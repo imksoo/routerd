@@ -165,11 +165,11 @@ func (c Controller) hostnameRecordsForResolver(servedZones map[string]bool) map[
 	}
 	for _, resource := range c.Router.Spec.Resources {
 		switch resource.Kind {
-		case "VirtualIPv4Address":
+		case "VirtualAddress":
 			if resource.APIVersion != api.NetAPIVersion {
 				continue
 			}
-			spec, err := resource.VirtualIPv4AddressSpec()
+			spec, err := resource.VirtualAddressSpec()
 			if err != nil {
 				continue
 			}
@@ -180,27 +180,7 @@ func (c Controller) hostnameRecordsForResolver(servedZones map[string]bool) map[
 			if hostname == "" {
 				continue
 			}
-			address := statusAddressValue(statusString(c.Store.ObjectStatus(api.NetAPIVersion, "VirtualIPv4Address", resource.Metadata.Name)["address"]))
-			if address == "" {
-				address = statusAddressValue(spec.Address)
-			}
-			c.addHostnameRecord(out, servedZones, hostname, address)
-		case "VirtualIPv6Address":
-			if resource.APIVersion != api.NetAPIVersion {
-				continue
-			}
-			spec, err := resource.VirtualIPv6AddressSpec()
-			if err != nil {
-				continue
-			}
-			if spec.ExternalDNS {
-				continue
-			}
-			hostname := strings.TrimSpace(spec.Hostname)
-			if hostname == "" {
-				continue
-			}
-			address := statusAddressValue(statusString(c.Store.ObjectStatus(api.NetAPIVersion, "VirtualIPv6Address", resource.Metadata.Name)["address"]))
+			address := statusAddressValue(statusString(c.Store.ObjectStatus(api.NetAPIVersion, "VirtualAddress", resource.Metadata.Name)["address"]))
 			if address == "" {
 				address = statusAddressValue(spec.Address)
 			}
@@ -725,7 +705,7 @@ func dnsResolverDependsOn(router *api.Router, ref daemonapi.ResourceRef) bool {
 	if router == nil {
 		return false
 	}
-	if ref.APIVersion == api.NetAPIVersion && (ref.Kind == "VirtualIPv4Address" || ref.Kind == "VirtualIPv6Address") && hostnameResourceExists(router, ref.Kind, ref.Name) {
+	if ref.APIVersion == api.NetAPIVersion && ref.Kind == "VirtualAddress" && hostnameResourceExists(router, ref.Kind, ref.Name) {
 		return true
 	}
 	if ref.APIVersion == api.FirewallAPIVersion && ref.Kind == "IngressService" && hostnameResourceExists(router, ref.Kind, ref.Name) {
@@ -768,11 +748,8 @@ func hostnameResourceExists(router *api.Router, kind, name string) bool {
 			continue
 		}
 		switch kind {
-		case "VirtualIPv4Address":
-			spec, err := resource.VirtualIPv4AddressSpec()
-			return err == nil && strings.TrimSpace(spec.Hostname) != "" && !spec.ExternalDNS
-		case "VirtualIPv6Address":
-			spec, err := resource.VirtualIPv6AddressSpec()
+		case "VirtualAddress":
+			spec, err := resource.VirtualAddressSpec()
 			return err == nil && strings.TrimSpace(spec.Hostname) != "" && !spec.ExternalDNS
 		case "IngressService":
 			spec, err := resource.IngressServiceSpec()

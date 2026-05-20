@@ -870,13 +870,8 @@ func routerNeedsFRRKeepalivedAccess(router *api.Router) bool {
 			return true
 		case res.APIVersion == api.FirewallAPIVersion && res.Kind == "IngressService":
 			return true
-		case res.APIVersion == api.NetAPIVersion && res.Kind == "VirtualIPv4Address":
-			spec, err := res.VirtualIPv4AddressSpec()
-			if err == nil && firstNonEmpty(spec.Mode, "static") == "vrrp" {
-				return true
-			}
-		case res.APIVersion == api.NetAPIVersion && res.Kind == "VirtualIPv6Address":
-			spec, err := res.VirtualIPv6AddressSpec()
+		case res.APIVersion == api.NetAPIVersion && res.Kind == "VirtualAddress":
+			spec, err := res.VirtualAddressSpec()
 			if err == nil && firstNonEmpty(spec.Mode, "static") == "vrrp" {
 				return true
 			}

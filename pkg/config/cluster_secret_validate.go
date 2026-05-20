@@ -117,14 +117,8 @@ func Warnings(router *api.Router) []string {
 			if err == nil {
 				warnings = append(warnings, secretSourceWarnings(res.ID(), "spec.passwordFrom", spec.PasswordFrom)...)
 			}
-		case "VirtualIPv4Address":
-			spec, err := res.VirtualIPv4AddressSpec()
-			if err == nil {
-				warnings = append(warnings, secretSourceWarnings(res.ID(), "spec.vrrp.authenticationFrom", spec.VRRP.AuthenticationFrom)...)
-				warnings = append(warnings, hostnameDNSCoverageWarnings(res.ID(), spec.Hostname, spec.ExternalDNS, dnsZones, dnsResolverZones)...)
-			}
-		case "VirtualIPv6Address":
-			spec, err := res.VirtualIPv6AddressSpec()
+		case "VirtualAddress":
+			spec, err := res.VirtualAddressSpec()
 			if err == nil {
 				warnings = append(warnings, secretSourceWarnings(res.ID(), "spec.vrrp.authenticationFrom", spec.VRRP.AuthenticationFrom)...)
 				warnings = append(warnings, hostnameDNSCoverageWarnings(res.ID(), spec.Hostname, spec.ExternalDNS, dnsZones, dnsResolverZones)...)

@@ -372,7 +372,7 @@ spec:
             match: [lain.local]
             zoneRef: [DNSZone/lan-zone]
     - apiVersion: net.routerd.net/v1alpha1
-      kind: VirtualIPv4Address
+      kind: VirtualAddress
       metadata:
         name: k8s-api-vip
       spec:
@@ -434,7 +434,7 @@ spec:
 	}); err != nil {
 		t.Fatalf("save bgp: %v", err)
 	}
-	if err := store.SaveObjectStatus(api.NetAPIVersion, "VirtualIPv4Address", "k8s-api-vip", map[string]any{
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "VirtualAddress", "k8s-api-vip", map[string]any{
 		"phase":                "Applied",
 		"address":              "192.168.123.250/32",
 		"hostname":             "k8s-api.lain.local",

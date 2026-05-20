@@ -299,8 +299,8 @@ func vrrpResourceSpec(resource api.Resource) (virtualAddressSpec, bool, error) {
 		return virtualAddressSpec{}, false, nil
 	}
 	switch resource.Kind {
-	case "VirtualIPv4Address":
-		spec, err := resource.VirtualIPv4AddressSpec()
+	case "VirtualAddress":
+		spec, err := resource.VirtualAddressSpec()
 		if err != nil {
 			return virtualAddressSpec{}, false, err
 		}
@@ -309,45 +309,17 @@ func vrrpResourceSpec(resource api.Resource) (virtualAddressSpec, bool, error) {
 			Address:     spec.Address,
 			Hostname:    spec.Hostname,
 			Mode:        spec.Mode,
-			VRRP:        vrrpIPv4Spec(spec.VRRP),
+			VRRP:        vrrpSpec(spec.VRRP),
 			Track:       spec.Track,
 			AddressFrom: spec.AddressFrom,
-			Family:      "ipv4",
-		}, true, nil
-	case "VirtualIPv6Address":
-		spec, err := resource.VirtualIPv6AddressSpec()
-		if err != nil {
-			return virtualAddressSpec{}, false, err
-		}
-		return virtualAddressSpec{
-			Interface:   spec.Interface,
-			Address:     spec.Address,
-			Hostname:    spec.Hostname,
-			Mode:        spec.Mode,
-			VRRP:        vrrpIPv6Spec(spec.VRRP),
-			Track:       spec.Track,
-			AddressFrom: spec.AddressFrom,
-			Family:      "ipv6",
+			Family:      spec.Family,
 		}, true, nil
 	default:
 		return virtualAddressSpec{}, false, nil
 	}
 }
 
-func vrrpIPv4Spec(spec api.VirtualIPv4VRRPSpec) virtualVRRPSpec {
-	return virtualVRRPSpec{
-		VirtualRouterID:    spec.VirtualRouterID,
-		Priority:           spec.Priority,
-		Preempt:            spec.Preempt,
-		PreemptDelay:       spec.PreemptDelay,
-		Peers:              spec.Peers,
-		AdvertInterval:     spec.AdvertInterval,
-		Authentication:     spec.Authentication,
-		AuthenticationFrom: spec.AuthenticationFrom,
-	}
-}
-
-func vrrpIPv6Spec(spec api.VirtualIPv6VRRPSpec) virtualVRRPSpec {
+func vrrpSpec(spec api.VirtualAddressVRRPSpec) virtualVRRPSpec {
 	return virtualVRRPSpec{
 		VirtualRouterID:    spec.VirtualRouterID,
 		Priority:           spec.Priority,
@@ -361,14 +333,11 @@ func vrrpIPv6Spec(spec api.VirtualIPv6VRRPSpec) virtualVRRPSpec {
 }
 
 func renderVirtualAddress(router *api.Router, spec virtualAddressSpec) (string, error) {
-	if spec.Family == "ipv6" {
-		return render.VirtualIPv6Address(router, api.VirtualIPv6AddressSpec{Address: spec.Address, AddressFrom: spec.AddressFrom})
-	}
-	return render.VirtualIPv4Address(router, api.VirtualIPv4AddressSpec{Address: spec.Address, AddressFrom: spec.AddressFrom})
+	return render.VirtualAddress(router, api.VirtualAddressSpec{Family: spec.Family, Address: spec.Address, AddressFrom: spec.AddressFrom})
 }
 
 func isVirtualAddressKind(kind string) bool {
-	return kind == "VirtualIPv4Address" || kind == "VirtualIPv6Address"
+	return kind == "VirtualAddress"
 }
 
 type trackDecision struct {

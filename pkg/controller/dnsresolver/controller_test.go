@@ -145,8 +145,8 @@ func TestRuntimeConfigMarksDNSZoneRecordPendingWhenSourceUnresolved(t *testing.T
 
 func TestRuntimeConfigAddsHostnameRecordsFromVIPAndIngress(t *testing.T) {
 	store := mapStore{
-		api.NetAPIVersion + "/VirtualIPv4Address/k8s-api-vip":         {"address": "192.168.123.250/32"},
-		api.NetAPIVersion + "/VirtualIPv6Address/k8s-api-vip-v6":      {"address": "fd00:1234::250/128"},
+		api.NetAPIVersion + "/VirtualAddress/k8s-api-vip":             {"address": "192.168.123.250/32"},
+		api.NetAPIVersion + "/VirtualAddress/k8s-api-vip-v6":          {"address": "fd00:1234::250/128"},
 		api.FirewallAPIVersion + "/IngressService/kubernetes-api-alt": {"listenAddress": "192.168.123.251"},
 	}
 	controller := Controller{
@@ -184,7 +184,7 @@ func TestRuntimeConfigAddsHostnameRecordsFromVIPAndIngress(t *testing.T) {
 
 func TestRuntimeConfigKeepsExplicitDNSZoneRecordOverHostnameRecord(t *testing.T) {
 	store := mapStore{
-		api.NetAPIVersion + "/VirtualIPv4Address/k8s-api-vip": {"address": "192.168.123.250/32"},
+		api.NetAPIVersion + "/VirtualAddress/k8s-api-vip": {"address": "192.168.123.250/32"},
 	}
 	router := dnsResolverRouterWithHostnameResources()
 	zoneSpec := router.Spec.Resources[0].Spec.(api.DNSZoneSpec)
@@ -247,11 +247,11 @@ func TestDNSResolverDependsOnDNSZoneRecordSource(t *testing.T) {
 
 func TestDNSResolverDependsOnHostnameResources(t *testing.T) {
 	router := dnsResolverRouterWithHostnameResources()
-	if !dnsResolverDependsOn(router, daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv4Address", Name: "k8s-api-vip"}) {
-		t.Fatal("expected dependency on VirtualIPv4Address/k8s-api-vip")
+	if !dnsResolverDependsOn(router, daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress", Name: "k8s-api-vip"}) {
+		t.Fatal("expected dependency on VirtualAddress/k8s-api-vip")
 	}
-	if !dnsResolverDependsOn(router, daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv6Address", Name: "k8s-api-vip-v6"}) {
-		t.Fatal("expected dependency on VirtualIPv6Address/k8s-api-vip-v6")
+	if !dnsResolverDependsOn(router, daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress", Name: "k8s-api-vip-v6"}) {
+		t.Fatal("expected dependency on VirtualAddress/k8s-api-vip-v6")
 	}
 	if !dnsResolverDependsOn(router, daemonapi.ResourceRef{APIVersion: api.FirewallAPIVersion, Kind: "IngressService", Name: "kubernetes-api-alt"}) {
 		t.Fatal("expected dependency on IngressService/kubernetes-api-alt")
@@ -325,18 +325,18 @@ func dnsResolverRouterWithHostnameResources() *api.Router {
 			},
 		},
 		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv4Address"},
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"},
 			Metadata: api.ObjectMeta{Name: "k8s-api-vip"},
-			Spec: api.VirtualIPv4AddressSpec{
+			Spec: api.VirtualAddressSpec{Family: "ipv4",
 				Interface: "lan",
 				Address:   "192.168.123.250/32",
 				Hostname:  "k8s-api.lain.local",
 			},
 		},
 		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv6Address"},
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"},
 			Metadata: api.ObjectMeta{Name: "k8s-api-vip-v6"},
-			Spec: api.VirtualIPv6AddressSpec{
+			Spec: api.VirtualAddressSpec{Family: "ipv6",
 				Interface: "lan",
 				Address:   "fd00:1234::250/128",
 				Hostname:  "k8s-api-v6.lain.local",

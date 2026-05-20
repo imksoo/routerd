@@ -21,19 +21,21 @@ spec:
     - fd00:70::21
 ```
 
-API VIP や service VIP は `VirtualIPv4Address` と `VirtualIPv6Address` を
-並列に宣言します。IPv4 VIP は従来通り keepalived の host prefix として描画し、
-IPv6 VIP は keepalived VRRPv3 の `family inet6` として描画します。FreeBSD では
+API VIP や service VIP は `VirtualAddress` に `spec.family: ipv4` と
+`spec.family: ipv6` を指定した並列 resource として宣言します。IPv4 VIP は
+従来通り keepalived の host prefix として描画し、IPv6 VIP は keepalived
+VRRPv3 の `family inet6` として描画します。FreeBSD では
 どちらも parent interface の CARP alias として扱います。
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
-kind: VirtualIPv6Address
+kind: VirtualAddress
 metadata:
   name: k8s-api-vip-v6
 spec:
   interface: lan
   address: fd00:70::10/128
+  family: ipv6
   hostname: k8s-api.cluster.example
   mode: vrrp
   vrrp:

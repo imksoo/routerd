@@ -211,13 +211,13 @@ exit 0
 				Spec:     api.InterfaceSpec{IfName: "eth0", Managed: false},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv4Address"},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"},
 				Metadata: api.ObjectMeta{Name: "api-vip"},
-				Spec: api.VirtualIPv4AddressSpec{
+				Spec: api.VirtualAddressSpec{Family: "ipv4",
 					Interface: "lan",
 					Address:   "10.240.70.10/32",
 					Mode:      "vrrp",
-					VRRP: api.VirtualIPv4VRRPSpec{
+					VRRP: api.VirtualAddressVRRPSpec{
 						VirtualRouterID: 66,
 						Priority:        150,
 						Peers:           []string{"10.240.70.11"},
@@ -249,7 +249,7 @@ exit 0
 		t.Fatalf("open state: %v", err)
 	}
 	defer func() { _ = store.Close() }()
-	status := store.ObjectStatus(api.NetAPIVersion, "VirtualIPv4Address", "api-vip")
+	status := store.ObjectStatus(api.NetAPIVersion, "VirtualAddress", "api-vip")
 	if got := statusStringMap(status, "phase"); got != "Rendered" {
 		t.Fatalf("phase = %q, want Rendered; status=%#v", got, status)
 	}
@@ -2692,8 +2692,7 @@ func TestResourceWhenCoversResourceLevelWhenSpecs(t *testing.T) {
 	for _, tc := range []api.Resource{
 		testResourceWithSpecWhen("ObservabilityPipeline", api.ObservabilityPipelineSpec{When: want}),
 		testResourceWithSpecWhen("RouterdCluster", api.RouterdClusterSpec{When: want}),
-		testResourceWithSpecWhen("VirtualIPv4Address", api.VirtualIPv4AddressSpec{When: want}),
-		testResourceWithSpecWhen("VirtualIPv6Address", api.VirtualIPv6AddressSpec{When: want}),
+		testResourceWithSpecWhen("VirtualAddress", api.VirtualAddressSpec{Family: "ipv4", When: want}),
 		testResourceWithSpecWhen("BGPRouter", api.BGPRouterSpec{When: want}),
 		testResourceWithSpecWhen("BGPPeer", api.BGPPeerSpec{When: want}),
 		testResourceWithSpecWhen("ClusterNetworkRoute", api.ClusterNetworkRouteSpec{When: want}),

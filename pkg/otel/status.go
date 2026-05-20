@@ -123,7 +123,7 @@ func RecordStatusMetrics(ctx context.Context, resources []routerstate.ObjectStat
 					}
 				}
 			}
-			if resource.Kind == "VirtualIPv4Address" {
+			if resource.Kind == "VirtualAddress" {
 				active := int64(0)
 				if strings.EqualFold(phase, "Applied") || strings.EqualFold(phase, "Active") || strings.EqualFold(phase, "Master") {
 					active = 1

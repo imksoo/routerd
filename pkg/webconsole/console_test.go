@@ -282,7 +282,7 @@ func TestHandlerServesOperationalViews(t *testing.T) {
 		},
 		{
 			APIVersion: api.NetAPIVersion,
-			Kind:       "VirtualIPv4Address",
+			Kind:       "VirtualAddress",
 			Name:       "k8s-api-vip",
 			Status: map[string]any{
 				"address":         "192.168.123.250/32",
@@ -322,7 +322,7 @@ func TestHandlerServesOperationalViews(t *testing.T) {
 		want []string
 	}{
 		{"/api/v1/bgp", []string{`"kind": "bgp"`, `"BGPRouter"`, `"192.168.123.111"`}},
-		{"/api/v1/vrrp", []string{`"kind": "vrrp"`, `"VirtualIPv4Address"`, `"k8s-api.lain.local"`}},
+		{"/api/v1/vrrp", []string{`"kind": "vrrp"`, `"VirtualAddress"`, `"k8s-api.lain.local"`}},
 		{"/api/v1/ingress", []string{`"kind": "ingress"`, `"IngressService"`, `"kubernetes-api"`}},
 		{"/bgp", []string{"<h1>BGP</h1>", "192.168.123.111", "12/11", "EventSource", "Event log", "metric-chart"}},
 		{"/vrrp", []string{"<h1>VRRP</h1>", "k8s-api.lain.local", "master"}},

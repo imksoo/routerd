@@ -41,12 +41,13 @@ spec:
         exclusive: false
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: VirtualIPv4Address
+      kind: VirtualAddress
       metadata:
         name: lan-api-vip
       spec:
         interface: lan
         address: 192.168.70.10/32
+        family: ipv4
         mode: vrrp
         vrrp:
           virtualRouterID: 70

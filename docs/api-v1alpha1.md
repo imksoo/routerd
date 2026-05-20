@@ -107,8 +107,7 @@ instead of silently ignoring the input.
 | Kind | Role |
 | --- | --- |
 | `IPv4StaticAddress` | Assigns a static IPv4 address. |
-| `VirtualIPv4Address` | Declares an IPv4 `/32` VIP. `mode: vrrp` uses keepalived on Linux and CARP on FreeBSD. |
-| `VirtualIPv6Address` | Declares an IPv6 `/128` VIP. `mode: vrrp` uses VRRPv3 on Linux keepalived and CARP inet6 aliases on FreeBSD. |
+| `VirtualAddress` | Declares an IPv4 `/32` or IPv6 `/128` VIP. `spec.family` is `ipv4` or `ipv6`; `mode: vrrp` uses keepalived on Linux and CARP on FreeBSD. |
 | `DHCPv4Client` | DHCPv4 lease, IPv4 address, and optional default route managed by `routerd-dhcpv4-client`. |
 | `DHCPv6Address` | Represents DHCPv6 IA_NA intent for platform renderers. |
 | `DHCPv6PrefixDelegation` | DHCPv6-PD lease managed by `routerd-dhcpv6-client`. |
@@ -239,8 +238,9 @@ validated and used for routerd-side listen collision checks; FRR address binding
 itself remains a bgpd daemon invocation option rather than an integrated config
 stanza.
 
-`VirtualIPv4Address` and `VirtualIPv6Address` use keepalived on Linux and CARP
-on FreeBSD for `mode: vrrp`. IPv6 VIPs render keepalived VRRPv3 with
+`VirtualAddress` uses keepalived on Linux and CARP on FreeBSD for
+`mode: vrrp`. `spec.family: ipv4` requires an IPv4 `/32`, and
+`spec.family: ipv6` requires an IPv6 `/128`. IPv6 VIPs render keepalived VRRPv3 with
 `family inet6`; FreeBSD renders `inet6` CARP aliases. Linux VRRP uses explicit
 unicast peers and defaults to
 `nopreempt`; FreeBSD CARP uses multicast advertisements on the parent interface,
@@ -285,9 +285,9 @@ FRR listen-address binding is a bgpd daemon invocation option (`-l` /
 host firewall zones and service-manager bgpd options aligned when BGP must be
 limited to a specific interface address.
 
-`VirtualIPv4Address.spec.vrrp.authentication` is rendered into keepalived as
+`VirtualAddress.spec.vrrp.authentication` is rendered into keepalived as
 `auth_pass` and into FreeBSD CARP as `pass`. Prefer
-`VirtualIPv4Address.spec.vrrp.authenticationFrom` for production configs.
+`VirtualAddress.spec.vrrp.authenticationFrom` for production configs.
 `authenticationFrom.file` reads a local secret file and `authenticationFrom.env`
 reads an environment variable; `base64: true` decodes either source before
 rendering. Treat rendered keepalived config and host interface state as secrets. VRRP
@@ -301,7 +301,7 @@ LAN clients to reach the service through the WAN address. Hairpin mode requires
 `listen.address` or `listen.addressFrom`; routerd renders the LAN-side DNAT plus
 the return-path masquerade/NAT reflection rule. `listen.addressFrom` and backend
 `addressFrom` can reference statically rendered address resources such as
-`IPv4StaticAddress/<name>.address` or `VirtualIPv4Address/<name>.address`.
+`IPv4StaticAddress/<name>.address` or `VirtualAddress/<name>.address`.
 `IngressService` treats omitted `spec.hairpin.mode` as `auto`: when the listen
 address and the selected backend are on a prefix declared for the same listen
 interface, routerd automatically emits the same-interface return-path SNAT

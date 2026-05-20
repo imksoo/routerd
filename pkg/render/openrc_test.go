@@ -194,13 +194,13 @@ func TestOpenRCRenderSynthesizesKeepalivedForVRRP(t *testing.T) {
 			Spec:     api.InterfaceSpec{IfName: "eth0", Managed: false},
 		},
 		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv4Address"},
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"},
 			Metadata: api.ObjectMeta{Name: "k8s-api"},
-			Spec: api.VirtualIPv4AddressSpec{
+			Spec: api.VirtualAddressSpec{Family: "ipv4",
 				Interface: "lan",
 				Address:   "192.168.1.248/32",
 				Mode:      "vrrp",
-				VRRP:      api.VirtualIPv4VRRPSpec{VirtualRouterID: 50, Priority: 150},
+				VRRP:      api.VirtualAddressVRRPSpec{VirtualRouterID: 50, Priority: 150},
 			},
 		},
 	}}}

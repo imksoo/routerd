@@ -12,13 +12,13 @@ import (
 func TestKeepalivedConfigRendersVRRPInstance(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv4Address"},
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"},
 			Metadata: api.ObjectMeta{Name: "k8s-api"},
-			Spec: api.VirtualIPv4AddressSpec{
+			Spec: api.VirtualAddressSpec{Family: "ipv4",
 				Interface: "lan",
 				Address:   "10.240.70.10/32",
 				Mode:      "vrrp",
-				VRRP: api.VirtualIPv4VRRPSpec{
+				VRRP: api.VirtualAddressVRRPSpec{
 					VirtualRouterID: 50,
 					Priority:        150,
 					Peers:           []string{"10.240.70.3"},
@@ -51,13 +51,13 @@ func TestKeepalivedConfigRendersVRRPInstance(t *testing.T) {
 func TestKeepalivedConfigRendersIPv6VRRPInstance(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv6Address"},
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"},
 			Metadata: api.ObjectMeta{Name: "k8s-api-v6"},
-			Spec: api.VirtualIPv6AddressSpec{
+			Spec: api.VirtualAddressSpec{Family: "ipv6",
 				Interface: "lan",
 				Address:   "fd00:1234::10/128",
 				Mode:      "vrrp",
-				VRRP: api.VirtualIPv6VRRPSpec{
+				VRRP: api.VirtualAddressVRRPSpec{
 					VirtualRouterID: 51,
 					Priority:        140,
 					Peers:           []string{"fd00:1234::3"},
@@ -86,13 +86,13 @@ func TestKeepalivedConfigRendersIPv6VRRPInstance(t *testing.T) {
 func TestKeepalivedConfigOverridesPriority(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv4Address"},
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"},
 			Metadata: api.ObjectMeta{Name: "k8s-api"},
-			Spec: api.VirtualIPv4AddressSpec{
+			Spec: api.VirtualAddressSpec{Family: "ipv4",
 				Interface: "lan",
 				Address:   "10.240.70.10",
 				Mode:      "vrrp",
-				VRRP:      api.VirtualIPv4VRRPSpec{VirtualRouterID: 50, Priority: 150, Peers: []string{"10.240.70.3"}},
+				VRRP:      api.VirtualAddressVRRPSpec{VirtualRouterID: 50, Priority: 150, Peers: []string{"10.240.70.3"}},
 			},
 		},
 	}}}
@@ -109,13 +109,13 @@ func TestKeepalivedConfigRendersPreemptDelay(t *testing.T) {
 	preempt := true
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv4Address"},
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"},
 			Metadata: api.ObjectMeta{Name: "k8s-api"},
-			Spec: api.VirtualIPv4AddressSpec{
+			Spec: api.VirtualAddressSpec{Family: "ipv4",
 				Interface: "lan",
 				Address:   "10.240.70.10/32",
 				Mode:      "vrrp",
-				VRRP: api.VirtualIPv4VRRPSpec{
+				VRRP: api.VirtualAddressVRRPSpec{
 					VirtualRouterID: 50,
 					Preempt:         &preempt,
 					PreemptDelay:    "5m",
@@ -138,13 +138,13 @@ func TestKeepalivedConfigResolvesAuthenticationFromEnv(t *testing.T) {
 	t.Setenv("ROUTERD_TEST_VRRP_AUTH", "secret")
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv4Address"},
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"},
 			Metadata: api.ObjectMeta{Name: "k8s-api"},
-			Spec: api.VirtualIPv4AddressSpec{
+			Spec: api.VirtualAddressSpec{Family: "ipv4",
 				Interface: "lan",
 				Address:   "10.240.70.10/32",
 				Mode:      "vrrp",
-				VRRP: api.VirtualIPv4VRRPSpec{
+				VRRP: api.VirtualAddressVRRPSpec{
 					VirtualRouterID:    50,
 					Peers:              []string{"10.240.70.3"},
 					AuthenticationFrom: api.SecretValueSourceSpec{Env: "ROUTERD_TEST_VRRP_AUTH"},

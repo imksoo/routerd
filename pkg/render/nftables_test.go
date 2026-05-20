@@ -1296,23 +1296,23 @@ func TestNftablesFirewallHolesForBGPVRRPAndIngress(t *testing.T) {
 			Spec:     api.BGPRouterSpec{ASN: 64512, RouterID: "10.240.70.2"},
 		},
 		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv4Address"},
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"},
 			Metadata: api.ObjectMeta{Name: "api-vip"},
-			Spec: api.VirtualIPv4AddressSpec{
+			Spec: api.VirtualAddressSpec{Family: "ipv4",
 				Interface: "lan",
 				Address:   "10.240.70.10/32",
 				Mode:      "vrrp",
-				VRRP:      api.VirtualIPv4VRRPSpec{VirtualRouterID: 50},
+				VRRP:      api.VirtualAddressVRRPSpec{VirtualRouterID: 50},
 			},
 		},
 		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv6Address"},
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"},
 			Metadata: api.ObjectMeta{Name: "api-vip-v6"},
-			Spec: api.VirtualIPv6AddressSpec{
+			Spec: api.VirtualAddressSpec{Family: "ipv6",
 				Interface: "lan",
 				Address:   "fd00:1234::10/128",
 				Mode:      "vrrp",
-				VRRP:      api.VirtualIPv6VRRPSpec{VirtualRouterID: 51},
+				VRRP:      api.VirtualAddressVRRPSpec{VirtualRouterID: 51},
 			},
 		},
 		{
@@ -1331,8 +1331,8 @@ func TestNftablesFirewallHolesForBGPVRRPAndIngress(t *testing.T) {
 	got := string(data)
 	for _, want := range []string{
 		`iifname "ens19" tcp dport 179 counter accept comment "net.routerd.net/v1alpha1/BGPRouter/k8s"`,
-		`iifname "ens19" ip protocol 112 counter accept comment "net.routerd.net/v1alpha1/VirtualIPv4Address/api-vip"`,
-		`iifname "ens19" ip6 nexthdr 112 counter accept comment "net.routerd.net/v1alpha1/VirtualIPv6Address/api-vip-v6"`,
+		`iifname "ens19" ip protocol 112 counter accept comment "net.routerd.net/v1alpha1/VirtualAddress/api-vip"`,
+		`iifname "ens19" ip6 nexthdr 112 counter accept comment "net.routerd.net/v1alpha1/VirtualAddress/api-vip-v6"`,
 		`iifname "ens19" tcp dport 6443 counter accept comment "firewall.routerd.net/v1alpha1/IngressService/k8s-api"`,
 	} {
 		if !strings.Contains(got, want) {

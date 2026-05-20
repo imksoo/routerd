@@ -21,19 +21,21 @@ spec:
     - fd00:70::21
 ```
 
-For API or service VIPs, use `VirtualIPv4Address` and `VirtualIPv6Address` as
-parallel resources. IPv4 VIPs render keepalived VRRPv2-style host prefixes,
-while IPv6 VIPs render keepalived VRRPv3 with `family inet6`. On FreeBSD both
+For API or service VIPs, use `VirtualAddress` with `spec.family: ipv4` and
+`spec.family: ipv6` as parallel resources. IPv4 VIPs render keepalived
+VRRPv2-style host prefixes, while IPv6 VIPs render keepalived VRRPv3 with
+`family inet6`. On FreeBSD both
 families use CARP aliases on the parent interface.
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
-kind: VirtualIPv6Address
+kind: VirtualAddress
 metadata:
   name: k8s-api-vip-v6
 spec:
   interface: lan
   address: fd00:70::10/128
+  family: ipv6
   hostname: k8s-api.cluster.example
   mode: vrrp
   vrrp:

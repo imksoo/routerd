@@ -33,7 +33,7 @@ func TestKnownResourceKindsDeclareArtifactIntents(t *testing.T) {
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VRF"}, Metadata: api.ObjectMeta{Name: "vrf-guest"}, Spec: api.VRFSpec{RouteTable: 1001}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VXLANTunnel"}, Metadata: api.ObjectMeta{Name: "vx240"}, Spec: api.VXLANTunnelSpec{VNI: 240, LocalAddress: "10.44.0.1", UnderlayInterface: "wg-lab", Peers: []string{"10.44.0.2"}}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "lan-v4"}, Spec: api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.168.10.3/24"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv4Address"}, Metadata: api.ObjectMeta{Name: "k8s-api"}, Spec: api.VirtualIPv4AddressSpec{Interface: "lan", Address: "192.168.10.10/32", Mode: "vrrp", VRRP: api.VirtualIPv4VRRPSpec{VirtualRouterID: 50, Peers: []string{"192.168.10.4"}}}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"}, Metadata: api.ObjectMeta{Name: "k8s-api"}, Spec: api.VirtualAddressSpec{Family: "ipv4", Interface: "lan", Address: "192.168.10.10/32", Mode: "vrrp", VRRP: api.VirtualAddressVRRPSpec{VirtualRouterID: 50, Peers: []string{"192.168.10.4"}}}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"}, Metadata: api.ObjectMeta{Name: "lan-bgp"}, Spec: api.BGPRouterSpec{ASN: 64512, RouterID: "192.168.10.3"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPPeer"}, Metadata: api.ObjectMeta{Name: "k8s-speakers"}, Spec: api.BGPPeerSpec{RouterRef: "BGPRouter/lan-bgp", PeerASN: 64513, Peers: []string{"192.168.10.21"}}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Client"}, Metadata: api.ObjectMeta{Name: "wan-lease"}, Spec: api.DHCPv4ClientSpec{Interface: "wan"}},
@@ -83,15 +83,15 @@ func TestKnownResourceKindsDeclareArtifactIntents(t *testing.T) {
 	}
 }
 
-func TestVirtualIPv4AddressArtifactIntentsUseFreeBSDCARP(t *testing.T) {
+func TestVirtualAddressIPv4ArtifactIntentsUseFreeBSDCARP(t *testing.T) {
 	res := api.Resource{
-		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv4Address"},
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"},
 		Metadata: api.ObjectMeta{Name: "api-vip"},
-		Spec: api.VirtualIPv4AddressSpec{
+		Spec: api.VirtualAddressSpec{Family: "ipv4",
 			Interface: "lan",
 			Address:   "192.168.10.10/32",
 			Mode:      "vrrp",
-			VRRP:      api.VirtualIPv4VRRPSpec{VirtualRouterID: 50},
+			VRRP:      api.VirtualAddressVRRPSpec{VirtualRouterID: 50},
 		},
 	}
 	intents := resourceArtifactIntentsForOS(res, map[string]string{"lan": "vtnet1"}, platform.OSFreeBSD)
@@ -109,16 +109,16 @@ func TestVirtualIPv4AddressArtifactIntentsUseFreeBSDCARP(t *testing.T) {
 	}
 }
 
-func TestVirtualIPv4AddressAndBGPRouterArtifactIntentsUseOpenRC(t *testing.T) {
+func TestVirtualAddressIPv4AndBGPRouterArtifactIntentsUseOpenRC(t *testing.T) {
 	features := platform.Features{HasOpenRC: true}
 	vip := api.Resource{
-		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv4Address"},
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"},
 		Metadata: api.ObjectMeta{Name: "api-vip"},
-		Spec: api.VirtualIPv4AddressSpec{
+		Spec: api.VirtualAddressSpec{Family: "ipv4",
 			Interface: "lan",
 			Address:   "192.168.10.10/32",
 			Mode:      "vrrp",
-			VRRP:      api.VirtualIPv4VRRPSpec{VirtualRouterID: 50},
+			VRRP:      api.VirtualAddressVRRPSpec{VirtualRouterID: 50},
 		},
 	}
 	vipIntents := resourceArtifactIntentsForPlatform(vip, map[string]string{"lan": "eth0"}, platform.OSLinux, features)
@@ -149,13 +149,13 @@ func TestOpenRCServiceArtifactIntentsAvoidSystemd(t *testing.T) {
 			Spec:     api.PPPoESessionSpec{Interface: "wan", IfName: "ppp0"},
 		},
 		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv4Address"},
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"},
 			Metadata: api.ObjectMeta{Name: "api-vip"},
-			Spec: api.VirtualIPv4AddressSpec{
+			Spec: api.VirtualAddressSpec{Family: "ipv4",
 				Interface: "lan",
 				Address:   "192.168.10.10/32",
 				Mode:      "vrrp",
-				VRRP:      api.VirtualIPv4VRRPSpec{VirtualRouterID: 50},
+				VRRP:      api.VirtualAddressVRRPSpec{VirtualRouterID: 50},
 			},
 		},
 		{
@@ -208,13 +208,13 @@ func TestServiceDeclarationsUsePlatformManagerMatrix(t *testing.T) {
 			Spec:     api.PPPoESessionSpec{Interface: "wan", IfName: "ppp0"},
 		},
 		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv4Address"},
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"},
 			Metadata: api.ObjectMeta{Name: "api-vip"},
-			Spec: api.VirtualIPv4AddressSpec{
+			Spec: api.VirtualAddressSpec{Family: "ipv4",
 				Interface: "lan",
 				Address:   "192.168.10.10/32",
 				Mode:      "vrrp",
-				VRRP:      api.VirtualIPv4VRRPSpec{VirtualRouterID: 50},
+				VRRP:      api.VirtualAddressVRRPSpec{VirtualRouterID: 50},
 			},
 		},
 		{

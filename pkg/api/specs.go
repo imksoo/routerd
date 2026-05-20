@@ -435,42 +435,20 @@ type IPv4StaticAddressSpec struct {
 	AllowOverlapReason string `yaml:"allowOverlapReason,omitempty" json:"allowOverlapReason,omitempty"`
 }
 
-type VirtualIPv4AddressSpec struct {
-	Interface   string                `yaml:"interface" json:"interface"`
-	Address     string                `yaml:"address" json:"address"`
-	Hostname    string                `yaml:"hostname,omitempty" json:"hostname,omitempty"`
-	ExternalDNS bool                  `yaml:"externalDNS,omitempty" json:"externalDNS,omitempty"`
-	Mode        string                `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=,enum=static,enum=vrrp"`
-	VRRP        VirtualIPv4VRRPSpec   `yaml:"vrrp,omitempty" json:"vrrp,omitempty"`
-	Track       []ResourceTrackSpec   `yaml:"track,omitempty" json:"track,omitempty"`
-	When        ResourceWhenSpec      `yaml:"when,omitempty" json:"when,omitempty"`
-	AddressFrom StatusValueSourceSpec `yaml:"addressFrom,omitempty" json:"addressFrom,omitempty"`
+type VirtualAddressSpec struct {
+	Family      string                 `yaml:"family" json:"family" jsonschema:"enum=ipv4,enum=ipv6"`
+	Interface   string                 `yaml:"interface" json:"interface"`
+	Address     string                 `yaml:"address" json:"address"`
+	Hostname    string                 `yaml:"hostname,omitempty" json:"hostname,omitempty"`
+	ExternalDNS bool                   `yaml:"externalDNS,omitempty" json:"externalDNS,omitempty"`
+	Mode        string                 `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=,enum=static,enum=vrrp"`
+	VRRP        VirtualAddressVRRPSpec `yaml:"vrrp,omitempty" json:"vrrp,omitempty"`
+	Track       []ResourceTrackSpec    `yaml:"track,omitempty" json:"track,omitempty"`
+	When        ResourceWhenSpec       `yaml:"when,omitempty" json:"when,omitempty"`
+	AddressFrom StatusValueSourceSpec  `yaml:"addressFrom,omitempty" json:"addressFrom,omitempty"`
 }
 
-type VirtualIPv6AddressSpec struct {
-	Interface   string                `yaml:"interface" json:"interface"`
-	Address     string                `yaml:"address" json:"address"`
-	Hostname    string                `yaml:"hostname,omitempty" json:"hostname,omitempty"`
-	ExternalDNS bool                  `yaml:"externalDNS,omitempty" json:"externalDNS,omitempty"`
-	Mode        string                `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=,enum=static,enum=vrrp"`
-	VRRP        VirtualIPv6VRRPSpec   `yaml:"vrrp,omitempty" json:"vrrp,omitempty"`
-	Track       []ResourceTrackSpec   `yaml:"track,omitempty" json:"track,omitempty"`
-	When        ResourceWhenSpec      `yaml:"when,omitempty" json:"when,omitempty"`
-	AddressFrom StatusValueSourceSpec `yaml:"addressFrom,omitempty" json:"addressFrom,omitempty"`
-}
-
-type VirtualIPv4VRRPSpec struct {
-	VirtualRouterID    int                   `yaml:"virtualRouterID" json:"virtualRouterID" jsonschema:"minimum=1,maximum=255"`
-	Priority           int                   `yaml:"priority,omitempty" json:"priority,omitempty" jsonschema:"minimum=1,maximum=254"`
-	Preempt            *bool                 `yaml:"preempt,omitempty" json:"preempt,omitempty"`
-	PreemptDelay       string                `yaml:"preemptDelay,omitempty" json:"preemptDelay,omitempty"`
-	Peers              []string              `yaml:"peers,omitempty" json:"peers,omitempty"`
-	AdvertInterval     string                `yaml:"advertInterval,omitempty" json:"advertInterval,omitempty"`
-	Authentication     string                `yaml:"authentication,omitempty" json:"authentication,omitempty"`
-	AuthenticationFrom SecretValueSourceSpec `yaml:"authenticationFrom,omitempty" json:"authenticationFrom,omitempty"`
-}
-
-type VirtualIPv6VRRPSpec struct {
+type VirtualAddressVRRPSpec struct {
 	VirtualRouterID    int                   `yaml:"virtualRouterID" json:"virtualRouterID" jsonschema:"minimum=1,maximum=255"`
 	Priority           int                   `yaml:"priority,omitempty" json:"priority,omitempty" jsonschema:"minimum=1,maximum=254"`
 	Preempt            *bool                 `yaml:"preempt,omitempty" json:"preempt,omitempty"`
@@ -1506,12 +1484,8 @@ func (r Resource) IPv4StaticAddressSpec() (IPv4StaticAddressSpec, error) {
 	return specAs[IPv4StaticAddressSpec](r)
 }
 
-func (r Resource) VirtualIPv4AddressSpec() (VirtualIPv4AddressSpec, error) {
-	return specAs[VirtualIPv4AddressSpec](r)
-}
-
-func (r Resource) VirtualIPv6AddressSpec() (VirtualIPv6AddressSpec, error) {
-	return specAs[VirtualIPv6AddressSpec](r)
+func (r Resource) VirtualAddressSpec() (VirtualAddressSpec, error) {
+	return specAs[VirtualAddressSpec](r)
 }
 
 func (r Resource) BGPRouterSpec() (BGPRouterSpec, error) {

@@ -54,9 +54,9 @@ var serviceDeclarations = []serviceDeclaration{
 		},
 	},
 	{
-		kind: "VirtualIPv4Address",
+		kind: "VirtualAddress",
 		declare: func(ctx serviceDeclarationContext) []resource.Intent {
-			spec, err := ctx.res.VirtualIPv4AddressSpec()
+			spec, err := ctx.res.VirtualAddressSpec()
 			if err != nil || defaultString(spec.Mode, "static") != "vrrp" {
 				return nil
 			}
@@ -248,10 +248,14 @@ func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]str
 			return nil
 		}
 		return []resource.Intent{artifact("net.ipv4.address", aliases[spec.Interface]+":"+spec.Address, resource.ActionEnsure, "platform-network", nil)}
-	case "VirtualIPv4Address":
-		spec, err := res.VirtualIPv4AddressSpec()
+	case "VirtualAddress":
+		spec, err := res.VirtualAddressSpec()
 		if err != nil {
 			return nil
+		}
+		artifactKind := "net.ipv4.address"
+		if spec.Family == "ipv6" {
+			artifactKind = "net.ipv6.address"
 		}
 		if defaultString(spec.Mode, "static") == "vrrp" {
 			if targetOS == platform.OSFreeBSD {
@@ -262,10 +266,10 @@ func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]str
 			}
 			intents := []resource.Intent{artifact("keepalived.config", "/etc/keepalived/keepalived.conf", resource.ActionEnsure, "keepalived", map[string]string{"interface": aliases[spec.Interface]})}
 			intents = append(intents, declaredServiceIntents(serviceContext)...)
-			intents = append(intents, artifact("net.ipv4.address", aliases[spec.Interface]+":"+spec.Address, resource.ActionEnsure, "keepalived", nil))
+			intents = append(intents, artifact(artifactKind, aliases[spec.Interface]+":"+spec.Address, resource.ActionEnsure, "keepalived", nil))
 			return intents
 		}
-		return []resource.Intent{artifact("net.ipv4.address", aliases[spec.Interface]+":"+spec.Address, resource.ActionEnsure, "ip-addr", nil)}
+		return []resource.Intent{artifact(artifactKind, aliases[spec.Interface]+":"+spec.Address, resource.ActionEnsure, "ip-addr", nil)}
 	case "BGPRouter":
 		intents := []resource.Intent{artifact("frr.config", "/run/routerd/frr/routerd.conf", resource.ActionEnsure, "frr-reload", nil)}
 		intents = append(intents, declaredServiceIntents(serviceContext)...)

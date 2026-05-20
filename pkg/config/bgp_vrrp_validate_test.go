@@ -12,17 +12,17 @@ import (
 	"routerd/pkg/platform"
 )
 
-func TestValidateBGPRouterPeerAndVirtualIPv4Address(t *testing.T) {
+func TestValidateBGPRouterPeerAndVirtualAddressIPv4(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 		Metadata: api.ObjectMeta{Name: "test"},
 		Spec: api.RouterSpec{Resources: []api.Resource{
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "eth0", Managed: true}},
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv4Address"}, Metadata: api.ObjectMeta{Name: "k8s-api"}, Spec: api.VirtualIPv4AddressSpec{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"}, Metadata: api.ObjectMeta{Name: "k8s-api"}, Spec: api.VirtualAddressSpec{Family: "ipv4",
 				Interface: "lan",
 				Address:   "10.240.70.10/32",
 				Mode:      "vrrp",
-				VRRP:      api.VirtualIPv4VRRPSpec{VirtualRouterID: 50, Priority: 150, Peers: []string{"10.240.70.3"}},
+				VRRP:      api.VirtualAddressVRRPSpec{VirtualRouterID: 50, Priority: 150, Peers: []string{"10.240.70.3"}},
 				Track:     []api.ResourceTrackSpec{{Resource: "BGPRouter/lan", UnhealthyPenalty: 50}},
 			}},
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.BGPRouterSpec{
@@ -52,17 +52,17 @@ func TestValidateBGPRouterPeerAndVirtualIPv4Address(t *testing.T) {
 	}
 }
 
-func TestValidateBGPDualStackAndVirtualIPv6Address(t *testing.T) {
+func TestValidateBGPDualStackAndVirtualAddressIPv6(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 		Metadata: api.ObjectMeta{Name: "test"},
 		Spec: api.RouterSpec{Resources: []api.Resource{
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "eth0", Managed: true}},
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv6Address"}, Metadata: api.ObjectMeta{Name: "k8s-api-v6"}, Spec: api.VirtualIPv6AddressSpec{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"}, Metadata: api.ObjectMeta{Name: "k8s-api-v6"}, Spec: api.VirtualAddressSpec{Family: "ipv6",
 				Interface: "lan",
 				Address:   "fd00:1234::10/128",
 				Mode:      "vrrp",
-				VRRP:      api.VirtualIPv6VRRPSpec{VirtualRouterID: 51, Priority: 150, Peers: []string{"fd00:1234::3"}},
+				VRRP:      api.VirtualAddressVRRPSpec{VirtualRouterID: 51, Priority: 150, Peers: []string{"fd00:1234::3"}},
 			}},
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.BGPRouterSpec{
 				ASN:      64512,
@@ -85,7 +85,7 @@ func TestValidateBGPDualStackAndVirtualIPv6Address(t *testing.T) {
 	if err := Validate(router); err != nil {
 		t.Fatalf("validate dual-stack BGP/VRRP resources: %v", err)
 	}
-	spec := router.Spec.Resources[1].Spec.(api.VirtualIPv6AddressSpec)
+	spec := router.Spec.Resources[1].Spec.(api.VirtualAddressSpec)
 	spec.Address = "fd00:1234::10/64"
 	router.Spec.Resources[1].Spec = spec
 	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "IPv6 /128") {
@@ -109,7 +109,7 @@ func TestValidateHostnameWarnsWithoutDNSResolverZoneCoverage(t *testing.T) {
 					ZoneRef: []string{"DNSZone/lan-zone"},
 				}},
 			}},
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv4Address"}, Metadata: api.ObjectMeta{Name: "vip"}, Spec: api.VirtualIPv4AddressSpec{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"}, Metadata: api.ObjectMeta{Name: "vip"}, Spec: api.VirtualAddressSpec{Family: "ipv4",
 				Interface: "lan",
 				Address:   "10.240.70.10/32",
 				Hostname:  "k8s-api.lain.local",
@@ -122,7 +122,7 @@ func TestValidateHostnameWarnsWithoutDNSResolverZoneCoverage(t *testing.T) {
 	if warnings := Warnings(router); len(warnings) != 0 {
 		t.Fatalf("warnings = %#v, want none", warnings)
 	}
-	spec := router.Spec.Resources[3].Spec.(api.VirtualIPv4AddressSpec)
+	spec := router.Spec.Resources[3].Spec.(api.VirtualAddressSpec)
 	spec.Hostname = "k8s_api.lain.local"
 	router.Spec.Resources[3].Spec = spec
 	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "spec.hostname is invalid") {
@@ -414,7 +414,7 @@ func TestValidateMultiInstanceBGPRouterRejectsASNAndListenConflicts(t *testing.T
 	}
 }
 
-func TestValidateVirtualIPv4AddressRejectsStaticAddressConflict(t *testing.T) {
+func TestValidateVirtualAddressIPv4RejectsStaticAddressConflict(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 		Metadata: api.ObjectMeta{Name: "test"},
@@ -424,7 +424,7 @@ func TestValidateVirtualIPv4AddressRejectsStaticAddressConflict(t *testing.T) {
 				Interface: "lan",
 				Address:   "10.240.70.10/32",
 			}},
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv4Address"}, Metadata: api.ObjectMeta{Name: "vip"}, Spec: api.VirtualIPv4AddressSpec{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"}, Metadata: api.ObjectMeta{Name: "vip"}, Spec: api.VirtualAddressSpec{Family: "ipv4",
 				Interface:   "lan",
 				AddressFrom: api.StatusValueSourceSpec{Resource: "IPv4StaticAddress/lan-base", Field: "address"},
 				Mode:        "static",
@@ -436,17 +436,17 @@ func TestValidateVirtualIPv4AddressRejectsStaticAddressConflict(t *testing.T) {
 	}
 }
 
-func TestValidateVirtualIPv4AddressVRRPRequiresPeers(t *testing.T) {
+func TestValidateVirtualAddressIPv4VRRPRequiresPeers(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 		Metadata: api.ObjectMeta{Name: "test"},
 		Spec: api.RouterSpec{Resources: []api.Resource{
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "eth0"}},
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv4Address"}, Metadata: api.ObjectMeta{Name: "vip"}, Spec: api.VirtualIPv4AddressSpec{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"}, Metadata: api.ObjectMeta{Name: "vip"}, Spec: api.VirtualAddressSpec{Family: "ipv4",
 				Interface: "lan",
 				Address:   "10.240.70.10/32",
 				Mode:      "vrrp",
-				VRRP:      api.VirtualIPv4VRRPSpec{VirtualRouterID: 50},
+				VRRP:      api.VirtualAddressVRRPSpec{VirtualRouterID: 50},
 			}},
 		}},
 	}
@@ -455,17 +455,17 @@ func TestValidateVirtualIPv4AddressVRRPRequiresPeers(t *testing.T) {
 	}
 }
 
-func TestValidateVirtualIPv4AddressCARPAllowsEmptyPeers(t *testing.T) {
+func TestValidateVirtualAddressIPv4CARPAllowsEmptyPeers(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 		Metadata: api.ObjectMeta{Name: "test"},
 		Spec: api.RouterSpec{Resources: []api.Resource{
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "vtnet1"}},
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv4Address"}, Metadata: api.ObjectMeta{Name: "vip"}, Spec: api.VirtualIPv4AddressSpec{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"}, Metadata: api.ObjectMeta{Name: "vip"}, Spec: api.VirtualAddressSpec{Family: "ipv4",
 				Interface: "lan",
 				Address:   "10.240.70.10/32",
 				Mode:      "vrrp",
-				VRRP:      api.VirtualIPv4VRRPSpec{VirtualRouterID: 50, Authentication: "secret"},
+				VRRP:      api.VirtualAddressVRRPSpec{VirtualRouterID: 50, Authentication: "secret"},
 			}},
 		}},
 	}
@@ -474,17 +474,17 @@ func TestValidateVirtualIPv4AddressCARPAllowsEmptyPeers(t *testing.T) {
 	}
 }
 
-func TestValidateVirtualIPv4AddressPreemptDelayRequiresPreempt(t *testing.T) {
+func TestValidateVirtualAddressIPv4PreemptDelayRequiresPreempt(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 		Metadata: api.ObjectMeta{Name: "test"},
 		Spec: api.RouterSpec{Resources: []api.Resource{
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "eth0"}},
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv4Address"}, Metadata: api.ObjectMeta{Name: "vip"}, Spec: api.VirtualIPv4AddressSpec{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"}, Metadata: api.ObjectMeta{Name: "vip"}, Spec: api.VirtualAddressSpec{Family: "ipv4",
 				Interface: "lan",
 				Address:   "10.240.70.10/32",
 				Mode:      "vrrp",
-				VRRP:      api.VirtualIPv4VRRPSpec{VirtualRouterID: 50, Peers: []string{"10.240.70.3"}, PreemptDelay: "5m"},
+				VRRP:      api.VirtualAddressVRRPSpec{VirtualRouterID: 50, Peers: []string{"10.240.70.3"}, PreemptDelay: "5m"},
 			}},
 		}},
 	}
@@ -493,19 +493,19 @@ func TestValidateVirtualIPv4AddressPreemptDelayRequiresPreempt(t *testing.T) {
 	}
 }
 
-func TestValidateVirtualIPv4AddressRejectsDuplicateVRIDOnInterface(t *testing.T) {
+func TestValidateVirtualAddressIPv4RejectsDuplicateVRIDOnInterface(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 		Metadata: api.ObjectMeta{Name: "test"},
 		Spec: api.RouterSpec{Resources: []api.Resource{
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "eth0"}},
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv4Address"}, Metadata: api.ObjectMeta{Name: "vip-a"}, Spec: api.VirtualIPv4AddressSpec{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"}, Metadata: api.ObjectMeta{Name: "vip-a"}, Spec: api.VirtualAddressSpec{Family: "ipv4",
 				Interface: "lan", Address: "10.240.70.10/32", Mode: "vrrp",
-				VRRP: api.VirtualIPv4VRRPSpec{VirtualRouterID: 50, Peers: []string{"10.240.70.3"}},
+				VRRP: api.VirtualAddressVRRPSpec{VirtualRouterID: 50, Peers: []string{"10.240.70.3"}},
 			}},
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv4Address"}, Metadata: api.ObjectMeta{Name: "vip-b"}, Spec: api.VirtualIPv4AddressSpec{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"}, Metadata: api.ObjectMeta{Name: "vip-b"}, Spec: api.VirtualAddressSpec{Family: "ipv4",
 				Interface: "lan", Address: "10.240.70.11/32", Mode: "vrrp",
-				VRRP: api.VirtualIPv4VRRPSpec{VirtualRouterID: 50, Peers: []string{"10.240.70.3"}},
+				VRRP: api.VirtualAddressVRRPSpec{VirtualRouterID: 50, Peers: []string{"10.240.70.3"}},
 			}},
 		}},
 	}
@@ -514,15 +514,15 @@ func TestValidateVirtualIPv4AddressRejectsDuplicateVRIDOnInterface(t *testing.T)
 	}
 }
 
-func TestValidateVirtualIPv4AddressRejectsInvalidVRRPPeer(t *testing.T) {
+func TestValidateVirtualAddressIPv4RejectsInvalidVRRPPeer(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 		Metadata: api.ObjectMeta{Name: "test"},
 		Spec: api.RouterSpec{Resources: []api.Resource{
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "eth0"}},
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv4Address"}, Metadata: api.ObjectMeta{Name: "vip"}, Spec: api.VirtualIPv4AddressSpec{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"}, Metadata: api.ObjectMeta{Name: "vip"}, Spec: api.VirtualAddressSpec{Family: "ipv4",
 				Interface: "lan", Address: "10.240.70.10/32", Mode: "vrrp",
-				VRRP: api.VirtualIPv4VRRPSpec{VirtualRouterID: 50, Peers: []string{"bad_peer"}},
+				VRRP: api.VirtualAddressVRRPSpec{VirtualRouterID: 50, Peers: []string{"bad_peer"}},
 			}},
 		}},
 	}

@@ -155,8 +155,8 @@ func virtualAddressResourceSpec(res api.Resource) (virtualAddressSpec, bool, err
 		return virtualAddressSpec{}, false, nil
 	}
 	switch res.Kind {
-	case "VirtualIPv4Address":
-		spec, err := res.VirtualIPv4AddressSpec()
+	case "VirtualAddress":
+		spec, err := res.VirtualAddressSpec()
 		if err != nil {
 			return virtualAddressSpec{}, false, err
 		}
@@ -165,32 +165,17 @@ func virtualAddressResourceSpec(res api.Resource) (virtualAddressSpec, bool, err
 			Address:     spec.Address,
 			Hostname:    spec.Hostname,
 			Mode:        spec.Mode,
-			VRRP:        virtualIPv4VRRPSpec(spec.VRRP),
+			VRRP:        virtualAddressVRRPSpec(spec.VRRP),
 			Track:       spec.Track,
 			AddressFrom: spec.AddressFrom,
-			Family:      "ipv4",
-		}, true, nil
-	case "VirtualIPv6Address":
-		spec, err := res.VirtualIPv6AddressSpec()
-		if err != nil {
-			return virtualAddressSpec{}, false, err
-		}
-		return virtualAddressSpec{
-			Interface:   spec.Interface,
-			Address:     spec.Address,
-			Hostname:    spec.Hostname,
-			Mode:        spec.Mode,
-			VRRP:        virtualIPv6VRRPSpec(spec.VRRP),
-			Track:       spec.Track,
-			AddressFrom: spec.AddressFrom,
-			Family:      "ipv6",
+			Family:      spec.Family,
 		}, true, nil
 	default:
 		return virtualAddressSpec{}, false, nil
 	}
 }
 
-func virtualIPv4VRRPSpec(spec api.VirtualIPv4VRRPSpec) virtualVRRPSpec {
+func virtualAddressVRRPSpec(spec api.VirtualAddressVRRPSpec) virtualVRRPSpec {
 	return virtualVRRPSpec{
 		VirtualRouterID:    spec.VirtualRouterID,
 		Priority:           spec.Priority,
@@ -203,32 +188,11 @@ func virtualIPv4VRRPSpec(spec api.VirtualIPv4VRRPSpec) virtualVRRPSpec {
 	}
 }
 
-func virtualIPv6VRRPSpec(spec api.VirtualIPv6VRRPSpec) virtualVRRPSpec {
-	return virtualVRRPSpec{
-		VirtualRouterID:    spec.VirtualRouterID,
-		Priority:           spec.Priority,
-		Preempt:            spec.Preempt,
-		PreemptDelay:       spec.PreemptDelay,
-		Peers:              spec.Peers,
-		AdvertInterval:     spec.AdvertInterval,
-		Authentication:     spec.Authentication,
-		AuthenticationFrom: spec.AuthenticationFrom,
-	}
-}
-
-func VirtualIPv4Address(router *api.Router, spec api.VirtualIPv4AddressSpec) (string, error) {
+func VirtualAddress(router *api.Router, spec api.VirtualAddressSpec) (string, error) {
 	return virtualAddress(router, virtualAddressSpec{
 		Address:     spec.Address,
 		AddressFrom: spec.AddressFrom,
-		Family:      "ipv4",
-	})
-}
-
-func VirtualIPv6Address(router *api.Router, spec api.VirtualIPv6AddressSpec) (string, error) {
-	return virtualAddress(router, virtualAddressSpec{
-		Address:     spec.Address,
-		AddressFrom: spec.AddressFrom,
-		Family:      "ipv6",
+		Family:      spec.Family,
 	})
 }
 

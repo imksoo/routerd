@@ -221,11 +221,11 @@ func TestSystemdUnitControllerAugmentsRouterdServiceForBGPVRRPIngress(t *testing
 			ASN:      64512,
 			RouterID: "192.0.2.1",
 		}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv4Address"}, Metadata: api.ObjectMeta{Name: "api-vip"}, Spec: api.VirtualIPv4AddressSpec{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"}, Metadata: api.ObjectMeta{Name: "api-vip"}, Spec: api.VirtualAddressSpec{Family: "ipv4",
 			Interface: "lan",
 			Address:   "192.0.2.250/32",
 			Mode:      "vrrp",
-			VRRP:      api.VirtualIPv4VRRPSpec{VirtualRouterID: 66},
+			VRRP:      api.VirtualAddressVRRPSpec{VirtualRouterID: 66},
 		}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "IngressService"}, Metadata: api.ObjectMeta{Name: "ssh"}, Spec: api.IngressServiceSpec{
 			Listen:   api.IngressListenSpec{Address: "192.0.2.250", Port: 22, Protocol: "tcp"},

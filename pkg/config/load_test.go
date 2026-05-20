@@ -48,6 +48,8 @@ func TestLoadRejectsRemovedImplementationResources(t *testing.T) {
 		{kind: "DHCPv4Lease", apiVersion: "net.routerd.net/v1alpha1", spec: "interface: wan\n"},
 		{kind: "PPPoEInterface", apiVersion: "net.routerd.net/v1alpha1", spec: "interface: wan\nusername: user\npassword: secret\n"},
 		{kind: "IPv4SourceNAT", apiVersion: "net.routerd.net/v1alpha1", spec: "outboundInterface: wan\nsourceCIDRs: [192.0.2.0/24]\ntranslation:\n  type: interfaceAddress\n"},
+		{kind: "VirtualIPv4Address", apiVersion: "net.routerd.net/v1alpha1", spec: "interface: lan\naddress: 192.0.2.10/32\n"},
+		{kind: "VirtualIPv6Address", apiVersion: "net.routerd.net/v1alpha1", spec: "interface: lan\naddress: 2001:db8::10/128\n"},
 		{kind: "IPv4ReversePathFilter", apiVersion: "net.routerd.net/v1alpha1", spec: "target: all\nmode: disabled\n"},
 		{kind: "PathMTUPolicy", apiVersion: "net.routerd.net/v1alpha1", spec: "fromInterface: lan\ntoInterfaces: [wan]\n"},
 	} {

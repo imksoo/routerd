@@ -212,14 +212,8 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
 		r.Spec = spec
-	case "VirtualIPv4Address":
-		var spec VirtualIPv4AddressSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "VirtualIPv6Address":
-		var spec VirtualIPv6AddressSpec
+	case "VirtualAddress":
+		var spec VirtualAddressSpec
 		if err := raw.Spec.Decode(&spec); err != nil {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
@@ -497,6 +491,10 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 		return fmt.Errorf("%s is not supported; use PPPoESession for routerd-managed PPPoE session intent", r.ID())
 	case "IPv4SourceNAT":
 		return fmt.Errorf("%s is not supported; use NAT44Rule for IPv4 source NAT intent", r.ID())
+	case "VirtualIPv4Address":
+		return fmt.Errorf("%s is not supported; use VirtualAddress with spec.family: ipv4", r.ID())
+	case "VirtualIPv6Address":
+		return fmt.Errorf("%s is not supported; use VirtualAddress with spec.family: ipv6", r.ID())
 	case "IPv4ReversePathFilter":
 		return fmt.Errorf("%s is not supported; routerd derives reverse path filter sysctls automatically", r.ID())
 	case "PathMTUPolicy":

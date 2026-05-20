@@ -247,26 +247,13 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 				address string
 			}{id: res.ID(), iface: spec.Interface, address: prefix.Masked().String()}
 		}
-		if res.APIVersion == api.NetAPIVersion && res.Kind == "VirtualIPv4Address" {
-			spec, err := res.VirtualIPv4AddressSpec()
+		if res.APIVersion == api.NetAPIVersion && res.Kind == "VirtualAddress" {
+			spec, err := res.VirtualAddressSpec()
 			if err != nil {
 				return err
 			}
 			if defaultString(spec.Mode, "static") == "vrrp" {
-				key := res.Kind + "|" + spec.Interface + "|" + strconv.Itoa(spec.VRRP.VirtualRouterID)
-				if existing := vrrpByInterfaceVRID[key]; existing != "" {
-					return fmt.Errorf("%s spec.vrrp.virtualRouterID conflicts with %s on interface %q", res.ID(), existing, spec.Interface)
-				}
-				vrrpByInterfaceVRID[key] = res.ID()
-			}
-		}
-		if res.APIVersion == api.NetAPIVersion && res.Kind == "VirtualIPv6Address" {
-			spec, err := res.VirtualIPv6AddressSpec()
-			if err != nil {
-				return err
-			}
-			if defaultString(spec.Mode, "static") == "vrrp" {
-				key := res.Kind + "|" + spec.Interface + "|" + strconv.Itoa(spec.VRRP.VirtualRouterID)
+				key := res.Kind + "|" + spec.Family + "|" + spec.Interface + "|" + strconv.Itoa(spec.VRRP.VirtualRouterID)
 				if existing := vrrpByInterfaceVRID[key]; existing != "" {
 					return fmt.Errorf("%s spec.vrrp.virtualRouterID conflicts with %s on interface %q", res.ID(), existing, spec.Interface)
 				}
@@ -287,12 +274,15 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 		return err
 	}
 	for _, res := range router.Spec.Resources {
-		if res.APIVersion != api.NetAPIVersion || res.Kind != "VirtualIPv4Address" {
+		if res.APIVersion != api.NetAPIVersion || res.Kind != "VirtualAddress" {
 			continue
 		}
-		spec, err := res.VirtualIPv4AddressSpec()
+		spec, err := res.VirtualAddressSpec()
 		if err != nil {
 			return err
+		}
+		if spec.Family != "ipv4" {
+			continue
 		}
 		if address := strings.TrimSpace(spec.Address); address != "" {
 			if prefix, err := netip.ParsePrefix(address); err == nil {
@@ -303,7 +293,7 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 		}
 		if kind, name, ok := strings.Cut(strings.TrimSpace(spec.AddressFrom.Resource), "/"); ok && kind == "IPv4StaticAddress" {
 			if source, ok := staticIPv4ByName[name]; ok && source.iface == spec.Interface {
-				return fmt.Errorf("%s spec.addressFrom conflicts with %s on interface %q; do not manage %s as both IPv4StaticAddress and VirtualIPv4Address", res.ID(), source.id, spec.Interface, source.address)
+				return fmt.Errorf("%s spec.addressFrom conflicts with %s on interface %q; do not manage %s as both IPv4StaticAddress and VirtualAddress", res.ID(), source.id, spec.Interface, source.address)
 			}
 		}
 	}
@@ -325,7 +315,7 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 
 	for _, res := range router.Spec.Resources {
 		switch res.Kind {
-		case "IPv4StaticAddress", "VirtualIPv4Address", "VirtualIPv6Address", "DHCPv4Client", "IPv4StaticRoute", "IPv6StaticRoute", "DHCPv4Scope", "DHCPv6Address", "IPv6RAAddress", "DHCPv6PrefixDelegation", "IPv6DelegatedAddress", "DSLiteTunnel", "PPPoESession":
+		case "IPv4StaticAddress", "VirtualAddress", "DHCPv4Client", "IPv4StaticRoute", "IPv6StaticRoute", "DHCPv4Scope", "DHCPv6Address", "IPv6RAAddress", "DHCPv6PrefixDelegation", "IPv6DelegatedAddress", "DSLiteTunnel", "PPPoESession":
 			name, err := interfaceRef(res)
 			if err != nil {
 				return err
@@ -1671,173 +1661,9 @@ func validateResource(res api.Resource, targetOS platform.OS) error {
 		if spec.AllowOverlap && spec.AllowOverlapReason == "" {
 			return fmt.Errorf("%s spec.allowOverlapReason is required when allowOverlap is true", res.ID())
 		}
-	case "VirtualIPv4Address":
-		if res.APIVersion != api.NetAPIVersion {
-			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
-		}
-		spec, err := res.VirtualIPv4AddressSpec()
-		if err != nil {
+	case "VirtualAddress":
+		if err := validateVirtualAddressResource(res, targetOS); err != nil {
 			return err
-		}
-		if strings.TrimSpace(spec.Interface) == "" {
-			return fmt.Errorf("%s spec.interface is required", res.ID())
-		}
-		if strings.TrimSpace(spec.Address) == "" && strings.TrimSpace(spec.AddressFrom.Resource) == "" {
-			return fmt.Errorf("%s spec.address or spec.addressFrom is required", res.ID())
-		}
-		if strings.TrimSpace(spec.Address) != "" && strings.TrimSpace(spec.AddressFrom.Resource) != "" {
-			return fmt.Errorf("%s spec.address and spec.addressFrom are mutually exclusive", res.ID())
-		}
-		if strings.TrimSpace(spec.Address) != "" {
-			prefix, err := netip.ParsePrefix(spec.Address)
-			if err != nil || !prefix.Addr().Is4() {
-				return fmt.Errorf("%s spec.address must be an IPv4 prefix", res.ID())
-			}
-			if prefix.Bits() != 32 {
-				return fmt.Errorf("%s spec.address must be an IPv4 /32 prefix", res.ID())
-			}
-		}
-		if err := validateIngressAddressSource(res.ID(), "spec.addressFrom", spec.AddressFrom); err != nil {
-			return err
-		}
-		if strings.TrimSpace(spec.Hostname) != "" {
-			if err := validateFQDN(spec.Hostname); err != nil {
-				return fmt.Errorf("%s spec.hostname is invalid: %w", res.ID(), err)
-			}
-		}
-		switch defaultString(spec.Mode, "static") {
-		case "static":
-		case "vrrp":
-			if spec.VRRP.VirtualRouterID < 1 || spec.VRRP.VirtualRouterID > 255 {
-				return fmt.Errorf("%s spec.vrrp.virtualRouterID must be within 1-255", res.ID())
-			}
-			if targetOS != platform.OSFreeBSD && len(spec.VRRP.Peers) == 0 {
-				return fmt.Errorf("%s spec.vrrp.peers is required for unicast VRRP", res.ID())
-			}
-			if spec.VRRP.Priority != 0 && (spec.VRRP.Priority < 1 || spec.VRRP.Priority > 254) {
-				return fmt.Errorf("%s spec.vrrp.priority must be within 1-254", res.ID())
-			}
-			if spec.VRRP.AdvertInterval != "" {
-				if _, err := time.ParseDuration(spec.VRRP.AdvertInterval); err != nil {
-					return fmt.Errorf("%s spec.vrrp.advertInterval is invalid: %w", res.ID(), err)
-				}
-			}
-			if spec.VRRP.PreemptDelay != "" {
-				if spec.VRRP.Preempt == nil || !*spec.VRRP.Preempt {
-					return fmt.Errorf("%s spec.vrrp.preemptDelay requires spec.vrrp.preempt=true", res.ID())
-				}
-				if _, err := time.ParseDuration(spec.VRRP.PreemptDelay); err != nil {
-					return fmt.Errorf("%s spec.vrrp.preemptDelay is invalid: %w", res.ID(), err)
-				}
-			}
-			for i, peer := range spec.VRRP.Peers {
-				if err := validateAddressOrHostname(peer); err != nil {
-					return fmt.Errorf("%s spec.vrrp.peers[%d] must be a single peer address or hostname", res.ID(), i)
-				}
-			}
-			if err := validateSecretValueSource(res.ID(), "spec.vrrp.authentication", spec.VRRP.Authentication, "spec.vrrp.authenticationFrom", spec.VRRP.AuthenticationFrom); err != nil {
-				return err
-			}
-		default:
-			return fmt.Errorf("%s spec.mode must be static or vrrp", res.ID())
-		}
-		for i, track := range spec.Track {
-			if err := validateSourceResourceRef(track.Resource); err != nil {
-				return fmt.Errorf("%s spec.track[%d].resource %w", res.ID(), i, err)
-			}
-			if track.UnhealthyPenalty < 0 || track.UnhealthyPenalty > 254 {
-				return fmt.Errorf("%s spec.track[%d].unhealthyPenalty must be within 0-254", res.ID(), i)
-			}
-			if track.ConfirmConsecutiveUnhealthy < 0 || track.ConfirmConsecutiveUnhealthy > 255 {
-				return fmt.Errorf("%s spec.track[%d].confirmConsecutiveUnhealthy must be non-negative and within 1-255 when set", res.ID(), i)
-			}
-			if track.ConfirmConsecutiveHealthy < 0 || track.ConfirmConsecutiveHealthy > 255 {
-				return fmt.Errorf("%s spec.track[%d].confirmConsecutiveHealthy must be non-negative and within 1-255 when set", res.ID(), i)
-			}
-		}
-	case "VirtualIPv6Address":
-		if res.APIVersion != api.NetAPIVersion {
-			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
-		}
-		spec, err := res.VirtualIPv6AddressSpec()
-		if err != nil {
-			return err
-		}
-		if strings.TrimSpace(spec.Interface) == "" {
-			return fmt.Errorf("%s spec.interface is required", res.ID())
-		}
-		if strings.TrimSpace(spec.Address) == "" && strings.TrimSpace(spec.AddressFrom.Resource) == "" {
-			return fmt.Errorf("%s spec.address or spec.addressFrom is required", res.ID())
-		}
-		if strings.TrimSpace(spec.Address) != "" && strings.TrimSpace(spec.AddressFrom.Resource) != "" {
-			return fmt.Errorf("%s spec.address and spec.addressFrom are mutually exclusive", res.ID())
-		}
-		if strings.TrimSpace(spec.Address) != "" {
-			prefix, err := netip.ParsePrefix(spec.Address)
-			if err != nil || !prefix.Addr().Is6() {
-				return fmt.Errorf("%s spec.address must be an IPv6 prefix", res.ID())
-			}
-			if prefix.Bits() != 128 {
-				return fmt.Errorf("%s spec.address must be an IPv6 /128 prefix", res.ID())
-			}
-		}
-		if err := validateIngressAddressSource(res.ID(), "spec.addressFrom", spec.AddressFrom); err != nil {
-			return err
-		}
-		if strings.TrimSpace(spec.Hostname) != "" {
-			if err := validateFQDN(spec.Hostname); err != nil {
-				return fmt.Errorf("%s spec.hostname is invalid: %w", res.ID(), err)
-			}
-		}
-		switch defaultString(spec.Mode, "static") {
-		case "static":
-		case "vrrp":
-			if spec.VRRP.VirtualRouterID < 1 || spec.VRRP.VirtualRouterID > 255 {
-				return fmt.Errorf("%s spec.vrrp.virtualRouterID must be within 1-255", res.ID())
-			}
-			if targetOS != platform.OSFreeBSD && len(spec.VRRP.Peers) == 0 {
-				return fmt.Errorf("%s spec.vrrp.peers is required for unicast VRRP", res.ID())
-			}
-			if spec.VRRP.Priority != 0 && (spec.VRRP.Priority < 1 || spec.VRRP.Priority > 254) {
-				return fmt.Errorf("%s spec.vrrp.priority must be within 1-254", res.ID())
-			}
-			if spec.VRRP.AdvertInterval != "" {
-				if _, err := time.ParseDuration(spec.VRRP.AdvertInterval); err != nil {
-					return fmt.Errorf("%s spec.vrrp.advertInterval is invalid: %w", res.ID(), err)
-				}
-			}
-			if spec.VRRP.PreemptDelay != "" {
-				if spec.VRRP.Preempt == nil || !*spec.VRRP.Preempt {
-					return fmt.Errorf("%s spec.vrrp.preemptDelay requires spec.vrrp.preempt=true", res.ID())
-				}
-				if _, err := time.ParseDuration(spec.VRRP.PreemptDelay); err != nil {
-					return fmt.Errorf("%s spec.vrrp.preemptDelay is invalid: %w", res.ID(), err)
-				}
-			}
-			for i, peer := range spec.VRRP.Peers {
-				if err := validateAddressOrHostname(peer); err != nil {
-					return fmt.Errorf("%s spec.vrrp.peers[%d] must be a single peer address or hostname", res.ID(), i)
-				}
-			}
-			if err := validateSecretValueSource(res.ID(), "spec.vrrp.authentication", spec.VRRP.Authentication, "spec.vrrp.authenticationFrom", spec.VRRP.AuthenticationFrom); err != nil {
-				return err
-			}
-		default:
-			return fmt.Errorf("%s spec.mode must be static or vrrp", res.ID())
-		}
-		for i, track := range spec.Track {
-			if err := validateSourceResourceRef(track.Resource); err != nil {
-				return fmt.Errorf("%s spec.track[%d].resource %w", res.ID(), i, err)
-			}
-			if track.UnhealthyPenalty < 0 || track.UnhealthyPenalty > 254 {
-				return fmt.Errorf("%s spec.track[%d].unhealthyPenalty must be within 0-254", res.ID(), i)
-			}
-			if track.ConfirmConsecutiveUnhealthy < 0 || track.ConfirmConsecutiveUnhealthy > 255 {
-				return fmt.Errorf("%s spec.track[%d].confirmConsecutiveUnhealthy must be non-negative and within 1-255 when set", res.ID(), i)
-			}
-			if track.ConfirmConsecutiveHealthy < 0 || track.ConfirmConsecutiveHealthy > 255 {
-				return fmt.Errorf("%s spec.track[%d].confirmConsecutiveHealthy must be non-negative and within 1-255 when set", res.ID(), i)
-			}
 		}
 	case "BGPRouter":
 		if res.APIVersion != api.NetAPIVersion {
@@ -3645,11 +3471,8 @@ func resourceWhens(res api.Resource) []resourceWhenRef {
 	case "RouterdCluster":
 		spec, _ := res.RouterdClusterSpec()
 		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
-	case "VirtualIPv4Address":
-		spec, _ := res.VirtualIPv4AddressSpec()
-		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
-	case "VirtualIPv6Address":
-		spec, _ := res.VirtualIPv6AddressSpec()
+	case "VirtualAddress":
+		spec, _ := res.VirtualAddressSpec()
 		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
 	case "BGPRouter":
 		spec, _ := res.BGPRouterSpec()
@@ -3926,11 +3749,8 @@ func interfaceRef(res api.Resource) (string, error) {
 	case "IPv4StaticAddress":
 		spec, err := res.IPv4StaticAddressSpec()
 		return spec.Interface, err
-	case "VirtualIPv4Address":
-		spec, err := res.VirtualIPv4AddressSpec()
-		return spec.Interface, err
-	case "VirtualIPv6Address":
-		spec, err := res.VirtualIPv6AddressSpec()
+	case "VirtualAddress":
+		spec, err := res.VirtualAddressSpec()
 		return spec.Interface, err
 	case "DHCPv4Client":
 		spec, err := res.DHCPv4ClientSpec()
@@ -4001,6 +3821,110 @@ func validateIngressListen(resourceID, path string, listen api.IngressListenSpec
 	}
 	if listen.Port < 1 || listen.Port > 65535 {
 		return fmt.Errorf("%s %s.port must be within 1-65535", resourceID, path)
+	}
+	return nil
+}
+
+func validateVirtualAddressResource(res api.Resource, targetOS platform.OS) error {
+	if res.APIVersion != api.NetAPIVersion {
+		return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
+	}
+	spec, err := res.VirtualAddressSpec()
+	if err != nil {
+		return err
+	}
+	switch spec.Family {
+	case "ipv4", "ipv6":
+	default:
+		return fmt.Errorf("%s spec.family must be ipv4 or ipv6", res.ID())
+	}
+	if strings.TrimSpace(spec.Interface) == "" {
+		return fmt.Errorf("%s spec.interface is required", res.ID())
+	}
+	if strings.TrimSpace(spec.Address) == "" && strings.TrimSpace(spec.AddressFrom.Resource) == "" {
+		return fmt.Errorf("%s spec.address or spec.addressFrom is required", res.ID())
+	}
+	if strings.TrimSpace(spec.Address) != "" && strings.TrimSpace(spec.AddressFrom.Resource) != "" {
+		return fmt.Errorf("%s spec.address and spec.addressFrom are mutually exclusive", res.ID())
+	}
+	if strings.TrimSpace(spec.Address) != "" {
+		prefix, err := netip.ParsePrefix(spec.Address)
+		if err != nil {
+			return fmt.Errorf("%s spec.address must be an %s prefix", res.ID(), spec.Family)
+		}
+		if spec.Family == "ipv4" && !prefix.Addr().Is4() {
+			return fmt.Errorf("%s spec.address must be an IPv4 prefix", res.ID())
+		}
+		if spec.Family == "ipv6" && !prefix.Addr().Is6() {
+			return fmt.Errorf("%s spec.address must be an IPv6 prefix", res.ID())
+		}
+		wantBits := 32
+		familyLabel := "IPv4"
+		if spec.Family == "ipv6" {
+			wantBits = 128
+			familyLabel = "IPv6"
+		}
+		if prefix.Bits() != wantBits {
+			return fmt.Errorf("%s spec.address must be an %s /%d prefix", res.ID(), familyLabel, wantBits)
+		}
+	}
+	if err := validateIngressAddressSource(res.ID(), "spec.addressFrom", spec.AddressFrom); err != nil {
+		return err
+	}
+	if strings.TrimSpace(spec.Hostname) != "" {
+		if err := validateFQDN(spec.Hostname); err != nil {
+			return fmt.Errorf("%s spec.hostname is invalid: %w", res.ID(), err)
+		}
+	}
+	switch defaultString(spec.Mode, "static") {
+	case "static":
+	case "vrrp":
+		if spec.VRRP.VirtualRouterID < 1 || spec.VRRP.VirtualRouterID > 255 {
+			return fmt.Errorf("%s spec.vrrp.virtualRouterID must be within 1-255", res.ID())
+		}
+		if targetOS != platform.OSFreeBSD && len(spec.VRRP.Peers) == 0 {
+			return fmt.Errorf("%s spec.vrrp.peers is required for unicast VRRP", res.ID())
+		}
+		if spec.VRRP.Priority != 0 && (spec.VRRP.Priority < 1 || spec.VRRP.Priority > 254) {
+			return fmt.Errorf("%s spec.vrrp.priority must be within 1-254", res.ID())
+		}
+		if spec.VRRP.AdvertInterval != "" {
+			if _, err := time.ParseDuration(spec.VRRP.AdvertInterval); err != nil {
+				return fmt.Errorf("%s spec.vrrp.advertInterval is invalid: %w", res.ID(), err)
+			}
+		}
+		if spec.VRRP.PreemptDelay != "" {
+			if spec.VRRP.Preempt == nil || !*spec.VRRP.Preempt {
+				return fmt.Errorf("%s spec.vrrp.preemptDelay requires spec.vrrp.preempt=true", res.ID())
+			}
+			if _, err := time.ParseDuration(spec.VRRP.PreemptDelay); err != nil {
+				return fmt.Errorf("%s spec.vrrp.preemptDelay is invalid: %w", res.ID(), err)
+			}
+		}
+		for i, peer := range spec.VRRP.Peers {
+			if err := validateAddressOrHostname(peer); err != nil {
+				return fmt.Errorf("%s spec.vrrp.peers[%d] must be a single peer address or hostname", res.ID(), i)
+			}
+		}
+		if err := validateSecretValueSource(res.ID(), "spec.vrrp.authentication", spec.VRRP.Authentication, "spec.vrrp.authenticationFrom", spec.VRRP.AuthenticationFrom); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("%s spec.mode must be static or vrrp", res.ID())
+	}
+	for i, track := range spec.Track {
+		if err := validateSourceResourceRef(track.Resource); err != nil {
+			return fmt.Errorf("%s spec.track[%d].resource %w", res.ID(), i, err)
+		}
+		if track.UnhealthyPenalty < 0 || track.UnhealthyPenalty > 254 {
+			return fmt.Errorf("%s spec.track[%d].unhealthyPenalty must be within 0-254", res.ID(), i)
+		}
+		if track.ConfirmConsecutiveUnhealthy < 0 || track.ConfirmConsecutiveUnhealthy > 255 {
+			return fmt.Errorf("%s spec.track[%d].confirmConsecutiveUnhealthy must be non-negative and within 1-255 when set", res.ID(), i)
+		}
+		if track.ConfirmConsecutiveHealthy < 0 || track.ConfirmConsecutiveHealthy > 255 {
+			return fmt.Errorf("%s spec.track[%d].confirmConsecutiveHealthy must be non-negative and within 1-255 when set", res.ID(), i)
+		}
 	}
 	return nil
 }

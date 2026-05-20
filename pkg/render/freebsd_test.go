@@ -113,11 +113,11 @@ func TestFreeBSDIgnoresPrefixDelegationClientRenderer(t *testing.T) {
 func TestFreeBSDRendersCARPRCDScript(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "vtnet1", Managed: true, Owner: "routerd"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv4Address"}, Metadata: api.ObjectMeta{Name: "api-vip"}, Spec: api.VirtualIPv4AddressSpec{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"}, Metadata: api.ObjectMeta{Name: "api-vip"}, Spec: api.VirtualAddressSpec{Family: "ipv4",
 			Interface: "lan",
 			Address:   "10.240.70.10/32",
 			Mode:      "vrrp",
-			VRRP: api.VirtualIPv4VRRPSpec{
+			VRRP: api.VirtualAddressVRRPSpec{
 				VirtualRouterID: 50,
 				Priority:        150,
 				AdvertInterval:  "2s",

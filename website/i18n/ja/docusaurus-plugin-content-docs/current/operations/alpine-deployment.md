@@ -9,7 +9,7 @@ routerd plan --config /usr/local/etc/routerd/router.yaml
 routerd apply --config /usr/local/etc/routerd/router.yaml --once
 ```
 
-`mode: vrrp` の `VirtualIPv4Address` / `VirtualIPv6Address` がある場合、
+`mode: vrrp` の `VirtualAddress` がある場合、
 routerd は `/etc/keepalived/keepalived.conf` を render し、OpenRC の
 `keepalived` init script を導入し、`rc-update` で有効化します。config
 変更は daemon mode と同じ VRRP controller 経路で適用し、daemon が稼働中なら

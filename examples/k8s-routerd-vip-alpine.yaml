@@ -31,12 +31,13 @@ spec:
         exclusive: false
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: VirtualIPv4Address
+      kind: VirtualAddress
       metadata:
         name: k8s-api-vip
       spec:
         interface: lan
         address: 192.168.1.248/32
+        family: ipv4
         hostname: k8s-api.cluster.example
         mode: vrrp
         vrrp:
@@ -63,7 +64,7 @@ spec:
         records:
           - hostname: k8s-api
             ipv4From:
-              resource: VirtualIPv4Address/k8s-api-vip
+              resource: VirtualAddress/k8s-api-vip
               field: address
           - hostname: cp-01
             ipv4: 192.168.1.41
@@ -78,7 +79,7 @@ spec:
         listen:
           - name: vip
             addressFrom:
-              - resource: VirtualIPv4Address/k8s-api-vip
+              - resource: VirtualAddress/k8s-api-vip
                 field: address
             port: 53
             sources:

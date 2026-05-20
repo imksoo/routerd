@@ -2414,11 +2414,8 @@ func resourceWhen(res api.Resource) api.ResourceWhenSpec {
 	case "RouterdCluster":
 		spec, _ := res.RouterdClusterSpec()
 		return spec.When
-	case "VirtualIPv4Address":
-		spec, _ := res.VirtualIPv4AddressSpec()
-		return spec.When
-	case "VirtualIPv6Address":
-		spec, _ := res.VirtualIPv6AddressSpec()
+	case "VirtualAddress":
+		spec, _ := res.VirtualAddressSpec()
 		return spec.When
 	case "BGPRouter":
 		spec, _ := res.BGPRouterSpec()
@@ -3145,7 +3142,7 @@ func controllerResourceKinds(name string) []string {
 	case "bgp":
 		return []string{"BGPRouter", "BGPPeer"}
 	case "vrrp":
-		return []string{"VirtualIPv4Address", "VirtualIPv6Address"}
+		return []string{"VirtualAddress"}
 	case "nat":
 		return []string{"NAT44Rule", "PortForward", "IngressService", "IPAddressSet", "LocalServiceRedirect"}
 	case "network-adoption":
@@ -3901,7 +3898,7 @@ func augmentControllerStatusesFromState(controllers []controlapi.ControllerStatu
 	var lastActionAt *time.Time
 	var lastChangeReason string
 	for _, item := range statuses {
-		if item.APIVersion != api.NetAPIVersion || (item.Kind != "VirtualIPv4Address" && item.Kind != "VirtualIPv6Address") {
+		if item.APIVersion != api.NetAPIVersion || item.Kind != "VirtualAddress" {
 			continue
 		}
 		if t := parseStatusTime(statusStringMap(item.Status, "lastReloadAt")); newerTime(t, lastReloadAt) {
@@ -6894,34 +6891,20 @@ func saveVRRPRenderedStatuses(router *api.Router, store routerstate.ObjectStatus
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	aliases := routerInterfaceAliases(router.Spec.Resources)
 	for _, resource := range router.Spec.Resources {
-		if resource.APIVersion != api.NetAPIVersion || (resource.Kind != "VirtualIPv4Address" && resource.Kind != "VirtualIPv6Address") {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "VirtualAddress" {
 			continue
 		}
 		address, ifname, mode := "", "", ""
-		switch resource.Kind {
-		case "VirtualIPv4Address":
-			spec, err := resource.VirtualIPv4AddressSpec()
-			if err != nil {
-				return err
-			}
-			address = spec.Address
-			if resolved, err := render.VirtualIPv4Address(router, spec); err == nil {
-				address = resolved
-			}
-			ifname = aliases[spec.Interface]
-			mode = spec.Mode
-		case "VirtualIPv6Address":
-			spec, err := resource.VirtualIPv6AddressSpec()
-			if err != nil {
-				return err
-			}
-			address = spec.Address
-			if resolved, err := render.VirtualIPv6Address(router, spec); err == nil {
-				address = resolved
-			}
-			ifname = aliases[spec.Interface]
-			mode = spec.Mode
+		spec, err := resource.VirtualAddressSpec()
+		if err != nil {
+			return err
 		}
+		address = spec.Address
+		if resolved, err := render.VirtualAddress(router, spec); err == nil {
+			address = resolved
+		}
+		ifname = aliases[spec.Interface]
+		mode = spec.Mode
 		status := map[string]any{
 			"phase":      "Rendered",
 			"backend":    "keepalived",
@@ -6948,7 +6931,7 @@ func routerHasVirtualAddress(router *api.Router) bool {
 		return false
 	}
 	for _, res := range router.Spec.Resources {
-		if res.APIVersion == api.NetAPIVersion && (res.Kind == "VirtualIPv4Address" || res.Kind == "VirtualIPv6Address") {
+		if res.APIVersion == api.NetAPIVersion && res.Kind == "VirtualAddress" {
 			return true
 		}
 	}

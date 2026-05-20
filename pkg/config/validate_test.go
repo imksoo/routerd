@@ -128,8 +128,7 @@ func whenValidationTestResources(when api.ResourceWhenSpec) []whenValidationTest
 	return []whenValidationTestResource{
 		{specName: "ObservabilityPipelineSpec", resource: testResource(api.SystemAPIVersion, "ObservabilityPipeline", "observability", api.ObservabilityPipelineSpec{When: when})},
 		{specName: "RouterdClusterSpec", resource: testResource(api.SystemAPIVersion, "RouterdCluster", "cluster", api.RouterdClusterSpec{Peers: []string{"router-a", "router-b"}, LeasePath: "/run/routerd/cluster/lease", When: when})},
-		{specName: "VirtualIPv4AddressSpec", resource: testResource(api.NetAPIVersion, "VirtualIPv4Address", "vip4", api.VirtualIPv4AddressSpec{Interface: "lan", Address: "192.0.2.10/32", When: when})},
-		{specName: "VirtualIPv6AddressSpec", resource: testResource(api.NetAPIVersion, "VirtualIPv6Address", "vip6", api.VirtualIPv6AddressSpec{Interface: "lan", Address: "2001:db8::10/128", When: when})},
+		{specName: "VirtualAddressSpec", resource: testResource(api.NetAPIVersion, "VirtualAddress", "vip", api.VirtualAddressSpec{Family: "ipv4", Interface: "lan", Address: "192.0.2.10/32", When: when})},
 		{specName: "BGPRouterSpec", resource: testResource(api.NetAPIVersion, "BGPRouter", "main", api.BGPRouterSpec{ASN: 64500, RouterID: "192.0.2.1", When: when})},
 		{specName: "BGPPeerSpec", resource: testResource(api.NetAPIVersion, "BGPPeer", "k8s-rt", api.BGPPeerSpec{RouterRef: "BGPRouter/main", PeerASN: 64512, Peers: []string{"192.0.2.2"}, When: when})},
 		{specName: "ClusterNetworkRouteSpec", resource: testResource(api.NetAPIVersion, "ClusterNetworkRoute", "k8s", api.ClusterNetworkRouteSpec{Pods: api.ClusterNetworkRouteCIDRSpec{CIDRs: []string{"10.244.0.0/16"}}, Via: []api.ClusterNetworkRouteViaSpec{{Interface: "lan", NextHop: "192.0.2.2"}}, When: when})},

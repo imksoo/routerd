@@ -15,12 +15,13 @@ spec:
         managed: false
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: VirtualIPv4Address
+      kind: VirtualAddress
       metadata:
         name: k8s-api-vip
       spec:
         interface: lan
         address: 192.0.2.10/32
+        family: ipv4
         mode: vrrp
         vrrp:
           virtualRouterID: 60
@@ -32,12 +33,13 @@ spec:
           preemptDelay: 30s
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: VirtualIPv4Address
+      kind: VirtualAddress
       metadata:
         name: home-lan-vip
       spec:
         interface: lan
         address: 192.0.2.1/32
+        family: ipv4
         mode: vrrp
         vrrp:
           virtualRouterID: 61

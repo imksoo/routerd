@@ -722,7 +722,7 @@ func (h Handler) operationalResources(kind string) ([]routerstate.ObjectStatus, 
 				out = append(out, resource)
 			}
 		case "vrrp":
-			if resource.Kind == "VirtualIPv4Address" {
+			if resource.Kind == "VirtualAddress" {
 				out = append(out, resource)
 			}
 		case "ingress":
@@ -1788,7 +1788,7 @@ func operationalPageScript(kind string) string {
 const view=` + strconv.Quote(kind) + `;
 const apiBase="./api/v1/";
 const streamURL="./api/events/stream";
-const resourceKinds={bgp:["BGPRouter","BGPPeer"],vrrp:["VirtualIPv4Address"],ingress:["IngressService"]}[view]||[];
+const resourceKinds={bgp:["BGPRouter","BGPPeer"],vrrp:["VirtualAddress"],ingress:["IngressService"]}[view]||[];
 const state=document.getElementById("live-state");
 const updated=document.getElementById("last-updated");
 const content=document.getElementById("operational-content");
@@ -1812,10 +1812,10 @@ function renderStatus(payload){const resources=payload.resources||[];if(updated)
 function renderTables(resources){if(view==="bgp")return renderBGP(resources);if(view==="vrrp")return renderVRRP(resources);if(view==="ingress")return renderIngress(resources);return "<p>Unknown view.</p>";}
 function rows(cells){return "<tr>"+cells.map(v=>"<td>"+esc(v||"-")+"</td>").join("")+"</tr>";}
 function renderBGP(resources){let routers=resources.filter(r=>r.kind==="BGPRouter"),out="<section><table><thead><tr><th>Router</th><th>Phase</th><th>Peers</th><th>Prefixes</th><th>Observed</th></tr></thead><tbody>";for(const r of routers){const peers=list(status(r,"peers"));out+=rows([r.name,status(r,"phase"),Number(status(r,"establishedPeers")||0)+"/"+peers.length,status(r,"acceptedPrefixes"),status(r,"observedAt")]);}out+="</tbody></table></section><section><table><thead><tr><th>Peer</th><th>ASN</th><th>State</th><th>Messages</th><th>Prefixes</th><th>Last Error</th></tr></thead><tbody>";for(const r of routers){for(const p of list(status(r,"peers"))){out+=rows([p.address,p.asn,p.state,Number(p.messagesReceived||0)+"/"+Number(p.messagesSent||0),p.prefixesReceived,p.lastErrorReason]);}}return out+"</tbody></table></section>";}
-function renderVRRP(resources){let out="<section><table><thead><tr><th>VIP</th><th>Hostname</th><th>Role</th><th>Priority</th><th>Interface</th><th>VRID</th><th>Last Transition</th></tr></thead><tbody>";for(const r of resources.filter(r=>r.kind==="VirtualIPv4Address")){out+=rows([status(r,"address"),status(r,"hostname"),status(r,"role")||"unknown",Number(status(r,"priority")||0)+"/"+Number(status(r,"basePriority")||0),status(r,"interface"),status(r,"virtualRouterID"),status(r,"lastRoleTransitionAt")]);}out+="</tbody></table></section><section><table><thead><tr><th>VIP</th><th>Track</th><th>State</th><th>Penalty</th><th>Unhealthy</th></tr></thead><tbody>";for(const r of resources.filter(r=>r.kind==="VirtualIPv4Address")){for(const t of list(status(r,"track"))){out+=rows([r.name,t.resource,t.state,t.penalty,t.unhealthyConsecutive]);}}return out+"</tbody></table></section>";}
+function renderVRRP(resources){let out="<section><table><thead><tr><th>VIP</th><th>Hostname</th><th>Role</th><th>Priority</th><th>Interface</th><th>VRID</th><th>Last Transition</th></tr></thead><tbody>";for(const r of resources.filter(r=>r.kind==="VirtualAddress")){out+=rows([status(r,"address"),status(r,"hostname"),status(r,"role")||"unknown",Number(status(r,"priority")||0)+"/"+Number(status(r,"basePriority")||0),status(r,"interface"),status(r,"virtualRouterID"),status(r,"lastRoleTransitionAt")]);}out+="</tbody></table></section><section><table><thead><tr><th>VIP</th><th>Track</th><th>State</th><th>Penalty</th><th>Unhealthy</th></tr></thead><tbody>";for(const r of resources.filter(r=>r.kind==="VirtualAddress")){for(const t of list(status(r,"track"))){out+=rows([r.name,t.resource,t.state,t.penalty,t.unhealthyConsecutive]);}}return out+"</tbody></table></section>";}
 function backendAddress(b){return b.port?(b.resolvedAddress||b.address||"")+":"+b.port:(b.resolvedAddress||b.address||"");}
 function renderIngress(resources){let out="<section><table><thead><tr><th>Service</th><th>Hostname</th><th>Phase</th><th>Active Backend</th><th>Health</th><th>Selection</th></tr></thead><tbody>";for(const r of resources.filter(r=>r.kind==="IngressService")){const a=status(r,"activeBackend")||{};out+=rows([r.name,status(r,"hostname"),status(r,"phase"),(a.name||"-")+" / "+backendAddress(a),Number(status(r,"healthyBackends")||0)+"/"+Number(status(r,"totalBackends")||0),status(r,"selection")]);}out+="</tbody></table></section><section><table><thead><tr><th>Service</th><th>Backend</th><th>Address</th><th>State</th><th>Counts</th><th>Last Healthy</th><th>Last Unhealthy</th></tr></thead><tbody>";for(const r of resources.filter(r=>r.kind==="IngressService")){for(const b of list(status(r,"backends"))){out+=rows([r.name,b.name,backendAddress(b),b.healthy?"Healthy":"Unhealthy",Number(b.healthyCount||0)+"/"+Number(b.unhealthyCount||0),b.lastHealthyAt,b.lastUnhealthyAt]);}}return out+"</tbody></table></section>";}
-function sample(resources){const now=new Date().toISOString();if(view==="bgp"){let established=0,peers=0,prefixes=0;for(const r of resources.filter(r=>r.kind==="BGPRouter")){established+=Number(status(r,"establishedPeers")||0);peers+=list(status(r,"peers")).length;prefixes+=Number(status(r,"acceptedPrefixes")||0);}return {time:now,a:established,b:peers,c:prefixes,labels:["established peers","total peers","accepted prefixes"]};}if(view==="vrrp"){let master=0,backup=0,unknown=0;for(const r of resources.filter(r=>r.kind==="VirtualIPv4Address")){const role=String(status(r,"role")||"").toLowerCase();if(role==="master")master++;else if(role==="backup")backup++;else unknown++;}return {time:now,a:master,b:backup,c:unknown,labels:["master","backup","unknown"]};}let healthy=0,total=0,active=0;for(const r of resources.filter(r=>r.kind==="IngressService")){healthy+=Number(status(r,"healthyBackends")||0);total+=Number(status(r,"totalBackends")||0);if(status(r,"activeBackend"))active++;}return {time:now,a:healthy,b:total,c:active,labels:["healthy backends","total backends","active services"]};}
+function sample(resources){const now=new Date().toISOString();if(view==="bgp"){let established=0,peers=0,prefixes=0;for(const r of resources.filter(r=>r.kind==="BGPRouter")){established+=Number(status(r,"establishedPeers")||0);peers+=list(status(r,"peers")).length;prefixes+=Number(status(r,"acceptedPrefixes")||0);}return {time:now,a:established,b:peers,c:prefixes,labels:["established peers","total peers","accepted prefixes"]};}if(view==="vrrp"){let master=0,backup=0,unknown=0;for(const r of resources.filter(r=>r.kind==="VirtualAddress")){const role=String(status(r,"role")||"").toLowerCase();if(role==="master")master++;else if(role==="backup")backup++;else unknown++;}return {time:now,a:master,b:backup,c:unknown,labels:["master","backup","unknown"]};}let healthy=0,total=0,active=0;for(const r of resources.filter(r=>r.kind==="IngressService")){healthy+=Number(status(r,"healthyBackends")||0);total+=Number(status(r,"totalBackends")||0);if(status(r,"activeBackend"))active++;}return {time:now,a:healthy,b:total,c:active,labels:["healthy backends","total backends","active services"]};}
 function metricKey(){return "routerd:operational-metrics:"+view;}
 function loadSamples(){try{return JSON.parse(localStorage.getItem(metricKey())||"[]");}catch{return [];}}
 function saveSamples(samples){try{localStorage.setItem(metricKey(),JSON.stringify(samples.slice(-720)));}catch{}}
@@ -1871,7 +1871,7 @@ func writeBGPHTML(body *strings.Builder, resources []routerstate.ObjectStatus) {
 func writeVRRPHTML(body *strings.Builder, resources []routerstate.ObjectStatus) {
 	body.WriteString(`<section><table><thead><tr><th>VIP</th><th>Hostname</th><th>Role</th><th>Priority</th><th>Interface</th><th>VRID</th><th>Last Transition</th></tr></thead><tbody>`)
 	for _, resource := range resources {
-		if resource.Kind != "VirtualIPv4Address" {
+		if resource.Kind != "VirtualAddress" {
 			continue
 		}
 		writeHTMLRow(body, []string{
@@ -1887,7 +1887,7 @@ func writeVRRPHTML(body *strings.Builder, resources []routerstate.ObjectStatus) 
 	body.WriteString(`</tbody></table></section>`)
 	body.WriteString(`<section><table><thead><tr><th>VIP</th><th>Track</th><th>State</th><th>Penalty</th><th>Unhealthy</th></tr></thead><tbody>`)
 	for _, resource := range resources {
-		if resource.Kind != "VirtualIPv4Address" {
+		if resource.Kind != "VirtualAddress" {
 			continue
 		}
 		for _, track := range statusList(resource.Status["track"]) {

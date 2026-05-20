@@ -12,7 +12,7 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ### Added
 
-- Added a FreeBSD CARP backend for `VirtualIPv4Address` in `mode: vrrp`,
+- Added a FreeBSD CARP backend for `VirtualAddress` in `mode: vrrp`,
   including runtime controller support, rc.d rendering, validation, tests, and
   a minimal `examples/freebsd-vrrp.yaml`.
 - Added listen-port collision validation for ingress/local router services and
@@ -41,7 +41,7 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
   source and destination matches, nftables rate limits, and per-source
   connection limits.
 - Added dual-stack BGP rendering and observation for IPv4/IPv6 unicast, plus
-  `VirtualIPv6Address` VRRPv3/CARP VIP support, automatic AAAA records, and
+  `VirtualAddress` VRRPv3/CARP VIP support, automatic AAAA records, and
   dual-stack BGP/Kubernetes API VIP examples.
 - Added `ObservabilityPipeline` for OTLP environment rendering and built-in
   routerd event forwarding to stdout, syslog, or Loki, plus `RouterdCluster`
@@ -138,7 +138,7 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 ### Added
 
 - Added FRR-backed `BGPRouter` / `BGPPeer`, keepalived-backed
-  `VirtualIPv4Address`, and runtime `IngressService` backend health/failover
+  `VirtualAddress`, and runtime `IngressService` backend health/failover
   control for Kubernetes edge use cases.
 - Added `routerctl show bgp`, `routerctl show vrrp`, and
   `routerctl show ingress` table views, derived DNS records from VIP/ingress

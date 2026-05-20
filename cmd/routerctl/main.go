@@ -1652,7 +1652,7 @@ func filterShowStatuses(resources []routerstate.ObjectStatus, kind string) []rou
 				out = append(out, resource)
 			}
 		case "vrrp":
-			if resource.Kind == "VirtualIPv4Address" || resource.Kind == "VirtualIPv6Address" {
+			if resource.Kind == "VirtualAddress" {
 				out = append(out, resource)
 			}
 		case "ingress":
@@ -1867,7 +1867,7 @@ func writeVRRPShowTable(stdout io.Writer, router *api.Router, resources []router
 	specs := virtualAddressShowSpecs(router)
 	fmt.Fprintln(w, "VIP\tHOSTNAME\tROLE\tPRIORITY\tBASE\tIFACE\tVRID\tPEERS\tLAST_TRANSITION")
 	for _, resource := range resources {
-		if resource.Kind != "VirtualIPv4Address" && resource.Kind != "VirtualIPv6Address" {
+		if resource.Kind != "VirtualAddress" {
 			continue
 		}
 		spec := specs[resource.Name]
@@ -2245,14 +2245,14 @@ func canonicalShowKind(kind string) string {
 		"dhcpv6prefixdelegation": "DHCPv6PrefixDelegation",
 		"ipv4static":             "IPv4StaticAddress",
 		"ipv4staticaddress":      "IPv4StaticAddress",
-		"vip":                    "VirtualIPv4Address",
-		"vips":                   "VirtualIPv4Address",
-		"virtualip":              "VirtualIPv4Address",
-		"virtualipv4":            "VirtualIPv4Address",
-		"virtualipv4address":     "VirtualIPv4Address",
-		"virtualipv6":            "VirtualIPv6Address",
-		"virtualipv6address":     "VirtualIPv6Address",
-		"vrrp":                   "VirtualIPv4Address",
+		"vip":                    "VirtualAddress",
+		"vips":                   "VirtualAddress",
+		"virtualip":              "VirtualAddress",
+		"virtualipv4":            "VirtualAddress",
+		"virtualipv4address":     "VirtualAddress",
+		"virtualipv6":            "VirtualAddress",
+		"virtualipv6address":     "VirtualAddress",
+		"vrrp":                   "VirtualAddress",
 		"bgp":                    "BGPRouter",
 		"bgprouter":              "BGPRouter",
 		"bgppeer":                "BGPPeer",
@@ -2364,15 +2364,10 @@ func virtualAddressShowSpecs(router *api.Router) map[string]virtualAddressShowSp
 	}
 	for _, resource := range router.Spec.Resources {
 		switch resource.Kind {
-		case "VirtualIPv4Address":
-			spec, err := resource.VirtualIPv4AddressSpec()
+		case "VirtualAddress":
+			spec, err := resource.VirtualAddressSpec()
 			if err == nil {
-				out[resource.Metadata.Name] = virtualAddressShowSpec{Interface: spec.Interface, Address: spec.Address, Family: "ipv4", Mode: spec.Mode, Peers: spec.VRRP.Peers}
-			}
-		case "VirtualIPv6Address":
-			spec, err := resource.VirtualIPv6AddressSpec()
-			if err == nil {
-				out[resource.Metadata.Name] = virtualAddressShowSpec{Interface: spec.Interface, Address: spec.Address, Family: "ipv6", Mode: spec.Mode, Peers: spec.VRRP.Peers}
+				out[resource.Metadata.Name] = virtualAddressShowSpec{Interface: spec.Interface, Address: spec.Address, Family: spec.Family, Mode: spec.Mode, Peers: spec.VRRP.Peers}
 			}
 		}
 	}
@@ -2495,7 +2490,7 @@ func withLiveVRRPRoles(router *api.Router, resources []routerstate.ObjectStatus)
 	out := make([]routerstate.ObjectStatus, len(resources))
 	copy(out, resources)
 	for i := range out {
-		if out[i].Kind != "VirtualIPv4Address" && out[i].Kind != "VirtualIPv6Address" {
+		if out[i].Kind != "VirtualAddress" {
 			continue
 		}
 		spec := specs[out[i].Name]

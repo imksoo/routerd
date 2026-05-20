@@ -12,7 +12,7 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 
 ### 追加
 
-- `mode: vrrp` の `VirtualIPv4Address` に FreeBSD CARP backend を追加しました。
+- `mode: vrrp` の `VirtualAddress` に FreeBSD CARP backend を追加しました。
   runtime controller、rc.d rendering、validation、tests、最小構成の
   `examples/freebsd-vrrp.yaml` を含みます。
 - ingress/local router service の listen-port collision validation と、
@@ -41,7 +41,7 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
   宛先の複数 port match、nftables rate limit、送信元ごとの connection
   limit を追加しました。
 - IPv4/IPv6 unicast の dual-stack BGP rendering / observation、
-  `VirtualIPv6Address` による VRRPv3/CARP VIP support、AAAA record 自動派生、
+  `VirtualAddress` による VRRPv3/CARP VIP support、AAAA record 自動派生、
   dual-stack BGP / Kubernetes API VIP example を追加しました。
 - OTLP environment rendering と stdout / syslog / Loki への内蔵 routerd event
   forwarding 用の `ObservabilityPipeline`、および apply/controller mutation を
@@ -140,7 +140,7 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 ### 追加
 
 - Kubernetes edge 用に、FRR backend の `BGPRouter` / `BGPPeer`、
-  keepalived backend の `VirtualIPv4Address`、および `IngressService`
+  keepalived backend の `VirtualAddress`、および `IngressService`
   backend health/failover controller を追加しました。
 - `routerctl show bgp`、`routerctl show vrrp`、`routerctl show ingress` の
   table view、VIP/ingress の `hostname` field からの DNS record 自動派生、

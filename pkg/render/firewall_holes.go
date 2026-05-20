@@ -33,14 +33,11 @@ func InternalFirewallHoles(router *api.Router) []FirewallHole {
 			for _, zone := range zones.nonSelfZones() {
 				add(resource.Metadata.Name+"-bgp-"+zone, zone, "self", "tcp", port, resource.ID(), zones.firstIfName(zone))
 			}
-		case "VirtualIPv4Address":
-			spec, _ := resource.VirtualIPv4AddressSpec()
-			if strings.TrimSpace(spec.Mode) == "vrrp" {
+		case "VirtualAddress":
+			spec, _ := resource.VirtualAddressSpec()
+			if strings.TrimSpace(spec.Mode) == "vrrp" && spec.Family == "ipv4" {
 				add(resource.Metadata.Name+"-vrrp", zones.byResource(spec.Interface), "self", "vrrp", 0, resource.ID(), zones.ifNameByResource(spec.Interface))
-			}
-		case "VirtualIPv6Address":
-			spec, _ := resource.VirtualIPv6AddressSpec()
-			if strings.TrimSpace(spec.Mode) == "vrrp" {
+			} else if strings.TrimSpace(spec.Mode) == "vrrp" && spec.Family == "ipv6" {
 				add(resource.Metadata.Name+"-vrrp6", zones.byResource(spec.Interface), "self", "vrrp6", 0, resource.ID(), zones.ifNameByResource(spec.Interface))
 			}
 		case "IngressService":

@@ -59,7 +59,7 @@ func TestReconcileLowersVRRPPriorityAfterTrackHysteresis(t *testing.T) {
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
-	status := store.ObjectStatus(api.NetAPIVersion, "VirtualIPv4Address", "vip")
+	status := store.ObjectStatus(api.NetAPIVersion, "VirtualAddress", "vip")
 	if status["priority"] != 150 {
 		t.Fatalf("priority should not drop before confirm threshold: %#v", status)
 	}
@@ -72,7 +72,7 @@ func TestReconcileLowersVRRPPriorityAfterTrackHysteresis(t *testing.T) {
 	if len(calls) == 0 {
 		t.Fatal("expected keepalived reload calls")
 	}
-	status = store.ObjectStatus(api.NetAPIVersion, "VirtualIPv4Address", "vip")
+	status = store.ObjectStatus(api.NetAPIVersion, "VirtualAddress", "vip")
 	if status["priority"] != 100 {
 		t.Fatalf("priority status = %#v", status)
 	}
@@ -92,14 +92,14 @@ func TestReconcileRestoresVRRPPriorityAfterHealthyHysteresis(t *testing.T) {
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("first healthy reconcile: %v", err)
 	}
-	status := store.ObjectStatus(api.NetAPIVersion, "VirtualIPv4Address", "vip")
+	status := store.ObjectStatus(api.NetAPIVersion, "VirtualAddress", "vip")
 	if status["priority"] != 100 {
 		t.Fatalf("priority should remain penalized before healthy threshold: %#v", status)
 	}
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("second healthy reconcile: %v", err)
 	}
-	status = store.ObjectStatus(api.NetAPIVersion, "VirtualIPv4Address", "vip")
+	status = store.ObjectStatus(api.NetAPIVersion, "VirtualAddress", "vip")
 	if status["priority"] != 150 {
 		t.Fatalf("priority should restore after healthy threshold: %#v", status)
 	}
@@ -108,7 +108,7 @@ func TestReconcileRestoresVRRPPriorityAfterHealthyHysteresis(t *testing.T) {
 func TestReconcileRestoresTrackHysteresisFromStore(t *testing.T) {
 	store := mapStore{
 		api.NetAPIVersion + "/BGPRouter/lan": {"phase": "Degraded"},
-		api.NetAPIVersion + "/VirtualIPv4Address/vip": {
+		api.NetAPIVersion + "/VirtualAddress/vip": {
 			"track": []map[string]any{{
 				"resource":       "BGPRouter/lan",
 				"penalized":      true,
@@ -121,7 +121,7 @@ func TestReconcileRestoresTrackHysteresisFromStore(t *testing.T) {
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
-	status := store.ObjectStatus(api.NetAPIVersion, "VirtualIPv4Address", "vip")
+	status := store.ObjectStatus(api.NetAPIVersion, "VirtualAddress", "vip")
 	if status["priority"] != 100 {
 		t.Fatalf("priority should stay penalized after restart restore: %#v", status)
 	}
@@ -131,7 +131,7 @@ func TestReconcileRestoresTrackHysteresisFromStore(t *testing.T) {
 	}
 }
 
-func TestReconcileAppliesStaticVirtualIPv4Address(t *testing.T) {
+func TestReconcileAppliesStaticVirtualAddressIPv4(t *testing.T) {
 	store := mapStore{}
 	var calls []string
 	controller := Controller{
@@ -170,7 +170,7 @@ func TestReconcileObservesVRRPRoleFromVIPAddress(t *testing.T) {
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
-	status := store.ObjectStatus(api.NetAPIVersion, "VirtualIPv4Address", "vip")
+	status := store.ObjectStatus(api.NetAPIVersion, "VirtualAddress", "vip")
 	if status["role"] != "master" {
 		t.Fatalf("role = %#v, status=%#v", status["role"], status)
 	}
@@ -181,7 +181,7 @@ func TestReconcileObservesVRRPRoleFromVIPAddress(t *testing.T) {
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("second reconcile: %v", err)
 	}
-	status = store.ObjectStatus(api.NetAPIVersion, "VirtualIPv4Address", "vip")
+	status = store.ObjectStatus(api.NetAPIVersion, "VirtualAddress", "vip")
 	if status["lastRoleTransitionAt"] != firstTransition {
 		t.Fatalf("lastRoleTransitionAt changed without role change: %#v", status)
 	}
@@ -219,7 +219,7 @@ func TestReconcileRestartsKeepalivedWithOpenRC(t *testing.T) {
 	}
 }
 
-func TestReconcileAppliesFreeBSDCARPVirtualIPv4Address(t *testing.T) {
+func TestReconcileAppliesFreeBSDCARPVirtualAddressIPv4(t *testing.T) {
 	store := mapStore{}
 	var calls []string
 	controller := Controller{
@@ -249,7 +249,7 @@ func TestReconcileAppliesFreeBSDCARPVirtualIPv4Address(t *testing.T) {
 			t.Fatalf("calls missing %q: %#v", want, calls)
 		}
 	}
-	status := store.ObjectStatus(api.NetAPIVersion, "VirtualIPv4Address", "vip")
+	status := store.ObjectStatus(api.NetAPIVersion, "VirtualAddress", "vip")
 	if status["backend"] != "carp" || status["role"] != "master" {
 		t.Fatalf("unexpected CARP status: %#v", status)
 	}
@@ -279,7 +279,7 @@ func TestReconcileSkipsNoopKeepalivedReloadWithOpenRC(t *testing.T) {
 	if !containsString(calls, "rc-service keepalived reload") {
 		t.Fatalf("missing initial OpenRC reload: %#v", calls)
 	}
-	status := store.ObjectStatus(api.NetAPIVersion, "VirtualIPv4Address", "vip")
+	status := store.ObjectStatus(api.NetAPIVersion, "VirtualAddress", "vip")
 	if statusString(status, "lastReloadAt") == "" || statusString(status, "lastChangeReason") != "keepalived.config changed" {
 		t.Fatalf("missing reload status: %#v", status)
 	}
@@ -292,7 +292,7 @@ func TestReconcileSkipsNoopKeepalivedReloadWithOpenRC(t *testing.T) {
 			t.Fatalf("no-op reconcile called %q: %#v", unwanted, calls)
 		}
 	}
-	status = store.ObjectStatus(api.NetAPIVersion, "VirtualIPv4Address", "vip")
+	status = store.ObjectStatus(api.NetAPIVersion, "VirtualAddress", "vip")
 	if statusString(status, "lastReloadAt") == "" || statusString(status, "lastChangeReason") != "keepalived.config changed" {
 		t.Fatalf("reload status was not retained: %#v", status)
 	}
@@ -332,9 +332,9 @@ func TestReconcileSkipsNoopKeepalivedReloadWithSystemd(t *testing.T) {
 	}
 }
 
-func TestReconcileCleansRemovedStaticVirtualIPv4Address(t *testing.T) {
+func TestReconcileCleansRemovedStaticVirtualAddressIPv4(t *testing.T) {
 	store := mapStore{
-		api.NetAPIVersion + "/VirtualIPv4Address/old": {
+		api.NetAPIVersion + "/VirtualAddress/old": {
 			"backend":        "iproute2",
 			"ifname":         "ens18",
 			"appliedAddress": "10.240.70.99/32",
@@ -363,7 +363,7 @@ func TestReconcileCleansRemovedStaticVirtualIPv4Address(t *testing.T) {
 	if !reflect.DeepEqual(calls, want) {
 		t.Fatalf("calls = %#v, want %#v", calls, want)
 	}
-	status := store.ObjectStatus(api.NetAPIVersion, "VirtualIPv4Address", "old")
+	status := store.ObjectStatus(api.NetAPIVersion, "VirtualAddress", "old")
 	if status["phase"] != "Removed" || status["appliedAddress"] != "" {
 		t.Fatalf("stale VIP status was not cleared: %#v", status)
 	}
@@ -377,10 +377,10 @@ func TestReconcileCleansRemovedStaticVirtualIPv4Address(t *testing.T) {
 
 func vrrpRouter(mode string) *api.Router {
 	track := []api.ResourceTrackSpec(nil)
-	vrrpSpec := api.VirtualIPv4VRRPSpec{}
+	vrrpSpec := api.VirtualAddressVRRPSpec{}
 	if mode == "vrrp" {
 		track = []api.ResourceTrackSpec{{Resource: "BGPRouter/lan", UnhealthyPenalty: 50}}
-		vrrpSpec = api.VirtualIPv4VRRPSpec{VirtualRouterID: 50, Priority: 150, Peers: []string{"10.240.70.3"}}
+		vrrpSpec = api.VirtualAddressVRRPSpec{VirtualRouterID: 50, Priority: 150, Peers: []string{"10.240.70.3"}}
 	}
 	return &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{
@@ -389,9 +389,9 @@ func vrrpRouter(mode string) *api.Router {
 			Spec:     api.InterfaceSpec{IfName: "ens18"},
 		},
 		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv4Address"},
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"},
 			Metadata: api.ObjectMeta{Name: "vip"},
-			Spec: api.VirtualIPv4AddressSpec{
+			Spec: api.VirtualAddressSpec{Family: "ipv4",
 				Interface: "lan",
 				Address:   "10.240.70.10/32",
 				Mode:      mode,
