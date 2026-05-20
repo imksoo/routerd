@@ -544,6 +544,41 @@ func TestDeleteCommandRemovesStateAndLedgerForResource(t *testing.T) {
 	}
 }
 
+func TestDeleteCommandForceRemovesStaleUnsupportedKindState(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "routerd.db")
+	ledgerPath := filepath.Join(dir, "artifacts.json")
+	store, err := routerstate.OpenSQLite(statePath)
+	if err != nil {
+		t.Fatalf("open sqlite state: %v", err)
+	}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "PPPoEInterface", "wan", map[string]any{"phase": "Applied"}); err != nil {
+		t.Fatalf("save stale object status: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close sqlite state: %v", err)
+	}
+	if err := resource.NewLedger().Save(ledgerPath); err != nil {
+		t.Fatalf("save ledger: %v", err)
+	}
+
+	var out strings.Builder
+	if err := deleteCommand([]string{"--state-file", statePath, "--ledger-file", ledgerPath, "--force", "PPPoEInterface/wan"}, &out); err != nil {
+		t.Fatalf("delete command: %v", err)
+	}
+	if !strings.Contains(out.String(), "delete net.routerd.net/v1alpha1/PPPoEInterface/wan") {
+		t.Fatalf("delete output = %s", out.String())
+	}
+	store, err = routerstate.OpenSQLite(statePath)
+	if err != nil {
+		t.Fatalf("reopen sqlite state: %v", err)
+	}
+	defer store.Close()
+	if status := store.ObjectStatus(api.NetAPIVersion, "PPPoEInterface", "wan"); len(status) != 0 {
+		t.Fatalf("stale status after delete = %+v, want none", status)
+	}
+}
+
 func TestDeleteCommandFileTargetsRouterResources(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "router.yaml")
@@ -562,7 +597,7 @@ spec:
 `), 0644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
-	targets, err := deleteTargets(nil, configPath)
+	targets, err := deleteTargets(nil, configPath, "", false, "")
 	if err != nil {
 		t.Fatalf("delete targets: %v", err)
 	}

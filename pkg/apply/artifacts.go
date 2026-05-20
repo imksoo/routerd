@@ -466,6 +466,16 @@ func routerArtifactIntentsForOS(router *api.Router, aliases map[string]string, t
 		features = platform.Features{HasRCD: true}
 	}
 	var intents []resource.Intent
+	if targetOS == platform.OSLinux {
+		if wants, err := render.RouterWantsTCPMSSClamp(router); err == nil && wants {
+			owner := api.RouterAPIVersion + "/Router/" + router.Metadata.Name
+			intents = append(intents, resource.Intent{
+				Artifact:  newNftTableArtifact(owner, "inet", "routerd_mss"),
+				Action:    resource.ActionEnsure,
+				ApplyWith: "nft",
+			})
+		}
+	}
 	for _, res := range hostdeps.DerivedPackageResources(router) {
 		intents = append(intents, resourceArtifactIntentsForPlatform(res, aliases, targetOS, features)...)
 	}

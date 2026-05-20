@@ -966,6 +966,56 @@ spec:
 	}
 }
 
+func TestShowDerivedResourcesHidesAndMarksStaleState(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "router.yaml")
+	data := []byte(`apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: test
+spec:
+  resources: []
+`)
+	if err := os.WriteFile(configPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	dbPath := filepath.Join(dir, "routerd.db")
+	store, err := routerstate.OpenSQLite(dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite state: %v", err)
+	}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "PPPoEInterface", "wan", map[string]any{
+		"phase":  "Applied",
+		"ifname": "ppp0",
+	}); err != nil {
+		t.Fatalf("save stale status: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close sqlite state: %v", err)
+	}
+
+	var out bytes.Buffer
+	err = run([]string{"show", "derived-resources", "--config", configPath, "--state-file", dbPath}, &out, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("show derived-resources: %v", err)
+	}
+	if strings.Contains(out.String(), "PPPoEInterface") {
+		t.Fatalf("default derived resources output includes stale status:\n%s", out.String())
+	}
+
+	out.Reset()
+	err = run([]string{"show", "derived-resources", "--config", configPath, "--state-file", dbPath, "--include-stale", "-o", "json"}, &out, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("show derived-resources --include-stale: %v", err)
+	}
+	got := out.String()
+	for _, want := range []string{"PPPoEInterface", `"stale": true`, `"phase": "Stale"`, `"reason": "UnsupportedResourceKind"`} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("include-stale output missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestDiagnoseEgressShowsPolicyHealthAndNAT(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "router.yaml")

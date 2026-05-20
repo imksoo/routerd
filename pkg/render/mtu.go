@@ -265,6 +265,14 @@ func PathMTURAByScope(router *api.Router) (map[string]int, error) {
 	return pathMTURAByScope(router)
 }
 
+func RouterWantsTCPMSSClamp(router *api.Router) (bool, error) {
+	policies, err := pathMTUMSSPolicies(router)
+	if err != nil {
+		return false, err
+	}
+	return len(policies) > 0, nil
+}
+
 func pathMTUMSSPolicies(router *api.Router) ([]pathMTUPolicy, error) {
 	policies, err := pathMTUPolicies(router)
 	if err != nil {

@@ -193,6 +193,34 @@ func TestDeletedPPPoESessionLedgerOrphansIncludeGeneratedFilesAndRuntime(t *test
 	}
 }
 
+func TestMSSClampNftTableIsRouterOwnedNotOrphan(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "br-lan"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "eth0"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite"}, Spec: api.DSLiteTunnelSpec{Interface: "wan", TunnelName: "ds-routerd"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"Interface/lan"}}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.FirewallZoneSpec{Role: "untrust", Interfaces: []string{"DSLiteTunnel/ds-lite"}}},
+		}},
+	}
+	aliases := map[string]string{"lan": "br-lan", "wan": "eth0", "ds-lite": "ds-routerd"}
+	desired := desiredArtifactsByKind(router, aliases, "nft.table")
+	if !hasArtifact(desired, "nft.table", "routerd_mss", api.RouterAPIVersion+"/Router/test") {
+		t.Fatalf("desired nft artifacts = %+v, want router-owned routerd_mss", desired)
+	}
+	engine := &Engine{Command: fakeCommand(map[string]string{
+		"nft list tables": "table inet routerd_mss\n",
+	})}
+	orphans := engine.observeNftTableOrphans(router, aliases)
+	for _, orphan := range orphans {
+		if orphan.Kind == "NftTable" && orphan.Name == "routerd_mss" {
+			t.Fatalf("routerd_mss reported as orphan: %+v", orphans)
+		}
+	}
+}
+
 func TestVirtualAddressIPv4AndBGPRouterArtifactIntentsUseOpenRC(t *testing.T) {
 	features := platform.Features{HasOpenRC: true}
 	vip := api.Resource{
@@ -369,6 +397,15 @@ func TestServiceDeclarationsUsePlatformManagerMatrix(t *testing.T) {
 func hasArtifactIntent(intents []resource.Intent, kind, name, applyWith string) bool {
 	for _, intent := range intents {
 		if intent.Artifact.Kind == kind && intent.Artifact.Name == name && intent.ApplyWith == applyWith {
+			return true
+		}
+	}
+	return false
+}
+
+func hasArtifact(artifacts []resource.Artifact, kind, name, owner string) bool {
+	for _, artifact := range artifacts {
+		if artifact.Kind == kind && artifact.Name == name && artifact.Owner == owner {
 			return true
 		}
 	}

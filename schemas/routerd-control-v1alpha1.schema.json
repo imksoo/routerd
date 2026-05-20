@@ -994,10 +994,16 @@
         "dryRun": {
           "type": "boolean"
         },
+        "force": {
+          "type": "boolean"
+        },
         "kind": {
           "type": "string"
         },
         "target": {
+          "type": "string"
+        },
+        "targetApiVersion": {
           "type": "string"
         }
       },

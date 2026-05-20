@@ -88,9 +88,11 @@ type ApplyResult struct {
 }
 
 type DeleteRequest struct {
-	TypeMeta `json:",inline" yaml:",inline"`
-	Target   string `json:"target" yaml:"target"`
-	DryRun   bool   `json:"dryRun,omitempty" yaml:"dryRun,omitempty"`
+	TypeMeta         `json:",inline" yaml:",inline"`
+	Target           string `json:"target" yaml:"target"`
+	TargetAPIVersion string `json:"targetApiVersion,omitempty" yaml:"targetApiVersion,omitempty"`
+	DryRun           bool   `json:"dryRun,omitempty" yaml:"dryRun,omitempty"`
+	Force            bool   `json:"force,omitempty" yaml:"force,omitempty"`
 }
 
 type DeleteResult struct {

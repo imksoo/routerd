@@ -235,6 +235,8 @@ func deleteCommand(args []string, stdout io.Writer) error {
 	socketPath := fs.String("socket", defaultSocketPath(), "routerd Unix domain socket path")
 	timeout := fs.Duration("timeout", 30*time.Second, "request timeout")
 	dryRun := fs.Bool("dry-run", false, "show what would be deleted without changing host state")
+	force := fs.Bool("force", false, "delete stale state even when the kind is no longer in the current schema")
+	apiVersion := fs.String("api-version", "", "apiVersion to use with --force when a stale kind is ambiguous")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -243,7 +245,7 @@ func deleteCommand(args []string, stdout io.Writer) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
-	result, err := controlapi.NewUnixClient(*socketPath).Delete(ctx, controlapi.DeleteRequest{Target: fs.Arg(0), DryRun: *dryRun})
+	result, err := controlapi.NewUnixClient(*socketPath).Delete(ctx, controlapi.DeleteRequest{Target: fs.Arg(0), TargetAPIVersion: *apiVersion, DryRun: *dryRun, Force: *force})
 	if err != nil {
 		return err
 	}
@@ -903,6 +905,7 @@ type showOptions struct {
 	SpecOnly         bool
 	StatusOnly       bool
 	Verbose          bool
+	IncludeStale     bool
 	ConnectionsLimit int
 }
 
@@ -911,6 +914,7 @@ type showResource struct {
 	Kind       string              `json:"kind" yaml:"kind"`
 	Name       string              `json:"name" yaml:"name"`
 	Source     string              `json:"source,omitempty" yaml:"source,omitempty"`
+	Stale      bool                `json:"stale,omitempty" yaml:"stale,omitempty"`
 	Spec       any                 `json:"spec,omitempty" yaml:"spec,omitempty"`
 	Observed   map[string]any      `json:"observed,omitempty" yaml:"observed,omitempty"`
 	Ledger     []resource.Artifact `json:"ledger,omitempty" yaml:"ledger,omitempty"`
@@ -1412,6 +1416,8 @@ func parseShowOptions(args []string) (showOptions, error) {
 			opts.StatusOnly = true
 		case "-v", "--verbose":
 			opts.Verbose = true
+		case "--include-stale":
+			opts.IncludeStale = true
 		default:
 			if strings.HasPrefix(arg, "-o=") {
 				opts.Output = strings.TrimPrefix(arg, "-o=")
@@ -1468,7 +1474,7 @@ func dedicatedShowKind(target string) string {
 
 func writeDedicatedShow(stdout io.Writer, router *api.Router, store routerstate.Store, opts showOptions, kind string) error {
 	if kind == "derived-resources" {
-		rows, err := buildDerivedShowResources(router, store)
+		rows, err := buildDerivedShowResources(router, store, opts.IncludeStale)
 		if err != nil {
 			return err
 		}
@@ -1512,7 +1518,7 @@ func writeDedicatedShow(stdout io.Writer, router *api.Router, store routerstate.
 	return nil
 }
 
-func buildDerivedShowResources(router *api.Router, store routerstate.Store) ([]showResource, error) {
+func buildDerivedShowResources(router *api.Router, store routerstate.Store, includeStale bool) ([]showResource, error) {
 	explicit := map[string]bool{}
 	if router != nil {
 		for _, res := range router.Spec.Resources {
@@ -1547,14 +1553,26 @@ func buildDerivedShowResources(router *api.Router, store routerstate.Store) ([]s
 		if explicit[id] {
 			continue
 		}
+		_, planned := byID[id]
+		if !planned && !includeStale {
+			continue
+		}
 		source := firstNonEmpty(statusString(status.Status["source"]), status.Owner)
+		observed := status.Status
+		stale := false
+		if !planned {
+			stale = true
+			observed = staleObjectStatus(status)
+			source = firstNonEmpty(source, "stale-state")
+		}
 		add(showResource{
 			APIVersion: status.APIVersion,
 			Kind:       status.Kind,
 			Name:       status.Name,
 			Source:     source,
-			Observed:   status.Status,
-			State:      status.Status,
+			Stale:      stale,
+			Observed:   observed,
+			State:      observed,
 		})
 	}
 	rows := make([]showResource, 0, len(byID))
@@ -1568,6 +1586,25 @@ func buildDerivedShowResources(router *api.Router, store routerstate.Store) ([]s
 		return rows[i].Name < rows[j].Name
 	})
 	return rows, nil
+}
+
+func staleObjectStatus(status routerstate.ObjectStatus) map[string]any {
+	out := map[string]any{}
+	for key, value := range status.Status {
+		out[key] = value
+	}
+	reason := "StaleStateNotInCurrentConfig"
+	if showAPIVersionForKnownKind(canonicalShowKind(status.Kind)) == "" {
+		reason = "UnsupportedResourceKind"
+	}
+	if phase := statusString(out["phase"]); phase != "" {
+		out["previousPhase"] = phase
+	}
+	out["phase"] = "Stale"
+	out["reason"] = reason
+	out["stale"] = true
+	out["message"] = "state row is not derived from the current router config"
+	return out
 }
 
 func plannedDerivedShowResources(router *api.Router) []showResource {
@@ -1601,10 +1638,7 @@ func plannedDerivedShowResources(router *api.Router) []showResource {
 			unit := render.TailscaleSystemdSpec(res.Metadata.Name, spec)
 			addServiceUnit(firstNonEmpty(unit.UnitName, render.TailscaleUnitName(res.Metadata.Name)), "TailscaleNode/"+res.Metadata.Name)
 		case "HealthCheck":
-			spec, err := res.HealthCheckSpec()
-			if err == nil && spec.Daemon == "routerd-healthcheck" {
-				addServiceUnit("routerd-healthcheck@"+res.Metadata.Name+".service", "HealthCheck/"+res.Metadata.Name)
-			}
+			addServiceUnit("routerd-healthcheck@"+res.Metadata.Name+".service", "HealthCheck/"+res.Metadata.Name)
 		case "FirewallEventLog":
 			spec, err := res.FirewallEventLogSpec()
 			if err == nil && spec.Enabled {
@@ -1623,7 +1657,7 @@ func writeDerivedResourcesTable(stdout io.Writer, rows []showResource) error {
 		if len(status) == 0 {
 			status = row.State
 		}
-		detail := firstNonEmpty(statusString(status["path"]), statusString(status["unitName"]), "-")
+		detail := firstNonEmpty(statusString(status["path"]), statusString(status["unitName"]), statusString(status["reason"]), "-")
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
 			row.Kind,
 			row.Name,
@@ -2364,6 +2398,23 @@ func canonicalShowKind(kind string) string {
 		return ""
 	}
 	return kind
+}
+
+func showAPIVersionForKnownKind(kind string) string {
+	switch kind {
+	case "Inventory":
+		return api.RouterAPIVersion
+	case "LogSink", "ObservabilityPipeline", "RouterdCluster", "LogRetention", "Sysctl", "SysctlProfile", "Package", "NTPClient", "NTPServer", "WebConsole", "ServiceUnit":
+		return api.SystemAPIVersion
+	case "Telemetry":
+		return api.ObservabilityAPIVersion
+	case "FirewallZone", "FirewallPolicy", "FirewallEventLog", "FirewallRule", "ClientPolicy", "PortForward", "IngressService", "LocalServiceRedirect":
+		return api.FirewallAPIVersion
+	case "Interface", "Bridge", "VXLANSegment", "WireGuardInterface", "WireGuardPeer", "TailscaleNode", "IPsecConnection", "VRF", "VXLANTunnel", "PPPoESession", "IPv4StaticAddress", "VirtualAddress", "BGPRouter", "BGPPeer", "BFD", "DHCPv4Client", "IPv4StaticRoute", "IPv6StaticRoute", "ClusterNetworkRoute", "DHCPv4Server", "DHCPv4Reservation", "DHCPv6Address", "IPv6RAAddress", "DHCPv6PrefixDelegation", "IPv6DelegatedAddress", "DHCPv6Information", "IPv6RouterAdvertisement", "DHCPv6Server", "DHCPv4Relay", "DNSZone", "DNSResolver", "DNSForwarder", "DNSUpstream", "SelfAddressPolicy", "DSLiteTunnel", "IPv4Route", "HealthCheck", "EgressRoutePolicy", "EventRule", "DerivedEvent", "NAT44Rule", "IPAddressSet", "TrafficFlowLog":
+		return api.NetAPIVersion
+	default:
+		return ""
+	}
 }
 
 func bgpRouterSpecs(router *api.Router) map[string]api.BGPRouterSpec {
@@ -3613,12 +3664,12 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  diagnose egress [policy] [--config <path>] [--state-file <path>] [--no-host] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  diagnose dns [resolver] [--server <addr>] [--name <fqdn>] [--no-host] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  diagnose lan-client <ip> [--no-host] [-o table|json|yaml]")
-	fmt.Fprintln(w, "  show bgp|vrrp|ingress [--config <path>] [--state-file <path>] [-o table|json|yaml]")
+	fmt.Fprintln(w, "  show bgp|vrrp|ingress|derived-resources [--config <path>] [--state-file <path>] [--include-stale] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  show <kind> [--config <path>] [--state-file <path>] [--ledger-file <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  show <kind>/<name> [--diff|--ledger|--adopt|--events|--spec|--status] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  drain ingress/<service> backend=<name> [--duration 10m] [--state-file <path>]")
 	fmt.Fprintln(w, "  undrain ingress/<service> backend=<name> [--state-file <path>]")
 	fmt.Fprintln(w, "  plan [--socket <path>]")
 	fmt.Fprintln(w, "  apply [--socket <path>] [--dry-run]")
-	fmt.Fprintln(w, "  delete <kind>/<name> [--socket <path>] [--dry-run]")
+	fmt.Fprintln(w, "  delete <kind>/<name> [--socket <path>] [--dry-run] [--force] [--api-version <version>]")
 }

@@ -634,10 +634,12 @@ func deleteCommand(args []string, stdout io.Writer) error {
 	ledgerPath := fs.String("ledger-file", defaultLedgerPath, "routerd ownership ledger file")
 	statePath := fs.String("state-file", defaultStatePath, "routerd state database file")
 	dryRun := fs.Bool("dry-run", false, "show what would be deleted without changing host state")
+	force := fs.Bool("force", false, "delete stale state even when the kind is no longer in the current schema")
+	apiVersion := fs.String("api-version", "", "apiVersion to use with --force when a stale kind is ambiguous")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	targets, err := deleteTargets(fs.Args(), *filePath)
+	targets, err := deleteTargets(fs.Args(), *filePath, *statePath, *force, *apiVersion)
 	if err != nil {
 		return err
 	}
@@ -717,7 +719,7 @@ type deleteTarget struct {
 	Name       string
 }
 
-func deleteTargets(args []string, filePath string) ([]deleteTarget, error) {
+func deleteTargets(args []string, filePath, statePath string, force bool, apiVersion string) ([]deleteTarget, error) {
 	if filePath != "" {
 		if len(args) != 0 {
 			return nil, errors.New("delete accepts either -f or <kind>/<name>, not both")
@@ -737,7 +739,13 @@ func deleteTargets(args []string, filePath string) ([]deleteTarget, error) {
 	}
 	target, err := deleteTargetFromArg(args[0])
 	if err != nil {
-		return nil, err
+		if !force {
+			return nil, err
+		}
+		target, err = forceDeleteTargetFromArg(args[0], statePath, apiVersion)
+		if err != nil {
+			return nil, err
+		}
 	}
 	return []deleteTarget{target}, nil
 }
@@ -753,6 +761,49 @@ func deleteTargetFromArg(arg string) (deleteTarget, error) {
 		return deleteTarget{}, fmt.Errorf("unknown resource kind %q", kind)
 	}
 	return deleteTarget{APIVersion: apiVersion, Kind: canonical, Name: name}, nil
+}
+
+func forceDeleteTargetFromArg(arg, statePath, apiVersion string) (deleteTarget, error) {
+	kind, name, ok := strings.Cut(arg, "/")
+	if !ok || kind == "" || name == "" {
+		return deleteTarget{}, fmt.Errorf("invalid delete target %q, want <kind>/<name>", arg)
+	}
+	if strings.TrimSpace(apiVersion) != "" {
+		return deleteTarget{APIVersion: strings.TrimSpace(apiVersion), Kind: kind, Name: name}, nil
+	}
+	store, err := routerstate.Load(statePath)
+	if err != nil {
+		return deleteTarget{}, err
+	}
+	if closer, ok := store.(interface{ Close() error }); ok {
+		defer func() { _ = closer.Close() }()
+	}
+	lister, ok := store.(routerstate.ObjectStatusLister)
+	if !ok {
+		return deleteTarget{}, errors.New("delete --force requires object status storage")
+	}
+	statuses, err := lister.ListObjectStatuses()
+	if err != nil {
+		return deleteTarget{}, err
+	}
+	var matches []routerstate.ObjectStatus
+	for _, status := range statuses {
+		if status.Kind == kind && status.Name == name {
+			matches = append(matches, status)
+		}
+	}
+	if len(matches) == 0 {
+		return deleteTarget{}, fmt.Errorf("unknown resource kind %q and no stale state row for %s/%s", kind, kind, name)
+	}
+	if len(matches) > 1 {
+		var versions []string
+		for _, match := range matches {
+			versions = append(versions, match.APIVersion)
+		}
+		sort.Strings(versions)
+		return deleteTarget{}, fmt.Errorf("delete --force target %s/%s is ambiguous; found apiVersions %s; rerun with --api-version <value>", kind, name, strings.Join(versions, ", "))
+	}
+	return deleteTarget{APIVersion: matches[0].APIVersion, Kind: kind, Name: name}, nil
 }
 
 func artifactsForOwner(ledger resource.Ledger, owner string) []resource.Artifact {
@@ -867,7 +918,7 @@ func canonicalResourceKind(kind string) string {
 
 func apiVersionForKind(kind string) string {
 	switch kind {
-	case "FirewallZone", "FirewallPolicy", "FirewallRule", "FirewallEventLog", "PortForward", "IngressService", "LocalServiceRedirect":
+	case "FirewallZone", "FirewallPolicy", "FirewallRule", "FirewallEventLog", "ClientPolicy", "PortForward", "IngressService", "LocalServiceRedirect":
 		return api.FirewallAPIVersion
 	case "Hostname", "Sysctl", "SysctlProfile", "Package", "NTPClient", "NTPServer", "LogSink", "ObservabilityPipeline", "RouterdCluster", "LogRetention", "WebConsole", "ServiceUnit":
 		return api.SystemAPIVersion
@@ -875,7 +926,7 @@ func apiVersionForKind(kind string) string {
 		return api.ObservabilityAPIVersion
 	case "Inventory":
 		return api.RouterAPIVersion
-	case "Interface", "Bridge", "VXLANSegment", "WireGuardInterface", "WireGuardPeer", "TailscaleNode", "IPsecConnection", "VRF", "VXLANTunnel", "PPPoESession", "IPv4StaticAddress", "DHCPv4Client", "IPv4StaticRoute", "IPv6StaticRoute", "ClusterNetworkRoute", "DHCPv4Server", "DHCPv4Reservation", "DHCPv6Address", "IPv6RAAddress", "DHCPv6PrefixDelegation", "IPv6DelegatedAddress", "DHCPv6Information", "IPv6RouterAdvertisement", "DHCPv6Server", "DHCPv4Relay", "DNSZone", "DNSResolver", "DNSForwarder", "DNSUpstream", "SelfAddressPolicy", "DSLiteTunnel", "IPv4Route", "HealthCheck", "EgressRoutePolicy", "EventRule", "DerivedEvent", "NAT44Rule", "IPAddressSet", "BFD":
+	case "Interface", "Bridge", "VXLANSegment", "WireGuardInterface", "WireGuardPeer", "TailscaleNode", "IPsecConnection", "VRF", "VXLANTunnel", "PPPoESession", "IPv4StaticAddress", "VirtualAddress", "DHCPv4Client", "IPv4StaticRoute", "IPv6StaticRoute", "ClusterNetworkRoute", "DHCPv4Server", "DHCPv4Reservation", "DHCPv6Address", "IPv6RAAddress", "DHCPv6PrefixDelegation", "IPv6DelegatedAddress", "DHCPv6Information", "IPv6RouterAdvertisement", "DHCPv6Server", "DHCPv4Relay", "DNSZone", "DNSResolver", "DNSForwarder", "DNSUpstream", "SelfAddressPolicy", "DSLiteTunnel", "IPv4Route", "HealthCheck", "EgressRoutePolicy", "EventRule", "DerivedEvent", "NAT44Rule", "IPAddressSet", "BFD", "TrafficFlowLog":
 		return api.NetAPIVersion
 	default:
 		return ""
@@ -3470,7 +3521,13 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 			}
 			target, err := deleteTargetFromArg(req.Target)
 			if err != nil {
-				return nil, err
+				if !req.Force {
+					return nil, err
+				}
+				target, err = forceDeleteTargetFromArg(req.Target, defaultStatePath, req.TargetAPIVersion)
+				if err != nil {
+					return nil, err
+				}
 			}
 			result, err := performDeleteTargets([]deleteTarget{target}, defaultStatePath, *ledgerPath, req.DryRun)
 			if err != nil {
@@ -8205,7 +8262,7 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  render freebsd --config <path> [--out-dir <path>]")
 	fmt.Fprintln(w, "  render alpine --config <path> [--out-dir <path>]")
 	fmt.Fprintln(w, "  apply --config <path> --once [--dry-run] [--override-client <client>] [--override-profile <profile>]")
-	fmt.Fprintln(w, "  delete <kind>/<name> [--dry-run]")
+	fmt.Fprintln(w, "  delete <kind>/<name> [--dry-run] [--force] [--api-version <version>]")
 	fmt.Fprintln(w, "  delete -f <path> [--dry-run]")
 	fmt.Fprintln(w, "  serve --config <path> [--socket <path>] [--status-socket <path>]")
 	fmt.Fprintln(w, "  run --config <path>")

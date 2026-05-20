@@ -33,7 +33,10 @@ under `/var/db/routerd`.
 ## Ownership
 
 Every host-side artifact routerd creates has an owning resource.
-For example, the dnsmasq configuration is owned by the DHCP and RA resources, the `routerd-dns-resolver` configuration by `DNSResolver` and `DNSZone`, and the nftables NAT table by `NAT44Rule`.
+For example, the dnsmasq configuration is owned by the DHCP and RA resources,
+the `routerd-dns-resolver` configuration by `DNSResolver` and `DNSZone`, the
+nftables NAT table by `NAT44Rule`, and the aggregate TCP MSS clamp table by the
+top-level `Router`.
 
 Knowing the owner answers three questions:
 

@@ -63,6 +63,11 @@ are derived service units. Use this view to inspect those generated resources:
 routerctl show derived-resources
 ```
 
+The default view is derived from the current config. Old status rows that no
+longer come from the current config are hidden so they do not look active.
+Use `--include-stale` when you need to inspect those rows while cleaning up an
+old state database.
+
 If a removed or unsupported resource kind is still present in YAML, routerd
 fails config loading instead of silently ignoring it.
 
@@ -73,6 +78,11 @@ only the artifacts it owns. Stale `routerd-healthcheck@*.service` and supervised
 client daemon units are disabled and removed when no matching owning resource
 remains. NAT44 clears the managed `routerd_nat` table or pf anchor when no NAT
 rules remain.
+
+If an old state row belongs to a resource kind that no longer exists in the
+schema, remove it with `routerctl delete --force <kind>/<name>`. When more than
+one API group has a row for the same kind/name, add `--api-version <version>` so
+routerd can delete the exact state row without guessing.
 
 Firewall rendering keeps the managed nftables table in place and reloads it in
 one `nft -f` batch. For named sets such as firewall zone interface sets and

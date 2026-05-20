@@ -599,6 +599,11 @@ func (e *Engine) observeNftTableOrphans(router *api.Router, aliases map[string]s
 
 func desiredArtifactsByKind(router *api.Router, aliases map[string]string, kind string) []resource.Artifact {
 	var desired []resource.Artifact
+	for _, intent := range routerArtifactIntents(router, aliases) {
+		if intent.Artifact.Kind == kind && intent.Action != resource.ActionDelete {
+			desired = append(desired, intent.Artifact)
+		}
+	}
 	for _, res := range router.Spec.Resources {
 		for _, intent := range resourceArtifactIntents(res, aliases) {
 			if intent.Artifact.Kind == kind && intent.Action != resource.ActionDelete {
