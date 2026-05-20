@@ -18,6 +18,10 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 - Let the Live ISO import router config from read-only ISO9660/UDF config media
   attached as CD-ROM devices, including Proxmox `media=cdrom` config ISOs
   labeled `ROUTERD_CONFIG`.
+- Prevent a persisted OpenRC `routerd` default-runlevel entry from starting
+  `routerd serve` before Live ISO USB config restore. The live autostart helper
+  now removes that runlevel entry and restarts an already-running `serve`
+  process after `apply --once`, so restored BGP config can be reloaded into FRR.
 
 ## v20260520.2307
 

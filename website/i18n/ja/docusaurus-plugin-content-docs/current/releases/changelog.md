@@ -18,6 +18,11 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 - Live ISO が CD-ROM として接続された read-only ISO9660/UDF config media からも
   router config を import できるようにしました。Proxmox の `media=cdrom` で
   `ROUTERD_CONFIG` label を付けた config ISO を対象に含めます。
+- 永続化された OpenRC の `routerd` default runlevel entry により、Live ISO の
+  USB config restore より前に `routerd serve` が起動する問題を防ぎます。
+  live autostart helper はこの runlevel entry を削除し、config restore と
+  `apply --once` 後に既存の `serve` process を restart するため、復元された
+  BGP config が FRR に reload されます。
 
 ## v20260520.2307
 

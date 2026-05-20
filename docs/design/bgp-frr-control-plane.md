@@ -147,10 +147,17 @@ judgment, surfaced via the explicit reason codes above.
 
 `scripts/build-live-iso.sh` / `live-autostart.sh` must not start a second
 `routerd serve` if one already owns `/run/routerd/routerd.sock`. The guard
-logs a warning and exits successfully (idempotent autostart). Without
-this guard, two routerd controllers compete for the FRR service lock
-(`flock` on rc-service / systemctl), causing the
+keeps autostart idempotent, but the first autostart pass of a boot is also
+the config handoff boundary. If a persisted OpenRC runlevel starts
+`routerd serve` before USB config restore, `live-autostart.sh` must restart
+that service after `apply --once` instead of treating the existing process as
+success. That restart is logged with `reason=LiveISOStaleServeRestarted`.
+The boot marker lives under `/run/routerd` so each boot re-evaluates this
+handoff. Without the duplicate guard, two routerd controllers compete for the
+FRR service lock (`flock` on rc-service / systemctl), causing the
 `ERROR: frr stopped by something else` symptom seen in Phase 0 evidence.
+Without the post-restore restart, the early `serve` process can miss the
+restored config and leave BGP at the apply-once `Rendered` handoff state.
 
 This is shipped in the same hotfix as the BGP gate change, as a separate
 commit, for independent revert and changelog clarity.
@@ -213,11 +220,17 @@ must never collapse to `Healthy` while FRR is down. The v2007 regression
     socket → exits 0 without starting a second process.
 11. Alpine Live ISO smoke test (release gate): boot a fresh ISO, observe
     autonomous BGP convergence.
-12. FRR service starting in FAILED state at boot: routerd must invoke
+12. Live ISO with a persisted `routerd` OpenRC default-runlevel entry:
+    `routerd serve` may be started before USB config restore, but
+    `live-autostart.sh` removes the default-runlevel entry and restarts the
+    service after config restore + `apply --once`, logging
+    `reason=LiveISOStaleServeRestarted`, so BGP reload still converges without
+    manual `frr-reload.py`.
+13. FRR service starting in FAILED state at boot: routerd must invoke
     `rc-service frr start` (or restart) and recover the daemons without
     manual intervention; status reflects the FAILED state until daemons
     are running.
-13. Status accuracy: with FRR forcibly stopped (`rc-service frr stop`)
+14. Status accuracy: with FRR forcibly stopped (`rc-service frr stop`)
     after a previously Healthy state, the next reconcile must surface
     `FRRControlUnavailable` or `FRRServiceDown`, not `Healthy`. The
     BGPRouter status' `lastSuccessTime` must not advance during the

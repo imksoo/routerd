@@ -19,10 +19,15 @@ func TestLiveAutostartGuardsDuplicateServe(t *testing.T) {
 		"pgrep -x routerd",
 		"pidof routerd",
 		"tr '\\000' ' ' < \"/proc/${pid}/cmdline\"",
+		"marker=/run/routerd/live-autostart.done",
 		"if routerd_serve_running; then",
-		"routerd serve already running; not starting a duplicate",
+		"routerd serve was already running before config handoff; restarting after restore reason=LiveISOStaleServeRestarted",
+		"rc-service routerd restart",
 		"elif [ -x /etc/init.d/routerd ]; then",
 		"rc-service routerd start",
+		"rc-update show default",
+		"rc-update del routerd default",
+		"failed to remove routerd from default runlevel; relying on stale serve restart path",
 		"elif [ ! -S \"${socket}\" ]; then",
 		"nohup \"${routerd}\" serve",
 		"cat > \"${overlay_root}/etc/init.d/routerd\"",
@@ -35,6 +40,9 @@ func TestLiveAutostartGuardsDuplicateServe(t *testing.T) {
 	}
 	if strings.Index(script, "if routerd_serve_running; then") > strings.Index(script, "nohup \"${routerd}\" serve") {
 		t.Fatalf("duplicate serve guard must run before nohup routerd serve")
+	}
+	if strings.Contains(script, "rc-update add routerd default") {
+		t.Fatalf("live autostart must not add routerd to default runlevel before config restore")
 	}
 }
 

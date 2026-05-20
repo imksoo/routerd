@@ -741,6 +741,13 @@ routerd_serve_running() {
 
 mkdir -p /run/routerd "${log_dir}" /var/lib/routerd
 /usr/share/routerd/live-persistence.sh init || true
+if [ -x /etc/init.d/routerd ]; then
+    if rc-update show default 2>/dev/null | grep -Eq '(^|[[:space:]])routerd([[:space:]]|$)'; then
+        if ! rc_update_out=$(rc-update del routerd default 2>&1); then
+            echo "routerd-live: failed to remove routerd from default runlevel; relying on stale serve restart path: ${rc_update_out}" >> "${log_dir}/routerd-live.log"
+        fi
+    fi
+fi
 
 [ -f "${config}" ] || exit 0
 [ -f "${marker}" ] && exit 0
@@ -751,9 +758,13 @@ mkdir -p /run/routerd "${log_dir}" /var/lib/routerd
 "${routerd}" validate --config "${config}"
 "${routerd}" apply --config "${config}" --once
 if routerd_serve_running; then
-    echo "routerd-live: routerd serve already running; not starting a duplicate" >> "${log_dir}/routerd-live.log"
+    if [ -x /etc/init.d/routerd ]; then
+        echo "routerd-live: routerd serve was already running before config handoff; restarting after restore reason=LiveISOStaleServeRestarted" >> "${log_dir}/routerd-live.log"
+        rc-service routerd restart >> "${log_dir}/routerd-live.log" 2>&1 || true
+    else
+        echo "routerd-live: routerd serve already running; not starting a duplicate" >> "${log_dir}/routerd-live.log"
+    fi
 elif [ -x /etc/init.d/routerd ]; then
-    rc-update add routerd default >/dev/null 2>&1 || true
     rc-service routerd start >> "${log_dir}/routerd-live.log" 2>&1 || true
 elif [ ! -S "${socket}" ]; then
     nohup "${routerd}" serve \
