@@ -50,10 +50,14 @@ The response should include `"libndpiLoaded": true`.
 
 ## Upgrade note
 
-The normal routerd archive installs the default `routerd-ndpi-agent`. On hosts
-that opt into native nDPI, reinstall the matching
-`routerd-ndpi-agent-libndpi` archive after each normal routerd upgrade and
-verify that the status JSON still includes `"libndpiLoaded": true`.
+The normal routerd archive includes the default static `routerd-ndpi-agent`.
+During upgrades, `install.sh` preserves an existing native agent when its
+`selftest` reports `"libndpiLoaded": true` and the archive agent does not.
+
+Run the normal installer with `--with-ndpi` on hosts that require native
+application-layer classification. The installer fails if the final installed
+agent does not report `"libndpiLoaded": true`, so the static fallback cannot
+silently satisfy a native nDPI intent.
 
 ## Configure
 

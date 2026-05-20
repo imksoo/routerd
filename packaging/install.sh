@@ -177,6 +177,62 @@ atomic_install()
     mv -f "${tmp}" "${target}"
 }
 
+ndpi_agent_libndpi_loaded()
+{
+    agent=$1
+    [ -x "${agent}" ] || return 1
+    output=$("${agent}" selftest 2>/dev/null || true)
+    case "${output}" in
+        *'"libndpiLoaded":true'*|*'"libndpiLoaded": true'*)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+install_binary()
+{
+    binary=$1
+    target="${bindir}/$(basename "${binary}")"
+    if [ "$(basename "${binary}")" = "routerd-ndpi-agent" ] && [ "${dry_run}" -eq 0 ]; then
+        if ndpi_agent_libndpi_loaded "${target}" && ! ndpi_agent_libndpi_loaded "${binary}"; then
+            echo "preserving existing native libndpi routerd-ndpi-agent: ${target}"
+            return 0
+        fi
+    fi
+    atomic_install 0755 "${binary}" "${target}"
+}
+
+verify_ndpi_agent_install()
+{
+    [ "${with_ndpi}" -eq 1 ] || return 0
+    agent="${bindir}/routerd-ndpi-agent"
+    if [ "${dry_run}" -eq 1 ]; then
+        echo "dry-run: verify ${agent} selftest reports libndpiLoaded=true"
+        return 0
+    fi
+    if ndpi_agent_libndpi_loaded "${agent}"; then
+        return 0
+    fi
+    cat >&2 <<'EOF'
+error: --with-ndpi was requested, but the installed routerd-ndpi-agent does not report libndpiLoaded=true.
+
+Install the matching native nDPI agent archive for this routerd release, then rerun install:
+
+  gh release download <tag> \
+    --repo imksoo/routerd \
+    --pattern 'routerd-ndpi-agent-libndpi-linux-amd64.tar.gz'
+  tar -xzf routerd-ndpi-agent-libndpi-linux-amd64.tar.gz
+  sudo install -m 0755 bin/routerd-ndpi-agent /usr/local/sbin/routerd-ndpi-agent
+  sudo systemctl restart routerd-ndpi-agent.service routerd-dpi-classifier.service
+
+The standard routerd archive includes a static fallback agent; it cannot satisfy --with-ndpi by itself.
+EOF
+    exit 1
+}
+
 routerd_service_managed_by_config()
 {
     service_path=/etc/systemd/system/routerd.service
@@ -1535,8 +1591,9 @@ else
 fi
 for binary in bin/*; do
     [ -f "${binary}" ] || continue
-    atomic_install 0755 "${binary}" "${bindir}/$(basename "${binary}")"
+    install_binary "${binary}"
 done
+verify_ndpi_agent_install
 
 if [ "${config_update}" -eq 1 ]; then
     if [ "${dry_run}" -eq 1 ]; then

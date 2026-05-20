@@ -903,6 +903,34 @@ type TrafficFlowLogSpec struct {
 	IncludeTLSSNI           bool   `yaml:"includeTLSSNI,omitempty" json:"includeTLSSNI,omitempty"`
 }
 
+type TrafficFlowLogStatus struct {
+	Phase         string `yaml:"phase,omitempty" json:"phase,omitempty"`
+	Reason        string `yaml:"reason,omitempty" json:"reason,omitempty"`
+	PendingReason string `yaml:"pendingReason,omitempty" json:"pendingReason,omitempty"`
+
+	Path        string `yaml:"path,omitempty" json:"path,omitempty"`
+	Source      string `yaml:"source,omitempty" json:"source,omitempty"`
+	ActiveFlows int    `yaml:"activeFlows,omitempty" json:"activeFlows,omitempty"`
+	Count       int    `yaml:"count,omitempty" json:"count,omitempty"`
+	ObservedAt  string `yaml:"observedAt,omitempty" json:"observedAt,omitempty"`
+
+	ApplicationLayer *TrafficFlowApplicationLayerStatus `yaml:"applicationLayer,omitempty" json:"applicationLayer,omitempty"`
+}
+
+type TrafficFlowApplicationLayerStatus struct {
+	Requested bool   `yaml:"requested" json:"requested"`
+	Available bool   `yaml:"available" json:"available"`
+	Message   string `yaml:"message,omitempty" json:"message,omitempty"`
+
+	Engine         string `yaml:"engine,omitempty" json:"engine,omitempty"`
+	Socket         string `yaml:"socket,omitempty" json:"socket,omitempty"`
+	LibNDPILoaded  bool   `yaml:"libndpiLoaded" json:"libndpiLoaded"`
+	LibNDPIVersion string `yaml:"libndpiVersion,omitempty" json:"libndpiVersion,omitempty"`
+
+	ProbeError string `yaml:"probeError,omitempty" json:"probeError,omitempty"`
+	ObservedAt string `yaml:"observedAt,omitempty" json:"observedAt,omitempty"`
+}
+
 type ReadyWhenSpec struct {
 	Field    string                     `yaml:"field,omitempty" json:"field,omitempty"`
 	Equals   string                     `yaml:"equals,omitempty" json:"equals,omitempty"`

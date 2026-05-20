@@ -10,6 +10,16 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期和时间型版本号。
 
 ## Unreleased
 
+### 修正
+
+- standard release archive 只包含 static fallback 版 `routerd-ndpi-agent`
+  时，如果已有 native `routerd-ndpi-agent` 的 `selftest` 返回
+  `libndpiLoaded: true`，installer 会保留该 native agent。`install.sh
+  --with-ndpi` 现在也会在最终 agent 未返回 `libndpiLoaded: true` 时失败。
+- 当 `spec.includeApplicationLayer: true` 但 nDPI agent 未加载 native
+  `libndpi` backend 时，`TrafficFlowLog` 会以
+  `TrafficFlowApplicationLayerUnavailable` reason 显示为 `Pending`。
+
 ## v20260521.0039
 
 ### 修正

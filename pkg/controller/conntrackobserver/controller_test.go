@@ -120,6 +120,125 @@ func TestControllerRecordsTrafficFlowLog(t *testing.T) {
 	}
 }
 
+func TestControllerMarksApplicationLayerUnavailable(t *testing.T) {
+	dir := t.TempDir()
+	countPath := filepath.Join(dir, "count")
+	maxPath := filepath.Join(dir, "max")
+	entriesPath := filepath.Join(dir, "entries")
+	flowPath := filepath.Join(dir, "traffic-flows.db")
+	if err := os.WriteFile(countPath, []byte("1\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(maxPath, []byte("10\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(entriesPath, nil, 0644); err != nil {
+		t.Fatal(err)
+	}
+	store := &testStore{}
+	controller := &Controller{
+		Router: &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "TrafficFlowLog"},
+			Metadata: api.ObjectMeta{Name: "default"},
+			Spec:     api.TrafficFlowLogSpec{Enabled: true, Path: flowPath, Source: "conntrack", IncludeApplicationLayer: true},
+		}}}},
+		Bus:   bus.New(),
+		Store: store,
+		Paths: conntrack.Paths{Entries: entriesPath, Count: countPath, Max: maxPath},
+		Connections: func(limit int) (*observe.ConnectionTable, error) {
+			return &observe.ConnectionTable{Entries: []observe.ConnectionEntry{{
+				Protocol: "tcp",
+				Original: observe.ConntrackTuple{Source: "172.18.0.10", SourcePort: "12345", Destination: "1.1.1.1", DestinationPort: "443", Packets: 1, Bytes: 100, Accounting: true},
+				Reply:    observe.ConntrackTuple{Source: "1.1.1.1", SourcePort: "443", Destination: "172.18.0.10", DestinationPort: "12345", Packets: 1, Bytes: 200, Accounting: true},
+			}}}, nil
+		},
+		ApplicationLayerStatus: func(context.Context, string) api.TrafficFlowApplicationLayerStatus {
+			return api.TrafficFlowApplicationLayerStatus{
+				Requested:      true,
+				Available:      false,
+				Engine:         "ndpi-agent",
+				Socket:         "/run/routerd/ndpi-agent/default.sock",
+				LibNDPILoaded:  false,
+				Message:        "libndpi backend is not enabled in this build",
+				ProbeError:     "libndpi backend is not enabled in this build",
+				LibNDPIVersion: "",
+			}
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "TrafficFlowLog", "default")
+	if status["phase"] != "Pending" || status["reason"] != "TrafficFlowApplicationLayerUnavailable" || status["pendingReason"] != "TrafficFlowApplicationLayerUnavailable" {
+		t.Fatalf("traffic status = %#v", status)
+	}
+	if status["activeFlows"] != 1 || status["count"] != 1 {
+		t.Fatalf("traffic flow counters missing from pending status: %#v", status)
+	}
+	app, ok := status["applicationLayer"].(api.TrafficFlowApplicationLayerStatus)
+	if !ok {
+		t.Fatalf("applicationLayer status type = %T %#v", status["applicationLayer"], status["applicationLayer"])
+	}
+	if !app.Requested || app.Available || app.LibNDPILoaded || app.ProbeError == "" {
+		t.Fatalf("applicationLayer status = %#v", app)
+	}
+}
+
+func TestControllerMarksApplicationLayerAvailable(t *testing.T) {
+	dir := t.TempDir()
+	countPath := filepath.Join(dir, "count")
+	maxPath := filepath.Join(dir, "max")
+	entriesPath := filepath.Join(dir, "entries")
+	flowPath := filepath.Join(dir, "traffic-flows.db")
+	if err := os.WriteFile(countPath, []byte("0\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(maxPath, []byte("10\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(entriesPath, nil, 0644); err != nil {
+		t.Fatal(err)
+	}
+	store := &testStore{}
+	controller := &Controller{
+		Router: &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "TrafficFlowLog"},
+			Metadata: api.ObjectMeta{Name: "default"},
+			Spec:     api.TrafficFlowLogSpec{Enabled: true, Path: flowPath, Source: "conntrack", IncludeApplicationLayer: true},
+		}}}},
+		Bus:   bus.New(),
+		Store: store,
+		Paths: conntrack.Paths{Entries: entriesPath, Count: countPath, Max: maxPath},
+		Connections: func(limit int) (*observe.ConnectionTable, error) {
+			return &observe.ConnectionTable{}, nil
+		},
+		ApplicationLayerStatus: func(context.Context, string) api.TrafficFlowApplicationLayerStatus {
+			return api.TrafficFlowApplicationLayerStatus{
+				Requested:      true,
+				Available:      true,
+				Engine:         "ndpi-agent",
+				Socket:         "/run/routerd/ndpi-agent/default.sock",
+				LibNDPILoaded:  true,
+				LibNDPIVersion: "4.2.0",
+			}
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "TrafficFlowLog", "default")
+	if status["phase"] != "Observed" || status["reason"] != nil || status["pendingReason"] != nil {
+		t.Fatalf("traffic status = %#v", status)
+	}
+	app, ok := status["applicationLayer"].(api.TrafficFlowApplicationLayerStatus)
+	if !ok {
+		t.Fatalf("applicationLayer status type = %T %#v", status["applicationLayer"], status["applicationLayer"])
+	}
+	if !app.Requested || !app.Available || !app.LibNDPILoaded || app.LibNDPIVersion != "4.2.0" {
+		t.Fatalf("applicationLayer status = %#v", app)
+	}
+}
+
 func TestTrafficFlowFromConnectionKeepsDPIFields(t *testing.T) {
 	flow := trafficFlowFromConnection(observe.ConnectionEntry{
 		Protocol:      "tcp",

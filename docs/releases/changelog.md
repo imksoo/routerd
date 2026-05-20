@@ -10,6 +10,17 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- Preserved an already-installed native `routerd-ndpi-agent` when the standard
+  release archive contains only the static fallback agent, and made
+  `install.sh --with-ndpi` fail if the final agent self-test does not report
+  `libndpiLoaded: true`.
+- Marked `TrafficFlowLog` as `Pending` with
+  `TrafficFlowApplicationLayerUnavailable` when
+  `spec.includeApplicationLayer: true` is configured but the nDPI agent does
+  not have its native `libndpi` backend loaded.
+
 ## v20260521.0039
 
 ### Fixed

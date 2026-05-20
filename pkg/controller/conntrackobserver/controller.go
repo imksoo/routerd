@@ -4,8 +4,13 @@ package conntrackobserver
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
+	"net"
+	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -28,18 +33,19 @@ type Store interface {
 }
 
 type Controller struct {
-	Bus            *bus.Bus
-	Router         *api.Router
-	Store          Store
-	Paths          conntrack.Paths
-	Interval       time.Duration
-	ThresholdRatio float64
-	Logger         *slog.Logger
-	Connections    func(limit int) (*observe.ConnectionTable, error)
-	lastCount      int
-	aboveThreshold bool
-	seen           bool
-	lastFlowBytes  map[string]flowByteTotals
+	Bus                    *bus.Bus
+	Router                 *api.Router
+	Store                  Store
+	Paths                  conntrack.Paths
+	Interval               time.Duration
+	ThresholdRatio         float64
+	Logger                 *slog.Logger
+	Connections            func(limit int) (*observe.ConnectionTable, error)
+	ApplicationLayerStatus func(context.Context, string) api.TrafficFlowApplicationLayerStatus
+	lastCount              int
+	aboveThreshold         bool
+	seen                   bool
+	lastFlowBytes          map[string]flowByteTotals
 }
 
 func (c *Controller) Start(ctx context.Context) {
@@ -190,7 +196,100 @@ func (c *Controller) recordTrafficFlows(ctx context.Context, count int) error {
 		"count":       count,
 		"observedAt":  now.Format(time.RFC3339Nano),
 	}
+	if spec.IncludeApplicationLayer {
+		appStatus := c.applicationLayerStatus(ctx, defaultNDPIAgentSocket)
+		status["applicationLayer"] = appStatus
+		if !appStatus.Available {
+			status["phase"] = "Pending"
+			status["reason"] = "TrafficFlowApplicationLayerUnavailable"
+			status["pendingReason"] = "TrafficFlowApplicationLayerUnavailable"
+		}
+	}
 	return c.Store.SaveObjectStatus(resource.APIVersion, "TrafficFlowLog", resource.Metadata.Name, status)
+}
+
+const defaultNDPIAgentSocket = "/run/routerd/ndpi-agent/default.sock"
+
+func (c *Controller) applicationLayerStatus(ctx context.Context, socket string) api.TrafficFlowApplicationLayerStatus {
+	if c.ApplicationLayerStatus != nil {
+		status := c.ApplicationLayerStatus(ctx, socket)
+		status.Requested = true
+		if status.ObservedAt == "" {
+			status.ObservedAt = time.Now().UTC().Format(time.RFC3339Nano)
+		}
+		return status
+	}
+	return probeApplicationLayerStatus(ctx, socket)
+}
+
+func probeApplicationLayerStatus(ctx context.Context, socket string) api.TrafficFlowApplicationLayerStatus {
+	status := api.TrafficFlowApplicationLayerStatus{
+		Requested:  true,
+		Available:  false,
+		Engine:     "ndpi-agent",
+		Socket:     socket,
+		ObservedAt: time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	if strings.TrimSpace(socket) == "" {
+		status.Message = "nDPI agent socket is not configured"
+		status.ProbeError = status.Message
+		return status
+	}
+	if _, err := os.Stat(socket); err != nil {
+		status.Message = "nDPI agent socket is unavailable"
+		status.ProbeError = err.Error()
+		return status
+	}
+	ctx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
+	defer cancel()
+	client := &http.Client{
+		Timeout: 300 * time.Millisecond,
+		Transport: &http.Transport{DisableKeepAlives: true, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			var dialer net.Dialer
+			return dialer.DialContext(ctx, "unix", socket)
+		}},
+	}
+	defer client.CloseIdleConnections()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://unix/v1/status", nil)
+	if err != nil {
+		status.Message = "failed to create nDPI agent status request"
+		status.ProbeError = err.Error()
+		return status
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		status.Message = "failed to query nDPI agent status"
+		status.ProbeError = err.Error()
+		return status
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		status.Message = "nDPI agent status endpoint returned an error"
+		status.ProbeError = resp.Status
+		return status
+	}
+	var body struct {
+		Engine         string `json:"engine"`
+		LibNDPILoaded  bool   `json:"libndpiLoaded"`
+		LibNDPIVersion string `json:"libndpiVersion"`
+		Reason         string `json:"reason"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&body); err != nil {
+		status.Message = "failed to decode nDPI agent status"
+		status.ProbeError = err.Error()
+		return status
+	}
+	status.Engine = firstNonEmpty(body.Engine, "ndpi-agent")
+	status.LibNDPILoaded = body.LibNDPILoaded
+	status.LibNDPIVersion = body.LibNDPIVersion
+	status.Available = body.LibNDPILoaded
+	if status.Available {
+		status.Message = "application-layer classification is available"
+		return status
+	}
+	status.Message = firstNonEmpty(body.Reason, "libndpi backend is unavailable")
+	status.ProbeError = status.Message
+	return status
 }
 
 func trafficFlowLogSpec(router *api.Router) (api.Resource, api.TrafficFlowLogSpec, bool) {
