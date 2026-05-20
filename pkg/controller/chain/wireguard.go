@@ -16,6 +16,7 @@ import (
 	"routerd/pkg/api"
 	"routerd/pkg/bus"
 	"routerd/pkg/daemonapi"
+	routerstate "routerd/pkg/state"
 	"routerd/pkg/wireguard"
 )
 
@@ -32,6 +33,9 @@ func (c WireGuardController) Reconcile(ctx context.Context) error {
 	if c.Router == nil || c.Store == nil {
 		return nil
 	}
+	if err := c.cleanupStaleResources(ctx); err != nil {
+		return err
+	}
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.Kind != "WireGuardInterface" {
 			continue
@@ -41,6 +45,118 @@ func (c WireGuardController) Reconcile(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func (c WireGuardController) cleanupStaleResources(ctx context.Context) error {
+	lister, ok := c.Store.(routerstate.ObjectStatusLister)
+	if !ok {
+		return nil
+	}
+	deleter, ok := c.Store.(routerstate.ObjectDeleteStore)
+	if !ok {
+		return nil
+	}
+	statuses, err := lister.ListObjectStatuses()
+	if err != nil {
+		return err
+	}
+	desiredInterfaces := map[string]struct{}{}
+	desiredPeers := map[string]struct{}{}
+	for _, resource := range c.Router.Spec.Resources {
+		switch resource.Kind {
+		case "WireGuardInterface":
+			desiredInterfaces[resource.Metadata.Name] = struct{}{}
+		case "WireGuardPeer":
+			desiredPeers[resource.Metadata.Name] = struct{}{}
+		}
+	}
+	staleInterfaces := map[string]struct{}{}
+	for _, item := range statuses {
+		if item.APIVersion != api.NetAPIVersion || item.Kind != "WireGuardInterface" {
+			continue
+		}
+		if _, ok := desiredInterfaces[item.Name]; ok || !routerdManagedObjectStatus(item) {
+			continue
+		}
+		ifname := firstNonEmpty(statusString(item.Status, "ifname"), statusString(item.Status, "interface"), item.Name)
+		if ifname != "" && !c.DryRun {
+			if err := c.deleteWireGuardInterface(ctx, ifname); err != nil {
+				return err
+			}
+		}
+		staleInterfaces[item.Name] = struct{}{}
+		if err := deleter.DeleteObject(item.APIVersion, item.Kind, item.Name); err != nil {
+			return err
+		}
+	}
+	for _, item := range statuses {
+		if item.APIVersion != api.NetAPIVersion || item.Kind != "WireGuardPeer" || !routerdManagedObjectStatus(item) {
+			continue
+		}
+		_, peerStillDesired := desiredPeers[item.Name]
+		_, interfaceRemoved := staleInterfaces[statusString(item.Status, "interface")]
+		if peerStillDesired && !interfaceRemoved {
+			continue
+		}
+		if err := deleter.DeleteObject(item.APIVersion, item.Kind, item.Name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c WireGuardController) deleteWireGuardInterface(ctx context.Context, ifname string) error {
+	run := c.Command
+	if run == nil {
+		run = wireguard.DefaultCommandRunner
+	}
+	out, err := run(ctx, "ip", "link", "delete", "dev", ifname)
+	if err == nil || wireGuardDeleteMissingLink(out, err) {
+		return nil
+	}
+	return fmt.Errorf("delete stale WireGuard interface %s: %w: %s", ifname, err, strings.TrimSpace(string(out)))
+}
+
+func wireGuardDeleteMissingLink(out []byte, err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(strings.TrimSpace(string(out)) + " " + err.Error())
+	for _, needle := range []string{"cannot find device", "does not exist", "not found", "no such device"} {
+		if strings.Contains(msg, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func routerdManagedObjectStatus(item routerstate.ObjectStatus) bool {
+	if managed, ok := statusBool(item.Status["managed"]); ok && !managed {
+		return false
+	}
+	managedBy := firstNonEmpty(item.ManagedBy, statusString(item.Status, "managedBy"))
+	if strings.EqualFold(managedBy, "external") {
+		return false
+	}
+	management := firstNonEmpty(item.Management, statusString(item.Status, "management"))
+	if strings.EqualFold(management, "adopted") {
+		return false
+	}
+	if managedBy == "" && management == "" && resourceOwnerController(item.Kind) == "" {
+		return false
+	}
+	return true
+}
+
+func statusString(status map[string]any, key string) string {
+	if status == nil {
+		return ""
+	}
+	value, ok := status[key]
+	if !ok || value == nil {
+		return ""
+	}
+	return strings.TrimSpace(fmt.Sprint(value))
 }
 
 func (c WireGuardController) reconcileInterface(ctx context.Context, resource api.Resource) error {

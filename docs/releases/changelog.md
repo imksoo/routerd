@@ -19,6 +19,10 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
   `/var/run/frr/reload-*.txt` scratch file under systemd capability bounding.
 - Classified `frr-reload.py` permission failures as
   `FRRReloadPermissionDenied` instead of the generic `FRRReloadFailed`.
+- Removed stale routerd-managed WireGuard interfaces and peer statuses when
+  `WireGuardInterface` / `WireGuardPeer` resources disappear from the config,
+  so deleting the resources and restarting `routerd serve` no longer requires
+  manually editing the state DB.
 
 ### Changed
 

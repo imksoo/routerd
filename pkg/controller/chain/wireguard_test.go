@@ -11,6 +11,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"routerd/pkg/api"
+	routerstate "routerd/pkg/state"
 	"routerd/pkg/wireguard"
 )
 
@@ -21,6 +22,28 @@ func mustWireGuardRouter(t *testing.T, body string) *api.Router {
 		t.Fatal(err)
 	}
 	return &router
+}
+
+func (s mapStore) ListObjectStatuses() ([]routerstate.ObjectStatus, error) {
+	out := make([]routerstate.ObjectStatus, 0, len(s))
+	for key, status := range s {
+		parts := strings.Split(key, "/")
+		if len(parts) != 4 {
+			continue
+		}
+		out = append(out, routerstate.ObjectStatus{
+			APIVersion: parts[0] + "/" + parts[1],
+			Kind:       parts[2],
+			Name:       parts[3],
+			Status:     status,
+		})
+	}
+	return out, nil
+}
+
+func (s mapStore) DeleteObject(apiVersion, kind, name string) error {
+	delete(s, apiVersion+"/"+kind+"/"+name)
+	return nil
 }
 
 func TestWireGuardControllerAppliesInterfaceAndPeers(t *testing.T) {
@@ -101,6 +124,78 @@ spec:
 		if !found {
 			t.Fatalf("missing command prefix %q in %#v", want, calls)
 		}
+	}
+}
+
+func TestWireGuardControllerDeletesStaleManagedInterfaceAndPeer(t *testing.T) {
+	router := mustWireGuardRouter(t, `
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata: {name: test}
+spec:
+  resources: []
+`)
+	store := mapStore{}
+	store.SaveObjectStatus(api.NetAPIVersion, "WireGuardInterface", "old", map[string]any{
+		"phase":     "Up",
+		"ifname":    "wg-old",
+		"managedBy": "routerd",
+	})
+	store.SaveObjectStatus(api.NetAPIVersion, "WireGuardPeer", "old-peer", map[string]any{
+		"phase":     "Connected",
+		"interface": "old",
+		"managedBy": "routerd",
+	})
+	var calls []string
+	controller := WireGuardController{
+		Router: router,
+		Store:  store,
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			calls = append(calls, name+" "+strings.Join(args, " "))
+			return []byte("ok"), nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 1 || calls[0] != "ip link delete dev wg-old" {
+		t.Fatalf("calls = %#v, want stale link delete", calls)
+	}
+	if _, ok := store[api.NetAPIVersion+"/WireGuardInterface/old"]; ok {
+		t.Fatalf("stale interface status was not deleted: %#v", store)
+	}
+	if _, ok := store[api.NetAPIVersion+"/WireGuardPeer/old-peer"]; ok {
+		t.Fatalf("stale peer status was not deleted: %#v", store)
+	}
+}
+
+func TestWireGuardControllerKeepsAdoptedStaleInterface(t *testing.T) {
+	router := mustWireGuardRouter(t, `
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata: {name: test}
+spec:
+  resources: []
+`)
+	store := mapStore{}
+	store.SaveObjectStatus(api.NetAPIVersion, "WireGuardInterface", "external", map[string]any{
+		"phase":     "Observed",
+		"ifname":    "wg-ext",
+		"managedBy": "external",
+	})
+	controller := WireGuardController{
+		Router: router,
+		Store:  store,
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			t.Fatalf("adopted stale interface must not be deleted, got %s %v", name, args)
+			return nil, nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := store[api.NetAPIVersion+"/WireGuardInterface/external"]; !ok {
+		t.Fatalf("adopted interface status was deleted: %#v", store)
 	}
 }
 
