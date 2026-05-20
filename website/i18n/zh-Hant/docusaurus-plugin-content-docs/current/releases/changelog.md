@@ -10,6 +10,8 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 
 ## Unreleased
 
+## v20260521.0843
+
 ### 修正
 
 - 修正 Linux kernel 以 `/128` 等不同 prefix length 顯示既有 delegated host
