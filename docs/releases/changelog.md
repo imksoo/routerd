@@ -10,6 +10,14 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- Retried transient FRR reload lock failures during BGP controller reconcile so
+  first boot can reach `bgpd` configuration without manual `frr-reload.py`.
+- Kept the Alpine Live ISO DHCP client running after the initial lease, derived
+  a stable DHCP hostname for live routers, and left DHCP option 61 unset by
+  default so Windows DHCP reservations continue to match the Ethernet MAC.
+
 ## v20260520.1737
 
 ### Added

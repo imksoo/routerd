@@ -10,6 +10,14 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 
 ## Unreleased
 
+### 修正
+
+- 在 BGP controller reconcile 期間重試暫時性的 FRR reload lock 失敗，讓初次
+  boot 也能不靠手動 `frr-reload.py` 到達 `bgpd` config。
+- 讓 Alpine Live ISO 的 DHCP client 在取得初始 lease 後持續常駐，為 live
+  router 派生穩定 DHCP hostname，且預設不送 DHCP option 61，讓 Windows DHCP
+  reservation 繼續以 Ethernet MAC 匹配。
+
 ## v20260520.1737
 
 ### 新增
