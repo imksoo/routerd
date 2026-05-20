@@ -67,6 +67,7 @@ type bgpGracefulRestart struct {
 
 type bgpBFD struct {
 	Enabled          bool
+	Interface        string
 	MinRxMS          int
 	MinTxMS          int
 	DetectMultiplier int
@@ -98,6 +99,8 @@ func bgpRouterConfigs(router *api.Router) ([]bgpRouterConfig, error) {
 	}
 	byName := map[string]*bgpRouterConfig{}
 	vrfs := bgpVRFIfNames(router)
+	bfdSpecs := bgpBFDSpecs(router)
+	ifNames := bgpInterfaceNames(router)
 	var names []string
 	for _, res := range router.Spec.Resources {
 		if res.APIVersion != api.NetAPIVersion || res.Kind != "BGPRouter" {
@@ -172,7 +175,7 @@ func bgpRouterConfigs(router *api.Router) ([]bgpRouterConfig, error) {
 				ExportPrefixes: sortedUniqueStrings(spec.ExportPolicy.AllowedPrefixes),
 				Timers:         renderBGPTimers(spec.Timers, cfg.Timers),
 				Communities:    renderBGPCommunities(spec.Communities, cfg.Communities),
-				BFD:            renderBGPBFD(spec.BFD),
+				BFD:            renderBGPBFDResource(res.ID(), peer, spec.BFD, bfdSpecs, ifNames),
 				VRFName:        cfg.VRFName,
 			})
 		}
@@ -376,6 +379,9 @@ func writeFRRBFDPeers(buf *bytes.Buffer, peers []bgpPeerConfig) {
 	buf.WriteString("bfd\n")
 	for _, peer := range bfdPeers {
 		line := " peer " + peer.Peer
+		if peer.BFD.Interface != "" {
+			line += " interface " + peer.BFD.Interface
+		}
 		if peer.VRFName != "" {
 			line += " vrf " + peer.VRFName
 		}
@@ -408,6 +414,42 @@ func bgpVRFIfNames(router *api.Router) map[string]string {
 			continue
 		}
 		out[res.Metadata.Name] = defaultString(spec.IfName, res.Metadata.Name)
+	}
+	return out
+}
+
+func bgpInterfaceNames(router *api.Router) map[string]string {
+	out := map[string]string{}
+	if router == nil {
+		return out
+	}
+	for _, res := range router.Spec.Resources {
+		if res.APIVersion != api.NetAPIVersion || res.Kind != "Interface" {
+			continue
+		}
+		spec, err := res.InterfaceSpec()
+		if err != nil {
+			continue
+		}
+		out[res.Metadata.Name] = defaultString(spec.IfName, res.Metadata.Name)
+	}
+	return out
+}
+
+func bgpBFDSpecs(router *api.Router) map[string]api.BFDSpec {
+	out := map[string]api.BFDSpec{}
+	if router == nil {
+		return out
+	}
+	for _, res := range router.Spec.Resources {
+		if res.APIVersion != api.NetAPIVersion || res.Kind != "BFD" {
+			continue
+		}
+		spec, err := res.BFDSpec()
+		if err != nil {
+			continue
+		}
+		out[res.Metadata.Name] = spec
 	}
 	return out
 }
@@ -590,15 +632,64 @@ func renderBGPCommunities(spec api.BGPCommunitiesSpec, fallback bgpCommunities) 
 	return out
 }
 
-func renderBGPBFD(spec api.BGPBFDSpec) bgpBFD {
-	enabled := spec.Enabled != nil && *spec.Enabled
-	out := bgpBFD{Enabled: enabled, DetectMultiplier: spec.DetectMultiplier}
-	if enabled && out.DetectMultiplier == 0 {
-		out.DetectMultiplier = 3
+func renderBGPBFDResource(peerResourceID, peerAddress, ref string, specs map[string]api.BFDSpec, ifNames map[string]string) bgpBFD {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return bgpBFD{}
 	}
-	out.MinRxMS = durationMilliseconds(spec.MinRxInterval)
-	out.MinTxMS = durationMilliseconds(spec.MinTxInterval)
+	_, name, ok := strings.Cut(ref, "/")
+	if !ok {
+		return bgpBFD{}
+	}
+	spec, ok := specs[name]
+	if !ok || !bfdAppliesToPeer(spec.Peer, peerResourceID, peerAddress) {
+		return bgpBFD{}
+	}
+	out := bgpBFD{
+		Enabled:          true,
+		DetectMultiplier: spec.DetectMultiplier,
+		MinRxMS:          durationMilliseconds(spec.MinRx),
+		MinTxMS:          durationMilliseconds(spec.MinTx),
+	}
+	switch spec.Profile {
+	case "fast":
+		out.MinRxMS = defaultInt(out.MinRxMS, 300)
+		out.MinTxMS = defaultInt(out.MinTxMS, 300)
+		out.DetectMultiplier = defaultInt(out.DetectMultiplier, 3)
+	case "slow":
+		out.MinRxMS = defaultInt(out.MinRxMS, 3000)
+		out.MinTxMS = defaultInt(out.MinTxMS, 3000)
+		out.DetectMultiplier = defaultInt(out.DetectMultiplier, 3)
+	default:
+		out.MinRxMS = defaultInt(out.MinRxMS, 1000)
+		out.MinTxMS = defaultInt(out.MinTxMS, 1000)
+		out.DetectMultiplier = defaultInt(out.DetectMultiplier, 3)
+	}
+	if spec.Interface != "" {
+		refKind, refName := bgpInterfaceRefName(spec.Interface)
+		if refKind == "Interface" && ifNames[refName] != "" {
+			out.Interface = ifNames[refName]
+		} else {
+			out.Interface = strings.TrimSpace(spec.Interface)
+		}
+	}
 	return out
+}
+
+func bfdAppliesToPeer(specPeer, peerResourceID, peerAddress string) bool {
+	specPeer = strings.TrimSpace(specPeer)
+	if kind, name, ok := strings.Cut(specPeer, "/"); ok {
+		return kind == "BGPPeer" && peerResourceID == api.NetAPIVersion+"/BGPPeer/"+name
+	}
+	return specPeer == strings.TrimSpace(peerAddress)
+}
+
+func bgpInterfaceRefName(value string) (string, string) {
+	value = strings.TrimSpace(value)
+	if kind, name, ok := strings.Cut(value, "/"); ok {
+		return kind, name
+	}
+	return "Interface", value
 }
 
 func FRRDaemons(existing []byte, router *api.Router) ([]byte, error) {
@@ -667,7 +758,7 @@ func routerUsesBFD(router *api.Router) bool {
 			continue
 		}
 		spec, err := res.BGPPeerSpec()
-		if err == nil && spec.BFD.Enabled != nil && *spec.BFD.Enabled {
+		if err == nil && strings.TrimSpace(spec.BFD) != "" {
 			return true
 		}
 	}

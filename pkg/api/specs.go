@@ -542,15 +542,18 @@ type BGPPeerSpec struct {
 	ExportPolicy BGPExportPolicySpec   `yaml:"exportPolicy,omitempty" json:"exportPolicy,omitempty"`
 	Timers       BGPTimersSpec         `yaml:"timers,omitempty" json:"timers,omitempty"`
 	Communities  BGPCommunitiesSpec    `yaml:"communities,omitempty" json:"communities,omitempty"`
-	BFD          BGPBFDSpec            `yaml:"bfd,omitempty" json:"bfd,omitempty"`
+	BFD          string                `yaml:"bfd,omitempty" json:"bfd,omitempty"`
 	When         ResourceWhenSpec      `yaml:"when,omitempty" json:"when,omitempty"`
 }
 
-type BGPBFDSpec struct {
-	Enabled          *bool  `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	MinRxInterval    string `yaml:"minRxInterval,omitempty" json:"minRxInterval,omitempty"`
-	MinTxInterval    string `yaml:"minTxInterval,omitempty" json:"minTxInterval,omitempty"`
-	DetectMultiplier int    `yaml:"detectMultiplier,omitempty" json:"detectMultiplier,omitempty" jsonschema:"minimum=1,maximum=50"`
+type BFDSpec struct {
+	Peer             string           `yaml:"peer" json:"peer"`
+	Interface        string           `yaml:"interface,omitempty" json:"interface,omitempty"`
+	Profile          string           `yaml:"profile,omitempty" json:"profile,omitempty" jsonschema:"enum=,enum=fast,enum=normal,enum=slow"`
+	MinRx            string           `yaml:"minRx,omitempty" json:"minRx,omitempty"`
+	MinTx            string           `yaml:"minTx,omitempty" json:"minTx,omitempty"`
+	DetectMultiplier int              `yaml:"detectMultiplier,omitempty" json:"detectMultiplier,omitempty" jsonschema:"minimum=1,maximum=50"`
+	When             ResourceWhenSpec `yaml:"when,omitempty" json:"when,omitempty"`
 }
 
 type SecretValueSourceSpec struct {
@@ -1334,10 +1337,17 @@ type ClientPolicyIsolationSpec struct {
 }
 
 type ClientPolicyClassSpec struct {
-	MACAddress      string `yaml:"macAddress" json:"macAddress"`
-	As              string `yaml:"as,omitempty" json:"as,omitempty" jsonschema:"enum=,enum=guest,enum=trusted"`
-	Name            string `yaml:"name,omitempty" json:"name,omitempty"`
-	IPv4Reservation string `yaml:"ipv4Reservation,omitempty" json:"ipv4Reservation,omitempty"`
+	Name            string                     `yaml:"name,omitempty" json:"name,omitempty"`
+	Mode            string                     `yaml:"mode" json:"mode" jsonschema:"enum=trusted,enum=guest,enum=isolated"`
+	Match           ClientPolicyClassMatchSpec `yaml:"match" json:"match"`
+	IPv4Reservation string                     `yaml:"ipv4Reservation,omitempty" json:"ipv4Reservation,omitempty"`
+}
+
+type ClientPolicyClassMatchSpec struct {
+	MACs             []string `yaml:"macs,omitempty" json:"macs,omitempty"`
+	OUIPrefixes      []string `yaml:"ouiPrefixes,omitempty" json:"ouiPrefixes,omitempty"`
+	HostnamePatterns []string `yaml:"hostnamePatterns,omitempty" json:"hostnamePatterns,omitempty"`
+	DHCPFingerprints []string `yaml:"dhcpFingerprints,omitempty" json:"dhcpFingerprints,omitempty"`
 }
 
 type FirewallRuleSpec struct {
@@ -1512,6 +1522,10 @@ func (r Resource) BGPRouterSpec() (BGPRouterSpec, error) {
 
 func (r Resource) BGPPeerSpec() (BGPPeerSpec, error) {
 	return specAs[BGPPeerSpec](r)
+}
+
+func (r Resource) BFDSpec() (BFDSpec, error) {
+	return specAs[BFDSpec](r)
 }
 
 func (r Resource) DHCPv4ClientSpec() (DHCPv4ClientSpec, error) {

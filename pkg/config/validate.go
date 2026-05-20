@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/netip"
 	"net/url"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -54,6 +55,7 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 	dsliteTunnels := map[string]bool{}
 	healthChecks := map[string]bool{}
 	bgpRouters := map[string]bool{}
+	bfdSpecs := map[string]api.BFDSpec{}
 	vrfs := map[string]bool{}
 	zones := map[string]bool{}
 	dnsZones := map[string]bool{}
@@ -263,6 +265,13 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "BGPRouter" {
 			bgpRouters[res.Metadata.Name] = true
 		}
+		if res.APIVersion == api.NetAPIVersion && res.Kind == "BFD" {
+			spec, err := res.BFDSpec()
+			if err != nil {
+				return err
+			}
+			bfdSpecs[res.Metadata.Name] = spec
+		}
 		if res.APIVersion == api.FirewallAPIVersion && res.Kind == "FirewallZone" {
 			zones[res.Metadata.Name] = true
 		}
@@ -316,6 +325,7 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 		}
 	}
 
+	bfdRefs := map[string]int{}
 	for _, res := range router.Spec.Resources {
 		switch res.Kind {
 		case "IPv4StaticAddress", "VirtualAddress", "DHCPv4Client", "IPv4StaticRoute", "IPv6StaticRoute", "DHCPv6Address", "IPv6RAAddress", "DHCPv6PrefixDelegation", "IPv6DelegatedAddress", "DSLiteTunnel", "PPPoESession":
@@ -356,6 +366,34 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 			kind, name, _ := strings.Cut(strings.TrimSpace(spec.RouterRef), "/")
 			if kind != "BGPRouter" || !bgpRouters[name] {
 				return fmt.Errorf("%s spec.routerRef references missing BGPRouter %q", res.ID(), spec.RouterRef)
+			}
+			if strings.TrimSpace(spec.BFD) != "" {
+				refKind, refName, ok := strings.Cut(strings.TrimSpace(spec.BFD), "/")
+				bfdSpec, exists := bfdSpecs[refName]
+				if !ok || refKind != "BFD" || !exists {
+					return fmt.Errorf("%s spec.bfd references missing BFD %q", res.ID(), spec.BFD)
+				}
+				if !bfdSpecMatchesBGPPeer(bfdSpec, res.Metadata.Name, spec.Peers) {
+					return fmt.Errorf("%s spec.bfd references BFD %q whose spec.peer does not match this BGPPeer or one of its peer addresses", res.ID(), spec.BFD)
+				}
+				bfdRefs[refName]++
+			}
+		}
+		if res.Kind == "BFD" {
+			spec, err := res.BFDSpec()
+			if err != nil {
+				return err
+			}
+			if kind, name, ok := strings.Cut(strings.TrimSpace(spec.Peer), "/"); ok {
+				if kind != "BGPPeer" || !seen[api.NetAPIVersion+"/BGPPeer/"+name] {
+					return fmt.Errorf("%s spec.peer references missing BGPPeer %q", res.ID(), spec.Peer)
+				}
+			}
+			if spec.Interface != "" {
+				refKind, refName := splitFirewallInterfaceRef(spec.Interface)
+				if refKind != "Interface" || !interfaces[refName] {
+					return fmt.Errorf("%s spec.interface references missing Interface %q", res.ID(), spec.Interface)
+				}
 			}
 		}
 		if res.Kind == "Bridge" {
@@ -708,6 +746,11 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 			}
 		}
 	}
+	for name := range bfdSpecs {
+		if bfdRefs[name] == 0 {
+			return fmt.Errorf("%s/BFD/%s is not referenced by any BGPPeer spec.bfd", api.NetAPIVersion, name)
+		}
+	}
 	return nil
 }
 
@@ -726,6 +769,36 @@ func splitFirewallInterfaceRef(ref string) (string, string) {
 		return kind, name
 	}
 	return "Interface", ref
+}
+
+func normalizeOUIPrefix(value string) (string, error) {
+	parts := strings.Split(strings.TrimSpace(value), ":")
+	if len(parts) != 3 {
+		return "", fmt.Errorf("must use three hex octets such as 18:ec:e7")
+	}
+	for i, part := range parts {
+		if len(part) != 2 {
+			return "", fmt.Errorf("octet %d must contain two hex digits", i)
+		}
+		if _, err := strconv.ParseUint(part, 16, 8); err != nil {
+			return "", err
+		}
+		parts[i] = strings.ToLower(part)
+	}
+	return strings.Join(parts, ":"), nil
+}
+
+func bfdSpecMatchesBGPPeer(spec api.BFDSpec, peerName string, peerAddresses []string) bool {
+	peer := strings.TrimSpace(spec.Peer)
+	if kind, name, ok := strings.Cut(peer, "/"); ok {
+		return kind == "BGPPeer" && name == peerName
+	}
+	for _, address := range peerAddresses {
+		if peer == strings.TrimSpace(address) {
+			return true
+		}
+	}
+	return false
 }
 
 func validateApplyPolicy(spec api.ApplyPolicySpec) error {
@@ -1671,10 +1744,21 @@ func validateResource(res api.Resource, targetOS platform.OS) error {
 		if _, err := validateBGPPrefixList(res.ID(), "spec.exportPolicy.allowedPrefixes", spec.ExportPolicy.AllowedPrefixes); err != nil {
 			return err
 		}
-		if err := validateBGPBFD(res.ID(), spec.BFD); err != nil {
-			return err
+		if strings.TrimSpace(spec.BFD) != "" && !strings.HasPrefix(strings.TrimSpace(spec.BFD), "BFD/") {
+			return fmt.Errorf("%s spec.bfd must reference BFD/<name>", res.ID())
 		}
 		if err := validateSecretValueSource(res.ID(), "spec.password", spec.Password, "spec.passwordFrom", spec.PasswordFrom); err != nil {
+			return err
+		}
+	case "BFD":
+		if res.APIVersion != api.NetAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
+		}
+		spec, err := res.BFDSpec()
+		if err != nil {
+			return err
+		}
+		if err := validateBFD(res.ID(), spec); err != nil {
 			return err
 		}
 	case "DHCPv6Address", "IPv6RAAddress":
@@ -3051,19 +3135,54 @@ func validateResource(res api.Resource, targetOS platform.OS) error {
 			seenMACs[normalizedMAC] = true
 		}
 		for i, entry := range spec.Classification {
-			mac, err := net.ParseMAC(entry.MACAddress)
-			if err != nil {
-				return fmt.Errorf("%s spec.classification[%d].macAddress is invalid: %w", res.ID(), i, err)
-			}
-			normalizedMAC := strings.ToLower(mac.String())
-			if seenMACs[normalizedMAC] {
-				return fmt.Errorf("%s spec.classification[%d].macAddress duplicates %q", res.ID(), i, normalizedMAC)
-			}
-			seenMACs[normalizedMAC] = true
-			switch entry.As {
-			case "", "guest", "trusted":
+			switch entry.Mode {
+			case "trusted", "guest", "isolated":
 			default:
-				return fmt.Errorf("%s spec.classification[%d].as must be guest or trusted", res.ID(), i)
+				return fmt.Errorf("%s spec.classification[%d].mode must be trusted, guest, or isolated", res.ID(), i)
+			}
+			if len(entry.Match.MACs) == 0 && len(entry.Match.OUIPrefixes) == 0 && len(entry.Match.HostnamePatterns) == 0 && len(entry.Match.DHCPFingerprints) == 0 {
+				return fmt.Errorf("%s spec.classification[%d].match must contain at least one selector", res.ID(), i)
+			}
+			for j, value := range entry.Match.MACs {
+				mac, err := net.ParseMAC(value)
+				if err != nil {
+					return fmt.Errorf("%s spec.classification[%d].match.macs[%d] is invalid: %w", res.ID(), i, j, err)
+				}
+				normalizedMAC := strings.ToLower(mac.String())
+				if seenMACs[normalizedMAC] {
+					return fmt.Errorf("%s spec.classification[%d].match.macs[%d] duplicates %q", res.ID(), i, j, normalizedMAC)
+				}
+				seenMACs[normalizedMAC] = true
+			}
+			seenOUI := map[string]bool{}
+			for j, value := range entry.Match.OUIPrefixes {
+				normalized, err := normalizeOUIPrefix(value)
+				if err != nil {
+					return fmt.Errorf("%s spec.classification[%d].match.ouiPrefixes[%d] is invalid: %w", res.ID(), i, j, err)
+				}
+				if seenOUI[normalized] {
+					return fmt.Errorf("%s spec.classification[%d].match.ouiPrefixes[%d] duplicates %q", res.ID(), i, j, normalized)
+				}
+				seenOUI[normalized] = true
+			}
+			for j, pattern := range entry.Match.HostnamePatterns {
+				if strings.TrimSpace(pattern) == "" {
+					return fmt.Errorf("%s spec.classification[%d].match.hostnamePatterns[%d] is required", res.ID(), i, j)
+				}
+				if _, err := path.Match(pattern, "routerd-test-hostname"); err != nil {
+					return fmt.Errorf("%s spec.classification[%d].match.hostnamePatterns[%d] is invalid: %w", res.ID(), i, j, err)
+				}
+			}
+			seenFingerprints := map[string]bool{}
+			for j, value := range entry.Match.DHCPFingerprints {
+				value = strings.TrimSpace(value)
+				if value == "" || strings.ContainsAny(value, " \t\n\r") {
+					return fmt.Errorf("%s spec.classification[%d].match.dhcpFingerprints[%d] must be a non-empty token", res.ID(), i, j)
+				}
+				if seenFingerprints[value] {
+					return fmt.Errorf("%s spec.classification[%d].match.dhcpFingerprints[%d] duplicates %q", res.ID(), i, j, value)
+				}
+				seenFingerprints[value] = true
 			}
 			if strings.Contains(entry.IPv4Reservation, "/") {
 				return fmt.Errorf("%s spec.classification[%d].ipv4Reservation must be a DHCPv4Reservation name, not Kind/name", res.ID(), i)
@@ -3259,6 +3378,9 @@ func resourceWhens(res api.Resource) []resourceWhenRef {
 		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
 	case "BGPPeer":
 		spec, _ := res.BGPPeerSpec()
+		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
+	case "BFD":
+		spec, _ := res.BFDSpec()
 		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
 	case "ClusterNetworkRoute":
 		spec, _ := res.ClusterNetworkRouteSpec()

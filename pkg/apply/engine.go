@@ -100,6 +100,8 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 			e.observeVXLANTunnel(res, aliases, includePlan, &rr)
 		case "IPv4StaticAddress":
 			e.observeIPv4Static(res, aliases, policies, overlaps[res.ID()], includePlan, &rr)
+		case "BFD":
+			e.observeBFD(res, includePlan, &rr)
 		case "DHCPv4Client":
 			e.observeDHCPv4Client(res, aliases, policies, includePlan, &rr)
 		case "DHCPv4Server":
@@ -543,6 +545,23 @@ func (e *Engine) observeDHCPv4Relay(res api.Resource, aliases map[string]string,
 	rr.Observed["upstream"] = spec.Upstream
 	if includePlan {
 		rr.Plan = append(rr.Plan, fmt.Sprintf("relay DHCP from %s to %s", strings.Join(ifnames, ","), spec.Upstream))
+	}
+}
+
+func (e *Engine) observeBFD(res api.Resource, includePlan bool, rr *ResourceResult) {
+	spec, err := res.BFDSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	rr.Observed["peer"] = spec.Peer
+	rr.Observed["profile"] = defaultString(spec.Profile, "normal")
+	if spec.Interface != "" {
+		rr.Observed["interface"] = spec.Interface
+	}
+	if includePlan {
+		rr.Plan = append(rr.Plan, "render FRR BFD session")
 	}
 }
 

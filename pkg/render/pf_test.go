@@ -215,8 +215,8 @@ func TestPFClientPolicyUsesIPv4Reservations(t *testing.T) {
 				Interfaces:    []string{"lan"},
 				GuestServices: []string{"dns", "dhcp", "ntp"},
 				Classification: []api.ClientPolicyClassSpec{{
-					MACAddress:      "02:00:00:00:00:44",
-					As:              "guest",
+					Mode:            "guest",
+					Match:           api.ClientPolicyClassMatchSpec{MACs: []string{"02:00:00:00:00:44"}},
 					IPv4Reservation: "guest-phone",
 				}},
 			},
@@ -263,8 +263,8 @@ func TestPFClientPolicyRequiresReservation(t *testing.T) {
 				Mode:       "include",
 				Interfaces: []string{"lan"},
 				Classification: []api.ClientPolicyClassSpec{{
-					MACAddress: "02:00:00:00:00:44",
-					As:         "guest",
+					Mode:  "guest",
+					Match: api.ClientPolicyClassMatchSpec{MACs: []string{"02:00:00:00:00:44"}},
 				}},
 			},
 		},

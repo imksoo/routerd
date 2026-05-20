@@ -566,7 +566,7 @@ func (c *Controller) bgpRouterUsesBFD(routerName string) bool {
 			continue
 		}
 		spec, err := resource.BGPPeerSpec()
-		if err != nil || !(spec.BFD.Enabled != nil && *spec.BFD.Enabled) {
+		if err != nil || strings.TrimSpace(spec.BFD) == "" {
 			continue
 		}
 		_, name, ok := strings.Cut(strings.TrimSpace(spec.RouterRef), "/")

@@ -284,6 +284,15 @@ func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]str
 			artifact("frr.config", "/run/routerd/frr/routerd.conf", resource.ActionEnsure, "frr-reload", nil),
 			artifact("frr.bgp.peer", spec.RouterRef+"/"+res.Metadata.Name, resource.ActionEnsure, "frr", nil),
 		}
+	case "BFD":
+		spec, err := res.BFDSpec()
+		if err != nil {
+			return nil
+		}
+		return []resource.Intent{
+			artifact("frr.config", "/run/routerd/frr/routerd.conf", resource.ActionEnsure, "frr-reload", nil),
+			artifact("frr.bfd.peer", res.Metadata.Name, resource.ActionEnsure, "frr", map[string]string{"peer": spec.Peer}),
+		}
 	case "DHCPv4Client":
 		return []resource.Intent{artifact("routerd.dhcpv4.client", res.Metadata.Name, resource.ActionEnsure, "routerd-dhcpv4-client", nil)}
 	case "WireGuardInterface":

@@ -47,8 +47,15 @@ spec:
         peers:
           - 192.168.50.21
           - 192.168.50.22
-        bfd:
-          enabled: true
-          minRxInterval: 300ms
-          minTxInterval: 300ms
-          detectMultiplier: 3
+        bfd: BFD/fabric-speakers
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: BFD
+      metadata:
+        name: fabric-speakers
+      spec:
+        peer: BGPPeer/fabric-speakers
+        profile: fast
+        minRx: 300ms
+        minTx: 300ms
+        detectMultiplier: 3

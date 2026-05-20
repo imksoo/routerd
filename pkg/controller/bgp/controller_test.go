@@ -874,7 +874,6 @@ func bgpRouter() *api.Router {
 }
 
 func bgpBFDRouter() *api.Router {
-	enabled := true
 	return &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"},
@@ -892,12 +891,18 @@ func bgpBFDRouter() *api.Router {
 				RouterRef: "BGPRouter/lan",
 				PeerASN:   64513,
 				Peers:     []string{"10.0.0.21"},
-				BFD: api.BGPBFDSpec{
-					Enabled:          &enabled,
-					MinRxInterval:    "300ms",
-					MinTxInterval:    "300ms",
-					DetectMultiplier: 3,
-				},
+				BFD:       "BFD/k8s-fast",
+			},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BFD"},
+			Metadata: api.ObjectMeta{Name: "k8s-fast"},
+			Spec: api.BFDSpec{
+				Peer:             "BGPPeer/k8s",
+				Profile:          "fast",
+				MinRx:            "300ms",
+				MinTx:            "300ms",
+				DetectMultiplier: 3,
 			},
 		},
 	}}}

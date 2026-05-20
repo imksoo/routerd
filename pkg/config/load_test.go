@@ -164,6 +164,34 @@ spec:
 	}
 }
 
+func TestLoadRejectsBGPPeerInlineBFD(t *testing.T) {
+	path := writeConfig(t, `
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: test
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: BGPPeer
+      metadata:
+        name: fabric
+      spec:
+        routerRef: BGPRouter/lan
+        peerASN: 64513
+        peers: [192.0.2.2]
+        bfd:
+          enabled: true
+`)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected BGPPeer inline BFD to be rejected")
+	}
+	if !strings.Contains(err.Error(), "spec.bfd inline BFD settings") || !strings.Contains(err.Error(), "BFD/<name>") {
+		t.Fatalf("error = %v, want BFD migration guide", err)
+	}
+}
+
 func TestLoadRejectsUnknownResourceKind(t *testing.T) {
 	path := writeConfig(t, `
 apiVersion: routerd.net/v1alpha1

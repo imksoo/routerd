@@ -284,8 +284,8 @@ func TestFRRConfigRendersMultipleBGPRouterInstances(t *testing.T) {
 }
 
 func TestFRRConfigRendersBFDPeerAndDaemons(t *testing.T) {
-	enabled := true
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.BGPRouterSpec{
 			ASN:      64512,
 			RouterID: "10.0.0.1",
@@ -294,12 +294,15 @@ func TestFRRConfigRendersBFDPeerAndDaemons(t *testing.T) {
 			RouterRef: "BGPRouter/lan",
 			PeerASN:   64513,
 			Peers:     []string{"10.0.0.21"},
-			BFD: api.BGPBFDSpec{
-				Enabled:          &enabled,
-				MinRxInterval:    "300ms",
-				MinTxInterval:    "300ms",
-				DetectMultiplier: 3,
-			},
+			BFD:       "BFD/fabric-fast",
+		}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BFD"}, Metadata: api.ObjectMeta{Name: "fabric-fast"}, Spec: api.BFDSpec{
+			Peer:             "BGPPeer/fabric",
+			Interface:        "Interface/lan",
+			Profile:          "fast",
+			MinRx:            "300ms",
+			MinTx:            "300ms",
+			DetectMultiplier: 3,
 		}},
 	}}}
 	data, err := FRRConfig(router)
@@ -308,7 +311,7 @@ func TestFRRConfigRendersBFDPeerAndDaemons(t *testing.T) {
 	}
 	got := string(data)
 	for _, want := range []string{
-		"bfd\n peer 10.0.0.21",
+		"bfd\n peer 10.0.0.21 interface ens19",
 		"  receive-interval 300",
 		"  transmit-interval 300",
 		"  detect-multiplier 3",

@@ -2575,24 +2575,7 @@
                     "additionalProperties": false,
                     "properties": {
                       "bfd": {
-                        "additionalProperties": false,
-                        "properties": {
-                          "detectMultiplier": {
-                            "maximum": 50,
-                            "minimum": 1,
-                            "type": "integer"
-                          },
-                          "enabled": {
-                            "type": "boolean"
-                          },
-                          "minRxInterval": {
-                            "type": "string"
-                          },
-                          "minTxInterval": {
-                            "type": "string"
-                          }
-                        },
-                        "type": "object"
+                        "type": "string"
                       },
                       "communities": {
                         "additionalProperties": false,
@@ -2737,6 +2720,119 @@
                       "routerRef",
                       "peerASN",
                       "peers"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "net.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "BFD",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "detectMultiplier": {
+                        "maximum": 50,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "interface": {
+                        "type": "string"
+                      },
+                      "minRx": {
+                        "type": "string"
+                      },
+                      "minTx": {
+                        "type": "string"
+                      },
+                      "peer": {
+                        "type": "string"
+                      },
+                      "profile": {
+                        "enum": [
+                          "",
+                          "fast",
+                          "normal",
+                          "slow"
+                        ],
+                        "type": "string"
+                      },
+                      "when": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "state": {
+                            "additionalProperties": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "contains": {
+                                  "type": "string"
+                                },
+                                "equals": {
+                                  "type": "string"
+                                },
+                                "exists": {
+                                  "type": "boolean"
+                                },
+                                "for": {
+                                  "type": "string"
+                                },
+                                "in": {
+                                  "items": {
+                                    "type": "string"
+                                  },
+                                  "type": "array"
+                                },
+                                "status": {
+                                  "enum": [
+                                    "set",
+                                    "unset",
+                                    "unknown"
+                                  ],
+                                  "type": "string"
+                                }
+                              },
+                              "type": "object"
+                            },
+                            "type": "object"
+                          }
+                        },
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "peer"
                     ],
                     "type": "object"
                   },
@@ -7187,18 +7283,45 @@
                         "items": {
                           "additionalProperties": false,
                           "properties": {
-                            "as": {
-                              "enum": [
-                                "",
-                                "guest",
-                                "trusted"
-                              ],
-                              "type": "string"
-                            },
                             "ipv4Reservation": {
                               "type": "string"
                             },
-                            "macAddress": {
+                            "match": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "dhcpFingerprints": {
+                                  "items": {
+                                    "type": "string"
+                                  },
+                                  "type": "array"
+                                },
+                                "hostnamePatterns": {
+                                  "items": {
+                                    "type": "string"
+                                  },
+                                  "type": "array"
+                                },
+                                "macs": {
+                                  "items": {
+                                    "type": "string"
+                                  },
+                                  "type": "array"
+                                },
+                                "ouiPrefixes": {
+                                  "items": {
+                                    "type": "string"
+                                  },
+                                  "type": "array"
+                                }
+                              },
+                              "type": "object"
+                            },
+                            "mode": {
+                              "enum": [
+                                "trusted",
+                                "guest",
+                                "isolated"
+                              ],
                               "type": "string"
                             },
                             "name": {
@@ -7206,7 +7329,8 @@
                             }
                           },
                           "required": [
-                            "macAddress"
+                            "mode",
+                            "match"
                           ],
                           "type": "object"
                         },

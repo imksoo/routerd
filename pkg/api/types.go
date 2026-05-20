@@ -225,7 +225,18 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 		}
 		r.Spec = spec
 	case "BGPPeer":
+		if bfd := mappingValueNode(&raw.Spec, "bfd"); bfd != nil {
+			if bfd.Kind != yaml.ScalarNode || bfd.Tag != "!!str" {
+				return fmt.Errorf("%s spec.bfd inline BFD settings are not supported; create a BFD/<name> resource and reference it with spec.bfd", r.ID())
+			}
+		}
 		var spec BGPPeerSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	case "BFD":
+		var spec BFDSpec
 		if err := raw.Spec.Decode(&spec); err != nil {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
@@ -501,13 +512,17 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 }
 
 func hasMappingKey(node *yaml.Node, key string) bool {
+	return mappingValueNode(node, key) != nil
+}
+
+func mappingValueNode(node *yaml.Node, key string) *yaml.Node {
 	if node == nil || node.Kind != yaml.MappingNode {
-		return false
+		return nil
 	}
 	for i := 0; i+1 < len(node.Content); i += 2 {
 		if node.Content[i].Value == key {
-			return true
+			return node.Content[i+1]
 		}
 	}
-	return false
+	return nil
 }

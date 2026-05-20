@@ -168,6 +168,7 @@ for DoH or DoT endpoint name resolution.
 | `ClusterNetworkRoute` | Expands Kubernetes Pod and Service CIDRs into static IPv4 routes through worker next hops. |
 | `BGPRouter` | Declares a local BGP router. The initial backend is FRR with default-deny import policy. |
 | `BGPPeer` | Declares FRR-managed BGP peers for a `BGPRouter`, for example Kubernetes BGP speakers. |
+| `BFD` | Declares one FRR BFD session profile and optional interface binding for BGP peers that reference it. |
 | `NAT44Rule` | Performs IPv4 NAPT in the nftables `routerd_nat` table. |
 | `PortForward` | Publishes one WAN-side IPv4 TCP/UDP port to one internal IPv4 target with DNAT. |
 | `IngressService` | Publishes one WAN-side IPv4 TCP/UDP service. Multiple backends, TCP/HTTP health checks, and `failover`, `sourceHash`, or `random` backend selection are accepted. |
@@ -211,15 +212,17 @@ prefer `destinationPorts`.
 `excludeDestinationSetRefs`. This allows internet traffic to be masqueraded
 while private routed destinations or reusable address sets stay un-NATed.
 
-`BGPRouter` and `BGPPeer` currently target FRR. routerd renders FRR config,
+`BGPRouter`, `BGPPeer`, and `BFD` currently target FRR. routerd renders FRR config,
 validates it with `vtysh -C -f`, applies deltas with
 `frr-reload.py --reload`, watches FRR JSON status through `BGPStateWatcher`,
 and stores peer/prefix status for `routerctl`, Web Console resources, events,
 and OTel metrics. `routerctl show bgp` summarizes routers, peers, message
-counters, BFD status, and last errors. `BGPPeer.spec.bfd` enables FRR BFD for
-peers that need sub-second failure detection; when any managed peer uses BFD,
-routerd also keeps `bgpd=yes` and `bfdd=yes` in the FRR daemons file and
-restarts `frr.service` only when those daemon toggles change. The
+counters, BFD status, and last errors. `BGPPeer.spec.bfd` must reference a
+`BFD/<name>` resource; inline BFD settings are rejected. `BFD.spec.peer` is an
+IP address or `BGPPeer/<name>`, and `profile`, `minRx`, `minTx`, and
+`detectMultiplier` describe the failure-detection intent. When any managed peer
+uses BFD, routerd also keeps `bgpd=yes` and `bfdd=yes` in the FRR daemons file
+and restarts `frr.service` only when those daemon toggles change. The
 watcher defaults to a 15 second controller interval and 4096 observed prefixes,
 and `BGPRouter.spec.watcher` can tune `pollInterval`, `maxPrefixes`, and
 `peerStateChangeThrottle`; validation rejects intervals below 3 seconds and
@@ -475,10 +478,14 @@ managed resources.
 `ClientPolicy` supports `mode: include` for "listed MAC addresses are guests"
 and `mode: exclude` for "listed MAC addresses are trusted, everything else on
 the interface is guest." `spec.macs` is the short form for guest/trusted MAC
-lists, while `classification[]` can keep names and reservation references.
-`spec.isolation` can express the common guest shape: internet allowed, LAN and
-management denied, and mDNS/SSDP/NetBIOS discovery blocked. The FreeBSD pf
-renderer reports this resource as unsupported because pf does not provide the
+lists. `classification[]` is the structured form; each entry has
+`mode: trusted|guest|isolated` and a `match` selector with `macs`,
+`ouiPrefixes`, `hostnamePatterns`, or `dhcpFingerprints`. Match fields are ORed.
+`ipv4Reservation` can keep address-based rendering stable on platforms that
+cannot match Ethernet source addresses. `spec.isolation` can express the common
+guest shape: internet allowed, LAN and management denied, and mDNS/SSDP/NetBIOS
+discovery blocked. The FreeBSD pf renderer reports this resource as unsupported
+because pf does not provide the
 same MAC-based routed filtering model.
 
 ## Renamed Kinds

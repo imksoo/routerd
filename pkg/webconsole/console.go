@@ -3998,14 +3998,18 @@ func (h Handler) annotateClientsWithPolicy(clients []ClientEntry) []ClientEntry 
 			}
 		}
 		for _, entry := range spec.Classification {
-			if normalized := normalizeClientMAC(entry.MACAddress); normalized != "" {
+			for _, mac := range entry.Match.MACs {
+				normalized := normalizeClientMAC(mac)
+				if normalized == "" {
+					continue
+				}
 				switch spec.Mode {
 				case "include":
-					if entry.As == "" || entry.As == "guest" {
+					if entry.Mode == "guest" || entry.Mode == "isolated" {
 						byMAC[normalized] = assignment
 					}
 				case "exclude":
-					if entry.As == "" || entry.As == "trusted" {
+					if entry.Mode == "trusted" {
 						byMAC[normalized] = clientPolicyAssignment{Name: res.Metadata.Name, Mode: "trusted", Isolation: []string{"trusted exception"}}
 					}
 				}

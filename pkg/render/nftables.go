@@ -640,19 +640,21 @@ func nftClientPolicies(aliases map[string]string, zoneMap map[string]firewallZon
 			policy.MACs = append(policy.MACs, strings.ToLower(parsedMAC.String()))
 		}
 		for _, entry := range spec.Classification {
-			parsedMAC, err := net.ParseMAC(entry.MACAddress)
-			if err != nil {
-				return nil, fmt.Errorf("%s has invalid client MAC %q: %w", res.ID(), entry.MACAddress, err)
-			}
-			mac := strings.ToLower(parsedMAC.String())
-			switch spec.Mode {
-			case "include":
-				if entry.As == "" || entry.As == "guest" {
-					policy.MACs = append(policy.MACs, mac)
+			for _, value := range entry.Match.MACs {
+				parsedMAC, err := net.ParseMAC(value)
+				if err != nil {
+					return nil, fmt.Errorf("%s has invalid client MAC %q: %w", res.ID(), value, err)
 				}
-			case "exclude":
-				if entry.As == "" || entry.As == "trusted" {
-					policy.MACs = append(policy.MACs, mac)
+				mac := strings.ToLower(parsedMAC.String())
+				switch spec.Mode {
+				case "include":
+					if entry.Mode == "guest" || entry.Mode == "isolated" {
+						policy.MACs = append(policy.MACs, mac)
+					}
+				case "exclude":
+					if entry.Mode == "trusted" {
+						policy.MACs = append(policy.MACs, mac)
+					}
 				}
 			}
 		}

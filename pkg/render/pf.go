@@ -380,8 +380,8 @@ func pfClientPolicies(router *api.Router, aliases map[string]string, resources [
 		}
 		for _, entry := range spec.Classification {
 			if entry.IPv4Reservation == "" {
-				if entry.As == "guest" || (spec.Mode == "include" && entry.As == "") {
-					return nil, fmt.Errorf("%s classification %q needs ipv4Reservation on FreeBSD because pf cannot match client MAC addresses", res.ID(), entry.MACAddress)
+				if spec.Mode == "include" && (entry.Mode == "guest" || entry.Mode == "isolated") {
+					return nil, fmt.Errorf("%s classification %q needs ipv4Reservation on FreeBSD because pf cannot match client selectors", res.ID(), entry.Name)
 				}
 				continue
 			}
@@ -394,11 +394,11 @@ func pfClientPolicies(router *api.Router, aliases map[string]string, resources [
 			}
 			switch spec.Mode {
 			case "include":
-				if entry.As == "" || entry.As == "guest" {
+				if entry.Mode == "guest" || entry.Mode == "isolated" {
 					policy.Addresses = append(policy.Addresses, reservation.IPAddress)
 				}
 			case "exclude":
-				if entry.As == "" || entry.As == "trusted" {
+				if entry.Mode == "trusted" {
 					policy.Addresses = append(policy.Addresses, reservation.IPAddress)
 				}
 			default:

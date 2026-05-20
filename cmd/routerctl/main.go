@@ -2257,6 +2257,7 @@ func canonicalShowKind(kind string) string {
 		"bgprouter":              "BGPRouter",
 		"bgppeer":                "BGPPeer",
 		"bgppeers":               "BGPPeer",
+		"bfd":                    "BFD",
 		"ingress":                "IngressService",
 		"ingressservice":         "IngressService",
 		"ingressservices":        "IngressService",

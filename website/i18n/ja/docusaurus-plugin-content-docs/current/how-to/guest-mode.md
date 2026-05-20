@@ -74,9 +74,12 @@ MAC 照合は Ethernet 送信元アドレスを直接見ます。
 | `interfaces` | いいえ | 方針を適用する LAN 側 `Interface` 参照です。`Interface/lan` と `lan` は同じインターフェースを指します。省略時は `trust` `FirewallZone` の全 interface に適用します。 |
 | `macs` | いいえ | 短縮形の MAC 一覧です。include mode では guest、exclude mode では trusted として扱います。 |
 | `isolation` | いいえ | guest intent です。`lanInternet`、`lanLAN`、`lanMgmt`、`mDNSBroadcast` に `allow` または `deny` を指定できます。 |
-| `classification` | いいえ | MAC アドレスの分類一覧です。意味は `mode` によって変わります。 |
-| `classification[].macAddress` | はい | 端末の MAC アドレスです。routerd は生成前に正規化します。 |
-| `classification[].as` | いいえ | `guest` または `trusted` です。空の場合、include mode では `guest`、exclude mode では `trusted` として扱います。 |
+| `classification` | いいえ | 構造化された client classification entry です。 |
+| `classification[].mode` | はい | `trusted`、`guest`、`isolated` のいずれかです。 |
+| `classification[].match.macs` | いいえ | 端末の MAC アドレスです。routerd は生成前に正規化します。 |
+| `classification[].match.ouiPrefixes` | いいえ | `18:ec:e7` のような vendor OUI prefix です。 |
+| `classification[].match.hostnamePatterns` | いいえ | DHCP hostname 観測値に対する glob pattern です。 |
+| `classification[].match.dhcpFingerprints` | いいえ | routerd が観測した DHCP fingerprint label です。 |
 | `classification[].name` | いいえ | 人間が読む端末名です。現時点では説明用の値です。 |
 | `classification[].ipv4Reservation` | いいえ | `DHCPv4Reservation` の名前です。`DHCPv4Reservation/aiseg2` ではなく `aiseg2` と書きます。 |
 | `guestServices` | いいえ | ゲスト端末に許可するルーター内サービスです。既定値は `dhcp`、`dns`、`ntp` です。指定できる値は `dhcp`、`dns`、`ntp`、`mdns`、`ssdp` です。 |
@@ -109,8 +112,10 @@ MAC 照合は Ethernet 送信元アドレスを直接見ます。
     interfaces:
       - Interface/lan
     classification:
-      - macAddress: "18:ec:e7:33:12:6c"
-        as: guest
+      - mode: guest
+        match:
+          macs:
+            - "18:ec:e7:33:12:6c"
         name: aiseg2
 ```
 
@@ -128,15 +133,21 @@ MAC 照合は Ethernet 送信元アドレスを直接見ます。
     interfaces:
       - Interface/lan
     classification:
-      - macAddress: "18:ec:e7:33:12:6c"
-        as: guest
+      - mode: guest
+        match:
+          macs:
+            - "18:ec:e7:33:12:6c"
         name: aiseg2
         ipv4Reservation: aiseg2
-      - macAddress: "7c:2f:80:11:22:33"
-        as: guest
+      - mode: guest
+        match:
+          macs:
+            - "7c:2f:80:11:22:33"
         name: guest-phone
-      - macAddress: "90:09:d0:44:55:66"
-        as: guest
+      - mode: guest
+        match:
+          macs:
+            - "90:09:d0:44:55:66"
         name: smart-tv
 ```
 
@@ -155,11 +166,15 @@ MAC 照合は Ethernet 送信元アドレスを直接見ます。
     interfaces:
       - Interface/lan
     classification:
-      - macAddress: "bc:24:11:e0:8e:3a"
-        as: trusted
+      - mode: trusted
+        match:
+          macs:
+            - "bc:24:11:e0:8e:3a"
         name: admin-laptop
-      - macAddress: "4e:20:15:aa:e0:67"
-        as: trusted
+      - mode: trusted
+        match:
+          macs:
+            - "4e:20:15:aa:e0:67"
         name: owner-phone
 ```
 
@@ -184,8 +199,10 @@ MAC 照合は Ethernet 送信元アドレスを直接見ます。
       - 192.168.0.0/16
       - fc00::/7
     classification:
-      - macAddress: "7c:2f:80:11:22:33"
-        as: guest
+      - mode: guest
+        match:
+          macs:
+            - "7c:2f:80:11:22:33"
         name: guest-phone
 ```
 
@@ -210,8 +227,10 @@ MAC 照合は Ethernet 送信元アドレスを直接見ます。
       - mdns
       - ssdp
     classification:
-      - macAddress: "90:09:d0:44:55:66"
-        as: guest
+      - mode: guest
+        match:
+          macs:
+            - "90:09:d0:44:55:66"
         name: smart-tv
 ```
 
@@ -243,8 +262,10 @@ Web Console の端末一覧や DNS レコードも分かりやすくなります
     interfaces:
       - Interface/lan
     classification:
-      - macAddress: "02:11:22:33:44:55"
-        as: guest
+      - mode: guest
+        match:
+          macs:
+            - "02:11:22:33:44:55"
         name: thermostat
         ipv4Reservation: thermostat
 ```

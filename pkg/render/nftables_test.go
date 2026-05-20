@@ -1382,9 +1382,9 @@ func TestNftablesClientPolicyIncludeGuestMACs(t *testing.T) {
 				Interfaces:    []string{"lan"},
 				GuestServices: []string{"dns", "dhcp", "ntp", "mdns", "ssdp"},
 				Classification: []api.ClientPolicyClassSpec{{
-					MACAddress: "18:ec:e7:33:12:6c",
-					As:         "guest",
-					Name:       "aiseg2",
+					Mode:  "guest",
+					Name:  "aiseg2",
+					Match: api.ClientPolicyClassMatchSpec{MACs: []string{"18:ec:e7:33:12:6c"}},
 				}},
 			},
 		},
@@ -1474,8 +1474,8 @@ func TestNftablesClientPolicyExcludeTrustedMACs(t *testing.T) {
 				Mode:       "exclude",
 				Interfaces: []string{"lan"},
 				Classification: []api.ClientPolicyClassSpec{{
-					MACAddress: "02:00:00:00:00:10",
-					As:         "trusted",
+					Mode:  "trusted",
+					Match: api.ClientPolicyClassMatchSpec{MACs: []string{"02:00:00:00:00:10"}},
 				}},
 			},
 		},

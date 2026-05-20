@@ -167,30 +167,39 @@ func validateBGPCommunities(resourceID, path string, spec api.BGPCommunitiesSpec
 	return nil
 }
 
-func validateBGPBFD(resourceID string, spec api.BGPBFDSpec) error {
-	if spec.Enabled == nil || !*spec.Enabled {
-		if spec.MinRxInterval != "" || spec.MinTxInterval != "" || spec.DetectMultiplier != 0 {
-			return fmt.Errorf("%s spec.bfd timer fields require spec.bfd.enabled: true", resourceID)
+func validateBFD(resourceID string, spec api.BFDSpec) error {
+	if strings.TrimSpace(spec.Peer) == "" {
+		return fmt.Errorf("%s spec.peer is required", resourceID)
+	}
+	if kind, name, ok := strings.Cut(strings.TrimSpace(spec.Peer), "/"); ok {
+		if kind != "BGPPeer" || strings.TrimSpace(name) == "" {
+			return fmt.Errorf("%s spec.peer must be an IP address or BGPPeer/<name>", resourceID)
 		}
-		return nil
+	} else if _, err := netip.ParseAddr(strings.TrimSpace(spec.Peer)); err != nil {
+		return fmt.Errorf("%s spec.peer must be an IP address or BGPPeer/<name>", resourceID)
+	}
+	switch spec.Profile {
+	case "", "fast", "normal", "slow":
+	default:
+		return fmt.Errorf("%s spec.profile must be fast, normal, or slow", resourceID)
 	}
 	for _, item := range []struct {
 		field string
 		value string
 	}{
-		{field: "minRxInterval", value: spec.MinRxInterval},
-		{field: "minTxInterval", value: spec.MinTxInterval},
+		{field: "minRx", value: spec.MinRx},
+		{field: "minTx", value: spec.MinTx},
 	} {
 		if strings.TrimSpace(item.value) == "" {
 			continue
 		}
 		ms, err := parseDurationMilliseconds(item.value)
 		if err != nil || ms < 50 || ms > 60000 {
-			return fmt.Errorf("%s spec.bfd.%s must be between 50ms and 60000ms", resourceID, item.field)
+			return fmt.Errorf("%s spec.%s must be between 50ms and 60000ms", resourceID, item.field)
 		}
 	}
 	if spec.DetectMultiplier < 0 || spec.DetectMultiplier > 50 {
-		return fmt.Errorf("%s spec.bfd.detectMultiplier must be within 1-50 when set", resourceID)
+		return fmt.Errorf("%s spec.detectMultiplier must be within 1-50 when set", resourceID)
 	}
 	return nil
 }

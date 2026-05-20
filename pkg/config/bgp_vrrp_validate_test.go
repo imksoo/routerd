@@ -216,7 +216,6 @@ func TestValidateSecretValueSources(t *testing.T) {
 }
 
 func TestValidateBGPBFDAndWatcher(t *testing.T) {
-	enabled := true
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 		Metadata: api.ObjectMeta{Name: "test"},
@@ -230,12 +229,14 @@ func TestValidateBGPBFDAndWatcher(t *testing.T) {
 				RouterRef: "BGPRouter/lan",
 				PeerASN:   64513,
 				Peers:     []string{"10.240.70.21"},
-				BFD: api.BGPBFDSpec{
-					Enabled:          &enabled,
-					MinRxInterval:    "300ms",
-					MinTxInterval:    "300ms",
-					DetectMultiplier: 3,
-				},
+				BFD:       "BFD/fabric-fast",
+			}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BFD"}, Metadata: api.ObjectMeta{Name: "fabric-fast"}, Spec: api.BFDSpec{
+				Peer:             "BGPPeer/fabric",
+				Profile:          "fast",
+				MinRx:            "300ms",
+				MinTx:            "300ms",
+				DetectMultiplier: 3,
 			}},
 		}},
 	}
@@ -243,21 +244,36 @@ func TestValidateBGPBFDAndWatcher(t *testing.T) {
 		t.Fatalf("valid BFD/watcher config should validate: %v", err)
 	}
 
-	peerSpec := router.Spec.Resources[1].Spec.(api.BGPPeerSpec)
-	peerSpec.BFD.MinRxInterval = "10ms"
-	router.Spec.Resources[1].Spec = peerSpec
-	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "spec.bfd.minRxInterval") {
+	bfdSpec := router.Spec.Resources[2].Spec.(api.BFDSpec)
+	bfdSpec.MinRx = "10ms"
+	router.Spec.Resources[2].Spec = bfdSpec
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "spec.minRx") {
 		t.Fatalf("expected minRx validation error, got %v", err)
 	}
-	peerSpec.BFD.MinRxInterval = "300ms"
-	peerSpec.BFD.Enabled = nil
-	router.Spec.Resources[1].Spec = peerSpec
-	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "timer fields require") {
-		t.Fatalf("expected disabled BFD timer validation error, got %v", err)
+	bfdSpec.MinRx = "300ms"
+	bfdSpec.Peer = "BGPPeer/missing"
+	router.Spec.Resources[2].Spec = bfdSpec
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "does not match this BGPPeer") {
+		t.Fatalf("expected mismatched BFD peer validation error, got %v", err)
 	}
 
-	peerSpec.BFD.Enabled = &enabled
+	bfdSpec.Peer = "BGPPeer/fabric"
+	router.Spec.Resources[2].Spec = bfdSpec
+	peerSpec := router.Spec.Resources[1].Spec.(api.BGPPeerSpec)
+	peerSpec.BFD = ""
 	router.Spec.Resources[1].Spec = peerSpec
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "not referenced by any BGPPeer") {
+		t.Fatalf("expected dangling BFD validation error, got %v", err)
+	}
+	peerSpec.BFD = "BFD/fabric-fast"
+	router.Spec.Resources[1].Spec = peerSpec
+	bfdSpec.Peer = "192.0.2.99"
+	router.Spec.Resources[2].Spec = bfdSpec
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "does not match this BGPPeer") {
+		t.Fatalf("expected BFD peer mismatch validation error, got %v", err)
+	}
+	bfdSpec.Peer = "BGPPeer/fabric"
+	router.Spec.Resources[2].Spec = bfdSpec
 	routerSpec := router.Spec.Resources[0].Spec.(api.BGPRouterSpec)
 	routerSpec.Watcher.PollInterval = "2s"
 	router.Spec.Resources[0].Spec = routerSpec

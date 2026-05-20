@@ -84,9 +84,12 @@ Web Console.
 | `interfaces` | no | LAN-side `Interface` references where the policy applies. `Interface/lan` and `lan` both resolve to the same interface. When omitted, routerd targets every `trust` `FirewallZone` interface. |
 | `macs` | no | Short-form MAC list. In `include` mode these are guests. In `exclude` mode these are trusted. |
 | `isolation` | no | High-level guest intent. `lanInternet`, `lanLAN`, `lanMgmt`, and `mDNSBroadcast` accept `allow` or `deny`. |
-| `classification` | no | MAC address entries. Their meaning depends on `mode`. |
-| `classification[].macAddress` | yes | Client MAC address. routerd normalizes the address before rendering. |
-| `classification[].as` | no | `guest` or `trusted`. Empty means `guest` in include mode and `trusted` in exclude mode. |
+| `classification` | no | Structured client classification entries. |
+| `classification[].mode` | yes | `trusted`, `guest`, or `isolated`. |
+| `classification[].match.macs` | no | Client MAC addresses. routerd normalizes them before rendering. |
+| `classification[].match.ouiPrefixes` | no | Vendor OUI prefixes such as `18:ec:e7`. |
+| `classification[].match.hostnamePatterns` | no | Glob patterns for observed DHCP hostnames. |
+| `classification[].match.dhcpFingerprints` | no | DHCP fingerprint labels observed by routerd. |
 | `classification[].name` | no | Human-readable device name. It is documentation for now. |
 | `classification[].ipv4Reservation` | no | Name of a `DHCPv4Reservation`. Use a bare resource name such as `aiseg2`, not `DHCPv4Reservation/aiseg2`. |
 | `guestServices` | no | Local router services allowed for guests. Default is `dhcp`, `dns`, `ntp`. Supported values are `dhcp`, `dns`, `ntp`, `mdns`, and `ssdp`. |
@@ -122,8 +125,10 @@ Only one MAC address is treated as a guest.
     interfaces:
       - Interface/lan
     classification:
-      - macAddress: "18:ec:e7:33:12:6c"
-        as: guest
+      - mode: guest
+        match:
+          macs:
+            - "18:ec:e7:33:12:6c"
         name: aiseg2
 ```
 
@@ -141,15 +146,21 @@ Multiple devices can share the same guest rule set.
     interfaces:
       - Interface/lan
     classification:
-      - macAddress: "18:ec:e7:33:12:6c"
-        as: guest
+      - mode: guest
+        match:
+          macs:
+            - "18:ec:e7:33:12:6c"
         name: aiseg2
         ipv4Reservation: aiseg2
-      - macAddress: "7c:2f:80:11:22:33"
-        as: guest
+      - mode: guest
+        match:
+          macs:
+            - "7c:2f:80:11:22:33"
         name: guest-phone
-      - macAddress: "90:09:d0:44:55:66"
-        as: guest
+      - mode: guest
+        match:
+          macs:
+            - "90:09:d0:44:55:66"
         name: smart-tv
 ```
 
@@ -167,11 +178,15 @@ All clients become guests by default. Only listed MAC addresses remain trusted.
     interfaces:
       - Interface/lan
     classification:
-      - macAddress: "bc:24:11:e0:8e:3a"
-        as: trusted
+      - mode: trusted
+        match:
+          macs:
+            - "bc:24:11:e0:8e:3a"
         name: admin-laptop
-      - macAddress: "4e:20:15:aa:e0:67"
-        as: trusted
+      - mode: trusted
+        match:
+          macs:
+            - "4e:20:15:aa:e0:67"
         name: owner-phone
 ```
 
@@ -197,8 +212,10 @@ one printer.
       - 192.168.0.0/16
       - fc00::/7
     classification:
-      - macAddress: "7c:2f:80:11:22:33"
-        as: guest
+      - mode: guest
+        match:
+          macs:
+            - "7c:2f:80:11:22:33"
         name: guest-phone
 ```
 
@@ -223,8 +240,10 @@ local discovery proxy or relay, add `mdns` or `ssdp` deliberately.
       - mdns
       - ssdp
     classification:
-      - macAddress: "90:09:d0:44:55:66"
-        as: guest
+      - mode: guest
+        match:
+          macs:
+            - "90:09:d0:44:55:66"
         name: smart-tv
 ```
 
@@ -257,8 +276,10 @@ client inventory and DNS records less ambiguous.
     interfaces:
       - Interface/lan
     classification:
-      - macAddress: "02:11:22:33:44:55"
-        as: guest
+      - mode: guest
+        match:
+          macs:
+            - "02:11:22:33:44:55"
         name: thermostat
         ipv4Reservation: thermostat
 ```

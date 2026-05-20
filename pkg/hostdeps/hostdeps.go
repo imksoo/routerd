@@ -136,7 +136,7 @@ func packageFeatures(router *api.Router) map[string]bool {
 		case "EgressRoutePolicy":
 			features["base"] = true
 			features["nft"] = true
-		case "BGPRouter", "BGPPeer":
+		case "BGPRouter", "BGPPeer", "BFD":
 			features["bgp"] = true
 		case "DHCPv4Server", "DHCPv4Reservation", "DHCPv6Server", "IPv6RouterAdvertisement", "DNSResolver", "DNSForwarder", "DNSUpstream", "DNSZone", "DHCPv4Relay":
 			features["dhcp-dns"] = true

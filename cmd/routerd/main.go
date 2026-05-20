@@ -827,6 +827,11 @@ func canonicalResourceKind(kind string) string {
 		"resolver":               "DNSResolver",
 		"dnsforwarder":           "DNSForwarder",
 		"dnsupstream":            "DNSUpstream",
+		"bgp":                    "BGPRouter",
+		"bgprouter":              "BGPRouter",
+		"bgppeer":                "BGPPeer",
+		"bgppeers":               "BGPPeer",
+		"bfd":                    "BFD",
 		"pppoe":                  "PPPoESession",
 		"pppoesession":           "PPPoESession",
 		"pppoeclient":            "PPPoESession",
@@ -868,7 +873,7 @@ func apiVersionForKind(kind string) string {
 		return api.ObservabilityAPIVersion
 	case "Inventory":
 		return api.RouterAPIVersion
-	case "Interface", "Bridge", "VXLANSegment", "WireGuardInterface", "WireGuardPeer", "TailscaleNode", "IPsecConnection", "VRF", "VXLANTunnel", "PPPoESession", "IPv4StaticAddress", "DHCPv4Client", "IPv4StaticRoute", "IPv6StaticRoute", "ClusterNetworkRoute", "DHCPv4Server", "DHCPv4Reservation", "DHCPv6Address", "IPv6RAAddress", "DHCPv6PrefixDelegation", "IPv6DelegatedAddress", "DHCPv6Information", "IPv6RouterAdvertisement", "DHCPv6Server", "DHCPv4Relay", "DNSZone", "DNSResolver", "DNSForwarder", "DNSUpstream", "SelfAddressPolicy", "DSLiteTunnel", "IPv4Route", "HealthCheck", "EgressRoutePolicy", "EventRule", "DerivedEvent", "NAT44Rule", "IPAddressSet":
+	case "Interface", "Bridge", "VXLANSegment", "WireGuardInterface", "WireGuardPeer", "TailscaleNode", "IPsecConnection", "VRF", "VXLANTunnel", "PPPoESession", "IPv4StaticAddress", "DHCPv4Client", "IPv4StaticRoute", "IPv6StaticRoute", "ClusterNetworkRoute", "DHCPv4Server", "DHCPv4Reservation", "DHCPv6Address", "IPv6RAAddress", "DHCPv6PrefixDelegation", "IPv6DelegatedAddress", "DHCPv6Information", "IPv6RouterAdvertisement", "DHCPv6Server", "DHCPv4Relay", "DNSZone", "DNSResolver", "DNSForwarder", "DNSUpstream", "SelfAddressPolicy", "DSLiteTunnel", "IPv4Route", "HealthCheck", "EgressRoutePolicy", "EventRule", "DerivedEvent", "NAT44Rule", "IPAddressSet", "BFD":
 		return api.NetAPIVersion
 	default:
 		return ""
@@ -2423,6 +2428,9 @@ func resourceWhen(res api.Resource) api.ResourceWhenSpec {
 	case "BGPPeer":
 		spec, _ := res.BGPPeerSpec()
 		return spec.When
+	case "BFD":
+		spec, _ := res.BFDSpec()
+		return spec.When
 	case "ClusterNetworkRoute":
 		spec, _ := res.ClusterNetworkRouteSpec()
 		return spec.When
@@ -3140,7 +3148,7 @@ func controllerResourceKinds(name string) []string {
 	case "ingress":
 		return []string{"IngressService"}
 	case "bgp":
-		return []string{"BGPRouter", "BGPPeer"}
+		return []string{"BGPRouter", "BGPPeer", "BFD"}
 	case "vrrp":
 		return []string{"VirtualAddress"}
 	case "nat":
