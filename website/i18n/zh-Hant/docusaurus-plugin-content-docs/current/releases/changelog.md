@@ -10,6 +10,8 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 
 ## Unreleased
 
+## v20260521.0039
+
 ### 修正
 
 - 針對已刪除的 `PPPoESession`，現在會 garbage collect ownership ledger 中

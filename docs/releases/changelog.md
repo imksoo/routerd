@@ -10,6 +10,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260521.0039
+
 ### Fixed
 
 - Garbage-collect deleted `PPPoESession` artifacts recorded in the ownership

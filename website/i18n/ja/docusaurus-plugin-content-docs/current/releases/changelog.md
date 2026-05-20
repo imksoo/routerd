@@ -10,6 +10,8 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 
 ## Unreleased
 
+## v20260521.0039
+
 ### 修正
 
 - 削除された `PPPoESession` について、ownership ledger に残る生成 artifact を
