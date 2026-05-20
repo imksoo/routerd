@@ -22,7 +22,8 @@ wg-lab-wireguard from=wan to=self ifnames=vtnet0 proto=udp port=51820 action=acc
   systemd.network.networks."10-netplan-vtnet0" = {
     matchConfig.Name = "vtnet0";
     networkConfig = {
-      IPv6AcceptRA = true;
+      DHCP = "no";
+      IPv6AcceptRA = false;
     };
     routes = [
       { routeConfig = {

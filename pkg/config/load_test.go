@@ -34,6 +34,43 @@ spec:
 	}
 }
 
+func TestLoadRejectsRemovedImplementationResources(t *testing.T) {
+	for _, tc := range []struct {
+		kind       string
+		apiVersion string
+		spec       string
+	}{
+		{kind: "KernelModule", apiVersion: "system.routerd.net/v1alpha1", spec: "modules: [nf_conntrack]\n"},
+		{kind: "NetworkAdoption", apiVersion: "system.routerd.net/v1alpha1", spec: "interface: wan\n"},
+		{kind: "NixOSHost", apiVersion: "system.routerd.net/v1alpha1", spec: "hostname: router\n"},
+		{kind: "Link", apiVersion: "net.routerd.net/v1alpha1", spec: "ifname: eth0\n"},
+	} {
+		t.Run(tc.kind, func(t *testing.T) {
+			path := writeConfig(t, `
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: test
+spec:
+  resources:
+    - apiVersion: `+tc.apiVersion+`
+      kind: `+tc.kind+`
+      metadata:
+        name: removed
+      spec:
+`+indentYAML(tc.spec, "        ")+`
+`)
+			_, err := Load(path)
+			if err == nil {
+				t.Fatalf("expected %s resource to be rejected", tc.kind)
+			}
+			if !strings.Contains(err.Error(), tc.kind) || !strings.Contains(err.Error(), "not supported") {
+				t.Fatalf("error = %v, want unsupported %s", err, tc.kind)
+			}
+		})
+	}
+}
+
 func TestLoadRejectsExplicitSocketSource(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -116,4 +153,12 @@ func writeConfig(t *testing.T, content string) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+func indentYAML(value, prefix string) string {
+	lines := strings.Split(strings.TrimRight(value, "\n"), "\n")
+	for i, line := range lines {
+		lines[i] = prefix + line
+	}
+	return strings.Join(lines, "\n")
 }

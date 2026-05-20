@@ -14,7 +14,7 @@ LAN 側 (ルーターから内側に提供するサービス) は [LAN 側サー
 
 | 役割 | リソース | 担当デーモン |
 | --- | --- | --- |
-| 物理 / 仮想インターフェース | `Interface`、`Link`、`IPv4StaticAddress`、`NetworkAdoption` | (kernel) |
+| 物理 / 仮想インターフェース | `Interface`、`IPv4StaticAddress` | (kernel) |
 | ISP から DHCP で IPv4 を取得 | `DHCPv4Lease` | `routerd-dhcpv4-client` |
 | ISP から IPv6 prefix を取得 | `DHCPv6PrefixDelegation`、`IPv6DelegatedAddress` | `routerd-dhcpv6-client` |
 | その他の DHCPv6 オプション (DNS、AFTR 等) | `DHCPv6Information` | `routerd-dhcpv6-client` |

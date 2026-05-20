@@ -19,6 +19,9 @@ lan-dhcpv4-dhcpv4-server-lan from=lan to=self ifnames=ens19 proto=udp port=67 ac
   };
   systemd.network.networks."10-netplan-ens19" = {
     matchConfig.Name = "ens19";
+    networkConfig = {
+      DHCP = "no";
+    };
     address = [
       "192.168.40.1/24"
     ];

@@ -8,10 +8,11 @@ routerd can describe most first-boot host preparation in the router YAML. The
 goal is not to replace an installer, but to keep the router-specific drift out
 of ad hoc shell history.
 
-## Package dependencies
+## Package Dependencies
 
-Use `Package` for OS packages that routerd controllers and managed helper
-daemons need.
+routerd derives normal OS package dependencies from the resources in the
+config. Use `Package` only as a narrow override for dependencies that cannot
+yet be derived.
 
 ```yaml
 apiVersion: system.routerd.net/v1alpha1
@@ -48,28 +49,9 @@ spec:
 
 ## Kernel modules
 
-Use `KernelModule` for Linux kernel modules that must be loaded before
-firewall, conntrack, WireGuard, or NFLOG integrations become useful.
-
-```yaml
-apiVersion: system.routerd.net/v1alpha1
-kind: KernelModule
-metadata:
-  name: router-kernel-modules
-spec:
-  modules:
-    - nf_conntrack
-    - nfnetlink_log
-    - wireguard
-  runtime: true
-  persistent: true
-  optional: true
-```
-
-On Ubuntu and Debian, `runtime: true` runs `modprobe` and `persistent: true`
-writes `/etc/modules-load.d/90-routerd-<name>.conf`. On NixOS, routerd records
-the resource as declarative-only because modules should be owned by the NixOS
-configuration. On FreeBSD, the resource is reported as unsupported.
+Linux kernel modules are derived from the router resources that need them, such
+as NAT, firewall logging, traffic flow logging, and WireGuard. `KernelModule`
+is not a user-facing config kind.
 
 ## Sysctl profile
 
@@ -91,9 +73,8 @@ spec:
 
 ## Existing host networking
 
-Use `NetworkAdoption` when the base OS already has DHCP or resolver behavior
-that conflicts with routerd's resource model. It is the documented place for
-networkd and resolved drop-ins instead of one-off edits under `/etc/systemd`.
+routerd derives systemd-networkd and systemd-resolved adoption drop-ins from
+`Interface`, DHCP, DNS, and RA resources. Do not declare those drop-ins in YAML.
 
 On Ubuntu 26.04 LTS, systemd-networkd may bind a DHCPv6 client socket on an
 interface even when the installer netplan sets `dhcp6: false`, depending on RA
@@ -129,9 +110,9 @@ network:
 ```
 
 If the WAN needs an RA-learned IPv6 default route for provider DNS or AFTR
-resolution, use `NetworkAdoption` for that interface. routerd will write a
-systemd-networkd drop-in that accepts RA but keeps systemd-networkd's DHCPv6
-client disabled.
+resolution, declare the WAN interface and the DHCPv6/RA resources. routerd will
+derive the required systemd-networkd drop-in while keeping systemd-networkd's
+DHCP clients out of the way.
 
 routerd-managed service units and init scripts are generated from the owning
 resource kinds. Do not declare local service-manager units in routerd config;
@@ -145,9 +126,9 @@ scripts under `/etc/init.d` and uses `rc-update` and `rc-service` only when the
 current OpenRC state needs a change.
 Synthesized DNS resolver scripts are rendered but not enabled or started until
 runtime config materialization is available outside the controller loop.
-It does not emulate systemd-only concepts. `NetworkAdoption` drop-ins for
-systemd-networkd/resolved, systemd sandboxing fields, and timesyncd ownership
-remain unsupported on OpenRC until they have native Alpine semantics.
+It does not emulate systemd-only concepts. systemd-networkd/resolved drop-ins,
+systemd sandboxing fields, and timesyncd ownership remain unsupported on OpenRC
+until they have native Alpine semantics.
 
 ## Apply order
 

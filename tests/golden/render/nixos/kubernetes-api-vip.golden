@@ -23,11 +23,18 @@
   };
   systemd.network.networks."10-netplan-ens20" = {
     matchConfig.Name = "ens20";
+    networkConfig = {
+      DHCP = "no";
+    };
     address = [
       "192.168.70.1/24"
     ];
     linkConfig.RequiredForOnline = "routable";
   };
+  services.resolved.enable = true;
+  services.resolved.extraConfig = ''
+    DNSStubListener=no
+  '';
   systemd.services."routerd-dns-resolver@lan-resolver" = {
     description = "routerd DNS resolver lan-resolver";
     wantedBy = [ "multi-user.target" ];

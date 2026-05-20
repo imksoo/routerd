@@ -10,6 +10,7 @@
   systemd.network.networks."10-netplan-ens1p1" = {
     matchConfig.Name = "ens1p1";
     networkConfig = {
+      DHCP = "no";
       LinkLocalAddressing = "no";
     };
     linkConfig.RequiredForOnline = "no";

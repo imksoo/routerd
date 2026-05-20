@@ -140,7 +140,7 @@ func statusBool(value any) (bool, bool) {
 
 func resourceOwnerController(kind string) string {
 	switch kind {
-	case "IPv4StaticAddress", "IPv6DelegatedAddress", "IPv6RAAddress", "Interface", "Link":
+	case "IPv4StaticAddress", "IPv6DelegatedAddress", "IPv6RAAddress", "Interface":
 		return "address"
 	case "VirtualIPv4Address", "VirtualIPv6Address":
 		return "vrrp"
@@ -741,7 +741,7 @@ func (r *Runner) Start(ctx context.Context) error {
 			}
 			return nil
 		}},
-		framework.FuncController{ControllerName: "lan-address", Every: 30 * time.Second, Subs: statusSubscriptions("DHCPv6PrefixDelegation", "Link", "Interface"), ReconcileFunc: func(ctx context.Context, _ daemonapi.DaemonEvent) error {
+		framework.FuncController{ControllerName: "lan-address", Every: 30 * time.Second, Subs: statusSubscriptions("DHCPv6PrefixDelegation", "Interface"), ReconcileFunc: func(ctx context.Context, _ daemonapi.DaemonEvent) error {
 			for _, resource := range r.Router.Spec.Resources {
 				if resource.Kind == "DHCPv6PrefixDelegation" {
 					if err := lan.reconcile(ctx, resource.Metadata.Name); err != nil {
@@ -752,9 +752,9 @@ func (r *Runner) Start(ctx context.Context) error {
 			return nil
 		}},
 		framework.FuncController{ControllerName: "dslite", Every: 30 * time.Second, Subs: statusSubscriptions("DHCPv6Information", "IPv6DelegatedAddress", "DNSResolver"), PeriodicFunc: dslite.reconcile},
-		framework.FuncController{ControllerName: "ipv4-policy-route", Subs: statusSubscriptions("DSLiteTunnel", "HealthCheck", "IPv4StaticAddress", "Link"), PeriodicFunc: policyRoute.Reconcile},
+		framework.FuncController{ControllerName: "ipv4-policy-route", Subs: statusSubscriptions("DSLiteTunnel", "HealthCheck", "IPv4StaticAddress", "Interface"), PeriodicFunc: policyRoute.Reconcile},
 		framework.FuncController{ControllerName: "ipv4-route", Every: 30 * time.Second, Subs: statusSubscriptions("DSLiteTunnel", "EgressRoutePolicy"), PeriodicFunc: route.reconcile},
-		framework.FuncController{ControllerName: "path-mtu", Subs: statusSubscriptions("DSLiteTunnel", "Link"), PeriodicFunc: pathMTU.Reconcile},
+		framework.FuncController{ControllerName: "path-mtu", Subs: statusSubscriptions("DSLiteTunnel", "Interface"), PeriodicFunc: pathMTU.Reconcile},
 		framework.FuncController{ControllerName: "dhcpv6-server", Every: 30 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed", "routerd.dhcp.lease.**"}}}, PeriodicFunc: dhcpv6.reconcile},
 		framework.FuncController{ControllerName: "dhcpv4-lease", Every: 10 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.dhcpv4.client.**"}}}, ReconcileFunc: func(ctx context.Context, _ daemonapi.DaemonEvent) error {
 			return dhcp4Lease.ReconcileAll(ctx)
@@ -1192,35 +1192,6 @@ func (c LinkController) Reconcile(ctx context.Context) error {
 			status["error"] = err.Error()
 		}
 		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "Interface", resource.Metadata.Name, status); err != nil {
-			return err
-		}
-	}
-	for _, resource := range c.Router.Spec.Resources {
-		if resource.Kind != "Link" {
-			continue
-		}
-		spec, err := resource.LinkSpec()
-		if err != nil {
-			return err
-		}
-		ifname := spec.IfName
-		if ifname == "" {
-			ifname = interfaceIfName(c.Router, resource.Metadata.Name)
-		}
-		status := map[string]any{"phase": "Down", "ifname": ifname}
-		if ifname == "" {
-			status["reason"] = "InterfaceMissing"
-		} else if ifi, err := net.InterfaceByName(ifname); err == nil {
-			status["index"] = ifi.Index
-			status["flags"] = ifi.Flags.String()
-			if ifi.Flags&net.FlagUp != 0 {
-				status["phase"] = "Up"
-			}
-		} else {
-			status["reason"] = "InterfaceNotFound"
-			status["error"] = err.Error()
-		}
-		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "Link", resource.Metadata.Name, status); err != nil {
 			return err
 		}
 	}
@@ -1665,7 +1636,7 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 }
 
 func (c LANAddressController) linkReady(name string) bool {
-	if status := c.Store.ObjectStatus(api.NetAPIVersion, "Link", name); status != nil {
+	if status := c.Store.ObjectStatus(api.NetAPIVersion, "Interface", name); status != nil {
 		if phase := fmt.Sprint(status["phase"]); phase != "" && phase != "<nil>" {
 			return phase == "Up"
 		}
@@ -1676,7 +1647,7 @@ func (c LANAddressController) linkReady(name string) bool {
 	}
 	ifi, err := net.InterfaceByName(ifname)
 	if err == nil && ifi.Flags&net.FlagUp != 0 {
-		_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "Link", name, map[string]any{"phase": "Up", "ifname": ifname})
+		_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "Interface", name, map[string]any{"phase": "Up", "ifname": ifname})
 		return true
 	}
 	return false

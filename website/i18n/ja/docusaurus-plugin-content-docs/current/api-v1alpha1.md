@@ -37,19 +37,16 @@ spec:
 | `routerd.net/v1alpha1` | `Router` |
 | `net.routerd.net/v1alpha1` | インターフェース、再利用可能な `IPAddressSet`、DHCP、DNS、経路、トンネル、VIP、BGP、イベント、通信フローログ |
 | `firewall.routerd.net/v1alpha1` | `FirewallZone`, `FirewallPolicy`, `FirewallRule`, `FirewallLog`, `ClientPolicy`, `PortForward`, `IngressService`, `LocalServiceRedirect` |
-| `system.routerd.net/v1alpha1` | `Hostname`, `Sysctl`, `SysctlProfile`, `KernelModule`, `Package`, `NetworkAdoption`, `generated service artifacts`, `NTPClient`, `LogSink`, `ObservabilityPipeline`, `RouterdCluster`, `LogRetention`, `WebConsole`, `NixOSHost` |
+| `system.routerd.net/v1alpha1` | `Hostname`, `Sysctl`, `SysctlProfile`, `Package`, `NTPClient`, `LogSink`, `ObservabilityPipeline`, `RouterdCluster`, `LogRetention`, `WebConsole` |
 | `plugin.routerd.net/v1alpha1` | プラグインマニフェスト |
 
 ## システム準備
 
 | Kind | 役割 |
 | --- | --- |
-| `Package` | OS ごとのパッケージ名を宣言し、不足していれば導入します。 |
+| `Package` | 他 resource から導出できない OS package だけを補う narrow override です。通常の runtime dependency は自動導出されます。 |
 | `Sysctl` | 実行時の sysctl 値を設定します。`compare: exact` と `compare: atLeast` で読み戻し判定を選べます。 |
 | `SysctlProfile` | ルーター向け sysctl 推奨値をまとめて設定します。 |
-| `KernelModule` | Linux kernel module を `modprobe` し、必要なら `/etc/modules-load.d` に永続化します。 |
-| `NetworkAdoption` | OS 標準の DHCP クライアントや systemd-resolved の待ち受けを調整します。DHCPv4 の経路と DNS だけを無効にする設定も扱います。 |
-| `generated service artifacts` | routerd が使う systemd ユニットを生成し、有効化します。 |
 | `Hostname` | ホスト名を設定します。 |
 | `NTPClient` | OS の NTP クライアントを有効にします。DHCPv4 / DHCPv6 の状態から時刻サーバーを導出し、空なら public NTP サーバーへ戻せます。 |
 | `LogSink` | routerd のイベントを syslog や外部プログラムへ送ります。 |
@@ -58,12 +55,11 @@ spec:
 | `LogRetention` | イベント、DNS、通信フロー、ファイアウォールログの保管期間を管理します。 |
 | `WebConsole` | 読み取り専用の Web 画面を管理ネットワークで待ち受けます。 |
 
-## インターフェースとリンク
+## インターフェース
 
 | Kind | 役割 |
 | --- | --- |
-| `Interface` | routerd が扱う安定した名前と OS のインターフェース名を結び付けます。 |
-| `Link` | 下流のリソースが参照するリンク状態を表します。 |
+| `Interface` | routerd が扱う安定した名前と OS のインターフェース名を結び付け、下流 resource 向けの link/address status も提供します。 |
 | `PPPoEInterface` | PPPoE 用の下位インターフェース設定を表します。 |
 | `PPPoESession` | `routerd-pppoe-client` が管理する PPPoE セッションです。 |
 | `WireGuardInterface` | WireGuard インターフェースを表します。 |
@@ -93,7 +89,7 @@ FreeBSD では、routerd が rc.d サービスを生成します。
 そのサービスは `wg` インターフェースを作成し、ファイルから秘密鍵を読み込み、
 宣言された peer と static address を適用します。
 
-`KernelModule` は Linux bootstrap resource です。`runtime: true` で即時ロードし、`persistent: true` で modules-load.d を書きます。NixOS は宣言的設定側の所有として扱い、FreeBSD は Linux module loading と同等扱いせず未対応として表示します。
+Kernel module と systemd-networkd/resolved の adoption drop-in は、router resource から自動導出されます。削除済みの `KernelModule`、`NetworkAdoption`、`Link`、`NixOSHost` が config に残っている場合、routerd は黙って無視せずエラーを返します。
 
 ## WAN アドレスと委譲
 
@@ -383,7 +379,6 @@ FreeBSD には Linux と同じ socket option がないためです。
 | `NTPClient` | NTP クライアント設定を管理します。`serverFrom` で `DHCPv4Lease.status.ntpServers` や `DHCPv6Information.status.sntpServers` を参照できます。 |
 | `LogSink` | ログ送信先を表します。 |
 | `WebConsole` | 状態、イベント、IPv4/IPv6 コネクション観測を表示する読み取り専用画面です。 |
-| `NixOSHost` | NixOS 宣言設定の生成に使います。 |
 
 `WebConsole.spec.listenAddressFrom` は、ほかのリソース状態から HTTP 待ち受けアドレスを導出します。
 たとえば、`Interface/mgmt.status.ipv4Addresses` を参照できます。

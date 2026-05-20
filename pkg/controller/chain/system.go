@@ -16,6 +16,7 @@ import (
 	"routerd/pkg/api"
 	"routerd/pkg/daemonapi"
 	"routerd/pkg/healthcheck"
+	"routerd/pkg/hostdeps"
 	"routerd/pkg/platform"
 	"routerd/pkg/render"
 	"routerd/pkg/tailscale"
@@ -46,10 +47,7 @@ func (c NetworkAdoptionController) Reconcile(ctx context.Context) error {
 	if command == nil {
 		command = runOutputCommandContext
 	}
-	for _, resource := range c.Router.Spec.Resources {
-		if resource.Kind != "NetworkAdoption" {
-			continue
-		}
+	for _, resource := range networkAdoptionControllerResources(c.Router) {
 		spec, err := resource.NetworkAdoptionSpec()
 		if err != nil {
 			return err
@@ -130,6 +128,10 @@ func (c NetworkAdoptionController) Reconcile(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func networkAdoptionControllerResources(router *api.Router) []api.Resource {
+	return hostdeps.NetworkAdoptionResources(router)
 }
 
 func networkAdoptionOSName(goos string) string {

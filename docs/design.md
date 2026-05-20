@@ -128,10 +128,10 @@ routerd configuration is a set of resources. The shape is similar to Kubernetes 
 
 | apiVersion | Responsibility |
 | --- | --- |
-| `net.routerd.net/v1alpha1` | Networking (Link, IPv4Static, DSLite, PPPoE, EgressRoute, HealthCheck, etc.) |
+| `net.routerd.net/v1alpha1` | Networking (Interface, IPv4Static, DSLite, PPPoE, EgressRoute, HealthCheck, etc.) |
 | `dns.routerd.net/v1alpha1` | DNS (DNSZone, DNSResolver, DHCPv4Reservation, etc.) |
 | `firewall.routerd.net/v1alpha1` | Firewall (FirewallZone, FirewallPolicy, FirewallRule, NAT44Rule, etc.) |
-| `system.routerd.net/v1alpha1` | OS bootstrap (Package, SysctlProfile, NetworkAdoption, WebConsole, etc.) |
+| `system.routerd.net/v1alpha1` | OS bootstrap intent and overrides (Package, SysctlProfile, WebConsole, etc.); host runtime artifacts are derived from resources |
 | `control.routerd.net/v1alpha1` | controller chain and routerctl control surface |
 
 The full list is in the [API reference](./api-v1alpha1.md).

@@ -135,7 +135,7 @@ func APIVersionForKind(kind string) string {
 	switch kind {
 	case "Inventory":
 		return api.RouterAPIVersion
-	case "LogSink", "ObservabilityPipeline", "RouterdCluster", "LogRetention", "Sysctl", "SysctlProfile", "KernelModule", "Package", "NetworkAdoption", "NTPClient", "NTPServer", "WebConsole", "NixOSHost", "ServiceUnit":
+	case "LogSink", "ObservabilityPipeline", "RouterdCluster", "LogRetention", "Sysctl", "SysctlProfile", "Package", "NTPClient", "NTPServer", "WebConsole", "ServiceUnit":
 		return api.SystemAPIVersion
 	case "FirewallZone", "FirewallPolicy", "FirewallLog", "FirewallRule", "ClientPolicy", "PortForward", "IngressService", "LocalServiceRedirect":
 		return api.FirewallAPIVersion

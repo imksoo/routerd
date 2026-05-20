@@ -169,6 +169,15 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 		result.Resources = append(result.Resources, rr)
 	}
 	if includePlan {
+		if intents := routerArtifactIntents(router, aliases); len(intents) > 0 {
+			result.Resources = append(result.Resources, ResourceResult{
+				ID:        api.RouterAPIVersion + "/Router/" + router.Metadata.Name + "/derived-host-runtime",
+				Phase:     "Healthy",
+				Observed:  map[string]string{"source": "resource graph"},
+				Plan:      []string{"derive host packages, kernel modules, and network adoption artifacts from declared resources"},
+				Artifacts: artifactIntentsForResult(intents),
+			})
+		}
 		result.Orphans = append(result.Orphans, e.observeManagedOrphans(router, aliases)...)
 		if len(result.Orphans) > 0 {
 			result.Warnings = append(result.Warnings, fmt.Sprintf("%d orphaned managed artifacts found", len(result.Orphans)))

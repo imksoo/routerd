@@ -14,6 +14,7 @@ import (
 
 	"routerd/pkg/api"
 	"routerd/pkg/daemonapi"
+	"routerd/pkg/hostdeps"
 )
 
 type KernelModuleController struct {
@@ -33,10 +34,7 @@ func (c KernelModuleController) Reconcile(ctx context.Context) error {
 	if c.Router == nil {
 		return nil
 	}
-	for _, resource := range c.Router.Spec.Resources {
-		if resource.Kind != "KernelModule" {
-			continue
-		}
+	for _, resource := range kernelModuleControllerResources(c.Router) {
 		spec, err := resource.KernelModuleSpec()
 		if err != nil {
 			return err
@@ -116,6 +114,10 @@ func (c KernelModuleController) Reconcile(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func kernelModuleControllerResources(router *api.Router) []api.Resource {
+	return hostdeps.KernelModuleResources(router)
 }
 
 func (c KernelModuleController) applyKernelModules(ctx context.Context, name string, spec api.KernelModuleSpec) (bool, []string, []string, error) {

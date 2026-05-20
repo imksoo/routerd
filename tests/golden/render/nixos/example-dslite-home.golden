@@ -16,17 +16,26 @@ wan-pd-dhcpv6-client from=wan to=self ifnames=ens18 proto=udp port=546 action=ac
   systemd.network.networks."10-netplan-ens18" = {
     matchConfig.Name = "ens18";
     networkConfig = {
-      IPv6AcceptRA = true;
+      DHCP = "no";
+      IPv6AcceptRA = false;
     };
     linkConfig.RequiredForOnline = "no";
   };
   systemd.network.networks."10-netplan-ens19" = {
     matchConfig.Name = "ens19";
+    networkConfig = {
+      DHCP = "no";
+      IPv6AcceptRA = false;
+    };
     address = [
       "192.168.10.1/24"
     ];
     linkConfig.RequiredForOnline = "routable";
   };
+  services.resolved.enable = true;
+  services.resolved.extraConfig = ''
+    DNSStubListener=no
+  '';
   systemd.services."routerd-dhcpv6-client@wan-pd" = {
     description = "routerd DHCPv6 client wan-pd";
     after = [ "network-online.target" ];

@@ -16,13 +16,13 @@ func (s mapStore) ObjectStatus(apiVersion, kind, name string) map[string]any {
 
 func TestDependencyReadyUsesKindAPIVersion(t *testing.T) {
 	store := mapStore{
-		api.SystemAPIVersion + "/NetworkAdoption/wan-networkd-owned-by-routerd": {
+		api.SystemAPIVersion + "/Package/router-runtime": {
 			"phase": "Applied",
 		},
 	}
 
 	if !DependencyReady(store, api.ResourceDependencySpec{
-		Resource: "NetworkAdoption/wan-networkd-owned-by-routerd",
+		Resource: "Package/router-runtime",
 		Phase:    "Applied",
 	}) {
 		t.Fatalf("expected system resource dependency to be ready")

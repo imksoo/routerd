@@ -11,23 +11,6 @@ spec:
       - mgmt
 
   resources:
-    - apiVersion: system.routerd.net/v1alpha1
-      kind: Package
-      metadata:
-        name: service-deps
-      spec:
-        packages:
-          - os: freebsd
-            manager: pkg
-            names:
-              - dnsmasq
-              - bind-tools
-              - wireguard-tools
-              - tailscale
-              - strongswan
-              - mpd5
-              - ndpi
-
     - apiVersion: net.routerd.net/v1alpha1
       kind: Hostname
       metadata:

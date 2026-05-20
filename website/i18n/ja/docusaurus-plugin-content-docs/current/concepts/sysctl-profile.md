@@ -94,21 +94,10 @@ spec:
     net.netfilter.nf_conntrack_udp_timeout: "60"
 ```
 
-conntrack、NFLOG、WireGuard などの module loading も YAML に寄せたい場合は `KernelModule` を使います。
-
-```yaml
-apiVersion: system.routerd.net/v1alpha1
-kind: KernelModule
-metadata:
-  name: router-kernel-modules
-spec:
-  modules:
-    - nf_conntrack
-    - nfnetlink_log
-    - wireguard
-  runtime: true
-  persistent: true
-```
+conntrack、NFLOG、WireGuard などの module loading は、NAT、firewall log、
+traffic flow log、WireGuard などの resource から routerd が自動導出します。
+`KernelModule` は user-facing config kind ではありません。導出漏れがあれば、
+実装側の derivation bug として直します。
 
 ## 個別 Sysctl との使い分け
 

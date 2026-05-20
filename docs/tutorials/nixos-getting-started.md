@@ -36,7 +36,7 @@ What is implemented:
 - systemd unit generation for `routerd-dhcpv6-client`
 - systemd unit generation for `routerd-dhcpv4-client`
 - systemd unit generation for `routerd-pppoe-client`
-- NixOS module generation for `Package`, `SysctlProfile`, `NetworkAdoption`, and generated service artifacts
+- NixOS module generation for `Package` overrides, `SysctlProfile`, derived host runtime artifacts, and generated service artifacts
 - DHCPv6-PD reaches `Bound` after `nixos-rebuild switch`
 - dnsmasq, DNS resolver, HealthCheck, firewall logger, Tailscale, DHCPv4 client, DHCPv6 client, and PPPoE client services can be declared through the generated module
 - nftables is enabled from the generated module when NAT, firewall, policy routing, or Path MTU resources require it

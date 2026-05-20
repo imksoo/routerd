@@ -6,25 +6,6 @@ metadata:
 
 spec:
   resources:
-    - apiVersion: system.routerd.net/v1alpha1
-      kind: Package
-      metadata:
-        name: tailscale-runtime
-      spec:
-        packages:
-          - os: ubuntu
-            manager: apt
-            names:
-              - tailscale
-          - os: nixos
-            manager: nix
-            names:
-              - tailscale
-          - os: alpine
-            manager: apk
-            names:
-              - tailscale
-
     - apiVersion: net.routerd.net/v1alpha1
       kind: TailscaleNode
       metadata:

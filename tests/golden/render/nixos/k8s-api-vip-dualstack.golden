@@ -21,6 +21,10 @@
     ];
     linkConfig.RequiredForOnline = "routable";
   };
+  services.resolved.enable = true;
+  services.resolved.extraConfig = ''
+    DNSStubListener=no
+  '';
   systemd.services."routerd-dns-resolver@lan-resolver" = {
     description = "routerd DNS resolver lan-resolver";
     wantedBy = [ "multi-user.target" ];

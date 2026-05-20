@@ -95,25 +95,13 @@ spec:
     net.netfilter.nf_conntrack_udp_timeout: "60"
 ```
 
-## Kernel modules
+## Kernel Modules
 
-`SysctlProfile` expects the relevant kernel subsystems to exist. Use
-`KernelModule` when the router should also declare module loading, for example
-conntrack accounting, NFLOG, or WireGuard:
-
-```yaml
-apiVersion: system.routerd.net/v1alpha1
-kind: KernelModule
-metadata:
-  name: router-kernel-modules
-spec:
-  modules:
-    - nf_conntrack
-    - nfnetlink_log
-    - wireguard
-  runtime: true
-  persistent: true
-```
+`SysctlProfile` expects the relevant kernel subsystems to exist. routerd derives
+kernel module loading from resources such as NAT, firewall logging, traffic flow
+logging, and WireGuard. `KernelModule` is no longer a user-facing config kind;
+if a module is missing from the derived set, fix the derivation instead of
+adding implementation-specific YAML.
 
 ## When to use a discrete `Sysctl`
 

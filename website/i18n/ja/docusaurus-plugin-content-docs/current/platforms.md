@@ -76,9 +76,9 @@ network:
       optional: true
 ```
 
-WAN link で RA から得る IPv6 default route が必要な場合は、その interface に
-`NetworkAdoption` を使います。routerd は systemd-networkd drop-in として
-`IPv6AcceptRA=yes` と `[IPv6AcceptRA] DHCPv6Client=no` を書くため、RA は受けつつ
+WAN link で RA から得る IPv6 default route が必要な場合は、WAN interface と
+DHCPv6 / RA resource を宣言します。routerd は systemd-networkd drop-in として
+`IPv6AcceptRA=yes` と `[IPv6AcceptRA] DHCPv6Client=no` を導出するため、RA は受けつつ
 OS 側 DHCPv6 client は無効のままにできます。
 
 ## Alpine Linux
@@ -126,7 +126,7 @@ NixOS は Ubuntu と同じ routerd リソースモデルを使います。
 - `routerd-dhcpv6-client` の systemd ユニット生成
 - `routerd-dhcpv4-client` の systemd ユニット生成
 - `routerd-pppoe-client` の systemd ユニット生成
-- `Package`、`SysctlProfile`、`NetworkAdoption`、`generated service artifacts` の NixOS モジュール生成
+- `Package` override、`SysctlProfile`、derived host runtime artifact、`generated service artifacts` の NixOS モジュール生成
 - `nixos-rebuild test` / `nixos-rebuild switch` 連携
 - `nixos-rebuild switch` 失敗時の `nixos-rebuild switch --rollback` 試行
 - `nixos-rebuild` 前後の `generation` 記録

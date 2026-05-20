@@ -12,6 +12,7 @@ import (
 
 	"routerd/pkg/api"
 	"routerd/pkg/daemonapi"
+	"routerd/pkg/hostdeps"
 )
 
 type PackageController struct {
@@ -26,10 +27,7 @@ type PackageController struct {
 }
 
 func (c PackageController) Reconcile(ctx context.Context) error {
-	for _, resource := range c.Router.Spec.Resources {
-		if resource.Kind != "Package" {
-			continue
-		}
+	for _, resource := range packageControllerResources(c.Router) {
 		spec, err := resource.PackageSpec()
 		if err != nil {
 			return err
@@ -141,6 +139,10 @@ func (c PackageController) Reconcile(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func packageControllerResources(router *api.Router) []api.Resource {
+	return hostdeps.PackageResources(router)
 }
 
 func packageSetForCurrentOS(spec api.PackageSpec) (api.OSPackageSetSpec, bool) {

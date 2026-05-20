@@ -40,18 +40,6 @@ spec:
       ifname: ds-routerd-test
       managed: false
   - apiVersion: net.routerd.net/v1alpha1
-    kind: Link
-    metadata:
-      name: ens19
-    spec:
-      ifname: ens19
-  - apiVersion: net.routerd.net/v1alpha1
-    kind: Link
-    metadata:
-      name: lo
-    spec:
-      ifname: lo
-  - apiVersion: net.routerd.net/v1alpha1
     kind: DHCPv6PrefixDelegation
     metadata:
       name: wan-pd
@@ -91,7 +79,7 @@ spec:
       dependsOn:
       - resource: DHCPv6PrefixDelegation/wan-pd
         phase: Bound
-      - resource: Link/ens19
+      - resource: Interface/ens19
         phase: Up
   - apiVersion: net.routerd.net/v1alpha1
     kind: IPv6RouterAdvertisement
@@ -314,12 +302,12 @@ spec:
         - resource: DSLiteTunnel/ds-lite
           phase: Up
       - name: dummy-fallback
-        source: Link/dummy-fallback
+        source: Interface/dummy-fallback
         device: dummy0
         gatewaySource: none
         weight: 50
         dependsOn:
-        - resource: Link/dummy-fallback
+        - resource: Interface/dummy-fallback
           phase: Up
   - apiVersion: net.routerd.net/v1alpha1
     kind: NAT44Rule

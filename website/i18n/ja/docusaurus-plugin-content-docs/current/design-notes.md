@@ -86,7 +86,7 @@ OpenRC 対応は、まず applier ではなく renderer として始めます。
 
 これは互換性の袋小路を避けるためです。
 API shape は当面 `generated service artifacts` のままですが、OpenRC に写すのは明確に init script の意味を持つ field に限ります：`ExecStart`、`ExecStartPre`、environment、working directory、user/group、runtime/state/log directory。
-systemd sandboxing、`NetworkAdoption`、networkd、resolved、timesyncd の意味は OpenRC 上で模倣しません。
+systemd sandboxing、networkd、resolved、timesyncd の意味は OpenRC 上で模倣しません。
 
 apply-time activation は `HasOpenRC` で分岐します。
 script は内容または mode が変わる場合だけ書き込み、`rc-update show default` で登録状態を確認してから add / del し、`rc-service <name> status` を見てから start / restart / stop します。

@@ -14,12 +14,16 @@ wan-dhcpv4-dhcpv4-client from=wan to=self ifnames=ens18 proto=udp port=68 action
   systemd.network.networks."10-netplan-ens18" = {
     matchConfig.Name = "ens18";
     networkConfig = {
+      DHCP = "no";
       LinkLocalAddressing = "no";
     };
     linkConfig.RequiredForOnline = "no";
   };
   systemd.network.networks."10-netplan-ens19" = {
     matchConfig.Name = "ens19";
+    networkConfig = {
+      DHCP = "no";
+    };
     address = [
       "192.168.10.1/24"
     ];

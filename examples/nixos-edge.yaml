@@ -14,49 +14,6 @@ spec:
 
   resources:
     - apiVersion: system.routerd.net/v1alpha1
-      kind: NixOSHost
-      metadata:
-        name: host
-      spec:
-        hostname: nixos-edge
-        domain: example.internal
-        stateVersion: "25.11"
-        boot:
-          loader: grub
-          grubDevice: /dev/sda
-        routerdService:
-          enabled: true
-          binaryPath: /usr/local/sbin/routerd
-          configFile: /usr/local/etc/routerd/router.yaml
-          socket: /run/routerd/routerd.sock
-          applyInterval: 60s
-          extraFlags:
-            - --status-file
-            - /run/routerd/status.json
-        additionalPackages:
-          - dnsutils
-          - iputils
-          - tcpdump
-          - traceroute
-        additionalServicePath:
-          - ndpi
-        debugSystemPackages: true
-        ssh:
-          enabled: true
-          passwordAuthentication: true
-          permitRootLogin: "no"
-        sudo:
-          wheelNeedsPassword: false
-        users:
-          - name: admin
-            description: Network administrator
-            groups:
-              - wheel
-            initialPassword: change-me
-            sshAuthorizedKeys:
-              - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexampleexampleexampleexampleexampleexample lab-admin@example
-
-    - apiVersion: system.routerd.net/v1alpha1
       kind: LogSink
       metadata:
         name: local-syslog

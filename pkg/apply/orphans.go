@@ -206,6 +206,14 @@ func desiredAttributesDrift(desired, actual map[string]string) bool {
 
 func DesiredOwnedArtifacts(router *api.Router, aliases map[string]string) []resource.Artifact {
 	var desired []resource.Artifact
+	for _, intent := range routerArtifactIntents(router, aliases) {
+		switch intent.Artifact.Kind {
+		case "linux.ipv4.routeTable":
+			continue
+		default:
+			desired = append(desired, intent.Artifact)
+		}
+	}
 	for _, res := range router.Spec.Resources {
 		for _, intent := range resourceArtifactIntents(res, aliases) {
 			switch intent.Artifact.Kind {

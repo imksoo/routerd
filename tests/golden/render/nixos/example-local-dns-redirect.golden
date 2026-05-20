@@ -14,11 +14,18 @@ lan-local-services-public-dns-udp from=lan to=self ifnames=ens19 proto=udp port=
   systemd.network.enable = true;
   systemd.network.networks."10-netplan-ens19" = {
     matchConfig.Name = "ens19";
+    networkConfig = {
+      DHCP = "no";
+    };
     address = [
       "192.168.50.1/24"
     ];
     linkConfig.RequiredForOnline = "routable";
   };
+  services.resolved.enable = true;
+  services.resolved.extraConfig = ''
+    DNSStubListener=no
+  '';
   systemd.services."routerd-dns-resolver@lan-resolver" = {
     description = "routerd DNS resolver lan-resolver";
     wantedBy = [ "multi-user.target" ];

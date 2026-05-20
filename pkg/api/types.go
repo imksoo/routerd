@@ -107,20 +107,8 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
 		r.Spec = spec
-	case "KernelModule":
-		var spec KernelModuleSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
 	case "Package":
 		var spec PackageSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "NetworkAdoption":
-		var spec NetworkAdoptionSpec
 		if err := raw.Spec.Decode(&spec); err != nil {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
@@ -143,12 +131,6 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
 		r.Spec = spec
-	case "NixOSHost":
-		var spec NixOSHostSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
 	case "RouterdCluster":
 		var spec RouterdClusterSpec
 		if err := raw.Spec.Decode(&spec); err != nil {
@@ -163,12 +145,6 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 		r.Spec = spec
 	case "Interface":
 		var spec InterfaceSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "Link":
-		var spec LinkSpec
 		if err := raw.Spec.Decode(&spec); err != nil {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
@@ -535,6 +511,14 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 		r.Spec = spec
 	case "SystemdUnit":
 		return fmt.Errorf("%s is not supported; declare router intent and let routerd generate service units", r.ID())
+	case "KernelModule":
+		return fmt.Errorf("%s is not supported; routerd derives required kernel modules from declared resources", r.ID())
+	case "NetworkAdoption":
+		return fmt.Errorf("%s is not supported; routerd derives networkd/resolved adoption from Interface and service resources", r.ID())
+	case "NixOSHost":
+		return fmt.Errorf("%s is not supported; use router resources and platform renderers instead of host implementation resources", r.ID())
+	case "Link":
+		return fmt.Errorf("%s is not supported; use Interface resources as link status providers", r.ID())
 	default:
 		return fmt.Errorf("unsupported resource kind %s in %s", raw.Kind, r.ID())
 	}

@@ -4,10 +4,6 @@
 
 {
   services.tailscale.enable = true;
-  environment.systemPackages = with pkgs; [
-    jq
-    tailscale
-  ];
   systemd.services."routerd-tailscale-home" = {
     description = "routerd Tailscale node home";
     wantedBy = [ "multi-user.target" ];

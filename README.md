@@ -96,9 +96,9 @@ Implemented resource areas include:
   MAC-based nftables filtering on shared LAN segments
 - `HealthCheck`, `EgressRoutePolicy`, `EventRule`, and `DerivedEvent`
   coordination
-- `Package`, `Sysctl`, `SysctlProfile`, `NetworkAdoption`, `SystemdUnit`,
-  `NTPClient`, `LogSink`, `ObservabilityPipeline`, `RouterdCluster`,
-  `LogRetention`, and `WebConsole`
+- `Package` overrides, `Sysctl`, `SysctlProfile`, derived host runtime
+  dependencies, `NTPClient`, `LogSink`, `ObservabilityPipeline`,
+  `RouterdCluster`, `LogRetention`, and `WebConsole`
 - local NAPT/conntrack inspection through `routerctl`
 - read-only Web Console for status, events, connections, DNS queries, traffic,
   firewall logs, and the active configuration

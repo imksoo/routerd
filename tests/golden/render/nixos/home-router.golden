@@ -127,28 +127,6 @@ wg-mesh-wireguard from=wan to=self ifnames=ens18 proto=udp port=51821 action=acc
     "net.ipv6.conf.ens19.accept_ra" = 2;
     "net.ipv6.route.max_size" = 16384;
   };
-  environment.systemPackages = with pkgs; [
-    bind
-    chrony
-    conntrack-tools
-    dnsmasq
-    iproute2
-    iputils
-    jq
-    kmod
-    libnetfilter_log
-    ndpi
-    nettools
-    nftables
-    ppp
-    procps
-    strongswan
-    systemd
-    tailscale
-    tcpdump
-    traceroute
-    wireguard-tools
-  ];
   systemd.services."routerd-dhcpv6-client@wan-pd" = {
     description = "routerd DHCPv6 client wan-pd";
     after = [ "network-online.target" ];

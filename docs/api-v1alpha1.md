@@ -38,7 +38,7 @@ spec:
 | `routerd.net/v1alpha1` | `Router` |
 | `net.routerd.net/v1alpha1` | interfaces, reusable `IPAddressSet` resources, DHCP, DNS, routes, tunnels, VIP, BGP, events, traffic flow logs |
 | `firewall.routerd.net/v1alpha1` | `FirewallZone`, `FirewallPolicy`, `FirewallRule`, `FirewallLog`, `ClientPolicy`, `PortForward`, `IngressService`, `LocalServiceRedirect` |
-| `system.routerd.net/v1alpha1` | `Hostname`, `Sysctl`, `SysctlProfile`, `KernelModule`, `Package`, `NetworkAdoption`, `NTPClient`, `LogSink`, `ObservabilityPipeline`, `RouterdCluster`, `LogRetention`, `WebConsole`, `NixOSHost` |
+| `system.routerd.net/v1alpha1` | `Hostname`, `Sysctl`, `SysctlProfile`, `Package`, `NTPClient`, `LogSink`, `ObservabilityPipeline`, `RouterdCluster`, `LogRetention`, `WebConsole` |
 | `observability.routerd.net/v1alpha1` | `Telemetry` |
 | `plugin.routerd.net/v1alpha1` | plugin manifests |
 
@@ -46,11 +46,9 @@ spec:
 
 | Kind | Role |
 | --- | --- |
-| `Package` | Declares OS-specific packages and installs missing packages where the platform supports it. |
+| `Package` | Optional narrow override for OS packages that cannot yet be derived from router resources. Normal runtime dependencies are derived automatically. |
 | `Sysctl` | Sets one sysctl value. Readback comparison can be `exact` or `atLeast`. |
 | `SysctlProfile` | Applies router-oriented sysctl defaults. |
-| `KernelModule` | Loads Linux kernel modules with `modprobe` and can persist them under `/etc/modules-load.d`. |
-| `NetworkAdoption` | Adjusts OS DHCP clients and systemd-resolved listeners so routerd can own the interface role. |
 | `Hostname` | Sets the host name. |
 | `NTPClient` | Enables the OS NTP client. It can use static servers or derive servers from DHCPv4 / DHCPv6 status with public fallback servers. |
 | `LogSink` | Sends routerd events to syslog or another local sink. |
@@ -65,12 +63,11 @@ spec:
 | --- | --- |
 | `Telemetry` | Declares an external OTLP endpoint and injects OpenTelemetry environment variables into generated service units. |
 
-## Interfaces and Links
+## Interfaces
 
 | Kind | Role |
 | --- | --- |
-| `Interface` | Binds a stable routerd name to an OS interface name. |
-| `Link` | Publishes link state for downstream resources. |
+| `Interface` | Binds a stable routerd name to an OS interface name and publishes link/address status for downstream resources. |
 | `PPPoEInterface` | Defines PPPoE lower-interface settings. |
 | `PPPoESession` | Represents a `routerd-pppoe-client` session. |
 | `WireGuardInterface` | Represents a WireGuard interface. |
@@ -100,10 +97,10 @@ routerd renders an rc.d service that creates the
 `wg` interface, loads the key from that file, applies peers, and then assigns
 declared static addresses for the WireGuard interface.
 
-`KernelModule` is a Linux bootstrap resource. `runtime: true` loads declared
-modules immediately, and `persistent: true` writes a modules-load.d file. NixOS
-is treated as declarative-only, and FreeBSD reports the resource as unsupported
-instead of pretending parity with Linux module loading.
+Kernel modules and systemd-networkd/resolved adoption drop-ins are derived from
+router resources. If a config still contains the removed `KernelModule`,
+`NetworkAdoption`, `Link`, or `NixOSHost` kinds, routerd returns an error
+instead of silently ignoring the input.
 
 ## WAN Addressing and Delegation
 

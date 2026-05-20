@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"routerd/pkg/api"
+	"routerd/pkg/hostdeps"
 	"routerd/pkg/sysctlprofile"
 )
 
@@ -553,6 +554,51 @@ func nixOSInterfaces(router *api.Router) ([]nixOSInterface, error) {
 			}
 		}
 	}
+	for _, res := range hostdeps.NetworkAdoptionResources(router) {
+		spec, err := res.NetworkAdoptionSpec()
+		if err != nil {
+			return nil, err
+		}
+		if defaultString(spec.State, "present") == "absent" {
+			continue
+		}
+		ifname := strings.TrimSpace(spec.IfName)
+		name := spec.Interface
+		if ifname == "" && name != "" {
+			if iface := interfaces[name]; iface != nil {
+				ifname = iface.IfName
+			}
+		}
+		if ifname == "" {
+			continue
+		}
+		if name == "" {
+			name = "adopt-" + ifname
+		}
+		if interfaces[name] == nil {
+			interfaces[name] = &nixOSInterface{Name: name, IfName: ifname, AdminUp: true}
+			names = append(names, name)
+		}
+		iface := interfaces[name]
+		if spec.SystemdNetworkd.DisableDHCPv4 {
+			iface.DisableDHCPv4 = true
+		}
+		if spec.SystemdNetworkd.DisableDHCPv6 {
+			iface.DisableDHCPv6 = true
+		}
+		if spec.SystemdNetworkd.DisableIPv6RA {
+			iface.DisableIPv6RA = true
+		}
+		if spec.SystemdNetworkd.DHCPv4UseRoutes != nil {
+			iface.DHCPv4UseRoutes = spec.SystemdNetworkd.DHCPv4UseRoutes
+		}
+		if spec.SystemdNetworkd.DHCPv4UseDNS != nil {
+			iface.DHCPv4UseDNS = spec.SystemdNetworkd.DHCPv4UseDNS
+		}
+		if spec.SystemdNetworkd.DHCPv4RouteMetric != 0 {
+			iface.DHCPv4RouteMetric = spec.SystemdNetworkd.DHCPv4RouteMetric
+		}
+	}
 	for _, res := range router.Spec.Resources {
 		switch res.Kind {
 		case "IPv4StaticAddress":
@@ -586,50 +632,6 @@ func nixOSInterfaces(router *api.Router) ([]nixOSInterface, error) {
 			}
 			if iface := interfaces[spec.Interface]; iface != nil && api.BoolDefault(spec.Managed, true) {
 				iface.AcceptRA = true
-			}
-		case "NetworkAdoption":
-			spec, err := res.NetworkAdoptionSpec()
-			if err != nil {
-				return nil, err
-			}
-			if defaultString(spec.State, "present") == "absent" {
-				continue
-			}
-			ifname := strings.TrimSpace(spec.IfName)
-			name := spec.Interface
-			if ifname == "" && name != "" {
-				if iface := interfaces[name]; iface != nil {
-					ifname = iface.IfName
-				}
-			}
-			if ifname == "" {
-				continue
-			}
-			if name == "" {
-				name = "adopt-" + ifname
-			}
-			if interfaces[name] == nil {
-				interfaces[name] = &nixOSInterface{Name: name, IfName: ifname, AdminUp: true}
-				names = append(names, name)
-			}
-			iface := interfaces[name]
-			if spec.SystemdNetworkd.DisableDHCPv4 {
-				iface.DisableDHCPv4 = true
-			}
-			if spec.SystemdNetworkd.DisableDHCPv6 {
-				iface.DisableDHCPv6 = true
-			}
-			if spec.SystemdNetworkd.DisableIPv6RA {
-				iface.DisableIPv6RA = true
-			}
-			if spec.SystemdNetworkd.DHCPv4UseRoutes != nil {
-				iface.DHCPv4UseRoutes = spec.SystemdNetworkd.DHCPv4UseRoutes
-			}
-			if spec.SystemdNetworkd.DHCPv4UseDNS != nil {
-				iface.DHCPv4UseDNS = spec.SystemdNetworkd.DHCPv4UseDNS
-			}
-			if spec.SystemdNetworkd.DHCPv4RouteMetric != 0 {
-				iface.DHCPv4RouteMetric = spec.SystemdNetworkd.DHCPv4RouteMetric
 			}
 		}
 	}
@@ -1476,10 +1478,7 @@ func nixOSSystemdServiceName(unitName string) string {
 }
 
 func nixOSResolvedStubDisabled(router *api.Router) bool {
-	for _, res := range router.Spec.Resources {
-		if res.Kind != "NetworkAdoption" {
-			continue
-		}
+	for _, res := range hostdeps.NetworkAdoptionResources(router) {
 		spec, err := res.NetworkAdoptionSpec()
 		if err != nil {
 			continue
@@ -1547,8 +1546,8 @@ func nixOSPackages(router *api.Router, host api.NixOSHostSpec) ([]string, []stri
 	}
 	hasDeclarativePackages := false
 	for _, res := range router.Spec.Resources {
-		switch res.Kind {
-		case "Package":
+		if res.Kind == "Package" {
+			hasDeclarativePackages = true
 			spec, err := res.PackageSpec()
 			if err != nil {
 				return nil, nil, err
@@ -1561,11 +1560,30 @@ func nixOSPackages(router *api.Router, host api.NixOSHostSpec) ([]string, []stri
 					if err := validateNixPackageIdent(pkg); err != nil {
 						return nil, nil, err
 					}
-					service[pkg] = true
 					debug[pkg] = true
-					hasDeclarativePackages = true
 				}
 			}
+		}
+	}
+	for _, res := range hostdeps.PackageResources(router) {
+		spec, err := res.PackageSpec()
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, set := range spec.Packages {
+			if set.OS != "nixos" {
+				continue
+			}
+			for _, pkg := range set.Names {
+				if err := validateNixPackageIdent(pkg); err != nil {
+					return nil, nil, err
+				}
+				service[pkg] = true
+			}
+		}
+	}
+	for _, res := range router.Spec.Resources {
+		switch res.Kind {
 		case "Bridge":
 			spec, err := res.BridgeSpec()
 			if err != nil {

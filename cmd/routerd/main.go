@@ -849,9 +849,6 @@ func canonicalResourceKind(kind string) string {
 		"host":                   "Hostname",
 		"sysctlprofile":          "SysctlProfile",
 		"sysctlprofiles":         "SysctlProfile",
-		"kernelmodule":           "KernelModule",
-		"kernelmodules":          "KernelModule",
-		"kmod":                   "KernelModule",
 		"package":                "Package",
 		"packages":               "Package",
 		"telemetry":              "Telemetry",
@@ -859,8 +856,6 @@ func canonicalResourceKind(kind string) string {
 		"obspipeline":            "ObservabilityPipeline",
 		"routerdcluster":         "RouterdCluster",
 		"cluster":                "RouterdCluster",
-		"networkadoption":        "NetworkAdoption",
-		"adoption":               "NetworkAdoption",
 		"route":                  "IPv4PolicyRouteSet",
 		"ipv4policyrouteset":     "IPv4PolicyRouteSet",
 		"clusternetworkroute":    "ClusterNetworkRoute",
@@ -876,13 +871,13 @@ func apiVersionForKind(kind string) string {
 	switch kind {
 	case "FirewallZone", "FirewallPolicy", "FirewallRule", "PortForward", "IngressService", "LocalServiceRedirect":
 		return api.FirewallAPIVersion
-	case "Hostname", "Sysctl", "SysctlProfile", "KernelModule", "Package", "NetworkAdoption", "NTPClient", "NTPServer", "LogSink", "ObservabilityPipeline", "RouterdCluster", "NixOSHost", "ServiceUnit":
+	case "Hostname", "Sysctl", "SysctlProfile", "Package", "NTPClient", "NTPServer", "LogSink", "ObservabilityPipeline", "RouterdCluster", "ServiceUnit":
 		return api.SystemAPIVersion
 	case "Telemetry":
 		return api.ObservabilityAPIVersion
 	case "Inventory":
 		return api.RouterAPIVersion
-	case "Interface", "Link", "Bridge", "VXLANSegment", "WireGuardInterface", "WireGuardPeer", "TailscaleNode", "IPsecConnection", "VRF", "VXLANTunnel", "PPPoEInterface", "PPPoESession", "IPv4StaticAddress", "DHCPv4Lease", "IPv4StaticRoute", "IPv6StaticRoute", "ClusterNetworkRoute", "DHCPv4Server", "DHCPv4Scope", "DHCPv4Reservation", "DHCPv6Address", "IPv6RAAddress", "DHCPv6PrefixDelegation", "IPv6DelegatedAddress", "DHCPv6Information", "IPv6RouterAdvertisement", "DHCPv6Server", "DHCPv6Scope", "DHCPv4Relay", "DNSZone", "DNSResolver", "SelfAddressPolicy", "DSLiteTunnel", "IPv4Route", "StatePolicy", "HealthCheck", "EgressRoutePolicy", "EventRule", "DerivedEvent", "IPv4DefaultRoutePolicy", "IPv4SourceNAT", "NAT44Rule", "IPAddressSet", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "IPv4ReversePathFilter", "PathMTUPolicy":
+	case "Interface", "Bridge", "VXLANSegment", "WireGuardInterface", "WireGuardPeer", "TailscaleNode", "IPsecConnection", "VRF", "VXLANTunnel", "PPPoEInterface", "PPPoESession", "IPv4StaticAddress", "DHCPv4Lease", "IPv4StaticRoute", "IPv6StaticRoute", "ClusterNetworkRoute", "DHCPv4Server", "DHCPv4Scope", "DHCPv4Reservation", "DHCPv6Address", "IPv6RAAddress", "DHCPv6PrefixDelegation", "IPv6DelegatedAddress", "DHCPv6Information", "IPv6RouterAdvertisement", "DHCPv6Server", "DHCPv6Scope", "DHCPv4Relay", "DNSZone", "DNSResolver", "SelfAddressPolicy", "DSLiteTunnel", "IPv4Route", "StatePolicy", "HealthCheck", "EgressRoutePolicy", "EventRule", "DerivedEvent", "IPv4DefaultRoutePolicy", "IPv4SourceNAT", "NAT44Rule", "IPAddressSet", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "IPv4ReversePathFilter", "PathMTUPolicy":
 		return api.NetAPIVersion
 	default:
 		return ""
@@ -3295,7 +3290,7 @@ func controllerResourceKinds(name string) []string {
 	case "network-adoption":
 		return []string{"NetworkAdoption"}
 	case "package":
-		return []string{"Package", "KernelModule"}
+		return []string{"Package"}
 	case "kernel-module":
 		return []string{"KernelModule"}
 	case "pppoesession":

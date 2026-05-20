@@ -79,93 +79,6 @@ spec:
           - 2001:db8:1271::/64
 
     - apiVersion: system.routerd.net/v1alpha1
-      kind: Package
-      metadata:
-        name: router-service-dependencies
-      spec:
-        state: present
-        packages:
-          - os: ubuntu
-            manager: apt
-            names:
-              - dnsmasq-base
-              - nftables
-              - conntrack
-              - iproute2
-              - iputils-ping
-              - iputils-tracepath
-              - dnsutils
-              - tcpdump
-              - traceroute
-              - procps
-              - ppp
-              - wireguard-tools
-              - strongswan-swanctl
-              - systemd
-              - chrony
-              - net-tools
-              - kmod
-              - frr
-              - libnetfilter-log1
-              - libndpi-bin
-              - tailscale
-              - tailscale-archive-keyring
-          - os: nixos
-            manager: nix
-            names:
-              - dnsmasq
-              - nftables
-              - conntrack-tools
-              - iproute2
-              - iputils
-              - bind
-              - tcpdump
-              - traceroute
-              - procps
-              - ppp
-              - wireguard-tools
-              - strongswan
-              - systemd
-              - chrony
-              - nettools
-              - kmod
-              - libnetfilter_log
-              - ndpi
-              - tailscale
-            optional: true
-          - os: alpine
-            manager: apk
-            names:
-              - dnsmasq
-              - nftables
-              - conntrack-tools
-              - iproute2
-              - iputils
-              - iputils-tracepath
-              - bind-tools
-              - tcpdump
-              - ppp
-              - ppp-pppoe
-              - wireguard-tools
-              - strongswan
-              - chrony
-              - kmod
-              - radvd
-              - ndpi
-              - tailscale
-            optional: true
-          - os: freebsd
-            manager: pkg
-            names:
-              - dnsmasq
-              - wireguard-tools
-              - strongswan
-              - mpd5
-              - bind-tools
-              - tailscale
-            optional: true
-
-    - apiVersion: system.routerd.net/v1alpha1
       kind: SysctlProfile
       metadata:
         name: router-runtime
@@ -176,18 +89,6 @@ spec:
         overrides:
           net.netfilter.nf_conntrack_acct: "1"
           net.netfilter.nf_conntrack_udp_timeout: "60"
-    - apiVersion: system.routerd.net/v1alpha1
-      kind: KernelModule
-      metadata:
-        name: router-kernel-modules
-      spec:
-        modules:
-          - nf_conntrack
-          - nfnetlink_log
-          - wireguard
-        runtime: true
-        persistent: true
-        optional: true
     - apiVersion: system.routerd.net/v1alpha1
       kind: Sysctl
       metadata:
@@ -280,30 +181,6 @@ spec:
             retention: 90d
 
     - apiVersion: system.routerd.net/v1alpha1
-      kind: NetworkAdoption
-      metadata:
-        name: wan-networkd-owned-by-routerd
-      spec:
-        interface: wan
-        systemdNetworkd:
-          disableDHCPv4: true
-          disableDHCPv6: true
-        systemdResolved:
-          disableDNSStubListener: true
-          dnsServers:
-            - 127.0.0.1
-    - apiVersion: system.routerd.net/v1alpha1
-      kind: NetworkAdoption
-      metadata:
-        name: lan-networkd-owned-by-routerd
-      spec:
-        interface: lan
-        systemdNetworkd:
-          disableDHCPv4: true
-          disableDHCPv6: true
-          disableIPv6RA: true
-
-    - apiVersion: system.routerd.net/v1alpha1
       kind: WebConsole
       metadata:
         name: mgmt
@@ -382,25 +259,6 @@ spec:
         ifname: ds-lite-ra
         role: untrust
         managed: false
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: Link
-      metadata:
-        name: wan
-      spec:
-        ifname: ens18
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: Link
-      metadata:
-        name: lan
-      spec:
-        ifname: ens19
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: Link
-      metadata:
-        name: mgmt
-      spec:
-        ifname: ens20
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: TailscaleNode
@@ -580,7 +438,7 @@ spec:
         dependsOn:
           - resource: DHCPv6PrefixDelegation/wan-pd
             phase: Bound
-          - resource: Link/lan
+          - resource: Interface/lan
             phase: Up
 
     - apiVersion: net.routerd.net/v1alpha1
@@ -595,7 +453,7 @@ spec:
         dependsOn:
           - resource: DHCPv6PrefixDelegation/wan-pd
             phase: Bound
-          - resource: Link/lan
+          - resource: Interface/lan
             phase: Up
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv6DelegatedAddress
@@ -609,7 +467,7 @@ spec:
         dependsOn:
           - resource: DHCPv6PrefixDelegation/wan-pd
             phase: Bound
-          - resource: Link/lan
+          - resource: Interface/lan
             phase: Up
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv6DelegatedAddress
@@ -623,7 +481,7 @@ spec:
         dependsOn:
           - resource: DHCPv6PrefixDelegation/wan-pd
             phase: Bound
-          - resource: Link/lan
+          - resource: Interface/lan
             phase: Up
 
     - apiVersion: net.routerd.net/v1alpha1
@@ -776,7 +634,7 @@ spec:
             weight: 50
             healthCheck: internet-via-ix2215
             dependsOn:
-              - resource: Link/lan
+              - resource: Interface/lan
                 phase: Up
               - resource: IPv4StaticAddress/lan-legacy-bridge
                 phase: Applied
@@ -961,7 +819,7 @@ spec:
           field: ifname
         metric: 20
         dependsOn:
-          - resource: NetworkAdoption/wan-networkd-owned-by-routerd
+          - resource: Interface/wan
             phase: Applied
 
     - apiVersion: net.routerd.net/v1alpha1

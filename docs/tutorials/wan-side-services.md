@@ -13,7 +13,7 @@ The companion page on the [LAN side](./lan-side-services.md) covers what the rou
 
 | Concern | Resource | Daemon backing it |
 | --- | --- | --- |
-| Physical / virtual interface | `Interface`, `Link`, `IPv4StaticAddress`, `NetworkAdoption` | (kernel) |
+| Physical / virtual interface | `Interface`, `IPv4StaticAddress` | (kernel) |
 | IPv4 from ISP via DHCP | `DHCPv4Lease` | `routerd-dhcpv4-client` |
 | IPv6 prefix from ISP | `DHCPv6PrefixDelegation`, `IPv6DelegatedAddress` | `routerd-dhcpv6-client` |
 | Other DHCPv6 options (DNS, AFTR, etc.) | `DHCPv6Information` | `routerd-dhcpv6-client` |

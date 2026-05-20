@@ -74,10 +74,10 @@ network:
       optional: true
 ```
 
-For WAN links that still need the RA-learned IPv6 default route, add a
-`NetworkAdoption` resource. routerd writes a systemd-networkd drop-in with
-`IPv6AcceptRA=yes` and `[IPv6AcceptRA] DHCPv6Client=no`, so RA is accepted while
-the OS DHCPv6 client stays disabled.
+For WAN links that still need the RA-learned IPv6 default route, declare the
+WAN interface and DHCPv6 / RA resources. routerd derives a systemd-networkd
+drop-in with `IPv6AcceptRA=yes` and `[IPv6AcceptRA] DHCPv6Client=no`, so RA is
+accepted while the OS DHCPv6 client stays disabled.
 
 ## Alpine Linux
 
@@ -134,7 +134,7 @@ Implemented:
 - systemd unit generation for `routerd-dhcpv6-client`
 - systemd unit generation for `routerd-dhcpv4-client`
 - systemd unit generation for `routerd-pppoe-client`
-- NixOS module generation for `Package`, `SysctlProfile`, `NetworkAdoption`, and generated service artifacts
+- NixOS module generation for `Package` overrides, `SysctlProfile`, derived host runtime artifacts, and generated service artifacts
 - automatic `nixos-rebuild test` from `routerd apply --dry-run`
 - automatic `nixos-rebuild switch` from `routerd apply`
 - rollback attempt with `nixos-rebuild switch --rollback` when a NixOS switch fails

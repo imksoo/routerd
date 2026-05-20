@@ -77,8 +77,8 @@ The first supported OpenRC surface is narrow:
 This keeps the code out of a compatibility trap. `generated service artifacts` remains the API
 shape for now, but OpenRC only maps fields that have clear init-script meaning:
 `ExecStart`, `ExecStartPre`, environment, working directory, user/group, and
-runtime/state/log directories. systemd sandboxing, `NetworkAdoption`, networkd,
-resolved, and timesyncd semantics are not emulated on OpenRC.
+runtime/state/log directories. systemd sandboxing, networkd, resolved, and
+timesyncd semantics are not emulated on OpenRC.
 
 Apply-time activation is gated by `HasOpenRC`. It writes scripts only when
 content or mode changes, checks `rc-update show default` before adding or

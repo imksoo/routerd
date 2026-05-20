@@ -10,6 +10,9 @@
   systemd.network.enable = true;
   systemd.network.networks."10-netplan-ens18" = {
     matchConfig.Name = "ens18";
+    networkConfig = {
+      DHCP = "no";
+    };
     address = [
       "192.0.0.2/32"
       "192.0.0.3/32"

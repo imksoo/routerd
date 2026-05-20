@@ -62,7 +62,7 @@ Some resources support `dependsOn` to make readiness conditions explicit.
 dependsOn:
   - resource: DHCPv6PrefixDelegation/wan-pd
     phase: Bound
-  - resource: Link/lan
+  - resource: Interface/lan
     phase: Up
 ```
 

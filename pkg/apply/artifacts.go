@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"routerd/pkg/api"
+	"routerd/pkg/hostdeps"
 	"routerd/pkg/platform"
 	"routerd/pkg/render"
 	"routerd/pkg/resource"
@@ -480,6 +481,46 @@ func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]str
 	default:
 		return nil
 	}
+}
+
+func routerArtifactIntents(router *api.Router, aliases map[string]string) []resource.Intent {
+	return routerArtifactIntentsForOS(router, aliases, platform.CurrentOS())
+}
+
+func routerArtifactIntentsForOS(router *api.Router, aliases map[string]string, targetOS platform.OS) []resource.Intent {
+	_, features := platform.Current()
+	if targetOS == platform.OSFreeBSD {
+		features = platform.Features{HasRCD: true}
+	}
+	var intents []resource.Intent
+	for _, res := range hostdeps.DerivedPackageResources(router) {
+		intents = append(intents, resourceArtifactIntentsForPlatform(res, aliases, targetOS, features)...)
+	}
+	for _, res := range hostdeps.KernelModuleResources(router) {
+		if hasExplicitResource(router, res.Kind, res.Metadata.Name) {
+			continue
+		}
+		intents = append(intents, resourceArtifactIntentsForPlatform(res, aliases, targetOS, features)...)
+	}
+	for _, res := range hostdeps.NetworkAdoptionResources(router) {
+		if hasExplicitResource(router, res.Kind, res.Metadata.Name) {
+			continue
+		}
+		intents = append(intents, resourceArtifactIntentsForPlatform(res, aliases, targetOS, features)...)
+	}
+	return intents
+}
+
+func hasExplicitResource(router *api.Router, kind, name string) bool {
+	if router == nil {
+		return false
+	}
+	for _, res := range router.Spec.Resources {
+		if res.Kind == kind && res.Metadata.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 func ipv4PolicyRouteArtifacts(res api.Resource, aliases map[string]string) []resource.Intent {

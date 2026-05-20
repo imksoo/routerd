@@ -322,10 +322,9 @@ func TestIPv4StaticAddressControllerRestoresMissingAddressWithUnchangedStatus(t 
 	}
 }
 
-func TestLANAddressControllerPopulatesLinkBeforeDependencyCheck(t *testing.T) {
+func TestLANAddressControllerPopulatesInterfaceBeforeDependencyCheck(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "lo", Managed: false}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Link"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.LinkSpec{IfName: "lo"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "lan-base"}, Spec: api.IPv6DelegatedAddressSpec{
 			PrefixDelegation: "wan-pd",
@@ -334,7 +333,7 @@ func TestLANAddressControllerPopulatesLinkBeforeDependencyCheck(t *testing.T) {
 			AddressSuffix:    "::1",
 			DependsOn: []api.ResourceDependencySpec{
 				{Resource: "DHCPv6PrefixDelegation/wan-pd", Phase: daemonapi.ResourcePhaseBound},
-				{Resource: "Link/lan", Phase: "Up"},
+				{Resource: "Interface/lan", Phase: "Up"},
 			},
 		}},
 	}}}
@@ -362,9 +361,9 @@ func TestLANAddressControllerPopulatesLinkBeforeDependencyCheck(t *testing.T) {
 	if strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Fatalf("command = %v, want %v", got, want)
 	}
-	link := store.ObjectStatus(api.NetAPIVersion, "Link", "lan")
-	if link["phase"] != "Up" || link["ifname"] != "lo" {
-		t.Fatalf("link status = %#v", link)
+	iface := store.ObjectStatus(api.NetAPIVersion, "Interface", "lan")
+	if iface["phase"] != "Up" || iface["ifname"] != "lo" {
+		t.Fatalf("interface status = %#v", iface)
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "lan-base")
 	if status["phase"] != "Applied" || status["address"] != "2409:10:3d60:1271::1/64" {
@@ -385,7 +384,7 @@ func TestLANAddressControllerRestoresMissingAddressWithUnchangedStatus(t *testin
 	}}}
 	store := mapStore{}
 	store.SaveObjectStatus(api.NetAPIVersion, "DHCPv6PrefixDelegation", "wan-pd", map[string]any{"phase": daemonapi.ResourcePhaseBound, "currentPrefix": "2409:10:3d60:1270::/60"})
-	store.SaveObjectStatus(api.NetAPIVersion, "Link", "lan", map[string]any{"phase": "Up", "ifname": "lo"})
+	store.SaveObjectStatus(api.NetAPIVersion, "Interface", "lan", map[string]any{"phase": "Up", "ifname": "lo"})
 	store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "lan-base", map[string]any{
 		"phase": "Applied", "address": "2409:10:3d60:1271::1/64", "interface": "lan", "prefixSource": "wan-pd", "dryRun": false,
 	})
@@ -416,10 +415,9 @@ func TestLocalIPv6AddressKeepsHostBitsFromPrefix(t *testing.T) {
 	}
 }
 
-func TestLinkControllerPublishesInterfaceIfName(t *testing.T) {
+func TestLinkControllerPublishesInterfaceStatus(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lo"}, Spec: api.InterfaceSpec{IfName: "lo", Managed: false}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Link"}, Metadata: api.ObjectMeta{Name: "lo"}, Spec: api.LinkSpec{IfName: "lo"}},
 	}}}
 	store := mapStore{}
 	controller := LinkController{Router: router, Store: store}
@@ -429,10 +427,6 @@ func TestLinkControllerPublishesInterfaceIfName(t *testing.T) {
 	iface := store.ObjectStatus(api.NetAPIVersion, "Interface", "lo")
 	if iface["ifname"] != "lo" {
 		t.Fatalf("interface status = %#v", iface)
-	}
-	link := store.ObjectStatus(api.NetAPIVersion, "Link", "lo")
-	if link["ifname"] != "lo" {
-		t.Fatalf("link status = %#v", link)
 	}
 }
 

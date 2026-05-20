@@ -60,7 +60,7 @@ routerd は次の API グループを使います。
 dependsOn:
   - resource: DHCPv6PrefixDelegation/wan-pd
     phase: Bound
-  - resource: Link/lan
+  - resource: Interface/lan
     phase: Up
 ```
 

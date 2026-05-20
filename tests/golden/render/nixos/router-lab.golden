@@ -20,7 +20,8 @@ wan-pd-dhcpv6-client from=wan to=self ifnames=ens18 proto=udp port=546 action=ac
   systemd.network.networks."10-netplan-ens18" = {
     matchConfig.Name = "ens18";
     networkConfig = {
-      IPv6AcceptRA = true;
+      DHCP = "no";
+      IPv6AcceptRA = false;
     };
     routes = [
       { routeConfig = {
@@ -54,6 +55,10 @@ wan-pd-dhcpv6-client from=wan to=self ifnames=ens18 proto=udp port=546 action=ac
   };
   services.timesyncd.enable = true;
   services.timesyncd.servers = [ "pool.ntp.org" ];
+  services.resolved.enable = true;
+  services.resolved.extraConfig = ''
+    DNSStubListener=no
+  '';
   systemd.services."routerd-dhcpv6-client@wan-pd" = {
     description = "routerd DHCPv6 client wan-pd";
     after = [ "network-online.target" ];

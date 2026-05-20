@@ -42,11 +42,10 @@ routerd は、ホスト上の構成物をリソースに対応付けて管理し
 | `TailscaleNode` | `routerd-tailscale-<name>` service unit / script と `tailscale up` 引数 |
 | `VRF` | Linux VRF デバイスと経路表 |
 | `VXLANTunnel` | VXLAN デバイス |
-| `Package` | apt、apk、dnf、pkg、Nix のパッケージ導入状態 |
+| `Package` | package override。通常の host package intent は router resource から自動導出 |
 | `Sysctl` | sysctl 値 |
 | `SysctlProfile` | 複数の sysctl 値 |
-| `KernelModule` | Linux の runtime module load 状態と `/etc/modules-load.d/90-routerd-<name>.conf` |
-| `NetworkAdoption` | systemd-networkd と systemd-resolved の drop-in |
+| Derived host runtime | router resource から導出される kernel module load 状態と systemd-networkd / resolved drop-in |
 | `generated service artifacts` | systemd unit、FreeBSD rc.d script、または OpenRC init script と enable 状態 |
 | `NTPClient` | NTP クライアント設定 |
 

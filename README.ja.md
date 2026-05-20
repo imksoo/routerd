@@ -94,9 +94,9 @@ WireGuard/Tailscale overlay、USB 状態から復元できるディスクレス 
   よる同一 LAN 上のゲスト端末隔離
 - `HealthCheck`、`EgressRoutePolicy`、`EventRule`、`DerivedEvent` による
   状態連携
-- `Package`、`Sysctl`、`SysctlProfile`、`NetworkAdoption`、`SystemdUnit`、
-  `NTPClient`、`LogSink`、`ObservabilityPipeline`、`RouterdCluster`、
-  `LogRetention`、`WebConsole`
+- `Package` override、`Sysctl`、`SysctlProfile`、自動導出される host runtime
+  dependency、`NTPClient`、`LogSink`、`ObservabilityPipeline`、
+  `RouterdCluster`、`LogRetention`、`WebConsole`
 - `routerctl` による NAPT と conntrack の確認
 - 状態、イベント、コネクション、DNS クエリー、通信フロー、ファイアウォール
   ログ、現在の設定を表示する読み取り専用 Web Console
