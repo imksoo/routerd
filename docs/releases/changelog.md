@@ -10,6 +10,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260521.0802
+
 ### Added
 
 - Added `install.sh --with-ndpi-archive PATH` so a normal static routerd

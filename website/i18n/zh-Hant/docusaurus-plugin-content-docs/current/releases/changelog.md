@@ -10,6 +10,8 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 
 ## Unreleased
 
+## v20260521.0802
+
 ### 新增
 
 - 新增 `install.sh --with-ndpi-archive PATH`。現在可以在同一個 rollback

@@ -10,6 +10,8 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 
 ## Unreleased
 
+## v20260521.0802
+
 ### 追加
 
 - `install.sh --with-ndpi-archive PATH` を追加しました。通常の static
