@@ -36,6 +36,7 @@ const MinPollInterval = 3 * time.Second
 
 const (
 	frrReadyTimeout       = 30 * time.Second
+	frrReloadReadyTimeout = 5 * time.Second
 	frrReadyProbeTimeout  = 2 * time.Second
 	frrReloadTimeout      = 15 * time.Second
 	frrServiceCmdTimeout  = 30 * time.Second
@@ -43,23 +44,24 @@ const (
 )
 
 type Controller struct {
-	Router      *api.Router
-	Bus         *bus.Bus
-	Store       Store
-	DryRun      bool
-	ConfigPath  string
-	DaemonsPath string
-	VTYSH       string
-	FRRReload   string
-	Systemctl   string
-	MaxPrefixes int
-	Command     CommandFunc
-	Logger      *slog.Logger
-	lastState   bgpstate.State
-	observed    bool
-	truncated   bool
-	peerEvents  map[string]time.Time
-	applyMeta   map[string]any
+	Router                *api.Router
+	Bus                   *bus.Bus
+	Store                 Store
+	DryRun                bool
+	ConfigPath            string
+	DaemonsPath           string
+	VTYSH                 string
+	FRRReload             string
+	FRRControlSocketPaths []string
+	Systemctl             string
+	MaxPrefixes           int
+	Command               CommandFunc
+	Logger                *slog.Logger
+	lastState             bgpstate.State
+	observed              bool
+	truncated             bool
+	peerEvents            map[string]time.Time
+	applyMeta             map[string]any
 }
 
 func (c *Controller) Reconcile(ctx context.Context) error {
@@ -94,36 +96,21 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		return err
 	}
 	reloadNeeded := changed
-	if !reloadNeeded && !c.DryRun {
-		matches, err := c.runningConfigMatches(ctx, data)
-		if err != nil {
-			if c.Logger != nil {
-				c.Logger.Warn("BGP running config comparison failed; reloading FRR", "error", err)
-			}
-			reloadNeeded = true
-		} else {
-			reloadNeeded = !matches
-		}
-	}
 	if daemonsChanged {
 		reloadNeeded = true
 	}
 	daemonRestartNeeded := daemonsChanged
-	if !c.DryRun && reloadNeeded && !daemonRestartNeeded {
-		listening, out, err := c.bgpdListening(ctx)
+	controlExtra := map[string]any{}
+	controlReadyForReload := false
+	if !reloadNeeded && !c.DryRun {
+		readyCtx, cancel := context.WithTimeout(ctx, frrReloadReadyTimeout)
+		out, err := c.waitFRRControlReady(readyCtx, controlExtra, 500*time.Millisecond)
+		cancel()
 		if err != nil {
-			if c.Logger != nil {
-				c.Logger.Warn("BGP daemon readiness check failed; restarting FRR", "error", err, "output", strings.TrimSpace(string(out)))
-			}
-			daemonRestartNeeded = true
-			reloadNeeded = true
-		} else if !listening {
-			if c.Logger != nil {
-				c.Logger.Warn("BGP daemon is enabled but not listening; restarting FRR", "output", strings.TrimSpace(string(out)))
-			}
-			daemonRestartNeeded = true
-			reloadNeeded = true
+			return c.saveFRRConfigPending(path, false, frrControlPendingReason(out, err), out, err, mergeStatusExtra(controlExtra, map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged, "daemonRestartNeeded": daemonRestartNeeded}))
 		}
+		controlReadyForReload = true
+		reloadNeeded = !runningConfigOutputMatches(out, data)
 	}
 	if !c.DryRun && daemonRestartNeeded {
 		for _, command := range c.frrDaemonChangeCommands() {
@@ -138,11 +125,26 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 				return fmt.Errorf("%s %s: %w: %s", command.Name, strings.Join(command.Args, " "), err, strings.TrimSpace(string(out)))
 			}
 		}
+		startingExtra := mergeStatusExtra(controlExtra, map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged, "daemonRestartNeeded": daemonRestartNeeded})
+		if err := c.saveFRRConfigPending(path, reloadNeeded, "FRRStarting", nil, nil, startingExtra); err != nil {
+			return err
+		}
 		readyCtx, cancel := context.WithTimeout(ctx, frrReadyTimeout)
-		out, err := c.waitFRRReady(readyCtx)
+		out, err := c.waitFRRControlReady(readyCtx, controlExtra, time.Second)
 		cancel()
 		if err != nil {
-			return c.saveFRRConfigPending(path, reloadNeeded, "FRRNotReady", out, err, map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged, "daemonRestartNeeded": daemonRestartNeeded})
+			return c.saveFRRConfigPending(path, reloadNeeded, frrControlPendingReason(out, err), out, err, mergeStatusExtra(controlExtra, map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged, "daemonRestartNeeded": daemonRestartNeeded}))
+		}
+	} else if !c.DryRun && reloadNeeded && !controlReadyForReload {
+		startingExtra := mergeStatusExtra(controlExtra, map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged, "daemonRestartNeeded": daemonRestartNeeded})
+		if err := c.saveFRRConfigPending(path, reloadNeeded, "FRRStarting", nil, nil, startingExtra); err != nil {
+			return err
+		}
+		readyCtx, cancel := context.WithTimeout(ctx, frrReloadReadyTimeout)
+		out, err := c.waitFRRControlReady(readyCtx, controlExtra, 500*time.Millisecond)
+		cancel()
+		if err != nil {
+			return c.saveFRRConfigPending(path, reloadNeeded, frrControlPendingReason(out, err), out, err, mergeStatusExtra(controlExtra, map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged, "daemonRestartNeeded": daemonRestartNeeded}))
 		}
 	}
 	if !c.DryRun && reloadNeeded {
@@ -150,8 +152,12 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		out, err := c.validateFRRConfig(validateCtx, path, daemonRestartNeeded)
 		cancel()
 		if err != nil {
+			extra := mergeStatusExtra(controlExtra, map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged, "daemonRestartNeeded": daemonRestartNeeded})
+			if isFRRControlUnavailableError(out, err) || isFRRPermissionDeniedError(out, err) {
+				return c.saveFRRConfigPending(path, reloadNeeded, frrControlPendingReason(out, err), out, err, extra)
+			}
 			if errors.Is(err, context.DeadlineExceeded) || errors.Is(validateCtx.Err(), context.DeadlineExceeded) {
-				return c.saveFRRConfigPending(path, reloadNeeded, "FRRValidateTimeout", out, err, map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged, "daemonRestartNeeded": daemonRestartNeeded})
+				return c.saveFRRConfigPending(path, reloadNeeded, "FRRValidateTimeout", out, err, extra)
 			}
 			vtysh := firstNonEmpty(c.VTYSH, "vtysh")
 			saveErr := c.saveConfiguredStatuses("Error", path, reloadNeeded, map[string]any{"reason": "FRRSyntaxInvalid", "error": strings.TrimSpace(string(out))})
@@ -160,26 +166,34 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 			}
 			return fmt.Errorf("%s -C -f %s: %w: %s", vtysh, path, err, strings.TrimSpace(string(out)))
 		}
+		reloadExtra := mergeStatusExtra(controlExtra, map[string]any{"LastReloadAttemptAt": time.Now().UTC().Format(time.RFC3339Nano)})
 		reloadCtx, cancel := context.WithTimeout(ctx, frrReloadTimeout)
 		out, err = c.reloadFRRConfig(reloadCtx, path)
 		cancel()
+		reloadExtra["LastReloadStderr"] = strings.TrimSpace(string(out))
 		if err != nil {
-			return c.saveFRRConfigPending(path, reloadNeeded, "FRRReloadFailed", out, err, map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged, "daemonRestartNeeded": daemonRestartNeeded})
+			return c.saveFRRConfigPending(path, reloadNeeded, "FRRReloadFailed", out, err, mergeStatusExtra(reloadExtra, map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged, "daemonRestartNeeded": daemonRestartNeeded}))
 		}
 		verifyCtx, cancel := context.WithTimeout(ctx, frrValidateCmdTimeout)
 		matches, err := c.runningConfigMatches(verifyCtx, data)
 		cancel()
 		if err != nil {
-			return c.saveFRRConfigPending(path, reloadNeeded, "FRRReloadVerifyFailed", nil, err, map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged, "daemonRestartNeeded": daemonRestartNeeded})
+			if isFRRControlUnavailableError(nil, err) || isFRRPermissionDeniedError(nil, err) {
+				return c.saveFRRConfigPending(path, reloadNeeded, frrControlPendingReason(nil, err), nil, err, mergeStatusExtra(reloadExtra, map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged, "daemonRestartNeeded": daemonRestartNeeded}))
+			}
+			return c.saveFRRConfigPending(path, reloadNeeded, "FRRReloadVerifyFailed", nil, err, mergeStatusExtra(reloadExtra, map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged, "daemonRestartNeeded": daemonRestartNeeded}))
 		}
 		if !matches {
 			msg := []byte("running FRR config does not contain rendered BGP critical lines after frr-reload")
-			return c.saveFRRConfigPending(path, reloadNeeded, "FRRReloadUnverified", msg, nil, map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged, "daemonRestartNeeded": daemonRestartNeeded})
+			return c.saveFRRConfigPending(path, reloadNeeded, "FRRReloadIncomplete", msg, nil, mergeStatusExtra(reloadExtra, map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged, "daemonRestartNeeded": daemonRestartNeeded}))
+		}
+		for key, value := range reloadExtra {
+			controlExtra[key] = value
 		}
 	}
 	if !c.DryRun {
 		if reloadNeeded || daemonRestartNeeded {
-			extra := map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged, "daemonRestartNeeded": daemonRestartNeeded}
+			extra := mergeStatusExtra(controlExtra, map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged, "daemonRestartNeeded": daemonRestartNeeded})
 			if err := c.saveConfiguredStatuses("Applied", path, reloadNeeded || daemonsChanged, extra); err != nil {
 				return err
 			}
@@ -226,65 +240,68 @@ func (c *Controller) renderFRRDaemons() (bool, string, error) {
 	return changed, path, nil
 }
 
-func (c *Controller) waitFRRReady(ctx context.Context) ([]byte, error) {
+func (c *Controller) waitFRRControlReady(ctx context.Context, extra map[string]any, interval time.Duration) ([]byte, error) {
+	if interval <= 0 {
+		interval = time.Second
+	}
 	var lastOut []byte
+	var lastErr error
 	for {
-		listening, out, err := c.bgpdListening(ctx)
-		if err == nil && listening {
+		if extra != nil {
+			extra["FRRControlSocket"] = c.firstFRRControlSocket()
+		}
+		out, err := c.frrControlReady(ctx)
+		recordFRRControlProbe(extra, out, err)
+		if err == nil {
 			return out, nil
 		}
 		lastOut = out
-		if err == nil {
-			err = fmt.Errorf("bgpd vty is not listening on tcp/2605")
+		lastErr = err
+		if isFRRPermissionDeniedError(out, err) {
+			return lastOut, lastErr
 		}
 		select {
 		case <-ctx.Done():
-			return lastOut, ctx.Err()
-		case <-time.After(time.Second):
-		}
-	}
-}
-
-func (c *Controller) bgpdListening(ctx context.Context) (bool, []byte, error) {
-	out, err := c.runWithTimeout(ctx, frrReadyProbeTimeout, "ss", "-ltn")
-	if err != nil {
-		return false, out, err
-	}
-	return bgpdVTYListenPresent(out), out, nil
-}
-
-func bgpdVTYListenPresent(out []byte) bool {
-	return listenPortPresent(out, "2605")
-}
-
-func listenPortPresent(out []byte, port string) bool {
-	for _, line := range strings.Split(string(out), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 4 {
-			continue
-		}
-		state := strings.ToUpper(fields[0])
-		if state != "LISTEN" {
-			continue
-		}
-		for _, field := range fields[3:] {
-			if listenAddressHasPort(field, port) {
-				return true
+			if lastErr == nil {
+				lastErr = ctx.Err()
 			}
+			return lastOut, lastErr
+		case <-time.After(interval):
 		}
 	}
-	return false
 }
 
-func listenAddressHasPort(address, port string) bool {
-	address = strings.TrimSpace(address)
-	if address == "" {
-		return false
+func (c *Controller) frrControlReady(ctx context.Context) ([]byte, error) {
+	vtysh := firstNonEmpty(c.VTYSH, "vtysh")
+	out, err := c.runWithTimeout(ctx, frrReadyProbeTimeout, vtysh, "-c", "show running-config")
+	if err == nil {
+		return out, nil
 	}
-	if strings.HasSuffix(address, ":"+port) {
-		return true
+	if isFRRPermissionDeniedError(out, err) {
+		return out, fmt.Errorf("FRR control permission denied: %w: %s", err, strings.TrimSpace(string(out)))
 	}
-	return strings.HasSuffix(address, "]:"+port)
+	return out, fmt.Errorf("FRR control unavailable: %w: %s", err, strings.TrimSpace(string(out)))
+}
+
+func (c *Controller) firstFRRControlSocket() string {
+	for _, path := range c.frrControlSocketPaths() {
+		if st, err := os.Stat(path); err == nil && st.Mode()&os.ModeSocket != 0 {
+			return path
+		}
+	}
+	return ""
+}
+
+func (c *Controller) frrControlSocketPaths() []string {
+	if len(c.FRRControlSocketPaths) > 0 {
+		return c.FRRControlSocketPaths
+	}
+	return []string{
+		"/run/frr/bgpd.vty",
+		"/var/run/frr/bgpd.vty",
+		"/run/frr/zebra.vty",
+		"/var/run/frr/zebra.vty",
+	}
 }
 
 func (c *Controller) validateFRRConfig(ctx context.Context, path string, retry bool) ([]byte, error) {
@@ -380,15 +397,100 @@ func (c *Controller) runningConfigMatches(ctx context.Context, desired []byte) (
 	vtysh := firstNonEmpty(c.VTYSH, "vtysh")
 	out, err := c.run(ctx, vtysh, "-c", "show running-config")
 	if err != nil {
+		if frrOutputIndicatesBGPInstanceMissing(out, err) {
+			return false, nil
+		}
 		return false, fmt.Errorf("%s -c show running-config: %w: %s", vtysh, err, strings.TrimSpace(string(out)))
 	}
+	return runningConfigOutputMatches(out, desired), nil
+}
+
+func runningConfigOutputMatches(out []byte, desired []byte) bool {
 	running := string(out)
 	for _, line := range criticalFRRLines(desired) {
 		if !strings.Contains(running, line) {
-			return false, nil
+			return false
 		}
 	}
-	return true, nil
+	return true
+}
+
+func recordFRRControlProbe(extra map[string]any, out []byte, err error) {
+	if extra == nil {
+		return
+	}
+	extra["LastControlProbeAt"] = time.Now().UTC().Format(time.RFC3339Nano)
+	if socketPath, _ := extra["FRRControlSocket"].(string); socketPath == "" {
+		extra["FRRControlSocket"] = ""
+	}
+	if err != nil {
+		extra["LastControlProbeError"] = strings.TrimSpace(strings.TrimSpace(err.Error()) + ": " + strings.TrimSpace(string(out)))
+	} else {
+		extra["LastControlProbeError"] = ""
+	}
+}
+
+func isFRRControlUnavailableError(out []byte, err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(strings.TrimSpace(string(out)) + " " + err.Error())
+	for _, needle := range []string{
+		"failed to connect",
+		"connection refused",
+		"no such file or directory",
+		"can't connect",
+		"could not connect",
+		"vty socket",
+	} {
+		if strings.Contains(msg, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func frrControlPendingReason(out []byte, err error) string {
+	if isFRRPermissionDeniedError(out, err) {
+		return "FRRPermissionDenied"
+	}
+	return "FRRControlUnavailable"
+}
+
+func isFRRPermissionDeniedError(out []byte, err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(strings.TrimSpace(string(out)) + " " + err.Error())
+	for _, needle := range []string{
+		"permission denied",
+		"operation not permitted",
+		"access denied",
+	} {
+		if strings.Contains(msg, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func frrOutputIndicatesBGPInstanceMissing(out []byte, err error) bool {
+	msg := strings.ToLower(strings.TrimSpace(string(out)))
+	if err != nil {
+		msg += " " + strings.ToLower(err.Error())
+	}
+	return strings.Contains(msg, "bgp instance not found")
+}
+
+func mergeStatusExtra(base map[string]any, overlay map[string]any) map[string]any {
+	out := map[string]any{}
+	for key, value := range base {
+		out[key] = value
+	}
+	for key, value := range overlay {
+		out[key] = value
+	}
+	return out
 }
 
 func criticalFRRLines(data []byte) []string {
