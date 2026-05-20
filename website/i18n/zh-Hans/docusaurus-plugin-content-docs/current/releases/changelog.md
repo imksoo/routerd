@@ -10,6 +10,8 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期和时间型版本号。
 
 ## Unreleased
 
+## v20260520.2107
+
 ### 修正
 
 - BGP controller 现在会在每次 reconcile 检查 FRR service state。若
