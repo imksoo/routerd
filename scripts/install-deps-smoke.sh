@@ -105,7 +105,8 @@ spec:
       metadata:
         name: internet
       spec:
-        daemon: routerd-healthcheck
+        role: internet
+        type: ping
         target: 1.1.1.1
         protocol: icmp
     - apiVersion: net.routerd.net/v1alpha1
@@ -121,7 +122,6 @@ spec:
         name: wan-pd
       spec:
         interface: lan
-        iaid: "1"
     - apiVersion: net.routerd.net/v1alpha1
       kind: DNSResolver
       metadata:
@@ -130,12 +130,27 @@ spec:
         listen:
           - addresses: [127.0.0.1]
             port: 5053
-        sources:
-          - kind: upstream
-            match: ["."]
-            upstreams: [udp://1.1.1.1:53]
+            sources:
+              - default
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSForwarder
+      metadata:
+        name: default
+      spec:
+        resolver: DNSResolver/lan
+        match: ["."]
+        upstreams:
+          - DNSUpstream/cloudflare
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSUpstream
+      metadata:
+        name: cloudflare
+      spec:
+        protocol: udp
+        address: 1.1.1.1
+        port: 53
     - apiVersion: firewall.routerd.net/v1alpha1
-      kind: FirewallLog
+      kind: FirewallEventLog
       metadata:
         name: default
       spec:
@@ -161,8 +176,6 @@ render_dir="${tmpdir}/alpine-render"
 go run ./cmd/routerd render alpine --config "${render_config}" --out-dir "${render_dir}" >/dev/null
 test -x "${render_dir}/openrc-routerd_healthcheck_internet"
 test -x "${render_dir}/openrc-routerd_dnsmasq"
-test -x "${render_dir}/openrc-routerd_dhcpv4_client_wan_v4"
-test -x "${render_dir}/openrc-routerd_dhcpv6_client_wan_pd"
 test -x "${render_dir}/openrc-routerd_dns_resolver_lan"
 test -x "${render_dir}/openrc-routerd_firewall_logger"
 test -x "${render_dir}/openrc-routerd_pppoe_client_wan_pppoe"
@@ -170,7 +183,6 @@ test -x "${render_dir}/openrc-routerd_tailscale_edge"
 test -f "${render_dir}/dnsmasq.conf"
 assert_contains "$(cat "${render_dir}/openrc-routerd_healthcheck_internet")" "#!/sbin/openrc-run" "OpenRC healthcheck script"
 assert_contains "$(cat "${render_dir}/openrc-routerd_dnsmasq")" "--conf-file=/usr/local/etc/routerd/dnsmasq.conf" "OpenRC dnsmasq script"
-assert_contains "$(cat "${render_dir}/openrc-routerd_dhcpv4_client_wan_v4")" "routerd-dhcpv4-client" "OpenRC DHCPv4 client script"
 assert_contains "$(cat "${render_dir}/openrc-routerd_firewall_logger")" "routerd-firewall-logger" "OpenRC firewall logger script"
 
 echo "install dependency smoke checks passed"
