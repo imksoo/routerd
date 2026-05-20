@@ -10,6 +10,22 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- Reconciled the FRR service state on every BGP controller cycle. If FRR is
+  stopped or failed on Alpine/OpenRC or systemd hosts, routerd now starts or
+  restarts the service before probing `vtysh` and running `frr-reload.py`.
+- Tightened BGPRouter health so service state, `vtysh` round-trip,
+  `tcp/179` listen state, and the rendered `router bgp <asn>` stanza must all
+  be present before the router is reported as healthy.
+- Aggregated `routerctl status` from resource phases so a pending or failed
+  BGP resource can no longer be hidden by a controller runtime success update.
+
+### Documentation
+
+- Added the BGP / FRR control-plane design note covering readiness, reload,
+  verification, failure status, and Live ISO acceptance scenarios.
+
 ## v20260520.2007
 
 ### Fixed

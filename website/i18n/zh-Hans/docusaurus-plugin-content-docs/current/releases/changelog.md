@@ -10,6 +10,22 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期和时间型版本号。
 
 ## Unreleased
 
+### 修正
+
+- BGP controller 现在会在每次 reconcile 检查 FRR service state。若
+  Alpine/OpenRC 或 systemd host 上的 FRR 为 stopped/failed，routerd 会先
+  start/restart service，再执行 `vtysh` probe 与 `frr-reload.py`。
+- 收紧 BGPRouter Healthy 判定：service state、`vtysh` round-trip、
+  `tcp/179` listen，以及 rendered `router bgp <asn>` stanza 必须全部存在，
+  才会回报 Healthy。
+- `routerctl status` 现在由 resource phases 聚合，避免 Pending/Error 的 BGP
+  resource 被 controller runtime 的 success update 隐藏。
+
+### 文档
+
+- 新增 BGP / FRR control-plane design note，记录 readiness、reload、
+  verification、failure status，以及 Live ISO acceptance scenarios。
+
 ## v20260520.2007
 
 ### 修正
