@@ -223,7 +223,14 @@ validates it with `vtysh -C -f`, applies deltas with
 `frr-reload.py --reload`, watches FRR JSON status through `BGPStateWatcher`,
 and stores peer/prefix status for `routerctl`, Web Console resources, events,
 and OTel metrics. `routerctl show bgp` summarizes routers, peers, message
-counters, BFD status, and last errors. `BGPPeer.spec.bfd` must reference a
+counters, BFD status, route selection state, and last errors. Prefix status
+includes `best`, `valid`, `installed`, `selectDeferred`, `selectionState`, and
+`selectionReason` when FRR exposes enough JSON detail, so GR/EOR deferral and
+"no best path" windows are visible without reading raw `vtysh` output.
+`BGPRouter.spec.convergenceProfile: fast` is intended for Kubernetes/edge
+routers that prefer quick first boot over graceful restart stale-path retention:
+it derives fast peer timers and disables graceful restart unless
+`spec.gracefulRestart.enabled` is explicitly set. `BGPPeer.spec.bfd` must reference a
 `BFD/<name>` resource; inline BFD settings are rejected. `BFD.spec.peer` is an
 IP address or `BGPPeer/<name>`, and `profile`, `minRx`, `minTx`, and
 `detectMultiplier` describe the failure-detection intent. When any managed peer

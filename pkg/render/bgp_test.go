@@ -64,6 +64,68 @@ func TestFRRConfigRendersDefaultDenyImportPolicy(t *testing.T) {
 	}
 }
 
+func TestFRRConfigFastConvergenceDisablesDefaultGracefulRestart(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"},
+			Metadata: api.ObjectMeta{Name: "lan"},
+			Spec: api.BGPRouterSpec{
+				ASN:                64512,
+				RouterID:           "10.0.0.1",
+				ConvergenceProfile: "fast",
+			},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPPeer"},
+			Metadata: api.ObjectMeta{Name: "workers"},
+			Spec: api.BGPPeerSpec{
+				RouterRef: "BGPRouter/lan",
+				PeerASN:   64513,
+				Peers:     []string{"10.0.0.21"},
+			},
+		},
+	}}}
+	data, err := FRRConfig(router)
+	if err != nil {
+		t.Fatalf("render FRR config: %v", err)
+	}
+	got := string(data)
+	if strings.Contains(got, "bgp graceful-restart") {
+		t.Fatalf("fast convergence should not render graceful restart by default:\n%s", got)
+	}
+	for _, want := range []string{
+		"neighbor 10.0.0.21 timers 3 9",
+		"neighbor 10.0.0.21 timers connect 5",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("fast convergence config missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestFRRConfigFastConvergenceAllowsExplicitGracefulRestart(t *testing.T) {
+	enabled := true
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"},
+			Metadata: api.ObjectMeta{Name: "lan"},
+			Spec: api.BGPRouterSpec{
+				ASN:                64512,
+				RouterID:           "10.0.0.1",
+				ConvergenceProfile: "fast",
+				GracefulRestart:    api.BGPGracefulRestartSpec{Enabled: &enabled},
+			},
+		},
+	}}}
+	data, err := FRRConfig(router)
+	if err != nil {
+		t.Fatalf("render FRR config: %v", err)
+	}
+	if got := string(data); !strings.Contains(got, "bgp graceful-restart") {
+		t.Fatalf("explicit graceful restart should still render:\n%s", got)
+	}
+}
+
 func TestFRRConfigRendersRedistributeAndCommunities(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{

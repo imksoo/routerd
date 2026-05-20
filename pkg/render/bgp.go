@@ -136,8 +136,8 @@ func bgpRouterConfigs(router *api.Router) ([]bgpRouterConfig, error) {
 				Static:    compactStrings(spec.Redistribute.Static.AllowedPrefixes),
 			},
 			Communities:     renderBGPCommunities(spec.Communities, bgpCommunities{}),
-			Timers:          renderBGPTimers(spec.Timers, bgpTimers{}),
-			GracefulRestart: renderBGPGracefulRestart(spec.GracefulRestart),
+			Timers:          renderBGPRouterTimers(spec.Timers, spec.ConvergenceProfile),
+			GracefulRestart: renderBGPGracefulRestart(spec.GracefulRestart, spec.ConvergenceProfile),
 		}
 		sort.Strings(cfg.AllowedPrefixes)
 		sort.Strings(cfg.ExportPrefixes)
@@ -611,8 +611,19 @@ func renderBGPTimers(spec api.BGPTimersSpec, fallback bgpTimers) bgpTimers {
 	return out
 }
 
-func renderBGPGracefulRestart(spec api.BGPGracefulRestartSpec) bgpGracefulRestart {
-	out := bgpGracefulRestart{Enabled: api.BoolDefault(spec.Enabled, true)}
+func renderBGPRouterTimers(spec api.BGPTimersSpec, convergenceProfile string) bgpTimers {
+	if strings.TrimSpace(spec.Profile) == "" && strings.TrimSpace(convergenceProfile) == "fast" {
+		spec.Profile = "fast"
+	}
+	return renderBGPTimers(spec, bgpTimers{})
+}
+
+func renderBGPGracefulRestart(spec api.BGPGracefulRestartSpec, convergenceProfile string) bgpGracefulRestart {
+	defaultEnabled := true
+	if strings.TrimSpace(convergenceProfile) == "fast" {
+		defaultEnabled = false
+	}
+	out := bgpGracefulRestart{Enabled: api.BoolDefault(spec.Enabled, defaultEnabled)}
 	if seconds := durationSeconds(spec.RestartTime); seconds > 0 {
 		out.RestartTimeSeconds = seconds
 	}

@@ -44,10 +44,16 @@ type BFD struct {
 }
 
 type Prefix struct {
-	Prefix      string   `json:"prefix"`
-	Best        bool     `json:"best,omitempty"`
-	Valid       bool     `json:"valid,omitempty"`
-	Communities []string `json:"communities,omitempty"`
+	Prefix          string   `json:"prefix"`
+	Best            bool     `json:"best"`
+	Valid           bool     `json:"valid"`
+	Installed       bool     `json:"installed"`
+	Selected        bool     `json:"selected"`
+	Stale           bool     `json:"stale,omitempty"`
+	SelectDeferred  bool     `json:"selectDeferred,omitempty"`
+	SelectionState  string   `json:"selectionState,omitempty"`
+	SelectionReason string   `json:"selectionReason,omitempty"`
+	Communities     []string `json:"communities,omitempty"`
 }
 
 type Event struct {
@@ -289,8 +295,8 @@ func collectPrefixes(value any, out *[]Prefix) {
 		for key, child := range typed {
 			if strings.Contains(key, "/") {
 				if routes, ok := child.([]any); ok {
-					best, valid, communities := routeFlags(routes)
-					*out = append(*out, Prefix{Prefix: key, Best: best, Valid: valid, Communities: communities})
+					prefix := routeFlags(key, routes)
+					*out = append(*out, prefix)
 					continue
 				}
 			}
@@ -308,27 +314,45 @@ func routePrefix(route map[string]any) (Prefix, bool) {
 	if prefix == "" || !strings.Contains(prefix, "/") {
 		return Prefix{}, false
 	}
-	return Prefix{Prefix: prefix, Best: firstBool(route, "bestpath", "best"), Valid: !firstBool(route, "invalid"), Communities: communitiesFromRoute(route)}, true
+	return annotatePrefixSelection(Prefix{
+		Prefix:          prefix,
+		Best:            firstBool(route, "bestpath", "best"),
+		Valid:           !firstBool(route, "invalid"),
+		Installed:       routeInstalled(route),
+		Selected:        firstBool(route, "selected", "bestSelected"),
+		Stale:           firstBool(route, "stale", "gracefulRestartStale"),
+		SelectDeferred:  routeSelectDeferred(route),
+		SelectionReason: routeSelectionReason(route),
+		Communities:     communitiesFromRoute(route),
+	}), true
 }
 
-func routeFlags(routes []any) (bool, bool, []string) {
-	valid := false
-	best := false
-	var communities []string
+func routeFlags(prefix string, routes []any) Prefix {
+	out := Prefix{Prefix: prefix}
+	var reasons []string
 	for _, raw := range routes {
 		route, ok := raw.(map[string]any)
 		if !ok {
 			continue
 		}
 		if !firstBool(route, "invalid") {
-			valid = true
+			out.Valid = true
 		}
 		if firstBool(route, "bestpath", "best") {
-			best = true
+			out.Best = true
 		}
-		communities = append(communities, communitiesFromRoute(route)...)
+		out.Installed = out.Installed || routeInstalled(route)
+		out.Selected = out.Selected || firstBool(route, "selected", "bestSelected")
+		out.Stale = out.Stale || firstBool(route, "stale", "gracefulRestartStale")
+		out.SelectDeferred = out.SelectDeferred || routeSelectDeferred(route)
+		if reason := routeSelectionReason(route); reason != "" {
+			reasons = append(reasons, reason)
+		}
+		out.Communities = append(out.Communities, communitiesFromRoute(route)...)
 	}
-	return best, valid, sortedUnique(communities)
+	out.SelectionReason = strings.Join(sortedUnique(reasons), "; ")
+	out.Communities = sortedUnique(out.Communities)
+	return annotatePrefixSelection(out)
 }
 
 func uniquePrefixes(values []Prefix) []Prefix {
@@ -341,16 +365,63 @@ func uniquePrefixes(values []Prefix) []Prefix {
 		if existing, ok := seen[value.Prefix]; ok {
 			value.Best = value.Best || existing.Best
 			value.Valid = value.Valid || existing.Valid
+			value.Installed = value.Installed || existing.Installed
+			value.Selected = value.Selected || existing.Selected
+			value.Stale = value.Stale || existing.Stale
+			value.SelectDeferred = value.SelectDeferred || existing.SelectDeferred
+			value.SelectionReason = strings.Join(sortedUnique([]string{value.SelectionReason, existing.SelectionReason}), "; ")
 			value.Communities = sortedUnique(append(value.Communities, existing.Communities...))
 		}
 		value.Communities = sortedUnique(value.Communities)
-		seen[value.Prefix] = value
+		seen[value.Prefix] = annotatePrefixSelection(value)
 	}
 	out := make([]Prefix, 0, len(seen))
 	for _, value := range seen {
 		out = append(out, value)
 	}
 	return out
+}
+
+func annotatePrefixSelection(prefix Prefix) Prefix {
+	if prefix.SelectionState == "" {
+		switch {
+		case prefix.SelectDeferred:
+			prefix.SelectionState = "selectDeferred"
+		case !prefix.Valid:
+			prefix.SelectionState = "invalid"
+		case !prefix.Best:
+			prefix.SelectionState = "noBestPath"
+		case !prefix.Installed:
+			prefix.SelectionState = "notInstalledToZebra"
+		default:
+			prefix.SelectionState = "installed"
+		}
+	}
+	return prefix
+}
+
+func routeInstalled(route map[string]any) bool {
+	if firstBool(route, "installed", "fib", "fibInstalled", "zebraInstalled", "inKernel") {
+		return true
+	}
+	for _, key := range []string{"nexthops", "nexthop", "nextHops"} {
+		if nestedAnyBool(route[key], "installed", "fib", "fibInstalled", "active") {
+			return true
+		}
+	}
+	return false
+}
+
+func routeSelectDeferred(route map[string]any) bool {
+	if firstBool(route, "selectDeferred", "selectionDeferred", "deferred") {
+		return true
+	}
+	reason := strings.ToLower(routeSelectionReason(route))
+	return strings.Contains(reason, "selectdeferred") || (strings.Contains(reason, "select") && strings.Contains(reason, "defer"))
+}
+
+func routeSelectionReason(route map[string]any) string {
+	return firstString(route, "selectionReason", "selectionReasonStr", "notSelectedReason", "ribFailureReason", "reason")
 }
 
 func communitiesFromRoute(route map[string]any) []string {
@@ -480,8 +551,39 @@ func firstNumber(values map[string]any, keys ...string) float64 {
 
 func firstBool(values map[string]any, keys ...string) bool {
 	for _, key := range keys {
-		if value, ok := values[key].(bool); ok {
+		switch value := values[key].(type) {
+		case bool:
 			return value
+		case string:
+			switch strings.ToLower(strings.TrimSpace(value)) {
+			case "true", "yes", "1":
+				return true
+			}
+		case float64:
+			if value != 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func nestedAnyBool(value any, keys ...string) bool {
+	switch typed := value.(type) {
+	case map[string]any:
+		if firstBool(typed, keys...) {
+			return true
+		}
+		for _, child := range typed {
+			if nestedAnyBool(child, keys...) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range typed {
+			if nestedAnyBool(child, keys...) {
+				return true
+			}
 		}
 	}
 	return false

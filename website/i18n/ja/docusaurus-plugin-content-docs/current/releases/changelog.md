@@ -10,6 +10,19 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 
 ## Unreleased
 
+### 追加
+
+- BGP prefix status と `routerctl show bgp` に route selection diagnostics を
+  追加しました。FRR が field を出す場合、select-deferred、no-best-path、
+  not-installed-to-zebra の状態を確認できます。
+- Kubernetes/edge router 向けに `BGPRouter.spec.convergenceProfile: fast` を
+  追加しました。fast profile は短い BGP timer を派生し、fresh boot 時の stale-path
+  selection defer を避けるため graceful restart を既定で無効にします。
+- Live ISO が `ROUTERD_CONFIG` label の USB partition から config を読み込める
+  ようにしました。boot helper は `/routerd/hosts/<hostname>.yaml`、
+  `/routerd/hosts/<mac>.yaml`、`/routerd/router.yaml` を選び、source と SHA256 を
+  `/run/routerd/` に記録します。
+
 ## v20260520.2107
 
 ### 修正

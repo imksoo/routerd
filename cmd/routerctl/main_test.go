@@ -597,7 +597,7 @@ JSON
     exit 0
     ;;
   "-c show bgp ipv4 unicast json")
-    echo '{"routes":{"10.250.0.10/32":[{"valid":true,"bestpath":true}]}}'
+    echo '{"routes":{"10.250.0.0/24":[{"valid":true,"selectDeferred":true,"selectionReason":"selectDeferred: waiting for graceful-restart EOR"}],"10.250.0.10/32":[{"valid":true,"bestpath":true,"nexthops":[{"fib":true}]}]}}'
     exit 0
     ;;
 esac
@@ -613,6 +613,11 @@ exit 1
 	for _, want := range []string{"lan", "1/1", "192.168.123.111", "64513", "Established", "12", "11", "2"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("show bgp output missing %q:\n%s", want, got)
+		}
+	}
+	for _, want := range []string{"10.250.0.0/24", "selectDeferred", "waiting for graceful-restart EOR", "10.250.0.10/32", "installed"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("show bgp output missing route diagnostic %q:\n%s", want, got)
 		}
 	}
 }

@@ -486,19 +486,20 @@ type ResourceTrackSpec struct {
 }
 
 type BGPRouterSpec struct {
-	ASN             uint32                 `yaml:"asn" json:"asn" jsonschema:"minimum=1"`
-	RouterID        string                 `yaml:"routerID" json:"routerID"`
-	VRF             string                 `yaml:"vrf,omitempty" json:"vrf,omitempty"`
-	Listen          BGPListenSpec          `yaml:"listen,omitempty" json:"listen,omitempty"`
-	ImportPolicy    BGPImportPolicySpec    `yaml:"importPolicy,omitempty" json:"importPolicy,omitempty"`
-	ExportPolicy    BGPExportPolicySpec    `yaml:"exportPolicy,omitempty" json:"exportPolicy,omitempty"`
-	Redistribute    BGPRedistributeSpec    `yaml:"redistribute,omitempty" json:"redistribute,omitempty"`
-	Communities     BGPCommunitiesSpec     `yaml:"communities,omitempty" json:"communities,omitempty"`
-	Timers          BGPTimersSpec          `yaml:"timers,omitempty" json:"timers,omitempty"`
-	GracefulRestart BGPGracefulRestartSpec `yaml:"gracefulRestart,omitempty" json:"gracefulRestart,omitempty"`
-	Watcher         BGPWatcherSpec         `yaml:"watcher,omitempty" json:"watcher,omitempty"`
-	Backend         string                 `yaml:"backend,omitempty" json:"backend,omitempty" jsonschema:"enum=,enum=frr"`
-	When            ResourceWhenSpec       `yaml:"when,omitempty" json:"when,omitempty"`
+	ASN                uint32                 `yaml:"asn" json:"asn" jsonschema:"minimum=1"`
+	RouterID           string                 `yaml:"routerID" json:"routerID"`
+	VRF                string                 `yaml:"vrf,omitempty" json:"vrf,omitempty"`
+	Listen             BGPListenSpec          `yaml:"listen,omitempty" json:"listen,omitempty"`
+	ImportPolicy       BGPImportPolicySpec    `yaml:"importPolicy,omitempty" json:"importPolicy,omitempty"`
+	ExportPolicy       BGPExportPolicySpec    `yaml:"exportPolicy,omitempty" json:"exportPolicy,omitempty"`
+	Redistribute       BGPRedistributeSpec    `yaml:"redistribute,omitempty" json:"redistribute,omitempty"`
+	Communities        BGPCommunitiesSpec     `yaml:"communities,omitempty" json:"communities,omitempty"`
+	ConvergenceProfile string                 `yaml:"convergenceProfile,omitempty" json:"convergenceProfile,omitempty" jsonschema:"enum=,enum=default,enum=fast,enum=stable"`
+	Timers             BGPTimersSpec          `yaml:"timers,omitempty" json:"timers,omitempty"`
+	GracefulRestart    BGPGracefulRestartSpec `yaml:"gracefulRestart,omitempty" json:"gracefulRestart,omitempty"`
+	Watcher            BGPWatcherSpec         `yaml:"watcher,omitempty" json:"watcher,omitempty"`
+	Backend            string                 `yaml:"backend,omitempty" json:"backend,omitempty" jsonschema:"enum=,enum=frr"`
+	When               ResourceWhenSpec       `yaml:"when,omitempty" json:"when,omitempty"`
 }
 
 type BGPListenSpec struct {

@@ -34,7 +34,7 @@ The important production-oriented settings are:
 | --- | --- |
 | `VirtualAddress/k8s-api-vip` | VRRP preempt settings and track entries for API health and BGP health. |
 | `IngressService/kubernetes-api` | HTTPS health check on `/readyz`, `tlsSkipVerify: true` for kubeadm self-signed bootstrap certs, failover selection, reject on no healthy backend, and automatic same-interface hairpin SNAT when selected control-plane backends are on the VIP LAN prefix or the same private `/24`. |
-| `BGPRouter/lan` | BGP timers `3s/9s/5s`, graceful restart, and an import allow-list for Kubernetes Service prefixes only. |
+| `BGPRouter/lan` | `convergenceProfile: fast`, BGP timers `3s/9s/5s`, graceful restart disabled by default, and an import allow-list for Kubernetes Service prefixes only. |
 | `DNSResolver/lan-resolver` | Automatically serves `k8s-api.cluster.example` from the VIP `hostname` field, plus static control-plane and worker records. |
 
 Keep the DHCP pool away from the VIP, control-plane addresses, worker

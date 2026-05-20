@@ -1713,6 +1713,31 @@ func writeBGPShowTable(stdout io.Writer, router *api.Router, resources []routers
 			)
 		}
 	}
+	var prefixes []map[string]any
+	for _, resource := range resources {
+		if resource.Kind != "BGPRouter" {
+			continue
+		}
+		for _, prefix := range statusMaps(resource.Status["prefixes"]) {
+			prefix["_router"] = resource.Name
+			prefixes = append(prefixes, prefix)
+		}
+	}
+	if len(prefixes) > 0 {
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "PREFIX\tROUTER\tBEST\tVALID\tINSTALLED\tSTATE\tREASON")
+		for _, prefix := range prefixes {
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+				statusString(prefix["prefix"]),
+				statusString(prefix["_router"]),
+				boolShow(prefix["best"]),
+				boolShow(prefix["valid"]),
+				boolShow(prefix["installed"]),
+				defaultShowString(statusString(prefix["selectionState"]), "-"),
+				defaultShowString(statusString(prefix["selectionReason"]), "-"),
+			)
+		}
+	}
 	return w.Flush()
 }
 
@@ -1844,10 +1869,16 @@ func bgpPrefixesStatusMaps(prefixes []bgpstate.Prefix) []map[string]any {
 	out := make([]map[string]any, 0, len(prefixes))
 	for _, prefix := range prefixes {
 		out = append(out, map[string]any{
-			"prefix":      prefix.Prefix,
-			"best":        prefix.Best,
-			"valid":       prefix.Valid,
-			"communities": prefix.Communities,
+			"prefix":          prefix.Prefix,
+			"best":            prefix.Best,
+			"valid":           prefix.Valid,
+			"installed":       prefix.Installed,
+			"selected":        prefix.Selected,
+			"stale":           prefix.Stale,
+			"selectDeferred":  prefix.SelectDeferred,
+			"selectionState":  prefix.SelectionState,
+			"selectionReason": prefix.SelectionReason,
+			"communities":     prefix.Communities,
 		})
 	}
 	return out
@@ -2600,6 +2631,22 @@ func enabledString(enabled bool) string {
 		return "enabled"
 	}
 	return "disabled"
+}
+
+func boolShow(value any) string {
+	if value == nil {
+		return "-"
+	}
+	if value == true {
+		return "yes"
+	}
+	if value == false {
+		return "no"
+	}
+	if text := statusString(value); text != "" {
+		return text
+	}
+	return "-"
 }
 
 func ingressListenString(spec api.IngressServiceSpec, status map[string]any) string {

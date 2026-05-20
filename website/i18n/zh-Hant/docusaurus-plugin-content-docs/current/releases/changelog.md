@@ -10,6 +10,19 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 
 ## Unreleased
 
+### 新增
+
+- 在 BGP prefix status 與 `routerctl show bgp` 加入 route selection diagnostics；
+  FRR 有提供欄位時，可看到 select-deferred、no-best-path 與
+  not-installed-to-zebra 狀態。
+- 新增面向 Kubernetes/edge router 的 `BGPRouter.spec.convergenceProfile: fast`。
+  fast profile 會派生較短的 BGP timers，並預設停用 graceful restart，以避免 fresh
+  boot 時的 stale-path selection defer。
+- Live ISO 現在可從 label 為 `ROUTERD_CONFIG` 的 USB partition 匯入 config。
+  boot helper 會選擇 `/routerd/hosts/<hostname>.yaml`、
+  `/routerd/hosts/<mac>.yaml` 或 `/routerd/router.yaml`，並將 source 與 SHA256
+  記錄在 `/run/routerd/`。
+
 ## v20260520.2107
 
 ### 修正

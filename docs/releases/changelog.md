@@ -10,6 +10,19 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Added
+
+- Added BGP route-selection diagnostics to observed prefix status and
+  `routerctl show bgp`, including select-deferred, no-best-path, and
+  not-installed-to-zebra states when FRR exposes those fields.
+- Added `BGPRouter.spec.convergenceProfile: fast` for Kubernetes/edge routers.
+  The fast profile derives short BGP timers and disables graceful restart by
+  default to avoid stale-path selection deferral on fresh boot.
+- Added Live ISO config import from USB partitions labeled `ROUTERD_CONFIG`.
+  The boot helper now selects `/routerd/hosts/<hostname>.yaml`,
+  `/routerd/hosts/<mac>.yaml`, or `/routerd/router.yaml`, then records the
+  source and SHA256 under `/run/routerd/`.
+
 ## v20260520.2107
 
 ### Fixed

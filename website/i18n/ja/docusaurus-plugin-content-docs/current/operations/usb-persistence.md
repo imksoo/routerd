@@ -28,12 +28,20 @@ routerd/
 起動時は `/usr/share/routerd/live-persistence.sh init` が USB デバイスを探します。
 最初に記録済みデバイスを確認します。
 次に kernel command line の `routerd.usb=` を確認します。
-最後に `ROUTERD` ラベルのパーティションを探します。
+最後に `ROUTERD_CONFIG` または `ROUTERD` ラベルのパーティションを探します。
 
 選択したパーティションは `/media/routerd-usb` に mount します。
-`/media/routerd-usb/routerd/router.yaml` があれば、
-`/usr/local/etc/routerd/router.yaml` へコピーします。
-その後、ライブ ISO の起動処理が設定を反映します。
+helper は host 固有の config を先に探し、その後 generic config を探します。
+
+- `/media/routerd-usb/routerd/hosts/<hostname>.yaml`
+- `/media/routerd-usb/routerd/hosts/<mac>.yaml`。MAC は colon 区切りまたは
+  lowercase compact 表記を使えます。
+- `/media/routerd-usb/routerd/router.yaml`
+
+config が見つかれば `/usr/local/etc/routerd/router.yaml` へコピーします。
+その後、ライブ ISO の起動処理が設定を反映します。受入テストと troubleshooting 用に、
+source と SHA256 を `/run/routerd/live-config-source` と
+`/run/routerd/live-config-sha256` に保存します。
 保存済み設定がなく、`/usr/local/etc/routerd/router.yaml` もなければ、
 設定ウィザードを起動します。
 

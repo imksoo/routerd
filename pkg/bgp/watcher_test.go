@@ -57,6 +57,41 @@ func TestParseFRRStateAndDiff(t *testing.T) {
 	}
 }
 
+func TestParseFRRRoutesSelectionDiagnostics(t *testing.T) {
+	prefixes, err := ParseFRRRoutesJSON([]byte(`{
+	  "routes": {
+	    "10.250.0.0/24": [{
+	      "valid": true,
+	      "selectDeferred": true,
+	      "selectionReason": "selectDeferred: waiting for graceful-restart EOR"
+	    }],
+	    "10.250.1.0/24": [{
+	      "valid": true,
+	      "bestpath": true,
+	      "nexthops": [{"fib": true}]
+	    }]
+	  }
+	}`))
+	if err != nil {
+		t.Fatalf("parse routes: %v", err)
+	}
+	byPrefix := map[string]Prefix{}
+	for _, prefix := range prefixes {
+		byPrefix[prefix.Prefix] = prefix
+	}
+	deferred := byPrefix["10.250.0.0/24"]
+	if !deferred.SelectDeferred || deferred.SelectionState != "selectDeferred" || deferred.Best || deferred.Installed {
+		t.Fatalf("deferred prefix = %#v", deferred)
+	}
+	if deferred.SelectionReason == "" {
+		t.Fatalf("deferred prefix should keep selection reason: %#v", deferred)
+	}
+	installed := byPrefix["10.250.1.0/24"]
+	if !installed.Best || !installed.Installed || installed.SelectionState != "installed" {
+		t.Fatalf("installed prefix = %#v", installed)
+	}
+}
+
 func TestParseFRRSummaryAcceptsRemoteASNVariants(t *testing.T) {
 	peers, err := ParseFRRSummaryJSON([]byte(`{
 	  "ipv4Unicast": {

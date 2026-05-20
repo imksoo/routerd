@@ -110,6 +110,8 @@ state_dir=/run/routerd/live
 mount_dir=/media/routerd-usb
 config_file=/usr/local/etc/routerd/router.yaml
 usb_state_file=/run/routerd/live/usb-device
+config_source_file=/run/routerd/live-config-source
+config_checksum_file=/run/routerd/live-config-sha256
 flush_enabled_file=/run/routerd/live/usb-flush-enabled
 log_limit_file=/run/routerd/live/log-limit
 log_dir=/run/routerd/logs
@@ -219,6 +221,14 @@ fs_type()
     fi
 }
 
+device_label()
+{
+    dev=$1
+    if command -v blkid >/dev/null 2>&1; then
+        blkid -o value -s LABEL "${dev}" 2>/dev/null || true
+    fi
+}
+
 mount_policy()
 {
     policy=$(cmdline_value routerd.usb_mount 2>/dev/null || true)
@@ -288,32 +298,30 @@ unmount_usb()
 
 discover_usb()
 {
-    if [ -f "${usb_state_file}" ]; then
-        dev=$(sed -n '1p' "${usb_state_file}")
-        [ -b "${dev}" ] && {
+    discover_usb_candidates | sed -n '1p'
+}
+
+discover_usb_candidates()
+{
+    {
+        if [ -f "${usb_state_file}" ]; then
+            dev=$(sed -n '1p' "${usb_state_file}")
+            [ -b "${dev}" ] && printf '%s\n' "${dev}"
+        fi
+        if dev=$(cmdline_value routerd.usb 2>/dev/null); then
+            [ -b "${dev}" ] && printf '%s\n' "${dev}"
+        fi
+        if command -v blkid >/dev/null 2>&1; then
+            dev=$(blkid -L ROUTERD_CONFIG 2>/dev/null || true)
+            [ -n "${dev}" ] && [ -b "${dev}" ] && printf '%s\n' "${dev}"
+            dev=$(blkid -L ROUTERD 2>/dev/null || true)
+            [ -n "${dev}" ] && [ -b "${dev}" ] && printf '%s\n' "${dev}"
+        fi
+        for dev in /dev/disk/by-label/ROUTERD_CONFIG /dev/disk/by-label/ROUTERD /dev/sd*[0-9] /dev/vd*[0-9]; do
+            [ -b "${dev}" ] || continue
             printf '%s\n' "${dev}"
-            return 0
-        }
-    fi
-    if dev=$(cmdline_value routerd.usb 2>/dev/null); then
-        [ -b "${dev}" ] && {
-            printf '%s\n' "${dev}"
-            return 0
-        }
-    fi
-    if command -v blkid >/dev/null 2>&1; then
-        dev=$(blkid -L ROUTERD 2>/dev/null || true)
-        [ -n "${dev}" ] && [ -b "${dev}" ] && {
-            printf '%s\n' "${dev}"
-            return 0
-        }
-    fi
-    for dev in /dev/disk/by-label/ROUTERD /dev/sd*[0-9] /dev/vd*[0-9]; do
-        [ -b "${dev}" ] || continue
-        printf '%s\n' "${dev}"
-        return 0
-    done
-    return 1
+        done
+    } | awk '!seen[$0]++'
 }
 
 install_flush_job()
@@ -344,14 +352,90 @@ restore_config()
 {
     dev=$1
     mount_usb "${dev}" || return 1
-    src="${mount_dir}/${persist_dir_name}/router.yaml"
+    src=$(select_config_source 2>/dev/null || true)
+    [ -n "${src}" ] || return 1
     if [ -f "${src}" ]; then
         mkdir -p "$(dirname "${config_file}")"
         install -m 0600 "${src}" "${config_file}"
-        log "restored ${config_file} from ${dev}"
+        record_config_source "${dev}" "${src}"
+        log "restored ${config_file} from ${dev}:${src#${mount_dir}/}"
         return 0
     fi
     return 1
+}
+
+config_hostnames()
+{
+    for key in routerd.hostname routerd.live_hostname; do
+        value=$(cmdline_value "${key}" 2>/dev/null || true)
+        [ -n "${value}" ] && printf '%s\n' "${value}"
+    done
+    current=$(hostname 2>/dev/null || true)
+    [ -n "${current}" ] && [ "${current}" != "localhost" ] && printf '%s\n' "${current}"
+    if [ -f /etc/hostname ]; then
+        value=$(sed -n '1p' /etc/hostname 2>/dev/null || true)
+        [ -n "${value}" ] && [ "${value}" != "localhost" ] && printf '%s\n' "${value}"
+    fi
+}
+
+config_macs()
+{
+    for iface in $(ls /sys/class/net 2>/dev/null | grep -E '^(eth|en|ens)' || true); do
+        mac=$(cat "/sys/class/net/${iface}/address" 2>/dev/null || true)
+        case "${mac}" in
+            ""|00:00:00:00:00:00) continue ;;
+        esac
+        lower=$(printf '%s\n' "${mac}" | tr 'A-F' 'a-f')
+        printf '%s\n' "${lower}"
+        printf '%s\n' "${lower}" | tr -d ':'
+    done
+}
+
+select_config_source()
+{
+    for host in $(config_hostnames | awk '!seen[$0]++'); do
+        for path in \
+            "${mount_dir}/${persist_dir_name}/hosts/${host}.yaml" \
+            "${mount_dir}/${persist_dir_name}/hosts/${host}.yml" \
+            "${mount_dir}/routerd/hosts/${host}.yaml" \
+            "${mount_dir}/routerd/hosts/${host}.yml"; do
+            [ -f "${path}" ] && { printf '%s\n' "${path}"; return 0; }
+        done
+    done
+    for mac in $(config_macs | awk '!seen[$0]++'); do
+        for path in \
+            "${mount_dir}/${persist_dir_name}/hosts/${mac}.yaml" \
+            "${mount_dir}/${persist_dir_name}/hosts/${mac}.yml" \
+            "${mount_dir}/routerd/hosts/${mac}.yaml" \
+            "${mount_dir}/routerd/hosts/${mac}.yml"; do
+            [ -f "${path}" ] && { printf '%s\n' "${path}"; return 0; }
+        done
+    done
+    for path in \
+        "${mount_dir}/${persist_dir_name}/router.yaml" \
+        "${mount_dir}/${persist_dir_name}/router.yml" \
+        "${mount_dir}/routerd/router.yaml" \
+        "${mount_dir}/routerd/router.yml"; do
+        [ -f "${path}" ] && { printf '%s\n' "${path}"; return 0; }
+    done
+    return 1
+}
+
+record_config_source()
+{
+    dev=$1
+    src=$2
+    {
+        printf 'device=%s\n' "${dev}"
+        printf 'label=%s\n' "$(device_label "${dev}")"
+        printf 'source=%s\n' "${src}"
+        printf 'installed=%s\n' "${config_file}"
+    } > "${config_source_file}"
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "${src}" | awk '{print $1}' > "${config_checksum_file}"
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "${src}" | awk '{print $1}' > "${config_checksum_file}"
+    fi
 }
 
 save_config()
@@ -411,10 +495,19 @@ case "${1:-init}" in
         log_limit=$(cmdline_value routerd.log_size 2>/dev/null || true)
         [ -n "${log_limit}" ] || log_limit=100M
         ensure_log_tmpfs "${log_limit}"
+        restored=no
+        for candidate in $(discover_usb_candidates 2>/dev/null || true); do
+            [ -b "${candidate}" ] || continue
+            printf '%s\n' "${candidate}" > "${usb_state_file}"
+            if restore_config "${candidate}"; then
+                restored=yes
+                break
+            fi
+        done
         dev=$(discover_usb 2>/dev/null || true)
         if [ -n "${dev}" ]; then
             printf '%s\n' "${dev}" > "${usb_state_file}"
-            restore_config "${dev}" || true
+            [ "${restored}" = "yes" ] || restore_config "${dev}" || true
             if mount_usb "${dev}" 2>/dev/null; then
                 enabled=$(sed -n '1p' "${mount_dir}/${persist_dir_name}/usb-flush-enabled" 2>/dev/null || true)
                 [ -n "${enabled}" ] || enabled=yes
@@ -644,6 +737,9 @@ mkdir -p /run/routerd "${log_dir}" /var/lib/routerd
 "${routerd}" apply --config "${config}" --once
 if routerd_serve_running; then
     echo "routerd-live: routerd serve already running; not starting a duplicate" >> "${log_dir}/routerd-live.log"
+elif [ -x /etc/init.d/routerd ]; then
+    rc-update add routerd default >/dev/null 2>&1 || true
+    rc-service routerd start >> "${log_dir}/routerd-live.log" 2>&1 || true
 elif [ ! -S "${socket}" ]; then
     nohup "${routerd}" serve \
         --config "${config}" \
@@ -658,6 +754,29 @@ fi
 touch "${marker}"
 EOF
 chmod 0755 "${overlay_root}/usr/share/routerd/live-autostart.sh"
+
+cat > "${overlay_root}/etc/init.d/routerd" <<'EOF'
+#!/sbin/openrc-run
+
+description="routerd live controller"
+command="/usr/local/sbin/routerd"
+command_args="serve --config /usr/local/etc/routerd/router.yaml --socket /run/routerd/routerd.sock --status-socket /run/routerd/routerd-status.sock"
+command_background="yes"
+pidfile="/run/routerd/routerd.pid"
+output_log="/run/routerd/logs/routerd-live.log"
+error_log="/run/routerd/logs/routerd-live.log"
+
+depend() {
+    need localmount
+    after networking
+}
+
+start_pre() {
+    mkdir -p /run/routerd/logs /var/lib/routerd
+    [ -f /usr/local/etc/routerd/router.yaml ]
+}
+EOF
+chmod 0755 "${overlay_root}/etc/init.d/routerd"
 
 cat > "${overlay_root}/etc/motd" <<EOF
 routerd live ${version}

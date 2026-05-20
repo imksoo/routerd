@@ -2384,6 +2384,15 @@
                         },
                         "type": "object"
                       },
+                      "convergenceProfile": {
+                        "enum": [
+                          "",
+                          "default",
+                          "fast",
+                          "stable"
+                        ],
+                        "type": "string"
+                      },
                       "exportPolicy": {
                         "additionalProperties": false,
                         "properties": {

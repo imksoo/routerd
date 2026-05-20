@@ -29,11 +29,20 @@ routerd/
 
 At boot, `/usr/share/routerd/live-persistence.sh init` tries to find the USB
 device. It first checks the remembered device, then `routerd.usb=` on the kernel
-command line, then a partition labeled `ROUTERD`.
+command line, then partitions labeled `ROUTERD_CONFIG` or `ROUTERD`.
 
-The selected partition is mounted at `/media/routerd-usb`. If a saved
-`/media/routerd-usb/routerd/router.yaml` exists, it is copied to
-`/usr/local/etc/routerd/router.yaml` and applied by the live ISO startup path.
+The selected partition is mounted at `/media/routerd-usb`. The helper looks for
+host-specific configs first, then a generic config:
+
+- `/media/routerd-usb/routerd/hosts/<hostname>.yaml`
+- `/media/routerd-usb/routerd/hosts/<mac>.yaml` with either colon-separated or
+  compact lowercase MAC address
+- `/media/routerd-usb/routerd/router.yaml`
+
+If a config is found, it is copied to `/usr/local/etc/routerd/router.yaml` and
+applied by the live ISO startup path. The source and SHA256 are recorded in
+`/run/routerd/live-config-source` and `/run/routerd/live-config-sha256` for
+acceptance tests and troubleshooting.
 If no saved config is found and `/usr/local/etc/routerd/router.yaml` is still
 missing, the ISO starts the configure wizard.
 
