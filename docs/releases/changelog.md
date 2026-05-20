@@ -10,6 +10,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260520.2227
+
 ### Fixed
 
 - Fixed the Live ISO build after adding the OpenRC `routerd` service script by
