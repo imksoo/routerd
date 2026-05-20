@@ -3,6 +3,7 @@
 package hostdeps
 
 import (
+	"reflect"
 	"testing"
 
 	"routerd/pkg/api"
@@ -72,6 +73,46 @@ func TestExplicitSysctlSuppressesDerivedDuplicate(t *testing.T) {
 	if count != 0 {
 		t.Fatalf("derived duplicate ip_forward count = %d, want 0", count)
 	}
+}
+
+func TestPackageFeaturesCoverStandaloneDataplaneResources(t *testing.T) {
+	for _, tc := range []struct {
+		kind string
+		want []string
+	}{
+		{kind: "PortForward", want: []string{"nft"}},
+		{kind: "IngressService", want: []string{"nft"}},
+		{kind: "LocalServiceRedirect", want: []string{"nft"}},
+		{kind: "IPv4ReversePathFilter", want: []string{"nft"}},
+		{kind: "EgressRoutePolicy", want: []string{"base", "nft"}},
+	} {
+		t.Run(tc.kind, func(t *testing.T) {
+			router := routerWithSingleKind(tc.kind)
+			features := packageFeatures(router)
+			for _, want := range tc.want {
+				if !features[want] {
+					t.Fatalf("packageFeatures(%s) missing %s in %#v", tc.kind, want, features)
+				}
+			}
+		})
+	}
+}
+
+func TestPackageFeaturesInternalEventResourcesNeedNoHostPackages(t *testing.T) {
+	for _, kind := range []string{"EventRule", "DerivedEvent"} {
+		t.Run(kind, func(t *testing.T) {
+			if got := packageFeatures(routerWithSingleKind(kind)); !reflect.DeepEqual(got, map[string]bool{}) {
+				t.Fatalf("packageFeatures(%s) = %#v, want no host package features", kind, got)
+			}
+		})
+	}
+}
+
+func routerWithSingleKind(kind string) *api.Router {
+	return &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
+		TypeMeta: api.TypeMeta{Kind: kind},
+		Metadata: api.ObjectMeta{Name: "test"},
+	}}}}
 }
 
 func derivedSysctlKeys(t *testing.T, router *api.Router) map[string]bool {

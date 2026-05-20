@@ -130,6 +130,9 @@ func packageFeatures(router *api.Router) map[string]bool {
 		switch res.Kind {
 		case "Interface", "Bridge", "VXLANSegment", "VRF", "VXLANTunnel", "IPv4StaticAddress", "IPv6DelegatedAddress", "IPv4Route", "IPv4StaticRoute", "IPv6StaticRoute", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "IPv4DefaultRoutePolicy", "ClusterNetworkRoute", "DSLiteTunnel", "DHCPv4Lease", "DHCPv6Address", "DHCPv6PrefixDelegation", "DHCPv6Information":
 			features["base"] = true
+		case "EgressRoutePolicy":
+			features["base"] = true
+			features["nft"] = true
 		case "BGPRouter", "BGPPeer":
 			features["bgp"] = true
 		case "DHCPv4Server", "DHCPv4Scope", "DHCPv4Reservation", "DHCPv6Server", "DHCPv6Scope", "IPv6RouterAdvertisement", "DNSResolver", "DNSZone", "DHCPv4Relay":
@@ -137,7 +140,7 @@ func packageFeatures(router *api.Router) map[string]bool {
 		case "NAT44Rule", "IPv4SourceNAT":
 			features["nat"] = true
 			features["conntrack"] = true
-		case "FirewallZone", "FirewallPolicy", "FirewallRule", "FirewallLog", "ClientPolicy", "PathMTUPolicy", "IPAddressSet", "LocalServiceRedirect":
+		case "FirewallZone", "FirewallPolicy", "FirewallRule", "FirewallLog", "ClientPolicy", "PathMTUPolicy", "IPAddressSet", "PortForward", "IngressService", "LocalServiceRedirect", "IPv4ReversePathFilter":
 			features["nft"] = true
 		case "TrafficFlowLog", "ConntrackObserver":
 			features["conntrack"] = true
