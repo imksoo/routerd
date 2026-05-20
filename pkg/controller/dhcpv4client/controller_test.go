@@ -42,6 +42,7 @@ func TestControllerAppliesLeaseDNS(t *testing.T) {
 				"currentAddress": "192.0.2.10",
 				"prefixLength":   "24",
 				"dnsServers":     `["192.0.2.53","192.0.2.54"]`,
+				"ntpServers":     `["192.0.2.123"]`,
 			},
 		}}
 		_ = json.NewEncoder(w).Encode(status)
@@ -80,6 +81,10 @@ func TestControllerAppliesLeaseDNS(t *testing.T) {
 	status := store.ObjectStatus(api.NetAPIVersion, "DHCPv4Client", "wan")
 	if status["appliedDNSServers"] != "192.0.2.53,192.0.2.54" {
 		t.Fatalf("status = %#v", status)
+	}
+	ntpServers, _ := status["ntpServers"].([]string)
+	if strings.Join(ntpServers, ",") != "192.0.2.123" {
+		t.Fatalf("ntpServers status = %#v", status["ntpServers"])
 	}
 }
 

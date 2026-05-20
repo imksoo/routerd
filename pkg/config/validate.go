@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"net/url"
 	"path"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -296,6 +297,9 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 		return err
 	}
 	if err := validateDNSForwarderGraph(router, dnsResolvers, dnsForwarders, dnsUpstreams, dnsZones, interfaces, wireGuardInterfaces); err != nil {
+		return err
+	}
+	if err := validateStatusReferences(router); err != nil {
 		return err
 	}
 	if err := validateBGPRouterInstances(router, vrfs); err != nil {
@@ -4182,6 +4186,136 @@ func validateSourceResourceRef(value string) error {
 		return fmt.Errorf("must be Kind/name")
 	}
 	return nil
+}
+
+type statusReference struct {
+	Path       string
+	Resource   string
+	Field      string
+	Optional   bool
+	Dependency bool
+}
+
+func validateStatusReferences(router *api.Router) error {
+	known := map[string]string{}
+	for _, resource := range router.Spec.Resources {
+		known[resource.Kind+"/"+resource.Metadata.Name] = resource.ID()
+	}
+	for _, resource := range router.Spec.Resources {
+		for _, ref := range collectStatusReferences(resource.Spec, "spec") {
+			if err := validateStatusReference(resource.ID(), ref, known); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func validateStatusReference(owner string, ref statusReference, known map[string]string) error {
+	resource := strings.TrimSpace(ref.Resource)
+	field := strings.TrimSpace(ref.Field)
+	if resource == "" {
+		if field != "" {
+			return fmt.Errorf("%s %s.resource is required when field is set", owner, ref.Path)
+		}
+		return nil
+	}
+	if err := validateSourceResourceRef(resource); err != nil {
+		return fmt.Errorf("%s %s.resource: %w", owner, ref.Path, err)
+	}
+	if field == "" {
+		if ref.Dependency {
+			field = "phase"
+		} else {
+			return fmt.Errorf("%s %s.field is required", owner, ref.Path)
+		}
+	}
+	kind, name, _ := strings.Cut(resource, "/")
+	if known[resource] == "" {
+		return fmt.Errorf("%s %s references missing %s %q", owner, ref.Path, kind, name)
+	}
+	if !api.ResourceProvidesField(kind, field) {
+		return fmt.Errorf("%s %s references %s.%s, but %s does not provide field %q", owner, ref.Path, resource, field, kind, field)
+	}
+	return nil
+}
+
+func collectStatusReferences(value any, path string) []statusReference {
+	if value == nil {
+		return nil
+	}
+	var refs []statusReference
+	collectStatusReferencesValue(reflect.ValueOf(value), path, &refs)
+	return refs
+}
+
+func collectStatusReferencesValue(value reflect.Value, path string, refs *[]statusReference) {
+	if !value.IsValid() {
+		return
+	}
+	for value.Kind() == reflect.Interface || value.Kind() == reflect.Pointer {
+		if value.IsNil() {
+			return
+		}
+		value = value.Elem()
+	}
+	statusType := reflect.TypeOf(api.StatusValueSourceSpec{})
+	dependencyType := reflect.TypeOf(api.ResourceDependencySpec{})
+	if value.Type() == statusType {
+		source := value.Interface().(api.StatusValueSourceSpec)
+		if strings.TrimSpace(source.Resource) != "" || strings.TrimSpace(source.Field) != "" {
+			*refs = append(*refs, statusReference{Path: path, Resource: source.Resource, Field: source.Field, Optional: source.Optional})
+		}
+		return
+	}
+	if value.Type() == dependencyType {
+		dependency := value.Interface().(api.ResourceDependencySpec)
+		if strings.TrimSpace(dependency.Resource) != "" || strings.TrimSpace(dependency.Field) != "" || strings.TrimSpace(dependency.Phase) != "" || strings.TrimSpace(dependency.Equals) != "" || dependency.NotEmpty {
+			field := dependency.Field
+			if strings.TrimSpace(dependency.Phase) != "" {
+				field = "phase"
+			}
+			*refs = append(*refs, statusReference{Path: path, Resource: dependency.Resource, Field: field, Optional: dependency.Optional, Dependency: true})
+		}
+		return
+	}
+	switch value.Kind() {
+	case reflect.Struct:
+		valueType := value.Type()
+		for i := 0; i < value.NumField(); i++ {
+			field := valueType.Field(i)
+			if field.PkgPath != "" {
+				continue
+			}
+			name := statusReferenceFieldName(field)
+			if name == "-" {
+				continue
+			}
+			childPath := path
+			if name != "" {
+				childPath += "." + name
+			}
+			collectStatusReferencesValue(value.Field(i), childPath, refs)
+		}
+	case reflect.Slice, reflect.Array:
+		for i := 0; i < value.Len(); i++ {
+			collectStatusReferencesValue(value.Index(i), fmt.Sprintf("%s[%d]", path, i), refs)
+		}
+	case reflect.Map:
+		return
+	}
+}
+
+func statusReferenceFieldName(field reflect.StructField) string {
+	tag := field.Tag.Get("yaml")
+	if tag == "" {
+		return field.Name
+	}
+	name := strings.Split(tag, ",")[0]
+	if name == "" {
+		return field.Name
+	}
+	return name
 }
 
 func validateAddressOrHostname(value string) error {

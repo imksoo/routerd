@@ -125,6 +125,9 @@ func (c Controller) reconcile(ctx context.Context, name string) error {
 		if servers := parseJSONStringList(observed["dnsServers"]); len(servers) > 0 {
 			next["dnsServers"] = servers
 		}
+		if servers := parseJSONStringList(observed["ntpServers"]); len(servers) > 0 {
+			next["ntpServers"] = servers
+		}
 		current := c.Store.ObjectStatus(resource.Resource.APIVersion, resource.Resource.Kind, resource.Resource.Name)
 		if err := c.applyLease(ctx, name, current, next); err != nil {
 			next["phase"] = "Error"
@@ -161,6 +164,9 @@ func leaseEventChanged(current, next map[string]any) bool {
 		}
 	}
 	if fmt.Sprint(current["dnsServers"]) != fmt.Sprint(next["dnsServers"]) {
+		return true
+	}
+	if fmt.Sprint(current["ntpServers"]) != fmt.Sprint(next["ntpServers"]) {
 		return true
 	}
 	return false

@@ -40,6 +40,13 @@ spec:
       ifname: ds-routerd-test
       managed: false
   - apiVersion: net.routerd.net/v1alpha1
+    kind: Interface
+    metadata:
+      name: dummy-fallback
+    spec:
+      ifname: dummy0
+      managed: false
+  - apiVersion: net.routerd.net/v1alpha1
     kind: DHCPv6PrefixDelegation
     metadata:
       name: wan-pd

@@ -47,8 +47,6 @@ spec:
         serverFrom:
           - resource: DHCPv6Information/wan-info
             field: sntpServers
-          - resource: DHCPv4Client/wan-v4
-            field: ntpServers
         fallbackServers:
           - ntp.jst.mfeed.ad.jp
           - ntp.nict.jp
@@ -64,8 +62,6 @@ spec:
         serverFrom:
           - resource: DHCPv6Information/wan-info
             field: sntpServers
-          - resource: DHCPv4Client/wan-v4
-            field: ntpServers
         fallbackServers:
           - ntp.jst.mfeed.ad.jp
           - ntp.nict.jp

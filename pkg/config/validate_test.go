@@ -5,6 +5,7 @@ package config
 import (
 	"bytes"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -116,6 +117,120 @@ func TestResourceWhensCoversAPISpecWhenFields(t *testing.T) {
 	sort.Strings(expected)
 	if strings.Join(actual, "\n") != strings.Join(expected, "\n") {
 		t.Fatalf("when validation resource table mismatch\nactual:\n%s\nexpected:\n%s", strings.Join(actual, "\n"), strings.Join(expected, "\n"))
+	}
+}
+
+func TestReferenceTableMatchesProvidesContract(t *testing.T) {
+	for _, row := range referenceProviderRows() {
+		t.Run(row.Kind+"."+row.Field, func(t *testing.T) {
+			got, ok := api.ResourceProvidesFieldType(row.Kind, row.Field)
+			if !ok {
+				t.Fatalf("%s does not provide %q", row.Kind, row.Field)
+			}
+			if got != row.Type {
+				t.Fatalf("%s.%s type = %s, want %s", row.Kind, row.Field, got, row.Type)
+			}
+		})
+	}
+}
+
+func TestValidateRejectsMissingStatusReference(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{{
+			TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "WebConsole"},
+			Metadata: api.ObjectMeta{Name: "console"},
+			Spec:     api.WebConsoleSpec{ListenAddressFrom: api.StatusValueSourceSpec{Resource: "IPv4StaticAddress/missing", Field: "address"}},
+		}}},
+	}
+	err := Validate(router)
+	if err == nil || !strings.Contains(err.Error(), "references missing IPv4StaticAddress") {
+		t.Fatalf("missing status reference error = %v", err)
+	}
+}
+
+func TestValidateRejectsStatusReferenceFieldOutsideProvidesContract(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "mgmt"},
+				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: true},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "WebConsole"},
+				Metadata: api.ObjectMeta{Name: "console"},
+				Spec:     api.WebConsoleSpec{ListenAddressFrom: api.StatusValueSourceSpec{Resource: "Interface/mgmt", Field: "gateway"}},
+			},
+		}},
+	}
+	err := Validate(router)
+	if err == nil || !strings.Contains(err.Error(), "does not provide field \"gateway\"") {
+		t.Fatalf("unsupported status field error = %v", err)
+	}
+}
+
+func TestValidateExampleStatusReferencesAgainstProvides(t *testing.T) {
+	entries, err := os.ReadDir("../../examples")
+	if err != nil {
+		t.Fatalf("read examples: %v", err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".yaml") {
+			continue
+		}
+		t.Run(entry.Name(), func(t *testing.T) {
+			router, err := Load(filepath.Join("../../examples", entry.Name()))
+			if err != nil {
+				t.Fatalf("load example: %v", err)
+			}
+			if err := Validate(router); err != nil {
+				t.Fatalf("validate example: %v", err)
+			}
+		})
+	}
+}
+
+type referenceProviderRow struct {
+	Kind  string
+	Field string
+	Type  string
+}
+
+func referenceProviderRows() []referenceProviderRow {
+	return []referenceProviderRow{
+		{Kind: "Interface", Field: "phase", Type: api.ProvidesTypeString},
+		{Kind: "Interface", Field: "ifname", Type: api.ProvidesTypeString},
+		{Kind: "Interface", Field: "ipv4Addresses", Type: api.ProvidesTypeStringList},
+		{Kind: "IPv4StaticAddress", Field: "address", Type: api.ProvidesTypeString},
+		{Kind: "VirtualAddress", Field: "address", Type: api.ProvidesTypeString},
+		{Kind: "IPv6DelegatedAddress", Field: "address", Type: api.ProvidesTypeString},
+		{Kind: "DHCPv4Client", Field: "gateway", Type: api.ProvidesTypeString},
+		{Kind: "DHCPv4Client", Field: "dnsServers", Type: api.ProvidesTypeStringList},
+		{Kind: "DHCPv4Client", Field: "ntpServers", Type: api.ProvidesTypeStringList},
+		{Kind: "DHCPv6Information", Field: "dnsServers", Type: api.ProvidesTypeStringList},
+		{Kind: "DHCPv6Information", Field: "sntpServers", Type: api.ProvidesTypeStringList},
+		{Kind: "DHCPv6Information", Field: "domainSearch", Type: api.ProvidesTypeStringList},
+		{Kind: "DHCPv6Information", Field: "aftrName", Type: api.ProvidesTypeString},
+		{Kind: "DHCPv6PrefixDelegation", Field: "currentPrefix", Type: api.ProvidesTypeString},
+		{Kind: "DNSZone", Field: "zone", Type: api.ProvidesTypeString},
+		{Kind: "DNSResolver", Field: "listenAddresses", Type: api.ProvidesTypeStringList},
+		{Kind: "DSLiteTunnel", Field: "interface", Type: api.ProvidesTypeString},
+		{Kind: "DSLiteTunnel", Field: "device", Type: api.ProvidesTypeString},
+		{Kind: "EgressRoutePolicy", Field: "selectedDevice", Type: api.ProvidesTypeString},
+		{Kind: "EgressRoutePolicy", Field: "selectedGateway", Type: api.ProvidesTypeString},
+		{Kind: "IngressService", Field: "listenAddress", Type: api.ProvidesTypeString},
+		{Kind: "IngressService", Field: "activeBackend", Type: api.ProvidesTypeObject},
+		{Kind: "IngressService", Field: "activeBackends", Type: api.ProvidesTypeObjectList},
+		{Kind: "IPAddressSet", Field: "addresses", Type: api.ProvidesTypeStringList},
+		{Kind: "NTPClient", Field: "servers", Type: api.ProvidesTypeStringList},
+		{Kind: "NTPServer", Field: "listenAddresses", Type: api.ProvidesTypeStringList},
+		{Kind: "PPPoESession", Field: "interface", Type: api.ProvidesTypeString},
+		{Kind: "PPPoESession", Field: "device", Type: api.ProvidesTypeString},
+		{Kind: "PPPoESession", Field: "gateway", Type: api.ProvidesTypeString},
 	}
 }
 
@@ -542,6 +657,9 @@ func TestValidatePhase15LANServiceKinds(t *testing.T) {
 		Metadata: api.ObjectMeta{Name: "test"},
 		Spec: api.RouterSpec{Resources: []api.Resource{
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19", Managed: true}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "ens18", Managed: true}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.IPv6DelegatedAddressSpec{PrefixDelegation: "wan-pd", Interface: "lan", AddressSuffix: "::1"}},
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"}, Metadata: api.ObjectMeta{Name: "lan-v4"}, Spec: api.DHCPv4ServerSpec{
 				Interface:   "lan",
 				AddressPool: api.DHCPAddressPoolSpec{Start: "192.168.10.100", End: "192.168.10.199", LeaseTime: "8h"},
@@ -562,7 +680,7 @@ func TestValidatePhase15LANServiceKinds(t *testing.T) {
 					{Resource: "DNSZone/local", Field: "zone"},
 				},
 			}},
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6RouterAdvertisement"}, Metadata: api.ObjectMeta{Name: "lan-ra"}, Spec: api.IPv6RouterAdvertisementSpec{Interface: "lan", PrefixFrom: api.StatusValueSourceSpec{Resource: "IPv6DelegatedAddress/lan", Field: "prefix"}, RDNSS: []string{"2001:db8::53"}, DNSSLFrom: []api.StatusValueSourceSpec{{Resource: "DNSZone/local", Field: "zone"}}, MTU: 1500, PRFPreference: "high"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6RouterAdvertisement"}, Metadata: api.ObjectMeta{Name: "lan-ra"}, Spec: api.IPv6RouterAdvertisementSpec{Interface: "lan", PrefixFrom: api.StatusValueSourceSpec{Resource: "IPv6DelegatedAddress/lan", Field: "address"}, RDNSS: []string{"2001:db8::53"}, DNSSLFrom: []api.StatusValueSourceSpec{{Resource: "DNSZone/local", Field: "zone"}}, MTU: 1500, PRFPreference: "high"}},
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSZone"}, Metadata: api.ObjectMeta{Name: "local"}, Spec: api.DNSZoneSpec{
 				Zone: "lan",
 				Records: []api.DNSZoneRecordSpec{
@@ -711,6 +829,11 @@ func TestValidateEgressRoutePolicyDynamicGatewayAllowsAutoDerivation(t *testing.
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"},
 				Metadata: api.ObjectMeta{Name: "wan-check"},
 				Spec:     api.HealthCheckSpec{TargetSource: "static", Target: "1.1.1.1"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "wan"},
+				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: true},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"},
@@ -1010,6 +1133,11 @@ func TestValidateNAT44Rule(t *testing.T) {
 				Spec:     api.InterfaceSpec{IfName: "ens18"},
 			},
 			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},
+				Metadata: api.ObjectMeta{Name: "ds-lite-source"},
+				Spec:     api.IPv4StaticAddressSpec{Interface: "wan", Address: "203.0.113.10/32"},
+			},
+			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44Rule"},
 				Metadata: api.ObjectMeta{Name: "lan-to-wan"},
 				Spec: api.NAT44RuleSpec{
@@ -1023,11 +1151,11 @@ func TestValidateNAT44Rule(t *testing.T) {
 	if err := Validate(router); err != nil {
 		t.Fatalf("validate NAT44Rule: %v", err)
 	}
-	router.Spec.Resources[1].Spec = api.NAT44RuleSpec{Type: "snat", EgressInterface: "wan", SourceRanges: []string{"192.168.0.0/16"}}
+	router.Spec.Resources[2].Spec = api.NAT44RuleSpec{Type: "snat", EgressInterface: "wan", SourceRanges: []string{"192.168.0.0/16"}}
 	if err := Validate(router); err == nil {
 		t.Fatal("expected snat without snatAddress or snatAddressFrom to be rejected")
 	}
-	router.Spec.Resources[1].Spec = api.NAT44RuleSpec{
+	router.Spec.Resources[2].Spec = api.NAT44RuleSpec{
 		Type:            "snat",
 		EgressInterface: "wan",
 		SourceRanges:    []string{"192.168.0.0/16"},
@@ -1047,6 +1175,11 @@ func TestValidatePortForwardAndIngressService(t *testing.T) {
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
 				Metadata: api.ObjectMeta{Name: "wan"},
 				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},
+				Metadata: api.ObjectMeta{Name: "wan-ip"},
+				Spec:     api.IPv4StaticAddressSpec{Interface: "wan", Address: "203.0.113.10/32"},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
@@ -1079,7 +1212,7 @@ func TestValidatePortForwardAndIngressService(t *testing.T) {
 		t.Fatalf("validate ingress resources: %v", err)
 	}
 
-	router.Spec.Resources[3].Spec = api.IngressServiceSpec{
+	router.Spec.Resources[4].Spec = api.IngressServiceSpec{
 		Listen:      api.IngressListenSpec{Interface: "wan", Address: "203.0.113.10", Protocol: "tcp", Port: 443},
 		Backends:    []api.IngressBackendSpec{{Address: "172.18.1.89", Port: 8443}, {Address: "172.18.1.90", Port: 8443}},
 		HealthCheck: api.IngressHealthCheckSpec{Protocol: "https", Interval: "5s", Timeout: "1s", Path: "/readyz", Host: "k8s-api.example", ExpectedStatus: []int{200, 204}, HealthyThreshold: 2, UnhealthyThreshold: 2},
@@ -1088,7 +1221,7 @@ func TestValidatePortForwardAndIngressService(t *testing.T) {
 	if err := Validate(router); err != nil {
 		t.Fatalf("validate ingress backend pool: %v", err)
 	}
-	router.Spec.Resources[3].Spec = api.IngressServiceSpec{
+	router.Spec.Resources[4].Spec = api.IngressServiceSpec{
 		Listen:      api.IngressListenSpec{Interface: "wan", Address: "203.0.113.10", Protocol: "tcp", Port: 443},
 		Backends:    []api.IngressBackendSpec{{Address: "172.18.1.89", Port: 8443}},
 		HealthCheck: api.IngressHealthCheckSpec{Protocol: "https", Path: "readyz"},
@@ -1097,7 +1230,7 @@ func TestValidatePortForwardAndIngressService(t *testing.T) {
 		t.Fatalf("expected invalid healthCheck path to be rejected, got %v", err)
 	}
 
-	router.Spec.Resources[3].Spec = api.IngressServiceSpec{
+	router.Spec.Resources[4].Spec = api.IngressServiceSpec{
 		Listen:   api.IngressListenSpec{Interface: "wan", Address: "203.0.113.10", Protocol: "tcp", Port: 443},
 		Backends: []api.IngressBackendSpec{{Address: "172.18.1.89", Port: 8443}, {Address: "172.18.1.90", Port: 8443}},
 		Policy:   api.IngressServicePolicySpec{Selection: "random"},
@@ -1105,7 +1238,7 @@ func TestValidatePortForwardAndIngressService(t *testing.T) {
 	if err := Validate(router); err != nil {
 		t.Fatalf("validate random ingress selection: %v", err)
 	}
-	router.Spec.Resources[3].Spec = api.IngressServiceSpec{
+	router.Spec.Resources[4].Spec = api.IngressServiceSpec{
 		Listen:   api.IngressListenSpec{Interface: "wan", Address: "203.0.113.10", Protocol: "tcp", Port: 443},
 		Backends: []api.IngressBackendSpec{{Address: "172.18.1.89", Port: 8443}, {Address: "172.18.1.90", Port: 8443}},
 		Policy:   api.IngressServicePolicySpec{Selection: "sticky"},
@@ -1113,7 +1246,7 @@ func TestValidatePortForwardAndIngressService(t *testing.T) {
 	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "spec.policy.selection must be failover, sourceHash, or random") {
 		t.Fatalf("expected unsupported ingress selection to be rejected, got %v", err)
 	}
-	router.Spec.Resources[3].Spec = api.IngressServiceSpec{
+	router.Spec.Resources[4].Spec = api.IngressServiceSpec{
 		Listen:   api.IngressListenSpec{Interface: "wan", Address: "203.0.113.10", Protocol: "tcp", Port: 443},
 		Backends: []api.IngressBackendSpec{{Address: "172.18.1.89", Port: 8443}},
 		Hairpin:  api.IngressHairpinSpec{Mode: "auto"},
@@ -1122,7 +1255,7 @@ func TestValidatePortForwardAndIngressService(t *testing.T) {
 		t.Fatalf("validate auto ingress hairpin: %v", err)
 	}
 
-	router.Spec.Resources[3].Spec = api.IngressServiceSpec{
+	router.Spec.Resources[4].Spec = api.IngressServiceSpec{
 		Listen:   api.IngressListenSpec{Interface: "wan", Address: "203.0.113.10", Protocol: "tcp", Port: 443},
 		Backends: []api.IngressBackendSpec{{Address: "172.18.1.89", Port: 8443}},
 		Hairpin:  api.IngressHairpinSpec{Enabled: true, Interfaces: []string{"wan"}},
@@ -1131,7 +1264,7 @@ func TestValidatePortForwardAndIngressService(t *testing.T) {
 		t.Fatalf("validate same-interface ingress hairpin: %v", err)
 	}
 
-	router.Spec.Resources[3].Spec = api.IngressServiceSpec{
+	router.Spec.Resources[4].Spec = api.IngressServiceSpec{
 		Listen:   api.IngressListenSpec{Interface: "wan", Address: "203.0.113.10", Protocol: "tcp", Port: 443},
 		Backends: []api.IngressBackendSpec{{Address: "172.18.1.89", Port: 8443}},
 		Hairpin:  api.IngressHairpinSpec{Mode: "invalid"},
@@ -1139,12 +1272,12 @@ func TestValidatePortForwardAndIngressService(t *testing.T) {
 	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "spec.hairpin.mode") {
 		t.Fatalf("expected invalid hairpin mode to be rejected, got %v", err)
 	}
-	router.Spec.Resources[3].Spec = api.IngressServiceSpec{
+	router.Spec.Resources[4].Spec = api.IngressServiceSpec{
 		Listen:   api.IngressListenSpec{Interface: "wan", Address: "203.0.113.10", Protocol: "tcp", Port: 443},
 		Backends: []api.IngressBackendSpec{{Address: "172.18.1.89", Port: 8443}},
 	}
 
-	router.Spec.Resources[2].Spec = api.PortForwardSpec{
+	router.Spec.Resources[3].Spec = api.PortForwardSpec{
 		Listen:  api.IngressListenSpec{Interface: "wan", Protocol: "tcp", Port: 8443},
 		Target:  api.IngressTargetSpec{Address: "172.18.1.88", Port: 443},
 		Hairpin: api.IngressHairpinSpec{Enabled: true, Interfaces: []string{"lan"}},

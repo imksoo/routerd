@@ -464,6 +464,80 @@ another resource status, for example `Interface/mgmt.status.ipv4Addresses`.
 Use it instead of a literal `listenAddress` when the management address comes
 from DHCP, IPAM, or another declarative resource.
 
+## Status Provides Contract
+
+Fields such as `addressFrom`, `gatewayFrom`, `dnsServerFrom`,
+`sourceAddressFrom`, and `dependsOn[].field` can reference only fields that the
+target kind declares in this contract. The validator rejects missing resources
+and fields outside the target kind's `provides` set.
+
+| Kind | Provides |
+| --- | --- |
+| `BFD` | `peer` (string), `phase` (string) |
+| `BGPPeer` | `acceptedPrefixes` (int), `address` (string), `observedAt` (timestamp), `phase` (string), `state` (string) |
+| `BGPRouter` | `acceptedPrefixes` (int), `establishedPeers` (int), `observedAt` (timestamp), `peers` (objectList), `phase` (string), `prefixes` (int) |
+| `Bridge` | `ifname` (string), `members` (stringList), `phase` (string) |
+| `ClientPolicy` | `phase` (string) |
+| `ClusterNetworkRoute` | `phase` (string), `pods` (stringList), `services` (stringList) |
+| `DHCPv4Client` | `currentAddress` (string), `defaultGateway` (string), `device` (string), `dnsServers` (stringList), `domain` (string), `expiresAt` (timestamp), `gateway` (string), `interface` (string), `leaseTime` (int), `ntpServers` (stringList), `phase` (string), `rebindAt` (timestamp), `renewAt` (timestamp) |
+| `DHCPv4Relay` | `phase` (string) |
+| `DHCPv4Reservation` | `address` (string), `hostname` (string), `phase` (string) |
+| `DHCPv4Server` | `configPath` (string), `dnsServers` (stringList), `domain` (string), `dryRun` (bool), `interface` (string), `ntpServers` (stringList), `phase` (string) |
+| `DHCPv6Address` | `address` (string), `interface` (string), `phase` (string) |
+| `DHCPv6Information` | `aftrName` (string), `dnsServers` (stringList), `domainSearch` (stringList), `phase` (string), `sntpServers` (stringList), `source` (string) |
+| `DHCPv6PrefixDelegation` | `aftrName` (string), `currentPrefix` (string), `dnsServers` (stringList), `domainSearch` (stringList), `interface` (string), `phase` (string), `sntpServers` (stringList) |
+| `DHCPv6Server` | `configPath` (string), `dnsServers` (stringList), `dryRun` (bool), `interface` (string), `phase` (string), `sntpServers` (stringList) |
+| `DNSForwarder` | `phase` (string), `resolver` (string), `upstreams` (stringList) |
+| `DNSResolver` | `listenAddresses` (stringList), `listeners` (int), `phase` (string), `sources` (int), `updatedAt` (timestamp) |
+| `DNSUpstream` | `address` (string), `phase` (string), `url` (string) |
+| `DNSZone` | `pendingRecords` (objectList), `phase` (string), `records` (int), `updatedAt` (timestamp), `zone` (string) |
+| `DSLiteTunnel` | `aftrIPv6` (string), `aftrName` (string), `device` (string), `dryRun` (bool), `innerLocalIPv4` (string), `innerRemoteIPv4` (string), `interface` (string), `localIPv6` (string), `localInterface` (string), `mtu` (int), `phase` (string), `tunnelName` (string) |
+| `DerivedEvent` | `phase` (string), `topic` (string) |
+| `EgressRoutePolicy` | `candidates` (objectList), `dryRun` (bool), `family` (string), `lastTransitionAt` (timestamp), `phase` (string), `selectedCandidate` (string), `selectedDevice` (string), `selectedGateway` (string), `selectedGatewaySource` (string), `selectedInterface` (string), `selectedMetric` (int), `selectedRouteTable` (int), `selectedSource` (string), `selectedTargets` (int), `selectedWeight` (int), `updatedAt` (timestamp) |
+| `EventRule` | `phase` (string), `topic` (string) |
+| `FirewallEventLog` | `path` (string), `phase` (string), `sinks` (stringList) |
+| `FirewallPolicy` | `phase` (string) |
+| `FirewallRule` | `action` (string), `phase` (string) |
+| `FirewallZone` | `interfaces` (stringList), `phase` (string) |
+| `HealthCheck` | `consecutiveFailed` (int), `lastCheckedAt` (timestamp), `phase` (string), `protocol` (string), `role` (string), `sourceAddress` (string), `sourceInterface` (string), `target` (string) |
+| `Hostname` | `hostname` (string), `phase` (string) |
+| `IPAddressSet` | `addresses` (stringList), `ipv4Addresses` (stringList), `ipv6Addresses` (stringList), `phase` (string), `updatedAt` (timestamp) |
+| `IPsecConnection` | `phase` (string) |
+| `IPv4Route` | `destination` (string), `device` (string), `dryRun` (bool), `gateway` (string), `metric` (int), `phase` (string), `type` (string) |
+| `IPv4StaticAddress` | `address` (string), `dryRun` (bool), `ifname` (string), `interface` (string), `phase` (string) |
+| `IPv4StaticRoute` | `destination` (string), `gateway` (string), `interface` (string), `phase` (string) |
+| `IPv6DelegatedAddress` | `address` (string), `dryRun` (bool), `interface` (string), `phase` (string), `prefixSource` (string) |
+| `IPv6RAAddress` | `address` (string), `interface` (string), `phase` (string) |
+| `IPv6RouterAdvertisement` | `configPath` (string), `dryRun` (bool), `interface` (string), `phase` (string), `prefix` (string), `rdnss` (stringList) |
+| `IPv6StaticRoute` | `destination` (string), `gateway` (string), `interface` (string), `phase` (string) |
+| `IngressService` | `activeBackend` (object), `activeBackends` (objectList), `backends` (objectList), `dryRun` (bool), `healthyBackends` (int), `hostname` (string), `listenAddress` (string), `observedAt` (timestamp), `phase` (string), `totalBackends` (int) |
+| `Interface` | `addresses` (stringList), `ifname` (string), `ipv4Addresses` (stringList), `ipv6Addresses` (stringList), `macAddress` (string), `phase` (string) |
+| `Inventory` | `host` (object), `phase` (string) |
+| `LocalServiceRedirect` | `phase` (string) |
+| `LogRetention` | `phase` (string), `targets` (objectList), `updatedAt` (timestamp) |
+| `LogSink` | `phase` (string), `type` (string) |
+| `NAT44Rule` | `dryRun` (bool), `egressInterface` (string), `phase` (string), `snatAddress` (string) |
+| `NTPClient` | `phase` (string), `servers` (stringList), `source` (string), `updatedAt` (timestamp) |
+| `NTPServer` | `listenAddresses` (stringList), `phase` (string), `servers` (stringList), `source` (string), `updatedAt` (timestamp) |
+| `ObservabilityPipeline` | `phase` (string), `signals` (stringList) |
+| `PPPoESession` | `connectedAt` (timestamp), `currentAddress` (string), `device` (string), `dnsServers` (stringList), `dryRun` (bool), `gateway` (string), `interface` (string), `peerAddress` (string), `phase` (string) |
+| `Package` | `dryRun` (bool), `packages` (stringList), `phase` (string) |
+| `PortForward` | `dryRun` (bool), `listenAddress` (string), `phase` (string), `target` (object) |
+| `RouterdCluster` | `leader` (string), `leaseExpiresAt` (timestamp), `phase` (string) |
+| `SelfAddressPolicy` | `address` (string), `phase` (string), `source` (string) |
+| `Sysctl` | `dryRun` (bool), `key` (string), `phase` (string), `value` (string) |
+| `SysctlProfile` | `dryRun` (bool), `phase` (string), `profile` (string) |
+| `TailscaleNode` | `advertiseRoutes` (stringList), `peerCount` (int), `phase` (string), `tailnetName` (string) |
+| `Telemetry` | `phase` (string), `signals` (stringList) |
+| `TrafficFlowLog` | `path` (string), `phase` (string), `sinks` (stringList) |
+| `VRF` | `ifname` (string), `members` (stringList), `phase` (string), `routeTable` (int) |
+| `VXLANSegment` | `ifname` (string), `phase` (string), `vni` (int) |
+| `VXLANTunnel` | `ifname` (string), `phase` (string), `vni` (int) |
+| `VirtualAddress` | `address` (string), `dryRun` (bool), `hostname` (string), `ifname` (string), `phase` (string), `priority` (int), `role` (string), `virtualRouterID` (int) |
+| `WebConsole` | `listenAddress` (string), `phase` (string), `port` (int) |
+| `WireGuardInterface` | `fwmark` (int), `listenPort` (int), `peerCount` (int), `phase` (string), `publicKey` (string) |
+| `WireGuardPeer` | `handshakeAgeSeconds` (int), `latestEndpoint` (string), `latestHandshake` (timestamp), `phase` (string), `transferRxBytes` (int), `transferTxBytes` (int) |
+
 ## Firewall
 
 | Kind | Role |

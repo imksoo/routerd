@@ -1,0 +1,161 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
+package api
+
+import "sort"
+
+const (
+	ProvidesTypeString     = "string"
+	ProvidesTypeStringList = "stringList"
+	ProvidesTypeInt        = "int"
+	ProvidesTypeBool       = "bool"
+	ProvidesTypeObject     = "object"
+	ProvidesTypeObjectList = "objectList"
+	ProvidesTypeTimestamp  = "timestamp"
+)
+
+type ProvidedFieldSpec struct {
+	Name        string
+	Type        string
+	Description string
+}
+
+type ResourceProvidesSpec struct {
+	Kind   string
+	Fields []ProvidedFieldSpec
+}
+
+func ResourceProvides(kind string) []ProvidedFieldSpec {
+	fields := resourceProvidesTable()[kind]
+	if len(fields) == 0 {
+		return nil
+	}
+	out := append([]ProvidedFieldSpec(nil), fields...)
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+func ResourceProvidesContract() []ResourceProvidesSpec {
+	table := resourceProvidesTable()
+	kinds := make([]string, 0, len(table))
+	for kind := range table {
+		kinds = append(kinds, kind)
+	}
+	sort.Strings(kinds)
+	out := make([]ResourceProvidesSpec, 0, len(kinds))
+	for _, kind := range kinds {
+		out = append(out, ResourceProvidesSpec{Kind: kind, Fields: ResourceProvides(kind)})
+	}
+	return out
+}
+
+func ResourceProvidesField(kind, field string) bool {
+	_, ok := ResourceProvidesFieldType(kind, field)
+	return ok
+}
+
+func ResourceProvidesFieldType(kind, field string) (string, bool) {
+	for _, provided := range resourceProvidesTable()[kind] {
+		if provided.Name == field {
+			return provided.Type, true
+		}
+	}
+	return "", false
+}
+
+func resourceProvidesTable() map[string][]ProvidedFieldSpec {
+	common := []ProvidedFieldSpec{{Name: "phase", Type: ProvidesTypeString, Description: "Current lifecycle phase"}}
+	withCommon := func(fields ...ProvidedFieldSpec) []ProvidedFieldSpec {
+		out := append([]ProvidedFieldSpec{}, common...)
+		out = append(out, fields...)
+		return out
+	}
+	s := func(name, desc string) ProvidedFieldSpec {
+		return ProvidedFieldSpec{Name: name, Type: ProvidesTypeString, Description: desc}
+	}
+	ss := func(name, desc string) ProvidedFieldSpec {
+		return ProvidedFieldSpec{Name: name, Type: ProvidesTypeStringList, Description: desc}
+	}
+	i := func(name, desc string) ProvidedFieldSpec {
+		return ProvidedFieldSpec{Name: name, Type: ProvidesTypeInt, Description: desc}
+	}
+	b := func(name, desc string) ProvidedFieldSpec {
+		return ProvidedFieldSpec{Name: name, Type: ProvidesTypeBool, Description: desc}
+	}
+	o := func(name, desc string) ProvidedFieldSpec {
+		return ProvidedFieldSpec{Name: name, Type: ProvidesTypeObject, Description: desc}
+	}
+	os := func(name, desc string) ProvidedFieldSpec {
+		return ProvidedFieldSpec{Name: name, Type: ProvidesTypeObjectList, Description: desc}
+	}
+	t := func(name, desc string) ProvidedFieldSpec {
+		return ProvidedFieldSpec{Name: name, Type: ProvidesTypeTimestamp, Description: desc}
+	}
+
+	return map[string][]ProvidedFieldSpec{
+		"BFD":                     withCommon(s("peer", "Observed or configured peer")),
+		"BGPPeer":                 withCommon(s("address", "Peer address"), s("state", "Peer session state"), i("acceptedPrefixes", "Accepted prefix count"), t("observedAt", "Observation time")),
+		"BGPRouter":               withCommon(os("peers", "Observed peers"), i("prefixes", "Observed prefix count"), i("establishedPeers", "Established peer count"), i("acceptedPrefixes", "Accepted prefix count"), t("observedAt", "Observation time")),
+		"Bridge":                  withCommon(s("ifname", "Kernel interface name"), ss("members", "Bridge member interfaces")),
+		"ClientPolicy":            withCommon(),
+		"ClusterNetworkRoute":     withCommon(ss("pods", "Pod CIDRs"), ss("services", "Service CIDRs")),
+		"DHCPv4Client":            withCommon(s("interface", "Logical interface"), s("device", "Kernel device"), s("currentAddress", "Current IPv4 address"), s("gateway", "Default gateway"), s("defaultGateway", "Default gateway"), ss("dnsServers", "DNS servers"), ss("ntpServers", "NTP servers"), s("domain", "Domain name"), i("leaseTime", "Lease lifetime seconds"), t("renewAt", "Renew time"), t("rebindAt", "Rebind time"), t("expiresAt", "Expiry time")),
+		"DHCPv4Relay":             withCommon(),
+		"DHCPv4Reservation":       withCommon(s("address", "Reserved IPv4 address"), s("hostname", "Reserved hostname")),
+		"DHCPv4Server":            withCommon(s("interface", "Serving interface"), ss("dnsServers", "Advertised DNS servers"), ss("ntpServers", "Advertised NTP servers"), s("domain", "Advertised domain"), s("configPath", "Rendered dnsmasq config"), b("dryRun", "Dry-run status")),
+		"DHCPv6Address":           withCommon(s("interface", "Logical interface"), s("address", "Observed DHCPv6 address")),
+		"DHCPv6Information":       withCommon(s("source", "Prefix delegation source"), s("aftrName", "AFTR hostname"), ss("dnsServers", "DNS servers"), ss("sntpServers", "SNTP servers"), ss("domainSearch", "Domain search list")),
+		"DHCPv6PrefixDelegation":  withCommon(s("interface", "Logical interface"), s("currentPrefix", "Delegated IPv6 prefix"), ss("dnsServers", "DNS servers"), ss("sntpServers", "SNTP servers"), ss("domainSearch", "Domain search list"), s("aftrName", "AFTR hostname")),
+		"DHCPv6Server":            withCommon(s("interface", "Serving interface"), ss("dnsServers", "Advertised DNS servers"), ss("sntpServers", "Advertised SNTP servers"), s("configPath", "Rendered dnsmasq config"), b("dryRun", "Dry-run status")),
+		"DNSForwarder":            withCommon(s("resolver", "Resolver reference"), ss("upstreams", "Upstream references")),
+		"DNSResolver":             withCommon(i("listeners", "Listener count"), ss("listenAddresses", "Resolved listen addresses"), i("sources", "Source count"), t("updatedAt", "Update time")),
+		"DNSUpstream":             withCommon(s("address", "Upstream address"), s("url", "Resolved upstream URL")),
+		"DNSZone":                 withCommon(s("zone", "DNS zone name"), i("records", "Record count"), os("pendingRecords", "Records waiting for source status"), t("updatedAt", "Update time")),
+		"DSLiteTunnel":            withCommon(s("interface", "Tunnel interface name"), s("device", "Tunnel device name"), s("tunnelName", "Tunnel device name"), s("localIPv6", "Local IPv6 endpoint"), s("innerLocalIPv4", "Inner local IPv4 endpoint"), s("innerRemoteIPv4", "Inner remote IPv4 endpoint"), s("localInterface", "Local underlay interface"), s("aftrName", "AFTR hostname"), s("aftrIPv6", "AFTR IPv6 endpoint"), i("mtu", "Tunnel MTU"), b("dryRun", "Dry-run status")),
+		"DerivedEvent":            withCommon(s("topic", "Emitted event topic")),
+		"EgressRoutePolicy":       withCommon(s("family", "Address family"), s("selectedCandidate", "Selected candidate"), s("selectedSource", "Selected candidate source"), s("selectedDevice", "Selected output device"), s("selectedGateway", "Selected gateway"), s("selectedGatewaySource", "Selected gateway source"), i("selectedRouteTable", "Selected route table"), i("selectedMetric", "Selected metric"), i("selectedWeight", "Selected weight"), i("selectedTargets", "Selected target count"), s("selectedInterface", "Selected logical interface"), os("candidates", "Candidate status list"), t("lastTransitionAt", "Last transition time"), t("updatedAt", "Update time"), b("dryRun", "Dry-run status")),
+		"EventRule":               withCommon(s("topic", "Emitted event topic")),
+		"FirewallEventLog":        withCommon(s("path", "Log path"), ss("sinks", "Log sink references")),
+		"FirewallPolicy":          withCommon(),
+		"FirewallRule":            withCommon(s("action", "Rendered action")),
+		"FirewallZone":            withCommon(ss("interfaces", "Zone interfaces")),
+		"HealthCheck":             withCommon(s("role", "Health-check role"), s("target", "Probe target"), s("sourceAddress", "Probe source address"), s("sourceInterface", "Probe source interface"), s("protocol", "Probe protocol"), i("consecutiveFailed", "Consecutive failure count"), t("lastCheckedAt", "Last probe time")),
+		"Hostname":                withCommon(s("hostname", "Configured hostname")),
+		"IPAddressSet":            withCommon(ss("addresses", "All addresses"), ss("ipv4Addresses", "IPv4 addresses"), ss("ipv6Addresses", "IPv6 addresses"), t("updatedAt", "Update time")),
+		"IPsecConnection":         withCommon(),
+		"IngressService":          withCommon(s("hostname", "Service hostname"), s("listenAddress", "Resolved listen address"), o("activeBackend", "Selected backend"), os("activeBackends", "Selected backend set"), i("healthyBackends", "Healthy backend count"), i("totalBackends", "Total backend count"), os("backends", "Backend status list"), t("observedAt", "Observation time"), b("dryRun", "Dry-run status")),
+		"Interface":               withCommon(s("ifname", "Kernel interface name"), ss("addresses", "All observed addresses"), ss("ipv4Addresses", "Observed IPv4 addresses"), ss("ipv6Addresses", "Observed IPv6 addresses"), s("macAddress", "Observed MAC address")),
+		"Inventory":               withCommon(o("host", "Host inventory")),
+		"IPv4Route":               withCommon(s("type", "Route type"), s("destination", "Route destination"), s("device", "Output device"), s("gateway", "Route gateway"), i("metric", "Route metric"), b("dryRun", "Dry-run status")),
+		"IPv4StaticAddress":       withCommon(s("interface", "Logical interface"), s("ifname", "Kernel interface name"), s("address", "Configured IPv4 address"), b("dryRun", "Dry-run status")),
+		"IPv4StaticRoute":         withCommon(s("destination", "Route destination"), s("gateway", "Route gateway"), s("interface", "Output interface")),
+		"IPv6DelegatedAddress":    withCommon(s("address", "Derived IPv6 address"), s("interface", "Logical interface"), s("prefixSource", "Prefix delegation source"), b("dryRun", "Dry-run status")),
+		"IPv6RAAddress":           withCommon(s("interface", "Logical interface"), s("address", "Observed RA address")),
+		"IPv6RouterAdvertisement": withCommon(s("interface", "Serving interface"), s("prefix", "Advertised prefix"), ss("rdnss", "Advertised RDNSS servers"), s("configPath", "Rendered dnsmasq config"), b("dryRun", "Dry-run status")),
+		"IPv6StaticRoute":         withCommon(s("destination", "Route destination"), s("gateway", "Route gateway"), s("interface", "Output interface")),
+		"LocalServiceRedirect":    withCommon(),
+		"LogRetention":            withCommon(os("targets", "Retention targets"), t("updatedAt", "Update time")),
+		"LogSink":                 withCommon(s("type", "Sink type")),
+		"NAT44Rule":               withCommon(s("egressInterface", "Resolved egress interface"), s("snatAddress", "Resolved SNAT address"), b("dryRun", "Dry-run status")),
+		"NTPClient":               withCommon(ss("servers", "Configured upstream servers"), s("source", "Server source"), t("updatedAt", "Update time")),
+		"NTPServer":               withCommon(ss("servers", "Configured upstream servers"), ss("listenAddresses", "Resolved listen addresses"), s("source", "Server source"), t("updatedAt", "Update time")),
+		"ObservabilityPipeline":   withCommon(ss("signals", "Exported signals")),
+		"PPPoESession":            withCommon(s("interface", "Logical interface"), s("device", "PPP device"), s("currentAddress", "Current IPv4 address"), s("peerAddress", "PPP peer address"), s("gateway", "PPP gateway"), ss("dnsServers", "DNS servers"), t("connectedAt", "Connection time"), b("dryRun", "Dry-run status")),
+		"Package":                 withCommon(ss("packages", "Package names"), b("dryRun", "Dry-run status")),
+		"PortForward":             withCommon(s("listenAddress", "Resolved listen address"), o("target", "Resolved target"), b("dryRun", "Dry-run status")),
+		"RouterdCluster":          withCommon(s("leader", "Current leader"), t("leaseExpiresAt", "Lease expiry time")),
+		"SelfAddressPolicy":       withCommon(s("address", "Selected address"), s("source", "Selected source")),
+		"Sysctl":                  withCommon(s("key", "Sysctl key"), s("value", "Applied value"), b("dryRun", "Dry-run status")),
+		"SysctlProfile":           withCommon(s("profile", "Applied profile"), b("dryRun", "Dry-run status")),
+		"TailscaleNode":           withCommon(s("tailnetName", "Tailnet name"), i("peerCount", "Peer count"), ss("advertiseRoutes", "Advertised routes")),
+		"Telemetry":               withCommon(ss("signals", "Exported signals")),
+		"TrafficFlowLog":          withCommon(s("path", "Flow log path"), ss("sinks", "Log sink references")),
+		"VRF":                     withCommon(s("ifname", "VRF device"), i("routeTable", "Route table"), ss("members", "Member interfaces")),
+		"VXLANTunnel":             withCommon(s("ifname", "Tunnel device"), i("vni", "VXLAN VNI")),
+		"VXLANSegment":            withCommon(s("ifname", "VXLAN device"), i("vni", "VXLAN VNI")),
+		"VirtualAddress":          withCommon(s("address", "Resolved virtual address"), s("ifname", "Kernel interface name"), s("role", "VRRP role"), s("hostname", "Announced hostname"), i("virtualRouterID", "VRRP router ID"), i("priority", "Effective VRRP priority"), b("dryRun", "Dry-run status")),
+		"WebConsole":              withCommon(s("listenAddress", "Resolved listen address"), i("port", "Listen port")),
+		"WireGuardInterface":      withCommon(s("publicKey", "Interface public key"), i("listenPort", "Listen port"), i("fwmark", "Firewall mark"), i("peerCount", "Peer count")),
+		"WireGuardPeer":           withCommon(s("latestEndpoint", "Latest endpoint"), t("latestHandshake", "Latest handshake"), i("handshakeAgeSeconds", "Handshake age seconds"), i("transferRxBytes", "Received bytes"), i("transferTxBytes", "Transmitted bytes")),
+	}
+}

@@ -6,6 +6,7 @@ no-resolv
 bind-dynamic
 interface=ens19
 except-interface=ds-routerd-test
+except-interface=dummy0
 except-interface=ens18
 except-interface=ens20
 except-interface=lo

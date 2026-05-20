@@ -26,6 +26,13 @@ wan-pd-dhcpv6-client from=wan to=self ifnames=ens18 proto=udp port=546 action=ac
     };
     linkConfig.RequiredForOnline = "no";
   };
+  systemd.network.networks."10-netplan-dummy0" = {
+    matchConfig.Name = "dummy0";
+    networkConfig = {
+      LinkLocalAddressing = "no";
+    };
+    linkConfig.RequiredForOnline = "no";
+  };
   systemd.network.networks."10-netplan-ens18" = {
     matchConfig.Name = "ens18";
     networkConfig = {
