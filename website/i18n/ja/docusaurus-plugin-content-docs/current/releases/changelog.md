@@ -10,6 +10,8 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 
 ## Unreleased
 
+## v20260520.2307
+
 ### 修正
 
 - FRR/keepalived 統合を含む場合だけ、生成される `routerd.service` に

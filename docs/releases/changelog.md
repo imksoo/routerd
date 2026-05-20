@@ -10,6 +10,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260520.2307
+
 ### Fixed
 
 - Added `CAP_DAC_OVERRIDE` to the generated `routerd.service` only when the

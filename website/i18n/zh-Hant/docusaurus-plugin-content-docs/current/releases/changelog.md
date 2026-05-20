@@ -10,6 +10,8 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 
 ## Unreleased
 
+## v20260520.2307
+
 ### 修正
 
 - 只有在 router config 含有 FRR/keepalived 整合時，才會在產生的
