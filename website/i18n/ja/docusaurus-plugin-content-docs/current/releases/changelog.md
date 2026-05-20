@@ -21,6 +21,15 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
   `libndpi` backend が load されていない場合、`TrafficFlowLog` を
   `TrafficFlowApplicationLayerUnavailable` reason 付きの `Pending` として表示する
   ようにしました。
+- 派生された `routerd_mss` nftables table を router-owned artifact として登録し、
+  routerd が再生成している table が orphan として誤表示されないようにしました。
+- `routerctl show derived-resources` は stale な派生 state を既定で隠し、
+  audit/debug 用に `--include-stale` を追加しました。また削除・rename 済み kind の
+  state DB 行を手動 SQLite 編集なしで消せるように `routerctl delete --force` を追加しました。
+- TCP MSS clamp を source path aware かつ downward-only にしました。
+  `Interface.spec.mtu` で `tailscale0` のような低 MTU source interface を表せます。
+  routerd は source/destination path ごとに `min(source MTU, destination path MTU)`
+  を使い、nftables は advertised MSS が派生値より大きい SYN packet だけを書き換えます。
 
 ## v20260521.0039
 

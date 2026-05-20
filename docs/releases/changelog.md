@@ -20,6 +20,18 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
   `TrafficFlowApplicationLayerUnavailable` when
   `spec.includeApplicationLayer: true` is configured but the nDPI agent does
   not have its native `libndpi` backend loaded.
+- Registered the derived `routerd_mss` nftables table as a router-owned
+  artifact, so it is no longer reported as an orphan while routerd still
+  regenerates it.
+- Hid stale derived state from `routerctl show derived-resources` by default,
+  added `--include-stale` for audit/debug views, and added
+  `routerctl delete --force` so deleted or renamed resource kinds can be
+  removed from the state DB without manual SQLite edits.
+- Made TCP MSS clamping source-path aware and downward-only. `Interface.spec.mtu`
+  can now describe low-MTU source interfaces such as `tailscale0`; routerd uses
+  `min(source MTU, destination path MTU)` per source/destination path while
+  nftables only rewrites SYN packets whose advertised MSS is higher than the
+  derived value.
 
 ## v20260521.0039
 

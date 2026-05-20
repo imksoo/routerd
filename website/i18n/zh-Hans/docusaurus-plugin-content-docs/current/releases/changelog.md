@@ -19,6 +19,15 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期和时间型版本号。
 - 当 `spec.includeApplicationLayer: true` 但 nDPI agent 未加载 native
   `libndpi` backend 时，`TrafficFlowLog` 会以
   `TrafficFlowApplicationLayerUnavailable` reason 显示为 `Pending`。
+- 将派生的 `routerd_mss` nftables table 注册为 router-owned artifact，避免
+  routerd 仍会重新生成该 table 时却把它误报为 orphan。
+- `routerctl show derived-resources` 默认隐藏 stale 派生 state，并新增
+  `--include-stale` 供 audit/debug 使用；同时新增 `routerctl delete --force`，
+  让已删除或重命名 kind 的 state DB 行可以不经手动 SQLite 编辑而删除。
+- TCP MSS clamp 现在会感知 source path，且只向下调整。可以用
+  `Interface.spec.mtu` 描述 `tailscale0` 等低 MTU source interface；routerd 会按
+  source/destination path 使用 `min(source MTU, destination path MTU)`，nftables
+  只改写 advertised MSS 高于派生值的 SYN packet。
 
 ## v20260521.0039
 
