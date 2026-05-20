@@ -22,13 +22,19 @@ already installed the normal routerd archive.
 
 ## Install
 
-Install the normal routerd release first, then install the native agent binary:
+Download both the normal routerd release archive and the matching native agent
+archive, then let the installer apply them in one transaction:
 
 ```sh
-tar -xzf routerd-ndpi-agent-libndpi-linux-amd64.tar.gz
-sudo install -m 0755 bin/routerd-ndpi-agent /usr/local/sbin/routerd-ndpi-agent
-sudo systemctl restart routerd-ndpi-agent.service
-sudo systemctl restart routerd-dpi-classifier.service
+curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-linux-amd64.tar.gz
+curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-linux-amd64.tar.gz.sha256
+curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-ndpi-agent-libndpi-linux-amd64.tar.gz
+curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-ndpi-agent-libndpi-linux-amd64.tar.gz.sha256
+sha256sum -c routerd-linux-amd64.tar.gz.sha256
+sha256sum -c routerd-ndpi-agent-libndpi-linux-amd64.tar.gz.sha256
+tar -xzf routerd-linux-amd64.tar.gz
+sudo ./install.sh --with-ndpi \
+  --with-ndpi-archive ./routerd-ndpi-agent-libndpi-linux-amd64.tar.gz
 ```
 
 The host must provide a `libndpi` runtime package with the same shared-library
@@ -58,6 +64,12 @@ Run the normal installer with `--with-ndpi` on hosts that require native
 application-layer classification. The installer fails if the final installed
 agent does not report `"libndpiLoaded": true`, so the static fallback cannot
 silently satisfy a native nDPI intent.
+
+For fresh installs, or when you want the native agent archive to be the explicit
+source of truth, pass `--with-ndpi-archive PATH`. The installer validates the
+archive target marker, rejects unsafe tar paths, verifies the neighboring
+`.sha256` file when present, checks that the archive agent reports
+`"libndpiLoaded": true`, and rolls back the whole install if the overlay fails.
 
 ## Configure
 

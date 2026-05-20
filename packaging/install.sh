@@ -15,6 +15,7 @@ list_deps=0
 deps_only=0
 with_tailscale=0
 with_ndpi=0
+ndpi_archive=
 configure_non_interactive=0
 configure_yes=0
 configure_apply=1
@@ -43,6 +44,7 @@ Install options:
   --deps-only
   --with-tailscale
   --with-ndpi
+  --with-ndpi-archive PATH
 
 Configure options:
   --prefix DIR
@@ -181,7 +183,12 @@ ndpi_agent_libndpi_loaded()
 {
     agent=$1
     [ -x "${agent}" ] || return 1
-    output=$("${agent}" selftest 2>/dev/null || true)
+    if command -v timeout >/dev/null 2>&1; then
+        output=$(timeout 5s "${agent}" selftest 2>/dev/null || true)
+    else
+        echo "warning: timeout command not found; running routerd-ndpi-agent selftest without timeout" >&2
+        output=$("${agent}" selftest 2>/dev/null || true)
+    fi
     case "${output}" in
         *'"libndpiLoaded":true'*|*'"libndpiLoaded": true'*)
             return 0
@@ -190,6 +197,132 @@ ndpi_agent_libndpi_loaded()
             return 1
             ;;
     esac
+}
+
+sha256_file_hash()
+{
+    file=$1
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "${file}" | awk '{print $1}'
+        return 0
+    fi
+    if command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "${file}" | awk '{print $1}'
+        return 0
+    fi
+    return 1
+}
+
+verify_archive_sha256()
+{
+    archive=$1
+    checksum="${archive}.sha256"
+    [ -f "${checksum}" ] || {
+        echo "warning: checksum file not found for ${archive}; expected ${checksum}" >&2
+        return 0
+    }
+    expected=$(awk 'NF {print $1; exit}' "${checksum}")
+    if [ -z "${expected}" ]; then
+        echo "warning: checksum file is empty: ${checksum}" >&2
+        return 0
+    fi
+    actual=$(sha256_file_hash "${archive}" || true)
+    if [ -z "${actual}" ]; then
+        echo "warning: no sha256 command found; skipping checksum verification for ${archive}" >&2
+        return 0
+    fi
+    if [ "${actual}" != "${expected}" ]; then
+        echo "nDPI agent archive checksum mismatch: ${archive}" >&2
+        echo "expected: ${expected}" >&2
+        echo "actual:   ${actual}" >&2
+        return 1
+    fi
+    echo "verified checksum: ${checksum}"
+}
+
+validate_tar_paths()
+{
+    archive=$1
+    list="${backup_dir}/ndpi-archive.list"
+    if ! tar -tzf "${archive}" > "${list}"; then
+        echo "failed to list nDPI agent archive: ${archive}" >&2
+        return 1
+    fi
+    while IFS= read -r path; do
+        case "${path}" in
+            ""|/*|../*|*/../*|..|*/..)
+                echo "unsafe path in nDPI agent archive: ${path}" >&2
+                return 1
+                ;;
+        esac
+    done < "${list}"
+}
+
+validate_ndpi_archive_target()
+{
+    archive_target=$1
+    [ -n "${archive_target}" ] || return 0
+    if [ "${archive_target}" = "${target_expected}" ]; then
+        return 0
+    fi
+    if [ "${manage_host_service}" -eq 1 ]; then
+        echo "nDPI agent archive target ${archive_target} does not match host ${target_expected}" >&2
+        echo "download the routerd-ndpi-agent-libndpi archive for ${target_expected}" >&2
+        return 1
+    fi
+    echo "warning: nDPI agent archive target ${archive_target} does not match host ${target_expected}; continuing for non-system prefix" >&2
+}
+
+install_ndpi_agent_archive()
+{
+    [ -n "${ndpi_archive}" ] || return 0
+    if [ "${dry_run}" -eq 1 ]; then
+        echo "dry-run: install native libndpi routerd-ndpi-agent archive ${ndpi_archive}"
+        return 0
+    fi
+    [ -f "${ndpi_archive}" ] || {
+        echo "nDPI agent archive not found: ${ndpi_archive}" >&2
+        return 1
+    }
+    size=$(wc -c < "${ndpi_archive}" | tr -d ' ')
+    case "${size}" in
+        ""|*[!0-9]*)
+            echo "could not determine nDPI agent archive size: ${ndpi_archive}" >&2
+            return 1
+            ;;
+    esac
+    if [ "${size}" -gt 104857600 ]; then
+        echo "nDPI agent archive is too large: ${ndpi_archive} (${size} bytes; max 104857600)" >&2
+        return 1
+    fi
+    verify_archive_sha256 "${ndpi_archive}" || return 1
+    validate_tar_paths "${ndpi_archive}" || return 1
+
+    extract_dir="${backup_dir}/ndpi-archive"
+    rm -rf "${extract_dir}"
+    install -d -m 0755 "${extract_dir}"
+    if ! tar -xzf "${ndpi_archive}" -C "${extract_dir}"; then
+        echo "failed to extract nDPI agent archive: ${ndpi_archive}" >&2
+        return 1
+    fi
+
+    archive_target=
+    if [ -f "${extract_dir}/share/doc/TARGET" ]; then
+        archive_target=$(sed -n '1p' "${extract_dir}/share/doc/TARGET")
+    fi
+    validate_ndpi_archive_target "${archive_target}" || return 1
+
+    agent="${extract_dir}/bin/routerd-ndpi-agent"
+    if [ ! -x "${agent}" ]; then
+        echo "nDPI agent archive does not contain executable bin/routerd-ndpi-agent" >&2
+        return 1
+    fi
+    if ! ndpi_agent_libndpi_loaded "${agent}"; then
+        echo "nDPI agent archive selftest did not report libndpiLoaded=true: ${ndpi_archive}" >&2
+        return 1
+    fi
+    echo "installing native libndpi routerd-ndpi-agent from ${ndpi_archive}"
+    atomic_install 0755 "${agent}" "${bindir}/routerd-ndpi-agent"
 }
 
 install_binary()
@@ -224,9 +357,8 @@ Install the matching native nDPI agent archive for this routerd release, then re
   gh release download <tag> \
     --repo imksoo/routerd \
     --pattern 'routerd-ndpi-agent-libndpi-linux-amd64.tar.gz'
-  tar -xzf routerd-ndpi-agent-libndpi-linux-amd64.tar.gz
-  sudo install -m 0755 bin/routerd-ndpi-agent /usr/local/sbin/routerd-ndpi-agent
-  sudo systemctl restart routerd-ndpi-agent.service routerd-dpi-classifier.service
+  sudo ./install.sh --with-ndpi \
+    --with-ndpi-archive ./routerd-ndpi-agent-libndpi-linux-amd64.tar.gz
 
 The standard routerd archive includes a static fallback agent; it cannot satisfy --with-ndpi by itself.
 EOF
@@ -1479,6 +1611,17 @@ while [ "$#" -gt 0 ]; do
         --with-ndpi)
             with_ndpi=1
             ;;
+        --with-ndpi-archive)
+            shift
+            [ "$#" -gt 0 ] || { echo "--with-ndpi-archive requires a value" >&2; exit 2; }
+            with_ndpi=1
+            ndpi_archive=$1
+            ;;
+        --with-ndpi-archive=*)
+            with_ndpi=1
+            ndpi_archive=${1#*=}
+            [ -n "${ndpi_archive}" ] || { echo "--with-ndpi-archive requires a value" >&2; exit 2; }
+            ;;
         --configure)
             command_mode=configure
             ;;
@@ -1593,6 +1736,7 @@ for binary in bin/*; do
     [ -f "${binary}" ] || continue
     install_binary "${binary}"
 done
+install_ndpi_agent_archive
 verify_ndpi_agent_install
 
 if [ "${config_update}" -eq 1 ]; then

@@ -10,6 +10,14 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期和时间型版本号。
 
 ## Unreleased
 
+### 新增
+
+- 新增 `install.sh --with-ndpi-archive PATH`。现在可以在同一个 rollback
+  transaction 中应用普通 static routerd archive 和 native
+  `routerd-ndpi-agent-libndpi` archive。installer 会在满足 `--with-ndpi`
+  之前验证 feature archive 的 target、path safety、存在时的 checksum，以及
+  `libndpiLoaded: true` self-test。
+
 ## v20260521.0731
 
 ### 修正

@@ -10,6 +10,14 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 
 ## Unreleased
 
+### 追加
+
+- `install.sh --with-ndpi-archive PATH` を追加しました。通常の static
+  routerd archive と native `routerd-ndpi-agent-libndpi` archive を、1 つの
+  rollback transaction で適用できます。installer は `--with-ndpi` を満たす前に、
+  feature archive の target、path safety、存在する場合の checksum、
+  `libndpiLoaded: true` self-test を検証します。
+
 ## v20260521.0731
 
 ### 修正

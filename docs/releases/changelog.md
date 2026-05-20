@@ -10,6 +10,14 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Added
+
+- Added `install.sh --with-ndpi-archive PATH` so a normal static routerd
+  archive and the native `routerd-ndpi-agent-libndpi` archive can be applied in
+  one rollback transaction. The installer validates the feature archive target,
+  path safety, checksum when present, and `libndpiLoaded: true` self-test before
+  the install can satisfy `--with-ndpi`.
+
 ## v20260521.0731
 
 ### Fixed

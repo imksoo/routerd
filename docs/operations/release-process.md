@@ -75,8 +75,17 @@ The archive contains:
 - `share/doc/`: README, VERSION, LICENSE, and third-party license inventory
 
 The native nDPI agent override archive contains only `bin/routerd-ndpi-agent`
-and minimal documentation. Install it over a normal routerd installation on
-hosts that should run `routerd-ndpi-agent` with `libndpiLoaded=true`.
+and minimal documentation. Install it together with a normal routerd archive on
+hosts that should run `routerd-ndpi-agent` with `libndpiLoaded=true`:
+
+```sh
+sudo ./install.sh --with-ndpi \
+  --with-ndpi-archive ./routerd-ndpi-agent-libndpi-linux-amd64.tar.gz
+```
+
+The installer keeps downloads explicit. It does not fetch the feature archive
+itself; release runbooks should download the archive and its `.sha256` file
+before invoking `install.sh`.
 
 The workflow uploads the versioned archive, the fixed-name archive, and their
 `.sha256` files to the GitHub Release page.

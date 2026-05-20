@@ -48,6 +48,22 @@ Linux 用アーカイブには、`CGO_ENABLED=0` で静的リンクした router
 `dnsmasq`、`nft`、`ip`、`conntrack`、`tcpdump` などの実行時ツールは、
 引き続き `install.sh` が導入または確認します。
 
+native nDPI による application classification が必要なホストでは、対応する
+`routerd-ndpi-agent-libndpi-linux-amd64.tar.gz` も取得し、通常のアーカイブと
+同じ install transaction で明示的に適用します。
+
+```sh
+curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-ndpi-agent-libndpi-linux-amd64.tar.gz
+curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-ndpi-agent-libndpi-linux-amd64.tar.gz.sha256
+sha256sum -c routerd-ndpi-agent-libndpi-linux-amd64.tar.gz.sha256
+sudo ./install.sh --with-ndpi \
+  --with-ndpi-archive ./routerd-ndpi-agent-libndpi-linux-amd64.tar.gz
+```
+
+`--with-ndpi` は、最終的に install された `routerd-ndpi-agent` が
+`libndpiLoaded: true` を返さない場合に失敗します。そのため、static fallback
+agent が native nDPI 要件を黙って満たしたことにはなりません。
+
 `install.sh` は新規導入かアップグレードかを自動判定します。
 実行ファイルを `/usr/local/sbin` に配置し、サービステンプレートを導入します。
 また、`/usr/local/etc/routerd/router.yaml.sample` を作成します。

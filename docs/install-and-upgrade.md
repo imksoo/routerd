@@ -47,6 +47,22 @@ routerd binaries. They do not require the router host to have the same glibc
 version as the build machine. Runtime tools such as `dnsmasq`, `nft`, `ip`,
 `conntrack`, and `tcpdump` are still installed or checked by `install.sh`.
 
+Hosts that require native nDPI application classification should also download
+the matching `routerd-ndpi-agent-libndpi-linux-amd64.tar.gz` archive and install
+it explicitly with the normal archive:
+
+```sh
+curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-ndpi-agent-libndpi-linux-amd64.tar.gz
+curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-ndpi-agent-libndpi-linux-amd64.tar.gz.sha256
+sha256sum -c routerd-ndpi-agent-libndpi-linux-amd64.tar.gz.sha256
+sudo ./install.sh --with-ndpi \
+  --with-ndpi-archive ./routerd-ndpi-agent-libndpi-linux-amd64.tar.gz
+```
+
+`--with-ndpi` fails if the final installed `routerd-ndpi-agent` does not report
+`libndpiLoaded: true`, so the static fallback agent cannot silently satisfy a
+native nDPI requirement.
+
 `install.sh` detects whether this is a fresh install or an upgrade.
 It installs the binaries under `/usr/local/sbin`, installs the service template,
 and writes `/usr/local/etc/routerd/router.yaml.sample`.
