@@ -617,6 +617,20 @@ socket=/run/routerd/routerd.sock
 status_socket=/run/routerd/routerd-status.sock
 log_dir=/run/routerd/logs
 
+routerd_serve_running() {
+    pids="$(pgrep -x routerd 2>/dev/null || pidof routerd 2>/dev/null || true)"
+    for pid in ${pids}; do
+        [ -r "/proc/${pid}/cmdline" ] || continue
+        cmdline="$(tr '\000' ' ' < "/proc/${pid}/cmdline")"
+        case " ${cmdline} " in
+            *" ${routerd} serve "*|*" routerd serve "*)
+                return 0
+                ;;
+        esac
+    done
+    return 1
+}
+
 mkdir -p /run/routerd "${log_dir}" /var/lib/routerd
 /usr/share/routerd/live-persistence.sh init || true
 
@@ -628,7 +642,9 @@ mkdir -p /run/routerd "${log_dir}" /var/lib/routerd
 /usr/share/routerd/install.sh --deps-only >/run/routerd/logs/deps.log 2>&1 || true
 "${routerd}" validate --config "${config}"
 "${routerd}" apply --config "${config}" --once
-if [ ! -S "${socket}" ]; then
+if routerd_serve_running; then
+    echo "routerd-live: routerd serve already running; not starting a duplicate" >> "${log_dir}/routerd-live.log"
+elif [ ! -S "${socket}" ]; then
     nohup "${routerd}" serve \
         --config "${config}" \
         --socket "${socket}" \
