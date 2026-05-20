@@ -10,6 +10,12 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 
 ## Unreleased
 
+### 修正
+
+- 針對已刪除的 `PPPoESession`，現在會 garbage collect ownership ledger 中
+  留下的產生 artifact，包括 PPP peer file、runtime socket、runtime
+  directory、state directory，以及已停止/停用的 systemd unit。
+
 ## v20260520.2307
 
 ### 修正

@@ -10,6 +10,12 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- Garbage-collect deleted `PPPoESession` artifacts recorded in the ownership
+  ledger, including generated PPP peer files, runtime sockets, runtime
+  directories, state directories, and the stopped/disabled systemd unit.
+
 ## v20260520.2307
 
 ### Fixed

@@ -47,9 +47,10 @@ var serviceDeclarations = []serviceDeclaration{
 			if err != nil {
 				return nil
 			}
+			name := render.SafePPPoEName(ctx.res.Metadata.Name)
 			return []resource.Intent{serviceIntent(ctx, servicemgr.Service{
-				SystemdName: "routerd-pppoe-" + ctx.res.Metadata.Name + ".service",
-				OpenRCName:  "routerd_pppoe_client_" + ctx.res.Metadata.Name,
+				SystemdName: "routerd-pppoe-" + name + ".service",
+				OpenRCName:  "routerd_pppoe_client_" + name,
 			}, resource.ActionEnsure, map[string]string{"disabled": fmt.Sprintf("%t", spec.Disabled)})}
 		},
 	},
@@ -236,10 +237,14 @@ func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]str
 		if spec.Disabled {
 			action = resource.ActionDelete
 		}
+		name := render.SafePPPoEName(res.Metadata.Name)
 		intents := declaredServiceIntents(serviceContext)
 		intents = append(intents,
 			artifact("routerd.pppoe.client", res.Metadata.Name, action, "routerd-pppoe-client", map[string]string{"interface": ifname}),
 			artifact("unix.socket", "/run/routerd/pppoe-client/"+res.Metadata.Name+".sock", action, "routerd-pppoe-client", nil),
+			artifact("file", "/etc/ppp/peers/routerd-"+name, resource.ActionEnsure, "routerd-pppoe-client", map[string]string{"purpose": "pppoe-peer"}),
+			artifact("directory", "/run/routerd/pppoe-client/"+res.Metadata.Name, action, "routerd-pppoe-client", map[string]string{"purpose": "pppoe-runtime"}),
+			artifact("directory", "/var/lib/routerd/pppoe-client/"+res.Metadata.Name, action, "routerd-pppoe-client", map[string]string{"purpose": "pppoe-state"}),
 		)
 		return intents
 	case "IPv4StaticAddress":

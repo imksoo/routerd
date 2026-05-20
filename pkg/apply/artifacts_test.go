@@ -111,6 +111,88 @@ func TestVirtualAddressIPv4ArtifactIntentsUseFreeBSDCARP(t *testing.T) {
 	}
 }
 
+func TestPPPoESessionArtifactIntentsDeclareGeneratedFilesAndRuntime(t *testing.T) {
+	res := api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoESession"},
+		Metadata: api.ObjectMeta{Name: "pppoe.flets"},
+		Spec:     api.PPPoESessionSpec{Interface: "wan", IfName: "ppp-flets", Username: "user"},
+	}
+	intents := resourceArtifactIntentsForPlatform(res, map[string]string{"wan": "ens18"}, platform.OSLinux, platform.Features{HasSystemd: true})
+	want := []struct {
+		kind      string
+		name      string
+		applyWith string
+	}{
+		{"systemd.service", "routerd-pppoe-pppoe-flets.service", "systemctl"},
+		{"file", "/etc/ppp/peers/routerd-pppoe-flets", "routerd-pppoe-client"},
+		{"unix.socket", "/run/routerd/pppoe-client/pppoe.flets.sock", "routerd-pppoe-client"},
+		{"directory", "/run/routerd/pppoe-client/pppoe.flets", "routerd-pppoe-client"},
+		{"directory", "/var/lib/routerd/pppoe-client/pppoe.flets", "routerd-pppoe-client"},
+	}
+	for _, item := range want {
+		if !hasArtifactIntent(intents, item.kind, item.name, item.applyWith) {
+			t.Fatalf("missing %s/%s in %+v", item.kind, item.name, intents)
+		}
+	}
+}
+
+func TestDeletedPPPoESessionLedgerOrphansIncludeGeneratedFilesAndRuntime(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+	}
+	owner := api.NetAPIVersion + "/PPPoESession/pppoe-flets"
+	ledger := resource.NewLedger()
+	ledger.Remember([]resource.Artifact{
+		{Kind: "systemd.service", Name: "routerd-pppoe-pppoe-flets.service", Owner: owner},
+		{Kind: "file", Name: "/etc/ppp/peers/routerd-pppoe-flets", Owner: owner},
+		{Kind: "unix.socket", Name: "/run/routerd/pppoe-client/pppoe-flets.sock", Owner: owner},
+		{Kind: "directory", Name: "/run/routerd/pppoe-client/pppoe-flets", Owner: owner},
+		{Kind: "directory", Name: "/var/lib/routerd/pppoe-client/pppoe-flets", Owner: owner},
+		{Kind: "file", Name: "/etc/ppp/chap-secrets", Owner: owner},
+	})
+	engine := &Engine{
+		Command: fakeCommand(map[string]string{
+			"ip -4 rule show":            "",
+			"ip -4 route show table all": "",
+			"nft list tables":            "",
+			"systemctl list-unit-files routerd-*.service --no-legend --no-pager":        "routerd-pppoe-pppoe-flets.service enabled enabled\n",
+			"systemctl cat routerd-pppoe-pppoe-flets.service":                           "[Unit]\n",
+			"find /etc/ppp/peers -maxdepth 1 -type f -name routerd-* -print":            "/etc/ppp/peers/routerd-pppoe-flets\n",
+			"test -f /etc/ppp/peers/routerd-pppoe-flets":                                "",
+			"test -f /etc/ppp/chap-secrets":                                             "",
+			"find /run/routerd/pppoe-client -maxdepth 1 -type s -name *.sock -print":    "/run/routerd/pppoe-client/pppoe-flets.sock\n",
+			"find /run/routerd/pppoe-client -mindepth 1 -maxdepth 1 -type d -print":     "/run/routerd/pppoe-client/pppoe-flets\n",
+			"find /var/lib/routerd/pppoe-client -mindepth 1 -maxdepth 1 -type d -print": "/var/lib/routerd/pppoe-client/pppoe-flets\n",
+		}),
+	}
+	orphans, artifacts, err := engine.LedgerOwnedOrphans(router, ledger)
+	if err != nil {
+		t.Fatalf("ledger owned orphans: %v", err)
+	}
+	if len(orphans) != 5 || len(artifacts) != 5 {
+		t.Fatalf("orphans = %+v artifacts = %+v, want five cleanup eligible PPPoE artifacts", orphans, artifacts)
+	}
+	kinds := map[string]bool{}
+	for _, orphan := range orphans {
+		kinds[orphan.Kind+"/"+orphan.Name] = true
+	}
+	for _, want := range []string{
+		"systemd.service/routerd-pppoe-pppoe-flets.service",
+		"file//etc/ppp/peers/routerd-pppoe-flets",
+		"unix.socket//run/routerd/pppoe-client/pppoe-flets.sock",
+		"directory//run/routerd/pppoe-client/pppoe-flets",
+		"directory//var/lib/routerd/pppoe-client/pppoe-flets",
+	} {
+		if !kinds[want] {
+			t.Fatalf("missing ledger orphan %s in %+v", want, orphans)
+		}
+	}
+	if kinds["file//etc/ppp/chap-secrets"] {
+		t.Fatalf("pppoe shared secrets file must not be auto-cleaned as a deleted session artifact: %+v", orphans)
+	}
+}
+
 func TestVirtualAddressIPv4AndBGPRouterArtifactIntentsUseOpenRC(t *testing.T) {
 	features := platform.Features{HasOpenRC: true}
 	vip := api.Resource{

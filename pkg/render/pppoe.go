@@ -64,7 +64,7 @@ func PPPoE(router *api.Router, passwordFor func(api.Resource, api.PPPoESessionSp
 		if lowerIfName == "" {
 			return PPPoEConfig{}, fmt.Errorf("%s references interface with empty ifname", res.ID())
 		}
-		name := safePPPoEName(res.Metadata.Name)
+		name := SafePPPoEName(res.Metadata.Name)
 		peerName := "routerd-" + name
 		ifname := defaultString(spec.IfName, "ppp-"+res.Metadata.Name)
 		if len(ifname) > 15 {
@@ -176,7 +176,7 @@ func PPPoESecretLine(entry PPPoESecretEntry) string {
 	return fmt.Sprintf("%s * %s *\n", strconv.Quote(entry.Username), strconv.Quote(entry.Password))
 }
 
-func safePPPoEName(name string) string {
+func SafePPPoEName(name string) string {
 	var b strings.Builder
 	for _, r := range name {
 		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {

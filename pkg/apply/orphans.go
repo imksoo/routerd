@@ -4,6 +4,7 @@ package apply
 
 import (
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -153,6 +154,12 @@ func cleanupEligibleLedgerOrphan(artifact resource.Artifact) bool {
 	switch artifact.Kind {
 	case "linux.ipip6.tunnel", "systemd.service":
 		return true
+	case "file":
+		return isPPPoEPeerFileArtifact(artifact)
+	case "unix.socket":
+		return isPPPoERuntimeSocketArtifact(artifact)
+	case "directory":
+		return isPPPoERuntimeDirectoryArtifact(artifact)
 	case "nft.table":
 		return strings.HasPrefix(artifact.Attributes["name"], "routerd_")
 	case "net.ipv4.address":
@@ -177,6 +184,12 @@ func orphanedArtifactFromLedger(artifact resource.Artifact) OrphanedArtifact {
 		orphan.Remediation = "delete nft table " + artifact.Attributes["family"] + " " + artifact.Attributes["name"]
 	case "systemd.service":
 		orphan.Remediation = "disable and stop systemd service " + artifact.Name
+	case "file":
+		orphan.Remediation = "delete file " + artifact.Name
+	case "unix.socket":
+		orphan.Remediation = "delete Unix socket " + artifact.Name
+	case "directory":
+		orphan.Remediation = "delete directory " + artifact.Name
 	case "net.ipv4.address":
 		orphan.Remediation = "remove IPv4 address " + artifact.Name
 	}
@@ -193,6 +206,43 @@ func isDSLiteIPv4AddressArtifact(artifact resource.Artifact) bool {
 		strings.Contains(artifact.Name, ":172.18.255.250/32") ||
 		strings.Contains(artifact.Name, ":172.18.255.251/32") ||
 		strings.Contains(artifact.Name, ":172.18.255.252/32")
+}
+
+func isPPPoEPeerFileArtifact(artifact resource.Artifact) bool {
+	if !strings.Contains(artifact.Owner, "/PPPoESession/") {
+		return false
+	}
+	name := filepath.Clean(artifact.Name)
+	return strings.HasPrefix(name, "/etc/ppp/peers/routerd-")
+}
+
+func isPPPoERuntimeSocketArtifact(artifact resource.Artifact) bool {
+	if !strings.Contains(artifact.Owner, "/PPPoESession/") {
+		return false
+	}
+	name := filepath.Clean(artifact.Name)
+	return strings.HasPrefix(name, "/run/routerd/pppoe-client/") && strings.HasSuffix(name, ".sock")
+}
+
+func isPPPoERuntimeDirectoryArtifact(artifact resource.Artifact) bool {
+	if !strings.Contains(artifact.Owner, "/PPPoESession/") {
+		return false
+	}
+	name := filepath.Clean(artifact.Name)
+	return strings.HasPrefix(name, "/run/routerd/pppoe-client/") ||
+		strings.HasPrefix(name, "/var/lib/routerd/pppoe-client/")
+}
+
+func IsPPPoEPeerFileArtifactForCleanup(artifact resource.Artifact) bool {
+	return isPPPoEPeerFileArtifact(artifact)
+}
+
+func IsPPPoERuntimeSocketArtifactForCleanup(artifact resource.Artifact) bool {
+	return isPPPoERuntimeSocketArtifact(artifact)
+}
+
+func IsPPPoERuntimeDirectoryArtifactForCleanup(artifact resource.Artifact) bool {
+	return isPPPoERuntimeDirectoryArtifact(artifact)
 }
 
 func desiredAttributesDrift(desired, actual map[string]string) bool {
@@ -222,6 +272,8 @@ func DesiredOwnedArtifacts(router *api.Router, aliases map[string]string) []reso
 				"nft.table",
 				"systemd.service",
 				"file",
+				"unix.socket",
+				"directory",
 				"host.sysctl",
 				"host.hostname",
 				"net.link",
@@ -263,6 +315,8 @@ func (e *Engine) actualInventoryBackedArtifacts() []resource.Artifact {
 	}
 	actual = append(actual, e.actualSystemdServiceArtifacts()...)
 	actual = append(actual, e.actualFileArtifacts()...)
+	actual = append(actual, e.actualUnixSocketArtifacts()...)
+	actual = append(actual, e.actualDirectoryArtifacts()...)
 	actual = append(actual, e.actualSysctlArtifacts()...)
 	actual = append(actual, e.actualHostnameArtifacts()...)
 	actual = append(actual, e.actualLinkArtifacts()...)
@@ -305,10 +359,57 @@ func (e *Engine) actualFileArtifacts() []resource.Artifact {
 		"/usr/local/etc/routerd/nftables.nft",
 		"/usr/local/etc/routerd/default-route.nft",
 	}
+	if out, err := e.Command("find", "/etc/ppp/peers", "-maxdepth", "1", "-type", "f", "-name", "routerd-*", "-print"); err == nil {
+		for _, line := range strings.Split(string(out), "\n") {
+			path := strings.TrimSpace(line)
+			if path != "" {
+				paths = append(paths, path)
+			}
+		}
+	}
 	var artifacts []resource.Artifact
+	seen := map[string]bool{}
 	for _, path := range paths {
+		if seen[path] {
+			continue
+		}
+		seen[path] = true
 		if _, err := e.Command("test", "-f", path); err == nil {
 			artifacts = append(artifacts, newSimpleArtifact("file", path, "file"))
+		}
+	}
+	return artifacts
+}
+
+func (e *Engine) actualUnixSocketArtifacts() []resource.Artifact {
+	out, err := e.Command("find", "/run/routerd/pppoe-client", "-maxdepth", "1", "-type", "s", "-name", "*.sock", "-print")
+	if err != nil {
+		return nil
+	}
+	var artifacts []resource.Artifact
+	for _, line := range strings.Split(string(out), "\n") {
+		path := strings.TrimSpace(line)
+		if path == "" {
+			continue
+		}
+		artifacts = append(artifacts, newSimpleArtifact("unix.socket", path, "file"))
+	}
+	return artifacts
+}
+
+func (e *Engine) actualDirectoryArtifacts() []resource.Artifact {
+	var artifacts []resource.Artifact
+	for _, root := range []string{"/run/routerd/pppoe-client", "/var/lib/routerd/pppoe-client"} {
+		out, err := e.Command("find", root, "-mindepth", "1", "-maxdepth", "1", "-type", "d", "-print")
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(out), "\n") {
+			path := strings.TrimSpace(line)
+			if path == "" {
+				continue
+			}
+			artifacts = append(artifacts, newSimpleArtifact("directory", path, "file"))
 		}
 	}
 	return artifacts

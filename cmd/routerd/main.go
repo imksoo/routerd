@@ -2653,6 +2653,9 @@ func cleanupLedgerOwnedOrphansMatching(router *api.Router, ledgerPath string, ma
 	}
 	var removed []string
 	var removedArtifacts []resource.Artifact
+	sort.SliceStable(artifacts, func(i, j int) bool {
+		return cleanupArtifactPriority(artifacts[i]) < cleanupArtifactPriority(artifacts[j])
+	})
 	for _, artifact := range artifacts {
 		if match != nil && !match(artifact) {
 			continue
@@ -2674,6 +2677,21 @@ func cleanupLedgerOwnedOrphansMatching(router *api.Router, ledgerPath string, ma
 		}
 	}
 	return removed, nil
+}
+
+func cleanupArtifactPriority(artifact resource.Artifact) int {
+	switch artifact.Kind {
+	case "systemd.service":
+		return 0
+	case "file":
+		return 10
+	case "unix.socket":
+		return 20
+	case "directory":
+		return 30
+	default:
+		return 50
+	}
 }
 
 func cleanupLedgerOwnedArtifact(artifact resource.Artifact) (string, error) {
@@ -2709,11 +2727,36 @@ func cleanupLedgerOwnedArtifact(artifact resource.Artifact) (string, error) {
 		if err := runLogged("systemctl", "disable", "--now", artifact.Name); err != nil {
 			return "", err
 		}
+		_ = runLogged("systemctl", "reset-failed", artifact.Name)
 		unitPath := "/etc/systemd/system/" + artifact.Name
 		if err := os.Remove(unitPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return "", err
 		}
 		if err := runLogged("systemctl", "daemon-reload"); err != nil {
+			return "", err
+		}
+		return artifact.Kind + "/" + artifact.Name, nil
+	case "file":
+		if !apply.IsPPPoEPeerFileArtifactForCleanup(artifact) {
+			return "", nil
+		}
+		if err := os.Remove(artifact.Name); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+		return artifact.Kind + "/" + artifact.Name, nil
+	case "unix.socket":
+		if !apply.IsPPPoERuntimeSocketArtifactForCleanup(artifact) {
+			return "", nil
+		}
+		if err := os.Remove(artifact.Name); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+		return artifact.Kind + "/" + artifact.Name, nil
+	case "directory":
+		if !apply.IsPPPoERuntimeDirectoryArtifactForCleanup(artifact) {
+			return "", nil
+		}
+		if err := os.RemoveAll(artifact.Name); err != nil {
 			return "", err
 		}
 		return artifact.Kind + "/" + artifact.Name, nil
