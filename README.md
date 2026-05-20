@@ -114,12 +114,12 @@ not a general-purpose firewall rule language.
 The production-style examples show how the pieces fit together:
 
 - `examples/home-router.yaml`: Ubuntu home-router style configuration with OS
-  bootstrap, DHCPv6-PD, DS-Lite, routed HGW LAN, DNS resolver, DHCP server,
-  RA, NAT44, log storage, and Web Console.
+  bootstrap auto-derivation, DHCPv6-PD, DS-Lite, DNS resolver, DHCP server,
+  RA, BGP peering, and Web Console.
 - `examples/router-lab.yaml`: smaller Linux lab configuration.
 - `examples/nixos-edge.yaml`: NixOS-oriented rendering path.
-- `examples/freebsd-edge.yaml`: FreeBSD-native rc.d, pf, mpd5, dnsmasq, DS-Lite,
-  package, and service examples.
+- `examples/freebsd-edge.yaml`: compact FreeBSD-native rc.d, pf, dnsmasq, and
+  DS-Lite rendering example.
 - `examples/tailscale-exit-subnet.yaml`: Tailscale exit-node and subnet-router
   advertisement through a managed systemd unit.
 - `examples/guest-mode.yaml`: MAC-based guest-device isolation on a shared

@@ -3,44 +3,22 @@ apiVersion: routerd.net/v1alpha1
 kind: Router
 metadata:
   name: kubernetes-edge
-
 spec:
-  reconcile:
-    mode: progressive
-    protectedInterfaces:
-      - mgmt
-
   resources:
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: Interface
-      metadata:
-        name: wan
-      spec:
-        ifname: ens18
-        adminUp: true
-        managed: false
-        owner: external
-
     - apiVersion: net.routerd.net/v1alpha1
       kind: Interface
       metadata:
         name: mgmt
       spec:
         ifname: ens19
-        adminUp: true
         managed: false
-        owner: external
-
     - apiVersion: net.routerd.net/v1alpha1
       kind: Interface
       metadata:
         name: lan
       spec:
         ifname: ens20
-        adminUp: true
         managed: true
-        owner: routerd
-
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4StaticAddress
       metadata:
@@ -48,41 +26,31 @@ spec:
       spec:
         interface: lan
         address: 192.168.70.1/24
-        exclusive: false
-
     - apiVersion: net.routerd.net/v1alpha1
       kind: VirtualAddress
       metadata:
         name: k8s-api-vip
       spec:
+        family: ipv4
         interface: lan
         address: 192.168.70.10/32
-        family: ipv4
         hostname: k8s-api.cluster.example
         mode: vrrp
         vrrp:
           virtualRouterID: 70
           priority: 150
-          preempt: true
-          peers:
-            - 192.168.70.3
+          peers: [192.168.70.3]
         track:
           - resource: IngressService/kubernetes-api
             unhealthyPenalty: 60
-            confirmConsecutiveUnhealthy: 3
-            confirmConsecutiveHealthy: 2
           - resource: BGPRouter/lan
             unhealthyPenalty: 40
-            confirmConsecutiveUnhealthy: 3
-            confirmConsecutiveHealthy: 2
-
     - apiVersion: net.routerd.net/v1alpha1
       kind: DNSZone
       metadata:
         name: cluster-zone
       spec:
         zone: cluster.example
-        ttl: 60
         records:
           - hostname: k8s-cp-01
             ipv4: 192.168.70.21
@@ -90,19 +58,10 @@ spec:
             ipv4: 192.168.70.22
           - hostname: k8s-cp-03
             ipv4: 192.168.70.23
-          - hostname: k8s-wk-01
-            ipv4: 192.168.70.31
-          - hostname: k8s-wk-02
-            ipv4: 192.168.70.32
-          - hostname: k8s-wk-03
-            ipv4: 192.168.70.33
-          - hostname: k8s-wk-04
-            ipv4: 192.168.70.34
-
     - apiVersion: net.routerd.net/v1alpha1
       kind: DNSResolver
       metadata:
-        name: lan-resolver
+        name: lan
       spec:
         listen:
           - name: lan
@@ -110,69 +69,30 @@ spec:
               - resource: IPv4StaticAddress/lan-base
                 field: address
             port: 53
-            sources:
-              - local-zone
-              - default
-
+            sources: [cluster, default]
     - apiVersion: net.routerd.net/v1alpha1
       kind: DNSForwarder
       metadata:
-        name: local-zone
+        name: cluster
       spec:
-        resolver: DNSResolver/lan-resolver
-        match:
-          - cluster.example
-        zoneRefs:
-          - DNSZone/cluster-zone
-
+        resolver: DNSResolver/lan
+        match: [cluster.example]
+        zoneRefs: [DNSZone/cluster-zone]
     - apiVersion: net.routerd.net/v1alpha1
       kind: DNSForwarder
       metadata:
         name: default
       spec:
-        resolver: DNSResolver/lan-resolver
-        match:
-          - "."
-        upstreams:
-          - DNSUpstream/cloudflare-udp
-          - DNSUpstream/google-udp
-
+        resolver: DNSResolver/lan
+        match: ["."]
+        upstreams: [DNSUpstream/cloudflare]
     - apiVersion: net.routerd.net/v1alpha1
       kind: DNSUpstream
       metadata:
-        name: cloudflare-udp
+        name: cloudflare
       spec:
         protocol: udp
         address: 1.1.1.1
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: DNSUpstream
-      metadata:
-        name: google-udp
-      spec:
-        protocol: udp
-        address: 8.8.8.8
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: DHCPv4Server
-      metadata:
-        name: lan-dhcpv4
-      spec:
-        interface: lan
-        addressPool:
-          start: 192.168.70.100
-          end: 192.168.70.199
-          leaseTime: 12h
-        gatewayFrom:
-          resource: IPv4StaticAddress/lan-base
-          field: address
-        dnsServerFrom:
-          - resource: IPv4StaticAddress/lan-base
-            field: address
-        domainFrom:
-          resource: DNSZone/cluster-zone
-          field: zone
-
     - apiVersion: firewall.routerd.net/v1alpha1
       kind: IngressService
       metadata:
@@ -197,18 +117,11 @@ spec:
         healthCheck:
           protocol: https
           path: /readyz
-          host: k8s-api.cluster.example
-          expectedStatus:
-            - 200
+          expectedStatus: [200]
           tlsSkipVerify: true
-          interval: 5s
-          timeout: 1s
-          healthyThreshold: 2
-          unhealthyThreshold: 2
         policy:
           selection: failover
           onNoHealthyBackends: reject
-
     - apiVersion: net.routerd.net/v1alpha1
       kind: BGPRouter
       metadata:
@@ -217,14 +130,7 @@ spec:
         asn: 64512
         routerID: 192.168.70.2
         importPolicy:
-          allowedPrefixes:
-            - 10.96.0.0/12
-            - 192.168.80.0/24
-        gracefulRestart:
-          enabled: true
-          restartTime: 120s
-          stalePathTime: 360s
-
+          allowedPrefixes: [10.96.0.0/12, 192.168.80.0/24]
     - apiVersion: net.routerd.net/v1alpha1
       kind: BGPPeer
       metadata:
@@ -232,8 +138,4 @@ spec:
       spec:
         routerRef: BGPRouter/lan
         peerASN: 64513
-        peers:
-          - 192.168.70.31
-          - 192.168.70.32
-          - 192.168.70.33
-          - 192.168.70.34
+        peers: [192.168.70.31, 192.168.70.32, 192.168.70.33]

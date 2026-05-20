@@ -32,9 +32,9 @@ flowchart LR
 | 番号 | 意味 | 主な resource |
 | --- | --- | --- |
 | [1] | DS-Lite tunnel の接続先になる ISP 側 AFTR。 | `DSLiteTunnel/transix` |
-| [2] | IPv6 RA と DHCPv6-PD を受ける WAN interface。 | `IPv6RAAddress/wan-ra`, `DHCPv6PrefixDelegation/wan-pd` |
+| [2] | IPv6 RA と DHCPv6-PD を受ける WAN interface。 | `DHCPv6PrefixDelegation/wan-pd` |
 | [3] | tunnel と LAN service を作り、必要な sysctl を導出する routerd host。 | Derived host runtime |
-| [4] | IPv4 egress に使う DS-Lite `ip6tnl` device。 | `DSLiteTunnel/transix`, `NAT44Rule/lan-to-dslite` |
+| [4] | IPv4 egress に使う DS-Lite `ip6tnl` device。 | `DSLiteTunnel/transix`, trust/untrust zone からの NAT44 自動導出 |
 | [5] | IPv4 address と delegated IPv6 address を持つ LAN interface。 | `IPv4StaticAddress/lan-ipv4`, `IPv6DelegatedAddress/lan-ipv6` |
 | [6] | DHCPv4、RA、RDNSS、DNSSL を受ける LAN client。 | `DHCPv4Server/lan-dhcpv4`, `IPv6RouterAdvertisement/lan-ra` |
 
@@ -42,13 +42,13 @@ flowchart LR
 
 | 領域 | routerd resource |
 | --- | --- |
-| WAN IPv6 | `IPv6RAAddress/wan-ra` |
+| WAN IPv6 | `DHCPv6PrefixDelegation/wan-pd` |
 | Prefix delegation | `DHCPv6PrefixDelegation/wan-pd`, `IPv6DelegatedAddress/lan-ipv6` |
 | DS-Lite | `DSLiteTunnel/transix` |
 | LAN IPv4 と DHCPv4 | `IPv4StaticAddress/lan-ipv4`, `DHCPv4Server/lan-dhcpv4` |
 | LAN IPv6 advertisement | `IPv6RouterAdvertisement/lan-ra` |
 | DNS | `DNSZone/home`, `DNSResolver/lan-resolver` |
-| IPv4 egress | `NAT44Rule/lan-to-dslite` |
+| IPv4 egress | trust/untrust zone から自動導出される NAT44 |
 | MTU/MSS | `DSLiteTunnel/transix` と firewall zone から自動導出 |
 
 この例では Transix に近い AFTR 値を placeholder として使っています。実回線に合わせて、
@@ -158,7 +158,7 @@ routerctl status
 routerctl describe DHCPv6PrefixDelegation/wan-pd
 routerctl describe IPv6DelegatedAddress/lan-ipv6
 routerctl describe DSLiteTunnel/transix
-routerctl describe NAT44Rule/lan-to-dslite
+routerctl describe FirewallZone/wan
 ip -6 tunnel show
 ip route show default
 ```

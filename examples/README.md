@@ -43,10 +43,10 @@ routerd plan --config examples/<name>.yaml
 | File | Use when |
 | --- | --- |
 | `dslite-lan-range-snat.yaml` | You need the optional DS-Lite inner-source form that uses an address carved from a LAN range. |
-| `multi-wan-home.yaml` | You want a template for DS-Lite A/B/C, RA-sourced DS-Lite, PPPoE, and DHCP WAN fallback. |
+| `multi-wan-home.yaml` | You want a compact template for DS-Lite failover with DHCP WAN fallback. |
 | `router-lab.yaml` | You want a compact Linux lab router with common WAN and LAN services. |
 | `linux-dslite-policy.yaml` | You want a lab-style DS-Lite and policy-routing example. |
-| `home-router.yaml` | You want a larger Ubuntu home-router reference configuration. Sanitize local addresses before reuse. |
+| `home-router.yaml` | You want a compact Ubuntu home-router reference with DS-Lite, LAN services, BGP, and Web Console. |
 
 ## OS-oriented examples
 
@@ -54,5 +54,5 @@ routerd plan --config examples/<name>.yaml
 | --- | --- |
 | `nixos-edge.yaml` | You want a routerd configuration that exercises the NixOS render path. |
 | `nixos-edge-configuration.nix` | You want the companion NixOS system configuration shape. |
-| `freebsd-edge.yaml` | You want FreeBSD rc.d, pf, mpd5, dnsmasq, DS-Lite, WireGuard, and Tailscale examples. |
+| `freebsd-edge.yaml` | You want a compact FreeBSD rc.d, pf, dnsmasq, and DS-Lite rendering example. |
 | `freebsd-vrrp.yaml` | You want a minimal FreeBSD CARP-backed `VirtualAddress` example. |

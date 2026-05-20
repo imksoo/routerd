@@ -3,34 +3,15 @@ apiVersion: routerd.net/v1alpha1
 kind: Router
 metadata:
   name: kubernetes-api-dualstack
-
 spec:
-  reconcile:
-    mode: progressive
-    protectedInterfaces:
-      - mgmt
-
   resources:
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: Interface
-      metadata:
-        name: mgmt
-      spec:
-        ifname: ens19
-        adminUp: true
-        managed: false
-        owner: external
-
     - apiVersion: net.routerd.net/v1alpha1
       kind: Interface
       metadata:
         name: lan
       spec:
         ifname: ens20
-        adminUp: true
         managed: true
-        owner: routerd
-
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4StaticAddress
       metadata:
@@ -38,59 +19,40 @@ spec:
       spec:
         interface: lan
         address: 192.168.70.1/24
-        exclusive: false
-
     - apiVersion: net.routerd.net/v1alpha1
       kind: VirtualAddress
       metadata:
-        name: k8s-api-vip-v4
+        name: api-v4
       spec:
+        family: ipv4
         interface: lan
         address: 192.168.70.10/32
-        family: ipv4
         hostname: k8s-api.cluster.example
         mode: vrrp
         vrrp:
           virtualRouterID: 70
           priority: 150
-          preempt: true
-          peers:
-            - 192.168.70.3
-        track:
-          - resource: IngressService/kubernetes-api
-            unhealthyPenalty: 60
-          - resource: BGPRouter/lan
-            unhealthyPenalty: 40
-
+          peers: [192.168.70.3]
     - apiVersion: net.routerd.net/v1alpha1
       kind: VirtualAddress
       metadata:
-        name: k8s-api-vip-v6
+        name: api-v6
       spec:
+        family: ipv6
         interface: lan
         address: fd00:70::10/128
-        family: ipv6
         hostname: k8s-api.cluster.example
         mode: vrrp
         vrrp:
           virtualRouterID: 71
           priority: 150
-          preempt: true
-          peers:
-            - fd00:70::3
-        track:
-          - resource: IngressService/kubernetes-api
-            unhealthyPenalty: 60
-          - resource: BGPRouter/lan
-            unhealthyPenalty: 40
-
+          peers: [fd00:70::3]
     - apiVersion: net.routerd.net/v1alpha1
       kind: DNSZone
       metadata:
-        name: cluster-zone
+        name: cluster
       spec:
         zone: cluster.example
-        ttl: 60
         records:
           - hostname: k8s-cp-01
             ipv4: 192.168.70.21
@@ -98,66 +60,49 @@ spec:
           - hostname: k8s-cp-02
             ipv4: 192.168.70.22
             ipv6: fd00:70::22
-          - hostname: k8s-cp-03
-            ipv4: 192.168.70.23
-            ipv6: fd00:70::23
-
     - apiVersion: net.routerd.net/v1alpha1
       kind: DNSResolver
       metadata:
-        name: lan-resolver
+        name: lan
       spec:
         listen:
           - name: lan
-            addresses:
-              - fd00:70::1
+            addresses: [fd00:70::1]
             addressFrom:
               - resource: IPv4StaticAddress/lan-v4
                 field: address
             port: 53
-            sources:
-              - local-zone
-              - default
-
+            sources: [cluster, default]
     - apiVersion: net.routerd.net/v1alpha1
       kind: DNSForwarder
       metadata:
-        name: local-zone
+        name: cluster
       spec:
-        resolver: DNSResolver/lan-resolver
-        match:
-          - cluster.example
-        zoneRefs:
-          - DNSZone/cluster-zone
-
+        resolver: DNSResolver/lan
+        match: [cluster.example]
+        zoneRefs: [DNSZone/cluster]
     - apiVersion: net.routerd.net/v1alpha1
       kind: DNSForwarder
       metadata:
         name: default
       spec:
-        resolver: DNSResolver/lan-resolver
-        match:
-          - "."
-        upstreams:
-          - DNSUpstream/cloudflare-udp-v4
-          - DNSUpstream/cloudflare-udp-v6
-
+        resolver: DNSResolver/lan
+        match: ["."]
+        upstreams: [DNSUpstream/cloudflare-v4, DNSUpstream/cloudflare-v6]
     - apiVersion: net.routerd.net/v1alpha1
       kind: DNSUpstream
       metadata:
-        name: cloudflare-udp-v4
+        name: cloudflare-v4
       spec:
         protocol: udp
         address: 1.1.1.1
-
     - apiVersion: net.routerd.net/v1alpha1
       kind: DNSUpstream
       metadata:
-        name: cloudflare-udp-v6
+        name: cloudflare-v6
       spec:
         protocol: udp
         address: 2606:4700:4700::1111
-
     - apiVersion: net.routerd.net/v1alpha1
       kind: BGPRouter
       metadata:
@@ -166,12 +111,7 @@ spec:
         asn: 64512
         routerID: 192.168.70.1
         importPolicy:
-          allowedPrefixes:
-            - 10.244.0.0/16
-            - fd00:244::/48
-        gracefulRestart:
-          enabled: true
-
+          allowedPrefixes: [10.244.0.0/16, fd00:244::/48]
     - apiVersion: net.routerd.net/v1alpha1
       kind: BGPPeer
       metadata:
@@ -179,14 +119,7 @@ spec:
       spec:
         routerRef: BGPRouter/lan
         peerASN: 64513
-        peers:
-          - 192.168.70.21
-          - 192.168.70.22
-          - 192.168.70.23
-          - fd00:70::21
-          - fd00:70::22
-          - fd00:70::23
-
+        peers: [192.168.70.21, 192.168.70.22, fd00:70::21, fd00:70::22]
     - apiVersion: firewall.routerd.net/v1alpha1
       kind: IngressService
       metadata:
@@ -198,7 +131,6 @@ spec:
           protocol: tcp
           port: 6443
         hostname: k8s-api.cluster.example
-        selection: sourceHash
         backends:
           - name: cp-01
             address: k8s-cp-01.cluster.example
@@ -206,13 +138,3 @@ spec:
           - name: cp-02
             address: k8s-cp-02.cluster.example
             port: 6443
-          - name: cp-03
-            address: k8s-cp-03.cluster.example
-            port: 6443
-        healthCheck:
-          protocol: https
-          path: /readyz
-          expectedStatus:
-            - 200
-          tlsSkipVerify: true
-          interval: 5s

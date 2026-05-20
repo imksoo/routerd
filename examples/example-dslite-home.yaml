@@ -3,7 +3,6 @@ apiVersion: routerd.net/v1alpha1
 kind: Router
 metadata:
   name: example-dslite-home
-
 spec:
   resources:
     - apiVersion: net.routerd.net/v1alpha1
@@ -12,152 +11,112 @@ spec:
         name: wan
       spec:
         ifname: ens18
-        adminUp: true
         managed: false
-        owner: external
-
     - apiVersion: net.routerd.net/v1alpha1
       kind: Interface
       metadata:
         name: lan
       spec:
         ifname: ens19
-        adminUp: true
+        role: trust
         managed: true
-        owner: routerd
-
     - apiVersion: net.routerd.net/v1alpha1
-      kind: IPv6RAAddress
+      kind: IPv4StaticAddress
       metadata:
-        name: wan-ra
+        name: lan-v4
       spec:
-        interface: wan
-
+        interface: lan
+        address: 192.168.10.1/24
     - apiVersion: net.routerd.net/v1alpha1
       kind: DHCPv6PrefixDelegation
       metadata:
         name: wan-pd
       spec:
         interface: wan
-        client: dhcp6c
         profile: ntt-hgw-lan-pd
-
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv6DelegatedAddress
       metadata:
-        name: lan-ipv6
+        name: lan-v6
       spec:
         prefixDelegation: wan-pd
         interface: lan
         subnetID: "0"
         addressSuffix: "::1"
         announce: true
-
     - apiVersion: net.routerd.net/v1alpha1
-      kind: IPv4StaticAddress
+      kind: DNSResolver
       metadata:
-        name: lan-ipv4
+        name: lan
       spec:
-        interface: lan
-        address: 192.168.10.1/24
-        exclusive: false
-
+        listen:
+          - name: lan
+            addressFrom:
+              - resource: IPv4StaticAddress/lan-v4
+                field: address
+              - resource: IPv6DelegatedAddress/lan-v6
+                field: address
+            port: 53
+            sources: [home, aftr, default]
+        cache:
+          enabled: true
     - apiVersion: net.routerd.net/v1alpha1
       kind: DNSZone
       metadata:
         name: home
       spec:
         zone: home.example
-        ttl: 300
         records:
           - hostname: router
             ipv4From:
-              resource: IPv4StaticAddress/lan-ipv4
+              resource: IPv4StaticAddress/lan-v4
               field: address
-            ipv6From:
-              resource: IPv6DelegatedAddress/lan-ipv6
-              field: address
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: DNSResolver
-      metadata:
-        name: lan-resolver
-      spec:
-        listen:
-          - name: lan
-            addressFrom:
-              - resource: IPv4StaticAddress/lan-ipv4
-                field: address
-              - resource: IPv6DelegatedAddress/lan-ipv6
-                field: address
-            port: 53
-            sources:
-              - local-zone
-              - aftr
-              - default
-        cache:
-          enabled: true
-          maxEntries: 10000
-
     - apiVersion: net.routerd.net/v1alpha1
       kind: DNSForwarder
       metadata:
-        name: local-zone
+        name: home
       spec:
-        resolver: DNSResolver/lan-resolver
-        match:
-          - home.example
-        zoneRefs:
-          - DNSZone/home
-
+        resolver: DNSResolver/lan
+        match: [home.example]
+        zoneRefs: [DNSZone/home]
     - apiVersion: net.routerd.net/v1alpha1
       kind: DNSForwarder
       metadata:
         name: aftr
       spec:
-        resolver: DNSResolver/lan-resolver
-        match:
-          - gw.transix.jp
-        upstreams:
-          - DNSUpstream/transix-aftr-a
-          - DNSUpstream/transix-aftr-b
-
+        resolver: DNSResolver/lan
+        match: [gw.transix.jp]
+        upstreams: [DNSUpstream/transix-a, DNSUpstream/transix-b]
     - apiVersion: net.routerd.net/v1alpha1
       kind: DNSUpstream
       metadata:
-        name: transix-aftr-a
+        name: transix-a
       spec:
         protocol: udp
         address: 2404:1a8:7f01:a::3
-
     - apiVersion: net.routerd.net/v1alpha1
       kind: DNSUpstream
       metadata:
-        name: transix-aftr-b
+        name: transix-b
       spec:
         protocol: udp
         address: 2404:1a8:7f01:b::3
-
     - apiVersion: net.routerd.net/v1alpha1
       kind: DNSForwarder
       metadata:
         name: default
       spec:
-        resolver: DNSResolver/lan-resolver
-        match:
-          - "."
-        upstreams:
-          - DNSUpstream/cloudflare-doh
-
+        resolver: DNSResolver/lan
+        match: ["."]
+        upstreams: [DNSUpstream/cloudflare]
     - apiVersion: net.routerd.net/v1alpha1
       kind: DNSUpstream
       metadata:
-        name: cloudflare-doh
+        name: cloudflare
       spec:
         protocol: doh
         address: cloudflare-dns.com
         path: /dns-query
-
     - apiVersion: net.routerd.net/v1alpha1
       kind: DSLiteTunnel
       metadata:
@@ -166,20 +125,15 @@ spec:
         interface: wan
         tunnelName: ds-transix
         aftrFQDN: gw.transix.jp
-        aftrDNSServers:
-          - 2404:1a8:7f01:a::3
-          - 2404:1a8:7f01:b::3
+        aftrDNSServers: [2404:1a8:7f01:a::3, 2404:1a8:7f01:b::3]
         localAddressSource: delegatedAddress
-        localDelegatedAddress: lan-ipv6
+        localDelegatedAddress: lan-v6
         localAddressSuffix: "::100"
         defaultRoute: true
-        routeMetric: 50
-        mtu: 1454
-
     - apiVersion: net.routerd.net/v1alpha1
       kind: DHCPv4Server
       metadata:
-        name: lan-dhcpv4
+        name: lan
       spec:
         interface: lan
         addressPool:
@@ -187,70 +141,47 @@ spec:
           end: 192.168.10.199
           leaseTime: 12h
         gatewayFrom:
-          resource: IPv4StaticAddress/lan-ipv4
+          resource: IPv4StaticAddress/lan-v4
           field: address
         dnsServerFrom:
-          - resource: IPv4StaticAddress/lan-ipv4
+          - resource: IPv4StaticAddress/lan-v4
             field: address
         domainFrom:
           resource: DNSZone/home
           field: zone
-
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv6RouterAdvertisement
       metadata:
-        name: lan-ra
+        name: lan
       spec:
         interface: lan
         prefixFrom:
-          resource: IPv6DelegatedAddress/lan-ipv6
+          resource: IPv6DelegatedAddress/lan-v6
           field: address
         rdnssFrom:
-          - resource: IPv6DelegatedAddress/lan-ipv6
+          - resource: IPv6DelegatedAddress/lan-v6
             field: address
         dnsslFrom:
           - resource: DNSZone/home
             field: zone
         oFlag: true
-        mtu: 1454
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: NAT44Rule
-      metadata:
-        name: lan-to-dslite
-      spec:
-        type: masquerade
-        egressInterface: transix
-        sourceRanges:
-          - 192.168.10.0/24
-        excludeDestinationCIDRs:
-          - 10.0.0.0/8
-          - 172.16.0.0/12
-          - 192.168.0.0/16
-
     - apiVersion: firewall.routerd.net/v1alpha1
       kind: FirewallZone
       metadata:
         name: wan
       spec:
         role: untrust
-        interfaces:
-          - wan
-          - transix
-
+        interfaces: [wan, transix]
     - apiVersion: firewall.routerd.net/v1alpha1
       kind: FirewallZone
       metadata:
         name: lan
       spec:
         role: trust
-        interfaces:
-          - lan
-
+        interfaces: [lan]
     - apiVersion: firewall.routerd.net/v1alpha1
       kind: FirewallPolicy
       metadata:
-        name: home
+        name: default
       spec:
         logDeny: true
-        sameRoleAccept: true

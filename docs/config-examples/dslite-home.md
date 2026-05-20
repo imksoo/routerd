@@ -32,9 +32,9 @@ flowchart LR
 | No. | Meaning | Main resources |
 | --- | --- | --- |
 | [1] | ISP AFTR endpoint used by the DS-Lite tunnel. | `DSLiteTunnel/transix` |
-| [2] | WAN interface receiving IPv6 RA and DHCPv6-PD. | `IPv6RAAddress/wan-ra`, `DHCPv6PrefixDelegation/wan-pd` |
+| [2] | WAN interface receiving IPv6 RA and DHCPv6-PD. | `DHCPv6PrefixDelegation/wan-pd` |
 | [3] | routerd host that creates the tunnel, derives sysctls, and runs LAN services. | Derived host runtime |
-| [4] | DS-Lite `ip6tnl` device used for IPv4 egress. | `DSLiteTunnel/transix`, `NAT44Rule/lan-to-dslite` |
+| [4] | DS-Lite `ip6tnl` device used for IPv4 egress. | `DSLiteTunnel/transix`, derived NAT44 |
 | [5] | LAN interface with IPv4 plus a delegated IPv6 address. | `IPv4StaticAddress/lan-ipv4`, `IPv6DelegatedAddress/lan-ipv6` |
 | [6] | LAN clients receiving DHCPv4, RA, RDNSS, and DNSSL. | `DHCPv4Server/lan-dhcpv4`, `IPv6RouterAdvertisement/lan-ra` |
 
@@ -42,13 +42,13 @@ flowchart LR
 
 | Area | routerd resources |
 | --- | --- |
-| WAN IPv6 | `IPv6RAAddress/wan-ra` |
+| WAN IPv6 | `DHCPv6PrefixDelegation/wan-pd` |
 | Prefix delegation | `DHCPv6PrefixDelegation/wan-pd`, `IPv6DelegatedAddress/lan-ipv6` |
 | DS-Lite | `DSLiteTunnel/transix` |
 | LAN IPv4 and DHCPv4 | `IPv4StaticAddress/lan-ipv4`, `DHCPv4Server/lan-dhcpv4` |
 | LAN IPv6 advertisement | `IPv6RouterAdvertisement/lan-ra` |
 | DNS | `DNSZone/home`, `DNSResolver/lan-resolver` |
-| IPv4 egress | `NAT44Rule/lan-to-dslite` |
+| IPv4 egress | Derived NAT44 from trust/untrust zones |
 | MTU/MSS | Derived from `DSLiteTunnel/transix` and firewall zones |
 
 This example uses Transix-like AFTR values as placeholders. Replace the AFTR
@@ -161,7 +161,7 @@ routerctl status
 routerctl describe DHCPv6PrefixDelegation/wan-pd
 routerctl describe IPv6DelegatedAddress/lan-ipv6
 routerctl describe DSLiteTunnel/transix
-routerctl describe NAT44Rule/lan-to-dslite
+routerctl describe FirewallZone/wan
 ip -6 tunnel show
 ip route show default
 ```

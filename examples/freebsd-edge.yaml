@@ -3,283 +3,104 @@ apiVersion: routerd.net/v1alpha1
 kind: Router
 metadata:
   name: freebsd-edge
-
 spec:
-  reconcile:
-    mode: progressive
-    protectedInterfaces:
-      - mgmt
-
   resources:
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: Hostname
-      metadata:
-        name: system-hostname
-      spec:
-        hostname: freebsd-edge.example.internal
-        managed: true
-
     - apiVersion: net.routerd.net/v1alpha1
       kind: Interface
       metadata:
         name: wan
       spec:
         ifname: vtnet0
-        adminUp: true
-        managed: true
-        owner: routerd
-
+        managed: false
     - apiVersion: net.routerd.net/v1alpha1
       kind: DHCPv4Client
       metadata:
         name: wan-dhcpv4
       spec:
         interface: wan
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: PPPoESession
-      metadata:
-        name: wan-pppoe
-      spec:
-        interface: wan
-        ifname: ppp0
-        username: user@example.jp
-        password: change-me
-        managed: true
-        defaultRoute: false
-        usePeerDNS: false
-        mtu: 1454
-        mru: 1454
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: Interface
-      metadata:
-        name: mgmt
-      spec:
-        ifname: vtnet2
-        adminUp: true
-        managed: true
-        owner: routerd
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: DHCPv4Client
-      metadata:
-        name: mgmt-dhcpv4
-      spec:
-        interface: mgmt
-        useRoutes: false
-        useDNS: false
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: DHCPv6Address
-      metadata:
-        name: wan-dhcpv6
-      spec:
-        interface: wan
-        client: dhcp6c
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: IPv6RAAddress
-      metadata:
-        name: wan-ra
-      spec:
-        interface: wan
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: DHCPv6PrefixDelegation
-      metadata:
-        name: wan-pd
-      spec:
-        interface: wan
-        profile: ntt-hgw-lan-pd
-        prefixLength: 60
-
     - apiVersion: net.routerd.net/v1alpha1
       kind: Interface
       metadata:
         name: lan
       spec:
         ifname: vtnet1
-        adminUp: true
+        role: trust
         managed: true
-        owner: routerd
-
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4StaticAddress
       metadata:
-        name: lan-ipv4
+        name: lan-v4
       spec:
         interface: lan
         address: 192.0.2.1/24
-        exclusive: false
-
     - apiVersion: net.routerd.net/v1alpha1
-      kind: IPv4StaticRoute
+      kind: DHCPv6PrefixDelegation
       metadata:
-        name: lab-v4
-      spec:
-        interface: lan
-        destination: 198.51.100.0/24
-        via: 192.0.2.254
-        metric: 100
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: IPv6StaticRoute
-      metadata:
-        name: lab-v6
+        name: wan-pd
       spec:
         interface: wan
-        destination: 2001:db8:100::/64
-        via: fe80::1
-        metric: 100
-
+        prefixLength: 60
     - apiVersion: net.routerd.net/v1alpha1
-      kind: WireGuardInterface
+      kind: IPv6DelegatedAddress
       metadata:
-        name: wg-lab
+        name: lan-v6
       spec:
-        listenPort: 51820
-        mtu: 1420
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: TailscaleNode
-      metadata:
-        name: home
-      spec:
-        hostname: freebsd-edge
-        advertiseRoutes:
-          - 192.0.2.0/24
-        acceptDNS: false
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: IPsecConnection
-      metadata:
-        name: cloud-vpn-example
-      spec:
-        localAddress: 198.51.100.10
-        remoteAddress: 203.0.113.10
-        preSharedKey: change-me
-        leftSubnet: 192.0.2.0/24
-        rightSubnet: 10.10.0.0/16
-        cloudProviderHint: aws
-
+        prefixDelegation: wan-pd
+        interface: lan
+        subnetID: "0"
+        addressSuffix: "::1"
     - apiVersion: net.routerd.net/v1alpha1
       kind: DSLiteTunnel
       metadata:
-        name: static-dslite-example
+        name: ds-lite
       spec:
         interface: wan
         tunnelName: gif0
-        localAddress: 2001:db8:1::100
-        remoteAddress: 2001:db8:2::200
-        mtu: 1454
-        defaultRoute: false
-
+        aftrFQDN: gw.transix.jp
+        localAddressSource: delegatedAddress
+        localDelegatedAddress: lan-v6
+        localAddressSuffix: "::100"
+        defaultRoute: true
     - apiVersion: net.routerd.net/v1alpha1
       kind: NAT44Rule
       metadata:
-        name: lan-nat
+        name: lan-to-wan
       spec:
-        outboundInterface: static-dslite-example
-        sourceCIDRs:
-          - 192.0.2.0/24
-        translation:
-          type: interfaceAddress
-
+        type: masquerade
+        egressInterface: ds-lite
+        sourceRanges: [192.0.2.0/24]
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DHCPv4Server
+      metadata:
+        name: lan-dhcpv4
+      spec:
+        interface: lan
+        rangeStart: 192.0.2.110
+        rangeEnd: 192.0.2.119
+        leaseTime: 12h
+        gatewayFrom:
+          resource: IPv4StaticAddress/lan-v4
+          field: address
+        dnsServerFrom:
+          - resource: IPv4StaticAddress/lan-v4
+            field: address
     - apiVersion: firewall.routerd.net/v1alpha1
       kind: FirewallZone
       metadata:
         name: wan
       spec:
         role: untrust
-        interfaces:
-          - wan
-          - static-dslite-example
-
+        interfaces: [wan, ds-lite]
     - apiVersion: firewall.routerd.net/v1alpha1
       kind: FirewallZone
       metadata:
         name: lan
       spec:
         role: trust
-        interfaces:
-          - lan
-
-    - apiVersion: firewall.routerd.net/v1alpha1
-      kind: FirewallZone
-      metadata:
-        name: mgmt
-      spec:
-        role: mgmt
-        interfaces:
-          - mgmt
-
+        interfaces: [lan]
     - apiVersion: firewall.routerd.net/v1alpha1
       kind: FirewallPolicy
       metadata:
-        name: default-home
-      spec:
-        logDeny: true
-
-    - apiVersion: firewall.routerd.net/v1alpha1
-      kind: FirewallEventLog
-      metadata:
         name: default
       spec:
-        enabled: true
-        path: /var/db/routerd/firewall-logs.db
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: DHCPv4Server
-      metadata:
-        name: lan-dhcpv4
-      spec:
-        server: dnsmasq
-        managed: true
-        listenInterfaces:
-          - lan
-        interface: lan
-        rangeStart: 192.0.2.110
-        rangeEnd: 192.0.2.119
-        leaseTime: 12h
-        routerSource: interfaceAddress
-        dnsSource: self
-        authoritative: true
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: DHCPv4Reservation
-      metadata:
-        name: printer
-      spec:
-        server: lan-dhcpv4
-        macAddress: "02:00:00:00:01:50"
-        ipAddress: 192.0.2.115
-        hostname: printer
-        leaseTime: infinite
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: IPv6DelegatedAddress
-      metadata:
-        name: lan-ipv6-pd-address
-      spec:
-        prefixDelegation: wan-pd
-        interface: lan
-        subnetID: "0"
-        addressSuffix: "::1"
-        sendRA: false
-        announce: true
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: DHCPv6Server
-      metadata:
-        name: lan-dhcpv6
-      spec:
-        server: dnsmasq
-        managed: true
-        listenInterfaces:
-          - lan
-        delegatedAddress: lan-ipv6-pd-address
-        mode: stateless
-        defaultRoute: true
-        dnsSource: self
-        leaseTime: 12h
+        logDeny: true

@@ -112,13 +112,13 @@ routerd は NAT44、ゾーンポリシー、管理対象サービス用の許可
 
 本番に近い設定例で全体像を確認できます。
 
-- `examples/home-router.yaml`: Ubuntu の家庭用ルーター構成です。OS 準備、
-  DHCPv6-PD、DS-Lite、HGW LAN への静的経路、DNS リゾルバー、DHCP サーバー、
-  RA、NAT44、ログ保存、Web Console を含みます。
+- `examples/home-router.yaml`: Ubuntu の家庭用ルーター構成です。OS 準備の
+  自動導出、DHCPv6-PD、DS-Lite、DNS リゾルバー、DHCP サーバー、RA、
+  BGP peer、Web Console を含みます。
 - `examples/router-lab.yaml`: 小さめの Linux ラボ構成です。
 - `examples/nixos-edge.yaml`: NixOS 向け生成経路の例です。
-- `examples/freebsd-edge.yaml`: FreeBSD の rc.d、pf、mpd5、dnsmasq、DS-Lite、
-  パッケージ、サービスの例です。
+- `examples/freebsd-edge.yaml`: FreeBSD の rc.d、pf、dnsmasq、DS-Lite 生成の
+  小さな例です。
 - `examples/tailscale-exit-subnet.yaml`: Tailscale の exit node と subnet router
   の広告を管理対象 systemd ユニットで行う例です。
 - `examples/guest-mode.yaml`: 同一 LAN 上の端末を MAC アドレスで分類し、

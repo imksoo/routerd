@@ -3,27 +3,8 @@ apiVersion: routerd.net/v1alpha1
 kind: Router
 metadata:
   name: lab-router
-
 spec:
-  reconcile:
-    mode: progressive
-    protectedInterfaces:
-      - mgmt
-    protectedZones:
-      - mgmt
-
   resources:
-    - apiVersion: system.routerd.net/v1alpha1
-      kind: LogSink
-      metadata:
-        name: local-syslog
-      spec:
-        type: syslog
-        minLevel: info
-        syslog:
-          facility: local6
-          tag: routerd
-
     - apiVersion: system.routerd.net/v1alpha1
       kind: NTPClient
       metadata:
@@ -33,17 +14,7 @@ spec:
         managed: true
         source: static
         interface: wan
-        servers:
-          - pool.ntp.org
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: Hostname
-      metadata:
-        name: system-hostname
-      spec:
-        hostname: router.example
-        managed: true
-
+        servers: [pool.ntp.org]
     - apiVersion: net.routerd.net/v1alpha1
       kind: Interface
       metadata:
@@ -53,190 +24,12 @@ spec:
         adminUp: true
         managed: false
         owner: external
-
     - apiVersion: net.routerd.net/v1alpha1
       kind: DHCPv4Client
       metadata:
         name: wan-dhcpv4
       spec:
         interface: wan
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: Interface
-      metadata:
-        name: mgmt
-      spec:
-        ifname: ens20
-        adminUp: true
-        managed: true
-        owner: routerd
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: DHCPv4Client
-      metadata:
-        name: mgmt-dhcpv4
-      spec:
-        interface: mgmt
-        useRoutes: false
-        useDNS: false
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: HealthCheck
-      metadata:
-        name: wan-dhcpv4-v4
-      spec:
-        type: ping
-        role: next-hop
-        targetSource: defaultGateway
-        interface: wan
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: EgressRoutePolicy
-      metadata:
-        name: default-v4
-      spec:
-        mode: priority
-        sourceCIDRs:
-          - 192.168.10.0/24
-        destinationCIDRs:
-          - 0.0.0.0/0
-        candidates:
-          - name: wan-dhcpv4
-            interface: wan
-            gatewaySource: dhcpv4
-            priority: 10
-            table: 100
-            mark: 256
-            routeMetric: 50
-            healthCheck: wan-dhcpv4-v4
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: NAT44Rule
-      metadata:
-        name: lan-to-wan
-      spec:
-        outboundInterface: transix
-        sourceCIDRs:
-          - 192.168.10.0/24
-        translation:
-          type: interfaceAddress
-          portMapping:
-            type: range
-            start: 1024
-            end: 65535
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: EgressRoutePolicy
-      metadata:
-        name: lan-via-transix
-      spec:
-        family: ipv4
-        mode: mark
-        sourceCIDRs:
-          - 192.168.10.0/24
-        candidates:
-          - name: transix
-            interface: transix
-            table: 100
-            priority: 10000
-            mark: 256
-            routeMetric: 50
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: DNSResolver
-      metadata:
-        name: lan-resolver
-      spec:
-        listen:
-          - name: lan
-            addresses:
-              - 127.0.0.1
-            port: 53
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: DNSForwarder
-      metadata:
-        name: transix-aftr
-      spec:
-        resolver: DNSResolver/lan-resolver
-        match:
-          - gw.transix.jp
-        upstreams:
-          - DNSUpstream/transix-aftr-a
-          - DNSUpstream/transix-aftr-b
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: DNSUpstream
-      metadata:
-        name: transix-aftr-a
-      spec:
-        protocol: udp
-        address: 2404:1a8:7f01:a::3
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: DNSUpstream
-      metadata:
-        name: transix-aftr-b
-      spec:
-        protocol: udp
-        address: 2404:1a8:7f01:b::3
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: DNSForwarder
-      metadata:
-        name: default
-      spec:
-        resolver: DNSResolver/lan-resolver
-        match:
-          - "."
-        upstreams:
-          - DNSUpstream/cloudflare-doh
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: DNSUpstream
-      metadata:
-        name: cloudflare-doh
-      spec:
-        protocol: doh
-        address: cloudflare-dns.com
-        path: /dns-query
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: DSLiteTunnel
-      metadata:
-        name: transix
-      spec:
-        interface: wan
-        tunnelName: ds-transix
-        aftrFQDN: gw.transix.jp
-        aftrDNSServers:
-          - 2404:1a8:7f01:a::3
-          - 2404:1a8:7f01:b::3
-        aftrAddressOrdinal: 1
-        aftrAddressSelection: ordinalModulo
-        localAddressSource: delegatedAddress
-        localDelegatedAddress: lan-ipv6-pd-address
-        localAddressSuffix: "::100"
-        defaultRoute: true
-        routeMetric: 50
-        mtu: 1454
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: IPv6RAAddress
-      metadata:
-        name: wan-ra
-      spec:
-        interface: wan
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: DHCPv6PrefixDelegation
-      metadata:
-        name: wan-pd
-      spec:
-        interface: wan
-        client: dhcp6c
-        profile: ntt-hgw-lan-pd
-
     - apiVersion: net.routerd.net/v1alpha1
       kind: Interface
       metadata:
@@ -246,7 +39,13 @@ spec:
         adminUp: true
         managed: true
         owner: routerd
-
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: transix
+      spec:
+        ifname: ds-transix
+        managed: false
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4StaticAddress
       metadata:
@@ -254,138 +53,135 @@ spec:
       spec:
         interface: lan
         address: 192.168.10.3/24
-        exclusive: false
-
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DHCPv6PrefixDelegation
+      metadata:
+        name: wan-pd
+      spec:
+        interface: wan
+        profile: ntt-hgw-lan-pd
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv6DelegatedAddress
+      metadata:
+        name: lan-ipv6
+      spec:
+        prefixDelegation: wan-pd
+        interface: lan
+        subnetID: "0"
+        addressSuffix: "::3"
+        announce: true
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: HealthCheck
+      metadata:
+        name: wan-dhcpv4-v4
+      spec:
+        role: next-hop
+        targetSource: defaultGateway
+        interface: wan
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: EgressRoutePolicy
+      metadata:
+        name: default-v4
+      spec:
+        mode: priority
+        sourceCIDRs: [192.168.10.0/24]
+        destinationCIDRs: [0.0.0.0/0]
+        candidates:
+          - name: wan-dhcpv4
+            interface: wan
+            gatewaySource: dhcpv4
+            priority: 10
+            table: 100
+            mark: 256
+            routeMetric: 50
+            healthCheck: wan-dhcpv4-v4
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: NAT44Rule
+      metadata:
+        name: lan-to-wan
+      spec:
+        outboundInterface: transix
+        sourceCIDRs: [192.168.10.0/24]
+        translation:
+          type: interfaceAddress
+          portMapping:
+            type: range
+            start: 1024
+            end: 65535
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4StaticRoute
       metadata:
         name: lab-v4
       spec:
-        interface: lan
-        destination: 198.51.100.0/24
-        via: 192.168.10.254
-        metric: 100
-
+        interface: wan
+        destination: 192.0.2.0/24
+        via: 192.168.1.1
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv6StaticRoute
       metadata:
         name: lab-v6
       spec:
-        interface: wan
-        destination: 2001:db8:100::/64
+        interface: lan
+        destination: 2001:db8:10::/64
         via: fe80::1
-        metric: 100
-
-    - apiVersion: firewall.routerd.net/v1alpha1
-      kind: FirewallZone
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSResolver
       metadata:
-        name: lan
+        name: lan-resolver
       spec:
-        role: trust
-        interfaces:
-          - lan
-
+        listen:
+          - name: lan
+            addresses: [192.168.10.3]
+            port: 53
+            sources: [default]
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSForwarder
+      metadata:
+        name: default
+      spec:
+        resolver: DNSResolver/lan-resolver
+        match: ["."]
+        upstreams: [DNSUpstream/cloudflare]
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSUpstream
+      metadata:
+        name: cloudflare
+      spec:
+        protocol: udp
+        address: 1.1.1.1
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DHCPv4Server
+      metadata:
+        name: lan-dhcpv4
+      spec:
+        managed: true
+        interface: lan
+        rangeStart: 192.168.10.100
+        rangeEnd: 192.168.10.199
+        leaseTime: 12h
+        gatewayFrom:
+          resource: IPv4StaticAddress/lan-ipv4
+          field: address
+        dnsServerFrom:
+          - resource: IPv4StaticAddress/lan-ipv4
+            field: address
     - apiVersion: firewall.routerd.net/v1alpha1
       kind: FirewallZone
       metadata:
         name: wan
       spec:
         role: untrust
-        interfaces:
-          - wan
-          - transix
-
+        interfaces: [wan, transix]
     - apiVersion: firewall.routerd.net/v1alpha1
       kind: FirewallZone
       metadata:
-        name: mgmt
+        name: lan
       spec:
-        role: mgmt
-        interfaces:
-          - mgmt
-
+        role: trust
+        interfaces: [lan]
     - apiVersion: firewall.routerd.net/v1alpha1
       kind: FirewallPolicy
       metadata:
-        name: default-home
+        name: default
       spec:
         logDeny: true
-        sameRoleAccept: true
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: IPv6DelegatedAddress
-      metadata:
-        name: lan-ipv6-pd-address
-      spec:
-        prefixDelegation: wan-pd
-        interface: lan
-        subnetID: "0"
-        addressSuffix: "::3"
-        sendRA: false
-        announce: true
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: DHCPv6Server
-      metadata:
-        name: lan-dhcpv6
-      spec:
-        server: dnsmasq
-        managed: true
-        listenInterfaces:
-          - lan
-        delegatedAddress: lan-ipv6-pd-address
-        mode: stateless
-        leaseTime: 12h
-        defaultRoute: true
-        dnsSource: self
-        selfAddressPolicy: lan-ipv6-self
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: SelfAddressPolicy
-      metadata:
-        name: lan-ipv6-self
-      spec:
-        addressFamily: ipv6
-        candidates:
-          - source: delegatedAddress
-            delegatedAddress: lan-ipv6-pd-address
-            addressSuffix: "::3"
-          - source: interfaceAddress
-            interface: lan
-            matchSuffix: "::3"
-          - source: interfaceAddress
-            interface: lan
-            ordinal: 1
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: DHCPv4Server
-      metadata:
-        name: lan-dhcpv4
-      spec:
-        server: dnsmasq
-        managed: true
-        listenInterfaces:
-          - lan
-        dns:
-          enabled: true
-          upstreamSource: dhcpv4
-          upstreamInterface: wan
-          cacheSize: 1000
-        interface: lan
-        rangeStart: 192.168.10.100
-        rangeEnd: 192.168.10.199
-        leaseTime: 12h
-        routerSource: interfaceAddress
-        dnsSource: self
-        authoritative: true
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: DHCPv4Reservation
-      metadata:
-        name: printer
-      spec:
-        server: lan-dhcpv4
-        macAddress: "02:00:00:00:01:50"
-        ipAddress: 192.168.10.150
-        hostname: printer
-        leaseTime: infinite
