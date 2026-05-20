@@ -705,6 +705,64 @@ func TestReconcileMarksPendingWhenFRRReloadFails(t *testing.T) {
 	}
 }
 
+func TestReconcileRetriesFRRReloadWhenLockIsBusy(t *testing.T) {
+	configPath := t.TempDir() + "/routerd.conf"
+	runningConfig := bgpRunningConfig(t, bgpRouter())
+	var calls []string
+	reloadAttempts := 0
+	controller := Controller{
+		Router:      bgpRouter(),
+		Store:       mapStore{},
+		ConfigPath:  configPath,
+		DaemonsPath: readyFRRDaemons(t),
+		VTYSH:       "vtysh",
+		FRRReload:   "frr-reload.py",
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			calls = append(calls, name+" "+strings.Join(args, " "))
+			switch {
+			case name == "ss" && strings.Join(args, " ") == "-ltn":
+				return []byte(ssBGPListenOutput), nil
+			case name == "vtysh" && reflect.DeepEqual(args[:2], []string{"-C", "-f"}):
+				return []byte("ok"), nil
+			case name == "frr-reload.py":
+				reloadAttempts++
+				if reloadAttempts < 3 {
+					return []byte("flock failed: resource temporarily unavailable"), errors.New("flock failed")
+				}
+				return []byte("reloaded"), nil
+			case name == "vtysh" && strings.Join(args, " ") == "-c show running-config":
+				return runningConfig, nil
+			case name == "vtysh" && strings.Join(args, " ") == "-c show bgp summary json":
+				return []byte(`{"ipv4Unicast":{"peers":{"10.0.0.21":{"remoteAs":64513,"state":"Established","pfxRcd":1}}}}`), nil
+			case name == "vtysh" && strings.Join(args, " ") == "-c show bgp ipv4 unicast json":
+				return []byte(`{"routes":{}}`), nil
+			default:
+				t.Fatalf("unexpected command: %s %v", name, args)
+				return nil, nil
+			}
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	want := []string{
+		"ss -ltn",
+		"vtysh -C -f " + configPath,
+		"frr-reload.py --reload --stdout " + configPath,
+		"frr-reload.py --reload --stdout " + configPath,
+		"frr-reload.py --reload --stdout " + configPath,
+		"vtysh -c show running-config",
+		"vtysh -c show bgp summary json",
+		"vtysh -c show bgp ipv4 unicast json",
+	}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("calls = %#v, want %#v", calls, want)
+	}
+	if reloadAttempts != 3 {
+		t.Fatalf("reload attempts = %d, want 3", reloadAttempts)
+	}
+}
+
 func TestReconcileMarksPendingWhenFRRReloadDoesNotChangeRunningConfig(t *testing.T) {
 	configPath := t.TempDir() + "/routerd.conf"
 	var calls []string

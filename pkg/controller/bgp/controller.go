@@ -160,8 +160,10 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 			}
 			return fmt.Errorf("%s -C -f %s: %w: %s", vtysh, path, err, strings.TrimSpace(string(out)))
 		}
-		reload := firstNonEmpty(c.FRRReload, defaultFRRReload())
-		if out, err := c.runWithTimeout(ctx, frrReloadTimeout, reload, "--reload", "--stdout", path); err != nil {
+		reloadCtx, cancel := context.WithTimeout(ctx, frrReloadTimeout)
+		out, err = c.reloadFRRConfig(reloadCtx, path)
+		cancel()
+		if err != nil {
 			return c.saveFRRConfigPending(path, reloadNeeded, "FRRReloadFailed", out, err, map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged, "daemonRestartNeeded": daemonRestartNeeded})
 		}
 		verifyCtx, cancel := context.WithTimeout(ctx, frrValidateCmdTimeout)
@@ -309,6 +311,45 @@ func (c *Controller) validateFRRConfig(ctx context.Context, path string, retry b
 		}
 	}
 	return lastOut, lastErr
+}
+
+func (c *Controller) reloadFRRConfig(ctx context.Context, path string) ([]byte, error) {
+	reload := firstNonEmpty(c.FRRReload, defaultFRRReload())
+	var lastOut []byte
+	for {
+		out, err := c.run(ctx, reload, "--reload", "--stdout", path)
+		if err == nil {
+			return out, nil
+		}
+		lastOut = out
+		if !isTransientFRRReloadError(out, err) {
+			return out, err
+		}
+		select {
+		case <-ctx.Done():
+			return lastOut, ctx.Err()
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+}
+
+func isTransientFRRReloadError(out []byte, err error) bool {
+	message := strings.ToLower(strings.TrimSpace(string(out)))
+	if err != nil {
+		message += " " + strings.ToLower(err.Error())
+	}
+	for _, needle := range []string{
+		"flock",
+		"lock failed",
+		"could not acquire",
+		"resource temporarily unavailable",
+		"another frr-reload",
+	} {
+		if strings.Contains(message, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Controller) frrDaemonChangeCommands() []servicemgr.Command {
