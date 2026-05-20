@@ -10,6 +10,24 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 
 ## Unreleased
 
+### 修正
+
+- FRR/keepalived 統合を含む場合だけ、生成される `routerd.service` に
+  `CAP_DAC_OVERRIDE` を追加しました。Ubuntu FRR では `/run/frr` が
+  `frr:frr` かつ mode `0755` になることがあり、`frrvty` group だけでは
+  `frr-reload.py` が `/var/run/frr/reload-*.txt` を作成できないためです。
+- `frr-reload.py` の permission failure を generic な `FRRReloadFailed` ではなく
+  `FRRReloadPermissionDenied` として分類するようにしました。
+- `WireGuardInterface` / `WireGuardPeer` が config から消えた場合、routerd-managed
+  な古い WireGuard interface と peer status を削除するようにしました。
+  resource 削除後に state DB を手動編集する必要をなくします。
+
+### 変更
+
+- Kubernetes BGP example の import prefix を MetalLB LoadBalancer pool の
+  `10.250.0.0/24` に更新し、home-router sample は 2 台の k8s route node と
+  個別に peer する構成へ調整しました。
+
 ## v20260520.2227
 
 ### 修正
