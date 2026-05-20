@@ -10,6 +10,8 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 
 ## Unreleased
 
+## v20260520.2222
+
 ### 追加
 
 - BGP prefix status と `routerctl show bgp` に route selection diagnostics を

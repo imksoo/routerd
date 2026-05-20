@@ -10,6 +10,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260520.2222
+
 ### Added
 
 - Added BGP route-selection diagnostics to observed prefix status and

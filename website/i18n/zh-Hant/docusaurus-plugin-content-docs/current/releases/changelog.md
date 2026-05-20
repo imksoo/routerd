@@ -10,6 +10,8 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 
 ## Unreleased
 
+## v20260520.2222
+
 ### 新增
 
 - 在 BGP prefix status 與 `routerctl show bgp` 加入 route selection diagnostics；
