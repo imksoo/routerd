@@ -10,6 +10,12 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 
 ## Unreleased
 
+### 新增
+
+- 新增 `NTPServer.spec.allowCIDRFrom`。LAN NTP client 的允許範圍現在可從
+  `IPv6DelegatedAddress/<name>.address` 或
+  `DHCPv6PrefixDelegation/<name>.currentPrefix` 等動態 status field 派生。
+
 ## v20260521.0802
 
 ### 新增

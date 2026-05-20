@@ -10,6 +10,13 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 
 ## Unreleased
 
+### 追加
+
+- `NTPServer.spec.allowCIDRFrom` を追加しました。LAN NTP client の許可範囲を
+  `IPv6DelegatedAddress/<name>.address` や
+  `DHCPv6PrefixDelegation/<name>.currentPrefix` などの動的な status field から
+  導出できます。
+
 ## v20260521.0802
 
 ### 追加

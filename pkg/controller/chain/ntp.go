@@ -5,6 +5,7 @@ package chain
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"net/netip"
 	"strings"
 
@@ -452,7 +453,22 @@ func (c NTPServerController) Reconcile(ctx context.Context) error {
 			}
 		}
 		configPath := c.serverConfigPath(provider)
-		data := renderNTPServerConfig(provider, servers, spec.AllowCIDRs, listenAddresses)
+		allowCIDRs, allowPendingReason, allowPendingError := resolveNTPAllowCIDRs(c.Store, spec.AllowCIDRs, spec.AllowCIDRFrom)
+		if allowPendingReason != "" {
+			if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "NTPServer", resource.Metadata.Name, map[string]any{
+				"phase":      "Pending",
+				"reason":     allowPendingReason,
+				"error":      allowPendingError,
+				"provider":   provider,
+				"source":     source,
+				"allowCIDRs": allowCIDRs,
+				"dryRun":     c.DryRun,
+			}); err != nil {
+				return err
+			}
+			continue
+		}
+		data := renderNTPServerConfig(provider, servers, allowCIDRs, listenAddresses)
 		changed, err := writeFileIfChanged(configPath, data, 0o644, c.DryRun)
 		if err != nil {
 			if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, "NTPServer", resource.Metadata.Name, map[string]any{
@@ -486,7 +502,7 @@ func (c NTPServerController) Reconcile(ctx context.Context) error {
 			"source":          source,
 			"servers":         servers,
 			"listenAddresses": ntpListenAddresses(listenAddresses),
-			"allowCIDRs":      spec.AllowCIDRs,
+			"allowCIDRs":      allowCIDRs,
 			"configPath":      configPath,
 			"changed":         changed,
 			"dryRun":          c.DryRun,
@@ -583,6 +599,47 @@ func resolveNTPServers(store Store, source string, servers []string, serverFrom 
 		}
 	}
 	return nil, source
+}
+
+func resolveNTPAllowCIDRs(store Store, static []string, sources []api.StatusValueSourceSpec) ([]string, string, string) {
+	out := compactNTPList(static)
+	for _, source := range sources {
+		values := resourcequery.Values(store, source)
+		if len(values) == 0 {
+			if source.Optional {
+				continue
+			}
+			return out, "AllowCIDRFromPending", fmt.Sprintf("%s.%s is unresolved", source.Resource, firstNonEmpty(source.Field, "phase"))
+		}
+		for _, value := range values {
+			for _, field := range splitNTPServerValue(value) {
+				cidr, err := normalizeNTPAllowCIDR(field)
+				if err != nil {
+					return out, "AllowCIDRFromInvalid", fmt.Sprintf("%s.%s produced %q: %v", source.Resource, firstNonEmpty(source.Field, "phase"), field, err)
+				}
+				out = append(out, cidr)
+			}
+		}
+	}
+	return compactNTPList(out), "", ""
+}
+
+func normalizeNTPAllowCIDR(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", fmt.Errorf("must not be empty")
+	}
+	if !strings.Contains(value, "/") {
+		if _, err := netip.ParseAddr(value); err == nil {
+			return "", fmt.Errorf("must be a CIDR prefix, not a bare address")
+		}
+		return "", fmt.Errorf("must be a CIDR prefix")
+	}
+	prefix, err := netip.ParsePrefix(value)
+	if err != nil {
+		return "", fmt.Errorf("must be a valid CIDR prefix: %w", err)
+	}
+	return prefix.Masked().String(), nil
 }
 
 func renderNTPServerConfig(provider string, servers, allowCIDRs, listenAddresses []string) []byte {

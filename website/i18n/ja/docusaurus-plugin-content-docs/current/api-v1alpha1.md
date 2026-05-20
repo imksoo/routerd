@@ -37,7 +37,7 @@ spec:
 | `routerd.net/v1alpha1` | `Router` |
 | `net.routerd.net/v1alpha1` | インターフェース、再利用可能な `IPAddressSet`、DHCP、DNS、経路、トンネル、VIP、BGP、イベント、通信フローログ |
 | `firewall.routerd.net/v1alpha1` | `FirewallZone`, `FirewallPolicy`, `FirewallRule`, `FirewallEventLog`, `ClientPolicy`, `PortForward`, `IngressService`, `LocalServiceRedirect` |
-| `system.routerd.net/v1alpha1` | `Hostname`, `Sysctl`, `SysctlProfile`, `Package`, `NTPClient`, `LogSink`, `ObservabilityPipeline`, `RouterdCluster`, `LogRetention`, `WebConsole` |
+| `system.routerd.net/v1alpha1` | `Hostname`, `Sysctl`, `SysctlProfile`, `Package`, `NTPClient`, `NTPServer`, `LogSink`, `ObservabilityPipeline`, `RouterdCluster`, `LogRetention`, `WebConsole` |
 | `plugin.routerd.net/v1alpha1` | プラグインマニフェスト |
 
 ## システム準備
@@ -49,6 +49,7 @@ spec:
 | `SysctlProfile` | ルーター向け sysctl 推奨値を補う narrow escape hatch です。通常の router sysctl は自動導出されます。 |
 | `Hostname` | ホスト名を設定します。 |
 | `NTPClient` | OS の NTP クライアントを有効にします。DHCPv4 / DHCPv6 の状態から時刻サーバーを導出し、空なら public NTP サーバーへ戻せます。 |
+| `NTPServer` | LAN 向けのローカル NTP サーバーを動かします。クライアント許可範囲は静的な `allowCIDRs` に加えて、`allowCIDRFrom` で `IPv6DelegatedAddress/<name>.address` や `DHCPv6PrefixDelegation/<name>.currentPrefix` などの status field から導出できます。 |
 | `LogSink` | log event を syslog、OTLP、webhook、file、journald へ転送します。 |
 | `ObservabilityPipeline` | OTLP environment と、stdout / syslog / Loki への routerd event forwarding を設定します。 |
 | `RouterdCluster` | file lease により leader だけが host configuration を変更し、standby は status 観測に回ります。 |
@@ -499,7 +500,7 @@ validator がエラーにします。
 | `LogSink` | `phase` (string), `type` (string) |
 | `NAT44Rule` | `dryRun` (bool), `egressInterface` (string), `phase` (string), `snatAddress` (string) |
 | `NTPClient` | `phase` (string), `servers` (stringList), `source` (string), `updatedAt` (timestamp) |
-| `NTPServer` | `listenAddresses` (stringList), `phase` (string), `servers` (stringList), `source` (string), `updatedAt` (timestamp) |
+| `NTPServer` | `allowCIDRs` (stringList), `listenAddresses` (stringList), `phase` (string), `servers` (stringList), `source` (string), `updatedAt` (timestamp) |
 | `ObservabilityPipeline` | `phase` (string), `signals` (stringList) |
 | `PPPoESession` | `connectedAt` (timestamp), `currentAddress` (string), `device` (string), `dnsServers` (stringList), `dryRun` (bool), `gateway` (string), `interface` (string), `peerAddress` (string), `phase` (string) |
 | `Package` | `dryRun` (bool), `packages` (stringList), `phase` (string) |

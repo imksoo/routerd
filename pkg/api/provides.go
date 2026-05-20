@@ -138,7 +138,7 @@ func resourceProvidesTable() map[string][]ProvidedFieldSpec {
 		"LogSink":                 withCommon(s("type", "Sink type")),
 		"NAT44Rule":               withCommon(s("egressInterface", "Resolved egress interface"), s("snatAddress", "Resolved SNAT address"), b("dryRun", "Dry-run status")),
 		"NTPClient":               withCommon(ss("servers", "Configured upstream servers"), s("source", "Server source"), t("updatedAt", "Update time")),
-		"NTPServer":               withCommon(ss("servers", "Configured upstream servers"), ss("listenAddresses", "Resolved listen addresses"), s("source", "Server source"), t("updatedAt", "Update time")),
+		"NTPServer":               withCommon(ss("servers", "Configured upstream servers"), ss("listenAddresses", "Resolved listen addresses"), ss("allowCIDRs", "Resolved client allow CIDRs"), s("source", "Server source"), t("updatedAt", "Update time")),
 		"ObservabilityPipeline":   withCommon(ss("signals", "Exported signals")),
 		"PPPoESession":            withCommon(s("interface", "Logical interface"), s("device", "PPP device"), s("currentAddress", "Current IPv4 address"), s("peerAddress", "PPP peer address"), s("gateway", "PPP gateway"), ss("dnsServers", "DNS servers"), t("connectedAt", "Connection time"), b("dryRun", "Dry-run status")),
 		"Package":                 withCommon(ss("packages", "Package names"), b("dryRun", "Dry-run status")),

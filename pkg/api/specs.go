@@ -257,6 +257,7 @@ type NTPServerSpec struct {
 	ListenAddresses   []string                `yaml:"listenAddresses,omitempty" json:"listenAddresses,omitempty"`
 	ListenAddressFrom []StatusValueSourceSpec `yaml:"listenAddressFrom,omitempty" json:"listenAddressFrom,omitempty"`
 	AllowCIDRs        []string                `yaml:"allowCIDRs,omitempty" json:"allowCIDRs,omitempty"`
+	AllowCIDRFrom     []StatusValueSourceSpec `yaml:"allowCIDRFrom,omitempty" json:"allowCIDRFrom,omitempty"`
 	Servers           []string                `yaml:"servers,omitempty" json:"servers,omitempty"`
 	ServerFrom        []StatusValueSourceSpec `yaml:"serverFrom,omitempty" json:"serverFrom,omitempty"`
 	FallbackServers   []string                `yaml:"fallbackServers,omitempty" json:"fallbackServers,omitempty"`

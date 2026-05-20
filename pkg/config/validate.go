@@ -1233,7 +1233,10 @@ func validateResource(res api.Resource, targetOS platform.OS) error {
 				return fmt.Errorf("%s spec.allowCIDRs[%d] must not be empty", res.ID(), i)
 			}
 		}
-		for i, source := range append(append([]api.StatusValueSourceSpec{}, spec.ServerFrom...), spec.ListenAddressFrom...) {
+		sources := append([]api.StatusValueSourceSpec{}, spec.ServerFrom...)
+		sources = append(sources, spec.ListenAddressFrom...)
+		sources = append(sources, spec.AllowCIDRFrom...)
+		for i, source := range sources {
 			if strings.TrimSpace(source.Resource) == "" {
 				return fmt.Errorf("%s source reference %d resource is required", res.ID(), i)
 			}

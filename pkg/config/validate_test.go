@@ -173,6 +173,51 @@ func TestValidateRejectsStatusReferenceFieldOutsideProvidesContract(t *testing.T
 	}
 }
 
+func TestValidateAcceptsNTPServerAllowCIDRFromProvidesContract(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "wan"},
+				Spec:     api.InterfaceSpec{IfName: "ens18"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "lan"},
+				Spec:     api.InterfaceSpec{IfName: "ens19"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"},
+				Metadata: api.ObjectMeta{Name: "wan-pd"},
+				Spec:     api.DHCPv6PrefixDelegationSpec{Interface: "wan"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"},
+				Metadata: api.ObjectMeta{Name: "lan-base"},
+				Spec: api.IPv6DelegatedAddressSpec{
+					PrefixDelegation: "wan-pd",
+					Interface:        "lan",
+					AddressSuffix:    "::1",
+				},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "NTPServer"},
+				Metadata: api.ObjectMeta{Name: "lan-time"},
+				Spec: api.NTPServerSpec{
+					Managed:       true,
+					Servers:       []string{"ntp.example.net"},
+					AllowCIDRFrom: []api.StatusValueSourceSpec{{Resource: "IPv6DelegatedAddress/lan-base", Field: "address"}},
+				},
+			},
+		}},
+	}
+	if err := Validate(router); err != nil {
+		t.Fatalf("validate allowCIDRFrom: %v", err)
+	}
+}
+
 func TestValidateExampleStatusReferencesAgainstProvides(t *testing.T) {
 	entries, err := os.ReadDir("../../examples")
 	if err != nil {
@@ -227,6 +272,7 @@ func referenceProviderRows() []referenceProviderRow {
 		{Kind: "IngressService", Field: "activeBackends", Type: api.ProvidesTypeObjectList},
 		{Kind: "IPAddressSet", Field: "addresses", Type: api.ProvidesTypeStringList},
 		{Kind: "NTPClient", Field: "servers", Type: api.ProvidesTypeStringList},
+		{Kind: "NTPServer", Field: "allowCIDRs", Type: api.ProvidesTypeStringList},
 		{Kind: "NTPServer", Field: "listenAddresses", Type: api.ProvidesTypeStringList},
 		{Kind: "PPPoESession", Field: "interface", Type: api.ProvidesTypeString},
 		{Kind: "PPPoESession", Field: "device", Type: api.ProvidesTypeString},
