@@ -1,6 +1,6 @@
 ### firewall-holes.txt
-lan-dhcpv4-dhcpv4-server-lan from=lan to=self ifnames=ens19 proto=udp port=67 action=accept direction= comment=net.routerd.net/v1alpha1/DHCPv4Server/lan-dhcpv4
-lan-ra-ra from=self to=lan ifnames=ens19 proto=icmpv6 port=0 action=accept direction= comment=net.routerd.net/v1alpha1/IPv6RouterAdvertisement/lan-ra
+lan-dhcpv4-server-lan from=lan to=self ifnames=ens19 proto=udp port=67 action=accept direction= comment=net.routerd.net/v1alpha1/DHCPv4Server/lan
+lan-ra from=self to=lan ifnames=ens19 proto=icmpv6 port=0 action=accept direction= comment=net.routerd.net/v1alpha1/IPv6RouterAdvertisement/lan
 transix-dslite-ipip from=self to=wan ifnames=ens18 proto=ipip port=0 action=accept direction= comment=net.routerd.net/v1alpha1/DSLiteTunnel/transix
 wan-pd-dhcpv6-client from=wan to=self ifnames=ens18 proto=udp port=546 action=accept direction= comment=net.routerd.net/v1alpha1/DHCPv6PrefixDelegation/wan-pd
 ### routerd-generated.nix
@@ -17,7 +17,7 @@ wan-pd-dhcpv6-client from=wan to=self ifnames=ens18 proto=udp port=546 action=ac
     matchConfig.Name = "ens18";
     networkConfig = {
       DHCP = "no";
-      IPv6AcceptRA = false;
+      LinkLocalAddressing = "no";
     };
     linkConfig.RequiredForOnline = "no";
   };
@@ -30,7 +30,6 @@ wan-pd-dhcpv6-client from=wan to=self ifnames=ens18 proto=udp port=546 action=ac
     address = [
       "192.168.10.1/24"
     ];
-    linkConfig.RequiredForOnline = "routable";
   };
   services.resolved.enable = true;
   services.resolved.extraConfig = ''
@@ -115,8 +114,8 @@ wan-pd-dhcpv6-client from=wan to=self ifnames=ens18 proto=udp port=546 action=ac
       ];
     };
   };
-  systemd.services."routerd-dns-resolver@lan-resolver" = {
-    description = "routerd DNS resolver lan-resolver";
+  systemd.services."routerd-dns-resolver@lan" = {
+    description = "routerd DNS resolver lan";
     wantedBy = [ "multi-user.target" ];
     after = [ "network-online.target" ];
     wants = [ "network-online.target" ];
@@ -125,14 +124,14 @@ wan-pd-dhcpv6-client from=wan to=self ifnames=ens18 proto=udp port=546 action=ac
         "/usr/local/sbin/routerd-dns-resolver"
         "daemon"
         "--resource"
-        "lan-resolver"
+        "lan"
         "--config-file"
-        "/var/lib/routerd/dns-resolver/lan-resolver/config.json"
+        "/var/lib/routerd/dns-resolver/lan/config.json"
       ];
       Restart = "always";
       RestartSec = "5s";
       RuntimeDirectory = [ "routerd/dns-resolver" ];
-      StateDirectory = [ "routerd/dns-resolver" "routerd/dns-resolver/lan-resolver" ];
+      StateDirectory = [ "routerd/dns-resolver" "routerd/dns-resolver/lan" ];
       LogsDirectory = [ "routerd" ];
       ReadWritePaths = [ "/run/routerd" "/var/lib/routerd" "/var/log/routerd" ];
       AmbientCapabilities = [ "CAP_NET_BIND_SERVICE" ];

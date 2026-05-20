@@ -1,8 +1,7 @@
 ### firewall-holes.txt
 lan-dhcpv4-dhcpv4-server-lan from=lan to=self ifnames=ens19 proto=udp port=67 action=accept direction= comment=net.routerd.net/v1alpha1/DHCPv4Server/lan-dhcpv4
-lan-dhcpv6-dhcpv6-server-lan from=lan to=self ifnames=ens19 proto=udp port=547 action=accept direction= comment=net.routerd.net/v1alpha1/DHCPv6Server/lan-dhcpv6
-mgmt-dhcpv4-dhcpv4-client from=mgmt to=self ifnames=ens20 proto=udp port=68 action=accept direction= comment=net.routerd.net/v1alpha1/DHCPv4Client/mgmt-dhcpv4
-transix-dslite-ipip from=self to=wan ifnames=ens18 proto=ipip port=0 action=accept direction= comment=net.routerd.net/v1alpha1/DSLiteTunnel/transix
+lan-resolver-dns-tcp-lan from=lan to=self ifnames= proto=tcp port=53 action=accept direction= comment=net.routerd.net/v1alpha1/DNSResolver/lan-resolver
+lan-resolver-dns-udp-lan from=lan to=self ifnames= proto=udp port=53 action=accept direction= comment=net.routerd.net/v1alpha1/DNSResolver/lan-resolver
 wan-dhcpv4-dhcpv4-client from=wan to=self ifnames=ens18 proto=udp port=68 action=accept direction= comment=net.routerd.net/v1alpha1/DHCPv4Client/wan-dhcpv4
 wan-pd-dhcpv6-client from=wan to=self ifnames=ens18 proto=udp port=546 action=accept direction= comment=net.routerd.net/v1alpha1/DHCPv6PrefixDelegation/wan-pd
 ### routerd-generated.nix
@@ -10,24 +9,28 @@ wan-pd-dhcpv6-client from=wan to=self ifnames=ens18 proto=udp port=546 action=ac
 { config, lib, pkgs, ... }:
 
 {
-  networking.hostName = "router";
-  networking.domain = "example";
   networking.useDHCP = false;
   networking.useNetworkd = true;
   networking.firewall.checkReversePath = false;
   networking.nftables.enable = true;
   systemd.network.enable = true;
+  systemd.network.networks."10-netplan-ds-transix" = {
+    matchConfig.Name = "ds-transix";
+    networkConfig = {
+      LinkLocalAddressing = "no";
+    };
+    linkConfig.RequiredForOnline = "no";
+  };
   systemd.network.networks."10-netplan-ens18" = {
     matchConfig.Name = "ens18";
     networkConfig = {
       DHCP = "no";
-      IPv6AcceptRA = false;
+      LinkLocalAddressing = "no";
     };
     routes = [
       { routeConfig = {
-        Destination = "2001:db8:100::/64";
-        Gateway = "fe80::1";
-        Metric = 100;
+        Destination = "192.0.2.0/24";
+        Gateway = "192.168.1.1";
       }; }
     ];
     linkConfig.RequiredForOnline = "no";
@@ -42,19 +45,11 @@ wan-pd-dhcpv6-client from=wan to=self ifnames=ens18 proto=udp port=546 action=ac
     ];
     routes = [
       { routeConfig = {
-        Destination = "198.51.100.0/24";
-        Gateway = "192.168.10.254";
-        Metric = 100;
+        Destination = "2001:db8:10::/64";
+        Gateway = "fe80::1";
       }; }
     ];
     linkConfig.RequiredForOnline = "routable";
-  };
-  systemd.network.networks."10-netplan-ens20" = {
-    matchConfig.Name = "ens20";
-    networkConfig = {
-      LinkLocalAddressing = "no";
-    };
-    linkConfig.RequiredForOnline = "no";
   };
   services.timesyncd.enable = true;
   services.timesyncd.servers = [ "pool.ntp.org" ];
@@ -139,36 +134,6 @@ wan-pd-dhcpv6-client from=wan to=self ifnames=ens18 proto=udp port=546 action=ac
         "CAP_NET_ADMIN"
         "CAP_NET_BIND_SERVICE"
       ];
-    };
-  };
-  systemd.services."routerd-dhcpv4-client@mgmt-dhcpv4" = {
-    description = "routerd DHCPv4 client mgmt-dhcpv4";
-    wantedBy = [ "multi-user.target" ];
-    after = [ "network-online.target" ];
-    wants = [ "network-online.target" ];
-    serviceConfig = {
-      ExecStart = lib.concatStringsSep " " [
-        "/usr/local/sbin/routerd-dhcpv4-client"
-        "daemon"
-        "--resource"
-        "mgmt-dhcpv4"
-        "--interface"
-        "ens20"
-      ];
-      Restart = "always";
-      RestartSec = "5s";
-      RuntimeDirectory = [ "routerd/dhcpv4-client" ];
-      RuntimeDirectoryPreserve = "yes";
-      StateDirectory = [ "routerd/dhcpv4-client" ];
-      LogsDirectory = [ "routerd" ];
-      ReadWritePaths = [ "/run/routerd" "/var/lib/routerd" "/var/log/routerd" ];
-      AmbientCapabilities = [ "CAP_NET_RAW" "CAP_NET_ADMIN" "CAP_NET_BIND_SERVICE" ];
-      CapabilityBoundingSet = [ "CAP_NET_RAW" "CAP_NET_ADMIN" "CAP_NET_BIND_SERVICE" ];
-      RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" "AF_NETLINK" ];
-      ProtectSystem = "strict";
-      ProtectHome = "true";
-      NoNewPrivileges = true;
-      PrivateTmp = true;
     };
   };
   systemd.services."routerd-dhcpv4-client@wan-dhcpv4" = {

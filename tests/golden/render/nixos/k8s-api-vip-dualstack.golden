@@ -7,19 +7,11 @@
   networking.useNetworkd = true;
   networking.firewall.checkReversePath = false;
   systemd.network.enable = true;
-  systemd.network.networks."10-netplan-ens19" = {
-    matchConfig.Name = "ens19";
-    networkConfig = {
-      LinkLocalAddressing = "no";
-    };
-    linkConfig.RequiredForOnline = "no";
-  };
   systemd.network.networks."10-netplan-ens20" = {
     matchConfig.Name = "ens20";
     address = [
       "192.168.70.1/24"
     ];
-    linkConfig.RequiredForOnline = "routable";
   };
   services.resolved.enable = true;
   services.resolved.extraConfig = ''
@@ -47,8 +39,8 @@
     "net.ipv6.conf.default.forwarding" = 1;
     "net.ipv6.route.max_size" = 16384;
   };
-  systemd.services."routerd-dns-resolver@lan-resolver" = {
-    description = "routerd DNS resolver lan-resolver";
+  systemd.services."routerd-dns-resolver@lan" = {
+    description = "routerd DNS resolver lan";
     wantedBy = [ "multi-user.target" ];
     after = [ "network-online.target" ];
     wants = [ "network-online.target" ];
@@ -57,14 +49,14 @@
         "/usr/local/sbin/routerd-dns-resolver"
         "daemon"
         "--resource"
-        "lan-resolver"
+        "lan"
         "--config-file"
-        "/var/lib/routerd/dns-resolver/lan-resolver/config.json"
+        "/var/lib/routerd/dns-resolver/lan/config.json"
       ];
       Restart = "always";
       RestartSec = "5s";
       RuntimeDirectory = [ "routerd/dns-resolver" ];
-      StateDirectory = [ "routerd/dns-resolver" "routerd/dns-resolver/lan-resolver" ];
+      StateDirectory = [ "routerd/dns-resolver" "routerd/dns-resolver/lan" ];
       LogsDirectory = [ "routerd" ];
       ReadWritePaths = [ "/run/routerd" "/var/lib/routerd" "/var/log/routerd" ];
       AmbientCapabilities = [ "CAP_NET_BIND_SERVICE" ];

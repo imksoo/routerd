@@ -10,6 +10,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260520.1737
+
 ### Added
 
 - Added a FreeBSD CARP backend for `VirtualAddress` in `mode: vrrp`,

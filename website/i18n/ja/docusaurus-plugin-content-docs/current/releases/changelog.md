@@ -10,6 +10,8 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 
 ## Unreleased
 
+## v20260520.1737
+
 ### 追加
 
 - `mode: vrrp` の `VirtualAddress` に FreeBSD CARP backend を追加しました。
