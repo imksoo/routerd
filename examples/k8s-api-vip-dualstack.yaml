@@ -122,20 +122,45 @@ spec:
             sources:
               - local-zone
               - default
-        sources:
-          - name: local-zone
-            kind: zone
-            match:
-              - cluster.example
-            zoneRef:
-              - DNSZone/cluster-zone
-          - name: default
-            kind: upstream
-            match:
-              - "."
-            upstreams:
-              - udp://1.1.1.1:53
-              - udp://[2606:4700:4700::1111]:53
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSForwarder
+      metadata:
+        name: local-zone
+      spec:
+        resolver: DNSResolver/lan-resolver
+        match:
+          - cluster.example
+        zoneRefs:
+          - DNSZone/cluster-zone
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSForwarder
+      metadata:
+        name: default
+      spec:
+        resolver: DNSResolver/lan-resolver
+        match:
+          - "."
+        upstreams:
+          - DNSUpstream/cloudflare-udp-v4
+          - DNSUpstream/cloudflare-udp-v6
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSUpstream
+      metadata:
+        name: cloudflare-udp-v4
+      spec:
+        protocol: udp
+        address: 1.1.1.1
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSUpstream
+      metadata:
+        name: cloudflare-udp-v6
+      spec:
+        protocol: udp
+        address: 2606:4700:4700::1111
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: BGPRouter

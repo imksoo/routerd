@@ -133,6 +133,37 @@ spec:
 	}
 }
 
+func TestLoadRejectsDNSResolverInlineSources(t *testing.T) {
+	path := writeConfig(t, `
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: test
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSResolver
+      metadata:
+        name: lan
+      spec:
+        listen:
+          - addresses: [127.0.0.1]
+            port: 53
+        sources:
+          - name: default
+            kind: upstream
+            match: ["."]
+            upstreams: [udp://1.1.1.1:53]
+`)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected DNSResolver spec.sources to be rejected")
+	}
+	if !strings.Contains(err.Error(), "spec.sources") || !strings.Contains(err.Error(), "DNSForwarder") || !strings.Contains(err.Error(), "DNSUpstream") {
+		t.Fatalf("error = %v, want DNSForwarder/DNSUpstream migration guide", err)
+	}
+}
+
 func TestLoadRejectsUnknownResourceKind(t *testing.T) {
 	path := writeConfig(t, `
 apiVersion: routerd.net/v1alpha1

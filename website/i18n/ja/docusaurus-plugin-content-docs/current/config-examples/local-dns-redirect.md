@@ -34,7 +34,7 @@ flowchart LR
 | [2] | prerouting redirect rule が match する LAN interface。 | `LocalServiceRedirect/lan-local-services.spec.interface` |
 | [3] | redirect された port 53 traffic を受ける local resolver。 | `DNSResolver/lan-resolver` |
 | [4] | nftables set に展開される完全一致 FQDN。 | `IPAddressSet/public-dns` |
-| [5] | local resolver が実際に使う upstream resolver。 | `DNSResolver.spec.sources` |
+| [5] | local resolver が実際に使う upstream resolver。 | `DNSForwarder`, `DNSUpstream` |
 
 ## 要点
 

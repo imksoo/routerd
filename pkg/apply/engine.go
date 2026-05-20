@@ -122,6 +122,10 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 			e.observeDNSZone(res, includePlan, &rr)
 		case "DNSResolver":
 			e.observeDNSResolver(res, includePlan, &rr)
+		case "DNSForwarder":
+			e.observeDNSForwarder(res, includePlan, &rr)
+		case "DNSUpstream":
+			e.observeDNSUpstream(res, includePlan, &rr)
 		case "DHCPv4Relay":
 			e.observeDHCPv4Relay(res, aliases, includePlan, &rr)
 		case "DSLiteTunnel":
@@ -488,7 +492,38 @@ func (e *Engine) observeDNSResolver(res api.Resource, includePlan bool, rr *Reso
 	rr.Observed["listeners"] = fmt.Sprintf("%d", len(spec.Listen))
 	rr.Observed["sources"] = fmt.Sprintf("%d", len(spec.Sources))
 	if includePlan {
-		rr.Plan = append(rr.Plan, fmt.Sprintf("run routerd-dns-resolver for %d listen profiles and %d sources", len(spec.Listen), len(spec.Sources)))
+		rr.Plan = append(rr.Plan, fmt.Sprintf("run routerd-dns-resolver for %d listen profiles", len(spec.Listen)))
+	}
+}
+
+func (e *Engine) observeDNSForwarder(res api.Resource, includePlan bool, rr *ResourceResult) {
+	spec, err := res.DNSForwarderSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	rr.Observed["resolver"] = spec.Resolver
+	rr.Observed["matches"] = fmt.Sprintf("%d", len(spec.Match))
+	rr.Observed["upstreams"] = fmt.Sprintf("%d", len(spec.Upstreams))
+	rr.Observed["zones"] = fmt.Sprintf("%d", len(spec.ZoneRefs))
+	if includePlan {
+		rr.Plan = append(rr.Plan, fmt.Sprintf("attach DNS forwarder to %s", spec.Resolver))
+	}
+}
+
+func (e *Engine) observeDNSUpstream(res api.Resource, includePlan bool, rr *ResourceResult) {
+	spec, err := res.DNSUpstreamSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	rr.Observed["protocol"] = spec.Protocol
+	rr.Observed["address"] = spec.Address
+	rr.Observed["addressFrom"] = fmt.Sprintf("%d", len(spec.AddressFrom))
+	if includePlan {
+		rr.Plan = append(rr.Plan, fmt.Sprintf("provide DNS %s upstream", spec.Protocol))
 	}
 }
 

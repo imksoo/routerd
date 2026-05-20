@@ -198,7 +198,7 @@ Implemented:
 - dnsmasq lease persistence under `/var/db/routerd/dnsmasq`
 - dnsmasq config validation with `dnsmasq --test` before service restart
 - automatic pf holes for routerd-owned DHCP, DNS, RA, DHCPv6-PD, DS-Lite, WireGuard, and healthcheck traffic
-- DNS resolver daemon builds on FreeBSD; `viaInterface` can target `fib:<n>` for FIB-bound upstream routing
+- DNS resolver daemon builds on FreeBSD; `DNSUpstream.spec.sourceInterface` can target `fib:<n>` for FIB-bound upstream routing
 - cloud VPN `IPsecConnection` validates and renders strongSwan `swanctl` connection definitions; live cloud gateway validation remains deployment-specific
 - rc.d script generation, installation, and `service <name> onestart` activation from generated service artifacts
 - rc.d script generation for `routerd-healthcheck`

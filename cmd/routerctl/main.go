@@ -2293,6 +2293,8 @@ func canonicalShowKind(kind string) string {
 		"dnszone":                "DNSZone",
 		"dnsresolver":            "DNSResolver",
 		"dns":                    "DNSResolver",
+		"dnsforwarder":           "DNSForwarder",
+		"dnsupstream":            "DNSUpstream",
 		"pppoe":                  "PPPoESession",
 		"pppoesession":           "PPPoESession",
 		"pppoeclient":            "PPPoESession",

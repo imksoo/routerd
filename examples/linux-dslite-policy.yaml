@@ -203,41 +203,81 @@ spec:
         - local-zone
         - transix-aftr
         - default-upstream
-      sources:
-      - name: local-zone
-        kind: zone
-        match:
-        - lab.example
-        - 160.168.192.in-addr.arpa
-        zoneRef:
-        - DNSZone/lan-zone
-      - name: transix-aftr
-        kind: forward
-        match:
-        - transix.jp
-        upstreamFrom:
-        - resource: DHCPv6Information/wan-info
-          field: dnsServers
-      - name: default-upstream
-        kind: upstream
-        match:
-        - "."
-        upstreams:
-        - https://cloudflare-dns.com/dns-query
-        - tls://dns.google
-        - quic://dns.google
-        - udp://8.8.8.8:53
-        healthcheck:
-          interval: 15s
-          timeout: 3s
-          failThreshold: 3
-          passThreshold: 2
       cache:
         enabled: true
         maxEntries: 10000
         minTTL: 60s
         maxTTL: 24h
         negativeTTL: 30s
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: DNSForwarder
+    metadata:
+      name: local-zone
+    spec:
+      resolver: DNSResolver/lan-resolver
+      match:
+      - lab.example
+      - 160.168.192.in-addr.arpa
+      zoneRefs:
+      - DNSZone/lan-zone
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: DNSForwarder
+    metadata:
+      name: transix-aftr
+    spec:
+      resolver: DNSResolver/lan-resolver
+      match:
+      - transix.jp
+      upstreams:
+      - DNSUpstream/wan-dns
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: DNSUpstream
+    metadata:
+      name: wan-dns
+    spec:
+      protocol: udp
+      addressFrom:
+      - resource: DHCPv6Information/wan-info
+        field: dnsServers
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: DNSForwarder
+    metadata:
+      name: default-upstream
+    spec:
+      resolver: DNSResolver/lan-resolver
+      match:
+      - "."
+      upstreams:
+      - DNSUpstream/cloudflare-doh
+      - DNSUpstream/google-dot
+      - DNSUpstream/google-udp
+      healthcheck:
+        interval: 15s
+        timeout: 3s
+        failThreshold: 3
+        passThreshold: 2
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: DNSUpstream
+    metadata:
+      name: cloudflare-doh
+    spec:
+      protocol: doh
+      address: cloudflare-dns.com
+      path: /dns-query
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: DNSUpstream
+    metadata:
+      name: google-dot
+    spec:
+      protocol: dot
+      address: dns.google
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: DNSUpstream
+    metadata:
+      name: google-udp
+    spec:
+      protocol: udp
+      address: 8.8.8.8
   - apiVersion: net.routerd.net/v1alpha1
     kind: DSLiteTunnel
     metadata:

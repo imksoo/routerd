@@ -150,7 +150,7 @@ When one resource refers to the status of another, use a typed `*From` field ins
     port: 8080
 ```
 
-`addressFrom`, `ipv4From`, `ipv6From`, `upstreamFrom`, `prefixFrom`, `rdnssFrom`, and `gatewayFrom` follow the same shape. Dependencies (`dependsOn`) use the same mechanism.
+`addressFrom`, `ipv4From`, `ipv6From`, `prefixFrom`, `rdnssFrom`, and `gatewayFrom` follow the same shape. Dependencies (`dependsOn`) use the same mechanism.
 
 For details, see [resource model](./concepts/resource-model.md) and [state and ownership](./concepts/state-and-ownership.md).
 

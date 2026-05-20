@@ -44,7 +44,7 @@ Long-running protocol state lives in small managed daemons:
 - `routerd-dhcpv4-client` handles DHCPv4 WAN leases.
 - `routerd-pppoe-client` handles PPPoE sessions.
 - `routerd-healthcheck` runs TCP, DNS, HTTP, and ICMP probes.
-- `routerd-dns-resolver` answers DNS zones and forwards DoH, DoT, DoQ, and UDP
+- `routerd-dns-resolver` answers DNS zones and forwards DoH, DoT, TCP, and UDP
   upstreams.
 - `routerd-dhcp-event-relay` converts dnsmasq lease changes into routerd events.
 - `routerd-firewall-logger` imports firewall logs into routerd log storage.
@@ -62,7 +62,7 @@ The current implementation can manage:
 - DHCPv6 information request, AFTR DNS resolution, and DS-Lite
 - DHCPv4 WAN leases and DHCPv4 LAN scopes with reservations
 - DHCPv6 server modes and IPv6 Router Advertisement options
-- DNS zones, DHCP-derived records, conditional forwarding, DoH, DoT, DoQ,
+- DNS zones, DHCP-derived records, conditional forwarding, DoH, DoT, TCP DNS,
   UDP fallback, multiple listen profiles, and cache
 - NAT44, private-destination exclusions, IPv4 route policy, reverse-path
   filter settings, Path MTU policy, and TCP MSS clamping

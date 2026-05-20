@@ -4702,106 +4702,200 @@
                           }
                         },
                         "type": "object"
+                      }
+                    },
+                    "required": [
+                      "listen"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "net.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "DNSForwarder",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "dnssecValidate": {
+                        "type": "boolean"
                       },
-                      "sources": {
-                        "items": {
-                          "additionalProperties": false,
-                          "properties": {
-                            "bootstrapResolver": {
-                              "items": {
-                                "type": "string"
-                              },
-                              "type": "array"
-                            },
-                            "dnssecValidate": {
-                              "type": "boolean"
-                            },
-                            "healthcheck": {
-                              "additionalProperties": false,
-                              "properties": {
-                                "failThreshold": {
-                                  "minimum": 1,
-                                  "type": "integer"
-                                },
-                                "interval": {
-                                  "type": "string"
-                                },
-                                "passThreshold": {
-                                  "minimum": 1,
-                                  "type": "integer"
-                                },
-                                "timeout": {
-                                  "type": "string"
-                                }
-                              },
-                              "type": "object"
-                            },
-                            "kind": {
-                              "enum": [
-                                "zone",
-                                "forward",
-                                "upstream"
-                              ],
-                              "type": "string"
-                            },
-                            "match": {
-                              "items": {
-                                "type": "string"
-                              },
-                              "type": "array"
-                            },
-                            "name": {
-                              "type": "string"
-                            },
-                            "upstreamFrom": {
-                              "items": {
-                                "additionalProperties": false,
-                                "properties": {
-                                  "field": {
-                                    "type": "string"
-                                  },
-                                  "optional": {
-                                    "type": "boolean"
-                                  },
-                                  "resource": {
-                                    "type": "string"
-                                  }
-                                },
-                                "required": [
-                                  "resource"
-                                ],
-                                "type": "object"
-                              },
-                              "type": "array"
-                            },
-                            "upstreams": {
-                              "items": {
-                                "type": "string"
-                              },
-                              "type": "array"
-                            },
-                            "viaInterface": {
-                              "type": "string"
-                            },
-                            "zoneRef": {
-                              "items": {
-                                "type": "string"
-                              },
-                              "type": "array"
-                            }
+                      "healthcheck": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "failThreshold": {
+                            "minimum": 1,
+                            "type": "integer"
                           },
-                          "required": [
-                            "kind",
-                            "match"
-                          ],
-                          "type": "object"
+                          "interval": {
+                            "type": "string"
+                          },
+                          "passThreshold": {
+                            "minimum": 1,
+                            "type": "integer"
+                          },
+                          "timeout": {
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "match": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "resolver": {
+                        "type": "string"
+                      },
+                      "upstreams": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "zoneRefs": {
+                        "items": {
+                          "type": "string"
                         },
                         "type": "array"
                       }
                     },
                     "required": [
-                      "listen",
-                      "sources"
+                      "resolver",
+                      "match"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "net.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "DNSUpstream",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "address": {
+                        "type": "string"
+                      },
+                      "addressFrom": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "field": {
+                              "type": "string"
+                            },
+                            "optional": {
+                              "type": "boolean"
+                            },
+                            "resource": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "resource"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "bootstrap": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "path": {
+                        "type": "string"
+                      },
+                      "port": {
+                        "maximum": 65535,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "protocol": {
+                        "enum": [
+                          "udp",
+                          "tcp",
+                          "dot",
+                          "doh"
+                        ],
+                        "type": "string"
+                      },
+                      "sourceInterface": {
+                        "type": "string"
+                      },
+                      "tlsName": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "protocol"
                     ],
                     "type": "object"
                   },

@@ -117,7 +117,9 @@ DHCPv6-PD は `routerd-dhcpv6-client` が担当します。
 | `IPv6RouterAdvertisement` | RA、PIO、RDNSS、DNSSL、M/O フラグ、MTU、優先度、寿命を生成します。 |
 | `DHCPv6Server` | dnsmasq の DHCPv6/RA service です。`stateless`、`stateful`、`both`、`ra-only` を扱います。 |
 | `DNSZone` | ローカル権威ゾーンを表します。手動レコードと DHCP リース由来のレコードを扱います。 |
-| `DNSResolver` | `routerd-dns-resolver` が管理する DNS 待ち受け、応答元、上流、キャッシュを表します。 |
+| `DNSResolver` | `routerd-dns-resolver` の daemon instance、待ち受け、cache、metrics、query log を表します。 |
+| `DNSForwarder` | 1 つの resolver に対する DNS match rule です。`DNSZone` を応答するか、名前付き `DNSUpstream` へ転送します。 |
+| `DNSUpstream` | `udp`、`tcp`、`dot`、`doh` のいずれかで 1 つの上流 endpoint を表します。状態由来 address、bootstrap resolver、TLS 名、送信元 interface も指定できます。 |
 
 Android は DHCPv6 の DNS だけでは名前解決を完結できないため、IPv6 LAN では `IPv6RouterAdvertisement.spec.rdnss` を設定します。
 
@@ -126,13 +128,18 @@ DNS の待ち受けと応答は `DNSResolver` が担当します。
 LAN の DNS suffix は、`DHCPv4Server.spec.domainFrom`、
 `IPv6RouterAdvertisement.spec.dnsslFrom`、`DHCPv6Server.spec.domainSearchFrom`
 から `DNSZone/<name>.zone` を参照して、ローカルゾーンと一致させられます。
-`DNSResolver.spec.sources` では、ローカルゾーン、条件付き転送、既定の上流を優先順に並べます。
-`https://` は DoH、`tls://` は DoT、`quic://` は DoQ、`udp://` は平文 DNS です。
-`listen` は複数指定できます。
-待ち受けごとに利用する `sources` の部分集合を選べます。
-`sources[].viaInterface` は特定インターフェース経由の送信を指定します。
-`sources[].bootstrapResolver` は DoH や DoT の名前解決に使う補助 DNS サーバーです。
-DNSSEC は `DNSZone.spec.dnssec` と `DNSResolver.spec.sources[].dnssecValidate` で指定します。
+`DNSResolver.spec.listen[].sources` には、その listener が使う `DNSForwarder` 名を並べます。
+省略した listener は、その resolver を参照するすべての `DNSForwarder` を使います。
+user YAML の `DNSResolver.spec.sources` は受け付けません。旧 inline source は
+`DNSForwarder` と `DNSUpstream` に分割してください。
+
+`DNSForwarder.spec.match` には `home.example` や既定上流を表す `.` を指定します。
+`spec.zoneRefs` は local `DNSZone` を応答し、`spec.upstreams` は `DNSUpstream` へ転送します。
+DNSSEC validation は `DNSForwarder.spec.dnssecValidate` に書きます。
+
+`DNSUpstream.spec.protocol` は `udp`、`tcp`、`dot`、`doh` です。
+`addressFrom` では `DHCPv6Information/<name>.dnsServers` などから UDP 上流 address を導出できます。
+`sourceInterface` は Linux で送信先 interface を束縛し、`bootstrap` は DoH/DoT endpoint 名の解決に使う補助 resolver です。
 
 ## DS-Lite、経路、NAT
 

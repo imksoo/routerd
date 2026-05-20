@@ -63,7 +63,7 @@ Verify in this order:
 - The resolver listens on the expected addresses and ports (`ss -lnup`).
 - Local authoritative zones answer (manual records and DHCP-derived records from `DNSZone`).
 - Conditional forwarders reach their target upstream (`dig @<lan-ip> <forwarded-domain>`).
-- The default upstream answers via the expected protocol (DoH / DoT / DoQ / plain UDP). Inspect `/v1/status` for `sources[].upstreams`.
+- The default upstream answers via the expected protocol (DoH / DoT / TCP / plain UDP). Inspect `/v1/status` for the resolver status and upstream health.
 
 ## DS-Lite
 

@@ -92,4 +92,4 @@ dig @192.168.30.1 router.home.example
 
 - Change `home.example` to the local search domain you want to advertise.
 - Add `DHCPv4Reservation` entries for NAS, printers, and infrastructure hosts.
-- Add more `DNSResolver.spec.sources` when some domains need private upstreams.
+- Add `DNSForwarder` and `DNSUpstream` resources when some domains need private upstreams.

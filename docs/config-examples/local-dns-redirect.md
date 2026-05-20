@@ -34,7 +34,7 @@ flowchart LR
 | [2] | LAN interface where prerouting redirect rules match. | `LocalServiceRedirect/lan-local-services.spec.interface` |
 | [3] | Local resolver that receives redirected port 53 traffic. | `DNSResolver/lan-resolver` |
 | [4] | Exact FQDNs resolved into reusable nftables sets. | `IPAddressSet/public-dns` |
-| [5] | Real upstream resolvers used by the local resolver. | `DNSResolver.spec.sources` |
+| [5] | Real upstream resolvers used by the local resolver. | `DNSForwarder`, `DNSUpstream` |
 
 ## What this manages
 

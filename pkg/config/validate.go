@@ -56,6 +56,10 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 	bgpRouters := map[string]bool{}
 	vrfs := map[string]bool{}
 	zones := map[string]bool{}
+	dnsZones := map[string]bool{}
+	dnsResolvers := map[string]api.DNSResolverSpec{}
+	dnsForwarders := map[string]api.DNSForwarderSpec{}
+	dnsUpstreams := map[string]api.DNSUpstreamSpec{}
 	ipAddressSets := map[string]bool{}
 	udpListenPorts := map[int]string{}
 	staticByInterfaceAddress := map[string]string{}
@@ -190,6 +194,30 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "SelfAddressPolicy" {
 			selfAddressPolicies[res.Metadata.Name] = true
 		}
+		if res.APIVersion == api.NetAPIVersion && res.Kind == "DNSZone" {
+			dnsZones[res.Metadata.Name] = true
+		}
+		if res.APIVersion == api.NetAPIVersion && res.Kind == "DNSResolver" {
+			spec, err := res.DNSResolverSpec()
+			if err != nil {
+				return err
+			}
+			dnsResolvers[res.Metadata.Name] = spec
+		}
+		if res.APIVersion == api.NetAPIVersion && res.Kind == "DNSForwarder" {
+			spec, err := res.DNSForwarderSpec()
+			if err != nil {
+				return err
+			}
+			dnsForwarders[res.Metadata.Name] = spec
+		}
+		if res.APIVersion == api.NetAPIVersion && res.Kind == "DNSUpstream" {
+			spec, err := res.DNSUpstreamSpec()
+			if err != nil {
+				return err
+			}
+			dnsUpstreams[res.Metadata.Name] = spec
+		}
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "DSLiteTunnel" {
 			dsliteTunnels[res.Metadata.Name] = true
 		}
@@ -240,6 +268,9 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 		}
 	}
 	if err := validateListenPortCollisions(router); err != nil {
+		return err
+	}
+	if err := validateDNSForwarderGraph(router, dnsResolvers, dnsForwarders, dnsUpstreams, dnsZones, interfaces, wireGuardInterfaces); err != nil {
 		return err
 	}
 	if err := validateBGPRouterInstances(router, vrfs); err != nil {
@@ -497,17 +528,6 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 				}
 				if candidate.DelegatedAddress != "" && !delegatedAddresses[candidate.DelegatedAddress] {
 					return fmt.Errorf("%s spec.candidates[%d] references missing IPv6DelegatedAddress %q", res.ID(), i, candidate.DelegatedAddress)
-				}
-			}
-		}
-		if res.Kind == "DNSResolver" {
-			spec, err := res.DNSResolverSpec()
-			if err != nil {
-				return err
-			}
-			for i, source := range spec.Sources {
-				if source.ViaInterface != "" && !interfaces[refName(source.ViaInterface)] && !wireGuardInterfaces[refName(source.ViaInterface)] {
-					return fmt.Errorf("%s spec.sources[%d].viaInterface references missing Interface or WireGuardInterface %q", res.ID(), i, source.ViaInterface)
 				}
 			}
 		}
@@ -1984,18 +2004,52 @@ func validateResource(res api.Resource, targetOS platform.OS) error {
 		if err != nil {
 			return err
 		}
-		if err := dnsresolver.Validate(spec); err != nil {
+		if err := validateDNSResolverCore(spec); err != nil {
 			return fmt.Errorf("%s: %w", res.ID(), err)
 		}
 		for i, listen := range spec.Listen {
 			if len(listen.AddressSources) > 0 {
 				return fmt.Errorf("%s spec.listen[%d].addressSources was removed; use addressFrom", res.ID(), i)
 			}
-			for _, sourceName := range listen.Sources {
-				if !dnsSourceExists(spec.Sources, sourceName) {
-					return fmt.Errorf("%s spec.listen[%d].sources references missing source %q", res.ID(), i, sourceName)
-				}
+		}
+	case "DNSForwarder":
+		if res.APIVersion != api.NetAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
+		}
+		spec, err := res.DNSForwarderSpec()
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(spec.Resolver) == "" {
+			return fmt.Errorf("%s spec.resolver is required", res.ID())
+		}
+		if len(spec.Match) == 0 {
+			return fmt.Errorf("%s spec.match is required", res.ID())
+		}
+		if len(spec.ZoneRefs) > 0 && len(spec.Upstreams) > 0 {
+			return fmt.Errorf("%s spec.zoneRefs and spec.upstreams cannot both be set", res.ID())
+		}
+		if len(spec.ZoneRefs) == 0 && len(spec.Upstreams) == 0 {
+			return fmt.Errorf("%s requires either spec.zoneRefs or spec.upstreams", res.ID())
+		}
+		for i, match := range spec.Match {
+			if strings.TrimSpace(match) == "" {
+				return fmt.Errorf("%s spec.match[%d] is required", res.ID(), i)
 			}
+		}
+		if err := validateDNSResolverHealthcheck(res.ID(), spec.Healthcheck); err != nil {
+			return err
+		}
+	case "DNSUpstream":
+		if res.APIVersion != api.NetAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
+		}
+		spec, err := res.DNSUpstreamSpec()
+		if err != nil {
+			return err
+		}
+		if err := validateDNSUpstream(res.ID(), spec); err != nil {
+			return err
 		}
 	case "TrafficFlowLog":
 		if res.APIVersion != api.NetAPIVersion {
@@ -3947,17 +4001,106 @@ func refName(ref string) string {
 	return ref
 }
 
-func dnsSourceExists(sources []api.DNSResolverSourceSpec, name string) bool {
-	for i, source := range sources {
-		sourceName := source.Name
-		if sourceName == "" {
-			sourceName = fmt.Sprintf("source-%d", i)
+func validateDNSForwarderGraph(router *api.Router, resolvers map[string]api.DNSResolverSpec, forwarders map[string]api.DNSForwarderSpec, upstreams map[string]api.DNSUpstreamSpec, zones map[string]bool, interfaces map[string]bool, wireGuardInterfaces map[string]bool) error {
+	resolverForwarders := map[string]map[string]bool{}
+	for name, spec := range forwarders {
+		resolver := refName(spec.Resolver)
+		if _, ok := resolvers[resolver]; !ok {
+			return fmt.Errorf("DNSForwarder/%s references missing DNSResolver %q", name, spec.Resolver)
 		}
-		if sourceName == name {
-			return true
+		if resolverForwarders[resolver] == nil {
+			resolverForwarders[resolver] = map[string]bool{}
+		}
+		resolverForwarders[resolver][name] = true
+		for _, ref := range spec.ZoneRefs {
+			if !zones[refName(ref)] {
+				return fmt.Errorf("DNSForwarder/%s spec.zoneRefs references missing DNSZone %q", name, ref)
+			}
+		}
+		for _, ref := range spec.Upstreams {
+			if _, ok := upstreams[refName(ref)]; !ok {
+				return fmt.Errorf("DNSForwarder/%s spec.upstreams references missing DNSUpstream %q", name, ref)
+			}
 		}
 	}
-	return false
+	for name, spec := range upstreams {
+		if spec.SourceInterface != "" && !interfaces[refName(spec.SourceInterface)] && !wireGuardInterfaces[refName(spec.SourceInterface)] {
+			return fmt.Errorf("DNSUpstream/%s spec.sourceInterface references missing Interface or WireGuardInterface %q", name, spec.SourceInterface)
+		}
+	}
+	for name, spec := range resolvers {
+		if len(resolverForwarders[name]) == 0 {
+			if len(spec.Sources) > 0 {
+				continue
+			}
+			return fmt.Errorf("DNSResolver/%s requires at least one DNSForwarder", name)
+		}
+		for i, listen := range spec.Listen {
+			for _, sourceName := range listen.Sources {
+				if !resolverForwarders[name][refName(sourceName)] {
+					return fmt.Errorf("DNSResolver/%s spec.listen[%d].sources references missing DNSForwarder %q for this resolver", name, i, sourceName)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func validateDNSResolverCore(spec api.DNSResolverSpec) error {
+	check := dnsresolver.NormalizeSpec(spec)
+	check.Sources = []api.DNSResolverSourceSpec{{
+		Name:      "validation-placeholder",
+		Kind:      "upstream",
+		Match:     []string{"."},
+		Upstreams: []string{"udp://127.0.0.1:53"},
+	}}
+	return dnsresolver.Validate(check)
+}
+
+func validateDNSResolverHealthcheck(resourceID string, spec api.DNSResolverHealthcheckSpec) error {
+	if strings.TrimSpace(spec.Interval) != "" {
+		if _, err := time.ParseDuration(spec.Interval); err != nil {
+			return fmt.Errorf("%s spec.healthcheck.interval must be a duration", resourceID)
+		}
+	}
+	if strings.TrimSpace(spec.Timeout) != "" {
+		if _, err := time.ParseDuration(spec.Timeout); err != nil {
+			return fmt.Errorf("%s spec.healthcheck.timeout must be a duration", resourceID)
+		}
+	}
+	return nil
+}
+
+func validateDNSUpstream(resourceID string, spec api.DNSUpstreamSpec) error {
+	switch strings.ToLower(strings.TrimSpace(spec.Protocol)) {
+	case "udp", "tcp", "dot", "doh":
+	default:
+		return fmt.Errorf("%s spec.protocol must be udp, tcp, dot, or doh", resourceID)
+	}
+	if strings.TrimSpace(spec.Address) == "" && len(spec.AddressFrom) == 0 {
+		return fmt.Errorf("%s requires spec.address or spec.addressFrom", resourceID)
+	}
+	if spec.Port != 0 && (spec.Port < 1 || spec.Port > 65535) {
+		return fmt.Errorf("%s spec.port must be between 1 and 65535", resourceID)
+	}
+	if len(spec.AddressFrom) > 0 && strings.ToLower(strings.TrimSpace(spec.Protocol)) != "udp" {
+		return fmt.Errorf("%s spec.addressFrom currently supports protocol udp only", resourceID)
+	}
+	if strings.EqualFold(spec.Protocol, "doh") && strings.TrimSpace(spec.TLSName) != "" {
+		return fmt.Errorf("%s spec.tlsName is only supported with protocol dot", resourceID)
+	}
+	for i, source := range spec.AddressFrom {
+		if strings.TrimSpace(source.Resource) == "" {
+			return fmt.Errorf("%s spec.addressFrom[%d].resource is required", resourceID, i)
+		}
+		if strings.TrimSpace(source.Field) == "" {
+			return fmt.Errorf("%s spec.addressFrom[%d].field is required", resourceID, i)
+		}
+	}
+	if strings.EqualFold(spec.Protocol, "doh") && strings.TrimSpace(spec.Path) != "" && !strings.HasPrefix(strings.TrimSpace(spec.Path), "/") {
+		return fmt.Errorf("%s spec.path must start with /", resourceID)
+	}
+	return nil
 }
 
 func validateHealthCheckDerivedFwMark(router *api.Router, res api.Resource, spec api.HealthCheckSpec) error {

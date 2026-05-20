@@ -66,7 +66,7 @@ dependsOn:
 
 状態値を利用する場合は、通常フィールドに式を書きません。
 `deviceFrom`、`gatewayFrom`、`addressFrom`、`ipv4From`、`ipv6From`、
-`prefixFrom`、`rdnssFrom`、`upstreamFrom` などの専用フィールドを使います。
+`prefixFrom`、`rdnssFrom`、`addressFrom` などの専用フィールドを使います。
 
 ```yaml
 deviceFrom:

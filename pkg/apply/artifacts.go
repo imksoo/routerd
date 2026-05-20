@@ -362,6 +362,10 @@ func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]str
 		return []resource.Intent{artifact("routerd.dns.zone", res.Metadata.Name, resource.ActionEnsure, "routerd-dns-resolver", nil)}
 	case "DNSResolver":
 		return declaredServiceIntents(serviceContext)
+	case "DNSForwarder":
+		return []resource.Intent{artifact("routerd.dns.forwarder", res.Metadata.Name, resource.ActionEnsure, "routerd-dns-resolver", nil)}
+	case "DNSUpstream":
+		return []resource.Intent{artifact("routerd.dns.upstream", res.Metadata.Name, resource.ActionEnsure, "routerd-dns-resolver", nil)}
 	case "DSLiteTunnel":
 		spec, err := res.DSLiteTunnelSpec()
 		if err != nil {

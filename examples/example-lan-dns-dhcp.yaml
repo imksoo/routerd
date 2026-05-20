@@ -59,23 +59,48 @@ spec:
             sources:
               - local-zone
               - default
-        sources:
-          - name: local-zone
-            kind: zone
-            match:
-              - home.example
-            zoneRef:
-              - DNSZone/home
-          - name: default
-            kind: upstream
-            match:
-              - "."
-            upstreams:
-              - udp://1.1.1.1:53
-              - udp://8.8.8.8:53
         cache:
           enabled: true
           maxEntries: 10000
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSForwarder
+      metadata:
+        name: local-zone
+      spec:
+        resolver: DNSResolver/lan-resolver
+        match:
+          - home.example
+        zoneRefs:
+          - DNSZone/home
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSForwarder
+      metadata:
+        name: default
+      spec:
+        resolver: DNSResolver/lan-resolver
+        match:
+          - "."
+        upstreams:
+          - DNSUpstream/cloudflare-udp
+          - DNSUpstream/google-udp
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSUpstream
+      metadata:
+        name: cloudflare-udp
+      spec:
+        protocol: udp
+        address: 1.1.1.1
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSUpstream
+      metadata:
+        name: google-udp
+      spec:
+        protocol: udp
+        address: 8.8.8.8
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: DHCPv4Server

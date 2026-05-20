@@ -27,6 +27,8 @@ routerd associates host-side artefacts with the resource that produced them. Rec
 | `DHCPv4Server` / `DHCPv6Server` / `IPv6RouterAdvertisement` | Managed dnsmasq configuration |
 | `DNSZone` | `routerd-dns-resolver` local authoritative zone |
 | `DNSResolver` | `routerd-dns-resolver` socket, state, events, listener configuration |
+| `DNSForwarder` | `routerd-dns-resolver` runtime forwarding rule derived into the resolver config |
+| `DNSUpstream` | `routerd-dns-resolver` runtime upstream endpoint derived into forwarder rules |
 | `DSLiteTunnel` | Linux `ip6tnl` interface |
 | `IPAddressSet` | nftables IPv4/IPv6 named sets when referenced by a Linux renderer |
 | `IPv4Route` | Kernel route |

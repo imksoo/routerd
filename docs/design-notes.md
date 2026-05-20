@@ -36,7 +36,9 @@ When DHCPv6-PD is not `Bound`, routerd does not advertise stale IPv6 information
 
 In some access networks the AFTR option is not returned in DHCPv6 information-request. `DSLiteTunnel` therefore treats a static `aftrFQDN` or `aftrIPv6` as a normal configuration path, not a fallback.
 
-AFTR FQDNs frequently cannot be resolved by public DNS. Use `DNSResolver.spec.sources[].kind: forward` to send the AFTR domain to the in-network resolver.
+AFTR FQDNs frequently cannot be resolved by public DNS. Use a `DNSForwarder`
+for the AFTR domain and a `DNSUpstream` whose `addressFrom` reads the
+in-network resolver from DHCPv6 information status.
 
 ## 5. Event coordination
 

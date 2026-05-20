@@ -331,7 +331,22 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 		}
 		r.Spec = spec
 	case "DNSResolver":
+		if hasMappingKey(&raw.Spec, "sources") {
+			return fmt.Errorf("%s spec.sources is not supported; split DNS source intent into DNSForwarder and DNSUpstream resources that reference this DNSResolver", r.ID())
+		}
 		var spec DNSResolverSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	case "DNSForwarder":
+		var spec DNSForwarderSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	case "DNSUpstream":
+		var spec DNSUpstreamSpec
 		if err := raw.Spec.Decode(&spec); err != nil {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}

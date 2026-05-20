@@ -108,14 +108,34 @@ spec:
             addresses:
               - 127.0.0.1
             port: 53
-        sources:
-          - name: transix-aftr
-            kind: forward
-            match:
-              - gw.transix.jp
-            upstreams:
-              - udp://[2404:1a8:7f01:a::3]:53
-              - udp://[2404:1a8:7f01:b::3]:53
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSForwarder
+      metadata:
+        name: transix-aftr
+      spec:
+        resolver: DNSResolver/lan-resolver
+        match:
+          - gw.transix.jp
+        upstreams:
+          - DNSUpstream/transix-aftr-a
+          - DNSUpstream/transix-aftr-b
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSUpstream
+      metadata:
+        name: transix-aftr-a
+      spec:
+        protocol: udp
+        address: 2404:1a8:7f01:a::3
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSUpstream
+      metadata:
+        name: transix-aftr-b
+      spec:
+        protocol: udp
+        address: 2404:1a8:7f01:b::3
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: Interface

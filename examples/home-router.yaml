@@ -1005,74 +1005,6 @@ spec:
                 field: address
             port: 53
             sources: [local-zone, home-example, lab-example, fab-example, home-zone, ngn-aftr, nextdns-bootstrap-ngn, nextdns-bootstrap-public, default]
-        sources:
-          - name: local-zone
-            kind: zone
-            match:
-              - home.internal
-              - 18.172.in-addr.arpa
-            zoneRef:
-              - DNSZone/home
-          - name: home-example
-            kind: forward
-            match:
-              - home.example
-            upstreams:
-              - udp://192.168.1.252:53
-          - name: lab-example
-            kind: forward
-            match:
-              - lab.example
-            upstreams:
-              - udp://172.17.0.253:53
-          - name: fab-example
-            kind: forward
-            match:
-              - fab.example
-            upstreams:
-              - udp://192.168.1.26:53
-          - name: home-zone
-            kind: forward
-            match:
-              - home.arpa
-            upstreams:
-              - udp://192.168.1.66:53
-              - udp://192.168.1.67:53
-          - name: ngn-aftr
-            kind: forward
-            match:
-              - gw.transix.jp
-              - transix.jp
-            upstreamFrom:
-              - resource: DHCPv6Information/wan-info
-                field: dnsServers
-          - name: nextdns-bootstrap-ngn
-            kind: forward
-            match:
-              - nextdns.io
-            upstreamFrom:
-              - resource: DHCPv6Information/wan-info
-                field: dnsServers
-          - name: nextdns-bootstrap-public
-            kind: forward
-            match:
-              - nextdns.io
-            upstreams:
-              - udp://1.1.1.1:53
-              - udp://8.8.8.8:53
-          - name: default
-            kind: upstream
-            match:
-              - "."
-            upstreams:
-              - https://dns.nextdns.io/example/home-router
-              - udp://[2001:db8::53]:53
-              - udp://[2001:db8::54]:53
-            healthcheck:
-              interval: 15s
-              timeout: 3s
-              failThreshold: 3
-              passThreshold: 2
         cache:
           enabled: true
           maxEntries: 10000
@@ -1083,6 +1015,207 @@ spec:
           enabled: true
           path: /var/lib/routerd/dns-queries.db
           retention: 30d
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSForwarder
+      metadata:
+        name: local-zone
+      spec:
+        resolver: DNSResolver/lan-resolver
+        match:
+          - home.internal
+          - 18.172.in-addr.arpa
+        zoneRefs:
+          - DNSZone/home
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSForwarder
+      metadata:
+        name: home-example
+      spec:
+        resolver: DNSResolver/lan-resolver
+        match:
+          - home.example
+        upstreams:
+          - DNSUpstream/home-example-dns
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSUpstream
+      metadata:
+        name: home-example-dns
+      spec:
+        protocol: udp
+        address: 192.168.1.252
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSForwarder
+      metadata:
+        name: lab-example
+      spec:
+        resolver: DNSResolver/lan-resolver
+        match:
+          - lab.example
+        upstreams:
+          - DNSUpstream/lab-example-dns
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSUpstream
+      metadata:
+        name: lab-example-dns
+      spec:
+        protocol: udp
+        address: 172.17.0.253
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSForwarder
+      metadata:
+        name: fab-example
+      spec:
+        resolver: DNSResolver/lan-resolver
+        match:
+          - fab.example
+        upstreams:
+          - DNSUpstream/fab-example-dns
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSUpstream
+      metadata:
+        name: fab-example-dns
+      spec:
+        protocol: udp
+        address: 192.168.1.26
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSForwarder
+      metadata:
+        name: home-zone
+      spec:
+        resolver: DNSResolver/lan-resolver
+        match:
+          - home.arpa
+        upstreams:
+          - DNSUpstream/home-zone-a
+          - DNSUpstream/home-zone-b
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSUpstream
+      metadata:
+        name: home-zone-a
+      spec:
+        protocol: udp
+        address: 192.168.1.66
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSUpstream
+      metadata:
+        name: home-zone-b
+      spec:
+        protocol: udp
+        address: 192.168.1.67
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSForwarder
+      metadata:
+        name: ngn-aftr
+      spec:
+        resolver: DNSResolver/lan-resolver
+        match:
+          - gw.transix.jp
+          - transix.jp
+        upstreams:
+          - DNSUpstream/ngn-dns
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSForwarder
+      metadata:
+        name: nextdns-bootstrap-ngn
+      spec:
+        resolver: DNSResolver/lan-resolver
+        match:
+          - nextdns.io
+        upstreams:
+          - DNSUpstream/ngn-dns
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSUpstream
+      metadata:
+        name: ngn-dns
+      spec:
+        protocol: udp
+        addressFrom:
+          - resource: DHCPv6Information/wan-info
+            field: dnsServers
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSForwarder
+      metadata:
+        name: nextdns-bootstrap-public
+      spec:
+        resolver: DNSResolver/lan-resolver
+        match:
+          - nextdns.io
+        upstreams:
+          - DNSUpstream/cloudflare-udp
+          - DNSUpstream/google-udp
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSUpstream
+      metadata:
+        name: cloudflare-udp
+      spec:
+        protocol: udp
+        address: 1.1.1.1
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSUpstream
+      metadata:
+        name: google-udp
+      spec:
+        protocol: udp
+        address: 8.8.8.8
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSForwarder
+      metadata:
+        name: default
+      spec:
+        resolver: DNSResolver/lan-resolver
+        match:
+          - "."
+        upstreams:
+          - DNSUpstream/nextdns-doh
+          - DNSUpstream/nextdns-v6-a
+          - DNSUpstream/nextdns-v6-b
+        healthcheck:
+          interval: 15s
+          timeout: 3s
+          failThreshold: 3
+          passThreshold: 2
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSUpstream
+      metadata:
+        name: nextdns-doh
+      spec:
+        protocol: doh
+        address: dns.nextdns.io
+        path: /example/home-router
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSUpstream
+      metadata:
+        name: nextdns-v6-a
+      spec:
+        protocol: udp
+        address: 2001:db8::53
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSUpstream
+      metadata:
+        name: nextdns-v6-b
+      spec:
+        protocol: udp
+        address: 2001:db8::54
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: DNSZone

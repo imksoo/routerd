@@ -42,7 +42,7 @@ RA、DHCPv6 server、AAAA レコード、prefix から導出した LAN アドレ
 一部のアクセス網では DHCPv6 information-request で AFTR option が返りません。
 そのため `DSLiteTunnel` は、`aftrFQDN` または `aftrIPv6` の静的指定を fallback ではなく正規経路として扱います。
 
-AFTR FQDN は公衆 DNS で解けないことが多いです。`DNSResolver.spec.sources[].kind: forward` で carrier 内 resolver に転送してください。
+AFTR FQDN は公衆 DNS で解けないことが多いです。AFTR domain 用の `DNSForwarder` と、DHCPv6 information status から carrier 内 resolver を読む `DNSUpstream.addressFrom` で転送してください。
 
 ## 5. Event 連携
 

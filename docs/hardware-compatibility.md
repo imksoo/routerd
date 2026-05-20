@@ -36,7 +36,7 @@ it as a router.
 For a normal home or small office router:
 
 - 2 CPU cores are enough for basic routing, DHCP, DNS, NAT, and Web Console.
-- 4 CPU cores give more room for DoH/DoT/DoQ, OpenTelemetry, and log indexing.
+- 4 CPU cores give more room for encrypted DNS, OpenTelemetry, and log indexing.
 - 1 GiB RAM is a practical lower bound.
 - 2 GiB or more is recommended for the live ISO and log buffering.
 

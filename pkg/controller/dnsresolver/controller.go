@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -83,6 +84,10 @@ func (c Controller) Reconcile(ctx context.Context) error {
 			continue
 		}
 		spec, err := resource.DNSResolverSpec()
+		if err != nil {
+			return err
+		}
+		spec, err = c.attachForwarders(resource.Metadata.Name, spec)
 		if err != nil {
 			return err
 		}
@@ -270,6 +275,138 @@ func appendHostnameRecords(zoneName string, spec api.DNSZoneSpec, records map[st
 		spec.Records = append(spec.Records, record)
 	}
 	return spec
+}
+
+func (c Controller) attachForwarders(resolverName string, spec api.DNSResolverSpec) (api.DNSResolverSpec, error) {
+	if c.Router == nil {
+		return spec, nil
+	}
+	upstreams := map[string]api.DNSUpstreamSpec{}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "DNSUpstream" {
+			continue
+		}
+		upstreamSpec, err := resource.DNSUpstreamSpec()
+		if err != nil {
+			return spec, err
+		}
+		upstreams[resource.Metadata.Name] = upstreamSpec
+	}
+	var sources []api.DNSResolverSourceSpec
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "DNSForwarder" {
+			continue
+		}
+		forwarder, err := resource.DNSForwarderSpec()
+		if err != nil {
+			return spec, err
+		}
+		if refName(forwarder.Resolver) != resolverName {
+			continue
+		}
+		source := api.DNSResolverSourceSpec{
+			Name:              resource.Metadata.Name,
+			Match:             append([]string(nil), forwarder.Match...),
+			DNSSECValidate:    forwarder.DNSSECValidate,
+			Healthcheck:       forwarder.Healthcheck,
+			ZoneRef:           append([]string(nil), forwarder.ZoneRefs...),
+			BootstrapResolver: nil,
+		}
+		if len(forwarder.ZoneRefs) > 0 {
+			source.Kind = "zone"
+		} else {
+			source.Kind = "forward"
+			for _, match := range forwarder.Match {
+				if strings.TrimSpace(match) == "." {
+					source.Kind = "upstream"
+					break
+				}
+			}
+			for _, upstreamRef := range forwarder.Upstreams {
+				name := refName(upstreamRef)
+				upstream, ok := upstreams[name]
+				if !ok {
+					return spec, fmt.Errorf("DNSForwarder/%s references missing DNSUpstream %q", resource.Metadata.Name, upstreamRef)
+				}
+				if len(upstream.AddressFrom) > 0 {
+					source.UpstreamFrom = append(source.UpstreamFrom, upstream.AddressFrom...)
+				}
+				if strings.TrimSpace(upstream.Address) != "" {
+					raw, err := dnsUpstreamURL(upstream, upstream.Address)
+					if err != nil {
+						return spec, fmt.Errorf("DNSUpstream/%s: %w", name, err)
+					}
+					source.Upstreams = append(source.Upstreams, raw)
+				}
+				if len(upstream.Bootstrap) > 0 {
+					source.BootstrapResolver = append(source.BootstrapResolver, upstream.Bootstrap...)
+				}
+				if source.ViaInterface == "" && strings.TrimSpace(upstream.SourceInterface) != "" {
+					source.ViaInterface = upstream.SourceInterface
+				}
+			}
+		}
+		sources = append(sources, source)
+	}
+	if len(sources) == 0 && len(spec.Sources) > 0 {
+		return spec, nil
+	}
+	spec.Sources = sources
+	return spec, nil
+}
+
+func dnsUpstreamURL(spec api.DNSUpstreamSpec, address string) (string, error) {
+	protocol := strings.ToLower(strings.TrimSpace(spec.Protocol))
+	if protocol == "" {
+		protocol = "udp"
+	}
+	address = strings.TrimSpace(address)
+	if address == "" {
+		return "", fmt.Errorf("address is required")
+	}
+	port := spec.Port
+	switch protocol {
+	case "udp", "tcp":
+		if port == 0 {
+			port = 53
+		}
+		return protocol + "://" + net.JoinHostPort(address, strconv.Itoa(port)), nil
+	case "dot":
+		if port == 0 {
+			port = 853
+		}
+		values := url.Values{}
+		if serverName := strings.TrimSpace(spec.TLSName); serverName != "" {
+			values.Set("serverName", serverName)
+		}
+		raw := "tls://" + net.JoinHostPort(address, strconv.Itoa(port))
+		if encoded := values.Encode(); encoded != "" {
+			raw += "?" + encoded
+		}
+		return raw, nil
+	case "doh":
+		if port == 0 {
+			port = 443
+		}
+		path := strings.TrimSpace(spec.Path)
+		if path == "" {
+			path = "/dns-query"
+		}
+		if !strings.HasPrefix(path, "/") {
+			path = "/" + path
+		}
+		values := url.Values{}
+		if serverName := strings.TrimSpace(spec.TLSName); serverName != "" {
+			values.Set("serverName", serverName)
+		}
+		raw := "https://" + net.JoinHostPort(address, strconv.Itoa(port)) + path
+		if encoded := values.Encode(); encoded != "" {
+			raw += "?" + encoded
+		}
+		return raw, nil
+	default:
+		return "", fmt.Errorf("protocol must be udp, tcp, dot, or doh")
+	}
 }
 
 func relativeHostname(hostname, zone string) (string, bool) {
@@ -716,12 +853,23 @@ func dnsResolverDependsOn(router *api.Router, ref daemonapi.ResourceRef) bool {
 	}
 	for _, resource := range router.Spec.Resources {
 		if resource.Kind != "DNSResolver" {
-			if resource.Kind == "DNSZone" {
+			switch resource.Kind {
+			case "DNSZone":
 				zoneSpec, err := resource.DNSZoneSpec()
 				if err != nil {
 					continue
 				}
 				for _, dep := range dnsZoneStatusRefs(zoneSpec) {
+					if dep == ref {
+						return true
+					}
+				}
+			case "DNSUpstream":
+				upstreamSpec, err := resource.DNSUpstreamSpec()
+				if err != nil {
+					continue
+				}
+				for _, dep := range dnsUpstreamStatusRefs(upstreamSpec) {
 					if dep == ref {
 						return true
 					}
@@ -766,8 +914,8 @@ func dnsResolverZoneRefs(spec api.DNSResolverSpec) map[string]bool {
 			continue
 		}
 		for _, ref := range source.ZoneRef {
-			kind, name, ok := strings.Cut(strings.TrimSpace(ref), "/")
-			if ok && kind == "DNSZone" && name != "" {
+			name := refName(ref)
+			if name != "" {
 				out[name] = true
 			}
 		}
@@ -822,6 +970,16 @@ func dnsResolverStatusRefs(spec api.DNSResolverSpec) []daemonapi.ResourceRef {
 	return refs
 }
 
+func dnsUpstreamStatusRefs(spec api.DNSUpstreamSpec) []daemonapi.ResourceRef {
+	var refs []daemonapi.ResourceRef
+	for _, source := range spec.AddressFrom {
+		if ref, ok := resourcequery.SourceRef(source); ok {
+			refs = append(refs, daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: ref.Kind, Name: ref.Name})
+		}
+	}
+	return refs
+}
+
 func statusRefResource(expr string) (string, string, bool) {
 	expr = strings.TrimSpace(expr)
 	if !isStatusRef(expr) {
@@ -837,6 +995,13 @@ func statusRefResource(expr string) (string, string, bool) {
 		return "", "", false
 	}
 	return kind, name, true
+}
+
+func refName(ref string) string {
+	if i := strings.LastIndex(strings.TrimSpace(ref), "/"); i >= 0 {
+		return strings.TrimSpace(ref)[i+1:]
+	}
+	return strings.TrimSpace(ref)
 }
 
 func decodeStringList(raw string) []string {

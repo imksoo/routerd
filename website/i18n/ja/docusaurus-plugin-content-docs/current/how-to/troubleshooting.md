@@ -67,7 +67,7 @@ dig @<lan-ip> example.com A
 - 待ち受けが想定アドレスとポートで開いているか (`ss -lnup`)
 - ローカル権威ゾーンが応答するか (`DNSZone` の手動レコードと DHCP 由来レコード)
 - 条件付き転送が指定上流へ届いているか (`dig @<lan-ip> <forwarded-domain>`)
-- 既定上流が DoH / DoT / DoQ / 平文 UDP のいずれで応答しているか (`/v1/status` の `sources[].upstreams` を見る)
+- 既定上流が DoH / DoT / TCP / 平文 UDP のいずれで応答しているか (resolver status と upstream health を見る)
 
 ## DS-Lite
 

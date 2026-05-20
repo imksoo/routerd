@@ -366,11 +366,15 @@ spec:
           - name: lan
             addresses: [127.0.0.1]
             port: 53
-        sources:
-          - name: local
-            kind: zone
-            match: [lain.local]
-            zoneRef: [DNSZone/lan-zone]
+            sources: [local]
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSForwarder
+      metadata:
+        name: local
+      spec:
+        resolver: DNSResolver/lan-resolver
+        match: [lain.local]
+        zoneRefs: [DNSZone/lan-zone]
     - apiVersion: net.routerd.net/v1alpha1
       kind: VirtualAddress
       metadata:

@@ -150,7 +150,7 @@ func resourceOwnerController(kind string) string {
 		return "dhcpv4client"
 	case "DHCPv4Server", "DHCPv6Server", "DHCPv6Information", "IPv6RouterAdvertisement":
 		return "dhcpv6"
-	case "DNSResolver", "DNSZone":
+	case "DNSResolver", "DNSForwarder", "DNSUpstream", "DNSZone":
 		return "dns-resolver"
 	case "DSLiteTunnel":
 		return "dslite"

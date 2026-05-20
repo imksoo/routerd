@@ -68,7 +68,7 @@ dependsOn:
 
 Do not put dynamic status expressions into normal literal fields. Use typed
 source fields such as `deviceFrom`, `gatewayFrom`, `addressFrom`, `ipv4From`,
-`ipv6From`, `prefixFrom`, `rdnssFrom`, and `upstreamFrom`.
+`ipv6From`, `prefixFrom`, `rdnssFrom`, and `addressFrom`.
 
 ```yaml
 deviceFrom:

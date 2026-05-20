@@ -144,20 +144,31 @@ func dnsZoneCoverage(router *api.Router) (map[string]string, map[string]bool) {
 			}
 			continue
 		}
-		if res.APIVersion != api.NetAPIVersion || res.Kind != "DNSResolver" {
+		if res.APIVersion != api.NetAPIVersion {
 			continue
 		}
-		spec, err := res.DNSResolverSpec()
-		if err != nil {
-			continue
-		}
-		for _, source := range spec.Sources {
-			if source.Kind != "zone" {
+		switch res.Kind {
+		case "DNSResolver":
+			spec, err := res.DNSResolverSpec()
+			if err != nil {
 				continue
 			}
-			for _, ref := range source.ZoneRef {
-				kind, name, ok := strings.Cut(strings.TrimSpace(ref), "/")
-				if ok && kind == "DNSZone" && name != "" {
+			for _, source := range spec.Sources {
+				for _, ref := range source.ZoneRef {
+					name := refName(ref)
+					if name != "" {
+						dnsResolverZones[name] = true
+					}
+				}
+			}
+		case "DNSForwarder":
+			spec, err := res.DNSForwarderSpec()
+			if err != nil {
+				continue
+			}
+			for _, ref := range spec.ZoneRefs {
+				name := refName(ref)
+				if name != "" {
 					dnsResolverZones[name] = true
 				}
 			}

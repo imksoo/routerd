@@ -95,29 +95,68 @@ spec:
               - local-zone
               - aftr
               - default
-        sources:
-          - name: local-zone
-            kind: zone
-            match:
-              - home.example
-            zoneRef:
-              - DNSZone/home
-          - name: aftr
-            kind: forward
-            match:
-              - gw.transix.jp
-            upstreams:
-              - udp://[2404:1a8:7f01:a::3]:53
-              - udp://[2404:1a8:7f01:b::3]:53
-          - name: default
-            kind: upstream
-            match:
-              - "."
-            upstreams:
-              - https://cloudflare-dns.com/dns-query
         cache:
           enabled: true
           maxEntries: 10000
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSForwarder
+      metadata:
+        name: local-zone
+      spec:
+        resolver: DNSResolver/lan-resolver
+        match:
+          - home.example
+        zoneRefs:
+          - DNSZone/home
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSForwarder
+      metadata:
+        name: aftr
+      spec:
+        resolver: DNSResolver/lan-resolver
+        match:
+          - gw.transix.jp
+        upstreams:
+          - DNSUpstream/transix-aftr-a
+          - DNSUpstream/transix-aftr-b
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSUpstream
+      metadata:
+        name: transix-aftr-a
+      spec:
+        protocol: udp
+        address: 2404:1a8:7f01:a::3
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSUpstream
+      metadata:
+        name: transix-aftr-b
+      spec:
+        protocol: udp
+        address: 2404:1a8:7f01:b::3
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSForwarder
+      metadata:
+        name: default
+      spec:
+        resolver: DNSResolver/lan-resolver
+        match:
+          - "."
+        upstreams:
+          - DNSUpstream/cloudflare-doh
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSUpstream
+      metadata:
+        name: cloudflare-doh
+      spec:
+        protocol: doh
+        address: cloudflare-dns.com
+        path: /dns-query
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: DSLiteTunnel

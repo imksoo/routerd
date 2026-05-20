@@ -28,6 +28,8 @@ routerd は、ホスト上の構成物をリソースに対応付けて管理し
 | `DHCPv4Server` / `DHCPv6Server` / `IPv6RouterAdvertisement` | 管理対象 dnsmasq 設定 |
 | `DNSZone` | `routerd-dns-resolver` のローカル権威ゾーン |
 | `DNSResolver` | `routerd-dns-resolver` の socket、state、events、待ち受け設定 |
+| `DNSForwarder` | `routerd-dns-resolver` の runtime forwarding rule。resolver config に導出されます |
+| `DNSUpstream` | `routerd-dns-resolver` の runtime upstream endpoint。forwarder rule に導出されます |
 | `DSLiteTunnel` | Linux `ip6tnl` インターフェース |
 | `IPAddressSet` | Linux renderer から参照される nftables IPv4/IPv6 named set |
 | `IPv4Route` | カーネル経路 |

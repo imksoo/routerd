@@ -86,4 +86,4 @@ dig @192.168.30.1 router.home.example
 
 - `home.example` を自分の search domain に変える。
 - NAS、printer、基盤機器は `DHCPv4Reservation` に足す。
-- 一部 domain だけ private upstream に送りたい場合は `DNSResolver.spec.sources` を増やす。
+- 一部 domain だけ private upstream に送りたい場合は `DNSForwarder` と `DNSUpstream` を追加する。

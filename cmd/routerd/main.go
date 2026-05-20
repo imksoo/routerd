@@ -825,6 +825,8 @@ func canonicalResourceKind(kind string) string {
 		"dslitetunnel":           "DSLiteTunnel",
 		"dns":                    "DNSResolver",
 		"resolver":               "DNSResolver",
+		"dnsforwarder":           "DNSForwarder",
+		"dnsupstream":            "DNSUpstream",
 		"pppoe":                  "PPPoESession",
 		"pppoesession":           "PPPoESession",
 		"pppoeclient":            "PPPoESession",
@@ -866,7 +868,7 @@ func apiVersionForKind(kind string) string {
 		return api.ObservabilityAPIVersion
 	case "Inventory":
 		return api.RouterAPIVersion
-	case "Interface", "Bridge", "VXLANSegment", "WireGuardInterface", "WireGuardPeer", "TailscaleNode", "IPsecConnection", "VRF", "VXLANTunnel", "PPPoESession", "IPv4StaticAddress", "DHCPv4Client", "IPv4StaticRoute", "IPv6StaticRoute", "ClusterNetworkRoute", "DHCPv4Server", "DHCPv4Reservation", "DHCPv6Address", "IPv6RAAddress", "DHCPv6PrefixDelegation", "IPv6DelegatedAddress", "DHCPv6Information", "IPv6RouterAdvertisement", "DHCPv6Server", "DHCPv4Relay", "DNSZone", "DNSResolver", "SelfAddressPolicy", "DSLiteTunnel", "IPv4Route", "HealthCheck", "EgressRoutePolicy", "EventRule", "DerivedEvent", "NAT44Rule", "IPAddressSet":
+	case "Interface", "Bridge", "VXLANSegment", "WireGuardInterface", "WireGuardPeer", "TailscaleNode", "IPsecConnection", "VRF", "VXLANTunnel", "PPPoESession", "IPv4StaticAddress", "DHCPv4Client", "IPv4StaticRoute", "IPv6StaticRoute", "ClusterNetworkRoute", "DHCPv4Server", "DHCPv4Reservation", "DHCPv6Address", "IPv6RAAddress", "DHCPv6PrefixDelegation", "IPv6DelegatedAddress", "DHCPv6Information", "IPv6RouterAdvertisement", "DHCPv6Server", "DHCPv4Relay", "DNSZone", "DNSResolver", "DNSForwarder", "DNSUpstream", "SelfAddressPolicy", "DSLiteTunnel", "IPv4Route", "HealthCheck", "EgressRoutePolicy", "EventRule", "DerivedEvent", "NAT44Rule", "IPAddressSet":
 		return api.NetAPIVersion
 	default:
 		return ""
@@ -3130,7 +3132,7 @@ func controllerResourceKinds(name string) []string {
 	case "dhcpv6":
 		return []string{"DHCPv6Server", "IPv6RouterAdvertisement"}
 	case "dns-resolver":
-		return []string{"DNSResolver", "DNSZone"}
+		return []string{"DNSResolver", "DNSForwarder", "DNSUpstream", "DNSZone"}
 	case "dslite":
 		return []string{"DSLiteTunnel"}
 	case "firewall":

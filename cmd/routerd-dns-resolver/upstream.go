@@ -103,7 +103,7 @@ func parseDNSUpstream(index int, raw string) (*dnsUpstream, error) {
 	}
 	scheme := strings.ToLower(parsed.Scheme)
 	switch scheme {
-	case "https", "tls", "quic", "udp":
+	case "https", "tls", "quic", "udp", "tcp":
 	default:
 		return nil, fmt.Errorf("unsupported DNS upstream scheme %q", scheme)
 	}
@@ -120,7 +120,7 @@ func parseDNSUpstream(index int, raw string) (*dnsUpstream, error) {
 			port = "853"
 		}
 		address = net.JoinHostPort(parsed.Hostname(), port)
-	case "udp":
+	case "udp", "tcp":
 		port := parsed.Port()
 		if port == "" {
 			port = "53"
@@ -133,6 +133,9 @@ func parseDNSUpstream(index int, raw string) (*dnsUpstream, error) {
 	}
 	if ip, err := netip.ParseAddr(parsed.Hostname()); err == nil && ip.IsValid() {
 		serverName = ""
+	}
+	if override := strings.TrimSpace(parsed.Query().Get("serverName")); override != "" {
+		serverName = override
 	}
 	return &dnsUpstream{Index: index, URL: trimmed, Scheme: scheme, Address: address, ServerName: serverName, Phase: upstreamProbing}, nil
 }
@@ -206,6 +209,8 @@ func (p *upstreamPool) exchangeOne(ctx context.Context, upstream *dnsUpstream, q
 		return p.exchangeDoQ(ctx, upstream, query)
 	case "udp":
 		return p.exchangeUDP(ctx, upstream, query)
+	case "tcp":
+		return p.exchangeTCP(ctx, upstream, query)
 	default:
 		return nil, fmt.Errorf("unsupported DNS upstream scheme %q", upstream.Scheme)
 	}
@@ -301,6 +306,16 @@ func (p *upstreamPool) exchangeUDP(ctx context.Context, upstream *dnsUpstream, q
 		return nil, err
 	}
 	return append([]byte(nil), buf[:n]...), nil
+}
+
+func (p *upstreamPool) exchangeTCP(ctx context.Context, upstream *dnsUpstream, query []byte) ([]byte, error) {
+	dialer := net.Dialer{Resolver: resolverForBootstrap(p.config.BootstrapResolver), Control: interfaceControl(p.config.ViaInterface)}
+	conn, err := dialer.DialContext(ctx, "tcp", upstream.Address)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+	return exchangeLengthPrefixed(ctx, conn, query)
 }
 
 func resolverForBootstrap(servers []string) *net.Resolver {

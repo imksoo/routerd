@@ -5,6 +5,15 @@ metadata:
 spec:
   resources:
   - apiVersion: net.routerd.net/v1alpha1
+    kind: DNSZone
+    metadata:
+      name: lan
+    spec:
+      zone: lab.example
+      records:
+      - hostname: router
+        ipv4: 192.0.2.1
+  - apiVersion: net.routerd.net/v1alpha1
     kind: DNSResolver
     metadata:
       name: lan-resolver
@@ -17,31 +26,59 @@ spec:
         sources:
         - local
         - default
-      sources:
-      - name: local
-        kind: zone
-        match:
-        - lab.example
-        zoneRef:
-        - DNSZone/lan
-      - name: default
-        kind: upstream
-        match:
-        - "."
-        upstreams:
-        - https://cloudflare-dns.com/dns-query
-        - tls://dns.google
-        - quic://dns.google
-        - udp://8.8.8.8:53
-        healthcheck:
-          interval: 15s
-          timeout: 3s
-          failThreshold: 3
-          passThreshold: 2
-        dnssecValidate: true
       cache:
         enabled: true
         maxEntries: 10000
         minTTL: 60s
         maxTTL: 24h
         negativeTTL: 30s
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: DNSForwarder
+    metadata:
+      name: local
+    spec:
+      resolver: DNSResolver/lan-resolver
+      match:
+      - lab.example
+      zoneRefs:
+      - DNSZone/lan
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: DNSForwarder
+    metadata:
+      name: default
+    spec:
+      resolver: DNSResolver/lan-resolver
+      match:
+      - "."
+      upstreams:
+      - DNSUpstream/cloudflare-doh
+      - DNSUpstream/google-dot
+      - DNSUpstream/google-udp
+      healthcheck:
+        interval: 15s
+        timeout: 3s
+        failThreshold: 3
+        passThreshold: 2
+      dnssecValidate: true
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: DNSUpstream
+    metadata:
+      name: cloudflare-doh
+    spec:
+      protocol: doh
+      address: cloudflare-dns.com
+      path: /dns-query
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: DNSUpstream
+    metadata:
+      name: google-dot
+    spec:
+      protocol: dot
+      address: dns.google
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: DNSUpstream
+    metadata:
+      name: google-udp
+    spec:
+      protocol: udp
+      address: 8.8.8.8

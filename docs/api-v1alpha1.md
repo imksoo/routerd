@@ -128,7 +128,9 @@ owned by `routerd-dhcpv6-client`.
 | `IPv6RouterAdvertisement` | Generates RA, PIO, RDNSS, DNSSL, M/O flags, MTU, preference, and lifetimes. |
 | `DHCPv6Server` | Provides dnsmasq DHCPv6/RA service in `stateless`, `stateful`, `both`, or `ra-only` mode. |
 | `DNSZone` | Owns a local authoritative zone with manual and DHCP-derived records. |
-| `DNSResolver` | Owns `routerd-dns-resolver` listen profiles, sources, upstreams, and cache. |
+| `DNSResolver` | Owns a `routerd-dns-resolver` daemon instance, listen profiles, cache, metrics, and query logging. |
+| `DNSForwarder` | Declares one DNS match rule for a resolver. It either serves one or more `DNSZone` resources or forwards to named `DNSUpstream` resources. |
+| `DNSUpstream` | Declares one reusable upstream endpoint using `udp`, `tcp`, `dot`, or `doh`, with optional status-derived addresses, bootstrap resolvers, TLS name, and source interface. |
 
 Android does not use DHCPv6 DNS configuration, so IPv6 LANs should publish
 RDNSS through `IPv6RouterAdvertisement.spec.rdnss`.
@@ -140,15 +142,21 @@ LAN DNS suffixes can be tied to a local zone by referencing
 `IPv6RouterAdvertisement.spec.dnsslFrom`, and
 `DHCPv6Server.spec.domainSearchFrom`.
 
-`DNSResolver.spec.sources` lists local zones, conditional forwarding sources,
-and default upstreams in priority order. `https://` is DoH, `tls://` is DoT,
-`quic://` is DoQ, and `udp://` is plain DNS. `listen` can contain multiple
-profiles, and each listener can choose a subset of sources.
+`DNSResolver.spec.listen[].sources` lists `DNSForwarder` names for that
+listener. If the list is omitted, the listener uses every `DNSForwarder` that
+references the resolver. `DNSResolver.spec.sources` is no longer accepted in
+user YAML; split old inline entries into `DNSForwarder` and `DNSUpstream`.
 
-`sources[].viaInterface` binds outgoing DNS queries to a Linux interface name.
-`sources[].bootstrapResolver` supplies resolver addresses for DoH and DoT
-endpoint name resolution. DNSSEC is configured with `DNSZone.spec.dnssec` and
-`DNSResolver.spec.sources[].dnssecValidate`.
+`DNSForwarder.spec.match` contains domain matches such as `home.example` or
+`.` for the default upstream. `spec.zoneRefs` serves local `DNSZone` resources;
+`spec.upstreams` forwards to `DNSUpstream` resources. DNSSEC validation is
+declared on `DNSForwarder.spec.dnssecValidate`.
+
+`DNSUpstream.spec.protocol` is `udp`, `tcp`, `dot`, or `doh`. `addressFrom`
+can derive UDP upstream addresses from resources such as
+`DHCPv6Information/<name>.dnsServers`. `sourceInterface` binds outgoing DNS
+queries to a Linux interface name, and `bootstrap` supplies resolver addresses
+for DoH or DoT endpoint name resolution.
 
 ## DS-Lite, Routes, and NAT
 

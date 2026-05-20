@@ -172,10 +172,10 @@ func ValidateUpstreamURL(raw string) error {
 		return fmt.Errorf("invalid DNS upstream %q", raw)
 	}
 	switch strings.ToLower(parsed.Scheme) {
-	case "https", "tls", "quic", "udp":
+	case "https", "tls", "quic", "udp", "tcp":
 		return nil
 	default:
-		return fmt.Errorf("DNS upstream %q must use https, tls, quic, or udp", raw)
+		return fmt.Errorf("DNS upstream %q must use https, tls, quic, udp, or tcp", raw)
 	}
 }
 

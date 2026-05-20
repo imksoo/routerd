@@ -798,7 +798,7 @@ type DNSZoneReverseSpec struct {
 
 type DNSResolverSpec struct {
 	Listen   []DNSResolverListenSpec `yaml:"listen" json:"listen"`
-	Sources  []DNSResolverSourceSpec `yaml:"sources" json:"sources"`
+	Sources  []DNSResolverSourceSpec `yaml:"-" json:"sources,omitempty" jsonschema:"-"`
 	Cache    DNSResolverCacheSpec    `yaml:"cache,omitempty" json:"cache,omitempty"`
 	Metrics  DNSResolverMetricsSpec  `yaml:"metrics,omitempty" json:"metrics,omitempty"`
 	QueryLog DNSResolverQueryLogSpec `yaml:"queryLog,omitempty" json:"queryLog,omitempty"`
@@ -829,6 +829,26 @@ type DNSResolverSourceSpec struct {
 	BootstrapResolver []string                   `yaml:"bootstrapResolver,omitempty" json:"bootstrapResolver,omitempty"`
 	DNSSECValidate    bool                       `yaml:"dnssecValidate,omitempty" json:"dnssecValidate,omitempty"`
 	Healthcheck       DNSResolverHealthcheckSpec `yaml:"healthcheck,omitempty" json:"healthcheck,omitempty"`
+}
+
+type DNSForwarderSpec struct {
+	Resolver       string                     `yaml:"resolver" json:"resolver"`
+	Match          []string                   `yaml:"match" json:"match"`
+	ZoneRefs       []string                   `yaml:"zoneRefs,omitempty" json:"zoneRefs,omitempty"`
+	Upstreams      []string                   `yaml:"upstreams,omitempty" json:"upstreams,omitempty"`
+	DNSSECValidate bool                       `yaml:"dnssecValidate,omitempty" json:"dnssecValidate,omitempty"`
+	Healthcheck    DNSResolverHealthcheckSpec `yaml:"healthcheck,omitempty" json:"healthcheck,omitempty"`
+}
+
+type DNSUpstreamSpec struct {
+	Protocol        string                  `yaml:"protocol" json:"protocol" jsonschema:"enum=udp,enum=tcp,enum=dot,enum=doh"`
+	Address         string                  `yaml:"address,omitempty" json:"address,omitempty"`
+	AddressFrom     []StatusValueSourceSpec `yaml:"addressFrom,omitempty" json:"addressFrom,omitempty"`
+	Port            int                     `yaml:"port,omitempty" json:"port,omitempty" jsonschema:"minimum=1,maximum=65535"`
+	Path            string                  `yaml:"path,omitempty" json:"path,omitempty"`
+	TLSName         string                  `yaml:"tlsName,omitempty" json:"tlsName,omitempty"`
+	Bootstrap       []string                `yaml:"bootstrap,omitempty" json:"bootstrap,omitempty"`
+	SourceInterface string                  `yaml:"sourceInterface,omitempty" json:"sourceInterface,omitempty"`
 }
 
 type DNSResolverCacheSpec struct {
@@ -1560,6 +1580,14 @@ func (r Resource) SelfAddressPolicySpec() (SelfAddressPolicySpec, error) {
 
 func (r Resource) DNSResolverSpec() (DNSResolverSpec, error) {
 	return specAs[DNSResolverSpec](r)
+}
+
+func (r Resource) DNSForwarderSpec() (DNSForwarderSpec, error) {
+	return specAs[DNSForwarderSpec](r)
+}
+
+func (r Resource) DNSUpstreamSpec() (DNSUpstreamSpec, error) {
+	return specAs[DNSUpstreamSpec](r)
 }
 
 func (r Resource) LogRetentionSpec() (LogRetentionSpec, error) {
