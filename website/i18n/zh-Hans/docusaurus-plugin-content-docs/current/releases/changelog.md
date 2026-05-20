@@ -10,6 +10,8 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期和时间型版本号。
 
 ## Unreleased
 
+## v20260521.0827
+
 ### 新增
 
 - 新增 `NTPServer.spec.allowCIDRFrom`。LAN NTP client 的允许范围现在可从
