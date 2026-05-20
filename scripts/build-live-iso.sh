@@ -473,6 +473,138 @@ esac
 EOF
 chmod 0755 "${overlay_root}/usr/share/routerd/live-persistence.sh"
 
+cat > "${overlay_root}/usr/share/routerd/live-dhcp.sh" <<'EOF'
+#!/bin/sh
+set -eu
+
+state_dir=/run/routerd/live
+config_file=/usr/local/etc/routerd/router.yaml
+log_dir=/run/routerd/logs
+
+mkdir -p "${state_dir}" "${log_dir}"
+
+cmdline_value()
+{
+    key=$1
+    for item in $(cat /proc/cmdline 2>/dev/null || true); do
+        case "${item}" in
+            "${key}="*)
+                printf '%s\n' "${item#*=}"
+                return 0
+                ;;
+        esac
+    done
+    return 1
+}
+
+config_router_name()
+{
+    [ -f "${config_file}" ] || return 1
+    awk '
+        /^metadata:[[:space:]]*$/ { in_meta = 1; next }
+        in_meta && /^spec:[[:space:]]*$/ { exit }
+        in_meta && /^[[:space:]]+name:[[:space:]]*/ {
+            sub(/^[[:space:]]+name:[[:space:]]*/, "")
+            gsub(/["'\'']/, "")
+            print
+            exit
+        }
+    ' "${config_file}"
+}
+
+first_mac()
+{
+    for iface in $(candidate_interfaces); do
+        mac=$(cat "/sys/class/net/${iface}/address" 2>/dev/null || true)
+        case "${mac}" in
+            ""|00:00:00:00:00:00) ;;
+            *) printf '%s\n' "${mac}"; return 0 ;;
+        esac
+    done
+    return 1
+}
+
+live_hostname()
+{
+    value=$(cmdline_value routerd.hostname 2>/dev/null || cmdline_value routerd.live_hostname 2>/dev/null || true)
+    [ -n "${value}" ] || value=$(config_router_name 2>/dev/null || true)
+    current=$(hostname 2>/dev/null || true)
+    if [ -z "${value}" ] && [ -n "${current}" ] && [ "${current}" != "localhost" ]; then
+        value=${current}
+    fi
+    if [ -z "${value}" ]; then
+        mac=$(first_mac 2>/dev/null || true)
+        suffix=$(printf '%s' "${mac}" | tr -d ':')
+        suffix=${suffix#????????}
+        [ -n "${suffix}" ] || suffix=live
+        value="routerd-${suffix}"
+    fi
+    printf '%s\n' "${value}" | tr -c 'A-Za-z0-9.-' '-' | sed 's/^-*//; s/-*$//'
+}
+
+candidate_interfaces()
+{
+    ls /sys/class/net 2>/dev/null | grep -E '^(eth|en|ens)' || true
+}
+
+client_id_hex()
+{
+    override=$(cmdline_value routerd.dhcp_client_id 2>/dev/null || true)
+    if [ -n "${override}" ]; then
+        printf '%s\n' "${override}"
+        return 0
+    fi
+    return 1
+}
+
+start_one()
+{
+    iface=$1
+    host=$2
+    pidfile="${state_dir}/udhcpc-${iface}.pid"
+    logfile="${log_dir}/udhcpc-${iface}.log"
+    [ -e "/sys/class/net/${iface}" ] || return 1
+    if [ -f "${pidfile}" ] && kill -0 "$(cat "${pidfile}" 2>/dev/null)" 2>/dev/null; then
+        return 0
+    fi
+    ip link set "${iface}" up 2>/dev/null || true
+    client_id=$(client_id_hex 2>/dev/null || true)
+    options="-x hostname:${host}"
+    [ -n "${client_id}" ] && options="${options} -x 0x3d:${client_id}"
+    # First get a lease synchronously so boot can continue with working network,
+    # then leave a daemon running to renew/rebind it.
+    # shellcheck disable=SC2086
+    udhcpc -q -n -t 2 -T 3 -i "${iface}" ${options} >>"${logfile}" 2>&1 || return 1
+    # shellcheck disable=SC2086
+    udhcpc -p "${pidfile}" -i "${iface}" ${options} >>"${logfile}" 2>&1 &
+    return 0
+}
+
+start()
+{
+    command -v udhcpc >/dev/null 2>&1 || exit 0
+    host=$(live_hostname)
+    [ -n "${host}" ] || host=routerd-live
+    hostname "${host}" 2>/dev/null || true
+    printf '%s\n' "${host}" > /etc/hostname 2>/dev/null || true
+    for iface in $(candidate_interfaces); do
+        if start_one "${iface}" "${host}"; then
+            printf '%s\n' "${iface}" > "${state_dir}/dhcp-interface"
+            printf '%s\n' "${host}" > "${state_dir}/dhcp-hostname"
+            return 0
+        fi
+    done
+    return 0
+}
+
+case "${1:-start}" in
+    start) start ;;
+    hostname) live_hostname ;;
+    *) echo "usage: live-dhcp.sh {start|hostname}" >&2; exit 2 ;;
+esac
+EOF
+chmod 0755 "${overlay_root}/usr/share/routerd/live-dhcp.sh"
+
 cat > "${overlay_root}/usr/share/routerd/live-autostart.sh" <<'EOF'
 #!/bin/sh
 set -eu
@@ -491,12 +623,7 @@ mkdir -p /run/routerd "${log_dir}" /var/lib/routerd
 [ -f "${config}" ] || exit 0
 [ -f "${marker}" ] && exit 0
 
-if command -v udhcpc >/dev/null 2>&1; then
-    for iface in $(ls /sys/class/net 2>/dev/null | grep -E '^(eth|en|ens)' || true); do
-        ip link set "$iface" up 2>/dev/null || true
-        udhcpc -q -n -t 2 -T 3 -i "$iface" >/dev/null 2>&1 && break
-    done
-fi
+/usr/share/routerd/live-dhcp.sh start || true
 
 /usr/share/routerd/install.sh --deps-only >/run/routerd/logs/deps.log 2>&1 || true
 "${routerd}" validate --config "${config}"
@@ -544,12 +671,7 @@ routerd_skip_wizard()
   return 1
 }
 if ! routerd_skip_wizard; then
-  if command -v udhcpc >/dev/null 2>&1; then
-    for iface in $(ls /sys/class/net 2>/dev/null | grep -E '^(eth|en|ens)' || true); do
-      ip link set "$iface" up 2>/dev/null || true
-      udhcpc -q -n -t 2 -T 3 -i "$iface" && break
-    done
-  fi
+  /usr/share/routerd/live-dhcp.sh start || true
   /usr/share/routerd/install.sh --deps-only || true
   echo "Starting routerd setup wizard. Press Enter within 5 seconds to continue, or wait to skip."
   if read -r -t 5 _routerd_start_wizard; then

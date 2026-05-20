@@ -47,6 +47,14 @@ routerd.skip-wizard=1
 まま動きます。後から開始する場合は
 `/usr/share/routerd/install.sh configure` を実行します。
 
+Live ISO は autostart 経路で `udhcpc` を常駐 DHCP client として起動し、
+boot 後も lease の renew/rebind を継続します。DHCP hostname は
+`routerd.hostname=`、`routerd.live_hostname=`、top-level Router の
+`metadata.name`、または MAC address 由来の fallback から決めます。既定では
+DHCP option 61 は送らないため、Ethernet MAC で client を識別する DHCP server
+では同じ client identity のまま扱われます。明示的な DHCP client ID が必要な
+場合だけ、hex 値を `routerd.dhcp_client_id=` で指定します。
+
 Kubernetes VIP example のように `advertInterval` が 1 秒の構成では、active
 node の keepalived を停止すると、おおむね数秒で backup へ VIP が移ります。
 keepalived の検出窓は概ね `advertInterval * 3` です。高 priority node への

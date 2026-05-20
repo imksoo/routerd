@@ -49,6 +49,14 @@ starting the wizard. If there is no input, it exits the wizard path and leaves
 the system running in ephemeral mode; start it later with
 `/usr/share/routerd/install.sh configure`.
 
+The live ISO starts `udhcpc` as a persistent DHCP client during the autostart
+path so leases are renewed after boot. It sends a DHCP hostname derived from
+`routerd.hostname=`, `routerd.live_hostname=`, the top-level Router
+`metadata.name`, or a stable MAC-derived fallback. By default it does not send
+DHCP option 61, so servers that identify clients by Ethernet MAC keep seeing the
+same client identity. To force a specific DHCP client ID, pass a hex value with
+`routerd.dhcp_client_id=`.
+
 With the example Kubernetes VIP profile and a 1 second `advertInterval`,
 stopping keepalived on the active node should move the VIP to the backup in
 roughly a few seconds. The keepalived detection window is approximately
