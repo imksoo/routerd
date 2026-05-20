@@ -410,6 +410,26 @@ func TestControllerDefaultStatusesAreLive(t *testing.T) {
 	}
 }
 
+func TestOverallStatusPhaseUsesResourceStatuses(t *testing.T) {
+	store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatalf("open state: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "BGPRouter", "lan", map[string]any{"phase": "Pending"}); err != nil {
+		t.Fatalf("save pending status: %v", err)
+	}
+	if got := overallStatusPhase("Healthy", store); got != "Pending" {
+		t.Fatalf("phase = %q, want Pending", got)
+	}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "BGPPeer", "worker", map[string]any{"phase": "Error"}); err != nil {
+		t.Fatalf("save error status: %v", err)
+	}
+	if got := overallStatusPhase("Healthy", store); got != "Error" {
+		t.Fatalf("phase = %q, want Error", got)
+	}
+}
+
 func TestListenUnixSocketSetsMode(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "routerd-status.sock")
 	listener, err := listenUnixSocket(path, 0o666)

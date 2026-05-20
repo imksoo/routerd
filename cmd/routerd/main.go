@@ -3348,6 +3348,7 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 	handler := controlapi.Handler{
 		Status: func(r *http.Request) (*controlapi.Status, error) {
 			status := controlapi.NewStatus(resultWithLatestGeneration(cache.Load(), stateStore))
+			status.Status.Phase = overallStatusPhase(status.Status.Phase, stateStore)
 			controllers := controllerRuntime.Snapshot()
 			if stateStore != nil {
 				controllers = augmentControllerStatusesFromState(controllers, stateStore)
@@ -3874,6 +3875,72 @@ func resultWithLatestGeneration(result *apply.Result, store *routerstate.SQLiteS
 	next := *result
 	next.Generation = generation
 	return &next
+}
+
+func overallStatusPhase(base string, lister routerstate.ObjectStatusLister) string {
+	if strings.TrimSpace(base) == "" {
+		base = "Unknown"
+	}
+	if lister == nil {
+		return base
+	}
+	statuses, err := lister.ListObjectStatuses()
+	if err != nil {
+		return base
+	}
+	phase := base
+	for _, item := range statuses {
+		resourcePhase := strings.TrimSpace(fmt.Sprint(item.Status["phase"]))
+		if resourcePhase == "" {
+			continue
+		}
+		phase = worseStatusPhase(phase, resourcePhase)
+		if phase == "Error" {
+			break
+		}
+	}
+	return phase
+}
+
+func worseStatusPhase(current, candidate string) string {
+	if statusPhaseRank(candidate) > statusPhaseRank(current) {
+		return canonicalOverallPhase(candidate)
+	}
+	return canonicalOverallPhase(current)
+}
+
+func statusPhaseRank(phase string) int {
+	switch strings.ToLower(strings.TrimSpace(phase)) {
+	case "error", "blocked", "failed", "unhealthy":
+		return 4
+	case "pending", "starting", "acquiring", "refreshing", "rebinding", "rendered":
+		return 3
+	case "degraded", "down", "lost", "expired", "nohealthybackends":
+		return 2
+	case "unknown", "":
+		return 1
+	case "healthy", "applied", "active", "established", "bound", "running", "ready", "up", "installed", "configured":
+		return 0
+	default:
+		return 1
+	}
+}
+
+func canonicalOverallPhase(phase string) string {
+	switch strings.ToLower(strings.TrimSpace(phase)) {
+	case "error", "blocked", "failed", "unhealthy":
+		return "Error"
+	case "pending", "starting", "acquiring", "refreshing", "rebinding", "rendered":
+		return "Pending"
+	case "degraded", "down", "lost", "expired", "nohealthybackends":
+		return "Degraded"
+	case "unknown", "":
+		return "Unknown"
+	case "healthy", "applied", "active", "established", "bound", "running", "ready", "up", "installed", "configured":
+		return "Healthy"
+	default:
+		return phase
+	}
 }
 
 func runObserveSchedule(stop <-chan struct{}, interval time.Duration, router *api.Router, cache *resultCache, statusFile string, logger *eventlog.Logger) {

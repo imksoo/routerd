@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -101,13 +102,21 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	}
 	daemonRestartNeeded := daemonsChanged
 	controlExtra := map[string]any{}
+	if !c.DryRun {
+		serviceState := c.frrServiceState(ctx)
+		mergeInto(controlExtra, serviceState.StatusExtra())
+		if !serviceState.Active {
+			daemonRestartNeeded = true
+			reloadNeeded = true
+		}
+	}
 	controlReadyForReload := false
 	if !reloadNeeded && !c.DryRun {
 		readyCtx, cancel := context.WithTimeout(ctx, frrReloadReadyTimeout)
 		out, err := c.waitFRRControlReady(readyCtx, controlExtra, 500*time.Millisecond)
 		cancel()
 		if err != nil {
-			return c.saveFRRConfigPending(path, false, frrControlPendingReason(out, err), out, err, mergeStatusExtra(controlExtra, map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged, "daemonRestartNeeded": daemonRestartNeeded}))
+			return c.saveFRRConfigPendingError(path, false, frrControlPendingReason(out, err), out, err, mergeStatusExtra(controlExtra, map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged, "daemonRestartNeeded": daemonRestartNeeded}))
 		}
 		controlReadyForReload = true
 		reloadNeeded = !runningConfigOutputMatches(out, data)
@@ -133,8 +142,9 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		out, err := c.waitFRRControlReady(readyCtx, controlExtra, time.Second)
 		cancel()
 		if err != nil {
-			return c.saveFRRConfigPending(path, reloadNeeded, frrControlPendingReason(out, err), out, err, mergeStatusExtra(controlExtra, map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged, "daemonRestartNeeded": daemonRestartNeeded}))
+			return c.saveFRRConfigPendingError(path, reloadNeeded, frrControlPendingReason(out, err), out, err, mergeStatusExtra(controlExtra, map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged, "daemonRestartNeeded": daemonRestartNeeded}))
 		}
+		mergeInto(controlExtra, c.frrServiceState(ctx).StatusExtra())
 	} else if !c.DryRun && reloadNeeded && !controlReadyForReload {
 		startingExtra := mergeStatusExtra(controlExtra, map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged, "daemonRestartNeeded": daemonRestartNeeded})
 		if err := c.saveFRRConfigPending(path, reloadNeeded, "FRRStarting", nil, nil, startingExtra); err != nil {
@@ -144,7 +154,7 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		out, err := c.waitFRRControlReady(readyCtx, controlExtra, 500*time.Millisecond)
 		cancel()
 		if err != nil {
-			return c.saveFRRConfigPending(path, reloadNeeded, frrControlPendingReason(out, err), out, err, mergeStatusExtra(controlExtra, map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged, "daemonRestartNeeded": daemonRestartNeeded}))
+			return c.saveFRRConfigPendingError(path, reloadNeeded, frrControlPendingReason(out, err), out, err, mergeStatusExtra(controlExtra, map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged, "daemonRestartNeeded": daemonRestartNeeded}))
 		}
 	}
 	if !c.DryRun && reloadNeeded {
@@ -154,7 +164,7 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		if err != nil {
 			extra := mergeStatusExtra(controlExtra, map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged, "daemonRestartNeeded": daemonRestartNeeded})
 			if isFRRControlUnavailableError(out, err) || isFRRPermissionDeniedError(out, err) {
-				return c.saveFRRConfigPending(path, reloadNeeded, frrControlPendingReason(out, err), out, err, extra)
+				return c.saveFRRConfigPendingError(path, reloadNeeded, frrControlPendingReason(out, err), out, err, extra)
 			}
 			if errors.Is(err, context.DeadlineExceeded) || errors.Is(validateCtx.Err(), context.DeadlineExceeded) {
 				return c.saveFRRConfigPending(path, reloadNeeded, "FRRValidateTimeout", out, err, extra)
@@ -179,13 +189,13 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		cancel()
 		if err != nil {
 			if isFRRControlUnavailableError(nil, err) || isFRRPermissionDeniedError(nil, err) {
-				return c.saveFRRConfigPending(path, reloadNeeded, frrControlPendingReason(nil, err), nil, err, mergeStatusExtra(reloadExtra, map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged, "daemonRestartNeeded": daemonRestartNeeded}))
+				return c.saveFRRConfigPendingError(path, reloadNeeded, frrControlPendingReason(nil, err), nil, err, mergeStatusExtra(reloadExtra, map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged, "daemonRestartNeeded": daemonRestartNeeded}))
 			}
-			return c.saveFRRConfigPending(path, reloadNeeded, "FRRReloadVerifyFailed", nil, err, mergeStatusExtra(reloadExtra, map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged, "daemonRestartNeeded": daemonRestartNeeded}))
+			return c.saveFRRConfigPendingError(path, reloadNeeded, "FRRReloadVerifyFailed", nil, err, mergeStatusExtra(reloadExtra, map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged, "daemonRestartNeeded": daemonRestartNeeded}))
 		}
 		if !matches {
 			msg := []byte("running FRR config does not contain rendered BGP critical lines after frr-reload")
-			return c.saveFRRConfigPending(path, reloadNeeded, "FRRReloadIncomplete", msg, nil, mergeStatusExtra(reloadExtra, map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged, "daemonRestartNeeded": daemonRestartNeeded}))
+			return c.saveFRRConfigPendingError(path, reloadNeeded, "FRRReloadIncomplete", msg, nil, mergeStatusExtra(reloadExtra, map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged, "daemonRestartNeeded": daemonRestartNeeded}))
 		}
 		for key, value := range reloadExtra {
 			controlExtra[key] = value
@@ -370,12 +380,80 @@ func isTransientFRRReloadError(out []byte, err error) bool {
 }
 
 func (c *Controller) frrDaemonChangeCommands() []servicemgr.Command {
-	frr := servicemgr.Service{SystemdName: "frr.service", OpenRCName: "frr", RCDName: "frr", NixName: "frr"}
 	manager := c.serviceManager()
 	return []servicemgr.Command{
-		manager.Command(servicemgr.OperationEnable, frr),
-		manager.Command(servicemgr.OperationRestart, frr),
+		manager.Command(servicemgr.OperationEnable, frrService()),
+		manager.Command(servicemgr.OperationRestart, frrService()),
 	}
+}
+
+type frrServiceState struct {
+	Manager string
+	Command string
+	Active  bool
+	Output  string
+	Error   string
+}
+
+func (s frrServiceState) StatusExtra() map[string]any {
+	return map[string]any{
+		"FRRServiceManager": s.Manager,
+		"FRRServiceCommand": s.Command,
+		"FRRServiceActive":  s.Active,
+		"FRRServiceStatus":  s.Output,
+		"FRRServiceError":   s.Error,
+	}
+}
+
+func (c *Controller) frrServiceState(ctx context.Context) frrServiceState {
+	manager := c.serviceManager()
+	command := manager.Command(servicemgr.OperationStatus, frrService())
+	state := frrServiceState{
+		Manager: manager.Name(),
+		Command: strings.TrimSpace(command.Name + " " + strings.Join(command.Args, " ")),
+	}
+	if command.Name == "" {
+		state.Error = "service status command unavailable"
+		return state
+	}
+	out, err := c.runWithTimeout(ctx, frrServiceCmdTimeout, command.Name, command.Args...)
+	state.Output = strings.TrimSpace(string(out))
+	if err != nil {
+		state.Error = err.Error()
+		return state
+	}
+	state.Active = frrServiceStatusOutputActive(out)
+	return state
+}
+
+func frrServiceStatusOutputActive(out []byte) bool {
+	for _, raw := range strings.Split(string(out), "\n") {
+		line := strings.ToLower(strings.TrimSpace(raw))
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "status of ") {
+			_, state, ok := strings.Cut(line, ":")
+			if ok && frrServiceStateTextFailed(state) {
+				return false
+			}
+			continue
+		}
+		if strings.Contains(line, " is ") && frrServiceStateTextFailed(line) {
+			return false
+		}
+	}
+	return true
+}
+
+func frrServiceStateTextFailed(value string) bool {
+	value = strings.ToLower(strings.TrimSpace(value))
+	for _, needle := range []string{"failed", "stopped", "inactive", "not started", "crashed"} {
+		if strings.Contains(value, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Controller) serviceManager() servicemgr.Manager {
@@ -391,6 +469,10 @@ func (c *Controller) serviceManager() servicemgr.Manager {
 	}
 	_, features := platform.Current()
 	return servicemgr.ForPlatform(features)
+}
+
+func frrService() servicemgr.Service {
+	return servicemgr.Service{SystemdName: "frr.service", OpenRCName: "frr", RCDName: "frr", NixName: "frr"}
 }
 
 func (c *Controller) runningConfigMatches(ctx context.Context, desired []byte) (bool, error) {
@@ -484,13 +566,18 @@ func frrOutputIndicatesBGPInstanceMissing(out []byte, err error) bool {
 
 func mergeStatusExtra(base map[string]any, overlay map[string]any) map[string]any {
 	out := map[string]any{}
-	for key, value := range base {
-		out[key] = value
-	}
-	for key, value := range overlay {
-		out[key] = value
-	}
+	mergeInto(out, base)
+	mergeInto(out, overlay)
 	return out
+}
+
+func mergeInto(dst map[string]any, src map[string]any) {
+	if dst == nil {
+		return
+	}
+	for key, value := range src {
+		dst[key] = value
+	}
 }
 
 func criticalFRRLines(data []byte) []string {
@@ -520,10 +607,13 @@ func criticalFRRLines(data []byte) []string {
 }
 
 func (c *Controller) observe(ctx context.Context) error {
+	if err := c.observeFRRHealth(ctx); err != nil {
+		return err
+	}
 	vtysh := firstNonEmpty(c.VTYSH, "vtysh")
 	states, truncated, err := c.observeInstances(ctx, vtysh)
 	if err != nil {
-		return c.saveConfiguredStatuses("Pending", firstNonEmpty(c.ConfigPath, "/run/routerd/frr/routerd.conf"), false, map[string]any{"reason": "FRRStatusUnavailable", "error": err.Error()})
+		return c.saveConfiguredStatusesError("Pending", firstNonEmpty(c.ConfigPath, "/run/routerd/frr/routerd.conf"), false, map[string]any{"reason": "FRRStatusUnavailable", "error": err.Error()}, err)
 	}
 	c.truncated = truncated
 	state := aggregateBGPStates(states)
@@ -542,6 +632,92 @@ func (c *Controller) observe(ctx context.Context) error {
 		c.publishBGPEvent(ctx, event)
 	}
 	return nil
+}
+
+func (c *Controller) observeFRRHealth(ctx context.Context) error {
+	path := firstNonEmpty(c.ConfigPath, "/run/routerd/frr/routerd.conf")
+	desired, _ := os.ReadFile(path)
+	extra := map[string]any{}
+	serviceState := c.frrServiceState(ctx)
+	mergeInto(extra, serviceState.StatusExtra())
+	if !serviceState.Active {
+		return c.saveFRRConfigPendingError(path, false, "FRRServiceInactive", nil, errors.New(firstNonEmpty(serviceState.Error, serviceState.Output, "FRR service is not active")), extra)
+	}
+	controlOut, controlErr := c.frrControlReady(ctx)
+	recordFRRControlProbe(extra, controlOut, controlErr)
+	if controlErr != nil {
+		return c.saveFRRConfigPendingError(path, false, frrControlPendingReason(controlOut, controlErr), controlOut, controlErr, extra)
+	}
+	listenOut, listenErr := c.bgpListenReady(ctx)
+	if listenErr != nil {
+		return c.saveFRRConfigPendingError(path, false, "FRRListenUnavailable", listenOut, listenErr, extra)
+	}
+	if len(desired) > 0 && !runningConfigOutputMatches(controlOut, desired) {
+		return c.saveFRRConfigPendingError(path, false, "FRRReloadIncomplete", []byte("running FRR config does not contain rendered BGP critical lines"), nil, extra)
+	}
+	return nil
+}
+
+func (c *Controller) bgpListenReady(ctx context.Context) ([]byte, error) {
+	out, err := c.runWithTimeout(ctx, frrReadyProbeTimeout, "ss", "-ltn")
+	if err != nil {
+		return out, err
+	}
+	for _, port := range c.bgpListenPorts() {
+		if !listenPortPresent(out, strconv.Itoa(port)) {
+			return out, fmt.Errorf("FRR BGP listen port %d is not listening", port)
+		}
+	}
+	return out, nil
+}
+
+func (c *Controller) bgpListenPorts() []int {
+	seen := map[int]bool{}
+	var out []int
+	if c.Router != nil {
+		for _, resource := range c.Router.Spec.Resources {
+			if resource.APIVersion != api.NetAPIVersion || resource.Kind != "BGPRouter" {
+				continue
+			}
+			spec, err := resource.BGPRouterSpec()
+			if err != nil {
+				continue
+			}
+			port := spec.Listen.Port
+			if port == 0 {
+				port = 179
+			}
+			if !seen[port] {
+				seen[port] = true
+				out = append(out, port)
+			}
+		}
+	}
+	if len(out) == 0 {
+		out = append(out, 179)
+	}
+	sort.Ints(out)
+	return out
+}
+
+func listenPortPresent(out []byte, port string) bool {
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 4 || strings.ToUpper(fields[0]) != "LISTEN" {
+			continue
+		}
+		for _, field := range fields[3:] {
+			if listenAddressHasPort(field, port) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func listenAddressHasPort(address, port string) bool {
+	address = strings.TrimSpace(address)
+	return strings.HasSuffix(address, ":"+port) || strings.HasSuffix(address, "]:"+port)
 }
 
 func (c *Controller) publishBGPEvent(ctx context.Context, event bgpstate.Event) {
@@ -819,6 +995,37 @@ func (c *Controller) saveFRRConfigPending(path string, changed bool, pendingReas
 		status[key] = value
 	}
 	return c.saveConfiguredStatuses("Pending", path, changed, status)
+}
+
+func (c *Controller) saveFRRConfigPendingError(path string, changed bool, pendingReason string, out []byte, err error, extra map[string]any) error {
+	if saveErr := c.saveFRRConfigPending(path, changed, pendingReason, out, err, extra); saveErr != nil {
+		return saveErr
+	}
+	return pendingError(pendingReason, out, err)
+}
+
+func (c *Controller) saveConfiguredStatusesError(phase, path string, changed bool, extra map[string]any, err error) error {
+	if saveErr := c.saveConfiguredStatuses(phase, path, changed, extra); saveErr != nil {
+		return saveErr
+	}
+	if err != nil {
+		return err
+	}
+	return fmt.Errorf("%s", phase)
+}
+
+func pendingError(reason string, out []byte, err error) error {
+	message := strings.TrimSpace(string(out))
+	if err != nil && message != "" {
+		return fmt.Errorf("%s: %w: %s", reason, err, message)
+	}
+	if err != nil {
+		return fmt.Errorf("%s: %w", reason, err)
+	}
+	if message != "" {
+		return fmt.Errorf("%s: %s", reason, message)
+	}
+	return fmt.Errorf("%s", reason)
 }
 
 func (c *Controller) saveObservedStatuses(states map[string]bgpstate.State, aggregate bgpstate.State) error {
