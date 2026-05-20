@@ -112,7 +112,7 @@ spec:
         routerID: 192.168.70.1
         convergenceProfile: fast
         importPolicy:
-          allowedPrefixes: [10.244.0.0/16, fd00:244::/48]
+          allowedPrefixes: [10.250.0.0/24, fd00:250::/64]
     - apiVersion: net.routerd.net/v1alpha1
       kind: BGPPeer
       metadata:

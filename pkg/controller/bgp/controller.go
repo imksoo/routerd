@@ -182,6 +182,9 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		cancel()
 		reloadExtra["LastReloadStderr"] = strings.TrimSpace(string(out))
 		if err != nil {
+			if isFRRPermissionDeniedError(out, err) {
+				return c.saveFRRConfigPending(path, reloadNeeded, "FRRReloadPermissionDenied", out, err, mergeStatusExtra(reloadExtra, map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged, "daemonRestartNeeded": daemonRestartNeeded}))
+			}
 			return c.saveFRRConfigPending(path, reloadNeeded, "FRRReloadFailed", out, err, mergeStatusExtra(reloadExtra, map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged, "daemonRestartNeeded": daemonRestartNeeded}))
 		}
 		verifyCtx, cancel := context.WithTimeout(ctx, frrValidateCmdTimeout)

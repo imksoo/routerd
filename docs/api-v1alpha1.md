@@ -243,6 +243,11 @@ prefix caps of 1,000,000 or more. Import policy is default deny; add
 `spec.importPolicy.allowedPrefixes` for Kubernetes LoadBalancer pools. Accepted
 imports set `ip next-hop peer-address` so Kubernetes-advertised
 `/32` routes remain reachable through the advertising speaker. `BGPRouter` can
+use a router ID that differs from the TCP source address, but peer routers must
+still configure the address that the host actually uses as its BGP source. Check
+`ip route get <peer-address>` on Linux when the LAN has multiple addresses, and
+prefer a router ID that matches that operational source unless there is a clear
+reason not to.
 redistribute connected and static IPv4 routes with independent
 `allowedPrefixes`; routerd renders FRR `redistribute connected/static route-map`
 statements and keeps the peer outbound route-map default-deny unless exported

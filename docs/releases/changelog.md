@@ -10,6 +10,22 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- Added `CAP_DAC_OVERRIDE` to the generated `routerd.service` only when the
+  router config contains FRR/keepalived integrations. Ubuntu FRR commonly keeps
+  `/run/frr` as `frr:frr` with mode `0755`; supplementary `frr` group access is
+  enough for VTY sockets but not enough for `frr-reload.py` to create its
+  `/var/run/frr/reload-*.txt` scratch file under systemd capability bounding.
+- Classified `frr-reload.py` permission failures as
+  `FRRReloadPermissionDenied` instead of the generic `FRRReloadFailed`.
+
+### Changed
+
+- Updated Kubernetes BGP examples to import the MetalLB LoadBalancer pool
+  `10.250.0.0/24` and adjusted the home-router sample to peer with the two
+  k8s route nodes individually.
+
 ## v20260520.2227
 
 ### Fixed

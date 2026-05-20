@@ -241,7 +241,10 @@ apply の途中で自分自身を直接再起動するのではなく、`systemd
 self-restart を予約します。
 BGP、VRRP、または ingress service リソースを同じ設定に含む場合は、生成される
 `routerd.service` に FRR の supplementary group と FRR/keepalived 用の書き込み可能
-path を自動追加します。
+path を自動追加します。FRR を使う場合は、ambient/bounding capability に
+`CAP_DAC_OVERRIDE` も追加します。Ubuntu の FRR は VTY socket を `frrvty` 経由で
+公開する一方、`/run/frr` を `frr:frr` かつ mode `0755` にすることがあり、
+`frr-reload.py` は reload 時に `/var/run/frr/reload-*.txt` を作成するためです。
 
 よく使うオプション:
 

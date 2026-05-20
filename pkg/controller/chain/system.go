@@ -854,6 +854,8 @@ func maybeAugmentRouterdServiceAccess(router *api.Router, unitName string, spec 
 	}
 	spec.SupplementaryGroups = appendMissingStrings(spec.SupplementaryGroups, "frr", "frrvty")
 	spec.ReadWritePaths = appendMissingStrings(spec.ReadWritePaths, "/run/frr", "/var/run/frr", "/etc/frr", "/etc/keepalived")
+	spec.AmbientCapabilities = appendMissingStrings(spec.AmbientCapabilities, "CAP_DAC_OVERRIDE")
+	spec.CapabilityBoundingSet = appendMissingStrings(spec.CapabilityBoundingSet, "CAP_DAC_OVERRIDE")
 	return spec
 }
 

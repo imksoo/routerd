@@ -160,7 +160,10 @@ spec:
         name: k8s-edge
       spec:
         asn: 64500
-        routerID: 192.168.1.1
+        routerID: 192.168.1.249
+        convergenceProfile: fast
+        importPolicy:
+          allowedPrefixes: [10.250.0.0/24]
         redistribute:
           connected:
             allowedPrefixes: [192.168.1.0/24]
@@ -171,7 +174,7 @@ spec:
       spec:
         routerRef: BGPRouter/k8s-edge
         peerASN: 64512
-        peers: [192.168.1.249]
+        peers: [192.168.1.38, 192.168.1.53]
     - apiVersion: firewall.routerd.net/v1alpha1
       kind: FirewallZone
       metadata:

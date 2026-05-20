@@ -890,6 +890,43 @@ func TestReconcileMarksPendingWhenFRRReloadFails(t *testing.T) {
 	}
 }
 
+func TestReconcileMarksPendingWhenFRRReloadPermissionDenied(t *testing.T) {
+	configPath := t.TempDir() + "/routerd.conf"
+	controller := Controller{
+		Router:      bgpRouter(),
+		Store:       mapStore{},
+		ConfigPath:  configPath,
+		DaemonsPath: readyFRRDaemons(t),
+		VTYSH:       "vtysh",
+		FRRReload:   "frr-reload.py",
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			switch {
+			case frrHealthyTestCommand(name, args...):
+				return frrHealthyTestOutput(name, args...), nil
+			case name == "vtysh" && strings.Join(args, " ") == "-c show running-config":
+				return []byte("frr version 10.5.3\nservice integrated-vtysh-config\n"), nil
+			case name == "vtysh" && reflect.DeepEqual(args[:2], []string{"-C", "-f"}):
+				return []byte("ok"), nil
+			case name == "frr-reload.py":
+				return []byte("PermissionError: [Errno 13] Permission denied: /var/run/frr/reload-2X6ROJ.txt"), errors.New("exit status 1")
+			default:
+				t.Fatalf("unexpected command: %s %v", name, args)
+				return nil, nil
+			}
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile should surface reload permission failure as pending status, got error: %v", err)
+	}
+	status := controller.Store.ObjectStatus(api.NetAPIVersion, "BGPRouter", "lan")
+	if status["phase"] != "Pending" || status["reason"] != "FRRConfigPending" || status["pendingReason"] != "FRRReloadPermissionDenied" {
+		t.Fatalf("pending status = %#v", status)
+	}
+	if got, _ := status["LastReloadStderr"].(string); !strings.Contains(got, "/var/run/frr/reload-") {
+		t.Fatalf("LastReloadStderr = %q", got)
+	}
+}
+
 func TestReconcileRetriesFRRReloadWhenLockIsBusy(t *testing.T) {
 	configPath := t.TempDir() + "/routerd.conf"
 	runningConfig := bgpRunningConfig(t, bgpRouter())

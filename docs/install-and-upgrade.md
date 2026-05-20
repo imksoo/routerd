@@ -241,7 +241,11 @@ When that unit changes, the controller schedules a delayed self-restart through
 controller pass.
 When the same router config contains BGP, VRRP, or ingress service resources,
 routerd augments its own unit with the supplementary FRR groups and writable
-FRR/keepalived paths needed by the generated integrations.
+FRR/keepalived paths needed by the generated integrations. For FRR, routerd
+also adds `CAP_DAC_OVERRIDE` to the unit's ambient and bounding capability sets:
+Ubuntu FRR commonly exposes VTY sockets through `frrvty` but keeps `/run/frr`
+owned by `frr:frr` with mode `0755`, and `frr-reload.py` creates
+`/var/run/frr/reload-*.txt` during reload.
 
 Useful options:
 

@@ -258,7 +258,12 @@ watcher は default で 15 秒間隔、prefix status 4096 entries cap です。
 `peerStateChangeThrottle` を調整できます。validation は 3 秒未満の interval と
 1,000,000 以上の prefix cap を拒否します。
 import policy は default deny で、受け入れた経路には
-`set ip next-hop peer-address` を付けます。`BGPRouter` は connected/static IPv4
+`set ip next-hop peer-address` を付けます。router ID は TCP の
+source address と同一である必要はありませんが、peer 側には実際に host が使う BGP source
+address を設定する必要があります。LAN に複数 address がある場合は Linux なら
+`ip route get <peer-address>` で source address を確認し、明確な理由がなければ
+router ID もその運用上の source address に寄せると混乱を避けられます。
+`BGPRouter` は connected/static IPv4
 route を個別の `allowedPrefixes` 付きで redistribute できます。routerd は FRR の
 `redistribute connected/static route-map` を生成し、明示的な export prefix がない限り
 peer outbound route-map は default deny のままにします。外向き広告は
