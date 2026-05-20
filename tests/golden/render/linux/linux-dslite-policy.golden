@@ -24,7 +24,7 @@ dhcp-range=set:lan-dhcpv6,::,constructor:ens19,ra-stateless,64,12h
 dhcp-option=tag:lan-dhcpv6,option6:domain-search,lab.example
 interface=ens19
 enable-ra
-ra-param=ens19,mtu:1500,high,0,7200
+ra-param=ens19,mtu:1460,high,0,7200
 dhcp-option=option6:domain-search,lab.example
 ### firewall-holes.txt
 ds-lite-dslite-ipip from=self to=wan ifnames=ens18 proto=ipip port=0 action=accept direction= comment=net.routerd.net/v1alpha1/DSLiteTunnel/ds-lite
@@ -189,6 +189,15 @@ table inet routerd_filter {
   }
   chain wan_to_wan {
     counter accept
+  }
+}
+add table inet routerd_mss
+flush table inet routerd_mss
+table inet routerd_mss {
+  chain forward {
+    type filter hook forward priority mangle; policy accept;
+    iifname "ens19" oifname { "ds-routerd-test", "ens18" } ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size set 1420
+    iifname "ens19" oifname { "ds-routerd-test", "ens18" } meta nfproto ipv6 tcp flags syn / syn,rst tcp option maxseg size set 1400
   }
 }
 add table ip routerd_nat

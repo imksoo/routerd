@@ -151,18 +151,18 @@ func writePFMSSClamp(buf *bytes.Buffer, aliases map[string]string, policies []pa
 		}
 		fromIfname := aliases[policy.Spec.FromInterface]
 		if fromIfname == "" {
-			return fmt.Errorf("%s references fromInterface with empty ifname", policy.Resource.ID())
+			return fmt.Errorf("%s references fromInterface with empty ifname", policy.ResourceID)
 		}
 		mss := policy.MTU - 40
 		if mss < 536 {
-			return fmt.Errorf("%s computed IPv4 MSS %d is too small", policy.Resource.ID(), mss)
+			return fmt.Errorf("%s computed IPv4 MSS %d is too small", policy.ResourceID, mss)
 		}
 		buf.WriteString("scrub in on " + fromIfname + " proto tcp max-mss " + strconv.Itoa(mss) + "\n")
 		var toIfnames []string
 		for _, name := range policy.Spec.ToInterfaces {
 			ifname := aliases[name]
 			if ifname == "" {
-				return fmt.Errorf("%s references toInterface with empty ifname %q", policy.Resource.ID(), name)
+				return fmt.Errorf("%s references toInterface with empty ifname %q", policy.ResourceID, name)
 			}
 			toIfnames = append(toIfnames, ifname)
 		}

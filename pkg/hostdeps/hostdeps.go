@@ -128,8 +128,11 @@ func packageFeatures(router *api.Router) map[string]bool {
 	features := map[string]bool{}
 	for _, res := range router.Spec.Resources {
 		switch res.Kind {
-		case "Interface", "Bridge", "VXLANSegment", "VRF", "VXLANTunnel", "IPv4StaticAddress", "IPv6DelegatedAddress", "IPv4Route", "IPv4StaticRoute", "IPv6StaticRoute", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "IPv4DefaultRoutePolicy", "ClusterNetworkRoute", "DSLiteTunnel", "DHCPv4Lease", "DHCPv6Address", "DHCPv6PrefixDelegation", "DHCPv6Information":
+		case "Interface", "Bridge", "VXLANSegment", "VRF", "VXLANTunnel", "IPv4StaticAddress", "IPv6DelegatedAddress", "IPv4Route", "IPv4StaticRoute", "IPv6StaticRoute", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "IPv4DefaultRoutePolicy", "ClusterNetworkRoute", "DHCPv4Lease", "DHCPv6Address", "DHCPv6PrefixDelegation", "DHCPv6Information":
 			features["base"] = true
+		case "DSLiteTunnel":
+			features["base"] = true
+			features["nft"] = true
 		case "EgressRoutePolicy":
 			features["base"] = true
 			features["nft"] = true
@@ -140,7 +143,7 @@ func packageFeatures(router *api.Router) map[string]bool {
 		case "NAT44Rule", "IPv4SourceNAT":
 			features["nat"] = true
 			features["conntrack"] = true
-		case "FirewallZone", "FirewallPolicy", "FirewallRule", "FirewallLog", "ClientPolicy", "PathMTUPolicy", "IPAddressSet", "PortForward", "IngressService", "LocalServiceRedirect", "IPv4ReversePathFilter":
+		case "FirewallZone", "FirewallPolicy", "FirewallRule", "FirewallLog", "ClientPolicy", "IPAddressSet", "PortForward", "IngressService", "LocalServiceRedirect":
 			features["nft"] = true
 		case "TrafficFlowLog", "ConntrackObserver":
 			features["conntrack"] = true
@@ -149,9 +152,11 @@ func packageFeatures(router *api.Router) map[string]bool {
 			features["ntp"] = true
 		case "PPPoEInterface", "PPPoESession":
 			features["pppoe"] = true
+			features["nft"] = true
 		case "WireGuardInterface", "WireGuardPeer":
 			features["wireguard"] = true
 			features["kmod"] = true
+			features["nft"] = true
 		case "IPsecConnection":
 			features["ipsec"] = true
 		case "TailscaleNode":

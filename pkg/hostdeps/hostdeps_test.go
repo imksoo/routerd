@@ -83,7 +83,9 @@ func TestPackageFeaturesCoverStandaloneDataplaneResources(t *testing.T) {
 		{kind: "PortForward", want: []string{"nft"}},
 		{kind: "IngressService", want: []string{"nft"}},
 		{kind: "LocalServiceRedirect", want: []string{"nft"}},
-		{kind: "IPv4ReversePathFilter", want: []string{"nft"}},
+		{kind: "DSLiteTunnel", want: []string{"base", "nft"}},
+		{kind: "PPPoEInterface", want: []string{"pppoe", "nft"}},
+		{kind: "WireGuardInterface", want: []string{"wireguard", "kmod", "nft"}},
 		{kind: "EgressRoutePolicy", want: []string{"base", "nft"}},
 	} {
 		t.Run(tc.kind, func(t *testing.T) {

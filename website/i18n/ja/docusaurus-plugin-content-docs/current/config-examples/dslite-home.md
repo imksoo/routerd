@@ -49,7 +49,7 @@ flowchart LR
 | LAN IPv6 advertisement | `IPv6RouterAdvertisement/lan-ra` |
 | DNS | `DNSZone/home`, `DNSResolver/lan-resolver` |
 | IPv4 egress | `NAT44Rule/lan-to-dslite` |
-| MTU/MSS | `PathMTUPolicy/lan-wan-mtu` |
+| MTU/MSS | `DSLiteTunnel/transix` と firewall zone から自動導出 |
 
 この例では Transix に近い AFTR 値を placeholder として使っています。実回線に合わせて、
 AFTR FQDN、DNS server、DHCPv6 client profile を置き換えてください。
@@ -177,4 +177,4 @@ dig router.home.example
 - platform に合わせて `client` と `profile` を変更する。
 - Transix 以外では `gw.transix.jp` と AFTR resolver address を置き換える。
 - DS-Lite tunnel を WAN RA address から張る必要がある場合は `localAddressSource: interface` を使う。
-- access network の MTU が小さい場合に備え、`PathMTUPolicy` は残しておく。
+- DS-Lite では MSS clamp が必要になりやすい。routerd は tunnel MTU と LAN/WAN firewall zone から自動導出する。

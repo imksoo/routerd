@@ -180,6 +180,15 @@ table inet routerd_filter {
     counter accept
   }
 }
+add table inet routerd_mss
+flush table inet routerd_mss
+table inet routerd_mss {
+  chain forward {
+    type filter hook forward priority mangle; policy accept;
+    iifname "vtnet1" oifname { "gif0", "vtnet0" } ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size set 1414
+    iifname "vtnet1" oifname { "gif0", "vtnet0" } meta nfproto ipv6 tcp flags syn / syn,rst tcp option maxseg size set 1394
+  }
+}
 add table ip routerd_nat
 flush table ip routerd_nat
 table ip routerd_nat {

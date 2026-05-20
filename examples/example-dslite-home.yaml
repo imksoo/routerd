@@ -189,26 +189,6 @@ spec:
           - 172.16.0.0/12
           - 192.168.0.0/16
 
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: PathMTUPolicy
-      metadata:
-        name: lan-wan-mtu
-      spec:
-        fromInterface: lan
-        toInterfaces:
-          - wan
-          - transix
-        mtu:
-          source: minInterface
-        ipv6RA:
-          enabled: true
-          scope: lan-ra
-        tcpMSSClamp:
-          enabled: true
-          families:
-            - ipv4
-            - ipv6
-
     - apiVersion: firewall.routerd.net/v1alpha1
       kind: FirewallZone
       metadata:

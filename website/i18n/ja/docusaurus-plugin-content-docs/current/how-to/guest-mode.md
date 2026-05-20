@@ -386,4 +386,4 @@ FreeBSD pf は、routerd が `FirewallZone` と `FirewallRule` で使う routed 
 - `FirewallPolicy`: 拒否ログなどの共通動作を有効にします。
 - `FirewallRule`: MAC 分類に紐付かない例外を表します。
 - `DHCPv4Reservation`: 分類済み端末へ安定した IPv4 アドレスとホスト名を与えます。
-- `PathMTUPolicy`: 条件に一致するゲスト転送にも適用されます。ゲスト隔離は MSS clamp を迂回しません。
+- tunnel から自動導出される TCP MSS clamp は、firewall zone と tunnel path が一致するゲスト転送にも適用されます。ゲスト隔離は MSS clamp を迂回しません。

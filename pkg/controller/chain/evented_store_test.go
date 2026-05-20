@@ -5,7 +5,7 @@ package chain
 import "testing"
 
 func TestStatusWithOwnershipAddsControllerMetadata(t *testing.T) {
-	status := statusWithOwnership("net.routerd.net/v1alpha1", "PathMTUPolicy", map[string]any{"phase": "Applied"})
+	status := statusWithOwnership("net.routerd.net/v1alpha1", "EgressRoutePolicy", map[string]any{"phase": "Applied"})
 	if status["owner"] != "route" {
 		t.Fatalf("owner = %v, want route", status["owner"])
 	}
@@ -67,7 +67,7 @@ func TestStatusChangedIgnoresPathMTUObservationTimestamp(t *testing.T) {
 		"mtuObservedAt": "2026-05-12T01:02:43Z",
 	}
 	if statusChanged(current, next) {
-		t.Fatalf("PathMTUPolicy probe timestamp-only update should not be a resource status change")
+		t.Fatalf("path MTU observation timestamp-only update should not be a resource status change")
 	}
 	if fields := statusChangedFields(current, next); len(fields) != 0 {
 		t.Fatalf("changed fields = %v, want none", fields)

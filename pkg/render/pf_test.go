@@ -441,14 +441,14 @@ func TestPfRendersTCPMSSClamp(t *testing.T) {
 			Spec:     api.DSLiteTunnelSpec{TunnelName: "gif40", MTU: 1454},
 		},
 		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PathMTUPolicy"},
-			Metadata: api.ObjectMeta{Name: "lan-dslite"},
-			Spec: api.PathMTUPolicySpec{
-				FromInterface: "lan",
-				ToInterfaces:  []string{"ds-lite"},
-				MTU:           api.PathMTUPolicyMTUSpec{Source: "minInterface"},
-				TCPMSSClamp:   api.PathMTUPolicyTCPMSSSpec{Enabled: true, Families: []string{"ipv4"}},
-			},
+			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
+			Metadata: api.ObjectMeta{Name: "lan"},
+			Spec:     api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"lan"}},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
+			Metadata: api.ObjectMeta{Name: "wan"},
+			Spec:     api.FirewallZoneSpec{Role: "untrust", Interfaces: []string{"ds-lite"}},
 		},
 	}}}
 	data, err := PF(router, nil)
@@ -459,7 +459,7 @@ func TestPfRendersTCPMSSClamp(t *testing.T) {
 	for _, want := range []string{
 		`scrub in on em1 proto tcp max-mss 1414`,
 		`scrub out on gif40 proto tcp max-mss 1414`,
-		`pass all keep state`,
+		`pass out quick all keep state`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("pf output missing %q:\n%s", want, got)

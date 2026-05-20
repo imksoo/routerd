@@ -35,13 +35,13 @@ type fakeStore struct {
 func TestAnnotateResourceOwnershipFromControllerModes(t *testing.T) {
 	resources := annotateResourceOwnership([]routerstate.ObjectStatus{{
 		APIVersion: "net.routerd.net/v1alpha1",
-		Kind:       "PathMTUPolicy",
-		Name:       "wan-mtu",
+		Kind:       "EgressRoutePolicy",
+		Name:       "wan-egress",
 		Status:     map[string]any{"phase": "Applied"},
 	}}, []controlapi.ControllerStatus{{
 		Name:          "route",
 		Mode:          "live",
-		ResourceKinds: []string{"PathMTUPolicy"},
+		ResourceKinds: []string{"EgressRoutePolicy"},
 	}})
 	if len(resources) != 1 {
 		t.Fatalf("resources = %d", len(resources))

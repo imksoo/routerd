@@ -534,17 +534,14 @@ func TestNftablesTCPMSSClamp(t *testing.T) {
 				Spec:     api.DSLiteTunnelSpec{Interface: "wan", TunnelName: "ds-lite-a", RemoteAddress: "2001:db8::1"},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PathMTUPolicy"},
-				Metadata: api.ObjectMeta{Name: "lan-wan-mtu"},
-				Spec: api.PathMTUPolicySpec{
-					FromInterface: "lan",
-					ToInterfaces:  []string{"wan-pppoe", "ds-lite-a"},
-					MTU:           api.PathMTUPolicyMTUSpec{Source: "minInterface"},
-					TCPMSSClamp: api.PathMTUPolicyTCPMSSSpec{
-						Enabled:  true,
-						Families: []string{"ipv4", "ipv6"},
-					},
-				},
+				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
+				Metadata: api.ObjectMeta{Name: "lan"},
+				Spec:     api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"lan"}},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
+				Metadata: api.ObjectMeta{Name: "wan"},
+				Spec:     api.FirewallZoneSpec{Role: "untrust", Interfaces: []string{"wan-pppoe", "ds-lite-a"}},
 			},
 		}},
 	}

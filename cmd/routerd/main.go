@@ -870,7 +870,7 @@ func apiVersionForKind(kind string) string {
 		return api.ObservabilityAPIVersion
 	case "Inventory":
 		return api.RouterAPIVersion
-	case "Interface", "Bridge", "VXLANSegment", "WireGuardInterface", "WireGuardPeer", "TailscaleNode", "IPsecConnection", "VRF", "VXLANTunnel", "PPPoEInterface", "PPPoESession", "IPv4StaticAddress", "DHCPv4Lease", "IPv4StaticRoute", "IPv6StaticRoute", "ClusterNetworkRoute", "DHCPv4Server", "DHCPv4Scope", "DHCPv4Reservation", "DHCPv6Address", "IPv6RAAddress", "DHCPv6PrefixDelegation", "IPv6DelegatedAddress", "DHCPv6Information", "IPv6RouterAdvertisement", "DHCPv6Server", "DHCPv6Scope", "DHCPv4Relay", "DNSZone", "DNSResolver", "SelfAddressPolicy", "DSLiteTunnel", "IPv4Route", "HealthCheck", "EgressRoutePolicy", "EventRule", "DerivedEvent", "IPv4DefaultRoutePolicy", "IPv4SourceNAT", "NAT44Rule", "IPAddressSet", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "IPv4ReversePathFilter", "PathMTUPolicy":
+	case "Interface", "Bridge", "VXLANSegment", "WireGuardInterface", "WireGuardPeer", "TailscaleNode", "IPsecConnection", "VRF", "VXLANTunnel", "PPPoEInterface", "PPPoESession", "IPv4StaticAddress", "DHCPv4Lease", "IPv4StaticRoute", "IPv6StaticRoute", "ClusterNetworkRoute", "DHCPv4Server", "DHCPv4Scope", "DHCPv4Reservation", "DHCPv6Address", "IPv6RAAddress", "DHCPv6PrefixDelegation", "IPv6DelegatedAddress", "DHCPv6Information", "IPv6RouterAdvertisement", "DHCPv6Server", "DHCPv6Scope", "DHCPv4Relay", "DNSZone", "DNSResolver", "SelfAddressPolicy", "DSLiteTunnel", "IPv4Route", "HealthCheck", "EgressRoutePolicy", "EventRule", "DerivedEvent", "IPv4DefaultRoutePolicy", "IPv4SourceNAT", "NAT44Rule", "IPAddressSet", "IPv4PolicyRoute", "IPv4PolicyRouteSet":
 		return api.NetAPIVersion
 	default:
 		return ""
@@ -1377,15 +1377,6 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 			return nil, err
 		}
 
-		var appliedReversePathFilters []string
-		if err := recordStageError("rp-filter", func() error {
-			var err error
-			appliedReversePathFilters, err = applyIPv4ReversePathFilters(effectiveRouter)
-			return err
-		}()); err != nil {
-			return nil, err
-		}
-
 		var appliedHostnames []string
 		if err := recordStageError("hostname", func() error {
 			var err error
@@ -1463,9 +1454,6 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 		for _, pkg := range appliedHostPackages {
 			fmt.Fprintf(stdout, "applied package %s\n", pkg)
 		}
-		for _, key := range appliedReversePathFilters {
-			fmt.Fprintf(stdout, "applied IPv4 reverse path filter %s\n", key)
-		}
 		for _, hostname := range appliedHostnames {
 			fmt.Fprintf(stdout, "applied hostname %s\n", hostname)
 		}
@@ -1499,7 +1487,6 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 		logger.Emit(eventlog.LevelInfo, "apply", "routerd changes applied", map[string]string{
 			"changedFiles":        fmt.Sprintf("%d", len(changedFiles)),
 			"runtimeSysctls":      fmt.Sprintf("%d", len(appliedRuntime)),
-			"reversePathFilters":  fmt.Sprintf("%d", len(appliedReversePathFilters)),
 			"hostnames":           fmt.Sprintf("%d", len(appliedHostnames)),
 			"ipv6DelegatedAddrs":  fmt.Sprintf("%d", len(appliedIPv6DelegatedAddresses)),
 			"pppoeFiles":          fmt.Sprintf("%d", len(pppoeChangedFiles)),
@@ -3172,7 +3159,7 @@ func controllerResourceKinds(name string) []string {
 	case "pppoesession":
 		return []string{"PPPoEInterface", "PPPoESession"}
 	case "route":
-		return []string{"IPv4Route", "IPv4StaticRoute", "IPv6StaticRoute", "ClusterNetworkRoute", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "EgressRoutePolicy", "PathMTUPolicy"}
+		return []string{"IPv4Route", "IPv4StaticRoute", "IPv6StaticRoute", "ClusterNetworkRoute", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "EgressRoutePolicy"}
 	case "service-unit":
 		return []string{"ServiceUnit", "TailscaleNode", "HealthCheck", "FirewallLog", "TrafficFlowLog"}
 	default:
@@ -4252,66 +4239,6 @@ func applyRuntimeSysctl(key, value string, runtime bool, optional bool) (bool, e
 	return true, nil
 }
 
-func applyIPv4ReversePathFilters(router *api.Router) ([]string, error) {
-	aliases := map[string]string{}
-	for _, res := range router.Spec.Resources {
-		switch res.Kind {
-		case "Interface":
-			spec, err := res.InterfaceSpec()
-			if err != nil {
-				return nil, err
-			}
-			aliases[res.Metadata.Name] = spec.IfName
-		case "PPPoEInterface":
-			spec, err := res.PPPoEInterfaceSpec()
-			if err != nil {
-				return nil, err
-			}
-			aliases[res.Metadata.Name] = defaultString(spec.IfName, "ppp-"+res.Metadata.Name)
-		case "DSLiteTunnel":
-			spec, err := res.DSLiteTunnelSpec()
-			if err != nil {
-				return nil, err
-			}
-			aliases[res.Metadata.Name] = defaultString(spec.TunnelName, res.Metadata.Name)
-		}
-	}
-	var applied []string
-	for _, res := range router.Spec.Resources {
-		if res.Kind != "IPv4ReversePathFilter" {
-			continue
-		}
-		spec, err := res.IPv4ReversePathFilterSpec()
-		if err != nil {
-			return nil, err
-		}
-		target := spec.Target
-		if target == "interface" {
-			target = aliases[spec.Interface]
-		}
-		if target == "" {
-			return nil, fmt.Errorf("%s references target with empty interface name", res.ID())
-		}
-		if target != "all" && target != "default" && !linkExists(target) {
-			continue
-		}
-		key := "net.ipv4.conf." + target + ".rp_filter"
-		value, err := ipv4ReversePathFilterValue(spec.Mode)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", res.ID(), err)
-		}
-		currentOut, err := exec.Command("sysctl", "-n", key).CombinedOutput()
-		if err == nil && strings.TrimSpace(string(currentOut)) == value {
-			continue
-		}
-		if err := runLogged("sysctl", "-w", key+"="+value); err != nil {
-			return nil, err
-		}
-		applied = append(applied, key)
-	}
-	return applied, nil
-}
-
 func applyHostnames(router *api.Router) ([]string, error) {
 	desired, err := managedHostnames(router)
 	if err != nil {
@@ -4372,19 +4299,6 @@ func managedHostnames(router *api.Router) ([]string, error) {
 		hostnames = append(hostnames, spec.Hostname)
 	}
 	return hostnames, nil
-}
-
-func ipv4ReversePathFilterValue(mode string) (string, error) {
-	switch mode {
-	case "disabled":
-		return "0", nil
-	case "strict":
-		return "1", nil
-	case "loose":
-		return "2", nil
-	default:
-		return "", fmt.Errorf("unsupported rp_filter mode %q", mode)
-	}
 }
 
 func applyNetworkConfig(netplanPath string, netplanData []byte, networkdFiles []render.File) ([]string, error) {

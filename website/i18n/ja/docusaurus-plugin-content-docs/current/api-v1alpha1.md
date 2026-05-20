@@ -155,12 +155,15 @@ DNSSEC は `DNSZone.spec.dnssec` と `DNSResolver.spec.sources[].dnssecValidate`
 | `IPv4PolicyRoute` | IPv4 ポリシールーティングを表します。 |
 | `IPv4PolicyRouteSet` | 複数のポリシールートをまとめます。 |
 | `IPv4DefaultRoutePolicy` | 既定経路の方針を表します。 |
-| `IPv4ReversePathFilter` | reverse path filter を表します。 |
-| `PathMTUPolicy` | MTU と TCP MSS 調整の方針を表します。`mtu.source: probe` では DF 付きの疎通確認で経路 MTU を測ります。 |
 
 `IPv4PolicyRoute` と `IPv4PolicyRouteSet` は、CIDR 指定に加えて
 `destinationSetRefs` と `excludeDestinationSetRefs` を持ちます。FQDN-backed な
 宛先 set を policy resource にアドレス展開せず、経路制御や除外条件として使えます。
+
+routerd は reverse path filter sysctl、tunnel MTU、RA MTU、TCP MSS clamp を
+router role、tunnel、firewall zone、RA/DHCPv6 resource から自動導出します。
+config では LAN/WAN と tunnel の intent を宣言し、`IPv4ReversePathFilter` や
+`PathMTUPolicy` は書きません。
 
 `IPv4PolicyRoute`、`IPv4PolicyRouteSet`、`IPv4DefaultRoutePolicy` は `excludeDestinationCIDRs` を持ちます。これにより、LAN 内部、管理網、HGW LAN、RFC 1918 の内部網などを policy routing の対象から外せます。
 

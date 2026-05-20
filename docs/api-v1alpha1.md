@@ -171,13 +171,16 @@ endpoint name resolution. DNSSEC is configured with `DNSZone.spec.dnssec` and
 | `IPv4PolicyRoute` | Represents IPv4 policy routing. |
 | `IPv4PolicyRouteSet` | Groups multiple policy routes. |
 | `IPv4DefaultRoutePolicy` | Represents default-route policy. |
-| `IPv4ReversePathFilter` | Manages reverse path filter settings. |
-| `PathMTUPolicy` | Controls MTU and TCP MSS adjustment. `mtu.source: probe` can measure path MTU with DF probes. |
 
 `IPv4PolicyRoute` and `IPv4PolicyRouteSet` support `destinationSetRefs` and
 `excludeDestinationSetRefs` in addition to CIDR fields. Use them to steer or
 exclude FQDN-backed destination sets without expanding addresses directly into
 the policy resource.
+
+routerd derives reverse path filter sysctls, tunnel MTU, RA MTU, and TCP MSS
+clamping from router role, tunnel, firewall zone, and RA/DHCPv6 resources.
+Configs should declare the tunnel and LAN/WAN intent rather than separate
+`IPv4ReversePathFilter` or `PathMTUPolicy` resources.
 
 `ClusterNetworkRoute` is a helper for Kubernetes nodes that need static routes
 for Pod CIDRs and Service CIDRs instead of dynamic routing. routerd expands each

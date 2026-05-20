@@ -49,7 +49,7 @@ flowchart LR
 | LAN IPv6 advertisement | `IPv6RouterAdvertisement/lan-ra` |
 | DNS | `DNSZone/home`, `DNSResolver/lan-resolver` |
 | IPv4 egress | `NAT44Rule/lan-to-dslite` |
-| MTU/MSS | `PathMTUPolicy/lan-wan-mtu` |
+| MTU/MSS | Derived from `DSLiteTunnel/transix` and firewall zones |
 
 This example uses Transix-like AFTR values as placeholders. Replace the AFTR
 FQDN, DNS servers, and DHCPv6 client profile with the values for your access
@@ -180,4 +180,4 @@ dig router.home.example
 - Change `client` and `profile` for the DHCPv6-PD client used by your platform.
 - Replace `gw.transix.jp` and the AFTR resolver addresses for non-Transix deployments.
 - Use `localAddressSource: interface` when the DS-Lite tunnel must originate from the WAN RA address.
-- Keep `PathMTUPolicy` when the access network requires a smaller MTU; DS-Lite commonly needs MSS clamping.
+- DS-Lite commonly needs MSS clamping; routerd derives it from the tunnel MTU and LAN/WAN firewall zones.

@@ -146,10 +146,6 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 			e.observeIPv4PolicyRouteSet(res, aliases, policies, includePlan, &rr)
 		case "ClusterNetworkRoute":
 			e.observeClusterNetworkRoute(res, includePlan, &rr)
-		case "IPv4ReversePathFilter":
-			e.observeIPv4ReversePathFilter(res, aliases, includePlan, &rr)
-		case "PathMTUPolicy":
-			e.observePathMTUPolicy(res, aliases, includePlan, &rr)
 		case "FirewallZone":
 			e.observeFirewallZone(res, aliases, includePlan, &rr)
 		case "FirewallPolicy":
@@ -994,34 +990,6 @@ func (e *Engine) observeClusterNetworkRoute(res api.Resource, includePlan bool, 
 	rr.Plan = append(rr.Plan, fmt.Sprintf("expand into %d IPv4StaticRoute resources", len(expanded.Spec.Resources)-1))
 }
 
-func (e *Engine) observeIPv4ReversePathFilter(res api.Resource, aliases map[string]string, includePlan bool, rr *ResourceResult) {
-	spec, err := res.IPv4ReversePathFilterSpec()
-	if err != nil {
-		rr.Phase = "Blocked"
-		rr.Warnings = append(rr.Warnings, err.Error())
-		return
-	}
-	target := spec.Target
-	targetName := target
-	if target == "interface" {
-		targetName = aliases[spec.Interface]
-	}
-	key := "net.ipv4.conf." + targetName + ".rp_filter"
-	rr.Observed["target"] = target
-	if spec.Interface != "" {
-		rr.Observed["interface"] = spec.Interface
-		rr.Observed["ifname"] = targetName
-	}
-	rr.Observed["mode"] = spec.Mode
-	rr.Observed["key"] = key
-	if current, err := e.Command("sysctl", "-n", key); err == nil {
-		rr.Observed["current"] = strings.TrimSpace(string(current))
-	}
-	if includePlan {
-		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure IPv4 reverse path filtering is %s for %s", spec.Mode, targetName))
-	}
-}
-
 func (e *Engine) observeFirewallZone(res api.Resource, aliases map[string]string, includePlan bool, rr *ResourceResult) {
 	spec, err := res.FirewallZoneSpec()
 	if err != nil {
@@ -1229,48 +1197,6 @@ func (e *Engine) observeDHCPv4Scope(res api.Resource, aliases map[string]string,
 		rr.Plan = append(rr.Plan, fmt.Sprintf("advertise this router as DNS server on %s", ifname))
 	case "none":
 		rr.Plan = append(rr.Plan, "do not advertise DNS servers")
-	}
-}
-
-func (e *Engine) observePathMTUPolicy(res api.Resource, aliases map[string]string, includePlan bool, rr *ResourceResult) {
-	spec, err := res.PathMTUPolicySpec()
-	if err != nil {
-		rr.Phase = "Blocked"
-		rr.Warnings = append(rr.Warnings, err.Error())
-		return
-	}
-	source := defaultString(spec.MTU.Source, "minInterface")
-	rr.Observed["fromInterface"] = spec.FromInterface
-	rr.Observed["fromIfname"] = aliases[spec.FromInterface]
-	rr.Observed["toInterfaces"] = strings.Join(spec.ToInterfaces, ",")
-	rr.Observed["mtuSource"] = source
-	if spec.MTU.Value != 0 {
-		rr.Observed["mtu"] = fmt.Sprintf("%d", spec.MTU.Value)
-	}
-	if spec.IPv6RA.Enabled {
-		rr.Observed["ipv6RAScope"] = spec.IPv6RA.Scope
-	}
-	if spec.TCPMSSClamp.Enabled {
-		families := spec.TCPMSSClamp.Families
-		if len(families) == 0 {
-			families = []string{"ipv4", "ipv6"}
-		}
-		rr.Observed["tcpMSSClampFamilies"] = strings.Join(families, ",")
-	}
-	if !includePlan {
-		return
-	}
-	switch source {
-	case "minInterface":
-		rr.Plan = append(rr.Plan, fmt.Sprintf("derive path MTU from minimum of %s", strings.Join(spec.ToInterfaces, ",")))
-	case "static":
-		rr.Plan = append(rr.Plan, fmt.Sprintf("use static path MTU %d", spec.MTU.Value))
-	}
-	if spec.IPv6RA.Enabled {
-		rr.Plan = append(rr.Plan, fmt.Sprintf("advertise path MTU in IPv6 RA scope %s", spec.IPv6RA.Scope))
-	}
-	if spec.TCPMSSClamp.Enabled {
-		rr.Plan = append(rr.Plan, "clamp forwarded TCP MSS for selected address families")
 	}
 }
 

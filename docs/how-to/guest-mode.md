@@ -408,5 +408,6 @@ they are not equivalent to routed pf rules.
   classification.
 - `DHCPv4Reservation`: gives a classified device a stable IPv4 address and
   hostname.
-- `PathMTUPolicy`: still applies to forwarded guest traffic when its interface
-  and route conditions match. Guest isolation does not bypass MSS clamping.
+- Tunnel-derived TCP MSS clamping still applies to forwarded guest traffic
+  when the firewall zones and tunnel path match. Guest isolation does not
+  bypass MSS clamping.

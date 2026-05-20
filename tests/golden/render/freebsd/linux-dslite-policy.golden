@@ -24,7 +24,7 @@ dhcp-range=set:lan-dhcpv6,::,constructor:ens19,ra-stateless,64,12h
 dhcp-option=tag:lan-dhcpv6,option6:domain-search,lab.example
 interface=ens19
 enable-ra
-ra-param=ens19,mtu:1500,high,0,7200
+ra-param=ens19,mtu:1460,high,0,7200
 dhcp-option=option6:domain-search,lab.example
 ### firewall-holes.txt
 ds-lite-dslite-ipip from=self to=wan ifnames=ens18 proto=ipip port=0 action=accept direction= comment=net.routerd.net/v1alpha1/DSLiteTunnel/ds-lite
@@ -56,6 +56,9 @@ set skip on lo0
 lan_if = "ens19"
 management_if = "ens20"
 wan_if = "{ ds-routerd-test, ens18 }"
+scrub in on ens19 proto tcp max-mss 1420
+scrub out on ds-routerd-test proto tcp max-mss 1420
+scrub out on ens18 proto tcp max-mss 1420
 nat-anchor "routerd_nat"
 # net.routerd.net/v1alpha1/NAT44Rule/lan-to-wan skipped: egressInterface is resolved by ipv4-default at runtime
 block drop all

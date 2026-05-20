@@ -67,6 +67,9 @@ func exampleConfigPath(t *testing.T, path string) string {
 			if writeErr := os.WriteFile(tmp, data, 0644); writeErr != nil {
 				t.Fatal(writeErr)
 			}
+			if _, loadErr := config.Load(tmp); loadErr != nil {
+				return path
+			}
 			return tmp
 		}
 	}

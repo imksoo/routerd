@@ -1295,51 +1295,6 @@ type IPv4PolicyRouteTarget struct {
 	HealthCheck       string `yaml:"healthCheck,omitempty" json:"healthCheck,omitempty"`
 }
 
-type IPv4ReversePathFilterSpec struct {
-	Target    string `yaml:"target" json:"target" jsonschema:"enum=all,enum=default,enum=interface"`
-	Interface string `yaml:"interface,omitempty" json:"interface,omitempty"`
-	Mode      string `yaml:"mode" json:"mode" jsonschema:"enum=disabled,enum=strict,enum=loose"`
-}
-
-type PathMTUPolicySpec struct {
-	FromInterface string                   `yaml:"fromInterface" json:"fromInterface"`
-	ToInterfaces  []string                 `yaml:"toInterfaces" json:"toInterfaces"`
-	MTU           PathMTUPolicyMTUSpec     `yaml:"mtu,omitempty" json:"mtu,omitempty"`
-	InterfaceMTU  PathMTUPolicyLinkMTUSpec `yaml:"interfaceMTU,omitempty" json:"interfaceMTU,omitempty"`
-	IPv6RA        PathMTUPolicyIPv6RASpec  `yaml:"ipv6RA,omitempty" json:"ipv6RA,omitempty"`
-	TCPMSSClamp   PathMTUPolicyTCPMSSSpec  `yaml:"tcpMSSClamp,omitempty" json:"tcpMSSClamp,omitempty"`
-}
-
-type PathMTUPolicyMTUSpec struct {
-	Source string                    `yaml:"source,omitempty" json:"source,omitempty" jsonschema:"enum=minInterface,enum=static,enum=probe"`
-	Value  int                       `yaml:"value,omitempty" json:"value,omitempty" jsonschema:"minimum=1280,maximum=65535"`
-	Probe  PathMTUPolicyMTUProbeSpec `yaml:"probe,omitempty" json:"probe,omitempty"`
-}
-
-type PathMTUPolicyMTUProbeSpec struct {
-	Targets  []string `yaml:"targets,omitempty" json:"targets,omitempty"`
-	Family   string   `yaml:"family,omitempty" json:"family,omitempty" jsonschema:"enum=ipv4,enum=ipv6"`
-	Min      int      `yaml:"min,omitempty" json:"min,omitempty" jsonschema:"minimum=1280,maximum=65535"`
-	Max      int      `yaml:"max,omitempty" json:"max,omitempty" jsonschema:"minimum=1280,maximum=65535"`
-	Fallback int      `yaml:"fallback,omitempty" json:"fallback,omitempty" jsonschema:"minimum=1280,maximum=65535"`
-	Interval string   `yaml:"interval,omitempty" json:"interval,omitempty"`
-	Timeout  string   `yaml:"timeout,omitempty" json:"timeout,omitempty"`
-}
-
-type PathMTUPolicyLinkMTUSpec struct {
-	Enabled bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-}
-
-type PathMTUPolicyIPv6RASpec struct {
-	Enabled bool   `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	Scope   string `yaml:"scope,omitempty" json:"scope,omitempty"`
-}
-
-type PathMTUPolicyTCPMSSSpec struct {
-	Enabled  bool     `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	Families []string `yaml:"families,omitempty" json:"families,omitempty" jsonschema:"enum=ipv4,enum=ipv6"`
-}
-
 type IPv4NATTranslationSpec struct {
 	Type        string                 `yaml:"type" json:"type" jsonschema:"enum=interfaceAddress,enum=address,enum=pool"`
 	Address     string                 `yaml:"address,omitempty" json:"address,omitempty"`
@@ -1727,14 +1682,6 @@ func (r Resource) IPv4PolicyRouteSpec() (IPv4PolicyRouteSpec, error) {
 
 func (r Resource) IPv4PolicyRouteSetSpec() (IPv4PolicyRouteSetSpec, error) {
 	return specAs[IPv4PolicyRouteSetSpec](r)
-}
-
-func (r Resource) IPv4ReversePathFilterSpec() (IPv4ReversePathFilterSpec, error) {
-	return specAs[IPv4ReversePathFilterSpec](r)
-}
-
-func (r Resource) PathMTUPolicySpec() (PathMTUPolicySpec, error) {
-	return specAs[PathMTUPolicySpec](r)
 }
 
 func (r Resource) FirewallZoneSpec() (FirewallZoneSpec, error) {

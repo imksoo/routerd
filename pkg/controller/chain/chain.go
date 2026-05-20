@@ -168,7 +168,7 @@ func resourceOwnerController(kind string) string {
 		return "package"
 	case "PPPoEInterface", "PPPoESession":
 		return "pppoesession"
-	case "IPv4Route", "IPv4StaticRoute", "IPv6StaticRoute", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "EgressRoutePolicy", "PathMTUPolicy":
+	case "IPv4Route", "IPv4StaticRoute", "IPv6StaticRoute", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "EgressRoutePolicy":
 		return "route"
 	case "ServiceUnit", "TailscaleNode", "HealthCheck", "NTPClient", "NTPServer", "SysctlProfile", "Sysctl", "LogRetention", "Hostname", "ConntrackTuning":
 		return "service-unit"
@@ -691,7 +691,7 @@ func (r *Runner) Start(ctx context.Context) error {
 	dslite := DSLiteTunnelController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunDSLite, ResolverPort: r.Opts.DnsmasqPort, Logger: logger}
 	route := IPv4RouteController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunRoute, Logger: logger}
 	policyRoute := IPv4PolicyRouteController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunRoute, NftCommand: r.Opts.NftCommand, Logger: logger}
-	pathMTU := PathMTUPolicyController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunRoute, NftCommand: r.Opts.NftCommand}
+	pathMTU := PathMTUController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunRoute, NftCommand: r.Opts.NftCommand}
 	dhcpv6 := DHCPv6ServerController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunDHCPv6, Command: r.Opts.DnsmasqCommand, ConfigPath: r.Opts.DnsmasqConfig, PIDFile: r.Opts.DnsmasqPID, Port: r.Opts.DnsmasqPort, ListenAddresses: r.Opts.DnsmasqListen, Logger: logger}
 	dhcp4Lease := dhcpv4lease.Controller{Router: r.Router, Bus: r.Bus, Store: store, DaemonSockets: r.Opts.DaemonSockets, DryRun: r.Opts.DryRunDHCPv4Lease, Logger: logger}
 	pppoeSession := pppoesession.Controller{Router: r.Router, Bus: r.Bus, Store: store, DaemonSockets: r.Opts.DaemonSockets, DryRun: r.Opts.DryRunPPPoESession, Logger: logger}
@@ -754,7 +754,7 @@ func (r *Runner) Start(ctx context.Context) error {
 		framework.FuncController{ControllerName: "dslite", Every: 30 * time.Second, Subs: statusSubscriptions("DHCPv6Information", "IPv6DelegatedAddress", "DNSResolver"), PeriodicFunc: dslite.reconcile},
 		framework.FuncController{ControllerName: "ipv4-policy-route", Subs: statusSubscriptions("DSLiteTunnel", "HealthCheck", "IPv4StaticAddress", "Interface"), PeriodicFunc: policyRoute.Reconcile},
 		framework.FuncController{ControllerName: "ipv4-route", Every: 30 * time.Second, Subs: statusSubscriptions("DSLiteTunnel", "EgressRoutePolicy"), PeriodicFunc: route.reconcile},
-		framework.FuncController{ControllerName: "path-mtu", Subs: statusSubscriptions("DSLiteTunnel", "Interface"), PeriodicFunc: pathMTU.Reconcile},
+		framework.FuncController{ControllerName: "path-mtu", Subs: statusSubscriptions("DSLiteTunnel", "PPPoEInterface", "PPPoESession", "WireGuardInterface", "Interface", "FirewallZone", "DHCPv6Scope", "IPv6RouterAdvertisement"), PeriodicFunc: pathMTU.Reconcile},
 		framework.FuncController{ControllerName: "dhcpv6-server", Every: 30 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed", "routerd.dhcp.lease.**"}}}, PeriodicFunc: dhcpv6.reconcile},
 		framework.FuncController{ControllerName: "dhcpv4-lease", Every: 10 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.dhcpv4.client.**"}}}, ReconcileFunc: func(ctx context.Context, _ daemonapi.DaemonEvent) error {
 			return dhcp4Lease.ReconcileAll(ctx)
@@ -1785,7 +1785,7 @@ func dnsmasqListenAddresses(addresses []string) []string {
 
 func dnsmasqLANServiceLines(router *api.Router, store Store) ([]string, error) {
 	aliases := chainInterfaceAliases(router)
-	raMTUByScope, err := chainPathMTURAByScope(router)
+	raMTUByScope, err := render.PathMTURAByScope(router)
 	if err != nil {
 		return nil, err
 	}
@@ -2336,81 +2336,6 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
-}
-
-func chainPathMTURAByScope(router *api.Router) (map[string]int, error) {
-	mtus := chainResourceMTUs(router)
-	out := map[string]int{}
-	for _, resource := range router.Spec.Resources {
-		if resource.Kind != "PathMTUPolicy" {
-			continue
-		}
-		spec, err := resource.PathMTUPolicySpec()
-		if err != nil {
-			return nil, err
-		}
-		if !spec.IPv6RA.Enabled || spec.IPv6RA.Scope == "" {
-			continue
-		}
-		mtu, err := chainPathMTU(resource.ID(), spec, mtus)
-		if err != nil {
-			return nil, err
-		}
-		if current := out[spec.IPv6RA.Scope]; current == 0 || mtu < current {
-			out[spec.IPv6RA.Scope] = mtu
-		}
-	}
-	return out, nil
-}
-
-func chainResourceMTUs(router *api.Router) map[string]int {
-	mtus := map[string]int{}
-	for _, resource := range router.Spec.Resources {
-		switch resource.Kind {
-		case "Interface":
-			mtus[resource.Metadata.Name] = 1500
-		case "PPPoEInterface":
-			spec, err := resource.PPPoEInterfaceSpec()
-			if err == nil {
-				mtus[resource.Metadata.Name] = chainFirstNonZero(spec.MTU, 1492)
-			}
-		case "DSLiteTunnel":
-			spec, err := resource.DSLiteTunnelSpec()
-			if err == nil {
-				mtus[resource.Metadata.Name] = chainFirstNonZero(spec.MTU, 1454)
-			}
-		}
-	}
-	return mtus
-}
-
-func chainPathMTU(resourceID string, spec api.PathMTUPolicySpec, mtus map[string]int) (int, error) {
-	switch firstNonEmpty(spec.MTU.Source, "minInterface") {
-	case "minInterface":
-		if len(spec.ToInterfaces) == 0 {
-			return 0, fmt.Errorf("%s spec.toInterfaces is required when mtu.source is minInterface", resourceID)
-		}
-		mtu := 0
-		for _, name := range spec.ToInterfaces {
-			candidate := mtus[name]
-			if candidate == 0 {
-				return 0, fmt.Errorf("%s references interface with unknown MTU %q", resourceID, name)
-			}
-			if mtu == 0 || candidate < mtu {
-				mtu = candidate
-			}
-		}
-		return mtu, nil
-	case "static":
-		if spec.MTU.Value == 0 {
-			return 0, fmt.Errorf("%s spec.mtu.value is required when mtu.source is static", resourceID)
-		}
-		return spec.MTU.Value, nil
-	case "probe":
-		return chainFirstNonZero(spec.MTU.Value, spec.MTU.Probe.Fallback, spec.MTU.Probe.Max, 1500), nil
-	default:
-		return 0, fmt.Errorf("%s spec.mtu.source must be minInterface, static, or probe", resourceID)
-	}
 }
 
 func chainFirstNonZero(values ...int) int {

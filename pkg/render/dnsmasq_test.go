@@ -502,14 +502,14 @@ func TestDnsmasqConfigRendersIPv6StatelessScope(t *testing.T) {
 				Spec:     api.DSLiteTunnelSpec{Interface: "wan", RemoteAddress: "2001:db8::1"},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PathMTUPolicy"},
-				Metadata: api.ObjectMeta{Name: "lan-wan-mtu"},
-				Spec: api.PathMTUPolicySpec{
-					FromInterface: "lan",
-					ToInterfaces:  []string{"ds-lite-a"},
-					MTU:           api.PathMTUPolicyMTUSpec{Source: "minInterface"},
-					IPv6RA:        api.PathMTUPolicyIPv6RASpec{Enabled: true, Scope: "lan-dhcpv6"},
-				},
+				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
+				Metadata: api.ObjectMeta{Name: "lan"},
+				Spec:     api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"lan"}},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
+				Metadata: api.ObjectMeta{Name: "wan"},
+				Spec:     api.FirewallZoneSpec{Role: "untrust", Interfaces: []string{"ds-lite-a"}},
 			},
 		}},
 	}
@@ -562,14 +562,14 @@ func TestDnsmasqConfigRendersPathMTUOnRouterAdvertisement(t *testing.T) {
 				},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PathMTUPolicy"},
-				Metadata: api.ObjectMeta{Name: "lan-dslite-mtu"},
-				Spec: api.PathMTUPolicySpec{
-					FromInterface: "lan",
-					ToInterfaces:  []string{"ds-lite"},
-					MTU:           api.PathMTUPolicyMTUSpec{Source: "minInterface"},
-					IPv6RA:        api.PathMTUPolicyIPv6RASpec{Enabled: true, Scope: "lan-ra"},
-				},
+				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
+				Metadata: api.ObjectMeta{Name: "lan"},
+				Spec:     api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"lan"}},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
+				Metadata: api.ObjectMeta{Name: "wan"},
+				Spec:     api.FirewallZoneSpec{Role: "untrust", Interfaces: []string{"ds-lite"}},
 			},
 		}},
 	}

@@ -57,8 +57,6 @@ func TestKnownResourceKindsDeclareArtifactIntents(t *testing.T) {
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44Rule"}, Metadata: api.ObjectMeta{Name: "nat44"}, Spec: api.NAT44RuleSpec{Type: "masquerade", EgressInterface: "wan", SourceRanges: []string{"192.168.0.0/16"}}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4PolicyRoute"}, Metadata: api.ObjectMeta{Name: "policy"}, Spec: api.IPv4PolicyRouteSpec{OutboundInterface: "wan", Priority: 100, Mark: 0x120, Table: 120}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4PolicyRouteSet"}, Metadata: api.ObjectMeta{Name: "set"}, Spec: api.IPv4PolicyRouteSetSpec{Targets: []api.IPv4PolicyRouteTarget{{OutboundInterface: "transix-a", Priority: 10000, Mark: 0x100, Table: 100}}}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4ReversePathFilter"}, Metadata: api.ObjectMeta{Name: "rp"}, Spec: api.IPv4ReversePathFilterSpec{Target: "interface", Interface: "lan"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PathMTUPolicy"}, Metadata: api.ObjectMeta{Name: "mtu"}, Spec: api.PathMTUPolicySpec{FromInterface: "lan"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"lan"}}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallPolicy"}, Metadata: api.ObjectMeta{Name: "default"}, Spec: api.FirewallPolicySpec{}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallRule"}, Metadata: api.ObjectMeta{Name: "https"}, Spec: api.FirewallRuleSpec{FromZone: "lan", ToZone: "self", Protocol: "tcp", Port: 443, Action: "accept"}},

@@ -415,21 +415,6 @@ func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]str
 		return ipv4PolicyRouteArtifacts(res, aliases)
 	case "IPv4PolicyRouteSet":
 		return ipv4PolicyRouteSetArtifacts(res, aliases)
-	case "IPv4ReversePathFilter":
-		spec, err := res.IPv4ReversePathFilterSpec()
-		if err != nil {
-			return nil
-		}
-		target := spec.Target
-		if target == "interface" {
-			target = aliases[spec.Interface]
-		}
-		return []resource.Intent{artifact("host.sysctl", "net.ipv4.conf."+target+".rp_filter", resource.ActionEnsure, "sysctl", nil)}
-	case "PathMTUPolicy":
-		return []resource.Intent{
-			artifact("nft.table", "routerd_mss", resource.ActionEnsure, "nft", nil),
-			artifact("dnsmasq.ra.mtu", res.Metadata.Name, resource.ActionEnsure, "dnsmasq", nil),
-		}
 	case "FirewallZone":
 		return []resource.Intent{artifact("routerd.firewall.zone", res.Metadata.Name, resource.ActionEnsure, "nft", nil)}
 	case "FirewallPolicy", "FirewallRule":

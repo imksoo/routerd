@@ -37,40 +37,6 @@ spec:
           - pool.ntp.org
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: IPv4ReversePathFilter
-      metadata:
-        name: rp-filter-all
-      spec:
-        target: all
-        mode: disabled
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: IPv4ReversePathFilter
-      metadata:
-        name: rp-filter-default
-      spec:
-        target: default
-        mode: disabled
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: IPv4ReversePathFilter
-      metadata:
-        name: rp-filter-lan
-      spec:
-        target: interface
-        interface: lan
-        mode: disabled
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: IPv4ReversePathFilter
-      metadata:
-        name: rp-filter-transix
-      spec:
-        target: interface
-        interface: transix
-        mode: disabled
-
-    - apiVersion: net.routerd.net/v1alpha1
       kind: Hostname
       metadata:
         name: system-hostname
@@ -216,26 +182,6 @@ spec:
         defaultRoute: true
         routeMetric: 50
         mtu: 1454
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: PathMTUPolicy
-      metadata:
-        name: lan-wan-mtu
-      spec:
-        fromInterface: lan
-        toInterfaces:
-          - wan
-          - transix
-        mtu:
-          source: minInterface
-        ipv6RA:
-          enabled: true
-          scope: lan-dhcpv6
-        tcpMSSClamp:
-          enabled: true
-          families:
-            - ipv4
-            - ipv6
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv6RAAddress

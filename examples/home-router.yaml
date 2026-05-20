@@ -841,40 +841,6 @@ spec:
           - 10.0.0.0/8
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: PathMTUPolicy
-      metadata:
-        name: lan-to-dslite-mtu
-      spec:
-        fromInterface: lan
-        toInterfaces:
-          - ds-lite-a
-          - ds-lite-b
-          - ds-lite-c
-          - ds-lite-ra
-        mtu:
-          source: probe
-          value: 1454
-          probe:
-            family: ipv4
-            targets:
-              - 1.1.1.1
-              - 8.8.8.8
-            min: 1280
-            max: 1500
-            fallback: 1454
-            interval: 10m
-            timeout: 1s
-        interfaceMTU:
-          enabled: true
-        ipv6RA:
-          enabled: true
-          scope: lan-ra
-        tcpMSSClamp:
-          enabled: true
-          families:
-            - ipv4
-
-    - apiVersion: net.routerd.net/v1alpha1
       kind: HealthCheck
       metadata:
         name: internet-via-dslite-a

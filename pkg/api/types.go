@@ -455,18 +455,6 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
 		r.Spec = spec
-	case "IPv4ReversePathFilter":
-		var spec IPv4ReversePathFilterSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "PathMTUPolicy":
-		var spec PathMTUPolicySpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
 	case "FirewallZone":
 		var spec FirewallZoneSpec
 		if err := raw.Spec.Decode(&spec); err != nil {
@@ -515,6 +503,10 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 		return fmt.Errorf("%s is not supported; use Interface resources as link status providers", r.ID())
 	case "StatePolicy":
 		return fmt.Errorf("%s is not supported; use spec.when any/all predicates on the dependent resources", r.ID())
+	case "IPv4ReversePathFilter":
+		return fmt.Errorf("%s is not supported; routerd derives reverse path filter sysctls automatically", r.ID())
+	case "PathMTUPolicy":
+		return fmt.Errorf("%s is not supported; routerd derives path MTU and TCP MSS handling from tunnel and interface resources", r.ID())
 	default:
 		return fmt.Errorf("unsupported resource kind %s in %s", raw.Kind, r.ID())
 	}
