@@ -10,6 +10,19 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 
 ## Unreleased
 
+## v20260520.2007
+
+### 修正
+
+- BGP controller の FRR readiness 判定から TCP VTY gate を取り除き、
+  `vtysh -c "show running-config"` を control-plane probe と running config
+  diff の入力として使うようにしました。これにより TCP VTY を無効にした
+  Alpine FRR build でも初回収束時に `frr-reload.py` へ到達できます。
+- FRR control 不可、権限不足、reload 試行、reload 後の反映不完全を status で
+  明示するようにしました。
+- Alpine Live ISO の autostart が、既に `routerd serve` が動いている場合に
+  2 つ目の `routerd serve` を起動しないようにしました。
+
 ## v20260520.1904
 
 ### 修正

@@ -10,6 +10,19 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260520.2007
+
+### Fixed
+
+- Removed the FRR TCP VTY readiness gate from the BGP controller and now use
+  `vtysh -c "show running-config"` as the control-plane probe and running
+  config diff source. This lets Alpine FRR builds with TCP VTY disabled still
+  run `frr-reload.py` on first convergence.
+- Added explicit pending status details for FRR control unavailability,
+  permission failures, reload attempts, and incomplete reload verification.
+- Prevented Alpine Live ISO autostart from launching a second `routerd serve`
+  process when one is already running.
+
 ## v20260520.1904
 
 ### Fixed
