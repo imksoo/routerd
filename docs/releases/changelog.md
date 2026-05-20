@@ -113,6 +113,76 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
   `apply --once` wait on bgpd or `frr-reload.py`.
 - Added a Web Console Routes view and `/api/v1/routes` endpoint that combines
   kernel, BGP, static, DHCP, and policy route information with BGP peer state.
+- Added `pkg/api/provides.go` declarative status output contract and reference
+  validation: `addressFrom` / `gatewayFrom` / `dnsServerFrom` /
+  `sourceAddressFrom` / `dependsOn` references are checked against missing
+  kinds and against the referenced kind's `provides` field set at load time.
+- Added `routerctl show derived-resources` to inspect auto-derived host
+  packages, kernel modules, sysctl entries, systemd-networkd/resolved
+  adoption drop-ins, and tunnel `rp_filter` derivations.
+- Added `spec.when` `any:` / `all:` recursive predicates so a resource (or
+  `IPv4DefaultRoutePolicy` candidate, `EgressRoutePolicy` candidate, etc.)
+  can be conditionally active without a separate `StatePolicy` resource.
+- Added new high-level kinds: `DHCPv4Client`, `PPPoESession`, `VirtualAddress`
+  (`spec.family: ipv4|ipv6`), `EgressRoutePolicy` with `mode: priority|mark|
+  hash` and candidate `targets[]`, `DNSForwarder`, `DNSUpstream`,
+  standalone `BFD`, `FirewallEventLog`, standalone `LogRetention`. Each
+  absorbs or replaces older lower-level kinds (see Removed below).
+- Added typed `LogSink` (`type: syslog|otlp|webhook|file|journald`) and a
+  `FirewallEventLog` with `events: deny|allow|rateLimit|connLimit` filters,
+  `fromZones`/`toZones`/`rules` selectors, `sampleRate`, `sinks`, and
+  `retention` references.
+- Added a `make check-examples-line-limits` blocking CI gate enforcing
+  `examples/*.yaml` ≤ 200 lines and ≤ 50 lines per resource. Compacted all
+  shipped examples (e.g. `examples/home-router.yaml` from ≈1800 to 194 lines)
+  so each resource fits on one screen.
+- Added automatic derivation of host packages (network-utils for HealthCheck,
+  vrrp/keepalived for `VirtualAddress mode: vrrp` on Linux, etc.), kernel
+  modules, sysctls, MSS clamp / RA MTU, NetworkAdoption drop-ins, and
+  default LAN-to-WAN masquerade so common router intent does not require
+  explicit `Package` / `Sysctl` / `SysctlProfile` / `NAT44Rule` declarations.
+
+### Changed
+
+- Split `DNSResolver` into `DNSResolver` (listen + cache + query log only) +
+  `DNSForwarder` (conditional forwarder, references a resolver and upstreams)
+  + `DNSUpstream` (single upstream, protocol enum `udp|tcp|dot|doh`, supports
+  TCP and DoT `tlsName`). The controller composes the runtime resolver
+  source list from forwarder/upstream graph.
+- Reworked BGP BFD: `BGPPeer.spec.bfd` is now a `BFD/<name>` reference;
+  inline BFD config is rejected with a migration guide.
+- Renamed `TrafficFlowLog.spec.includeNDPI` to `spec.includeApplicationLayer`
+  and moved retention out to standalone `LogRetention`.
+- Reshaped `ClientPolicy.classification` into `mode` + structured `match`
+  (`macs`, `ouiPrefixes`, `hostnamePatterns`, `dhcpFingerprints`).
+- DHCPv4 reservations may now sit outside the dynamic pool range, matching
+  dnsmasq behavior for static-only assignments.
+- Changed loader to error on unknown or removed kinds and on removed fields
+  with migration guides instead of silently ignoring them.
+
+### Removed
+
+- Removed `SystemdUnit` user-facing kind. routerd derives systemd / OpenRC /
+  rc.d / NixOS service units from declared intent.
+- Removed `KernelModule`, `NetworkAdoption`, `Link`, `NixOSHost`,
+  `IPv4ReversePathFilter`, `PathMTUPolicy`, `StatePolicy`,
+  `IPv4DefaultRoutePolicy`, `IPv4PolicyRoute`, `IPv4PolicyRouteSet`,
+  `IPv4SourceNAT`, `DHCPv4Lease`, `PPPoEInterface`, `VirtualIPv4Address`,
+  `VirtualIPv6Address`, `DHCPv4Scope`, `DHCPv6Scope`, and `FirewallLog`
+  user-facing kinds. Each is rejected at load time with a migration guide
+  to the replacement (auto-derive, narrow override, or absorbed kind).
+- `Package`, `Sysctl`, and `SysctlProfile` remain only as narrow escape
+  hatches; normal router intent should not need them.
+- Removed low-level mechanics fields: `HealthCheck` `daemon` / `socketSource`
+  / `fwmark` / `sourceInterface` / `sourceAddress*` / `via`; BGP `keepalive`
+  / `holdTime` / `connectRetry`; VRRP `advertInterval` / `preemptDelay`;
+  WireGuard `fwmark` / `table`; Tailscale `operator` / `binaryPath`;
+  DHCPv6PrefixDelegation `iaid` / `duidType`. routerd derives the underlying
+  daemon/socket/timer/sysctl from higher-level intent.
+- Removed `DNSResolver.spec.sources`; declare `DNSForwarder` + `DNSUpstream`
+  resources that reference the resolver instead.
+- Removed `--controller-chain` public flag from `routerd serve` and `routerd
+  apply`; the controller chain is always the production runtime path.
 
 ## v20260519.0743
 

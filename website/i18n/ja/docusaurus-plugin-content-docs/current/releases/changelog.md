@@ -115,6 +115,67 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
   `bgpd` や `frr-reload.py` を待ちません。
 - Web Console に Routes view と `/api/v1/routes` endpoint を追加しました。kernel、
   BGP、static、DHCP、policy route 情報と BGP peer state を同じ画面で確認できます。
+- `pkg/api/provides.go` で各 kind の status output (provides) を宣言的に定義し、
+  config validator が `addressFrom` / `gatewayFrom` / `dnsServerFrom` /
+  `sourceAddressFrom` / `dependsOn` の Kind/name 存在 + 参照先 field の provides
+  整合を loader 時点で検査するようにしました。
+- `routerctl show derived-resources` を追加し、router intent から自動派生した
+  package / kernel module / sysctl / systemd-networkd/resolved adoption /
+  tunnel `rp_filter` を確認できるようにしました。
+- `spec.when` に `any:` / `all:` predicate を追加。`StatePolicy` を分離せずに
+  resource を条件付き活性化できるようになり、入れ子も可能です。
+- 新 kind: `DHCPv4Client`, `PPPoESession`, `VirtualAddress`
+  (`spec.family: ipv4|ipv6`), `EgressRoutePolicy` (`mode: priority|mark|hash`
+  と candidate `targets[]`), `DNSForwarder`, `DNSUpstream`, standalone
+  `BFD`, `FirewallEventLog`, standalone `LogRetention` を追加。
+- 型付き `LogSink` (`type: syslog|otlp|webhook|file|journald`) と
+  `FirewallEventLog` (`events: deny|allow|rateLimit|connLimit` + zones/rules
+  filter + sampleRate + sinks + retention ref) を追加。
+- `make check-examples-line-limits` で `examples/*.yaml` を 200 行以下、各
+  resource を 50 行以下に強制する CI gate を追加。examples/home-router.yaml
+  を 1800 行から 194 行へ縮減しました。
+- HealthCheck / VirtualAddress(mode:vrrp) / WAN tunnel から network-utils /
+  vrrp(keepalived) / rp_filter sysctl を自動派生するようになりました。
+
+### 変更
+
+- `DNSResolver` を分割: `DNSResolver` 本体は listen + cache + queryLog のみ。
+  条件付きフォワーダーと upstream は `DNSForwarder` / `DNSUpstream` で別 resource
+  として宣言し resolver を参照します。TCP upstream と DoT `tlsName` も新たに
+  サポートしました。
+- BGP BFD 分離: `BGPPeer.spec.bfd` は `BFD/<name>` 参照のみ受け付け、inline 設定
+  は loader で reject + migration guide を返します。
+- `TrafficFlowLog.spec.includeNDPI` を `spec.includeApplicationLayer` に rename、
+  `retention` は独立した `LogRetention` resource に分離しました。
+- `ClientPolicy.classification` を `mode` + 構造化 `match` (`macs` /
+  `ouiPrefixes` / `hostnamePatterns` / `dhcpFingerprints`) に整理しました。
+- DHCPv4 reservation を動的プール範囲外にも置けるようにしました (dnsmasq の
+  static-only 割当と整合)。
+- loader は不明 kind や削除済み kind/field を黙って無視せず、移行ガイドつきで
+  エラーを返します。
+
+### 削除
+
+- `SystemdUnit` の user-facing 宣言を削除。systemd / OpenRC / rc.d / NixOS の
+  service unit は router intent から自動派生します。
+- `KernelModule`, `NetworkAdoption`, `Link`, `NixOSHost`,
+  `IPv4ReversePathFilter`, `PathMTUPolicy`, `StatePolicy`,
+  `IPv4DefaultRoutePolicy`, `IPv4PolicyRoute`, `IPv4PolicyRouteSet`,
+  `IPv4SourceNAT`, `DHCPv4Lease`, `PPPoEInterface`, `VirtualIPv4Address`,
+  `VirtualIPv6Address`, `DHCPv4Scope`, `DHCPv6Scope`, `FirewallLog` を
+  user-facing kind から削除しました。それぞれ loader で reject され、移行先
+  (自動派生 / narrow override / 吸収先 kind) を案内します。
+- `Package` / `Sysctl` / `SysctlProfile` は narrow escape hatch としてのみ残し、
+  通常の router intent には不要です。
+- 低レベル mechanics field を削除: `HealthCheck` `daemon` / `socketSource` /
+  `fwmark` / `sourceInterface` / `sourceAddress*` / `via`; BGP `keepalive` /
+  `holdTime` / `connectRetry`; VRRP `advertInterval` / `preemptDelay`;
+  WireGuard `fwmark` / `table`; Tailscale `operator` / `binaryPath`;
+  DHCPv6PrefixDelegation `iaid` / `duidType`。
+- `DNSResolver.spec.sources` を削除。代わりに `DNSForwarder` / `DNSUpstream`
+  resource で宣言してください。
+- `--controller-chain` public flag を `routerd serve` / `routerd apply` から
+  削除。controller chain は本番 runtime の唯一の経路です。
 
 ## v20260519.0743
 
