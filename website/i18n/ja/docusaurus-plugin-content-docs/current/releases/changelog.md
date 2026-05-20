@@ -10,6 +10,8 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 
 ## Unreleased
 
+## v20260520.1904
+
 ### 修正
 
 - BGP controller reconcile 中の一時的な FRR reload lock 失敗を retry し、

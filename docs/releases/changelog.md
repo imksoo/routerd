@@ -10,6 +10,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260520.1904
+
 ### Fixed
 
 - Retried transient FRR reload lock failures during BGP controller reconcile so

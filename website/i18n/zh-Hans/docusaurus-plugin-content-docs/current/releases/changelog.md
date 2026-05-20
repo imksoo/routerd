@@ -10,6 +10,8 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期和时间型版本号。
 
 ## Unreleased
 
+## v20260520.1904
+
 ### 修正
 
 - 在 BGP controller reconcile 期间重试临时性的 FRR reload lock 失败，让首次
