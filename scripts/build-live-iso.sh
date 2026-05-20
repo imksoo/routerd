@@ -66,6 +66,7 @@ install -d "${overlay_root}/usr/local/sbin" \
     "${overlay_root}/usr/share/licenses/routerd" \
     "${overlay_root}/usr/local/etc/routerd" \
     "${overlay_root}/etc" \
+    "${overlay_root}/etc/init.d" \
     "${overlay_root}/etc/local.d" \
     "${overlay_root}/etc/runlevels/default" \
     "${overlay_root}/root"

@@ -10,6 +10,11 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 
 ## Unreleased
 
+### 修正
+
+- OpenRC `routerd` service script 追加後の Live ISO build を修正しました。
+  script を書き込む前に overlay `/etc/init.d` directory を作成します。
+
 ## v20260520.2222
 
 ### 追加

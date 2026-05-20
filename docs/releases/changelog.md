@@ -10,6 +10,11 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- Fixed the Live ISO build after adding the OpenRC `routerd` service script by
+  creating the overlay `/etc/init.d` directory before writing the script.
+
 ## v20260520.2222
 
 ### Added
