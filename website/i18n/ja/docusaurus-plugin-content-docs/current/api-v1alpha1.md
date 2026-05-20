@@ -45,8 +45,8 @@ spec:
 | Kind | 役割 |
 | --- | --- |
 | `Package` | 他 resource から導出できない OS package だけを補う narrow override です。通常の runtime dependency は自動導出されます。 |
-| `Sysctl` | 実行時の sysctl 値を設定します。`compare: exact` と `compare: atLeast` で読み戻し判定を選べます。 |
-| `SysctlProfile` | ルーター向け sysctl 推奨値をまとめて設定します。 |
+| `Sysctl` | router resource からまだ導出できない sysctl 値を補う narrow escape hatch です。`compare: exact` と `compare: atLeast` で読み戻し判定を選べます。 |
+| `SysctlProfile` | ルーター向け sysctl 推奨値を補う narrow escape hatch です。通常の router sysctl は自動導出されます。 |
 | `Hostname` | ホスト名を設定します。 |
 | `NTPClient` | OS の NTP クライアントを有効にします。DHCPv4 / DHCPv6 の状態から時刻サーバーを導出し、空なら public NTP サーバーへ戻せます。 |
 | `LogSink` | routerd のイベントを syslog や外部プログラムへ送ります。 |
@@ -306,9 +306,11 @@ listen address の A record として DNSResolver に自動反映できます。
 `routerctl show ingress --verbose` は live dataplane の `ip_forward`、nftables
 DNAT/SNAT rule 数、該当 conntrack flow 数も表示します。`DETAIL` column には
 `hairpinMode`、hairpin が必要か、期待される nftables SNAT rule が present/missing
-のどちらかも出します。Ingress/NAT 系 resource が
-ある場合、明示的な `SysctlProfile` がなくても apply/controller reconcile 時に
-runtime の `net.ipv4.ip_forward=1` と `net.ipv6.conf.all.forwarding=1` を自動適用します。
+のどちらかも出します。Ingress、NAT 系、DS-Lite、IPv6 PD/RA、routing resource から、
+forwarding、redirect suppression、reverse path filter exception、interface ごとの RA 受信など
+必要な runtime sysctl を導出します。`routerd apply --once` は派生設定を plan / render しますが、
+host 変更は明示的な `Sysctl` / `SysctlProfile` escape hatch だけに限定します。
+派生 runtime 設定の適用は `routerd serve` の controller reconcile が担当します。
 保守中は `routerctl drain
 ingress/<service> backend=<name> --duration 10m` で backend を runtime state 上の
 drain 状態にできます。controller は duration が切れるか `routerctl undrain

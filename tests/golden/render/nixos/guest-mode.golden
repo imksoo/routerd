@@ -27,6 +27,9 @@ lan-v4-dhcpv4-server-lan from=lan to=self ifnames=ens19 proto=udp port=67 action
     ];
     linkConfig.RequiredForOnline = "routable";
   };
+  boot.kernel.sysctl = {
+    "net.ipv4.conf.ens19.send_redirects" = 0;
+  };
   systemd.services."routerd-dnsmasq" = {
     description = "routerd managed dnsmasq DHCP service";
     wantedBy = [ "multi-user.target" ];

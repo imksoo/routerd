@@ -508,6 +508,12 @@ func routerArtifactIntentsForOS(router *api.Router, aliases map[string]string, t
 		}
 		intents = append(intents, resourceArtifactIntentsForPlatform(res, aliases, targetOS, features)...)
 	}
+	for _, res := range hostdeps.DerivedSysctlResources(router) {
+		if hasExplicitResource(router, res.Kind, res.Metadata.Name) {
+			continue
+		}
+		intents = append(intents, resourceArtifactIntentsForPlatform(res, aliases, targetOS, features)...)
+	}
 	return intents
 }
 

@@ -26,8 +26,9 @@ func TestSysctlControllerAppliesRuntimeValue(t *testing.T) {
 	values := map[string]string{"net.ipv4.ip_forward": "0"}
 	var commands []string
 	controller := SysctlController{
-		Router: router,
-		Store:  store,
+		Router:  router,
+		Store:   store,
+		BaseDir: t.TempDir(),
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			_ = ctx
 			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
@@ -69,8 +70,9 @@ func TestSysctlControllerAutoEnablesForwardingForIngress(t *testing.T) {
 	}
 	var commands []string
 	controller := SysctlController{
-		Router: router,
-		Store:  store,
+		Router:  router,
+		Store:   store,
+		BaseDir: t.TempDir(),
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			_ = ctx
 			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
@@ -98,7 +100,7 @@ func TestSysctlControllerAutoEnablesForwardingForIngress(t *testing.T) {
 			t.Fatalf("commands missing %q:\n%s", want, got)
 		}
 	}
-	if status := store.ObjectStatus(api.SystemAPIVersion, "Sysctl", "auto-forwarding-net.ipv4.ip_forward"); status["phase"] != "Applied" {
+	if status := store.ObjectStatus(api.SystemAPIVersion, "SysctlProfile", "router-runtime"); status["phase"] != "Applied" {
 		t.Fatalf("auto IPv4 forwarding status = %#v", status)
 	}
 }

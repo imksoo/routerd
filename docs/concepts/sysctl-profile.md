@@ -5,23 +5,25 @@ slug: /concepts/sysctl-profile
 
 # Sysctl profile
 
-routerd ships a `SysctlProfile` for Linux routers.
-Instead of listing many individual `Sysctl` resources, you declare a single profile that bundles the values a home router typically needs.
+routerd derives the Linux router sysctl set from router resources.
+Normal home-router configs should not list `SysctlProfile` or many individual
+`Sysctl` entries. NAT, DS-Lite, BGP, IPv6 prefix delegation, RA, and LAN service
+resources imply the forwarding, redirect, reverse-path-filter, conntrack, TCP,
+and per-interface RA settings they need.
 
-```yaml
-apiVersion: system.routerd.net/v1alpha1
-kind: SysctlProfile
-metadata:
-  name: router-runtime
-spec:
-  profile: router-linux
-  runtime: true
-  persistent: true
-```
+`Sysctl` and `SysctlProfile` remain as narrow escape hatches for hardware,
+kernel, or distribution-specific settings that routerd cannot yet derive. Treat
+such entries as implementation overrides, not as the main way to describe router
+intent.
 
-`runtime: true` writes immediately to the running kernel.
-`persistent: true` writes a persistent file under `/etc/sysctl.d/`.
-Use `overrides` to change individual values inside the profile.
+`runtime: true` writes immediately to the running kernel when the controller
+chain is serving. `persistent: true` writes a persistent file under
+`/etc/sysctl.d/`. `routerd apply --once` mutates only explicit `Sysctl` and
+`SysctlProfile` resources; derived sysctls are rendered and planned there, then
+applied by `routerd serve`.
+
+Use `overrides` only when you intentionally keep an explicit profile escape
+hatch.
 
 ```yaml
 spec:
@@ -59,6 +61,8 @@ spec:
 | `net.ipv4.conf.all.forwarding` | `1` | Enable per-interface IPv4 forwarding. |
 | `net.ipv4.conf.all.rp_filter` | `0` | Prevent reverse-path filtering from dropping return traffic for policy routing or DS-Lite tunnels. |
 | `net.ipv4.conf.default.rp_filter` | `0` | Same, applied to interfaces created later (e.g. tunnels). |
+| `net.ipv4.conf.all.send_redirects` | `0` | Do not emit ICMP redirects from the router. |
+| `net.ipv4.conf.default.send_redirects` | `0` | Same, applied to interfaces created later. |
 | `net.ipv4.conf.all.src_valid_mark` | `1` | Allow `fwmark`-based routing decisions to participate in reverse-path validation. |
 | `net.ipv6.conf.all.forwarding` | `1` | Enable IPv6 forwarding. |
 | `net.ipv6.conf.default.forwarding` | `1` | Same, applied to interfaces created later. |
@@ -105,17 +109,23 @@ adding implementation-specific YAML.
 
 ## When to use a discrete `Sysctl`
 
-`SysctlProfile` covers the recommended bundle.
-Per-interface keys (such as `accept_ra` on a specific WAN interface) belong in a discrete `Sysctl`:
+Use a discrete `Sysctl` only for a setting that is truly outside routerd's
+derived model. Per-interface router needs such as DS-Lite tunnel
+`rp_filter=0`, WAN/LAN `accept_ra=2`, and LAN `send_redirects=0` are derived
+from resources and should not appear in normal configs.
+
+Example escape hatch for a lab kernel that needs a temporary socket-buffer
+override:
 
 ```yaml
 apiVersion: system.routerd.net/v1alpha1
 kind: Sysctl
 metadata:
-  name: wan-accept-ra
+  name: lab-rmem-max
 spec:
-  key: net.ipv6.conf.ens18.accept_ra
-  value: "2"
+  key: net.core.rmem_max
+  value: "33554432"
+  compare: atLeast
   runtime: true
   persistent: true
 ```

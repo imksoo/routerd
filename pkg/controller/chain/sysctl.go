@@ -15,6 +15,7 @@ import (
 	"routerd/pkg/api"
 	"routerd/pkg/conntracktuning"
 	"routerd/pkg/daemonapi"
+	"routerd/pkg/hostdeps"
 	"routerd/pkg/logstore"
 	"routerd/pkg/sysctlprofile"
 )
@@ -28,10 +29,11 @@ type SysctlController struct {
 	}
 	Store   Store
 	Command outputCommandFunc
+	BaseDir string
 }
 
 func (c SysctlController) Reconcile(ctx context.Context) error {
-	for _, resource := range c.Router.Spec.Resources {
+	for _, resource := range hostdeps.SysctlResources(c.Router) {
 		switch resource.Kind {
 		case "Sysctl":
 			spec, err := resource.SysctlSpec()
@@ -91,18 +93,6 @@ func (c SysctlController) Reconcile(ctx context.Context) error {
 				if err := c.publishApplied(ctx, "SysctlProfile", resource.Metadata.Name, "profile", spec.Profile); err != nil {
 					return err
 				}
-			}
-		}
-	}
-	for _, entry := range sysctlprofile.ForwardingEntries(c.Router) {
-		name := "auto-forwarding-" + safeSysctlName(entry.Key)
-		result, err := c.applyOne(ctx, name, "Sysctl", sysctlSetting{Key: entry.Key, Value: entry.Value, Compare: entry.Compare, Optional: entry.Optional})
-		if err != nil {
-			return err
-		}
-		if result.changed && c.Bus != nil {
-			if err := c.publishApplied(ctx, "Sysctl", name, entry.Key, entry.Value); err != nil {
-				return err
 			}
 		}
 	}
@@ -190,7 +180,11 @@ func (c SysctlController) applyOne(ctx context.Context, name, kind string, spec 
 	persistentPath := ""
 	persistentChanged := false
 	if spec.Persistent {
-		persistentPath = filepath.Join("/etc/sysctl.d", "90-routerd-"+safeSysctlName(name)+".conf")
+		baseDir := c.BaseDir
+		if baseDir == "" {
+			baseDir = "/etc/sysctl.d"
+		}
+		persistentPath = filepath.Join(baseDir, "90-routerd-"+safeSysctlName(name)+".conf")
 		data := []byte(fmt.Sprintf("# Managed by routerd. Do not edit by hand.\n%s = %s\n", spec.Key, spec.Value))
 		var err error
 		persistentChanged, err = writeFileIfChanged(persistentPath, data, 0644, false)

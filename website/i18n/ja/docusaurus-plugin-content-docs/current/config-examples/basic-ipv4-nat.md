@@ -30,7 +30,7 @@ flowchart LR
 | --- | --- | --- |
 | [1] | WAN 側 IPv4 lease を配る上流 network。 | routerd 管理外 |
 | [2] | 物理 WAN interface。ここで DHCPv4 client を動かす。 | `Interface/wan`, `DHCPv4Lease/wan-dhcpv4` |
-| [3] | routerd config を適用する Linux host。 | `Sysctl/ipv4-forwarding` |
+| [3] | 派生 forwarding sysctl と nftables rule を適用する Linux host。 | Derived host runtime |
 | [4] | routerd が持つ LAN gateway address。 | `Interface/lan`, `IPv4StaticAddress/lan-base` |
 | [5] | router を gateway / DNS として使う LAN client。 | `DHCPv4Server/lan-dhcpv4` |
 

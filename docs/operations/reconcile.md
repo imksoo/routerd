@@ -31,11 +31,12 @@ declared, the matching controller decides how to converge it, and `--dry-run`
 remains a pre-apply check rather than a persistent operating mode.
 
 When the config contains resources that forward traffic, such as
-`IngressService`, `PortForward`, NAT, BGP, or static/policy routes, apply and
-controller reconcile also converge the runtime kernel forwarding switches:
-`net.ipv4.ip_forward=1` and `net.ipv6.conf.all.forwarding=1`. This is applied
-even when the YAML does not include an explicit `SysctlProfile`, so a live ISO
-or freshly booted router does not silently keep forwarding disabled.
+`IngressService`, `PortForward`, NAT, BGP, or static/policy routes, routerd
+derives the required runtime sysctls. `routerd apply --once` observes, plans,
+and renders those derived settings without mutating them; `routerd serve`
+converges them during controller reconcile. This keeps one-shot apply bounded to
+config validation and artifact rendering while the long-running controller owns
+daemon and runtime kernel lifecycle.
 
 ## Drift checks
 

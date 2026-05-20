@@ -4356,15 +4356,6 @@ func applyRuntimeSysctls(router *api.Router) ([]string, error) {
 			continue
 		}
 	}
-	for _, entry := range sysctlprofile.ForwardingEntries(router) {
-		changed, err := applyRuntimeSysctl(entry.Key, entry.Value, true, entry.Optional)
-		if err != nil {
-			return nil, err
-		}
-		if changed {
-			applied = append(applied, entry.Key)
-		}
-	}
 	return applied, nil
 }
 

@@ -21,6 +21,9 @@
   services.resolved.extraConfig = ''
     DNSStubListener=no
   '';
+  boot.kernel.sysctl = {
+    "net.ipv4.conf.ens19.send_redirects" = 0;
+  };
   systemd.services."routerd-dns-resolver@lan-resolver" = {
     description = "routerd DNS resolver lan-resolver";
     wantedBy = [ "multi-user.target" ];

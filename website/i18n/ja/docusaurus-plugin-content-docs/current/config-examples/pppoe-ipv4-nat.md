@@ -33,7 +33,7 @@ flowchart LR
 | [1] | routerd 管理外の access line / ONU。 | routerd 管理外 |
 | [2] | PPPoE を通す物理 Ethernet interface。 | `Interface/wan` |
 | [3] | PPPoE session と論理 egress interface。 | `PPPoEInterface/pppoe-home` |
-| [4] | IPv4 forwarding と nftables NAT を適用する host。 | `Sysctl/ipv4-forwarding`, `NAT44Rule/lan-to-pppoe` |
+| [4] | IPv4 forwarding を導出し、nftables NAT を適用する host。 | Derived host runtime, `NAT44Rule/lan-to-pppoe` |
 | [5] | LAN gateway と DHCPv4 segment。 | `IPv4StaticAddress/lan-base`, `DHCPv4Server/lan-dhcpv4` |
 | [6] | NAT 経由で PPPoE を IPv4 internet path として使う client。 | `DHCPv4Server/lan-dhcpv4` |
 

@@ -47,13 +47,6 @@ spec:
           - os: ubuntu
             names: [dnsmasq, nftables, conntrack, iproute2]
 
-    - apiVersion: system.routerd.net/v1alpha1
-      kind: SysctlProfile
-      metadata:
-        name: router-linux
-      spec:
-        profile: router-linux
-
     - apiVersion: net.routerd.net/v1alpha1
       kind: Interface
       metadata:
@@ -73,9 +66,9 @@ spec:
         managed: true
 ```
 
-`Package` and `SysctlProfile` make host preparation part of the router intent.
-They are useful because router features often require OS tools and forwarding
-settings before protocol resources can work.
+Router features derive their host runtime needs from the resources you declare.
+Use `Package`, `Sysctl`, or `SysctlProfile` only as narrow escape hatches when a
+package or kernel setting is not yet derivable.
 
 ## 3. Validate
 

@@ -33,7 +33,7 @@ flowchart LR
 | --- | --- | --- |
 | [1] | ISP AFTR endpoint used by the DS-Lite tunnel. | `DSLiteTunnel/transix` |
 | [2] | WAN interface receiving IPv6 RA and DHCPv6-PD. | `IPv6RAAddress/wan-ra`, `DHCPv6PrefixDelegation/wan-pd` |
-| [3] | routerd host that creates the tunnel and LAN services. | `Sysctl/ipv4-forwarding`, `Sysctl/ipv6-forwarding` |
+| [3] | routerd host that creates the tunnel, derives sysctls, and runs LAN services. | Derived host runtime |
 | [4] | DS-Lite `ip6tnl` device used for IPv4 egress. | `DSLiteTunnel/transix`, `NAT44Rule/lan-to-dslite` |
 | [5] | LAN interface with IPv4 plus a delegated IPv6 address. | `IPv4StaticAddress/lan-ipv4`, `IPv6DelegatedAddress/lan-ipv6` |
 | [6] | LAN clients receiving DHCPv4, RA, RDNSS, and DNSSL. | `DHCPv4Server/lan-dhcpv4`, `IPv6RouterAdvertisement/lan-ra` |

@@ -7,11 +7,17 @@ import (
 	"strings"
 
 	"routerd/pkg/api"
+	"routerd/pkg/sysctlprofile"
 )
 
 type NetworkAdoptionResource struct {
 	Name string
 	Spec api.NetworkAdoptionSpec
+}
+
+type sysctlResource struct {
+	Name string
+	Spec api.SysctlSpec
 }
 
 func PackageResources(router *api.Router) []api.Resource {
@@ -222,6 +228,286 @@ func KernelModules(router *api.Router) []string {
 	return sortedKeys(needed)
 }
 
+func SysctlResources(router *api.Router) []api.Resource {
+	if router == nil {
+		return nil
+	}
+	var out []api.Resource
+	for _, resource := range router.Spec.Resources {
+		switch resource.Kind {
+		case "Sysctl", "SysctlProfile":
+			out = append(out, resource)
+		}
+	}
+	out = append(out, DerivedSysctlResources(router)...)
+	return out
+}
+
+func DerivedSysctlResources(router *api.Router) []api.Resource {
+	if router == nil {
+		return nil
+	}
+	explicit := explicitSysctlKeys(router)
+	var out []api.Resource
+	if spec, ok := derivedRouterProfile(router); ok {
+		entries, err := sysctlprofile.Entries(spec.Profile, spec.Overrides)
+		if err == nil {
+			if intersectsEntryKeys(entries, explicit) {
+				for _, entry := range entries {
+					if explicit[entry.Key] {
+						continue
+					}
+					out = append(out, sysctlResourceFor("router-runtime-"+safeResourceName(entry.Key), sysctlSpecFromEntry(entry, spec.Runtime, spec.Persistent)))
+				}
+			} else {
+				out = append(out, api.Resource{
+					TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "SysctlProfile"},
+					Metadata: api.ObjectMeta{Name: "router-runtime"},
+					Spec:     spec,
+				})
+				for _, entry := range entries {
+					explicit[entry.Key] = true
+				}
+			}
+		}
+	}
+	for _, setting := range derivedInterfaceSysctls(router) {
+		if explicit[setting.Spec.Key] {
+			continue
+		}
+		out = append(out, sysctlResourceFor(setting.Name, setting.Spec))
+		explicit[setting.Spec.Key] = true
+	}
+	return out
+}
+
+func derivedRouterProfile(router *api.Router) (api.SysctlProfileSpec, bool) {
+	if !sysctlprofile.NeedsForwarding(router) {
+		return api.SysctlProfileSpec{}, false
+	}
+	return api.SysctlProfileSpec{
+		Profile:    "router-linux",
+		Runtime:    boolPtr(true),
+		Persistent: true,
+		Overrides: map[string]string{
+			"net.netfilter.nf_conntrack_udp_timeout": "60",
+		},
+	}, true
+}
+
+func derivedInterfaceSysctls(router *api.Router) []sysctlResource {
+	aliases := interfaceAliases(router)
+	var out []sysctlResource
+	for _, tunnel := range dsLiteTunnelNames(router) {
+		out = append(out, sysctlResource{
+			Name: "rp-filter-" + safeResourceName(tunnel),
+			Spec: api.SysctlSpec{
+				Key:      "net.ipv4.conf." + tunnel + ".rp_filter",
+				Value:    "0",
+				Runtime:  boolPtr(true),
+				Optional: true,
+			},
+		})
+	}
+	for _, iface := range raAcceptInterfaceNames(router, aliases) {
+		out = append(out, sysctlResource{
+			Name: "accept-ra-" + safeResourceName(iface),
+			Spec: api.SysctlSpec{
+				Key:        "net.ipv6.conf." + iface + ".accept_ra",
+				Value:      "2",
+				Runtime:    boolPtr(true),
+				Persistent: true,
+			},
+		})
+	}
+	for _, iface := range routedInterfaceNames(router, aliases) {
+		out = append(out, sysctlResource{
+			Name: "disable-send-redirects-" + safeResourceName(iface),
+			Spec: api.SysctlSpec{
+				Key:        "net.ipv4.conf." + iface + ".send_redirects",
+				Value:      "0",
+				Runtime:    boolPtr(true),
+				Persistent: true,
+				Optional:   true,
+			},
+		})
+	}
+	return out
+}
+
+func dsLiteTunnelNames(router *api.Router) []string {
+	names := map[string]bool{}
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "DSLiteTunnel" {
+			continue
+		}
+		spec, err := res.DSLiteTunnelSpec()
+		if err != nil {
+			continue
+		}
+		name := strings.TrimSpace(spec.TunnelName)
+		if name == "" {
+			name = res.Metadata.Name
+		}
+		if name != "" {
+			names[name] = true
+		}
+	}
+	return sortedKeys(names)
+}
+
+func raAcceptInterfaceNames(router *api.Router, aliases map[string]string) []string {
+	names := map[string]bool{}
+	add := func(name string) {
+		if resolved := resolveInterfaceName(name, aliases); resolved != "" {
+			names[resolved] = true
+		}
+	}
+	for _, res := range router.Spec.Resources {
+		switch res.Kind {
+		case "DHCPv6Address":
+			if spec, err := res.DHCPv6AddressSpec(); err == nil {
+				add(spec.Interface)
+			}
+		case "DHCPv6Information":
+			if spec, err := res.DHCPv6InformationSpec(); err == nil {
+				add(spec.Interface)
+			}
+		case "DHCPv6PrefixDelegation":
+			if spec, err := res.DHCPv6PrefixDelegationSpec(); err == nil {
+				add(spec.Interface)
+			}
+		case "IPv6RAAddress":
+			if spec, err := res.IPv6RAAddressSpec(); err == nil {
+				add(spec.Interface)
+			}
+		case "IPv6DelegatedAddress":
+			if spec, err := res.IPv6DelegatedAddressSpec(); err == nil {
+				add(spec.Interface)
+			}
+		}
+	}
+	return sortedKeys(names)
+}
+
+func routedInterfaceNames(router *api.Router, aliases map[string]string) []string {
+	names := map[string]bool{}
+	add := func(name string) {
+		if resolved := resolveInterfaceName(name, aliases); resolved != "" && resolved != "lo" {
+			names[resolved] = true
+		}
+	}
+	for _, res := range router.Spec.Resources {
+		switch res.Kind {
+		case "DHCPv4Server":
+			if spec, err := res.DHCPv4ServerSpec(); err == nil {
+				add(spec.Interface)
+			}
+		case "DHCPv6Server":
+			if spec, err := res.DHCPv6ServerSpec(); err == nil {
+				add(spec.Interface)
+			}
+		case "IPv6RouterAdvertisement":
+			if spec, err := res.IPv6RouterAdvertisementSpec(); err == nil {
+				add(spec.Interface)
+			}
+		case "IPv6DelegatedAddress":
+			if spec, err := res.IPv6DelegatedAddressSpec(); err == nil && (spec.SendRA || spec.Announce) {
+				add(spec.Interface)
+			}
+		}
+	}
+	return sortedKeys(names)
+}
+
+func interfaceAliases(router *api.Router) map[string]string {
+	aliases := map[string]string{}
+	if router == nil {
+		return aliases
+	}
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "Interface" {
+			continue
+		}
+		spec, err := res.InterfaceSpec()
+		if err != nil {
+			continue
+		}
+		if res.Metadata.Name != "" && spec.IfName != "" {
+			aliases[res.Metadata.Name] = spec.IfName
+		}
+	}
+	return aliases
+}
+
+func resolveInterfaceName(name string, aliases map[string]string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
+	if resolved := strings.TrimSpace(aliases[name]); resolved != "" {
+		return resolved
+	}
+	return name
+}
+
+func explicitSysctlKeys(router *api.Router) map[string]bool {
+	keys := map[string]bool{}
+	if router == nil {
+		return keys
+	}
+	for _, res := range router.Spec.Resources {
+		switch res.Kind {
+		case "Sysctl":
+			spec, err := res.SysctlSpec()
+			if err == nil && spec.Key != "" {
+				keys[spec.Key] = true
+			}
+		case "SysctlProfile":
+			spec, err := res.SysctlProfileSpec()
+			if err != nil {
+				continue
+			}
+			entries, err := sysctlprofile.Entries(spec.Profile, spec.Overrides)
+			if err != nil {
+				continue
+			}
+			for _, entry := range entries {
+				keys[entry.Key] = true
+			}
+		}
+	}
+	return keys
+}
+
+func intersectsEntryKeys(entries []sysctlprofile.Entry, keys map[string]bool) bool {
+	for _, entry := range entries {
+		if keys[entry.Key] {
+			return true
+		}
+	}
+	return false
+}
+
+func sysctlSpecFromEntry(entry sysctlprofile.Entry, runtime *bool, persistent bool) api.SysctlSpec {
+	return api.SysctlSpec{
+		Key:        entry.Key,
+		Value:      entry.Value,
+		Compare:    entry.Compare,
+		Runtime:    runtime,
+		Persistent: persistent,
+		Optional:   entry.Optional,
+	}
+}
+
+func sysctlResourceFor(name string, spec api.SysctlSpec) api.Resource {
+	return api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "Sysctl"},
+		Metadata: api.ObjectMeta{Name: name},
+		Spec:     spec,
+	}
+}
+
 func NetworkAdoptionResources(router *api.Router) []api.Resource {
 	if router == nil {
 		return nil
@@ -385,6 +671,16 @@ func sortedKeysPtr[T any](values map[string]*T) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+func safeResourceName(name string) string {
+	name = strings.TrimSpace(name)
+	name = strings.NewReplacer("/", "-", " ", "-", "\t", "-", "\n", "-").Replace(name)
+	name = strings.Trim(name, "-.")
+	if name == "" {
+		return "default"
+	}
+	return name
 }
 
 func boolPtr(value bool) *bool {

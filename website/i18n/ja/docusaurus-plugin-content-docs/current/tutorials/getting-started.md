@@ -46,13 +46,6 @@ spec:
           - os: ubuntu
             names: [dnsmasq, nftables, conntrack, iproute2]
 
-    - apiVersion: system.routerd.net/v1alpha1
-      kind: SysctlProfile
-      metadata:
-        name: router-linux
-      spec:
-        profile: router-linux
-
     - apiVersion: net.routerd.net/v1alpha1
       kind: Interface
       metadata:
@@ -72,9 +65,9 @@ spec:
         managed: true
 ```
 
-`Package` と `SysctlProfile` により、ホスト準備もルーターの意図に含めます。
-ルーター機能は OS のツールや転送設定に依存します。
-そのため、プロトコルリソースより前に明示しておくと安全です。
+ルーター機能に必要な host runtime 設定は、宣言した resource から routerd が導出します。
+`Package`、`Sysctl`、`SysctlProfile` は、まだ導出できない package や kernel 設定を補う
+narrow escape hatch としてだけ使います。
 
 ## 3. 検証します
 

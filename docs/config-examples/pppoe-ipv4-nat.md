@@ -34,7 +34,7 @@ flowchart LR
 | [1] | Access line or ONU outside routerd management. | External to routerd |
 | [2] | Physical Ethernet interface that carries PPPoE. | `Interface/wan` |
 | [3] | PPPoE session and logical egress interface. | `PPPoEInterface/pppoe-home` |
-| [4] | Host enabling IPv4 forwarding and applying nftables NAT. | `Sysctl/ipv4-forwarding`, `NAT44Rule/lan-to-pppoe` |
+| [4] | Host deriving IPv4 forwarding and applying nftables NAT. | Derived host runtime, `NAT44Rule/lan-to-pppoe` |
 | [5] | LAN gateway and DHCPv4 segment. | `IPv4StaticAddress/lan-base`, `DHCPv4Server/lan-dhcpv4` |
 | [6] | Clients using PPPoE as their IPv4 internet path through NAT. | `DHCPv4Server/lan-dhcpv4` |
 

@@ -19,26 +19,6 @@ spec:
         hostname: freebsd-edge.example.internal
         managed: true
 
-    - apiVersion: system.routerd.net/v1alpha1
-      kind: Sysctl
-      metadata:
-        name: ipv4-forwarding
-      spec:
-        key: net.inet.ip.forwarding
-        value: "1"
-        runtime: true
-        persistent: false
-
-    - apiVersion: system.routerd.net/v1alpha1
-      kind: Sysctl
-      metadata:
-        name: ipv6-forwarding
-      spec:
-        key: net.inet6.ip6.forwarding
-        value: "1"
-        runtime: true
-        persistent: false
-
     - apiVersion: net.routerd.net/v1alpha1
       kind: Interface
       metadata:

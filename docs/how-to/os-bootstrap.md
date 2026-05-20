@@ -55,8 +55,13 @@ is not a user-facing config kind.
 
 ## Sysctl profile
 
-Use `SysctlProfile` for forwarding, conntrack accounting, and router-oriented
-kernel defaults. Override only the values that differ from the profile.
+routerd derives forwarding, conntrack accounting, reverse-path-filter, redirect,
+TCP, and RA sysctls from router resources. Do not list `SysctlProfile` in normal
+configs.
+
+Use `SysctlProfile` only as a narrow escape hatch for a platform-specific kernel
+setting that routerd cannot yet derive. Override only the values that differ
+from the profile.
 
 ```yaml
 apiVersion: system.routerd.net/v1alpha1

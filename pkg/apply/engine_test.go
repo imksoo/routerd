@@ -261,10 +261,14 @@ func TestPlanAllowsDHCPScopeWhenNetplanCanManageInterface(t *testing.T) {
 }
 
 func TestPlanSysctlDrift(t *testing.T) {
-	router, err := config.Load("../../examples/router-lab.yaml")
-	if err != nil {
-		t.Fatalf("load example: %v", err)
-	}
+	router := &api.Router{TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"}, Metadata: api.ObjectMeta{Name: "test-router"}, Spec: api.RouterSpec{Resources: []api.Resource{{
+		TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "Sysctl"},
+		Metadata: api.ObjectMeta{Name: "ipv4-forwarding"},
+		Spec: api.SysctlSpec{
+			Key:   "net.ipv4.ip_forward",
+			Value: "1",
+		},
+	}}}}
 
 	engine := &Engine{
 		Command: fakeCommand(map[string]string{

@@ -36,36 +36,6 @@ spec:
         servers:
           - pool.ntp.org
 
-    - apiVersion: system.routerd.net/v1alpha1
-      kind: Sysctl
-      metadata:
-        name: ipv4-forwarding
-      spec:
-        key: net.ipv4.ip_forward
-        value: "1"
-        runtime: true
-        persistent: true
-
-    - apiVersion: system.routerd.net/v1alpha1
-      kind: Sysctl
-      metadata:
-        name: ipv6-forwarding
-      spec:
-        key: net.ipv6.conf.all.forwarding
-        value: "1"
-        runtime: true
-        persistent: true
-
-    - apiVersion: system.routerd.net/v1alpha1
-      kind: Sysctl
-      metadata:
-        name: wan-ipv6-accept-ra
-      spec:
-        key: net.ipv6.conf.ens18.accept_ra
-        value: "2"
-        runtime: true
-        persistent: true
-
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4ReversePathFilter
       metadata:

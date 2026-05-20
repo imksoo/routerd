@@ -30,7 +30,7 @@ flowchart LR
 | --- | --- | --- |
 | [1] | Upstream network that gives the router a WAN IPv4 lease. | External to routerd |
 | [2] | Physical WAN interface. routerd runs a DHCPv4 client here. | `Interface/wan`, `DHCPv4Lease/wan-dhcpv4` |
-| [3] | Linux host applying the routerd config. | `Sysctl/ipv4-forwarding` |
+| [3] | Linux host applying derived forwarding sysctls and nftables rules. | Derived host runtime |
 | [4] | LAN gateway address owned by routerd. | `Interface/lan`, `IPv4StaticAddress/lan-base` |
 | [5] | DHCPv4 clients using the router as gateway and DNS. | `DHCPv4Server/lan-dhcpv4` |
 

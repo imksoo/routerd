@@ -47,8 +47,8 @@ spec:
 | Kind | Role |
 | --- | --- |
 | `Package` | Optional narrow override for OS packages that cannot yet be derived from router resources. Normal runtime dependencies are derived automatically. |
-| `Sysctl` | Sets one sysctl value. Readback comparison can be `exact` or `atLeast`. |
-| `SysctlProfile` | Applies router-oriented sysctl defaults. |
+| `Sysctl` | Narrow escape hatch for one sysctl value that cannot yet be derived from router resources. Readback comparison can be `exact` or `atLeast`. |
+| `SysctlProfile` | Narrow escape hatch for router-oriented sysctl defaults. Normal router sysctls are derived automatically. |
 | `Hostname` | Sets the host name. |
 | `NTPClient` | Enables the OS NTP client. It can use static servers or derive servers from DHCPv4 / DHCPv6 status with public fallback servers. |
 | `LogSink` | Sends routerd events to syslog or another local sink. |
@@ -326,9 +326,12 @@ health; `routerctl show ingress --verbose` also samples the live dataplane
 (`ip_forward`, nftables DNAT/SNAT rule counts, and matching conntrack flows).
 The `DETAIL` column reports `hairpinMode`, whether hairpin is required, and
 whether the expected nftables SNAT rule is present or missing.
-Ingress and NAT-like resources automatically enable runtime
-`net.ipv4.ip_forward=1` and `net.ipv6.conf.all.forwarding=1` during apply or
-controller reconcile, even when no explicit `SysctlProfile` is present. During
+Ingress, NAT-like resources, DS-Lite, IPv6 PD/RA, and routing resources derive
+the runtime sysctls they need, including forwarding, redirect suppression,
+reverse-path-filter exceptions, and per-interface RA acceptance. `routerd
+apply --once` plans and renders those derived settings but mutates the host only
+for explicit `Sysctl` / `SysctlProfile` escape hatches; `routerd serve` applies
+the derived runtime settings during controller reconcile. During
 maintenance, `routerctl drain ingress/<service> backend=<name>
 --duration 10m` marks a backend as drained in the runtime state store. The
 controller treats it as unhealthy with reason `Drained` until the duration

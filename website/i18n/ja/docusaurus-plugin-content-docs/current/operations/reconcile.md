@@ -34,11 +34,11 @@ selection と、IngressService 由来の nftables DNAT/hairpin rule の live app
 `--controller runtime-dry-run-nat=false` で別に制御します。
 
 `IngressService`、`PortForward`、NAT、BGP、static/policy route など転送を伴う
-resource がある場合、apply と controller reconcile は runtime kernel forwarding
-も収束させます。具体的には `net.ipv4.ip_forward=1` と
-`net.ipv6.conf.all.forwarding=1` を適用します。明示的な `SysctlProfile` がない
-Live ISO や初回起動直後の router でも、forwarding disabled のまま silently 動く
-状態を避けるためです。
+resource がある場合、routerd は必要な runtime sysctl を導出します。
+`routerd apply --once` は派生設定を観測、計画、render しますが host には反映しません。
+`routerd serve` が controller reconcile 中に収束させます。これにより one-shot apply は
+config validation と artifact rendering に閉じ、daemon と runtime kernel lifecycle は
+長時間動く controller が所有します。
 
 ## drift の確認
 

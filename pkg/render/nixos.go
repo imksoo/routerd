@@ -441,7 +441,7 @@ func compactSortedStrings(values []string) []string {
 
 func nixOSSysctls(router *api.Router) (map[string]string, error) {
 	values := map[string]string{}
-	for _, res := range router.Spec.Resources {
+	for _, res := range hostdeps.SysctlResources(router) {
 		switch res.Kind {
 		case "Sysctl":
 			spec, err := res.SysctlSpec()

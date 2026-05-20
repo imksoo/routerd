@@ -49,7 +49,9 @@ Linux の kernel module は、NAT、firewall log、traffic flow log、WireGuard 
 
 ## Sysctl
 
-`SysctlProfile` は forwarding、conntrack accounting、ルーター用途向け kernel default をまとめます。差分だけ `overrides` で指定します。
+routerd は forwarding、conntrack accounting、reverse path filter、redirect、TCP、RA の sysctl を router resource から自動導出します。通常 config に `SysctlProfile` を書きません。
+
+`SysctlProfile` は、routerd がまだ導出できない platform 固有 kernel 設定を補う narrow escape hatch としてだけ使います。差分だけ `overrides` で指定します。
 
 ```yaml
 apiVersion: system.routerd.net/v1alpha1

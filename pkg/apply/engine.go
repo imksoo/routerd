@@ -174,7 +174,7 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 				ID:        api.RouterAPIVersion + "/Router/" + router.Metadata.Name + "/derived-host-runtime",
 				Phase:     "Healthy",
 				Observed:  map[string]string{"source": "resource graph"},
-				Plan:      []string{"derive host packages, kernel modules, and network adoption artifacts from declared resources"},
+				Plan:      []string{"derive host packages, kernel modules, sysctls, and network adoption artifacts from declared resources"},
 				Artifacts: artifactIntentsForResult(intents),
 			})
 		}
