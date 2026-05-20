@@ -2,7 +2,16 @@
 
 package chain
 
-import "testing"
+import (
+	"context"
+	"strings"
+	"testing"
+	"time"
+
+	"routerd/pkg/api"
+	"routerd/pkg/bus"
+	"routerd/pkg/daemonapi"
+)
 
 func TestStatusWithOwnershipAddsControllerMetadata(t *testing.T) {
 	status := statusWithOwnership("net.routerd.net/v1alpha1", "EgressRoutePolicy", map[string]any{"phase": "Applied"})
@@ -77,6 +86,79 @@ func TestStatusChangedIgnoresPathMTUObservationTimestamp(t *testing.T) {
 	fields := statusChangedFields(current, next)
 	if len(fields) != 1 || fields[0] != "mtu" {
 		t.Fatalf("changed fields = %v, want [mtu]", fields)
+	}
+}
+
+func TestStatusChangedIgnoresLastTransitionAt(t *testing.T) {
+	current := map[string]any{
+		"phase":             "Applied",
+		"selectedCandidate": "ds-lite-ra",
+		"selectedDevice":    "ds-lite-ra",
+		"lastTransitionAt":  "2026-05-20T10:00:00Z",
+	}
+	next := map[string]any{
+		"phase":             "Applied",
+		"selectedCandidate": "ds-lite-ra",
+		"selectedDevice":    "ds-lite-ra",
+		"lastTransitionAt":  "2026-05-20T10:00:30Z",
+	}
+	if statusChanged(current, next) {
+		t.Fatalf("lastTransitionAt-only update should not be a resource status change")
+	}
+	if fields := statusChangedFields(current, next); len(fields) != 0 {
+		t.Fatalf("changed fields = %v, want none", fields)
+	}
+}
+
+func TestEventedStoreDoesNotPublishTimestampOnlyStatusChange(t *testing.T) {
+	base := mapStore{
+		api.NetAPIVersion + "/EgressRoutePolicy/ipv4-default": statusWithOwnership(api.NetAPIVersion, "EgressRoutePolicy", map[string]any{
+			"phase":             "Applied",
+			"selectedCandidate": "ds-lite-ra",
+			"selectedDevice":    "ds-lite-ra",
+			"lastTransitionAt":  "2026-05-20T10:00:00Z",
+		}),
+	}
+	eventBus := bus.New()
+	resource := daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy", Name: "ipv4-default"}
+	ch, cancel := eventBus.Subscribe(context.Background(), bus.Subscription{
+		Topics:   []string{"routerd.resource.status.changed"},
+		Resource: &resource,
+	}, 1)
+	defer cancel()
+
+	store := eventedStore{Store: base, Bus: eventBus}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "ipv4-default", map[string]any{
+		"phase":             "Applied",
+		"selectedCandidate": "ds-lite-ra",
+		"selectedDevice":    "ds-lite-ra",
+		"lastTransitionAt":  "2026-05-20T10:00:30Z",
+	}); err != nil {
+		t.Fatalf("save status: %v", err)
+	}
+
+	select {
+	case event := <-ch:
+		t.Fatalf("unexpected event: %#v", event)
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "ipv4-default", map[string]any{
+		"phase":             "Applied",
+		"selectedCandidate": "ix2215",
+		"selectedDevice":    "ix2215",
+		"lastTransitionAt":  "2026-05-20T10:01:00Z",
+	}); err != nil {
+		t.Fatalf("save changed status: %v", err)
+	}
+
+	select {
+	case event := <-ch:
+		if fields := event.Attributes["changedFields"]; !strings.Contains(fields, "selectedCandidate") || strings.Contains(fields, "lastTransitionAt") {
+			t.Fatalf("changedFields = %q, want selectedCandidate without lastTransitionAt", fields)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for semantic status change event")
 	}
 }
 

@@ -10,6 +10,13 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 
 ## Unreleased
 
+### 修正
+
+- 修正 Linux kernel 以 `/128` 等不同 prefix length 顯示既有 delegated host
+  address 時，`IPv6DelegatedAddress` apply event 會反覆產生的問題。
+- 當 status refresh 只更新 `lastTransitionAt` timestamp 時，不再發出
+  `routerd.resource.status.changed` event。
+
 ## v20260521.0827
 
 ### 新增

@@ -10,6 +10,14 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 
 ## Unreleased
 
+### 修正
+
+- Linux kernel が既存の delegated host address を設定上の `/64` ではなく
+  `/128` など別の prefix length で表示する場合に、`IPv6DelegatedAddress` の
+  apply event が繰り返し発生する問題を修正しました。
+- `lastTransitionAt` timestamp だけが更新された status refresh では、
+  `routerd.resource.status.changed` event を出さないようにしました。
+
 ## v20260521.0827
 
 ### 追加

@@ -245,6 +245,16 @@ func TestIfconfigHasIPv4AddressIgnoresPrefix(t *testing.T) {
 	}
 }
 
+func TestIPAddrShowHasIPv6AddressIgnoresKernelPrefixLength(t *testing.T) {
+	out := []byte(`7: ens19    inet6 2409:10:3d60:1271::13/128 scope global
+7: ens19    inet6 2409:10:3d60:1271::1/64 scope global
+7: ens19    inet6 2409:10:3d60:1271::11/128 scope global
+`)
+	if !ipAddrShowHasIPv6Address(out, "2409:10:3d60:1271::11/64") {
+		t.Fatal("ipAddrShowHasIPv6Address = false, want true")
+	}
+}
+
 func TestInterfaceIfNameResolvesBridgeIfName(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Bridge"}, Metadata: api.ObjectMeta{Name: "br-lab"}, Spec: api.BridgeSpec{IfName: "bridge100"}},

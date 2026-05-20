@@ -10,6 +10,14 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- Fixed repeated `IPv6DelegatedAddress` apply events on Linux when the kernel
+  reports an existing delegated host address with a different prefix length
+  such as `/128` instead of the configured `/64`.
+- Stopped `routerd.resource.status.changed` events from being emitted for
+  `lastTransitionAt` timestamp-only status refreshes.
+
 ## v20260521.0827
 
 ### Added

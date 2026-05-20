@@ -357,7 +357,7 @@ func stableStatus(status map[string]any) map[string]any {
 	out := map[string]any{}
 	for key, value := range status {
 		switch key {
-		case "updatedAt", "observedAt", "installedAt", "lastCheckedAt", "consecutivePassed", "consecutiveFailed", "createdHint", "packetRing", "conditions", "mtuObservedAt":
+		case "updatedAt", "observedAt", "installedAt", "lastCheckedAt", "lastTransitionAt", "consecutivePassed", "consecutiveFailed", "createdHint", "packetRing", "conditions", "mtuObservedAt":
 			continue
 		case "handshakeAgeSeconds", "latestHandshake", "transferRxBytes", "transferTxBytes", "peers", "internalHoles":
 			continue
@@ -435,7 +435,7 @@ func stableStatusValue(value any) any {
 
 func volatileNestedStatusField(key string) bool {
 	switch key {
-	case "healthyCount", "unhealthyCount", "observedAt", "updatedAt", "lastCheckedAt", "lastHealthyAt", "lastUnhealthyAt":
+	case "healthyCount", "unhealthyCount", "observedAt", "updatedAt", "lastCheckedAt", "lastTransitionAt", "lastHealthyAt", "lastUnhealthyAt":
 		return true
 	default:
 		return false
@@ -1514,9 +1514,17 @@ func ipv6AddressPresent(ctx context.Context, ifname, address string) bool {
 	if err != nil {
 		return false
 	}
+	return ipAddrShowHasIPv6Address(out, address)
+}
+
+func ipAddrShowHasIPv6Address(out []byte, address string) bool {
+	want := localIPv6Address(address)
+	if want == "" {
+		return false
+	}
 	fields := strings.Fields(string(out))
 	for i := 0; i+1 < len(fields); i++ {
-		if fields[i] == "inet6" && fields[i+1] == address {
+		if fields[i] == "inet6" && localIPv6Address(fields[i+1]) == want {
 			return true
 		}
 	}
