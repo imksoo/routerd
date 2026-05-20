@@ -1070,6 +1070,123 @@ func recordHostInventoryState(store routerstate.Store) error {
 	return nil
 }
 
+type staleObjectStatusCleanupStore interface {
+	routerstate.ObjectStatusLister
+	routerstate.ObjectDeleteStore
+	routerstate.EventRecorder
+	Backup(path string) error
+}
+
+type staleObjectStatusCleanupResult struct {
+	Removed    []routerstate.ObjectStatus
+	BackupPath string
+	Skipped    bool
+}
+
+func cleanupUnsupportedLegacyObjectStatuses(router *api.Router, store staleObjectStatusCleanupStore, statePath string, now time.Time, logger *eventlog.Logger) (staleObjectStatusCleanupResult, error) {
+	if store == nil {
+		return staleObjectStatusCleanupResult{}, nil
+	}
+	statuses, err := store.ListObjectStatuses()
+	if err != nil {
+		emitStateCleanupWarning(logger, "stale state cleanup skipped: list object statuses failed", map[string]string{"error": err.Error()})
+		recordStateCleanupEvent(router, store, "StaleStateCleanupSkipped", "stale state cleanup skipped: "+err.Error())
+		return staleObjectStatusCleanupResult{Skipped: true}, err
+	}
+	removed := unsupportedLegacyObjectStatuses(statuses)
+	if len(removed) == 0 {
+		return staleObjectStatusCleanupResult{}, nil
+	}
+	backupPath := staleStateCleanupBackupPath(statePath, now)
+	if err := store.Backup(backupPath); err != nil {
+		msg := fmt.Sprintf("stale state cleanup skipped: failed to create backup %s: %v", backupPath, err)
+		emitStateCleanupWarning(logger, msg, map[string]string{"backup": backupPath, "error": err.Error(), "resources": staleObjectStatusIDs(removed)})
+		recordStateCleanupEvent(router, store, "StaleStateCleanupSkipped", msg)
+		return staleObjectStatusCleanupResult{Removed: removed, BackupPath: backupPath, Skipped: true}, nil
+	}
+	for _, status := range removed {
+		if err := store.DeleteObject(status.APIVersion, status.Kind, status.Name); err != nil {
+			msg := fmt.Sprintf("stale state cleanup stopped after backup %s: delete %s failed: %v", backupPath, objectStatusID(status), err)
+			emitStateCleanupWarning(logger, msg, map[string]string{"backup": backupPath, "error": err.Error(), "resource": objectStatusID(status)})
+			recordStateCleanupEvent(router, store, "StaleStateCleanupPartial", msg)
+			return staleObjectStatusCleanupResult{Removed: removed, BackupPath: backupPath, Skipped: true}, err
+		}
+	}
+	pruneStaleStateCleanupBackups(statePath, 5, logger)
+	msg := fmt.Sprintf("removed %d stale unsupported resource status rows after backup %s", len(removed), backupPath)
+	emitStateCleanupWarning(logger, msg, map[string]string{"backup": backupPath, "count": strconv.Itoa(len(removed)), "resources": staleObjectStatusIDs(removed)})
+	recordStateCleanupEvent(router, store, "StaleStateCleanup", msg)
+	return staleObjectStatusCleanupResult{Removed: removed, BackupPath: backupPath}, nil
+}
+
+func unsupportedLegacyObjectStatuses(statuses []routerstate.ObjectStatus) []routerstate.ObjectStatus {
+	var out []routerstate.ObjectStatus
+	for _, status := range statuses {
+		if api.IsRemovedLegacyKind(status.Kind) {
+			out = append(out, status)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return objectStatusID(out[i]) < objectStatusID(out[j])
+	})
+	return out
+}
+
+func staleStateCleanupBackupPath(statePath string, now time.Time) string {
+	base := filepath.Base(statePath)
+	if base == "." || base == string(filepath.Separator) || base == "" {
+		base = "routerd.db"
+	}
+	return filepath.Join(filepath.Dir(statePath), fmt.Sprintf("%s.stale-cleanup.%s", base, now.UTC().Format("20060102T150405Z")))
+}
+
+func pruneStaleStateCleanupBackups(statePath string, keep int, logger *eventlog.Logger) {
+	if keep <= 0 {
+		return
+	}
+	matches, err := filepath.Glob(filepath.Join(filepath.Dir(statePath), filepath.Base(statePath)+".stale-cleanup.*"))
+	if err != nil || len(matches) <= keep {
+		return
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(matches)))
+	for _, path := range matches[keep:] {
+		if err := os.Remove(path); err != nil {
+			emitStateCleanupWarning(logger, "failed to prune stale state cleanup backup", map[string]string{"backup": path, "error": err.Error()})
+		}
+	}
+}
+
+func emitStateCleanupWarning(logger *eventlog.Logger, message string, attrs map[string]string) {
+	if logger == nil {
+		return
+	}
+	logger.Emit(eventlog.LevelWarning, "serve", message, attrs)
+}
+
+func recordStateCleanupEvent(router *api.Router, recorder routerstate.EventRecorder, reason, message string) {
+	if recorder == nil {
+		return
+	}
+	name := "router"
+	if router != nil && strings.TrimSpace(router.Metadata.Name) != "" {
+		name = strings.TrimSpace(router.Metadata.Name)
+	}
+	_ = recorder.RecordEvent(api.RouterAPIVersion, "Router", name, "Warning", reason, message)
+}
+
+func staleObjectStatusIDs(statuses []routerstate.ObjectStatus) string {
+	ids := make([]string, 0, len(statuses))
+	for _, status := range statuses {
+		ids = append(ids, objectStatusID(status))
+	}
+	sort.Strings(ids)
+	return strings.Join(ids, ",")
+}
+
+func objectStatusID(status routerstate.ObjectStatus) string {
+	return status.APIVersion + "/" + status.Kind + "/" + status.Name
+}
+
 func inventoryStatusMap(status inventory.Status) map[string]any {
 	data, _ := json.Marshal(status)
 	out := map[string]any{}
@@ -3366,6 +3483,9 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 		return err
 	}
 	defer stateStore.Close()
+	if _, cleanupErr := cleanupUnsupportedLegacyObjectStatuses(router, stateStore, defaultStatePath, time.Now().UTC(), logger); cleanupErr != nil {
+		logger.Emit(eventlog.LevelWarning, "serve", "stale state cleanup encountered an error", map[string]string{"error": cleanupErr.Error()})
+	}
 	controllerBus = bus.NewWithStore(stateStore)
 	controllerBus.SetLogger(slog.Default())
 	publishControllerModeEvents(ctx, controllerBus, controllerStatuses)

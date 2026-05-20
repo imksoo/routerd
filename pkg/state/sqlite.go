@@ -695,6 +695,17 @@ func (s *SQLiteStore) DeleteObject(apiVersion, kind, name string) error {
 	return err
 }
 
+func (s *SQLiteStore) Backup(path string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	escaped := strings.ReplaceAll(path, `'`, `''`)
+	_, err := s.db.Exec(`VACUUM INTO '` + escaped + `'`)
+	return err
+}
+
 func (s *SQLiteStore) SaveObjectApplySource(apiVersion, kind, name, path string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

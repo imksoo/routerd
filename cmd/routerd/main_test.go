@@ -579,6 +579,82 @@ func TestDeleteCommandForceRemovesStaleUnsupportedKindState(t *testing.T) {
 	}
 }
 
+func TestCleanupUnsupportedLegacyObjectStatusesRemovesOnlyLegacyRows(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "routerd.db")
+	store, err := routerstate.OpenSQLite(statePath)
+	if err != nil {
+		t.Fatalf("open sqlite state: %v", err)
+	}
+	defer store.Close()
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "PPPoEInterface", "wan", map[string]any{"phase": "Applied"}); err != nil {
+		t.Fatalf("save stale legacy status: %v", err)
+	}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "Interface", "wan", map[string]any{"phase": "Applied"}); err != nil {
+		t.Fatalf("save supported status: %v", err)
+	}
+	router := &api.Router{Metadata: api.ObjectMeta{Name: "test-router"}}
+
+	result, err := cleanupUnsupportedLegacyObjectStatuses(router, store, statePath, time.Date(2026, 5, 21, 7, 45, 0, 0, time.UTC), nil)
+	if err != nil {
+		t.Fatalf("cleanup: %v", err)
+	}
+	if result.Skipped || len(result.Removed) != 1 || result.Removed[0].Kind != "PPPoEInterface" {
+		t.Fatalf("cleanup result = %+v, want one PPPoEInterface removal", result)
+	}
+	if _, err := os.Stat(result.BackupPath); err != nil {
+		t.Fatalf("backup stat: %v", err)
+	}
+	if status := store.ObjectStatus(api.NetAPIVersion, "PPPoEInterface", "wan"); len(status) != 0 {
+		t.Fatalf("legacy status after cleanup = %+v, want none", status)
+	}
+	if status := store.ObjectStatus(api.NetAPIVersion, "Interface", "wan"); status["phase"] != "Applied" {
+		t.Fatalf("supported status after cleanup = %+v, want preserved", status)
+	}
+	events := store.Events(api.RouterAPIVersion, "Router", "test-router", 10)
+	if len(events) == 0 || events[0].Reason != "StaleStateCleanup" {
+		t.Fatalf("events = %+v, want StaleStateCleanup", events)
+	}
+}
+
+func TestUnsupportedLegacyObjectStatusesKeepsSupportedKinds(t *testing.T) {
+	statuses := []routerstate.ObjectStatus{
+		{APIVersion: api.NetAPIVersion, Kind: "PPPoEInterface", Name: "wan"},
+		{APIVersion: api.NetAPIVersion, Kind: "Interface", Name: "wan"},
+		{APIVersion: api.NetAPIVersion, Kind: "BGPRouter", Name: "lan"},
+		{APIVersion: api.RouterAPIVersion, Kind: "Inventory", Name: "host"},
+	}
+	got := unsupportedLegacyObjectStatuses(statuses)
+	if len(got) != 1 || got[0].Kind != "PPPoEInterface" {
+		t.Fatalf("unsupported legacy statuses = %+v, want only PPPoEInterface", got)
+	}
+}
+
+func TestCleanupUnsupportedLegacyObjectStatusesSkipsWhenBackupFails(t *testing.T) {
+	store := &fakeStaleCleanupStore{
+		statuses: []routerstate.ObjectStatus{
+			{APIVersion: api.NetAPIVersion, Kind: "PPPoEInterface", Name: "wan", Status: map[string]any{"phase": "Applied"}},
+			{APIVersion: api.NetAPIVersion, Kind: "Interface", Name: "wan", Status: map[string]any{"phase": "Applied"}},
+		},
+		backupErr: errors.New("disk full"),
+	}
+	router := &api.Router{Metadata: api.ObjectMeta{Name: "test-router"}}
+
+	result, err := cleanupUnsupportedLegacyObjectStatuses(router, store, filepath.Join(t.TempDir(), "routerd.db"), time.Now(), nil)
+	if err != nil {
+		t.Fatalf("cleanup returned error: %v", err)
+	}
+	if !result.Skipped || len(result.Removed) != 1 {
+		t.Fatalf("cleanup result = %+v, want skipped with one candidate", result)
+	}
+	if len(store.deleted) != 0 {
+		t.Fatalf("deleted = %v, want none when backup fails", store.deleted)
+	}
+	if len(store.events) != 1 || store.events[0].Reason != "StaleStateCleanupSkipped" {
+		t.Fatalf("events = %+v, want skipped audit event", store.events)
+	}
+}
+
 func TestDeleteCommandFileTargetsRouterResources(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "router.yaml")
@@ -604,6 +680,51 @@ spec:
 	if len(targets) != 1 || targets[0].Kind != "Interface" || targets[0].Name != "wan" {
 		t.Fatalf("targets = %+v", targets)
 	}
+}
+
+type fakeStaleCleanupStore struct {
+	statuses  []routerstate.ObjectStatus
+	deleted   []string
+	events    []routerstate.Event
+	backupErr error
+}
+
+func (s *fakeStaleCleanupStore) ListObjectStatuses() ([]routerstate.ObjectStatus, error) {
+	return append([]routerstate.ObjectStatus(nil), s.statuses...), nil
+}
+
+func (s *fakeStaleCleanupStore) DeleteObject(apiVersion, kind, name string) error {
+	s.deleted = append(s.deleted, apiVersion+"/"+kind+"/"+name)
+	return nil
+}
+
+func (s *fakeStaleCleanupStore) Backup(string) error {
+	return s.backupErr
+}
+
+func (s *fakeStaleCleanupStore) RecordEvent(apiVersion, kind, name, eventType, reason, message string) error {
+	s.events = append(s.events, routerstate.Event{
+		APIVersion: apiVersion,
+		Kind:       kind,
+		Name:       name,
+		Type:       eventType,
+		Reason:     reason,
+		Message:    message,
+	})
+	return nil
+}
+
+func (s *fakeStaleCleanupStore) Events(apiVersion, kind, name string, limit int) []routerstate.Event {
+	var out []routerstate.Event
+	for _, event := range s.events {
+		if event.APIVersion == apiVersion && event.Kind == kind && event.Name == name {
+			out = append(out, event)
+		}
+	}
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out
 }
 
 func TestWriteFileIfChanged(t *testing.T) {

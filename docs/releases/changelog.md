@@ -18,6 +18,13 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
   path safety, checksum when present, and `libndpiLoaded: true` self-test before
   the install can satisfy `--with-ndpi`.
 
+### Fixed
+
+- Added serve-startup cleanup for stale object status rows whose resource kinds
+  have been removed from the current schema. routerd creates a timestamped
+  SQLite backup before deleting those legacy rows, records an audit event, and
+  skips cleanup if the backup cannot be created.
+
 ## v20260521.0731
 
 ### Fixed

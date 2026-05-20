@@ -18,6 +18,12 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期和时间型版本号。
   之前验证 feature archive 的 target、path safety、存在时的 checksum，以及
   `libndpiLoaded: true` self-test。
 
+### 修正
+
+- 针对当前 schema 已删除的 resource kind，serve 启动时会清理 stale object
+  status row。routerd 会在删除前创建带 timestamp 的 SQLite backup，并记录
+  audit event；如果 backup 无法创建，则跳过 cleanup。
+
 ## v20260521.0731
 
 ### 修正

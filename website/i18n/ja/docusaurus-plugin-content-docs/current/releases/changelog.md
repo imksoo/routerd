@@ -18,6 +18,13 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
   feature archive の target、path safety、存在する場合の checksum、
   `libndpiLoaded: true` self-test を検証します。
 
+### 修正
+
+- 現在の schema から削除済みの resource kind について、serve 起動時に stale な
+  object status row を cleanup するようにしました。routerd は削除前に timestamp
+  付き SQLite backup を作成し、audit event を記録します。backup を作成できない
+  場合は cleanup を skip します。
+
 ## v20260521.0731
 
 ### 修正

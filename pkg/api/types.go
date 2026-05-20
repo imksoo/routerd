@@ -312,7 +312,7 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 		}
 		r.Spec = spec
 	case "DHCPv4Scope":
-		return fmt.Errorf("%s is not supported; put the DHCPv4 address pool directly on DHCPv4Server", r.ID())
+		return RemovedLegacyKindError(raw.Kind, r.ID())
 	case "DHCPv4Reservation":
 		var spec DHCPv4ReservationSpec
 		if err := raw.Spec.Decode(&spec); err != nil {
@@ -367,7 +367,7 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 		}
 		r.Spec = spec
 	case "DHCPv6Scope":
-		return fmt.Errorf("%s is not supported; put the DHCPv6 delegatedAddress and options directly on DHCPv6Server", r.ID())
+		return RemovedLegacyKindError(raw.Kind, r.ID())
 	case "DHCPv4Relay":
 		var spec DHCPv4RelaySpec
 		if err := raw.Spec.Decode(&spec); err != nil {
@@ -461,7 +461,7 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 		}
 		r.Spec = spec
 	case "IPv4DefaultRoutePolicy":
-		return fmt.Errorf("%s is not supported; use EgressRoutePolicy with candidates directly", r.ID())
+		return RemovedLegacyKindError(raw.Kind, r.ID())
 	case "NAT44Rule":
 		var spec NAT44RuleSpec
 		if err := raw.Spec.Decode(&spec); err != nil {
@@ -493,9 +493,9 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 		}
 		r.Spec = spec
 	case "IPv4PolicyRoute":
-		return fmt.Errorf("%s is not supported; use EgressRoutePolicy with one marked candidate", r.ID())
+		return RemovedLegacyKindError(raw.Kind, r.ID())
 	case "IPv4PolicyRouteSet":
-		return fmt.Errorf("%s is not supported; put hashFields and targets under EgressRoutePolicy candidates", r.ID())
+		return RemovedLegacyKindError(raw.Kind, r.ID())
 	case "FirewallZone":
 		var spec FirewallZoneSpec
 		if err := raw.Spec.Decode(&spec); err != nil {
@@ -533,33 +533,33 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 		}
 		r.Spec = spec
 	case "SystemdUnit":
-		return fmt.Errorf("%s is not supported; declare router intent and let routerd generate service units", r.ID())
+		return RemovedLegacyKindError(raw.Kind, r.ID())
 	case "KernelModule":
-		return fmt.Errorf("%s is not supported; routerd derives required kernel modules from declared resources", r.ID())
+		return RemovedLegacyKindError(raw.Kind, r.ID())
 	case "NetworkAdoption":
-		return fmt.Errorf("%s is not supported; routerd derives networkd/resolved adoption from Interface and service resources", r.ID())
+		return RemovedLegacyKindError(raw.Kind, r.ID())
 	case "NixOSHost":
-		return fmt.Errorf("%s is not supported; use router resources and platform renderers instead of host implementation resources", r.ID())
+		return RemovedLegacyKindError(raw.Kind, r.ID())
 	case "Link":
-		return fmt.Errorf("%s is not supported; use Interface resources as link status providers", r.ID())
+		return RemovedLegacyKindError(raw.Kind, r.ID())
 	case "StatePolicy":
-		return fmt.Errorf("%s is not supported; use spec.when any/all predicates on the dependent resources", r.ID())
+		return RemovedLegacyKindError(raw.Kind, r.ID())
 	case "DHCPv4Lease":
-		return fmt.Errorf("%s is not supported; use DHCPv4Client for routerd-managed DHCPv4 client intent", r.ID())
+		return RemovedLegacyKindError(raw.Kind, r.ID())
 	case "PPPoEInterface":
-		return fmt.Errorf("%s is not supported; use PPPoESession for routerd-managed PPPoE session intent", r.ID())
+		return RemovedLegacyKindError(raw.Kind, r.ID())
 	case "IPv4SourceNAT":
-		return fmt.Errorf("%s is not supported; use NAT44Rule for IPv4 source NAT intent", r.ID())
+		return RemovedLegacyKindError(raw.Kind, r.ID())
 	case "VirtualIPv4Address":
-		return fmt.Errorf("%s is not supported; use VirtualAddress with spec.family: ipv4", r.ID())
+		return RemovedLegacyKindError(raw.Kind, r.ID())
 	case "VirtualIPv6Address":
-		return fmt.Errorf("%s is not supported; use VirtualAddress with spec.family: ipv6", r.ID())
+		return RemovedLegacyKindError(raw.Kind, r.ID())
 	case "FirewallLog":
-		return fmt.Errorf("%s is not supported; use FirewallEventLog for firewall event logging intent", r.ID())
+		return RemovedLegacyKindError(raw.Kind, r.ID())
 	case "IPv4ReversePathFilter":
-		return fmt.Errorf("%s is not supported; routerd derives reverse path filter sysctls automatically", r.ID())
+		return RemovedLegacyKindError(raw.Kind, r.ID())
 	case "PathMTUPolicy":
-		return fmt.Errorf("%s is not supported; routerd derives path MTU and TCP MSS handling from tunnel and interface resources", r.ID())
+		return RemovedLegacyKindError(raw.Kind, r.ID())
 	default:
 		return fmt.Errorf("unsupported resource kind %s in %s", raw.Kind, r.ID())
 	}
