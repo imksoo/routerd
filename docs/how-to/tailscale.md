@@ -124,8 +124,12 @@ metadata:
   name: tailscale
 spec:
   ifname: tailscale0
+  mtu: 1280
   managed: false
 ```
+
+`mtu: 1280` lets derived TCP MSS clamp rules account for the Tailscale source
+path without lowering unrelated LAN-to-WAN paths.
 
 For a home router, place `tailscale0` in the `trust` zone rather than the
 `mgmt` zone:

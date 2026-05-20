@@ -30,6 +30,7 @@ type netplanEthernet struct {
 	AcceptRA        bool                  `yaml:"accept-ra"`
 	LinkLocal       []string              `yaml:"link-local"`
 	Addresses       []string              `yaml:"addresses,omitempty"`
+	MTU             int                   `yaml:"mtu,omitempty"`
 }
 
 type netplanDHCPOverrides struct {
@@ -50,6 +51,7 @@ type netplanInterface struct {
 	DHCPv6            bool
 	AcceptRA          bool
 	IPv6LinkLocal     bool
+	MTU               int
 }
 
 func Netplan(router *api.Router) ([]byte, error) {
@@ -75,6 +77,7 @@ func Netplan(router *api.Router) ([]byte, error) {
 			Name:    res.Metadata.Name,
 			IfName:  spec.IfName,
 			AdminUp: spec.AdminUp,
+			MTU:     spec.MTU,
 		}
 		names = append(names, res.Metadata.Name)
 	}
@@ -148,6 +151,7 @@ func Netplan(router *api.Router) ([]byte, error) {
 			AcceptRA:        iface.DHCPv6 || iface.AcceptRA,
 			LinkLocal:       linkLocal,
 			Addresses:       iface.Addresses,
+			MTU:             iface.MTU,
 		}
 	}
 

@@ -1425,6 +1425,11 @@
                       "managed": {
                         "type": "boolean"
                       },
+                      "mtu": {
+                        "maximum": 9216,
+                        "minimum": 576,
+                        "type": "integer"
+                      },
                       "owner": {
                         "enum": [
                           "routerd",

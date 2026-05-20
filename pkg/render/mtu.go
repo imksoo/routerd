@@ -48,22 +48,40 @@ func pathMTUPolicies(router *api.Router) ([]pathMTUPolicy, error) {
 		if len(spec.ToInterfaces) == 0 {
 			continue
 		}
-		mtu := 0
+		sourceMTU := mtus[spec.FromInterface]
+		if sourceMTU == 0 {
+			return nil, fmt.Errorf("%s references fromInterface with unknown MTU %q", specResourceID(spec), spec.FromInterface)
+		}
+		toInterfacesByMTU := map[int][]string{}
 		for _, name := range spec.ToInterfaces {
 			candidate := mtus[name]
 			if candidate == 0 {
 				return nil, fmt.Errorf("%s references interface with unknown MTU %q", specResourceID(spec), name)
 			}
-			if mtu == 0 || candidate < mtu {
-				mtu = candidate
+			mtu := candidate
+			if sourceMTU < mtu {
+				mtu = sourceMTU
 			}
+			if mtu < 1280 {
+				return nil, fmt.Errorf("%s computed MTU %d is below the IPv6 minimum MTU 1280", specResourceID(spec), mtu)
+			}
+			toInterfacesByMTU[mtu] = append(toInterfacesByMTU[mtu], name)
 		}
-		if mtu < 1280 {
-			return nil, fmt.Errorf("%s computed MTU %d is below the IPv6 minimum MTU 1280", specResourceID(spec), mtu)
+		var mtusForSpec []int
+		for mtu := range toInterfacesByMTU {
+			mtusForSpec = append(mtusForSpec, mtu)
 		}
-		policies = append(policies, pathMTUPolicy{ResourceID: specResourceID(spec), Spec: spec, MTU: mtu})
+		sort.Ints(mtusForSpec)
+		for _, mtu := range mtusForSpec {
+			grouped := spec
+			grouped.ToInterfaces = compactStrings(sortedStrings(toInterfacesByMTU[mtu]))
+			policies = append(policies, pathMTUPolicy{ResourceID: specResourceID(spec), Spec: grouped, MTU: mtu})
+		}
 	}
 	sort.Slice(policies, func(i, j int) bool {
+		if policies[i].ResourceID == policies[j].ResourceID {
+			return policies[i].MTU < policies[j].MTU
+		}
 		return policies[i].ResourceID < policies[j].ResourceID
 	})
 	return policies, nil
@@ -74,7 +92,11 @@ func resourceMTUs(router *api.Router) (map[string]int, error) {
 	for _, res := range router.Spec.Resources {
 		switch res.Kind {
 		case "Interface":
-			mtus[res.Metadata.Name] = 1500
+			spec, err := res.InterfaceSpec()
+			if err != nil {
+				return nil, err
+			}
+			mtus[res.Metadata.Name] = defaultInt(spec.MTU, 1500)
 		case "PPPoESession":
 			spec, err := res.PPPoESessionSpec()
 			if err != nil {

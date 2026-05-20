@@ -21,10 +21,9 @@ fi
 set skip on lo0
 lan_if = "ens19"
 wan_if = "{ ds-lite-a, ds-lite-b, ens18 }"
-scrub in on ens19 proto tcp max-mss 1414
 scrub out on ds-lite-a proto tcp max-mss 1414
 scrub out on ds-lite-b proto tcp max-mss 1414
-scrub out on ens18 proto tcp max-mss 1414
+scrub out on ens18 proto tcp max-mss 1460
 nat-anchor "routerd_nat"
 # net.routerd.net/v1alpha1/NAT44Rule/lan-to-selected-wan skipped: egressInterface is resolved by ipv4-default at runtime
 block drop all

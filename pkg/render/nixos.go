@@ -30,6 +30,7 @@ type nixOSInterface struct {
 	DisableIPv6RA     bool
 	Addresses         []string
 	Routes            []nixOSRoute
+	MTU               int
 }
 
 type nixOSRoute struct {
@@ -492,6 +493,7 @@ func nixOSInterfaces(router *api.Router) ([]nixOSInterface, error) {
 			Name:    res.Metadata.Name,
 			IfName:  spec.IfName,
 			AdminUp: spec.AdminUp,
+			MTU:     spec.MTU,
 		}
 		names = append(names, res.Metadata.Name)
 	}
@@ -902,6 +904,9 @@ func writeNixOSNetwork(buf *bytes.Buffer, iface nixOSInterface) {
 			required = "routable"
 		}
 		buf.WriteString("    linkConfig.RequiredForOnline = " + nixString(required) + ";\n")
+	}
+	if iface.MTU != 0 {
+		buf.WriteString("    linkConfig.MTUBytes = " + strconv.Itoa(iface.MTU) + ";\n")
 	}
 	buf.WriteString("  };\n")
 }

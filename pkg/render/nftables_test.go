@@ -564,11 +564,66 @@ func TestNftablesTCPMSSClamp(t *testing.T) {
 		"flush table inet routerd_mss",
 		"table inet routerd_mss",
 		"type filter hook forward priority mangle; policy accept;",
-		`iifname "ens19" oifname { "ds-lite-a", "ppp0" } ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size set 1414`,
-		`iifname "ens19" oifname { "ds-lite-a", "ppp0" } meta nfproto ipv6 tcp flags syn / syn,rst tcp option maxseg size set 1394`,
+		`iifname "ens19" oifname "ds-lite-a" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1414 tcp option maxseg size set 1414`,
+		`iifname "ens19" oifname "ds-lite-a" meta nfproto ipv6 tcp flags syn / syn,rst tcp option maxseg size > 1394 tcp option maxseg size set 1394`,
+		`iifname "ens19" oifname "ppp0" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1452 tcp option maxseg size set 1452`,
+		`iifname "ens19" oifname "ppp0" meta nfproto ipv6 tcp flags syn / syn,rst tcp option maxseg size > 1432 tcp option maxseg size set 1432`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("nftables output missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestNftablesTCPMSSClampOnlyLowersMSS(t *testing.T) {
+	router := &api.Router{
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "lan"},
+				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: false, Owner: "external"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "tailscale"},
+				Spec:     api.InterfaceSpec{IfName: "tailscale0", MTU: 1280, Managed: false, Owner: "external"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "wan"},
+				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"},
+				Metadata: api.ObjectMeta{Name: "ds-lite-a"},
+				Spec:     api.DSLiteTunnelSpec{Interface: "wan", TunnelName: "ds-lite-a", RemoteAddress: "2001:db8::1"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
+				Metadata: api.ObjectMeta{Name: "lan"},
+				Spec:     api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"lan", "tailscale"}},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
+				Metadata: api.ObjectMeta{Name: "wan"},
+				Spec:     api.FirewallZoneSpec{Role: "untrust", Interfaces: []string{"ds-lite-a"}},
+			},
+		}},
+	}
+
+	data, err := NftablesNAT44Rule(router)
+	if err != nil {
+		t.Fatalf("render nftables: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		`iifname "ens19" oifname "ds-lite-a" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1414 tcp option maxseg size set 1414`,
+		`iifname "ens19" oifname "ds-lite-a" meta nfproto ipv6 tcp flags syn / syn,rst tcp option maxseg size > 1394 tcp option maxseg size set 1394`,
+		`iifname "tailscale0" oifname "ds-lite-a" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1240 tcp option maxseg size set 1240`,
+		`iifname "tailscale0" oifname "ds-lite-a" meta nfproto ipv6 tcp flags syn / syn,rst tcp option maxseg size > 1220 tcp option maxseg size set 1220`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("nftables output missing guarded MSS clamp %q:\n%s", want, got)
 		}
 	}
 }

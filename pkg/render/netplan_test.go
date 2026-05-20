@@ -23,7 +23,7 @@ func TestNetplanRendersOnlyRouterdManagedInterfaces(t *testing.T) {
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
 				Metadata: api.ObjectMeta{Name: "lan"},
-				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: true, Owner: "routerd", AdminUp: true},
+				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: true, Owner: "routerd", AdminUp: true, MTU: 1500},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},
@@ -45,6 +45,7 @@ func TestNetplanRendersOnlyRouterdManagedInterfaces(t *testing.T) {
 		"dhcp6: false",
 		"accept-ra: false",
 		"link-local: []",
+		"mtu: 1500",
 		"- 192.168.10.3/24",
 	} {
 		if !strings.Contains(got, want) {

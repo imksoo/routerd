@@ -1345,6 +1345,9 @@ func validateResource(res api.Resource, targetOS platform.OS) error {
 		if spec.IfName == "" {
 			return fmt.Errorf("%s spec.ifname is required", res.ID())
 		}
+		if spec.MTU != 0 && (spec.MTU < 576 || spec.MTU > 9216) {
+			return fmt.Errorf("%s spec.mtu must be within 576-9216", res.ID())
+		}
 	case "Link":
 		if res.APIVersion != api.NetAPIVersion {
 			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)

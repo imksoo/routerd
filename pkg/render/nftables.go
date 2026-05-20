@@ -1803,14 +1803,16 @@ func writeTCPMSSClampTable(buf *bytes.Buffer, aliases map[string]string, policie
 			if mss < 536 {
 				return fmt.Errorf("%s computed IPv4 MSS %d is too small", policy.ResourceID, mss)
 			}
-			buf.WriteString("    " + match + " ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size set " + strconv.Itoa(mss) + "\n")
+			mssValue := strconv.Itoa(mss)
+			buf.WriteString("    " + match + " ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > " + mssValue + " tcp option maxseg size set " + mssValue + "\n")
 		}
 		if pathMTUFamilyEnabled(policy.Spec.TCPMSSClamp.Families, "ipv6") {
 			mss := policy.MTU - 60
 			if mss < 1220 {
 				return fmt.Errorf("%s computed IPv6 MSS %d is too small", policy.ResourceID, mss)
 			}
-			buf.WriteString("    " + match + " meta nfproto ipv6 tcp flags syn / syn,rst tcp option maxseg size set " + strconv.Itoa(mss) + "\n")
+			mssValue := strconv.Itoa(mss)
+			buf.WriteString("    " + match + " meta nfproto ipv6 tcp flags syn / syn,rst tcp option maxseg size > " + mssValue + " tcp option maxseg size set " + mssValue + "\n")
 		}
 	}
 	buf.WriteString("  }\n")

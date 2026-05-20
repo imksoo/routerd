@@ -33,9 +33,8 @@ fi
 set skip on lo0
 lan_if = "vtnet1"
 wan_if = "{ gif0, vtnet0 }"
-scrub in on vtnet1 proto tcp max-mss 1414
 scrub out on gif0 proto tcp max-mss 1414
-scrub out on vtnet0 proto tcp max-mss 1414
+scrub out on vtnet0 proto tcp max-mss 1460
 nat on gif0 from 192.0.2.0/24 to any -> (gif0)
 block drop all
 pass quick on lo0 all

@@ -6,7 +6,11 @@ firewall zones identify the LAN-to-WAN forwarding direction.
 
 When a trusted interface forwards through an untrusted tunnel, routerd renders
 TCP MSS clamping automatically. For IPv4 TCP, MSS is `MTU - 40`. For IPv6 TCP,
-MSS is `MTU - 60`.
+MSS is `MTU - 60`. The effective value is computed per source and destination
+path as the lower of the source interface MTU and destination path MTU. The
+Linux nftables renderer only rewrites SYN packets whose advertised MSS is
+higher than that derived value, so a lower MSS from another small-MTU interface
+is never raised and does not force unrelated LAN paths down.
 
 Router advertisements also receive a derived MTU when the trusted interface has
 a `DHCPv6Server` or `IPv6RouterAdvertisement` and the forwarding path uses a

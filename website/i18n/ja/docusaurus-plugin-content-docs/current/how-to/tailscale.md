@@ -121,8 +121,12 @@ metadata:
   name: tailscale
 spec:
   ifname: tailscale0
+  mtu: 1280
   managed: false
 ```
+
+`mtu: 1280` により、派生 TCP MSS clamp は Tailscale source path を考慮しつつ、
+無関係な LAN-to-WAN path までは低い MTU に下げません。
 
 家庭ルーターでは、`tailscale0` は `mgmt` ではなく `trust` ゾーンに置くのが自然です。
 

@@ -192,6 +192,9 @@ routerd derives reverse path filter sysctls, tunnel MTU, RA MTU, and TCP MSS
 clamping from router role, tunnel, firewall zone, and RA/DHCPv6 resources.
 Configs should declare the tunnel and LAN/WAN intent rather than separate
 `IPv4ReversePathFilter` or `PathMTUPolicy` resources.
+If an externally managed source interface has a lower MTU, such as `tailscale0`,
+set `Interface.spec.mtu`; routerd uses it only for that source path instead of
+lowering unrelated LAN paths.
 
 `ClusterNetworkRoute` is a helper for Kubernetes nodes that need static routes
 for Pod CIDRs and Service CIDRs instead of dynamic routing. routerd expands each

@@ -125,8 +125,10 @@ flush table inet routerd_mss
 table inet routerd_mss {
   chain forward {
     type filter hook forward priority mangle; policy accept;
-    iifname "ens19" oifname { "ds-lite-a", "ds-lite-b", "ens18" } ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size set 1414
-    iifname "ens19" oifname { "ds-lite-a", "ds-lite-b", "ens18" } meta nfproto ipv6 tcp flags syn / syn,rst tcp option maxseg size set 1394
+    iifname "ens19" oifname { "ds-lite-a", "ds-lite-b" } ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1414 tcp option maxseg size set 1414
+    iifname "ens19" oifname { "ds-lite-a", "ds-lite-b" } meta nfproto ipv6 tcp flags syn / syn,rst tcp option maxseg size > 1394 tcp option maxseg size set 1394
+    iifname "ens19" oifname "ens18" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1460 tcp option maxseg size set 1460
+    iifname "ens19" oifname "ens18" meta nfproto ipv6 tcp flags syn / syn,rst tcp option maxseg size > 1440 tcp option maxseg size set 1440
   }
 }
 add table ip routerd_nat

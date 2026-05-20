@@ -169,6 +169,9 @@ routerd は reverse path filter sysctl、tunnel MTU、RA MTU、TCP MSS clamp を
 router role、tunnel、firewall zone、RA/DHCPv6 resource から自動導出します。
 config では LAN/WAN と tunnel の intent を宣言し、`IPv4ReversePathFilter` や
 `PathMTUPolicy` は書きません。
+`tailscale0` のように外部管理の source interface が低い MTU を持つ場合は
+`Interface.spec.mtu` を設定します。routerd はその source path だけに使い、
+無関係な LAN path は低い MTU に引っ張りません。
 
 `EgressRoutePolicy` は `excludeDestinationCIDRs` を持ちます。これにより、LAN 内部、管理網、HGW LAN、RFC 1918 の内部網などを policy routing の対象から外せます。
 

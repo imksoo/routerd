@@ -6,7 +6,11 @@ LAN から WAN へ転送する向きを表します。
 
 trusted interface から untrusted tunnel へ転送する場合、routerd は TCP MSS
 clamp を自動で生成します。IPv4 TCP では MSS を `MTU - 40`、IPv6 TCP では
-`MTU - 60` にします。
+`MTU - 60` にします。有効値は source interface MTU と destination path MTU の
+小さい方を、source/destination path ごとに計算します。Linux nftables renderer は
+SYN packet の advertised MSS がその派生値より大きい場合だけ書き換えるため、
+別の小さい MTU を持つ interface から来た低い MSS を引き上げず、無関係な LAN
+path まで低い MTU に引っ張りません。
 
 trusted interface に `DHCPv6Server` または `IPv6RouterAdvertisement` があり、
 転送経路が小さい tunnel MTU を使う場合、RA にも派生 MTU を反映します。

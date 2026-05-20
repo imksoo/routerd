@@ -28,7 +28,7 @@ func TestPathMTUControllerRendersMSSClamp(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := string(data)
-	for _, want := range []string{`table inet routerd_mss`, `iifname "ens19" oifname "ds-lite-a" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size set 1414`} {
+	for _, want := range []string{`table inet routerd_mss`, `iifname "ens19" oifname "ds-lite-a" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1414 tcp option maxseg size set 1414`} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("mss rules missing %q:\n%s", want, got)
 		}

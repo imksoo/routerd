@@ -457,7 +457,6 @@ func TestPfRendersTCPMSSClamp(t *testing.T) {
 	}
 	got := string(data)
 	for _, want := range []string{
-		`scrub in on em1 proto tcp max-mss 1414`,
 		`scrub out on gif40 proto tcp max-mss 1414`,
 		`pass out quick all keep state`,
 	} {
