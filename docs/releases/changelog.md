@@ -10,6 +10,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260521.0731
+
 ### Fixed
 
 - Preserved an already-installed native `routerd-ndpi-agent` when the standard
