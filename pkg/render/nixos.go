@@ -1493,7 +1493,7 @@ func nixOSResolvedStubDisabled(router *api.Router) bool {
 func nixOSNeedsDnsmasq(router *api.Router) bool {
 	for _, res := range router.Spec.Resources {
 		switch res.Kind {
-		case "DHCPv4Server", "DHCPv4Scope", "DHCPv4Reservation", "DHCPv6Server", "DHCPv6Scope", "IPv6RouterAdvertisement", "DHCPv4Relay":
+		case "DHCPv4Server", "DHCPv4Reservation", "DHCPv6Server", "IPv6RouterAdvertisement", "DHCPv4Relay":
 			return true
 		}
 	}
@@ -1596,7 +1596,7 @@ func nixOSPackages(router *api.Router, host api.NixOSHostSpec) ([]string, []stri
 		case "VXLANSegment":
 			service["nftables"] = true
 			debug["nftables"] = true
-		case "DHCPv4Server", "DHCPv4Scope", "DHCPv6Server", "DHCPv6Scope":
+		case "DHCPv4Server", "DHCPv6Server":
 			service["dnsmasq"] = true
 			debug["dnsmasq"] = true
 		case "IPv4PolicyRoute", "IPv4PolicyRouteSet", "IPv4DefaultRoutePolicy", "DSLiteTunnel", "WireGuardInterface", "FirewallZone", "FirewallPolicy", "FirewallRule", "ClientPolicy":

@@ -9,7 +9,7 @@ TCP MSS clamping automatically. For IPv4 TCP, MSS is `MTU - 40`. For IPv6 TCP,
 MSS is `MTU - 60`.
 
 Router advertisements also receive a derived MTU when the trusted interface has
-a `DHCPv6Scope` or `IPv6RouterAdvertisement` and the forwarding path uses a
+a `DHCPv6Server` or `IPv6RouterAdvertisement` and the forwarding path uses a
 smaller tunnel MTU. The config should declare the LAN, WAN, tunnel, firewall
 zones, and RA/DHCPv6 intent; it should not contain a separate MTU policy
 resource.

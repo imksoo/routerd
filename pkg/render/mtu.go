@@ -219,8 +219,8 @@ func pathMTURAScopesByInterface(router *api.Router) map[string]string {
 	}
 	for _, res := range router.Spec.Resources {
 		switch res.Kind {
-		case "DHCPv6Scope":
-			spec, err := res.DHCPv6ScopeSpec()
+		case "DHCPv6Server":
+			spec, err := res.DHCPv6ServerSpec()
 			if err != nil {
 				continue
 			}

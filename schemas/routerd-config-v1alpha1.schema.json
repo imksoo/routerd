@@ -3001,6 +3001,9 @@
                         },
                         "type": "object"
                       },
+                      "authoritative": {
+                        "type": "boolean"
+                      },
                       "dns": {
                         "additionalProperties": false,
                         "properties": {
@@ -3032,6 +3035,9 @@
                         },
                         "type": "object"
                       },
+                      "dnsInterface": {
+                        "type": "string"
+                      },
                       "dnsServerFrom": {
                         "items": {
                           "additionalProperties": false,
@@ -3058,6 +3064,15 @@
                           "type": "string"
                         },
                         "type": "array"
+                      },
+                      "dnsSource": {
+                        "enum": [
+                          "dhcpv4",
+                          "static",
+                          "self",
+                          "none"
+                        ],
+                        "type": "string"
                       },
                       "domain": {
                         "type": "string"
@@ -3102,6 +3117,9 @@
                         "type": "object"
                       },
                       "interface": {
+                        "type": "string"
+                      },
+                      "leaseTime": {
                         "type": "string"
                       },
                       "listenInterfaces": {
@@ -3163,99 +3181,17 @@
                         },
                         "type": "array"
                       },
+                      "rangeEnd": {
+                        "type": "string"
+                      },
+                      "rangeStart": {
+                        "type": "string"
+                      },
                       "role": {
                         "enum": [
                           "server",
                           "transit"
                         ],
-                        "type": "string"
-                      },
-                      "server": {
-                        "enum": [
-                          "dnsmasq",
-                          "kea",
-                          "dhcpd"
-                        ],
-                        "type": "string"
-                      },
-                      "stickyHoldDays": {
-                        "minimum": 0,
-                        "type": "integer"
-                      }
-                    },
-                    "type": "object"
-                  },
-                  "status": {
-                    "additionalProperties": true,
-                    "type": "object"
-                  }
-                },
-                "required": [
-                  "apiVersion",
-                  "kind",
-                  "metadata",
-                  "spec"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "apiVersion": {
-                    "const": "net.routerd.net/v1alpha1",
-                    "type": "string"
-                  },
-                  "kind": {
-                    "const": "DHCPv4Scope",
-                    "type": "string"
-                  },
-                  "metadata": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "name": {
-                        "minLength": 1,
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "name"
-                    ],
-                    "type": "object"
-                  },
-                  "spec": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "authoritative": {
-                        "type": "boolean"
-                      },
-                      "dnsInterface": {
-                        "type": "string"
-                      },
-                      "dnsServers": {
-                        "items": {
-                          "type": "string"
-                        },
-                        "type": "array"
-                      },
-                      "dnsSource": {
-                        "enum": [
-                          "dhcpv4",
-                          "static",
-                          "self",
-                          "none"
-                        ],
-                        "type": "string"
-                      },
-                      "interface": {
-                        "type": "string"
-                      },
-                      "leaseTime": {
-                        "type": "string"
-                      },
-                      "rangeEnd": {
-                        "type": "string"
-                      },
-                      "rangeStart": {
                         "type": "string"
                       },
                       "router": {
@@ -3270,7 +3206,16 @@
                         "type": "string"
                       },
                       "server": {
+                        "enum": [
+                          "dnsmasq",
+                          "kea",
+                          "dhcpd"
+                        ],
                         "type": "string"
+                      },
+                      "stickyHoldDays": {
+                        "minimum": 0,
+                        "type": "integer"
                       },
                       "when": {
                         "additionalProperties": false,
@@ -3314,12 +3259,6 @@
                         "type": "object"
                       }
                     },
-                    "required": [
-                      "server",
-                      "interface",
-                      "rangeStart",
-                      "rangeEnd"
-                    ],
                     "type": "object"
                   },
                   "status": {
@@ -4064,6 +4003,12 @@
                       "configPath": {
                         "type": "string"
                       },
+                      "defaultRoute": {
+                        "type": "boolean"
+                      },
+                      "delegatedAddress": {
+                        "type": "string"
+                      },
                       "dependsOn": {
                         "items": {
                           "additionalProperties": false,
@@ -4121,6 +4066,14 @@
                         },
                         "type": "array"
                       },
+                      "dnsSource": {
+                        "enum": [
+                          "self",
+                          "static",
+                          "none"
+                        ],
+                        "type": "string"
+                      },
                       "domainSearch": {
                         "items": {
                           "type": "string"
@@ -4170,7 +4123,8 @@
                         "enum": [
                           "stateless",
                           "stateful",
-                          "both"
+                          "both",
+                          "ra-only"
                         ],
                         "type": "string"
                       },
@@ -4185,6 +4139,9 @@
                           "server",
                           "transit"
                         ],
+                        "type": "string"
+                      },
+                      "selfAddressPolicy": {
                         "type": "string"
                       },
                       "server": {
@@ -4223,85 +4180,6 @@
                       "stickyHoldDays": {
                         "minimum": 0,
                         "type": "integer"
-                      }
-                    },
-                    "type": "object"
-                  },
-                  "status": {
-                    "additionalProperties": true,
-                    "type": "object"
-                  }
-                },
-                "required": [
-                  "apiVersion",
-                  "kind",
-                  "metadata",
-                  "spec"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "apiVersion": {
-                    "const": "net.routerd.net/v1alpha1",
-                    "type": "string"
-                  },
-                  "kind": {
-                    "const": "DHCPv6Scope",
-                    "type": "string"
-                  },
-                  "metadata": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "name": {
-                        "minLength": 1,
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "name"
-                    ],
-                    "type": "object"
-                  },
-                  "spec": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "defaultRoute": {
-                        "type": "boolean"
-                      },
-                      "delegatedAddress": {
-                        "type": "string"
-                      },
-                      "dnsServers": {
-                        "items": {
-                          "type": "string"
-                        },
-                        "type": "array"
-                      },
-                      "dnsSource": {
-                        "enum": [
-                          "self",
-                          "static",
-                          "none"
-                        ],
-                        "type": "string"
-                      },
-                      "leaseTime": {
-                        "type": "string"
-                      },
-                      "mode": {
-                        "enum": [
-                          "stateless",
-                          "ra-only"
-                        ],
-                        "type": "string"
-                      },
-                      "selfAddressPolicy": {
-                        "type": "string"
-                      },
-                      "server": {
-                        "type": "string"
                       },
                       "when": {
                         "additionalProperties": false,
@@ -4345,10 +4223,6 @@
                         "type": "object"
                       }
                     },
-                    "required": [
-                      "server",
-                      "delegatedAddress"
-                    ],
                     "type": "object"
                   },
                   "status": {

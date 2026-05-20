@@ -122,13 +122,11 @@ owned by `routerd-dhcpv6-client`.
 
 | Kind | Role |
 | --- | --- |
-| `DHCPv4Server` | Provides a dnsmasq DHCPv4 pool. |
-| `DHCPv4Scope` | Represents a DHCPv4 address range. |
+| `DHCPv4Server` | Provides a dnsmasq DHCPv4 service and optional address pool. |
 | `DHCPv4Reservation` | Reserves an IPv4 address for a MAC address. |
 | `DHCPv4Relay` | Represents dnsmasq DHCPv4 relay. |
 | `IPv6RouterAdvertisement` | Generates RA, PIO, RDNSS, DNSSL, M/O flags, MTU, preference, and lifetimes. |
-| `DHCPv6Server` | Provides dnsmasq DHCPv6 service in `stateless`, `stateful`, or `both` mode. |
-| `DHCPv6Scope` | Represents a DHCPv6 address range. |
+| `DHCPv6Server` | Provides dnsmasq DHCPv6/RA service in `stateless`, `stateful`, `both`, or `ra-only` mode. |
 | `DNSZone` | Owns a local authoritative zone with manual and DHCP-derived records. |
 | `DNSResolver` | Owns `routerd-dns-resolver` listen profiles, sources, upstreams, and cache. |
 
@@ -485,11 +483,11 @@ Phase 1.6 renamed DHCP resources.
 | --- | --- |
 | `IPv4DHCPServer` | `DHCPv4Server` |
 | `IPv4DHCPReservation` | `DHCPv4Reservation` |
-| `IPv4DHCPScope` | `DHCPv4Scope` |
+| `IPv4DHCPScope` | `DHCPv4Server` |
 | `IPv6DHCPAddress` | `DHCPv6Address` |
 | `IPv6PrefixDelegation` | `DHCPv6PrefixDelegation` |
 | `IPv6DHCPServer` / `IPv6DHCPv6Server` | `DHCPv6Server` |
-| `IPv6DHCPScope` | `DHCPv6Scope` |
+| `IPv6DHCPScope` | `DHCPv6Server` |
 | `DHCPRelay` | `DHCPv4Relay` |
 
 The daemon binaries are `routerd-dhcpv4-client` and `routerd-dhcpv6-client`.

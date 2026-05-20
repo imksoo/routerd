@@ -261,11 +261,7 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 		}
 		r.Spec = spec
 	case "DHCPv4Scope":
-		var spec DHCPv4ScopeSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
+		return fmt.Errorf("%s is not supported; put the DHCPv4 address pool directly on DHCPv4Server", r.ID())
 	case "DHCPv4Reservation":
 		var spec DHCPv4ReservationSpec
 		if err := raw.Spec.Decode(&spec); err != nil {
@@ -315,11 +311,7 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 		}
 		r.Spec = spec
 	case "DHCPv6Scope":
-		var spec DHCPv6ScopeSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
+		return fmt.Errorf("%s is not supported; put the DHCPv6 delegatedAddress and options directly on DHCPv6Server", r.ID())
 	case "DHCPv4Relay":
 		var spec DHCPv4RelaySpec
 		if err := raw.Spec.Decode(&spec); err != nil {

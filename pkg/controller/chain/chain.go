@@ -148,7 +148,7 @@ func resourceOwnerController(kind string) string {
 		return "bgp"
 	case "DHCPv4Client":
 		return "dhcpv4client"
-	case "DHCPv4Server", "DHCPv6Server", "DHCPv6Scope", "DHCPv6Information", "IPv6RouterAdvertisement":
+	case "DHCPv4Server", "DHCPv6Server", "DHCPv6Information", "IPv6RouterAdvertisement":
 		return "dhcpv6"
 	case "DNSResolver", "DNSZone":
 		return "dns-resolver"
@@ -754,7 +754,7 @@ func (r *Runner) Start(ctx context.Context) error {
 		framework.FuncController{ControllerName: "dslite", Every: 30 * time.Second, Subs: statusSubscriptions("DHCPv6Information", "IPv6DelegatedAddress", "DNSResolver"), PeriodicFunc: dslite.reconcile},
 		framework.FuncController{ControllerName: "ipv4-policy-route", Subs: statusSubscriptions("DSLiteTunnel", "HealthCheck", "IPv4StaticAddress", "Interface"), PeriodicFunc: policyRoute.Reconcile},
 		framework.FuncController{ControllerName: "ipv4-route", Every: 30 * time.Second, Subs: statusSubscriptions("DSLiteTunnel", "EgressRoutePolicy"), PeriodicFunc: route.reconcile},
-		framework.FuncController{ControllerName: "path-mtu", Subs: statusSubscriptions("DSLiteTunnel", "PPPoESession", "WireGuardInterface", "Interface", "FirewallZone", "DHCPv6Scope", "IPv6RouterAdvertisement"), PeriodicFunc: pathMTU.Reconcile},
+		framework.FuncController{ControllerName: "path-mtu", Subs: statusSubscriptions("DSLiteTunnel", "PPPoESession", "WireGuardInterface", "Interface", "FirewallZone", "DHCPv6Server", "IPv6RouterAdvertisement"), PeriodicFunc: pathMTU.Reconcile},
 		framework.FuncController{ControllerName: "dhcpv6-server", Every: 30 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed", "routerd.dhcp.lease.**"}}}, PeriodicFunc: dhcpv6.reconcile},
 		framework.FuncController{ControllerName: "dhcpv4-lease", Every: 10 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.dhcpv4.client.**"}}}, ReconcileFunc: func(ctx context.Context, _ daemonapi.DaemonEvent) error {
 			return dhcp4Client.ReconcileAll(ctx)

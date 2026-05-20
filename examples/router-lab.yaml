@@ -289,19 +289,12 @@ spec:
     - apiVersion: net.routerd.net/v1alpha1
       kind: DHCPv6Server
       metadata:
-        name: dhcpv6
+        name: lan-dhcpv6
       spec:
         server: dnsmasq
         managed: true
         listenInterfaces:
           - lan
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: DHCPv6Scope
-      metadata:
-        name: lan-dhcpv6
-      spec:
-        server: dhcpv6
         delegatedAddress: lan-ipv6-pd-address
         mode: stateless
         leaseTime: 12h
@@ -329,7 +322,7 @@ spec:
     - apiVersion: net.routerd.net/v1alpha1
       kind: DHCPv4Server
       metadata:
-        name: dhcpv4
+        name: lan-dhcpv4
       spec:
         server: dnsmasq
         managed: true
@@ -340,13 +333,6 @@ spec:
           upstreamSource: dhcpv4
           upstreamInterface: wan
           cacheSize: 1000
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: DHCPv4Scope
-      metadata:
-        name: lan-dhcpv4
-      spec:
-        server: dhcpv4
         interface: lan
         rangeStart: 192.168.10.100
         rangeEnd: 192.168.10.199
@@ -360,7 +346,7 @@ spec:
       metadata:
         name: printer
       spec:
-        scope: lan-dhcpv4
+        server: lan-dhcpv4
         macAddress: "02:00:00:00:01:50"
         ipAddress: 192.168.10.150
         hostname: printer

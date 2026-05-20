@@ -434,7 +434,7 @@ func TestControllerResourceKindsUseCanonicalNames(t *testing.T) {
 			t.Fatalf("controllerResourceKinds returned legacy kind %q in %v", kind, kinds)
 		}
 	}
-	if !reflect.DeepEqual(kinds, []string{"DHCPv6Server", "DHCPv6Scope", "IPv6RouterAdvertisement"}) {
+	if !reflect.DeepEqual(kinds, []string{"DHCPv6Server", "IPv6RouterAdvertisement"}) {
 		t.Fatalf("dhcpv6 resource kinds = %v", kinds)
 	}
 }
@@ -2696,9 +2696,9 @@ func TestResourceWhenCoversResourceLevelWhenSpecs(t *testing.T) {
 		testResourceWithSpecWhen("BGPRouter", api.BGPRouterSpec{When: want}),
 		testResourceWithSpecWhen("BGPPeer", api.BGPPeerSpec{When: want}),
 		testResourceWithSpecWhen("ClusterNetworkRoute", api.ClusterNetworkRouteSpec{When: want}),
-		testResourceWithSpecWhen("DHCPv4Scope", api.DHCPv4ScopeSpec{When: want}),
+		testResourceWithSpecWhen("DHCPv4Server", api.DHCPv4ServerSpec{When: want}),
 		testResourceWithSpecWhen("IPv6DelegatedAddress", api.IPv6DelegatedAddressSpec{When: want}),
-		testResourceWithSpecWhen("DHCPv6Scope", api.DHCPv6ScopeSpec{When: want}),
+		testResourceWithSpecWhen("DHCPv6Server", api.DHCPv6ServerSpec{When: want}),
 		testResourceWithSpecWhen("DSLiteTunnel", api.DSLiteTunnelSpec{When: want}),
 		testResourceWithSpecWhen("HealthCheck", api.HealthCheckSpec{When: want}),
 		testResourceWithSpecWhen("NAT44Rule", api.NAT44RuleSpec{When: want}),

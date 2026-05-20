@@ -106,8 +106,6 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 			e.observeDHCPv4Server(res, includePlan, &rr)
 		case "DHCPv4Reservation":
 			e.observeDHCPv4Reservation(res, includePlan, &rr)
-		case "DHCPv4Scope":
-			e.observeDHCPv4Scope(res, aliases, policies, includePlan, &rr)
 		case "DHCPv6Address":
 			e.observeDHCP(res, aliases, policies, "ipv6", includePlan, &rr)
 		case "IPv6RAAddress":
@@ -118,8 +116,6 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 			e.observeIPv6DelegatedAddress(res, aliases, includePlan, &rr)
 		case "DHCPv6Server":
 			e.observeDHCPv6Server(res, includePlan, &rr)
-		case "DHCPv6Scope":
-			e.observeDHCPv6Scope(res, includePlan, &rr)
 		case "SelfAddressPolicy":
 			e.observeSelfAddressPolicy(res, includePlan, &rr)
 		case "DNSZone":
@@ -394,6 +390,17 @@ func (e *Engine) observeDHCPv6Server(res api.Resource, includePlan bool, rr *Res
 	rr.Observed["listenInterfaces"] = strings.Join(spec.ListenInterfaces, ",")
 	rr.Observed["interface"] = spec.Interface
 	rr.Observed["mode"] = mode
+	if spec.DelegatedAddress != "" {
+		rr.Observed["delegatedAddress"] = spec.DelegatedAddress
+		rr.Observed["defaultRoute"] = fmt.Sprintf("%t", spec.DefaultRoute)
+		rr.Observed["dnsSource"] = defaultString(spec.DNSSource, "self")
+	}
+	if spec.SelfAddressPolicy != "" {
+		rr.Observed["selfAddressPolicy"] = spec.SelfAddressPolicy
+	}
+	if spec.LeaseTime != "" {
+		rr.Observed["leaseTime"] = spec.LeaseTime
+	}
 	if len(spec.DNSServers) > 0 {
 		rr.Observed["dnsServers"] = strings.Join(spec.DNSServers, ",")
 	}
@@ -429,45 +436,19 @@ func (e *Engine) observeDHCPv6Server(res api.Resource, includePlan bool, rr *Res
 	if spec.Interface != "" {
 		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure dnsmasq DHCPv6 %s service on %s", mode, spec.Interface))
 	}
-}
-
-func (e *Engine) observeDHCPv6Scope(res api.Resource, includePlan bool, rr *ResourceResult) {
-	spec, err := res.DHCPv6ScopeSpec()
-	if err != nil {
-		rr.Phase = "Blocked"
-		rr.Warnings = append(rr.Warnings, err.Error())
-		return
-	}
-	mode := defaultString(spec.Mode, "stateless")
-	dnsSource := defaultString(spec.DNSSource, "self")
-	rr.Observed["server"] = spec.Server
-	rr.Observed["delegatedAddress"] = spec.DelegatedAddress
-	rr.Observed["mode"] = mode
-	rr.Observed["defaultRoute"] = fmt.Sprintf("%t", spec.DefaultRoute)
-	rr.Observed["dnsSource"] = dnsSource
-	if spec.SelfAddressPolicy != "" {
-		rr.Observed["selfAddressPolicy"] = spec.SelfAddressPolicy
-	}
-	if spec.LeaseTime != "" {
-		rr.Observed["leaseTime"] = spec.LeaseTime
-	}
-	if len(spec.DNSServers) > 0 {
-		rr.Observed["dnsServers"] = strings.Join(spec.DNSServers, ",")
-	}
-	if !includePlan {
-		return
-	}
-	rr.Plan = append(rr.Plan, fmt.Sprintf("ensure IPv6 DHCP scope %s uses delegated address %s", spec.Server, spec.DelegatedAddress))
-	if spec.DefaultRoute {
-		rr.Plan = append(rr.Plan, "advertise IPv6 default route by router advertisement")
-	}
-	switch dnsSource {
-	case "self":
-		rr.Plan = append(rr.Plan, "advertise this router's delegated IPv6 address as DNS server")
-	case "static":
-		rr.Plan = append(rr.Plan, fmt.Sprintf("advertise IPv6 DNS servers %s", strings.Join(spec.DNSServers, ",")))
-	case "none":
-		rr.Plan = append(rr.Plan, "do not advertise IPv6 DNS servers")
+	if spec.DelegatedAddress != "" {
+		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure IPv6 DHCP/RA service uses delegated address %s", spec.DelegatedAddress))
+		if spec.DefaultRoute {
+			rr.Plan = append(rr.Plan, "advertise IPv6 default route by router advertisement")
+		}
+		switch defaultString(spec.DNSSource, "self") {
+		case "self":
+			rr.Plan = append(rr.Plan, "advertise this router's delegated IPv6 address as DNS server")
+		case "static":
+			rr.Plan = append(rr.Plan, fmt.Sprintf("advertise IPv6 DNS servers %s", strings.Join(spec.DNSServers, ",")))
+		case "none":
+			rr.Plan = append(rr.Plan, "do not advertise IPv6 DNS servers")
+		}
 	}
 }
 
@@ -1027,8 +1008,26 @@ func (e *Engine) observeDHCPv4Server(res api.Resource, includePlan bool, rr *Res
 	rr.Observed["listenInterfaces"] = strings.Join(spec.ListenInterfaces, ",")
 	if spec.Interface != "" {
 		rr.Observed["interface"] = spec.Interface
-		rr.Observed["rangeStart"] = spec.AddressPool.Start
-		rr.Observed["rangeEnd"] = spec.AddressPool.End
+		rr.Observed["rangeStart"] = defaultString(spec.AddressPool.Start, spec.RangeStart)
+		rr.Observed["rangeEnd"] = defaultString(spec.AddressPool.End, spec.RangeEnd)
+	}
+	if spec.LeaseTime != "" || spec.AddressPool.LeaseTime != "" {
+		rr.Observed["leaseTime"] = defaultString(spec.AddressPool.LeaseTime, spec.LeaseTime)
+	}
+	if spec.RouterSource != "" {
+		rr.Observed["routerSource"] = spec.RouterSource
+	}
+	if spec.Router != "" {
+		rr.Observed["router"] = spec.Router
+	}
+	if spec.DNSSource != "" {
+		rr.Observed["dnsSource"] = spec.DNSSource
+	}
+	if spec.DNSInterface != "" {
+		rr.Observed["dnsInterface"] = spec.DNSInterface
+	}
+	if len(spec.DNSServers) > 0 {
+		rr.Observed["dnsServers"] = strings.Join(spec.DNSServers, ",")
 	}
 	rr.Observed["dnsEnabled"] = fmt.Sprintf("%t", spec.DNS.Enabled)
 	if spec.DNS.UpstreamSource != "" {
@@ -1062,7 +1061,27 @@ func (e *Engine) observeDHCPv4Server(res api.Resource, includePlan bool, rr *Res
 		rr.Plan = append(rr.Plan, fmt.Sprintf("serve dnsmasq only on %s", strings.Join(spec.ListenInterfaces, ",")))
 	}
 	if spec.Interface != "" {
-		rr.Plan = append(rr.Plan, fmt.Sprintf("serve IPv4 DHCP pool %s-%s on %s", spec.AddressPool.Start, spec.AddressPool.End, spec.Interface))
+		rr.Plan = append(rr.Plan, fmt.Sprintf("serve IPv4 DHCP pool %s-%s on %s", defaultString(spec.AddressPool.Start, spec.RangeStart), defaultString(spec.AddressPool.End, spec.RangeEnd), spec.Interface))
+	}
+	if spec.RangeStart != "" || spec.RangeEnd != "" || spec.RouterSource != "" || spec.Router != "" || spec.DNSSource != "" || spec.DNSInterface != "" {
+		switch defaultString(spec.RouterSource, "interfaceAddress") {
+		case "interfaceAddress":
+			rr.Plan = append(rr.Plan, fmt.Sprintf("advertise router option from IPv4 address on %s", spec.Interface))
+		case "static":
+			rr.Plan = append(rr.Plan, fmt.Sprintf("advertise router option %s", spec.Router))
+		case "none":
+			rr.Plan = append(rr.Plan, "do not advertise router option")
+		}
+		switch defaultString(spec.DNSSource, "self") {
+		case "dhcpv4":
+			rr.Plan = append(rr.Plan, fmt.Sprintf("advertise DNS servers learned from DHCPv4 on %s", spec.DNSInterface))
+		case "static":
+			rr.Plan = append(rr.Plan, fmt.Sprintf("advertise DNS servers %s", strings.Join(spec.DNSServers, ",")))
+		case "self":
+			rr.Plan = append(rr.Plan, fmt.Sprintf("advertise this router as DNS server on %s", spec.Interface))
+		case "none":
+			rr.Plan = append(rr.Plan, "do not advertise DNS servers")
+		}
 	}
 	if spec.DNS.Enabled {
 		upstreamSource := defaultString(spec.DNS.UpstreamSource, "system")
@@ -1094,71 +1113,6 @@ func (e *Engine) observeDHCPv4Reservation(res api.Resource, includePlan bool, rr
 	}
 	if includePlan {
 		rr.Plan = append(rr.Plan, fmt.Sprintf("reserve %s for %s", spec.IPAddress, spec.MACAddress))
-	}
-}
-
-func (e *Engine) observeDHCPv4Scope(res api.Resource, aliases map[string]string, policies map[string]interfacePolicy, includePlan bool, rr *ResourceResult) {
-	spec, err := res.DHCPv4ScopeSpec()
-	if err != nil {
-		rr.Phase = "Blocked"
-		rr.Warnings = append(rr.Warnings, err.Error())
-		return
-	}
-	ifname := aliases[spec.Interface]
-	policy := policies[spec.Interface]
-	routerSource := defaultString(spec.RouterSource, "interfaceAddress")
-	dnsSource := defaultString(spec.DNSSource, "self")
-
-	rr.Observed["server"] = spec.Server
-	rr.Observed["interface"] = spec.Interface
-	rr.Observed["ifname"] = ifname
-	rr.Observed["rangeStart"] = spec.RangeStart
-	rr.Observed["rangeEnd"] = spec.RangeEnd
-	rr.Observed["routerSource"] = routerSource
-	rr.Observed["dnsSource"] = dnsSource
-	if spec.LeaseTime != "" {
-		rr.Observed["leaseTime"] = spec.LeaseTime
-	}
-	if spec.Router != "" {
-		rr.Observed["router"] = spec.Router
-	}
-	if spec.DNSInterface != "" {
-		rr.Observed["dnsInterface"] = spec.DNSInterface
-	}
-	if len(spec.DNSServers) > 0 {
-		rr.Observed["dnsServers"] = strings.Join(spec.DNSServers, ",")
-	}
-
-	if !includePlan {
-		return
-	}
-	if !policy.Managed || policy.Owner == "external" {
-		rr.Plan = append(rr.Plan, "observe only; referenced interface is externally managed")
-		return
-	}
-	if policy.RequiresAdoption {
-		rr.Phase = "RequiresAdoption"
-		rr.Plan = append(rr.Plan, "blocked: referenced interface requires adoption before routerd manages DHCP scope")
-		return
-	}
-	rr.Plan = append(rr.Plan, fmt.Sprintf("ensure IPv4 DHCP scope %s serves %s-%s on %s", spec.Server, spec.RangeStart, spec.RangeEnd, ifname))
-	switch routerSource {
-	case "interfaceAddress":
-		rr.Plan = append(rr.Plan, fmt.Sprintf("advertise router option from IPv4 address on %s", ifname))
-	case "static":
-		rr.Plan = append(rr.Plan, fmt.Sprintf("advertise router option %s", spec.Router))
-	case "none":
-		rr.Plan = append(rr.Plan, "do not advertise router option")
-	}
-	switch dnsSource {
-	case "dhcpv4":
-		rr.Plan = append(rr.Plan, fmt.Sprintf("advertise DNS servers learned from DHCPv4 on %s", aliases[spec.DNSInterface]))
-	case "static":
-		rr.Plan = append(rr.Plan, fmt.Sprintf("advertise DNS servers %s", strings.Join(spec.DNSServers, ",")))
-	case "self":
-		rr.Plan = append(rr.Plan, fmt.Sprintf("advertise this router as DNS server on %s", ifname))
-	case "none":
-		rr.Plan = append(rr.Plan, "do not advertise DNS servers")
 	}
 }
 
@@ -2030,19 +1984,14 @@ func stringSpec(res api.Resource, key string) string {
 		switch key {
 		case "server":
 			return spec.Server
-		}
-	case api.DHCPv4ScopeSpec:
-		switch key {
 		case "interface":
 			return spec.Interface
-		case "server":
-			return spec.Server
 		case "rangeStart":
-			return spec.RangeStart
+			return defaultString(spec.AddressPool.Start, spec.RangeStart)
 		case "rangeEnd":
-			return spec.RangeEnd
+			return defaultString(spec.AddressPool.End, spec.RangeEnd)
 		case "leaseTime":
-			return spec.LeaseTime
+			return defaultString(spec.AddressPool.LeaseTime, spec.LeaseTime)
 		case "router":
 			return spec.Router
 		}

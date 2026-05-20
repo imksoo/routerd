@@ -43,14 +43,9 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 	baseInterfaces := map[string]bool{}
 	interfaces := map[string]bool{}
 	wireGuardInterfaces := map[string]bool{}
-	dhcp4Servers := map[string]bool{}
 	dhcp4ServerSpecs := map[string]api.DHCPv4ServerSpec{}
 	directDHCPv4Servers := map[string]bool{}
-	dhcp4Scopes := map[string]api.DHCPv4ScopeSpec{}
 	dhcp4Reservations := map[string]bool{}
-	dhcp6Servers := map[string]bool{}
-	dhcp6ServerSpecs := map[string]api.DHCPv6ServerSpec{}
-	dhcp6Scopes := map[string]bool{}
 	ipv6RAs := map[string]bool{}
 	prefixDelegations := map[string]bool{}
 	delegatedAddresses := map[string]bool{}
@@ -147,7 +142,6 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 			}
 		}
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "DHCPv4Server" {
-			dhcp4Servers[res.Metadata.Name] = true
 			spec, err := res.DHCPv4ServerSpec()
 			if err != nil {
 				return err
@@ -157,26 +151,8 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 				directDHCPv4Servers[res.Metadata.Name] = true
 			}
 		}
-		if res.APIVersion == api.NetAPIVersion && res.Kind == "DHCPv6Server" {
-			dhcp6Servers[res.Metadata.Name] = true
-			spec, err := res.DHCPv6ServerSpec()
-			if err != nil {
-				return err
-			}
-			dhcp6ServerSpecs[res.Metadata.Name] = spec
-		}
-		if res.APIVersion == api.NetAPIVersion && res.Kind == "DHCPv6Scope" {
-			dhcp6Scopes[res.Metadata.Name] = true
-		}
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "IPv6RouterAdvertisement" {
 			ipv6RAs[res.Metadata.Name] = true
-		}
-		if res.APIVersion == api.NetAPIVersion && res.Kind == "DHCPv4Scope" {
-			spec, err := res.DHCPv4ScopeSpec()
-			if err != nil {
-				return err
-			}
-			dhcp4Scopes[res.Metadata.Name] = spec
 		}
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "DHCPv4Reservation" {
 			dhcp4Reservations[res.Metadata.Name] = true
@@ -315,7 +291,7 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 
 	for _, res := range router.Spec.Resources {
 		switch res.Kind {
-		case "IPv4StaticAddress", "VirtualAddress", "DHCPv4Client", "IPv4StaticRoute", "IPv6StaticRoute", "DHCPv4Scope", "DHCPv6Address", "IPv6RAAddress", "DHCPv6PrefixDelegation", "IPv6DelegatedAddress", "DSLiteTunnel", "PPPoESession":
+		case "IPv4StaticAddress", "VirtualAddress", "DHCPv4Client", "IPv4StaticRoute", "IPv6StaticRoute", "DHCPv6Address", "IPv6RAAddress", "DHCPv6PrefixDelegation", "IPv6DelegatedAddress", "DSLiteTunnel", "PPPoESession":
 			name, err := interfaceRef(res)
 			if err != nil {
 				return err
@@ -416,39 +392,17 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 				return fmt.Errorf("%s spec.bridge references missing Bridge %q", res.ID(), spec.Bridge)
 			}
 		}
-		if res.Kind == "DHCPv4Scope" {
-			spec, err := res.DHCPv4ScopeSpec()
-			if err != nil {
-				return err
-			}
-			if !dhcp4Servers[spec.Server] {
-				return fmt.Errorf("%s references missing DHCPv4Server %q", res.ID(), spec.Server)
-			}
-			if !stringInSlice(spec.Interface, dhcp4ServerSpecs[spec.Server].ListenInterfaces) {
-				return fmt.Errorf("%s spec.interface %q must be listed in DHCPv4Server %q spec.listenInterfaces", res.ID(), spec.Interface, spec.Server)
-			}
-			if spec.DNSInterface != "" && !interfaces[spec.DNSInterface] {
-				return fmt.Errorf("%s references missing DNS Interface %q", res.ID(), spec.DNSInterface)
-			}
-		}
 		if res.Kind == "DHCPv4Reservation" {
 			spec, err := res.DHCPv4ReservationSpec()
 			if err != nil {
 				return err
 			}
 			if spec.Scope != "" {
-				scope, ok := dhcp4Scopes[spec.Scope]
-				if !ok {
-					return fmt.Errorf("%s references missing DHCPv4Scope %q", res.ID(), spec.Scope)
-				}
-				ip, err := netip.ParseAddr(spec.IPAddress)
-				if err != nil || !ip.Is4() {
-					return fmt.Errorf("%s spec.ipAddress must be an IPv4 address", res.ID())
-				}
-				start := netip.MustParseAddr(scope.RangeStart)
-				end := netip.MustParseAddr(scope.RangeEnd)
-				if ip.Compare(start) < 0 || ip.Compare(end) > 0 {
-					return fmt.Errorf("%s spec.ipAddress must be inside DHCPv4Scope %q range", res.ID(), spec.Scope)
+				return fmt.Errorf("%s spec.scope is not supported; use spec.server to reference DHCPv4Server", res.ID())
+			}
+			if spec.Server != "" {
+				if _, ok := dhcp4ServerSpecs[spec.Server]; !ok {
+					return fmt.Errorf("%s references missing DHCPv4Server %q", res.ID(), spec.Server)
 				}
 			}
 		}
@@ -474,6 +428,9 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 			if spec.Interface != "" && !interfaces[spec.Interface] {
 				return fmt.Errorf("%s spec.interface references missing Interface %q", res.ID(), spec.Interface)
 			}
+			if spec.DNSInterface != "" && !interfaces[spec.DNSInterface] {
+				return fmt.Errorf("%s spec.dnsInterface references missing Interface %q", res.ID(), spec.DNSInterface)
+			}
 		}
 		if res.Kind == "DHCPv6Server" {
 			spec, err := res.DHCPv6ServerSpec()
@@ -484,6 +441,20 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 				if !interfaces[name] {
 					return fmt.Errorf("%s spec.listenInterfaces[%d] references missing Interface %q", res.ID(), i, name)
 				}
+			}
+			if spec.Interface != "" && !interfaces[spec.Interface] {
+				return fmt.Errorf("%s spec.interface references missing Interface %q", res.ID(), spec.Interface)
+			}
+			if spec.DelegatedAddress != "" {
+				if !delegatedAddresses[spec.DelegatedAddress] {
+					return fmt.Errorf("%s references missing IPv6DelegatedAddress %q", res.ID(), spec.DelegatedAddress)
+				}
+				if len(spec.ListenInterfaces) > 0 && !stringInSlice(delegatedAddressInterfaces[spec.DelegatedAddress], spec.ListenInterfaces) {
+					return fmt.Errorf("%s delegatedAddress interface %q must be listed in spec.listenInterfaces", res.ID(), delegatedAddressInterfaces[spec.DelegatedAddress])
+				}
+			}
+			if spec.SelfAddressPolicy != "" && !selfAddressPolicies[spec.SelfAddressPolicy] {
+				return fmt.Errorf("%s references missing SelfAddressPolicy %q", res.ID(), spec.SelfAddressPolicy)
 			}
 		}
 		if res.Kind == "DHCPv4Reservation" {
@@ -540,24 +511,6 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 			}
 			if !prefixDelegations[spec.PrefixDelegation] {
 				return fmt.Errorf("%s references missing DHCPv6PrefixDelegation %q", res.ID(), spec.PrefixDelegation)
-			}
-		}
-		if res.Kind == "DHCPv6Scope" {
-			spec, err := res.DHCPv6ScopeSpec()
-			if err != nil {
-				return err
-			}
-			if !dhcp6Servers[spec.Server] {
-				return fmt.Errorf("%s references missing DHCPv6Server %q", res.ID(), spec.Server)
-			}
-			if !delegatedAddresses[spec.DelegatedAddress] {
-				return fmt.Errorf("%s references missing IPv6DelegatedAddress %q", res.ID(), spec.DelegatedAddress)
-			}
-			if !stringInSlice(delegatedAddressInterfaces[spec.DelegatedAddress], dhcp6ServerSpecs[spec.Server].ListenInterfaces) {
-				return fmt.Errorf("%s delegatedAddress interface %q must be listed in DHCPv6Server %q spec.listenInterfaces", res.ID(), delegatedAddressInterfaces[spec.DelegatedAddress], spec.Server)
-			}
-			if spec.SelfAddressPolicy != "" && !selfAddressPolicies[spec.SelfAddressPolicy] {
-				return fmt.Errorf("%s references missing SelfAddressPolicy %q", res.ID(), spec.SelfAddressPolicy)
 			}
 		}
 		if res.Kind == "SelfAddressPolicy" {
@@ -1971,22 +1924,34 @@ func validateResource(res api.Resource, targetOS platform.OS) error {
 				return fmt.Errorf("%s spec.listenInterfaces[%d] must not be empty", res.ID(), i)
 			}
 		}
-		rendersLANService := spec.Interface != "" || spec.Mode != "" || spec.AddressPool.Start != "" || spec.AddressPool.End != "" || len(spec.DNSServers) > 0 || len(spec.SNTPServers) > 0 || len(spec.DomainSearch) > 0 || len(spec.DomainSearchFrom) > 0
-		if rendersLANService && spec.Interface == "" {
+		rendersLANService := spec.Interface != "" || spec.DelegatedAddress != "" || spec.Mode != "" || spec.AddressPool.Start != "" || spec.AddressPool.End != "" || len(spec.DNSServers) > 0 || len(spec.SNTPServers) > 0 || len(spec.DomainSearch) > 0 || len(spec.DomainSearchFrom) > 0
+		if rendersLANService && spec.Interface == "" && spec.DelegatedAddress == "" {
 			return fmt.Errorf("%s spec.interface is required when rendering DHCPv6 LAN service", res.ID())
 		}
 		switch spec.Mode {
-		case "", "stateless", "stateful", "both":
+		case "", "stateless", "stateful", "both", "ra-only":
 		default:
-			return fmt.Errorf("%s spec.mode must be stateless, stateful, or both", res.ID())
+			return fmt.Errorf("%s spec.mode must be stateless, stateful, both, or ra-only", res.ID())
 		}
-		if defaultString(spec.Mode, "stateless") != "stateless" {
+		if spec.DelegatedAddress != "" && spec.Mode != "" && defaultString(spec.Mode, "stateless") != "stateless" && spec.Mode != "ra-only" {
+			return fmt.Errorf("%s spec.mode must be stateless or ra-only when spec.delegatedAddress is set", res.ID())
+		}
+		if spec.DelegatedAddress == "" && defaultString(spec.Mode, "stateless") != "stateless" {
 			if spec.AddressPool.Start == "" || spec.AddressPool.End == "" {
 				return fmt.Errorf("%s spec.addressPool.start and spec.addressPool.end are required for stateful modes", res.ID())
 			}
 			if err := validateIPv6AddressPair(spec.AddressPool.Start, spec.AddressPool.End); err != nil {
 				return fmt.Errorf("%s spec.addressPool: %w", res.ID(), err)
 			}
+		}
+		switch defaultString(spec.DNSSource, "self") {
+		case "self", "none":
+		case "static":
+			if len(spec.DNSServers) == 0 {
+				return fmt.Errorf("%s spec.dnsServers is required when dnsSource is static", res.ID())
+			}
+		default:
+			return fmt.Errorf("%s spec.dnsSource must be self, static, or none", res.ID())
 		}
 		for i, server := range append(append([]string{}, spec.DNSServers...), spec.SNTPServers...) {
 			if strings.ContainsAny(server, "\n\r") {
@@ -2137,11 +2102,43 @@ func validateResource(res api.Resource, targetOS platform.OS) error {
 			}
 		}
 		if spec.Interface != "" {
-			if spec.AddressPool.Start == "" || spec.AddressPool.End == "" {
+			poolStart := defaultString(spec.AddressPool.Start, spec.RangeStart)
+			poolEnd := defaultString(spec.AddressPool.End, spec.RangeEnd)
+			if poolStart == "" || poolEnd == "" {
 				return fmt.Errorf("%s spec.addressPool.start and spec.addressPool.end are required when spec.interface is set", res.ID())
 			}
-			if err := validateIPv4AddressPair(spec.AddressPool.Start, spec.AddressPool.End); err != nil {
+			if err := validateIPv4AddressPair(poolStart, poolEnd); err != nil {
 				return fmt.Errorf("%s spec.addressPool: %w", res.ID(), err)
+			}
+			routerSource := defaultString(spec.RouterSource, "interfaceAddress")
+			switch routerSource {
+			case "interfaceAddress", "none":
+			case "static":
+				if spec.Router == "" {
+					return fmt.Errorf("%s spec.router is required when routerSource is static", res.ID())
+				}
+			default:
+				return fmt.Errorf("%s spec.routerSource must be interfaceAddress, static, or none", res.ID())
+			}
+			if spec.Router != "" {
+				router, err := netip.ParseAddr(spec.Router)
+				if err != nil || !router.Is4() {
+					return fmt.Errorf("%s spec.router must be an IPv4 address", res.ID())
+				}
+			}
+			dnsSource := defaultString(spec.DNSSource, "self")
+			switch dnsSource {
+			case "dhcpv4":
+				if spec.DNSInterface == "" {
+					return fmt.Errorf("%s spec.dnsInterface is required when dnsSource is dhcpv4", res.ID())
+				}
+			case "static":
+				if len(spec.DNSServers) == 0 {
+					return fmt.Errorf("%s spec.dnsServers is required when dnsSource is static", res.ID())
+				}
+			case "self", "none":
+			default:
+				return fmt.Errorf("%s spec.dnsSource must be dhcpv4, static, self, or none", res.ID())
 			}
 			if spec.Gateway != "" {
 				addr, err := netip.ParseAddr(spec.Gateway)
@@ -2187,70 +2184,6 @@ func validateResource(res api.Resource, targetOS platform.OS) error {
 				}
 			}
 		}
-	case "DHCPv4Scope":
-		if res.APIVersion != api.NetAPIVersion {
-			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
-		}
-		spec, err := res.DHCPv4ScopeSpec()
-		if err != nil {
-			return err
-		}
-		if spec.Server == "" {
-			return fmt.Errorf("%s spec.server is required", res.ID())
-		}
-		if spec.RangeStart == "" {
-			return fmt.Errorf("%s spec.rangeStart is required", res.ID())
-		}
-		if spec.RangeEnd == "" {
-			return fmt.Errorf("%s spec.rangeEnd is required", res.ID())
-		}
-		start, err := netip.ParseAddr(spec.RangeStart)
-		if err != nil || !start.Is4() {
-			return fmt.Errorf("%s spec.rangeStart must be an IPv4 address", res.ID())
-		}
-		end, err := netip.ParseAddr(spec.RangeEnd)
-		if err != nil || !end.Is4() {
-			return fmt.Errorf("%s spec.rangeEnd must be an IPv4 address", res.ID())
-		}
-		if start.Compare(end) > 0 {
-			return fmt.Errorf("%s DHCP range start must be less than or equal to range end", res.ID())
-		}
-		routerSource := defaultString(spec.RouterSource, "interfaceAddress")
-		switch routerSource {
-		case "interfaceAddress", "none":
-		case "static":
-			if spec.Router == "" {
-				return fmt.Errorf("%s spec.router is required when routerSource is static", res.ID())
-			}
-		default:
-			return fmt.Errorf("%s spec.routerSource must be interfaceAddress, static, or none", res.ID())
-		}
-		if spec.Router != "" {
-			router, err := netip.ParseAddr(spec.Router)
-			if err != nil || !router.Is4() {
-				return fmt.Errorf("%s spec.router must be an IPv4 address", res.ID())
-			}
-		}
-		dnsSource := defaultString(spec.DNSSource, "self")
-		switch dnsSource {
-		case "dhcpv4":
-			if spec.DNSInterface == "" {
-				return fmt.Errorf("%s spec.dnsInterface is required when dnsSource is dhcpv4", res.ID())
-			}
-		case "static":
-			if len(spec.DNSServers) == 0 {
-				return fmt.Errorf("%s spec.dnsServers is required when dnsSource is static", res.ID())
-			}
-		case "self", "none":
-		default:
-			return fmt.Errorf("%s spec.dnsSource must be dhcpv4, static, self, or none", res.ID())
-		}
-		for _, dns := range spec.DNSServers {
-			addr, err := netip.ParseAddr(dns)
-			if err != nil || !addr.Is4() {
-				return fmt.Errorf("%s spec.dnsServers entries must be IPv4 addresses", res.ID())
-			}
-		}
 	case "DHCPv4Reservation":
 		if res.APIVersion != api.NetAPIVersion {
 			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
@@ -2259,8 +2192,11 @@ func validateResource(res api.Resource, targetOS platform.OS) error {
 		if err != nil {
 			return err
 		}
-		if spec.Scope == "" && spec.Server == "" {
-			return fmt.Errorf("%s spec.scope or spec.server is required", res.ID())
+		if spec.Scope != "" {
+			return fmt.Errorf("%s spec.scope is not supported; use spec.server to reference DHCPv4Server", res.ID())
+		}
+		if spec.Server == "" {
+			return fmt.Errorf("%s spec.server is required", res.ID())
 		}
 		if spec.MACAddress == "" {
 			return fmt.Errorf("%s spec.macAddress is required", res.ID())
@@ -2301,40 +2237,6 @@ func validateResource(res api.Resource, targetOS platform.OS) error {
 		}
 		if addr, err := netip.ParseAddr(spec.Upstream); err != nil || !addr.Is4() {
 			return fmt.Errorf("%s spec.upstream must be an IPv4 address", res.ID())
-		}
-	case "DHCPv6Scope":
-		if res.APIVersion != api.NetAPIVersion {
-			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
-		}
-		spec, err := res.DHCPv6ScopeSpec()
-		if err != nil {
-			return err
-		}
-		if spec.Server == "" {
-			return fmt.Errorf("%s spec.server is required", res.ID())
-		}
-		if spec.DelegatedAddress == "" {
-			return fmt.Errorf("%s spec.delegatedAddress is required", res.ID())
-		}
-		switch defaultString(spec.Mode, "stateless") {
-		case "stateless", "ra-only":
-		default:
-			return fmt.Errorf("%s spec.mode must be stateless or ra-only", res.ID())
-		}
-		switch defaultString(spec.DNSSource, "self") {
-		case "self", "none":
-		case "static":
-			if len(spec.DNSServers) == 0 {
-				return fmt.Errorf("%s spec.dnsServers is required when dnsSource is static", res.ID())
-			}
-		default:
-			return fmt.Errorf("%s spec.dnsSource must be self, static, or none", res.ID())
-		}
-		for _, dns := range spec.DNSServers {
-			addr, err := netip.ParseAddr(dns)
-			if err != nil || !addr.Is6() {
-				return fmt.Errorf("%s spec.dnsServers entries must be IPv6 addresses", res.ID())
-			}
 		}
 	case "SelfAddressPolicy":
 		if res.APIVersion != api.NetAPIVersion {
@@ -3483,14 +3385,14 @@ func resourceWhens(res api.Resource) []resourceWhenRef {
 	case "ClusterNetworkRoute":
 		spec, _ := res.ClusterNetworkRouteSpec()
 		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
-	case "DHCPv4Scope":
-		spec, _ := res.DHCPv4ScopeSpec()
+	case "DHCPv4Server":
+		spec, _ := res.DHCPv4ServerSpec()
 		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
 	case "IPv6DelegatedAddress":
 		spec, _ := res.IPv6DelegatedAddressSpec()
 		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
-	case "DHCPv6Scope":
-		spec, _ := res.DHCPv6ScopeSpec()
+	case "DHCPv6Server":
+		spec, _ := res.DHCPv6ServerSpec()
 		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
 	case "DSLiteTunnel":
 		spec, _ := res.DSLiteTunnelSpec()
@@ -3761,11 +3663,11 @@ func interfaceRef(res api.Resource) (string, error) {
 	case "IPv6StaticRoute":
 		spec, err := res.IPv6StaticRouteSpec()
 		return spec.Interface, err
-	case "DHCPv4Server", "DHCPv6Server":
-		return "", nil
-	case "DHCPv4Scope":
-		spec, err := res.DHCPv4ScopeSpec()
+	case "DHCPv4Server":
+		spec, err := res.DHCPv4ServerSpec()
 		return spec.Interface, err
+	case "DHCPv6Server":
+		return "", nil
 	case "DHCPv6Address":
 		spec, err := res.DHCPv6AddressSpec()
 		return spec.Interface, err
@@ -3778,8 +3680,6 @@ func interfaceRef(res api.Resource) (string, error) {
 	case "IPv6DelegatedAddress":
 		spec, err := res.IPv6DelegatedAddressSpec()
 		return spec.Interface, err
-	case "DHCPv6Scope":
-		return "", nil
 	case "DSLiteTunnel":
 		spec, err := res.DSLiteTunnelSpec()
 		return spec.Interface, err

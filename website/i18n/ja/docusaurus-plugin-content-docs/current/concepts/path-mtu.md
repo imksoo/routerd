@@ -8,7 +8,7 @@ trusted interface から untrusted tunnel へ転送する場合、routerd は TC
 clamp を自動で生成します。IPv4 TCP では MSS を `MTU - 40`、IPv6 TCP では
 `MTU - 60` にします。
 
-trusted interface に `DHCPv6Scope` または `IPv6RouterAdvertisement` があり、
+trusted interface に `DHCPv6Server` または `IPv6RouterAdvertisement` があり、
 転送経路が小さい tunnel MTU を使う場合、RA にも派生 MTU を反映します。
 config には LAN、WAN、tunnel、firewall zone、RA/DHCPv6 の intent を宣言し、
 個別の MTU policy resource は書きません。

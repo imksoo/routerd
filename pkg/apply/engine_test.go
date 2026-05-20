@@ -225,7 +225,7 @@ func TestPlanStaticDefaultRoutePolicy(t *testing.T) {
 	}
 }
 
-func TestPlanAllowsDHCPScopeWhenNetplanCanManageInterface(t *testing.T) {
+func TestPlanAllowsDHCPServerPoolWhenNetplanCanManageInterface(t *testing.T) {
 	router, err := config.Load("../../examples/router-lab.yaml")
 	if err != nil {
 		t.Fatalf("load example: %v", err)
@@ -248,15 +248,15 @@ func TestPlanAllowsDHCPScopeWhenNetplanCanManageInterface(t *testing.T) {
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
-	scope := findResult(result, "net.routerd.net/v1alpha1/DHCPv4Scope/lan-dhcpv4")
-	if scope == nil {
-		t.Fatal("missing DHCP scope result")
+	server := findResult(result, "net.routerd.net/v1alpha1/DHCPv4Server/lan-dhcpv4")
+	if server == nil {
+		t.Fatal("missing DHCP server result")
 	}
-	if scope.Phase != "Healthy" {
-		t.Fatalf("DHCP scope phase = %s, want Healthy", scope.Phase)
+	if server.Phase != "Healthy" {
+		t.Fatalf("DHCP server phase = %s, want Healthy", server.Phase)
 	}
-	if got := strings.Join(scope.Plan, "\n"); !strings.Contains(got, "ensure IPv4 DHCP scope") {
-		t.Fatalf("DHCP scope plan = %q, want scope ensure", got)
+	if got := strings.Join(server.Plan, "\n"); !strings.Contains(got, "serve IPv4 DHCP pool") {
+		t.Fatalf("DHCP server plan = %q, want pool ensure", got)
 	}
 }
 

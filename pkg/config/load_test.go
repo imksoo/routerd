@@ -50,6 +50,8 @@ func TestLoadRejectsRemovedImplementationResources(t *testing.T) {
 		{kind: "IPv4SourceNAT", apiVersion: "net.routerd.net/v1alpha1", spec: "outboundInterface: wan\nsourceCIDRs: [192.0.2.0/24]\ntranslation:\n  type: interfaceAddress\n"},
 		{kind: "VirtualIPv4Address", apiVersion: "net.routerd.net/v1alpha1", spec: "interface: lan\naddress: 192.0.2.10/32\n"},
 		{kind: "VirtualIPv6Address", apiVersion: "net.routerd.net/v1alpha1", spec: "interface: lan\naddress: 2001:db8::10/128\n"},
+		{kind: "DHCPv4Scope", apiVersion: "net.routerd.net/v1alpha1", spec: "server: dhcpv4\ninterface: lan\nrangeStart: 192.0.2.10\nrangeEnd: 192.0.2.20\n"},
+		{kind: "DHCPv6Scope", apiVersion: "net.routerd.net/v1alpha1", spec: "server: dhcpv6\ndelegatedAddress: lan-v6\n"},
 		{kind: "IPv4ReversePathFilter", apiVersion: "net.routerd.net/v1alpha1", spec: "target: all\nmode: disabled\n"},
 		{kind: "PathMTUPolicy", apiVersion: "net.routerd.net/v1alpha1", spec: "fromInterface: lan\ntoInterfaces: [wan]\n"},
 	} {

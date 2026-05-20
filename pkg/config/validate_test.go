@@ -132,9 +132,9 @@ func whenValidationTestResources(when api.ResourceWhenSpec) []whenValidationTest
 		{specName: "BGPRouterSpec", resource: testResource(api.NetAPIVersion, "BGPRouter", "main", api.BGPRouterSpec{ASN: 64500, RouterID: "192.0.2.1", When: when})},
 		{specName: "BGPPeerSpec", resource: testResource(api.NetAPIVersion, "BGPPeer", "k8s-rt", api.BGPPeerSpec{RouterRef: "BGPRouter/main", PeerASN: 64512, Peers: []string{"192.0.2.2"}, When: when})},
 		{specName: "ClusterNetworkRouteSpec", resource: testResource(api.NetAPIVersion, "ClusterNetworkRoute", "k8s", api.ClusterNetworkRouteSpec{Pods: api.ClusterNetworkRouteCIDRSpec{CIDRs: []string{"10.244.0.0/16"}}, Via: []api.ClusterNetworkRouteViaSpec{{Interface: "lan", NextHop: "192.0.2.2"}}, When: when})},
-		{specName: "DHCPv4ScopeSpec", resource: testResource(api.NetAPIVersion, "DHCPv4Scope", "lan", api.DHCPv4ScopeSpec{Server: "dnsmasq", Interface: "lan", RangeStart: "192.0.2.100", RangeEnd: "192.0.2.150", When: when})},
+		{specName: "DHCPv4ServerSpec", resource: testResource(api.NetAPIVersion, "DHCPv4Server", "lan", api.DHCPv4ServerSpec{Server: "dnsmasq", Interface: "lan", RangeStart: "192.0.2.100", RangeEnd: "192.0.2.150", When: when})},
 		{specName: "IPv6DelegatedAddressSpec", resource: testResource(api.NetAPIVersion, "IPv6DelegatedAddress", "lan-v6", api.IPv6DelegatedAddressSpec{PrefixDelegation: "wan-pd", Interface: "lan", AddressSuffix: "::1", When: when})},
-		{specName: "DHCPv6ScopeSpec", resource: testResource(api.NetAPIVersion, "DHCPv6Scope", "lan-v6", api.DHCPv6ScopeSpec{Server: "dnsmasq", DelegatedAddress: "lan-v6", When: when})},
+		{specName: "DHCPv6ServerSpec", resource: testResource(api.NetAPIVersion, "DHCPv6Server", "lan-v6", api.DHCPv6ServerSpec{Server: "dnsmasq", DelegatedAddress: "lan-v6", When: when})},
 		{specName: "DSLiteTunnelSpec", resource: testResource(api.NetAPIVersion, "DSLiteTunnel", "dslite", api.DSLiteTunnelSpec{Interface: "wan", AFTRIPv6: "2001:db8::1", When: when})},
 		{specName: "HealthCheckSpec", resource: testResource(api.NetAPIVersion, "HealthCheck", "internet", api.HealthCheckSpec{TargetSource: "static", Target: "192.0.2.1", When: when})},
 		{specName: "IPv4DefaultRoutePolicyCandidate", resource: testResource(api.NetAPIVersion, "IPv4DefaultRoutePolicy", "default-v4", api.IPv4DefaultRoutePolicySpec{Candidates: []api.IPv4DefaultRoutePolicyCandidate{{Interface: "wan", Priority: 1, Table: 100, Mark: 100, When: when}}})},
@@ -731,7 +731,7 @@ func TestValidateEgressRoutePolicyDynamicGatewayRequiresGatewayFrom(t *testing.T
 	}
 }
 
-func TestValidateDHCPv4ScopeRange(t *testing.T) {
+func TestValidateDHCPv4ServerPoolRange(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 		Metadata: api.ObjectMeta{Name: "test"},
@@ -743,14 +743,9 @@ func TestValidateDHCPv4ScopeRange(t *testing.T) {
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"},
-				Metadata: api.ObjectMeta{Name: "dhcpv4"},
-				Spec:     api.DHCPv4ServerSpec{Server: "dnsmasq", Managed: true, ListenInterfaces: []string{"lan"}},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Scope"},
 				Metadata: api.ObjectMeta{Name: "lan-dhcp4"},
-				Spec: api.DHCPv4ScopeSpec{
-					Server:     "dhcpv4",
+				Spec: api.DHCPv4ServerSpec{
+
 					Interface:  "lan",
 					RangeStart: "192.168.10.199",
 					RangeEnd:   "192.168.10.100",
@@ -764,7 +759,7 @@ func TestValidateDHCPv4ScopeRange(t *testing.T) {
 	}
 }
 
-func TestValidateDHCPv4ReservationRange(t *testing.T) {
+func TestValidateDHCPv4ReservationMayLiveOutsidePool(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 		Metadata: api.ObjectMeta{Name: "test"},
@@ -776,14 +771,9 @@ func TestValidateDHCPv4ReservationRange(t *testing.T) {
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"},
-				Metadata: api.ObjectMeta{Name: "dhcpv4"},
-				Spec:     api.DHCPv4ServerSpec{Server: "dnsmasq", Managed: true, ListenInterfaces: []string{"lan"}},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Scope"},
 				Metadata: api.ObjectMeta{Name: "lan-dhcp4"},
-				Spec: api.DHCPv4ScopeSpec{
-					Server:     "dhcpv4",
+				Spec: api.DHCPv4ServerSpec{
+
 					Interface:  "lan",
 					RangeStart: "192.0.2.100",
 					RangeEnd:   "192.0.2.150",
@@ -793,7 +783,7 @@ func TestValidateDHCPv4ReservationRange(t *testing.T) {
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Reservation"},
 				Metadata: api.ObjectMeta{Name: "printer"},
 				Spec: api.DHCPv4ReservationSpec{
-					Scope:      "lan-dhcp4",
+					Server:     "lan-dhcp4",
 					MACAddress: "02:00:00:00:01:50",
 					IPAddress:  "192.0.2.200",
 				},
@@ -801,8 +791,8 @@ func TestValidateDHCPv4ReservationRange(t *testing.T) {
 		}},
 	}
 
-	if err := Validate(router); err == nil {
-		t.Fatal("expected host reservation outside the scope range to be rejected")
+	if err := Validate(router); err != nil {
+		t.Fatalf("reservation outside dynamic pool should validate: %v", err)
 	}
 }
 

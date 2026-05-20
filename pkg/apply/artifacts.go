@@ -333,13 +333,7 @@ func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]str
 		if err != nil {
 			return nil
 		}
-		return []resource.Intent{artifact("dnsmasq.dhcpv4.host", res.Metadata.Name, resource.ActionEnsure, "dnsmasq", map[string]string{"server": spec.Server, "scope": spec.Scope, "mac": spec.MACAddress, "ip": spec.IPAddress})}
-	case "DHCPv4Scope":
-		spec, err := res.DHCPv4ScopeSpec()
-		if err != nil {
-			return nil
-		}
-		return []resource.Intent{artifact("dnsmasq.dhcpv4.scope", res.Metadata.Name, resource.ActionEnsure, "dnsmasq", map[string]string{"server": spec.Server})}
+		return []resource.Intent{artifact("dnsmasq.dhcpv4.host", res.Metadata.Name, resource.ActionEnsure, "dnsmasq", map[string]string{"server": spec.Server, "mac": spec.MACAddress, "ip": spec.IPAddress})}
 	case "DHCPv6Address":
 		spec, err := res.DHCPv6AddressSpec()
 		if err != nil {
@@ -360,12 +354,6 @@ func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]str
 			return nil
 		}
 		return []resource.Intent{artifact("net.ipv6.address", aliases[spec.Interface]+":"+spec.AddressSuffix, resource.ActionEnsure, "platform-network", nil)}
-	case "DHCPv6Scope":
-		spec, err := res.DHCPv6ScopeSpec()
-		if err != nil {
-			return nil
-		}
-		return []resource.Intent{artifact("dnsmasq.dhcpv6.scope", res.Metadata.Name, resource.ActionEnsure, "dnsmasq", map[string]string{"server": spec.Server})}
 	case "DHCPv4Relay":
 		return []resource.Intent{artifact("dnsmasq.dhcp.relay", res.Metadata.Name, resource.ActionEnsure, "dnsmasq", nil)}
 	case "SelfAddressPolicy":

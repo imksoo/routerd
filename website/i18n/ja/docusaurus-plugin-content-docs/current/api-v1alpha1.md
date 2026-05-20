@@ -111,13 +111,11 @@ DHCPv6-PD は `routerd-dhcpv6-client` が担当します。
 
 | Kind | 役割 |
 | --- | --- |
-| `DHCPv4Server` | dnsmasq で DHCPv4 アドレスプールを提供します。 |
-| `DHCPv4Scope` | DHCPv4 のプール範囲を表します。 |
+| `DHCPv4Server` | dnsmasq の DHCPv4 service と任意のアドレスプールを提供します。 |
 | `DHCPv4Reservation` | MAC アドレスごとの固定割り当てを表します。 |
 | `DHCPv4Relay` | dnsmasq の DHCPv4 中継を表します。 |
 | `IPv6RouterAdvertisement` | RA、PIO、RDNSS、DNSSL、M/O フラグ、MTU、優先度、寿命を生成します。 |
-| `DHCPv6Server` | dnsmasq の DHCPv6 サーバーです。`stateless`、`stateful`、`both` を扱います。 |
-| `DHCPv6Scope` | DHCPv6 の範囲を表します。 |
+| `DHCPv6Server` | dnsmasq の DHCPv6/RA service です。`stateless`、`stateful`、`both`、`ra-only` を扱います。 |
 | `DNSZone` | ローカル権威ゾーンを表します。手動レコードと DHCP リース由来のレコードを扱います。 |
 | `DNSResolver` | `routerd-dns-resolver` が管理する DNS 待ち受け、応答元、上流、キャッシュを表します。 |
 
@@ -453,11 +451,11 @@ Phase 1.6 で次の名前に整理しました。
 | --- | --- |
 | `IPv4DHCPServer` | `DHCPv4Server` |
 | `IPv4DHCPReservation` | `DHCPv4Reservation` |
-| `IPv4DHCPScope` | `DHCPv4Scope` |
+| `IPv4DHCPScope` | `DHCPv4Server` |
 | `IPv6DHCPAddress` | `DHCPv6Address` |
 | `IPv6PrefixDelegation` | `DHCPv6PrefixDelegation` |
 | `IPv6DHCPServer` / `IPv6DHCPv6Server` | `DHCPv6Server` |
-| `IPv6DHCPScope` | `DHCPv6Scope` |
+| `IPv6DHCPScope` | `DHCPv6Server` |
 | `DHCPRelay` | `DHCPv4Relay` |
 
 バイナリ名も `routerd-dhcpv4-client`、`routerd-dhcpv6-client` です。

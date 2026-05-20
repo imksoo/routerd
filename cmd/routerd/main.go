@@ -799,13 +799,11 @@ func canonicalResourceKind(kind string) string {
 		"ipv4staticaddress":      "IPv4StaticAddress",
 		"dhcpv4client":           "DHCPv4Client",
 		"dhcpv4server":           "DHCPv4Server",
-		"dhcpv4scope":            "DHCPv4Scope",
 		"dhcpv4reservation":      "DHCPv4Reservation",
 		"dhcpv4relay":            "DHCPv4Relay",
 		"dhcprelay":              "DHCPv4Relay",
 		"dhcpv6address":          "DHCPv6Address",
 		"dhcpv6server":           "DHCPv6Server",
-		"dhcpv6scope":            "DHCPv6Scope",
 		"dhcpv6information":      "DHCPv6Information",
 		"ipv4staticroute":        "IPv4StaticRoute",
 		"ipv6route":              "IPv6StaticRoute",
@@ -868,7 +866,7 @@ func apiVersionForKind(kind string) string {
 		return api.ObservabilityAPIVersion
 	case "Inventory":
 		return api.RouterAPIVersion
-	case "Interface", "Bridge", "VXLANSegment", "WireGuardInterface", "WireGuardPeer", "TailscaleNode", "IPsecConnection", "VRF", "VXLANTunnel", "PPPoESession", "IPv4StaticAddress", "DHCPv4Client", "IPv4StaticRoute", "IPv6StaticRoute", "ClusterNetworkRoute", "DHCPv4Server", "DHCPv4Scope", "DHCPv4Reservation", "DHCPv6Address", "IPv6RAAddress", "DHCPv6PrefixDelegation", "IPv6DelegatedAddress", "DHCPv6Information", "IPv6RouterAdvertisement", "DHCPv6Server", "DHCPv6Scope", "DHCPv4Relay", "DNSZone", "DNSResolver", "SelfAddressPolicy", "DSLiteTunnel", "IPv4Route", "HealthCheck", "EgressRoutePolicy", "EventRule", "DerivedEvent", "IPv4DefaultRoutePolicy", "NAT44Rule", "IPAddressSet", "IPv4PolicyRoute", "IPv4PolicyRouteSet":
+	case "Interface", "Bridge", "VXLANSegment", "WireGuardInterface", "WireGuardPeer", "TailscaleNode", "IPsecConnection", "VRF", "VXLANTunnel", "PPPoESession", "IPv4StaticAddress", "DHCPv4Client", "IPv4StaticRoute", "IPv6StaticRoute", "ClusterNetworkRoute", "DHCPv4Server", "DHCPv4Reservation", "DHCPv6Address", "IPv6RAAddress", "DHCPv6PrefixDelegation", "IPv6DelegatedAddress", "DHCPv6Information", "IPv6RouterAdvertisement", "DHCPv6Server", "DHCPv4Relay", "DNSZone", "DNSResolver", "SelfAddressPolicy", "DSLiteTunnel", "IPv4Route", "HealthCheck", "EgressRoutePolicy", "EventRule", "DerivedEvent", "IPv4DefaultRoutePolicy", "NAT44Rule", "IPAddressSet", "IPv4PolicyRoute", "IPv4PolicyRouteSet":
 		return api.NetAPIVersion
 	default:
 		return ""
@@ -2426,14 +2424,14 @@ func resourceWhen(res api.Resource) api.ResourceWhenSpec {
 	case "ClusterNetworkRoute":
 		spec, _ := res.ClusterNetworkRouteSpec()
 		return spec.When
-	case "DHCPv4Scope":
-		spec, _ := res.DHCPv4ScopeSpec()
+	case "DHCPv4Server":
+		spec, _ := res.DHCPv4ServerSpec()
 		return spec.When
 	case "IPv6DelegatedAddress":
 		spec, _ := res.IPv6DelegatedAddressSpec()
 		return spec.When
-	case "DHCPv6Scope":
-		spec, _ := res.DHCPv6ScopeSpec()
+	case "DHCPv6Server":
+		spec, _ := res.DHCPv6ServerSpec()
 		return spec.When
 	case "DSLiteTunnel":
 		spec, _ := res.DSLiteTunnelSpec()
@@ -3130,7 +3128,7 @@ func controllerResourceKinds(name string) []string {
 	case "dhcpv4client":
 		return []string{"DHCPv4Client"}
 	case "dhcpv6":
-		return []string{"DHCPv6Server", "DHCPv6Scope", "IPv6RouterAdvertisement"}
+		return []string{"DHCPv6Server", "IPv6RouterAdvertisement"}
 	case "dns-resolver":
 		return []string{"DNSResolver", "DNSZone"}
 	case "dslite":

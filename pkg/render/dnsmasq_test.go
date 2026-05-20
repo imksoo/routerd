@@ -45,10 +45,10 @@ func TestDnsmasqConfigUsesSelfDNSWithDHCPv4Upstream(t *testing.T) {
 				},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Scope"},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"},
 				Metadata: api.ObjectMeta{Name: "lan-dhcpv4"},
-				Spec: api.DHCPv4ScopeSpec{
-					Server:        "dhcpv4",
+				Spec: api.DHCPv4ServerSpec{
+
 					Interface:     "lan",
 					RangeStart:    "192.168.10.130",
 					RangeEnd:      "192.168.10.139",
@@ -106,10 +106,10 @@ func TestDnsmasqConfigRendersLogDHCPWhenEnabled(t *testing.T) {
 				Spec:     api.DHCPv4ServerSpec{Server: "dnsmasq", Managed: true, ListenInterfaces: []string{"lan"}, LogDHCP: true},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Scope"},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"},
 				Metadata: api.ObjectMeta{Name: "lan-dhcpv4"},
-				Spec: api.DHCPv4ScopeSpec{
-					Server:     "dhcpv4",
+				Spec: api.DHCPv4ServerSpec{
+
 					Interface:  "lan",
 					RangeStart: "192.168.10.130",
 					RangeEnd:   "192.168.10.139",
@@ -132,7 +132,7 @@ func TestDnsmasqConfigRendersStickyHostsInScope(t *testing.T) {
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19", Managed: true, Owner: "routerd"}},
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "lan-ipv4"}, Spec: api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.168.10.3/24"}},
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"}, Metadata: api.ObjectMeta{Name: "dhcpv4"}, Spec: api.DHCPv4ServerSpec{Server: "dnsmasq", Managed: true, ListenInterfaces: []string{"lan"}}},
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Scope"}, Metadata: api.ObjectMeta{Name: "lan-dhcpv4"}, Spec: api.DHCPv4ScopeSpec{Server: "dhcpv4", Interface: "lan", RangeStart: "192.168.10.130", RangeEnd: "192.168.10.139", LeaseTime: "12h", RouterSource: "none", DNSSource: "none"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"}, Metadata: api.ObjectMeta{Name: "lan-dhcpv4"}, Spec: api.DHCPv4ServerSpec{Interface: "lan", RangeStart: "192.168.10.130", RangeEnd: "192.168.10.139", LeaseTime: "12h", RouterSource: "none", DNSSource: "none"}},
 		}},
 	}
 	data, _, err := DnsmasqConfig(router, DnsmasqRuntime{StickyHosts: []DHCPStickyHost{
@@ -199,10 +199,10 @@ func TestDnsmasqConfigRendersDHCPv4Reservation(t *testing.T) {
 				Spec:     api.DHCPv4ServerSpec{Server: "dnsmasq", Managed: true, ListenInterfaces: []string{"lan"}},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Scope"},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"},
 				Metadata: api.ObjectMeta{Name: "lan-dhcpv4"},
-				Spec: api.DHCPv4ScopeSpec{
-					Server:     "dhcpv4",
+				Spec: api.DHCPv4ServerSpec{
+
 					Interface:  "lan",
 					RangeStart: "192.0.2.100",
 					RangeEnd:   "192.0.2.150",
@@ -213,7 +213,7 @@ func TestDnsmasqConfigRendersDHCPv4Reservation(t *testing.T) {
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Reservation"},
 				Metadata: api.ObjectMeta{Name: "printer"},
 				Spec: api.DHCPv4ReservationSpec{
-					Scope:      "lan-dhcpv4",
+					Server:     "lan-dhcpv4",
 					MACAddress: "02:00:00:00:01:50",
 					IPAddress:  "192.0.2.120",
 					Hostname:   "printer",
@@ -389,10 +389,10 @@ func TestDnsmasqConfigCanPassThroughDHCPv4DNS(t *testing.T) {
 				Spec:     api.DHCPv4ServerSpec{Server: "dnsmasq", Managed: true, ListenInterfaces: []string{"lan"}},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Scope"},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"},
 				Metadata: api.ObjectMeta{Name: "lan-dhcpv4"},
-				Spec: api.DHCPv4ScopeSpec{
-					Server:       "dhcpv4",
+				Spec: api.DHCPv4ServerSpec{
+
 					Interface:    "lan",
 					RangeStart:   "192.168.10.130",
 					RangeEnd:     "192.168.10.139",
@@ -433,10 +433,10 @@ func TestDnsmasqConfigSkipsTransitDHCPServerRole(t *testing.T) {
 				Spec:     api.DHCPv4ServerSpec{Server: "dnsmasq", Managed: true, Role: "transit", ListenInterfaces: []string{"lan"}},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Scope"},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"},
 				Metadata: api.ObjectMeta{Name: "lan-dhcpv4"},
-				Spec: api.DHCPv4ScopeSpec{
-					Server:     "dhcpv4",
+				Spec: api.DHCPv4ServerSpec{
+					Role:       "transit",
 					Interface:  "lan",
 					RangeStart: "192.0.2.100",
 					RangeEnd:   "192.0.2.120",
@@ -485,10 +485,10 @@ func TestDnsmasqConfigRendersIPv6StatelessScope(t *testing.T) {
 				Spec:     api.DHCPv6ServerSpec{Server: "dnsmasq", Managed: true, ListenInterfaces: []string{"lan"}},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6Scope"},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6Server"},
 				Metadata: api.ObjectMeta{Name: "lan-dhcpv6"},
-				Spec: api.DHCPv6ScopeSpec{
-					Server:           "dhcpv6",
+				Spec: api.DHCPv6ServerSpec{
+
 					DelegatedAddress: "lan-ipv6",
 					Mode:             "stateless",
 					LeaseTime:        "12h",
@@ -637,10 +637,10 @@ func TestDnsmasqConfigSkipsIPv6ScopeUntilDelegatedPrefixExists(t *testing.T) {
 				Spec:     api.DHCPv4ServerSpec{Server: "dnsmasq", Managed: true, ListenInterfaces: []string{"lan"}},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Scope"},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"},
 				Metadata: api.ObjectMeta{Name: "lan-dhcpv4"},
-				Spec: api.DHCPv4ScopeSpec{
-					Server:       "dhcpv4",
+				Spec: api.DHCPv4ServerSpec{
+
 					Interface:    "lan",
 					RangeStart:   "192.168.10.120",
 					RangeEnd:     "192.168.10.129",
@@ -663,10 +663,10 @@ func TestDnsmasqConfigSkipsIPv6ScopeUntilDelegatedPrefixExists(t *testing.T) {
 				Spec:     api.DHCPv6ServerSpec{Server: "dnsmasq", Managed: true, ListenInterfaces: []string{"lan"}},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6Scope"},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6Server"},
 				Metadata: api.ObjectMeta{Name: "lan-dhcpv6"},
-				Spec: api.DHCPv6ScopeSpec{
-					Server:           "dhcpv6",
+				Spec: api.DHCPv6ServerSpec{
+
 					DelegatedAddress: "lan-ipv6",
 					Mode:             "stateless",
 					DNSSource:        "self",
@@ -754,10 +754,9 @@ func TestDnsmasqConfigUsesPersistentLeaseFileWhenProvided(t *testing.T) {
 			Spec:     api.DHCPv4ServerSpec{Server: "dnsmasq", Managed: true, ListenInterfaces: []string{"lan"}},
 		},
 		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Scope"},
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"},
 			Metadata: api.ObjectMeta{Name: "lan-scope"},
-			Spec: api.DHCPv4ScopeSpec{
-				Server:       "lan-server",
+			Spec: api.DHCPv4ServerSpec{
 				Interface:    "lan",
 				RangeStart:   "192.0.2.10",
 				RangeEnd:     "192.0.2.20",
@@ -780,7 +779,7 @@ func TestDnsmasqConfigUsesPersistentLeaseFileWhenProvided(t *testing.T) {
 }
 
 func TestDnsmasqConfigDerivesIPv6SelfDNSFromRoutePrefix(t *testing.T) {
-	spec := api.DHCPv6ScopeSpec{DNSSource: "self", DelegatedAddress: "lan-ipv6"}
+	spec := api.DHCPv6ServerSpec{DNSSource: "self", DelegatedAddress: "lan-ipv6"}
 	delegated := delegatedIPv6Address{
 		Interface:     "lan",
 		IfName:        "ens19",
@@ -798,7 +797,7 @@ func TestDnsmasqConfigDerivesIPv6SelfDNSFromRoutePrefix(t *testing.T) {
 }
 
 func TestDnsmasqConfigPrefersObservedIPv6SelfDNSMatchingSuffix(t *testing.T) {
-	spec := api.DHCPv6ScopeSpec{DNSSource: "self", DelegatedAddress: "lan-ipv6"}
+	spec := api.DHCPv6ServerSpec{DNSSource: "self", DelegatedAddress: "lan-ipv6"}
 	delegated := delegatedIPv6Address{
 		Interface:     "lan",
 		IfName:        "ens19",
@@ -819,7 +818,7 @@ func TestDnsmasqConfigPrefersObservedIPv6SelfDNSMatchingSuffix(t *testing.T) {
 }
 
 func TestDnsmasqConfigUsesSelfAddressPolicyOrder(t *testing.T) {
-	spec := api.DHCPv6ScopeSpec{DNSSource: "self", DelegatedAddress: "lan-ipv6", SelfAddressPolicy: "lan-dns-self"}
+	spec := api.DHCPv6ServerSpec{DNSSource: "self", DelegatedAddress: "lan-ipv6", SelfAddressPolicy: "lan-dns-self"}
 	delegated := delegatedIPv6Address{Interface: "lan", IfName: "ens19", AddressSuffix: "::3"}
 	policy := api.SelfAddressPolicySpec{
 		AddressFamily: "ipv6",
@@ -858,10 +857,10 @@ func TestDnsmasqConfigExcludesDNSResolverSources(t *testing.T) {
 				Spec:     api.DHCPv4ServerSpec{Server: "dnsmasq", Managed: true, ListenInterfaces: []string{"lan"}},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Scope"},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"},
 				Metadata: api.ObjectMeta{Name: "lan-dhcpv4"},
-				Spec: api.DHCPv4ScopeSpec{
-					Server:       "dhcpv4",
+				Spec: api.DHCPv4ServerSpec{
+
 					Interface:    "lan",
 					RangeStart:   "192.168.10.130",
 					RangeEnd:     "192.168.10.139",
@@ -912,10 +911,10 @@ func TestDnsmasqConfigIgnoresDNSResolverWhenObservedEmpty(t *testing.T) {
 				Spec:     api.DHCPv4ServerSpec{Server: "dnsmasq", Managed: true, ListenInterfaces: []string{"lan"}},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Scope"},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"},
 				Metadata: api.ObjectMeta{Name: "lan-dhcpv4"},
-				Spec: api.DHCPv4ScopeSpec{
-					Server:       "dhcpv4",
+				Spec: api.DHCPv4ServerSpec{
+
 					Interface:    "lan",
 					RangeStart:   "192.168.10.130",
 					RangeEnd:     "192.168.10.139",

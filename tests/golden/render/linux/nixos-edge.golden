@@ -15,12 +15,12 @@ dhcp-option=tag:lan-dhcpv4,option:router,192.0.2.2
 dhcp-option=tag:lan-dhcpv4,option:dns-server,192.0.2.2
 dhcp-host=02:00:00:00:01:50,192.0.2.125,printer,infinite
 ### firewall-holes.txt
-dhcpv4-dhcpv4-server-lan from=lan to=self ifnames=ens19 proto=udp port=67 action=accept direction= comment=net.routerd.net/v1alpha1/DHCPv4Server/dhcpv4
-dhcpv6-dhcpv6-server-lan from=lan to=self ifnames=ens19 proto=udp port=547 action=accept direction= comment=net.routerd.net/v1alpha1/DHCPv6Server/dhcpv6
 ds-lite-a-dslite-ipip from=self to=wan ifnames=ens18 proto=ipip port=0 action=accept direction= comment=net.routerd.net/v1alpha1/DSLiteTunnel/ds-lite-a
 ds-lite-b-dslite-ipip from=self to=wan ifnames=ens18 proto=ipip port=0 action=accept direction= comment=net.routerd.net/v1alpha1/DSLiteTunnel/ds-lite-b
 ds-lite-c-dslite-ipip from=self to=wan ifnames=ens18 proto=ipip port=0 action=accept direction= comment=net.routerd.net/v1alpha1/DSLiteTunnel/ds-lite-c
 home-tailscale from=wan to=self ifnames=ens18 proto=udp port=41641 action=accept direction= comment=net.routerd.net/v1alpha1/TailscaleNode/home
+lan-dhcpv4-dhcpv4-server-lan from=lan to=self ifnames=ens19 proto=udp port=67 action=accept direction= comment=net.routerd.net/v1alpha1/DHCPv4Server/lan-dhcpv4
+lan-dhcpv6-dhcpv6-server-lan from=lan to=self ifnames=ens19 proto=udp port=547 action=accept direction= comment=net.routerd.net/v1alpha1/DHCPv6Server/lan-dhcpv6
 mgmt-dhcpv4-dhcpv4-client from=mgmt to=self ifnames=ens20 proto=udp port=68 action=accept direction= comment=net.routerd.net/v1alpha1/DHCPv4Client/mgmt-dhcpv4
 wan-dhcpv4-dhcpv4-client from=wan to=self ifnames=ens18 proto=udp port=68 action=accept direction= comment=net.routerd.net/v1alpha1/DHCPv4Client/wan-dhcpv4
 wan-pd-dhcpv6-client from=wan to=self ifnames=ens18 proto=udp port=546 action=accept direction= comment=net.routerd.net/v1alpha1/DHCPv6PrefixDelegation/wan-pd

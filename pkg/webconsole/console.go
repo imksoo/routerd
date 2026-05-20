@@ -2119,7 +2119,7 @@ func defaultResourceOwnerController(kind string) string {
 		return "address"
 	case "DHCPv4Client":
 		return "dhcpv4client"
-	case "DHCPv4Server", "DHCPv6Server", "DHCPv6Scope", "DHCPv6Information", "IPv6RouterAdvertisement":
+	case "DHCPv4Server", "DHCPv6Server", "DHCPv6Information", "IPv6RouterAdvertisement":
 		return "dhcpv6"
 	case "DNSResolver", "DNSZone":
 		return "dns-resolver"
