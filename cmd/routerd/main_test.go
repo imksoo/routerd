@@ -2680,6 +2680,8 @@ func TestResourceWhenCoversResourceLevelWhenSpecs(t *testing.T) {
 		testResourceWithSpecWhen("IPv6DelegatedAddress", api.IPv6DelegatedAddressSpec{When: want}),
 		testResourceWithSpecWhen("DHCPv6Server", api.DHCPv6ServerSpec{When: want}),
 		testResourceWithSpecWhen("DSLiteTunnel", api.DSLiteTunnelSpec{When: want}),
+		testResourceWithSpecWhen("DNSForwarder", api.DNSForwarderSpec{When: want}),
+		testResourceWithSpecWhen("DNSUpstream", api.DNSUpstreamSpec{When: want}),
 		testResourceWithSpecWhen("HealthCheck", api.HealthCheckSpec{When: want}),
 		testResourceWithSpecWhen("NAT44Rule", api.NAT44RuleSpec{When: want}),
 		testResourceWithSpecWhen("PortForward", api.PortForwardSpec{When: want}),

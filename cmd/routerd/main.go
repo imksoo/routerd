@@ -2448,6 +2448,12 @@ func resourceWhen(res api.Resource) api.ResourceWhenSpec {
 	case "DSLiteTunnel":
 		spec, _ := res.DSLiteTunnelSpec()
 		return spec.When
+	case "DNSForwarder":
+		spec, _ := res.DNSForwarderSpec()
+		return spec.When
+	case "DNSUpstream":
+		spec, _ := res.DNSUpstreamSpec()
+		return spec.When
 	case "HealthCheck":
 		spec, _ := res.HealthCheckSpec()
 		return spec.When

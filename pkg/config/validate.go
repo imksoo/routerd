@@ -3425,6 +3425,12 @@ func resourceWhens(res api.Resource) []resourceWhenRef {
 	case "DSLiteTunnel":
 		spec, _ := res.DSLiteTunnelSpec()
 		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
+	case "DNSForwarder":
+		spec, _ := res.DNSForwarderSpec()
+		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
+	case "DNSUpstream":
+		spec, _ := res.DNSUpstreamSpec()
+		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
 	case "HealthCheck":
 		spec, _ := res.HealthCheckSpec()
 		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}

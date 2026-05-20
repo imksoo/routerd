@@ -861,6 +861,7 @@ type DNSForwarderSpec struct {
 	Upstreams      []string                   `yaml:"upstreams,omitempty" json:"upstreams,omitempty"`
 	DNSSECValidate bool                       `yaml:"dnssecValidate,omitempty" json:"dnssecValidate,omitempty"`
 	Healthcheck    DNSResolverHealthcheckSpec `yaml:"healthcheck,omitempty" json:"healthcheck,omitempty"`
+	When           ResourceWhenSpec           `yaml:"when,omitempty" json:"when,omitempty"`
 }
 
 type DNSUpstreamSpec struct {
@@ -872,6 +873,7 @@ type DNSUpstreamSpec struct {
 	TLSName         string                  `yaml:"tlsName,omitempty" json:"tlsName,omitempty"`
 	Bootstrap       []string                `yaml:"bootstrap,omitempty" json:"bootstrap,omitempty"`
 	SourceInterface string                  `yaml:"sourceInterface,omitempty" json:"sourceInterface,omitempty"`
+	When            ResourceWhenSpec        `yaml:"when,omitempty" json:"when,omitempty"`
 }
 
 type DNSResolverCacheSpec struct {
