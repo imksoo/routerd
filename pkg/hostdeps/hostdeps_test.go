@@ -18,6 +18,8 @@ func TestDerivedSysctlResourcesForRouterHost(t *testing.T) {
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "lan-v6"}, Spec: api.IPv6DelegatedAddressSpec{Interface: "lan", PrefixDelegation: "wan-pd", AddressSuffix: "::1"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6RouterAdvertisement"}, Metadata: api.ObjectMeta{Name: "lan-ra"}, Spec: api.IPv6RouterAdvertisementSpec{Interface: "lan"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite-a"}, Spec: api.DSLiteTunnelSpec{Interface: "wan"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoESession"}, Metadata: api.ObjectMeta{Name: "flets"}, Spec: api.PPPoESessionSpec{Interface: "wan", IfName: "ppp-flets"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardInterface"}, Metadata: api.ObjectMeta{Name: "wg-mesh"}, Spec: api.WireGuardInterfaceSpec{}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44Rule"}, Metadata: api.ObjectMeta{Name: "lan-nat"}, Spec: api.NAT44RuleSpec{Type: "masquerade", EgressInterface: "wan"}},
 	}}}
 
@@ -27,6 +29,8 @@ func TestDerivedSysctlResourcesForRouterHost(t *testing.T) {
 		"net.ipv4.conf.all.send_redirects",
 		"net.ipv4.conf.default.send_redirects",
 		"net.ipv4.conf.ds-lite-a.rp_filter",
+		"net.ipv4.conf.ppp-flets.rp_filter",
+		"net.ipv4.conf.wg-mesh.rp_filter",
 		"net.ipv4.conf.ens19.send_redirects",
 		"net.ipv6.conf.ens18.accept_ra",
 		"net.ipv6.conf.ens19.accept_ra",
@@ -87,6 +91,7 @@ func TestPackageFeaturesCoverStandaloneDataplaneResources(t *testing.T) {
 		{kind: "PPPoESession", want: []string{"pppoe", "nft"}},
 		{kind: "WireGuardInterface", want: []string{"wireguard", "kmod", "nft"}},
 		{kind: "EgressRoutePolicy", want: []string{"base", "nft"}},
+		{kind: "HealthCheck", want: []string{"network-utils"}},
 	} {
 		t.Run(tc.kind, func(t *testing.T) {
 			router := routerWithSingleKind(tc.kind)
@@ -97,6 +102,28 @@ func TestPackageFeaturesCoverStandaloneDataplaneResources(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestPackageFeaturesDeriveVRRPRuntimeOnlyForVRRPVirtualAddress(t *testing.T) {
+	static := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"},
+		Metadata: api.ObjectMeta{Name: "static-vip"},
+		Spec:     api.VirtualAddressSpec{Family: "ipv4", Mode: "static"},
+	}}}}
+	if features := packageFeatures(static); features["vrrp"] {
+		t.Fatalf("static VirtualAddress features = %#v, want no vrrp", features)
+	}
+	vrrp := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"},
+		Metadata: api.ObjectMeta{Name: "vrrp-vip"},
+		Spec:     api.VirtualAddressSpec{Family: "ipv4", Mode: "vrrp"},
+	}}}}
+	features := packageFeatures(vrrp)
+	for _, want := range []string{"base", "vrrp"} {
+		if !features[want] {
+			t.Fatalf("vrrp VirtualAddress features missing %s in %#v", want, features)
+		}
 	}
 }
 

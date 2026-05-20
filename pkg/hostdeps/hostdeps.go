@@ -61,64 +61,71 @@ func PackageSets(router *api.Router) []api.OSPackageSetSpec {
 }
 
 var ubuntuPackages = map[string][]string{
-	"base":      {"iproute2", "systemd"},
-	"bgp":       {"frr"},
-	"conntrack": {"conntrack"},
-	"dhcp-dns":  {"dnsmasq-base"},
-	"dpi":       {"libnetfilter-log1", "libndpi-bin"},
-	"ipsec":     {"strongswan-swanctl"},
-	"kmod":      {"kmod"},
-	"nat":       {"nftables"},
-	"nft":       {"nftables"},
-	"ntp":       {"chrony"},
-	"pppoe":     {"ppp"},
-	"tailscale": {"tailscale", "tailscale-archive-keyring"},
-	"wireguard": {"wireguard-tools"},
+	"base":          {"iproute2", "systemd"},
+	"bgp":           {"frr"},
+	"conntrack":     {"conntrack"},
+	"dhcp-dns":      {"dnsmasq-base"},
+	"dpi":           {"libnetfilter-log1", "libndpi-bin"},
+	"ipsec":         {"strongswan-swanctl"},
+	"kmod":          {"kmod"},
+	"nat":           {"nftables"},
+	"nft":           {"nftables"},
+	"ntp":           {"chrony"},
+	"pppoe":         {"ppp"},
+	"network-utils": {"iputils-ping", "dnsutils", "traceroute"},
+	"tailscale":     {"tailscale", "tailscale-archive-keyring"},
+	"vrrp":          {"keepalived"},
+	"wireguard":     {"wireguard-tools"},
 }
 
 var debianPackages = ubuntuPackages
 
 var nixosPackages = map[string][]string{
-	"base":      {"iproute2", "systemd"},
-	"bgp":       {"frr"},
-	"conntrack": {"conntrack-tools"},
-	"dhcp-dns":  {"dnsmasq"},
-	"dpi":       {"libnetfilter_log", "ndpi"},
-	"ipsec":     {"strongswan"},
-	"kmod":      {"kmod"},
-	"nat":       {"nftables"},
-	"nft":       {"nftables"},
-	"ntp":       {"chrony"},
-	"pppoe":     {"ppp"},
-	"tailscale": {"tailscale"},
-	"wireguard": {"wireguard-tools"},
+	"base":          {"iproute2", "systemd"},
+	"bgp":           {"frr"},
+	"conntrack":     {"conntrack-tools"},
+	"dhcp-dns":      {"dnsmasq"},
+	"dpi":           {"libnetfilter_log", "ndpi"},
+	"ipsec":         {"strongswan"},
+	"kmod":          {"kmod"},
+	"nat":           {"nftables"},
+	"nft":           {"nftables"},
+	"ntp":           {"chrony"},
+	"pppoe":         {"ppp"},
+	"network-utils": {"iputils", "dnsutils", "traceroute"},
+	"tailscale":     {"tailscale"},
+	"vrrp":          {"keepalived"},
+	"wireguard":     {"wireguard-tools"},
 }
 
 var alpinePackages = map[string][]string{
-	"base":      {"iproute2"},
-	"bgp":       {"frr"},
-	"conntrack": {"conntrack-tools"},
-	"dhcp-dns":  {"dnsmasq"},
-	"dpi":       {"ndpi"},
-	"ipsec":     {"strongswan"},
-	"kmod":      {"kmod"},
-	"nat":       {"nftables"},
-	"nft":       {"nftables"},
-	"ntp":       {"chrony"},
-	"pppoe":     {"ppp", "ppp-pppoe"},
-	"tailscale": {"tailscale"},
-	"wireguard": {"wireguard-tools"},
+	"base":          {"iproute2"},
+	"bgp":           {"frr"},
+	"conntrack":     {"conntrack-tools"},
+	"dhcp-dns":      {"dnsmasq"},
+	"dpi":           {"ndpi"},
+	"ipsec":         {"strongswan"},
+	"kmod":          {"kmod"},
+	"nat":           {"nftables"},
+	"nft":           {"nftables"},
+	"ntp":           {"chrony"},
+	"pppoe":         {"ppp", "ppp-pppoe"},
+	"network-utils": {"iputils", "bind-tools", "traceroute"},
+	"tailscale":     {"tailscale"},
+	"vrrp":          {"keepalived"},
+	"wireguard":     {"wireguard-tools"},
 }
 
 var freebsdPackages = map[string][]string{
-	"bgp":       {"frr"},
-	"dhcp-dns":  {"dnsmasq"},
-	"dpi":       {"ndpi"},
-	"ipsec":     {"strongswan"},
-	"ntp":       {"chrony"},
-	"pppoe":     {"mpd5"},
-	"tailscale": {"tailscale"},
-	"wireguard": {"wireguard-tools"},
+	"bgp":           {"frr"},
+	"dhcp-dns":      {"dnsmasq"},
+	"dpi":           {"ndpi"},
+	"ipsec":         {"strongswan"},
+	"ntp":           {"chrony"},
+	"pppoe":         {"mpd5"},
+	"network-utils": {"bind-tools"},
+	"tailscale":     {"tailscale"},
+	"wireguard":     {"wireguard-tools"},
 }
 
 func packageFeatures(router *api.Router) map[string]bool {
@@ -130,6 +137,11 @@ func packageFeatures(router *api.Router) map[string]bool {
 		switch res.Kind {
 		case "Interface", "Bridge", "VXLANSegment", "VRF", "VXLANTunnel", "IPv4StaticAddress", "IPv6DelegatedAddress", "VirtualAddress", "IPv4Route", "IPv4StaticRoute", "IPv6StaticRoute", "ClusterNetworkRoute", "DHCPv4Client", "DHCPv6Address", "DHCPv6PrefixDelegation", "DHCPv6Information":
 			features["base"] = true
+			if res.Kind == "VirtualAddress" {
+				if spec, err := res.VirtualAddressSpec(); err == nil && spec.Mode == "vrrp" {
+					features["vrrp"] = true
+				}
+			}
 		case "DSLiteTunnel":
 			features["base"] = true
 			features["nft"] = true
@@ -150,6 +162,8 @@ func packageFeatures(router *api.Router) map[string]bool {
 			features["dpi"] = true
 		case "NTPClient", "NTPServer":
 			features["ntp"] = true
+		case "HealthCheck":
+			features["network-utils"] = true
 		case "PPPoESession":
 			features["pppoe"] = true
 			features["nft"] = true
@@ -306,7 +320,7 @@ func derivedRouterProfile(router *api.Router) (api.SysctlProfileSpec, bool) {
 func derivedInterfaceSysctls(router *api.Router) []sysctlResource {
 	aliases := interfaceAliases(router)
 	var out []sysctlResource
-	for _, tunnel := range dsLiteTunnelNames(router) {
+	for _, tunnel := range ipv4TunnelInterfaceNames(router) {
 		out = append(out, sysctlResource{
 			Name: "rp-filter-" + safeResourceName(tunnel),
 			Spec: api.SysctlSpec{
@@ -343,22 +357,38 @@ func derivedInterfaceSysctls(router *api.Router) []sysctlResource {
 	return out
 }
 
-func dsLiteTunnelNames(router *api.Router) []string {
+func ipv4TunnelInterfaceNames(router *api.Router) []string {
 	names := map[string]bool{}
 	for _, res := range router.Spec.Resources {
-		if res.Kind != "DSLiteTunnel" {
-			continue
-		}
-		spec, err := res.DSLiteTunnelSpec()
-		if err != nil {
-			continue
-		}
-		name := strings.TrimSpace(spec.TunnelName)
-		if name == "" {
-			name = res.Metadata.Name
-		}
-		if name != "" {
-			names[name] = true
+		switch res.Kind {
+		case "DSLiteTunnel":
+			spec, err := res.DSLiteTunnelSpec()
+			if err != nil {
+				continue
+			}
+			name := strings.TrimSpace(spec.TunnelName)
+			if name == "" {
+				name = res.Metadata.Name
+			}
+			if name != "" {
+				names[name] = true
+			}
+		case "PPPoESession":
+			spec, err := res.PPPoESessionSpec()
+			if err != nil {
+				continue
+			}
+			name := strings.TrimSpace(spec.IfName)
+			if name == "" {
+				name = "ppp-" + res.Metadata.Name
+			}
+			if name != "" {
+				names[name] = true
+			}
+		case "WireGuardInterface":
+			if res.Metadata.Name != "" {
+				names[res.Metadata.Name] = true
+			}
 		}
 	}
 	return sortedKeys(names)
