@@ -390,12 +390,46 @@ spec:
 | `EventRule` | Evaluates event streams with all_of, any_of, sequence, window, absence, throttle, debounce, and count. |
 | `DerivedEvent` | Emits virtual events derived from multiple resource states. |
 | `SelfAddressPolicy` | Selects a self address for protocols that need one. |
-| `StatePolicy` | Represents state-management policy. |
 
 `HealthCheck.spec.disabled` renders the daemon unit but disables and stops it.
 `EgressRoutePolicy` candidates also accept `disabled: true`; disabled
 candidates are not selected even if their last observed health status is still
 Healthy.
+
+## `spec.when`
+
+Resources that support `spec.when` are included only when the predicate matches
+routerd's local state store. The existing single-predicate form remains valid:
+
+```yaml
+when:
+  state:
+    wan.ipv6.mode:
+      equals: pd-ready
+```
+
+Use `all` for AND and `any` for OR. They can be nested to any depth:
+
+```yaml
+when:
+  any:
+    - all:
+        - state:
+            dslite.a.health:
+              status: set
+        - state:
+            wan.ipv6.mode:
+              in: [pd-ready, address-only]
+    - state:
+        pppoe.health:
+          equals: healthy
+```
+
+Each `when` node must be exactly one of `state`, `all`, or `any`. `state` maps
+state variable names to `exists`, `equals`, `in`, `contains`, `status`, and
+`for` matches. One-element `all` is equivalent to the single-predicate form.
+State-management resources are not exposed as config kinds; express conditional
+activation directly on the dependent resources with `spec.when`.
 
 `HealthCheck.spec.sourceInterface` accepts a network resource name and resolves
 it to the OS interface name at runtime. `via`, `fwmark`, and `sourceAddress`

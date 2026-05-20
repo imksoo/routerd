@@ -1,4 +1,87 @@
 {
+  "$defs": {
+    "ResourceWhen": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "state": {
+              "additionalProperties": {
+                "additionalProperties": false,
+                "properties": {
+                  "contains": {
+                    "type": "string"
+                  },
+                  "equals": {
+                    "type": "string"
+                  },
+                  "exists": {
+                    "type": "boolean"
+                  },
+                  "for": {
+                    "type": "string"
+                  },
+                  "in": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "status": {
+                    "enum": [
+                      "set",
+                      "unset",
+                      "unknown"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "minProperties": 1,
+              "type": "object"
+            }
+          },
+          "required": [
+            "state"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "all": {
+              "items": {
+                "$ref": "#/$defs/ResourceWhen"
+              },
+              "minItems": 1,
+              "type": "array"
+            }
+          },
+          "required": [
+            "all"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "any": {
+              "items": {
+                "$ref": "#/$defs/ResourceWhen"
+              },
+              "minItems": 1,
+              "type": "array"
+            }
+          },
+          "required": [
+            "any"
+          ],
+          "type": "object"
+        }
+      ]
+    }
+  },
   "$id": "https://routerd.net/schemas/routerd-config-v1alpha1.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
@@ -5469,141 +5552,6 @@
                     },
                     "required": [
                       "destination"
-                    ],
-                    "type": "object"
-                  },
-                  "status": {
-                    "additionalProperties": true,
-                    "type": "object"
-                  }
-                },
-                "required": [
-                  "apiVersion",
-                  "kind",
-                  "metadata",
-                  "spec"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "apiVersion": {
-                    "const": "net.routerd.net/v1alpha1",
-                    "type": "string"
-                  },
-                  "kind": {
-                    "const": "StatePolicy",
-                    "type": "string"
-                  },
-                  "metadata": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "name": {
-                        "minLength": 1,
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "name"
-                    ],
-                    "type": "object"
-                  },
-                  "spec": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "interface": {
-                        "type": "string"
-                      },
-                      "values": {
-                        "items": {
-                          "additionalProperties": false,
-                          "properties": {
-                            "value": {
-                              "type": "string"
-                            },
-                            "when": {
-                              "additionalProperties": false,
-                              "properties": {
-                                "dnsResolve": {
-                                  "additionalProperties": false,
-                                  "properties": {
-                                    "name": {
-                                      "type": "string"
-                                    },
-                                    "type": {
-                                      "enum": [
-                                        "AAAA"
-                                      ],
-                                      "type": "string"
-                                    },
-                                    "upstreamInterface": {
-                                      "type": "string"
-                                    },
-                                    "upstreamServers": {
-                                      "items": {
-                                        "type": "string"
-                                      },
-                                      "type": "array"
-                                    },
-                                    "upstreamSource": {
-                                      "enum": [
-                                        "static",
-                                        "dhcpv4",
-                                        "dhcpv6",
-                                        "system"
-                                      ],
-                                      "type": "string"
-                                    }
-                                  },
-                                  "type": "object"
-                                },
-                                "ipv6Address": {
-                                  "additionalProperties": false,
-                                  "properties": {
-                                    "global": {
-                                      "type": "boolean"
-                                    },
-                                    "interface": {
-                                      "type": "string"
-                                    }
-                                  },
-                                  "type": "object"
-                                },
-                                "ipv6PrefixDelegation": {
-                                  "additionalProperties": false,
-                                  "properties": {
-                                    "available": {
-                                      "type": "boolean"
-                                    },
-                                    "resource": {
-                                      "type": "string"
-                                    },
-                                    "unavailableFor": {
-                                      "type": "string"
-                                    }
-                                  },
-                                  "type": "object"
-                                }
-                              },
-                              "type": "object"
-                            }
-                          },
-                          "required": [
-                            "value",
-                            "when"
-                          ],
-                          "type": "object"
-                        },
-                        "type": "array"
-                      },
-                      "variable": {
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "variable",
-                      "values"
                     ],
                     "type": "object"
                   },

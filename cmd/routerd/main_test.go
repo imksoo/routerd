@@ -119,25 +119,11 @@ func TestRunApplyOnceDryRunDoesNotMutateExistingStateDB(t *testing.T) {
 		t.Fatalf("close sqlite: %v", err)
 	}
 
-	available := false
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 		Metadata: api.ObjectMeta{
 			Name: "test-router",
 		},
-		Spec: api.RouterSpec{Resources: []api.Resource{{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "StatePolicy"},
-			Metadata: api.ObjectMeta{Name: "mode"},
-			Spec: api.StatePolicySpec{
-				Variable: "wan.mode",
-				Values: []api.StateValueSpec{{
-					Value: "fallback",
-					When: api.StateConditionSpec{
-						DHCPv6PrefixDelegation: api.StateDHCPv6PrefixDelegationCondition{Available: &available},
-					},
-				}},
-			},
-		}}},
 	}
 	result, err := runApplyOnce(router, applyOptions{
 		DryRun:     true,
@@ -2654,12 +2640,100 @@ func TestStateWhenRequiresSetAndEqual(t *testing.T) {
 	}
 }
 
+func TestStateWhenAllAnyAndNested(t *testing.T) {
+	store := routerstate.New()
+	store.Set("wan.a", "up", "test")
+	store.Set("wan.b", "down", "test")
+	store.Set("wan.c", "ready", "test")
+
+	all := api.ResourceWhenSpec{All: []api.ResourceWhenSpec{
+		{State: map[string]api.StateMatchSpec{"wan.a": {Equals: "up"}}},
+		{State: map[string]api.StateMatchSpec{"wan.c": {Equals: "ready"}}},
+	}}
+	if !resourceWhenMatches(all, store) {
+		t.Fatal("all predicate did not match")
+	}
+
+	any := api.ResourceWhenSpec{Any: []api.ResourceWhenSpec{
+		{State: map[string]api.StateMatchSpec{"wan.a": {Equals: "down"}}},
+		{State: map[string]api.StateMatchSpec{"wan.b": {Equals: "down"}}},
+	}}
+	if !resourceWhenMatches(any, store) {
+		t.Fatal("any predicate did not match")
+	}
+
+	nested := api.ResourceWhenSpec{Any: []api.ResourceWhenSpec{
+		{All: []api.ResourceWhenSpec{
+			{State: map[string]api.StateMatchSpec{"wan.a": {Equals: "up"}}},
+			{State: map[string]api.StateMatchSpec{"wan.b": {Equals: "up"}}},
+		}},
+		{All: []api.ResourceWhenSpec{
+			{State: map[string]api.StateMatchSpec{"wan.a": {Equals: "up"}}},
+			{State: map[string]api.StateMatchSpec{"wan.c": {Equals: "ready"}}},
+		}},
+	}}
+	if !resourceWhenMatches(nested, store) {
+		t.Fatal("nested any/all predicate did not match")
+	}
+}
+
+func TestStateWhenSinglePredicateEqualsAllSugar(t *testing.T) {
+	store := routerstate.New()
+	store.Set("wan.ipv6.mode", "pd-ready", "test")
+	leaf := api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{"wan.ipv6.mode": {Equals: "pd-ready"}}}
+	all := api.ResourceWhenSpec{All: []api.ResourceWhenSpec{leaf}}
+	if resourceWhenMatches(leaf, store) != resourceWhenMatches(all, store) {
+		t.Fatal("single predicate and one-element all are not equivalent")
+	}
+}
+
+func TestResourceWhenCoversResourceLevelWhenSpecs(t *testing.T) {
+	want := api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{"wan.ready": {Equals: "true"}}}
+	for _, tc := range []api.Resource{
+		testResourceWithSpecWhen("ObservabilityPipeline", api.ObservabilityPipelineSpec{When: want}),
+		testResourceWithSpecWhen("RouterdCluster", api.RouterdClusterSpec{When: want}),
+		testResourceWithSpecWhen("VirtualIPv4Address", api.VirtualIPv4AddressSpec{When: want}),
+		testResourceWithSpecWhen("VirtualIPv6Address", api.VirtualIPv6AddressSpec{When: want}),
+		testResourceWithSpecWhen("BGPRouter", api.BGPRouterSpec{When: want}),
+		testResourceWithSpecWhen("BGPPeer", api.BGPPeerSpec{When: want}),
+		testResourceWithSpecWhen("ClusterNetworkRoute", api.ClusterNetworkRouteSpec{When: want}),
+		testResourceWithSpecWhen("DHCPv4Scope", api.DHCPv4ScopeSpec{When: want}),
+		testResourceWithSpecWhen("IPv6DelegatedAddress", api.IPv6DelegatedAddressSpec{When: want}),
+		testResourceWithSpecWhen("DHCPv6Scope", api.DHCPv6ScopeSpec{When: want}),
+		testResourceWithSpecWhen("DSLiteTunnel", api.DSLiteTunnelSpec{When: want}),
+		testResourceWithSpecWhen("HealthCheck", api.HealthCheckSpec{When: want}),
+		testResourceWithSpecWhen("IPv4SourceNAT", api.IPv4SourceNATSpec{When: want}),
+		testResourceWithSpecWhen("PortForward", api.PortForwardSpec{When: want}),
+		testResourceWithSpecWhen("IngressService", api.IngressServiceSpec{When: want}),
+		testResourceWithSpecWhen("IPAddressSet", api.IPAddressSetSpec{When: want}),
+		testResourceWithSpecWhen("LocalServiceRedirect", api.LocalServiceRedirectSpec{When: want}),
+		testResourceWithSpecWhen("IPv4PolicyRouteSet", api.IPv4PolicyRouteSetSpec{When: want}),
+	} {
+		t.Run(tc.Kind, func(t *testing.T) {
+			if got := resourceWhen(tc); !reflect.DeepEqual(got, want) {
+				t.Fatalf("resourceWhen(%s) = %#v, want %#v", tc.Kind, got, want)
+			}
+		})
+	}
+}
+
+func testResourceWithSpecWhen(kind string, spec any) api.Resource {
+	return api.Resource{
+		TypeMeta: api.TypeMeta{Kind: kind},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec:     spec,
+	}
+}
+
 func TestFilterDefaultRouteCandidatesByWhen(t *testing.T) {
 	store := routerstate.New()
 	store.Set("wan.ipv6.mode", "address-only", "test")
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{Kind: "IPv4DefaultRoutePolicy"}, Metadata: api.ObjectMeta{Name: "default-v4"}, Spec: api.IPv4DefaultRoutePolicySpec{Candidates: []api.IPv4DefaultRoutePolicyCandidate{
-			{Name: "dslite", RouteSet: "dslite", Priority: 10, When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{"wan.ipv6.mode": {In: []string{"pd-ready", "address-only"}}}}},
+			{Name: "dslite", RouteSet: "dslite", Priority: 10, When: api.ResourceWhenSpec{Any: []api.ResourceWhenSpec{
+				{State: map[string]api.StateMatchSpec{"wan.ipv6.mode": {Equals: "pd-ready"}}},
+				{State: map[string]api.StateMatchSpec{"wan.ipv6.mode": {Equals: "address-only"}}},
+			}}},
 			{Name: "pppoe", Interface: "wan-pppoe", Priority: 20, When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{"wan.ipv6.mode": {Equals: "ipv4-only"}}}},
 		}}},
 	}}}

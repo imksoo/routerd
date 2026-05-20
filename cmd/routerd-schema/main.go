@@ -50,6 +50,9 @@ func configSchema() map[string]any {
 			"spec",
 		},
 		"additionalProperties": false,
+		"$defs": map[string]any{
+			"ResourceWhen": resourceWhenSchema(),
+		},
 		"properties": map[string]any{
 			"apiVersion": constString(api.RouterAPIVersion),
 			"kind":       constString("Router"),
@@ -313,7 +316,6 @@ func resourceUnionSchema() map[string]any {
 			resourceSchema(api.NetAPIVersion, "DNSResolver", api.DNSResolverSpec{}),
 			resourceSchema(api.NetAPIVersion, "DSLiteTunnel", api.DSLiteTunnelSpec{}),
 			resourceSchema(api.NetAPIVersion, "IPv4Route", api.IPv4RouteSpec{}),
-			resourceSchema(api.NetAPIVersion, "StatePolicy", api.StatePolicySpec{}),
 			resourceSchema(api.NetAPIVersion, "HealthCheck", api.HealthCheckSpec{}),
 			resourceSchema(api.NetAPIVersion, "EgressRoutePolicy", api.EgressRoutePolicySpec{}),
 			resourceSchema(api.NetAPIVersion, "EventRule", api.EventRuleSpec{}),
@@ -380,7 +382,72 @@ func reflectedSchema(value any) map[string]any {
 	}
 	delete(schema, "$schema")
 	delete(schema, "$id")
+	patchResourceWhenSchemas(schema)
 	return schema
+}
+
+func resourceWhenSchema() map[string]any {
+	stateMatch := reflectedSchema(api.StateMatchSpec{})
+	return map[string]any{
+		"oneOf": []any{
+			map[string]any{
+				"type":                 "object",
+				"required":             []string{"state"},
+				"additionalProperties": false,
+				"properties": map[string]any{
+					"state": map[string]any{
+						"type":                 "object",
+						"minProperties":        1,
+						"additionalProperties": stateMatch,
+					},
+				},
+			},
+			map[string]any{
+				"type":                 "object",
+				"required":             []string{"all"},
+				"additionalProperties": false,
+				"properties": map[string]any{
+					"all": map[string]any{
+						"type":     "array",
+						"minItems": 1,
+						"items":    map[string]any{"$ref": "#/$defs/ResourceWhen"},
+					},
+				},
+			},
+			map[string]any{
+				"type":                 "object",
+				"required":             []string{"any"},
+				"additionalProperties": false,
+				"properties": map[string]any{
+					"any": map[string]any{
+						"type":     "array",
+						"minItems": 1,
+						"items":    map[string]any{"$ref": "#/$defs/ResourceWhen"},
+					},
+				},
+			},
+		},
+	}
+}
+
+func patchResourceWhenSchemas(value any) {
+	switch node := value.(type) {
+	case map[string]any:
+		if node["title"] == "ResourceWhenSpec" {
+			for key := range node {
+				delete(node, key)
+			}
+			node["$ref"] = "#/$defs/ResourceWhen"
+			return
+		}
+		for _, child := range node {
+			patchResourceWhenSchemas(child)
+		}
+	case []any:
+		for _, child := range node {
+			patchResourceWhenSchemas(child)
+		}
+	}
 }
 
 func metadataSchema() map[string]any {

@@ -3,6 +3,10 @@
 package config
 
 import (
+	"bytes"
+	"os"
+	"regexp"
+	"sort"
 	"strings"
 	"testing"
 
@@ -35,6 +39,145 @@ func TestValidateSysctl(t *testing.T) {
 	if err := Validate(router); err != nil {
 		t.Fatalf("validate sysctl: %v", err)
 	}
+}
+
+func TestValidateResourceWhenAnyAllNested(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"},
+			Metadata: api.ObjectMeta{Name: "internet"},
+			Spec: api.HealthCheckSpec{
+				TargetSource: "static",
+				Target:       "192.0.2.1",
+				When: api.ResourceWhenSpec{Any: []api.ResourceWhenSpec{
+					{All: []api.ResourceWhenSpec{
+						{State: map[string]api.StateMatchSpec{"wan.a": {Equals: "up"}}},
+						{State: map[string]api.StateMatchSpec{"wan.b": {Status: "set"}}},
+					}},
+					{State: map[string]api.StateMatchSpec{"wan.c": {In: []string{"ready", "fallback"}}}},
+				}},
+			},
+		}}},
+	}
+	if err := Validate(router); err != nil {
+		t.Fatalf("validate nested when: %v", err)
+	}
+}
+
+func TestValidateResourceWhenRejectsMixedForms(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"},
+			Metadata: api.ObjectMeta{Name: "internet"},
+			Spec: api.HealthCheckSpec{
+				TargetSource: "static",
+				Target:       "192.0.2.1",
+				When: api.ResourceWhenSpec{
+					State: map[string]api.StateMatchSpec{"wan.a": {Equals: "up"}},
+					Any:   []api.ResourceWhenSpec{{State: map[string]api.StateMatchSpec{"wan.b": {Equals: "up"}}}},
+				},
+			},
+		}}},
+	}
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "exactly one of state, all, or any") {
+		t.Fatalf("validate mixed when error = %v", err)
+	}
+}
+
+func TestValidateResourceWhenRejectsMixedFormsForEveryWhenField(t *testing.T) {
+	for _, tc := range whenValidationTestResources(invalidMixedResourceWhen()) {
+		t.Run(tc.specName, func(t *testing.T) {
+			if refs := resourceWhens(tc.resource); len(refs) == 0 {
+				t.Fatalf("resourceWhens returned no refs for %s", tc.resource.Kind)
+			}
+			router := &api.Router{
+				TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+				Metadata: api.ObjectMeta{Name: "test"},
+				Spec:     api.RouterSpec{Resources: []api.Resource{tc.resource}},
+			}
+			err := Validate(router)
+			if err == nil || !strings.Contains(err.Error(), "exactly one of state, all, or any") {
+				t.Fatalf("Validate(%s) error = %v", tc.specName, err)
+			}
+		})
+	}
+}
+
+func TestResourceWhensCoversAPISpecWhenFields(t *testing.T) {
+	actual := apiSpecStructsWithResourceWhen(t)
+	expected := make([]string, 0, len(whenValidationTestResources(api.ResourceWhenSpec{})))
+	for _, tc := range whenValidationTestResources(api.ResourceWhenSpec{}) {
+		expected = append(expected, tc.specName)
+	}
+	sort.Strings(expected)
+	if strings.Join(actual, "\n") != strings.Join(expected, "\n") {
+		t.Fatalf("when validation resource table mismatch\nactual:\n%s\nexpected:\n%s", strings.Join(actual, "\n"), strings.Join(expected, "\n"))
+	}
+}
+
+type whenValidationTestResource struct {
+	specName string
+	resource api.Resource
+}
+
+func whenValidationTestResources(when api.ResourceWhenSpec) []whenValidationTestResource {
+	return []whenValidationTestResource{
+		{specName: "ObservabilityPipelineSpec", resource: testResource(api.SystemAPIVersion, "ObservabilityPipeline", "observability", api.ObservabilityPipelineSpec{When: when})},
+		{specName: "RouterdClusterSpec", resource: testResource(api.SystemAPIVersion, "RouterdCluster", "cluster", api.RouterdClusterSpec{Peers: []string{"router-a", "router-b"}, LeasePath: "/run/routerd/cluster/lease", When: when})},
+		{specName: "VirtualIPv4AddressSpec", resource: testResource(api.NetAPIVersion, "VirtualIPv4Address", "vip4", api.VirtualIPv4AddressSpec{Interface: "lan", Address: "192.0.2.10/32", When: when})},
+		{specName: "VirtualIPv6AddressSpec", resource: testResource(api.NetAPIVersion, "VirtualIPv6Address", "vip6", api.VirtualIPv6AddressSpec{Interface: "lan", Address: "2001:db8::10/128", When: when})},
+		{specName: "BGPRouterSpec", resource: testResource(api.NetAPIVersion, "BGPRouter", "main", api.BGPRouterSpec{ASN: 64500, RouterID: "192.0.2.1", When: when})},
+		{specName: "BGPPeerSpec", resource: testResource(api.NetAPIVersion, "BGPPeer", "k8s-rt", api.BGPPeerSpec{RouterRef: "BGPRouter/main", PeerASN: 64512, Peers: []string{"192.0.2.2"}, When: when})},
+		{specName: "ClusterNetworkRouteSpec", resource: testResource(api.NetAPIVersion, "ClusterNetworkRoute", "k8s", api.ClusterNetworkRouteSpec{Pods: api.ClusterNetworkRouteCIDRSpec{CIDRs: []string{"10.244.0.0/16"}}, Via: []api.ClusterNetworkRouteViaSpec{{Interface: "lan", NextHop: "192.0.2.2"}}, When: when})},
+		{specName: "DHCPv4ScopeSpec", resource: testResource(api.NetAPIVersion, "DHCPv4Scope", "lan", api.DHCPv4ScopeSpec{Server: "dnsmasq", Interface: "lan", RangeStart: "192.0.2.100", RangeEnd: "192.0.2.150", When: when})},
+		{specName: "IPv6DelegatedAddressSpec", resource: testResource(api.NetAPIVersion, "IPv6DelegatedAddress", "lan-v6", api.IPv6DelegatedAddressSpec{PrefixDelegation: "wan-pd", Interface: "lan", AddressSuffix: "::1", When: when})},
+		{specName: "DHCPv6ScopeSpec", resource: testResource(api.NetAPIVersion, "DHCPv6Scope", "lan-v6", api.DHCPv6ScopeSpec{Server: "dnsmasq", DelegatedAddress: "lan-v6", When: when})},
+		{specName: "DSLiteTunnelSpec", resource: testResource(api.NetAPIVersion, "DSLiteTunnel", "dslite", api.DSLiteTunnelSpec{Interface: "wan", AFTRIPv6: "2001:db8::1", When: when})},
+		{specName: "HealthCheckSpec", resource: testResource(api.NetAPIVersion, "HealthCheck", "internet", api.HealthCheckSpec{TargetSource: "static", Target: "192.0.2.1", When: when})},
+		{specName: "IPv4DefaultRoutePolicyCandidate", resource: testResource(api.NetAPIVersion, "IPv4DefaultRoutePolicy", "default-v4", api.IPv4DefaultRoutePolicySpec{Candidates: []api.IPv4DefaultRoutePolicyCandidate{{Interface: "wan", Priority: 1, Table: 100, Mark: 100, When: when}}})},
+		{specName: "IPv4SourceNATSpec", resource: testResource(api.NetAPIVersion, "IPv4SourceNAT", "lan", api.IPv4SourceNATSpec{OutboundInterface: "wan", SourceCIDRs: []string{"192.0.2.0/24"}, Translation: api.IPv4NATTranslationSpec{Type: "interfaceAddress"}, When: when})},
+		{specName: "PortForwardSpec", resource: testResource(api.FirewallAPIVersion, "PortForward", "web", api.PortForwardSpec{Listen: api.IngressListenSpec{Interface: "wan", Protocol: "tcp", Port: 443}, Target: api.IngressTargetSpec{Address: "192.0.2.10", Port: 8443}, When: when})},
+		{specName: "IngressServiceSpec", resource: testResource(api.FirewallAPIVersion, "IngressService", "web", api.IngressServiceSpec{Listen: api.IngressListenSpec{Interface: "wan", Protocol: "tcp", Port: 443}, Backends: []api.IngressBackendSpec{{Address: "192.0.2.10", Port: 8443}}, When: when})},
+		{specName: "IPAddressSetSpec", resource: testResource(api.NetAPIVersion, "IPAddressSet", "blocked", api.IPAddressSetSpec{Addresses: []string{"192.0.2.10"}, When: when})},
+		{specName: "LocalServiceRedirectSpec", resource: testResource(api.FirewallAPIVersion, "LocalServiceRedirect", "dns", api.LocalServiceRedirectSpec{Interface: "lan", Rules: []api.LocalServiceRedirectRuleSpec{{Protocols: []string{"tcp"}, DestinationSetRef: "dns-servers", DestinationPort: 53, RedirectPort: 5353}}, When: when})},
+		{specName: "IPv4PolicyRouteSetSpec", resource: testResource(api.NetAPIVersion, "IPv4PolicyRouteSet", "split", api.IPv4PolicyRouteSetSpec{HashFields: []string{"sourceAddress"}, SourceCIDRs: []string{"192.0.2.0/24"}, Targets: []api.IPv4PolicyRouteTarget{{OutboundInterface: "wan-a", Table: 100, Priority: 100, Mark: 100}, {OutboundInterface: "wan-b", Table: 101, Priority: 101, Mark: 101}}, When: when})},
+	}
+}
+
+func invalidMixedResourceWhen() api.ResourceWhenSpec {
+	return api.ResourceWhenSpec{
+		State: map[string]api.StateMatchSpec{"wan.a": {Equals: "up"}},
+		Any:   []api.ResourceWhenSpec{{State: map[string]api.StateMatchSpec{"wan.b": {Equals: "up"}}}},
+	}
+}
+
+func testResource(apiVersion, kind, name string, spec any) api.Resource {
+	return api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: apiVersion, Kind: kind},
+		Metadata: api.ObjectMeta{Name: name},
+		Spec:     spec,
+	}
+}
+
+func apiSpecStructsWithResourceWhen(t *testing.T) []string {
+	t.Helper()
+	data, err := os.ReadFile("../api/specs.go")
+	if err != nil {
+		t.Fatalf("read api specs: %v", err)
+	}
+	re := regexp.MustCompile(`(?s)type\s+(\w+)\s+struct\s*\{([^{}]*)\}`)
+	var out []string
+	for _, match := range re.FindAllSubmatch(data, -1) {
+		if bytes.Contains(match[2], []byte("When")) && regexp.MustCompile(`\bWhen\s+ResourceWhenSpec\b`).Match(match[2]) {
+			out = append(out, string(match[1]))
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 func TestValidatePackageSupportsAlpineAPK(t *testing.T) {

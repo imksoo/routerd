@@ -974,6 +974,8 @@ type DHCPv6ScopeSpec struct {
 
 type ResourceWhenSpec struct {
 	State map[string]StateMatchSpec `yaml:"state,omitempty" json:"state,omitempty"`
+	All   []ResourceWhenSpec        `yaml:"all,omitempty" json:"all,omitempty" jsonschema:"-"`
+	Any   []ResourceWhenSpec        `yaml:"any,omitempty" json:"any,omitempty" jsonschema:"-"`
 }
 
 type StateMatchSpec struct {
@@ -1043,42 +1045,6 @@ type IPv4RouteSpec struct {
 	Metric      int                      `yaml:"metric,omitempty" json:"metric,omitempty" jsonschema:"minimum=0"`
 	DependsOn   []ResourceDependencySpec `yaml:"dependsOn,omitempty" json:"dependsOn,omitempty"`
 	ReadyWhen   []ReadyWhenSpec          `yaml:"ready_when,omitempty" json:"-"`
-}
-
-type StatePolicySpec struct {
-	Variable  string           `yaml:"variable" json:"variable"`
-	Interface string           `yaml:"interface,omitempty" json:"interface,omitempty"`
-	Values    []StateValueSpec `yaml:"values" json:"values"`
-}
-
-type StateValueSpec struct {
-	Value string             `yaml:"value" json:"value"`
-	When  StateConditionSpec `yaml:"when" json:"when"`
-}
-
-type StateConditionSpec struct {
-	DHCPv6PrefixDelegation StateDHCPv6PrefixDelegationCondition `yaml:"ipv6PrefixDelegation,omitempty" json:"ipv6PrefixDelegation,omitempty"`
-	IPv6Address            StateIPv6AddressCondition            `yaml:"ipv6Address,omitempty" json:"ipv6Address,omitempty"`
-	DNSResolve             StateDNSResolveCondition             `yaml:"dnsResolve,omitempty" json:"dnsResolve,omitempty"`
-}
-
-type StateDHCPv6PrefixDelegationCondition struct {
-	Resource       string `yaml:"resource,omitempty" json:"resource,omitempty"`
-	Available      *bool  `yaml:"available,omitempty" json:"available,omitempty"`
-	UnavailableFor string `yaml:"unavailableFor,omitempty" json:"unavailableFor,omitempty"`
-}
-
-type StateIPv6AddressCondition struct {
-	Interface string `yaml:"interface,omitempty" json:"interface,omitempty"`
-	Global    *bool  `yaml:"global,omitempty" json:"global,omitempty"`
-}
-
-type StateDNSResolveCondition struct {
-	Name              string   `yaml:"name,omitempty" json:"name,omitempty"`
-	Type              string   `yaml:"type,omitempty" json:"type,omitempty" jsonschema:"enum=AAAA"`
-	UpstreamSource    string   `yaml:"upstreamSource,omitempty" json:"upstreamSource,omitempty" jsonschema:"enum=static,enum=dhcpv4,enum=dhcpv6,enum=system"`
-	UpstreamInterface string   `yaml:"upstreamInterface,omitempty" json:"upstreamInterface,omitempty"`
-	UpstreamServers   []string `yaml:"upstreamServers,omitempty" json:"upstreamServers,omitempty"`
 }
 
 type HealthCheckSpec struct {
@@ -1709,10 +1675,6 @@ func (r Resource) DSLiteTunnelSpec() (DSLiteTunnelSpec, error) {
 
 func (r Resource) IPv4RouteSpec() (IPv4RouteSpec, error) {
 	return specAs[IPv4RouteSpec](r)
-}
-
-func (r Resource) StatePolicySpec() (StatePolicySpec, error) {
-	return specAs[StatePolicySpec](r)
 }
 
 func (r Resource) HealthCheckSpec() (HealthCheckSpec, error) {

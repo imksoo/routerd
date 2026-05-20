@@ -374,12 +374,6 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
 		r.Spec = spec
-	case "StatePolicy":
-		var spec StatePolicySpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
 	case "HealthCheck":
 		if hasMappingKey(&raw.Spec, "socketSource") {
 			return fmt.Errorf("%s spec.socketSource is not supported; routerd derives daemon sockets automatically", r.ID())
@@ -519,6 +513,8 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 		return fmt.Errorf("%s is not supported; use router resources and platform renderers instead of host implementation resources", r.ID())
 	case "Link":
 		return fmt.Errorf("%s is not supported; use Interface resources as link status providers", r.ID())
+	case "StatePolicy":
+		return fmt.Errorf("%s is not supported; use spec.when any/all predicates on the dependent resources", r.ID())
 	default:
 		return fmt.Errorf("unsupported resource kind %s in %s", raw.Kind, r.ID())
 	}

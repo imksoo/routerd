@@ -450,15 +450,10 @@ func configCommand(args []string, stdout io.Writer, name string) (err error) {
 	if err != nil {
 		return err
 	}
-	stateChanges, err := recordObservedPrefixDelegationState(router, stateStore)
+	_, err = recordObservedPrefixDelegationState(router, stateStore)
 	if err != nil {
 		return err
 	}
-	policyChanges, err := evaluateStatePolicies(router, stateStore)
-	if err != nil {
-		return err
-	}
-	stateChanges = append(stateChanges, policyChanges...)
 	effectiveRouter := filterRouterByWhen(router, stateStore)
 	configWarnings := config.Warnings(router)
 	switch name {
@@ -468,7 +463,6 @@ func configCommand(args []string, stdout io.Writer, name string) (err error) {
 			return err
 		}
 		result.Warnings = append(result.Warnings, configWarnings...)
-		appendStatePolicyResults(result, router, stateStore, stateChanges)
 		appendPrefixDelegationStateWarnings(result, router, stateStore)
 		return writeResult(stdout, *statusFile, result)
 	case "plan":
@@ -477,7 +471,6 @@ func configCommand(args []string, stdout io.Writer, name string) (err error) {
 			return err
 		}
 		result.Warnings = append(result.Warnings, configWarnings...)
-		appendStatePolicyResults(result, router, stateStore, stateChanges)
 		appendPrefixDelegationStateWarnings(result, router, stateStore)
 		return writeResult(stdout, *statusFile, result)
 	case "run":
@@ -877,7 +870,7 @@ func apiVersionForKind(kind string) string {
 		return api.ObservabilityAPIVersion
 	case "Inventory":
 		return api.RouterAPIVersion
-	case "Interface", "Bridge", "VXLANSegment", "WireGuardInterface", "WireGuardPeer", "TailscaleNode", "IPsecConnection", "VRF", "VXLANTunnel", "PPPoEInterface", "PPPoESession", "IPv4StaticAddress", "DHCPv4Lease", "IPv4StaticRoute", "IPv6StaticRoute", "ClusterNetworkRoute", "DHCPv4Server", "DHCPv4Scope", "DHCPv4Reservation", "DHCPv6Address", "IPv6RAAddress", "DHCPv6PrefixDelegation", "IPv6DelegatedAddress", "DHCPv6Information", "IPv6RouterAdvertisement", "DHCPv6Server", "DHCPv6Scope", "DHCPv4Relay", "DNSZone", "DNSResolver", "SelfAddressPolicy", "DSLiteTunnel", "IPv4Route", "StatePolicy", "HealthCheck", "EgressRoutePolicy", "EventRule", "DerivedEvent", "IPv4DefaultRoutePolicy", "IPv4SourceNAT", "NAT44Rule", "IPAddressSet", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "IPv4ReversePathFilter", "PathMTUPolicy":
+	case "Interface", "Bridge", "VXLANSegment", "WireGuardInterface", "WireGuardPeer", "TailscaleNode", "IPsecConnection", "VRF", "VXLANTunnel", "PPPoEInterface", "PPPoESession", "IPv4StaticAddress", "DHCPv4Lease", "IPv4StaticRoute", "IPv6StaticRoute", "ClusterNetworkRoute", "DHCPv4Server", "DHCPv4Scope", "DHCPv4Reservation", "DHCPv6Address", "IPv6RAAddress", "DHCPv6PrefixDelegation", "IPv6DelegatedAddress", "DHCPv6Information", "IPv6RouterAdvertisement", "DHCPv6Server", "DHCPv6Scope", "DHCPv4Relay", "DNSZone", "DNSResolver", "SelfAddressPolicy", "DSLiteTunnel", "IPv4Route", "HealthCheck", "EgressRoutePolicy", "EventRule", "DerivedEvent", "IPv4DefaultRoutePolicy", "IPv4SourceNAT", "NAT44Rule", "IPAddressSet", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "IPv4ReversePathFilter", "PathMTUPolicy":
 		return api.NetAPIVersion
 	default:
 		return ""
@@ -1080,15 +1073,10 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 			return nil, err
 		}
 	}
-	stateChanges, err := recordObservedPrefixDelegationState(router, stateStore)
+	_, err = recordObservedPrefixDelegationState(router, stateStore)
 	if err != nil {
 		return nil, err
 	}
-	policyChanges, err := evaluateStatePolicies(router, stateStore)
-	if err != nil {
-		return nil, err
-	}
-	stateChanges = append(stateChanges, policyChanges...)
 	effectiveRouter := filterRouterByWhen(router, stateStore)
 	engine := apply.New()
 	result, err := engine.Plan(effectiveRouter)
@@ -1099,7 +1087,6 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 		result.Generation = generation
 	}
 	result.Warnings = append(result.Warnings, optionWarnings...)
-	appendStatePolicyResults(result, router, stateStore, stateChanges)
 	appendPrefixDelegationStateWarnings(result, router, stateStore)
 	if err := appendLedgerOwnedOrphans(result, effectiveRouter, opts.LedgerPath, opts.DryRun); err != nil {
 		return nil, err
@@ -1920,46 +1907,6 @@ type stateChange struct {
 	Value routerstate.Value
 }
 
-func evaluateStatePolicies(router *api.Router, store routerstate.Store) ([]stateChange, error) {
-	aliases := map[string]string{}
-	for _, res := range router.Spec.Resources {
-		if res.Kind != "Interface" {
-			continue
-		}
-		spec, err := res.InterfaceSpec()
-		if err != nil {
-			return nil, err
-		}
-		aliases[res.Metadata.Name] = spec.IfName
-	}
-	var changes []stateChange
-	for _, res := range router.Spec.Resources {
-		if res.Kind != "StatePolicy" {
-			continue
-		}
-		spec, err := res.StatePolicySpec()
-		if err != nil {
-			return nil, err
-		}
-		applied := false
-		for _, value := range spec.Values {
-			ok, err := evaluateStateConditions(router, aliases, store, spec, value)
-			if err != nil {
-				return nil, fmt.Errorf("%s: %w", res.ID(), err)
-			}
-			if ok {
-				changes = append(changes, stateChange{Name: spec.Variable, Value: store.Set(spec.Variable, value.Value, res.ID())})
-				applied = true
-				break
-			}
-		}
-		if !applied {
-			changes = append(changes, stateChange{Name: spec.Variable, Value: store.Unset(spec.Variable, res.ID()+": no value matched")})
-		}
-	}
-	return changes, nil
-}
-
 func recordObservedPrefixDelegationState(router *api.Router, store routerstate.Store) ([]stateChange, error) {
 	aliases := map[string]string{}
 	for _, res := range router.Spec.Resources {
@@ -2443,96 +2390,10 @@ func delegatedPrefixFromObserved(prefixes, addresses []string, prefixLength int)
 	return "", false
 }
 
-func evaluateStateConditions(router *api.Router, aliases map[string]string, store routerstate.Store, policy api.StatePolicySpec, value api.StateValueSpec) (bool, error) {
-	if value.When.DHCPv6PrefixDelegation.Resource != "" || value.When.DHCPv6PrefixDelegation.Available != nil {
-		ok, known, err := stateDHCPv6PrefixDelegationAvailable(router, aliases, value.When.DHCPv6PrefixDelegation)
-		predicateName := policy.Variable + "." + value.Value + ".ipv6PrefixDelegation"
-		if err != nil || !known {
-			store.Forget(predicateName, "ipv6 prefix delegation unknown")
-			return false, err
-		}
-		if ok {
-			store.Set(predicateName, "available", "ipv6 prefix delegation available")
-		} else {
-			store.Unset(predicateName, "ipv6 prefix delegation unavailable")
-		}
-		if value.When.DHCPv6PrefixDelegation.Available != nil && ok != *value.When.DHCPv6PrefixDelegation.Available {
-			return false, nil
-		}
-		if value.When.DHCPv6PrefixDelegation.UnavailableFor != "" {
-			duration, err := time.ParseDuration(value.When.DHCPv6PrefixDelegation.UnavailableFor)
-			if err != nil {
-				return false, err
-			}
-			if store.Get(predicateName).Status != routerstate.StatusUnset || store.Age(predicateName) < duration {
-				return false, nil
-			}
-		}
-	}
-	if value.When.IPv6Address.Global != nil || value.When.IPv6Address.Interface != "" {
-		ifname := aliases[defaultString(value.When.IPv6Address.Interface, policy.Interface)]
-		hasGlobal := firstGlobalIPv6(ipv6Addresses(ifname)) != ""
-		if value.When.IPv6Address.Global != nil && hasGlobal != *value.When.IPv6Address.Global {
-			return false, nil
-		}
-	}
-	if value.When.DNSResolve.Name != "" {
-		addrs, err := resolveStateDNS(value.When.DNSResolve, aliases)
-		if err != nil || len(addrs) == 0 {
-			return false, nil
-		}
-	}
-	return true, nil
-}
-
-func stateDHCPv6PrefixDelegationAvailable(router *api.Router, aliases map[string]string, cond api.StateDHCPv6PrefixDelegationCondition) (bool, bool, error) {
-	for _, res := range router.Spec.Resources {
-		if res.Kind != "IPv6DelegatedAddress" {
-			continue
-		}
-		spec, err := res.IPv6DelegatedAddressSpec()
-		if err != nil {
-			return false, false, err
-		}
-		if cond.Resource != "" && spec.PrefixDelegation != cond.Resource {
-			continue
-		}
-		ifname := aliases[spec.Interface]
-		if ifname == "" {
-			continue
-		}
-		if _, err := deriveIPv6AddressFromInterface(ifname, spec.AddressSuffix); err == nil {
-			return true, true, nil
-		}
-	}
-	return false, true, nil
-}
-
-func resolveStateDNS(spec api.StateDNSResolveCondition, aliases map[string]string) ([]string, error) {
-	if defaultString(spec.Type, "AAAA") != "AAAA" {
-		return nil, fmt.Errorf("unsupported DNS resolve type %q", spec.Type)
-	}
-	servers := spec.UpstreamServers
-	if len(servers) == 0 || defaultString(spec.UpstreamSource, "system") == "system" {
-		return net.LookupHost(spec.Name)
-	}
-	var out []string
-	for _, server := range servers {
-		addrs, err := resolveAAAAWithServers(spec.Name, []string{server}, 0, "")
-		if err == nil && addrs != "" {
-			out = append(out, addrs)
-		}
-	}
-	return out, nil
-}
-
 func filterRouterByWhen(router *api.Router, store routerstate.Store) *api.Router {
 	filtered := *router
 	filtered.Spec.Resources = nil
 	for _, res := range router.Spec.Resources {
-		if res.Kind == "StatePolicy" {
-			continue
-		}
 		when := resourceWhen(res)
 		if resourceWhenMatches(when, store) {
 			if res.Kind == "IPv4DefaultRoutePolicy" {
@@ -2562,6 +2423,27 @@ func filterDefaultRoutePolicyCandidatesByWhen(res api.Resource, store routerstat
 
 func resourceWhen(res api.Resource) api.ResourceWhenSpec {
 	switch res.Kind {
+	case "ObservabilityPipeline":
+		spec, _ := res.ObservabilityPipelineSpec()
+		return spec.When
+	case "RouterdCluster":
+		spec, _ := res.RouterdClusterSpec()
+		return spec.When
+	case "VirtualIPv4Address":
+		spec, _ := res.VirtualIPv4AddressSpec()
+		return spec.When
+	case "VirtualIPv6Address":
+		spec, _ := res.VirtualIPv6AddressSpec()
+		return spec.When
+	case "BGPRouter":
+		spec, _ := res.BGPRouterSpec()
+		return spec.When
+	case "BGPPeer":
+		spec, _ := res.BGPPeerSpec()
+		return spec.When
+	case "ClusterNetworkRoute":
+		spec, _ := res.ClusterNetworkRouteSpec()
+		return spec.When
 	case "DHCPv4Scope":
 		spec, _ := res.DHCPv4ScopeSpec()
 		return spec.When
@@ -2580,11 +2462,20 @@ func resourceWhen(res api.Resource) api.ResourceWhenSpec {
 	case "IPv4SourceNAT":
 		spec, _ := res.IPv4SourceNATSpec()
 		return spec.When
+	case "PortForward":
+		spec, _ := res.PortForwardSpec()
+		return spec.When
+	case "IngressService":
+		spec, _ := res.IngressServiceSpec()
+		return spec.When
+	case "IPAddressSet":
+		spec, _ := res.IPAddressSetSpec()
+		return spec.When
+	case "LocalServiceRedirect":
+		spec, _ := res.LocalServiceRedirectSpec()
+		return spec.When
 	case "IPv4PolicyRouteSet":
 		spec, _ := res.IPv4PolicyRouteSetSpec()
-		return spec.When
-	case "ClusterNetworkRoute":
-		spec, _ := res.ClusterNetworkRouteSpec()
 		return spec.When
 	default:
 		return api.ResourceWhenSpec{}
@@ -2592,6 +2483,22 @@ func resourceWhen(res api.Resource) api.ResourceWhenSpec {
 }
 
 func resourceWhenMatches(when api.ResourceWhenSpec, store routerstate.Store) bool {
+	if len(when.All) > 0 {
+		for _, child := range when.All {
+			if !resourceWhenMatches(child, store) {
+				return false
+			}
+		}
+		return true
+	}
+	if len(when.Any) > 0 {
+		for _, child := range when.Any {
+			if resourceWhenMatches(child, store) {
+				return true
+			}
+		}
+		return false
+	}
 	if len(when.State) == 0 {
 		return true
 	}
@@ -2635,37 +2542,6 @@ func stateMatch(store routerstate.Store, name string, match api.StateMatchSpec) 
 		}
 	}
 	return true
-}
-
-func appendStatePolicyResults(result *apply.Result, router *api.Router, store routerstate.Store, changes []stateChange) {
-	changed := map[string]routerstate.Value{}
-	for _, change := range changes {
-		changed[change.Name] = change.Value
-	}
-	for _, res := range router.Spec.Resources {
-		if res.Kind != "StatePolicy" {
-			continue
-		}
-		spec, err := res.StatePolicySpec()
-		if err != nil {
-			continue
-		}
-		value := store.Get(spec.Variable)
-		if changedValue, ok := changed[spec.Variable]; ok {
-			value = changedValue
-		}
-		result.Resources = append(result.Resources, apply.ResourceResult{
-			ID:    res.ID(),
-			Phase: "Healthy",
-			Observed: map[string]string{
-				"variable": spec.Variable,
-				"status":   value.Status,
-				"value":    value.Value,
-				"since":    value.Since.Format(time.RFC3339),
-			},
-			Plan: []string{"evaluate state variable " + spec.Variable},
-		})
-	}
 }
 
 func appendPrefixDelegationStateWarnings(result *apply.Result, router *api.Router, store routerstate.Store) {

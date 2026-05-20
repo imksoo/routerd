@@ -44,6 +44,7 @@ func TestLoadRejectsRemovedImplementationResources(t *testing.T) {
 		{kind: "NetworkAdoption", apiVersion: "system.routerd.net/v1alpha1", spec: "interface: wan\n"},
 		{kind: "NixOSHost", apiVersion: "system.routerd.net/v1alpha1", spec: "hostname: router\n"},
 		{kind: "Link", apiVersion: "net.routerd.net/v1alpha1", spec: "ifname: eth0\n"},
+		{kind: "StatePolicy", apiVersion: "net.routerd.net/v1alpha1", spec: "variable: wan.mode\nvalues:\n  - value: ready\n    when: {}\n"},
 	} {
 		t.Run(tc.kind, func(t *testing.T) {
 			path := writeConfig(t, `

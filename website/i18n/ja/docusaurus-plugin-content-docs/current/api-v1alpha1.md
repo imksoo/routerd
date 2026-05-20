@@ -357,11 +357,44 @@ DS-Lite、IPv4 既定経路、NAT44 は実 lab で動作確認済みです。
 | `EventRule` | イベント列に対して all_of、any_of、sequence、window、absence、throttle、debounce、count を評価します。 |
 | `DerivedEvent` | 複数リソースの状態から仮想イベントを発行します。 |
 | `SelfAddressPolicy` | 自ホストアドレスの選択方針を表します。 |
-| `StatePolicy` | 状態管理の方針を表します。 |
 
 `HealthCheck.spec.disabled` を `true` にすると、daemon ユニットは生成しますが停止・無効化します。
 `EgressRoutePolicy` の候補にも `disabled: true` を指定できます。
 無効化した候補は、最後の観測状態が Healthy のままでも選択されません。
+
+## `spec.when`
+
+`spec.when` を持つ resource は、routerd の local state store に対する predicate が一致したときだけ有効になります。既存の単一 predicate 構文は引き続き使えます。
+
+```yaml
+when:
+  state:
+    wan.ipv6.mode:
+      equals: pd-ready
+```
+
+AND は `all`、OR は `any` で表します。任意の深さで nest できます。
+
+```yaml
+when:
+  any:
+    - all:
+        - state:
+            dslite.a.health:
+              status: set
+        - state:
+            wan.ipv6.mode:
+              in: [pd-ready, address-only]
+    - state:
+        pppoe.health:
+          equals: healthy
+```
+
+各 `when` node は `state`、`all`、`any` のどれか 1 つだけを持ちます。
+`state` は state variable 名を key にし、`exists`、`equals`、`in`、`contains`、
+`status`、`for` で照合します。1 要素の `all` は単一 predicate 構文と等価です。
+状態管理専用の resource kind は公開しません。条件付き activation は依存する resource の
+`spec.when` に直接書きます。
 
 `HealthCheck.spec.sourceInterface` は実行時に OS のインターフェース名へ解決されます。
 Linux では `SO_BINDTODEVICE` を使います。`fwmark` を指定した場合は
