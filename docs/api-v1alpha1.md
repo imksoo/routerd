@@ -133,6 +133,7 @@ owned by `routerd-dhcpv6-client`.
 | `DHCPv4Reservation` | Reserves an IPv4 address for a MAC address. |
 | `DHCPv4Relay` | Represents dnsmasq DHCPv4 relay. |
 | `IPv6RouterAdvertisement` | Generates RA, PIO, RDNSS, DNSSL, M/O flags, MTU, preference, and lifetimes. |
+| `RogueRADetector` | Auto-derived status resource that reports non-self IPv6 Router Advertisements observed on an RA-serving interface. |
 | `DHCPv6Server` | Provides dnsmasq DHCPv6/RA service in `stateless`, `stateful`, `both`, or `ra-only` mode. |
 | `DNSZone` | Owns a local authoritative zone with manual and DHCP-derived records. |
 | `DNSResolver` | Owns a `routerd-dns-resolver` daemon instance, listen profiles, cache, metrics, and query logging. |
@@ -508,6 +509,7 @@ and fields outside the target kind's `provides` set.
 | `IPv6DelegatedAddress` | `address` (string), `dryRun` (bool), `interface` (string), `phase` (string), `prefixSource` (string) |
 | `IPv6RAAddress` | `address` (string), `interface` (string), `phase` (string) |
 | `IPv6RouterAdvertisement` | `configPath` (string), `dryRun` (bool), `interface` (string), `phase` (string), `prefix` (string), `rdnss` (stringList) |
+| `RogueRADetector` | `interface` (string), `observedRouters` (string), `packetsSeen` (string), `phase` (string), `rogueCount` (string), `selfMAC` (string) |
 | `IPv6StaticRoute` | `destination` (string), `gateway` (string), `interface` (string), `phase` (string) |
 | `IngressService` | `activeBackend` (object), `activeBackends` (objectList), `backends` (objectList), `dryRun` (bool), `healthyBackends` (int), `hostname` (string), `listenAddress` (string), `observedAt` (timestamp), `phase` (string), `totalBackends` (int) |
 | `Interface` | `addresses` (stringList), `ifname` (string), `ipv4Addresses` (stringList), `ipv6Addresses` (stringList), `macAddress` (string), `phase` (string) |

@@ -643,6 +643,22 @@ func (c SystemdUnitController) reconcileClientDaemonUnits(ctx context.Context, e
 			if err := c.reconcileSyntheticSystemdUnit(ctx, api.NetAPIVersion, "DHCPv6PrefixDelegation", resource.Metadata.Name, unitName, dhcpv6ClientUnitSpec(resource.Metadata.Name, ifname, spec, telemetryEnv), command); err != nil {
 				return err
 			}
+		case "IPv6RouterAdvertisement":
+			spec, err := resource.IPv6RouterAdvertisementSpec()
+			if err != nil {
+				return err
+			}
+			ifname := aliases[spec.Interface]
+			if ifname == "" {
+				ifname = spec.Interface
+			}
+			unitName := "routerd-ra-observer@" + resource.Metadata.Name + ".service"
+			if explicitUnits[unitName] {
+				continue
+			}
+			if err := c.reconcileSyntheticSystemdUnit(ctx, api.NetAPIVersion, "RogueRADetector", resource.Metadata.Name, unitName, raObserverUnitSpec(resource.Metadata.Name, ifname, telemetryEnv), command); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -860,6 +876,39 @@ func dhcpv6ClientUnitSpec(resource, ifname string, spec api.DHCPv6PrefixDelegati
 		AmbientCapabilities:      []string{"CAP_NET_RAW", "CAP_NET_ADMIN", "CAP_NET_BIND_SERVICE"},
 		CapabilityBoundingSet:    []string{"CAP_NET_RAW", "CAP_NET_ADMIN", "CAP_NET_BIND_SERVICE"},
 		RestrictAddressFamilies:  []string{"AF_UNIX", "AF_INET", "AF_INET6", "AF_NETLINK"},
+		ProtectSystem:            "strict",
+		ProtectHome:              "yes",
+		NoNewPrivileges:          &noNewPrivileges,
+		PrivateTmp:               &privateTmp,
+	}
+}
+
+func raObserverUnitSpec(resource, ifname string, telemetryEnv []string) api.SystemdUnitSpec {
+	noNewPrivileges := true
+	privateTmp := true
+	exec := []string{
+		"/usr/local/sbin/routerd-ra-observer", "daemon",
+		"--resource", resource,
+		"--interface", ifname,
+		"--socket", "/run/routerd/ra-observer/" + resource + ".sock",
+		"--event-file", "/var/log/routerd/ra-observer-" + resource + ".events.jsonl",
+	}
+	return api.SystemdUnitSpec{
+		Description:              "routerd IPv6 RA observer " + resource,
+		ExecStart:                exec,
+		Environment:              telemetryEnv,
+		Wants:                    []string{"network-online.target"},
+		After:                    []string{"network-online.target"},
+		WantedBy:                 []string{"multi-user.target"},
+		Restart:                  "always",
+		RestartSec:               "5s",
+		RuntimeDirectory:         []string{"routerd/ra-observer"},
+		RuntimeDirectoryPreserve: "yes",
+		LogsDirectory:            []string{"routerd"},
+		ReadWritePaths:           []string{"/run/routerd", "/var/log/routerd"},
+		AmbientCapabilities:      []string{"CAP_NET_RAW"},
+		CapabilityBoundingSet:    []string{"CAP_NET_RAW"},
+		RestrictAddressFamilies:  []string{"AF_UNIX", "AF_PACKET"},
 		ProtectSystem:            "strict",
 		ProtectHome:              "yes",
 		NoNewPrivileges:          &noNewPrivileges,

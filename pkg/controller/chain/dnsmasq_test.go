@@ -439,6 +439,7 @@ func TestLinkControllerPublishesInterfaceStatus(t *testing.T) {
 func TestDaemonStatusControllerDiscoversDaemonSockets(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6RouterAdvertisement"}, Metadata: api.ObjectMeta{Name: "lan-ra"}, Spec: api.IPv6RouterAdvertisementSpec{Interface: "lan"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"}, Metadata: api.ObjectMeta{Name: "internet"}, Spec: api.HealthCheckSpec{}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"}, Metadata: api.ObjectMeta{Name: "embedded"}, Spec: api.HealthCheckSpec{}},
 	}}}
@@ -446,6 +447,7 @@ func TestDaemonStatusControllerDiscoversDaemonSockets(t *testing.T) {
 	got := strings.Join(controller.daemonSockets(), "\n")
 	for _, want := range []string{
 		"/run/routerd/dhcpv6-client/wan-pd.sock",
+		"/run/routerd/ra-observer/lan-ra.sock",
 		"/run/routerd/healthcheck/internet.sock",
 		"/run/routerd/healthcheck/embedded.sock",
 	} {

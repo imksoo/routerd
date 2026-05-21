@@ -38,6 +38,11 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 - `DHCPv6Information` now reports a Pending state while waiting for the
   supervised DHCPv6 client socket during startup instead of logging a repeated
   bootstrap WARN for the expected socket creation race.
+- Added an auto-derived `RogueRADetector` for each `IPv6RouterAdvertisement`.
+  The new `routerd-ra-observer` daemon passively observes ICMPv6 Router
+  Advertisements on the serving interface and reports non-self routers through
+  status and `routerd.ipv6.ra.rogue_detected` events without attempting active
+  RA Guard on flat L2 segments.
 
 ## v20260521.1953
 

@@ -132,6 +132,7 @@ func resourceProvidesTable() map[string][]ProvidedFieldSpec {
 		"IPv6DelegatedAddress":    withCommon(s("address", "Derived IPv6 address"), s("interface", "Logical interface"), s("prefixSource", "Prefix delegation source"), b("dryRun", "Dry-run status")),
 		"IPv6RAAddress":           withCommon(s("interface", "Logical interface"), s("address", "Observed RA address")),
 		"IPv6RouterAdvertisement": withCommon(s("interface", "Serving interface"), s("prefix", "Advertised prefix"), ss("rdnss", "Advertised RDNSS servers"), s("configPath", "Rendered dnsmasq config"), b("dryRun", "Dry-run status")),
+		"RogueRADetector":         withCommon(s("interface", "Observed interface"), s("selfMAC", "Local router MAC address"), s("packetsSeen", "Observed RA packet count"), s("rogueCount", "Observed non-self router count"), s("observedRouters", "JSON encoded observed router list")),
 		"IPv6StaticRoute":         withCommon(s("destination", "Route destination"), s("gateway", "Route gateway"), s("interface", "Output interface")),
 		"LocalServiceRedirect":    withCommon(),
 		"LogRetention":            withCommon(os("targets", "Retention targets"), t("updatedAt", "Update time")),

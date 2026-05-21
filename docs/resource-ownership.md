@@ -25,6 +25,7 @@ routerd associates host-side artefacts with the resource that produced them. Rec
 | `PPPoESession` | `routerd-pppoe-client` socket, state, pppd/ppp config |
 | `HealthCheck` | `routerd-healthcheck` socket, state, events |
 | `DHCPv4Server` / `DHCPv6Server` / `IPv6RouterAdvertisement` | Managed dnsmasq configuration |
+| `RogueRADetector` | Auto-derived `routerd-ra-observer` socket, passive IPv6 RA observations, rogue RA events |
 | `DNSZone` | `routerd-dns-resolver` local authoritative zone |
 | `DNSResolver` | `routerd-dns-resolver` socket, state, events, listener configuration |
 | `DNSForwarder` | `routerd-dns-resolver` runtime forwarding rule derived into the resolver config |

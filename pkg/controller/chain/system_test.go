@@ -711,8 +711,10 @@ func TestSystemdUnitControllerSynthesizesDHCPClientUnits(t *testing.T) {
 	dir := t.TempDir()
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "ens18"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Client"}, Metadata: api.ObjectMeta{Name: "wan-v4"}, Spec: api.DHCPv4ClientSpec{Interface: "wan", Hostname: "routerd-test"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan", IAID: "1"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6RouterAdvertisement"}, Metadata: api.ObjectMeta{Name: "lan-ra"}, Spec: api.IPv6RouterAdvertisementSpec{Interface: "lan"}},
 	}}}
 	store := mapStore{}
 	var commands []string
@@ -751,6 +753,15 @@ func TestSystemdUnitControllerSynthesizesDHCPClientUnits(t *testing.T) {
 				`AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN CAP_NET_BIND_SERVICE`,
 			},
 		},
+		{
+			unit: "routerd-ra-observer@lan-ra.service",
+			want: []string{
+				`ExecStart=/usr/local/sbin/routerd-ra-observer daemon --resource lan-ra --interface ens19 --socket /run/routerd/ra-observer/lan-ra.sock --event-file /var/log/routerd/ra-observer-lan-ra.events.jsonl`,
+				`RuntimeDirectory=routerd/ra-observer`,
+				`AmbientCapabilities=CAP_NET_RAW`,
+				`RestrictAddressFamilies=AF_UNIX AF_PACKET`,
+			},
+		},
 	} {
 		data, err := os.ReadFile(filepath.Join(dir, tc.unit))
 		if err != nil {
@@ -771,6 +782,9 @@ func TestSystemdUnitControllerSynthesizesDHCPClientUnits(t *testing.T) {
 		"systemctl unmask routerd-dhcpv6-client@wan-pd.service",
 		"systemctl enable routerd-dhcpv6-client@wan-pd.service",
 		"systemctl restart routerd-dhcpv6-client@wan-pd.service",
+		"systemctl unmask routerd-ra-observer@lan-ra.service",
+		"systemctl enable routerd-ra-observer@lan-ra.service",
+		"systemctl restart routerd-ra-observer@lan-ra.service",
 	} {
 		if !strings.Contains(gotCommands, want) {
 			t.Fatalf("commands missing %q:\n%s", want, gotCommands)

@@ -116,6 +116,7 @@ DHCPv6-PD は `routerd-dhcpv6-client` が担当します。
 | `DHCPv4Reservation` | MAC アドレスごとの固定割り当てを表します。 |
 | `DHCPv4Relay` | dnsmasq の DHCPv4 中継を表します。 |
 | `IPv6RouterAdvertisement` | RA、PIO、RDNSS、DNSSL、M/O フラグ、MTU、優先度、寿命を生成します。 |
+| `RogueRADetector` | RA を送出する interface 上で観測された、自身以外の IPv6 Router Advertisement を status として表示する自動導出 resource です。 |
 | `DHCPv6Server` | dnsmasq の DHCPv6/RA service です。`stateless`、`stateful`、`both`、`ra-only` を扱います。 |
 | `DNSZone` | ローカル権威ゾーンを表します。手動レコードと DHCP リース由来のレコードを扱います。 |
 | `DNSResolver` | `routerd-dns-resolver` の daemon instance、待ち受け、cache、metrics、query log を表します。 |
@@ -483,6 +484,7 @@ validator がエラーにします。
 | `IPv6DelegatedAddress` | `address` (string), `dryRun` (bool), `interface` (string), `phase` (string), `prefixSource` (string) |
 | `IPv6RAAddress` | `address` (string), `interface` (string), `phase` (string) |
 | `IPv6RouterAdvertisement` | `configPath` (string), `dryRun` (bool), `interface` (string), `phase` (string), `prefix` (string), `rdnss` (stringList) |
+| `RogueRADetector` | `interface` (string), `observedRouters` (string), `packetsSeen` (string), `phase` (string), `rogueCount` (string), `selfMAC` (string) |
 | `IPv6StaticRoute` | `destination` (string), `gateway` (string), `interface` (string), `phase` (string) |
 | `IngressService` | `activeBackend` (object), `activeBackends` (objectList), `backends` (objectList), `dryRun` (bool), `healthyBackends` (int), `hostname` (string), `listenAddress` (string), `observedAt` (timestamp), `phase` (string), `totalBackends` (int) |
 | `Interface` | `addresses` (stringList), `ifname` (string), `ipv4Addresses` (stringList), `ipv6Addresses` (stringList), `macAddress` (string), `phase` (string) |

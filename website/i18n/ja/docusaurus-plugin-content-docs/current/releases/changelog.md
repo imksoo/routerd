@@ -36,6 +36,10 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 - 起動時に supervised DHCPv6 client socket の作成を待っている間、
   `DHCPv6Information` は想定済みの socket race を bootstrap WARN として繰り返し
   記録せず、Pending state として表示するようになりました。
+- 各 `IPv6RouterAdvertisement` から `RogueRADetector` を自動導出するようにしました。
+  新しい `routerd-ra-observer` daemon は対象 interface の ICMPv6 Router Advertisement を
+  passive に観測し、flat L2 segment で active RA Guard を試みず、homert02 以外の
+  router を status と `routerd.ipv6.ra.rogue_detected` event で通知します。
 
 ## v20260521.1953
 

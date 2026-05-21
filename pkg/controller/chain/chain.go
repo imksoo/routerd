@@ -1399,6 +1399,16 @@ func (c DaemonStatusController) daemonSockets() []string {
 				socket = filepath.Join(defaults.RuntimeDir, "pppoe-client", resource.Metadata.Name+".sock")
 			}
 			add(socket)
+		case "IPv6RouterAdvertisement":
+			if _, err := resource.IPv6RouterAdvertisementSpec(); err != nil {
+				continue
+			}
+			socket := c.DaemonSockets[resource.Metadata.Name]
+			if socket == "" {
+				defaults, _ := platform.Current()
+				socket = filepath.Join(defaults.RuntimeDir, "ra-observer", resource.Metadata.Name+".sock")
+			}
+			add(socket)
 		}
 	}
 	return out
