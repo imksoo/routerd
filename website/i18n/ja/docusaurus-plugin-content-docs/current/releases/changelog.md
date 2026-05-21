@@ -43,6 +43,9 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 - selection-only の `EgressRoutePolicy` status/event 用語を、hard-code された
   `dryRun: true` から `role: advisory` / `advisory: true` に改名しました。
   CLI の `--dry-run` は、host 変更を適用しない preview の意味のままです。
+- stale legacy client daemon unit cleanup は、active な unit を停止せず
+  Pending status と warning event で保留するようになりました。inactive な stale
+  unit は引き続き status/event の証跡付きで削除します。
 
 ## v20260521.1953
 

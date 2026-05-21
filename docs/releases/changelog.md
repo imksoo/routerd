@@ -46,6 +46,9 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 - Renamed selection-only `EgressRoutePolicy` status/event terminology from
   hard-coded `dryRun: true` to `role: advisory` / `advisory: true`. CLI
   `--dry-run` continues to mean preview without applying host changes.
+- Stale legacy client daemon unit cleanup now defers active units with a
+  Pending status and warning event instead of stopping them, while inactive
+  stale units are still removed with status/event evidence.
 
 ## v20260521.1953
 

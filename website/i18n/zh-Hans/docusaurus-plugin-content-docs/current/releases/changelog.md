@@ -42,6 +42,9 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期和时间型版本号。
 - 将 selection-only `EgressRoutePolicy` status/event 术语从硬编码的
   `dryRun: true` 改名为 `role: advisory` / `advisory: true`。CLI
   `--dry-run` 仍表示不应用 host change 的 preview。
+- stale legacy client daemon unit cleanup 现在会对 active unit 延后处理，
+  写入 Pending status 和 warning event，而不会停止服务；inactive stale unit
+  仍会带 status/event 证据被移除。
 
 ## v20260521.1953
 

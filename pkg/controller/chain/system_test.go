@@ -436,7 +436,7 @@ func TestSystemdUnitControllerDoesNotReloadForAlreadyAbsentUnit(t *testing.T) {
 	}
 }
 
-func TestSystemdUnitControllerReportsStaleClientDaemonCleanup(t *testing.T) {
+func TestSystemdUnitControllerDefersActiveStaleClientDaemonCleanup(t *testing.T) {
 	dir := t.TempDir()
 	unitName := "routerd-dhcpv4-client@wan.service"
 	unitPath := filepath.Join(dir, unitName)
@@ -465,8 +465,65 @@ func TestSystemdUnitControllerReportsStaleClientDaemonCleanup(t *testing.T) {
 	if err := controller.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := os.Stat(unitPath); err != nil {
+		t.Fatalf("active stale client daemon unit was removed: %v", err)
+	}
+	gotCommands := strings.Join(commands, "\n")
+	if !strings.Contains(gotCommands, "systemctl is-active --quiet "+unitName) {
+		t.Fatalf("commands missing active check:\n%s", gotCommands)
+	}
+	for _, unwanted := range []string{
+		"systemctl disable --now " + unitName,
+		"systemctl reset-failed " + unitName,
+	} {
+		if strings.Contains(gotCommands, unwanted) {
+			t.Fatalf("commands included service-disrupting cleanup %q:\n%s", unwanted, gotCommands)
+		}
+	}
+	status := store.ObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName)
+	if status["phase"] != "Pending" || status["reason"] != "StaleClientDaemonUnitActive" || status["active"] != true {
+		t.Fatalf("status = %#v", status)
+	}
+	events := eventBus.Recent("routerd.system.service_unit.stale_cleanup_deferred")
+	if len(events) != 1 {
+		t.Fatalf("events = %#v, want one stale_cleanup_deferred event", events)
+	}
+	if events[0].Severity != "warning" || events[0].Resource == nil || events[0].Resource.Name != unitName {
+		t.Fatalf("event = %#v", events[0])
+	}
+}
+
+func TestSystemdUnitControllerReportsInactiveStaleClientDaemonCleanup(t *testing.T) {
+	dir := t.TempDir()
+	unitName := "routerd-dhcpv4-client@wan.service"
+	unitPath := filepath.Join(dir, unitName)
+	if err := os.WriteFile(unitPath, []byte("[Service]\nExecStart=/usr/local/sbin/routerd-dhcpv4-client daemon\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	router := &api.Router{Spec: api.RouterSpec{}}
+	store := mapStore{}
+	eventBus := bus.New()
+	var commands []string
+	controller := SystemdUnitController{
+		Router:           router,
+		Bus:              eventBus,
+		Store:            store,
+		SystemdSystemDir: dir,
+		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			_ = ctx
+			line := strings.Join(append([]string{name}, args...), " ")
+			commands = append(commands, line)
+			if line == "systemctl is-active --quiet "+unitName {
+				return nil, errors.New("inactive")
+			}
+			return []byte("ok"), nil
+		},
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := os.Stat(unitPath); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("stale client daemon unit still exists: %v", err)
+		t.Fatalf("inactive stale client daemon unit still exists: %v", err)
 	}
 	gotCommands := strings.Join(commands, "\n")
 	for _, want := range []string{
@@ -480,14 +537,14 @@ func TestSystemdUnitControllerReportsStaleClientDaemonCleanup(t *testing.T) {
 		}
 	}
 	status := store.ObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName)
-	if status["phase"] != "Removed" || status["reason"] != "StaleClientDaemonUnit" || status["active"] != true {
+	if status["phase"] != "Removed" || status["reason"] != "StaleClientDaemonUnit" || status["active"] != false {
 		t.Fatalf("status = %#v", status)
 	}
 	events := eventBus.Recent("routerd.system.service_unit.stale_removed")
 	if len(events) != 1 {
 		t.Fatalf("events = %#v, want one stale_removed event", events)
 	}
-	if events[0].Severity != "warning" || events[0].Resource == nil || events[0].Resource.Name != unitName {
+	if events[0].Severity != "info" || events[0].Resource == nil || events[0].Resource.Name != unitName {
 		t.Fatalf("event = %#v", events[0])
 	}
 }

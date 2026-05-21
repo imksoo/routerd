@@ -1116,6 +1116,24 @@ func (c SystemdUnitController) cleanupStaleClientDaemonUnits(ctx context.Context
 				"active":    active,
 				"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
 			}
+			if active {
+				status["phase"] = "Pending"
+				status["reason"] = "StaleClientDaemonUnitActive"
+				status["message"] = "stale client daemon unit is active; cleanup deferred to avoid service interruption"
+				if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName, status); err != nil {
+					return err
+				}
+				if c.Bus != nil {
+					event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.system.service_unit.stale_cleanup_deferred", daemonapi.SeverityWarning)
+					event.Resource = &daemonapi.ResourceRef{APIVersion: api.SystemAPIVersion, Kind: "ServiceUnit", Name: unitName}
+					event.Reason = "StaleClientDaemonUnitActive"
+					event.Attributes = map[string]string{"unitName": unitName, "path": path, "active": "true"}
+					if err := c.Bus.Publish(ctx, event); err != nil {
+						return err
+					}
+				}
+				continue
+			}
 			if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName, status); err != nil {
 				return err
 			}
@@ -1147,11 +1165,7 @@ func (c SystemdUnitController) cleanupStaleClientDaemonUnits(ctx context.Context
 				return err
 			}
 			if c.Bus != nil {
-				severity := daemonapi.SeverityInfo
-				if active {
-					severity = daemonapi.SeverityWarning
-				}
-				event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.system.service_unit.stale_removed", severity)
+				event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.system.service_unit.stale_removed", daemonapi.SeverityInfo)
 				event.Resource = &daemonapi.ResourceRef{APIVersion: api.SystemAPIVersion, Kind: "ServiceUnit", Name: unitName}
 				event.Reason = "StaleClientDaemonUnit"
 				event.Attributes = map[string]string{"unitName": unitName, "path": path, "active": fmt.Sprint(active)}
