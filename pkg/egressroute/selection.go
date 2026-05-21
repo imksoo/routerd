@@ -174,7 +174,8 @@ func (c Controller) reconcilePolicy(ctx context.Context, resource api.Resource, 
 		"selectedWeight":        selected.Weight,
 		"lastTransitionAt":      transitionAt.UTC().Format(time.RFC3339Nano),
 		"hysteresis":            hysteresis.String(),
-		"dryRun":                true,
+		"role":                  "advisory",
+		"advisory":              true,
 		"candidates":            statusCandidates(candidates),
 	}
 	if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", resource.Metadata.Name, status); err != nil {
@@ -188,7 +189,8 @@ func (c Controller) reconcilePolicy(ctx context.Context, resource api.Resource, 
 			"selectedDevice":        selected.Device,
 			"selectedGateway":       selected.Gateway,
 			"selectedGatewaySource": selected.GatewaySource,
-			"dryRun":                "true",
+			"role":                  "advisory",
+			"advisory":              "true",
 		}
 		return c.Bus.Publish(ctx, event)
 	}

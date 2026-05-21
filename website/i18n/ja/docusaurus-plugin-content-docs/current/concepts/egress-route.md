@@ -10,10 +10,11 @@
 
 `spec.mode` で status の owner が変わります。`mode` を省略した場合は、
 egress-route selector が selection-only の status と
-`routerd.lan.route.changed` event を発行します。`mode: priority`、`mark`、
-`hash` の場合は、policy-route controller が実際に適用された routing/NAT mark
-state の owner になります。依存 controller は legacy route-changed event ではなく
-`routerd.resource.status.changed` を見て追従します。
+`routerd.lan.route.changed` event を `role: advisory` / `advisory: true` 付きで
+発行します。この status は live controller の出力であり、apply dry-run ではありません。
+`mode: priority`、`mark`、`hash` の場合は、policy-route controller が実際に適用された
+routing/NAT mark state の owner になります。依存 controller は legacy route-changed event
+ではなく `routerd.resource.status.changed` を見て追従します。
 
 `mode: priority` でも `selection: highest-weight-ready` を使います。
 準備完了した候補のうち weight が最も高いものを選び、`priority` は同点時の

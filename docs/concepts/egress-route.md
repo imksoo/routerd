@@ -9,10 +9,11 @@ candidate in status. Other resources can refer to that status.
 
 `spec.mode` decides which controller owns the status. When `mode` is omitted,
 the egress-route selector publishes selection-only status and
-`routerd.lan.route.changed` events. When `mode` is set to `priority`, `mark`,
-or `hash`, the policy-route controller owns the applied routing/NAT mark state
-and dependent controllers follow `routerd.resource.status.changed` instead of
-the legacy route-changed event.
+`routerd.lan.route.changed` events with `role: advisory` / `advisory: true`.
+That status is live controller output, not an apply dry run. When `mode` is set
+to `priority`, `mark`, or `hash`, the policy-route controller owns the applied
+routing/NAT mark state and dependent controllers follow
+`routerd.resource.status.changed` instead of the legacy route-changed event.
 
 `mode: priority` still uses `selection: highest-weight-ready`. The highest
 weight ready candidate wins; `priority` is the tie-breaker and the policy-route

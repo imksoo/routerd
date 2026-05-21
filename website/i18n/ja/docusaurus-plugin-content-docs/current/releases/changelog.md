@@ -40,6 +40,9 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
   新しい `routerd-ra-observer` daemon は対象 interface の ICMPv6 Router Advertisement を
   passive に観測し、flat L2 segment で active RA Guard を試みず、homert02 以外の
   router を status と `routerd.ipv6.ra.rogue_detected` event で通知します。
+- selection-only の `EgressRoutePolicy` status/event 用語を、hard-code された
+  `dryRun: true` から `role: advisory` / `advisory: true` に改名しました。
+  CLI の `--dry-run` は、host 変更を適用しない preview の意味のままです。
 
 ## v20260521.1953
 

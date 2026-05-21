@@ -62,6 +62,12 @@ func TestControllerSelectsHighestWeightReady(t *testing.T) {
 	if got := fmt.Sprint(status["destinationCIDRs"]); !strings.Contains(got, "0.0.0.0/0") {
 		t.Fatalf("destinationCIDRs = %v", status["destinationCIDRs"])
 	}
+	if status["role"] != "advisory" || status["advisory"] != true {
+		t.Fatalf("advisory status = %#v", status)
+	}
+	if _, ok := status["dryRun"]; ok {
+		t.Fatalf("selection-only status must not use dryRun terminology: %#v", status)
+	}
 }
 
 func TestControllerSkipsPolicyRouteModes(t *testing.T) {
@@ -495,6 +501,12 @@ func TestControllerRepublishesWhenSelectedOutputChanges(t *testing.T) {
 		if event.Attributes["selectedDevice"] != "ds-routerd-new" {
 			t.Fatalf("event attributes = %#v", event.Attributes)
 		}
+		if event.Attributes["role"] != "advisory" || event.Attributes["advisory"] != "true" {
+			t.Fatalf("event advisory attributes = %#v", event.Attributes)
+		}
+		if _, ok := event.Attributes["dryRun"]; ok {
+			t.Fatalf("selection-only event must not use dryRun terminology: %#v", event.Attributes)
+		}
 	default:
 		t.Fatal("expected route changed event")
 	}
@@ -536,6 +548,12 @@ func TestControllerDoesNotRepublishWhenSelectionUnchanged(t *testing.T) {
 	case event := <-ch:
 		if event.Attributes["selectedCandidate"] != "ix2215-fallback" {
 			t.Fatalf("first event attributes = %#v", event.Attributes)
+		}
+		if event.Attributes["role"] != "advisory" || event.Attributes["advisory"] != "true" {
+			t.Fatalf("first event advisory attributes = %#v", event.Attributes)
+		}
+		if _, ok := event.Attributes["dryRun"]; ok {
+			t.Fatalf("selection-only event must not use dryRun terminology: %#v", event.Attributes)
 		}
 	default:
 		t.Fatal("expected initial route changed event")

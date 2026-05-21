@@ -43,6 +43,9 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
   Advertisements on the serving interface and reports non-self routers through
   status and `routerd.ipv6.ra.rogue_detected` events without attempting active
   RA Guard on flat L2 segments.
+- Renamed selection-only `EgressRoutePolicy` status/event terminology from
+  hard-coded `dryRun: true` to `role: advisory` / `advisory: true`. CLI
+  `--dry-run` continues to mean preview without applying host changes.
 
 ## v20260521.1953
 

@@ -39,6 +39,9 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
   新的 `routerd-ra-observer` daemon 會在服務介面上被動觀測 ICMPv6 Router
   Advertisement，不會在 flat L2 segment 上嘗試主動 RA Guard，並透過 status 與
   `routerd.ipv6.ra.rogue_detected` event 回報非本機 router。
+- 將 selection-only `EgressRoutePolicy` status/event 術語從硬編碼的
+  `dryRun: true` 改名為 `role: advisory` / `advisory: true`。CLI
+  `--dry-run` 仍表示不套用 host change 的 preview。
 
 ## v20260521.1953
 
