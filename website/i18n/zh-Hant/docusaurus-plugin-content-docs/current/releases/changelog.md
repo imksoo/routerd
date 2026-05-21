@@ -10,6 +10,13 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 
 ## Unreleased
 
+### 修正
+
+- 移除了 NixOS module 的 `services.routerd.extraFlags` escape hatch，
+  避免升級後繼續傳入已刪除的 `--controller-chain*` flag。產生的
+  `routerd.service` 現在使用與簡化 service lifecycle 一致的固定
+  `routerd serve` 啟動形式。
+
 ## v20260522.0658
 
 ### 修正

@@ -10,6 +10,13 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- Removed the NixOS module `services.routerd.extraFlags` escape hatch so
+  NixOS deployments cannot keep passing removed `--controller-chain*` flags
+  after upgrading. The generated `routerd.service` now uses the fixed
+  `routerd serve` invocation that matches the simplified service lifecycle.
+
 ## v20260522.0658
 
 ### Fixed
