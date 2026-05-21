@@ -10,6 +10,8 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期和时间型版本号。
 
 ## Unreleased
 
+## v20260521.0918
+
 ### 修正
 
 - 阻止 `EgressRoutePolicy` 的 selection-only reconciliation 覆盖

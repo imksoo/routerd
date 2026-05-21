@@ -10,6 +10,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260521.0918
+
 ### Fixed
 
 - Stopped `EgressRoutePolicy` selection-only reconciliation from overwriting
