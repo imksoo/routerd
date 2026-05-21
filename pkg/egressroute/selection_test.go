@@ -64,6 +64,41 @@ func TestControllerSelectsHighestWeightReady(t *testing.T) {
 	}
 }
 
+func TestControllerSkipsPolicyRouteModes(t *testing.T) {
+	store := mapStore{
+		api.NetAPIVersion + "/DSLiteTunnel/ds-lite": {"phase": "Up", "interface": "ds-routerd-test"},
+	}
+	b := bus.New()
+	ch, cancel := b.Subscribe(context.Background(), bus.Subscription{Topics: []string{EventRouteChanged}}, 1)
+	defer cancel()
+	controller := Controller{
+		Router: routerWithPolicy(api.EgressRoutePolicySpec{
+			Mode:      "priority",
+			Selection: SelectionHighestWeightReady,
+			Candidates: []api.EgressRoutePolicyCandidate{{
+				Name:       "ds-lite",
+				Source:     "DSLiteTunnel/ds-lite",
+				DeviceFrom: api.StatusValueSourceSpec{Resource: "DSLiteTunnel/ds-lite", Field: "interface"},
+				Weight:     80,
+			}},
+		}),
+		Bus:   b,
+		Store: store,
+	}
+
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if status := store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "ipv4-default"); len(status) != 0 {
+		t.Fatalf("mode:priority policy should be owned by policyroute controller, got status %#v", status)
+	}
+	select {
+	case event := <-ch:
+		t.Fatalf("mode:priority policy should not publish route changed event: %#v", event)
+	default:
+	}
+}
+
 func TestControllerReportsSelectedGateway(t *testing.T) {
 	now := time.Date(2026, 5, 2, 10, 0, 0, 0, time.UTC)
 	store := mapStore{

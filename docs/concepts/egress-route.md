@@ -7,6 +7,13 @@ not accepted.
 The policy watches candidate resources and health checks. It stores the chosen
 candidate in status. Other resources can refer to that status.
 
+`spec.mode` decides which controller owns the status. When `mode` is omitted,
+the egress-route selector publishes selection-only status and
+`routerd.lan.route.changed` events. When `mode` is set to `priority`, `mark`,
+or `hash`, the policy-route controller owns the applied routing/NAT mark state
+and dependent controllers follow `routerd.resource.status.changed` instead of
+the legacy route-changed event.
+
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
 kind: EgressRoutePolicy

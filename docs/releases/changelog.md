@@ -10,6 +10,14 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- Stopped `EgressRoutePolicy` selection-only reconciliation from overwriting
+  `mode: priority`, `mode: mark`, and `mode: hash` policy-route status. These
+  modes now have a single status owner, preventing dry-run
+  `routerd.lan.route.changed` churn when the applied policy selection is
+  unchanged.
+
 ## v20260521.0843
 
 ### Fixed

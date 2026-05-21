@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"routerd/pkg/api"
+	"routerd/pkg/bus"
+	"routerd/pkg/daemonapi"
 	"routerd/pkg/render"
 )
 
@@ -169,6 +171,95 @@ func TestEgressRoutePolicyTargetCandidateRendersOnlyWhenActive(t *testing.T) {
 	}
 	if !strings.Contains(string(active), "0x110") {
 		t.Fatalf("active target candidate should render marks:\n%s", active)
+	}
+}
+
+func TestIPv4PolicyRouteSkipsSelectionOnlyPolicy(t *testing.T) {
+	store := mapStore{}
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "lo"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "ipv4-default"}, Spec: api.EgressRoutePolicySpec{
+			Candidates: []api.EgressRoutePolicyCandidate{{
+				Name:      "wan",
+				Interface: "wan",
+				Priority:  10,
+				Mark:      0x110,
+				Table:     110,
+			}},
+		}},
+	}}}
+	controller := IPv4PolicyRouteController{Router: router, Store: store, DryRun: true}
+
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if status := store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "ipv4-default"); len(status) != 0 {
+		t.Fatalf("mode-omitted policy should be owned by egressroute controller, got status %#v", status)
+	}
+}
+
+func TestIPv4PolicyRouteOwnsPriorityPolicyWithoutChurn(t *testing.T) {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	base := mapStore{
+		api.NetAPIVersion + "/HealthCheck/internet-a": {"phase": "Healthy", "lastCheckedAt": now},
+		api.NetAPIVersion + "/HealthCheck/internet-b": {"phase": "Healthy", "lastCheckedAt": now},
+	}
+	eventBus := bus.New()
+	resource := daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy", Name: "ipv4-default"}
+	statusCh, cancelStatus := eventBus.Subscribe(context.Background(), bus.Subscription{
+		Topics:   []string{"routerd.resource.status.changed"},
+		Resource: &resource,
+	}, 4)
+	defer cancelStatus()
+	routeCh, cancelRoute := eventBus.Subscribe(context.Background(), bus.Subscription{Topics: []string{"routerd.lan.route.changed"}}, 1)
+	defer cancelRoute()
+
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan-a"}, Spec: api.InterfaceSpec{IfName: "lo"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan-b"}, Spec: api.InterfaceSpec{IfName: "lo"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "ipv4-default"}, Spec: api.EgressRoutePolicySpec{
+			Mode:        "priority",
+			HashFields:  []string{"sourceAddress"},
+			SourceCIDRs: []string{"192.0.2.0/24"},
+			Candidates: []api.EgressRoutePolicyCandidate{
+				{Name: "dslite-pd-balanced", Priority: 10, HealthCheck: "internet-a", Targets: []api.EgressRoutePolicyTarget{
+					{Name: "ds-lite-a", Interface: "wan-a", Priority: 10110, Mark: 0x110, Table: 110},
+					{Name: "ds-lite-b", Interface: "wan-b", Priority: 10111, Mark: 0x111, Table: 111},
+				}},
+				{Name: "ds-lite-ra", Interface: "wan-a", Priority: 20, Mark: 0x112, Table: 112, HealthCheck: "internet-b"},
+			},
+		}},
+	}}}
+	controller := IPv4PolicyRouteController{Router: router, Store: eventedStore{Store: base, Bus: eventBus}, Bus: eventBus, DryRun: true}
+
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	status := base.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "ipv4-default")
+	if status["phase"] != "Applied" || status["selectedCandidate"] != "dslite-pd-balanced" || status["dryRun"] != true {
+		t.Fatalf("priority policy status = %#v", status)
+	}
+	drainEvents(statusCh)
+
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case event := <-statusCh:
+		t.Fatalf("unchanged priority policy should not publish status churn: %#v", event)
+	case event := <-routeCh:
+		t.Fatalf("priority policy should not publish legacy route changed event: %#v", event)
+	case <-time.After(40 * time.Millisecond):
+	}
+}
+
+func drainEvents(ch <-chan daemonapi.DaemonEvent) {
+	for {
+		select {
+		case <-ch:
+		default:
+			return
+		}
 	}
 }
 

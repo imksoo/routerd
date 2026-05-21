@@ -10,6 +10,13 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期和时间型版本号。
 
 ## Unreleased
 
+### 修正
+
+- 阻止 `EgressRoutePolicy` 的 selection-only reconciliation 覆盖
+  `mode: priority`、`mode: mark` 和 `mode: hash` 的 policy-route status。
+  这些 mode 现在只有一个 status owner，可避免已应用的 policy selection
+  未变化时反复产生 dry-run `routerd.lan.route.changed` event。
+
 ## v20260521.0843
 
 ### 修正

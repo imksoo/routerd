@@ -123,6 +123,9 @@ func (c Controller) reconcilePolicy(ctx context.Context, resource api.Resource, 
 	if err != nil {
 		return err
 	}
+	if strings.TrimSpace(spec.Mode) != "" {
+		return nil
+	}
 	if selection := defaultString(spec.Selection, SelectionHighestWeightReady); selection != SelectionHighestWeightReady {
 		status := map[string]any{
 			"phase":   PhasePending,

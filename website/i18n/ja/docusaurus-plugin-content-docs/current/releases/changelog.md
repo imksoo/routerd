@@ -10,6 +10,14 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 
 ## Unreleased
 
+### 修正
+
+- `EgressRoutePolicy` の selection-only reconciliation が `mode: priority`、
+  `mode: mark`、`mode: hash` の policy-route status を上書きしないようにしました。
+  これらの mode は status owner を 1 つに統一し、適用済みの policy selection が
+  変わっていない場合に dry-run の `routerd.lan.route.changed` event が
+  繰り返し発生する問題を防ぎます。
+
 ## v20260521.0843
 
 ### 修正

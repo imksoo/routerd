@@ -8,6 +8,13 @@
 選んだ候補は status に保存します。
 ほかのリソースは、その status を参照できます。
 
+`spec.mode` で status の owner が変わります。`mode` を省略した場合は、
+egress-route selector が selection-only の status と
+`routerd.lan.route.changed` event を発行します。`mode: priority`、`mark`、
+`hash` の場合は、policy-route controller が実際に適用された routing/NAT mark
+state の owner になります。依存 controller は legacy route-changed event ではなく
+`routerd.resource.status.changed` を見て追従します。
+
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
 kind: EgressRoutePolicy
