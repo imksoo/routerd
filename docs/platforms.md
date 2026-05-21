@@ -20,7 +20,7 @@ routerd uses the following OS surfaces on Linux:
 - nftables for filtering and NAT
 - conntrack for connection observation
 - iproute2 for interfaces and routes
-- embedded GoBGP for BGP peering and route installation
+- long-lived `routerd-bgp` GoBGP daemon for BGP peering and route installation
 - keepalived for VRRP VIP ownership
 - pppd / rp-pppoe for PPPoE
 - WireGuard, Tailscale, strongSwan, radvd
@@ -100,7 +100,7 @@ Implemented:
 - apply-time OpenRC activation through `rc-update` / `rc-service`, with
   idempotency checks before enable/start/restart operations
 - `make alpine-vm-smoke` harness for installed Alpine guests
-- Linux nftables, conntrack, iproute2, dnsmasq, embedded GoBGP, keepalived, PPP,
+- Linux nftables, conntrack, iproute2, dnsmasq, `routerd-bgp` GoBGP, keepalived, PPP,
   WireGuard, strongSwan, radvd, and diagnostic package names documented for Alpine
 
 Backlog before calling Alpine equivalent to Ubuntu:

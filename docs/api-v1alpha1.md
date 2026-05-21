@@ -173,9 +173,9 @@ for DoH or DoT endpoint name resolution.
 | `IPAddressSet` | Defines reusable IP address sets from literal addresses and FQDNs. Linux nftables renderers materialize these as named sets for firewall, redirect, NAT, and policy-routing consumers. |
 | `IPv4Route` | Adds IPv4 routes, including DS-Lite defaults and explicit drop routes. |
 | `ClusterNetworkRoute` | Expands Kubernetes Pod and Service CIDRs into static IPv4 routes through worker next hops. |
-| `BGPRouter` | Declares a local BGP router. The current backend is embedded GoBGP with default-deny import policy. |
+| `BGPRouter` | Declares a local BGP router. The current backend is a long-lived `routerd-bgp` GoBGP daemon with default-deny import policy. |
 | `BGPPeer` | Declares GoBGP-managed BGP peers for a `BGPRouter`, for example Kubernetes BGP speakers. |
-| `BFD` | Declares one BFD session intent. Embedded GoBGP reports BFD resources as unsupported until BFD is implemented without FRR. |
+| `BFD` | Declares one BFD session intent. The GoBGP backend reports BFD resources as unsupported until BFD is implemented without FRR. |
 | `NAT44Rule` | Performs IPv4 NAPT in the nftables `routerd_nat` table. |
 | `PortForward` | Publishes one WAN-side IPv4 TCP/UDP port to one internal IPv4 target with DNAT. |
 | `IngressService` | Publishes one WAN-side IPv4 TCP/UDP service. Multiple backends, TCP/HTTP health checks, and `failover`, `sourceHash`, or `random` backend selection are accepted. |
@@ -222,13 +222,14 @@ prefer `destinationPorts`.
 `excludeDestinationSetRefs`. This allows internet traffic to be masqueraded
 while private routed destinations or reusable address sets stay un-NATed.
 
-`BGPRouter` and `BGPPeer` currently use an embedded GoBGP server inside
-`routerd serve`. routerd maps the resource specs directly to typed GoBGP API
-objects and observes status through `ListPeer` and `ListPath`; it does not
-render FRR text config, run `frr-reload.py`, parse `vtysh`, or use GoBGP's file
-configuration format. `apply --once` renders host artifacts only and reports BGP
-as serve-managed. `routerctl show bgp` summarizes routers, peers, message
-counters, route selection state, and last errors from stored GoBGP observation.
+`BGPRouter` and `BGPPeer` currently use the long-lived `routerd-bgp` daemon.
+routerd maps the resource specs directly to typed GoBGP API objects over a
+local gRPC Unix socket and observes status through `ListPeer` and `ListPath`;
+it does not render FRR text config, run `frr-reload.py`, parse `vtysh`, or use
+GoBGP's file configuration format. `apply --once` renders host artifacts only
+and reports BGP as serve-managed. `routerctl show bgp` summarizes routers,
+peers, message counters, route selection state, and last errors from stored
+GoBGP observation.
 Prefix status includes `best`, `valid`, `installed`, `stale`, `nextHop`, and
 observed communities. Learned IPv4 best paths that match
 `spec.importPolicy.allowedPrefixes` are installed into the kernel FIB with
@@ -255,11 +256,11 @@ router or peer with `communities.send`, `communities.accept`, and
 GoBGP reports them. The watcher defaults to a 15 second controller interval and
 4096 observed prefixes, and `BGPRouter.spec.watcher` can tune `pollInterval`,
 `maxPrefixes`, and `peerStateChangeThrottle`; validation rejects intervals below
-3 seconds and prefix caps of 1,000,000 or more. Embedded GoBGP MVP supports one
-`BGPRouter` per routerd process and does not yet support `spec.vrf`; unsupported
+3 seconds and prefix caps of 1,000,000 or more. The GoBGP MVP supports one
+`BGPRouter` per router and does not yet support `spec.vrf`; unsupported
 multi-router, VRF, or BFD resources are reported as Pending instead of being
-silently ignored. `spec.listen.address` and `spec.listen.port` bind the in-process
-GoBGP listener.
+silently ignored. `spec.listen.address` and `spec.listen.port` bind the
+`routerd-bgp` GoBGP listener.
 
 `VirtualAddress` uses keepalived on Linux and CARP on FreeBSD for
 `mode: vrrp`. `spec.family: ipv4` requires an IPv4 `/32`, and
@@ -292,12 +293,12 @@ prefer the default non-preemptive behavior so the backup keeps the VIP until it
 fails or is intentionally moved. See `examples/vrrp-tuning-presets.yaml`
 for complete resource fragments.
 
-`BGPPeer.spec.password` is passed to the embedded GoBGP peer as the TCP MD5
+`BGPPeer.spec.password` is passed to the GoBGP peer as the TCP MD5
 authentication password. Prefer `BGPPeer.spec.passwordFrom` for production
 configs so the routerd YAML does not contain the shared secret.
 `passwordFrom.file` reads a local root-owned secret file and `passwordFrom.env`
 reads an environment variable; `base64: true` decodes either source before
-applying it to the in-process BGP peer.
+applying it to the long-lived BGP daemon.
 
 `VirtualAddress.spec.vrrp.authentication` is rendered into keepalived as
 `auth_pass` and into FreeBSD CARP as `pass`. Prefer

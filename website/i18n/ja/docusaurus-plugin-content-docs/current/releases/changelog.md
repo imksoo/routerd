@@ -12,10 +12,12 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 
 ### 変更
 
-- BGP controller backend を embedded GoBGP に置き換えました。`BGPRouter` と
-  `BGPPeer` は型付き GoBGP API object に直接 map され、`apply --once` は
-  FRR artifact を render せず、`routerd serve` が in-process BGP server を管理します。
-  peer/path status は `vtysh` text parse ではなく `ListPeer` / `ListPath` から取得します。
+- BGP controller backend を GoBGP ベースの長寿命 `routerd-bgp` daemon に
+  置き換えました。`BGPRouter` と `BGPPeer` は local gRPC Unix socket 経由で
+  型付き GoBGP API object に直接 map され、`apply --once` は FRR artifact を
+  render せず、`routerd` restart でも BGP process を restart せず established
+  session を落としません。peer/path status は `vtysh` text parse ではなく
+  `ListPeer` / `ListPath` から取得します。
   import policy に一致する学習済み IPv4 best path は kernel FIB に投入し、equal best path は
   ECMP next-hop として扱います。未対応の BFD intent は黙って無視せず Pending にします。
   MVP での IPv6 FIB route や non-Linux platform など、kernel FIB に投入できない

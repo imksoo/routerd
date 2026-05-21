@@ -1,6 +1,6 @@
 # IPv6 dual-stack BGP and VIPs
 
-routerd can run embedded GoBGP IPv4 and IPv6 unicast BGP in the same `BGPRouter`.
+routerd can run GoBGP IPv4 and IPv6 unicast BGP through `routerd-bgp` for the same `BGPRouter`.
 Keep `spec.importPolicy.allowedPrefixes`, `spec.exportPolicy.allowedPrefixes`,
 and `redistribute.*.allowedPrefixes` as mixed IPv4/IPv6 lists; routerd maps
 prefixes to typed GoBGP address families directly.

@@ -173,6 +173,7 @@ depend() {
 start_pre() {
 	checkpath -d -m 0755 /run/routerd/openrc
 	checkpath -d -m 0755 '/run/routerd'
+	checkpath -d -m 0755 '/run/routerd/bgp'
 	checkpath -d -m 0755 '/run/routerd/dhcpv4-client'
 	checkpath -d -m 0755 '/run/routerd/dhcpv6-client'
 	checkpath -d -m 0755 '/run/routerd/dns-resolver'

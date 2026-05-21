@@ -49,6 +49,10 @@ func (s *fakeServer) Stop()  { s.stops++ }
 
 func (s *fakeServer) StopBgp(context.Context, *gobgpapi.StopBgpRequest) error { return nil }
 
+func (s *fakeServer) GetBgp(context.Context, *gobgpapi.GetBgpRequest) (*gobgpapi.GetBgpResponse, error) {
+	return &gobgpapi.GetBgpResponse{Global: s.global}, nil
+}
+
 func (s *fakeServer) StartBgp(_ context.Context, req *gobgpapi.StartBgpRequest) error {
 	s.starts++
 	s.global = req.GetGlobal()
@@ -97,8 +101,10 @@ func (s *fakeServer) ListPeer(_ context.Context, _ *gobgpapi.ListPeerRequest, fn
 
 func (s *fakeServer) AddPath(_ context.Context, req *gobgpapi.AddPathRequest) (*gobgpapi.AddPathResponse, error) {
 	s.paths++
+	uuid := []byte{byte(s.paths)}
+	req.GetPath().Uuid = uuid
 	s.routes = append(s.routes, &gobgpapi.Destination{Prefix: pathPrefix(req.GetPath()), Paths: []*gobgpapi.Path{req.GetPath()}})
-	return &gobgpapi.AddPathResponse{Uuid: []byte{byte(s.paths)}}, nil
+	return &gobgpapi.AddPathResponse{Uuid: uuid}, nil
 }
 
 func (s *fakeServer) DeletePath(context.Context, *gobgpapi.DeletePathRequest) error { return nil }
@@ -248,22 +254,15 @@ func TestReconcileReportsBFDUnsupported(t *testing.T) {
 	}
 }
 
-func TestReconcileRecreatesServerWhenGlobalConfigChanges(t *testing.T) {
+func TestReconcileDoesNotRestartDaemonWhenGlobalConfigChanges(t *testing.T) {
 	router := bgpRouter()
 	first := &fakeServer{}
-	second := &fakeServer{}
-	servers := []*fakeServer{first, second}
 	controller := Controller{
 		Router: router,
 		Store:  mapStore{},
 		FIB:    &fakeFIB{},
 		NewServer: func() GoBGPServer {
-			if len(servers) == 0 {
-				t.Fatal("unexpected server allocation")
-			}
-			next := servers[0]
-			servers = servers[1:]
-			return next
+			return first
 		},
 	}
 	if err := controller.Reconcile(context.Background()); err != nil {
@@ -272,14 +271,80 @@ func TestReconcileRecreatesServerWhenGlobalConfigChanges(t *testing.T) {
 	spec := router.Spec.Resources[0].Spec.(api.BGPRouterSpec)
 	spec.RouterID = "10.0.0.2"
 	router.Spec.Resources[0].Spec = spec
+	if err := controller.Reconcile(context.Background()); err == nil || !strings.Contains(err.Error(), "GoBGPStartFailed") {
+		t.Fatalf("second reconcile error = %v, want GoBGPStartFailed", err)
+	}
+	if first.stops != 0 || first.starts != 1 {
+		t.Fatalf("daemon lifecycle changed: stops=%d starts=%d, want 0/1", first.stops, first.starts)
+	}
+}
+
+func TestReconcileReattachesToLiveDaemonWithoutPeerOrPathChurn(t *testing.T) {
+	router := bgpRouter()
+	server := &fakeServer{}
+	first := Controller{
+		Router: router,
+		Store:  mapStore{},
+		FIB:    &fakeFIB{},
+		NewServer: func() GoBGPServer {
+			return server
+		},
+	}
+	if err := first.Reconcile(context.Background()); err != nil {
+		t.Fatalf("first reconcile: %v", err)
+	}
+	for _, peer := range server.peers {
+		peer.Timers = nil
+		peer.GracefulRestart = nil
+	}
+	adds, deletes, paths := server.adds, server.deletes, server.paths
+	second := Controller{
+		Router: router,
+		Store:  mapStore{},
+		FIB:    &fakeFIB{},
+		NewServer: func() GoBGPServer {
+			return server
+		},
+	}
+	if err := second.Reconcile(context.Background()); err != nil {
+		t.Fatalf("second reconcile: %v", err)
+	}
+	if server.adds != adds || server.deletes != deletes || server.paths != paths {
+		t.Fatalf("restart reattach churned GoBGP state: adds %d->%d deletes %d->%d paths %d->%d", adds, server.adds, deletes, server.deletes, paths, server.paths)
+	}
+}
+
+func TestReconcileUpdatesPeerWhenLiveConfigDrifts(t *testing.T) {
+	router := bgpRouter()
+	server := &fakeServer{}
+	controller := Controller{
+		Router: router,
+		Store:  mapStore{},
+		FIB:    &fakeFIB{},
+		NewServer: func() GoBGPServer {
+			return server
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("first reconcile: %v", err)
+	}
+	peer := router.Spec.Resources[1]
+	spec, err := peer.BGPPeerSpec()
+	if err != nil {
+		t.Fatalf("peer spec: %v", err)
+	}
+	spec.Timers.Profile = "slow"
+	peer.Spec = spec
+	router.Spec.Resources[1] = peer
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("second reconcile: %v", err)
 	}
-	if first.stops != 1 {
-		t.Fatalf("old server stops = %d, want 1", first.stops)
+	if server.deletes != 1 || server.adds != 2 {
+		t.Fatalf("peer drift reconcile counts deletes=%d adds=%d, want 1/2", server.deletes, server.adds)
 	}
-	if second.starts != 1 || second.global.GetRouterId() != "10.0.0.2" {
-		t.Fatalf("new server starts=%d routerID=%q, want 1/10.0.0.2", second.starts, second.global.GetRouterId())
+	got := server.peers["10.0.0.21"].GetTimers().GetConfig().GetHoldTime()
+	if got != 180 {
+		t.Fatalf("hold time = %d, want slow profile 180", got)
 	}
 }
 

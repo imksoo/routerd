@@ -302,6 +302,11 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 		if err := c.reconcileSyntheticSystemdHelperUnit(ctx, render.RouterdUnitName, "Router/"+c.Router.Metadata.Name, routerdSpec, command); err != nil {
 			return err
 		}
+		if routerHasBGP(c.Router) {
+			if err := c.reconcileLongLivedSystemdHelperUnit(ctx, render.BGPUnitName, "Router/"+c.Router.Metadata.Name+"/BGPRouter", render.BGPSystemdSpec("/run/routerd/bgp/gobgp.sock"), command); err != nil {
+				return err
+			}
+		}
 		if c.SynthesizeClientDaemonUnits {
 			if err := c.reconcileClientDaemonUnits(ctx, explicitUnits, telemetryEnv, command); err != nil {
 				return err
@@ -738,6 +743,41 @@ func (c SystemdUnitController) reconcileSyntheticSystemdHelperUnit(ctx context.C
 	return nil
 }
 
+func (c SystemdUnitController) reconcileLongLivedSystemdHelperUnit(ctx context.Context, unitName, source string, spec api.SystemdUnitSpec, command outputCommandFunc) error {
+	path := filepath.Join(c.SystemdSystemDir, unitName)
+	changed, err := c.applyLongLivedSystemdUnit(ctx, path, unitName, spec, command)
+	if err != nil {
+		if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName, map[string]any{
+			"phase":     "Error",
+			"reason":    "ApplyFailed",
+			"unitName":  unitName,
+			"path":      path,
+			"source":    source,
+			"error":     err.Error(),
+			"dryRun":    c.DryRun,
+			"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
+		}); saveErr != nil {
+			return saveErr
+		}
+		return err
+	}
+	phase := "Applied"
+	if c.DryRun && changed {
+		phase = "Rendered"
+	}
+	status := map[string]any{
+		"phase":              phase,
+		"unitName":           unitName,
+		"path":               path,
+		"source":             source,
+		"changed":            changed,
+		"dryRun":             c.DryRun,
+		"restartOnReconcile": false,
+		"updatedAt":          time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	return c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName, status)
+}
+
 func interfaceAliases(router *api.Router) map[string]string {
 	out := map[string]string{}
 	if router == nil {
@@ -1157,6 +1197,58 @@ func (c SystemdUnitController) applySystemdUnit(ctx context.Context, name, path,
 		}
 	}
 	return changed, nil
+}
+
+func (c SystemdUnitController) applyLongLivedSystemdUnit(ctx context.Context, path, unitName string, spec api.SystemdUnitSpec, command outputCommandFunc) (bool, error) {
+	data := render.SystemdUnit(unitName, spec)
+	fileChanged, err := writeFileIfChanged(path, data, 0644, c.DryRun)
+	if err != nil {
+		return false, err
+	}
+	if c.DryRun {
+		return fileChanged, nil
+	}
+	if fileChanged {
+		if _, err := command(ctx, "systemctl", "daemon-reload"); err != nil {
+			return fileChanged, err
+		}
+	}
+	if api.BoolDefault(spec.Enabled, true) {
+		if fileChanged || !systemdUnitEnabled(ctx, command, unitName) {
+			if _, err := command(ctx, "systemctl", "unmask", unitName); err != nil {
+				return true, err
+			}
+			if _, err := command(ctx, "systemctl", "enable", unitName); err != nil {
+				return true, err
+			}
+		}
+	} else if systemdUnitEnabledOrActive(ctx, command, unitName) {
+		if _, err := command(ctx, "systemctl", "disable", "--now", unitName); err != nil {
+			return true, err
+		}
+		return true, nil
+	}
+	if api.BoolDefault(spec.Started, true) {
+		if _, err := command(ctx, "systemctl", "is-active", "--quiet", unitName); err != nil {
+			if _, err := command(ctx, "systemctl", "start", unitName); err != nil {
+				return true, err
+			}
+			return true, nil
+		}
+	}
+	return fileChanged, nil
+}
+
+func routerHasBGP(router *api.Router) bool {
+	if router == nil {
+		return false
+	}
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion == api.NetAPIVersion && resource.Kind == "BGPRouter" {
+			return true
+		}
+	}
+	return false
 }
 
 func systemdUnitEnabledOrActive(ctx context.Context, command outputCommandFunc, unitName string) bool {

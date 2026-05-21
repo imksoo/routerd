@@ -1,6 +1,6 @@
 # IPv6 dual-stack BGP と VIP
 
-routerd は 1 つの `BGPRouter` から embedded GoBGP の IPv4 unicast と IPv6 unicast を
+routerd は 1 つの `BGPRouter` から `routerd-bgp` GoBGP の IPv4 unicast と IPv6 unicast を
 同時に扱えます。`spec.importPolicy.allowedPrefixes`、
 `spec.exportPolicy.allowedPrefixes`、`redistribute.*.allowedPrefixes` は
 IPv4/IPv6 混在のままでよく、routerd が型付き GoBGP address family に直接 map します。

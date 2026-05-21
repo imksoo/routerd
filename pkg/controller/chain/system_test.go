@@ -188,7 +188,7 @@ func TestSystemdUnitControllerRendersAndEnablesUnit(t *testing.T) {
 		t.Fatalf("read unit: %v", err)
 	}
 	gotUnit := string(data)
-	for _, want := range []string{"ExecStartPre=/usr/local/sbin/routerd check", "ExecStart=/usr/local/sbin/routerd serve", "RuntimeDirectory=routerd routerd/dhcpv6-client routerd/dhcpv4-client routerd/pppoe-client routerd/dns-resolver", "StateDirectory=routerd", "ReadWritePaths=/run/routerd /var/lib/routerd", "AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE CAP_SETUID CAP_SETGID CAP_CHOWN", "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK", "ProtectSystem=no", "NoNewPrivileges=no"} {
+	for _, want := range []string{"ExecStartPre=/usr/local/sbin/routerd check", "ExecStart=/usr/local/sbin/routerd serve", "RuntimeDirectory=routerd routerd/bgp routerd/dhcpv6-client routerd/dhcpv4-client routerd/pppoe-client routerd/dns-resolver", "StateDirectory=routerd", "ReadWritePaths=/run/routerd /var/lib/routerd", "AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE CAP_SETUID CAP_SETGID CAP_CHOWN", "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK", "ProtectSystem=no", "NoNewPrivileges=no"} {
 		if !strings.Contains(gotUnit, want) {
 			t.Fatalf("unit missing %q:\n%s", want, gotUnit)
 		}
@@ -266,6 +266,59 @@ func TestSystemdUnitControllerAugmentsRouterdServiceForBGPVRRPIngress(t *testing
 		if strings.Contains(gotUnit, notWant) {
 			t.Fatalf("unit should not contain %q:\n%s", notWant, gotUnit)
 		}
+	}
+	bgpUnit, err := os.ReadFile(filepath.Join(dir, "routerd-bgp.service"))
+	if err != nil {
+		t.Fatalf("read routerd-bgp unit: %v", err)
+	}
+	gotBGPUnit := string(bgpUnit)
+	for _, want := range []string{
+		"ExecStart=/usr/local/sbin/routerd-bgp daemon --socket /run/routerd/bgp/gobgp.sock",
+		"RuntimeDirectory=routerd/bgp",
+		"Restart=always",
+		"Wants=network-online.target",
+		"After=network-online.target",
+	} {
+		if !strings.Contains(gotBGPUnit, want) {
+			t.Fatalf("routerd-bgp unit missing %q:\n%s", want, gotBGPUnit)
+		}
+	}
+	for _, notWant := range []string{"PartOf=", "BindsTo=", "routerd.service"} {
+		if strings.Contains(gotBGPUnit, notWant) {
+			t.Fatalf("routerd-bgp unit must be independent from routerd.service, found %q:\n%s", notWant, gotBGPUnit)
+		}
+	}
+}
+
+func TestSystemdUnitControllerDoesNotRestartActiveBGPDaemonOnUnitChange(t *testing.T) {
+	dir := t.TempDir()
+	router := &api.Router{Metadata: api.ObjectMeta{Name: "home"}, Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.BGPRouterSpec{
+			ASN:      64512,
+			RouterID: "192.0.2.1",
+		}},
+	}}}
+	var commands []string
+	controller := SystemdUnitController{
+		Router:           router,
+		Store:            mapStore{},
+		SystemdSystemDir: dir,
+		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			_ = ctx
+			line := strings.Join(append([]string{name}, args...), " ")
+			commands = append(commands, line)
+			return []byte("ok"), nil
+		},
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	gotCommands := strings.Join(commands, "\n")
+	if strings.Contains(gotCommands, "systemctl restart routerd-bgp.service") {
+		t.Fatalf("routerd-bgp.service must not be restarted by reconcile:\n%s", gotCommands)
+	}
+	if !strings.Contains(gotCommands, "systemctl daemon-reload") || !strings.Contains(gotCommands, "systemctl enable routerd-bgp.service") {
+		t.Fatalf("routerd-bgp unit was not rendered/enabled:\n%s", gotCommands)
 	}
 }
 

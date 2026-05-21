@@ -576,6 +576,7 @@ func applyCommand(args []string, stdout io.Writer) (err error) {
 	dnsmasqServicePath := fs.String("dnsmasq-service-file", defaultDnsmasqServicePath, "routerd-managed dnsmasq systemd unit file")
 	nftablesPath := fs.String("nftables-file", defaultNftablesPath, "routerd-managed nftables ruleset file")
 	ledgerPath := fs.String("ledger-file", defaultLedgerPath, "routerd ownership ledger file")
+	statePath := fs.String("state-file", defaultStatePath, "routerd state database file")
 	overrideClient := fs.String("override-client", "", "override DHCPv6PrefixDelegation client for this apply: routerd-dhcpv6-client, networkd, dhcp6c, or dhcpcd")
 	overrideProfile := fs.String("override-profile", "", "override DHCPv6PrefixDelegation profile for this apply")
 	once := fs.Bool("once", false, "run one apply loop")
@@ -614,7 +615,7 @@ func applyCommand(args []string, stdout io.Writer) (err error) {
 		DnsmasqServicePath:  runtimeDnsmasqServicePath(*dnsmasqServicePath),
 		NftablesPath:        *nftablesPath,
 		LedgerPath:          *ledgerPath,
-		StatePath:           defaultStatePath,
+		StatePath:           *statePath,
 		OverrideClient:      *overrideClient,
 		OverrideProfile:     *overrideProfile,
 		DryRun:              *dryRun,
@@ -3370,6 +3371,27 @@ func controllerDefaultStatuses() []controlapi.ControllerStatus {
 	return out
 }
 
+func filterControllerDefaultStatuses(statuses []controlapi.ControllerStatus, enabled []string) []controlapi.ControllerStatus {
+	if len(enabled) == 0 {
+		return statuses
+	}
+	allowed := make(map[string]struct{}, len(enabled))
+	for _, name := range enabled {
+		name = strings.TrimSpace(name)
+		if name == "" || name == "all" {
+			return statuses
+		}
+		allowed[name] = struct{}{}
+	}
+	out := make([]controlapi.ControllerStatus, 0, len(statuses))
+	for _, status := range statuses {
+		if _, ok := allowed[status.Name]; ok {
+			out = append(out, status)
+		}
+	}
+	return out
+}
+
 func controllerResourceKinds(name string) []string {
 	switch name {
 	case "address":
@@ -3438,6 +3460,8 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 	statusFile := fs.String("status-file", defaultStatusFile(), "status file")
 	socketPath := fs.String("socket", defaultSocketPath(), "Unix domain socket path")
 	statusSocketPath := fs.String("status-socket", defaultStatusSocketPath(), "read-only status Unix domain socket path")
+	statePath := fs.String("state-file", defaultStatePath, "routerd state database file")
+	controllerNames := fs.String("controllers", "all", "comma-separated controller names to run; use bgp for isolated BGP labs")
 	observeInterval := fs.Duration("observe-interval", 30*time.Second, "periodic observe interval; 0 disables scheduled observe")
 	applyInterval := fs.Duration("apply-interval", 0, "periodic apply interval; 0 disables scheduled apply")
 	netplanPath := fs.String("netplan-file", defaultNetplanPath, "routerd-managed netplan file")
@@ -3445,13 +3469,15 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 	dnsmasqServicePath := fs.String("dnsmasq-service-file", defaultDnsmasqServicePath, "routerd-managed dnsmasq systemd unit file")
 	nftablesPath := fs.String("nftables-file", defaultNftablesPath, "routerd-managed nftables ruleset file")
 	ledgerPath := fs.String("ledger-file", defaultLedgerPath, "routerd ownership ledger file")
+	bgpSocketPath := fs.String("bgp-socket", "/run/routerd/bgp/gobgp.sock", "routerd-bgp GoBGP gRPC Unix socket path")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *statusSocketPath == *socketPath {
 		return errors.New("--status-socket must differ from --socket")
 	}
-	controllerStatuses := controllerDefaultStatuses()
+	enabledControllers := parseControllerNames(*controllerNames)
+	controllerStatuses := filterControllerDefaultStatuses(controllerDefaultStatuses(), enabledControllers)
 	controllerRuntime := controlapi.NewControllerRuntimeStore(controllerStatuses)
 	router, err := config.Load(*configPath)
 	if err != nil {
@@ -3498,12 +3524,12 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 	}()
 	var controllerBus *bus.Bus
 	var stateStore *routerstate.SQLiteStore
-	stateStore, err = routerstate.OpenSQLite(defaultStatePath)
+	stateStore, err = routerstate.OpenSQLite(*statePath)
 	if err != nil {
 		return err
 	}
 	defer stateStore.Close()
-	if _, cleanupErr := cleanupUnsupportedLegacyObjectStatuses(router, stateStore, defaultStatePath, time.Now().UTC(), logger); cleanupErr != nil {
+	if _, cleanupErr := cleanupUnsupportedLegacyObjectStatuses(router, stateStore, *statePath, time.Now().UTC(), logger); cleanupErr != nil {
 		logger.Emit(eventlog.LevelWarning, "serve", "stale state cleanup encountered an error", map[string]string{"error": cleanupErr.Error()})
 	}
 	controllerBus = bus.NewWithStore(stateStore)
@@ -3524,8 +3550,10 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 			FirewallPath:           "/run/routerd/firewall.nft",
 			LedgerPath:             *ledgerPath,
 			NftCommand:             "nft",
+			BGPSocketPath:          *bgpSocketPath,
 			ConntrackInterval:      30 * time.Second,
 			ControllerObserver:     controllerRuntime,
+			EnabledControllers:     enabledControllers,
 		},
 	}
 	if err := chainRunner.Start(ctx); err != nil {
@@ -3542,7 +3570,7 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 		DnsmasqServicePath: runtimeDnsmasqServicePath(*dnsmasqServicePath),
 		NftablesPath:       *nftablesPath,
 		LedgerPath:         *ledgerPath,
-		StatePath:          defaultStatePath,
+		StatePath:          *statePath,
 	}
 	applyMu := &sync.Mutex{}
 	if *applyInterval > 0 {
@@ -3555,7 +3583,7 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 			webStore = stateStore
 			webObjectStore = stateStore
 		} else {
-			opened, openErr := routerstate.OpenSQLite(defaultStatePath)
+			opened, openErr := routerstate.OpenSQLite(*statePath)
 			if openErr != nil {
 				return openErr
 			}
@@ -3752,6 +3780,21 @@ func listenUnixSocket(path string, perm os.FileMode) (net.Listener, error) {
 		return nil, err
 	}
 	return listener, nil
+}
+
+func parseControllerNames(value string) []string {
+	value = strings.TrimSpace(value)
+	if value == "" || value == "all" {
+		return nil
+	}
+	var out []string
+	for _, part := range strings.Split(value, ",") {
+		part = strings.TrimSpace(part)
+		if part != "" && part != "all" {
+			out = append(out, part)
+		}
+	}
+	return out
 }
 
 func logQuerySince(value string) (time.Time, error) {

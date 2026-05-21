@@ -12,9 +12,10 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 
 ### 變更
 
-- 將 BGP controller backend 替換為 embedded GoBGP。`BGPRouter` 與
-  `BGPPeer` 會直接映射到型別化的 GoBGP API object，`apply --once` 不再
-  render FRR artifact，`routerd serve` 負責管理 process 內的 BGP server。
+- 將 BGP controller backend 替換為以 GoBGP 建構的長生命週期 `routerd-bgp`
+  daemon。`BGPRouter` 與 `BGPPeer` 會透過本機 gRPC Unix socket 直接映射到
+  型別化的 GoBGP API object，`apply --once` 不再 render FRR artifact，
+  `routerd` restart 也不會 restart BGP process 或中斷已建立的 session。
   peer/path status 現在來自 `ListPeer` / `ListPath`，不再解析 `vtysh` 文字。
   符合 import policy 的已學習 IPv4 best path 會寫入 kernel FIB，equal best path
   會作為 ECMP next-hop 處理；尚未支援的 BFD intent 會回報 Pending，而不是靜默忽略。

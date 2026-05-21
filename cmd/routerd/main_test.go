@@ -387,6 +387,20 @@ func TestControllerDefaultStatusesAreLive(t *testing.T) {
 	}
 }
 
+func TestFilterControllerDefaultStatuses(t *testing.T) {
+	all := controllerDefaultStatuses()
+	filtered := filterControllerDefaultStatuses(all, parseControllerNames("bgp"))
+	if len(filtered) != 1 {
+		t.Fatalf("filtered len = %d, want 1: %+v", len(filtered), filtered)
+	}
+	if filtered[0].Name != "bgp" {
+		t.Fatalf("filtered[0].Name = %q, want bgp", filtered[0].Name)
+	}
+	if got := filterControllerDefaultStatuses(all, parseControllerNames("all")); len(got) != len(all) {
+		t.Fatalf("all filtered len = %d, want %d", len(got), len(all))
+	}
+}
+
 func TestOverallStatusPhaseUsesResourceStatuses(t *testing.T) {
 	store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {

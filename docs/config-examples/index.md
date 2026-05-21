@@ -36,7 +36,7 @@ The numbers in diagrams and YAML comments intentionally match. For example,
 | [DS-Lite home gateway](./dslite-home.md) | Works today with ISP-specific values | The access line is IPv6-first and IPv4 goes through a DS-Lite tunnel. |
 | [PPPoE IPv4 NAT gateway](./pppoe-ipv4-nat.md) | Works today with ISP credentials | The WAN is an Ethernet access line and IPv4 comes from a PPPoE session. |
 | [Port forward to an inside web server](./port-forward-web.md) | Works today with a known WAN address | You need to publish one inside HTTPS service and support hairpin access from LAN clients. |
-| [Kubernetes API VIP with BGP](./kubernetes-api-vip.md) | Works today with embedded GoBGP and keepalived | You want routerd to hold a Kubernetes API VIP, health-check control planes, and receive Service prefixes by BGP. |
+| [Kubernetes API VIP with BGP](./kubernetes-api-vip.md) | Works today with `routerd-bgp` GoBGP and keepalived | You want routerd to hold a Kubernetes API VIP, health-check control planes, and receive Service prefixes by BGP. |
 | [Guest and IoT client isolation](./guest-isolation.md) | Works today on Linux nftables | A small set of MAC addresses should reach the internet but not the trusted LAN or management networks. |
 | [Firewall rate limits and ICMP rules](./firewall-rate-limit.md) | Works today on Linux nftables | You need multi-port service openings, ICMP type matching, and SSH brute-force dampening. |
 | [Multi-WAN IPv4 failover](./multi-wan-failover.md) | Works today; tune health checks carefully | Several IPv4 egress paths exist and routerd should select a healthy default route. |

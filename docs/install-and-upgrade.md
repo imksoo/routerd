@@ -258,7 +258,8 @@ controller pass.
 When the same router config contains VRRP or ingress service resources, routerd
 augments its own unit with the keepalived paths and capabilities needed by the
 generated integrations. BGP no longer requires FRR groups or writable FRR
-runtime directories because the GoBGP backend runs in-process.
+runtime directories because the GoBGP backend runs as the managed
+`routerd-bgp` daemon and is controlled through a local gRPC Unix socket.
 
 Useful options:
 

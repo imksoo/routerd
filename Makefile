@@ -23,12 +23,13 @@ ROUTERD_DHCPv6_CLIENT_BIN := $(BUILDDIR)/routerd-dhcpv6-client
 ROUTERD_DHCP_EVENT_RELAY_BIN := $(BUILDDIR)/routerd-dhcp-event-relay
 ROUTERD_DHCP_FINGERPRINT_WATCHER_BIN := $(BUILDDIR)/routerd-dhcp-fingerprint-watcher
 ROUTERD_HEALTHCHECK_BIN := $(BUILDDIR)/routerd-healthcheck
+ROUTERD_BGP_BIN := $(BUILDDIR)/routerd-bgp
 ROUTERD_DNS_RESOLVER_BIN := $(BUILDDIR)/routerd-dns-resolver
 ROUTERD_FIREWALL_LOGGER_BIN := $(BUILDDIR)/routerd-firewall-logger
 ROUTERD_DPI_CLASSIFIER_BIN := $(BUILDDIR)/routerd-dpi-classifier
 ROUTERD_NDPI_AGENT_BIN := $(BUILDDIR)/routerd-ndpi-agent
 ROUTERD_PPPOE_CLIENT_BIN := $(BUILDDIR)/routerd-pppoe-client
-ROUTERD_RELEASE_BINS := $(ROUTERD_BIN) $(ROUTERCTL_BIN) $(ROUTERD_DHCPv4_CLIENT_BIN) $(ROUTERD_DHCPv6_CLIENT_BIN) $(ROUTERD_DHCP_EVENT_RELAY_BIN) $(ROUTERD_DHCP_FINGERPRINT_WATCHER_BIN) $(ROUTERD_HEALTHCHECK_BIN) $(ROUTERD_DNS_RESOLVER_BIN) $(ROUTERD_FIREWALL_LOGGER_BIN) $(ROUTERD_DPI_CLASSIFIER_BIN) $(ROUTERD_NDPI_AGENT_BIN) $(ROUTERD_PPPOE_CLIENT_BIN)
+ROUTERD_RELEASE_BINS := $(ROUTERD_BIN) $(ROUTERCTL_BIN) $(ROUTERD_DHCPv4_CLIENT_BIN) $(ROUTERD_DHCPv6_CLIENT_BIN) $(ROUTERD_DHCP_EVENT_RELAY_BIN) $(ROUTERD_DHCP_FINGERPRINT_WATCHER_BIN) $(ROUTERD_HEALTHCHECK_BIN) $(ROUTERD_BGP_BIN) $(ROUTERD_DNS_RESOLVER_BIN) $(ROUTERD_FIREWALL_LOGGER_BIN) $(ROUTERD_DPI_CLASSIFIER_BIN) $(ROUTERD_NDPI_AGENT_BIN) $(ROUTERD_PPPOE_CLIENT_BIN)
 ROUTERD_NDPI_AGENT_LIBNDPI_DISTROOT := $(DISTDIR)/ndpi-agent-libndpi-package
 ROUTERD_NDPI_AGENT_LIBNDPI_TAR := $(DISTDIR)/routerd-ndpi-agent-libndpi-$(VERSION)-$(DISTPLATFORM).tar.gz
 ROUTERD_NDPI_AGENT_LIBNDPI_ALIAS := $(DISTDIR)/routerd-ndpi-agent-libndpi-$(DISTPLATFORM).tar.gz
@@ -61,6 +62,7 @@ build-daemons:
 	$(GO_BUILD_ENV) go build $(GO_BUILD_FLAGS) -o $(ROUTERD_DHCP_EVENT_RELAY_BIN) ./cmd/routerd-dhcp-event-relay
 	$(GO_BUILD_ENV) go build $(GO_BUILD_FLAGS) -o $(ROUTERD_DHCP_FINGERPRINT_WATCHER_BIN) ./cmd/routerd-dhcp-fingerprint-watcher
 	$(GO_BUILD_ENV) go build $(GO_BUILD_FLAGS) -o $(ROUTERD_HEALTHCHECK_BIN) ./cmd/routerd-healthcheck
+	$(GO_BUILD_ENV) go build $(GO_BUILD_FLAGS) -o $(ROUTERD_BGP_BIN) ./cmd/routerd-bgp
 	$(GO_BUILD_ENV) go build $(GO_BUILD_FLAGS) -o $(ROUTERD_DNS_RESOLVER_BIN) ./cmd/routerd-dns-resolver
 	$(GO_BUILD_ENV) go build $(GO_BUILD_FLAGS) -o $(ROUTERD_FIREWALL_LOGGER_BIN) ./cmd/routerd-firewall-logger
 	$(GO_BUILD_ENV) go build $(GO_BUILD_FLAGS) -o $(ROUTERD_DPI_CLASSIFIER_BIN) ./cmd/routerd-dpi-classifier
@@ -183,6 +185,7 @@ dist:
 	install -m 0755 $(ROUTERD_DHCP_EVENT_RELAY_BIN) $(DISTROOT)/bin/routerd-dhcp-event-relay
 	install -m 0755 $(ROUTERD_DHCP_FINGERPRINT_WATCHER_BIN) $(DISTROOT)/bin/routerd-dhcp-fingerprint-watcher
 	install -m 0755 $(ROUTERD_HEALTHCHECK_BIN) $(DISTROOT)/bin/routerd-healthcheck
+	install -m 0755 $(ROUTERD_BGP_BIN) $(DISTROOT)/bin/routerd-bgp
 	install -m 0755 $(ROUTERD_DNS_RESOLVER_BIN) $(DISTROOT)/bin/routerd-dns-resolver
 	install -m 0755 $(ROUTERD_FIREWALL_LOGGER_BIN) $(DISTROOT)/bin/routerd-firewall-logger
 	install -m 0755 $(ROUTERD_DPI_CLASSIFIER_BIN) $(DISTROOT)/bin/routerd-dpi-classifier
@@ -239,7 +242,7 @@ validate-example:
 	done
 
 dry-run-example:
-	go run ./cmd/routerd apply --config examples/basic-static.yaml --once --dry-run --status-file /tmp/routerd-status.json
+	go run ./cmd/routerd apply --config examples/basic-static.yaml --once --dry-run --status-file /tmp/routerd-status.json --state-file /tmp/routerd-dry-run-example.db --ledger-file /tmp/routerd-dry-run-ledger.db
 
 plan-config:
 	test -n "$(CONFIG)" || (echo "CONFIG is required, for example: make plan-config CONFIG=path/to/router.yaml" >&2; exit 2)

@@ -257,8 +257,8 @@ apply の途中で自分自身を直接再起動するのではなく、`systemd
 self-restart を予約します。
 VRRP または ingress service リソースを同じ設定に含む場合は、生成される
 `routerd.service` に keepalived 用の書き込み可能 path と capability を自動追加します。
-BGP は embedded GoBGP backend が process 内で動くため、FRR group や FRR runtime
-directory は不要です。
+BGP は長寿命 `routerd-bgp` daemon を local gRPC Unix socket で制御するため、
+FRR group や FRR runtime directory は不要です。
 
 よく使うオプション:
 

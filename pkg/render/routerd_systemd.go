@@ -20,7 +20,7 @@ func RouterdServiceSystemdSpec() api.SystemdUnitSpec {
 			"/usr/local/sbin/routerd",
 			"serve",
 		},
-		RuntimeDirectory:         []string{"routerd", "routerd/dhcpv6-client", "routerd/dhcpv4-client", "routerd/pppoe-client", "routerd/dns-resolver"},
+		RuntimeDirectory:         []string{"routerd", "routerd/bgp", "routerd/dhcpv6-client", "routerd/dhcpv4-client", "routerd/pppoe-client", "routerd/dns-resolver"},
 		RuntimeDirectoryPreserve: "yes",
 		StateDirectory:           []string{"routerd"},
 		LogsDirectory:            []string{"routerd"},

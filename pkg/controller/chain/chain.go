@@ -533,9 +533,11 @@ type Options struct {
 	FirewallPath           string
 	LedgerPath             string
 	NftCommand             string
+	BGPSocketPath          string
 	ConntrackInterval      time.Duration
 	Logger                 *slog.Logger
 	ControllerObserver     framework.Observer
+	EnabledControllers     []string
 }
 
 type Runner struct {
@@ -553,7 +555,7 @@ func (r *Runner) Start(ctx context.Context) error {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	if r.Opts.SuperviseClientDaemons {
+	if r.Opts.SuperviseClientDaemons && r.controllerEnabled("daemon-supervisor") {
 		r.superviseClientDaemons(ctx, logger)
 	}
 	for _, resource := range r.Router.Spec.Resources {
@@ -706,18 +708,32 @@ func (r *Runner) Start(ctx context.Context) error {
 	health := healthcheck.Controller{Router: r.Router, Bus: r.Bus, Store: store, Logger: logger}
 	nat := nat44.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunNAT, IngressLive: !r.Opts.DryRunIngress, NftablesPath: r.Opts.NftablesPath, NftCommand: r.Opts.NftCommand, Logger: logger}
 	ingressService := ingressservicecontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunIngress, Resolver: ingressServiceDNSResolver(r.Router, store), Logger: logger}
-	bgp := bgpcontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunBGP, Logger: logger}
+	bgpDaemon := bgpcontroller.DefaultDaemonSpec()
+	if strings.TrimSpace(r.Opts.BGPSocketPath) != "" {
+		bgpDaemon.SocketPath = strings.TrimSpace(r.Opts.BGPSocketPath)
+	}
+	bgp := bgpcontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunBGP, Logger: logger, Daemon: bgpDaemon}
 	vrrp := vrrpcontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunVRRP, Logger: logger}
 	ipAddressSet := IPAddressSetController{Router: r.Router, Store: store, DryRunNAT: r.Opts.DryRunNAT, DryRunRoute: r.Opts.DryRunRoute, DryRunFirewall: r.Opts.DryRunFirewall, NftCommand: r.Opts.NftCommand, RuntimeDir: defaults.RuntimeDir}
 	firewall := firewallcontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunFirewall, NftablesPath: firstNonEmpty(r.Opts.FirewallPath, "/run/routerd/firewall.nft"), NftCommand: r.Opts.NftCommand, Logger: logger}
 	conntrackObs := conntrackobserver.Controller{Router: r.Router, Bus: r.Bus, Store: store, Paths: conntrack.DefaultPaths(), Interval: r.Opts.ConntrackInterval, Logger: logger}
-	rules.Start(ctx)
-	derivedEvents.Start(ctx)
-	if err := observabilityPipeline.Start(ctx); err != nil {
-		return err
+	if r.controllerEnabled("event-rule") {
+		rules.Start(ctx)
 	}
-	health.Start(ctx)
-	conntrackObs.Start(ctx)
+	if r.controllerEnabled("derived-event") {
+		derivedEvents.Start(ctx)
+	}
+	if r.controllerEnabled("observability-pipeline") {
+		if err := observabilityPipeline.Start(ctx); err != nil {
+			return err
+		}
+	}
+	if r.controllerEnabled("healthcheck") {
+		health.Start(ctx)
+	}
+	if r.controllerEnabled("conntrack-observer") {
+		conntrackObs.Start(ctx)
+	}
 	controllers := []framework.Controller{
 		framework.FuncController{ControllerName: "daemon-status", Every: 5 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.dhcpv6.client.**", "routerd.dhcpv4.client.**", "routerd.healthcheck.**", "routerd.pppoe.client.**"}}}, PeriodicFunc: daemonStatusSync.Reconcile},
 		framework.FuncController{ControllerName: "package", Every: 5 * time.Minute, PeriodicFunc: packages.Reconcile},
@@ -781,7 +797,10 @@ func (r *Runner) Start(ctx context.Context) error {
 	if !r.Opts.FirewallDisabled {
 		controllers = append(controllers, framework.FuncController{ControllerName: "firewall", Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed", "routerd.firewall.**"}}}, PeriodicFunc: firewall.Reconcile})
 	}
-	r.warmDaemonStatuses(ctx, daemonStatusSync, logger)
+	controllers = r.filterControllers(controllers)
+	if r.controllerEnabled("daemon-status") {
+		r.warmDaemonStatuses(ctx, daemonStatusSync, logger)
+	}
 	go func() {
 		loop := framework.Runner{Bus: r.Bus, Logger: logger, Interval: 30 * time.Second, Observer: r.Opts.ControllerObserver}
 		if err := loop.Run(ctx, controllers...); err != nil && ctx.Err() == nil {
@@ -789,6 +808,31 @@ func (r *Runner) Start(ctx context.Context) error {
 		}
 	}()
 	return nil
+}
+
+func (r *Runner) controllerEnabled(name string) bool {
+	if len(r.Opts.EnabledControllers) == 0 {
+		return true
+	}
+	for _, candidate := range r.Opts.EnabledControllers {
+		if strings.TrimSpace(candidate) == name || strings.TrimSpace(candidate) == "all" {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *Runner) filterControllers(controllers []framework.Controller) []framework.Controller {
+	if len(r.Opts.EnabledControllers) == 0 {
+		return controllers
+	}
+	out := make([]framework.Controller, 0, len(controllers))
+	for _, controller := range controllers {
+		if r.controllerEnabled(controller.Name()) {
+			out = append(out, controller)
+		}
+	}
+	return out
 }
 
 func acquireClusterLease(ctx context.Context, router *api.Router, store Store) (ha.Decision, error) {

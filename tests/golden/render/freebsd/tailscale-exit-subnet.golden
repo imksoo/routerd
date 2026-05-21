@@ -43,6 +43,7 @@ start_precmd="${name}_prestart"
 routerd_prestart() {
   mkdir -p "/var/run/${name}"
   mkdir -p '/var/run/routerd'
+  mkdir -p '/var/run/routerd/bgp'
   mkdir -p '/var/run/routerd/dhcpv4-client'
   mkdir -p '/var/run/routerd/dhcpv6-client'
   mkdir -p '/var/run/routerd/dns-resolver'

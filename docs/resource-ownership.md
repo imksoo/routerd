@@ -35,8 +35,8 @@ routerd associates host-side artefacts with the resource that produced them. Rec
 | `ClusterNetworkRoute` | Generated `IPv4StaticRoute` intents for Pod / Service CIDRs through configured next hops |
 | `NAT44Rule` | nftables `routerd_nat` table |
 | `PortForward` / `IngressService` | Linux nftables `routerd_nat` / `routerd_filter` DNAT, optional hairpin SNAT, or FreeBSD `pf.conf` `rdr pass` / optional NAT reflection rules |
-| `BGPRouter` / `BGPPeer` | Embedded GoBGP server state inside `routerd serve`; learned IPv4 best paths installed into the kernel FIB with routerd-owned protocol/metric values |
-| `BFD` | BFD intent only; embedded GoBGP reports BFD as unsupported until routerd owns a non-FRR BFD implementation |
+| `BGPRouter` / `BGPPeer` | Long-lived `routerd-bgp` daemon state controlled through local GoBGP gRPC; learned IPv4 best paths installed into the kernel FIB with routerd-owned protocol/metric values |
+| `BFD` | BFD intent only; the GoBGP backend reports BFD as unsupported until routerd owns a non-FRR BFD implementation |
 | `VirtualAddress` | Static VIP through `ip addr` or `ifconfig`; VRRP/VRRPv3 VIP ownership through keepalived on Linux or CARP on FreeBSD |
 | `ObservabilityPipeline` | In-process routerd event exporter and generated OpenTelemetry environment for managed units |
 | `RouterdCluster` | File lease under `spec.leasePath`; leader-only apply/controller mutation gate |

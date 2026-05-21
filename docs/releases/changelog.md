@@ -12,16 +12,18 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ### Changed
 
-- Replaced the BGP controller backend with embedded GoBGP. `BGPRouter` and
-  `BGPPeer` now map directly to typed GoBGP API objects, `apply --once` no
-  longer renders FRR artifacts, `routerd serve` owns the in-process BGP server,
-  and observed peer/path status comes from `ListPeer`/`ListPath` instead of
-  `vtysh` text parsing. Learned IPv4 best paths matching import policy are
-  installed into the kernel FIB, including ECMP next hops for equal best paths;
-  unsupported BFD intent is reported as Pending instead of being silently ignored.
-  Learned routes that cannot be installed into the kernel FIB, such as IPv6 FIB
-  routes in the MVP or non-Linux platforms, now degrade the router status with a
-  per-prefix install reason instead of being silently dropped.
+- Replaced the BGP controller backend with a long-lived `routerd-bgp` daemon
+  built on GoBGP. `BGPRouter` and `BGPPeer` now map directly to typed GoBGP API
+  objects over a local gRPC Unix socket, `apply --once` no longer renders FRR
+  artifacts, and `routerd` restarts no longer restart the BGP process or drop
+  established sessions. Observed peer/path status comes from
+  `ListPeer`/`ListPath` instead of `vtysh` text parsing. Learned IPv4 best paths
+  matching import policy are installed into the kernel FIB, including ECMP next
+  hops for equal best paths; unsupported BFD intent is reported as Pending
+  instead of being silently ignored. Learned routes that cannot be installed into
+  the kernel FIB, such as IPv6 FIB routes in the MVP or non-Linux platforms, now
+  degrade the router status with a per-prefix install reason instead of being
+  silently dropped.
 
 ## v20260521.1953
 

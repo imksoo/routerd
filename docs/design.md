@@ -181,10 +181,10 @@ The `eventedStore` wrapper guarantees that every persisted state change emits `r
 Kubernetes edge resources use this status flow directly. `IngressService`
 health checks choose an active backend and the NAT renderer uses that status on
 the next reconcile. `BGPRouter` / `BGPPeer` status is observed from the
-embedded GoBGP server with typed `ListPeer` / `ListPath` API calls and can
-lower `VirtualAddress` VRRP priority through `track`. BGP config changes are
-applied to the in-process server with GoBGP API objects instead of rendering
-FRR-style text config or shelling out to reload tools. `VirtualAddress` and
+long-lived `routerd-bgp` daemon with typed `ListPeer` / `ListPath` API calls
+and can lower `VirtualAddress` VRRP priority through `track`. BGP config changes
+are applied to that daemon with GoBGP API objects instead of rendering FRR-style
+text config or shelling out to reload tools. `VirtualAddress` and
 `IngressService` hostnames feed
 DNSResolver-served zones as derived A/AAAA records, and BGP/VRRP/Ingress status is
 also surfaced through dedicated `routerctl show` views and low-cardinality OTel
