@@ -29,6 +29,9 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期和时间型版本号。
   `reconcileErrorCount` 仍是 lifetime counter，而 `currentError`、
   `consecutiveErrorCount`、`lastErrorTime`、`lastErrorClearedAt` 用于判断最新
   reconcile 是否仍在失败，或过去的一次性错误是否已经恢复。
+- 新增 `EgressRoutePolicy` no-op reconcile 回归测试，确保 default-route selection
+  未变化时，包括 `mode: priority` 的 dry-run status，不会 churn
+  `routerd.lan.route.changed` 或 resource status event。
 
 ## v20260521.1953
 

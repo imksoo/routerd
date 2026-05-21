@@ -253,6 +253,60 @@ func TestIPv4PolicyRouteOwnsPriorityPolicyWithoutChurn(t *testing.T) {
 	}
 }
 
+func TestIPv4PolicyRoutePriorityDryRunDoesNotChurnUnchangedFallback(t *testing.T) {
+	eventBus := bus.New()
+	base := mapStore{
+		api.NetAPIVersion + "/Interface/ix2215": {"phase": "Up", "ifname": "lo"},
+	}
+	resource := daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy", Name: "ipv4-default"}
+	statusCh, cancelStatus := eventBus.Subscribe(context.Background(), bus.Subscription{
+		Topics:   []string{"routerd.resource.status.changed"},
+		Resource: &resource,
+	}, 4)
+	defer cancelStatus()
+	routeCh, cancelRoute := eventBus.Subscribe(context.Background(), bus.Subscription{Topics: []string{"routerd.lan.route.changed"}}, 1)
+	defer cancelRoute()
+
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "ix2215"}, Spec: api.InterfaceSpec{IfName: "lo"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "ipv4-default"}, Spec: api.EgressRoutePolicySpec{
+			Mode: "priority",
+			Candidates: []api.EgressRoutePolicyCandidate{{
+				Name:          "ix2215-fallback",
+				DeviceFrom:    api.StatusValueSourceSpec{Resource: "Interface/ix2215", Field: "ifname"},
+				GatewaySource: "static",
+				Gateway:       "192.168.1.1",
+				Table:         116,
+				Metric:        50,
+				Priority:      10116,
+				Mark:          0x116,
+				Weight:        10,
+			}},
+		}},
+	}}}
+	controller := IPv4PolicyRouteController{Router: router, Store: eventedStore{Store: base, Bus: eventBus}, Bus: eventBus, DryRun: true}
+
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	status := base.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "ipv4-default")
+	if status["selectedCandidate"] != "ix2215-fallback" || status["selectedDevice"] != "lo" || status["selectedGateway"] != "192.168.1.1" || status["dryRun"] != true {
+		t.Fatalf("priority fallback status = %#v", status)
+	}
+	drainEvents(statusCh)
+
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case event := <-statusCh:
+		t.Fatalf("unchanged priority dry-run policy should not publish status churn: %#v", event)
+	case event := <-routeCh:
+		t.Fatalf("priority dry-run policy should not publish legacy route changed event: %#v", event)
+	case <-time.After(40 * time.Millisecond):
+	}
+}
+
 func TestIPv4PolicyRoutePrioritySelectionUsesWeightThenPriority(t *testing.T) {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	store := mapStore{

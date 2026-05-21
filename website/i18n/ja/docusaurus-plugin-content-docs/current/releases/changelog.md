@@ -30,6 +30,9 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
   `reconcileErrorCount` は lifetime counter のまま残し、`currentError`、
   `consecutiveErrorCount`、`lastErrorTime`、`lastErrorClearedAt` で最新 reconcile が
   失敗中なのか、過去の一時 error がすでに回復済みなのかを判定できます。
+- `EgressRoutePolicy` の no-op reconcile 回帰 test を追加し、`mode: priority` の
+  dry-run status を含む default-route selection が不変の場合に
+  `routerd.lan.route.changed` や resource status event を churn しないことを保証しました。
 
 ## v20260521.1953
 

@@ -500,6 +500,62 @@ func TestControllerRepublishesWhenSelectedOutputChanges(t *testing.T) {
 	}
 }
 
+func TestControllerDoesNotRepublishWhenSelectionUnchanged(t *testing.T) {
+	now := time.Date(2026, 5, 21, 10, 0, 0, 0, time.UTC)
+	store := mapStore{
+		api.NetAPIVersion + "/Link/ix2215": {"phase": "Up", "ifname": "ens19"},
+	}
+	b := bus.New()
+	ch, cancel := b.Subscribe(context.Background(), bus.Subscription{Topics: []string{EventRouteChanged}}, 2)
+	defer cancel()
+	controller := Controller{
+		Router: routerWithPolicy(api.EgressRoutePolicySpec{
+			Selection: SelectionHighestWeightReady,
+			Candidates: []api.EgressRoutePolicyCandidate{
+				{
+					Name:          "ix2215-fallback",
+					Source:        "Link/ix2215",
+					DeviceFrom:    api.StatusValueSourceSpec{Resource: "Link/ix2215", Field: "ifname"},
+					GatewaySource: "static",
+					Gateway:       "192.168.1.1",
+					Table:         116,
+					Metric:        50,
+					Weight:        10,
+				},
+			},
+		}),
+		Bus:   b,
+		Store: store,
+		Now:   func() time.Time { return now },
+	}
+
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case event := <-ch:
+		if event.Attributes["selectedCandidate"] != "ix2215-fallback" {
+			t.Fatalf("first event attributes = %#v", event.Attributes)
+		}
+	default:
+		t.Fatal("expected initial route changed event")
+	}
+
+	now = now.Add(30 * time.Second)
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "ipv4-default")
+	if status["selectedCandidate"] != "ix2215-fallback" || status["selectedDevice"] != "ens19" || status["selectedGateway"] != "192.168.1.1" || statusInt(status["selectedRouteTable"]) != 116 {
+		t.Fatalf("status = %#v", status)
+	}
+	select {
+	case event := <-ch:
+		t.Fatalf("unchanged selection should not publish route changed event: %#v", event)
+	case <-time.After(40 * time.Millisecond):
+	}
+}
+
 func routerWithPolicy(spec api.EgressRoutePolicySpec) *api.Router {
 	return routerWithResources(api.Resource{
 		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"},

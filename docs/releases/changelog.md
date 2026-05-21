@@ -32,6 +32,9 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
   while `currentError`, `consecutiveErrorCount`, `lastErrorTime`, and
   `lastErrorClearedAt` show whether the latest reconcile is still failing or a
   previous transient error has already recovered.
+- Added regression coverage for `EgressRoutePolicy` no-op reconciliation so
+  unchanged default-route selection, including `mode: priority` dry-run status,
+  does not churn `routerd.lan.route.changed` or resource status events.
 
 ## v20260521.1953
 
