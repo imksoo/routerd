@@ -10,6 +10,14 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 
 ## Unreleased
 
+### 修正
+
+- 修復從舊 routerd release 原地升級時仍殘留已刪除的
+  `--controller-chain*` flag 或 `SystemdUnit` resource 而導致啟動失敗的問題。
+  `serve` / `apply` 現在會帶 warning 忽略 legacy controller-chain flag；
+  installer 會在 restart service 前替換 legacy routerd service unit，並從保留的
+  config 中移除 user-facing `SystemdUnit` resource。
+
 ## v20260522.0006
 
 ### 變更

@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -23,6 +24,29 @@ import (
 	"routerd/pkg/resource"
 	routerstate "routerd/pkg/state"
 )
+
+func TestDropLegacyControllerChainFlagsWarnsAndKeepsModernArgs(t *testing.T) {
+	var stderr bytes.Buffer
+	got := dropLegacyControllerChainFlags("serve", []string{
+		"--config", "/tmp/router.yaml",
+		"--controller-chain",
+		"--controller-chain-daemon-sockets", "wan-pd=/run/routerd/pd.sock",
+		"--controller-chain-dry-run-route=false",
+		"-controller-chain-dry-run-nat", "false",
+		"--controller-chain-supervise-client-daemons=true",
+		"--controller-chain-future-knob", "legacy-value",
+		"--socket", "/run/routerd/routerd.sock",
+	}, &stderr)
+	want := []string{"--config", "/tmp/router.yaml", "--socket", "/run/routerd/routerd.sock"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("args = %#v, want %#v", got, want)
+	}
+	for _, text := range []string{"warning:", "controller-chain", "routerd serve ignored legacy"} {
+		if !strings.Contains(stderr.String(), text) {
+			t.Fatalf("warning missing %q:\n%s", text, stderr.String())
+		}
+	}
+}
 
 func TestApplyFilesReportsCreatedAndChanged(t *testing.T) {
 	dir := t.TempDir()

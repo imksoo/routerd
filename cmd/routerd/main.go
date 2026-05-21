@@ -126,11 +126,11 @@ func run(args []string, stdout, stderr io.Writer) error {
 	case "render":
 		return renderCommand(args[1:], stdout)
 	case "apply":
-		return applyCommand(args[1:], stdout)
+		return applyCommand(args[1:], stdout, stderr)
 	case "delete":
 		return deleteCommand(args[1:], stdout)
 	case "serve":
-		return serveCommand(args[1:], stdout)
+		return serveCommand(args[1:], stdout, stderr)
 	case "run":
 		return configCommand(args[1:], stdout, "run")
 	case "status":
@@ -144,6 +144,58 @@ func run(args []string, stdout, stderr io.Writer) error {
 		usage(stderr)
 		return fmt.Errorf("unknown command %q", args[0])
 	}
+}
+
+var legacyControllerChainFlagsWithValue = map[string]bool{
+	"controller-chain-daemon-sockets":           true,
+	"controller-chain-dnsmasq-command":          true,
+	"controller-chain-dnsmasq-config":           true,
+	"controller-chain-dnsmasq-pid":              true,
+	"controller-chain-dnsmasq-port":             true,
+	"controller-chain-dnsmasq-listen-addresses": true,
+	"controller-chain-nftables-file":            true,
+	"controller-chain-firewall-file":            true,
+	"controller-chain-conntrack-interval":       true,
+}
+
+func dropLegacyControllerChainFlags(command string, args []string, stderr io.Writer) []string {
+	if len(args) == 0 {
+		return args
+	}
+	out := make([]string, 0, len(args))
+	var dropped []string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if !strings.HasPrefix(arg, "-") {
+			out = append(out, arg)
+			continue
+		}
+		trimmed := strings.TrimLeft(arg, "-")
+		name, hasInlineValue := trimmed, false
+		if idx := strings.IndexByte(trimmed, '='); idx >= 0 {
+			name = trimmed[:idx]
+			hasInlineValue = true
+		}
+		if name == "controller-chain" || strings.HasPrefix(name, "controller-chain-") {
+			dropped = append(dropped, "--"+name)
+			if !hasInlineValue {
+				if legacyControllerChainFlagsWithValue[name] && i+1 < len(args) {
+					i++
+				} else if i+1 < len(args) && (args[i+1] == "true" || args[i+1] == "false") {
+					i++
+				} else if name != "controller-chain" && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+					i++
+				}
+			}
+			continue
+		}
+		out = append(out, arg)
+	}
+	if len(dropped) > 0 {
+		sort.Strings(dropped)
+		fmt.Fprintf(stderr, "warning: routerd %s ignored legacy controller-chain flags: %s; controller-chain is now selected automatically from config\n", command, strings.Join(dropped, ", "))
+	}
+	return out
 }
 
 func renderCommand(args []string, stdout io.Writer) error {
@@ -566,7 +618,8 @@ func adoptedArtifactsForResult(artifacts []resource.Artifact) []apply.AdoptedArt
 	return out
 }
 
-func applyCommand(args []string, stdout io.Writer) (err error) {
+func applyCommand(args []string, stdout, stderr io.Writer) (err error) {
+	args = dropLegacyControllerChainFlags("apply", args, stderr)
 	fs := flag.NewFlagSet("apply", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	configPath := fs.String("config", defaultConfigPath, "config path")
@@ -3453,7 +3506,8 @@ func publishControllerModeEvents(ctx context.Context, b *bus.Bus, controllers []
 	}
 }
 
-func serveCommand(args []string, stdout io.Writer) (err error) {
+func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
+	args = dropLegacyControllerChainFlags("serve", args, stderr)
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	configPath := fs.String("config", defaultConfigPath, "config path")

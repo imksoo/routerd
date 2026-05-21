@@ -5,6 +5,7 @@ package install_test
 import (
 	"archive/tar"
 	"compress/gzip"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -147,13 +148,140 @@ echo static-archive-agent
 	}
 }
 
+func TestInstallMigratesLegacySystemdUnitConfig(t *testing.T) {
+	dir := t.TempDir()
+	pkg := filepath.Join(dir, "package")
+	prefix := filepath.Join(dir, "prefix")
+	writeExecutable(t, filepath.Join(pkg, "bin", "routerd"), `#!/bin/sh
+if [ "$1" = "--version" ]; then echo routerd-test; exit 0; fi
+exit 0
+`)
+	if err := os.MkdirAll(filepath.Join(pkg, "etc", "routerd"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pkg, "etc", "routerd", "router.yaml.sample"), []byte("apiVersion: routerd.net/v1alpha1\nkind: Router\nmetadata:\n  name: sample\nspec: {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(prefix, "etc", "routerd", "router.yaml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacyConfig := `apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: legacy
+spec:
+  resources:
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: SystemdUnit
+      metadata:
+        name: routerd.service
+      spec:
+        execStart: /usr/local/sbin/routerd serve --controller-chain
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: Hostname
+      metadata:
+        name: router
+      spec:
+        hostname: router01
+`
+	if err := os.WriteFile(configPath, []byte(legacyConfig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runInstall(t, pkg, prefix, "--no-install-deps", "--no-config-update", "--no-restart")
+	if err != nil {
+		t.Fatalf("install failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "removing legacy SystemdUnit resources") {
+		t.Fatalf("missing migration warning:\n%s", out)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(data)
+	if strings.Contains(got, "SystemdUnit") || strings.Contains(got, "--controller-chain") {
+		t.Fatalf("legacy SystemdUnit was not removed:\n%s", got)
+	}
+	if !strings.Contains(got, "kind: Hostname") {
+		t.Fatalf("non-legacy resource was not preserved:\n%s", got)
+	}
+}
+
+func TestInstallReplacesLegacyRouterdServiceBeforeRestart(t *testing.T) {
+	dir := t.TempDir()
+	pkg := filepath.Join(dir, "package")
+	prefix := filepath.Join(dir, "prefix")
+	systemdDir := filepath.Join(dir, "systemd")
+	binDir := filepath.Join(dir, "bin")
+	commandLog := filepath.Join(dir, "commands.log")
+	writeExecutable(t, filepath.Join(pkg, "bin", "routerd"), `#!/bin/sh
+if [ "$1" = "--version" ]; then echo routerd-test; exit 0; fi
+exit 0
+`)
+	writeExecutable(t, filepath.Join(binDir, "systemctl"), fmt.Sprintf(`#!/bin/sh
+echo "systemctl $@" >> %q
+if [ "$1" = "is-active" ]; then exit 1; fi
+exit 0
+`, commandLog))
+	if err := os.MkdirAll(filepath.Join(pkg, "systemd"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	newUnit := `[Service]
+ExecStart=/usr/local/sbin/routerd serve --config /usr/local/etc/routerd/router.yaml
+`
+	if err := os.WriteFile(filepath.Join(pkg, "systemd", "routerd.service"), []byte(newUnit), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(systemdDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacyUnit := `# Managed by routerd.
+[Service]
+ExecStart=/usr/local/sbin/routerd serve --controller-chain --controller-chain-dry-run-route=false
+`
+	if err := os.WriteFile(filepath.Join(systemdDir, "routerd.service"), []byte(legacyUnit), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runInstallWithEnv(t, pkg, prefix, []string{
+		"PATH=" + binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+		"ROUTERD_INSTALL_FORCE_SERVICE_MANAGER=1",
+		"ROUTERD_INSTALL_SYSTEMD_SYSTEM_DIR=" + systemdDir,
+	}, "--no-install-deps", "--no-config-update", "--no-restart")
+	if err != nil {
+		t.Fatalf("install failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "replacing legacy routerd.service") {
+		t.Fatalf("missing legacy replacement warning:\n%s", out)
+	}
+	data, err := os.ReadFile(filepath.Join(systemdDir, "routerd.service"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(data)
+	if strings.Contains(got, "--controller-chain") || strings.Contains(got, "# Managed by routerd.") {
+		t.Fatalf("legacy unit was preserved:\n%s", got)
+	}
+	if !strings.Contains(got, "routerd serve --config") {
+		t.Fatalf("new unit was not installed:\n%s", got)
+	}
+}
+
 func runInstall(t *testing.T, pkg, prefix string, args ...string) (string, error) {
+	t.Helper()
+	return runInstallWithEnv(t, pkg, prefix, nil, args...)
+}
+
+func runInstallWithEnv(t *testing.T, pkg, prefix string, env []string, args ...string) (string, error) {
 	t.Helper()
 	script := filepath.Join(repoRoot(t), "packaging", "install.sh")
 	fullArgs := append([]string{"--prefix", prefix}, args...)
 	cmd := exec.Command(script, fullArgs...)
 	cmd.Dir = pkg
 	cmd.Env = append(os.Environ(), "ROUTERD_INSTALL_PACKAGE_MANAGER=none")
+	cmd.Env = append(cmd.Env, env...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }

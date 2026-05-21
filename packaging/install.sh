@@ -365,18 +365,97 @@ EOF
     exit 1
 }
 
-routerd_service_managed_by_config()
+routerd_service_has_legacy_config()
 {
-    service_path=/etc/systemd/system/routerd.service
+    service_path=$1
     [ -f "${service_path}" ] || return 1
     grep -Eq '(^# Managed by routerd\.|--controller-chain)' "${service_path}"
 }
 
-routerd_rcd_managed_by_config()
+routerd_config_contains_systemd_unit()
 {
-    service_path="${prefix}/etc/rc.d/routerd"
-    [ -f "${service_path}" ] || return 1
-    grep -Eq '(^# Managed by routerd\.|--controller-chain)' "${service_path}"
+    config=$1
+    [ -f "${config}" ] || return 1
+    awk '
+        /^[[:space:]]*-[[:space:]]*apiVersion:[[:space:]]*/ {
+            if (in_item && item ~ /(^|\n)[[:space:]]*kind:[[:space:]]*SystemdUnit([[:space:]\n]|$)/) {
+                found = 1
+            }
+            in_item = 1
+            item = $0 "\n"
+            next
+        }
+        {
+            if (in_item) {
+                item = item $0 "\n"
+            }
+        }
+        END {
+            if (in_item && item ~ /(^|\n)[[:space:]]*kind:[[:space:]]*SystemdUnit([[:space:]\n]|$)/) {
+                found = 1
+            }
+            exit(found ? 0 : 1)
+        }
+    ' "${config}"
+}
+
+migrate_legacy_router_config()
+{
+    config=$1
+    [ -f "${config}" ] || return 0
+    if ! routerd_config_contains_systemd_unit "${config}"; then
+        return 0
+    fi
+    echo "warning: removing legacy SystemdUnit resources from ${config}; routerd now generates service units from declared router intent" >&2
+    if [ "${dry_run}" -eq 1 ]; then
+        echo "dry-run: remove SystemdUnit resources from ${config}"
+        return 0
+    fi
+    backup_target "${config}"
+    tmp="${config}.tmp.$$"
+    awk '
+        function flush_item() {
+            if (!in_item) {
+                return
+            }
+            if (item ~ /(^|\n)[[:space:]]*kind:[[:space:]]*SystemdUnit([[:space:]\n]|$)/) {
+                changed = 1
+            } else {
+                printf "%s", item
+            }
+            in_item = 0
+            item = ""
+        }
+        /^[[:space:]]*-[[:space:]]*apiVersion:[[:space:]]*/ {
+            flush_item()
+            in_item = 1
+            item = $0 "\n"
+            next
+        }
+        {
+            if (in_item) {
+                item = item $0 "\n"
+            } else {
+                print
+            }
+        }
+        END {
+            flush_item()
+            if (!changed) {
+                exit 3
+            }
+        }
+    ' "${config}" > "${tmp}" || {
+        status=$?
+        rm -f "${tmp}"
+        if [ "${status}" -eq 3 ]; then
+            echo "warning: legacy SystemdUnit marker disappeared before migration: ${config}" >&2
+            return 0
+        fi
+        echo "failed to migrate legacy SystemdUnit resources from ${config}" >&2
+        return "${status}"
+    }
+    mv -f "${tmp}" "${config}"
 }
 
 wait_for_routerd_status_socket()
@@ -1377,8 +1456,6 @@ maybe_start_live_routerd()
         --config "${final_config}" \
         --socket "${socket_path}" \
         --status-socket "${status_socket_path}" \
-        --controller-chain \
-        --controller-chain-dry-run-dns-resolver=false \
         > /var/log/routerd-live.log 2>&1 &
     sleep 1
 }
@@ -1655,6 +1732,8 @@ if [ -f share/doc/TARGET ]; then
 fi
 bindir="${prefix}/sbin"
 sysconfdir="${prefix}/etc/routerd"
+systemd_system_dir=${ROUTERD_INSTALL_SYSTEMD_SYSTEM_DIR:-/etc/systemd/system}
+rcd_dir=${ROUTERD_INSTALL_RCD_DIR:-${prefix}/etc/rc.d}
 if [ "${prefix}" != "/usr/local" ]; then
     manage_host_service=0
     echo "non-default prefix ${prefix}; skipping host service manager"
@@ -1662,6 +1741,10 @@ fi
 if is_nixos_host; then
     manage_host_service=0
     echo "NixOS detected; skipping host service manager"
+fi
+if [ "${ROUTERD_INSTALL_FORCE_SERVICE_MANAGER:-0}" = "1" ]; then
+    manage_host_service=1
+    echo "test override: forcing host service manager"
 fi
 if [ -n "${target_archive}" ] && [ "${target_archive}" != "${target_expected}" ]; then
     if [ "${manage_host_service}" -eq 1 ]; then
@@ -1746,6 +1829,8 @@ else
     echo "config sample update skipped by --no-config-update"
 fi
 
+migrate_legacy_router_config "${sysconfdir}/router.yaml"
+
 if [ "${config_update}" -eq 1 ] && [ -f "${sysconfdir}/router.yaml" ] && [ -f "${sysconfdir}/router.yaml.sample" ]; then
     echo "existing config preserved: ${sysconfdir}/router.yaml"
     echo "new sample config: ${sysconfdir}/router.yaml.sample"
@@ -1764,18 +1849,18 @@ case "${os}" in
     Linux)
         if [ "${manage_host_service}" -eq 1 ] && [ -d systemd ]; then
             if [ "${dry_run}" -eq 1 ]; then
-                echo "dry-run: install -d -m 0755 /etc/systemd/system"
+                echo "dry-run: install -d -m 0755 ${systemd_system_dir}"
             else
-                install -d -m 0755 /etc/systemd/system
+                install -d -m 0755 "${systemd_system_dir}"
             fi
             for unit in systemd/*.service; do
                 [ -f "${unit}" ] || continue
                 unit_name=$(basename "${unit}")
-                if [ "${unit_name}" = "routerd.service" ] && routerd_service_managed_by_config; then
-                    echo "existing config-managed routerd.service preserved: /etc/systemd/system/routerd.service"
-                    continue
+                target_unit="${systemd_system_dir}/${unit_name}"
+                if [ "${unit_name}" = "routerd.service" ] && routerd_service_has_legacy_config "${target_unit}"; then
+                    echo "warning: replacing legacy routerd.service managed by removed SystemdUnit/controller-chain flags: ${target_unit}" >&2
                 fi
-                atomic_install 0644 "${unit}" "/etc/systemd/system/${unit_name}"
+                atomic_install 0644 "${unit}" "${target_unit}"
             done
             if command -v systemctl >/dev/null 2>&1; then
                 if [ "${dry_run}" -eq 1 ]; then
@@ -1807,18 +1892,18 @@ case "${os}" in
     FreeBSD)
         if [ "${manage_host_service}" -eq 1 ] && [ -d rc.d ]; then
             if [ "${dry_run}" -eq 1 ]; then
-                echo "dry-run: install -d -m 0755 ${prefix}/etc/rc.d"
+                echo "dry-run: install -d -m 0755 ${rcd_dir}"
             else
-                install -d -m 0755 "${prefix}/etc/rc.d"
+                install -d -m 0755 "${rcd_dir}"
             fi
             for script in rc.d/*; do
                 [ -f "${script}" ] || continue
                 script_name=$(basename "${script}")
-                if [ "${script_name}" = "routerd" ] && routerd_rcd_managed_by_config; then
-                    echo "existing config-managed routerd rc.d script preserved: ${prefix}/etc/rc.d/routerd"
-                    continue
+                target_script="${rcd_dir}/${script_name}"
+                if [ "${script_name}" = "routerd" ] && routerd_service_has_legacy_config "${target_script}"; then
+                    echo "warning: replacing legacy routerd rc.d script managed by removed SystemdUnit/controller-chain flags: ${target_script}" >&2
                 fi
-                atomic_install 0555 "${script}" "${prefix}/etc/rc.d/${script_name}"
+                atomic_install 0555 "${script}" "${target_script}"
             done
             if [ "${enable_service}" -eq 1 ] && command -v sysrc >/dev/null 2>&1; then
                 if [ "${dry_run}" -eq 1 ]; then

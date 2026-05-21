@@ -10,6 +10,15 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 
 ## Unreleased
 
+### 修正
+
+- 旧 routerd release からの in-place upgrade で、削除済みの
+  `--controller-chain*` flag や `SystemdUnit` resource が残っている場合でも
+  起動不能にならないようにしました。`serve` / `apply` は legacy
+  controller-chain flag を warning 付きで無視し、installer は service restart 前に
+  legacy routerd service unit を置き換え、保存済み config から user-facing
+  `SystemdUnit` resource を削除します。
+
 ## v20260522.0006
 
 ### 変更

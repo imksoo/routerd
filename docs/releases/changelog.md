@@ -10,6 +10,15 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- Fixed in-place upgrades from legacy routerd releases that still passed
+  removed `--controller-chain*` flags or declared `SystemdUnit` resources.
+  `serve` and `apply` now warn and ignore legacy controller-chain flags instead
+  of failing before reconciliation, and the installer replaces legacy
+  routerd service units while removing user-facing `SystemdUnit` resources from
+  preserved configs before restarting the service.
+
 ## v20260522.0006
 
 ### Changed
