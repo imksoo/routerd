@@ -10,6 +10,8 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 
 ## Unreleased
 
+## v20260522.0742
+
 ### 修正
 
 - NixOS module の `services.routerd.extraFlags` escape hatch を削除し、

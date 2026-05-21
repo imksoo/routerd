@@ -2,7 +2,7 @@
 
 package version
 
-const Version = "v20260522.0658"
+const Version = "v20260522.0742"
 
 var Commit = ""
 
