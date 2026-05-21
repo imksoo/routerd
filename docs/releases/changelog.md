@@ -19,6 +19,9 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
   `vtysh` text parsing. Learned IPv4 best paths matching import policy are
   installed into the kernel FIB, including ECMP next hops for equal best paths;
   unsupported BFD intent is reported as Pending instead of being silently ignored.
+  Learned routes that cannot be installed into the kernel FIB, such as IPv6 FIB
+  routes in the MVP or non-Linux platforms, now degrade the router status with a
+  per-prefix install reason instead of being silently dropped.
 
 ## v20260521.1953
 

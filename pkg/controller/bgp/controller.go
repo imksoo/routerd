@@ -42,12 +42,17 @@ type GoBGPServer interface {
 }
 
 type FIBSyncer interface {
-	SyncBGP(ctx context.Context, routes []FIBRoute) error
+	SyncBGP(ctx context.Context, routes []FIBRoute) (FIBSyncResult, error)
 }
 
 type FIBRoute struct {
 	Prefix   string
 	NextHops []string
+}
+
+type FIBSyncResult struct {
+	Installed   map[string]bool
+	Unsupported map[string]string
 }
 
 const MinPollInterval = 3 * time.Second
@@ -134,9 +139,11 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	if c.FIB == nil {
 		c.FIB = defaultFIBSyncer()
 	}
-	if err := c.FIB.SyncBGP(ctx, routes); err != nil {
+	fibResult, err := c.FIB.SyncBGP(ctx, routes)
+	if err != nil {
 		return c.savePendingAll("GoBGPFIBSyncFailed", err)
 	}
+	state = applyFIBResult(state, routes, fibResult)
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	state.Peers = c.applyPeerHistory(state.Peers, now)
 	var events []bgpstate.Event
@@ -145,7 +152,7 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	}
 	c.lastState = state
 	c.observed = true
-	if err := c.saveObservedStatuses(routerResource.Metadata.Name, state, changed, len(routes)); err != nil {
+	if err := c.saveObservedStatuses(routerResource.Metadata.Name, state, changed, fibResult); err != nil {
 		return err
 	}
 	for _, event := range events {
@@ -173,11 +180,12 @@ func (c *Controller) ensureServer(ctx context.Context, spec routerapi.BGPRouterS
 		go c.Server.Serve()
 	}
 	req := &gobgpapi.StartBgpRequest{Global: &gobgpapi.Global{
-		Asn:             spec.ASN,
-		RouterId:        strings.TrimSpace(spec.RouterID),
-		ListenPort:      int32(bgpListenPort(spec.Listen)),
-		ListenAddresses: bgpListenAddresses(spec.Listen),
-		Families:        []uint32{0}, // GoBGP API uses OpenConfig AFI-SAFI type indexes: 0 = ipv4-unicast.
+		Asn:              spec.ASN,
+		RouterId:         strings.TrimSpace(spec.RouterID),
+		ListenPort:       int32(bgpListenPort(spec.Listen)),
+		ListenAddresses:  bgpListenAddresses(spec.Listen),
+		Families:         []uint32{0}, // GoBGP API uses OpenConfig AFI-SAFI type indexes: 0 = ipv4-unicast.
+		UseMultiplePaths: true,
 	}}
 	if c.bgpRouterUsesIPv6(spec) {
 		req.Global.Families = append(req.Global.Families, 1) // 1 = ipv6-unicast.
@@ -298,6 +306,7 @@ func (c *Controller) reconcileAdvertisements(ctx context.Context, spec routerapi
 
 func (c *Controller) observeState(ctx context.Context, allowedImportPrefixes []netip.Prefix) (bgpstate.State, []FIBRoute, error) {
 	var state bgpstate.State
+	var routes []FIBRoute
 	if err := c.Server.ListPeer(ctx, &gobgpapi.ListPeerRequest{EnableAdvertised: true}, func(peer *gobgpapi.Peer) {
 		state.Peers = append(state.Peers, statePeer(peer))
 	}); err != nil {
@@ -306,12 +315,13 @@ func (c *Controller) observeState(ctx context.Context, allowedImportPrefixes []n
 	for _, family := range bgpFamiliesForRouter(c.Router) {
 		err := c.Server.ListPath(ctx, &gobgpapi.ListPathRequest{TableType: gobgpapi.TableType_GLOBAL, Family: family}, func(dst *gobgpapi.Destination) {
 			state.Prefixes = append(state.Prefixes, statePrefixes(dst)...)
+			routes = append(routes, fibRoutesFromDestination(dst, allowedImportPrefixes)...)
 		})
 		if err != nil {
 			return bgpstate.State{}, nil, err
 		}
 	}
-	routes := bestFIBRoutes(state.Prefixes, allowedImportPrefixes)
+	routes = mergeFIBRoutes(routes)
 	limited, truncated := bgpstate.LimitPrefixes(bgpstate.Normalize(state), c.maxPrefixes())
 	if truncated {
 		limited.Prefixes = append(limited.Prefixes, bgpstate.Prefix{Prefix: "truncated", SelectionReason: "prefix limit reached"})
@@ -319,9 +329,11 @@ func (c *Controller) observeState(ctx context.Context, allowedImportPrefixes []n
 	return bgpstate.Normalize(limited), routes, nil
 }
 
-func (c *Controller) saveObservedStatuses(routerName string, state bgpstate.State, changed bool, fibRoutes int) error {
+func (c *Controller) saveObservedStatuses(routerName string, state bgpstate.State, changed bool, fibResult FIBSyncResult) error {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	peersByResource := c.peersByResource(state)
+	fibRoutes := fibInstalledCount(fibResult)
+	fibUnsupported := fibUnsupportedCount(fibResult)
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.APIVersion != routerapi.NetAPIVersion {
 			continue
@@ -340,20 +352,34 @@ func (c *Controller) saveObservedStatuses(routerName string, state bgpstate.Stat
 			} else if len(state.Peers) > 0 {
 				phase = "Down"
 			}
+			if fibUnsupported > 0 && phase == "Established" {
+				phase = "Degraded"
+			}
 			status := map[string]any{
-				"phase":               phase,
-				"backend":             "gobgp",
-				"applyWith":           "embedded gobgp API",
-				"changed":             changed,
-				"dryRun":              c.DryRun,
-				"peers":               state.Peers,
-				"prefixes":            state.Prefixes,
-				"observedCommunities": observedCommunities(state.Prefixes),
-				"establishedPeers":    established,
-				"acceptedPrefixes":    len(state.Prefixes),
-				"fibRoutes":           fibRoutes,
-				"observedAt":          now,
-				"conditions":          []map[string]any{{"type": "Observed", "status": "True", "reason": "GoBGPStatus"}},
+				"phase":                phase,
+				"backend":              "gobgp",
+				"applyWith":            "embedded gobgp API",
+				"changed":              changed,
+				"dryRun":               c.DryRun,
+				"peers":                state.Peers,
+				"prefixes":             state.Prefixes,
+				"observedCommunities":  observedCommunities(state.Prefixes),
+				"establishedPeers":     established,
+				"acceptedPrefixes":     len(state.Prefixes),
+				"fibRoutes":            fibRoutes,
+				"fibUnsupportedRoutes": fibUnsupported,
+				"observedAt":           now,
+				"conditions":           []map[string]any{{"type": "Observed", "status": "True", "reason": "GoBGPStatus"}},
+			}
+			if fibUnsupported > 0 {
+				status["reason"] = "GoBGPFIBPartial"
+				status["pendingReason"] = "GoBGPFIBPartial"
+				status["conditions"] = append(status["conditions"].([]map[string]any), map[string]any{
+					"type":    "KernelFIB",
+					"status":  "False",
+					"reason":  "GoBGPFIBPartial",
+					"message": fmt.Sprintf("%d imported BGP prefix(es) could not be installed into the kernel FIB", fibUnsupported),
+				})
 			}
 			if err := c.Store.SaveObjectStatus(routerapi.NetAPIVersion, "BGPRouter", resource.Metadata.Name, status); err != nil {
 				return err
@@ -490,8 +516,18 @@ func goBGPPeer(peer desiredPeer) *gobgpapi.Peer {
 		},
 		Timers: &gobgpapi.Timers{Config: goBGPTimers(peer.Timers)},
 		AfiSafis: []*gobgpapi.AfiSafi{
-			{Config: &gobgpapi.AfiSafiConfig{Family: ipv4Family(), Enabled: true}},
-			{Config: &gobgpapi.AfiSafiConfig{Family: ipv6Family(), Enabled: true}},
+			goBGPAFISAFI(ipv4Family()),
+			goBGPAFISAFI(ipv6Family()),
+		},
+	}
+}
+
+func goBGPAFISAFI(family *gobgpapi.Family) *gobgpapi.AfiSafi {
+	return &gobgpapi.AfiSafi{
+		Config: &gobgpapi.AfiSafiConfig{Family: family, Enabled: true},
+		UseMultiplePaths: &gobgpapi.UseMultiplePaths{
+			Config: &gobgpapi.UseMultiplePathsConfig{Enabled: true},
+			Ebgp:   &gobgpapi.Ebgp{Config: &gobgpapi.EbgpConfig{MaximumPaths: 16}},
 		},
 	}
 }
@@ -593,7 +629,7 @@ func bestFIBRoutes(prefixes []bgpstate.Prefix, allowed []netip.Prefix) []FIBRout
 			continue
 		}
 		parsed, err := netip.ParsePrefix(prefix.Prefix)
-		if err != nil || !parsed.Addr().Is4() {
+		if err != nil {
 			continue
 		}
 		parsed = parsed.Masked()
@@ -617,6 +653,231 @@ func bestFIBRoutes(prefixes []bgpstate.Prefix, allowed []netip.Prefix) []FIBRout
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Prefix < out[j].Prefix })
 	return out
+}
+
+type bgpPathRank struct {
+	LocalPref uint32
+	ASPathLen int
+	Origin    uint8
+	MED       uint32
+}
+
+func fibRoutesFromDestination(dst *gobgpapi.Destination, allowed []netip.Prefix) []FIBRoute {
+	prefix := normalizeRoutePrefix(dst.GetPrefix())
+	var candidates []struct {
+		nextHop string
+		rank    bgpPathRank
+		best    bool
+	}
+	for _, path := range dst.GetPaths() {
+		if path.GetIsWithdraw() || path.GetIsNexthopInvalid() {
+			continue
+		}
+		pathPrefix := firstNonEmpty(prefix, normalizeRoutePrefix(pathPrefix(path)))
+		if pathPrefix == "" {
+			continue
+		}
+		parsed, err := netip.ParsePrefix(pathPrefix)
+		if err != nil {
+			continue
+		}
+		parsed = parsed.Masked()
+		if len(allowed) > 0 && !prefixAllowed(parsed, allowed) {
+			continue
+		}
+		nextHop := strings.TrimSpace(pathNextHop(path))
+		if nextHop == "" || nextHop == "0.0.0.0" || nextHop == "::" {
+			continue
+		}
+		candidates = append(candidates, struct {
+			nextHop string
+			rank    bgpPathRank
+			best    bool
+		}{nextHop: nextHop, rank: pathRank(path), best: path.GetBest()})
+		prefix = parsed.String()
+	}
+	if len(candidates) == 0 || prefix == "" {
+		return nil
+	}
+	bestRank := candidates[0].rank
+	bestSet := false
+	for _, candidate := range candidates {
+		if candidate.best {
+			bestRank = candidate.rank
+			bestSet = true
+			break
+		}
+	}
+	if !bestSet {
+		for _, candidate := range candidates[1:] {
+			if comparePathRank(candidate.rank, bestRank) > 0 {
+				bestRank = candidate.rank
+			}
+		}
+	}
+	seen := map[string]bool{}
+	var nextHops []string
+	for _, candidate := range candidates {
+		if comparePathRank(candidate.rank, bestRank) != 0 || seen[candidate.nextHop] {
+			continue
+		}
+		seen[candidate.nextHop] = true
+		nextHops = append(nextHops, candidate.nextHop)
+	}
+	sort.Strings(nextHops)
+	if len(nextHops) == 0 {
+		return nil
+	}
+	return []FIBRoute{{Prefix: prefix, NextHops: nextHops}}
+}
+
+func mergeFIBRoutes(routes []FIBRoute) []FIBRoute {
+	byPrefix := map[string]map[string]bool{}
+	for _, route := range routes {
+		prefix := normalizeRoutePrefix(route.Prefix)
+		if prefix == "" {
+			continue
+		}
+		if byPrefix[prefix] == nil {
+			byPrefix[prefix] = map[string]bool{}
+		}
+		for _, nextHop := range normalizeRouteNextHops(route.NextHops) {
+			byPrefix[prefix][nextHop] = true
+		}
+	}
+	out := make([]FIBRoute, 0, len(byPrefix))
+	for prefix, nextHops := range byPrefix {
+		var hops []string
+		for hop := range nextHops {
+			hops = append(hops, hop)
+		}
+		sort.Strings(hops)
+		out = append(out, FIBRoute{Prefix: prefix, NextHops: hops})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Prefix < out[j].Prefix })
+	return out
+}
+
+func normalizeRouteNextHops(values []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, value := range values {
+		addr, err := netip.ParseAddr(strings.TrimSpace(value))
+		if err != nil {
+			continue
+		}
+		key := addr.String()
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, key)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func comparePathRank(a, b bgpPathRank) int {
+	switch {
+	case a.LocalPref != b.LocalPref:
+		return int(a.LocalPref) - int(b.LocalPref)
+	case a.ASPathLen != b.ASPathLen:
+		return b.ASPathLen - a.ASPathLen
+	case a.Origin != b.Origin:
+		return int(b.Origin) - int(a.Origin)
+	case a.MED != b.MED:
+		return int(b.MED) - int(a.MED)
+	default:
+		return 0
+	}
+}
+
+func pathRank(path *gobgpapi.Path) bgpPathRank {
+	rank := bgpPathRank{LocalPref: 100, Origin: 2}
+	for _, attr := range path.GetPattrs() {
+		value, err := attr.UnmarshalNew()
+		if err != nil {
+			continue
+		}
+		switch typed := value.(type) {
+		case *gobgpapi.LocalPrefAttribute:
+			rank.LocalPref = typed.GetLocalPref()
+		case *gobgpapi.AsPathAttribute:
+			rank.ASPathLen += asPathLength(typed.GetSegments())
+		case *gobgpapi.As4PathAttribute:
+			rank.ASPathLen += asPathLength(typed.GetSegments())
+		case *gobgpapi.OriginAttribute:
+			rank.Origin = uint8(typed.GetOrigin())
+		case *gobgpapi.MultiExitDiscAttribute:
+			rank.MED = typed.GetMed()
+		}
+	}
+	return rank
+}
+
+func asPathLength(segments []*gobgpapi.AsSegment) int {
+	length := 0
+	for _, segment := range segments {
+		if segment.GetType() == gobgpapi.AsSegment_AS_SET && len(segment.GetNumbers()) > 0 {
+			length++
+			continue
+		}
+		length += len(segment.GetNumbers())
+	}
+	return length
+}
+
+func applyFIBResult(state bgpstate.State, routes []FIBRoute, result FIBSyncResult) bgpstate.State {
+	targets := map[string]bool{}
+	for _, route := range routes {
+		prefix := normalizeRoutePrefix(route.Prefix)
+		if prefix != "" {
+			targets[prefix] = true
+		}
+	}
+	for i := range state.Prefixes {
+		prefix := normalizeRoutePrefix(state.Prefixes[i].Prefix)
+		if !targets[prefix] {
+			continue
+		}
+		state.Prefixes[i].Prefix = prefix
+		if result.Installed[prefix] {
+			state.Prefixes[i].Installed = true
+			state.Prefixes[i].SelectionState = "installed"
+			state.Prefixes[i].SelectionReason = ""
+			continue
+		}
+		state.Prefixes[i].Installed = false
+		state.Prefixes[i].SelectionState = "notInstalled"
+		if reason := result.Unsupported[prefix]; reason != "" {
+			state.Prefixes[i].SelectionReason = reason
+		} else {
+			state.Prefixes[i].SelectionReason = "GoBGPFIBNotInstalled"
+		}
+	}
+	return state
+}
+
+func normalizeRoutePrefix(value string) string {
+	prefix, err := netip.ParsePrefix(strings.TrimSpace(value))
+	if err != nil {
+		return ""
+	}
+	return prefix.Masked().String()
+}
+
+func fibInstalledCount(result FIBSyncResult) int {
+	count := 0
+	for _, installed := range result.Installed {
+		if installed {
+			count++
+		}
+	}
+	return count
+}
+
+func fibUnsupportedCount(result FIBSyncResult) int {
+	return len(result.Unsupported)
 }
 
 func importAllowedPrefixes(spec routerapi.BGPRouterSpec) []netip.Prefix {

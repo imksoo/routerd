@@ -24,12 +24,17 @@ func defaultFIBSyncer() FIBSyncer {
 	return &netlinkFIBSyncer{installed: map[string]FIBRoute{}}
 }
 
-func (s *netlinkFIBSyncer) SyncBGP(_ context.Context, routes []FIBRoute) error {
+func (s *netlinkFIBSyncer) SyncBGP(_ context.Context, routes []FIBRoute) (FIBSyncResult, error) {
 	if s.installed == nil {
 		s.installed = map[string]FIBRoute{}
 	}
+	result := FIBSyncResult{Installed: map[string]bool{}, Unsupported: map[string]string{}}
 	desired := map[string]FIBRoute{}
 	for _, route := range routes {
+		route = normalizeFIBRoute(route)
+		if route.Prefix == "" {
+			continue
+		}
 		desired[route.Prefix] = route
 	}
 	var keys []string
@@ -40,16 +45,19 @@ func (s *netlinkFIBSyncer) SyncBGP(_ context.Context, routes []FIBRoute) error {
 	for _, key := range keys {
 		route := normalizeFIBRoute(desired[key])
 		if equalFIBRoute(s.installed[key], route) {
+			result.Installed[key] = true
 			continue
 		}
 		nl, ok := netlinkRoute(route)
 		if !ok {
+			result.Unsupported[key] = unsupportedFIBReason(route.Prefix)
 			continue
 		}
 		if err := netlink.RouteReplace(nl); err != nil {
-			return err
+			return result, err
 		}
 		s.installed[key] = route
+		result.Installed[key] = true
 	}
 	for key, route := range s.installed {
 		if _, ok := desired[key]; ok {
@@ -60,7 +68,7 @@ func (s *netlinkFIBSyncer) SyncBGP(_ context.Context, routes []FIBRoute) error {
 		}
 		delete(s.installed, key)
 	}
-	return nil
+	return result, nil
 }
 
 func netlinkRoute(route FIBRoute) (*netlink.Route, bool) {
@@ -97,6 +105,7 @@ func netlinkRoute(route FIBRoute) (*netlink.Route, bool) {
 }
 
 func normalizeFIBRoute(route FIBRoute) FIBRoute {
+	route.Prefix = normalizeRoutePrefix(route.Prefix)
 	route.NextHops = normalizeNextHops(route.NextHops)
 	return route
 }
@@ -124,4 +133,12 @@ func equalFIBRoute(a, b FIBRoute) bool {
 	a = normalizeFIBRoute(a)
 	b = normalizeFIBRoute(b)
 	return a.Prefix == b.Prefix && reflect.DeepEqual(a.NextHops, b.NextHops)
+}
+
+func unsupportedFIBReason(prefix string) string {
+	parsed, err := netip.ParsePrefix(prefix)
+	if err == nil && parsed.Addr().Is6() {
+		return "GoBGPIPv6FIBUnsupported"
+	}
+	return "GoBGPFIBRouteUnsupported"
 }

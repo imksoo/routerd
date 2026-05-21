@@ -12,6 +12,13 @@ func defaultFIBSyncer() FIBSyncer {
 	return noopFIBSyncer{}
 }
 
-func (noopFIBSyncer) SyncBGP(context.Context, []FIBRoute) error {
-	return nil
+func (noopFIBSyncer) SyncBGP(_ context.Context, routes []FIBRoute) (FIBSyncResult, error) {
+	result := FIBSyncResult{Installed: map[string]bool{}, Unsupported: map[string]string{}}
+	for _, route := range routes {
+		prefix := normalizeRoutePrefix(route.Prefix)
+		if prefix != "" {
+			result.Unsupported[prefix] = "GoBGPFIBUnsupported"
+		}
+	}
+	return result, nil
 }

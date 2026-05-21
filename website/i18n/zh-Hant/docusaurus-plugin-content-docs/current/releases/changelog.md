@@ -18,6 +18,8 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
   peer/path status 現在來自 `ListPeer` / `ListPath`，不再解析 `vtysh` 文字。
   符合 import policy 的已學習 IPv4 best path 會寫入 kernel FIB，equal best path
   會作為 ECMP next-hop 處理；尚未支援的 BFD intent 會回報 Pending，而不是靜默忽略。
+  MVP 階段的 IPv6 FIB route 或 non-Linux platform 等無法寫入 kernel FIB 的已學習路由，
+  現在會以 prefix 級 install reason 和 router Degraded status 顯示，而不是靜默丟棄。
 
 ## v20260521.1953
 

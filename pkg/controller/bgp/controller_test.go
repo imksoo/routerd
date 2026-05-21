@@ -71,7 +71,9 @@ func (s *fakeServer) AddPeer(_ context.Context, req *gobgpapi.AddPeerRequest) er
 		SessionState:    gobgpapi.PeerState_ESTABLISHED,
 		Messages:        &gobgpapi.Messages{Received: &gobgpapi.Message{Total: 2}, Sent: &gobgpapi.Message{Total: 3}},
 	}
-	peer.AfiSafis = []*gobgpapi.AfiSafi{{State: &gobgpapi.AfiSafiState{Accepted: 1}}}
+	for _, af := range peer.AfiSafis {
+		af.State = &gobgpapi.AfiSafiState{Accepted: 1}
+	}
 	s.peers[address] = peer
 	return nil
 }
@@ -113,13 +115,25 @@ func (s *fakeServer) ListPath(_ context.Context, _ *gobgpapi.ListPathRequest, fn
 }
 
 type fakeFIB struct {
-	routes []FIBRoute
-	err    error
+	routes      []FIBRoute
+	unsupported map[string]string
+	err         error
 }
 
-func (f *fakeFIB) SyncBGP(_ context.Context, routes []FIBRoute) error {
+func (f *fakeFIB) SyncBGP(_ context.Context, routes []FIBRoute) (FIBSyncResult, error) {
 	f.routes = append([]FIBRoute(nil), routes...)
-	return f.err
+	result := FIBSyncResult{Installed: map[string]bool{}, Unsupported: map[string]string{}}
+	for _, route := range routes {
+		prefix := normalizeRoutePrefix(route.Prefix)
+		if prefix != "" {
+			result.Installed[prefix] = true
+		}
+	}
+	for prefix, reason := range f.unsupported {
+		delete(result.Installed, prefix)
+		result.Unsupported[prefix] = reason
+	}
+	return result, f.err
 }
 
 func TestReconcileStartsGoBGPAndDoesNotReaddUnchangedPeer(t *testing.T) {
@@ -143,8 +157,15 @@ func TestReconcileStartsGoBGPAndDoesNotReaddUnchangedPeer(t *testing.T) {
 	if !reflect.DeepEqual(server.global.GetFamilies(), []uint32{0}) {
 		t.Fatalf("global families = %#v, want ipv4-unicast OpenConfig index 0", server.global.GetFamilies())
 	}
+	if !server.global.GetUseMultiplePaths() {
+		t.Fatal("global multipath disabled, want enabled")
+	}
 	if server.adds != 1 {
 		t.Fatalf("peer adds = %d, want 1", server.adds)
+	}
+	peer := server.peers["10.0.0.21"]
+	if got := peer.GetAfiSafis()[0].GetUseMultiplePaths().GetEbgp().GetConfig().GetMaximumPaths(); got < 4 {
+		t.Fatalf("peer eBGP maximum paths = %d, want >= 4", got)
 	}
 	status := controller.Store.ObjectStatus(api.NetAPIVersion, "BGPRouter", "lan")
 	if status["backend"] != "gobgp" || status["phase"] != "Established" {
@@ -152,6 +173,37 @@ func TestReconcileStartsGoBGPAndDoesNotReaddUnchangedPeer(t *testing.T) {
 	}
 	if !reflect.DeepEqual(fib.routes, []FIBRoute{{Prefix: "10.250.0.0/24", NextHops: []string{"192.168.1.38", "192.168.1.53"}}}) {
 		t.Fatalf("fib routes = %#v", fib.routes)
+	}
+}
+
+func TestReconcileDegradesWhenSomePrefixesCannotInstall(t *testing.T) {
+	server := &fakeServer{routes: []*gobgpapi.Destination{testDestination("2001:db8:250::/64", "2001:db8::53")}}
+	controller := Controller{
+		Router: bgpRouterWithImportPrefixes("10.250.0.0/24", "2001:db8:250::/64"),
+		Store:  mapStore{},
+		Server: server,
+		FIB:    &fakeFIB{unsupported: map[string]string{"2001:db8:250::/64": "GoBGPIPv6FIBUnsupported"}},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	status := controller.Store.ObjectStatus(api.NetAPIVersion, "BGPRouter", "lan")
+	if status["phase"] != "Degraded" || status["pendingReason"] != "GoBGPFIBPartial" {
+		t.Fatalf("router status = %#v, want degraded partial FIB", status)
+	}
+	prefixes, ok := status["prefixes"].([]bgpstate.Prefix)
+	if !ok {
+		t.Fatalf("prefixes = %#v", status["prefixes"])
+	}
+	byPrefix := map[string]bgpstate.Prefix{}
+	for _, prefix := range prefixes {
+		byPrefix[prefix.Prefix] = prefix
+	}
+	if got := byPrefix["10.250.0.0/24"]; !got.Installed || got.SelectionState != "installed" {
+		t.Fatalf("v4 prefix = %#v, want installed", got)
+	}
+	if got := byPrefix["2001:db8:250::/64"]; got.Installed || got.SelectionReason != "GoBGPIPv6FIBUnsupported" {
+		t.Fatalf("v6 prefix = %#v, want unsupported", got)
 	}
 }
 
@@ -293,6 +345,10 @@ func TestPrefixAllowedRequiresSameFamilyAndCoveredLength(t *testing.T) {
 }
 
 func bgpRouter() *api.Router {
+	return bgpRouterWithImportPrefixes("10.250.0.0/24")
+}
+
+func bgpRouterWithImportPrefixes(prefixes ...string) *api.Router {
 	return &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"},
@@ -301,7 +357,7 @@ func bgpRouter() *api.Router {
 				ASN:          64512,
 				RouterID:     "10.0.0.1",
 				ExportPolicy: api.BGPExportPolicySpec{AllowedPrefixes: []string{"10.0.0.0/16"}},
-				ImportPolicy: api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.250.0.0/24"}},
+				ImportPolicy: api.BGPImportPolicySpec{AllowedPrefixes: prefixes},
 			},
 		},
 		{
