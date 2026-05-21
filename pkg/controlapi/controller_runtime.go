@@ -40,6 +40,8 @@ func (s *ControllerRuntimeStore) SetBase(base []ControllerStatus) {
 		controller.NextReconcileTime = current.NextReconcileTime
 		controller.ReconcileCount = current.ReconcileCount
 		controller.ReconcileErrorCount = current.ReconcileErrorCount
+		controller.ConsecutiveErrorCount = current.ConsecutiveErrorCount
+		controller.CurrentError = current.CurrentError
 		controller.LastDuration = current.LastDuration
 		controller.MaxDuration = current.MaxDuration
 		controller.AverageDuration = current.AverageDuration
@@ -47,6 +49,8 @@ func (s *ControllerRuntimeStore) SetBase(base []ControllerStatus) {
 		controller.MaxDurationMillis = current.MaxDurationMillis
 		controller.AverageDurationMillis = current.AverageDurationMillis
 		controller.LastError = current.LastError
+		controller.LastErrorTime = current.LastErrorTime
+		controller.LastErrorClearedAt = current.LastErrorClearedAt
 		s.controllers[controller.Name] = controller
 	}
 }
@@ -100,8 +104,16 @@ func (s *ControllerRuntimeStore) ControllerReconciled(name, trigger string, inte
 	controller.AverageDuration = durationFromMillis(controller.AverageDurationMillis).String()
 	if err != nil {
 		controller.ReconcileErrorCount++
+		controller.ConsecutiveErrorCount++
+		controller.CurrentError = true
 		controller.LastError = err.Error()
+		controller.LastErrorTime = ptrTime(now)
 	} else {
+		if controller.CurrentError || controller.ConsecutiveErrorCount > 0 || controller.LastError != "" {
+			controller.LastErrorClearedAt = ptrTime(now)
+		}
+		controller.ConsecutiveErrorCount = 0
+		controller.CurrentError = false
 		controller.LastError = ""
 		controller.LastSuccessTime = ptrTime(now)
 	}

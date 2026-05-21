@@ -26,6 +26,10 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
   advertisement intent を `/var/lib/routerd/bgp/applied.json` に atomic rename で保存し、
   daemon restart 時に復元します。これにより `routerd` reconnect 後も config drift を検出し、
   stale な live peer を黙って採用しません。
+- Controller runtime status で、累積 reconcile failure と現在の異常を分離しました。
+  `reconcileErrorCount` は lifetime counter のまま残し、`currentError`、
+  `consecutiveErrorCount`、`lastErrorTime`、`lastErrorClearedAt` で最新 reconcile が
+  失敗中なのか、過去の一時 error がすでに回復済みなのかを判定できます。
 
 ## v20260521.1953
 

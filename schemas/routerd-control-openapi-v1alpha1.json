@@ -909,6 +909,12 @@
                     "averageDurationMillis": {
                       "type": "number"
                     },
+                    "consecutiveErrorCount": {
+                      "type": "integer"
+                    },
+                    "currentError": {
+                      "type": "boolean"
+                    },
                     "interval": {
                       "type": "string"
                     },
@@ -922,6 +928,14 @@
                       "type": "number"
                     },
                     "lastError": {
+                      "type": "string"
+                    },
+                    "lastErrorClearedAt": {
+                      "format": "date-time",
+                      "type": "string"
+                    },
+                    "lastErrorTime": {
+                      "format": "date-time",
                       "type": "string"
                     },
                     "lastReconcileTime": {
@@ -980,7 +994,8 @@
                   },
                   "required": [
                     "name",
-                    "mode"
+                    "mode",
+                    "currentError"
                   ],
                   "type": "object"
                 },

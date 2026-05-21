@@ -27,6 +27,11 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
   peer, and advertisement intent in `/var/lib/routerd/bgp/applied.json` with an
   atomic rename, restores it on daemon restart, and lets `routerd` detect config
   drift after reconnect instead of silently adopting stale live peers.
+- Controller runtime status now separates cumulative reconcile failures from
+  the current health signal. `reconcileErrorCount` remains a lifetime counter,
+  while `currentError`, `consecutiveErrorCount`, `lastErrorTime`, and
+  `lastErrorClearedAt` show whether the latest reconcile is still failing or a
+  previous transient error has already recovered.
 
 ## v20260521.1953
 

@@ -37,9 +37,12 @@ endpoint も公開します。読み取り専用 status socket は status 系 en
 `Status.status.controllers` と `Controllers` endpoint は、controller の設定上の
 mode と runtime reconcile 状態を返します。runtime field には `interval`、
 `lastTrigger`、`lastReconcileTime`、`nextReconcileTime`、`reconcileCount`、
-`reconcileErrorCount`、`lastDuration`、`maxDuration`、`averageDuration`、
-`lastError` が含まれます。これらは観測値なので、controller がまだ一度も
-実行されていない場合は field が無いものとして扱ってください。
+`reconcileErrorCount`、`consecutiveErrorCount`、`currentError`、
+`lastDuration`、`maxDuration`、`averageDuration`、`lastError`、
+`lastErrorTime`、`lastErrorClearedAt` が含まれます。`reconcileErrorCount` は
+累積値なので、現在失敗中かどうかは `currentError` と `consecutiveErrorCount` を
+見て判定してください。これらは観測値なので、controller がまだ一度も実行されて
+いない場合は field が無いものとして扱ってください。
 
 ## 管理対象 daemon
 

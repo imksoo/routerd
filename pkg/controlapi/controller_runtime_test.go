@@ -37,4 +37,34 @@ func TestControllerRuntimeStoreRecordsReconcileStats(t *testing.T) {
 	if status.LastError != "route failed" {
 		t.Fatalf("last error = %q", status.LastError)
 	}
+	if !status.CurrentError || status.ConsecutiveErrorCount != 1 || status.LastErrorTime == nil || status.LastErrorClearedAt != nil {
+		t.Fatalf("current error fields = current=%t consecutive=%d last=%v cleared=%v", status.CurrentError, status.ConsecutiveErrorCount, status.LastErrorTime, status.LastErrorClearedAt)
+	}
+}
+
+func TestControllerRuntimeStoreSeparatesHistoricAndCurrentErrors(t *testing.T) {
+	store := NewControllerRuntimeStore([]ControllerStatus{{
+		Name: "dhcpv6-information",
+		Mode: "live",
+	}})
+	store.ControllerReconciled("dhcpv6-information", "bootstrap", 30*time.Second, 10*time.Millisecond, errors.New("socket missing"))
+	first := store.Snapshot()[0]
+	if !first.CurrentError || first.ReconcileErrorCount != 1 || first.ConsecutiveErrorCount != 1 || first.LastError == "" || first.LastErrorTime == nil {
+		t.Fatalf("first failure status = %+v", first)
+	}
+
+	store.ControllerReconciled("dhcpv6-information", "periodic", 30*time.Second, 8*time.Millisecond, nil)
+	recovered := store.Snapshot()[0]
+	if recovered.ReconcileErrorCount != 1 {
+		t.Fatalf("historic error count = %d, want 1", recovered.ReconcileErrorCount)
+	}
+	if recovered.CurrentError || recovered.ConsecutiveErrorCount != 0 || recovered.LastError != "" {
+		t.Fatalf("current error not cleared: current=%t consecutive=%d last=%q", recovered.CurrentError, recovered.ConsecutiveErrorCount, recovered.LastError)
+	}
+	if recovered.LastErrorTime == nil || recovered.LastErrorClearedAt == nil || recovered.LastSuccessTime == nil {
+		t.Fatalf("timestamps not populated: last=%v cleared=%v success=%v", recovered.LastErrorTime, recovered.LastErrorClearedAt, recovered.LastSuccessTime)
+	}
+	if !recovered.LastErrorClearedAt.After(*recovered.LastErrorTime) && !recovered.LastErrorClearedAt.Equal(*recovered.LastErrorTime) {
+		t.Fatalf("clearedAt %v before lastErrorTime %v", recovered.LastErrorClearedAt, recovered.LastErrorTime)
+	}
 }

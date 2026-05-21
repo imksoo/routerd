@@ -36,9 +36,12 @@ state. Highlights:
 `Status.status.controllers` and the `Controllers` endpoint include both the
 configured controller mode and runtime reconcile state. Runtime fields include
 `interval`, `lastTrigger`, `lastReconcileTime`, `nextReconcileTime`,
-`reconcileCount`, `reconcileErrorCount`, `lastDuration`, `maxDuration`,
-`averageDuration`, and `lastError`. These fields are observational; clients
-should tolerate them being absent before a controller has run.
+`reconcileCount`, `reconcileErrorCount`, `consecutiveErrorCount`,
+`currentError`, `lastDuration`, `maxDuration`, `averageDuration`, `lastError`,
+`lastErrorTime`, and `lastErrorClearedAt`. `reconcileErrorCount` is cumulative;
+use `currentError` and `consecutiveErrorCount` to decide whether the controller
+is failing now. These fields are observational; clients should tolerate them
+being absent before a controller has run.
 
 ## Managed daemons
 

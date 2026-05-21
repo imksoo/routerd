@@ -25,6 +25,10 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期和时间型版本号。
   advertisement intent 保存到 `/var/lib/routerd/bgp/applied.json`，并在 daemon
   restart 时恢复；`routerd` reconnect 后可据此检测 config drift，而不会静默采用
   stale live peer。
+- Controller runtime status 现在会区分累计 reconcile failure 与当前健康信号。
+  `reconcileErrorCount` 仍是 lifetime counter，而 `currentError`、
+  `consecutiveErrorCount`、`lastErrorTime`、`lastErrorClearedAt` 用于判断最新
+  reconcile 是否仍在失败，或过去的一次性错误是否已经恢复。
 
 ## v20260521.1953
 

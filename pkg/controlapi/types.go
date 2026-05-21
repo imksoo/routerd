@@ -51,6 +51,8 @@ type ControllerStatus struct {
 	NextReconcileTime     *time.Time           `json:"nextReconcileTime,omitempty" yaml:"nextReconcileTime,omitempty"`
 	ReconcileCount        int64                `json:"reconcileCount,omitempty" yaml:"reconcileCount,omitempty"`
 	ReconcileErrorCount   int64                `json:"reconcileErrorCount,omitempty" yaml:"reconcileErrorCount,omitempty"`
+	ConsecutiveErrorCount int64                `json:"consecutiveErrorCount,omitempty" yaml:"consecutiveErrorCount,omitempty"`
+	CurrentError          bool                 `json:"currentError" yaml:"currentError"`
 	LastDuration          string               `json:"lastDuration,omitempty" yaml:"lastDuration,omitempty"`
 	MaxDuration           string               `json:"maxDuration,omitempty" yaml:"maxDuration,omitempty"`
 	AverageDuration       string               `json:"averageDuration,omitempty" yaml:"averageDuration,omitempty"`
@@ -58,6 +60,8 @@ type ControllerStatus struct {
 	MaxDurationMillis     float64              `json:"maxDurationMillis,omitempty" yaml:"maxDurationMillis,omitempty"`
 	AverageDurationMillis float64              `json:"averageDurationMillis,omitempty" yaml:"averageDurationMillis,omitempty"`
 	LastError             string               `json:"lastError,omitempty" yaml:"lastError,omitempty"`
+	LastErrorTime         *time.Time           `json:"lastErrorTime,omitempty" yaml:"lastErrorTime,omitempty"`
+	LastErrorClearedAt    *time.Time           `json:"lastErrorClearedAt,omitempty" yaml:"lastErrorClearedAt,omitempty"`
 }
 
 type ControllerModeReason string
