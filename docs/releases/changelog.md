@@ -10,6 +10,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260522.0006
+
 ### Changed
 
 - Replaced the BGP controller backend with a long-lived `routerd-bgp` daemon

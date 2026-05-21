@@ -10,6 +10,8 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期和时间型版本号。
 
 ## Unreleased
 
+## v20260522.0006
+
 ### 变更
 
 - 将 BGP controller backend 替换为基于 GoBGP 的长生命周期 `routerd-bgp`

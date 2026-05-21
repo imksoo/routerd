@@ -10,6 +10,8 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 
 ## Unreleased
 
+## v20260522.0006
+
 ### 変更
 
 - BGP controller backend を GoBGP ベースの長寿命 `routerd-bgp` daemon に
