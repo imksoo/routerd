@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"routerd/pkg/api"
+	"routerd/pkg/bus"
 )
 
 func TestNetworkAdoptionControllerWritesNetworkdAndResolvedDropins(t *testing.T) {
@@ -374,6 +375,62 @@ func TestSystemdUnitControllerDoesNotReloadForAlreadyAbsentUnit(t *testing.T) {
 	gotCommands := strings.Join(commands, "\n")
 	if strings.Contains(gotCommands, "systemctl disable --now routerd-dhcpv6-client@wan-pd.service") {
 		t.Fatalf("already absent disabled unit must not call disable:\n%s", gotCommands)
+	}
+}
+
+func TestSystemdUnitControllerReportsStaleClientDaemonCleanup(t *testing.T) {
+	dir := t.TempDir()
+	unitName := "routerd-dhcpv4-client@wan.service"
+	unitPath := filepath.Join(dir, unitName)
+	if err := os.WriteFile(unitPath, []byte("[Service]\nExecStart=/usr/local/sbin/routerd-dhcpv4-client daemon\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	router := &api.Router{Spec: api.RouterSpec{}}
+	store := mapStore{}
+	eventBus := bus.New()
+	var commands []string
+	controller := SystemdUnitController{
+		Router:           router,
+		Bus:              eventBus,
+		Store:            store,
+		SystemdSystemDir: dir,
+		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			_ = ctx
+			line := strings.Join(append([]string{name}, args...), " ")
+			commands = append(commands, line)
+			if line == "systemctl is-active --quiet "+unitName {
+				return []byte("active"), nil
+			}
+			return []byte("ok"), nil
+		},
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(unitPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stale client daemon unit still exists: %v", err)
+	}
+	gotCommands := strings.Join(commands, "\n")
+	for _, want := range []string{
+		"systemctl is-active --quiet " + unitName,
+		"systemctl disable --now " + unitName,
+		"systemctl reset-failed " + unitName,
+		"systemctl daemon-reload",
+	} {
+		if !strings.Contains(gotCommands, want) {
+			t.Fatalf("commands missing %q:\n%s", want, gotCommands)
+		}
+	}
+	status := store.ObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName)
+	if status["phase"] != "Removed" || status["reason"] != "StaleClientDaemonUnit" || status["active"] != true {
+		t.Fatalf("status = %#v", status)
+	}
+	events := eventBus.Recent("routerd.system.service_unit.stale_removed")
+	if len(events) != 1 {
+		t.Fatalf("events = %#v, want one stale_removed event", events)
+	}
+	if events[0].Severity != "warning" || events[0].Resource == nil || events[0].Resource.Name != unitName {
+		t.Fatalf("event = %#v", events[0])
 	}
 }
 

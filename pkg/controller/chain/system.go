@@ -1021,10 +1021,57 @@ func (c SystemdUnitController) cleanupStaleClientDaemonUnits(ctx context.Context
 		}
 		for _, path := range matches {
 			unitName := filepath.Base(path)
-			_, _ = command(ctx, "systemctl", "disable", "--now", unitName)
+			active := systemdUnitActive(ctx, command, unitName)
+			status := map[string]any{
+				"phase":     "Removing",
+				"reason":    "StaleClientDaemonUnit",
+				"unitName":  unitName,
+				"path":      path,
+				"active":    active,
+				"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
+			}
+			if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName, status); err != nil {
+				return err
+			}
+			if _, err := command(ctx, "systemctl", "disable", "--now", unitName); err != nil {
+				status["phase"] = "Error"
+				status["error"] = err.Error()
+				status["updatedAt"] = time.Now().UTC().Format(time.RFC3339Nano)
+				if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName, status); saveErr != nil {
+					return saveErr
+				}
+				if c.Bus != nil {
+					event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.system.service_unit.stale_cleanup_failed", daemonapi.SeverityError)
+					event.Resource = &daemonapi.ResourceRef{APIVersion: api.SystemAPIVersion, Kind: "ServiceUnit", Name: unitName}
+					event.Reason = "StaleClientDaemonUnitCleanupFailed"
+					event.Attributes = map[string]string{"unitName": unitName, "path": path, "active": fmt.Sprint(active), "error": err.Error()}
+					if publishErr := c.Bus.Publish(ctx, event); publishErr != nil {
+						return publishErr
+					}
+				}
+				return fmt.Errorf("disable stale client daemon unit %s: %w", unitName, err)
+			}
 			_, _ = command(ctx, "systemctl", "reset-failed", unitName)
 			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 				return err
+			}
+			status["phase"] = "Removed"
+			status["updatedAt"] = time.Now().UTC().Format(time.RFC3339Nano)
+			if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName, status); err != nil {
+				return err
+			}
+			if c.Bus != nil {
+				severity := daemonapi.SeverityInfo
+				if active {
+					severity = daemonapi.SeverityWarning
+				}
+				event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.system.service_unit.stale_removed", severity)
+				event.Resource = &daemonapi.ResourceRef{APIVersion: api.SystemAPIVersion, Kind: "ServiceUnit", Name: unitName}
+				event.Reason = "StaleClientDaemonUnit"
+				event.Attributes = map[string]string{"unitName": unitName, "path": path, "active": fmt.Sprint(active)}
+				if err := c.Bus.Publish(ctx, event); err != nil {
+					return err
+				}
 			}
 			removed = true
 		}
@@ -1035,6 +1082,11 @@ func (c SystemdUnitController) cleanupStaleClientDaemonUnits(ctx context.Context
 		}
 	}
 	return nil
+}
+
+func systemdUnitActive(ctx context.Context, command outputCommandFunc, unitName string) bool {
+	_, err := command(ctx, "systemctl", "is-active", "--quiet", unitName)
+	return err == nil
 }
 
 func (c SystemdUnitController) applySystemdUnit(ctx context.Context, name, path, unitName string, spec api.SystemdUnitSpec, command outputCommandFunc) (bool, error) {
