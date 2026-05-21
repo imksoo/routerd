@@ -46,19 +46,14 @@ func TestBespokeLifecycleContractsAvoidForbiddenGenericFallbacks(t *testing.T) {
 func TestBespokeLifecycleContractsCoverRequiredIntegrations(t *testing.T) {
 	contracts := bespokeLifecycleContracts()
 	required := []string{
-		"frr-live-reload",
 		"keepalived-openrc-reload",
 		"keepalived-openrc-restart",
 		"dnsmasq-sighup-reload",
 		"dhcp-client-renew-release-ipc",
-		"bgpd-daemon-enable",
-		"bfd-daemon-enable",
-		"bgp-export-policy-transit-route-map",
 		"ingress-nft-map-apply",
 		"vrrp-track-script-artifacts",
 		"dslite-tunnel-event-hook",
 		"dhcp-event-daemon-ipc-order",
-		"frr-graceful-restart-drain",
 	}
 	seen := map[string]bool{}
 	for _, contract := range contracts {
@@ -92,22 +87,12 @@ func TestBespokeLifecycleContractsCoverOSMatrix(t *testing.T) {
 }
 
 func bespokeLifecycleContracts() []bespokeLifecycleContract {
-	frr := Service{SystemdName: "frr.service", OpenRCName: "frr", RCDName: "frr"}
 	keepalived := Service{SystemdName: "keepalived.service", OpenRCName: "keepalived", RCDName: "keepalived"}
 	dnsmasq := Service{SystemdName: "routerd-dnsmasq.service", OpenRCName: "routerd_dnsmasq", RCDName: "routerd_dnsmasq"}
 	dhcp4 := Service{SystemdName: "routerd-dhcpv4-client@wan.service", OpenRCName: "routerd_dhcpv4_client_wan", RCDName: "routerd_dhcpv4_client_wan"}
 	dhcp6 := Service{SystemdName: "routerd-dhcpv6-client@wan-pd.service", OpenRCName: "routerd_dhcpv6_client_wan_pd", RCDName: "routerd_dhcpv6_client_wan_pd"}
 
-	frrReloadHooks := FRRLiveReloadHooks("/run/routerd/frr/routerd.conf", "vtysh", "frr-reload.py")
 	return []bespokeLifecycleContract{
-		{
-			name:   "frr-live-reload",
-			proves: "FRR config changes run vtysh syntax check before frr-reload.py and never restart bgpd for config-only reloads.",
-			plan:   Systemd{}.Plan(OperationReload, frr, frrReloadHooks...),
-			forbidden: []Command{
-				{Name: "systemctl", Args: []string{"restart", "frr.service"}},
-			},
-		},
 		{
 			name:   "keepalived-openrc-reload",
 			proves: "OpenRC keepalived config changes use signal reload instead of restart when the daemon is already running.",
@@ -144,36 +129,6 @@ func bespokeLifecycleContracts() []bespokeLifecycleContract {
 			forbidden: []Command{
 				Systemd{}.Command(OperationRestart, dhcp4),
 				Systemd{}.Command(OperationRestart, dhcp6),
-			},
-		},
-		{
-			name:   "bgpd-daemon-enable",
-			proves: "Any BGPRouter enables bgpd in /etc/frr/daemons and enables/restarts the FRR service even when BFD is not configured.",
-			plan: Plan{Operation: OperationRestart, Commands: []Command{
-				{Name: "artifact-write", Args: []string{"/etc/frr/daemons", "zebra=yes", "bgpd=yes", "bfdd=preserve"}},
-				Systemd{}.Command(OperationEnable, frr),
-				Systemd{}.Command(OperationRestart, frr),
-			}},
-		},
-		{
-			name:   "bfd-daemon-enable",
-			proves: "BGP BFD enables bgpd and bfdd in /etc/frr/daemons before the service restart needed for daemon-set changes.",
-			plan: Plan{Operation: OperationRestart, Commands: []Command{
-				{Name: "artifact-write", Args: []string{"/etc/frr/daemons", "zebra=yes", "bgpd=yes", "bfdd=yes"}},
-				Systemd{}.Command(OperationEnable, frr),
-				Systemd{}.Command(OperationRestart, frr),
-			}},
-		},
-		{
-			name:   "bgp-export-policy-transit-route-map",
-			proves: "Transit prefixes are advertised only when exportPolicy.allowedPrefixes renders an outbound permit route-map.",
-			plan: Plan{Operation: OperationReload, Commands: []Command{
-				{Name: "render-frr", Args: []string{"ip prefix-list ROUTERD-LAN-EXPORT seq 10 permit 10.250.0.0/24"}},
-				{Name: "render-frr", Args: []string{"route-map ROUTERD-LAN-OUT permit 10"}},
-				{Name: "render-frr", Args: []string{"match ip address prefix-list ROUTERD-LAN-EXPORT"}},
-			}},
-			forbidden: []Command{
-				{Name: "render-frr", Args: []string{"route-map ROUTERD-LAN-OUT deny-only"}},
 			},
 		},
 		{
@@ -216,18 +171,6 @@ func bespokeLifecycleContracts() []bespokeLifecycleContract {
 				{Name: "daemon-status", Args: []string{"GET", "unix:///run/routerd/dhcpv6-client/wan-pd.sock", "/v1/status"}},
 				{Name: "bus", Args: []string{"publish", "routerd.controller.bootstrap"}},
 			}},
-		},
-		{
-			name:   "frr-graceful-restart-drain",
-			proves: "FRR graceful-restart keeps config-only reloads in place and observes peers after negotiation-sensitive reloads.",
-			plan: Plan{Operation: OperationReload, Commands: append(
-				append([]Command{}, Systemd{}.Plan(OperationReload, frr, frrReloadHooks...).Commands...),
-				Command{Name: "vtysh", Args: []string{"-c", "show bgp summary json"}},
-				Command{Name: "status", Args: []string{"wait", "bgp graceful-restart negotiation"}},
-			)},
-			forbidden: []Command{
-				{Name: "systemctl", Args: []string{"restart", "frr.service"}},
-			},
 		},
 	}
 }
@@ -285,37 +228,15 @@ func lifecycleMatrixManagers() []Manager {
 }
 
 func bespokeMatrixPlan(contract bespokeLifecycleContract, manager Manager) Plan {
-	frr := Service{SystemdName: "frr.service", OpenRCName: "frr", RCDName: "frr"}
 	keepalived := Service{SystemdName: "keepalived.service", OpenRCName: "keepalived", RCDName: "keepalived"}
 	dnsmasq := Service{SystemdName: "routerd-dnsmasq.service", OpenRCName: "routerd_dnsmasq", RCDName: "routerd_dnsmasq", NixName: "routerd-dnsmasq"}
 	switch contract.name {
-	case "frr-live-reload", "frr-graceful-restart-drain":
-		plan := manager.Plan(OperationReload, frr, FRRLiveReloadHooks("/run/routerd/frr/routerd.conf", "vtysh", "frr-reload.py")...)
-		if contract.name == "frr-graceful-restart-drain" {
-			plan.Commands = append(plan.Commands,
-				Command{Name: "vtysh", Args: []string{"-c", "show bgp summary json"}},
-				Command{Name: "status", Args: []string{"wait", "bgp graceful-restart negotiation"}},
-			)
-		}
-		return plan
 	case "keepalived-openrc-reload":
 		return manager.Plan(OperationReload, keepalived)
 	case "keepalived-openrc-restart":
 		return manager.Plan(OperationRestart, keepalived)
 	case "dnsmasq-sighup-reload":
 		return manager.Plan(OperationReload, dnsmasq, PIDSignalHook(OperationReload, "HUP", "/run/routerd/dnsmasq.pid"))
-	case "bgpd-daemon-enable":
-		return Plan{Operation: OperationRestart, Commands: []Command{
-			{Name: "artifact-write", Args: []string{"/etc/frr/daemons", "zebra=yes", "bgpd=yes", "bfdd=preserve"}},
-			manager.Command(OperationEnable, frr),
-			manager.Command(OperationRestart, frr),
-		}}
-	case "bfd-daemon-enable":
-		return Plan{Operation: OperationRestart, Commands: []Command{
-			{Name: "artifact-write", Args: []string{"/etc/frr/daemons", "zebra=yes", "bgpd=yes", "bfdd=yes"}},
-			manager.Command(OperationEnable, frr),
-			manager.Command(OperationRestart, frr),
-		}}
 	case "vrrp-track-script-artifacts":
 		return Plan{Operation: OperationEnable, Commands: []Command{
 			{Name: "artifact-write", Args: []string{"/usr/local/libexec/routerd/keepalived-track.d", "mode=0755"}},
@@ -327,12 +248,9 @@ func bespokeMatrixPlan(contract bespokeLifecycleContract, manager Manager) Plan 
 }
 
 func bespokeMatrixForbidden(contract bespokeLifecycleContract, manager Manager) []Command {
-	frr := Service{SystemdName: "frr.service", OpenRCName: "frr", RCDName: "frr"}
 	keepalived := Service{SystemdName: "keepalived.service", OpenRCName: "keepalived", RCDName: "keepalived"}
 	dnsmasq := Service{SystemdName: "routerd-dnsmasq.service", OpenRCName: "routerd_dnsmasq", RCDName: "routerd_dnsmasq", NixName: "routerd-dnsmasq"}
 	switch contract.name {
-	case "frr-live-reload", "frr-graceful-restart-drain":
-		return []Command{manager.Command(OperationRestart, frr)}
 	case "keepalived-openrc-reload", "vrrp-track-script-artifacts":
 		if manager.Name() == "nixos" {
 			return nil

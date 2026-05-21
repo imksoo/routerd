@@ -1781,7 +1781,7 @@ func withLiveBGPState(router *api.Router, resources []routerstate.ObjectStatus) 
 
 func liveBGPStatuses(_ *api.Router) map[string]map[string]any {
 	// BGP is now embedded in routerd through GoBGP. routerctl must not probe
-	// FRR/vtysh; live status is written by the daemon controller itself.
+	// external BGP CLIs; live status is written by the daemon controller itself.
 	return map[string]map[string]any{}
 }
 

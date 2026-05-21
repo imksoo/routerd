@@ -83,34 +83,6 @@ func TestManagerCommands(t *testing.T) {
 	}
 }
 
-func TestManagerPlanKeepsFRRConfigCheckAndLiveReload(t *testing.T) {
-	service := Service{SystemdName: "frr.service", OpenRCName: "frr"}
-	plan := Systemd{}.Plan(OperationReload, service,
-		Hook{
-			Operation:     OperationReload,
-			BeforeDefault: true,
-			Command:       Command{Name: "vtysh", Args: []string{"-C", "-f", "/run/routerd/frr/routerd.conf"}},
-		},
-		Hook{
-			Operation:      OperationReload,
-			ReplaceDefault: true,
-			Command:        Command{Name: "frr-reload.py", Args: []string{"--reload", "/run/routerd/frr/routerd.conf"}},
-		},
-	)
-	want := []Command{
-		{Name: "vtysh", Args: []string{"-C", "-f", "/run/routerd/frr/routerd.conf"}},
-		{Name: "frr-reload.py", Args: []string{"--reload", "/run/routerd/frr/routerd.conf"}},
-	}
-	if !reflect.DeepEqual(plan.Commands, want) {
-		t.Fatalf("FRR reload plan = %#v, want %#v", plan.Commands, want)
-	}
-	for _, cmd := range plan.Commands {
-		if cmd.Name == "systemctl" && reflect.DeepEqual(cmd.Args, []string{"restart", "frr.service"}) {
-			t.Fatalf("FRR live reload plan must not restart bgpd: %#v", plan.Commands)
-		}
-	}
-}
-
 func TestManagerPlanDistinguishesKeepalivedReloadAndRestart(t *testing.T) {
 	service := Service{SystemdName: "keepalived.service", OpenRCName: "keepalived"}
 	reload := OpenRC{}.Plan(OperationReload, service)

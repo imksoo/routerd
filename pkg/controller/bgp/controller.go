@@ -108,7 +108,7 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		return c.savePendingAll("GoBGPVRFUnsupported", err)
 	}
 	if c.usesBFD() {
-		err := fmt.Errorf("embedded GoBGP MVP does not yet support BFD; remove BGPPeer.spec.bfd and BFD resources or keep using a release with the FRR backend")
+		err := fmt.Errorf("embedded GoBGP MVP does not yet support BFD; remove BGPPeer.spec.bfd and BFD resources until routerd owns a BFD implementation")
 		return c.savePendingAll("GoBGPBFDUnsupported", err)
 	}
 	if c.DryRun {

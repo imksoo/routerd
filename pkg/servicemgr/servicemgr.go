@@ -55,16 +55,6 @@ func ReplaceDefaultHook(op Operation, command Command) Hook {
 	return Hook{Operation: op, Command: command, ReplaceDefault: true}
 }
 
-func FRRLiveReloadHooks(configPath, vtysh, reload string) []Hook {
-	configPath = firstNonEmpty(configPath, "/run/routerd/frr/routerd.conf")
-	vtysh = firstNonEmpty(vtysh, "vtysh")
-	reload = firstNonEmpty(reload, "frr-reload.py")
-	return []Hook{
-		BeforeDefaultHook(OperationReload, Command{Name: vtysh, Args: []string{"-C", "-f", configPath}}),
-		ReplaceDefaultHook(OperationReload, Command{Name: reload, Args: []string{"--reload", configPath}}),
-	}
-}
-
 func PIDSignalHook(op Operation, signal, pidPath string) Hook {
 	signal = strings.TrimPrefix(firstNonEmpty(signal, "HUP"), "-")
 	return ReplaceDefaultHook(op, Command{Name: "sh", Args: []string{"-c", fmt.Sprintf("kill -%s \"$(cat %s)\"", signal, pidPath)}})

@@ -140,16 +140,6 @@ func renderLinuxSnapshot(router *api.Router) ([]byte, error) {
 		return nil, err
 	}
 	addFile(files, "keepalived.conf", keepalived)
-	frr, err := render.FRRConfig(router)
-	if err != nil {
-		return nil, err
-	}
-	addFile(files, "frr.conf", frr)
-	frrDaemons, err := render.FRRDaemons(nil, router)
-	if err != nil {
-		return nil, err
-	}
-	addFile(files, "frr-daemons", frrDaemons)
 	nat, err := render.NftablesNAT44Rule(router)
 	if err != nil {
 		return nil, err

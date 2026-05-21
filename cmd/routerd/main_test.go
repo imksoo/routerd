@@ -290,27 +290,15 @@ exit 99
 
 	oldDefaults := platformDefaults
 	oldFeatures := platformFeatures
-	oldFRRConfigPath := runtimeFRRConfigPath
-	oldFRRDaemonsPath := runtimeFRRDaemonsPath
 	platformDefaults = oldDefaults
 	platformDefaults.OS = platform.OSLinux
 	platformDefaults.RuntimeDir = filepath.Join(dir, "run")
 	platformDefaults.StateDir = filepath.Join(dir, "var", "lib", "routerd")
 	platformFeatures = platform.Features{HasSystemd: true}
-	runtimeFRRConfigPath = filepath.Join(dir, "run", "routerd", "frr", "routerd.conf")
-	runtimeFRRDaemonsPath = filepath.Join(dir, "etc", "frr", "daemons")
 	t.Cleanup(func() {
 		platformDefaults = oldDefaults
 		platformFeatures = oldFeatures
-		runtimeFRRConfigPath = oldFRRConfigPath
-		runtimeFRRDaemonsPath = oldFRRDaemonsPath
 	})
-	if err := os.MkdirAll(filepath.Dir(runtimeFRRDaemonsPath), 0755); err != nil {
-		t.Fatalf("create daemons dir: %v", err)
-	}
-	if err := os.WriteFile(runtimeFRRDaemonsPath, []byte("zebra=yes\nbgpd=no\nbfdd=no\n"), 0644); err != nil {
-		t.Fatalf("seed frr daemons: %v", err)
-	}
 
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
@@ -350,12 +338,6 @@ exit 99
 		t.Fatalf("apply once: %v", err)
 	}
 
-	if data, err := os.ReadFile(runtimeFRRDaemonsPath); err == nil && strings.Contains(string(data), "bgpd=yes") {
-		t.Fatalf("apply --once must not enable FRR bgpd for embedded GoBGP:\n%s", data)
-	}
-	if data, err := os.ReadFile(runtimeFRRConfigPath); err == nil {
-		t.Fatalf("apply --once must not render FRR config for embedded GoBGP:\n%s", data)
-	}
 	if commands, err := os.ReadFile(commandLog); err == nil {
 		for _, unwanted := range []string{
 			"systemctl enable frr.service",
@@ -386,7 +368,7 @@ exit 99
 		t.Fatalf("applyWith = %q, want serve handoff; status=%#v", got, status)
 	}
 	if strings.Contains(stdout.String(), "rendered BGP artifacts") || strings.Contains(stdout.String(), "observed BGP") || strings.Contains(stdout.String(), "applied bgp") {
-		t.Fatalf("stdout should not describe FRR-backed BGP apply work:\n%s", stdout.String())
+		t.Fatalf("stdout should not describe one-shot BGP control-plane work:\n%s", stdout.String())
 	}
 }
 

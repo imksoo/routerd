@@ -4,43 +4,16 @@ package bgp
 
 import "testing"
 
-func TestParseFRRStateAndDiff(t *testing.T) {
-	summary := []byte(`{
-	  "ipv4Unicast": {
-	    "peers": {
-	      "10.0.0.21": {"remoteAs": "64513", "state": "Established", "pfxRcd": "1", "msgRcvd": "12", "msgSent": "11", "lastConnectionEstablished": "2026-05-18T10:00:00Z"}
-	    }
-	  }
-	}`)
-	routes := []byte(`{
-	  "routes": {
-	    "10.0.0.200/32": [{"valid": true, "bestpath": true, "community": {"string": "64513:100 no-export"}}]
-	  }
-	}`)
-	state, err := ParseFRRState(summary, routes)
-	if err != nil {
-		t.Fatalf("parse FRR state: %v", err)
-	}
-	if len(state.Peers) != 1 || !state.Peers[0].Established {
-		t.Fatalf("peers = %#v", state.Peers)
-	}
-	if state.Peers[0].LastEstablishedAt != "2026-05-18T10:00:00Z" {
-		t.Fatalf("lastEstablishedAt = %#v", state.Peers[0])
-	}
-	if state.Peers[0].MessagesReceived != 12 || state.Peers[0].MessagesSent != 11 {
-		t.Fatalf("message counters = %#v", state.Peers[0])
-	}
-	if len(state.Prefixes) != 1 || state.Prefixes[0].Prefix != "10.0.0.200/32" {
-		t.Fatalf("prefixes = %#v", state.Prefixes)
-	}
-	if got := state.Prefixes[0].Communities; len(got) != 2 || got[0] != "64513:100" || got[1] != "no-export" {
-		t.Fatalf("communities = %#v", got)
-	}
+func TestDiffReportsPeerAndPrefixChanges(t *testing.T) {
+	state := Normalize(State{
+		Peers:    []Peer{{Address: "10.0.0.21", State: "Established"}},
+		Prefixes: []Prefix{{Prefix: "10.0.0.200/32", Best: true, Valid: true, Installed: true}},
+	})
 	events := Diff(State{}, state)
 	if len(events) != 2 {
 		t.Fatalf("events = %#v", events)
 	}
-	state2 := State{Peers: []Peer{{Address: "10.0.0.21", State: "Idle"}}, Prefixes: nil}
+	state2 := State{Peers: []Peer{{Address: "10.0.0.21", State: "Idle"}}}
 	events = Diff(state, state2)
 	seenDown := false
 	seenWithdraw := false
@@ -57,54 +30,20 @@ func TestParseFRRStateAndDiff(t *testing.T) {
 	}
 }
 
-func TestParseFRRRoutesSelectionDiagnostics(t *testing.T) {
-	prefixes, err := ParseFRRRoutesJSON([]byte(`{
-	  "routes": {
-	    "10.250.0.0/24": [{
-	      "valid": true,
-	      "selectDeferred": true,
-	      "selectionReason": "selectDeferred: waiting for graceful-restart EOR"
-	    }],
-	    "10.250.1.0/24": [{
-	      "valid": true,
-	      "bestpath": true,
-	      "nexthops": [{"fib": true}]
-	    }]
-	  }
-	}`))
-	if err != nil {
-		t.Fatalf("parse routes: %v", err)
-	}
+func TestNormalizeAnnotatesPrefixSelection(t *testing.T) {
+	state := Normalize(State{Prefixes: []Prefix{
+		{Prefix: "10.250.0.0/24", Valid: true, SelectDeferred: true, SelectionReason: "waiting for EOR"},
+		{Prefix: "10.250.1.0/24", Best: true, Valid: true, Installed: true},
+	}})
 	byPrefix := map[string]Prefix{}
-	for _, prefix := range prefixes {
+	for _, prefix := range state.Prefixes {
 		byPrefix[prefix.Prefix] = prefix
 	}
-	deferred := byPrefix["10.250.0.0/24"]
-	if !deferred.SelectDeferred || deferred.SelectionState != "selectDeferred" || deferred.Best || deferred.Installed {
-		t.Fatalf("deferred prefix = %#v", deferred)
+	if got := byPrefix["10.250.0.0/24"]; !got.SelectDeferred || got.SelectionState != "selectDeferred" {
+		t.Fatalf("deferred prefix = %#v", got)
 	}
-	if deferred.SelectionReason == "" {
-		t.Fatalf("deferred prefix should keep selection reason: %#v", deferred)
-	}
-	installed := byPrefix["10.250.1.0/24"]
-	if !installed.Best || !installed.Installed || installed.SelectionState != "installed" {
-		t.Fatalf("installed prefix = %#v", installed)
-	}
-}
-
-func TestParseFRRSummaryAcceptsRemoteASNVariants(t *testing.T) {
-	peers, err := ParseFRRSummaryJSON([]byte(`{
-	  "ipv4Unicast": {
-	    "peers": {
-	      "10.0.0.21": {"remoteAsn": 64513, "state": "Established"}
-	    }
-	  }
-	}`))
-	if err != nil {
-		t.Fatalf("parse FRR summary: %v", err)
-	}
-	if len(peers) != 1 || peers[0].ASN != 64513 {
-		t.Fatalf("peers = %#v", peers)
+	if got := byPrefix["10.250.1.0/24"]; !got.Best || !got.Installed || got.SelectionState != "installed" {
+		t.Fatalf("installed prefix = %#v", got)
 	}
 }
 
@@ -116,34 +55,5 @@ func TestLimitPrefixes(t *testing.T) {
 	}
 	if len(state.Prefixes) != 2 {
 		t.Fatalf("LimitPrefixes mutated input: %#v", state)
-	}
-}
-
-func TestParseFRRBFDPeersJSONAndAttach(t *testing.T) {
-	data := []byte(`{
-	  "peers": {
-	    "10.0.0.21": {
-	      "status": "up",
-	      "lastUp": "2026-05-19T00:00:00Z"
-	    },
-	    "10.0.0.22": {
-	      "status": "down",
-	      "lastDown": "2026-05-19T00:01:00Z"
-	    }
-	  }
-	}`)
-	bfd, err := ParseFRRBFDPeersJSON(data)
-	if err != nil {
-		t.Fatalf("parse BFD peers: %v", err)
-	}
-	state := AttachBFD(State{Peers: []Peer{
-		{Address: "10.0.0.21", State: "Established"},
-		{Address: "10.0.0.23", State: "Idle"},
-	}}, bfd)
-	if state.Peers[0].BFD == nil || state.Peers[0].BFD.State != "up" || state.Peers[0].BFD.LastUp != "2026-05-19T00:00:00Z" {
-		t.Fatalf("attached BFD = %#v", state.Peers[0].BFD)
-	}
-	if state.Peers[1].BFD != nil {
-		t.Fatalf("unexpected BFD on unmatched peer: %#v", state.Peers[1].BFD)
 	}
 }

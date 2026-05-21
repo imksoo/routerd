@@ -83,8 +83,6 @@ var (
 	defaultLedgerPath           = platformDefaults.DBFile()
 	defaultStatePath            = platformDefaults.DBFile()
 	runtimeKeepalivedConfigPath = defaultKeepalivedConfigPath
-	runtimeFRRConfigPath        = "/run/routerd/frr/routerd.conf"
-	runtimeFRRDaemonsPath       = "/etc/frr/daemons"
 	pppoeCHAPSecretsPath        = platformDefaults.PPPoEChapSecretsFile
 	pppoePAPSecretsPath         = platformDefaults.PPPoEPapSecretsFile
 	pdClientLeaseDir            = filepath.Join(platformDefaults.StateDir, "dhcpv6-client")
