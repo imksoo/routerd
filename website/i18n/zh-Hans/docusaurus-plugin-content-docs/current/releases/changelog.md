@@ -10,6 +10,8 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期和时间型版本号。
 
 ## Unreleased
 
+## v20260521.1953
+
 ### 修正
 
 - 当 routerd restart 且 firewall 与 TCP MSS clamp 的渲染结果未变化时，

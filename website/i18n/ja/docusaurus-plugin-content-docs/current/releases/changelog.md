@@ -10,6 +10,8 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 
 ## Unreleased
 
+## v20260521.1953
+
 ### 修正
 
 - routerd restart 時に firewall と TCP MSS clamp の render 結果が変わって
