@@ -35,6 +35,9 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 - Added regression coverage for `EgressRoutePolicy` no-op reconciliation so
   unchanged default-route selection, including `mode: priority` dry-run status,
   does not churn `routerd.lan.route.changed` or resource status events.
+- `DHCPv6Information` now reports a Pending state while waiting for the
+  supervised DHCPv6 client socket during startup instead of logging a repeated
+  bootstrap WARN for the expected socket creation race.
 
 ## v20260521.1953
 

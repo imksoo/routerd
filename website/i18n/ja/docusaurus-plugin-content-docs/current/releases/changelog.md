@@ -33,6 +33,9 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 - `EgressRoutePolicy` の no-op reconcile 回帰 test を追加し、`mode: priority` の
   dry-run status を含む default-route selection が不変の場合に
   `routerd.lan.route.changed` や resource status event を churn しないことを保証しました。
+- 起動時に supervised DHCPv6 client socket の作成を待っている間、
+  `DHCPv6Information` は想定済みの socket race を bootstrap WARN として繰り返し
+  記録せず、Pending state として表示するようになりました。
 
 ## v20260521.1953
 

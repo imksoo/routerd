@@ -69,6 +69,12 @@ func (c DHCPv6InformationController) reconcile(ctx context.Context, pdName strin
 		if !c.matchesPD(resource, spec, pdName) {
 			continue
 		}
+		if !clientSocketReady(socket) {
+			if err := c.saveDHCPv6InformationPending(resource.Metadata.Name, pdName, socket); err != nil {
+				return err
+			}
+			continue
+		}
 		if request {
 			_, _ = postDaemonCommand(ctx, socket, daemonapi.CommandInfoRequest)
 		}
@@ -99,6 +105,16 @@ func (c DHCPv6InformationController) reconcile(ctx context.Context, pdName strin
 		}
 	}
 	return nil
+}
+
+func (c DHCPv6InformationController) saveDHCPv6InformationPending(name, pdName, socket string) error {
+	return c.Store.SaveObjectStatus(api.NetAPIVersion, "DHCPv6Information", name, map[string]any{
+		"phase":   "Pending",
+		"reason":  "DHCPv6ClientSocketPending",
+		"source":  pdName,
+		"socket":  socket,
+		"message": fmt.Sprintf("waiting for DHCPv6 client socket %s", socket),
+	})
 }
 
 func (c DHCPv6InformationController) matchesPD(resource api.Resource, spec api.DHCPv6InformationSpec, pdName string) bool {

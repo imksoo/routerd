@@ -32,6 +32,9 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 - 新增 `EgressRoutePolicy` no-op reconcile 回歸測試，確保 default-route selection
   未變化時，包括 `mode: priority` 的 dry-run status，不會 churn
   `routerd.lan.route.changed` 或 resource status event。
+- 啟動期間等待 supervised DHCPv6 client socket 建立時，`DHCPv6Information`
+  現在會回報 Pending state，而不是把這個預期中的 socket race 反覆記錄為
+  bootstrap WARN。
 
 ## v20260521.1953
 
