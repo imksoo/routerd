@@ -10,6 +10,13 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- Removed `ProtectSystem` and `ReadWritePaths` from generated `routerd.service`
+  units. `routerd` already runs without systemd filesystem protection, and the
+  explicit write-path list could make clean hosts fail service startup with
+  systemd namespace errors when optional directories did not exist.
+
 ## v20260522.0742
 
 ### Fixed

@@ -10,6 +10,13 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期和时间型版本号。
 
 ## Unreleased
 
+### 修正
+
+- 从生成的 `routerd.service` 中移除了 `ProtectSystem` 和 `ReadWritePaths`。
+  `routerd` 本来就在没有 systemd filesystem protection 的前提下运行，而显式的
+  write-path 列表会在 optional directory 不存在的 clean host 上触发 systemd
+  namespace error，导致 service 启动失败。
+
 ## v20260522.0742
 
 ### 修正

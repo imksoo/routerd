@@ -43,10 +43,6 @@ func SystemdUnit(name string, spec api.SystemdUnitSpec) []byte {
 	if serviceType == "" {
 		serviceType = "simple"
 	}
-	protectSystem := spec.ProtectSystem
-	if protectSystem == "" {
-		protectSystem = "no"
-	}
 	protectHome := spec.ProtectHome
 	if protectHome == "" {
 		protectHome = "yes"
@@ -103,7 +99,9 @@ func SystemdUnit(name string, spec api.SystemdUnitSpec) []byte {
 		b.WriteString("RemainAfterExit=" + yesNo(*spec.RemainAfterExit) + "\n")
 	}
 	b.WriteString("ProtectHome=" + protectHome + "\n")
-	b.WriteString("ProtectSystem=" + protectSystem + "\n")
+	if spec.ProtectSystem != "" {
+		b.WriteString("ProtectSystem=" + spec.ProtectSystem + "\n")
+	}
 	writeSpaceList(&b, "RestrictAddressFamilies", spec.RestrictAddressFamilies)
 	writeSpaceList(&b, "CapabilityBoundingSet", spec.CapabilityBoundingSet)
 	writeSpaceList(&b, "AmbientCapabilities", spec.AmbientCapabilities)
