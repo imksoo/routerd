@@ -10,6 +10,8 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 
 ## Unreleased
 
+## v20260522.0658
+
 ### 修正
 
 - 修復從舊 routerd release 原地升級時仍殘留已刪除的

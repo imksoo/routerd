@@ -10,6 +10,8 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 
 ## Unreleased
 
+## v20260522.0658
+
 ### 修正
 
 - 旧 routerd release からの in-place upgrade で、削除済みの

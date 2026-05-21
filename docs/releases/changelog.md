@@ -10,6 +10,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260522.0658
+
 ### Fixed
 
 - Fixed in-place upgrades from legacy routerd releases that still passed
