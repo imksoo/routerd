@@ -6331,7 +6331,15 @@ func applyEgressRoutePolicyDefaultMarks(resourceID string, spec api.EgressRouteP
 	if err := os.MkdirAll(filepathDir(defaultRouteNftablesPath), 0755); err != nil {
 		return err
 	}
-	if _, err := writeFileIfChanged(defaultRouteNftablesPath, data, 0644); err != nil {
+	changed, err := writeFileIfChanged(defaultRouteNftablesPath, data, 0644)
+	if err != nil {
+		return err
+	}
+	missing := exec.Command("nft", "list", "table", "ip", "routerd_default_route").Run() != nil
+	if !changed && !missing {
+		return nil
+	}
+	if err := runLogged("nft", "-c", "-f", defaultRouteNftablesPath); err != nil {
 		return err
 	}
 	return runLogged("nft", "-f", defaultRouteNftablesPath)

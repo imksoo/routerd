@@ -90,6 +90,9 @@ func (c PathMTUController) applyTable(ctx context.Context, nft, path string, dat
 		return changed, fmt.Errorf("%s -c -f %s: %w: %s", nft, path, err, strings.TrimSpace(string(out)))
 	}
 	missing := exec.CommandContext(ctx, nft, "list", "table", "inet", "routerd_mss").Run() != nil
+	if !changed && !missing {
+		return false, nil
+	}
 	if out, err := exec.CommandContext(ctx, nft, "-f", path).CombinedOutput(); err != nil {
 		return changed, fmt.Errorf("%s -f %s: %w: %s", nft, path, err, strings.TrimSpace(string(out)))
 	}

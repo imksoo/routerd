@@ -80,6 +80,60 @@ func TestFirewallBackendDiffSkipsUnchangedReload(t *testing.T) {
 	}
 }
 
+func TestNftablesBackendSkipsUnchangedLiveReloadWhenTableExists(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "firewall.nft")
+	data := []byte("table inet routerd_filter {}\n")
+	var calls []string
+	backend := Nftables{Command: "nft", Run: func(_ context.Context, name string, args ...string) ([]byte, error) {
+		calls = append(calls, name+" "+strings.Join(args, " "))
+		return []byte("ok"), nil
+	}}
+	if changed, err := backend.Apply(context.Background(), Ruleset{Path: path, Data: data}, false); err != nil {
+		t.Fatalf("first apply nftables: %v", err)
+	} else if !changed {
+		t.Fatal("first apply should report changed")
+	}
+	calls = nil
+	changed, err := backend.Apply(context.Background(), Ruleset{Path: path, Data: data}, false)
+	if err != nil {
+		t.Fatalf("second apply nftables: %v", err)
+	}
+	if changed {
+		t.Fatal("unchanged live apply should not report changed")
+	}
+	want := []string{"nft list table inet routerd_filter"}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("calls = %#v, want %#v", calls, want)
+	}
+}
+
+func TestNftablesBackendReloadsUnchangedRulesetWhenTableMissing(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "firewall.nft")
+	data := []byte("table inet routerd_filter {}\n")
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+	var calls []string
+	backend := Nftables{Command: "nft", Run: func(_ context.Context, name string, args ...string) ([]byte, error) {
+		calls = append(calls, name+" "+strings.Join(args, " "))
+		if len(args) >= 4 && args[0] == "list" && args[1] == "table" {
+			return nil, errors.New("missing")
+		}
+		return []byte("ok"), nil
+	}}
+	changed, err := backend.Apply(context.Background(), Ruleset{Path: path, Data: data}, false)
+	if err != nil {
+		t.Fatalf("apply nftables: %v", err)
+	}
+	if changed {
+		t.Fatal("unchanged file should not report changed even when table is restored")
+	}
+	want := []string{"nft list table inet routerd_filter", "nft -c -f " + path, "nft -f " + path}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("calls = %#v, want %#v", calls, want)
+	}
+}
+
 func TestForPlatformSelectsNativeBackend(t *testing.T) {
 	if got := ForPlatform(platform.OSLinux, "").Name(); got != "nftables" {
 		t.Fatalf("linux backend = %q", got)

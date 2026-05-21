@@ -10,6 +10,12 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期和时间型版本号。
 
 ## Unreleased
 
+### 修正
+
+- 当 routerd restart 且 firewall 与 TCP MSS clamp 的渲染结果未变化时，
+  保留现有 nftables dataplane rule，避免对 `routerd_filter` 和
+  `routerd_mss` 执行不必要的 `flush table` reload。
+
 ## v20260521.1155
 
 ### 修正

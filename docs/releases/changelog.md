@@ -10,6 +10,12 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- Preserved existing nftables dataplane rules during routerd restarts when
+  rendered firewall and TCP MSS clamp rules are unchanged, avoiding needless
+  `flush table` reloads for `routerd_filter` and `routerd_mss`.
+
 ## v20260521.1155
 
 ### Fixed

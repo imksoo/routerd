@@ -74,10 +74,27 @@ func (b Nftables) Apply(ctx context.Context, ruleset Ruleset, dryRun bool) (bool
 	if dryRun {
 		return changed, nil
 	}
+	if !changed && b.rulesetTablesPresent(ctx, ruleset) {
+		return false, nil
+	}
 	if err := b.Reload(ctx, ruleset); err != nil {
 		return false, err
 	}
 	return changed, nil
+}
+
+func (b Nftables) rulesetTablesPresent(ctx context.Context, ruleset Ruleset) bool {
+	tables := nftRulesetTables(ruleset.Data)
+	if len(tables) == 0 {
+		return false
+	}
+	nft := firstNonEmpty(b.Command, "nft")
+	for _, table := range tables {
+		if _, err := b.run(ctx, nft, "list", "table", table.family, table.name); err != nil {
+			return false
+		}
+	}
+	return true
 }
 
 func (b Nftables) Reload(ctx context.Context, ruleset Ruleset) error {
@@ -197,6 +214,30 @@ func writeRuleset(path string, data []byte) error {
 		return err
 	}
 	return os.WriteFile(path, data, 0644)
+}
+
+type nftTableRef struct {
+	family string
+	name   string
+}
+
+func nftRulesetTables(data []byte) []nftTableRef {
+	seen := map[string]bool{}
+	var tables []nftTableRef
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 3 || fields[0] != "table" {
+			continue
+		}
+		table := nftTableRef{family: fields[1], name: fields[2]}
+		key := table.family + "/" + table.name
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		tables = append(tables, table)
+	}
+	return tables
 }
 
 func validateRuleset(ruleset Ruleset) error {
