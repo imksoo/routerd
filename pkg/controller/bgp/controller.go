@@ -97,8 +97,13 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		return err
 	}
 	reloadNeeded := changed
+	var reloadReasons []string
+	if changed {
+		reloadReasons = append(reloadReasons, "RenderedConfigChanged")
+	}
 	if daemonsChanged {
 		reloadNeeded = true
+		reloadReasons = append(reloadReasons, "FRRDaemonsChanged")
 	}
 	daemonRestartNeeded := daemonsChanged
 	controlExtra := map[string]any{}
@@ -108,6 +113,7 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		if !serviceState.Active {
 			daemonRestartNeeded = true
 			reloadNeeded = true
+			reloadReasons = append(reloadReasons, "FRRServiceInactive")
 		}
 	}
 	controlReadyForReload := false
@@ -119,7 +125,14 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 			return c.saveFRRConfigPendingError(path, false, frrControlPendingReason(out, err), out, err, mergeStatusExtra(controlExtra, map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged, "daemonRestartNeeded": daemonRestartNeeded}))
 		}
 		controlReadyForReload = true
-		reloadNeeded = !runningConfigOutputMatches(out, data)
+		if !runningConfigOutputMatches(out, data) {
+			reloadNeeded = true
+			reloadReasons = append(reloadReasons, "RunningConfigDrift")
+		}
+	}
+	if len(reloadReasons) > 0 {
+		controlExtra["reloadReasons"] = append([]string(nil), reloadReasons...)
+		controlExtra["reloadReason"] = strings.Join(reloadReasons, ",")
 	}
 	if !c.DryRun && daemonRestartNeeded {
 		for _, command := range c.frrDaemonChangeCommands() {
@@ -176,6 +189,9 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 			}
 			return fmt.Errorf("%s -C -f %s: %w: %s", vtysh, path, err, strings.TrimSpace(string(out)))
 		}
+		if err := c.publishFRRReloadEvent(ctx, path, reloadReasons, daemonRestartNeeded); err != nil {
+			return err
+		}
 		reloadExtra := mergeStatusExtra(controlExtra, map[string]any{"LastReloadAttemptAt": time.Now().UTC().Format(time.RFC3339Nano)})
 		reloadCtx, cancel := context.WithTimeout(ctx, frrReloadTimeout)
 		out, err = c.reloadFRRConfig(reloadCtx, path)
@@ -218,6 +234,8 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 				"daemonsPath":     daemonsPath,
 				"daemonsChanged":  daemonsChanged,
 				"daemonRestarted": daemonRestartNeeded,
+				"reloadReasons":   append([]string(nil), reloadReasons...),
+				"reloadReason":    strings.Join(reloadReasons, ","),
 				"configuredPhase": "Applied",
 			}
 		}
@@ -361,6 +379,21 @@ func (c *Controller) reloadFRRConfig(ctx context.Context, path string) ([]byte, 
 		case <-time.After(500 * time.Millisecond):
 		}
 	}
+}
+
+func (c *Controller) publishFRRReloadEvent(ctx context.Context, path string, reasons []string, daemonRestartNeeded bool) error {
+	if c.Bus == nil {
+		return nil
+	}
+	event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.bgp.frr.reload", daemonapi.SeverityInfo)
+	event.Reason = strings.Join(reasons, ",")
+	event.Attributes = map[string]string{
+		"configPath":            path,
+		"reloadReasons":         strings.Join(reasons, ","),
+		"daemonRestartRequired": fmt.Sprint(daemonRestartNeeded),
+		"applyWith":             "frr-reload.py --reload --stdout",
+	}
+	return c.Bus.Publish(ctx, event)
 }
 
 func isTransientFRRReloadError(out []byte, err error) bool {

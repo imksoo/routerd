@@ -134,7 +134,7 @@ resources:
 				continue
 			}
 			for _, target := range sortedIPAddressSetTargets(existingTargets) {
-				if err := c.applyNftSet(ctx, command, target.TableFamily, target.Table, target.SetName, result.addressesForFamily(target.AddressFamily)); err != nil {
+				if err := c.applyNftSet(ctx, command, target.TableFamily, target.Table, target.SetName, result.addressesForFamily(target.AddressFamily), existingOutputs[target.key()]); err != nil {
 					if saveErr := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPAddressSet", resource.Metadata.Name, map[string]any{
 						"phase":      "Error",
 						"reason":     "ApplyFailed",
@@ -315,7 +315,11 @@ func ipAddressSetRefreshDue(status map[string]any, now time.Time) bool {
 	return !now.Before(t)
 }
 
-func (c IPAddressSetController) applyNftSet(ctx context.Context, command outputCommandFunc, family, table, setName string, addresses []string) error {
+func (c IPAddressSetController) applyNftSet(ctx context.Context, command outputCommandFunc, family, table, setName string, addresses []string, currentOutput string) error {
+	additions, removals := ipAddressSetElementDiff(currentOutput, addresses)
+	if len(additions) == 0 && len(removals) == 0 {
+		return nil
+	}
 	dir := firstNonEmpty(c.RuntimeDir, os.TempDir())
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
@@ -327,9 +331,11 @@ func (c IPAddressSetController) applyNftSet(ctx context.Context, command outputC
 	path := file.Name()
 	defer os.Remove(path)
 	var b strings.Builder
-	b.WriteString("flush set " + family + " " + table + " " + setName + "\n")
-	if len(addresses) > 0 {
-		b.WriteString("add element " + family + " " + table + " " + setName + " { " + strings.Join(addresses, ", ") + " }\n")
+	if len(removals) > 0 {
+		b.WriteString("delete element " + family + " " + table + " " + setName + " { " + strings.Join(removals, ", ") + " }\n")
+	}
+	if len(additions) > 0 {
+		b.WriteString("add element " + family + " " + table + " " + setName + " { " + strings.Join(additions, ", ") + " }\n")
 	}
 	if _, err := file.WriteString(b.String()); err != nil {
 		file.Close()
@@ -343,6 +349,49 @@ func (c IPAddressSetController) applyNftSet(ctx context.Context, command outputC
 		return fmt.Errorf("%s -f %s: %w: %s", nft, path, err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+func ipAddressSetElementDiff(currentOutput string, desired []string) (additions, removals []string) {
+	current := ipAddressSetElements(currentOutput)
+	wanted := map[string]bool{}
+	for _, address := range desired {
+		address = strings.TrimSpace(address)
+		if address == "" {
+			continue
+		}
+		wanted[address] = true
+		if !current[address] {
+			additions = append(additions, address)
+		}
+	}
+	for address := range current {
+		if !wanted[address] {
+			removals = append(removals, address)
+		}
+	}
+	sort.Strings(additions)
+	sort.Strings(removals)
+	return additions, removals
+}
+
+func ipAddressSetElements(output string) map[string]bool {
+	out := map[string]bool{}
+	for _, token := range strings.FieldsFunc(output, func(r rune) bool {
+		switch r {
+		case ' ', '\n', '\t', ',', '{', '}', ';':
+			return true
+		default:
+			return false
+		}
+	}) {
+		token = strings.Trim(token, "\"'")
+		addr, err := netip.ParseAddr(token)
+		if err != nil {
+			continue
+		}
+		out[addr.Unmap().String()] = true
+	}
+	return out
 }
 
 func nftSetSnapshot(ctx context.Context, command outputCommandFunc, nft, family, table, setName string) (bool, string) {

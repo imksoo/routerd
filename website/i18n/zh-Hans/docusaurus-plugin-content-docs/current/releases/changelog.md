@@ -15,6 +15,10 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期和时间型版本号。
 - 当 routerd restart 且 firewall 与 TCP MSS clamp 的渲染结果未变化时，
   保留现有 nftables dataplane rule，避免对 `routerd_filter` 和
   `routerd_mss` 执行不必要的 `flush table` reload。
+- 加强无变更 reconcile 的幂等性：stale client daemon unit cleanup 现在会写入
+  status/event；static 与 DHCP IPv4 route 在 live kernel route 已匹配时会跳过；
+  动态 nftables address set 改为按 element 差分更新而不是 flush 整个 set；
+  NTP/BGP 的 service 操作也会暴露原因。
 
 ## v20260521.1155
 

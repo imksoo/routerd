@@ -359,6 +359,14 @@ func (c IPv4RouteController) reconcile(ctx context.Context) error {
 			status["installedAt"] = installedAt
 		}
 		if !c.DryRun {
+			if platform.CurrentOS() != platform.OSFreeBSD && ipv4RouteInstalled(ctx, c.run, routeType, destination, device, gateway, spec.Metric) {
+				status["kernelRouteAlreadyCurrent"] = true
+				status["changed"] = changed
+				if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4Route", resource.Metadata.Name, status); err != nil {
+					return err
+				}
+				continue
+			}
 			args := []string{"route", "replace", destination, "dev", device}
 			if routeType == "blackhole" {
 				args = []string{"route", "replace", "blackhole", destination}
@@ -405,6 +413,59 @@ func (c IPv4RouteController) reconcile(ctx context.Context) error {
 		return fmt.Errorf("%s", strings.Join(failures, "; "))
 	}
 	return nil
+}
+
+func ipv4RouteInstalled(ctx context.Context, command outputCommandFunc, routeType, destination, device, gateway string, metric int) bool {
+	if command == nil {
+		command = runOutputCommandContext
+	}
+	queryDestination := destination
+	if destination == "" || destination == "0.0.0.0/0" {
+		queryDestination = "default"
+	}
+	out, err := command(ctx, "ip", "route", "show", queryDestination)
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if ipv4RouteLineMatches(line, routeType, queryDestination, device, gateway, metric) {
+			return true
+		}
+	}
+	return false
+}
+
+func ipv4RouteLineMatches(line, routeType, destination, device, gateway string, metric int) bool {
+	fields := strings.Fields(line)
+	if len(fields) == 0 {
+		return false
+	}
+	if routeType == "blackhole" {
+		if len(fields) < 2 || fields[0] != "blackhole" || fields[1] != destination {
+			return false
+		}
+	} else if fields[0] != destination {
+		return false
+	}
+	if device != "" && !routeFieldsContainPair(fields, "dev", device) {
+		return false
+	}
+	if gateway != "" && !routeFieldsContainPair(fields, "via", gateway) {
+		return false
+	}
+	if metric > 0 && !routeFieldsContainPair(fields, "metric", fmt.Sprintf("%d", metric)) {
+		return false
+	}
+	return true
+}
+
+func routeFieldsContainPair(fields []string, key, value string) bool {
+	for i := 0; i+1 < len(fields); i++ {
+		if fields[i] == key && fields[i+1] == value {
+			return true
+		}
+	}
+	return false
 }
 
 func (c IPv4RouteController) cleanupRemovedRoutes(ctx context.Context) error {

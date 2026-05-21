@@ -211,8 +211,13 @@ func (c Controller) applyLease(ctx context.Context, name string, current, next m
 	if api.BoolDefault(spec.UseRoutes, true) {
 		gateway := strings.TrimSpace(fmt.Sprint(next["defaultGateway"]))
 		if gateway != "" {
-			if err := replaceDefaultRoute(ctx, platform.CurrentOS(), command, ifname, gateway, spec.RouteMetric); err != nil {
-				return err
+			routePresent := dhcpv4DefaultRoutePresent(ctx, platform.CurrentOS(), command, ifname, gateway, spec.RouteMetric)
+			next["defaultRoutePresent"] = routePresent
+			if !routePresent {
+				if err := replaceDefaultRoute(ctx, platform.CurrentOS(), command, ifname, gateway, spec.RouteMetric); err != nil {
+					return err
+				}
+				next["defaultRoutePresent"] = true
 			}
 			next["appliedDefaultGateway"] = gateway
 		}
@@ -406,6 +411,48 @@ func removeIPv4Address(ctx context.Context, osName platform.OS, command outputCo
 	}
 	_, err := command(ctx, "ip", "-4", "addr", "del", address, "dev", ifname)
 	return err
+}
+
+func dhcpv4DefaultRoutePresent(ctx context.Context, osName platform.OS, command outputCommandFunc, ifname, gateway string, metric int) bool {
+	if osName == platform.OSFreeBSD {
+		return false
+	}
+	out, err := command(ctx, "ip", "-4", "route", "show", "default")
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if dhcpv4DefaultRouteLineMatches(line, ifname, gateway, metric) {
+			return true
+		}
+	}
+	return false
+}
+
+func dhcpv4DefaultRouteLineMatches(line, ifname, gateway string, metric int) bool {
+	fields := strings.Fields(line)
+	if len(fields) == 0 || fields[0] != "default" {
+		return false
+	}
+	if !dhcpv4RouteFieldsContainPair(fields, "dev", ifname) {
+		return false
+	}
+	if gateway != "" && !dhcpv4RouteFieldsContainPair(fields, "via", gateway) {
+		return false
+	}
+	if metric > 0 && !dhcpv4RouteFieldsContainPair(fields, "metric", strconv.Itoa(metric)) {
+		return false
+	}
+	return true
+}
+
+func dhcpv4RouteFieldsContainPair(fields []string, key, value string) bool {
+	for i := 0; i+1 < len(fields); i++ {
+		if fields[i] == key && fields[i+1] == value {
+			return true
+		}
+	}
+	return false
 }
 
 func replaceDefaultRoute(ctx context.Context, osName platform.OS, command outputCommandFunc, ifname, gateway string, metric int) error {

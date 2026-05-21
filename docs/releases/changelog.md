@@ -15,6 +15,11 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 - Preserved existing nftables dataplane rules during routerd restarts when
   rendered firewall and TCP MSS clamp rules are unchanged, avoiding needless
   `flush table` reloads for `routerd_filter` and `routerd_mss`.
+- Hardened unchanged reconcile paths so stale client daemon unit cleanup is
+  reported through status/events, static and DHCP IPv4 routes skip matching
+  live kernel routes, dynamic nftables address sets update by element diff
+  instead of flushing the whole set, and NTP/BGP service actions expose their
+  reasons.
 
 ## v20260521.1155
 

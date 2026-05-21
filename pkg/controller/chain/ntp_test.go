@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"routerd/pkg/api"
+	"routerd/pkg/bus"
 )
 
 func TestNTPClientControllerUsesDHCPv6SNTPServers(t *testing.T) {
@@ -90,6 +91,44 @@ func TestNTPClientControllerFallsBackWhenDynamicSourceMissing(t *testing.T) {
 	status := store.ObjectStatus(api.SystemAPIVersion, "NTPClient", "system-time")
 	if status["source"] != "fallback" {
 		t.Fatalf("unexpected source status: %#v", status)
+	}
+}
+
+func TestNTPClientControllerReportsTimesyncdDisableForChrony(t *testing.T) {
+	store := mapStore{}
+	eventBus := bus.New()
+	configPath := filepath.Join(t.TempDir(), "chrony.conf")
+	var commands []string
+	controller := NTPClientController{
+		Router: ntpRouter(api.NTPClientSpec{
+			Provider: "chrony",
+			Managed:  true,
+			Servers:  []string{"ntp.example.net"},
+		}),
+		Bus:        eventBus,
+		Store:      store,
+		ConfigPath: configPath,
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			line := name + " " + strings.Join(args, " ")
+			commands = append(commands, line)
+			return []byte("ok"), nil
+		},
+	}
+
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	got := strings.Join(commands, "\n")
+	if !strings.Contains(got, "systemctl disable --now systemd-timesyncd.service") {
+		t.Fatalf("timesyncd disable command missing:\n%s", got)
+	}
+	status := store.ObjectStatus(api.SystemAPIVersion, "NTPClient", "system-time")
+	if status["disabledUnit"] != "systemd-timesyncd.service" || status["disableReason"] != "TimesyncdDisabledForChrony" {
+		t.Fatalf("status = %#v", status)
+	}
+	events := eventBus.Recent("routerd.system.ntp.provider_conflict_resolved")
+	if len(events) != 1 || events[0].Resource == nil || events[0].Resource.Name != "system-time" {
+		t.Fatalf("events = %#v", events)
 	}
 }
 

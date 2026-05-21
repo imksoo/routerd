@@ -320,8 +320,10 @@ func TestReconcileReloadsWhenRunningConfigDriftsAfterInitialObserve(t *testing.T
 	var calls []string
 	drifted := false
 	reloaded := false
+	eventBus := bus.New()
 	controller := Controller{
 		Router:      bgpRouter(),
+		Bus:         eventBus,
 		Store:       mapStore{},
 		ConfigPath:  path,
 		DaemonsPath: readyFRRDaemons(t),
@@ -370,6 +372,14 @@ func TestReconcileReloadsWhenRunningConfigDriftsAfterInitialObserve(t *testing.T
 	}
 	if !reflect.DeepEqual(normalizeBGPTestCalls(calls), want) {
 		t.Fatalf("calls = %#v, want %#v", normalizeBGPTestCalls(calls), want)
+	}
+	status := controller.Store.ObjectStatus(api.NetAPIVersion, "BGPRouter", "lan")
+	if status["reloadReason"] != "RunningConfigDrift" {
+		t.Fatalf("status missing reload reason: %#v", status)
+	}
+	events := eventBus.Recent("routerd.bgp.frr.reload")
+	if len(events) != 1 || events[0].Reason != "RunningConfigDrift" {
+		t.Fatalf("reload events = %#v", events)
 	}
 }
 

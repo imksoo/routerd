@@ -122,8 +122,11 @@ func (c NTPClientController) Reconcile(ctx context.Context) error {
 			}
 			return err
 		}
+		timesyncdDisabled := false
 		if !c.DryRun {
-			if err := c.applyNTPService(ctx, provider, configPath, changed, command); err != nil {
+			var err error
+			timesyncdDisabled, err = c.applyNTPService(ctx, resource.Metadata.Name, provider, configPath, changed, command)
+			if err != nil {
 				return c.saveNTPCommandError(resource.Metadata.Name, provider, servers, "ServiceApplyFailed", err)
 			}
 		}
@@ -135,6 +138,10 @@ func (c NTPClientController) Reconcile(ctx context.Context) error {
 			"configPath": configPath,
 			"changed":    changed,
 			"dryRun":     c.DryRun,
+		}
+		if timesyncdDisabled {
+			status["disabledUnit"] = "systemd-timesyncd.service"
+			status["disableReason"] = "TimesyncdDisabledForChrony"
 		}
 		if len(spec.FallbackServers) > 0 {
 			status["fallbackServers"] = compactNTPList(spec.FallbackServers)
@@ -191,19 +198,19 @@ func (c NTPClientController) ntpConfigPath(provider string, defaults platform.De
 	return firstNonEmpty(defaults.TimesyncdDropinFile, "/etc/systemd/timesyncd.conf.d/routerd.conf")
 }
 
-func (c NTPClientController) applyNTPService(ctx context.Context, provider, configPath string, changed bool, command outputCommandFunc) error {
+func (c NTPClientController) applyNTPService(ctx context.Context, resourceName, provider, configPath string, changed bool, command outputCommandFunc) (bool, error) {
 	switch provider {
 	case "systemd-timesyncd":
 		if _, err := command(ctx, "timedatectl", "set-ntp", "true"); err != nil {
-			return err
+			return false, err
 		}
 		if changed {
 			_, err := command(ctx, "systemctl", "restart", "systemd-timesyncd.service")
-			return err
+			return false, err
 		}
 		if _, err := command(ctx, "systemctl", "is-active", "--quiet", "systemd-timesyncd.service"); err != nil {
 			_, err := command(ctx, "systemctl", "enable", "--now", "systemd-timesyncd.service")
-			return err
+			return false, err
 		}
 	case "ntpd":
 		for _, args := range [][]string{
@@ -212,42 +219,56 @@ func (c NTPClientController) applyNTPService(ctx context.Context, provider, conf
 			{"ntpd_config=" + configPath},
 		} {
 			if _, err := command(ctx, "sysrc", args...); err != nil {
-				return err
+				return false, err
 			}
 		}
 		if changed {
 			_, err := command(ctx, "service", "ntpd", "restart")
-			return err
+			return false, err
 		}
 		if _, err := command(ctx, "service", "ntpd", "status"); err != nil {
 			_, err := command(ctx, "service", "ntpd", "onestart")
-			return err
+			return false, err
 		}
 	case "chrony":
 		if platform.IsNixOSHost() {
 			if changed {
 				_, err := command(ctx, "systemctl", "restart", "chronyd.service")
-				return err
+				return false, err
 			}
 			if _, err := command(ctx, "systemctl", "is-active", "--quiet", "chronyd.service"); err != nil {
 				_, err := command(ctx, "systemctl", "restart", "chronyd.service")
-				return err
+				return false, err
 			}
-			return nil
+			return false, nil
 		}
+		timesyncdDisabled := false
 		if systemdUnitEnabledOrActive(ctx, command, "systemd-timesyncd.service") {
-			_, _ = command(ctx, "systemctl", "disable", "--now", "systemd-timesyncd.service")
+			if _, err := command(ctx, "systemctl", "disable", "--now", "systemd-timesyncd.service"); err != nil {
+				return false, err
+			}
+			timesyncdDisabled = true
+			if c.Bus != nil {
+				event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.system.ntp.provider_conflict_resolved", daemonapi.SeverityWarning)
+				event.Resource = &daemonapi.ResourceRef{APIVersion: api.SystemAPIVersion, Kind: "NTPClient", Name: resourceName}
+				event.Reason = "TimesyncdDisabledForChrony"
+				event.Attributes = map[string]string{"provider": provider, "disabledUnit": "systemd-timesyncd.service"}
+				if err := c.Bus.Publish(ctx, event); err != nil {
+					return false, err
+				}
+			}
 		}
 		if changed {
 			_, err := command(ctx, "systemctl", "restart", "chrony.service")
-			return err
+			return timesyncdDisabled, err
 		}
 		if _, err := command(ctx, "systemctl", "is-active", "--quiet", "chrony.service"); err != nil {
 			_, err := command(ctx, "systemctl", "enable", "--now", "chrony.service")
-			return err
+			return timesyncdDisabled, err
 		}
+		return timesyncdDisabled, nil
 	}
-	return nil
+	return false, nil
 }
 
 func (c NTPClientController) saveNTPCommandError(name, provider string, servers []string, reason string, err error) error {
@@ -482,8 +503,11 @@ func (c NTPServerController) Reconcile(ctx context.Context) error {
 			}
 			return err
 		}
+		timesyncdDisabled := false
 		if !c.DryRun {
-			if err := c.applyNTPServer(ctx, provider, configPath, changed, command); err != nil {
+			var err error
+			timesyncdDisabled, err = c.applyNTPServer(ctx, resource.Metadata.Name, provider, configPath, changed, command)
+			if err != nil {
 				if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, "NTPServer", resource.Metadata.Name, map[string]any{
 					"phase":    "Error",
 					"reason":   "ServiceApplyFailed",
@@ -506,6 +530,10 @@ func (c NTPServerController) Reconcile(ctx context.Context) error {
 			"configPath":      configPath,
 			"changed":         changed,
 			"dryRun":          c.DryRun,
+		}
+		if timesyncdDisabled {
+			status["disabledUnit"] = "systemd-timesyncd.service"
+			status["disableReason"] = "TimesyncdDisabledForChrony"
 		}
 		if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "NTPServer", resource.Metadata.Name, status); err != nil {
 			return err
@@ -534,31 +562,45 @@ func (c NTPServerController) serverConfigPath(provider string) string {
 	return "/etc/chrony/conf.d/routerd-server.conf"
 }
 
-func (c NTPServerController) applyNTPServer(ctx context.Context, provider, configPath string, changed bool, command outputCommandFunc) error {
+func (c NTPServerController) applyNTPServer(ctx context.Context, resourceName, provider, configPath string, changed bool, command outputCommandFunc) (bool, error) {
 	switch provider {
 	case "chrony":
 		if platform.IsNixOSHost() {
 			if changed {
 				_, err := command(ctx, "systemctl", "restart", "chronyd.service")
-				return err
+				return false, err
 			}
 			if _, err := command(ctx, "systemctl", "is-active", "--quiet", "chronyd.service"); err != nil {
 				_, err := command(ctx, "systemctl", "restart", "chronyd.service")
-				return err
+				return false, err
 			}
-			return nil
+			return false, nil
 		}
+		timesyncdDisabled := false
 		if systemdUnitEnabledOrActive(ctx, command, "systemd-timesyncd.service") {
-			_, _ = command(ctx, "systemctl", "disable", "--now", "systemd-timesyncd.service")
+			if _, err := command(ctx, "systemctl", "disable", "--now", "systemd-timesyncd.service"); err != nil {
+				return false, err
+			}
+			timesyncdDisabled = true
+			if c.Bus != nil {
+				event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.system.ntp.provider_conflict_resolved", daemonapi.SeverityWarning)
+				event.Resource = &daemonapi.ResourceRef{APIVersion: api.SystemAPIVersion, Kind: "NTPServer", Name: resourceName}
+				event.Reason = "TimesyncdDisabledForChrony"
+				event.Attributes = map[string]string{"provider": provider, "disabledUnit": "systemd-timesyncd.service"}
+				if err := c.Bus.Publish(ctx, event); err != nil {
+					return false, err
+				}
+			}
 		}
 		if changed {
 			_, err := command(ctx, "systemctl", "restart", "chrony.service")
-			return err
+			return timesyncdDisabled, err
 		}
 		if _, err := command(ctx, "systemctl", "is-active", "--quiet", "chrony.service"); err != nil {
 			_, err := command(ctx, "systemctl", "enable", "--now", "chrony.service")
-			return err
+			return timesyncdDisabled, err
 		}
+		return timesyncdDisabled, nil
 	case "ntpd":
 		for _, args := range [][]string{
 			{"ntpd_enable=YES"},
@@ -566,19 +608,19 @@ func (c NTPServerController) applyNTPServer(ctx context.Context, provider, confi
 			{"ntpd_config=" + configPath},
 		} {
 			if _, err := command(ctx, "sysrc", args...); err != nil {
-				return err
+				return false, err
 			}
 		}
 		if changed {
 			_, err := command(ctx, "service", "ntpd", "restart")
-			return err
+			return false, err
 		}
 		if _, err := command(ctx, "service", "ntpd", "status"); err != nil {
 			_, err := command(ctx, "service", "ntpd", "onestart")
-			return err
+			return false, err
 		}
 	}
-	return nil
+	return false, nil
 }
 
 func resolveNTPServers(store Store, source string, servers []string, serverFrom []api.StatusValueSourceSpec, fallback []string) ([]string, string) {
