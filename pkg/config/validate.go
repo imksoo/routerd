@@ -1758,10 +1758,10 @@ func validateResource(res api.Resource, targetOS platform.OS) error {
 		if err := validateBGPWatcher(res.ID(), spec.Watcher); err != nil {
 			return err
 		}
-		switch defaultString(spec.Backend, "frr") {
-		case "frr":
+		switch defaultString(spec.Backend, "gobgp") {
+		case "gobgp":
 		default:
-			return fmt.Errorf("%s spec.backend must be frr", res.ID())
+			return fmt.Errorf("%s spec.backend must be gobgp", res.ID())
 		}
 		if err := validateBGPRouterPolicy(res.ID(), spec); err != nil {
 			return err

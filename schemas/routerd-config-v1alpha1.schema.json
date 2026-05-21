@@ -2367,7 +2367,7 @@
                       "backend": {
                         "enum": [
                           "",
-                          "frr"
+                          "gobgp"
                         ],
                         "type": "string"
                       },

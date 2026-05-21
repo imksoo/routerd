@@ -31,10 +31,10 @@ routerd は宣言的に設定するルーター・フレームワークです。
 | --- | --- | --- |
 | **H** (Home) | 家庭・小規模オフィス | WAN acquire (PD/RA/PPPoE/DHCPv4/DS-Lite)、LAN service (RA/DHCPv6/dnsmasq)、NAT44、firewall、`EgressRoutePolicy` |
 | **S** (SOHO/branch) | 数拠点・VPN 中心 | + WireGuard / IPsec、VRF、VPN 上の dynamic routing、commit-confirmed |
-| **C** (Campus / Small DC) | 数十ノード | + EVPN-VXLAN、iBGP RR、BFD、RouteMap DSL、FRR ラッパ |
+| **C** (Campus / Small DC) | 数十ノード | + EVPN-VXLAN、iBGP RR、BFD、RouteMap DSL、より高度な routing policy |
 | **E** (Enterprise / SP) | 数百ノード以上 | + フル BGP、MP-BGP L3VPN、segment routing、HA leader election |
 
-primitive は H から E まで共通です。tier が上がるにつれ、ラップ対象 (FRR など) が増えます。
+primitive は H から E まで共通です。tier が上がるにつれ、routing と policy controller が増えます。
 
 ---
 

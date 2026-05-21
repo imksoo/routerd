@@ -254,13 +254,17 @@ func TestSystemdUnitControllerAugmentsRouterdServiceForBGPVRRPIngress(t *testing
 	}
 	gotUnit := string(data)
 	for _, want := range []string{
-		"SupplementaryGroups=frr frrvty",
-		"/run/frr /var/run/frr /etc/frr /etc/keepalived",
+		"/etc/keepalived",
 		"AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE CAP_SETUID CAP_SETGID CAP_CHOWN CAP_DAC_OVERRIDE",
 		"CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE CAP_SETUID CAP_SETGID CAP_CHOWN CAP_DAC_OVERRIDE",
 	} {
 		if !strings.Contains(gotUnit, want) {
 			t.Fatalf("unit missing %q:\n%s", want, gotUnit)
+		}
+	}
+	for _, notWant := range []string{"SupplementaryGroups=frr frrvty", "/run/frr", "/etc/frr"} {
+		if strings.Contains(gotUnit, notWant) {
+			t.Fatalf("unit should not contain %q:\n%s", notWant, gotUnit)
 		}
 	}
 }

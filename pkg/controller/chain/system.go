@@ -849,24 +849,21 @@ func mergeStringEnvs(base, extra []string) []string {
 }
 
 func maybeAugmentRouterdServiceAccess(router *api.Router, unitName string, spec api.SystemdUnitSpec) api.SystemdUnitSpec {
-	if unitName != "routerd.service" || !routerNeedsFRRKeepalivedAccess(router) || firstNonEmpty(spec.State, "present") == "absent" {
+	if unitName != "routerd.service" || !routerNeedsKeepalivedAccess(router) || firstNonEmpty(spec.State, "present") == "absent" {
 		return spec
 	}
-	spec.SupplementaryGroups = appendMissingStrings(spec.SupplementaryGroups, "frr", "frrvty")
-	spec.ReadWritePaths = appendMissingStrings(spec.ReadWritePaths, "/run/frr", "/var/run/frr", "/etc/frr", "/etc/keepalived")
+	spec.ReadWritePaths = appendMissingStrings(spec.ReadWritePaths, "/etc/keepalived")
 	spec.AmbientCapabilities = appendMissingStrings(spec.AmbientCapabilities, "CAP_DAC_OVERRIDE")
 	spec.CapabilityBoundingSet = appendMissingStrings(spec.CapabilityBoundingSet, "CAP_DAC_OVERRIDE")
 	return spec
 }
 
-func routerNeedsFRRKeepalivedAccess(router *api.Router) bool {
+func routerNeedsKeepalivedAccess(router *api.Router) bool {
 	if router == nil {
 		return false
 	}
 	for _, res := range router.Spec.Resources {
 		switch {
-		case res.APIVersion == api.NetAPIVersion && res.Kind == "BGPRouter":
-			return true
 		case res.APIVersion == api.FirewallAPIVersion && res.Kind == "IngressService":
 			return true
 		case res.APIVersion == api.NetAPIVersion && res.Kind == "VirtualAddress":

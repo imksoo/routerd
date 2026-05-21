@@ -30,10 +30,10 @@ All three are expressible with the same declarative primitives. The applicable f
 | --- | --- | --- |
 | **H** (Home) | Home or small office | WAN acquire (PD/RA/PPPoE/DHCPv4/DS-Lite), LAN service (RA/DHCPv6/dnsmasq), NAT44, firewall, `EgressRoutePolicy` |
 | **S** (SOHO/branch) | Several sites with VPN | + WireGuard / IPsec, VRF, dynamic routing across VPN, commit-confirmed |
-| **C** (Campus / small DC) | Tens of nodes | + EVPN-VXLAN, iBGP RR, BFD, RouteMap DSL, FRR wrapper |
+| **C** (Campus / small DC) | Tens of nodes | + EVPN-VXLAN, iBGP RR, BFD, RouteMap DSL, richer routing policy |
 | **E** (Enterprise / SP) | Hundreds of nodes | + Full BGP, MP-BGP L3VPN, segment routing, HA leader election |
 
-The primitives are the same from H to E. Higher tiers add wrappers (FRR, etc.) on top of the same model.
+The primitives are the same from H to E. Higher tiers add more routing and policy controllers on top of the same model.
 
 ---
 
@@ -180,11 +180,12 @@ The `eventedStore` wrapper guarantees that every persisted state change emits `r
 
 Kubernetes edge resources use this status flow directly. `IngressService`
 health checks choose an active backend and the NAT renderer uses that status on
-the next reconcile. `BGPRouter` / `BGPPeer` status is observed from FRR JSON by
-`BGPStateWatcher` and can lower `VirtualAddress` VRRP priority through
-`track`. FRR config changes are syntax-checked with `vtysh -C -f` and applied
-with `frr-reload.py --reload`; routerd does not restart FRR for normal BGP
-resource changes. `VirtualAddress` and `IngressService` hostnames feed
+the next reconcile. `BGPRouter` / `BGPPeer` status is observed from the
+embedded GoBGP server with typed `ListPeer` / `ListPath` API calls and can
+lower `VirtualAddress` VRRP priority through `track`. BGP config changes are
+applied to the in-process server with GoBGP API objects instead of rendering
+FRR-style text config or shelling out to reload tools. `VirtualAddress` and
+`IngressService` hostnames feed
 DNSResolver-served zones as derived A/AAAA records, and BGP/VRRP/Ingress status is
 also surfaced through dedicated `routerctl show` views and low-cardinality OTel
 metrics for transitions and backend health.

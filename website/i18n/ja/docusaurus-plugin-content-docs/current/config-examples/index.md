@@ -35,7 +35,7 @@ sidebar_position: 0
 | [DS-Lite ホームルーター](./dslite-home.md) | ISP 固有値を入れれば現在の実装で利用可能 | IPv6 を主回線として使い、IPv4 は DS-Lite tunnel に通す。 |
 | [PPPoE IPv4 NAT ルーター](./pppoe-ipv4-nat.md) | ISP 認証情報を入れれば現在の実装で利用可能 | Ethernet の WAN 上に PPPoE session を張って IPv4 internet に出る。 |
 | [内部 Web server への port forward](./port-forward-web.md) | WAN address が分かっていれば現在の実装で利用可能 | 内部の HTTPS server を 1 つ公開し、LAN からも同じ公開名で到達したい。 |
-| [BGP 付き Kubernetes API VIP](./kubernetes-api-vip.md) | FRR と keepalived が入っていれば現在の実装で利用可能 | Kubernetes API VIP を routerd が保持し、control plane を health check し、Service prefix を BGP で受けたい。 |
+| [BGP 付き Kubernetes API VIP](./kubernetes-api-vip.md) | embedded GoBGP と keepalived で現在の実装で利用可能 | Kubernetes API VIP を routerd が保持し、control plane を health check し、Service prefix を BGP で受けたい。 |
 | [Guest / IoT client の分離](./guest-isolation.md) | Linux nftables で利用可能 | 一部の MAC address だけ internet 可、LAN と管理網は不可にしたい。 |
 | [Firewall rate limit と ICMP rule](./firewall-rate-limit.md) | Linux nftables で利用可能 | 複数 port の service opening、ICMP type match、SSH brute-force 緩和を使いたい。 |
 | [Multi-WAN IPv4 failover](./multi-wan-failover.md) | 現在の実装で利用可能。health check は慎重に調整 | 複数の IPv4 出口から正常な default route を選びたい。 |
@@ -52,7 +52,7 @@ sidebar_position: 0
 | パターン | 現状 |
 | --- | --- |
 | MAP-E / v6plus 系 IPv4 over IPv6 | まだ一級 resource としては未実装です。 |
-| OSPF など FRR BGP 以外の動的 routing | 未実装です。Kubernetes 風の Service prefix import には FRR 経由の BGP を利用できます。 |
+| OSPF など BGP 以外の動的 routing | 未実装です。Kubernetes 風の Service prefix import には embedded GoBGP を利用できます。 |
 | IPsec site-to-site cookbook | IPsec の土台はありますが、本番 renderer の parity を完了済みとは書いていません。 |
 
 ## 安全チェック

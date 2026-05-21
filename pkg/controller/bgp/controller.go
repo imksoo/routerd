@@ -3,27 +3,24 @@
 package bgp
 
 import (
-	"bytes"
 	"context"
-	"errors"
+	"encoding/base64"
 	"fmt"
 	"log/slog"
 	"net/netip"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
-	"routerd/pkg/api"
+	gobgpapi "github.com/osrg/gobgp/v3/api"
+	gobgpserver "github.com/osrg/gobgp/v3/pkg/server"
+	"google.golang.org/protobuf/types/known/anypb"
+
+	routerapi "routerd/pkg/api"
 	bgpstate "routerd/pkg/bgp"
 	"routerd/pkg/bus"
 	"routerd/pkg/daemonapi"
-	"routerd/pkg/platform"
-	"routerd/pkg/render"
-	"routerd/pkg/servicemgr"
 )
 
 type Store interface {
@@ -31,628 +28,115 @@ type Store interface {
 	ObjectStatus(apiVersion, kind, name string) map[string]any
 }
 
-type CommandFunc func(context.Context, string, ...string) ([]byte, error)
+type GoBGPServer interface {
+	Serve()
+	Stop()
+	StartBgp(context.Context, *gobgpapi.StartBgpRequest) error
+	StopBgp(context.Context, *gobgpapi.StopBgpRequest) error
+	AddPeer(context.Context, *gobgpapi.AddPeerRequest) error
+	DeletePeer(context.Context, *gobgpapi.DeletePeerRequest) error
+	ListPeer(context.Context, *gobgpapi.ListPeerRequest, func(*gobgpapi.Peer)) error
+	AddPath(context.Context, *gobgpapi.AddPathRequest) (*gobgpapi.AddPathResponse, error)
+	DeletePath(context.Context, *gobgpapi.DeletePathRequest) error
+	ListPath(context.Context, *gobgpapi.ListPathRequest, func(*gobgpapi.Destination)) error
+}
+
+type FIBSyncer interface {
+	SyncBGP(ctx context.Context, routes []FIBRoute) error
+}
+
+type FIBRoute struct {
+	Prefix   string
+	NextHops []string
+}
 
 const MinPollInterval = 3 * time.Second
 
-const (
-	frrReadyTimeout       = 30 * time.Second
-	frrReloadReadyTimeout = 5 * time.Second
-	frrReadyProbeTimeout  = 2 * time.Second
-	frrReloadTimeout      = 15 * time.Second
-	frrServiceCmdTimeout  = 30 * time.Second
-	frrValidateCmdTimeout = 10 * time.Second
-)
-
 type Controller struct {
-	Router                *api.Router
-	Bus                   *bus.Bus
-	Store                 Store
-	DryRun                bool
-	ConfigPath            string
-	DaemonsPath           string
-	VTYSH                 string
-	FRRReload             string
-	FRRControlSocketPaths []string
-	Systemctl             string
-	MaxPrefixes           int
-	Command               CommandFunc
-	Logger                *slog.Logger
-	lastState             bgpstate.State
-	observed              bool
-	truncated             bool
-	peerEvents            map[string]time.Time
-	applyMeta             map[string]any
+	Router *routerapi.Router
+	Bus    *bus.Bus
+	Store  Store
+	DryRun bool
+	Logger *slog.Logger
+
+	Server    GoBGPServer
+	NewServer func() GoBGPServer
+	FIB       FIBSyncer
+
+	MaxPrefixes int
+
+	started         bool
+	globalKey       string
+	desiredPeerKeys map[string]desiredPeer
+	pathUUIDs       map[string][]byte
+	observed        bool
+	lastState       bgpstate.State
+	peerEvents      map[string]time.Time
+}
+
+type desiredPeer struct {
+	Address  string
+	ASN      uint32
+	Password string
+	Timers   routerapi.BGPTimersSpec
 }
 
 func (c *Controller) Reconcile(ctx context.Context) error {
 	if c.Router == nil || c.Store == nil || !hasBGP(c.Router) {
 		return nil
 	}
-	c.applyMeta = nil
-	data, err := render.FRRConfig(c.Router)
-	if err != nil {
-		return err
-	}
-	if len(data) == 0 {
+	routers := c.bgpRouters()
+	if len(routers) == 0 {
 		return nil
 	}
-	path := firstNonEmpty(c.ConfigPath, "/run/routerd/frr/routerd.conf")
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return err
+	if len(routers) > 1 {
+		err := fmt.Errorf("embedded GoBGP MVP supports one BGPRouter per routerd process; found %d", len(routers))
+		return c.savePendingAll("GoBGPMultipleRoutersUnsupported", err)
 	}
-	changed := true
-	if current, err := os.ReadFile(path); err == nil && bytes.Equal(current, data) {
-		changed = false
-	} else if err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	if changed && !c.DryRun {
-		if err := os.WriteFile(path, data, 0644); err != nil {
-			return err
-		}
-	}
-	daemonsChanged, daemonsPath, err := c.renderFRRDaemons()
+	routerResource := routers[0]
+	routerSpec, err := routerResource.BGPRouterSpec()
 	if err != nil {
 		return err
 	}
-	reloadNeeded := changed
-	var reloadReasons []string
-	if changed {
-		reloadReasons = append(reloadReasons, "RenderedConfigChanged")
+	if strings.TrimSpace(routerSpec.VRF) != "" {
+		err := fmt.Errorf("embedded GoBGP MVP does not yet support BGPRouter.spec.vrf")
+		return c.savePendingAll("GoBGPVRFUnsupported", err)
 	}
-	if daemonsChanged {
-		reloadNeeded = true
-		reloadReasons = append(reloadReasons, "FRRDaemonsChanged")
+	if c.usesBFD() {
+		err := fmt.Errorf("embedded GoBGP MVP does not yet support BFD; remove BGPPeer.spec.bfd and BFD resources or keep using a release with the FRR backend")
+		return c.savePendingAll("GoBGPBFDUnsupported", err)
 	}
-	daemonRestartNeeded := daemonsChanged
-	controlExtra := map[string]any{}
-	if !c.DryRun {
-		serviceState := c.frrServiceState(ctx)
-		mergeInto(controlExtra, serviceState.StatusExtra())
-		if !serviceState.Active {
-			daemonRestartNeeded = true
-			reloadNeeded = true
-			reloadReasons = append(reloadReasons, "FRRServiceInactive")
-		}
+	if c.DryRun {
+		return c.saveServeManagedStatuses("Planned", false, map[string]any{
+			"reason":    "GoBGPServeManaged",
+			"applyWith": "routerd serve",
+		})
 	}
-	controlReadyForReload := false
-	if !reloadNeeded && !c.DryRun {
-		readyCtx, cancel := context.WithTimeout(ctx, frrReloadReadyTimeout)
-		out, err := c.waitFRRControlReady(readyCtx, controlExtra, 500*time.Millisecond)
-		cancel()
-		if err != nil {
-			return c.saveFRRConfigPendingError(path, false, frrControlPendingReason(out, err), out, err, mergeStatusExtra(controlExtra, map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged, "daemonRestartNeeded": daemonRestartNeeded}))
-		}
-		controlReadyForReload = true
-		if !runningConfigOutputMatches(out, data) {
-			reloadNeeded = true
-			reloadReasons = append(reloadReasons, "RunningConfigDrift")
-		}
+	if err := c.ensureServer(ctx, routerSpec); err != nil {
+		return c.savePendingAll("GoBGPStartFailed", err)
 	}
-	if len(reloadReasons) > 0 {
-		controlExtra["reloadReasons"] = append([]string(nil), reloadReasons...)
-		controlExtra["reloadReason"] = strings.Join(reloadReasons, ",")
-	}
-	if !c.DryRun && daemonRestartNeeded {
-		for _, command := range c.frrDaemonChangeCommands() {
-			if command.Name == "" {
-				continue
-			}
-			if out, err := c.runWithTimeout(ctx, frrServiceCmdTimeout, command.Name, command.Args...); err != nil {
-				saveErr := c.saveConfiguredStatuses("Error", path, true, map[string]any{"reason": "FRRServiceEnableRestartFailed", "error": strings.TrimSpace(string(out)), "daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged, "daemonRestartNeeded": daemonRestartNeeded})
-				if saveErr != nil {
-					return saveErr
-				}
-				return fmt.Errorf("%s %s: %w: %s", command.Name, strings.Join(command.Args, " "), err, strings.TrimSpace(string(out)))
-			}
-		}
-		startingExtra := mergeStatusExtra(controlExtra, map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged, "daemonRestartNeeded": daemonRestartNeeded})
-		if err := c.saveFRRConfigPending(path, reloadNeeded, "FRRStarting", nil, nil, startingExtra); err != nil {
-			return err
-		}
-		readyCtx, cancel := context.WithTimeout(ctx, frrReadyTimeout)
-		out, err := c.waitFRRControlReady(readyCtx, controlExtra, time.Second)
-		cancel()
-		if err != nil {
-			return c.saveFRRConfigPendingError(path, reloadNeeded, frrControlPendingReason(out, err), out, err, mergeStatusExtra(controlExtra, map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged, "daemonRestartNeeded": daemonRestartNeeded}))
-		}
-		mergeInto(controlExtra, c.frrServiceState(ctx).StatusExtra())
-	} else if !c.DryRun && reloadNeeded && !controlReadyForReload {
-		startingExtra := mergeStatusExtra(controlExtra, map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged, "daemonRestartNeeded": daemonRestartNeeded})
-		if err := c.saveFRRConfigPending(path, reloadNeeded, "FRRStarting", nil, nil, startingExtra); err != nil {
-			return err
-		}
-		readyCtx, cancel := context.WithTimeout(ctx, frrReloadReadyTimeout)
-		out, err := c.waitFRRControlReady(readyCtx, controlExtra, 500*time.Millisecond)
-		cancel()
-		if err != nil {
-			return c.saveFRRConfigPendingError(path, reloadNeeded, frrControlPendingReason(out, err), out, err, mergeStatusExtra(controlExtra, map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged, "daemonRestartNeeded": daemonRestartNeeded}))
-		}
-	}
-	if !c.DryRun && reloadNeeded {
-		validateCtx, cancel := context.WithTimeout(ctx, frrValidateCmdTimeout)
-		out, err := c.validateFRRConfig(validateCtx, path, daemonRestartNeeded)
-		cancel()
-		if err != nil {
-			extra := mergeStatusExtra(controlExtra, map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged, "daemonRestartNeeded": daemonRestartNeeded})
-			if isFRRControlUnavailableError(out, err) || isFRRPermissionDeniedError(out, err) {
-				return c.saveFRRConfigPendingError(path, reloadNeeded, frrControlPendingReason(out, err), out, err, extra)
-			}
-			if errors.Is(err, context.DeadlineExceeded) || errors.Is(validateCtx.Err(), context.DeadlineExceeded) {
-				return c.saveFRRConfigPending(path, reloadNeeded, "FRRValidateTimeout", out, err, extra)
-			}
-			vtysh := firstNonEmpty(c.VTYSH, "vtysh")
-			saveErr := c.saveConfiguredStatuses("Error", path, reloadNeeded, map[string]any{"reason": "FRRSyntaxInvalid", "error": strings.TrimSpace(string(out))})
-			if saveErr != nil {
-				return saveErr
-			}
-			return fmt.Errorf("%s -C -f %s: %w: %s", vtysh, path, err, strings.TrimSpace(string(out)))
-		}
-		if err := c.publishFRRReloadEvent(ctx, path, reloadReasons, daemonRestartNeeded); err != nil {
-			return err
-		}
-		reloadExtra := mergeStatusExtra(controlExtra, map[string]any{"LastReloadAttemptAt": time.Now().UTC().Format(time.RFC3339Nano)})
-		reloadCtx, cancel := context.WithTimeout(ctx, frrReloadTimeout)
-		out, err = c.reloadFRRConfig(reloadCtx, path)
-		cancel()
-		reloadExtra["LastReloadStderr"] = strings.TrimSpace(string(out))
-		if err != nil {
-			if isFRRPermissionDeniedError(out, err) {
-				return c.saveFRRConfigPending(path, reloadNeeded, "FRRReloadPermissionDenied", out, err, mergeStatusExtra(reloadExtra, map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged, "daemonRestartNeeded": daemonRestartNeeded}))
-			}
-			return c.saveFRRConfigPending(path, reloadNeeded, "FRRReloadFailed", out, err, mergeStatusExtra(reloadExtra, map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged, "daemonRestartNeeded": daemonRestartNeeded}))
-		}
-		verifyCtx, cancel := context.WithTimeout(ctx, frrValidateCmdTimeout)
-		matches, err := c.runningConfigMatches(verifyCtx, data)
-		cancel()
-		if err != nil {
-			if isFRRControlUnavailableError(nil, err) || isFRRPermissionDeniedError(nil, err) {
-				return c.saveFRRConfigPendingError(path, reloadNeeded, frrControlPendingReason(nil, err), nil, err, mergeStatusExtra(reloadExtra, map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged, "daemonRestartNeeded": daemonRestartNeeded}))
-			}
-			return c.saveFRRConfigPendingError(path, reloadNeeded, "FRRReloadVerifyFailed", nil, err, mergeStatusExtra(reloadExtra, map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged, "daemonRestartNeeded": daemonRestartNeeded}))
-		}
-		if !matches {
-			msg := []byte("running FRR config does not contain rendered BGP critical lines after frr-reload")
-			return c.saveFRRConfigPendingError(path, reloadNeeded, "FRRReloadIncomplete", msg, nil, mergeStatusExtra(reloadExtra, map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged, "daemonRestartNeeded": daemonRestartNeeded}))
-		}
-		for key, value := range reloadExtra {
-			controlExtra[key] = value
-		}
-	}
-	if !c.DryRun {
-		if reloadNeeded || daemonRestartNeeded {
-			extra := mergeStatusExtra(controlExtra, map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged, "daemonRestartNeeded": daemonRestartNeeded})
-			if err := c.saveConfiguredStatuses("Applied", path, reloadNeeded || daemonsChanged, extra); err != nil {
-				return err
-			}
-			c.applyMeta = map[string]any{
-				"configPath":      path,
-				"applyWith":       "frr-reload.py --reload --stdout",
-				"changed":         reloadNeeded || daemonRestartNeeded,
-				"dryRun":          c.DryRun,
-				"daemonsPath":     daemonsPath,
-				"daemonsChanged":  daemonsChanged,
-				"daemonRestarted": daemonRestartNeeded,
-				"reloadReasons":   append([]string(nil), reloadReasons...),
-				"reloadReason":    strings.Join(reloadReasons, ","),
-				"configuredPhase": "Applied",
-			}
-		}
-		return c.observe(ctx)
-	}
-	if err := c.saveConfiguredStatuses("Applied", path, changed, nil); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (c *Controller) renderFRRDaemons() (bool, string, error) {
-	path := firstNonEmpty(c.DaemonsPath, "/etc/frr/daemons")
-	var existing []byte
-	if current, err := os.ReadFile(path); err == nil {
-		existing = current
-	} else if err != nil && !os.IsNotExist(err) {
-		return false, path, err
-	}
-	data, err := render.FRRDaemons(existing, c.Router)
-	if err != nil || len(data) == 0 {
-		return false, path, err
-	}
-	changed := !bytes.Equal(existing, data)
-	if changed && !c.DryRun {
-		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-			return false, path, err
-		}
-		if err := os.WriteFile(path, data, 0644); err != nil {
-			return false, path, err
-		}
-	}
-	return changed, path, nil
-}
-
-func (c *Controller) waitFRRControlReady(ctx context.Context, extra map[string]any, interval time.Duration) ([]byte, error) {
-	if interval <= 0 {
-		interval = time.Second
-	}
-	var lastOut []byte
-	var lastErr error
-	for {
-		if extra != nil {
-			extra["FRRControlSocket"] = c.firstFRRControlSocket()
-		}
-		out, err := c.frrControlReady(ctx)
-		recordFRRControlProbe(extra, out, err)
-		if err == nil {
-			return out, nil
-		}
-		lastOut = out
-		lastErr = err
-		if isFRRPermissionDeniedError(out, err) {
-			return lastOut, lastErr
-		}
-		select {
-		case <-ctx.Done():
-			if lastErr == nil {
-				lastErr = ctx.Err()
-			}
-			return lastOut, lastErr
-		case <-time.After(interval):
-		}
-	}
-}
-
-func (c *Controller) frrControlReady(ctx context.Context) ([]byte, error) {
-	vtysh := firstNonEmpty(c.VTYSH, "vtysh")
-	out, err := c.runWithTimeout(ctx, frrReadyProbeTimeout, vtysh, "-c", "show running-config")
-	if err == nil {
-		return out, nil
-	}
-	if isFRRPermissionDeniedError(out, err) {
-		return out, fmt.Errorf("FRR control permission denied: %w: %s", err, strings.TrimSpace(string(out)))
-	}
-	return out, fmt.Errorf("FRR control unavailable: %w: %s", err, strings.TrimSpace(string(out)))
-}
-
-func (c *Controller) firstFRRControlSocket() string {
-	for _, path := range c.frrControlSocketPaths() {
-		if st, err := os.Stat(path); err == nil && st.Mode()&os.ModeSocket != 0 {
-			return path
-		}
-	}
-	return ""
-}
-
-func (c *Controller) frrControlSocketPaths() []string {
-	if len(c.FRRControlSocketPaths) > 0 {
-		return c.FRRControlSocketPaths
-	}
-	return []string{
-		"/run/frr/bgpd.vty",
-		"/var/run/frr/bgpd.vty",
-		"/run/frr/zebra.vty",
-		"/var/run/frr/zebra.vty",
-	}
-}
-
-func (c *Controller) validateFRRConfig(ctx context.Context, path string, retry bool) ([]byte, error) {
-	vtysh := firstNonEmpty(c.VTYSH, "vtysh")
-	attempts := 1
-	if retry {
-		attempts = 25
-	}
-	var lastOut []byte
-	var lastErr error
-	for i := 0; i < attempts; i++ {
-		out, err := c.run(ctx, vtysh, "-C", "-f", path)
-		if err == nil {
-			return out, nil
-		}
-		lastOut, lastErr = out, err
-		if !retry {
-			break
-		}
-		select {
-		case <-ctx.Done():
-			return lastOut, ctx.Err()
-		case <-time.After(200 * time.Millisecond):
-		}
-	}
-	return lastOut, lastErr
-}
-
-func (c *Controller) reloadFRRConfig(ctx context.Context, path string) ([]byte, error) {
-	reload := firstNonEmpty(c.FRRReload, defaultFRRReload())
-	var lastOut []byte
-	for {
-		out, err := c.run(ctx, reload, "--reload", "--stdout", path)
-		if err == nil {
-			return out, nil
-		}
-		lastOut = out
-		if !isTransientFRRReloadError(out, err) {
-			return out, err
-		}
-		select {
-		case <-ctx.Done():
-			return lastOut, ctx.Err()
-		case <-time.After(500 * time.Millisecond):
-		}
-	}
-}
-
-func (c *Controller) publishFRRReloadEvent(ctx context.Context, path string, reasons []string, daemonRestartNeeded bool) error {
-	if c.Bus == nil {
-		return nil
-	}
-	event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.bgp.frr.reload", daemonapi.SeverityInfo)
-	event.Reason = strings.Join(reasons, ",")
-	event.Attributes = map[string]string{
-		"configPath":            path,
-		"reloadReasons":         strings.Join(reasons, ","),
-		"daemonRestartRequired": fmt.Sprint(daemonRestartNeeded),
-		"applyWith":             "frr-reload.py --reload --stdout",
-	}
-	return c.Bus.Publish(ctx, event)
-}
-
-func isTransientFRRReloadError(out []byte, err error) bool {
-	message := strings.ToLower(strings.TrimSpace(string(out)))
+	desired, err := c.desiredPeers(routerResource.Metadata.Name)
 	if err != nil {
-		message += " " + strings.ToLower(err.Error())
+		return c.savePendingAll("GoBGPPeerConfigInvalid", err)
 	}
-	for _, needle := range []string{
-		"flock",
-		"lock failed",
-		"could not acquire",
-		"resource temporarily unavailable",
-		"another frr-reload",
-	} {
-		if strings.Contains(message, needle) {
-			return true
-		}
-	}
-	return false
-}
-
-func (c *Controller) frrDaemonChangeCommands() []servicemgr.Command {
-	manager := c.serviceManager()
-	return []servicemgr.Command{
-		manager.Command(servicemgr.OperationEnable, frrService()),
-		manager.Command(servicemgr.OperationRestart, frrService()),
-	}
-}
-
-type frrServiceState struct {
-	Manager string
-	Command string
-	Active  bool
-	Output  string
-	Error   string
-}
-
-func (s frrServiceState) StatusExtra() map[string]any {
-	return map[string]any{
-		"FRRServiceManager": s.Manager,
-		"FRRServiceCommand": s.Command,
-		"FRRServiceActive":  s.Active,
-		"FRRServiceStatus":  s.Output,
-		"FRRServiceError":   s.Error,
-	}
-}
-
-func (c *Controller) frrServiceState(ctx context.Context) frrServiceState {
-	manager := c.serviceManager()
-	command := manager.Command(servicemgr.OperationStatus, frrService())
-	state := frrServiceState{
-		Manager: manager.Name(),
-		Command: strings.TrimSpace(command.Name + " " + strings.Join(command.Args, " ")),
-	}
-	if command.Name == "" {
-		state.Error = "service status command unavailable"
-		return state
-	}
-	out, err := c.runWithTimeout(ctx, frrServiceCmdTimeout, command.Name, command.Args...)
-	state.Output = strings.TrimSpace(string(out))
+	changed, err := c.reconcilePeers(ctx, desired)
 	if err != nil {
-		state.Error = err.Error()
-		return state
+		return c.savePendingAll("GoBGPPeerApplyFailed", err)
 	}
-	state.Active = frrServiceStatusOutputActive(out)
-	return state
-}
-
-func frrServiceStatusOutputActive(out []byte) bool {
-	for _, raw := range strings.Split(string(out), "\n") {
-		line := strings.ToLower(strings.TrimSpace(raw))
-		if line == "" {
-			continue
-		}
-		if strings.HasPrefix(line, "status of ") {
-			_, state, ok := strings.Cut(line, ":")
-			if ok && frrServiceStateTextFailed(state) {
-				return false
-			}
-			continue
-		}
-		if strings.Contains(line, " is ") && frrServiceStateTextFailed(line) {
-			return false
-		}
+	if err := c.reconcileAdvertisements(ctx, routerSpec); err != nil {
+		return c.savePendingAll("GoBGPPathApplyFailed", err)
 	}
-	return true
-}
-
-func frrServiceStateTextFailed(value string) bool {
-	value = strings.ToLower(strings.TrimSpace(value))
-	for _, needle := range []string{"failed", "stopped", "inactive", "not started", "crashed"} {
-		if strings.Contains(value, needle) {
-			return true
-		}
-	}
-	return false
-}
-
-func (c *Controller) serviceManager() servicemgr.Manager {
-	switch strings.TrimSpace(c.Systemctl) {
-	case "rc-service", "rc-update":
-		return servicemgr.OpenRC{}
-	case "service", "sysrc":
-		return servicemgr.RCD{}
-	case "nixos-rebuild":
-		return servicemgr.NixOS{}
-	case "systemctl":
-		return servicemgr.Systemd{}
-	}
-	_, features := platform.Current()
-	return servicemgr.ForPlatform(features)
-}
-
-func frrService() servicemgr.Service {
-	return servicemgr.Service{SystemdName: "frr.service", OpenRCName: "frr", RCDName: "frr", NixName: "frr"}
-}
-
-func (c *Controller) runningConfigMatches(ctx context.Context, desired []byte) (bool, error) {
-	vtysh := firstNonEmpty(c.VTYSH, "vtysh")
-	out, err := c.run(ctx, vtysh, "-c", "show running-config")
+	allowedImportPrefixes := importAllowedPrefixes(routerSpec)
+	state, routes, err := c.observeState(ctx, allowedImportPrefixes)
 	if err != nil {
-		if frrOutputIndicatesBGPInstanceMissing(out, err) {
-			return false, nil
-		}
-		return false, fmt.Errorf("%s -c show running-config: %w: %s", vtysh, err, strings.TrimSpace(string(out)))
+		return c.savePendingAll("GoBGPObserveFailed", err)
 	}
-	return runningConfigOutputMatches(out, desired), nil
-}
-
-func runningConfigOutputMatches(out []byte, desired []byte) bool {
-	running := string(out)
-	for _, line := range criticalFRRLines(desired) {
-		if !strings.Contains(running, line) {
-			return false
-		}
+	if c.FIB == nil {
+		c.FIB = defaultFIBSyncer()
 	}
-	return true
-}
-
-func recordFRRControlProbe(extra map[string]any, out []byte, err error) {
-	if extra == nil {
-		return
+	if err := c.FIB.SyncBGP(ctx, routes); err != nil {
+		return c.savePendingAll("GoBGPFIBSyncFailed", err)
 	}
-	extra["LastControlProbeAt"] = time.Now().UTC().Format(time.RFC3339Nano)
-	if socketPath, _ := extra["FRRControlSocket"].(string); socketPath == "" {
-		extra["FRRControlSocket"] = ""
-	}
-	if err != nil {
-		extra["LastControlProbeError"] = strings.TrimSpace(strings.TrimSpace(err.Error()) + ": " + strings.TrimSpace(string(out)))
-	} else {
-		extra["LastControlProbeError"] = ""
-	}
-}
-
-func isFRRControlUnavailableError(out []byte, err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := strings.ToLower(strings.TrimSpace(string(out)) + " " + err.Error())
-	for _, needle := range []string{
-		"failed to connect",
-		"connection refused",
-		"no such file or directory",
-		"can't connect",
-		"could not connect",
-		"vty socket",
-	} {
-		if strings.Contains(msg, needle) {
-			return true
-		}
-	}
-	return false
-}
-
-func frrControlPendingReason(out []byte, err error) string {
-	if isFRRPermissionDeniedError(out, err) {
-		return "FRRPermissionDenied"
-	}
-	return "FRRControlUnavailable"
-}
-
-func isFRRPermissionDeniedError(out []byte, err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := strings.ToLower(strings.TrimSpace(string(out)) + " " + err.Error())
-	for _, needle := range []string{
-		"permission denied",
-		"operation not permitted",
-		"access denied",
-	} {
-		if strings.Contains(msg, needle) {
-			return true
-		}
-	}
-	return false
-}
-
-func frrOutputIndicatesBGPInstanceMissing(out []byte, err error) bool {
-	msg := strings.ToLower(strings.TrimSpace(string(out)))
-	if err != nil {
-		msg += " " + strings.ToLower(err.Error())
-	}
-	return strings.Contains(msg, "bgp instance not found")
-}
-
-func mergeStatusExtra(base map[string]any, overlay map[string]any) map[string]any {
-	out := map[string]any{}
-	mergeInto(out, base)
-	mergeInto(out, overlay)
-	return out
-}
-
-func mergeInto(dst map[string]any, src map[string]any) {
-	if dst == nil {
-		return
-	}
-	for key, value := range src {
-		dst[key] = value
-	}
-}
-
-func criticalFRRLines(data []byte) []string {
-	var lines []string
-	seen := map[string]bool{}
-	for _, raw := range strings.Split(string(data), "\n") {
-		line := strings.TrimSpace(raw)
-		if line == "" || strings.HasPrefix(line, "!") || strings.HasPrefix(line, "frr ") || strings.HasPrefix(line, "hostname ") || strings.HasPrefix(line, "service ") {
-			continue
-		}
-		if line == "address-family ipv4 unicast" || line == "exit-address-family" {
-			continue
-		}
-		if line == "bgp graceful-restart restart-time 120" || line == "bgp graceful-restart stalepath-time 360" {
-			continue
-		}
-		if strings.HasSuffix(line, " activate") {
-			continue
-		}
-		if seen[line] {
-			continue
-		}
-		seen[line] = true
-		lines = append(lines, line)
-	}
-	return lines
-}
-
-func (c *Controller) observe(ctx context.Context) error {
-	if err := c.observeFRRHealth(ctx); err != nil {
-		return err
-	}
-	vtysh := firstNonEmpty(c.VTYSH, "vtysh")
-	states, truncated, err := c.observeInstances(ctx, vtysh)
-	if err != nil {
-		return c.saveConfiguredStatusesError("Pending", firstNonEmpty(c.ConfigPath, "/run/routerd/frr/routerd.conf"), false, map[string]any{"reason": "FRRStatusUnavailable", "error": err.Error()}, err)
-	}
-	c.truncated = truncated
-	state := aggregateBGPStates(states)
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	state.Peers = c.applyPeerHistory(state.Peers, now)
 	var events []bgpstate.Event
@@ -661,7 +145,7 @@ func (c *Controller) observe(ctx context.Context) error {
 	}
 	c.lastState = state
 	c.observed = true
-	if err := c.saveObservedStatuses(states, state); err != nil {
+	if err := c.saveObservedStatuses(routerResource.Metadata.Name, state, changed, len(routes)); err != nil {
 		return err
 	}
 	for _, event := range events {
@@ -670,80 +154,306 @@ func (c *Controller) observe(ctx context.Context) error {
 	return nil
 }
 
-func (c *Controller) observeFRRHealth(ctx context.Context) error {
-	path := firstNonEmpty(c.ConfigPath, "/run/routerd/frr/routerd.conf")
-	desired, _ := os.ReadFile(path)
-	extra := map[string]any{}
-	serviceState := c.frrServiceState(ctx)
-	mergeInto(extra, serviceState.StatusExtra())
-	if !serviceState.Active {
-		return c.saveFRRConfigPendingError(path, false, "FRRServiceInactive", nil, errors.New(firstNonEmpty(serviceState.Error, serviceState.Output, "FRR service is not active")), extra)
+func (c *Controller) ensureServer(ctx context.Context, spec routerapi.BGPRouterSpec) error {
+	key := bgpGlobalKey(spec)
+	if c.started && c.globalKey == key {
+		return nil
 	}
-	controlOut, controlErr := c.frrControlReady(ctx)
-	recordFRRControlProbe(extra, controlOut, controlErr)
-	if controlErr != nil {
-		return c.saveFRRConfigPendingError(path, false, frrControlPendingReason(controlOut, controlErr), controlOut, controlErr, extra)
+	if c.started && c.Server != nil {
+		c.Server.Stop()
+		c.Server = nil
+		c.started = false
 	}
-	listenOut, listenErr := c.bgpListenReady(ctx)
-	if listenErr != nil {
-		return c.saveFRRConfigPendingError(path, false, "FRRListenUnavailable", listenOut, listenErr, extra)
+	if c.Server == nil {
+		if c.NewServer != nil {
+			c.Server = c.NewServer()
+		} else {
+			c.Server = gobgpserver.NewBgpServer()
+		}
+		go c.Server.Serve()
 	}
-	if len(desired) > 0 && !runningConfigOutputMatches(controlOut, desired) {
-		return c.saveFRRConfigPendingError(path, false, "FRRReloadIncomplete", []byte("running FRR config does not contain rendered BGP critical lines"), nil, extra)
+	req := &gobgpapi.StartBgpRequest{Global: &gobgpapi.Global{
+		Asn:             spec.ASN,
+		RouterId:        strings.TrimSpace(spec.RouterID),
+		ListenPort:      int32(bgpListenPort(spec.Listen)),
+		ListenAddresses: bgpListenAddresses(spec.Listen),
+		Families:        []uint32{0}, // GoBGP API uses OpenConfig AFI-SAFI type indexes: 0 = ipv4-unicast.
+	}}
+	if c.bgpRouterUsesIPv6(spec) {
+		req.Global.Families = append(req.Global.Families, 1) // 1 = ipv6-unicast.
 	}
+	if gr := gobgpGracefulRestart(spec); gr != nil {
+		req.Global.GracefulRestart = gr
+	}
+	if err := c.Server.StartBgp(ctx, req); err != nil {
+		return err
+	}
+	c.started = true
+	c.globalKey = key
+	c.desiredPeerKeys = nil
+	c.pathUUIDs = map[string][]byte{}
 	return nil
 }
 
-func (c *Controller) bgpListenReady(ctx context.Context) ([]byte, error) {
-	out, err := c.runWithTimeout(ctx, frrReadyProbeTimeout, "ss", "-ltn")
-	if err != nil {
-		return out, err
-	}
-	for _, port := range c.bgpListenPorts() {
-		if !listenPortPresent(out, strconv.Itoa(port)) {
-			return out, fmt.Errorf("FRR BGP listen port %d is not listening", port)
+func (c *Controller) desiredPeers(routerName string) (map[string]desiredPeer, error) {
+	out := map[string]desiredPeer{}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion != routerapi.NetAPIVersion || resource.Kind != "BGPPeer" {
+			continue
+		}
+		spec, err := resource.BGPPeerSpec()
+		if err != nil {
+			return nil, err
+		}
+		_, name, ok := strings.Cut(strings.TrimSpace(spec.RouterRef), "/")
+		if !ok || name != routerName {
+			continue
+		}
+		password, err := secretValue(spec.Password, spec.PasswordFrom)
+		if err != nil {
+			return nil, fmt.Errorf("%s/%s passwordFrom: %w", resource.Kind, resource.Metadata.Name, err)
+		}
+		for _, peer := range spec.Peers {
+			peer = strings.TrimSpace(peer)
+			out[peer] = desiredPeer{Address: peer, ASN: spec.PeerASN, Password: password, Timers: spec.Timers}
 		}
 	}
 	return out, nil
 }
 
-func (c *Controller) bgpListenPorts() []int {
-	seen := map[int]bool{}
-	var out []int
-	if c.Router != nil {
-		for _, resource := range c.Router.Spec.Resources {
-			if resource.APIVersion != api.NetAPIVersion || resource.Kind != "BGPRouter" {
+func (c *Controller) reconcilePeers(ctx context.Context, desired map[string]desiredPeer) (bool, error) {
+	if c.desiredPeerKeys == nil {
+		c.desiredPeerKeys = map[string]desiredPeer{}
+	}
+	live := map[string]*gobgpapi.Peer{}
+	if err := c.Server.ListPeer(ctx, &gobgpapi.ListPeerRequest{}, func(peer *gobgpapi.Peer) {
+		address := peerAddress(peer)
+		if address != "" {
+			live[address] = peer
+		}
+	}); err != nil {
+		return false, err
+	}
+	changed := false
+	for address, current := range live {
+		if _, ok := desired[address]; !ok {
+			if err := c.Server.DeletePeer(ctx, &gobgpapi.DeletePeerRequest{Address: address}); err != nil {
+				return changed, err
+			}
+			delete(c.desiredPeerKeys, address)
+			changed = true
+			continue
+		}
+		if desiredPeerMatches(current, desired[address]) && c.desiredPeerKeys[address] == desired[address] {
+			continue
+		}
+		if err := c.Server.DeletePeer(ctx, &gobgpapi.DeletePeerRequest{Address: address}); err != nil {
+			return changed, err
+		}
+		delete(c.desiredPeerKeys, address)
+		changed = true
+	}
+	for address, peer := range desired {
+		if _, ok := live[address]; ok && c.desiredPeerKeys[address] == peer {
+			continue
+		}
+		if err := c.Server.AddPeer(ctx, &gobgpapi.AddPeerRequest{Peer: goBGPPeer(peer)}); err != nil {
+			return changed, err
+		}
+		c.desiredPeerKeys[address] = peer
+		changed = true
+	}
+	return changed, nil
+}
+
+func (c *Controller) reconcileAdvertisements(ctx context.Context, spec routerapi.BGPRouterSpec) error {
+	desired := advertisedPrefixes(spec)
+	if c.pathUUIDs == nil {
+		c.pathUUIDs = map[string][]byte{}
+	}
+	for prefix := range c.pathUUIDs {
+		if !desired[prefix] {
+			if err := c.Server.DeletePath(ctx, &gobgpapi.DeletePathRequest{TableType: gobgpapi.TableType_GLOBAL, Uuid: c.pathUUIDs[prefix]}); err != nil {
+				return err
+			}
+			delete(c.pathUUIDs, prefix)
+		}
+	}
+	for prefix := range desired {
+		if len(c.pathUUIDs[prefix]) > 0 {
+			continue
+		}
+		path, err := localPath(prefix)
+		if err != nil {
+			return err
+		}
+		resp, err := c.Server.AddPath(ctx, &gobgpapi.AddPathRequest{TableType: gobgpapi.TableType_GLOBAL, Path: path})
+		if err != nil {
+			return err
+		}
+		c.pathUUIDs[prefix] = resp.GetUuid()
+	}
+	return nil
+}
+
+func (c *Controller) observeState(ctx context.Context, allowedImportPrefixes []netip.Prefix) (bgpstate.State, []FIBRoute, error) {
+	var state bgpstate.State
+	if err := c.Server.ListPeer(ctx, &gobgpapi.ListPeerRequest{EnableAdvertised: true}, func(peer *gobgpapi.Peer) {
+		state.Peers = append(state.Peers, statePeer(peer))
+	}); err != nil {
+		return bgpstate.State{}, nil, err
+	}
+	for _, family := range bgpFamiliesForRouter(c.Router) {
+		err := c.Server.ListPath(ctx, &gobgpapi.ListPathRequest{TableType: gobgpapi.TableType_GLOBAL, Family: family}, func(dst *gobgpapi.Destination) {
+			state.Prefixes = append(state.Prefixes, statePrefixes(dst)...)
+		})
+		if err != nil {
+			return bgpstate.State{}, nil, err
+		}
+	}
+	routes := bestFIBRoutes(state.Prefixes, allowedImportPrefixes)
+	limited, truncated := bgpstate.LimitPrefixes(bgpstate.Normalize(state), c.maxPrefixes())
+	if truncated {
+		limited.Prefixes = append(limited.Prefixes, bgpstate.Prefix{Prefix: "truncated", SelectionReason: "prefix limit reached"})
+	}
+	return bgpstate.Normalize(limited), routes, nil
+}
+
+func (c *Controller) saveObservedStatuses(routerName string, state bgpstate.State, changed bool, fibRoutes int) error {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	peersByResource := c.peersByResource(state)
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion != routerapi.NetAPIVersion {
+			continue
+		}
+		switch resource.Kind {
+		case "BGPRouter":
+			if resource.Metadata.Name != routerName {
 				continue
 			}
-			spec, err := resource.BGPRouterSpec()
-			if err != nil {
-				continue
+			established := establishedPeers(state.Peers)
+			phase := "Pending"
+			if len(state.Peers) > 0 && established == len(state.Peers) {
+				phase = "Established"
+			} else if established > 0 {
+				phase = "Degraded"
+			} else if len(state.Peers) > 0 {
+				phase = "Down"
 			}
-			port := spec.Listen.Port
-			if port == 0 {
-				port = 179
+			status := map[string]any{
+				"phase":               phase,
+				"backend":             "gobgp",
+				"applyWith":           "embedded gobgp API",
+				"changed":             changed,
+				"dryRun":              c.DryRun,
+				"peers":               state.Peers,
+				"prefixes":            state.Prefixes,
+				"observedCommunities": observedCommunities(state.Prefixes),
+				"establishedPeers":    established,
+				"acceptedPrefixes":    len(state.Prefixes),
+				"fibRoutes":           fibRoutes,
+				"observedAt":          now,
+				"conditions":          []map[string]any{{"type": "Observed", "status": "True", "reason": "GoBGPStatus"}},
 			}
-			if !seen[port] {
-				seen[port] = true
-				out = append(out, port)
+			if err := c.Store.SaveObjectStatus(routerapi.NetAPIVersion, "BGPRouter", resource.Metadata.Name, status); err != nil {
+				return err
+			}
+		case "BGPPeer":
+			peers := peersByResource[resource.Metadata.Name]
+			established := establishedPeers(peers)
+			phase := "Pending"
+			if len(peers) > 0 && established == len(peers) {
+				phase = "Established"
+			} else if established > 0 {
+				phase = "Degraded"
+			} else if len(peers) > 0 {
+				phase = "Down"
+			}
+			status := map[string]any{
+				"phase":            phase,
+				"backend":          "gobgp",
+				"applyWith":        "embedded gobgp API",
+				"changed":          changed,
+				"dryRun":           c.DryRun,
+				"peers":            peers,
+				"establishedPeers": established,
+				"observedAt":       now,
+			}
+			if err := c.Store.SaveObjectStatus(routerapi.NetAPIVersion, "BGPPeer", resource.Metadata.Name, status); err != nil {
+				return err
 			}
 		}
 	}
-	if len(out) == 0 {
-		out = append(out, 179)
+	return nil
+}
+
+func (c *Controller) saveServeManagedStatuses(phase string, changed bool, extra map[string]any) error {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion != routerapi.NetAPIVersion || (resource.Kind != "BGPRouter" && resource.Kind != "BGPPeer" && resource.Kind != "BFD") {
+			continue
+		}
+		status := map[string]any{
+			"phase":      phase,
+			"backend":    "gobgp",
+			"applyWith":  "routerd serve",
+			"changed":    changed,
+			"dryRun":     c.DryRun,
+			"observedAt": now,
+		}
+		for key, value := range extra {
+			status[key] = value
+		}
+		if err := c.Store.SaveObjectStatus(routerapi.NetAPIVersion, resource.Kind, resource.Metadata.Name, status); err != nil {
+			return err
+		}
 	}
-	sort.Ints(out)
+	return nil
+}
+
+func (c *Controller) savePendingAll(reason string, err error) error {
+	status := map[string]any{
+		"reason":        "GoBGPConfigPending",
+		"pendingReason": reason,
+		"error":         err.Error(),
+		"conditions": []map[string]any{{
+			"type":    "Configured",
+			"status":  "False",
+			"reason":  "GoBGPConfigPending",
+			"message": reason,
+		}},
+	}
+	if saveErr := c.saveServeManagedStatuses("Pending", false, status); saveErr != nil {
+		return saveErr
+	}
+	return fmt.Errorf("%s: %w", reason, err)
+}
+
+func (c *Controller) bgpRouters() []routerapi.Resource {
+	var out []routerapi.Resource
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion == routerapi.NetAPIVersion && resource.Kind == "BGPRouter" {
+			out = append(out, resource)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Metadata.Name < out[j].Metadata.Name })
 	return out
 }
 
-func listenPortPresent(out []byte, port string) bool {
-	for _, line := range strings.Split(string(out), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 4 || strings.ToUpper(fields[0]) != "LISTEN" {
+func (c *Controller) usesBFD() bool {
+	if c.Router == nil {
+		return false
+	}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion != routerapi.NetAPIVersion {
 			continue
 		}
-		for _, field := range fields[3:] {
-			if listenAddressHasPort(field, port) {
+		switch resource.Kind {
+		case "BFD":
+			return true
+		case "BGPPeer":
+			spec, err := resource.BGPPeerSpec()
+			if err == nil && strings.TrimSpace(spec.BFD) != "" {
 				return true
 			}
 		}
@@ -751,16 +461,450 @@ func listenPortPresent(out []byte, port string) bool {
 	return false
 }
 
-func listenAddressHasPort(address, port string) bool {
-	address = strings.TrimSpace(address)
-	return strings.HasSuffix(address, ":"+port) || strings.HasSuffix(address, "]:"+port)
+func bgpGlobalKey(spec routerapi.BGPRouterSpec) string {
+	return fmt.Sprintf("%d|%s|%s|%d|%t", spec.ASN, strings.TrimSpace(spec.RouterID), strings.TrimSpace(spec.Listen.Address), bgpListenPort(spec.Listen), cBool(spec.GracefulRestart.Enabled))
+}
+
+func bgpListenPort(spec routerapi.BGPListenSpec) int {
+	if spec.Port > 0 {
+		return spec.Port
+	}
+	return 179
+}
+
+func bgpListenAddresses(spec routerapi.BGPListenSpec) []string {
+	if strings.TrimSpace(spec.Address) == "" {
+		return nil
+	}
+	return []string{strings.TrimSpace(spec.Address)}
+}
+
+func goBGPPeer(peer desiredPeer) *gobgpapi.Peer {
+	return &gobgpapi.Peer{
+		Conf: &gobgpapi.PeerConf{
+			NeighborAddress: peer.Address,
+			PeerAsn:         peer.ASN,
+			AuthPassword:    peer.Password,
+			Type:            gobgpapi.PeerType_EXTERNAL,
+			SendCommunity:   3,
+		},
+		Timers: &gobgpapi.Timers{Config: goBGPTimers(peer.Timers)},
+		AfiSafis: []*gobgpapi.AfiSafi{
+			{Config: &gobgpapi.AfiSafiConfig{Family: ipv4Family(), Enabled: true}},
+			{Config: &gobgpapi.AfiSafiConfig{Family: ipv6Family(), Enabled: true}},
+		},
+	}
+}
+
+func goBGPTimers(spec routerapi.BGPTimersSpec) *gobgpapi.TimersConfig {
+	switch strings.TrimSpace(spec.Profile) {
+	case "fast":
+		return &gobgpapi.TimersConfig{ConnectRetry: 1, HoldTime: 9, KeepaliveInterval: 3, IdleHoldTimeAfterReset: 1}
+	case "slow":
+		return &gobgpapi.TimersConfig{ConnectRetry: 30, HoldTime: 180, KeepaliveInterval: 60, IdleHoldTimeAfterReset: 5}
+	default:
+		return &gobgpapi.TimersConfig{ConnectRetry: 10, HoldTime: 90, KeepaliveInterval: 30, IdleHoldTimeAfterReset: 1}
+	}
+}
+
+func gobgpGracefulRestart(spec routerapi.BGPRouterSpec) *gobgpapi.GracefulRestart {
+	enabled := true
+	if spec.ConvergenceProfile == "fast" {
+		enabled = false
+	}
+	if spec.GracefulRestart.Enabled != nil {
+		enabled = *spec.GracefulRestart.Enabled
+	}
+	if !enabled {
+		return nil
+	}
+	return &gobgpapi.GracefulRestart{Enabled: true, RestartTime: uint32(durationSeconds(spec.GracefulRestart.RestartTime, 120)), StaleRoutesTime: uint32(durationSeconds(spec.GracefulRestart.StalePathTime, 360))}
+}
+
+func desiredPeerMatches(peer *gobgpapi.Peer, desired desiredPeer) bool {
+	conf := peer.GetConf()
+	return conf.GetNeighborAddress() == desired.Address &&
+		conf.GetPeerAsn() == desired.ASN &&
+		conf.GetAuthPassword() == desired.Password
+}
+
+func peerAddress(peer *gobgpapi.Peer) string {
+	if address := strings.TrimSpace(peer.GetConf().GetNeighborAddress()); address != "" {
+		return address
+	}
+	return strings.TrimSpace(peer.GetState().GetNeighborAddress())
+}
+
+func statePeer(peer *gobgpapi.Peer) bgpstate.Peer {
+	state := peer.GetState()
+	session := state.GetSessionState().String()
+	prefixes := 0
+	for _, af := range peer.GetAfiSafis() {
+		prefixes += int(af.GetState().GetAccepted())
+	}
+	messagesReceived, messagesSent := 0, 0
+	if messages := state.GetMessages(); messages != nil {
+		messagesReceived = int(messages.GetReceived().GetTotal())
+		messagesSent = int(messages.GetSent().GetTotal())
+	}
+	return bgpstate.Peer{
+		Address:          firstNonEmpty(peerAddress(peer), state.GetNeighborAddress()),
+		ASN:              firstNonZero(state.GetPeerAsn(), peer.GetConf().GetPeerAsn()),
+		State:            session,
+		Established:      state.GetSessionState() == gobgpapi.PeerState_ESTABLISHED,
+		PrefixesReceived: prefixes,
+		MessagesReceived: messagesReceived,
+		MessagesSent:     messagesSent,
+	}
+}
+
+func statePrefixes(dst *gobgpapi.Destination) []bgpstate.Prefix {
+	var out []bgpstate.Prefix
+	for _, path := range dst.GetPaths() {
+		if path.GetIsWithdraw() {
+			continue
+		}
+		prefix := firstNonEmpty(dst.GetPrefix(), pathPrefix(path))
+		if prefix == "" {
+			continue
+		}
+		out = append(out, bgpstate.Prefix{
+			Prefix:      prefix,
+			NextHop:     pathNextHop(path),
+			Best:        path.GetBest(),
+			Valid:       !path.GetIsNexthopInvalid(),
+			Installed:   path.GetBest() && !path.GetIsNexthopInvalid(),
+			Selected:    path.GetBest(),
+			Stale:       path.GetStale(),
+			Communities: pathCommunities(path),
+		})
+	}
+	return out
+}
+
+func bestFIBRoutes(prefixes []bgpstate.Prefix, allowed []netip.Prefix) []FIBRoute {
+	byPrefix := map[string]map[string]bool{}
+	for _, prefix := range prefixes {
+		if !prefix.Best || !prefix.Valid || strings.TrimSpace(prefix.Prefix) == "" {
+			continue
+		}
+		nextHop := strings.TrimSpace(prefix.NextHop)
+		if nextHop == "" || nextHop == "0.0.0.0" || nextHop == "::" {
+			continue
+		}
+		parsed, err := netip.ParsePrefix(prefix.Prefix)
+		if err != nil || !parsed.Addr().Is4() {
+			continue
+		}
+		parsed = parsed.Masked()
+		if len(allowed) > 0 && !prefixAllowed(parsed, allowed) {
+			continue
+		}
+		key := parsed.String()
+		if byPrefix[key] == nil {
+			byPrefix[key] = map[string]bool{}
+		}
+		byPrefix[key][nextHop] = true
+	}
+	var out []FIBRoute
+	for prefix, nextHops := range byPrefix {
+		var hops []string
+		for hop := range nextHops {
+			hops = append(hops, hop)
+		}
+		sort.Strings(hops)
+		out = append(out, FIBRoute{Prefix: prefix, NextHops: hops})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Prefix < out[j].Prefix })
+	return out
+}
+
+func importAllowedPrefixes(spec routerapi.BGPRouterSpec) []netip.Prefix {
+	var out []netip.Prefix
+	for _, prefix := range spec.ImportPolicy.AllowedPrefixes {
+		if parsed, err := netip.ParsePrefix(strings.TrimSpace(prefix)); err == nil {
+			out = append(out, parsed.Masked())
+		}
+	}
+	return out
+}
+
+func prefixAllowed(candidate netip.Prefix, allowed []netip.Prefix) bool {
+	for _, parent := range allowed {
+		if parent.Addr().Is4() != candidate.Addr().Is4() {
+			continue
+		}
+		if parent.Contains(candidate.Addr()) && candidate.Bits() >= parent.Bits() {
+			return true
+		}
+	}
+	return false
+}
+
+func pathPrefix(path *gobgpapi.Path) string {
+	value, err := path.GetNlri().UnmarshalNew()
+	if err != nil {
+		return ""
+	}
+	switch nlri := value.(type) {
+	case *gobgpapi.IPAddressPrefix:
+		addr, err := netip.ParseAddr(nlri.GetPrefix())
+		if err != nil {
+			return ""
+		}
+		return netip.PrefixFrom(addr, int(nlri.GetPrefixLen())).Masked().String()
+	default:
+		return ""
+	}
+}
+
+func pathCommunities(path *gobgpapi.Path) []string {
+	var out []string
+	for _, attr := range path.GetPattrs() {
+		value, err := attr.UnmarshalNew()
+		if err != nil {
+			continue
+		}
+		if communities, ok := value.(*gobgpapi.CommunitiesAttribute); ok {
+			for _, community := range communities.GetCommunities() {
+				out = append(out, fmt.Sprintf("%d:%d", community>>16, community&0xffff))
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func pathNextHop(path *gobgpapi.Path) string {
+	for _, attr := range path.GetPattrs() {
+		value, err := attr.UnmarshalNew()
+		if err != nil {
+			continue
+		}
+		switch typed := value.(type) {
+		case *gobgpapi.NextHopAttribute:
+			return strings.TrimSpace(typed.GetNextHop())
+		case *gobgpapi.MpReachNLRIAttribute:
+			for _, hop := range typed.GetNextHops() {
+				if strings.TrimSpace(hop) != "" {
+					return strings.TrimSpace(hop)
+				}
+			}
+		}
+	}
+	return strings.TrimSpace(path.GetNeighborIp())
+}
+
+func advertisedPrefixes(spec routerapi.BGPRouterSpec) map[string]bool {
+	out := map[string]bool{}
+	for _, prefix := range spec.ExportPolicy.AllowedPrefixes {
+		if normalized, ok := normalizePrefix(prefix); ok {
+			out[normalized] = true
+		}
+	}
+	for _, prefix := range spec.Redistribute.Connected.AllowedPrefixes {
+		if normalized, ok := normalizePrefix(prefix); ok {
+			out[normalized] = true
+		}
+	}
+	for _, prefix := range spec.Redistribute.Static.AllowedPrefixes {
+		if normalized, ok := normalizePrefix(prefix); ok {
+			out[normalized] = true
+		}
+	}
+	return out
+}
+
+func localPath(prefix string) (*gobgpapi.Path, error) {
+	parsed, err := netip.ParsePrefix(strings.TrimSpace(prefix))
+	if err != nil {
+		return nil, err
+	}
+	parsed = parsed.Masked()
+	nlri, err := anypb.New(&gobgpapi.IPAddressPrefix{Prefix: parsed.Addr().String(), PrefixLen: uint32(parsed.Bits())})
+	if err != nil {
+		return nil, err
+	}
+	origin, err := anypb.New(&gobgpapi.OriginAttribute{Origin: 0})
+	if err != nil {
+		return nil, err
+	}
+	nextHop := "0.0.0.0"
+	if parsed.Addr().Is6() {
+		nextHop = "::"
+	}
+	nh, err := anypb.New(&gobgpapi.NextHopAttribute{NextHop: nextHop})
+	if err != nil {
+		return nil, err
+	}
+	return &gobgpapi.Path{
+		Family: familyForPrefix(parsed),
+		Nlri:   nlri,
+		Pattrs: []*anypb.Any{origin, nh},
+	}, nil
+}
+
+func familyForPrefix(prefix netip.Prefix) *gobgpapi.Family {
+	if prefix.Addr().Is6() {
+		return ipv6Family()
+	}
+	return ipv4Family()
+}
+
+func ipv4Family() *gobgpapi.Family {
+	return &gobgpapi.Family{Afi: gobgpapi.Family_AFI_IP, Safi: gobgpapi.Family_SAFI_UNICAST}
+}
+
+func ipv6Family() *gobgpapi.Family {
+	return &gobgpapi.Family{Afi: gobgpapi.Family_AFI_IP6, Safi: gobgpapi.Family_SAFI_UNICAST}
+}
+
+func bgpFamiliesForRouter(router *routerapi.Router) []*gobgpapi.Family {
+	has6 := false
+	if router != nil {
+		for _, resource := range router.Spec.Resources {
+			if resource.APIVersion != routerapi.NetAPIVersion {
+				continue
+			}
+			switch resource.Kind {
+			case "BGPRouter":
+				spec, err := resource.BGPRouterSpec()
+				if err == nil {
+					for _, p := range append(append(append([]string{}, spec.ImportPolicy.AllowedPrefixes...), spec.ExportPolicy.AllowedPrefixes...), append(spec.Redistribute.Connected.AllowedPrefixes, spec.Redistribute.Static.AllowedPrefixes...)...) {
+						if parsed, err := netip.ParsePrefix(strings.TrimSpace(p)); err == nil && parsed.Addr().Is6() {
+							has6 = true
+						}
+					}
+				}
+			case "BGPPeer":
+				spec, err := resource.BGPPeerSpec()
+				if err == nil {
+					for _, p := range spec.Peers {
+						if addr, err := netip.ParseAddr(strings.TrimSpace(p)); err == nil && addr.Is6() {
+							has6 = true
+						}
+					}
+				}
+			}
+		}
+	}
+	out := []*gobgpapi.Family{ipv4Family()}
+	if has6 {
+		out = append(out, ipv6Family())
+	}
+	return out
+}
+
+func (c *Controller) bgpRouterUsesIPv6(spec routerapi.BGPRouterSpec) bool {
+	for _, family := range bgpFamiliesForRouter(c.Router) {
+		if family.GetAfi() == gobgpapi.Family_AFI_IP6 {
+			return true
+		}
+	}
+	for prefix := range advertisedPrefixes(spec) {
+		if parsed, err := netip.ParsePrefix(prefix); err == nil && parsed.Addr().Is6() {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *Controller) peersByResource(state bgpstate.State) map[string][]bgpstate.Peer {
+	byAddress := map[string]bgpstate.Peer{}
+	for _, peer := range state.Peers {
+		byAddress[peer.Address] = peer
+	}
+	out := map[string][]bgpstate.Peer{}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion != routerapi.NetAPIVersion || resource.Kind != "BGPPeer" {
+			continue
+		}
+		spec, err := resource.BGPPeerSpec()
+		if err != nil {
+			continue
+		}
+		for _, peerAddress := range spec.Peers {
+			peer, ok := byAddress[peerAddress]
+			if !ok {
+				peer = bgpstate.Peer{Address: peerAddress, ASN: spec.PeerASN, State: "Missing"}
+			} else if peer.ASN == 0 {
+				peer.ASN = spec.PeerASN
+			}
+			out[resource.Metadata.Name] = append(out[resource.Metadata.Name], peer)
+		}
+	}
+	return out
+}
+
+func PollInterval(router *routerapi.Router) time.Duration {
+	out := 15 * time.Second
+	if router == nil {
+		return out
+	}
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != routerapi.NetAPIVersion || resource.Kind != "BGPRouter" {
+			continue
+		}
+		spec, err := resource.BGPRouterSpec()
+		if err != nil || strings.TrimSpace(spec.Watcher.PollInterval) == "" {
+			continue
+		}
+		duration, err := time.ParseDuration(spec.Watcher.PollInterval)
+		if err != nil || duration < MinPollInterval {
+			continue
+		}
+		if duration < out {
+			out = duration
+		}
+	}
+	return out
+}
+
+func (c *Controller) maxPrefixes() int {
+	if c.MaxPrefixes > 0 {
+		return c.MaxPrefixes
+	}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion != routerapi.NetAPIVersion || resource.Kind != "BGPRouter" {
+			continue
+		}
+		spec, err := resource.BGPRouterSpec()
+		if err == nil && spec.Watcher.MaxPrefixes > 0 {
+			return spec.Watcher.MaxPrefixes
+		}
+	}
+	return bgpstate.DefaultMaxPrefixes
+}
+
+func (c *Controller) peerStateChangeThrottle() time.Duration {
+	var out time.Duration
+	if c.Router == nil {
+		return 0
+	}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion != routerapi.NetAPIVersion || resource.Kind != "BGPRouter" {
+			continue
+		}
+		spec, err := resource.BGPRouterSpec()
+		if err != nil || strings.TrimSpace(spec.Watcher.PeerStateChangeThrottle) == "" {
+			continue
+		}
+		duration, err := time.ParseDuration(spec.Watcher.PeerStateChangeThrottle)
+		if err != nil || duration <= 0 {
+			continue
+		}
+		if out == 0 || duration < out {
+			out = duration
+		}
+	}
+	return out
 }
 
 func (c *Controller) publishBGPEvent(ctx context.Context, event bgpstate.Event) {
 	if c.throttleBGPEvent(event) || c.Bus == nil {
 		return
 	}
-	daemonEvent := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "frr", Kind: "frr", Instance: "bgp"}, "routerd.bgp."+strings.ReplaceAll(event.Type, " ", "."), daemonapi.SeverityInfo)
+	daemonEvent := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "gobgp", Kind: "bgp", Instance: "embedded"}, "routerd.bgp."+strings.ReplaceAll(event.Type, " ", "."), daemonapi.SeverityInfo)
 	daemonEvent.Attributes = map[string]string{
 		"peer":     event.Peer,
 		"prefix":   event.Prefix,
@@ -788,482 +932,6 @@ func (c *Controller) throttleBGPEvent(event bgpstate.Event) bool {
 	}
 	c.peerEvents[key] = now
 	return false
-}
-
-func (c *Controller) observeInstances(ctx context.Context, vtysh string) (map[string]bgpstate.State, bool, error) {
-	states := map[string]bgpstate.State{}
-	truncatedAny := false
-	for _, instance := range c.bgpInstances() {
-		summaryCmd, routesCmd := bgpShowCommands(instance.VRFName)
-		summary, summaryErr := c.run(ctx, vtysh, "-c", summaryCmd)
-		routes, routesErr := c.run(ctx, vtysh, "-c", routesCmd)
-		if summaryErr != nil || routesErr != nil {
-			errText := strings.TrimSpace(fmt.Sprintf("%s: %v %v", instance.Name, summaryErr, routesErr))
-			return nil, false, fmt.Errorf("%s", errText)
-		}
-		state, err := bgpstate.ParseFRRState(summary, routes)
-		if err != nil {
-			return nil, false, fmt.Errorf("%s: %w", instance.Name, err)
-		}
-		if instance.IPv6 {
-			routesV6, err := c.run(ctx, vtysh, "-c", bgpShowIPv6RoutesCommand(instance.VRFName))
-			if err != nil {
-				return nil, false, fmt.Errorf("%s ipv6: %w", instance.Name, err)
-			}
-			prefixesV6, err := bgpstate.ParseFRRRoutesJSON(routesV6)
-			if err != nil {
-				return nil, false, fmt.Errorf("%s ipv6: %w", instance.Name, err)
-			}
-			state.Prefixes = append(state.Prefixes, prefixesV6...)
-			state = bgpstate.Normalize(state)
-		}
-		if instance.BFD {
-			bfd, err := c.observeBFD(ctx, vtysh, instance.VRFName)
-			if err != nil {
-				return nil, false, fmt.Errorf("%s bfd: %w", instance.Name, err)
-			}
-			state = bgpstate.AttachBFD(state, bfd)
-		}
-		limited, truncated := bgpstate.LimitPrefixes(state, c.maxPrefixesForRouter(instance.Name))
-		if truncated {
-			truncatedAny = true
-		}
-		states[instance.Name] = limited
-	}
-	return states, truncatedAny, nil
-}
-
-func (c *Controller) observeBFD(ctx context.Context, vtysh, vrfName string) (map[string]bgpstate.BFD, error) {
-	cmd := "show bfd peers brief json"
-	if strings.TrimSpace(vrfName) != "" {
-		cmd = "show bfd vrf " + strings.TrimSpace(vrfName) + " peers brief json"
-	}
-	out, err := c.run(ctx, vtysh, "-c", cmd)
-	if err != nil {
-		return nil, err
-	}
-	return bgpstate.ParseFRRBFDPeersJSON(out)
-}
-
-type bgpInstance struct {
-	Name    string
-	VRFName string
-	BFD     bool
-	IPv6    bool
-}
-
-func (c *Controller) bgpInstances() []bgpInstance {
-	vrfs := controllerBGPVRFIfNames(c.Router)
-	var out []bgpInstance
-	if c.Router == nil {
-		return out
-	}
-	for _, resource := range c.Router.Spec.Resources {
-		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "BGPRouter" {
-			continue
-		}
-		spec, err := resource.BGPRouterSpec()
-		if err != nil {
-			continue
-		}
-		ref := strings.TrimSpace(spec.VRF)
-		out = append(out, bgpInstance{Name: resource.Metadata.Name, VRFName: vrfs[controllerBGPVRFRefName(ref)], BFD: c.bgpRouterUsesBFD(resource.Metadata.Name), IPv6: c.bgpRouterUsesIPv6(resource.Metadata.Name, spec)})
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
-	return out
-}
-
-func (c *Controller) bgpRouterUsesIPv6(routerName string, spec api.BGPRouterSpec) bool {
-	prefixes := append([]string{}, spec.ImportPolicy.AllowedPrefixes...)
-	prefixes = append(prefixes, spec.ExportPolicy.AllowedPrefixes...)
-	prefixes = append(prefixes, spec.Redistribute.Connected.AllowedPrefixes...)
-	prefixes = append(prefixes, spec.Redistribute.Static.AllowedPrefixes...)
-	for _, prefix := range prefixes {
-		if parsed, err := netip.ParsePrefix(strings.TrimSpace(prefix)); err == nil && parsed.Addr().Is6() {
-			return true
-		}
-	}
-	if c.Router == nil {
-		return false
-	}
-	for _, resource := range c.Router.Spec.Resources {
-		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "BGPPeer" {
-			continue
-		}
-		peerSpec, err := resource.BGPPeerSpec()
-		if err != nil {
-			continue
-		}
-		_, name, ok := strings.Cut(strings.TrimSpace(peerSpec.RouterRef), "/")
-		if !ok || name != routerName {
-			continue
-		}
-		for _, prefix := range peerSpec.ExportPolicy.AllowedPrefixes {
-			if parsed, err := netip.ParsePrefix(strings.TrimSpace(prefix)); err == nil && parsed.Addr().Is6() {
-				return true
-			}
-		}
-		for _, peer := range peerSpec.Peers {
-			if addr, err := netip.ParseAddr(strings.TrimSpace(peer)); err == nil && addr.Is6() {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func (c *Controller) bgpRouterUsesBFD(routerName string) bool {
-	if c.Router == nil {
-		return false
-	}
-	for _, resource := range c.Router.Spec.Resources {
-		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "BGPPeer" {
-			continue
-		}
-		spec, err := resource.BGPPeerSpec()
-		if err != nil || strings.TrimSpace(spec.BFD) == "" {
-			continue
-		}
-		_, name, ok := strings.Cut(strings.TrimSpace(spec.RouterRef), "/")
-		if ok && name == routerName {
-			return true
-		}
-	}
-	return false
-}
-
-func bgpShowCommands(vrfName string) (string, string) {
-	if strings.TrimSpace(vrfName) == "" {
-		return "show bgp summary json", "show bgp ipv4 unicast json"
-	}
-	vrf := strings.TrimSpace(vrfName)
-	return "show bgp vrf " + vrf + " summary json", "show bgp vrf " + vrf + " ipv4 unicast json"
-}
-
-func bgpShowIPv6RoutesCommand(vrfName string) string {
-	if strings.TrimSpace(vrfName) == "" {
-		return "show bgp ipv6 unicast json"
-	}
-	return "show bgp vrf " + strings.TrimSpace(vrfName) + " ipv6 unicast json"
-}
-
-func aggregateBGPStates(states map[string]bgpstate.State) bgpstate.State {
-	var aggregate bgpstate.State
-	for _, state := range states {
-		aggregate.Peers = append(aggregate.Peers, state.Peers...)
-		aggregate.Prefixes = append(aggregate.Prefixes, state.Prefixes...)
-	}
-	return bgpstate.Normalize(aggregate)
-}
-
-func controllerBGPVRFIfNames(router *api.Router) map[string]string {
-	out := map[string]string{}
-	if router == nil {
-		return out
-	}
-	for _, resource := range router.Spec.Resources {
-		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "VRF" {
-			continue
-		}
-		spec, err := resource.VRFSpec()
-		if err != nil {
-			continue
-		}
-		out[resource.Metadata.Name] = firstNonEmpty(spec.IfName, resource.Metadata.Name)
-	}
-	return out
-}
-
-func controllerBGPVRFRefName(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return ""
-	}
-	if kind, name, ok := strings.Cut(value, "/"); ok && kind == "VRF" {
-		return strings.TrimSpace(name)
-	}
-	return value
-}
-
-func (c *Controller) saveConfiguredStatuses(phase, path string, changed bool, extra map[string]any) error {
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	for _, resource := range c.Router.Spec.Resources {
-		if resource.APIVersion != api.NetAPIVersion || (resource.Kind != "BGPRouter" && resource.Kind != "BGPPeer") {
-			continue
-		}
-		status := map[string]any{
-			"phase":      phase,
-			"backend":    "frr",
-			"configPath": path,
-			"applyWith":  "frr-reload.py --reload --stdout",
-			"changed":    changed,
-			"dryRun":     c.DryRun,
-			"observedAt": now,
-			"conditions": []map[string]any{{"type": "Configured", "status": "True", "reason": "FRRRendered"}},
-		}
-		for key, value := range extra {
-			status[key] = value
-		}
-		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, resource.Kind, resource.Metadata.Name, status); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (c *Controller) saveFRRConfigPending(path string, changed bool, pendingReason string, out []byte, err error, extra map[string]any) error {
-	status := map[string]any{
-		"reason":        "FRRConfigPending",
-		"pendingReason": pendingReason,
-		"conditions": []map[string]any{{
-			"type":    "Configured",
-			"status":  "False",
-			"reason":  "FRRConfigPending",
-			"message": pendingReason,
-		}},
-	}
-	if message := strings.TrimSpace(string(out)); message != "" {
-		status["error"] = message
-	} else if err != nil {
-		status["error"] = err.Error()
-	}
-	for key, value := range extra {
-		status[key] = value
-	}
-	return c.saveConfiguredStatuses("Pending", path, changed, status)
-}
-
-func (c *Controller) saveFRRConfigPendingError(path string, changed bool, pendingReason string, out []byte, err error, extra map[string]any) error {
-	if saveErr := c.saveFRRConfigPending(path, changed, pendingReason, out, err, extra); saveErr != nil {
-		return saveErr
-	}
-	return pendingError(pendingReason, out, err)
-}
-
-func (c *Controller) saveConfiguredStatusesError(phase, path string, changed bool, extra map[string]any, err error) error {
-	if saveErr := c.saveConfiguredStatuses(phase, path, changed, extra); saveErr != nil {
-		return saveErr
-	}
-	if err != nil {
-		return err
-	}
-	return fmt.Errorf("%s", phase)
-}
-
-func pendingError(reason string, out []byte, err error) error {
-	message := strings.TrimSpace(string(out))
-	if err != nil && message != "" {
-		return fmt.Errorf("%s: %w: %s", reason, err, message)
-	}
-	if err != nil {
-		return fmt.Errorf("%s: %w", reason, err)
-	}
-	if message != "" {
-		return fmt.Errorf("%s: %s", reason, message)
-	}
-	return fmt.Errorf("%s", reason)
-}
-
-func (c *Controller) saveObservedStatuses(states map[string]bgpstate.State, aggregate bgpstate.State) error {
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	peersByResource := c.peersByResource(aggregate)
-	for _, resource := range c.Router.Spec.Resources {
-		if resource.APIVersion != api.NetAPIVersion {
-			continue
-		}
-		switch resource.Kind {
-		case "BGPRouter":
-			state := c.routerState(resource.Metadata.Name, states, peersByResource)
-			established := 0
-			for _, peer := range state.Peers {
-				if peer.Established {
-					established++
-				}
-			}
-			phase := "Degraded"
-			if len(state.Peers) > 0 && established == len(state.Peers) {
-				phase = "Established"
-			}
-			if len(state.Peers) == 0 {
-				phase = "Pending"
-			}
-			status := map[string]any{
-				"phase":               phase,
-				"backend":             "frr",
-				"peers":               state.Peers,
-				"prefixes":            state.Prefixes,
-				"vrf":                 c.bgpInstanceVRFName(resource.Metadata.Name),
-				"observedCommunities": observedCommunities(state.Prefixes),
-				"establishedPeers":    established,
-				"acceptedPrefixes":    len(state.Prefixes),
-				"prefixLimit":         c.maxPrefixesForRouter(resource.Metadata.Name),
-				"prefixesTruncated":   c.truncated,
-				"observedAt":          now,
-				"conditions":          []map[string]any{{"type": "Observed", "status": "True", "reason": "FRRStatus"}},
-			}
-			for key, value := range c.applyMeta {
-				status[key] = value
-			}
-			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "BGPRouter", resource.Metadata.Name, status); err != nil {
-				return err
-			}
-		case "BGPPeer":
-			peers := peersByResource[resource.Metadata.Name]
-			established := 0
-			for _, peer := range peers {
-				if peer.Established {
-					established++
-				}
-			}
-			phase := "Pending"
-			if len(peers) > 0 && established == len(peers) {
-				phase = "Established"
-			} else if established > 0 {
-				phase = "Degraded"
-			} else if len(peers) > 0 {
-				phase = "Down"
-			}
-			status := map[string]any{
-				"phase":            phase,
-				"backend":          "frr",
-				"peers":            peers,
-				"establishedPeers": established,
-				"observedAt":       now,
-			}
-			for key, value := range c.applyMeta {
-				status[key] = value
-			}
-			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "BGPPeer", resource.Metadata.Name, status); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func (c *Controller) routerState(routerName string, states map[string]bgpstate.State, peersByResource map[string][]bgpstate.Peer) bgpstate.State {
-	state := states[routerName]
-	wanted := c.peerResourceNamesForRouter(routerName)
-	var peers []bgpstate.Peer
-	for _, peerResource := range wanted {
-		peers = append(peers, peersByResource[peerResource]...)
-	}
-	if len(peers) > 0 {
-		state.Peers = peers
-	}
-	return bgpstate.Normalize(state)
-}
-
-func (c *Controller) peerResourceNamesForRouter(routerName string) []string {
-	var out []string
-	if c.Router == nil {
-		return out
-	}
-	for _, resource := range c.Router.Spec.Resources {
-		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "BGPPeer" {
-			continue
-		}
-		spec, err := resource.BGPPeerSpec()
-		if err != nil {
-			continue
-		}
-		_, name, ok := strings.Cut(strings.TrimSpace(spec.RouterRef), "/")
-		if ok && name == routerName {
-			out = append(out, resource.Metadata.Name)
-		}
-	}
-	sort.Strings(out)
-	return out
-}
-
-func (c *Controller) bgpInstanceVRFName(routerName string) string {
-	for _, instance := range c.bgpInstances() {
-		if instance.Name == routerName {
-			return instance.VRFName
-		}
-	}
-	return ""
-}
-
-func (c *Controller) maxPrefixesForRouter(routerName string) int {
-	if c.MaxPrefixes > 0 {
-		return c.MaxPrefixes
-	}
-	for _, resource := range c.Router.Spec.Resources {
-		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "BGPRouter" || resource.Metadata.Name != routerName {
-			continue
-		}
-		spec, err := resource.BGPRouterSpec()
-		if err == nil && spec.Watcher.MaxPrefixes > 0 {
-			return spec.Watcher.MaxPrefixes
-		}
-	}
-	return bgpstate.DefaultMaxPrefixes
-}
-
-func (c *Controller) peerStateChangeThrottle() time.Duration {
-	var out time.Duration
-	if c.Router == nil {
-		return 0
-	}
-	for _, resource := range c.Router.Spec.Resources {
-		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "BGPRouter" {
-			continue
-		}
-		spec, err := resource.BGPRouterSpec()
-		if err != nil || strings.TrimSpace(spec.Watcher.PeerStateChangeThrottle) == "" {
-			continue
-		}
-		duration, err := time.ParseDuration(spec.Watcher.PeerStateChangeThrottle)
-		if err != nil || duration <= 0 {
-			continue
-		}
-		if out == 0 || duration < out {
-			out = duration
-		}
-	}
-	return out
-}
-
-func PollInterval(router *api.Router) time.Duration {
-	out := 15 * time.Second
-	if router == nil {
-		return out
-	}
-	for _, resource := range router.Spec.Resources {
-		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "BGPRouter" {
-			continue
-		}
-		spec, err := resource.BGPRouterSpec()
-		if err != nil || strings.TrimSpace(spec.Watcher.PollInterval) == "" {
-			continue
-		}
-		duration, err := time.ParseDuration(spec.Watcher.PollInterval)
-		if err != nil || duration < MinPollInterval {
-			continue
-		}
-		if duration < out {
-			out = duration
-		}
-	}
-	return out
-}
-
-func observedCommunities(prefixes []bgpstate.Prefix) []string {
-	seen := map[string]bool{}
-	var out []string
-	for _, prefix := range prefixes {
-		for _, community := range prefix.Communities {
-			community = strings.TrimSpace(community)
-			if community == "" || seen[community] {
-				continue
-			}
-			seen[community] = true
-			out = append(out, community)
-		}
-	}
-	sort.Strings(out)
-	return out
 }
 
 func (c *Controller) applyPeerHistory(peers []bgpstate.Peer, now string) []bgpstate.Peer {
@@ -1310,10 +978,10 @@ func (c *Controller) previousPeers() map[string]bgpstate.Peer {
 		return out
 	}
 	for _, resource := range c.Router.Spec.Resources {
-		if resource.APIVersion != api.NetAPIVersion || (resource.Kind != "BGPRouter" && resource.Kind != "BGPPeer") {
+		if resource.APIVersion != routerapi.NetAPIVersion || (resource.Kind != "BGPRouter" && resource.Kind != "BGPPeer") {
 			continue
 		}
-		for _, peer := range peersFromStatus(c.Store.ObjectStatus(api.NetAPIVersion, resource.Kind, resource.Metadata.Name)["peers"]) {
+		for _, peer := range peersFromStatus(c.Store.ObjectStatus(routerapi.NetAPIVersion, resource.Kind, resource.Metadata.Name)["peers"]) {
 			if peer.Address != "" {
 				out[peer.Address] = peer
 			}
@@ -1350,31 +1018,118 @@ func peersFromStatus(value any) []bgpstate.Peer {
 	}
 }
 
-func (c *Controller) peersByResource(state bgpstate.State) map[string][]bgpstate.Peer {
-	byAddress := map[string]bgpstate.Peer{}
-	for _, peer := range state.Peers {
-		byAddress[peer.Address] = peer
-	}
-	out := map[string][]bgpstate.Peer{}
-	for _, resource := range c.Router.Spec.Resources {
-		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "BGPPeer" {
-			continue
-		}
-		spec, err := resource.BGPPeerSpec()
-		if err != nil {
-			continue
-		}
-		for _, peerAddress := range spec.Peers {
-			peer, ok := byAddress[peerAddress]
-			if !ok {
-				peer = bgpstate.Peer{Address: peerAddress, ASN: spec.PeerASN, State: "Missing"}
-			} else if peer.ASN == 0 {
-				peer.ASN = spec.PeerASN
+func observedCommunities(prefixes []bgpstate.Prefix) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, prefix := range prefixes {
+		for _, community := range prefix.Communities {
+			community = strings.TrimSpace(community)
+			if community == "" || seen[community] {
+				continue
 			}
-			out[resource.Metadata.Name] = append(out[resource.Metadata.Name], peer)
+			seen[community] = true
+			out = append(out, community)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func hasBGP(router *routerapi.Router) bool {
+	if router == nil {
+		return false
+	}
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion == routerapi.NetAPIVersion && (resource.Kind == "BGPRouter" || resource.Kind == "BGPPeer") {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizePrefix(value string) (string, bool) {
+	prefix, err := netip.ParsePrefix(strings.TrimSpace(value))
+	if err != nil {
+		return "", false
+	}
+	return prefix.Masked().String(), true
+}
+
+func durationSeconds(value string, fallback int) int {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	duration, err := time.ParseDuration(strings.TrimSpace(value))
+	if err != nil || duration <= 0 {
+		return fallback
+	}
+	return int(duration.Seconds())
+}
+
+func establishedPeers(peers []bgpstate.Peer) int {
+	var out int
+	for _, peer := range peers {
+		if peer.Established {
+			out++
 		}
 	}
 	return out
+}
+
+func secretValue(plain string, source routerapi.SecretValueSourceSpec) (string, error) {
+	if strings.TrimSpace(plain) != "" {
+		return plain, nil
+	}
+	if strings.TrimSpace(source.File) == "" && strings.TrimSpace(source.Env) == "" {
+		return "", nil
+	}
+	var value string
+	switch {
+	case strings.TrimSpace(source.File) != "":
+		data, err := os.ReadFile(strings.TrimSpace(source.File))
+		if err != nil {
+			return "", fmt.Errorf("read secret file %q: %w", strings.TrimSpace(source.File), err)
+		}
+		value = string(data)
+	case strings.TrimSpace(source.Env) != "":
+		env := strings.TrimSpace(source.Env)
+		var ok bool
+		value, ok = os.LookupEnv(env)
+		if !ok {
+			return "", fmt.Errorf("read secret env %q: not set", env)
+		}
+	}
+	value = strings.TrimRight(value, "\r\n")
+	if source.Base64 {
+		decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(value))
+		if err != nil {
+			return "", fmt.Errorf("decode base64 secret: %w", err)
+		}
+		value = strings.TrimRight(string(decoded), "\r\n")
+	}
+	return value, nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func firstNonZero(values ...uint32) uint32 {
+	for _, value := range values {
+		if value != 0 {
+			return value
+		}
+	}
+	return 0
+}
+
+func cBool(value *bool) bool {
+	return value != nil && *value
 }
 
 func statusString(value any) string {
@@ -1418,58 +1173,8 @@ func statusBool(value any) bool {
 	}
 }
 
-func hasBGP(router *api.Router) bool {
-	if router == nil {
-		return false
+func (c *Controller) Close() {
+	if c.Server != nil {
+		c.Server.Stop()
 	}
-	for _, resource := range router.Spec.Resources {
-		if resource.APIVersion == api.NetAPIVersion && (resource.Kind == "BGPRouter" || resource.Kind == "BGPPeer") {
-			return true
-		}
-	}
-	return false
-}
-
-func (c *Controller) run(ctx context.Context, name string, args ...string) ([]byte, error) {
-	if c.Command != nil {
-		return c.Command(ctx, name, args...)
-	}
-	return exec.CommandContext(ctx, name, args...).CombinedOutput()
-}
-
-func (c *Controller) runWithTimeout(ctx context.Context, timeout time.Duration, name string, args ...string) ([]byte, error) {
-	if timeout <= 0 {
-		return c.run(ctx, name, args...)
-	}
-	cmdCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	return c.run(cmdCtx, name, args...)
-}
-
-func defaultFRRReload() string {
-	if _, err := exec.LookPath("frr-reload.py"); err == nil {
-		return "frr-reload.py"
-	}
-	for _, path := range []string{"/usr/lib/frr/frr-reload.py", "/usr/libexec/frr/frr-reload.py"} {
-		if st, err := os.Stat(path); err == nil && !st.IsDir() {
-			return path
-		}
-	}
-	return "frr-reload.py"
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
-}
-
-func defaultInt(value, fallback int) int {
-	if value == 0 {
-		return fallback
-	}
-	return value
 }

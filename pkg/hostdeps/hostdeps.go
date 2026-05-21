@@ -62,7 +62,7 @@ func PackageSets(router *api.Router) []api.OSPackageSetSpec {
 
 var ubuntuPackages = map[string][]string{
 	"base":          {"iproute2", "systemd"},
-	"bgp":           {"frr"},
+	"bgp":           {},
 	"conntrack":     {"conntrack"},
 	"dhcp-dns":      {"dnsmasq-base"},
 	"dpi":           {"libnetfilter-log1", "libndpi-bin"},
@@ -82,7 +82,7 @@ var debianPackages = ubuntuPackages
 
 var nixosPackages = map[string][]string{
 	"base":          {"iproute2", "systemd"},
-	"bgp":           {"frr"},
+	"bgp":           {},
 	"conntrack":     {"conntrack-tools"},
 	"dhcp-dns":      {"dnsmasq"},
 	"dpi":           {"libnetfilter_log", "ndpi"},
@@ -100,7 +100,7 @@ var nixosPackages = map[string][]string{
 
 var alpinePackages = map[string][]string{
 	"base":          {"iproute2"},
-	"bgp":           {"frr"},
+	"bgp":           {},
 	"conntrack":     {"conntrack-tools"},
 	"dhcp-dns":      {"dnsmasq"},
 	"dpi":           {"ndpi"},
@@ -117,7 +117,7 @@ var alpinePackages = map[string][]string{
 }
 
 var freebsdPackages = map[string][]string{
-	"bgp":           {"frr"},
+	"bgp":           {},
 	"dhcp-dns":      {"dnsmasq"},
 	"dpi":           {"ndpi"},
 	"ipsec":         {"strongswan"},

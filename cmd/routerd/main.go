@@ -7276,69 +7276,29 @@ func applyBGPArtifactsOnce(router *api.Router, store routerstate.Store) ([]strin
 	if router == nil || platformDefaults.OS == platform.OSFreeBSD || isNixOSHost() || !routerHasBGP(router) {
 		return nil, false, nil
 	}
-	config, err := render.FRRConfig(router)
-	if err != nil || len(config) == 0 {
-		return nil, false, err
-	}
-	var changedFiles []string
-	if err := os.MkdirAll(filepath.Dir(runtimeFRRConfigPath), 0755); err != nil {
-		return nil, false, err
-	}
-	changed, err := writeFileIfChanged(runtimeFRRConfigPath, config, 0644)
-	if err != nil {
-		return nil, false, err
-	}
-	if changed {
-		changedFiles = append(changedFiles, runtimeFRRConfigPath)
-	}
-
-	var existingDaemons []byte
-	if current, err := os.ReadFile(runtimeFRRDaemonsPath); err == nil {
-		existingDaemons = current
-	} else if !os.IsNotExist(err) {
-		return nil, false, err
-	}
-	daemons, err := render.FRRDaemons(existingDaemons, router)
-	if err != nil {
-		return nil, false, err
-	}
-	if len(daemons) > 0 {
-		if err := os.MkdirAll(filepath.Dir(runtimeFRRDaemonsPath), 0755); err != nil {
-			return nil, false, err
-		}
-		changed, err := writeFileIfChanged(runtimeFRRDaemonsPath, daemons, 0644)
-		if err != nil {
-			return nil, false, err
-		}
-		if changed {
-			changedFiles = append(changedFiles, runtimeFRRDaemonsPath)
-		}
-	}
 	if statusStore, ok := store.(routerstate.ObjectStatusStore); ok {
-		if err := saveBGPRenderedStatuses(router, statusStore, len(changedFiles) > 0); err != nil {
+		if err := saveBGPServeManagedStatuses(router, statusStore); err != nil {
 			return nil, false, err
 		}
 	}
-	sort.Strings(changedFiles)
-	return changedFiles, len(changedFiles) > 0, nil
+	return nil, false, nil
 }
 
-func saveBGPRenderedStatuses(router *api.Router, store routerstate.ObjectStatusStore, changed bool) error {
+func saveBGPServeManagedStatuses(router *api.Router, store routerstate.ObjectStatusStore) error {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	for _, resource := range router.Spec.Resources {
 		if resource.APIVersion != api.NetAPIVersion || (resource.Kind != "BGPRouter" && resource.Kind != "BGPPeer") {
 			continue
 		}
 		status := map[string]any{
-			"phase":       "Rendered",
-			"backend":     "frr",
-			"configPath":  runtimeFRRConfigPath,
-			"daemonsPath": runtimeFRRDaemonsPath,
-			"applyWith":   "routerd serve",
-			"changed":     changed,
-			"dryRun":      false,
-			"observedAt":  now,
-			"conditions":  []map[string]any{{"type": "Configured", "status": "True", "reason": "FRRRendered"}},
+			"phase":      "Pending",
+			"backend":    "gobgp",
+			"applyWith":  "routerd serve",
+			"changed":    false,
+			"dryRun":     false,
+			"reason":     "GoBGPServeManaged",
+			"observedAt": now,
+			"conditions": []map[string]any{{"type": "Configured", "status": "False", "reason": "GoBGPServeManaged", "message": "BGP is managed by the embedded GoBGP controller in routerd serve"}},
 		}
 		if err := store.SaveObjectStatus(api.NetAPIVersion, resource.Kind, resource.Metadata.Name, status); err != nil {
 			return err

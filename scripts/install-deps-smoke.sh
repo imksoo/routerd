@@ -36,7 +36,6 @@ assert_contains "${alpine_deps}" "package manager: apk" "Alpine package manager 
 assert_contains "${alpine_deps}" "- alpine-conf" "Alpine dependency package list"
 assert_contains "${alpine_deps}" "- ppp-pppoe" "Alpine PPPoE dependency package"
 assert_contains "${alpine_deps}" "- radvd" "Alpine RA dependency package"
-assert_contains "${alpine_deps}" "- frr-pythontools" "Alpine FRR reload tools dependency package"
 assert_contains "${alpine_deps}" "- lbu" "Alpine live persistence command check"
 
 config="${tmpdir}/alpine-package.yaml"

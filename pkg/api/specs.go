@@ -500,7 +500,7 @@ type BGPRouterSpec struct {
 	Timers             BGPTimersSpec          `yaml:"timers,omitempty" json:"timers,omitempty"`
 	GracefulRestart    BGPGracefulRestartSpec `yaml:"gracefulRestart,omitempty" json:"gracefulRestart,omitempty"`
 	Watcher            BGPWatcherSpec         `yaml:"watcher,omitempty" json:"watcher,omitempty"`
-	Backend            string                 `yaml:"backend,omitempty" json:"backend,omitempty" jsonschema:"enum=,enum=frr"`
+	Backend            string                 `yaml:"backend,omitempty" json:"backend,omitempty" jsonschema:"enum=,enum=gobgp"`
 	When               ResourceWhenSpec       `yaml:"when,omitempty" json:"when,omitempty"`
 }
 

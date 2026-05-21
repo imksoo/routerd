@@ -45,6 +45,7 @@ type BFD struct {
 
 type Prefix struct {
 	Prefix          string   `json:"prefix"`
+	NextHop         string   `json:"nextHop,omitempty"`
 	Best            bool     `json:"best"`
 	Valid           bool     `json:"valid"`
 	Installed       bool     `json:"installed"`

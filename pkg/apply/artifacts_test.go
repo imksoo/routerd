@@ -221,7 +221,7 @@ func TestMSSClampNftTableIsRouterOwnedNotOrphan(t *testing.T) {
 	}
 }
 
-func TestVirtualAddressIPv4AndBGPRouterArtifactIntentsUseOpenRC(t *testing.T) {
+func TestVirtualAddressIPv4UsesOpenRCAndBGPRouterUsesEmbeddedGoBGP(t *testing.T) {
 	features := platform.Features{HasOpenRC: true}
 	vip := api.Resource{
 		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"},
@@ -247,8 +247,11 @@ func TestVirtualAddressIPv4AndBGPRouterArtifactIntentsUseOpenRC(t *testing.T) {
 		Spec:     api.BGPRouterSpec{ASN: 64512, RouterID: "192.168.10.1"},
 	}
 	bgpIntents := resourceArtifactIntentsForPlatform(bgp, nil, platform.OSLinux, features)
-	if !hasArtifactIntent(bgpIntents, "openrc.service", "frr", "rc-service") {
-		t.Fatalf("BGPRouter missing FRR OpenRC intent: %+v", bgpIntents)
+	if !hasArtifactIntent(bgpIntents, "gobgp.router", "lan", "routerd-serve") {
+		t.Fatalf("BGPRouter missing embedded GoBGP intent: %+v", bgpIntents)
+	}
+	if hasArtifactIntent(bgpIntents, "openrc.service", "frr", "rc-service") {
+		t.Fatalf("BGPRouter should not claim FRR OpenRC intent: %+v", bgpIntents)
 	}
 }
 
@@ -269,11 +272,6 @@ func TestOpenRCServiceArtifactIntentsAvoidSystemd(t *testing.T) {
 				Mode:      "vrrp",
 				VRRP:      api.VirtualAddressVRRPSpec{VirtualRouterID: 50},
 			},
-		},
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"},
-			Metadata: api.ObjectMeta{Name: "lan"},
-			Spec:     api.BGPRouterSpec{ASN: 64512, RouterID: "192.168.10.1"},
 		},
 		{
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "TailscaleNode"},
@@ -328,11 +326,6 @@ func TestServiceDeclarationsUsePlatformManagerMatrix(t *testing.T) {
 				Mode:      "vrrp",
 				VRRP:      api.VirtualAddressVRRPSpec{VirtualRouterID: 50},
 			},
-		},
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"},
-			Metadata: api.ObjectMeta{Name: "lan"},
-			Spec:     api.BGPRouterSpec{ASN: 64512, RouterID: "192.168.10.1"},
 		},
 		{
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "TailscaleNode"},

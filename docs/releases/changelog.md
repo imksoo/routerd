@@ -10,6 +10,16 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Changed
+
+- Replaced the BGP controller backend with embedded GoBGP. `BGPRouter` and
+  `BGPPeer` now map directly to typed GoBGP API objects, `apply --once` no
+  longer renders FRR artifacts, `routerd serve` owns the in-process BGP server,
+  and observed peer/path status comes from `ListPeer`/`ListPath` instead of
+  `vtysh` text parsing. Learned IPv4 best paths matching import policy are
+  installed into the kernel FIB, including ECMP next hops for equal best paths;
+  unsupported BFD intent is reported as Pending instead of being silently ignored.
+
 ## v20260521.1953
 
 ### Fixed

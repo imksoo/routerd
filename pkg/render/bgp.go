@@ -74,6 +74,9 @@ type bgpBFD struct {
 }
 
 func FRRConfig(router *api.Router) ([]byte, error) {
+	if !routerUsesLegacyFRR(router) {
+		return nil, nil
+	}
 	routers, err := bgpRouterConfigs(router)
 	if err != nil {
 		return nil, err
@@ -714,7 +717,7 @@ func bgpInterfaceRefName(value string) (string, string) {
 }
 
 func FRRDaemons(existing []byte, router *api.Router) ([]byte, error) {
-	if !routerUsesBGP(router) {
+	if !routerUsesLegacyFRR(router) {
 		return nil, nil
 	}
 	values := map[string]string{"bgpd": "yes"}
@@ -754,7 +757,7 @@ func renderFRRDaemons(existing []byte, values map[string]string) []byte {
 	return []byte(strings.Join(lines, "\n") + "\n")
 }
 
-func routerUsesBGP(router *api.Router) bool {
+func routerUsesLegacyFRR(router *api.Router) bool {
 	if router == nil {
 		return false
 	}
@@ -763,7 +766,7 @@ func routerUsesBGP(router *api.Router) bool {
 			continue
 		}
 		spec, err := res.BGPRouterSpec()
-		if err == nil && (strings.TrimSpace(spec.Backend) == "" || spec.Backend == "frr") {
+		if err == nil && strings.TrimSpace(spec.Backend) == "frr" {
 			return true
 		}
 	}

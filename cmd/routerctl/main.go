@@ -1776,93 +1776,13 @@ func writeBGPShowTable(stdout io.Writer, router *api.Router, resources []routers
 }
 
 func withLiveBGPState(router *api.Router, resources []routerstate.ObjectStatus) []routerstate.ObjectStatus {
-	if router == nil || !hasBGPResources(router) {
-		return resources
-	}
-	live := liveBGPStatuses(router)
-	if len(live) == 0 {
-		return resources
-	}
-	out := append([]routerstate.ObjectStatus(nil), resources...)
-	seen := map[string]bool{}
-	for i := range out {
-		if out[i].APIVersion != api.NetAPIVersion || out[i].Kind != "BGPRouter" {
-			continue
-		}
-		if status := live[out[i].Name]; status != nil {
-			out[i].Status = mergeBGPStatus(out[i].Status, status)
-			seen[out[i].Name] = true
-		}
-	}
-	for name, status := range live {
-		if seen[name] {
-			continue
-		}
-		out = append(out, routerstate.ObjectStatus{APIVersion: api.NetAPIVersion, Kind: "BGPRouter", Name: name, Status: status})
-	}
-	return out
+	return resources
 }
 
-func liveBGPStatuses(router *api.Router) map[string]map[string]any {
-	statuses := map[string]map[string]any{}
-	vrfs := routerctlBGPVRFNames(router)
-	for _, resource := range router.Spec.Resources {
-		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "BGPRouter" {
-			continue
-		}
-		spec, err := resource.BGPRouterSpec()
-		if err != nil {
-			continue
-		}
-		vrfName := vrfs[routerctlBGPVRFRefName(spec.VRF)]
-		summaryCmd, routesCmd := routerctlBGPShowCommands(vrfName)
-		summary, err := runDataplaneCommand("vtysh", "-c", summaryCmd)
-		if err != nil {
-			continue
-		}
-		routes, err := runDataplaneCommand("vtysh", "-c", routesCmd)
-		if err != nil {
-			routes = nil
-		}
-		state, err := bgpstate.ParseFRRState(summary, routes)
-		if err != nil {
-			continue
-		}
-		if routerctlBGPRouterUsesIPv6(router, resource.Metadata.Name, spec) {
-			if routesV6, err := runDataplaneCommand("vtysh", "-c", routerctlBGPShowIPv6RoutesCommand(vrfName)); err == nil {
-				if prefixesV6, err := bgpstate.ParseFRRRoutesJSON(routesV6); err == nil {
-					state.Prefixes = append(state.Prefixes, prefixesV6...)
-					state = bgpstate.Normalize(state)
-				}
-			}
-		}
-		peers := routerctlPeersForRouter(router, resource.Metadata.Name, state)
-		established := 0
-		for _, peer := range peers {
-			if peer.Established {
-				established++
-			}
-		}
-		phase := "Pending"
-		if len(peers) > 0 && established == len(peers) {
-			phase = "Established"
-		} else if established > 0 {
-			phase = "Degraded"
-		} else if len(peers) > 0 {
-			phase = "Down"
-		}
-		statuses[resource.Metadata.Name] = map[string]any{
-			"phase":            phase,
-			"backend":          "frr",
-			"peers":            bgpPeersStatusMaps(peers),
-			"prefixes":         bgpPrefixesStatusMaps(state.Prefixes),
-			"establishedPeers": established,
-			"acceptedPrefixes": len(state.Prefixes),
-			"observedAt":       time.Now().UTC().Format(time.RFC3339Nano),
-			"source":           "live-vtysh",
-		}
-	}
-	return statuses
+func liveBGPStatuses(_ *api.Router) map[string]map[string]any {
+	// BGP is now embedded in routerd through GoBGP. routerctl must not probe
+	// FRR/vtysh; live status is written by the daemon controller itself.
+	return map[string]map[string]any{}
 }
 
 func mergeBGPStatus(current, live map[string]any) map[string]any {

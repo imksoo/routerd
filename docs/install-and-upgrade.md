@@ -172,7 +172,7 @@ sudo ./install.sh --with-tailscale
 The installer uses `apt-get` and installs:
 
 ```text
-ca-certificates curl dnsmasq-base nftables wireguard-tools chrony bind9-dnsutils tcpdump cron jq ppp pppoe conntrack iproute2 iputils-ping iputils-tracepath net-tools kmod radvd strongswan-swanctl iptables frr keepalived
+ca-certificates curl dnsmasq-base nftables wireguard-tools chrony bind9-dnsutils tcpdump cron jq ppp pppoe conntrack iproute2 iputils-ping iputils-tracepath net-tools kmod radvd strongswan-swanctl iptables keepalived
 ```
 
 ### Fedora-like systems
@@ -180,7 +180,7 @@ ca-certificates curl dnsmasq-base nftables wireguard-tools chrony bind9-dnsutils
 The installer uses `dnf` and installs:
 
 ```text
-ca-certificates curl dnsmasq nftables wireguard-tools chrony bind-utils tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute iputils traceroute kmod radvd strongswan iptables frr keepalived
+ca-certificates curl dnsmasq nftables wireguard-tools chrony bind-utils tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute iputils traceroute kmod radvd strongswan iptables keepalived
 ```
 
 ### Arch-like systems
@@ -188,7 +188,7 @@ ca-certificates curl dnsmasq nftables wireguard-tools chrony bind-utils tcpdump 
 The installer uses `pacman` and installs:
 
 ```text
-ca-certificates curl dnsmasq nftables wireguard-tools chrony bind tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute2 iputils traceroute kmod radvd strongswan iptables frr keepalived
+ca-certificates curl dnsmasq nftables wireguard-tools chrony bind tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute2 iputils traceroute kmod radvd strongswan iptables keepalived
 ```
 
 ### Alpine
@@ -196,7 +196,7 @@ ca-certificates curl dnsmasq nftables wireguard-tools chrony bind tcpdump cronie
 The installer uses `apk` and installs:
 
 ```text
-alpine-conf ca-certificates curl dnsmasq nftables wireguard-tools chrony bind-tools tcpdump cronie jq ppp ppp-pppoe conntrack-tools iproute2 iputils iputils-tracepath kmod radvd strongswan iptables frr keepalived util-linux e2fsprogs dosfstools exfatprogs
+alpine-conf ca-certificates curl dnsmasq nftables wireguard-tools chrony bind-tools tcpdump cronie jq ppp ppp-pppoe conntrack-tools iproute2 iputils iputils-tracepath kmod radvd strongswan iptables keepalived util-linux e2fsprogs dosfstools exfatprogs
 ```
 
 `alpine-conf` provides `lbu`, which routerd uses on the live ISO to preserve
@@ -255,13 +255,10 @@ routerd derives its own `routerd.service` unit from the router configuration.
 When that unit changes, the controller schedules a delayed self-restart through
 `systemd-run` instead of directly restarting itself in the middle of the
 controller pass.
-When the same router config contains BGP, VRRP, or ingress service resources,
-routerd augments its own unit with the supplementary FRR groups and writable
-FRR/keepalived paths needed by the generated integrations. For FRR, routerd
-also adds `CAP_DAC_OVERRIDE` to the unit's ambient and bounding capability sets:
-Ubuntu FRR commonly exposes VTY sockets through `frrvty` but keeps `/run/frr`
-owned by `frr:frr` with mode `0755`, and `frr-reload.py` creates
-`/var/run/frr/reload-*.txt` during reload.
+When the same router config contains VRRP or ingress service resources, routerd
+augments its own unit with the keepalived paths and capabilities needed by the
+generated integrations. BGP no longer requires FRR groups or writable FRR
+runtime directories because the GoBGP backend runs in-process.
 
 Useful options:
 

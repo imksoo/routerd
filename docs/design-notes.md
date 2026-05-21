@@ -104,7 +104,7 @@ harness into a regular VM job.
 - More production examples for VRRP `advertInterval`, `preempt`, and `preemptDelay` tuning.
 - Validation for listen-port collisions between `IngressService`, local service redirects, and routerd-managed daemons.
 - IPv6 BGP and VRRPv3 for dual-stack Kubernetes clusters.
-- OSPF integration via FRR for the Tier C tier.
+- OSPF or other dynamic routing integration for the Tier C tier.
 - High availability (leader election, fault-tolerant control plane).
 - Production observability: OpenTelemetry collector and remote log sinks.
 - Long-running validation of routerd as the only WAN router on a residential link.

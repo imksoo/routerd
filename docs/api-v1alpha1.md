@@ -173,9 +173,9 @@ for DoH or DoT endpoint name resolution.
 | `IPAddressSet` | Defines reusable IP address sets from literal addresses and FQDNs. Linux nftables renderers materialize these as named sets for firewall, redirect, NAT, and policy-routing consumers. |
 | `IPv4Route` | Adds IPv4 routes, including DS-Lite defaults and explicit drop routes. |
 | `ClusterNetworkRoute` | Expands Kubernetes Pod and Service CIDRs into static IPv4 routes through worker next hops. |
-| `BGPRouter` | Declares a local BGP router. The initial backend is FRR with default-deny import policy. |
-| `BGPPeer` | Declares FRR-managed BGP peers for a `BGPRouter`, for example Kubernetes BGP speakers. |
-| `BFD` | Declares one FRR BFD session profile and optional interface binding for BGP peers that reference it. |
+| `BGPRouter` | Declares a local BGP router. The current backend is embedded GoBGP with default-deny import policy. |
+| `BGPPeer` | Declares GoBGP-managed BGP peers for a `BGPRouter`, for example Kubernetes BGP speakers. |
+| `BFD` | Declares one BFD session intent. Embedded GoBGP reports BFD resources as unsupported until BFD is implemented without FRR. |
 | `NAT44Rule` | Performs IPv4 NAPT in the nftables `routerd_nat` table. |
 | `PortForward` | Publishes one WAN-side IPv4 TCP/UDP port to one internal IPv4 target with DNAT. |
 | `IngressService` | Publishes one WAN-side IPv4 TCP/UDP service. Multiple backends, TCP/HTTP health checks, and `failover`, `sourceHash`, or `random` backend selection are accepted. |
@@ -222,51 +222,44 @@ prefer `destinationPorts`.
 `excludeDestinationSetRefs`. This allows internet traffic to be masqueraded
 while private routed destinations or reusable address sets stay un-NATed.
 
-`BGPRouter`, `BGPPeer`, and `BFD` currently target FRR. routerd renders FRR config,
-validates it with `vtysh -C -f`, applies deltas with
-`frr-reload.py --reload`, watches FRR JSON status through `BGPStateWatcher`,
-and stores peer/prefix status for `routerctl`, Web Console resources, events,
-and OTel metrics. `routerctl show bgp` summarizes routers, peers, message
-counters, BFD status, route selection state, and last errors. Prefix status
-includes `best`, `valid`, `installed`, `selectDeferred`, `selectionState`, and
-`selectionReason` when FRR exposes enough JSON detail, so GR/EOR deferral and
-"no best path" windows are visible without reading raw `vtysh` output.
+`BGPRouter` and `BGPPeer` currently use an embedded GoBGP server inside
+`routerd serve`. routerd maps the resource specs directly to typed GoBGP API
+objects and observes status through `ListPeer` and `ListPath`; it does not
+render FRR text config, run `frr-reload.py`, parse `vtysh`, or use GoBGP's file
+configuration format. `apply --once` renders host artifacts only and reports BGP
+as serve-managed. `routerctl show bgp` summarizes routers, peers, message
+counters, route selection state, and last errors from stored GoBGP observation.
+Prefix status includes `best`, `valid`, `installed`, `stale`, `nextHop`, and
+observed communities. Learned IPv4 best paths that match
+`spec.importPolicy.allowedPrefixes` are installed into the kernel FIB with
+routerd-owned protocol and metric values; equal best paths for the same prefix
+are installed as ECMP next hops.
+
 `BGPRouter.spec.convergenceProfile: fast` is intended for Kubernetes/edge
-routers that prefer quick first boot over graceful restart stale-path retention:
-it derives fast peer timers and disables graceful restart unless
-`spec.gracefulRestart.enabled` is explicitly set. `BGPPeer.spec.bfd` must reference a
-`BFD/<name>` resource; inline BFD settings are rejected. `BFD.spec.peer` is an
-IP address or `BGPPeer/<name>`, and `profile`, `minRx`, `minTx`, and
-`detectMultiplier` describe the failure-detection intent. When any managed peer
-uses BFD, routerd also keeps `bgpd=yes` and `bfdd=yes` in the FRR daemons file
-and restarts `frr.service` only when those daemon toggles change. The
-watcher defaults to a 15 second controller interval and 4096 observed prefixes,
-and `BGPRouter.spec.watcher` can tune `pollInterval`, `maxPrefixes`, and
-`peerStateChangeThrottle`; validation rejects intervals below 3 seconds and
-prefix caps of 1,000,000 or more. Import policy is default deny; add
-`spec.importPolicy.allowedPrefixes` for Kubernetes LoadBalancer pools. Accepted
-imports set `ip next-hop peer-address` so Kubernetes-advertised
-`/32` routes remain reachable through the advertising speaker. `BGPRouter` can
-use a router ID that differs from the TCP source address, but peer routers must
-still configure the address that the host actually uses as its BGP source. Check
-`ip route get <peer-address>` on Linux when the LAN has multiple addresses, and
-prefer a router ID that matches that operational source unless there is a clear
-reason not to.
-redistribute connected and static IPv4 routes with independent
-`allowedPrefixes`; routerd renders FRR `redistribute connected/static route-map`
-statements and keeps the peer outbound route-map default-deny unless exported
-prefixes are explicitly listed in `BGPRouter.spec.exportPolicy.allowedPrefixes`
-or a peer override at `BGPPeer.spec.exportPolicy.allowedPrefixes`. BGP
-community policy can be declared on the router or peer with `communities.send`, `communities.accept`, and
-`communities.set.in/out`. The watcher records observed route communities in
-status when FRR exposes them in JSON output. Multiple `BGPRouter` resources can
-run as separate FRR BGP instances by assigning additional routers to
-`spec.vrf`, which references a routerd `VRF` resource and renders
-`router bgp <asn> vrf <ifname>`. routerd stores observed BGP status per
-`BGPRouter` by following `BGPPeer.spec.routerRef`. `spec.listen.address` is
-validated and used for routerd-side listen collision checks; FRR address binding
-itself remains a bgpd daemon invocation option rather than an integrated config
-stanza.
+routers that prefer quick convergence over graceful restart stale-path
+retention: it derives fast peer timers and disables graceful restart unless
+`spec.gracefulRestart.enabled` is explicitly set. Import policy is default
+deny; add `spec.importPolicy.allowedPrefixes` for Kubernetes LoadBalancer pools.
+`BGPRouter` can use a router ID that differs from the TCP source address, but
+peer routers must still configure the address that the host actually uses as
+its BGP source. Check `ip route get <peer-address>` on Linux when the LAN has
+multiple addresses, and prefer a router ID that matches that operational source
+unless there is a clear reason not to.
+
+`BGPRouter` can advertise connected and static IPv4 routes with independent
+`allowedPrefixes`; only prefixes explicitly listed in
+`BGPRouter.spec.exportPolicy.allowedPrefixes` or the redistribute allow-lists
+are added to GoBGP as local paths. BGP community policy can be declared on the
+router or peer with `communities.send`, `communities.accept`, and
+`communities.set.in/out`; observed route communities are stored in status when
+GoBGP reports them. The watcher defaults to a 15 second controller interval and
+4096 observed prefixes, and `BGPRouter.spec.watcher` can tune `pollInterval`,
+`maxPrefixes`, and `peerStateChangeThrottle`; validation rejects intervals below
+3 seconds and prefix caps of 1,000,000 or more. Embedded GoBGP MVP supports one
+`BGPRouter` per routerd process and does not yet support `spec.vrf`; unsupported
+multi-router, VRF, or BFD resources are reported as Pending instead of being
+silently ignored. `spec.listen.address` and `spec.listen.port` bind the in-process
+GoBGP listener.
 
 `VirtualAddress` uses keepalived on Linux and CARP on FreeBSD for
 `mode: vrrp`. `spec.family: ipv4` requires an IPv4 `/32`, and
@@ -299,15 +292,12 @@ prefer the default non-preemptive behavior so the backup keeps the VIP until it
 fails or is intentionally moved. See `examples/vrrp-tuning-presets.yaml`
 for complete resource fragments.
 
-`BGPPeer.spec.password` is rendered into FRR as `neighbor ... password ...`.
-Prefer `BGPPeer.spec.passwordFrom` for production configs so the routerd YAML
-does not contain the shared secret. `passwordFrom.file` reads a local root-owned
-secret file and `passwordFrom.env` reads an environment variable; `base64: true`
-decodes either source before rendering.
-FRR listen-address binding is a bgpd daemon invocation option (`-l` /
-`--listenon`), not a normal BGP config stanza in the managed FRR config. Keep
-host firewall zones and service-manager bgpd options aligned when BGP must be
-limited to a specific interface address.
+`BGPPeer.spec.password` is passed to the embedded GoBGP peer as the TCP MD5
+authentication password. Prefer `BGPPeer.spec.passwordFrom` for production
+configs so the routerd YAML does not contain the shared secret.
+`passwordFrom.file` reads a local root-owned secret file and `passwordFrom.env`
+reads an environment variable; `base64: true` decodes either source before
+applying it to the in-process BGP peer.
 
 `VirtualAddress.spec.vrrp.authentication` is rendered into keepalived as
 `auth_pass` and into FreeBSD CARP as `pass`. Prefer

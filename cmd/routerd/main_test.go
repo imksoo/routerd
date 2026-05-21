@@ -273,7 +273,7 @@ exit 0
 	}
 }
 
-func TestRunApplyOnceBGPRendersFRRArtifactsWithoutDaemonLifecycle(t *testing.T) {
+func TestRunApplyOnceBGPHandoffsToEmbeddedGoBGPServe(t *testing.T) {
 	dir := t.TempDir()
 	binDir := filepath.Join(dir, "bin")
 	if err := os.MkdirAll(binDir, 0755); err != nil {
@@ -350,19 +350,11 @@ exit 99
 		t.Fatalf("apply once: %v", err)
 	}
 
-	daemons, err := os.ReadFile(runtimeFRRDaemonsPath)
-	if err != nil {
-		t.Fatalf("read frr daemons: %v", err)
+	if data, err := os.ReadFile(runtimeFRRDaemonsPath); err == nil && strings.Contains(string(data), "bgpd=yes") {
+		t.Fatalf("apply --once must not enable FRR bgpd for embedded GoBGP:\n%s", data)
 	}
-	if !strings.Contains(string(daemons), "bgpd=yes") {
-		t.Fatalf("bgpd was not enabled:\n%s", daemons)
-	}
-	config, err := os.ReadFile(runtimeFRRConfigPath)
-	if err != nil {
-		t.Fatalf("read frr config: %v", err)
-	}
-	if !strings.Contains(string(config), "router bgp 64512") || !strings.Contains(string(config), "neighbor 10.0.0.21 remote-as 64513") {
-		t.Fatalf("frr config missing bgp stanza:\n%s", config)
+	if data, err := os.ReadFile(runtimeFRRConfigPath); err == nil {
+		t.Fatalf("apply --once must not render FRR config for embedded GoBGP:\n%s", data)
 	}
 	if commands, err := os.ReadFile(commandLog); err == nil {
 		for _, unwanted := range []string{
@@ -384,14 +376,17 @@ exit 99
 	}
 	defer func() { _ = store.Close() }()
 	status := store.ObjectStatus(api.NetAPIVersion, "BGPRouter", "lan")
-	if got := statusStringMap(status, "phase"); got != "Rendered" {
-		t.Fatalf("phase = %q, want Rendered; status=%#v", got, status)
+	if got := statusStringMap(status, "phase"); got != "Pending" {
+		t.Fatalf("phase = %q, want Pending; status=%#v", got, status)
+	}
+	if got := statusStringMap(status, "backend"); got != "gobgp" {
+		t.Fatalf("backend = %q, want gobgp; status=%#v", got, status)
 	}
 	if got := statusStringMap(status, "applyWith"); got != "routerd serve" {
 		t.Fatalf("applyWith = %q, want serve handoff; status=%#v", got, status)
 	}
-	if !strings.Contains(stdout.String(), "rendered BGP artifacts") || strings.Contains(stdout.String(), "observed BGP") || strings.Contains(stdout.String(), "applied bgp") {
-		t.Fatalf("stdout did not describe BGP as render-only:\n%s", stdout.String())
+	if strings.Contains(stdout.String(), "rendered BGP artifacts") || strings.Contains(stdout.String(), "observed BGP") || strings.Contains(stdout.String(), "applied bgp") {
+		t.Fatalf("stdout should not describe FRR-backed BGP apply work:\n%s", stdout.String())
 	}
 }
 

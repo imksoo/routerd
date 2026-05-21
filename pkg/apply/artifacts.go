@@ -69,12 +69,6 @@ var serviceDeclarations = []serviceDeclaration{
 		},
 	},
 	{
-		kind: "BGPRouter",
-		declare: func(ctx serviceDeclarationContext) []resource.Intent {
-			return []resource.Intent{serviceIntent(ctx, servicemgr.Service{SystemdName: "frr.service", OpenRCName: "frr", RCDName: "frr"}, resource.ActionEnsure, nil)}
-		},
-	},
-	{
 		kind: "TailscaleNode",
 		declare: func(ctx serviceDeclarationContext) []resource.Intent {
 			spec, err := ctx.res.TailscaleNodeSpec()
@@ -276,28 +270,19 @@ func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]str
 		}
 		return []resource.Intent{artifact(artifactKind, aliases[spec.Interface]+":"+spec.Address, resource.ActionEnsure, "ip-addr", nil)}
 	case "BGPRouter":
-		intents := []resource.Intent{artifact("frr.config", "/run/routerd/frr/routerd.conf", resource.ActionEnsure, "frr-reload", nil)}
-		intents = append(intents, declaredServiceIntents(serviceContext)...)
-		intents = append(intents, artifact("frr.bgp.router", res.Metadata.Name, resource.ActionEnsure, "frr", nil))
-		return intents
+		return []resource.Intent{artifact("gobgp.router", res.Metadata.Name, resource.ActionEnsure, "routerd-serve", nil)}
 	case "BGPPeer":
 		spec, err := res.BGPPeerSpec()
 		if err != nil {
 			return nil
 		}
-		return []resource.Intent{
-			artifact("frr.config", "/run/routerd/frr/routerd.conf", resource.ActionEnsure, "frr-reload", nil),
-			artifact("frr.bgp.peer", spec.RouterRef+"/"+res.Metadata.Name, resource.ActionEnsure, "frr", nil),
-		}
+		return []resource.Intent{artifact("gobgp.peer", spec.RouterRef+"/"+res.Metadata.Name, resource.ActionEnsure, "routerd-serve", nil)}
 	case "BFD":
 		spec, err := res.BFDSpec()
 		if err != nil {
 			return nil
 		}
-		return []resource.Intent{
-			artifact("frr.config", "/run/routerd/frr/routerd.conf", resource.ActionEnsure, "frr-reload", nil),
-			artifact("frr.bfd.peer", res.Metadata.Name, resource.ActionEnsure, "frr", map[string]string{"peer": spec.Peer}),
-		}
+		return []resource.Intent{artifact("gobgp.bfd.intent", res.Metadata.Name, resource.ActionEnsure, "routerd-serve", map[string]string{"peer": spec.Peer})}
 	case "DHCPv4Client":
 		return []resource.Intent{artifact("routerd.dhcpv4.client", res.Metadata.Name, resource.ActionEnsure, "routerd-dhcpv4-client", nil)}
 	case "WireGuardInterface":

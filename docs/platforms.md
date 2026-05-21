@@ -20,7 +20,7 @@ routerd uses the following OS surfaces on Linux:
 - nftables for filtering and NAT
 - conntrack for connection observation
 - iproute2 for interfaces and routes
-- FRR for BGP peering and route installation
+- embedded GoBGP for BGP peering and route installation
 - keepalived for VRRP VIP ownership
 - pppd / rp-pppoe for PPPoE
 - WireGuard, Tailscale, strongSwan, radvd
@@ -32,7 +32,7 @@ The reference list:
 
 | Category | Packages |
 | --- | --- |
-| Runtime | `dnsmasq-base`, `nftables`, `conntrack`, `iproute2`, `frr`, `keepalived`, `ppp`, `wireguard-tools`, `tailscale`, `tailscale-archive-keyring`, `strongswan-swanctl`, `radvd` |
+| Runtime | `dnsmasq-base`, `nftables`, `conntrack`, `iproute2`, `keepalived`, `ppp`, `wireguard-tools`, `tailscale`, `tailscale-archive-keyring`, `strongswan-swanctl`, `radvd` |
 | Diagnostics | `dnsutils`, `iputils-ping`, `iputils-tracepath`, `tcpdump`, `traceroute`, `net-tools` |
 | OS control | `procps`, `systemd`, `kmod` |
 
@@ -100,7 +100,7 @@ Implemented:
 - apply-time OpenRC activation through `rc-update` / `rc-service`, with
   idempotency checks before enable/start/restart operations
 - `make alpine-vm-smoke` harness for installed Alpine guests
-- Linux nftables, conntrack, iproute2, dnsmasq, FRR, keepalived, PPP,
+- Linux nftables, conntrack, iproute2, dnsmasq, embedded GoBGP, keepalived, PPP,
   WireGuard, strongSwan, radvd, and diagnostic package names documented for Alpine
 
 Backlog before calling Alpine equivalent to Ubuntu:
@@ -115,7 +115,7 @@ Backlog before calling Alpine equivalent to Ubuntu:
 
 | Category | Packages |
 | --- | --- |
-| Runtime | `dnsmasq`, `nftables`, `conntrack-tools`, `iproute2`, `frr`, `keepalived`, `ppp`, `ppp-pppoe`, `wireguard-tools`, `strongswan`, `radvd` |
+| Runtime | `dnsmasq`, `nftables`, `conntrack-tools`, `iproute2`, `keepalived`, `ppp`, `ppp-pppoe`, `wireguard-tools`, `strongswan`, `radvd` |
 | Diagnostics | `bind-tools`, `iputils`, `iputils-tracepath`, `tcpdump` |
 | OS control | `alpine-conf`, `kmod`, `util-linux`, `e2fsprogs`, `dosfstools`, `exfatprogs` |
 
@@ -166,7 +166,7 @@ NixOS post-activation inventory:
 
 | Category | Packages |
 | --- | --- |
-| Runtime | `dnsmasq`, `nftables`, `conntrack-tools`, `iproute2`, `frr`, `keepalived`, `ppp`, `wireguard-tools`, `tailscale`, `strongswan`, `radvd` |
+| Runtime | `dnsmasq`, `nftables`, `conntrack-tools`, `iproute2`, `keepalived`, `ppp`, `wireguard-tools`, `tailscale`, `strongswan`, `radvd` |
 | Diagnostics | `bind`, `iputils`, `tcpdump`, `traceroute`, `nettools` |
 | OS control | `procps`, `systemd`, `kmod` |
 

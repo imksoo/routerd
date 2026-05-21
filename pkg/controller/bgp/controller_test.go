@@ -5,16 +5,17 @@ package bgp
 import (
 	"context"
 	"errors"
-	"os"
+	"net/netip"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	gobgpapi "github.com/osrg/gobgp/v3/api"
+	"google.golang.org/protobuf/types/known/anypb"
+
 	"routerd/pkg/api"
 	bgpstate "routerd/pkg/bgp"
-	"routerd/pkg/bus"
-	"routerd/pkg/render"
 )
 
 type mapStore map[string]map[string]any
@@ -31,1184 +32,263 @@ func (s mapStore) ObjectStatus(apiVersion, kind, name string) map[string]any {
 	return map[string]any{}
 }
 
-func frrHealthyTestCommand(name string, args ...string) bool {
-	line := strings.Join(args, " ")
-	return (name == "systemctl" && line == "is-active --quiet frr.service") ||
-		(name == "rc-service" && line == "frr status") ||
-		(name == "ss" && line == "-ltn")
+type fakeServer struct {
+	starts  int
+	stops   int
+	adds    int
+	deletes int
+	paths   int
+
+	global *gobgpapi.Global
+	peers  map[string]*gobgpapi.Peer
+	routes []*gobgpapi.Destination
 }
 
-func frrHealthyTestOutput(name string, args ...string) []byte {
-	if name == "ss" {
-		return []byte("LISTEN 0 128 0.0.0.0:179 0.0.0.0:*\n")
-	}
-	if name == "rc-service" {
-		return []byte("Status of watchfrr: running\nStatus of zebra: running\nStatus of bgpd: running\nStatus of staticd: running\n")
+func (s *fakeServer) Serve() {}
+func (s *fakeServer) Stop()  { s.stops++ }
+
+func (s *fakeServer) StopBgp(context.Context, *gobgpapi.StopBgpRequest) error { return nil }
+
+func (s *fakeServer) StartBgp(_ context.Context, req *gobgpapi.StartBgpRequest) error {
+	s.starts++
+	s.global = req.GetGlobal()
+	if s.peers == nil {
+		s.peers = map[string]*gobgpapi.Peer{}
 	}
 	return nil
 }
 
-func normalizeBGPTestCalls(calls []string) []string {
-	var out []string
-	for _, call := range calls {
-		switch call {
-		case "systemctl is-active --quiet frr.service", "rc-service frr status", "ss -ltn":
-			continue
-		}
-		if call == "vtysh -c show running-config" && len(out) > 0 && out[len(out)-1] == call {
-			continue
-		}
-		out = append(out, call)
+func (s *fakeServer) AddPeer(_ context.Context, req *gobgpapi.AddPeerRequest) error {
+	s.adds++
+	if s.peers == nil {
+		s.peers = map[string]*gobgpapi.Peer{}
 	}
-	return out
+	peer := req.GetPeer()
+	address := peer.GetConf().GetNeighborAddress()
+	peer.State = &gobgpapi.PeerState{
+		NeighborAddress: address,
+		PeerAsn:         peer.GetConf().GetPeerAsn(),
+		SessionState:    gobgpapi.PeerState_ESTABLISHED,
+		Messages:        &gobgpapi.Messages{Received: &gobgpapi.Message{Total: 2}, Sent: &gobgpapi.Message{Total: 3}},
+	}
+	peer.AfiSafis = []*gobgpapi.AfiSafi{{State: &gobgpapi.AfiSafiState{Accepted: 1}}}
+	s.peers[address] = peer
+	return nil
 }
 
-func TestReconcileValidatesAndReloadsFRR(t *testing.T) {
-	var calls []string
+func (s *fakeServer) DeletePeer(_ context.Context, req *gobgpapi.DeletePeerRequest) error {
+	s.deletes++
+	delete(s.peers, req.GetAddress())
+	return nil
+}
+
+func (s *fakeServer) ListPeer(_ context.Context, _ *gobgpapi.ListPeerRequest, fn func(*gobgpapi.Peer)) error {
+	var keys []string
+	for key := range s.peers {
+		keys = append(keys, key)
+	}
+	for _, key := range keys {
+		fn(s.peers[key])
+	}
+	return nil
+}
+
+func (s *fakeServer) AddPath(_ context.Context, req *gobgpapi.AddPathRequest) (*gobgpapi.AddPathResponse, error) {
+	s.paths++
+	s.routes = append(s.routes, &gobgpapi.Destination{Prefix: pathPrefix(req.GetPath()), Paths: []*gobgpapi.Path{req.GetPath()}})
+	return &gobgpapi.AddPathResponse{Uuid: []byte{byte(s.paths)}}, nil
+}
+
+func (s *fakeServer) DeletePath(context.Context, *gobgpapi.DeletePathRequest) error { return nil }
+
+func (s *fakeServer) ListPath(_ context.Context, _ *gobgpapi.ListPathRequest, fn func(*gobgpapi.Destination)) error {
+	for _, dst := range s.routes {
+		for _, path := range dst.Paths {
+			path.Best = true
+		}
+		fn(dst)
+	}
+	fn(testDestination("10.250.0.0/24", "192.168.1.53", "192.168.1.38"))
+	return nil
+}
+
+type fakeFIB struct {
+	routes []FIBRoute
+	err    error
+}
+
+func (f *fakeFIB) SyncBGP(_ context.Context, routes []FIBRoute) error {
+	f.routes = append([]FIBRoute(nil), routes...)
+	return f.err
+}
+
+func TestReconcileStartsGoBGPAndDoesNotReaddUnchangedPeer(t *testing.T) {
+	server := &fakeServer{}
+	fib := &fakeFIB{}
 	controller := Controller{
-		Router:      bgpRouter(),
-		Store:       mapStore{},
-		DryRun:      false,
-		ConfigPath:  t.TempDir() + "/routerd.conf",
-		DaemonsPath: readyFRRDaemons(t),
-		VTYSH:       "vtysh",
-		FRRReload:   "frr-reload.py",
-		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
-			calls = append(calls, name+" "+strings.Join(args, " "))
-			switch {
-			case frrHealthyTestCommand(name, args...):
-				return frrHealthyTestOutput(name, args...), nil
-			case name == "vtysh" && reflect.DeepEqual(args[:2], []string{"-C", "-f"}):
-				return []byte("ok"), nil
-			case name == "frr-reload.py":
-				return []byte("reloaded"), nil
-			case name == "vtysh" && strings.Join(args, " ") == "-c show running-config":
-				return bgpRunningConfig(t, bgpRouter()), nil
-			case name == "vtysh" && strings.Join(args, " ") == "-c show bgp summary json":
-				return []byte(`{"ipv4Unicast":{"peers":{"10.0.0.21":{"remoteAs":64513,"state":"Established","pfxRcd":1,"lastConnectionEstablished":"2026-05-18T10:00:00Z"}}}}`), nil
-			case name == "vtysh" && strings.Join(args, " ") == "-c show bgp ipv4 unicast json":
-				return []byte(`{"routes":{"10.0.0.200/32":[{"valid":true,"bestpath":true,"community":{"string":"64513:100 no-export"}}]}}`), nil
-			default:
-				t.Fatalf("unexpected command: %s %v", name, args)
-				return nil, nil
-			}
-		},
+		Router: bgpRouter(),
+		Store:  mapStore{},
+		Server: server,
+		FIB:    fib,
 	}
 	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("reconcile: %v", err)
+		t.Fatalf("first reconcile: %v", err)
 	}
-	want := []string{
-		"vtysh -c show running-config",
-		"vtysh -C -f " + controller.ConfigPath,
-		"frr-reload.py --reload --stdout " + controller.ConfigPath,
-		"vtysh -c show running-config",
-		"vtysh -c show bgp summary json",
-		"vtysh -c show bgp ipv4 unicast json",
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("second reconcile: %v", err)
 	}
-	if !reflect.DeepEqual(normalizeBGPTestCalls(calls), want) {
-		t.Fatalf("calls = %#v, want %#v", normalizeBGPTestCalls(calls), want)
+	if server.starts != 1 {
+		t.Fatalf("starts = %d, want 1", server.starts)
+	}
+	if !reflect.DeepEqual(server.global.GetFamilies(), []uint32{0}) {
+		t.Fatalf("global families = %#v, want ipv4-unicast OpenConfig index 0", server.global.GetFamilies())
+	}
+	if server.adds != 1 {
+		t.Fatalf("peer adds = %d, want 1", server.adds)
 	}
 	status := controller.Store.ObjectStatus(api.NetAPIVersion, "BGPRouter", "lan")
-	if status["phase"] != "Established" {
-		t.Fatalf("status = %#v", status)
+	if status["backend"] != "gobgp" || status["phase"] != "Established" {
+		t.Fatalf("router status = %#v", status)
 	}
-	peers, ok := status["peers"].([]bgpstate.Peer)
-	if !ok || len(peers) != 1 || peers[0].LastEstablishedAt != "2026-05-18T10:00:00Z" {
-		t.Fatalf("peer history = %#v", status["peers"])
-	}
-	communities, ok := status["observedCommunities"].([]string)
-	if !ok || !reflect.DeepEqual(communities, []string{"64513:100", "no-export"}) {
-		t.Fatalf("observed communities = %#v", status["observedCommunities"])
+	if !reflect.DeepEqual(fib.routes, []FIBRoute{{Prefix: "10.250.0.0/24", NextHops: []string{"192.168.1.38", "192.168.1.53"}}}) {
+		t.Fatalf("fib routes = %#v", fib.routes)
 	}
 }
 
-func TestReconcileSkipsInitialBGPDiffEvents(t *testing.T) {
-	eventBus := bus.New()
+func TestReconcileReportsFIBSyncFailure(t *testing.T) {
 	controller := Controller{
-		Router:      bgpRouter(),
-		Bus:         eventBus,
-		Store:       mapStore{},
-		ConfigPath:  t.TempDir() + "/routerd.conf",
-		DaemonsPath: readyFRRDaemons(t),
-		VTYSH:       "vtysh",
-		FRRReload:   "frr-reload.py",
-		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
-			switch {
-			case frrHealthyTestCommand(name, args...):
-				return frrHealthyTestOutput(name, args...), nil
-			case name == "vtysh" && reflect.DeepEqual(args[:2], []string{"-C", "-f"}):
-				return []byte("ok"), nil
-			case name == "frr-reload.py":
-				return []byte("reloaded"), nil
-			case name == "vtysh" && strings.Join(args, " ") == "-c show running-config":
-				return bgpRunningConfig(t, bgpRouter()), nil
-			case name == "vtysh" && strings.Join(args, " ") == "-c show bgp summary json":
-				return []byte(`{"ipv4Unicast":{"peers":{"10.0.0.21":{"remoteAs":64513,"state":"Established","pfxRcd":1}}}}`), nil
-			case name == "vtysh" && strings.Join(args, " ") == "-c show bgp ipv4 unicast json":
-				return []byte(`{"routes":{"10.0.0.200/32":[{"valid":true,"bestpath":true}]}}`), nil
-			default:
-				t.Fatalf("unexpected command: %s %v", name, args)
-				return nil, nil
-			}
-		},
+		Router: bgpRouter(),
+		Store:  mapStore{},
+		Server: &fakeServer{},
+		FIB:    &fakeFIB{err: errors.New("netlink denied")},
 	}
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("reconcile: %v", err)
-	}
-	if got := eventBus.Recent("routerd.bgp.peer.up"); len(got) != 0 {
-		t.Fatalf("initial observe emitted peer-up events: %#v", got)
-	}
-	if got := eventBus.Recent("routerd.bgp.prefix.accepted"); len(got) != 0 {
-		t.Fatalf("initial observe emitted prefix events: %#v", got)
-	}
-}
-
-func TestReconcileDryRunDoesNotWriteFRRConfig(t *testing.T) {
-	path := t.TempDir() + "/routerd.conf"
-	if err := os.WriteFile(path, []byte("old config\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	controller := Controller{
-		Router:     bgpRouter(),
-		Store:      mapStore{},
-		DryRun:     true,
-		ConfigPath: path,
-	}
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("reconcile: %v", err)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(data) != "old config\n" {
-		t.Fatalf("dry-run rewrote config: %q", string(data))
+	if err := controller.Reconcile(context.Background()); err == nil || !strings.Contains(err.Error(), "GoBGPFIBSyncFailed") {
+		t.Fatalf("reconcile error = %v, want GoBGPFIBSyncFailed", err)
 	}
 	status := controller.Store.ObjectStatus(api.NetAPIVersion, "BGPRouter", "lan")
-	if status["changed"] != true || status["dryRun"] != true {
-		t.Fatalf("dry-run status = %#v", status)
+	if status["phase"] != "Pending" || status["pendingReason"] != "GoBGPFIBSyncFailed" {
+		t.Fatalf("pending status = %#v", status)
 	}
 }
 
-func TestReconcileReloadsFRROnFirstLiveObserveWhenRunningConfigDiffers(t *testing.T) {
-	path := t.TempDir() + "/routerd.conf"
-	data, err := render.FRRConfig(bgpRouter())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, data, 0644); err != nil {
-		t.Fatal(err)
-	}
-	var calls []string
-	runningConfigCalls := 0
+func TestReconcileReportsBFDUnsupported(t *testing.T) {
+	router := bgpRouter()
+	peer := router.Spec.Resources[1].Spec.(api.BGPPeerSpec)
+	peer.BFD = "BFD/k8s"
+	router.Spec.Resources[1].Spec = peer
+	router.Spec.Resources = append(router.Spec.Resources, api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BFD"},
+		Metadata: api.ObjectMeta{Name: "k8s"},
+		Spec:     api.BFDSpec{Peer: "BGPPeer/k8s"},
+	})
 	controller := Controller{
-		Router:      bgpRouter(),
-		Store:       mapStore{},
-		ConfigPath:  path,
-		DaemonsPath: readyFRRDaemons(t),
-		VTYSH:       "vtysh",
-		FRRReload:   "frr-reload.py",
-		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
-			calls = append(calls, name+" "+strings.Join(args, " "))
-			switch {
-			case frrHealthyTestCommand(name, args...):
-				return frrHealthyTestOutput(name, args...), nil
-			case name == "vtysh" && strings.Join(args, " ") == "-c show running-config":
-				runningConfigCalls++
-				if runningConfigCalls == 1 {
-					return []byte("router bgp 64599\n neighbor 10.0.0.21 remote-as 64599\n"), nil
-				}
-				return data, nil
-			case name == "vtysh" && reflect.DeepEqual(args[:2], []string{"-C", "-f"}):
-				return []byte("ok"), nil
-			case name == "frr-reload.py":
-				return []byte("reloaded"), nil
-			case name == "vtysh" && strings.Join(args, " ") == "-c show bgp summary json":
-				return []byte(`{"ipv4Unicast":{"peers":{"10.0.0.21":{"remoteAs":64513,"state":"Established","pfxRcd":1}}}}`), nil
-			case name == "vtysh" && strings.Join(args, " ") == "-c show bgp ipv4 unicast json":
-				return []byte(`{"routes":{}}`), nil
-			default:
-				t.Fatalf("unexpected command: %s %v", name, args)
-				return nil, nil
+		Router: router,
+		Store:  mapStore{},
+		Server: &fakeServer{},
+		FIB:    &fakeFIB{},
+	}
+	if err := controller.Reconcile(context.Background()); err == nil || !strings.Contains(err.Error(), "GoBGPBFDUnsupported") {
+		t.Fatalf("reconcile error = %v, want GoBGPBFDUnsupported", err)
+	}
+	status := controller.Store.ObjectStatus(api.NetAPIVersion, "BFD", "k8s")
+	if status["phase"] != "Pending" || status["pendingReason"] != "GoBGPBFDUnsupported" {
+		t.Fatalf("bfd status = %#v", status)
+	}
+}
+
+func TestReconcileRecreatesServerWhenGlobalConfigChanges(t *testing.T) {
+	router := bgpRouter()
+	first := &fakeServer{}
+	second := &fakeServer{}
+	servers := []*fakeServer{first, second}
+	controller := Controller{
+		Router: router,
+		Store:  mapStore{},
+		FIB:    &fakeFIB{},
+		NewServer: func() GoBGPServer {
+			if len(servers) == 0 {
+				t.Fatal("unexpected server allocation")
 			}
+			next := servers[0]
+			servers = servers[1:]
+			return next
 		},
 	}
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("first reconcile: %v", err)
 	}
-	wantFirst := []string{
-		"vtysh -c show running-config",
-		"vtysh -C -f " + path,
-		"frr-reload.py --reload --stdout " + path,
-		"vtysh -c show running-config",
-		"vtysh -c show bgp summary json",
-		"vtysh -c show bgp ipv4 unicast json",
-	}
-	if !reflect.DeepEqual(normalizeBGPTestCalls(calls), wantFirst) {
-		t.Fatalf("first calls = %#v, want %#v", normalizeBGPTestCalls(calls), wantFirst)
-	}
-	calls = nil
+	spec := router.Spec.Resources[0].Spec.(api.BGPRouterSpec)
+	spec.RouterID = "10.0.0.2"
+	router.Spec.Resources[0].Spec = spec
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("second reconcile: %v", err)
 	}
-	wantSecond := []string{
-		"vtysh -c show running-config",
-		"vtysh -c show bgp summary json",
-		"vtysh -c show bgp ipv4 unicast json",
-	}
-	if !reflect.DeepEqual(normalizeBGPTestCalls(calls), wantSecond) {
-		t.Fatalf("second calls = %#v, want %#v", normalizeBGPTestCalls(calls), wantSecond)
-	}
-}
-
-func TestReconcileSkipsInitialReloadWhenRunningConfigMatches(t *testing.T) {
-	path := t.TempDir() + "/routerd.conf"
-	data, err := render.FRRConfig(bgpRouter())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, data, 0644); err != nil {
-		t.Fatal(err)
-	}
-	var calls []string
-	controller := Controller{
-		Router:      bgpRouter(),
-		Store:       mapStore{},
-		ConfigPath:  path,
-		DaemonsPath: readyFRRDaemons(t),
-		VTYSH:       "vtysh",
-		FRRReload:   "frr-reload.py",
-		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
-			calls = append(calls, name+" "+strings.Join(args, " "))
-			switch {
-			case frrHealthyTestCommand(name, args...):
-				return frrHealthyTestOutput(name, args...), nil
-			case name == "vtysh" && strings.Join(args, " ") == "-c show running-config":
-				return data, nil
-			case name == "vtysh" && strings.Join(args, " ") == "-c show bgp summary json":
-				return []byte(`{"ipv4Unicast":{"peers":{"10.0.0.21":{"remoteAs":64513,"state":"Established","pfxRcd":1}}}}`), nil
-			case name == "vtysh" && strings.Join(args, " ") == "-c show bgp ipv4 unicast json":
-				return []byte(`{"routes":{}}`), nil
-			default:
-				t.Fatalf("unexpected command: %s %v", name, args)
-				return nil, nil
-			}
-		},
-	}
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("reconcile: %v", err)
-	}
-	want := []string{
-		"vtysh -c show running-config",
-		"vtysh -c show bgp summary json",
-		"vtysh -c show bgp ipv4 unicast json",
-	}
-	if !reflect.DeepEqual(normalizeBGPTestCalls(calls), want) {
-		t.Fatalf("calls = %#v, want %#v", normalizeBGPTestCalls(calls), want)
-	}
-}
-
-func TestReconcileReloadsWhenRunningConfigDriftsAfterInitialObserve(t *testing.T) {
-	path := t.TempDir() + "/routerd.conf"
-	data, err := render.FRRConfig(bgpRouter())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, data, 0644); err != nil {
-		t.Fatal(err)
-	}
-	var calls []string
-	drifted := false
-	reloaded := false
-	eventBus := bus.New()
-	controller := Controller{
-		Router:      bgpRouter(),
-		Bus:         eventBus,
-		Store:       mapStore{},
-		ConfigPath:  path,
-		DaemonsPath: readyFRRDaemons(t),
-		VTYSH:       "vtysh",
-		FRRReload:   "frr-reload.py",
-		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
-			calls = append(calls, name+" "+strings.Join(args, " "))
-			switch {
-			case frrHealthyTestCommand(name, args...):
-				return frrHealthyTestOutput(name, args...), nil
-			case name == "vtysh" && strings.Join(args, " ") == "-c show running-config":
-				if drifted && !reloaded {
-					return []byte("router bgp 64599\n neighbor 10.0.0.21 remote-as 64599\n"), nil
-				}
-				return data, nil
-			case name == "vtysh" && reflect.DeepEqual(args[:2], []string{"-C", "-f"}):
-				return []byte("ok"), nil
-			case name == "frr-reload.py":
-				reloaded = true
-				return []byte("reloaded"), nil
-			case name == "vtysh" && strings.Join(args, " ") == "-c show bgp summary json":
-				return []byte(`{"ipv4Unicast":{"peers":{"10.0.0.21":{"remoteAs":64513,"state":"Established","pfxRcd":1}}}}`), nil
-			case name == "vtysh" && strings.Join(args, " ") == "-c show bgp ipv4 unicast json":
-				return []byte(`{"routes":{}}`), nil
-			default:
-				t.Fatalf("unexpected command: %s %v", name, args)
-				return nil, nil
-			}
-		},
-	}
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("initial reconcile: %v", err)
-	}
-	calls = nil
-	drifted = true
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("drift reconcile: %v", err)
-	}
-	want := []string{
-		"vtysh -c show running-config",
-		"vtysh -C -f " + path,
-		"frr-reload.py --reload --stdout " + path,
-		"vtysh -c show running-config",
-		"vtysh -c show bgp summary json",
-		"vtysh -c show bgp ipv4 unicast json",
-	}
-	if !reflect.DeepEqual(normalizeBGPTestCalls(calls), want) {
-		t.Fatalf("calls = %#v, want %#v", normalizeBGPTestCalls(calls), want)
-	}
-	status := controller.Store.ObjectStatus(api.NetAPIVersion, "BGPRouter", "lan")
-	if status["reloadReason"] != "RunningConfigDrift" {
-		t.Fatalf("status missing reload reason: %#v", status)
-	}
-	events := eventBus.Recent("routerd.bgp.frr.reload")
-	if len(events) != 1 || events[0].Reason != "RunningConfigDrift" {
-		t.Fatalf("reload events = %#v", events)
-	}
-}
-
-func TestReconcileReloadsFRRWhenRunningConfigLacksBGPInstance(t *testing.T) {
-	path := t.TempDir() + "/routerd.conf"
-	data, err := render.FRRConfig(bgpRouter())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, data, 0644); err != nil {
-		t.Fatal(err)
-	}
-	var calls []string
-	runningConfigCalls := 0
-	controller := Controller{
-		Router:      bgpRouter(),
-		Store:       mapStore{},
-		ConfigPath:  path,
-		DaemonsPath: readyFRRDaemons(t),
-		VTYSH:       "vtysh",
-		FRRReload:   "frr-reload.py",
-		Systemctl:   "systemctl",
-		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
-			calls = append(calls, name+" "+strings.Join(args, " "))
-			switch {
-			case frrHealthyTestCommand(name, args...):
-				return frrHealthyTestOutput(name, args...), nil
-			case name == "vtysh" && strings.Join(args, " ") == "-c show running-config":
-				runningConfigCalls++
-				if runningConfigCalls == 1 {
-					return []byte("frr version 10.5.3\nservice integrated-vtysh-config\n"), nil
-				}
-				return data, nil
-			case name == "vtysh" && reflect.DeepEqual(args[:2], []string{"-C", "-f"}):
-				return []byte("ok"), nil
-			case name == "frr-reload.py":
-				return []byte("reloaded"), nil
-			case name == "vtysh" && strings.Join(args, " ") == "-c show bgp summary json":
-				return []byte(`{"ipv4Unicast":{"peers":{"10.0.0.21":{"remoteAs":64513,"state":"Established","pfxRcd":1}}}}`), nil
-			case name == "vtysh" && strings.Join(args, " ") == "-c show bgp ipv4 unicast json":
-				return []byte(`{"routes":{}}`), nil
-			default:
-				t.Fatalf("unexpected command: %s %v", name, args)
-				return nil, nil
-			}
-		},
-	}
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("reconcile: %v", err)
-	}
-	want := []string{
-		"vtysh -c show running-config",
-		"vtysh -C -f " + path,
-		"frr-reload.py --reload --stdout " + path,
-		"vtysh -c show running-config",
-		"vtysh -c show bgp summary json",
-		"vtysh -c show bgp ipv4 unicast json",
-	}
-	if !reflect.DeepEqual(normalizeBGPTestCalls(calls), want) {
-		t.Fatalf("calls = %#v, want %#v", normalizeBGPTestCalls(calls), want)
-	}
-	status := controller.Store.ObjectStatus(api.NetAPIVersion, "BGPRouter", "lan")
-	if status["phase"] != "Established" || status["daemonRestarted"] != false {
-		t.Fatalf("status = %#v", status)
-	}
-}
-
-func TestReconcileSeparatesMultiInstanceRouterStatus(t *testing.T) {
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VRF"}, Metadata: api.ObjectMeta{Name: "wan-peering"}, Spec: api.VRFSpec{IfName: "vrf-wan", RouteTable: 65001}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.BGPRouterSpec{ASN: 64512, RouterID: "10.0.0.1"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.BGPRouterSpec{ASN: 65001, RouterID: "192.0.2.1", VRF: "wan-peering"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPPeer"}, Metadata: api.ObjectMeta{Name: "lan-speaker"}, Spec: api.BGPPeerSpec{RouterRef: "BGPRouter/lan", PeerASN: 64513, Peers: []string{"10.0.0.21"}}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPPeer"}, Metadata: api.ObjectMeta{Name: "wan-upstream"}, Spec: api.BGPPeerSpec{RouterRef: "BGPRouter/wan", PeerASN: 65002, Peers: []string{"192.0.2.254"}}},
-	}}}
-	path := t.TempDir() + "/routerd.conf"
-	data, err := render.FRRConfig(router)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, data, 0644); err != nil {
-		t.Fatal(err)
-	}
-	controller := Controller{
-		Router:      router,
-		Store:       mapStore{},
-		ConfigPath:  path,
-		DaemonsPath: readyFRRDaemons(t),
-		VTYSH:       "vtysh",
-		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
-			if frrHealthyTestCommand(name, args...) {
-				return frrHealthyTestOutput(name, args...), nil
-			}
-			if name != "vtysh" {
-				t.Fatalf("unexpected command: %s %v", name, args)
-			}
-			switch strings.Join(args, " ") {
-			case "-c show running-config":
-				return data, nil
-			case "-c show bgp summary json":
-				return []byte(`{"ipv4Unicast":{"peers":{"10.0.0.21":{"remoteAs":64513,"state":"Established","pfxRcd":1}}}}`), nil
-			case "-c show bgp ipv4 unicast json":
-				return []byte(`{"routes":{"10.0.0.200/32":[{"valid":true,"bestpath":true}]}}`), nil
-			case "-c show bgp vrf vrf-wan summary json":
-				return []byte(`{"ipv4Unicast":{"peers":{"192.0.2.254":{"remoteAs":65002,"state":"Established","pfxRcd":1}}}}`), nil
-			case "-c show bgp vrf vrf-wan ipv4 unicast json":
-				return []byte(`{"routes":{"198.51.100.0/24":[{"valid":true,"bestpath":true}]}}`), nil
-			default:
-				t.Fatalf("unexpected command: %s %v", name, args)
-				return nil, nil
-			}
-		},
-	}
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("reconcile: %v", err)
-	}
-	lanStatus := controller.Store.ObjectStatus(api.NetAPIVersion, "BGPRouter", "lan")
-	wanStatus := controller.Store.ObjectStatus(api.NetAPIVersion, "BGPRouter", "wan")
-	lanPeers := lanStatus["peers"].([]bgpstate.Peer)
-	wanPeers := wanStatus["peers"].([]bgpstate.Peer)
-	if len(lanPeers) != 1 || lanPeers[0].Address != "10.0.0.21" {
-		t.Fatalf("lan peers = %#v", lanPeers)
-	}
-	if len(wanPeers) != 1 || wanPeers[0].Address != "192.0.2.254" || wanStatus["vrf"] != "vrf-wan" {
-		t.Fatalf("wan status = %#v", wanStatus)
-	}
-}
-
-func TestReconcileObservesBFDAndWritesFRRDaemons(t *testing.T) {
-	router := bgpBFDRouter()
-	runningConfig, err := render.FRRConfig(router)
-	if err != nil {
-		t.Fatal(err)
-	}
-	configPath := t.TempDir() + "/routerd.conf"
-	daemonsPath := pendingFRRDaemons(t)
-	var calls []string
-	controller := Controller{
-		Router:      router,
-		Store:       mapStore{},
-		ConfigPath:  configPath,
-		DaemonsPath: daemonsPath,
-		VTYSH:       "vtysh",
-		FRRReload:   "frr-reload.py",
-		Systemctl:   "systemctl",
-		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
-			calls = append(calls, name+" "+strings.Join(args, " "))
-			switch {
-			case frrHealthyTestCommand(name, args...):
-				return frrHealthyTestOutput(name, args...), nil
-			case name == "vtysh" && reflect.DeepEqual(args[:2], []string{"-C", "-f"}):
-				return []byte("ok"), nil
-			case name == "frr-reload.py":
-				return []byte("reloaded"), nil
-			case name == "vtysh" && strings.Join(args, " ") == "-c show running-config":
-				return runningConfig, nil
-			case name == "systemctl" && strings.Join(args, " ") == "enable frr.service":
-				return []byte("enabled"), nil
-			case name == "systemctl" && strings.Join(args, " ") == "restart frr.service":
-				return []byte("restarted"), nil
-			case name == "vtysh" && strings.Join(args, " ") == "-c show bgp summary json":
-				return []byte(`{"ipv4Unicast":{"peers":{"10.0.0.21":{"remoteAs":64513,"state":"Established","pfxRcd":1}}}}`), nil
-			case name == "vtysh" && strings.Join(args, " ") == "-c show bgp ipv4 unicast json":
-				return []byte(`{"routes":{}}`), nil
-			case name == "vtysh" && strings.Join(args, " ") == "-c show bfd peers brief json":
-				return []byte(`{"peers":{"10.0.0.21":{"status":"up","lastUp":"2026-05-19T00:00:00Z"}}}`), nil
-			default:
-				t.Fatalf("unexpected command: %s %v", name, args)
-				return nil, nil
-			}
-		},
-	}
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("reconcile: %v", err)
-	}
-	want := []string{
-		"systemctl enable frr.service",
-		"systemctl restart frr.service",
-		"vtysh -c show running-config",
-		"vtysh -C -f " + configPath,
-		"frr-reload.py --reload --stdout " + configPath,
-		"vtysh -c show running-config",
-		"vtysh -c show bgp summary json",
-		"vtysh -c show bgp ipv4 unicast json",
-		"vtysh -c show bfd peers brief json",
-	}
-	if !reflect.DeepEqual(normalizeBGPTestCalls(calls), want) {
-		t.Fatalf("calls = %#v, want %#v", normalizeBGPTestCalls(calls), want)
-	}
-	daemons, err := os.ReadFile(daemonsPath)
-	if err != nil {
-		t.Fatalf("read daemons: %v", err)
-	}
-	if !strings.Contains(string(daemons), "bgpd=yes") || !strings.Contains(string(daemons), "bfdd=yes") {
-		t.Fatalf("daemons = %s", daemons)
-	}
-	status := controller.Store.ObjectStatus(api.NetAPIVersion, "BGPPeer", "k8s")
-	peers, ok := status["peers"].([]bgpstate.Peer)
-	if !ok || len(peers) != 1 || peers[0].BFD == nil || peers[0].BFD.State != "up" {
-		t.Fatalf("BFD peer status = %#v", status["peers"])
-	}
-}
-
-func TestReconcileRetriesFRRValidationAfterDaemonRestart(t *testing.T) {
-	configPath := t.TempDir() + "/routerd.conf"
-	daemonsPath := pendingFRRDaemons(t)
-	runningConfig := bgpRunningConfig(t, bgpRouter())
-	var calls []string
-	validateAttempts := 0
-	controller := Controller{
-		Router:      bgpRouter(),
-		Store:       mapStore{},
-		ConfigPath:  configPath,
-		DaemonsPath: daemonsPath,
-		VTYSH:       "vtysh",
-		FRRReload:   "frr-reload.py",
-		Systemctl:   "systemctl",
-		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
-			calls = append(calls, name+" "+strings.Join(args, " "))
-			switch {
-			case frrHealthyTestCommand(name, args...):
-				return frrHealthyTestOutput(name, args...), nil
-			case name == "systemctl" && strings.Join(args, " ") == "enable frr.service":
-				return []byte("enabled"), nil
-			case name == "systemctl" && strings.Join(args, " ") == "restart frr.service":
-				return []byte("restarted"), nil
-			case name == "vtysh" && reflect.DeepEqual(args[:2], []string{"-C", "-f"}):
-				validateAttempts++
-				if validateAttempts == 1 {
-					return []byte("bgpd not ready"), errors.New("not ready")
-				}
-				return []byte("ok"), nil
-			case name == "frr-reload.py":
-				return []byte("reloaded"), nil
-			case name == "vtysh" && strings.Join(args, " ") == "-c show running-config":
-				return runningConfig, nil
-			case name == "vtysh" && strings.Join(args, " ") == "-c show bgp summary json":
-				return []byte(`{"ipv4Unicast":{"peers":{"10.0.0.21":{"remoteAs":64513,"state":"Established","pfxRcd":1}}}}`), nil
-			case name == "vtysh" && strings.Join(args, " ") == "-c show bgp ipv4 unicast json":
-				return []byte(`{"routes":{}}`), nil
-			default:
-				t.Fatalf("unexpected command: %s %v", name, args)
-				return nil, nil
-			}
-		},
-	}
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("reconcile: %v", err)
-	}
-	want := []string{
-		"systemctl enable frr.service",
-		"systemctl restart frr.service",
-		"vtysh -c show running-config",
-		"vtysh -C -f " + configPath,
-		"vtysh -C -f " + configPath,
-		"frr-reload.py --reload --stdout " + configPath,
-		"vtysh -c show running-config",
-		"vtysh -c show bgp summary json",
-		"vtysh -c show bgp ipv4 unicast json",
-	}
-	if !reflect.DeepEqual(normalizeBGPTestCalls(calls), want) {
-		t.Fatalf("calls = %#v, want %#v", normalizeBGPTestCalls(calls), want)
-	}
-	if validateAttempts != 2 {
-		t.Fatalf("validate attempts = %d, want 2", validateAttempts)
-	}
-}
-
-func TestReconcileMarksPendingWhenFRRControlUnavailable(t *testing.T) {
-	configPath := t.TempDir() + "/routerd.conf"
-	var calls []string
-	controller := Controller{
-		Router:      bgpRouter(),
-		Store:       mapStore{},
-		ConfigPath:  configPath,
-		DaemonsPath: pendingFRRDaemons(t),
-		Systemctl:   "systemctl",
-		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
-			calls = append(calls, name+" "+strings.Join(args, " "))
-			switch {
-			case frrHealthyTestCommand(name, args...):
-				return frrHealthyTestOutput(name, args...), nil
-			case name == "systemctl" && strings.Join(args, " ") == "enable frr.service":
-				return []byte("enabled"), nil
-			case name == "systemctl" && strings.Join(args, " ") == "restart frr.service":
-				return []byte("restarted"), nil
-			case name == "vtysh" && strings.Join(args, " ") == "-c show running-config":
-				return []byte("Exiting: failed to connect to any daemons."), errors.New("exit status 1")
-			default:
-				t.Fatalf("unexpected command: %s %v", name, args)
-				return nil, nil
-			}
-		},
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
-	defer cancel()
-	if err := controller.Reconcile(ctx); err == nil || !strings.Contains(err.Error(), "FRRControlUnavailable") {
-		t.Fatalf("reconcile error = %v, want FRRControlUnavailable", err)
-	}
-	want := []string{
-		"systemctl enable frr.service",
-		"systemctl restart frr.service",
-		"vtysh -c show running-config",
-	}
-	if !reflect.DeepEqual(normalizeBGPTestCalls(calls), want) {
-		t.Fatalf("calls = %#v, want %#v", normalizeBGPTestCalls(calls), want)
-	}
-	status := controller.Store.ObjectStatus(api.NetAPIVersion, "BGPRouter", "lan")
-	if status["phase"] != "Pending" || status["reason"] != "FRRConfigPending" || status["pendingReason"] != "FRRControlUnavailable" {
-		t.Fatalf("pending status = %#v", status)
-	}
-	if status["LastControlProbeError"] == "" {
-		t.Fatalf("pending status did not record control probe error: %#v", status)
-	}
-}
-
-func TestReconcileMarksPendingWhenFRRControlPermissionDenied(t *testing.T) {
-	configPath := t.TempDir() + "/routerd.conf"
-	var calls []string
-	controller := Controller{
-		Router:      bgpRouter(),
-		Store:       mapStore{},
-		ConfigPath:  configPath,
-		DaemonsPath: readyFRRDaemons(t),
-		VTYSH:       "vtysh",
-		FRRReload:   "frr-reload.py",
-		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
-			calls = append(calls, name+" "+strings.Join(args, " "))
-			switch {
-			case frrHealthyTestCommand(name, args...):
-				return frrHealthyTestOutput(name, args...), nil
-			case name == "vtysh" && strings.Join(args, " ") == "-c show running-config":
-				return []byte("vtysh: permission denied opening /run/frr/bgpd.vty"), errors.New("exit status 1")
-			default:
-				t.Fatalf("unexpected command: %s %v", name, args)
-				return nil, nil
-			}
-		},
-	}
-	if err := controller.Reconcile(context.Background()); err == nil || !strings.Contains(err.Error(), "FRRPermissionDenied") {
-		t.Fatalf("reconcile error = %v, want FRRPermissionDenied", err)
-	}
-	want := []string{"vtysh -c show running-config"}
-	if !reflect.DeepEqual(normalizeBGPTestCalls(calls), want) {
-		t.Fatalf("calls = %#v, want %#v", normalizeBGPTestCalls(calls), want)
-	}
-	status := controller.Store.ObjectStatus(api.NetAPIVersion, "BGPRouter", "lan")
-	if status["phase"] != "Pending" || status["reason"] != "FRRConfigPending" || status["pendingReason"] != "FRRPermissionDenied" {
-		t.Fatalf("pending status = %#v", status)
-	}
-}
-
-func TestReconcileRetriesAfterFRRControlUnavailable(t *testing.T) {
-	configPath := t.TempDir() + "/routerd.conf"
-	runningConfig := bgpRunningConfig(t, bgpRouter())
-	var calls []string
-	controlReady := false
-	runningConfigCalls := 0
-	controller := Controller{
-		Router:      bgpRouter(),
-		Store:       mapStore{},
-		ConfigPath:  configPath,
-		DaemonsPath: readyFRRDaemons(t),
-		VTYSH:       "vtysh",
-		FRRReload:   "frr-reload.py",
-		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
-			calls = append(calls, name+" "+strings.Join(args, " "))
-			switch {
-			case frrHealthyTestCommand(name, args...):
-				return frrHealthyTestOutput(name, args...), nil
-			case name == "vtysh" && strings.Join(args, " ") == "-c show running-config":
-				if !controlReady {
-					return []byte("Exiting: failed to connect to any daemons."), errors.New("exit status 1")
-				}
-				runningConfigCalls++
-				if runningConfigCalls == 1 {
-					return []byte("frr version 10.5.3\nservice integrated-vtysh-config\n"), nil
-				}
-				return runningConfig, nil
-			case name == "vtysh" && reflect.DeepEqual(args[:2], []string{"-C", "-f"}):
-				return []byte("ok"), nil
-			case name == "frr-reload.py":
-				return []byte("reloaded"), nil
-			case name == "vtysh" && strings.Join(args, " ") == "-c show bgp summary json":
-				return []byte(`{"ipv4Unicast":{"peers":{"10.0.0.21":{"remoteAs":64513,"state":"Established","pfxRcd":1}}}}`), nil
-			case name == "vtysh" && strings.Join(args, " ") == "-c show bgp ipv4 unicast json":
-				return []byte(`{"routes":{}}`), nil
-			default:
-				t.Fatalf("unexpected command: %s %v", name, args)
-				return nil, nil
-			}
-		},
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
-	if err := controller.Reconcile(ctx); err == nil || !strings.Contains(err.Error(), "FRRControlUnavailable") {
-		t.Fatalf("first reconcile error = %v, want FRRControlUnavailable", err)
-	}
-	cancel()
-	status := controller.Store.ObjectStatus(api.NetAPIVersion, "BGPRouter", "lan")
-	if status["pendingReason"] != "FRRControlUnavailable" {
-		t.Fatalf("first status = %#v", status)
-	}
-	calls = nil
-	controlReady = true
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("second reconcile: %v", err)
-	}
-	want := []string{
-		"vtysh -c show running-config",
-		"vtysh -C -f " + configPath,
-		"frr-reload.py --reload --stdout " + configPath,
-		"vtysh -c show running-config",
-		"vtysh -c show bgp summary json",
-		"vtysh -c show bgp ipv4 unicast json",
-	}
-	if !reflect.DeepEqual(normalizeBGPTestCalls(calls), want) {
-		t.Fatalf("second calls = %#v, want %#v", normalizeBGPTestCalls(calls), want)
-	}
-}
-
-func TestReconcileReloadsWhenBGPInstanceMissing(t *testing.T) {
-	configPath := t.TempDir() + "/routerd.conf"
-	runningConfig := bgpRunningConfig(t, bgpRouter())
-	var calls []string
-	runningConfigCalls := 0
-	controller := Controller{
-		Router:      bgpRouter(),
-		Store:       mapStore{},
-		ConfigPath:  configPath,
-		DaemonsPath: readyFRRDaemons(t),
-		VTYSH:       "vtysh",
-		FRRReload:   "frr-reload.py",
-		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
-			calls = append(calls, name+" "+strings.Join(args, " "))
-			switch {
-			case frrHealthyTestCommand(name, args...):
-				return frrHealthyTestOutput(name, args...), nil
-			case name == "vtysh" && strings.Join(args, " ") == "-c show running-config":
-				runningConfigCalls++
-				if runningConfigCalls == 1 {
-					return []byte("frr version 10.5.3\nservice integrated-vtysh-config\n"), nil
-				}
-				return runningConfig, nil
-			case name == "vtysh" && reflect.DeepEqual(args[:2], []string{"-C", "-f"}):
-				return []byte("ok"), nil
-			case name == "frr-reload.py":
-				return []byte("reloaded"), nil
-			case name == "vtysh" && strings.Join(args, " ") == "-c show bgp summary json":
-				return []byte(`{"ipv4Unicast":{"peers":{"10.0.0.21":{"remoteAs":64513,"state":"Established","pfxRcd":1}}}}`), nil
-			case name == "vtysh" && strings.Join(args, " ") == "-c show bgp ipv4 unicast json":
-				return []byte(`{"routes":{}}`), nil
-			default:
-				t.Fatalf("unexpected command: %s %v", name, args)
-				return nil, nil
-			}
-		},
-	}
-	if err := os.WriteFile(configPath, runningConfig, 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("reconcile: %v", err)
-	}
-	want := []string{
-		"vtysh -c show running-config",
-		"vtysh -C -f " + configPath,
-		"frr-reload.py --reload --stdout " + configPath,
-		"vtysh -c show running-config",
-		"vtysh -c show bgp summary json",
-		"vtysh -c show bgp ipv4 unicast json",
-	}
-	if !reflect.DeepEqual(normalizeBGPTestCalls(calls), want) {
-		t.Fatalf("calls = %#v, want %#v", normalizeBGPTestCalls(calls), want)
-	}
-}
-
-func TestReconcileMarksPendingWhenFRRReloadFails(t *testing.T) {
-	configPath := t.TempDir() + "/routerd.conf"
-	var calls []string
-	controller := Controller{
-		Router:      bgpRouter(),
-		Store:       mapStore{},
-		ConfigPath:  configPath,
-		DaemonsPath: readyFRRDaemons(t),
-		VTYSH:       "vtysh",
-		FRRReload:   "frr-reload.py",
-		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
-			calls = append(calls, name+" "+strings.Join(args, " "))
-			switch {
-			case frrHealthyTestCommand(name, args...):
-				return frrHealthyTestOutput(name, args...), nil
-			case name == "vtysh" && strings.Join(args, " ") == "-c show running-config":
-				return []byte("frr version 10.5.3\nservice integrated-vtysh-config\n"), nil
-			case name == "vtysh" && reflect.DeepEqual(args[:2], []string{"-C", "-f"}):
-				return []byte("ok"), nil
-			case name == "frr-reload.py":
-				return []byte("bgpd not ready"), errors.New("reload timeout")
-			default:
-				t.Fatalf("unexpected command: %s %v", name, args)
-				return nil, nil
-			}
-		},
-	}
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("reconcile should surface reload failure as pending status, got error: %v", err)
-	}
-	want := []string{
-		"vtysh -c show running-config",
-		"vtysh -C -f " + configPath,
-		"frr-reload.py --reload --stdout " + configPath,
-	}
-	if !reflect.DeepEqual(normalizeBGPTestCalls(calls), want) {
-		t.Fatalf("calls = %#v, want %#v", normalizeBGPTestCalls(calls), want)
-	}
-	status := controller.Store.ObjectStatus(api.NetAPIVersion, "BGPRouter", "lan")
-	if status["phase"] != "Pending" || status["reason"] != "FRRConfigPending" || status["pendingReason"] != "FRRReloadFailed" {
-		t.Fatalf("pending status = %#v", status)
-	}
-}
-
-func TestReconcileMarksPendingWhenFRRReloadPermissionDenied(t *testing.T) {
-	configPath := t.TempDir() + "/routerd.conf"
-	controller := Controller{
-		Router:      bgpRouter(),
-		Store:       mapStore{},
-		ConfigPath:  configPath,
-		DaemonsPath: readyFRRDaemons(t),
-		VTYSH:       "vtysh",
-		FRRReload:   "frr-reload.py",
-		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
-			switch {
-			case frrHealthyTestCommand(name, args...):
-				return frrHealthyTestOutput(name, args...), nil
-			case name == "vtysh" && strings.Join(args, " ") == "-c show running-config":
-				return []byte("frr version 10.5.3\nservice integrated-vtysh-config\n"), nil
-			case name == "vtysh" && reflect.DeepEqual(args[:2], []string{"-C", "-f"}):
-				return []byte("ok"), nil
-			case name == "frr-reload.py":
-				return []byte("PermissionError: [Errno 13] Permission denied: /var/run/frr/reload-2X6ROJ.txt"), errors.New("exit status 1")
-			default:
-				t.Fatalf("unexpected command: %s %v", name, args)
-				return nil, nil
-			}
-		},
-	}
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("reconcile should surface reload permission failure as pending status, got error: %v", err)
-	}
-	status := controller.Store.ObjectStatus(api.NetAPIVersion, "BGPRouter", "lan")
-	if status["phase"] != "Pending" || status["reason"] != "FRRConfigPending" || status["pendingReason"] != "FRRReloadPermissionDenied" {
-		t.Fatalf("pending status = %#v", status)
-	}
-	if got, _ := status["LastReloadStderr"].(string); !strings.Contains(got, "/var/run/frr/reload-") {
-		t.Fatalf("LastReloadStderr = %q", got)
-	}
-}
-
-func TestReconcileRetriesFRRReloadWhenLockIsBusy(t *testing.T) {
-	configPath := t.TempDir() + "/routerd.conf"
-	runningConfig := bgpRunningConfig(t, bgpRouter())
-	var calls []string
-	reloadAttempts := 0
-	controller := Controller{
-		Router:      bgpRouter(),
-		Store:       mapStore{},
-		ConfigPath:  configPath,
-		DaemonsPath: readyFRRDaemons(t),
-		VTYSH:       "vtysh",
-		FRRReload:   "frr-reload.py",
-		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
-			calls = append(calls, name+" "+strings.Join(args, " "))
-			switch {
-			case frrHealthyTestCommand(name, args...):
-				return frrHealthyTestOutput(name, args...), nil
-			case name == "vtysh" && reflect.DeepEqual(args[:2], []string{"-C", "-f"}):
-				return []byte("ok"), nil
-			case name == "frr-reload.py":
-				reloadAttempts++
-				if reloadAttempts < 3 {
-					return []byte("flock failed: resource temporarily unavailable"), errors.New("flock failed")
-				}
-				return []byte("reloaded"), nil
-			case name == "vtysh" && strings.Join(args, " ") == "-c show running-config":
-				return runningConfig, nil
-			case name == "vtysh" && strings.Join(args, " ") == "-c show bgp summary json":
-				return []byte(`{"ipv4Unicast":{"peers":{"10.0.0.21":{"remoteAs":64513,"state":"Established","pfxRcd":1}}}}`), nil
-			case name == "vtysh" && strings.Join(args, " ") == "-c show bgp ipv4 unicast json":
-				return []byte(`{"routes":{}}`), nil
-			default:
-				t.Fatalf("unexpected command: %s %v", name, args)
-				return nil, nil
-			}
-		},
-	}
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("reconcile: %v", err)
-	}
-	want := []string{
-		"vtysh -c show running-config",
-		"vtysh -C -f " + configPath,
-		"frr-reload.py --reload --stdout " + configPath,
-		"frr-reload.py --reload --stdout " + configPath,
-		"frr-reload.py --reload --stdout " + configPath,
-		"vtysh -c show running-config",
-		"vtysh -c show bgp summary json",
-		"vtysh -c show bgp ipv4 unicast json",
-	}
-	if !reflect.DeepEqual(normalizeBGPTestCalls(calls), want) {
-		t.Fatalf("calls = %#v, want %#v", normalizeBGPTestCalls(calls), want)
-	}
-	if reloadAttempts != 3 {
-		t.Fatalf("reload attempts = %d, want 3", reloadAttempts)
-	}
-}
-
-func TestReconcileMarksPendingWhenFRRReloadDoesNotChangeRunningConfig(t *testing.T) {
-	configPath := t.TempDir() + "/routerd.conf"
-	var calls []string
-	controller := Controller{
-		Router:      bgpRouter(),
-		Store:       mapStore{},
-		ConfigPath:  configPath,
-		DaemonsPath: readyFRRDaemons(t),
-		VTYSH:       "vtysh",
-		FRRReload:   "frr-reload.py",
-		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
-			calls = append(calls, name+" "+strings.Join(args, " "))
-			switch {
-			case frrHealthyTestCommand(name, args...):
-				return frrHealthyTestOutput(name, args...), nil
-			case name == "vtysh" && reflect.DeepEqual(args[:2], []string{"-C", "-f"}):
-				return []byte("ok"), nil
-			case name == "frr-reload.py":
-				return []byte("reloaded"), nil
-			case name == "vtysh" && strings.Join(args, " ") == "-c show running-config":
-				return []byte("router bgp 64599\n"), nil
-			default:
-				t.Fatalf("unexpected command: %s %v", name, args)
-				return nil, nil
-			}
-		},
-	}
-	if err := controller.Reconcile(context.Background()); err == nil || !strings.Contains(err.Error(), "FRRReloadIncomplete") {
-		t.Fatalf("reconcile error = %v, want FRRReloadIncomplete", err)
-	}
-	want := []string{
-		"vtysh -c show running-config",
-		"vtysh -C -f " + configPath,
-		"frr-reload.py --reload --stdout " + configPath,
-		"vtysh -c show running-config",
-	}
-	if !reflect.DeepEqual(normalizeBGPTestCalls(calls), want) {
-		t.Fatalf("calls = %#v, want %#v", normalizeBGPTestCalls(calls), want)
-	}
-	status := controller.Store.ObjectStatus(api.NetAPIVersion, "BGPRouter", "lan")
-	if status["phase"] != "Pending" || status["reason"] != "FRRConfigPending" || status["pendingReason"] != "FRRReloadIncomplete" {
-		t.Fatalf("pending status = %#v", status)
-	}
-}
-
-func TestReconcileEnablesBGPDWithOpenRC(t *testing.T) {
-	configPath := t.TempDir() + "/routerd.conf"
-	runningConfig := bgpRunningConfig(t, bgpRouter())
-	var calls []string
-	controller := Controller{
-		Router:      bgpRouter(),
-		Store:       mapStore{},
-		ConfigPath:  configPath,
-		DaemonsPath: pendingFRRDaemons(t),
-		VTYSH:       "vtysh",
-		FRRReload:   "frr-reload.py",
-		Systemctl:   "rc-service",
-		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
-			calls = append(calls, name+" "+strings.Join(args, " "))
-			switch {
-			case frrHealthyTestCommand(name, args...):
-				return frrHealthyTestOutput(name, args...), nil
-			case name == "rc-update" && strings.Join(args, " ") == "add frr default":
-				return []byte("enabled"), nil
-			case name == "rc-service" && strings.Join(args, " ") == "frr restart":
-				return []byte("restarted"), nil
-			case name == "vtysh" && reflect.DeepEqual(args[:2], []string{"-C", "-f"}):
-				return []byte("ok"), nil
-			case name == "frr-reload.py":
-				return []byte("reloaded"), nil
-			case name == "vtysh" && strings.Join(args, " ") == "-c show running-config":
-				return runningConfig, nil
-			case name == "vtysh" && strings.Join(args, " ") == "-c show bgp summary json":
-				return []byte(`{"ipv4Unicast":{"peers":{"10.0.0.21":{"remoteAs":64513,"state":"Established","pfxRcd":1}}}}`), nil
-			case name == "vtysh" && strings.Join(args, " ") == "-c show bgp ipv4 unicast json":
-				return []byte(`{"routes":{}}`), nil
-			default:
-				t.Fatalf("unexpected command: %s %v", name, args)
-				return nil, nil
-			}
-		},
-	}
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("reconcile: %v", err)
-	}
-	want := []string{
-		"rc-update add frr default",
-		"rc-service frr restart",
-		"vtysh -c show running-config",
-		"vtysh -C -f " + configPath,
-		"frr-reload.py --reload --stdout " + configPath,
-		"vtysh -c show running-config",
-		"vtysh -c show bgp summary json",
-		"vtysh -c show bgp ipv4 unicast json",
-	}
-	if !reflect.DeepEqual(normalizeBGPTestCalls(calls), want) {
-		t.Fatalf("calls = %#v, want %#v", normalizeBGPTestCalls(calls), want)
-	}
-	daemons, err := os.ReadFile(controller.DaemonsPath)
-	if err != nil {
-		t.Fatalf("read daemons: %v", err)
-	}
-	if !strings.Contains(string(daemons), "bgpd=yes") || strings.Contains(string(daemons), "bfdd=yes") {
-		t.Fatalf("daemons = %s", daemons)
-	}
-}
-
-func TestReconcileRestartsFRRWhenServiceFailedEvenWithoutDaemonFileChange(t *testing.T) {
-	configPath := t.TempDir() + "/routerd.conf"
-	data, err := render.FRRConfig(bgpRouter())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(configPath, data, 0644); err != nil {
-		t.Fatal(err)
-	}
-	var calls []string
-	statusCalls := 0
-	controller := Controller{
-		Router:      bgpRouter(),
-		Store:       mapStore{},
-		ConfigPath:  configPath,
-		DaemonsPath: readyFRRDaemons(t),
-		VTYSH:       "vtysh",
-		FRRReload:   "frr-reload.py",
-		Systemctl:   "rc-service",
-		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
-			calls = append(calls, name+" "+strings.Join(args, " "))
-			switch {
-			case name == "rc-service" && strings.Join(args, " ") == "frr status":
-				statusCalls++
-				if statusCalls == 1 {
-					return []byte("Status of watchfrr: FAILED\nStatus of bgpd: FAILED\n"), errors.New("exit status 1")
-				}
-				return frrHealthyTestOutput(name, args...), nil
-			case name == "rc-update" && strings.Join(args, " ") == "add frr default":
-				return []byte("enabled"), nil
-			case name == "rc-service" && strings.Join(args, " ") == "frr restart":
-				return []byte("restarted"), nil
-			case frrHealthyTestCommand(name, args...):
-				return frrHealthyTestOutput(name, args...), nil
-			case name == "vtysh" && strings.Join(args, " ") == "-c show running-config":
-				return data, nil
-			case name == "vtysh" && reflect.DeepEqual(args[:2], []string{"-C", "-f"}):
-				return []byte("ok"), nil
-			case name == "frr-reload.py":
-				return []byte("reloaded"), nil
-			case name == "vtysh" && strings.Join(args, " ") == "-c show bgp summary json":
-				return []byte(`{"ipv4Unicast":{"peers":{"10.0.0.21":{"remoteAs":64513,"state":"Established","pfxRcd":1}}}}`), nil
-			case name == "vtysh" && strings.Join(args, " ") == "-c show bgp ipv4 unicast json":
-				return []byte(`{"routes":{}}`), nil
-			default:
-				t.Fatalf("unexpected command: %s %v", name, args)
-				return nil, nil
-			}
-		},
-	}
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("reconcile: %v", err)
-	}
-	want := []string{
-		"rc-update add frr default",
-		"rc-service frr restart",
-		"vtysh -c show running-config",
-		"vtysh -C -f " + configPath,
-		"frr-reload.py --reload --stdout " + configPath,
-		"vtysh -c show running-config",
-		"vtysh -c show bgp summary json",
-		"vtysh -c show bgp ipv4 unicast json",
-	}
-	if !reflect.DeepEqual(normalizeBGPTestCalls(calls), want) {
-		t.Fatalf("calls = %#v, want %#v", normalizeBGPTestCalls(calls), want)
-	}
-	status := controller.Store.ObjectStatus(api.NetAPIVersion, "BGPRouter", "lan")
-	if status["phase"] != "Established" || status["daemonRestarted"] != true {
-		t.Fatalf("status = %#v", status)
+	if first.stops != 1 {
+		t.Fatalf("old server stops = %d, want 1", first.stops)
+	}
+	if second.starts != 1 || second.global.GetRouterId() != "10.0.0.2" {
+		t.Fatalf("new server starts=%d routerID=%q, want 1/10.0.0.2", second.starts, second.global.GetRouterId())
 	}
 }
 
 func TestPollIntervalUsesBGPRouterWatcher(t *testing.T) {
 	router := bgpRouter()
 	spec := router.Spec.Resources[0].Spec.(api.BGPRouterSpec)
-	spec.Watcher.PollInterval = "5s"
+	spec.Watcher.PollInterval = "4s"
 	router.Spec.Resources[0].Spec = spec
-	if got := PollInterval(router); got != 5*time.Second {
+	if got := PollInterval(router); got != 4*time.Second {
 		t.Fatalf("poll interval = %v", got)
 	}
-	spec.Watcher.PollInterval = "2s"
+	spec.Watcher.PollInterval = "1s"
 	router.Spec.Resources[0].Spec = spec
 	if got := PollInterval(router); got != 15*time.Second {
-		t.Fatalf("poll interval with too-low value = %v", got)
+		t.Fatalf("short poll interval = %v", got)
 	}
 }
 
-func TestCriticalFRRLinesIgnoresDefaultGracefulRestartTimers(t *testing.T) {
-	lines := criticalFRRLines([]byte(`
-! Generated by routerd. Do not edit by hand.
-router bgp 64512
- bgp graceful-restart
- bgp graceful-restart restart-time 120
- bgp graceful-restart stalepath-time 360
- neighbor 10.0.0.21 remote-as 64513
-`))
-	for _, line := range lines {
-		if strings.Contains(line, "restart-time 120") || strings.Contains(line, "stalepath-time 360") {
-			t.Fatalf("default graceful restart timer line was critical: %#v", lines)
-		}
+func TestStatePeerMapsListPeerFields(t *testing.T) {
+	peer := statePeer(&gobgpapi.Peer{
+		Conf: &gobgpapi.PeerConf{NeighborAddress: "192.0.2.1", PeerAsn: 64513},
+		State: &gobgpapi.PeerState{
+			SessionState: gobgpapi.PeerState_ESTABLISHED,
+			Messages:     &gobgpapi.Messages{Received: &gobgpapi.Message{Total: 7}, Sent: &gobgpapi.Message{Total: 8}},
+		},
+		AfiSafis: []*gobgpapi.AfiSafi{{State: &gobgpapi.AfiSafiState{Accepted: 3}}},
+	})
+	if !peer.Established || peer.ASN != 64513 || peer.PrefixesReceived != 3 || peer.MessagesReceived != 7 || peer.MessagesSent != 8 {
+		t.Fatalf("peer = %#v", peer)
 	}
-	if !reflect.DeepEqual(lines, []string{
-		"router bgp 64512",
-		"bgp graceful-restart",
-		"neighbor 10.0.0.21 remote-as 64513",
-	}) {
-		t.Fatalf("lines = %#v", lines)
+}
+
+func TestBestFIBRoutesBuildsECMPAndSkipsLocalAdvertisements(t *testing.T) {
+	routes := bestFIBRoutes([]bgpstate.Prefix{
+		{Prefix: "10.250.0.0/24", NextHop: "192.168.1.53", Best: true, Valid: true},
+		{Prefix: "10.250.0.0/24", NextHop: "192.168.1.38", Best: true, Valid: true},
+		{Prefix: "10.0.0.0/16", NextHop: "0.0.0.0", Best: true, Valid: true},
+		{Prefix: "10.96.0.0/12", NextHop: "192.168.1.57", Best: true, Valid: true},
+	}, []netip.Prefix{netip.MustParsePrefix("10.250.0.0/16")})
+	want := []FIBRoute{{Prefix: "10.250.0.0/24", NextHops: []string{"192.168.1.38", "192.168.1.53"}}}
+	if !reflect.DeepEqual(routes, want) {
+		t.Fatalf("routes = %#v, want %#v", routes, want)
+	}
+}
+
+func TestPrefixAllowedRequiresSameFamilyAndCoveredLength(t *testing.T) {
+	allowed := []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8"), netip.MustParsePrefix("2001:db8::/32")}
+	tests := []struct {
+		prefix string
+		want   bool
+	}{
+		{"10.250.0.0/24", true},
+		{"10.0.0.0/7", false},
+		{"192.168.1.0/24", false},
+		{"2001:db8:1::/64", true},
+		{"2001:db9::/64", false},
+	}
+	for _, tt := range tests {
+		if got := prefixAllowed(netip.MustParsePrefix(tt.prefix), allowed); got != tt.want {
+			t.Fatalf("prefixAllowed(%s) = %t, want %t", tt.prefix, got, tt.want)
+		}
 	}
 }
 
@@ -1220,7 +300,8 @@ func bgpRouter() *api.Router {
 			Spec: api.BGPRouterSpec{
 				ASN:          64512,
 				RouterID:     "10.0.0.1",
-				ImportPolicy: api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.0.0.200/29"}},
+				ExportPolicy: api.BGPExportPolicySpec{AllowedPrefixes: []string{"10.0.0.0/16"}},
+				ImportPolicy: api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.250.0.0/24"}},
 			},
 		},
 		{
@@ -1235,64 +316,23 @@ func bgpRouter() *api.Router {
 	}}}
 }
 
-func bgpBFDRouter() *api.Router {
-	return &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"},
-			Metadata: api.ObjectMeta{Name: "lan"},
-			Spec: api.BGPRouterSpec{
-				ASN:      64512,
-				RouterID: "10.0.0.1",
-				Watcher:  api.BGPWatcherSpec{MaxPrefixes: 2, PeerStateChangeThrottle: "5s"},
-			},
-		},
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPPeer"},
-			Metadata: api.ObjectMeta{Name: "k8s"},
-			Spec: api.BGPPeerSpec{
-				RouterRef: "BGPRouter/lan",
-				PeerASN:   64513,
-				Peers:     []string{"10.0.0.21"},
-				BFD:       "BFD/k8s-fast",
-			},
-		},
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BFD"},
-			Metadata: api.ObjectMeta{Name: "k8s-fast"},
-			Spec: api.BFDSpec{
-				Peer:             "BGPPeer/k8s",
-				Profile:          "fast",
-				MinRx:            "300ms",
-				MinTx:            "300ms",
-				DetectMultiplier: 3,
-			},
-		},
-	}}}
+func testDestination(prefix string, nextHops ...string) *gobgpapi.Destination {
+	parsed := netip.MustParsePrefix(prefix)
+	nlri, _ := anypb.New(&gobgpapi.IPAddressPrefix{Prefix: parsed.Addr().String(), PrefixLen: uint32(parsed.Bits())})
+	var paths []*gobgpapi.Path
+	for _, nextHop := range nextHops {
+		nh, _ := anypb.New(&gobgpapi.NextHopAttribute{NextHop: nextHop})
+		paths = append(paths, &gobgpapi.Path{
+			Family: ipv4Family(),
+			Nlri:   nlri,
+			Pattrs: []*anypb.Any{nh},
+			Best:   true,
+		})
+	}
+	return &gobgpapi.Destination{
+		Prefix: prefix,
+		Paths:  paths,
+	}
 }
 
-func bgpRunningConfig(t *testing.T, router *api.Router) []byte {
-	t.Helper()
-	data, err := render.FRRConfig(router)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return data
-}
-
-func readyFRRDaemons(t *testing.T) string {
-	t.Helper()
-	path := t.TempDir() + "/daemons"
-	if err := os.WriteFile(path, []byte("zebra=yes\nbgpd=yes\nbfdd=no\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	return path
-}
-
-func pendingFRRDaemons(t *testing.T) string {
-	t.Helper()
-	path := t.TempDir() + "/daemons"
-	if err := os.WriteFile(path, []byte("zebra=yes\nbgpd=no\nbfdd=no\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	return path
-}
+var _ bgpstate.State

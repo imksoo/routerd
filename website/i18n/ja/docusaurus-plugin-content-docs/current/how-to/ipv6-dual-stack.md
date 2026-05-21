@@ -1,10 +1,9 @@
 # IPv6 dual-stack BGP と VIP
 
-routerd は 1 つの `BGPRouter` から FRR の IPv4 unicast と IPv6 unicast を
-同時に描画できます。`spec.importPolicy.allowedPrefixes`、
+routerd は 1 つの `BGPRouter` から embedded GoBGP の IPv4 unicast と IPv6 unicast を
+同時に扱えます。`spec.importPolicy.allowedPrefixes`、
 `spec.exportPolicy.allowedPrefixes`、`redistribute.*.allowedPrefixes` は
-IPv4/IPv6 混在のままでよく、routerd が prefix-list、route-map、
-`address-family` block を address family ごとに分けます。
+IPv4/IPv6 混在のままでよく、routerd が型付き GoBGP address family に直接 map します。
 
 `BGPPeer.spec.peers` には IPv6 peer address をそのまま指定します。
 

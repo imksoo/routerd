@@ -101,7 +101,7 @@ systemd 側と同じく、望む状態と file が変わらない場合は servi
   今後は基本的な expression coverage ではなく、rule grouping と上位 policy の
   使いやすさを改善します。
 - LAN 向け DoH 代理。
-- Tier C のための FRR 経由 BGP / OSPF 統合。
+- Tier C のための OSPF などの dynamic routing 統合。
 - 高可用 (leader 選出、耐障害 control plane)。
 - 本番 observability (OpenTelemetry collector + 遠隔 log sink)。
 - 家庭用回線で routerd を唯一の WAN ルーターとして長時間運用する検証。

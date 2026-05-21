@@ -17,6 +17,7 @@ func TestFRRConfigRendersDefaultDenyImportPolicy(t *testing.T) {
 			Spec: api.BGPRouterSpec{
 				ASN:          64512,
 				RouterID:     "10.0.0.1",
+				Backend:      "frr",
 				ImportPolicy: api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.0.0.200/29"}},
 				Timers:       api.BGPTimersSpec{Keepalive: "3s", HoldTime: "9s", ConnectRetry: "5s"},
 				GracefulRestart: api.BGPGracefulRestartSpec{
@@ -72,6 +73,7 @@ func TestFRRConfigFastConvergenceDisablesDefaultGracefulRestart(t *testing.T) {
 			Spec: api.BGPRouterSpec{
 				ASN:                64512,
 				RouterID:           "10.0.0.1",
+				Backend:            "frr",
 				ConvergenceProfile: "fast",
 			},
 		},
@@ -112,6 +114,7 @@ func TestFRRConfigFastConvergenceAllowsExplicitGracefulRestart(t *testing.T) {
 			Spec: api.BGPRouterSpec{
 				ASN:                64512,
 				RouterID:           "10.0.0.1",
+				Backend:            "frr",
 				ConvergenceProfile: "fast",
 				GracefulRestart:    api.BGPGracefulRestartSpec{Enabled: &enabled},
 			},
@@ -134,6 +137,7 @@ func TestFRRConfigRendersRedistributeAndCommunities(t *testing.T) {
 			Spec: api.BGPRouterSpec{
 				ASN:      64512,
 				RouterID: "10.0.0.1",
+				Backend:  "frr",
 				ImportPolicy: api.BGPImportPolicySpec{
 					AllowedPrefixes: []string{"10.0.0.200/29"},
 				},
@@ -194,6 +198,7 @@ func TestFRRConfigRendersExportPolicyForTransitRouting(t *testing.T) {
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.BGPRouterSpec{
 			ASN:          64512,
 			RouterID:     "10.0.0.1",
+			Backend:      "frr",
 			ImportPolicy: api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.250.0.0/24"}},
 			ExportPolicy: api.BGPExportPolicySpec{AllowedPrefixes: []string{"10.250.0.0/24"}},
 		}},
@@ -236,6 +241,7 @@ func TestFRRConfigKeepsRedistributeExportDenyByDefault(t *testing.T) {
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.BGPRouterSpec{
 			ASN:      64512,
 			RouterID: "10.0.0.1",
+			Backend:  "frr",
 			Redistribute: api.BGPRedistributeSpec{
 				Connected: api.BGPRedistributeRouteSpec{AllowedPrefixes: []string{"192.168.50.0/24"}},
 			},
@@ -264,6 +270,7 @@ func TestFRRConfigRendersIPv6Unicast(t *testing.T) {
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.BGPRouterSpec{
 			ASN:      64512,
 			RouterID: "10.0.0.1",
+			Backend:  "frr",
 			ImportPolicy: api.BGPImportPolicySpec{
 				AllowedPrefixes: []string{"10.0.0.200/29", "fd00:1234::/64"},
 			},
@@ -311,10 +318,12 @@ func TestFRRConfigRendersMultipleBGPRouterInstances(t *testing.T) {
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.BGPRouterSpec{
 			ASN:      64512,
 			RouterID: "10.0.0.1",
+			Backend:  "frr",
 		}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.BGPRouterSpec{
 			ASN:      65001,
 			RouterID: "192.0.2.1",
+			Backend:  "frr",
 			VRF:      "wan-peering",
 		}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPPeer"}, Metadata: api.ObjectMeta{Name: "lan-speaker"}, Spec: api.BGPPeerSpec{
@@ -351,6 +360,7 @@ func TestFRRConfigRendersBFDPeerAndDaemons(t *testing.T) {
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.BGPRouterSpec{
 			ASN:      64512,
 			RouterID: "10.0.0.1",
+			Backend:  "frr",
 		}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPPeer"}, Metadata: api.ObjectMeta{Name: "fabric"}, Spec: api.BGPPeerSpec{
 			RouterRef: "BGPRouter/lan",
@@ -399,6 +409,7 @@ func TestFRRDaemonsEnablesBGPDWithoutBFD(t *testing.T) {
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.BGPRouterSpec{
 			ASN:      64512,
 			RouterID: "10.0.0.1",
+			Backend:  "frr",
 		}},
 	}}}
 	daemons, err := FRRDaemons([]byte("zebra=yes\nbgpd=no\nbfdd=no\n"), router)
@@ -419,6 +430,7 @@ func TestFRRConfigResolvesBGPPeerPasswordFromEnv(t *testing.T) {
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.BGPRouterSpec{
 			ASN:      64512,
 			RouterID: "10.0.0.1",
+			Backend:  "frr",
 		}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPPeer"}, Metadata: api.ObjectMeta{Name: "fabric"}, Spec: api.BGPPeerSpec{
 			RouterRef:    "BGPRouter/lan",
