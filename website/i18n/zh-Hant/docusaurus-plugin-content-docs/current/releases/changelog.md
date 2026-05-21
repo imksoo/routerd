@@ -10,6 +10,8 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 
 ## Unreleased
 
+## v20260522.0824
+
 ### 修正
 
 - 從產生的 `routerd.service` 中移除了 `ProtectSystem` 和 `ReadWritePaths`。

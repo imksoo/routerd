@@ -10,6 +10,8 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 
 ## Unreleased
 
+## v20260522.0824
+
 ### 修正
 
 - 生成される `routerd.service` から `ProtectSystem` と `ReadWritePaths` を削除しました。
