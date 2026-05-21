@@ -47,11 +47,6 @@ in {
       description = "Periodic apply interval, as a Go duration.";
     };
 
-    extraFlags = lib.mkOption {
-      type = lib.types.listOf lib.types.str;
-      default = [ ];
-      description = "Additional command-line flags passed to routerd serve.";
-    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -97,14 +92,14 @@ in {
 
       serviceConfig = {
         Type = "simple";
-        ExecStart = lib.concatStringsSep " " ([
+        ExecStart = lib.concatStringsSep " " [
           "${cfg.package}/bin/routerd"
           "serve"
           "--config" "${configFile}"
           "--socket" cfg.socket
           "--status-socket" cfg.statusSocket
           "--apply-interval" cfg.applyInterval
-        ] ++ cfg.extraFlags);
+        ];
         Restart = "always";
         RestartSec = "2s";
         RuntimeDirectory = "routerd";
