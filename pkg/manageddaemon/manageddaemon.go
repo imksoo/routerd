@@ -11,10 +11,12 @@ import (
 )
 
 type Spec struct {
-	Name       string
-	Binary     string
-	UnitName   string
-	SocketPath string
+	Name              string
+	Binary            string
+	UnitName          string
+	SocketPath        string
+	ControlSocketPath string
+	StatePath         string
 }
 
 func (s Spec) Validate() error {
@@ -32,6 +34,14 @@ func (s Spec) Validate() error {
 
 func (s Spec) UnixTarget() string {
 	return "unix://" + strings.TrimSpace(s.SocketPath)
+}
+
+func (s Spec) ControlSocket() string {
+	return strings.TrimSpace(s.ControlSocketPath)
+}
+
+func (s Spec) StateFile() string {
+	return strings.TrimSpace(s.StatePath)
 }
 
 func (s Spec) SocketReady(ctx context.Context, timeout time.Duration) error {

@@ -273,8 +273,9 @@ func TestSystemdUnitControllerAugmentsRouterdServiceForBGPVRRPIngress(t *testing
 	}
 	gotBGPUnit := string(bgpUnit)
 	for _, want := range []string{
-		"ExecStart=/usr/local/sbin/routerd-bgp daemon --socket /run/routerd/bgp/gobgp.sock",
+		"ExecStart=/usr/local/sbin/routerd-bgp daemon --socket /run/routerd/bgp/gobgp.sock --control-socket /run/routerd/bgp/control.sock --state-file /var/lib/routerd/bgp/applied.json",
 		"RuntimeDirectory=routerd/bgp",
+		"StateDirectory=routerd/bgp",
 		"Restart=always",
 		"Wants=network-online.target",
 		"After=network-online.target",

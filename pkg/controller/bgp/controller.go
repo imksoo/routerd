@@ -4,11 +4,15 @@ package bgp
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/netip"
 	"os"
+	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
@@ -19,6 +23,7 @@ import (
 
 	routerapi "routerd/pkg/api"
 	bgpstate "routerd/pkg/bgp"
+	"routerd/pkg/bgpdaemon"
 	"routerd/pkg/bus"
 	"routerd/pkg/daemonapi"
 	"routerd/pkg/manageddaemon"
@@ -36,11 +41,14 @@ type GoBGPServer interface {
 	StartBgp(context.Context, *gobgpapi.StartBgpRequest) error
 	StopBgp(context.Context, *gobgpapi.StopBgpRequest) error
 	AddPeer(context.Context, *gobgpapi.AddPeerRequest) error
+	UpdatePeer(context.Context, *gobgpapi.UpdatePeerRequest) (*gobgpapi.UpdatePeerResponse, error)
 	DeletePeer(context.Context, *gobgpapi.DeletePeerRequest) error
 	ListPeer(context.Context, *gobgpapi.ListPeerRequest, func(*gobgpapi.Peer)) error
 	AddPath(context.Context, *gobgpapi.AddPathRequest) (*gobgpapi.AddPathResponse, error)
 	DeletePath(context.Context, *gobgpapi.DeletePathRequest) error
 	ListPath(context.Context, *gobgpapi.ListPathRequest, func(*gobgpapi.Destination)) error
+	AppliedConfig(context.Context) (bgpdaemon.AppliedConfig, error)
+	SaveAppliedConfig(context.Context, bgpdaemon.AppliedConfig) error
 }
 
 type FIBSyncer interface {
@@ -76,6 +84,8 @@ type Controller struct {
 	started         bool
 	globalKey       string
 	desiredPeerKeys map[string]desiredPeer
+	appliedPeerKeys map[string]desiredPeer
+	appliedConfig   bgpdaemon.AppliedConfig
 	pathUUIDs       map[string][]byte
 	observed        bool
 	lastState       bgpstate.State
@@ -125,6 +135,10 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	if err := c.ensureServer(ctx, routerSpec); err != nil {
 		return c.savePendingAll("GoBGPStartFailed", err)
 	}
+	applied, err := c.Server.AppliedConfig(ctx)
+	if err != nil {
+		return c.savePendingAll("GoBGPAppliedStateUnavailable", err)
+	}
 	desired, err := c.desiredPeers(routerResource.Metadata.Name)
 	if err != nil {
 		return c.savePendingAll("GoBGPPeerConfigInvalid", err)
@@ -134,6 +148,7 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		peer.ConvergenceProfile = routerSpec.ConvergenceProfile
 		desired[address] = peer
 	}
+	c.appliedPeerKeys = desiredPeersFromApplied(applied.Peers)
 	changed, err := c.reconcilePeers(ctx, desired)
 	if err != nil {
 		return c.savePendingAll("GoBGPPeerApplyFailed", err)
@@ -141,6 +156,11 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	if err := c.reconcileAdvertisements(ctx, routerSpec); err != nil {
 		return c.savePendingAll("GoBGPPathApplyFailed", err)
 	}
+	applied = c.buildAppliedConfig(routerSpec, desired, advertisedPrefixes(routerSpec))
+	if err := c.Server.SaveAppliedConfig(ctx, applied); err != nil {
+		return c.savePendingAll("GoBGPAppliedStatePersistFailed", err)
+	}
+	c.appliedConfig = applied
 	allowedImportPrefixes := importAllowedPrefixes(routerSpec)
 	state, routes, err := c.observeState(ctx, allowedImportPrefixes)
 	if err != nil {
@@ -219,17 +239,41 @@ func (c *Controller) ensureServer(ctx context.Context, spec routerapi.BGPRouterS
 
 func (c *Controller) daemonSpec() manageddaemon.Spec {
 	if c.Daemon.Name != "" || c.Daemon.SocketPath != "" {
-		return c.Daemon
+		spec := DefaultDaemonSpec()
+		if c.Daemon.Name != "" {
+			spec.Name = c.Daemon.Name
+		}
+		if c.Daemon.Binary != "" {
+			spec.Binary = c.Daemon.Binary
+		}
+		if c.Daemon.UnitName != "" {
+			spec.UnitName = c.Daemon.UnitName
+		}
+		if c.Daemon.SocketPath != "" {
+			spec.SocketPath = c.Daemon.SocketPath
+			if c.Daemon.ControlSocketPath == "" {
+				spec.ControlSocketPath = filepath.Join(filepath.Dir(c.Daemon.SocketPath), "control.sock")
+			}
+		}
+		if c.Daemon.ControlSocketPath != "" {
+			spec.ControlSocketPath = c.Daemon.ControlSocketPath
+		}
+		if c.Daemon.StatePath != "" {
+			spec.StatePath = c.Daemon.StatePath
+		}
+		return spec
 	}
 	return DefaultDaemonSpec()
 }
 
 func DefaultDaemonSpec() manageddaemon.Spec {
 	return manageddaemon.Spec{
-		Name:       "routerd-bgp",
-		Binary:     "routerd-bgp",
-		UnitName:   "routerd-bgp.service",
-		SocketPath: "/run/routerd/bgp/gobgp.sock",
+		Name:              "routerd-bgp",
+		Binary:            "routerd-bgp",
+		UnitName:          "routerd-bgp.service",
+		SocketPath:        "/run/routerd/bgp/gobgp.sock",
+		ControlSocketPath: "/run/routerd/bgp/control.sock",
+		StatePath:         "/var/lib/routerd/bgp/applied.json",
 	}
 }
 
@@ -281,6 +325,93 @@ func (c *Controller) desiredPeers(routerName string) (map[string]desiredPeer, er
 	return out, nil
 }
 
+func desiredPeersFromApplied(peers map[string]bgpdaemon.AppliedPeer) map[string]desiredPeer {
+	out := map[string]desiredPeer{}
+	for address, peer := range peers {
+		gr := routerapi.BGPGracefulRestartSpec{}
+		if peer.GracefulRestart != nil {
+			enabled := peer.GracefulRestart.Enabled
+			gr.Enabled = &enabled
+			gr.RestartTime = fmt.Sprintf("%ds", peer.GracefulRestart.RestartTime)
+			gr.StalePathTime = fmt.Sprintf("%ds", peer.GracefulRestart.StaleRoutesTime)
+		}
+		out[address] = desiredPeer{
+			Address:            peer.Address,
+			ASN:                peer.ASN,
+			Password:           peer.Password,
+			Timers:             routerapi.BGPTimersSpec{Profile: peer.TimersProfile},
+			GracefulRestart:    gr,
+			ConvergenceProfile: peer.ConvergenceProfile,
+		}
+	}
+	return out
+}
+
+func (c *Controller) buildAppliedConfig(spec routerapi.BGPRouterSpec, peers map[string]desiredPeer, advertisements map[string]bool) bgpdaemon.AppliedConfig {
+	out := bgpdaemon.AppliedConfig{
+		Version:        bgpdaemon.AppliedVersion,
+		Global:         appliedGlobalFromSpec(spec, c.Router),
+		Peers:          map[string]bgpdaemon.AppliedPeer{},
+		Advertisements: mapKeys(advertisements),
+	}
+	for address, peer := range peers {
+		out.Peers[address] = appliedPeer(peer)
+	}
+	return bgpdaemon.Normalize(out)
+}
+
+func appliedGlobalFromSpec(spec routerapi.BGPRouterSpec, router *routerapi.Router) bgpdaemon.AppliedGlobal {
+	global := bgpdaemon.AppliedGlobal{
+		ASN:              spec.ASN,
+		RouterID:         strings.TrimSpace(spec.RouterID),
+		ListenPort:       bgpListenPort(spec.Listen),
+		ListenAddresses:  bgpListenAddresses(spec.Listen),
+		Families:         []string{"ipv4-unicast"},
+		UseMultiplePaths: true,
+	}
+	for _, family := range bgpFamiliesForRouter(router) {
+		if family.GetAfi() == gobgpapi.Family_AFI_IP6 {
+			global.Families = append(global.Families, "ipv6-unicast")
+		}
+	}
+	if gr := gobgpGracefulRestart(spec); gr != nil {
+		global.GracefulRestart = &bgpdaemon.AppliedGracefulRestart{Enabled: true, RestartTime: gr.GetRestartTime(), StaleRoutesTime: gr.GetStaleRoutesTime()}
+	}
+	return global
+}
+
+func appliedPeer(peer desiredPeer) bgpdaemon.AppliedPeer {
+	out := bgpdaemon.AppliedPeer{
+		Address:            peer.Address,
+		ASN:                peer.ASN,
+		Password:           peer.Password,
+		TimersProfile:      strings.TrimSpace(peer.Timers.Profile),
+		ConvergenceProfile: peer.ConvergenceProfile,
+	}
+	if gr := gobgpPeerGracefulRestart(peer); gr != nil {
+		out.GracefulRestart = &bgpdaemon.AppliedGracefulRestart{Enabled: true, RestartTime: gr.GetRestartTime(), StaleRoutesTime: gr.GetStaleRoutesTime()}
+	}
+	return out
+}
+
+func mapKeys(values map[string]bool) []string {
+	out := make([]string, 0, len(values))
+	for key := range values {
+		out = append(out, key)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func desiredPeerHash(peer desiredPeer) string {
+	data, err := json.Marshal(peer)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
 func (c *Controller) reconcilePeers(ctx context.Context, desired map[string]desiredPeer) (bool, error) {
 	if c.desiredPeerKeys == nil {
 		c.desiredPeerKeys = map[string]desiredPeer{}
@@ -310,11 +441,10 @@ func (c *Controller) reconcilePeers(ctx context.Context, desired map[string]desi
 			c.desiredPeerKeys[address] = peer
 			continue
 		}
-		if err := c.Server.DeletePeer(ctx, &gobgpapi.DeletePeerRequest{Address: address}); err != nil {
+		if _, err := c.Server.UpdatePeer(ctx, &gobgpapi.UpdatePeerRequest{Peer: goBGPPeer(peer), DoSoftResetIn: true}); err != nil {
 			return changed, err
 		}
-		delete(live, address)
-		delete(c.desiredPeerKeys, address)
+		c.desiredPeerKeys[address] = peer
 		changed = true
 	}
 	for address, peer := range desired {
@@ -443,6 +573,7 @@ func (c *Controller) saveObservedStatuses(routerName string, state bgpstate.Stat
 				"applyWith":            "routerd-bgp gRPC API",
 				"daemon":               c.daemonSpec().Name,
 				"daemonSocket":         c.daemonSpec().SocketPath,
+				"appliedConfigHash":    bgpdaemon.Hash(c.appliedConfig),
 				"changed":              changed,
 				"dryRun":               c.DryRun,
 				"peers":                state.Peers,
@@ -485,6 +616,7 @@ func (c *Controller) saveObservedStatuses(routerName string, state bgpstate.Stat
 				"applyWith":        "routerd-bgp gRPC API",
 				"daemon":           c.daemonSpec().Name,
 				"daemonSocket":     c.daemonSpec().SocketPath,
+				"peerConfigHashes": c.peerConfigHashes(resource),
 				"changed":          changed,
 				"dryRun":           c.DryRun,
 				"peers":            peers,
@@ -521,6 +653,21 @@ func (c *Controller) saveServeManagedStatuses(phase string, changed bool, extra 
 		}
 	}
 	return nil
+}
+
+func (c *Controller) peerConfigHashes(resource routerapi.Resource) map[string]string {
+	spec, err := resource.BGPPeerSpec()
+	if err != nil {
+		return nil
+	}
+	out := map[string]string{}
+	for _, address := range spec.Peers {
+		address = strings.TrimSpace(address)
+		if peer, ok := c.desiredPeerKeys[address]; ok {
+			out[address] = desiredPeerHash(peer)
+		}
+	}
+	return out
 }
 
 func (c *Controller) savePendingAll(reason string, err error) error {
@@ -661,16 +808,18 @@ func gobgpPeerGracefulRestart(peer desiredPeer) *gobgpapi.GracefulRestart {
 	return &gobgpapi.GracefulRestart{Enabled: true, RestartTime: uint32(durationSeconds(peer.GracefulRestart.RestartTime, 120)), StaleRoutesTime: uint32(durationSeconds(peer.GracefulRestart.StalePathTime, 360))}
 }
 
-func (c *Controller) desiredPeerMatches(address string, peer *gobgpapi.Peer, desired desiredPeer) bool {
+func (c *Controller) desiredPeerMatches(address string, _ *gobgpapi.Peer, desired desiredPeer) bool {
 	if cached, ok := c.desiredPeerKeys[address]; ok {
 		return reflect.DeepEqual(cached, desired)
 	}
+	if applied, ok := c.appliedPeerKeys[address]; ok {
+		return reflect.DeepEqual(applied, desired)
+	}
 	// GoBGP's ListPeer response is not a reliable echo of all configured peer
-	// fields after routerd reconnects to a long-lived routerd-bgp daemon. When
-	// the live peer is already keyed by a desired address, keep it to preserve
-	// sessions across routerd restarts; same-process config drift is handled by
-	// desiredPeerKeys above.
-	return peerAddress(peer) != "" && desired.Address != ""
+	// fields after routerd reconnects to a long-lived routerd-bgp daemon. If the
+	// daemon has no applied-state proof for this peer, do not silently adopt the
+	// address-only live peer; reconcilePeers will UpdatePeer explicitly.
+	return false
 }
 
 func sameStringSet(a, b []string) bool {

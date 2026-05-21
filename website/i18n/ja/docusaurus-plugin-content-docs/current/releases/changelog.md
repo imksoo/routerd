@@ -22,7 +22,10 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
   ECMP next-hop として扱います。未対応の BFD intent は黙って無視せず Pending にします。
   MVP での IPv6 FIB route や non-Linux platform など、kernel FIB に投入できない
   学習 route は黙って落とさず、prefix ごとの install reason と router の Degraded
-  status として表示します。
+  status として表示します。`routerd-bgp` daemon は最後に適用した global / peer /
+  advertisement intent を `/var/lib/routerd/bgp/applied.json` に atomic rename で保存し、
+  daemon restart 時に復元します。これにより `routerd` reconnect 後も config drift を検出し、
+  stale な live peer を黙って採用しません。
 
 ## v20260521.1953
 

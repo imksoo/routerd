@@ -3470,6 +3470,8 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 	nftablesPath := fs.String("nftables-file", defaultNftablesPath, "routerd-managed nftables ruleset file")
 	ledgerPath := fs.String("ledger-file", defaultLedgerPath, "routerd ownership ledger file")
 	bgpSocketPath := fs.String("bgp-socket", "/run/routerd/bgp/gobgp.sock", "routerd-bgp GoBGP gRPC Unix socket path")
+	bgpControlSocketPath := fs.String("bgp-control-socket", "", "routerd-bgp control Unix socket path")
+	bgpStatePath := fs.String("bgp-state-file", "", "routerd-bgp applied state JSON path")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -3551,6 +3553,8 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 			LedgerPath:             *ledgerPath,
 			NftCommand:             "nft",
 			BGPSocketPath:          *bgpSocketPath,
+			BGPControlSocketPath:   *bgpControlSocketPath,
+			BGPStatePath:           *bgpStatePath,
 			ConntrackInterval:      30 * time.Second,
 			ControllerObserver:     controllerRuntime,
 			EnabledControllers:     enabledControllers,
@@ -7339,7 +7343,7 @@ func saveBGPServeManagedStatuses(router *api.Router, store routerstate.ObjectSta
 			"dryRun":     false,
 			"reason":     "GoBGPServeManaged",
 			"observedAt": now,
-			"conditions": []map[string]any{{"type": "Configured", "status": "False", "reason": "GoBGPServeManaged", "message": "BGP is managed by the embedded GoBGP controller in routerd serve"}},
+			"conditions": []map[string]any{{"type": "Configured", "status": "False", "reason": "GoBGPServeManaged", "message": "BGP is managed by routerd serve through the routerd-bgp daemon"}},
 		}
 		if err := store.SaveObjectStatus(api.NetAPIVersion, resource.Kind, resource.Metadata.Name, status); err != nil {
 			return err

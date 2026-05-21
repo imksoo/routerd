@@ -23,7 +23,10 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
   instead of being silently ignored. Learned routes that cannot be installed into
   the kernel FIB, such as IPv6 FIB routes in the MVP or non-Linux platforms, now
   degrade the router status with a per-prefix install reason instead of being
-  silently dropped.
+  silently dropped. The `routerd-bgp` daemon persists its last applied global,
+  peer, and advertisement intent in `/var/lib/routerd/bgp/applied.json` with an
+  atomic rename, restores it on daemon restart, and lets `routerd` detect config
+  drift after reconnect instead of silently adopting stale live peers.
 
 ## v20260521.1953
 

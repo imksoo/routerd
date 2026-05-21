@@ -534,6 +534,8 @@ type Options struct {
 	LedgerPath             string
 	NftCommand             string
 	BGPSocketPath          string
+	BGPControlSocketPath   string
+	BGPStatePath           string
 	ConntrackInterval      time.Duration
 	Logger                 *slog.Logger
 	ControllerObserver     framework.Observer
@@ -711,6 +713,15 @@ func (r *Runner) Start(ctx context.Context) error {
 	bgpDaemon := bgpcontroller.DefaultDaemonSpec()
 	if strings.TrimSpace(r.Opts.BGPSocketPath) != "" {
 		bgpDaemon.SocketPath = strings.TrimSpace(r.Opts.BGPSocketPath)
+		if strings.TrimSpace(r.Opts.BGPControlSocketPath) == "" {
+			bgpDaemon.ControlSocketPath = filepath.Join(filepath.Dir(bgpDaemon.SocketPath), "control.sock")
+		}
+	}
+	if strings.TrimSpace(r.Opts.BGPControlSocketPath) != "" {
+		bgpDaemon.ControlSocketPath = strings.TrimSpace(r.Opts.BGPControlSocketPath)
+	}
+	if strings.TrimSpace(r.Opts.BGPStatePath) != "" {
+		bgpDaemon.StatePath = strings.TrimSpace(r.Opts.BGPStatePath)
 	}
 	bgp := bgpcontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunBGP, Logger: logger, Daemon: bgpDaemon}
 	vrrp := vrrpcontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunVRRP, Logger: logger}

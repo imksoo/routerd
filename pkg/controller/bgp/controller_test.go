@@ -16,6 +16,7 @@ import (
 
 	"routerd/pkg/api"
 	bgpstate "routerd/pkg/bgp"
+	"routerd/pkg/bgpdaemon"
 )
 
 type mapStore map[string]map[string]any
@@ -36,12 +37,14 @@ type fakeServer struct {
 	starts  int
 	stops   int
 	adds    int
+	updates int
 	deletes int
 	paths   int
 
-	global *gobgpapi.Global
-	peers  map[string]*gobgpapi.Peer
-	routes []*gobgpapi.Destination
+	global  *gobgpapi.Global
+	peers   map[string]*gobgpapi.Peer
+	routes  []*gobgpapi.Destination
+	applied bgpdaemon.AppliedConfig
 }
 
 func (s *fakeServer) Serve() {}
@@ -79,6 +82,35 @@ func (s *fakeServer) AddPeer(_ context.Context, req *gobgpapi.AddPeerRequest) er
 		af.State = &gobgpapi.AfiSafiState{Accepted: 1}
 	}
 	s.peers[address] = peer
+	return nil
+}
+
+func (s *fakeServer) UpdatePeer(_ context.Context, req *gobgpapi.UpdatePeerRequest) (*gobgpapi.UpdatePeerResponse, error) {
+	s.updates++
+	peer := req.GetPeer()
+	address := peer.GetConf().GetNeighborAddress()
+	if s.peers == nil {
+		s.peers = map[string]*gobgpapi.Peer{}
+	}
+	peer.State = &gobgpapi.PeerState{
+		NeighborAddress: address,
+		PeerAsn:         peer.GetConf().GetPeerAsn(),
+		SessionState:    gobgpapi.PeerState_ESTABLISHED,
+		Messages:        &gobgpapi.Messages{Received: &gobgpapi.Message{Total: 2}, Sent: &gobgpapi.Message{Total: 3}},
+	}
+	for _, af := range peer.AfiSafis {
+		af.State = &gobgpapi.AfiSafiState{Accepted: 1}
+	}
+	s.peers[address] = peer
+	return &gobgpapi.UpdatePeerResponse{}, nil
+}
+
+func (s *fakeServer) AppliedConfig(context.Context) (bgpdaemon.AppliedConfig, error) {
+	return s.applied, nil
+}
+
+func (s *fakeServer) SaveAppliedConfig(_ context.Context, config bgpdaemon.AppliedConfig) error {
+	s.applied = bgpdaemon.Normalize(config)
 	return nil
 }
 
@@ -339,12 +371,81 @@ func TestReconcileUpdatesPeerWhenLiveConfigDrifts(t *testing.T) {
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("second reconcile: %v", err)
 	}
-	if server.deletes != 1 || server.adds != 2 {
-		t.Fatalf("peer drift reconcile counts deletes=%d adds=%d, want 1/2", server.deletes, server.adds)
+	if server.updates != 1 || server.deletes != 0 || server.adds != 1 {
+		t.Fatalf("peer drift reconcile counts updates=%d deletes=%d adds=%d, want 1/0/1", server.updates, server.deletes, server.adds)
 	}
 	got := server.peers["10.0.0.21"].GetTimers().GetConfig().GetHoldTime()
 	if got != 180 {
 		t.Fatalf("hold time = %d, want slow profile 180", got)
+	}
+}
+
+func TestReconcileUpdatesPeerWhenConfigChangedAcrossRouterdRestart(t *testing.T) {
+	router := bgpRouter()
+	server := &fakeServer{}
+	first := Controller{
+		Router: router,
+		Store:  mapStore{},
+		FIB:    &fakeFIB{},
+		NewServer: func() GoBGPServer {
+			return server
+		},
+	}
+	if err := first.Reconcile(context.Background()); err != nil {
+		t.Fatalf("first reconcile: %v", err)
+	}
+	peer := router.Spec.Resources[1]
+	spec, err := peer.BGPPeerSpec()
+	if err != nil {
+		t.Fatalf("peer spec: %v", err)
+	}
+	spec.Timers.Profile = "slow"
+	peer.Spec = spec
+	router.Spec.Resources[1] = peer
+	second := Controller{
+		Router: router,
+		Store:  mapStore{},
+		FIB:    &fakeFIB{},
+		NewServer: func() GoBGPServer {
+			return server
+		},
+	}
+	if err := second.Reconcile(context.Background()); err != nil {
+		t.Fatalf("second reconcile: %v", err)
+	}
+	if server.updates != 1 || server.deletes != 0 || server.adds != 1 {
+		t.Fatalf("restart+config change counts updates=%d deletes=%d adds=%d, want 1/0/1", server.updates, server.deletes, server.adds)
+	}
+	if got := server.peers["10.0.0.21"].GetTimers().GetConfig().GetHoldTime(); got != 180 {
+		t.Fatalf("hold time = %d, want slow profile 180", got)
+	}
+	if got := bgpdaemon.Hash(server.applied); got == "" {
+		t.Fatal("applied config hash is empty")
+	}
+}
+
+func TestReconcileDoesNotSilentlyAdoptLivePeerWithoutAppliedState(t *testing.T) {
+	router := bgpRouter()
+	server := &fakeServer{peers: map[string]*gobgpapi.Peer{
+		"10.0.0.21": {
+			Conf:   &gobgpapi.PeerConf{NeighborAddress: "10.0.0.21", PeerAsn: 64513},
+			Timers: &gobgpapi.Timers{Config: &gobgpapi.TimersConfig{HoldTime: 90}},
+			State:  &gobgpapi.PeerState{NeighborAddress: "10.0.0.21", PeerAsn: 64513, SessionState: gobgpapi.PeerState_ESTABLISHED},
+		},
+	}}
+	controller := Controller{
+		Router: router,
+		Store:  mapStore{},
+		FIB:    &fakeFIB{},
+		NewServer: func() GoBGPServer {
+			return server
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if server.updates != 1 {
+		t.Fatalf("updates = %d, want 1 explicit UpdatePeer for unproven live peer", server.updates)
 	}
 }
 

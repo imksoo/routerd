@@ -21,6 +21,10 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期和时间型版本号。
   尚未支持的 BFD intent 会报告为 Pending，而不是静默忽略。MVP 阶段的 IPv6
   FIB route 或 non-Linux platform 等无法写入 kernel FIB 的已学习路由，现在会以
   prefix 级 install reason 和 router Degraded status 显示，而不是静默丢弃。
+  `routerd-bgp` daemon 会通过 atomic rename 将最后应用的 global / peer /
+  advertisement intent 保存到 `/var/lib/routerd/bgp/applied.json`，并在 daemon
+  restart 时恢复；`routerd` reconnect 后可据此检测 config drift，而不会静默采用
+  stale live peer。
 
 ## v20260521.1953
 

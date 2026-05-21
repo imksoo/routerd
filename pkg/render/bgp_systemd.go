@@ -11,7 +11,7 @@ func BGPSystemdSpec(socketPath string) api.SystemdUnitSpec {
 	privateTmp := true
 	return api.SystemdUnitSpec{
 		Description:              "routerd BGP daemon",
-		ExecStart:                []string{"/usr/local/sbin/routerd-bgp", "daemon", "--socket", socketPath},
+		ExecStart:                []string{"/usr/local/sbin/routerd-bgp", "daemon", "--socket", socketPath, "--control-socket", "/run/routerd/bgp/control.sock", "--state-file", "/var/lib/routerd/bgp/applied.json"},
 		Wants:                    []string{"network-online.target"},
 		After:                    []string{"network-online.target"},
 		WantedBy:                 []string{"multi-user.target"},
