@@ -10,6 +10,8 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 
 ## Unreleased
 
+## v20260521.1155
+
 ### 修正
 
 - 修正 `EgressRoutePolicy` 的 `mode: priority`，使其正確遵守

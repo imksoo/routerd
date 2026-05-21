@@ -10,6 +10,8 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 
 ## Unreleased
 
+## v20260521.1155
+
 ### 修正
 
 - `EgressRoutePolicy` の `mode: priority` が `selection: highest-weight-ready`、
