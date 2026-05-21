@@ -16,10 +16,14 @@ import (
 	"time"
 
 	"routerd/pkg/api"
+	"routerd/pkg/apply"
 	"routerd/pkg/bus"
 	"routerd/pkg/daemonapi"
+	"routerd/pkg/egressroute"
 	"routerd/pkg/healthcheck"
 	"routerd/pkg/render"
+	"routerd/pkg/resource"
+	"routerd/pkg/resourcequery"
 )
 
 type IPv4PolicyRouteController struct {
@@ -30,6 +34,8 @@ type IPv4PolicyRouteController struct {
 	NftCommand       string
 	PolicyPath       string
 	DefaultRoutePath string
+	LedgerPath       string
+	CommandOutput    func(context.Context, string, ...string) ([]byte, error)
 	Logger           *slog.Logger
 }
 
@@ -89,6 +95,9 @@ func (c IPv4PolicyRouteController) activeTargetCandidates() map[string]bool {
 		if err != nil || firstNonEmpty(spec.Mode, "") != "priority" {
 			continue
 		}
+		if unsupportedPrioritySelection(spec) {
+			continue
+		}
 		healthy := c.availableDefaultRouteCandidates(spec)
 		candidate, ok := selectDefaultRouteCandidate(healthy)
 		if ok && len(candidate.Targets) > 0 {
@@ -107,10 +116,13 @@ func (c IPv4PolicyRouteController) applyRouteTables(ctx context.Context, aliases
 		c.applyRouteTarget(ctx, aliases, owner, target.Name, target.EffectiveInterface(), target.EffectiveTable(), target.Priority, target.Mark, target.EffectiveMetric(), "none", "", skipMissing, &failures)
 	}
 	applyCandidate := func(owner string, candidate api.EgressRoutePolicyCandidate) {
+		if candidate.Disabled {
+			return
+		}
 		if !c.shouldInstallPolicyRouteForHealthCheck(candidate.HealthCheck, candidate.Mark) {
 			return
 		}
-		c.applyRouteTarget(ctx, aliases, owner, firstNonEmpty(candidate.Name, candidate.EffectiveInterface()), candidate.EffectiveInterface(), candidate.EffectiveTable(), candidate.Priority, candidate.Mark, candidate.EffectiveMetric(), firstNonEmpty(candidate.GatewaySource, "none"), candidate.Gateway, false, &failures)
+		c.applyRouteTarget(ctx, aliases, owner, firstNonEmpty(candidate.Name, candidate.EffectiveInterface()), c.candidateDevice(candidate), candidate.EffectiveTable(), candidate.Priority, candidate.Mark, candidate.EffectiveMetric(), firstNonEmpty(candidate.GatewaySource, "none"), c.candidateGateway(candidate), false, &failures)
 	}
 	for _, res := range c.Router.Spec.Resources {
 		if res.Kind != "EgressRoutePolicy" {
@@ -121,12 +133,19 @@ func (c IPv4PolicyRouteController) applyRouteTables(ctx context.Context, aliases
 			failures = append(failures, err.Error())
 			continue
 		}
-		switch firstNonEmpty(spec.Mode, "") {
+		mode := firstNonEmpty(spec.Mode, "")
+		switch mode {
 		case "priority", "mark", "hash":
 		default:
 			continue
 		}
+		if mode == "priority" && unsupportedPrioritySelection(spec) {
+			continue
+		}
 		for _, candidate := range spec.Candidates {
+			if candidate.Disabled {
+				continue
+			}
 			if len(candidate.Targets) > 0 {
 				for i, target := range candidate.Targets {
 					if target.Name == "" {
@@ -145,6 +164,9 @@ func (c IPv4PolicyRouteController) applyRouteTables(ctx context.Context, aliases
 	if len(failures) > 0 {
 		return fmt.Errorf("%s", strings.Join(failures, "; "))
 	}
+	if err := c.cleanupLedgerOwnedPolicyRoutes(ctx, aliases); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -153,6 +175,93 @@ func (c IPv4PolicyRouteController) shouldInstallPolicyRouteForHealthCheck(name s
 		return true
 	}
 	return c.healthCheckUsesFwMark(name, mark)
+}
+
+func (c IPv4PolicyRouteController) cleanupLedgerOwnedPolicyRoutes(ctx context.Context, aliases map[string]string) error {
+	if c.DryRun || c.LedgerPath == "" || c.Router == nil {
+		return nil
+	}
+	ledger, err := resource.LoadLedger(c.LedgerPath)
+	if err != nil {
+		return err
+	}
+	desired := map[string]resource.Artifact{}
+	desiredTables := map[int]bool{}
+	for _, artifact := range apply.DesiredOwnedArtifacts(c.Router, aliases) {
+		if artifact.Kind != "linux.ipv4.fwmarkRule" && artifact.Kind != "linux.ipv4.routeTable" {
+			continue
+		}
+		desired[artifact.Identity()] = artifact
+		if table, ok := artifactIPv4Table(artifact); ok {
+			desiredTables[table] = true
+		}
+	}
+	actual, err := c.currentPolicyRouteArtifacts(ctx)
+	if err != nil {
+		return err
+	}
+	var stale []resource.Artifact
+	for _, owned := range ledger.All() {
+		switch owned.Kind {
+		case "linux.ipv4.fwmarkRule", "linux.ipv4.routeTable":
+		default:
+			continue
+		}
+		if _, ok := desired[owned.Identity()]; ok {
+			continue
+		}
+		if observed, ok := actual[owned.Identity()]; ok {
+			stale = append(stale, observed)
+		} else {
+			stale = append(stale, owned)
+		}
+	}
+	sort.SliceStable(stale, func(i, j int) bool {
+		return policyRouteArtifactCleanupOrder(stale[i]) < policyRouteArtifactCleanupOrder(stale[j])
+	})
+	var forgotten []resource.Artifact
+	for _, artifact := range stale {
+		switch artifact.Kind {
+		case "linux.ipv4.fwmarkRule":
+			rule, ok := ipv4FwmarkRuleFromPolicyArtifact(artifact)
+			if !ok {
+				continue
+			}
+			if actual[artifact.Identity()].Kind != "" {
+				if err := c.deleteIPv4FwmarkRule(ctx, rule); err != nil {
+					return err
+				}
+			}
+			forgotten = append(forgotten, artifact)
+		case "linux.ipv4.routeTable":
+			table, ok := artifactIPv4Table(artifact)
+			if !ok {
+				continue
+			}
+			if actual[artifact.Identity()].Kind != "" && !desiredTables[table] {
+				if err := c.flushIPv4RouteTable(ctx, table); err != nil {
+					return err
+				}
+			}
+			forgotten = append(forgotten, artifact)
+		}
+	}
+	if len(forgotten) == 0 {
+		return nil
+	}
+	ledger.Forget(forgotten)
+	return ledger.Save(c.LedgerPath)
+}
+
+func policyRouteArtifactCleanupOrder(artifact resource.Artifact) int {
+	switch artifact.Kind {
+	case "linux.ipv4.fwmarkRule":
+		return 0
+	case "linux.ipv4.routeTable":
+		return 10
+	default:
+		return 100
+	}
 }
 
 func (c IPv4PolicyRouteController) healthCheckUsesFwMark(name string, mark int) bool {
@@ -174,6 +283,9 @@ func (c IPv4PolicyRouteController) healthCheckUsesFwMark(name string, mark int) 
 
 func (c IPv4PolicyRouteController) applyRouteTarget(ctx context.Context, aliases map[string]string, owner, name, outboundInterface string, table, priority, mark, routeMetric int, gatewaySource, gateway string, skipMissing bool, failures *[]string) {
 	ifname := aliases[outboundInterface]
+	if ifname == "" && outboundInterface != "" {
+		ifname = outboundInterface
+	}
 	if ifname == "" {
 		*failures = append(*failures, fmt.Sprintf("%s references missing outbound interface %q", owner, outboundInterface))
 		return
@@ -218,18 +330,6 @@ func (c IPv4PolicyRouteController) applyRouteTarget(ctx context.Context, aliases
 			return
 		}
 	}
-	name = firstNonEmpty(name, outboundInterface)
-	_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", name, map[string]any{
-		"phase":     "Installed",
-		"device":    ifname,
-		"gateway":   gateway,
-		"table":     table,
-		"mark":      fmt.Sprintf("0x%x", mark),
-		"priority":  priority,
-		"metric":    metric,
-		"dryRun":    c.DryRun,
-		"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
-	})
 }
 
 func (c IPv4PolicyRouteController) routeGateway(ctx context.Context, ifname, gatewaySource, gateway string) (string, error) {
@@ -341,6 +441,15 @@ func (c IPv4PolicyRouteController) applyDefaultRoutePolicies(ctx context.Context
 			}
 			continue
 		}
+		if unsupportedPrioritySelection(spec) {
+			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", res.Metadata.Name, map[string]any{
+				"phase":   "Pending",
+				"reason":  egressroute.ReasonUnsupported,
+				"message": fmt.Sprintf("selection %q is reserved but not implemented", firstNonEmpty(spec.Selection, egressroute.SelectionHighestWeightReady)),
+				"dryRun":  c.DryRun,
+			})
+			continue
+		}
 		healthy := c.availableDefaultRouteCandidates(spec)
 		active, ok := selectDefaultRouteCandidate(healthy)
 		if !ok {
@@ -352,14 +461,26 @@ func (c IPv4PolicyRouteController) applyDefaultRoutePolicies(ctx context.Context
 			return err
 		}
 		chunks = append(chunks, data)
-		_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", res.Metadata.Name, map[string]any{
+		status := map[string]any{
 			"phase":             "Applied",
+			"family":            firstNonEmpty(spec.Family, "ipv4"),
 			"selectedCandidate": egressCandidateName(active),
 			"selectedTargets":   len(active.Targets),
 			"selectedInterface": active.EffectiveInterface(),
+			"selectedSource":    active.Source,
+			"selectedWeight":    active.Weight,
 			"dryRun":            c.DryRun,
 			"updatedAt":         time.Now().UTC().Format(time.RFC3339Nano),
-		})
+			"candidates":        priorityStatusCandidates(spec.Candidates, healthy),
+		}
+		if len(active.Targets) == 0 {
+			status["selectedDevice"] = c.candidateDevice(active)
+			status["selectedGateway"] = c.candidateGateway(active)
+			status["selectedGatewaySource"] = firstNonEmpty(active.GatewaySource, "none")
+			status["selectedRouteTable"] = active.EffectiveTable()
+			status["selectedMetric"] = active.EffectiveMetric()
+		}
+		_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", res.Metadata.Name, status)
 	}
 	return c.applyNftTable(ctx, nft, path, "ip", "routerd_default_route", bytes.Join(chunks, []byte("\n")))
 }
@@ -368,6 +489,9 @@ func (c IPv4PolicyRouteController) availableDefaultRouteCandidates(spec api.Egre
 	var out []api.EgressRoutePolicyCandidate
 	aliases := c.aliases()
 	for _, candidate := range spec.Candidates {
+		if candidate.Disabled {
+			continue
+		}
 		if !c.targetHealthy(candidate.HealthCheck) {
 			continue
 		}
@@ -383,11 +507,24 @@ func (c IPv4PolicyRouteController) availableDefaultRouteCandidates(spec api.Egre
 			}
 			continue
 		}
-		if ifname := aliases[candidate.EffectiveInterface()]; ifname != "" && c.linkExists(context.Background(), ifname) {
+		device := c.candidateDevice(candidate)
+		if ifname := firstNonEmpty(aliases[device], device); ifname != "" && c.linkExists(context.Background(), ifname) {
 			out = append(out, candidate)
 		}
 	}
 	return out
+}
+
+func (c IPv4PolicyRouteController) candidateDevice(candidate api.EgressRoutePolicyCandidate) string {
+	if device := resourcequery.Value(c.Store, candidate.DeviceFrom); device != "" {
+		return device
+	}
+	logical := candidate.EffectiveInterface()
+	return firstNonEmpty(c.aliases()[logical], logical)
+}
+
+func (c IPv4PolicyRouteController) candidateGateway(candidate api.EgressRoutePolicyCandidate) string {
+	return firstNonEmpty(resourcequery.Value(c.Store, candidate.GatewayFrom), candidate.Gateway)
 }
 
 func (c IPv4PolicyRouteController) effectivePolicyRouteRouter(activeTargetCandidates map[string]bool) *api.Router {
@@ -410,7 +547,7 @@ func (c IPv4PolicyRouteController) effectivePolicyRouteRouter(activeTargetCandid
 		if mode == "priority" {
 			var candidates []api.EgressRoutePolicyCandidate
 			for _, candidate := range spec.Candidates {
-				if len(candidate.Targets) == 0 || !activeTargetCandidates[egressCandidateKey(res.Metadata.Name, candidate)] {
+				if candidate.Disabled || len(candidate.Targets) == 0 || !activeTargetCandidates[egressCandidateKey(res.Metadata.Name, candidate)] {
 					continue
 				}
 				targets := candidate.Targets[:0]
@@ -435,6 +572,9 @@ func (c IPv4PolicyRouteController) effectivePolicyRouteRouter(activeTargetCandid
 		}
 		var candidates []api.EgressRoutePolicyCandidate
 		for _, candidate := range spec.Candidates {
+			if candidate.Disabled {
+				continue
+			}
 			if !c.targetHealthy(candidate.HealthCheck) {
 				continue
 			}
@@ -574,13 +714,57 @@ func parseDurationDefault(value string, fallback time.Duration) time.Duration {
 	return parsed
 }
 
+func unsupportedPrioritySelection(spec api.EgressRoutePolicySpec) bool {
+	return firstNonEmpty(spec.Selection, egressroute.SelectionHighestWeightReady) != egressroute.SelectionHighestWeightReady
+}
+
 func selectDefaultRouteCandidate(candidates []api.EgressRoutePolicyCandidate) (api.EgressRoutePolicyCandidate, bool) {
 	if len(candidates) == 0 {
 		return api.EgressRoutePolicyCandidate{}, false
 	}
-	ordered := append([]api.EgressRoutePolicyCandidate{}, candidates...)
-	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].Priority < ordered[j].Priority })
-	return ordered[0], true
+	states := make([]egressroute.CandidateState, 0, len(candidates))
+	for i, candidate := range candidates {
+		states = append(states, egressroute.CandidateState{
+			Name:     egressCandidateName(candidate),
+			Ready:    true,
+			Weight:   candidate.Weight,
+			Priority: candidate.Priority,
+			Index:    i,
+		})
+	}
+	selected, ok := egressroute.SelectHighestWeightReady(states)
+	if !ok {
+		return api.EgressRoutePolicyCandidate{}, false
+	}
+	return candidates[selected.Index], true
+}
+
+func priorityStatusCandidates(candidates, readyCandidates []api.EgressRoutePolicyCandidate) []map[string]any {
+	ready := map[string]bool{}
+	for _, candidate := range readyCandidates {
+		ready[egressCandidateName(candidate)] = true
+	}
+	out := make([]map[string]any, 0, len(candidates))
+	for _, candidate := range candidates {
+		item := map[string]any{
+			"name":          egressCandidateName(candidate),
+			"source":        candidate.Source,
+			"gateway":       candidate.Gateway,
+			"gatewaySource": firstNonEmpty(candidate.GatewaySource, "none"),
+			"routeTable":    candidate.EffectiveTable(),
+			"metric":        candidate.EffectiveMetric(),
+			"weight":        candidate.Weight,
+			"priority":      candidate.Priority,
+			"ready":         ready[egressCandidateName(candidate)],
+			"disabled":      candidate.Disabled,
+			"targets":       len(candidate.Targets),
+		}
+		if len(candidate.Targets) == 0 {
+			item["device"] = candidate.EffectiveInterface()
+		}
+		out = append(out, item)
+	}
+	return out
 }
 
 func egressCandidateKey(policy string, candidate api.EgressRoutePolicyCandidate) string {
@@ -652,6 +836,168 @@ func (c IPv4PolicyRouteController) ensureFwmarkRule(ctx context.Context, priorit
 		return fmt.Errorf("ip -4 rule add priority %s fwmark %s table %s: %w: %s", priorityText, markText, tableText, err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+type ipv4PolicyFwmarkRule struct {
+	Priority int
+	Mark     int
+	Table    int
+}
+
+func (c IPv4PolicyRouteController) currentPolicyRouteArtifacts(ctx context.Context) (map[string]resource.Artifact, error) {
+	out := map[string]resource.Artifact{}
+	rules, err := c.commandOutput(ctx, "ip", "-4", "rule", "show")
+	if err != nil {
+		return nil, err
+	}
+	for _, artifact := range parseIPv4PolicyFwmarkRuleArtifacts(string(rules)) {
+		out[artifact.Identity()] = artifact
+	}
+	tables, err := c.commandOutput(ctx, "ip", "-4", "route", "show", "table", "all")
+	if err != nil {
+		return nil, err
+	}
+	for _, artifact := range parseIPv4PolicyRouteTableArtifacts(string(tables)) {
+		out[artifact.Identity()] = artifact
+	}
+	return out, nil
+}
+
+func (c IPv4PolicyRouteController) deleteIPv4FwmarkRule(ctx context.Context, rule ipv4PolicyFwmarkRule) error {
+	out, err := c.commandOutput(ctx, "ip", "-4", "rule", "del", "priority", fmt.Sprintf("%d", rule.Priority), "fwmark", fmt.Sprintf("0x%x", rule.Mark), "table", fmt.Sprintf("%d", rule.Table))
+	if err != nil {
+		return fmt.Errorf("ip -4 rule del priority %d fwmark 0x%x table %d: %w: %s", rule.Priority, rule.Mark, rule.Table, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func (c IPv4PolicyRouteController) flushIPv4RouteTable(ctx context.Context, table int) error {
+	out, err := c.commandOutput(ctx, "ip", "-4", "route", "flush", "table", fmt.Sprintf("%d", table))
+	if err != nil {
+		return fmt.Errorf("ip -4 route flush table %d: %w: %s", table, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func (c IPv4PolicyRouteController) commandOutput(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if c.CommandOutput != nil {
+		return c.CommandOutput(ctx, name, args...)
+	}
+	return exec.CommandContext(ctx, name, args...).CombinedOutput()
+}
+
+func parseIPv4PolicyFwmarkRuleArtifacts(output string) []resource.Artifact {
+	var artifacts []resource.Artifact
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		rule := ipv4PolicyFwmarkRule{}
+		priority, err := strconv.Atoi(strings.TrimSuffix(fields[0], ":"))
+		if err != nil {
+			continue
+		}
+		rule.Priority = priority
+		for i, field := range fields {
+			switch field {
+			case "fwmark":
+				if i+1 >= len(fields) {
+					continue
+				}
+				mark, err := strconv.ParseInt(strings.SplitN(fields[i+1], "/", 2)[0], 0, 64)
+				if err != nil {
+					continue
+				}
+				rule.Mark = int(mark)
+			case "lookup":
+				if i+1 >= len(fields) {
+					continue
+				}
+				table, err := strconv.Atoi(fields[i+1])
+				if err != nil {
+					continue
+				}
+				rule.Table = table
+			}
+		}
+		if rule.Mark != 0 && rule.Table != 0 {
+			artifacts = append(artifacts, ipv4PolicyFwmarkRuleArtifact(rule))
+		}
+	}
+	return artifacts
+}
+
+func parseIPv4PolicyRouteTableArtifacts(output string) []resource.Artifact {
+	seen := map[int]bool{}
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		for i, field := range fields {
+			if field != "table" || i+1 >= len(fields) {
+				continue
+			}
+			table, err := strconv.Atoi(fields[i+1])
+			if err == nil && table != 0 {
+				seen[table] = true
+			}
+		}
+	}
+	var tables []int
+	for table := range seen {
+		tables = append(tables, table)
+	}
+	sort.Ints(tables)
+	artifacts := make([]resource.Artifact, 0, len(tables))
+	for _, table := range tables {
+		artifacts = append(artifacts, ipv4PolicyRouteTableArtifact(table))
+	}
+	return artifacts
+}
+
+func ipv4PolicyFwmarkRuleArtifact(rule ipv4PolicyFwmarkRule) resource.Artifact {
+	return resource.Artifact{
+		Kind: "linux.ipv4.fwmarkRule",
+		Name: fmt.Sprintf("priority=%d,mark=0x%x,table=%d", rule.Priority, rule.Mark, rule.Table),
+		Attributes: map[string]string{
+			"priority": fmt.Sprintf("%d", rule.Priority),
+			"mark":     fmt.Sprintf("0x%x", rule.Mark),
+			"table":    fmt.Sprintf("%d", rule.Table),
+		},
+	}
+}
+
+func ipv4PolicyRouteTableArtifact(table int) resource.Artifact {
+	return resource.Artifact{
+		Kind: "linux.ipv4.routeTable",
+		Name: fmt.Sprintf("table=%d", table),
+		Attributes: map[string]string{
+			"table": fmt.Sprintf("%d", table),
+		},
+	}
+}
+
+func ipv4FwmarkRuleFromPolicyArtifact(artifact resource.Artifact) (ipv4PolicyFwmarkRule, bool) {
+	priority, err := strconv.Atoi(artifact.Attributes["priority"])
+	if err != nil {
+		return ipv4PolicyFwmarkRule{}, false
+	}
+	mark, err := strconv.ParseInt(artifact.Attributes["mark"], 0, 64)
+	if err != nil {
+		return ipv4PolicyFwmarkRule{}, false
+	}
+	table, err := strconv.Atoi(artifact.Attributes["table"])
+	if err != nil {
+		return ipv4PolicyFwmarkRule{}, false
+	}
+	return ipv4PolicyFwmarkRule{Priority: priority, Mark: int(mark), Table: table}, true
+}
+
+func artifactIPv4Table(artifact resource.Artifact) (int, bool) {
+	if artifact.Attributes == nil {
+		return 0, false
+	}
+	table, err := strconv.Atoi(artifact.Attributes["table"])
+	return table, err == nil
 }
 
 func (c IPv4PolicyRouteController) linkExists(ctx context.Context, ifname string) bool {

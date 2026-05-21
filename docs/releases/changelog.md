@@ -10,6 +10,14 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- Fixed `EgressRoutePolicy` `mode: priority` so it honors
+  `selection: highest-weight-ready`, candidate `weight`, and
+  `disabled: true`, reports selected route details consistently, and removes
+  stale ledger-owned policy-route rules and route tables after candidates are
+  removed.
+
 ## v20260521.0918
 
 ### Fixed

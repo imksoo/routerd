@@ -10,6 +10,13 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 
 ## Unreleased
 
+### 修正
+
+- `EgressRoutePolicy` の `mode: priority` が `selection: highest-weight-ready`、
+  candidate の `weight`、`disabled: true` を正しく反映するようにしました。
+  選択された経路の status も一貫して出し、candidate 削除後に残る
+  ledger-owned な policy-route rule と route table を削除します。
+
 ## v20260521.0918
 
 ### 修正

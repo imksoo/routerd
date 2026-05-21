@@ -15,6 +15,13 @@ egress-route selector が selection-only の status と
 state の owner になります。依存 controller は legacy route-changed event ではなく
 `routerd.resource.status.changed` を見て追従します。
 
+`mode: priority` でも `selection: highest-weight-ready` を使います。
+準備完了した候補のうち weight が最も高いものを選び、`priority` は同点時の
+tie-break と policy-route rule priority として扱います。`priority` は selection
+policy の代替ではありません。`weighted-ecmp` は実装されるまで予約値であり、
+黙って無視せず `UnsupportedSelection` として報告します。`disabled: true` の候補は
+選択対象から外れ、生成される policy-route rule/table の ownership からも外れます。
+
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
 kind: EgressRoutePolicy
@@ -59,6 +66,8 @@ IPv6 では `::/0` を使います。
 - `status.selectedCandidate`
 - `status.selectedDevice`
 - `status.selectedGateway`
+- `status.selectedWeight`
+- `status.selectedTargets`
 - `status.destinationCIDRs`
 
 起動直後は、まず準備完了の候補を選びます。

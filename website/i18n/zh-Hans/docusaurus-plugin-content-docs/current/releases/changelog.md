@@ -10,6 +10,13 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期和时间型版本号。
 
 ## Unreleased
 
+### 修正
+
+- 修复 `EgressRoutePolicy` 的 `mode: priority`，使其正确遵守
+  `selection: highest-weight-ready`、候选项 `weight` 和 `disabled: true`。
+  现在会一致地报告所选路由状态，并在候选项移除后清理 ledger-owned 的
+  policy-route rule 和 route table。
+
 ## v20260521.0918
 
 ### 修正

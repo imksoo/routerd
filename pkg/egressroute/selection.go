@@ -56,6 +56,7 @@ type CandidateState struct {
 	Ready         bool
 	Disabled      bool
 	Weight        int
+	Priority      int
 	Index         int
 }
 
@@ -135,7 +136,7 @@ func (c Controller) reconcilePolicy(ctx context.Context, resource api.Resource, 
 		return c.Store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", resource.Metadata.Name, status)
 	}
 	candidates := c.candidateStates(spec)
-	selected, ok := selectHighestWeightReady(candidates)
+	selected, ok := SelectHighestWeightReady(candidates)
 	if !ok {
 		status := map[string]any{"phase": PhasePending, "reason": ReasonNoReadyCandidates, "candidates": statusCandidates(candidates)}
 		return c.Store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", resource.Metadata.Name, status)
@@ -263,6 +264,7 @@ func (c Controller) candidateStates(spec api.EgressRoutePolicySpec) []CandidateS
 			Ready:         !disabled && c.ready(candidate),
 			Disabled:      disabled,
 			Weight:        candidate.Weight,
+			Priority:      candidate.Priority,
 			Index:         i,
 		})
 	}
@@ -406,7 +408,7 @@ func (c Controller) hasResolvedOutput(candidate api.EgressRoutePolicyCandidate) 
 	return true
 }
 
-func selectHighestWeightReady(candidates []CandidateState) (CandidateState, bool) {
+func SelectHighestWeightReady(candidates []CandidateState) (CandidateState, bool) {
 	ready := make([]CandidateState, 0, len(candidates))
 	for _, candidate := range candidates {
 		if candidate.Ready {
@@ -419,6 +421,9 @@ func selectHighestWeightReady(candidates []CandidateState) (CandidateState, bool
 	sort.SliceStable(ready, func(i, j int) bool {
 		if ready[i].Weight != ready[j].Weight {
 			return ready[i].Weight > ready[j].Weight
+		}
+		if ready[i].Priority != ready[j].Priority {
+			return ready[i].Priority < ready[j].Priority
 		}
 		if ready[i].Name != ready[j].Name {
 			return ready[i].Name < ready[j].Name

@@ -422,7 +422,9 @@ spec:
 `HealthCheck.spec.disabled` renders the daemon unit but disables and stops it.
 `EgressRoutePolicy` candidates also accept `disabled: true`; disabled
 candidates are not selected even if their last observed health status is still
-Healthy.
+Healthy. In `mode: priority`, candidate `weight` remains the first selection
+key, `priority` is the tie-breaker and policy-rule priority, and stale
+ledger-owned policy-route rules/tables are removed when candidates are removed.
 
 ## `spec.when`
 

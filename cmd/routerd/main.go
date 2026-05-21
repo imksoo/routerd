@@ -2849,14 +2849,18 @@ func cleanupLedgerOwnedOrphansMatching(router *api.Router, ledgerPath string, ma
 
 func cleanupArtifactPriority(artifact resource.Artifact) int {
 	switch artifact.Kind {
-	case "systemd.service":
+	case "linux.ipv4.fwmarkRule":
 		return 0
-	case "file":
+	case "linux.ipv4.routeTable":
+		return 5
+	case "systemd.service":
 		return 10
-	case "unix.socket":
+	case "file":
 		return 20
-	case "directory":
+	case "unix.socket":
 		return 30
+	case "directory":
+		return 40
 	default:
 		return 50
 	}
@@ -2878,6 +2882,24 @@ func cleanupLedgerOwnedArtifact(artifact resource.Artifact) (string, error) {
 			return artifact.Kind + "/" + artifact.Name, nil
 		}
 		return "", nil
+	case "linux.ipv4.fwmarkRule":
+		rule, ok := ipv4FwmarkRuleFromArtifact(artifact)
+		if !ok {
+			return "", nil
+		}
+		if err := deleteIPv4FwmarkRule(rule); err != nil {
+			return "", err
+		}
+		return artifact.Kind + "/" + artifact.Name, nil
+	case "linux.ipv4.routeTable":
+		table, err := strconv.Atoi(artifact.Attributes["table"])
+		if err != nil || table == 0 {
+			return "", nil
+		}
+		if err := flushIPv4RouteTable(table); err != nil {
+			return "", err
+		}
+		return artifact.Kind + "/" + artifact.Name, nil
 	case "nft.table":
 		family := artifact.Attributes["family"]
 		name := artifact.Attributes["name"]
@@ -3502,6 +3524,7 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 			DnsmasqListen:          []string{"127.0.0.1"},
 			NftablesPath:           "/run/routerd/nat44.nft",
 			FirewallPath:           "/run/routerd/firewall.nft",
+			LedgerPath:             *ledgerPath,
 			NftCommand:             "nft",
 			ConntrackInterval:      30 * time.Second,
 			ControllerObserver:     controllerRuntime,

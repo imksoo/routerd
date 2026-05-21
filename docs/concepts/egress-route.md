@@ -14,6 +14,13 @@ or `hash`, the policy-route controller owns the applied routing/NAT mark state
 and dependent controllers follow `routerd.resource.status.changed` instead of
 the legacy route-changed event.
 
+`mode: priority` still uses `selection: highest-weight-ready`. The highest
+weight ready candidate wins; `priority` is the tie-breaker and the policy-route
+rule priority, not a replacement for the selection policy. `weighted-ecmp` is
+reserved until implemented and is reported as `UnsupportedSelection` rather
+than being silently ignored. `disabled: true` removes the candidate from
+selection and from generated policy-route rule/table ownership.
+
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
 kind: EgressRoutePolicy
@@ -58,6 +65,8 @@ The selected values are exposed as:
 - `status.selectedCandidate`
 - `status.selectedDevice`
 - `status.selectedGateway`
+- `status.selectedWeight`
+- `status.selectedTargets`
 - `status.destinationCIDRs`
 
 At startup, the policy chooses the first ready candidate instead of waiting for

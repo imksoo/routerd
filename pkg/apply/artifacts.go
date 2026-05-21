@@ -533,7 +533,13 @@ func egressRoutePolicyArtifacts(res api.Resource, aliases map[string]string) []r
 			ApplyWith: "nft",
 		})
 	}
+	if mode == "priority" && defaultString(spec.Selection, "highest-weight-ready") != "highest-weight-ready" {
+		return intents
+	}
 	for _, candidate := range spec.Candidates {
+		if candidate.Disabled {
+			continue
+		}
 		if len(candidate.Targets) > 0 {
 			for i, target := range candidate.Targets {
 				if target.Name == "" {

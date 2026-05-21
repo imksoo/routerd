@@ -152,7 +152,7 @@ func (e *Engine) LedgerOwnedOrphans(router *api.Router, ledger resource.Ledger) 
 
 func cleanupEligibleLedgerOrphan(artifact resource.Artifact) bool {
 	switch artifact.Kind {
-	case "linux.ipip6.tunnel", "systemd.service":
+	case "linux.ipip6.tunnel", "linux.ipv4.fwmarkRule", "linux.ipv4.routeTable", "systemd.service":
 		return true
 	case "file":
 		return isPPPoEPeerFileArtifact(artifact)
@@ -192,6 +192,10 @@ func orphanedArtifactFromLedger(artifact resource.Artifact) OrphanedArtifact {
 		orphan.Remediation = "delete directory " + artifact.Name
 	case "net.ipv4.address":
 		orphan.Remediation = "remove IPv4 address " + artifact.Name
+	case "linux.ipv4.fwmarkRule":
+		orphan.Remediation = "delete ip rule " + artifact.Name
+	case "linux.ipv4.routeTable":
+		orphan.Remediation = "flush ip route table " + artifact.Attributes["table"]
 	}
 	return orphan
 }
@@ -629,7 +633,13 @@ func desiredIPv4FwmarkRuleArtifacts(router *api.Router) []resource.Artifact {
 			if err != nil {
 				continue
 			}
+			if defaultString(spec.Mode, "") == "priority" && defaultString(spec.Selection, "highest-weight-ready") != "highest-weight-ready" {
+				continue
+			}
 			for _, candidate := range spec.Candidates {
+				if candidate.Disabled {
+					continue
+				}
 				if len(candidate.Targets) > 0 {
 					for _, target := range candidate.Targets {
 						add(res.ID(), target.Priority, target.Mark, target.EffectiveTable())

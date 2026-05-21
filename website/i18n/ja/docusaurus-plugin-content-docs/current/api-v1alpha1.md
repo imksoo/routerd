@@ -383,6 +383,9 @@ DS-Lite、IPv4 既定経路、NAT44 は実 lab で動作確認済みです。
 `HealthCheck.spec.disabled` を `true` にすると、daemon ユニットは生成しますが停止・無効化します。
 `EgressRoutePolicy` の候補にも `disabled: true` を指定できます。
 無効化した候補は、最後の観測状態が Healthy のままでも選択されません。
+`mode: priority` でも candidate の `weight` が選択の第一キーで、`priority` は
+tie-break と policy-rule priority です。candidate を削除すると、ledger-owned な
+policy-route rule/table も削除されます。
 
 ## `spec.when`
 

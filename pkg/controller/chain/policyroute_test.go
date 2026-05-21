@@ -14,6 +14,7 @@ import (
 	"routerd/pkg/bus"
 	"routerd/pkg/daemonapi"
 	"routerd/pkg/render"
+	"routerd/pkg/resource"
 )
 
 func TestEgressRoutePolicyFiltersUnhealthyTargets(t *testing.T) {
@@ -121,9 +122,8 @@ func TestIPv4PolicyRouteInstallsFwmarkBootstrapRouteForHealthCheck(t *testing.T)
 	if err := controller.applyRouteTables(t.Context(), map[string]string{"wan": "lo"}); err != nil {
 		t.Fatal(err)
 	}
-	status := store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "hgw")
-	if status["phase"] != "Installed" || status["mark"] != "0x116" {
-		t.Fatalf("bootstrap route status = %#v", status)
+	if status := store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "hgw"); len(status) != 0 {
+		t.Fatalf("route target should not create phantom EgressRoutePolicy status: %#v", status)
 	}
 
 	router.Spec.Resources[0].Spec = api.HealthCheckSpec{Target: "1.1.1.1", Disabled: true}
@@ -250,6 +250,184 @@ func TestIPv4PolicyRouteOwnsPriorityPolicyWithoutChurn(t *testing.T) {
 	case event := <-routeCh:
 		t.Fatalf("priority policy should not publish legacy route changed event: %#v", event)
 	case <-time.After(40 * time.Millisecond):
+	}
+}
+
+func TestIPv4PolicyRoutePrioritySelectionUsesWeightThenPriority(t *testing.T) {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	store := mapStore{
+		api.NetAPIVersion + "/HealthCheck/primary":  {"phase": "Healthy", "lastCheckedAt": now},
+		api.NetAPIVersion + "/HealthCheck/fallback": {"phase": "Healthy", "lastCheckedAt": now},
+		api.NetAPIVersion + "/Interface/wan-b":      {"phase": "Up", "ifname": "lo"},
+	}
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan-a"}, Spec: api.InterfaceSpec{IfName: "lo"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan-b"}, Spec: api.InterfaceSpec{IfName: "lo"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "ipv4-default"}, Spec: api.EgressRoutePolicySpec{
+			Mode:      "priority",
+			Selection: "highest-weight-ready",
+			Candidates: []api.EgressRoutePolicyCandidate{
+				{Name: "primary", Interface: "wan-a", Priority: 10, Mark: 0x110, Table: 110, Weight: 100, HealthCheck: "primary"},
+				{Name: "fallback", DeviceFrom: api.StatusValueSourceSpec{Resource: "Interface/wan-b", Field: "ifname"}, Priority: 20, Mark: 0x111, Table: 111, Weight: 200, HealthCheck: "fallback", GatewaySource: "static", Gateway: "192.0.2.1"},
+			},
+		}},
+	}}}
+	controller := IPv4PolicyRouteController{Router: router, Store: store, DryRun: true}
+	if err := controller.applyDefaultRoutePolicies(t.Context(), "nft", filepath.Join(t.TempDir(), "default.nft")); err != nil {
+		t.Fatal(err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "ipv4-default")
+	if status["selectedCandidate"] != "fallback" || status["selectedDevice"] != "lo" || status["selectedGateway"] != "192.0.2.1" || status["selectedWeight"] != 200 {
+		t.Fatalf("status = %#v", status)
+	}
+}
+
+func TestIPv4PolicyRoutePrioritySelectionSkipsDisabled(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan-a"}, Spec: api.InterfaceSpec{IfName: "lo"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan-b"}, Spec: api.InterfaceSpec{IfName: "lo"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "ipv4-default"}, Spec: api.EgressRoutePolicySpec{
+			Mode: "priority",
+			Candidates: []api.EgressRoutePolicyCandidate{
+				{Name: "disabled", Interface: "wan-a", Priority: 10, Mark: 0x110, Table: 110, Weight: 300, Disabled: true},
+				{Name: "enabled", Interface: "wan-b", Priority: 20, Mark: 0x111, Table: 111, Weight: 100},
+			},
+		}},
+	}}}
+	store := mapStore{}
+	controller := IPv4PolicyRouteController{Router: router, Store: store, DryRun: true}
+	if err := controller.applyDefaultRoutePolicies(t.Context(), "nft", filepath.Join(t.TempDir(), "default.nft")); err != nil {
+		t.Fatal(err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "ipv4-default")
+	if status["selectedCandidate"] != "enabled" {
+		t.Fatalf("status = %#v", status)
+	}
+}
+
+func TestIPv4PolicyRoutePriorityReportsUnsupportedSelection(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "ipv4-default"}, Spec: api.EgressRoutePolicySpec{
+			Mode:      "priority",
+			Selection: "weighted-ecmp",
+			Candidates: []api.EgressRoutePolicyCandidate{{
+				Name: "wan", Weight: 1,
+			}},
+		}},
+	}}}
+	store := mapStore{}
+	controller := IPv4PolicyRouteController{Router: router, Store: store, DryRun: true}
+	if err := controller.applyDefaultRoutePolicies(t.Context(), "nft", filepath.Join(t.TempDir(), "default.nft")); err != nil {
+		t.Fatal(err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "ipv4-default")
+	if status["phase"] != "Pending" || status["reason"] != "UnsupportedSelection" {
+		t.Fatalf("status = %#v", status)
+	}
+}
+
+func TestIPv4PolicyRouteCleansOnlyLedgerOwnedStaleRulesAndTables(t *testing.T) {
+	dir := t.TempDir()
+	ledgerPath := filepath.Join(dir, "artifacts.json")
+	ledger := resource.NewLedger()
+	ledger.Remember([]resource.Artifact{
+		{
+			Kind:  "linux.ipv4.fwmarkRule",
+			Name:  "priority=10110,mark=0x110,table=110",
+			Owner: api.NetAPIVersion + "/EgressRoutePolicy/ipv4-default",
+			Attributes: map[string]string{
+				"priority": "10110",
+				"mark":     "0x110",
+				"table":    "110",
+			},
+		},
+		{
+			Kind:       "linux.ipv4.routeTable",
+			Name:       "table=110",
+			Owner:      api.NetAPIVersion + "/EgressRoutePolicy/ipv4-default",
+			Attributes: map[string]string{"table": "110"},
+		},
+		{
+			Kind:  "linux.ipv4.fwmarkRule",
+			Name:  "priority=10111,mark=0x111,table=111",
+			Owner: api.NetAPIVersion + "/EgressRoutePolicy/ipv4-default",
+			Attributes: map[string]string{
+				"priority": "10111",
+				"mark":     "0x111",
+				"table":    "111",
+			},
+		},
+		{
+			Kind:       "linux.ipv4.routeTable",
+			Name:       "table=111",
+			Owner:      api.NetAPIVersion + "/EgressRoutePolicy/ipv4-default",
+			Attributes: map[string]string{"table": "111"},
+		},
+	})
+	if err := ledger.Save(ledgerPath); err != nil {
+		t.Fatal(err)
+	}
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan-b"}, Spec: api.InterfaceSpec{IfName: "lo"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "ipv4-default"}, Spec: api.EgressRoutePolicySpec{
+			Mode: "priority",
+			Candidates: []api.EgressRoutePolicyCandidate{{
+				Name: "dslite",
+				Targets: []api.EgressRoutePolicyTarget{{
+					Name: "ds-lite-b", Interface: "wan-b", Priority: 10111, Mark: 0x111, Table: 111,
+				}},
+			}},
+		}},
+	}}}
+	var commands []string
+	controller := IPv4PolicyRouteController{
+		Router:     router,
+		Store:      mapStore{},
+		LedgerPath: ledgerPath,
+		CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			command := name + " " + strings.Join(args, " ")
+			commands = append(commands, command)
+			switch command {
+			case "ip -4 rule show":
+				return []byte("10110: from all fwmark 0x110 lookup 110\n10111: from all fwmark 0x111 lookup 111\n100: from all fwmark 0x999 lookup 999\n"), nil
+			case "ip -4 route show table all":
+				return []byte("default dev old table 110\ndefault dev lo table 111\ndefault dev manual table 999\n"), nil
+			default:
+				return []byte(""), nil
+			}
+		},
+	}
+	if err := controller.cleanupLedgerOwnedPolicyRoutes(t.Context(), map[string]string{"wan-b": "lo"}); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(commands, "\n")
+	for _, want := range []string{
+		"ip -4 rule del priority 10110 fwmark 0x110 table 110",
+		"ip -4 route flush table 110",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("commands =\n%s\nwant %s", joined, want)
+		}
+	}
+	for _, notWant := range []string{
+		"priority 10111",
+		"table 111",
+		"0x999",
+		"table 999",
+	} {
+		if strings.Contains(joined, notWant) {
+			t.Fatalf("commands =\n%s\nshould not contain %s", joined, notWant)
+		}
+	}
+	loaded, err := resource.LoadLedger(ledgerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Owns(resource.Artifact{Kind: "linux.ipv4.fwmarkRule", Name: "priority=10110,mark=0x110,table=110"}) {
+		t.Fatalf("stale rule remained in ledger: %+v", loaded.All())
+	}
+	if !loaded.Owns(resource.Artifact{Kind: "linux.ipv4.fwmarkRule", Name: "priority=10111,mark=0x111,table=111"}) {
+		t.Fatalf("desired rule missing from ledger: %+v", loaded.All())
 	}
 }
 
