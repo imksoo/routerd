@@ -205,6 +205,15 @@ func (s *remoteGoBGPServer) SetPolicies(ctx context.Context, req *gobgpapi.SetPo
 	return err
 }
 
+func (s *remoteGoBGPServer) SetPolicyAssignment(ctx context.Context, req *gobgpapi.SetPolicyAssignmentRequest) error {
+	client, err := s.api(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = client.SetPolicyAssignment(ctx, req)
+	return err
+}
+
 func (s *remoteGoBGPServer) AddPath(ctx context.Context, req *gobgpapi.AddPathRequest) (*gobgpapi.AddPathResponse, error) {
 	client, err := s.api(ctx)
 	if err != nil {

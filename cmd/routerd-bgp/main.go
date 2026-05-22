@@ -160,8 +160,19 @@ func restoreApplied(ctx context.Context, server *gobgpserver.BgpServer, statePat
 	if err := server.StartBgp(ctx, &gobgpapi.StartBgpRequest{Global: appliedGlobal(applied.Global)}); err != nil {
 		return fmt.Errorf("restore BGP global: %w", err)
 	}
-	if err := server.SetPolicies(ctx, appliedPolicies(applied)); err != nil {
+	policies, assignment := appliedPolicies(applied)
+	if len(assignment.GetPolicies()) == 0 {
+		if err := server.SetPolicyAssignment(ctx, &gobgpapi.SetPolicyAssignmentRequest{Assignment: assignment}); err != nil {
+			return fmt.Errorf("restore BGP import policy assignment: %w", err)
+		}
+	}
+	if err := server.SetPolicies(ctx, policies); err != nil {
 		return fmt.Errorf("restore BGP import policy: %w", err)
+	}
+	if len(assignment.GetPolicies()) > 0 {
+		if err := server.SetPolicyAssignment(ctx, &gobgpapi.SetPolicyAssignmentRequest{Assignment: assignment}); err != nil {
+			return fmt.Errorf("restore BGP import policy assignment: %w", err)
+		}
 	}
 	for _, peer := range sortedPeers(applied.Peers) {
 		if err := server.AddPeer(ctx, &gobgpapi.AddPeerRequest{Peer: appliedPeer(peer, applied.Global.ImportPolicy)}); err != nil {
@@ -206,7 +217,7 @@ func appliedGlobal(global bgpdaemon.AppliedGlobal) *gobgpapi.Global {
 	return out
 }
 
-func appliedPeer(peer bgpdaemon.AppliedPeer, globalImport bgpdaemon.AppliedImportPolicy) *gobgpapi.Peer {
+func appliedPeer(peer bgpdaemon.AppliedPeer, _ bgpdaemon.AppliedImportPolicy) *gobgpapi.Peer {
 	out := &gobgpapi.Peer{
 		Conf: &gobgpapi.PeerConf{
 			NeighborAddress: peer.Address,
@@ -220,24 +231,6 @@ func appliedPeer(peer bgpdaemon.AppliedPeer, globalImport bgpdaemon.AppliedImpor
 			afiSafi(ipv4Family()),
 			afiSafi(ipv6Family()),
 		},
-	}
-	policyName := strings.TrimSpace(peer.ImportPolicyName)
-	if policyName == "" {
-		policyName = "routerd-restore-import"
-	}
-	importPolicy := peer.ImportPolicy
-	if len(importPolicy.AllowedPrefixes) == 0 {
-		importPolicy = globalImport
-	}
-	out.ApplyPolicy = &gobgpapi.ApplyPolicy{
-		ImportPolicy: &gobgpapi.PolicyAssignment{
-			Name:          policyName,
-			Direction:     gobgpapi.PolicyDirection_IMPORT,
-			DefaultAction: gobgpapi.RouteAction_REJECT,
-		},
-	}
-	if len(appliedPolicyPrefixes(importPolicy)) > 0 {
-		out.ApplyPolicy.ImportPolicy.Policies = []*gobgpapi.Policy{{Name: policyName}}
 	}
 	if gr := peer.GracefulRestart; gr != nil && gr.Enabled {
 		out.GracefulRestart = &gobgpapi.GracefulRestart{Enabled: true, RestartTime: gr.RestartTime, StaleRoutesTime: gr.StaleRoutesTime}
@@ -266,8 +259,13 @@ func afiSafi(family *gobgpapi.Family) *gobgpapi.AfiSafi {
 	}
 }
 
-func appliedPolicies(config bgpdaemon.AppliedConfig) *gobgpapi.SetPoliciesRequest {
+func appliedPolicies(config bgpdaemon.AppliedConfig) (*gobgpapi.SetPoliciesRequest, *gobgpapi.PolicyAssignment) {
 	req := &gobgpapi.SetPoliciesRequest{}
+	assignment := &gobgpapi.PolicyAssignment{
+		Name:          "global",
+		Direction:     gobgpapi.PolicyDirection_IMPORT,
+		DefaultAction: gobgpapi.RouteAction_REJECT,
+	}
 	for _, policy := range appliedImportPolicies(config) {
 		prefixes := appliedPolicyPrefixes(policy.Spec)
 		if len(prefixes) == 0 {
@@ -294,7 +292,12 @@ func appliedPolicies(config bgpdaemon.AppliedConfig) *gobgpapi.SetPoliciesReques
 			}},
 		})
 	}
-	return req
+	if len(req.GetPolicies()) > 0 {
+		for _, policy := range req.GetPolicies() {
+			assignment.Policies = append(assignment.Policies, &gobgpapi.Policy{Name: policy.GetName()})
+		}
+	}
+	return req, assignment
 }
 
 type appliedImportPolicy struct {

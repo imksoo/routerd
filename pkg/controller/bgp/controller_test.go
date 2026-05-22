@@ -50,6 +50,7 @@ type fakeServer struct {
 	applied bgpdaemon.AppliedConfig
 
 	policyRequest     *gobgpapi.SetPoliciesRequest
+	policyAssignment  *gobgpapi.PolicyAssignment
 	thirdPartyNextHop string
 }
 
@@ -150,6 +151,11 @@ func (s *fakeServer) SetPolicies(_ context.Context, req *gobgpapi.SetPoliciesReq
 	return nil
 }
 
+func (s *fakeServer) SetPolicyAssignment(_ context.Context, req *gobgpapi.SetPolicyAssignmentRequest) error {
+	s.policyAssignment = req.GetAssignment()
+	return nil
+}
+
 func (s *fakeServer) AddPath(_ context.Context, req *gobgpapi.AddPathRequest) (*gobgpapi.AddPathResponse, error) {
 	s.paths++
 	uuid := []byte{byte(s.paths)}
@@ -180,7 +186,17 @@ func (s *fakeServer) ListPath(_ context.Context, _ *gobgpapi.ListPathRequest, fn
 }
 
 func (s *fakeServer) importPolicyRewritesPeerAddress() bool {
+	if s.policyAssignment.GetName() != "global" || s.policyAssignment.GetDirection() != gobgpapi.PolicyDirection_IMPORT {
+		return false
+	}
+	assigned := map[string]bool{}
+	for _, policy := range s.policyAssignment.GetPolicies() {
+		assigned[policy.GetName()] = true
+	}
 	for _, policy := range s.policyRequest.GetPolicies() {
+		if !assigned[policy.GetName()] {
+			continue
+		}
 		for _, statement := range policy.GetStatements() {
 			if statement.GetActions().GetNexthop().GetPeerAddress() {
 				return true
@@ -246,9 +262,12 @@ func TestReconcileStartsGoBGPAndDoesNotReaddUnchangedPeer(t *testing.T) {
 	if got := peer.GetAfiSafis()[0].GetUseMultiplePaths().GetEbgp().GetConfig().GetMaximumPaths(); got < 4 {
 		t.Fatalf("peer eBGP maximum paths = %d, want >= 4", got)
 	}
-	importPolicy := peer.GetApplyPolicy().GetImportPolicy()
-	if importPolicy.GetDefaultAction() != gobgpapi.RouteAction_REJECT || len(importPolicy.GetPolicies()) != 1 {
-		t.Fatalf("peer import policy = %#v, want default reject plus routerd policy", importPolicy)
+	if applyPolicy := peer.GetApplyPolicy(); applyPolicy != nil && applyPolicy.GetImportPolicy() != nil {
+		t.Fatalf("peer import policy = %#v, want global import policy assignment only", applyPolicy.GetImportPolicy())
+	}
+	if server.policyAssignment.GetName() != "global" || server.policyAssignment.GetDirection() != gobgpapi.PolicyDirection_IMPORT ||
+		server.policyAssignment.GetDefaultAction() != gobgpapi.RouteAction_REJECT || len(server.policyAssignment.GetPolicies()) != 1 {
+		t.Fatalf("global import policy assignment = %#v, want default reject plus routerd policy", server.policyAssignment)
 	}
 	status := controller.Store.ObjectStatus(api.NetAPIVersion, "BGPRouter", "lan")
 	if status["backend"] != "gobgp" || status["phase"] != "Established" {

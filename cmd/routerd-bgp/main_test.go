@@ -19,7 +19,7 @@ func TestAppliedPoliciesRestorePeerImportPolicyWithoutGlobalPolicy(t *testing.T)
 			NextHopRewrite:  "peer-address",
 		},
 	}
-	req := appliedPolicies(bgpdaemon.AppliedConfig{
+	req, assignment := appliedPolicies(bgpdaemon.AppliedConfig{
 		Peers: map[string]bgpdaemon.AppliedPeer{
 			"192.168.1.38": peer,
 		},
@@ -35,9 +35,13 @@ func TestAppliedPoliciesRestorePeerImportPolicyWithoutGlobalPolicy(t *testing.T)
 	if !action.GetPeerAddress() {
 		t.Fatalf("next-hop action = %#v, want peer-address rewrite", action)
 	}
+	if assignment.GetName() != "global" || assignment.GetDirection() != gobgpapi.PolicyDirection_IMPORT ||
+		assignment.GetDefaultAction() != gobgpapi.RouteAction_REJECT || len(assignment.GetPolicies()) != 1 ||
+		assignment.GetPolicies()[0].GetName() != "routerd-lan-import" {
+		t.Fatalf("global import policy assignment = %#v, want restored policy assigned to global import", assignment)
+	}
 	restoredPeer := appliedPeer(peer, bgpdaemon.AppliedImportPolicy{})
-	assignment := restoredPeer.GetApplyPolicy().GetImportPolicy()
-	if assignment.GetDefaultAction() != gobgpapi.RouteAction_REJECT || len(assignment.GetPolicies()) != 1 || assignment.GetPolicies()[0].GetName() != "routerd-lan-import" {
-		t.Fatalf("restored peer import policy = %#v, want default reject and peer policy assignment", assignment)
+	if applyPolicy := restoredPeer.GetApplyPolicy(); applyPolicy != nil && applyPolicy.GetImportPolicy() != nil {
+		t.Fatalf("restored peer import policy = %#v, want no per-neighbor import policy for normal eBGP", applyPolicy.GetImportPolicy())
 	}
 }

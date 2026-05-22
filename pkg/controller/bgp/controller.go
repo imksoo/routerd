@@ -46,6 +46,7 @@ type GoBGPServer interface {
 	DeletePeer(context.Context, *gobgpapi.DeletePeerRequest) error
 	ListPeer(context.Context, *gobgpapi.ListPeerRequest, func(*gobgpapi.Peer)) error
 	SetPolicies(context.Context, *gobgpapi.SetPoliciesRequest) error
+	SetPolicyAssignment(context.Context, *gobgpapi.SetPolicyAssignmentRequest) error
 	AddPath(context.Context, *gobgpapi.AddPathRequest) (*gobgpapi.AddPathResponse, error)
 	DeletePath(context.Context, *gobgpapi.DeletePathRequest) error
 	ListPath(context.Context, *gobgpapi.ListPathRequest, func(*gobgpapi.Destination)) error
@@ -366,6 +367,13 @@ func (c *Controller) applyImportPolicy(ctx context.Context, routerName string, s
 	name := bgpPolicyName(routerName, "import")
 	req := &gobgpapi.SetPoliciesRequest{}
 	prefixes := importPolicyPrefixes(spec)
+	assignment := globalImportPolicyAssignment(name, len(prefixes) > 0)
+	if len(prefixes) == 0 {
+		if err := c.Server.SetPolicyAssignment(ctx, &gobgpapi.SetPolicyAssignmentRequest{Assignment: assignment}); err != nil {
+			return err
+		}
+		return c.Server.SetPolicies(ctx, req)
+	}
 	if len(prefixes) > 0 {
 		prefixSetName := bgpPolicyName(routerName, "import-prefixes")
 		req.DefinedSets = append(req.DefinedSets, &gobgpapi.DefinedSet{
@@ -388,7 +396,10 @@ func (c *Controller) applyImportPolicy(ctx context.Context, routerName string, s
 			}},
 		})
 	}
-	return c.Server.SetPolicies(ctx, req)
+	if err := c.Server.SetPolicies(ctx, req); err != nil {
+		return err
+	}
+	return c.Server.SetPolicyAssignment(ctx, &gobgpapi.SetPolicyAssignmentRequest{Assignment: assignment})
 }
 
 func (c *Controller) softResetImportPolicy(ctx context.Context, desired map[string]desiredPeer) error {
@@ -853,16 +864,6 @@ func goBGPPeer(peer desiredPeer) *gobgpapi.Peer {
 			goBGPAFISAFI(ipv6Family()),
 		},
 	}
-	out.ApplyPolicy = &gobgpapi.ApplyPolicy{
-		ImportPolicy: &gobgpapi.PolicyAssignment{
-			Name:          peer.ImportPolicyName,
-			Direction:     gobgpapi.PolicyDirection_IMPORT,
-			DefaultAction: gobgpapi.RouteAction_REJECT,
-		},
-	}
-	if len(importPolicyPrefixes(peer.ImportPolicy)) > 0 {
-		out.ApplyPolicy.ImportPolicy.Policies = []*gobgpapi.Policy{{Name: peer.ImportPolicyName}}
-	}
 	if gr := gobgpPeerGracefulRestart(peer); gr != nil {
 		out.GracefulRestart = gr
 	}
@@ -1303,6 +1304,18 @@ func nextHopRewriteAction(spec routerapi.BGPImportPolicySpec) *gobgpapi.NexthopA
 		return &gobgpapi.NexthopAction{Unchanged: true}
 	}
 	return &gobgpapi.NexthopAction{PeerAddress: true}
+}
+
+func globalImportPolicyAssignment(policyName string, includePolicy bool) *gobgpapi.PolicyAssignment {
+	assignment := &gobgpapi.PolicyAssignment{
+		Name:          "global",
+		Direction:     gobgpapi.PolicyDirection_IMPORT,
+		DefaultAction: gobgpapi.RouteAction_REJECT,
+	}
+	if includePolicy && strings.TrimSpace(policyName) != "" {
+		assignment.Policies = []*gobgpapi.Policy{{Name: strings.TrimSpace(policyName)}}
+	}
+	return assignment
 }
 
 func importPolicyPrefixes(spec routerapi.BGPImportPolicySpec) []*gobgpapi.Prefix {
