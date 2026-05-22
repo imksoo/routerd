@@ -42,6 +42,7 @@ type fakeServer struct {
 	deletes  int
 	paths    int
 	policies int
+	resets   int
 
 	global  *gobgpapi.Global
 	peers   map[string]*gobgpapi.Peer
@@ -108,6 +109,13 @@ func (s *fakeServer) UpdatePeer(_ context.Context, req *gobgpapi.UpdatePeerReque
 	}
 	s.peers[address] = peer
 	return &gobgpapi.UpdatePeerResponse{}, nil
+}
+
+func (s *fakeServer) ResetPeer(_ context.Context, req *gobgpapi.ResetPeerRequest) error {
+	if req.GetSoft() && req.GetDirection() == gobgpapi.ResetPeerRequest_IN {
+		s.resets++
+	}
+	return nil
 }
 
 func (s *fakeServer) AppliedConfig(context.Context) (bgpdaemon.AppliedConfig, error) {
@@ -254,6 +262,34 @@ func TestReconcileStartsGoBGPAndDoesNotReaddUnchangedPeer(t *testing.T) {
 	}
 }
 
+func TestReconcileDoesNotRefreshUnchangedImportPolicy(t *testing.T) {
+	router := bgpRouterWithImportPrefixes("10.250.0.0/24")
+	peerResource := router.Spec.Resources[1]
+	peerSpec := peerResource.Spec.(api.BGPPeerSpec)
+	peerSpec.Peers = []string{"192.168.1.38", "192.168.1.53"}
+	peerResource.Spec = peerSpec
+	router.Spec.Resources[1] = peerResource
+	server := &fakeServer{}
+	controller := Controller{
+		Router: router,
+		Store:  mapStore{},
+		Server: server,
+		FIB:    &fakeFIB{},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("first reconcile: %v", err)
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("second reconcile: %v", err)
+	}
+	if server.policies != 1 {
+		t.Fatalf("SetPolicies calls = %d, want unchanged-policy no-op after first reconcile", server.policies)
+	}
+	if server.resets != 0 {
+		t.Fatalf("soft inbound resets = %d, want no reset for unchanged applied policy", server.resets)
+	}
+}
+
 func TestReconcileInstallsPeerAddressECMPForThirdPartyNextHop(t *testing.T) {
 	server := &fakeServer{thirdPartyNextHop: "192.168.1.57"}
 	fib := &fakeFIB{}
@@ -274,6 +310,37 @@ func TestReconcileInstallsPeerAddressECMPForThirdPartyNextHop(t *testing.T) {
 	got, ok := status["installedNextHops"].(map[string][]string)
 	if !ok || !reflect.DeepEqual(got["10.250.0.0/24"], []string{"192.168.1.38", "192.168.1.53"}) {
 		t.Fatalf("installedNextHops = %#v", status["installedNextHops"])
+	}
+}
+
+func TestReconcileRefreshesImportPolicyAfterReconnectDrift(t *testing.T) {
+	router := bgpRouterWithImportPrefixes("10.250.0.0/24")
+	peerResource := router.Spec.Resources[1]
+	peerSpec := peerResource.Spec.(api.BGPPeerSpec)
+	peerSpec.Peers = []string{"192.168.1.38", "192.168.1.53"}
+	peerResource.Spec = peerSpec
+	router.Spec.Resources[1] = peerResource
+	server := &fakeServer{thirdPartyNextHop: "192.168.1.57"}
+	fib := &fakeFIB{}
+	controller := Controller{
+		Router:          router,
+		Store:           mapStore{},
+		Server:          server,
+		FIB:             fib,
+		importPolicyKey: importPolicyKey(api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.250.0.0/24"}}),
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if server.policies != 1 {
+		t.Fatalf("SetPolicies calls = %d, want policy reapplied after next-hop drift", server.policies)
+	}
+	if server.resets != 2 {
+		t.Fatalf("soft inbound resets = %d, want one per peer", server.resets)
+	}
+	want := []FIBRoute{{Prefix: "10.250.0.0/24", NextHops: []string{"192.168.1.38", "192.168.1.53"}}}
+	if !reflect.DeepEqual(fib.routes, want) {
+		t.Fatalf("fib routes = %#v, want peer-address ECMP after refresh %#v", fib.routes, want)
 	}
 }
 

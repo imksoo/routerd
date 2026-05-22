@@ -157,6 +157,15 @@ func (s *remoteGoBGPServer) UpdatePeer(ctx context.Context, req *gobgpapi.Update
 	return client.UpdatePeer(ctx, req)
 }
 
+func (s *remoteGoBGPServer) ResetPeer(ctx context.Context, req *gobgpapi.ResetPeerRequest) error {
+	client, err := s.api(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = client.ResetPeer(ctx, req)
+	return err
+}
+
 func (s *remoteGoBGPServer) DeletePeer(ctx context.Context, req *gobgpapi.DeletePeerRequest) error {
 	client, err := s.api(ctx)
 	if err != nil {

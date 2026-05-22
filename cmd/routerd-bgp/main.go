@@ -160,7 +160,7 @@ func restoreApplied(ctx context.Context, server *gobgpserver.BgpServer, statePat
 	if err := server.StartBgp(ctx, &gobgpapi.StartBgpRequest{Global: appliedGlobal(applied.Global)}); err != nil {
 		return fmt.Errorf("restore BGP global: %w", err)
 	}
-	if err := server.SetPolicies(ctx, appliedPolicies(applied.Global.ImportPolicy, appliedPolicyNames(applied))); err != nil {
+	if err := server.SetPolicies(ctx, appliedPolicies(applied)); err != nil {
 		return fmt.Errorf("restore BGP import policy: %w", err)
 	}
 	for _, peer := range sortedPeers(applied.Peers) {
@@ -266,24 +266,21 @@ func afiSafi(family *gobgpapi.Family) *gobgpapi.AfiSafi {
 	}
 }
 
-func appliedPolicies(spec bgpdaemon.AppliedImportPolicy, names []string) *gobgpapi.SetPoliciesRequest {
+func appliedPolicies(config bgpdaemon.AppliedConfig) *gobgpapi.SetPoliciesRequest {
 	req := &gobgpapi.SetPoliciesRequest{}
-	prefixes := appliedPolicyPrefixes(spec)
-	if len(prefixes) == 0 {
-		return req
-	}
-	if len(names) == 0 {
-		names = []string{"routerd-restore-import"}
-	}
-	prefixSetName := "routerd-restore-import-prefixes"
-	req.DefinedSets = append(req.DefinedSets, &gobgpapi.DefinedSet{
-		DefinedType: gobgpapi.DefinedType_PREFIX,
-		Name:        prefixSetName,
-		Prefixes:    prefixes,
-	})
-	for _, name := range names {
+	for _, policy := range appliedImportPolicies(config) {
+		prefixes := appliedPolicyPrefixes(policy.Spec)
+		if len(prefixes) == 0 {
+			continue
+		}
+		prefixSetName := policy.Name + "-prefixes"
+		req.DefinedSets = append(req.DefinedSets, &gobgpapi.DefinedSet{
+			DefinedType: gobgpapi.DefinedType_PREFIX,
+			Name:        prefixSetName,
+			Prefixes:    prefixes,
+		})
 		req.Policies = append(req.Policies, &gobgpapi.Policy{
-			Name: name,
+			Name: policy.Name,
 			Statements: []*gobgpapi.Statement{{
 				Name: "allow-import",
 				Conditions: &gobgpapi.Conditions{PrefixSet: &gobgpapi.MatchSet{
@@ -292,7 +289,7 @@ func appliedPolicies(spec bgpdaemon.AppliedImportPolicy, names []string) *gobgpa
 				}},
 				Actions: &gobgpapi.Actions{
 					RouteAction: gobgpapi.RouteAction_ACCEPT,
-					Nexthop:     appliedNextHopAction(spec),
+					Nexthop:     appliedNextHopAction(policy.Spec),
 				},
 			}},
 		})
@@ -300,21 +297,39 @@ func appliedPolicies(spec bgpdaemon.AppliedImportPolicy, names []string) *gobgpa
 	return req
 }
 
-func appliedPolicyNames(config bgpdaemon.AppliedConfig) []string {
-	seen := map[string]bool{}
+type appliedImportPolicy struct {
+	Name string
+	Spec bgpdaemon.AppliedImportPolicy
+}
+
+func appliedImportPolicies(config bgpdaemon.AppliedConfig) []appliedImportPolicy {
+	byName := map[string]bgpdaemon.AppliedImportPolicy{}
 	for _, peer := range config.Peers {
 		name := strings.TrimSpace(peer.ImportPolicyName)
 		if name == "" {
 			name = "routerd-restore-import"
 		}
-		seen[name] = true
+		spec := peer.ImportPolicy
+		if len(spec.AllowedPrefixes) == 0 {
+			spec = config.Global.ImportPolicy
+		}
+		if len(appliedPolicyPrefixes(spec)) > 0 {
+			byName[name] = spec
+		}
+	}
+	if len(byName) == 0 && len(appliedPolicyPrefixes(config.Global.ImportPolicy)) > 0 {
+		byName["routerd-restore-import"] = config.Global.ImportPolicy
 	}
 	var out []string
-	for name := range seen {
+	for name := range byName {
 		out = append(out, name)
 	}
 	sort.Strings(out)
-	return out
+	policies := make([]appliedImportPolicy, 0, len(out))
+	for _, name := range out {
+		policies = append(policies, appliedImportPolicy{Name: name, Spec: byName[name]})
+	}
+	return policies
 }
 
 func appliedPolicyPrefixes(spec bgpdaemon.AppliedImportPolicy) []*gobgpapi.Prefix {
