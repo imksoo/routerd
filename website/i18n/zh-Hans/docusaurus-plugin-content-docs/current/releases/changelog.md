@@ -10,6 +10,8 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期和时间型版本号。
 
 ## Unreleased
 
+## v20260522.1334
+
 ### 新增
 
 - 新增 `BGPPeer.spec.ebgpMultihop`，用于经过路由多跳的 eBGP peering。

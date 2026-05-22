@@ -10,6 +10,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260522.1334
+
 ### Added
 
 - Added `BGPPeer.spec.ebgpMultihop` for routed eBGP peering. Values `0` and `1`
