@@ -10,6 +10,14 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期和时间型版本号。
 
 ## Unreleased
 
+### 修正
+
+- 在 GoBGP backend 中恢复旧 FRR `set ip next-hop peer-address` 等价的
+  import 行为。`BGPRouter.spec.importPolicy.nextHopRewrite` 现在默认是
+  `peer-address`，因此接受的 eBGP route 会通过学习来源 peer address 安装到
+  kernel FIB；即使下游 speaker 广告第三方 next-hop，也能保留 ECMP。
+  router status 现在会显示 rewrite mode 和 installed next-hop。
+
 ## v20260522.0824
 
 ### 修正

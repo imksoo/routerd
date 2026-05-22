@@ -63,6 +63,11 @@ func validateBGPRouterPolicy(resourceID string, spec api.BGPRouterSpec) error {
 	if err != nil {
 		return err
 	}
+	switch strings.TrimSpace(spec.ImportPolicy.NextHopRewrite) {
+	case "", "peer-address", "unchanged":
+	default:
+		return fmt.Errorf("%s spec.importPolicy.nextHopRewrite must be peer-address or unchanged", resourceID)
+	}
 	if _, err := validateBGPPrefixList(resourceID, "spec.exportPolicy.allowedPrefixes", spec.ExportPolicy.AllowedPrefixes); err != nil {
 		return err
 	}

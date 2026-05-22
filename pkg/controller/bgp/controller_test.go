@@ -12,6 +12,7 @@ import (
 	"time"
 
 	gobgpapi "github.com/osrg/gobgp/v3/api"
+	gobgpserver "github.com/osrg/gobgp/v3/pkg/server"
 	"google.golang.org/protobuf/types/known/anypb"
 
 	"routerd/pkg/api"
@@ -34,17 +35,21 @@ func (s mapStore) ObjectStatus(apiVersion, kind, name string) map[string]any {
 }
 
 type fakeServer struct {
-	starts  int
-	stops   int
-	adds    int
-	updates int
-	deletes int
-	paths   int
+	starts   int
+	stops    int
+	adds     int
+	updates  int
+	deletes  int
+	paths    int
+	policies int
 
 	global  *gobgpapi.Global
 	peers   map[string]*gobgpapi.Peer
 	routes  []*gobgpapi.Destination
 	applied bgpdaemon.AppliedConfig
+
+	policyRequest     *gobgpapi.SetPoliciesRequest
+	thirdPartyNextHop string
 }
 
 func (s *fakeServer) Serve() {}
@@ -131,6 +136,12 @@ func (s *fakeServer) ListPeer(_ context.Context, _ *gobgpapi.ListPeerRequest, fn
 	return nil
 }
 
+func (s *fakeServer) SetPolicies(_ context.Context, req *gobgpapi.SetPoliciesRequest) error {
+	s.policies++
+	s.policyRequest = req
+	return nil
+}
+
 func (s *fakeServer) AddPath(_ context.Context, req *gobgpapi.AddPathRequest) (*gobgpapi.AddPathResponse, error) {
 	s.paths++
 	uuid := []byte{byte(s.paths)}
@@ -148,8 +159,27 @@ func (s *fakeServer) ListPath(_ context.Context, _ *gobgpapi.ListPathRequest, fn
 		}
 		fn(dst)
 	}
+	if s.thirdPartyNextHop != "" {
+		if s.importPolicyRewritesPeerAddress() {
+			fn(testDestination("10.250.0.0/24", "192.168.1.53", "192.168.1.38"))
+		} else {
+			fn(testDestination("10.250.0.0/24", s.thirdPartyNextHop))
+		}
+		return nil
+	}
 	fn(testDestination("10.250.0.0/24", "192.168.1.53", "192.168.1.38"))
 	return nil
+}
+
+func (s *fakeServer) importPolicyRewritesPeerAddress() bool {
+	for _, policy := range s.policyRequest.GetPolicies() {
+		for _, statement := range policy.GetStatements() {
+			if statement.GetActions().GetNexthop().GetPeerAddress() {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 type fakeFIB struct {
@@ -201,9 +231,16 @@ func TestReconcileStartsGoBGPAndDoesNotReaddUnchangedPeer(t *testing.T) {
 	if server.adds != 1 {
 		t.Fatalf("peer adds = %d, want 1", server.adds)
 	}
+	if server.policies == 0 {
+		t.Fatal("SetPolicies was not called")
+	}
 	peer := server.peers["10.0.0.21"]
 	if got := peer.GetAfiSafis()[0].GetUseMultiplePaths().GetEbgp().GetConfig().GetMaximumPaths(); got < 4 {
 		t.Fatalf("peer eBGP maximum paths = %d, want >= 4", got)
+	}
+	importPolicy := peer.GetApplyPolicy().GetImportPolicy()
+	if importPolicy.GetDefaultAction() != gobgpapi.RouteAction_REJECT || len(importPolicy.GetPolicies()) != 1 {
+		t.Fatalf("peer import policy = %#v, want default reject plus routerd policy", importPolicy)
 	}
 	status := controller.Store.ObjectStatus(api.NetAPIVersion, "BGPRouter", "lan")
 	if status["backend"] != "gobgp" || status["phase"] != "Established" {
@@ -211,6 +248,85 @@ func TestReconcileStartsGoBGPAndDoesNotReaddUnchangedPeer(t *testing.T) {
 	}
 	if !reflect.DeepEqual(fib.routes, []FIBRoute{{Prefix: "10.250.0.0/24", NextHops: []string{"192.168.1.38", "192.168.1.53"}}}) {
 		t.Fatalf("fib routes = %#v", fib.routes)
+	}
+	if status["nextHopRewrite"] != "peer-address" {
+		t.Fatalf("nextHopRewrite status = %#v, want peer-address", status["nextHopRewrite"])
+	}
+}
+
+func TestReconcileInstallsPeerAddressECMPForThirdPartyNextHop(t *testing.T) {
+	server := &fakeServer{thirdPartyNextHop: "192.168.1.57"}
+	fib := &fakeFIB{}
+	controller := Controller{
+		Router: bgpRouterWithImportPrefixes("10.250.0.0/24"),
+		Store:  mapStore{},
+		Server: server,
+		FIB:    fib,
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	want := []FIBRoute{{Prefix: "10.250.0.0/24", NextHops: []string{"192.168.1.38", "192.168.1.53"}}}
+	if !reflect.DeepEqual(fib.routes, want) {
+		t.Fatalf("fib routes = %#v, want peer-address ECMP %#v", fib.routes, want)
+	}
+	status := controller.Store.ObjectStatus(api.NetAPIVersion, "BGPRouter", "lan")
+	got, ok := status["installedNextHops"].(map[string][]string)
+	if !ok || !reflect.DeepEqual(got["10.250.0.0/24"], []string{"192.168.1.38", "192.168.1.53"}) {
+		t.Fatalf("installedNextHops = %#v", status["installedNextHops"])
+	}
+}
+
+func TestReconcileCanLeaveImportNextHopUnchanged(t *testing.T) {
+	router := bgpRouterWithImportPrefixes("10.250.0.0/24")
+	spec := router.Spec.Resources[0].Spec.(api.BGPRouterSpec)
+	spec.ImportPolicy.NextHopRewrite = "unchanged"
+	router.Spec.Resources[0].Spec = spec
+	server := &fakeServer{thirdPartyNextHop: "192.168.1.57"}
+	fib := &fakeFIB{}
+	controller := Controller{
+		Router: router,
+		Store:  mapStore{},
+		Server: server,
+		FIB:    fib,
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	want := []FIBRoute{{Prefix: "10.250.0.0/24", NextHops: []string{"192.168.1.57"}}}
+	if !reflect.DeepEqual(fib.routes, want) {
+		t.Fatalf("fib routes = %#v, want unchanged third-party next-hop %#v", fib.routes, want)
+	}
+}
+
+func TestGeneratedImportPolicyIsAcceptedByGoBGP(t *testing.T) {
+	server := gobgpserver.NewBgpServer()
+	go server.Serve()
+	defer server.Stop()
+	spec := api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.250.0.0/24"}}
+	req := &gobgpapi.SetPoliciesRequest{
+		DefinedSets: []*gobgpapi.DefinedSet{{
+			DefinedType: gobgpapi.DefinedType_PREFIX,
+			Name:        "routerd-test-import-prefixes",
+			Prefixes:    importPolicyPrefixes(spec),
+		}},
+		Policies: []*gobgpapi.Policy{{
+			Name: "routerd-test-import",
+			Statements: []*gobgpapi.Statement{{
+				Name: "allow-import",
+				Conditions: &gobgpapi.Conditions{PrefixSet: &gobgpapi.MatchSet{
+					Type: gobgpapi.MatchSet_ANY,
+					Name: "routerd-test-import-prefixes",
+				}},
+				Actions: &gobgpapi.Actions{
+					RouteAction: gobgpapi.RouteAction_ACCEPT,
+					Nexthop:     nextHopRewriteAction(spec),
+				},
+			}},
+		}},
+	}
+	if err := server.SetPolicies(context.Background(), req); err != nil {
+		t.Fatalf("SetPolicies rejected generated import policy: %v", err)
 	}
 }
 

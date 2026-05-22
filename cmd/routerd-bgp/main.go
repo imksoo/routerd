@@ -15,6 +15,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"sort"
+	"strings"
 	"syscall"
 
 	gobgpapi "github.com/osrg/gobgp/v3/api"
@@ -159,8 +160,11 @@ func restoreApplied(ctx context.Context, server *gobgpserver.BgpServer, statePat
 	if err := server.StartBgp(ctx, &gobgpapi.StartBgpRequest{Global: appliedGlobal(applied.Global)}); err != nil {
 		return fmt.Errorf("restore BGP global: %w", err)
 	}
+	if err := server.SetPolicies(ctx, appliedPolicies(applied.Global.ImportPolicy, appliedPolicyNames(applied))); err != nil {
+		return fmt.Errorf("restore BGP import policy: %w", err)
+	}
 	for _, peer := range sortedPeers(applied.Peers) {
-		if err := server.AddPeer(ctx, &gobgpapi.AddPeerRequest{Peer: appliedPeer(peer)}); err != nil {
+		if err := server.AddPeer(ctx, &gobgpapi.AddPeerRequest{Peer: appliedPeer(peer, applied.Global.ImportPolicy)}); err != nil {
 			return fmt.Errorf("restore BGP peer %s: %w", peer.Address, err)
 		}
 	}
@@ -202,7 +206,7 @@ func appliedGlobal(global bgpdaemon.AppliedGlobal) *gobgpapi.Global {
 	return out
 }
 
-func appliedPeer(peer bgpdaemon.AppliedPeer) *gobgpapi.Peer {
+func appliedPeer(peer bgpdaemon.AppliedPeer, globalImport bgpdaemon.AppliedImportPolicy) *gobgpapi.Peer {
 	out := &gobgpapi.Peer{
 		Conf: &gobgpapi.PeerConf{
 			NeighborAddress: peer.Address,
@@ -216,6 +220,24 @@ func appliedPeer(peer bgpdaemon.AppliedPeer) *gobgpapi.Peer {
 			afiSafi(ipv4Family()),
 			afiSafi(ipv6Family()),
 		},
+	}
+	policyName := strings.TrimSpace(peer.ImportPolicyName)
+	if policyName == "" {
+		policyName = "routerd-restore-import"
+	}
+	importPolicy := peer.ImportPolicy
+	if len(importPolicy.AllowedPrefixes) == 0 {
+		importPolicy = globalImport
+	}
+	out.ApplyPolicy = &gobgpapi.ApplyPolicy{
+		ImportPolicy: &gobgpapi.PolicyAssignment{
+			Name:          policyName,
+			Direction:     gobgpapi.PolicyDirection_IMPORT,
+			DefaultAction: gobgpapi.RouteAction_REJECT,
+		},
+	}
+	if len(appliedPolicyPrefixes(importPolicy)) > 0 {
+		out.ApplyPolicy.ImportPolicy.Policies = []*gobgpapi.Policy{{Name: policyName}}
 	}
 	if gr := peer.GracefulRestart; gr != nil && gr.Enabled {
 		out.GracefulRestart = &gobgpapi.GracefulRestart{Enabled: true, RestartTime: gr.RestartTime, StaleRoutesTime: gr.StaleRoutesTime}
@@ -242,6 +264,78 @@ func afiSafi(family *gobgpapi.Family) *gobgpapi.AfiSafi {
 			Ebgp:   &gobgpapi.Ebgp{Config: &gobgpapi.EbgpConfig{MaximumPaths: 16}},
 		},
 	}
+}
+
+func appliedPolicies(spec bgpdaemon.AppliedImportPolicy, names []string) *gobgpapi.SetPoliciesRequest {
+	req := &gobgpapi.SetPoliciesRequest{}
+	prefixes := appliedPolicyPrefixes(spec)
+	if len(prefixes) == 0 {
+		return req
+	}
+	if len(names) == 0 {
+		names = []string{"routerd-restore-import"}
+	}
+	prefixSetName := "routerd-restore-import-prefixes"
+	req.DefinedSets = append(req.DefinedSets, &gobgpapi.DefinedSet{
+		DefinedType: gobgpapi.DefinedType_PREFIX,
+		Name:        prefixSetName,
+		Prefixes:    prefixes,
+	})
+	for _, name := range names {
+		req.Policies = append(req.Policies, &gobgpapi.Policy{
+			Name: name,
+			Statements: []*gobgpapi.Statement{{
+				Name: "allow-import",
+				Conditions: &gobgpapi.Conditions{PrefixSet: &gobgpapi.MatchSet{
+					Type: gobgpapi.MatchSet_ANY,
+					Name: prefixSetName,
+				}},
+				Actions: &gobgpapi.Actions{
+					RouteAction: gobgpapi.RouteAction_ACCEPT,
+					Nexthop:     appliedNextHopAction(spec),
+				},
+			}},
+		})
+	}
+	return req
+}
+
+func appliedPolicyNames(config bgpdaemon.AppliedConfig) []string {
+	seen := map[string]bool{}
+	for _, peer := range config.Peers {
+		name := strings.TrimSpace(peer.ImportPolicyName)
+		if name == "" {
+			name = "routerd-restore-import"
+		}
+		seen[name] = true
+	}
+	var out []string
+	for name := range seen {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func appliedPolicyPrefixes(spec bgpdaemon.AppliedImportPolicy) []*gobgpapi.Prefix {
+	var out []*gobgpapi.Prefix
+	for _, value := range spec.AllowedPrefixes {
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(value))
+		if err != nil {
+			continue
+		}
+		prefix = prefix.Masked()
+		bits := uint32(prefix.Bits())
+		out = append(out, &gobgpapi.Prefix{IpPrefix: prefix.String(), MaskLengthMin: bits, MaskLengthMax: bits})
+	}
+	return out
+}
+
+func appliedNextHopAction(spec bgpdaemon.AppliedImportPolicy) *gobgpapi.NexthopAction {
+	if strings.TrimSpace(spec.NextHopRewrite) == "unchanged" {
+		return &gobgpapi.NexthopAction{Unchanged: true}
+	}
+	return &gobgpapi.NexthopAction{PeerAddress: true}
 }
 
 func localPath(prefix string) (*gobgpapi.Path, error) {

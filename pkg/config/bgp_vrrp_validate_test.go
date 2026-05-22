@@ -308,6 +308,32 @@ func TestValidateBGPRedistributeRejectsImportOverlap(t *testing.T) {
 	}
 }
 
+func TestValidateBGPRouterImportNextHopRewrite(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.BGPRouterSpec{
+				ASN:      64512,
+				RouterID: "10.240.70.2",
+				ImportPolicy: api.BGPImportPolicySpec{
+					AllowedPrefixes: []string{"10.250.0.0/24"},
+					NextHopRewrite:  "peer-address",
+				},
+			}},
+		}},
+	}
+	if err := Validate(router); err != nil {
+		t.Fatalf("valid nextHopRewrite should validate: %v", err)
+	}
+	spec := router.Spec.Resources[0].Spec.(api.BGPRouterSpec)
+	spec.ImportPolicy.NextHopRewrite = "third-party"
+	router.Spec.Resources[0].Spec = spec
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "spec.importPolicy.nextHopRewrite") {
+		t.Fatalf("expected nextHopRewrite validation error, got %v", err)
+	}
+}
+
 func TestValidateBGPExportPolicy(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},

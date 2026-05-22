@@ -511,6 +511,7 @@ type BGPListenSpec struct {
 
 type BGPImportPolicySpec struct {
 	AllowedPrefixes []string `yaml:"allowedPrefixes,omitempty" json:"allowedPrefixes,omitempty"`
+	NextHopRewrite  string   `yaml:"nextHopRewrite,omitempty" json:"nextHopRewrite,omitempty" jsonschema:"enum=,enum=peer-address,enum=unchanged"`
 }
 
 type BGPExportPolicySpec struct {

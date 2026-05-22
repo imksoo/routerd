@@ -187,6 +187,15 @@ func (s *remoteGoBGPServer) ListPeer(ctx context.Context, req *gobgpapi.ListPeer
 	}
 }
 
+func (s *remoteGoBGPServer) SetPolicies(ctx context.Context, req *gobgpapi.SetPoliciesRequest) error {
+	client, err := s.api(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = client.SetPolicies(ctx, req)
+	return err
+}
+
 func (s *remoteGoBGPServer) AddPath(ctx context.Context, req *gobgpapi.AddPathRequest) (*gobgpapi.AddPathResponse, error) {
 	client, err := s.api(ctx)
 	if err != nil {

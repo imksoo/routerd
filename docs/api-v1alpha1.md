@@ -234,8 +234,14 @@ GoBGP observation.
 Prefix status includes `best`, `valid`, `installed`, `stale`, `nextHop`, and
 observed communities. Learned IPv4 best paths that match
 `spec.importPolicy.allowedPrefixes` are installed into the kernel FIB with
-routerd-owned protocol and metric values; equal best paths for the same prefix
-are installed as ECMP next hops.
+routerd-owned protocol and metric values. By default, GoBGP import policy
+rewrites accepted eBGP next-hops to the learning peer address
+(`spec.importPolicy.nextHopRewrite: peer-address`), matching the former FRR
+`set ip next-hop peer-address` behavior so Kubernetes edge routes install as
+peer-address ECMP even when the advertised next-hop is a downstream speaker.
+Set `nextHopRewrite: unchanged` only when the advertised next-hop is meant to
+be installed directly. Equal best paths for the same prefix are installed as
+ECMP next hops.
 
 `BGPRouter.spec.convergenceProfile: fast` is intended for Kubernetes/edge
 routers that prefer quick convergence over graceful restart stale-path

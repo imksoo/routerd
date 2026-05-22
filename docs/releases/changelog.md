@@ -10,6 +10,15 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- Restored the former FRR `set ip next-hop peer-address` import behavior in the
+  GoBGP backend. `BGPRouter.spec.importPolicy.nextHopRewrite` now defaults to
+  `peer-address`, so accepted eBGP routes install into the kernel FIB via the
+  learning peer addresses and preserve ECMP when downstream speakers advertise
+  a third-party next-hop. Router status now exposes the rewrite mode and
+  installed next-hops.
+
 ## v20260522.0824
 
 ### Fixed

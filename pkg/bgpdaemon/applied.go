@@ -31,7 +31,13 @@ type AppliedGlobal struct {
 	ListenAddresses  []string                `json:"listenAddresses,omitempty"`
 	Families         []string                `json:"families,omitempty"`
 	UseMultiplePaths bool                    `json:"useMultiplePaths"`
+	ImportPolicy     AppliedImportPolicy     `json:"importPolicy,omitempty"`
 	GracefulRestart  *AppliedGracefulRestart `json:"gracefulRestart,omitempty"`
+}
+
+type AppliedImportPolicy struct {
+	AllowedPrefixes []string `json:"allowedPrefixes,omitempty"`
+	NextHopRewrite  string   `json:"nextHopRewrite,omitempty"`
 }
 
 type AppliedGracefulRestart struct {
@@ -46,6 +52,8 @@ type AppliedPeer struct {
 	Password           string                  `json:"password,omitempty"`
 	TimersProfile      string                  `json:"timersProfile,omitempty"`
 	ConvergenceProfile string                  `json:"convergenceProfile,omitempty"`
+	ImportPolicyName   string                  `json:"importPolicyName,omitempty"`
+	ImportPolicy       AppliedImportPolicy     `json:"importPolicy,omitempty"`
 	GracefulRestart    *AppliedGracefulRestart `json:"gracefulRestart,omitempty"`
 }
 
@@ -56,6 +64,8 @@ func Normalize(config AppliedConfig) AppliedConfig {
 	config.Global.RouterID = strings.TrimSpace(config.Global.RouterID)
 	config.Global.ListenAddresses = cleanStrings(config.Global.ListenAddresses)
 	config.Global.Families = cleanStrings(config.Global.Families)
+	config.Global.ImportPolicy.AllowedPrefixes = cleanStrings(config.Global.ImportPolicy.AllowedPrefixes)
+	config.Global.ImportPolicy.NextHopRewrite = strings.TrimSpace(config.Global.ImportPolicy.NextHopRewrite)
 	config.Advertisements = cleanStrings(config.Advertisements)
 	if config.Peers != nil {
 		peers := make(map[string]AppliedPeer, len(config.Peers))
@@ -63,6 +73,9 @@ func Normalize(config AppliedConfig) AppliedConfig {
 			peer.Address = firstNonEmpty(strings.TrimSpace(peer.Address), strings.TrimSpace(key))
 			peer.TimersProfile = strings.TrimSpace(peer.TimersProfile)
 			peer.ConvergenceProfile = strings.TrimSpace(peer.ConvergenceProfile)
+			peer.ImportPolicyName = strings.TrimSpace(peer.ImportPolicyName)
+			peer.ImportPolicy.AllowedPrefixes = cleanStrings(peer.ImportPolicy.AllowedPrefixes)
+			peer.ImportPolicy.NextHopRewrite = strings.TrimSpace(peer.ImportPolicy.NextHopRewrite)
 			if peer.Address != "" {
 				peers[peer.Address] = peer
 			}

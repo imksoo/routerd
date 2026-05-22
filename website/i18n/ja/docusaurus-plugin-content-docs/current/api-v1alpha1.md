@@ -251,7 +251,12 @@ BGP は `routerd serve` 管理として status に出します。`routerctl show
 GoBGP 観測から router、peer、message counter、route selection state、直近 error を
 表示します。prefix status には `best`、`valid`、`installed`、`stale`、`nextHop`、
 observed community が含まれます。`spec.importPolicy.allowedPrefixes` に一致する
-学習済み IPv4 best path は routerd 所有の protocol/metric で kernel FIB に投入され、
+学習済み IPv4 best path は routerd 所有の protocol/metric で kernel FIB に投入されます。
+既定では GoBGP import policy が受理した eBGP next-hop を学習元 peer address に
+書き換えます (`spec.importPolicy.nextHopRewrite: peer-address`)。これは旧 FRR の
+`set ip next-hop peer-address` と同じ意味で、広告 next-hop が downstream speaker を
+指す Kubernetes edge 経路でも peer address ECMP として投入できます。広告 next-hop を
+そのまま kernel に入れたい場合だけ `nextHopRewrite: unchanged` を指定してください。
 同一 prefix の equal best path は ECMP next-hop として入ります。
 
 `BGPRouter.spec.convergenceProfile: fast` は、graceful restart の stale-path 保持より
