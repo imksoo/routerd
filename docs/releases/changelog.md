@@ -10,6 +10,13 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Added
+
+- Added `BGPPeer.spec.ebgpMultihop` for routed eBGP peering. Values `0` and `1`
+  keep the direct-peer default, while `2` through `255` configure GoBGP
+  `EbgpMultihop.MultihopTtl`; the setting is persisted in `routerd-bgp`
+  applied state so daemon restarts restore the same peer TTL.
+
 ## v20260522.1045
 
 ### Fixed

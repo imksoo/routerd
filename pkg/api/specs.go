@@ -563,6 +563,7 @@ type BGPPeerSpec struct {
 	Peers        []string              `yaml:"peers" json:"peers"`
 	Password     string                `yaml:"password,omitempty" json:"password,omitempty"`
 	PasswordFrom SecretValueSourceSpec `yaml:"passwordFrom,omitempty" json:"passwordFrom,omitempty"`
+	EbgpMultihop int                   `yaml:"ebgpMultihop,omitempty" json:"ebgpMultihop,omitempty" jsonschema:"minimum=0,maximum=255"`
 	ExportPolicy BGPExportPolicySpec   `yaml:"exportPolicy,omitempty" json:"exportPolicy,omitempty"`
 	Timers       BGPTimersSpec         `yaml:"timers,omitempty" json:"timers,omitempty"`
 	Communities  BGPCommunitiesSpec    `yaml:"communities,omitempty" json:"communities,omitempty"`

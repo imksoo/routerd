@@ -235,6 +235,9 @@ func appliedPeer(peer bgpdaemon.AppliedPeer, _ bgpdaemon.AppliedImportPolicy) *g
 	if gr := peer.GracefulRestart; gr != nil && gr.Enabled {
 		out.GracefulRestart = &gobgpapi.GracefulRestart{Enabled: true, RestartTime: gr.RestartTime, StaleRoutesTime: gr.StaleRoutesTime}
 	}
+	if peer.EbgpMultihop > 1 {
+		out.EbgpMultihop = &gobgpapi.EbgpMultihop{Enabled: true, MultihopTtl: uint32(peer.EbgpMultihop)}
+	}
 	return out
 }
 

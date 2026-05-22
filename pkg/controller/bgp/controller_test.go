@@ -281,6 +281,21 @@ func TestReconcileStartsGoBGPAndDoesNotReaddUnchangedPeer(t *testing.T) {
 	}
 }
 
+func TestGoBGPPeerEbgpMultihop(t *testing.T) {
+	direct := goBGPPeer(desiredPeer{Address: "192.0.2.2", ASN: 64513})
+	if direct.GetEbgpMultihop() != nil {
+		t.Fatalf("direct peer eBGP multihop = %#v, want nil", direct.GetEbgpMultihop())
+	}
+	ttlOne := goBGPPeer(desiredPeer{Address: "192.0.2.2", ASN: 64513, EbgpMultihop: 1})
+	if ttlOne.GetEbgpMultihop() != nil {
+		t.Fatalf("ttl=1 eBGP multihop = %#v, want nil direct-peer behavior", ttlOne.GetEbgpMultihop())
+	}
+	multihop := goBGPPeer(desiredPeer{Address: "192.0.2.2", ASN: 64513, EbgpMultihop: 8})
+	if got := multihop.GetEbgpMultihop(); !got.GetEnabled() || got.GetMultihopTtl() != 8 {
+		t.Fatalf("eBGP multihop = %#v, want enabled ttl=8", got)
+	}
+}
+
 func TestReconcileDoesNotRefreshUnchangedImportPolicy(t *testing.T) {
 	router := bgpRouterWithImportPrefixes("10.250.0.0/24")
 	peerResource := router.Spec.Resources[1]

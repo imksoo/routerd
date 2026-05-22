@@ -10,6 +10,13 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 
 ## Unreleased
 
+### 追加
+
+- routed eBGP peering 用に `BGPPeer.spec.ebgpMultihop` を追加しました。
+  `0` と `1` は直結 peer の既定動作のままです。`2` から `255` は GoBGP の
+  `EbgpMultihop.MultihopTtl` として設定され、`routerd-bgp` の applied state にも
+  保存されるため daemon restart 後も同じ peer TTL を復元します。
+
 ## v20260522.1045
 
 ### 修正

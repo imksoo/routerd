@@ -1784,6 +1784,9 @@ func validateResource(res api.Resource, targetOS platform.OS) error {
 		if len(spec.Peers) == 0 {
 			return fmt.Errorf("%s spec.peers is required", res.ID())
 		}
+		if spec.EbgpMultihop < 0 || spec.EbgpMultihop > 255 {
+			return fmt.Errorf("%s spec.ebgpMultihop must be within 0-255", res.ID())
+		}
 		seenPeers := map[string]bool{}
 		for i, peer := range spec.Peers {
 			peer = strings.TrimSpace(peer)

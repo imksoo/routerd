@@ -248,6 +248,10 @@ routers that prefer quick convergence over graceful restart stale-path
 retention: it derives fast peer timers and disables graceful restart unless
 `spec.gracefulRestart.enabled` is explicitly set. Import policy is default
 deny; add `spec.importPolicy.allowedPrefixes` for Kubernetes LoadBalancer pools.
+`BGPPeer.spec.ebgpMultihop` enables non-direct eBGP sessions such as loopback
+peering or lab-to-production validation across routed hops. Omit it or set `0`
+or `1` for the direct eBGP default; set a value from `2` to `255` to configure
+the GoBGP multihop TTL for that peer group.
 `BGPRouter` can use a router ID that differs from the TCP source address, but
 peer routers must still configure the address that the host actually uses as
 its BGP source. Check `ip route get <peer-address>` on Linux when the LAN has

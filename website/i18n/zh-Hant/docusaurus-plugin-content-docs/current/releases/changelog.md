@@ -10,6 +10,13 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 
 ## Unreleased
 
+### 新增
+
+- 新增 `BGPPeer.spec.ebgpMultihop`，用於經過路由多跳的 eBGP peering。
+  `0` 和 `1` 保持直連 peer 預設行為；`2` 到 `255` 會設定為 GoBGP 的
+  `EbgpMultihop.MultihopTtl`。此設定也會保存到 `routerd-bgp` applied state，
+  daemon restart 後會復原同一 peer TTL。
+
 ## v20260522.1045
 
 ### 修正

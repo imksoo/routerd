@@ -45,3 +45,14 @@ func TestAppliedPoliciesRestorePeerImportPolicyWithoutGlobalPolicy(t *testing.T)
 		t.Fatalf("restored peer import policy = %#v, want no per-neighbor import policy for normal eBGP", applyPolicy.GetImportPolicy())
 	}
 }
+
+func TestAppliedPeerEbgpMultihop(t *testing.T) {
+	direct := appliedPeer(bgpdaemon.AppliedPeer{Address: "192.0.2.2", ASN: 64513}, bgpdaemon.AppliedImportPolicy{})
+	if direct.GetEbgpMultihop() != nil {
+		t.Fatalf("direct peer eBGP multihop = %#v, want nil", direct.GetEbgpMultihop())
+	}
+	multihop := appliedPeer(bgpdaemon.AppliedPeer{Address: "192.0.2.2", ASN: 64513, EbgpMultihop: 16}, bgpdaemon.AppliedImportPolicy{})
+	if got := multihop.GetEbgpMultihop(); !got.GetEnabled() || got.GetMultihopTtl() != 16 {
+		t.Fatalf("restored eBGP multihop = %#v, want enabled ttl=16", got)
+	}
+}

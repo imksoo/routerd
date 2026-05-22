@@ -100,6 +100,7 @@ type desiredPeer struct {
 	Address            string
 	ASN                uint32
 	Password           string
+	EbgpMultihop       int
 	Timers             routerapi.BGPTimersSpec
 	GracefulRestart    routerapi.BGPGracefulRestartSpec
 	ConvergenceProfile string
@@ -344,7 +345,7 @@ func (c *Controller) desiredPeers(routerName string) (map[string]desiredPeer, er
 		}
 		for _, peer := range spec.Peers {
 			peer = strings.TrimSpace(peer)
-			out[peer] = desiredPeer{Address: peer, ASN: spec.PeerASN, Password: password, Timers: spec.Timers}
+			out[peer] = desiredPeer{Address: peer, ASN: spec.PeerASN, Password: password, EbgpMultihop: spec.EbgpMultihop, Timers: spec.Timers}
 		}
 	}
 	return out, nil
@@ -434,6 +435,7 @@ func desiredPeersFromApplied(peers map[string]bgpdaemon.AppliedPeer) map[string]
 			Address:            peer.Address,
 			ASN:                peer.ASN,
 			Password:           peer.Password,
+			EbgpMultihop:       peer.EbgpMultihop,
 			Timers:             routerapi.BGPTimersSpec{Profile: peer.TimersProfile},
 			GracefulRestart:    gr,
 			ConvergenceProfile: peer.ConvergenceProfile,
@@ -489,6 +491,7 @@ func appliedPeer(peer desiredPeer) bgpdaemon.AppliedPeer {
 		Address:            peer.Address,
 		ASN:                peer.ASN,
 		Password:           peer.Password,
+		EbgpMultihop:       peer.EbgpMultihop,
 		TimersProfile:      strings.TrimSpace(peer.Timers.Profile),
 		ConvergenceProfile: peer.ConvergenceProfile,
 		ImportPolicyName:   peer.ImportPolicyName,
@@ -866,6 +869,9 @@ func goBGPPeer(peer desiredPeer) *gobgpapi.Peer {
 	}
 	if gr := gobgpPeerGracefulRestart(peer); gr != nil {
 		out.GracefulRestart = gr
+	}
+	if peer.EbgpMultihop > 1 {
+		out.EbgpMultihop = &gobgpapi.EbgpMultihop{Enabled: true, MultihopTtl: uint32(peer.EbgpMultihop)}
 	}
 	return out
 }

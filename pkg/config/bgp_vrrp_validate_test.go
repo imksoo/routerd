@@ -52,6 +52,31 @@ func TestValidateBGPRouterPeerAndVirtualAddressIPv4(t *testing.T) {
 	}
 }
 
+func TestValidateBGPPeerEbgpMultihopRange(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.BGPRouterSpec{ASN: 64512, RouterID: "10.240.70.2"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPPeer"}, Metadata: api.ObjectMeta{Name: "remote"}, Spec: api.BGPPeerSpec{
+				RouterRef:    "BGPRouter/lan",
+				PeerASN:      64513,
+				Peers:        []string{"192.0.2.2"},
+				EbgpMultihop: 255,
+			}},
+		}},
+	}
+	if err := Validate(router); err != nil {
+		t.Fatalf("validate eBGP multihop ttl 255: %v", err)
+	}
+	spec := router.Spec.Resources[1].Spec.(api.BGPPeerSpec)
+	spec.EbgpMultihop = 256
+	router.Spec.Resources[1].Spec = spec
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "spec.ebgpMultihop must be within 0-255") {
+		t.Fatalf("expected eBGP multihop range error, got %v", err)
+	}
+}
+
 func TestValidateBGPDualStackAndVirtualAddressIPv6(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},

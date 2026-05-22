@@ -50,6 +50,7 @@ type AppliedPeer struct {
 	Address            string                  `json:"address"`
 	ASN                uint32                  `json:"asn"`
 	Password           string                  `json:"password,omitempty"`
+	EbgpMultihop       int                     `json:"ebgpMultihop,omitempty"`
 	TimersProfile      string                  `json:"timersProfile,omitempty"`
 	ConvergenceProfile string                  `json:"convergenceProfile,omitempty"`
 	ImportPolicyName   string                  `json:"importPolicyName,omitempty"`
@@ -71,6 +72,9 @@ func Normalize(config AppliedConfig) AppliedConfig {
 		peers := make(map[string]AppliedPeer, len(config.Peers))
 		for key, peer := range config.Peers {
 			peer.Address = firstNonEmpty(strings.TrimSpace(peer.Address), strings.TrimSpace(key))
+			if peer.EbgpMultihop < 0 || peer.EbgpMultihop > 255 {
+				peer.EbgpMultihop = 0
+			}
 			peer.TimersProfile = strings.TrimSpace(peer.TimersProfile)
 			peer.ConvergenceProfile = strings.TrimSpace(peer.ConvergenceProfile)
 			peer.ImportPolicyName = strings.TrimSpace(peer.ImportPolicyName)

@@ -2678,6 +2678,11 @@
                         },
                         "type": "object"
                       },
+                      "ebgpMultihop": {
+                        "maximum": 255,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
                       "exportPolicy": {
                         "additionalProperties": false,
                         "properties": {
