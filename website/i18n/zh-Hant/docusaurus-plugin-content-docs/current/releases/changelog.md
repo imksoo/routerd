@@ -10,6 +10,8 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 
 ## Unreleased
 
+## v20260522.1045
+
 ### 修正
 
 - 在 GoBGP backend 中恢復舊 FRR `set ip next-hop peer-address` 等價的

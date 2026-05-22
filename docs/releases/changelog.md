@@ -10,6 +10,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260522.1045
+
 ### Fixed
 
 - Restored the former FRR `set ip next-hop peer-address` import behavior in the

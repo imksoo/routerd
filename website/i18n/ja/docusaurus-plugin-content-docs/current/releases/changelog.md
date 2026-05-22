@@ -10,6 +10,8 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 
 ## Unreleased
 
+## v20260522.1045
+
 ### 修正
 
 - GoBGP backend で、旧 FRR の `set ip next-hop peer-address` 相当の import
