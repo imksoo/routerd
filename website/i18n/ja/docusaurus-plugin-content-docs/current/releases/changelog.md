@@ -11,6 +11,18 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 追加
+
+- `qemu-guest-agent` を `install.sh` の Alpine 依存先に追加しました。
+  Alpine 環境では既定で仮想化用エージェントをインストールします。
+- 仮想環境でのライブ ISO 起動時に、`scripts/build-live-iso.sh` が
+  `qemu-guest-agent` を自動起動する処理を追加しました。
+
+### 変更
+
+- 将来のインタラクティブ運用に備え、サポート対象 OS 全体で
+  SSH サーバー依存 (`openssh` / `openssh-server`) を既定に追加しました。
+
 ## v20260523.1542
 
 ### 追加

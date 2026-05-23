@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260523.2327
+
 ### Added
 
 - Added `qemu-guest-agent` to Alpine package defaults in `install.sh` so
