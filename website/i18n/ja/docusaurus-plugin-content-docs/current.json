@@ -1,0 +1,66 @@
+{
+  "version.label": {
+    "message": "Next",
+    "description": "The label for version current"
+  },
+  "sidebar.tutorialSidebar.category.Introduction": {
+    "message": "はじめに",
+    "description": "The label for category 'Introduction' in sidebar 'tutorialSidebar'"
+  },
+  "sidebar.tutorialSidebar.category.Get started": {
+    "message": "導入（クイックスタート）",
+    "description": "The label for category 'Get started' in sidebar 'tutorialSidebar'"
+  },
+  "sidebar.tutorialSidebar.category.Concepts (declarative model)": {
+    "message": "機能解説（宣言型モデル）",
+    "description": "The label for category 'Concepts (declarative model)' in sidebar 'tutorialSidebar'"
+  },
+  "sidebar.tutorialSidebar.category.Configuration reference": {
+    "message": "設定リファレンス（機能別）",
+    "description": "The label for category 'Configuration reference' in sidebar 'tutorialSidebar'"
+  },
+  "sidebar.tutorialSidebar.category.DNS resolver": {
+    "message": "DNS リゾルバ",
+    "description": "The label for category 'DNS resolver' in sidebar 'tutorialSidebar'"
+  },
+  "sidebar.tutorialSidebar.category.Firewall": {
+    "message": "ファイアウォール",
+    "description": "The label for category 'Firewall' in sidebar 'tutorialSidebar'"
+  },
+  "sidebar.tutorialSidebar.category.Egress & multi-WAN": {
+    "message": "Egress・マルチ WAN",
+    "description": "The label for category 'Egress & multi-WAN' in sidebar 'tutorialSidebar'"
+  },
+  "sidebar.tutorialSidebar.category.Configuration examples": {
+    "message": "設定例集（シナリオ別）",
+    "description": "The label for category 'Configuration examples' in sidebar 'tutorialSidebar'"
+  },
+  "sidebar.tutorialSidebar.category.How-to guides": {
+    "message": "How-to ガイド",
+    "description": "The label for category 'How-to guides' in sidebar 'tutorialSidebar'"
+  },
+  "sidebar.tutorialSidebar.category.Knowledge base": {
+    "message": "ナレッジベース（実環境知見）",
+    "description": "The label for category 'Knowledge base' in sidebar 'tutorialSidebar'"
+  },
+  "sidebar.tutorialSidebar.category.Operations": {
+    "message": "運用",
+    "description": "The label for category 'Operations' in sidebar 'tutorialSidebar'"
+  },
+  "sidebar.tutorialSidebar.category.Reference (API, protocol, platforms)": {
+    "message": "リファレンス（API・プロトコル・対応環境）",
+    "description": "The label for category 'Reference (API, protocol, platforms)' in sidebar 'tutorialSidebar'"
+  },
+  "sidebar.tutorialSidebar.category.Releases & stable": {
+    "message": "リリースと安定版",
+    "description": "The label for category 'Releases & stable' in sidebar 'tutorialSidebar'"
+  },
+  "sidebar.tutorialSidebar.category.Design notes": {
+    "message": "設計ノート",
+    "description": "The label for category 'Design notes' in sidebar 'tutorialSidebar'"
+  },
+  "sidebar.tutorialSidebar.category.Project": {
+    "message": "プロジェクト",
+    "description": "The label for category 'Project' in sidebar 'tutorialSidebar'"
+  }
+}

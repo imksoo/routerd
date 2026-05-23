@@ -1,8 +1,17 @@
 # High availability
 
-`RouterdCluster` は、軽量なファイルベースのリースで、レンダラーと適用処理の動作を制御します。VIP の所有権とは分離しています。VIP をどのルーターが持つかは keepalived または CARP が決め、routerd はリースによって、ホスト設定を変更してよいノードを決めます。
+`RouterdCluster` gates renderer and applier work with a lightweight file-based
+lease. It is intentionally separate from VIP ownership: keepalived or CARP still
+decides which router owns a VIP, while routerd uses the lease to decide which
+node may mutate host configuration.
 
-リーダーは `spec.leasePath` の排他ロックを保持し、`spec.leaseTTL` が切れる前にリースを更新します。スタンバイのノードは、観測のためにコントローラーチェーンを動かし続けますが、状態を変更するコントローラーは dry-run モードに強制されます。one-shot apply モードでは、通常どおり計画を作成し、クラスターの状態を記録したうえで apply を skip します。
+The leader holds an exclusive lock on `spec.leasePath` and refreshes the lease
+before `spec.leaseTTL` expires. Standby nodes keep the controller chain running
+for observation, but mutating controllers are forced into dry-run mode. In
+one-shot apply mode, a standby node plans normally, records cluster status, and
+skips apply.
+
+Example:
 
 ```yaml
 apiVersion: system.routerd.net/v1alpha1
@@ -17,7 +26,19 @@ spec:
   leasePath: /var/lib/routerd/ha-lease
 ```
 
-同一ホスト上で routerd プロセスを 1 つだけにしたい場合は、ローカルパスで十分です。
-複数ホストの間で 1 つの適用処理を選びたい場合は、advisory lock が正しく動作する共有ファイルシステム上のパスを使います。
+Use a local path when only one routerd process can run on the host. Use a shared
+filesystem path when multiple hosts must elect one applier. The filesystem must
+provide working advisory locks; otherwise use this resource only for status and
+keep the actual apply service enabled on one node.
 
-最小構成は `examples/ha-2-node.yaml` にあります。
+Status fields:
+
+| Field | Meaning |
+| --- | --- |
+| `phase` | `Leader` or `Standby` |
+| `identity` | Local routerd identity, defaulting to hostname |
+| `holder` | Current lease holder |
+| `expiresAt` | Lease expiry timestamp |
+| `leasePath` | Lease file path |
+
+See `examples/ha-2-node.yaml` for a minimal two-node shape.

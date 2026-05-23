@@ -1,16 +1,17 @@
 ---
-title: リソース API v1alpha1
+title: Resource API v1alpha1
 slug: /reference/api-v1alpha1
 ---
 
-# リソース API v1alpha1
+# Resource API v1alpha1
 
-routerd の設定は、最上位の `Router` と、型付きリソースの一覧で構成します。
-このページは、現在の実装に合わせたリソース一覧です。
-Phase 1.6 以降は RFC の表記に合わせ、DHCP 関連の Kind は `DHCPv4*` と `DHCPv6*` を使います。
-旧名の互換用別名はありません。
+routerd configuration is a top-level `Router` resource with a list of typed
+resources. This page summarizes the current implemented API surface.
 
-## 共通形
+Since Phase 1.6, DHCP names follow RFC spelling: `DHCPv4*` and `DHCPv6*`.
+There are no compatibility aliases for the earlier names.
+
+## Common Shape
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
@@ -22,327 +23,370 @@ spec:
   adminUp: true
 ```
 
-| フィールド | 意味 |
+| Field | Meaning |
 | --- | --- |
-| `apiVersion` | API グループと版です。 |
-| `kind` | リソース種別です。 |
-| `metadata.name` | 同じ種別内の名前です。 |
-| `spec` | 利用者が宣言する意図です。 |
-| `status` | routerd または専用デーモンが観測した状態です。 |
+| `apiVersion` | API group and version. |
+| `kind` | Resource kind. |
+| `metadata.name` | Name inside the kind. |
+| `spec` | Desired intent declared by the user. |
+| `status` | Observed state written by routerd or a managed daemon. |
 
-## API グループ
+## API Groups
 
-| API グループ | 主な Kind |
+| API group | Main kinds |
 | --- | --- |
 | `routerd.net/v1alpha1` | `Router` |
-| `net.routerd.net/v1alpha1` | インターフェース、再利用可能な `IPAddressSet`、DHCP、DNS、経路、トンネル、VIP、BGP、イベント、通信フローログ |
+| `net.routerd.net/v1alpha1` | interfaces, reusable `IPAddressSet` resources, DHCP, DNS, routes, tunnels, VIP, BGP, events, traffic flow logs |
 | `firewall.routerd.net/v1alpha1` | `FirewallZone`, `FirewallPolicy`, `FirewallRule`, `FirewallEventLog`, `ClientPolicy`, `PortForward`, `IngressService`, `LocalServiceRedirect` |
 | `system.routerd.net/v1alpha1` | `Hostname`, `Sysctl`, `SysctlProfile`, `Package`, `NTPClient`, `NTPServer`, `LogSink`, `ObservabilityPipeline`, `RouterdCluster`, `LogRetention`, `WebConsole` |
-| `plugin.routerd.net/v1alpha1` | プラグインマニフェスト |
+| `observability.routerd.net/v1alpha1` | `Telemetry` |
+| `plugin.routerd.net/v1alpha1` | plugin manifests |
 
-## システム準備
+## System Bootstrap
 
-| Kind | 役割 |
+| Kind | Role |
 | --- | --- |
-| `Package` | 他の resource から導出できない OS package だけを補う、限定的な override です。通常の runtime dependency は自動で導出されます。 |
-| `Sysctl` | router resource からまだ導出できない sysctl 値を補う、限定的な escape hatch です。`compare: exact` と `compare: atLeast` で読み戻しの判定を選べます。 |
-| `SysctlProfile` | ルーター向けの sysctl 推奨値を補う、限定的な escape hatch です。通常の router sysctl は自動で導出されます。 |
-| `Hostname` | ホスト名を設定します。 |
-| `NTPClient` | OS の NTP クライアントを有効にします。DHCPv4 / DHCPv6 の状態から時刻サーバーを導出し、空なら public NTP サーバーへ戻せます。 |
-| `NTPServer` | LAN 向けのローカル NTP サーバーを動かします。クライアント許可範囲は、静的な `allowCIDRs` に加えて、`allowCIDRFrom` で `IPv6DelegatedAddress/<name>.address` や `DHCPv6PrefixDelegation/<name>.currentPrefix` などの status field から導出できます。 |
-| `LogSink` | log event を syslog、OTLP、webhook、file、journald へ転送します。 |
-| `ObservabilityPipeline` | OTLP の environment と、stdout / syslog / Loki への routerd event の転送を設定します。 |
-| `RouterdCluster` | file lease により、leader だけが host configuration を変更し、standby は status 観測に回ります。 |
-| `LogRetention` | イベント、DNS、通信フロー、firewall event log の保管期間を管理します。 |
-| `WebConsole` | 読み取り専用の Web 画面を、管理ネットワークで待ち受けます。 |
+| `Package` | Optional narrow override for OS packages that cannot yet be derived from router resources. Normal runtime dependencies are derived automatically. |
+| `Sysctl` | Narrow escape hatch for one sysctl value that cannot yet be derived from router resources. Readback comparison can be `exact` or `atLeast`. |
+| `SysctlProfile` | Narrow escape hatch for router-oriented sysctl defaults. Normal router sysctls are derived automatically. |
+| `Hostname` | Sets the host name. |
+| `NTPClient` | Enables the OS NTP client. It can use static servers or derive servers from DHCPv4 / DHCPv6 status with public fallback servers. |
+| `NTPServer` | Runs a local LAN NTP server. Client allow ranges can be static `allowCIDRs` or derived with `allowCIDRFrom` from status fields such as `IPv6DelegatedAddress/<name>.address` or `DHCPv6PrefixDelegation/<name>.currentPrefix`. |
+| `LogSink` | Routes log events to syslog, OTLP, webhook, file, or journald sinks. |
+| `ObservabilityPipeline` | Configures OTLP environment and built-in routerd event forwarding to stdout, syslog, or Loki. |
+| `RouterdCluster` | Uses a file lease so only the leader mutates host configuration while standby nodes observe status. |
+| `LogRetention` | Manages retention for events, DNS queries, traffic flows, and firewall event logs. |
+| `WebConsole` | Enables the read-only management Web Console. |
 
-## インターフェース
+## Observability
 
-| Kind | 役割 |
+| Kind | Role |
 | --- | --- |
-| `Interface` | routerd が扱う安定した名前と OS のインターフェース名を結び付け、下流 resource 向けの link/address status も提供します。 |
-| `PPPoESession` | PPPoE 用の下位インターフェース設定を表します。 |
-| `PPPoESession` | `routerd-pppoe-client` が管理する PPPoE セッションです。 |
-| `WireGuardInterface` | WireGuard インターフェースを表します。 |
-| `WireGuardPeer` | WireGuard の相手を表します。 |
-| `TailscaleNode` | Tailscale ノードを設定します。Exit node と subnet router の広告を管理対象 systemd ユニットで行います。 |
-| `IPsecConnection` | strongSwan の cloud VPN 向け接続定義を表します。 |
-| `VRF` | Linux VRF デバイスと経路表を表します。 |
-| `VXLANTunnel` | VXLAN トンネルを表します。 |
+| `Telemetry` | Declares an external OTLP endpoint and injects OpenTelemetry environment variables into generated service units. |
 
-`PPPoESession.spec.disabled` を `true` にすると、PPPoE の定義は残したまま、管理対象の pppd ユニットを停止・無効化します。
-通常運用では PPPoE セッション枠を使わず、必要なときだけ手動で試験する fallback 経路として使えます。
+`Telemetry` describes routerd's own signal export endpoint for metrics, traces,
+and logs emitted by managed daemons. `LogSink` describes log forwarding routes
+for operational events and observed network logs. When a log sink uses OTLP,
+prefer `LogSink.spec.otlp.telemetryRef` so the sink reuses a `Telemetry`
+resource instead of duplicating collector endpoints.
 
-`TailscaleNode` は、初回登録用に `authKey` を使えます。
-本番設定では `authKeyEnv` と `authKeyFile` を推奨します。
-これにより、秘密値を YAML と Git 履歴に残さずに済みます。
-どちらも未指定の場合、`tailscaled` はログイン済みとみなします。
-routerd は、広告するノード設定だけを再適用します。
-Tailscale の既定 UDP/41641 は予約済みとして扱います。
-WireGuard の待ち受けポートには、別の番号を使ってください。
-詳しい設定手順は、Tailscale の設定ガイドを参照してください。
+## Interfaces
 
-`WireGuardInterface` は `privateKeyFile` を受け取れます。
-秘密鍵を router YAML の外に置くためです。
-`WireGuardPeer` も、任意の PSK 用に `presharedKeyFile` を受け取れます。
-インラインの鍵フィールドは、主に例とテスト向けです。
-FreeBSD では、routerd が rc.d サービスを生成します。
-そのサービスは `wg` インターフェースを作成し、ファイルから秘密鍵を読み込み、
-宣言された peer と static address を適用します。
-
-Kernel module と、systemd-networkd/resolved の adoption drop-in は、router resource から自動で導出されます。削除済みの `KernelModule`、`NetworkAdoption`、`Link`、`NixOSHost` が config に残っている場合、routerd は黙って無視せず、エラーを返します。
-
-## WAN アドレスと委任
-
-| Kind | 役割 |
+| Kind | Role |
 | --- | --- |
-| `IPv4StaticAddress` | 静的 IPv4 アドレスを付与します。 |
-| `VirtualAddress` | IPv4 `/32` または IPv6 `/128` VIP を宣言します。`spec.family` は `ipv4` または `ipv6` です。`mode: vrrp` は Linux では keepalived、FreeBSD では CARP を使います。 |
-| `DHCPv4Client` | `routerd-dhcpv4-client` が DHCPv4 リース、IPv4 アドレス、任意のデフォルト経路を管理します。 |
-| `DHCPv6Address` | DHCPv6 IA_NA の意図を表します。 |
-| `DHCPv6PrefixDelegation` | `routerd-dhcpv6-client` が管理する DHCPv6-PD リースです。 |
-| `DHCPv6Information` | DHCPv6 情報要求の結果です。DNS、SNTP、ドメイン検索、AFTR 情報を観測します。 |
-| `IPv6DelegatedAddress` | 委任プレフィックスから LAN 側アドレスを導出します。 |
-| `IPv6RAAddress` | RA/SLAAC で得る IPv6 アドレスを表します。 |
+| `Interface` | Binds a stable routerd name to an OS interface name and publishes link/address status for downstream resources. |
+| `PPPoESession` | Defines PPPoE lower-interface settings. |
+| `PPPoESession` | Represents a `routerd-pppoe-client` session. |
+| `WireGuardInterface` | Represents a WireGuard interface. |
+| `WireGuardPeer` | Represents a WireGuard peer. |
+| `TailscaleNode` | Configures a local Tailscale node for exit-node and subnet-router advertisement through a managed systemd unit. |
+| `IPsecConnection` | Defines a cloud VPN oriented strongSwan connection. |
+| `VRF` | Represents a Linux VRF device and route table. |
+| `VXLANTunnel` | Represents a VXLAN tunnel. |
 
-`DHCPv6PrefixDelegation` は、旧来の OS クライアント選択フィールドを持ちません。
-DHCPv6-PD は `routerd-dhcpv6-client` が担当します。
+`PPPoESession.spec.disabled` keeps the PPPoE definition renderable but stops
+routerd from starting the managed pppd unit. This is useful for a fallback path
+that should remain available for manual testing without consuming a line's
+PPPoE session slot during normal operation.
 
-## LAN 側サービス
+`TailscaleNode` can use `authKey` for one-shot bootstrap, but production
+configs should prefer `authKeyEnv` and `authKeyFile` so the secret value stays
+outside the YAML and the Git history. If neither is set, routerd assumes
+`tailscaled` is already logged in and only reapplies the advertised node
+options. Tailscale's default UDP/41641 port is reserved when this kind is
+present, so WireGuard listen ports must use a different value. The Tailscale
+how-to covers the full setup flow.
 
-| Kind | 役割 |
+`WireGuardInterface` accepts `privateKeyFile` so the private key can stay out of
+the router YAML. `WireGuardPeer` also accepts `presharedKeyFile` for optional
+peer PSKs; inline key fields are intended for examples and tests. On FreeBSD,
+routerd renders an rc.d service that creates the
+`wg` interface, loads the key from that file, applies peers, and then assigns
+declared static addresses for the WireGuard interface.
+
+Kernel modules and systemd-networkd/resolved adoption drop-ins are derived from
+router resources. If a config still contains the removed `KernelModule`,
+`NetworkAdoption`, `Link`, or `NixOSHost` kinds, routerd returns an error
+instead of silently ignoring the input.
+
+## WAN Addressing and Delegation
+
+| Kind | Role |
 | --- | --- |
-| `DHCPv4Server` | dnsmasq の DHCPv4 service と任意のアドレスプールを提供します。 |
-| `DHCPv4Reservation` | MAC アドレスごとの固定割り当てを表します。 |
-| `DHCPv4Relay` | dnsmasq の DHCPv4 中継を表します。 |
-| `IPv6RouterAdvertisement` | RA、PIO、RDNSS、DNSSL、M/O フラグ、MTU、優先度、寿命を生成します。 |
-| `RogueRADetector` | RA を送出する interface 上で観測された、自身以外の IPv6 Router Advertisement を status として表示する、自動導出の resource です。 |
-| `DHCPv6Server` | dnsmasq の DHCPv6/RA service です。`stateless`、`stateful`、`both`、`ra-only` を扱います。 |
-| `DNSZone` | ローカル権威ゾーンを表します。手動レコードと DHCP リース由来のレコードを扱います。 |
-| `DNSResolver` | `routerd-dns-resolver` の daemon instance、待ち受け、cache、metrics、query log を表します。 |
-| `DNSForwarder` | 1 つの resolver に対する DNS の match rule です。`DNSZone` を応答するか、名前付きの `DNSUpstream` へ転送します。 |
-| `DNSUpstream` | `udp`、`tcp`、`dot`、`doh` のいずれかで、1 つの上流 endpoint を表します。状態由来の address、bootstrap resolver、TLS 名、送信元 interface も指定できます。 |
+| `IPv4StaticAddress` | Assigns a static IPv4 address. |
+| `VirtualAddress` | Declares an IPv4 `/32` or IPv6 `/128` VIP. `spec.family` is `ipv4` or `ipv6`; `mode: vrrp` uses keepalived on Linux and CARP on FreeBSD. |
+| `DHCPv4Client` | DHCPv4 lease, IPv4 address, and optional default route managed by `routerd-dhcpv4-client`. |
+| `DHCPv6Address` | Represents DHCPv6 IA_NA intent for platform renderers. |
+| `DHCPv6PrefixDelegation` | DHCPv6-PD lease managed by `routerd-dhcpv6-client`. |
+| `DHCPv6Information` | DHCPv6 information request result, including DNS, SNTP, domain search, and AFTR observations. |
+| `IPv6DelegatedAddress` | Derives a LAN-side address from a delegated prefix. |
+| `IPv6RAAddress` | Represents IPv6 addresses learned from RA/SLAAC. |
 
-Android は DHCPv6 の DNS だけでは名前解決を完結できないため、IPv6 LAN では `IPv6RouterAdvertisement.spec.rdnss` を設定します。
+`DHCPv6PrefixDelegation` no longer selects an OS DHCPv6 client. DHCPv6-PD is
+owned by `routerd-dhcpv6-client`.
 
-dnsmasq は、DHCPv4、DHCPv6、中継、RA だけを担当します。
-DNS の待ち受けと応答は `DNSResolver` が担当します。
-LAN の DNS suffix は、`DHCPv4Server.spec.domainFrom`、
-`IPv6RouterAdvertisement.spec.dnsslFrom`、`DHCPv6Server.spec.domainSearchFrom`
-から `DNSZone/<name>.zone` を参照することで、ローカルゾーンと一致させられます。
-`DNSResolver.spec.listen[].sources` には、その listener が使う `DNSForwarder` 名を並べます。
-省略した listener は、その resolver を参照するすべての `DNSForwarder` を使います。
-user YAML の `DNSResolver.spec.sources` は受け付けません。旧来のインライン source は
-`DNSForwarder` と `DNSUpstream` に分割してください。
+## LAN Services
 
-`DNSForwarder.spec.match` には、`home.example` や、既定の上流を表す `.` を指定します。
-`spec.zoneRefs` は local の `DNSZone` を応答し、`spec.upstreams` は `DNSUpstream` へ転送します。
-DNSSEC validation は `DNSForwarder.spec.dnssecValidate` に書きます。
-
-`DNSUpstream.spec.protocol` は `udp`、`tcp`、`dot`、`doh` のいずれかです。
-`addressFrom` では、`DHCPv6Information/<name>.dnsServers` などから UDP の上流 address を導出できます。
-`sourceInterface` は Linux で送信先 interface を束縛し、`bootstrap` は DoH/DoT の endpoint 名の解決に使う補助 resolver です。
-
-## DS-Lite、経路、NAT
-
-| Kind | 役割 |
+| Kind | Role |
 | --- | --- |
-| `DSLiteTunnel` | AFTR へ `ip6tnl` トンネルを張ります。AFTR は IPv6 を直接指定するか、FQDN、または DHCPv6 情報から得ます。 |
-| `IPAddressSet` | 直接指定したアドレスや FQDN から、再利用可能な IP address set を定義します。Linux nftables renderer はこれを named set として出力し、redirect、NAT、policy routing から参照できます。 |
-| `IPv4Route` | IPv4 経路を追加します。DS-Lite 経由の既定経路や、明示的な破棄経路にも使います。 |
-| `ClusterNetworkRoute` | Kubernetes の Pod / Service CIDR を、worker の next hop 経由の static IPv4 route に展開します。 |
-| `BGPRouter` | ローカルの BGP router を宣言します。現在の backend は長寿命の `routerd-bgp` GoBGP daemon で、import policy は default deny です。 |
-| `BGPPeer` | `BGPRouter` にぶら下がる、GoBGP 管理の BGP peer を宣言します。Kubernetes BGP speaker などに使います。 |
-| `BFD` | BFD session の intent を宣言します。GoBGP backend では、FRR なしの BFD 実装が入るまで unsupported として報告します。 |
-| `NAT44Rule` | nftables の `routerd_nat` テーブルで IPv4 NAPT を行います。 |
-| `PortForward` | WAN 側の IPv4 TCP/UDP ポートを、1 つの内部 IPv4 宛先へ DNAT します。 |
-| `IngressService` | WAN 側の IPv4 TCP/UDP サービスを公開します。複数 backend、TCP/HTTP health check、`failover` / `sourceHash` / `random` selection を受け付けます。 |
-| `LocalServiceRedirect` | LAN 側 client から `IPAddressSet` 宛てに出る IPv4/IPv6 通信を、router の local port へ redirect します。平文 DNS/NTP の集約を想定し、DoH や DoT の port には触れません。 |
-| `EgressRoutePolicy` | 既定経路の選択、mark ベースの IPv4 policy routing、複数 target への hash 分散を表します。 |
+| `DHCPv4Server` | Provides a dnsmasq DHCPv4 service and optional address pool. |
+| `DHCPv4Reservation` | Reserves an IPv4 address for a MAC address. |
+| `DHCPv4Relay` | Represents dnsmasq DHCPv4 relay. |
+| `IPv6RouterAdvertisement` | Generates RA, PIO, RDNSS, DNSSL, M/O flags, MTU, preference, and lifetimes. |
+| `RogueRADetector` | Auto-derived status resource that reports non-self IPv6 Router Advertisements observed on an RA-serving interface. |
+| `DHCPv6Server` | Provides dnsmasq DHCPv6/RA service in `stateless`, `stateful`, `both`, or `ra-only` mode. |
+| `DNSZone` | Owns a local authoritative zone with manual and DHCP-derived records. |
+| `DNSResolver` | Owns a `routerd-dns-resolver` daemon instance, listen profiles, cache, metrics, and query logging. |
+| `DNSForwarder` | Declares one DNS match rule for a resolver. It either serves one or more `DNSZone` resources or forwards to named `DNSUpstream` resources. |
+| `DNSUpstream` | Declares one reusable upstream endpoint using `udp`, `tcp`, `dot`, or `doh`, with optional status-derived addresses, bootstrap resolvers, TLS name, and source interface. |
 
-`EgressRoutePolicy` は、CIDR 指定に加えて `destinationSetRefs` と
-`excludeDestinationSetRefs` を持ちます。これにより、FQDN-backed な宛先 set を policy
-resource にアドレス展開せず、経路制御や除外条件として使えます。
-`mode: priority` は既定経路の failover、`mode: mark` は 1 つの mark 付き route
-table、`mode: hash` または `candidates[].targets` は複数 route table への
-source/destination の hash 分散に使います。
+Android does not use DHCPv6 DNS configuration, so IPv6 LANs should publish
+RDNSS through `IPv6RouterAdvertisement.spec.rdnss`.
 
-routerd は、reverse path filter sysctl、tunnel MTU、RA MTU、TCP MSS clamp を
-router role、tunnel、firewall zone、RA/DHCPv6 resource から自動で導出します。
-config では LAN/WAN と tunnel の intent を宣言し、`IPv4ReversePathFilter` や
-`PathMTUPolicy` は書きません。
-`tailscale0` のように外部が管理する source interface が低い MTU を持つ場合は、
-`Interface.spec.mtu` を設定します。routerd はその source path にだけ使い、
-無関係な LAN path を低い MTU に引っ張りません。
+dnsmasq is limited to DHCPv4, DHCPv6, relay, and RA. DNS answering and
+forwarding belongs to `DNSResolver`.
+LAN DNS suffixes can be tied to a local zone by referencing
+`DNSZone/<name>.zone` from `DHCPv4Server.spec.domainFrom`,
+`IPv6RouterAdvertisement.spec.dnsslFrom`, and
+`DHCPv6Server.spec.domainSearchFrom`.
 
-`EgressRoutePolicy` は `excludeDestinationCIDRs` を持ちます。これにより、LAN 内部、管理網、HGW LAN、RFC 1918 の内部網などを policy routing の対象から外せます。
+`DNSResolver.spec.listen[].sources` lists `DNSForwarder` names for that
+listener. If the list is omitted, the listener uses every `DNSForwarder` that
+references the resolver. `DNSResolver.spec.sources` is no longer accepted in
+user YAML; split old inline entries into `DNSForwarder` and `DNSUpstream`.
 
-`ClusterNetworkRoute` は、Kubernetes node 向けの補助 resource です。
-`spec.pods.cidrs` と `spec.services.cidrs` に Pod / Service CIDR を並べ、
-`spec.via[]` に worker または VIP の next hop を指定すると、routerd は
-対応する `IPv4StaticRoute` の intent を生成します。同じ weight は同じ metric
-として扱われ、複数 next hop の ECMP に使えます。異なる weight は metric の差に
-変換され、優先経路と fallback 経路を表します。
+`DNSForwarder.spec.match` contains domain matches such as `home.example` or
+`.` for the default upstream. `spec.zoneRefs` serves local `DNSZone` resources;
+`spec.upstreams` forwards to `DNSUpstream` resources. DNSSEC validation is
+declared on `DNSForwarder.spec.dnssecValidate`.
 
-`FirewallRule` は、宛先 CIDR に加えて `destinationSetRefs` と
-`excludeDestinationSetRefs` を持ちます。これにより、再利用可能な FQDN-backed set
-を各 rule にアドレス展開せず、許可・拒否・reject の条件として使えます。
-stateful rule expression は、`sourcePorts`、`destinationPorts`、ICMP / ICMPv6 の
-type matching、`rateLimit`、`connLimit` も扱えます。`port` は単一の
-destination port の shorthand として引き続き受け付けますが、新しい例では
-`destinationPorts` を使います。
+`DNSUpstream.spec.protocol` is `udp`, `tcp`, `dot`, or `doh`. `addressFrom`
+can derive UDP upstream addresses from resources such as
+`DHCPv6Information/<name>.dnsServers`. `sourceInterface` binds outgoing DNS
+queries to a Linux interface name, and `bootstrap` supplies resolver addresses
+for DoH or DoT endpoint name resolution.
 
-`NAT44Rule` は、`outboundInterface`、`sourceCIDRs`、`translation` による単純な
-source NAT と、`type`、`egressInterface` または `egressPolicyRef`、`sourceRanges`
-による policy-aware NAT を扱います。さらに `destinationCIDRs`、`destinationSetRefs`、
-`excludeDestinationCIDRs`、`excludeDestinationSetRefs` を持ちます。これにより、
-インターネット向け通信だけをマスカレードし、静的経路を持つプライベート宛先や
-再利用可能な address set は NAT しない構成にできます。
+## DS-Lite, Routes, and NAT
 
-`PortForward` と `IngressService` は、Linux nftables と FreeBSD pf に DNAT を生成します。
-`spec.hairpin.enabled: true` と `spec.hairpin.interfaces` を指定すると、LAN
-クライアントから WAN アドレス経由で同じサービスへ到達するための hairpin NAT も生成します。
-hairpin には `listen.address` または `listen.addressFrom` が必須で、routerd は LAN 側の
-DNAT と、戻り経路用の masquerade/NAT reflection を生成します。
-`listen.addressFrom` と backend の `addressFrom` は、`IPv4StaticAddress/<name>.address`
-や `VirtualAddress/<name>.address` のような、静的に描画できるアドレスリソースを参照できます。
-`IngressService` では、`spec.hairpin.mode` の未指定を `auto` として扱います。
-listen address と選択済み backend が、listen interface に宣言された同じ prefix 上に
-ある場合、routerd は、LAN client が VIP を使うために必要な、同一 interface の戻り
-SNAT を自動生成します。YAML に listen interface の prefix が宣言されていない場合でも、
-private IPv4 の listen/backend address が同じ `/24` にあれば、hairpin が必要と判断します。
-これは Live ISO のように、boot 環境から interface address を引き継ぐ構成をカバーするためです。
-抑止する場合は `spec.hairpin.mode: off`、明示指定する場合は `manual` と `interfaces` を使います。
-`VirtualAddress.spec.vrrp.authentication` は、keepalived では `auth_pass`、
-FreeBSD CARP では `pass` として描画されます。本番構成では routerd YAML に
-共有 secret を残さないため、`VirtualAddress.spec.vrrp.authenticationFrom`
-を優先してください。`authenticationFrom.file` は local の secret file、
-`authenticationFrom.env` は環境変数を読み、`base64: true` で base64 値を
-decode します。生成済みの keepalived/CARP 設定や host interface state は secret
-として扱ってください。
-VRRP authentication は VRRPv3（RFC 5798）では deprecated です。routerd は L2 隔離を前提にするため、
-authentication は、周辺ネットワークの方針で必要な場合や、単純な誤設定対策に限って使ってください。
-`IngressService` は、複数 backend、TCP/HTTP health check、`failover`、`sourceHash`、
-`random` selection を受け付けます。runtime controller は backend の FQDN を解決し、
-DNS が一時的に失敗した場合は、直前の解決済み IPv4 に fallback します。healthy な backend が
-複数ある場合、Linux nftables は `sourceHash` では `jhash ip saddr`、`random` では
-`numgen random` で分配します。healthy な backend が 1 つだけになった場合は failover に
-降格します。validator は、`IngressService`、`LocalServiceRedirect`、routerd 管理 daemon の
-listen port が同じ interface/protocol で衝突する設定を拒否します。
+| Kind | Role |
+| --- | --- |
+| `DSLiteTunnel` | Creates an `ip6tnl` tunnel to an AFTR. The AFTR can be static IPv6, FQDN, or DHCPv6 information. |
+| `IPAddressSet` | Defines reusable IP address sets from literal addresses and FQDNs. Linux nftables renderers materialize these as named sets for firewall, redirect, NAT, and policy-routing consumers. |
+| `IPv4Route` | Adds IPv4 routes, including DS-Lite defaults and explicit drop routes. |
+| `ClusterNetworkRoute` | Expands Kubernetes Pod and Service CIDRs into static IPv4 routes through worker next hops. |
+| `BGPRouter` | Declares a local BGP router. The current backend is a long-lived `routerd-bgp` GoBGP daemon with default-deny import policy. |
+| `BGPPeer` | Declares GoBGP-managed BGP peers for a `BGPRouter`, for example Kubernetes BGP speakers. |
+| `BFD` | Declares one BFD session intent. The GoBGP backend reports BFD resources as unsupported until BFD is implemented without FRR. |
+| `NAT44Rule` | Performs IPv4 NAPT in the nftables `routerd_nat` table. |
+| `PortForward` | Publishes one WAN-side IPv4 TCP/UDP port to one internal IPv4 target with DNAT. |
+| `IngressService` | Publishes one WAN-side IPv4 TCP/UDP service. Multiple backends, TCP/HTTP health checks, and `failover`, `sourceHash`, or `random` backend selection are accepted. |
+| `LocalServiceRedirect` | Redirects LAN-origin IPv4/IPv6 traffic for `IPAddressSet` destinations to a local router port. This is intended for plaintext DNS/NTP interception without touching DoH or DoT ports. |
+| `EgressRoutePolicy` | Represents default-route selection, marked IPv4 policy routing, and hash-based multi-target egress routing. |
 
-`IPAddressSet` は、直接指定した IPv4/IPv6 address を apply 時に nftables の named set へ
-出力します。FQDN の `A`/`AAAA` record は runtime controller が解決し、参照されている
-set を、firewall、NAT、policy table 全体を reload せずにその場で更新します。次回の更新は、
-観測した最小 DNS TTL の半分を基本とし、60 秒より短くはしません。`refreshInterval` は、
-より積極的に更新したい場合の上限として使えます。
+`EgressRoutePolicy` supports `destinationSetRefs` and `excludeDestinationSetRefs`
+in addition to CIDR fields. Use them to steer or exclude FQDN-backed destination
+sets without expanding addresses directly into the policy resource. Use
+`mode: priority` for default-route failover, `mode: mark` for one marked route
+table, and `mode: hash` or `candidates[].targets` for source/destination hash
+distribution across multiple route tables.
 
-`IPAddressSet.spec.names` は、完全一致の DNS 名だけを扱います。`microsoft.com` は
-`microsoft.com` 自体の `A`/`AAAA` record を意味し、`www.microsoft.com`、
-`login.microsoft.com`、`*.microsoft.com`、さらに深いサブドメインは含みません。
-ワイルドカードや suffix 形式のサービス判定には、単純な FQDN 解決ではなく、
-DNS query の観測や provider endpoint feed を扱う、別のリソースが必要です。
+routerd derives reverse path filter sysctls, tunnel MTU, RA MTU, and TCP MSS
+clamping from router role, tunnel, firewall zone, and RA/DHCPv6 resources.
+Configs should declare the tunnel and LAN/WAN intent rather than separate
+`IPv4ReversePathFilter` or `PathMTUPolicy` resources.
+If an externally managed source interface has a lower MTU, such as `tailscale0`,
+set `Interface.spec.mtu`; routerd uses it only for that source path instead of
+lowering unrelated LAN paths.
 
-`BGPRouter` と `BGPPeer` は、長寿命の `routerd-bgp` daemon を使います。
-routerd は resource spec を local gRPC Unix socket 経由で型付きの GoBGP API object に
-直接 map し、`ListPeer` と `ListPath` で status を観測します。FRR の text config、
-`frr-reload.py`、`vtysh` の parse、GoBGP の file config は使いません。
-`apply --once` は host artifact の render だけを行い、
-BGP は `routerd serve` の管理として status に出します。`routerctl show bgp` は、保存された
-GoBGP の観測から router、peer、message counter、route selection state、直近の error を
-表示します。prefix status には、`best`、`valid`、`installed`、`stale`、`nextHop`、
-observed community が含まれます。`spec.importPolicy.allowedPrefixes` に一致する
-学習済みの IPv4 best path は、routerd 所有の protocol/metric で kernel FIB に投入されます。
-既定では、GoBGP import policy が受理した eBGP next-hop を、学習元の peer address に
-書き換えます（`spec.importPolicy.nextHopRewrite: peer-address`）。これは旧 FRR の
-`set ip next-hop peer-address` と同じ意味で、広告 next-hop が downstream speaker を
-指す Kubernetes edge 経路でも、peer address の ECMP として投入できます。広告された next-hop を
-そのまま kernel に入れたい場合だけ、`nextHopRewrite: unchanged` を指定してください。
-同一 prefix の equal best path は、ECMP の next-hop として入ります。
+`ClusterNetworkRoute` is a helper for Kubernetes nodes that need static routes
+for Pod CIDRs and Service CIDRs instead of dynamic routing. routerd expands each
+CIDR and each `spec.via[]` next hop into managed `IPv4StaticRoute` resources.
+Equal `weight` values produce equal route metrics for ECMP-capable platforms;
+different weights become different metrics so higher-weight next hops are
+preferred and lower-weight next hops act as fallback routes.
 
-`BGPRouter.spec.convergenceProfile: fast` は、graceful restart の stale-path 保持よりも
-速い収束を優先する Kubernetes/edge router 向けです。fast profile は peer timer を
-短くし、`spec.gracefulRestart.enabled` が明示されていない場合は graceful restart を
-無効化します。import policy は default deny です。Kubernetes LoadBalancer pool など、
-受け入れたい prefix を `spec.importPolicy.allowedPrefixes` に列挙してください。
-`BGPPeer.spec.ebgpMultihop` は、loopback peering や、lab から本番 router への
-検証のように、直結でない eBGP session に使います。未指定、`0`、`1` は、直結 eBGP
-の既定動作です。`2` から `255` を指定すると、その peer group の GoBGP multihop
-TTL として設定します。
-router ID は TCP の source address と同一である必要はありませんが、peer 側には、実際に
-host が使う BGP source address を設定する必要があります。LAN に複数の address がある
-場合は、Linux なら `ip route get <peer-address>` で source address を確認し、明確な理由が
-なければ router ID もその運用上の source address に寄せると、混乱を避けられます。
+`EgressRoutePolicy` supports `excludeDestinationCIDRs`. Use it to keep LAN,
+management, HGW LAN, and RFC 1918 destinations out of policy routing.
 
-`BGPRouter` は、connected/static IPv4 route を個別の `allowedPrefixes` 付きで広告できます。
-`BGPRouter.spec.exportPolicy.allowedPrefixes` または redistribute の allow-list に明示された
-prefix だけが、GoBGP の local path として追加されます。BGP community policy は router または
-peer に `communities.send`、`communities.accept`、`communities.set.in/out` として宣言でき、
-GoBGP が報告する observed route community は status に保存されます。watcher は既定で
-15 秒間隔、prefix status は 4096 entries が上限です。`BGPRouter.spec.watcher` で
-`pollInterval`、`maxPrefixes`、`peerStateChangeThrottle` を調整できます。validation は、
-3 秒未満の interval と、1,000,000 以上の prefix cap を拒否します。GoBGP MVP は
-router ごとに 1 つの `BGPRouter` を support し、`spec.vrf` は未対応です。
-multi-router、VRF、BFD resource は、黙って無視せず Pending として報告します。
-`spec.listen.address` と `spec.listen.port` は、`routerd-bgp` の GoBGP listener を bind します。
+`FirewallRule` supports `destinationSetRefs` and `excludeDestinationSetRefs`
+in addition to destination CIDR narrowing. Use these fields to accept, drop, or
+reject traffic for reusable FQDN-backed sets without expanding addresses into
+each rule. Stateful rule expressions also support `sourcePorts`,
+`destinationPorts`, ICMP / ICMPv6 type matching, `rateLimit`, and `connLimit`.
+`port` remains accepted as a single destination port shorthand; new examples
+prefer `destinationPorts`.
 
-`VirtualAddress` の `mode: vrrp` は、Linux では keepalived、FreeBSD では CARP を使います。
-`spec.family: ipv4` は IPv4 `/32`、`spec.family: ipv6` は IPv6 `/128` を要求します。
-IPv6 VIP は keepalived VRRPv3 の
-`family inet6` として描画され、FreeBSD では `inet6` の CARP alias になります。
-Linux VRRP は明示的な unicast peer を使い、既定は `nopreempt` です。
-FreeBSD CARP は親 interface 上の multicast advertisement を使うため、
-`spec.vrrp.peers` は FreeBSD では無視されます。`preempt: true` は、自動 failback が必要な場合だけ使います。advertisement や
-failback の低レベルな timing は、resource ごとの field ではなく、routerd の profile 既定値で扱います。`track` で `BGPRouter`、`BGPPeer`、`IngressService`
-などの状態に応じて priority を下げられます。既定では、unhealthy が 3 回連続で penalty
-を適用し、healthy が 2 回連続で解除します。`spec.hostname` は、DNSResolver が配信する
-対応する `DNSZone` へ VIP を自動公開できます。IPv4 VIP は A record、IPv6 VIP は AAAA
-record になります。外部の AD DNS などが名前を管理する場合は、
-`spec.externalDNS: true` を設定してください。routerd は hostname 構文だけを検証し、
-DNSZone の coverage warning と自動公開を行いません。`routerctl show vrrp` は、role、
-priority、peer、transition からの経過時間を表示します。
+`NAT44Rule` supports simple source NAT with `outboundInterface`,
+`sourceCIDRs`, and `translation`, and policy-aware NAT with `type`,
+`egressInterface` or `egressPolicyRef`, and `sourceRanges`. It also supports
+`destinationCIDRs`, `destinationSetRefs`, `excludeDestinationCIDRs`, and
+`excludeDestinationSetRefs`. This allows internet traffic to be masqueraded
+while private routed destinations or reusable address sets stay un-NATed.
+
+`BGPRouter` and `BGPPeer` currently use the long-lived `routerd-bgp` daemon.
+routerd maps the resource specs directly to typed GoBGP API objects over a
+local gRPC Unix socket and observes status through `ListPeer` and `ListPath`;
+it does not render FRR text config, run `frr-reload.py`, parse `vtysh`, or use
+GoBGP's file configuration format. `apply --once` renders host artifacts only
+and reports BGP as serve-managed. `routerctl show bgp` summarizes routers,
+peers, message counters, route selection state, and last errors from stored
+GoBGP observation.
+Prefix status includes `best`, `valid`, `installed`, `stale`, `nextHop`, and
+observed communities. Learned IPv4 best paths that match
+`spec.importPolicy.allowedPrefixes` are installed into the kernel FIB with
+routerd-owned protocol and metric values. By default, GoBGP import policy
+rewrites accepted eBGP next-hops to the learning peer address
+(`spec.importPolicy.nextHopRewrite: peer-address`), matching the former FRR
+`set ip next-hop peer-address` behavior so Kubernetes edge routes install as
+peer-address ECMP even when the advertised next-hop is a downstream speaker.
+Set `nextHopRewrite: unchanged` only when the advertised next-hop is meant to
+be installed directly. Equal best paths for the same prefix are installed as
+ECMP next hops.
+
+`BGPRouter.spec.convergenceProfile: fast` is intended for Kubernetes/edge
+routers that prefer quick convergence over graceful restart stale-path
+retention: it derives fast peer timers and disables graceful restart unless
+`spec.gracefulRestart.enabled` is explicitly set. Import policy is default
+deny; add `spec.importPolicy.allowedPrefixes` for Kubernetes LoadBalancer pools.
+`BGPPeer.spec.ebgpMultihop` enables non-direct eBGP sessions such as loopback
+peering or lab-to-production validation across routed hops. Omit it or set `0`
+or `1` for the direct eBGP default; set a value from `2` to `255` to configure
+the GoBGP multihop TTL for that peer group.
+`BGPRouter` can use a router ID that differs from the TCP source address, but
+peer routers must still configure the address that the host actually uses as
+its BGP source. Check `ip route get <peer-address>` on Linux when the LAN has
+multiple addresses, and prefer a router ID that matches that operational source
+unless there is a clear reason not to.
+
+`BGPRouter` can advertise connected and static IPv4 routes with independent
+`allowedPrefixes`; only prefixes explicitly listed in
+`BGPRouter.spec.exportPolicy.allowedPrefixes` or the redistribute allow-lists
+are added to GoBGP as local paths. BGP community policy can be declared on the
+router or peer with `communities.send`, `communities.accept`, and
+`communities.set.in/out`; observed route communities are stored in status when
+GoBGP reports them. The watcher defaults to a 15 second controller interval and
+4096 observed prefixes, and `BGPRouter.spec.watcher` can tune `pollInterval`,
+`maxPrefixes`, and `peerStateChangeThrottle`; validation rejects intervals below
+3 seconds and prefix caps of 1,000,000 or more. The GoBGP MVP supports one
+`BGPRouter` per router and does not yet support `spec.vrf`; unsupported
+multi-router, VRF, or BFD resources are reported as Pending instead of being
+silently ignored. `spec.listen.address` and `spec.listen.port` bind the
+`routerd-bgp` GoBGP listener.
+
+`VirtualAddress` uses keepalived on Linux and CARP on FreeBSD for
+`mode: vrrp`. `spec.family: ipv4` requires an IPv4 `/32`, and
+`spec.family: ipv6` requires an IPv6 `/128`. IPv6 VIPs render keepalived VRRPv3 with
+`family inet6`; FreeBSD renders `inet6` CARP aliases. Linux VRRP uses explicit
+unicast peers and defaults to
+`nopreempt`; FreeBSD CARP uses multicast advertisements on the parent interface,
+so `spec.vrrp.peers` is ignored there. Set `spec.vrrp.preempt: true` only when
+automatic failback is intended. Advertisement and failback timing use routerd
+profile defaults rather than per-resource low-level timing fields.
+The resource status records the rendered backend, VIP address, VRID, base
+priority, track-adjusted priority, and generated config path when a file-backed
+backend is used. `track` lowers priority when referenced resources such as
+`BGPRouter`, `BGPPeer`, or `IngressService` are not healthy. Track entries use
+hysteresis: by default three consecutive unhealthy observations are required to
+apply a penalty and two consecutive healthy observations are required to clear
+it. `spec.hostname` can publish VIPs into matching DNSResolver-served `DNSZone`
+records; IPv4 VIPs create A records and IPv6 VIPs create AAAA records. Set
+`spec.externalDNS: true` when the name is owned by an outside DNS system; routerd
+will keep validating the hostname syntax but will not try to publish it or warn
+about missing DNSZone coverage. `routerctl show vrrp` shows role, priority,
+peers, and transition age. NixOS remains groundwork until a native
+service-manager module owns the same host artifacts.
 
 ### VRRP production tuning
 
-制御プレーン VIP のように自動 failback が必要な場所だけ、`preempt: true` を
-使います。家庭 LAN や DS-Lite 周辺の VIP では、優先 owner に戻すことよりも安定性を
-優先し、既定の non-preemptive な挙動を使うのが扱いやすいです。backup が VIP を
-持ったあとは、その node が落ちるか、明示的に移動するまで保持します。完全な resource fragment は
-`examples/vrrp-tuning-presets.yaml` を参照してください。
+Use `preempt: true` only for control-plane VIPs where automatic failback is
+worth the operational sensitivity. For home-router or DS-Lite/LAN service VIPs,
+prefer the default non-preemptive behavior so the backup keeps the VIP until it
+fails or is intentionally moved. See `examples/vrrp-tuning-presets.yaml`
+for complete resource fragments.
 
-`BGPPeer.spec.password` は、GoBGP peer の TCP MD5 authentication password として
-渡されます。
-本番構成では routerd YAML に共有 secret を残さないため、`BGPPeer.spec.passwordFrom`
-を優先してください。`passwordFrom.file` は local の root-owned secret file、
-`passwordFrom.env` は環境変数を読み、`base64: true` で base64 値を decode します。
+`BGPPeer.spec.password` is passed to the GoBGP peer as the TCP MD5
+authentication password. Prefer `BGPPeer.spec.passwordFrom` for production
+configs so the routerd YAML does not contain the shared secret.
+`passwordFrom.file` reads a local root-owned secret file and `passwordFrom.env`
+reads an environment variable; `base64: true` decodes either source before
+applying it to the long-lived BGP daemon.
 
+`VirtualAddress.spec.vrrp.authentication` is rendered into keepalived as
+`auth_pass` and into FreeBSD CARP as `pass`. Prefer
+`VirtualAddress.spec.vrrp.authenticationFrom` for production configs.
+`authenticationFrom.file` reads a local secret file and `authenticationFrom.env`
+reads an environment variable; `base64: true` decodes either source before
+rendering. Treat rendered keepalived config and host interface state as secrets. VRRP
+authentication is deprecated in VRRPv3 (RFC 5798); routerd assumes L2 isolation
+and recommends using authentication only when it is still required by the
+surrounding network policy or to guard against simple misconfiguration.
 
-`IngressService` は、複数 backend、TCP health check、failover policy を扱います。
-runtime controller が backend の FQDN を解決し、DNS 失敗時は直前の解決済み IPv4 を
-fallback として使います。Linux nftables は、次回の NAT reconcile で status の
-active backend を転送先に使います。既存の conntrack は消さないため、既存の flow は
-旧 backend に残り、新規の flow が選択済みの backend へ向かいます。`spec.hostname` は、
-listen address の A record として DNSResolver に自動反映できます。外部の DNS が名前を
-管理する場合は、`spec.externalDNS: true` を設定してください。
-`routerctl show ingress` は、active backend と backend ごとの health を表示します。
-`routerctl show ingress --verbose` は、live dataplane の `ip_forward`、nftables の
-DNAT/SNAT rule 数、該当する conntrack flow 数も表示します。`DETAIL` column には、
-`hairpinMode`、hairpin が必要か、期待される nftables SNAT rule が present/missing
-のどちらか、も出します。Ingress、NAT 系、DS-Lite、IPv6 PD/RA、routing resource から、
-forwarding、redirect suppression、reverse path filter exception、interface ごとの RA 受信など、
-必要な runtime sysctl を導出します。`routerd apply --once` は派生設定を plan / render しますが、
-host 変更は明示的な `Sysctl` / `SysctlProfile` の escape hatch だけに限定します。
-派生 runtime 設定の適用は、`routerd serve` の controller reconcile が担当します。
-保守中は `routerctl drain
-ingress/<service> backend=<name> --duration 10m` で、backend を runtime state 上の
-drain 状態にできます。controller は、duration が切れるか `routerctl undrain
-ingress/<service> backend=<name>` で解除されるまで、該当する backend を reason `Drained`
-の unhealthy として扱います。
+`PortForward` and `IngressService` render DNAT on Linux nftables and FreeBSD pf.
+Set `spec.hairpin.enabled: true` with `spec.hairpin.interfaces` to also allow
+LAN clients to reach the service through the WAN address. Hairpin mode requires
+`listen.address` or `listen.addressFrom`; routerd renders the LAN-side DNAT plus
+the return-path masquerade/NAT reflection rule. `listen.addressFrom` and backend
+`addressFrom` can reference statically rendered address resources such as
+`IPv4StaticAddress/<name>.address` or `VirtualAddress/<name>.address`.
+`IngressService` treats omitted `spec.hairpin.mode` as `auto`: when the listen
+address and the selected backend are on a prefix declared for the same listen
+interface, routerd automatically emits the same-interface return-path SNAT
+needed for LAN clients to use the VIP. If no listen-interface prefix is
+declared in YAML, auto mode also treats private IPv4 listen/backend addresses
+in the same `/24` as hairpin-required, which covers live ISO deployments where
+the interface address is inherited from the boot environment. Set
+`spec.hairpin.mode: off` to suppress that behavior, or `manual` with
+`interfaces` for explicit NAT reflection.
+`IngressService` accepts multiple backends, TCP/HTTP health checks, and
+`failover`, `sourceHash`, or `random` backend selection. The runtime controller
+resolves backend FQDNs, falls back to the previous resolved IPv4 address when DNS
+temporarily fails, records backend health in status, and writes either one
+active backend or a healthy backend distribution. When only one backend remains
+healthy, `sourceHash` and `random` degrade to failover. Linux nftables rendering
+uses the status-selected backend set on the next NAT reconcile and emits
+`jhash ip saddr` for `sourceHash` or `numgen random` for `random`. Existing
+conntrack entries are not flushed, so established flows can stay on the old
+backend while new flows use the selected backend. Validator checks reject
+listen-port collisions between `IngressService`, `LocalServiceRedirect`, and
+routerd-managed local daemons on the same protocol/interface. `spec.hostname`
+can also publish the listen address into matching DNSResolver-served `DNSZone`
+records. Set `spec.externalDNS: true` when AD DNS or another external DNS system
+owns the name. `routerctl show ingress` shows active backend and per-backend
+health; `routerctl show ingress --verbose` also samples the live dataplane
+(`ip_forward`, nftables DNAT/SNAT rule counts, and matching conntrack flows).
+The `DETAIL` column reports `hairpinMode`, whether hairpin is required, and
+whether the expected nftables SNAT rule is present or missing.
+Ingress, NAT-like resources, DS-Lite, IPv6 PD/RA, and routing resources derive
+the runtime sysctls they need, including forwarding, redirect suppression,
+reverse-path-filter exceptions, and per-interface RA acceptance. `routerd
+apply --once` plans and renders those derived settings but mutates the host only
+for explicit `Sysctl` / `SysctlProfile` escape hatches; `routerd serve` applies
+the derived runtime settings during controller reconcile. During
+maintenance, `routerctl drain ingress/<service> backend=<name>
+--duration 10m` marks a backend as drained in the runtime state store. The
+controller treats it as unhealthy with reason `Drained` until the duration
+expires or `routerctl undrain ingress/<service> backend=<name>` clears the
+state.
 
-`LocalServiceRedirect` は、Linux nftables の `prerouting` に `redirect` rule を生成します。
-指定した interface から入ってきた packet と、`IPAddressSet` 宛先だけを対象にします。
-router 自身が発信する通信や health check は、この hook を通りません。
+`IPAddressSet` writes literal IPv4/IPv6 addresses into nftables named sets when
+the ruleset is rendered. FQDN `A`/`AAAA` records are resolved by the runtime
+controller, which refreshes referenced nftables sets in place without reloading
+the whole firewall, NAT, or policy table. The next refresh is scheduled at half of the
+observed minimum DNS TTL, but never sooner than 60 seconds. `refreshInterval`
+can cap that delay when a set should be refreshed more aggressively.
 
-例:
+Entries in `IPAddressSet.spec.names` are exact DNS names only. `microsoft.com`
+means the `A`/`AAAA` records for `microsoft.com` itself; it does not include
+`www.microsoft.com`, `login.microsoft.com`, `*.microsoft.com`, or deeper
+subdomains. Wildcard and suffix-style service matching needs a DNS-observation
+or provider endpoint-feed resource rather than plain FQDN resolution.
+
+`LocalServiceRedirect` renders Linux nftables `redirect` rules in `prerouting`
+only. It matches packets arriving from one declared interface and an
+`IPAddressSet` destination. Router-originated traffic and health checks do not
+traverse this hook.
+
+Example:
 
 ```yaml
 apiVersion: firewall.routerd.net/v1alpha1
@@ -367,28 +411,27 @@ spec:
       - lan
 ```
 
-DS-Lite、IPv4 既定経路、NAT44 は、実際の lab で動作確認済みです。
+## Coordination
 
-## 状態連携
-
-| Kind | 役割 |
+| Kind | Role |
 | --- | --- |
-| `HealthCheck` | target、protocol、cadence、threshold から到達性 probe の intent を宣言します。`EgressRoutePolicy` の candidate/target から参照されると、routerd が health-check daemon、source binding、socket mark を自動で導出します。 |
-| `EgressRoutePolicy` | 準備完了の候補の中から、重みの高い外向き経路を選びます。`destinationCIDRs` と、candidate の `gatewaySource`、`gateway` を持ちます。 |
-| `EventRule` | イベント列に対して、all_of、any_of、sequence、window、absence、throttle、debounce、count を評価します。 |
-| `DerivedEvent` | 複数リソースの状態から仮想イベントを発行します。 |
-| `SelfAddressPolicy` | 自ホストアドレスの選択方針を表します。 |
+| `HealthCheck` | Measures reachability through `routerd-healthcheck` or the development embedded runner. |
+| `EgressRoutePolicy` | Selects the highest-weight ready egress candidate. Candidates can include gateway fields and health checks. |
+| `EventRule` | Evaluates event streams with all_of, any_of, sequence, window, absence, throttle, debounce, and count. |
+| `DerivedEvent` | Emits virtual events derived from multiple resource states. |
+| `SelfAddressPolicy` | Selects a self address for protocols that need one. |
 
-`HealthCheck.spec.disabled` を `true` にすると、daemon ユニットは生成しますが、停止・無効化します。
-`EgressRoutePolicy` の候補にも `disabled: true` を指定できます。
-無効化した候補は、最後の観測状態が Healthy のままでも選択されません。
-`mode: priority` でも、candidate の `weight` が選択の第一キーで、`priority` は
-tie-break と policy-rule の priority です。candidate を削除すると、ledger-owned な
-policy-route の rule/table も削除されます。
+`HealthCheck.spec.disabled` renders the daemon unit but disables and stops it.
+`EgressRoutePolicy` candidates also accept `disabled: true`; disabled
+candidates are not selected even if their last observed health status is still
+Healthy. In `mode: priority`, candidate `weight` remains the first selection
+key, `priority` is the tie-breaker and policy-rule priority, and stale
+ledger-owned policy-route rules/tables are removed when candidates are removed.
 
 ## `spec.when`
 
-`spec.when` を持つ resource は、routerd の local state store に対する predicate が一致したときだけ有効になります。従来の単一 predicate 構文も引き続き使えます。
+Resources that support `spec.when` are included only when the predicate matches
+routerd's local state store. The existing single-predicate form remains valid:
 
 ```yaml
 when:
@@ -397,7 +440,7 @@ when:
       equals: pd-ready
 ```
 
-AND は `all`、OR は `any` で表します。任意の深さで nest できます。
+Use `all` for AND and `any` for OR. They can be nested to any depth:
 
 ```yaml
 when:
@@ -414,46 +457,29 @@ when:
           equals: healthy
 ```
 
-各 `when` node は、`state`、`all`、`any` のどれか 1 つだけを持ちます。
-`state` は state variable 名を key にし、`exists`、`equals`、`in`、`contains`、
-`status`、`for` で照合します。要素が 1 つの `all` は、単一 predicate 構文と等価です。
-状態管理専用の resource kind は公開しません。条件付きの activation は、依存する resource の
-`spec.when` に直接書きます。
+Each `when` node must be exactly one of `state`, `all`, or `any`. `state` maps
+state variable names to `exists`, `equals`, `in`, `contains`, `status`, and
+`for` matches. One-element `all` is equivalent to the single-predicate form.
+State-management resources are not exposed as config kinds; express conditional
+activation directly on the dependent resources with `spec.when`.
 
-`HealthCheck.spec.sourceInterface` は、実行時に OS のインターフェース名へ解決されます。
-Linux では `SO_BINDTODEVICE` を使います。`fwmark` を指定した場合は、
-`SO_MARK` も設定します。`HealthCheck` が `EgressRoutePolicy` の candidate や
-target から参照されている場合は、routerd がその route target の mark から
-`SO_MARK` を自動で導出します。
-直接の `fwmark` 指定は、route target に紐づかない低レベルな probe 向けです。
-FreeBSD では、指定したインターフェースから送信元アドレスを選びます。
-FreeBSD には、Linux と同じ socket option がないためです。
+`HealthCheck` declares probe intent: target, protocol, cadence, and thresholds.
+When a health check is referenced by an `EgressRoutePolicy` candidate or target,
+routerd derives the health-check daemon, source binding, and socket mark from
+that route target automatically. Platform-specific socket mechanics stay inside
+the controller and renderer.
 
-## システム
-
-| Kind | 役割 |
-| --- | --- |
-| `Hostname` | ホスト名を管理します。 |
-| `Sysctl` | sysctl 値を管理します。 |
-| `NTPClient` | NTP クライアント設定を管理します。`serverFrom` で `DHCPv4Client.status.ntpServers` や `DHCPv6Information.status.sntpServers` を参照できます。 |
-| `LogSink` | ログの送信先を表します。 |
-| `WebConsole` | 状態、イベント、IPv4/IPv6 のコネクション観測を表示する、読み取り専用画面です。 |
-
-`Telemetry` は、routerd 自身と管理対象 daemon の metrics / traces / logs を
-OpenTelemetry の endpoint へ出すための resource です。`LogSink` は、運用イベント
-や観測ログの転送経路を表します。OTLP へログ転送する場合は、collector の endpoint を
-重複して書かず、`LogSink.spec.otlp.telemetryRef` で `Telemetry` を参照してください。
-
-`WebConsole.spec.listenAddressFrom` は、ほかのリソースの状態から HTTP の待ち受けアドレスを導出します。
-たとえば、`Interface/mgmt.status.ipv4Addresses` を参照できます。
-管理アドレスを DHCP、IPAM、別の宣言リソースから得る場合は、固定の `listenAddress` ではなく、こちらを使います。
+`WebConsole.spec.listenAddressFrom` derives the HTTP listener address from
+another resource status, for example `Interface/mgmt.status.ipv4Addresses`.
+Use it instead of a literal `listenAddress` when the management address comes
+from DHCP, IPAM, or another declarative resource.
 
 ## Status Provides Contract
 
-`addressFrom`、`gatewayFrom`、`dnsServerFrom`、`dependsOn[].field`
-などの参照フィールドは、参照先の kind がこの contract で宣言した
-field だけを参照できます。存在しない resource や、`provides` に無い field は、
-validator がエラーにします。
+Fields such as `addressFrom`, `gatewayFrom`, `dnsServerFrom`, and
+`dependsOn[].field` can reference only fields that the
+target kind declares in this contract. The validator rejects missing resources
+and fields outside the target kind's `provides` set.
 
 | Kind | Provides |
 | --- | --- |
@@ -523,37 +549,41 @@ validator がエラーにします。
 | `WireGuardInterface` | `fwmark` (int), `listenPort` (int), `peerCount` (int), `phase` (string), `publicKey` (string) |
 | `WireGuardPeer` | `handshakeAgeSeconds` (int), `latestEndpoint` (string), `latestHandshake` (timestamp), `phase` (string), `transferRxBytes` (int), `transferTxBytes` (int) |
 
-## ファイアウォール
+## Firewall
 
-| Kind | 役割 |
+| Kind | Role |
 | --- | --- |
-| `FirewallZone` | インターフェースをゾーンへ割り当て、`untrust`、`trust`、`mgmt` の役割を設定します。 |
-| `FirewallPolicy` | 拒否ログなど、全体の設定を表します。 |
-| `FirewallRule` | 役割の組み合わせでは表せない例外を表します。送信元 CIDR、宛先 CIDR、`IPAddressSet` 宛先参照で範囲を絞れます。 |
-| `ClientPolicy` | MAC アドレスでクライアントを分類し、Linux nftables でゲスト隔離を行います。 |
-| `PortForward` | 単一宛先の ingress DNAT ルールを追加します。routerd が firewall table も管理している場合は、内部の forward accept も生成します。任意の hairpin mode では、LAN 側の DNAT と戻り経路の SNAT も生成します。 |
-| `IngressService` | `PortForward` と同じ ingress DNAT を追加します。複数 backend、選択方針、health check の intent を受け付け、runtime の failover state は controller path で扱います。任意の hairpin mode も `PortForward` と同じです。 |
-| `LocalServiceRedirect` | 明示的な `IPAddressSet` 宛ての通信を local service へ redirect します。firewall renderer は、送信元 zone から該当する local input port への開口も生成します。 |
+| `FirewallZone` | Assigns interfaces to zones with `untrust`, `trust`, and `mgmt` roles. |
+| `FirewallPolicy` | Represents global firewall behavior such as deny logging. |
+| `FirewallRule` | Represents exceptions that cannot be expressed by the role matrix. Supports source CIDRs, destination CIDRs, and `IPAddressSet` destination refs. |
+| `ClientPolicy` | Classifies clients by MAC address for guest isolation on Linux nftables. |
+| `PortForward` | Adds a single-target ingress DNAT rule and, when routerd manages the firewall table, an internal forward accept rule. Optional hairpin mode adds LAN-side DNAT and return-path SNAT. |
+| `IngressService` | Adds the same ingress DNAT path as `PortForward`; multiple backends, `failover` / `sourceHash` / `random` selection, and health-check intent are accepted, with runtime backend state handled by the controller path. Optional hairpin mode matches `PortForward`. |
+| `LocalServiceRedirect` | Adds local service redirect rules for `IPAddressSet` destinations. The firewall renderer opens the matching local input ports for the source zone. |
 
-状態を持つフィルターは、nftables の `inet routerd_filter` テーブルに生成します。
-確立済みの通信、loopback、必要な ICMPv6 は常に許可します。
-DHCP、DNS、DS-Lite などに必要な開口は、routerd が内部で生成します。
+Stateful filtering renders into the nftables `inet routerd_filter` table.
+Established traffic, loopback, and required ICMPv6 are always accepted.
+routerd derives internal openings needed by DHCP, DNS, DS-Lite, and related
+managed resources.
 
-`ClientPolicy` は、`mode: include` では「一覧に書いた MAC アドレスを guest として扱う」動作です。
-`mode: exclude` では「一覧に書いた MAC アドレスを trusted とし、対象インターフェース上の残りを guest として扱う」動作です。
-`spec.macs` は短縮形です。`classification[]` は構造化された形式で、各 entry は
-`mode: trusted|guest|isolated` と、`match.macs`、`match.ouiPrefixes`、
-`match.hostnamePatterns`、`match.dhcpFingerprints` の selector を持ちます。
-match field は OR として評価します。`ipv4Reservation` は、Ethernet source address を
-直接 match できない platform で、address ベースの rendering を安定させるためにも使えます。
-`spec.isolation` では、internet 許可、LAN/mgmt 拒否、mDNS/SSDP/NetBIOS discovery 拒否といった、典型的な guest の intent を表現できます。
-FreeBSD pf は同じ MAC ベースの routed filtering モデルを持たないため、このリソースは FreeBSD では未対応として扱います。
+`ClientPolicy` supports `mode: include` for "listed MAC addresses are guests"
+and `mode: exclude` for "listed MAC addresses are trusted, everything else on
+the interface is guest." `spec.macs` is the short form for guest/trusted MAC
+lists. `classification[]` is the structured form; each entry has
+`mode: trusted|guest|isolated` and a `match` selector with `macs`,
+`ouiPrefixes`, `hostnamePatterns`, or `dhcpFingerprints`. Match fields are ORed.
+`ipv4Reservation` can keep address-based rendering stable on platforms that
+cannot match Ethernet source addresses. `spec.isolation` can express the common
+guest shape: internet allowed, LAN and management denied, and mDNS/SSDP/NetBIOS
+discovery blocked. The FreeBSD pf renderer reports this resource as unsupported
+because pf does not provide the
+same MAC-based routed filtering model.
 
-## 名前変更の要点
+## Renamed Kinds
 
-Phase 1.6 で、次のように名前を整理しました。
+Phase 1.6 renamed DHCP resources.
 
-| 旧名 | 現在の名前 |
+| Old | Current |
 | --- | --- |
 | `IPv4DHCPServer` | `DHCPv4Server` |
 | `IPv4DHCPReservation` | `DHCPv4Reservation` |
@@ -564,4 +594,4 @@ Phase 1.6 で、次のように名前を整理しました。
 | `IPv6DHCPScope` | `DHCPv6Server` |
 | `DHCPRelay` | `DHCPv4Relay` |
 
-バイナリ名も、`routerd-dhcpv4-client`、`routerd-dhcpv6-client` です。
+The daemon binaries are `routerd-dhcpv4-client` and `routerd-dhcpv6-client`.

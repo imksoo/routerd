@@ -1,18 +1,18 @@
 ---
-title: ファイアウォールのレート制限と ICMP ルール
+title: Firewall rate limits and ICMP rules
 ---
 
-# ファイアウォールのレート制限と ICMP ルール
+# Firewall rate limits and ICMP rules
 
-この例は、小規模なルーター向けのステートフルな `FirewallRule` の書き方を示します。
+This example shows stateful `FirewallRule` expressions for a small router:
 
-- HTTP と HTTPS を 1 つの複数ポートのルールで許可する
-- WAN からの ICMP echo request だけを許可する
-- パケットのレート、または送信元ごとの接続数の上限を超えた SSH の試行を reject する
+- allow HTTP and HTTPS on the router with one multi-port rule
+- allow only ICMP echo requests from the WAN
+- reject SSH attempts that exceed a packet rate or per-source connection limit
 
-完全な YAML は `examples/firewall-rate-limit.yaml` にあります。
+The complete YAML is in `examples/firewall-rate-limit.yaml`.
 
-## 適用手順
+## Apply sequence
 
 ```bash
 routerd validate --config examples/firewall-rate-limit.yaml
@@ -20,7 +20,7 @@ routerd plan --config examples/firewall-rate-limit.yaml
 routerd apply --config examples/firewall-rate-limit.yaml --once --dry-run
 ```
 
-## ルールの抜粋
+## Rule excerpt
 
 ```yaml
 - apiVersion: firewall.routerd.net/v1alpha1

@@ -1,28 +1,25 @@
 ---
-title: ローカル DNS ゾーン
+title: Local DNS zones
 slug: /how-to/dns-local-zone
 ---
 
-# ローカル DNS ゾーン
+# Local DNS zones
 
-## 想定するシーン
+## Scenario
 
-社内ホストを名前で解決したいが、各端末の `/etc/hosts` を手作業でそろえたくない場合です。具体的には次を実現したいときです。
+You want internal hosts to be reachable by name without hand-maintaining `/etc/hosts` files on every device. Specifically:
 
-- ひと握りの固定レコード（router、NAS、プリンタ）を持つ。
-- DHCP リースを取得した端末ごとに、A / AAAA / PTR を自動生成する。
-- 順引きと逆引きの両方を動かす。
+- A handful of static records (router, NAS, printer).
+- Automatic A / AAAA / PTR records for every device that takes a DHCP lease.
+- Forward and reverse lookups working for those names.
 
-## routerd での解決方法
+## How routerd solves it
 
-`DNSZone` で、1 つの DNS ドメインのローカル権威レコードを管理します。
-**手書きのレコード**（YAML で宣言）と、**DHCP 由来のレコード**（リース DB から構築）を組み合わせられます。
-`DNSResolver` がこれらを応答元の 1 つとして読み込むため、内部の問い合わせはローカルで応答し、外部の問い合わせは設定済みの上流へ送ります。
+`DNSZone` stores local authoritative records for one DNS domain. It can combine **manual records** (declared in YAML) with **DHCP-derived records** (built from the lease database). `DNSResolver` reads `DNSZone` resources as one of its sources, so internal queries get answered locally and external queries fall through to the configured upstreams.
 
-DHCP 由来のレコードはイベントバスを経由して同期します。dnsmasq がリース変更で `routerd-dhcp-event-relay` を呼び、relay が routerd のイベントを発行し、`routerd-dns-resolver` がメモリ上のゾーンを更新します。
-dnsmasq のリースファイルは起動時にも読み直すので、デーモンを再起動してもレコードは失われません。
+DHCP-derived records are kept in sync via the event bus: dnsmasq invokes `routerd-dhcp-event-relay` whenever a lease changes, the relay publishes a routerd event, and `routerd-dns-resolver` updates its in-memory zone tables. The dnsmasq lease file is also re-read at startup so records survive a daemon restart.
 
-## 例
+## Example
 
 ```yaml
 - apiVersion: net.routerd.net/v1alpha1
@@ -52,15 +49,15 @@ dnsmasq のリースファイルは起動時にも読み直すので、デーモ
       - name: 2.0.192.in-addr.arpa
 ```
 
-これを適用すると、`nas.lan.example.org` や `<dhcp-client-name>.lan.example.org` がローカルアドレスに解決され、`192.0.2.x` の PTR ルックアップも同じ名前を返します。
+After this resource is applied, queries for `nas.lan.example.org` and `<dhcp-client-name>.lan.example.org` resolve to local addresses, and PTR lookups for `192.0.2.x` return the same names.
 
-## 補足
+## Notes
 
-- 管理権を持つドメインか、社内向けに予約されたドメイン（`example.org`、`home.arpa` など）を選んでください。`.lan` のように公衆 DNS と衝突する suffix は使わないでください。
-- DNSSEC を有効（`dnssec.enabled: true`）にしておけば、外部の DNSSEC 検証は引き続き動きます。ローカルゾーンは設計上 unsigned です。
-- 内部サブネットが複数ある場合は、`reverseZones` をサブネットの数だけ書いてください。これで両方向の PTR が動きます。
+- Choose a domain you control or one that is reserved for internal use (`example.org`, `home.arpa`, etc.). Do not invent suffixes that collide with the public DNS namespace (such as `.lan`).
+- If you keep DNSSEC enabled (`dnssec.enabled: true`), upstream DNSSEC validation continues to work for external queries; the local zone is unsigned by design.
+- For multiple internal subnets, declare one `reverseZones` entry per subnet so PTR lookups work in both directions.
 
-## 関連項目
+## See also
 
-- [専用 DNS 上流](./dns-private-upstream.md)
-- [DNS リゾルバのコンセプト](../concepts/dns-resolver.md)
+- [Private DNS upstreams](./dns-private-upstream.md)
+- [DNS resolver concept](../concepts/dns-resolver.md)

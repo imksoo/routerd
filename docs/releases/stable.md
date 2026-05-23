@@ -1,39 +1,39 @@
 ---
-title: 安定版マイルストーン
-sidebar_label: 安定版マイルストーン
+title: Stable milestone
+sidebar_label: Stable milestone
 sidebar_position: 0
 ---
 
-# 安定版マイルストーン
+# Stable milestone
 
-routerd は `vYYYYMMDD.HHmm` 形式で頻繁にリリースしますが、その中から**本番運用に推奨できる版**を「安定版マイルストーン」として節目ごとに選びます。新しく導入するときは、このページで案内する版を使ってください。
+routerd ships frequently using the `vYYYYMMDD.HHmm` scheme. From those builds we pick a **production-recommended** release at each milestone. When you start a new deployment, use the version listed here.
 
-## 現在の推奨版
+## Current recommended release
 
-| 項目 | 内容 |
+| Item | Value |
 | --- | --- |
-| バージョン | **v20260522.1334** |
-| 位置づけ | 最初の推奨安定版マイルストーン |
-| 稼働実績 | 本番ルーターで稼働中（BGP の 2-way ECMP・無瞬断アップグレードを確認） |
-| バイナリ | 静的リンク（`CGO_ENABLED=0`）、CI 通過済み |
+| Version | **v20260522.1334** |
+| Status | First recommended stable milestone |
+| Track record | Running in production (verified 2-way ECMP over BGP and a zero-downtime upgrade) |
+| Binary | Statically linked (`CGO_ENABLED=0`), passes CI |
 
-## v20260522.1334 を推奨する理由
+## Why v20260522.1334 is recommended
 
-- **BGP 制御プレーンの移行が完了**しました。FRR から routerd 自前の `routerd-bgp` デーモンへ切り替え、eBGP peer を `routerd-bgp` が直接保持します。
-- **next-hop 書き換えの不具合（#26）を解消**しました。第三者 next-hop を広告する上流に対しても、学習元 peer address 経由で kernel FIB に経路を投入し、2-way ECMP を維持します。
-- **本番ルーターでの稼働実績**があります。1334 への入れ替えは、観測上 0 秒の瞬断で完了しました。
-- **静的バイナリ**で配布し、CI（ビルド・テスト・Release ワークフロー）を通過しています。
+- **The BGP control-plane migration is complete.** routerd moved from FRR to its own `routerd-bgp` daemon, which now holds the eBGP peers directly.
+- **The next-hop rewrite defect (#26) is fixed.** Even when an upstream advertises a third-party next-hop, routes are installed into the kernel FIB via the learned peer address, preserving 2-way ECMP.
+- **It has a production track record.** Upgrading to 1334 completed with no observed outage.
+- **It ships as a static binary** and passes CI (build, tests, and the Release workflow).
 
-## 「安定版」の意味と注意点
+## What "stable" means here
 
-:::warning API はまだ v1alpha1 です
-「安定版マイルストーン」は、**この版が本番運用に堪える品質である**ことを示すもので、**API（リソーススキーマ）の後方互換を約束するものではありません**。
+:::warning The API is still v1alpha1
+A "stable milestone" means **this build is production-quality**. It does **not** promise backward compatibility of the API (resource schema).
 :::
 
-- routerd のリソース API は現在 **v1alpha1** です。リリース間で**破壊的変更が入ることがあります**。
-- バージョンを上げるときは、後方互換に頼らず、**新しいスキーマに合わせて設定（YAML）を書き直す**前提で進めてください。
-- マイグレーション用の互換コードは持たない方針です。各版の変更点は [変更履歴（Changelog）](./changelog.md) を確認してください。
+- The routerd resource API is currently **v1alpha1**. **Breaking changes can land between releases.**
+- When upgrading, do not rely on backward compatibility. Plan to **rewrite your configuration (YAML) against the new schema**.
+- There is no migration shim by policy. Review the per-release deltas in the [changelog](./changelog.md).
 
-## 導入とアップグレード
+## Install and upgrade
 
-導入手順は [導入とアップグレード](../install-and-upgrade.md) を参照してください。アップグレードは、推奨マイルストーン版を起点に行うことを勧めます。
+See [Install and upgrade](../install-and-upgrade.md) for the procedure. Start upgrades from a recommended milestone release.

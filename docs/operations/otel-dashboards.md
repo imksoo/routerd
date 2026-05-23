@@ -2,26 +2,27 @@
 title: OpenTelemetry dashboards
 ---
 
-# OpenTelemetry ダッシュボード
+# OpenTelemetry dashboards
 
-routerd は、`routerd.<domain>.<metric>` という命名規則でメトリクスを出力します。
-Grafana、OpenObserve、その他の OTLP メトリクスバックエンドで、次のパネルを出発点として使えます。
+routerd exports metrics with the `routerd.<domain>.<metric>` naming pattern.
+Use these starter panels in Grafana, OpenObserve, or any OTLP metrics backend:
 
-| パネル | メトリクス |
+| Panel | Metric |
 |---|---|
-| コントローラーの dry-run 回数 | `routerd.controller.dry_run.count` |
-| リソースのフェーズ | `routerd.resource.phase.count`（`routerd.resource.phase` でグループ化） |
-| アクティブな DHCP リース | `routerd.dhcp.lease.active`（`network.address.family` でグループ化） |
-| sticky な DHCP の hold | `routerd.dhcp.sticky.held`（`network.address.family` でグループ化） |
-| アクティブなクライアント | `routerd.client.active.count` |
-| BGP ピアとプレフィックス | `routerd.bgp.peer.established` / `routerd.bgp.prefix.accepted` |
-| VIP と ingress のフェイルオーバー | `routerd.vip.active` / `routerd.ingress.service.active` / `routerd.ingress.backend.healthy` |
-| conntrack の使用量 | `routerd.conntrack.count` / `routerd.conntrack.max` |
-| ファイアウォールの拒否 | `routerd.firewall.deny.total`（`network.protocol.name` でグループ化） |
+| Controller dry-run count | `routerd.controller.dry_run.count` |
+| Resource phases | `routerd.resource.phase.count` grouped by `routerd.resource.phase` |
+| Active DHCP leases | `routerd.dhcp.lease.active` grouped by `network.address.family` |
+| Sticky DHCP holds | `routerd.dhcp.sticky.held` grouped by `network.address.family` |
+| Active clients | `routerd.client.active.count` |
+| BGP peers and prefixes | `routerd.bgp.peer.established` / `routerd.bgp.prefix.accepted` |
+| VIP and ingress failover | `routerd.vip.active` / `routerd.ingress.service.active` / `routerd.ingress.backend.healthy` |
+| Conntrack usage | `routerd.conntrack.count` / `routerd.conntrack.max` |
+| Firewall denies | `routerd.firewall.deny.total` grouped by `network.protocol.name` |
 
-リソース属性には、`service.name`、`service.version`、`host.name`、`routerd.host.role`、`routerd.os` が含まれます。
+Resource attributes include `service.name`, `service.version`, `host.name`,
+`routerd.host.role`, and `routerd.os`.
 
-PromQL 形式のクエリーの例は次のとおりです。
+Example PromQL-style queries:
 
 ```promql
 routerd_resource_phase_count

@@ -1,19 +1,21 @@
 ---
-title: USB 永続化
+title: USB persistence
 ---
 
-# USB 永続化
+# USB persistence
 
-routerd のライブ ISO は、ディスクレスルーターとして動作できます。
-このモードでは、実行中のシステムを RAM に置きます。
-選択したルーター状態だけを USB デバイスへ保存します。
+The routerd live ISO can run as a diskless router. In that mode, the ISO keeps
+the active system in RAM and stores only the selected router state on a USB
+device.
 
-これは、リムーバブルメディアから起動する mini PC 向けです。
-内蔵ディスクを使わずに、再起動後も設定を維持できます。
+This is intended for mini PCs that boot from removable media. It avoids a
+permanent internal disk while still preserving the router configuration across
+reboots.
 
-## 配置
+## Layout
 
-USB 永続化を有効にすると、選択したパーティションに次の配置を作ります。
+When USB persistence is enabled, routerd uses this layout on the selected
+partition:
 
 ```text
 routerd/
@@ -25,97 +27,101 @@ routerd/
   state/
 ```
 
-起動時には、`/usr/share/routerd/live-persistence.sh init` が設定メディアを探します。
-まず、記録済みのデバイスを確認します。
-次に、カーネルコマンドラインの `routerd.usb=` を確認します。
-最後に、`ROUTERD_CONFIG` または `ROUTERD` ラベルのデバイスを探します。
-書き込み可能なパーティションは、永続化用に使います。Proxmox の `media=cdrom` 設定 ISO のような読み取り専用の ISO9660/UDF CD-ROM メディアは、設定の取り込み専用として扱い、書き出し（flush）は無効にします。
+At boot, `/usr/share/routerd/live-persistence.sh init` tries to find config
+media. It first checks the remembered device, then `routerd.usb=` on the kernel
+command line, then devices labeled `ROUTERD_CONFIG` or `ROUTERD`. Writable
+partitions are used for persistence. Read-only ISO9660/UDF CD-ROM media, such
+as a Proxmox `media=cdrom` config ISO, are accepted for config import only.
 
-選択したパーティションは `/media/routerd-usb` にマウントします。
-ヘルパーは、ホスト固有の設定を先に探し、その後に汎用の設定を探します。
+The selected partition is mounted at `/media/routerd-usb`. The helper looks for
+host-specific configs first, then a generic config:
 
 - `/media/routerd-usb/routerd/hosts/<hostname>.yaml`
-- `/media/routerd-usb/routerd/hosts/<mac>.yaml`。MAC はコロン区切り、または小文字の詰めた表記を使えます。
+- `/media/routerd-usb/routerd/hosts/<mac>.yaml` with either colon-separated or
+  compact lowercase MAC address
 - `/media/routerd-usb/routerd/router.yaml`
 
-設定が見つかれば、`/usr/local/etc/routerd/router.yaml` へコピーします。
-その後、ライブ ISO の起動処理が設定を反映します。受け入れテストや障害調査のために、取得元と SHA256 を `/run/routerd/live-config-source` と `/run/routerd/live-config-sha256` に保存します。
-保存済みの設定がなく、`/usr/local/etc/routerd/router.yaml` もなければ、設定ウィザードを起動します。
+If a config is found, it is copied to `/usr/local/etc/routerd/router.yaml` and
+applied by the live ISO startup path. The source and SHA256 are recorded in
+`/run/routerd/live-config-source` and `/run/routerd/live-config-sha256` for
+acceptance tests and troubleshooting.
+If no saved config is found and `/usr/local/etc/routerd/router.yaml` is still
+missing, the ISO starts the configure wizard.
 
-## ファイルシステム
+## Filesystems
 
-ライブヘルパーは `blkid` でファイルシステムを判定します。
-判定結果に応じて、マウントオプションを切り替えます。
+The live helper detects the filesystem with `blkid` and mounts it with
+filesystem-specific options.
 
-| ファイルシステム | 既定のマウントオプション | メモ |
+| Filesystem | Default mount options | Notes |
 | --- | --- | --- |
-| `ext4` | `rw,async,noatime` | 永続ルーター用途では第一候補です。 |
-| `vfat` | `rw,async,noatime,utf8,shortname=mixed` | 単純な USB メモリーで便利です。Unix のパーミッションはありません。 |
-| `exfat` | `rw,async,noatime` | 大容量の USB メモリーをデスクトップ OS と共用しやすい形式です。 |
-| `iso9660` / `udf` | `ro,noatime` | 読み取り専用の設定取り込みメディアです。永続化の書き出しは無効です。 |
+| `ext4` | `rw,async,noatime` | Best choice for persistent router use. |
+| `vfat` | `rw,async,noatime,utf8,shortname=mixed` | Useful for simple removable media. No Unix permissions. |
+| `exfat` | `rw,async,noatime` | Useful for larger USB sticks shared with desktop OSes. |
+| `iso9660` / `udf` | `ro,noatime` | Read-only config import media. Persistence flush is disabled. |
 
-FAT32 は、通常 `blkid` では `vfat` として表示されます。
-ライブヘルパーは、FAT32 と決め打ちでマウントしません。
-ファイルシステムの種別を判定してから、対応するオプションを選びます。
+FAT32 normally appears as `vfat` in `blkid` output. The live helper does not
+force a FAT32 mount first; it detects the filesystem type and then chooses
+the matching options.
 
-既定は `async,noatime` です。
-USB フラッシュへの書き込みを減らすためです。
-デバッグや保守的な書き込み確認を優先する場合は、次のカーネルパラメーターを指定します。
+`async,noatime` is the default because it reduces write pressure on USB flash.
+For debugging or very conservative flush behavior, pass this kernel parameter:
 
 ```text
 routerd.usb_mount=sync
 ```
 
-既定値を明示する場合は、`routerd.usb_mount=async` を使います。
+Use `routerd.usb_mount=async` to force the default explicitly.
 
-## ログバッファー
+## Log buffering
 
-実行時のログは tmpfs に一時保存します。
+Runtime logs are buffered in tmpfs:
 
 ```text
 /run/routerd/logs
 ```
 
-既定の上限は 100 MiB です。
-上限を超えた場合は、古いファイルから削除します。
+The default buffer limit is 100 MiB. When the buffer grows beyond the limit, the
+oldest files are removed first.
 
-日次の書き出しジョブを有効にすると、`/etc/periodic/daily/routerd-usb-flush` が次を USB へコピーします。
+If the daily flush job is enabled, `/etc/periodic/daily/routerd-usb-flush`
+copies these artifacts to USB:
 
-- 現在の `router.yaml`
-- `/var/lib/routerd` の状態アーカイブ
-- `/var/db/routerd` の状態アーカイブ
-- `/run/routerd/logs` の圧縮ログアーカイブ
+- current `router.yaml`
+- state archive from `/var/lib/routerd`
+- state archive from `/var/db/routerd`
+- compressed log archive from `/run/routerd/logs`
 
-手動でも書き出せます。
+You can flush manually:
 
 ```sh
 /usr/share/routerd/live-persistence.sh flush
 ```
 
-## 安全な取り外し
+## Safe removal
 
-永続化用のマウントが有効なまま、USB デバイスを抜かないでください。
-先に、ライブヘルパーで書き出しとアンマウントを実行します。
+Do not pull the USB device while the persistence mount is active. Ask the live
+helper to flush and unmount it first:
 
 ```sh
 /usr/share/routerd/live-persistence.sh flush
 /usr/share/routerd/live-persistence.sh umount
 ```
 
-現在の状態は、次で確認します。
+Check the current state with:
 
 ```sh
 /usr/share/routerd/live-persistence.sh status
 ```
 
-予期せず USB デバイスが抜かれた場合でも、routerd は RAM 上で動作を続けます。
-ライブヘルパーは警告を出します。
-再接続してマウントするまで、USB のパスを永続保存先としては扱いません。
+If the device is removed unexpectedly, routerd keeps running from RAM. The live
+helper logs a warning and stops treating the USB path as durable until the
+device is reinserted and mounted again.
 
 ## Alpine lbu
 
-ISO には Alpine の `lbu` が含まれます。
-ライブヘルパーは、routerd 用のパスを lbu の include list に追加します。
+The ISO includes Alpine `lbu`. The live helper adds routerd paths to the lbu
+include list:
 
 ```text
 /usr/local/etc/routerd
@@ -124,25 +130,25 @@ ISO には Alpine の `lbu` が含まれます。
 /etc/periodic/daily/routerd-usb-flush
 ```
 
-設定の保存や状態の書き出しの後に、ヘルパーが `lbu commit` を実行します。
-通常は、`lbu` を直接実行する必要はありません。
+The helper runs `lbu commit` after saving config or flushing state. You normally
+do not need to run `lbu` directly.
 
-## よく使うコマンド
+## Useful commands
 
-候補のデバイスを表示します。
+List candidate devices:
 
 ```sh
 /usr/share/routerd/live-persistence.sh list-devices
 ```
 
-設定を USB へ保存します。
+Save a config to USB:
 
 ```sh
 /usr/share/routerd/live-persistence.sh save-config /dev/sdb1 /usr/local/etc/routerd/router.yaml yes 100M
 ```
 
-復元は、起動時に自動で行います。
-シェルから起動時の処理を再実行する場合は、次を使います。
+Restore happens automatically at boot. To force the boot-time logic from a
+shell:
 
 ```sh
 /usr/share/routerd/live-persistence.sh init

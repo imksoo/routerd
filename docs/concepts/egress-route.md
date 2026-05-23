@@ -1,26 +1,26 @@
 # EgressRoutePolicy
 
-`EgressRoutePolicy` は、外向き通信で使う経路を選びます。
-以前の WAN 経路ポリシーを置き換えます。
-旧 Kind 名は受け付けません。
+`EgressRoutePolicy` selects the route used for outbound traffic. It replaces
+an earlier WAN route policy Kind. This is a clean break. The old Kind name is
+not accepted.
 
-このポリシーは候補リソースと HealthCheck を見て、選んだ候補を status に保存します。
-ほかのリソースは、その status を参照できます。
+The policy watches candidate resources and health checks. It stores the chosen
+candidate in status. Other resources can refer to that status.
 
-`spec.mode` によって、status の所有者が変わります。`mode` を省略した場合は、
-egress-route セレクターが選択のみの status と、`role: advisory` / `advisory: true`
-を付けた `routerd.lan.route.changed` イベントを発行します。この status は稼働中の
-コントローラーの出力であり、適用のドライランではありません。
-`mode: priority`、`mark`、`hash` の場合は、ポリシー経路コントローラーが、実際に
-適用したルーティング・NAT mark の状態の所有者になります。依存するコントローラーは、
-旧来の route-changed イベントではなく `routerd.resource.status.changed` を見て追従します。
+`spec.mode` decides which controller owns the status. When `mode` is omitted,
+the egress-route selector publishes selection-only status and
+`routerd.lan.route.changed` events with `role: advisory` / `advisory: true`.
+That status is live controller output, not an apply dry run. When `mode` is set
+to `priority`, `mark`, or `hash`, the policy-route controller owns the applied
+routing/NAT mark state and dependent controllers follow
+`routerd.resource.status.changed` instead of the legacy route-changed event.
 
-`mode: priority` でも `selection: highest-weight-ready` を使います。
-準備完了した候補のうち weight が最も高いものを選び、`priority` は同点時の
-決着と、ポリシー経路ルールの優先度として扱います。`priority` は選択ポリシーの
-代替ではありません。`weighted-ecmp` は実装されるまでの予約値であり、
-黙って無視せず `UnsupportedSelection` として報告します。`disabled: true` の候補は
-選択対象から外れ、生成されるポリシー経路ルール・経路表の所有からも外れます。
+`mode: priority` still uses `selection: highest-weight-ready`. The highest
+weight ready candidate wins; `priority` is the tie-breaker and the policy-route
+rule priority, not a replacement for the selection policy. `weighted-ecmp` is
+reserved until implemented and is reported as `UnsupportedSelection` rather
+than being silently ignored. `disabled: true` removes the candidate from
+selection and from generated policy-route rule/table ownership.
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
@@ -51,17 +51,17 @@ spec:
       weight: 50
 ```
 
-`destinationCIDRs` は、ポリシーの対象宛先です。
-省略時は IPv4 で `0.0.0.0/0` を使います。
-IPv6 では `::/0` を使います。
+`destinationCIDRs` limits the destinations managed by the policy. If it is
+omitted, routerd uses `0.0.0.0/0` for IPv4 and `::/0` for IPv6.
 
-`gatewaySource` はゲートウェイの決め方です。
+`gatewaySource` describes how the gateway is chosen.
 
-- `none`: DS-Lite などのポイントツーポイントデバイスで使います。
-- `static`: `gateway` にネクストホップアドレスを書きます。
-- `dhcpv4` と `dhcpv6`: DHCP クライアント由来のゲートウェイ用です。
+- `none`: point-to-point devices such as DS-Lite do not need a gateway.
+- `static`: `gateway` contains the next-hop address.
+- `dhcpv4` and `dhcpv6`: reserved for gateway values learned from client
+  leases.
 
-選択結果は次の status に入ります。
+The selected values are exposed as:
 
 - `status.selectedCandidate`
 - `status.selectedDevice`
@@ -70,16 +70,14 @@ IPv6 では `::/0` を使います。
 - `status.selectedTargets`
 - `status.destinationCIDRs`
 
-起動直後は、まず準備完了の候補を選びます。
-重みが最も高い経路を無期限には待ちません。
-あとから重みの高い候補が準備完了になると、
-routerd は `routerd.lan.route.changed` を発行します。
-それを受けて `IPv4Route` と `NAT44Rule` を更新します。
-このとき conntrack は消しません。
-既存の通信はカーネルが持つ状態に従い、
-新しい通信は、新しい経路と NAT の向きを使います。
+At startup, the policy chooses the first ready candidate instead of waiting for
+the highest-weight path forever. If a higher-weight candidate becomes ready
+later, routerd updates `IPv4Route` and `NAT44Rule` through
+`routerd.lan.route.changed`. It does not flush conntrack. Existing flows keep
+the kernel state they already have, while new flows use the new route and NAT
+direction.
 
-`IPv4Route` は、これらの status を参照できます。
+`IPv4Route` can use those status fields:
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
@@ -96,8 +94,11 @@ spec:
     field: selectedGateway
 ```
 
-DS-Lite（あるいはどのトンネル）へ出してはいけない内部向けの宛先は、通常の経路として表現します。
-上流ゲートウェイ側のプライベートサブネットは WAN 側へ、内部の `10.0.0.0/8` や `172.16.0.0/12` は専用経路へ、破棄したい範囲は `type: blackhole` を使います。
+Private destinations that must not leave through a DS-Lite (or any) tunnel can
+be modeled as ordinary routes. Use a WAN-side route for the upstream gateway's
+private subnet, a dedicated route for any internal `10.0.0.0/8` or
+`172.16.0.0/12` ranges, and `type: blackhole` for ranges that should be
+discarded:
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
@@ -109,9 +110,9 @@ spec:
   destination: 10.0.0.0/8
 ```
 
-## HealthCheck
+## Health Checks
 
-`HealthCheck` は、プローブの意図を宣言します。
+`HealthCheck` can pin probes to a path.
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
@@ -124,7 +125,7 @@ spec:
   port: 443
 ```
 
-`HealthCheck` が `EgressRoutePolicy` の候補やターゲットから参照されている場合、
-routerd は health-check デーモン、socket mark、送信元バインドを、その経路ターゲットから
-自動導出します。設定はプローブの意図だけを持ち、プラットフォームごとのソケットの仕組みは
-コントローラーとレンダラーの内部に閉じ込めます。
+When a `HealthCheck` is referenced by an `EgressRoutePolicy` candidate or
+target, routerd derives the health-check daemon, socket mark, and source binding
+from that route target automatically. The config describes the probe intent;
+platform-specific socket mechanics stay inside the controller and renderer.

@@ -1,75 +1,103 @@
 ---
-title: 位置づけ
+title: Positioning
 slug: /concepts/positioning
 ---
 
-# 位置づけ
+# Positioning
 
-routerd は、設定から理解でき、実行時の状態から説明できるルーターを作るためのローカル制御プレーンです。
+routerd is for people who want a router that is understandable from its
+configuration and observable from its runtime state.
 
-routerd は、ネットワーク OS 全体の置き換えではありません。多数のルーターを外側から所有するクラウドコントローラーでもありません。各ルーターのホスト上で動き、型付きの YAML リソースを、ホストのネットワーク、サービス、経路、トンネル、ファイアウォール、ログ、状態へ変換します。
+It is not a replacement for a full network operating system. It is also not a
+cloud controller that owns many routers from the outside. routerd runs locally
+on one router host and turns typed YAML resources into host networking,
+services, routing, tunnels, firewall rules, logs, and status.
 
-## 重視すること
+## What routerd optimizes for
 
-routerd は、次のような運用を重視します。
+routerd optimizes for small and medium networks where the operator wants:
 
-- git で管理できる宣言型のルーター設定
-- ホスト型コントローラーに依存しないローカル運用
-- 生成したホスト成果物の、明示的な所有関係
-- 隠れたデーモン状態ではなく、イベントで説明できる状態
-- 危険な変更の前に行う、管理経路の確認
-- 経路・トンネル・ファイアウォールの判断理由を追える観測性
+- a declarative router configuration that can live in git
+- local operation without a hosted controller
+- explicit ownership of generated host artifacts
+- event-driven status instead of hidden daemon state
+- safe management-path checks before applying risky changes
+- observability that explains why a route, tunnel, or firewall decision exists
 
-主な対象は、ホームラボ、小規模オフィス、Proxmox VE や KVM を使う開発者、そして手書きの Linux ルータースクリプトを再現可能な仕組みに置き換えたい人です。
+Typical users are home lab operators, small office operators, developers who
+run Proxmox VE or KVM, and people replacing hand-maintained Linux router
+scripts with something more repeatable.
 
-## カバーする範囲
+## Spectrum coverage
 
-| 領域 | 例 |
+routerd intentionally covers a wide spectrum of router work:
+
+| Area | Examples |
 | --- | --- |
-| WAN 接続 | DHCPv4、DHCPv6-PD、DHCPv6 情報要求、PPPoE |
-| IPv4 移行 | DS-Lite、NAT44、多段 WAN フォールバック |
-| LAN サービス | DHCPv4、DHCPv6、RA、DNS、NTP |
-| 経路 | 静的経路、ポリシー経路、EgressRoutePolicy、ヘルスチェック |
-| セキュリティ | 3 ロールのファイアウォール、ゲストモード、拒否ログ |
-| オーバーレイ | WireGuard、Tailscale 連携、VXLAN の土台、VRF |
-| 運用 | Web 管理画面、`routerctl`、OpenTelemetry、ログストア |
-| 初期構築 | パッケージ、sysctl プロファイル、systemd ユニット、ライブ ISO |
+| WAN access | DHCPv4, DHCPv6-PD, DHCPv6 information request, PPPoE |
+| IPv4 transition | DS-Lite, NAT44, multi-stage WAN fallback |
+| LAN service | DHCPv4, DHCPv6, RA, DNS, NTP |
+| Routing | static routes, policy routes, EgressRoutePolicy, health checks |
+| Security | three-role firewall model, guest mode, denial logging |
+| Overlay | WireGuard, Tailscale integration, VXLAN groundwork, VRF |
+| Operations | Web Console, `routerctl`, OpenTelemetry, log stores |
+| Bootstrap | packages, sysctl profiles, systemd units, live ISO |
 
-routerd が扱う範囲は、両端がかなり離れています。
+The endpoints of that spectrum are deliberately far apart:
 
-- **仮想 SDN / VNET 間のルーティング:** Proxmox VE SDN、WireGuard オーバーレイ、VRF、VXLAN 実験、ラボ用のポリシー経路をつなぐルーター VM です。
-- **ディスクレス PC ルーター:** 小型 x86 mini PC がライブ ISO から起動し、USB から `router.yaml` を復元し、ログを RAM に保持し、物理 LAN を提供します。
+- **Virtual SDN/VNET routing:** a router VM that connects Proxmox VE SDN
+  segments, WireGuard overlays, VRFs, VXLAN experiments, and lab-only policy
+  routes.
+- **Diskless PC router:** a small x86 mini PC that boots a live ISO, restores
+  `router.yaml` from USB, buffers logs in RAM, and serves a physical LAN.
 
-この両端を同じ設定問題として扱うルータープロジェクトは多くありません。routerd は、ここを同じ問題として扱います。違いは主に生成されるホスト成果物であって、意図のモデルではありません。
+Few router projects treat both ends as the same configuration problem. routerd
+does. The difference is mostly the host artifacts being rendered, not the
+intent model.
 
-範囲が広いことには意味があります。ルーターの障害は、機能どうしの境界で起きやすいからです。DNS の選択が DHCPv6 の情報オプションに依存することもあれば、DS-Lite トンネルが特定の上流でしか解決できない AFTR レコードに依存することもあります。経路は、ヘルスチェックが成功してからプライマリになるべきです。routerd は、こうした関係を 1 つのリソースグラフに置きます。
+The breadth matters because routers fail at the boundaries. A DNS choice may
+depend on a DHCPv6 information option. A DS-Lite tunnel may depend on an AFTR
+record that only resolves through a specific upstream. A route should not
+become primary until a health check has observed it. routerd keeps those
+relationships in one resource graph.
 
-## シェルスクリプトとの違い
+## Compared with shell scripts
 
-シェルスクリプトは始めやすい一方で、後から監査しにくくなります。「どのコマンドを実行したか」は分かっても、「いま存在すべき状態」が残らないためです。
+Shell scripts are easy to start and hard to audit later. They often answer
+"what command did we run?" but not "what state should exist now?"
 
-routerd は、望ましい状態を YAML に置き、観測した状態を保存し、イベントを発行します。結果は API・CLI・Web 管理画面から確認でき、差分、世代、実トラフィックの調査を進めやすくなります。
+routerd keeps the desired state in YAML, stores observed state, emits events,
+and exposes the result through an API, CLI, and Web Console. That makes it
+easier to inspect drift, compare generations, and debug real traffic.
 
-## アプライアンスファームウェアとの違い
+## Compared with appliance firmware
 
-アプライアンスのファームウェアは、用途が UI に合う場合は便利です。一方で、DS-Lite、PPPoE フォールバック、ローカル DNS、独自のファイアウォール、OpenTelemetry、ラボ用オーバーレイなどを細かく組み合わせると難しくなります。
+Appliance firmware is convenient when the use case fits its UI. It becomes
+harder when you need a precise mix of DS-Lite, PPPoE fallback, local DNS,
+custom firewall behavior, OpenTelemetry, or a lab overlay network.
 
-routerd は、それらをリソースとして扱います。UI は読み取りと調査のためにあり、設定変更は CLI と YAML を正とします。
+routerd keeps those features as resources. The UI is for reading and
+debugging. Configuration changes remain CLI and YAML driven.
 
-## Kubernetes 型コントローラーとの違い
+## Compared with Kubernetes-style controllers
 
-routerd は、リソースとコントローラーの考え方を借りています。ただし、クラスターは必要ありません。境界はホストであり、調整（リコンサイル）の対象はカーネル、ローカルデーモン、ローカルファイルです。
+routerd borrows resource and controller ideas, but it does not require a
+cluster. The host is the boundary. The kernel, local daemons, and local files
+are the things being adjusted.
 
-この形により、家庭用ルーターとして扱える小ささを保ちながら、DHCP、DNS、トンネル、ヘルスチェック、経路、ファイアウォールログ、テレメトリをイベント駆動で連携できます。
+That keeps the operational model small enough for a home router while still
+allowing event-driven coordination between DHCP, DNS, tunnels, health checks,
+routes, firewall logs, and telemetry.
 
-## 非目標
+## Non-goals
 
-routerd は、現時点では次を目指しません。
+routerd does not currently aim to be:
 
-- ホスト型 SDN コントローラー
-- リモートプラグインのマーケットプレイス
-- 汎用のファイアウォール言語
-- すべてのエンタープライズルーター機能の置き換え
-- GUI 優先の設定システム
+- a hosted SDN controller
+- a remote plugin marketplace
+- a general-purpose firewall language
+- a replacement for every enterprise router feature
+- a GUI-first configuration system
 
-routerd は、広いクリック式の管理画面よりも、明示的な YAML、ローカル制御、質の高い運用情報を重視します。
+The project favors explicit YAML, local control, and high-quality operational
+feedback over a broad clickable management surface.

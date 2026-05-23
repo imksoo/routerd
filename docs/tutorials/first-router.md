@@ -1,11 +1,11 @@
 ---
-title: 最初のルーターを上げる
+title: Bring up the first router
 sidebar_position: 2
 ---
 
-# 最初のルーターを立ち上げる
+# Bring up the first router
 
-このチュートリアルでは、最小の routerd 構成を立ち上げます。構成は「DHCPv4 で IPv4 を取得する WAN 1 本」と「固定 IPv4 アドレスの LAN 1 本」です。
+This tutorial brings up the smallest possible routerd configuration: one WAN interface that gets its IPv4 address from DHCPv4, and one LAN interface with a static IPv4 address.
 
 ```yaml
 apiVersion: routerd.net/v1alpha1
@@ -48,10 +48,9 @@ spec:
         address: 192.0.2.1/24
 ```
 
-`DHCPv4Client` は `routerd-dhcpv4-client` が所有します。
-routerd は OS 付属のクライアントには任せません。このデーモンは、他の routerd デーモンと同じ取り決め（`/v1/status`、`lease.json`、`events.jsonl`）で状態を公開します。
+`DHCPv4Client` is owned by `routerd-dhcpv4-client`, the routerd-managed DHCPv4 daemon. routerd does not delegate to an OS-bundled client; the daemon publishes its state under the same contract as every other routerd daemon (`/v1/status`, `lease.json`, `events.jsonl`).
 
-本番に適用する前に、validate と plan で確認してください。
+Before applying for real, validate the configuration and preview the plan:
 
 ```bash
 routerd validate --config first-router.yaml
@@ -59,10 +58,10 @@ routerd plan     --config first-router.yaml
 routerd apply    --config first-router.yaml --once --dry-run
 ```
 
-管理経路（LAN 経由の SSH、コンソール、ハイパーバイザーのコンソール）が変更後も残ることを確認してから、`--dry-run` を付けずに適用します。
+Confirm that your management connection (SSH on the LAN, console, or hypervisor console) will survive the change, then apply without `--dry-run`.
 
-## 次に読むもの
+## Next
 
-- [WAN 側サービス](./wan-side-services.md) — DHCPv6-PD、PPPoE、DS-Lite
-- [LAN 側サービス](./lan-side-services.md) — DHCP、RA、DNS、ローカルゾーン
-- [基本の NAT とファイアウォールポリシー](./basic-firewall.md)
+- [WAN-side services](./wan-side-services.md) — DHCPv6-PD, PPPoE, DS-Lite
+- [LAN-side services](./lan-side-services.md) — DHCP, RA, DNS, local zones
+- [Basic NAT and firewall policy](./basic-firewall.md)

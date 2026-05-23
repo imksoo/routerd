@@ -1,17 +1,27 @@
-# 観測パイプライン
+# Observability pipeline
 
-`Telemetry` は、routerd 自身のメトリクス・トレース・ログを OTLP へ出すための小さなリソースです。`LogSink` は、運用イベントや観測ログの転送経路を表します。OTLP の `LogSink` は、コレクターのエンドポイントを重複して書かず、`Telemetry` リソースを参照します。routerd のイベントログを Loki などパイプライン型のリモート sink に送りたい場合は、`ObservabilityPipeline` を使います。
+`Telemetry` remains the small OTLP-only resource for routerd's own metrics,
+traces, and logs. `LogSink` describes log forwarding routes for operational
+events and observed network logs; an OTLP `LogSink` should reference a
+`Telemetry` resource rather than duplicating collector endpoints. Use
+`ObservabilityPipeline` when the router should also forward routerd event logs
+to pipeline-style remote sinks such as Loki.
 
-`ObservabilityPipeline` は、同梱の `otelcol` プロセスではなく、routerd 内蔵のパイプラインです。OTLP のログ・メトリクス・トレースは通常の OpenTelemetry SDK を使い、設定したログ sink には軽量なイベントエクスポーターが送信します。
+`ObservabilityPipeline` is a built-in pipeline, not a bundled `otelcol`
+process. routerd still uses the normal OpenTelemetry SDK for OTLP logs,
+metrics, and traces, and it starts a lightweight event exporter for configured
+log sinks.
 
-現在のログ sink は次のとおりです。
+Supported log sinks today:
 
-- `stdout`: JSON 形式のイベント行。
-- `syslog`: 既存の `LogSink` と同じ syslog 形式。
-- `loki`: `/loki/api/v1/push` への HTTP push。
+- `stdout`: JSON event lines, useful for supervised service logs.
+- `syslog`: local or remote syslog using the existing `LogSink` syslog shape.
+- `loki`: HTTP push to `/loki/api/v1/push`.
 
-`kafka` は、意図する外部パイプラインを設定に残すためのメタデータとして受け付けます。
-routerd はまだ Kafka へ直接 publish しません。
+`kafka` is accepted as documented metadata only so configs can record the
+intended external pipeline, but routerd does not publish to Kafka directly yet.
+
+Example:
 
 ```yaml
 apiVersion: system.routerd.net/v1alpha1
@@ -22,6 +32,8 @@ spec:
   otlp:
     endpoint: http://otel-collector.lan:4317
     insecure: true
+    headers:
+      authorization: Bearer example-token
   serviceNamespace: routerd
   attributes:
     site: edge
@@ -38,6 +50,13 @@ spec:
           tenant: routerd
 ```
 
-OTLP のフィールドは、routerd が管理するユニットの標準的な OpenTelemetry 環境変数に展開されます。ログ sink のエクスポーターはプロセス内バスの `routerd.**` イベントを購読するため、`journalctl` を scrape せずに、コントローラーの状態変化やデーモンのイベントを転送できます。
+The OTLP fields render to the standard OpenTelemetry environment variables for
+routerd-managed units. The log sink exporter subscribes to `routerd.**` events
+on the in-process bus, so it forwards controller status changes and daemon
+events without scraping `journalctl`.
 
-完全な例は `examples/observability-loki.yaml` にあります。
+Sampling is deterministic per pipeline and applies before sink fan-out. Keep it
+at `1` for operational event logs unless a high-volume source is intentionally
+being downsampled.
+
+See `examples/observability-loki.yaml` for a complete config.

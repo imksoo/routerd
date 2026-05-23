@@ -1,17 +1,17 @@
 ---
-title: パブリック DNS をローカルリゾルバへリダイレクト
+title: Redirect public DNS to the local resolver
 sidebar_position: 80
 ---
 
-# パブリック DNS をローカルリゾルバへリダイレクト
+# Redirect public DNS to the local resolver
 
-LAN クライアントが有名なパブリックリゾルバへ平文 DNS を直接送ろうとしたときに、
-TCP/UDP の port 53 だけをルーターのローカルリゾルバへリダイレクトする例です。
-DoH や DoT の port には手を加えません。
+This example catches LAN clients that send plaintext DNS directly to well-known
+public resolver names and redirects only TCP/UDP port 53 to the router's local
+resolver. DoH and DoT ports are not touched.
 
-完全な YAML は `examples/example-local-dns-redirect.yaml` にあります。
+The complete, validated YAML is in `examples/example-local-dns-redirect.yaml`.
 
-## 構成図
+## Topology
 
 ```mermaid
 flowchart LR
@@ -26,20 +26,29 @@ flowchart LR
   public -. "IPAddressSet FQDN refresh" .-> router
 ```
 
-## 図の対応表
+## Diagram map
 
-| 番号 | 意味 | 主な resource |
+| No. | Meaning | Main resources |
 | --- | --- | --- |
-| [1] | パブリック DNS へ直接問い合わせようとするクライアント。 | external client |
-| [2] | prerouting のリダイレクトルールが一致する LAN インターフェース。 | `LocalServiceRedirect/lan-local-services.spec.interface` |
-| [3] | リダイレクトされた port 53 のトラフィックを受けるローカルリゾルバ。 | `DNSResolver/lan-resolver` |
-| [4] | nftables の set に展開される完全一致の FQDN。 | `IPAddressSet/public-dns` |
-| [5] | ローカルリゾルバが実際に使う上流リゾルバ。 | `DNSForwarder`, `DNSUpstream` |
+| [1] | Client that tries to query public DNS directly. | External client |
+| [2] | LAN interface where prerouting redirect rules match. | `LocalServiceRedirect/lan-local-services.spec.interface` |
+| [3] | Local resolver that receives redirected port 53 traffic. | `DNSResolver/lan-resolver` |
+| [4] | Exact FQDNs resolved into reusable nftables sets. | `IPAddressSet/public-dns` |
+| [5] | Real upstream resolvers used by the local resolver. | `DNSForwarder`, `DNSUpstream` |
 
-## 要点
+## What this manages
+
+| Area | routerd resources |
+| --- | --- |
+| Local DNS | `DNSResolver/lan-resolver`, `DNSZone/home` |
+| DHCP advertisement | `DHCPv4Server/lan-dhcpv4` |
+| FQDN-backed destination set | `IPAddressSet/public-dns` |
+| Local redirect | `LocalServiceRedirect/lan-local-services` |
+
+## Key config
 
 ```yaml
-# [4] public DNS の exact name を IPAddressSet に解決する。
+# [4] Resolve exact public DNS names into an IPAddressSet.
 - apiVersion: net.routerd.net/v1alpha1
   kind: IPAddressSet
   metadata:
@@ -50,7 +59,10 @@ flowchart LR
       - one.one.one.one
     refreshInterval: 10m
 
-# [2] -> [3] 平文 DNS port 53 だけ local resolver に redirect する。
+# [2] -> [3] Redirect only plaintext DNS port 53 to the local resolver.
+# This matches LAN-client prerouting traffic only. Router-origin TCP/443
+# HealthCheck probes are not redirected, so they can use the same public target
+# address when policy routing selects the path explicitly.
 - apiVersion: firewall.routerd.net/v1alpha1
   kind: LocalServiceRedirect
   metadata:
@@ -65,10 +77,11 @@ flowchart LR
         redirectPort: 53
 ```
 
-`IPAddressSet.spec.names` は完全一致の DNS 名です。
-`dns.google` はサブドメインを含みません。必要な宛先名はすべて明示的に列挙します。
+`IPAddressSet.spec.names` are exact names. `dns.google` does not include
+subdomains. Use explicit names for every destination whose resolved addresses
+you want to match.
 
-## 確認
+## Checks
 
 ```bash
 routerd validate --config examples/example-local-dns-redirect.yaml
@@ -77,7 +90,7 @@ routerctl describe IPAddressSet/public-dns
 nft list table ip routerd_nat
 ```
 
-LAN クライアントからは次のように確認できます。
+From a LAN client:
 
 ```bash
 dig @8.8.8.8 router.home.example

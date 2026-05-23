@@ -1,15 +1,16 @@
 ---
-title: Tailscale subnet / exit node
+title: Tailscale subnet and exit node
 sidebar_position: 90
 ---
 
-# Tailscale subnet / exit node
+# Tailscale subnet and exit node
 
-ルーターを Tailscale の subnet router 兼 exit node として広告する例です。
+This example installs or expects Tailscale and advertises the router as both a
+subnet router and an exit node.
 
-完全な YAML は `examples/tailscale-exit-subnet.yaml` にあります。
+The complete, validated YAML is in `examples/tailscale-exit-subnet.yaml`.
 
-## 構成図
+## Topology
 
 ```mermaid
 flowchart LR
@@ -25,19 +26,28 @@ flowchart LR
   router --- internet
 ```
 
-## 図の対応表
+## Diagram map
 
-| 番号 | 意味 | 主な resource |
+| No. | Meaning | Main resources |
 | --- | --- | --- |
-| [1] | 経路と exit node の広告を受ける tailnet。 | Tailscale control plane |
-| [2] | Tailscale node として登録されるルーター。 | `TailscaleNode/home` |
-| [3] | tailnet に広告する LAN プレフィックス。 | `advertiseRoutes` |
-| [4] | リモート管理用に広告する管理プレフィックス。 | `advertiseRoutes` |
+| [1] | Tailnet that receives route and exit-node advertisements. | External Tailscale control plane |
+| [2] | Router registered as a Tailscale node. | `TailscaleNode/home` |
+| [3] | LAN prefix advertised to the tailnet. | `advertiseRoutes` |
+| [4] | Management prefix advertised when remote management is desired. | `advertiseRoutes` |
 
-## 要点
+## What this manages
+
+| Area | routerd resources |
+| --- | --- |
+| Runtime package | `Package/tailscale-runtime` |
+| Tailnet node | `TailscaleNode/home` |
+| Route advertisement | `advertiseRoutes` |
+| Exit node | `advertiseExitNode` |
+
+## Key config
 
 ```yaml
-# [2] router を名前付き Tailscale node として登録する。
+# [2] Register the router as a named Tailscale node.
 - apiVersion: net.routerd.net/v1alpha1
   kind: TailscaleNode
   metadata:
@@ -45,7 +55,7 @@ flowchart LR
   spec:
     hostname: edge-router
     advertiseExitNode: true
-    # [3] + [4] tailnet に広告する prefix。
+    # [3] + [4] Prefixes advertised into the tailnet.
     advertiseRoutes:
       - 172.18.0.0/16
       - 192.168.20.0/24
@@ -54,7 +64,7 @@ flowchart LR
     authKeyFile: /usr/local/etc/routerd/secrets/tailscale.env
 ```
 
-## 確認
+## Checks
 
 ```bash
 routerd validate --config examples/tailscale-exit-subnet.yaml
@@ -63,4 +73,5 @@ routerctl describe TailscaleNode/home
 tailscale status
 ```
 
-tailnet のポリシーに応じて、Tailscale admin console 側で経路と exit node を承認します。
+Approve the advertised routes and exit-node use in the Tailscale admin console
+when required by your tailnet policy.

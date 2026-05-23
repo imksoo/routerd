@@ -1,107 +1,110 @@
 ---
-title: 設計メモ
+title: Design notes
 ---
 
-# 設計メモ
+# Design notes
 
-このドキュメントは、routerd で残すべき設計判断の記録です。
-過去の試行錯誤の時系列ログではなく、現在のコードが従っている原則と、今後の変更で守るべき指針だけを残します。
+This document records design decisions worth keeping. It is not a chronological log of past experiments — only the principles current code follows and that future changes should respect.
 
 ## 1. Daemon contract
 
-状態を持つ処理は、専用 daemon が担当します。
-ツール側が一様に扱えるよう、すべての daemon は同じインターフェースを公開します。
+Stateful work is carried out by dedicated daemons. Every daemon exposes the same surface so tooling can interact with them uniformly:
 
-- Unix domain socket 上の HTTP+JSON API
+- HTTP+JSON API over a Unix domain socket
 - `/v1/status`
 - `/v1/healthz`
 - `/v1/events`
 - `/v1/commands/reload`
 - `/v1/commands/renew`
 - `/v1/commands/stop`
-- state または lease ファイル
+- a state or lease file
 - `events.jsonl` (append-only)
 
-この contract は、`routerd-dhcpv6-client`、`routerd-dhcpv4-client`、`routerd-pppoe-client`、`routerd-healthcheck` で共通です。
+This contract is shared by `routerd-dhcpv6-client`, `routerd-dhcpv4-client`, `routerd-pppoe-client`, and `routerd-healthcheck`.
 
 ## 2. DHCPv6-PD
 
-DHCPv6-PD は `routerd-dhcpv6-client` が所有します。OS 付属クライアント向けに設定を生成する経路は、もうありません。
+DHCPv6-PD is owned by `routerd-dhcpv6-client`. There is no longer a code path that generates configuration for an OS-bundled client.
 
-通常の residential gateway 環境では、標準の solicit / advertise / request / renew と、lease 永続化、T1 renew で十分です。
-壊れた環境を回避するための過剰な再送は、現在の方針では使いません。
+For ordinary residential gateways, the standard solicit / advertise / request / renew sequence with lease persistence and T1 renewal is sufficient. Aggressive retries that were once needed to work around broken environments are no longer the default.
 
-## 3. 誠実な LAN 広告
+## 3. Honest LAN advertisement
 
-DHCPv6-PD が `Bound` でない場合、routerd は LAN へ古い IPv6 情報を出しません。
-これは RA、DHCPv6 server、AAAA レコード、prefix から導出した LAN アドレスのすべてに当てはまります。
-「壊れた状態を、壊れたまま正直に見せる」方針です。届かない prefix を配り続けることはしません。
+When DHCPv6-PD is not `Bound`, routerd does not advertise stale IPv6 information to the LAN. This applies to RA, DHCPv6 server, AAAA records, and any LAN address derived from the prefix. The router stays "broken in an obvious way" rather than handing out addresses that no longer reach upstream.
 
 ## 4. DS-Lite
 
-一部のアクセス網では、DHCPv6 information-request で AFTR option が返りません。
-そのため `DSLiteTunnel` は、`aftrFQDN` または `aftrIPv6` の静的指定を、fallback ではなく正規の経路として扱います。
+In some access networks the AFTR option is not returned in DHCPv6 information-request. `DSLiteTunnel` therefore treats a static `aftrFQDN` or `aftrIPv6` as a normal configuration path, not a fallback.
 
-AFTR の FQDN は、公衆 DNS で解けないことが多いです。AFTR domain 用の `DNSForwarder` と、DHCPv6 information status から carrier 内の resolver を読む `DNSUpstream.addressFrom` で転送してください。
+AFTR FQDNs frequently cannot be resolved by public DNS. Use a `DNSForwarder`
+for the AFTR domain and a `DNSUpstream` whose `addressFrom` reads the
+in-network resolver from DHCPv6 information status.
 
-## 5. Event 連携
+## 5. Event coordination
 
-routerd は in-process bus を持ちます。controller は event を受けて、影響を受けるリソースだけを再評価します。
+routerd has an in-process bus. Controllers consume events and reconcile only the resources affected.
 
-高位の連携には次の Kind を使います。
+The following kinds work together for higher-level coordination:
 
 - `EgressRoutePolicy`
 - `EventRule`
 - `DerivedEvent`
 - `HealthCheck`
 
-`EventRule` は、event 列を入力にして別の event 列を生成します。
-`DerivedEvent` は、観測した状態から asserted / retracted の仮想 event を合成します。
+`EventRule` consumes one stream of events and produces another. `DerivedEvent` synthesises asserted / retracted virtual events from observed state.
 
-## 6. Tier S 構成要素
+## 6. Tier S building blocks
 
-WireGuard、Tailscale、IPsec、VRF、VXLAN は、Tier S（SOHO / branch）の構成要素です。
-WireGuard と VXLAN-over-WireGuard は、対応 OS 間での相互運用を確認済みです。
-`TailscaleNode` は exit node と subnet router の広告を扱います。
-VPN をすべて抽象的な 1 種類の形に押し込まないためです。
+WireGuard, Tailscale, IPsec, VRF, and VXLAN are the building blocks for the Tier S (SOHO / branch) capability. WireGuard and VXLAN-over-WireGuard interoperability is verified across the supported operating systems. `TailscaleNode` covers exit-node and subnet-router advertisement without turning every VPN into one abstract shape.
 
-抽象的な `VPNTunnel` リソースは作りません。
-WireGuard、Tailscale、IPsec、将来の SoftEther 連携は、それぞれ別の Kind として追加します。
-それぞれの状態機械が大きく異なり、
-多態的な 1 つの Kind にまとめると意味を失うためです。
+There is no abstract `VPNTunnel` resource. WireGuard, Tailscale, IPsec, and future SoftEther integrations are added as their own kinds. The motivation is that each of these has materially different state machines; collapsing them into one polymorphic kind would lose semantics.
 
 ## 7. OpenRC service rendering
 
-Alpine は systemd ではなく OpenRC を使います。
-OpenRC 対応は、まず applier ではなく renderer として始めます。
-`routerd render alpine --out-dir` は、レビュー可能な init script と関連設定を書き出し、routerd が OpenRC の状態を変更する前に、導入済みホストの挙動を確認できるようにします。
+Alpine uses OpenRC rather than systemd. The OpenRC renderer intentionally starts
+as a renderer, not an applier: `routerd render alpine --out-dir` writes reviewable
+init scripts and related config so installed-host behavior can be tested before
+routerd starts mutating OpenRC state.
 
-最初に対応する OpenRC の範囲は狭く保ちます。
+The first supported OpenRC surface is narrow:
 
-- 明示的な `generated service artifacts` resource から OpenRC script への変換
-- `routerd-healthcheck` script の自動生成
-- DHCP または RA resource が dnsmasq を必要とする場合の、managed dnsmasq script の自動生成
-- DHCPv4 / DHCPv6 client、firewall logger、PPPoE、Tailscale の script の自動生成
-- DNS resolver script。ただし resolver の runtime config を controller loop の外で materialize できるまでは enable / start しません
+- explicit `generated service artifacts` resources mapped to OpenRC scripts
+- synthesized `routerd-healthcheck` scripts
+- synthesized managed dnsmasq scripts when DHCP or RA resources require dnsmasq
+- synthesized scripts for DHCPv4/DHCPv6 clients, firewall logger, PPPoE, and
+  Tailscale
+- DNS resolver scripts, with enable/start deferred until routerd can materialize
+  the resolver runtime config outside the controller loop
 
-これは互換性の袋小路を避けるためです。
-API の形は当面 `generated service artifacts` のままですが、OpenRC に写すのは init script の意味を明確に持つ field に限ります。具体的には `ExecStart`、`ExecStartPre`、environment、working directory、user/group、runtime/state/log directory です。
-systemd sandboxing、networkd、resolved、timesyncd の意味は、OpenRC 上で模倣しません。
+This keeps the code out of a compatibility trap. `generated service artifacts` remains the API
+shape for now, but OpenRC only maps fields that have clear init-script meaning:
+`ExecStart`, `ExecStartPre`, environment, working directory, user/group, and
+runtime/state/log directories. systemd sandboxing, networkd, resolved, and
+timesyncd semantics are not emulated on OpenRC.
 
-apply 時の activation は `HasOpenRC` で分岐します。
-script は内容または mode が変わる場合だけ書き込み、`rc-update show default` で登録状態を確認してから add / del し、`rc-service <name> status` を見てから start / restart / stop します。
-systemd 側と同じく、望む状態と file が変わらない場合は、service-manager command を重複実行しません。
+Apply-time activation is gated by `HasOpenRC`. It writes scripts only when
+content or mode changes, checks `rc-update show default` before adding or
+removing a service, and checks `rc-service <name> status` before start,
+restart, or stop. This keeps OpenRC behavior aligned with the systemd
+idempotency rule: no repeated service-manager commands when desired state and
+files are unchanged.
 
-次の実装段階は、Alpine の導入済みホスト向け smoke harness を通常の VM job にすることです。
+The next implementation step is promoting the Alpine installed-host smoke
+harness into a regular VM job.
 
-## 8. 残課題
+## 8. Open work
 
-- 状態を持つ firewall の本番運用。`FirewallRule` は ICMP type 一致、
-  複数 port、nftables rate limit、送信元ごとの connection limit を扱えます。
-  今後は基本的な expression の網羅ではなく、rule grouping と上位 policy の
-  使いやすさを改善します。
-- LAN 向けの DoH 代理。
-- Tier C に向けた、OSPF などの dynamic routing の統合。
-- 高可用性（leader 選出、耐障害の control plane）。
-- 本番向けの observability（OpenTelemetry collector とリモート log sink）。
-- 家庭用回線で routerd を唯一の WAN ルーターとして長時間運用する検証。
+- Stateful firewall in production: `FirewallRule` now covers ICMP type matching,
+  multiple ports per rule, nftables rate limiting, and per-source connection
+  limits. Future work should focus on rule grouping and higher-level policy
+  ergonomics rather than basic expression coverage.
+- DoH proxying for clients on the LAN.
+- BFD for BGP peers that need sub-second failure detection.
+- Operator-controlled IngressService backend drain mode through `routerctl` without editing YAML.
+- More production examples for VRRP `advertInterval`, `preempt`, and `preemptDelay` tuning.
+- Validation for listen-port collisions between `IngressService`, local service redirects, and routerd-managed daemons.
+- IPv6 BGP and VRRPv3 for dual-stack Kubernetes clusters.
+- OSPF or other dynamic routing integration for the Tier C tier.
+- High availability (leader election, fault-tolerant control plane).
+- Production observability: OpenTelemetry collector and remote log sinks.
+- Long-running validation of routerd as the only WAN router on a residential link.

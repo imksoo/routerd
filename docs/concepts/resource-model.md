@@ -1,13 +1,14 @@
 ---
-title: リソースモデル
+title: Resource model
 slug: /concepts/resource-model
 sidebar_position: 3
 ---
 
-# リソースモデル
+# Resource model
 
-routerd の設定は、最上位の `Router` と、その下に並ぶ複数のリソースで構成します。
-各リソースは Kubernetes に近い形をとります。
+routerd configuration is a top-level `Router` resource with a list of typed
+resources. The shape is intentionally close to Kubernetes resources, but
+routerd applies them to one local router host.
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
@@ -18,43 +19,44 @@ spec:
   interface: wan
 ```
 
-## 共通フィールド
+## Common Fields
 
-- `apiVersion`: リソースが属する API グループと版です。
-- `kind`: リソースの種類です。
-- `metadata.name`: 同じ `kind` の中で一意な名前です。
-- `spec`: 利用者が宣言する意図です。
-- `status`: routerd や専用デーモンが観測した状態です。
+- `apiVersion`: API group and version.
+- `kind`: resource kind.
+- `metadata.name`: unique name within the kind.
+- `spec`: desired intent declared by the user.
+- `status`: observed state written by routerd or a managed daemon.
 
-設定ファイルに書くのは主に `spec` です。
-`status` は制御 API、状態データベース、デーモンの `/v1/status` で確認します。
+Configuration files normally contain `spec`. `status` is read through the
+control API, state database, daemon `/v1/status`, `routerctl`, and Web Console.
 
-## API グループ
+## API Groups
 
-routerd は次の API グループを使います。
+routerd uses these API groups:
 
-| グループ | 用途 |
+| Group | Purpose |
 | --- | --- |
-| `routerd.net/v1alpha1` | 最上位の `Router` |
-| `net.routerd.net/v1alpha1` | インターフェース、DHCP、DNS、経路、トンネル、WAN 選択、通信フローログ |
-| `firewall.routerd.net/v1alpha1` | ファイアウォールゾーン、ポリシー、規則、ログ |
-| `system.routerd.net/v1alpha1` | ホスト名、パッケージ、sysctl、ネットワーク引き継ぎ、systemd ユニット、NTP、ログ転送、Web 管理画面 |
-| `plugin.routerd.net/v1alpha1` | 信頼済みローカルプラグイン |
+| `routerd.net/v1alpha1` | top-level `Router` |
+| `net.routerd.net/v1alpha1` | interfaces, DHCP, DNS, routes, tunnels, WAN selection, flow logs |
+| `firewall.routerd.net/v1alpha1` | firewall zones, policies, rules, and logs |
+| `system.routerd.net/v1alpha1` | hostname, packages, sysctl, network adoption, systemd units, NTP, log sinks, Web Console |
+| `plugin.routerd.net/v1alpha1` | trusted local plugin manifests |
 
-`routerd.io` のような仮のグループは使いません。
+Do not use placeholder groups such as `routerd.io`.
 
-## 依存関係
+## Dependencies
 
-リソースは他のリソースを名前で参照します。
-たとえば `IPv6DelegatedAddress` は `DHCPv6PrefixDelegation` を参照し、`DSLiteTunnel` は `DHCPv6Information` や `DNSResolver` の結果を参照します。
+Resources refer to each other by name. For example, `IPv6DelegatedAddress`
+depends on `DHCPv6PrefixDelegation`, and `DSLiteTunnel` can depend on
+`DHCPv6Information`, `DNSResolver`, or a source address policy.
 
-参照先がまだ準備できていないと、リソースは `Pending` のままです。
-参照先が整うと `Applied`、`Bound`、`Up`、`Installed`、`Healthy` などの段階へ進みます。
+If a dependency is not ready, the dependent resource stays `Pending`. When the
+dependency becomes ready, resources move through phases such as `Applied`,
+`Bound`, `Up`, `Installed`, and `Healthy`.
 
 ## dependsOn
 
-一部のリソースは `dependsOn` で適用の条件を指定できます。
-`dependsOn` には、参照するリソースとその状態フィールドを明示します。
+Some resources support `dependsOn` to make readiness conditions explicit.
 
 ```yaml
 dependsOn:
@@ -64,9 +66,9 @@ dependsOn:
     phase: Up
 ```
 
-他リソースの状態値を使うときは、通常のフィールドに式を書きません。
-`deviceFrom`、`gatewayFrom`、`addressFrom`、`ipv4From`、`ipv6From`、
-`prefixFrom`、`rdnssFrom`、`addressFrom` といった専用フィールドを使います。
+Do not put dynamic status expressions into normal literal fields. Use typed
+source fields such as `deviceFrom`, `gatewayFrom`, `addressFrom`, `ipv4From`,
+`ipv6From`, `prefixFrom`, `rdnssFrom`, and `addressFrom`.
 
 ```yaml
 deviceFrom:
@@ -74,10 +76,14 @@ deviceFrom:
   field: interface
 ```
 
-## 所有参照
+This keeps dependencies visible to validation, planning, event subscriptions,
+and controller reconciliation.
 
-`ownerRefs` は、あるリソースが別のリソースに従属することを表します。
-親が準備できないとき、子は古くなった構成を出し続けません。
-これは、DHCPv6-PD が失われたときに古い LAN IPv6 設定を残さないための重要な仕組みです。
-委任されたプレフィックスに依存する LAN IPv6 アドレス、RA、DNS レコード、DS-Lite は、
-親が準備できない間は古い状態を出さないようにします。
+## ownerRefs
+
+`ownerRefs` declares that one resource is owned by another. If the owner is not
+ready, the child should not keep publishing stale host state.
+
+This matters for delegated IPv6 networks. When DHCPv6-PD is lost, LAN IPv6
+addresses, RA, DNS records, and DS-Lite state that depend on that prefix should
+stop or become pending rather than continuing to advertise an old prefix.

@@ -1,16 +1,17 @@
 ---
-title: ゲスト / IoT 端末の分離
+title: Guest and IoT client isolation
 sidebar_position: 60
 ---
 
-# ゲスト / IoT 端末の分離
+# Guest and IoT client isolation
 
-同じ LAN につながった特定の MAC アドレスをゲスト / IoT 端末として扱い、
-インターネットは許可しつつ、信頼済み LAN や管理網への到達を止める例です。
+This example keeps selected MAC addresses on the same LAN but treats them as
+guest or IoT clients: internet access is allowed, while trusted LAN and
+management access are denied.
 
-完全な YAML は `examples/guest-mode.yaml` にあります。
+The complete, validated YAML is in `examples/guest-mode.yaml`.
 
-## 構成図
+## Topology
 
 ```mermaid
 flowchart LR
@@ -27,20 +28,28 @@ flowchart LR
   router --- mgmt
 ```
 
-## 図の対応表
+## Diagram map
 
-| 番号 | 意味 | 主なリソース |
+| No. | Meaning | Main resources |
 | --- | --- | --- |
-| [1] | 端末ポリシーを適用するルーター。 | `FirewallPolicy/default` |
-| [2] | 信頼済み端末とゲスト端末が同居する共有 LAN。 | `FirewallZone/lan` |
-| [3] | ゲストポリシーに一致しない通常の端末。 | default zone behavior |
-| [4] | ゲスト / IoT として扱う MAC アドレス。 | `ClientPolicy/guest-devices` |
-| [5] | ゲスト端末から到達させない管理宛先。 | `ClientPolicy.spec.isolation.lanMgmt` |
+| [1] | Router applying the client policy. | `FirewallPolicy/default` |
+| [2] | Shared layer-2 LAN where trusted and guest clients coexist. | `FirewallZone/lan` |
+| [3] | Normal clients not matched by the guest policy. | Default zone behavior |
+| [4] | Listed MAC addresses treated as guest or IoT clients. | `ClientPolicy/guest-devices` |
+| [5] | Management destinations blocked from guest clients. | `ClientPolicy.spec.isolation.lanMgmt` |
 
-## 要点
+## What this manages
+
+| Area | routerd resources |
+| --- | --- |
+| LAN addressing | `IPv4StaticAddress/lan-gateway`, `DHCPv4Server/lan-v4` |
+| Client classification | `ClientPolicy/guest-devices` |
+| Filtering | `FirewallZone/*`, `FirewallPolicy/default` |
+
+## Key config
 
 ```yaml
-# [4] listed MAC address を isolated guest / IoT client として扱う。
+# [4] Listed MAC addresses become isolated guest/IoT clients.
 - apiVersion: firewall.routerd.net/v1alpha1
   kind: ClientPolicy
   metadata:
@@ -49,7 +58,7 @@ flowchart LR
     mode: include
     macs:
       - 18:ec:e7:33:12:6c
-    # [4] -> [1] internet は許可し、LAN と管理網は拒否する。
+    # [4] -> [1] Internet is allowed, but LAN and management access are denied.
     isolation:
       lanInternet: allow
       lanLAN: deny
@@ -57,7 +66,7 @@ flowchart LR
       mDNSBroadcast: deny
 ```
 
-## 確認
+## Checks
 
 ```bash
 routerd validate --config examples/guest-mode.yaml
@@ -66,10 +75,11 @@ routerctl describe ClientPolicy/guest-devices
 nft list table inet routerd_filter
 ```
 
-ゲスト端末からインターネットへ出られること、信頼済み LAN と管理網へ届かないことを確認します。
+From a guest client, verify internet access and confirm that trusted LAN and
+management addresses are blocked.
 
-## よく変えるところ
+## Common edits
 
-- 列挙した MAC アドレスだけを分離するなら `mode: include`。
-- 原則ゲスト扱いにして、列挙した端末だけ信頼済みにするなら `mode: exclude`。
-- Web 管理画面で分かりやすくするため、DHCP の予約と組み合わせる。
+- Use `mode: include` when only listed MAC addresses are isolated.
+- Use `mode: exclude` for a guest-first network where only listed devices are trusted.
+- Pair this with DHCP reservations so client names in the Web Console stay readable.

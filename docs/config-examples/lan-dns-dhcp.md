@@ -1,21 +1,22 @@
 ---
-title: LAN DHCP とローカル DNS
+title: LAN DHCP and local DNS
 sidebar_position: 20
 ---
 
-# LAN DHCP とローカル DNS
+# LAN DHCP and local DNS
 
-1 つの LAN インターフェースを、小さな家庭内 LAN や検証用 LAN のサービスセグメントとして使う例です。
-routerd が LAN アドレス、DHCPv4、ローカル DNS ゾーン、DHCP リース由来の名前を管理します。
+This example turns one LAN interface into a small home or lab service segment:
+routerd owns the LAN address, serves DHCPv4, answers a local DNS zone, and
+derives client names from DHCP leases.
 
-完全な YAML は `examples/example-lan-dns-dhcp.yaml` にあります。
+The complete, validated YAML is in `examples/example-lan-dns-dhcp.yaml`.
 
-## 構成図
+## Topology
 
 ```mermaid
 flowchart LR
   router["[1] routerd host<br/>192.168.30.1"]
-  lan["[2] LAN<br/>home.example"]
+  lan["[2] lan segment<br/>home.example"]
   dhcp["[3] DHCPv4 clients<br/>192.168.30.100-199"]
   nas["[4] NAS reservation<br/>192.168.30.10"]
 
@@ -24,39 +25,44 @@ flowchart LR
   lan --- nas
 ```
 
-## 図の対応表
+## Diagram map
 
-| 番号 | 意味 | 主なリソース |
+| No. | Meaning | Main resources |
 | --- | --- | --- |
-| [1] | LAN の DNS 待ち受けも兼ねるルーターのアドレス。 | `IPv4StaticAddress/lan-base`, `DNSResolver/lan-resolver` |
-| [2] | DHCP の search domain として配るローカル DNS ゾーン。 | `DNSZone/home` |
-| [3] | アドレスと DNS 設定を受け取る動的なクライアント。 | `DHCPv4Server/lan-dhcpv4` |
-| [4] | 固定リースと名前を持つ基盤ホスト。 | `DHCPv4Reservation/nas`, `DNSZone/home` |
+| [1] | Router address that also listens for DNS on the LAN. | `IPv4StaticAddress/lan-base`, `DNSResolver/lan-resolver` |
+| [2] | Local DNS zone advertised as the DHCP search domain. | `DNSZone/home` |
+| [3] | Dynamic clients that receive addresses and DNS settings. | `DHCPv4Server/lan-dhcpv4` |
+| [4] | Fixed infrastructure host with a stable lease and name. | `DHCPv4Reservation/nas`, `DNSZone/home` |
 
-## この例で管理するもの
+## What this manages
 
-| 領域 | routerd リソース |
+| Area | routerd resources |
 | --- | --- |
-| LAN アドレス | `Interface/lan`, `IPv4StaticAddress/lan-base` |
-| ローカルの名前 | `DNSZone/home` |
-| リゾルバ | `DNSResolver/lan-resolver` |
+| LAN address | `Interface/lan`, `IPv4StaticAddress/lan-base` |
+| Local names | `DNSZone/home` |
+| Resolver | `DNSResolver/lan-resolver` |
 | DHCPv4 | `DHCPv4Server/lan-dhcpv4`, `DHCPv4Reservation/nas` |
 
-## 要点
+## Key config
 
 ```yaml
-# [2] router.home.example や nas.home.example の local zone。
+# [2] Local zone for names such as router.home.example and nas.home.example.
 - kind: DNSZone
   metadata:
     name: home
   spec:
     zone: home.example
+    records:
+      - hostname: router
+        ipv4From:
+          resource: IPv4StaticAddress/lan-base
+          field: address
     dhcpDerived:
       sources:
         - DHCPv4Server/lan-dhcpv4
       ddns: true
 
-# [3] DHCP で router address を gateway / DNS として配る。
+# [3] DHCP advertises the router address as gateway and DNS.
 - kind: DHCPv4Server
   metadata:
     name: lan-dhcpv4
@@ -72,7 +78,7 @@ flowchart LR
       field: zone
 ```
 
-## 確認
+## Checks
 
 ```bash
 routerd validate --config examples/example-lan-dns-dhcp.yaml
@@ -82,8 +88,8 @@ routerctl describe DHCPv4Server/lan-dhcpv4
 dig @192.168.30.1 router.home.example
 ```
 
-## よく変えるところ
+## Common edits
 
-- `home.example` を自分の search domain に変える。
-- NAS、プリンター、基盤機器は `DHCPv4Reservation` に足す。
-- 一部のドメインだけプライベートな上流へ送りたい場合は `DNSForwarder` と `DNSUpstream` を追加する。
+- Change `home.example` to the local search domain you want to advertise.
+- Add `DHCPv4Reservation` entries for NAS, printers, and infrastructure hosts.
+- Add `DNSForwarder` and `DNSUpstream` resources when some domains need private upstreams.

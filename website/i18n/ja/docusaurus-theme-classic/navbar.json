@@ -1,0 +1,62 @@
+{
+  "title": {
+    "message": "routerd",
+    "description": "The title in the navbar"
+  },
+  "logo.alt": {
+    "message": "routerd",
+    "description": "The alt text of navbar logo"
+  },
+  "item.label.Docs": {
+    "message": "ドキュメント",
+    "description": "Navbar item with label Docs"
+  },
+  "item.label.GitHub": {
+    "message": "GitHub",
+    "description": "Navbar item with label GitHub"
+  },
+  "item.label.Introduction": {
+    "message": "はじめに",
+    "description": "Navbar item with label Introduction"
+  },
+  "item.label.Get started": {
+    "message": "導入（クイックスタート）",
+    "description": "Navbar item with label Get started"
+  },
+  "item.label.Concepts (declarative model)": {
+    "message": "機能解説（宣言型モデル）",
+    "description": "Navbar item with label Concepts (declarative model)"
+  },
+  "item.label.Glossary": {
+    "message": "用語集",
+    "description": "Navbar item with label Glossary"
+  },
+  "item.label.Configuration reference": {
+    "message": "設定リファレンス（機能別）",
+    "description": "Navbar item with label Configuration reference"
+  },
+  "item.label.Configuration examples": {
+    "message": "設定例集",
+    "description": "Navbar item with label Configuration examples"
+  },
+  "item.label.How-to guides": {
+    "message": "How-to ガイド",
+    "description": "Navbar item with label How-to guides"
+  },
+  "item.label.Operations": {
+    "message": "運用",
+    "description": "Navbar item with label Operations"
+  },
+  "item.label.Reference (API)": {
+    "message": "リファレンス（API）",
+    "description": "Navbar item with label Reference (API)"
+  },
+  "item.label.Design notes": {
+    "message": "設計ノート",
+    "description": "Navbar item with label Design notes"
+  },
+  "item.label.Releases & stable": {
+    "message": "リリースと安定版",
+    "description": "Navbar item with label Releases & stable"
+  }
+}

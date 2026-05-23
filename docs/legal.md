@@ -1,103 +1,102 @@
 ---
-title: 法務と再配布
+title: Legal and redistribution
 ---
 
-# 法務と再配布
+# Legal and Redistribution
 
-routerd 本体は BSD 3-Clause License で配布します。
-全文はリポジトリルートの `LICENSE` にあります。
+routerd itself is distributed under the BSD 3-Clause License. The full license
+text is in the repository root as `LICENSE`.
 
-routerd の著作権表示は次の通りです。
+The routerd copyright notice is:
 
 ```text
 Copyright (c) 2026 Kirino Minato <kirino.minato@gmail.com> (https://github.com/imksoo) and routerd contributors
 ```
 
-このページは、routerd のリリースアーカイブとライブ ISO を再配布する際の、
-実務上の確認事項をまとめたものです。法的助言ではありません。
+This page summarizes the practical redistribution rules for routerd release
+archives and the routerd live ISO. It is an operational note, not legal advice.
 
-## routerd バイナリ
+## routerd binaries
 
-routerd バイナリは、このリポジトリの Go ソースコードからビルドします。
-リリース前に次を実行します。
+The routerd binaries are built from Go source code in this repository. Before a
+release, run:
 
 ```sh
 make third-party-licenses
 ```
 
-このコマンドは `THIRD_PARTY_LICENSES.md` を再生成し、次の情報を一覧化します。
+That command regenerates `THIRD_PARTY_LICENSES.md`. It lists:
 
-- routerd バイナリにリンクする Go モジュール
-- 検出したライセンステキストの種類
-- ライセンスファイル名
-- モジュールのソース URL
-- ライブ ISO で使う Alpine パッケージ
-- Alpine パッケージのライセンスメタデータと upstream URL
+- Go modules linked into routerd binaries
+- detected license text type
+- license file name
+- module source URL
+- Alpine packages used by the live ISO
+- Alpine package license metadata and upstream URL
 
-現在の監査処理は、Go モジュールのライセンスファイルから GPL、LGPL、AGPL の
-テキストを検出します。リンクする Go モジュールとして見つかった場合は、リリースを
-止めます。その上で、routerd バイナリのライセンスを変える必要があるか、依存を外す
-べきかを確認します。
+The current audit path checks Go module license files for GPL, LGPL, and AGPL
+text. If such a linked Go module appears, stop the release and review whether
+the routerd binary license needs to change or the dependency needs to be
+removed.
 
-ソースファイルには次のような SPDX 識別子を付けます。
+Source files use SPDX identifiers such as:
 
 ```text
 SPDX-License-Identifier: BSD-3-Clause
 ```
 
-このヘッダーは routerd ソースのライセンスを示します。
-同梱するツール、Alpine パッケージ、Go モジュール、その他の第三者コンポーネントの
-ライセンスを変えるものではありません。
-それらは `THIRD_PARTY_LICENSES.md` に一覧化します。
+Those headers identify the routerd source license. They do not change the
+licenses of bundled tools, Alpine packages, Go modules, or other third-party
+components listed in `THIRD_PARTY_LICENSES.md`.
 
-## リリースアーカイブ
+## Release archives
 
-リリースアーカイブには次を入れます。
+Release archives contain:
 
-- routerd バイナリ
-- インストーラースクリプト
-- systemd または rc.d のサービステンプレート
-- サンプル設定
+- routerd binaries
+- installer scripts
+- systemd or rc.d service templates
+- sample configuration
 - `share/doc/LICENSE`
 - `share/doc/THIRD_PARTY_LICENSES.md`
 
-リリースアーカイブを再配布する場合は、これらのファイルを一緒に配布します。
+When redistributing a release archive, keep those files with the archive.
 
-## ライブ ISO
+## Live ISO
 
-ライブ ISO は集合的な配布物で、次を組み合わせています。
+The live ISO is an aggregate distribution. It combines:
 
-- routerd バイナリとスクリプト
-- Alpine Linux のベースファイル
-- dnsmasq、nftables、WireGuard tools、ppp、iproute2、chrony、
-  tcpdump などの Alpine パッケージ
+- routerd binaries and scripts
+- Alpine Linux base files
+- Alpine packages such as dnsmasq, nftables, WireGuard tools, ppp, iproute2,
+  chrony, tcpdump, and related utilities
 
-これらの Alpine パッケージは、それぞれの upstream ライセンスを保ちます。
-一部は GPL ライセンスです。
-ライブ ISO 全体を 1 つの GPL 著作物として再ライセンスする扱いではありません。
+Those Alpine packages keep their own upstream licenses. Some are GPL licensed.
+The live ISO is not relicensed as a single GPL work.
 
-ライブ ISO では、次の場所から routerd の通知を確認できます。
+The live ISO includes the routerd notices at:
 
 ```text
 /usr/share/licenses/routerd/LICENSE
 /usr/share/licenses/routerd/THIRD_PARTY_LICENSES.txt
 ```
 
-Alpine パッケージのソース情報は、Alpine パッケージリポジトリ、APKBUILD、
-`THIRD_PARTY_LICENSES.md` にある upstream URL から確認できます。
+Source information for Alpine packages is available from Alpine package
+repositories, APKBUILD records, and the upstream URLs listed in
+`THIRD_PARTY_LICENSES.md`.
 
-## リリースチェックリスト
+## Release checklist
 
-リリース前に確認します。
+Before publishing a release:
 
-1. `make third-party-licenses` を実行します。
-2. Go モジュールの copyleft チェックで、GPL、LGPL、AGPL のモジュールがないことを確認します。
-3. GPL 系ライセンスが、分離して配布する Alpine パッケージや外部ツールにだけ
-   現れることを確認します。
-4. 通常のテスト、スキーマ、example、website、アーカイブ、ライブ ISO のチェックを実行します。
-5. リリースアーカイブに `share/doc/LICENSE` と
-   `share/doc/THIRD_PARTY_LICENSES.md` があることを確認します。
-6. ライブ ISO に `/usr/share/licenses/routerd/` があることを確認します。
+1. Run `make third-party-licenses`.
+2. Confirm the Go module copyleft check reports no GPL, LGPL, or AGPL module.
+3. Confirm GPL-family licenses only appear in separately distributed Alpine
+   packages or other external tools.
+4. Run the normal test, schema, example, website, archive, and live ISO checks.
+5. Confirm release archives include `share/doc/LICENSE` and
+   `share/doc/THIRD_PARTY_LICENSES.md`.
+6. Confirm the live ISO includes `/usr/share/licenses/routerd/`.
 
-依存関係が大きく変わった場合は、タグを作る前にこのページと、生成済みの
-ライセンス一覧を見直します。
+If the dependency set changes substantially, review this page and the generated
+license inventory before tagging the release.

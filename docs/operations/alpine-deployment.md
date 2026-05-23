@@ -1,7 +1,7 @@
-# Alpine / OpenRC デプロイ
+# Alpine / OpenRC deployment
 
-Alpine Linux では、routerd は OpenRC をサービスマネージャーとして扱います。
-one-shot apply は、routerd が管理するローカルサービスまで含めて自己完結します。
+On Alpine Linux, routerd treats OpenRC as the service manager. A one-shot apply
+is self-contained for routerd-managed local services:
 
 ```sh
 routerd validate --config /usr/local/etc/routerd/router.yaml
@@ -9,30 +9,56 @@ routerd plan --config /usr/local/etc/routerd/router.yaml
 routerd apply --config /usr/local/etc/routerd/router.yaml --once
 ```
 
-`mode: vrrp` の `VirtualAddress` がある場合、routerd は `/etc/keepalived/keepalived.conf` を生成（レンダリング）し、OpenRC の `keepalived` init script を導入し、`rc-update` で有効化します。設定の変更は、デーモンモードと同じ VRRP コントローラー経路で適用します。デーモンが稼働中なら `rc-service keepalived reload` を、必要な場合は `restart` にフォールバックします。
-生成した script は、起動前に `keepalived --config-test --use-file /etc/keepalived/keepalived.conf` を実行します。
+For `VirtualAddress` resources with `mode: vrrp`,
+routerd renders `/etc/keepalived/keepalived.conf`, installs an OpenRC
+`keepalived` init script, enables it with `rc-update`, and applies config
+changes through the same VRRP controller path used by daemon mode. The
+controller reloads keepalived with `rc-service keepalived reload` when the
+daemon is already running and falls back to `restart` when needed. The generated
+script runs `keepalived --config-test --use-file /etc/keepalived/keepalived.conf`
+before starting the daemon.
 
-`routerctl show vrrp` の role は、稼働中のインターフェースの状態から観測します。
-Linux/OpenRC では、`ip addr show` で VIP を持っているノードを `master`、持っていないピアを `backup` と判定します。
-`LAST_TRANSITION` は、routerd または `routerctl show vrrp` が、そのノードの role 変化を最後に観測した時刻です。keepalived 単独のフェイルオーバーでは、CLI が次に稼働中の VIP 所有権を読んだタイミングで更新されます。
+`routerctl show vrrp` reports the observed role from the live interface state.
+On Linux/OpenRC this is derived from `ip addr show`: the node that owns the
+VIP address is `master`, and the peer that does not own it is `backup`.
+`LAST_TRANSITION` is the time routerd or `routerctl show vrrp` most recently
+observed the node's role changing, so a keepalived-only failover updates it when
+the CLI next reads the live VIP ownership.
 
-ホストを変更せずに Alpine 向けの出力を確認するには、次を使います。
+To preview the Alpine output without touching the host, use:
 
 ```sh
 routerd render alpine --config /usr/local/etc/routerd/router.yaml
 ```
 
-VRRP VIP を含む設定では、OpenRC の init script と `keepalived.conf` がプレビューに含まれます。Kubernetes API VIP で、同じ VIP 上に DNS の port 53 と API ingress の port 6443 を併用する例は、`examples/k8s-routerd-vip-alpine.yaml` を参照してください。
+The preview includes OpenRC init scripts and `keepalived.conf` when the config
+contains a VRRP VIP. See `examples/k8s-routerd-vip-alpine.yaml` for a Kubernetes
+API VIP example that shares one VIP for DNS on port 53 and API ingress on port
+6443.
 
-ライブ ISO では、`/usr/local/etc/routerd/router.yaml` が存在する場合、ログイン時にウィザードを起動しません。ブートコマンドラインに次を入れても抑止できます。
+On the live ISO, the login wizard is skipped when
+`/usr/local/etc/routerd/router.yaml` already exists. It can also be skipped from
+the boot command line with:
 
 ```text
 routerd.skip-wizard=1
 ```
 
-どちらの条件も満たさない場合、ライブ ISO はログイン時に、ウィザードの開始入力を 5 秒だけ待ちます。入力がなければウィザード経路を終了し、ephemeral モードのまま動きます。後から開始する場合は、`/usr/share/routerd/install.sh configure` を実行します。
+When neither condition is true, the live ISO waits 5 seconds at login before
+starting the wizard. If there is no input, it exits the wizard path and leaves
+the system running in ephemeral mode; start it later with
+`/usr/share/routerd/install.sh configure`.
 
-ライブ ISO は、autostart 経路で `udhcpc` を常駐 DHCP クライアントとして起動し、起動後もリースの renew/rebind を継続します。DHCP のホスト名は、`routerd.hostname=`、`routerd.live_hostname=`、トップレベル Router の `metadata.name`、または MAC アドレス由来のフォールバックから決めます。既定では DHCP option 61 を送らないため、Ethernet の MAC でクライアントを識別する DHCP サーバーでは、同じクライアント識別子のまま扱われます。明示的な DHCP クライアント ID が必要な場合だけ、hex 値を `routerd.dhcp_client_id=` で指定します。
+The live ISO starts `udhcpc` as a persistent DHCP client during the autostart
+path so leases are renewed after boot. It sends a DHCP hostname derived from
+`routerd.hostname=`, `routerd.live_hostname=`, the top-level Router
+`metadata.name`, or a stable MAC-derived fallback. By default it does not send
+DHCP option 61, so servers that identify clients by Ethernet MAC keep seeing the
+same client identity. To force a specific DHCP client ID, pass a hex value with
+`routerd.dhcp_client_id=`.
 
-Kubernetes VIP の例のように `advertInterval` が 1 秒の構成では、アクティブなノードの keepalived を停止すると、おおむね数秒で backup へ VIP が移ります。
-keepalived の検出窓は、概ね `advertInterval * 3` です。優先度の高いノードへの reclaim は、設定した `preemptDelay` と、次の advert convergence window の後に進みます。
+With the example Kubernetes VIP profile and a 1 second `advertInterval`,
+stopping keepalived on the active node should move the VIP to the backup in
+roughly a few seconds. The keepalived detection window is approximately
+`advertInterval * 3`; reclaim by the higher-priority node then follows the
+configured `preemptDelay` plus the next advert convergence window.

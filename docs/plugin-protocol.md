@@ -1,44 +1,40 @@
 ---
-title: プラグインプロトコル
+title: Plugin protocol
 slug: /reference/plugin-protocol
 ---
 
-# プラグインプロトコル
+# Plugin protocol
 
-routerd のプラグインは、信頼済みのローカル実行ファイルです。
-本体に組み込まないリソース固有の処理を、同じホスト上の小さなプログラムとして追加するための仕組みです。
+routerd plugins are trusted local executables. The plugin mechanism lets you add resource-specific behaviour as a small program on the same host, without modifying the routerd binary.
 
-リモートからのプラグイン登録、リモートインストール、公開レジストリは、現在は対象外です。
+Remote plugin registration, remote installation, and a public plugin registry are intentionally out of scope.
 
-## 配置
+## Layout
 
-標準の配置先は次の通りです。
+The default install path is:
 
 ```text
 /usr/local/libexec/routerd/plugins/<name>/
 ```
 
-各プラグインはマニフェストと実行ファイルを持ちます。
+Each plugin has a manifest and an executable:
 
 ```text
 plugin.yaml
 bin/<plugin>
 ```
 
-## 役割
+## Responsibilities
 
-プラグインは次のような処理を担当できます。
+A plugin can take part in:
 
-- リソースの検証
-- 変更計画の作成
-- ホスト状態の観測
-- ホストへの適用
+- Resource validation
+- Plan generation
+- Host state observation
+- Host state application
 
-ただし、ネットワーク状態を変更する処理は、テストしやすい小さな単位に分けます。
-本体と同じく、ホストネットワークを変更するテストは、`tests/netns` などの隔離環境で行います。
+Operations that mutate network state should be split into testable units. As with the main code base, tests that touch real host networking should run inside isolated network namespaces (see `tests/netns`).
 
-## 現在の位置付け
+## Current status
 
-routerd の主要なルーター機能は、本体のリソースと専用デーモンで実装を進めています。
-プラグインは、利用者ごとのローカル拡張を安全に取り込むための基盤です。
-公開互換 API として固定するまでは、マニフェストと入出力の形が変わる可能性があります。
+The main router features are advanced inside the routerd binary and its managed daemons. The plugin protocol is the safe foundation for site-local extensions; the manifest format and the I/O contract may still change before the protocol is frozen as a stable public surface.

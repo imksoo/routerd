@@ -1,14 +1,18 @@
 ---
-title: ルーターホストを宣言型でブートストラップする
+title: Bootstrap a router host declaratively
 ---
 
-# ルーターホストを宣言型でブートストラップする
+# Bootstrap a router host declaratively
 
-routerd は、初回構築時に手作業になりがちなホスト準備を YAML へ寄せられます。インストーラーの代替ではなく、ルーター固有の差分を shell 履歴ではなく設定として残すための機能です。
+routerd can describe most first-boot host preparation in the router YAML. The
+goal is not to replace an installer, but to keep the router-specific drift out
+of ad hoc shell history.
 
-## パッケージ
+## Package Dependencies
 
-routerd は、設定内のリソースから通常の OS パッケージ依存を自動で導出します。`Package` は、まだ導出できない依存だけを補う、狭いオーバーライドとして使います。
+routerd derives normal OS package dependencies from the resources in the
+config. Use `Package` only as a narrow override for dependencies that cannot
+yet be derived.
 
 ```yaml
 apiVersion: system.routerd.net/v1alpha1
@@ -43,15 +47,21 @@ spec:
         - mpd5
 ```
 
-## カーネルモジュール
+## Kernel modules
 
-Linux のカーネルモジュールは、NAT、ファイアウォールログ、トラフィックフローログ、WireGuard などのリソースから自動で導出します。`KernelModule` は、利用者が直接書く設定 Kind ではありません。
+Linux kernel modules are derived from the router resources that need them, such
+as NAT, firewall logging, traffic flow logging, and WireGuard. `KernelModule`
+is not a user-facing config kind.
 
-## Sysctl
+## Sysctl profile
 
-routerd は、forwarding、conntrack accounting、reverse path filter、redirect、TCP、RA の sysctl を、ルーターのリソースから自動で導出します。通常、設定に `SysctlProfile` を書く必要はありません。
+routerd derives forwarding, conntrack accounting, reverse-path-filter, redirect,
+TCP, and RA sysctls from router resources. Do not list `SysctlProfile` in normal
+configs.
 
-`SysctlProfile` は、routerd がまだ導出できないプラットフォーム固有のカーネル設定を補う、狭い逃げ道としてだけ使います。差分だけを `overrides` で指定します。
+Use `SysctlProfile` only as a narrow escape hatch for a platform-specific kernel
+setting that routerd cannot yet derive. Override only the values that differ
+from the profile.
 
 ```yaml
 apiVersion: system.routerd.net/v1alpha1
@@ -66,16 +76,18 @@ spec:
     net.netfilter.nf_conntrack_udp_timeout: "60"
 ```
 
-## 既存ホスト設定の引き継ぎ
+## Existing host networking
 
-systemd-networkd や systemd-resolved の引き継ぎ用 drop-in は、`Interface`、DHCP、DNS、RA などのリソースから自動で導出します。DHCP、DNS、PPPoE、healthcheck、Tailscale などの routerd 管理ユニットも、それぞれのリソース Kind から生成されるため、重複して定義しないでください。
+routerd derives systemd-networkd and systemd-resolved adoption drop-ins from
+`Interface`, DHCP, DNS, and RA resources. Do not declare those drop-ins in YAML.
 
-Ubuntu 26.04 LTS では、RA の状態によっては、インストーラーが書いた netplan で `dhcp6: false` にしていても、
-systemd-networkd がインターフェース上で DHCPv6 クライアントのソケットを開くことがあります。
-routerd が所有する WAN/LAN リンクでは、OS のブートストラップ時に `accept-ra: false` も明示し、
-インストーラーの netplan レイヤーでは IPv6 のリンクローカルのみにしてください。
-こうすると、UDP ポート 546 を `routerd-dhcpv6-client` が使える状態に保てます。OS の初期ネットワーク設定が、routerd の DHCPv6-PD や RA/DHCPv6 の生成と競合するのを避けられます。
-管理用 DHCP は、別の管理インターフェースに残してください。
+On Ubuntu 26.04 LTS, systemd-networkd may bind a DHCPv6 client socket on an
+interface even when the installer netplan sets `dhcp6: false`, depending on RA
+state. For routerd-owned WAN/LAN links, also set `accept-ra: false` during OS
+bootstrap and leave only IPv6 link-local addressing at the installer netplan
+layer. This keeps UDP port 546 available for `routerd-dhcpv6-client` and avoids
+the install-time network policy competing with routerd's DHCPv6-PD and
+RA/DHCPv6 renderers. Keep management DHCP on a separate management interface.
 
 ```yaml
 network:
@@ -102,10 +114,34 @@ network:
       optional: true
 ```
 
-プロバイダー DNS や AFTR の解決のために、WAN リンクで RA 由来の IPv6 デフォルト経路が必要な場合は、その WAN インターフェースと DHCPv6 / RA のリソースを宣言します。routerd は必要な systemd-networkd の drop-in を導出し、systemd-networkd の DHCP クライアントが競合しないようにします。
+If the WAN needs an RA-learned IPv6 default route for provider DNS or AFTR
+resolution, declare the WAN interface and the DHCPv6/RA resources. routerd will
+derive the required systemd-networkd drop-in while keeping systemd-networkd's
+DHCP clients out of the way.
 
-Alpine / OpenRC では、`routerd render alpine --out-dir <dir>` が、明示的な生成済みサービス成果物、管理対象の dnsmasq、`routerd-healthcheck`、DHCP クライアント、DNS リゾルバ、ファイアウォールロガー、PPPoE、Tailscale の OpenRC スクリプトを生成できます。
-適用時は `/etc/init.d` にスクリプトを配置し、現在の OpenRC 状態と差分がある場合だけ `rc-update` と `rc-service` を実行します。
-自動生成された DNS リゾルバのスクリプトは、コントローラーループの外でランタイム設定を実体化できるようになるまでは、enable や start を行いません。
-systemd 専用の挙動は模倣しません。
-systemd-networkd / resolved 向けの drop-in、systemd のサンドボックス用フィールド、timesyncd の所有は、Alpine ネイティブな意味を持つまで OpenRC では未対応として扱います。
+routerd-managed service units and init scripts are generated from the owning
+resource kinds. Do not declare local service-manager units in routerd config;
+write the desired router resources and let the renderer derive the host
+artifacts.
+
+On Alpine/OpenRC, `routerd render alpine --out-dir <dir>` can render OpenRC
+scripts for routerd, managed dnsmasq, `routerd-healthcheck`, DNS resolver,
+firewall logger, PPPoE, and Tailscale. During apply, routerd installs those
+scripts under `/etc/init.d` and uses `rc-update` and `rc-service` only when the
+current OpenRC state needs a change.
+Synthesized DNS resolver scripts are rendered but not enabled or started until
+runtime config materialization is available outside the controller loop.
+It does not emulate systemd-only concepts. systemd-networkd/resolved drop-ins,
+systemd sandboxing fields, and timesyncd ownership remain unsupported on OpenRC
+until they have native Alpine semantics.
+
+## Apply order
+
+For a remote router, keep the operational order conservative:
+
+1. Install the routerd binaries and a minimal config.
+2. Validate the full config.
+3. Run a dry-run apply.
+4. Confirm management interface and SSH are protected.
+5. Apply.
+6. Verify `routerctl status`, forwarding, DNS, and the Web Console.

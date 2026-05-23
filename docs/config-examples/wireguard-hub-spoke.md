@@ -1,16 +1,16 @@
 ---
-title: WireGuard ハブ＆スポークのテンプレート
+title: WireGuard hub and spoke template
 sidebar_position: 100
 ---
 
-# WireGuard ハブ＆スポークのテンプレート
+# WireGuard hub and spoke template
 
-2 つの spoke を持つ routed WireGuard hub のテンプレートです。
-実際に使う前に、鍵、endpoint、広告するプレフィックスを置き換えてください。
+This template describes a routed WireGuard hub with two spokes. Treat it as a
+starting point: replace keys, endpoint names, and routed prefixes before use.
 
-完全な YAML は `examples/wireguard-hub-spoke.yaml` にあります。
+The complete YAML template is in `examples/wireguard-hub-spoke.yaml`.
 
-## 構成図
+## Topology
 
 ```mermaid
 flowchart LR
@@ -21,18 +21,26 @@ flowchart LR
   a --- hub --- b
 ```
 
-## 図の対応表
+## Diagram map
 
-| 番号 | 意味 | 主な resource |
+| No. | Meaning | Main resources |
 | --- | --- | --- |
-| [1] | spoke A の tunnel アドレスと routed LAN プレフィックス。 | `WireGuardPeer/spoke-a` |
-| [2] | spoke B の tunnel アドレスと routed LAN プレフィックス。 | `WireGuardPeer/spoke-b` |
-| [3] | hub 側の WireGuard インターフェースとアドレス。 | `WireGuardInterface/wg-hub`, `IPv4StaticAddress/wg-hub-ipv4` |
+| [1] | First spoke tunnel address and routed LAN prefix. | `WireGuardPeer/spoke-a` |
+| [2] | Second spoke tunnel address and routed LAN prefix. | `WireGuardPeer/spoke-b` |
+| [3] | Hub WireGuard interface and address. | `WireGuardInterface/wg-hub`, `IPv4StaticAddress/wg-hub-ipv4` |
 
-## 要点
+## What this manages
+
+| Area | routerd resources |
+| --- | --- |
+| WireGuard device | `WireGuardInterface/wg-hub` |
+| Hub address | `IPv4StaticAddress/wg-hub-ipv4` |
+| Peer routes | `WireGuardPeer/spoke-a`, `WireGuardPeer/spoke-b` |
+
+## Key config
 
 ```yaml
-# [3] hub 側 WireGuard interface と listen port。
+# [3] Hub WireGuard interface and listen port.
 - kind: WireGuardInterface
   metadata:
     name: wg-hub
@@ -41,7 +49,7 @@ flowchart LR
     listenPort: 51820
     mtu: 1420
 
-# [1] spoke A の tunnel address と routed LAN prefix。
+# [1] Spoke A tunnel address and routed LAN prefix.
 - kind: WireGuardPeer
   metadata:
     name: spoke-a
@@ -53,7 +61,7 @@ flowchart LR
       - 172.30.11.0/24
 ```
 
-## 確認
+## Checks
 
 ```bash
 routerd validate --config examples/wireguard-hub-spoke.yaml
@@ -62,8 +70,8 @@ routerctl describe WireGuardInterface/wg-hub
 wg show
 ```
 
-## よく変えるところ
+## Common edits
 
-- private key は permission を絞ったファイルに置きます。
-- peer ごとに tunnel アドレス `/32` と routed LAN プレフィックスを明示します。
-- WAN のファイアウォールを routerd で管理している場合は、UDP の listen port の許可も足します。
+- Keep the private key in a file with restricted permissions.
+- Use one `/32` tunnel address per peer and add routed LAN prefixes explicitly.
+- Add firewall rules for the UDP listen port where the WAN firewall is managed by routerd.

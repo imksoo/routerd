@@ -1,0 +1,42 @@
+{
+  "link.title.Docs": {
+    "message": "ドキュメント",
+    "description": "The title of the footer links column with title=Docs in the footer"
+  },
+  "link.title.Project": {
+    "message": "プロジェクト",
+    "description": "The title of the footer links column with title=Project in the footer"
+  },
+  "link.item.label.Install & Upgrade": {
+    "message": "導入とアップグレード",
+    "description": "The label of footer link with label=Install & Upgrade linking to /docs/install-and-upgrade"
+  },
+  "link.item.label.Getting Started": {
+    "message": "クイックスタート",
+    "description": "The label of footer link with label=Getting Started linking to /docs/tutorials/getting-started"
+  },
+  "link.item.label.Resource API": {
+    "message": "リソース API",
+    "description": "The label of footer link with label=Resource API linking to /docs/reference/api-v1alpha1"
+  },
+  "link.item.label.Plugin Protocol": {
+    "message": "プラグインプロトコル",
+    "description": "The label of footer link with label=Plugin Protocol linking to /docs/reference/plugin-protocol"
+  },
+  "link.item.label.GitHub": {
+    "message": "GitHub",
+    "description": "The label of footer link with label=GitHub linking to https://github.com/imksoo/routerd"
+  },
+  "link.item.label.Stable milestone": {
+    "message": "安定版マイルストーン",
+    "description": "The label of footer link with label=Stable milestone linking to /docs/releases/stable"
+  },
+  "link.item.label.Changelog": {
+    "message": "変更履歴",
+    "description": "The label of footer link with label=Changelog linking to /docs/releases/changelog"
+  },
+  "copyright": {
+    "message": "Copyright © 2026 Kirino Minato and routerd contributors. Licensed under the BSD 3-Clause License.",
+    "description": "The footer copyright"
+  }
+}
