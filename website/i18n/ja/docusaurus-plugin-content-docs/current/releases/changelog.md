@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260523.2327
+
 ### 追加
 
 - `qemu-guest-agent` を `install.sh` の Alpine 依存先に追加しました。

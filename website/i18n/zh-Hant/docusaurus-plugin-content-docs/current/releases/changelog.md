@@ -11,6 +11,8 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260523.2327
+
 ### 新增
 
 - 已將 `qemu-guest-agent` 新增到 `install.sh` 的 Alpine 相依套件中，
