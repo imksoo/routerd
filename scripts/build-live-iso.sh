@@ -725,6 +725,63 @@ socket=/run/routerd/routerd.sock
 status_socket=/run/routerd/routerd-status.sock
 log_dir=/run/routerd/logs
 
+log() {
+    echo "routerd-live: $*" >> "${log_dir}/routerd-live.log"
+}
+
+is_virtual_environment() {
+    if command -v systemd-detect-virt >/dev/null 2>&1; then
+        if systemd-detect-virt --vm >/dev/null 2>&1; then
+            return 0
+        fi
+    fi
+
+    if grep -q 'hypervisor' /proc/cpuinfo 2>/dev/null; then
+        return 0
+    fi
+
+    for path in \
+        /sys/class/dmi/id/sys_vendor \
+        /sys/class/dmi/id/board_vendor \
+        /sys/class/dmi/id/product_name \
+        /sys/class/dmi/id/product_version \
+        /sys/class/dmi/id/chassis_vendor; do
+        if [ -r "${path}" ]; then
+            value=$(tr -d '\r' < "${path}" 2>/dev/null || true)
+            case "${value}" in
+                *QEMU*|*KVM*|*VirtualBox*|*VMware*|*Xen*|*innotek*|*OpenStack*|*oVirt*|*RHEV*|*Microsoft*|*Parallels*|*Bochs*)
+                    return 0
+                    ;;
+            esac
+        fi
+    done
+
+    return 1
+}
+
+start_qemu_guest_agent() {
+    if ! is_virtual_environment; then
+        return 0
+    fi
+
+    for service in qemu-ga qemu-guest-agent; do
+        if [ -x "/etc/init.d/${service}" ]; then
+            log "detected virtual environment; ensuring ${service} service"
+            rc-update add "${service}" default >/dev/null 2>&1 || true
+            rc-service "${service}" restart >/dev/null 2>&1 || rc-service "${service}" start >/dev/null 2>&1 || true
+            return 0
+        fi
+    done
+
+    if command -v qemu-ga >/dev/null 2>&1; then
+        log "detected virtual environment; starting qemu-ga directly"
+        qemu-ga --daemonize >/dev/null 2>&1 || true
+        return 0
+    fi
+
+    log "virtual environment detected but qemu guest agent service or binary not present"
+}
+
 routerd_serve_running() {
     pids="$(pgrep -x routerd 2>/dev/null || pidof routerd 2>/dev/null || true)"
     for pid in ${pids}; do
@@ -755,6 +812,7 @@ fi
 /usr/share/routerd/live-dhcp.sh start || true
 
 /usr/share/routerd/install.sh --deps-only >/run/routerd/logs/deps.log 2>&1 || true
+start_qemu_guest_agent
 "${routerd}" validate --config "${config}"
 # Start the managed GoBGP daemon (routerd-bgp) before routerd serve reconciles BGP.
 # On Alpine/OpenRC the daemon is supervised by /etc/init.d/routerd-bgp; routerd

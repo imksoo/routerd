@@ -85,7 +85,9 @@ Use the ISO for demos and short trials.
 For a persistent router, install routerd onto disk with the release archive.
 
 The live ISO enables both the video console and a serial console.
-On Proxmox VE, add a serial socket and connect with `qm terminal`:
+On virtual machines (for example KVM/Proxmox), the live boot flow also attempts to
+start `qemu-guest-agent` automatically when the service is available.
+On Proxmox VE, add a serial socket and connect with `qm terminal`: 
 
 ```sh
 qm create 200 \
