@@ -11,6 +11,18 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 新增
+
+- 新增 `qemu-guest-agent` 到 `install.sh` 的 Alpine 依赖项中，
+  这样 Alpine 安装会默认包含虚拟化控制台代理。
+- 在 `scripts/build-live-iso.sh` 中加入虚拟化环境检测时自动启动
+  `qemu-guest-agent` 的逻辑。
+
+### 修复
+
+- 在支持的发行版中加入默认 SSH server 套件 (`openssh` /
+  `openssh-server`)，以便需要时可启用交互式访问。
+
 ## v20260523.1542
 
 ### 新增
