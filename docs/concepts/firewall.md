@@ -1,85 +1,74 @@
-# Stateful firewall
+# 状態を持つファイアウォール
 
-routerd manages a stateful nftables filter table named `inet routerd_filter`.
-The firewall model has four resource kinds:
+routerd は nftables の `inet routerd_filter` テーブルを管理します。
+ファイアウォールは 4 種類のリソースで表します。
 
-- `FirewallZone` assigns interfaces to a named zone and gives that zone a role.
-- `FirewallPolicy` sets global behavior such as deny logging.
-- `FirewallRule` adds explicit exceptions to the role matrix.
-- `ClientPolicy` classifies LAN clients by MAC address for guest isolation.
+- `FirewallZone` は、インターフェースをゾーンに割り当てます。
+- `FirewallPolicy` は、拒否ログなどの全体設定を表します。
+- `FirewallRule` は、役割の組み合わせでは表せない例外を表します。
+- `ClientPolicy` は、MAC アドレスで LAN クライアントを分類します。
 
-The supported roles are `untrust`, `trust`, and `mgmt`. Zone names describe
-topology, such as `wan`, `lan`, or `management`. Roles describe policy.
+役割は `untrust`、`trust`、`mgmt` の 3 種類です。`wan`、`lan`、
+`management` などはゾーン名であり、役割とは分けて考えます。
 
-The implicit matrix is:
+既定の動作は次の表で決まります。
 
-| From | To self | To mgmt | To trust | To untrust |
+| 送信元 | self | mgmt | trust | untrust |
 | --- | --- | --- | --- | --- |
-| `mgmt` | accept | accept | accept | accept |
-| `trust` | accept | drop | accept | accept |
-| `untrust` | drop | drop | drop | drop |
+| `mgmt` | 許可 | 許可 | 許可 | 許可 |
+| `trust` | 許可 | 拒否 | 許可 | 許可 |
+| `untrust` | 拒否 | 拒否 | 拒否 | 拒否 |
 
-The generated rules always accept established and related connections, loopback
-traffic, and required ICMPv6 traffic. Controllers also derive internal openings
-for routerd-managed services such as DHCPv6 prefix delegation, DS-Lite,
-dnsmasq DHCP service, and `routerd-dns-resolver`.
+生成するルールは、確立済みの通信、関連する通信、loopback、必要な ICMPv6
+を常に許可します。DHCPv6 PD、DS-Lite、dnsmasq の DHCP、`routerd-dns-resolver`
+などに必要な穴も、routerd が内部で生成します。
 
-The firewall table is separate from NAT. NAT44 continues to use `ip
-routerd_nat`.
+NAT44 は別の `ip routerd_nat` テーブルを使います。
 
-## Rule expressions
+## Rule expression
 
-`FirewallRule` supports CIDR source/destination matches, reusable
-`IPAddressSet` destination references, TCP/UDP `sourcePorts` and
-`destinationPorts`, ICMP / ICMPv6 type names, nftables `rateLimit`, and
-per-source `connLimit`. `rateLimit` and `connLimit` match over-limit traffic,
-so they are usually paired with `drop` or `reject` rules for dampening scans or
-brute-force attempts.
+`FirewallRule` は、CIDR による送信元 / 宛先の match、再利用できる `IPAddressSet`
+への宛先参照、TCP/UDP の `sourcePorts` / `destinationPorts`、ICMP / ICMPv6
+の type 名、nftables の `rateLimit`、送信元ごとの `connLimit` を扱えます。
+`rateLimit` と `connLimit` は閾値を超えた通信に一致するため、scan や
+brute-force を緩和する `drop` / `reject` ルールと組み合わせるのが基本です。
 
-## Guest client isolation
+## ゲスト端末の隔離
 
-`ClientPolicy` is a MAC-based guest mode for shared LAN segments. It is meant
-for the case where trusted and guest devices receive addresses from the same
-DHCP server, but guest devices must not reach private networks.
+`ClientPolicy` は、同じ LAN セグメント上の端末を MAC アドレスで分類するゲストモードです。
+信頼済みの端末とゲスト端末が同じ DHCP サーバーからアドレスを受け取る構成で使います。
+ゲスト端末はルーターの最小限のサービスだけを使い、プライベートネットワークへは到達させません。
 
-The policy has two modes:
+方針は 2 種類です。
 
-| Mode | Behavior |
+| mode | 動作 |
 | --- | --- |
-| `include` | Listed MAC addresses are guests. All other clients remain trusted. |
-| `exclude` | Listed MAC addresses are trusted. All other clients on the target interfaces are guests. |
+| `include` | 一覧に書いた MAC アドレスだけを guest として扱います。残りは trusted です。 |
+| `exclude` | 一覧に書いた MAC アドレスだけを trusted として扱います。対象インターフェース上の残りは guest です。 |
 
-`ClientPolicy.spec.macs` is the short form for the common case. `interfaces`
-can be omitted when the policy should target every interface in a `trust`
-`FirewallZone`. `spec.isolation` provides readable intent for guest mode:
-internet, LAN, management, and local discovery can be allowed or denied without
-hand-writing CIDR lists.
+`ClientPolicy.spec.macs` は、よく使う場合の短縮形です。`interfaces` を省略すると、`trust` の `FirewallZone` に属する全インターフェースが対象になります。`spec.isolation` では、internet、LAN、management、local discovery の allow / deny を読みやすく表現できます。
 
-Guest clients can use the router's local DNS, DHCP, and NTP services. By
-default they cannot forward traffic to `10.0.0.0/8`, `172.16.0.0/12`,
-`192.168.0.0/16`, or `fc00::/7`. Global internet egress still follows the
-normal zone matrix and route policy.
+ゲスト端末は、既定で DNS、DHCP、NTP を使えます。
+転送先が `10.0.0.0/8`、`172.16.0.0/12`、`192.168.0.0/16`、`fc00::/7` の通信は拒否します。
+グローバルインターネット向けの通信は、通常のゾーンマトリクスと経路方針に従います。
 
-`ClientPolicy` is currently implemented by the Linux nftables renderer with
-Ethernet source address sets. FreeBSD pf does not expose the same MAC matching
-model in the routed filter path, so the FreeBSD renderer reports the resource
-as unsupported instead of silently applying a weaker policy.
+`ClientPolicy` は、Linux nftables の Ethernet 送信元アドレス set で実装しています。
+FreeBSD pf は routed filter path で同じ MAC 照合モデルを持たないため、routerd はこのリソースを明示的に未対応として扱います。
 
-## Logging
+## ログ
 
-When `FirewallPolicy.spec.logDeny` is true and a `FirewallEventLog` resource is
-enabled, generated nftables rules log denied packets to the configured NFLOG
-group. On Linux, `routerd-firewall-logger` reads that group directly through
-nfnetlink and stores rows in `firewall-logs.db`. This keeps NFLOG prefixes,
-interfaces, packet family, protocol, addresses, and ports without running a
-separate packet capture process.
+`FirewallPolicy.spec.logDeny` が true で、`FirewallEventLog` リソースが有効な場合、
+生成した nftables ルールは、拒否したパケットを設定済みの NFLOG group へ送ります。
+Linux では、`routerd-firewall-logger` が nfnetlink から直接その group を読み取り、
+`firewall-logs.db` に保存します。別のパケット取得プロセスは起動しません。
+NFLOG の prefix、インターフェース、パケットファミリー、プロトコル、
+アドレス、ポートをそのまま保存できます。
 
-The Web Console Firewall tab and `routerctl firewall-logs` read from that
-database. When `FirewallEventLog.spec.enabled` is true, routerd derives the
-`routerd-firewall-logger` service artifact and passes the configured database
-path and NFLOG group to it.
+Web 管理画面の Firewall タブと `routerctl firewall-logs` は、このデータベースを読みます。
+logger は管理対象の `generated service artifacts` として有効にしてください。
+たとえば `routerd-firewall-logger daemon --path /var/lib/routerd/firewall-logs.db --nflog-group 1` を使います。
 
-For accepted-flow DPI observation, set `FirewallEventLog.spec.log.copyRange` to cap
-the NFLOG payload copied from each packet. Values such as `1536` or `2048`
-bytes keep the first payload visible for TLS/HTTP/DNS classification without
-copying full packets into user space.
+accept した通信フローを DPI の観測に使う場合は、`FirewallEventLog.spec.log.copyRange`
+で、NFLOG が各パケットからコピーするペイロード量に上限を設定できます。
+`1536` や `2048` バイト程度にしておくと、TLS/HTTP/DNS の分類に必要な先頭部分は見えつつ、
+パケット全体をユーザー空間へコピーし続けることを避けられます。

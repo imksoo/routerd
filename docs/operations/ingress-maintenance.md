@@ -2,24 +2,18 @@
 title: Ingress maintenance
 ---
 
-# Ingress maintenance
+# Ingress のメンテナンス
 
-Use `routerctl drain` when an `IngressService` backend needs temporary
-maintenance without editing the router YAML:
+router の YAML を編集せずに `IngressService` のバックエンドを一時的に外したい場合は、`routerctl drain` を使います。
 
 ```sh
 routerctl drain ingress/kubernetes-api backend=cp-01 --duration 10m
 routerctl show ingress
 ```
 
-The drain state is stored in the routerd state database. During the drain
-window, the ingress controller marks that backend as `drained: true`,
-`healthy: false`, and `reason: Drained`; new flows are sent to the remaining
-healthy backends on the next reconcile. Existing conntrack entries are not
-flushed.
+ドレインの状態は routerd の状態データベースに保存します。ドレイン中、ingress コントローラーは該当バックエンドを `drained: true`、`healthy: false`、`reason: Drained` として扱い、次回以降の調整（リコンサイル）では、新規フローを残りの healthy なバックエンドへ送ります。既存の conntrack エントリーは削除しません。
 
-The backend is restored automatically when `--duration` expires. To restore it
-immediately:
+`--duration` が切れると、自動で復帰します。すぐに戻す場合は、次を実行します。
 
 ```sh
 routerctl undrain ingress/kubernetes-api backend=cp-01

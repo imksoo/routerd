@@ -1,12 +1,12 @@
 ---
-title: Install
+title: インストール
 sidebar_position: 1
 ---
 
-# Install
+# インストール
 
-Install routerd from a release archive.
-The router host does not need Go or a Makefile.
+routerd はリリースアーカイブから導入します。
+ルーターホストに Go や Makefile は不要です。
 
 ```sh
 curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-linux-amd64.tar.gz
@@ -16,27 +16,28 @@ tar -xzf routerd-linux-amd64.tar.gz
 sudo ./install.sh
 ```
 
-On Linux arm64 hosts, use `routerd-linux-arm64.tar.gz`.
+Linux arm64 ホストでは `routerd-linux-arm64.tar.gz` を使います。
 
-For FreeBSD, download `routerd-freebsd-amd64.tar.gz` and run the
-same `./install.sh`.
-On FreeBSD arm64 hosts, use `routerd-freebsd-arm64.tar.gz`.
-Use the versioned archives on a release page when you need an exact release.
+FreeBSD では `routerd-freebsd-amd64.tar.gz` を取得し、同じ
+`./install.sh` を実行します。
+FreeBSD arm64 ホストでは `routerd-freebsd-arm64.tar.gz` を使います。
+特定の版に固定したい場合は、リリースページにある版番号付きアーカイブを使います。
 
-Linux archives contain statically linked routerd binaries (`CGO_ENABLED=0`).
-They are not tied to the glibc version on the router host.
+Linux 用アーカイブには、静的リンクした routerd バイナリを含めます
+(`CGO_ENABLED=0`)。
+ルーターホストの glibc 版には依存しません。
 
-The installer:
+インストーラーは次を行います。
 
-- installs runtime packages on supported package managers
-- copies binaries to `/usr/local/sbin`
-- installs the systemd or rc.d service template
-- writes `/usr/local/etc/routerd/router.yaml.sample`
-- preserves an existing `/usr/local/etc/routerd/router.yaml`
-- preserves state under `/var/lib/routerd` or `/var/db/routerd`
-- runs `routerctl status` when the read-only status socket exists
+- 対応するパッケージマネージャーで実行時パッケージを導入します。
+- 実行ファイルを `/usr/local/sbin` に配置します。
+- systemd または rc.d のサービステンプレートを配置します。
+- `/usr/local/etc/routerd/router.yaml.sample` を作成します。
+- 既存の `/usr/local/etc/routerd/router.yaml` は保持します。
+- `/var/lib/routerd` または `/var/db/routerd` の状態は保持します。
+- 読み取り専用の状態ソケットがある場合は `routerctl status` を実行します。
 
-Common options:
+よく使うオプション:
 
 ```sh
 ./install.sh --list-deps
@@ -46,7 +47,7 @@ sudo ./install.sh --with-tailscale
 sudo ./install.sh --dry-run
 ```
 
-After installation, create a configuration and validate it:
+インストール後、設定ファイルを作成して検証します。
 
 ```sh
 sudo install -d -m 0755 /usr/local/etc/routerd
@@ -58,18 +59,18 @@ routerd plan --config /usr/local/etc/routerd/router.yaml
 routerd apply --config /usr/local/etc/routerd/router.yaml --once --dry-run
 ```
 
-Apply only after confirming that management access stays reachable:
+管理経路が残ることを確認してから反映します。
 
 ```sh
 sudo routerd apply --config /usr/local/etc/routerd/router.yaml --once
 ```
 
-See [Install and upgrade](../install-and-upgrade.md) for OS-specific package
-lists, upgrade behavior, uninstall options, and developer release commands.
+OS 別のパッケージ一覧、アップグレード、アンインストール、開発者向けの
+リリース手順は [インストールとアップグレード](../install-and-upgrade.md) を
+参照してください。
 
-To try routerd without installing to disk, boot `routerd-live.iso`.
-The ISO starts the same `install.sh configure` wizard after root login.
-It also supports Proxmox VE serial consoles through `qm terminal`.
-When the wizard asks about USB persistence, choose a USB partition to turn the
-live ISO into a diskless persistent router. Without USB persistence, the ISO
-runs as an ephemeral demo and loses config at reboot.
+ディスクに導入せず試す場合は、`routerd-live.iso` を起動します。
+root でログインすると、同じ `install.sh configure` ウィザードが起動します。
+Proxmox VE の `qm terminal` によるシリアルコンソールにも対応します。
+ウィザードで USB 永続化を選べば、ライブ ISO をディスクレスの永続ルーターとして使えます。
+USB 永続化を選ばない場合、ISO は一時的なデモとして動作し、再起動で設定が消えます。

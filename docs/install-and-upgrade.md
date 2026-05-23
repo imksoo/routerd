@@ -1,18 +1,18 @@
 ---
-title: Install and upgrade
+title: インストールとアップグレード
 ---
 
-# Install and upgrade
+# インストールとアップグレード
 
-Use the release archive when you install routerd on a router host.
-The archive contains the binaries, service template, sample configuration, and
-the installer scripts.
-You do not need a Go toolchain or the Makefile on the router host.
+ルーターホストへはリリースアーカイブから導入します。
+アーカイブには、実行ファイル、サービステンプレート、設定例、インストーラーが
+含まれます。
+ルーターホストに Go や Makefile は要りません。
 
-## Quick install
+## クイックインストール
 
-Download the archive for your OS and architecture from the
-[GitHub Releases page](https://github.com/imksoo/routerd/releases).
+[GitHub Releases](https://github.com/imksoo/routerd/releases) から、OS と
+アーキテクチャーに合うアーカイブを取得します。
 
 Linux amd64:
 
@@ -24,7 +24,7 @@ tar -xzf routerd-linux-amd64.tar.gz
 sudo ./install.sh
 ```
 
-For Linux arm64, use the `linux-arm64` archive.
+Linux arm64 では `linux-arm64` アーカイブを使います。
 
 FreeBSD amd64:
 
@@ -37,19 +37,20 @@ tar -xzf routerd-freebsd-amd64.tar.gz
 sudo ./install.sh
 ```
 
-For FreeBSD arm64, use the `freebsd-arm64` archive.
-The latest release also includes versioned archives such as
-`routerd-vYYYYMMDD.HHmm-linux-amd64.tar.gz`.
-Use those when you need to pin a specific release.
+FreeBSD arm64 では `freebsd-arm64` アーカイブを使います。
+最新リリースには `routerd-vYYYYMMDD.HHmm-linux-amd64.tar.gz` のような
+版番号付きアーカイブもあります。
+特定の版に固定する場合は、版番号付きアーカイブを使います。
 
-Linux archives are built with `CGO_ENABLED=0` and contain statically linked
-routerd binaries. They do not require the router host to have the same glibc
-version as the build machine. Runtime tools such as `dnsmasq`, `nft`, `ip`,
-`conntrack`, and `tcpdump` are still installed or checked by `install.sh`.
+Linux 用アーカイブには、`CGO_ENABLED=0` で静的リンクした routerd バイナリを
+含めます。
+そのため、配置先ホストの glibc 版には依存しません。
+`dnsmasq`、`nft`、`ip`、`conntrack`、`tcpdump` などの実行時ツールは、
+引き続き `install.sh` が導入または確認します。
 
-Hosts that require native nDPI application classification should also download
-the matching `routerd-ndpi-agent-libndpi-linux-amd64.tar.gz` archive and install
-it explicitly with the normal archive:
+native nDPI によるアプリケーション識別が必要なホストでは、対応する
+`routerd-ndpi-agent-libndpi-linux-amd64.tar.gz` も取得し、通常のアーカイブと
+同じインストール処理の中で明示的に適用します。
 
 ```sh
 curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-ndpi-agent-libndpi-linux-amd64.tar.gz
@@ -59,18 +60,18 @@ sudo ./install.sh --with-ndpi \
   --with-ndpi-archive ./routerd-ndpi-agent-libndpi-linux-amd64.tar.gz
 ```
 
-`--with-ndpi` fails if the final installed `routerd-ndpi-agent` does not report
-`libndpiLoaded: true`, so the static fallback agent cannot silently satisfy a
-native nDPI requirement.
+`--with-ndpi` を付けた場合、導入後の `routerd-ndpi-agent` が
+`libndpiLoaded: true` を返さなければ処理は失敗します。これにより、static な
+フォールバックエージェントが native nDPI の要件を黙って満たしたことにはなりません。
 
-`install.sh` detects whether this is a fresh install or an upgrade.
-It installs the binaries under `/usr/local/sbin`, installs the service template,
-and writes `/usr/local/etc/routerd/router.yaml.sample`.
-It never overwrites an existing `/usr/local/etc/routerd/router.yaml`.
+`install.sh` は新規導入かアップグレードかを自動で判定します。
+実行ファイルを `/usr/local/sbin` に配置し、サービステンプレートを導入します。
+また、`/usr/local/etc/routerd/router.yaml.sample` を作成します。
+既存の `/usr/local/etc/routerd/router.yaml` は上書きしません。
 
-## Try the live ISO
+## ライブ ISO で試す
 
-The release page also publishes a bootable Alpine-based live ISO:
+リリースページでは、Alpine ベースの起動可能なライブ ISO も公開します。
 
 ```sh
 curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-live.iso
@@ -78,14 +79,14 @@ curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-live
 sha256sum -c routerd-live.iso.sha256
 ```
 
-Attach the ISO to a Proxmox VE test VM and boot it.
-The console prints routerd setup instructions and starts the same
-`install.sh configure` wizard after root login.
-Use the ISO for demos and short trials.
-For a persistent router, install routerd onto disk with the release archive.
+ISO を Proxmox VE のテスト VM に接続して起動します。
+コンソールには routerd の初期設定手順が表示されます。
+root でログインすれば、同じ `install.sh configure` ウィザードを起動できます。
+ISO はデモや短時間の試用に向いています。
+永続的なルーターとして使う場合は、リリースアーカイブからディスクへ導入します。
 
-The live ISO enables both the video console and a serial console.
-On Proxmox VE, add a serial socket and connect with `qm terminal`:
+ライブ ISO は、ビデオコンソールとシリアルコンソールの両方を有効にします。
+Proxmox VE では、シリアルソケットを追加し、`qm terminal` で接続します。
 
 ```sh
 qm create 200 \
@@ -103,165 +104,163 @@ qm start 200
 qm terminal 200
 ```
 
-Use an isolated LAN bridge for `net1` when you test DHCP or RA.
-The serial console runs at 115200 8N1 and uses plain text prompts, so the same
-wizard works from `qm terminal`, a framebuffer console, or a minimal terminal.
+DHCP や RA を試す場合は、`net1` に隔離した LAN ブリッジを使います。
+シリアルコンソールは 115200 8N1 です。
+ウィザードはプレーンテキストで表示します。
+そのため、`qm terminal`、フレームバッファーコンソール、最小構成の端末のいずれでも同じように動きます。
 
-The live ISO can run in two modes:
+ライブ ISO には 2 つの動作があります。
 
-- **Ephemeral demo mode:** no USB storage is selected. Configuration and logs
-  live in RAM and disappear at reboot.
-- **Persistent router mode:** select a USB partition in the wizard. The wizard
-  saves `router.yaml` to the USB device. On the next boot, the ISO mounts the
-  USB device, restores the config, and applies it automatically.
+- **一時デモモード:** USB ストレージを選びません。
+  設定とログは RAM 上に置かれ、再起動で消えます。
+- **永続ルーターモード:** ウィザードで USB パーティションを選びます。
+  ウィザードが `router.yaml` を USB デバイスへ保存します。
+  次回の起動時には、ISO が USB デバイスをマウントし、設定を復元して自動的に反映します。
 
-For persistent mode, label the USB partition `ROUTERD` or pass
-`routerd.usb=/dev/sdX1` on the kernel command line when multiple removable
-devices are present. The helper detects `ext4`, `vfat`, and `exfat` with
-`blkid` and mounts them with `async,noatime` by default. Pass
-`routerd.usb_mount=sync` only when you explicitly want synchronous writes.
+永続モードでは、USB パーティションに `ROUTERD` というラベルを付けます。
+リムーバブルデバイスが複数ある場合は、カーネル引数に
+`routerd.usb=/dev/sdX1` を指定できます。
+ヘルパーは `blkid` で `ext4`、`vfat`、`exfat` を判別します。
+既定では `async,noatime` でマウントします。
+同期書き込みを明示したい場合にだけ、`routerd.usb_mount=sync` を指定します。
 
-Logs are buffered under `/run/routerd/logs` on tmpfs. The wizard can enable a
-daily flush job that copies the config, state snapshot, and compressed log
-archive to the USB device. The default tmpfs log limit is 100 MiB. Older log
-files are removed when the buffer exceeds that limit.
+ログは `/run/routerd/logs` の tmpfs に一時保存します。
+ウィザードでは、1 日 1 回の書き出しジョブを有効にできます。
+このジョブは、設定、状態スナップショット、圧縮したログアーカイブを USB デバイスへコピーします。
+tmpfs のログ上限は既定で 100 MiB です。
+上限を超えた場合は、古いログファイルから順に削除します。
 
-For safe USB removal, run:
+USB を安全に取り外す場合は、次を実行します。
 
 ```sh
 /usr/share/routerd/live-persistence.sh flush
 /usr/share/routerd/live-persistence.sh umount
 ```
 
-See [Operations → USB persistence](./operations/usb-persistence) for the full
-layout, mount options, and Alpine `lbu` behavior.
+配置先、マウントオプション、Alpine `lbu` の動きは
+[Operations → USB 永続化](./operations/usb-persistence) を参照してください。
 
-Versioned ISO files are also published, for example
-`routerd-live-vYYYYMMDD.HHmm.iso`.
+`routerd-live-vYYYYMMDD.HHmm.iso` のような版番号付き ISO も公開します。
 
-## Runtime dependencies
+## 実行時の依存パッケージ
 
-By default, `install.sh` installs known OS packages before copying routerd.
-Use `--list-deps` to inspect the package list:
+既定では、`install.sh` が既知の OS パッケージを導入します。
+一覧だけを確認するには、次を実行します。
 
 ```sh
 ./install.sh --list-deps
 ```
 
-Use `--no-install-deps` when dependencies are already managed by another tool:
+別の仕組みでパッケージを管理する場合は、自動導入を止めます。
 
 ```sh
 sudo ./install.sh --no-install-deps
 ```
 
-Use `--deps-only` when you only want to install dependencies:
+依存パッケージだけを導入することもできます。
 
 ```sh
 sudo ./install.sh --deps-only
 ```
 
-Tailscale is optional.
-Add it to the package list with `--with-tailscale`:
+Tailscale の導入は任意です。
+導入する場合は `--with-tailscale` を付けます。
 
 ```sh
 sudo ./install.sh --with-tailscale
 ```
 
-### Debian and Ubuntu
+### Debian / Ubuntu
 
-The installer uses `apt-get` and installs:
+インストーラーは `apt-get` を使い、次を導入します。
 
 ```text
-ca-certificates curl dnsmasq-base nftables wireguard-tools chrony bind9-dnsutils tcpdump cron jq ppp pppoe conntrack iproute2 iputils-ping iputils-tracepath net-tools kmod radvd strongswan-swanctl iptables keepalived
+ca-certificates curl dnsmasq-base nftables wireguard-tools chrony bind9-dnsutils tcpdump cron jq ppp pppoe conntrack iproute2 iputils-ping iputils-tracepath net-tools kmod radvd strongswan-swanctl iptables
 ```
 
-### Fedora-like systems
+### Fedora 系
 
-The installer uses `dnf` and installs:
+インストーラーは `dnf` を使い、次を導入します。
 
 ```text
-ca-certificates curl dnsmasq nftables wireguard-tools chrony bind-utils tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute iputils traceroute kmod radvd strongswan iptables keepalived
+ca-certificates curl dnsmasq nftables wireguard-tools chrony bind-utils tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute iputils traceroute kmod radvd strongswan iptables
 ```
 
-### Arch-like systems
+### Arch 系
 
-The installer uses `pacman` and installs:
+インストーラーは `pacman` を使い、次を導入します。
 
 ```text
-ca-certificates curl dnsmasq nftables wireguard-tools chrony bind tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute2 iputils traceroute kmod radvd strongswan iptables keepalived
+ca-certificates curl dnsmasq nftables wireguard-tools chrony bind tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute2 iputils traceroute kmod radvd strongswan iptables
 ```
 
 ### Alpine
 
-The installer uses `apk` and installs:
+インストーラーは `apk` を使い、次を導入します。
 
 ```text
-alpine-conf ca-certificates curl dnsmasq nftables wireguard-tools chrony bind-tools tcpdump cronie jq ppp ppp-pppoe conntrack-tools iproute2 iputils iputils-tracepath kmod radvd strongswan iptables keepalived util-linux e2fsprogs dosfstools exfatprogs
+alpine-conf ca-certificates curl dnsmasq nftables wireguard-tools chrony bind-tools tcpdump cronie jq ppp ppp-pppoe conntrack-tools iproute2 iputils iputils-tracepath kmod radvd strongswan iptables util-linux e2fsprogs dosfstools exfatprogs
 ```
 
-`alpine-conf` provides `lbu`, which routerd uses on the live ISO to preserve
-the router configuration and selected local system state on USB media.
+`alpine-conf` は `lbu` を提供します。
+routerd はライブ ISO で `lbu` を使い、ルーター設定と選んだローカル状態を USB メディアへ保存します。
 
 ### FreeBSD
 
-The installer uses `pkg` and installs:
+インストーラーは `pkg` を使い、次を導入します。
 
 ```text
 ca_root_nss curl dnsmasq wireguard-tools mpd5 bind-tools tcpdump jq chrony strongswan
 ```
 
-FreeBSD `pf`, `ifconfig`, `route`, `sysctl`, `service`, `sysrc`, `cron`,
-`netstat`, `sockstat`, `ping`, and `traceroute` are base-system tools.
-The installer checks for the commands but does not install them as packages.
+FreeBSD の `pf`、`ifconfig`、`route`、`sysctl`、`service`、`sysrc`、`cron`、
+`netstat`、`sockstat`、`ping`、`traceroute` は基本システムの機能です。
+これらはパッケージとして導入せず、コマンドの存在だけを確認します。
 
 ### NixOS
 
-NixOS should keep package state in the NixOS configuration.
-When `install.sh` detects NixOS-style tooling, it prints a warning instead of
-calling `nix-env`.
-Declare packages through the NixOS configuration or routerd `Package` resources.
-The release installer can still place `/usr/local/sbin/routerd` binaries, but it
-does not install, enable, or restart systemd units on NixOS. Manage the routerd
-service declaratively through the NixOS module.
+NixOS では、パッケージの状態を NixOS 設定に残すべきです。
+`install.sh` は NixOS を検出すると、`nix-env` を実行せず警告を出します。
+パッケージは NixOS 設定、または routerd の `Package` リソースで宣言してください。
+リリースインストーラーで `/usr/local/sbin/routerd` の実行ファイルを配置することは
+できますが、NixOS では systemd ユニットの導入、有効化、再起動は行いません。
+routerd サービスは NixOS module で宣言型に管理してください。
 
-## Upgrade
+## アップグレード
 
-Extract the new archive and run the same installer:
+新しいアーカイブを展開し、同じインストーラーを実行します。
 
 ```sh
 tar -xzf routerd-linux-amd64.tar.gz
 sudo ./install.sh
 ```
 
-When `/usr/local/sbin/routerd` already exists, the installer switches to upgrade
-mode.
-It prints the old and new `routerd --version` output.
-It replaces binaries and service templates, keeps configuration and state, and
-restarts the routerd service if it was already active.
-On systemd hosts, it waits for the restarted `routerd.service` to expose its
-status socket, lets routerd-managed unit files settle, and then restarts only
-active routerd helper services that still need refresh. A helper needs refresh
-when it is still running a deleted pre-upgrade binary or when its unit file was
-updated after the helper process started.
-When `/etc/systemd/system/routerd.service` is already managed by routerd
-configuration, the installer preserves that unit instead of overwriting it with
-the archive template.
+`/usr/local/sbin/routerd` が存在する場合、インストーラーはアップグレードモードに
+切り替わります。
+このとき、古い `routerd --version` と新しい `routerd --version` を表示します。
+実行ファイルとサービステンプレートを置き換える一方で、設定と状態は保持します。
+routerd サービスが起動中であれば再起動します。
+systemd ホストでは、再起動した `routerd.service` の状態ソケットを待ち、
+routerd が管理するユニットファイルの更新が落ち着いてから、更新が必要な
+routerd ヘルパーサービスだけを再起動します。
+再起動するのは、削除済みのアップグレード前バイナリを実行している場合、または
+ヘルパーのプロセス起動後にユニットファイルが更新された場合だけです。
+`/etc/systemd/system/routerd.service` が routerd の設定で管理されている場合は、
+アーカイブのテンプレートで上書きせず、そのユニットを保持します。
 
-Every replaced file is copied to `*.backup.YYYYMMDDHHMMSS` before replacement.
-If the install fails partway through, the script restores files from the
-temporary rollback backup.
+置き換えるファイルは `*.backup.YYYYMMDDHHMMSS` に退避します。
+途中で失敗した場合は、一時バックアップから復元します。
 
-routerd derives its own `routerd.service` unit from the router configuration.
-When that unit changes, the controller schedules a delayed self-restart through
-`systemd-run` instead of directly restarting itself in the middle of the
-controller pass.
-When the same router config contains VRRP or ingress service resources, routerd
-augments its own unit with the keepalived paths and capabilities needed by the
-generated integrations. BGP no longer requires FRR groups or writable FRR
-runtime directories because the GoBGP backend runs as the managed
-`routerd-bgp` daemon and is controlled through a local gRPC Unix socket.
+routerd 自身が `routerd.service` を、生成されるサービス成果物のリソースとして管理している場合、
+ユニットファイルの変更は慎重に扱います。
+適用の途中で自分自身を直接再起動するのではなく、`systemd-run` で少し遅らせた
+自己再起動を予約します。
+VRRP または ingress サービスのリソースを同じ設定に含む場合は、生成される
+`routerd.service` に、keepalived 用の書き込み可能なパスと capability を自動で追加します。
+BGP は長寿命の `routerd-bgp` デーモンをローカルの gRPC Unix ソケットで制御するため、
+FRR group や FRR の実行時ディレクトリは要りません。
 
-Useful options:
+よく使うオプション:
 
 ```sh
 sudo ./install.sh --no-restart
@@ -270,20 +269,18 @@ sudo ./install.sh --verbose
 sudo ./install.sh --no-config-update
 ```
 
-## Layout
+## 配置先
 
-The release installer uses these paths:
-
-| Item | Linux | FreeBSD |
+| 項目 | Linux | FreeBSD |
 | --- | --- | --- |
-| Configuration | `/usr/local/etc/routerd/router.yaml` | `/usr/local/etc/routerd/router.yaml` |
-| Sample configuration | `/usr/local/etc/routerd/router.yaml.sample` | `/usr/local/etc/routerd/router.yaml.sample` |
-| Binaries | `/usr/local/sbin` | `/usr/local/sbin` |
-| Service template | `/etc/systemd/system/routerd.service` | `/usr/local/etc/rc.d/routerd` |
-| Runtime sockets | `/run/routerd` | `/var/run/routerd` |
-| Persistent state | `/var/lib/routerd` | `/var/db/routerd` |
+| 設定 | `/usr/local/etc/routerd/router.yaml` | `/usr/local/etc/routerd/router.yaml` |
+| 設定例 | `/usr/local/etc/routerd/router.yaml.sample` | `/usr/local/etc/routerd/router.yaml.sample` |
+| 実行ファイル | `/usr/local/sbin` | `/usr/local/sbin` |
+| サービステンプレート | `/etc/systemd/system/routerd.service` | `/usr/local/etc/rc.d/routerd` |
+| 実行時ソケット | `/run/routerd` | `/var/run/routerd` |
+| 永続状態 | `/var/lib/routerd` | `/var/db/routerd` |
 
-The installer never removes these state locations:
+インストーラーは次の状態を削除しません。
 
 - `/usr/local/etc/routerd/router.yaml`
 - `/var/lib/routerd`
@@ -292,22 +289,22 @@ The installer never removes these state locations:
 - `/var/run/routerd`
 - `/var/log/otelcol`
 
-## First configuration
+## 最初の設定
 
-For a first trial, run the built-in setup wizard:
+最初の試用では、組み込みの初期設定ウィザードを使えます。
 
 ```sh
 sudo ./install.sh configure
 ```
 
-The wizard asks for the WAN interface, LAN interface, LAN address, LAN services,
-management placement, and optional USB persistence. It writes a candidate file to
-`/usr/local/etc/routerd/router.yaml.configure`, shows a diff when an existing
-configuration is present, and installs it as
-`/usr/local/etc/routerd/router.yaml` only after confirmation.
-It then runs `routerd validate`, `routerd plan`, and `routerd apply --once`.
+ウィザードは、WAN インターフェース、LAN インターフェース、LAN アドレス、
+LAN 向けサービス、管理経路の置き場所、任意の USB 永続化を順に確認します。
+生成した候補は `/usr/local/etc/routerd/router.yaml.configure` に保存します。
+既存の設定がある場合は差分を表示します。
+確認後、`/usr/local/etc/routerd/router.yaml` へ導入します。
+その後、`routerd validate`、`routerd plan`、`routerd apply --once` を実行します。
 
-Automation can use environment variables and skip prompts:
+自動化する場合は、環境変数で値を渡して質問を省略できます。
 
 ```sh
 sudo ROUTERD_WAN_INTERFACE=ens18 \
@@ -319,7 +316,7 @@ sudo ROUTERD_WAN_INTERFACE=ens18 \
   ./install.sh configure --non-interactive --yes
 ```
 
-For live ISO USB persistence, set:
+ライブ ISO で USB 永続化を使う場合は、次の値を指定します。
 
 ```sh
 sudo ROUTERD_ENABLE_USB_PERSISTENCE=yes \
@@ -329,14 +326,14 @@ sudo ROUTERD_ENABLE_USB_PERSISTENCE=yes \
   ./install.sh configure --non-interactive --yes
 ```
 
-Use `--no-apply` when you want only the YAML file.
+YAML ファイルの生成だけを行う場合は、`--no-apply` を使います。
 
 ```sh
 sudo ./install.sh configure --no-apply
 ```
 
-Manual configuration is still available.
-Copy a sample configuration into place and edit it for your interfaces:
+手動で設定することもできます。
+設定例をコピーし、インターフェース名などを編集してください。
 
 ```sh
 sudo install -d -m 0755 /usr/local/etc/routerd
@@ -344,7 +341,7 @@ sudo install -m 0600 /usr/local/etc/routerd/router.yaml.sample /usr/local/etc/ro
 sudo vi /usr/local/etc/routerd/router.yaml
 ```
 
-Then validate and review the plan:
+検証し、計画を確認します。
 
 ```sh
 routerd validate --config /usr/local/etc/routerd/router.yaml
@@ -352,36 +349,36 @@ routerd plan --config /usr/local/etc/routerd/router.yaml
 routerd apply --config /usr/local/etc/routerd/router.yaml --once --dry-run
 ```
 
-Apply only after the management path is safe:
+管理経路が安全だと確認してから反映します。
 
 ```sh
 sudo routerd apply --config /usr/local/etc/routerd/router.yaml --once
 ```
 
-Start the service when the one-shot apply is healthy:
+一度だけの反映が正常に終われば、サービスを起動します。
 
 ```sh
 sudo systemctl enable --now routerd.service
 ```
 
-On FreeBSD:
+FreeBSD では次のようにします。
 
 ```sh
 sudo sysrc routerd_enable=YES
 sudo service routerd start
 ```
 
-## Uninstall
+## アンインストール
 
-The release archive also contains `uninstall.sh`.
-The default uninstall removes binaries, service templates, and runtime files.
-It keeps configuration and state.
+リリースアーカイブには `uninstall.sh` も含まれます。
+既定では、実行ファイル、サービステンプレート、実行時ファイルを削除し、
+設定と状態は残します。
 
 ```sh
 sudo ./uninstall.sh --yes
 ```
 
-Purge options are explicit:
+削除範囲を広げる場合は、明示的に指定します。
 
 ```sh
 sudo ./uninstall.sh --yes --purge-config
@@ -389,13 +386,13 @@ sudo ./uninstall.sh --yes --purge-state
 sudo ./uninstall.sh --yes --all
 ```
 
-Use `--dry-run` to preview removal.
+`--dry-run` で削除内容だけ確認できます。
 
-## Developer workflow
+## 開発者向けワークフロー
 
-The Makefile is for development only.
-Use it to test, build, generate schemas, validate examples, build the website,
-and create release archives:
+Makefile は開発用です。
+テスト、ビルド、スキーマ生成、設定例の検証、Web サイトのビルド、
+リリースアーカイブの作成に使います。
 
 ```sh
 make test
@@ -405,5 +402,5 @@ make website-build
 make dist ROUTERD_OS=linux GOARCH=amd64 VERSION="$(git describe --tags --abbrev=0)"
 ```
 
-Do not use the Makefile as the user-facing install path.
-The release archive and `install.sh` are the supported deployment path.
+利用者向けの導入経路としては Makefile を使いません。
+標準の配置方法は、リリースアーカイブと `install.sh` です。

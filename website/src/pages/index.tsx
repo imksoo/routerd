@@ -7,6 +7,8 @@ import Layout from '@theme/Layout';
 import Heading from '@theme/Heading';
 import styles from './index.module.css';
 
+const STABLE_VERSION = 'v20260522.1334';
+
 const copy = {
   en: {
     title: 'Declarative router control for real hosts',
@@ -19,6 +21,7 @@ const copy = {
     tutorial: 'Install routerd',
     resources: 'Browse resources',
     config: 'WAN-side services',
+    stable: 'Latest stable',
     quickstartTitle: 'Install, Validate, Apply',
     quickstartBody:
       'Start from the release archive. The installer brings in runtime packages, installs binaries and service templates, then you validate the YAML before changing the host.',
@@ -59,6 +62,7 @@ const copy = {
     tutorial: 'routerd を導入する',
     resources: 'リソースを見る',
     config: 'WAN 側サービスを見る',
+    stable: '最新安定版',
     quickstartTitle: '導入、検証、適用',
     quickstartBody:
       'リリースアーカイブから始めます。インストーラーが実行時パッケージ、実行ファイル、サービステンプレートを配置します。その後、YAML を検証してからホストを変更します。',
@@ -100,6 +104,11 @@ function HomepageHeader({siteCopy}: {siteCopy: typeof copy.en}) {
         </Heading>
         <p className={styles.heroHeadline}>{siteCopy.headline}</p>
         <p className="heroSubtitle">{siteCopy.subtitle}</p>
+        <p className={styles.heroStable}>
+          <Link to="/docs/releases/stable">
+            {siteCopy.stable}: <b>{STABLE_VERSION}</b>
+          </Link>
+        </p>
         <div className="heroActions">
           <Link className="button button--secondary button--lg" to="/docs/install-and-upgrade">
             {siteCopy.tutorial}

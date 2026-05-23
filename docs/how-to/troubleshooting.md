@@ -1,19 +1,20 @@
 ---
-title: Troubleshooting
+title: トラブルシューティング
 slug: /how-to/troubleshooting
 ---
 
-# Troubleshooting
+# トラブルシューティング
 
-When investigating routerd, first separate **what routerd intends** from **what the host actually has**. Verify routerd's view, then compare against the OS state.
+routerd の調査では、まず **routerd の意図** と **ホストの実状態** を分けます。
+routerd が何を意図しているかを確認してから、OS の状態と突き合わせてください。
 
-## Triage order
+## 基本順序
 
-1. `routerctl status` — overall view.
-2. `routerctl describe <kind>/<name>` — focus on a specific resource.
-3. `routerd apply --once --dry-run` — what would change next.
-4. OS commands (`ip`, `nft`, `ss`, `journalctl`) — actual host state.
-5. The relevant daemon's `/v1/status` and event log.
+1. `routerctl status` — 全体を見る
+2. `routerctl describe <kind>/<name>` — 対象リソースを掘り下げる
+3. `routerd apply --once --dry-run` — 次の適用で何が変わるか
+4. OS コマンド (`ip`、`nft`、`ss`、`journalctl`) — 実状態
+5. 該当デーモンの `/v1/status` とイベントログ
 
 ## DHCPv6-PD
 
@@ -22,14 +23,15 @@ curl --unix-socket /run/routerd/dhcpv6-client/wan-pd.sock http://unix/v1/status
 tail -n 20 /var/lib/routerd/dhcpv6-client/wan-pd/events.jsonl
 ```
 
-Look for:
+確認点は次の通りです。
 
-- `phase` is `Bound`.
-- `currentPrefix` is populated.
-- `renewAt` is in the future.
-- The event log shows `Reply` and `Renew` records.
+- `phase` が `Bound` になっている
+- `currentPrefix` が入っている
+- `renewAt` が未来の時刻になっている
+- イベントログに `Reply` や `Renew` が記録されている
 
-If the prefix is **not** `Bound`, IPv6 RA, AAAA, and DHCPv6 should be paused on the LAN. routerd's safety contract is to stop advertising stale prefixes.
+`Bound` でない場合、LAN 側の IPv6 RA、AAAA、DHCPv6 は止まるべきです。
+古いプレフィックスを配り続けないことが、routerd の安全上の約束です。
 
 ## DHCPv4
 
@@ -37,18 +39,20 @@ If the prefix is **not** `Bound`, IPv6 RA, AAAA, and DHCPv6 should be paused on 
 curl --unix-socket /run/routerd/dhcpv4-client/wan.sock http://unix/v1/status
 ```
 
-Confirm `DHCPv4Client` is `Bound`. If you need an immediate renewal, `POST /v1/commands/renew` triggers it.
+`DHCPv4Client` が `Bound` かどうかを確認します。
+即時の更新が必要なら、`POST /v1/commands/renew` で要求します。
 
 ## dnsmasq
 
-In current routerd, dnsmasq is scoped to DHCPv4, DHCPv6, DHCP relay, and Router Advertisement. DNS resolution is handled by `routerd-dns-resolver`.
+現在の routerd では、dnsmasq は DHCPv4、DHCPv6、DHCP 中継、Router Advertisement に専念しています。
+DNS の応答と転送は、`routerd-dns-resolver` が担当します。
 
-Check that the generated dnsmasq configuration:
+生成された dnsmasq の設定が、以下を満たしているか確認します。
 
-- Contains the expected `dhcp-range`.
-- Has `port=0` (DNS handling disabled — that's `routerd-dns-resolver`'s job).
-- References `dhcp-script=/usr/local/libexec/routerd/dhcp-event-relay` so lease changes are forwarded to routerd.
-- Has `enable-ra` when RA is part of the configuration.
+- 期待する `dhcp-range` が含まれている
+- `port=0` になっている (DNS 機能が止まっている。DNS は `routerd-dns-resolver` の責務です)
+- `dhcp-script=/usr/local/libexec/routerd/dhcp-event-relay` がある (リースの変化を routerd へ通知する経路)
+- 必要な構成で `enable-ra` が入っている
 
 ## DNS resolver
 
@@ -58,12 +62,12 @@ dig @<lan-ip> router.lan.example.org A
 dig @<lan-ip> example.com A
 ```
 
-Verify in this order:
+順に確認します。
 
-- The resolver listens on the expected addresses and ports (`ss -lnup`).
-- Local authoritative zones answer (manual records and DHCP-derived records from `DNSZone`).
-- Conditional forwarders reach their target upstream (`dig @<lan-ip> <forwarded-domain>`).
-- The default upstream answers via the expected protocol (DoH / DoT / TCP / plain UDP). Inspect `/v1/status` for the resolver status and upstream health.
+- 待ち受けが、想定したアドレスとポートで開いているか (`ss -lnup`)
+- ローカルの権威ゾーンが応答するか (`DNSZone` の手動レコードと DHCP 由来のレコード)
+- 条件付き転送が、指定した上流へ届いているか (`dig @<lan-ip> <forwarded-domain>`)
+- 既定の上流が、DoH / DoT / TCP / 平文 UDP のいずれで応答しているか (リゾルバの status と上流の health を見る)
 
 ## DS-Lite
 
@@ -73,19 +77,22 @@ ip route show default
 nft list table ip routerd_nat
 ```
 
-If the AFTR FQDN does not resolve, check the `DNSResolver` `forward` source for the AFTR domain. Public DNS often cannot resolve AFTR records that are scoped to a specific access network.
+AFTR の FQDN が解決できない場合は、`DNSResolver` の `forward` source を確認します。
+公衆 DNS では、特定のアクセス網向けの AFTR レコードを解けないことが多いです。
 
 ## conntrack
 
-Some environments do not expose `/proc/net/nf_conntrack`. In that case, routerd falls back to sysctl-derived counters. An empty per-flow list does not necessarily mean NAT is broken; check the `routerctl connections` summary instead.
+環境によっては、`/proc/net/nf_conntrack` がありません。
+この場合、routerd は sysctl 由来の集計へ縮退します。
+詳細なフロー一覧が空でも、必ずしも NAT が壊れているとは限りません。`routerctl connections` のサマリを見てください。
 
-## Things to avoid during diagnosis
+## 調査時に避けること
 
-- Do not run an old DHCP client (or a manual test daemon) on the production WAN at the same time as routerd. Two clients sending DHCPv6-PD on the same interface can confuse the upstream's lease state.
-- Do not flush `nf_conntrack` while changing routes; routerd intentionally avoids that, and clearing it kills established sessions.
-- Do not edit `/usr/local/etc/routerd/router.yaml` on a host while ad-hoc YAML overrides exist elsewhere on the same host. Keep one canonical config file per host so reconcile remains predictable.
+- 本番 WAN で、古い DHCP クライアントや手動の試験用デーモンを、routerd と並行して動かさないでください。同じインターフェースから複数の DHCPv6-PD クライアントを出すと、上流のリース状態を壊すことがあります。
+- 経路変更時に `nf_conntrack` を flush しないでください。routerd は意図的に flush しません。flush すると、確立済みのセッションが切れます。
+- 1 ホスト上で `/usr/local/etc/routerd/router.yaml` を編集しつつ、別の場所にその場しのぎの YAML オーバーレイを置かないでください。1 ホストにつき設定ファイルを 1 つに保つと、調整（リコンサイル）の予測性が保たれます。
 
-## See also
+## 関連項目
 
-- [State and ownership](../concepts/state-and-ownership.md)
+- [状態と所有権](../concepts/state-and-ownership.md)
 - [Reconcile loop](../operations/reconcile)

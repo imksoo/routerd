@@ -1,50 +1,50 @@
 ---
-title: Send telemetry to an OTLP collector
+title: OTLP コレクターへテレメトリを送る
 slug: /how-to/opentelemetry
 ---
 
-# Send telemetry to an OTLP collector
+# OTLP コレクターへテレメトリを送る
 
-## Scenario
+## シナリオ
 
-You want to ship the router's logs, metrics, and traces to an OpenTelemetry-compatible backend (Grafana Loki/Tempo/Mimir, Datadog, Honeycomb, a self-hosted `otelcol-contrib`, …) without having to scrape `journalctl` or `routerctl events`.
+ルーターのログ・メトリクス・トレースを、OpenTelemetry 互換のバックエンド（Grafana Loki/Tempo/Mimir、Datadog、Honeycomb、自前の `otelcol-contrib` など）へ送りたい場合です。`journalctl` や `routerctl events` を毎回叩かずに、外部のダッシュボードで観測したい状態を想定します。
 
-routerd exposes OpenTelemetry export from every long-running daemon. There is no collector bundled in the router binary — you point routerd at an external OTLP endpoint that you already operate, and routerd sends data over OTLP/gRPC.
+routerd は、すべての常駐デーモンから OpenTelemetry でエクスポートできます。コレクター本体は routerd のバイナリに同梱しません。すでに運用している外部の OTLP エンドポイントを指定してください。routerd は OTLP/gRPC でデータを送ります。
 
-## What routerd emits
+## routerd が出すもの
 
-| Daemon | service.name | What you get |
+| デーモン | service.name | 内容 |
 | --- | --- | --- |
-| `routerd` (control plane) | `routerd` | `controller.reconcile` traces, `routerd.controller.reconcile` counter, structured slog records |
-| `routerd-dhcpv6-client` | `routerd-dhcpv6-client` | DHCPv6 lifecycle traces and structured logs (Solicit/Request/Renew, lease events) |
-| `routerd-dhcpv4-client` | `routerd-dhcpv4-client` | DHCPv4 lifecycle traces and structured logs |
-| `routerd-pppoe-client` | `routerd-pppoe-client` | PPPoE session lifecycle |
-| `routerd-healthcheck` | `routerd-healthcheck` | Probe results (success/failure with target attributes) |
+| `routerd` (制御プレーン) | `routerd` | `controller.reconcile` トレース、`routerd.controller.reconcile` カウンタ、構造化 slog ログ |
+| `routerd-dhcpv6-client` | `routerd-dhcpv6-client` | DHCPv6 ライフサイクルのトレースと構造化ログ（Solicit/Request/Renew、リースイベント） |
+| `routerd-dhcpv4-client` | `routerd-dhcpv4-client` | DHCPv4 ライフサイクルのトレースと構造化ログ |
+| `routerd-pppoe-client` | `routerd-pppoe-client` | PPPoE セッションのライフサイクル |
+| `routerd-healthcheck` | `routerd-healthcheck` | ヘルスチェックの結果（target 属性付きの成功・失敗） |
 
-Each daemon adds `routerd.resource.name` as a resource attribute so you can split signals per resource (e.g. one DHCPv6 client per WAN).
+各デーモンはリソース属性に `routerd.resource.name` を付けるので、リソース単位（例: WAN ごとの DHCPv6 クライアント）でシグナルを分けられます。
 
-The export is OTLP/gRPC. logs, metrics, and traces share the same endpoint by default; you can point each signal at a different endpoint if your backend prefers it.
+エクスポートは OTLP/gRPC です。logs / metrics / traces は既定で同じエンドポイントを共有しますが、必要なら信号ごとに別のエンドポイントを指定できます。
 
-## Configure the export
+## エクスポートの設定
 
-routerd reads the standard OpenTelemetry environment variables. There is no routerd-specific syntax to learn; anything the upstream OTLP/gRPC exporter understands works.
+routerd は OpenTelemetry の標準環境変数を読みます。routerd 独自の構文はありません。OTLP/gRPC エクスポーターの上流が解釈する変数は、そのまま使えます。
 
-The key variables:
+主な変数は次のとおりです。
 
-| Variable | Purpose |
+| 変数 | 用途 |
 | --- | --- |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | One endpoint for all signals (e.g. `http://collector.lan:4317`) |
-| `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` / `_METRICS_ENDPOINT` / `_TRACES_ENDPOINT` | Per-signal override |
-| `OTEL_EXPORTER_OTLP_INSECURE` | `true` to disable TLS (lab use) |
-| `OTEL_EXPORTER_OTLP_HEADERS` | e.g. `Authorization=Bearer ...` for managed backends |
-| `OTEL_SERVICE_NAMESPACE` | Recommended: set to `routerd` so all daemons share a namespace |
-| `OTEL_RESOURCE_ATTRIBUTES` | Free-form `key=value,...` for site/host attributes |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | 全シグナル共通のエンドポイント（例: `http://collector.lan:4317`） |
+| `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` / `_METRICS_ENDPOINT` / `_TRACES_ENDPOINT` | 信号ごとの個別指定 |
+| `OTEL_EXPORTER_OTLP_INSECURE` | `true` で TLS を無効化（ラボ用） |
+| `OTEL_EXPORTER_OTLP_HEADERS` | 例: マネージドバックエンド向けの `Authorization=Bearer ...` |
+| `OTEL_SERVICE_NAMESPACE` | 推奨: 全デーモンで `routerd` を共有する |
+| `OTEL_RESOURCE_ATTRIBUTES` | サイト・ホスト属性などを `key=value,...` で自由に指定する |
 
-If none of `OTEL_EXPORTER_OTLP_ENDPOINT` / `_LOGS_ENDPOINT` / `_METRICS_ENDPOINT` / `_TRACES_ENDPOINT` is set, routerd skips telemetry initialization entirely. There is no per-daemon "off" switch — leaving the variables unset is the off state.
+`OTEL_EXPORTER_OTLP_ENDPOINT` / `_LOGS_ENDPOINT` / `_METRICS_ENDPOINT` / `_TRACES_ENDPOINT` のいずれも未設定なら、routerd はテレメトリの初期化自体を省きます。デーモン側に有効化フラグはありません。「変数を設定しない」ことが、そのまま無効を意味します。
 
-### Apply the variables to a systemd-managed routerd
+### systemd 管理の routerd へ反映
 
-On Linux installations the variables go into the systemd unit's environment. The cleanest place is a drop-in so an upstream unit refresh doesn't overwrite them:
+Linux のインストールでは、systemd unit の環境に変数を入れます。上流の unit が更新されても消えないように、drop-in を使うのが無難です。
 
 ```ini
 # /etc/systemd/system/routerd.service.d/10-otel.conf
@@ -55,14 +55,14 @@ Environment=OTEL_SERVICE_NAMESPACE=routerd
 Environment=OTEL_RESOURCE_ATTRIBUTES=deployment.environment=home,host.name=edge-router
 ```
 
-Repeat the same drop-in for every managed daemon you want to export from:
+エクスポートしたい管理対象デーモンにも、同じ drop-in を入れてください。
 
 - `/etc/systemd/system/routerd-dhcpv6-client@.service.d/10-otel.conf`
 - `/etc/systemd/system/routerd-dhcpv4-client@.service.d/10-otel.conf`
 - `/etc/systemd/system/routerd-pppoe-client@.service.d/10-otel.conf`
 - `/etc/systemd/system/routerd-healthcheck@.service.d/10-otel.conf`
 
-Then:
+そして、次を実行します。
 
 ```bash
 sudo systemctl daemon-reload
@@ -73,7 +73,7 @@ sudo systemctl restart routerd.service \
 
 ### NixOS
 
-Add the variables under each generated systemd unit. With the routerd NixOS module:
+routerd の NixOS モジュールが生成した各 systemd service の environment に、変数を加えます。
 
 ```nix
 systemd.services.routerd.environment = {
@@ -83,15 +83,15 @@ systemd.services.routerd.environment = {
 };
 ```
 
-Mirror the same block on the per-daemon services routerd generated for you.
+routerd が生成したデーモン用の service にも、同じブロックを並べます。
 
 ### FreeBSD
 
-In the rc.d wrapper that routerd renders for each daemon, add the variables to the `command_args` environment block (or use `routerd_envfile=...` if your wrapper supports it).
+routerd が出力する rc.d ラッパーの `command_args` の環境ブロックに、変数を追加します（ラッパーが対応していれば `routerd_envfile=...` でも構いません）。
 
-## Run a receiver to verify
+## 受信側を立てて検証する
 
-Any OTLP/gRPC backend works. The simplest one for a smoke test is `otelcol-contrib` with a `debug` exporter:
+OTLP/gRPC バックエンドなら何でも構いません。スモークテストには、`otelcol-contrib` の `debug` exporter が一番手軽です。
 
 ```yaml
 # /tmp/otel-test.yaml
@@ -116,30 +116,30 @@ service:
 otelcol-contrib --config /tmp/otel-test.yaml
 ```
 
-After restarting routerd you should see, within a few seconds:
+routerd を再起動すると、数秒以内に次が見えるはずです。
 
-- `routerd.controller.reconcile` Sum metric, increasing over time
-- `controller.reconcile` spans with status OK
-- routerd's slog records as `LogRecord` entries
+- `routerd.controller.reconcile` の Sum メトリック（増加方向）
+- `controller.reconcile` のスパン（status OK）
+- routerd の slog 出力が `LogRecord` として届く
 
-If you only see records from `routerd` itself but the per-daemon services are silent, double-check that the per-daemon drop-ins were applied and that `daemon-reload` ran.
+`routerd` 本体の記録だけ届いてデーモン側が黙っているなら、デーモン用の drop-in が反映されているか、`daemon-reload` を実行したかを確認してください。
 
-## Troubleshooting
+## トラブルシューティング
 
-**"address family not supported by protocol" in a daemon's journal.** routerd's hardened systemd units restrict address families. If your collector runs over IPv4 (most do) the unit must allow `AF_INET`. The shipped templates do; if you have an older drop-in that overrides `RestrictAddressFamilies`, make sure `AF_INET AF_INET6` are both present.
+**デーモンの journal に `address family not supported by protocol` が出る。** routerd のハードン済み systemd unit は、アドレスファミリを制限しています。コレクターが IPv4 経由なら（多くの場合はそうです）、unit に `AF_INET` の許可が必要です。同梱テンプレートにはすでに入っています。古い drop-in で `RestrictAddressFamilies` を上書きしている場合は、`AF_INET AF_INET6` の両方が含まれていることを確認してください。
 
-**No data at the collector.** Check that the endpoint is a hostname/IP routerd can reach (test with `getent ahosts` and `nc -vz host port`), and that `OTEL_EXPORTER_OTLP_INSECURE=true` is set when you skip TLS.
+**コレクターに何も届かない。** routerd から到達できるホスト・IP か（`getent ahosts` と `nc -vz host port` で確認）、TLS 無しなら `OTEL_EXPORTER_OTLP_INSECURE=true` を入れたかを確認します。
 
-**Records come through but service.name is wrong.** Each daemon sets its own `service.name`; you can add `OTEL_RESOURCE_ATTRIBUTES=service.namespace=routerd,...` to group them in the backend, but do not override `service.name` itself.
+**届いているが service.name がおかしい。** 各デーモンが自分自身の `service.name` を設定します。バックエンドでまとめたいなら、`OTEL_RESOURCE_ATTRIBUTES=service.namespace=routerd,...` でグループ化してください。`service.name` 自体は上書きしないでください。
 
-## What routerd does not ship
+## routerd が出さないもの
 
-- A bundled OTLP collector. Run one alongside routerd or use a managed backend.
-- A built-in storage backend. routerd has its own SQLite log databases (`events.db`, `dns-queries.db`, `traffic-flows.db`, `firewall-logs.db`) for local visibility through the Web Console; OTLP export is for sending the same data outside the host.
+- 同梱の OTLP コレクター。routerd の隣で別途立てるか、マネージドバックエンドを使ってください。
+- 組み込みのストレージバックエンド。routerd はローカルで可視化するための SQLite ログ DB（`events.db`, `dns-queries.db`, `traffic-flows.db`, `firewall-logs.db`）を持っており、Web 管理画面から確認できます。OTLP エクスポートは「同じデータをホストの外へ送る」用途です。
 
-## Declarative Telemetry resource
+## 宣言型の Telemetry リソース
 
-Use `Telemetry` to describe the OTLP endpoint in router YAML. routerd injects the matching OpenTelemetry environment variables into generated systemd, NixOS, and FreeBSD rc.d units. The collector is still external; routerd only prepares the exporter configuration.
+`Telemetry` を使うと、OTLP エンドポイントを router の YAML に書けます。routerd は、対応する OpenTelemetry 環境変数を、生成済みの systemd、NixOS、FreeBSD rc.d の unit に入れます。コレクターは外部で用意します。routerd はエクスポーターの設定だけを準備します。
 
 ```yaml
 apiVersion: observability.routerd.net/v1alpha1
@@ -157,6 +157,6 @@ spec:
   signals: [logs, metrics, traces]
 ```
 
-Use `ObservabilityPipeline` when you also want routerd to forward its internal
-event stream to stdout, syslog, or Loki without adding a separate local
-collector. See [Observability pipeline](../operations/observability.md).
+routerd 内部のイベントストリームも stdout / syslog / Loki へ転送したい場合は、
+`ObservabilityPipeline` を使います。詳しくは
+[Observability pipeline](../operations/observability.md) を参照してください。

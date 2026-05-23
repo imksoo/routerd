@@ -4,7 +4,8 @@ title: 法律与再分发
 
 # 法律与再分发
 
-routerd 本体以 BSD 3-Clause License 分发。完整许可证文本位于仓库根目录的 `LICENSE`。
+routerd 本体以 BSD 3-Clause License 分发。
+完整许可证文本位于 repository root 的 `LICENSE`。
 
 routerd 的版权声明如下。
 
@@ -12,76 +13,84 @@ routerd 的版权声明如下。
 Copyright (c) 2026 Kirino Minato <kirino.minato@gmail.com> (https://github.com/imksoo) and routerd contributors
 ```
 
-本页总结再分发 routerd release archive 和 routerd live ISO 时的实际确认事项。它不是法律建议。
+本页汇整再分发 routerd release archive 及 Live ISO 时的实际确认事项。本页内容不构成法律建议。
 
 ## routerd 二进制文件
 
-routerd 二进制文件由本仓库中的 Go source code 构建。发布前请运行：
+routerd 二进制文件由本 repository 的 Go source code 构建。
+发布前请执行：
 
 ```sh
 make third-party-licenses
 ```
 
-该命令会重新生成 `THIRD_PARTY_LICENSES.md`，其中列出：
+此命令会重新生成 `THIRD_PARTY_LICENSES.md`，并列出下列信息：
 
-- 链接进 routerd 二进制文件的 Go module
-- 检测到的 license text 类型
-- license file 名称
-- module source URL
-- live ISO 使用的 Alpine package
-- Alpine package 的 license metadata 和 upstream URL
+- 链接进 routerd 二进制文件的 Go 模块
+- 检测到的许可证文本类型
+- 许可证文件名称
+- 模块的 source URL
+- Live ISO 使用的 Alpine 软件包
+- Alpine 软件包的许可证 metadata 与 upstream URL
 
-当前 audit path 会检查 Go module license file 中的 GPL、LGPL 和 AGPL 文本。如果这类文本出现在被链接的 Go module 中，请停止发布，并确认是否需要改变 routerd 二进制文件的许可证或移除该依赖。
+目前的审计流程会扫描 Go 模块许可证文件中的 GPL、LGPL、AGPL 文本。
+若在被链接的 Go 模块中检测到此类文本，请停止发布，
+并确认是否需要变更 routerd 二进制文件的许可证，或移除该依赖软件包。
 
-源文件使用以下 SPDX 标识符。
+source 文件使用下列 SPDX 标识符：
 
 ```text
 SPDX-License-Identifier: BSD-3-Clause
 ```
 
-这些头部只表示 routerd 源代码许可证。它们不会改变随包提供的工具、Alpine package、Go module 或其他第三方组件的许可证。这些组件列在 `THIRD_PARTY_LICENSES.md` 中。
+此标识符仅表示 routerd source code 的许可证。
+它不会变更随包附带的工具、Alpine 软件包、Go 模块或其他第三方组件的许可证。
+这些组件的许可证信息列于 `THIRD_PARTY_LICENSES.md`。
 
 ## Release archive
 
-Release archive 包含：
+Release archive 包含下列内容：
 
 - routerd 二进制文件
-- installer script
-- systemd 或 rc.d service template
-- sample configuration
+- 安装程序 script
+- systemd 或 rc.d 服务模板
+- 示例配置
 - `share/doc/LICENSE`
 - `share/doc/THIRD_PARTY_LICENSES.md`
 
-再分发 release archive 时，请保留这些文件。
+再分发 release archive 时，请一并保留上述文件。
 
 ## Live ISO
 
-live ISO 是 aggregate distribution。它组合了：
+Live ISO 是汇总式发布物，组合了下列内容：
 
-- routerd 二进制文件和 script
-- Alpine Linux base file
-- dnsmasq、nftables、WireGuard tools、ppp、iproute2、chrony、tcpdump 等 Alpine package
+- routerd 二进制文件与 script
+- Alpine Linux 基础文件
+- dnsmasq、nftables、WireGuard tools、ppp、iproute2、chrony、
+  tcpdump 等 Alpine 软件包
 
-这些 Alpine package 保留各自的 upstream license。其中一部分使用 GPL license。live ISO 不会因此作为一个整体重新许可为单一 GPL work。
+这些 Alpine 软件包各自保留其 upstream 许可证。部分软件包采用 GPL 许可证。
+Live ISO 整体并不因此被重新授权为单一 GPL 著作物。
 
-live ISO 在以下位置包含 routerd notices。
+Live ISO 在下列路径提供 routerd 的许可声明：
 
 ```text
 /usr/share/licenses/routerd/LICENSE
 /usr/share/licenses/routerd/THIRD_PARTY_LICENSES.txt
 ```
 
-Alpine package 的 source 信息可以通过 Alpine package repositories、APKBUILD records，以及 `THIRD_PARTY_LICENSES.md` 中列出的 upstream URL 查阅。
+Alpine 软件包的 source 信息可通过 Alpine 软件包仓库、APKBUILD 记录，
+以及 `THIRD_PARTY_LICENSES.md` 中列出的 upstream URL 查阅。
 
-## Release checklist
+## Release 检查清单
 
-发布前请确认：
+发布前请确认下列事项：
 
-1. 运行 `make third-party-licenses`。
-2. 确认 Go module copyleft check 没有报告 GPL、LGPL 或 AGPL module。
-3. 确认 GPL-family license 只出现在单独分发的 Alpine package 或其他外部工具中。
-4. 运行通常的 test、schema、example、website、archive 和 live ISO checks。
-5. 确认 release archive 包含 `share/doc/LICENSE` 和 `share/doc/THIRD_PARTY_LICENSES.md`。
-6. 确认 live ISO 包含 `/usr/share/licenses/routerd/`。
+1. 执行 `make third-party-licenses`。
+2. 确认 Go 模块 copyleft 检查未报告 GPL、LGPL 或 AGPL 模块。
+3. 确认 GPL 系列许可证仅出现在单独分发的 Alpine 软件包或其他外部工具中。
+4. 执行常规的测试、schema、example、website、archive 及 Live ISO 检查。
+5. 确认 release archive 包含 `share/doc/LICENSE` 与 `share/doc/THIRD_PARTY_LICENSES.md`。
+6. 确认 Live ISO 包含 `/usr/share/licenses/routerd/`。
 
-如果依赖集合有较大变化，请在创建 tag 前重新检查本页和生成的 license inventory。
+若依赖软件包集合有较大幅度的变动，请在创建 tag 前重新审查本页与已生成的许可证清单。

@@ -1,26 +1,25 @@
-# Log Storage
+# ログストレージ
 
-routerd keeps long-lived state separate from operational logs.
+routerd は、長期的な状態と運用ログを分けて保存します。
 
-The Linux default layout is:
+Linux の既定の配置は次のとおりです。
 
-| File | Purpose | Typical retention |
+| ファイル | 目的 | 標準の保管期間 |
 | --- | --- | --- |
-| `/var/lib/routerd/routerd.db` | resource state and event table | 30 days for events |
-| `/var/lib/routerd/dns-queries.db` | DNS query rows from `routerd-dns-resolver` | 30 days |
-| `/var/lib/routerd/traffic-flows.db` | conntrack-derived traffic flows | 30 days |
-| `/var/lib/routerd/firewall-logs.db` | firewall accept/drop/reject rows | 90 days |
+| `/var/lib/routerd/routerd.db` | リソース状態とイベントテーブル | イベントは 30 日 |
+| `/var/lib/routerd/dns-queries.db` | `routerd-dns-resolver` の DNS クエリー履歴 | 30 日 |
+| `/var/lib/routerd/traffic-flows.db` | conntrack から作った通信フロー履歴 | 30 日 |
+| `/var/lib/routerd/firewall-logs.db` | accept、drop、reject のファイアウォールログ | 90 日 |
 
-FreeBSD keeps the same database names under `/var/db/routerd`.
+FreeBSD では、同じデータベース名を `/var/db/routerd` 配下に置きます。
 
-The log tables use column names that can be mapped to OpenTelemetry log
-attributes. nDPI and TLS SNI columns are reserved in `traffic-flows.db`, even
-when no writer fills them yet.
+ログテーブルの列名は、OpenTelemetry のログ属性へ変換しやすい名前にしています。
+`traffic-flows.db` には、nDPI と TLS SNI 用の列を予約しています。
+これらの列へ書き込む処理は、現時点ではまだ実装しておらず、後続の実装で追加します。
 
-`LogRetention` removes old rows by signal and can run SQLite incremental
-vacuum. It no longer exposes database paths in user config; routerd derives the
-event, DNS query, traffic flow, and firewall event stores from the resources
-that produce those logs.
+`LogRetention` は、signal 単位で古い行を削除します。
+SQLite の incremental vacuum も実行できます。DB ファイルのパスは設定には現れず、
+routerd が、イベント・DNS クエリー・通信フロー・ファイアウォールイベントを生成するリソースから導出します。
 
 ```yaml
 apiVersion: system.routerd.net/v1alpha1
@@ -50,7 +49,7 @@ spec:
     - firewallEvents
 ```
 
-Inspection commands:
+確認には次のコマンドを使います。
 
 ```sh
 routerctl dns-queries --since 1h

@@ -2,28 +2,22 @@
 title: nDPI agent native package
 ---
 
-# nDPI agent native package
+# nDPI エージェントのネイティブパッケージ
 
-routerd's normal Linux release archives are built with `CGO_ENABLED=0` and keep
-all included routerd binaries statically linked. The optional
-`routerd-ndpi-agent-libndpi` archive is the exception package for hosts that
-need native nDPI classification.
+routerd の通常の Linux リリースアーカイブは `CGO_ENABLED=0` でビルドし、同梱する routerd のバイナリをすべて静的リンクに保ちます。任意の `routerd-ndpi-agent-libndpi` アーカイブは、ネイティブの nDPI 分類が必要なホスト向けの例外パッケージです。
 
-This archive contains only:
+このアーカイブに含まれるのは、次のものだけです。
 
 - `bin/routerd-ndpi-agent`
 - `share/doc/README.md`
 - `share/doc/VERSION`
 - `share/doc/TARGET`
 
-The binary is built with `CGO_ENABLED=1 -tags libndpi` and links to the target
-system's `libndpi` runtime. It is intended as an override for a host that
-already installed the normal routerd archive.
+このバイナリは `CGO_ENABLED=1 -tags libndpi` でビルドし、対象システムの `libndpi` ランタイムにリンクします。すでに通常の routerd アーカイブをインストール済みのホストで、それを上書きするためのものです。
 
 ## Install
 
-Download both the normal routerd release archive and the matching native agent
-archive, then let the installer apply them in one transaction:
+通常の routerd リリースアーカイブと、対応するネイティブエージェントのアーカイブを両方ダウンロードし、インストーラーに 1 つのトランザクションとして適用させます。
 
 ```sh
 curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-linux-amd64.tar.gz
@@ -37,46 +31,33 @@ sudo ./install.sh --with-ndpi \
   --with-ndpi-archive ./routerd-ndpi-agent-libndpi-linux-amd64.tar.gz
 ```
 
-The host must provide a `libndpi` runtime package with the same shared-library
-ABI as the archive was built against. On Debian/Ubuntu, install the optional
-runtime dependencies with:
+ホストには、アーカイブのビルド時と同じ共有ライブラリ ABI を持つ `libndpi` ランタイムパッケージが必要です。Debian/Ubuntu では、任意のランタイム依存関係を次でインストールします。
 
 ```sh
 sudo apt-get install libndpi-bin
 ```
 
-Verify that the native backend is active:
+ネイティブバックエンドが有効になっているかを確認します。
 
 ```sh
 sudo curl --silent --unix-socket /run/routerd/ndpi-agent/default.sock \
   http://unix/v1/status
 ```
 
-The response should include `"libndpiLoaded": true`.
+応答に `"libndpiLoaded": true` が含まれているはずです。
 
 ## Upgrade note
 
-The normal routerd archive includes the default static `routerd-ndpi-agent`.
-During upgrades, `install.sh` preserves an existing native agent when its
-`selftest` reports `"libndpiLoaded": true` and the archive agent does not.
+通常の routerd アーカイブには、既定の静的な `routerd-ndpi-agent` が含まれます。
+アップグレード時、`install.sh` は、既存のネイティブエージェントの `selftest` が `"libndpiLoaded": true` を返し、かつアーカイブ側のエージェントが返さない場合に、既存のネイティブエージェントを保持します。
 
-Run the normal installer with `--with-ndpi` on hosts that require native
-application-layer classification. The installer fails if the final installed
-agent does not report `"libndpiLoaded": true`, so the static fallback cannot
-silently satisfy a native nDPI intent.
+ネイティブのアプリケーション層分類が必要なホストでは、通常のインストーラーを `--with-ndpi` 付きで実行します。最終的にインストールされたエージェントが `"libndpiLoaded": true` を返さない場合、インストーラーは失敗します。これにより、静的なフォールバックがネイティブ nDPI の意図を黙って満たしてしまうことを防ぎます。
 
-For fresh installs, or when you want the native agent archive to be the explicit
-source of truth, pass `--with-ndpi-archive PATH`. The installer validates the
-archive target marker, rejects unsafe tar paths, verifies the neighboring
-`.sha256` file when present, checks that the archive agent reports
-`"libndpiLoaded": true`, and rolls back the whole install if the overlay fails.
+新規インストールの場合や、ネイティブエージェントのアーカイブを正本として明示したい場合は、`--with-ndpi-archive PATH` を渡します。インストーラーは、アーカイブのターゲットマーカーを検証し、安全でない tar パスを拒否し、隣接する `.sha256` ファイルがあれば検証し、アーカイブ側のエージェントが `"libndpiLoaded": true` を返すかを確認します。オーバーレイが失敗した場合は、インストール全体をロールバックします。
 
 ## Configure
 
-`routerd-dpi-classifier` must be configured with `--engine auto` or
-`--engine ndpi-agent` and an `--ndpi-agent-socket` pointing at the agent socket.
-`auto` is recommended because it falls back to the built-in classifier if the
-native agent is unavailable.
+`routerd-dpi-classifier` は、`--engine auto` または `--engine ndpi-agent` と、エージェントのソケットを指す `--ndpi-agent-socket` を指定して構成する必要があります。
+`auto` を推奨します。ネイティブエージェントが利用できない場合に、組み込みの分類器へフォールバックするためです。
 
-The deprecated `--ndpi-reader` option does not enable native nDPI
-classification.
+非推奨の `--ndpi-reader` オプションは、ネイティブの nDPI 分類を有効にしません。

@@ -1,50 +1,50 @@
 ---
-title: 把遥测数据送到 OTLP 收集器
+title: 将遥测数据送到 OTLP 收集器
 slug: /how-to/opentelemetry
 ---
 
-# 把遥测数据送到 OTLP 收集器
+# 将遥测数据送到 OTLP 收集器
 
 ## 场景
 
-你想把路由器的日志、指标和追踪发到任意 OpenTelemetry 兼容的后端 (Grafana Loki/Tempo/Mimir、Datadog、Honeycomb、自建 `otelcol-contrib` 等),而不必每次都去 `journalctl` 或 `routerctl events`。
+当您想把路由器的日志、指标与追踪，送到 OpenTelemetry 兼容的后端（Grafana Loki/Tempo/Mimir、Datadog、Honeycomb、自建的 `otelcol-contrib` 等），不必每次都执行 `journalctl` 或 `routerctl events`，而是从外部仪表板观测状态时，本指南即适用。
 
-routerd 的所有常驻 daemon 都能输出 OpenTelemetry。**routerd 不内置收集器**;你需要自己准备外部 OTLP 端点,routerd 会用 OTLP/gRPC 把数据发过去。
+routerd 的所有守护进程均可通过 OpenTelemetry 导出数据。收集器本体并不内置于 routerd binary 中，请另行准备外部 OTLP 端点，routerd 会以 OTLP/gRPC 传送数据。
 
-## routerd 会输出什么
+## routerd 会导出的内容
 
-| Daemon | service.name | 内容 |
+| 守护进程 | service.name | 内容 |
 | --- | --- | --- |
-| `routerd` (控制面) | `routerd` | `controller.reconcile` 追踪、`routerd.controller.reconcile` 计数器、结构化 slog 日志 |
-| `routerd-dhcpv6-client` | `routerd-dhcpv6-client` | DHCPv6 生命周期追踪与日志 (Solicit/Request/Renew、租约事件) |
-| `routerd-dhcpv4-client` | `routerd-dhcpv4-client` | DHCPv4 生命周期追踪与日志 |
-| `routerd-pppoe-client` | `routerd-pppoe-client` | PPPoE 会话生命周期 |
-| `routerd-healthcheck` | `routerd-healthcheck` | 探测结果 (附目标属性的成功/失败) |
+| `routerd`（控制平面） | `routerd` | `controller.reconcile` 追踪、`routerd.controller.reconcile` 计数器、结构化 slog 日志 |
+| `routerd-dhcpv6-client` | `routerd-dhcpv6-client` | DHCPv6 生命周期的追踪与结构化日志（Solicit/Request/Renew、租约事件） |
+| `routerd-dhcpv4-client` | `routerd-dhcpv4-client` | DHCPv4 生命周期的追踪与日志 |
+| `routerd-pppoe-client` | `routerd-pppoe-client` | PPPoE 连接的生命周期 |
+| `routerd-healthcheck` | `routerd-healthcheck` | 健康检查结果（附 target 属性的成功/失败） |
 
-每个 daemon 都会把 `routerd.resource.name` 设成资源属性,所以你能按资源 (例如每条 WAN 上的 DHCPv6 client) 拆分信号。
+每个守护进程都会在资源属性中附上 `routerd.resource.name`，因此可以依资源（例如每条 WAN 的 DHCPv6 客户端）分别筛选信号。
 
-输出方式是 OTLP/gRPC。默认 logs/metrics/traces 共用同一端点,如后端要求,也可分别指定。
+导出方式为 OTLP/gRPC。logs / metrics / traces 默认共用同一个端点，若后端有需要也可分别指定。
 
-## 配置输出
+## 导出配置
 
-routerd 读取 OpenTelemetry 标准环境变量,没有 routerd 专属语法。OTLP/gRPC exporter 上游能解析的变量都能直接用。
+routerd 读取 OpenTelemetry 的标准环境变量，没有 routerd 专属的语法。OTLP/gRPC 导出器的上游能解析的变量，可直接使用。
 
-主要变量:
+主要变量如下。
 
 | 变量 | 用途 |
 | --- | --- |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | 全信号共用端点 (例如 `http://collector.lan:4317`) |
-| `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` / `_METRICS_ENDPOINT` / `_TRACES_ENDPOINT` | 单信号覆盖 |
-| `OTEL_EXPORTER_OTLP_INSECURE` | `true` 关闭 TLS (lab 用) |
-| `OTEL_EXPORTER_OTLP_HEADERS` | 例如 managed 后端用 `Authorization=Bearer ...` |
-| `OTEL_SERVICE_NAMESPACE` | 建议所有 daemon 都设为 `routerd` |
-| `OTEL_RESOURCE_ATTRIBUTES` | 用 `key=value,...` 自由标注 site / host 属性 |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | 所有信号共用的端点（例如：`http://collector.lan:4317`） |
+| `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` / `_METRICS_ENDPOINT` / `_TRACES_ENDPOINT` | 各信号的单独指定 |
+| `OTEL_EXPORTER_OTLP_INSECURE` | 设为 `true` 可停用 TLS（实验室用） |
+| `OTEL_EXPORTER_OTLP_HEADERS` | 例如：managed 后端用的 `Authorization=Bearer ...` |
+| `OTEL_SERVICE_NAMESPACE` | 建议：所有守护进程共用 `routerd` |
+| `OTEL_RESOURCE_ATTRIBUTES` | 以 `key=value,...` 格式自由指定站点、主机等属性 |
 
-如果 `OTEL_EXPORTER_OTLP_ENDPOINT` / `_LOGS_ENDPOINT` / `_METRICS_ENDPOINT` / `_TRACES_ENDPOINT` 全部没设置,routerd 会完全跳过遥测初始化。daemon 没有专门的开关,**不设变量就是 OFF**。
+若 `OTEL_EXPORTER_OTLP_ENDPOINT` / `_LOGS_ENDPOINT` / `_METRICS_ENDPOINT` / `_TRACES_ENDPOINT` 均未设置，routerd 会完全跳过遥测初始化。守护进程端没有单独的开关，**不设置变量即代表停用**。
 
-### 应用到 systemd 管理的 routerd
+### 应用至 systemd 管理的 routerd
 
-Linux 安装把变量放进 systemd unit 的环境。为了不被上游 unit 更新覆盖,使用 drop-in 最干净:
+Linux 安装时，请将变量加入 systemd unit 的环境中。为避免上游 unit 更新后被覆盖，建议使用 drop-in 方式。
 
 ```ini
 # /etc/systemd/system/routerd.service.d/10-otel.conf
@@ -55,14 +55,14 @@ Environment=OTEL_SERVICE_NAMESPACE=routerd
 Environment=OTEL_RESOURCE_ATTRIBUTES=deployment.environment=home,host.name=edge-router
 ```
 
-要输出的每个受管 daemon 都加同样的 drop-in:
+每个需要导出的受管守护进程也请加入相同的 drop-in。
 
 - `/etc/systemd/system/routerd-dhcpv6-client@.service.d/10-otel.conf`
 - `/etc/systemd/system/routerd-dhcpv4-client@.service.d/10-otel.conf`
 - `/etc/systemd/system/routerd-pppoe-client@.service.d/10-otel.conf`
 - `/etc/systemd/system/routerd-healthcheck@.service.d/10-otel.conf`
 
-然后:
+接着执行以下命令。
 
 ```bash
 sudo systemctl daemon-reload
@@ -73,7 +73,7 @@ sudo systemctl restart routerd.service \
 
 ### NixOS
 
-在 routerd 的 NixOS module 生成的每个 systemd service 的 environment 里加变量:
+在 routerd 的 NixOS 模块生成的各 systemd service 的 environment 中加入变量。
 
 ```nix
 systemd.services.routerd.environment = {
@@ -83,15 +83,15 @@ systemd.services.routerd.environment = {
 };
 ```
 
-routerd 给你生成的 daemon service 也照搬。
+routerd 生成的守护进程 service 也请同样设置。
 
 ### FreeBSD
 
-把变量加到 routerd 渲染的 rc.d 包装脚本的 `command_args` 环境块 (若包装脚本支持,可改用 `routerd_envfile=...`)。
+请将变量加入 routerd 生成的 rc.d 包装程序的 `command_args` 环境区块中（若包装程序支持，也可使用 `routerd_envfile=...`）。
 
-## 起一个接收端验证
+## 建立接收端进行验证
 
-任何 OTLP/gRPC 后端都行。冒烟测试最方便的是 `otelcol-contrib` 加 `debug` exporter:
+任何 OTLP/gRPC 后端均可。快速冒烟测试最方便的方式是使用 `otelcol-contrib` 搭配 `debug` 导出器。
 
 ```yaml
 # /tmp/otel-test.yaml
@@ -116,27 +116,47 @@ service:
 otelcol-contrib --config /tmp/otel-test.yaml
 ```
 
-重启 routerd 几秒后应能看到:
+重启 routerd 后数秒内，应可看到以下内容。
 
-- `routerd.controller.reconcile` Sum 指标 (持续增加)
-- `controller.reconcile` span (状态 OK)
-- routerd 的 slog 以 `LogRecord` 形式发进来
+- `routerd.controller.reconcile` 的 Sum 指标（持续递增）
+- `controller.reconcile` 的 span（状态 OK）
+- routerd 的 slog 输出以 `LogRecord` 形式送达
 
-如果只见到 `routerd` 本体的记录而 daemon 沉默,检查 daemon 的 drop-in 是否生效、`daemon-reload` 是否打过。
+若只收到 `routerd` 本体的记录，而守护进程端沉默，请确认守护进程的 drop-in 是否已应用、以及是否有执行 `daemon-reload`。
 
 ## 故障排查
 
-**daemon journal 出现 `address family not supported by protocol`。** routerd 加固后的 systemd unit 限制了 address family。如果 collector 走 IPv4 (大多数如此),unit 必须允许 `AF_INET`。内置模板已经包含;若你有旧 drop-in 覆盖了 `RestrictAddressFamilies`,确认 `AF_INET AF_INET6` 两者都在。
+**守护进程的 journal 出现 `address family not supported by protocol`。** routerd 加固过的 systemd unit 限制了地址族。若收集器通过 IPv4 连接（大多数情况如此），unit 必须允许 `AF_INET`。内置模板已包含此设置；若您有旧的 drop-in 覆盖了 `RestrictAddressFamilies`，请确认 `AF_INET AF_INET6` 两者均包含在内。
 
-**收集端没数据。** 确认端点是 routerd 能解到的主机/IP (`getent ahosts` 与 `nc -vz host port`),并且不走 TLS 时要设 `OTEL_EXPORTER_OTLP_INSECURE=true`。
+**收集器未收到任何数据。** 请确认端点是 routerd 可解析的主机/IP（使用 `getent ahosts` 与 `nc -vz host port` 确认），以及不使用 TLS 时是否已设置 `OTEL_EXPORTER_OTLP_INSECURE=true`。
 
-**有数据但 service.name 不对。** 每个 daemon 设定自己的 `service.name`。后端归组请用 `OTEL_RESOURCE_ATTRIBUTES=service.namespace=routerd,...`。**不要覆盖 `service.name` 本身**。
+**数据送达但 service.name 不正确。** 每个守护进程会自行设置 `service.name`。若要在后端进行分组，请使用 `OTEL_RESOURCE_ATTRIBUTES=service.namespace=routerd,...`。请勿覆盖 `service.name` 本身。
 
-## routerd 不会提供的东西
+## routerd 不提供的功能
 
-- 内置 OTLP collector。请在 routerd 旁边另起一份,或用 managed 后端。
-- 内置存储后端。routerd 自己有 SQLite 日志 DB (`events.db`, `dns-queries.db`, `traffic-flows.db`, `firewall-logs.db`),Web Console 可直接查看;OTLP 导出用于把同一份数据「送到主机外」。
+- 内置 OTLP 收集器。请在 routerd 旁另行架设，或使用 managed 后端。
+- 内置存储后端。routerd 本身具备 SQLite 日志 DB（`events.db`、`dns-queries.db`、`traffic-flows.db`、`firewall-logs.db`），可从 Web 管理界面查看。OTLP 导出的用途是「将相同数据传送至主机外部」。
 
-## 后续
+## 声明式 Telemetry 资源
 
-计划增加声明式的 `Telemetry` 资源 (apiVersion `observability.routerd.net/v1alpha1`)。届时可以用 YAML 表达端点/信号/属性,不必手改 systemd drop-in。在此之前,上述环境变量就是受支持的配置面。
+使用 `Telemetry` 可以在路由器的 YAML 中指定 OTLP 端点。routerd 会将对应的 OpenTelemetry 环境变量注入至生成的 systemd、NixOS 及 FreeBSD rc.d unit 中。收集器需在外部另行准备，routerd 只负责配置导出器。
+
+```yaml
+apiVersion: observability.routerd.net/v1alpha1
+kind: Telemetry
+metadata:
+  name: otlp
+spec:
+  otlp:
+    endpoint: http://collector.example.internal:4317
+    insecure: true
+  serviceNamespace: routerd
+  attributes:
+    deployment.environment: home
+    site: edge
+  signals: [logs, metrics, traces]
+```
+
+若希望也将 routerd 内部的事件流转发至 stdout / syslog / Loki，请使用
+`ObservabilityPipeline`。详情请参阅
+[Observability pipeline](../operations/observability.md)。

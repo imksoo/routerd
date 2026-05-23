@@ -1,66 +1,56 @@
 ---
-title: Isolate guest devices by MAC address
+title: MAC アドレスでゲスト端末を隔離する
 ---
 
-# Isolate guest devices by MAC address
+# MAC アドレスでゲスト端末を隔離する
 
-`ClientPolicy` is routerd's guest mode. It classifies clients by MAC address on
-a shared LAN and applies a stricter forwarding policy before the normal
-zone-to-zone firewall matrix is evaluated.
+`ClientPolicy` は routerd のゲストモードです。
+同じ LAN 上の端末を MAC アドレスで分類し、通常のゾーン間ファイアウォールマトリクスより先に、より厳しい転送方針を適用します。
 
-The feature is useful when you do not want to build a separate VLAN yet, but
-you still want a clear boundary between trusted devices and devices that should
-only reach the public internet.
+VLAN をまだ分けていない構成でも、信頼済みの端末と、インターネットだけを使わせたい端末との境界を明確にできます。
 
-## Use cases
+## ユースケース
 
-Common uses include:
+代表的な用途は次の通りです。
 
-- Home networks where a visitor phone, game console, appliance, or BYOD laptop
-  should not reach the management network or home servers.
-- Apartment or shared-house networks where the default should be guest access,
-  and only explicitly listed devices become trusted.
-- IoT isolation, where cameras, HEMS controllers, TVs, and speakers need DNS,
-  DHCP, NTP, and internet access but do not need lateral access.
-- Small office visitor networks where guests share a physical LAN for now, but
-  internal RFC 1918 and ULA destinations must stay blocked.
+- 家庭内で、来客のスマートフォン、ゲーム機、家電、持ち込み PC を、管理網や自宅サーバーへ届かせたくない場合。
+- 集合住宅や共有住宅で、既定をゲストとし、明示した端末だけを信頼済みにしたい場合。
+- カメラ、HEMS、テレビ、スピーカーなどの IoT 端末を隔離する場合。DNS、DHCP、NTP、インターネットは使わせますが、横方向の通信は不要です。
+- 小規模オフィスの来客用ネットワークで、物理 LAN は共有しつつ、RFC 1918 や ULA 宛ての通信を遮断したい場合。
 
-For a complete example, see
-[examples/guest-mode.yaml](https://github.com/imksoo/routerd/blob/main/examples/guest-mode.yaml).
+完全な例は [examples/guest-mode.yaml](https://github.com/imksoo/routerd/blob/main/examples/guest-mode.yaml) を参照してください。
 
-## How it works
+## 仕組み
 
-On Linux, routerd renders `ClientPolicy` into the nftables table
-`inet routerd_filter`.
+Linux では、routerd は `ClientPolicy` を nftables の `inet routerd_filter` テーブルに生成します。
 
-For each policy it generates:
+各方針から、次の規則を生成します。
 
-- an nftables `ether_addr` set such as `client_policy_guest_devices`;
-- `ether saddr @set` matches for `mode: include`;
-- `ether saddr != @set` matches for `mode: exclude`;
-- self-service accept rules for selected local router services;
-- forwarding deny rules for private IPv4 and ULA IPv6 destinations;
-- optional allow rules before the deny list.
+- `client_policy_guest_devices` のような nftables の `ether_addr` set。
+- `mode: include` 用の `ether saddr @set` 照合。
+- `mode: exclude` 用の `ether saddr != @set` 照合。
+- 選択したルーター内サービスへの、self 向け許可規則。
+- プライベート IPv4 宛てと ULA IPv6 宛ての転送拒否規則。
+- 拒否規則より前に置く、任意の許可規則。
 
-The generated rules are placed early in the `input` and `forward` chains. That
-means guest isolation narrows access before a `trust -> self` or `trust ->
-trust` role-matrix accept rule can allow the packet.
+生成した規則は、`input` チェーンと `forward` チェーンの早い位置に入ります。
+そのため、通常なら `trust -> self` や `trust -> trust` の役割マトリクスで許可される通信でも、ゲスト端末の通信は先に絞り込まれます。
 
-`ClientPolicy` does not replace `FirewallZone`. The usual model still applies:
+`ClientPolicy` は `FirewallZone` の代替ではありません。
+通常のモデルはそのまま使います。
 
-- `FirewallZone` decides the normal zone role of an interface.
-- `FirewallPolicy` decides global logging behavior.
-- `FirewallRule` adds explicit exceptions.
-- `ClientPolicy` adds per-client restrictions inside a LAN-like zone.
+- `FirewallZone` は、インターフェースの通常の役割を決めます。
+- `FirewallPolicy` は、拒否ログなどの共通動作を決めます。
+- `FirewallRule` は、明示的な例外を追加します。
+- `ClientPolicy` は、LAN の中に端末単位の制限を重ねます。
 
-DHCP leases are not required for MAC matching, because nftables sees the
-Ethernet source address directly. `DHCPv4Reservation` is still useful because
-it gives the same device a stable IP address and a stable name in DNS and the
-Web Console.
+MAC 照合は、Ethernet の送信元アドレスを直接見ます。
+そのため、DHCP リースは必須ではありません。
+ただし `DHCPv4Reservation` を併用すると、端末の IPv4 アドレス、名前、Web 管理画面での表示が安定します。
 
-## Specification
+## 仕様
 
-`ClientPolicy` belongs to `firewall.routerd.net/v1alpha1`.
+`ClientPolicy` は `firewall.routerd.net/v1alpha1` に属します。
 
 ```yaml
 - apiVersion: firewall.routerd.net/v1alpha1
@@ -78,42 +68,39 @@ Web Console.
       mDNSBroadcast: deny
 ```
 
-| Field | Required | Meaning |
+| フィールド | 必須 | 意味 |
 | --- | --- | --- |
-| `mode` | yes | `include` or `exclude`. |
-| `interfaces` | no | LAN-side `Interface` references where the policy applies. `Interface/lan` and `lan` both resolve to the same interface. When omitted, routerd targets every `trust` `FirewallZone` interface. |
-| `macs` | no | Short-form MAC list. In `include` mode these are guests. In `exclude` mode these are trusted. |
-| `isolation` | no | High-level guest intent. `lanInternet`, `lanLAN`, `lanMgmt`, and `mDNSBroadcast` accept `allow` or `deny`. |
-| `classification` | no | Structured client classification entries. |
-| `classification[].mode` | yes | `trusted`, `guest`, or `isolated`. |
-| `classification[].match.macs` | no | Client MAC addresses. routerd normalizes them before rendering. |
-| `classification[].match.ouiPrefixes` | no | Vendor OUI prefixes such as `18:ec:e7`. |
-| `classification[].match.hostnamePatterns` | no | Glob patterns for observed DHCP hostnames. |
-| `classification[].match.dhcpFingerprints` | no | DHCP fingerprint labels observed by routerd. |
-| `classification[].name` | no | Human-readable device name. It is documentation for now. |
-| `classification[].ipv4Reservation` | no | Name of a `DHCPv4Reservation`. Use a bare resource name such as `aiseg2`, not `DHCPv4Reservation/aiseg2`. |
-| `guestServices` | no | Local router services allowed for guests. Default is `dhcp`, `dns`, `ntp`. Supported values are `dhcp`, `dns`, `ntp`, `mdns`, and `ssdp`. |
-| `guestEgressDeny` | no | CIDR list denied for guest forwarding. Defaults to RFC 1918 plus ULA. |
-| `guestEgressAllow` | no | CIDR list explicitly allowed before deny rules. |
+| `mode` | はい | `include` または `exclude` です。 |
+| `interfaces` | いいえ | 方針を適用する LAN 側の `Interface` 参照です。`Interface/lan` と `lan` は同じインターフェースを指します。省略時は `trust` の `FirewallZone` に属する全インターフェースへ適用します。 |
+| `macs` | いいえ | 短縮形の MAC 一覧です。include モードではゲスト、exclude モードでは信頼済みとして扱います。 |
+| `isolation` | いいえ | ゲストの意図を表します。`lanInternet`、`lanLAN`、`lanMgmt`、`mDNSBroadcast` に `allow` または `deny` を指定できます。 |
+| `classification` | いいえ | 構造化したクライアント分類のエントリです。 |
+| `classification[].mode` | はい | `trusted`、`guest`、`isolated` のいずれかです。 |
+| `classification[].match.macs` | いいえ | 端末の MAC アドレスです。routerd は生成前に正規化します。 |
+| `classification[].match.ouiPrefixes` | いいえ | `18:ec:e7` のようなベンダーの OUI プレフィックスです。 |
+| `classification[].match.hostnamePatterns` | いいえ | 観測した DHCP ホスト名に対する glob パターンです。 |
+| `classification[].match.dhcpFingerprints` | いいえ | routerd が観測した DHCP フィンガープリントのラベルです。 |
+| `classification[].name` | いいえ | 人が読むための端末名です。現時点では説明用の値です。 |
+| `classification[].ipv4Reservation` | いいえ | `DHCPv4Reservation` の名前です。`DHCPv4Reservation/aiseg2` ではなく `aiseg2` と書きます。 |
+| `guestServices` | いいえ | ゲスト端末に許可するルーター内サービスです。既定値は `dhcp`、`dns`、`ntp` です。指定できる値は `dhcp`、`dns`、`ntp`、`mdns`、`ssdp` です。 |
+| `guestEgressDeny` | いいえ | ゲスト端末の転送先として拒否する CIDR です。省略時は RFC 1918 と ULA を拒否します。 |
+| `guestEgressAllow` | いいえ | 拒否規則より先に許可する CIDR です。 |
 
-Default `guestEgressDeny`:
+既定の `guestEgressDeny` は次の通りです。
 
 - `10.0.0.0/8`
 - `172.16.0.0/12`
 - `192.168.0.0/16`
 - `fc00::/7`
 
-When `isolation.mDNSBroadcast: deny` is set, routerd drops guest mDNS, SSDP,
-and NetBIOS discovery forwarding so a guest device does not browse LAN peers by
-local multicast or broadcast discovery.
+`isolation.mDNSBroadcast: deny` を指定すると、ゲストからの mDNS、SSDP、NetBIOS による探索の転送も拒否します。ゲスト端末がマルチキャストやブロードキャストの探索で LAN 内の端末を見つける挙動を抑えます。
 
-Allow rules are rendered before deny rules. This lets you create narrow
-exceptions, such as a single printer or captive-portal helper, without opening
-the whole private range.
+許可規則は、拒否規則より先に生成されます。
+プリンターやキャプティブポータルの補助サーバーなど、狭い例外を作るときに使えます。
 
-## Example 1: minimal include mode
+## 例 1: 最小の include モード
 
-Only one MAC address is treated as a guest.
+1 つの MAC アドレスだけをゲストとして扱います。
 
 ```yaml
 - apiVersion: firewall.routerd.net/v1alpha1
@@ -132,9 +119,9 @@ Only one MAC address is treated as a guest.
         name: aiseg2
 ```
 
-## Example 2: include mode with several devices
+## 例 2: 複数端末の include モード
 
-Multiple devices can share the same guest rule set.
+複数の端末を同じゲスト規則で扱えます。
 
 ```yaml
 - apiVersion: firewall.routerd.net/v1alpha1
@@ -164,9 +151,10 @@ Multiple devices can share the same guest rule set.
         name: smart-tv
 ```
 
-## Example 3: exclude mode for BYOD
+## 例 3: BYOD 向けの exclude モード
 
-All clients become guests by default. Only listed MAC addresses remain trusted.
+対象インターフェース上の端末を、既定でゲストとして扱います。
+一覧に書いた MAC アドレスだけを信頼済みとして扱います。
 
 ```yaml
 - apiVersion: firewall.routerd.net/v1alpha1
@@ -190,10 +178,9 @@ All clients become guests by default. Only listed MAC addresses remain trusted.
         name: owner-phone
 ```
 
-## Example 4: custom deny and allow lists
+## 例 4: 拒否と許可のカスタム CIDR
 
-This policy keeps the default private deny behavior but allows guests to reach
-one printer.
+既定のプライベート宛て拒否を保ちつつ、1 台のプリンターだけ許可します。
 
 ```yaml
 - apiVersion: firewall.routerd.net/v1alpha1
@@ -219,10 +206,10 @@ one printer.
         name: guest-phone
 ```
 
-## Example 5: local discovery services
+## 例 5: ローカル探索サービス
 
-By default, guests can use DHCP, DNS, and NTP. If the router is also running a
-local discovery proxy or relay, add `mdns` or `ssdp` deliberately.
+既定では、ゲスト端末に DHCP、DNS、NTP を許可します。
+ルーター上でローカル探索のプロキシや中継を動かす場合は、`mdns` や `ssdp` を明示的に追加します。
 
 ```yaml
 - apiVersion: firewall.routerd.net/v1alpha1
@@ -247,14 +234,13 @@ local discovery proxy or relay, add `mdns` or `ssdp` deliberately.
         name: smart-tv
 ```
 
-Only enable discovery services when you understand what the local relay exposes.
-mDNS and SSDP are convenient, but they can reveal device names and service
-metadata.
+探索サービスは、公開される情報を理解したうえで有効にしてください。
+mDNS や SSDP は便利ですが、端末名やサービス情報を見せてしまうことがあります。
 
-## Example 6: IoT isolation with reservations
+## 例 6: IoT の隔離と固定割り当て
 
-Stable reservations make troubleshooting easier. They also make Web Console
-client inventory and DNS records less ambiguous.
+固定割り当てがあると、調査しやすくなります。
+Web 管理画面の端末一覧や DNS レコードも分かりやすくなります。
 
 ```yaml
 - apiVersion: net.routerd.net/v1alpha1
@@ -284,31 +270,30 @@ client inventory and DNS records less ambiguous.
         ipv4Reservation: thermostat
 ```
 
-## DHCPv4Reservation integration
+## DHCPv4Reservation との連携
 
-`classification[].ipv4Reservation` is a reference check. routerd validates that
-the named `DHCPv4Reservation` exists. The firewall match is still based on MAC
-address, not on the leased IP address.
+`classification[].ipv4Reservation` は参照の検証用です。
+routerd は、指定した `DHCPv4Reservation` が存在することを確認します。
+ファイアウォールの照合は、リースされた IP アドレスではなく MAC アドレスで行います。
 
-This split is intentional:
+この分離は意図的です。
 
-- MAC matching catches the client before IP-layer policy decisions.
-- A fixed IPv4 lease gives the device stable DNS and Web Console identity.
-- If the device changes IP address, the guest isolation still follows the MAC.
+- MAC 照合により、IP 層の判断より前に端末を分類できます。
+- IPv4 の固定リースにより、DNS と Web 管理画面の表示が安定します。
+- 端末の IP アドレスが変わっても、ゲスト隔離は MAC アドレスに追従します。
 
-When a device uses randomized MAC addresses, create the reservation and
-classification for the actual MAC address used on that SSID or wired segment.
+端末がランダム MAC アドレスを使う場合は、その SSID または有線セグメントで実際に見えている MAC アドレスを登録してください。
 
-## Verify generated rules
+## 生成規則の確認
 
-Render or inspect the active nftables table:
+設定を生成するか、稼働中の nftables テーブルを確認します。
 
 ```sh
 routerd render nftables --config /usr/local/etc/routerd/router.yaml
 sudo nft list table inet routerd_filter
 ```
 
-Look for:
+次のような規則を確認します。
 
 ```nft
 set client_policy_guest_devices {
@@ -320,9 +305,9 @@ iifname "ens19" ether saddr @client_policy_guest_devices udp dport 53 counter ac
 iifname "ens19" ether saddr @client_policy_guest_devices ip daddr 10.0.0.0/8 counter log prefix "routerd client-policy guest-devices deny " drop
 ```
 
-## Verify from a guest device
+## ゲスト端末からの動作確認
 
-From a guest client:
+ゲスト端末から確認します。
 
 ```sh
 curl -4 https://www.google.com/generate_204
@@ -330,52 +315,50 @@ curl -4 --connect-timeout 3 http://192.168.1.1/
 curl -4 --connect-timeout 3 http://172.18.0.1:8080/
 ```
 
-Expected result:
+期待する結果は次の通りです。
 
-- public internet succeeds;
-- private destinations time out or fail;
-- DNS, DHCP, and NTP continue to work.
+- インターネットへの通信は成功します。
+- プライベート宛ては、タイムアウトするか失敗します。
+- DNS、DHCP、NTP は動き続けます。
 
-On the router, use tcpdump to see the packet path:
+ルーター側では、tcpdump でパケットの経路を確認します。
 
 ```sh
 sudo tcpdump -ni ens19 ether host 18:ec:e7:33:12:6c
 sudo nft list chain inet routerd_filter forward
 ```
 
-The nftables counters on the generated `ClientPolicy` rules should increment
-when private destinations are denied.
+プライベート宛てが拒否されると、生成された `ClientPolicy` 規則のカウンターが増えます。
 
-## Troubleshooting
+## トラブルシューティング
 
-### MAC address does not match
+### MAC アドレスが一致しない
 
-Check the MAC address seen by the router:
+ルーターから見えている MAC アドレスを確認します。
 
 ```sh
 ip neigh show dev ens19
 sudo tcpdump -eni ens19
 ```
 
-Wireless clients often use different MAC addresses per SSID. Phones and laptops
-may also use private randomized MAC addresses. Use the address visible on the
-router-facing LAN, not the hardware address printed on the device.
+無線端末は、SSID ごとに異なる MAC アドレスを使うことがあります。
+スマートフォンやノート PC は、ランダム MAC アドレスを使うこともあります。
+端末に印字された MAC アドレスではなく、ルーター側の LAN で見えているアドレスを使ってください。
 
-### Guest can still reach private networks
+### ゲスト端末からプライベートネットワークに届いてしまう
 
-Check these points:
+次を確認してください。
 
-- The policy references the correct `Interface`.
-- The packet enters through that interface.
-- `routerd apply` installed the current nftables table.
-- `guestEgressAllow` does not contain a broad private prefix.
-- Another path, such as a VPN client on the endpoint itself, is not bypassing
-  the router.
+- 方針が正しい `Interface` を参照している。
+- パケットがそのインターフェースから入っている。
+- `routerd apply` で最新の nftables テーブルが反映されている。
+- `guestEgressAllow` に広いプライベートプレフィックスが入っていない。
+- 端末側の VPN クライアントなど、ルーターを迂回する経路がない。
 
-### Guest cannot reach the internet
+### ゲスト端末からインターネットに出られない
 
-`ClientPolicy` only narrows private and self traffic. Internet failure usually
-comes from route policy, NAT44, DS-Lite, DNS, or IP forwarding. Check:
+`ClientPolicy` は、プライベート宛てと self 宛てを絞ります。
+インターネットへの疎通が失敗する場合は、経路方針、NAT44、DS-Lite、DNS、IP forwarding を確認します。
 
 ```sh
 routerctl status
@@ -383,52 +366,45 @@ sysctl net.ipv4.ip_forward
 sudo nft list table ip routerd_nat
 ```
 
-### guestServices ordering
+### guestServices の役割
 
-`guestServices` only controls access to local router services. It does not
-permit forwarding to private subnets. Forwarding exceptions belong in
-`guestEgressAllow`.
+`guestServices` は、ルーター自身のローカルサービスへのアクセスだけを制御します。
+プライベートサブネットへの転送許可ではありません。
+転送の例外は `guestEgressAllow` で表します。
 
-## Security considerations
+## セキュリティ上の注意
 
-MAC-based isolation is useful, but it is not a cryptographic identity system.
-A malicious user can spoof a trusted MAC address if they have enough control
-over their device.
+MAC アドレスによる隔離は実用的ですが、暗号学的な識別ではありません。
+悪意ある利用者は、端末を操作できれば信頼済みの MAC アドレスを偽装できます。
 
-Use `ClientPolicy` as a practical home and small-office control, not as the
-only boundary for hostile users. Stronger designs include:
+`ClientPolicy` は、家庭や小規模オフィス向けの実用的な制御として使ってください。
+敵対的な利用者に対する唯一の境界にはしないでください。
+より強い設計には、次があります。
 
-- separate VLANs or SSIDs;
-- WPA3 Enterprise or 802.1X;
-- switch port isolation;
-- per-device credentials;
-- a dedicated guest bridge or VRF.
+- VLAN または SSID の分離。
+- WPA3 Enterprise または 802.1X。
+- スイッチのポート分離。
+- 端末ごとの資格情報。
+- 専用のゲスト bridge または VRF。
 
-`ClientPolicy` is still valuable with those designs because it documents the
-intended classification in routerd's resource model and gives consistent
-firewall rendering.
+これらと組み合わせても、`ClientPolicy` は有用です。
+端末分類の意図を routerd のリソースモデルに残せるためです。
 
-## OS support
+## OS 対応
 
-Linux nftables is supported.
+Linux の nftables に対応しています。
 
-FreeBSD pf does not provide the same MAC-based routed filtering model in the
-path routerd uses for `FirewallZone` and `FirewallRule`. routerd therefore
-returns an explicit unsupported error for `ClientPolicy` on FreeBSD instead of
-silently applying a weaker policy.
+FreeBSD の pf は、routerd が `FirewallZone` と `FirewallRule` で使う routed フィルタリング経路に、同じ MAC ベースの分類モデルを持ちません。
+そのため routerd は、FreeBSD では `ClientPolicy` を明示的に未対応として扱います。
+効果のない no-op の方針として、黙って適用することはありません。
 
-Possible future FreeBSD designs include bridge-level filtering or a dedicated
-layer-2 segmentation resource, but those should be designed separately because
-they are not equivalent to routed pf rules.
+将来の FreeBSD 対応としては、bridge 階層のフィルターや、専用のレイヤー 2 分離リソースが考えられます。
+ただし、routed な pf 規則とは等価ではないため、別の設計として扱うべきです。
 
-## Related resources
+## 関連リソース
 
-- `FirewallZone`: assigns the interface to `trust`, `untrust`, or `mgmt`.
-- `FirewallPolicy`: enables deny logging and shared firewall behavior.
-- `FirewallRule`: expresses exceptions that are not tied to MAC
-  classification.
-- `DHCPv4Reservation`: gives a classified device a stable IPv4 address and
-  hostname.
-- Tunnel-derived TCP MSS clamping still applies to forwarded guest traffic
-  when the firewall zones and tunnel path match. Guest isolation does not
-  bypass MSS clamping.
+- `FirewallZone`: インターフェースを `trust`、`untrust`、`mgmt` へ割り当てます。
+- `FirewallPolicy`: 拒否ログなどの共通動作を有効にします。
+- `FirewallRule`: MAC 分類に紐付かない例外を表します。
+- `DHCPv4Reservation`: 分類済みの端末へ、安定した IPv4 アドレスとホスト名を与えます。
+- トンネルから自動導出される TCP MSS clamp は、ファイアウォールのゾーンとトンネル経路が一致するゲスト転送にも適用されます。ゲスト隔離が MSS clamp を迂回することはありません。

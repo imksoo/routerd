@@ -1,16 +1,16 @@
 ---
-title: Telemetry export to an OTLP collector
+title: OTLP コレクターへのテレメトリ送出
 sidebar_position: 110
 ---
 
-# Telemetry export to an OTLP collector
+# OTLP コレクターへのテレメトリ送出
 
-This example sends routerd telemetry to an OpenTelemetry collector. It is useful
-when testing long-running behavior, health checks, DPI, or apply latency.
+routerd のテレメトリを OpenTelemetry コレクターへ送る例です。
+長時間運転、health check、DPI、apply のレイテンシーの観測に使えます。
 
-The complete, validated YAML is in `examples/telemetry-export.yaml`.
+完全な YAML は `examples/telemetry-export.yaml` にあります。
 
-## Topology
+## 構成図
 
 ```mermaid
 flowchart LR
@@ -21,32 +21,24 @@ flowchart LR
   router --> collector --> backend
 ```
 
-## Diagram map
+## 図の対応表
 
-| No. | Meaning | Main resources |
+| 番号 | 意味 | 主な resource |
 | --- | --- | --- |
-| [1] | routerd process producing logs, metrics, and traces. | `Telemetry/otlp` |
-| [2] | OTLP collector endpoint. | `Telemetry.spec.otlp.endpoint` |
-| [3] | Backend selected by the collector configuration. | External to routerd |
+| [1] | logs、metrics、traces を出す routerd プロセス。 | `Telemetry/otlp` |
+| [2] | OTLP コレクターの endpoint。 | `Telemetry.spec.otlp.endpoint` |
+| [3] | コレクターが転送する先のバックエンド。 | routerd 管理外 |
 
-## What this manages
-
-| Area | routerd resources |
-| --- | --- |
-| Telemetry sink | `Telemetry/otlp` |
-| Service identity | `serviceNamespace`, `attributes` |
-| Signals | `logs`, `metrics`, `traces` |
-
-## Key config
+## 要点
 
 ```yaml
-# [1] Enable routerd telemetry export.
+# [1] routerd telemetry export を有効にする。
 - apiVersion: observability.routerd.net/v1alpha1
   kind: Telemetry
   metadata:
     name: otlp
   spec:
-    # [2] OTLP collector endpoint.
+    # [2] OTLP collector のエンドポイント。
     otlp:
       endpoint: http://collector.example.internal:4317
       insecure: true
@@ -60,12 +52,12 @@ flowchart LR
       - traces
 ```
 
-## Checks
+## 確認
 
 ```bash
 routerd validate --config examples/telemetry-export.yaml
 routerctl describe Telemetry/otlp
 ```
 
-Confirm data arrival from the collector or backend side. Keep the endpoint on a
-trusted management or observability network.
+コレクターやバックエンド側でデータが届いていることを確認します。
+endpoint は信頼できる管理網または観測用ネットワークに置いてください。

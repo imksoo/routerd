@@ -1,11 +1,11 @@
-# IPv6 dual-stack BGP and VIPs
+# IPv6 デュアルスタック BGP と VIP
 
-routerd can run GoBGP IPv4 and IPv6 unicast BGP through `routerd-bgp` for the same `BGPRouter`.
-Keep `spec.importPolicy.allowedPrefixes`, `spec.exportPolicy.allowedPrefixes`,
-and `redistribute.*.allowedPrefixes` as mixed IPv4/IPv6 lists; routerd maps
-prefixes to typed GoBGP address families directly.
+routerd は、1 つの `BGPRouter` から `routerd-bgp` GoBGP の IPv4 unicast と IPv6 unicast を
+同時に扱えます。`spec.importPolicy.allowedPrefixes`、
+`spec.exportPolicy.allowedPrefixes`、`redistribute.*.allowedPrefixes` は
+IPv4/IPv6 が混在したままでかまいません。routerd が、型付きの GoBGP address family へ直接マッピングします。
 
-Use IPv6 peer addresses directly in `BGPPeer.spec.peers`:
+`BGPPeer.spec.peers` には、IPv6 のピアアドレスをそのまま指定します。
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
@@ -20,11 +20,11 @@ spec:
     - fd00:70::21
 ```
 
-For API or service VIPs, use `VirtualAddress` with `spec.family: ipv4` and
-`spec.family: ipv6` as parallel resources. IPv4 VIPs render keepalived
-VRRPv2-style host prefixes, while IPv6 VIPs render keepalived VRRPv3 with
-`family inet6`. On FreeBSD both
-families use CARP aliases on the parent interface.
+API VIP やサービス VIP は、`VirtualAddress` に `spec.family: ipv4` と
+`spec.family: ipv6` を指定した並列のリソースとして宣言します。IPv4 VIP は
+従来どおり keepalived のホストプレフィックスとして生成し、IPv6 VIP は keepalived
+VRRPv3 の `family inet6` として生成します。FreeBSD では、
+どちらも親インターフェースの CARP エイリアスとして扱います。
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
@@ -44,10 +44,10 @@ spec:
       - fd00:70::3
 ```
 
-When both VIP resources use the same `hostname`, a matching `DNSResolver` and
-served `DNSZone` automatically receive A and AAAA records. The firewall renderer
-also opens BGP TCP/179 and both IPv4 and IPv6 VRRP protocol 112 control traffic
-for routerd-managed resources.
+IPv4/IPv6 の VIP リソースが同じ `hostname` を持ち、対応する `DNSResolver` と
+`DNSZone` がある場合は、A レコードと AAAA レコードが自動で追加されます。ファイアウォールの
+生成では、routerd 管理リソースに必要な BGP の TCP/179 と、IPv4/IPv6 VRRP の protocol
+112 による制御トラフィックも開きます。
 
-See `examples/dualstack-bgp.yaml` for the BGP-only shape and
-`examples/k8s-api-vip-dualstack.yaml` for a Kubernetes API VIP pattern.
+`examples/dualstack-bgp.yaml` は BGP 単体の構成例、
+`examples/k8s-api-vip-dualstack.yaml` は Kubernetes API VIP の構成例です。

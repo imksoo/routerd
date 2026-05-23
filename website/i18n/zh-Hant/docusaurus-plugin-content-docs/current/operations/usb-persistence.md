@@ -4,13 +4,16 @@ title: USB 持久化
 
 # USB 持久化
 
-routerd live ISO 可以作為無碟路由器執行。在這種模式下，正在執行的系統保存在 RAM 中，只有選定的路由器狀態會保存到 USB 裝置。
+routerd 的 Live ISO 可作為無碟路由器運作。
+在此模式下，執行中的系統放置於 RAM，
+只有選定的路由器狀態才會儲存至 USB 裝置。
 
-這適合從可移動媒體啟動的 mini PC。它不需要永久內建磁碟，也能在重新啟動後保留路由器設定。
+這適合從可移動媒體啟動的 mini PC。
+不需要內建磁碟，重新開機後仍可保留設定。
 
-## 佈局
+## 目錄配置
 
-啟用 USB 持久化後，routerd 會在選定分割區上使用以下佈局。
+啟用 USB 持久化後，routerd 會在選定分割區上建立以下配置。
 
 ```text
 routerd/
@@ -22,49 +25,69 @@ routerd/
   state/
 ```
 
-啟動時，`/usr/share/routerd/live-persistence.sh init` 會嘗試尋找 config media。它先檢查記錄過的裝置，再檢查 kernel command line 上的 `routerd.usb=`，最後尋找標籤為 `ROUTERD_CONFIG` 或 `ROUTERD` 的裝置。可寫入的分割區會用於 persistence。Proxmox `media=cdrom` config ISO 這類 read-only ISO9660/UDF CD-ROM media 只用於 config import，flush 會停用。
+開機時，`/usr/share/routerd/live-persistence.sh init` 會搜尋設定媒體。
+首先確認已記錄的裝置，
+接著確認核心命令列的 `routerd.usb=`，
+最後搜尋標籤為 `ROUTERD_CONFIG` 或 `ROUTERD` 的裝置。
+可寫入的分割區用於持久化。Proxmox 的 `media=cdrom` 設定 ISO 等唯讀的 ISO9660/UDF CD-ROM 媒體，
+僅作為設定匯入用途，寫出（flush）功能會停用。
 
-選中的分割區會掛載到 `/media/routerd-usb`。如果存在已保存的 `/media/routerd-usb/routerd/router.yaml`，它會被複製到 `/usr/local/etc/routerd/router.yaml`，然後由 live ISO 的啟動流程套用。如果沒有找到已保存設定，且 `/usr/local/etc/routerd/router.yaml` 也不存在，ISO 會啟動設定精靈。
+選定的分割區掛載至 `/media/routerd-usb`。
+輔助程式會優先搜尋主機專屬設定，再搜尋通用設定。
+
+- `/media/routerd-usb/routerd/hosts/<hostname>.yaml`
+- `/media/routerd-usb/routerd/hosts/<mac>.yaml`（MAC 可使用冒號分隔或小寫無分隔格式）
+- `/media/routerd-usb/routerd/router.yaml`
+
+找到設定後，複製至 `/usr/local/etc/routerd/router.yaml`，
+接著由 Live ISO 的開機程序套用設定。為方便驗收測試與障礙排查，
+來源路徑與 SHA256 會分別儲存於 `/run/routerd/live-config-source` 與 `/run/routerd/live-config-sha256`。
+若無已儲存的設定，且 `/usr/local/etc/routerd/router.yaml` 也不存在，則啟動設定精靈。
 
 ## 檔案系統
 
-live helper 使用 `blkid` 偵測檔案系統，並根據檔案系統選擇 mount option。
+Live 輔助程式使用 `blkid` 判斷檔案系統，並依判斷結果切換掛載選項。
 
-| 檔案系統 | 預設 mount option | 說明 |
+| 檔案系統 | 預設掛載選項 | 備註 |
 | --- | --- | --- |
 | `ext4` | `rw,async,noatime` | 持久化路由器用途的首選。 |
-| `vfat` | `rw,async,noatime,utf8,shortname=mixed` | 適合簡單 USB 媒體。沒有 Unix 權限。 |
-| `exfat` | `rw,async,noatime` | 適合與桌面作業系統共用的大容量 USB 媒體。 |
-| `iso9660` / `udf` | `ro,noatime` | read-only config import media。persistence flush 會停用。 |
+| `vfat` | `rw,async,noatime,utf8,shortname=mixed` | 適合一般 USB 隨身碟。無 Unix 權限。 |
+| `exfat` | `rw,async,noatime` | 適合與桌面作業系統共用的大容量 USB 隨身碟。 |
+| `iso9660` / `udf` | `ro,noatime` | 唯讀設定匯入媒體。持久化寫出停用。 |
 
-FAT32 在 `blkid` 輸出中通常顯示為 `vfat`。live helper 不會先按 FAT32 硬編碼掛載，而是先偵測檔案系統類型，再選擇對應的掛載選項。
+FAT32 在 `blkid` 輸出中通常顯示為 `vfat`。
+Live 輔助程式不會直接以 FAT32 硬式編碼掛載，
+而是先判斷檔案系統類型，再選擇對應的選項。
 
-預設使用 `async,noatime`，因為它可以減少對 USB flash 的寫入壓力。除錯或需要更保守寫入行為時，可以傳入以下 kernel parameter。
+預設使用 `async,noatime`，
+以減少對 USB 快閃記憶體的寫入次數。
+若優先考量除錯或保守的寫入確認，請指定以下核心參數。
 
 ```text
 routerd.usb_mount=sync
 ```
 
-也可以用 `routerd.usb_mount=async` 明確指定預設行為。
+若要明確指定預設值，使用 `routerd.usb_mount=async`。
 
 ## 日誌緩衝
 
-執行時日誌先緩存在 tmpfs 中。
+執行時日誌暫存於 tmpfs。
 
 ```text
 /run/routerd/logs
 ```
 
-預設緩衝上限是 100 MiB。超過上限時，會先刪除最舊的檔案。
+預設上限為 100 MiB。
+超過上限時，從最舊的檔案開始刪除。
 
-如果啟用每日寫出任務，`/etc/periodic/daily/routerd-usb-flush` 會把以下內容複製到 USB。
+啟用每日寫出工作後，`/etc/periodic/daily/routerd-usb-flush` 會將以下內容複製至 USB。
 
 - 目前的 `router.yaml`
 - `/var/lib/routerd` 的狀態封存
 - `/var/db/routerd` 的狀態封存
 - `/run/routerd/logs` 的壓縮日誌封存
 
-也可以手動寫出。
+也可手動執行寫出。
 
 ```sh
 /usr/share/routerd/live-persistence.sh flush
@@ -72,24 +95,28 @@ routerd.usb_mount=sync
 
 ## 安全移除
 
-不要在持久化 mount 仍然有效時拔出 USB 裝置。請先讓 live helper 寫出並卸載。
+持久化掛載仍有效時，請勿直接拔除 USB 裝置。
+請先透過 Live 輔助程式執行寫出與卸載。
 
 ```sh
 /usr/share/routerd/live-persistence.sh flush
 /usr/share/routerd/live-persistence.sh umount
 ```
 
-可以用以下命令查看目前狀態。
+目前狀態可透過以下指令確認。
 
 ```sh
 /usr/share/routerd/live-persistence.sh status
 ```
 
-如果裝置被意外拔出，routerd 會繼續從 RAM 執行。live helper 會記錄警告，並在裝置重新插入和 mount 前，不再把 USB 路徑視為持久儲存。
+即使 USB 裝置意外拔除，routerd 仍會繼續在 RAM 上運作。
+Live 輔助程式會輸出警告，在裝置重新插入並掛載前，
+不再將 USB 路徑作為持久儲存目的地。
 
 ## Alpine lbu
 
-ISO 包含 Alpine `lbu`。live helper 會把 routerd 路徑加入 lbu include list。
+ISO 內含 Alpine 的 `lbu`。
+Live 輔助程式會將 routerd 的路徑加入 lbu 的 include 清單。
 
 ```text
 /usr/local/etc/routerd
@@ -98,9 +125,10 @@ ISO 包含 Alpine `lbu`。live helper 會把 routerd 路徑加入 lbu include li
 /etc/periodic/daily/routerd-usb-flush
 ```
 
-保存設定或寫出狀態後，helper 會執行 `lbu commit`。通常不需要直接執行 `lbu`。
+儲存設定或寫出狀態後，輔助程式會執行 `lbu commit`。
+一般情況下不需要直接執行 `lbu`。
 
-## 常用命令
+## 常用指令
 
 列出候選裝置。
 
@@ -108,13 +136,14 @@ ISO 包含 Alpine `lbu`。live helper 會把 routerd 路徑加入 lbu include li
 /usr/share/routerd/live-persistence.sh list-devices
 ```
 
-把設定保存到 USB。
+將設定儲存至 USB。
 
 ```sh
 /usr/share/routerd/live-persistence.sh save-config /dev/sdb1 /usr/local/etc/routerd/router.yaml yes 100M
 ```
 
-還原會在啟動時自動執行。如果需要從 shell 強制重新執行啟動邏輯，可以執行：
+還原會在開機時自動執行。
+若需從 shell 重新執行開機程序，請使用以下指令。
 
 ```sh
 /usr/share/routerd/live-persistence.sh init

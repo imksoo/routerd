@@ -1,106 +1,105 @@
 ---
-title: Hardware compatibility
+title: ハードウェア互換性
 ---
 
-# Hardware compatibility
+# ハードウェア互換性
 
-routerd can run on any supported OS that exposes the needed kernel and userland
-features. The practical question is whether the hardware has enough network
-interfaces, CPU, memory, and storage endurance for router duty.
+routerd は、必要なカーネル機能とユーザーランド機能を持つ対応 OS の上で動きます。
+実用上の論点は、ルーターとして十分なネットワークインターフェース、CPU、
+メモリー、ストレージ耐久性があるかどうかです。
 
-## Recommended classes
+## 推奨クラス
 
-| Class | Fit | Notes |
+| 種別 | 適性 | メモ |
 | --- | --- | --- |
-| Intel NUC | Good lab router | Usually reliable, but many models have only one Ethernet port. Use USB Ethernet or VLAN trunks with care. |
-| Intel N100 mini PC | Strong home router | Good performance per watt. Prefer models with Intel i226/i225 NICs and enough cooling. |
-| Raspberry Pi 5 | Useful edge or demo router | Works best with a high-quality power supply and supported USB/NVMe storage. Network throughput depends on adapters. |
+| Intel NUC | ラボルーター向き | 信頼性は高い傾向です。ただし Ethernet が 1 ポートのモデルが多いため、USB Ethernet や VLAN trunk は慎重に使います。 |
+| Intel N100 mini PC | 家庭用ルーター向き | 消費電力あたりの性能が高いです。Intel i226/i225 NIC と十分な冷却を備えたモデルを選びます。 |
+| Raspberry Pi 5 | edge やデモ向き | 高品質な電源と、対応する USB/NVMe ストレージが重要です。スループットはアダプターに依存します。 |
 
-## Candidate hardware
+## 候補ハードウェア
 
-This list is a starting point. Unless the status says "verified", treat it as
-an expected fit and validate the NICs, MTU, and reboot convergence before using
-it as a router.
+この表は出発点です。
+状態が「検証済み」でないものは、期待される適性として扱ってください。
+ルーターとして使う前に、NIC、MTU、再起動後の収束を確認します。
 
-| Hardware | Expected fit | Status | Notes |
+| ハードウェア | 期待する用途 | 状態 | メモ |
 | --- | --- | --- | --- |
-| Intel NUC with USB Ethernet | Proxmox lab router or live ISO demo | Expected | Prefer known-good USB Ethernet adapters. Keep management on a separate VLAN or interface while testing. |
-| N100 4-port 2.5GbE mini PC | Home router, DS-Lite, PPPoE fallback, VPN overlay | Expected | The best first target for a diskless routerd appliance. Choose Intel i226/i225 NIC models and check cooling. |
-| N100 6-port 2.5GbE mini PC | Multi-LAN home lab, guest network, management separation | Expected | Useful when WAN, LAN, guest, and management should be physical ports. Validate BIOS power recovery. |
-| Raspberry Pi 5 with USB or PCIe NIC | Demo, edge router, low-power lab | Expected | Use a strong power supply. Throughput depends heavily on the NIC and storage path. |
-| Old thin client with Intel NIC | Secondary router or lab node | Expected | Good for testing, but check AES, thermal behavior, and storage health. |
-| Virtual machine on Proxmox | SDN/VNET routing, CI-style lab, integration test | Verified in lab | routerd is especially useful when the same resources later move to a physical mini PC. |
+| USB Ethernet 付き Intel NUC | Proxmox ラボルーター、ライブ ISO デモ | 期待動作 | 実績のある USB Ethernet アダプターを選びます。試験中は管理経路を別の VLAN または別の interface に分けます。 |
+| N100 4 ポート 2.5GbE mini PC | 家庭用ルーター、DS-Lite、PPPoE fallback、VPN overlay | 期待動作 | ディスクレスな routerd アプライアンスの最有力候補です。Intel i226/i225 NIC と冷却を確認します。 |
+| N100 6 ポート 2.5GbE mini PC | 複数 LAN、guest network、管理経路分離 | 期待動作 | WAN、LAN、guest、management を物理ポートで分けたい場合に向きます。BIOS の電源復帰設定も確認します。 |
+| USB または PCIe NIC 付き Raspberry Pi 5 | デモ、edge router、省電力ラボ | 期待動作 | 強力な電源が必要です。スループットは NIC とストレージ経路に強く依存します。 |
+| Intel NIC 搭載の古い thin client | 予備ルーター、ラボノード | 期待動作 | 試験には便利です。AES、発熱、ストレージの状態を確認します。 |
+| Proxmox 上の仮想マシン | SDN/VNET routing、CI 風ラボ、統合試験 | ラボ検証済み | 同じ resource をあとで物理 mini PC へ移せる点が routerd の強みです。 |
 
-## CPU and memory
+## CPU とメモリー
 
-For a normal home or small office router:
+家庭または小規模オフィスでは、次を目安にします。
 
-- 2 CPU cores are enough for basic routing, DHCP, DNS, NAT, and Web Console.
-- 4 CPU cores give more room for encrypted DNS, OpenTelemetry, and log indexing.
-- 1 GiB RAM is a practical lower bound.
-- 2 GiB or more is recommended for the live ISO and log buffering.
+- 基本的な経路制御、DHCP、DNS、NAT、Web 管理画面なら 2 コアで足ります。
+- 暗号化 DNS、OpenTelemetry、ログ保存を使うなら 4 コアが扱いやすいです。
+- 1 GiB RAM が実用下限です。
+- ライブ ISO とログバッファーを使う場合は 2 GiB 以上を推奨します。
 
-## Network interfaces
+## ネットワークインターフェース
 
-Prefer at least two physical interfaces:
+物理インターフェースは 2 つ以上を推奨します。
 
-- WAN or untrust
-- LAN or trust
+- WAN または untrust
+- LAN または trust
 
-A third management interface is useful when testing firewall changes. It lets
-you keep SSH and Web Console access independent from WAN and LAN policy.
+3 つ目の管理インターフェースがあると、ファイアウォール変更の試験が安全になります。
+SSH と Web 管理画面を WAN/LAN policy から分離できます。
 
-Single-NIC VLAN routers are possible, but they raise the risk of management
-lockout during early setup. Validate the plan before applying.
+単一 NIC の VLAN ルーターも構成できます。
+ただし、初期設定時に管理経路を失うリスクが上がります。
+反映前に必ず plan を確認してください。
 
-## Storage
+## ストレージ
 
-For installed routers, use SSD or NVMe storage when possible. For diskless
-mini PCs, use the live ISO with USB persistence:
+通常インストールでは SSD または NVMe を推奨します。
+ディスクレス mini PC では、USB 永続化付きライブ ISO を使えます。
 
-- configuration is saved to the USB device
-- logs are buffered under `/run/routerd/logs` on tmpfs
-- a daily flush job can copy compressed logs and state snapshots to USB
+- 設定を USB デバイスへ保存します。
+- ログは `/run/routerd/logs` の tmpfs に一時保存します。
+- 1 日 1 回、圧縮ログと状態スナップショットを USB へ書き出せます。
 
-This reduces write pressure on low-end flash media.
+これにより、低価格な flash media への書き込みを減らせます。
 
-## Live ISO and USB persistence
+## ライブ ISO と USB 永続化
 
-The live ISO is meant for both quick evaluation and diskless operation:
+ライブ ISO は、短時間の評価とディスクレス運用の両方を想定しています。
 
-- boot from ISO
-- run the text wizard on the video console or serial console
-- save `router.yaml` and selected state to USB
-- buffer logs on tmpfs
-- flush compressed log and state snapshots to USB once per day
+- ISO から起動します。
+- 画面またはシリアルコンソールでテキストウィザードを実行します。
+- `router.yaml` と選択した状態を USB に保存します。
+- ログは tmpfs に一時保存します。
+- 1 日 1 回、圧縮ログと状態スナップショットを USB へ書き出します。
 
-Without USB persistence, the live ISO is an ephemeral demo router. With USB
-persistence, the same mini PC can reboot into the saved router configuration.
+USB 永続化がない場合、ライブ ISO は一時的なデモルーターとして動きます。
+USB 永続化がある場合、同じ mini PC が保存済み設定で再起動します。
 
-## NIC notes
+## NIC メモ
 
-| NIC type | Recommendation |
+| NIC 種別 | 推奨 |
 | --- | --- |
-| Intel i210/i211 | Conservative and reliable. |
-| Intel i225/i226 | Good 2.5GbE choice. Keep firmware and OS drivers current. |
-| Realtek 2.5GbE | Often works, but test under load before relying on it. |
-| USB Ethernet | Useful for demos and NUCs. Avoid no-name adapters for production routers. |
+| Intel i210/i211 | 堅実で信頼性の高い選択です。 |
+| Intel i225/i226 | 2.5GbE では良い選択です。firmware と OS driver は新しく保ちます。 |
+| Realtek 2.5GbE | 動くことは多いですが、本番で使う前に負荷試験をしてください。 |
+| USB Ethernet | デモや NUC では便利です。本番ルーターでは無名アダプターを避けます。 |
 
-## Platform notes
+## プラットフォームメモ
 
-Ubuntu Server is the primary target. NixOS and FreeBSD are supported through
-their platform-specific renderers and service integrations. Check
-[Platforms](./platforms) before relying on a feature on a non-Linux host.
+Ubuntu Server が主対象です。
+NixOS と FreeBSD は、プラットフォーム固有の renderer とサービス連携で対応します。
+Linux 以外で特定の機能に依存する場合は、[プラットフォーム](./platforms) を確認してください。
 
-## Validation checklist
+## 検証チェックリスト
 
-Before putting hardware into service:
-
-1. Boot the target OS or live ISO.
-2. Confirm all NICs have stable names.
-3. Run `routerd validate` and `routerd plan`.
-4. Apply with management access on a separate path when possible.
-5. Check DHCP, DNS, NAT, firewall, and route policy.
-6. Run a throughput test.
-7. Watch CPU temperature and packet drops.
-8. Reboot and confirm the router converges without manual commands.
+1. 対象 OS またはライブ ISO を起動します。
+2. すべての NIC 名が安定していることを確認します。
+3. `routerd validate` と `routerd plan` を実行します。
+4. 可能なら管理経路を分離してから反映します。
+5. DHCP、DNS、NAT、firewall、route policy を確認します。
+6. スループット試験を実行します。
+7. CPU 温度と packet drop を確認します。
+8. 再起動後、手動コマンドなしで収束することを確認します。

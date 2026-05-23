@@ -1,35 +1,37 @@
 ---
-title: DHCPv6-PD and AFTR on NTT NGN-style access networks
+title: NTT NGN 系アクセス網での DHCPv6-PD と AFTR
 ---
 
-# DHCPv6-PD and AFTR on NTT NGN-style access networks
+# NTT NGN 系アクセス網での DHCPv6-PD と AFTR
 
-Field notes for routers placed behind a residential gateway that exposes an NTT NGN-style (Japan IPv6 fibre) IPv6 access network. The same patterns apply to other carriers that combine DHCPv6-PD with a DS-Lite path to an in-network AFTR.
+NTT NGN (日本の IPv6 光回線) のような IPv6 アクセス網につながる HGW 配下で routerd を使う場合のフィールドノートです。
+DHCPv6-PD と、網内 AFTR への DS-Lite を組み合わせる他の事業者にも、同じパターンが適用できます。
 
 ## DHCPv6-PD
 
-`routerd-dhcpv6-client` obtains DHCPv6-PD reliably behind these residential gateways. There is no need for aggressive retries or unusual acquisition tricks; standard solicit / advertise / request / renew is enough.
+`routerd-dhcpv6-client` は、これらの HGW 配下で安定して DHCPv6-PD を取得できます。
+過剰な再送や特殊な取得手順は不要で、通常の solicit / advertise / request / renew で十分です。
 
-What we have observed in steady state:
+定常状態では、次のように観測できます。
 
-- Multiple routers behind the same RGW receive distinct prefixes (no collision).
-- T1 / T2 renewals succeed indefinitely.
-- The lease survives daemon restarts via `lease.json`.
+- 同じ HGW 配下の複数のルーターが、互いに重ならないプレフィックスを取得します。
+- T1 / T2 のタイミングで、Renew が継続して成功します。
+- デーモンを再起動しても、`lease.json` からリースが復元されます。
 
-## AFTR may not be returned in DHCPv6 information-request
+## DHCPv6 の information-request で AFTR が返らない場合がある
 
-For some RGW / ONU combinations, DHCPv6 information-request returns DNS, SNTP, and domain-search options but **not** the AFTR option. An empty AFTR field is normal in those cases.
+一部の HGW / ONU の構成では、DHCPv6 の information-request で DNS、SNTP、domain-search は返るものの、AFTR オプションは返りません。AFTR が空であること自体は正常です。
 
-For DS-Lite, supply the AFTR explicitly with one of:
+この場合、DS-Lite には次のいずれかを明示します。
 
-- `DSLiteTunnel.spec.aftrIPv6` — pin the AFTR's IPv6 address directly.
-- `DSLiteTunnel.spec.aftrFQDN` — let routerd resolve the FQDN through a known resolver.
+- `DSLiteTunnel.spec.aftrIPv6` — AFTR の IPv6 アドレスを直接固定します。
+- `DSLiteTunnel.spec.aftrFQDN` — FQDN を解決します。
 
-## AFTR FQDN often needs conditional DNS forwarding
+## AFTR の FQDN は条件付き DNS 転送が必要なことが多い
 
-Carrier-managed AFTR FQDNs (for example `gw.transix.jp`) typically resolve only through the carrier's own DNS servers. Public resolvers may answer with NXDOMAIN.
+事業者が管理する AFTR の FQDN (例: `gw.transix.jp`) は、事業者内の DNS でしか解けないことが多いです。公衆のリゾルバは NXDOMAIN を返します。
 
-In routerd, express that with a `forward` source on `DNSResolver`:
+routerd では、`DNSResolver` の `forward` source で表現します。
 
 ```yaml
 - apiVersion: net.routerd.net/v1alpha1
@@ -49,18 +51,20 @@ In routerd, express that with a `forward` source on `DNSResolver`:
           - udp://[2404:8e00::feed:101]:53
 ```
 
-The DS-Lite controller resolves the AFTR FQDN through `routerd-dns-resolver`, not through the system stub resolver.
+DS-Lite コントローラーは、AFTR の FQDN を `routerd-dns-resolver` 経由で解決します。システムの stub resolver は経由しません。
 
-## DS-Lite end-to-end checklist
+## DS-Lite の end-to-end チェックリスト
 
-When a DS-Lite tunnel is fully working you should see:
+DS-Lite が正常に動作している場合は、次のように見えます。
 
-- The conditional forwarder resolves the AFTR FQDN.
-- An `ip6tnl` tunnel device exists.
-- The IPv4 default route points into the tunnel.
-- nftables NAT44 is in place for outbound IPv4 from the LAN.
-- Outbound IPv4 (HTTP, ICMP) succeeds from a LAN client.
+- 条件付き転送が、AFTR の FQDN を解決できる。
+- `ip6tnl` のトンネルデバイスが存在する。
+- IPv4 のデフォルト経路がトンネルへ向く。
+- nftables の NAT44 が、LAN から外向きの IPv4 用に設定されている。
+- LAN クライアントから、外向きの IPv4 (HTTP / ICMP) が成功する。
 
-## Scope of these notes
+## 本ノートの位置づけ
 
-These observations come from routerd evaluation labs that exercise the same RGW model the carrier ships. They are intended as guidance for similar deployments, not as a guarantee for every Japanese ISP plan or every RGW firmware revision. Treat them as a starting point for your own validation.
+これらは、routerd の評価環境で、事業者が出荷する HGW を使って得た観測結果です。
+類似の配備に向けたガイダンスとして利用できますが、国内のすべての ISP プランや HGW のファームウェアバージョンに対する保証ではありません。
+ご自身の検証の出発点として扱ってください。

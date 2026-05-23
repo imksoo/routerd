@@ -1,47 +1,48 @@
 ---
-title: Host inventory
+title: ホストインベントリ
 slug: /operations/inventory
 ---
 
-# Host inventory
+# ホストインベントリ
 
-routerd inspects the host's operating system, available commands, and network features. This inventory is used by the renderers and the apply path to make OS-specific decisions explicit instead of failing at runtime.
+routerd は、ホストの OS、利用できるコマンド、ネットワーク機能を調べます。
+このインベントリは、レンダラーと適用処理が、OS 固有の判断を検証または計画の段階で明示するために使います。
 
-## What routerd checks
+## routerd が確認する項目
 
-- Operating system and release
-- Service-management scheme (systemd, rc.d, NixOS modules)
-- Available commands (iproute2, nftables, conntrack, dnsmasq, radvd, pppd, WireGuard, strongSwan, etc.)
-- Kernel features (IPv6, VRF, VXLAN, WireGuard)
-- Whether `/run/routerd` and `/var/lib/routerd` are usable
+- OS とリリース
+- サービス管理方式（systemd、rc.d、NixOS module）
+- 利用できるコマンド（iproute2、nftables、conntrack、dnsmasq、radvd、pppd、WireGuard、strongSwan など）
+- カーネル機能（IPv6、VRF、VXLAN、WireGuard）
+- `/run/routerd` と `/var/lib/routerd` の利用可否
 
-## How it informs behaviour
+## 振る舞いへの影響
 
-- On Ubuntu, routerd targets systemd and the Linux networking stack.
-- On NixOS, declarative generation takes priority over runtime mutation.
-- On FreeBSD, routerd uses `daemon(8)` and rc.d for service control.
+- Ubuntu では、systemd と Linux ネットワークスタックを対象にします。
+- NixOS では、実行時の変更よりも宣言型の生成を優先します。
+- FreeBSD では、`daemon(8)` と rc.d でサービスを制御します。
 
-If a configuration depends on a feature the host does not provide, routerd reports the gap during validation or planning rather than failing halfway through `apply`.
+ホストが提供しない機能に依存する設定は、`apply` の途中で失敗するのではなく、検証または計画の段階で明示します。
 
-## Common commands routerd looks for
+## routerd が探す代表的なコマンド
 
-| Command | Purpose |
+| コマンド | 用途 |
 | --- | --- |
-| `ip`, `bridge` | Addresses, routes, DS-Lite, VRF, VXLAN |
-| `nft` | NAT, firewall, route marks |
-| `dnsmasq` | DHCPv4, DHCPv6, RA |
-| `conntrack` | IPv4/IPv6 connection observation |
+| `ip`, `bridge` | アドレス、経路、DS-Lite、VRF、VXLAN |
+| `nft` | NAT、ファイアウォール、route mark |
+| `dnsmasq` | DHCPv4、DHCPv6、RA |
+| `conntrack` | IPv4/IPv6 コネクションの観測 |
 | `pppd`, `ppp` | PPPoE |
 | `wg` | WireGuard |
-| `tailscale` | Tailscale exit-node and subnet-router advertisement |
+| `tailscale` | Tailscale の exit node と subnet router の広告 |
 | `swanctl` | IPsec |
-| `radvd` | Optional radvd RA path |
-| `sysctl` | Kernel settings |
-| `systemctl`, `resolvectl`, `networkctl`, `journalctl` | systemd environment management |
-| `service`, `sysrc`, `pfctl` | FreeBSD environment management |
-| `dig`, `ping`, `ping6`, `tcpdump`, `tracepath`, `traceroute`, `netstat`, `sockstat` | Diagnostics |
+| `radvd` | radvd 経由の RA（任意） |
+| `sysctl` | カーネル設定 |
+| `systemctl`, `resolvectl`, `networkctl`, `journalctl` | systemd 環境の管理 |
+| `service`, `sysrc`, `pfctl` | FreeBSD 環境の管理 |
+| `dig`, `ping`, `ping6`, `tcpdump`, `tracepath`, `traceroute`, `netstat`, `sockstat` | 障害調査 |
 
-## See also
+## 関連項目
 
-- [Supported platforms](/docs/platforms)
-- [Reconcile and removal](./reconcile)
+- [対応プラットフォーム](../platforms.md)
+- [Reconcile と削除](./reconcile)

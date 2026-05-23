@@ -1,25 +1,26 @@
 ---
-title: Tailscale exit node and subnet router
+title: Tailscale の exit node と subnet router
 ---
 
-# Tailscale exit node and subnet router
+# Tailscale の exit node と subnet router
 
-## Scenario
+## 想定する構成
 
-Use `TailscaleNode` when a routerd host should join a tailnet and advertise:
+`TailscaleNode` は、routerd ホストを tailnet に参加させ、次の経路を広告したい場合に使います。
 
-- an exit node (`0.0.0.0/0` and `::/0`)
-- one or more routed subnets
-- both at the same time
+- exit node（`0.0.0.0/0` と `::/0`）
+- 1 個以上の subnet route
+- exit node と subnet route の両方
 
-routerd does not replace `tailscaled`. It generates and manages a systemd unit
-that runs `tailscale up` with the declared node options. This keeps the
-Tailscale account, control plane, and route approval workflow in Tailscale,
-while routerd owns the host-local intent.
+routerd は `tailscaled` を置き換えません。
+routerd は `tailscale up` を実行する systemd ユニットを生成し、ノードの広告設定を管理します。
+Tailscale のアカウント、制御プレーン、経路承認は Tailscale 側に残します。
+routerd はホスト上の宣言設定を管理します。
 
-## Install tailscale
+## tailscale を導入する
 
-Declare the OS package so the dependency is visible in the router config.
+依存パッケージを `Package` で宣言します。
+これにより、必要なパッケージが YAML から分かります。
 
 ```yaml
 apiVersion: system.routerd.net/v1alpha1
@@ -44,13 +45,12 @@ spec:
       optional: true
 ```
 
-On Ubuntu, the Tailscale apt repository must already be available before
-`Package` can install `tailscale`. Use your normal bootstrap method for that
-repository.
+Ubuntu では、`Package` が `tailscale` を導入する前に Tailscale の apt リポジトリが必要です。
+リポジトリの追加は、通常の初期構築手順で済ませてください。
 
-## Authenticate without committing secrets
+## 秘密値を Git に残さない
 
-For production configs, prefer `authKeyEnv` plus `authKeyFile`.
+本番設定では `authKeyEnv` と `authKeyFile` を推奨します。
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
@@ -70,7 +70,7 @@ spec:
   authKeyFile: /usr/local/etc/routerd/secrets/tailscale.env
 ```
 
-The environment file is outside the routerd YAML:
+環境ファイルは routerd の YAML の外に置きます。
 
 ```sh
 sudo install -d -m 0700 /usr/local/etc/routerd/secrets
@@ -78,18 +78,16 @@ sudo sh -c 'printf "%s\n" "TS_AUTHKEY=REDACTED" > /usr/local/etc/routerd/secrets
 sudo chmod 0600 /usr/local/etc/routerd/secrets/tailscale.env
 ```
 
-If the node is already logged in, omit `authKey`, `authKeyEnv`, and
-`authKeyFile`. routerd will reapply the advertised node options without
-embedding a secret in the service unit.
+既にログイン済みのノードでは、`authKey`、`authKeyEnv`、`authKeyFile` を省略できます。
+その場合、routerd は秘密値を systemd ユニットに埋め込まず、広告設定だけを再適用します。
 
-Tailscale listens on UDP/41641 by default. routerd reserves that port when a
-`TailscaleNode` is present and validation rejects any `WireGuardInterface` that
-tries to reuse it.
+Tailscale は既定で UDP/41641 を使います。
+routerd は `TailscaleNode` がある場合にこのポートを予約済みとして扱います。
+`WireGuardInterface` が同じポートを使う設定は検証で拒否します。
 
-## Advertise private subnets
+## プライベートアドレスをまとめて広告する
 
-Advertising all RFC 1918 private address space is useful when the router should
-be the tailnet path back into home or site networks:
+ルーターを自宅や拠点ネットワークへの入口にする場合は、RFC 1918 のプライベートアドレス全体を広告できます。
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
@@ -107,15 +105,14 @@ spec:
   acceptRoutes: false
 ```
 
-After applying this config, approve the advertised routes in the Tailscale
-admin console. Until approval, `tailscale debug prefs` shows the requested
-routes, but `tailscale status --self --json` may not include them in
-`Self.AllowedIPs`.
+この設定を反映したあと、Tailscale の管理画面で広告された経路を承認します。
+承認前は、`tailscale debug prefs` では要求した経路が見えます。
+ただし、`tailscale status --self --json` の `Self.AllowedIPs` にはまだ出ないことがあります。
 
-## Firewall zone placement
+## ファイアウォールゾーンの置き方
 
-Declare `tailscale0` as an `Interface` so it appears in status and in the Web
-Console.
+`tailscale0` を `Interface` として宣言します。
+これにより、状態と Web 管理画面の Interfaces に表示できます。
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
@@ -128,11 +125,10 @@ spec:
   managed: false
 ```
 
-`mtu: 1280` lets derived TCP MSS clamp rules account for the Tailscale source
-path without lowering unrelated LAN-to-WAN paths.
+`mtu: 1280` を指定すると、派生する TCP MSS clamp が Tailscale 経由の経路を考慮しつつ、
+無関係な LAN から WAN への経路まで低い MTU に下げることはありません。
 
-For a home router, place `tailscale0` in the `trust` zone rather than the
-`mgmt` zone:
+家庭ルーターでは、`tailscale0` は `mgmt` ではなく `trust` ゾーンに置くのが自然です。
 
 ```yaml
 apiVersion: firewall.routerd.net/v1alpha1
@@ -157,37 +153,34 @@ spec:
     - Interface/mgmt
 ```
 
-This allows tailnet clients to reach services on the router itself, such as the
-routerd Web Console, through the normal `trust -> self` path. It does not grant
-the tailnet broad access to the management VLAN if the firewall policy still
-denies `trust -> mgmt` forwarding.
+この構成では、tailnet のクライアントは `trust -> self` の経路で routerd の Web 管理画面などに到達できます。
+一方で、ファイアウォールが `trust -> mgmt` の転送を拒否していれば、tailnet から管理 VLAN 全体へ広く入ることはできません。
 
-Use `mgmt` only when the tailnet should be treated as a full management
-network.
+tailnet 全体を管理ネットワークとして扱いたい場合だけ、`tailscale0` を `mgmt` に置きます。
 
-## Apply and verify
+## 反映と確認
 
-Apply the config:
+設定を確認してから routerd を再起動します。
 
 ```sh
 routerd validate --config /usr/local/etc/routerd/router.yaml
 systemctl restart routerd.service
 ```
 
-Check the generated unit:
+生成された systemd ユニットを確認します。
 
 ```sh
 systemctl cat routerd-tailscale-edge.service
 ```
 
-Check Tailscale state:
+Tailscale 側の状態を確認します。
 
 ```sh
 tailscale status --self --json | jq '.BackendState, .Self.AllowedIPs'
 tailscale debug prefs | jq '.AdvertiseRoutes'
 ```
 
-Check routerd state:
+routerd 側の状態を確認します。
 
 ```sh
 routerctl status --json
@@ -195,33 +188,23 @@ routerctl get TailscaleNode/edge -o yaml
 routerctl tailscale peers
 ```
 
-`routerctl tailscale peers -o json` reads `tailscale status --json` and formats
-the peer list through routerd's CLI. The Web Console also shows the current
-peer list on the `TailscaleNode` resource, including online state, relay, last
-seen time, and allowed routes.
+`routerctl tailscale peers -o json` は `tailscale status --json` を読み、ピア一覧を routerd の CLI 形式で表示します。Web 管理画面の Resources でも、`TailscaleNode` にピアのオンライン状態、relay、last seen、許可された経路を表示します。
 
-If the Web Console should be reachable over Tailscale, test it through the
-router's Tailscale address or through an approved routed address:
+Web 管理画面を Tailscale 経由で見たい場合は、ルーターの Tailscale アドレス、または承認済みの経路上のアドレスで確認します。
 
 ```sh
 curl -f http://100.64.0.1:8080/
 ```
 
-Replace the address with the actual Tailscale IP of the router.
+上のアドレスは例です。
+実際のルーターの Tailscale IP に置き換えてください。
 
-## Notes
+## 補足
 
-- `acceptDNS: false` keeps Tailscale from replacing the router's local DNS
-  resolver configuration. routerd's default model is "LAN DNS first":
-  `DNSResolver`, local zones, DHCP-derived records, and conditional forwarding
-  stay authoritative for LAN clients. Tailscale MagicDNS remains useful from
-  tailnet clients, but it should not take over the router's host resolver.
-- `acceptRoutes: false` keeps the router from importing other peers' advertised
-  routes. This is common for a router that advertises routes outward.
-- routerd exports Tailscale peer gauges as `routerd.tailscale.peer.count` and
-  `routerd.tailscale.last_handshake.seconds`. Tailscale status exposes peer
-  `LastSeen`, so routerd uses that timestamp as the operational handshake-age
-  signal.
-- Exit-node and subnet-route approval happens in Tailscale, not in routerd.
-- Keep auth keys out of examples and Git history. Use `authKeyFile` for local
-  deployments.
+- `acceptDNS: false` にすると、Tailscale がルーター自身の DNS 設定を置き換えません。routerd の基本方針は LAN の DNS を優先することです。`DNSResolver`、ローカルゾーン、DHCP 由来のレコード、条件付き転送を LAN 側の権威として維持し、MagicDNS にホストのリゾルバを乗っ取らせません。
+- `acceptRoutes: false` にすると、ルーターはほかのノードが広告する経路を取り込みません。
+  経路を外へ広告するルーターでは、この設定が自然です。
+- routerd は Tailscale ピアのメトリクスとして `routerd.tailscale.peer.count` と `routerd.tailscale.last_handshake.seconds` を出します。運用上のハンドシェイク経過時間としては、Tailscale status の `LastSeen` を使います。
+- exit node と subnet route の承認は Tailscale 側で行います。
+- auth key は examples や Git 履歴に残さないでください。
+  実機では `authKeyFile` を使います。

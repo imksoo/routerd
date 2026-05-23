@@ -1,26 +1,27 @@
 ---
-title: State database
+title: 状態データベース
 slug: /operations/state-database
 ---
 
-# State database
+# 状態データベース
 
-routerd persists state and events in SQLite. Each managed daemon additionally keeps its own lease or state file and an event log.
+routerd は状態とイベントを SQLite に永続化します。各デーモンはこれに加えて、自身のリースまたは状態ファイルとイベントログを持ちます。
 
-## Key paths
+## 主なパス
 
-| Kind | Path |
+| 種類 | パス |
 | --- | --- |
-| routerd state DB | `/var/lib/routerd/routerd.db` |
-| DHCPv6-PD lease | `/var/lib/routerd/dhcpv6-client/<name>/lease.json` |
-| DHCPv4 lease | `/var/lib/routerd/dhcpv4-client/<name>/lease.json` |
-| PPPoE state | `/var/lib/routerd/pppoe-client/<name>/state.json` |
-| HealthCheck state | `/var/lib/routerd/healthcheck/<name>/state.json` |
-| Per-daemon events | `/var/lib/routerd/<daemon>/<name>/events.jsonl` |
+| routerd 状態 DB | `/var/lib/routerd/routerd.db` |
+| DHCPv6-PD リース | `/var/lib/routerd/dhcpv6-client/<name>/lease.json` |
+| DHCPv4 リース | `/var/lib/routerd/dhcpv4-client/<name>/lease.json` |
+| PPPoE 状態 | `/var/lib/routerd/pppoe-client/<name>/state.json` |
+| HealthCheck 状態 | `/var/lib/routerd/healthcheck/<name>/state.json` |
+| デーモン別イベント | `/var/lib/routerd/<daemon>/<name>/events.jsonl` |
 
-## Events table
+## events テーブル
 
-The bus persists events into SQLite. `EventRule` and `DerivedEvent` consume this stream as input. For day-to-day operations, prefer `routerctl events` over running `sqlite3` against the database directly:
+イベントバスはイベントを SQLite に永続化します。`EventRule` や `DerivedEvent` は、このストリームを入力にします。
+日常の運用では `sqlite3` を直接叩かず、`routerctl events` を使ってください。
 
 ```sh
 routerctl events --limit 20
@@ -28,13 +29,15 @@ routerctl events --topic routerd.resource.status.changed
 routerctl events --resource DNSResolver/lan-resolver -o json
 ```
 
-## Backup philosophy
+## バックアップの考え方
 
-The state database holds **observed** state — it is not a substitute for the configuration. The authoritative description of intent lives in the YAML configuration, version-controlled in git. If a host is rebuilt, restoring the configuration and letting routerd reconcile is preferred over restoring the SQLite database.
+状態 DB は**観測した**状態を持つもので、設定の代わりにはなりません。
+意図の正本は YAML 設定ファイルなので、git で管理してください。
+ホストを再構築するときは、SQLite を復元するよりも、設定ファイルを当てて routerd に調整（リコンサイル）させる方が確実です。
 
-If you want history of operational events for forensic purposes, take periodic snapshots of `events.db`, `dns-queries.db`, `traffic-flows.db`, and `firewall-logs.db` instead. Those are append-only by nature and do not need point-in-time backups of `routerd.db`.
+forensic 用途で操作イベントの履歴を残したい場合は、`events.db`、`dns-queries.db`、`traffic-flows.db`、`firewall-logs.db` のスナップショットを定期的に取ってください。これらは追記専用なので、`routerd.db` のような特定時点のバックアップは不要です。
 
-## See also
+## 関連項目
 
-- [Log storage](../concepts/log-storage.md)
-- [Reconcile and removal](./reconcile)
+- [ログストレージ](../concepts/log-storage.md)
+- [Reconcile と削除](./reconcile)

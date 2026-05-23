@@ -1,22 +1,24 @@
 ---
-title: Add firewall exceptions
+title: ファイアウォール例外を追加する
 ---
 
-# Add firewall exceptions
+# ファイアウォール例外を追加する
 
-## Scenario
+## 想定するシーン
 
-The role-based defaults from `FirewallZone` cover the common case, but you need an exception:
+`FirewallZone` のロールベースの既定で大半はまかなえますが、例外が必要になる場面もあります。
 
-- Allow SSH from a specific management subnet.
-- Open a service port on the router itself (a metrics endpoint, a custom listener).
-- Permit a specific LAN host to receive inbound connections from the WAN (port forward / DMZ-style).
+- 特定の管理サブネットからの SSH を許可したい。
+- ルーター本体上のサービスポート（メトリクスの endpoint、独自の listener）を開けたい。
+- 特定の LAN ホストへの、WAN からの inbound 接続を通したい（port forward や DMZ のような用途）。
 
-## How routerd solves it
+## routerd での解決方法
 
-`FirewallRule` declares an exception that overrides the implicit role matrix. Rules are evaluated **before** the implicit matrix, and routerd-derived internal openings (DHCP, DNS, DHCPv6-PD, DS-Lite control traffic, etc.) are evaluated before user rules. That ordering keeps managed services alive even when you add restrictive rules.
+`FirewallRule` で、暗黙のロールマトリクスを上書きする例外を宣言します。
+ルールはロールマトリクスより **先** に評価し、routerd が自動で派生する内部用の穴（DHCP、DNS、DHCPv6-PD、DS-Lite 制御など）は、さらにユーザールールより先に評価します。
+この順序のおかげで、制限ルールを追加しても管理対象サービスは生き残ります。
 
-## Example: allow SSH from the management network
+## 例: 管理ネットワークからの SSH を許可する
 
 ```yaml
 - apiVersion: firewall.routerd.net/v1alpha1
@@ -31,9 +33,10 @@ The role-based defaults from `FirewallZone` cover the common case, but you need 
     action: accept
 ```
 
-`fromZone` and `toZone` reference `FirewallZone` names. `toZone: self` means traffic terminated by the router itself (as opposed to forwarded traffic).
+`fromZone` / `toZone` は `FirewallZone` 名を参照します。
+`toZone: self` は、ルーター自身が終端する通信（forward ではない）を意味します。
 
-## Example: open a service port on the router
+## 例: ルーター本体のサービスポートを開ける
 
 ```yaml
 - apiVersion: firewall.routerd.net/v1alpha1
@@ -49,11 +52,11 @@ The role-based defaults from `FirewallZone` cover the common case, but you need 
     action: accept
 ```
 
-## Example: allow one management host from the LAN
+## 例: LAN から管理セグメント上の 1 台だけを許可する
 
-Use `destinationCIDRs` when the exception should apply to a specific host
-inside the destination zone. This keeps the rest of the management segment
-closed by the role matrix.
+宛先ゾーン内の特定ホストだけを例外にしたい場合は、
+`destinationCIDRs` を指定します。
+これにより、管理セグメント全体を開けずに済みます。
 
 ```yaml
 - apiVersion: firewall.routerd.net/v1alpha1
@@ -71,10 +74,10 @@ closed by the role matrix.
     action: accept
 ```
 
-## Example: multi-port web and ICMP echo
+## 例: 複数の web ポートと ICMP echo
 
-Use `destinationPorts` when a rule covers more than one TCP or UDP port.
-ICMP rules can be narrowed to specific type names.
+TCP / UDP の複数ポートを 1 つのルールで扱う場合は `destinationPorts` を使います。
+ICMP ルールは type 名で絞り込めます。
 
 ```yaml
 - apiVersion: firewall.routerd.net/v1alpha1
@@ -102,10 +105,10 @@ ICMP rules can be narrowed to specific type names.
     action: accept
 ```
 
-## Example: reject SSH over a rate or connection limit
+## 例: rate / connection limit を超えた SSH を reject する
 
-`rateLimit` matches traffic over the configured threshold. `connLimit` matches
-when one source already has more than the allowed concurrent tracked states.
+`rateLimit` は、設定した閾値を超えた通信に一致します。`connLimit` は、同じ送信元が
+許可数を超える concurrent tracked state をすでに持っている場合に一致します。
 
 ```yaml
 - apiVersion: firewall.routerd.net/v1alpha1
@@ -130,18 +133,19 @@ when one source already has more than the allowed concurrent tracked states.
       log: true
 ```
 
-## Validating before apply
+## 適用前の確認
 
-Use the local simulator to check what the rule would do before you apply it:
+ローカルのシミュレーターで動作を確かめてから適用してください。
 
 ```sh
 routerctl firewall test from=wan to=self proto=tcp dport=22
 routerctl describe firewall
 ```
 
-The first command reports `accept` or `drop` for the specific 5-tuple. The second prints the full effective ruleset including role-matrix defaults and managed openings.
+最初のコマンドは、指定した 5-tuple に対して `accept` / `drop` を返します。
+2 つ目は、ロールマトリクスの既定と管理対象の穴を含めた、実効ルール全体を表示します。
 
-## See also
+## 関連項目
 
-- [Define firewall zones](./firewall-zone.md)
-- [Firewall concept](../concepts/firewall.md)
+- [ファイアウォールゾーンを定義する](./firewall-zone.md)
+- [ファイアウォールのコンセプト](../concepts/firewall.md)

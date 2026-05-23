@@ -1,0 +1,24 @@
+---
+title: Ingress maintenance
+---
+
+# Ingress 维护
+
+若想在不编辑路由器 YAML 的情况下，临时将 `IngressService` 的后端移除，
+请使用 `routerctl drain`。
+
+```sh
+routerctl drain ingress/kubernetes-api backend=cp-01 --duration 10m
+routerctl show ingress
+```
+
+排空（drain）状态保存于 routerd 的状态数据库。
+排空期间，ingress 控制器会将该后端标记为 `drained: true`、`healthy: false`、`reason: Drained`，
+后续的调和（reconcile）将把新流量导向其余健康的后端。
+现有的 conntrack 条目不会被删除。
+
+`--duration` 到期后自动恢复。若要立即恢复，请执行：
+
+```sh
+routerctl undrain ingress/kubernetes-api backend=cp-01
+```

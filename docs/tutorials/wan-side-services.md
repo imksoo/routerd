@@ -1,34 +1,35 @@
 ---
-title: WAN-side services
+title: WAN 側サービス
 sidebar_position: 4
 ---
 
-# WAN-side services
+# WAN 側サービス
 
-This page introduces the routerd resources that handle the WAN side of a router: getting an upstream link, obtaining IP addresses and prefixes from the ISP, terminating tunnels, and exposing one or more upstream paths to the rest of the controller chain.
+このページでは、ルーターの WAN 側を扱う routerd リソースを紹介します。
+WAN 側のリソースは、上流リンクの確立、ISP からの IP アドレスとプレフィックスの取得、トンネルの終端、複数の上流経路の controller chain への提供といった役割を担います。
 
-The companion page on the [LAN side](./lan-side-services.md) covers what the router serves to its inside.
+LAN 側 (ルーターから内側に提供するサービス) は [LAN 側サービス](./lan-side-services.md) を参照してください。
 
-## Summary table
+## 一覧
 
-| Concern | Resource | Daemon backing it |
+| 役割 | リソース | 担当デーモン |
 | --- | --- | --- |
-| Physical / virtual interface | `Interface`, `IPv4StaticAddress` | (kernel) |
-| IPv4 from ISP via DHCP | `DHCPv4Client` | `routerd-dhcpv4-client` |
-| IPv6 prefix from ISP | `DHCPv6PrefixDelegation`, `IPv6DelegatedAddress` | `routerd-dhcpv6-client` |
-| Other DHCPv6 options (DNS, AFTR, etc.) | `DHCPv6Information` | `routerd-dhcpv6-client` |
-| Upstream time sources | `NTPClient` | `systemd-timesyncd` or `ntpd` |
-| PPPoE session | `PPPoESession` | `routerd-pppoe-client` |
-| IPv4 over IPv6 (DS-Lite) | `DSLiteTunnel` | (kernel `ip6tnl`) |
-| WAN selection | `EgressRoutePolicy`, `HealthCheck` | `routerd-healthcheck@<name>` |
+| 物理 / 仮想インターフェース | `Interface`、`IPv4StaticAddress` | (kernel) |
+| ISP から DHCP で IPv4 を取得 | `DHCPv4Client` | `routerd-dhcpv4-client` |
+| ISP から IPv6 prefix を取得 | `DHCPv6PrefixDelegation`、`IPv6DelegatedAddress` | `routerd-dhcpv6-client` |
+| その他の DHCPv6 オプション (DNS、AFTR 等) | `DHCPv6Information` | `routerd-dhcpv6-client` |
+| 上流の時刻サーバー | `NTPClient` | `systemd-timesyncd` または `ntpd` |
+| PPPoE セッション | `PPPoESession` | `routerd-pppoe-client` |
+| IPv6 上の IPv4 (DS-Lite) | `DSLiteTunnel` | (kernel `ip6tnl`) |
+| WAN 経路選択 | `EgressRoutePolicy`、`HealthCheck` | `routerd-healthcheck@<name>` |
 | IPv4 NAT (masquerade) | `NAT44Rule` | (nftables) |
-| Static IPv4 route | `IPv4Route` | (kernel) |
+| 静的 IPv4 経路 | `IPv4Route` | (kernel) |
 
-You typically pick a subset of these depending on what the ISP gives you.
+ISP の提供形態に応じて、必要なリソースの組み合わせを選びます。
 
-## Pattern A: Native dual-stack (IPv4 + IPv6)
+## パターン A: ネイティブデュアルスタック (IPv4 + IPv6)
 
-The ISP gives you a public IPv4 address via DHCPv4 and an IPv6 prefix via DHCPv6-PD on the same WAN interface.
+ISP が同一 WAN インターフェースで IPv4 (DHCPv4) と IPv6 prefix (DHCPv6-PD) を配布する構成です。
 
 ```yaml
 - apiVersion: net.routerd.net/v1alpha1
@@ -68,13 +69,15 @@ The ISP gives you a public IPv4 address via DHCPv4 and an IPv6 prefix via DHCPv6
       - 192.0.2.0/24
 ```
 
-`DHCPv4Client` runs `routerd-dhcpv4-client` and writes the lease to `lease.json`. The kernel takes the address; routerd publishes events for downstream resources to react.
+`DHCPv4Client` は `routerd-dhcpv4-client` を起動し、リース内容を `lease.json` に書き込みます。アドレス自体は kernel が保持し、routerd は下流リソース向けにイベントを発行します。
 
-`DHCPv6PrefixDelegation` runs `routerd-dhcpv6-client` and obtains an IA_PD. `IPv6DelegatedAddress` carves a `/64` (or other length) for a LAN side.
+`DHCPv6PrefixDelegation` は `routerd-dhcpv6-client` を使って IA_PD を取得します。`IPv6DelegatedAddress` は、取得したプレフィックスから LAN 側に配る `/64` (またはその他の長さ) を切り出します。
 
-## Upstream NTP / SNTP
+## 上流 NTP / SNTP
 
-`NTPClient` can derive time servers from DHCPv4 option 42 or DHCPv6 option 31. If the upstream does not provide one, routerd writes the configured public fallback servers to the OS NTP client (`systemd-timesyncd` on Linux / NixOS, `ntpd` on FreeBSD).
+`NTPClient` は、DHCPv4 option 42 または DHCPv6 option 31 から時刻サーバーを取り出せます。
+上流が時刻サーバーを配布しない場合は、指定した public NTP サーバーを OS の NTP クライアントに設定します。
+Linux / NixOS では `systemd-timesyncd`、FreeBSD では `ntpd` を使います。
 
 ```yaml
 - apiVersion: system.routerd.net/v1alpha1
@@ -94,11 +97,11 @@ The ISP gives you a public IPv4 address via DHCPv4 and an IPv6 prefix via DHCPv6
       - ntp.nict.jp
 ```
 
-Use this with the LAN-side `ntpServerFrom` and `sntpServerFrom` fields when the router itself should be the time source advertised to clients.
+ルーター自身を LAN クライアントの時刻参照先として配る場合は、LAN 側の `ntpServerFrom` と `sntpServerFrom` を併用します。
 
-## Pattern B: PPPoE for IPv4, DHCPv6-PD for IPv6
+## パターン B: PPPoE (IPv4) + DHCPv6-PD (IPv6)
 
-Common for older xDSL plans where the IPv4 path goes through PPPoE while IPv6 still rides native DHCPv6-PD on the same physical link.
+旧来の xDSL 系で、IPv4 は PPPoE、IPv6 は同一物理リンクのネイティブ DHCPv6-PD で取得する構成です。
 
 ```yaml
 - apiVersion: net.routerd.net/v1alpha1
@@ -118,11 +121,11 @@ Common for older xDSL plans where the IPv4 path goes through PPPoE while IPv6 st
     interface: wan
 ```
 
-`PPPoESession` runs `routerd-pppoe-client`, which wraps `pppd`/`rp-pppoe` on Linux and `ppp(8)` on FreeBSD. The session interface (typically `ppp0`) becomes available for routes and `NAT44Rule`.
+`PPPoESession` は `routerd-pppoe-client` を起動し、Linux では `pppd`/`rp-pppoe`、FreeBSD では `ppp(8)` をラップします。PPPoE セッションのインターフェース (通常 `ppp0`) は、経路や `NAT44Rule` の対象として参照できます。
 
-## Pattern C: DS-Lite (IPv6-only access network with IPv4-in-IPv6 tunnel)
+## パターン C: DS-Lite (IPv6 のみのアクセス網で IPv4 をトンネルする)
 
-The ISP provides only IPv6 natively. IPv4 is delivered through a DS-Lite tunnel to an Address Family Transition Router (AFTR).
+ISP がネイティブで IPv4 を渡さず、IPv6 のみを提供する構成です。IPv4 は AFTR (Address Family Transition Router) への DS-Lite トンネルで実現します。
 
 ```yaml
 - apiVersion: net.routerd.net/v1alpha1
@@ -149,15 +152,16 @@ The ISP provides only IPv6 natively. IPv4 is delivered through a DS-Lite tunnel 
     mtu: 1454
 ```
 
-`DSLiteTunnel` is created as a kernel `ip6tnl` device once the AFTR address is resolved. `aftrFQDNResolverFromResource` ensures the AFTR FQDN is resolved through the ISP's own DNS rather than a public resolver, since AFTR records are usually only authoritative inside the access network.
+`DSLiteTunnel` は、AFTR アドレスを解決できた時点で kernel の `ip6tnl` デバイスとして作成されます。
+AFTR レコードはアクセス網内の DNS でしか解けないことが多いため、`aftrFQDNResolverFromResource` で ISP の DNS を使うようにしてください。
 
-## Pattern D: Multi-WAN (primary + backup)
+## パターン D: マルチ WAN (主回線 + バックアップ)
 
-When more than one path is available, pair the WAN-acquisition resources with `EgressRoutePolicy` and `HealthCheck`. See [Multi-WAN egress with health-based selection](../how-to/multi-wan.md) for the full pattern.
+複数の経路がある場合は、WAN 取得リソースに `EgressRoutePolicy` と `HealthCheck` を組み合わせます。詳細は [マルチ WAN 切替](../how-to/multi-wan.md) を参照してください。
 
-## Status and observation
+## 状態確認
 
-For each WAN resource, `routerctl describe <kind>/<name>` shows the current phase, observed leases, and recent events. Examples:
+各 WAN リソースの状況は `routerctl describe <kind>/<name>` で確認できます。例:
 
 ```sh
 routerctl describe DHCPv6PrefixDelegation/wan-pd      # phase: Bound, prefix: 2001:db8:1::/56
@@ -165,11 +169,11 @@ routerctl describe DSLiteTunnel/ds-lite-primary       # phase: Up, aftr: 2001:db
 routerctl describe EgressRoutePolicy/ipv4-default     # selectedCandidate: ds-lite-primary
 ```
 
-The Web Console summarises the same information under the **Overview** and **Resources** tabs, and the **Connections** tab shows real conntrack/pf state per WAN path.
+Web 管理画面の「Overview」「Resources」タブからも同じ情報を確認できます。「Connections」タブでは、WAN 経路ごとの実際の conntrack/pf state を表示します。
 
-## See also
+## 関連項目
 
-- [LAN-side services](./lan-side-services.md)
-- [Multi-WAN egress](../how-to/multi-wan.md)
-- [DS-Lite via NTT NGN](../how-to/flets-ipv6-setup.md)
-- [Path MTU and MSS clamping](../concepts/path-mtu.md)
+- [LAN 側サービス](./lan-side-services.md)
+- [マルチ WAN 切替](../how-to/multi-wan.md)
+- [NTT NGN での DS-Lite](../how-to/flets-ipv6-setup.md)
+- [Path MTU と MSS clamping](../concepts/path-mtu.md)

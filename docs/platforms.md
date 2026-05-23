@@ -1,53 +1,55 @@
 ---
-title: Supported platforms
+title: 対応プラットフォーム
 ---
 
-# Supported platforms
+# 対応プラットフォーム
 
-routerd is designed to be cross-OS, but each platform uses a different host integration model. This page lists the concrete OS surfaces routerd uses on each platform, so you can review generated files and runtime ownership before applying a router configuration.
+routerd は cross-OS を前提に設計されています。
+利用するホスト側の機構は OS ごとに異なります。
+このページでは、routerd が各プラットフォームで使う OS 機能を明示します。
+適用する前に、生成されるファイルと、実行時の所有範囲を確認してください。
 
 ## Linux (Ubuntu / Debian)
 
-Linux with systemd is the primary platform. Release installs land under `/usr/local` by default.
-Install from the Linux release archive and run `sudo ./install.sh`.
-The installer can install runtime packages with `apt-get`, `dnf`, `apk`, or `pacman`.
+systemd を使う Linux が主対象です。
+リリースインストーラーの配置先は、既定で `/usr/local` 配下です。
+Linux 用のリリースアーカイブを展開し、`sudo ./install.sh` を実行します。
+インストーラーは `apt-get`、`dnf`、`apk`、`pacman` のいずれかで、ランタイムのパッケージを導入できます。
 
-routerd uses the following OS surfaces on Linux:
+routerd が Linux 上で利用する OS 機能は次の通りです。
 
-- systemd unit files
-- `/run/routerd` and `/var/lib/routerd` for runtime and persistent state
-- dnsmasq for DHCPv4, DHCPv6, DHCP relay, and Router Advertisement
-- nftables for filtering and NAT
-- conntrack for connection observation
-- iproute2 for interfaces and routes
-- long-lived `routerd-bgp` GoBGP daemon for BGP peering and route installation
-- keepalived for VRRP VIP ownership
-- pppd / rp-pppoe for PPPoE
-- WireGuard, Tailscale, strongSwan, radvd
+- systemd ユニット
+- `/run/routerd` と `/var/lib/routerd`（ランタイムと永続状態）
+- dnsmasq（DHCPv4 / DHCPv6 / DHCP relay / RA）
+- nftables（フィルター + NAT）
+- conntrack（コネクション観測）
+- iproute2（interface + 経路）
+- pppd / rp-pppoe（PPPoE）
+- WireGuard、Tailscale、strongSwan、radvd
 
-Even on Ubuntu, routerd does not assume packages are pre-installed.
-For first bootstrap, `install.sh` installs a practical default set.
-For ongoing declarative management, declare dependencies with the `Package` resource.
-The reference list:
+Ubuntu でも、パッケージが事前に導入されていることは前提にしません。
+初回の準備では、`install.sh` が実用的な既定セットを導入します。
+継続的な宣言管理では、`Package` リソースで依存関係を宣言してください。
+参考までに、対象パッケージは次の通りです。
 
-| Category | Packages |
+| 分類 | パッケージ |
 | --- | --- |
-| Runtime | `dnsmasq-base`, `nftables`, `conntrack`, `iproute2`, `keepalived`, `ppp`, `wireguard-tools`, `tailscale`, `tailscale-archive-keyring`, `strongswan-swanctl`, `radvd` |
+| Runtime | `dnsmasq-base`, `nftables`, `conntrack`, `iproute2`, `ppp`, `wireguard-tools`, `tailscale`, `tailscale-archive-keyring`, `strongswan-swanctl`, `radvd` |
 | Diagnostics | `dnsutils`, `iputils-ping`, `iputils-tracepath`, `tcpdump`, `traceroute`, `net-tools` |
-| OS control | `procps`, `systemd`, `kmod` |
+| OS 制御 | `procps`, `systemd`, `kmod` |
 
-`routerd-dhcpv6-client`, `routerd-dhcpv4-client`, `routerd-pppoe-client`, and `routerd-healthcheck` run as systemd services on Linux.
+`routerd-dhcpv6-client`、`routerd-dhcpv4-client`、`routerd-pppoe-client`、`routerd-healthcheck` は、Linux 上では systemd サービスとして動作します。
 
-Ubuntu 26.04 LTS (`resolute`) has been validated with the same Linux data-plane
-renderers used by Ubuntu 24.04 for managed dnsmasq, nftables, DHCPv6-PD,
-delegated LAN IPv6 address derivation, and the control API. The host bootstrap
-did need one OS-level networking adjustment: on interfaces that routerd owns for
-DHCPv6-PD or LAN RA/DHCPv6 service, configure installer netplan/systemd-networkd
-so the OS does not run its own DHCPv6 client. Otherwise systemd-networkd can
-bind UDP port 546 before `routerd-dhcpv6-client`.
+Ubuntu 26.04 LTS（`resolute`）は、managed dnsmasq、nftables、DHCPv6-PD、
+委任された LAN IPv6 アドレス、control API について、Ubuntu 24.04 と同じ Linux
+data-plane renderer で実機検証済みです。ただし host bootstrap 側では、OS の
+ネットワーク設定に注意点があります。routerd が DHCPv6-PD や LAN RA/DHCPv6
+を所有する interface では、OS 側の systemd-networkd が DHCPv6 client socket
+を開かないようにしてください。そうしないと、`routerd-dhcpv6-client` より先に
+systemd-networkd が UDP port 546 を bind することがあります。
 
-For Ubuntu 26.04 router lab hosts, keep only the management interface on OS
-DHCP and make routerd-owned WAN/LAN interfaces link-local-only at the OS layer:
+Ubuntu 26.04 の lab router では、OS の DHCP は management interface にだけ残し、
+routerd 所有の WAN/LAN interface は OS レイヤーでは link-local のみにします。
 
 ```yaml
 network:
@@ -74,158 +76,142 @@ network:
       optional: true
 ```
 
-For WAN links that still need the RA-learned IPv6 default route, declare the
-WAN interface and DHCPv6 / RA resources. routerd derives a systemd-networkd
-drop-in with `IPv6AcceptRA=yes` and `[IPv6AcceptRA] DHCPv6Client=no`, so RA is
-accepted while the OS DHCPv6 client stays disabled.
+WAN link で RA から得る IPv6 default route が必要な場合は、WAN interface と
+DHCPv6 / RA resource を宣言します。routerd は systemd-networkd drop-in として
+`IPv6AcceptRA=yes` と `[IPv6AcceptRA] DHCPv6Client=no` を導出するため、RA は受けつつ、
+OS 側の DHCPv6 client は無効のままにできます。
 
 ## Alpine Linux
 
-Alpine is a Linux target for the live ISO and minimal installed hosts. It does
-not have Ubuntu feature parity yet: routerd uses the Linux data plane tools
-where available, but service activation is OpenRC-oriented instead of systemd.
+Alpine は、ライブ ISO と最小構成の導入済みホスト向けの Linux 対象です。
+まだ Ubuntu と同等の扱いではありません。
+routerd は使える範囲で Linux の data plane ツールを使いますが、service の activation は systemd ではなく OpenRC 側に課題が残っています。
 
-Implemented:
+実装済みの項目は次の通りです。
 
-- live ISO boot and USB persistence flow on Alpine
-- dependency bootstrap through `install.sh` with `apk`
-- platform detection through `pkg/platform` with `HasOpenRC`
-- `Package` resources with `os: alpine` and `manager: apk`
-- CI smoke coverage for Alpine `install.sh --list-deps` and a minimal
-  `Package` validate/dry-run apply path
-- `routerd render alpine --out-dir` for OpenRC scripts and dnsmasq config
-- OpenRC script rendering for generated routerd service artifacts, managed
-  dnsmasq, `routerd-healthcheck`, DNS resolver, firewall logger, PPPoE, and
-  Tailscale
-- apply-time OpenRC activation through `rc-update` / `rc-service`, with
-  idempotency checks before enable/start/restart operations
-- `make alpine-vm-smoke` harness for installed Alpine guests
-- Linux nftables, conntrack, iproute2, dnsmasq, `routerd-bgp` GoBGP, keepalived, PPP,
-  WireGuard, strongSwan, radvd, and diagnostic package names documented for Alpine
+- Alpine でのライブ ISO 起動と USB 永続化
+- `install.sh` による `apk` 依存パッケージの導入
+- `pkg/platform` での Alpine 検出と `HasOpenRC`
+- `Package` リソースの `os: alpine` / `manager: apk`
+- Alpine の `install.sh --list-deps` と、最小限の `Package` validate / dry-run apply path の CI smoke coverage
+- `routerd render alpine --out-dir` による OpenRC script と dnsmasq 設定の生成
+- 明示的な `generated service artifacts`、managed dnsmasq、`routerd-healthcheck`、DHCPv4 / DHCPv6 client、DNS resolver、firewall logger、PPPoE、Tailscale の OpenRC script の rendering
+- `rc-update` / `rc-service` による apply 時の activation。状態が変わらない場合は enable / start / restart を重複実行しない確認を入れています
+- 導入済み Alpine guest 向けの `make alpine-vm-smoke` harness
+- Alpine 向けの nftables、conntrack、iproute2、dnsmasq、PPP、WireGuard、strongSwan、radvd、診断パッケージの名前の整理
 
-Backlog before calling Alpine equivalent to Ubuntu:
+Ubuntu と同等と呼ぶ前の backlog は次の通りです。
 
-- materialize DNS resolver runtime config before activating synthesized OpenRC
-  DNS resolver services; the script is rendered but not enabled or started
-  immediately
-- persistent installed-host networking ownership outside the live ISO bootstrap
-- promote the Alpine installed-host smoke harness into a regular VM CI job
-  that exercises OpenRC activation and real package-manager command paths
-- richer docs for systemd-only resources that stay unsupported on OpenRC
+- DNS resolver の runtime config を、OpenRC service を有効化する前に materialize すること。script は生成しますが、現時点では enable / start しません
+- ライブ ISO の bootstrap 以外での、導入済みホストの networking 所有
+- Alpine の導入済みホスト向け smoke harness を通常の VM CI job に昇格し、OpenRC activation と実際の package-manager command path を継続的に確認すること
+- OpenRC 上で未対応のまま残す、systemd 専用 resource の詳しいドキュメント
 
-| Category | Packages |
+| 分類 | パッケージ |
 | --- | --- |
-| Runtime | `dnsmasq`, `nftables`, `conntrack-tools`, `iproute2`, `keepalived`, `ppp`, `ppp-pppoe`, `wireguard-tools`, `strongswan`, `radvd` |
+| Runtime | `dnsmasq`, `nftables`, `conntrack-tools`, `iproute2`, `ppp`, `ppp-pppoe`, `wireguard-tools`, `strongswan`, `radvd` |
 | Diagnostics | `bind-tools`, `iputils`, `iputils-tracepath`, `tcpdump` |
-| OS control | `alpine-conf`, `kmod`, `util-linux`, `e2fsprogs`, `dosfstools`, `exfatprogs` |
+| OS 制御 | `alpine-conf`, `kmod`, `util-linux`, `e2fsprogs`, `dosfstools`, `exfatprogs` |
 
 ## NixOS
 
-NixOS uses the same routerd resource model as Ubuntu, but activation goes
-through the NixOS module system. Instead of writing transient systemd units,
-routerd targets `/etc/nixos/routerd-generated.nix` and lets
-`nixos-rebuild test` / `nixos-rebuild switch` manage activation.
+NixOS は Ubuntu と同じ routerd リソースモデルを使います。
+ただし、反映は NixOS モジュール経由です。
+一時的な systemd ユニットを書く代わりに、`/etc/nixos/routerd-generated.nix` を生成します。
+その後、`nixos-rebuild test` / `nixos-rebuild switch` で有効化します。
 
-Implemented:
+実装済みの項目は次の通りです。
 
-- real-machine validation for NixOS activation, reboot recovery, DHCPv6-PD,
-  dnsmasq LAN service, DNS resolver, DS-Lite, nftables NAT/firewall,
-  health checks, Web Console generation diffs, and OpenTelemetry export
-- systemd unit generation for `routerd-dhcpv6-client`
-- systemd unit generation for `routerd-dhcpv4-client`
-- systemd unit generation for `routerd-pppoe-client`
-- NixOS module generation for `Package` overrides, `SysctlProfile`, derived host runtime artifacts, and generated service artifacts
-- automatic `nixos-rebuild test` from `routerd apply --dry-run`
-- automatic `nixos-rebuild switch` from `routerd apply`
-- rollback attempt with `nixos-rebuild switch --rollback` when a NixOS switch fails
-- generation tracking before and after `nixos-rebuild`
-- DHCPv6-PD reaches `Bound`
-- generated `routerd-dnsmasq` service when DHCP or RA resources require dnsmasq
-- generated `routerd-dnsmasq` service uses an absolute NixOS system-profile
-  binary path and explicit root execution options so hardened systemd
-  activation does not depend on shell `PATH` lookup or privilege dropping
-- generated DNS resolver, HealthCheck, firewall logger, Tailscale, DHCPv4 client, DHCPv6 client, and PPPoE client services
-- generated `networking.nftables.enable = true` when NAT, firewall, policy routing, or Path MTU resources require nftables
-- WireGuard, Tailscale, VXLAN, and native systemd-networkd VRF generation
-- Linux runtime resources that are not native NixOS network declarations are reconciled by `routerd.service` after NixOS activation
+- NixOS の有効化、再起動後の復元、DHCPv6-PD、dnsmasq による LAN サービス、DNS リゾルバ、DS-Lite、nftables の NAT とファイアウォール、HealthCheck、Web 管理画面の世代差分、OpenTelemetry 送信の実機検証
+- `routerd-dhcpv6-client` の systemd ユニット生成
+- `routerd-dhcpv4-client` の systemd ユニット生成
+- `routerd-pppoe-client` の systemd ユニット生成
+- `Package` override、`SysctlProfile`、derived host runtime artifact、`generated service artifacts` の NixOS モジュール生成
+- `nixos-rebuild test` / `nixos-rebuild switch` 連携
+- `nixos-rebuild switch` 失敗時の `nixos-rebuild switch --rollback` 試行
+- `nixos-rebuild` 前後の `generation` 記録
+- DHCPv6-PD が `Bound` まで到達
+- DHCP または RA リソースが dnsmasq を必要とする場合の `routerd-dnsmasq` サービス生成
+- `routerd-dnsmasq` サービスでは、NixOS のシステムプロファイル内の絶対パスを使います。root のまま実行する指定も入れるため、systemd の保護設定下でも `PATH` 探索や権限降格に依存しません
+- DNS resolver、HealthCheck、firewall logger、Tailscale、DHCPv4 クライアント、DHCPv6 クライアント、PPPoE クライアントのサービス生成
+- NAT、firewall、policy routing、Path MTU リソースが nftables を必要とする場合の `networking.nftables.enable = true` の生成
+- WireGuard、Tailscale、VXLAN、systemd-networkd による VRF の生成
+- NixOS の native な network 宣言では表せない Linux 実行時リソースは、NixOS の有効化後に `routerd.service` が調整
 
-On NixOS, populate `systemd.services.routerd.path` with the commands routerd needs.
-`install.sh` warns instead of calling `nix-env`, because NixOS package state should remain declarative.
-When `Package` resources have `os: nixos`, routerd does **not** install packages imperatively at runtime.
-It writes them to `environment.systemPackages` in `/etc/nixos/routerd-generated.nix`, then lets `nixos-rebuild` activate the system profile.
+NixOS では、routerd が必要とするコマンドを `systemd.services.routerd.path` に入れてください。
+`install.sh` は NixOS を検出すると、`nix-env` を実行せず警告だけ出します。
+NixOS のパッケージ状態は宣言型で管理してください。
+`Package` リソースに `os: nixos` を書く場合、routerd は実行時にパッケージを導入しません。
+`routerd render nixos` が `environment.systemPackages` を生成します。
 
-NixOS post-activation inventory:
+NixOS の有効化後の inventory は次の通りです。
 
-| Area | Current owner | Notes |
+| 領域 | 現在の所有者 | メモ |
 | --- | --- | --- |
-| Packages and routerd service path | Generated NixOS module | `Package` resources become `environment.systemPackages`; routerd does not call `nix-env`. |
-| Helper daemon service definitions | Generated NixOS module | DHCPv4, DHCPv6, PPPoE, HealthCheck, firewall logger, Tailscale, and dnsmasq are expressed as systemd services in Nix. |
-| nftables enablement | Generated NixOS module | NAT, firewall, policy routing, and Path MTU resources set `networking.nftables.enable = true` when needed. |
-| Runtime-only network mutations | `routerd.service` after activation | Dynamic DS-Lite, transient route decisions, and other status-derived mutations still need runtime reconciliation. |
-| Legacy runtime dnsmasq unit cleanup | `routerd.service` after activation | Kept temporarily to remove older `/run/systemd/system/routerd-dnsmasq.service` artifacts during migration. Remove after deployed hosts have passed one release cycle. |
+| package と routerd service path | 生成された NixOS module | `Package` resource は `environment.systemPackages` になります。routerd は `nix-env` を呼びません。 |
+| helper daemon service 定義 | 生成された NixOS module | DHCPv4、DHCPv6、PPPoE、HealthCheck、firewall logger、Tailscale、dnsmasq は Nix の systemd service として表現します。 |
+| nftables の有効化 | 生成された NixOS module | NAT、firewall、policy routing、Path MTU resource が必要とする場合に `networking.nftables.enable = true` を出します。 |
+| runtime のみの network 変更 | 有効化後の `routerd.service` | 動的な DS-Lite、一時的な経路判断、status 由来の変更には runtime の reconciliation が必要です。 |
+| 旧 runtime dnsmasq unit の cleanup | 有効化後の `routerd.service` | 古い `/run/systemd/system/routerd-dnsmasq.service` artifact を移行時に消すため、一時的に残します。導入済み host が 1 release cycle を経たら削除します。 |
 
-| Category | Packages |
+| 分類 | パッケージ |
 | --- | --- |
-| Runtime | `dnsmasq`, `nftables`, `conntrack-tools`, `iproute2`, `keepalived`, `ppp`, `wireguard-tools`, `tailscale`, `strongswan`, `radvd` |
+| Runtime | `dnsmasq`, `nftables`, `conntrack-tools`, `iproute2`, `ppp`, `wireguard-tools`, `tailscale`, `strongswan`, `radvd` |
 | Diagnostics | `bind`, `iputils`, `tcpdump`, `traceroute`, `nettools` |
-| OS control | `procps`, `systemd`, `kmod` |
+| OS 制御 | `procps`, `systemd`, `kmod` |
 
 ## FreeBSD
 
-FreeBSD uses the same routerd resource model as Ubuntu, mapped onto FreeBSD
-host mechanisms. The DHCPv6-PD client runs under `daemon(8)` and reliably keeps
-a lease bound. routerd maps resources to FreeBSD-native `rc.conf`, `rc.d`,
-`pf`, `mpd5`, `ifconfig`, and dnsmasq surfaces instead of using Linux tools.
-Install from the FreeBSD release archive and run `sudo ./install.sh`.
-The installer uses `pkg` for ports packages and leaves base-system tools alone.
+FreeBSD も Ubuntu と同じ routerd リソースモデルを使います。
+反映先は FreeBSD のホスト機構です。
+DHCPv6-PD クライアントは `daemon(8)` で実行し、リースを安定して維持します。
+routerd は Linux 用の機構ではなく、FreeBSD の `rc.conf`、`rc.d`、`pf`、`mpd5`、`ifconfig`、dnsmasq にリソースを対応付けます。
+FreeBSD 用のリリースアーカイブを展開し、`sudo ./install.sh` を実行します。
+インストーラーは `pkg` で ports のパッケージを導入し、基本システムのコマンドは導入せず確認だけ行います。
 
-Implemented:
+実装済みの項目は次の通りです。
 
-- DHCPv6-PD daemon with persistent lease
-- WireGuard interop with Linux / NixOS
+- DHCPv6-PD デーモンとリースの永続化
+- WireGuard による Linux / NixOS との相互接続
 - VXLAN over WireGuard
-- PPPoE via generated `mpd5.conf`, `mpd_enable`, and `mpd5` service restart
-- `Package` install through `pkg`
-- `render freebsd --out-dir` emits `install-packages.sh` for reviewable `pkg install` bootstrap
-- FreeBSD-idiomatic `rc.conf.d` output for `gateway_enable`, `ipv6_gateway_enable`, `cloned_interfaces`, `ifconfig_*`, `static_routes`, `ipv6_static_routes`, `pf_enable`, `pflog_enable`, and `mpd_enable`
-- `dhclient.conf`, `mpd5.conf`, `pf.conf`, dnsmasq config, and generated `rc.d` scripts from `routerd render freebsd --out-dir`
-- pf rendering from `FirewallZone`, `FirewallPolicy`, `FirewallRule`
-- pf NAT rendering from `NAT44Rule`
-- automatic `pfctl -nf` validation and `pfctl -f` application for generated `pf.conf`
-- conntrack-equivalent traffic flows from `pfctl -ss -v`
-- `pflog0` ingestion through direct BPF reads for firewall logs; packet parsing avoids dependency on vendor-specific tcpdump text formats
-- managed dnsmasq for DHCPv4, DHCPv6, and Router Advertisement
-- dnsmasq lease persistence under `/var/db/routerd/dnsmasq`
-- dnsmasq config validation with `dnsmasq --test` before service restart
-- automatic pf holes for routerd-owned DHCP, DNS, RA, DHCPv6-PD, DS-Lite, WireGuard, and healthcheck traffic
-- DNS resolver daemon builds on FreeBSD; `DNSUpstream.spec.sourceInterface` can target `fib:<n>` for FIB-bound upstream routing
-- cloud VPN `IPsecConnection` validates and renders strongSwan `swanctl` connection definitions; live cloud gateway validation remains deployment-specific
-- rc.d script generation, installation, and `service <name> onestart` activation from generated service artifacts
-- rc.d script generation for `routerd-healthcheck`
-- rc.d script generation for `routerd-firewall-logger` with direct `pflog0` input
-- rc.d script generation for `TailscaleNode`
-- CARP-backed `VirtualAddress` in `mode: vrrp`, configured on the parent interface with `vhid`
-- dnsmasq rc.d ordering after `mpd5` for PPPoE coexistence
-- Static DS-Lite gif tunnel rendering
-- Dynamic DS-Lite apply from static AFTR IPv6, AFTR FQDN, or delegated-address local source
+- `mpd5.conf`、`mpd_enable`、`mpd5` サービスの再起動による PPPoE
+- `Package` の `pkg` 経由での導入
+- `gateway_enable`、`ipv6_gateway_enable`、`cloned_interfaces`、`ifconfig_*`、`static_routes`、`ipv6_static_routes`、`pf_enable`、`pflog_enable`、`mpd_enable` の、FreeBSD らしい `rc.conf.d` 出力
+- `routerd render freebsd --out-dir` による `dhclient.conf`、`mpd5.conf`、`pf.conf`、dnsmasq 設定、`rc.d` スクリプトの生成
+- `FirewallZone` / `FirewallPolicy` / `FirewallRule` からの pf のレンダリング
+- `NAT44Rule` からの pf NAT のレンダリング
+- 生成された `pf.conf` の `pfctl -nf` による検証と `pfctl -f` による適用
+- `pfctl -ss -v` 出力の traffic flow への変換
+- `pflog0` を BPF から直接読む firewall log。packet を解析するため、tcpdump の文字列表現の差異に依存しません
+- DHCPv4、DHCPv6、RA 用の管理対象 dnsmasq
+- `/var/db/routerd/dnsmasq` 配下での dnsmasq リースの永続化
+- サービス再起動前の `dnsmasq --test` による設定確認
+- DHCP、DNS、RA、DHCPv6-PD、DS-Lite、WireGuard、HealthCheck に必要な pf の穴の自動生成
+- `generated service artifacts` からの rc.d スクリプトの生成
+- `routerd-healthcheck` の rc.d スクリプトの生成
+- `routerd-firewall-logger` の rc.d スクリプトの生成と `pflog0` の直接読み取り
 
-`ClientPolicy` is the one firewall feature that is intentionally Linux-only
-for now. It depends on nftables Ethernet source address sets for MAC-based
-guest isolation. The FreeBSD pf renderer rejects the resource with an explicit
-error instead of applying a weaker no-op policy.
+`ClientPolicy` は、現時点では Linux 専用のファイアウォール機能です。
+MAC アドレスでゲスト端末を隔離するために、nftables の Ethernet 送信元アドレス set を使います。
+FreeBSD pf は同じモデルを routed filter path で扱えないため、routerd はこのリソースを明示的に未対応として扱います。
+- `TailscaleNode` の rc.d スクリプトの生成
+- 静的 DS-Lite gif tunnel のレンダリング
+- 静的 AFTR IPv6、AFTR FQDN、委任アドレス由来の local source による動的 DS-Lite の適用
+- cloud VPN 向け `IPsecConnection` の検証と、strongSwan `swanctl` 接続定義の生成。クラウドゲートウェイとの実疎通確認は環境ごとに行います
 
-FreeBSD does not use Linux-specific nftables, conntrack, or iproute2. The
-`Package` examples declare FreeBSD-native replacements: `pf` and `pflog0` from
-the base system, `mpd5` for PPPoE, `ifconfig gif` for DS-Lite, dnsmasq for LAN
-DHCP/RA service, and ports packages for WireGuard, Tailscale, and strongSwan.
+FreeBSD は、Linux 専用の nftables / conntrack / iproute2 を使いません。
+`Package` の例は、FreeBSD 側の置き換えを宣言します。
+pf と `pflog0` は基本システムを使います。
+PPPoE は `mpd5`、DS-Lite は `ifconfig gif`、LAN の DHCP/RA は dnsmasq を使います。
+WireGuard、Tailscale、strongSwan は ports のパッケージを使います。
 
-| Category | Packages |
+| 分類 | パッケージ |
 | --- | --- |
 | Runtime | `dnsmasq`, `wireguard-tools`, `tailscale`, `strongswan`, `mpd5` |
 | Diagnostics | `bind-tools`, `tcpdump` |
-| Base system | `ifconfig`, `sysctl`, `service`, `sysrc`, `netstat`, `sockstat`, `ping`, `traceroute` |
+| 基本システム | `ifconfig`, `sysctl`, `service`, `sysrc`, `netstat`, `sockstat`, `tcpdump`, `ping`, `traceroute` |
 
-`routerd render freebsd --out-dir <dir>` produces:
+`routerd render freebsd --out-dir <dir>` は次を出力します。
 
 - `rc.conf.d-routerd`
 - `dhclient.conf`
@@ -234,21 +220,27 @@ DHCP/RA service, and ports packages for WireGuard, Tailscale, and strongSwan.
 - `dnsmasq.conf`
 - `rc.d-*`
 
-`routerd apply` installs the generated `pf.conf`, validates it with `pfctl -nf`, applies it with `pfctl -f`, validates dnsmasq with `dnsmasq --test`, starts generated rc.d scripts with `service <name> onestart`, and applies dynamic DS-Lite tunnels with `ifconfig gif` when static `rc.conf` rendering is not enough. Use `routerd render freebsd` for review and offline validation before pointing real traffic at a FreeBSD host.
+`routerd apply` は生成した `pf.conf` を導入します。
+その前に `pfctl -nf` で構文を確認します。
+dnsmasq も `dnsmasq --test` で設定を確認してから再起動します。
+導入後は `pfctl -f` で反映し、生成した rc.d スクリプトを `service <name> onestart` で起動します。
+静的な `rc.conf` の生成だけでは足りない DS-Lite tunnel は、`ifconfig gif` で動的に適用します。
+本番運用の前には、`routerd render freebsd` で出力を確認してください。
 
 ## Platform parity backlog
 
-These are the current known level differences to track when comparing Ubuntu,
-NixOS, FreeBSD, and Alpine:
+Ubuntu、NixOS、FreeBSD、Alpine を比較したときの既知の差分です。
 
-| Area | Current gap | Backlog |
+| 領域 | 現在の差分 | backlog |
 | --- | --- | --- |
-| CI/runtime coverage | CI runs unit tests and Linux static checks on Ubuntu. Alpine now has a host-independent installer dependency smoke plus minimal `Package` validate/dry-run coverage and an installed-host smoke harness, but Alpine activation is not yet a regular VM job. FreeBSD is cross-built in release, and NixOS activation is not yet a regular VM job. | Add FreeBSD VM, NixOS VM, and Alpine VM smoke jobs that run validate, plan, dry-run apply, real package-manager checks, service activation, and renderer syntax checks. |
-| Alpine service manager | Alpine now has OpenRC rendering for generated routerd service artifacts, managed dnsmasq, `routerd-healthcheck`, DNS resolver, firewall logger, PPPoE, and Tailscale. Apply-time activation uses `rc-update` / `rc-service` and avoids duplicate enable/start/restart work when state is unchanged. DNS resolver scripts are rendered but not enabled or started until runtime config materialization is in place. | Materialize DNS resolver runtime config for OpenRC, broaden installed-host networking ownership, and promote the Alpine smoke harness to CI. |
-| NixOS imperative leftovers | NixOS renders the module and lets `nixos-rebuild` activate it. Runtime-only network mutations and legacy dnsmasq unit cleanup still run from `routerd.service` after activation. The cleanup is intentionally kept for the first release that contains generated NixOS dnsmasq service ownership. | Remove legacy dnsmasq cleanup after that release cycle, reduce post-activation reconciliation where NixOS has native declarations, and keep tests around remaining runtime-only resources. |
-| FreeBSD feature exceptions | `ClientPolicy` remains Linux-only because it depends on nftables Ethernet source address sets. | Keep rejecting it explicitly, and only add pf support after a design that preserves the same isolation semantics. |
-| Package bootstrap | Ubuntu, Alpine, and FreeBSD can install packages imperatively; NixOS intentionally renders package declarations instead. Schema, validation, examples, installer dependency lists, and CI smoke coverage now include `apk`. | Keep schema, validation, installer package lists, examples, and generated docs in sync for `apt`, `apk`, `pkg`, and Nix declarations. |
+| CI / runtime coverage | CI は Ubuntu 上で unit test と Linux static check を実行します。Alpine は host に依存しない installer dependency smoke、最小限の `Package` validate / dry-run coverage、導入済みホスト向けの smoke harness を持っていますが、Alpine の activation はまだ通常の VM job ではありません。FreeBSD は release 時に cross build しますが、NixOS の activation もまだ VM job になっていません。 | FreeBSD VM、NixOS VM、Alpine VM の smoke job を追加し、validate、plan、dry-run apply、実際の package-manager check、service activation、renderer の syntax check を流します。 |
+| Alpine の service manager | Alpine は明示的な `generated service artifacts`、managed dnsmasq、`routerd-healthcheck`、DHCP client、DNS resolver、firewall logger、PPPoE、Tailscale の OpenRC rendering を持っています。apply 時の activation は `rc-update` / `rc-service` を使い、状態が変わらない場合の重複した enable / start / restart を避けます。DNS resolver script は生成しますが、runtime config の materialization が入るまでは enable / start しません。 | OpenRC 向けの DNS resolver runtime config の materialization、導入済みホストの networking 所有の拡張、Alpine smoke harness の CI 昇格を進めます。 |
+| NixOS に残る命令的な部分 | NixOS は module を生成し、activation は `nixos-rebuild` に任せます。runtime のみの network 変更と、旧 dnsmasq unit の cleanup は、activation 後の `routerd.service` に残っています。この cleanup は、生成された NixOS dnsmasq service の ownership を含む最初の release に向けて、意図的に残しています。 | その release cycle のあとで旧 dnsmasq cleanup を削除し、NixOS の native な declaration で表せるものについては activation 後の reconciliation を減らし、残す runtime のみの resource には test を追加します。 |
+| FreeBSD の機能例外 | `ClientPolicy` は nftables の Ethernet source address set に依存するため、Linux 専用です。 | 同じ isolation の意味を保てる設計ができるまで、明示的に拒否します。 |
+| Package bootstrap | Ubuntu、Alpine、FreeBSD は package を命令的に導入できます。NixOS は意図的に package declaration を生成します。schema、validation、example、installer の dependency list、CI smoke coverage は `apk` を含むように更新済みです。 | `apt`、`apk`、`pkg`、Nix declaration について、schema、validation、installer の package list、example、生成ドキュメントの同期を保ちます。 |
 
-## Implementation guideline for OS abstraction
+## OS 抽象化の実装方針
 
-When you add a new OS-specific behaviour, do not branch on `runtime.GOOS` in business logic. Use the `pkg/platform` layer (`platform.Features`) or Go build tags to keep the boundaries explicit. Failing fast at validation or planning is preferred over surprising the operator at runtime on an unsupported OS.
+新しい OS 固有の振る舞いを足すときは、business logic 層で `runtime.GOOS` を直接読まないでください。
+`pkg/platform` 層（`platform.Features`）または Go の build tag を使って、境界を明示します。
+対象外の OS で実行時に予期せず失敗するよりも、validation や planning の段階で明示的にエラーにすることを優先します。

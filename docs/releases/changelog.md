@@ -4,1389 +4,1394 @@ title: Changelog
 
 # Changelog
 
-routerd release history. The format follows [Keep a Changelog](https://keepachangelog.com/).
-routerd uses date-and-time-based release versions in `vYYYYMMDD.HHmm` format.
-The software is at the v1alpha1 stage; releases may contain breaking changes.
+routerd のリリース履歴です。形式は [Keep a Changelog](https://keepachangelog.com/ja/) に準拠します。
+変更は「追加」「変更」「非推奨」「削除」「修正」「セキュリティ」に分類します。
+ただし版番号は Semantic Versioning ではなく、日付と時刻に基づく `vYYYYMMDD.HHmm` 形式を使います。
+ソフトウェアは v1alpha1 段階のため、リリース間で破壊的変更を含むことがあります。
 
 ## Unreleased
 
 ## v20260522.1334
 
-### Added
+:::tip ★安定マイルストーン
+この版は最初の**推奨安定版マイルストーン**です。本番ルーターでの稼働実績があります。詳細と推奨の理由は [安定版マイルストーン](./stable.md) を参照してください。
+:::
 
-- Added `BGPPeer.spec.ebgpMultihop` for routed eBGP peering. Values `0` and `1`
-  keep the direct-peer default, while `2` through `255` configure GoBGP
-  `EbgpMultihop.MultihopTtl`; the setting is persisted in `routerd-bgp`
-  applied state so daemon restarts restore the same peer TTL.
+### 追加
+
+- routed eBGP peering 用に `BGPPeer.spec.ebgpMultihop` を追加しました。
+  `0` と `1` は直結 peer の既定動作のままです。`2` から `255` は GoBGP の
+  `EbgpMultihop.MultihopTtl` として設定され、`routerd-bgp` の適用済み状態にも
+  保存されるため、デーモン再起動後も同じ peer TTL を復元します。
 
 ## v20260522.1045
 
-### Fixed
+### 修正
 
-- Restored the former FRR `set ip next-hop peer-address` import behavior in the
-  GoBGP backend. `BGPRouter.spec.importPolicy.nextHopRewrite` now defaults to
-  `peer-address`, so accepted eBGP routes install into the kernel FIB via the
-  learning peer addresses and preserve ECMP when downstream speakers advertise
-  a third-party next-hop. Router status now exposes the rewrite mode and
-  installed next-hops.
+- GoBGP backend で、旧 FRR の `set ip next-hop peer-address` 相当の import
+  動作を復元しました。`BGPRouter.spec.importPolicy.nextHopRewrite` は既定で
+  `peer-address` になり、受理した eBGP route は downstream speaker が第三者
+  next-hop を広告していても、学習元 peer address 経由で kernel FIB に投入され、
+  ECMP を維持します。router status には rewrite mode と投入された next-hop を表示します。
 
 ## v20260522.0824
 
-### Fixed
+### 修正
 
-- Removed `ProtectSystem` and `ReadWritePaths` from generated `routerd.service`
-  units. `routerd` already runs without systemd filesystem protection, and the
-  explicit write-path list could make clean hosts fail service startup with
-  systemd namespace errors when optional directories did not exist.
+- 生成される `routerd.service` から `ProtectSystem` と `ReadWritePaths` を削除しました。
+  `routerd` は systemd のファイルシステム保護なしで動く前提であり、明示的な
+  write-path のリストは、optional なディレクトリが存在しない clean host で systemd namespace
+  エラーによるサービス起動失敗を招くことがありました。
 
 ## v20260522.0742
 
-### Fixed
+### 修正
 
-- Removed the NixOS module `services.routerd.extraFlags` escape hatch so
-  NixOS deployments cannot keep passing removed `--controller-chain*` flags
-  after upgrading. The generated `routerd.service` now uses the fixed
-  `routerd serve` invocation that matches the simplified service lifecycle.
+- NixOS module の `services.routerd.extraFlags` escape hatch を削除し、
+  アップグレード後も削除済みの `--controller-chain*` flag を渡し続けられないようにしました。
+  生成される `routerd.service` は、簡素化したサービスライフサイクルに合う固定の
+  `routerd serve` 起動形を使います。
 
 ## v20260522.0658
 
-### Fixed
+### 修正
 
-- Fixed in-place upgrades from legacy routerd releases that still passed
-  removed `--controller-chain*` flags or declared `SystemdUnit` resources.
-  `serve` and `apply` now warn and ignore legacy controller-chain flags instead
-  of failing before reconciliation, and the installer replaces legacy
-  routerd service units while removing user-facing `SystemdUnit` resources from
-  preserved configs before restarting the service.
+- 旧 routerd release からの in-place アップグレードで、削除済みの
+  `--controller-chain*` flag や `SystemdUnit` resource が残っている場合でも
+  起動不能にならないようにしました。`serve` / `apply` は legacy な
+  controller-chain flag を警告付きで無視し、installer はサービス再起動の前に
+  legacy な routerd service unit を置き換え、保存済み config から user-facing な
+  `SystemdUnit` resource を削除します。
 
 ## v20260522.0006
 
-### Changed
+### 変更
 
-- Replaced the BGP controller backend with a long-lived `routerd-bgp` daemon
-  built on GoBGP. `BGPRouter` and `BGPPeer` now map directly to typed GoBGP API
-  objects over a local gRPC Unix socket, `apply --once` no longer renders FRR
-  artifacts, and `routerd` restarts no longer restart the BGP process or drop
-  established sessions. Observed peer/path status comes from
-  `ListPeer`/`ListPath` instead of `vtysh` text parsing. Learned IPv4 best paths
-  matching import policy are installed into the kernel FIB, including ECMP next
-  hops for equal best paths; unsupported BFD intent is reported as Pending
-  instead of being silently ignored. Learned routes that cannot be installed into
-  the kernel FIB, such as IPv6 FIB routes in the MVP or non-Linux platforms, now
-  degrade the router status with a per-prefix install reason instead of being
-  silently dropped. The `routerd-bgp` daemon persists its last applied global,
-  peer, and advertisement intent in `/var/lib/routerd/bgp/applied.json` with an
-  atomic rename, restores it on daemon restart, and lets `routerd` detect config
-  drift after reconnect instead of silently adopting stale live peers.
-- Controller runtime status now separates cumulative reconcile failures from
-  the current health signal. `reconcileErrorCount` remains a lifetime counter,
-  while `currentError`, `consecutiveErrorCount`, `lastErrorTime`, and
-  `lastErrorClearedAt` show whether the latest reconcile is still failing or a
-  previous transient error has already recovered.
-- Added regression coverage for `EgressRoutePolicy` no-op reconciliation so
-  unchanged default-route selection, including `mode: priority` dry-run status,
-  does not churn `routerd.lan.route.changed` or resource status events.
-- `DHCPv6Information` now reports a Pending state while waiting for the
-  supervised DHCPv6 client socket during startup instead of logging a repeated
-  bootstrap WARN for the expected socket creation race.
-- Added an auto-derived `RogueRADetector` for each `IPv6RouterAdvertisement`.
-  The new `routerd-ra-observer` daemon passively observes ICMPv6 Router
-  Advertisements on the serving interface and reports non-self routers through
-  status and `routerd.ipv6.ra.rogue_detected` events without attempting active
-  RA Guard on flat L2 segments.
-- Renamed selection-only `EgressRoutePolicy` status/event terminology from
-  hard-coded `dryRun: true` to `role: advisory` / `advisory: true`. CLI
-  `--dry-run` continues to mean preview without applying host changes.
-- Stale legacy client daemon unit cleanup now defers active units with a
-  Pending status and warning event instead of stopping them, while inactive
-  stale units are still removed with status/event evidence.
+- BGP controller backend を GoBGP ベースの長寿命 `routerd-bgp` デーモンに
+  置き換えました。`BGPRouter` と `BGPPeer` は local gRPC Unix socket 経由で
+  型付き GoBGP API object へ直接マップされ、`apply --once` は FRR artifact を
+  render せず、`routerd` 再起動でも BGP process を再起動せず、established な
+  session を落としません。peer/path status は `vtysh` のテキスト parse ではなく
+  `ListPeer` / `ListPath` から取得します。
+  import policy に一致する学習済み IPv4 best path は kernel FIB に投入し、equal best path は
+  ECMP next-hop として扱います。未対応の BFD intent は黙って無視せず Pending にします。
+  MVP での IPv6 FIB route や non-Linux platform など、kernel FIB に投入できない
+  学習 route は黙って落とさず、prefix ごとの install reason と router の Degraded な
+  status として表示します。`routerd-bgp` デーモンは最後に適用した global / peer /
+  advertisement intent を `/var/lib/routerd/bgp/applied.json` に atomic rename で保存し、
+  デーモン再起動時に復元します。これにより `routerd` reconnect 後も config drift を検出し、
+  stale な live peer を黙って採用しません。
+- コントローラー runtime status で、累積した reconcile failure と現在の異常を分離しました。
+  `reconcileErrorCount` は lifetime counter のまま残し、`currentError`、
+  `consecutiveErrorCount`、`lastErrorTime`、`lastErrorClearedAt` で最新 reconcile が
+  失敗中なのか、過去の一時 error がすでに回復済みなのかを判定できます。
+- `EgressRoutePolicy` の no-op reconcile 回帰 test を追加し、`mode: priority` の
+  dry-run status を含む default-route selection が不変の場合に
+  `routerd.lan.route.changed` や resource status event を churn しないことを保証しました。
+- 起動時に supervised な DHCPv6 client socket の作成を待っている間、
+  `DHCPv6Information` は想定内の socket race を bootstrap の WARN として繰り返し
+  記録せず、Pending state として表示するようになりました。
+- 各 `IPv6RouterAdvertisement` から `RogueRADetector` を自動導出するようにしました。
+  新しい `routerd-ra-observer` デーモンは対象 interface の ICMPv6 Router Advertisement を
+  passive に観測し、flat L2 segment で active な RA Guard を試みず、homert02 以外の
+  router を status と `routerd.ipv6.ra.rogue_detected` event で通知します。
+- selection-only の `EgressRoutePolicy` status/event 用語を、hard-code された
+  `dryRun: true` から `role: advisory` / `advisory: true` に改名しました。
+  CLI の `--dry-run` は、host 変更を適用しない preview の意味のままです。
+- stale な legacy client daemon unit の cleanup は、active な unit を停止せず
+  Pending status と警告 event で保留するようになりました。inactive な stale
+  unit は引き続き status/event の証跡付きで削除します。
 
 ## v20260521.1953
 
-### Fixed
+### 修正
 
-- Preserved existing nftables dataplane rules during routerd restarts when
-  rendered firewall and TCP MSS clamp rules are unchanged, avoiding needless
-  `flush table` reloads for `routerd_filter` and `routerd_mss`.
-- Hardened unchanged reconcile paths so stale client daemon unit cleanup is
-  reported through status/events, static and DHCP IPv4 routes skip matching
-  live kernel routes, dynamic nftables address sets update by element diff
-  instead of flushing the whole set, and NTP/BGP service actions expose their
-  reasons.
+- routerd 再起動時に firewall と TCP MSS clamp の render 結果が変わって
+  いない場合は既存の nftables dataplane rule を維持し、`routerd_filter` と
+  `routerd_mss` への不要な `flush table` での再読み込みを避けるようにしました。
+- 無変更 reconcile の冪等性を強化しました。stale な client daemon unit の cleanup は
+  status/event に記録し、static/DHCP IPv4 route は live kernel route が一致する
+  場合に skip し、動的な nftables address set は set 全体を flush せず element 差分で
+  更新します。NTP/BGP のサービス操作理由も status/event で確認できるようにしました。
 
 ## v20260521.1155
 
-### Fixed
+### 修正
 
-- Fixed `EgressRoutePolicy` `mode: priority` so it honors
-  `selection: highest-weight-ready`, candidate `weight`, and
-  `disabled: true`, reports selected route details consistently, and removes
-  stale ledger-owned policy-route rules and route tables after candidates are
-  removed.
+- `EgressRoutePolicy` の `mode: priority` が `selection: highest-weight-ready`、
+  candidate の `weight`、`disabled: true` を正しく反映するようにしました。
+  選択された経路の status も一貫して出し、candidate 削除後に残る
+  ledger-owned な policy-route rule と route table を削除します。
 
 ## v20260521.0918
 
-### Fixed
+### 修正
 
-- Stopped `EgressRoutePolicy` selection-only reconciliation from overwriting
-  `mode: priority`, `mode: mark`, and `mode: hash` policy-route status. These
-  modes now have a single status owner, preventing dry-run
-  `routerd.lan.route.changed` churn when the applied policy selection is
-  unchanged.
+- `EgressRoutePolicy` の selection-only reconciliation が `mode: priority`、
+  `mode: mark`、`mode: hash` の policy-route status を上書きしないようにしました。
+  これらの mode は status owner を 1 つに統一し、適用済みの policy selection が
+  変わっていない場合に dry-run の `routerd.lan.route.changed` event が
+  繰り返し発生する問題を防ぎます。
 
 ## v20260521.0843
 
-### Fixed
+### 修正
 
-- Fixed repeated `IPv6DelegatedAddress` apply events on Linux when the kernel
-  reports an existing delegated host address with a different prefix length
-  such as `/128` instead of the configured `/64`.
-- Stopped `routerd.resource.status.changed` events from being emitted for
-  `lastTransitionAt` timestamp-only status refreshes.
+- Linux kernel が既存の delegated host address を設定上の `/64` ではなく
+  `/128` など別の prefix length で表示する場合に、`IPv6DelegatedAddress` の
+  apply event が繰り返し発生する問題を修正しました。
+- `lastTransitionAt` timestamp だけが更新された status refresh では、
+  `routerd.resource.status.changed` event を出さないようにしました。
 
 ## v20260521.0827
 
-### Added
+### 追加
 
-- Added `NTPServer.spec.allowCIDRFrom` so LAN NTP client allow ranges can be
-  derived from dynamic status fields such as
-  `IPv6DelegatedAddress/<name>.address` or
-  `DHCPv6PrefixDelegation/<name>.currentPrefix`.
+- `NTPServer.spec.allowCIDRFrom` を追加しました。LAN NTP client の許可範囲を
+  `IPv6DelegatedAddress/<name>.address` や
+  `DHCPv6PrefixDelegation/<name>.currentPrefix` などの動的な status field から
+  導出できます。
 
 ## v20260521.0802
 
-### Added
+### 追加
 
-- Added `install.sh --with-ndpi-archive PATH` so a normal static routerd
-  archive and the native `routerd-ndpi-agent-libndpi` archive can be applied in
-  one rollback transaction. The installer validates the feature archive target,
-  path safety, checksum when present, and `libndpiLoaded: true` self-test before
-  the install can satisfy `--with-ndpi`.
+- `install.sh --with-ndpi-archive PATH` を追加しました。通常の static
+  routerd archive と native `routerd-ndpi-agent-libndpi` archive を、1 つの
+  rollback transaction で適用できます。installer は `--with-ndpi` を満たす前に、
+  feature archive の target、path safety、存在する場合の checksum、
+  `libndpiLoaded: true` self-test を検証します。
 
-### Fixed
+### 修正
 
-- Added serve-startup cleanup for stale object status rows whose resource kinds
-  have been removed from the current schema. routerd creates a timestamped
-  SQLite backup before deleting those legacy rows, records an audit event, and
-  skips cleanup if the backup cannot be created.
+- 現在の schema から削除済みの resource kind について、serve 起動時に stale な
+  object status の行を cleanup するようにしました。routerd は削除前に timestamp
+  付きの SQLite バックアップを作成し、audit event を記録します。バックアップを作成できない
+  場合は cleanup を skip します。
 
 ## v20260521.0731
 
-### Fixed
+### 修正
 
-- Preserved an already-installed native `routerd-ndpi-agent` when the standard
-  release archive contains only the static fallback agent, and made
-  `install.sh --with-ndpi` fail if the final agent self-test does not report
-  `libndpiLoaded: true`.
-- Marked `TrafficFlowLog` as `Pending` with
-  `TrafficFlowApplicationLayerUnavailable` when
-  `spec.includeApplicationLayer: true` is configured but the nDPI agent does
-  not have its native `libndpi` backend loaded.
-- Registered the derived `routerd_mss` nftables table as a router-owned
-  artifact, so it is no longer reported as an orphan while routerd still
-  regenerates it.
-- Hid stale derived state from `routerctl show derived-resources` by default,
-  added `--include-stale` for audit/debug views, and added
-  `routerctl delete --force` so deleted or renamed resource kinds can be
-  removed from the state DB without manual SQLite edits.
-- Made TCP MSS clamping source-path aware and downward-only. `Interface.spec.mtu`
-  can now describe low-MTU source interfaces such as `tailscale0`; routerd uses
-  `min(source MTU, destination path MTU)` per source/destination path while
-  nftables only rewrites SYN packets whose advertised MSS is higher than the
-  derived value.
+- standard release archive に static fallback 版 `routerd-ndpi-agent` しか含まれない
+  場合でも、既に install 済みの native `routerd-ndpi-agent` が `selftest` で
+  `libndpiLoaded: true` を返すなら保持するようにしました。また
+  `install.sh --with-ndpi` は、最終的に install された agent が
+  `libndpiLoaded: true` を返さない場合に失敗します。
+- `spec.includeApplicationLayer: true` が設定されているのに nDPI agent の native
+  `libndpi` backend が load されていない場合、`TrafficFlowLog` を
+  `TrafficFlowApplicationLayerUnavailable` reason 付きの `Pending` として表示する
+  ようにしました。
+- 派生された `routerd_mss` nftables table を router-owned artifact として登録し、
+  routerd が再生成している table が orphan として誤表示されないようにしました。
+- `routerctl show derived-resources` は stale な派生 state を既定で隠し、
+  audit/debug 用に `--include-stale` を追加しました。また削除・rename 済み kind の
+  state DB 行を手動 SQLite 編集なしで消せるように `routerctl delete --force` を追加しました。
+- TCP MSS clamp を source path aware かつ downward-only にしました。
+  `Interface.spec.mtu` で `tailscale0` のような低 MTU source interface を表せます。
+  routerd は source/destination path ごとに `min(source MTU, destination path MTU)`
+  を使い、nftables は advertised MSS が派生値より大きい SYN packet だけを書き換えます。
 
 ## v20260521.0039
 
-### Fixed
+### 修正
 
-- Garbage-collect deleted `PPPoESession` artifacts recorded in the ownership
-  ledger, including generated PPP peer files, runtime sockets, runtime
-  directories, state directories, and the stopped/disabled systemd unit.
-- Let the Live ISO import router config from read-only ISO9660/UDF config media
-  attached as CD-ROM devices, including Proxmox `media=cdrom` config ISOs
-  labeled `ROUTERD_CONFIG`.
-- Prevent a persisted OpenRC `routerd` default-runlevel entry from starting
-  `routerd serve` before Live ISO USB config restore. The live autostart helper
-  now removes that runlevel entry and restarts an already-running `serve`
-  process after `apply --once`, so restored BGP config can be reloaded into FRR.
+- 削除された `PPPoESession` について、ownership ledger に残る生成済み artifact を
+  garbage collect するようにしました。対象は PPP peer file、runtime socket、
+  runtime ディレクトリ、state ディレクトリ、停止・無効化済みの systemd unit です。
+- Live ISO が CD-ROM として接続された read-only な ISO9660/UDF config media からも
+  router config を import できるようにしました。Proxmox の `media=cdrom` で
+  `ROUTERD_CONFIG` label を付けた config ISO を対象に含めます。
+- 永続化された OpenRC の `routerd` default runlevel entry により、Live ISO の
+  USB config restore より前に `routerd serve` が起動してしまう問題を防ぎます。
+  live autostart helper はこの runlevel entry を削除し、config restore と
+  `apply --once` の後に既存の `serve` process を再起動するため、復元された
+  BGP config が FRR に再読み込みされます。
 
 ## v20260520.2307
 
-### Fixed
+### 修正
 
-- Added `CAP_DAC_OVERRIDE` to the generated `routerd.service` only when the
-  router config contains FRR/keepalived integrations. Ubuntu FRR commonly keeps
-  `/run/frr` as `frr:frr` with mode `0755`; supplementary `frr` group access is
-  enough for VTY sockets but not enough for `frr-reload.py` to create its
-  `/var/run/frr/reload-*.txt` scratch file under systemd capability bounding.
-- Classified `frr-reload.py` permission failures as
-  `FRRReloadPermissionDenied` instead of the generic `FRRReloadFailed`.
-- Removed stale routerd-managed WireGuard interfaces and peer statuses when
-  `WireGuardInterface` / `WireGuardPeer` resources disappear from the config,
-  so deleting the resources and restarting `routerd serve` no longer requires
-  manually editing the state DB.
+- FRR/keepalived 統合を含む場合だけ、生成される `routerd.service` に
+  `CAP_DAC_OVERRIDE` を追加しました。Ubuntu の FRR では `/run/frr` が
+  `frr:frr` かつ mode `0755` になることがあり、`frrvty` group だけでは
+  `frr-reload.py` が `/var/run/frr/reload-*.txt` を作成できないためです。
+- `frr-reload.py` の permission failure を generic な `FRRReloadFailed` ではなく
+  `FRRReloadPermissionDenied` として分類するようにしました。
+- `WireGuardInterface` / `WireGuardPeer` が config から消えた場合に、routerd 管理下の
+  古い WireGuard interface と peer status を削除するようにしました。
+  resource 削除後に state DB を手動編集する必要をなくします。
 
-### Changed
+### 変更
 
-- Updated Kubernetes BGP examples to import the MetalLB LoadBalancer pool
-  `10.250.0.0/24` and adjusted the home-router sample to peer with the two
-  k8s route nodes individually.
+- Kubernetes BGP example の import prefix を MetalLB LoadBalancer pool の
+  `10.250.0.0/24` に更新し、home-router の sample は 2 台の k8s route node と
+  個別に peer する構成へ調整しました。
 
 ## v20260520.2227
 
-### Fixed
+### 修正
 
-- Fixed the Live ISO build after adding the OpenRC `routerd` service script by
-  creating the overlay `/etc/init.d` directory before writing the script.
+- OpenRC `routerd` service script 追加後の Live ISO build を修正しました。
+  script を書き込む前に overlay の `/etc/init.d` ディレクトリを作成します。
 
 ## v20260520.2222
 
-### Added
+### 追加
 
-- Added BGP route-selection diagnostics to observed prefix status and
-  `routerctl show bgp`, including select-deferred, no-best-path, and
-  not-installed-to-zebra states when FRR exposes those fields.
-- Added `BGPRouter.spec.convergenceProfile: fast` for Kubernetes/edge routers.
-  The fast profile derives short BGP timers and disables graceful restart by
-  default to avoid stale-path selection deferral on fresh boot.
-- Added Live ISO config import from USB partitions labeled `ROUTERD_CONFIG`.
-  The boot helper now selects `/routerd/hosts/<hostname>.yaml`,
-  `/routerd/hosts/<mac>.yaml`, or `/routerd/router.yaml`, then records the
-  source and SHA256 under `/run/routerd/`.
+- BGP prefix status と `routerctl show bgp` に route selection diagnostics を
+  追加しました。FRR が field を出す場合、select-deferred、no-best-path、
+  not-installed-to-zebra の状態を確認できます。
+- Kubernetes/edge router 向けに `BGPRouter.spec.convergenceProfile: fast` を
+  追加しました。fast profile は短い BGP timer を派生し、fresh boot 時の stale-path
+  selection defer を避けるため graceful restart を既定で無効にします。
+- Live ISO が `ROUTERD_CONFIG` label の USB partition から config を読み込める
+  ようにしました。boot helper は `/routerd/hosts/<hostname>.yaml`、
+  `/routerd/hosts/<mac>.yaml`、`/routerd/router.yaml` を選び、source と SHA256 を
+  `/run/routerd/` へ記録します。
 
 ## v20260520.2107
 
-### Fixed
+### 追加
 
-- Reconciled the FRR service state on every BGP controller cycle. If FRR is
-  stopped or failed on Alpine/OpenRC or systemd hosts, routerd now starts or
-  restarts the service before probing `vtysh` and running `frr-reload.py`.
-- Tightened BGPRouter health so service state, `vtysh` round-trip,
-  `tcp/179` listen state, and the rendered `router bgp <asn>` stanza must all
-  be present before the router is reported as healthy.
-- Aggregated `routerctl status` from resource phases so a pending or failed
-  BGP resource can no longer be hidden by a controller runtime success update.
+- BGP / FRR control-plane design note を追加し、readiness、reload、
+  verification、failure status、Live ISO 受入 scenario を明文化しました。
 
-### Documentation
+### 修正
 
-- Added the BGP / FRR control-plane design note covering readiness, reload,
-  verification, failure status, and Live ISO acceptance scenarios.
+- BGP controller が各 reconcile で FRR の service state を確認するようにしました。
+  Alpine/OpenRC または systemd host で FRR が stopped/failed の場合、
+  `vtysh` probe と `frr-reload.py` の前にサービスを起動・再起動します。
+- BGPRouter の Healthy 判定を厳格化し、service state、`vtysh` round-trip、
+  `tcp/179` listen、render 済みの `router bgp <asn>` stanza がすべて揃った
+  場合だけ Healthy と判定します。
+- `routerctl status` を resource phase から集約するようにし、Pending/Error の
+  BGP resource が controller runtime の成功更新に隠れないようにしました。
 
 ## v20260520.2007
 
-### Fixed
+### 修正
 
-- Removed the FRR TCP VTY readiness gate from the BGP controller and now use
-  `vtysh -c "show running-config"` as the control-plane probe and running
-  config diff source. This lets Alpine FRR builds with TCP VTY disabled still
-  run `frr-reload.py` on first convergence.
-- Added explicit pending status details for FRR control unavailability,
-  permission failures, reload attempts, and incomplete reload verification.
-- Prevented Alpine Live ISO autostart from launching a second `routerd serve`
-  process when one is already running.
+- BGP controller の FRR readiness 判定から TCP VTY gate を取り除き、
+  `vtysh -c "show running-config"` を control-plane probe と running config の
+  diff の入力として使うようにしました。これにより TCP VTY を無効にした
+  Alpine FRR build でも、初回収束時に `frr-reload.py` へ到達できます。
+- FRR control 不可、権限不足、reload 試行、reload 後の反映不完全を status で
+  明示するようにしました。
+- Alpine Live ISO の autostart が、既に `routerd serve` が動いている場合は
+  2 つ目の `routerd serve` を起動しないようにしました。
 
 ## v20260520.1904
 
-### Fixed
+### 修正
 
-- Retried transient FRR reload lock failures during BGP controller reconcile so
-  first boot can reach `bgpd` configuration without manual `frr-reload.py`.
-- Kept the Alpine Live ISO DHCP client running after the initial lease, derived
-  a stable DHCP hostname for live routers, and left DHCP option 61 unset by
-  default so Windows DHCP reservations continue to match the Ethernet MAC.
+- BGP controller reconcile 中の一時的な FRR reload lock 失敗を retry し、
+  初回 boot 時にも手動の `frr-reload.py` なしで `bgpd` config まで到達できる
+  ようにしました。
+- Alpine Live ISO の DHCP client を初回リース後も常駐させ、live router 用の
+  安定した DHCP hostname を派生し、既定では DHCP option 61 を送らないことで
+  Windows の DHCP reservation が Ethernet MAC に一致し続けるようにしました。
 
 ## v20260520.1737
 
-### Added
+### 追加
 
-- Added a FreeBSD CARP backend for `VirtualAddress` in `mode: vrrp`,
-  including runtime controller support, rc.d rendering, validation, tests, and
-  a minimal `examples/freebsd-vrrp.yaml`.
-- Added listen-port collision validation for ingress/local router services and
-  `IngressService` `sourceHash` / `random` backend distribution on Linux
-  nftables.
-- Added FRR BGP connected/static redistribution, BGP community send/accept/set
-  policy, observed community status parsing, and
-  `examples/lan-advertise-with-community.yaml`.
-- Added multi-instance `BGPRouter` support with VRF-backed FRR BGP instances,
-  listen-address collision validation, per-router observed status, and
-  `examples/multi-instance-bgp.yaml`.
-- Added BFD support for FRR-managed BGP peers, FRR `bfdd` daemon rendering,
-  BGP watcher tuning fields, BFD status observation, and
-  `examples/bgp-bfd.yaml`.
-- Added BGP export policy allow-lists for transit routing and automatic FRR
-  `bgpd` daemon enablement when a `BGPRouter` is present.
-- Added `ClusterNetworkRoute` helpers for Kubernetes Pod / Service CIDR static
-  routes, plus `passwordFrom` / `authenticationFrom` secret sources for BGP
-  peer passwords and VRRP/CARP authentication.
-- Added `routerctl drain` / `undrain` for temporary `IngressService` backend
-  maintenance and VRRP production tuning documentation with
-  `examples/vrrp-tuning-presets.yaml`.
-- Added live BGP / VRRP / IngressService Web Console operational pages with
-  SSE refresh, filtered event logs, and lightweight local SVG metric trends.
-- Added stateful firewall rule expressions for ICMP / ICMPv6 types, multi-port
-  source and destination matches, nftables rate limits, and per-source
-  connection limits.
-- Added dual-stack BGP rendering and observation for IPv4/IPv6 unicast, plus
-  `VirtualAddress` VRRPv3/CARP VIP support, automatic AAAA records, and
-  dual-stack BGP/Kubernetes API VIP examples.
-- Added `ObservabilityPipeline` for OTLP environment rendering and built-in
-  routerd event forwarding to stdout, syslog, or Loki, plus `RouterdCluster`
-  file-lease high availability gating for apply/controller mutation.
-- Added Alpine/OpenRC VRRP render support: `routerd apply --once` writes the
-  keepalived config artifact, while controller runtime manages the OpenRC
-  `keepalived` service and observes live VRRP roles.
-- Polished the Alpine live ISO path with live VRRP controller defaults, live
-  `routerctl show vrrp` role observation, commit-aware version output, FRR
-  reload tooling dependencies, and non-blocking setup wizard behavior.
-- Avoided no-op keepalived reloads during live VRRP reconcile and exposed the
-  last keepalived reload/restart time and reason in controller status.
-- Kept VRRP daemon lifecycle in controller runtime. `routerd apply --once`
-  renders keepalived artifacts and records controller handoff status without
-  reload/restart.
-- Decoupled IngressService live nftables apply from independent NAT44 dry-run
-  mode and relaxed hostname DNSZone coverage to warnings with an `externalDNS`
-  opt-out for externally managed DNS names.
-- Auto-enabled same-interface IngressService hairpin SNAT and runtime
-  `ip_forward` sysctls for forwarding configs, and added
-  `routerctl show ingress --verbose` dataplane checks for forwarding, nftables,
-  and conntrack state.
-- Fixed IngressService `hairpin.mode: auto` for live ISO-style configs without
-  a declared listen-interface prefix by treating same private `/24`
-  listen/backend addresses as hairpin-required, and made verbose ingress output
-  warn when the expected nftables SNAT is missing.
-- Added a `pkg/servicemgr` abstraction for systemd, OpenRC, rc.d, and NixOS
-  service artifact naming and lifecycle commands, then routed service artifact
-  intent generation through it to reduce per-resource OS switch drift.
-- Added render golden tests for all checked-in example configs across Linux,
-  Alpine/OpenRC, FreeBSD/rc.d, and NixOS snapshots, plus a netns compatibility
-  wrapper. Extended `pkg/servicemgr` with lifecycle hooks so FRR config-check
-  + live reload, keepalived reload-vs-restart, and signal-based daemon reloads
-  remain expressible instead of collapsing into generic restarts.
-- Added bespoke lifecycle command golden tests and a `make check-bespoke-lifecycle`
-  gate covering FRR live reload, keepalived no-op/reload behavior, dnsmasq
-  SIGHUP, DHCP daemon IPC, BFD daemon enablement, IngressService nftables-only
-  backend rotation, VRRP track artifacts, DS-Lite dataplane hooks, DHCP event
-  daemon ordering, and FRR graceful-restart observation.
-- Added a no-behavior-change firewall backend abstraction for nftables and pf
-  render/diff/reload paths, with regression contracts protecting nftables
-  `ct state`, `jhash`, `numgen`, hairpin conntrack expressions and pf
-  `rdr`, `nat-anchor`, and hairpin NAT syntax.
-- Added a no-behavior-change network config backend abstraction for netplan,
-  systemd-networkd drop-ins, NixOS modules, and FreeBSD rc.conf fragments,
-  backed by common IPv4/IPv6 address and route declarations.
-- Reworked service-backed artifact intents into a ServiceManager declaration
-  table so systemd, OpenRC, rc.d, and NixOS service ownership stays consistent
-  across PPPoE, VRRP/CARP, FRR, dnsmasq, DHCPv6 PD, DNS resolver, and Tailscale
-  resources without changing rendered output.
-- Expanded render golden coverage for firewall hole derivation and OS-specific
-  interface/network artifacts, including Linux netplan/systemd-networkd output
-  and Alpine nftables snapshots.
-- Strengthened abstraction-layer regression coverage with cross-OS semantic
-  tests, invalid-spec checks, firewall backend error propagation status/events,
-  edge-case declarations, race-tested reload calls, 80% coverage gates, and a
-  four-OS bespoke lifecycle command matrix.
+- `mode: vrrp` の `VirtualAddress` に FreeBSD CARP backend を追加しました。
+  runtime controller、rc.d rendering、validation、tests、最小構成の
+  `examples/freebsd-vrrp.yaml` を含みます。
+- ingress/local router service の listen-port 衝突 validation と、
+  Linux nftables 向けの `IngressService` `sourceHash` / `random` backend
+  distribution を追加しました。
+- FRR BGP の connected/static redistribution、BGP community の send/accept/set
+  policy、観測 community の status 解析、
+  `examples/lan-advertise-with-community.yaml` を追加しました。
+- VRF-backed FRR BGP instance による multi-instance `BGPRouter` support、
+  listen-address collision validation、router ごとの observed status、
+  `examples/multi-instance-bgp.yaml` を追加しました。
+- FRR 管理の BGP peer 向け BFD support、FRR `bfdd` daemon rendering、
+  BGP watcher tuning field、BFD status observation、
+  `examples/bgp-bfd.yaml` を追加しました。
+- transit routing 用の BGP export policy allow-list と、`BGPRouter` がある場合の
+  FRR `bgpd` daemon 自動 enable を追加しました。
+- Kubernetes の Pod / Service CIDR static route 向け `ClusterNetworkRoute`
+  helper と、BGP peer password / VRRP-CARP authentication 用の
+  `passwordFrom` / `authenticationFrom` secret source を追加しました。
+- 一時的な `IngressService` backend maintenance 用の `routerctl drain` /
+  `undrain` と、VRRP production tuning documentation および
+  `examples/vrrp-tuning-presets.yaml` を追加しました。
+- BGP / VRRP / IngressService の Web 管理画面運用ページに SSE 更新、
+  filter 付き event log、軽量なローカル SVG metric trend を追加しました。
+- stateful なファイアウォール rule expression として ICMP / ICMPv6 type、送信元 /
+  宛先の複数 port match、nftables rate limit、送信元ごとのコネクション
+  上限を追加しました。
+- IPv4/IPv6 unicast の dual-stack BGP rendering / observation、
+  `VirtualAddress` による VRRPv3/CARP VIP support、AAAA record 自動派生、
+  dual-stack BGP / Kubernetes API VIP example を追加しました。
+- OTLP environment rendering と stdout / syslog / Loki への内蔵 routerd event
+  forwarding 用の `ObservabilityPipeline`、および apply/controller mutation を
+  file lease で gate する `RouterdCluster` を追加しました。
+- Alpine/OpenRC 向け VRRP render support を追加しました。`routerd apply --once`
+  が keepalived config artifact を書き、OpenRC の `keepalived` サービス管理と
+  live VRRP role observation は controller runtime が担当します。Alpine 向けの
+  Kubernetes VIP example も追加しました。
+- Alpine Live ISO の経路を改善し、VRRP controller の既定を live にし、
+  `routerctl show vrrp` は live address から role を再観測します。version
+  output には commit を埋め込めるようにし、FRR reload tooling dependency と、
+  非 blocking な setup wizard の動作も追加しました。
+- live な VRRP reconcile で keepalived の no-op な reload/restart を避け、
+  最後に keepalived を reload/restart した時刻と理由を controller status に
+  出すようにしました。
+- VRRP の daemon lifecycle は controller runtime に限定しました。
+  `routerd apply --once` は keepalived artifact を render し、reload/restart
+  せず controller handoff status を記録します。
+- IngressService の live な nftables apply を独立した NAT44 dry-run mode から分離し、
+  hostname の DNSZone coverage は警告に緩和しました。外部 DNS 管理の名前は
+  `externalDNS` で自動公開と警告を抑止できます。
+- IngressService の同一 interface hairpin SNAT と、forwarding 用の runtime
+  `ip_forward` sysctl を自動適用し、`routerctl show ingress --verbose` で
+  forwarding、nftables、conntrack の dataplane 状態を確認できるようにしました。
+- listen interface prefix が YAML に無い Live ISO 風の構成でも、
+  private `/24` 内の IngressService listen/backend address は
+  `hairpin.mode: auto` で hairpin が必要と判定するようにし、verbose な ingress 出力は
+  期待される nftables SNAT が無い場合に警告を出すようにしました。
+- systemd、OpenRC、rc.d、NixOS の service artifact 名と lifecycle command を扱う
+  `pkg/servicemgr` abstraction を追加し、service artifact の intent generation を
+  そこへ寄せて、resource ごとの OS switch drift を減らしました。
+- すべての checked-in な example config について Linux、Alpine/OpenRC、
+  FreeBSD/rc.d、NixOS の render スナップショットを固定する golden test と、
+  netns 側の compatibility wrapper を追加しました。`pkg/servicemgr` には lifecycle
+  hook を追加し、FRR の config-check + live reload、keepalived の reload/restart
+  分離、signal-based な daemon reload が generic restart に潰れないようにしました。
+- bespoke lifecycle command の golden test と `make check-bespoke-lifecycle`
+  gate を追加しました。FRR live reload、keepalived no-op/reload、dnsmasq
+  SIGHUP、DHCP daemon IPC、BFD daemon enablement、IngressService の nftables-only
+  backend rotation、VRRP track artifact、DS-Lite dataplane hook、DHCP event daemon
+  ordering、FRR graceful-restart observation を固定します。
+- nftables / pf の render・diff・reload 経路向けに、挙動を変えない
+  firewall backend abstraction を追加しました。nftables の `ct state`、`jhash`、
+  `numgen`、hairpin conntrack expression と、pf の `rdr`、`nat-anchor`、
+  hairpin NAT syntax を regression contract で固定します。
+- netplan、systemd-networkd drop-in、NixOS module、FreeBSD rc.conf fragment
+  向けに、挙動を変えない network config backend abstraction を追加しました。
+  IPv4/IPv6 の address と route は共通の declaration として扱います。
+- PPPoE、VRRP/CARP、FRR、dnsmasq、DHCPv6 PD、DNS resolver、Tailscale の
+  service-backed artifact intent を ServiceManager declaration table に整理し、
+  systemd/OpenRC/rc.d/NixOS の ownership が出力変更なしで揃うようにしました。
+- firewall hole derivation と OS 別 interface/network artifact の render golden
+  coverage を拡張し、Linux の netplan/systemd-networkd output と Alpine の
+  nftables snapshot も固定しました。
+- abstraction layer regression coverage を強化し、cross-OS semantic test、
+  invalid spec check、firewall backend error propagation の status/event、
+  edge-case declaration、race-tested reload、80% coverage gate、4 OS の
+  bespoke lifecycle command matrix を追加しました。
 
-### Fixed
+### 修正
 
-- Separated BGP apply-once rendering from daemon lifecycle. `routerd apply
-  --once` now writes the FRR config and daemon artifact only; `routerd serve
-  --controller runtime` owns bgpd enable/restart, `vtysh` validation, live reload,
-  and peer observation.
-- Fixed BGP observation for FRR JSON fields emitted as strings and made
-  `routerctl show bgp` refresh stale stored status from live `vtysh` output.
-- Kept FRR readiness and reload status in the BGP controller path so
-  controller runtime can report pending/error state without making
-  `apply --once` wait on bgpd or `frr-reload.py`.
-- Added a Web Console Routes view and `/api/v1/routes` endpoint that combines
-  kernel, BGP, static, DHCP, and policy route information with BGP peer state.
-- Added `pkg/api/provides.go` declarative status output contract and reference
-  validation: `addressFrom` / `gatewayFrom` / `dnsServerFrom` /
-  `sourceAddressFrom` / `dependsOn` references are checked against missing
-  kinds and against the referenced kind's `provides` field set at load time.
-- Added `routerctl show derived-resources` to inspect auto-derived host
-  packages, kernel modules, sysctl entries, systemd-networkd/resolved
-  adoption drop-ins, and tunnel `rp_filter` derivations.
-- Added `spec.when` `any:` / `all:` recursive predicates so a resource (or
-  `IPv4DefaultRoutePolicy` candidate, `EgressRoutePolicy` candidate, etc.)
-  can be conditionally active without a separate `StatePolicy` resource.
-- Added new high-level kinds: `DHCPv4Client`, `PPPoESession`, `VirtualAddress`
-  (`spec.family: ipv4|ipv6`), `EgressRoutePolicy` with `mode: priority|mark|
-  hash` and candidate `targets[]`, `DNSForwarder`, `DNSUpstream`,
-  standalone `BFD`, `FirewallEventLog`, standalone `LogRetention`. Each
-  absorbs or replaces older lower-level kinds (see Removed below).
-- Added typed `LogSink` (`type: syslog|otlp|webhook|file|journald`) and a
-  `FirewallEventLog` with `events: deny|allow|rateLimit|connLimit` filters,
-  `fromZones`/`toZones`/`rules` selectors, `sampleRate`, `sinks`, and
-  `retention` references.
-- Added a `make check-examples-line-limits` blocking CI gate enforcing
-  `examples/*.yaml` ≤ 200 lines and ≤ 50 lines per resource. Compacted all
-  shipped examples (e.g. `examples/home-router.yaml` from ≈1800 to 194 lines)
-  so each resource fits on one screen.
-- Added automatic derivation of host packages (network-utils for HealthCheck,
-  vrrp/keepalived for `VirtualAddress mode: vrrp` on Linux, etc.), kernel
-  modules, sysctls, MSS clamp / RA MTU, NetworkAdoption drop-ins, and
-  default LAN-to-WAN masquerade so common router intent does not require
-  explicit `Package` / `Sysctl` / `SysctlProfile` / `NAT44Rule` declarations.
+- BGP の `apply --once` を daemon lifecycle から分離しました。`routerd apply
+  --once` は FRR config と daemon artifact の render のみ行い、`bgpd` の
+  enable/restart、`vtysh` validation、live reload、peer observation は
+  `routerd serve` 側が担当します。
+- FRR JSON が数値フィールドを文字列として返す場合の BGP observation を修正し、
+  `routerctl show bgp` は古い stored status を live な `vtysh` output で更新して
+  表示するようにしました。
+- FRR の readiness と reload status は BGP controller 側に残し、controller runtime
+  の serve が pending/error state を報告できるようにしました。`apply --once` は
+  `bgpd` や `frr-reload.py` を待ちません。
+- Web 管理画面に Routes ビューと `/api/v1/routes` endpoint を追加しました。kernel、
+  BGP、static、DHCP、policy route の情報と BGP peer state を同じ画面で確認できます。
+- `pkg/api/provides.go` で各 kind の status output (provides) を宣言型に定義し、
+  config validator が `addressFrom` / `gatewayFrom` / `dnsServerFrom` /
+  `sourceAddressFrom` / `dependsOn` の Kind/name 存在 + 参照先 field の provides
+  整合を loader 時点で検査するようにしました。
+- `routerctl show derived-resources` を追加し、router intent から自動派生される
+  package / kernel module / sysctl / systemd-networkd/resolved adoption /
+  tunnel `rp_filter` を確認できるようにしました。
+- `spec.when` に `any:` / `all:` predicate を追加しました。`StatePolicy` を分離せずに
+  resource を条件付きで活性化でき、入れ子も可能です。
+- 新 kind: `DHCPv4Client`, `PPPoESession`, `VirtualAddress`
+  (`spec.family: ipv4|ipv6`), `EgressRoutePolicy` (`mode: priority|mark|hash`
+  と candidate `targets[]`), `DNSForwarder`, `DNSUpstream`, standalone
+  `BFD`, `FirewallEventLog`, standalone `LogRetention` を追加。
+- 型付き `LogSink` (`type: syslog|otlp|webhook|file|journald`) と
+  `FirewallEventLog` (`events: deny|allow|rateLimit|connLimit` + zones/rules
+  filter + sampleRate + sinks + retention ref) を追加。
+- `make check-examples-line-limits` で `examples/*.yaml` を 200 行以下、各
+  resource を 50 行以下に強制する CI gate を追加。examples/home-router.yaml
+  を 1800 行から 194 行へ縮減しました。
+- HealthCheck / VirtualAddress(mode:vrrp) / WAN tunnel から network-utils /
+  vrrp(keepalived) / rp_filter sysctl を自動派生するようになりました。
 
-### Changed
+### 変更
 
-- Split `DNSResolver` into `DNSResolver` (listen + cache + query log only) +
-  `DNSForwarder` (conditional forwarder, references a resolver and upstreams)
-  + `DNSUpstream` (single upstream, protocol enum `udp|tcp|dot|doh`, supports
-  TCP and DoT `tlsName`). The controller composes the runtime resolver
-  source list from forwarder/upstream graph.
-- Reworked BGP BFD: `BGPPeer.spec.bfd` is now a `BFD/<name>` reference;
-  inline BFD config is rejected with a migration guide.
-- Renamed `TrafficFlowLog.spec.includeNDPI` to `spec.includeApplicationLayer`
-  and moved retention out to standalone `LogRetention`.
-- Reshaped `ClientPolicy.classification` into `mode` + structured `match`
-  (`macs`, `ouiPrefixes`, `hostnamePatterns`, `dhcpFingerprints`).
-- DHCPv4 reservations may now sit outside the dynamic pool range, matching
-  dnsmasq behavior for static-only assignments.
-- Changed loader to error on unknown or removed kinds and on removed fields
-  with migration guides instead of silently ignoring them.
+- `DNSResolver` を分割しました。`DNSResolver` 本体は listen + cache + queryLog のみです。
+  条件付きフォワーダーと upstream は `DNSForwarder` / `DNSUpstream` で別の resource
+  として宣言し、resolver を参照します。TCP upstream と DoT `tlsName` も新たに
+  サポートしました。
+- BGP の BFD を分離しました。`BGPPeer.spec.bfd` は `BFD/<name>` 参照のみ受け付け、inline な設定
+  は loader で reject し、移行ガイドを返します。
+- `TrafficFlowLog.spec.includeNDPI` を `spec.includeApplicationLayer` に rename、
+  `retention` は独立した `LogRetention` resource に分離しました。
+- `ClientPolicy.classification` を `mode` + 構造化 `match` (`macs` /
+  `ouiPrefixes` / `hostnamePatterns` / `dhcpFingerprints`) に整理しました。
+- DHCPv4 reservation を動的プールの範囲外にも置けるようにしました (dnsmasq の
+  static-only な割当と整合します)。
+- loader は不明な kind や削除済みの kind/field を黙って無視せず、移行ガイドつきで
+  エラーを返します。
 
-### Removed
+### 削除
 
-- Removed `SystemdUnit` user-facing kind. routerd derives systemd / OpenRC /
-  rc.d / NixOS service units from declared intent.
-- Removed `KernelModule`, `NetworkAdoption`, `Link`, `NixOSHost`,
+- `SystemdUnit` の user-facing な宣言を削除しました。systemd / OpenRC / rc.d / NixOS の
+  service unit は router intent から自動派生します。
+- `KernelModule`, `NetworkAdoption`, `Link`, `NixOSHost`,
   `IPv4ReversePathFilter`, `PathMTUPolicy`, `StatePolicy`,
   `IPv4DefaultRoutePolicy`, `IPv4PolicyRoute`, `IPv4PolicyRouteSet`,
   `IPv4SourceNAT`, `DHCPv4Lease`, `PPPoEInterface`, `VirtualIPv4Address`,
-  `VirtualIPv6Address`, `DHCPv4Scope`, `DHCPv6Scope`, and `FirewallLog`
-  user-facing kinds. Each is rejected at load time with a migration guide
-  to the replacement (auto-derive, narrow override, or absorbed kind).
-- `Package`, `Sysctl`, and `SysctlProfile` remain only as narrow escape
-  hatches; normal router intent should not need them.
-- Removed low-level mechanics fields: `HealthCheck` `daemon` / `socketSource`
-  / `fwmark` / `sourceInterface` / `sourceAddress*` / `via`; BGP `keepalive`
-  / `holdTime` / `connectRetry`; VRRP `advertInterval` / `preemptDelay`;
+  `VirtualIPv6Address`, `DHCPv4Scope`, `DHCPv6Scope`, `FirewallLog` を
+  user-facing な kind から削除しました。それぞれ loader で reject され、移行先
+  (自動派生 / narrow override / 吸収先の kind) を案内します。
+- `Package` / `Sysctl` / `SysctlProfile` は narrow escape hatch としてのみ残し、
+  通常の router intent には不要です。
+- 低レベル mechanics field を削除: `HealthCheck` `daemon` / `socketSource` /
+  `fwmark` / `sourceInterface` / `sourceAddress*` / `via`; BGP `keepalive` /
+  `holdTime` / `connectRetry`; VRRP `advertInterval` / `preemptDelay`;
   WireGuard `fwmark` / `table`; Tailscale `operator` / `binaryPath`;
-  DHCPv6PrefixDelegation `iaid` / `duidType`. routerd derives the underlying
-  daemon/socket/timer/sysctl from higher-level intent.
-- Removed `DNSResolver.spec.sources`; declare `DNSForwarder` + `DNSUpstream`
-  resources that reference the resolver instead.
-- Removed `--controller-chain` public flag from `routerd serve` and `routerd
-  apply`; the controller chain is always the production runtime path.
+  DHCPv6PrefixDelegation `iaid` / `duidType`。
+- `DNSResolver.spec.sources` を削除しました。代わりに `DNSForwarder` / `DNSUpstream`
+  resource で宣言してください。
+- `--controller-chain` public flag を `routerd serve` / `routerd apply` から
+  削除しました。controller chain は本番 runtime の唯一の経路です。
 
 ## v20260519.0743
 
-### Changed
+### 変更
 
-- Sanitized public documentation and example configuration names so internal
-  lab hostnames, domains, and management-network addresses stay in internal
-  notes instead of website or reusable examples.
-- Moved internal design and soak notes out of the public Docusaurus docs tree,
-  and documented the lab validation policy for native nDPI and RA/DHCPv6-PD
-  coverage under `internal/notes/`.
+- 公開 documentation と example configuration の名前を整理し、内部 lab の
+  hostname、domain、management network address が website や再利用用の example
+  ではなく internal notes に残るようにしました。
+- internal design / soak note を公開 Docusaurus docs tree から外し、native nDPI
+  と RA/DHCPv6-PD coverage の lab validation policy を `internal/notes/` へ
+  記録しました。
 
 ## v20260519.0713
 
-### Fixed
+### 修正
 
-- `routerctl show bgp`, `routerctl show vrrp`, and `routerctl show ingress`
-  no longer open the ownership ledger, so they work with an explicit status
-  store even when the default ledger path is not writable.
+- `routerctl show bgp`、`routerctl show vrrp`、`routerctl show ingress` が
+  ownership ledger を開かないようにし、明示した status store を使う場合は
+  default の ledger path が書き込めない環境でも動くようにしました。
 
 ## v20260519.0708
 
-### Added
+### 追加
 
-- Added FRR-backed `BGPRouter` / `BGPPeer`, keepalived-backed
-  `VirtualAddress`, and runtime `IngressService` backend health/failover
-  control for Kubernetes edge use cases.
-- Added `routerctl show bgp`, `routerctl show vrrp`, and
-  `routerctl show ingress` table views, derived DNS records from VIP/ingress
-  `hostname` fields, and BGP/VRRP/Ingress OpenTelemetry metrics for transitions
-  and backend health.
-- Added Web Console dedicated BGP, VRRP, and IngressService views and JSON
-  endpoints.
+- Kubernetes edge 用に、FRR backend の `BGPRouter` / `BGPPeer`、
+  keepalived backend の `VirtualAddress`、および `IngressService`
+  backend health/failover controller を追加しました。
+- `routerctl show bgp`、`routerctl show vrrp`、`routerctl show ingress` の
+  table ビュー、VIP/ingress の `hostname` field からの DNS record 自動派生、
+  BGP/VRRP/Ingress の transition と backend health 用の OTel metrics を追加しました。
+- Web 管理画面に BGP、VRRP、IngressService の専用ビューと JSON endpoint を追加しました。
 
-### Changed
+### 変更
 
-- FRR BGP config is now syntax-checked with `vtysh -C -f` and applied through
-  `frr-reload.py --reload`. VRRP defaults to unicast peers with `nopreempt`,
-  supports track hysteresis and `preemptDelay`, and Linux firewall holes are
-  derived for BGP, VRRP, and IngressService listener ports.
-- BGP reconcile no longer lets dry-run writes mask a later live apply, and the
-  first live observation compares FRR running-config before deciding to reload
-  so an already-matching session is not reset by a no-op reload.
+- FRR BGP 設定は `vtysh -C -f` で検証し、`frr-reload.py --reload` で
+  差分適用します。VRRP は unicast peer と `nopreempt` を既定にし、
+  track hysteresis と `preemptDelay` を扱います。BGP、VRRP、IngressService
+  listen port の firewall hole も自動派生します。
+- BGP reconcile では dry-run の書き込みが後続の live apply を隠さないようにし、
+  初回の live 観測時は FRR running-config を比較してから reload するため、
+  既に一致している session を no-op な reload で reset しません。
 
 ## v20260518.1810
 
-### Added
+### 追加
 
-- Added a separate `routerd-ndpi-agent-libndpi-linux-amd64` release archive for
-  hosts that opt into native nDPI classification. The normal Linux release
-  archives remain fully static, while the optional nDPI agent override is built
-  with `CGO_ENABLED=1 -tags libndpi` and verified with a libndpi self-test.
+- native な nDPI classification を有効化する host 向けに、別 archive
+  `routerd-ndpi-agent-libndpi-linux-amd64` を追加しました。通常の Linux
+  release archive は完全な静的 binary のまま維持し、optional な nDPI agent の
+  override は `CGO_ENABLED=1 -tags libndpi` で build し、libndpi self-test で
+  検証します。
 
 ## v20260518.1431
 
-### Added
+### 追加
 
-- Added controller reconcile runtime status to the control API, logs, OpenTelemetry
-  metrics/traces, and the Web Console controller view. Controller status now
-  reports interval, trigger, run/error counts, last/average/max duration, and the
-  latest error when present.
+- controller reconcile の runtime status を control API、log、OpenTelemetry
+  metrics/traces、Web 管理画面の controller ビューに追加しました。controller
+  status は interval、trigger、実行回数、error 回数、last/average/max duration、
+  最新の error を返します。
 
 ## v20260518.1301
 
-### Changed
+### 変更
 
-- Removed dead compatibility helpers and obsolete raw systemd unit renderers
-  that are no longer used by the current controller runtime configuration path.
+- 現在の controller runtime 設定の path では使われなくなった dead な compatibility
+  helper と、旧 raw systemd unit renderer を削除しました。
 
 ## v20260517.2339
 
-### Added
+### 追加
 
-- Added a Configuration examples documentation section with numbered topology
-  diagrams, diagram-to-YAML mapping comments, safety notes, and validated sample
-  YAML for basic IPv4 NAT, LAN DHCP/DNS, DS-Lite, PPPoE, port forwarding,
-  guest isolation, multi-WAN failover, local DNS redirect, Tailscale,
-  WireGuard, and telemetry export patterns.
-- Health checks referenced by IPv4 route policy resources now derive their
-  socket mark from the referencing route candidate or target. Direct
-  `spec.fwmark` remains available for standalone probes, and validation rejects
-  conflicting explicit marks.
+- 番号付きの構成図、図と YAML の対応 comment、安全上の注意、検証済み sample
+  YAML を含む「設定事例集」セクションを追加しました。基本的な IPv4 NAT、
+  LAN DHCP/DNS、DS-Lite、PPPoE、port forwarding、guest 分離、multi-WAN
+  failover、local DNS redirect、Tailscale、WireGuard、telemetry export の
+  パターンを用意しました。
+- IPv4 route policy resource から参照される health check は、参照元の route
+  candidate または target から socket mark を導出するようにしました。単体 probe
+  用の `spec.fwmark` は引き続き利用でき、明示した mark と導出した mark が衝突する設定は
+  validation で拒否します。
 
-### Changed
+### 変更
 
-- Linux upgrades now refresh routerd helper systemd services only when a helper
-  is still running a deleted pre-upgrade binary or its unit file was regenerated
-  after the helper process started. The installer waits for `routerd.service`
-  and routerd-managed unit files to settle before making that decision.
-- The release installer now skips host service-manager changes on NixOS, so
-  archive-based binary updates do not fail when `/etc/systemd/system` is
-  read-only and service units are managed declaratively.
-- Conntrack observation now records an `Unavailable` status instead of logging a
-  warning every interval when conntrack procfs files are not present on the
-  host.
-- FreeBSD `--skip-service-manager` apply now suppresses rc.d/service operations
-  for generated helpers, managed dnsmasq, and pf/pflog service activation while
-  still allowing rc.conf-backed network state and direct `pfctl` rule loading to
-  proceed. This keeps recovery and bootstrapping paths from racing the base rc
-  boot sequence.
-- FreeBSD upgrades now preserve a config-managed `routerd` rc.d script instead
-  of replacing it with the generic bootstrap template, matching the existing
-  Linux behavior for config-managed `routerd.service`.
-- `routerd serve` now handles SIGTERM/SIGINT by shutting down its control and
-  status sockets cleanly, allowing FreeBSD rc.d restarts under `daemon(8)` to
-  stop without falling through to forced KILL.
-- The routerd state SQLite database now uses WAL mode with the existing busy
-  timeout, reducing transient `SQLITE_BUSY` failures when status readers and the
-  controller overlap.
+- Linux のアップグレードでは、routerd helper の systemd service が削除済みの旧 binary を
+  実行している場合、または unit file が helper process の起動後に再生成された場合に
+  限って helper を更新するようにしました。installer はその判定の前に
+  `routerd.service` と routerd 管理の unit file の反映が落ち着くのを待ちます。
+- release installer は NixOS で host service manager の変更を行わないようにしました。
+  これにより、`/etc/systemd/system` が読み取り専用で service unit を宣言型に管理する
+  host でも、archive からの binary 更新が失敗しません。
+- conntrack の procfs file が host に存在しない場合、conntrack observation は interval
+  ごとに警告を出す代わりに `Unavailable` status を記録するようにしました。
+- FreeBSD の `--skip-service-manager` apply は、生成 helper、管理対象 dnsmasq、
+  pf/pflog service activation の rc.d/service 操作を抑止するようにしました。
+  その一方で、rc.conf による network state と直接の `pfctl` rule loading は継続します。
+  recovery や bootstrapping の経路が base の rc boot sequence と競合するのを避けます。
+- FreeBSD のアップグレードでは、config 管理の `routerd` rc.d script を generic な bootstrap
+  template で置き換えず保持するようにしました。Linux で config 管理の
+  `routerd.service` を保持する挙動と揃えています。
+- `routerd serve` は SIGTERM/SIGINT を受けたときに control socket と status socket を
+  clean に shutdown するようにしました。FreeBSD の `daemon(8)` 配下で rc.d restart する際、
+  強制 KILL に進まず停止できます。
+- routerd state の SQLite database は、既存の busy timeout と併せて WAL mode を使うように
+  しました。status reader と controller が重なったときの一時的な `SQLITE_BUSY` を
+  減らします。
 
 ## v20260517.1808
 
-### Fixed
+### 修正
 
-- The Debian/Ubuntu release installer now installs `dnsmasq-base` instead of
-  the full `dnsmasq` package, avoiding an enabled distro `dnsmasq.service`
-  racing with routerd-managed dnsmasq instances.
+- Debian/Ubuntu 用の release installer は、完全な `dnsmasq` package ではなく
+  `dnsmasq-base` を導入するようにしました。distro 側の `dnsmasq.service` が
+  有効化され、routerd 管理の dnsmasq instance と競合するのを避けます。
 
 ## v20260517.1800
 
-### Fixed
+### 修正
 
-- One-shot HTTP-over-Unix calls from controllers and helper probes now disable
-  keep-alive and close idle transports explicitly. This prevents periodic
-  status polling from leaving large numbers of established Unix sockets open in
-  `routerd`, health check helpers, DHCP clients, and DNS/DPI helper services.
+- controller と helper probe からの一回完結の HTTP-over-Unix 呼び出しは
+  keep-alive を無効化し、idle な transport を明示的に閉じるようにしました。
+  定期的な status polling により、`routerd`、health check helper、DHCP client、
+  DNS/DPI helper service に多数の確立済み Unix socket が残り続けるのを防ぎます。
 
 ## v20260517.1533
 
-### Fixed
+### 修正
 
-- The release helper now regenerates checked-in config and control API schemas
-  before running schema checks, so API type changes are included in the release
-  commit instead of failing late during release.
-- `routerctl` now retries transient Unix-socket connection failures for
-  read-only control API requests during daemon startup. `routerctl status` now
-  uses a separate read-only status socket by default, while apply and delete
-  continue to use the privileged control socket and are not retried.
+- release helper は、schema check の前に管理対象の config schema と control API
+  schema を再生成するようにしました。API type の変更が release の終盤で失敗する
+  代わりに、release commit に含まれます。
+- `routerctl` は daemon 起動直後の一時的な Unix socket 接続失敗を、読み取り専用の
+  control API request に限って retry するようにしました。`routerctl status` は
+  既定で別の読み取り専用 status socket を使い、apply と delete は引き続き権限付きの
+  control socket だけを使い、retry しません。
 
 ## v20260517.1510
 
-### Added
+### 追加
 
-- Web Console Connections now marks flows that were handled by
-  `LocalServiceRedirect`, including the redirect rule and destination
-  `IPAddressSet` when the live conntrack tuple and resolved set status identify
-  the match.
-- Web Console Firewall now shows destination `IPAddressSet` matches on deny-log
-  rows, distinguishing explicit `FirewallRule.destinationSetRefs` matches from
-  destinations that are currently present in a configured set.
+- Web 管理画面の Connections で、`LocalServiceRedirect` により処理されたフロー
+  に印を付けるようにしました。live な conntrack tuple と解決済みの set status から
+  判定できる場合は、redirect rule と宛先 `IPAddressSet` も表示します。
+- Web 管理画面の Firewall で、拒否ログの行の宛先 `IPAddressSet` match を表示する
+  ようにしました。明示的な `FirewallRule.destinationSetRefs` による match と、
+  現在設定済みの set に含まれている宛先を区別して表示します。
 
 ## v20260517.1401
 
-### Fixed
+### 修正
 
-- Fixed Web Console disk usage collection so it compiles on FreeBSD, where
-  `syscall.Statfs_t` block counters use signed integer types.
+- `syscall.Statfs_t` の block counter が signed integer type になる FreeBSD でも
+  Web 管理画面の disk usage collection が compile できるようにしました。
 
 ## v20260517.1353
 
-### Fixed
+### 修正
 
-- The release helper now rejects changelogs whose first release section is not
-  `Unreleased`, and the stale empty release headings left by older helper runs
-  were removed from the maintained changelog files.
+- release helper は、最初の release セクションが `Unreleased` ではない changelog を
+  拒否するようにしました。また、以前の helper 実行で残っていた空の release
+  見出しを、管理対象の changelog file から削除しました。
 
 ## v20260517.1351
 
-### Changed
+### 変更
 
-- `routerd-dpi-classifier` now has an explicit classifier engine facade. The
-  default engine is the built-in parser, and `auto` / `ndpi-agent` modes can
-  query a future `routerd-ndpi-agent` Unix-socket service with built-in fallback.
-- Web Console Connections now labels TCP port 4317 as OTLP and TCP port 4318 as
-  OTLP/HTTP when DPI has not identified the flow.
-- Web Console Overview now shows host CPU, memory, and root filesystem usage,
-  plus classifier-side DPI processing latency, so router-local load regressions
-  are visible next to routing and DPI health.
-- Web Console Clients and Connections now link to each other. Client rows can
-  open a Connections view filtered to that client's observed addresses, and
-  connection details can jump back to the matching local client identity.
-- Web Console Connections now loads recent traffic-flow observations while the
-  Clients snapshot is built, so recent IPv6 privacy addresses are more likely
-  to resolve back to a client. Source endpoints also expose a Clients search
-  action even when the address has not yet been merged into a known identity.
-- Web Console search inputs now show an inline clear button when they contain
-  text.
-- The release helper now requires a clean working tree and promotes the current
-  `Unreleased` changelog entries into the release tag instead of creating empty
-  tag headings.
+- `routerd-dpi-classifier` に明示的な classifier engine facade を追加しました。
+  既定は built-in parser で、`auto` / `ndpi-agent` mode では将来の
+  `routerd-ndpi-agent` Unix socket service に問い合わせ、失敗時は built-in
+  parser へ fallback できます。
+- Web 管理画面の Connections で、DPI がフローを識別できない場合でも、
+  TCP port 4317 を OTLP、TCP port 4318 を OTLP/HTTP として表示するようにしました。
+- Web 管理画面の Overview に host の CPU、memory、root filesystem の使用率と
+  classifier 側の DPI processing latency を表示し、router 内部の負荷悪化を
+  routing や DPI の状態と並べて確認できるようにしました。
+- Web 管理画面の Clients と Connections を相互に移動しやすくしました。
+  client 行からその client の観測アドレスで絞り込んだ Connections を開け、
+  connection 詳細から対応する local client identity へ戻れます。
+- Web 管理画面の Connections で Clients スナップショットを作る際に、直近の traffic-flow
+  観測も読み込むようにしました。これにより、IPv6 privacy address でも client へ
+  戻せる可能性が上がります。また、source endpoint では既知の identity にまだ
+  統合されていないアドレスでも Clients 検索へ移動できます。
+- Web 管理画面の検索入力に、文字が入っているときだけ表示されるクリアボタンを
+  追加しました。
+- release helper は clean な working tree からだけ実行するようにし、空の tag
+  見出しを作る代わりに、現在の `Unreleased` の内容を release tag へ昇格するように
+  しました。
 
-### Added
+### 追加
 
-- Added `IPAddressSet` and `LocalServiceRedirect`. `IPAddressSet` can resolve
-  literal IPv4/IPv6 addresses and FQDN `A`/`AAAA` records into reusable nftables named sets,
-  and `LocalServiceRedirect` can redirect LAN-origin plaintext DNS/NTP traffic
-  for those sets to local router services without touching DoH/DoT or
-  router-originated health checks.
-- `FirewallRule`, `NAT44Rule`, `IPv4PolicyRoute`, and `IPv4PolicyRouteSet` can
-  now consume `IPAddressSet` resources through `destinationSetRefs` and
-  `excludeDestinationSetRefs`, allowing FQDN-backed address sets to be reused for
-  firewall filtering, NAT scoping, and IPv4 policy routing.
-- Added a runtime `IPAddressSet` refresh controller. Referenced nftables sets are
-  refreshed in place from DNS TTLs, using half of the minimum observed TTL with a
-  60 second floor and an optional `refreshInterval` cap, so FQDN-backed sets stay
-  current without reloading the full firewall, NAT, or policy table.
-- Added the initial `routerd-ndpi-agent` service boundary as an optional
-  command. Default builds report that the libndpi backend is unavailable,
-  while `-tags libndpi` builds link the native library behind the same IPC
-  surface.
-- `routerd-ndpi-agent` now owns per-flow observation state, including flow TTL,
-  flow count limits, first-payload-packet limits, and status counters for
-  observed, classified, unknown, skipped, error, and pruned packets.
-- Added the initial libndpi backend for `routerd-ndpi-agent`. It is opt-in via
-  the `libndpi` build tag, keeps native flow state inside the agent, and can
-  classify full packet observations from the firewall logger.
-- Added a `make build-ndpi-agent-libndpi` target for building the optional
-  native backend when libndpi development files are installed.
-- Added systemd, OpenRC, FreeBSD rc.d, and NixOS rendering for
-  `routerd-ndpi-agent` when `routerd-dpi-classifier` is configured with
-  `--engine auto` or `--engine ndpi-agent`.
-- DPI flow and traffic-flow records now persist typed classifier fields such as
-  detected protocol, application protocol, category, confidence, risk, and
-  metadata in addition to the legacy app label fields.
-- `routerd-dpi-classifier` status now reports average and maximum classify
-  latency for requests handled by the daemon.
+- `IPAddressSet` と `LocalServiceRedirect` を追加しました。`IPAddressSet` は
+  直接指定した IPv4/IPv6 address と FQDN の `A`/`AAAA` record を、再利用可能な nftables
+  named set へ解決できます。`LocalServiceRedirect` は、その set 宛てに LAN
+  client から出る平文 DNS/NTP 通信を router の local service へ redirect できます。
+  DoH/DoT や router 自身が発信する health check は対象にしません。
+- `FirewallRule`、`NAT44Rule`、`IPv4PolicyRoute`、`IPv4PolicyRouteSet` が
+  `destinationSetRefs` と `excludeDestinationSetRefs` で `IPAddressSet` を参照できる
+  ようになりました。FQDN-backed な address set を firewall filtering、NAT の適用範囲、
+  IPv4 policy routing の条件として再利用できます。
+- runtime の `IPAddressSet` refresh controller を追加しました。参照されている
+  nftables set は DNS TTL に基づいてその場で更新します。観測した最小 TTL の半分を
+  基本にし、60 秒より短くせず、必要に応じて `refreshInterval` で上限を指定できます。
+  firewall、NAT、policy table の全体を reload せず、FQDN-backed set を新しい状態に保てます。
+- optional command として、初期版の `routerd-ndpi-agent` service boundary を追加しました。
+  既定の build は libndpi backend が利用不可であることを報告し、`-tags libndpi`
+  build では同じ IPC surface の背後で native library に link します。
+- `routerd-ndpi-agent` がフローごとの観測 state を持つようにしました。
+  flow TTL、フロー数の上限、先頭 payload packet 数の上限と、observed、classified、
+  unknown、skipped、error、pruned packet の status counter を持ちます。
+- `routerd-ndpi-agent` 向けの初期 libndpi backend を追加しました。`libndpi`
+  build tag で opt-in し、native な flow state を agent 内に閉じ込めたまま、
+  firewall logger から届く full packet observation を分類できます。
+- libndpi development files が入っている環境で optional native backend を build
+  するための `make build-ndpi-agent-libndpi` target を追加しました。
+- `routerd-dpi-classifier` が `--engine auto` または `--engine ndpi-agent`
+  で設定されている場合に、systemd、OpenRC、FreeBSD rc.d、NixOS で
+  `routerd-ndpi-agent` を render するようにしました。
+- DPI フローと traffic flow の record が、従来の app label に加えて、
+  detected protocol、application protocol、category、confidence、risk、
+  metadata などの typed な classifier field を保存するようにしました。
+- `routerd-dpi-classifier` の status が、daemon で処理した classify request の
+  average latency と maximum latency を報告するようにしました。
 
-### Fixed
+### 修正
 
-- On Linux upgrades, `install.sh` now restarts active routerd helper systemd
-  services that are still running a deleted pre-upgrade binary after the
-  replacement.
-- `routerd-dpi-classifier` now preserves useful built-in packet hints such as
-  TLS SNI, HTTP Host, and DNS query when an nDPI agent result identifies the
-  application but lacks those details.
-- DPI helper daemons now refuse to unlink a non-socket path when binding their
-  Unix sockets, and `routerd-ndpi-agent` closes native libndpi state explicitly.
-- Web Console traffic-flow reads now tolerate legacy SQLite files that do not
-  yet have the newest DPI columns, so a read-only UI query can still succeed
-  before the writer performs schema migration.
+- Linux の upgrade 時に、差し替え前の削除済み binary を実行し続けている
+  routerd helper の systemd service があれば、`install.sh` が再起動するようにしました。
+- nDPI agent の結果が application を識別していても TLS SNI、HTTP Host、DNS query
+  などの詳細を持っていない場合、`routerd-dpi-classifier` が built-in parser
+  の有用な hint を保持するようにしました。
+- DPI helper daemon が Unix socket を bind するとき、socket ではない path を
+  誤って unlink しないようにしました。また `routerd-ndpi-agent` は native な
+  libndpi state を明示的に close します。
+- Web 管理画面の traffic-flow 読み取りは、writer が schema 移行を行う前の
+  legacy な SQLite file に新しい DPI column がない場合でも成功するようにしました。
 
 ## v20260516.2302
 
-### Changed
+### 変更
 
-- Web Console Connections now keeps the source-to-destination route aligned in
-  a fixed route column and moves state, protocol, provider, traffic, and timeout
-  metadata into a separate badge area.
-- Web Console connection labels now separate transport/application identity from
-  destination providers. Legacy provider-specific labels such as `google-https`
-  are canonicalized to `TLS`, while Google, AWS, Microsoft, Apple, and
-  Cloudflare appear as separate destination provider badges.
-- Destination service names such as `https` are now rendered as protocol badges
-  when they add information to the connection row.
+- Web 管理画面の Connections で、source から destination への経路を固定幅の
+  route column に揃え、state、protocol、provider、traffic、timeout などの
+  metadata を別の badge 領域に分けました。
+- Web 管理画面の connection label は、transport/application identity と
+  destination provider を分けて表示するようにしました。
+  `google-https` のような旧 provider 固有の label は `TLS` に正規化し、
+  Google、AWS、Microsoft、Apple、Cloudflare は別の destination provider badge
+  として表示します。
+- `https` などの destination service 名は、connection の行に追加情報を与える場合に、
+  protocol badge として表示するようにしました。
 
-### Fixed
+### 修正
 
-- Fixed expanded connection details so destination service and provider badges
-  keep their content width instead of stretching across the full detail column.
-- Fixed expanded connection details so source and destination identity text uses
-  the available width and wraps instead of being ellipsized at the compact row
-  width.
-- Fixed the Connections `Showing` metric so it distinguishes filtered rows,
-  loaded rows, and the total conntrack count when the API result is truncated by
-  the requested row limit.
+- 展開した connection detail で、destination service と provider の badge が
+  detail column 全体に伸びず、内容の幅のまま表示されるようにしました。
+- 展開した connection detail で、source と destination の identity text が
+  compact な行用の幅で省略されず、利用可能な幅を使って折り返すようにしました。
+- Connections の `Showing` metric で、API の取得上限により行が打ち切られた場合に、
+  filtered rows、loaded rows、総 conntrack count を区別して表示するようにしました。
 
 ## v20260516.2155
 
-### Changed
+### 変更
 
-- Web Console Connections now sorts active flows by observed transfer bytes by
-  default. The Connections sort menu includes a `Traffic` option, connection
-  cards show total bytes, and expanded details show outbound, inbound, and total
-  counters when conntrack accounting is available.
-- The conntrack observer now prefers higher-byte entries within each
-  family/protocol group when applying the Web Console connection limit, so large
-  active flows are less likely to be hidden by low-traffic entries.
+- Web 管理画面の Connections は、観測された転送バイト数の降順を既定の並び順にしました。
+  Connections の sort menu に `Traffic` を追加し、connection card には合計バイト数を、
+  詳細表示には conntrack accounting が使える場合の outbound、inbound、total の counter を表示します。
+- Web 管理画面の connection 件数の上限を適用するとき、conntrack observer は
+  family/protocol group ごとにバイト数の大きい entry を優先します。
+  低トラフィックの entry に押し出されて、大きな active flow が隠れにくくなります。
 
 ## v20260516.1413
 
-### Fixed
+### 修正
 
-- Fixed `routerd apply --dry-run` and related planning paths so a missing
-  SQLite ownership ledger is treated as an empty in-memory ledger instead of
-  trying to create `/var/lib/routerd` on unprivileged CI runners.
+- `routerd apply --dry-run` と関連する planning path で、存在しない SQLite ownership
+  ledger を空の in-memory ledger として扱うようにしました。
+  権限のない CI runner 上で `/var/lib/routerd` を作成しようとして失敗しなくなります。
 
 ## v20260516.1405
 
-### Added
+### 追加
 
-- Added `PortForward` and single-backend `IngressService` resources under
-  `firewall.routerd.net/v1alpha1` for WAN-side IPv4 TCP/UDP ingress DNAT.
-- Linux nftables and FreeBSD pf rendering now publish those ingress services
-  and can optionally render hairpin NAT so LAN clients can use the WAN address
-  for the same port-forwarded service.
-- Added generated JSON Schema, CLI aliases, API documentation, and resource
-  ownership documentation for the new ingress NAT resources.
+- `firewall.routerd.net/v1alpha1` に `PortForward` と単一 backend の
+  `IngressService` を追加しました。WAN 側 IPv4 TCP/UDP ingress DNAT を表せます。
+- Linux nftables と FreeBSD pf の rendering で、これらの ingress service を公開できるようにしました。
+  任意の hairpin NAT も生成でき、LAN クライアントが WAN アドレス経由で同じ port forward
+  の service へ到達できます。
+- 新しい ingress NAT resource 向けに、生成 JSON Schema、CLI alias、API documentation、
+  resource ownership documentation を追加しました。
 
 ## v20260516.0804
 
-### Changed
+### 変更
 
-- Web Console Connections now groups active flows by fixed IP family and
-  transport protocol buckets instead of splitting tables by DPI application.
-  App labels such as TLS, DNS, and QUIC remain visible inside each group.
+- Web 管理画面の Connections は、DPI application ごとに表を分けるのではなく、
+  IP family と transport protocol の固定 bucket で active な flow をまとめるようにしました。
+  TLS、DNS、QUIC などの app label は各 group 内の表示として残ります。
 
 ## v20260514.1433
 
+### 追加
+
+- Alpine Linux / OpenRC への apply support を追加しました。`routerd apply` が
+  OpenRC service script を render し、Alpine host で routerd 管理 service を
+  起動・管理できるようにしました。
+
 ## v20260514.0813
 
-### Fixed
+### 修正
 
-- Fixed Web Console Clients so IP-address-based DNS, traffic, firewall, DPI, and
-  DHCP fingerprint evidence is limited to the same recent one-hour observation
-  window before being correlated with current DHCP leases.
-- Sticky DHCP lease annotations now load only active holds for the client
-  inventory path, avoiding stale lease history in current endpoint identity
-  decisions.
+- Web 管理画面の Clients で、IP address ベースの DNS、traffic、firewall、DPI、
+  DHCP fingerprint 情報を、現在の DHCP リースと突き合わせる前に直近 1 時間の
+  観測ウィンドウに揃えるようにしました。
+- client inventory では sticky な DHCP lease annotation に active hold だけを使うようにし、
+  古い lease history が現在の endpoint identity の判定に混ざらないようにしました。
 
 ## v20260514.0743
 
-### Fixed
+### 修正
 
-- Fixed Web Console Clients so expired dnsmasq leases are ignored instead of
-  keeping old hosts visible indefinitely.
-- Web Console DHCP lease merging now prefers the newest valid lease, using the
-  configured lease-file order only as a tie-breaker.
-- routerd now passes the controller runtime dnsmasq lease file to the Web Console
-  first, so the console follows the lease file that the managed dnsmasq instance
-  actually uses.
+- Web 管理画面の Clients で、期限切れの dnsmasq リースを無視するようにしました。
+  古い host が無期限に残り続けないようにします。
+- DHCP リースの統合では、まず有効期限が新しいリースを優先し、lease file の
+  設定順は同条件の場合の tie-breaker としてだけ使います。
+- routerd は controller runtime の dnsmasq lease file を Web 管理画面に先頭候補として渡します。
+  これにより、管理対象の dnsmasq が実際に使う lease file に沿って表示します。
 
 ## v20260514.0654
 
-### Fixed
+### 修正
 
-- Fixed the Web Console Overview so lightweight first-load snapshots are not
-  recorded as zero-valued metric samples.
-- The Overview delayed refresh now loads the resource, event, conntrack, DNS,
-  and recent traffic-flow data it needs while still avoiding heavier firewall,
-  VPN, and client inventory work.
-- Overview cards now show a loading state for omitted flow and connection data
-  instead of presenting unavailable values as zero.
+- Web 管理画面の Overview で、初回の軽量なスナップショットを 0 値の metric sample として
+  記録しないようにしました。
+- Overview の遅延 refresh は、必要な resource、event、conntrack、DNS、最近の
+  traffic flow を取得します。一方で、重い firewall、VPN、client inventory の処理は
+  引き続き避けます。
+- Overview card は、まだ取得していない flow / connection data を 0 と見せず、
+  loading state として表示します。
 
 ## v20260514.0037
 
-### Fixed
+### 修正
 
-- DHCPv4 LAN domain rendering now emits both the domain-name and domain-search options from `domain` / `domainFrom`, unless an explicit domain-search option is already configured.
+- DHCPv4 の LAN domain rendering で、明示的な domain-search option がない場合は `domain` / `domainFrom` から domain-name と domain-search の両方を生成するようにしました。
 
 ## v20260514.0025
 
-### Added
+### 追加
 
-- Added `domainFrom`, `dnsslFrom`, and `domainSearchFrom` so DHCPv4,
-  IPv6 RA, and DHCPv6 LAN suffix advertisement can reference
-  `DNSZone/<name>.zone` instead of repeating the local domain string.
+- `domainFrom`、`dnsslFrom`、`domainSearchFrom` を追加しました。
+  DHCPv4、IPv6 RA、DHCPv6 で LAN の suffix を広告するとき、
+  ローカルドメイン文字列を重複して書かず `DNSZone/<name>.zone` を参照できます。
 
 ## v20260513.2358
 
-### Changed
+### 変更
 
-- Hardened long-running event processing. `EventRule` and `DerivedEvent`
-  timers now clean up their map entries after firing, ignore stale timer
-  callbacks, and protect shared state with controller locks.
-- Bounded retained `EventRule` correlation state so high-cardinality event
-  streams cannot grow memory usage indefinitely.
-- Rotated daemon `events.jsonl` files at a fixed size instead of appending
-  forever.
-- Added request and response size limits to local control, daemon-event, DNS
-  resolver, DoH, and classifier paths, and added HTTP header timeouts to local
-  daemon servers and the Web Console.
+- 長時間動き続けるイベント処理を堅牢化しました。
+  `EventRule` と `DerivedEvent` の timer は発火後に map から取り除かれ、
+  古い timer callback を無視し、共有状態を controller の lock で保護します。
+- `EventRule` の相関状態に上限を設けました。
+  高カーディナリティのイベント列でも、メモリ使用量が無制限に増え続けません。
+- daemon の `events.jsonl` は追記し続けるのではなく、一定サイズで
+  ローテーションするようにしました。
+- local control、daemon event、DNS resolver、DoH、classifier の経路に
+  request / response のサイズ上限を追加しました。
+  local daemon server と Web 管理画面には HTTP header の timeout も追加しています。
 
-### Fixed
+### 修正
 
-- Removed a race in `DerivedEvent` hysteresis handling that could update
-  pending transition state from a timer callback while reconcile was running.
+- `DerivedEvent` の hysteresis 中に、timer callback と reconcile が
+  pending な transition state を同時に更新し得る race を修正しました。
 
 ## v20260513.2317
 
-### Changed
+### 変更
 
-- Refreshed the production reconciliation documentation after the
-  `v20260513.2252` hardening work. The operations, upgrade, state ownership,
-  and localized changelog pages now describe host-state drift checks, managed
-  cleanup, nftables named-set updates, and config-managed `routerd.service`
-  upgrade behavior.
+- `v20260513.2252` の堅牢化に合わせて、本番環境での reconcile に関する
+  ドキュメントを更新しました。
+  operations、upgrade、state ownership、各言語の changelog で、実機状態の
+  drift 確認、管理対象構成物の掃除、nftables named set の更新、
+  設定で管理される `routerd.service` のアップグレード時の扱いを説明しています。
 
 ## v20260513.2252
 
-### Changed
+### 変更
 
-- Hardened production reconciliation so controllers compare the status database
-  with the host state before skipping work. This covers systemd units, dnsmasq,
-  DHCPv4 lease addresses, route-policy nftables tables, NAT44, and related
-  managed artifacts.
-- Health checks now carry `fwmark` through the rendered systemd units, socket
-  setup, status observations, and OpenTelemetry attributes. This lets probes use
-  the same policy-route marks as the paths they are testing.
-- Linux firewall rendering now clears routerd-managed named sets before
-  redefining them. Removed zone interfaces or client-policy MAC addresses no
-  longer remain in nftables, while the managed filter table is still reloaded
-  without destroying the whole table.
-- The release installer preserves a config-managed `routerd.service` instead of
-  overwriting it with the archive template. When routerd manages its own unit,
-  unit-file changes schedule a delayed self-restart through `systemd-run`.
+- 本番環境での reconcile を堅牢化しました。
+  controller は処理を省略する前に、状態データベースだけでなく実機状態も確認します。
+  対象には systemd unit、dnsmasq、DHCPv4 lease アドレス、
+  route-policy の nftables table、NAT44、関連する管理対象構成物が含まれます。
+- health check の `fwmark` を、生成する systemd unit、socket 設定、status の観測値、
+  OpenTelemetry 属性まで通すようにしました。
+  probe が、検査対象の経路と同じ policy-route mark を使えます。
+- Linux firewall の rendering で、routerd が管理する named set を再定義前に
+  消すようにしました。
+  zone interface や client-policy の MAC アドレスを削除したときに nftables 上へ残らず、
+  filter table 全体を destroy せずに再読み込みします。
+- release installer は、設定で管理されている `routerd.service` を
+  archive の template で上書きせず保持します。
+  routerd が自分自身の unit を管理している場合、unit file の変更時は
+  `systemd-run` で少し遅らせた self-restart を予約します。
 
-### Fixed
+### 修正
 
-- Removed stale `routerd-healthcheck@*.service` units when their `HealthCheck`
-  resources disappear from YAML.
-- Cleared the managed NAT44 table or pf anchor when the last NAT rule is
-  removed.
-- Re-applied a DHCPv4 lease address when status said it was present but the
-  address was missing from the interface.
-- Marked empty `WireGuardPeer` resources as `NotConfigured` instead of leaving
-  them in a misleading pending state.
+- YAML から消えた `HealthCheck` に対応する古い `routerd-healthcheck@*.service` を
+  削除するようにしました。
+- NAT rule が 0 件になったとき、管理対象の NAT44 table または pf anchor を
+  空にするようにしました。
+- status では DHCPv4 lease アドレスが存在すると見えていても、実際の
+  インターフェースから消えている場合は再適用するようにしました。
+- 設定内容が空の `WireGuardPeer` は、誤解を招く Pending ではなく
+  `NotConfigured` として表示するようにしました。
 
 ## v20260513.1931
 
-### Fixed
+### 修正
 
-- Stabilized health-check route failover behavior.
+- health check による経路切替の挙動を安定化しました。
 
 ## v20260513.1153
 
-### Fixed
+### 修正
 
-- Stabilized idempotent controller reconciliation.
+- controller reconcile の冪等性を安定化しました。
 
 ## v20260513.0836
 
-### Added
+### 追加
 
-- Added the WireGuard mesh controller.
+- WireGuard mesh controller を追加しました。
 
 ## v20260513.0727
 
-### Changed
+### 変更
 
-- Raised the home-router UDP conntrack timeout configuration.
+- home-router の UDP conntrack timeout 設定を引き上げました。
 
 ## v20260512.0037
 
-### Added
+### 追加
 
-- Exported DPI flow metrics from the conntrack observer.
+- conntrack observer から DPI flow metrics を出力するようにしました。
 
 ## v20260512.0032
 
-### Added
+### 追加
 
-- Added DPI summary cards to the Web Console Overview page.
+- Web 管理画面 Overview に DPI summary card を追加しました。
 
 ## v20260512.0027
 
-### Added
+### 追加
 
-- Added DPI activity summaries to the Web Console Clients page.
+- Web 管理画面 Clients ページに DPI activity summary を追加しました。
 
 ## v20260512.0008
 
-### Added
+### 追加
 
-- Added DPI classifications to the Web Console Connections page.
+- Web 管理画面 Connections ページに DPI classification を表示するようにしました。
 
 ## v20260511.2357
 
-### Changed
+### 変更
 
-- Extended DPI enrichment to forwarded flows.
+- forward flow へ DPI enrichment を広げました。
 
 ## v20260511.2307
 
-### Fixed
+### 修正
 
-- Contained horizontal overscroll in the Web Console.
+- Web 管理画面の横方向のオーバースクロールを抑制しました。
 
 ## v20260511.2300
 
-### Fixed
+### 修正
 
-- Fixed horizontal scrolling in the Firewall timeline.
+- Firewall timeline の横スクロールを修正しました。
 
 ## v20260511.2253
 
-### Changed
+### 変更
 
-- Reworked the Web Console around content-driven layout sections.
+- Web 管理画面を content-driven なレイアウトセクションへ整理しました。
 
 ## v20260511.2217
 
-### Validated
+### 変更
 
-- Validated the mobile Web Console layout.
+- mobile での Web 管理画面のレイアウトを検証しました。
 
 ## v20260511.2211
 
-### Changed
+### 変更
 
-- Preserved Web Console page state across navigation.
+- Web 管理画面の page state を画面遷移後も保持するようにしました。
 
 ## v20260511.2154
 
-### Changed
+### 変更
 
-- Structured the Clients inventory view.
+- Clients の inventory ビューを整理しました。
 
 ## v20260511.2145
 
-### Added
+### 追加
 
-- Added Web Console SSE reconciliation.
+- Web 管理画面 SSE reconciliation を追加しました。
 
 ## v20260511.2130
 
-### Added
+### 追加
 
-- Added client fingerprint inference.
+- client fingerprint inference を追加しました。
 
 ## v20260511.2106
 
-### Changed
+### 変更
 
-- Correlated expired conntrack return flows.
+- 期限切れの conntrack return flow の相関を取るようにしました。
 
 ## v20260511.2045
 
-### Changed
+### 変更
 
-- Enriched firewall deny events with DPI context.
+- firewall deny event に DPI context を付与するようにしました。
 
 ## v20260511.2018
 
-### Validated
+### 変更
 
-- Validated DPI classifier OS parity.
+- DPI classifier の OS parity を検証しました。
 
 ## v20260511.1846
 
-### Fixed
+### 修正
 
-- Fixed the Web Console time locale to English.
+- Web 管理画面の時刻 locale を英語に固定しました。
 
 ## v20260511.1840
 
-### Added
+### 追加
 
-- Added an isolated DPI classifier proof of concept.
+- 分離した DPI classifier proof of concept を追加しました。
 
 ## v20260511.1820
 
-### Added
+### 追加
 
-- Added Connections protocol summaries.
+- Connections protocol summary を追加しました。
 
 ## v20260511.1709
 
-### Fixed
+### 修正
 
-- Fixed release artifact checksums.
+- release artifact の checksum を修正しました。
 
 ## v20260511.1428
 
-### Changed
+### 変更
 
-- Improved Web Console navigation sections.
+- Web 管理画面の navigation section を改善しました。
 
 ## v20260511.1240
 
-### Changed
+### 変更
 
-- Refined controller mode reasons.
+- controller mode reason の表現を調整しました。
 
 ## v20260511.1041
 
-### Added
+### 追加
 
-- Exposed dry-run controller visibility.
+- dry-run controller の可視性を高めました。
 
 ## v20260511.1017
 
-### Changed
+### 変更
 
-- Made controller dry-run modes explicit.
+- controller の dry-run mode を明示的に表示するようにしました。
 
 ## v20260510.1956
 
-### Changed
+### 変更
 
-- Let `NetworkAdoption` manage resolved DNS.
+- `NetworkAdoption` が resolved DNS を管理できるようにしました。
 
 ## v20260510.1811
 
-### Added
+### 追加
 
-- Added the PVE live ISO serial-console validation log to `internal/notes/` so the walkthrough screenshots and execution log are preserved together as test evidence.
+- PVE live ISO のシリアルコンソール検証ログを `internal/notes/` に追加しました。
+  walkthrough の画面キャプチャと実行ログを、test evidence として同じ release に残します。
 
 ## v20260510.1802
 
-### Changed
+### 変更
 
-- Embedded the real PVE live ISO boot screenshots in the Japanese, Simplified Chinese, and Traditional Chinese diskless mini PC walkthroughs.
-- Removed stale placeholder screenshot references from the diskless mini PC walkthroughs.
+- 日本語、簡体字中国語、繁体字中国語のディスクレス mini PC walkthrough に、
+  PVE live ISO boot test で取得した実際の画面キャプチャを埋め込みました。
+- ディスクレス mini PC walkthrough に残っていた古い placeholder 画像参照を削除しました。
 
 ## v20260510.1750
 
-### Added
+### 追加
 
-- Added real PVE live ISO screenshots to the diskless mini PC walkthrough.
-- Added missing Simplified and Traditional Chinese pages for positioning, USB persistence, and legal redistribution.
+- ディスクレス mini PC walkthrough に、PVE live ISO 実機検証で取得した
+  画面キャプチャを追加しました。
+- 簡体字中国語版と繁体字中国語版に、位置づけ、USB 永続化、
+  法務と再配布の不足ページを追加しました。
 
-### Changed
+### 変更
 
-- Changed the website footer copyright text to the conventional copyright-first form.
-- Updated the diskless mini PC walkthrough to use VGA plus serial console so QEMU screenshots and `qm terminal` validation can be captured in one run.
+- website footer の著作権表示を、著作権表示を先に置く慣習的な形式へ変更しました。
+- ディスクレス mini PC walkthrough の PVE 例を、VGA と serial console の
+  両方を有効にする構成へ更新しました。これにより、QEMU の screenshot と
+  `qm terminal` 検証を同じ実行で取得できます。
 
-### Fixed
+### 修正
 
-- Fixed the live ISO configure wizard so DHCPv4 pool defaults are derived from the selected LAN address prefix.
-- Re-ran the PVE live ISO boot test with `/tmp/iso-boot-test-20260510-1742.log`, QEMU screenshots, routerd apply, Healthy status, and USB persistence flush validation.
+- live ISO の設定ウィザードで、DHCPv4 pool の既定値を選択した LAN
+  アドレスの prefix から導出するように修正しました。
+- PVE live ISO boot test を再実行し、
+  `/tmp/iso-boot-test-20260510-1742.log`、QEMU screenshot、routerd apply、
+  Healthy status、USB persistence flush まで確認しました。
 
 ## v20260510.1722
 
-### Added
+### 追加
 
-- Added BSD 3-Clause SPDX identifiers to routerd Go sources, installer scripts, plugin scripts, and Web Console sources.
-- Added a README license badge and linked the BSD 3-Clause license from the English and Japanese READMEs.
-- Added public contributing documentation and linked it from the docs sidebar.
-- Added SECURITY reporting details for email and GitHub Security Advisories.
+- routerd の Go ソース、インストーラースクリプト、プラグインスクリプト、
+  Web 管理画面ソースに BSD 3-Clause の SPDX 識別子を追加しました。
+- README にライセンスバッジを追加し、英語版と日本語版 README から
+  BSD 3-Clause License へリンクしました。
+- 公開ドキュメントに貢献ガイドを追加し、ドキュメントの sidebar から
+  辿れるようにしました。
+- SECURITY にメールと GitHub Security Advisories の報告先を明記しました。
 
-### Changed
+### 変更
 
-- Unified the root `LICENSE` copyright notice as `Kirino Minato <kirino.minato@gmail.com> (https://github.com/imksoo) and routerd contributors`.
-- Clarified the legal documentation that SPDX headers apply to routerd source files only; bundled third-party software remains covered by `THIRD_PARTY_LICENSES.md`.
-- Removed product comparison tables from the README and kept the positioning text focused on routerd's own scope.
+- repository root の `LICENSE` にある著作権表示を
+  `Kirino Minato <kirino.minato@gmail.com> (https://github.com/imksoo) and routerd contributors`
+  に統一しました。
+- SPDX ヘッダーが routerd ソースファイルだけに適用されることを
+  法務ドキュメントに明記しました。同梱する第三者ソフトウェアは
+  `THIRD_PARTY_LICENSES.md` に記載された個別ライセンスに従います。
+- README から製品比較表を削除し、routerd 自身の対象範囲と特徴を説明する
+  記述に整理しました。
 
 ## v20260510.1626
 
-### Added
+### 追加
 
-- Added a public legal and redistribution page with release checklist.
-- Added Go module source URLs to the generated third-party license inventory.
-- Recorded an internal license audit note for the BSD routerd binary and aggregate live ISO distribution model.
+- 公開ドキュメントに法務と再配布ページを追加し、release checklist を整理しました。
+- 生成される第三者ライセンス一覧に Go module source URL を追加しました。
+- BSD routerd binary と aggregate live ISO distribution model の内部 license audit note を記録しました。
 
 ## v20260510.1612
 
-### Added
+### 追加
 
-- Added an automated third-party license inventory for Go modules and Alpine packages used by the live ISO.
-- Added release archive and live ISO license notice installation paths.
-- Documented routerd BSD 3-Clause licensing and live ISO aggregate-distribution handling.
+- Go module とライブ ISO で使う Alpine package の第三者ライセンス一覧を自動生成できるようにしました。
+- release archive とライブ ISO にライセンス通知を同梱する場所を追加しました。
+- routerd 本体の BSD 3-Clause License と、ライブ ISO の aggregate distribution としての扱いを文書化しました。
 
 ## v20260510.1547
 
-### Added
+### 追加
 
-- Expanded the public positioning material around routerd's own scope and deployment spectrum.
-- Expanded hardware compatibility guidance for Intel NUC, N100 mini PCs, Raspberry Pi 5, thin clients, and Proxmox VMs.
-- Added Chinese hardware compatibility pages and clarified the live ISO plus USB persistence path.
+- routerd 自身の対象範囲と deployment spectrum を中心に、公開向けの位置づけ説明を広げました。
+- Intel NUC、N100 mini PC、Raspberry Pi 5、thin client、Proxmox VM の hardware compatibility を拡充しました。
+- 中国語の hardware compatibility ページを追加し、ライブ ISO と USB 永続化の流れを明確にしました。
 
 ## v20260510.1534
 
-### Added
+### 追加
 
-- Added diskless mini PC walkthrough diagrams, tutorial index updates, and a field-note blog post.
+- ディスクレス mini PC walkthrough の図、tutorial index、field-note blog post を追加しました。
 
 ## v20260510.1508
 
-### Added
+### 追加
 
-- Added USB persistence operations documentation and live ISO USB persistence support.
+- USB persistence の運用ドキュメントと live ISO の USB persistence support を追加しました。
 
 ## v20260510.1451
 
-### Added
+### 追加
 
-- Added project contribution, security, license, positioning, hardware compatibility, and diskless mini PC documentation.
+- contribution、security、license、positioning、hardware compatibility、diskless mini PC の各ドキュメントを追加しました。
 
 ## v20260510.1429
 
-### Added
+### 追加
 
-- Added Alpine live ISO build and install documentation.
+- Alpine live ISO build と install documentation を追加しました。
 
 ## v20260510.1412
 
-### Added
+### 追加
 
-- Added live ISO validation notes and installer documentation for the live ISO path.
+- live ISO validation note と、live ISO 経路の installer documentation を追加しました。
 
 ## v20260510.1354
 
-### Fixed
+### 修正
 
-- Fixed live ISO runtime apply on Alpine.
+- Alpine 上の live ISO runtime apply を修正しました。
 
 ## v20260510.1310
 
-### Added
+### 追加
 
-- Enabled serial console support for the live ISO.
+- live ISO の serial console support を有効にしました。
 
 ## v20260510.1301
 
-### Changed
+### 変更
 
-- Switched release tags to JST timestamp format.
+- release tag を JST timestamp 形式へ切り替えました。
 
 ## 20260510.4
 
-### Fixed
+### 修正
 
-- Fixed the live ISO overlay archive path.
+- live ISO overlay archive path を修正しました。
 
 ## 20260510.3
 
-### Fixed
+### 修正
 
-- Fixed Alpine live ISO release discovery.
+- Alpine live ISO の release discovery を修正しました。
 
 ## 20260510.2
 
-### Added
+### 追加
 
-- Added Alpine-based live ISO packaging.
+- Alpine ベースの live ISO packaging を追加しました。
 
 ## 20260510.1
 
-### Added
+### 追加
 
-- Added the installer configuration wizard.
+- installer configuration wizard を追加しました。
 
 ## 20260510.0
 
-### Changed
+### 変更
 
-- Started the 20260510 release series after the fixed-download-asset release.
+- fixed-download-asset release の後続として、20260510 release series を開始しました。
 
 ## 20260509.16
 
-### Added
+### 追加
 
-- Release archives now include fixed-name aliases such as `routerd-linux-amd64.tar.gz` in addition to versioned archives.
-- Fixed-name archives and their `.sha256` files are uploaded to GitHub Releases, so documentation can use `releases/latest/download/...` URLs.
+- 版番号付きアーカイブに加えて、`routerd-linux-amd64.tar.gz` のような固定名の alias をリリースアーカイブに追加しました。
+- 固定名アーカイブと `.sha256` ファイルを GitHub Releases に配置します。これにより、ドキュメントで `releases/latest/download/...` の URL を使えます。
 
-### Changed
+### 変更
 
-- Quick start documentation now uses stable latest-download URLs instead of hardcoded release versions.
-- The release workflow opts GitHub JavaScript actions into the Node.js 24 runtime where supported.
+- クイックスタートのドキュメントを、固定された latest download URL に変更しました。
+- release workflow で、対応している GitHub JavaScript actions が Node.js 24 runtime を使うようにしました。
 
 ## 20260509.15
 
-### Added
+### 追加
 
-- Added a `CI` GitHub Actions workflow for branch pushes and pull requests.
-- The CI workflow runs `go test ./...`, schema checks, example validation, and the website build on Ubuntu.
-- Added an optional `scripts/pre-commit.sh` hook that runs Go tests and schema checks before local commits.
-- Added development documentation that explains the split between CI, pre-commit checks, and tag-driven release publishing.
+- branch push と pull request 用の `CI` GitHub Actions workflow を追加しました。
+- CI workflow は Ubuntu 上で `go test ./...`、schema 確認、example 検証、Web サイト生成を実行します。
+- ローカル commit の前に Go テストと schema 確認を実行する任意の `scripts/pre-commit.sh` hook を追加しました。
+- CI、pre-commit 確認、tag で起動する release workflow の役割分担を説明する開発ドキュメントを追加しました。
 
 ## 20260509.14
 
-### Validated
+### 変更
 
-- Validated `ClientPolicy` guest mode on an Ubuntu lab router.
-- Confirmed Linux nftables renders include-mode guest MAC sets, guest DNS/DHCP/NTP access, self-isolation, and RFC 1918 / ULA deny rules.
-- Confirmed exclude-mode rendering with the focused nftables renderer test.
+- Ubuntu lab ルーターで `ClientPolicy` ゲストモードを検証しました。
+- Linux nftables で、include mode のゲスト MAC アドレス集合、ゲスト向け DNS/DHCP/NTP 許可、自己隔離、RFC 1918 / ULA 拒否規則が生成されることを確認しました。
+- exclude mode は、nftables 生成テストで確認しました。
 
 ## 20260509.13
 
-### Added
+### 追加
 
-- Expanded the guest mode guide with use cases, implementation details, full `ClientPolicy` field reference, verification steps, troubleshooting, and security limits.
-- Added documented examples for include mode, exclude mode, multiple guest devices, custom deny/allow lists, local discovery services, and IoT reservations.
-- `ClientPolicy.spec.guestServices` now accepts `mdns` and `ssdp` in addition to `dhcp`, `dns`, and `ntp`.
+- ゲストモードガイドを詳細化しました。ユースケース、内部実装、`ClientPolicy` の全フィールド、確認手順、トラブルシューティング、セキュリティ上の限界を追加しました。
+- include mode、exclude mode、複数ゲスト端末、カスタム拒否・許可リスト、ローカル探索サービス、IoT 固定割り当ての例を追加しました。
+- `ClientPolicy.spec.guestServices` で、`dhcp`、`dns`、`ntp` に加えて `mdns` と `ssdp` を指定できるようにしました。
 
 ## 20260509.12
 
-### Added
+### 追加
 
-- Added `ClientPolicy`, a Linux nftables-backed guest mode that classifies LAN clients by MAC address.
-- Guest clients can keep DNS, DHCP, and NTP access while private IPv4 and ULA IPv6 destinations are denied by default.
-- Added `examples/guest-mode.yaml` and documentation for include-mode and exclude-mode client classification.
+- `ClientPolicy` を追加しました。Linux nftables で LAN 端末を MAC アドレスごとに分類するゲストモードです。
+- ゲスト端末は DNS、DHCP、NTP を使えます。プライベート IPv4 宛てと ULA IPv6 宛ての通信は既定で拒否します。
+- `examples/guest-mode.yaml` と、include mode / exclude mode の分類方法を説明するドキュメントを追加しました。
 
-### Changed
+### 変更
 
-- FreeBSD pf now rejects `ClientPolicy` explicitly because pf does not provide the same MAC-based routed filtering model.
+- FreeBSD pf では `ClientPolicy` を明示的に未対応として扱います。pf は同じ MAC ベースの routed filtering モデルを持たないためです。
 
 ## 20260509.11
 
-### Added
+### 追加
 
-- Added focused example configurations for minimal Tailscale mesh membership, WireGuard hub-spoke routing, a VRF lab, and multi-WAN home fallback.
-- Added `examples/README.md` to explain when each example should be used.
+- 最小 Tailscale mesh 参加、WireGuard hub-spoke 経路、VRF lab、multi-WAN home fallback の用途別 example を追加しました。
+- 各 example の用途を説明する `examples/README.md` を追加しました。
 
-### Changed
+### 変更
 
-- `make validate-example` now validates every YAML file under `examples/`.
+- `make validate-example` が `examples/` 配下の全 YAML ファイルを検証するようにしました。
 
 ## 20260509.10
 
-### Added
+### 追加
 
-- Web Console overview now shows browser-session trend charts for generation, resource phases, and HealthCheck state.
-- The Config page can compare the current YAML file with the latest applied generation before an operator runs `routerd apply`.
-- Resource tables now support kind/name/phase/detail search, phase filtering, and match highlighting.
-- VPN pages now include visual peer status strips for Tailscale and WireGuard.
+- Web 管理画面の Overview に、世代、リソース phase、HealthCheck 状態の簡易時系列チャートを追加しました。
+- Config 画面で、現在の YAML ファイルと最新適用世代を比較できるようにしました。`routerd apply` の前に差分を確認できます。
+- Resource テーブルで、kind、name、phase、詳細の検索、phase 絞り込み、検索結果の強調表示ができるようにしました。
+- VPN 画面に Tailscale と WireGuard の peer 状態を示す視覚サマリーを追加しました。
 
 ## 20260509.9
 
-### Added
+### 追加
 
-- Release archives now carry a `share/doc/TARGET` marker, and `install.sh` checks the archive OS and architecture against the host.
-- GitHub Actions now builds Linux and FreeBSD archives for both `amd64` and `arm64`.
-- Release CI runs `shellcheck` against the installer and uninstaller scripts.
+- リリースアーカイブに `share/doc/TARGET` を含め、`install.sh` がホストの OS と CPU アーキテクチャーを確認するようにしました。
+- GitHub Actions で Linux と FreeBSD の `amd64` / `arm64` アーカイブを生成するようにしました。
+- release CI で `install.sh` と `uninstall.sh` に `shellcheck` を実行します。
 
-### Changed
+### 変更
 
-- `install.sh --list-deps` now prints a structured dependency plan with OS, architecture, package manager, packages, and checked commands.
-- Installer dependency sets were expanded for practical router use, including PPPoE, RA, IPsec, packet capture, routing, and firewall tooling.
+- `install.sh --list-deps` の出力を、OS、CPU アーキテクチャー、パッケージマネージャー、パッケージ、確認対象コマンドが分かる形に整理しました。
+- PPPoE、RA、IPsec、パケット取得、経路制御、ファイアウォールで使う実用パッケージを依存リストへ追加しました。
 
 ## 20260509.8
 
-### Fixed
+### 修正
 
-- Fixed zh-Hant and zh-Hans documentation links so translated pages no longer point at missing locale-local documents.
-- Kept translated overview pages linked to the canonical English reference pages until full translations are available.
+- zh-Hant と zh-Hans のドキュメントリンクを修正し、翻訳ページが未翻訳のロケール内ページを指さないようにしました。
+- 翻訳がそろうまで、概要ページから英語版の正準リファレンスへリンクする形にしました。
 
 ## 20260509.7
 
-### Added
+### 追加
 
-- Multi-stage WAN fallback can now model DS-Lite primary tunnels, RA-sourced DS-Lite, PPPoE, and direct WAN fallback candidates through `EgressRoutePolicy`.
-- OpenTelemetry deployment was extended across the router fleet with declarative `Telemetry` resources and OTLP environment propagation.
-- DS-Lite examples now use the RFC 6333 B4-AFTR link prefix `192.0.0.0/29` for tunnel inner IPv4 source addresses.
-- `PPPoESession.disabled` and disabled route-policy candidates keep PPPoE fallback definitions in YAML without leaking a production PPPoE session.
+- `EgressRoutePolicy` で、DS-Lite 主経路、RA 由来 DS-Lite、PPPoE、WAN 直結の多段フォールバックを表現できるようにしました。
+- 宣言型な `Telemetry` リソースと OTLP 環境変数の伝播により、ルーター群へ OpenTelemetry 設定を展開しました。
+- DS-Lite の例は、RFC 6333 の B4-AFTR link prefix `192.0.0.0/29` を tunnel 内側 IPv4 送信元として使う形にしました。
+- `PPPoESession.disabled` と無効化された経路候補により、PPPoE フォールバック定義を YAML に残しつつ、本番 PPPoE セッションの漏れを防げるようにしました。
 
-### Changed
+### 変更
 
-- Release versions moved away from `0.x.y` and toward date-based values.
-- `routerd --version`, `routerctl --version`, and release archives now use the same release tag value.
-- NAT44 rendering was tightened around per-interface rules on Linux nftables and FreeBSD pf.
-- The 3-role firewall model was verified on Linux and FreeBSD, with service holes bound to the owning ingress interface instead of broad multi-interface zones.
-- FreeBSD pf gained TCP MSS clamp rendering for `PathMTUPolicy`, aligning it with Linux nftables behavior.
-- dnsmasq RA generation now propagates path MTU through the IPv6 RA MTU option.
+- リリース版番号を `0.x.y` から日付ベースの値へ変更しました。
+- `routerd --version`、`routerctl --version`、リリースアーカイブで同じ release tag の値を使うようにしました。
+- Linux nftables と FreeBSD pf の NAT44 生成を、インターフェース単位のルールへ寄せました。
+- 3-role のファイアウォールモデルを Linux と FreeBSD で確認し、service hole を広い zone 全体ではなく、所有する受信インターフェースへ束縛しました。
+- FreeBSD pf で `PathMTUPolicy` の TCP MSS clamp を生成できるようにし、Linux nftables とそろえました。
+- dnsmasq の RA 生成で、IPv6 RA MTU option により path MTU を配布できるようにしました。
 
-### Fixed
+### 修正
 
-- FreeBSD pf service-hole rendering no longer expands DHCPv6, WireGuard, and VXLAN holes across every member of the `wan` zone.
-- FreeBSD NAT artifacts are reported as `pf.anchor/routerd_nat` instead of nftables artifacts.
-- PPPoE interface aliases are resolved to the real OS interface name before NAT rendering.
+- FreeBSD pf で DHCPv6、WireGuard、VXLAN の service hole が `wan` zone の全インターフェースへ広がる問題を修正しました。
+- FreeBSD の NAT artifact を nftables ではなく `pf.anchor/routerd_nat` として報告するようにしました。
+- NAT 生成の前に、PPPoE のリソース名を実 OS インターフェース名へ解決するようにしました。
 
 ## 0.4.0
 
-### Added
+### 追加
 
-- The implicit-deny log lines from nftables are now ingested by `routerd-firewall-logger` and stored in `firewall-logs.db`. On Linux the logger reads `nfnetlink` directly; on FreeBSD it consumes `pflog` directly through BPF.
-- The Web Console gained a Connections tab (live conntrack / pf state), a Clients tab (DHCP lease + traffic statistics combined), and a Firewall tab (deny ranking plus a per-second timeline).
-- `TailscaleNode` can now advertise a router as a Tailscale exit node and subnet router through a generated systemd unit. NixOS rendering enables `services.tailscale` and includes the generated unit path.
-- `WebConsole.spec.listenAddressFrom` and the listen address of `DNSResolver` resources can now be derived from `Interface/<name>.status.ipv4Addresses`. Reference fields can be used in place of literal IP values.
-- Conntrack accounting (`net.netfilter.nf_conntrack_acct=1`) is enabled in the default `SysctlProfile/router-linux` profile, so `TrafficFlowLog` can record `bytesOut` and `bytesIn`.
+- nftables の暗黙拒否ログを `routerd-firewall-logger` で取り込み、`firewall-logs.db` に保存するようになりました。Linux では `nfnetlink` を直接読み取り、FreeBSD では `pflog` を `tcpdump` 経由で取り込みます。
+- Web 管理画面に Connections タブ (リアルタイムの conntrack / pf state)、Clients タブ (DHCP リース + トラフィック統合)、Firewall タブ (拒否ランキング + 時系列テーブル) を追加しました。
+- `TailscaleNode` で Tailscale の exit node と subnet router を広告できるようにしました。生成した systemd ユニットで `tailscale up` を実行します。NixOS 向け生成では `services.tailscale` を有効化し、ユニットの `path` も設定します。
+- `WebConsole.spec.listenAddressFrom` と `DNSResolver` 系のリスニングアドレスを `Interface/<name>.status.ipv4Addresses` から導出できるようにしました。即値の代わりに参照で書けます。
+- conntrack accounting (`net.netfilter.nf_conntrack_acct=1`) を `SysctlProfile/router-linux` 既定値に追加し、`TrafficFlowLog` で `bytesOut` / `bytesIn` を集計できるようにしました。
 
-### Changed
+### 変更
 
-- The live connection view in API and CLI is unified under the name `connections` (previously `conntrack-snapshot`). Use `/api/v1/connections` and `routerctl connections`. IPv6 connections are surfaced in the same table.
-- NixOS rendering was extended. `Package` (NixOS-style declarations), `SysctlProfile`, `NetworkAdoption`, and `generated service artifacts` now flow into the `routerd render nixos` output. On NixOS the `Package` resource is no longer installed at runtime; its content is owned by the generated NixOS configuration instead.
-- `generated service artifacts` resources can now produce FreeBSD `rc.d` scripts via `routerd render freebsd --out-dir`.
+- リアルタイムのコネクション表示の API / CLI を `connections` に統一しました (旧称 `conntrack-snapshot`)。`/api/v1/connections`、`routerctl connections` を使います。IPv6 を含む全ファミリを同じ表で扱います。
+- NixOS 向けの宣言型レンダリングを拡張しました。`Package` (NixOS パッケージ宣言)、`SysctlProfile`、`NetworkAdoption`、`generated service artifacts` を `routerd render nixos` の出力に統合します。NixOS 上の `Package` は実行時に導入せず、生成された NixOS 設定で管理します。
+- `generated service artifacts` から FreeBSD `rc.d` スクリプトを生成できるようになりました (`routerd render freebsd --out-dir`)。
 
-### Fixed
+### 修正
 
-- `IPv6DelegatedAddress` no longer skips applying the delegated address to a host interface when the upstream `Link/<name>` status is empty.
-- `generated service artifacts` no longer restarts an already-active unit when nothing has changed.
+- `IPv6DelegatedAddress` controller が `Link/<name>` の status が空のとき、PD 由来アドレスをホストインターフェースに付与しない問題を修正しました。
+- `generated service artifacts` controller が変更のない active unit を毎回再起動する問題を修正しました。
 
 ## 0.3.0
 
-### Added
+### 追加
 
-- `Package` and `SysctlProfile` resources for declarative OS bootstrap. They cover apt, dnf, nix, and pkg package declarations as well as router-oriented sysctl tuning (`nf_conntrack_max`, socket buffers, TCP/UDP timeouts, `ip_forward`, etc.) in a single resource.
-- `NetworkAdoption` disables systemd-networkd's DHCP / RA from YAML. `generated service artifacts` lets routerd render, install, and enable its own unit files.
-- `routerctl events --limit N --topic X --resource K/N -o json` reports bus events without requiring `sqlite3`.
-- `routerd plan --diff` previews the diff that an apply would produce.
-- `DNSResolver` accepts a bootstrap forwarder so internal DNS can be tried first while public DNS acts as a fallback.
+- 宣言型な OS bootstrap リソースとして `Package` と `SysctlProfile` を追加しました。apt、dnf、nix、pkg のパッケージ宣言と、ルーター用途向けの sysctl 推奨値 (`nf_conntrack_max`、socket buffer、TCP/UDP timeout、`ip_forward` など) を 1 つのリソースで適用します。
+- `NetworkAdoption` で systemd-networkd の DHCP / RA を YAML から無効化できます。`generated service artifacts` で routerd 自身が unit を render + install + enable できます。
+- `routerctl events --limit N --topic X --resource K/N -o json` で sqlite3 不要に bus event を確認できます。
+- `routerd plan --diff` で apply 前差分を表示します。
+- `DNSResolver` に bootstrap forwarder (RFC1918 内部 DNS を優先しつつ public DNS を予備にする) を追加しました。
 
-### Changed
+### 変更
 
-- `${...status.field}` string references inside the configuration were replaced by typed `*From` fields (`addressFrom`, `ipv4From`, `ipv6From`, `upstreamFrom`, `prefixFrom`, `rdnssFrom`, `dependsOn`). No backwards-compatible aliases.
-- The controller chain was rebuilt as a pure event-loop. A common `framework.FuncController` (Subscriptions + Bootstrap + PeriodicFunc) and an `eventedStore` wrapper guarantee that any persisted state change emits `routerd.resource.status.changed`, which downstream controllers consume.
-- Bus events are emitted to the systemd journal through `slog`. `journalctl -u routerd.service -f | grep "routerd event"` traces the controller chain. High-frequency topics are at the debug level.
-- All binaries are now statically linked (`CGO_ENABLED=0 go build -trimpath -ldflags="-s -w"`). The OS-specific package list (`dnsmasq-base`, `nftables`, `conntrack`, `iproute2`, `ppp`, `wireguard-tools`, `strongswan-swanctl`, `radvd`, `tcpdump`, etc.) is documented per Ubuntu / NixOS / FreeBSD.
-- `HealthCheck.sourceInterface` is written as a resource name in YAML and resolved to an OS interface name at runtime.
+- 設定ファイル中の `${...status.field}` 文字列参照を、型付きの `*From` フィールドへ整理しました (`addressFrom`、`ipv4From`、`ipv6From`、`upstreamFrom`、`prefixFrom`、`rdnssFrom`、`dependsOn`)。互換別名はありません。
+- controller chain を pure event-loop 型に再構築しました。共通 `framework.FuncController` (Subscriptions + Bootstrap + PeriodicFunc) と `eventedStore` で、状態保存時に必ず `routerd.resource.status.changed` を発行し、下流が再評価する設計です。
+- bus event を `slog` 経由で systemd journal へ出力します (`journalctl -u routerd.service -f | grep "routerd event"` で controller の意思決定を追跡できます)。高頻度イベントは debug レベルです。
+- 全バイナリを静的ビルドにしました (`CGO_ENABLED=0 go build -trimpath -ldflags="-s -w"`)。OS 別の依存パッケージ (`dnsmasq-base`、`nftables`、`conntrack`、`iproute2`、`ppp`、`wireguard-tools`、`strongswan-swanctl`、`radvd`、`tcpdump` など) を Ubuntu / NixOS / FreeBSD ごとに整理しました。
+- `HealthCheck.sourceInterface` を YAML 上ではリソース名で書き、実行時に OS の interface 名に解決します。
 
-### Fixed
+### 修正
 
-- The `RuntimeDirectory` collision between `generated service artifacts` resources that previously deleted sockets across restarts is solved declaratively via `runtimeDirectoryPreserve`.
-- `generated service artifacts` with `state: absent` is now correctly detected as Drifted and unit removal is included in the plan.
-- `SysctlProfile` observation no longer reports spurious drift caused by type coercion.
+- `generated service artifacts` 同士の `RuntimeDirectory` 競合で再起動時に socket が消える問題を、`runtimeDirectoryPreserve` で declarative に解消しました。
+- `generated service artifacts` の `state: absent` を正しく Drifted として検出し、unit 削除を plan に含めるようにしました。
+- `SysctlProfile` の observe で型ゆらぎによる不要な drift を抑えました。
 
 ## 0.2.0
 
-### Added
+### 追加
 
-- Stateful firewall: `FirewallZone`, `FirewallPolicy`, and `FirewallRule` generate the `inet routerd_filter` table for nftables.
-- `EgressRoutePolicy` (formerly `WANEgressPolicy`) gained `destinationCIDRs`, `gateway`, and `gatewaySource`. `HealthCheck` accepts `via`, `sourceInterface`, and `sourceAddress` to scope the probe path.
-- The DNS subsystem was reorganised. `DNSZone` (authoritative zone definition) and `DNSResolver` (forwarder / cache) cover local zones, conditional forwarding, DoH / DoT / DoQ, and plain UDP DNS. dnsmasq is now scoped to DHCPv4 / DHCPv6 / RA / relay only.
-- DS-Lite (`DSLiteTunnel`), PPPoE (`PPPoESession`, `routerd-pppoe-client`), DHCPv4 client (`routerd-dhcpv4-client`, `DHCPv4Client`).
-- NAT44 (`NAT44Rule`) and conntrack observation. The observer falls back to a sysctl-derived summary when `/proc/net/nf_conntrack` is unavailable.
+- Stateful firewall を導入しました。`FirewallZone`、`FirewallPolicy`、`FirewallRule` で nftables の `inet routerd_filter` table を生成します。
+- `EgressRoutePolicy` (旧 `WANEgressPolicy`) に `destinationCIDRs`、`gateway`、`gatewaySource` を追加しました。`HealthCheck` は `via`、`sourceInterface`、`sourceAddress` で probe の送信経路を指定できます。
+- DNS サブシステムを再構成しました。`DNSZone` (権威ゾーン定義) と `DNSResolver` (フォワーダー / キャッシュ) に分離し、ローカルゾーン、条件付き転送、DoH / DoT / DoQ、平文 UDP DNS をサポートします。dnsmasq は DHCPv4 / DHCPv6 / RA / 中継に専念します。
+- DS-Lite (`DSLiteTunnel`)、PPPoE (`PPPoESession`、`routerd-pppoe-client`)、DHCPv4 client (`routerd-dhcpv4-client`、`DHCPv4Client`) を追加しました。
+- NAT44 (`NAT44Rule`) と conntrack 観測を追加しました。`/proc/net/nf_conntrack` がない環境では sysctl 由来の集計に縮退します。
 
-### Changed
+### 変更
 
-- `WANEgressPolicy` was renamed to `EgressRoutePolicy`. No backwards-compatible aliases.
-- DHCP client kinds and binary names were aligned with RFC notation: `routerd-dhcpv4-client`, `routerd-dhcpv6-client`. No backwards-compatible aliases.
+- `WANEgressPolicy` を `EgressRoutePolicy` に改名しました。互換別名はありません。
+- DHCP 関連 Kind とバイナリ名を RFC 表記に統一しました (`routerd-dhcpv4-client`、`routerd-dhcpv6-client`)。旧名の互換別名はありません。
 
 ## 0.1.0
 
-The first v1alpha1 implementation.
+最初の v1alpha1 実装です。
 
-- Introduced the DHCPv6-PD client, the daemon contract, the event bus, and the controller framework.
-- Implemented the controller chain that turns DHCPv6-PD into LAN address derivation and DNS responses.
-- Added DHCPv6 information request, prototype DS-Lite, IPv4 routing, RA, DHCPv6 server, `HealthCheck`, `EventRule`, and `DerivedEvent`.
+- DHCPv6-PD クライアント、daemon contract、event bus、controller framework を導入しました。
+- DHCPv6-PD → LAN アドレス導出 → DNS 応答までの controller chain を実装しました。
+- DHCPv6 情報要求、DS-Lite (試作)、IPv4 経路、RA、DHCPv6 サーバー、`HealthCheck`、`EventRule`、`DerivedEvent` を追加しました。
 
-API names and implementation strategies have changed substantially since this version as part of pre-release cleanup. For current usage, refer to the `Unreleased` section above and the `examples/` directory.
+このバージョン以降、出荷前の整理として API 名や実装方針に大きな変更が入っています。最新の利用方法は `Unreleased` の項目と `examples/` を参照してください。

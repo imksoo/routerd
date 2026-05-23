@@ -1,0 +1,14 @@
+{
+  "title": {
+    "message": "routerd field notes",
+    "description": "The title for the blog used in SEO"
+  },
+  "description": {
+    "message": "Practical routerd walkthroughs and design notes.",
+    "description": "The description for the blog used in SEO"
+  },
+  "sidebar.title": {
+    "message": "Recent posts",
+    "description": "The label for the left sidebar"
+  }
+}

@@ -1,38 +1,40 @@
 ---
-title: Replacing a hypervisor-to-hypervisor overlay VPN
+title: ハイパーバイザー間のオーバーレイ VPN を置き換える
 ---
 
-# Replacing a hypervisor-to-hypervisor overlay VPN
+# ハイパーバイザー間のオーバーレイ VPN を置き換える
 
-## Scenario
+## 想定するシーン
 
-You run a hypervisor cluster (Proxmox VE, KVM, etc.) where the inter-node bridge currently rides on top of a heavyweight overlay VPN — for example, a vendor-supplied SoftEther bridge or another tap-based tunnel. Symptoms include poor throughput between guests on different hosts, MTU mismatches, and operational fragility because the overlay is a separate product from the hypervisor and the router.
+ハイパーバイザークラスター (Proxmox VE、KVM など) で、ノード間のブリッジを、すでに何らかの重量級のオーバーレイ VPN (ベンダー製の SoftEther bridge、別の tap ベースのトンネルなど) に乗せている構成です。
+症状としては、別ホスト上のゲスト同士の通信が遅い、MTU がずれる、ハイパーバイザー本体やルーターとは別の製品なので運用が脆い、といった問題があります。
 
-You want to replace that overlay with something:
+これを、次の性質を備えた仕組みに置き換えたいとします。
 
-- declaratively configured alongside the rest of the network
-- routed (L3) by default, with L2 extension only where strictly necessary
-- predictable on MTU
-- observable through the same `routerctl` and Web Console you already use
+- 他のネットワーク設定と同じく、宣言型で管理する。
+- L2 拡張ではなく、原則として L3 経路にする。
+- MTU の挙動が予測できる。
+- すでに使っている `routerctl` と Web 管理画面から観測できる。
 
-## How routerd solves it
+## routerd での解決方法
 
-routerd models the overlay as four primitives:
+routerd は、オーバーレイを 4 つのプリミティブでモデル化します。
 
-| Resource | Role |
+| リソース | 役割 |
 | --- | --- |
-| `WireGuardInterface` | the encrypted L3 underlay between hypervisor hosts |
-| `WireGuardPeer` | one entry per remote host with its public key, endpoint, and allowed IPs |
-| `VXLANTunnel` | an L2 segment riding on top of the WireGuard underlay (only when L2 extension is required) |
-| `EgressRoutePolicy` + `HealthCheck` | optional readiness gating and L3 failover on top of the underlay |
+| `WireGuardInterface` | ハイパーバイザー間の暗号化 L3 underlay |
+| `WireGuardPeer` | ピア (リモートホスト) ごとの公開鍵、エンドポイント、許可 IP |
+| `VXLANTunnel` | underlay 上に乗せる L2 セグメント (本当に L2 拡張が必要なときのみ) |
+| `EgressRoutePolicy` + `HealthCheck` | underlay の準備完了確認と L3 フェイルオーバー (任意) |
 
-Prefer L3 routing over L2 extension whenever possible. L2 extension multiplies MTU constraints (Ethernet header + WireGuard overhead + VXLAN header) and turns broadcast storms into multi-host issues. Use `VXLANTunnel` only for the segments that genuinely need to span hosts.
+可能な限り L3 ルーティングを優先してください。L2 拡張は MTU の制約 (Ethernet ヘッダ + WireGuard のオーバーヘッド + VXLAN ヘッダ) を重ねるうえに、ブロードキャストストームが複数ホスト規模に広がります。
+`VXLANTunnel` は、本当にホスト間で広げる必要があるセグメントだけに使ってください。
 
-## Minimal configuration
+## 最小構成
 
-The example below assumes two hypervisor hosts (`alpha` and `beta`) connected through their existing IP transport. We bring up a WireGuard underlay between them, then add a single VXLAN segment.
+ハイパーバイザー 2 ホスト (`alpha` / `beta`) が既存の IP トランスポートでつながっている前提で、まず WireGuard underlay を立ち上げ、必要なら VXLAN を 1 セグメント載せます。
 
-### Underlay between two hosts
+### 2 ホスト間の underlay
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
@@ -57,9 +59,9 @@ spec:
   persistentKeepalive: 25
 ```
 
-The `mtu: 1420` value matches WireGuard's default with IPv4 underlay (1500 - 20 IP - 8 UDP - 32 WireGuard overhead - 8 nonce/key = 1432; conservative 1420 leaves headroom).
+`mtu: 1420` は、IPv4 underlay の既定値として保守的な値です (1500 - 20 IP - 8 UDP - 32 WireGuard オーバーヘッド - 8 nonce/key = 1432 が理論値で、余裕を込めています)。
 
-### Stretched L2 segment over the underlay
+### Underlay 上の L2 拡張セグメント
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
@@ -76,9 +78,10 @@ spec:
   mtu: 1370
 ```
 
-VXLAN adds 50 bytes of header (14 outer Ethernet + 20 outer IPv4 + 8 UDP + 8 VXLAN). On a 1420-byte WireGuard MTU, the inner MTU drops to 1370. Set this explicitly; do not rely on default MTU calculation when stacking encapsulations.
+VXLAN は 50 バイトのヘッダ (外側 Ethernet 14 + 外側 IPv4 20 + UDP 8 + VXLAN 8) を加えるため、1420 の WireGuard 内では内側の MTU が 1370 になります。
+カプセル化を重ねるときは、MTU を明示し、自動計算に任せないでください。
 
-## Verification
+## 動作確認
 
 ```sh
 # Underlay
@@ -92,16 +95,16 @@ ip -d link show vx-bridge1
 ping -M do -s 1342 <peer-overlay-host>        # 1370 - 20 IP - 8 ICMP
 ```
 
-`routerctl diagnose egress` is also useful when the underlay is itself a candidate egress (for example, when traffic to a remote office should ride the WireGuard underlay rather than the public default route).
+`routerctl diagnose egress` も役立ちます (例: 拠点向けのトラフィックを、公衆のデフォルト経路ではなく WireGuard underlay へ流したいとき)。
 
-## Operational notes
+## 運用上のヒント
 
-- **Roll out one host pair first.** Keep hypervisor console access available so you can recover if WireGuard or VXLAN does not converge.
-- **MTU mistakes are the most common cause of "fast ping but slow large transfers."** Use `ping -M do -s <size>` to confirm both underlay and overlay MTUs before routing real traffic.
-- **Do not blindly disable Linux NIC offload features.** TSO/GSO/GRO are usually fine; problems with `mtu greater than device maximum` more often come from the hypervisor host's tap/veth offload settings, not the guest.
-- **Avoid running redundant overlays during the transition.** Place the new WireGuard underlay on a different segment from the old SoftEther tunnel and cut over deliberately.
+- **まず 1 ホストのペアから試す**。WireGuard や VXLAN が収束しない場合に備えて、ハイパーバイザーのコンソールアクセスを確保しておきます。
+- **MTU の誤りは「ping は速いが大容量転送だけ遅い」という現象の最大の要因**。`ping -M do -s <size>` で underlay と overlay の両方の MTU を確認してから本番に投入してください。
+- **Linux NIC の offload をむやみに切らないでください**。TSO/GSO/GRO そのものは、通常は問題ありません。`mtu greater than device maximum` の真因は、ゲスト側ではなくハイパーバイザーの tap/veth の offload にあることが多いです。
+- **移行期間中は、新旧のオーバーレイを同一セグメントに載せない**。新しい WireGuard underlay は旧 SoftEther とは別のセグメントに置き、計画的にカットオーバーしてください。
 
-## See also
+## 関連項目
 
-- [Path MTU and MSS clamping](../concepts/path-mtu.md)
-- [Multi-WAN egress with health-based selection](./multi-wan.md)
+- [Path MTU と MSS clamping](../concepts/path-mtu.md)
+- [マルチ WAN 切替](./multi-wan.md)

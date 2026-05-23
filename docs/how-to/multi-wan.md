@@ -1,42 +1,41 @@
 ---
-title: Multi-WAN egress with health-based selection
+title: ヘルスチェック付きマルチ WAN 切替
 ---
 
-# Multi-WAN egress with health-based selection
+# ヘルスチェック付きマルチ WAN 切替
 
-## Scenario
+## 想定するシーン
 
-You have a router with more than one path to the internet and want routerd to:
+ルーターから外向きの経路が複数あり、routerd に次のように振る舞ってほしい場合です。
 
-- Pick the best available path automatically.
-- Fall back to a slower or backup link if the preferred one becomes unhealthy.
-- Avoid hard cutovers that drop existing connections.
+- 利用可能な経路の中から最良のものを自動で選ぶ。
+- 主回線が不調になったらフォールバック回線に切り替える。
+- 既存の接続を切らずに、なめらかに切り替える。
 
-Typical examples:
+代表的な例を挙げます。
 
-- A home router with a DS-Lite tunnel as primary and the upstream residential gateway as a NAT fallback.
-- A SOHO router with two ISP uplinks (e.g. fibre + LTE) for redundancy.
-- A site router that prefers a private VPN circuit but falls back to public internet.
+- 家庭ルーターで、DS-Lite トンネルを主回線、上流 HGW の NAT 越しをフォールバックにしたい。
+- SOHO ルーターで、2 系統の ISP 回線（光 + LTE など）を冗長化したい。
+- 拠点ルーターで、社内 VPN 回線を優先し、つながらないときだけ公衆インターネットへ落としたい。
 
-## How routerd solves it
+## routerd での解決方法
 
-`EgressRoutePolicy` declares the candidate paths and how to choose between them.
-At any moment routerd selects the highest-weight candidate that is **ready** (the source resource has settled) and **healthy** (its `HealthCheck` is passing).
-On a transition, routerd updates the OS route table and reapplies any NAT rule that follows the policy. It does **not** flush conntrack, so existing flows continue on their current path while new flows take the freshly selected one.
+`EgressRoutePolicy` で候補の経路と選択方法を宣言します。
+routerd は常に、「ready（上流リソースが落ち着いている）かつ healthy（`HealthCheck` が通っている）」候補のうち、weight が最も高いものを選びます。
+切り替え時は OS の経路表を更新し、ポリシーに追従する `NAT44Rule` も適用し直しますが、conntrack はあえて消しません。
+既存のフローはそのまま継続し、新規のフローだけが新しい経路を使います。
 
-Convergence is intentional: a low-weight backup can serve traffic the moment it is ready at boot, and routerd switches to the preferred path only after that path is confirmed healthy.
+これにより、weight の低いフォールバックが起動直後から働き、あとから確認できた主回線へなめらかに移れます。
 
-For fallback links that consume scarce sessions, such as a test PPPoE login,
-keep the resource in YAML but set `disabled: true` on the `PPPoESession`,
-its `HealthCheck`, and the matching `EgressRoutePolicy` candidate. routerd
-will stop and disable the generated services during normal apply. The rendered
-unit remains available for an explicit manual test.
+試験用 PPPoE など、セッション枠を消費するフォールバックは、YAML に残したまま無効化できます。
+`PPPoESession`、対応する `HealthCheck`、`EgressRoutePolicy` の候補に `disabled: true` を指定します。
+通常の適用では生成済みのサービスを停止・無効化し、必要なときだけ手動で試験できます。
 
-## Minimal configuration
+## 最小構成
 
-Three building blocks: a `HealthCheck` per candidate, an `EgressRoutePolicy` that lists the candidates, and a `NAT44Rule` that follows the policy.
+構成要素は 3 つです。候補ごとの `HealthCheck`、それらをまとめる `EgressRoutePolicy`、ポリシーに追従する `NAT44Rule` です。
 
-### Health checks
+### Health check
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
@@ -51,7 +50,8 @@ spec:
   timeout: 3s
 ```
 
-Reference each check from the matching `EgressRoutePolicy` candidate. routerd derives the probe source binding and socket mark from that reference, so the probe rides the candidate path without exposing host-specific mechanics in config. Use TCP/443 against a well-known stable target rather than ICMP, so transient ICMP filtering does not flap the selection.
+各チェックは、対応する `EgressRoutePolicy` の候補から参照します。routerd はその参照からプローブの送信元バインドと socket mark を導出するため、設定にホスト固有の仕組みを書く必要はありません。
+ICMP は途中のフィルターで落ちやすいので、安定した宛先（1.1.1.1 など）に対して TCP/443 を使うのが確実です。
 
 ### Egress policy
 
@@ -87,9 +87,9 @@ spec:
       healthCheck: internet-via-hgw
 ```
 
-`hysteresis` damps flapping: routerd waits this long after a candidate becomes unhealthy before demoting it.
+`hysteresis` はチャタリングを防ぐためのものです。候補が unhealthy になっても、この時間は降格しません。
 
-### NAT that follows the policy
+### ポリシーに追従する NAT
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
@@ -103,11 +103,11 @@ spec:
     - 192.0.2.0/24
 ```
 
-The masquerade source address is taken from the interface routerd selected at this instant. When the policy switches, the next packet is masqueraded with the new path's address.
+masquerade の送信元アドレスは、その時点で routerd が選んでいる候補のインターフェースから取ります。切り替わると、次のパケットは新しい経路のアドレスで NAT します。
 
-## Avoiding NAT for private destinations
+## RFC1918 宛は NAT しない
 
-If the upstream gateway has a static route back to the LAN, you can keep NAT for the public internet but skip it when traffic is destined for other private networks.
+上流ゲートウェイが LAN への戻り経路を持っている場合、公衆インターネット向けは NAT しつつ、ほかの社内ネットワーク宛は NAT を避けられます。
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
@@ -135,17 +135,17 @@ spec:
   device: wan
 ```
 
-With this combination, RFC 1918 destinations are routed (not NATed), and the public internet still flows through the selected egress.
+これで RFC1918 宛は経路で配り、公衆インターネット向けは選択された egress を経由します。
 
-## Operational notes
+## 運用上のヒント
 
-- Always keep an out-of-band management path (mgmt interface, console, dedicated SSH NIC). Do not test router SSH over an untrusted WAN path while applying firewall or route changes.
-- Prefer health checks that are referenced by exactly one candidate, so routerd can derive a single probe path and a failure clearly means that path is broken.
-- Avoid clearing conntrack when the path switches. routerd does not flush conntrack on purpose; existing TCP flows that already finished their handshake should be allowed to die naturally.
-- The selected candidate is visible at any time via `routerctl describe EgressRoutePolicy/<name>` (`status.selectedCandidate`).
+- 必ず帯域外の管理経路（mgmt インターフェース、コンソール、専用 SSH NIC など）を確保してください。WAN 経由の SSH で経路やファイアウォールを変えるのは危険です。
+- 1 つの `HealthCheck` は 1 つの候補から参照する形にしてください。routerd が単一のプローブ経路を導出でき、「プローブ失敗 = その経路が壊れている」と解釈しやすくなります。
+- 切り替え時に conntrack をフラッシュしないでください。routerd は意図的にフラッシュしません。すでにハンドシェイク済みの TCP は自然に終わらせます。
+- 現在選択中の候補は、`routerctl describe EgressRoutePolicy/<name>` の `status.selectedCandidate` で確認できます。
 
-## See also
+## 関連項目
 
-- [Path MTU and MSS clamping](../concepts/path-mtu.md)
-- [Firewall rule basics](./firewall-rule.md)
-- [DS-Lite setup](./flets-ipv6-setup.md)
+- [Path MTU と MSS clamping](../concepts/path-mtu.md)
+- [ファイアウォールルールの基本](./firewall-rule.md)
+- [DS-Lite 設定](./flets-ipv6-setup.md)

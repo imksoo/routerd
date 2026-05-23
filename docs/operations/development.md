@@ -1,22 +1,22 @@
 ---
-title: Development checks
+title: 開発時の確認
 ---
 
-# Development checks
+# 開発時の確認
 
-routerd uses two separate automation paths.
+routerd は 2 つの自動化経路を分けています。
 
-- The CI workflow checks normal pushes and pull requests.
-- The release workflow builds signed release archives after a release tag is pushed.
+- CI workflow は通常の push と pull request を確認します。
+- release workflow は release tag を push した後にリリースアーカイブを生成します。
 
-The release workflow is intentionally separate because it builds multiple
-operating system and architecture archives and publishes GitHub Release assets.
+release workflow は複数の OS と CPU アーキテクチャーを対象にします。
+また、GitHub Release の成果物も公開します。
+そのため、通常の CI とは分けています。
 
 ## CI workflow
 
-`.github/workflows/ci.yaml` runs on branch pushes and pull requests.
-It uses an Ubuntu runner and checks the development surface that should stay
-green before review:
+`.github/workflows/ci.yaml` は branch push と pull request で動きます。
+Ubuntu runner を使い、レビュー前に緑に保つべき範囲を確認します。
 
 ```sh
 go test ./...
@@ -25,33 +25,33 @@ make validate-example
 make website-build
 ```
 
-The CI workflow does not publish release artifacts.
-Release archives are created only by the `Release` workflow on date-based tags.
+CI workflow はリリース成果物を公開しません。
+リリースアーカイブは、日付ベースの tag で `Release` workflow が生成します。
 
-## Pre-commit hook
+## pre-commit hook
 
-The repository includes an optional pre-commit hook script:
+リポジトリには任意で使える pre-commit hook を含めています。
 
 ```sh
 ln -sf ../../scripts/pre-commit.sh .git/hooks/pre-commit
 chmod +x scripts/pre-commit.sh
 ```
 
-After enabling it, `git commit` runs:
+有効にすると、`git commit` の前に次の確認を実行します。
 
 ```sh
 go test ./...
 make check-schema
 ```
 
-If either command fails, the commit is stopped.
-This catches schema drift and test failures before they reach CI.
+どちらかが失敗すると commit は止まります。
+schema の差分やテスト失敗を CI の前に検出できます。
 
-For an emergency local commit, set this environment variable:
+緊急でローカル commit が必要な場合は、次の環境変数を指定します。
 
 ```sh
 ROUTERD_SKIP_PRE_COMMIT=1 git commit
 ```
 
-Use that only when the follow-up fix is already clear.
-CI still runs after the branch is pushed.
+後続の修正が明確な場合だけ使ってください。
+branch を push した後は CI が実行されます。

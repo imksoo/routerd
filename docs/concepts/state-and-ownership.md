@@ -1,81 +1,81 @@
 ---
-title: State and ownership
+title: 状態と所有
 slug: /concepts/state-and-ownership
 sidebar_position: 5
 ---
 
-# State and ownership
+# 状態と所有
 
-routerd separates declared intent from observed state.
-YAML is the intent you manage.
-SQLite, lease files, and `events.jsonl` are state that routerd and its dedicated daemons observe.
+routerd は、宣言した意図と観測した状態を分けて扱います。
+YAML は、利用者が管理する意図です。
+SQLite、lease ファイル、events.jsonl は、routerd と専用デーモンが観測した状態です。
 
-## Where state lives
+## 状態の置き場所
 
-Release installs use `/usr/local/etc/routerd/router.yaml` for the canonical
-configuration and `/usr/local/sbin` for routerd binaries.
+リリース版のインストールでは、正本の設定を `/usr/local/etc/routerd/router.yaml`
+に置きます。
+routerd の実行ファイルは `/usr/local/sbin` に置きます。
 
-Linux state defaults:
+Linux での状態の保存先は次の通りです。
 
-| Kind | Example |
+| 種類 | 例 |
 | --- | --- |
-| routerd state database | `/var/lib/routerd/routerd.db` |
-| DHCPv6-PD lease | `/var/lib/routerd/dhcpv6-client/wan-pd/lease.json` |
-| DHCPv4 lease | `/var/lib/routerd/dhcpv4-client/wan/lease.json` |
-| PPPoE state | `/var/lib/routerd/pppoe-client/<name>/state.json` |
-| HealthCheck state | `/var/lib/routerd/healthcheck/<name>/state.json` |
-| Runtime sockets | `/run/routerd/.../*.sock` |
+| routerd 状態データベース | `/var/lib/routerd/routerd.db` |
+| DHCPv6-PD リース | `/var/lib/routerd/dhcpv6-client/wan-pd/lease.json` |
+| DHCPv4 リース | `/var/lib/routerd/dhcpv4-client/wan/lease.json` |
+| PPPoE 状態 | `/var/lib/routerd/pppoe-client/<name>/state.json` |
+| ヘルスチェック状態 | `/var/lib/routerd/healthcheck/<name>/state.json` |
+| 実行時ソケット | `/run/routerd/.../*.sock` |
 
-FreeBSD uses the same configuration and binary paths under `/usr/local`.
-Its runtime sockets live under `/var/run/routerd`, and persistent state lives
-under `/var/db/routerd`.
+FreeBSD でも、設定と実行ファイルは `/usr/local` 配下に置きます。
+実行時ソケットは `/var/run/routerd` に置きます。
+永続状態は `/var/db/routerd` に置きます。
 
-## Ownership
+## 所有の考え方
 
-Every host-side artifact routerd creates has an owning resource.
-For example, the dnsmasq configuration is owned by the DHCP and RA resources,
-the `routerd-dns-resolver` configuration by `DNSResolver` and `DNSZone`, the
-nftables NAT table by `NAT44Rule`, and the aggregate TCP MSS clamp table by the
-top-level `Router`.
+routerd が作るホスト側の構成物には、それぞれ所有元のリソースがあります。
+たとえば dnsmasq 設定は DHCP と RA の各リソースから、`routerd-dns-resolver` の設定は `DNSResolver` と `DNSZone` から、nftables の NAT テーブルは `NAT44Rule` から作られます。
+複数のトンネルから集約される TCP MSS clamp テーブルは、最上位の `Router` が所有します。
 
-Knowing the owner answers three questions:
+所有元が分かると、次の判断ができます。
 
-- Is this artifact safe for routerd to modify?
-- When the resource is removed from YAML, should routerd remove the host-side artifact too?
-- Does routerd adopt an existing object, or create a new one from scratch?
+- この構成物を routerd が変更してよいか。
+- YAML からリソースを消したとき、ホスト側も消してよいか。
+- 既存の設定を取り込むだけか、それとも routerd が新しく作るのか。
 
-## Don't act on stale state
+## 古くなった状態を使わない
 
-Leases and observed values are useful, but acting on stale data is dangerous.
-DHCPv6-PD prefixes in particular are propagated downstream only while they are confirmed `Bound`.
-When that confirmation is missing, routerd suppresses the matching AAAA records, RA, DHCPv6 server, and LAN IPv6 address applications instead of advertising broken connectivity.
+リースや観測値は便利ですが、古くなった値を使い続けるのは危険です。
+特に DHCPv6-PD のプレフィックスは、Bound であることを確認できるときだけ下流へ展開します。
+確認できないときは、AAAA、RA、DHCPv6 サーバー、LAN IPv6 アドレスの適用を止めます。
 
-## Events
+## イベント
 
-routerd and its daemons record state changes as events.
-Events are persisted in the SQLite `events` table and in per-daemon `events.jsonl` files.
-`EventRule` and `DerivedEvent` consume that stream to synthesize virtual state changes.
+routerd と専用デーモンは、状態の変化をイベントとして記録します。
+イベントは、SQLite の `events` テーブルやデーモンごとの `events.jsonl` に残ります。
+EventRule と DerivedEvent は、このイベントや状態を使って仮想的な状態変化を作り出します。
 
-## Apply generations
+## 適用世代
 
-The `generation` value in status output is the latest committed apply generation.
-It is incremented when `routerd apply` changes the host-side intent store and records a completed apply in SQLite.
-It is not a reconcile loop counter.
-Dry-run plans, daemon events, health checks, and periodic controller runtime reconciliation do not increment it.
-New apply generations store the YAML snapshot that was applied.
-The Web Console uses those snapshots to show a read-only generation history and unified diffs between stored generations.
-Rows created before YAML snapshot storage was introduced remain valid history, but they cannot be diffed.
+status に出る `generation` は、最後に完了した適用世代です。
+この値は、`routerd apply` がホスト側の意図を更新し、SQLite に適用の完了を記録したときに増えます。
+調整ループの回数ではありません。
+dry-run の計画、デーモンイベント、ヘルスチェック、controller chain の定期調整では増えません。
+新しい適用世代には、そのとき適用した YAML のスナップショットを保存します。
+Web 管理画面は、このスナップショットを使い、読み取り専用の世代履歴と、世代間の差分（unified diff）を表示します。
+YAML 保存を導入する前の行は履歴として残りますが、差分表示の対象にはできません。
 
-## Stateful packet filters
+## 状態を持つパケットフィルター
 
-On Linux, routerd updates managed nftables tables with a single `nft -f` transaction.
-Generated rulesets create the managed table if needed, flush that table, and then load the replacement chains in the same nftables batch.
-For named sets owned by routerd, such as firewall zone interface sets and
-client-policy MAC sets, the generated ruleset destroys the managed set before
-defining it again. That prevents removed set elements from surviving a reload.
-routerd does not delete a live NAT or filter table before adding the replacement table.
-Existing conntrack entries therefore remain attached to the kernel state table during routerd restarts and normal configuration changes.
+Linux では、routerd は nftables の管理テーブルを 1 回の `nft -f` トランザクションで更新します。
+生成したルールセットは、必要なら管理テーブルを作成します。
+その後、同じ nftables バッチの中でテーブルを空にし、新しいチェーンを読み込みます。
+firewall zone のインターフェース set や client-policy の MAC set のように
+routerd が所有する named set は、再定義の前に管理対象の set だけを削除します。
+これにより、削除した set 要素が再読み込み後に残るのを防ぎます。
+稼働中の NAT テーブルやフィルターテーブルを、削除してから作り直すことはしません。
+そのため、routerd の再起動や通常の設定変更を行っても、既存の conntrack エントリーはカーネルの状態テーブルに残ります。
 
-On FreeBSD, routerd loads generated pf rules with `pfctl -f`.
-pf keeps the existing state table across rule reloads unless states are explicitly flushed.
-routerd does not flush pf states during normal apply.
+FreeBSD では、routerd は生成した pf ルールを `pfctl -f` で読み込みます。
+pf は、状態を明示的に消さない限り、ルールの再読み込み時にも既存の状態テーブルを保持します。
+routerd の通常の適用処理では、pf の状態を消しません。

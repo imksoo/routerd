@@ -1,26 +1,27 @@
 ---
-title: DS-Lite over DHCPv6-PD (IPv6-only access network)
+title: DHCPv6-PD 上の DS-Lite (IPv6 のみアクセス網)
 slug: /how-to/flets-ipv6-setup
 ---
 
-# DS-Lite over DHCPv6-PD (IPv6-only access network)
+# DHCPv6-PD 上の DS-Lite (IPv6 のみアクセス網)
 
-## Scenario
+## 想定するシーン
 
-The ISP delivers an IPv6-only access network and provides IPv4 connectivity through a DS-Lite tunnel to an Address Family Transition Router (AFTR). The router needs to:
+ISP が IPv6 のみのアクセス網を提供し、IPv4 接続は AFTR (Address Family Transition Router) への DS-Lite トンネルで実現する構成です。
+このとき、ルーターは次を担います。
 
-- Take an IPv6 prefix via DHCPv6-PD and use it to address the LAN.
-- Establish a DS-Lite (IPv4-in-IPv6 / `ip6tnl`) tunnel to the AFTR.
-- Resolve the AFTR FQDN through the access-network DNS, since AFTR records are usually only authoritative inside the carrier network.
-- Advertise IPv6 with RDNSS so SLAAC clients (Android included) get a working DNS server.
+- DHCPv6-PD で IPv6 プレフィックスを取得し、LAN へ配ります。
+- AFTR への DS-Lite (IPv4-in-IPv6 / `ip6tnl`) トンネルを確立します。
+- AFTR の FQDN はアクセス網の DNS でしか解けない場合があるため、条件付き転送を使います。
+- IPv6 RA に RDNSS を含めて、SLAAC クライアント (Android を含む) へ DNS を伝えます。
 
-This pattern is common with several Japanese fibre carriers (NTT NGN with `gw.transix.jp` and similar AFTRs), but the configuration applies to any DS-Lite deployment.
+このパターンは、日本国内のフレッツ系回線 (NTT NGN + `gw.transix.jp` など) で典型的ですが、同様の DS-Lite 配備全般に適用できます。
 
-## Prerequisites
+## 前提
 
-- The WAN-facing interface is connected to a residential gateway or ONU that runs an IPv6-only access network.
-- DHCPv6-PD is available on that interface.
-- The AFTR DNS records may or may not be returned in DHCPv6 information-request; always plan for both cases.
+- WAN インターフェースが、HGW か ONU を経由して IPv6 のみのアクセス網につながっています。
+- そのインターフェースで DHCPv6-PD を利用できます。
+- AFTR の DNS が DHCPv6 の information-request で返るかどうかは ISP や HGW 次第です。どちらの場合にも備えてください。
 
 ## DHCPv6-PD
 
@@ -33,19 +34,19 @@ This pattern is common with several Japanese fibre carriers (NTT NGN with `gw.tr
     interface: wan
 ```
 
-The lease is persisted at:
+リースは次の場所に保存されます。
 
 ```text
 /var/lib/routerd/dhcpv6-client/wan-pd/lease.json
 ```
 
-The daemon's status is available over its Unix socket:
+デーモンの状態は Unix ソケットで確認できます。
 
 ```bash
 curl --unix-socket /run/routerd/dhcpv6-client/wan-pd.sock http://unix/v1/status
 ```
 
-## LAN address derivation and RA
+## LAN アドレス導出と RA
 
 ```yaml
 - apiVersion: net.routerd.net/v1alpha1
@@ -75,11 +76,13 @@ curl --unix-socket /run/routerd/dhcpv6-client/wan-pd.sock http://unix/v1/status
         field: address
 ```
 
-The advertised RDNSS uses the LAN-side address derived from the delegated prefix. SLAAC clients pick up that resolver automatically.
+RA で広告する RDNSS には、委任されたプレフィックスから導出した LAN 側アドレスを使います。
+SLAAC クライアントは、このリゾルバを自動で取得します。
 
-## Conditional DNS forwarding for the AFTR
+## AFTR の条件付き DNS 転送
 
-The AFTR FQDN is normally only resolvable through the carrier's own DNS servers. Use a conditional forwarder so queries for that domain go to the access-network resolver, while everything else uses your normal upstream.
+AFTR の FQDN は、通常 ISP のアクセス網 DNS でしか解けません。
+そのドメインだけをアクセス網のリゾルバへ転送し、それ以外は通常の上流に流します。
 
 ```yaml
 - apiVersion: net.routerd.net/v1alpha1
@@ -104,9 +107,9 @@ The AFTR FQDN is normally only resolvable through the carrier's own DNS servers.
           - udp://1.1.1.1:53
 ```
 
-Replace `transix.jp` and the upstream IPv6 address with the values your ISP publishes.
+`transix.jp` と上流の IPv6 アドレスは、ISP が公開している値に置き換えてください。
 
-## DS-Lite tunnel
+## DS-Lite トンネル
 
 ```yaml
 - apiVersion: net.routerd.net/v1alpha1
@@ -123,22 +126,24 @@ Replace `transix.jp` and the upstream IPv6 address with the values your ISP publ
         phase: Applied
 ```
 
-`localAddressSource: interface` uses the WAN-side IPv6 address that SLAAC/RA gave you (rather than a delegated-prefix-derived one) as the local endpoint of the tunnel. That address is usually available before LAN derivation finishes, so the tunnel comes up sooner.
+`localAddressSource: interface` は、SLAAC/RA で WAN 側に付いた IPv6 アドレスを、トンネルのローカルエンドポイントとして使います。
+このアドレスは LAN 側の導出より早く取れるため、トンネルが早く立ち上がります。
 
-If your ISP publishes a stable AFTR address and you prefer to skip DNS resolution, set `aftrIPv6` directly:
+ISP が安定した AFTR アドレスを公開していて、DNS 解決を省きたい場合は、`aftrIPv6` を直接指定します。
 
 ```yaml
 spec:
   aftrIPv6: 2001:db8:cafe::1
 ```
 
-When AFTR is not returned in DHCPv6 information-request (common with NTT NGN HGWs), the static `aftrFQDN` or `aftrIPv6` configuration is the correct fallback.
+NTT NGN の HGW のように、DHCPv6 の information-request で AFTR が返らない環境では、`aftrFQDN` または `aftrIPv6` の静的な指定が正しいフォールバックです。
 
-For the tunnel inner IPv4 address, the normal DS-Lite example uses the RFC 6333 B4-AFTR link range `192.0.0.0/29`.
-If you need to carve an address from a LAN range instead, keep the address in an `IPv4StaticAddress` resource and reference it from `DSLiteTunnel.localAddressFrom` and `NAT44Rule.snatAddressFrom`.
-See `examples/dslite-lan-range-snat.yaml` for the optional form.
+トンネル内側の IPv4 アドレスには、通常 RFC 6333 の B4-AFTR リンク範囲 `192.0.0.0/29` を使います。
+LAN 範囲から切り出したアドレスを使いたい場合は、`IPv4StaticAddress` リソースで定義します。
+その値を `DSLiteTunnel.localAddressFrom` と `NAT44Rule.snatAddressFrom` から参照します。
+任意指定の例は `examples/dslite-lan-range-snat.yaml` にあります。
 
-## Verification
+## 動作確認
 
 ```bash
 routerd apply --config router.yaml --once --dry-run
@@ -148,14 +153,14 @@ ip -6 tunnel show
 ip route show default
 nft list table ip routerd_nat
 
-# IPv4 reachability through the tunnel
+# トンネル経由で IPv4 の疎通を確認
 curl --interface ds-routerd https://1.1.1.1/
 ```
 
-Run the dry-run first; only apply for real once the plan looks right and a rollback path is in place.
+まず dry-run で確認し、計画が妥当でロールバック経路もある状態で本適用してください。
 
-## See also
+## 関連項目
 
-- [WAN-side services](../tutorials/wan-side-services.md)
-- [Multi-WAN egress](./multi-wan.md)
-- [Path MTU and MSS clamping](../concepts/path-mtu.md)
+- [WAN 側サービス](../tutorials/wan-side-services.md)
+- [マルチ WAN 切替](./multi-wan.md)
+- [Path MTU と MSS clamping](../concepts/path-mtu.md)

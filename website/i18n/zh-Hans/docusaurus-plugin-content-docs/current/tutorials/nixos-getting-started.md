@@ -4,44 +4,55 @@ title: 从 NixOS 开始
 
 # 从 NixOS 开始
 
-NixOS 使用 routerd 的完整 resource model。推荐做法是通过声明式 NixOS 配置来驱动 routerd 管理的服务,不要依赖 transient systemd unit。
+NixOS 是 routerd 的主要辅助平台。
+在 NixOS 上，建议通过声明式 NixOS 配置来管理 routerd 的管理服务，而非使用临时的 systemd unit。
+routerd 的可执行文件从 release archive 安装。
+不过，OS 软件包请通过 NixOS 配置管理。
+`install.sh` 不会以 `nix-env` 安装软件包，只会输出警告。
 
-## 推荐的起始范围
+## 推荐的起始方式
 
-在 NixOS 上,先从 daemon 型 WAN 服务开始。DHCPv6-PD、DHCPv4 client lease、PPPoE session、HealthCheck、dnsmasq、firewall logging、nftables 启用,以及主 `routerd.service`,都可以写进生成的 NixOS module。基础服务能以 `nixos-rebuild test` 干净收敛后,再加入更多 router resource。
+在 NixOS 上，请先以声明式方式管理守护进程型的 WAN 侧服务。
+DHCPv6-PD、DHCPv4 客户端租约、PPPoE 连接、HealthCheck、dnsmasq、防火墙日志记录、nftables 启用，以及主要的 `routerd.service`，都可以通过生成的 NixOS 模块来描述。
+请先确认基础服务能以 `nixos-rebuild test` 正常收敛，再加入其他路由器资源。
 
 ## 生成的产物
 
-routerd 会把 systemd units 写入 `/etc/nixos/routerd-generated.nix`。用下列命令应用:
+routerd 会将 systemd unit 写入 `/etc/nixos/routerd-generated.nix`。使用下列命令应用：
 
 ```bash
 sudo nixos-rebuild test
 sudo nixos-rebuild switch
 ```
 
-生成的 units 会以明确 binary path 启动 routerd daemons,并带有合适的 `RuntimeDirectory`、`StateDirectory`、`ProtectSystem=strict` 与 capability 清单。
+生成的 unit 会以明确的路径启动 routerd 守护进程，
+并具备适当的 `RuntimeDirectory`、`StateDirectory`、`ProtectSystem=strict` 与所需的 capability。
 
-## 为什么不用 transient units
+## 为何不使用临时 unit
 
-NixOS 上放在 `/run/systemd/system` 的 unit 不是系统配置的一部分。重启或执行 `nixos-rebuild switch` 后会被移除。若要跨重启与 rebuild 保留 unit,就必须把 unit 声明在 NixOS 配置中。routerd 通过写入 `/etc/nixos/routerd-generated.nix` 达成这一点。
+在 NixOS 上，放在 `/run/systemd/system` 的 unit 不属于系统配置的一部分。
+重新启动或执行 `nixos-rebuild switch` 后就会消失。
+若要让 unit 在重新启动和重新构建后仍然保留，就必须在 NixOS 配置中声明。
+routerd 通过写入 `/etc/nixos/routerd-generated.nix` 来实现这一点。
 
-## 当前覆盖范围
+## 目前支持范围
 
-已实现:
+已实现的功能如下。
 
 - `routerd-dhcpv6-client` 的 systemd unit 生成
 - `routerd-dhcpv4-client` 的 systemd unit 生成
 - `routerd-pppoe-client` 的 systemd unit 生成
-- `Package`、`SysctlProfile`、`NetworkAdoption`、`generated service artifacts` 的 NixOS module 生成
-- `nixos-rebuild switch` 后 DHCPv6-PD 到达 `Bound`
-- dnsmasq、DNS resolver、HealthCheck、firewall logger、Tailscale、DHCPv4 client、DHCPv6 client、PPPoE client service 可通过生成 module 声明
-- NAT、firewall、policy routing、Path MTU resource 需要 nftables 时自动启用
-- `nixos-rebuild switch` 失败时尝试 `nixos-rebuild switch --rollback`
-- WireGuard / Tailscale / VXLAN 已在 NixOS / Linux / FreeBSD 间确认
-- VRF 以 systemd-networkd 的 native netdev 生成
+- `Package` override、`SysctlProfile`、derived host runtime artifact、`generated service artifacts` 的 NixOS 模块生成
+- `nixos-rebuild switch` 后 DHCPv6-PD 能达到 `Bound` 状态
+- dnsmasq、DNS 解析器、HealthCheck、防火墙日志记录器、Tailscale、DHCPv4 客户端、DHCPv6 客户端、PPPoE 客户端服务可通过生成的模块声明
+- NAT、firewall、policy routing、Path MTU 资源所需的 nftables 自动启用
+- `nixos-rebuild switch` 失败时尝试执行 `nixos-rebuild switch --rollback`
+- WireGuard / Tailscale / VXLAN 已确认可在 NixOS / Linux / FreeBSD 之间运行
 
-各平台细节请参考 [支持的平台](../platforms.md)。
+各平台的详细说明请参阅 [支持的平台](../platforms.md)。
 
-## 下一步
+## 相关项目
 
-接着请在英文或日文文档中查看 install、first router、WAN-side services 的教程。
+- [安装](./install.md)
+- [创建第一台路由器](./first-router.md)
+- [WAN 侧服务](./wan-side-services.md)

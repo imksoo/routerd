@@ -5,7 +5,7 @@ import type {Options as PresetOptions, ThemeConfig} from '@docusaurus/preset-cla
 
 const config: Config = {
   title: 'routerd',
-  tagline: 'Declarative router control for small, serious networks',
+  tagline: '小さく本気のネットワークのための、宣言型ルーター',
   favicon: 'img/favicon.svg',
 
   url: 'https://routerd.net',
@@ -42,8 +42,8 @@ const config: Config = {
   onBrokenLinks: 'warn',
 
   i18n: {
-    defaultLocale: 'en',
-    locales: ['en', 'ja', 'zh-Hant', 'zh-Hans'],
+    defaultLocale: 'ja',
+    locales: ['ja', 'en', 'zh-Hant', 'zh-Hans'],
     localeConfigs: {
       en: {
         label: 'English',
@@ -86,6 +86,14 @@ const config: Config = {
 
   themeConfig: {
     image: 'img/routerd-social-card.svg',
+    announcementBar: {
+      id: 'stable-milestone-20260522-1334',
+      content:
+        '安定版マイルストーン / Stable: <a href="/docs/releases/stable"><b>v20260522.1334</b></a>（本番稼働実績あり / running in production）',
+      backgroundColor: '#1f6feb',
+      textColor: '#ffffff',
+      isCloseable: true,
+    },
     navbar: {
       title: 'routerd',
       logo: {
@@ -95,20 +103,20 @@ const config: Config = {
       items: [
         {
           type: 'dropdown',
-          label: 'Docs',
+          label: 'ドキュメント',
           position: 'left',
           items: [
-            {to: '/docs/', label: 'Overview'},
-            {to: '/docs/install-and-upgrade', label: 'Install'},
-            {to: '/docs/concepts/what-is-routerd', label: 'Concepts'},
-            {to: '/docs/tutorials/getting-started', label: 'Tutorials'},
-            {to: '/docs/config-examples/', label: 'Configuration examples'},
-            {to: '/docs/how-to/multi-wan', label: 'How-to'},
-            {to: '/docs/knowledge-base/dhcpv6-pd-clients', label: 'Knowledge base'},
-            {to: '/docs/reference/api-v1alpha1', label: 'Reference'},
-            {to: '/docs/operations/reconcile', label: 'Operations'},
-            {to: '/docs/design-notes', label: 'Design notes'},
-            {to: '/docs/releases/changelog', label: 'Releases'},
+            {to: '/docs/', label: 'はじめに'},
+            {to: '/docs/install-and-upgrade', label: '導入（クイックスタート）'},
+            {to: '/docs/concepts/resource-model', label: '機能解説（宣言型モデル）'},
+            {to: '/docs/concepts/glossary', label: '用語集'},
+            {to: '/docs/concepts/firewall', label: '設定リファレンス（機能別）'},
+            {to: '/docs/config-examples/', label: '設定例集'},
+            {to: '/docs/how-to/multi-wan', label: 'How-to ガイド'},
+            {to: '/docs/operations/reconcile', label: '運用'},
+            {to: '/docs/reference/api-v1alpha1', label: 'リファレンス（API）'},
+            {to: '/docs/design-notes', label: '設計ノート'},
+            {to: '/docs/releases/stable', label: 'リリースと安定版'},
           ],
         },
         {
@@ -126,19 +134,20 @@ const config: Config = {
       style: 'dark',
       links: [
         {
-          title: 'Docs',
+          title: 'ドキュメント',
           items: [
-            {label: 'Install and Upgrade', to: '/docs/install-and-upgrade'},
-            {label: 'Getting Started', to: '/docs/tutorials/getting-started'},
-            {label: 'Resource API', to: '/docs/reference/api-v1alpha1'},
-            {label: 'Plugin Protocol', to: '/docs/reference/plugin-protocol'},
+            {label: '導入とアップグレード', to: '/docs/install-and-upgrade'},
+            {label: 'クイックスタート', to: '/docs/tutorials/getting-started'},
+            {label: 'リソース API', to: '/docs/reference/api-v1alpha1'},
+            {label: 'プラグインプロトコル', to: '/docs/reference/plugin-protocol'},
           ],
         },
         {
-          title: 'Project',
+          title: 'プロジェクト',
           items: [
             {label: 'GitHub', href: 'https://github.com/imksoo/routerd'},
-            {label: 'Changelog', to: '/docs/releases/changelog'},
+            {label: '安定版マイルストーン', to: '/docs/releases/stable'},
+            {label: '変更履歴', to: '/docs/releases/changelog'},
           ],
         },
       ],

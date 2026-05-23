@@ -1,11 +1,11 @@
-# Web Console
+# Web 管理画面
 
-`WebConsole` enables a read-only HTTP view for routerd. It is intended for
-local operations on a management network. It does not change configuration,
-restart services, apply resources, or edit the state database.
+`WebConsole` は、routerd の状態を読むための HTTP 画面です。
+管理ネットワークでのローカル運用を想定しています。
+設定の変更、サービスの再起動、リソースの適用、状態データベースの編集は行いません。
 
-Configuration changes remain limited to YAML files and `routerctl` commands.
-The browser is for observation only.
+設定の変更は、YAML ファイルと `routerctl` コマンドに限定します。
+ブラウザーは観測専用です。
 
 ```yaml
 apiVersion: system.routerd.net/v1alpha1
@@ -21,72 +21,68 @@ spec:
   title: edge-router
 ```
 
-Keep the listener on a management address. Do not expose it on an untrusted
-WAN interface. Use `listenAddressFrom` when the management address is owned by
-the operating system or IPAM. The value is resolved from resource status at
-startup, and `listenAddress` remains available for a literal fallback address.
+待ち受けは、管理アドレスに限定してください。
+untrust の WAN インターフェースでは公開しないでください。
+管理アドレスを OS や IPAM から受け取る場合は、`listenAddressFrom` を使います。
+routerd は、起動時にリソースの状態から値を解決します。
+固定の予備アドレスが必要な場合は、`listenAddress` も併用できます。
 
-## What the console reads
+## 読み取る情報
 
-The Web Console reads:
+Web 管理画面は次の情報を読み取ります。
 
-- routerd daemon status
-- resource status in the SQLite state database
-- bus events in the SQLite event table
-- live connection observations from conntrack or pf state
-- DNS query history from `dns-queries.db`
-- traffic flow history from `traffic-flows.db`
-- firewall deny history from `firewall-logs.db`
-- current dnsmasq DHCP lease files for client names, MAC addresses, and local
-  vendor hints
-- the active YAML configuration, shown read-only
+- routerd デーモン状態
+- SQLite 状態データベース内のリソース状態
+- SQLite イベントテーブル内のバスイベント
+- conntrack または pf の state から得たコネクションの観測値
+- `dns-queries.db` の DNS クエリー履歴
+- `traffic-flows.db` の通信フロー履歴
+- `firewall-logs.db` のファイアウォール拒否履歴
+- 現在の dnsmasq の DHCP リースファイル。端末名、MAC アドレス、ローカルな
+  ベンダー候補を表示します。
+- 現在の YAML 設定。読み取り専用で表示します。
 
-## Current screens
+## 現在の画面
 
-The current Fluent UI web app provides:
+現在の Fluent UI 版 Web アプリケーションでは、次を表示します。
 
-- a status overview for PD, DS-Lite, DNS, NAT, routes, health checks, VPN,
-  packages, sysctl, systemd units, and log resources
-- resource change highlighting when a phase or observed value changes
-- an Events view with a selectable detail pane, so large attributes do not
-  crowd the event table
-- DHCP lease event details, including MAC address, IP address, hostname, and
-  resource names when present
-- a Connections view grouped by family and protocol, with filtering, sorting,
-  pagination, and page size controls
-- DNS query, traffic flow, and firewall log views backed by separate log
-  databases
-- dedicated BGP, VRRP, and IngressService operational pages at `/bgp`, `/vrrp`,
-  and `/ingress`. These pages use Server-Sent Events to refresh resource
-  tables, keep a local 5/15/60 minute SVG trend, and show a filtered event log
-  for the relevant resources.
-- Firewall rows combine firewall logs, DNS answers, DHCP leases, MAC vendor
-  hints, and current conntrack reply tuples. This helps explain whether a
-  denied packet is unsolicited traffic or an off-path reply for an existing
-  NAT mapping.
-- a Config view with a structured, foldable YAML tree and a raw YAML fallback
+- PD、DS-Lite、DNS、NAT、経路、ヘルスチェック、VPN、パッケージ、sysctl、
+  systemd ユニット、ログリソースの状態概要
+- フェーズや観測値が変わったリソースの強調表示
+- 選択したイベントの詳細ペイン。大きな属性でイベント表を崩しません。
+- DHCP リースイベントの詳細。MAC アドレス、IP アドレス、ホスト名、リソース名を表示します。
+- アドレスファミリーとプロトコルで分けた Connections 画面。
+  絞り込み、並べ替え、ページネーション、行数選択ができます。
+- 分離したログデータベースに基づく、DNS クエリー、通信フロー、ファイアウォールログの画面
+- `/bgp`、`/vrrp`、`/ingress` の BGP、VRRP、IngressService 専用の運用ページ。
+  これらは Server-Sent Events でリソース表を更新し、ブラウザー内に
+  5/15/60 分の軽量な SVG トレンドを保持し、関連リソースだけのイベントログを表示します。
+- Firewall 行では、ファイアウォールログ、DNS 応答、DHCP リース、
+  MAC ベンダー候補、現在の conntrack の復路タプルをまとめて表示します。
+  これにより、拒否されたパケットが不要な外部通信なのか、既存の NAT 変換に近い別経路の応答なのかを判断しやすくします。
+- 構造化した折りたたみツリーと Raw YAML 表示を持つ、読み取り専用の Config 画面
 
-Connection rows show the forward direction by default. Return-path data is not
-shown as a separate primary row because conntrack commonly reports the same
-conversation from both directions.
+コネクション行は、基本的に往路を表示します。
+conntrack は同じ通信を往復の両方向で報告しますが、復路を主要行として重ねて表示することはしません。
 
-## API boundary
+## API 境界
 
-Web Console APIs are read-only. The JSON endpoints are under `/api/v1`; the
-SSE stream is also available through the short `/api/events/stream` alias.
+Web 管理画面 API は読み取り専用です。
+JSON エンドポイントは `/api/v1` 配下にあり、SSE ストリームは短い
+`/api/events/stream` という別名でも利用できます。
 
-| Path | Content |
+| パス | 内容 |
 | --- | --- |
-| `/api/v1/summary` | status, resource phases, recent events, and connection summary |
-| `/api/v1/resources` | resource statuses from the state database |
-| `/api/v1/events?limit=200&resourceKind=&resourceName=&q=` | recent bus events with optional filters |
-| `/api/v1/events/stream` or `/api/events/stream` | Server-Sent Events stream for `routerd.*` bus events |
-| `/api/v1/connections` | live connection observation from conntrack or pf state |
-| `/api/v1/dns-queries?since=1h&client=&qname=&limit=100` | DNS query log rows |
-| `/api/v1/traffic-flows?since=1h&client=&peer=&limit=100` | traffic flow log rows with DNS-derived hostnames |
-| `/api/v1/firewall-logs?since=24h&action=drop&src=&limit=100` | firewall log rows |
-| `/api/v1/bgp`, `/api/v1/vrrp`, `/api/v1/ingress` | filtered operational status for Kubernetes-edge routing and VIP resources |
-| `/api/v1/config` | active YAML configuration |
-| `/api/v1/generations?limit=100` | completed apply generations and whether a YAML snapshot is stored |
-| `/api/v1/generations/<id>/config` | stored YAML for one apply generation |
-| `/api/v1/generations/<from>/diff/<to>` | unified diff between two stored YAML generations |
+| `/api/v1/summary` | 状態、リソースフェーズ、直近イベント、コネクションの概要 |
+| `/api/v1/resources` | 状態データベース内のリソース状態 |
+| `/api/v1/events?limit=200&resourceKind=&resourceName=&q=` | 任意の絞り込み条件付きの直近バスイベント |
+| `/api/v1/events/stream` または `/api/events/stream` | `routerd.*` バスイベントの Server-Sent Events ストリーム |
+| `/api/v1/connections` | conntrack または pf の state から得たコネクションの観測値 |
+| `/api/v1/dns-queries?since=1h&client=&qname=&limit=100` | DNS クエリーログの行 |
+| `/api/v1/traffic-flows?since=1h&client=&peer=&limit=100` | DNS 由来のホスト名を含む通信フローログの行 |
+| `/api/v1/firewall-logs?since=24h&action=drop&src=&limit=100` | ファイアウォールログの行 |
+| `/api/v1/bgp`、`/api/v1/vrrp`、`/api/v1/ingress` | Kubernetes edge の経路 / VIP リソース向けの運用状態 |
+| `/api/v1/config` | 現在の YAML 設定 |
+| `/api/v1/generations?limit=100` | 完了した適用世代と、YAML スナップショットの有無 |
+| `/api/v1/generations/<id>/config` | 1 つの適用世代に保存された YAML |
+| `/api/v1/generations/<from>/diff/<to>` | 2 つの YAML 世代の差分（unified diff） |

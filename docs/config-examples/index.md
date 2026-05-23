@@ -1,71 +1,69 @@
 ---
-title: Configuration examples
+title: 設定事例集
 sidebar_position: 0
 ---
 
-# Configuration examples
+# 設定事例集
 
-This section is a catalog of small, copyable router patterns. It is intentionally
-closer to a vendor "configuration example collection" than to a design document:
-each page starts with a topology diagram, states what routerd can manage today,
-then shows the smallest useful YAML shape.
+このセクションは、小さく写経しやすいルーター構成のパターンを集めたものです。
+設計ドキュメントというより、機器ベンダーの設定事例集に近い形式にしています。
+各ページは構成図から始め、いま routerd が管理できる範囲を示したうえで、
+最小限の YAML を載せます。
 
-Use these examples as starting points, not as drop-in production configs. Always
-replace interface names, address ranges, ISP values, and management access
-before applying them to a real router.
+ここにある設定は出発点です。本番に投入する前に、インターフェース名、アドレス範囲、
+ISP 固有値、管理アクセスの経路を、必ず自分の環境に合わせてください。
 
-## How to read an example
+## 読み方
 
-Each example follows the same structure:
+各事例は同じ流れで読めるようにしています。
 
-1. **Topology**: the physical or logical network layout.
-2. **Diagram map**: numbered parts in the diagram and what each part means.
-3. **Example config**: complete YAML in `examples/`, with numbered YAML excerpts in the page.
-4. **Apply sequence**: validation and dry-run commands to run first.
-5. **Checks**: commands that confirm the router converged.
+1. **構成図**: 物理構成または論理構成。
+2. **図の対応表**: 図の番号が何を表すか。
+3. **設定例**: 完全な YAML は `examples/` に置き、ページ内では番号付きで要点を抜粋します。
+4. **適用手順**: 先に実行する validate、plan、dry-run。
+5. **確認方法**: 収束したことを確認するコマンド。
 
-The numbers in diagrams and YAML comments intentionally match. For example,
-`[1]` in a diagram points to the same concept as `# [1]` in the config excerpt.
+構成図の `[1]` と YAML コメントの `# [1]` は同じ対象を指します。
+図を見ながら、どのリソースがどの場所を管理するのか追えるようにしています。
 
-## Ready-to-try examples
+## すぐ試せる事例
 
-| Example | Status | Use when |
+| 事例 | 状態 | 使う場面 |
 | --- | --- | --- |
-| [Basic IPv4 NAT gateway](./basic-ipv4-nat.md) | Works today | The WAN gets IPv4 by DHCP and the LAN uses private IPv4 with DHCPv4. |
-| [LAN DHCP and local DNS](./lan-dns-dhcp.md) | Works today | You want routerd to serve DHCPv4, a local DNS zone, and DHCP-derived names on one LAN. |
-| [DS-Lite home gateway](./dslite-home.md) | Works today with ISP-specific values | The access line is IPv6-first and IPv4 goes through a DS-Lite tunnel. |
-| [PPPoE IPv4 NAT gateway](./pppoe-ipv4-nat.md) | Works today with ISP credentials | The WAN is an Ethernet access line and IPv4 comes from a PPPoE session. |
-| [Port forward to an inside web server](./port-forward-web.md) | Works today with a known WAN address | You need to publish one inside HTTPS service and support hairpin access from LAN clients. |
-| [Kubernetes API VIP with BGP](./kubernetes-api-vip.md) | Works today with `routerd-bgp` GoBGP and keepalived | You want routerd to hold a Kubernetes API VIP, health-check control planes, and receive Service prefixes by BGP. |
-| [Guest and IoT client isolation](./guest-isolation.md) | Works today on Linux nftables | A small set of MAC addresses should reach the internet but not the trusted LAN or management networks. |
-| [Firewall rate limits and ICMP rules](./firewall-rate-limit.md) | Works today on Linux nftables | You need multi-port service openings, ICMP type matching, and SSH brute-force dampening. |
-| [Multi-WAN IPv4 failover](./multi-wan-failover.md) | Works today; tune health checks carefully | Several IPv4 egress paths exist and routerd should select a healthy default route. |
-| [Redirect public DNS to the local resolver](./local-dns-redirect.md) | Works today on Linux nftables | LAN clients try to query public plaintext DNS directly and you want port 53 to stay local. |
-| [Tailscale subnet and exit node](./tailscale-subnet-exit.md) | Works today when Tailscale is installed | The router should advertise LAN routes or an exit-node service into a tailnet. |
-| [WireGuard hub and spoke template](./wireguard-hub-spoke.md) | Template; replace keys and peer routes | You want a compact starting point for a routed WireGuard hub. |
-| [Telemetry export to an OTLP collector](./telemetry-export.md) | Works today when a collector exists | You want routerd logs, metrics, and traces sent to an observability stack. |
+| [基本的な IPv4 NAT ルーター](./basic-ipv4-nat.md) | 現在の実装で利用可能 | WAN は DHCPv4、LAN はプライベート IPv4 と DHCPv4 で構成したい。 |
+| [LAN DHCP とローカル DNS](./lan-dns-dhcp.md) | 現在の実装で利用可能 | 1 つの LAN で DHCPv4、ローカル DNS ゾーン、DHCP 由来の名前を配りたい。 |
+| [DS-Lite ホームルーター](./dslite-home.md) | ISP 固有値を入れれば現在の実装で利用可能 | IPv6 を主回線として使い、IPv4 は DS-Lite tunnel に通したい。 |
+| [PPPoE IPv4 NAT ルーター](./pppoe-ipv4-nat.md) | ISP 認証情報を入れれば現在の実装で利用可能 | Ethernet の WAN 上に PPPoE セッションを張って IPv4 インターネットに出たい。 |
+| [内部 Web サーバーへのポートフォワード](./port-forward-web.md) | WAN アドレスが分かっていれば現在の実装で利用可能 | 内部の HTTPS サーバーを 1 つ公開し、LAN からも同じ公開名で到達したい。 |
+| [BGP 付き Kubernetes API VIP](./kubernetes-api-vip.md) | `routerd-bgp` GoBGP と keepalived で現在の実装で利用可能 | Kubernetes API VIP を routerd が保持し、control plane をヘルスチェックし、Service prefix を BGP で受けたい。 |
+| [ゲスト / IoT 端末の分離](./guest-isolation.md) | Linux nftables で利用可能 | 一部の MAC アドレスだけインターネットを許可し、LAN と管理網へは届かせたくない。 |
+| [ファイアウォールのレート制限と ICMP ルール](./firewall-rate-limit.md) | Linux nftables で利用可能 | 複数ポートのサービス開放、ICMP type のマッチ、SSH ブルートフォース緩和を使いたい。 |
+| [Multi-WAN IPv4 failover](./multi-wan-failover.md) | 現在の実装で利用可能。ヘルスチェックは慎重に調整 | 複数の IPv4 出口から正常な default route を選びたい。 |
+| [パブリック DNS をローカルリゾルバへリダイレクト](./local-dns-redirect.md) | Linux nftables で利用可能 | LAN クライアントが平文 DNS を外へ直接投げるのを、ルーターの DNS に集約したい。 |
+| [Tailscale subnet / exit node](./tailscale-subnet-exit.md) | Tailscale が利用できる環境で利用可能 | LAN の経路や exit node を tailnet に広告したい。 |
+| [WireGuard ハブ＆スポーク template](./wireguard-hub-spoke.md) | 鍵と peer の経路を置き換える template | routed な WireGuard hub の出発点が欲しい。 |
+| [OTLP collector への telemetry エクスポート](./telemetry-export.md) | collector があれば利用可能 | routerd の logs、metrics、traces を観測基盤へ送りたい。 |
 
-## Patterns not ready as copyable examples
+## まだそのまま実行できるとは書かない事例
 
-The following patterns are useful for first-time users, but they should not be
-shown as ready-to-run YAML until the corresponding renderer or operational
-guidance is complete:
+初めて触る人には重要ですが、対応する生成（レンダリング）や運用指針が揃うまで、
+そのまま適用できる YAML としては出さないものです。
 
-| Pattern | Current state |
+| パターン | 現状 |
 | --- | --- |
-| MAP-E / v6plus-style IPv4 over IPv6 | Not implemented as a first-class resource yet. |
-| OSPF or non-BGP dynamic routing | Not implemented. Embedded GoBGP is available for Kubernetes-style Service prefix import. |
-| Full IPsec site-to-site cookbook | IPsec groundwork exists; production renderer parity is not documented as complete. |
+| MAP-E / v6plus 系の IPv4 over IPv6 | まだ一級リソースとしては未実装です。 |
+| OSPF など BGP 以外の動的ルーティング | 未実装です。Kubernetes 風の Service prefix インポートには `routerd-bgp` GoBGP を利用できます。 |
+| IPsec site-to-site cookbook | IPsec の土台はありますが、本番向けの生成（レンダリング）が同等水準に達したとは書いていません。 |
 
-## Safety checklist
+## 安全チェック
 
-Before applying an example on a router you are actively using:
+実利用中のルーターに適用する前に、必ず次を確認してください。
 
-- Keep console or hypervisor access available.
-- Know which interface carries management traffic.
-- Run `routerd validate`, `routerd plan`, and a dry-run apply first.
-- Check that the plan does not remove the management interface address, route, or firewall opening.
-- Apply from the release binary installed on the router, not from an unrelated development tree.
+- コンソールまたは hypervisor から入れる経路を残す。
+- 管理通信がどのインターフェースを通っているか把握する。
+- `routerd validate`、`routerd plan`、dry-run apply を先に実行する。
+- plan が管理インターフェースのアドレス、経路、ファイアウォールの開放を消さないことを確認する。
+- ルーター上にインストールした release バイナリで apply し、別の開発 tree から実行しない。
 
 ```bash
 routerd validate --config router.yaml
@@ -75,9 +73,9 @@ routerd apply --config router.yaml --once
 routerctl status
 ```
 
-## Related pages
+## 関連ページ
 
-- [Bring up the first router](../tutorials/first-router.md)
-- [WAN-side services](../tutorials/wan-side-services.md)
-- [LAN-side services](../tutorials/lan-side-services.md)
-- [Basic NAT and firewall policy](../tutorials/basic-firewall.md)
+- [最初の router を起動する](../tutorials/first-router.md)
+- [WAN 側サービス](../tutorials/wan-side-services.md)
+- [LAN 側サービス](../tutorials/lan-side-services.md)
+- [基本的な NAT と firewall policy](../tutorials/basic-firewall.md)

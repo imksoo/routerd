@@ -1,35 +1,34 @@
 ---
-title: Getting started
+title: はじめに
 ---
 
-# Getting started
+# はじめに
 
-This tutorial shows the safest first loop:
+このチュートリアルでは、まず安全な進め方を確認します。
 
-1. write a small router resource file
-2. validate it
-3. inspect the plan
-4. run a dry application
-5. only then run the daemon
+1. 小さなルーターリソースファイルを書きます。
+2. 検証します。
+3. 計画を確認します。
+4. 予行実行します。
+5. 安全を確かめてからデーモンを起動します。
 
-The first pass should not change the host network.
-Install routerd first with the release archive and `install.sh`.
-See [Install and upgrade](../install-and-upgrade.md) for the OS-specific steps.
+最初の確認では、ホストのネットワークを変更しません。
+先にリリースアーカイブと `install.sh` で routerd を導入してください。
+OS 別の手順は [インストールとアップグレード](../install-and-upgrade.md) を参照してください。
 
-## 1. Check interface names
+## 1. インターフェース名の確認
 
 ```bash
 ip link
 ```
 
-The examples use `ens18` for WAN, `ens19` for LAN, and `ens20` for management.
-Use the names from your host.
+ここでは WAN を `ens18`、LAN を `ens19`、管理用を `ens20` とします。
+実機では必ず自分のホストに合わせて読み替えてください。
 
-Keep the management path separate from the interface being changed. Do not
-test a first configuration over the same interface that routerd is about to
-adopt.
+管理経路は、変更するインターフェースと分けてください。
+routerd が引き継ぐ予定のインターフェースだけで最初の検証をすると危険です。
 
-## 2. Start with interfaces and host bootstrap
+## 2. インターフェースとホスト準備の記述
 
 ```yaml
 apiVersion: routerd.net/v1alpha1
@@ -66,46 +65,45 @@ spec:
         managed: true
 ```
 
-Router features derive their host runtime needs from the resources you declare.
-Use `Package`, `Sysctl`, or `SysctlProfile` only as narrow escape hatches when a
-package or kernel setting is not yet derivable.
+ルーター機能に必要なホスト側の実行時設定は、宣言したリソースから routerd が導き出します。
+`Package`、`Sysctl`、`SysctlProfile` は、まだ自動で導けないパッケージやカーネル設定を補うための、
+限定的な逃げ道としてのみ使います。
 
-## 3. Validate
+## 3. 検証
 
 ```bash
 routerd validate --config first-router.yaml
 ```
 
-Validation checks the resource shape before routerd touches the host.
+検証では、routerd がホストに触れる前にリソースの形を確かめます。
 
-## 4. Inspect the plan
+## 4. 計画の確認
 
 ```bash
 routerd plan --config first-router.yaml
 ```
 
-Use the plan to catch accidental interface names, missing dependencies, and
-host artifacts that routerd would create.
+計画では、インターフェース名の間違い、依存関係の不足、作成されるホスト成果物を確認します。
 
-## 5. Dry apply
+## 5. 予行実行
 
 ```bash
 routerd apply --config first-router.yaml --once --dry-run
 ```
 
-Dry application exercises resource loading, dependency ordering, and generated
-artifacts without committing network changes.
+予行実行では、リソースの読み込み、依存の順序、生成内容を確かめます。
+ネットワークの変更は確定しません。
 
-## 6. Run the daemon when the plan is safe
+## 6. 計画が安全ならデーモンを起動
 
 ```bash
 sudo routerd serve --config first-router.yaml
 ```
 
-In production, install routerd with the packaged service manager files so that
-`routerd serve` starts on boot.
+本番では、生成されるサービス成果物のリソースか systemd ユニットファイルを使います。
+こうすると、起動時に `routerd serve` を開始できます。
 
-## 7. Inspect status
+## 7. 状態の確認
 
 ```bash
 routerctl status
@@ -113,4 +111,4 @@ routerctl events --limit 20
 routerctl connections --limit 50
 ```
 
-The next tutorials add LAN DHCP, RA, DNS, route policy, NAT44, and DS-Lite.
+次のチュートリアルでは、LAN の DHCP、RA、DNS、経路ポリシー、NAT44、DS-Lite を追加します。

@@ -1,82 +1,83 @@
 ---
-title: Architecture overview
+title: アーキテクチャ概要
 ---
 
-# routerd architecture overview
+# routerd アーキテクチャ概要
 
-This document is an introduction to routerd for operators and contributors. It covers the design intent and the major moving parts.
-For day-to-day usage, start with the [tutorials](./tutorials/getting-started.md) and the [how-to guides](./how-to/multi-wan.md).
-For resource definitions, see the [API reference](./api-v1alpha1.md).
+このドキュメントでは、routerd の設計思想と内部構造を、運用担当者やコントリビューター向けに概観します。
+個別機能の使い方は [チュートリアル](./tutorials/getting-started.md) と [How-to](./how-to/multi-wan.md) を、
+リソース定義は [API リファレンス](./api-v1alpha1.md) を参照してください。
 
 ---
 
-## 1. Where routerd fits
+## 1. routerd の位置づけ
 
-routerd is a declarative router framework. Its goal is to let you build a home router, a SOHO router, or a small data-center edge router from the same set of primitives.
+routerd は宣言型のルーターフレームワークです。
+家庭用ルーター、SOHO ルーター、小規模データセンターのエッジルーターを、同じ primitive で構築できることを目標としています。
 
-The three deployment targets we design for:
+具体的な置き換え対象として、次の 3 つを想定しています。
 
-| Target | Scope | Required tier |
+| ターゲット | 対象範囲 | 必要な機能段階 |
 | --- | --- | --- |
-| Home-router replacement | One host, one or two uplinks, one to three LAN VLANs | H |
-| Hypervisor SDN router | VXLAN / EVPN / underlay routing inside a cluster | C |
-| Kubernetes cluster edge | Advertise Pod CIDR / LoadBalancer IP via BGP, terminate ingress | S → C |
+| 家庭ルーター置換 | 1 ホスト、1-2 アップリンク、1-3 LAN VLAN | H |
+| ハイパーバイザーの SDN ルーター | クラスター内の VXLAN / EVPN / underlay routing | C |
+| Kubernetes クラスターのエッジ | BGP で Pod CIDR / LoadBalancer IP を広告、ingress 終端 | S → C |
 
-All three are expressible with the same declarative primitives. The applicable feature set scales with the deployment.
+3 つは同じ宣言型の primitive で扱える設計とし、目的に応じて段階的に機能を有効化します。
 
-### 1.1 Capability tiers
+### 1.1 機能段階 (capability tier)
 
-| Tier | Use case | Headline features |
+| tier | 用途 | 主機能 |
 | --- | --- | --- |
-| **H** (Home) | Home or small office | WAN acquire (PD/RA/PPPoE/DHCPv4/DS-Lite), LAN service (RA/DHCPv6/dnsmasq), NAT44, firewall, `EgressRoutePolicy` |
-| **S** (SOHO/branch) | Several sites with VPN | + WireGuard / IPsec, VRF, dynamic routing across VPN, commit-confirmed |
-| **C** (Campus / small DC) | Tens of nodes | + EVPN-VXLAN, iBGP RR, BFD, RouteMap DSL, richer routing policy |
-| **E** (Enterprise / SP) | Hundreds of nodes | + Full BGP, MP-BGP L3VPN, segment routing, HA leader election |
+| **H** (Home) | 家庭・小規模オフィス | WAN acquire (PD/RA/PPPoE/DHCPv4/DS-Lite)、LAN service (RA/DHCPv6/dnsmasq)、NAT44、firewall、`EgressRoutePolicy` |
+| **S** (SOHO/branch) | 数拠点・VPN 中心 | + WireGuard / IPsec、VRF、VPN 上の dynamic routing、commit-confirmed |
+| **C** (Campus / Small DC) | 数十ノード | + EVPN-VXLAN、iBGP RR、BFD、RouteMap DSL、より高度な routing policy |
+| **E** (Enterprise / SP) | 数百ノード以上 | + フル BGP、MP-BGP L3VPN、segment routing、HA leader election |
 
-The primitives are the same from H to E. Higher tiers add more routing and policy controllers on top of the same model.
+primitive は H から E まで共通です。tier が上がるにつれて、routing と policy の controller が増えていきます。
 
 ---
 
-## 2. Runtime environment
+## 2. 動作環境
 
-### 2.1 Deployment shape
+### 2.1 配備形態
 
-routerd targets virtual machines. Embedded appliances are out of scope for now.
+routerd は仮想マシン上での動作を想定しています。物理アプライアンスへの組み込みは今後の検討課題です。
 
-Requirements for the host environment:
+仮想化環境への要件は次の通りです。
 
-- virtio NICs (vmxnet, ne2k, etc. are out of scope)
-- No dependency on privileged kernel modules (DPDK / XDP optional, host passthrough not required)
-- Console + SSH for operations
-- For lab work, snapshots and clones are encouraged
+- virtio NIC（vmxnet・ne2k などは対象外）
+- 特権カーネルモジュールに依存しない（DPDK / XDP は任意、host passthrough は不要）
+- コンソールと SSH で運用する
+- 検証ではスナップショットとクローンを活用する
 
-### 2.2 OS strategy
+### 2.2 OS 戦略
 
-routerd is designed to be cross-OS. The same binary and the same configuration target multiple operating systems.
+routerd は cross-OS を前提に設計し、同一バイナリ・同一設定で複数の OS をサポートします。
 
-| OS | Strengths | Role |
+| OS | 評価 | 用途 |
 | --- | --- | --- |
-| **Linux (Ubuntu / Debian)** | systemd standard, easy to obtain, recent kernels | Primary platform for development and production |
-| **NixOS** | Declarative OS aligns with declarative routerd configuration; reproducible | Primary platform for declarative operations |
-| **FreeBSD** | Stable base, small footprint, jail isolation | Long-running and low-resource deployments |
-| **Alpine** | Minimal footprint, musl, apk | Minimal profile (future) |
+| **Linux (Ubuntu / Debian)** | systemd 標準、入手容易、kernel 新しめ | 開発・本番双方の主流 |
+| **NixOS** | declarative OS と routerd の親和性高、再現性 | declarative 運用の本命 |
+| **FreeBSD** | base 安定、リソース小、jail 隔離 | 長期運用・低リソース環境 |
+| **Alpine** | 最小フットプリント、musl、apk | 将来の最小プロファイル |
 
-OS-specific differences are absorbed in the `pkg/platform` layer.
-Mappings such as nftables ↔ pf, systemd-networkd ↔ rc.conf, and systemd unit ↔ rc.d script are owned by per-OS renderers.
+OS 固有の差分は `pkg/platform` 層で吸収します。
+nftables ↔ pf、systemd-networkd ↔ rc.conf、systemd unit ↔ rc.d スクリプトといった対応は、各 OS の renderer が引き受けます。
 
-Versioning policy: routerd uses date-and-time-based release versions in `vYYYYMMDD.HHmm` format; the previous `0.x.y` and `yyyymmdd.N` pre-release numbering is discontinued.
+バージョン方針として、routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使います。従来の `0.x.y` 形式と `yyyymmdd.N` 形式のプレリリース番号は廃止します。
 
 ---
 
-## 3. End-to-end picture
+## 3. アーキテクチャ全体図
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│ User                                                              │
+│ ユーザー                                                          │
 │   /etc/routerd/*.yaml  +  routerctl CLI                          │
 └─────────┬─────────────────────────────────────────┬───────────────┘
           │ inotify                          HTTP+JSON
-          │ (notify only)                    (explicit apply)
+          │ (検出のみ)                       (明示 apply)
           ▼                                         ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │ routerd (1 binary, multi-OS)                                      │
@@ -85,13 +86,13 @@ Versioning policy: routerd uses date-and-time-based release versions in `vYYYYMM
 │   ConfigLoader ◀──explicit trigger───── routerctl apply           │
 │                                                                   │
 │   ┌──────────────────────────────────────────────────────────┐   │
-│   │ Bus (in-process channel + persistent SQLite event log)    │   │
+│   │ Bus (in-process channel + SQLite events 永続層)           │   │
 │   │  topics: routerd.<area>.<subject>.<verb>                  │   │
 │   │  cursor: events.id (autoincrement)                        │   │
 │   │  fanout: subscribe pattern match → controller channel     │   │
 │   └─────┬─────────────────────────────────────────────────────┘   │
 │         │                                                         │
-│         ▼ Controllers (in-process reactors)                       │
+│         ▼ Controllers (in-process reactor 群)                     │
 │   PrefixDelegationCtrl / LANAddressCtrl / RAAnnouncerCtrl         │
 │   DNSAnswerCtrl / DNSResolverCtrl / FirewallCtrl / RouteCtrl      │
 │   EgressRouteCtrl / ServiceLifecycleCtrl / ConfigLoaderCtrl       │
@@ -102,7 +103,7 @@ Versioning policy: routerd uses date-and-time-based release versions in `vYYYYMM
           │ Unix socket HTTP+JSON                fsnotify (lease/snapshot)
           ▼                                            ▲
 ┌─────────────────────────────────────────────────────────────────┐
-│ Layer 1 source daemons (one process each)                         │
+│ Layer 1 source daemons (各々 1 process)                           │
 │   routerd-dhcpv6-client / routerd-dhcpv4-client                   │
 │   routerd-pppoe-client / routerd-dns-resolver                     │
 │   routerd-healthcheck@<resource> / routerd-firewall-logger        │
@@ -111,9 +112,9 @@ Versioning policy: routerd uses date-and-time-based release versions in `vYYYYMM
 
 ---
 
-## 4. Resource model
+## 4. リソースモデル
 
-routerd configuration is a set of resources. The shape is similar to Kubernetes but the apiVersion hierarchy and the controller plumbing are simpler.
+routerd の設定はリソースの集合として記述します。Kubernetes に似ていますが、apiVersion の階層と controller の構造はより単純です。
 
 ```yaml
 - apiVersion: net.routerd.net/v1alpha1
@@ -124,21 +125,21 @@ routerd configuration is a set of resources. The shape is similar to Kubernetes 
     aftrFQDN: gw.transix.jp
 ```
 
-### 4.1 Major apiVersions
+### 4.1 主要 apiVersion
 
-| apiVersion | Responsibility |
+| apiVersion | 役割 |
 | --- | --- |
-| `net.routerd.net/v1alpha1` | Networking (Interface, IPv4Static, DSLite, PPPoE, EgressRoute, HealthCheck, etc.) |
-| `dns.routerd.net/v1alpha1` | DNS (DNSZone, DNSResolver, DHCPv4Reservation, etc.) |
-| `firewall.routerd.net/v1alpha1` | Firewall (FirewallZone, FirewallPolicy, FirewallRule, NAT44Rule, etc.) |
-| `system.routerd.net/v1alpha1` | OS bootstrap intent and overrides (Package, SysctlProfile, WebConsole, etc.); host runtime artifacts are derived from resources |
-| `control.routerd.net/v1alpha1` | controller chain and routerctl control surface |
+| `net.routerd.net/v1alpha1` | ネットワーク機能 (Interface、IPv4Static、DSLite、PPPoE、EgressRoute、HealthCheck など) |
+| `dns.routerd.net/v1alpha1` | DNS (DNSZone、DNSResolver、DHCPv4Reservation など) |
+| `firewall.routerd.net/v1alpha1` | Firewall (FirewallZone、FirewallPolicy、FirewallRule、NAT44Rule など) |
+| `system.routerd.net/v1alpha1` | OS bootstrap intent と override (Package、SysctlProfile、WebConsole など)。host runtime artifact は resource から自動導出します |
+| `control.routerd.net/v1alpha1` | controller chain と routerctl の制御 API |
 
-The full list is in the [API reference](./api-v1alpha1.md).
+完全な一覧は [API リファレンス](./api-v1alpha1.md) を参照してください。
 
-### 4.2 Cross-resource references
+### 4.2 リソース間の参照
 
-When one resource refers to the status of another, use a typed `*From` field instead of a literal value.
+あるリソースが別のリソースの status を参照する場合は、値を直接書かずに、型付きの `*From` フィールドで書きます。
 
 ```yaml
 - apiVersion: net.routerd.net/v1alpha1
@@ -150,112 +151,91 @@ When one resource refers to the status of another, use a typed `*From` field ins
     port: 8080
 ```
 
-`addressFrom`, `ipv4From`, `ipv6From`, `prefixFrom`, `rdnssFrom`, and `gatewayFrom` follow the same shape. Dependencies (`dependsOn`) use the same mechanism.
+共通の参照スタイルとして、`addressFrom`、`ipv4From`、`ipv6From`、`prefixFrom`、`rdnssFrom`、`gatewayFrom` などがあります。
+依存関係（`dependsOn`）も同じ仕組みで宣言します。
 
-For details, see [resource model](./concepts/resource-model.md) and [state and ownership](./concepts/state-and-ownership.md).
+詳細は [リソースモデル](./concepts/resource-model.md) と [状態と所有権](./concepts/state-and-ownership.md) を参照してください。
 
 ---
 
-## 5. Event bus and controller chain
+## 5. Event bus と controller chain
 
-routerd combines an in-process event bus with a set of controllers to converge to the desired state declared in configuration.
+routerd は in-process の event bus と複数の controller を組み合わせて、宣言された望ましい状態へ収束させます。
 
 ### 5.1 Event bus
 
-- in-process channels backed by a SQLite event log for persistence
-- topics use the pattern `routerd.<area>.<subject>.<verb>` (for example `routerd.dhcpv6.bind.changed`)
-- subscribers receive events via pattern match
-- every event has an `events.id` cursor so re-evaluation is possible after a restart
+- in-process channel と SQLite イベントログによる永続化
+- topics は `routerd.<area>.<subject>.<verb>` 形式（例: `routerd.dhcpv6.bind.changed`）
+- subscribers は pattern match で受信する
+- すべてのイベントは `events.id` を cursor として持ち、再起動後も再評価できる
 
 ### 5.2 Controller chain
 
-Every controller follows the common `framework.FuncController` shape:
+すべての controller は、共通の `framework.FuncController` パターンに従います。
 
-- `Subscriptions`: topics this controller cares about
-- `Bootstrap`: one-shot initialisation at startup
-- `PeriodicFunc`: idempotent periodic re-evaluation
-- `ReconcileFunc`: state convergence on event arrival
+- `Subscriptions`: 関心のある topic
+- `Bootstrap`: 起動時に 1 回だけ行う初期化
+- `PeriodicFunc`: 定期的な再評価（idempotent）
+- `ReconcileFunc`: イベント受信時の状態収束
 
-The `eventedStore` wrapper guarantees that every persisted state change emits `routerd.resource.status.changed`, which downstream controllers consume to resolve cross-resource dependencies.
-
-Kubernetes edge resources use this status flow directly. `IngressService`
-health checks choose an active backend and the NAT renderer uses that status on
-the next reconcile. `BGPRouter` / `BGPPeer` status is observed from the
-long-lived `routerd-bgp` daemon with typed `ListPeer` / `ListPath` API calls
-and can lower `VirtualAddress` VRRP priority through `track`. BGP config changes
-are applied to that daemon with GoBGP API objects instead of rendering FRR-style
-text config or shelling out to reload tools. `VirtualAddress` and
-`IngressService` hostnames feed
-DNSResolver-served zones as derived A/AAAA records, and BGP/VRRP/Ingress status is
-also surfaced through dedicated `routerctl show` views and low-cardinality OTel
-metrics for transitions and backend health.
+`eventedStore` ラッパーは、状態を保存するときに必ず `routerd.resource.status.changed` を発行します。
+これにより下流の controller が連鎖的に再評価され、リソース間の依存解決が成立します。
 
 ### 5.3 Daemon contract
 
-Long-running OS processes (DHCPv6 client, DNS resolver, healthcheck, etc.) live as **daemons** rather than as controllers.
-Each daemon talks to the controller chain over a Unix domain socket using JSON, and persists its own state under files such as `lease.json`.
+長時間動作する OS プロセス（DHCPv6 client、DNS resolver、healthcheck など）は、controller ではなく **daemon** として動かします。
+daemon は controller chain と Unix domain socket 上の JSON で通信し、自身の状態を `lease.json` などのファイルに永続化します。
 
-For details, see [reconcile loop behaviour](./operations/reconcile).
+詳細は [reconcile loop の動作](./operations/reconcile) を参照してください。
 
 ---
 
-## 6. Operating the configuration file
+## 6. 設定ファイル運用
 
-The routerd configuration file (default `/usr/local/etc/routerd/router.yaml`) is rolled out as follows.
+routerd の設定ファイル（既定では `/usr/local/etc/routerd/router.yaml`）は、次の流れで反映します。
 
 ```
-edit → routerctl validate → routerctl apply --once
+編集 → routerctl validate → routerctl apply (or auto reload)
                               │
-                              └─ observe host state
-                                 → plan
-                                 → render host artifacts
-                                 → record state and exit
-
-routerd serve
-  → consumes state/events
-  → starts / enables / reloads managed daemons
-  → updates OS state (nftables / netlink / systemd) continuously
+                              └─ controller chain が状態 DB を更新
+                                 → daemon が再起動 / reload
+                                 → OS 状態 (nftables / netlink / systemd) に反映
 ```
 
-We strongly recommend keeping the configuration in git.
-Apply changes to production via routerd; do not run ad hoc commands such as `nft add rule`, `ip route add`, or `sysctl -w` directly on the host.
-Ad hoc changes are either reverted by the next reconcile or, worse, create drift between the routerd state DB and what the kernel actually has.
+設定ファイルは git で管理することを強く推奨します。
+本番ホストへの反映は routerd 経由で宣言型に行い、ホスト上で `nft add rule`、`ip route add`、`sysctl -w` のような ad hoc な変更を加えないでください。
+ad hoc な変更は、次回の reconcile で打ち消されるか、あるいは routerd の状態 DB と OS の実状態との間に drift を生みます。
 
-The right response to drift is to express the new desired state in configuration and apply it again. `apply --once` must return quickly and hand daemon lifecycle to the controller runtime; the long-running `serve` process keeps the configuration ↔ state DB ↔ OS state triangle aligned.
-
----
-
-## 7. Observability and debugging
-
-routerd exposes its operating state through several surfaces.
-
-- `routerctl status` — phase per resource
-- `routerctl describe <kind>/<name>` — spec, status, and recent events for one resource
-- `routerctl events --topic <pattern> --resource <kind>/<name>` — tail the bus
-- `routerctl plan --diff` — preview the diff a future apply would produce
-- Web Console (default `http://<mgmt-ip>:8080/`) — summary, events, connections, clients, firewall, configuration in a browser
-- `journalctl -u routerd.service -f | grep "routerd event"` — bus events through the systemd journal
-
-Logs are persisted across four databases by purpose: `events.db` (controller-driven), `dns-queries.db` (DNS resolver), `traffic-flows.db` (conntrack/pf), and `firewall-logs.db` (NFLOG/pflog).
-For details, see [log storage](./concepts/log-storage.md).
-
-OpenTelemetry export is configured by the `Telemetry` resource in
-`observability.routerd.net/v1alpha1`. routerd does not bundle an OTLP
-collector. When an endpoint is declared, generated systemd, NixOS, and FreeBSD
-rc.d units receive the matching `OTEL_*` environment variables and the existing
-SDK path sends logs, metrics, and traces to that endpoint.
+drift を見つけたときは、設定ファイル側で表現し直してから apply するのが正解です。
+これにより、設定ファイル ↔ 状態 DB ↔ OS の実状態の三者が常に一致します。
 
 ---
 
-## 8. Related documents
+## 7. observability と debug
 
-- [What is routerd](./concepts/what-is-routerd.md)
-- [Resource model](./concepts/resource-model.md)
-- [Design philosophy](./concepts/design-philosophy.md)
-- [Apply and render](./concepts/apply-and-render.md)
-- [State and ownership](./concepts/state-and-ownership.md)
-- [Reconcile loop](./operations/reconcile)
-- [State database operations](./operations/state-database.md)
-- [API reference v1alpha1](./api-v1alpha1.md)
-- [Plugin protocol](./plugin-protocol.md)
-- [Supported platforms](./platforms.md)
+routerd は次の手段で運用状態を観測できます。
+
+- `routerctl status`: 全リソースの phase 一覧
+- `routerctl describe <kind>/<name>`: 個別リソースの spec、status、最近の event
+- `routerctl events --topic <pattern> --resource <kind>/<name>`: bus event を tail する
+- `routerctl plan --diff`: apply 前の差分プレビュー
+- Web 管理画面（既定では `http://<mgmt-ip>:8080/`）: summary、events、connections、clients、firewall、config をブラウザで表示する
+- `journalctl -u routerd.service -f | grep "routerd event"`: bus event を systemd journal で追跡する
+
+ログは `events.db`（controller 由来）、`dns-queries.db`（DNS resolver 由来）、`traffic-flows.db`（conntrack/pf 由来）、`firewall-logs.db`（NFLOG/pflog 由来）の 4 つに分けて永続化します。
+詳細は [ログストレージ](./concepts/log-storage.md) を参照してください。
+
+---
+
+## 8. 関連ドキュメント
+
+- [routerd とは](./concepts/what-is-routerd.md)
+- [リソースモデル](./concepts/resource-model.md)
+- [設計思想](./concepts/design-philosophy.md)
+- [apply と render](./concepts/apply-and-render.md)
+- [状態と所有権](./concepts/state-and-ownership.md)
+- [reconcile loop](./operations/reconcile)
+- [状態 DB の運用](./operations/state-database.md)
+- [API リファレンス v1alpha1](./api-v1alpha1.md)
+- [プラグインプロトコル](./plugin-protocol.md)
+- [対応プラットフォーム](./platforms.md)

@@ -1,22 +1,25 @@
 ---
-title: Tailscale exit node 与 subnet router
+title: Tailscale 的 exit node 与 subnet router
 ---
 
-# Tailscale exit node 与 subnet router
+# Tailscale 的 exit node 与 subnet router
 
-## 场景
+## 适用场景
 
-当一台 routerd 主机要加入 tailnet,并广告下面其中之一(或同时)时,使用 `TailscaleNode`:
+当 routerd 主机需要加入 tailnet，并广告以下路由时，请使用 `TailscaleNode`。
 
-- exit node (`0.0.0.0/0` 与 `::/0`)
-- 一条或多条 subnet route
-- 同时两者
+- exit node（`0.0.0.0/0` 与 `::/0`）
+- 一个或多个 subnet route
+- exit node 与 subnet route 两者并行
 
-routerd 不会替代 `tailscaled`。它会生成并管理一个 systemd unit,以声明的选项执行 `tailscale up`。Tailscale 账号、控制平面、route 审批流程留在 Tailscale 一侧;routerd 只承担主机端的意图。
+routerd 不会取代 `tailscaled`。
+routerd 会生成一个 systemd unit 来执行 `tailscale up`，并管理节点的广告配置。
+Tailscale 的账号、控制平面及路由审批流程留在 Tailscale 端处理；
+routerd 负责管理主机上的声明式配置。
 
 ## 安装 tailscale
 
-把 OS 包声明出来,让依赖在 router 配置中可见:
+以 `Package` 声明依赖软件包，让必要的软件包从 YAML 中即可一目了然。
 
 ```yaml
 apiVersion: system.routerd.net/v1alpha1
@@ -41,11 +44,12 @@ spec:
       optional: true
 ```
 
-在 Ubuntu 上,Tailscale apt 仓库必须已可用,`Package` 才能安装 `tailscale`。请按平常的 bootstrap 流程准备该仓库。
+在 Ubuntu 上，`Package` 安装 `tailscale` 之前，需先确保 Tailscale 的 apt 仓库已可用。
+请通过一般的初始构建程序完成仓库的添加。
 
-## 认证但不在 Git 留下密钥
+## 不将密钥留在 Git 中
 
-生产环境优先使用 `authKeyEnv` 搭配 `authKeyFile`:
+生产环境建议使用 `authKeyEnv` 搭配 `authKeyFile`。
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
@@ -65,7 +69,7 @@ spec:
   authKeyFile: /usr/local/etc/routerd/secrets/tailscale.env
 ```
 
-环境文件放在 routerd YAML 之外:
+环境变量文件置于 routerd YAML 之外。
 
 ```sh
 sudo install -d -m 0700 /usr/local/etc/routerd/secrets
@@ -73,11 +77,16 @@ sudo sh -c 'printf "%s\n" "TS_AUTHKEY=REDACTED" > /usr/local/etc/routerd/secrets
 sudo chmod 0600 /usr/local/etc/routerd/secrets/tailscale.env
 ```
 
-若节点已登录,可同时省略 `authKey`、`authKeyEnv`、`authKeyFile`。routerd 会在不把密钥塞进 service unit 的前提下,只重新应用所声明的节点选项。
+节点已登录的情况下，可省略 `authKey`、`authKeyEnv`、`authKeyFile`。
+此时 routerd 不会将密钥嵌入 systemd unit，只会重新应用广告配置。
 
-## 广告私网段
+Tailscale 默认使用 UDP/41641。
+当配置中存在 `TailscaleNode` 时，routerd 会将此端口视为已保留。
+若 `WireGuardInterface` 配置使用相同端口，验证时会予以拒绝。
 
-把整个 RFC 1918 私有地址空间广告出去,适用于「router 是 tailnet 回家或回站点网络的入口」这一类场景:
+## 广告所有私有地址
+
+当路由器作为自宅或站点网络的 tailnet 入口时，可广告 RFC 1918 的全部私有地址空间。
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
@@ -95,11 +104,13 @@ spec:
   acceptRoutes: false
 ```
 
-应用此配置之后,要在 Tailscale 管理控制台审批被广告的路由。审批前,`tailscale debug prefs` 能看到所请求的 route,但 `tailscale status --self --json` 的 `Self.AllowedIPs` 可能还不包含它们。
+应用配置后，请在 Tailscale 管理控制台审批广告的路由。
+审批前，`tailscale debug prefs` 可看到请求的路由；
+但 `tailscale status --self --json` 的 `Self.AllowedIPs` 中可能尚未出现。
 
-## 防火墙 zone 放置
+## 防火墙 zone 的配置
 
-把 `tailscale0` 声明为 `Interface`,让它出现在状态与 Web Console 中:
+将 `tailscale0` 声明为 `Interface`，使其显示在状态与 Web 管理界面的接口列表中。
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
@@ -108,10 +119,14 @@ metadata:
   name: tailscale
 spec:
   ifname: tailscale0
+  mtu: 1280
   managed: false
 ```
 
-家用 router 推荐把 `tailscale0` 放进 `trust` zone,而不是 `mgmt` zone:
+指定 `mtu: 1280` 可让派生的 TCP MSS clamp 在考量 Tailscale 路由的同时，
+不会对无关的 LAN 至 WAN 路由降低 MTU。
+
+家庭路由器建议将 `tailscale0` 放在 `trust` zone，而非 `mgmt` zone。
 
 ```yaml
 apiVersion: firewall.routerd.net/v1alpha1
@@ -136,50 +151,55 @@ spec:
     - Interface/mgmt
 ```
 
-这样,tailnet 上的客户端就能通过正常的 `trust -> self` 路径访问 router 上的服务,比如 routerd Web Console。只要防火墙策略仍然对 `trust -> mgmt` 转发拒绝,tailnet 也不会因此获得对管理 VLAN 的广泛访问。
+此配置下，tailnet 的客户端可通过 `trust -> self` 的路径访问 routerd 的 Web 管理界面等服务。
+只要防火墙拒绝 `trust -> mgmt` 的转发，tailnet 便无法广泛访问管理 VLAN。
 
-只有当你打算把 tailnet 当作完整的管理网络时,才用 `mgmt`。
+仅在希望将整个 tailnet 视为管理网络时，才将 `tailscale0` 放入 `mgmt`。
 
-## 应用与验证
+## 应用与确认
 
-应用配置:
+确认配置后重启 routerd。
 
 ```sh
 routerd validate --config /usr/local/etc/routerd/router.yaml
 systemctl restart routerd.service
 ```
 
-查看生成的 unit:
+确认生成的 systemd unit。
 
 ```sh
 systemctl cat routerd-tailscale-edge.service
 ```
 
-查看 Tailscale 状态:
+确认 Tailscale 端的状态。
 
 ```sh
 tailscale status --self --json | jq '.BackendState, .Self.AllowedIPs'
 tailscale debug prefs | jq '.AdvertiseRoutes'
 ```
 
-查看 routerd 状态:
+确认 routerd 端的状态。
 
 ```sh
 routerctl status --json
 routerctl get TailscaleNode/edge -o yaml
+routerctl tailscale peers
 ```
 
-若希望 Web Console 从 Tailscale 一侧可达,就用 router 的 Tailscale 地址或已审批的路由地址测试:
+`routerctl tailscale peers -o json` 会读取 `tailscale status --json`，并以 routerd CLI 格式显示对等节点列表。Web 管理界面的 Resources 页面也会在 `TailscaleNode` 中显示对等节点的在线状态、relay、最后上线时间及允许的路由。
+
+若要通过 Tailscale 访问 Web 管理界面，请使用路由器的 Tailscale 地址或已审批路由上的地址。
 
 ```sh
 curl -f http://100.64.0.1:8080/
 ```
 
-请把上面的地址换成 router 实际的 Tailscale IP。
+上述地址仅为示例，请替换为实际的路由器 Tailscale IP。
 
-## 注意事项
+## 补充说明
 
-- `acceptDNS: false` 可避免 Tailscale 替换 router 本地的 DNS 解析配置。
-- `acceptRoutes: false` 可避免 router 引入其他 peer 广告的 route。对「向外广告 route」的 router 来说,这是常见配置。
-- Exit node 和 subnet route 的审批在 Tailscale 一侧完成,不在 routerd 这边。
-- 不要把 auth key 放进示例和 Git 历史。本地部署请使用 `authKeyFile`。
+- 设置 `acceptDNS: false` 可防止 Tailscale 覆盖路由器本身的 DNS 配置。routerd 的基本方针是优先使用 LAN 端的 DNS。`DNSResolver`、本地 zone、DHCP 派生记录及条件式转发均以 LAN 端为权威，不让 MagicDNS 接管主机的解析器。
+- 设置 `acceptRoutes: false` 可防止路由器导入其他节点广告的路由。对于负责向外广告路由的路由器而言，此为合理的配置。
+- routerd 会针对 Tailscale 对等节点导出 `routerd.tailscale.peer.count` 与 `routerd.tailscale.last_handshake.seconds` 指标。运维上判断握手经过时间时，请使用 Tailscale status 的 `LastSeen`。
+- exit node 与 subnet route 的审批在 Tailscale 端进行。
+- 请勿将 auth key 留在示例或 Git 记录中。实机部署请使用 `authKeyFile`。

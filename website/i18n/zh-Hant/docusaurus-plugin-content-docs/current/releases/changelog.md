@@ -4,9 +4,10 @@ title: 變更記錄
 
 # 變更記錄
 
-routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog.com/)。
-routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
-本軟體仍在 v1alpha1 階段，版本之間可能含有破壞性異動。
+routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/)。
+變更分類為「新增」「變更」「棄用」「移除」「修正」「安全性」。
+但版號不採用 Semantic Versioning，而是使用日期與時間型的 `vYYYYMMDD.HHmm` 格式。
+本軟體仍在 v1alpha1 階段，版本之間可能含有破壞性變更。
 
 ## Unreleased
 
@@ -234,6 +235,11 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 
 ## v20260520.2107
 
+### 新增
+
+- 新增 BGP / FRR control-plane design note，記錄 readiness、reload、
+  verification、failure status，以及 Live ISO acceptance scenarios。
+
 ### 修正
 
 - BGP controller 現在會在每次 reconcile 檢查 FRR service state。若
@@ -244,11 +250,6 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
   才會回報 Healthy。
 - `routerctl status` 現在由 resource phases 聚合，避免 Pending/Error 的 BGP
   resource 被 controller runtime 的 success update 隱藏。
-
-### 文件
-
-- 新增 BGP / FRR control-plane design note，記錄 readiness、reload、
-  verification、failure status，以及 Live ISO acceptance scenarios。
 
 ## v20260520.2007
 
@@ -376,7 +377,7 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 - 新增 `routerctl show bgp`、`routerctl show vrrp`、`routerctl show ingress`
   table view，從 VIP/ingress `hostname` field 自動推導 DNS record，並新增
   BGP/VRRP/Ingress transition 與 backend health 的 OTel metrics。
-- Web Console 新增 BGP、VRRP、IngressService dedicated view 與 JSON endpoint。
+- Web 管理介面 新增 BGP、VRRP、IngressService dedicated view 與 JSON endpoint。
 
 ### 變更
 
@@ -400,7 +401,7 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 
 ### 新增
 
-- 在 control API、log、OpenTelemetry metrics/traces，以及 Web Console 的
+- 在 control API、log、OpenTelemetry metrics/traces，以及 Web 管理介面 的
   controller view 中新增 controller reconcile runtime status。controller status
   現在會回傳 interval、trigger、執行次數、錯誤次數、last/average/max duration，
   以及最新錯誤。
@@ -477,10 +478,10 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 
 ### 新增
 
-- Web Console Connections 現在會標示由 `LocalServiceRedirect` 處理的 flow。
+- Web 管理介面 Connections 現在會標示由 `LocalServiceRedirect` 處理的 flow。
   當 live conntrack tuple 與已解析的 set status 能辨識 match 時，也會顯示
   redirect rule 與目的地 `IPAddressSet`。
-- Web Console Firewall 現在會在 deny log row 顯示目的地 `IPAddressSet` match，
+- Web 管理介面 Firewall 現在會在 deny log row 顯示目的地 `IPAddressSet` match，
   並區分明確的 `FirewallRule.destinationSetRefs` match，以及目前存在於已設定
   set 內的目的地。
 
@@ -488,7 +489,7 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 
 ### 修正
 
-- 修正 Web Console disk usage collection，使其在 `syscall.Statfs_t` block counter
+- 修正 Web 管理介面 disk usage collection，使其在 `syscall.Statfs_t` block counter
   使用 signed integer type 的 FreeBSD 上也能編譯。
 
 ## v20260517.1353
@@ -506,18 +507,18 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 - `routerd-dpi-classifier` 現在有明確的 classifier engine facade。預設 engine 是
   built-in parser，`auto` / `ndpi-agent` mode 可以查詢未來的
   `routerd-ndpi-agent` Unix socket service，失敗時會 fallback 到 built-in parser。
-- Web Console Connections 現在會在 DPI 尚未識別 flow 時，將 TCP port 4317
+- Web 管理介面 Connections 現在會在 DPI 尚未識別 flow 時，將 TCP port 4317
   標示為 OTLP，將 TCP port 4318 標示為 OTLP/HTTP。
-- Web Console Overview 現在會顯示 host CPU、memory、root filesystem 使用率，
+- Web 管理介面 Overview 現在會顯示 host CPU、memory、root filesystem 使用率，
   以及 classifier 端的 DPI processing latency，方便把 router 本機負載惡化與
   routing、DPI 健康狀態一起觀察。
-- Web Console Clients 與 Connections 現在可以互相跳轉。client row 可以開啟依該
+- Web 管理介面 Clients 與 Connections 現在可以互相跳轉。client row 可以開啟依該
   client 觀測位址篩選的 Connections，connection 詳細也可以回到對應的 local
   client identity。
-- Web Console Connections 現在建立 Clients snapshot 時也會讀取近期
+- Web 管理介面 Connections 現在建立 Clients snapshot 時也會讀取近期
   traffic-flow observation，讓近期的 IPv6 privacy address 更有機會對應回 client。
   source endpoint 即使尚未合併到已知 identity，也會提供前往 Clients 搜尋的動作。
-- Web Console 的搜尋輸入框現在會在有文字時顯示內嵌清除按鈕。
+- Web 管理介面 的搜尋輸入框現在會在有文字時顯示內嵌清除按鈕。
 - release helper 現在要求 working tree 處於 clean 狀態，並會把目前
   `Unreleased` 的內容提升到 release tag，而不是建立空的 tag 標題。
 
@@ -561,17 +562,17 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
   等 detail 時，`routerd-dpi-classifier` 現在會保留 built-in parser 提供的有用 hint。
 - DPI helper daemon bind Unix socket 時，現在會拒絕 unlink 非 socket path；
   `routerd-ndpi-agent` 也會明確 close native libndpi state。
-- Web Console 讀取 traffic-flow 時，現在可容忍 writer 尚未完成 schema migration、
+- Web 管理介面 讀取 traffic-flow 時，現在可容忍 writer 尚未完成 schema migration、
   因而缺少最新 DPI column 的 legacy SQLite file。
 
 ## v20260516.2302
 
 ### 變更
 
-- Web Console Connections 現在會將 source 到 destination 的路徑對齊在固定的
+- Web 管理介面 Connections 現在會將 source 到 destination 的路徑對齊在固定的
   route column，並把 state、protocol、provider、traffic 與 timeout 等 metadata
   移到獨立的 badge 區域。
-- Web Console 的 connection label 現在會分開顯示 transport/application identity
+- Web 管理介面 的 connection label 現在會分開顯示 transport/application identity
   與 destination provider。像 `google-https` 這類舊的 provider-specific label
   會正規化為 `TLS`，而 Google、AWS、Microsoft、Apple 與 Cloudflare 會以獨立的
   destination provider badge 顯示。
@@ -591,10 +592,10 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 
 ### 變更
 
-- Web Console Connections 現在預設依觀測到的傳輸 byte 數降冪排序。
+- Web 管理介面 Connections 現在預設依觀測到的傳輸 byte 數降冪排序。
   Connections 的 sort menu 新增 `Traffic` 選項，connection card 會顯示總 byte 數，
   展開詳細資訊時會在 conntrack accounting 可用時顯示 outbound、inbound 與 total counter。
-- 套用 Web Console connection 數量上限時，conntrack observer 現在會在每個
+- 套用 Web 管理介面 connection 數量上限時，conntrack observer 現在會在每個
   family/protocol group 內優先保留 byte 數較大的 entry。
   這可降低大型 active flow 被低 traffic entry 擠出清單的機率。
 
@@ -622,17 +623,22 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 
 ### 變更
 
-- Web Console Connections 現在以固定的 IP family 與 transport protocol
+- Web 管理介面 Connections 現在以固定的 IP family 與 transport protocol
   bucket 彙整 active flow，不再依 DPI application 拆成多個表格。
   TLS、DNS、QUIC 等 app label 仍會顯示在各 group 內。
 
 ## v20260514.1433
 
+### 新增
+
+- 新增 Alpine Linux / OpenRC 的 apply 支援。`routerd apply` 會產生 OpenRC
+  service script，讓 routerd 管理的 service 能在 Alpine 主機上啟動與管理。
+
 ## v20260514.0813
 
 ### 修正
 
-- 修正 Web Console Clients，在與目前 DHCP lease 關聯之前，將以 IP address 為基礎的
+- 修正 Web 管理介面 Clients，在與目前 DHCP lease 關聯之前，將以 IP address 為基礎的
   DNS、traffic、firewall、DPI 與 DHCP fingerprint 證據限制在相同的最近一小時
   observation window 內。
 - client inventory 的 sticky DHCP lease annotation 現在只使用 active hold，
@@ -642,16 +648,16 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 
 ### 修正
 
-- 修正 Web Console Clients，忽略已過期的 dnsmasq lease，避免舊 host 無限期留在清單中。
+- 修正 Web 管理介面 Clients，忽略已過期的 dnsmasq lease，避免舊 host 無限期留在清單中。
 - DHCP lease 合併現在會優先採用最新的有效 lease，只有在條件相同時才以 lease file 設定順序作為 tie-breaker。
-- routerd 現在會把 controller runtime dnsmasq lease file 作為第一候選傳給 Web Console，
+- routerd 現在會把 controller runtime dnsmasq lease file 作為第一候選傳給 Web 管理介面，
   讓 console 依照受管理 dnsmasq 實際使用的 lease file 顯示。
 
 ## v20260514.0654
 
 ### 修正
 
-- 修正 Web Console Overview，避免把首次輕量 snapshot 記錄成數值為 0 的 metric sample。
+- 修正 Web 管理介面 Overview，避免把首次輕量 snapshot 記錄成數值為 0 的 metric sample。
 - Overview 的延遲 refresh 現在會載入所需的 resource、event、conntrack、DNS
   與近期 traffic flow 資料，同時仍避開較重的 firewall、VPN 與 client inventory 工作。
 - Overview card 會將尚未取得的 flow / connection data 顯示為 loading state，
@@ -678,7 +684,7 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 - 強化長期運行的事件處理。`EventRule` 與 `DerivedEvent` 的 timer 觸發後會清理 map entry，忽略過期的 timer callback，並以 controller lock 保護共享狀態。
 - 為 `EventRule` 的 correlation state 設定上限，避免高基數事件流讓記憶體用量無限制成長。
 - daemon 的 `events.jsonl` 不再無限追加，而是在固定大小後輪替。
-- 為 local control、daemon event、DNS resolver、DoH 與 classifier 路徑加入 request / response 大小限制，並為 local daemon server 與 Web Console 加入 HTTP header timeout。
+- 為 local control、daemon event、DNS resolver、DoH 與 classifier 路徑加入 request / response 大小限制，並為 local daemon server 與 Web 管理介面 加入 HTTP header timeout。
 
 ### 修正
 
@@ -740,19 +746,19 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 
 ### 新增
 
-- 在 Web Console Overview 頁面新增 DPI summary card。
+- 在 Web 管理介面 Overview 頁面新增 DPI summary card。
 
 ## v20260512.0027
 
 ### 新增
 
-- 在 Web Console Clients 頁面新增 DPI activity summary。
+- 在 Web 管理介面 Clients 頁面新增 DPI activity summary。
 
 ## v20260512.0008
 
 ### 新增
 
-- 在 Web Console Connections 頁面顯示 DPI classification。
+- 在 Web 管理介面 Connections 頁面顯示 DPI classification。
 
 ## v20260511.2357
 
@@ -764,7 +770,7 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 
 ### 修正
 
-- 抑制 Web Console 的水平 overscroll。
+- 抑制 Web 管理介面 的水平 overscroll。
 
 ## v20260511.2300
 
@@ -776,19 +782,19 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 
 ### 變更
 
-- 將 Web Console 整理為 content-driven layout section。
+- 將 Web 管理介面 整理為 content-driven layout section。
 
 ## v20260511.2217
 
-### 驗證
+### 變更
 
-- 驗證 mobile Web Console layout。
+- 驗證 mobile Web 管理介面 layout。
 
 ## v20260511.2211
 
 ### 變更
 
-- Web Console 在頁面切換後會保留 page state。
+- Web 管理介面 在頁面切換後會保留 page state。
 
 ## v20260511.2154
 
@@ -800,7 +806,7 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 
 ### 新增
 
-- 新增 Web Console SSE reconciliation。
+- 新增 Web 管理介面 SSE reconciliation。
 
 ## v20260511.2130
 
@@ -822,7 +828,7 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 
 ## v20260511.2018
 
-### 驗證
+### 變更
 
 - 驗證 DPI classifier OS parity。
 
@@ -830,7 +836,7 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 
 ### 修正
 
-- 將 Web Console time locale 固定為 English。
+- 將 Web 管理介面 time locale 固定為 English。
 
 ## v20260511.1840
 
@@ -854,7 +860,7 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 
 ### 變更
 
-- 改善 Web Console navigation section。
+- 改善 Web 管理介面 navigation section。
 
 ## v20260511.1240
 
@@ -914,7 +920,7 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 
 ### 新增
 
-- 為 routerd Go source、installer scripts、plugin scripts 與 Web Console source 增加 BSD 3-Clause SPDX identifiers。
+- 為 routerd Go source、installer scripts、plugin scripts 與 Web 管理介面 source 增加 BSD 3-Clause SPDX identifiers。
 - 在 README 中加入 license badge，並從英文與日文 README 連結到 BSD 3-Clause License。
 - 新增公開 contributing 文件，並從 docs sidebar 連結。
 - 在 SECURITY 中補充 email 與 GitHub Security Advisories 報告路徑。
@@ -1034,7 +1040,7 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 - Release archive 現在除了 versioned archive，也包含 `routerd-linux-amd64.tar.gz` 這類固定名稱 alias。
 - 固定名稱 archive 與 `.sha256` 檔會上傳到 GitHub Releases，因此文件可以使用 `releases/latest/download/...` URL。
 
-### 異動
+### 變更
 
 - Quick start 文件改用 stable latest-download URL，不再硬編特定 release version。
 - release workflow 會在支援時讓 GitHub JavaScript actions 使用 Node.js 24 runtime。
@@ -1050,7 +1056,7 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 
 ## 20260509.14
 
-### 驗證
+### 變更
 
 - 在 Ubuntu lab router 上驗證 `ClientPolicy` guest mode。
 - 確認 Linux nftables 會產生 include mode guest MAC set、guest DNS/DHCP/NTP allow、自我隔離，以及 RFC 1918 / ULA deny 規則。
@@ -1072,7 +1078,7 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 - guest client 可使用 DNS、DHCP、NTP，但預設會拒絕前往 private IPv4 與 ULA IPv6 目的地的轉送。
 - 新增 `examples/guest-mode.yaml` 與 include mode / exclude mode 文件。
 
-### 異動
+### 變更
 
 - FreeBSD pf 會明確拒絕 `ClientPolicy`，因為 pf 沒有相同的 MAC-based routed filtering 模型。
 
@@ -1083,7 +1089,7 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 - 新增最小 Tailscale mesh、WireGuard hub-spoke、VRF lab 與 multi-WAN home fallback 的用途別範例。
 - 新增 `examples/README.md`，說明各範例適合的使用情境。
 
-### 異動
+### 變更
 
 - `make validate-example` 現在會驗證 `examples/` 目錄下的所有 YAML 檔案。
 
@@ -1091,7 +1097,7 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 
 ### 新增
 
-- Web Console Overview 會顯示 generation、resource phase、HealthCheck 狀態的簡易趨勢圖。
+- Web 管理介面 Overview 會顯示 generation、resource phase、HealthCheck 狀態的簡易趨勢圖。
 - Config 頁可比較目前 YAML 檔案與最新已套用 generation，方便在執行 `routerd apply` 前確認差異。
 - Resource 表格支援 kind、name、phase、詳細內容搜尋、phase 篩選與結果標示。
 - VPN 頁面新增 Tailscale 與 WireGuard peer 狀態的視覺摘要。
@@ -1104,7 +1110,7 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 - GitHub Actions 會產生 Linux 與 FreeBSD 的 `amd64` / `arm64` archive。
 - release CI 會對 `install.sh` 與 `uninstall.sh` 執行 `shellcheck`。
 
-### 異動
+### 變更
 
 - `install.sh --list-deps` 改為結構化輸出，列出 OS、CPU 架構、套件管理器、套件與檢查命令。
 - 依賴清單加入 PPPoE、RA、IPsec、封包擷取、路由與 firewall 工具。
@@ -1125,7 +1131,7 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 - DS-Lite 範例改用 RFC 6333 的 B4-AFTR link prefix `192.0.0.0/29` 作為隧道內側 IPv4 來源位址。
 - `PPPoESession.disabled` 與停用的路徑候選允許在 YAML 中保留 PPPoE 備援定義，同時避免正式環境 PPPoE session 外洩。
 
-### 異動
+### 變更
 
 - 版號從 `0.x.y` 改為 `20260509` 這類日期字串。
 - Linux nftables 與 FreeBSD pf 的 NAT44 產生方式收斂為按介面產生規則。
@@ -1143,11 +1149,11 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 ### 新增
 
 - nftables 的隱含拒絕封包紀錄會由 `routerd-firewall-logger` 接收，並寫入 `firewall-logs.db`。Linux 直接讀取 `nfnetlink`，FreeBSD 透過 `tcpdump` 讀取 `pflog`。
-- Web Console 新增「Connections」分頁（即時 conntrack / pf state）、「Clients」分頁（DHCP 租約與流量整合）以及「Firewall」分頁（拒絕排行 + 時間序列）。
+- Web 管理介面 新增「Connections」分頁（即時 conntrack / pf state）、「Clients」分頁（DHCP 租約與流量整合）以及「Firewall」分頁（拒絕排行 + 時間序列）。
 - `WebConsole.spec.listenAddressFrom` 與 `DNSResolver` 系列的待聽位址，可由 `Interface/<name>.status.ipv4Addresses` 推導。允許以參考代替字面值。
 - 預設啟用 conntrack 計數（`net.netfilter.nf_conntrack_acct=1`），`SysctlProfile/router-linux` 將其納入；`TrafficFlowLog` 因此能聚合 `bytesOut` / `bytesIn`。
 
-### 異動
+### 變更
 
 - 即時連線檢視的 API / CLI 統一命名為 `connections`（舊稱 `conntrack-snapshot`）。請改用 `/api/v1/connections`、`routerctl connections`。IPv6 也納入同一張表。
 - NixOS 的宣告式渲染擴充。`Package`（NixOS 套件宣告）、`SysctlProfile`、`NetworkAdoption`、`generated service artifacts` 皆會輸出至 `routerd render nixos`。NixOS 上的 `Package` 不再於執行期安裝，而由產生的 NixOS 設定接管。
@@ -1168,7 +1174,7 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 - `routerd plan --diff` 提供 apply 前的差異預覽。
 - `DNSResolver` 支援 bootstrap forwarder（內部 DNS 為主，公用 DNS 為備援）。
 
-### 異動
+### 變更
 
 - 設定檔的 `${...status.field}` 字串參考改為型別化 `*From` 欄位（`addressFrom`、`ipv4From`、`ipv6From`、`upstreamFrom`、`prefixFrom`、`rdnssFrom`、`dependsOn`）。沒有相容別名。
 - controller chain 重構為純 event-loop。共用 `framework.FuncController`（Subscriptions + Bootstrap + PeriodicFunc）與 `eventedStore`，狀態保存時必發 `routerd.resource.status.changed`，由下游 controller 觸發再評估。
@@ -1192,7 +1198,7 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 - DS-Lite（`DSLiteTunnel`）、PPPoE（`PPPoESession`、`routerd-pppoe-client`）、DHCPv4 client（`routerd-dhcpv4-client`、`DHCPv4Client`）。
 - NAT44（`NAT44Rule`）與 conntrack 觀測。在無 `/proc/net/nf_conntrack` 環境會退回 sysctl 統計。
 
-### 異動
+### 變更
 
 - `WANEgressPolicy` 改名為 `EgressRoutePolicy`。沒有相容別名。
 - DHCP 相關 Kind 與 binary 名稱對齊 RFC 表記法（`routerd-dhcpv4-client`、`routerd-dhcpv6-client`）。沒有相容別名。

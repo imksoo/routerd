@@ -1,52 +1,58 @@
 ---
-title: Getting started on NixOS
+title: NixOS から始める
 ---
 
-# Getting started on NixOS
+# NixOS から始める
 
-NixOS is a first-class secondary platform for routerd. The recommended path on NixOS is to drive routerd-managed services from declarative NixOS configuration rather than from transient systemd units.
+NixOS は routerd の主要な補助プラットフォームです。
+NixOS 上では、一時的な systemd ユニットではなく、宣言型の NixOS 設定を通じて routerd の管理サービスを動かすことを推奨します。
+routerd の実行ファイルはリリースアーカイブから導入します。
+ただし、OS パッケージは NixOS 設定で管理してください。
+`install.sh` は `nix-env` でパッケージを導入せず、警告だけを出します。
 
-Install the routerd binaries from the release archive, but keep OS packages in
-the NixOS configuration. `install.sh` intentionally warns instead of installing
-packages with `nix-env`.
+## 推奨する進め方
 
-## Recommended starting scope
+NixOS では、まずデーモン型の WAN 側サービスを宣言型の経路で管理してください。
+DHCPv6-PD、DHCPv4 クライアントリース、PPPoE セッション、HealthCheck、dnsmasq、ファイアウォールログ、nftables の有効化、そして主プロセスの `routerd.service` は、生成された NixOS モジュールで表現できます。
+基礎となるサービスが `nixos-rebuild test` で正常に収束してから、他のルーターリソースを追加してください。
 
-On NixOS, start by managing the daemon-based WAN services through the declarative path. DHCPv6-PD, DHCPv4 client leases, PPPoE sessions, HealthCheck, dnsmasq, firewall logging, nftables activation, and the main `routerd.service` can now be represented in the generated NixOS module. Add more router resources after the base service set reaches a clean `nixos-rebuild test`.
+## 生成物
 
-## Generated artefacts
-
-routerd writes systemd units into `/etc/nixos/routerd-generated.nix`. Apply them with:
+routerd は、systemd ユニットを `/etc/nixos/routerd-generated.nix` に書き出します。次のコマンドで適用します。
 
 ```bash
 sudo nixos-rebuild test
 sudo nixos-rebuild switch
 ```
 
-The generated units launch routerd daemons with explicit binary paths and the appropriate `RuntimeDirectory`, `StateDirectory`, `ProtectSystem=strict`, and capability lists.
+生成されたユニットは、routerd デーモンを明示的なパスで起動します。
+あわせて、適切な `RuntimeDirectory`、`StateDirectory`、`ProtectSystem=strict`、capability を持ちます。
 
-## Why not transient units
+## なぜ一時的なユニットではないのか
 
-Units placed under `/run/systemd/system` on NixOS are not part of the system configuration; a reboot or a `nixos-rebuild switch` will remove them. To survive across reboots and rebuilds, the unit has to be declared in the NixOS configuration. routerd does that by writing to `/etc/nixos/routerd-generated.nix`.
+NixOS では、`/run/systemd/system` に置かれたユニットはシステム設定の一部になりません。
+再起動や `nixos-rebuild switch` で消えてしまいます。
+再起動と再ビルドをまたいで残すには、ユニットを NixOS 設定として宣言する必要があります。
+routerd は、`/etc/nixos/routerd-generated.nix` に書き出すことでこれを実現します。
 
-## Coverage today
+## 現在の対応範囲
 
-What is implemented:
+次は実装済みです。
 
-- systemd unit generation for `routerd-dhcpv6-client`
-- systemd unit generation for `routerd-dhcpv4-client`
-- systemd unit generation for `routerd-pppoe-client`
-- NixOS module generation for `Package` overrides, `SysctlProfile`, derived host runtime artifacts, and generated service artifacts
-- DHCPv6-PD reaches `Bound` after `nixos-rebuild switch`
-- dnsmasq, DNS resolver, HealthCheck, firewall logger, Tailscale, DHCPv4 client, DHCPv6 client, and PPPoE client services can be declared through the generated module
-- nftables is enabled from the generated module when NAT, firewall, policy routing, or Path MTU resources require it
-- failed `nixos-rebuild switch` attempts a `nixos-rebuild switch --rollback`
-- WireGuard / Tailscale / VXLAN coverage tested across NixOS / Linux / FreeBSD
+- `routerd-dhcpv6-client` の systemd ユニット生成
+- `routerd-dhcpv4-client` の systemd ユニット生成
+- `routerd-pppoe-client` の systemd ユニット生成
+- `Package` override、`SysctlProfile`、derived host runtime artifact、`generated service artifacts` の NixOS モジュール生成
+- `nixos-rebuild switch` 後に DHCPv6-PD が `Bound` へ到達すること
+- dnsmasq、DNS リゾルバ、HealthCheck、ファイアウォールロガー、Tailscale、DHCPv4 クライアント、DHCPv6 クライアント、PPPoE クライアントのサービスを生成モジュールで宣言できること
+- NAT、firewall、policy routing、Path MTU リソースが必要とする nftables の有効化
+- `nixos-rebuild switch` の失敗時に `nixos-rebuild switch --rollback` を試みること
+- WireGuard / Tailscale / VXLAN が NixOS / Linux / FreeBSD 間で動作することの確認
 
-For the per-platform breakdown, see [supported platforms](../platforms.md).
+詳細は [対応プラットフォーム](../platforms.md) を参照してください。
 
-## See also
+## 関連項目
 
-- [Install](./install.md)
-- [Bring up the first router](./first-router.md)
-- [WAN-side services](./wan-side-services.md)
+- [インストール](./install.md)
+- [最初のルーターを上げる](./first-router.md)
+- [WAN 側サービス](./wan-side-services.md)

@@ -1,41 +1,41 @@
 ---
-title: DNS resolver
+title: DNS リゾルバ
 slug: /concepts/dns-resolver
 ---
 
-# DNS resolver
+# DNS リゾルバ
 
-routerd splits DNS into small resources with a clear boundary between authoritative data, the resolver process, forwarding rules, and upstream endpoints.
+routerd の DNS は、権威データ、リゾルバプロセス、転送ルール、上流 endpoint を、それぞれ小さなリソースに分けて表します。
 
-`DNSZone` owns local authoritative data. It stores manual records and records derived from DHCP leases.
+`DNSZone` はローカルの権威データを持ちます。手で書いたレコードと、DHCP リースから派生したレコードを保存します。
 
-`DNSResolver` owns the daemon instance. It defines listen addresses, cache policy, metrics, and query logging. Each `DNSResolver` resource starts one `routerd-dns-resolver` process.
+`DNSResolver` はデーモンインスタンスを管理します。待ち受けアドレス、キャッシュ、metrics、query log を定義します。1 つの `DNSResolver` リソースが、1 つの `routerd-dns-resolver` プロセスを起動します。
 
-`DNSForwarder` owns one match rule for a resolver. It either serves `DNSZone` resources or forwards matching queries to `DNSUpstream` resources.
+`DNSForwarder` はリゾルバに属する 1 つの match ルールです。`DNSZone` から応答するか、一致した問い合わせを `DNSUpstream` へ転送します。
 
-`DNSUpstream` owns one upstream endpoint. It can be plain UDP/TCP DNS, DoT, or DoH.
+`DNSUpstream` は 1 つの上流 endpoint です。平文の UDP/TCP DNS、DoT、DoH を表します。
 
-## Source ordering
+## 応答元の順序
 
-`DNSForwarder` resources that reference a resolver are evaluated in config order.
-A forwarder with `zoneRefs` answers from `DNSZone`.
-A forwarder with `upstreams` sends matching queries to selected upstreams.
-Use `match: ["."]` for the default recursive path.
+リゾルバを参照する `DNSForwarder` は、config に書いた順に評価します。
+`zoneRefs` を持つフォワーダーは `DNSZone` から応答します。
+`upstreams` を持つフォワーダーは、一致した問い合わせを上流へ転送します。
+`match: ["."]` は既定の再帰問い合わせ経路です。
 
-The resolver supports DoH, DoT, TCP DNS, and plain UDP DNS.
-It tries upstreams by priority and falls back when a higher source fails.
+リゾルバは DoH、DoT、TCP DNS、平文 UDP DNS を扱います。
+上流は優先順に試します。
+優先度の高い上流が失敗したら、次の上流へ切り替えます。
 
-## Multiple listen profiles
+## 複数の待ち受けプロファイル
 
-`spec.listen` is a list.
-Each entry can select a subset of source names.
-This allows LAN and VPN listeners to behave differently while sharing one resolver resource.
-The names in `listen[].sources` refer to `DNSForwarder` resources. If omitted,
-the listener uses every forwarder attached to the resolver.
+`spec.listen` は配列です。
+各待ち受けは、使う応答元名の部分集合を選べます。
+これにより、LAN 用と VPN 用の待ち受けで挙動を変えられます。
+それでも 1 つのリゾルバリソースを共有できます。
+`listen[].sources` の名前は `DNSForwarder` を参照します。省略すると、そのリゾルバに属するすべてのフォワーダーを使います。
 
-Use `listen[].addressFrom` when a listen address comes from another
-resource status. This keeps the dependency explicit and lets the controller
-reconfigure the daemon when the source resource changes.
+待ち受けアドレスをほかのリソース状態から得る場合は、`listen[].addressFrom` を使います。
+依存関係が明示されるため、元リソースが変わったときにデーモンを再構成できます。
 
 ```yaml
 listen:
@@ -48,14 +48,14 @@ listen:
     port: 53
 ```
 
-If a required address source is not available yet, the resolver stays
-`Pending(AddressUnresolved)` instead of starting with a stale address.
+必要なアドレスをまだ解決できないときは、リゾルバは古いアドレスで起動しません。
+`Pending(AddressUnresolved)` のまま待ちます。
 
-## Dynamic zone records
+## 動的なゾーンレコード
 
-`DNSZone.spec.records[].ipv4` and `ipv6` are literal addresses.
-Use `ipv4From` or `ipv6From` when a record address comes from another
-resource status.
+`DNSZone.spec.records[].ipv4` と `ipv6` は固定値です。
+レコードのアドレスをほかのリソース状態から得る場合は、`ipv4From` または
+`ipv6From` を使います。
 
 ```yaml
 records:
@@ -68,23 +68,21 @@ records:
       field: address
 ```
 
-If a required record source is not available yet, the record field is marked in
-`DNSZone.status.pendingRecords`. The resolver is regenerated when the source
-resource changes, and the record is published after the field resolves.
+必要な参照先をまだ解決できないときは、そのレコードを `DNSZone.status.pendingRecords`
+に記録します。
+参照先リソースが変わるとリゾルバを再生成し、解決できたあとにレコードを公開します。
 
-## Network-constrained upstreams
+## ネットワークを限定した上流
 
-`DNSUpstream.spec.sourceInterface` binds outgoing queries to a specific interface on Linux.
-Use a literal OS interface name, for example `ens18` or `wg0`.
-When a tunnel or VRF resource creates that interface, make the dependency
-explicit with resource ownership or ordering and keep the resolver pending
-until the interface exists.
+`DNSUpstream.spec.sourceInterface` は、Linux で送信先インターフェースを束縛します。
+`ens18` や `wg0` のような OS インターフェース名を固定値で指定します。
+トンネルや VRF のリソースがそのインターフェースを作る場合は、リソースの所有や順序で依存関係を明示します。
+インターフェースができるまで、リゾルバを待機させます。
 
-`DNSUpstream.spec.bootstrap` supplies DNS server addresses for resolving DoH and DoT endpoint names.
-This is useful when the endpoint name is only resolvable inside an access network.
+`DNSUpstream.spec.bootstrap` は、DoH や DoT の接続先名を解決する補助 DNS サーバーです。
+接続先名がアクセス網の内側でしか解決できないときに使います。
 
-Use `addressFrom` when the upstream server list comes from another resource
-status.
+上流サーバーの一覧をほかのリソース状態から得る場合は、`addressFrom` を使います。
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
@@ -109,8 +107,7 @@ spec:
       field: dnsServers
 ```
 
-`DNSResolver.spec.sources` is not accepted in user YAML. Split old inline
-source entries into `DNSForwarder` and `DNSUpstream`.
+ユーザーが書く YAML では `DNSResolver.spec.sources` を受け付けません。以前のインライン source は `DNSForwarder` と `DNSUpstream` に分けます。
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
@@ -134,8 +131,8 @@ spec:
   path: /dns-query
 ```
 
-## dnsmasq boundary
+## dnsmasq との境界
 
-dnsmasq is now limited to DHCPv4, DHCPv6, DHCP relay, and RA.
-It does not generate `server=`, `local=`, or `host-record=` lines.
-All DNS answering and forwarding goes through `routerd-dns-resolver`.
+dnsmasq は DHCPv4、DHCPv6、DHCP 中継、RA に限定します。
+`server=`、`local=`、`host-record=` は生成しません。
+DNS の応答と転送は、すべて `routerd-dns-resolver` が担当します。

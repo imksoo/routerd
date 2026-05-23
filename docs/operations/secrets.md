@@ -2,11 +2,9 @@
 title: Secret sources
 ---
 
-# Secret sources
+# シークレットソース
 
-routerd supports file and environment secret sources for BGP peer passwords and
-VRRP/CARP authentication. Prefer these fields over inline `password` or
-`authentication` values:
+routerd は、BGP ピアのパスワードと、VRRP/CARP の認証に、ファイルまたは環境変数のシークレットソースを使えます。本番設定では、inline の `password` や `authentication` よりも、次のフィールドを優先してください。
 
 ```yaml
 passwordFrom:
@@ -19,14 +17,10 @@ authenticationFrom:
   env: ROUTERD_VRRP_AUTH
 ```
 
-Operational guidance:
+運用上の注意は次のとおりです。
 
-- Keep secret files outside Git-managed config directories.
-- Use root-owned files with mode `0600`, or an equivalent service-manager
-  credential mechanism that exposes a file only to routerd.
-- Do not publish rendered keepalived or CARP config from production
-  hosts; rendered files contain the resolved secret value.
-- `base64: true` is only an encoding convenience for file/env transport. It is
-  not encryption.
-- `routerd validate` warns when a referenced secret file does not exist yet.
-  Render and apply require the source to be readable.
+- シークレットファイルは、git で管理する設定ディレクトリの外に置きます。
+- root 所有で mode `0600` のファイルにするか、routerd だけにファイルを見せるサービスマネージャーのクレデンシャル機構を使います。
+- 本番ホストで生成した keepalived や CARP の設定を公開しないでください。生成したファイルには、解決後のシークレット値が入っています。
+- `base64: true` は、ファイルや環境変数で受け渡すためのエンコーディングであり、暗号化ではありません。
+- `routerd validate` は、参照先のシークレットファイルがまだ存在しない場合に警告を出します。render と apply では、ソースが読める必要があります。

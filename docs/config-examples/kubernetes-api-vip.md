@@ -1,16 +1,16 @@
 ---
-title: Kubernetes API VIP with BGP
+title: BGP 付き Kubernetes API VIP
 ---
 
-# Kubernetes API VIP with BGP
+# BGP 付き Kubernetes API VIP
 
-This example shows a routerd edge pair pattern for bootstrapping Kubernetes
-without putting the API endpoint inside the cluster. The router owns a VRRP
-VIP, forwards `k8s-api.cluster.example:6443` to three control-plane backends, checks
-`/readyz` over HTTPS, and peers with Kubernetes BGP speakers for Service
-prefixes.
+この例は、Kubernetes API の endpoint を cluster 内に置かず、routerd の edge pair で
+ブートストラップするための構成です。ルーターは VRRP VIP を保持し、
+`k8s-api.cluster.example:6443` を 3 台の control-plane backend へ転送し、
+HTTPS の `/readyz` を確認し、Kubernetes の BGP speaker と peer を張って Service
+prefix を受け取ります。
 
-Use it as an end-to-end starting point:
+出発点として、次の順で確認します。
 
 ```bash
 routerd validate --config examples/kubernetes-api-vip.yaml
@@ -18,7 +18,7 @@ routerd plan --config examples/kubernetes-api-vip.yaml
 routerd apply --config examples/kubernetes-api-vip.yaml --once --dry-run
 ```
 
-Topology:
+構成:
 
 ```text
 routerd-01/02  VRRP VIP 192.168.70.10
@@ -28,21 +28,20 @@ routerd-01/02  VRRP VIP 192.168.70.10
        +-- k8s-wk-01..04  BGP ASN 64513
 ```
 
-The important production-oriented settings are:
+重要な設定:
 
-| Resource | Setting |
+| リソース | 設定 |
 | --- | --- |
-| `VirtualAddress/k8s-api-vip` | VRRP preempt settings and track entries for API health and BGP health. |
-| `IngressService/kubernetes-api` | HTTPS health check on `/readyz`, `tlsSkipVerify: true` for kubeadm self-signed bootstrap certs, failover selection, reject on no healthy backend, and automatic same-interface hairpin SNAT when selected control-plane backends are on the VIP LAN prefix or the same private `/24`. |
-| `BGPRouter/lan` | `convergenceProfile: fast`, BGP timers `3s/9s/5s`, graceful restart disabled by default, and an import allow-list for Kubernetes Service prefixes only. |
-| `DNSResolver/lan-resolver` | Automatically serves `k8s-api.cluster.example` from the VIP `hostname` field, plus static control-plane and worker records. |
+| `VirtualAddress/k8s-api-vip` | VRRP の preempt 設定、API のヘルスと BGP のヘルスの追跡。 |
+| `IngressService/kubernetes-api` | `/readyz` への HTTPS ヘルスチェック、kubeadm のブートストラップで使う self-signed 証明書向けの `tlsSkipVerify: true`、フェイルオーバーの選択、healthy な backend が無いときの reject、VIP と選択された control-plane backend が同じ LAN prefix または同じプライベート `/24` 上にある場合の、同一インターフェース hairpin SNAT の自動生成。 |
+| `BGPRouter/lan` | `convergenceProfile: fast`、BGP timers `3s/9s/5s`、既定で graceful restart を無効化、Kubernetes の Service prefix だけを受け取る import の allow-list。 |
+| `DNSResolver/lan-resolver` | VIP の `hostname` フィールドから `k8s-api.cluster.example` を自動で返し、control plane と worker の静的レコードも提供。 |
 
-Keep the DHCP pool away from the VIP, control-plane addresses, worker
-addresses, and LoadBalancer/Service advertisement ranges.
+DHCP のプールは、VIP、control-plane のアドレス、worker のアドレス、LoadBalancer /
+Service の advertisement の範囲と重ならないようにしてください。
 
-For operations, `routerctl show bgp`, `routerctl show vrrp`, and
-`routerctl show ingress` provide table views for peer state, VIP role, and
-backend health without dumping raw status JSON. Use
-`routerctl show ingress --verbose` when debugging dataplane state; it reports
-runtime forwarding sysctls, nftables DNAT/SNAT rule counts, and matching
-conntrack flow counts for the API ingress.
+運用時は `routerctl show bgp`、`routerctl show vrrp`、
+`routerctl show ingress` を使うと、peer の状態、VIP の役割、backend のヘルスを、
+生の status JSON ではなく表形式で確認できます。dataplane を確認する場合は
+`routerctl show ingress --verbose` を使うと、ランタイムの forwarding sysctl、nftables の
+DNAT/SNAT ルール数、API の ingress に該当する conntrack のフロー数を表示できます。

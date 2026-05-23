@@ -14,6 +14,25 @@
   line-height: 1.12;
 }
 
+.heroStable {
+  margin: 0.75rem 0 0;
+}
+
+.heroStable a {
+  display: inline-block;
+  padding: 0.3rem 0.75rem;
+  border: 1px solid rgba(248, 250, 252, 0.5);
+  border-radius: 999px;
+  color: #f8fafc;
+  font-size: 0.95rem;
+  text-decoration: none;
+}
+
+.heroStable a:hover {
+  border-color: #f8fafc;
+  background: rgba(248, 250, 252, 0.1);
+}
+
 .outcomes {
   padding: 4rem 0;
   background: var(--ifm-background-surface-color);

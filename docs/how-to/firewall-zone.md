@@ -1,24 +1,26 @@
 ---
-title: Define firewall zones
+title: ファイアウォールゾーンを定義する
 ---
 
-# Define firewall zones
+# ファイアウォールゾーンを定義する
 
-## Scenario
+## 想定するシーン
 
-You want a stateful firewall whose default behaviour is "WAN cannot reach LAN, LAN can reach WAN, management can reach everything." That is the matrix every home or SOHO router needs, and writing it as individual `accept` / `drop` rules is repetitive and error-prone.
+「WAN は LAN に届かない、LAN は WAN に届く、管理経路はすべてに届く」というのが、家庭や SOHO のルーターの基本的なポリシーマトリクスです。
+これを個別の `accept` / `drop` ルールで書くと、繰り返しが多くミスの温床になります。
 
-## How routerd solves it
+## routerd での解決方法
 
-`FirewallZone` maps interfaces to a **role**. routerd has a built-in role matrix that derives the directional default actions, so you usually do not need any explicit `FirewallRule` for the common case.
+`FirewallZone` で、インターフェースを **役割（role）** に紐付けます。
+routerd は内蔵のロールマトリクスから方向ごとの既定アクションを導くため、典型的な構成では `FirewallRule` を書く必要すらありません。
 
-| role | Typical use |
+| role | 用途 |
 | --- | --- |
-| `untrust` | WAN-facing interfaces (uplink, DSLite tunnel, PPPoE pseudo-interface) |
-| `trust` | Normal LAN segments |
-| `mgmt` | Out-of-band management network |
+| `untrust` | WAN 側（上流回線、DSLite トンネル、PPPoE 仮想インターフェース） |
+| `trust` | 通常の LAN セグメント |
+| `mgmt` | 帯域外管理ネットワーク |
 
-The implicit matrix is:
+暗黙のマトリクスは次のとおりです。
 
 | from \ to | self | trust | mgmt | untrust |
 | --- | --- | --- | --- | --- |
@@ -27,9 +29,9 @@ The implicit matrix is:
 | `untrust` | drop | drop | drop | n/a |
 | `self` | accept | accept | accept | accept |
 
-Established/related connections are always allowed.
+established/related な接続は常に許可します。
 
-## Example
+## 例
 
 ```yaml
 - apiVersion: firewall.routerd.net/v1alpha1
@@ -61,10 +63,10 @@ Established/related connections are always allowed.
       - Interface/mgmt
 ```
 
-This is enough for a typical home router. The role matrix supplies the defaults; you only add explicit `FirewallRule` resources to express exceptions.
+典型的な家庭ルーターはこれで十分です。`FirewallRule` は、例外を表すときだけ追加してください。
 
-## See also
+## 関連項目
 
-- [Add firewall exceptions](./firewall-rule.md)
-- [Isolate guest devices by MAC address](./guest-mode.md)
-- [Firewall concept](../concepts/firewall.md)
+- [ファイアウォール例外を追加する](./firewall-rule.md)
+- [MAC アドレスでゲスト端末を隔離する](./guest-mode.md)
+- [ファイアウォールのコンセプト](../concepts/firewall.md)

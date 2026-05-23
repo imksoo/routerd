@@ -1,12 +1,13 @@
 ---
-title: Reconcile and removal
+title: 調整（リコンサイル）と削除
 ---
 
-# Reconcile and removal
+# 調整（リコンサイル）と削除
 
-routerd compares the intent declared in YAML with the host's current state. When they differ, routerd computes a plan, optionally previews it as a dry-run, and then applies it.
+routerd は、YAML が宣言する意図とホストの現在状態を比べます。
+差があれば計画（plan）を作り、必要なら dry-run で確認してから apply します。
 
-## Standard sequence
+## 標準シーケンス
 
 ```bash
 routerd validate --config router.yaml
@@ -15,89 +16,92 @@ routerd apply    --config router.yaml --once --dry-run
 routerd apply    --config router.yaml --once
 ```
 
-For a remote router, confirm that the management connection (SSH, console, hypervisor console) will survive the change before running the non-dry-run `apply`.
+遠隔のルーターでは、本番の `apply` を実行する前に、管理経路（SSH、コンソール、ハイパーバイザーのコンソール）が変更後も残ることを確認してください。
 
-## Long-running mode
+## 常駐モード
 
 ```bash
 routerd serve --config router.yaml
 ```
 
-In serve mode, routerd reacts to events on the bus and re-evaluates only the resources affected. Inputs include DHCPv6-PD renewals, health-check results, derived events, and configuration changes detected by inotify.
+serve モードでは、バス上のイベントに反応し、影響範囲のリソースだけを再評価します。
+入力となるのは、DHCPv6-PD のリース更新、ヘルスチェックの結果、派生イベント、inotify による設定変更の検知などです。
 
-`routerd serve` runs the controller runtime directly from the declared config.
-There is no public flag to choose a partial controller set; if a resource is
-declared, the matching controller decides how to converge it, and `--dry-run`
-remains a pre-apply check rather than a persistent operating mode.
+コントローラーの dry-run フラグは、所有範囲ごとに効きます。
+`--controller runtime-dry-run-ingress=false` は、IngressService コントローラーによるヘルスの実選択と、IngressService 由来の nftables DNAT/hairpin ルールの実適用を意味します。
+独立した `NAT44Rule` と `LocalServiceRedirect` は、引き続き
+`--controller runtime-dry-run-nat=false` で別に制御します。
 
-When the config contains resources that forward traffic, such as
-`IngressService`, `PortForward`, NAT, BGP, or static/policy routes, routerd
-derives the required runtime sysctls. `routerd apply --once` observes, plans,
-and renders those derived settings without mutating them; `routerd serve`
-converges them during controller reconcile. This keeps one-shot apply bounded to
-config validation and artifact rendering while the long-running controller owns
-daemon and runtime kernel lifecycle.
+`IngressService`、`PortForward`、NAT、BGP、静的経路・ポリシー経路など、転送を伴う
+リソースがある場合、routerd は必要なランタイム sysctl を導出します。
+`routerd apply --once` は、派生する設定を観測・計画・生成しますが、ホストには反映しません。
+反映は、`routerd serve` がコントローラーの調整（リコンサイル）の中で収束させます。
+これにより、一度きりの apply は設定の検証と成果物の生成にとどまり、
+デーモンとランタイムのカーネルのライフサイクルは、長時間動くコントローラーが所有します。
 
-## Drift checks
+## drift の確認
 
-routerd does not treat the status database as the only source of truth. The
-status store records what the previous apply observed, but controllers also
-check the host state they are responsible for before deciding to skip work.
-Examples include systemd unit enabled/active state, whether dnsmasq is running
-with the expected config file, whether a DHCPv4 lease address is still present
-on the interface, and whether managed nftables tables exist on the host.
+routerd は、状態データベースだけを唯一の正として扱いません。
+状態ストアには前回の apply で観測した内容を記録しますが、各コントローラーは
+処理を省く前に、自分が管理する実機の状態も確認します。
+たとえば、systemd ユニットの enabled/active 状態、dnsmasq が期待どおりの設定ファイルで
+動いているか、DHCPv4 リースのアドレスがインターフェース上に残っているか、
+管理対象の nftables テーブルが実機に存在するか、といった点です。
 
-This matters after a reboot, a failed manual edit, or an interrupted upgrade:
-the status database can still say "Applied" while the OS state has drifted.
-Controllers should converge the OS back to the declared YAML instead of
-assuming that the previous status row is still true.
+これは、再起動の後、手作業の変更に失敗した後、upgrade が途中で止まった後に重要になります。
+状態データベース上は Applied のままでも、OS 側の状態がずれていることがあるためです。
+コントローラーは、前回の status 行をそのまま信じるのではなく、宣言された YAML へ
+OS の状態を収束させます。
 
-## Derived resources
+## 派生リソース
 
-Some host objects are generated from higher-level intent instead of being
-written in YAML directly. For example, `routerd.service`,
-`routerd-healthcheck@*.service`, firewall log daemons, and helper DPI services
-are derived service units. Use this view to inspect those generated resources:
+一部のホストオブジェクトは、YAML に直接書かせず、より高レベルの意図から生成します。
+たとえば `routerd.service`、`routerd-healthcheck@*.service`、firewall log デーモン、
+DPI helper サービスは、派生したサービスユニットです。生成されたリソースは次で確認できます。
 
 ```bash
 routerctl show derived-resources
 ```
 
-The default view is derived from the current config. Old status rows that no
-longer come from the current config are hidden so they do not look active.
-Use `--include-stale` when you need to inspect those rows while cleaning up an
-old state database.
+既定では、現在の設定から派生するものだけを表示します。
+現在の設定に由来しない古い status 行は、稼働中のリソースに見えないよう
+非表示にします。古い状態データベースを掃除するときは、`--include-stale` で確認できます。
 
-If a removed or unsupported resource kind is still present in YAML, routerd
-fails config loading instead of silently ignoring it.
+削除済み、または未対応のリソース Kind が YAML に残っている場合、routerd はそれを黙って
+無視せず、設定の読み込みを失敗させます。
 
-## Managed cleanup
+## 管理対象の掃除
 
-When a resource disappears from YAML, the owning controller removes or disables
-only the artifacts it owns. Stale `routerd-healthcheck@*.service` and supervised
-client daemon units are disabled and removed when no matching owning resource
-remains. NAT44 clears the managed `routerd_nat` table or pf anchor when no NAT
-rules remain.
+YAML からリソースが消えた場合、所有元のコントローラーは、自分が所有する構成物だけを
+削除または無効化します。
+対応する `HealthCheck` がなくなった `routerd-healthcheck@*.service` は、
+無効化して削除します。
+NAT44 ルールが 0 件になった場合は、管理対象の `routerd_nat` テーブルまたは
+pf anchor を空にします。
+`state: absent` の `generated service artifacts` は、生成済みのユニットを削除し、ユニットが存在するか
+まだ enabled/active のときだけ停止します。
 
-If an old state row belongs to a resource kind that no longer exists in the
-schema, remove it with `routerctl delete --force <kind>/<name>`. When more than
-one API group has a row for the same kind/name, add `--api-version <version>` so
-routerd can delete the exact state row without guessing.
+古い status 行が、現在のスキーマにないリソース Kind に属している場合は、
+`routerctl delete --force <kind>/<name>` で削除します。同じ kind/name が複数の
+API グループにある場合は、routerd が推測で消さないよう `--api-version <version>` を指定します。
 
-Firewall rendering keeps the managed nftables table in place and reloads it in
-one `nft -f` batch. For named sets such as firewall zone interface sets and
-client-policy MAC sets, routerd destroys the managed set before redefining it so
-removed elements do not remain. It does not destroy and recreate the whole
-filter table during normal apply.
+ファイアウォールの生成では、管理対象の nftables テーブルを維持したまま、1 回の
+`nft -f` バッチで再読み込みします。
+firewall zone のインターフェース set や client-policy の MAC set のような named set は、
+再定義の前に routerd が管理対象の set だけを削除します。
+これにより、削除済みの要素が残らず、通常の apply でフィルターテーブル全体を
+削除して作り直すこともありません。
 
-## Removal
+## 削除
 
-routerd only deletes objects whose ownership it can attribute (i.e. that routerd previously created or adopted). It does not remove third-party configuration or manual changes.
+routerd が削除するのは、所有を確認できる構成物（routerd が以前に作成したもの、または明示的に取り込んだもの）だけです。
+第三者の構成や手作業の変更には触れません。
 
-Full rollback to a previous configuration is not in scope today. For changes that include deletions, always run `routerd plan` and `routerd apply --dry-run` first and confirm the deletion list before applying.
+過去の設定への完全なロールバックは、現状では対象外です。
+削除を含む変更では、必ず `routerd plan` と `routerd apply --dry-run` で削除リストを確認してから適用してください。
 
-## See also
+## 関連項目
 
-- [State and ownership](../concepts/state-and-ownership.md)
-- [Apply and render](../concepts/apply-and-render.md)
-- [Troubleshooting](../how-to/troubleshooting.md)
+- [状態と所有権](../concepts/state-and-ownership.md)
+- [Apply と render](../concepts/apply-and-render.md)
+- [トラブルシューティング](../how-to/troubleshooting.md)

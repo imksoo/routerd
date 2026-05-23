@@ -1,96 +1,71 @@
 ---
-title: What is routerd?
+title: routerd とは
 slug: /concepts/what-is-routerd
 sidebar_position: 1
 ---
 
-# What is routerd?
+# routerd とは
 
-routerd is a declarative router control plane for Linux hosts, NixOS, and
-FreeBSD. You write the router intent as YAML resources. routerd turns that
-intent into interfaces, addresses, DHCP service, DNS service, NAT, routes,
-tunnels, health checks, system packages, sysctl values, service units, logs,
-and status.
+routerd は、Linux ホスト・NixOS・FreeBSD をルーターとして動かすための宣言型の制御プレーンです。ルーターの構成を YAML リソースとして書くと、routerd がその意図を、インターフェース、アドレス、DHCP、DNS、NAT、経路、トンネル、ヘルスチェック、パッケージ、sysctl、サービスユニット、ログといった実際の状態へ反映します。
 
-routerd is not a distribution and it is not a hosted controller. It runs on each
-router host. It uses local kernel features and host components such as
-systemd-networkd, dnsmasq, nftables, pppd, WireGuard, and systemd where that is
-the right boundary.
+routerd はディストリビューションでも、集中管理サービスでもありません。各ルーターのホスト上でローカルに動き、systemd-networkd、dnsmasq、nftables、pppd、WireGuard、systemd といったホスト側の部品を、必要な範囲で使います。
 
-## The Problem
+## 解決する問題
 
-A hand-built router spreads state across many places:
+ルーターを手作業で作ると、状態が多くの場所に散らばります。
 
-- interface addresses in netplan, systemd-networkd, rc.d, or NixOS settings
-- DHCP, DHCPv6, DHCP relay, and RA in dnsmasq configuration
-- DNS forwarding and local records in resolver-specific files
-- NAT, route policy, conntrack, and firewall state in nftables and iproute2
-- DHCPv4, DHCPv6-PD, PPPoE, health checks, and logging in separate daemons
-- packages, sysctl values, and service units in host bootstrap scripts
+- インターフェースのアドレスは、netplan・systemd-networkd・rc.d・NixOS 設定に分かれます。
+- DHCP、DHCPv6、DHCP 中継、RA は、dnsmasq の設定に分かれます。
+- DNS 転送とローカルレコードは、リゾルバごとの設定に分かれます。
+- NAT、経路ポリシー、conntrack、ファイアウォールは、nftables と iproute2 に分かれます。
+- DHCPv4、DHCPv6-PD、PPPoE、ヘルスチェック、ログは、別々のデーモンになります。
+- パッケージ、sysctl、サービスユニットは、ホスト準備スクリプトに残りがちです。
 
-routerd treats these pieces as resources. The YAML shows the router intent.
-Git diffs show the operational change. `routerctl` and the Web Console show
-what the host actually observed.
+routerd は、これらをまとめてリソースとして扱います。YAML を見ればルーターの意図が分かり、変更は git の diff で追え、実際に観測した状態は `routerctl` と Web 管理画面で確認できます。
 
-## Current Shape
+## 現在の構成
 
-`routerd serve` loads resources, resolves dependencies, starts child daemons,
-subscribes to events, and adjusts the host toward the desired state.
+`routerd serve` はリソースを読んで依存関係を解き、子デーモンを起動し、イベントを購読しながら、ホストを望ましい状態へ調整（リコンサイル）します。
 
-Long-running protocol state lives in small managed daemons:
+長く動き続けるプロトコル状態は、小さな管理対象デーモンに分けています。
 
-- `routerd-dhcpv6-client` handles DHCPv6 prefix delegation and information
-  request.
-- `routerd-dhcpv4-client` handles DHCPv4 WAN leases.
-- `routerd-pppoe-client` handles PPPoE sessions.
-- `routerd-healthcheck` runs TCP, DNS, HTTP, and ICMP probes.
-- `routerd-dns-resolver` answers DNS zones and forwards DoH, DoT, TCP, and UDP
-  upstreams.
-- `routerd-dhcp-event-relay` converts dnsmasq lease changes into routerd events.
-- `routerd-firewall-logger` imports firewall logs into routerd log storage.
+- `routerd-dhcpv6-client`: DHCPv6 のプレフィックス委任（PD）と情報要求を担当します。
+- `routerd-dhcpv4-client`: DHCPv4 の WAN リースを担当します。
+- `routerd-pppoe-client`: PPPoE セッションを担当します。
+- `routerd-healthcheck`: TCP、DNS、HTTP、ICMP の疎通確認を担当します。
+- `routerd-dns-resolver`: DNS ゾーン応答と、DoH・DoT・TCP・UDP の上流を担当します。
+- `routerd-dhcp-event-relay`: dnsmasq のリース変化を routerd のイベントへ変換します。
+- `routerd-firewall-logger`: ファイアウォールログを routerd のログ保存先へ取り込みます。
 
-Each daemon exposes local HTTP+JSON status over a Unix socket and persists its
-own state where needed. routerd consumes those events and updates LAN service,
-DNS records, DS-Lite tunnels, NAT, route policy, health-derived choices, and
-observability stores.
+各デーモンは、Unix ソケット上のローカル HTTP+JSON で状態を公開し、必要な状態はファイルに保存します。routerd はそれらのイベントを読み、LAN サービス、DNS レコード、DS-Lite、NAT、経路ポリシー、ヘルスチェックによる経路選択、観測用の保存先へ反映します。
 
-## What It Can Manage
+## 管理できるもの
 
-The current implementation can manage:
+現在の実装では、次を扱えます。
 
-- DHCPv6-PD and delegated IPv6 LAN addresses
-- DHCPv6 information request, AFTR DNS resolution, and DS-Lite
-- DHCPv4 WAN leases and DHCPv4 LAN scopes with reservations
-- DHCPv6 server modes and IPv6 Router Advertisement options
-- DNS zones, DHCP-derived records, conditional forwarding, DoH, DoT, TCP DNS,
-  UDP fallback, multiple listen profiles, and cache
-- NAT44, private-destination exclusions, IPv4 route policy, reverse-path
-  filter settings, Path MTU policy, and TCP MSS clamping
-- PPPoE, WireGuard, VXLAN, VRF, and cloud-oriented IPsec connection
-  definitions with strongSwan `swanctl` rendering
-- package installation, sysctl profiles, network adoption, systemd units,
-  NTP client configuration, log sinks, log retention, and Web Console
-- `EgressRoutePolicy`, `HealthCheck`, `EventRule`, and `DerivedEvent`
-  coordination
-- status, event, DNS query, connection, traffic-flow, and firewall-log
-  inspection
+- DHCPv6-PD と、委任されたプレフィックスから作る IPv6 LAN アドレス
+- DHCPv6 情報要求、AFTR の DNS 解決、DS-Lite
+- DHCPv4 の WAN リース、DHCPv4 の LAN スコープ、固定割り当て
+- DHCPv6 サーバーモード、IPv6 RA オプション
+- DNS ゾーン、DHCP 由来のレコード、条件付き転送、DoH、DoT、TCP DNS、UDP フォールバック、複数待ち受け、キャッシュ
+- NAT44、プライベート宛先の NAT 対象外指定、IPv4 経路ポリシー、reverse path filter、Path MTU 方針、TCP MSS 調整
+- PPPoE、WireGuard、VXLAN、VRF、cloud VPN 向けの IPsec 接続定義、strongSwan `swanctl` 設定の生成
+- パッケージ、sysctl プロファイル、ネットワーク引き継ぎ、systemd ユニット、NTP クライアント、ログ転送、ログ保管、Web 管理画面
+- `EgressRoutePolicy`、`HealthCheck`、`EventRule`、`DerivedEvent` による状態の連携
+- 状態、イベント、DNS クエリー、コネクション、通信フロー、ファイアウォールログの確認
 
-## Deliberate Boundaries
+## 意図して範囲を絞っていること
 
-routerd is v1alpha1 pre-release software. Names and fields may change without a
-compatibility alias when the cleanup makes the router safer or the configuration
-more understandable.
+routerd は v1alpha1 のプレリリースです。ルーターを安全にし、設定を分かりやすくするためなら、互換用の別名を残さずに名前やフィールドを変えることがあります。
 
-Stateful firewall filtering is intentionally scoped. routerd renders NAT44,
-zone policy, service holes, denial logging, and traffic inspection, but it is
-not a general-purpose firewall rule language. NixOS and FreeBSD use the same
-resource model through their native activation paths. Platform-specific host
-surfaces are tracked in the platform matrix.
+ステートフルなファイアウォールフィルターも、意図して範囲を絞っています。routerd が生成するのは、NAT44、ゾーンポリシー、管理対象サービス向けの許可、拒否ログ、通信の確認までで、汎用のファイアウォール規則言語ではありません。
 
-## Next Pages
+NixOS と FreeBSD も同じリソースモデルを使い、反映先だけがそれぞれの OS に合った機構になります。プラットフォームごとの差は対応表に記載します。
 
-- [Design philosophy](./design-philosophy)
-- [Resource model](./resource-model)
-- [Apply and render](./apply-and-render)
-- [State and ownership](./state-and-ownership)
-- [Install](../tutorials/install)
+## 次に読むもの
+
+- [設計思想](./design-philosophy)
+- [リソースモデル](./resource-model)
+- [適用と生成](./apply-and-render)
+- [状態と所有](./state-and-ownership)
+- [インストール](../tutorials/install)

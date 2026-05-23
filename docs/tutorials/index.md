@@ -1,33 +1,32 @@
 ---
-title: Tutorials
+title: チュートリアル
 slug: /tutorials
 ---
 
-# Tutorials
+# チュートリアル
 
-## Diskless mini PC router in five minutes
+## ディスクレス mini PC で 5 分ルーター
 
-Boot the routerd live ISO, answer the text wizard, save the configuration to a
-USB stick, and turn a small x86 mini PC into a persistent router without
-installing an OS to the internal disk.
+routerd ライブ ISO を起動し、テキストウィザードに答えます。
+設定を USB メモリーへ保存すれば、内蔵ディスクに OS を入れずに、
+小型 x86 mini PC を永続的なルーターとして使えます。
 
-[Start the diskless walkthrough](/docs/tutorials/diskless-minipc-walkthrough)
+[ディスクレス手順を始める](/docs/tutorials/diskless-minipc-walkthrough)
 
-![Diskless mini PC flow](/img/routerd-diskless-minipc.svg)
+![ディスクレス mini PC の流れ](/img/routerd-diskless-minipc.svg)
 
-## Pick a path
+## 目的から選ぶ
 
-| Goal | Tutorial |
+| 目的 | チュートリアル |
 | --- | --- |
-| Install routerd from a release archive | [Install](/docs/tutorials/install) |
-| Build a first router from YAML | [Getting started](/docs/tutorials/getting-started) |
-| Configure WAN-side acquisition and tunnels | [WAN-side services](/docs/tutorials/wan-side-services) |
-| Configure DHCP, DNS, RA, and NTP on LAN | [LAN-side services](/docs/tutorials/lan-side-services) |
-| Add a conservative firewall baseline | [Basic firewall](/docs/tutorials/basic-firewall) |
-| Start from NixOS | [NixOS getting started](/docs/tutorials/nixos-getting-started) |
-| Start from FreeBSD | [FreeBSD getting started](/docs/tutorials/freebsd-getting-started) |
+| リリースアーカイブから導入する | [インストール](/docs/tutorials/install) |
+| YAML から最初のルーターを作る | [はじめに](/docs/tutorials/getting-started) |
+| WAN 取得とトンネルを設定する | [WAN 側サービス](/docs/tutorials/wan-side-services) |
+| LAN の DHCP、DNS、RA、NTP を設定する | [LAN 側サービス](/docs/tutorials/lan-side-services) |
+| 保守的なファイアウォールの基本構成を追加する | [基本のファイアウォール](/docs/tutorials/basic-firewall) |
+| NixOS から始める | [NixOS で始める](/docs/tutorials/nixos-getting-started) |
+| FreeBSD から始める | [FreeBSD で始める](/docs/tutorials/freebsd-getting-started) |
 
-routerd is unusual because the same resource model can describe a virtual lab
-router between SDN/VNET segments and a diskless physical router on a mini PC.
-Use the tutorial that matches your first deployment, then reuse the same
-resources as the network grows.
+routerd の特徴は、同じリソースモデルで、仮想 SDN/VNET 間のルーターと、
+ディスクレスな物理 mini PC ルーターの両方を記述できることです。
+最初の導入に合う手順から始めれば、ネットワークが広がっても同じリソースを使い続けられます。

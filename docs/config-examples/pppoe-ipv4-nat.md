@@ -1,16 +1,15 @@
 ---
-title: PPPoE IPv4 NAT gateway
+title: PPPoE IPv4 NAT ルーター
 sidebar_position: 40
 ---
 
-# PPPoE IPv4 NAT gateway
+# PPPoE IPv4 NAT ルーター
 
-This example is for an access line where the physical WAN is Ethernet but the
-IPv4 internet session is PPPoE.
+物理 WAN は Ethernet で、IPv4 internet への出口を PPPoE セッションで作る例です。
 
-The complete, validated YAML is in `examples/example-pppoe-ipv4-nat.yaml`.
+完全な YAML は `examples/example-pppoe-ipv4-nat.yaml` にあります。
 
-## Topology
+## 構成図
 
 ```mermaid
 flowchart LR
@@ -27,30 +26,30 @@ flowchart LR
   router --- lan --- clients
 ```
 
-## Diagram map
+## 図の対応表
 
-| No. | Meaning | Main resources |
+| 番号 | 意味 | 主な resource |
 | --- | --- | --- |
-| [1] | Access line or ONU outside routerd management. | External to routerd |
-| [2] | Physical Ethernet interface that carries PPPoE. | `Interface/wan` |
-| [3] | PPPoE session and logical egress interface. | `PPPoESession/pppoe-home` |
-| [4] | Host deriving IPv4 forwarding and applying nftables NAT. | Derived host runtime, `NAT44Rule/lan-to-pppoe` |
-| [5] | LAN gateway and DHCPv4 segment. | `IPv4StaticAddress/lan-base`, `DHCPv4Server/lan-dhcpv4` |
-| [6] | Clients using PPPoE as their IPv4 internet path through NAT. | `DHCPv4Server/lan-dhcpv4` |
+| [1] | routerd の管理外にある access line / ONU。 | routerd 管理外 |
+| [2] | PPPoE を通す物理 Ethernet インターフェース。 | `Interface/wan` |
+| [3] | PPPoE セッションと論理 egress インターフェース。 | `PPPoESession/pppoe-home` |
+| [4] | IPv4 forwarding を導出し、nftables NAT を適用するホスト。 | Derived host runtime, `NAT44Rule/lan-to-pppoe` |
+| [5] | LAN ゲートウェイと DHCPv4 セグメント。 | `IPv4StaticAddress/lan-base`, `DHCPv4Server/lan-dhcpv4` |
+| [6] | NAT 経由で PPPoE を IPv4 internet 経路として使うクライアント。 | `DHCPv4Server/lan-dhcpv4` |
 
-## What this manages
+## この例で管理するもの
 
-| Area | routerd resources |
+| 領域 | routerd resource |
 | --- | --- |
-| PPPoE session | `PPPoESession/pppoe-home` |
-| LAN address and DHCPv4 | `IPv4StaticAddress/lan-base`, `DHCPv4Server/lan-dhcpv4` |
-| IPv4 internet access | `NAT44Rule/lan-to-pppoe` |
-| Filtering | `FirewallZone/*`, `FirewallPolicy/home` |
+| PPPoE セッション | `PPPoESession/pppoe-home` |
+| LAN アドレス / DHCPv4 | `IPv4StaticAddress/lan-base`, `DHCPv4Server/lan-dhcpv4` |
+| IPv4 internet 接続 | `NAT44Rule/lan-to-pppoe` |
+| フィルタリング | `FirewallZone/*`, `FirewallPolicy/home` |
 
-## Key config
+## 要点
 
 ```yaml
-# [3] Logical PPPoE interface created over the physical WAN.
+# [3] 物理 WAN 上に作る論理 PPPoE interface。
 - kind: PPPoESession
   metadata:
     name: pppoe-home
@@ -63,7 +62,7 @@ flowchart LR
     mru: 1454
     defaultRoute: true
 
-# [5] -> [3] LAN IPv4 is masqueraded toward the PPPoE session.
+# [5] -> [3] LAN IPv4 traffic を PPPoE session 側へ masquerade する。
 - kind: NAT44Rule
   metadata:
     name: lan-to-pppoe
@@ -74,7 +73,7 @@ flowchart LR
       - 192.168.40.0/24
 ```
 
-## Checks
+## 確認
 
 ```bash
 routerd validate --config examples/example-pppoe-ipv4-nat.yaml
@@ -84,8 +83,8 @@ ip link show ppp-home
 ip route show default
 ```
 
-## Common edits
+## よく変えるところ
 
-- Put the real PPPoE password in the referenced secret file, not in YAML.
-- Keep `mtu` and `mru` aligned with the ISP guidance.
-- Use `defaultRoute: false` when PPPoE is a backup path selected by route policy.
+- PPPoE のパスワードは YAML に直書きせず、参照先の secret ファイルに置きます。
+- `mtu` と `mru` は ISP の案内に合わせます。
+- PPPoE をバックアップ経路にする場合は `defaultRoute: false` にします。

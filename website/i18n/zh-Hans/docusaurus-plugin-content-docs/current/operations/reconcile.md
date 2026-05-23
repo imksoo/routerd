@@ -1,10 +1,11 @@
 ---
-title: Reconcile 与移除
+title: 调和（reconcile）与删除
 ---
 
-# Reconcile 与移除
+# 调和（reconcile）与删除
 
-routerd 会比较 YAML 声明的意图与主机当前状态。两者不一致时，routerd 会计算 plan，可以先用 dry-run 预览，再应用到主机。
+routerd 会比较 YAML 所声明的意图与主机的当前状态。
+若有差异，则生成计划（plan），必要时可先通过 dry-run 确认后再应用。
 
 ## 标准流程
 
@@ -15,31 +16,88 @@ routerd apply    --config router.yaml --once --dry-run
 routerd apply    --config router.yaml --once
 ```
 
-对远程路由器执行非 dry-run `apply` 前，请先确认管理路径（SSH、console、hypervisor console）不会被这次变更切断。
+对远程路由器执行正式 `apply` 前，请先确认管理路径（SSH、控制台、hypervisor 控制台）在变更后仍能保持连接。
 
-## 常驻模式
+## 守护进程模式
 
 ```bash
 routerd serve --config router.yaml
 ```
 
-在 serve 模式中，routerd 会响应 bus 上的事件，只重新评估受影响的 resource。输入包括 DHCPv6-PD renewal、health-check 结果、derived event，以及 inotify 检测到的配置变更。
+在 serve 模式下，routerd 会响应总线上的事件，只重新评估受影响范围的资源。
+输入来源包含 DHCPv6-PD 租约更新、健康检查结果、衍生事件，以及 inotify 检测到的配置变更。
 
-## Drift 检查
+控制器的 dry-run 标志依拥有范围单独生效。
+`--controller runtime-dry-run-ingress=false` 表示由 IngressService 控制器实际执行健康状态的选择，
+以及 IngressService 所衍生的 nftables DNAT/hairpin 规则的实际应用。
+独立的 `NAT44Rule` 与 `LocalServiceRedirect` 则继续通过
+`--controller runtime-dry-run-nat=false` 单独控制。
 
-routerd 不会把 status database 当成唯一真相。status store 会记录前一次 apply 观测到的内容，但 controller 在决定跳过工作前，也会检查自己负责的主机状态。
-例子包括 systemd unit 的 enabled/active 状态、dnsmasq 是否使用预期的配置文件运行、DHCPv4 lease 地址是否仍在接口上，以及受管理的 nftables table 是否存在于主机上。
+当配置中存在 `IngressService`、`PortForward`、NAT、BGP、静态路由或策略路由等需要转发的资源时，
+routerd 会自动推导所需的运行时 sysctl。
+`routerd apply --once` 会观测、计划并生成（render）衍生配置，但不会反映到主机。
+反映动作由 `routerd serve` 在控制器调和（reconcile）过程中逐步收敛完成。
+因此，一次性的 apply 仅用于配置验证与产物生成，
+守护进程与运行时内核的生命周期则由长时间运行的控制器所拥有。
 
-这在重启、手动修改失败，或 upgrade 中断后特别重要：status database 可能仍显示 “Applied”，但 OS 状态已经 drift。controller 应该把 OS 收敛回 YAML 声明的状态，而不是假设前一次 status row 仍然正确。
+## drift 确认
 
-## 受管理项的清理
+routerd 不以状态数据库作为唯一的事实依据。
+状态存储记录的是前次 apply 时的观测内容，但各控制器
+在决定是否跳过处理前，也会确认自己所管理的实际主机状态。
+例如，systemd unit 的 enabled/active 状态、dnsmasq 是否以预期的配置文件运行、
+DHCPv4 租约地址是否仍存在于接口上，以及受管理的 nftables 表是否存在于主机上。
 
-当 resource 从 YAML 消失时，拥有它的 controller 只会移除或停用自己拥有的 artifact。没有对应 `HealthCheck` resource 的旧 `routerd-healthcheck@*.service` unit 会被 disable 并移除。NAT44 没有任何规则时，会清空受管理的 `routerd_nat` table 或 pf anchor。`state: absent` 的 `generated service artifacts` 会移除 render 出来的 unit；只有当 unit 存在或仍为 enabled/active 时才会停止它。
+这在重新启动后、手动变更失败后，或升级中途中断后尤为重要。
+即使状态数据库显示为 Applied，OS 侧的状态可能已产生偏移。
+控制器不应直接信任前次的 status 记录，而应将 OS 状态收敛至 YAML 所声明的内容。
 
-Firewall rendering 会保留受管理的 nftables table，并在单个 `nft -f` batch 中重新加载。对 firewall zone interface set 与 client-policy MAC set 这类 named set，routerd 会先 destroy 受管理的 set，再重新定义，避免已移除的元素残留。正常 apply 不会 destroy 并重建整个 filter table。
+## 衍生资源
 
-## 移除
+部分主机对象不直接在 YAML 中编写，而是从较高层次的意图自动生成。
+例如 `routerd.service`、`routerd-healthcheck@*.service`、防火墙日志守护进程、
+DPI 辅助服务都是衍生的服务 unit。生成的资源可通过以下命令确认。
 
-routerd 只会删除能判定 ownership 的对象，也就是 routerd 先前创建或明确 adopt 的对象。它不会移除第三方配置或手动变更。
+```bash
+routerctl show derived-resources
+```
 
-目前不支持完整回滚到先前配置。包含删除的变更，请务必先执行 `routerd plan` 与 `routerd apply --dry-run`，确认删除清单后再应用。
+默认只显示从当前配置衍生的资源。
+不来自当前配置的旧 status 记录会隐藏，以避免看起来像是仍在运行的资源。
+清理旧状态数据库时，可加上 `--include-stale` 查看。
+
+若 YAML 中残留已删除或不支持的资源 Kind，routerd 不会静默忽略，
+而是直接让配置读取失败。
+
+## 受管理项目的清理
+
+当资源从 YAML 移除时，拥有该资源的控制器只会删除或停用自己所拥有的产物。
+已无对应 `HealthCheck` 的 `routerd-healthcheck@*.service` 会被停用并删除。
+NAT44 规则归零时，受管理的 `routerd_nat` 表或 pf anchor 会被清空。
+`state: absent` 的 `generated service artifacts` 会删除已生成的 unit，
+只在 unit 存在且仍处于 enabled/active 状态时才执行停止。
+
+若旧 status 记录属于当前 schema 中不存在的资源 Kind，
+可使用 `routerctl delete --force <kind>/<name>` 删除。
+同一 kind/name 存在于多个 API 组时，请加上 `--api-version <version>`，
+避免 routerd 误判删除目标。
+
+防火墙生成时，会保留受管理的 nftables 表，并以单次 `nft -f` 批量重新加载。
+防火墙 zone 的接口 set 与 client-policy 的 MAC set 等 named set，
+routerd 会先删除受管理的 set 再重新定义，避免已移除的元素残留。
+一般的 apply 不会删除并重建整个 filter 表。
+
+## 删除
+
+routerd 只删除可确认拥有权的产物（即 routerd 先前创建或明确接管的对象）。
+不会触及第三方配置或手动变更。
+
+目前不支持完整回滚至过去的配置。
+包含删除的变更，请务必先执行 `routerd plan` 与 `routerd apply --dry-run`
+确认删除清单后再应用。
+
+## 相关项目
+
+- [状态与拥有权](../concepts/state-and-ownership.md)
+- [应用与生成（render）](../concepts/apply-and-render.md)
+- [故障排查](../how-to/troubleshooting.md)

@@ -1,24 +1,25 @@
 ---
-title: Basic NAT and firewall policy
+title: 基本の NAT とファイアウォールポリシー
 sidebar_position: 6
 ---
 
-# Basic NAT and firewall policy
+# 基本の NAT とファイアウォールポリシー
 
-routerd applies IPv4 NAPT (NAT44) and a stateful firewall to a Linux router. This tutorial shows the minimum resources needed to put both in place on a freshly installed host.
+routerd は、Linux ルーター上で IPv4 NAPT (NAT44) と stateful firewall を適用します。
+このチュートリアルでは、初期構成のホストに両方を入れる最小手順を示します。
 
-## Scenario
+## 想定する構成
 
-The router has:
+ルーターは次の構成になっているものとします。
 
-- An upstream interface (`wan`) carrying IPv4 connectivity (any of: native dual-stack, PPPoE, or DS-Lite).
-- A LAN interface (`lan`) serving local clients with private addresses.
-- Optionally, a management interface (`mgmt`).
+- IPv4 が乗っている上流 interface (`wan`)。native dual-stack / PPPoE / DS-Lite のいずれでもかまいません。
+- LAN 内クライアントに private アドレスを配る LAN interface (`lan`)。
+- 任意で、管理 interface (`mgmt`)。
 
-The goal is to:
+ここでの目的は次の 2 つです。
 
-- Masquerade outbound IPv4 from the LAN.
-- Apply a sane default firewall posture (WAN cannot reach LAN, LAN can reach WAN, management can reach the router itself).
+- LAN からの外向き IPv4 を masquerade する。
+- 健全な firewall の既定状態を適用する (WAN は LAN に届かない、LAN は WAN に届く、management はルーター自身に届く)。
 
 ## NAT44
 
@@ -34,17 +35,21 @@ The goal is to:
     masquerade: true
 ```
 
-routerd renders the rule into the `routerd_nat` nftables table. The same shape works for plain DHCP-acquired uplinks, PPPoE pseudo-interfaces, and DS-Lite tunnels — only `outboundInterface` changes.
+routerd は、`routerd_nat` nftables テーブルに rule を生成します。
+DHCP 取得回線、PPPoE 仮想 interface、DS-Lite tunnel のいずれでも書き方は同じで、`outboundInterface` だけを変えます。
 
-## Conntrack observation
+## conntrack 観測
 
-routerd consumes conntrack so the Web Console and `routerctl connections` can show live flows. Where `/proc/net/nf_conntrack` is missing, routerd falls back to a sysctl-derived summary; it does not stop on this condition, but the per-flow detail will be unavailable.
+routerd は conntrack を読み、Web 管理画面と `routerctl connections` でライブフローを表示します。
+`/proc/net/nf_conntrack` がない環境では、sysctl 由来のサマリに縮退します。失敗にはせず、観測できる範囲だけを表示します。
 
-## Firewall kinds
+## Firewall Kind
 
-`FirewallZone`, `FirewallPolicy`, and `FirewallRule` describe a stateful filter. routerd renders them into the `inet routerd_filter` nftables table.
+`FirewallZone`、`FirewallPolicy`、`FirewallRule` が stateful filter を表現します。
+routerd は、これらを `inet routerd_filter` nftables テーブルに生成します。
 
-The roles (`untrust`, `trust`, `mgmt`) provide the implicit accept/drop matrix. routerd injects internal openings for managed services (DHCP, DNS, DS-Lite control traffic, etc.) so they keep working when the firewall is on.
+役割 (`untrust`、`trust`、`mgmt`) が、暗黙の accept / drop マトリクスを提供します。
+DHCP / DNS / DS-Lite 制御のような管理対象サービスに必要な穴は、routerd が自動で開けます。
 
 ```yaml
 - apiVersion: firewall.routerd.net/v1alpha1
@@ -69,9 +74,9 @@ The roles (`untrust`, `trust`, `mgmt`) provide the implicit accept/drop matrix. 
   spec: {}
 ```
 
-For exceptions to the implicit matrix, use the [firewall rule guide](../how-to/firewall-rule.md).
+例外を入れたいときは [firewall ルールのガイド](../how-to/firewall-rule.md) を参照してください。
 
-## Validation
+## 確認
 
 ```sh
 routerctl describe NAT44Rule/lan-to-wan
@@ -80,8 +85,8 @@ nft list table inet routerd_filter
 nft list table ip routerd_nat
 ```
 
-## See also
+## 関連項目
 
-- [Define firewall zones](../how-to/firewall-zone.md)
-- [Add firewall exceptions](../how-to/firewall-rule.md)
-- [Firewall concept](../concepts/firewall.md)
+- [Firewall ゾーンを定義する](../how-to/firewall-zone.md)
+- [Firewall 例外を追加する](../how-to/firewall-rule.md)
+- [Firewall コンセプト](../concepts/firewall.md)

@@ -1,37 +1,37 @@
 ---
-title: Design philosophy
+title: 設計思想
 slug: /concepts/design-philosophy
 sidebar_position: 2
 ---
 
-# Design philosophy
+# 設計思想
 
-routerd treats a router as a set of stateful resources, not a pile of configuration files. This page explains the principles behind the implementation choices.
+routerd は、ルーターを「設定ファイルの集まり」ではなく「状態を持つリソースの集合」として扱います。このページでは、実装上の判断基準を説明します。
 
-## YAML is the centre of intent
+## YAML を意図の中心に置く
 
-The YAML configuration expresses the router's intent. routerd compares that intent to the host's current state and applies only the necessary diff. The configuration is something you can re-read, not a memory of the steps you ran.
+YAML はルーターの意図を表します。routerd は、YAML とホストの現在状態を比べ、必要な差分だけを適用します。作業手順の記憶ではなく、読み返せる定義を重視します。
 
-## Stateful work belongs in dedicated daemons
+## 状態を持つ処理は専用デーモンに分ける
 
-DHCPv6-PD, DHCPv4, PPPoE, and health checks have timers, recover from restarts, and produce event histories. Squeezing them into one-shot commands makes lease renewals and incident debugging unstable.
+DHCPv6-PD、DHCPv4、PPPoE、ヘルスチェックのような処理は、タイマー、再起動後の復元、イベント履歴を持ちます。これらを一度きりのコマンドに押し込むと、リース更新や障害時の観測が不安定になります。
 
-routerd runs that stateful work as small dedicated daemons. Each daemon persists its lease or internal state to a file and exposes its status over a Unix domain socket. The main routerd process consumes that status to reconcile downstream resources.
+そこで routerd は、状態を持つ処理を小さな専用デーモンとして動かします。デーモンはリースや内部状態をファイルに保存し、Unix ドメインソケットで状態を公開します。routerd 本体はその状態を読み、下流のリソースを調整（リコンサイル）します。
 
-## Do not announce broken IPv6 to the LAN
+## 壊れた IPv6 を LAN に出さない
 
-If DHCPv6-PD has been lost but the router keeps emitting RA, AAAA records, and LAN addresses derived from the old prefix, clients see "IPv6 looks present but does not work." routerd is designed to **stop** announcing IPv6 to downstream when the prefix's status cannot be confirmed.
+DHCPv6-PD が失われているのに、古いプレフィックスの RA・AAAA・LAN アドレスを出し続けると、利用者からは「IPv6 があるように見えるのに通信できない」状態になります。routerd は、委任されたプレフィックスの状態を確認できないとき、下流の IPv6 提供を止める設計を取ります。
 
-## Compose small parts with events
+## 小さな部品をイベントでつなぐ
 
-routerd does not handle the entire router in one big procedure. It connects small controllers with events. When DHCPv6-PD becomes `Bound`, the LAN address, RA, DHCPv6 server, DNS answers, DS-Lite, and IPv4 routes converge in turn.
+routerd は、ひとつの大きな手続きでルーター全体を処理するのではなく、小さなコントローラーをイベントでつなぎます。たとえば DHCPv6-PD が Bound になると、LAN アドレス、RA、DHCPv6 サーバー、DNS 応答、DS-Lite、IPv4 経路へと順に状態が伝わります。
 
-This shape makes it much easier to find which step stopped progressing.
+この形にすると、どの段階で止まったかを見つけやすくなります。
 
-## Confine OS differences
+## OS 差分は閉じ込める
 
-The same intent maps to different host-level expressions on Linux, NixOS, and FreeBSD. routerd confines those differences inside `pkg/platform` feature flags and per-OS renderers. The user-visible resource names stay as similar as possible across platforms.
+Ubuntu、NixOS、FreeBSD では、同じ意図でもホスト側の表現が異なります。routerd は、`pkg/platform` の機能フラグと OS 別の生成器で、この差分を閉じ込めます。利用者向けのリソース名は、できるだけ同じ形に保ちます。
 
-## Prefer correct names over compatibility (for now)
+## いまは互換性よりも正しい名前を優先する
 
-routerd is at the v1alpha1 stage. We previously renamed the DHCP-related kinds and binaries to align with RFC notation (`DHCPv4*` / `DHCPv6*`) without keeping aliases. At the pre-release stage, we prioritise avoiding wrong names that would otherwise live forever.
+現在は出荷前の v1alpha1 です。過去には、DHCP 系の Kind 名とバイナリ名を、互換用の別名を残さずに RFC 表記（`DHCPv4*` / `DHCPv6*`）へ揃え直しました。出荷前のこの段階では、将来ずっと残ってしまう誤った名前を避けることを優先します。

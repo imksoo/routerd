@@ -1,16 +1,16 @@
 ---
-title: Basic IPv4 NAT gateway
+title: 基本的な IPv4 NAT ルーター
 sidebar_position: 10
 ---
 
-# Basic IPv4 NAT gateway
+# 基本的な IPv4 NAT ルーター
 
-This is the smallest home-router shape that gives LAN clients IPv4 internet
-access through a DHCP-acquired WAN address.
+LAN クライアントが、DHCP で取得した WAN 側 IPv4 アドレスを使ってインターネットに出るための、
+最小構成に近いホームルーターの例です。
 
-The complete, validated YAML is in `examples/example-basic-ipv4-nat.yaml`.
+完全な検証済み YAML は `examples/example-basic-ipv4-nat.yaml` にあります。
 
-## Topology
+## 構成図
 
 ```mermaid
 flowchart LR
@@ -24,34 +24,34 @@ flowchart LR
   internet --- upstream --- wan --- router --- lan --- clients
 ```
 
-## Diagram map
+## 図の対応表
 
-| No. | Meaning | Main resources |
+| 番号 | 意味 | 主なリソース |
 | --- | --- | --- |
-| [1] | Upstream network that gives the router a WAN IPv4 lease. | External to routerd |
-| [2] | Physical WAN interface. routerd runs a DHCPv4 client here. | `Interface/wan`, `DHCPv4Client/wan-dhcpv4` |
-| [3] | Linux host applying derived forwarding sysctls and nftables rules. | Derived host runtime |
-| [4] | LAN gateway address owned by routerd. | `Interface/lan`, `IPv4StaticAddress/lan-base` |
-| [5] | DHCPv4 clients using the router as gateway and DNS. | `DHCPv4Server/lan-dhcpv4` |
+| [1] | WAN 側 IPv4 リースを配る上流ネットワーク。 | routerd 管理外 |
+| [2] | 物理 WAN インターフェース。ここで DHCPv4 クライアントを動かす。 | `Interface/wan`, `DHCPv4Client/wan-dhcpv4` |
+| [3] | 派生した forwarding sysctl と nftables ルールを適用する Linux ホスト。 | Derived host runtime |
+| [4] | routerd が持つ LAN ゲートウェイアドレス。 | `Interface/lan`, `IPv4StaticAddress/lan-base` |
+| [5] | ルーターをゲートウェイ / DNS として使う LAN クライアント。 | `DHCPv4Server/lan-dhcpv4` |
 
-## What this manages
+## この例で管理するもの
 
-| Area | routerd resources |
+| 領域 | routerd リソース |
 | --- | --- |
-| WAN address | `Interface/wan`, `DHCPv4Client/wan-dhcpv4` |
-| LAN address | `Interface/lan`, `IPv4StaticAddress/lan-base` |
+| WAN アドレス | `Interface/wan`, `DHCPv4Client/wan-dhcpv4` |
+| LAN アドレス | `Interface/lan`, `IPv4StaticAddress/lan-base` |
 | LAN DHCPv4 | `DHCPv4Server/lan-dhcpv4` |
-| IPv4 internet access | `NAT44Rule/lan-to-wan` |
-| Basic filtering | `FirewallZone/wan`, `FirewallZone/lan`, `FirewallPolicy/home` |
+| IPv4 インターネット接続 | `NAT44Rule/lan-to-wan` |
+| 基本的なフィルター | `FirewallZone/wan`, `FirewallZone/lan`, `FirewallPolicy/home` |
 
-This example leaves DNS resolution simple: DHCPv4 clients receive the router's
-LAN address as their DNS server. Add a `DNSResolver` and `DNSZone` once the basic
-routing path is working.
+この例では DNS をできるだけ単純にしています。DHCPv4 クライアントには、ルーターの
+LAN アドレスを DNS サーバーとして配ります。基本的なルーティングが動いたあとで、
+必要に応じて `DNSResolver` と `DNSZone` を追加してください。
 
-## Key config
+## 設定の要点
 
 ```yaml
-# [2] WAN address is learned from the upstream network.
+# [2] WAN address は上流 network から DHCPv4 で取得する。
 - apiVersion: net.routerd.net/v1alpha1
   kind: DHCPv4Client
   metadata:
@@ -59,7 +59,7 @@ routing path is working.
   spec:
     interface: wan
 
-# [4] LAN gateway address owned by routerd.
+# [4] routerd が LAN gateway address を持つ。
 - apiVersion: net.routerd.net/v1alpha1
   kind: IPv4StaticAddress
   metadata:
@@ -68,7 +68,7 @@ routing path is working.
     interface: lan
     address: 192.168.10.1/24
 
-# [5] LAN clients receive addresses, gateway, DNS, and search domain.
+# [5] LAN client へ address、gateway、DNS、search domain を配る。
 - apiVersion: net.routerd.net/v1alpha1
   kind: DHCPv4Server
   metadata:
@@ -86,7 +86,7 @@ routing path is working.
       - resource: IPv4StaticAddress/lan-base
         field: address
 
-# [2] -> [5] LAN IPv4 is masqueraded when it exits through the WAN.
+# [2] -> [5] LAN IPv4 traffic は WAN に出るとき masquerade する。
 - apiVersion: net.routerd.net/v1alpha1
   kind: NAT44Rule
   metadata:
@@ -98,11 +98,11 @@ routing path is working.
       - 192.168.10.0/24
 ```
 
-`NAT44Rule` renders into routerd's nftables NAT table. The firewall resources
-put the WAN interface in an `untrust` zone and the LAN interface in a `trust`
-zone.
+`NAT44Rule` は routerd の nftables NAT テーブルに反映されます。ファイアウォールの
+リソースでは、WAN インターフェースを `untrust` ゾーン、LAN インターフェースを
+`trust` ゾーンに入れます。
 
-## Apply sequence
+## 適用手順
 
 ```bash
 cp examples/example-basic-ipv4-nat.yaml router.yaml
@@ -111,14 +111,14 @@ routerd plan --config router.yaml
 routerd apply --config router.yaml --once --dry-run
 ```
 
-Only apply for real after confirming that management access is not on the LAN
-interface being readdressed, or that you have console access.
+管理アクセスが、アドレスを変更しようとしている LAN インターフェースに依存していないこと、
+あるいはコンソールアクセスがあることを確認してから適用します。
 
 ```bash
 routerd apply --config router.yaml --once
 ```
 
-## Checks
+## 確認
 
 ```bash
 routerctl status
@@ -129,7 +129,7 @@ nft list table ip routerd_nat
 nft list table inet routerd_filter
 ```
 
-From a LAN client:
+LAN クライアント側では次を確認します。
 
 ```bash
 ip route
@@ -137,8 +137,8 @@ ping 192.168.10.1
 curl https://1.1.1.1/
 ```
 
-## Common edits
+## よく変える場所
 
-- Change `ens18` and `ens19` to the host's real interface names.
-- Change `192.168.10.0/24` when it overlaps with an upstream, VPN, or management network.
-- Add a `DNSResolver` before advertising the router as DNS if the host does not already answer DNS on the LAN address.
+- `ens18` と `ens19` を実際のインターフェース名に変更する。
+- 上流、VPN、管理ネットワークと重なる場合は `192.168.10.0/24` を変更する。
+- ルーターを DNS サーバーとして配る前に、必要なら `DNSResolver` を追加する。

@@ -1,38 +1,39 @@
 ---
-title: LAN-side services
+title: LAN 側サービス
 sidebar_position: 5
 ---
 
-# LAN-side services
+# LAN 側サービス
 
-This page introduces the routerd resources that handle the LAN side of a router: addresses on the inside interface, DHCPv4 / DHCPv6 leases, IPv6 Router Advertisement, and the local DNS resolver.
+このページでは、ルーターの LAN 側を扱う routerd リソースを紹介します。
+LAN 側のリソースは、内側インターフェースのアドレス、DHCPv4 / DHCPv6 の配布、IPv6 Router Advertisement、ローカル DNS リゾルバといった役割を担います。
 
-The companion page on the [WAN side](./wan-side-services.md) covers how the router gets its upstream addresses; this page is what the router publishes to the inside.
+WAN 側 (上流からのアドレス取得) は [WAN 側サービス](./wan-side-services.md) を参照してください。
 
-## Service split
+## サービス分担
 
-routerd splits LAN service across two daemons with clear boundaries:
+routerd は LAN 側サービスを 2 つのデーモンに明確に分けます。
 
-- **dnsmasq** handles DHCPv4, DHCPv6, DHCP relay, and IPv6 Router Advertisement.
-- **`routerd-dns-resolver`** handles DNS zones, conditional forwarding, cache, and query logging.
+- **dnsmasq** が DHCPv4、DHCPv6、DHCP relay、IPv6 Router Advertisement を担当します。
+- **`routerd-dns-resolver`** が DNS ゾーン、条件付き転送、キャッシュ、クエリログを担当します。
 
-Keeping DHCP next to dnsmasq avoids reimplementing a battle-tested DHCP server. Keeping DNS in `routerd-dns-resolver` lets us model resolver policy as typed routerd resources (`DNSResolver`, `DNSZone`).
+実績のある dnsmasq をそのまま DHCP に使い、DNS のポリシーは型付き routerd リソース (`DNSResolver`、`DNSZone`) で表現する、という分担です。
 
-## Summary table
+## 一覧
 
-| Concern | Resource | Daemon backing it |
+| 役割 | リソース | 担当デーモン |
 | --- | --- | --- |
-| LAN interface address | `IPv4StaticAddress`, `IPv6DelegatedAddress` | (kernel) |
-| DHCPv4 scope | `DHCPv4Server` | dnsmasq |
-| DHCPv4 reservation | `DHCPv4Reservation` | dnsmasq |
+| LAN インターフェースのアドレス | `IPv4StaticAddress`、`IPv6DelegatedAddress` | (kernel) |
+| DHCPv4 スコープ | `DHCPv4Server` | dnsmasq |
+| DHCPv4 固定割り当て | `DHCPv4Reservation` | dnsmasq |
 | DHCPv6 (stateless / stateful) | `DHCPv6Server` | dnsmasq |
 | IPv6 Router Advertisement | `IPv6RouterAdvertisement` | dnsmasq (RA mode) |
-| LAN time server advertisement | `DHCPv4Server`, `DHCPv6Server` | dnsmasq |
-| DNS zone (local authoritative) | `DNSZone` | `routerd-dns-resolver` |
-| DNS resolver listener | `DNSResolver` | `routerd-dns-resolver` |
-| DHCP lease event relay | (built-in) | `routerd-dhcp-event-relay` |
+| LAN 側の時刻サーバー広告 | `DHCPv4Server`、`DHCPv6Server` | dnsmasq |
+| DNS ゾーン (ローカル権威) | `DNSZone` | `routerd-dns-resolver` |
+| DNS リゾルバの待ち受け | `DNSResolver` | `routerd-dns-resolver` |
+| DHCP リースイベントの中継 | (組み込み) | `routerd-dhcp-event-relay` |
 
-## DHCPv4 scope
+## DHCPv4 スコープ
 
 ```yaml
 - apiVersion: net.routerd.net/v1alpha1
@@ -60,10 +61,10 @@ Keeping DHCP next to dnsmasq avoids reimplementing a battle-tested DHCP server. 
     stickyHoldDays: 3
 ```
 
-Use a separate range for automatic clients and reserve a smaller block for fixed-address devices if it makes operations clearer.
-`stickyHoldDays` is optional. When it is greater than zero, routerd keeps a short DHCP lease history and renders temporary dnsmasq `dhcp-host` holds after a lease is released or expires, so the same MAC can reclaim the same address during the hold window and the address is not handed to another client immediately.
+自動割り当てするクライアント用と固定アドレス用で範囲を分けると、運用が読みやすくなります。
+`stickyHoldDays` は任意の項目です。0 より大きい値を指定すると、routerd は DHCP リース履歴を短期間保持し、リースの解放または期限切れの後に一時的な dnsmasq の `dhcp-host` hold を生成します。同じ MAC は hold 期間内に同じアドレスを再取得でき、そのアドレスはすぐには別のクライアントへ割り当てられません。
 
-## Static DHCPv4 reservation
+## 静的 DHCPv4 予約
 
 ```yaml
 - apiVersion: net.routerd.net/v1alpha1
@@ -77,15 +78,23 @@ Use a separate range for automatic clients and reserve a smaller block for fixed
     ipAddress: 192.0.2.10
 ```
 
-`DHCPv4Reservation` renders to a dnsmasq host reservation entry. It also gives the Web Console and event log a stable resource name for the device, independent of its current IP.
+`DHCPv4Reservation` は dnsmasq の host reservation エントリに展開されます。
+Web 管理画面と event log には、デバイスの現在の IP に依存しない安定したリソース名で現れます。
 
-On FreeBSD, routerd keeps the dnsmasq lease file under `/var/db/routerd/dnsmasq` instead of `/var/run`. The rc.d script creates both the runtime directory and the lease directory before starting dnsmasq. During `routerd apply`, routerd runs `dnsmasq --test` before restarting the service and renders the pf exceptions required for DHCP, DHCPv6, Router Advertisement, and DNS traffic.
+FreeBSD では、dnsmasq のリースファイルを `/var/db/routerd/dnsmasq` 配下に置きます。
+`/var/run` だけに置くと、再起動でリースが失われるためです。
+rc.d スクリプトは、起動前にランタイムディレクトリとリースディレクトリを作成します。
+`routerd apply` は、dnsmasq を再起動する前に `dnsmasq --test` を実行します。
+あわせて、DHCP、DHCPv6、RA、DNS に必要な pf の穴も自動で生成します。
 
-## IPv6 RA and DHCPv6
+## IPv6 RA と DHCPv6
 
-For an IPv6 LAN, publish RDNSS in Router Advertisement so Android clients can pick up the resolver (Android does not use DHCPv6 for DNS configuration). For Windows clients you usually also need a DHCPv6 stateless server.
+IPv6 LAN では、Router Advertisement に RDNSS を含めて配布してください。
+Android は DHCPv6 で DNS を取得しないため、RDNSS が必要です。
+Windows クライアントには、加えて DHCPv6 stateless サーバーも用意します。
 
-Router Advertisement does not carry a standard NTP server option. Use DHCPv4 option 42 and DHCPv6 option 31 (SNTP) when the router should advertise itself as the LAN time source.
+Router Advertisement には、標準の NTP サーバー広告がありません。
+ルーター自身を LAN の時刻参照先として配る場合は、DHCPv4 option 42 と DHCPv6 option 31 (SNTP) を使います。
 
 ```yaml
 - apiVersion: net.routerd.net/v1alpha1
@@ -125,10 +134,11 @@ Router Advertisement does not carry a standard NTP server option. Use DHCPv4 opt
         field: zone
 ```
 
-Use `mode: stateful` or `mode: both` only when DHCPv6 address assignment (in addition to SLAAC) is required.
-Use `domainFrom`, `dnsslFrom`, and `domainSearchFrom` when the LAN DNS suffix should follow a `DNSZone` resource. This keeps the DHCPv4 domain-name option, RA DNSSL option, and DHCPv6 domain-search option tied to the same local zone without repeating the domain string.
+DHCPv6 でアドレス自体も配布したい場合は、`mode: stateful` または `mode: both` を使います。
+LAN の DNS suffix を `DNSZone` に合わせたい場合は、`domainFrom`、`dnsslFrom`、`domainSearchFrom` を使います。
+DHCPv4 の domain-name、RA の DNSSL、DHCPv6 の domain-search がいずれも同じローカルゾーンを参照するため、ドメイン文字列を重複して書かずに済みます。
 
-## Local DNS zone
+## ローカル DNS ゾーン
 
 ```yaml
 - apiVersion: net.routerd.net/v1alpha1
@@ -154,10 +164,11 @@ Use `domainFrom`, `dnsslFrom`, and `domainSearchFrom` when the LAN DNS suffix sh
       ttl: 60
 ```
 
-Manual records are placed under `records:`. Records derived from DHCP leases come from `dhcpDerived.sources`. The two are merged at lookup time.
-When DHCP-derived hostnames are relative names, they are published under the zone itself, so `hostnameSuffix` is usually not needed.
+固定レコードは `records:` に、DHCP リース由来のレコードは `dhcpDerived.sources` に書きます。
+両者は問い合わせ時に統合されます。
+DHCP 由来の hostname が相対名の場合は DNSZone 自身の下に公開されるため、通常は `hostnameSuffix` を書く必要はありません。
 
-## DNS resolver listener
+## DNS リゾルバの待ち受け
 
 ```yaml
 - apiVersion: net.routerd.net/v1alpha1
@@ -193,30 +204,31 @@ When DHCP-derived hostnames are relative names, they are published under the zon
       maxEntries: 10000
 ```
 
-The resolver listens on every address routerd derives from the referenced status fields. New IPv6 addresses (e.g. on PD renewal) are picked up without a restart.
+リゾルバは、参照先の status から得られるすべてのアドレスで待ち受けます。
+PD 更新などで IPv6 アドレスが増えても、再起動なしで追従します。
 
-## Verification
+## 動作確認
 
 ```sh
-# Confirm the LAN interface has both v4 and v6
+# LAN インターフェースに v4 / v6 が乗っていることを確認
 routerctl describe Interface/lan
 
-# Watch DHCP events live
+# DHCP イベントをリアルタイムに tail
 routerctl events --topic 'routerd.dhcp.lease.**' --resource DHCPv4Server/lan-dhcpv4
 
-# Resolve a name through the local resolver
+# ローカルリゾルバで名前解決
 dig @<lan-ip> router.lan.example.org
 dig @<lan-ip> example.com
 ```
 
-## Operational notes
+## 運用上のヒント
 
-- Begin with `routerctl plan` and `--dry-run`. Only enable the real LAN listener after the management path and a known rollback are ready.
-- If you replace dnsmasq leases manually, restart `routerd-dhcp-event-relay` so the in-memory state catches up. Prefer changing the lease through routerd.
-- Keep upstream public resolvers as a fallback: `routerd-dns-resolver` will demote a forwarder that fails health checks but only if a working alternative exists.
+- 最初は `routerctl plan` と `--dry-run` から始めます。本番の LAN 待ち受けを有効化するのは、管理経路と既知の rollback 経路を確保した後にしてください。
+- dnsmasq のリースを手で書き換えた場合は、`routerd-dhcp-event-relay` を再起動して in-memory state を追従させます。リースの変更は、できる限り routerd 経由で行ってください。
+- 公共 DNS はフォールバックとして残してください。`routerd-dns-resolver` は health check に失敗した forwarder を降格しますが、これは健全な代替がない場合に限ります。
 
-## See also
+## 関連項目
 
-- [WAN-side services](./wan-side-services.md)
-- [Local DNS zones](../how-to/dns-local-zone.md)
-- [Private DNS upstreams](../how-to/dns-private-upstream.md)
+- [WAN 側サービス](./wan-side-services.md)
+- [ローカル DNS ゾーン](../how-to/dns-local-zone.md)
+- [専用 DNS upstream](../how-to/dns-private-upstream.md)

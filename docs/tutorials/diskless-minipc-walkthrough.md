@@ -1,45 +1,47 @@
 ---
-title: Diskless mini PC walkthrough
+title: ディスクレス mini PC チュートリアル
 ---
 
-# Diskless mini PC walkthrough
+# ディスクレス mini PC チュートリアル
 
-This tutorial turns a small x86 mini PC into a router without installing an OS
-to its internal disk. The router boots the routerd live ISO, stores
-configuration on USB, buffers logs in RAM, and flushes a compact archive to USB
-once per day.
+このチュートリアルでは、小型 x86 mini PC を、内蔵ディスクへ OS を導入せずに
+ルーター化します。
+routerd ライブ ISO から起動し、設定を USB に保存します。
+ログは RAM に一時保存し、1 日 1 回だけ圧縮アーカイブを USB へ書き出します。
 
-![Diskless mini PC flow](/img/routerd-diskless-minipc.svg)
+![ディスクレス mini PC の流れ](/img/routerd-diskless-minipc.svg)
 
-## What you need
+## 用意するもの
 
-- A mini PC with at least two network interfaces.
-- A USB stick for routerd persistence.
-- The latest `routerd-live.iso`.
-- Console access. On Proxmox VE, `qm terminal` works through the serial console.
-- A WAN network that can provide DHCPv4, or a static WAN address.
-- A LAN switch or isolated test bridge.
+- ネットワークインターフェースを 2 つ以上持つ mini PC
+- routerd 永続化用の USB メモリー
+- 最新の `routerd-live.iso`
+- コンソールアクセス
+- DHCPv4 または静的アドレスを使える WAN
+- LAN スイッチまたは隔離されたテストブリッジ
 
-## 1. Prepare the USB stick
+## 1. USB メモリーを準備する
 
-Create one partition and format it with a filesystem the live ISO can mount.
-`ext4` is the best default. `vfat` and `exfat` also work for simple removable
-media. Label it `ROUTERD` so the ISO can find it automatically.
-FAT32 is reported by `blkid` as `vfat`; it is supported, but `ext4` is better
-for a USB stick that is dedicated to routerd.
+パーティションを 1 つ作り、ライブ ISO がマウントできるファイルシステムで
+フォーマットします。
+既定では `ext4` を推奨します。
+単純なリムーバブルメディアなら `vfat` と `exfat` も使えます。
+ISO が自動検出できるように、ラベルを `ROUTERD` にします。
+FAT32 は `blkid` では通常 `vfat` として表示されます。
+routerd 専用の USB メモリーなら、`ext4` が扱いやすいです。
 
-Example from a Linux workstation:
+Linux 端末での例を示します。
 
 ```sh
 sudo mkfs.ext4 -L ROUTERD /dev/sdX1
 ```
 
-Replace `/dev/sdX1` with the actual USB partition. Do not format the wrong
-device.
+`/dev/sdX1` は、実際の USB パーティションに置き換えてください。
+誤ったデバイスをフォーマットしないように注意してください。
 
-## 2. Boot the live ISO
+## 2. ライブ ISO を起動する
 
-Download the fixed latest URL:
+固定 URL から取得します。
 
 ```sh
 curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-live.iso
@@ -47,10 +49,10 @@ curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-live
 sha256sum -c routerd-live.iso.sha256
 ```
 
-Boot the mini PC from the ISO. The same image works on a video console and a
-serial console.
+mini PC を ISO から起動します。
+同じイメージで、ビデオコンソールとシリアルコンソールの両方を使えます。
 
-For Proxmox VE:
+Proxmox VE での例を示します。
 
 ```sh
 qm create 200 \
@@ -68,24 +70,25 @@ qm start 200
 qm terminal 200
 ```
 
-Use an isolated LAN bridge for early DHCP and RA testing.
+DHCP や RA の初期試験では、隔離された LAN ブリッジを使います。
 
 ![routerd live boot menu](/img/iso-boot/iso-boot-01-grub.png)
 
-The ISO enables both the video console and the serial console.
-On Proxmox VE, the interactive wizard is normally easier to read through
-`qm terminal`; the VGA screenshots are useful for boot evidence, while the
-serial transcript below shows the actual inputs and results.
+ISO は、ビデオコンソールとシリアルコンソールの両方を有効にします。
+Proxmox VE では、対話式ウィザードは通常 `qm terminal` の方が読みやすいです。
+VGA の画面キャプチャは起動の証跡として使い、実際の入力と結果は下の
+シリアルコンソールログで確認します。
 
 ![Alpine boot messages](/img/iso-boot/iso-boot-02-alpine-boot.png)
 
-## 3. Run the wizard
+## 3. ウィザードを実行する
 
-Log in as `root`. The live ISO starts the setup wizard.
+`root` でログインすると、ライブ ISO が初期設定ウィザードを起動します。
 
 ![routerd live login and message of the day](/img/iso-boot/iso-boot-03-login-motd.png)
 
-The serial console should show the live ISO message and the wizard prompt:
+シリアルコンソールでは、ライブ ISO の案内とウィザードの開始が次のように
+表示されます。
 
 ```text
 Welcome to Alpine Linux 3.23
@@ -106,22 +109,22 @@ Available interfaces:
   - eth1
 ```
 
-The wizard asks for:
+ウィザードは次を確認します。
 
-- router name
-- WAN interface
-- WAN IPv4 mode
-- LAN interface
-- LAN address
-- DHCPv4, DNS, NTP, RA, firewall, and NAT44 choices
-- management placement
-- USB persistence
+- ルーター名
+- WAN インターフェース
+- WAN IPv4 モード
+- LAN インターフェース
+- LAN アドレス
+- DHCPv4、DNS、NTP、RA、firewall、NAT44
+- 管理経路の置き場所
+- USB 永続化
 
 ![WAN setup in the routerd live wizard](/img/iso-boot/iso-boot-04-wizard-wan.png)
 
 ![LAN setup in the routerd live wizard](/img/iso-boot/iso-boot-05-wizard-lan.png)
 
-This is the same run captured from the serial console:
+実機検証時のシリアルコンソールログを次に示します。
 
 ```text
 Router name [routerd-router]: routerd-live-router-test
@@ -146,30 +149,31 @@ generated candidate config: /usr/local/etc/routerd/router.yaml.configure
 Install this config as router.yaml? (yes/no) [no]: yes
 ```
 
-When asked about USB persistence, choose `yes` and select the USB partition.
-If the partition is labeled `ROUTERD`, it should be listed automatically.
+USB 永続化を聞かれたら `yes` を選び、USB パーティションを指定します。
+パーティションに `ROUTERD` ラベルが付いていれば、自動的に候補へ表示されます。
 
-Enable the daily USB flush job unless you are only testing. The default log
-buffer is 100 MiB under `/run/routerd/logs`.
+短時間の試験でなければ、1 日 1 回の USB 書き出しジョブを有効にします。
+既定のログバッファーは `/run/routerd/logs` に置かれる 100 MiB です。
 
-The live helper detects `ext4`, `vfat`, and `exfat` with `blkid`. It mounts USB
-persistence with `async,noatime` by default to reduce writes. If you need
-synchronous writes for a specific test, add `routerd.usb_mount=sync` to the
-kernel command line.
+live helper は、`blkid` で `ext4`、`vfat`、`exfat` を判定します。
+USB 永続化は、USB への書き込みを減らすために、既定で `async,noatime` として
+マウントします。
+特定の試験で同期書き込みが必要な場合だけ、kernel command line に
+`routerd.usb_mount=sync` を追加します。
 
-The selected USB partition is mounted at `/media/routerd-usb`. The saved
-configuration path is `/media/routerd-usb/routerd/router.yaml`. It is not
-`/mnt/routerd/router.yaml`.
+選択した USB パーティションは `/media/routerd-usb` に mount します。
+保存先の設定ファイルは `/media/routerd-usb/routerd/router.yaml` であり、
+`/mnt/routerd/router.yaml` ではありません。
 
-## 4. Confirm the first apply
+## 4. 初回反映を確認する
 
-After confirmation, the wizard writes:
+確認が終わると、ウィザードは次を書き出します。
 
 ```text
 /usr/local/etc/routerd/router.yaml
 ```
 
-It then runs:
+その後、次を実行します。
 
 ```sh
 routerd validate --config /usr/local/etc/routerd/router.yaml
@@ -179,7 +183,7 @@ routerd apply --config /usr/local/etc/routerd/router.yaml --once
 
 ![Wizard summary and first apply](/img/iso-boot/iso-boot-06-wizard-summary.png)
 
-Check status:
+状態を確認します。
 
 ```sh
 routerctl status
@@ -187,8 +191,8 @@ routerctl status
 
 ![routerctl status after first apply](/img/iso-boot/iso-boot-07-routerctl-status.png)
 
-The phase should become `Healthy`.
-The serial log should contain a status response like this:
+phase が `Healthy` になれば成功です。
+シリアルログでは、次のような状態が返ってきます。
 
 ```json
 {
@@ -202,29 +206,29 @@ The serial log should contain a status response like this:
 }
 ```
 
-## 5. Test a LAN client
+## 5. LAN クライアントを試す
 
-Connect a client to the LAN interface or test bridge.
+LAN インターフェースまたはテストブリッジへ、クライアントを接続します。
 
-The client should receive:
+クライアントは、次を受け取るはずです。
 
-- an IPv4 address from the configured DHCPv4 pool
-- default route through the router
-- DNS server pointing at the router
-- NTP server pointing at the router, when enabled
+- DHCPv4 pool からの IPv4 アドレス
+- routerd を向く default route
+- routerd を向く DNS server
+- 有効化した場合は、routerd を向く NTP server
 
-Basic checks:
+基本的な確認は次のとおりです。
 
 ```sh
 dig @192.168.10.1 www.google.com A +short
 curl -4 https://www.google.com/generate_204
 ```
 
-Adjust the address if you chose a different LAN prefix.
+LAN prefix を変えた場合は、アドレスを読み替えてください。
 
-The PVE validation used a temporary network namespace connected to the isolated
-LAN bridge. It received a lease from routerd and reached the Internet through
-routerd NAT44:
+PVE 検証では、隔離 LAN ブリッジに一時的な network namespace を接続しました。
+クライアントは routerd からリースを受け取り、routerd の NAT44 を経由して
+外部へ通信できました。
 
 ```text
 inet 192.168.99.186/24
@@ -243,48 +247,47 @@ curl http://192.168.99.1:8080/
 http_code=200 remote_ip=192.168.99.1 time_total=0.000537
 ```
 
-## 6. Reboot and confirm persistence
+## 6. 再起動して永続化を確認する
 
-Reboot the mini PC with the USB stick still attached.
+USB メモリーを接続したまま、mini PC を再起動します。
 
-At boot, the live ISO:
+起動時に、ライブ ISO は次を行います。
 
-1. finds the USB device from the remembered device, `routerd.usb=`, or the
-   `ROUTERD` filesystem label
-2. mounts it at `/media/routerd-usb`
-3. restores `/media/routerd-usb/routerd/router.yaml`
-4. prepares `/run/routerd/logs` as tmpfs
-5. applies the router configuration
-6. starts the live routerd daemon
+1. 記録済みデバイス、`routerd.usb=`、`ROUTERD` ラベルの順で USB デバイスを探します。
+2. USB デバイスを `/media/routerd-usb` に mount します。
+3. `/media/routerd-usb/routerd/router.yaml` を復元します。
+4. `/run/routerd/logs` を tmpfs として準備します。
+5. ルーター設定を反映します。
+6. ライブ routerd デーモンを起動します。
 
-Log in and run:
+ログイン後に確認します。
 
 ```sh
 routerctl status
 ```
 
-The router should converge without rerunning the wizard.
-If no USB config is restored and `/usr/local/etc/routerd/router.yaml` is still
-missing, the root login profile starts the configure wizard.
+ウィザードを再実行せずに収束すれば成功です。
+設定が復元されず、`/usr/local/etc/routerd/router.yaml` もない場合は、
+設定ウィザードが起動します。
 
-## 7. How log persistence works
+## 7. ログ永続化の仕組み
 
-Logs are written to RAM first:
+ログは、まず RAM へ書き込みます。
 
 ```text
 /run/routerd/logs
 ```
 
-The daily flush job copies these artifacts to USB:
+日次の書き出しジョブは、次を USB へコピーします。
 
-- current `router.yaml`
-- routerd state snapshot
-- compressed log archive
+- 現在の `router.yaml`
+- routerd の状態スナップショット
+- 圧縮ログアーカイブ
 
-This avoids constant writes to USB flash. If the tmpfs buffer exceeds the
-configured limit, older files are removed first.
+こうすることで、USB flash への常時書き込みを避けます。
+tmpfs の上限を超えた場合は、古いファイルから削除します。
 
-You can flush manually:
+手動で書き出す場合は、次を実行します。
 
 ```sh
 /usr/share/routerd/live-persistence.sh flush
@@ -292,56 +295,56 @@ You can flush manually:
 
 ![USB persistence flush](/img/iso-boot/iso-boot-08-usb-flush.png)
 
-Before physically removing the USB device, flush and unmount it:
+USB デバイスを物理的に抜く前に、flush と unmount を実行します。
 
 ```sh
 /usr/share/routerd/live-persistence.sh flush
 /usr/share/routerd/live-persistence.sh umount
 ```
 
-If the device is removed without unmounting, routerd keeps running from RAM and
-prints a warning. New logs remain in tmpfs until the USB device is available
-again.
+unmount せずに抜いた場合でも、routerd は RAM 上で動作を続けます。
+警告を出し、新しいログは USB が戻るまで tmpfs に保持します。
 
-## Troubleshooting
+## トラブルシューティング
 
-### The wizard does not list the USB stick
+### USB メモリーが候補に出ない
 
-Check the partition from the shell:
+シェルからパーティションを確認します。
 
 ```sh
 blkid
 lsblk -f
 ```
 
-If needed, pass the device explicitly on the kernel command line:
+必要なら、カーネル引数で明示的に指定します。
 
 ```text
 routerd.usb=/dev/sdb1
 ```
 
-### The router boots into wizard mode again
+### 再起動後にまたウィザードが出る
 
-The ISO did not find a saved config. Mount the USB device and check:
+ISO が保存済みの設定を見つけられていません。
+USB デバイスをマウントして確認します。
 
 ```sh
 mount /dev/sdX1 /media/routerd-usb
 ls -l /media/routerd-usb/routerd/router.yaml
 ```
 
-### Logs are missing after reboot
+### 再起動後にログがない
 
-Logs are buffered in RAM. They persist only after the daily flush job runs or
-after a manual flush.
+ログは RAM に一時保存しています。
+日次の書き出しジョブ、または手動の flush を実行した後に、USB へ残ります。
 
-### The LAN client has no address
+### LAN クライアントにアドレスが出ない
 
-Check that the LAN interface is the one selected in the wizard:
+ウィザードで選んだ LAN インターフェースを確認します。
 
 ```sh
 routerctl status --json
 ip addr
 ```
 
-If you are testing in Proxmox VE, confirm the client and router LAN NIC are on
-the same isolated bridge.
+Proxmox VE で試す場合は、クライアントと routerd の LAN NIC が同じ隔離ブリッジに
+接続されていることを確認してください。
