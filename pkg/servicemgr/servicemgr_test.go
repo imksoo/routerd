@@ -62,16 +62,16 @@ func TestForPlatformSelectsManager(t *testing.T) {
 }
 
 func TestManagerCommands(t *testing.T) {
-	service := Service{SystemdName: "frr.service", OpenRCName: "frr", RCDName: "frr"}
+	service := Service{SystemdName: "routerd-dnsmasq.service", OpenRCName: "routerd_dnsmasq", RCDName: "routerd_dnsmasq"}
 	tests := []struct {
 		name    string
 		manager Manager
 		op      Operation
 		want    Command
 	}{
-		{name: "systemdRestart", manager: Systemd{}, op: OperationRestart, want: Command{Name: "systemctl", Args: []string{"restart", "frr.service"}}},
-		{name: "openrcEnable", manager: OpenRC{}, op: OperationEnable, want: Command{Name: "rc-update", Args: []string{"add", "frr", "default"}}},
-		{name: "rcdReload", manager: RCD{}, op: OperationReload, want: Command{Name: "service", Args: []string{"frr", "reload"}}},
+		{name: "systemdRestart", manager: Systemd{}, op: OperationRestart, want: Command{Name: "systemctl", Args: []string{"restart", "routerd-dnsmasq.service"}}},
+		{name: "openrcEnable", manager: OpenRC{}, op: OperationEnable, want: Command{Name: "rc-update", Args: []string{"add", "routerd_dnsmasq", "default"}}},
+		{name: "rcdReload", manager: RCD{}, op: OperationReload, want: Command{Name: "service", Args: []string{"routerd_dnsmasq", "reload"}}},
 		{name: "nixosApply", manager: NixOS{}, op: OperationRestart, want: Command{Name: "nixos-rebuild", Args: []string{"switch"}}},
 	}
 	for _, tt := range tests {

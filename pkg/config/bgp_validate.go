@@ -25,7 +25,7 @@ func validateBGPRouterInstances(router *api.Router, vrfs map[string]bool) error 
 			return err
 		}
 		if existing := asnOwners[spec.ASN]; existing != "" {
-			return fmt.Errorf("%s spec.asn %d conflicts with %s; one routerd-managed FRR instance cannot reuse an ASN", res.ID(), spec.ASN, existing)
+			return fmt.Errorf("%s spec.asn %d conflicts with %s; one routerd-managed BGP instance cannot reuse an ASN", res.ID(), spec.ASN, existing)
 		}
 		asnOwners[spec.ASN] = res.ID()
 		vrfName := bgpVRFRefName(spec.VRF)

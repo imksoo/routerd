@@ -32,19 +32,6 @@ require_cmd() {
   fi
 }
 
-frr_cmd() {
-  local name="$1"
-  if command -v "$name" >/dev/null 2>&1; then
-    command -v "$name"
-    return 0
-  fi
-  if [[ -x "/usr/lib/frr/$name" ]]; then
-    printf '/usr/lib/frr/%s\n' "$name"
-    return 0
-  fi
-  fail "missing FRR command: $name"
-}
-
 require_common() {
   require_root
   require_cmd ip
@@ -127,57 +114,6 @@ write_file() {
   shift
   cat >"$path" <<EOF
 $*
-EOF
-}
-
-frr_prepare_pathspace() {
-  local pathspace="$1"
-  install -d -m 0755 "/run/frr/$pathspace" "/var/run/frr/$pathspace"
-  if id frr >/dev/null 2>&1; then
-    chown frr:frr "/run/frr/$pathspace" "/var/run/frr/$pathspace" || true
-  fi
-  add_cleanup "rm -rf '/run/frr/$pathspace' '/var/run/frr/$pathspace'"
-}
-
-start_frr() {
-  local ns="$1" pathspace="$2" zebra_conf="$3" bgpd_conf="$4"
-  local zebra bgpd
-  zebra="$(frr_cmd zebra)"
-  bgpd="$(frr_cmd bgpd)"
-  frr_prepare_pathspace "$pathspace"
-  ip netns exec "$ns" "$zebra" -N "$pathspace" -f "$zebra_conf" -i "$WORKDIR/$pathspace-zebra.pid" -d
-  ip netns exec "$ns" "$bgpd" -N "$pathspace" -f "$bgpd_conf" -i "$WORKDIR/$pathspace-bgpd.pid" -d
-  add_cleanup "test -f '$WORKDIR/$pathspace-zebra.pid' && kill \"\$(cat '$WORKDIR/$pathspace-zebra.pid')\""
-  add_cleanup "test -f '$WORKDIR/$pathspace-bgpd.pid' && kill \"\$(cat '$WORKDIR/$pathspace-bgpd.pid')\""
-}
-
-stop_bgpd() {
-  local pathspace="$1"
-  if [[ -f "$WORKDIR/$pathspace-bgpd.pid" ]]; then
-    kill "$(cat "$WORKDIR/$pathspace-bgpd.pid")" 2>/dev/null || true
-    rm -f "$WORKDIR/$pathspace-bgpd.pid"
-  fi
-}
-
-vtysh_ns() {
-  local ns="$1" pathspace="$2"
-  shift 2
-  ip netns exec "$ns" vtysh -N "$pathspace" "$@"
-}
-
-frr_reload_ns() {
-  local ns="$1" pathspace="$2" config="$3"
-  local reload
-  reload="$(frr_cmd frr-reload.py)"
-  ip netns exec "$ns" "$reload" --pathspace "$pathspace" --reload "$config"
-}
-
-basic_zebra_conf() {
-  local name="$1"
-  cat <<EOF
-hostname $name-zebra
-password zebra
-log file $WORKDIR/$name-zebra.log
 EOF
 }
 

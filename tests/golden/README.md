@@ -27,10 +27,10 @@ restart/reload commands is pinned separately under
 make check-bespoke-lifecycle
 ```
 
-That target covers FRR live reload, keepalived no-op/reload behavior, dnsmasq
-SIGHUP reloads, DHCP daemon IPC, IngressService nftables dataplane updates,
-VRRP track script artifacts, DS-Lite dataplane hooks, DHCP event daemon
-ordering, BFD daemon enablement, and FRR graceful-restart observation.
+That target covers keepalived no-op/reload behavior, dnsmasq SIGHUP reloads,
+DHCP daemon IPC, IngressService nftables dataplane updates, VRRP track script
+artifacts, DS-Lite dataplane hooks, DHCP event daemon ordering, and BFD daemon
+enablement.
 
 `tests/golden/coverage.txt` pins minimum line coverage for the Task #35
 abstraction packages. `make check-render-golden` enforces the snapshot by
