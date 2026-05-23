@@ -43,9 +43,7 @@ const config: Config = {
 
   i18n: {
     defaultLocale: 'en',
-    // Keep zh-Hans before zh-Hant: building zh-Hant immediately before zh-Hans
-    // makes Docusaurus SSG fail (undefined blog/docs metadata) for zh-Hans.
-    // This order builds all four locales cleanly. The order is cosmetic for URLs.
+    // Locale order is cosmetic (it drives the locale dropdown order).
     locales: ['en', 'ja', 'zh-Hans', 'zh-Hant'],
     localeConfigs: {
       en: {
@@ -92,7 +90,7 @@ const config: Config = {
     announcementBar: {
       id: 'stable-milestone-20260522-1334',
       content:
-        'Stable milestone: <a href="/docs/releases/stable"><b>v20260522.1334</b></a> — running in production',
+        'Stable milestone: <a href="/docs/releases/stable"><b>v20260523.1542</b></a> — running in production',
       backgroundColor: '#1f6feb',
       textColor: '#ffffff',
       isCloseable: true,

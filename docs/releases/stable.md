@@ -12,17 +12,17 @@ routerd ships frequently using the `vYYYYMMDD.HHmm` scheme. From those builds we
 
 | Item | Value |
 | --- | --- |
-| Version | **v20260522.1334** |
-| Status | First recommended stable milestone |
-| Track record | Running in production (verified 2-way ECMP over BGP and a zero-downtime upgrade) |
-| Binary | Statically linked (`CGO_ENABLED=0`), passes CI |
+| Version | **v20260523.1542** |
+| Status | Recommended stable release (supersedes v20260522.1334) |
+| Track record | Running in production on a home router (homert02); 2-way ECMP over BGP is maintained, and the binary upgrades with zero downtime via graceful restart |
+| Binary | Statically linked (`CGO_ENABLED=0`), passes CI and the Release workflow |
 
-## Why v20260522.1334 is recommended
+## Why v20260523.1542 is recommended
 
-- **The BGP control-plane migration is complete.** routerd moved from FRR to its own `routerd-bgp` daemon, which now holds the eBGP peers directly.
-- **The next-hop rewrite defect (#26) is fixed.** Even when an upstream advertises a third-party next-hop, routes are installed into the kernel FIB via the learned peer address, preserving 2-way ECMP.
-- **It has a production track record.** Upgrading to 1334 completed with no observed outage.
-- **It ships as a static binary** and passes CI (build, tests, and the Release workflow).
+- **It carries the complete BGP control-plane work from v20260522.1334.** routerd runs its own `routerd-bgp` daemon (no FRR), and the next-hop rewrite fix (#26) keeps 2-way ECMP even when an upstream advertises a third-party next-hop.
+- **It fixes live-ISO BGP (#28).** On the Alpine/OpenRC live ISO, the managed GoBGP daemon (`routerd-bgp`) now starts under OpenRC, so BGP works from the live ISO. v20260522.1334 had this broken — so 1334 is no longer recommended, especially if you run BGP from the live ISO.
+- **It adds the built-in DPI classifier and NixOS renderer fixes.**
+- **It runs in production** (home router), ships as a static binary, and passes CI.
 
 ## What "stable" means here
 
