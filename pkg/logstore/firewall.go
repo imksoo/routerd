@@ -537,7 +537,9 @@ func (l *FirewallLog) RecordDPIFlow(ctx context.Context, flow DPIFlowEntry, ttl 
 	if flow.Protocol == "" || flow.SrcAddress == "" || flow.DstAddress == "" {
 		return nil
 	}
-	if flow.AppName == "" || flow.AppName == "unknown" {
+	flow.AppName = strings.ToLower(strings.TrimSpace(flow.AppName))
+	flow.AppCategory = strings.ToLower(strings.TrimSpace(flow.AppCategory))
+	if flow.AppName == "" {
 		return nil
 	}
 	now := time.Now().UTC()
@@ -547,7 +549,7 @@ func (l *FirewallLog) RecordDPIFlow(ctx context.Context, flow DPIFlowEntry, ttl 
 	if flow.LastSeen.IsZero() {
 		flow.LastSeen = flow.FirstSeen
 	}
-	if flow.ClassifiedAt.IsZero() {
+	if flow.ClassifiedAt.IsZero() && flow.AppName != "unknown" {
 		flow.ClassifiedAt = flow.LastSeen
 	}
 	if flow.FlowID == "" {

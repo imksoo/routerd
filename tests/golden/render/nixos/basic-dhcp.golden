@@ -38,7 +38,7 @@
       ReadWritePaths = [ "/run/routerd" "/var/lib/routerd" "/var/log/routerd" ];
       AmbientCapabilities = [ "CAP_NET_RAW" "CAP_NET_ADMIN" "CAP_NET_BIND_SERVICE" ];
       CapabilityBoundingSet = [ "CAP_NET_RAW" "CAP_NET_ADMIN" "CAP_NET_BIND_SERVICE" ];
-      RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" "AF_NETLINK" ];
+      RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" "AF_NETLINK" "AF_PACKET" ];
       ProtectSystem = "strict";
       ProtectHome = "true";
       NoNewPrivileges = true;

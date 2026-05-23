@@ -21,6 +21,7 @@ import (
 	"routerd/pkg/daemonapi"
 	"routerd/pkg/egressroute"
 	"routerd/pkg/healthcheck"
+	"routerd/pkg/platform"
 	"routerd/pkg/render"
 	"routerd/pkg/resource"
 	"routerd/pkg/resourcequery"
@@ -41,6 +42,10 @@ type IPv4PolicyRouteController struct {
 
 func (c IPv4PolicyRouteController) Reconcile(ctx context.Context) error {
 	if c.Router == nil || c.Store == nil {
+		return nil
+	}
+	_, features := platform.Current()
+	if !features.HasIproute2 {
 		return nil
 	}
 	nft := firstNonEmpty(c.NftCommand, "nft")

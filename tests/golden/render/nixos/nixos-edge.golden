@@ -59,6 +59,7 @@ wan-pd-dhcpv6-client from=wan to=self ifnames=ens18 proto=udp port=546 action=ac
     "net.ipv6.conf.default.forwarding" = 1;
     "net.ipv6.conf.ens18.accept_ra" = 2;
     "net.ipv6.conf.ens19.accept_ra" = 2;
+    "net.ipv6.conf.ens19.accept_ra_defrtr" = 0;
     "net.ipv6.route.max_size" = 16384;
   };
   systemd.services."routerd-dhcpv6-client@wan-pd" = {
@@ -138,7 +139,7 @@ wan-pd-dhcpv6-client from=wan to=self ifnames=ens18 proto=udp port=546 action=ac
       ReadWritePaths = [ "/run/routerd" "/var/lib/routerd" "/var/log/routerd" ];
       AmbientCapabilities = [ "CAP_NET_RAW" "CAP_NET_ADMIN" "CAP_NET_BIND_SERVICE" ];
       CapabilityBoundingSet = [ "CAP_NET_RAW" "CAP_NET_ADMIN" "CAP_NET_BIND_SERVICE" ];
-      RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" "AF_NETLINK" ];
+      RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" "AF_NETLINK" "AF_PACKET" ];
       ProtectSystem = "strict";
       ProtectHome = "true";
       NoNewPrivileges = true;
@@ -184,7 +185,7 @@ wan-pd-dhcpv6-client from=wan to=self ifnames=ens18 proto=udp port=546 action=ac
     ];
     serviceConfig = {
       ExecStart = lib.concatStringsSep " " [
-        "/run/current-system/sw/bin/dnsmasq"
+        "${pkgs.dnsmasq}/bin/dnsmasq"
         "--keep-in-foreground"
         "--user=root"
         "--group=root"
@@ -199,7 +200,7 @@ wan-pd-dhcpv6-client from=wan to=self ifnames=ens18 proto=udp port=546 action=ac
       ReadWritePaths = [ "/run/routerd" "/var/lib/routerd" "/usr/local/etc/routerd" ];
       AmbientCapabilities = [ "CAP_NET_BIND_SERVICE" "CAP_NET_RAW" "CAP_NET_ADMIN" "CAP_SETUID" "CAP_SETGID" "CAP_CHOWN" ];
       CapabilityBoundingSet = [ "CAP_NET_BIND_SERVICE" "CAP_NET_RAW" "CAP_NET_ADMIN" "CAP_SETUID" "CAP_SETGID" "CAP_CHOWN" ];
-      RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" "AF_NETLINK" ];
+      RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" "AF_NETLINK" "AF_PACKET" ];
       ProtectSystem = "strict";
       ProtectHome = "true";
       NoNewPrivileges = true;

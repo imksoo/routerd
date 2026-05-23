@@ -337,7 +337,7 @@ func TestNixOSModuleRendersOptionalRouterdService(t *testing.T) {
 		`RuntimeDirectoryPreserve = "yes";`,
 		`systemd.services."routerd-dnsmasq" = {`,
 		`description = "routerd managed dnsmasq DHCP service";`,
-		`"/run/current-system/sw/bin/dnsmasq"`,
+		`"${pkgs.dnsmasq}/bin/dnsmasq"`,
 		`"--user=root"`,
 		`"--group=root"`,
 		`"--conf-file=/usr/local/etc/routerd/dnsmasq.conf"`,
@@ -639,6 +639,7 @@ func TestNixOSModuleSynthesizesDHCPv4ClientDaemonUnit(t *testing.T) {
 		`"192.0.2.10"`,
 		`RuntimeDirectory = [ "routerd/dhcpv4-client" ];`,
 		`CapabilityBoundingSet = [ "CAP_NET_RAW" "CAP_NET_ADMIN" "CAP_NET_BIND_SERVICE" ];`,
+		`RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" "AF_NETLINK" "AF_PACKET" ];`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("NixOS module missing %q:\n%s", want, got)

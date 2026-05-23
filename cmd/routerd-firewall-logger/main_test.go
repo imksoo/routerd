@@ -326,6 +326,50 @@ func TestShouldClassifyForwardDPISkipsKnownFlow(t *testing.T) {
 	}
 }
 
+func TestShouldClassifyForwardDPIStopsAfterUnknownPacketBudget(t *testing.T) {
+	log, err := logstore.OpenFirewallLog(filepath.Join(t.TempDir(), "firewall-logs.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer log.Close()
+	opts := options{dpiSocket: "/tmp/dpi.sock", dpiFlowTTL: time.Hour, dpiFlowLimit: 100000, dpiFlowFirstPackets: 2}
+	entry := logstore.FirewallLogEntry{
+		Timestamp:  time.Now().UTC(),
+		Action:     "accept",
+		SrcAddress: "172.18.0.10",
+		SrcPort:    53168,
+		DstAddress: "198.51.100.10",
+		DstPort:    443,
+		Protocol:   "tcp",
+		L3Proto:    "ipv4",
+		Hint: appendDPIHintFields("", dpi.ClassifyResult{
+			AppName: "unknown",
+			Engine:  "builtin",
+			Source:  "builtin",
+			Reason:  "no_application_signal",
+		}),
+	}
+	if err := recordFirewallEntry(context.Background(), log, entry, nil, opts); err != nil {
+		t.Fatal(err)
+	}
+	if !shouldClassifyForwardDPI(context.Background(), log, entry, opts, time.Now().UTC()) {
+		t.Fatal("unknown flow below packet budget should still classify")
+	}
+	if err := recordFirewallEntry(context.Background(), log, entry, nil, opts); err != nil {
+		t.Fatal(err)
+	}
+	if shouldClassifyForwardDPI(context.Background(), log, entry, opts, time.Now().UTC()) {
+		t.Fatal("unknown flow at packet budget should stop classification")
+	}
+	flow, ok, err := log.FindDPIFlowForFirewallEntry(context.Background(), entry, time.Now().UTC(), time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || flow.AppName != "unknown" || flow.PacketCount != 2 || flow.Metadata["reason"] != "no_application_signal" {
+		t.Fatalf("flow ok=%v flow=%+v", ok, flow)
+	}
+}
+
 func logstoreEntry(hint string) logstore.FirewallLogEntry {
 	return logstore.FirewallLogEntry{Action: "drop", Protocol: "tcp", L3Proto: "ipv4", Hint: hint}
 }

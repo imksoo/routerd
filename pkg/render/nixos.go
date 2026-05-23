@@ -1210,7 +1210,7 @@ func dnsmasqNixOSSystemdSpec() api.SystemdUnitSpec {
 	privateTmp := true
 	return api.SystemdUnitSpec{
 		Description:              "routerd managed dnsmasq DHCP service",
-		ExecStart:                []string{"/run/current-system/sw/bin/dnsmasq", "--keep-in-foreground", "--user=root", "--group=root", "--conf-file=/usr/local/etc/routerd/dnsmasq.conf", "--pid-file=/run/routerd/dnsmasq.pid"},
+		ExecStart:                []string{"${pkgs.dnsmasq}/bin/dnsmasq", "--keep-in-foreground", "--user=root", "--group=root", "--conf-file=/usr/local/etc/routerd/dnsmasq.conf", "--pid-file=/run/routerd/dnsmasq.pid"},
 		Wants:                    []string{"network-online.target"},
 		After:                    []string{"network-online.target", "routerd.service"},
 		WantedBy:                 []string{"multi-user.target"},
@@ -1222,7 +1222,7 @@ func dnsmasqNixOSSystemdSpec() api.SystemdUnitSpec {
 		ReadWritePaths:           []string{"/run/routerd", "/var/lib/routerd", "/usr/local/etc/routerd"},
 		AmbientCapabilities:      []string{"CAP_NET_BIND_SERVICE", "CAP_NET_RAW", "CAP_NET_ADMIN", "CAP_SETUID", "CAP_SETGID", "CAP_CHOWN"},
 		CapabilityBoundingSet:    []string{"CAP_NET_BIND_SERVICE", "CAP_NET_RAW", "CAP_NET_ADMIN", "CAP_SETUID", "CAP_SETGID", "CAP_CHOWN"},
-		RestrictAddressFamilies:  []string{"AF_UNIX", "AF_INET", "AF_INET6", "AF_NETLINK"},
+		RestrictAddressFamilies:  []string{"AF_UNIX", "AF_INET", "AF_INET6", "AF_NETLINK", "AF_PACKET"},
 		ProtectSystem:            "strict",
 		ProtectHome:              "true",
 		NoNewPrivileges:          &noNewPrivileges,
@@ -1262,7 +1262,7 @@ func dhcpv4ClientSystemdSpec(name, ifname string, spec api.DHCPv4ClientSpec, tel
 		Environment:              telemetryEnv,
 		AmbientCapabilities:      []string{"CAP_NET_RAW", "CAP_NET_ADMIN", "CAP_NET_BIND_SERVICE"},
 		CapabilityBoundingSet:    []string{"CAP_NET_RAW", "CAP_NET_ADMIN", "CAP_NET_BIND_SERVICE"},
-		RestrictAddressFamilies:  []string{"AF_UNIX", "AF_INET", "AF_INET6", "AF_NETLINK"},
+		RestrictAddressFamilies:  []string{"AF_UNIX", "AF_INET", "AF_INET6", "AF_NETLINK", "AF_PACKET"},
 		ProtectSystem:            "strict",
 		ProtectHome:              "true",
 		NoNewPrivileges:          &noNewPrivileges,

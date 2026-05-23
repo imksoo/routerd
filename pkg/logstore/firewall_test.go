@@ -227,6 +227,62 @@ func TestFirewallLogDPIFlowLookupDirectAndReverse(t *testing.T) {
 	}
 }
 
+func TestFirewallLogRecordsUnknownDPIFlow(t *testing.T) {
+	log, err := OpenFirewallLog(filepath.Join(t.TempDir(), "firewall-logs.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer log.Close()
+	now := time.Now().UTC()
+	if err := log.RecordDPIFlow(context.Background(), DPIFlowEntry{
+		FirstSeen:     now.Add(-time.Second),
+		LastSeen:      now,
+		L3Proto:       "ipv4",
+		Protocol:      "udp",
+		SrcAddress:    "172.18.0.10",
+		SrcPort:       53000,
+		DstAddress:    "198.51.100.10",
+		DstPort:       443,
+		AppName:       "unknown",
+		Metadata:      map[string]string{"reason": "no_application_signal"},
+		Engine:        "builtin",
+		Source:        "builtin",
+		PacketCount:   1,
+		AppConfidence: 0,
+	}, time.Hour, 100000); err != nil {
+		t.Fatal(err)
+	}
+	if err := log.RecordDPIFlow(context.Background(), DPIFlowEntry{
+		LastSeen:    now.Add(time.Second),
+		L3Proto:     "ipv4",
+		Protocol:    "udp",
+		SrcAddress:  "172.18.0.10",
+		SrcPort:     53000,
+		DstAddress:  "198.51.100.10",
+		DstPort:     443,
+		AppName:     "unknown",
+		Metadata:    map[string]string{"reason": "no_application_signal"},
+		Engine:      "builtin",
+		Source:      "builtin",
+		PacketCount: 1,
+	}, time.Hour, 100000); err != nil {
+		t.Fatal(err)
+	}
+	flow, ok, err := log.FindDPIFlowForFirewallEntry(context.Background(), FirewallLogEntry{
+		Protocol:   "udp",
+		SrcAddress: "172.18.0.10",
+		SrcPort:    53000,
+		DstAddress: "198.51.100.10",
+		DstPort:    443,
+	}, now.Add(time.Second), time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || flow.AppName != "unknown" || flow.PacketCount != 2 || !flow.ClassifiedAt.IsZero() || flow.Metadata["reason"] != "no_application_signal" {
+		t.Fatalf("flow ok=%v flow=%+v", ok, flow)
+	}
+}
+
 func TestFirewallLogMigratesDPIFlowSourceColumns(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "firewall-logs.db")
 	db, err := sql.Open("sqlite", path)
