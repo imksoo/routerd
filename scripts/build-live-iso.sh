@@ -756,6 +756,14 @@ fi
 
 /usr/share/routerd/install.sh --deps-only >/run/routerd/logs/deps.log 2>&1 || true
 "${routerd}" validate --config "${config}"
+# Start the managed GoBGP daemon (routerd-bgp) before routerd serve reconciles BGP.
+# On Alpine/OpenRC the daemon is supervised by /etc/init.d/routerd-bgp; routerd
+# serve only connects to its socket (the systemd unit it renders is inert here).
+# This runs after live-dhcp.sh so the interface has an address; restart is used so a
+# clean instance comes up regardless of any earlier state.
+if [ -x /etc/init.d/routerd-bgp ] && grep -qE '^[[:space:]]*kind:[[:space:]]*BGPRouter([[:space:]]|$)' "${config}" 2>/dev/null; then
+    rc-service routerd-bgp restart >> "${log_dir}/routerd-live.log" 2>&1 || true
+fi
 "${routerd}" apply --config "${config}" --once
 if routerd_serve_running; then
     if [ -x /etc/init.d/routerd ]; then
@@ -803,6 +811,46 @@ start_pre() {
 }
 EOF
 chmod 0755 "${overlay_root}/etc/init.d/routerd"
+
+cat > "${overlay_root}/etc/init.d/routerd-bgp" <<'EOF'
+#!/sbin/openrc-run
+
+description="routerd managed GoBGP daemon"
+# supervise-daemon gives systemd-unit-like behaviour: keep the foreground daemon
+# running and respawn it if it exits (e.g. an early start before the DHCP lease).
+supervisor=supervise-daemon
+command="/usr/local/sbin/routerd-bgp"
+command_args="daemon --socket /run/routerd/bgp/gobgp.sock --control-socket /run/routerd/bgp/control.sock --state-file /var/lib/routerd/bgp/applied.json"
+pidfile="/run/routerd/bgp/routerd-bgp.pid"
+respawn_delay=3
+respawn_max=0
+output_log="/run/routerd/logs/routerd-bgp.log"
+error_log="/run/routerd/logs/routerd-bgp.log"
+
+depend() {
+    need localmount
+    after networking
+}
+
+start_pre() {
+    checkpath -d -m 0755 /run/routerd/bgp /var/lib/routerd/bgp /run/routerd/logs
+    [ -x /usr/local/sbin/routerd-bgp ] || return 1
+    # Wait for a global IPv4 address before launching GoBGP. On the live image DHCP
+    # is brought up by live-dhcp.sh and a lease may still be in flight; routerd-bgp
+    # needs a local address to source its BGP sessions and exits early without one.
+    i=0
+    while [ "${i}" -lt 60 ]; do
+        [ -n "$(ip -4 -o addr show scope global 2>/dev/null)" ] && break
+        sleep 1
+        i=$((i + 1))
+    done
+}
+EOF
+chmod 0755 "${overlay_root}/etc/init.d/routerd-bgp"
+# Intentionally NOT enabled in the default runlevel: the live image brings up the
+# network via live-dhcp.sh inside the local hook, which runs after OpenRC's default
+# runlevel. Starting routerd-bgp from the runlevel would race ahead of DHCP and the
+# config restore. live-autostart.sh starts it (after DHCP, before routerd serve).
 
 cat > "${overlay_root}/etc/motd" <<EOF
 routerd live ${version}
