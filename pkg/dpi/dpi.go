@@ -55,7 +55,6 @@ func Classify(req ClassifyRequest) (result ClassifyResult) {
 		DstAddress:        req.DstAddress,
 		DstPort:           req.DstPort,
 		Engine:            "builtin",
-		Source:            "builtin",
 	}
 	defer func() {
 		result = FinalizeResult(result)
@@ -92,6 +91,7 @@ func Classify(req ClassifyRequest) (result ClassifyResult) {
 		result.AppName = vpn.app
 		result.AppCategory = vpn.category
 		result.AppConfidence = vpn.confidence
+		result.Source = "builtin-payload"
 		result.Reason = vpn.reason
 		return result
 	}
@@ -99,6 +99,7 @@ func Classify(req ClassifyRequest) (result ClassifyResult) {
 		result.AppName = "tls"
 		result.AppCategory = "web"
 		result.AppConfidence = 90
+		result.Source = "builtin-payload"
 		result.TLSSNI = host
 		result.Reason = "tls_client_hello_sni"
 		return result
@@ -107,6 +108,7 @@ func Classify(req ClassifyRequest) (result ClassifyResult) {
 		result.AppName = "http"
 		result.AppCategory = "web"
 		result.AppConfidence = 80
+		result.Source = "builtin-payload"
 		result.HTTPHost = host
 		result.Reason = "http_host"
 		return result
@@ -115,8 +117,20 @@ func Classify(req ClassifyRequest) (result ClassifyResult) {
 		result.AppName = "netbios"
 		result.AppCategory = "network"
 		result.AppConfidence = 75
+		result.Source = "builtin-payload"
 		result.DNSQuery = name
 		result.Reason = "nbns_query"
+		return result
+	}
+	if app, ok := classifyKnownPayload(result.TransportProtocol, result.SrcPort, result.DstPort, payload); ok {
+		result.AppName = app.app
+		result.AppCategory = app.category
+		result.AppConfidence = app.confidence
+		result.Source = "builtin-payload"
+		result.Reason = app.reason
+		if len(app.metadata) > 0 {
+			result.Metadata = app.metadata
+		}
 		return result
 	}
 	if qname, ok := ExtractDNSQuery(payload); ok {
@@ -124,6 +138,7 @@ func Classify(req ClassifyRequest) (result ClassifyResult) {
 			result.AppName = "tailscale"
 			result.AppCategory = "vpn"
 			result.AppConfidence = 80
+			result.Source = "builtin-payload"
 			result.DNSQuery = qname
 			result.Reason = "tailscale_dns_query"
 			return result
@@ -131,6 +146,7 @@ func Classify(req ClassifyRequest) (result ClassifyResult) {
 		result.AppName = "dns"
 		result.AppCategory = "network"
 		result.AppConfidence = 75
+		result.Source = "builtin-payload"
 		result.DNSQuery = qname
 		result.Reason = "dns_query"
 		return result
@@ -139,11 +155,13 @@ func Classify(req ClassifyRequest) (result ClassifyResult) {
 		result.AppName = vpn.app
 		result.AppCategory = vpn.category
 		result.AppConfidence = vpn.confidence
+		result.Source = "port-fallback"
 		result.Reason = vpn.reason
 		return result
 	}
 	result.AppName = "unknown"
 	result.AppConfidence = 0
+	result.Source = "builtin"
 	result.Reason = "no_application_signal"
 	return result
 }
@@ -205,6 +223,74 @@ type vpnClassification struct {
 	category   string
 	confidence int
 	reason     string
+}
+
+type payloadClassification struct {
+	app        string
+	category   string
+	confidence int
+	reason     string
+	metadata   map[string]string
+}
+
+func classifyKnownPayload(protocol string, srcPort, dstPort int, payload []byte) (payloadClassification, bool) {
+	protocol = strings.ToLower(strings.TrimSpace(protocol))
+	switch protocol {
+	case "tcp":
+		if ssh, ok := ExtractSSHBanner(payload); ok {
+			meta := map[string]string{}
+			if ssh != "" {
+				meta["ssh.software"] = ssh
+			}
+			return payloadClassification{app: "ssh", category: "remote-access", confidence: 85, reason: "ssh_banner", metadata: meta}, true
+		}
+		if ftp, ok := ExtractFTPControl(payload); ok {
+			meta := map[string]string{}
+			if ftp != "" {
+				meta["ftp.message"] = ftp
+			}
+			return payloadClassification{app: "ftp", category: "file-transfer", confidence: 70, reason: "ftp_control", metadata: meta}, true
+		}
+		if mqtt, ok := ExtractMQTT(payload, srcPort, dstPort); ok {
+			meta := map[string]string{"mqtt.packet_type": mqtt}
+			return payloadClassification{app: "mqtt", category: "messaging", confidence: 75, reason: "mqtt_packet", metadata: meta}, true
+		}
+	case "udp":
+		if dhcp, ok := ExtractDHCPv4(payload, srcPort, dstPort); ok {
+			meta := map[string]string{}
+			if dhcp.messageType != "" {
+				meta["dhcp.message_type"] = dhcp.messageType
+			}
+			if dhcp.hostname != "" {
+				meta["dhcp.hostname"] = dhcp.hostname
+			}
+			return payloadClassification{app: "dhcp", category: "network", confidence: 85, reason: "dhcpv4_message", metadata: meta}, true
+		}
+		if qname, ok := ExtractPortScopedDNSQuery(payload, srcPort, dstPort, 5353); ok {
+			meta := map[string]string{"dns.query": qname}
+			return payloadClassification{app: "mdns", category: "network", confidence: 80, reason: "mdns_query", metadata: meta}, true
+		}
+		if qname, ok := ExtractPortScopedDNSQuery(payload, srcPort, dstPort, 5355); ok {
+			meta := map[string]string{"dns.query": qname}
+			return payloadClassification{app: "llmnr", category: "network", confidence: 80, reason: "llmnr_query", metadata: meta}, true
+		}
+		if ntp, ok := ExtractNTP(payload, srcPort, dstPort); ok {
+			meta := map[string]string{
+				"ntp.version": ntp.version,
+				"ntp.mode":    ntp.mode,
+				"ntp.stratum": ntp.stratum,
+			}
+			return payloadClassification{app: "ntp", category: "network", confidence: 80, reason: "ntp_message", metadata: meta}, true
+		}
+		if ssdp, ok := ExtractSSDP(payload, srcPort, dstPort); ok {
+			meta := map[string]string{}
+			if ssdp != "" {
+				meta["ssdp.method"] = ssdp
+			}
+			return payloadClassification{app: "ssdp", category: "network", confidence: 75, reason: "ssdp_message", metadata: meta}, true
+		}
+	}
+	return payloadClassification{}, false
 }
 
 func classifyVPNDatagram(protocol string, srcPort, dstPort int, payload []byte) (vpnClassification, bool) {
@@ -544,6 +630,13 @@ func ExtractDNSQuery(payload []byte) (string, bool) {
 	return strings.Join(labels, "."), true
 }
 
+func ExtractPortScopedDNSQuery(payload []byte, srcPort, dstPort, port int) (string, bool) {
+	if srcPort != port && dstPort != port {
+		return "", false
+	}
+	return ExtractDNSQuery(payload)
+}
+
 func validDNSLabel(label []byte) bool {
 	if len(label) == 0 || len(label) > 63 {
 		return false
@@ -577,6 +670,275 @@ func validDNSQuestionClass(qclass uint16) bool {
 	default:
 		return false
 	}
+}
+
+func ExtractSSHBanner(payload []byte) (string, bool) {
+	if len(payload) < len("SSH-1.0") {
+		return "", false
+	}
+	prefix := string(payload[:6])
+	if prefix != "SSH-1." && prefix != "SSH-2." {
+		return "", false
+	}
+	lineEnd := len(payload)
+	for i, ch := range payload {
+		if ch == '\r' || ch == '\n' {
+			lineEnd = i
+			break
+		}
+	}
+	if lineEnd > 255 {
+		lineEnd = 255
+	}
+	line := string(payload[:lineEnd])
+	parts := strings.SplitN(line, "-", 3)
+	if len(parts) < 3 {
+		return "", true
+	}
+	software := strings.TrimSpace(parts[2])
+	if software == "" {
+		return "", true
+	}
+	return software, true
+}
+
+func ExtractFTPControl(payload []byte) (string, bool) {
+	if len(payload) < 3 {
+		return "", false
+	}
+	lineEnd := len(payload)
+	for i, ch := range payload {
+		if ch == '\r' || ch == '\n' {
+			lineEnd = i
+			break
+		}
+	}
+	if lineEnd == 0 || lineEnd > 256 {
+		return "", false
+	}
+	line := string(payload[:lineEnd])
+	if len(line) >= 4 && isDigit(line[0]) && isDigit(line[1]) && isDigit(line[2]) && (line[3] == ' ' || line[3] == '-') {
+		return strings.TrimSpace(line[:3]), true
+	}
+	fields := strings.Fields(line)
+	if len(fields) == 0 {
+		return "", false
+	}
+	cmd := strings.ToUpper(fields[0])
+	switch cmd {
+	case "USER", "PASS", "AUTH", "PBSZ", "PROT", "SYST", "FEAT", "TYPE", "PASV", "EPSV", "PORT", "EPRT", "LIST", "NLST", "RETR", "STOR", "CWD", "PWD", "QUIT", "NOOP":
+		return cmd, true
+	default:
+		return "", false
+	}
+}
+
+func ExtractMQTT(payload []byte, srcPort, dstPort int) (string, bool) {
+	if srcPort != 1883 && dstPort != 1883 {
+		return "", false
+	}
+	if len(payload) < 2 {
+		return "", false
+	}
+	packetType := payload[0] >> 4
+	remainingLen, pos, ok := parseMQTTRemainingLength(payload[1:])
+	if !ok || remainingLen < 0 || pos+1+remainingLen > len(payload) {
+		return "", false
+	}
+	switch packetType {
+	case 1:
+		start := 1 + pos
+		if start+7 <= len(payload) && payload[start] == 0 && payload[start+1] == 4 && string(payload[start+2:start+6]) == "MQTT" {
+			return "connect", true
+		}
+		if start+9 <= len(payload) && payload[start] == 0 && payload[start+1] == 6 && string(payload[start+2:start+8]) == "MQIsdp" {
+			return "connect", true
+		}
+	case 2:
+		return "connack", true
+	case 3:
+		return "publish", true
+	case 8:
+		return "subscribe", true
+	case 12:
+		return "pingreq", true
+	case 14:
+		return "disconnect", true
+	}
+	return "", false
+}
+
+func parseMQTTRemainingLength(data []byte) (int, int, bool) {
+	multiplier := 1
+	value := 0
+	for i := 0; i < len(data) && i < 4; i++ {
+		encoded := int(data[i])
+		value += (encoded & 127) * multiplier
+		if encoded&128 == 0 {
+			return value, i + 1, true
+		}
+		multiplier *= 128
+	}
+	return 0, 0, false
+}
+
+type ntpInfo struct {
+	version string
+	mode    string
+	stratum string
+}
+
+func ExtractNTP(payload []byte, srcPort, dstPort int) (ntpInfo, bool) {
+	if srcPort != 123 && dstPort != 123 {
+		return ntpInfo{}, false
+	}
+	if len(payload) < 48 {
+		return ntpInfo{}, false
+	}
+	version := int((payload[0] >> 3) & 0x07)
+	mode := int(payload[0] & 0x07)
+	if version < 1 || version > 4 || mode == 0 || mode > 5 {
+		return ntpInfo{}, false
+	}
+	return ntpInfo{
+		version: fmt.Sprintf("%d", version),
+		mode:    ntpModeName(mode),
+		stratum: fmt.Sprintf("%d", payload[1]),
+	}, true
+}
+
+func ntpModeName(mode int) string {
+	switch mode {
+	case 1:
+		return "symmetric-active"
+	case 2:
+		return "symmetric-passive"
+	case 3:
+		return "client"
+	case 4:
+		return "server"
+	case 5:
+		return "broadcast"
+	default:
+		return "unknown"
+	}
+}
+
+type dhcpv4Info struct {
+	messageType string
+	hostname    string
+}
+
+func ExtractDHCPv4(payload []byte, srcPort, dstPort int) (dhcpv4Info, bool) {
+	if !((srcPort == 67 || srcPort == 68) && (dstPort == 67 || dstPort == 68)) {
+		return dhcpv4Info{}, false
+	}
+	if len(payload) < 240 {
+		return dhcpv4Info{}, false
+	}
+	if payload[0] != 1 && payload[0] != 2 {
+		return dhcpv4Info{}, false
+	}
+	if binary.BigEndian.Uint32(payload[236:240]) != 0x63825363 {
+		return dhcpv4Info{}, false
+	}
+	info := dhcpv4Info{}
+	for pos := 240; pos < len(payload); {
+		code := payload[pos]
+		pos++
+		switch code {
+		case 0:
+			continue
+		case 255:
+			if info.messageType == "" {
+				return dhcpv4Info{}, false
+			}
+			return info, true
+		}
+		if pos >= len(payload) {
+			break
+		}
+		length := int(payload[pos])
+		pos++
+		if pos+length > len(payload) {
+			break
+		}
+		value := payload[pos : pos+length]
+		switch code {
+		case 12:
+			if validASCIIText(value) {
+				info.hostname = string(value)
+			}
+		case 53:
+			if len(value) == 1 {
+				info.messageType = dhcpMessageTypeName(value[0])
+			}
+		}
+		pos += length
+	}
+	if info.messageType == "" {
+		return dhcpv4Info{}, false
+	}
+	return info, true
+}
+
+func dhcpMessageTypeName(value byte) string {
+	switch value {
+	case 1:
+		return "discover"
+	case 2:
+		return "offer"
+	case 3:
+		return "request"
+	case 4:
+		return "decline"
+	case 5:
+		return "ack"
+	case 6:
+		return "nak"
+	case 7:
+		return "release"
+	case 8:
+		return "inform"
+	default:
+		return fmt.Sprintf("%d", value)
+	}
+}
+
+func ExtractSSDP(payload []byte, srcPort, dstPort int) (string, bool) {
+	if srcPort != 1900 && dstPort != 1900 {
+		return "", false
+	}
+	if len(payload) == 0 || len(payload) > 2048 {
+		return "", false
+	}
+	text := string(payload)
+	switch {
+	case strings.HasPrefix(text, "M-SEARCH * HTTP/1.1\r\n"):
+		return "m-search", true
+	case strings.HasPrefix(text, "NOTIFY * HTTP/1.1\r\n"):
+		return "notify", true
+	case strings.HasPrefix(text, "HTTP/1.1 200 OK\r\n"):
+		return "response", true
+	default:
+		return "", false
+	}
+}
+
+func isDigit(ch byte) bool {
+	return ch >= '0' && ch <= '9'
+}
+
+func validASCIIText(value []byte) bool {
+	if len(value) == 0 || len(value) > 255 {
+		return false
+	}
+	for _, ch := range value {
+		if ch < 0x20 || ch > 0x7e {
+			return false
+		}
+	}
+	return true
 }
 
 func ExtractNBNSQuery(payload []byte) (string, bool) {

@@ -48,6 +48,7 @@ lan-dhcpv4-dhcpv4-server-lan from=lan to=self ifnames=ens19 proto=udp port=67 ac
     "net.ipv4.tcp_wmem" = "4096 65536 16777216";
     "net.ipv6.conf.all.forwarding" = 1;
     "net.ipv6.conf.default.forwarding" = 1;
+    "net.ipv6.conf.ens19.accept_ra_defrtr" = 0;
     "net.ipv6.route.max_size" = 16384;
   };
   systemd.services."routerd-dnsmasq" = {
@@ -60,7 +61,7 @@ lan-dhcpv4-dhcpv4-server-lan from=lan to=self ifnames=ens19 proto=udp port=67 ac
     ];
     serviceConfig = {
       ExecStart = lib.concatStringsSep " " [
-        "/run/current-system/sw/bin/dnsmasq"
+        "${pkgs.dnsmasq}/bin/dnsmasq"
         "--keep-in-foreground"
         "--user=root"
         "--group=root"
@@ -75,7 +76,7 @@ lan-dhcpv4-dhcpv4-server-lan from=lan to=self ifnames=ens19 proto=udp port=67 ac
       ReadWritePaths = [ "/run/routerd" "/var/lib/routerd" "/usr/local/etc/routerd" ];
       AmbientCapabilities = [ "CAP_NET_BIND_SERVICE" "CAP_NET_RAW" "CAP_NET_ADMIN" "CAP_SETUID" "CAP_SETGID" "CAP_CHOWN" ];
       CapabilityBoundingSet = [ "CAP_NET_BIND_SERVICE" "CAP_NET_RAW" "CAP_NET_ADMIN" "CAP_SETUID" "CAP_SETGID" "CAP_CHOWN" ];
-      RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" "AF_NETLINK" ];
+      RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" "AF_NETLINK" "AF_PACKET" ];
       ProtectSystem = "strict";
       ProtectHome = "true";
       NoNewPrivileges = true;

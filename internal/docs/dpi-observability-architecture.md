@@ -283,6 +283,133 @@ Production notes from homert02 on 2026-05-16:
   fell back to the built-in TLS SNI classifier, preserving analysis without
   inline packet verdict impact.
 
+## Built-in classifier direction
+
+The built-in classifier should become a first-class lightweight classifier, not
+only a degraded fallback for hosts without nDPI. The target is for normal router
+operation to remain useful without `libndpi`: classification should explain
+most common home and small-office flows from local payload evidence, DNS/SNI/HTTP
+metadata, flow state, and conservative port fallback. nDPI can remain an
+optional enrichment engine for broad application/provider naming, risk metadata,
+and long-tail protocol heuristics.
+
+This direction is informed by the approach in
+`https://github.com/domcyrus/rustnet` as observed at commit
+`93fab8a13423116501b31edeb731d9daa3b6d97b`: keep packet parsing local,
+protocol-specific, bounded to early packets, and connection-centric. Do not copy
+the implementation wholesale; use it as a design reference for protocol-aware
+state, timeout, and parser coverage.
+
+### Expected built-in coverage
+
+The built-in path should be able to classify these protocols with high
+confidence from direct payload evidence:
+
+- DNS, mDNS, LLMNR, NBNS: query name, response flag, question type where useful.
+- HTTP: host, method, and a bounded request path.
+- TLS: SNI, ALPN, TLS version, and optionally selected cipher suite.
+- SSH: banner and client/server software when visible.
+- STUN, WireGuard, and Tailscale: payload signature first, port fallback second.
+- NTP, DHCP, SSDP, SNMP, MQTT, FTP: well-known ports plus structural payload
+  validation.
+- BitTorrent peer handshakes, DHT, and uTP where the signature is unambiguous.
+- QUIC: start with payload-confirmed QUIC long/short header detection and
+  connection ID metadata; add Initial TLS/SNI extraction only after dedicated
+  tests cover fragmented and malformed packets.
+
+The built-in path should not try to claim broad application identity from weak
+signals. Provider or product labels such as Google, YouTube, Microsoft 365, or
+AWS should come from DNS/SNI/provider enrichment with a separate source label,
+not from protocol detection itself.
+
+### Source model
+
+`dpi.ClassifyResult.Source` should describe the evidence path, not just the
+engine. Keep `Engine` as the executable implementation (`builtin`,
+`ndpi-agent`) and use `Source` for provenance:
+
+- `builtin-payload`: direct payload parsing such as TLS SNI, HTTP Host, DNS,
+  SSH, STUN, or QUIC header evidence.
+- `port-fallback`: no payload signal; inferred from well-known ports only.
+- `flow-cache`: reused classification from `dpi_flow`.
+- `dns-cache` or `sni-cache`: future enrichment from observed names.
+- `provider-enrichment`: future CDN/cloud/provider label derived from address or
+  hostname intelligence.
+- `ndpi-agent`: native nDPI result.
+
+This distinction matters in the Web Console and control API because users should
+be able to tell a confirmed payload classification from a guess.
+
+### Flow-state policy
+
+Unknown forward flows should also be remembered temporarily. Today,
+`recordDPIFlowFromEntry` only records classified accepted flows, which means an
+unclassified accepted flow can be sent to the classifier repeatedly until some
+other cache entry appears. Change the cache policy so unknown flows keep:
+
+- the normalized tuple and L3/transport protocol,
+- first and last seen timestamps,
+- packet count,
+- the last reason for `unknown`,
+- optional partial metadata such as QUIC connection ID or TLS version.
+
+Once `dpi-flow-first-packets` is reached for an unknown flow, stop sending more
+payload copies for that flow until TTL expiry. This mirrors the existing
+`routerd-ndpi-agent` packet budget while keeping the no-nDPI path bounded.
+
+### Implementation phases
+
+1. Split `Source` for the current built-in results.
+   - Mark payload-derived classifications as `builtin-payload`.
+   - Mark UDP/443, STUN port, WireGuard/Tailscale port guesses as
+     `port-fallback`.
+   - Preserve existing JSON field names and add focused tests for source values.
+
+2. Record unknown `dpi_flow` entries.
+   - Allow `RecordDPIFlow` to persist unknown entries with packet counts and a
+     reason, without treating them as positive classifications in traffic
+     summaries.
+   - Make `shouldClassifyForwardDPI` stop after `dpi-flow-first-packets` even
+     when the flow remains unknown.
+
+3. Add low-risk built-in protocol parsers.
+   - Prioritize SSH, NTP, mDNS, LLMNR, DHCP, SSDP, MQTT, and FTP.
+   - Require structural validation beyond ports, and keep confidence below
+     payload-confirmed TLS/HTTP/DNS unless the signature is unambiguous.
+   - Store useful details in `Metadata` rather than adding a new typed field for
+     every protocol immediately.
+
+4. Strengthen TLS parsing.
+   - Validate hostnames before accepting SNI.
+   - Extract ALPN and TLS version.
+   - Keep partial or fragmented ClientHello support out of the first pass unless
+     bounded state and tests are in place.
+
+5. Upgrade QUIC in stages.
+   - First replace plain UDP/443 guessing with payload-confirmed QUIC header
+     detection and lower-confidence fallback only when no payload is available.
+   - Then add QUIC Initial TLS extraction and connection-level reassembly after
+     malformed packet, coalesced packet, and fragment tests are available.
+
+6. Re-evaluate nDPI after built-in coverage improves.
+   - Compare unknown ratio, port-fallback ratio, CPU/RSS, and Web Console
+     usefulness with `engine: builtin` versus `engine: auto`.
+   - Keep nDPI optional if it mainly adds provider naming and long-tail
+     protocols; consider simplifying release and docs if the built-in path is
+     sufficient for the primary router use cases.
+
+### Acceptance criteria
+
+- No classifier path affects packet forwarding verdicts.
+- No persistent store records packet payload bytes.
+- Classification remains bounded by copy range, per-request timeout, flow TTL,
+  flow limit, and first-payload-packet budget.
+- Unit tests cover every new parser with valid, malformed, too-short, and
+  binary-noise payloads.
+- Renderer or systemd changes are not required for built-in-only improvements.
+- Web Console and metrics continue to separate protocol evidence from
+  provider/application labels.
+
 ## Non-goals
 
 - Do not use DPI for firewall verdicts in this work.

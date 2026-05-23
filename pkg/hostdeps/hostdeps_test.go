@@ -34,6 +34,7 @@ func TestDerivedSysctlResourcesForRouterHost(t *testing.T) {
 		"net.ipv4.conf.ens19.send_redirects",
 		"net.ipv6.conf.ens18.accept_ra",
 		"net.ipv6.conf.ens19.accept_ra",
+		"net.ipv6.conf.ens19.accept_ra_defrtr",
 	} {
 		if !keys[want] {
 			t.Fatalf("missing derived sysctl %s in %#v", want, sortedKeys(keys))

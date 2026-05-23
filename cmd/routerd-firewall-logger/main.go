@@ -317,7 +317,11 @@ func watchConntrackDestroy(ctx context.Context, opts options, log *logstore.Fire
 
 func enrichEntryWithDPI(ctx context.Context, opts options, entry logstore.FirewallLogEntry, packet []byte) logstore.FirewallLogEntry {
 	result, err := classifyPacket(ctx, opts.dpiSocket, opts.dpiTimeout, packet)
-	if err != nil || result.AppName == "" || result.AppName == "unknown" {
+	if err != nil {
+		return entry
+	}
+	entry.Hint = appendDPIHintFields(entry.Hint, result)
+	if result.AppName == "" || result.AppName == "unknown" {
 		return entry
 	}
 	entry.DPIApp = result.AppName
@@ -326,7 +330,6 @@ func enrichEntryWithDPI(ctx context.Context, opts options, entry logstore.Firewa
 	entry.DPIHTTPHost = result.HTTPHost
 	entry.DPIDNSQuery = result.DNSQuery
 	entry.DPIConfidence = result.AppConfidence
-	entry.Hint = appendDPIHintFields(entry.Hint, result)
 	return entry
 }
 
@@ -356,6 +359,9 @@ func enrichEntryWithDPIFlow(ctx context.Context, log *logstore.FirewallLog, entr
 	if err != nil || !ok {
 		return entry
 	}
+	if flow.AppName == "" || flow.AppName == "unknown" {
+		return entry
+	}
 	entry = applyDPIFlow(entry, flow)
 	age := now.Sub(flow.ClassifiedAt)
 	if flow.ClassifiedAt.IsZero() || age < 0 {
@@ -373,12 +379,17 @@ func enrichEntryWithDPIFlow(ctx context.Context, log *logstore.FirewallLog, entr
 }
 
 func recordDPIFlowFromEntry(ctx context.Context, log *logstore.FirewallLog, entry logstore.FirewallLogEntry, opts options) error {
-	if entry.DPIApp == "" || entry.DPIApp == "unknown" {
+	appName := firstNonEmpty(entry.DPIApp, dpiHintValue(entry.Hint, "dpi.app"))
+	if appName == "" {
 		return nil
 	}
 	now := entry.Timestamp
 	if now.IsZero() {
 		now = time.Now().UTC()
+	}
+	classifiedAt := time.Time{}
+	if appName != "unknown" {
+		classifiedAt = now
 	}
 	return log.RecordDPIFlow(ctx, logstore.DPIFlowEntry{
 		FirstSeen:           now,
@@ -389,9 +400,9 @@ func recordDPIFlowFromEntry(ctx context.Context, log *logstore.FirewallLog, entr
 		SrcPort:             entry.SrcPort,
 		DstAddress:          entry.DstAddress,
 		DstPort:             entry.DstPort,
-		AppName:             entry.DPIApp,
-		AppCategory:         entry.DPICategory,
-		AppConfidence:       entry.DPIConfidence,
+		AppName:             appName,
+		AppCategory:         firstNonEmpty(entry.DPICategory, dpiHintValue(entry.Hint, "dpi.category")),
+		AppConfidence:       firstNonZero(entry.DPIConfidence, atoiDefault(dpiHintValue(entry.Hint, "dpi.confidence"), 0)),
 		DetectedProtocol:    dpiHintValue(entry.Hint, "dpi.detected_protocol"),
 		MasterProtocol:      dpiHintValue(entry.Hint, "dpi.master_protocol"),
 		ApplicationProtocol: dpiHintValue(entry.Hint, "dpi.application_protocol"),
@@ -404,7 +415,7 @@ func recordDPIFlowFromEntry(ctx context.Context, log *logstore.FirewallLog, entr
 		TLSSNI:              entry.DPITLSSNI,
 		HTTPHost:            entry.DPIHTTPHost,
 		DNSQuery:            entry.DPIDNSQuery,
-		ClassifiedAt:        now,
+		ClassifiedAt:        classifiedAt,
 		PacketCount:         1,
 	}, opts.dpiFlowTTL, opts.dpiFlowLimit)
 }
@@ -1465,6 +1476,15 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func firstNonZero(values ...int) int {
+	for _, value := range values {
+		if value != 0 {
+			return value
+		}
+	}
+	return 0
 }
 
 func usage(w io.Writer) {

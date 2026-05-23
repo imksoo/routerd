@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"routerd/pkg/api"
+	"routerd/pkg/platform"
 	"routerd/pkg/sysctlprofile"
 )
 
@@ -269,6 +270,9 @@ func DerivedSysctlResources(router *api.Router) []api.Resource {
 	if router == nil {
 		return nil
 	}
+	if platform.CurrentOS() != platform.OSLinux {
+		return nil
+	}
 	explicit := explicitSysctlKeys(router)
 	var out []api.Resource
 	if spec, ok := derivedRouterProfile(router); ok {
@@ -339,6 +343,18 @@ func derivedInterfaceSysctls(router *api.Router) []sysctlResource {
 				Value:      "2",
 				Runtime:    boolPtr(true),
 				Persistent: true,
+			},
+		})
+	}
+	for _, iface := range routedInterfaceNames(router, aliases) {
+		out = append(out, sysctlResource{
+			Name: "disable-ra-default-route-" + safeResourceName(iface),
+			Spec: api.SysctlSpec{
+				Key:        "net.ipv6.conf." + iface + ".accept_ra_defrtr",
+				Value:      "0",
+				Runtime:    boolPtr(true),
+				Persistent: true,
+				Optional:   true,
 			},
 		})
 	}

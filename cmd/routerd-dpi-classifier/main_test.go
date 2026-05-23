@@ -29,7 +29,7 @@ func TestSelftestClassifiesTLS(t *testing.T) {
 	if resp.TLSSNI != "routerd-dpi-selftest.example" {
 		t.Fatalf("response = %+v", resp)
 	}
-	if resp.Engine != "builtin" || resp.Source != "builtin" {
+	if resp.Engine != "builtin" || resp.Source != "builtin-payload" {
 		t.Fatalf("engine/source = %+v", resp)
 	}
 	if resp.ApplicationProtocol != "tls" || resp.Category != "web" || resp.Confidence != 90 || resp.Metadata["tls.sni"] != "routerd-dpi-selftest.example" {
@@ -56,7 +56,7 @@ func TestNDPIReaderAvailabilityDoesNotChangeClassification(t *testing.T) {
 	if resp.TLSSNI != "routerd-dpi-selftest.example" {
 		t.Fatalf("response = %+v", resp)
 	}
-	if resp.Engine != "builtin" || resp.Source != "builtin" {
+	if resp.Engine != "builtin" || resp.Source != "builtin-payload" {
 		t.Fatalf("engine/source = %+v", resp)
 	}
 }
@@ -155,7 +155,7 @@ func TestAutoEngineFallsBackWhenAgentUnavailable(t *testing.T) {
 		ndpiAgentSocket: filepath.Join(t.TempDir(), "missing.sock"),
 		timeout:         10 * time.Millisecond,
 	}, req)
-	if got.TLSSNI != "routerd.example" || got.Engine != "builtin" || got.Source != "builtin" || got.FallbackReason == "" {
+	if got.TLSSNI != "routerd.example" || got.Engine != "builtin" || got.Source != "builtin-payload" || got.FallbackReason == "" {
 		t.Fatalf("response = %+v", got)
 	}
 }
@@ -186,7 +186,7 @@ func TestAutoEngineFallsBackWhenAgentTimesOut(t *testing.T) {
 		ndpiAgentSocket: socket,
 		timeout:         time.Millisecond,
 	}, req)
-	if got.TLSSNI != "routerd.example" || got.Engine != "builtin" || got.Source != "builtin" || got.FallbackReason == "" {
+	if got.TLSSNI != "routerd.example" || got.Engine != "builtin" || got.Source != "builtin-payload" || got.FallbackReason == "" {
 		t.Fatalf("response = %+v", got)
 	}
 }

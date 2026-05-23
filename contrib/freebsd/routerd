@@ -73,12 +73,12 @@ routerd_prestart()
 
 routerd_pid()
 {
-    routerd_read_pidfile "${pidfile}" || pgrep -f "^${procname} serve --config ${routerd_config} --socket ${routerd_socket}"
+    routerd_read_pidfile "${pidfile}"
 }
 
 routerd_supervisor_pid()
 {
-    routerd_read_pidfile "${supervisor_pidfile}" || pgrep -f "^daemon: ${name}"
+    routerd_read_pidfile "${supervisor_pidfile}"
 }
 
 routerd_read_pidfile()

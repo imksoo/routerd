@@ -679,6 +679,9 @@ func (r *Runner) Start(ctx context.Context) error {
 		opts.DryRunNetworkAdoption = true
 		opts.DryRunServiceUnit = true
 	}
+	if platform.IsNixOSHost() {
+		opts.DryRunServiceUnit = true
+	}
 	r.Opts = opts
 	packages := PackageController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunPackage}
 	sysctl := SysctlController{Router: r.Router, Bus: r.Bus, Store: store}

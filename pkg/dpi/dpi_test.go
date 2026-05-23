@@ -13,7 +13,7 @@ func TestClassifyTLSSNIFromPayload(t *testing.T) {
 	if got.TLSSNI != "routerd.example" || got.AppName != "tls" || got.AppConfidence < 80 {
 		t.Fatalf("classification = %+v", got)
 	}
-	if got.ApplicationProtocol != "tls" || got.DetectedProtocol != "tls" || got.Category != "web" || got.Confidence != got.AppConfidence || got.Metadata["tls.sni"] != "routerd.example" {
+	if got.ApplicationProtocol != "tls" || got.DetectedProtocol != "tls" || got.Category != "web" || got.Confidence != got.AppConfidence || got.Metadata["tls.sni"] != "routerd.example" || got.Source != "builtin-payload" {
 		t.Fatalf("typed classification = %+v metadata=%+v", got, got.Metadata)
 	}
 }
@@ -79,7 +79,7 @@ func TestClassifySTUNBeforeDNS(t *testing.T) {
 	}
 
 	got = Classify(ClassifyRequest{L4Payload: payload, TransportProtocol: "udp", DstPort: 49152})
-	if got.AppName != "stun" || got.DNSQuery != "" || got.Reason != "stun_magic_cookie" {
+	if got.AppName != "stun" || got.DNSQuery != "" || got.Reason != "stun_magic_cookie" || got.Source != "builtin-payload" {
 		t.Fatalf("classification on ephemeral port = %+v", got)
 	}
 }
@@ -95,6 +95,13 @@ func TestClassifyWireGuardAndTailscalePorts(t *testing.T) {
 	got = Classify(ClassifyRequest{L4Payload: wireguard, TransportProtocol: "udp", DstPort: 51820})
 	if got.AppName != "wireguard" || got.AppCategory != "vpn" || got.Reason != "wireguard_message_type" {
 		t.Fatalf("wireguard classification = %+v", got)
+	}
+}
+
+func TestClassifyPortFallbackSource(t *testing.T) {
+	got := Classify(ClassifyRequest{TransportProtocol: "udp", DstPort: 443})
+	if got.AppName != "quic" || got.Source != "port-fallback" || got.Reason != "udp_443_quic_http3" {
+		t.Fatalf("classification = %+v", got)
 	}
 }
 
@@ -123,6 +130,81 @@ func TestClassifyNBNSQuery(t *testing.T) {
 	}
 }
 
+func TestClassifyAdditionalBuiltinProtocols(t *testing.T) {
+	tests := []struct {
+		name     string
+		req      ClassifyRequest
+		app      string
+		metaKey  string
+		metaWant string
+	}{
+		{
+			name:     "ssh",
+			req:      ClassifyRequest{L4Payload: []byte("SSH-2.0-OpenSSH_9.8\r\n"), TransportProtocol: "tcp", DstPort: 22},
+			app:      "ssh",
+			metaKey:  "ssh.software",
+			metaWant: "OpenSSH_9.8",
+		},
+		{
+			name:     "ftp",
+			req:      ClassifyRequest{L4Payload: []byte("USER anonymous\r\n"), TransportProtocol: "tcp", DstPort: 21},
+			app:      "ftp",
+			metaKey:  "ftp.message",
+			metaWant: "USER",
+		},
+		{
+			name:     "mqtt",
+			req:      ClassifyRequest{L4Payload: []byte{0x10, 0x0c, 0x00, 0x04, 'M', 'Q', 'T', 'T', 0x04, 0x02, 0x00, 0x3c, 0x00, 0x00}, TransportProtocol: "tcp", DstPort: 1883},
+			app:      "mqtt",
+			metaKey:  "mqtt.packet_type",
+			metaWant: "connect",
+		},
+		{
+			name:     "ntp",
+			req:      ClassifyRequest{L4Payload: ntpPayload(), TransportProtocol: "udp", DstPort: 123},
+			app:      "ntp",
+			metaKey:  "ntp.mode",
+			metaWant: "client",
+		},
+		{
+			name:     "mdns",
+			req:      ClassifyRequest{L4Payload: dnsQueryPayload("printer.local"), TransportProtocol: "udp", DstPort: 5353},
+			app:      "mdns",
+			metaKey:  "dns.query",
+			metaWant: "printer.local",
+		},
+		{
+			name:     "llmnr",
+			req:      ClassifyRequest{L4Payload: dnsQueryPayload("desktop"), TransportProtocol: "udp", DstPort: 5355},
+			app:      "llmnr",
+			metaKey:  "dns.query",
+			metaWant: "desktop",
+		},
+		{
+			name:     "dhcp",
+			req:      ClassifyRequest{L4Payload: dhcpDiscoverPayload("router-client"), TransportProtocol: "udp", SrcPort: 68, DstPort: 67},
+			app:      "dhcp",
+			metaKey:  "dhcp.hostname",
+			metaWant: "router-client",
+		},
+		{
+			name:     "ssdp",
+			req:      ClassifyRequest{L4Payload: []byte("M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\n\r\n"), TransportProtocol: "udp", DstPort: 1900},
+			app:      "ssdp",
+			metaKey:  "ssdp.method",
+			metaWant: "m-search",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := Classify(tt.req)
+			if got.AppName != tt.app || got.Source != "builtin-payload" || got.Metadata[tt.metaKey] != tt.metaWant {
+				t.Fatalf("classification = %+v metadata=%+v", got, got.Metadata)
+			}
+		})
+	}
+}
+
 func dnsQueryPayload(name string) []byte {
 	payload := []byte{0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0}
 	for _, label := range strings.Split(name, ".") {
@@ -130,5 +212,29 @@ func dnsQueryPayload(name string) []byte {
 		payload = append(payload, []byte(label)...)
 	}
 	payload = append(payload, 0x00, 0x00, 0x01, 0x00, 0x01)
+	return payload
+}
+
+func ntpPayload() []byte {
+	payload := make([]byte, 48)
+	payload[0] = 0x23
+	payload[1] = 2
+	return payload
+}
+
+func dhcpDiscoverPayload(hostname string) []byte {
+	payload := make([]byte, 240)
+	payload[0] = 1
+	payload[1] = 1
+	payload[2] = 6
+	payload[3] = 0
+	payload[236] = 0x63
+	payload[237] = 0x82
+	payload[238] = 0x53
+	payload[239] = 0x63
+	payload = append(payload, 53, 1, 1)
+	payload = append(payload, 12, byte(len(hostname)))
+	payload = append(payload, []byte(hostname)...)
+	payload = append(payload, 255)
 	return payload
 }

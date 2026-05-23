@@ -249,6 +249,10 @@ func (c Controller) clearPF(ctx context.Context) error {
 	}
 	out, err := exec.CommandContext(ctx, pfctl, "-a", "routerd_nat", "-F", "rules").CombinedOutput()
 	if err != nil {
+		text := strings.TrimSpace(string(out))
+		if strings.Contains(text, "/dev/pf") || strings.Contains(text, "No such file or directory") {
+			return nil
+		}
 		return fmt.Errorf("%s -a routerd_nat -F rules: %w: %s", pfctl, err, strings.TrimSpace(string(out)))
 	}
 	return nil
