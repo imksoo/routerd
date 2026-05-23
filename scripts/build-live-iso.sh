@@ -713,6 +713,156 @@ esac
 EOF
 chmod 0755 "${overlay_root}/usr/share/routerd/live-dhcp.sh"
 
+cat > "${overlay_root}/usr/share/routerd/live-ssh.sh" <<'EOF'
+#!/bin/sh
+# Opt-in SSH enablement for the routerd live ISO.
+# Activated by passing routerd.ssh=1 on the kernel command line.
+# Requires authorized_keys on the ROUTERD_CONFIG persistence disk; password
+# authentication for root is never enabled.
+set -eu
+
+mount_dir=/media/routerd-usb
+persist_dir_name=routerd
+log_dir=/run/routerd/logs
+state_dir=/run/routerd/live
+
+log() {
+    echo "routerd-live-ssh: $*"
+}
+
+cmdline_value() {
+    key=$1
+    for item in $(cat /proc/cmdline 2>/dev/null || true); do
+        case "${item}" in
+            "${key}="*)
+                printf '%s\n' "${item#*=}"
+                return 0
+                ;;
+        esac
+    done
+    return 1
+}
+
+ssh_enabled() {
+    val=$(cmdline_value routerd.ssh 2>/dev/null || true)
+    [ "${val}" = "1" ]
+}
+
+usb_mounted() {
+    grep -q " ${mount_dir} " /proc/mounts 2>/dev/null
+}
+
+hostname_candidates() {
+    for key in routerd.hostname routerd.live_hostname; do
+        value=$(cmdline_value "${key}" 2>/dev/null || true)
+        [ -n "${value}" ] && printf '%s\n' "${value}"
+    done
+    current=$(hostname 2>/dev/null || true)
+    [ -n "${current}" ] && [ "${current}" != "localhost" ] && printf '%s\n' "${current}"
+}
+
+mac_candidates() {
+    for iface in $(ls /sys/class/net 2>/dev/null | grep -E '^(eth|en|ens)' || true); do
+        mac=$(cat "/sys/class/net/${iface}/address" 2>/dev/null || true)
+        case "${mac}" in
+            ""|00:00:00:00:00:00) continue ;;
+        esac
+        lower=$(printf '%s\n' "${mac}" | tr 'A-F' 'a-f')
+        printf '%s\n' "${lower}"
+        printf '%s\n' "${lower}" | tr -d ':'
+    done
+}
+
+find_authorized_keys() {
+    if ! usb_mounted; then
+        return 1
+    fi
+    for host in $(hostname_candidates | awk '!seen[$0]++'); do
+        for path in \
+            "${mount_dir}/${persist_dir_name}/hosts/${host}/authorized_keys" \
+            "${mount_dir}/routerd/hosts/${host}/authorized_keys"; do
+            [ -f "${path}" ] && { printf '%s\n' "${path}"; return 0; }
+        done
+    done
+    for mac in $(mac_candidates | awk '!seen[$0]++'); do
+        for path in \
+            "${mount_dir}/${persist_dir_name}/hosts/${mac}/authorized_keys" \
+            "${mount_dir}/routerd/hosts/${mac}/authorized_keys"; do
+            [ -f "${path}" ] && { printf '%s\n' "${path}"; return 0; }
+        done
+    done
+    for path in \
+        "${mount_dir}/${persist_dir_name}/authorized_keys" \
+        "${mount_dir}/routerd/authorized_keys"; do
+        [ -f "${path}" ] && { printf '%s\n' "${path}"; return 0; }
+    done
+    return 1
+}
+
+ensure_openssh() {
+    command -v sshd >/dev/null 2>&1 && return 0
+    if command -v apk >/dev/null 2>&1; then
+        log "openssh not found; installing"
+        apk add --no-cache openssh >/dev/null 2>&1 || true
+    fi
+    command -v sshd >/dev/null 2>&1
+}
+
+configure_sshd() {
+    mkdir -p /etc/ssh
+    cat > /etc/ssh/sshd_config << 'SSHD_EOF'
+Protocol 2
+PermitRootLogin prohibit-password
+PubkeyAuthentication yes
+AuthorizedKeysFile .ssh/authorized_keys
+PasswordAuthentication no
+ChallengeResponseAuthentication no
+UsePAM no
+PrintMotd no
+SSHD_EOF
+    chmod 0600 /etc/ssh/sshd_config
+}
+
+start_sshd() {
+    ssh-keygen -A >/dev/null 2>&1 || true
+    configure_sshd
+    if [ -x /etc/init.d/sshd ]; then
+        rc-service sshd restart >>"${log_dir}/routerd-ssh.log" 2>&1 ||
+            rc-service sshd start >>"${log_dir}/routerd-ssh.log" 2>&1 || true
+    else
+        pkill -x sshd 2>/dev/null || true
+        sshd 2>>"${log_dir}/routerd-ssh.log" || true
+    fi
+    log "sshd started (root login: public key only)"
+}
+
+mkdir -p "${state_dir}" "${log_dir}"
+
+if ! ssh_enabled; then
+    exit 0
+fi
+
+if ! ensure_openssh; then
+    log "openssh not available; cannot start sshd"
+    exit 1
+fi
+
+keys_src=$(find_authorized_keys 2>/dev/null || true)
+if [ -z "${keys_src}" ]; then
+    log "routerd.ssh=1 set but no authorized_keys found on config media; not starting sshd"
+    log "place authorized_keys at: ${mount_dir}/${persist_dir_name}/authorized_keys"
+    exit 0
+fi
+
+mkdir -p /root/.ssh
+chmod 0700 /root/.ssh
+install -m 0600 "${keys_src}" /root/.ssh/authorized_keys
+log "installed authorized_keys from ${keys_src}"
+
+start_sshd
+EOF
+chmod 0755 "${overlay_root}/usr/share/routerd/live-ssh.sh"
+
 cat > "${overlay_root}/usr/share/routerd/live-autostart.sh" <<'EOF'
 #!/bin/sh
 set -eu
@@ -812,6 +962,7 @@ fi
 /usr/share/routerd/live-dhcp.sh start || true
 
 /usr/share/routerd/install.sh --deps-only >/run/routerd/logs/deps.log 2>&1 || true
+/usr/share/routerd/live-ssh.sh >> "${log_dir}/routerd-ssh.log" 2>&1 || true
 start_qemu_guest_agent
 "${routerd}" validate --config "${config}"
 # Start the managed GoBGP daemon (routerd-bgp) before routerd serve reconciles BGP.
@@ -915,6 +1066,11 @@ routerd live ${version}
 
 Run the setup wizard:
   /usr/share/routerd/install.sh configure
+
+SSH remote management (opt-in):
+  Boot with kernel parameter routerd.ssh=1 and place authorized_keys on the
+  config disk at routerd/authorized_keys (alongside router.yaml).
+  Password authentication is never enabled.
 
 License notices:
   /usr/share/licenses/routerd/LICENSE

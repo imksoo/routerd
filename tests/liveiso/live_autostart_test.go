@@ -94,3 +94,68 @@ func TestLiveISOIncludesCDROMModulesForConfigMedia(t *testing.T) {
 		}
 	}
 }
+
+func TestLiveISOSSHOptIn(t *testing.T) {
+	data, err := os.ReadFile("../../scripts/build-live-iso.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(data)
+
+	// live-ssh.sh must be created and made executable in the overlay
+	required := []string{
+		"cat > \"${overlay_root}/usr/share/routerd/live-ssh.sh\"",
+		"chmod 0755 \"${overlay_root}/usr/share/routerd/live-ssh.sh\"",
+		// SSH is gated on the kernel cmdline flag
+		"cmdline_value routerd.ssh",
+		`[ "${val}" = "1" ]`,
+		// Authorized keys are read from config media, never baked in
+		"find_authorized_keys()",
+		"${mount_dir}/${persist_dir_name}/authorized_keys",
+		"${mount_dir}/${persist_dir_name}/hosts/${host}/authorized_keys",
+		"${mount_dir}/${persist_dir_name}/hosts/${mac}/authorized_keys",
+		// sshd must be started after keys are installed
+		"install -m 0600 \"${keys_src}\" /root/.ssh/authorized_keys",
+		"start_sshd",
+		// sshd configuration must prohibit password auth and allow pubkey only
+		"PermitRootLogin prohibit-password",
+		"PasswordAuthentication no",
+		"PubkeyAuthentication yes",
+		// SSH setup is invoked from live-autostart.sh
+		"/usr/share/routerd/live-ssh.sh",
+		// Safety: not starting sshd without keys
+		"routerd.ssh=1 set but no authorized_keys found on config media; not starting sshd",
+		// MOTD mentions the SSH opt-in
+		"routerd.ssh=1",
+		"authorized_keys",
+	}
+	for _, needle := range required {
+		if !strings.Contains(script, needle) {
+			t.Fatalf("live SSH opt-in script missing %q", needle)
+		}
+	}
+
+	// live-ssh.sh call must appear after install.sh --deps-only in live-autostart.sh
+	depsIdx := strings.Index(script, "install.sh --deps-only")
+	// The invocation in live-autostart.sh is distinct from the script creation block.
+	sshInvoke := "/usr/share/routerd/live-ssh.sh >>"
+	sshIdx := strings.Index(script, sshInvoke)
+	if depsIdx < 0 {
+		t.Fatal("install.sh --deps-only not found in script")
+	}
+	if sshIdx < 0 {
+		t.Fatalf("%q call not found in script", sshInvoke)
+	}
+	if sshIdx < depsIdx {
+		t.Fatal("live-ssh.sh must be called after install.sh --deps-only so openssh is available")
+	}
+
+	// Password auth must never be enabled – no PermitRootLogin yes / PasswordAuthentication yes
+	if strings.Contains(script, "PasswordAuthentication yes") {
+		t.Fatal("live SSH must not enable password authentication")
+	}
+	if strings.Contains(script, "PermitRootLogin yes") {
+		t.Fatal("live SSH must not use PermitRootLogin yes; use prohibit-password")
+	}
+}
+
