@@ -149,7 +149,29 @@ func (z *zoneData) answer(req *dns.Msg, q dns.Question) (*dns.Msg, bool) {
 	if strings.HasSuffix(name, z.Name) {
 		msg := new(dns.Msg)
 		msg.SetReply(req)
-		record := z.Records[name]
+		record, ok := z.Records[name]
+		if !ok {
+			// RFC 4592 style wildcard: with no exact match, walk up toward the
+			// zone apex looking for a "*" record at the closest enclosing label.
+			for rest := name; ; {
+				idx := strings.IndexByte(rest, '.')
+				if idx < 0 {
+					break
+				}
+				rest = rest[idx+1:]
+				if len(rest) < len(z.Name) {
+					break
+				}
+				if wc, found := z.Records["*."+rest]; found {
+					record = wc
+					ok = true
+					break
+				}
+				if rest == z.Name {
+					break
+				}
+			}
+		}
 		switch q.Qtype {
 		case dns.TypeA:
 			for _, ip := range record.IPv4 {
@@ -166,7 +188,14 @@ func (z *zoneData) answer(req *dns.Msg, q dns.Question) (*dns.Msg, bool) {
 			}
 			return msg, true
 		}
-		msg.SetRcode(req, dns.RcodeNameError)
+		if !ok {
+			// The name does not exist anywhere in this authoritative zone.
+			msg.SetRcode(req, dns.RcodeNameError)
+		}
+		// Otherwise the name exists but has no record of the queried type
+		// (NODATA): keep NOERROR with an empty answer so a dual-stack client
+		// does not treat the whole name as nonexistent (e.g. an AAAA query for
+		// an A-only record must not poison the A lookup via negative caching).
 		if z.DNSSEC.Enabled {
 			msg.AuthenticatedData = true
 		}

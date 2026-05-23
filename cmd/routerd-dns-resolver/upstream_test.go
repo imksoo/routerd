@@ -35,6 +35,44 @@ func TestZoneAnswerMatchesResourceRef(t *testing.T) {
 	}
 }
 
+func TestZoneAnswerWildcard(t *testing.T) {
+	table := newZoneTable([]resolvercfg.RuntimeZone{{
+		Name: "apps-zone",
+		Spec: api.DNSZoneSpec{
+			Zone: "apps.lain.internal",
+			Records: []api.DNSZoneRecordSpec{{
+				Hostname: "*",
+				IPv4:     "10.250.0.30",
+			}},
+		},
+	}})
+	// A name with no exact record matches the wildcard.
+	req := new(dns.Msg)
+	req.SetQuestion("birdclaw.apps.lain.internal.", dns.TypeA)
+	resp, ok := table.Answer(req, []string{"DNSZone/apps-zone"})
+	if !ok || len(resp.Answer) != 1 {
+		t.Fatalf("wildcard Answer ok=%v resp=%v", ok, resp)
+	}
+	if a, isA := resp.Answer[0].(*dns.A); !isA || a.A.String() != "10.250.0.30" {
+		t.Fatalf("wildcard answer = %v, want 10.250.0.30", resp.Answer[0])
+	}
+	// A deeper name also matches the apex wildcard.
+	deep := new(dns.Msg)
+	deep.SetQuestion("a.b.apps.lain.internal.", dns.TypeA)
+	resp, ok = table.Answer(deep, []string{"DNSZone/apps-zone"})
+	if !ok || len(resp.Answer) != 1 {
+		t.Fatalf("deep wildcard Answer ok=%v resp=%v", ok, resp)
+	}
+	// AAAA for an A-only wildcard name is NODATA (NOERROR, empty), not NXDOMAIN,
+	// so dual-stack clients do not negative-cache the name.
+	aaaa := new(dns.Msg)
+	aaaa.SetQuestion("birdclaw.apps.lain.internal.", dns.TypeAAAA)
+	resp, ok = table.Answer(aaaa, []string{"DNSZone/apps-zone"})
+	if !ok || resp.Rcode != dns.RcodeSuccess || len(resp.Answer) != 0 {
+		t.Fatalf("AAAA NODATA expected NOERROR+empty, got ok=%v rcode=%v answers=%d", ok, resp.Rcode, len(resp.Answer))
+	}
+}
+
 func TestParseDNSUpstreamDefaults(t *testing.T) {
 	tests := []struct {
 		raw     string
