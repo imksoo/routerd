@@ -12,6 +12,19 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Added
+
+- Added `qemu-guest-agent` to Alpine package defaults in `install.sh` so
+  Alpine installs include the virtual-console agent by default.
+- Added automatic startup for the QEMU guest agent during virtualized
+  `scripts/build-live-iso.sh` boots when virtualization is detected.
+
+### Changed
+
+- Changed dependency defaults to include SSH server packages (`openssh` /
+  `openssh-server`) across supported package managers for environments that
+  want interactive access.
+
 ## v20260523.1542
 
 ### Added
