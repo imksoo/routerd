@@ -12,6 +12,24 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Added
+
+- Promoted the built-in DPI classifier into a useful nDPI-free traffic
+  classifier. It now records payload-derived application hints, distinguishes
+  payload evidence from port fallback, tracks unknown accepted flows with a
+  bounded first-packet budget, and adds lightweight protocol detection for
+  common local protocols while still allowing the nDPI agent to enrich results
+  when available.
+
+### Fixed
+
+- Fixed NixOS rendering for router-managed dnsmasq and DHCPv4 client units by
+  allowing `AF_PACKET` in `RestrictAddressFamilies` for raw packet needs,
+  rendering dnsmasq through `${pkgs.dnsmasq}`, and pinning generated
+  `accept_ra_defrtr = 0` sysctls in the NixOS golden output.
+- Fixed the Alpine/OpenRC live ISO so configurations with managed GoBGP start
+  `routerd-bgp` under OpenRC before `routerd serve`, resolving issue #28.
+
 ## v20260522.1334
 
 ### Added

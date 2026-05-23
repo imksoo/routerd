@@ -11,6 +11,24 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 追加
+
+- built-in DPI classifier を、nDPI なしでも実用できる通信分類器として拡張しました。
+  payload 由来の application hint を記録し、payload evidence と port fallback を区別します。
+  また、unknown のまま accept された flow は最初の数 packet だけ再分類する budget で追跡し、
+  よく使われる local protocol の軽量検出を追加しました。nDPI agent がある場合は、
+  これまでどおり結果の enrichment に使えます。
+
+### 修正
+
+- NixOS render で、routerd 管理の dnsmasq と DHCPv4 client unit を修正しました。
+  raw packet が必要な経路のため `RestrictAddressFamilies` に `AF_PACKET` を許可し、
+  dnsmasq は `${pkgs.dnsmasq}` の store path で render します。あわせて生成される
+  `accept_ra_defrtr = 0` sysctl を NixOS golden output に反映しました。
+- Alpine/OpenRC live ISO で、managed GoBGP を使う config の場合に
+  `routerd serve` より前に `routerd-bgp` を OpenRC 下で起動するよう修正しました。
+  issue #28 の修正です。
+
 ## v20260522.1334
 
 :::tip ★安定マイルストーン

@@ -11,6 +11,22 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 新增
+
+- 将 built-in DPI classifier 扩展为不依赖 nDPI 也可实用的流量分类器。
+  现在会记录 payload 来源的 application hint，区分 payload evidence 与 port fallback，
+  对仍为 unknown 但已 accepted 的 flow 以有限 first-packet budget 追踪重新分类，
+  并加入常见 local protocol 的轻量检测；如果有 nDPI agent，仍可用于 enrichment 结果。
+
+### 修复
+
+- 修复 NixOS render 中 routerd 管理的 dnsmasq 与 DHCPv4 client unit。
+  为 raw packet 需求在 `RestrictAddressFamilies` 允许 `AF_PACKET`，
+  dnsmasq 会通过 `${pkgs.dnsmasq}` store path render，并将生成的
+  `accept_ra_defrtr = 0` sysctl 反映到 NixOS golden output。
+- 修复 Alpine/OpenRC live ISO：当 config 使用 managed GoBGP 时，会在
+  `routerd serve` 前由 OpenRC 启动 `routerd-bgp`。此项修复 issue #28。
+
 ## v20260522.1334
 
 ### 新增
