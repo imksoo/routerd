@@ -189,19 +189,19 @@ ca-certificates curl dnsmasq-base nftables wireguard-tools chrony bind9-dnsutils
 On Fedora-like systems, the installer uses `dnf` and installs:
 
 ```text
-ca-certificates curl dnsmasq nftables wireguard-tools chrony bind-utils tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute iputils traceroute kmod radvd strongswan iptables keepalived
+ca-certificates curl dnsmasq nftables wireguard-tools chrony bind-utils tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute iputils traceroute kmod radvd strongswan iptables keepalived openssh-server
 ```
 
 On Arch-like systems, the installer uses `pacman` and installs:
 
 ```text
-ca-certificates curl dnsmasq nftables wireguard-tools chrony bind tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute2 iputils traceroute kmod radvd strongswan iptables keepalived
+ca-certificates curl dnsmasq nftables wireguard-tools chrony bind tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute2 iputils traceroute kmod radvd strongswan iptables keepalived openssh
 ```
 
 On Alpine, the installer uses `apk` and installs:
 
 ```text
-alpine-conf ca-certificates curl dnsmasq nftables wireguard-tools chrony bind-tools tcpdump cronie jq ppp ppp-pppoe conntrack-tools iproute2 iputils iputils-tracepath kmod radvd strongswan iptables keepalived util-linux e2fsprogs dosfstools exfatprogs qemu-guest-agent
+alpine-conf ca-certificates curl dnsmasq nftables wireguard-tools chrony bind-tools tcpdump cronie jq ppp ppp-pppoe conntrack-tools iproute2 iputils iputils-tracepath kmod radvd strongswan iptables keepalived util-linux e2fsprogs dosfstools exfatprogs qemu-guest-agent openssh
 ```
 
 On FreeBSD, the installer uses `pkg` and installs:
