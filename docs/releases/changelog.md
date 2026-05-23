@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260523.1542
+
 ### Added
 
 - Promoted the built-in DPI classifier into a useful nDPI-free traffic

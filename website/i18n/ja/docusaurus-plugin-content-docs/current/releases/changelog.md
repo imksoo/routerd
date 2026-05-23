@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260523.1542
+
 ### 追加
 
 - built-in DPI classifier を、nDPI なしでも実用できる通信分類器として拡張しました。

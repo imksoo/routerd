@@ -11,6 +11,8 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260523.1542
+
 ### 新增
 
 - 將 built-in DPI classifier 擴充為不依賴 nDPI 也可實用的流量分類器。
