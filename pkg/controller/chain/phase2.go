@@ -729,6 +729,9 @@ func (c DHCPv6ServerController) reconcile(ctx context.Context) error {
 			return err
 		}
 	}
+	if err := c.saveDHCPv4ServerStatuses(configPath, pidFile); err != nil {
+		return err
+	}
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.Kind != "DHCPv6Server" {
 			continue
@@ -741,7 +744,14 @@ func (c DHCPv6ServerController) reconcile(ctx context.Context) error {
 			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "DHCPv6Server", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "DependsOnFalse", "dependencies": dependencyStatusSnapshot(c.Store, spec.DependsOn)})
 			continue
 		}
-		dnsServers := append(expandServers(c.Store, spec.DNSServers), expandServerSources(c.Store, spec.DNSServerFrom)...)
+		if pending := dhcpv6ServerPending(c.Router, c.Store, spec); pending != "" {
+			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "DHCPv6Server", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": pending, "interface": spec.Interface, "mode": firstNonEmpty(spec.Mode, "stateless"), "configPath": configPath, "pidFile": pidFile, "dryRun": c.DryRun}); err != nil {
+				return err
+			}
+			continue
+		}
+		dnsServerSources, _ := expandServerSources(c.Store, spec.DNSServerFrom, "DNSServerFrom")
+		dnsServers := append(expandServers(c.Store, spec.DNSServers), dnsServerSources...)
 		phase := "Applied"
 		if c.DryRun {
 			phase = "Rendered"
@@ -765,6 +775,36 @@ func (c DHCPv6ServerController) reconcile(ctx context.Context) error {
 	return nil
 }
 
+func (c DHCPv6ServerController) saveDHCPv4ServerStatuses(configPath, pidFile string) error {
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.Kind != "DHCPv4Server" {
+			continue
+		}
+		spec, err := resource.DHCPv4ServerSpec()
+		if err != nil {
+			return err
+		}
+		if pending := dhcpv4ServerPending(c.Router, c.Store, spec); pending != "" {
+			status := map[string]any{"phase": "Pending", "reason": pending, "interface": spec.Interface, "configPath": configPath, "pidFile": pidFile, "dryRun": c.DryRun}
+			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "DHCPv4Server", resource.Metadata.Name, status); err != nil {
+				return err
+			}
+			continue
+		}
+		dnsServerSources, _ := expandIPv4DHCPServerSources(c.Store, spec.DNSServerFrom, "DNSServerFrom")
+		dnsServers := append(expandIPv4DHCPServers(spec.DNSServers), dnsServerSources...)
+		phase := "Applied"
+		if c.DryRun {
+			phase = "Rendered"
+		}
+		status := map[string]any{"phase": phase, "interface": spec.Interface, "dnsServers": dnsServers, "configPath": configPath, "pidFile": pidFile, "dryRun": c.DryRun}
+		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "DHCPv4Server", resource.Metadata.Name, status); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (c DHCPv6ServerController) reconcileRouterAdvertisements(ctx context.Context, configPath, pidFile string, changed bool) error {
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.Kind != "IPv6RouterAdvertisement" {
@@ -778,7 +818,8 @@ func (c DHCPv6ServerController) reconcileRouterAdvertisements(ctx context.Contex
 			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6RouterAdvertisement", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "DependsOnFalse", "dependencies": dependencyStatusSnapshot(c.Store, spec.DependsOn)})
 			continue
 		}
-		rdnss := append(expandServers(c.Store, spec.RDNSS), expandServerSources(c.Store, spec.RDNSSFrom)...)
+		rdnssFrom, _ := expandServerSources(c.Store, spec.RDNSSFrom, "RDNSSFrom")
+		rdnss := append(expandServers(c.Store, spec.RDNSS), rdnssFrom...)
 		prefix := firstNonEmpty(prefixFromStatusOrAddress(c.Store, resourcequery.Value(c.Store, spec.PrefixFrom)), prefixFromStatusOrAddress(c.Store, spec.Prefix), prefixFromStatusOrAddress(c.Store, spec.PrefixSource))
 		phase := "Applied"
 		if c.DryRun {

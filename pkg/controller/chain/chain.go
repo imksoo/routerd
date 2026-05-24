@@ -1879,14 +1879,19 @@ func dnsmasqLANServiceLines(router *api.Router, store Store) ([]string, error) {
 		if ifname == "" {
 			continue
 		}
+		if pending := dhcpv4ServerPending(router, store, spec); pending != "" {
+			continue
+		}
 		tag := sanitizeChainTag(resource.Metadata.Name)
 		lines = append(lines, "interface="+ifname)
 		lines = append(lines, "dhcp-script=/usr/local/libexec/routerd/dhcp-event-relay")
 		leaseTime := firstNonEmpty(spec.AddressPool.LeaseTime, "12h")
 		lines = append(lines, fmt.Sprintf("dhcp-range=set:%s,%s,%s,%s", tag, spec.AddressPool.Start, spec.AddressPool.End, leaseTime))
 		gateway := firstNonEmpty(statusAddressValue(resourcequery.Value(store, spec.GatewayFrom)), spec.Gateway)
-		dnsServers := append(expandIPv4DHCPServers(spec.DNSServers), expandIPv4DHCPServerSources(store, spec.DNSServerFrom)...)
-		ntpServers := append(expandIPv4DHCPServers(spec.NTPServers), expandIPv4DHCPServerSources(store, spec.NTPServerFrom)...)
+		dnsServerSources, _ := expandIPv4DHCPServerSources(store, spec.DNSServerFrom, "DNSServerFrom")
+		ntpServerSources, _ := expandIPv4DHCPServerSources(store, spec.NTPServerFrom, "NTPServerFrom")
+		dnsServers := append(expandIPv4DHCPServers(spec.DNSServers), dnsServerSources...)
+		ntpServers := append(expandIPv4DHCPServers(spec.NTPServers), ntpServerSources...)
 		if gateway != "" {
 			lines = append(lines, fmt.Sprintf("dhcp-option=tag:%s,option:router,%s", tag, gateway))
 		}
@@ -1896,7 +1901,7 @@ func dnsmasqLANServiceLines(router *api.Router, store Store) ([]string, error) {
 		if len(ntpServers) > 0 {
 			lines = append(lines, fmt.Sprintf("dhcp-option=tag:%s,option:ntp-server,%s", tag, strings.Join(ntpServers, ",")))
 		}
-		domains := expandDomainValues(router, store, []string{spec.Domain}, []api.StatusValueSourceSpec{spec.DomainFrom})
+		domains, _ := expandDomainValues(router, store, []string{spec.Domain}, []api.StatusValueSourceSpec{spec.DomainFrom}, "DomainFrom")
 		if len(domains) > 0 {
 			lines = append(lines, fmt.Sprintf("dhcp-option=tag:%s,option:domain-name,%s", tag, domains[0]))
 			if !hasDHCPv4Option(spec.Options, "domain-search", 119) {
@@ -1937,6 +1942,9 @@ func dnsmasqLANServiceLines(router *api.Router, store Store) ([]string, error) {
 		if ifname == "" {
 			ifname = spec.Interface
 		}
+		if pending := dhcpv6ServerPending(router, store, spec); pending != "" {
+			continue
+		}
 		tag := sanitizeChainTag(resource.Metadata.Name)
 		lines = append(lines, "interface="+ifname, "enable-ra")
 		leaseTime := firstNonEmpty(spec.AddressPool.LeaseTime, spec.LeaseTime, "12h")
@@ -1948,14 +1956,16 @@ func dnsmasqLANServiceLines(router *api.Router, store Store) ([]string, error) {
 		default:
 			lines = append(lines, fmt.Sprintf("dhcp-range=set:%s,::,constructor:%s,ra-stateless,64,%s", tag, ifname, leaseTime))
 		}
-		for _, server := range append(expandServers(store, spec.DNSServers), expandServerSources(store, spec.DNSServerFrom)...) {
+		dnsServerSources, _ := expandServerSources(store, spec.DNSServerFrom, "DNSServerFrom")
+		for _, server := range append(expandServers(store, spec.DNSServers), dnsServerSources...) {
 			lines = append(lines, fmt.Sprintf("dhcp-option=tag:%s,option6:dns-server,[%s]", tag, dnsmasqIPv6Address(server)))
 		}
-		searchDomains := expandDomainValues(router, store, spec.DomainSearch, spec.DomainSearchFrom)
+		searchDomains, _ := expandDomainValues(router, store, spec.DomainSearch, spec.DomainSearchFrom, "DomainSearchFrom")
 		if len(searchDomains) > 0 {
 			lines = append(lines, fmt.Sprintf("dhcp-option=tag:%s,option6:domain-search,%s", tag, strings.Join(searchDomains, ",")))
 		}
-		for _, server := range append(expandServers(store, spec.SNTPServers), expandServerSources(store, spec.SNTPServerFrom)...) {
+		sntpServerSources, _ := expandServerSources(store, spec.SNTPServerFrom, "SNTPServerFrom")
+		for _, server := range append(expandServers(store, spec.SNTPServers), sntpServerSources...) {
 			lines = append(lines, fmt.Sprintf("dhcp-option=tag:%s,option6:sntp-server,[%s]", tag, dnsmasqIPv6Address(server)))
 		}
 		if spec.RapidCommit {
@@ -1993,10 +2003,11 @@ func dnsmasqLANServiceLines(router *api.Router, store Store) ([]string, error) {
 		if len(params) > 0 {
 			lines = append(lines, fmt.Sprintf("ra-param=%s,%s", ifname, strings.Join(params, ",")))
 		}
-		for _, server := range append(expandServers(store, spec.RDNSS), expandServerSources(store, spec.RDNSSFrom)...) {
+		rdnssFrom, _ := expandServerSources(store, spec.RDNSSFrom, "RDNSSFrom")
+		for _, server := range append(expandServers(store, spec.RDNSS), rdnssFrom...) {
 			lines = append(lines, fmt.Sprintf("dhcp-option=option6:dns-server,[%s]", dnsmasqIPv6Address(server)))
 		}
-		dnssl := expandDomainValues(router, store, spec.DNSSL, spec.DNSSLFrom)
+		dnssl, _ := expandDomainValues(router, store, spec.DNSSL, spec.DNSSLFrom, "DNSSLFrom")
 		if len(dnssl) > 0 {
 			lines = append(lines, "dhcp-option=option6:domain-search,"+strings.Join(dnssl, ","))
 		}
@@ -2118,16 +2129,22 @@ func expandIPv4DHCPServers(values []string) []string {
 	return out
 }
 
-func expandIPv4DHCPServerSources(store Store, sources []api.StatusValueSourceSpec) []string {
+func expandIPv4DHCPServerSources(store Store, sources []api.StatusValueSourceSpec, label string) ([]string, string) {
 	var out []string
 	for _, source := range sources {
+		before := len(out)
 		for _, value := range resourcequery.Values(store, source) {
 			if address := statusAddressValue(value); address != "" {
 				out = append(out, address)
 			}
 		}
+		if len(out) == before {
+			if pending := unresolvedStatusSourceReason(label, source); pending != "" {
+				return out, pending
+			}
+		}
 	}
-	return out
+	return out, ""
 }
 
 func statusAddressValue(value string) string {
@@ -2170,15 +2187,22 @@ func expandServers(store Store, values []string) []string {
 	return out
 }
 
-func expandServerSources(store Store, sources []api.StatusValueSourceSpec) []string {
+func expandServerSources(store Store, sources []api.StatusValueSourceSpec, label string) ([]string, string) {
 	var out []string
 	for _, source := range sources {
-		out = append(out, resourcequery.Values(store, source)...)
+		values := compactNonEmptyStrings(resourcequery.Values(store, source))
+		if len(values) == 0 {
+			if pending := unresolvedStatusSourceReason(label, source); pending != "" {
+				return out, pending
+			}
+			continue
+		}
+		out = append(out, values...)
 	}
-	return out
+	return out, ""
 }
 
-func expandDomainValues(router *api.Router, store Store, values []string, sources []api.StatusValueSourceSpec) []string {
+func expandDomainValues(router *api.Router, store Store, values []string, sources []api.StatusValueSourceSpec, label string) ([]string, string) {
 	var out []string
 	for _, value := range values {
 		value = strings.TrimSpace(value)
@@ -2190,9 +2214,56 @@ func expandDomainValues(router *api.Router, store Store, values []string, source
 		if strings.TrimSpace(source.Resource) == "" {
 			continue
 		}
-		out = append(out, resourcequery.ValuesFromStoreOrRouter(store, router, source)...)
+		resolved := compactNonEmptyStrings(resourcequery.ValuesFromStoreOrRouter(store, router, source))
+		if len(resolved) == 0 {
+			if pending := unresolvedStatusSourceReason(label, source); pending != "" {
+				return compactNonEmptyStrings(out), pending
+			}
+			continue
+		}
+		out = append(out, resolved...)
 	}
-	return compactNonEmptyStrings(out)
+	return compactNonEmptyStrings(out), ""
+}
+
+func dhcpv4ServerPending(router *api.Router, store Store, spec api.DHCPv4ServerSpec) string {
+	if strings.TrimSpace(spec.GatewayFrom.Resource) != "" {
+		if address := statusAddressValue(resourcequery.Value(store, spec.GatewayFrom)); address == "" {
+			if pending := unresolvedStatusSourceReason("GatewayFrom", spec.GatewayFrom); pending != "" {
+				return pending
+			}
+		}
+	}
+	if _, pending := expandIPv4DHCPServerSources(store, spec.DNSServerFrom, "DNSServerFrom"); pending != "" {
+		return pending
+	}
+	if _, pending := expandIPv4DHCPServerSources(store, spec.NTPServerFrom, "NTPServerFrom"); pending != "" {
+		return pending
+	}
+	if _, pending := expandDomainValues(router, store, nil, []api.StatusValueSourceSpec{spec.DomainFrom}, "DomainFrom"); pending != "" {
+		return pending
+	}
+	return ""
+}
+
+func dhcpv6ServerPending(router *api.Router, store Store, spec api.DHCPv6ServerSpec) string {
+	if _, pending := expandServerSources(store, spec.DNSServerFrom, "DNSServerFrom"); pending != "" {
+		return pending
+	}
+	if _, pending := expandServerSources(store, spec.SNTPServerFrom, "SNTPServerFrom"); pending != "" {
+		return pending
+	}
+	if _, pending := expandDomainValues(router, store, nil, spec.DomainSearchFrom, "DomainSearchFrom"); pending != "" {
+		return pending
+	}
+	return ""
+}
+
+func unresolvedStatusSourceReason(label string, source api.StatusValueSourceSpec) string {
+	if strings.TrimSpace(source.Resource) == "" || source.Optional {
+		return ""
+	}
+	return label + "Unresolved: " + source.Resource
 }
 
 func compactNonEmptyStrings(values []string) []string {

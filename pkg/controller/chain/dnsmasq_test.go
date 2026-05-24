@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -142,6 +143,67 @@ func TestDnsmasqLANServiceLinesStripIPv6PrefixLengthFromOptions(t *testing.T) {
 		if strings.Contains(line, "option6:dns-server,[2409:10:3d60:1271::1/64]") {
 			t.Fatalf("line still contains prefix length: %q", line)
 		}
+	}
+}
+
+func TestDHCPv4ServerPendingSourceOmitsScopeUntilResolved(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"}, Metadata: api.ObjectMeta{Name: "lan-pending"}, Spec: api.DHCPv4ServerSpec{
+			Interface:     "lan",
+			AddressPool:   api.DHCPAddressPoolSpec{Start: "192.168.10.100", End: "192.168.10.199", LeaseTime: "8h"},
+			DNSServerFrom: []api.StatusValueSourceSpec{{Resource: "IPv4StaticAddress/lan-base", Field: "address"}},
+		}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"}, Metadata: api.ObjectMeta{Name: "guest-v4"}, Spec: api.DHCPv4ServerSpec{
+			Interface:   "lan",
+			AddressPool: api.DHCPAddressPoolSpec{Start: "192.168.20.100", End: "192.168.20.199", LeaseTime: "8h"},
+			DNSServers:  []string{"192.168.20.1"},
+		}},
+	}}}
+	store := mapStore{}
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "dnsmasq.conf")
+	pidFile := filepath.Join(dir, "dnsmasq.pid")
+	if _, err := writeDnsmasqConfig(router, store, configPath, pidFile, 1053, nil); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "set:lan-pending") {
+		t.Fatalf("pending scope was rendered:\n%s", data)
+	}
+	if !strings.Contains(string(data), "dhcp-range=set:guest-v4,192.168.20.100,192.168.20.199,8h") {
+		t.Fatalf("other scope was not rendered:\n%s", data)
+	}
+	controller := DHCPv6ServerController{Router: router, Store: store}
+	if err := controller.saveDHCPv4ServerStatuses(configPath, pidFile); err != nil {
+		t.Fatal(err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "DHCPv4Server", "lan-pending")
+	if status["phase"] != "Pending" || status["reason"] != "DNSServerFromUnresolved: IPv4StaticAddress/lan-base" {
+		t.Fatalf("pending status = %#v", status)
+	}
+
+	store.SaveObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", "lan-base", map[string]any{"address": "192.168.10.1/24"})
+	if _, err := writeDnsmasqConfig(router, store, configPath, pidFile, 1053, nil); err != nil {
+		t.Fatal(err)
+	}
+	data, err = os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "dhcp-range=set:lan-pending,192.168.10.100,192.168.10.199,8h") ||
+		!strings.Contains(string(data), "dhcp-option=tag:lan-pending,option:dns-server,192.168.10.1") {
+		t.Fatalf("resolved scope or DNS option was not rendered:\n%s", data)
+	}
+	if err := controller.saveDHCPv4ServerStatuses(configPath, pidFile); err != nil {
+		t.Fatal(err)
+	}
+	status = store.ObjectStatus(api.NetAPIVersion, "DHCPv4Server", "lan-pending")
+	if status["phase"] != "Applied" || !reflect.DeepEqual(status["dnsServers"], []string{"192.168.10.1"}) {
+		t.Fatalf("resolved status = %#v", status)
 	}
 }
 
