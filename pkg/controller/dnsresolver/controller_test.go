@@ -66,6 +66,64 @@ func TestReconcilePendingWhenListenAddressUnresolved(t *testing.T) {
 	}
 }
 
+func dnsResolverRouterWithUpstreamFrom(source api.StatusValueSourceSpec) *api.Router {
+	return &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSResolver"},
+			Metadata: api.ObjectMeta{Name: "lan-resolver"},
+			Spec: api.DNSResolverSpec{
+				Listen: []api.DNSResolverListenSpec{{Name: "lan", Addresses: []string{"127.0.0.1"}, Port: 53}},
+				Sources: []api.DNSResolverSourceSpec{{
+					Name:         "ngn-aftr",
+					Kind:         "forward",
+					Match:        []string{"gw.transix.jp"},
+					UpstreamFrom: []api.StatusValueSourceSpec{source},
+				}},
+			},
+		},
+	}}}
+}
+
+// A forward source whose only upstream is derived from another resource's status
+// (e.g. a DHCPv6Information server's dnsServers) must wait as Pending until that
+// status is populated, not fail validation during bootstrap.
+func TestReconcilePendingWhenUpstreamFromUnresolved(t *testing.T) {
+	store := mapStore{}
+	controller := Controller{
+		Router: dnsResolverRouterWithUpstreamFrom(api.StatusValueSourceSpec{Resource: "DHCPv6Information/wan-info", Field: "dnsServers"}),
+		Store:  store,
+		DryRun: true,
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "DNSResolver", "lan-resolver")
+	if status["phase"] != "Pending" {
+		t.Fatalf("status = %#v", status)
+	}
+	if !strings.Contains(strings.TrimSpace(status["message"].(string)), "UpstreamUnresolved") {
+		t.Fatalf("message = %#v", status["message"])
+	}
+}
+
+func TestReconcileResolvesUpstreamFromStatus(t *testing.T) {
+	store := mapStore{
+		api.NetAPIVersion + "/DHCPv6Information/wan-info": {"dnsServers": []any{"2409:10:3d60:1200:1eb1:7fff:fe73:76d8"}},
+	}
+	controller := Controller{
+		Router: dnsResolverRouterWithUpstreamFrom(api.StatusValueSourceSpec{Resource: "DHCPv6Information/wan-info", Field: "dnsServers"}),
+		Store:  store,
+		DryRun: true,
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "DNSResolver", "lan-resolver")
+	if status["phase"] != "Applied" {
+		t.Fatalf("status = %#v", status)
+	}
+}
+
 func TestDNSResolverDependsOnExplicitAddressSource(t *testing.T) {
 	router := dnsResolverRouter([]string{"172.18.0.1"}, []api.StatusValueSourceSpec{{Resource: "IPv6DelegatedAddress/lan-base", Field: "address"}})
 	if !dnsResolverDependsOn(router, daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress", Name: "lan-base"}) {

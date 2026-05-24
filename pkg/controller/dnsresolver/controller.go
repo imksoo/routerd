@@ -448,7 +448,11 @@ func (c Controller) expandSpec(spec api.DNSResolverSpec) (api.DNSResolverSpec, s
 		spec.Listen[i].AddressSources = nil
 	}
 	for i := range spec.Sources {
-		spec.Sources[i].Upstreams = expandUpstreams(c.Store, spec.Sources[i].Upstreams, spec.Sources[i].UpstreamFrom)
+		upstreams, pending := expandUpstreams(c.Store, spec.Sources[i].Upstreams, spec.Sources[i].UpstreamFrom)
+		if pending != "" {
+			return spec, pending, nil
+		}
+		spec.Sources[i].Upstreams = upstreams
 		spec.Sources[i].UpstreamFrom = nil
 		spec.Sources[i].BootstrapResolver = expandStrings(c.Store, spec.Sources[i].BootstrapResolver)
 	}
@@ -802,7 +806,15 @@ func statusAddressValue(value string) string {
 	return value
 }
 
-func expandUpstreams(store Store, values []string, sources []api.StatusValueSourceSpec) []string {
+// expandUpstreams resolves a source's static upstreams plus any upstreamFrom
+// references into concrete upstream values. It returns a non-empty pending
+// reason when a required (non-optional) upstreamFrom reference has not published
+// a value yet — for example a DHCPv6Information server before it learns its DNS
+// servers. Callers treat that as a dependency-wait (Pending) instead of failing
+// validation, and the controller re-reconciles when the dependency's status
+// changes. A source that declares no upstreams and no upstreamFrom at all is not
+// pending here; dnsresolver.Validate reports that as a real misconfiguration.
+func expandUpstreams(store Store, values []string, sources []api.StatusValueSourceSpec) ([]string, string) {
 	var out []string
 	for _, value := range values {
 		if strings.TrimSpace(value) != "" {
@@ -810,13 +822,18 @@ func expandUpstreams(store Store, values []string, sources []api.StatusValueSour
 		}
 	}
 	for _, source := range sources {
+		resolved := false
 		for _, value := range resourcequery.Values(store, source) {
 			if strings.TrimSpace(value) != "" {
 				out = append(out, dnsresolver.NormalizeUpstream(value))
+				resolved = true
 			}
 		}
+		if !resolved && !source.Optional {
+			return out, "UpstreamUnresolved: " + source.Resource
+		}
 	}
-	return out
+	return out, ""
 }
 
 func isStatusRef(value string) bool {

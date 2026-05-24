@@ -150,7 +150,19 @@ When one resource refers to the status of another, use a typed `*From` field ins
     port: 8080
 ```
 
-`addressFrom`, `ipv4From`, `ipv6From`, `prefixFrom`, `rdnssFrom`, and `gatewayFrom` follow the same shape. Dependencies (`dependsOn`) use the same mechanism.
+`addressFrom`, `ipv4From`, `ipv6From`, `prefixFrom`, `rdnssFrom`, `gatewayFrom`,
+and `upstreamFrom` follow the same shape. Dependencies (`dependsOn`) use the same
+mechanism.
+
+A `*From` reference whose target has not published a value yet is a normal
+bootstrap condition, not an error: the consuming controller reports the resource
+as `Pending` (with a reason naming the unresolved reference) and re-reconciles
+when the referenced status changes — no explicit `dependsOn` is required. For
+example a `DNSResolver` forward source whose `upstreamFrom` points at a
+`DHCPv6Information` server stays `Pending` until that server learns its DNS
+servers, then becomes `Applied` on the next reconcile. A source that declares no
+upstream at all (neither `upstreams` nor `upstreamFrom`) is a real
+misconfiguration and is rejected by validation instead.
 
 For details, see [resource model](./concepts/resource-model.md) and [state and ownership](./concepts/state-and-ownership.md).
 
