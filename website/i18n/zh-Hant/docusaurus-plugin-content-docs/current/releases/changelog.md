@@ -11,6 +11,8 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260525.0112
+
 ### 變更
 
 - `DNSResolver` 啟動時不再等待所有相依關係，而是部分拉起常駐程式：使用已經解析出的監聽位址和

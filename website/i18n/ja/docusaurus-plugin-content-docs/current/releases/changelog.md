@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260525.0112
+
 ### 変更
 
 - `DNSResolver` は、すべての依存関係を待つのではなく、起動時に部分的にデーモンを

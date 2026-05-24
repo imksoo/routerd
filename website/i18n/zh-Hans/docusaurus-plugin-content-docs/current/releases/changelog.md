@@ -11,6 +11,8 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260525.0112
+
 ### 变更
 
 - `DNSResolver` 启动时不再等待所有依赖，而是部分拉起守护进程：使用已经解析出的监听地址和
