@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -65,6 +66,23 @@ func OpenSQLite(path string) (*SQLiteStore, error) {
 		return nil, err
 	}
 	return store, nil
+}
+
+func OpenSQLiteReadOnly(path string) (*SQLiteStore, error) {
+	u := url.URL{Scheme: "file", Path: path}
+	q := u.Query()
+	q.Set("mode", "ro")
+	u.RawQuery = q.Encode()
+	db, err := sql.Open("sqlite", u.String())
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(1)
+	if _, err := db.Exec(`PRAGMA busy_timeout = 5000;`); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	return &SQLiteStore{path: path, db: db, now: time.Now}, nil
 }
 
 func (s *SQLiteStore) init() error {

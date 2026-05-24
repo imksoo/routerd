@@ -178,6 +178,120 @@ func TestRunApplyOnceDryRunDoesNotMutateExistingStateDB(t *testing.T) {
 	}
 }
 
+func TestRollbackListShowsStoredGenerations(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "routerd.db")
+	store, err := routerstate.OpenSQLite(statePath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	gen1 := seedGeneration(t, store, "hash-1", testRouterYAML("rollback-one"), true, "Applied")
+	gen2 := seedGeneration(t, store, "hash-2", testRouterYAML("rollback-two"), true, "Applied")
+	if err := store.Close(); err != nil {
+		t.Fatalf("close sqlite: %v", err)
+	}
+
+	var stdout strings.Builder
+	if err := rollbackCommand([]string{"--list", "--state-file", statePath}, &stdout, io.Discard); err != nil {
+		t.Fatalf("rollback --list: %v", err)
+	}
+	output := stdout.String()
+	for _, text := range []string{"generation", "started_at", "finished_at", "phase", "config", fmt.Sprintf("%d", gen1), fmt.Sprintf("%d", gen2), "yes", "(current)"} {
+		if !strings.Contains(output, text) {
+			t.Fatalf("rollback list missing %q:\n%s", text, output)
+		}
+	}
+	if strings.Index(output, fmt.Sprintf("%d", gen2)) > strings.Index(output, fmt.Sprintf("%d", gen1)) {
+		t.Fatalf("generations are not newest-first:\n%s", output)
+	}
+}
+
+func TestRollbackToGenerationDryRunUsesStoredConfig(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "routerd.db")
+	statusPath := filepath.Join(dir, "status.json")
+	ledgerPath := filepath.Join(dir, "ledger.db")
+	store, err := routerstate.OpenSQLite(statePath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	gen := seedGeneration(t, store, "hash-1", testRouterYAML("rollback-dry-run"), true, "Applied")
+	if err := store.Close(); err != nil {
+		t.Fatalf("close sqlite: %v", err)
+	}
+
+	var stdout strings.Builder
+	err = rollbackCommand([]string{
+		"--to", fmt.Sprintf("%d", gen),
+		"--dry-run",
+		"--state-file", statePath,
+		"--ledger-file", ledgerPath,
+		"--status-file", statusPath,
+		"--skip-service-manager",
+	}, &stdout, io.Discard)
+	if err != nil {
+		t.Fatalf("rollback --to --dry-run: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "dry-run apply plan") {
+		t.Fatalf("dry-run output missing plan banner:\n%s", stdout.String())
+	}
+	store, err = routerstate.OpenSQLite(statePath)
+	if err != nil {
+		t.Fatalf("reopen sqlite: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+	if got := store.LatestGeneration(); got != gen {
+		t.Fatalf("latest generation after dry-run = %d, want %d", got, gen)
+	}
+}
+
+func TestRollbackToGenerationErrors(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "routerd.db")
+	store, err := routerstate.OpenSQLite(statePath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	genWithoutConfig := seedGeneration(t, store, "hash-1", "", false, "Applied")
+	if err := store.Close(); err != nil {
+		t.Fatalf("close sqlite: %v", err)
+	}
+
+	if err := rollbackCommand([]string{"--to", "99", "--state-file", statePath}, io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "generation 99 not found") {
+		t.Fatalf("missing generation error = %v", err)
+	}
+	if err := rollbackCommand([]string{"--to", fmt.Sprintf("%d", genWithoutConfig), "--state-file", statePath}, io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "has no saved config") {
+		t.Fatalf("missing config error = %v", err)
+	}
+}
+
+func seedGeneration(t *testing.T, store *routerstate.SQLiteStore, hash, configYAML string, recordConfig bool, phase string) int64 {
+	t.Helper()
+	generation, err := store.BeginGeneration(hash)
+	if err != nil {
+		t.Fatalf("begin generation: %v", err)
+	}
+	if recordConfig {
+		if err := store.RecordGenerationConfig(generation, configYAML); err != nil {
+			t.Fatalf("record generation config: %v", err)
+		}
+	}
+	if err := store.FinishGeneration(generation, phase, nil); err != nil {
+		t.Fatalf("finish generation: %v", err)
+	}
+	return generation
+}
+
+func testRouterYAML(name string) string {
+	return fmt.Sprintf(`apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: %s
+spec:
+  resources: []
+`, name)
+}
+
 func TestRunApplyOnceVRRPRendersKeepalivedWithoutDaemonLifecycle(t *testing.T) {
 	dir := t.TempDir()
 	binDir := filepath.Join(dir, "bin")

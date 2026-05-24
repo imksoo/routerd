@@ -28,6 +28,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"text/tabwriter"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -127,6 +128,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return renderCommand(args[1:], stdout)
 	case "apply":
 		return applyCommand(args[1:], stdout, stderr)
+	case "rollback":
+		return rollbackCommand(args[1:], stdout, stderr)
 	case "delete":
 		return deleteCommand(args[1:], stdout)
 	case "serve":
@@ -618,38 +621,89 @@ func adoptedArtifactsForResult(artifacts []resource.Artifact) []apply.AdoptedArt
 	return out
 }
 
+type applyFlagValues struct {
+	ConfigPath         *string
+	StatusFile         *string
+	NetplanPath        *string
+	DnsmasqConfigPath  *string
+	DnsmasqServicePath *string
+	NftablesPath       *string
+	LedgerPath         *string
+	StatePath          *string
+	OverrideClient     *string
+	OverrideProfile    *string
+	Once               *bool
+	DryRun             *bool
+	SkipServiceManager *bool
+}
+
+func registerApplyFlags(fs *flag.FlagSet, includeConfig, includeOnce bool) applyFlagValues {
+	var flags applyFlagValues
+	if includeConfig {
+		flags.ConfigPath = fs.String("config", defaultConfigPath, "config path")
+	}
+	flags.StatusFile = fs.String("status-file", defaultStatusFile(), "status file")
+	flags.NetplanPath = fs.String("netplan-file", defaultNetplanPath, "routerd-managed netplan file")
+	flags.DnsmasqConfigPath = fs.String("dnsmasq-file", defaultDnsmasqConfigPath, "routerd-managed dnsmasq config file")
+	flags.DnsmasqServicePath = fs.String("dnsmasq-service-file", defaultDnsmasqServicePath, "routerd-managed dnsmasq systemd unit file")
+	flags.NftablesPath = fs.String("nftables-file", defaultNftablesPath, "routerd-managed nftables ruleset file")
+	flags.LedgerPath = fs.String("ledger-file", defaultLedgerPath, "routerd ownership ledger file")
+	flags.StatePath = fs.String("state-file", defaultStatePath, "routerd state database file")
+	flags.OverrideClient = fs.String("override-client", "", "override DHCPv6PrefixDelegation client for this apply: routerd-dhcpv6-client, networkd, dhcp6c, or dhcpcd")
+	flags.OverrideProfile = fs.String("override-profile", "", "override DHCPv6PrefixDelegation profile for this apply")
+	if includeOnce {
+		flags.Once = fs.Bool("once", false, "run one apply loop")
+	}
+	flags.DryRun = fs.Bool("dry-run", false, "plan without applying changes")
+	flags.SkipServiceManager = fs.Bool("skip-service-manager", false, "skip applying service-manager units during this apply")
+	return flags
+}
+
+func (flags applyFlagValues) validateOverrides() error {
+	if !api.ValidIPv6PDClient(*flags.OverrideClient) {
+		return fmt.Errorf("invalid --override-client %q", *flags.OverrideClient)
+	}
+	if !api.ValidIPv6PDProfile(*flags.OverrideProfile) {
+		return fmt.Errorf("invalid --override-profile %q", *flags.OverrideProfile)
+	}
+	return nil
+}
+
+func (flags applyFlagValues) applyOptions(configPath string) applyOptions {
+	return applyOptions{
+		ConfigPath:          configPath,
+		StatusFile:          *flags.StatusFile,
+		NetplanPath:         *flags.NetplanPath,
+		DnsmasqConfigPath:   *flags.DnsmasqConfigPath,
+		DnsmasqServicePath:  runtimeDnsmasqServicePath(*flags.DnsmasqServicePath),
+		NftablesPath:        *flags.NftablesPath,
+		LedgerPath:          *flags.LedgerPath,
+		StatePath:           *flags.StatePath,
+		OverrideClient:      *flags.OverrideClient,
+		OverrideProfile:     *flags.OverrideProfile,
+		DryRun:              *flags.DryRun,
+		SkipServiceManager:  *flags.SkipServiceManager,
+		AnnounceDryRunToCLI: true,
+	}
+}
+
 func applyCommand(args []string, stdout, stderr io.Writer) (err error) {
 	args = dropLegacyControllerChainFlags("apply", args, stderr)
 	fs := flag.NewFlagSet("apply", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	configPath := fs.String("config", defaultConfigPath, "config path")
-	statusFile := fs.String("status-file", defaultStatusFile(), "status file")
-	netplanPath := fs.String("netplan-file", defaultNetplanPath, "routerd-managed netplan file")
-	dnsmasqConfigPath := fs.String("dnsmasq-file", defaultDnsmasqConfigPath, "routerd-managed dnsmasq config file")
-	dnsmasqServicePath := fs.String("dnsmasq-service-file", defaultDnsmasqServicePath, "routerd-managed dnsmasq systemd unit file")
-	nftablesPath := fs.String("nftables-file", defaultNftablesPath, "routerd-managed nftables ruleset file")
-	ledgerPath := fs.String("ledger-file", defaultLedgerPath, "routerd ownership ledger file")
-	statePath := fs.String("state-file", defaultStatePath, "routerd state database file")
-	overrideClient := fs.String("override-client", "", "override DHCPv6PrefixDelegation client for this apply: routerd-dhcpv6-client, networkd, dhcp6c, or dhcpcd")
-	overrideProfile := fs.String("override-profile", "", "override DHCPv6PrefixDelegation profile for this apply")
-	once := fs.Bool("once", false, "run one apply loop")
-	dryRun := fs.Bool("dry-run", false, "plan without applying changes")
-	skipServiceManager := fs.Bool("skip-service-manager", false, "skip applying service-manager units during this apply")
+	applyFlags := registerApplyFlags(fs, true, true)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if !*once {
+	if !*applyFlags.Once {
 		return errors.New("apply currently requires --once")
 	}
-	router, err := config.Load(*configPath)
+	router, err := config.Load(*applyFlags.ConfigPath)
 	if err != nil {
 		return err
 	}
-	if !api.ValidIPv6PDClient(*overrideClient) {
-		return fmt.Errorf("invalid --override-client %q", *overrideClient)
-	}
-	if !api.ValidIPv6PDProfile(*overrideProfile) {
-		return fmt.Errorf("invalid --override-profile %q", *overrideProfile)
+	if err := applyFlags.validateOverrides(); err != nil {
+		return err
 	}
 	logger, err := eventlog.New(router)
 	if err != nil {
@@ -657,26 +711,160 @@ func applyCommand(args []string, stdout, stderr io.Writer) (err error) {
 	}
 	defer closeLogger(logger, "apply", &err)
 	logger.Emit(eventlog.LevelInfo, "apply", "routerd command started", map[string]string{
-		"config": *configPath,
-		"dryRun": fmt.Sprintf("%t", *dryRun),
+		"config": *applyFlags.ConfigPath,
+		"dryRun": fmt.Sprintf("%t", *applyFlags.DryRun),
 	})
-	opts := applyOptions{
-		ConfigPath:          *configPath,
-		StatusFile:          *statusFile,
-		NetplanPath:         *netplanPath,
-		DnsmasqConfigPath:   *dnsmasqConfigPath,
-		DnsmasqServicePath:  runtimeDnsmasqServicePath(*dnsmasqServicePath),
-		NftablesPath:        *nftablesPath,
-		LedgerPath:          *ledgerPath,
-		StatePath:           *statePath,
-		OverrideClient:      *overrideClient,
-		OverrideProfile:     *overrideProfile,
-		DryRun:              *dryRun,
-		SkipServiceManager:  *skipServiceManager,
-		AnnounceDryRunToCLI: true,
-	}
+	opts := applyFlags.applyOptions(*applyFlags.ConfigPath)
 	_, err = runApplyOnce(router, opts, stdout, logger)
 	return err
+}
+
+func rollbackCommand(args []string, stdout, stderr io.Writer) (err error) {
+	args = dropLegacyControllerChainFlags("rollback", args, stderr)
+	fs := flag.NewFlagSet("rollback", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	applyFlags := registerApplyFlags(fs, false, false)
+	list := fs.Bool("list", false, "list stored config generations")
+	to := fs.Int64("to", 0, "generation to re-apply")
+	limit := fs.Int("limit", 20, "maximum generations to list")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *list && *to != 0 {
+		return errors.New("rollback accepts either --list or --to, not both")
+	}
+	if *to == 0 {
+		return listRollbackGenerations(*applyFlags.StatePath, *limit, stdout)
+	}
+	if *to < 0 {
+		return fmt.Errorf("invalid --to %d", *to)
+	}
+	if err := applyFlags.validateOverrides(); err != nil {
+		return err
+	}
+	return rollbackToGeneration(*applyFlags.StatePath, *to, applyFlags, stdout)
+}
+
+func openRollbackState(path string) (*routerstate.SQLiteStore, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		path = defaultStatePath
+	}
+	store, err := routerstate.OpenSQLiteReadOnly(path)
+	if err != nil {
+		return nil, fmt.Errorf("open state database %s: %w", path, err)
+	}
+	return store, nil
+}
+
+func listRollbackGenerations(statePath string, limit int, stdout io.Writer) error {
+	store, err := openRollbackState(statePath)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = store.Close() }()
+	records, err := store.ListGenerations(limit)
+	if err != nil {
+		return err
+	}
+	current := store.LatestGeneration()
+	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "generation\tstarted_at\tfinished_at\tphase\tconfig\tcurrent")
+	for _, rec := range records {
+		currentMark := ""
+		if rec.Generation == current {
+			currentMark = "(current)"
+		}
+		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\n",
+			rec.Generation,
+			formatGenerationTime(rec.StartedAt),
+			formatGenerationTime(rec.FinishedAt),
+			defaultString(rec.Phase, "-"),
+			yesNo(rec.HasYAML),
+			currentMark,
+		)
+	}
+	return tw.Flush()
+}
+
+func rollbackToGeneration(statePath string, generation int64, applyFlags applyFlagValues, stdout io.Writer) (err error) {
+	configYAML, err := rollbackGenerationConfig(statePath, generation)
+	if err != nil {
+		return err
+	}
+	configFile, cleanup, err := writeRollbackConfigTemp(configYAML)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	router, err := config.Load(configFile)
+	if err != nil {
+		return err
+	}
+	logger, err := eventlog.New(router)
+	if err != nil {
+		return err
+	}
+	defer closeLogger(logger, "rollback", &err)
+	logger.Emit(eventlog.LevelInfo, "rollback", "routerd rollback command started", map[string]string{
+		"generation": fmt.Sprintf("%d", generation),
+		"dryRun":     fmt.Sprintf("%t", *applyFlags.DryRun),
+	})
+	opts := applyFlags.applyOptions(configFile)
+	_, err = runApplyOnce(router, opts, stdout, logger)
+	return err
+}
+
+func rollbackGenerationConfig(statePath string, generation int64) (string, error) {
+	store, err := openRollbackState(statePath)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = store.Close() }()
+	latest := store.LatestGeneration()
+	if generation <= 0 || generation > latest {
+		return "", fmt.Errorf("generation %d not found", generation)
+	}
+	configYAML, ok, err := store.GenerationConfig(generation)
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", fmt.Errorf("generation %d has no saved config", generation)
+	}
+	return configYAML, nil
+}
+
+func writeRollbackConfigTemp(configYAML string) (string, func(), error) {
+	file, err := os.CreateTemp("", "routerd-rollback-*.yaml")
+	if err != nil {
+		return "", nil, err
+	}
+	cleanup := func() { _ = os.Remove(file.Name()) }
+	if _, err := io.WriteString(file, configYAML); err != nil {
+		_ = file.Close()
+		cleanup()
+		return "", nil, err
+	}
+	if err := file.Close(); err != nil {
+		cleanup()
+		return "", nil, err
+	}
+	return file.Name(), cleanup, nil
+}
+
+func formatGenerationTime(t time.Time) string {
+	if t.IsZero() {
+		return "-"
+	}
+	return t.UTC().Format(time.RFC3339)
+}
+
+func yesNo(ok bool) string {
+	if ok {
+		return "yes"
+	}
+	return "no"
 }
 
 func deleteCommand(args []string, stdout io.Writer) error {
@@ -8472,6 +8660,7 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  render freebsd --config <path> [--out-dir <path>]")
 	fmt.Fprintln(w, "  render alpine --config <path> [--out-dir <path>]")
 	fmt.Fprintln(w, "  apply --config <path> --once [--dry-run] [--override-client <client>] [--override-profile <profile>]")
+	fmt.Fprintln(w, "  rollback [--list] [--to <generation>] [--dry-run]")
 	fmt.Fprintln(w, "  delete <kind>/<name> [--dry-run] [--force] [--api-version <version>]")
 	fmt.Fprintln(w, "  delete -f <path> [--dry-run]")
 	fmt.Fprintln(w, "  serve --config <path> [--socket <path>] [--status-socket <path>]")
