@@ -150,58 +150,6 @@ func run(args []string, stdout, stderr io.Writer) error {
 	}
 }
 
-var legacyControllerChainFlagsWithValue = map[string]bool{
-	"controller-chain-daemon-sockets":           true,
-	"controller-chain-dnsmasq-command":          true,
-	"controller-chain-dnsmasq-config":           true,
-	"controller-chain-dnsmasq-pid":              true,
-	"controller-chain-dnsmasq-port":             true,
-	"controller-chain-dnsmasq-listen-addresses": true,
-	"controller-chain-nftables-file":            true,
-	"controller-chain-firewall-file":            true,
-	"controller-chain-conntrack-interval":       true,
-}
-
-func dropLegacyControllerChainFlags(command string, args []string, stderr io.Writer) []string {
-	if len(args) == 0 {
-		return args
-	}
-	out := make([]string, 0, len(args))
-	var dropped []string
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		if !strings.HasPrefix(arg, "-") {
-			out = append(out, arg)
-			continue
-		}
-		trimmed := strings.TrimLeft(arg, "-")
-		name, hasInlineValue := trimmed, false
-		if idx := strings.IndexByte(trimmed, '='); idx >= 0 {
-			name = trimmed[:idx]
-			hasInlineValue = true
-		}
-		if name == "controller-chain" || strings.HasPrefix(name, "controller-chain-") {
-			dropped = append(dropped, "--"+name)
-			if !hasInlineValue {
-				if legacyControllerChainFlagsWithValue[name] && i+1 < len(args) {
-					i++
-				} else if i+1 < len(args) && (args[i+1] == "true" || args[i+1] == "false") {
-					i++
-				} else if name != "controller-chain" && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
-					i++
-				}
-			}
-			continue
-		}
-		out = append(out, arg)
-	}
-	if len(dropped) > 0 {
-		sort.Strings(dropped)
-		fmt.Fprintf(stderr, "warning: routerd %s ignored legacy controller-chain flags: %s; controller-chain is now selected automatically from config\n", command, strings.Join(dropped, ", "))
-	}
-	return out
-}
-
 func renderCommand(args []string, stdout io.Writer) error {
 	if len(args) == 0 {
 		return errors.New("render requires a target: nixos, freebsd, or alpine")
@@ -688,8 +636,7 @@ func (flags applyFlagValues) applyOptions(configPath string) applyOptions {
 	}
 }
 
-func applyCommand(args []string, stdout, stderr io.Writer) (err error) {
-	args = dropLegacyControllerChainFlags("apply", args, stderr)
+func applyCommand(args []string, stdout, _ io.Writer) (err error) {
 	fs := flag.NewFlagSet("apply", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	applyFlags := registerApplyFlags(fs, true, true)
@@ -720,8 +667,7 @@ func applyCommand(args []string, stdout, stderr io.Writer) (err error) {
 	return err
 }
 
-func rollbackCommand(args []string, stdout, stderr io.Writer) (err error) {
-	args = dropLegacyControllerChainFlags("rollback", args, stderr)
+func rollbackCommand(args []string, stdout, _ io.Writer) (err error) {
 	fs := flag.NewFlagSet("rollback", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	applyFlags := registerApplyFlags(fs, false, false)
@@ -3699,7 +3645,6 @@ func publishControllerModeEvents(ctx context.Context, b *bus.Bus, controllers []
 }
 
 func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
-	args = dropLegacyControllerChainFlags("serve", args, stderr)
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	configPath := fs.String("config", defaultConfigPath, "config path")
@@ -3708,7 +3653,6 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	statusSocketPath := fs.String("status-socket", defaultStatusSocketPath(), "read-only status Unix domain socket path")
 	statePath := fs.String("state-file", defaultStatePath, "routerd state database file")
 	controllerNames := fs.String("controllers", "all", "comma-separated controller names to run; use bgp for isolated BGP labs")
-	observeInterval := fs.Duration("observe-interval", 30*time.Second, "periodic observe interval; 0 disables scheduled observe")
 	applyInterval := fs.Duration("apply-interval", 0, "periodic apply interval; 0 disables scheduled apply")
 	netplanPath := fs.String("netplan-file", defaultNetplanPath, "routerd-managed netplan file")
 	dnsmasqConfigPath := fs.String("dnsmasq-file", defaultDnsmasqConfigPath, "routerd-managed dnsmasq config file")
@@ -3737,11 +3681,10 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	}
 	defer closeLogger(logger, "serve", &err)
 	logger.Emit(eventlog.LevelInfo, "serve", "routerd daemon starting", map[string]string{
-		"config":          *configPath,
-		"socket":          *socketPath,
-		"statusSocket":    *statusSocketPath,
-		"observeInterval": observeInterval.String(),
-		"applyInterval":   applyInterval.String(),
+		"config":        *configPath,
+		"socket":        *socketPath,
+		"statusSocket":  *statusSocketPath,
+		"applyInterval": applyInterval.String(),
 	})
 	cache := &resultCache{}
 	engine := apply.New()
@@ -3808,9 +3751,6 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	}
 	if err := chainRunner.Start(ctx); err != nil {
 		return err
-	}
-	if *observeInterval > 0 {
-		go runObserveSchedule(stop, *observeInterval, router, cache, *statusFile, logger)
 	}
 	applyOpts := applyOptions{
 		ConfigPath:         *configPath,
@@ -4515,30 +4455,6 @@ func canonicalOverallPhase(phase string) string {
 		return "Healthy"
 	default:
 		return phase
-	}
-}
-
-func runObserveSchedule(stop <-chan struct{}, interval time.Duration, router *api.Router, cache *resultCache, statusFile string, logger *eventlog.Logger) {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-stop:
-			return
-		case <-ticker.C:
-			engine := apply.New()
-			result, err := engine.Observe(router)
-			if err != nil {
-				logger.Emit(eventlog.LevelWarning, "serve", "scheduled observe failed", map[string]string{"error": err.Error()})
-				continue
-			}
-			cache.Store(result)
-			if err := statuswriter.Write(statusFile, result); err != nil {
-				logger.Emit(eventlog.LevelWarning, "serve", "scheduled status write failed", map[string]string{"error": err.Error()})
-				continue
-			}
-			logger.Emit(eventlog.LevelDebug, "serve", "scheduled observe completed", map[string]string{"phase": result.Phase})
-		}
 	}
 }
 

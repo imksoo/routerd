@@ -11,30 +11,7 @@ ExecStart=/usr/local/sbin/routerd serve \
   --config /usr/local/etc/routerd/router.yaml \
   --socket /run/routerd/routerd.sock \
   --status-socket /run/routerd/routerd-status.sock \
-  --status-file /run/routerd/status.json \
-  --observe-interval 0 \
-  --controller-chain \
-  --controller-chain-daemon-sockets wan-pd=/run/routerd/dhcpv6-client/wan-pd.sock \
-  --controller-chain-dry-run-address=false \
-  --controller-chain-dry-run-dslite=false \
-  --controller-chain-dry-run-route=false \
-  --controller-chain-dry-run-ra=true \
-  --controller-chain-dry-run-dhcpv6=false \
-  --controller-chain-dry-run-dns-resolver=false \
-  --controller-chain-dry-run-nat=false \
-  --controller-chain-dry-run-firewall=false \
-  --controller-chain-dry-run-package=false \
-  --controller-chain-dry-run-network-adoption=false \
-  --controller-chain-dry-run-systemd-unit=false \
-  --controller-chain-supervise-client-daemons=true \
-  --controller-chain-dnsmasq-command /usr/sbin/dnsmasq \
-  --controller-chain-dnsmasq-config /run/routerd/dnsmasq.conf \
-  --controller-chain-dnsmasq-pid /run/routerd/dnsmasq.pid \
-  --controller-chain-dnsmasq-port 53 \
-  --controller-chain-dnsmasq-listen-addresses 127.0.0.1 \
-  --controller-chain-nftables-file /run/routerd/nat44.nft \
-  --controller-chain-firewall-file /run/routerd/firewall.nft \
-  --controller-chain-conntrack-interval 30s
+  --status-file /run/routerd/status.json
 Restart=always
 RestartSec=5s
 RuntimeDirectory=routerd routerd/dhcpv6-client routerd/dhcpv4-client routerd/pppoe-client routerd/dns-resolver

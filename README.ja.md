@@ -15,7 +15,7 @@ routerd は、汎用ホストを見通しのよいルーターとして動かす
 netplan、systemd-networkd、dnsmasq、nftables、sysctl、個別スクリプト、
 systemd ユニットに意図を分散させず、型付き YAML リソースとしてまとめます。
 routerd は設定を検証し、計画を表示し、必要なホスト成果物を作成します。
-管理対象デーモンの lifecycle は `routerd serve --controller-chain` が担当し、
+管理対象デーモンの lifecycle は `routerd serve` が担当し、
 `routerctl`、ローカル API、ログ、読み取り専用 Web Console で状態を見えるようにします。
 
 routerd の基本思想は単純です。
