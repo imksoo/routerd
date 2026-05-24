@@ -849,6 +849,78 @@ func TestDescribeInventoryHost(t *testing.T) {
 	}
 }
 
+func TestDescribeShowsStatusReasonMessageAndRemediation(t *testing.T) {
+	dir := t.TempDir()
+	configPath := writeShowConfig(t, dir)
+	dbPath := filepath.Join(dir, "routerd.db")
+	store, err := routerstate.OpenSQLite(dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite state: %v", err)
+	}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "Interface", "wan", map[string]any{
+		"phase":   "Drifted",
+		"reason":  "NftablesRuleMissing",
+		"message": "expected accept rule, found drop",
+	}); err != nil {
+		t.Fatalf("save interface status: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close sqlite state: %v", err)
+	}
+
+	var out bytes.Buffer
+	err = run([]string{"describe", "interface/wan", "--config", configPath, "--state-file", dbPath, "--ledger-file", dbPath}, &out, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("describe interface: %v", err)
+	}
+	got := out.String()
+	for _, want := range []string{
+		"Phase:",
+		"Drifted",
+		"Reason:",
+		"NftablesRuleMissing",
+		"Message:",
+		"expected accept rule, found drop",
+		"Remediation:",
+		"run `routerd apply` to reconcile this resource",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("describe interface output missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestDescribeHealthyStatusOmitsRemediation(t *testing.T) {
+	dir := t.TempDir()
+	configPath := writeShowConfig(t, dir)
+	dbPath := filepath.Join(dir, "routerd.db")
+	store, err := routerstate.OpenSQLite(dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite state: %v", err)
+	}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "Interface", "wan", map[string]any{
+		"phase": "Healthy",
+	}); err != nil {
+		t.Fatalf("save interface status: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close sqlite state: %v", err)
+	}
+
+	var out bytes.Buffer
+	err = run([]string{"describe", "interface/wan", "--config", configPath, "--state-file", dbPath, "--ledger-file", dbPath}, &out, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("describe interface: %v", err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "Phase:") || !strings.Contains(got, "Healthy") {
+		t.Fatalf("describe healthy output missing phase:\n%s", got)
+	}
+	if strings.Contains(got, "Remediation:") {
+		t.Fatalf("describe healthy output includes remediation:\n%s", got)
+	}
+}
+
 func TestDescribeUsesObjectStatusForControllerManagedResource(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "router.yaml")

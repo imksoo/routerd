@@ -3335,8 +3335,34 @@ func writeDescribeStatus(w io.Writer, row showResource) {
 	} else if len(row.Observed) > 0 {
 		observable = true
 	}
+	phase := strings.TrimSpace(stringValue(row.State["phase"]))
+	if phase != "" {
+		fmt.Fprintf(w, "Phase:\t%s\n", phase)
+	}
+	if reason := strings.TrimSpace(stringValue(row.State["reason"])); reason != "" {
+		fmt.Fprintf(w, "Reason:\t%s\n", reason)
+	}
+	if message := strings.TrimSpace(stringValue(row.State["message"])); message != "" {
+		fmt.Fprintf(w, "Message:\t%s\n", message)
+	}
+	if remediation := describePhaseRemediation(phase); remediation != "" {
+		fmt.Fprintf(w, "Remediation:\t%s\n", remediation)
+	}
 	fmt.Fprintf(w, "Currently observable:\t%s\n", yesNo(observable))
 	fmt.Fprintf(w, "Last observed at:\t-\n")
+}
+
+func describePhaseRemediation(phase string) string {
+	switch strings.ToLower(strings.TrimSpace(phase)) {
+	case "drifted":
+		return "run `routerd apply` to reconcile this resource"
+	case "blocked":
+		return "unmet dependency or conflict; check Events above and dependent resources"
+	case "failing", "unhealthy", "error":
+		return "check Events above and routerd logs"
+	default:
+		return ""
+	}
 }
 
 func nestedString(values map[string]any, keys ...string) string {
