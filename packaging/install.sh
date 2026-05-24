@@ -179,6 +179,47 @@ atomic_install()
     mv -f "${tmp}" "${target}"
 }
 
+routerd_group_exists()
+{
+    if command -v getent >/dev/null 2>&1; then
+        getent group routerd >/dev/null 2>&1
+        return $?
+    fi
+    [ -r /etc/group ] && grep -q '^routerd:' /etc/group
+}
+
+ensure_routerd_group()
+{
+    [ "${os}" = "Linux" ] || return 0
+    [ "${manage_host_service}" -eq 1 ] || return 0
+    [ "${prefix}" = "/usr/local" ] || return 0
+    [ -d systemd ] || return 0
+    routerd_group_exists && return 0
+    if [ "${dry_run}" -eq 1 ]; then
+        if command -v groupadd >/dev/null 2>&1; then
+            echo "dry-run: groupadd -r routerd"
+        elif command -v addgroup >/dev/null 2>&1; then
+            echo "dry-run: addgroup -S routerd"
+        else
+            echo "dry-run: create system group routerd"
+        fi
+        return 0
+    fi
+    if command -v groupadd >/dev/null 2>&1; then
+        groupadd -r routerd
+        return 0
+    fi
+    if command -v addgroup >/dev/null 2>&1; then
+        if addgroup -S routerd 2>/dev/null; then
+            return 0
+        fi
+        addgroup --system routerd
+        return 0
+    fi
+    echo "could not create routerd group: groupadd/addgroup not found" >&2
+    return 1
+}
+
 ndpi_agent_libndpi_loaded()
 {
     agent=$1
@@ -1803,6 +1844,8 @@ case "${os}" in
         fi
         ;;
 esac
+
+ensure_routerd_group
 
 if [ "${dry_run}" -eq 1 ]; then
     echo "dry-run: install -d -m 0755 ${bindir}"

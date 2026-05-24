@@ -269,6 +269,51 @@ ExecStart=/usr/local/sbin/routerd serve --controller-chain --controller-chain-dr
 	}
 }
 
+func TestInstallDryRunCreatesRouterdGroupBeforeSystemdUnit(t *testing.T) {
+	dir := t.TempDir()
+	pkg := filepath.Join(dir, "package")
+	binDir := filepath.Join(dir, "bin")
+	writeExecutable(t, filepath.Join(pkg, "bin", "routerd"), `#!/bin/sh
+if [ "$1" = "--version" ]; then echo routerd-test; exit 0; fi
+exit 0
+`)
+	writeExecutable(t, filepath.Join(binDir, "getent"), `#!/bin/sh
+if [ "$1" = "group" ] && [ "$2" = "routerd" ]; then exit 2; fi
+exit 2
+`)
+	writeExecutable(t, filepath.Join(binDir, "groupadd"), `#!/bin/sh
+exit 0
+`)
+	writeExecutable(t, filepath.Join(binDir, "systemctl"), `#!/bin/sh
+if [ "$1" = "is-active" ]; then exit 1; fi
+exit 0
+`)
+	if err := os.MkdirAll(filepath.Join(pkg, "systemd"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pkg, "systemd", "routerd.service"), []byte("[Service]\nGroup=routerd\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runInstallRawWithEnv(t, pkg, []string{
+		"PATH=" + binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+	}, "--dry-run", "--no-install-deps", "--no-config-update", "--no-restart")
+	if err != nil {
+		t.Fatalf("install failed: %v\n%s", err, out)
+	}
+	groupIdx := strings.Index(out, "dry-run: groupadd -r routerd")
+	unitIdx := strings.Index(out, "dry-run: install -m 0644 systemd/routerd.service /etc/systemd/system/routerd.service")
+	if groupIdx < 0 {
+		t.Fatalf("missing routerd group creation:\n%s", out)
+	}
+	if unitIdx < 0 {
+		t.Fatalf("missing systemd unit install:\n%s", out)
+	}
+	if groupIdx > unitIdx {
+		t.Fatalf("routerd group creation happened after unit install:\n%s", out)
+	}
+}
+
 func runInstall(t *testing.T, pkg, prefix string, args ...string) (string, error) {
 	t.Helper()
 	return runInstallWithEnv(t, pkg, prefix, nil, args...)
@@ -279,6 +324,17 @@ func runInstallWithEnv(t *testing.T, pkg, prefix string, env []string, args ...s
 	script := filepath.Join(repoRoot(t), "packaging", "install.sh")
 	fullArgs := append([]string{"--prefix", prefix}, args...)
 	cmd := exec.Command(script, fullArgs...)
+	cmd.Dir = pkg
+	cmd.Env = append(os.Environ(), "ROUTERD_INSTALL_PACKAGE_MANAGER=none")
+	cmd.Env = append(cmd.Env, env...)
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+func runInstallRawWithEnv(t *testing.T, pkg string, env []string, args ...string) (string, error) {
+	t.Helper()
+	script := filepath.Join(repoRoot(t), "packaging", "install.sh")
+	cmd := exec.Command(script, args...)
 	cmd.Dir = pkg
 	cmd.Env = append(os.Environ(), "ROUTERD_INSTALL_PACKAGE_MANAGER=none")
 	cmd.Env = append(cmd.Env, env...)

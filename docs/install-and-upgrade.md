@@ -67,6 +67,9 @@ native nDPI requirement.
 It installs the binaries under `/usr/local/sbin`, installs the service template,
 and writes `/usr/local/etc/routerd/router.yaml.sample`.
 It never overwrites an existing `/usr/local/etc/routerd/router.yaml`.
+On systemd hosts, the installer creates the `routerd` group for local socket
+access. Add an operator with `sudo usermod -aG routerd <user>` to allow
+`routerctl status` and other local control socket operations without sudo.
 
 ## Try the live ISO
 
