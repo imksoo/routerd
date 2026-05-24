@@ -11,6 +11,51 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 追加
+
+- `routerd rollback --list` と `routerd rollback --to <generation>` を追加しました。
+  保存済みの設定世代を一覧し、通常の apply 経路で再適用します（既存の SQLite 世代を
+  利用し、別途スナップショット保管は持ちません）。
+- `routerctl set-log-level <debug|info|warning|error|default>` を追加しました。
+  再起動せずに control socket 経由でログ詳細度を実行時変更できます（OTLP ログ sink にも反映）。
+- `routerctl describe` がリソースの Phase / Reason / Message と、非正常 phase での
+  対処ヒント（remediation）を表示するようになりました。
+- 生成される設定 JSON Schema に、非自明なフィールドの説明（godoc 由来）が入るように
+  なり、エディタ補完や検証メッセージが改善します。
+- インストーラが `routerd` システムグループを作成します。グループに追加した運用者は
+  sudo なしで `routerctl status` を実行できます。
+
+### 変更
+
+- 読み取り専用ステータス socket の所有を `root:routerd`・モード `0o660` にしました。
+  socket 生成時に routerd 自身がグループ所有を設定するため、unit の `Group=` 設定に
+  依存しません。読み書き用 control socket は root 専用のままです。
+
+### 削除
+
+- `disabled:` フィールドを削除しました。`PPPoESession` / `HealthCheck` /
+  `DSLiteTunnel` / `EgressRoutePolicy` の候補では `enabled: false` を使ってください。
+  **破壊的変更:** `disabled:` を使っていた設定は書き直しが必要です。
+- 無効化済みで no-op だった `--controller-chain` / `--controller-chain-*` フラグと、
+  `--observe-interval` の定期 observe を削除しました（イベント駆動のコントローラチェーンが
+  常時有効。`--apply-interval` は変更なし）。これらのフラグを渡している host unit は
+  アップグレード前に更新が必要です。
+
+### 修正
+
+- `install.sh` がアップグレード時に `routerd-bgp` を自動再起動しなくなり、routerd
+  バイナリ更新をまたいで BGP セッションと ECMP が維持されます。
+- 起動時に動的参照（`*From` / `upstreamFrom`）が未解決の場合、ハードエラーや値の
+  暗黙ドロップではなく `Pending` として報告し、依存先の status が現れた時点で再 reconcile
+  するようにしました（DNS リゾルバ / DS-Lite / DHCP サーバ / VRRP 静的アドレス）。
+- 終了時の `sql: database is closed` ログノイズを解消しました。state store が close 後の
+  アクセスを安全に拒否します。
+
+### セキュリティ
+
+- 読み取り専用ステータス socket が全ユーザーからアクセス可能でなくなり、root と
+  `routerd` グループのメンバーに限定されました。
+
 ## v20260523.2327
 
 ### 追加

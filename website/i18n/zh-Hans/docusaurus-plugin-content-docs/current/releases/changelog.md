@@ -11,6 +11,40 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 新增
+
+- `routerd rollback --list` 与 `routerd rollback --to <generation>`：列出已保存的配置代次，
+  并通过常规 apply 路径重新应用某个代次（基于现有的 SQLite 代次，不另设快照存储）。
+- `routerctl set-log-level <debug|info|warning|error|default>`：无需重启，通过 control
+  socket 在运行时调整日志详细级别（同样作用于 OTLP 日志 sink）。
+- `routerctl describe` 现在会显示资源的 Phase、Reason、Message，以及非健康 phase 的处置提示（remediation）。
+- 生成的配置 JSON Schema 现在为不直观的字段附带说明（来自 godoc），改善编辑器补全与校验提示。
+- 安装器会创建 `routerd` 系统组；加入该组的运维人员可免 sudo 运行 `routerctl status`。
+
+### 变更
+
+- 只读状态 socket 现归属 `root:routerd`、权限 `0o660`；socket 创建时由 routerd 自行设置
+  组归属，因此不再依赖 unit 的 `Group=` 设置。读写用 control socket 仍为 root 专用。
+
+### 移除
+
+- 移除了 `disabled:` 字段。请在 `PPPoESession`、`HealthCheck`、`DSLiteTunnel` 以及
+  `EgressRoutePolicy` 候选中改用 `enabled: false`。**破坏性改动：** 使用过 `disabled:` 的配置需要改写。
+- 移除了早已无效（no-op）的 `--controller-chain` / `--controller-chain-*` 标志，以及
+  `--observe-interval` 的定时 observe（事件驱动的控制器链始终启用；`--apply-interval` 不变）。
+  仍在传递这些标志的 host unit 需在升级前更新。
+
+### 修复
+
+- `install.sh` 在升级时不再自动重启 `routerd-bgp`，从而在 routerd 二进制更新期间保持 BGP 会话与 ECMP。
+- 启动期间动态引用（`*From` / `upstreamFrom`）未解析时，现报告为 `Pending` 并在依赖方 status
+  出现后重新协调，而不是记录硬错误或静默丢弃取值（DNS 解析器 / DS-Lite / DHCP 服务器 / VRRP 静态地址）。
+- 消除了关闭时的 `sql: database is closed` 日志噪声；状态存储在关闭后会安全地拒绝访问。
+
+### 安全
+
+- 只读状态 socket 不再对所有用户开放，访问被限制为 root 与 `routerd` 组成员。
+
 ## v20260523.2327
 
 ### 新增

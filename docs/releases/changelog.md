@@ -12,6 +12,54 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Added
+
+- `routerd rollback --list` and `routerd rollback --to <generation>`: list stored
+  config generations and re-apply one through the normal apply path (built on the
+  existing SQLite generations; no separate snapshot store).
+- `routerctl set-log-level <debug|info|warning|error|default>`: change log
+  verbosity at runtime over the control socket without restarting; the override
+  also applies to the OTLP log sink.
+- `routerctl describe` now shows a resource's Phase, Reason, and Message, plus a
+  remediation hint for non-healthy phases.
+- The generated config JSON Schema now carries field descriptions (from godoc)
+  for non-obvious fields, improving editor completion and validation messages.
+- The installer creates a `routerd` system group; operators added to it can run
+  `routerctl status` without sudo.
+
+### Changed
+
+- The read-only status socket is now owned `root:routerd` with mode `0o660`;
+  routerd sets the group ownership itself when creating the socket, so it no
+  longer depends on the service unit's `Group=` setting. The read-write control
+  socket stays root-only.
+
+### Removed
+
+- Removed the `disabled:` field; use `enabled: false` instead on `PPPoESession`,
+  `HealthCheck`, `DSLiteTunnel`, and `EgressRoutePolicy` candidates. **Breaking:**
+  re-author any config that used `disabled:`.
+- Removed the no-op `--controller-chain` / `--controller-chain-*` flags and the
+  `--observe-interval` scheduled observe (the event-driven controller chain is
+  always active; `--apply-interval` is unchanged). Host units that still pass
+  these flags must be updated before upgrading.
+
+### Fixed
+
+- `install.sh` no longer auto-restarts `routerd-bgp` during an upgrade, so BGP
+  sessions and ECMP are preserved across routerd binary updates.
+- An unresolved dynamic reference (`*From` / `upstreamFrom`) during bootstrap is
+  now reported as `Pending` and re-reconciled when the dependency's status
+  appears, instead of logging a hard error or silently dropping the value
+  (DNS resolver, DS-Lite, DHCP servers, VRRP static addresses).
+- No more `sql: database is closed` log noise during shutdown; the state store
+  rejects access after close gracefully.
+
+### Security
+
+- The read-only status socket is no longer world-accessible; access is limited to
+  root and members of the `routerd` group.
+
 ## v20260523.2327
 
 ### Added
