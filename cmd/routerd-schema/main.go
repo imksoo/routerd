@@ -7,11 +7,18 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"sync"
 
 	"github.com/invopop/jsonschema"
 
 	"routerd/pkg/api"
 	"routerd/pkg/controlapi"
+)
+
+var (
+	apiCommentMap  map[string]string
+	apiCommentOnce sync.Once
+	apiCommentErr  error
 )
 
 func main() {
@@ -364,6 +371,7 @@ func reflectedSchema(value any) map[string]any {
 		DoNotReference:            true,
 		ExpandedStruct:            true,
 		AllowAdditionalProperties: false,
+		CommentMap:                apiComments(),
 	}
 	data, err := json.Marshal(reflector.Reflect(value))
 	if err != nil {
@@ -377,6 +385,18 @@ func reflectedSchema(value any) map[string]any {
 	delete(schema, "$id")
 	patchResourceWhenSchemas(schema)
 	return schema
+}
+
+func apiComments() map[string]string {
+	apiCommentOnce.Do(func() {
+		reflector := jsonschema.Reflector{}
+		apiCommentErr = reflector.AddGoComments("routerd", "./pkg/api")
+		apiCommentMap = reflector.CommentMap
+	})
+	if apiCommentErr != nil {
+		panic(apiCommentErr)
+	}
+	return apiCommentMap
 }
 
 func resourceWhenSchema() map[string]any {

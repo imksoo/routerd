@@ -117,6 +117,7 @@
               "type": "boolean"
             },
             "mode": {
+              "description": "Mode defaults to strict; progressive mode records recoverable apply errors and continues with later stages.",
               "enum": [
                 "",
                 "strict",
@@ -125,6 +126,7 @@
               "type": "string"
             },
             "protectedInterfaces": {
+              "description": "ProtectedInterfaces excludes interfaces from routerd-generated adoption and management-path disruption checks.",
               "items": {
                 "type": "string"
               },
@@ -645,6 +647,7 @@
                               },
                               "type": "object"
                             },
+                            "description": "State gates a resource on status fields from other resources.",
                             "type": "object"
                           }
                         },
@@ -1034,12 +1037,14 @@
                           "additionalProperties": false,
                           "properties": {
                             "field": {
+                              "description": "Field defaults to phase when omitted.",
                               "type": "string"
                             },
                             "optional": {
                               "type": "boolean"
                             },
                             "resource": {
+                              "description": "Resource names the source resource as Kind/name and reads its status, or a router config field for supported resources.",
                               "type": "string"
                             }
                           },
@@ -1113,12 +1118,14 @@
                           "additionalProperties": false,
                           "properties": {
                             "field": {
+                              "description": "Field defaults to phase when omitted.",
                               "type": "string"
                             },
                             "optional": {
                               "type": "boolean"
                             },
                             "resource": {
+                              "description": "Resource names the source resource as Kind/name and reads its status, or a router config field for supported resources.",
                               "type": "string"
                             }
                           },
@@ -1146,12 +1153,14 @@
                           "additionalProperties": false,
                           "properties": {
                             "field": {
+                              "description": "Field defaults to phase when omitted.",
                               "type": "string"
                             },
                             "optional": {
                               "type": "boolean"
                             },
                             "resource": {
+                              "description": "Resource names the source resource as Kind/name and reads its status, or a router config field for supported resources.",
                               "type": "string"
                             }
                           },
@@ -1183,12 +1192,14 @@
                           "additionalProperties": false,
                           "properties": {
                             "field": {
+                              "description": "Field defaults to phase when omitted.",
                               "type": "string"
                             },
                             "optional": {
                               "type": "boolean"
                             },
                             "resource": {
+                              "description": "Resource names the source resource as Kind/name and reads its status, or a router config field for supported resources.",
                               "type": "string"
                             }
                           },
@@ -1270,12 +1281,14 @@
                         "additionalProperties": false,
                         "properties": {
                           "field": {
+                            "description": "Field defaults to phase when omitted.",
                             "type": "string"
                           },
                           "optional": {
                             "type": "boolean"
                           },
                           "resource": {
+                            "description": "Resource names the source resource as Kind/name and reads its status, or a router config field for supported resources.",
                             "type": "string"
                           }
                         },
@@ -1386,6 +1399,7 @@
                               },
                               "type": "object"
                             },
+                            "description": "State gates a resource on status fields from other resources.",
                             "type": "object"
                           }
                         },
@@ -1520,6 +1534,7 @@
                         "type": "boolean"
                       },
                       "disabled": {
+                        "description": "Disabled suppresses session startup even when the resource is present.",
                         "type": "boolean"
                       },
                       "enabled": {
@@ -2092,12 +2107,14 @@
                         "type": "string"
                       },
                       "allowOverlap": {
+                        "description": "AllowOverlap permits an address prefix that overlaps another configured IPv4 prefix.",
                         "type": "boolean"
                       },
                       "allowOverlapReason": {
                         "type": "string"
                       },
                       "exclusive": {
+                        "description": "Exclusive removes other IPv4 addresses from the target interface before adding this address.",
                         "type": "boolean"
                       },
                       "interface": {
@@ -2157,12 +2174,14 @@
                         "additionalProperties": false,
                         "properties": {
                           "field": {
+                            "description": "Field defaults to phase when omitted.",
                             "type": "string"
                           },
                           "optional": {
                             "type": "boolean"
                           },
                           "resource": {
+                            "description": "Resource names the source resource as Kind/name and reads its status, or a router config field for supported resources.",
                             "type": "string"
                           }
                         },
@@ -2307,6 +2326,7 @@
                               },
                               "type": "object"
                             },
+                            "description": "State gates a resource on status fields from other resources.",
                             "type": "object"
                           }
                         },
@@ -2584,6 +2604,7 @@
                               },
                               "type": "object"
                             },
+                            "description": "State gates a resource on status fields from other resources.",
                             "type": "object"
                           }
                         },
@@ -2777,6 +2798,7 @@
                               },
                               "type": "object"
                             },
+                            "description": "State gates a resource on status fields from other resources.",
                             "type": "object"
                           }
                         },
@@ -2892,6 +2914,7 @@
                               },
                               "type": "object"
                             },
+                            "description": "State gates a resource on status fields from other resources.",
                             "type": "object"
                           }
                         },
@@ -3098,6 +3121,7 @@
                               },
                               "type": "object"
                             },
+                            "description": "State gates a resource on status fields from other resources.",
                             "type": "object"
                           }
                         },
@@ -3206,12 +3230,14 @@
                           "additionalProperties": false,
                           "properties": {
                             "field": {
+                              "description": "Field defaults to phase when omitted.",
                               "type": "string"
                             },
                             "optional": {
                               "type": "boolean"
                             },
                             "resource": {
+                              "description": "Resource names the source resource as Kind/name and reads its status, or a router config field for supported resources.",
                               "type": "string"
                             }
                           },
@@ -3229,6 +3255,7 @@
                         "type": "array"
                       },
                       "dnsSource": {
+                        "description": "DNSSource defaults to self; dhcpv4 reuses DNS servers learned on dnsInterface, static uses dnsServers, and none omits DNS options.",
                         "enum": [
                           "dhcpv4",
                           "static",
@@ -3244,12 +3271,14 @@
                         "additionalProperties": false,
                         "properties": {
                           "field": {
+                            "description": "Field defaults to phase when omitted.",
                             "type": "string"
                           },
                           "optional": {
                             "type": "boolean"
                           },
                           "resource": {
+                            "description": "Resource names the source resource as Kind/name and reads its status, or a router config field for supported resources.",
                             "type": "string"
                           }
                         },
@@ -3265,12 +3294,14 @@
                         "additionalProperties": false,
                         "properties": {
                           "field": {
+                            "description": "Field defaults to phase when omitted.",
                             "type": "string"
                           },
                           "optional": {
                             "type": "boolean"
                           },
                           "resource": {
+                            "description": "Resource names the source resource as Kind/name and reads its status, or a router config field for supported resources.",
                             "type": "string"
                           }
                         },
@@ -3302,12 +3333,14 @@
                           "additionalProperties": false,
                           "properties": {
                             "field": {
+                              "description": "Field defaults to phase when omitted.",
                               "type": "string"
                             },
                             "optional": {
                               "type": "boolean"
                             },
                             "resource": {
+                              "description": "Resource names the source resource as Kind/name and reads its status, or a router config field for supported resources.",
                               "type": "string"
                             }
                           },
@@ -3361,6 +3394,7 @@
                         "type": "string"
                       },
                       "routerSource": {
+                        "description": "RouterSource defaults to interfaceAddress; static uses router, and none omits DHCP option 3.",
                         "enum": [
                           "interfaceAddress",
                           "static",
@@ -3416,6 +3450,7 @@
                               },
                               "type": "object"
                             },
+                            "description": "State gates a resource on status fields from other resources.",
                             "type": "object"
                           }
                         },
@@ -3671,6 +3706,7 @@
                         "type": "integer"
                       },
                       "profile": {
+                        "description": "Profile applies provider-specific defaults; NTT profiles default prefixLength to 60 and DUID type to link-layer.",
                         "enum": [
                           "default",
                           "ntt-ngn-direct-hikari-denwa",
@@ -3728,6 +3764,7 @@
                     "additionalProperties": false,
                     "properties": {
                       "addressSuffix": {
+                        "description": "AddressSuffix is ORed into the selected /64 to derive the final IPv6 address.",
                         "type": "string"
                       },
                       "announce": {
@@ -3741,6 +3778,7 @@
                               "type": "string"
                             },
                             "field": {
+                              "description": "Field defaults to phase unless phase is set.",
                               "type": "string"
                             },
                             "notEmpty": {
@@ -3750,6 +3788,7 @@
                               "type": "boolean"
                             },
                             "phase": {
+                              "description": "Phase is shorthand for requiring the dependency phase field to equal this value.",
                               "type": "string"
                             },
                             "resource": {
@@ -3767,12 +3806,14 @@
                         "type": "string"
                       },
                       "prefixDelegation": {
+                        "description": "PrefixDelegation references the DHCPv6PrefixDelegation resource that supplies the delegated prefix.",
                         "type": "string"
                       },
                       "sendRA": {
                         "type": "boolean"
                       },
                       "subnetID": {
+                        "description": "SubnetID selects the /64 inside the delegated prefix; it defaults to 0.",
                         "type": "string"
                       },
                       "when": {
@@ -3811,6 +3852,7 @@
                               },
                               "type": "object"
                             },
+                            "description": "State gates a resource on status fields from other resources.",
                             "type": "object"
                           }
                         },
@@ -3872,6 +3914,7 @@
                               "type": "string"
                             },
                             "field": {
+                              "description": "Field defaults to phase unless phase is set.",
                               "type": "string"
                             },
                             "notEmpty": {
@@ -3881,6 +3924,7 @@
                               "type": "boolean"
                             },
                             "phase": {
+                              "description": "Phase is shorthand for requiring the dependency phase field to equal this value.",
                               "type": "string"
                             },
                             "resource": {
@@ -3960,6 +4004,7 @@
                               "type": "string"
                             },
                             "field": {
+                              "description": "Field defaults to phase unless phase is set.",
                               "type": "string"
                             },
                             "notEmpty": {
@@ -3969,6 +4014,7 @@
                               "type": "boolean"
                             },
                             "phase": {
+                              "description": "Phase is shorthand for requiring the dependency phase field to equal this value.",
                               "type": "string"
                             },
                             "resource": {
@@ -3993,12 +4039,14 @@
                           "additionalProperties": false,
                           "properties": {
                             "field": {
+                              "description": "Field defaults to phase when omitted.",
                               "type": "string"
                             },
                             "optional": {
                               "type": "boolean"
                             },
                             "resource": {
+                              "description": "Resource names the source resource as Kind/name and reads its status, or a router config field for supported resources.",
                               "type": "string"
                             }
                           },
@@ -4036,12 +4084,14 @@
                         "additionalProperties": false,
                         "properties": {
                           "field": {
+                            "description": "Field defaults to phase when omitted.",
                             "type": "string"
                           },
                           "optional": {
                             "type": "boolean"
                           },
                           "resource": {
+                            "description": "Resource names the source resource as Kind/name and reads its status, or a router config field for supported resources.",
                             "type": "string"
                           }
                         },
@@ -4070,12 +4120,14 @@
                           "additionalProperties": false,
                           "properties": {
                             "field": {
+                              "description": "Field defaults to phase when omitted.",
                               "type": "string"
                             },
                             "optional": {
                               "type": "boolean"
                             },
                             "resource": {
+                              "description": "Resource names the source resource as Kind/name and reads its status, or a router config field for supported resources.",
                               "type": "string"
                             }
                           },
@@ -4157,6 +4209,7 @@
                         "type": "boolean"
                       },
                       "delegatedAddress": {
+                        "description": "DelegatedAddress references an IPv6DelegatedAddress used to derive self DNS and RA-adjacent settings.",
                         "type": "string"
                       },
                       "dependsOn": {
@@ -4167,6 +4220,7 @@
                               "type": "string"
                             },
                             "field": {
+                              "description": "Field defaults to phase unless phase is set.",
                               "type": "string"
                             },
                             "notEmpty": {
@@ -4176,6 +4230,7 @@
                               "type": "boolean"
                             },
                             "phase": {
+                              "description": "Phase is shorthand for requiring the dependency phase field to equal this value.",
                               "type": "string"
                             },
                             "resource": {
@@ -4194,12 +4249,14 @@
                           "additionalProperties": false,
                           "properties": {
                             "field": {
+                              "description": "Field defaults to phase when omitted.",
                               "type": "string"
                             },
                             "optional": {
                               "type": "boolean"
                             },
                             "resource": {
+                              "description": "Resource names the source resource as Kind/name and reads its status, or a router config field for supported resources.",
                               "type": "string"
                             }
                           },
@@ -4217,6 +4274,7 @@
                         "type": "array"
                       },
                       "dnsSource": {
+                        "description": "DNSSource defaults to self; static uses dnsServers, and none omits DNS options.",
                         "enum": [
                           "self",
                           "static",
@@ -4235,12 +4293,14 @@
                           "additionalProperties": false,
                           "properties": {
                             "field": {
+                              "description": "Field defaults to phase when omitted.",
                               "type": "string"
                             },
                             "optional": {
                               "type": "boolean"
                             },
                             "resource": {
+                              "description": "Resource names the source resource as Kind/name and reads its status, or a router config field for supported resources.",
                               "type": "string"
                             }
                           },
@@ -4270,6 +4330,7 @@
                         "type": "boolean"
                       },
                       "mode": {
+                        "description": "Mode defaults to stateless; ra-only emits router advertisements without DHCPv6 service.",
                         "enum": [
                           "stateless",
                           "stateful",
@@ -4292,6 +4353,7 @@
                         "type": "string"
                       },
                       "selfAddressPolicy": {
+                        "description": "SelfAddressPolicy references a SelfAddressPolicy resource used when dnsSource is self.",
                         "type": "string"
                       },
                       "server": {
@@ -4305,12 +4367,14 @@
                           "additionalProperties": false,
                           "properties": {
                             "field": {
+                              "description": "Field defaults to phase when omitted.",
                               "type": "string"
                             },
                             "optional": {
                               "type": "boolean"
                             },
                             "resource": {
+                              "description": "Resource names the source resource as Kind/name and reads its status, or a router config field for supported resources.",
                               "type": "string"
                             }
                           },
@@ -4367,6 +4431,7 @@
                               },
                               "type": "object"
                             },
+                            "description": "State gates a resource on status fields from other resources.",
                             "type": "object"
                           }
                         },
@@ -4486,6 +4551,7 @@
                               "type": "string"
                             },
                             "addressSuffix": {
+                              "description": "AddressSuffix defaults to the referenced delegated address suffix for delegatedAddress candidates.",
                               "type": "string"
                             },
                             "delegatedAddress": {
@@ -4498,10 +4564,12 @@
                               "type": "string"
                             },
                             "ordinal": {
+                              "description": "Ordinal is one-based when selecting an address from an interface.",
                               "minimum": 1,
                               "type": "integer"
                             },
                             "source": {
+                              "description": "Source selects how the candidate address is found: delegatedAddress derives from a delegated prefix, interfaceAddress scans live interface addresses, and static uses address.",
                               "enum": [
                                 "delegatedAddress",
                                 "interfaceAddress",
@@ -4642,12 +4710,14 @@
                               "additionalProperties": false,
                               "properties": {
                                 "field": {
+                                  "description": "Field defaults to phase when omitted.",
                                   "type": "string"
                                 },
                                 "optional": {
                                   "type": "boolean"
                                 },
                                 "resource": {
+                                  "description": "Resource names the source resource as Kind/name and reads its status, or a router config field for supported resources.",
                                   "type": "string"
                                 }
                               },
@@ -4663,12 +4733,14 @@
                               "additionalProperties": false,
                               "properties": {
                                 "field": {
+                                  "description": "Field defaults to phase when omitted.",
                                   "type": "string"
                                 },
                                 "optional": {
                                   "type": "boolean"
                                 },
                                 "resource": {
+                                  "description": "Resource names the source resource as Kind/name and reads its status, or a router config field for supported resources.",
                                   "type": "string"
                                 }
                               },
@@ -4788,12 +4860,14 @@
                                 "additionalProperties": false,
                                 "properties": {
                                   "field": {
+                                    "description": "Field defaults to phase when omitted.",
                                     "type": "string"
                                   },
                                   "optional": {
                                     "type": "boolean"
                                   },
                                   "resource": {
+                                    "description": "Resource names the source resource as Kind/name and reads its status, or a router config field for supported resources.",
                                     "type": "string"
                                   }
                                 },
@@ -4973,6 +5047,7 @@
                               },
                               "type": "object"
                             },
+                            "description": "State gates a resource on status fields from other resources.",
                             "type": "object"
                           }
                         },
@@ -5039,12 +5114,14 @@
                           "additionalProperties": false,
                           "properties": {
                             "field": {
+                              "description": "Field defaults to phase when omitted.",
                               "type": "string"
                             },
                             "optional": {
                               "type": "boolean"
                             },
                             "resource": {
+                              "description": "Resource names the source resource as Kind/name and reads its status, or a router config field for supported resources.",
                               "type": "string"
                             }
                           },
@@ -5120,6 +5197,7 @@
                               },
                               "type": "object"
                             },
+                            "description": "State gates a resource on status fields from other resources.",
                             "type": "object"
                           }
                         },
@@ -5176,6 +5254,7 @@
                         "type": "integer"
                       },
                       "aftrAddressSelection": {
+                        "description": "AFTRAddressSelection controls how multiple AAAA records are selected; ordinalModulo wraps the ordinal by the answer count.",
                         "enum": [
                           "ordinal",
                           "ordinalModulo"
@@ -5195,12 +5274,14 @@
                         "additionalProperties": false,
                         "properties": {
                           "field": {
+                            "description": "Field defaults to phase when omitted.",
                             "type": "string"
                           },
                           "optional": {
                             "type": "boolean"
                           },
                           "resource": {
+                            "description": "Resource names the source resource as Kind/name and reads its status, or a router config field for supported resources.",
                             "type": "string"
                           }
                         },
@@ -5223,6 +5304,7 @@
                               "type": "string"
                             },
                             "field": {
+                              "description": "Field defaults to phase unless phase is set.",
                               "type": "string"
                             },
                             "notEmpty": {
@@ -5232,6 +5314,7 @@
                               "type": "boolean"
                             },
                             "phase": {
+                              "description": "Phase is shorthand for requiring the dependency phase field to equal this value.",
                               "type": "string"
                             },
                             "resource": {
@@ -5258,12 +5341,14 @@
                         "additionalProperties": false,
                         "properties": {
                           "field": {
+                            "description": "Field defaults to phase when omitted.",
                             "type": "string"
                           },
                           "optional": {
                             "type": "boolean"
                           },
                           "resource": {
+                            "description": "Resource names the source resource as Kind/name and reads its status, or a router config field for supported resources.",
                             "type": "string"
                           }
                         },
@@ -5273,6 +5358,7 @@
                         "type": "object"
                       },
                       "localAddressSource": {
+                        "description": "LocalAddressSource defaults to interface; delegatedAddress derives the tunnel source from localDelegatedAddress.",
                         "enum": [
                           "interface",
                           "static",
@@ -5337,6 +5423,7 @@
                               },
                               "type": "object"
                             },
+                            "description": "State gates a resource on status fields from other resources.",
                             "type": "object"
                           }
                         },
@@ -5396,6 +5483,7 @@
                               "type": "string"
                             },
                             "field": {
+                              "description": "Field defaults to phase unless phase is set.",
                               "type": "string"
                             },
                             "notEmpty": {
@@ -5405,6 +5493,7 @@
                               "type": "boolean"
                             },
                             "phase": {
+                              "description": "Phase is shorthand for requiring the dependency phase field to equal this value.",
                               "type": "string"
                             },
                             "resource": {
@@ -5428,12 +5517,14 @@
                         "additionalProperties": false,
                         "properties": {
                           "field": {
+                            "description": "Field defaults to phase when omitted.",
                             "type": "string"
                           },
                           "optional": {
                             "type": "boolean"
                           },
                           "resource": {
+                            "description": "Resource names the source resource as Kind/name and reads its status, or a router config field for supported resources.",
                             "type": "string"
                           }
                         },
@@ -5449,12 +5540,14 @@
                         "additionalProperties": false,
                         "properties": {
                           "field": {
+                            "description": "Field defaults to phase when omitted.",
                             "type": "string"
                           },
                           "optional": {
                             "type": "boolean"
                           },
                           "resource": {
+                            "description": "Resource names the source resource as Kind/name and reads its status, or a router config field for supported resources.",
                             "type": "string"
                           }
                         },
@@ -5629,6 +5722,7 @@
                               },
                               "type": "object"
                             },
+                            "description": "State gates a resource on status fields from other resources.",
                             "type": "object"
                           }
                         },
@@ -5689,6 +5783,7 @@
                                     "type": "string"
                                   },
                                   "field": {
+                                    "description": "Field defaults to phase unless phase is set.",
                                     "type": "string"
                                   },
                                   "notEmpty": {
@@ -5698,6 +5793,7 @@
                                     "type": "boolean"
                                   },
                                   "phase": {
+                                    "description": "Phase is shorthand for requiring the dependency phase field to equal this value.",
                                     "type": "string"
                                   },
                                   "resource": {
@@ -5718,12 +5814,14 @@
                               "additionalProperties": false,
                               "properties": {
                                 "field": {
+                                  "description": "Field defaults to phase when omitted.",
                                   "type": "string"
                                 },
                                 "optional": {
                                   "type": "boolean"
                                 },
                                 "resource": {
+                                  "description": "Resource names the source resource as Kind/name and reads its status, or a router config field for supported resources.",
                                   "type": "string"
                                 }
                               },
@@ -5733,6 +5831,7 @@
                               "type": "object"
                             },
                             "disabled": {
+                              "description": "Disabled keeps the candidate in config and status but excludes it from selection and rendering.",
                               "type": "boolean"
                             },
                             "gateway": {
@@ -5742,12 +5841,14 @@
                               "additionalProperties": false,
                               "properties": {
                                 "field": {
+                                  "description": "Field defaults to phase when omitted.",
                                   "type": "string"
                                 },
                                 "optional": {
                                   "type": "boolean"
                                 },
                                 "resource": {
+                                  "description": "Resource names the source resource as Kind/name and reads its status, or a router config field for supported resources.",
                                   "type": "string"
                                 }
                               },
@@ -5757,6 +5858,7 @@
                               "type": "object"
                             },
                             "gatewaySource": {
+                              "description": "GatewaySource declares whether gateway is static, learned from DHCP status, or intentionally absent.",
                               "enum": [
                                 "",
                                 "static",
@@ -5895,6 +5997,7 @@
                                     },
                                     "type": "object"
                                   },
+                                  "description": "State gates a resource on status fields from other resources.",
                                   "type": "object"
                                 }
                               },
@@ -5946,6 +6049,7 @@
                         "type": "string"
                       },
                       "mode": {
+                        "description": "Mode selects the route policy shape: priority chooses one candidate, mark installs marked tables, and hash spreads flows across targets.",
                         "enum": [
                           "priority",
                           "mark",
@@ -6002,6 +6106,7 @@
                               },
                               "type": "object"
                             },
+                            "description": "State gates a resource on status fields from other resources.",
                             "type": "object"
                           }
                         },
@@ -6309,6 +6414,7 @@
                         "type": "string"
                       },
                       "egressPolicyRef": {
+                        "description": "EgressPolicyRef uses the selected device from an EgressRoutePolicy when egressInterface is omitted.",
                         "type": "string"
                       },
                       "excludeDestinationCIDRs": {
@@ -6331,14 +6437,17 @@
                       },
                       "snatAddressFrom": {
                         "additionalProperties": false,
+                        "description": "SNATAddressFrom reads the SNAT address from another resource status or supported router resource field.",
                         "properties": {
                           "field": {
+                            "description": "Field defaults to phase when omitted.",
                             "type": "string"
                           },
                           "optional": {
                             "type": "boolean"
                           },
                           "resource": {
+                            "description": "Resource names the source resource as Kind/name and reads its status, or a router config field for supported resources.",
                             "type": "string"
                           }
                         },
@@ -6452,6 +6561,7 @@
                               },
                               "type": "object"
                             },
+                            "description": "State gates a resource on status fields from other resources.",
                             "type": "object"
                           }
                         },
@@ -6534,12 +6644,14 @@
                             "additionalProperties": false,
                             "properties": {
                               "field": {
+                                "description": "Field defaults to phase when omitted.",
                                 "type": "string"
                               },
                               "optional": {
                                 "type": "boolean"
                               },
                               "resource": {
+                                "description": "Resource names the source resource as Kind/name and reads its status, or a router config field for supported resources.",
                                 "type": "string"
                               }
                             },
@@ -6581,12 +6693,14 @@
                             "additionalProperties": false,
                             "properties": {
                               "field": {
+                                "description": "Field defaults to phase when omitted.",
                                 "type": "string"
                               },
                               "optional": {
                                 "type": "boolean"
                               },
                               "resource": {
+                                "description": "Resource names the source resource as Kind/name and reads its status, or a router config field for supported resources.",
                                 "type": "string"
                               }
                             },
@@ -6642,6 +6756,7 @@
                               },
                               "type": "object"
                             },
+                            "description": "State gates a resource on status fields from other resources.",
                             "type": "object"
                           }
                         },
@@ -6705,12 +6820,14 @@
                               "additionalProperties": false,
                               "properties": {
                                 "field": {
+                                  "description": "Field defaults to phase when omitted.",
                                   "type": "string"
                                 },
                                 "optional": {
                                   "type": "boolean"
                                 },
                                 "resource": {
+                                  "description": "Resource names the source resource as Kind/name and reads its status, or a router config field for supported resources.",
                                   "type": "string"
                                 }
                               },
@@ -6826,12 +6943,14 @@
                             "additionalProperties": false,
                             "properties": {
                               "field": {
+                                "description": "Field defaults to phase when omitted.",
                                 "type": "string"
                               },
                               "optional": {
                                 "type": "boolean"
                               },
                               "resource": {
+                                "description": "Resource names the source resource as Kind/name and reads its status, or a router config field for supported resources.",
                                 "type": "string"
                               }
                             },
@@ -6922,6 +7041,7 @@
                               },
                               "type": "object"
                             },
+                            "description": "State gates a resource on status fields from other resources.",
                             "type": "object"
                           }
                         },
@@ -7025,6 +7145,7 @@
                               },
                               "type": "object"
                             },
+                            "description": "State gates a resource on status fields from other resources.",
                             "type": "object"
                           }
                         },
@@ -7149,6 +7270,7 @@
                               },
                               "type": "object"
                             },
+                            "description": "State gates a resource on status fields from other resources.",
                             "type": "object"
                           }
                         },

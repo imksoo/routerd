@@ -110,7 +110,9 @@ type LogRetentionTargetSpec struct {
 }
 
 type ApplyPolicySpec struct {
-	Mode                string   `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=,enum=strict,enum=progressive"`
+	// Mode defaults to strict; progressive mode records recoverable apply errors and continues with later stages.
+	Mode string `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=,enum=strict,enum=progressive"`
+	// ProtectedInterfaces excludes interfaces from routerd-generated adoption and management-path disruption checks.
 	ProtectedInterfaces []string `yaml:"protectedInterfaces,omitempty" json:"protectedInterfaces,omitempty"`
 	ProtectedZones      []string `yaml:"protectedZones,omitempty" json:"protectedZones,omitempty"`
 	AutoTuneConntrack   bool     `yaml:"autoTuneConntrack,omitempty" json:"autoTuneConntrack,omitempty"`
@@ -424,9 +426,10 @@ type VXLANTunnelSpec struct {
 }
 
 type PPPoESessionSpec struct {
-	Interface       string `yaml:"interface" json:"interface"`
-	IfName          string `yaml:"ifname,omitempty" json:"ifname,omitempty"`
-	Enabled         *bool  `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Interface string `yaml:"interface" json:"interface"`
+	IfName    string `yaml:"ifname,omitempty" json:"ifname,omitempty"`
+	Enabled   *bool  `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	// Disabled suppresses session startup even when the resource is present.
 	Disabled        bool   `yaml:"disabled,omitempty" json:"disabled,omitempty"`
 	AuthMethod      string `yaml:"authMethod,omitempty" json:"authMethod,omitempty" jsonschema:"enum=chap,enum=pap,enum=both"`
 	Username        string `yaml:"username" json:"username"`
@@ -449,9 +452,11 @@ type PPPoESessionSpec struct {
 }
 
 type IPv4StaticAddressSpec struct {
-	Interface          string `yaml:"interface" json:"interface"`
-	Address            string `yaml:"address" json:"address"`
-	Exclusive          bool   `yaml:"exclusive,omitempty" json:"exclusive,omitempty"`
+	Interface string `yaml:"interface" json:"interface"`
+	Address   string `yaml:"address" json:"address"`
+	// Exclusive removes other IPv4 addresses from the target interface before adding this address.
+	Exclusive bool `yaml:"exclusive,omitempty" json:"exclusive,omitempty"`
+	// AllowOverlap permits an address prefix that overlaps another configured IPv4 prefix.
 	AllowOverlap       bool   `yaml:"allowOverlap,omitempty" json:"allowOverlap,omitempty"`
 	AllowOverlapReason string `yaml:"allowOverlapReason,omitempty" json:"allowOverlapReason,omitempty"`
 }
@@ -630,33 +635,35 @@ type IPv6StaticRouteSpec struct {
 }
 
 type DHCPv4ServerSpec struct {
-	Server           string                  `yaml:"server,omitempty" json:"server,omitempty" jsonschema:"enum=dnsmasq,enum=kea,enum=dhcpd"`
-	Managed          bool                    `yaml:"managed,omitempty" json:"managed,omitempty"`
-	Role             string                  `yaml:"role,omitempty" json:"role,omitempty" jsonschema:"enum=server,enum=transit"`
-	ListenInterfaces []string                `yaml:"listenInterfaces,omitempty" json:"listenInterfaces,omitempty"`
-	LogDHCP          bool                    `yaml:"logDHCP,omitempty" json:"logDHCP,omitempty"`
-	StickyHoldDays   int                     `yaml:"stickyHoldDays,omitempty" json:"stickyHoldDays,omitempty" jsonschema:"minimum=0"`
-	DNS              DHCPv4ServerDNSSpec     `yaml:"dns,omitempty" json:"dns,omitempty"`
-	Interface        string                  `yaml:"interface,omitempty" json:"interface,omitempty"`
-	AddressPool      DHCPAddressPoolSpec     `yaml:"addressPool,omitempty" json:"addressPool,omitempty"`
-	RangeStart       string                  `yaml:"rangeStart,omitempty" json:"rangeStart,omitempty"`
-	RangeEnd         string                  `yaml:"rangeEnd,omitempty" json:"rangeEnd,omitempty"`
-	LeaseTime        string                  `yaml:"leaseTime,omitempty" json:"leaseTime,omitempty"`
-	RouterSource     string                  `yaml:"routerSource,omitempty" json:"routerSource,omitempty" jsonschema:"enum=interfaceAddress,enum=static,enum=none"`
-	Router           string                  `yaml:"router,omitempty" json:"router,omitempty"`
-	Gateway          string                  `yaml:"gateway,omitempty" json:"gateway,omitempty"`
-	GatewayFrom      StatusValueSourceSpec   `yaml:"gatewayFrom,omitempty" json:"gatewayFrom,omitempty"`
-	DNSSource        string                  `yaml:"dnsSource,omitempty" json:"dnsSource,omitempty" jsonschema:"enum=dhcpv4,enum=static,enum=self,enum=none"`
-	DNSInterface     string                  `yaml:"dnsInterface,omitempty" json:"dnsInterface,omitempty"`
-	DNSServers       []string                `yaml:"dnsServers,omitempty" json:"dnsServers,omitempty"`
-	DNSServerFrom    []StatusValueSourceSpec `yaml:"dnsServerFrom,omitempty" json:"dnsServerFrom,omitempty"`
-	NTPServers       []string                `yaml:"ntpServers,omitempty" json:"ntpServers,omitempty"`
-	NTPServerFrom    []StatusValueSourceSpec `yaml:"ntpServerFrom,omitempty" json:"ntpServerFrom,omitempty"`
-	Domain           string                  `yaml:"domain,omitempty" json:"domain,omitempty"`
-	DomainFrom       StatusValueSourceSpec   `yaml:"domainFrom,omitempty" json:"domainFrom,omitempty"`
-	Options          []DHCPv4OptionSpec      `yaml:"options,omitempty" json:"options,omitempty"`
-	Authoritative    bool                    `yaml:"authoritative,omitempty" json:"authoritative,omitempty"`
-	When             ResourceWhenSpec        `yaml:"when,omitempty" json:"when,omitempty"`
+	Server           string              `yaml:"server,omitempty" json:"server,omitempty" jsonschema:"enum=dnsmasq,enum=kea,enum=dhcpd"`
+	Managed          bool                `yaml:"managed,omitempty" json:"managed,omitempty"`
+	Role             string              `yaml:"role,omitempty" json:"role,omitempty" jsonschema:"enum=server,enum=transit"`
+	ListenInterfaces []string            `yaml:"listenInterfaces,omitempty" json:"listenInterfaces,omitempty"`
+	LogDHCP          bool                `yaml:"logDHCP,omitempty" json:"logDHCP,omitempty"`
+	StickyHoldDays   int                 `yaml:"stickyHoldDays,omitempty" json:"stickyHoldDays,omitempty" jsonschema:"minimum=0"`
+	DNS              DHCPv4ServerDNSSpec `yaml:"dns,omitempty" json:"dns,omitempty"`
+	Interface        string              `yaml:"interface,omitempty" json:"interface,omitempty"`
+	AddressPool      DHCPAddressPoolSpec `yaml:"addressPool,omitempty" json:"addressPool,omitempty"`
+	RangeStart       string              `yaml:"rangeStart,omitempty" json:"rangeStart,omitempty"`
+	RangeEnd         string              `yaml:"rangeEnd,omitempty" json:"rangeEnd,omitempty"`
+	LeaseTime        string              `yaml:"leaseTime,omitempty" json:"leaseTime,omitempty"`
+	// RouterSource defaults to interfaceAddress; static uses router, and none omits DHCP option 3.
+	RouterSource string                `yaml:"routerSource,omitempty" json:"routerSource,omitempty" jsonschema:"enum=interfaceAddress,enum=static,enum=none"`
+	Router       string                `yaml:"router,omitempty" json:"router,omitempty"`
+	Gateway      string                `yaml:"gateway,omitempty" json:"gateway,omitempty"`
+	GatewayFrom  StatusValueSourceSpec `yaml:"gatewayFrom,omitempty" json:"gatewayFrom,omitempty"`
+	// DNSSource defaults to self; dhcpv4 reuses DNS servers learned on dnsInterface, static uses dnsServers, and none omits DNS options.
+	DNSSource     string                  `yaml:"dnsSource,omitempty" json:"dnsSource,omitempty" jsonschema:"enum=dhcpv4,enum=static,enum=self,enum=none"`
+	DNSInterface  string                  `yaml:"dnsInterface,omitempty" json:"dnsInterface,omitempty"`
+	DNSServers    []string                `yaml:"dnsServers,omitempty" json:"dnsServers,omitempty"`
+	DNSServerFrom []StatusValueSourceSpec `yaml:"dnsServerFrom,omitempty" json:"dnsServerFrom,omitempty"`
+	NTPServers    []string                `yaml:"ntpServers,omitempty" json:"ntpServers,omitempty"`
+	NTPServerFrom []StatusValueSourceSpec `yaml:"ntpServerFrom,omitempty" json:"ntpServerFrom,omitempty"`
+	Domain        string                  `yaml:"domain,omitempty" json:"domain,omitempty"`
+	DomainFrom    StatusValueSourceSpec   `yaml:"domainFrom,omitempty" json:"domainFrom,omitempty"`
+	Options       []DHCPv4OptionSpec      `yaml:"options,omitempty" json:"options,omitempty"`
+	Authoritative bool                    `yaml:"authoritative,omitempty" json:"authoritative,omitempty"`
+	When          ResourceWhenSpec        `yaml:"when,omitempty" json:"when,omitempty"`
 }
 
 type DHCPv4ServerDNSSpec struct {
@@ -702,8 +709,9 @@ type IPv6RAAddressSpec struct {
 }
 
 type DHCPv6PrefixDelegationSpec struct {
-	Interface    string `yaml:"interface" json:"interface"`
-	Client       string `yaml:"client,omitempty" json:"client,omitempty"`
+	Interface string `yaml:"interface" json:"interface"`
+	Client    string `yaml:"client,omitempty" json:"client,omitempty"`
+	// Profile applies provider-specific defaults; NTT profiles default prefixLength to 60 and DUID type to link-layer.
 	Profile      string `yaml:"profile,omitempty" json:"profile,omitempty" jsonschema:"enum=default,enum=ntt-ngn-direct-hikari-denwa,enum=ntt-hgw-lan-pd"`
 	PrefixLength int    `yaml:"prefixLength,omitempty" json:"prefixLength,omitempty" jsonschema:"minimum=1,maximum=128"`
 	IAID         string `yaml:"-" json:"-"`
@@ -712,14 +720,18 @@ type DHCPv6PrefixDelegationSpec struct {
 }
 
 type StatusValueSourceSpec struct {
+	// Resource names the source resource as Kind/name and reads its status, or a router config field for supported resources.
 	Resource string `yaml:"resource" json:"resource"`
+	// Field defaults to phase when omitted.
 	Field    string `yaml:"field,omitempty" json:"field,omitempty"`
 	Optional bool   `yaml:"optional,omitempty" json:"optional,omitempty"`
 }
 
 type ResourceDependencySpec struct {
 	Resource string `yaml:"resource" json:"resource"`
-	Field    string `yaml:"field,omitempty" json:"field,omitempty"`
+	// Field defaults to phase unless phase is set.
+	Field string `yaml:"field,omitempty" json:"field,omitempty"`
+	// Phase is shorthand for requiring the dependency phase field to equal this value.
 	Phase    string `yaml:"phase,omitempty" json:"phase,omitempty"`
 	Equals   string `yaml:"equals,omitempty" json:"equals,omitempty"`
 	NotEmpty bool   `yaml:"notEmpty,omitempty" json:"notEmpty,omitempty"`
@@ -762,16 +774,19 @@ func EffectiveIPv6PDDUIDType(profile, configured string) string {
 }
 
 type IPv6DelegatedAddressSpec struct {
-	PrefixDelegation string                   `yaml:"prefixDelegation" json:"prefixDelegation"`
-	PrefixSource     string                   `yaml:"prefixSource,omitempty" json:"-"`
-	Interface        string                   `yaml:"interface" json:"interface"`
-	SubnetID         string                   `yaml:"subnetID,omitempty" json:"subnetID,omitempty"`
-	AddressSuffix    string                   `yaml:"addressSuffix" json:"addressSuffix"`
-	SendRA           bool                     `yaml:"sendRA,omitempty" json:"sendRA,omitempty"`
-	Announce         bool                     `yaml:"announce,omitempty" json:"announce,omitempty"`
-	When             ResourceWhenSpec         `yaml:"when,omitempty" json:"when,omitempty"`
-	DependsOn        []ResourceDependencySpec `yaml:"dependsOn,omitempty" json:"dependsOn,omitempty"`
-	ReadyWhen        []ReadyWhenSpec          `yaml:"ready_when,omitempty" json:"-"`
+	// PrefixDelegation references the DHCPv6PrefixDelegation resource that supplies the delegated prefix.
+	PrefixDelegation string `yaml:"prefixDelegation" json:"prefixDelegation"`
+	PrefixSource     string `yaml:"prefixSource,omitempty" json:"-"`
+	Interface        string `yaml:"interface" json:"interface"`
+	// SubnetID selects the /64 inside the delegated prefix; it defaults to 0.
+	SubnetID string `yaml:"subnetID,omitempty" json:"subnetID,omitempty"`
+	// AddressSuffix is ORed into the selected /64 to derive the final IPv6 address.
+	AddressSuffix string                   `yaml:"addressSuffix" json:"addressSuffix"`
+	SendRA        bool                     `yaml:"sendRA,omitempty" json:"sendRA,omitempty"`
+	Announce      bool                     `yaml:"announce,omitempty" json:"announce,omitempty"`
+	When          ResourceWhenSpec         `yaml:"when,omitempty" json:"when,omitempty"`
+	DependsOn     []ResourceDependencySpec `yaml:"dependsOn,omitempty" json:"dependsOn,omitempty"`
+	ReadyWhen     []ReadyWhenSpec          `yaml:"ready_when,omitempty" json:"-"`
 }
 
 type DHCPv6InformationSpec struct {
@@ -970,18 +985,22 @@ type IPv6RouterAdvertisementSpec struct {
 }
 
 type DHCPv6ServerSpec struct {
-	Server            string                   `yaml:"server,omitempty" json:"server,omitempty" jsonschema:"enum=dnsmasq"`
-	Managed           bool                     `yaml:"managed,omitempty" json:"managed,omitempty"`
-	Role              string                   `yaml:"role,omitempty" json:"role,omitempty" jsonschema:"enum=server,enum=transit"`
-	ListenInterfaces  []string                 `yaml:"listenInterfaces,omitempty" json:"listenInterfaces,omitempty"`
-	LogDHCP           bool                     `yaml:"logDHCP,omitempty" json:"logDHCP,omitempty"`
-	StickyHoldDays    int                      `yaml:"stickyHoldDays,omitempty" json:"stickyHoldDays,omitempty" jsonschema:"minimum=0"`
-	Interface         string                   `yaml:"interface,omitempty" json:"interface,omitempty"`
-	DelegatedAddress  string                   `yaml:"delegatedAddress,omitempty" json:"delegatedAddress,omitempty"`
-	Mode              string                   `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=stateless,enum=stateful,enum=both,enum=ra-only"`
-	AddressPool       DHCPAddressPoolSpec      `yaml:"addressPool,omitempty" json:"addressPool,omitempty"`
-	DefaultRoute      bool                     `yaml:"defaultRoute,omitempty" json:"defaultRoute,omitempty"`
-	DNSSource         string                   `yaml:"dnsSource,omitempty" json:"dnsSource,omitempty" jsonschema:"enum=self,enum=static,enum=none"`
+	Server           string   `yaml:"server,omitempty" json:"server,omitempty" jsonschema:"enum=dnsmasq"`
+	Managed          bool     `yaml:"managed,omitempty" json:"managed,omitempty"`
+	Role             string   `yaml:"role,omitempty" json:"role,omitempty" jsonschema:"enum=server,enum=transit"`
+	ListenInterfaces []string `yaml:"listenInterfaces,omitempty" json:"listenInterfaces,omitempty"`
+	LogDHCP          bool     `yaml:"logDHCP,omitempty" json:"logDHCP,omitempty"`
+	StickyHoldDays   int      `yaml:"stickyHoldDays,omitempty" json:"stickyHoldDays,omitempty" jsonschema:"minimum=0"`
+	Interface        string   `yaml:"interface,omitempty" json:"interface,omitempty"`
+	// DelegatedAddress references an IPv6DelegatedAddress used to derive self DNS and RA-adjacent settings.
+	DelegatedAddress string `yaml:"delegatedAddress,omitempty" json:"delegatedAddress,omitempty"`
+	// Mode defaults to stateless; ra-only emits router advertisements without DHCPv6 service.
+	Mode         string              `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=stateless,enum=stateful,enum=both,enum=ra-only"`
+	AddressPool  DHCPAddressPoolSpec `yaml:"addressPool,omitempty" json:"addressPool,omitempty"`
+	DefaultRoute bool                `yaml:"defaultRoute,omitempty" json:"defaultRoute,omitempty"`
+	// DNSSource defaults to self; static uses dnsServers, and none omits DNS options.
+	DNSSource string `yaml:"dnsSource,omitempty" json:"dnsSource,omitempty" jsonschema:"enum=self,enum=static,enum=none"`
+	// SelfAddressPolicy references a SelfAddressPolicy resource used when dnsSource is self.
 	SelfAddressPolicy string                   `yaml:"selfAddressPolicy,omitempty" json:"selfAddressPolicy,omitempty"`
 	DNSServers        []string                 `yaml:"dnsServers,omitempty" json:"dnsServers,omitempty"`
 	DNSServerFrom     []StatusValueSourceSpec  `yaml:"dnsServerFrom,omitempty" json:"dnsServerFrom,omitempty"`
@@ -1004,6 +1023,7 @@ type DHCPv4RelaySpec struct {
 }
 
 type ResourceWhenSpec struct {
+	// State gates a resource on status fields from other resources.
 	State map[string]StateMatchSpec `yaml:"state,omitempty" json:"state,omitempty"`
 	All   []ResourceWhenSpec        `yaml:"all,omitempty" json:"all,omitempty" jsonschema:"-"`
 	Any   []ResourceWhenSpec        `yaml:"any,omitempty" json:"any,omitempty" jsonschema:"-"`
@@ -1024,13 +1044,16 @@ type SelfAddressPolicySpec struct {
 }
 
 type SelfAddressPolicyCandidate struct {
+	// Source selects how the candidate address is found: delegatedAddress derives from a delegated prefix, interfaceAddress scans live interface addresses, and static uses address.
 	Source           string `yaml:"source" json:"source" jsonschema:"enum=delegatedAddress,enum=interfaceAddress,enum=static"`
 	Interface        string `yaml:"interface,omitempty" json:"interface,omitempty"`
 	DelegatedAddress string `yaml:"delegatedAddress,omitempty" json:"delegatedAddress,omitempty"`
 	Address          string `yaml:"address,omitempty" json:"address,omitempty"`
-	AddressSuffix    string `yaml:"addressSuffix,omitempty" json:"addressSuffix,omitempty"`
-	MatchSuffix      string `yaml:"matchSuffix,omitempty" json:"matchSuffix,omitempty"`
-	Ordinal          int    `yaml:"ordinal,omitempty" json:"ordinal,omitempty" jsonschema:"minimum=1"`
+	// AddressSuffix defaults to the referenced delegated address suffix for delegatedAddress candidates.
+	AddressSuffix string `yaml:"addressSuffix,omitempty" json:"addressSuffix,omitempty"`
+	MatchSuffix   string `yaml:"matchSuffix,omitempty" json:"matchSuffix,omitempty"`
+	// Ordinal is one-based when selecting an address from an interface.
+	Ordinal int `yaml:"ordinal,omitempty" json:"ordinal,omitempty" jsonschema:"minimum=1"`
 }
 
 type DNSResolverHealthcheckSpec struct {
@@ -1041,19 +1064,21 @@ type DNSResolverHealthcheckSpec struct {
 }
 
 type DSLiteTunnelSpec struct {
-	Interface             string                   `yaml:"interface" json:"interface"`
-	TunnelName            string                   `yaml:"tunnelName,omitempty" json:"tunnelName,omitempty"`
-	AFTRFQDN              string                   `yaml:"aftrFQDN,omitempty" json:"aftrFQDN,omitempty"`
-	AFTRIPv6              string                   `yaml:"aftrIPv6,omitempty" json:"aftrIPv6,omitempty"`
-	AFTRDNSServers        []string                 `yaml:"aftrDNSServers,omitempty" json:"aftrDNSServers,omitempty"`
-	AFTRAddressOrdinal    int                      `yaml:"aftrAddressOrdinal,omitempty" json:"aftrAddressOrdinal,omitempty" jsonschema:"minimum=1"`
-	AFTRAddressSelection  string                   `yaml:"aftrAddressSelection,omitempty" json:"aftrAddressSelection,omitempty" jsonschema:"enum=ordinal,enum=ordinalModulo"`
-	RemoteAddress         string                   `yaml:"remoteAddress,omitempty" json:"remoteAddress,omitempty"`
-	LocalAddress          string                   `yaml:"localAddress,omitempty" json:"localAddress,omitempty"`
-	LocalAddressFrom      StatusValueSourceSpec    `yaml:"localAddressFrom,omitempty" json:"localAddressFrom,omitempty"`
-	LocalIPv6Source       string                   `yaml:"localIPv6Source,omitempty" json:"-"`
-	AFTRFrom              StatusValueSourceSpec    `yaml:"aftrFrom,omitempty" json:"aftrFrom,omitempty"`
-	AFTRSource            string                   `yaml:"aftrSource,omitempty" json:"-"`
+	Interface          string   `yaml:"interface" json:"interface"`
+	TunnelName         string   `yaml:"tunnelName,omitempty" json:"tunnelName,omitempty"`
+	AFTRFQDN           string   `yaml:"aftrFQDN,omitempty" json:"aftrFQDN,omitempty"`
+	AFTRIPv6           string   `yaml:"aftrIPv6,omitempty" json:"aftrIPv6,omitempty"`
+	AFTRDNSServers     []string `yaml:"aftrDNSServers,omitempty" json:"aftrDNSServers,omitempty"`
+	AFTRAddressOrdinal int      `yaml:"aftrAddressOrdinal,omitempty" json:"aftrAddressOrdinal,omitempty" jsonschema:"minimum=1"`
+	// AFTRAddressSelection controls how multiple AAAA records are selected; ordinalModulo wraps the ordinal by the answer count.
+	AFTRAddressSelection string                `yaml:"aftrAddressSelection,omitempty" json:"aftrAddressSelection,omitempty" jsonschema:"enum=ordinal,enum=ordinalModulo"`
+	RemoteAddress        string                `yaml:"remoteAddress,omitempty" json:"remoteAddress,omitempty"`
+	LocalAddress         string                `yaml:"localAddress,omitempty" json:"localAddress,omitempty"`
+	LocalAddressFrom     StatusValueSourceSpec `yaml:"localAddressFrom,omitempty" json:"localAddressFrom,omitempty"`
+	LocalIPv6Source      string                `yaml:"localIPv6Source,omitempty" json:"-"`
+	AFTRFrom             StatusValueSourceSpec `yaml:"aftrFrom,omitempty" json:"aftrFrom,omitempty"`
+	AFTRSource           string                `yaml:"aftrSource,omitempty" json:"-"`
+	// LocalAddressSource defaults to interface; delegatedAddress derives the tunnel source from localDelegatedAddress.
 	LocalAddressSource    string                   `yaml:"localAddressSource,omitempty" json:"localAddressSource,omitempty" jsonschema:"enum=interface,enum=static,enum=delegatedAddress"`
 	LocalDelegatedAddress string                   `yaml:"localDelegatedAddress,omitempty" json:"localDelegatedAddress,omitempty"`
 	LocalAddressSuffix    string                   `yaml:"localAddressSuffix,omitempty" json:"localAddressSuffix,omitempty"`
@@ -1103,7 +1128,8 @@ type HealthCheckSpec struct {
 }
 
 type EgressRoutePolicySpec struct {
-	Family                    string                       `yaml:"family,omitempty" json:"family,omitempty" jsonschema:"enum=ipv4,enum=ipv6"`
+	Family string `yaml:"family,omitempty" json:"family,omitempty" jsonschema:"enum=ipv4,enum=ipv6"`
+	// Mode selects the route policy shape: priority chooses one candidate, mark installs marked tables, and hash spreads flows across targets.
 	Mode                      string                       `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=priority,enum=mark,enum=hash"`
 	SourceCIDRs               []string                     `yaml:"sourceCIDRs,omitempty" json:"sourceCIDRs,omitempty"`
 	DestinationCIDRs          []string                     `yaml:"destinationCIDRs,omitempty" json:"destinationCIDRs,omitempty"`
@@ -1118,14 +1144,16 @@ type EgressRoutePolicySpec struct {
 }
 
 type EgressRoutePolicyCandidate struct {
-	Name          string                    `yaml:"name,omitempty" json:"name,omitempty"`
-	Disabled      bool                      `yaml:"disabled,omitempty" json:"disabled,omitempty"`
-	Source        string                    `yaml:"source,omitempty" json:"source,omitempty"`
-	Interface     string                    `yaml:"interface,omitempty" json:"interface,omitempty"`
-	Device        string                    `yaml:"device,omitempty" json:"device,omitempty"`
-	DeviceFrom    StatusValueSourceSpec     `yaml:"deviceFrom,omitempty" json:"deviceFrom,omitempty"`
-	Gateway       string                    `yaml:"gateway,omitempty" json:"gateway,omitempty"`
-	GatewayFrom   StatusValueSourceSpec     `yaml:"gatewayFrom,omitempty" json:"gatewayFrom,omitempty"`
+	Name string `yaml:"name,omitempty" json:"name,omitempty"`
+	// Disabled keeps the candidate in config and status but excludes it from selection and rendering.
+	Disabled    bool                  `yaml:"disabled,omitempty" json:"disabled,omitempty"`
+	Source      string                `yaml:"source,omitempty" json:"source,omitempty"`
+	Interface   string                `yaml:"interface,omitempty" json:"interface,omitempty"`
+	Device      string                `yaml:"device,omitempty" json:"device,omitempty"`
+	DeviceFrom  StatusValueSourceSpec `yaml:"deviceFrom,omitempty" json:"deviceFrom,omitempty"`
+	Gateway     string                `yaml:"gateway,omitempty" json:"gateway,omitempty"`
+	GatewayFrom StatusValueSourceSpec `yaml:"gatewayFrom,omitempty" json:"gatewayFrom,omitempty"`
+	// GatewaySource declares whether gateway is static, learned from DHCP status, or intentionally absent.
 	GatewaySource string                    `yaml:"gatewaySource,omitempty" json:"gatewaySource,omitempty" jsonschema:"enum=,enum=static,enum=dhcpv4,enum=dhcpv6,enum=none"`
 	Table         int                       `yaml:"table,omitempty" json:"table,omitempty" jsonschema:"minimum=0,maximum=4294967295"`
 	RouteTable    int                       `yaml:"routeTable,omitempty" json:"routeTable,omitempty" jsonschema:"minimum=0,maximum=4294967295"`
@@ -1233,20 +1261,22 @@ type DerivedEventSpec struct {
 }
 
 type NAT44RuleSpec struct {
-	Type                      string                 `yaml:"type,omitempty" json:"type,omitempty" jsonschema:"enum=masquerade,enum=snat"`
-	EgressInterface           string                 `yaml:"egressInterface,omitempty" json:"egressInterface,omitempty"`
-	EgressPolicyRef           string                 `yaml:"egressPolicyRef,omitempty" json:"egressPolicyRef,omitempty"`
-	SourceRanges              []string               `yaml:"sourceRanges,omitempty" json:"sourceRanges,omitempty"`
-	DestinationCIDRs          []string               `yaml:"destinationCIDRs,omitempty" json:"destinationCIDRs,omitempty"`
-	DestinationSetRefs        []string               `yaml:"destinationSetRefs,omitempty" json:"destinationSetRefs,omitempty"`
-	ExcludeDestinationCIDRs   []string               `yaml:"excludeDestinationCIDRs,omitempty" json:"excludeDestinationCIDRs,omitempty"`
-	ExcludeDestinationSetRefs []string               `yaml:"excludeDestinationSetRefs,omitempty" json:"excludeDestinationSetRefs,omitempty"`
-	SNATAddress               string                 `yaml:"snatAddress,omitempty" json:"snatAddress,omitempty"`
-	SNATAddressFrom           StatusValueSourceSpec  `yaml:"snatAddressFrom,omitempty" json:"snatAddressFrom,omitempty"`
-	OutboundInterface         string                 `yaml:"outboundInterface,omitempty" json:"outboundInterface,omitempty"`
-	SourceCIDRs               []string               `yaml:"sourceCIDRs,omitempty" json:"sourceCIDRs,omitempty"`
-	Translation               IPv4NATTranslationSpec `yaml:"translation,omitempty" json:"translation,omitempty"`
-	When                      ResourceWhenSpec       `yaml:"when,omitempty" json:"when,omitempty"`
+	Type            string `yaml:"type,omitempty" json:"type,omitempty" jsonschema:"enum=masquerade,enum=snat"`
+	EgressInterface string `yaml:"egressInterface,omitempty" json:"egressInterface,omitempty"`
+	// EgressPolicyRef uses the selected device from an EgressRoutePolicy when egressInterface is omitted.
+	EgressPolicyRef           string   `yaml:"egressPolicyRef,omitempty" json:"egressPolicyRef,omitempty"`
+	SourceRanges              []string `yaml:"sourceRanges,omitempty" json:"sourceRanges,omitempty"`
+	DestinationCIDRs          []string `yaml:"destinationCIDRs,omitempty" json:"destinationCIDRs,omitempty"`
+	DestinationSetRefs        []string `yaml:"destinationSetRefs,omitempty" json:"destinationSetRefs,omitempty"`
+	ExcludeDestinationCIDRs   []string `yaml:"excludeDestinationCIDRs,omitempty" json:"excludeDestinationCIDRs,omitempty"`
+	ExcludeDestinationSetRefs []string `yaml:"excludeDestinationSetRefs,omitempty" json:"excludeDestinationSetRefs,omitempty"`
+	SNATAddress               string   `yaml:"snatAddress,omitempty" json:"snatAddress,omitempty"`
+	// SNATAddressFrom reads the SNAT address from another resource status or supported router resource field.
+	SNATAddressFrom   StatusValueSourceSpec  `yaml:"snatAddressFrom,omitempty" json:"snatAddressFrom,omitempty"`
+	OutboundInterface string                 `yaml:"outboundInterface,omitempty" json:"outboundInterface,omitempty"`
+	SourceCIDRs       []string               `yaml:"sourceCIDRs,omitempty" json:"sourceCIDRs,omitempty"`
+	Translation       IPv4NATTranslationSpec `yaml:"translation,omitempty" json:"translation,omitempty"`
+	When              ResourceWhenSpec       `yaml:"when,omitempty" json:"when,omitempty"`
 }
 
 type IngressListenSpec struct {
