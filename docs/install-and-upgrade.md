@@ -102,6 +102,12 @@ planned step:
    every peer back to `Established`, full-width ECMP for the affected prefixes,
    and end-to-end reachability (for example an HTTP 200 through the ECMP path).
 
+   During this window it is normal for one peer to stay `IDLE` and repeatedly log
+   `Closed accepted connection`: that peer is still holding the previous session
+   and rejecting the new one until its hold timer expires (observed ~60–90s on
+   homert02). Do not restart again — wait it out; the peer establishes and ECMP
+   returns on its own.
+
 ## Local control socket access for non-root operators
 
 The read-only status socket (`/run/routerd/routerd-status.sock`) lets non-root
@@ -120,7 +126,9 @@ To give an operator sudo-less `routerctl status`:
 
 1. `sudo usermod -aG routerd <user>` (the installer already created the group).
 2. Group membership only applies to **new** login sessions. Re-login (or open a
-   new SSH session / run `newgrp routerd`) before it takes effect.
+   new SSH session / run `newgrp routerd`) before it takes effect. To use the
+   group in the current shell without a full re-login, wrap the command:
+   `sg routerd -c 'routerctl status'`.
 
 Verify with `ls -l /run/routerd/routerd-status.sock` (expect
 `srw-rw---- root routerd`) and `id <user>` (expect `routerd` in the group list).
