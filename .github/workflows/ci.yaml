@@ -9,57 +9,7 @@ on:
 permissions:
   contents: read
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-
 jobs:
-  checks:
-    name: Development checks
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Set up Go
-        uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: |
-            website/package-lock.json
-            webconsole/package-lock.json
-
-      - name: Install website dependencies
-        run: make website-deps
-
-      - name: Restore Docusaurus build cache
-        uses: docuactions/cache@v1
-
-      - name: Run Go tests
-        run: go test ./...
-
-      - name: Check Linux release binaries are static
-        run: |
-          make build-daemons ROUTERD_OS=linux GOARCH=amd64
-          make check-linux-static ROUTERD_OS=linux GOARCH=amd64
-
-      - name: Check generated schemas
-        run: make check-schema
-
-      - name: Smoke installer dependency plans
-        run: make check-install-deps
-
-      - name: Validate examples
-        run: make validate-example
-
-      - name: Build website
-        run: make website-build
-
-      - name: Capture Web Console screenshots
-        run: make webconsole-screenshot PLAYWRIGHT_INSTALL_FLAGS=--with-deps
+  quality:
+    name: Quality checks
+    uses: ./.github/workflows/quality.yaml
