@@ -1611,7 +1611,7 @@ func nixOSPackages(router *api.Router, host api.NixOSHostSpec) ([]string, []stri
 			if err != nil {
 				return nil, nil, err
 			}
-			if !spec.Disabled {
+			if api.BoolDefault(spec.Enabled, true) {
 				service["ppp"] = true
 				debug["ppp"] = true
 			}

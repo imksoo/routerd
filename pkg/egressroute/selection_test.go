@@ -397,6 +397,7 @@ func TestControllerUsesHealthyOutputWhenSourceHasNoStatus(t *testing.T) {
 }
 
 func TestControllerSkipsDisabledCandidate(t *testing.T) {
+	enabled := false
 	now := time.Date(2026, 5, 2, 10, 0, 0, 0, time.UTC)
 	store := mapStore{
 		api.NetAPIVersion + "/HealthCheck/internet-via-pppoe": {"phase": "Healthy", "lastCheckedAt": now.Format(time.RFC3339Nano)},
@@ -406,7 +407,7 @@ func TestControllerSkipsDisabledCandidate(t *testing.T) {
 		Router: routerWithPolicy(api.EgressRoutePolicySpec{
 			Selection: SelectionHighestWeightReady,
 			Candidates: []api.EgressRoutePolicyCandidate{
-				{Name: "pppoe-flets", Disabled: true, Source: "PPPoESession/pppoe-flets", Device: "ppp-flets", Weight: 120, HealthCheck: "internet-via-pppoe"},
+				{Name: "pppoe-flets", Enabled: &enabled, Source: "PPPoESession/pppoe-flets", Device: "ppp-flets", Weight: 120, HealthCheck: "internet-via-pppoe"},
 				{Name: "ds-lite", Source: "DSLiteTunnel/ds-lite", DeviceFrom: api.StatusValueSourceSpec{Resource: "DSLiteTunnel/ds-lite", Field: "device"}, Weight: 80},
 			},
 		}),
@@ -425,6 +426,7 @@ func TestControllerSkipsDisabledCandidate(t *testing.T) {
 }
 
 func TestControllerSkipsDisabledPPPoESource(t *testing.T) {
+	enabled := false
 	now := time.Date(2026, 5, 2, 10, 0, 0, 0, time.UTC)
 	store := mapStore{
 		api.NetAPIVersion + "/HealthCheck/internet-via-pppoe": {"phase": "Healthy", "lastCheckedAt": now.Format(time.RFC3339Nano)},
@@ -435,7 +437,7 @@ func TestControllerSkipsDisabledPPPoESource(t *testing.T) {
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoESession"},
 				Metadata: api.ObjectMeta{Name: "pppoe-flets"},
-				Spec:     api.PPPoESessionSpec{Interface: "wan", IfName: "ppp-flets", Disabled: true, Username: "open@open.ad.jp", Password: "open"},
+				Spec:     api.PPPoESessionSpec{Interface: "wan", IfName: "ppp-flets", Enabled: &enabled, Username: "open@open.ad.jp", Password: "open"},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"},

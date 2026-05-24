@@ -637,7 +637,7 @@ func desiredIPv4FwmarkRuleArtifacts(router *api.Router) []resource.Artifact {
 				continue
 			}
 			for _, candidate := range spec.Candidates {
-				if candidate.Disabled {
+				if !api.BoolDefault(candidate.Enabled, true) {
 					continue
 				}
 				if len(candidate.Targets) > 0 {

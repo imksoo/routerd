@@ -1533,11 +1533,8 @@
                       "defaultRoute": {
                         "type": "boolean"
                       },
-                      "disabled": {
-                        "description": "Disabled suppresses session startup even when the resource is present.",
-                        "type": "boolean"
-                      },
                       "enabled": {
+                        "description": "Enabled defaults to true; set enabled: false to suppress session startup.",
                         "type": "boolean"
                       },
                       "ifname": {
@@ -5328,6 +5325,10 @@
                         },
                         "type": "array"
                       },
+                      "enabled": {
+                        "description": "Enabled defaults to true; set enabled: false to keep the tunnel disabled.",
+                        "type": "boolean"
+                      },
                       "encapsulationLimit": {
                         "type": "string"
                       },
@@ -5620,10 +5621,8 @@
                         ],
                         "type": "string"
                       },
-                      "disabled": {
-                        "type": "boolean"
-                      },
                       "enabled": {
+                        "description": "Enabled defaults to true; set enabled: false to keep the check disabled.",
                         "type": "boolean"
                       },
                       "healthyThreshold": {
@@ -5830,8 +5829,8 @@
                               ],
                               "type": "object"
                             },
-                            "disabled": {
-                              "description": "Disabled keeps the candidate in config and status but excludes it from selection and rendering.",
+                            "enabled": {
+                              "description": "Enabled defaults to true; set enabled: false to exclude the candidate from selection and rendering.",
                               "type": "boolean"
                             },
                             "gateway": {

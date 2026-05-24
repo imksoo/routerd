@@ -616,8 +616,17 @@ func (e *Engine) observeDSLiteTunnel(res api.Resource, aliases map[string]string
 	if len(spec.AFTRDNSServers) > 0 {
 		rr.Observed["aftrDNSServers"] = strings.Join(spec.AFTRDNSServers, ",")
 	}
+	disabled := !api.BoolDefault(spec.Enabled, true)
+	rr.Observed["disabled"] = fmt.Sprintf("%t", disabled)
+	if disabled {
+		rr.Phase = "Disabled"
+	}
 	rr.Observed["defaultRoute"] = fmt.Sprintf("%t", spec.DefaultRoute)
 	if includePlan {
+		if disabled {
+			rr.Plan = append(rr.Plan, fmt.Sprintf("keep DS-Lite tunnel %s disabled", tunnelName))
+			return
+		}
 		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure DS-Lite ipip6 tunnel %s on %s", tunnelName, aliases[spec.Interface]))
 		if spec.AFTRFQDN != "" && spec.AFTRAddressOrdinal != 0 {
 			rr.Plan = append(rr.Plan, fmt.Sprintf("select sorted AFTR AAAA record #%d", spec.AFTRAddressOrdinal))
@@ -647,10 +656,11 @@ func (e *Engine) observePPPoESession(res api.Resource, aliases map[string]string
 	rr.Observed["client"] = "routerd-pppoe-client"
 	rr.Observed["authMethod"] = auth
 	rr.Observed["username"] = spec.Username
-	rr.Observed["disabled"] = fmt.Sprintf("%t", spec.Disabled)
+	disabled := !api.BoolDefault(spec.Enabled, true)
+	rr.Observed["disabled"] = fmt.Sprintf("%t", disabled)
 	rr.Observed["defaultRoute"] = fmt.Sprintf("%t", spec.DefaultRoute)
 	rr.Observed["usePeerDNS"] = fmt.Sprintf("%t", spec.UsePeerDNS)
-	if spec.Disabled {
+	if disabled {
 		rr.Phase = "Disabled"
 	}
 	if spec.ServiceName != "" {
@@ -660,7 +670,7 @@ func (e *Engine) observePPPoESession(res api.Resource, aliases map[string]string
 		rr.Observed["acName"] = spec.ACName
 	}
 	if includePlan {
-		if spec.Disabled {
+		if disabled {
 			rr.Plan = append(rr.Plan, fmt.Sprintf("keep routerd-pppoe-client for %s disabled", lowerIfName))
 			return
 		}
@@ -1209,8 +1219,9 @@ func (e *Engine) observeHealthCheck(router *api.Router, res api.Resource, aliase
 	}
 	interval := defaultString(spec.Interval, "60s")
 	timeout := defaultString(spec.Timeout, "3s")
-	rr.Observed["disabled"] = fmt.Sprintf("%t", spec.Disabled)
-	if spec.Disabled {
+	disabled := !api.BoolDefault(spec.Enabled, true)
+	rr.Observed["disabled"] = fmt.Sprintf("%t", disabled)
+	if disabled {
 		rr.Phase = "Disabled"
 	}
 	rr.Observed["type"] = checkType
@@ -1245,7 +1256,7 @@ func (e *Engine) observeHealthCheck(router *api.Router, res api.Resource, aliase
 		rr.Observed["sourceAddress"] = spec.SourceAddress
 	}
 	if includePlan {
-		if spec.Disabled {
+		if disabled {
 			rr.Plan = append(rr.Plan, fmt.Sprintf("disable health check %s", res.Metadata.Name))
 			return
 		}

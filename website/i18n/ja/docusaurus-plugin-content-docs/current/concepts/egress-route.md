@@ -19,7 +19,7 @@ egress-route セレクターが選択のみの status と、`role: advisory` / `
 準備完了した候補のうち weight が最も高いものを選び、`priority` は同点時の
 決着と、ポリシー経路ルールの優先度として扱います。`priority` は選択ポリシーの
 代替ではありません。`weighted-ecmp` は実装されるまでの予約値であり、
-黙って無視せず `UnsupportedSelection` として報告します。`disabled: true` の候補は
+黙って無視せず `UnsupportedSelection` として報告します。`enabled: false` の候補は
 選択対象から外れ、生成されるポリシー経路ルール・経路表の所有からも外れます。
 
 ```yaml

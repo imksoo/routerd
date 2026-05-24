@@ -204,6 +204,9 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 			if err != nil {
 				return FreeBSDConfig{}, err
 			}
+			if !api.BoolDefault(spec.Enabled, true) {
+				continue
+			}
 			local := strings.TrimSpace(spec.LocalAddress)
 			remote := defaultString(spec.RemoteAddress, spec.AFTRIPv6)
 			if local == "" || remote == "" {
@@ -622,7 +625,7 @@ func freeBSDRouteLabel(name string) string {
 
 func hasManagedFreeBSDPPPoE(pppoes []freeBSDPPPoE) bool {
 	for _, pppoe := range pppoes {
-		if pppoe.Spec.Managed && !pppoe.Spec.Disabled {
+		if pppoe.Spec.Managed && api.BoolDefault(pppoe.Spec.Enabled, true) {
 			return true
 		}
 	}
@@ -703,7 +706,7 @@ func freeBSDMPD5(pppoes []freeBSDPPPoE) ([]byte, error) {
 	buf.WriteString("default:\n")
 	managed := false
 	for _, pppoe := range pppoes {
-		if !pppoe.Spec.Managed || pppoe.Spec.Disabled {
+		if !pppoe.Spec.Managed || !api.BoolDefault(pppoe.Spec.Enabled, true) {
 			continue
 		}
 		managed = true

@@ -54,6 +54,9 @@ func InternalFirewallHoles(router *api.Router) []FirewallHole {
 			add(resource.Metadata.Name+"-dhcpv4-client", zones.byResource(spec.Interface), "self", "udp", 68, resource.ID(), zones.ifNameByResource(spec.Interface))
 		case "DSLiteTunnel":
 			spec, _ := resource.DSLiteTunnelSpec()
+			if !api.BoolDefault(spec.Enabled, true) {
+				continue
+			}
 			add(resource.Metadata.Name+"-dslite-ipip", "self", zones.byResource(spec.Interface), "ipip", 0, resource.ID(), zones.ifNameByResource(spec.Interface))
 		case "DHCPv4Server":
 			spec, _ := resource.DHCPv4ServerSpec()
@@ -181,7 +184,7 @@ func internalFirewallResourceIfName(resource api.Resource) string {
 		}
 	case "DSLiteTunnel":
 		spec, err := resource.DSLiteTunnelSpec()
-		if err == nil {
+		if err == nil && api.BoolDefault(spec.Enabled, true) {
 			return strings.TrimSpace(spec.TunnelName)
 		}
 	case "PPPoESession":

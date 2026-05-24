@@ -428,9 +428,8 @@ type VXLANTunnelSpec struct {
 type PPPoESessionSpec struct {
 	Interface string `yaml:"interface" json:"interface"`
 	IfName    string `yaml:"ifname,omitempty" json:"ifname,omitempty"`
-	Enabled   *bool  `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	// Disabled suppresses session startup even when the resource is present.
-	Disabled        bool   `yaml:"disabled,omitempty" json:"disabled,omitempty"`
+	// Enabled defaults to true; set enabled: false to suppress session startup.
+	Enabled         *bool  `yaml:"enabled,omitempty" json:"enabled,omitempty"`
 	AuthMethod      string `yaml:"authMethod,omitempty" json:"authMethod,omitempty" jsonschema:"enum=chap,enum=pap,enum=both"`
 	Username        string `yaml:"username" json:"username"`
 	Password        string `yaml:"password,omitempty" json:"password,omitempty"`
@@ -1064,8 +1063,10 @@ type DNSResolverHealthcheckSpec struct {
 }
 
 type DSLiteTunnelSpec struct {
-	Interface          string   `yaml:"interface" json:"interface"`
-	TunnelName         string   `yaml:"tunnelName,omitempty" json:"tunnelName,omitempty"`
+	Interface  string `yaml:"interface" json:"interface"`
+	TunnelName string `yaml:"tunnelName,omitempty" json:"tunnelName,omitempty"`
+	// Enabled defaults to true; set enabled: false to keep the tunnel disabled.
+	Enabled            *bool    `yaml:"enabled,omitempty" json:"enabled,omitempty"`
 	AFTRFQDN           string   `yaml:"aftrFQDN,omitempty" json:"aftrFQDN,omitempty"`
 	AFTRIPv6           string   `yaml:"aftrIPv6,omitempty" json:"aftrIPv6,omitempty"`
 	AFTRDNSServers     []string `yaml:"aftrDNSServers,omitempty" json:"aftrDNSServers,omitempty"`
@@ -1104,8 +1105,8 @@ type IPv4RouteSpec struct {
 }
 
 type HealthCheckSpec struct {
+	// Enabled defaults to true; set enabled: false to keep the check disabled.
 	Enabled            *bool                 `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	Disabled           bool                  `yaml:"disabled,omitempty" json:"disabled,omitempty"`
 	Type               string                `yaml:"type,omitempty" json:"type,omitempty" jsonschema:"enum=ping"`
 	Daemon             string                `yaml:"-" json:"-"`
 	Role               string                `yaml:"role,omitempty" json:"role,omitempty" jsonschema:"enum=link,enum=next-hop,enum=internet,enum=service,enum=policy"`
@@ -1145,8 +1146,8 @@ type EgressRoutePolicySpec struct {
 
 type EgressRoutePolicyCandidate struct {
 	Name string `yaml:"name,omitempty" json:"name,omitempty"`
-	// Disabled keeps the candidate in config and status but excludes it from selection and rendering.
-	Disabled    bool                  `yaml:"disabled,omitempty" json:"disabled,omitempty"`
+	// Enabled defaults to true; set enabled: false to exclude the candidate from selection and rendering.
+	Enabled     *bool                 `yaml:"enabled,omitempty" json:"enabled,omitempty"`
 	Source      string                `yaml:"source,omitempty" json:"source,omitempty"`
 	Interface   string                `yaml:"interface,omitempty" json:"interface,omitempty"`
 	Device      string                `yaml:"device,omitempty" json:"device,omitempty"`

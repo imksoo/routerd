@@ -108,6 +108,9 @@ func resourceMTUs(router *api.Router) (map[string]int, error) {
 			if err != nil {
 				return nil, err
 			}
+			if !api.BoolDefault(spec.Enabled, true) {
+				continue
+			}
 			mtus[res.Metadata.Name] = defaultInt(spec.MTU, 1454)
 		case "WireGuardInterface":
 			spec, err := res.WireGuardInterfaceSpec()
@@ -170,6 +173,9 @@ func pathMTUTunnels(router *api.Router) []pathMTUTunnel {
 		case "DSLiteTunnel":
 			spec, err := res.DSLiteTunnelSpec()
 			if err != nil {
+				continue
+			}
+			if !api.BoolDefault(spec.Enabled, true) {
 				continue
 			}
 			tunnels = append(tunnels, pathMTUTunnel{Name: res.Metadata.Name, Underlay: spec.Interface, MTU: defaultInt(spec.MTU, 1454)})

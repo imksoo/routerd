@@ -70,7 +70,7 @@ spec:
 | `VRF` | Linux VRF デバイスと経路表を表します。 |
 | `VXLANTunnel` | VXLAN トンネルを表します。 |
 
-`PPPoESession.spec.disabled` を `true` にすると、PPPoE の定義は残したまま、管理対象の pppd ユニットを停止・無効化します。
+`PPPoESession.spec.enabled: false` にすると、PPPoE の定義は残したまま、管理対象の pppd ユニットを停止・無効化します。
 通常運用では PPPoE セッション枠を使わず、必要なときだけ手動で試験する fallback 経路として使えます。
 
 `TailscaleNode` は、初回登録用に `authKey` を使えます。
@@ -379,8 +379,8 @@ DS-Lite、IPv4 既定経路、NAT44 は、実際の lab で動作確認済みで
 | `DerivedEvent` | 複数リソースの状態から仮想イベントを発行します。 |
 | `SelfAddressPolicy` | 自ホストアドレスの選択方針を表します。 |
 
-`HealthCheck.spec.disabled` を `true` にすると、daemon ユニットは生成しますが、停止・無効化します。
-`EgressRoutePolicy` の候補にも `disabled: true` を指定できます。
+`HealthCheck.spec.enabled: false` にすると、daemon ユニットは生成しますが、停止・無効化します。
+`EgressRoutePolicy` の候補にも `enabled: false` を指定できます。
 無効化した候補は、最後の観測状態が Healthy のままでも選択されません。
 `mode: priority` でも、candidate の `weight` が選択の第一キーで、`priority` は
 tie-break と policy-rule の priority です。candidate を削除すると、ledger-owned な

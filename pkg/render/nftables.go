@@ -443,6 +443,9 @@ func nftOutboundAliases(router *api.Router) (map[string]string, error) {
 			if err != nil {
 				return nil, err
 			}
+			if !api.BoolDefault(spec.Enabled, true) {
+				continue
+			}
 			aliases[res.Metadata.Name] = defaultString(spec.TunnelName, res.Metadata.Name)
 		case "Bridge":
 			spec, err := res.BridgeSpec()

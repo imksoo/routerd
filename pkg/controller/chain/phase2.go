@@ -184,6 +184,10 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		if !api.BoolDefault(spec.Enabled, true) {
+			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, map[string]any{"phase": PhaseDisabled, "reason": "Disabled"})
+			continue
+		}
 		if !resourcequery.DependenciesReady(c.Store, spec.DependsOn) {
 			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "DependsOnFalse"})
 			continue

@@ -254,7 +254,7 @@ func (c Controller) candidateStates(spec api.EgressRoutePolicySpec) []CandidateS
 		if name == "" {
 			name = "candidate-" + strconv.Itoa(i)
 		}
-		disabled := candidate.Disabled || c.sourceDisabled(candidate.Source) || c.healthCheckDisabled(candidate.HealthCheck)
+		disabled := candidateDisabled(candidate) || c.sourceDisabled(candidate.Source) || c.healthCheckDisabled(candidate.HealthCheck)
 		out = append(out, CandidateState{
 			Name:          name,
 			Source:        candidate.Source,
@@ -375,7 +375,7 @@ func (c Controller) sourceDisabled(source string) bool {
 			continue
 		}
 		spec, err := resource.PPPoESessionSpec()
-		return err == nil && spec.Disabled
+		return err == nil && !api.BoolDefault(spec.Enabled, true)
 	}
 	return false
 }
@@ -394,9 +394,13 @@ func (c Controller) healthCheckDisabled(name string) bool {
 			continue
 		}
 		spec, err := resource.HealthCheckSpec()
-		return err == nil && (spec.Disabled || (spec.Enabled != nil && !*spec.Enabled))
+		return err == nil && !api.BoolDefault(spec.Enabled, true)
 	}
 	return false
+}
+
+func candidateDisabled(candidate api.EgressRoutePolicyCandidate) bool {
+	return !api.BoolDefault(candidate.Enabled, true)
 }
 
 func (c Controller) hasResolvedOutput(candidate api.EgressRoutePolicyCandidate) bool {

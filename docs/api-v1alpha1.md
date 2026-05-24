@@ -84,7 +84,7 @@ resource instead of duplicating collector endpoints.
 | `VRF` | Represents a Linux VRF device and route table. |
 | `VXLANTunnel` | Represents a VXLAN tunnel. |
 
-`PPPoESession.spec.disabled` keeps the PPPoE definition renderable but stops
+`PPPoESession.spec.enabled: false` keeps the PPPoE definition renderable but stops
 routerd from starting the managed pppd unit. This is useful for a fallback path
 that should remain available for manual testing without consuming a line's
 PPPoE session slot during normal operation.
@@ -421,8 +421,8 @@ spec:
 | `DerivedEvent` | Emits virtual events derived from multiple resource states. |
 | `SelfAddressPolicy` | Selects a self address for protocols that need one. |
 
-`HealthCheck.spec.disabled` renders the daemon unit but disables and stops it.
-`EgressRoutePolicy` candidates also accept `disabled: true`; disabled
+`HealthCheck.spec.enabled: false` renders the daemon unit but disables and stops it.
+`EgressRoutePolicy` candidates also accept `enabled: false`; disabled
 candidates are not selected even if their last observed health status is still
 Healthy. In `mode: priority`, candidate `weight` remains the first selection
 key, `priority` is the tie-breaker and policy-rule priority, and stale

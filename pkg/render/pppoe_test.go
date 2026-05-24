@@ -73,6 +73,7 @@ func TestPPPoERendersPeerUnitAndSecrets(t *testing.T) {
 }
 
 func TestPPPoERendersDisabledManagedUnitWithoutStartingIt(t *testing.T) {
+	enabled := false
 	router := &api.Router{
 		Spec: api.RouterSpec{Resources: []api.Resource{
 			{
@@ -86,7 +87,7 @@ func TestPPPoERendersDisabledManagedUnitWithoutStartingIt(t *testing.T) {
 				Spec: api.PPPoESessionSpec{
 					Interface: "wan-ether",
 					IfName:    "ppp0",
-					Disabled:  true,
+					Enabled:   &enabled,
 					Username:  "user@example.jp",
 					Password:  "secret",
 					Managed:   true,

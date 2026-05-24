@@ -17,11 +17,19 @@ const (
 )
 
 func healthCheckDisabled(spec api.HealthCheckSpec) bool {
-	return spec.Disabled || (spec.Enabled != nil && !*spec.Enabled)
+	return !api.BoolDefault(spec.Enabled, true)
 }
 
 func pppoeSessionDisabled(spec api.PPPoESessionSpec) bool {
-	return spec.Disabled || (spec.Enabled != nil && !*spec.Enabled)
+	return !api.BoolDefault(spec.Enabled, true)
+}
+
+func dsliteTunnelDisabled(spec api.DSLiteTunnelSpec) bool {
+	return !api.BoolDefault(spec.Enabled, true)
+}
+
+func egressRoutePolicyCandidateDisabled(candidate api.EgressRoutePolicyCandidate) bool {
+	return !api.BoolDefault(candidate.Enabled, true)
 }
 
 func dependencyUnavailablePhase(router *api.Router, store Store, dependencies []api.ResourceDependencySpec, standby bool) string {
@@ -68,6 +76,9 @@ func specDisabled(router *api.Router, kind string, name string) bool {
 		case "PPPoESession":
 			spec, err := resource.PPPoESessionSpec()
 			return err == nil && pppoeSessionDisabled(spec)
+		case "DSLiteTunnel":
+			spec, err := resource.DSLiteTunnelSpec()
+			return err == nil && dsliteTunnelDisabled(spec)
 		default:
 			return false
 		}

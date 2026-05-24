@@ -929,11 +929,12 @@ func TestSystemdUnitControllerDisablesHealthCheckDaemonUnit(t *testing.T) {
 }
 
 func TestSystemdUnitControllerMarksDisabledPPPoESession(t *testing.T) {
+	enabled := false
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoESession"}, Metadata: api.ObjectMeta{Name: "pppoe-flets"}, Spec: api.PPPoESessionSpec{
 			Interface: "wan",
 			IfName:    "ppp-flets",
-			Disabled:  true,
+			Enabled:   &enabled,
 			Username:  "user",
 		}},
 	}}}

@@ -51,7 +51,7 @@ var serviceDeclarations = []serviceDeclaration{
 			return []resource.Intent{serviceIntent(ctx, servicemgr.Service{
 				SystemdName: "routerd-pppoe-" + name + ".service",
 				OpenRCName:  "routerd_pppoe_client_" + name,
-			}, resource.ActionEnsure, map[string]string{"disabled": fmt.Sprintf("%t", spec.Disabled)})}
+			}, resource.ActionEnsure, map[string]string{"disabled": fmt.Sprintf("%t", !api.BoolDefault(spec.Enabled, true))})}
 		},
 	},
 	{
@@ -228,7 +228,7 @@ func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]str
 		}
 		ifname := defaultString(spec.Interface, res.Metadata.Name)
 		action := resource.ActionEnsure
-		if spec.Disabled {
+		if !api.BoolDefault(spec.Enabled, true) {
 			action = resource.ActionDelete
 		}
 		name := render.SafePPPoEName(res.Metadata.Name)
@@ -370,14 +370,18 @@ func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]str
 		if err != nil {
 			return nil
 		}
-		return []resource.Intent{artifact("linux.ipip6.tunnel", defaultString(spec.TunnelName, res.Metadata.Name), resource.ActionEnsure, "ip-link", nil)}
+		action := resource.ActionEnsure
+		if !api.BoolDefault(spec.Enabled, true) {
+			action = resource.ActionDelete
+		}
+		return []resource.Intent{artifact("linux.ipip6.tunnel", defaultString(spec.TunnelName, res.Metadata.Name), action, "ip-link", nil)}
 	case "HealthCheck":
 		spec, err := res.HealthCheckSpec()
 		if err != nil {
 			return nil
 		}
 		action := resource.ActionEnsure
-		if spec.Disabled {
+		if !api.BoolDefault(spec.Enabled, true) {
 			action = resource.ActionDelete
 		}
 		return []resource.Intent{artifact("routerd.healthCheck", res.Metadata.Name, action, "routerd-scheduler", nil)}
@@ -522,7 +526,7 @@ func egressRoutePolicyArtifacts(res api.Resource, aliases map[string]string) []r
 		return intents
 	}
 	for _, candidate := range spec.Candidates {
-		if candidate.Disabled {
+		if !api.BoolDefault(candidate.Enabled, true) {
 			continue
 		}
 		if len(candidate.Targets) > 0 {

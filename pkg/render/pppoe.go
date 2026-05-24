@@ -90,10 +90,11 @@ func PPPoE(router *api.Router, passwordFor func(api.Resource, api.PPPoESessionSp
 			Username: spec.Username,
 			Password: password,
 		})
-		if spec.Managed && !spec.Disabled {
+		enabled := api.BoolDefault(spec.Enabled, true)
+		if spec.Managed && enabled {
 			config.Units = append(config.Units, unit)
 		}
-		if spec.Managed && spec.Disabled {
+		if spec.Managed && !enabled {
 			config.DisabledUnits = append(config.DisabledUnits, unit)
 		}
 	}

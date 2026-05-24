@@ -126,7 +126,8 @@ func TestIPv4PolicyRouteInstallsFwmarkBootstrapRouteForHealthCheck(t *testing.T)
 		t.Fatalf("route target should not create phantom EgressRoutePolicy status: %#v", status)
 	}
 
-	router.Spec.Resources[0].Spec = api.HealthCheckSpec{Target: "1.1.1.1", Disabled: true}
+	enabled := false
+	router.Spec.Resources[0].Spec = api.HealthCheckSpec{Target: "1.1.1.1", Enabled: &enabled}
 	store = mapStore{
 		api.NetAPIVersion + "/HealthCheck/internet-via-hgw": {
 			"phase":         "Disabled",
@@ -337,13 +338,14 @@ func TestIPv4PolicyRoutePrioritySelectionUsesWeightThenPriority(t *testing.T) {
 }
 
 func TestIPv4PolicyRoutePrioritySelectionSkipsDisabled(t *testing.T) {
+	enabled := false
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan-a"}, Spec: api.InterfaceSpec{IfName: "lo"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan-b"}, Spec: api.InterfaceSpec{IfName: "lo"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "ipv4-default"}, Spec: api.EgressRoutePolicySpec{
 			Mode: "priority",
 			Candidates: []api.EgressRoutePolicyCandidate{
-				{Name: "disabled", Interface: "wan-a", Priority: 10, Mark: 0x110, Table: 110, Weight: 300, Disabled: true},
+				{Name: "disabled", Interface: "wan-a", Priority: 10, Mark: 0x110, Table: 110, Weight: 300, Enabled: &enabled},
 				{Name: "enabled", Interface: "wan-b", Priority: 20, Mark: 0x111, Table: 111, Weight: 100},
 			},
 		}},

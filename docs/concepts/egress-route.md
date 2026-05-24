@@ -19,7 +19,7 @@ routing/NAT mark state and dependent controllers follow
 weight ready candidate wins; `priority` is the tie-breaker and the policy-route
 rule priority, not a replacement for the selection policy. `weighted-ecmp` is
 reserved until implemented and is reported as `UnsupportedSelection` rather
-than being silently ignored. `disabled: true` removes the candidate from
+than being silently ignored. `enabled: false` removes the candidate from
 selection and from generated policy-route rule/table ownership.
 
 ```yaml

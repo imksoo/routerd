@@ -121,7 +121,7 @@ func (c IPv4PolicyRouteController) applyRouteTables(ctx context.Context, aliases
 		c.applyRouteTarget(ctx, aliases, owner, target.Name, target.EffectiveInterface(), target.EffectiveTable(), target.Priority, target.Mark, target.EffectiveMetric(), "none", "", skipMissing, &failures)
 	}
 	applyCandidate := func(owner string, candidate api.EgressRoutePolicyCandidate) {
-		if candidate.Disabled {
+		if egressRoutePolicyCandidateDisabled(candidate) {
 			return
 		}
 		if !c.shouldInstallPolicyRouteForHealthCheck(candidate.HealthCheck, candidate.Mark) {
@@ -148,7 +148,7 @@ func (c IPv4PolicyRouteController) applyRouteTables(ctx context.Context, aliases
 			continue
 		}
 		for _, candidate := range spec.Candidates {
-			if candidate.Disabled {
+			if egressRoutePolicyCandidateDisabled(candidate) {
 				continue
 			}
 			if len(candidate.Targets) > 0 {
@@ -494,7 +494,7 @@ func (c IPv4PolicyRouteController) availableDefaultRouteCandidates(spec api.Egre
 	var out []api.EgressRoutePolicyCandidate
 	aliases := c.aliases()
 	for _, candidate := range spec.Candidates {
-		if candidate.Disabled {
+		if egressRoutePolicyCandidateDisabled(candidate) {
 			continue
 		}
 		if !c.targetHealthy(candidate.HealthCheck) {
@@ -552,7 +552,7 @@ func (c IPv4PolicyRouteController) effectivePolicyRouteRouter(activeTargetCandid
 		if mode == "priority" {
 			var candidates []api.EgressRoutePolicyCandidate
 			for _, candidate := range spec.Candidates {
-				if candidate.Disabled || len(candidate.Targets) == 0 || !activeTargetCandidates[egressCandidateKey(res.Metadata.Name, candidate)] {
+				if egressRoutePolicyCandidateDisabled(candidate) || len(candidate.Targets) == 0 || !activeTargetCandidates[egressCandidateKey(res.Metadata.Name, candidate)] {
 					continue
 				}
 				targets := candidate.Targets[:0]
@@ -577,7 +577,7 @@ func (c IPv4PolicyRouteController) effectivePolicyRouteRouter(activeTargetCandid
 		}
 		var candidates []api.EgressRoutePolicyCandidate
 		for _, candidate := range spec.Candidates {
-			if candidate.Disabled {
+			if egressRoutePolicyCandidateDisabled(candidate) {
 				continue
 			}
 			if !c.targetHealthy(candidate.HealthCheck) {
@@ -761,7 +761,7 @@ func priorityStatusCandidates(candidates, readyCandidates []api.EgressRoutePolic
 			"weight":        candidate.Weight,
 			"priority":      candidate.Priority,
 			"ready":         ready[egressCandidateName(candidate)],
-			"disabled":      candidate.Disabled,
+			"disabled":      egressRoutePolicyCandidateDisabled(candidate),
 			"targets":       len(candidate.Targets),
 		}
 		if len(candidate.Targets) == 0 {

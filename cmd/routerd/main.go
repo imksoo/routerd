@@ -2812,6 +2812,9 @@ func filterEgressRoutePolicyCandidatesByWhen(res api.Resource, store routerstate
 	}
 	var candidates []api.EgressRoutePolicyCandidate
 	for _, candidate := range spec.Candidates {
+		if !api.BoolDefault(candidate.Enabled, true) {
+			continue
+		}
 		if resourceWhenMatches(candidate.When, store) {
 			candidates = append(candidates, candidate)
 		}
@@ -5913,6 +5916,9 @@ func managedDelegatedIPv6Targets(router *api.Router, store routerstate.Store) (d
 		if err != nil {
 			return targets, err
 		}
+		if !api.BoolDefault(spec.Enabled, true) {
+			continue
+		}
 		if defaultString(spec.LocalAddressSource, "interface") != "delegatedAddress" {
 			continue
 		}
@@ -6002,6 +6008,9 @@ func applyIPv4PolicyRoutes(router *api.Router) ([]string, error) {
 			spec, err := res.DSLiteTunnelSpec()
 			if err != nil {
 				return nil, err
+			}
+			if !api.BoolDefault(spec.Enabled, true) {
+				continue
 			}
 			aliases[res.Metadata.Name] = defaultString(spec.TunnelName, res.Metadata.Name)
 		}
@@ -6111,6 +6120,9 @@ type effectiveRouterAvailability struct {
 func availableIPv4DefaultRouteCandidates(ctx effectiveRouterAvailability, candidates []api.EgressRoutePolicyCandidate) []api.EgressRoutePolicyCandidate {
 	var available []api.EgressRoutePolicyCandidate
 	for _, candidate := range candidates {
+		if !api.BoolDefault(candidate.Enabled, true) {
+			continue
+		}
 		if candidate.HealthCheck != "" && !ctx.Health[candidate.HealthCheck] {
 			continue
 		}
@@ -6154,6 +6166,9 @@ func egressTargetUsable(ctx effectiveRouterAvailability, name string) bool {
 		}
 		spec, err := res.DSLiteTunnelSpec()
 		if err != nil {
+			return false
+		}
+		if !api.BoolDefault(spec.Enabled, true) {
 			return false
 		}
 		ifname := ctx.Aliases[spec.Interface]
@@ -6872,8 +6887,13 @@ func applyDSLiteTunnelsWithState(router *api.Router, store routerstate.Store) ([
 		if err != nil {
 			return nil, err
 		}
-		ifname := aliases[spec.Interface]
 		tunnelName := defaultString(spec.TunnelName, res.Metadata.Name)
+		if !api.BoolDefault(spec.Enabled, true) {
+			_ = deleteDSLiteTunnel(tunnelName)
+			applied = append(applied, "removed-disabled:"+tunnelName)
+			continue
+		}
+		ifname := aliases[spec.Interface]
 		local, localIfName, err := dsliteLocalAddressWithPrefixes(spec, ifname, aliases, delegated, pdPrefixes)
 		if err != nil {
 			if !errors.Is(err, errNoIPv6PrefixAvailable) {
