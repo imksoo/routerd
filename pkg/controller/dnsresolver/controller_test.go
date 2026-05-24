@@ -9,6 +9,7 @@ import (
 
 	"routerd/pkg/api"
 	"routerd/pkg/daemonapi"
+	resolverruntime "routerd/pkg/dnsresolver"
 )
 
 type mapStore map[string]map[string]any
@@ -66,6 +67,46 @@ func TestReconcilePendingWhenListenAddressUnresolved(t *testing.T) {
 	}
 }
 
+func TestReconcileDegradedWhenOneListenAddressWaits(t *testing.T) {
+	store := mapStore{}
+	controller := Controller{
+		Router: dnsResolverRouter([]string{"127.0.0.1"}, []api.StatusValueSourceSpec{{Resource: "IPv6DelegatedAddress/lan-base", Field: "address"}}),
+		Store:  store,
+		DryRun: true,
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "DNSResolver", "lan-resolver")
+	if status["phase"] != "Degraded" {
+		t.Fatalf("status = %#v", status)
+	}
+	resolved, _ := status["listenAddresses"].([]string)
+	if len(resolved) != 1 || resolved[0] != "127.0.0.1" {
+		t.Fatalf("listenAddresses = %#v", status["listenAddresses"])
+	}
+	waiting, _ := status["waiting"].([]map[string]string)
+	if len(waiting) != 1 || waiting[0]["kind"] != "listen" || waiting[0]["source"] != "IPv6DelegatedAddress/lan-base" {
+		t.Fatalf("waiting = %#v", status["waiting"])
+	}
+
+	spec, err := controller.Router.Spec.Resources[0].DNSResolverSpec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec = resolverruntime.NormalizeSpec(spec)
+	spec, waiting, blockReason, err := controller.expandSpec(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if blockReason != "" || len(waiting) != 1 {
+		t.Fatalf("waiting=%#v blockReason=%q", waiting, blockReason)
+	}
+	if len(spec.Listen) != 1 || len(spec.Listen[0].Addresses) != 1 || spec.Listen[0].Addresses[0] != "127.0.0.1" || len(spec.Listen[0].AddressFrom) != 0 {
+		t.Fatalf("listen = %#v", spec.Listen)
+	}
+}
+
 func dnsResolverRouterWithUpstreamFrom(source api.StatusValueSourceSpec) *api.Router {
 	return &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{
@@ -79,6 +120,32 @@ func dnsResolverRouterWithUpstreamFrom(source api.StatusValueSourceSpec) *api.Ro
 					Match:        []string{"gw.transix.jp"},
 					UpstreamFrom: []api.StatusValueSourceSpec{source},
 				}},
+			},
+		},
+	}}}
+}
+
+func dnsResolverRouterWithPartialUpstreamFrom(source api.StatusValueSourceSpec) *api.Router {
+	return &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSResolver"},
+			Metadata: api.ObjectMeta{Name: "lan-resolver"},
+			Spec: api.DNSResolverSpec{
+				Listen: []api.DNSResolverListenSpec{{Name: "lan", Addresses: []string{"127.0.0.1"}, Port: 53}},
+				Sources: []api.DNSResolverSourceSpec{
+					{
+						Name:      "default",
+						Kind:      "upstream",
+						Match:     []string{"."},
+						Upstreams: []string{"udp://1.1.1.1:53"},
+					},
+					{
+						Name:         "ngn-aftr",
+						Kind:         "forward",
+						Match:        []string{"gw.transix.jp"},
+						UpstreamFrom: []api.StatusValueSourceSpec{source},
+					},
+				},
 			},
 		},
 	}}}
@@ -106,6 +173,45 @@ func TestReconcilePendingWhenUpstreamFromUnresolved(t *testing.T) {
 	}
 }
 
+func TestReconcileDegradedWhenOneSourceWaitsForUpstream(t *testing.T) {
+	store := mapStore{}
+	controller := Controller{
+		Router: dnsResolverRouterWithPartialUpstreamFrom(api.StatusValueSourceSpec{Resource: "DHCPv6Information/wan-info", Field: "dnsServers"}),
+		Store:  store,
+		DryRun: true,
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "DNSResolver", "lan-resolver")
+	if status["phase"] != "Degraded" {
+		t.Fatalf("status = %#v", status)
+	}
+	waiting, _ := status["waiting"].([]map[string]string)
+	if len(waiting) != 1 || waiting[0]["kind"] != "source" || waiting[0]["name"] != "ngn-aftr" || waiting[0]["source"] != "DHCPv6Information/wan-info" {
+		t.Fatalf("waiting = %#v", status["waiting"])
+	}
+
+	spec, err := controller.Router.Spec.Resources[0].DNSResolverSpec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec = resolverruntime.NormalizeSpec(spec)
+	spec, waiting, blockReason, err := controller.expandSpec(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if blockReason != "" || len(waiting) != 1 {
+		t.Fatalf("waiting=%#v blockReason=%q", waiting, blockReason)
+	}
+	if len(spec.Listen) != 1 || spec.Listen[0].Addresses[0] != "127.0.0.1" {
+		t.Fatalf("listen = %#v", spec.Listen)
+	}
+	if len(spec.Sources) != 1 || spec.Sources[0].Name != "default" {
+		t.Fatalf("sources = %#v", spec.Sources)
+	}
+}
+
 func TestReconcileResolvesUpstreamFromStatus(t *testing.T) {
 	store := mapStore{
 		api.NetAPIVersion + "/DHCPv6Information/wan-info": {"dnsServers": []any{"2409:10:3d60:1200:1eb1:7fff:fe73:76d8"}},
@@ -121,6 +227,50 @@ func TestReconcileResolvesUpstreamFromStatus(t *testing.T) {
 	status := store.ObjectStatus(api.NetAPIVersion, "DNSResolver", "lan-resolver")
 	if status["phase"] != "Applied" {
 		t.Fatalf("status = %#v", status)
+	}
+}
+
+func TestReconcileConvergesFromDegradedWhenUpstreamResolves(t *testing.T) {
+	store := mapStore{}
+	controller := Controller{
+		Router: dnsResolverRouterWithPartialUpstreamFrom(api.StatusValueSourceSpec{Resource: "DHCPv6Information/wan-info", Field: "dnsServers"}),
+		Store:  store,
+		DryRun: true,
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "DNSResolver", "lan-resolver")
+	if status["phase"] != "Degraded" {
+		t.Fatalf("status = %#v", status)
+	}
+
+	store[api.NetAPIVersion+"/DHCPv6Information/wan-info"] = map[string]any{"dnsServers": []any{"2409:10:3d60:1200:1eb1:7fff:fe73:76d8"}}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	status = store.ObjectStatus(api.NetAPIVersion, "DNSResolver", "lan-resolver")
+	if status["phase"] != "Applied" {
+		t.Fatalf("status = %#v", status)
+	}
+
+	spec, err := controller.Router.Spec.Resources[0].DNSResolverSpec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec = resolverruntime.NormalizeSpec(spec)
+	spec, waiting, blockReason, err := controller.expandSpec(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if blockReason != "" || len(waiting) != 0 {
+		t.Fatalf("waiting=%#v blockReason=%q", waiting, blockReason)
+	}
+	if len(spec.Sources) != 2 || spec.Sources[1].Name != "ngn-aftr" {
+		t.Fatalf("sources = %#v", spec.Sources)
+	}
+	if len(spec.Sources[1].Upstreams) != 1 || spec.Sources[1].Upstreams[0] != "udp://[2409:10:3d60:1200:1eb1:7fff:fe73:76d8]:53" {
+		t.Fatalf("ngn-aftr upstreams = %#v", spec.Sources[1].Upstreams)
 	}
 }
 
