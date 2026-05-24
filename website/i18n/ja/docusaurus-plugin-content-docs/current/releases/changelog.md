@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260525.0006
+
 ### 追加
 
 - `routerd rollback --list` と `routerd rollback --to <generation>` を追加しました。

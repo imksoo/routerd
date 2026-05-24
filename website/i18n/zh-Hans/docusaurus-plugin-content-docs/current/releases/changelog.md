@@ -11,6 +11,8 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260525.0006
+
 ### 新增
 
 - `routerd rollback --list` 与 `routerd rollback --to <generation>`：列出已保存的配置代次，
