@@ -3994,8 +3994,9 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 			return &result, nil
 		},
 	}
-	// The status API is read-only; keep it available to the routerd group only.
-	statusListener, err := listenUnixSocket(*statusSocketPath, 0o640)
+	// The status API is read-only; 0o660 lets the routerd group connect
+	// (connecting to a unix socket needs write access) while denying others.
+	statusListener, err := listenUnixSocket(*statusSocketPath, 0o660)
 	if err != nil {
 		return err
 	}

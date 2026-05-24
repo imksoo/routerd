@@ -7,6 +7,7 @@ After=network-online.target
 [Service]
 Type=simple
 User=root
+Group=routerd
 ExecStart=/usr/local/sbin/routerd serve \
   --config /usr/local/etc/routerd/router.yaml \
   --socket /run/routerd/routerd.sock \
