@@ -216,7 +216,11 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 		if mtu == 0 {
 			mtu = 1460
 		}
-		innerLocal, err := dsliteInnerLocalIPv4(c.Router, c.Store, spec)
+		innerLocal, innerLocalPending, err := dsliteInnerLocalIPv4(c.Router, c.Store, spec)
+		if innerLocalPending != "" {
+			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": innerLocalPending, "aftrName": aftrName, "aftrIPv6": remote, "dryRun": c.DryRun})
+			continue
+		}
 		if err != nil {
 			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, map[string]any{"phase": "Error", "reason": "InnerLocalIPv4Invalid", "error": err.Error(), "dryRun": c.DryRun})
 			continue
@@ -1402,7 +1406,12 @@ const (
 	dsliteInnerRemoteIPv4       = "192.0.0.1"
 )
 
-func dsliteInnerLocalIPv4(router *api.Router, store Store, spec api.DSLiteTunnelSpec) (string, error) {
+// dsliteInnerLocalIPv4 returns the inner IPv4 endpoint for the tunnel. The
+// middle return value is a non-empty pending reason when a required (non-optional)
+// localAddressFrom reference has not published a value yet — a normal bootstrap
+// condition that the caller surfaces as Pending and re-reconciles, distinct from
+// a genuinely invalid configured address, which is returned as an error.
+func dsliteInnerLocalIPv4(router *api.Router, store Store, spec api.DSLiteTunnelSpec) (string, string, error) {
 	value := ""
 	if strings.TrimSpace(spec.LocalAddressFrom.Resource) != "" {
 		value = statusAddressValue(resourcequery.Value(store, spec.LocalAddressFrom))
@@ -1413,7 +1422,7 @@ func dsliteInnerLocalIPv4(router *api.Router, store Store, spec api.DSLiteTunnel
 			if spec.LocalAddressFrom.Optional {
 				value = dsliteDefaultInnerLocalIPv4
 			} else {
-				return "", fmt.Errorf("localAddressFrom %s.%s is unresolved", spec.LocalAddressFrom.Resource, firstNonEmpty(spec.LocalAddressFrom.Field, "phase"))
+				return "", "InnerLocalIPv4Unresolved: " + spec.LocalAddressFrom.Resource, nil
 			}
 		}
 	}
@@ -1422,12 +1431,12 @@ func dsliteInnerLocalIPv4(router *api.Router, store Store, spec api.DSLiteTunnel
 	}
 	addr, err := netip.ParseAddr(value)
 	if err != nil || !addr.Is4() {
-		return "", fmt.Errorf("innerLocalAddress %q is not an IPv4 address", value)
+		return "", "", fmt.Errorf("innerLocalAddress %q is not an IPv4 address", value)
 	}
 	if addr.IsUnspecified() || addr.IsMulticast() || addr.IsLoopback() {
-		return "", fmt.Errorf("innerLocalAddress %q must be a usable unicast IPv4 address", value)
+		return "", "", fmt.Errorf("innerLocalAddress %q must be a usable unicast IPv4 address", value)
 	}
-	return addr.String(), nil
+	return addr.String(), "", nil
 }
 
 func addressFromRouterResource(router *api.Router, source api.StatusValueSourceSpec) string {

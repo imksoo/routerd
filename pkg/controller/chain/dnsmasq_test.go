@@ -498,14 +498,32 @@ func TestDSLiteTunnelInnerLocalAddressFromStaticAddress(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "ds-lite-a-source"}, Spec: api.IPv4StaticAddressSpec{Interface: "ds-lite-a", Address: "192.0.0.2/29"}},
 	}}}
-	got, err := dsliteInnerLocalIPv4(router, nil, api.DSLiteTunnelSpec{
+	got, pending, err := dsliteInnerLocalIPv4(router, nil, api.DSLiteTunnelSpec{
 		LocalAddressFrom: api.StatusValueSourceSpec{Resource: "IPv4StaticAddress/ds-lite-a-source", Field: "address"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
+	if pending != "" {
+		t.Fatalf("unexpected pending = %q", pending)
+	}
 	if got != "192.0.0.2" {
 		t.Fatalf("inner local = %q", got)
+	}
+}
+
+func TestDSLiteInnerLocalIPv4PendingWhenSourceUnresolved(t *testing.T) {
+	got, pending, err := dsliteInnerLocalIPv4(&api.Router{}, nil, api.DSLiteTunnelSpec{
+		LocalAddressFrom: api.StatusValueSourceSpec{Resource: "IPv4StaticAddress/missing", Field: "address"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "" {
+		t.Fatalf("inner local = %q, want empty", got)
+	}
+	if !strings.Contains(pending, "InnerLocalIPv4Unresolved") {
+		t.Fatalf("pending = %q", pending)
 	}
 }
 
