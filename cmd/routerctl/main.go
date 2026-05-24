@@ -94,6 +94,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return applyCommand(args[1:], stdout)
 	case "delete":
 		return deleteCommand(args[1:], stdout)
+	case "set-log-level":
+		return setLogLevelCommand(args[1:], stdout)
 	case "plan":
 		return applyCommand(append([]string{"--dry-run"}, args[1:]...), stdout)
 	case "help", "-h", "--help":
@@ -246,6 +248,32 @@ func deleteCommand(args []string, stdout io.Writer) error {
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 	result, err := controlapi.NewUnixClient(*socketPath).Delete(ctx, controlapi.DeleteRequest{Target: fs.Arg(0), TargetAPIVersion: *apiVersion, DryRun: *dryRun, Force: *force})
+	if err != nil {
+		return err
+	}
+	return writeJSON(stdout, result)
+}
+
+func setLogLevelCommand(args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("set-log-level", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	socketPath := fs.String("socket", defaultSocketPath(), "routerd Unix domain socket path")
+	timeout := fs.Duration("timeout", 5*time.Second, "request timeout")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return errors.New("set-log-level requires <debug|info|warning|error|default>")
+	}
+	level := fs.Arg(0)
+	switch level {
+	case "debug", "info", "warning", "error", "default":
+	default:
+		return fmt.Errorf("unsupported log level %q", level)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	defer cancel()
+	result, err := controlapi.NewUnixClient(*socketPath).SetLogLevel(ctx, controlapi.LogLevelRequest{Level: level})
 	if err != nil {
 		return err
 	}
@@ -3618,4 +3646,5 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  plan [--socket <path>]")
 	fmt.Fprintln(w, "  apply [--socket <path>] [--dry-run]")
 	fmt.Fprintln(w, "  delete <kind>/<name> [--socket <path>] [--dry-run] [--force] [--api-version <version>]")
+	fmt.Fprintln(w, "  set-log-level <debug|info|warning|error|default> [--socket <path>]")
 }

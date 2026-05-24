@@ -4,35 +4,41 @@ package eventlog
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
-	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"routerd/pkg/api"
 )
 
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
 func TestWebhookSinkWritesEventJSON(t *testing.T) {
 	events := make(chan Event, 1)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var event Event
-		if err := json.NewDecoder(r.Body).Decode(&event); err != nil {
-			t.Errorf("decode event: %v", err)
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		events <- event
-	}))
-	defer server.Close()
 	sink, err := NewSink(api.LogSinkSpec{
 		Type:     "webhook",
 		MinLevel: "debug",
-		Webhook:  api.LogSinkWebhookSpec{URL: server.URL, Timeout: "2s"},
+		Webhook:  api.LogSinkWebhookSpec{URL: "http://routerd.test/events", Timeout: "2s"},
 	})
 	if err != nil {
 		t.Fatalf("new sink: %v", err)
 	}
+	sink.(*WebhookSink).client = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		var event Event
+		if err := json.NewDecoder(r.Body).Decode(&event); err != nil {
+			t.Errorf("decode event: %v", err)
+			return &http.Response{StatusCode: http.StatusBadRequest, Status: "400 Bad Request", Body: io.NopCloser(strings.NewReader(""))}, nil
+		}
+		events <- event
+		return okHTTPResponse(), nil
+	})}
 
 	err = sink.Emit(Event{
 		Timestamp: time.Date(2026, 4, 26, 0, 0, 0, 0, time.UTC),
@@ -53,24 +59,103 @@ func TestWebhookSinkWritesEventJSON(t *testing.T) {
 }
 
 func TestWebhookSinkHonorsMinLevel(t *testing.T) {
+	SetLevelOverride(nil)
+	defer SetLevelOverride(nil)
+
 	var called bool
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		called = true
-	}))
-	defer server.Close()
 	sink, err := NewSink(api.LogSinkSpec{
 		Type:     "webhook",
 		MinLevel: "warning",
-		Webhook:  api.LogSinkWebhookSpec{URL: server.URL},
+		Webhook:  api.LogSinkWebhookSpec{URL: "http://routerd.test/events"},
 	})
 	if err != nil {
 		t.Fatalf("new sink: %v", err)
 	}
+	sink.(*WebhookSink).client = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		called = true
+		return okHTTPResponse(), nil
+	})}
 	if err := sink.Emit(Event{Level: LevelInfo, Message: "ignored"}); err != nil {
 		t.Fatalf("emit: %v", err)
 	}
 	if called {
 		t.Fatal("webhook was called after ignored event")
+	}
+}
+
+func okHTTPResponse() *http.Response {
+	return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Body: io.NopCloser(strings.NewReader(""))}
+}
+
+func TestLevelOverrideAllowsMoreVerboseEvents(t *testing.T) {
+	SetLevelOverride(nil)
+	defer SetLevelOverride(nil)
+
+	var calls atomic.Int32
+	sink, err := NewSink(api.LogSinkSpec{
+		Type:     "webhook",
+		MinLevel: "warning",
+		Webhook:  api.LogSinkWebhookSpec{URL: "http://routerd.test/events"},
+	})
+	if err != nil {
+		t.Fatalf("new sink: %v", err)
+	}
+	sink.(*WebhookSink).client = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		calls.Add(1)
+		return okHTTPResponse(), nil
+	})}
+	if err := sink.Emit(Event{Level: LevelDebug, Message: "ignored"}); err != nil {
+		t.Fatalf("emit before override: %v", err)
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("calls before override = %d, want 0", calls.Load())
+	}
+
+	level := LevelDebug
+	SetLevelOverride(&level)
+	if got := LevelOverride(); got == nil || *got != LevelDebug {
+		t.Fatalf("LevelOverride() = %v, want debug", got)
+	}
+	if err := sink.Emit(Event{Level: LevelDebug, Message: "emitted"}); err != nil {
+		t.Fatalf("emit after override: %v", err)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("calls after override = %d, want 1", calls.Load())
+	}
+}
+
+func TestLevelOverrideClearRestoresSinkMinLevel(t *testing.T) {
+	SetLevelOverride(nil)
+	defer SetLevelOverride(nil)
+
+	var calls atomic.Int32
+	sink, err := NewSink(api.LogSinkSpec{
+		Type:     "webhook",
+		MinLevel: "warning",
+		Webhook:  api.LogSinkWebhookSpec{URL: "http://routerd.test/events"},
+	})
+	if err != nil {
+		t.Fatalf("new sink: %v", err)
+	}
+	sink.(*WebhookSink).client = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		calls.Add(1)
+		return okHTTPResponse(), nil
+	})}
+
+	level := LevelDebug
+	SetLevelOverride(&level)
+	if err := sink.Emit(Event{Level: LevelInfo, Message: "emitted"}); err != nil {
+		t.Fatalf("emit with override: %v", err)
+	}
+	SetLevelOverride(nil)
+	if got := LevelOverride(); got != nil {
+		t.Fatalf("LevelOverride() = %v, want nil", *got)
+	}
+	if err := sink.Emit(Event{Level: LevelInfo, Message: "ignored"}); err != nil {
+		t.Fatalf("emit after clear: %v", err)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("calls = %d, want 1", calls.Load())
 	}
 }
 

@@ -106,6 +106,16 @@ type DeleteResult struct {
 	DryRun    bool     `json:"dryRun,omitempty" yaml:"dryRun,omitempty"`
 }
 
+type LogLevelRequest struct {
+	TypeMeta `json:",inline" yaml:",inline"`
+	Level    string `json:"level" yaml:"level"`
+}
+
+type LogLevelResult struct {
+	TypeMeta `json:",inline" yaml:",inline"`
+	Level    string `json:"level" yaml:"level"`
+}
+
 type DHCPv6EventRequest struct {
 	TypeMeta  `json:",inline" yaml:",inline"`
 	Resource  string            `json:"resource" yaml:"resource"`
@@ -275,6 +285,13 @@ func NewApplyResult(result *apply.Result) ApplyResult {
 	return ApplyResult{
 		TypeMeta: TypeMeta{APIVersion: APIVersion, Kind: "ApplyResult"},
 		Result:   *result,
+	}
+}
+
+func NewLogLevelResult(level string) LogLevelResult {
+	return LogLevelResult{
+		TypeMeta: TypeMeta{APIVersion: APIVersion, Kind: "LogLevelResult"},
+		Level:    level,
 	}
 }
 

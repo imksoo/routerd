@@ -186,6 +186,13 @@ func TestLogCommandsUseControlSocketByDefault(t *testing.T) {
 			result := controlapi.NewFirewallLogs([]logstore.FirewallLogEntry{{Timestamp: time.Now(), Action: "drop", SrcAddress: "172.18.0.10", DstAddress: "198.51.100.10", Protocol: "tcp", L3Proto: "ipv4", RuleName: "deny-test"}})
 			return &result, nil
 		},
+		SetLogLevel: func(r *http.Request, req controlapi.LogLevelRequest) (*controlapi.LogLevelResult, error) {
+			if req.Level != "debug" {
+				t.Fatalf("level = %q, want debug", req.Level)
+			}
+			result := controlapi.NewLogLevelResult(req.Level)
+			return &result, nil
+		},
 	}}
 	go func() { _ = server.Serve(listener) }()
 	defer server.Close()
@@ -199,6 +206,7 @@ func TestLogCommandsUseControlSocketByDefault(t *testing.T) {
 		{[]string{"dns-queries", "--socket", socketPath, "--limit", "3"}, "socket.example"},
 		{[]string{"traffic-flows", "--socket", socketPath}, "1.1.1.1"},
 		{[]string{"firewall-logs", "--socket", socketPath}, "deny-test"},
+		{[]string{"set-log-level", "--socket", socketPath, "debug"}, `"level": "debug"`},
 	} {
 		var out bytes.Buffer
 		if err := run(tt.args, &out, &bytes.Buffer{}); err != nil {

@@ -87,6 +87,62 @@ func TestDeleteHandler(t *testing.T) {
 	}
 }
 
+func TestSetLogLevelHandler(t *testing.T) {
+	handler := Handler{
+		SetLogLevel: func(r *http.Request, req LogLevelRequest) (*LogLevelResult, error) {
+			if req.Level != "debug" {
+				t.Fatalf("level = %q, want debug", req.Level)
+			}
+			result := NewLogLevelResult(req.Level)
+			return &result, nil
+		},
+	}
+	req := httptest.NewRequest(http.MethodPost, Prefix+"/log-level", strings.NewReader(`{"apiVersion":"control.routerd.net/v1alpha1","kind":"LogLevelRequest","level":"debug"}`))
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status code = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"kind": "LogLevelResult"`) || !strings.Contains(rec.Body.String(), `"level": "debug"`) {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
+func TestSetLogLevelHandlerRejectsAPIVersion(t *testing.T) {
+	called := false
+	handler := Handler{
+		SetLogLevel: func(r *http.Request, req LogLevelRequest) (*LogLevelResult, error) {
+			called = true
+			result := NewLogLevelResult(req.Level)
+			return &result, nil
+		},
+	}
+	req := httptest.NewRequest(http.MethodPost, Prefix+"/log-level", strings.NewReader(`{"apiVersion":"example.invalid/v1","kind":"LogLevelRequest","level":"debug"}`))
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status code = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if called {
+		t.Fatal("handler was called for invalid apiVersion")
+	}
+}
+
+func TestSetLogLevelHandlerNotConfigured(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, Prefix+"/log-level", strings.NewReader(`{"apiVersion":"control.routerd.net/v1alpha1","kind":"LogLevelRequest","level":"debug"}`))
+	rec := httptest.NewRecorder()
+
+	Handler{}.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotImplemented {
+		t.Fatalf("status code = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestConnectionsHandler(t *testing.T) {
 	handler := Handler{
 		Connections: func(r *http.Request, req ConnectionsRequest) (*ConnectionTable, error) {

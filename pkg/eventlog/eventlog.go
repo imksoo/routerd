@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"routerd/pkg/api"
@@ -26,6 +27,8 @@ const (
 	LevelWarning Level = "warning"
 	LevelError   Level = "error"
 )
+
+var levelOverride atomic.Int32
 
 type Event struct {
 	Timestamp  time.Time         `json:"timestamp"`
@@ -156,7 +159,7 @@ type SyslogSink struct {
 }
 
 func (s *SyslogSink) Emit(event Event) error {
-	if !enabled(event.Level, s.minLevel) {
+	if !shouldEmit(event.Level, s.minLevel) {
 		return nil
 	}
 	if s.writer == nil {
@@ -195,7 +198,7 @@ type WebhookSink struct {
 }
 
 func (s *WebhookSink) Emit(event Event) error {
-	if !enabled(event.Level, s.minLevel) {
+	if !shouldEmit(event.Level, s.minLevel) {
 		return nil
 	}
 	data, err := json.Marshal(event)
@@ -235,7 +238,7 @@ type FileSink struct {
 }
 
 func (s *FileSink) Emit(event Event) error {
-	if !enabled(event.Level, s.minLevel) {
+	if !shouldEmit(event.Level, s.minLevel) {
 		return nil
 	}
 	if err := os.MkdirAll(filepath.Dir(s.path), 0755); err != nil {
@@ -264,7 +267,7 @@ type JournaldSink struct {
 }
 
 func (s *JournaldSink) Emit(event Event) error {
-	if !enabled(event.Level, s.minLevel) {
+	if !shouldEmit(event.Level, s.minLevel) {
 		return nil
 	}
 	log.Printf("%s %s", s.identifier, formatEvent(event))
@@ -280,7 +283,7 @@ type OTLPSink struct {
 }
 
 func (s *OTLPSink) Emit(event Event) error {
-	if !enabled(event.Level, s.minLevel) {
+	if !shouldEmit(event.Level, s.minLevel) {
 		return nil
 	}
 	return nil
@@ -369,7 +372,37 @@ func parseLevel(value string) int {
 	}
 }
 
-func enabled(level Level, minLevel int) bool {
+func SetLevelOverride(level *Level) {
+	if level == nil {
+		levelOverride.Store(0)
+		return
+	}
+	levelOverride.Store(int32(parseLevel(string(*level)) + 1))
+}
+
+func LevelOverride() *Level {
+	switch levelOverride.Load() {
+	case 1:
+		level := LevelDebug
+		return &level
+	case 2:
+		level := LevelInfo
+		return &level
+	case 3:
+		level := LevelWarning
+		return &level
+	case 4:
+		level := LevelError
+		return &level
+	default:
+		return nil
+	}
+}
+
+func shouldEmit(level Level, minLevel int) bool {
+	if override := levelOverride.Load(); override > 0 {
+		minLevel = int(override - 1)
+	}
 	return parseLevel(string(level)) >= minLevel
 }
 

@@ -101,6 +101,25 @@ func (c *Client) Delete(ctx context.Context, request DeleteRequest) (*DeleteResu
 	return &result, nil
 }
 
+func (c *Client) SetLogLevel(ctx context.Context, request LogLevelRequest) (*LogLevelResult, error) {
+	request.APIVersion = APIVersion
+	request.Kind = "LogLevelRequest"
+	data, err := json.Marshal(request)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+Prefix+"/log-level", bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	var result LogLevelResult
+	if err := c.do(req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
 func (c *Client) Connections(ctx context.Context, limit int) (*ConnectionTable, error) {
 	path := c.baseURL + Prefix + "/connections"
 	if limit >= 0 {

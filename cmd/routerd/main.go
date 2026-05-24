@@ -3950,6 +3950,23 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 			}
 			return &result, nil
 		},
+		SetLogLevel: func(r *http.Request, req controlapi.LogLevelRequest) (*controlapi.LogLevelResult, error) {
+			level := strings.TrimSpace(req.Level)
+			effective := "default"
+			switch level {
+			case "", "default":
+				eventlog.SetLevelOverride(nil)
+			case "debug", "info", "warning", "error":
+				override := eventlog.Level(level)
+				eventlog.SetLevelOverride(&override)
+				effective = string(override)
+			default:
+				return nil, fmt.Errorf("%w: unsupported log level %q", controlapi.ErrBadRequest, req.Level)
+			}
+			logger.Emit(eventlog.LevelInfo, "serve", "log level override changed", map[string]string{"level": effective})
+			result := controlapi.NewLogLevelResult(effective)
+			return &result, nil
+		},
 		DHCPLeaseEvent: func(r *http.Request, req controlapi.DHCPLeaseEventRequest) (*controlapi.DHCPLeaseEventResult, error) {
 			if req.Action == "" || req.IP == "" {
 				return nil, controlapi.ErrBadRequest
