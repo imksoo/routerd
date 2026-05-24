@@ -11,6 +11,13 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 變更
+
+- `DNSResolver` 啟動時不再等待所有相依關係，而是部分拉起常駐程式：使用已經解析出的監聽位址和
+  source 提供服務，在其餘部分仍待定時回報帶有 `waiting` list 的 `phase: Degraded`，
+  並在相依關係解析完成後收斂到 `Applied`。這消除了等待 DHCPv6 prefix delegation 時
+  DNS 被拒絕的啟動窗口。
+
 ## v20260525.0006
 
 ### 新增

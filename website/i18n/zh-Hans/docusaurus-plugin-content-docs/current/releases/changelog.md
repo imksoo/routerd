@@ -11,6 +11,13 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 变更
+
+- `DNSResolver` 启动时不再等待所有依赖，而是部分拉起守护进程：使用已经解析出的监听地址和
+  source 提供服务，在其余部分仍待定时报告带有 `waiting` list 的 `phase: Degraded`，
+  并在依赖解析完成后收敛到 `Applied`。这消除了等待 DHCPv6 prefix delegation 时
+  DNS 被拒绝的启动窗口。
+
 ## v20260525.0006
 
 ### 新增

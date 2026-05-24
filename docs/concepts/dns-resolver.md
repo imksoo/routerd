@@ -15,6 +15,34 @@ routerd splits DNS into small resources with a clear boundary between authoritat
 
 `DNSUpstream` owns one upstream endpoint. It can be plain UDP/TCP DNS, DoT, or DoH.
 
+## Startup and partial bring-up
+
+`DNSResolver` does not wait for every dependency before it serves. At startup it
+brings up the daemon with whatever listen addresses and sources already resolve,
+and converges later as the rest become ready:
+
+- A listen entry binds the addresses that resolve now; an address whose `*From`
+  source is not ready yet (for example a delegated-prefix address still waiting
+  on DHCPv6 prefix delegation) is added on a later reconcile.
+- A forward/upstream source whose dynamic upstream is unresolved (for example an
+  AFTR forwarder whose upstream comes from a `DHCPv6Information` server) is
+  omitted until that upstream appears. Zone sources, and sources with static or
+  already-resolved upstreams, are served immediately.
+
+While some parts are still waiting, the resource reports `phase: Degraded` with a
+`waiting` list naming each listen/source and what it is waiting on. This is a
+normal bootstrap state, not a failure: general DNS already answers. Once the
+dependencies publish their status the controller re-reconciles and converges to
+`phase: Applied` with the full configuration (identical to a fully-resolved
+start). The resolver only reports `phase: Pending` (serving nothing) when no
+listen address resolves at all, or no usable source remains.
+
+This removes the boot-time window where DNS was refused while waiting on a
+DHCPv6 prefix delegation (measured on a production router: general DNS answered
+from the first second while the AFTR forwarder showed `Degraded`, then converged
+to `Applied` once the delegated prefix arrived). A deliberate `routerd` restart
+still has a sub-second gap while the process itself restarts.
+
 ## Source ordering
 
 `DNSForwarder` resources that reference a resolver are evaluated in config order.

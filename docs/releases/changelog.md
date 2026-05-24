@@ -12,6 +12,15 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Changed
+
+- `DNSResolver` brings the daemon up partially at startup instead of waiting for
+  every dependency: it serves with the listen addresses and sources that already
+  resolve, reports `phase: Degraded` with a `waiting` list while the rest are
+  pending, and converges to `Applied` when dependencies resolve. This removes
+  the boot-time window where DNS was refused while waiting on a DHCPv6 prefix
+  delegation.
+
 ## v20260525.0006
 
 ### Added

@@ -11,6 +11,14 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 変更
+
+- `DNSResolver` は、すべての依存関係を待つのではなく、起動時に部分的にデーモンを
+  立ち上げるようになりました。すでに解決できている待ち受けアドレスと source で応答し、
+  残りが待機中の間は `waiting` list 付きの `phase: Degraded` を報告し、依存関係が
+  解決すると `Applied` へ収束します。これにより、DHCPv6 prefix delegation を待つ間に
+  DNS が拒否される起動時の空白時間がなくなります。
+
 ## v20260525.0006
 
 ### 追加
