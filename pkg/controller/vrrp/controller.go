@@ -59,7 +59,7 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		return nil
 	}
 	priorities, tracks := c.effectivePriorities()
-	staticChanged, err := c.applyStaticAddresses(ctx, aliases)
+	staticChanged, staticIsolated, err := c.applyStaticAddresses(ctx, aliases)
 	if err != nil {
 		return err
 	}
@@ -78,18 +78,18 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	if result.LastChangeReason != "" {
 		extra["lastChangeReason"] = result.LastChangeReason
 	}
-	return c.saveStatuses("Applied", result.Path, result.Changed || cleanupChanged || staticChanged, tracks, result.Roles, extra)
+	return c.saveStatuses("Applied", result.Path, result.Changed || cleanupChanged || staticChanged, tracks, result.Roles, staticIsolated, extra)
 }
 
 func (c *Controller) saveError(path string, changed bool, tracks map[string]trackSummary, reason string, err error) error {
-	saveErr := c.saveStatuses("Error", path, changed, tracks, nil, map[string]any{"reason": reason, "error": err.Error()})
+	saveErr := c.saveStatuses("Error", path, changed, tracks, nil, nil, map[string]any{"reason": reason, "error": err.Error()})
 	if saveErr != nil {
 		return saveErr
 	}
 	return err
 }
 
-func (c *Controller) saveStatuses(phase, path string, changed bool, tracks map[string]trackSummary, roles map[string]string, extra map[string]any) error {
+func (c *Controller) saveStatuses(phase, path string, changed bool, tracks map[string]trackSummary, roles map[string]string, isolated map[string]bool, extra map[string]any) error {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	aliases := interfaceAliases(c.Router)
 	for _, resource := range c.Router.Spec.Resources {
@@ -98,6 +98,9 @@ func (c *Controller) saveStatuses(phase, path string, changed bool, tracks map[s
 			return err
 		}
 		if !ok {
+			continue
+		}
+		if isolated[resource.Metadata.Name] {
 			continue
 		}
 		address := spec.Address
@@ -234,12 +237,13 @@ func (c *Controller) cleanupStaleStaticAddresses(ctx context.Context, aliases ma
 	return changed, nil
 }
 
-func (c *Controller) applyStaticAddresses(ctx context.Context, aliases map[string]string) (bool, error) {
+func (c *Controller) applyStaticAddresses(ctx context.Context, aliases map[string]string) (bool, map[string]bool, error) {
 	changed := false
+	isolated := map[string]bool{}
 	for _, resource := range c.Router.Spec.Resources {
 		spec, ok, err := vrrpResourceSpec(resource)
 		if err != nil {
-			return changed, err
+			return changed, isolated, err
 		}
 		if !ok {
 			continue
@@ -249,21 +253,99 @@ func (c *Controller) applyStaticAddresses(ctx context.Context, aliases map[strin
 		}
 		ifname := aliases[spec.Interface]
 		if ifname == "" {
-			return changed, fmt.Errorf("%s references interface with empty ifname %q", resource.ID(), spec.Interface)
+			return changed, isolated, fmt.Errorf("%s references interface with empty ifname %q", resource.ID(), spec.Interface)
 		}
 		address, err := renderVirtualAddress(c.Router, spec)
 		if err != nil {
-			return changed, fmt.Errorf("%s spec.address: %w", resource.ID(), err)
+			phase := "Error"
+			reason := "AddressInvalid"
+			if pending := staticVirtualAddressPendingReason(c.Router, spec); pending != "" {
+				phase = "Pending"
+				reason = pending
+			}
+			if saveErr := c.saveStaticAddressStatus(resource, spec, aliases, phase, changed, reason, err); saveErr != nil {
+				return changed, isolated, saveErr
+			}
+			isolated[resource.Metadata.Name] = true
+			continue
 		}
 		changed = true
 		if c.DryRun {
 			continue
 		}
 		if err := c.replaceStaticAddress(ctx, ifname, address); err != nil {
-			return changed, c.saveError("", changed, nil, "StaticVIPApplyFailed", err)
+			return changed, isolated, c.saveError("", changed, nil, "StaticVIPApplyFailed", err)
 		}
 	}
-	return changed, nil
+	return changed, isolated, nil
+}
+
+func (c *Controller) saveStaticAddressStatus(resource api.Resource, spec virtualAddressSpec, aliases map[string]string, phase string, changed bool, reason string, applyErr error) error {
+	address := strings.TrimSpace(spec.Address)
+	status := map[string]any{
+		"phase":          phase,
+		"backend":        c.virtualAddressBackend(spec),
+		"address":        address,
+		"hostname":       strings.TrimSpace(spec.Hostname),
+		"interface":      spec.Interface,
+		"ifname":         aliases[spec.Interface],
+		"configPath":     "",
+		"changed":        changed,
+		"dryRun":         c.DryRun,
+		"observedAt":     time.Now().UTC().Format(time.RFC3339Nano),
+		"desiredAddress": address,
+		"reason":         reason,
+	}
+	if applyErr != nil {
+		status["error"] = applyErr.Error()
+	}
+	if previous := statusString(c.Store.ObjectStatus(api.NetAPIVersion, resource.Kind, resource.Metadata.Name), "appliedAddress"); previous != "" {
+		status["appliedAddress"] = previous
+	}
+	return c.Store.SaveObjectStatus(api.NetAPIVersion, resource.Kind, resource.Metadata.Name, status)
+}
+
+func staticVirtualAddressPendingReason(router *api.Router, spec virtualAddressSpec) string {
+	if strings.TrimSpace(spec.Address) != "" || strings.TrimSpace(spec.AddressFrom.Resource) == "" || spec.AddressFrom.Optional {
+		return ""
+	}
+	kind, name, ok := strings.Cut(strings.TrimSpace(spec.AddressFrom.Resource), "/")
+	if !ok || kind == "" || name == "" {
+		return ""
+	}
+	field := strings.TrimSpace(spec.AddressFrom.Field)
+	if field == "" {
+		field = "address"
+	}
+	for _, res := range router.Spec.Resources {
+		if res.Kind != kind || res.Metadata.Name != name {
+			continue
+		}
+		switch kind {
+		case "IPv4StaticAddress":
+			if field != "address" {
+				return ""
+			}
+			source, err := res.IPv4StaticAddressSpec()
+			if err != nil || strings.TrimSpace(source.Address) != "" {
+				return ""
+			}
+		case "VirtualAddress":
+			if field != "address" {
+				return ""
+			}
+			source, err := res.VirtualAddressSpec()
+			if err != nil || strings.TrimSpace(source.Address) != "" {
+				return ""
+			}
+		default:
+			return ""
+		}
+		return "AddressUnresolved: " + spec.AddressFrom.Resource
+	}
+	// The referenced resource is absent from the config: a real misconfiguration
+	// (typo), not a bootstrap-ordering wait. Return "" so the caller reports Error.
+	return ""
 }
 
 type trackSummary struct {

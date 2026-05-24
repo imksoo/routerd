@@ -152,6 +152,82 @@ func TestReconcileAppliesStaticVirtualAddressIPv4(t *testing.T) {
 	}
 }
 
+func TestReconcileIsolatesUnresolvedStaticVirtualAddress(t *testing.T) {
+	store := mapStore{}
+	var calls []string
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+			Metadata: api.ObjectMeta{Name: "lan"},
+			Spec:     api.InterfaceSpec{IfName: "ens18"},
+		},
+		{
+			// A static address source that exists in config but has no address
+			// yet (dynamically assigned): the VIP must wait as Pending.
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},
+			Metadata: api.ObjectMeta{Name: "dyn-src"},
+			Spec:     api.IPv4StaticAddressSpec{Interface: "lan"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"},
+			Metadata: api.ObjectMeta{Name: "pending-vip"},
+			Spec: api.VirtualAddressSpec{Family: "ipv4",
+				Interface:   "lan",
+				Mode:        "static",
+				AddressFrom: api.StatusValueSourceSpec{Resource: "IPv4StaticAddress/dyn-src", Field: "address"},
+			},
+		},
+		{
+			// References a resource absent from config (a typo): a real
+			// misconfiguration, reported as Error, not Pending.
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"},
+			Metadata: api.ObjectMeta{Name: "error-vip"},
+			Spec: api.VirtualAddressSpec{Family: "ipv4",
+				Interface:   "lan",
+				Mode:        "static",
+				AddressFrom: api.StatusValueSourceSpec{Resource: "IPv4StaticAddress/missing", Field: "address"},
+			},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"},
+			Metadata: api.ObjectMeta{Name: "good-vip"},
+			Spec: api.VirtualAddressSpec{Family: "ipv4",
+				Interface: "lan",
+				Address:   "10.240.70.20/32",
+				Mode:      "static",
+			},
+		},
+	}}}
+	controller := Controller{
+		Router: router,
+		Store:  store,
+		IP:     "ip",
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			calls = append(calls, name+" "+strings.Join(args, " "))
+			return []byte("ok"), nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	pending := store.ObjectStatus(api.NetAPIVersion, "VirtualAddress", "pending-vip")
+	if pending["phase"] != "Pending" || pending["reason"] != "AddressUnresolved: IPv4StaticAddress/dyn-src" {
+		t.Fatalf("pending VIP status = %#v", pending)
+	}
+	errored := store.ObjectStatus(api.NetAPIVersion, "VirtualAddress", "error-vip")
+	if errored["phase"] != "Error" {
+		t.Fatalf("error VIP status = %#v", errored)
+	}
+	good := store.ObjectStatus(api.NetAPIVersion, "VirtualAddress", "good-vip")
+	if good["phase"] != "Applied" || good["appliedAddress"] != "10.240.70.20/32" {
+		t.Fatalf("good VIP status = %#v", good)
+	}
+	want := []string{"ip addr replace 10.240.70.20/32 dev ens18"}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("calls = %#v, want %#v", calls, want)
+	}
+}
+
 func TestReconcileObservesVRRPRoleFromVIPAddress(t *testing.T) {
 	store := mapStore{}
 	controller := Controller{
