@@ -71,6 +71,58 @@ On systemd hosts, the installer creates the `routerd` group for local socket
 access. Add an operator with `sudo usermod -aG routerd <user>` to allow
 `routerctl status` and other local control socket operations without sudo.
 
+## Upgrading a router that runs BGP
+
+`routerd-bgp` is a long-lived daemon that holds the BGP sessions. Restarting it
+drops those sessions; peers keep the old paths until their hold timers expire,
+so ECMP shrinks during that window. To keep an upgrade non-disruptive,
+`install.sh` does **not** auto-restart `routerd-bgp`, even without
+`--no-restart`. It updates the binaries, restarts `routerd.service`, and prints
+a note that `routerd-bgp` is still running the previous (in-memory) binary:
+
+```
+note: not auto-restarting routerd-bgp.service (running deleted binary ...)
+      restart it deliberately when ready: systemctl restart routerd-bgp
+```
+
+This is the expected steady state right after an upgrade: the control plane runs
+the new code while BGP stays up on the old `routerd-bgp` binary. Acceptance for
+the upgrade itself is that BGP sessions and ECMP are unchanged across it.
+
+To adopt the new `routerd-bgp` binary, restart it deliberately as a separate,
+planned step:
+
+1. Confirm a stable baseline first: all peers `Established` and ECMP at full
+   width (`routerctl show bgp`).
+2. `sudo systemctl restart routerd-bgp` **once**. Do not restart it again while
+   it is reconverging — a rapid second restart makes peers hold stale paths and
+   collapses ECMP. Graceful restart protects a single restart only.
+3. Wait for reconvergence before judging (allow up to ~3–6 minutes; the BGP hold
+   timer and graceful-restart stale-path timer drive this). Pass conditions:
+   every peer back to `Established`, full-width ECMP for the affected prefixes,
+   and end-to-end reachability (for example an HTTP 200 through the ECMP path).
+
+## Local control socket access for non-root operators
+
+The control socket (`/run/routerd/routerd.sock`) and the read-only status
+socket (`/run/routerd/routerd-status.sock`) are created `root:routerd`, mode
+`0o660`. Connecting to a unix socket requires write access, so a non-root user
+must be a member of the `routerd` group:
+
+1. The service unit must set `Group=routerd` (the bundled `routerd.service` and
+   `homert02-routerd.service` do; a host with its own unit must add it). Restart
+   `routerd.service` after changing the unit so the sockets are recreated with
+   the right group.
+2. `sudo usermod -aG routerd <user>`.
+3. Group membership only applies to **new** login sessions. Re-login (or open a
+   new SSH session / run `newgrp routerd`) before `routerctl status` works
+   without sudo.
+
+Verify with `ls -l /run/routerd/routerd-status.sock` (expect
+`srw-rw---- root routerd`) and `id <user>` (expect `routerd` in the group list).
+A user who is not in the group is denied by design; that is the intended
+hardening, not a regression.
+
 ## Try the live ISO
 
 The release page also publishes a bootable Alpine-based live ISO:
