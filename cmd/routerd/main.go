@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"os/user"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -3994,12 +3995,16 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 			return &result, nil
 		},
 	}
-	// The status API is read-only; 0o660 lets the routerd group connect
-	// (connecting to a unix socket needs write access) while denying others.
 	statusListener, err := listenUnixSocket(*statusSocketPath, 0o660)
 	if err != nil {
 		return err
 	}
+	// The status API is read-only. If a routerd group exists, hand the socket
+	// to it (root:routerd, 0o660) so non-root operators in that group can run
+	// `routerctl status` without sudo. Otherwise fall back to world-accessible
+	// so non-root tooling keeps working. Done in-process so it does not depend
+	// on the unit's Group= setting.
+	groupOwnStatusSocket(*statusSocketPath)
 	defer statusListener.Close()
 	statusServer := &http.Server{
 		Handler: controlapi.Handler{
@@ -4028,6 +4033,24 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		return err
 	}
 	return nil
+}
+
+// groupOwnStatusSocket makes the read-only status socket reachable by members
+// of the routerd group (root:routerd, 0o660). Connecting to a unix socket needs
+// write access, so the group needs read+write. The socket's group owner follows
+// the process egid by default, so set it explicitly instead of relying on the
+// service unit's Group= setting. If the routerd group does not exist, fall back
+// to world-accessible (0o666) so non-root operators are not locked out.
+func groupOwnStatusSocket(path string) {
+	if grp, err := user.LookupGroup("routerd"); err == nil {
+		if gid, convErr := strconv.Atoi(grp.Gid); convErr == nil {
+			if chErr := os.Chown(path, -1, gid); chErr == nil {
+				_ = os.Chmod(path, 0o660)
+				return
+			}
+		}
+	}
+	_ = os.Chmod(path, 0o666)
 }
 
 func listenUnixSocket(path string, perm os.FileMode) (net.Listener, error) {

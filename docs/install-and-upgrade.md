@@ -104,24 +104,28 @@ planned step:
 
 ## Local control socket access for non-root operators
 
-The control socket (`/run/routerd/routerd.sock`) and the read-only status
-socket (`/run/routerd/routerd-status.sock`) are created `root:routerd`, mode
-`0o660`. Connecting to a unix socket requires write access, so a non-root user
-must be a member of the `routerd` group:
+The read-only status socket (`/run/routerd/routerd-status.sock`) lets non-root
+operators run `routerctl status` without sudo. When a `routerd` group exists,
+routerd hands that socket to it (`root:routerd`, mode `0o660`); connecting to a
+unix socket needs write access, so members get read+write. routerd sets this
+group ownership itself when it creates the socket, so it does **not** depend on
+the service unit's `Group=` setting. If no `routerd` group exists, the status
+socket falls back to world-accessible (`0o666`) so nobody is locked out.
 
-1. The service unit must set `Group=routerd` (the bundled `routerd.service` and
-   `homert02-routerd.service` do; a host with its own unit must add it). Restart
-   `routerd.service` after changing the unit so the sockets are recreated with
-   the right group.
-2. `sudo usermod -aG routerd <user>`.
-3. Group membership only applies to **new** login sessions. Re-login (or open a
-   new SSH session / run `newgrp routerd`) before `routerctl status` works
-   without sudo.
+The read-write control socket (`/run/routerd/routerd.sock`, used by
+`routerctl apply`/`delete`) stays `root`-owned `0o660`: mutating the router
+still requires root/sudo.
+
+To give an operator sudo-less `routerctl status`:
+
+1. `sudo usermod -aG routerd <user>` (the installer already created the group).
+2. Group membership only applies to **new** login sessions. Re-login (or open a
+   new SSH session / run `newgrp routerd`) before it takes effect.
 
 Verify with `ls -l /run/routerd/routerd-status.sock` (expect
 `srw-rw---- root routerd`) and `id <user>` (expect `routerd` in the group list).
 A user who is not in the group is denied by design; that is the intended
-hardening, not a regression.
+hardening, not a regression. No service-unit change is required.
 
 ## Try the live ISO
 
