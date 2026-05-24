@@ -31,6 +31,7 @@ type SQLiteStore struct {
 	db         *sql.DB
 	now        func() time.Time
 	generation int64
+	closed     bool
 	mu         sync.RWMutex
 }
 
@@ -384,6 +385,9 @@ func (s *SQLiteStore) Save(path string) error { return nil }
 func (s *SQLiteStore) Get(name string) Value {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if s.closed {
+		return Value{}
+	}
 	ref := objectRefForKey(name)
 	status, _, err := s.loadStatus(ref.APIVersion, ref.Kind, ref.Name)
 	if err != nil {
@@ -400,6 +404,9 @@ func (s *SQLiteStore) Get(name string) Value {
 func (s *SQLiteStore) Set(name, value, reason string) Value {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.closed {
+		return Value{}
+	}
 	if value == "" {
 		return s.setLocked(name, StatusUnset, "", reason)
 	}
@@ -409,18 +416,27 @@ func (s *SQLiteStore) Set(name, value, reason string) Value {
 func (s *SQLiteStore) Unset(name, reason string) Value {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.closed {
+		return Value{}
+	}
 	return s.setLocked(name, StatusUnset, "", reason)
 }
 
 func (s *SQLiteStore) Forget(name, reason string) Value {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.closed {
+		return Value{}
+	}
 	return s.setLocked(name, StatusUnknown, "", reason)
 }
 
 func (s *SQLiteStore) Delete(name string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.closed {
+		return
+	}
 	ref := objectRefForKey(name)
 	status, _, err := s.loadStatus(ref.APIVersion, ref.Kind, ref.Name)
 	if err != nil {
@@ -514,6 +530,9 @@ func (s *SQLiteStore) Now() time.Time                { return s.now().UTC() }
 func (s *SQLiteStore) Variables() map[string]Value {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if s.closed {
+		return map[string]Value{}
+	}
 	rows, err := s.db.Query(`SELECT api_version,kind,name,coalesce(status,'{}') FROM objects ORDER BY api_version,kind,name`)
 	if err != nil {
 		return map[string]Value{}
@@ -537,6 +556,9 @@ func (s *SQLiteStore) Variables() map[string]Value {
 func (s *SQLiteStore) BeginGeneration(configHash string) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.closed {
+		return 0, nil
+	}
 	now := s.now().UTC().Format(time.RFC3339Nano)
 	result, err := s.db.Exec(`INSERT INTO generations(started_at,warnings,config_hash) VALUES(?,'[]',?)`, now, configHash)
 	if err != nil {
@@ -553,6 +575,9 @@ func (s *SQLiteStore) BeginGeneration(configHash string) (int64, error) {
 func (s *SQLiteStore) RecordGenerationConfig(generation int64, configYAML string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.closed {
+		return nil
+	}
 	if generation == 0 {
 		generation = s.generation
 	}
@@ -566,6 +591,9 @@ func (s *SQLiteStore) RecordGenerationConfig(generation int64, configYAML string
 func (s *SQLiteStore) FinishGeneration(generation int64, phase string, warnings []string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.closed {
+		return nil
+	}
 	if generation == 0 {
 		generation = s.generation
 	}
@@ -579,6 +607,9 @@ func (s *SQLiteStore) CurrentGeneration() int64 { return s.generation }
 func (s *SQLiteStore) LatestGeneration() int64 {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if s.closed {
+		return 0
+	}
 	var generation sql.NullInt64
 	err := s.db.QueryRow(`SELECT max(generation) FROM generations`).Scan(&generation)
 	if err != nil || !generation.Valid {
@@ -590,6 +621,9 @@ func (s *SQLiteStore) LatestGeneration() int64 {
 func (s *SQLiteStore) ListGenerations(limit int) ([]GenerationRecord, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if s.closed {
+		return []GenerationRecord{}, nil
+	}
 	if limit <= 0 {
 		limit = 100
 	}
@@ -621,6 +655,9 @@ func (s *SQLiteStore) ListGenerations(limit int) ([]GenerationRecord, error) {
 func (s *SQLiteStore) GenerationConfig(generation int64) (string, bool, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if s.closed {
+		return "", false, nil
+	}
 	var value sql.NullString
 	err := s.db.QueryRow(`SELECT config_yaml FROM generations WHERE generation = ?`, generation).Scan(&value)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -638,6 +675,9 @@ func (s *SQLiteStore) GenerationConfig(generation int64) (string, bool, error) {
 func (s *SQLiteStore) ObjectGeneration(apiVersion, kind, name string) int64 {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if s.closed {
+		return 0
+	}
 	var generation sql.NullInt64
 	err := s.db.QueryRow(`SELECT observed_generation FROM objects WHERE api_version = ? AND kind = ? AND name = ?`, apiVersion, kind, name).Scan(&generation)
 	if err != nil || !generation.Valid {
@@ -649,12 +689,18 @@ func (s *SQLiteStore) ObjectGeneration(apiVersion, kind, name string) int64 {
 func (s *SQLiteStore) SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.closed {
+		return nil
+	}
 	return s.saveStatus(objectRef{APIVersion: apiVersion, Kind: kind, Name: name}, objectStatus(status))
 }
 
 func (s *SQLiteStore) ObjectStatus(apiVersion, kind, name string) map[string]any {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if s.closed {
+		return map[string]any{}
+	}
 	status, _, err := s.loadStatus(apiVersion, kind, name)
 	if err != nil {
 		return nil
@@ -669,6 +715,9 @@ func (s *SQLiteStore) ObjectStatus(apiVersion, kind, name string) map[string]any
 func (s *SQLiteStore) ListObjectStatuses() ([]ObjectStatus, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if s.closed {
+		return []ObjectStatus{}, nil
+	}
 	rows, err := s.db.Query(`SELECT api_version,kind,name,coalesce(status,'{}') FROM objects ORDER BY api_version,kind,name`)
 	if err != nil {
 		return nil, err
@@ -709,6 +758,9 @@ func statusString(status map[string]any, key string) string {
 func (s *SQLiteStore) DeleteObject(apiVersion, kind, name string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.closed {
+		return nil
+	}
 	_, err := s.db.Exec(`DELETE FROM objects WHERE api_version = ? AND kind = ? AND name = ?`, apiVersion, kind, name)
 	return err
 }
@@ -716,6 +768,9 @@ func (s *SQLiteStore) DeleteObject(apiVersion, kind, name string) error {
 func (s *SQLiteStore) Backup(path string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.closed {
+		return nil
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
@@ -727,6 +782,9 @@ func (s *SQLiteStore) Backup(path string) error {
 func (s *SQLiteStore) SaveObjectApplySource(apiVersion, kind, name, path string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.closed {
+		return nil
+	}
 	now := s.now().UTC().Format(time.RFC3339Nano)
 	uid := apiVersion + "/" + kind + "/" + name
 	_, err := s.db.Exec(`INSERT INTO objects(api_version,kind,name,uid,resource_version,last_applied_path,status,created_at,modified_at)
@@ -739,6 +797,9 @@ ON CONFLICT(api_version,kind,name) DO UPDATE SET last_applied_path=excluded.last
 func (s *SQLiteStore) ObjectApplySource(apiVersion, kind, name string) string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if s.closed {
+		return ""
+	}
 	var path sql.NullString
 	err := s.db.QueryRow(`SELECT last_applied_path FROM objects WHERE api_version = ? AND kind = ? AND name = ?`, apiVersion, kind, name).Scan(&path)
 	if err != nil || !path.Valid {
@@ -750,6 +811,9 @@ func (s *SQLiteStore) ObjectApplySource(apiVersion, kind, name string) string {
 func (s *SQLiteStore) RecordEvent(apiVersion, kind, name, eventType, reason, message string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.closed {
+		return nil
+	}
 	_, err := s.db.Exec(`INSERT INTO events(api_version,kind,name,type,reason,message,generation,created_at) VALUES(?,?,?,?,?,?,?,?)`,
 		apiVersion, kind, name, eventType, reason, message, nullGeneration(s.generation), s.now().UTC().Format(time.RFC3339Nano))
 	return err
@@ -758,6 +822,9 @@ func (s *SQLiteStore) RecordEvent(apiVersion, kind, name, eventType, reason, mes
 func (s *SQLiteStore) RecordBusEvent(_ context.Context, event daemonapi.DaemonEvent) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.closed {
+		return "", nil
+	}
 	apiVersion := event.APIVersion
 	kind := event.Kind
 	name := event.Daemon.Name
@@ -790,6 +857,9 @@ VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 func (s *SQLiteStore) Events(apiVersion, kind, name string, limit int) []Event {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if s.closed {
+		return []Event{}
+	}
 	if limit <= 0 {
 		limit = 20
 	}
@@ -814,6 +884,9 @@ func (s *SQLiteStore) Events(apiVersion, kind, name string, limit int) []Event {
 func (s *SQLiteStore) ListEvents(query EventQuery) ([]StoredEvent, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if s.closed {
+		return []StoredEvent{}, nil
+	}
 	limit := query.Limit
 	if limit <= 0 {
 		limit = 50
@@ -882,7 +955,15 @@ FROM events`+where+` ORDER BY id DESC LIMIT ?`, args...)
 	return events, nil
 }
 
-func (s *SQLiteStore) Close() error { return s.db.Close() }
+func (s *SQLiteStore) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return nil
+	}
+	s.closed = true
+	return s.db.Close()
+}
 
 func JSONValue(value any) string {
 	data, _ := json.Marshal(value)

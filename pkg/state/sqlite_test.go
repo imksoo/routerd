@@ -251,3 +251,51 @@ func TestSQLiteStoreGenerationsAndEvents(t *testing.T) {
 		t.Fatalf("events = %+v", events)
 	}
 }
+
+func TestSQLiteStoreClosedAccessIsBenign(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "routerd.db")
+	store, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatalf("open sqlite store: %v", err)
+	}
+	generation, err := store.BeginGeneration("abc123")
+	if err != nil {
+		t.Fatalf("begin generation: %v", err)
+	}
+	if err := store.RecordGenerationConfig(generation, "kind: Router\nmetadata:\n  name: lab\n"); err != nil {
+		t.Fatalf("record generation config: %v", err)
+	}
+	if err := store.SaveObjectStatus("net.routerd.net/v1alpha1", "Interface", "wan", map[string]any{"state": "ready"}); err != nil {
+		t.Fatalf("save object status before close: %v", err)
+	}
+	if got := store.ObjectStatus("net.routerd.net/v1alpha1", "Interface", "wan"); got["state"] != "ready" {
+		t.Fatalf("object status before close = %+v", got)
+	}
+
+	if err := store.Close(); err != nil {
+		t.Fatalf("close sqlite store: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("second close sqlite store: %v", err)
+	}
+	if err := store.SaveObjectStatus("net.routerd.net/v1alpha1", "Interface", "wan", map[string]any{"state": "stopping"}); err != nil {
+		t.Fatalf("save object status after close: %v", err)
+	}
+	if got := store.ObjectStatus("net.routerd.net/v1alpha1", "Interface", "wan"); len(got) != 0 {
+		t.Fatalf("object status after close = %+v, want empty", got)
+	}
+	statuses, err := store.ListObjectStatuses()
+	if err != nil {
+		t.Fatalf("list object statuses after close: %v", err)
+	}
+	if len(statuses) != 0 {
+		t.Fatalf("object statuses after close = %+v, want empty", statuses)
+	}
+	configYAML, ok, err := store.GenerationConfig(generation)
+	if err != nil {
+		t.Fatalf("generation config after close: %v", err)
+	}
+	if ok || configYAML != "" {
+		t.Fatalf("generation config after close ok=%t yaml=%q, want empty", ok, configYAML)
+	}
+}
