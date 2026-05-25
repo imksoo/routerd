@@ -70,7 +70,7 @@ spec:
 | `VRF` | 表示 Linux VRF 裝置與路由表。 |
 | `VXLANTunnel` | 表示 VXLAN 隧道。 |
 
-將 `PPPoESession.spec.disabled` 設為 `true`，可在保留 PPPoE 定義的同時，停止並停用受管理的 pppd 單元。
+將 `PPPoESession.spec.enabled` 設為 `false`，可在保留 PPPoE 定義的同時，停止並停用受管理的 pppd 單元。
 這樣在正常運作時不使用 PPPoE 工作階段，僅在需要時手動用作備援路徑。
 
 `TailscaleNode` 可在初次註冊時使用 `authKey`。
@@ -322,8 +322,8 @@ DS-Lite、IPv4 預設路由、NAT44 均已在實際 lab 中驗證。
 | `DerivedEvent` | 從多個資源狀態發出虛擬事件。 |
 | `SelfAddressPolicy` | 表示自身主機位址的選擇策略。 |
 
-將 `HealthCheck.spec.disabled` 設為 `true` 時，常駐程式單元仍會產生，但會停止並停用。
-`EgressRoutePolicy` 的候選也可指定 `disabled: true`。
+將 `HealthCheck.spec.enabled` 設為 `false` 時，常駐程式單元仍會產生，但會停止並停用。
+`EgressRoutePolicy` 的候選也可指定 `enabled: false`。
 停用的候選即使最後觀測狀態為 Healthy，也不會被選中。
 `mode: priority` 中，candidate 的 `weight` 仍是選擇的第一排序鍵，`priority` 用於平局決勝與 policy 規則的優先度。刪除候選時，ledger 所擁有的 policy-route 規則/路由表也會一併刪除。
 

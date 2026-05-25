@@ -15,7 +15,7 @@ egress-route 選擇器僅輸出含選擇結果的 status，以及附有 `role: a
 
 `mode: priority` 同樣使用 `selection: highest-weight-ready`。
 從準備就緒的候選中選出 weight 最高的那一個，`priority` 作為平局決勝與
-policy 路由規則的優先度。`priority` 不是選擇策略的替代品。`weighted-ecmp` 是實作前的保留值，不會靜默忽略，而是回報為 `UnsupportedSelection`。`disabled: true` 的候選不列入選擇對象，也不擁有所產生的 policy 路由規則與路由表。
+policy 路由規則的優先度。`priority` 不是選擇策略的替代品。`weighted-ecmp` 是實作前的保留值，不會靜默忽略，而是回報為 `UnsupportedSelection`。`enabled: false` 的候選不列入選擇對象，也不擁有所產生的 policy 路由規則與路由表。
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1

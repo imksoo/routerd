@@ -12,17 +12,23 @@ routerd は `vYYYYMMDD.HHmm` 形式で頻繁にリリースしますが、その
 
 | 項目 | 内容 |
 | --- | --- |
-| バージョン | **v20260523.1542** |
-| 位置づけ | 推奨安定版（v20260522.1334 を置き換え） |
+| バージョン | **v20260525.0112** |
+| 位置づけ | 推奨安定版（v20260523.1542 を置き換え） |
 | 稼働実績 | 本番ルーター（homert02）で稼働中。BGP の 2-way ECMP を維持し、Graceful Restart により無瞬断でアップグレードできます |
 | バイナリ | 静的リンク（`CGO_ENABLED=0`）、CI と Release ワークフローを通過 |
 
-## v20260523.1542 を推奨する理由
+## v20260525.0112 を推奨する理由
 
-- **v20260522.1334 の BGP 制御プレーンの成果をすべて引き継いでいます。** FRR を使わず routerd 自前の `routerd-bgp` デーモンで eBGP peer を保持し、next-hop 書き換えの修正（#26）により、第三者 next-hop を広告する上流に対しても 2-way ECMP を維持します。
-- **live ISO の BGP を修正しました（#28）。** Alpine/OpenRC の live ISO で、管理対象の GoBGP デーモン（`routerd-bgp`）が OpenRC 下で起動するようになり、live ISO から BGP が使えます。v20260522.1334 はここが壊れていたため、特に live ISO から BGP を使う場合は 1334 を推奨しません。
-- **組み込み DPI classifier と NixOS renderer の修正**を追加しました。
-- **本番ルーターで稼働**し、静的バイナリで配布、CI を通過しています。
+- **起動直後の DNS 不通がありません。** `DNSResolver` は依存がすべて解決するのを待たず部分起動するようになりました。すでに解決済みの listen アドレスと forward ソースで応答を開始し、残りが保留の間は `phase: Degraded` と `waiting` リストを報告し、DHCPv6 のプレフィックス委任が届くと `Applied` に収束します。以前の版は PD 待ちの起動直後に DNS を拒否していました。
+- **BGP 制御プレーンの成果をすべて備えています。** FRR を使わず routerd 自前の `routerd-bgp` デーモンで eBGP peer を保持し、next-hop 書き換えの修正（#26）により第三者 next-hop を広告する上流でも 2-way ECMP を維持し、Alpine/OpenRC の live ISO でも `routerd-bgp` が OpenRC 下で起動します（#28）。
+- **アップグレードが BGP を乱しません。** `install.sh` はバイナリ更新時に `routerd-bgp` を自動再起動しなくなり、routerd 更新をまたいで eBGP セッションと ECMP を維持します。
+- **運用が容易になりました。** `routerd rollback --list` / `--to <generation>` で保存済みの設定世代を再適用でき、`routerctl set-log-level` でログ詳細度を実行時に変更でき、`routerctl describe` が Phase・Reason・Message と是正ヒントを表示します。
+- **非 root での status 取得。** 読み取り専用の status ソケットは `root:routerd`・モード `0o660` で作成されるため、`routerd` グループに属する運用者は sudo なしで `routerctl status` を実行できます。
+- **本番ルーター（homert02）で稼働**し、静的バイナリ（`CGO_ENABLED=0`）で配布、CI と Release ワークフローを通過しています。
+
+:::warning v20260523.1542 以前からのアップグレード
+このマイルストーンでは `disabled:` フィールド（`enabled: false` を使用）と、no-op の `--controller-chain*` / `--observe-interval` フラグを削除しました。`disabled:` を使っていた設定は書き直し、削除済みフラグを渡しているホストの service unit はアップグレード前に更新してください。
+:::
 
 ## 「安定版」の意味と注意点
 

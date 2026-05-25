@@ -28,7 +28,7 @@ weight 最高的路径。切换时更新 OS 路由表，并重新应用跟踪策
 这样的设计让 weight 较低的备援路径从启动之初即可使用，之后等主线路确认可用后再平滑切回。
 
 测试用 PPPoE 等会消耗 session 额度的备援路径，可保留在 YAML 中同时设为停用。
-在 `PPPoESession`、对应的 `HealthCheck` 及 `EgressRoutePolicy` 的候选中指定 `disabled: true`，
+在 `PPPoESession`、对应的 `HealthCheck` 及 `EgressRoutePolicy` 的候选中指定 `enabled: false`，
 正常应用时即会停止并停用已生成的服务，需要时可手动进行测试。
 
 ## 最小配置
