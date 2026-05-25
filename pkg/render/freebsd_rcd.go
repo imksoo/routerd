@@ -128,6 +128,24 @@ func freeBSDRCDScripts(router *api.Router) (map[string][]byte, error) {
 		}
 		out[name] = data
 	}
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "DNSResolver" {
+			continue
+		}
+		spec, err := res.DNSResolverSpec()
+		if err != nil {
+			return nil, err
+		}
+		name := freeBSDServiceName("routerd-dns-resolver@" + res.Metadata.Name + ".service")
+		if explicit[name] {
+			continue
+		}
+		data, err := FreeBSDRCDScript(name, freeBSDDNSResolverSystemdSpec(res.Metadata.Name, spec))
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", res.ID(), err)
+		}
+		out[name] = data
+	}
 	carpConfig, err := CARPConfig(router, aliases)
 	if err != nil {
 		return nil, err
@@ -205,6 +223,16 @@ func freeBSDRCDScripts(router *api.Router) (map[string][]byte, error) {
 		out[name] = data
 	}
 	return out, nil
+}
+
+func freeBSDDNSResolverSystemdSpec(name string, spec api.DNSResolverSpec) api.SystemdUnitSpec {
+	unit := DNSResolverSystemdSpec(name, spec, "/usr/local/sbin/routerd-dns-resolver", "/var/db/routerd/dns-resolver/"+name+"/config.json")
+	unit.ExecStart = append(unit.ExecStart,
+		"--socket", "/var/run/routerd/dns-resolver/"+name+".sock",
+		"--state-file", "/var/db/routerd/dns-resolver/"+name+"/state.json",
+		"--event-file", "/var/db/routerd/dns-resolver/"+name+"/events.jsonl",
+	)
+	return unit
 }
 
 func FreeBSDCARPRCDScript(config CARPConfigData) []byte {

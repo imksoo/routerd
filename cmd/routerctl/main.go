@@ -34,6 +34,7 @@ import (
 	"routerd/pkg/platform"
 	"routerd/pkg/render"
 	"routerd/pkg/resource"
+	"routerd/pkg/servicemgr"
 	routerstate "routerd/pkg/state"
 	"routerd/pkg/tailscale"
 	routerversion "routerd/pkg/version"
@@ -96,6 +97,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return deleteCommand(args[1:], stdout)
 	case "set-log-level":
 		return setLogLevelCommand(args[1:], stdout)
+	case "restart-dns-resolver":
+		return restartDNSResolverCommand(args[1:], stdout)
 	case "plan":
 		return applyCommand(append([]string{"--dry-run"}, args[1:]...), stdout)
 	case "help", "-h", "--help":
@@ -278,6 +281,86 @@ func setLogLevelCommand(args []string, stdout io.Writer) error {
 		return err
 	}
 	return writeJSON(stdout, result)
+}
+
+func restartDNSResolverCommand(args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("restart-dns-resolver", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	configPath := fs.String("config", defaultConfigPath(), "config path")
+	timeout := fs.Duration("timeout", 30*time.Second, "restart timeout")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() > 1 {
+		return errors.New("restart-dns-resolver accepts at most one resolver name")
+	}
+	router, err := config.Load(*configPath)
+	if err != nil {
+		return err
+	}
+	name := ""
+	if fs.NArg() == 1 {
+		name = strings.TrimSpace(fs.Arg(0))
+	}
+	names, err := dnsResolverResourceNames(router)
+	if err != nil {
+		return err
+	}
+	if name == "" {
+		switch len(names) {
+		case 0:
+			return errors.New("no DNSResolver resources found")
+		case 1:
+			name = names[0]
+		default:
+			return fmt.Errorf("multiple DNSResolver resources found; specify one of: %s", strings.Join(names, ", "))
+		}
+	}
+	if !containsString(names, name) {
+		return fmt.Errorf("DNSResolver %q not found", name)
+	}
+	_, features := platform.Current()
+	manager := servicemgr.ForPlatform(features)
+	service := servicemgr.Service{SystemdName: "routerd-dns-resolver@" + name + ".service"}
+	command := manager.Command(servicemgr.OperationRestart, service)
+	if command.Name == "" {
+		return fmt.Errorf("restart unsupported for %s service manager", manager.Name())
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, hostcmd.Resolve(command.Name), command.Args...).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s %s: %w: %s", command.Name, strings.Join(command.Args, " "), err, strings.TrimSpace(string(out)))
+	}
+	fmt.Fprintf(stdout, "restarted DNSResolver/%s via %s\n", name, manager.Name())
+	return nil
+}
+
+func dnsResolverResourceNames(router *api.Router) ([]string, error) {
+	if router == nil {
+		return nil, nil
+	}
+	var names []string
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "DNSResolver" {
+			continue
+		}
+		if _, err := resource.DNSResolverSpec(); err != nil {
+			return nil, err
+		}
+		names = append(names, resource.Metadata.Name)
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func ingressDrainCommand(args []string, stdout io.Writer, drain bool) error {
@@ -3647,4 +3730,5 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  apply [--socket <path>] [--dry-run]")
 	fmt.Fprintln(w, "  delete <kind>/<name> [--socket <path>] [--dry-run] [--force] [--api-version <version>]")
 	fmt.Fprintln(w, "  set-log-level <debug|info|warning|error|default> [--socket <path>]")
+	fmt.Fprintln(w, "  restart-dns-resolver [name] [--config <path>]")
 }

@@ -11,6 +11,18 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 新增
+
+- `routerctl restart-dns-resolver [name]`：显式重启 DNS 解析器的服务单元（用于守护进程
+  不健康时的恢复）。
+
+### 变更
+
+- `DNSResolver` 现在作为独立的长寿命服务单元（`routerd-dns-resolver@<name>.service`）运行，
+  而不再是 `routerd serve` 的子进程。重启或升级 routerd 不再中断 DNS；配置变更（包括
+  DHCPv6-PD 收敛）通过守护进程的 reload 端点就地生效，无需重启进程；`install.sh` 在升级时
+  不再自动重启解析器。config 文件尚未生成时，守护进程会以空状态启动，并在运行时完成配置。
+
 ## v20260525.0112
 
 ### 变更

@@ -40,8 +40,9 @@ listen address resolves at all, or no usable source remains.
 This removes the boot-time window where DNS was refused while waiting on a
 DHCPv6 prefix delegation (measured on a production router: general DNS answered
 from the first second while the AFTR forwarder showed `Degraded`, then converged
-to `Applied` once the delegated prefix arrived). A deliberate `routerd` restart
-still has a sub-second gap while the process itself restarts.
+to `Applied` once the delegated prefix arrived). The resolver runs as its own
+service unit, so a deliberate `routerd` restart does not restart DNS; restart
+the resolver unit explicitly when a process restart is needed.
 
 ## Source ordering
 

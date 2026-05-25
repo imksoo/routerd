@@ -287,6 +287,40 @@ func TestFreeBSDRendersTailscaleAndFirewallLoggerRCDScripts(t *testing.T) {
 	}
 }
 
+func TestFreeBSDRendersDNSResolverRCDScript(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSResolver"},
+			Metadata: api.ObjectMeta{Name: "lan-resolver"},
+			Spec: api.DNSResolverSpec{
+				Listen:  []api.DNSResolverListenSpec{{Addresses: []string{"127.0.0.1"}, Port: 53}},
+				Sources: []api.DNSResolverSourceSpec{{Kind: "upstream", Match: []string{"."}, Upstreams: []string{"udp://1.1.1.1:53"}}},
+			},
+		},
+	}}}
+	got, err := FreeBSD(router)
+	if err != nil {
+		t.Fatalf("render FreeBSD: %v", err)
+	}
+	script := string(got.RCDScripts["routerd_dns_resolver_lan_resolver"])
+	for _, want := range []string{
+		`PROVIDE: routerd_dns_resolver_lan_resolver`,
+		`/usr/local/sbin/routerd-dns-resolver`,
+		`--resource`,
+		`lan-resolver`,
+		`--config-file`,
+		`/var/db/routerd/dns-resolver/lan-resolver/config.json`,
+		`--socket`,
+		`/var/run/routerd/dns-resolver/lan-resolver.sock`,
+		`--state-file`,
+		`/var/db/routerd/dns-resolver/lan-resolver/state.json`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("dns resolver rc.d script missing %q:\n%s", want, script)
+		}
+	}
+}
+
 func TestFreeBSDRenderSynthesizesNDPIAgentForAutoClassifier(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{

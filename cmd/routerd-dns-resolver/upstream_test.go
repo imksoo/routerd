@@ -100,11 +100,13 @@ func TestParseDNSUpstreamDefaults(t *testing.T) {
 func TestUpstreamPoolFallsBackToSecondUpstream(t *testing.T) {
 	failed, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
+		skipIfListenNotPermitted(t, err)
 		t.Fatal(err)
 	}
 	defer failed.Close()
 	ok, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
+		skipIfListenNotPermitted(t, err)
 		t.Fatal(err)
 	}
 	defer ok.Close()

@@ -97,6 +97,54 @@ func TestDrainAndUndrainIngressBackend(t *testing.T) {
 	}
 }
 
+func TestRestartDNSResolverSelectsSingleResource(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "router.yaml")
+	if err := os.WriteFile(configPath, []byte(`apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: test
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSResolver
+      metadata:
+        name: lan-resolver
+      spec:
+        listen:
+          - addresses: ["127.0.0.1"]
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	binDir := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(dir, "commands.log")
+	for _, binary := range []string{"systemctl", "rc-service", "service", "nixos-rebuild"} {
+		if err := os.WriteFile(filepath.Join(binDir, binary), []byte("#!/bin/sh\necho "+binary+" \"$@\" >> \""+logPath+"\"\n"), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	var out bytes.Buffer
+	if err := run([]string{"restart-dns-resolver", "--config", configPath}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("restart-dns-resolver: %v", err)
+	}
+	if !strings.Contains(out.String(), "DNSResolver/lan-resolver") {
+		t.Fatalf("output = %s", out.String())
+	}
+	commands, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.TrimSpace(string(commands))
+	if !strings.Contains(got, "restart") || !strings.Contains(got, "routerd") || !strings.Contains(got, "dns") || !strings.Contains(got, "resolver") {
+		t.Fatalf("commands = %q", got)
+	}
+}
+
 func TestEventsCommandListsStateDatabaseEvents(t *testing.T) {
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, "routerd.db")

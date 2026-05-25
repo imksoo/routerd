@@ -169,7 +169,7 @@ func OpenRCWithOptions(router *api.Router, options OpenRCOptions) (OpenRCConfig,
 			return OpenRCConfig{}, fmt.Errorf("%s: %w", res.ID(), err)
 		}
 		out[name] = data
-		services = append(services, OpenRCService{Name: name, Enabled: false, Started: false})
+		services = append(services, OpenRCService{Name: name, Enabled: true, Started: true})
 	}
 	for _, res := range router.Spec.Resources {
 		if res.Kind != "PPPoESession" {

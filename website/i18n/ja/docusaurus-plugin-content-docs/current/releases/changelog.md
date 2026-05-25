@@ -11,6 +11,20 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 追加
+
+- `routerctl restart-dns-resolver [name]`: DNS リゾルバのサービスユニットを明示的に
+  再起動します（デーモンの健全性が損なわれたときの復旧用）。
+
+### 変更
+
+- `DNSResolver` を `routerd serve` の子プロセスではなく、独立した長寿命サービスユニット
+  （`routerd-dns-resolver@<name>.service`）として動かすようにしました。routerd の再起動・
+  アップグレードで DNS が中断しなくなり、config 変更（DHCPv6-PD 収束を含む）はデーモンの
+  reload エンドポイント経由でプロセスを再起動せずに反映され、`install.sh` は upgrade 時に
+  リゾルバを自動再起動しなくなりました。config ファイルが未生成のときはデーモンが空状態で
+  起動し、ランタイムに構成されます。
+
 ## v20260525.0112
 
 ### 変更

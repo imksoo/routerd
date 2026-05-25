@@ -12,6 +12,21 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Added
+
+- `routerctl restart-dns-resolver [name]` explicitly restarts a DNS resolver
+  service unit, for recovery when the daemon is unhealthy.
+
+### Changed
+
+- `DNSResolver` now runs as an independent, long-lived service unit
+  (`routerd-dns-resolver@<name>.service`) instead of a child process of
+  `routerd serve`. Restarting or upgrading routerd no longer interrupts DNS;
+  config changes (including DHCPv6-PD convergence) apply in place through the
+  daemon's reload endpoint without a process restart; and `install.sh` no
+  longer auto-restarts the resolver on upgrade. The daemon also starts idle
+  when its config file is not yet present and is configured at runtime.
+
 ## v20260525.0112
 
 ### Changed

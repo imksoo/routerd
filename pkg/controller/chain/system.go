@@ -307,6 +307,12 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 				return err
 			}
 		}
+		if err := c.reconcileDNSResolverUnits(ctx, defaults.StateDir, command); err != nil {
+			return err
+		}
+		if err := c.cleanupStaleDNSResolverUnits(ctx, command); err != nil {
+			return err
+		}
 		if c.SynthesizeClientDaemonUnits {
 			if err := c.reconcileClientDaemonUnits(ctx, explicitUnits, telemetryEnv, command); err != nil {
 				return err
@@ -662,6 +668,28 @@ func (c SystemdUnitController) reconcileClientDaemonUnits(ctx context.Context, e
 		}
 	}
 	return nil
+}
+
+func (c SystemdUnitController) reconcileDNSResolverUnits(ctx context.Context, stateDir string, command outputCommandFunc) error {
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.Kind != "DNSResolver" {
+			continue
+		}
+		spec, err := resource.DNSResolverSpec()
+		if err != nil {
+			return err
+		}
+		unitName := dnsResolverUnitName(resource.Metadata.Name)
+		configPath := filepath.Join(stateDir, "dns-resolver", resource.Metadata.Name, "config.json")
+		if err := c.reconcileLongLivedSystemdHelperUnit(ctx, unitName, "Router/"+c.Router.Metadata.Name+"/DNSResolver/"+resource.Metadata.Name, render.DNSResolverSystemdSpec(resource.Metadata.Name, spec, "/usr/local/sbin/routerd-dns-resolver", configPath), command); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func dnsResolverUnitName(name string) string {
+	return "routerd-dns-resolver@" + name + ".service"
 }
 
 func (c SystemdUnitController) reconcileSyntheticSystemdUnit(ctx context.Context, apiVersion, kind, resourceName, unitName string, spec api.SystemdUnitSpec, command outputCommandFunc) error {
@@ -1077,6 +1105,68 @@ func (c SystemdUnitController) cleanupStaleHealthCheckUnits(ctx context.Context,
 		_, _ = command(ctx, "systemctl", "disable", "--now", unitName)
 		_, _ = command(ctx, "systemctl", "reset-failed", unitName)
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		removed = true
+	}
+	if removed {
+		if _, err := command(ctx, "systemctl", "daemon-reload"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c SystemdUnitController) cleanupStaleDNSResolverUnits(ctx context.Context, command outputCommandFunc) error {
+	if c.DryRun {
+		return nil
+	}
+	desired := map[string]bool{}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.Kind != "DNSResolver" {
+			continue
+		}
+		if _, err := resource.DNSResolverSpec(); err != nil {
+			return err
+		}
+		desired[dnsResolverUnitName(resource.Metadata.Name)] = true
+	}
+	matches, err := filepath.Glob(filepath.Join(c.SystemdSystemDir, "routerd-dns-resolver@*.service"))
+	if err != nil {
+		return err
+	}
+	var removed bool
+	for _, path := range matches {
+		unitName := filepath.Base(path)
+		if desired[unitName] {
+			continue
+		}
+		status := map[string]any{
+			"phase":     "Removing",
+			"reason":    "StaleDNSResolverUnit",
+			"unitName":  unitName,
+			"path":      path,
+			"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
+		}
+		if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName, status); err != nil {
+			return err
+		}
+		if _, err := command(ctx, "systemctl", "disable", "--now", unitName); err != nil {
+			status["phase"] = "Error"
+			status["error"] = err.Error()
+			status["updatedAt"] = time.Now().UTC().Format(time.RFC3339Nano)
+			if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName, status); saveErr != nil {
+				return saveErr
+			}
+			return fmt.Errorf("disable stale DNS resolver unit %s: %w", unitName, err)
+		}
+		_, _ = command(ctx, "systemctl", "reset-failed", unitName)
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		status["phase"] = "Removed"
+		status["updatedAt"] = time.Now().UTC().Format(time.RFC3339Nano)
+		if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName, status); err != nil {
 			return err
 		}
 		removed = true

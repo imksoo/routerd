@@ -6,18 +6,17 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/netip"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
-	"syscall"
 	"time"
 
 	"routerd/pkg/api"
@@ -43,17 +42,6 @@ type Controller struct {
 	RuntimeDir string
 	StateDir   string
 }
-
-type runningResolver struct {
-	process *exec.Cmd
-	spec    api.DNSResolverSpec
-	config  string
-}
-
-var (
-	runningMu        sync.Mutex
-	runningResolvers = map[string]runningResolver{}
-)
 
 func (c Controller) Start(ctx context.Context) {
 	_ = c.Reconcile(ctx)
@@ -114,13 +102,19 @@ func (c Controller) Reconcile(ctx context.Context) error {
 		}
 		changed := c.DryRun
 		if !c.DryRun {
-			changed, err = c.ensureRunning(ctx, resource.Metadata.Name, spec, config)
+			changed, err = c.ensureRunning(ctx, resource.Metadata.Name, config)
 			if err != nil {
-				phase = "Pending"
-				if err := c.saveStatus(resource.Metadata.Name, spec, phase, err.Error(), waiting); err != nil {
+				var reloadErr resolverReloadError
+				if errors.As(err, &reloadErr) {
+					phase = "Degraded"
+					message = err.Error()
+				} else {
+					phase = "Pending"
+					if err := c.saveStatus(resource.Metadata.Name, spec, phase, err.Error(), waiting); err != nil {
+						return err
+					}
 					return err
 				}
-				return err
 			}
 		}
 		if err := c.saveStatus(resource.Metadata.Name, spec, phase, message, waiting); err != nil {
@@ -532,9 +526,7 @@ func (c Controller) eventRelevant(event daemonapi.DaemonEvent) bool {
 	return dnsResolverDependsOn(c.Router, *event.Resource)
 }
 
-func (c Controller) ensureRunning(ctx context.Context, name string, spec api.DNSResolverSpec, config dnsresolver.RuntimeConfig) (bool, error) {
-	runningMu.Lock()
-	defer runningMu.Unlock()
+func (c Controller) ensureRunning(ctx context.Context, name string, config dnsresolver.RuntimeConfig) (bool, error) {
 	runtimeDir, stateDir := c.dirs()
 	configPath := filepath.Join(stateDir, "dns-resolver", name, "config.json")
 	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
@@ -544,72 +536,56 @@ func (c Controller) ensureRunning(ctx context.Context, name string, spec api.DNS
 	if err != nil {
 		return false, err
 	}
-	if current, ok := runningResolvers[name]; ok && processAlive(current.process.Process) && sameSpec(current.spec, spec) && current.config == string(data) {
-		return false, nil
-	}
+	changed := false
 	currentConfig, readErr := os.ReadFile(configPath)
 	if readErr != nil || string(bytes.TrimSpace(currentConfig)) != string(data) {
 		if err := os.WriteFile(configPath, append(data, '\n'), 0644); err != nil {
 			return false, err
 		}
+		changed = true
 	}
-	if current, ok := runningResolvers[name]; ok && current.process.Process != nil {
-		_ = current.process.Process.Signal(syscall.SIGTERM)
-		delete(runningResolvers, name)
+	if !changed {
+		return false, nil
 	}
-	_ = terminateExistingResolverProcesses(name)
-	binary := c.Binary
-	if binary == "" {
-		binary = "/usr/local/sbin/routerd-dns-resolver"
+	if err := c.reloadResolver(ctx, filepath.Join(runtimeDir, "dns-resolver", name+".sock")); err != nil {
+		return true, err
 	}
-	args := []string{
-		"daemon",
-		"--resource", name,
-		"--config-file", configPath,
-		"--socket", filepath.Join(runtimeDir, "dns-resolver", name+".sock"),
-		"--state-file", filepath.Join(stateDir, "dns-resolver", name, "state.json"),
-		"--event-file", filepath.Join(stateDir, "dns-resolver", name, "events.jsonl"),
-	}
-	cmd := exec.CommandContext(ctx, binary, args...)
-	if err := cmd.Start(); err != nil {
-		return false, err
-	}
-	runningResolvers[name] = runningResolver{process: cmd, spec: spec, config: string(data)}
-	go func() {
-		_ = cmd.Wait()
-		runningMu.Lock()
-		if current, ok := runningResolvers[name]; ok && current.process == cmd {
-			delete(runningResolvers, name)
-		}
-		runningMu.Unlock()
-	}()
 	return true, nil
 }
 
-func terminateExistingResolverProcesses(name string) error {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return nil
+type resolverReloadError struct {
+	status string
+	body   string
+}
+
+func (e resolverReloadError) Error() string {
+	if strings.TrimSpace(e.body) == "" {
+		return "ReloadFailed: " + e.status
 	}
-	pattern := "routerd-dns-resolver.*--resource[ ='\"]+" + name
-	out, err := exec.Command("pgrep", "-f", pattern).Output()
+	return "ReloadFailed: " + e.status + ": " + strings.TrimSpace(e.body)
+}
+
+func (c Controller) reloadResolver(ctx context.Context, socket string) error {
+	client := newResolverHTTPClient(socket)
+	defer client.CloseIdleConnections()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://unix/v1/reload", nil)
+	if err != nil {
+		return err
+	}
+	req.Close = true
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil
 	}
-	for _, field := range strings.Fields(string(out)) {
-		pid, err := strconv.Atoi(field)
-		if err != nil || pid <= 0 || pid == os.Getpid() {
-			continue
-		}
-		process, err := os.FindProcess(pid)
-		if err != nil {
-			continue
-		}
-		_ = process.Signal(syscall.SIGTERM)
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return resolverReloadError{status: resp.Status, body: string(body)}
 	}
-	time.Sleep(100 * time.Millisecond)
 	return nil
 }
+
+var newResolverHTTPClient = resolverUnixHTTPClient
 
 func (c Controller) dirs() (runtimeDir, stateDir string) {
 	defaults, _ := platform.Current()
@@ -684,11 +660,9 @@ func (c Controller) forwardLeaseEvent(ctx context.Context, event daemonapi.Daemo
 		if resource.Kind != "DNSResolver" {
 			continue
 		}
-		socket := filepath.Join("/run/routerd/dns-resolver", resource.Metadata.Name+".sock")
-		client := &http.Client{Transport: &http.Transport{DisableKeepAlives: true, DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
-			var dialer net.Dialer
-			return dialer.DialContext(ctx, "unix", socket)
-		}}}
+		runtimeDir, _ := c.dirs()
+		socket := filepath.Join(runtimeDir, "dns-resolver", resource.Metadata.Name+".sock")
+		client := resolverUnixHTTPClient(socket)
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://unix/v1/leases", bytes.NewReader(body))
 		if err != nil {
 			return err
@@ -706,18 +680,11 @@ func (c Controller) forwardLeaseEvent(ctx context.Context, event daemonapi.Daemo
 	return nil
 }
 
-func processAlive(process *os.Process) bool {
-	if process == nil {
-		return false
-	}
-	err := process.Signal(syscall.Signal(0))
-	return err == nil || err == syscall.EPERM
-}
-
-func sameSpec(a, b api.DNSResolverSpec) bool {
-	aj, _ := json.Marshal(a)
-	bj, _ := json.Marshal(b)
-	return string(aj) == string(bj)
+func resolverUnixHTTPClient(socket string) *http.Client {
+	return &http.Client{Transport: &http.Transport{DisableKeepAlives: true, DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+		var dialer net.Dialer
+		return dialer.DialContext(ctx, "unix", socket)
+	}}}
 }
 
 func joinPorts(listen []api.DNSResolverListenSpec) string {

@@ -768,6 +768,116 @@ func TestSystemdUnitControllerRemovesStaleHealthCheckDaemonUnits(t *testing.T) {
 	}
 }
 
+func TestSystemdUnitControllerReconcilesDNSResolverLongLivedUnit(t *testing.T) {
+	dir := t.TempDir()
+	router := &api.Router{Metadata: api.ObjectMeta{Name: "home"}, Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSResolver"}, Metadata: api.ObjectMeta{Name: "lan-resolver"}, Spec: api.DNSResolverSpec{
+			Listen:  []api.DNSResolverListenSpec{{Addresses: []string{"127.0.0.1"}, Port: 53}},
+			Sources: []api.DNSResolverSourceSpec{{Kind: "upstream", Match: []string{"."}, Upstreams: []string{"udp://1.1.1.1:53"}}},
+		}},
+	}}}
+	store := mapStore{}
+	var commands []string
+	controller := SystemdUnitController{
+		Router:           router,
+		Store:            store,
+		SystemdSystemDir: dir,
+		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			_ = ctx
+			line := strings.Join(append([]string{name}, args...), " ")
+			commands = append(commands, line)
+			if line == "systemctl is-active --quiet routerd-dns-resolver@lan-resolver.service" ||
+				line == "systemctl is-enabled --quiet routerd-dns-resolver@lan-resolver.service" {
+				return nil, errors.New("inactive")
+			}
+			return []byte("ok"), nil
+		},
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	unitName := "routerd-dns-resolver@lan-resolver.service"
+	data, err := os.ReadFile(filepath.Join(dir, unitName))
+	if err != nil {
+		t.Fatalf("read unit: %v", err)
+	}
+	unit := string(data)
+	for _, want := range []string{
+		"ExecStart=/usr/local/sbin/routerd-dns-resolver daemon",
+		"--resource lan-resolver",
+		"--config-file /var/lib/routerd/dns-resolver/lan-resolver/config.json",
+		"Restart=always",
+	} {
+		if !strings.Contains(unit, want) {
+			t.Fatalf("unit missing %q:\n%s", want, unit)
+		}
+	}
+	gotCommands := strings.Join(commands, "\n")
+	for _, want := range []string{
+		"systemctl unmask " + unitName,
+		"systemctl enable " + unitName,
+		"systemctl start " + unitName,
+	} {
+		if !strings.Contains(gotCommands, want) {
+			t.Fatalf("commands missing %q:\n%s", want, gotCommands)
+		}
+	}
+	if strings.Contains(gotCommands, "systemctl restart "+unitName) {
+		t.Fatalf("DNS resolver long-lived unit must not restart on reconcile:\n%s", gotCommands)
+	}
+	status := store.ObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName)
+	if status["phase"] != "Applied" || status["restartOnReconcile"] != false {
+		t.Fatalf("status = %#v", status)
+	}
+}
+
+func TestSystemdUnitControllerRemovesStaleDNSResolverUnits(t *testing.T) {
+	dir := t.TempDir()
+	stale := filepath.Join(dir, "routerd-dns-resolver@old.service")
+	if err := os.WriteFile(stale, []byte("[Service]\nExecStart=/usr/local/sbin/routerd-dns-resolver\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	router := &api.Router{Metadata: api.ObjectMeta{Name: "home"}, Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSResolver"}, Metadata: api.ObjectMeta{Name: "current"}, Spec: api.DNSResolverSpec{
+			Listen:  []api.DNSResolverListenSpec{{Addresses: []string{"127.0.0.1"}, Port: 53}},
+			Sources: []api.DNSResolverSourceSpec{{Kind: "upstream", Match: []string{"."}, Upstreams: []string{"udp://1.1.1.1:53"}}},
+		}},
+	}}}
+	var commands []string
+	controller := SystemdUnitController{
+		Router:           router,
+		Store:            mapStore{},
+		SystemdSystemDir: dir,
+		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			_ = ctx
+			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
+			if name == "systemctl" && len(args) >= 2 && args[0] == "is-active" {
+				return nil, errors.New("inactive")
+			}
+			return []byte("ok"), nil
+		},
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Fatalf("stale unit still exists: %v", err)
+	}
+	gotCommands := strings.Join(commands, "\n")
+	for _, want := range []string{
+		"systemctl disable --now routerd-dns-resolver@old.service",
+		"systemctl reset-failed routerd-dns-resolver@old.service",
+		"systemctl daemon-reload",
+	} {
+		if !strings.Contains(gotCommands, want) {
+			t.Fatalf("commands missing %q:\n%s", want, gotCommands)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, "routerd-dns-resolver@current.service")); err != nil {
+		t.Fatalf("current unit missing: %v", err)
+	}
+}
+
 func TestSystemdUnitControllerSynthesizesDHCPClientUnits(t *testing.T) {
 	dir := t.TempDir()
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{

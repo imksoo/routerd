@@ -85,6 +85,54 @@ func (t *zoneTable) ZoneCount() int {
 	return len(t.zones)
 }
 
+func (t *zoneTable) CopyDynamicFrom(old *zoneTable) {
+	if old == nil {
+		return
+	}
+	type dynamicRecord struct {
+		zoneName string
+		record   zoneRecord
+	}
+	var records []dynamicRecord
+	old.mu.RLock()
+	for zoneName, zone := range old.zones {
+		for _, record := range zone.Records {
+			if record.Dynamic {
+				records = append(records, dynamicRecord{zoneName: zoneName, record: cloneZoneRecord(record)})
+			}
+		}
+	}
+	old.mu.RUnlock()
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, item := range records {
+		zone := t.zones[item.zoneName]
+		if zone == nil {
+			continue
+		}
+		record := item.record
+		record.Dynamic = true
+		zone.Records[strings.ToLower(record.Hostname)] = record
+		for _, ip := range record.IPv4 {
+			if ptr, err := dns.ReverseAddr(ip); err == nil {
+				zone.PTR[dns.Fqdn(ptr)] = record.Hostname
+			}
+		}
+		for _, ip := range record.IPv6 {
+			if ptr, err := dns.ReverseAddr(ip); err == nil {
+				zone.PTR[dns.Fqdn(ptr)] = record.Hostname
+			}
+		}
+	}
+}
+
+func cloneZoneRecord(record zoneRecord) zoneRecord {
+	record.IPv4 = append([]string(nil), record.IPv4...)
+	record.IPv6 = append([]string(nil), record.IPv6...)
+	return record
+}
+
 func (t *zoneTable) Answer(req *dns.Msg, refs []string) (*dns.Msg, bool) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()

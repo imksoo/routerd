@@ -159,8 +159,8 @@ func TestOpenRCRenderSynthesizesHelperDaemons(t *testing.T) {
 	for _, service := range got.Services {
 		services[service.Name] = service
 	}
-	if services["routerd_dns_resolver_lan"].Enabled || services["routerd_dns_resolver_lan"].Started {
-		t.Fatalf("DNS resolver OpenRC service should render without activation until runtime config exists")
+	if !services["routerd_dns_resolver_lan"].Enabled || !services["routerd_dns_resolver_lan"].Started {
+		t.Fatalf("DNS resolver OpenRC service should be enabled and started")
 	}
 }
 

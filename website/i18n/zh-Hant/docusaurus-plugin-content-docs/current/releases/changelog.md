@@ -11,6 +11,19 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 新增
+
+- `routerctl restart-dns-resolver [name]`：明確重新啟動 DNS 解析器的服務單元（用於守護程序
+  不健康時的復原）。
+
+### 變更
+
+- `DNSResolver` 現在作為獨立的長壽命服務單元（`routerd-dns-resolver@<name>.service`）運行，
+  而不再是 `routerd serve` 的子程序。重新啟動或升級 routerd 不再中斷 DNS；設定變更（包括
+  DHCPv6-PD 收斂）透過守護程序的 reload 端點就地生效，無需重新啟動程序；`install.sh` 在升級
+  時不再自動重新啟動解析器。config 檔案尚未產生時，守護程序會以空狀態啟動，並在執行時期
+  完成設定。
+
 ## v20260525.0112
 
 ### 變更
