@@ -11,6 +11,8 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260525.1631
+
 ### 新增
 
 - `routerctl restart-dns-resolver [name]`：明確重新啟動 DNS 解析器的服務單元（用於守護程序

@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260525.1631
+
 ### 追加
 
 - `routerctl restart-dns-resolver [name]`: DNS リゾルバのサービスユニットを明示的に
