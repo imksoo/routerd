@@ -12,22 +12,23 @@ routerd ships frequently using the `vYYYYMMDD.HHmm` scheme. From those builds we
 
 | Item | Value |
 | --- | --- |
-| Version | **v20260525.0112** |
-| Status | Recommended stable release (supersedes v20260523.1542) |
-| Track record | Running in production on a home router (homert02); 2-way ECMP over BGP is maintained, and the binary upgrades with zero downtime via graceful restart |
+| Version | **v20260525.1631** |
+| Status | Recommended stable release (supersedes v20260525.0112) |
+| Track record | Running in production on a home router (homert02); 2-way ECMP over BGP is maintained, the DNS resolver keeps serving across routerd restarts, and the binary upgrades with zero downtime via graceful restart |
 | Binary | Statically linked (`CGO_ENABLED=0`), passes CI and the Release workflow |
 
-## Why v20260525.0112 is recommended
+## Why v20260525.1631 is recommended
 
-- **No boot-time DNS gap.** `DNSResolver` now brings the daemon up partially: it serves with the listen addresses and forward sources that already resolve, reports `phase: Degraded` with a `waiting` list while the rest are pending, and converges to `Applied` once a DHCPv6 prefix delegation arrives. Earlier builds refused DNS during the startup window while waiting on PD.
+- **DNS keeps serving across routerd restarts.** `DNSResolver` runs as its own long-lived service unit (`routerd-dns-resolver@<name>.service`): restarting or upgrading routerd no longer interrupts DNS, config changes (including DHCPv6-PD convergence) apply in place through the daemon's reload endpoint without a process restart, and `routerctl restart-dns-resolver` provides explicit recovery. It also brings up partially at boot — serving the listen addresses and sources that already resolve (`phase: Degraded` with a `waiting` list) and converging to `Applied` — so there is no boot-time window where DNS is refused while waiting on a prefix delegation.
 - **The complete BGP control plane.** routerd runs its own `routerd-bgp` daemon (no FRR); the next-hop rewrite fix (#26) keeps 2-way ECMP even when an upstream advertises a third-party next-hop, and the Alpine/OpenRC live ISO starts `routerd-bgp` under OpenRC (#28).
-- **Upgrades no longer disturb BGP.** `install.sh` no longer auto-restarts `routerd-bgp` on a binary upgrade, so eBGP sessions and ECMP survive routerd updates.
+- **Upgrades no longer disturb BGP or DNS.** `install.sh` no longer auto-restarts `routerd-bgp` or the DNS resolver on a binary upgrade, so eBGP sessions, ECMP, and DNS survive routerd updates.
 - **Easier operations.** `routerd rollback --list` / `--to <generation>` re-applies a stored config generation, `routerctl set-log-level` changes log verbosity at runtime, and `routerctl describe` reports Phase, Reason, and Message with remediation hints.
 - **Non-root status access.** The read-only status socket is owned `root:routerd` with mode `0o660`, so operators in the `routerd` group can run `routerctl status` without sudo.
 - **It runs in production** (home router homert02), ships as a static binary (`CGO_ENABLED=0`), and passes CI and the Release workflow.
 
-:::warning Upgrading from v20260523.1542 or earlier
-This milestone removed the `disabled:` field (use `enabled: false`) and the no-op `--controller-chain*` / `--observe-interval` flags. Re-author any config that used `disabled:`, and update host service units that still pass the removed flags before upgrading.
+:::warning Upgrading
+- **From v20260523.1542 or earlier:** the `disabled:` field was removed (use `enabled: false`) along with the no-op `--controller-chain*` / `--observe-interval` flags. Re-author affected config and host service units before upgrading.
+- **DNS resolver service unit:** the resolver now runs as `routerd-dns-resolver@<name>.service`. The first upgrade onto this model performs a one-time child-process → unit cutover with a brief DNS blip; afterwards routerd restarts and upgrades no longer interrupt DNS.
 :::
 
 ## What "stable" means here
