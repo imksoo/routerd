@@ -83,28 +83,42 @@ OS 側の DHCPv6 client は無効のままにできます。
 
 ## Alpine Linux
 
-Alpine は、ライブ ISO と最小構成の導入済みホスト向けの Linux 対象です。
+Alpine は、ライブ ISO と最小構成の導入済みホスト向けの Linux 対応です。
 まだ Ubuntu と同等の扱いではありません。
-routerd は使える範囲で Linux の data plane ツールを使いますが、service の activation は systemd ではなく OpenRC 側に課題が残っています。
+routerd は使える範囲で Linux のデータプレーン用ツールを利用しますが、
+サービスの有効化処理は systemd ではなく OpenRC 側に課題が残っています。
 
-実装済みの項目は次の通りです。
+実装済みの項目は次のとおりです。
 
 - Alpine でのライブ ISO 起動と USB 永続化
 - `install.sh` による `apk` 依存パッケージの導入
-- `pkg/platform` での Alpine 検出と `HasOpenRC`
+- `pkg/platform` での Alpine 検出と `HasOpenRC` の判定
 - `Package` リソースの `os: alpine` / `manager: apk`
-- Alpine の `install.sh --list-deps` と、最小限の `Package` validate / dry-run apply path の CI smoke coverage
-- `routerd render alpine --out-dir` による OpenRC script と dnsmasq 設定の生成
-- 明示的な `generated service artifacts`、managed dnsmasq、`routerd-healthcheck`、DHCPv4 / DHCPv6 client、DNS resolver、firewall logger、PPPoE、Tailscale の OpenRC script の rendering
-- `rc-update` / `rc-service` による apply 時の activation。状態が変わらない場合は enable / start / restart を重複実行しない確認を入れています
-- 導入済み Alpine guest 向けの `make alpine-vm-smoke` harness
-- Alpine 向けの nftables、conntrack、iproute2、dnsmasq、PPP、WireGuard、strongSwan、radvd、診断パッケージの名前の整理
+- Alpine 向け `install.sh --list-deps` と、最小限の `Package` 検証・
+  dry-run 適用経路をカバーする CI スモークテスト
+- `routerd render alpine --out-dir` による OpenRC スクリプトと
+  dnsmasq 設定の生成
+- 明示された `generated service artifacts`、管理対象の dnsmasq、
+  `routerd-healthcheck`、DHCPv4 / DHCPv6 クライアント、DNS リゾルバー、
+  ファイアウォールロガー、PPPoE、Tailscale 向けの OpenRC スクリプト
+  生成
+- `rc-update` / `rc-service` を使った適用時の有効化処理。状態が
+  変わらない場合は enable / start / restart を重複実行しない
+  チェックを入れています
+- 導入済み Alpine ゲスト向けの `make alpine-vm-smoke` スモークテスト
+  ハーネス
+- Alpine 向けの nftables、conntrack、iproute2、dnsmasq、PPP、
+  WireGuard、strongSwan、radvd、診断系パッケージの名前整理
 
-Ubuntu と同等と呼ぶ前の backlog は次の通りです。
+Ubuntu と同等と呼ぶ前に残っている課題は次のとおりです。
 
-- ライブ ISO の bootstrap 以外での、導入済みホストの networking 所有
-- Alpine の導入済みホスト向け smoke harness を通常の VM CI job に昇格し、OpenRC activation と実際の package-manager command path を継続的に確認すること
-- OpenRC 上で未対応のまま残す、systemd 専用 resource の詳しいドキュメント
+- ライブ ISO のブートストラップ以外で、導入済みホストの
+  ネットワーキングを routerd が所有すること
+- Alpine 導入済みホスト向けのスモークテストハーネスを通常の VM CI
+  ジョブに昇格させ、OpenRC の有効化処理と実際のパッケージマネージャ
+  の呼び出し経路を継続的に確認すること
+- OpenRC 上で未対応のまま残る、systemd 専用リソースの詳細
+  ドキュメント
 
 | 分類 | パッケージ |
 | --- | --- |
@@ -226,20 +240,20 @@ dnsmasq も `dnsmasq --test` で設定を確認してから再起動します。
 静的な `rc.conf` の生成だけでは足りない DS-Lite tunnel は、`ifconfig gif` で動的に適用します。
 本番運用の前には、`routerd render freebsd` で出力を確認してください。
 
-## Platform parity backlog
+## プラットフォーム差分の残課題
 
 Ubuntu、NixOS、FreeBSD、Alpine を比較したときの既知の差分です。
 
-| 領域 | 現在の差分 | backlog |
+| 領域 | 現在の差分 | 残課題 |
 | --- | --- | --- |
-| CI / runtime coverage | CI は Ubuntu 上で unit test と Linux static check を実行します。Alpine は host に依存しない installer dependency smoke、最小限の `Package` validate / dry-run coverage、導入済みホスト向けの smoke harness を持っていますが、Alpine の activation はまだ通常の VM job ではありません。FreeBSD は release 時に cross build しますが、NixOS の activation もまだ VM job になっていません。 | FreeBSD VM、NixOS VM、Alpine VM の smoke job を追加し、validate、plan、dry-run apply、実際の package-manager check、service activation、renderer の syntax check を流します。 |
-| Alpine の service manager | Alpine は明示的な `generated service artifacts`、managed dnsmasq、`routerd-healthcheck`、DHCP client、DNS resolver、firewall logger、PPPoE、Tailscale の OpenRC rendering を持っています。apply 時の activation は `rc-update` / `rc-service` を使い、状態が変わらない場合の重複した enable / start / restart を避けます。DNS resolver script は生成しますが、runtime config の materialization が入るまでは enable / start しません。 | OpenRC 向けの DNS resolver runtime config の materialization、導入済みホストの networking 所有の拡張、Alpine smoke harness の CI 昇格を進めます。 |
-| NixOS に残る命令的な部分 | NixOS は module を生成し、activation は `nixos-rebuild` に任せます。runtime のみの network 変更と、旧 dnsmasq unit の cleanup は、activation 後の `routerd.service` に残っています。この cleanup は、生成された NixOS dnsmasq service の ownership を含む最初の release に向けて、意図的に残しています。 | その release cycle のあとで旧 dnsmasq cleanup を削除し、NixOS の native な declaration で表せるものについては activation 後の reconciliation を減らし、残す runtime のみの resource には test を追加します。 |
-| FreeBSD の機能例外 | `ClientPolicy` は nftables の Ethernet source address set に依存するため、Linux 専用です。 | 同じ isolation の意味を保てる設計ができるまで、明示的に拒否します。 |
-| Package bootstrap | Ubuntu、Alpine、FreeBSD は package を命令的に導入できます。NixOS は意図的に package declaration を生成します。schema、validation、example、installer の dependency list、CI smoke coverage は `apk` を含むように更新済みです。 | `apt`、`apk`、`pkg`、Nix declaration について、schema、validation、installer の package list、example、生成ドキュメントの同期を保ちます。 |
+| CI と実機検証の網羅 | CI は Ubuntu 上で単体テストと Linux 向け静的リンクの確認を実行します。Alpine はホストに依存しないインストーラの依存関係スモークと、最小限の `Package` 検証 / dry-run 適用網羅、および導入済みホスト向けスモークテストハーネスを持っていますが、Alpine の有効化処理はまだ通常の VM ジョブではありません。FreeBSD はリリース時にクロスビルドしますが、NixOS の有効化処理もまだ VM ジョブにはなっていません。 | FreeBSD VM、NixOS VM、Alpine VM のスモークジョブを追加し、検証、プラン、dry-run 適用、実際のパッケージマネージャ確認、サービス有効化、レンダラーの構文確認まで流すようにします。 |
+| Alpine のサービスマネージャ | Alpine は明示された `generated service artifacts`、管理対象 dnsmasq、`routerd-healthcheck`、DHCP クライアント、DNS リゾルバー、ファイアウォールロガー、PPPoE、Tailscale 向けの OpenRC スクリプト生成を持っています。適用時の有効化処理は `rc-update` / `rc-service` を使い、状態が変わらない場合の重複した enable / start / restart を避けます。DNS リゾルバーのスクリプトは生成しますが、ランタイム設定の実体化が入るまでは enable / start しません。 | OpenRC 向けの DNS リゾルバーランタイム設定の実体化、導入済みホストでのネットワーキング所有の拡張、Alpine スモークテストハーネスの CI 昇格を進めます。 |
+| NixOS に残る命令的な部分 | NixOS はモジュールを生成し、有効化処理は `nixos-rebuild` に任せます。ランタイムのみのネットワーク変更と、旧 dnsmasq ユニットのクリーンアップは、有効化後の `routerd.service` に残っています。このクリーンアップは、生成された NixOS dnsmasq サービスの所有権を含む最初のリリースに向けて、意図的に残しています。 | そのリリースサイクルの後で旧 dnsmasq クリーンアップを削除し、NixOS のネイティブな宣言で表せるものについては有効化後の再調整を減らし、残るランタイムのみのリソースにはテストを追加します。 |
+| FreeBSD の機能例外 | `ClientPolicy` は nftables の Ethernet 送信元アドレスセットに依存するため、Linux 専用です。 | 同じ隔離意味を保てる設計ができるまで、明示的に拒否します。 |
+| パッケージのブートストラップ | Ubuntu、Alpine、FreeBSD はパッケージを命令的に導入できます。NixOS は意図的にパッケージ宣言を生成します。スキーマ、検証、設定例、インストーラの依存関係一覧、CI スモーク網羅は `apk` を含むように更新済みです。 | `apt`、`apk`、`pkg`、Nix 宣言について、スキーマ、検証、インストーラのパッケージ一覧、設定例、生成ドキュメントの同期を保ちます。 |
 
 ## OS 抽象化の実装方針
 
-新しい OS 固有の振る舞いを足すときは、business logic 層で `runtime.GOOS` を直接読まないでください。
-`pkg/platform` 層（`platform.Features`）または Go の build tag を使って、境界を明示します。
+新しい OS 固有の振る舞いを足すときは、ビジネスロジック層で `runtime.GOOS` を直接読まないでください。
+`pkg/platform` 層（`platform.Features`）または Go のビルドタグを使って、境界を明示します。
 対象外の OS で実行時に予期せず失敗するよりも、validation や planning の段階で明示的にエラーにすることを優先します。
