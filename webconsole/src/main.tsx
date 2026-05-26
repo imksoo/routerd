@@ -102,6 +102,8 @@ type GatewayHealthComponent = {
   phase?: string;
   reason?: string;
   detail?: string;
+  selectedCandidate?: string;
+  preferredCandidate?: string;
   waiting?: Record<string, string>[];
 };
 
@@ -981,6 +983,15 @@ const useStyles = makeStyles({
   gatewayDetail: {
     display: "grid",
     gap: "4px",
+  },
+  gatewayCandidateBar: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "6px",
+    alignItems: "center",
+  },
+  gatewayCandidateValue: {
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
   },
   connectionCardList: {
     display: "grid",
@@ -3703,6 +3714,9 @@ function GatewayHealthRow({ component }: { component: GatewayHealthComponent }) 
   const status = normalizeGatewayStatus(component.status);
   const waiting = component.waiting ?? [];
   const showDiagnostic = status === "degraded" || status === "down";
+  const selectedCandidate = component.selectedCandidate || gatewayDetailValue(component.detail, "selectedCandidate") || gatewayDetailValue(component.detail, "selected");
+  const preferredCandidate = component.preferredCandidate || gatewayDetailValue(component.detail, "preferredCandidate") || gatewayDetailValue(component.detail, "preferred");
+  const fallback = Boolean(selectedCandidate && preferredCandidate && selectedCandidate !== preferredCandidate);
   return (
     <div className={styles.gatewayComponent}>
       <div className={styles.gatewayComponentHeader}>
@@ -3715,6 +3729,20 @@ function GatewayHealthRow({ component }: { component: GatewayHealthComponent }) 
         </div>
       </div>
       <div className={styles.gatewayDetail}>
+        {selectedCandidate || preferredCandidate ? (
+          <div className={styles.gatewayCandidateBar}>
+            {selectedCandidate ? (
+              <Badge appearance={fallback ? "tint" : "outline"} color={fallback ? "warning" : "success"}>
+                selected <span className={styles.gatewayCandidateValue}>{selectedCandidate}</span>
+              </Badge>
+            ) : null}
+            {preferredCandidate ? (
+              <Badge appearance="outline" color={fallback ? "warning" : "subtle"}>
+                preferred <span className={styles.gatewayCandidateValue}>{preferredCandidate}</span>
+              </Badge>
+            ) : null}
+          </div>
+        ) : null}
         {component.detail ? <code className={styles.wrapCode}>{component.detail}</code> : null}
         {showDiagnostic ? <Text size={200} className={styles.muted}>reason: {component.reason || "-"}</Text> : null}
         {showDiagnostic ? <Text size={200} className={styles.muted}>waiting: {waiting.length ? waiting.map(formatGatewayWaiting).join("; ") : "-"}</Text> : null}
@@ -5895,6 +5923,9 @@ function phaseColor(phase: unknown): "success" | "warning" | "danger" | "informa
 
 function normalizeGatewayStatus(value: unknown) {
   const status = String(value ?? "").toLowerCase();
+  if (status === "pass" || status === "passing") return "ok";
+  if (status === "warn" || status === "warning") return "degraded";
+  if (status === "skip" || status === "skipped" || status === "disabled") return "skip";
   if (status === "ok" || status === "degraded" || status === "down" || status === "unknown") return status;
   return "unknown";
 }
@@ -5907,6 +5938,8 @@ function gatewayStatusColor(status: string): "success" | "warning" | "danger" | 
       return "warning";
     case "down":
       return "danger";
+    case "skip":
+      return "subtle";
     default:
       return "subtle";
   }
@@ -5925,9 +5958,16 @@ function gatewayBannerClass(styles: ReturnType<typeof useStyles>, status: string
       return styles.gatewayBannerDegraded;
     case "down":
       return styles.gatewayBannerDown;
+    case "skip":
+      return styles.gatewayBannerUnknown;
     default:
       return styles.gatewayBannerUnknown;
   }
+}
+
+function gatewayDetailValue(detail: string | undefined, key: string) {
+  const match = detail?.match(new RegExp(`(?:^|[\\s,])${key}=([^\\s,]+)`));
+  return match?.[1] ?? "";
 }
 
 function formatGatewayWaiting(waiting: Record<string, string>) {

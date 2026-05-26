@@ -152,13 +152,109 @@ func TestGatewayHealthAggregatesGatewayResources(t *testing.T) {
 		"DHCPv6PrefixDelegation/wan-pd": "degraded",
 		"DSLiteTunnel/ds-lite":          "down",
 		"DNSResolver/missing":           "unknown",
+		"HealthCheck/internet":          "pass",
 	} {
 		if statuses[name] != want {
 			t.Fatalf("%s status = %q, want %q: %+v", name, statuses[name], want, health.Components)
 		}
 	}
-	if len(health.Components) != 4 {
-		t.Fatalf("components = %d, want 4: %+v", len(health.Components), health.Components)
+	if len(health.Components) != 5 {
+		t.Fatalf("components = %d, want 5: %+v", len(health.Components), health.Components)
+	}
+}
+
+func TestGatewayHealthEgressRoutePolicyCandidates(t *testing.T) {
+	tests := []struct {
+		name       string
+		status     map[string]any
+		wantStatus string
+		wantDetail []string
+	}{
+		{
+			name: "selected preferred",
+			status: map[string]any{
+				"phase":              "Healthy",
+				"selectedCandidate":  "ds-lite-primary",
+				"preferredCandidate": "ds-lite-primary",
+			},
+			wantStatus: "pass",
+			wantDetail: []string{"selected=ds-lite-primary,preferred=ds-lite-primary", "selectedCandidate=ds-lite-primary", "preferredCandidate=ds-lite-primary"},
+		},
+		{
+			name: "fallback",
+			status: map[string]any{
+				"phase":             "Healthy",
+				"selectedCandidate": "pppoe-fallback",
+				"candidates": []map[string]any{
+					{"name": "ds-lite-primary", "weight": 100, "priority": 10, "ready": false},
+					{"name": "pppoe-fallback", "weight": 10, "priority": 20, "ready": true},
+				},
+			},
+			wantStatus: "warn",
+			wantDetail: []string{"selected=pppoe-fallback,preferred=ds-lite-primary", "selectedCandidate=pppoe-fallback", "preferredCandidate=ds-lite-primary"},
+		},
+		{
+			name: "error",
+			status: map[string]any{
+				"phase":              "Error",
+				"reason":             "NoReadyCandidates",
+				"selectedCandidate":  "pppoe-fallback",
+				"preferredCandidate": "ds-lite-primary",
+			},
+			wantStatus: "down",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			health := gatewayHealth([]routerstate.ObjectStatus{{
+				APIVersion: api.NetAPIVersion,
+				Kind:       "EgressRoutePolicy",
+				Name:       "ipv4-default",
+				Status:     tt.status,
+			}})
+			if len(health.Components) != 1 {
+				t.Fatalf("components = %+v", health.Components)
+			}
+			component := health.Components[0]
+			if component.Status != tt.wantStatus {
+				t.Fatalf("status = %q, want %q: %+v", component.Status, tt.wantStatus, component)
+			}
+			for _, want := range tt.wantDetail {
+				if !strings.Contains(component.Detail, want) {
+					t.Fatalf("detail missing %q: %q", want, component.Detail)
+				}
+			}
+		})
+	}
+}
+
+func TestGatewayHealthNAT44AndHealthCheckStatuses(t *testing.T) {
+	health := gatewayHealth([]routerstate.ObjectStatus{
+		{APIVersion: api.NetAPIVersion, Kind: "NAT44Rule", Name: "nat-applied", Status: map[string]any{"phase": "Applied"}},
+		{APIVersion: api.NetAPIVersion, Kind: "NAT44Rule", Name: "nat-pending", Status: map[string]any{"phase": "Pending"}},
+		{APIVersion: api.NetAPIVersion, Kind: "NAT44Rule", Name: "nat-error", Status: map[string]any{"phase": "Error"}},
+		{APIVersion: api.NetAPIVersion, Kind: "HealthCheck", Name: "hc-healthy", Status: map[string]any{"phase": "Healthy"}},
+		{APIVersion: api.NetAPIVersion, Kind: "HealthCheck", Name: "hc-unhealthy", Status: map[string]any{"phase": "Unhealthy"}},
+		{APIVersion: api.NetAPIVersion, Kind: "HealthCheck", Name: "hc-disabled", Status: map[string]any{"phase": "Disabled"}},
+	})
+	if health.Overall != "down" {
+		t.Fatalf("overall = %q, want down: %+v", health.Overall, health)
+	}
+	statuses := map[string]string{}
+	for _, component := range health.Components {
+		statuses[component.Kind+"/"+component.Name] = component.Status
+	}
+	for name, want := range map[string]string{
+		"NAT44Rule/nat-applied":    "pass",
+		"NAT44Rule/nat-pending":    "degraded",
+		"NAT44Rule/nat-error":      "down",
+		"HealthCheck/hc-healthy":   "pass",
+		"HealthCheck/hc-unhealthy": "down",
+		"HealthCheck/hc-disabled":  "skip",
+	} {
+		if statuses[name] != want {
+			t.Fatalf("%s status = %q, want %q: %+v", name, statuses[name], want, health.Components)
+		}
 	}
 }
 
@@ -178,6 +274,50 @@ func TestSummaryIncludesGatewayHealthJSON(t *testing.T) {
 	}
 	if snapshot.GatewayHealth.Overall != "ok" || len(snapshot.GatewayHealth.Components) != 1 {
 		t.Fatalf("gatewayHealth = %+v", snapshot.GatewayHealth)
+	}
+}
+
+func TestSummaryIncludesNewGatewayHealthComponentsJSON(t *testing.T) {
+	handler := New(Options{Store: fakeStore{resources: []routerstate.ObjectStatus{
+		{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy", Name: "ipv4-default", Status: map[string]any{
+			"phase":             "Applied",
+			"selectedCandidate": "pppoe-fallback",
+			"candidates": []map[string]any{
+				{"name": "ds-lite-primary", "weight": 100, "priority": 10},
+				{"name": "pppoe-fallback", "weight": 10, "priority": 20},
+			},
+		}},
+		{APIVersion: api.NetAPIVersion, Kind: "NAT44Rule", Name: "lan-to-wan", Status: map[string]any{"phase": "Applied"}},
+		{APIVersion: api.NetAPIVersion, Kind: "HealthCheck", Name: "internet", Status: map[string]any{"phase": "Disabled"}},
+	}}})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/summary?events=-1&connections=-1&dnsQueries=-1&trafficFlows=-1&firewallLogs=-1&vpn=0&dhcpLeases=0", nil)
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	var snapshot Snapshot
+	if err := json.Unmarshal(rec.Body.Bytes(), &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.GatewayHealth.Overall != "warn" {
+		t.Fatalf("overall = %q, want warn: %+v", snapshot.GatewayHealth.Overall, snapshot.GatewayHealth)
+	}
+	statuses := map[string]string{}
+	for _, component := range snapshot.GatewayHealth.Components {
+		statuses[component.Kind+"/"+component.Name] = component.Status
+	}
+	for name, want := range map[string]string{
+		"EgressRoutePolicy/ipv4-default": "warn",
+		"NAT44Rule/lan-to-wan":           "pass",
+		"HealthCheck/internet":           "skip",
+	} {
+		if statuses[name] != want {
+			t.Fatalf("%s status = %q, want %q: %+v", name, statuses[name], want, snapshot.GatewayHealth.Components)
+		}
+	}
+	if !strings.Contains(rec.Body.String(), `"selectedCandidate": "pppoe-fallback"`) || !strings.Contains(rec.Body.String(), `"preferredCandidate": "ds-lite-primary"`) {
+		t.Fatalf("summary missing selected/preferred candidates:\n%s", rec.Body.String())
 	}
 }
 

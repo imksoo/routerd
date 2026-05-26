@@ -132,13 +132,15 @@ type GatewayHealth struct {
 }
 
 type GatewayHealthComponent struct {
-	Kind    string              `json:"kind"`
-	Name    string              `json:"name"`
-	Status  string              `json:"status"`
-	Phase   string              `json:"phase,omitempty"`
-	Reason  string              `json:"reason,omitempty"`
-	Detail  string              `json:"detail,omitempty"`
-	Waiting []map[string]string `json:"waiting,omitempty"`
+	Kind               string              `json:"kind"`
+	Name               string              `json:"name"`
+	Status             string              `json:"status"`
+	Phase              string              `json:"phase,omitempty"`
+	Reason             string              `json:"reason,omitempty"`
+	Detail             string              `json:"detail,omitempty"`
+	SelectedCandidate  string              `json:"selectedCandidate,omitempty"`
+	PreferredCandidate string              `json:"preferredCandidate,omitempty"`
+	Waiting            []map[string]string `json:"waiting,omitempty"`
 }
 
 type DPIStatus struct {
@@ -589,13 +591,15 @@ func gatewayHealth(resources []routerstate.ObjectStatus) GatewayHealth {
 			continue
 		}
 		component := GatewayHealthComponent{
-			Kind:    resource.Kind,
-			Name:    resource.Name,
-			Status:  gatewayComponentStatus(resource.Status),
-			Phase:   statusText(resource.Status, "phase"),
-			Reason:  firstNonEmpty(statusText(resource.Status, "reason"), statusText(resource.Status, "message")),
-			Detail:  gatewayComponentDetail(resource.Kind, resource.Status),
-			Waiting: gatewayWaiting(resource.Status["waiting"]),
+			Kind:               resource.Kind,
+			Name:               resource.Name,
+			Status:             gatewayComponentStatus(resource.Kind, resource.Status),
+			Phase:              statusText(resource.Status, "phase"),
+			Reason:             firstNonEmpty(statusText(resource.Status, "reason"), statusText(resource.Status, "message")),
+			Detail:             gatewayComponentDetail(resource.Kind, resource.Status),
+			SelectedCandidate:  statusText(resource.Status, "selectedCandidate"),
+			PreferredCandidate: gatewayPreferredCandidate(resource.Status),
+			Waiting:            gatewayWaiting(resource.Status["waiting"]),
 		}
 		health.Components = append(health.Components, component)
 	}
@@ -613,17 +617,29 @@ func gatewayHealth(resources []routerstate.ObjectStatus) GatewayHealth {
 
 func gatewayHealthKind(kind string) bool {
 	switch kind {
-	case "DNSResolver", "DSLiteTunnel", "DHCPv6PrefixDelegation":
+	case "DNSResolver", "DSLiteTunnel", "DHCPv6PrefixDelegation", "EgressRoutePolicy", "NAT44Rule", "HealthCheck":
 		return true
 	default:
 		return false
 	}
 }
 
-func gatewayComponentStatus(status map[string]any) string {
+func gatewayComponentStatus(kind string, status map[string]any) string {
 	if len(status) == 0 {
 		return "unknown"
 	}
+	switch kind {
+	case "EgressRoutePolicy":
+		return gatewayEgressRoutePolicyStatus(status)
+	case "NAT44Rule":
+		return gatewayNAT44RuleStatus(status)
+	case "HealthCheck":
+		return gatewayHealthCheckStatus(status)
+	}
+	return gatewayGenericComponentStatus(status)
+}
+
+func gatewayGenericComponentStatus(status map[string]any) string {
 	phase := strings.ToLower(statusText(status, "phase"))
 	health := strings.ToLower(statusText(status, "health"))
 	switch {
@@ -637,6 +653,49 @@ func gatewayComponentStatus(status map[string]any) string {
 		return "ok"
 	default:
 		return "unknown"
+	}
+}
+
+func gatewayEgressRoutePolicyStatus(status map[string]any) string {
+	base := gatewayGenericComponentStatus(status)
+	if base != "ok" {
+		return base
+	}
+	selected := statusText(status, "selectedCandidate")
+	preferred := gatewayPreferredCandidate(status)
+	if selected != "" && preferred != "" && selected != preferred {
+		return "warn"
+	}
+	return "pass"
+}
+
+func gatewayNAT44RuleStatus(status map[string]any) string {
+	switch strings.ToLower(statusText(status, "phase")) {
+	case "applied", "active":
+		return "pass"
+	case "error", "failed":
+		return "down"
+	case "pending":
+		return "degraded"
+	default:
+		return gatewayGenericComponentStatus(status)
+	}
+}
+
+func gatewayHealthCheckStatus(status map[string]any) string {
+	phase := strings.ToLower(statusText(status, "phase"))
+	health := strings.ToLower(statusText(status, "health"))
+	switch {
+	case phase == "disabled" || health == "disabled":
+		return "skip"
+	case phase == "healthy" || health == "healthy" || health == "healthok":
+		return "pass"
+	case phase == "unhealthy" || phase == "failed" || health == "unhealthy" || health == "failed" || health == "healthfailed":
+		return "down"
+	case phase == "pending" || health == "pending":
+		return "degraded"
+	default:
+		return gatewayGenericComponentStatus(status)
 	}
 }
 
@@ -671,7 +730,7 @@ func gatewayHealthRank(status string) int {
 	switch status {
 	case "down":
 		return 3
-	case "degraded":
+	case "degraded", "warn":
 		return 2
 	case "unknown":
 		return 1
@@ -689,16 +748,68 @@ func gatewayComponentDetail(kind string, status map[string]any) string {
 		keys = []string{"currentPrefix", "serverDUID", "health"}
 	case "DSLiteTunnel":
 		keys = []string{"aftrName", "aftrIPv6", "interface", "device", "localIPv6", "health"}
+	case "EgressRoutePolicy":
+		keys = []string{"selectedCandidate", "preferredCandidate", "selectedDevice", "selectedGateway", "selectedInterface", "selectedRouteTable", "selectedMetric", "health"}
+	case "NAT44Rule":
+		keys = []string{"egressInterface", "activeEgressInterface", "snatAddress", "health"}
+	case "HealthCheck":
+		keys = []string{"target", "sourceAddress", "sourceInterface", "protocol", "consecutiveFailed", "health"}
 	default:
 		keys = []string{"health"}
 	}
 	var parts []string
+	if kind == "EgressRoutePolicy" {
+		selected := statusText(status, "selectedCandidate")
+		preferred := gatewayPreferredCandidate(status)
+		if selected != "" || preferred != "" {
+			parts = append(parts, fmt.Sprintf("selected=%s,preferred=%s", selected, preferred))
+		}
+	}
 	for _, key := range keys {
-		if text := statusAnyText(status[key]); text != "" {
+		text := statusAnyText(status[key])
+		if key == "preferredCandidate" && text == "" {
+			text = gatewayPreferredCandidate(status)
+		}
+		if text != "" {
 			parts = append(parts, key+"="+text)
 		}
 	}
 	return strings.Join(parts, " ")
+}
+
+func gatewayPreferredCandidate(status map[string]any) string {
+	if preferred := statusText(status, "preferredCandidate"); preferred != "" {
+		return preferred
+	}
+	if preferred := statusText(status, "desiredCandidate"); preferred != "" {
+		return preferred
+	}
+	candidates := statusList(status["candidates"])
+	if len(candidates) == 0 {
+		return ""
+	}
+	type preferredCandidate struct {
+		name     string
+		weight   int
+		priority int
+		set      bool
+	}
+	var best preferredCandidate
+	for _, candidate := range candidates {
+		disabled, ok := statusBoolValue(candidate["disabled"])
+		if ok && disabled {
+			continue
+		}
+		name := statusAnyText(candidate["name"])
+		if name == "" {
+			continue
+		}
+		item := preferredCandidate{name: name, weight: statusIntValue(candidate["weight"]), priority: statusIntValue(candidate["priority"]), set: true}
+		if !best.set || item.weight > best.weight || (item.weight == best.weight && item.priority < best.priority) {
+			best = item
+		}
+	}
+	return best.name
 }
 
 func gatewayWaiting(value any) []map[string]string {
