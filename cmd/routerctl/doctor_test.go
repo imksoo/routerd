@@ -109,6 +109,25 @@ func TestDoctorDSLiteSelectedHealthyPolicyIgnoresAFTRProbeFailure(t *testing.T) 
 	}
 }
 
+func TestDoctorDSLiteUpSelectedSourceAggregateCandidatePasses(t *testing.T) {
+	configPath, statePath := writeDoctorDSLiteFixture(t)
+	saveDoctorDSLiteState(t, statePath, map[string]any{"phase": "Up"}, "dslite-pd-balanced", map[string]any{"phase": "Applied", "selectedSource": "DSLiteTunnel/ds-lite", "selectedTargets": 3}, map[string]any{"phase": "Healthy"})
+	installDoctorDSLiteHostCommands(t, false, true)
+
+	report := runDoctorDSLiteJSON(t, configPath, statePath)
+	if report.Summary.Overall != doctorPass || report.Summary.Warn != 0 || report.Summary.Fail != 0 {
+		t.Fatalf("summary = %#v checks = %#v", report.Summary, report.Checks)
+	}
+	resourceCheck := findDoctorCheck(t, report, "DSLiteTunnel/ds-lite")
+	if resourceCheck.Status != doctorPass {
+		t.Fatalf("DSLiteTunnel check = %#v", resourceCheck)
+	}
+	check := findDoctorCheck(t, report, "dig AFTR aftr.example.net")
+	if check.Status != doctorPass || !strings.Contains(check.Detail, "selected via EgressRoutePolicy/ipv4-default, gatewayHealth-aligned") {
+		t.Fatalf("AFTR check = %#v", check)
+	}
+}
+
 func TestDoctorDSLiteSelectedHealthyPolicyWithAFTRProbeSuccessPasses(t *testing.T) {
 	configPath, statePath := writeDoctorDSLiteFixture(t)
 	saveDoctorDSLiteState(t, statePath, map[string]any{"phase": "Applied", "health": "HealthOK"}, "ds-lite", map[string]any{"phase": "Applied", "selectedCandidate": "ds-lite", "selectedDevice": "ds-routerd"}, map[string]any{"phase": "Healthy"})
@@ -127,6 +146,30 @@ func TestDoctorDSLiteSelectedHealthyPolicyWithAFTRProbeSuccessPasses(t *testing.
 func TestDoctorDSLiteNotSelectedWarnsOnAFTRProbeFailure(t *testing.T) {
 	configPath, statePath := writeDoctorDSLiteFixture(t)
 	saveDoctorDSLiteState(t, statePath, map[string]any{"phase": "Applied", "health": "HealthOK"}, "pppoe", map[string]any{"phase": "Applied", "selectedCandidate": "pppoe", "selectedDevice": "ppp0"}, map[string]any{"phase": "Healthy"})
+	installDoctorDSLiteHostCommands(t, false, true)
+
+	report := runDoctorDSLiteJSON(t, configPath, statePath)
+	check := findDoctorCheck(t, report, "dig AFTR aftr.example.net")
+	if check.Status != doctorWarn || strings.Contains(check.Detail, "selected via") {
+		t.Fatalf("AFTR check = %#v", check)
+	}
+}
+
+func TestDoctorDSLiteUpSelectedSourceMismatchWarnsOnAFTRProbeFailure(t *testing.T) {
+	configPath, statePath := writeDoctorDSLiteFixture(t)
+	saveDoctorDSLiteState(t, statePath, map[string]any{"phase": "Up"}, "dslite-pd-balanced", map[string]any{"phase": "Applied", "selectedSource": "DSLiteTunnel/other", "selectedDevice": "other-device"}, map[string]any{"phase": "Healthy"})
+	installDoctorDSLiteHostCommands(t, false, true)
+
+	report := runDoctorDSLiteJSON(t, configPath, statePath)
+	check := findDoctorCheck(t, report, "dig AFTR aftr.example.net")
+	if check.Status != doctorWarn || strings.Contains(check.Detail, "selected via") {
+		t.Fatalf("AFTR check = %#v", check)
+	}
+}
+
+func TestDoctorDSLiteUpSelectedSourceUnhealthyPolicyWarnsOnAFTRProbeFailure(t *testing.T) {
+	configPath, statePath := writeDoctorDSLiteFixture(t)
+	saveDoctorDSLiteState(t, statePath, map[string]any{"phase": "Up"}, "dslite-pd-balanced", map[string]any{"phase": "Pending", "selectedSource": "DSLiteTunnel/ds-lite"}, map[string]any{"phase": "Healthy"})
 	installDoctorDSLiteHostCommands(t, false, true)
 
 	report := runDoctorDSLiteJSON(t, configPath, statePath)

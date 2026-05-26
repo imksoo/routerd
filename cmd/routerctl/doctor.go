@@ -178,7 +178,7 @@ func (r doctorRunner) doctorDSLite() []doctorCheck {
 	var checks []doctorCheck
 	for _, res := range tunnels {
 		status := objectStatus(r.store, res.APIVersion, res.Kind, res.Metadata.Name)
-		resourceCheck := doctorResourceCheck("dslite", res, status, healthyPhases("Applied", "Active", "Ready"))
+		resourceCheck := doctorResourceCheck("dslite", res, status, healthyPhases("Applied", "Active", "Ready", "Up"))
 		checks = append(checks, resourceCheck)
 		spec, _ := res.DSLiteTunnelSpec()
 		aftr := firstNonEmpty(spec.AFTRFQDN, stringStatus(status, "aftrFQDN"), stringStatus(status, "aftrName"))
@@ -214,23 +214,23 @@ func (r doctorRunner) dsliteSelectedEvidence(tunnelName, device string) string {
 			continue
 		}
 		selectedCandidate := stringStatus(policyStatus, "selectedCandidate")
-		if selectedCandidate == "" {
-			continue
-		}
+		selectedSource := stringStatus(policyStatus, "selectedSource")
 		selectedDevice := stringStatus(policyStatus, "selectedDevice")
 		spec, err := policy.EgressRoutePolicySpec()
 		if err != nil {
 			continue
 		}
-		candidate, ok := selectedEgressCandidate(spec.Candidates, selectedCandidate)
-		if !ok || !(egressCandidateUsesDSLite(candidate, tunnelName, device) || device != "" && selectedDevice == device) {
+		candidate, candidateOK := selectedEgressCandidate(spec.Candidates, selectedCandidate)
+		if !egressPolicySelectsDSLite(selectedSource, selectedDevice, candidate, candidateOK, tunnelName, device) {
 			continue
 		}
 		detail := "selected via EgressRoutePolicy/" + policy.Metadata.Name + ", gatewayHealth-aligned"
-		if hc := firstNonEmpty(candidate.HealthCheck, selectedTargetHealthCheck(candidate)); hc != "" {
-			hcStatus := objectStatus(r.store, api.NetAPIVersion, "HealthCheck", hc)
-			if doctorStatusPass(hcStatus, healthyPhases("Healthy", "Applied", "Ready")) {
-				detail += ", HealthCheck/" + hc + " healthy"
+		if candidateOK {
+			if hc := firstNonEmpty(candidate.HealthCheck, selectedTargetHealthCheck(candidate)); hc != "" {
+				hcStatus := objectStatus(r.store, api.NetAPIVersion, "HealthCheck", hc)
+				if doctorStatusPass(hcStatus, healthyPhases("Healthy", "Applied", "Ready")) {
+					detail += ", HealthCheck/" + hc + " healthy"
+				}
 			}
 		}
 		return detail
@@ -239,12 +239,25 @@ func (r doctorRunner) dsliteSelectedEvidence(tunnelName, device string) string {
 }
 
 func selectedEgressCandidate(candidates []api.EgressRoutePolicyCandidate, selected string) (api.EgressRoutePolicyCandidate, bool) {
+	if selected == "" {
+		return api.EgressRoutePolicyCandidate{}, false
+	}
 	for _, candidate := range candidates {
 		if candidate.Name == selected {
 			return candidate, true
 		}
 	}
 	return api.EgressRoutePolicyCandidate{}, false
+}
+
+func egressPolicySelectsDSLite(selectedSource, selectedDevice string, candidate api.EgressRoutePolicyCandidate, candidateOK bool, tunnelName, device string) bool {
+	if resourceRefMatches(selectedSource, "DSLiteTunnel", tunnelName) {
+		return true
+	}
+	if !candidateOK {
+		return false
+	}
+	return egressCandidateUsesDSLite(candidate, tunnelName, device) || device != "" && selectedDevice == device
 }
 
 func egressCandidateUsesDSLite(candidate api.EgressRoutePolicyCandidate, tunnelName, device string) bool {
