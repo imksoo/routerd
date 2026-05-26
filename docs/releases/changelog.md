@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260526.2335
+
 Documentation and CI consistency follow-up to v20260526.2241. No
 binary or runtime behavior changes.
 

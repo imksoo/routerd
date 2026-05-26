@@ -11,6 +11,8 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260526.2335
+
 v20260526.2241 的文件 / CI 一致性 follow-up 發布。二進位與執行時行為
 均無變更。
 
