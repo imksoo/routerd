@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260526.1225
+
 ### 追加
 
 - `routerctl doctor [area]`: wan / dns / dslite / dhcpv6-pd / nat /

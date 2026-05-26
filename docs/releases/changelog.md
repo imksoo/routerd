@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260526.1225
+
 ### Added
 
 - `routerctl doctor [area]` runs a battery of read-only checks (wan, dns,

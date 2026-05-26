@@ -11,6 +11,8 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260526.1225
+
 ### 新增
 
 - `routerctl doctor [area]`：執行 wan / dns / dslite / dhcpv6-pd / nat /
