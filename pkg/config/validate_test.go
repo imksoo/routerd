@@ -42,6 +42,56 @@ func TestValidateSysctl(t *testing.T) {
 	}
 }
 
+func TestValidateManagementAccess(t *testing.T) {
+	router := testManagementRouter(
+		managementAccess("main", []string{"mgmt0", "Interface/lan0"}, nil),
+	)
+	router.Spec.Resources[0].Spec = api.ManagementAccessSpec{
+		Interfaces:       []string{"mgmt0", "Interface/lan0"},
+		AllowSourceCIDRs: []string{"192.168.100.0/24", "2001:db8::/64"},
+	}
+	if err := Validate(router); err != nil {
+		t.Fatalf("validate ManagementAccess: %v", err)
+	}
+}
+
+func TestValidateManagementAccessRejectsInvalidSpec(t *testing.T) {
+	tests := []struct {
+		name string
+		spec api.ManagementAccessSpec
+		want string
+	}{
+		{
+			name: "missing interfaces",
+			spec: api.ManagementAccessSpec{},
+			want: "spec.interfaces is required",
+		},
+		{
+			name: "unsupported reference kind",
+			spec: api.ManagementAccessSpec{Interfaces: []string{"PPPoESession/wan"}},
+			want: "must reference an Interface name or Interface/<name>",
+		},
+		{
+			name: "invalid cidr",
+			spec: api.ManagementAccessSpec{Interfaces: []string{"mgmt0"}, AllowSourceCIDRs: []string{"192.168.100.1"}},
+			want: "spec.allowSourceCIDRs[0] is invalid",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			router := testManagementRouter(api.Resource{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "ManagementAccess"},
+				Metadata: api.ObjectMeta{Name: "main"},
+				Spec:     tc.spec,
+			})
+			err := Validate(router)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Validate error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestValidateResourceWhenAnyAllNested(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},

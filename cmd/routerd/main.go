@@ -584,6 +584,7 @@ type applyFlagValues struct {
 	Once               *bool
 	DryRun             *bool
 	SkipServiceManager *bool
+	AllowMgmtLockout   *bool
 }
 
 func registerApplyFlags(fs *flag.FlagSet, includeConfig, includeOnce bool) applyFlagValues {
@@ -605,6 +606,7 @@ func registerApplyFlags(fs *flag.FlagSet, includeConfig, includeOnce bool) apply
 	}
 	flags.DryRun = fs.Bool("dry-run", false, "plan without applying changes")
 	flags.SkipServiceManager = fs.Bool("skip-service-manager", false, "skip applying service-manager units during this apply")
+	flags.AllowMgmtLockout = fs.Bool("allow-mgmt-lockout", false, "allow apply to continue despite ManagementAccess lockout findings")
 	return flags
 }
 
@@ -632,11 +634,12 @@ func (flags applyFlagValues) applyOptions(configPath string) applyOptions {
 		OverrideProfile:     *flags.OverrideProfile,
 		DryRun:              *flags.DryRun,
 		SkipServiceManager:  *flags.SkipServiceManager,
+		AllowMgmtLockout:    *flags.AllowMgmtLockout,
 		AnnounceDryRunToCLI: true,
 	}
 }
 
-func applyCommand(args []string, stdout, _ io.Writer) (err error) {
+func applyCommand(args []string, stdout, stderr io.Writer) (err error) {
 	fs := flag.NewFlagSet("apply", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	applyFlags := registerApplyFlags(fs, true, true)
@@ -663,6 +666,7 @@ func applyCommand(args []string, stdout, _ io.Writer) (err error) {
 		"dryRun": fmt.Sprintf("%t", *applyFlags.DryRun),
 	})
 	opts := applyFlags.applyOptions(*applyFlags.ConfigPath)
+	opts.MgmtLockoutWriter = stderr
 	_, err = runApplyOnce(router, opts, stdout, logger)
 	return err
 }
@@ -1092,6 +1096,8 @@ func canonicalResourceKind(kind string) string {
 		"obspipeline":            "ObservabilityPipeline",
 		"routerdcluster":         "RouterdCluster",
 		"cluster":                "RouterdCluster",
+		"managementaccess":       "ManagementAccess",
+		"mgmtaccess":             "ManagementAccess",
 		"route":                  "EgressRoutePolicy",
 		"ipv4policyrouteset":     "EgressRoutePolicy",
 		"clusternetworkroute":    "ClusterNetworkRoute",
@@ -1113,7 +1119,7 @@ func apiVersionForKind(kind string) string {
 		return api.ObservabilityAPIVersion
 	case "Inventory":
 		return api.RouterAPIVersion
-	case "Interface", "Bridge", "VXLANSegment", "WireGuardInterface", "WireGuardPeer", "TailscaleNode", "IPsecConnection", "VRF", "VXLANTunnel", "PPPoESession", "IPv4StaticAddress", "VirtualAddress", "DHCPv4Client", "IPv4StaticRoute", "IPv6StaticRoute", "ClusterNetworkRoute", "DHCPv4Server", "DHCPv4Reservation", "DHCPv6Address", "IPv6RAAddress", "DHCPv6PrefixDelegation", "IPv6DelegatedAddress", "DHCPv6Information", "IPv6RouterAdvertisement", "DHCPv6Server", "DHCPv4Relay", "DNSZone", "DNSResolver", "DNSForwarder", "DNSUpstream", "SelfAddressPolicy", "DSLiteTunnel", "IPv4Route", "HealthCheck", "EgressRoutePolicy", "EventRule", "DerivedEvent", "NAT44Rule", "IPAddressSet", "BFD", "TrafficFlowLog":
+	case "Interface", "Bridge", "VXLANSegment", "WireGuardInterface", "WireGuardPeer", "TailscaleNode", "IPsecConnection", "VRF", "VXLANTunnel", "PPPoESession", "IPv4StaticAddress", "VirtualAddress", "DHCPv4Client", "IPv4StaticRoute", "IPv6StaticRoute", "ClusterNetworkRoute", "DHCPv4Server", "DHCPv4Reservation", "DHCPv6Address", "IPv6RAAddress", "DHCPv6PrefixDelegation", "IPv6DelegatedAddress", "DHCPv6Information", "IPv6RouterAdvertisement", "DHCPv6Server", "DHCPv4Relay", "DNSZone", "DNSResolver", "DNSForwarder", "DNSUpstream", "SelfAddressPolicy", "DSLiteTunnel", "IPv4Route", "HealthCheck", "EgressRoutePolicy", "EventRule", "DerivedEvent", "NAT44Rule", "ManagementAccess", "IPAddressSet", "BFD", "TrafficFlowLog":
 		return api.NetAPIVersion
 	default:
 		return ""
@@ -1133,7 +1139,9 @@ type applyOptions struct {
 	OverrideProfile     string
 	DryRun              bool
 	SkipServiceManager  bool
+	AllowMgmtLockout    bool
 	AnnounceDryRunToCLI bool
+	MgmtLockoutWriter   io.Writer
 }
 
 func effectiveApplyPolicy(router *api.Router) api.ApplyPolicySpec {
@@ -1370,6 +1378,50 @@ func staleObjectStatusIDs(statuses []routerstate.ObjectStatus) string {
 	return strings.Join(ids, ",")
 }
 
+func reportManagementPlaneFindings(w io.Writer, findings []config.ManagementPlaneFinding, allowLockout bool) {
+	if w == nil || len(findings) == 0 {
+		return
+	}
+	for _, finding := range findings {
+		severity := finding.Severity
+		if allowLockout && severity == config.ManagementPlaneFail {
+			severity = config.ManagementPlaneWarn
+		}
+		fmt.Fprintf(w, "management-plane %s %s: %s", strings.ToUpper(severity), finding.Resource, finding.Message)
+		if finding.Remedy != "" {
+			fmt.Fprintf(w, " Remedy: %s.", finding.Remedy)
+		}
+		fmt.Fprintln(w)
+	}
+}
+
+func managementPlaneWarnings(findings []config.ManagementPlaneFinding) []string {
+	warnings := make([]string, 0, len(findings))
+	for _, finding := range findings {
+		warnings = append(warnings, fmt.Sprintf("management-plane %s %s: %s", finding.Severity, finding.Resource, finding.Message))
+	}
+	return warnings
+}
+
+func managementPlaneHasFailures(findings []config.ManagementPlaneFinding) bool {
+	for _, finding := range findings {
+		if finding.Severity == config.ManagementPlaneFail {
+			return true
+		}
+	}
+	return false
+}
+
+func checkManagementPlaneBeforeApply(router *api.Router, opts applyOptions) ([]string, error) {
+	findings := config.CheckManagementPlane(router)
+	reportManagementPlaneFindings(opts.MgmtLockoutWriter, findings, opts.AllowMgmtLockout)
+	warnings := managementPlaneWarnings(findings)
+	if !opts.DryRun && !opts.AllowMgmtLockout && managementPlaneHasFailures(findings) {
+		return warnings, errors.New("management plane lockout risk; fix ManagementAccess findings or re-run with --allow-mgmt-lockout")
+	}
+	return warnings, nil
+}
+
 func objectStatusID(status routerstate.ObjectStatus) string {
 	return status.APIVersion + "/" + status.Kind + "/" + status.Name
 }
@@ -1404,6 +1456,11 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 	router = effectiveConfig
 	optionWarnings = append(optionWarnings, warnings...)
 	optionWarnings = append(optionWarnings, config.Warnings(router)...)
+	managementWarnings, err := checkManagementPlaneBeforeApply(router, opts)
+	if err != nil {
+		return nil, err
+	}
+	optionWarnings = append(optionWarnings, managementWarnings...)
 	stateStore, err := loadApplyStateStore(defaultString(opts.StatePath, defaultStatePath), opts.DryRun)
 	if err != nil {
 		return nil, err
@@ -8637,7 +8694,7 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  render nixos --config <path> [--out <path>]")
 	fmt.Fprintln(w, "  render freebsd --config <path> [--out-dir <path>]")
 	fmt.Fprintln(w, "  render alpine --config <path> [--out-dir <path>]")
-	fmt.Fprintln(w, "  apply --config <path> --once [--dry-run] [--override-client <client>] [--override-profile <profile>]")
+	fmt.Fprintln(w, "  apply --config <path> --once [--dry-run] [--allow-mgmt-lockout] [--override-client <client>] [--override-profile <profile>]")
 	fmt.Fprintln(w, "  rollback [--list] [--to <generation>] [--dry-run]")
 	fmt.Fprintln(w, "  delete <kind>/<name> [--dry-run] [--force] [--api-version <version>]")
 	fmt.Fprintln(w, "  delete -f <path> [--dry-run]")

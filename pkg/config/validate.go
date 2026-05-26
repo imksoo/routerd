@@ -843,6 +843,11 @@ func splitFirewallInterfaceRef(ref string) (string, string) {
 	return "Interface", ref
 }
 
+func validManagementInterfaceName(name string) bool {
+	name = strings.TrimSpace(name)
+	return name != "" && !strings.ContainsAny(name, "/ \t\n\r\x00")
+}
+
 func normalizeOUIPrefix(value string) (string, error) {
 	parts := strings.Split(strings.TrimSpace(value), ":")
 	if len(parts) != 3 {
@@ -1266,6 +1271,33 @@ func validateResource(res api.Resource, targetOS platform.OS) error {
 		if spec.BasePath != "" {
 			if !strings.HasPrefix(spec.BasePath, "/") || strings.ContainsAny(spec.BasePath, "\x00\r\n") {
 				return fmt.Errorf("%s spec.basePath must be an absolute HTTP path", res.ID())
+			}
+		}
+	case "ManagementAccess":
+		if res.APIVersion != api.NetAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
+		}
+		spec, err := res.ManagementAccessSpec()
+		if err != nil {
+			return err
+		}
+		if len(spec.Interfaces) == 0 {
+			return fmt.Errorf("%s spec.interfaces is required", res.ID())
+		}
+		seen := map[string]bool{}
+		for i, ref := range spec.Interfaces {
+			kind, name := splitFirewallInterfaceRef(ref)
+			if kind != "Interface" || !validManagementInterfaceName(name) {
+				return fmt.Errorf("%s spec.interfaces[%d] must reference an Interface name or Interface/<name>", res.ID(), i)
+			}
+			if seen[name] {
+				return fmt.Errorf("%s spec.interfaces[%d] duplicates %q", res.ID(), i, ref)
+			}
+			seen[name] = true
+		}
+		for i, cidr := range spec.AllowSourceCIDRs {
+			if _, err := netip.ParsePrefix(strings.TrimSpace(cidr)); err != nil {
+				return fmt.Errorf("%s spec.allowSourceCIDRs[%d] is invalid: %w", res.ID(), i, err)
 			}
 		}
 	case "NixOSHost":

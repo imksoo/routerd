@@ -13,6 +13,7 @@ import (
 	"text/tabwriter"
 
 	"routerd/pkg/api"
+	"routerd/pkg/config"
 	routerstate "routerd/pkg/state"
 )
 
@@ -304,6 +305,20 @@ func (r doctorRunner) doctorDisk() []doctorCheck {
 
 func (r doctorRunner) doctorMgmt() []doctorCheck {
 	var checks []doctorCheck
+	if len(selectResources(r.router.Spec.Resources, "ManagementAccess", "")) > 0 {
+		findings := config.CheckManagementPlane(r.router)
+		if len(findings) == 0 {
+			return []doctorCheck{{Area: "mgmt", Name: "ManagementAccess", Status: doctorPass, Detail: "management plane checks passed"}}
+		}
+		for _, finding := range findings {
+			status := doctorWarn
+			if finding.Severity == config.ManagementPlaneFail {
+				status = doctorFail
+			}
+			checks = append(checks, doctorCheck{Area: "mgmt", Name: finding.Resource, Status: status, Detail: finding.Message, Remedy: finding.Remedy})
+		}
+		return checks
+	}
 	mgmtIfaces := r.mgmtInterfaces()
 	if len(mgmtIfaces) == 0 {
 		checks = append(checks, doctorCheck{Area: "mgmt", Name: "management interface", Status: doctorSkip, Detail: "no obvious management interface in config"})

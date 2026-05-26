@@ -35,7 +35,7 @@ spec:
 | API グループ | 主な Kind |
 | --- | --- |
 | `routerd.net/v1alpha1` | `Router` |
-| `net.routerd.net/v1alpha1` | インターフェース、再利用可能な `IPAddressSet`、DHCP、DNS、経路、トンネル、VIP、BGP、イベント、通信フローログ |
+| `net.routerd.net/v1alpha1` | インターフェース、`ManagementAccess`、再利用可能な `IPAddressSet`、DHCP、DNS、経路、トンネル、VIP、BGP、イベント、通信フローログ |
 | `firewall.routerd.net/v1alpha1` | `FirewallZone`, `FirewallPolicy`, `FirewallRule`, `FirewallEventLog`, `ClientPolicy`, `PortForward`, `IngressService`, `LocalServiceRedirect` |
 | `system.routerd.net/v1alpha1` | `Hostname`, `Sysctl`, `SysctlProfile`, `Package`, `NTPClient`, `NTPServer`, `LogSink`, `ObservabilityPipeline`, `RouterdCluster`, `LogRetention`, `WebConsole` |
 | `plugin.routerd.net/v1alpha1` | プラグインマニフェスト |
@@ -61,6 +61,7 @@ spec:
 | Kind | 役割 |
 | --- | --- |
 | `Interface` | routerd が扱う安定した名前と OS のインターフェース名を結び付け、下流 resource 向けの link/address status も提供します。 |
+| `ManagementAccess` | 管理用インターフェースと apply 前の lockout チェックを宣言します。宣言時は、管理 IF の欠落、firewall zone による遮断、WebConsole の全アドレス待ち受けを検出すると、`--allow-mgmt-lockout` なしの apply を止めます。 |
 | `PPPoESession` | PPPoE 用の下位インターフェース設定を表します。 |
 | `PPPoESession` | `routerd-pppoe-client` が管理する PPPoE セッションです。 |
 | `WireGuardInterface` | WireGuard インターフェースを表します。 |
@@ -501,6 +502,7 @@ validator がエラーにします。
 | `LocalServiceRedirect` | `phase` (string) |
 | `LogRetention` | `phase` (string), `targets` (objectList), `updatedAt` (timestamp) |
 | `LogSink` | `phase` (string), `type` (string) |
+| `ManagementAccess` | `interfaces` (stringList), `phase` (string) |
 | `NAT44Rule` | `dryRun` (bool), `egressInterface` (string), `phase` (string), `snatAddress` (string) |
 | `NTPClient` | `phase` (string), `servers` (stringList), `source` (string), `updatedAt` (timestamp) |
 | `NTPServer` | `allowCIDRs` (stringList), `listenAddresses` (stringList), `phase` (string), `servers` (stringList), `source` (string), `updatedAt` (timestamp) |

@@ -36,7 +36,7 @@ spec:
 | API group | Main kinds |
 | --- | --- |
 | `routerd.net/v1alpha1` | `Router` |
-| `net.routerd.net/v1alpha1` | interfaces, reusable `IPAddressSet` resources, DHCP, DNS, routes, tunnels, VIP, BGP, events, traffic flow logs |
+| `net.routerd.net/v1alpha1` | interfaces, `ManagementAccess`, reusable `IPAddressSet` resources, DHCP, DNS, routes, tunnels, VIP, BGP, events, traffic flow logs |
 | `firewall.routerd.net/v1alpha1` | `FirewallZone`, `FirewallPolicy`, `FirewallRule`, `FirewallEventLog`, `ClientPolicy`, `PortForward`, `IngressService`, `LocalServiceRedirect` |
 | `system.routerd.net/v1alpha1` | `Hostname`, `Sysctl`, `SysctlProfile`, `Package`, `NTPClient`, `NTPServer`, `LogSink`, `ObservabilityPipeline`, `RouterdCluster`, `LogRetention`, `WebConsole` |
 | `observability.routerd.net/v1alpha1` | `Telemetry` |
@@ -75,6 +75,7 @@ resource instead of duplicating collector endpoints.
 | Kind | Role |
 | --- | --- |
 | `Interface` | Binds a stable routerd name to an OS interface name and publishes link/address status for downstream resources. |
+| `ManagementAccess` | Declares management interfaces and apply-time lockout checks. When present, apply fails if declared interfaces are missing, blocked by firewall zoning, or an enabled WebConsole is bound to all addresses unless `--allow-mgmt-lockout` is set. |
 | `PPPoESession` | Defines PPPoE lower-interface settings. |
 | `PPPoESession` | Represents a `routerd-pppoe-client` session. |
 | `WireGuardInterface` | Represents a WireGuard interface. |
@@ -527,6 +528,7 @@ and fields outside the target kind's `provides` set.
 | `LocalServiceRedirect` | `phase` (string) |
 | `LogRetention` | `phase` (string), `targets` (objectList), `updatedAt` (timestamp) |
 | `LogSink` | `phase` (string), `type` (string) |
+| `ManagementAccess` | `interfaces` (stringList), `phase` (string) |
 | `NAT44Rule` | `dryRun` (bool), `egressInterface` (string), `phase` (string), `snatAddress` (string) |
 | `NTPClient` | `phase` (string), `servers` (stringList), `source` (string), `updatedAt` (timestamp) |
 | `NTPServer` | `allowCIDRs` (stringList), `listenAddresses` (stringList), `phase` (string), `servers` (stringList), `source` (string), `updatedAt` (timestamp) |

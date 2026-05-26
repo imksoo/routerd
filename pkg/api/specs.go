@@ -274,6 +274,12 @@ type WebConsoleSpec struct {
 	Title             string                `yaml:"title,omitempty" json:"title,omitempty"`
 }
 
+type ManagementAccessSpec struct {
+	Interfaces             []string `yaml:"interfaces" json:"interfaces" jsonschema:"title=Management interfaces"`
+	AllowSourceCIDRs       []string `yaml:"allowSourceCIDRs,omitempty" json:"allowSourceCIDRs,omitempty"`
+	RequireWebConsoleBound *bool    `yaml:"requireWebConsoleBound,omitempty" json:"requireWebConsoleBound,omitempty"`
+}
+
 type NixOSHostSpec struct {
 	Hostname              string                  `yaml:"hostname,omitempty" json:"hostname,omitempty"`
 	Domain                string                  `yaml:"domain,omitempty" json:"domain,omitempty"`
@@ -1547,6 +1553,10 @@ func (r Resource) NTPServerSpec() (NTPServerSpec, error) {
 
 func (r Resource) WebConsoleSpec() (WebConsoleSpec, error) {
 	return specAs[WebConsoleSpec](r)
+}
+
+func (r Resource) ManagementAccessSpec() (ManagementAccessSpec, error) {
+	return specAs[ManagementAccessSpec](r)
 }
 
 func (r Resource) NixOSHostSpec() (NixOSHostSpec, error) {

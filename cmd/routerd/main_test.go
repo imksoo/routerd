@@ -106,6 +106,39 @@ func TestRunApplyOnceDryRunDoesNotCreateStateDB(t *testing.T) {
 	}
 }
 
+func TestManagementPlaneBlocksNonDryRunApply(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test-router"},
+		Spec: api.RouterSpec{Resources: []api.Resource{{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "ManagementAccess"},
+			Metadata: api.ObjectMeta{Name: "main"},
+			Spec:     api.ManagementAccessSpec{Interfaces: []string{"mgmt0"}},
+		}}},
+	}
+
+	var stderr strings.Builder
+	_, err := checkManagementPlaneBeforeApply(router, applyOptions{MgmtLockoutWriter: &stderr})
+	if err == nil || !strings.Contains(err.Error(), "management plane lockout risk") {
+		t.Fatalf("checkManagementPlaneBeforeApply error = %v, want lockout risk", err)
+	}
+	if !strings.Contains(stderr.String(), "management-plane FAIL Interface/mgmt0") {
+		t.Fatalf("stderr missing management finding:\n%s", stderr.String())
+	}
+
+	stderr.Reset()
+	warnings, err := checkManagementPlaneBeforeApply(router, applyOptions{AllowMgmtLockout: true, MgmtLockoutWriter: &stderr})
+	if err != nil {
+		t.Fatalf("allow management lockout: %v", err)
+	}
+	if len(warnings) == 0 {
+		t.Fatalf("warnings = %#v, want management-plane warning", warnings)
+	}
+	if !strings.Contains(stderr.String(), "management-plane WARN Interface/mgmt0") {
+		t.Fatalf("stderr missing allowed warning:\n%s", stderr.String())
+	}
+}
+
 func TestRunApplyOnceDryRunDoesNotMutateExistingStateDB(t *testing.T) {
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, "routerd.db")

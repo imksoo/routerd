@@ -6586,6 +6586,68 @@
                 "additionalProperties": false,
                 "properties": {
                   "apiVersion": {
+                    "const": "net.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "ManagementAccess",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "allowSourceCIDRs": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "interfaces": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "title": "Management interfaces",
+                        "type": "array"
+                      },
+                      "requireWebConsoleBound": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "interfaces"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
                     "const": "firewall.routerd.net/v1alpha1",
                     "type": "string"
                   },

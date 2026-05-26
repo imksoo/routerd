@@ -138,6 +138,8 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 			e.observeEgressRoutePolicy(res, aliases, policies, includePlan, &rr)
 		case "NAT44Rule":
 			e.observeNAT44Rule(res, aliases, policies, includePlan, &rr)
+		case "ManagementAccess":
+			e.observeManagementAccess(res, includePlan, &rr)
 		case "ClusterNetworkRoute":
 			e.observeClusterNetworkRoute(res, includePlan, &rr)
 		case "FirewallZone":
@@ -178,6 +180,19 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 	}
 
 	return result, nil
+}
+
+func (e *Engine) observeManagementAccess(res api.Resource, includePlan bool, rr *ResourceResult) {
+	spec, err := res.ManagementAccessSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	rr.Observed["interfaces"] = strings.Join(spec.Interfaces, ",")
+	if includePlan {
+		rr.Plan = append(rr.Plan, "check management access before apply")
+	}
 }
 
 func (e *Engine) observeNTPClient(res api.Resource, aliases map[string]string, includePlan bool, rr *ResourceResult) {
