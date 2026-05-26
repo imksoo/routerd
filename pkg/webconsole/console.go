@@ -72,6 +72,7 @@ type Snapshot struct {
 	GeneratedAt      time.Time                     `json:"generatedAt"`
 	Status           controlapi.Status             `json:"status"`
 	Controllers      []controlapi.ControllerStatus `json:"controllers,omitempty"`
+	GatewayHealth    GatewayHealth                 `json:"gatewayHealth"`
 	Phases           map[string]int                `json:"phases,omitempty"`
 	Resources        []routerstate.ObjectStatus    `json:"resources,omitempty"`
 	Interfaces       []InterfaceSummary            `json:"interfaces,omitempty"`
@@ -124,6 +125,21 @@ type SnapshotOptions struct {
 }
 
 const clientObservationWindow = time.Hour
+
+type GatewayHealth struct {
+	Overall    string                   `json:"overall"`
+	Components []GatewayHealthComponent `json:"components,omitempty"`
+}
+
+type GatewayHealthComponent struct {
+	Kind    string              `json:"kind"`
+	Name    string              `json:"name"`
+	Status  string              `json:"status"`
+	Phase   string              `json:"phase,omitempty"`
+	Reason  string              `json:"reason,omitempty"`
+	Detail  string              `json:"detail,omitempty"`
+	Waiting []map[string]string `json:"waiting,omitempty"`
+}
 
 type DPIStatus struct {
 	Classifier *DPIServiceStatus `json:"classifier,omitempty"`
@@ -539,6 +555,7 @@ func (h Handler) Snapshot(opts SnapshotOptions) Snapshot {
 		GeneratedAt:      now,
 		Status:           statusWithControllers(result, controllers),
 		Controllers:      controllers,
+		GatewayHealth:    gatewayHealth(resources),
 		Phases:           phaseCounts(resources),
 		Resources:        resources,
 		Interfaces:       h.interfaceSummaries(resources),
@@ -563,6 +580,162 @@ func statusWithControllers(result *apply.Result, controllers []controlapi.Contro
 	status := controlapi.NewStatus(result)
 	status.Status.Controllers = controllers
 	return status
+}
+
+func gatewayHealth(resources []routerstate.ObjectStatus) GatewayHealth {
+	health := GatewayHealth{Overall: "ok"}
+	for _, resource := range resources {
+		if !gatewayHealthKind(resource.Kind) {
+			continue
+		}
+		component := GatewayHealthComponent{
+			Kind:    resource.Kind,
+			Name:    resource.Name,
+			Status:  gatewayComponentStatus(resource.Status),
+			Phase:   statusText(resource.Status, "phase"),
+			Reason:  firstNonEmpty(statusText(resource.Status, "reason"), statusText(resource.Status, "message")),
+			Detail:  gatewayComponentDetail(resource.Kind, resource.Status),
+			Waiting: gatewayWaiting(resource.Status["waiting"]),
+		}
+		health.Components = append(health.Components, component)
+	}
+	if len(health.Components) == 0 {
+		health.Overall = "unknown"
+		return health
+	}
+	for _, component := range health.Components {
+		if gatewayHealthRank(component.Status) > gatewayHealthRank(health.Overall) {
+			health.Overall = component.Status
+		}
+	}
+	return health
+}
+
+func gatewayHealthKind(kind string) bool {
+	switch kind {
+	case "DNSResolver", "DSLiteTunnel", "DHCPv6PrefixDelegation":
+		return true
+	default:
+		return false
+	}
+}
+
+func gatewayComponentStatus(status map[string]any) string {
+	if len(status) == 0 {
+		return "unknown"
+	}
+	phase := strings.ToLower(statusText(status, "phase"))
+	health := strings.ToLower(statusText(status, "health"))
+	switch {
+	case gatewayDownStatus(phase), gatewayDownStatus(health):
+		return "down"
+	case len(gatewayWaiting(status["waiting"])) > 0:
+		return "degraded"
+	case gatewayDegradedStatus(phase), gatewayDegradedStatus(health):
+		return "degraded"
+	case gatewayOKStatus(health), gatewayOKStatus(phase):
+		return "ok"
+	default:
+		return "unknown"
+	}
+}
+
+func gatewayDownStatus(value string) bool {
+	switch strings.TrimSpace(value) {
+	case "error", "failed", "fail", "healthfailed", "healthfail", "down", "unhealthy", "lost", "expired":
+		return true
+	default:
+		return false
+	}
+}
+
+func gatewayDegradedStatus(value string) bool {
+	switch strings.TrimSpace(value) {
+	case "degraded", "healthdegraded", "warning", "warn", "pending", "blocked", "starting", "acquiring", "idle":
+		return true
+	default:
+		return false
+	}
+}
+
+func gatewayOKStatus(value string) bool {
+	switch strings.TrimSpace(value) {
+	case "ok", "healthok", "healthy", "pass", "passing", "applied", "active", "ready", "running", "up", "bound", "installed", "observed":
+		return true
+	default:
+		return false
+	}
+}
+
+func gatewayHealthRank(status string) int {
+	switch status {
+	case "down":
+		return 3
+	case "degraded":
+		return 2
+	case "unknown":
+		return 1
+	default:
+		return 0
+	}
+}
+
+func gatewayComponentDetail(kind string, status map[string]any) string {
+	var keys []string
+	switch kind {
+	case "DNSResolver":
+		keys = []string{"listeners", "sources", "listenAddresses", "health"}
+	case "DHCPv6PrefixDelegation":
+		keys = []string{"currentPrefix", "serverDUID", "health"}
+	case "DSLiteTunnel":
+		keys = []string{"aftrName", "aftrIPv6", "interface", "device", "localIPv6", "health"}
+	default:
+		keys = []string{"health"}
+	}
+	var parts []string
+	for _, key := range keys {
+		if text := statusAnyText(status[key]); text != "" {
+			parts = append(parts, key+"="+text)
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+func gatewayWaiting(value any) []map[string]string {
+	switch typed := value.(type) {
+	case []map[string]string:
+		return append([]map[string]string(nil), typed...)
+	case []map[string]any:
+		out := make([]map[string]string, 0, len(typed))
+		for _, item := range typed {
+			out = append(out, gatewayWaitingMap(item))
+		}
+		return out
+	case []any:
+		out := make([]map[string]string, 0, len(typed))
+		for _, item := range typed {
+			if object, ok := item.(map[string]any); ok {
+				out = append(out, gatewayWaitingMap(object))
+				continue
+			}
+			if text := strings.TrimSpace(fmt.Sprint(item)); text != "" {
+				out = append(out, map[string]string{"value": text})
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func gatewayWaitingMap(values map[string]any) map[string]string {
+	out := make(map[string]string, len(values))
+	for key, value := range values {
+		if text := strings.TrimSpace(fmt.Sprint(value)); text != "" {
+			out[key] = text
+		}
+	}
+	return out
 }
 
 func resultWithLatestGeneration(result *apply.Result, store routerstate.Store) *apply.Result {

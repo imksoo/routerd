@@ -70,6 +70,7 @@ type Summary = {
   generatedAt?: string;
   status?: { status?: Record<string, unknown> };
   controllers?: ControllerStatus[];
+  gatewayHealth?: GatewayHealth;
   phases?: Record<string, number>;
   resources?: ResourceStatus[];
   interfaces?: InterfaceSummary[];
@@ -87,6 +88,21 @@ type Summary = {
   dpi?: DPIStatus;
   systemUsage?: SystemUsage;
   errors?: string[];
+};
+
+type GatewayHealth = {
+  overall?: string;
+  components?: GatewayHealthComponent[];
+};
+
+type GatewayHealthComponent = {
+  kind?: string;
+  name?: string;
+  status?: string;
+  phase?: string;
+  reason?: string;
+  detail?: string;
+  waiting?: Record<string, string>[];
 };
 
 type SystemUsage = {
@@ -897,6 +913,74 @@ const useStyles = makeStyles({
     border: `1px solid ${tokens.colorBrandStroke2}`,
     borderRadius: tokens.borderRadiusMedium,
     backgroundColor: "#102238",
+  },
+  gatewayBanner: {
+    display: "grid",
+    gap: "12px",
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    backgroundColor: "#101a28",
+  },
+  gatewayBannerOk: {
+    border: "1px solid #2f5f45",
+    backgroundColor: "#0f1d1b",
+  },
+  gatewayBannerDegraded: {
+    border: "1px solid #8a6a20",
+    backgroundColor: "#2a220f",
+  },
+  gatewayBannerDown: {
+    border: "1px solid #8f2d2d",
+    backgroundColor: "#2a1114",
+  },
+  gatewayBannerUnknown: {
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    backgroundColor: "#111827",
+  },
+  gatewayHeader: {
+    display: "flex",
+    flexWrap: "wrap",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "10px",
+  },
+  gatewayTitle: {
+    display: "flex",
+    flexWrap: "wrap",
+    alignItems: "center",
+    gap: "8px",
+    minWidth: 0,
+  },
+  gatewayComponents: {
+    display: "grid",
+    gap: "8px",
+  },
+  gatewayComponent: {
+    display: "grid",
+    gap: "6px",
+    padding: "9px 10px",
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: tokens.borderRadiusMedium,
+    backgroundColor: "rgba(255,255,255,0.025)",
+  },
+  gatewayComponentHeader: {
+    display: "flex",
+    flexWrap: "wrap",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "8px",
+  },
+  gatewayComponentName: {
+    minWidth: 0,
+    overflowWrap: "anywhere",
+  },
+  gatewayComponentBadges: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "4px",
+  },
+  gatewayDetail: {
+    display: "grid",
+    gap: "4px",
   },
   connectionCardList: {
     display: "grid",
@@ -2859,6 +2943,7 @@ function App() {
             {error ? <Card><Text role="alert">Web console error: {error}</Text></Card> : null}
             {selected === "overview" ? (
               <>
+                <GatewayHealthBanner health={summary?.gatewayHealth} />
                 <div id="overview-metrics" className={styles.connectionAnchor}>
                   <div className={styles.grid}>
                     <Metric label="phase" value={String(summary?.status?.status?.phase ?? "Unknown")} />
@@ -3586,6 +3671,56 @@ function Metric({ label, value }: { label: string; value: string }) {
       <Text size={200} className={styles.muted}>{label}</Text>
       <Text size={600} weight="semibold" className={styles.metricValue}>{value}</Text>
     </Card>
+  );
+}
+
+function GatewayHealthBanner({ health }: { health?: GatewayHealth }) {
+  const styles = useStyles();
+  const overall = normalizeGatewayStatus(health?.overall);
+  const components = health?.components ?? [];
+  return (
+    <Card className={`${styles.gatewayBanner} ${gatewayBannerClass(styles, overall)}`}>
+      <div className={styles.gatewayHeader}>
+        <div className={styles.gatewayTitle}>
+          <Text weight="semibold">Gateway Health</Text>
+          <Badge appearance={overall === "ok" ? "outline" : "tint"} color={gatewayStatusColor(overall)}>{gatewayStatusLabel(overall)}</Badge>
+        </div>
+        <Text size={200} className={styles.muted}>{components.length ? `${components.length} gateway components` : "No gateway component status observed"}</Text>
+      </div>
+      {components.length ? (
+        <div className={styles.gatewayComponents}>
+          {components.map((component, index) => (
+            <GatewayHealthRow key={`${component.kind ?? "component"}/${component.name ?? index}`} component={component} />
+          ))}
+        </div>
+      ) : null}
+    </Card>
+  );
+}
+
+function GatewayHealthRow({ component }: { component: GatewayHealthComponent }) {
+  const styles = useStyles();
+  const status = normalizeGatewayStatus(component.status);
+  const waiting = component.waiting ?? [];
+  const showDiagnostic = status === "degraded" || status === "down";
+  return (
+    <div className={styles.gatewayComponent}>
+      <div className={styles.gatewayComponentHeader}>
+        <Text className={styles.gatewayComponentName}>
+          <Text weight="semibold">{component.kind || "Component"}</Text>{component.name ? <> / <code className={styles.code}>{component.name}</code></> : null}
+        </Text>
+        <div className={styles.gatewayComponentBadges}>
+          <Badge appearance="tint" color={gatewayStatusColor(status)}>{gatewayStatusLabel(status)}</Badge>
+          {component.phase ? <Badge appearance="outline" color={phaseColor(component.phase)}>{component.phase}</Badge> : null}
+        </div>
+      </div>
+      <div className={styles.gatewayDetail}>
+        {component.detail ? <code className={styles.wrapCode}>{component.detail}</code> : null}
+        {showDiagnostic ? <Text size={200} className={styles.muted}>reason: {component.reason || "-"}</Text> : null}
+        {showDiagnostic ? <Text size={200} className={styles.muted}>waiting: {waiting.length ? waiting.map(formatGatewayWaiting).join("; ") : "-"}</Text> : null}
+        {!showDiagnostic && !component.detail && !component.phase ? <Text size={200} className={styles.muted}>No observed status detail</Text> : null}
+      </div>
+    </div>
   );
 }
 
@@ -5665,6 +5800,7 @@ function reconcileSummary(current: Summary | null, next: Summary): Summary {
   return {
     ...next,
     controllers: reconcileRecords(current.controllers, next.controllers, row => row.name ?? ""),
+    gatewayHealth: next.gatewayHealth ?? current.gatewayHealth,
     resources: next.resources === undefined ? current.resources : reconcileRecords(current.resources, next.resources, row => `${row.apiVersion ?? ""}/${row.kind ?? ""}/${row.name ?? ""}`),
     interfaces: next.interfaces === undefined ? current.interfaces : reconcileRecords(current.interfaces, next.interfaces, row => row.ifname ?? row.name ?? ""),
     events: next.events === undefined ? current.events : reconcileRecords(current.events, next.events, row => eventKey(row)),
@@ -5755,6 +5891,51 @@ function phaseColor(phase: unknown): "success" | "warning" | "danger" | "informa
   if (/Pending|Drifted|Unknown/.test(text)) return "warning";
   if (/Error|Failed|Down|Unhealthy/.test(text)) return "danger";
   return "informative";
+}
+
+function normalizeGatewayStatus(value: unknown) {
+  const status = String(value ?? "").toLowerCase();
+  if (status === "ok" || status === "degraded" || status === "down" || status === "unknown") return status;
+  return "unknown";
+}
+
+function gatewayStatusColor(status: string): "success" | "warning" | "danger" | "subtle" {
+  switch (normalizeGatewayStatus(status)) {
+    case "ok":
+      return "success";
+    case "degraded":
+      return "warning";
+    case "down":
+      return "danger";
+    default:
+      return "subtle";
+  }
+}
+
+function gatewayStatusLabel(status: string) {
+  const normalized = normalizeGatewayStatus(status);
+  return normalized === "ok" ? "OK" : normalized.charAt(0).toUpperCase() + normalized.slice(1);
+}
+
+function gatewayBannerClass(styles: ReturnType<typeof useStyles>, status: string) {
+  switch (normalizeGatewayStatus(status)) {
+    case "ok":
+      return styles.gatewayBannerOk;
+    case "degraded":
+      return styles.gatewayBannerDegraded;
+    case "down":
+      return styles.gatewayBannerDown;
+    default:
+      return styles.gatewayBannerUnknown;
+  }
+}
+
+function formatGatewayWaiting(waiting: Record<string, string>) {
+  const parts = Object.keys(waiting)
+    .sort()
+    .map(key => `${key}=${waiting[key]}`)
+    .filter(Boolean);
+  return parts.length ? parts.join(" ") : "-";
 }
 
 function neutralPhase(phase: unknown) {

@@ -125,10 +125,59 @@ func TestHandlerServesReadOnlySummary(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
 	}
-	for _, want := range []string{`"phase": "Healthy"`, `"generation": 11`, `"HealthCheck"`, `"connections"`, `"dnsQueries"`, `"trafficFlows"`, `"firewallLogs"`, `"conntrackTuning"`, `"systemUsage"`, `"application": "tls"`, `"applyMode": "manual"`, `"tcpFlags": "SYN"`, `"tailscale"`, `"homert02"`, "example.com", `"resolvedHostname": "example.com"`, `"topic": "routerd.dhcp.lease.renewed"`, `"mac": "18:ec:e7:33:12:6c"`, `"ip": "172.18.0.150"`, `"hostname": "aiseg2"`} {
+	for _, want := range []string{`"phase": "Healthy"`, `"generation": 11`, `"gatewayHealth"`, `"HealthCheck"`, `"connections"`, `"dnsQueries"`, `"trafficFlows"`, `"firewallLogs"`, `"conntrackTuning"`, `"systemUsage"`, `"application": "tls"`, `"applyMode": "manual"`, `"tcpFlags": "SYN"`, `"tailscale"`, `"homert02"`, "example.com", `"resolvedHostname": "example.com"`, `"topic": "routerd.dhcp.lease.renewed"`, `"mac": "18:ec:e7:33:12:6c"`, `"ip": "172.18.0.150"`, `"hostname": "aiseg2"`} {
 		if !strings.Contains(rec.Body.String(), want) {
 			t.Fatalf("summary missing %q:\n%s", want, rec.Body.String())
 		}
+	}
+}
+
+func TestGatewayHealthAggregatesGatewayResources(t *testing.T) {
+	health := gatewayHealth([]routerstate.ObjectStatus{
+		{APIVersion: api.NetAPIVersion, Kind: "DNSResolver", Name: "lan-resolver", Status: map[string]any{"phase": "Applied", "health": "HealthOK", "listeners": 4}},
+		{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation", Name: "wan-pd", Status: map[string]any{"phase": "Pending", "reason": "NoPrefix", "waiting": []map[string]string{{"source": "wan", "reason": "NoReply"}}}},
+		{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel", Name: "ds-lite", Status: map[string]any{"phase": "Error", "reason": "AFTRResolveFailed"}},
+		{APIVersion: api.NetAPIVersion, Kind: "DNSResolver", Name: "missing"},
+		{APIVersion: api.NetAPIVersion, Kind: "HealthCheck", Name: "internet", Status: map[string]any{"phase": "Healthy"}},
+	})
+	if health.Overall != "down" {
+		t.Fatalf("overall = %q, want down: %+v", health.Overall, health)
+	}
+	statuses := map[string]string{}
+	for _, component := range health.Components {
+		statuses[component.Kind+"/"+component.Name] = component.Status
+	}
+	for name, want := range map[string]string{
+		"DNSResolver/lan-resolver":      "ok",
+		"DHCPv6PrefixDelegation/wan-pd": "degraded",
+		"DSLiteTunnel/ds-lite":          "down",
+		"DNSResolver/missing":           "unknown",
+	} {
+		if statuses[name] != want {
+			t.Fatalf("%s status = %q, want %q: %+v", name, statuses[name], want, health.Components)
+		}
+	}
+	if len(health.Components) != 4 {
+		t.Fatalf("components = %d, want 4: %+v", len(health.Components), health.Components)
+	}
+}
+
+func TestSummaryIncludesGatewayHealthJSON(t *testing.T) {
+	handler := New(Options{Store: fakeStore{resources: []routerstate.ObjectStatus{
+		{APIVersion: api.NetAPIVersion, Kind: "DNSResolver", Name: "lan-resolver", Status: map[string]any{"phase": "Applied", "health": "ok"}},
+	}}})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/summary?events=-1&connections=-1&dnsQueries=-1&trafficFlows=-1&firewallLogs=-1&vpn=0&dhcpLeases=0", nil)
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	var snapshot Snapshot
+	if err := json.Unmarshal(rec.Body.Bytes(), &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.GatewayHealth.Overall != "ok" || len(snapshot.GatewayHealth.Components) != 1 {
+		t.Fatalf("gatewayHealth = %+v", snapshot.GatewayHealth)
 	}
 }
 
