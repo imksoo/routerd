@@ -12,59 +12,71 @@ routerd ships frequently using the `vYYYYMMDD.HHmm` scheme. From those builds we
 
 | Item | Value |
 | --- | --- |
-| Version | **v20260526.1607** |
-| Status | Recommended stable release (supersedes v20260525.1631) |
-| Track record | Production-validated on a home router (homert02): DNS keeps serving through routerd restart/install (NG 0), `/api/v1/config` exposes 0 raw secrets, `gatewayHealth` overall=ok across 26 components, `routerctl doctor` rc=0 (pass=32 warn=4 fail=0 skip=1), and BGP 2/2 + 2-way ECMP preserved across binary install |
+| Version | **v20260526.2241** |
+| Status | Recommended stable release (supersedes v20260526.1607) |
+| Track record | Production-validated on a home router (homert02) across **two successive in-place upgrades** (1607 → 2152 → 2241): each routerd restart left `routerd-bgp` untouched (MainPID unchanged), BGP stayed 2/2 Established with uptime climbing through every upgrade (1h19m → 1h27m → 2h0m → 2h15m, never reset), 2-way ECMP via .38/.53 stayed in the kernel, `routerctl doctor dslite` finished at pass=12 warn=0, and the Web Console Gateway Health page recorded good=90 / bad=0 over 180s |
 | Binary | Statically linked (`CGO_ENABLED=0`), passes CI and the Release workflow |
 
-## Why v20260526.1607 is recommended
+## Why v20260526.2241 is recommended
 
-The recommendation is **operational maturity, not feature scope.**
-v20260526.1607 inherits the production-safe DNS and BGP upgrade behavior of
-the prior recommended build and adds four operator-facing contracts that have
-been validated on a real production home router (homert02):
+The recommendation is **operational maturity, not feature scope.** v20260526.2241
+inherits every production-safe property of v20260526.1607 (Web Console secret
+redaction, `gatewayHealth` aggregation, machine-readable `routerctl doctor`,
+`ManagementAccess` apply guard) and adds five contracts that have been observed
+in real production on homert02:
 
-- **Web Console no longer leaks secrets.** `/api/v1/config` and the
-  generation-config / diff endpoints redact WireGuard `privateKey` /
-  `preSharedKey`, Tailscale `authKey`, BGP/PPPoE/IPsec `password`,
-  WebConsole `initialPassword`, and bearer/token fields before serializing.
-  Marker values preserve key structure for the UI. Validated on homert02:
-  **0 sensitive-key detections** in the actual response.
-- **`gatewayHealth` aggregates the whole egress path.** `/api/v1/summary`
-  now unifies DNSResolver, DSLiteTunnel, DHCPv6PrefixDelegation,
-  EgressRoutePolicy, NAT44Rule, and HealthCheck. The Web Console banner
-  surfaces selected vs preferred egress path with a visible warning when
-  a fallback candidate is in use. Validated on homert02: **overall=ok,
-  26 components**.
-- **`routerctl doctor` is a stable machine-readable contract.** `-o json`
-  output is documented as a v1alpha1 contract (areas, status enum, summary
-  fields, exit code); non-zero exit on fail makes it scriptable. Validated
-  on homert02: **rc=0 (pass=32 warn=4 fail=0 skip=1)**.
-- **`ManagementAccess` declarative apply guard.** Apply preflight fails
-  (unless `--allow-mgmt-lockout`) when a declared management interface is
-  missing, when the firewall would drop SSH to it, or when WebConsole binds
-  to all addresses — the documented v1alpha1 way to prevent lockout, also
-  surfaced by `routerctl doctor mgmt`.
+- **BGP sessions survive routerd binary upgrades.** The BGP controller now
+  hydrates its in-memory applied-policy state on reconcile, so a routerd
+  restart no longer re-PUTs the unchanged import-policy assignment and resets
+  every BGP session. Validated on homert02 across **two consecutive routerd
+  restarts** (PID 3368318 → 3407972 → 3428160): BGP stayed 2/2 Established
+  the whole way, uptime climbed through every restart instead of resetting,
+  and 2-way ECMP via .38/.53 stayed in the kernel without re-installation.
+- **`routerctl doctor dslite` aligns with reality.** Doctor now treats
+  DSLiteTunnel `phase=Up` as healthy and recognizes EgressRoutePolicy
+  selection through `status.selectedSource = "DSLiteTunnel/<name>"` in
+  addition to the legacy `selectedCandidate` match. Production configurations
+  using aggregate candidate names (`dslite-pd-balanced` on homert02) no
+  longer drive WARNs while `gatewayHealth` reports `ok`. Validated: warn=4
+  → pass=12 warn=0.
+- **Gateway Health UI is a dedicated screen with stable rendering.** The
+  Web Console moves Gateway Health off the Overview into its own screen
+  (mirroring Connections/Clients) with full evidence (`selectedPath`,
+  `preferredPath`, `fallbackReason`, `failedProbes`, `lastTransition`).
+  Overview keeps a compact summary card. A thin-snapshot bug that briefly
+  flashed `Components 0 / Unknown` during partial refreshes is fixed:
+  `reconcileSummary` keeps the previous `gatewayHealth` when the incoming
+  snapshot has no components but the previous one did. Validated:
+  **good=90 / bad=0 over 180s, 26 components seen**.
+- **`install.sh` cannot silently no-op.** Earlier installers would exit 0
+  saying `routerd upgrade completed` even when launched from outside the
+  release tree (`cd /tmp/release && ./pkg/install.sh ...`): the cwd-relative
+  `bin/*` glob ran zero iterations and only `--with-ndpi-archive` payloads
+  landed. The script now refuses to proceed with `exit 2` and a clear
+  diagnostic when cwd has no `bin/routerd` payload, and a CI regression
+  smoke (`scripts/install-sh-cwd-smoke.sh`) reproduces both the
+  missing-payload and correct-cwd cases. Validated on homert02:
+  cwd-mismatch antipattern **fails fast rc=2**; correct cd-into-package-dir
+  pattern returns rc=0.
 
-**Carry-forward (from v20260525.1631 etc.):** the DNS resolver runs as its
-own long-lived service unit so routerd restart/upgrade does not interrupt
-DNS (homert02 validation: 0 DNS probe failures during `routerd.service`
-restart and during install). `install.sh` does not auto-restart
+**Carry-forward (from v20260526.1607 etc.):** Web Console `/api/v1/config`
+and generation endpoints redact WireGuard `privateKey` / `preSharedKey`,
+Tailscale `authKey`, BGP/PPPoE/IPsec `password`, WebConsole
+`initialPassword`, and bearer/token fields before serializing.
+`/api/v1/summary` aggregates DNSResolver, DSLiteTunnel,
+DHCPv6PrefixDelegation, EgressRoutePolicy, NAT44Rule, and HealthCheck into
+`gatewayHealth`. `routerctl doctor` is a v1alpha1 machine-readable
+contract (`-o json`, documented areas / status enum / summary fields,
+non-zero exit on fail). `ManagementAccess` apply preflight blocks lockout
+unless `--allow-mgmt-lockout`. The DNS resolver runs as its own
+long-lived service unit so routerd restart/upgrade does not interrupt
+DNS (0 probe failures during install). `install.sh` does not auto-restart
 `routerd-bgp` on upgrade so eBGP sessions and ECMP survive routerd binary
-updates (homert02 validation: 2/2 Established, 2-way ECMP, HTTP 200
-throughput across install). Complete BGP control plane (no FRR; #26 next-hop
-rewrite, #28 OpenRC live-ISO start). `routerctl ledger` maintenance
-(`integrity-check` / `vacuum` / `backup` / `prune-events`, with an audit
-event on each non-dry-run prune).
+updates. `routerctl ledger` maintenance (`integrity-check` / `vacuum` /
+`backup` / `prune-events`, with an audit event on each non-dry-run prune).
 
 ## Known observations (not release blockers)
 
-- **DS-Lite doctor may WARN while egress is healthy.** When AFTR AAAA
-  probing or tunnel-device observation is intermittently noisy, doctor's
-  `dslite` area can report WARN even though `gatewayHealth=ok` and real
-  egress (HTTP 200) succeeds. This is conservative diagnostic noise, not
-  a dataplane failure. Future tuning will align DS-Lite doctor severity
-  with `gatewayHealth` selected-path evidence.
 - **`routerd-bgp` may keep running with the old executable inode after
   `install.sh`.** This is intentional: `install.sh` does not restart
   `routerd-bgp` on upgrade so established BGP sessions and ECMP survive
@@ -78,6 +90,12 @@ event on each non-dry-run prune).
   [`examples/home-router-mgmt-protected.yaml`](https://github.com/imksoo/routerd/blob/main/examples/home-router-mgmt-protected.yaml)).
 
 :::warning Upgrading
+- **Always `cd` into the extracted release directory before running
+  `install.sh`.** Running it from a sibling directory (for example
+  `cd /tmp && sudo ./routerd-release-vYYYYMMDD.HHmm/install.sh ...`) will
+  now refuse to proceed with `exit 2`. This is intentional — earlier
+  versions silently no-op'd in that case and only installed
+  `--with-ndpi-archive` payloads.
 - **From v20260523.1542 or earlier:** the `disabled:` field was removed
   (use `enabled: false`) along with the no-op `--controller-chain*` /
   `--observe-interval` flags. Re-author affected config and host service

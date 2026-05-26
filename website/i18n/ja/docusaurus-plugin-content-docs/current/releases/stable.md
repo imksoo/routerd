@@ -12,54 +12,69 @@ routerd は `vYYYYMMDD.HHmm` 形式で頻繁にリリースしますが、その
 
 | 項目 | 内容 |
 | --- | --- |
-| バージョン | **v20260526.1607** |
-| 位置づけ | 推奨安定版（v20260525.1631 を置き換え） |
-| 稼働実績 | 本番ルーター（homert02）で検証済み: routerd 再起動・install 中も DNS は無瞬断（NG 0）、`/api/v1/config` の生 secrets 検出 0、`gatewayHealth` は 26 components で overall=ok、`routerctl doctor` は rc=0（pass=32 warn=4 fail=0 skip=1）、install 跨ぎで BGP 2/2 と 2-way ECMP を維持 |
+| バージョン | **v20260526.2241** |
+| 位置づけ | 推奨安定版（v20260526.1607 を置き換え） |
+| 稼働実績 | 本番ルーター（homert02）で **2 回連続の in-place アップグレード**（1607 → 2152 → 2241）を検証済み: routerd 再起動のたびに `routerd-bgp` は触られず（MainPID 不変）、BGP は 2/2 Established を維持、uptime は再起動ごとに途切れず伸び続け（1h19m → 1h27m → 2h0m → 2h15m）、2-way ECMP（.38/.53）も kernel に残ったまま、`routerctl doctor dslite` は pass=12 warn=0、Web Console Gateway Health 画面は 180s / 90 samples で good=90 / bad=0 |
 | バイナリ | 静的リンク（`CGO_ENABLED=0`）、CI と Release ワークフローを通過 |
 
-## v20260526.1607 を推奨する理由
+## v20260526.2241 を推奨する理由
 
-推奨の理由は**新機能の追加ではなく運用上の成熟**です。
-v20260526.1607 は前推奨版の本番安全な DNS / BGP アップグレード挙動をそのまま受け継ぎ、
-本番ルーター（homert02）で検証された 4 つの運用契約を加えています:
+推奨の理由は**新機能の追加ではなく運用上の成熟**です。v20260526.2241 は
+v20260526.1607 の本番安全特性（Web Console secrets redaction、`gatewayHealth`
+集約、機械可読 `routerctl doctor`、`ManagementAccess` apply ガード）をすべて
+受け継ぎ、本番ルーター（homert02）で観測された 5 つの運用契約を追加して
+います:
 
-- **Web Console が secrets を漏らさなくなりました。** `/api/v1/config` と
-  generation の config / diff エンドポイントは、シリアライズ前に
-  WireGuard `privateKey` / `preSharedKey`、Tailscale `authKey`、
-  BGP/PPPoE/IPsec `password`、WebConsole `initialPassword`、bearer/token 系を
-  redact します。キーは残しマーカに置換するため UI は壊れません。homert02
-  実トラフィック検証で **生 secrets 検出 0**。
-- **`gatewayHealth` が出口経路全体を集約します。** `/api/v1/summary` は
-  DNSResolver / DSLiteTunnel / DHCPv6PrefixDelegation に加えて
-  EgressRoutePolicy / NAT44Rule / HealthCheck も束ねます。Web Console バナーは
-  選択中 path と preferred の一致状態を表示し、fallback 候補使用中は警告を
-  目立たせます。homert02 検証で **overall=ok / 26 components**。
-- **`routerctl doctor` は機械可読な安定契約になりました。** `-o json` 出力は
-  v1alpha1 の運用者向け契約として明文化（area・status enum・summary・終了コード）。
-  fail で非0 終了するためスクリプトから扱えます。homert02 検証で
-  **rc=0（pass=32 warn=4 fail=0 skip=1）**。
-- **`ManagementAccess` による宣言的 apply ガード。** 管理 IF の欠落、firewall が
-  SSH を遮断する状況、WebConsole の全アドレス bind を、apply 前 preflight で
-  検出し（`--allow-mgmt-lockout` で上書き可）非 dry-run apply を中止します。
-  同じチェックは `routerctl doctor mgmt` でも実行できます。
+- **routerd 本体のバイナリ更新で BGP セッションが落ちなくなりました。** BGP
+  コントローラーが reconcile 入口で applied 済みポリシー状態を hydrate する
+  ようになり、routerd 再起動時に同一内容の import-policy 割り当てを再 PUT
+  しなくなりました。homert02 の **2 回連続の routerd 再起動**で検証済み
+  （PID 3368318 → 3407972 → 3428160）: BGP は終始 2/2 Established を維持、
+  uptime は再起動ごとに途切れず伸び続け、2-way ECMP（.38/.53）も再導入なしで
+  kernel に残りました。
+- **`routerctl doctor dslite` が実体と一致するようになりました。** Doctor は
+  DSLiteTunnel `phase=Up` を健全と判定し、EgressRoutePolicy の選択を
+  `status.selectedSource = "DSLiteTunnel/<name>"` 経由でも認識します（旧来の
+  `selectedCandidate` 名一致も併用）。homert02 のように `dslite-pd-balanced`
+  といった集約候補名を使う本番構成でも、`gatewayHealth=ok` の DSLiteTunnel
+  が WARN にならなくなりました。検証結果: warn=4 → pass=12 warn=0。
+- **Gateway Health UI が独立画面になり、表示が安定しました。** Web Console は
+  Gateway Health を Overview から独立画面に分離し（Connections / Clients と
+  同じ構成）、`selectedPath` / `preferredPath` / `fallbackReason` /
+  `failedProbes` / `lastTransition` を含む完全な evidence を表示します。
+  Overview には集約カードのみを残します。partial refresh 中に
+  `Components 0 / Unknown` と瞬時に表示される flap も解消しました。
+  `reconcileSummary` は空 components の薄い snapshot で前回値を上書き
+  しなくなりました。検証結果: **180s / 90 samples で good=90 / bad=0、
+  26 components 確認**。
+- **`install.sh` は silent no-op にならなくなりました。** これまでは
+  release tree の外から起動すると（`cd /tmp/release && ./pkg/install.sh ...`
+  など）cwd 相対の `bin/*` glob が 1 度も展開されず、`--with-ndpi-archive`
+  payload だけが反映されるのに exit 0 + `routerd upgrade completed` の成功
+  表示だけが出ていました。cwd に `bin/routerd` payload が無い場合は明示
+  メッセージとともに `exit 2` で即座に失敗するようになりました。CI には
+  両ケース（payload 欠落・正規 cwd）を再現する smoke
+  (`scripts/install-sh-cwd-smoke.sh`) を組み込んでいます。homert02 検証:
+  cwd-mismatch の antipattern は **rc=2 で即 fail**、正規の
+  cd-into-package-dir パターンは rc=0。
 
-**継承事項（v20260525.1631 等から）:** DNS リゾルバが独立長寿命サービスユニット
-として動き、routerd 再起動・アップグレードで DNS が中断しません（homert02 検証:
-`routerd.service` restart 中・install 中とも DNS probe NG 0）。`install.sh` は
-バイナリ更新時に `routerd-bgp` を自動再起動せず、eBGP セッション・ECMP を維持
-します（homert02 検証: 2/2 Established・2-way ECMP・HTTP 200 を install 跨ぎで
-維持）。完全な BGP 制御プレーン（FRR 不使用、#26 next-hop 書き換え、#28
-OpenRC live ISO 起動）。`routerctl ledger` 保守（`integrity-check` / `vacuum` /
-`backup` / `prune-events`、非 dry-run prune には監査イベントを発行）。
+**継承事項（v20260526.1607 等から）:** Web Console の `/api/v1/config` と
+generation エンドポイントは WireGuard `privateKey` / `preSharedKey`、
+Tailscale `authKey`、BGP/PPPoE/IPsec `password`、WebConsole
+`initialPassword`、bearer/token 系を redact します。`/api/v1/summary` は
+DNSResolver / DSLiteTunnel / DHCPv6PrefixDelegation / EgressRoutePolicy /
+NAT44Rule / HealthCheck を `gatewayHealth` に集約します。`routerctl doctor`
+は v1alpha1 の機械可読契約（`-o json`、明文化された area / status enum /
+summary、fail で非 0 終了）。`ManagementAccess` apply preflight は
+`--allow-mgmt-lockout` 無しでは lockout を防ぎます。DNS リゾルバは独立
+長寿命サービスユニットとして動き、routerd 再起動・アップグレードで DNS は
+中断しません。`install.sh` はバイナリ更新時に `routerd-bgp` を自動再起動
+せず、eBGP セッション・ECMP は routerd バイナリ更新をまたいで残ります。
+`routerctl ledger` 保守（`integrity-check` / `vacuum` / `backup` /
+`prune-events`、非 dry-run prune には監査イベントを発行）。
 
 ## 既知の観測（リリースを止めない事項）
 
-- **DS-Lite の doctor WARN は egress が正常でも出ることがある。** AFTR の AAAA
-  プローブまたは tunnel device 検出が間欠的に noisy なとき、doctor の `dslite`
-  area が WARN を返すことがあります（`gatewayHealth=ok`、実際の egress も
-  HTTP 200 で通る場合）。dataplane 障害ではなく保守的診断ノイズと扱います。
-  次の調整で DS-Lite doctor の severity を `gatewayHealth` の selected-path
-  証拠と整合させる予定です。
 - **`install.sh` 後に `routerd-bgp` が旧 inode のままで動く場合がある。** これは
   意図どおりです。`install.sh` は upgrade 時に `routerd-bgp` を自動再起動せず、
   確立済み BGP セッションと ECMP が routerd バイナリ更新をまたいで残ります。
@@ -72,6 +87,7 @@ OpenRC live ISO 起動）。`routerctl ledger` 保守（`integrity-check` / `vac
   参照）。
 
 :::warning アップグレード時の注意
+- **`install.sh` は必ず展開した release ディレクトリに `cd` してから実行してください。** 別ディレクトリから（例: `cd /tmp && sudo ./routerd-release-vYYYYMMDD.HHmm/install.sh ...`）起動すると、`exit 2` で実行を拒否するようになりました。これは意図したものです。以前は同じ呼び出しで silent no-op が発生し、`--with-ndpi-archive` の payload だけが反映されていました。
 - **v20260523.1542 以前から上げる場合:** `disabled:` フィールド（`enabled: false` を使用）と no-op の `--controller-chain*` / `--observe-interval` フラグが削除済みです。該当する設定とホストの service unit をアップグレード前に書き直してください。
 - **DNS リゾルバのサービスユニット化:** リゾルバは `routerd-dns-resolver@<name>.service` として動くようになりました。この方式への初回アップグレード時だけ「子プロセス → ユニット」の切り替えで一度だけ短い DNS 瞬断が出ます。以降は routerd の再起動・アップグレードで DNS は中断しません。
 :::
