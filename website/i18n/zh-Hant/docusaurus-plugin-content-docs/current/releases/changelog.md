@@ -11,6 +11,29 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 新增
+
+- `routerctl ledger prune-events` 非 dry-run 執行後會發出稽核事件
+  `routerd.ledger.events.pruned`（屬性包含 `cutoff`、`deletedRows`、
+  呼叫端 `uid`/`gid`），prune 自身可在 events 表中追蹤。
+
+### 變更
+
+- `/api/v1/summary` 的 `gatewayHealth` 現在還會彙總 `EgressRoutePolicy` /
+  `NAT44Rule` / `HealthCheck`。Web Console 的 Overview 橫幅顯示目前選擇
+  的 egress path 與 preferred 的一致狀態，啟用 fallback 候選時會明顯
+  警告。
+
+### 安全
+
+- Web Console 的 `/api/v1/config` 與 generation config/diff 端點在
+  序列化前會對 secrets 進行 redact（WireGuard `privateKey` /
+  `preSharedKey`、Tailscale `authKey`、BGP/PPPoE/IPsec `password`、
+  WebConsole `initialPassword`、bearer/token 欄位等）。鍵保留並以標記值
+  取代，不會影響 UI 結構。特權通道（control socket、`routerctl describe`）
+  不變。修復了管理 LAN 上的維運人員即使在唯讀模式下也可能透過 Web Console
+  看到原始 secrets 的問題。
+
 ## v20260526.1225
 
 ### 新增

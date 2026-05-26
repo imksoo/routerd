@@ -12,6 +12,31 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Added
+
+- `routerctl ledger prune-events` records a `routerd.ledger.events.pruned`
+  audit event on each non-dry-run prune (with `cutoff`, `deletedRows`, and
+  the invoking `uid`/`gid`), so the prune itself is auditable from the
+  events table.
+
+### Changed
+
+- `gatewayHealth` in `/api/v1/summary` now also aggregates
+  `EgressRoutePolicy`, `NAT44Rule`, and `HealthCheck`. The Web Console
+  Overview banner surfaces the selected vs preferred egress path and
+  visibly warns when a fallback candidate is in use.
+
+### Security
+
+- The Web Console `/api/v1/config` and generation-config / diff endpoints
+  now redact secrets before serializing — WireGuard `privateKey` /
+  `preSharedKey`, Tailscale `authKey`, BGP/PPPoE/IPsec `password`,
+  WebConsole `initialPassword`, bearer/token fields, and similar. Marker
+  values keep the keys present so the UI is unaffected. Privileged
+  channels (control socket, `routerctl describe`) are unchanged. Closes a
+  read-only Web Console exposure path where any operator reachable on the
+  management network could see raw secrets.
+
 ## v20260526.1225
 
 ### Added

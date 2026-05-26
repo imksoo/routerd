@@ -11,6 +11,31 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 追加
+
+- `routerctl ledger prune-events` の非 dry-run 実行時に監査イベント
+  `routerd.ledger.events.pruned` を発行するようになりました（属性として
+  `cutoff` / `deletedRows` / 実行 `uid`/`gid` を含む）。events テーブル
+  から prune 自体の実行履歴を確認できます。
+
+### 変更
+
+- `/api/v1/summary` の `gatewayHealth` が `EgressRoutePolicy` /
+  `NAT44Rule` / `HealthCheck` も集約するようになりました。Web Console の
+  Overview バナーに選択中 egress path と preferred との一致状態が表示され、
+  fallback 候補が使用されているときは目立つ警告になります。
+
+### セキュリティ
+
+- Web Console の `/api/v1/config` および generation の config/diff
+  エンドポイントは、シリアライズ前に secrets を redact するようになりました
+  （WireGuard `privateKey` / `preSharedKey`、Tailscale `authKey`、
+  BGP/PPPoE/IPsec `password`、WebConsole `initialPassword`、bearer/token
+  系フィールド等）。キーは残しマーカ値に置換するため、UI の構造は壊しません。
+  特権チャネル（control socket、`routerctl describe`）は変更ありません。
+  管理 LAN に到達可能な運用者が Web Console 経由（read-only でも）で生の
+  secrets を見られる経路を塞ぎます。
+
 ## v20260526.1225
 
 ### 追加
