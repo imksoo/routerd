@@ -587,11 +587,39 @@ func TestHandlerServesGenerationHistoryAndDiff(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
+	firstConfig := `kind: Router
+metadata:
+  name: old
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: PPPoESession
+      metadata:
+        name: wan
+      spec:
+        interface: wan0
+        username: user-old
+        password: generation-old-secret
+`
+	secondConfig := `kind: Router
+metadata:
+  name: new
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: PPPoESession
+      metadata:
+        name: wan
+      spec:
+        interface: wan0
+        username: user-new
+        password: generation-new-secret
+`
 	first, err := store.BeginGeneration("hash-a")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.RecordGenerationConfig(first, "kind: Router\nmetadata:\n  name: old\n"); err != nil {
+	if err := store.RecordGenerationConfig(first, firstConfig); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.FinishGeneration(first, "Healthy", nil); err != nil {
@@ -601,7 +629,7 @@ func TestHandlerServesGenerationHistoryAndDiff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.RecordGenerationConfig(second, "kind: Router\nmetadata:\n  name: new\n"); err != nil {
+	if err := store.RecordGenerationConfig(second, secondConfig); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.FinishGeneration(second, "Healthy", nil); err != nil {
@@ -619,11 +647,31 @@ func TestHandlerServesGenerationHistoryAndDiff(t *testing.T) {
 		}
 	}
 	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/generations/1/config", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	for _, notWant := range []string{"generation-old-secret"} {
+		if strings.Contains(rec.Body.String(), notWant) {
+			t.Fatalf("generation config leaked %q:\n%s", notWant, rec.Body.String())
+		}
+	}
+	for _, want := range []string{"password:", api.RedactedSecret, "interface: wan0", "username: user-old"} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Fatalf("generation config missing %q:\n%s", want, rec.Body.String())
+		}
+	}
+	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/generations/1/diff/2", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
 	}
-	for _, want := range []string{"--- generation-1.yaml", "+++ generation-2.yaml", "-  name: old", "+  name: new"} {
+	for _, notWant := range []string{"generation-old-secret", "generation-new-secret"} {
+		if strings.Contains(rec.Body.String(), notWant) {
+			t.Fatalf("generation diff leaked %q:\n%s", notWant, rec.Body.String())
+		}
+	}
+	for _, want := range []string{"--- generation-1.yaml", "+++ generation-2.yaml", "-    name: old", "+    name: new", api.RedactedSecret, "interface: wan0"} {
 		if !strings.Contains(rec.Body.String(), want) {
 			t.Fatalf("diff missing %q:\n%s", want, rec.Body.String())
 		}
@@ -1793,6 +1841,120 @@ func TestHandlerServesConfigReadOnly(t *testing.T) {
 	for _, want := range []string{path, "apiVersion: routerd.net/v1alpha1", "kind: Router"} {
 		if !strings.Contains(rec.Body.String(), want) {
 			t.Fatalf("config response missing %q:\n%s", want, rec.Body.String())
+		}
+	}
+}
+
+func TestHandlerRedactsConfigSecrets(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "router.yaml")
+	config := `apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: lab
+spec:
+  hostname: homert02
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: PPPoESession
+      metadata:
+        name: pppoe-wan
+      spec:
+        interface: wan0
+        username: isp-user
+        password: pppoe-secret-p@ss
+        passwordFile: /etc/routerd/pppoe.pass
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardInterface
+      metadata:
+        name: wg0
+      spec:
+        privateKey: wg-private-secret
+        listenPort: 51820
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardPeer
+      metadata:
+        name: peer-a
+      spec:
+        interface: wg0
+        publicKey: wg-public-key
+        preSharedKey: wg-peer-psk-secret
+        allowedIPs:
+          - 192.0.2.2/32
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: TailscaleNode
+      metadata:
+        name: ts
+      spec:
+        hostname: homert02
+        authKey: ts-auth-secret
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: BGPPeer
+      metadata:
+        name: upstream
+      spec:
+        routerRef: edge
+        peerASN: 64501
+        peers:
+          - 198.51.100.1
+        password: bgp-secret
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: WebConsole
+      metadata:
+        name: console
+      spec:
+        listen: unix:///run/routerd/webconsole.sock
+        initialPassword: console-secret
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4StaticAddress
+      metadata:
+        name: lan-ip
+      spec:
+        interface: lan0
+        address: 192.0.2.1/24
+`
+	if err := os.WriteFile(path, []byte(config), 0644); err != nil {
+		t.Fatal(err)
+	}
+	handler := New(Options{ConfigPath: path})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/config", nil)
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	var snapshot ConfigSnapshot
+	if err := json.Unmarshal(rec.Body.Bytes(), &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	for _, notWant := range []string{
+		"pppoe-secret-p@ss",
+		"/etc/routerd/pppoe.pass",
+		"wg-private-secret",
+		"wg-peer-psk-secret",
+		"ts-auth-secret",
+		"bgp-secret",
+		"console-secret",
+	} {
+		if strings.Contains(snapshot.Text, notWant) {
+			t.Fatalf("config leaked %q:\n%s", notWant, snapshot.Text)
+		}
+	}
+	for _, want := range []string{
+		"hostname: homert02",
+		"interface: wan0",
+		"interface: lan0",
+		"address: 192.0.2.1/24",
+		"publicKey: wg-public-key",
+		"password:",
+		"passwordFile:",
+		"privateKey:",
+		"preSharedKey:",
+		"authKey:",
+		"initialPassword:",
+		api.RedactedSecret,
+	} {
+		if !strings.Contains(snapshot.Text, want) {
+			t.Fatalf("config response missing %q:\n%s", want, snapshot.Text)
 		}
 	}
 }

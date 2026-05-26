@@ -1721,7 +1721,12 @@ func (h Handler) config(w http.ResponseWriter) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, ConfigSnapshot{Path: path, Text: string(data)})
+	redacted, err := api.RedactYAMLSecrets(string(data))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to redact config: "+err.Error())
+		return
+	}
+	writeJSON(w, ConfigSnapshot{Path: path, Text: redacted})
 }
 
 func (h Handler) generations(w http.ResponseWriter, r *http.Request) {
@@ -1771,6 +1776,11 @@ func (h Handler) generationConfig(w http.ResponseWriter, idText string) {
 		writeError(w, http.StatusConflict, "this generation has no stored YAML; diff is available for newly applied generations")
 		return
 	}
+	configYAML, err = api.RedactYAMLSecrets(configYAML)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to redact generation config: "+err.Error())
+		return
+	}
 	w.Header().Set("Content-Type", "application/yaml; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	_, _ = w.Write([]byte(configYAML))
@@ -1801,6 +1811,11 @@ func (h Handler) generationDiff(w http.ResponseWriter, r *http.Request, fromText
 		writeError(w, http.StatusConflict, fmt.Sprintf("generation %d has no stored YAML", from))
 		return
 	}
+	fromYAML, err = api.RedactYAMLSecrets(fromYAML)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to redact from generation config: "+err.Error())
+		return
+	}
 	toYAML, found, err := reader.GenerationConfig(to)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -1808,6 +1823,11 @@ func (h Handler) generationDiff(w http.ResponseWriter, r *http.Request, fromText
 	}
 	if !found {
 		writeError(w, http.StatusConflict, fmt.Sprintf("generation %d has no stored YAML", to))
+		return
+	}
+	toYAML, err = api.RedactYAMLSecrets(toYAML)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to redact to generation config: "+err.Error())
 		return
 	}
 	diff := unifiedDiff(fmt.Sprintf("generation-%d.yaml", from), fmt.Sprintf("generation-%d.yaml", to), fromYAML, toYAML)
