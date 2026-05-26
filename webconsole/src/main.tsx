@@ -5910,12 +5910,35 @@ async function fetchText(path: string): Promise<string> {
   return response.text();
 }
 
+function mergeGatewayHealth(
+  current: GatewayHealth | undefined,
+  next: GatewayHealth | undefined,
+): GatewayHealth | undefined {
+  if (next == null) return current;
+  // Plain `??` only falls back when `next` is null/undefined, so a thin
+  // payload like `{ overall: "unknown", components: [] }` would still
+  // overwrite the populated `current` and the Gateway Health page would
+  // flash "No gateway component status observed" until the next refresh
+  // landed. Keep `current` whenever the incoming snapshot has no
+  // components but the previous one did — server-side observations on
+  // homert02 (v20260526.2152) confirmed `/api/v1/summary` consistently
+  // returns 26 components, so a transient empty snapshot is almost
+  // always a partial/light refresh rather than a real "no gateways"
+  // state.
+  const nextComponents = next.components ?? [];
+  const currentComponents = current?.components ?? [];
+  if (nextComponents.length === 0 && currentComponents.length > 0) {
+    return current;
+  }
+  return next;
+}
+
 function reconcileSummary(current: Summary | null, next: Summary): Summary {
   if (!current) return next;
   return {
     ...next,
     controllers: reconcileRecords(current.controllers, next.controllers, row => row.name ?? ""),
-    gatewayHealth: next.gatewayHealth ?? current.gatewayHealth,
+    gatewayHealth: mergeGatewayHealth(current.gatewayHealth, next.gatewayHealth),
     resources: next.resources === undefined ? current.resources : reconcileRecords(current.resources, next.resources, row => `${row.apiVersion ?? ""}/${row.kind ?? ""}/${row.name ?? ""}`),
     interfaces: next.interfaces === undefined ? current.interfaces : reconcileRecords(current.interfaces, next.interfaces, row => row.ifname ?? row.name ?? ""),
     events: next.events === undefined ? current.events : reconcileRecords(current.events, next.events, row => eventKey(row)),
