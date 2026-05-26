@@ -178,19 +178,24 @@ func (r doctorRunner) doctorDSLite() []doctorCheck {
 	var checks []doctorCheck
 	for _, res := range tunnels {
 		status := objectStatus(r.store, res.APIVersion, res.Kind, res.Metadata.Name)
-		checks = append(checks, doctorResourceCheck("dslite", res, status, healthyPhases("Applied", "Active", "Ready")))
+		resourceCheck := doctorResourceCheck("dslite", res, status, healthyPhases("Applied", "Active", "Ready"))
+		checks = append(checks, resourceCheck)
 		spec, _ := res.DSLiteTunnelSpec()
 		aftr := firstNonEmpty(spec.AFTRFQDN, stringStatus(status, "aftrFQDN"), stringStatus(status, "aftrName"))
 		device := firstNonEmpty(spec.TunnelName, stringStatus(status, "device"), stringStatus(status, "tunnelName"))
+		selectedEvidence := ""
+		if resourceCheck.Status == doctorPass {
+			selectedEvidence = r.dsliteSelectedEvidence(res.Metadata.Name, device)
+		}
 		if r.opts.Host {
 			ctx, cancel := context.WithTimeout(context.Background(), r.opts.Timeout)
 			if aftr != "" {
-				checks = append(checks, doctorCommandStatus("dslite", runDiagnosticCommand(ctx, "dig AFTR "+aftr, "dig", aftr, "AAAA", "+time=2", "+tries=1"), doctorWarn, "check AFTR DNS and DNSResolver forwarding"))
+				checks = append(checks, doctorDSLiteCommandStatus(runDiagnosticCommand(ctx, "dig AFTR "+aftr, "dig", aftr, "AAAA", "+time=2", "+tries=1"), doctorWarn, "check AFTR DNS and DNSResolver forwarding", selectedEvidence))
 			} else {
 				checks = append(checks, doctorCheck{Area: "dslite", Name: "AFTR FQDN", Status: doctorSkip, Detail: "no AFTR FQDN in spec or status"})
 			}
 			if device != "" {
-				checks = append(checks, doctorCommandStatus("dslite", runDiagnosticCommand(ctx, "ip link show "+device, "ip", "link", "show", "dev", device), doctorFail, "check DSLiteTunnel rendering and tunnel creation"))
+				checks = append(checks, doctorDSLiteCommandStatus(runDiagnosticCommand(ctx, "ip link show "+device, "ip", "link", "show", "dev", device), doctorFail, "check DSLiteTunnel rendering and tunnel creation", selectedEvidence))
 			} else {
 				checks = append(checks, doctorCheck{Area: "dslite", Name: "tunnel device", Status: doctorSkip, Detail: "no tunnel device in spec or status"})
 			}
@@ -200,6 +205,79 @@ func (r doctorRunner) doctorDSLite() []doctorCheck {
 		}
 	}
 	return checks
+}
+
+func (r doctorRunner) dsliteSelectedEvidence(tunnelName, device string) string {
+	for _, policy := range selectResources(r.router.Spec.Resources, "EgressRoutePolicy", "") {
+		policyStatus := objectStatus(r.store, policy.APIVersion, policy.Kind, policy.Metadata.Name)
+		if !doctorStatusPass(policyStatus, healthyPhases("Applied", "Active", "Ready", "Healthy")) {
+			continue
+		}
+		selectedCandidate := stringStatus(policyStatus, "selectedCandidate")
+		if selectedCandidate == "" {
+			continue
+		}
+		selectedDevice := stringStatus(policyStatus, "selectedDevice")
+		spec, err := policy.EgressRoutePolicySpec()
+		if err != nil {
+			continue
+		}
+		candidate, ok := selectedEgressCandidate(spec.Candidates, selectedCandidate)
+		if !ok || !(egressCandidateUsesDSLite(candidate, tunnelName, device) || device != "" && selectedDevice == device) {
+			continue
+		}
+		detail := "selected via EgressRoutePolicy/" + policy.Metadata.Name + ", gatewayHealth-aligned"
+		if hc := firstNonEmpty(candidate.HealthCheck, selectedTargetHealthCheck(candidate)); hc != "" {
+			hcStatus := objectStatus(r.store, api.NetAPIVersion, "HealthCheck", hc)
+			if doctorStatusPass(hcStatus, healthyPhases("Healthy", "Applied", "Ready")) {
+				detail += ", HealthCheck/" + hc + " healthy"
+			}
+		}
+		return detail
+	}
+	return ""
+}
+
+func selectedEgressCandidate(candidates []api.EgressRoutePolicyCandidate, selected string) (api.EgressRoutePolicyCandidate, bool) {
+	for _, candidate := range candidates {
+		if candidate.Name == selected {
+			return candidate, true
+		}
+	}
+	return api.EgressRoutePolicyCandidate{}, false
+}
+
+func egressCandidateUsesDSLite(candidate api.EgressRoutePolicyCandidate, tunnelName, device string) bool {
+	if resourceRefMatches(candidate.Source, "DSLiteTunnel", tunnelName) {
+		return true
+	}
+	for _, value := range []string{candidate.Interface, candidate.Device, candidate.EffectiveInterface()} {
+		if value != "" && value == device {
+			return true
+		}
+	}
+	for _, target := range candidate.Targets {
+		for _, value := range []string{target.Interface, target.OutboundInterface, target.EffectiveInterface()} {
+			if value != "" && value == device {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func selectedTargetHealthCheck(candidate api.EgressRoutePolicyCandidate) string {
+	for _, target := range candidate.Targets {
+		if target.HealthCheck != "" {
+			return target.HealthCheck
+		}
+	}
+	return ""
+}
+
+func resourceRefMatches(ref, kind, name string) bool {
+	ref = strings.TrimSpace(ref)
+	return ref == name || ref == kind+"/"+name || strings.HasSuffix(ref, "/"+kind+"/"+name)
 }
 
 func (r doctorRunner) doctorDHCPv6PD() []doctorCheck {
@@ -447,6 +525,38 @@ func doctorRemedy(status map[string]any) string {
 		return "wait for or repair dependency " + waiting
 	}
 	return "inspect routerd status and logs for this resource"
+}
+
+func doctorStatusPass(status map[string]any, pass map[string]bool) bool {
+	return doctorNamedStatusCheck("", "", status, pass).Status == doctorPass
+}
+
+func doctorDSLiteCommandStatus(command diagnoseCommandCheck, failStatus, remedy, selectedEvidence string) doctorCheck {
+	check := doctorCommandStatus("dslite", command, failStatus, remedy)
+	if selectedEvidence == "" {
+		return check
+	}
+	if check.Status == doctorPass {
+		check.Detail = appendDoctorDetail(check.Detail, selectedEvidence)
+		return check
+	}
+	check.Status = doctorPass
+	check.Detail = appendDoctorDetail(selectedEvidence, "host observation ignored: "+firstNonEmpty(command.Error, oneLine(command.Output)))
+	check.Remedy = ""
+	return check
+}
+
+func appendDoctorDetail(base, detail string) string {
+	base = strings.TrimSpace(base)
+	detail = strings.TrimSpace(detail)
+	switch {
+	case base == "":
+		return detail
+	case detail == "":
+		return base
+	default:
+		return base + "; " + detail
+	}
 }
 
 func stringStatus(status map[string]any, key string) string {
