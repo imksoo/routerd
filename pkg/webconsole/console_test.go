@@ -1985,14 +1985,128 @@ func TestHandlerServesConfigReadOnly(t *testing.T) {
 	}
 }
 
-func TestHandlerRedactsConfigSecrets(t *testing.T) {
+func TestHandlerRedactsAllKnownConfigSecretsAcrossEndpoints(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "router.yaml")
-	config := `apiVersion: routerd.net/v1alpha1
+	config := redactionRegressionConfig("redaction-lab", "homert02")
+	if err := os.WriteFile(path, []byte(config), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "routerd.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	first, err := store.BeginGeneration("redaction-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordGenerationConfig(first, config); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.FinishGeneration(first, "Healthy", nil); err != nil {
+		t.Fatal(err)
+	}
+	secondConfig := redactionRegressionConfig("redaction-lab-next", "homert03")
+	second, err := store.BeginGeneration("redaction-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordGenerationConfig(second, secondConfig); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.FinishGeneration(second, "Healthy", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	handler := New(Options{ConfigPath: path, Store: store})
+	sentinels := redactionRegressionSentinels()
+	secretKeys := []string{
+		"password",
+		"passwordFile",
+		"privateKey",
+		"privateKeyFile",
+		"presharedKey",
+		"presharedKeyFile",
+		"authKey",
+		"authKeyEnv",
+		"authKeyFile",
+		"preSharedKey",
+		"passwordFrom",
+		"initialPassword",
+	}
+	publicValues := []string{
+		"hostname: homert02",
+		"interface: wan0",
+		"interface: lan0",
+		"address: 192.0.2.1/24",
+		"publicKey: wg-public-key",
+		"peerASN: 64501",
+		"port: 8443",
+	}
+
+	t.Run("current config JSON snapshot", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/config", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+		}
+		assertNoSentinels(t, rec.Body.String(), sentinels)
+		var snapshot ConfigSnapshot
+		if err := json.Unmarshal(rec.Body.Bytes(), &snapshot); err != nil {
+			t.Fatal(err)
+		}
+		assertRedactedConfigText(t, snapshot.Text, sentinels, secretKeys, publicValues)
+	})
+
+	t.Run("generation config YAML", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/generations/%d/config", first), nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+		}
+		assertRedactedConfigText(t, rec.Body.String(), sentinels, secretKeys, publicValues)
+	})
+
+	t.Run("generation diff text", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/generations/%d/diff/%d", first, second), nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+		}
+		body := rec.Body.String()
+		assertRedactedConfigText(t, body, sentinels, secretKeys, publicValues)
+		for _, want := range []string{"--- generation-1.yaml", "+++ generation-2.yaml", "-    name: redaction-lab", "+    name: redaction-lab-next", "+    hostname: homert03"} {
+			if !strings.Contains(body, want) {
+				t.Fatalf("diff missing %q:\n%s", want, body)
+			}
+		}
+	})
+
+	t.Run("generation diff JSON", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/generations/%d/diff/%d", first, second), nil)
+		req.Header.Set("Accept", "application/json")
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+		}
+		assertNoSentinels(t, rec.Body.String(), sentinels)
+		var diff GenerationDiff
+		if err := json.Unmarshal(rec.Body.Bytes(), &diff); err != nil {
+			t.Fatal(err)
+		}
+		assertRedactedConfigText(t, diff.Diff, sentinels, secretKeys, publicValues)
+	})
+}
+
+func redactionRegressionConfig(name, hostname string) string {
+	return fmt.Sprintf(`apiVersion: routerd.net/v1alpha1
 kind: Router
 metadata:
-  name: lab
+  name: %s
 spec:
-  hostname: homert02
+  hostname: %s
   resources:
     - apiVersion: net.routerd.net/v1alpha1
       kind: PPPoESession
@@ -2001,14 +2115,15 @@ spec:
       spec:
         interface: wan0
         username: isp-user
-        password: pppoe-secret-p@ss
-        passwordFile: /etc/routerd/pppoe.pass
+        password: REDACTION_SENTINEL_pppoe_password
+        passwordFile: REDACTION_SENTINEL_pppoe_passwordFile
     - apiVersion: net.routerd.net/v1alpha1
       kind: WireGuardInterface
       metadata:
         name: wg0
       spec:
-        privateKey: wg-private-secret
+        privateKey: REDACTION_SENTINEL_wireguard_privateKey
+        privateKeyFile: REDACTION_SENTINEL_wireguard_privateKeyFile
         listenPort: 51820
     - apiVersion: net.routerd.net/v1alpha1
       kind: WireGuardPeer
@@ -2017,7 +2132,8 @@ spec:
       spec:
         interface: wg0
         publicKey: wg-public-key
-        preSharedKey: wg-peer-psk-secret
+        presharedKey: REDACTION_SENTINEL_wireguard_peer_presharedKey
+        presharedKeyFile: REDACTION_SENTINEL_wireguard_peer_presharedKeyFile
         allowedIPs:
           - 192.0.2.2/32
     - apiVersion: net.routerd.net/v1alpha1
@@ -2025,8 +2141,20 @@ spec:
       metadata:
         name: ts
       spec:
-        hostname: homert02
-        authKey: ts-auth-secret
+        hostname: %s
+        authKey: REDACTION_SENTINEL_tailscale_authKey
+        authKeyEnv: REDACTION_SENTINEL_tailscale_authKeyEnv
+        authKeyFile: REDACTION_SENTINEL_tailscale_authKeyFile
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPsecConnection
+      metadata:
+        name: site-a
+      spec:
+        localAddress: 203.0.113.2
+        remoteAddress: 198.51.100.2
+        preSharedKey: REDACTION_SENTINEL_ipsec_preSharedKey
+        leftSubnet: 192.0.2.0/24
+        rightSubnet: 198.51.100.0/24
     - apiVersion: net.routerd.net/v1alpha1
       kind: BGPPeer
       metadata:
@@ -2036,14 +2164,27 @@ spec:
         peerASN: 64501
         peers:
           - 198.51.100.1
-        password: bgp-secret
+        password: REDACTION_SENTINEL_bgp_password
+        passwordFrom:
+          file: REDACTION_SENTINEL_bgp_passwordFrom_file
+          env: REDACTION_SENTINEL_bgp_passwordFrom_env
     - apiVersion: system.routerd.net/v1alpha1
       kind: WebConsole
       metadata:
         name: console
       spec:
-        listen: unix:///run/routerd/webconsole.sock
-        initialPassword: console-secret
+        listenAddress: 127.0.0.1
+        port: 8443
+        initialPassword: REDACTION_SENTINEL_webconsole_initialPassword
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: NixOSHost
+      metadata:
+        name: nix
+      spec:
+        hostname: %s
+        users:
+          - name: admin
+            initialPassword: REDACTION_SENTINEL_nixos_user_initialPassword
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4StaticAddress
       metadata:
@@ -2051,50 +2192,52 @@ spec:
       spec:
         interface: lan0
         address: 192.0.2.1/24
-`
-	if err := os.WriteFile(path, []byte(config), 0644); err != nil {
-		t.Fatal(err)
+`, name, hostname, hostname, hostname)
+}
+
+func redactionRegressionSentinels() []string {
+	return []string{
+		"REDACTION_SENTINEL_pppoe_password",
+		"REDACTION_SENTINEL_pppoe_passwordFile",
+		"REDACTION_SENTINEL_wireguard_privateKey",
+		"REDACTION_SENTINEL_wireguard_privateKeyFile",
+		"REDACTION_SENTINEL_wireguard_peer_presharedKey",
+		"REDACTION_SENTINEL_wireguard_peer_presharedKeyFile",
+		"REDACTION_SENTINEL_tailscale_authKey",
+		"REDACTION_SENTINEL_tailscale_authKeyEnv",
+		"REDACTION_SENTINEL_tailscale_authKeyFile",
+		"REDACTION_SENTINEL_ipsec_preSharedKey",
+		"REDACTION_SENTINEL_bgp_password",
+		"REDACTION_SENTINEL_bgp_passwordFrom_file",
+		"REDACTION_SENTINEL_bgp_passwordFrom_env",
+		"REDACTION_SENTINEL_webconsole_initialPassword",
+		"REDACTION_SENTINEL_nixos_user_initialPassword",
 	}
-	handler := New(Options{ConfigPath: path})
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/config", nil)
-	handler.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
-	}
-	var snapshot ConfigSnapshot
-	if err := json.Unmarshal(rec.Body.Bytes(), &snapshot); err != nil {
-		t.Fatal(err)
-	}
-	for _, notWant := range []string{
-		"pppoe-secret-p@ss",
-		"/etc/routerd/pppoe.pass",
-		"wg-private-secret",
-		"wg-peer-psk-secret",
-		"ts-auth-secret",
-		"bgp-secret",
-		"console-secret",
-	} {
-		if strings.Contains(snapshot.Text, notWant) {
-			t.Fatalf("config leaked %q:\n%s", notWant, snapshot.Text)
+}
+
+func assertRedactedConfigText(t *testing.T, text string, sentinels, secretKeys, publicValues []string) {
+	t.Helper()
+	assertNoSentinels(t, text, sentinels)
+	for _, key := range secretKeys {
+		if !strings.Contains(text, key+":") {
+			t.Fatalf("redacted config missing key %q:\n%s", key, text)
 		}
 	}
-	for _, want := range []string{
-		"hostname: homert02",
-		"interface: wan0",
-		"interface: lan0",
-		"address: 192.0.2.1/24",
-		"publicKey: wg-public-key",
-		"password:",
-		"passwordFile:",
-		"privateKey:",
-		"preSharedKey:",
-		"authKey:",
-		"initialPassword:",
-		api.RedactedSecret,
-	} {
-		if !strings.Contains(snapshot.Text, want) {
-			t.Fatalf("config response missing %q:\n%s", want, snapshot.Text)
+	if !strings.Contains(text, api.RedactedSecret) {
+		t.Fatalf("redacted config missing %q:\n%s", api.RedactedSecret, text)
+	}
+	for _, want := range publicValues {
+		if !strings.Contains(text, want) {
+			t.Fatalf("redacted config missing public value %q:\n%s", want, text)
+		}
+	}
+}
+
+func assertNoSentinels(t *testing.T, text string, sentinels []string) {
+	t.Helper()
+	for _, sentinel := range sentinels {
+		if strings.Contains(text, sentinel) {
+			t.Fatalf("response leaked %q:\n%s", sentinel, text)
 		}
 	}
 }
