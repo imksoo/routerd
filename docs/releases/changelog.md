@@ -16,18 +16,21 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ### Fixed
 
-- `install.sh` now resolves its own script directory and `cd`s there
-  before reading the release payload, and exits non-zero with a clear
-  diagnostic when `bin/routerd` is missing under that directory.
-  Previously, running the installer from outside its release tree (for
-  example `cd /tmp/routerd-release-vYYYYMMDD.HHmm && sudo
-  ./pkg/install.sh ...`) left cwd outside the payload, every `bin/*`
-  glob ran zero iterations, no standard routerd / routerctl binaries
-  were updated, and the script still exited 0 and printed `routerd
-  upgrade completed`. Only `--with-ndpi-archive` payloads ever landed.
-  This silent no-op is now impossible — a regression smoke
-  (`scripts/install-sh-cwd-smoke.sh`, wired into CI) reproduces both
-  the missing-payload and sibling-cwd cases.
+- `install.sh` remains cwd-relative for the release payload (so it
+  keeps working with the test harness in `tests/install`), but now
+  refuses to proceed when the current working directory does not
+  contain an executable `bin/routerd`. It exits non-zero with a clear
+  diagnostic instead of silently running zero `bin/*` iterations and
+  printing a successful upgrade message. Previously, running the
+  installer from outside its release tree — for example
+  `cd /tmp/routerd-release-vYYYYMMDD.HHmm && sudo ./pkg/install.sh ...`
+  — left cwd outside the payload, standard routerd / routerctl
+  binaries were not updated, and only `--with-ndpi-archive` payloads
+  ever landed, yet the script still exited 0 and printed `routerd
+  upgrade completed`. The installer now exits 2 unless run from inside
+  the extracted package directory, and a regression smoke
+  (`scripts/install-sh-cwd-smoke.sh`, wired into CI) covers both the
+  missing-payload and correct-cwd cases.
 - The Web Console no longer briefly renders Gateway Health as
   `Components 0 / Unknown / No gateway component status observed`
   during partial refreshes. `reconcileSummary` previously used

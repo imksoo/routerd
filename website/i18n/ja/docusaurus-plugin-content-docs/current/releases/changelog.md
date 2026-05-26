@@ -15,16 +15,19 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ### 修正
 
-- `install.sh` がスクリプト自身のディレクトリを解決して `cd` してから
-  リリース payload を読むようになり、`bin/routerd` が解決先に存在しない
-  場合は明示メッセージとともに非 0 終了するようになりました。これまでは
-  リリースツリーの外から（例: `cd /tmp/routerd-release-vYYYYMMDD.HHmm
-  && sudo ./pkg/install.sh ...`）実行すると cwd が payload 外になり、
-  `bin/*` の glob が 1 度も展開されず、標準 routerd / routerctl
-  バイナリは一切更新されないにも関わらず exit 0 + `routerd upgrade
-  completed` の成功表示だけが出ていました（`--with-ndpi-archive` の
-  payload だけが反映）。この silent no-op は不可能になりました。
-  欠落 payload / 別 cwd 起動の両ケースを再現する smoke
+- `install.sh` は引き続き release payload を cwd 相対で扱います
+  （`tests/install` の test harness との互換維持のため）が、現在の
+  作業ディレクトリに実行可能な `bin/routerd` が無い場合は実行を拒否
+  するようになりました。silent に `bin/*` の glob が 0 回展開され
+  「`routerd upgrade completed`」と成功表示するのを止め、明示メッセージ
+  とともに非 0 終了します。これまではリリースツリーの外から（例:
+  `cd /tmp/routerd-release-vYYYYMMDD.HHmm && sudo ./pkg/install.sh ...`）
+  実行すると cwd が payload 外になり、標準 routerd / routerctl
+  バイナリは一切更新されないにも関わらず exit 0 +
+  `routerd upgrade completed` の成功表示だけが出ていました
+  （`--with-ndpi-archive` の payload だけが反映）。今後は展開したパッケージ
+  ディレクトリ内から実行しない限り exit 2 で終了し、欠落 payload / 正規
+  cwd の両ケースを再現する regression smoke
   (`scripts/install-sh-cwd-smoke.sh`) を CI に組み込んでいます。
 - Web Console の Gateway Health 画面が partial refresh 中に一時的に
   `Components 0 / Unknown / No gateway component status observed`

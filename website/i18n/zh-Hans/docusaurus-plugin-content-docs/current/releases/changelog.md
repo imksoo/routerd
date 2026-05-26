@@ -15,15 +15,18 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ### 修复
 
-- `install.sh` 现在会先解析自身脚本目录并 `cd` 进去再读取 release
-  payload；如果该目录下没有 `bin/routerd`，则以明确的诊断信息非 0 退出。
-  此前从 release 目录之外执行（例如 `cd /tmp/routerd-release-vYYYYMMDD.HHmm
-  && sudo ./pkg/install.sh ...`）会让 cwd 指向 payload 之外，`bin/*`
-  通配符一次也不展开，标准 routerd / routerctl 二进制完全没有更新，
-  脚本却仍以 `routerd upgrade completed` 退出 0（只有 `--with-ndpi-archive`
-  的 payload 会被装上）。这种 silent no-op 已不可能再发生。新增了
-  smoke 测试 (`scripts/install-sh-cwd-smoke.sh`) 覆盖缺失 payload 与
-  sibling cwd 两种用法，并已接入 CI。
+- `install.sh` 仍以 cwd 相对方式定位 release payload（为兼容
+  `tests/install` 测试夹具），但现在若当前工作目录下没有可执行的
+  `bin/routerd`，会拒绝继续。它不再静默地让 `bin/*` 通配符展开 0 次后
+  以 `routerd upgrade completed` 的成功消息退出 0，而是以明确的诊断
+  信息非 0 退出。此前从 release 目录之外执行（例如
+  `cd /tmp/routerd-release-vYYYYMMDD.HHmm && sudo ./pkg/install.sh ...`）
+  会让 cwd 指向 payload 之外，标准 routerd / routerctl 二进制完全没有
+  更新，脚本却仍以 `routerd upgrade completed` 退出 0（只有
+  `--with-ndpi-archive` 的 payload 会被装上）。今后除非从解压后的
+  package 目录内启动，否则将以 exit 2 终止；CI 中已加入回归 smoke
+  (`scripts/install-sh-cwd-smoke.sh`) 覆盖缺失 payload 与正确 cwd 两种
+  用法。
 - Web Console 的 Gateway Health 画面在 partial refresh 中不再瞬时显示
   `Components 0 / Unknown / No gateway component status observed`。
   此前 `reconcileSummary` 使用 `next.gatewayHealth ?? current.gatewayHealth`，
