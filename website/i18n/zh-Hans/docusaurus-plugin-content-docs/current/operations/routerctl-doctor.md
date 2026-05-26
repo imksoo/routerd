@@ -40,7 +40,7 @@ routerctl doctor -o yaml
 | `nat` | `NAT44Rule` 的资源 status；`nft list table ip routerd_nat` 存在。 |
 | `firewall` | `FirewallZone` / `FirewallPolicy` 的 status；`nft list table inet routerd_filter` 存在且 input 链 `policy drop`（否则视为 permissive）。 |
 | `rollback` | 至少存在一个已保存世代，使 `routerctl rollback --to` 可用。 |
-| `disk` | `/var/lib/routerd` 与 `/run/routerd` 的容量。≥90% 或 <256 MiB 时 WARN，≥98% 或 <64 MiB 时 FAIL。 |
+| `disk` | `/var/lib/routerd` 与 `/run/routerd` 的容量。≥90% 或 `<256 MiB` 时 WARN，≥98% 或 `<64 MiB` 时 FAIL。 |
 | `mgmt` | 管理接口的存在性（从 `ManagementAccess` 或 `FirewallZone role=mgmt` 推断）；WebConsole 的 bind（`0.0.0.0` / `::` 为 WARN/FAIL）。 |
 
 每个检查返回 `pass`、`warn`、`fail`、`skip`（资源或信号不存在）之一。
