@@ -391,7 +391,7 @@ func reflectedSchema(value any) map[string]any {
 func apiComments() map[string]string {
 	apiCommentOnce.Do(func() {
 		reflector := jsonschema.Reflector{}
-		apiCommentErr = reflector.AddGoComments("routerd", "./pkg/api")
+		apiCommentErr = reflector.AddGoComments("github.com/imksoo/routerd", "./pkg/api")
 		apiCommentMap = reflector.CommentMap
 	})
 	if apiCommentErr != nil {
