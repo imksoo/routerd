@@ -581,6 +581,48 @@ discovery blocked. The FreeBSD pf renderer reports this resource as unsupported
 because pf does not provide the
 same MAC-based routed filtering model.
 
+## Management plane
+
+`ManagementAccess` declares the interfaces and admin source CIDRs that
+routerd must keep reachable so a non-dry-run `apply` cannot accidentally
+lock the operator out. When at least one `ManagementAccess` is present, the
+apply preflight runs the checks below and **fails the apply** unless
+`--allow-mgmt-lockout` is set. `validate`, `plan`, and `show` are not
+affected, and dry-run apply only reports the findings without blocking.
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: ManagementAccess
+metadata:
+  name: home-mgmt
+spec:
+  interfaces: [mgmt0]
+  allowSourceCIDRs:
+    - 192.168.100.0/24
+    - fd00:100::/64
+  requireWebConsoleBound: true  # default
+```
+
+Preflight checks:
+
+| Check | Failure condition |
+| --- | --- |
+| Interface exists | A declared `interfaces[]` member is not present as an `Interface` resource (the management interface is being removed or renamed). |
+| Firewall self-access | The firewall is enabled (at least one `FirewallZone` resource exists), but a declared management interface is not a member of a `FirewallZone` with role `mgmt` or `trust` — the input chain's `policy drop` would block SSH to the router. |
+| WebConsole binding | `WebConsole` is enabled and binds to `0.0.0.0` / `::`. With `requireWebConsoleBound: true` (default) this is a fail; otherwise a warn. |
+
+The same checks are surfaced by `routerctl doctor mgmt`, which never
+applies anything.
+
+`spec.allowSourceCIDRs` is informational today (recorded in status and
+shown by doctor) and is not yet enforced by the firewall guard.
+
+`--allow-mgmt-lockout` is an **emergency override**, intended for the case
+where you must apply a config that would otherwise be blocked and have a
+console-side recovery path lined up (e.g. migrating the management
+interface to a new VLAN with PVE console access ready). It is not a
+default-operations flag; routine apply should not need it.
+
 ## Renamed Kinds
 
 Phase 1.6 renamed DHCP resources.

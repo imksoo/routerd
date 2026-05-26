@@ -482,6 +482,40 @@ match 欄位以 OR 評估。`ipv4Reservation` 亦可用於在無法直接比對 
 `spec.isolation` 可表達典型訪客的意圖，例如允許網際網路、拒絕 LAN/mgmt、拒絕 mDNS/SSDP/NetBIOS discovery。
 FreeBSD pf 在 routed filter path 上不具備相同的 MAC 比對模型，因此此資源在 FreeBSD 上視為不支援。
 
+## 管理面（Management plane）
+
+`ManagementAccess` 宣告 routerd 必須保持可達的管理介面與管理來源 CIDR，
+避免非 dry-run 的 `apply` 把維運人員自己鎖在門外。當存在至少一個 `ManagementAccess` 時，
+apply 前的 preflight 會執行以下檢查，未指定 `--allow-mgmt-lockout` 時**會中止 apply**。
+`validate` / `plan` / `show` 不受影響；dry-run apply 只顯示 findings，不會中止。
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: ManagementAccess
+metadata:
+  name: home-mgmt
+spec:
+  interfaces: [mgmt0]
+  allowSourceCIDRs:
+    - 192.168.100.0/24
+    - fd00:100::/64
+  requireWebConsoleBound: true  # 預設
+```
+
+Preflight 檢查內容：
+
+| 檢查 | 失敗條件 |
+| --- | --- |
+| 介面存在 | `interfaces[]` 中宣告的 IF 在 `Interface` 資源中不存在（管理介面被刪除或改名）。 |
+| firewall self-access | 存在至少一個 `FirewallZone`（firewall 啟用），但宣告的管理 IF 未屬於 role `mgmt` / `trust` 的 `FirewallZone` — input 鏈的 `policy drop` 會阻擋對路由器自身的 SSH。 |
+| WebConsole 繫結 | `WebConsole` 啟用且繫結到 `0.0.0.0` / `::`。`requireWebConsoleBound: true`（預設）為 fail，false 為 warn。 |
+
+相同檢查也可在 `routerctl doctor mgmt` 中執行（不會 apply）。
+
+`spec.allowSourceCIDRs` 目前是**資訊性**欄位（用於 status 與 doctor 顯示），尚未由 firewall guard 強制執行。
+
+`--allow-mgmt-lockout` 是**緊急覆寫**旗標。例如將管理介面移到新 VLAN，須在備妥 PVE console 等復原路徑的情況下，刻意套用會被阻擋的設定時才使用。日常維運不需要它。
+
 ## 名稱變更重點
 
 Phase 1.6 中進行了以下名稱整理：

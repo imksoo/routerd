@@ -551,6 +551,41 @@ match field は OR として評価します。`ipv4Reservation` は、Ethernet s
 `spec.isolation` では、internet 許可、LAN/mgmt 拒否、mDNS/SSDP/NetBIOS discovery 拒否といった、典型的な guest の intent を表現できます。
 FreeBSD pf は同じ MAC ベースの routed filtering モデルを持たないため、このリソースは FreeBSD では未対応として扱います。
 
+## 管理面（Management plane）
+
+`ManagementAccess` は、非 dry-run の `apply` で運用者が自分自身を締め出すのを
+防ぐため、routerd が到達可能なまま保つべき管理インターフェースと管理元 CIDR を
+宣言します。`ManagementAccess` が 1 つでも存在すると、apply 前 preflight が以下を
+チェックし、`--allow-mgmt-lockout` 未指定なら **apply を中止**します。`validate` /
+`plan` / `show` は影響を受けず、dry-run apply は findings を表示するだけで中止しません。
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: ManagementAccess
+metadata:
+  name: home-mgmt
+spec:
+  interfaces: [mgmt0]
+  allowSourceCIDRs:
+    - 192.168.100.0/24
+    - fd00:100::/64
+  requireWebConsoleBound: true  # 既定値
+```
+
+preflight チェック内容:
+
+| チェック | 失敗条件 |
+| --- | --- |
+| インターフェース存在 | `interfaces[]` の宣言 IF が `Interface` リソースに無い（管理 IF が削除・改名される）。 |
+| firewall self-access | `FirewallZone` が 1 つでも存在（firewall 有効）なのに、宣言された管理 IF が role `mgmt` / `trust` の `FirewallZone` に属していない — input chain の `policy drop` が router 自身への SSH を落とす。 |
+| WebConsole の bind | `WebConsole` が有効で `0.0.0.0` / `::` に bind。`requireWebConsoleBound: true`（既定）で fail、false で warn。 |
+
+同じチェックは `routerctl doctor mgmt` でも実行できます（apply はしない）。
+
+`spec.allowSourceCIDRs` は現状**情報的**な扱いで（status と doctor 表示に使う）、firewall ガードによる強制はまだ行いません。
+
+`--allow-mgmt-lockout` は**緊急用の上書き**フラグです。管理 IF を新 VLAN に移すなど、ブロックされる構成を意図的に適用する場合（かつ PVE console 等の復旧手段が用意できている場合）に限り使います。通常運用では使いません。
+
 ## 名前変更の要点
 
 Phase 1.6 で、次のように名前を整理しました。
