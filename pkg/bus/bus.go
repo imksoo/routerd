@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/daemonapi"
 )
 
 type Event = daemonapi.DaemonEvent

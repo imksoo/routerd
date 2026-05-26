@@ -9,7 +9,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/api"
 )
 
 type netplanDocument struct {

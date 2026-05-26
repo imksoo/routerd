@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"routerd/pkg/controlapi"
+	"github.com/imksoo/routerd/pkg/controlapi"
 )
 
 func main() {

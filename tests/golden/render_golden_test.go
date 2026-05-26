@@ -12,10 +12,10 @@ import (
 	"strings"
 	"testing"
 
-	"routerd/pkg/api"
-	"routerd/pkg/config"
-	"routerd/pkg/netconfigbackend"
-	"routerd/pkg/render"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/config"
+	"github.com/imksoo/routerd/pkg/netconfigbackend"
+	"github.com/imksoo/routerd/pkg/render"
 )
 
 const updateEnv = "ROUTERD_UPDATE_GOLDEN"

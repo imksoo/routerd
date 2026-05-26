@@ -9,10 +9,10 @@ import (
 	"io"
 	"time"
 
-	"routerd/pkg/apply"
-	"routerd/pkg/config"
-	"routerd/pkg/eventlog"
-	"routerd/pkg/resource"
+	"github.com/imksoo/routerd/pkg/apply"
+	"github.com/imksoo/routerd/pkg/config"
+	"github.com/imksoo/routerd/pkg/eventlog"
+	"github.com/imksoo/routerd/pkg/resource"
 )
 
 func configCommand(args []string, stdout io.Writer, name string) (err error) {

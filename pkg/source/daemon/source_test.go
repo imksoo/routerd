@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/daemonapi"
 )
 
 type capturePublisher struct {

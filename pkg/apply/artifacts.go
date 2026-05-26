@@ -6,13 +6,13 @@ import (
 	"fmt"
 	"strings"
 
-	"routerd/pkg/api"
-	"routerd/pkg/hostdeps"
-	"routerd/pkg/platform"
-	"routerd/pkg/render"
-	"routerd/pkg/resource"
-	"routerd/pkg/servicemgr"
-	"routerd/pkg/sysctlprofile"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/hostdeps"
+	"github.com/imksoo/routerd/pkg/platform"
+	"github.com/imksoo/routerd/pkg/render"
+	"github.com/imksoo/routerd/pkg/resource"
+	"github.com/imksoo/routerd/pkg/servicemgr"
+	"github.com/imksoo/routerd/pkg/sysctlprofile"
 )
 
 func resourceArtifactIntents(res api.Resource, aliases map[string]string) []resource.Intent {

@@ -6,7 +6,7 @@ import (
 	"flag"
 	"fmt"
 
-	"routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/api"
 )
 
 type applyFlagValues struct {

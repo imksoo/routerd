@@ -8,8 +8,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"routerd/pkg/platform"
-	"routerd/pkg/resource"
+	"github.com/imksoo/routerd/pkg/platform"
+	"github.com/imksoo/routerd/pkg/resource"
 )
 
 type Operation string

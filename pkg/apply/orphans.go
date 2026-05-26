@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"strings"
 
-	"routerd/pkg/api"
-	"routerd/pkg/resource"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/resource"
 )
 
 type ipv4FwmarkRuleArtifact struct {

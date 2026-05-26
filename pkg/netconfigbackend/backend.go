@@ -7,9 +7,9 @@ import (
 	"net/netip"
 	"strings"
 
-	"routerd/pkg/api"
-	"routerd/pkg/platform"
-	"routerd/pkg/render"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/platform"
+	"github.com/imksoo/routerd/pkg/render"
 )
 
 type Address struct {

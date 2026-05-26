@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"strings"
 
-	"routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/api"
 )
 
 func NftablesNAT44(router *api.Router) ([]byte, error) {

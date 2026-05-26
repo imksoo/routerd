@@ -11,8 +11,8 @@ import (
 	"strconv"
 	"strings"
 
-	"routerd/pkg/api"
-	"routerd/pkg/hostdeps"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/hostdeps"
 )
 
 type FreeBSDConfig struct {

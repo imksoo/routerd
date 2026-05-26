@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"routerd/pkg/api"
-	"routerd/pkg/platform"
-	routerstate "routerd/pkg/state"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/platform"
+	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
 func Validate(router *api.Router) error {

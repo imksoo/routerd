@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/api"
 )
 
 func TestPFRenderFirewallAndNAT(t *testing.T) {

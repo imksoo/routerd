@@ -2,7 +2,7 @@
 
 package sysctlprofile
 
-import "routerd/pkg/api"
+import "github.com/imksoo/routerd/pkg/api"
 
 func ForwardingEntries(router *api.Router) []Entry {
 	if !NeedsForwarding(router) {

@@ -22,8 +22,8 @@ import (
 	gobgpserver "github.com/osrg/gobgp/v3/pkg/server"
 	"google.golang.org/protobuf/types/known/anypb"
 
-	"routerd/pkg/bgpdaemon"
-	"routerd/pkg/version"
+	"github.com/imksoo/routerd/pkg/bgpdaemon"
+	"github.com/imksoo/routerd/pkg/version"
 )
 
 const defaultSocketPath = "/run/routerd/bgp/gobgp.sock"

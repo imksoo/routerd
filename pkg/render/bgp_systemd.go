@@ -2,7 +2,7 @@
 
 package render
 
-import "routerd/pkg/api"
+import "github.com/imksoo/routerd/pkg/api"
 
 const BGPUnitName = "routerd-bgp.service"
 

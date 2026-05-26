@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"routerd/pkg/logstore"
-	routerotel "routerd/pkg/otel"
+	"github.com/imksoo/routerd/pkg/logstore"
+	routerotel "github.com/imksoo/routerd/pkg/otel"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"

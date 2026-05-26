@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/api"
 )
 
 func validateBGPRouterInstances(router *api.Router, vrfs map[string]bool) error {

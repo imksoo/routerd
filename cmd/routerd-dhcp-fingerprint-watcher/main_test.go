@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"routerd/pkg/logstore"
+	"github.com/imksoo/routerd/pkg/logstore"
 )
 
 func TestIngestDnsmasqLogDHCPAssociatesPendingFieldsWithMAC(t *testing.T) {

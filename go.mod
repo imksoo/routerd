@@ -1,4 +1,4 @@
-module routerd
+module github.com/imksoo/routerd
 
 go 1.25.0
 

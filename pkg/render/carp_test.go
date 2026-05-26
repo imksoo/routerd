@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/api"
 )
 
 func TestCARPConfigRendersFreeBSDIfconfigCommands(t *testing.T) {

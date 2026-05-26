@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/api"
 )
 
 func TestNftablesNAT44RuleSourceNATFields(t *testing.T) {

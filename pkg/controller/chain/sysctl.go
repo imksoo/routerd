@@ -12,12 +12,12 @@ import (
 	"strings"
 	"time"
 
-	"routerd/pkg/api"
-	"routerd/pkg/conntracktuning"
-	"routerd/pkg/daemonapi"
-	"routerd/pkg/hostdeps"
-	"routerd/pkg/logstore"
-	"routerd/pkg/sysctlprofile"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/conntracktuning"
+	"github.com/imksoo/routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/hostdeps"
+	"github.com/imksoo/routerd/pkg/logstore"
+	"github.com/imksoo/routerd/pkg/sysctlprofile"
 )
 
 type outputCommandFunc func(ctx context.Context, name string, args ...string) ([]byte, error)

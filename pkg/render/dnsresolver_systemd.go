@@ -5,8 +5,8 @@ package render
 import (
 	"strings"
 
-	"routerd/pkg/api"
-	"routerd/pkg/dnsresolver"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/dnsresolver"
 )
 
 func DNSResolverSystemdSpec(name string, spec api.DNSResolverSpec, binaryPath, configPath string) api.SystemdUnitSpec {

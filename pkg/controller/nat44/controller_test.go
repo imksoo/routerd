@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"routerd/pkg/api"
-	"routerd/pkg/bus"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/bus"
 )
 
 type testStore struct {

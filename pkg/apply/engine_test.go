@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"routerd/pkg/api"
-	"routerd/pkg/config"
-	"routerd/pkg/resource"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/config"
+	"github.com/imksoo/routerd/pkg/resource"
 )
 
 func TestPlanUsesNetplanForManagedInterfaceWhenAvailable(t *testing.T) {

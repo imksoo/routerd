@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"routerd/pkg/api"
-	"routerd/pkg/platform"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/platform"
 )
 
 func TestValidateBGPRouterPeerAndVirtualAddressIPv4(t *testing.T) {

@@ -14,8 +14,8 @@ import (
 
 	"github.com/miekg/dns"
 
-	"routerd/pkg/api"
-	"routerd/pkg/render"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/render"
 )
 
 type IPAddressSetController struct {

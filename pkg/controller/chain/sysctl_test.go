@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"routerd/pkg/api"
-	"routerd/pkg/daemonapi"
-	"routerd/pkg/logstore"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/logstore"
 )
 
 func TestSysctlControllerAppliesRuntimeValue(t *testing.T) {

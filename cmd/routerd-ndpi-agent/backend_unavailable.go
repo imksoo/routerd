@@ -7,7 +7,7 @@ package main
 import (
 	"context"
 
-	"routerd/pkg/dpi"
+	"github.com/imksoo/routerd/pkg/dpi"
 )
 
 func newBackend(options) ndpiBackend {

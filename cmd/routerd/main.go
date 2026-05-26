@@ -10,9 +10,9 @@ import (
 	"os"
 	"path/filepath"
 
-	routerotel "routerd/pkg/otel"
-	"routerd/pkg/platform"
-	routerversion "routerd/pkg/version"
+	routerotel "github.com/imksoo/routerd/pkg/otel"
+	"github.com/imksoo/routerd/pkg/platform"
+	routerversion "github.com/imksoo/routerd/pkg/version"
 )
 
 var version = routerversion.String()

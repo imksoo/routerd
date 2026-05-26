@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/api"
 )
 
 const (

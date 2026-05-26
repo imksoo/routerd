@@ -7,8 +7,8 @@ import (
 	"reflect"
 	"testing"
 
-	"routerd/pkg/api"
-	routerstate "routerd/pkg/state"
+	"github.com/imksoo/routerd/pkg/api"
+	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
 func TestIPv4RouteControllerInstallsBlackholeRouteInDryRun(t *testing.T) {

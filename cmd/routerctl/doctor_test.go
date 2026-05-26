@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"routerd/pkg/api"
-	routerstate "routerd/pkg/state"
+	"github.com/imksoo/routerd/pkg/api"
+	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
 func TestDoctorDNSPassNoHost(t *testing.T) {

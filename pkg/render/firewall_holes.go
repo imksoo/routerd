@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/api"
 )
 
 // InternalFirewallHoles returns the small service exceptions that routerd-owned

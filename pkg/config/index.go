@@ -7,8 +7,8 @@ import (
 	"net/netip"
 	"strconv"
 
-	"routerd/pkg/api"
-	"routerd/pkg/platform"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/platform"
 )
 
 type RouterIndex struct {

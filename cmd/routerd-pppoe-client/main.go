@@ -23,12 +23,12 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 
-	"routerd/pkg/api"
-	"routerd/pkg/daemonapi"
-	"routerd/pkg/eventfile"
-	routerotel "routerd/pkg/otel"
-	"routerd/pkg/platform"
-	"routerd/pkg/pppoeclient"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/eventfile"
+	routerotel "github.com/imksoo/routerd/pkg/otel"
+	"github.com/imksoo/routerd/pkg/platform"
+	"github.com/imksoo/routerd/pkg/pppoeclient"
 )
 
 const daemonKind = pppoeclient.DaemonKind

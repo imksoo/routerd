@@ -9,8 +9,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"routerd/pkg/api"
-	"routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/daemonapi"
 )
 
 func TestExporterPushesLokiEvent(t *testing.T) {

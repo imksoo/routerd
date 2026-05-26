@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"routerd/pkg/api"
-	"routerd/pkg/render"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/render"
 )
 
 func TestDeclarationsFromRouterCollectsAddressAndRouteShape(t *testing.T) {

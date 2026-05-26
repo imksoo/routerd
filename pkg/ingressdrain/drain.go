@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	routerstate "routerd/pkg/state"
+	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
 const keyPrefix = "ingressDrain."

@@ -26,10 +26,10 @@ import (
 	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/sys/unix"
 
-	"routerd/pkg/daemonapi"
-	"routerd/pkg/eventfile"
-	routerotel "routerd/pkg/otel"
-	"routerd/pkg/pdclient"
+	"github.com/imksoo/routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/eventfile"
+	routerotel "github.com/imksoo/routerd/pkg/otel"
+	"github.com/imksoo/routerd/pkg/pdclient"
 )
 
 const daemonKind = "routerd-dhcpv6-client"

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/api"
 )
 
 type Config struct {

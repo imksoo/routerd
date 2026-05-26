@@ -60,7 +60,7 @@ func parseCoverageMinimums(t *testing.T, text string) map[string]float64 {
 
 func parseGoCoverage(t *testing.T, text string) map[string]float64 {
 	t.Helper()
-	re := regexp.MustCompile(`ok\s+(routerd/pkg/(?:servicemgr|firewallbackend|netconfigbackend))\s+.*coverage:\s+([0-9.]+)%`)
+	re := regexp.MustCompile(`ok\s+(github\.com/imksoo/routerd/pkg/(?:servicemgr|firewallbackend|netconfigbackend))\s+.*coverage:\s+([0-9.]+)%`)
 	out := map[string]float64{}
 	for _, match := range re.FindAllSubmatch([]byte(text), -1) {
 		value, err := strconv.ParseFloat(string(match[2]), 64)

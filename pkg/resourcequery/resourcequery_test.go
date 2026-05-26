@@ -5,7 +5,7 @@ package resourcequery
 import (
 	"testing"
 
-	"routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/api"
 )
 
 type mapStore map[string]map[string]any

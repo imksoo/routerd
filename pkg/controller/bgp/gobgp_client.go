@@ -16,8 +16,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	"routerd/pkg/bgpdaemon"
-	"routerd/pkg/manageddaemon"
+	"github.com/imksoo/routerd/pkg/bgpdaemon"
+	"github.com/imksoo/routerd/pkg/manageddaemon"
 )
 
 type remoteGoBGPServer struct {

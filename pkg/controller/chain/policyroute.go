@@ -15,16 +15,16 @@ import (
 	"strings"
 	"time"
 
-	"routerd/pkg/api"
-	"routerd/pkg/apply"
-	"routerd/pkg/bus"
-	"routerd/pkg/daemonapi"
-	"routerd/pkg/egressroute"
-	"routerd/pkg/healthcheck"
-	"routerd/pkg/platform"
-	"routerd/pkg/render"
-	"routerd/pkg/resource"
-	"routerd/pkg/resourcequery"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/apply"
+	"github.com/imksoo/routerd/pkg/bus"
+	"github.com/imksoo/routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/egressroute"
+	"github.com/imksoo/routerd/pkg/healthcheck"
+	"github.com/imksoo/routerd/pkg/platform"
+	"github.com/imksoo/routerd/pkg/render"
+	"github.com/imksoo/routerd/pkg/resource"
+	"github.com/imksoo/routerd/pkg/resourcequery"
 )
 
 type IPv4PolicyRouteController struct {

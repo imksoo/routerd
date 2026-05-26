@@ -5,7 +5,7 @@ package dnsresolver
 import (
 	"testing"
 
-	"routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/api"
 )
 
 func TestValidateAcceptsDNSResolverSources(t *testing.T) {

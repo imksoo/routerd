@@ -17,8 +17,8 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"routerd/pkg/logstore"
-	routerotel "routerd/pkg/otel"
+	"github.com/imksoo/routerd/pkg/logstore"
+	routerotel "github.com/imksoo/routerd/pkg/otel"
 )
 
 const maxBPFDevices = 256

@@ -11,10 +11,10 @@ import (
 	"strings"
 	"time"
 
-	"routerd/pkg/api"
-	"routerd/pkg/dnsresolver"
-	"routerd/pkg/healthcheck"
-	"routerd/pkg/platform"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/dnsresolver"
+	"github.com/imksoo/routerd/pkg/healthcheck"
+	"github.com/imksoo/routerd/pkg/platform"
 )
 
 func validIAID(value string) bool {

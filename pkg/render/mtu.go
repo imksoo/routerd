@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"sort"
 
-	"routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/api"
 )
 
 type pathMTUPolicy struct {

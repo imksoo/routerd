@@ -6,9 +6,9 @@ import (
 	"sort"
 	"strings"
 
-	"routerd/pkg/api"
-	"routerd/pkg/platform"
-	"routerd/pkg/sysctlprofile"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/platform"
+	"github.com/imksoo/routerd/pkg/sysctlprofile"
 )
 
 type NetworkAdoptionResource struct {

@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"routerd/pkg/dpi"
+	"github.com/imksoo/routerd/pkg/dpi"
 )
 
 type fakeBackend struct {

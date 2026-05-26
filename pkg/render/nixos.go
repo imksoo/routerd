@@ -9,9 +9,9 @@ import (
 	"strconv"
 	"strings"
 
-	"routerd/pkg/api"
-	"routerd/pkg/hostdeps"
-	"routerd/pkg/sysctlprofile"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/hostdeps"
+	"github.com/imksoo/routerd/pkg/sysctlprofile"
 )
 
 type nixOSInterface struct {

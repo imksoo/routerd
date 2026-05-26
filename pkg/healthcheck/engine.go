@@ -19,10 +19,10 @@ import (
 	"golang.org/x/net/ipv4"
 	"golang.org/x/net/ipv6"
 
-	"routerd/pkg/api"
-	"routerd/pkg/bus"
-	"routerd/pkg/daemonapi"
-	"routerd/pkg/resourcequery"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/bus"
+	"github.com/imksoo/routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/resourcequery"
 )
 
 const (

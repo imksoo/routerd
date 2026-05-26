@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"routerd/pkg/api"
-	"routerd/pkg/bus"
-	"routerd/pkg/daemonapi"
-	"routerd/pkg/pppoeclient"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/bus"
+	"github.com/imksoo/routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/pppoeclient"
 )
 
 type mapStore map[string]map[string]any

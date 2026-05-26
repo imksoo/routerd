@@ -14,9 +14,9 @@ import (
 	"testing"
 	"time"
 
-	"routerd/pkg/api"
-	"routerd/pkg/ingressdrain"
-	routerstate "routerd/pkg/state"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/ingressdrain"
+	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
 type mapStore map[string]map[string]any

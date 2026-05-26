@@ -20,8 +20,8 @@ import (
 
 	"github.com/miekg/dns"
 
-	"routerd/pkg/api"
-	resolvercfg "routerd/pkg/dnsresolver"
+	"github.com/imksoo/routerd/pkg/api"
+	resolvercfg "github.com/imksoo/routerd/pkg/dnsresolver"
 )
 
 func TestSelftest(t *testing.T) {

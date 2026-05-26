@@ -16,11 +16,11 @@ import (
 	"syscall"
 	"time"
 
-	"routerd/pkg/api"
-	"routerd/pkg/logstore"
-	"routerd/pkg/platform"
-	"routerd/pkg/render"
-	routerstate "routerd/pkg/state"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/logstore"
+	"github.com/imksoo/routerd/pkg/platform"
+	"github.com/imksoo/routerd/pkg/render"
+	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
 func applyDnsmasqConfig(configPath, servicePath string, configData []byte) ([]string, error) {

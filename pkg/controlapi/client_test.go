@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"routerd/pkg/apply"
+	"github.com/imksoo/routerd/pkg/apply"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)

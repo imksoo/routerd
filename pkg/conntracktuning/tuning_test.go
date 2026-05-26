@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"routerd/pkg/logstore"
+	"github.com/imksoo/routerd/pkg/logstore"
 )
 
 func TestAnalyzeSuggestsShortTLSAndExtendsOrphanUDP(t *testing.T) {

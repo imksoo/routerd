@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/api"
 )
 
 func TestHealthCheckSystemdUnit(t *testing.T) {

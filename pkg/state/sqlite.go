@@ -18,7 +18,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/daemonapi"
 )
 
 const (

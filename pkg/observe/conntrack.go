@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"strings"
 
-	"routerd/internal/hostcmd"
-	"routerd/pkg/platform"
+	"github.com/imksoo/routerd/internal/hostcmd"
+	"github.com/imksoo/routerd/pkg/platform"
 )
 
 type ConnectionTable struct {

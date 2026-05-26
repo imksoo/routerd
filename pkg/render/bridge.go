@@ -5,7 +5,7 @@ package render
 import (
 	"sort"
 
-	"routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/api"
 )
 
 func linkAliases(router *api.Router) map[string]string {

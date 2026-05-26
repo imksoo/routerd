@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"routerd/pkg/dpi"
-	"routerd/pkg/logstore"
+	"github.com/imksoo/routerd/pkg/dpi"
+	"github.com/imksoo/routerd/pkg/logstore"
 )
 
 func TestSelftestCreatesDatabase(t *testing.T) {

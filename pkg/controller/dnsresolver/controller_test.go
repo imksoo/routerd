@@ -12,9 +12,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"routerd/pkg/api"
-	"routerd/pkg/daemonapi"
-	resolverruntime "routerd/pkg/dnsresolver"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/daemonapi"
+	resolverruntime "github.com/imksoo/routerd/pkg/dnsresolver"
 )
 
 type mapStore map[string]map[string]any

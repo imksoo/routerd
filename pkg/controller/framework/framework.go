@@ -9,10 +9,10 @@ import (
 	"sync"
 	"time"
 
-	"routerd/pkg/bus"
-	"routerd/pkg/daemonapi"
-	"routerd/pkg/lock"
-	routerotel "routerd/pkg/otel"
+	"github.com/imksoo/routerd/pkg/bus"
+	"github.com/imksoo/routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/lock"
+	routerotel "github.com/imksoo/routerd/pkg/otel"
 )
 
 type Controller interface {

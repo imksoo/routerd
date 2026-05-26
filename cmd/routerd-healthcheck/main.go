@@ -23,12 +23,12 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 
-	"routerd/pkg/api"
-	"routerd/pkg/daemonapi"
-	"routerd/pkg/eventfile"
-	"routerd/pkg/healthcheck"
-	routerotel "routerd/pkg/otel"
-	"routerd/pkg/platform"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/eventfile"
+	"github.com/imksoo/routerd/pkg/healthcheck"
+	routerotel "github.com/imksoo/routerd/pkg/otel"
+	"github.com/imksoo/routerd/pkg/platform"
 )
 
 const daemonKind = healthcheck.DaemonKind

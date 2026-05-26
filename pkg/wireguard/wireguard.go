@@ -17,9 +17,9 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 
-	"routerd/internal/hostcmd"
-	"routerd/pkg/api"
-	"routerd/pkg/platform"
+	"github.com/imksoo/routerd/internal/hostcmd"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/platform"
 )
 
 type CommandRunner func(ctx context.Context, name string, args ...string) ([]byte, error)

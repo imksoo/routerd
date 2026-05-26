@@ -5,9 +5,9 @@ package controlapi
 import (
 	"time"
 
-	"routerd/pkg/apply"
-	"routerd/pkg/logstore"
-	"routerd/pkg/observe"
+	"github.com/imksoo/routerd/pkg/apply"
+	"github.com/imksoo/routerd/pkg/logstore"
+	"github.com/imksoo/routerd/pkg/observe"
 )
 
 const APIVersion = "control.routerd.net/v1alpha1"

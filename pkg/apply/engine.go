@@ -12,11 +12,11 @@ import (
 	"strings"
 	"time"
 
-	"routerd/pkg/api"
-	"routerd/pkg/config"
-	"routerd/pkg/healthcheck"
-	"routerd/pkg/render"
-	"routerd/pkg/sysctlprofile"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/config"
+	"github.com/imksoo/routerd/pkg/healthcheck"
+	"github.com/imksoo/routerd/pkg/render"
+	"github.com/imksoo/routerd/pkg/sysctlprofile"
 )
 
 type Engine struct {

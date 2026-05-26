@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"routerd/pkg/api"
-	"routerd/pkg/daemonapi"
-	"routerd/pkg/hostdeps"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/hostdeps"
 )
 
 type KernelModuleController struct {

@@ -19,12 +19,12 @@ import (
 	"strings"
 	"time"
 
-	"routerd/pkg/api"
-	"routerd/pkg/bus"
-	"routerd/pkg/daemonapi"
-	"routerd/pkg/dnsresolver"
-	"routerd/pkg/platform"
-	"routerd/pkg/resourcequery"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/bus"
+	"github.com/imksoo/routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/dnsresolver"
+	"github.com/imksoo/routerd/pkg/platform"
+	"github.com/imksoo/routerd/pkg/resourcequery"
 )
 
 type Store interface {

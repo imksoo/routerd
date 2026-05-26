@@ -11,12 +11,12 @@ import (
 	"strings"
 	"time"
 
-	"routerd/pkg/api"
-	"routerd/pkg/bus"
-	"routerd/pkg/platform"
-	"routerd/pkg/render"
-	"routerd/pkg/resourcequery"
-	routerstate "routerd/pkg/state"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/bus"
+	"github.com/imksoo/routerd/pkg/platform"
+	"github.com/imksoo/routerd/pkg/render"
+	"github.com/imksoo/routerd/pkg/resourcequery"
+	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
 type Store interface {

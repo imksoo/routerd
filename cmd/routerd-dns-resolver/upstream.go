@@ -21,8 +21,8 @@ import (
 
 	"github.com/quic-go/quic-go"
 
-	"routerd/pkg/daemonapi"
-	resolvercfg "routerd/pkg/dnsresolver"
+	"github.com/imksoo/routerd/pkg/daemonapi"
+	resolvercfg "github.com/imksoo/routerd/pkg/dnsresolver"
 )
 
 const (

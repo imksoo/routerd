@@ -16,14 +16,14 @@ import (
 	"testing"
 	"time"
 
-	"routerd/pkg/api"
-	"routerd/pkg/apply"
-	"routerd/pkg/bus"
-	"routerd/pkg/controlapi"
-	"routerd/pkg/daemonapi"
-	"routerd/pkg/logstore"
-	"routerd/pkg/observe"
-	routerstate "routerd/pkg/state"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/apply"
+	"github.com/imksoo/routerd/pkg/bus"
+	"github.com/imksoo/routerd/pkg/controlapi"
+	"github.com/imksoo/routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/logstore"
+	"github.com/imksoo/routerd/pkg/observe"
+	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
 type fakeStore struct {

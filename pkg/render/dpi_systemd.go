@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/api"
 )
 
 const (

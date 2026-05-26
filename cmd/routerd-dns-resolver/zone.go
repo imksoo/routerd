@@ -11,8 +11,8 @@ import (
 
 	"github.com/miekg/dns"
 
-	"routerd/pkg/api"
-	"routerd/pkg/dnsresolver"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/dnsresolver"
 )
 
 type zoneTable struct {

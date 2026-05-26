@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"routerd/pkg/api"
-	"routerd/pkg/bus"
-	"routerd/pkg/logstore"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/bus"
+	"github.com/imksoo/routerd/pkg/logstore"
 )
 
 func TestLogRetentionControllerDeletesExpiredRows(t *testing.T) {

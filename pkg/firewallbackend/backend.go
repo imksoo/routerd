@@ -11,9 +11,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"routerd/pkg/api"
-	"routerd/pkg/platform"
-	"routerd/pkg/render"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/platform"
+	"github.com/imksoo/routerd/pkg/render"
 )
 
 type CommandFunc func(context.Context, string, ...string) ([]byte, error)

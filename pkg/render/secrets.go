@@ -8,7 +8,7 @@ import (
 	"os"
 	"strings"
 
-	"routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/api"
 )
 
 func secretValue(plain string, source api.SecretValueSourceSpec) (string, error) {

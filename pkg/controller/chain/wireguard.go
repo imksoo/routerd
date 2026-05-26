@@ -13,11 +13,11 @@ import (
 	"strings"
 	"time"
 
-	"routerd/pkg/api"
-	"routerd/pkg/bus"
-	"routerd/pkg/daemonapi"
-	routerstate "routerd/pkg/state"
-	"routerd/pkg/wireguard"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/bus"
+	"github.com/imksoo/routerd/pkg/daemonapi"
+	routerstate "github.com/imksoo/routerd/pkg/state"
+	"github.com/imksoo/routerd/pkg/wireguard"
 )
 
 type WireGuardController struct {

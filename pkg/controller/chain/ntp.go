@@ -9,10 +9,10 @@ import (
 	"net/netip"
 	"strings"
 
-	"routerd/pkg/api"
-	"routerd/pkg/daemonapi"
-	"routerd/pkg/platform"
-	"routerd/pkg/resourcequery"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/platform"
+	"github.com/imksoo/routerd/pkg/resourcequery"
 )
 
 type NTPClientController struct {

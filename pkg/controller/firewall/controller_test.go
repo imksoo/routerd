@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"routerd/pkg/api"
-	"routerd/pkg/bus"
-	"routerd/pkg/render"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/bus"
+	"github.com/imksoo/routerd/pkg/render"
 )
 
 func TestDeriveHolesIncludesDSLiteAndDHCPv6(t *testing.T) {

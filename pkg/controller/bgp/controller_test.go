@@ -15,9 +15,9 @@ import (
 	gobgpserver "github.com/osrg/gobgp/v3/pkg/server"
 	"google.golang.org/protobuf/types/known/anypb"
 
-	"routerd/pkg/api"
-	bgpstate "routerd/pkg/bgp"
-	"routerd/pkg/bgpdaemon"
+	"github.com/imksoo/routerd/pkg/api"
+	bgpstate "github.com/imksoo/routerd/pkg/bgp"
+	"github.com/imksoo/routerd/pkg/bgpdaemon"
 )
 
 type mapStore map[string]map[string]any

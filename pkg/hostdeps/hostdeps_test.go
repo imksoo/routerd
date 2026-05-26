@@ -6,8 +6,8 @@ import (
 	"reflect"
 	"testing"
 
-	"routerd/pkg/api"
-	"routerd/pkg/sysctlprofile"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/sysctlprofile"
 )
 
 func TestDerivedSysctlResourcesForRouterHost(t *testing.T) {

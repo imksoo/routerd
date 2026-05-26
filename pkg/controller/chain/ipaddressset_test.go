@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/api"
 )
 
 type fakeIPAddressSetResolver map[string][]ipAddressSetRecord

@@ -13,13 +13,13 @@ import (
 	"strings"
 	"time"
 
-	"routerd/pkg/api"
-	"routerd/pkg/daemonapi"
-	"routerd/pkg/healthcheck"
-	"routerd/pkg/hostdeps"
-	"routerd/pkg/platform"
-	"routerd/pkg/render"
-	"routerd/pkg/tailscale"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/healthcheck"
+	"github.com/imksoo/routerd/pkg/hostdeps"
+	"github.com/imksoo/routerd/pkg/platform"
+	"github.com/imksoo/routerd/pkg/render"
+	"github.com/imksoo/routerd/pkg/tailscale"
 )
 
 type NetworkAdoptionController struct {

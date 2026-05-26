@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/api"
 )
 
 type ingressNATRule struct {

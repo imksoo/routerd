@@ -21,12 +21,12 @@ import (
 	gobgpapi "github.com/osrg/gobgp/v3/api"
 	"google.golang.org/protobuf/types/known/anypb"
 
-	routerapi "routerd/pkg/api"
-	bgpstate "routerd/pkg/bgp"
-	"routerd/pkg/bgpdaemon"
-	"routerd/pkg/bus"
-	"routerd/pkg/daemonapi"
-	"routerd/pkg/manageddaemon"
+	routerapi "github.com/imksoo/routerd/pkg/api"
+	bgpstate "github.com/imksoo/routerd/pkg/bgp"
+	"github.com/imksoo/routerd/pkg/bgpdaemon"
+	"github.com/imksoo/routerd/pkg/bus"
+	"github.com/imksoo/routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/manageddaemon"
 )
 
 type Store interface {

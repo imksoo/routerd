@@ -8,8 +8,8 @@ import (
 	"net/netip"
 	"strings"
 
-	"routerd/pkg/api"
-	"routerd/pkg/platform"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/platform"
 )
 
 func validateDHCPResource(res api.Resource, targetOS platform.OS) (bool, error) {

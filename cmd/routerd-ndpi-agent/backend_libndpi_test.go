@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"routerd/pkg/dpi"
+	"github.com/imksoo/routerd/pkg/dpi"
 )
 
 func TestLibNDPIBackendClassifiesTLSPacket(t *testing.T) {

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/daemonapi"
 )
 
 func TestPublishSubscribeWithTopicGlobAndResource(t *testing.T) {

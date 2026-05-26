@@ -16,7 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/api"
 )
 
 type Level string

@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/api"
 )
 
 func PF(router *api.Router, holes []FirewallHole) ([]byte, error) {

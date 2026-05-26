@@ -11,9 +11,9 @@ import (
 	"sort"
 	"strings"
 
-	"routerd/pkg/config"
-	"routerd/pkg/netconfigbackend"
-	"routerd/pkg/render"
+	"github.com/imksoo/routerd/pkg/config"
+	"github.com/imksoo/routerd/pkg/netconfigbackend"
+	"github.com/imksoo/routerd/pkg/render"
 )
 
 func renderCommand(args []string, stdout io.Writer) error {

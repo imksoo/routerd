@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"io"
 
-	"routerd/pkg/config"
-	"routerd/pkg/eventlog"
+	"github.com/imksoo/routerd/pkg/config"
+	"github.com/imksoo/routerd/pkg/eventlog"
 )
 
 func validateCommand(args []string, stdout io.Writer) error {

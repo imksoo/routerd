@@ -21,11 +21,11 @@ import (
 
 	"github.com/miekg/dns"
 
-	"routerd/pkg/api"
-	"routerd/pkg/daemonapi"
-	"routerd/pkg/dnsresolver"
-	"routerd/pkg/eventfile"
-	"routerd/pkg/logstore"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/dnsresolver"
+	"github.com/imksoo/routerd/pkg/eventfile"
+	"github.com/imksoo/routerd/pkg/logstore"
 )
 
 type options struct {

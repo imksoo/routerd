@@ -11,8 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"routerd/pkg/api"
-	"routerd/pkg/render"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/render"
 )
 
 const (

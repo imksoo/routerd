@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	"routerd/pkg/api"
-	"routerd/pkg/healthcheck"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/healthcheck"
 )
 
 type HealthCheckSystemdOptions struct {

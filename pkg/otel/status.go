@@ -8,9 +8,9 @@ import (
 	"strings"
 	"sync"
 
-	"routerd/pkg/controlapi"
-	"routerd/pkg/logstore"
-	routerstate "routerd/pkg/state"
+	"github.com/imksoo/routerd/pkg/controlapi"
+	"github.com/imksoo/routerd/pkg/logstore"
+	routerstate "github.com/imksoo/routerd/pkg/state"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"

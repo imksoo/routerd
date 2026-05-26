@@ -21,17 +21,17 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"routerd/pkg/api"
-	"routerd/pkg/apply"
-	nixosapply "routerd/pkg/apply/nixos"
-	"routerd/pkg/config"
-	"routerd/pkg/eventlog"
-	"routerd/pkg/ha"
-	"routerd/pkg/inventory"
-	"routerd/pkg/netconfigbackend"
-	"routerd/pkg/platform"
-	"routerd/pkg/render"
-	routerstate "routerd/pkg/state"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/apply"
+	nixosapply "github.com/imksoo/routerd/pkg/apply/nixos"
+	"github.com/imksoo/routerd/pkg/config"
+	"github.com/imksoo/routerd/pkg/eventlog"
+	"github.com/imksoo/routerd/pkg/ha"
+	"github.com/imksoo/routerd/pkg/inventory"
+	"github.com/imksoo/routerd/pkg/netconfigbackend"
+	"github.com/imksoo/routerd/pkg/platform"
+	"github.com/imksoo/routerd/pkg/render"
+	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
 func applyCommand(args []string, stdout, stderr io.Writer) (err error) {

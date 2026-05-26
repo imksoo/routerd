@@ -7,7 +7,7 @@ import (
 	"net/netip"
 	"strings"
 
-	"routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/api"
 )
 
 func renderAddressFromResource(router *api.Router, source api.StatusValueSourceSpec) (string, error) {

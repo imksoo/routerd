@@ -23,12 +23,12 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 
-	"routerd/internal/hostcmd"
-	"routerd/pkg/conntracktuning"
-	"routerd/pkg/dpi"
-	"routerd/pkg/logstore"
-	"routerd/pkg/nflog"
-	routerotel "routerd/pkg/otel"
+	"github.com/imksoo/routerd/internal/hostcmd"
+	"github.com/imksoo/routerd/pkg/conntracktuning"
+	"github.com/imksoo/routerd/pkg/dpi"
+	"github.com/imksoo/routerd/pkg/logstore"
+	"github.com/imksoo/routerd/pkg/nflog"
+	routerotel "github.com/imksoo/routerd/pkg/otel"
 )
 
 func main() {

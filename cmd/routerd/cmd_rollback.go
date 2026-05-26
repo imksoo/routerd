@@ -12,9 +12,9 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"routerd/pkg/config"
-	"routerd/pkg/eventlog"
-	routerstate "routerd/pkg/state"
+	"github.com/imksoo/routerd/pkg/config"
+	"github.com/imksoo/routerd/pkg/eventlog"
+	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
 func rollbackCommand(args []string, stdout, _ io.Writer) (err error) {

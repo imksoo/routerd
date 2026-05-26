@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/api"
 )
 
 func freeBSDRCDScripts(router *api.Router) (map[string][]byte, error) {

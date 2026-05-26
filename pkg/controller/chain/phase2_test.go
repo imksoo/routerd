@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"routerd/pkg/api"
-	"routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/daemonapi"
 )
 
 func TestDHCPv6InformationWaitsForClientSocket(t *testing.T) {

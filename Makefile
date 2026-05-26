@@ -39,7 +39,7 @@ ifneq ($(GOARCH),)
 GO_BUILD_ENV += GOARCH=$(GOARCH)
 endif
 GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || true)
-GO_LDFLAGS ?= -s -w $(if $(GIT_COMMIT),-X routerd/pkg/version.Commit=$(GIT_COMMIT))
+GO_LDFLAGS ?= -s -w $(if $(GIT_COMMIT),-X github.com/imksoo/routerd/pkg/version.Commit=$(GIT_COMMIT))
 GO_BUILD_FLAGS ?= -trimpath -ldflags="$(GO_LDFLAGS)"
 EXAMPLE_CONFIGS ?= $(wildcard examples/*.yaml)
 PLAYWRIGHT_INSTALL_FLAGS ?= --with-deps

@@ -12,11 +12,11 @@ import (
 	"strings"
 	"time"
 
-	"routerd/pkg/api"
-	"routerd/pkg/apply"
-	"routerd/pkg/eventlog"
-	"routerd/pkg/render"
-	routerstate "routerd/pkg/state"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/apply"
+	"github.com/imksoo/routerd/pkg/eventlog"
+	"github.com/imksoo/routerd/pkg/render"
+	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
 func runFreeBSDApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logger *eventlog.Logger, engine *apply.Engine, result *apply.Result, generation int64, stateStore routerstate.Store) (*apply.Result, error) {

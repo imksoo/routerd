@@ -8,7 +8,7 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 
-	"routerd/pkg/version"
+	"github.com/imksoo/routerd/pkg/version"
 )
 
 func TestResourceAttributesMergeDefaultsEnvAndExplicit(t *testing.T) {

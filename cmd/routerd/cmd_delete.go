@@ -10,11 +10,11 @@ import (
 	"sort"
 	"strings"
 
-	"routerd/pkg/api"
-	"routerd/pkg/config"
-	"routerd/pkg/controlapi"
-	"routerd/pkg/resource"
-	routerstate "routerd/pkg/state"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/config"
+	"github.com/imksoo/routerd/pkg/controlapi"
+	"github.com/imksoo/routerd/pkg/resource"
+	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
 func deleteCommand(args []string, stdout io.Writer) error {

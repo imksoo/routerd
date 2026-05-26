@@ -20,8 +20,8 @@ import (
 	"sync"
 	"time"
 
-	"routerd/pkg/dpi"
-	"routerd/pkg/version"
+	"github.com/imksoo/routerd/pkg/dpi"
+	"github.com/imksoo/routerd/pkg/version"
 )
 
 type options struct {

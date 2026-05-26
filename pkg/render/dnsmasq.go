@@ -10,8 +10,8 @@ import (
 	"sort"
 	"strings"
 
-	"routerd/pkg/api"
-	"routerd/pkg/resourcequery"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/resourcequery"
 )
 
 type DnsmasqRuntime struct {

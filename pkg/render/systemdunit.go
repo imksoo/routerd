@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/api"
 )
 
 func SystemdUnit(name string, spec api.SystemdUnitSpec) []byte {

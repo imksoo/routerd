@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"routerd/pkg/apply"
-	"routerd/pkg/logstore"
+	"github.com/imksoo/routerd/pkg/apply"
+	"github.com/imksoo/routerd/pkg/logstore"
 )
 
 func TestStatusHandler(t *testing.T) {

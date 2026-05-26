@@ -12,9 +12,9 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"routerd/pkg/api"
-	"routerd/pkg/config"
-	routerstate "routerd/pkg/state"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/config"
+	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
 const (

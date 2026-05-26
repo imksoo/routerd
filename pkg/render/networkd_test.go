@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"routerd/pkg/api"
-	"routerd/pkg/config"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/config"
 )
 
 func TestNetworkdDropinsDoNotRenderLegacyDHCPv6PD(t *testing.T) {

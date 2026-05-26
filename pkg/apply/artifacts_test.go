@@ -5,9 +5,9 @@ package apply
 import (
 	"testing"
 
-	"routerd/pkg/api"
-	"routerd/pkg/platform"
-	"routerd/pkg/resource"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/platform"
+	"github.com/imksoo/routerd/pkg/resource"
 )
 
 func TestKnownResourceKindsDeclareArtifactIntents(t *testing.T) {

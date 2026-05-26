@@ -14,14 +14,14 @@ import (
 	"testing"
 	"time"
 
-	"routerd/pkg/api"
-	"routerd/pkg/apply"
-	"routerd/pkg/controlapi"
-	"routerd/pkg/daemonapi"
-	"routerd/pkg/ingressdrain"
-	"routerd/pkg/logstore"
-	"routerd/pkg/resource"
-	routerstate "routerd/pkg/state"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/apply"
+	"github.com/imksoo/routerd/pkg/controlapi"
+	"github.com/imksoo/routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/ingressdrain"
+	"github.com/imksoo/routerd/pkg/logstore"
+	"github.com/imksoo/routerd/pkg/resource"
+	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
 func TestShowIPv6PDTableIncludesSpecStateLedger(t *testing.T) {

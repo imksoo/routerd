@@ -18,11 +18,11 @@ import (
 	"sync"
 	"time"
 
-	"routerd/pkg/api"
-	"routerd/pkg/daemonapi"
-	"routerd/pkg/eventfile"
-	"routerd/pkg/platform"
-	"routerd/pkg/raobserver"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/eventfile"
+	"github.com/imksoo/routerd/pkg/platform"
+	"github.com/imksoo/routerd/pkg/raobserver"
 )
 
 const daemonKind = "routerd-ra-observer"

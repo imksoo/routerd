@@ -74,8 +74,8 @@ import (
 	"strings"
 	"time"
 
-	"routerd/pkg/api"
-	vrrpcontroller "routerd/pkg/controller/vrrp"
+	"github.com/imksoo/routerd/pkg/api"
+	vrrpcontroller "github.com/imksoo/routerd/pkg/controller/vrrp"
 )
 
 type store map[string]map[string]any

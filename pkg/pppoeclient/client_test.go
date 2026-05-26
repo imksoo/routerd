@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/api"
 )
 
 func TestLinuxPeerRendersSoftEtherCredential(t *testing.T) {

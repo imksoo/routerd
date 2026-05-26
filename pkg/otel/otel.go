@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"routerd/pkg/version"
+	"github.com/imksoo/routerd/pkg/version"
 
 	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/otel"

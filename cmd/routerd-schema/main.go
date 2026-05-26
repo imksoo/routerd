@@ -11,8 +11,8 @@ import (
 
 	"github.com/invopop/jsonschema"
 
-	"routerd/pkg/api"
-	"routerd/pkg/controlapi"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/controlapi"
 )
 
 var (

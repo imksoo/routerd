@@ -15,9 +15,9 @@ import (
 	"strings"
 	"time"
 
-	"routerd/pkg/api"
-	"routerd/pkg/pdclient"
-	routerstate "routerd/pkg/state"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/pdclient"
+	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
 type stateChange struct {

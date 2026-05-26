@@ -14,14 +14,14 @@ import (
 	"testing"
 	"time"
 
-	"routerd/pkg/api"
-	"routerd/pkg/apply"
-	"routerd/pkg/controlapi"
-	"routerd/pkg/eventlog"
-	"routerd/pkg/platform"
-	"routerd/pkg/render"
-	"routerd/pkg/resource"
-	routerstate "routerd/pkg/state"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/apply"
+	"github.com/imksoo/routerd/pkg/controlapi"
+	"github.com/imksoo/routerd/pkg/eventlog"
+	"github.com/imksoo/routerd/pkg/platform"
+	"github.com/imksoo/routerd/pkg/render"
+	"github.com/imksoo/routerd/pkg/resource"
+	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
 func TestApplyFilesReportsCreatedAndChanged(t *testing.T) {

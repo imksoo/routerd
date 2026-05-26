@@ -9,7 +9,7 @@ import (
 	"os"
 	"strings"
 
-	"routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/api"
 )
 
 func validateClusterNetworkRoute(resourceID string, spec api.ClusterNetworkRouteSpec) error {

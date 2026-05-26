@@ -56,7 +56,7 @@ import (
 	"sync"
 	"time"
 
-	"routerd/pkg/dpi"
+	"github.com/imksoo/routerd/pkg/dpi"
 )
 
 type libndpiBackend struct {

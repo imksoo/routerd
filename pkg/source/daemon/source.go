@@ -12,7 +12,7 @@ import (
 	"net/url"
 	"time"
 
-	"routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/daemonapi"
 )
 
 type Publisher interface {

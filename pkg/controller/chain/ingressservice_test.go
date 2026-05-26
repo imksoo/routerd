@@ -5,7 +5,7 @@ package chain
 import (
 	"testing"
 
-	"routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/api"
 )
 
 func TestIngressServiceDNSResolverEndpointPrefersLoopback(t *testing.T) {

@@ -12,11 +12,11 @@ import (
 	"os/exec"
 	"strings"
 
-	"routerd/pkg/api"
-	"routerd/pkg/apply"
-	"routerd/pkg/eventlog"
-	"routerd/pkg/render"
-	statuswriter "routerd/pkg/status"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/apply"
+	"github.com/imksoo/routerd/pkg/eventlog"
+	"github.com/imksoo/routerd/pkg/render"
+	statuswriter "github.com/imksoo/routerd/pkg/status"
 )
 
 func applyFiles(files []render.File) (changed, created []string, err error) {

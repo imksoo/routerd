@@ -10,9 +10,9 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"routerd/pkg/api"
-	routerstate "routerd/pkg/state"
-	"routerd/pkg/wireguard"
+	"github.com/imksoo/routerd/pkg/api"
+	routerstate "github.com/imksoo/routerd/pkg/state"
+	"github.com/imksoo/routerd/pkg/wireguard"
 )
 
 func mustWireGuardRouter(t *testing.T, body string) *api.Router {

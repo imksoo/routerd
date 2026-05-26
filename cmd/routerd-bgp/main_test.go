@@ -7,7 +7,7 @@ import (
 
 	gobgpapi "github.com/osrg/gobgp/v3/api"
 
-	"routerd/pkg/bgpdaemon"
+	"github.com/imksoo/routerd/pkg/bgpdaemon"
 )
 
 func TestAppliedPoliciesRestorePeerImportPolicyWithoutGlobalPolicy(t *testing.T) {

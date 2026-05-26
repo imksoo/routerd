@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"testing"
 
-	"routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/api"
 )
 
 func TestRenderDnsmasqLines(t *testing.T) {

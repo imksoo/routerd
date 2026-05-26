@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/api"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)

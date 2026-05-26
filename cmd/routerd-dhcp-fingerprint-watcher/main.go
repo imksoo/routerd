@@ -15,9 +15,9 @@ import (
 	"syscall"
 	"time"
 
-	"routerd/pkg/dhcpfingerprint"
-	"routerd/pkg/logstore"
-	"routerd/pkg/platform"
+	"github.com/imksoo/routerd/pkg/dhcpfingerprint"
+	"github.com/imksoo/routerd/pkg/logstore"
+	"github.com/imksoo/routerd/pkg/platform"
 )
 
 var commandContext = exec.CommandContext

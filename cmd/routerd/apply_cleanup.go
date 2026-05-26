@@ -14,11 +14,11 @@ import (
 	"strings"
 	"time"
 
-	"routerd/pkg/api"
-	"routerd/pkg/apply"
-	"routerd/pkg/controlapi"
-	"routerd/pkg/resource"
-	routerstate "routerd/pkg/state"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/apply"
+	"github.com/imksoo/routerd/pkg/controlapi"
+	"github.com/imksoo/routerd/pkg/resource"
+	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
 func filterRouterByWhen(router *api.Router, store routerstate.Store) *api.Router {

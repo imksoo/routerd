@@ -19,11 +19,11 @@ import (
 	"strings"
 	"time"
 
-	"routerd/pkg/api"
-	"routerd/pkg/platform"
-	"routerd/pkg/resource"
-	"routerd/pkg/resourcequery"
-	routerstate "routerd/pkg/state"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/platform"
+	"github.com/imksoo/routerd/pkg/resource"
+	"github.com/imksoo/routerd/pkg/resourcequery"
+	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
 func applyIPv6DelegatedAddressesWithState(router *api.Router, store routerstate.Store) ([]string, error) {
