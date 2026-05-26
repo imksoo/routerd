@@ -3,15 +3,18 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
 
+	"github.com/imksoo/routerd/pkg/daemonapi"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -173,6 +176,9 @@ func ledgerPruneEventsCommand(args []string, stdout io.Writer) error {
 	} else {
 		count, err = store.PruneEventsOlderThan(cutoff)
 		deleted = count
+		if err == nil {
+			err = recordPruneEventsAuditEvent(store, cutoff, deleted)
+		}
 	}
 	if closeErr := store.Close(); err == nil && closeErr != nil {
 		err = closeErr
@@ -181,6 +187,22 @@ func ledgerPruneEventsCommand(args []string, stdout io.Writer) error {
 		return err
 	}
 	return writeLedgerPruneEventsTable(stdout, ledgerPruneEventsReport{StateFile: *statePath, Cutoff: cutoff, Matched: count, Deleted: deleted, DryRun: *dryRun})
+}
+
+func recordPruneEventsAuditEvent(store *routerstate.SQLiteStore, cutoff time.Time, deleted int64) error {
+	event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerctl", Kind: "routerctl", Instance: "ledger"}, "routerd.ledger.events.pruned", daemonapi.SeverityInfo)
+	event.Reason = "EventsPruned"
+	event.Message = "ledger events pruned"
+	event.Attributes = map[string]string{
+		"cutoff":      cutoff.UTC().Format(time.RFC3339Nano),
+		"deletedRows": strconv.FormatInt(deleted, 10),
+		"dryRun":      "false",
+	}
+	if uid := os.Getuid(); uid >= 0 {
+		event.Attributes["invokedBy"] = fmt.Sprintf("uid=%d,gid=%d", uid, os.Getgid())
+	}
+	_, err := store.RecordBusEvent(context.Background(), event)
+	return err
 }
 
 type ledgerIntegrityReport struct {

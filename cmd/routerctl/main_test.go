@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"fmt"
 	"net"
 	"net/http"
 	"os"
@@ -240,6 +241,74 @@ func TestLedgerPruneEventsDryRunCommand(t *testing.T) {
 	events := store.Events("net.routerd.net/v1alpha1", "Interface", "wan", 10)
 	if len(events) != 2 {
 		t.Fatalf("dry-run pruned events: %+v", events)
+	}
+}
+
+func TestLedgerPruneEventsCommandRecordsAuditEvent(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "routerd.db")
+	store, err := routerstate.OpenSQLite(statePath)
+	if err != nil {
+		t.Fatalf("open state: %v", err)
+	}
+	if err := store.RecordEvent("net.routerd.net/v1alpha1", "Interface", "wan", "Normal", "OldEvent", "old event"); err != nil {
+		t.Fatalf("record old event: %v", err)
+	}
+	if err := store.RecordEvent("net.routerd.net/v1alpha1", "Interface", "wan", "Normal", "NewEvent", "new event"); err != nil {
+		t.Fatalf("record new event: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close state: %v", err)
+	}
+	db, err := sql.Open("sqlite", statePath)
+	if err != nil {
+		t.Fatalf("open sqlite directly: %v", err)
+	}
+	_, err = db.Exec(`UPDATE events SET created_at = ? WHERE reason = ?`, time.Now().Add(-48*time.Hour).UTC().Format(time.RFC3339Nano), "OldEvent")
+	if err != nil {
+		t.Fatalf("backdate old event: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close sqlite directly: %v", err)
+	}
+
+	var out bytes.Buffer
+	if err := run([]string{"ledger", "prune-events", "--state-file", statePath, "--older-than", "24h"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("ledger prune-events: %v", err)
+	}
+	got := out.String()
+	fields := strings.Join(strings.Fields(got), "|")
+	if !strings.Contains(got, "MATCHED") || !strings.Contains(fields, "|1|1|false") {
+		t.Fatalf("prune output = %s", got)
+	}
+	store, err = routerstate.OpenSQLite(statePath)
+	if err != nil {
+		t.Fatalf("reopen state: %v", err)
+	}
+	defer store.Close()
+	events, err := store.ListEvents(routerstate.EventQuery{Topic: "routerd.ledger.events.pruned", Limit: 10})
+	if err != nil {
+		t.Fatalf("list audit events: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("audit events = %+v, want 1", events)
+	}
+	event := events[0]
+	if event.Severity != "info" || event.Reason != "EventsPruned" {
+		t.Fatalf("audit event metadata = %+v", event)
+	}
+	if got := fmt.Sprint(event.Attributes["deletedRows"]); got != "1" {
+		t.Fatalf("deletedRows attribute = %q, want 1", got)
+	}
+	cutoff, ok := event.Attributes["cutoff"].(string)
+	if !ok || cutoff == "" {
+		t.Fatalf("cutoff attribute = %#v", event.Attributes["cutoff"])
+	}
+	if _, err := time.Parse(time.RFC3339Nano, cutoff); err != nil {
+		t.Fatalf("cutoff attribute is not RFC3339Nano: %q: %v", cutoff, err)
+	}
+	if got := fmt.Sprint(event.Attributes["dryRun"]); got != "false" {
+		t.Fatalf("dryRun attribute = %q, want false", got)
 	}
 }
 
