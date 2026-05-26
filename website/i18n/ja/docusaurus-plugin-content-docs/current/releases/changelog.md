@@ -13,61 +13,61 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## v20260526.2335
 
-v20260526.2241 のドキュメント / CI 整合 follow-up リリース。バイナリや
-ランタイムの挙動変更はありません。
+v20260526.2241 のドキュメントと CI の整合性を取り直した追従リリースです。
+バイナリやランタイムの挙動には変更はありません。
 
 ### 追加
 
-- `scripts/check-active-stable.sh` を追加し、homepage hero、ドキュメント
-  の intro tip、announcement bar、`docusaurus.config.ts` が
+- `scripts/check-active-stable.sh` を追加し、ホームページ冒頭のカード、
+  各ロケールの導入ヒント、告知バー、`docusaurus.config.ts` が
   `website/src/pages/index.tsx` の `STABLE_VERSION` 定数から乖離した
-  場合に CI で fail するようにしました。release changelog の歴史的
-  言及と、`stable.md` の supersedes / carry-forward 記述は意図的に
+  場合に CI を失敗させるようにしました。リリースの変更履歴に含まれる
+  歴史的な版表記と、`stable.md` の「置き換え」「承継」記述は意図的に
   対象外です。
 
 ### 修正
 
-- homepage の "Latest stable" カード、4 言語の intro tip、
-  `website/src/pages/index.tsx` の `STABLE_VERSION` がすべて
-  `v20260526.2241` を指すようにしました。announcement bar と
-  `stable.md` を promote したときに 5 箇所が `v20260526.1607` のまま
-  取り残されており、トップページと announcement bar が異なる安定版を
-  案内する不整合になっていました。
-- `v20260526.2241` の install.sh changelog エントリを、実際にリリース
-  された実装に合わせて書き直しました。`install.sh` は payload を
-  cwd 相対のまま扱い（`tests/install` の test harness と互換維持）、
-  `bin/routerd` が cwd に無い場合は明示メッセージとともに exit 2 で
-  停止します。以前の文言は `cd $script_dir` 設計を説明していましたが、
-  この設計は `tests/install` を壊したため commit `d9f8817c` で revert
-  されています。
+- ホームページの「Latest stable」カード、4 言語の導入ヒント、
+  `website/src/pages/index.tsx` の `STABLE_VERSION` をすべて
+  `v20260526.2241` に揃えました。告知バーと `stable.md` を昇格した
+  時に 5 箇所が `v20260526.1607` のまま取り残されており、トップ
+  ページと告知バーが異なる安定版を案内する不整合が出ていました。
+- `v20260526.2241` の `install.sh` に関する変更履歴エントリを、
+  実際に出荷した実装に合わせて書き直しました。`install.sh` は
+  ペイロードを cwd 相対のまま扱い（`tests/install` のテストハーネスとの
+  互換維持のため）、`bin/routerd` が cwd に無い場合は明示メッセージ
+  とともに終了コード 2 で停止します。以前の文言は `cd $script_dir`
+  設計を説明していましたが、この設計は `tests/install` を壊したため
+  コミット `d9f8817c` で取り消されています。
 
 ## v20260526.2241
 
 ### 修正
 
-- `install.sh` は引き続き release payload を cwd 相対で扱います
-  （`tests/install` の test harness との互換維持のため）が、現在の
+- `install.sh` は引き続きリリースペイロードを cwd 相対で扱います
+  （`tests/install` のテストハーネスとの互換維持のため）が、現在の
   作業ディレクトリに実行可能な `bin/routerd` が無い場合は実行を拒否
-  するようになりました。silent に `bin/*` の glob が 0 回展開され
-  「`routerd upgrade completed`」と成功表示するのを止め、明示メッセージ
-  とともに非 0 終了します。これまではリリースツリーの外から（例:
+  するようになりました。`bin/*` のグロブが一度も展開されないまま
+  「`routerd upgrade completed`」と成功表示するのをやめ、明示メッセージ
+  とともに非 0 で終了します。これまではリリースツリーの外から（例:
   `cd /tmp/routerd-release-vYYYYMMDD.HHmm && sudo ./pkg/install.sh ...`）
-  実行すると cwd が payload 外になり、標準 routerd / routerctl
-  バイナリは一切更新されないにも関わらず exit 0 +
+  実行すると cwd がペイロードの外になり、標準の routerd / routerctl
+  バイナリはまったく更新されないにもかかわらず終了コード 0 と
   `routerd upgrade completed` の成功表示だけが出ていました
-  （`--with-ndpi-archive` の payload だけが反映）。今後は展開したパッケージ
-  ディレクトリ内から実行しない限り exit 2 で終了し、欠落 payload / 正規
-  cwd の両ケースを再現する regression smoke
-  (`scripts/install-sh-cwd-smoke.sh`) を CI に組み込んでいます。
-- Web Console の Gateway Health 画面が partial refresh 中に一時的に
+  （`--with-ndpi-archive` のペイロードだけが反映されていました）。
+  今後は展開したパッケージディレクトリ内から実行しない限り終了コード 2
+  で終了します。欠落ペイロード / 正規 cwd の両ケースを再現する
+  リグレッションスモークテスト (`scripts/install-sh-cwd-smoke.sh`) を
+  CI に組み込んでいます。
+- Web Console の Gateway Health 画面が部分更新中に一時的に
   `Components 0 / Unknown / No gateway component status observed`
-  と表示される瞬きを修正しました。`reconcileSummary` はこれまで
+  と表示されるちらつきを修正しました。`reconcileSummary` はこれまで
   `next.gatewayHealth ?? current.gatewayHealth` を使っていましたが、
-  `??` は `null`/`undefined` でのみ fallback するため、
-  `{ overall: "unknown", components: [] }` のような薄い snapshot が
-  来ると populated な前回値を上書きしてしまっていました。空 components
-  を持つ snapshot が来た時に前回の `gatewayHealth` を保持するよう変更
-  しました。
+  `??` は `null` / `undefined` の場合だけ fallback するため、
+  `{ overall: "unknown", components: [] }` のような薄いスナップショット
+  が来ると値が入っていた前回値を上書きしてしまっていました。空の
+  コンポーネント配列を含むスナップショットが来た場合に、前回の
+  `gatewayHealth` を保持するよう変更しました。
 
 ## v20260526.2152
 
@@ -76,56 +76,58 @@ v20260526.2241 のドキュメント / CI 整合 follow-up リリース。バイ
 - `/api/v1/summary` の `gatewayHealth` がコンポーネントごとに
   `selectedPath` / `preferredPath` / `fallbackReason` / `failedProbes` /
   `lastTransition` の根拠フィールドを返すようになりました。Web Console
-  は選択中の egress path が preferred と異なる場合に、現在使用している
-  fallback ターゲットを強調表示します。
+  は選択中の出口経路が優先候補と異なる場合に、現在使用している
+  フォールバック対象を強調表示します。
 
 ### 変更
 
 - Web Console の Gateway Health を Overview から専用画面へ分離しました
-  （Connections / Clients と同じ構成）。Overview には、overall ステータス、
-  pass / warn / fail / skip 件数、詳細画面へのジャンプボタン、degraded /
-  down 時の worst コンポーネント名一行を含む集約カードのみを残します。
+  （Connections / Clients と同じ構成）。Overview には、全体ステータス、
+  pass / warn / fail / skip の件数、詳細画面へのジャンプボタン、
+  degraded / down 時の最も悪いコンポーネント名一行を含む集約カードのみを
+  残します。
 
 ### 修正
 
-- BGP コントローラーが reconcile 時に applied 済みポリシー状態を
-  hydrate するようになり、routerd を再起動しても同一内容の
-  import-policy 割り当てを再 PUT しなくなりました。これまで本番運用
-  （homert02）では routerd 再起動のたびに全 BGP ピアが drop / 再確立
-  し、hold-time 分の stale path を経て ECMP が回復していました。
-- `routerctl doctor dslite` が DSLiteTunnel `phase=Up` を健全とみなし、
-  EgressRoutePolicy の選択を `status.selectedSource = "DSLiteTunnel/<name>"`
-  経由でも認識するようになりました（旧来の `selectedCandidate` 名一致も
-  併用）。これまで `dslite-pd-balanced` のような集約候補名を使う本番
-  構成では、`gatewayHealth` が `ok` と判定している DSLiteTunnel が
-  毎回 WARN 表示になっていました。
+- BGP コントローラーが reconcile 時に適用済みのポリシー状態を再構築
+  するようになり、routerd を再起動しても同一内容のインポートポリシー
+  割り当てを再 PUT しなくなりました。これまで本番運用（homert02）では
+  routerd 再起動のたびにすべての BGP ピアが切断・再確立し、hold-time
+  分の古い経路を経て ECMP が回復していました。
+- `routerctl doctor dslite` が DSLiteTunnel の `phase=Up` を健全と
+  みなし、EgressRoutePolicy の選択を `status.selectedSource =
+  "DSLiteTunnel/<name>"` 経由でも認識するようになりました（旧来の
+  `selectedCandidate` 名一致も併用します）。これまで `dslite-pd-balanced`
+  のような集約候補名を使う本番構成では、`gatewayHealth` が `ok` と
+  判定している DSLiteTunnel が毎回 WARN 表示になっていました。
 
 ## v20260526.1607
 
 ### 追加
 
-- `routerctl ledger prune-events` の非 dry-run 実行時に監査イベント
+- `routerctl ledger prune-events` の非 dry-run 実行時に、監査イベント
   `routerd.ledger.events.pruned` を発行するようになりました（属性として
-  `cutoff` / `deletedRows` / 実行 `uid`/`gid` を含む）。events テーブル
-  から prune 自体の実行履歴を確認できます。
+  `cutoff` / `deletedRows` / 実行時の `uid` / `gid` を含みます）。
+  events テーブルから prune そのものの実行履歴を確認できます。
 
 ### 変更
 
 - `/api/v1/summary` の `gatewayHealth` が `EgressRoutePolicy` /
   `NAT44Rule` / `HealthCheck` も集約するようになりました。Web Console の
-  Overview バナーに選択中 egress path と preferred との一致状態が表示され、
-  fallback 候補が使用されているときは目立つ警告になります。
+  Overview バナーに、選択中の出口経路と優先候補との一致状態が表示され、
+  フォールバック候補を使用しているときは目立つ警告になります。
 
 ### セキュリティ
 
-- Web Console の `/api/v1/config` および generation の config/diff
-  エンドポイントは、シリアライズ前に secrets を redact するようになりました
-  （WireGuard `privateKey` / `preSharedKey`、Tailscale `authKey`、
-  BGP/PPPoE/IPsec `password`、WebConsole `initialPassword`、bearer/token
-  系フィールド等）。キーは残しマーカ値に置換するため、UI の構造は壊しません。
-  特権チャネル（control socket、`routerctl describe`）は変更ありません。
-  管理 LAN に到達可能な運用者が Web Console 経由（read-only でも）で生の
-  secrets を見られる経路を塞ぎます。
+- Web Console の `/api/v1/config` および generation の config / diff
+  エンドポイントが、シリアライズ前にシークレット値を伏字化するように
+  なりました（WireGuard の `privateKey` / `preSharedKey`、Tailscale の
+  `authKey`、BGP / PPPoE / IPsec の `password`、WebConsole の
+  `initialPassword`、bearer / token 系フィールドなど）。キーは残し
+  マーカ値に置換するため、UI の構造は壊れません。特権経路
+  （コントロールソケット、`routerctl describe`）は変更ありません。
+  管理 LAN に到達可能な運用者が Web Console 経由（読み取り専用でも）で
+  生のシークレット値を閲覧できてしまう経路を塞ぎます。
 
 ## v20260526.1225
 
