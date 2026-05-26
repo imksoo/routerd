@@ -104,6 +104,11 @@ type GatewayHealthComponent = {
   detail?: string;
   selectedCandidate?: string;
   preferredCandidate?: string;
+  selectedPath?: string;
+  preferredPath?: string;
+  fallbackReason?: string;
+  failedProbes?: string | string[];
+  lastTransition?: string;
   waiting?: Record<string, string>[];
 };
 
@@ -989,6 +994,17 @@ const useStyles = makeStyles({
     flexWrap: "wrap",
     gap: "6px",
     alignItems: "center",
+  },
+  gatewayFallbackNotice: {
+    display: "flex",
+    flexWrap: "wrap",
+    alignItems: "center",
+    gap: "4px",
+    padding: "6px 8px",
+    border: "1px solid #9a7118",
+    borderRadius: tokens.borderRadiusSmall,
+    backgroundColor: "rgba(255, 185, 0, 0.12)",
+    overflowWrap: "anywhere",
   },
   gatewayCandidateValue: {
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
@@ -3716,7 +3732,11 @@ function GatewayHealthRow({ component }: { component: GatewayHealthComponent }) 
   const showDiagnostic = status === "degraded" || status === "down";
   const selectedCandidate = component.selectedCandidate || gatewayDetailValue(component.detail, "selectedCandidate") || gatewayDetailValue(component.detail, "selected");
   const preferredCandidate = component.preferredCandidate || gatewayDetailValue(component.detail, "preferredCandidate") || gatewayDetailValue(component.detail, "preferred");
-  const fallback = Boolean(selectedCandidate && preferredCandidate && selectedCandidate !== preferredCandidate);
+  const selectedPath = component.selectedPath || selectedCandidate;
+  const preferredPath = component.preferredPath || preferredCandidate;
+  const fallback = Boolean(selectedPath && preferredPath && selectedPath !== preferredPath);
+  const fallbackReason = component.fallbackReason || (fallback ? component.reason : "");
+  const failedProbes = gatewayEvidenceList(component.failedProbes).slice(0, 5);
   return (
     <div className={styles.gatewayComponent}>
       <div className={styles.gatewayComponentHeader}>
@@ -3729,6 +3749,14 @@ function GatewayHealthRow({ component }: { component: GatewayHealthComponent }) 
         </div>
       </div>
       <div className={styles.gatewayDetail}>
+        {fallback ? (
+          <div className={styles.gatewayFallbackNotice}>
+            <Text size={200} weight="semibold">
+              → fallback: <code className={styles.code}>{selectedPath}</code> (preferred: <code className={styles.code}>{preferredPath}</code>)
+              {fallbackReason ? <> reason: <code className={styles.code}>{fallbackReason}</code></> : null}
+            </Text>
+          </div>
+        ) : null}
         {selectedCandidate || preferredCandidate ? (
           <div className={styles.gatewayCandidateBar}>
             {selectedCandidate ? (
@@ -3744,6 +3772,8 @@ function GatewayHealthRow({ component }: { component: GatewayHealthComponent }) 
           </div>
         ) : null}
         {component.detail ? <code className={styles.wrapCode}>{component.detail}</code> : null}
+        {failedProbes.length ? <Text size={200} className={styles.muted}>failed probes: {failedProbes.join(", ")}</Text> : null}
+        {component.lastTransition ? <Text size={200} className={styles.muted}>last transition: <RelativeTime value={component.lastTransition} /></Text> : null}
         {showDiagnostic ? <Text size={200} className={styles.muted}>reason: {component.reason || "-"}</Text> : null}
         {showDiagnostic ? <Text size={200} className={styles.muted}>waiting: {waiting.length ? waiting.map(formatGatewayWaiting).join("; ") : "-"}</Text> : null}
         {!showDiagnostic && !component.detail && !component.phase ? <Text size={200} className={styles.muted}>No observed status detail</Text> : null}
@@ -5968,6 +5998,12 @@ function gatewayBannerClass(styles: ReturnType<typeof useStyles>, status: string
 function gatewayDetailValue(detail: string | undefined, key: string) {
   const match = detail?.match(new RegExp(`(?:^|[\\s,])${key}=([^\\s,]+)`));
   return match?.[1] ?? "";
+}
+
+function gatewayEvidenceList(value: string | string[] | undefined) {
+  if (Array.isArray(value)) return value.filter(Boolean);
+  if (typeof value === "string") return value.split(",").map(item => item.trim()).filter(Boolean);
+  return [];
 }
 
 function formatGatewayWaiting(waiting: Record<string, string>) {

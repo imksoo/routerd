@@ -140,6 +140,11 @@ type GatewayHealthComponent struct {
 	Detail             string              `json:"detail,omitempty"`
 	SelectedCandidate  string              `json:"selectedCandidate,omitempty"`
 	PreferredCandidate string              `json:"preferredCandidate,omitempty"`
+	SelectedPath       string              `json:"selectedPath,omitempty"`
+	PreferredPath      string              `json:"preferredPath,omitempty"`
+	FallbackReason     string              `json:"fallbackReason,omitempty"`
+	FailedProbes       []string            `json:"failedProbes,omitempty"`
+	LastTransition     string              `json:"lastTransition,omitempty"`
 	Waiting            []map[string]string `json:"waiting,omitempty"`
 }
 
@@ -599,7 +604,13 @@ func gatewayHealth(resources []routerstate.ObjectStatus) GatewayHealth {
 			Detail:             gatewayComponentDetail(resource.Kind, resource.Status),
 			SelectedCandidate:  statusText(resource.Status, "selectedCandidate"),
 			PreferredCandidate: gatewayPreferredCandidate(resource.Status),
+			FailedProbes:       gatewayFailedProbes(resource.Kind, resource.Status),
+			LastTransition:     gatewayLastTransition(resource.Status),
 			Waiting:            gatewayWaiting(resource.Status["waiting"]),
+		}
+		component.SelectedPath, component.PreferredPath = gatewayEvidencePaths(resource.Kind, resource.Status)
+		if component.SelectedPath != "" && component.PreferredPath != "" && component.SelectedPath != component.PreferredPath {
+			component.FallbackReason = component.Reason
 		}
 		health.Components = append(health.Components, component)
 	}
@@ -810,6 +821,87 @@ func gatewayPreferredCandidate(status map[string]any) string {
 		}
 	}
 	return best.name
+}
+
+func gatewayEvidencePaths(kind string, status map[string]any) (string, string) {
+	if kind != "EgressRoutePolicy" {
+		return "", ""
+	}
+	return statusText(status, "selectedCandidate"), gatewayPreferredCandidate(status)
+}
+
+func gatewayFailedProbes(kind string, status map[string]any) []string {
+	if kind != "HealthCheck" {
+		return nil
+	}
+	var probes []string
+	for _, key := range []string{"failedProbes", "recentFailedProbes", "failedProbeNames"} {
+		probes = appendGatewayProbeNames(probes, status[key])
+	}
+	for _, probe := range statusList(status["probes"]) {
+		result := strings.ToLower(firstNonEmpty(statusAnyText(probe["result"]), statusAnyText(probe["status"]), statusAnyText(probe["phase"]), statusAnyText(probe["health"])))
+		if !gatewayDownStatus(result) {
+			continue
+		}
+		probes = appendGatewayProbeNames(probes, firstNonEmpty(statusAnyText(probe["name"]), statusAnyText(probe["target"]), statusAnyText(probe["address"])))
+	}
+	if len(probes) > 5 {
+		probes = probes[:5]
+	}
+	return probes
+}
+
+func appendGatewayProbeNames(out []string, value any) []string {
+	switch typed := value.(type) {
+	case []string:
+		for _, item := range typed {
+			out = appendUnique(out, item)
+		}
+	case []any:
+		for _, item := range typed {
+			out = appendGatewayProbeNames(out, item)
+		}
+	case string:
+		for _, item := range strings.Split(typed, ",") {
+			out = appendUnique(out, item)
+		}
+	default:
+		if text := statusAnyText(value); text != "" {
+			out = appendUnique(out, text)
+		}
+	}
+	return out
+}
+
+func gatewayLastTransition(status map[string]any) string {
+	for _, key := range []string{"lastTransitionAt", "updatedAt"} {
+		if text := statusTimestampText(status[key]); text != "" {
+			return text
+		}
+	}
+	return ""
+}
+
+func statusTimestampText(value any) string {
+	switch typed := value.(type) {
+	case time.Time:
+		if typed.IsZero() {
+			return ""
+		}
+		return typed.UTC().Format(time.RFC3339Nano)
+	case string:
+		text := strings.TrimSpace(typed)
+		if text == "" {
+			return ""
+		}
+		parsed, err := time.Parse(time.RFC3339Nano, text)
+		if err != nil {
+			return ""
+		}
+		return parsed.UTC().Format(time.RFC3339Nano)
+	default:
+		return ""
+	}
 }
 
 func gatewayWaiting(value any) []map[string]string {

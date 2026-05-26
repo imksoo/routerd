@@ -165,10 +165,14 @@ func TestGatewayHealthAggregatesGatewayResources(t *testing.T) {
 
 func TestGatewayHealthEgressRoutePolicyCandidates(t *testing.T) {
 	tests := []struct {
-		name       string
-		status     map[string]any
-		wantStatus string
-		wantDetail []string
+		name               string
+		status             map[string]any
+		wantStatus         string
+		wantDetail         []string
+		wantSelectedPath   string
+		wantPreferredPath  string
+		wantFallbackReason string
+		wantLastTransition string
 	}{
 		{
 			name: "selected preferred",
@@ -176,22 +180,32 @@ func TestGatewayHealthEgressRoutePolicyCandidates(t *testing.T) {
 				"phase":              "Healthy",
 				"selectedCandidate":  "ds-lite-primary",
 				"preferredCandidate": "ds-lite-primary",
+				"lastTransitionAt":   "2026-05-26T10:11:12Z",
 			},
-			wantStatus: "pass",
-			wantDetail: []string{"selected=ds-lite-primary,preferred=ds-lite-primary", "selectedCandidate=ds-lite-primary", "preferredCandidate=ds-lite-primary"},
+			wantStatus:         "pass",
+			wantDetail:         []string{"selected=ds-lite-primary,preferred=ds-lite-primary", "selectedCandidate=ds-lite-primary", "preferredCandidate=ds-lite-primary"},
+			wantSelectedPath:   "ds-lite-primary",
+			wantPreferredPath:  "ds-lite-primary",
+			wantLastTransition: "2026-05-26T10:11:12Z",
 		},
 		{
 			name: "fallback",
 			status: map[string]any{
 				"phase":             "Healthy",
+				"reason":            "PreferredCandidateUnhealthy",
 				"selectedCandidate": "pppoe-fallback",
+				"updatedAt":         "2026-05-26T10:12:13Z",
 				"candidates": []map[string]any{
 					{"name": "ds-lite-primary", "weight": 100, "priority": 10, "ready": false},
 					{"name": "pppoe-fallback", "weight": 10, "priority": 20, "ready": true},
 				},
 			},
-			wantStatus: "warn",
-			wantDetail: []string{"selected=pppoe-fallback,preferred=ds-lite-primary", "selectedCandidate=pppoe-fallback", "preferredCandidate=ds-lite-primary"},
+			wantStatus:         "warn",
+			wantDetail:         []string{"selected=pppoe-fallback,preferred=ds-lite-primary", "selectedCandidate=pppoe-fallback", "preferredCandidate=ds-lite-primary"},
+			wantSelectedPath:   "pppoe-fallback",
+			wantPreferredPath:  "ds-lite-primary",
+			wantFallbackReason: "PreferredCandidateUnhealthy",
+			wantLastTransition: "2026-05-26T10:12:13Z",
 		},
 		{
 			name: "error",
@@ -201,7 +215,10 @@ func TestGatewayHealthEgressRoutePolicyCandidates(t *testing.T) {
 				"selectedCandidate":  "pppoe-fallback",
 				"preferredCandidate": "ds-lite-primary",
 			},
-			wantStatus: "down",
+			wantStatus:         "down",
+			wantSelectedPath:   "pppoe-fallback",
+			wantPreferredPath:  "ds-lite-primary",
+			wantFallbackReason: "NoReadyCandidates",
 		},
 	}
 	for _, tt := range tests {
@@ -224,7 +241,45 @@ func TestGatewayHealthEgressRoutePolicyCandidates(t *testing.T) {
 					t.Fatalf("detail missing %q: %q", want, component.Detail)
 				}
 			}
+			if component.SelectedPath != tt.wantSelectedPath {
+				t.Fatalf("selectedPath = %q, want %q: %+v", component.SelectedPath, tt.wantSelectedPath, component)
+			}
+			if component.PreferredPath != tt.wantPreferredPath {
+				t.Fatalf("preferredPath = %q, want %q: %+v", component.PreferredPath, tt.wantPreferredPath, component)
+			}
+			if component.FallbackReason != tt.wantFallbackReason {
+				t.Fatalf("fallbackReason = %q, want %q: %+v", component.FallbackReason, tt.wantFallbackReason, component)
+			}
+			if component.LastTransition != tt.wantLastTransition {
+				t.Fatalf("lastTransition = %q, want %q: %+v", component.LastTransition, tt.wantLastTransition, component)
+			}
 		})
+	}
+}
+
+func TestGatewayHealthHealthCheckFailedProbeEvidence(t *testing.T) {
+	health := gatewayHealth([]routerstate.ObjectStatus{
+		{APIVersion: api.NetAPIVersion, Kind: "HealthCheck", Name: "internet", Status: map[string]any{
+			"phase":            "Unhealthy",
+			"failedProbes":     []any{"tcp-443", "dns-aaaa", "tcp-443"},
+			"lastTransitionAt": "2026-05-26T10:13:14Z",
+		}},
+		{APIVersion: api.NetAPIVersion, Kind: "HealthCheck", Name: "plain", Status: map[string]any{
+			"phase": "Healthy",
+		}},
+	})
+	components := map[string]GatewayHealthComponent{}
+	for _, component := range health.Components {
+		components[component.Name] = component
+	}
+	if got := components["internet"].FailedProbes; len(got) != 2 || got[0] != "tcp-443" || got[1] != "dns-aaaa" {
+		t.Fatalf("failedProbes = %#v, want tcp-443/dns-aaaa", got)
+	}
+	if components["internet"].LastTransition != "2026-05-26T10:13:14Z" {
+		t.Fatalf("lastTransition = %q", components["internet"].LastTransition)
+	}
+	if len(components["plain"].FailedProbes) != 0 {
+		t.Fatalf("plain failedProbes = %#v, want omitted/empty", components["plain"].FailedProbes)
 	}
 }
 
@@ -281,14 +336,16 @@ func TestSummaryIncludesNewGatewayHealthComponentsJSON(t *testing.T) {
 	handler := New(Options{Store: fakeStore{resources: []routerstate.ObjectStatus{
 		{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy", Name: "ipv4-default", Status: map[string]any{
 			"phase":             "Applied",
+			"reason":            "PreferredCandidateUnhealthy",
 			"selectedCandidate": "pppoe-fallback",
+			"updatedAt":         "2026-05-26T10:12:13Z",
 			"candidates": []map[string]any{
 				{"name": "ds-lite-primary", "weight": 100, "priority": 10},
 				{"name": "pppoe-fallback", "weight": 10, "priority": 20},
 			},
 		}},
 		{APIVersion: api.NetAPIVersion, Kind: "NAT44Rule", Name: "lan-to-wan", Status: map[string]any{"phase": "Applied"}},
-		{APIVersion: api.NetAPIVersion, Kind: "HealthCheck", Name: "internet", Status: map[string]any{"phase": "Disabled"}},
+		{APIVersion: api.NetAPIVersion, Kind: "HealthCheck", Name: "internet", Status: map[string]any{"phase": "Disabled", "failedProbes": []string{"tcp-443"}}},
 	}}})
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/summary?events=-1&connections=-1&dnsQueries=-1&trafficFlows=-1&firewallLogs=-1&vpn=0&dhcpLeases=0", nil)
@@ -318,6 +375,11 @@ func TestSummaryIncludesNewGatewayHealthComponentsJSON(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), `"selectedCandidate": "pppoe-fallback"`) || !strings.Contains(rec.Body.String(), `"preferredCandidate": "ds-lite-primary"`) {
 		t.Fatalf("summary missing selected/preferred candidates:\n%s", rec.Body.String())
+	}
+	for _, want := range []string{`"selectedPath": "pppoe-fallback"`, `"preferredPath": "ds-lite-primary"`, `"fallbackReason": "PreferredCandidateUnhealthy"`, `"lastTransition": "2026-05-26T10:12:13Z"`, `"failedProbes": [`} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Fatalf("summary missing evidence %q:\n%s", want, rec.Body.String())
+		}
 	}
 }
 
