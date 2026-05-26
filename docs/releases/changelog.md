@@ -12,6 +12,30 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- `install.sh` now resolves its own script directory and `cd`s there
+  before reading the release payload, and exits non-zero with a clear
+  diagnostic when `bin/routerd` is missing under that directory.
+  Previously, running the installer from outside its release tree (for
+  example `cd /tmp/routerd-release-vYYYYMMDD.HHmm && sudo
+  ./pkg/install.sh ...`) left cwd outside the payload, every `bin/*`
+  glob ran zero iterations, no standard routerd / routerctl binaries
+  were updated, and the script still exited 0 and printed `routerd
+  upgrade completed`. Only `--with-ndpi-archive` payloads ever landed.
+  This silent no-op is now impossible — a regression smoke
+  (`scripts/install-sh-cwd-smoke.sh`, wired into CI) reproduces both
+  the missing-payload and sibling-cwd cases.
+- The Web Console no longer briefly renders Gateway Health as
+  `Components 0 / Unknown / No gateway component status observed`
+  during partial refreshes. `reconcileSummary` previously used
+  `next.gatewayHealth ?? current.gatewayHealth`, which only falls back
+  on `null`/`undefined`; a thin snapshot like
+  `{ overall: "unknown", components: [] }` would overwrite the
+  populated previous state and the banner would flash empty until the
+  next refresh. The merge now keeps the previous `gatewayHealth` when
+  the incoming snapshot has no components but the previous one did.
+
 ## v20260526.2152
 
 ### Added

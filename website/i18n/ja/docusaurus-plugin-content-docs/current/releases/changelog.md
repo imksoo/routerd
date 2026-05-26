@@ -11,6 +11,29 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 修正
+
+- `install.sh` がスクリプト自身のディレクトリを解決して `cd` してから
+  リリース payload を読むようになり、`bin/routerd` が解決先に存在しない
+  場合は明示メッセージとともに非 0 終了するようになりました。これまでは
+  リリースツリーの外から（例: `cd /tmp/routerd-release-vYYYYMMDD.HHmm
+  && sudo ./pkg/install.sh ...`）実行すると cwd が payload 外になり、
+  `bin/*` の glob が 1 度も展開されず、標準 routerd / routerctl
+  バイナリは一切更新されないにも関わらず exit 0 + `routerd upgrade
+  completed` の成功表示だけが出ていました（`--with-ndpi-archive` の
+  payload だけが反映）。この silent no-op は不可能になりました。
+  欠落 payload / 別 cwd 起動の両ケースを再現する smoke
+  (`scripts/install-sh-cwd-smoke.sh`) を CI に組み込んでいます。
+- Web Console の Gateway Health 画面が partial refresh 中に一時的に
+  `Components 0 / Unknown / No gateway component status observed`
+  と表示される瞬きを修正しました。`reconcileSummary` はこれまで
+  `next.gatewayHealth ?? current.gatewayHealth` を使っていましたが、
+  `??` は `null`/`undefined` でのみ fallback するため、
+  `{ overall: "unknown", components: [] }` のような薄い snapshot が
+  来ると populated な前回値を上書きしてしまっていました。空 components
+  を持つ snapshot が来た時に前回の `gatewayHealth` を保持するよう変更
+  しました。
+
 ## v20260526.2152
 
 ### 追加

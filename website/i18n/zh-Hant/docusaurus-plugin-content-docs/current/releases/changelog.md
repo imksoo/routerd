@@ -11,6 +11,25 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 修正
+
+- `install.sh` 現在會先解析自身的指令稿目錄並 `cd` 進去再讀取 release
+  payload；若該目錄下沒有 `bin/routerd`，則以明確的診斷訊息非 0 結束。
+  先前若從 release 目錄之外執行（例如 `cd /tmp/routerd-release-vYYYYMMDD.HHmm
+  && sudo ./pkg/install.sh ...`），cwd 會位於 payload 之外，`bin/*`
+  萬用字元完全不展開，標準 routerd / routerctl 執行檔完全沒有更新，
+  指令稿卻仍以 `routerd upgrade completed` 退出 0（只有
+  `--with-ndpi-archive` 的 payload 會被裝上）。這種 silent no-op 不再
+  可能發生。新增 smoke 測試 (`scripts/install-sh-cwd-smoke.sh`)，
+  涵蓋缺漏 payload 與 sibling cwd 兩種情境，並已接入 CI。
+- Web Console 的 Gateway Health 畫面在 partial refresh 期間不再瞬時
+  顯示 `Components 0 / Unknown / No gateway component status observed`。
+  先前 `reconcileSummary` 使用 `next.gatewayHealth ?? current.gatewayHealth`，
+  `??` 只在 `null`/`undefined` 時回退，因此
+  `{ overall: "unknown", components: [] }` 這類瘦 snapshot 會覆蓋已
+  populated 的舊狀態。現在若新 snapshot 的 components 為空而舊的有
+  資料，則保留舊 `gatewayHealth`。
+
 ## v20260526.2152
 
 ### 新增
