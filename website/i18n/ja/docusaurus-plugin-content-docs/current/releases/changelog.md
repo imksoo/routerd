@@ -11,6 +11,37 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 追加
+
+- `routerctl doctor [area]`: wan / dns / dslite / dhcpv6-pd / nat /
+  firewall / rollback / disk / mgmt の一連の読み取り専用チェックを実行し、
+  PASS/WARN/FAIL を是正ヒント付きで報告します。FAIL があれば非0で終了するため
+  スクリプトから利用できます。
+- SQLite state DB の保守コマンド: `routerctl ledger integrity-check` /
+  `vacuum` / `backup <dest>` / `prune-events --older-than <dur>`。prune は
+  events 限定で、rollback と監査履歴を支える generations / objects /
+  artifacts は保持されます。
+- `ManagementAccess` リソース: 管理用インターフェースと管理元 CIDR を宣言
+  します。宣言時、非 dry-run の `apply` は、宣言された管理 IF が欠落・
+  firewall が SSH を遮断する設定（管理 IF が mgmt/trust の FirewallZone に
+  属していない）・有効な WebConsole が全アドレス bind を検出すると失敗します
+  （`--allow-mgmt-lockout` で上書き可）。
+- `api/v1/summary` に `gatewayHealth` を追加。`DNSResolver` /
+  `DSLiteTunnel` / `DHCPv6PrefixDelegation` を集約し全体判定とコンポーネント別
+  状態を返します。Web Console の Overview 最上部に Gateway Health バナーを
+  表示し、degraded / down のときは理由と waiting を強調します。
+- `examples/home-router-mgmt-protected.yaml`: 家庭ルーター置き換えの
+  「安全最小の出発点」 canonical example。3-role firewall（untrust / trust /
+  mgmt）、DS-Lite 優先 + PPPoE フォールバック、`ManagementAccess`、mgmt
+  アドレス固定 bind の `WebConsole` を含みます。
+
+### 変更
+
+- Go の module path を `github.com/imksoo/routerd` に変更しました
+  （旧: `routerd`）。リリースアーカイブから導入するユーザーには影響しませんが、
+  `go install github.com/imksoo/routerd/...` や外部 Go プロジェクトからの
+  import が可能になります。
+
 ## v20260525.1631
 
 ### 追加

@@ -12,6 +12,39 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Added
+
+- `routerctl doctor [area]` runs a battery of read-only checks (wan, dns,
+  dslite, dhcpv6-pd, nat, firewall, rollback, disk, mgmt) and reports
+  PASS/WARN/FAIL with a remediation hint; exits non-zero when anything
+  FAILs so it is scriptable.
+- `routerctl ledger` maintenance commands for the SQLite state DB:
+  `integrity-check`, `vacuum`, `backup <dest>`, and `prune-events
+  --older-than <dur>`. Prune is events-only so the generations, objects,
+  and artifacts that back rollback and audit history are preserved.
+- `ManagementAccess` resource declares management interfaces and admin
+  source CIDRs. A non-dry-run `apply` fails (unless `--allow-mgmt-lockout`)
+  when a declared management interface is missing, the firewall would drop
+  SSH to it (no `mgmt`/`trust` FirewallZone covers it), or an enabled
+  WebConsole binds to all addresses.
+- `api/v1/summary` now includes a `gatewayHealth` object that aggregates
+  `DNSResolver`, `DSLiteTunnel`, and `DHCPv6PrefixDelegation` into an
+  overall verdict plus per-component status. The Web Console Overview
+  shows a Gateway Health banner at the top, prominent when degraded or
+  down with the reason and waiting list.
+- Canonical `examples/home-router-mgmt-protected.yaml`: a minimal "safe
+  starting point" for replacing a home router with routerd, using the
+  3-role firewall (untrust/trust/mgmt), DS-Lite preferred with PPPoE
+  fallback, `ManagementAccess`, and a `WebConsole` bound to the mgmt
+  address.
+
+### Changed
+
+- The Go module path is now `github.com/imksoo/routerd` (was `routerd`).
+  This is invisible when installing from release archives but enables
+  `go install github.com/imksoo/routerd/...` and Go-module imports from
+  external projects.
+
 ## v20260525.1631
 
 ### Added

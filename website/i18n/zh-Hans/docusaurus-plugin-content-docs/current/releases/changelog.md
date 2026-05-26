@@ -11,6 +11,32 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 新增
+
+- `routerctl doctor [area]`：执行 wan / dns / dslite / dhcpv6-pd / nat /
+  firewall / rollback / disk / mgmt 的一组只读检查，并以 PASS/WARN/FAIL 与
+  修复提示报告；存在 FAIL 时以非 0 退出，便于脚本调用。
+- SQLite state DB 维护命令：`routerctl ledger integrity-check` / `vacuum` /
+  `backup <dest>` / `prune-events --older-than <dur>`。prune 仅作用于 events，
+  保留承担 rollback 与审计的 generations / objects / artifacts。
+- `ManagementAccess` 资源：声明管理用接口与管理来源 CIDR。声明后，非
+  dry-run 的 `apply` 会在「声明的管理接口缺失 / firewall 会切断 SSH（管理
+  接口未归属 mgmt 或 trust 的 FirewallZone）/ 启用的 WebConsole 绑定到所有
+  地址」时失败（可用 `--allow-mgmt-lockout` 覆盖）。
+- `api/v1/summary` 新增 `gatewayHealth` 对象：聚合 `DNSResolver` /
+  `DSLiteTunnel` / `DHCPv6PrefixDelegation` 并返回整体判定与各组件状态。
+  Web Console 在 Overview 顶部展示 Gateway Health 横幅，degraded / down
+  时突出显示原因与 waiting。
+- `examples/home-router-mgmt-protected.yaml`：替换家庭路由器的「安全最小起点」
+  canonical 示例，包含 3-role 防火墙（untrust / trust / mgmt）、DS-Lite 优先
+  + PPPoE 备援、`ManagementAccess`，以及绑定到 mgmt 地址的 `WebConsole`。
+
+### 变更
+
+- Go module path 改为 `github.com/imksoo/routerd`（旧值：`routerd`）。从
+  release 压缩包安装的用户不会受影响，但可以使用 `go install
+  github.com/imksoo/routerd/...`，外部 Go 工程也可以将其作为 module 引入。
+
 ## v20260525.1631
 
 ### 新增
