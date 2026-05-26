@@ -11,6 +11,8 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260526.2152
+
 ### 新增
 
 - `/api/v1/summary` 中的 `gatewayHealth` 现在按组件输出

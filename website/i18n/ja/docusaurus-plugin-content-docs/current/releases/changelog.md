@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260526.2152
+
 ### 追加
 
 - `/api/v1/summary` の `gatewayHealth` がコンポーネントごとに
