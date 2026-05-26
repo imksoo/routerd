@@ -97,5 +97,5 @@ v1alpha1 の minor 間で改名・再用途化しません。
 
 ## 関連項目
 
-- [調整（reconcile）と rollback](./reconcile.md)
+- [調整（reconcile）とロールバック](./reconcile.md)
 - [`routerctl ledger` 保守](./reconcile.md#削除)

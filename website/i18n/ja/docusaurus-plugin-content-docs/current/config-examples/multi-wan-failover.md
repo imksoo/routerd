@@ -60,11 +60,11 @@ flowchart LR
       - name: ds-lite-a
         weight: 120
         healthCheck: internet-via-dslite-a
-      # [5] PPPoE backup は低めの weight にする。
+      # [5] PPPoE バックアップは低めの weight にする。
       - name: pppoe-flets
         weight: 60
         healthCheck: internet-via-pppoe
-      # [6] この例では HGW direct を最後の fallback にする。
+      # [6] この例では HGW 直結を最後のフォールバックにする。
       - name: hgw-direct
         weight: 40
         healthCheck: internet-via-hgw-direct

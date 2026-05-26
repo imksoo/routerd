@@ -39,10 +39,10 @@ DHCPv6-PD が `Bound` でない場合、routerd は LAN へ古い IPv6 情報を
 
 ## 4. DS-Lite
 
-一部のアクセス網では、DHCPv6 information-request で AFTR option が返りません。
-そのため `DSLiteTunnel` は、`aftrFQDN` または `aftrIPv6` の静的指定を、fallback ではなく正規の経路として扱います。
+一部のアクセス網では、DHCPv6 の information-request で AFTR オプションが返りません。
+そのため `DSLiteTunnel` は、`aftrFQDN` または `aftrIPv6` の静的指定を、フォールバックではなく正規の経路として扱います。
 
-AFTR の FQDN は、公衆 DNS で解けないことが多いです。AFTR domain 用の `DNSForwarder` と、DHCPv6 information status から carrier 内の resolver を読む `DNSUpstream.addressFrom` で転送してください。
+AFTR の FQDN は、公衆 DNS で解けないことが多いです。AFTR ドメイン用の `DNSForwarder` と、DHCPv6 の information status から事業者網内のリゾルバーを読み取る `DNSUpstream.addressFrom` で転送してください。
 
 ## 5. Event 連携
 
