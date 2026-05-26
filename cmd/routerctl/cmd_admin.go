@@ -1,0 +1,261 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
+package main
+
+import (
+	"context"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"os/exec"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/imksoo/routerd/internal/hostcmd"
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/config"
+	"github.com/imksoo/routerd/pkg/controlapi"
+	"github.com/imksoo/routerd/pkg/ingressdrain"
+	"github.com/imksoo/routerd/pkg/platform"
+	"github.com/imksoo/routerd/pkg/servicemgr"
+	routerstate "github.com/imksoo/routerd/pkg/state"
+)
+
+func applyCommand(args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("apply", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	socketPath := fs.String("socket", defaultSocketPath(), "routerd Unix domain socket path")
+	timeout := fs.Duration("timeout", 30*time.Second, "request timeout")
+	dryRun := fs.Bool("dry-run", false, "plan without applying changes")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	defer cancel()
+	result, err := controlapi.NewUnixClient(*socketPath).Apply(ctx, controlapi.ApplyRequest{DryRun: *dryRun})
+	if err != nil {
+		return err
+	}
+	return writeJSON(stdout, result)
+}
+
+func deleteCommand(args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("delete", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	socketPath := fs.String("socket", defaultSocketPath(), "routerd Unix domain socket path")
+	timeout := fs.Duration("timeout", 30*time.Second, "request timeout")
+	dryRun := fs.Bool("dry-run", false, "show what would be deleted without changing host state")
+	force := fs.Bool("force", false, "delete stale state even when the kind is no longer in the current schema")
+	apiVersion := fs.String("api-version", "", "apiVersion to use with --force when a stale kind is ambiguous")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return errors.New("delete requires <kind>/<name>")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	defer cancel()
+	result, err := controlapi.NewUnixClient(*socketPath).Delete(ctx, controlapi.DeleteRequest{Target: fs.Arg(0), TargetAPIVersion: *apiVersion, DryRun: *dryRun, Force: *force})
+	if err != nil {
+		return err
+	}
+	return writeJSON(stdout, result)
+}
+
+func setLogLevelCommand(args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("set-log-level", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	socketPath := fs.String("socket", defaultSocketPath(), "routerd Unix domain socket path")
+	timeout := fs.Duration("timeout", 5*time.Second, "request timeout")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return errors.New("set-log-level requires <debug|info|warning|error|default>")
+	}
+	level := fs.Arg(0)
+	switch level {
+	case "debug", "info", "warning", "error", "default":
+	default:
+		return fmt.Errorf("unsupported log level %q", level)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	defer cancel()
+	result, err := controlapi.NewUnixClient(*socketPath).SetLogLevel(ctx, controlapi.LogLevelRequest{Level: level})
+	if err != nil {
+		return err
+	}
+	return writeJSON(stdout, result)
+}
+
+func restartDNSResolverCommand(args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("restart-dns-resolver", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	configPath := fs.String("config", defaultConfigPath(), "config path")
+	timeout := fs.Duration("timeout", 30*time.Second, "restart timeout")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() > 1 {
+		return errors.New("restart-dns-resolver accepts at most one resolver name")
+	}
+	router, err := config.Load(*configPath)
+	if err != nil {
+		return err
+	}
+	name := ""
+	if fs.NArg() == 1 {
+		name = strings.TrimSpace(fs.Arg(0))
+	}
+	names, err := dnsResolverResourceNames(router)
+	if err != nil {
+		return err
+	}
+	if name == "" {
+		switch len(names) {
+		case 0:
+			return errors.New("no DNSResolver resources found")
+		case 1:
+			name = names[0]
+		default:
+			return fmt.Errorf("multiple DNSResolver resources found; specify one of: %s", strings.Join(names, ", "))
+		}
+	}
+	if !containsString(names, name) {
+		return fmt.Errorf("DNSResolver %q not found", name)
+	}
+	_, features := platform.Current()
+	manager := servicemgr.ForPlatform(features)
+	service := servicemgr.Service{SystemdName: "routerd-dns-resolver@" + name + ".service"}
+	command := manager.Command(servicemgr.OperationRestart, service)
+	if command.Name == "" {
+		return fmt.Errorf("restart unsupported for %s service manager", manager.Name())
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, hostcmd.Resolve(command.Name), command.Args...).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s %s: %w: %s", command.Name, strings.Join(command.Args, " "), err, strings.TrimSpace(string(out)))
+	}
+	fmt.Fprintf(stdout, "restarted DNSResolver/%s via %s\n", name, manager.Name())
+	return nil
+}
+
+func dnsResolverResourceNames(router *api.Router) ([]string, error) {
+	if router == nil {
+		return nil, nil
+	}
+	var names []string
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "DNSResolver" {
+			continue
+		}
+		if _, err := resource.DNSResolverSpec(); err != nil {
+			return nil, err
+		}
+		names = append(names, resource.Metadata.Name)
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func ingressDrainCommand(args []string, stdout io.Writer, drain bool) error {
+	statePath := defaultStatePath()
+	var duration time.Duration
+	var backend string
+	var target string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--state-file":
+			i++
+			if i >= len(args) {
+				return errors.New("--state-file requires a value")
+			}
+			statePath = args[i]
+		case strings.HasPrefix(arg, "--state-file="):
+			statePath = strings.TrimPrefix(arg, "--state-file=")
+		case arg == "--duration":
+			i++
+			if i >= len(args) {
+				return errors.New("--duration requires a value")
+			}
+			parsed, err := time.ParseDuration(args[i])
+			if err != nil {
+				return err
+			}
+			duration = parsed
+		case strings.HasPrefix(arg, "--duration="):
+			parsed, err := time.ParseDuration(strings.TrimPrefix(arg, "--duration="))
+			if err != nil {
+				return err
+			}
+			duration = parsed
+		case arg == "--backend":
+			i++
+			if i >= len(args) {
+				return errors.New("--backend requires a value")
+			}
+			backend = args[i]
+		case strings.HasPrefix(arg, "--backend="):
+			backend = strings.TrimPrefix(arg, "--backend=")
+		case strings.HasPrefix(arg, "backend="):
+			backend = strings.TrimPrefix(arg, "backend=")
+		case strings.HasPrefix(arg, "-"):
+			return fmt.Errorf("unknown option %q", arg)
+		default:
+			if target != "" {
+				return fmt.Errorf("unexpected argument %q", arg)
+			}
+			target = arg
+		}
+	}
+	if target == "" {
+		if drain {
+			return errors.New("drain requires ingress/<service> backend=<name>")
+		}
+		return errors.New("undrain requires ingress/<service> backend=<name>")
+	}
+	kind, service, err := parseResourceTarget("drain", target)
+	if err != nil {
+		return err
+	}
+	if kind != "IngressService" || strings.TrimSpace(service) == "" {
+		return fmt.Errorf("drain target must be ingress/<service>")
+	}
+	if strings.TrimSpace(backend) == "" {
+		return errors.New("backend=<name> is required")
+	}
+	store, err := routerstate.Load(statePath)
+	if err != nil {
+		return err
+	}
+	if drain {
+		state, err := ingressdrain.Drain(store, service, backend, duration)
+		if err != nil {
+			return err
+		}
+		if err := store.Save(statePath); err != nil {
+			return err
+		}
+		return writeJSON(stdout, state)
+	}
+	if err := ingressdrain.Undrain(store, service, backend); err != nil {
+		return err
+	}
+	if err := store.Save(statePath); err != nil {
+		return err
+	}
+	return writeJSON(stdout, map[string]any{"service": service, "backend": backend, "drained": false})
+}
