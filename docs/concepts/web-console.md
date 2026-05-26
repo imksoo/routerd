@@ -39,7 +39,7 @@ The Web Console reads:
 - firewall deny history from `firewall-logs.db`
 - current dnsmasq DHCP lease files for client names, MAC addresses, and local
   vendor hints
-- the active YAML configuration, shown read-only
+- the active YAML configuration, shown read-only with secret fields redacted
 
 ## Current screens
 
@@ -86,10 +86,10 @@ SSE stream is also available through the short `/api/events/stream` alias.
 | `/api/v1/traffic-flows?since=1h&client=&peer=&limit=100` | traffic flow log rows with DNS-derived hostnames |
 | `/api/v1/firewall-logs?since=24h&action=drop&src=&limit=100` | firewall log rows |
 | `/api/v1/bgp`, `/api/v1/vrrp`, `/api/v1/ingress` | filtered operational status for Kubernetes-edge routing and VIP resources |
-| `/api/v1/config` | active YAML configuration |
+| `/api/v1/config` | active YAML configuration, redacted |
 | `/api/v1/generations?limit=100` | completed apply generations and whether a YAML snapshot is stored |
-| `/api/v1/generations/<id>/config` | stored YAML for one apply generation |
-| `/api/v1/generations/<from>/diff/<to>` | unified diff between two stored YAML generations |
+| `/api/v1/generations/<id>/config` | stored YAML for one apply generation, redacted |
+| `/api/v1/generations/<from>/diff/<to>` | unified diff between two stored YAML generations, redacted |
 
 ## Secret redaction
 

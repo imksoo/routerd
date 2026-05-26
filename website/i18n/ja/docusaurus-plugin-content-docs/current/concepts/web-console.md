@@ -40,7 +40,7 @@ Web 管理画面は次の情報を読み取ります。
 - `firewall-logs.db` のファイアウォール拒否履歴
 - 現在の dnsmasq の DHCP リースファイル。端末名、MAC アドレス、ローカルな
   ベンダー候補を表示します。
-- 現在の YAML 設定。読み取り専用で表示します。
+- 現在の YAML 設定。読み取り専用で表示し、secret フィールドは redact されています。
 
 ## 現在の画面
 
@@ -82,10 +82,10 @@ JSON エンドポイントは `/api/v1` 配下にあり、SSE ストリームは
 | `/api/v1/traffic-flows?since=1h&client=&peer=&limit=100` | DNS 由来のホスト名を含む通信フローログの行 |
 | `/api/v1/firewall-logs?since=24h&action=drop&src=&limit=100` | ファイアウォールログの行 |
 | `/api/v1/bgp`、`/api/v1/vrrp`、`/api/v1/ingress` | Kubernetes edge の経路 / VIP リソース向けの運用状態 |
-| `/api/v1/config` | 現在の YAML 設定 |
+| `/api/v1/config` | 現在の YAML 設定（redact 済み） |
 | `/api/v1/generations?limit=100` | 完了した適用世代と、YAML スナップショットの有無 |
-| `/api/v1/generations/<id>/config` | 1 つの適用世代に保存された YAML |
-| `/api/v1/generations/<from>/diff/<to>` | 2 つの YAML 世代の差分（unified diff） |
+| `/api/v1/generations/<id>/config` | 1 つの適用世代に保存された YAML（redact 済み） |
+| `/api/v1/generations/<from>/diff/<to>` | 2 つの YAML 世代の差分（unified diff、redact 済み） |
 
 ## シークレットの redaction
 

@@ -39,7 +39,7 @@ Web 管理界面会读取以下信息。
 - `traffic-flows.db` 的连接流量记录
 - `firewall-logs.db` 的防火墙拒绝记录
 - 当前 dnsmasq 的 DHCP 租约文件，显示设备名称、MAC 地址及本地厂商候选名称
-- 当前的 YAML 配置，以只读方式显示
+- 当前的 YAML 配置，以只读方式显示，secret 字段已 redact
 
 ## 当前的界面
 
@@ -81,10 +81,10 @@ JSON 端点位于 `/api/v1` 下，SSE 流也可通过短名称
 | `/api/v1/traffic-flows?since=1h&client=&peer=&limit=100` | 含 DNS 来源主机名的连接流量记录列 |
 | `/api/v1/firewall-logs?since=24h&action=drop&src=&limit=100` | 防火墙记录列 |
 | `/api/v1/bgp`、`/api/v1/vrrp`、`/api/v1/ingress` | Kubernetes edge 路由 / VIP 资源的运维状态 |
-| `/api/v1/config` | 当前的 YAML 配置 |
+| `/api/v1/config` | 当前的 YAML 配置（已 redact） |
 | `/api/v1/generations?limit=100` | 已完成的应用世代及 YAML 快照的有无 |
-| `/api/v1/generations/<id>/config` | 某一应用世代保存的 YAML |
-| `/api/v1/generations/<from>/diff/<to>` | 两个 YAML 世代的差异（unified diff） |
+| `/api/v1/generations/<id>/config` | 某一应用世代保存的 YAML（已 redact） |
+| `/api/v1/generations/<from>/diff/<to>` | 两个 YAML 世代的差异（unified diff，已 redact） |
 
 ## Secrets redaction
 
