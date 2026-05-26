@@ -94,7 +94,7 @@ filter table during normal apply.
 
 routerd only deletes objects whose ownership it can attribute (i.e. that routerd previously created or adopted). It does not remove third-party configuration or manual changes.
 
-Full rollback to a previous configuration is not in scope today. For changes that include deletions, always run `routerd plan` and `routerd apply --dry-run` first and confirm the deletion list before applying.
+Generation-based rollback is supported. `routerctl rollback --list` shows the stored generations recorded by past applies, and `routerctl rollback --to <generation>` re-applies a stored Router YAML through the normal apply path. Rollback re-applies the declared config and the artifacts routerd manages; it does **not** restore live conntrack, kernel transient state, daemon runtime state, or any host change made outside routerd's ledger. For changes that include deletions, always run `routerd plan` and `routerd apply --dry-run` first and confirm the deletion list before applying.
 
 ## See also
 
