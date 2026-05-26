@@ -42,6 +42,7 @@ type fakeServer struct {
 	deletes  int
 	paths    int
 	policies int
+	assigns  int
 	resets   int
 
 	global  *gobgpapi.Global
@@ -152,6 +153,7 @@ func (s *fakeServer) SetPolicies(_ context.Context, req *gobgpapi.SetPoliciesReq
 }
 
 func (s *fakeServer) SetPolicyAssignment(_ context.Context, req *gobgpapi.SetPolicyAssignmentRequest) error {
+	s.assigns++
 	s.policyAssignment = req.GetAssignment()
 	return nil
 }
@@ -321,6 +323,45 @@ func TestReconcileDoesNotRefreshUnchangedImportPolicy(t *testing.T) {
 	}
 	if server.resets != 0 {
 		t.Fatalf("soft inbound resets = %d, want no reset for unchanged applied policy", server.resets)
+	}
+}
+
+func TestReconcileHydratesAppliedImportPolicyAfterRestart(t *testing.T) {
+	router := bgpRouterWithImportPrefixes("10.250.0.0/24")
+	peerResource := router.Spec.Resources[1]
+	peerSpec := peerResource.Spec.(api.BGPPeerSpec)
+	peerSpec.Peers = []string{"192.168.1.38", "192.168.1.53"}
+	peerResource.Spec = peerSpec
+	router.Spec.Resources[1] = peerResource
+	server := &fakeServer{}
+	first := Controller{
+		Router: router,
+		Store:  mapStore{},
+		Server: server,
+		FIB:    &fakeFIB{},
+	}
+	if err := first.Reconcile(context.Background()); err != nil {
+		t.Fatalf("first reconcile: %v", err)
+	}
+	server.policies = 0
+	server.assigns = 0
+	second := Controller{
+		Router: router,
+		Store:  mapStore{},
+		Server: server,
+		FIB:    &fakeFIB{},
+	}
+	if err := second.Reconcile(context.Background()); err != nil {
+		t.Fatalf("post-restart reconcile: %v", err)
+	}
+	if server.assigns != 0 {
+		t.Fatalf("SetPolicyAssignment calls = %d, want post-restart same-intent no-op", server.assigns)
+	}
+	if server.policies != 0 {
+		t.Fatalf("SetPolicies calls = %d, want post-restart same-intent no-op", server.policies)
+	}
+	if second.importPolicyKey == "" {
+		t.Fatal("importPolicyKey was not hydrated from applied state")
 	}
 }
 

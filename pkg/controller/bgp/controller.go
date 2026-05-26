@@ -146,6 +146,7 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	if err != nil {
 		return c.savePendingAll("GoBGPAppliedStateUnavailable", err)
 	}
+	c.hydrateAppliedState(applied)
 	importPolicyName, err := c.reconcileImportPolicy(ctx, routerResource.Metadata.Name, routerSpec)
 	if err != nil {
 		return c.savePendingAll("GoBGPImportPolicyApplyFailed", err)
@@ -161,7 +162,6 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		peer.ImportPolicyName = importPolicyName
 		desired[address] = peer
 	}
-	c.appliedPeerKeys = desiredPeersFromApplied(applied.Peers)
 	changed, err := c.reconcilePeers(ctx, desired)
 	if err != nil {
 		return c.savePendingAll("GoBGPPeerApplyFailed", err)
@@ -215,6 +215,23 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		c.publishBGPEvent(ctx, event)
 	}
 	return nil
+}
+
+func (c *Controller) hydrateAppliedState(applied bgpdaemon.AppliedConfig) {
+	applied = bgpdaemon.Normalize(applied)
+	c.appliedConfig = applied
+	c.appliedPeerKeys = desiredPeersFromApplied(applied.Peers)
+	if c.importPolicyKey != "" || !appliedGlobalConfigured(applied.Global) {
+		return
+	}
+	c.importPolicyKey = importPolicyKey(routerapi.BGPImportPolicySpec{
+		AllowedPrefixes: applied.Global.ImportPolicy.AllowedPrefixes,
+		NextHopRewrite:  applied.Global.ImportPolicy.NextHopRewrite,
+	})
+}
+
+func appliedGlobalConfigured(global bgpdaemon.AppliedGlobal) bool {
+	return global.ASN != 0 && strings.TrimSpace(global.RouterID) != ""
 }
 
 func (c *Controller) ensureServer(ctx context.Context, spec routerapi.BGPRouterSpec) error {
