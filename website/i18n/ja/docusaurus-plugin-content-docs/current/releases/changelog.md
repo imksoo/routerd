@@ -11,6 +11,34 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+v20260526.2241 のドキュメント / CI 整合 follow-up リリース。バイナリや
+ランタイムの挙動変更はありません。
+
+### 追加
+
+- `scripts/check-active-stable.sh` を追加し、homepage hero、ドキュメント
+  の intro tip、announcement bar、`docusaurus.config.ts` が
+  `website/src/pages/index.tsx` の `STABLE_VERSION` 定数から乖離した
+  場合に CI で fail するようにしました。release changelog の歴史的
+  言及と、`stable.md` の supersedes / carry-forward 記述は意図的に
+  対象外です。
+
+### 修正
+
+- homepage の "Latest stable" カード、4 言語の intro tip、
+  `website/src/pages/index.tsx` の `STABLE_VERSION` がすべて
+  `v20260526.2241` を指すようにしました。announcement bar と
+  `stable.md` を promote したときに 5 箇所が `v20260526.1607` のまま
+  取り残されており、トップページと announcement bar が異なる安定版を
+  案内する不整合になっていました。
+- `v20260526.2241` の install.sh changelog エントリを、実際にリリース
+  された実装に合わせて書き直しました。`install.sh` は payload を
+  cwd 相対のまま扱い（`tests/install` の test harness と互換維持）、
+  `bin/routerd` が cwd に無い場合は明示メッセージとともに exit 2 で
+  停止します。以前の文言は `cd $script_dir` 設計を説明していましたが、
+  この設計は `tests/install` を壊したため commit `d9f8817c` で revert
+  されています。
+
 ## v20260526.2241
 
 ### 修正

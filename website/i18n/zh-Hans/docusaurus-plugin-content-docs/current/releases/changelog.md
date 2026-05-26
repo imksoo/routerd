@@ -11,6 +11,31 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+v20260526.2241 的文档 / CI 一致性 follow-up 发布。二进制与运行时行为
+均无变化。
+
+### 新增
+
+- 新增 `scripts/check-active-stable.sh` CI 守护脚本，当 homepage hero、
+  文档 intro tip、announcement bar、`docusaurus.config.ts` 与
+  `website/src/pages/index.tsx` 中的 `STABLE_VERSION` 常量产生分歧时
+  在 CI 中 fail。release changelog 与 `stable.md` 中的 supersedes /
+  carry-forward 历史引用属于有意保留，已被排除在守护对象之外。
+
+### 修复
+
+- homepage 的 "Latest stable" 卡片、4 个语言的 intro tip、
+  `website/src/pages/index.tsx` 的 `STABLE_VERSION` 现在全部指向
+  `v20260526.2241`。在 announcement bar 与 `stable.md` 完成 promote
+  时，这 5 处遗留为 `v20260526.1607`，导致首页与 announcement bar
+  公示的稳定版互相矛盾。
+- 重写 `v20260526.2241` 中 install.sh 的 changelog 条目，与实际发行的
+  实现保持一致：`install.sh` 仍以 cwd 相对方式定位 payload（保留
+  `tests/install` 测试夹具的兼容性），并在当前工作目录不含
+  `bin/routerd` 时以明确诊断信息 exit 2 终止。先前的描述对应的是
+  `cd $script_dir` 设计，因破坏 `tests/install` 已在 commit
+  `d9f8817c` 中回退。
+
 ## v20260526.2241
 
 ### 修复

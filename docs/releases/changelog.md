@@ -12,6 +12,34 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+Documentation and CI consistency follow-up to v20260526.2241. No
+binary or runtime behavior changes.
+
+### Added
+
+- `scripts/check-active-stable.sh` is a CI guard that fails when the
+  homepage hero, the docs intro tip, the announcement bar, or
+  `docusaurus.config.ts` drift from the `STABLE_VERSION` constant in
+  `website/src/pages/index.tsx`. The release-changelog narrative and
+  the supersedes / carry-forward history in `stable.md` keep their
+  intentional historic references and are excluded from the guard.
+
+### Fixed
+
+- The homepage "Latest stable" card, the docs intro tip in each of the
+  four locales, and `STABLE_VERSION` in `website/src/pages/index.tsx`
+  now all point at `v20260526.2241`. They had been left at
+  `v20260526.1607` when the announcement bar and `stable.md` were
+  promoted, so the homepage and the announcement bar disagreed on
+  the recommended milestone.
+- The `v20260526.2241` install.sh changelog entry has been rewritten
+  to match the shipped implementation: `install.sh` remains
+  cwd-relative for its payload (so `tests/install` keeps working) and
+  adds a `bin/routerd` presence check that exits 2 with a clear
+  diagnostic when run from a cwd that has no payload. The earlier
+  wording described a `cd $script_dir` design that had been reverted
+  in `d9f8817c` because it broke the test harness.
+
 ## v20260526.2241
 
 ### Fixed
