@@ -14,6 +14,16 @@ Use these examples as starting points, not as drop-in production configs. Always
 replace interface names, address ranges, ISP values, and management access
 before applying them to a real router.
 
+:::tip Canonical starting point
+If you are replacing a home router with routerd, start from
+[`examples/home-router-mgmt-protected.yaml`](https://github.com/imksoo/routerd/blob/main/examples/home-router-mgmt-protected.yaml).
+It is the safe-minimal canonical configuration: 3-role firewall
+(untrust / trust / mgmt), DS-Lite preferred with PPPoE fallback,
+`ManagementAccess` for apply-time lockout protection, and `WebConsole`
+bound to a management address. Adapt it to your interfaces and ISP, then
+apply through the safety checklist below.
+:::
+
 ## How to read an example
 
 Each example follows the same structure:

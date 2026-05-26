@@ -13,6 +13,16 @@ sidebar_position: 0
 ここにある設定は出発点です。本番に投入する前に、インターフェース名、アドレス範囲、
 ISP 固有値、管理アクセスの経路を、必ず自分の環境に合わせてください。
 
+:::tip 標準の出発点
+家庭ルーターを routerd で置き換える場合は、
+[`examples/home-router-mgmt-protected.yaml`](https://github.com/imksoo/routerd/blob/main/examples/home-router-mgmt-protected.yaml)
+を出発点にしてください。3-role firewall（untrust / trust / mgmt）、
+DS-Lite 優先 + PPPoE フォールバック、apply 時のロックアウト防止のための
+`ManagementAccess`、管理アドレスへ bind した `WebConsole` を含む、
+**安全最小の canonical 構成**です。インターフェースと ISP を自環境に合わせ、
+下の Safety checklist の順序で適用してください。
+:::
+
 ## 読み方
 
 各事例は同じ流れで読めるようにしています。

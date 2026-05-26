@@ -12,6 +12,15 @@ sidebar_position: 0
 这里的配置是出发点。投入正式环境之前，请务必依照您的实际环境调整接口名称、地址范围、
 ISP 专属值及管理访问路径。
 
+:::tip 推荐起点
+如需用 routerd 替换家庭路由器，请从
+[`examples/home-router-mgmt-protected.yaml`](https://github.com/imksoo/routerd/blob/main/examples/home-router-mgmt-protected.yaml)
+开始。该示例为**安全最小的 canonical 配置**：3-role 防火墙（untrust / trust / mgmt）、
+DS-Lite 优先 + PPPoE 备援、用于 apply 时锁出保护的 `ManagementAccess`，
+以及绑定到管理地址的 `WebConsole`。请将接口与 ISP 替换为您自己的环境，
+按下方安全检查清单的顺序应用。
+:::
+
 ## 阅读方式
 
 每个示例均依照相同的流程说明：
