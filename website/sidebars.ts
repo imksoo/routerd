@@ -126,6 +126,7 @@ const sidebars: SidebarsConfig = {
       label: 'Operations',
       collapsed: true,
       items: [
+        'operations/routerctl-doctor',
         'operations/state-database',
         'operations/inventory',
         'operations/usb-persistence',
