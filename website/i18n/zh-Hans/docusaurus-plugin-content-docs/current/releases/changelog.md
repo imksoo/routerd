@@ -11,6 +11,8 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260526.2241
+
 ### 修复
 
 - `install.sh` 现在会先解析自身脚本目录并 `cd` 进去再读取 release

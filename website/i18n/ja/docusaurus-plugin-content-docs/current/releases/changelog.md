@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260526.2241
+
 ### 修正
 
 - `install.sh` がスクリプト自身のディレクトリを解決して `cd` してから
