@@ -38,6 +38,7 @@ import {
   DocumentTextRegular,
   FilterRegular,
   GamesRegular,
+  HeartPulseRegular,
   HomeRegular,
   LaptopRegular,
   NavigationRegular,
@@ -617,7 +618,7 @@ type ClientRow = {
   isolationPolicy: Set<string>;
 };
 
-type ViewKey = "overview" | "resources" | "routes" | "controllers" | "clients" | "connections" | "vpn" | "events" | "firewall" | "config" | "generations";
+type ViewKey = "overview" | "resources" | "routes" | "controllers" | "clients" | "connections" | "gateway-health" | "vpn" | "events" | "firewall" | "config" | "generations";
 type NavSubItem = { key: string; label: string; count?: number; view: ViewKey; targetID: string };
 
 const cfg = window.__ROUTERD_WEB_CONSOLE__ ?? { basePath: "/", title: "routerd" };
@@ -634,6 +635,7 @@ const navItems: { key: ViewKey; label: string; description: string; icon: React.
   { key: "routes", label: "Routes", description: "Kernel, static, DHCP, and BGP routes", icon: <DatabaseRegular /> },
   { key: "clients", label: "Clients", description: "Leases and endpoint traffic", icon: <PeopleRegular /> },
   { key: "connections", label: "Connections", description: "conntrack and live flows", icon: <PlugConnectedRegular /> },
+  { key: "gateway-health", label: "Gateway Health", description: "Egress path status and evidence", icon: <HeartPulseRegular /> },
   { key: "vpn", label: "VPN", description: "WireGuard and Tailscale peers", icon: <PlugConnectedRegular /> },
   { key: "events", label: "Events", description: "Bus events and resource changes", icon: <ServerRegular /> },
   { key: "firewall", label: "Firewall", description: "Deny ranking and timeline", icon: <ShieldRegular /> },
@@ -1008,6 +1010,23 @@ const useStyles = makeStyles({
   },
   gatewayCandidateValue: {
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+  },
+  gatewaySummaryCounts: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "6px",
+    alignItems: "center",
+  },
+  gatewaySummaryFooter: {
+    display: "flex",
+    flexWrap: "wrap",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "10px",
+  },
+  gatewaySummaryIssues: {
+    minWidth: 0,
+    overflowWrap: "anywhere",
   },
   connectionCardList: {
     display: "grid",
@@ -2471,7 +2490,7 @@ function App() {
     const includeVPN = selected === "vpn";
     const includeDPI = selected === "connections" || selected === "clients" || selected === "firewall";
     const trafficFlowLimit = selected === "clients" ? 200 : selected === "connections" ? 600 : -1;
-    const includeResources = selected === "resources";
+    const includeResources = selected === "resources" || selected === "gateway-health";
     const includeEvents = selected === "events";
     const includeDHCPLeases = selected === "clients" || selected === "connections";
     const summaryQuery = new URLSearchParams({
@@ -2970,7 +2989,7 @@ function App() {
             {error ? <Card><Text role="alert">Web console error: {error}</Text></Card> : null}
             {selected === "overview" ? (
               <>
-                <GatewayHealthBanner health={summary?.gatewayHealth} />
+                <GatewayHealthSummaryCard health={summary?.gatewayHealth} navigateTo={navigateTo} />
                 <div id="overview-metrics" className={styles.connectionAnchor}>
                   <div className={styles.grid}>
                     <Metric label="phase" value={String(summary?.status?.status?.phase ?? "Unknown")} />
@@ -3204,6 +3223,9 @@ function App() {
             </div>
             <Button className={styles.scrollTopButton} appearance="primary" icon={<ArrowUpRegular />} onClick={scrollToTop}>Top</Button>
               </Card>
+            ) : null}
+            {selected === "gateway-health" ? (
+              <GatewayHealthBanner health={summary?.gatewayHealth} />
             ) : null}
             {selected === "vpn" ? (
               <div className={styles.vpnGrid}>
@@ -3701,12 +3723,47 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
+function GatewayHealthSummaryCard({ health, navigateTo }: { health?: GatewayHealth; navigateTo: (view: ViewKey, targetID?: string) => void }) {
+  const styles = useStyles();
+  const overall = normalizeGatewayStatus(health?.overall);
+  const components = health?.components ?? [];
+  const counts = gatewayHealthCounts(components);
+  const worst = gatewayWorstComponents(components).slice(0, 2);
+  return (
+    <Card id="overview-gateway-health" className={`${styles.gatewayBanner} ${gatewayBannerClass(styles, overall)}`}>
+      <div className={styles.gatewayHeader}>
+        <div className={styles.gatewayTitle}>
+          <Text weight="semibold">Gateway Health</Text>
+          <Badge appearance={overall === "ok" ? "outline" : "tint"} color={gatewayStatusColor(overall)}>{gatewaySummaryStatusLabel(overall)}</Badge>
+        </div>
+        <Text size={200} className={styles.muted}>{components.length ? `${components.length} gateway components` : "No gateway component status observed"}</Text>
+      </div>
+      <div className={styles.gatewaySummaryCounts} aria-label="Gateway health component counts">
+        <Badge appearance="tint" color="success">pass {counts.pass}</Badge>
+        <Badge appearance="tint" color="warning">warn {counts.warn}</Badge>
+        <Badge appearance="tint" color="danger">fail {counts.fail}</Badge>
+        <Badge appearance="outline" color="subtle">skip {counts.skip}</Badge>
+      </div>
+      <div className={styles.gatewaySummaryFooter}>
+        {worst.length && (overall === "degraded" || overall === "down") ? (
+          <Text size={200} className={`${styles.muted} ${styles.gatewaySummaryIssues}`}>
+            Attention: {worst.map(gatewayComponentLabel).join(", ")}
+          </Text>
+        ) : (
+          <Text size={200} className={styles.muted}>Detailed component evidence is on the Gateway Health page.</Text>
+        )}
+        <Button size="small" appearance="secondary" icon={<HeartPulseRegular />} onClick={() => navigateTo("gateway-health", "gateway-health-components")}>Gateway Health</Button>
+      </div>
+    </Card>
+  );
+}
+
 function GatewayHealthBanner({ health }: { health?: GatewayHealth }) {
   const styles = useStyles();
   const overall = normalizeGatewayStatus(health?.overall);
   const components = health?.components ?? [];
   return (
-    <Card className={`${styles.gatewayBanner} ${gatewayBannerClass(styles, overall)}`}>
+    <Card id="gateway-health-components" className={`${styles.gatewayBanner} ${gatewayBannerClass(styles, overall)} ${styles.connectionAnchor}`}>
       <div className={styles.gatewayHeader}>
         <div className={styles.gatewayTitle}>
           <Text weight="semibold">Gateway Health</Text>
@@ -5955,6 +6012,7 @@ function normalizeGatewayStatus(value: unknown) {
   const status = String(value ?? "").toLowerCase();
   if (status === "pass" || status === "passing") return "ok";
   if (status === "warn" || status === "warning") return "degraded";
+  if (status === "fail" || status === "failed" || status === "failing") return "down";
   if (status === "skip" || status === "skipped" || status === "disabled") return "skip";
   if (status === "ok" || status === "degraded" || status === "down" || status === "unknown") return status;
   return "unknown";
@@ -5978,6 +6036,54 @@ function gatewayStatusColor(status: string): "success" | "warning" | "danger" | 
 function gatewayStatusLabel(status: string) {
   const normalized = normalizeGatewayStatus(status);
   return normalized === "ok" ? "OK" : normalized.charAt(0).toUpperCase() + normalized.slice(1);
+}
+
+function gatewaySummaryStatusLabel(status: string) {
+  switch (normalizeGatewayStatus(status)) {
+    case "ok":
+      return "ok";
+    case "degraded":
+      return "warn";
+    case "down":
+      return "fail";
+    case "skip":
+      return "skip";
+    default:
+      return "skip";
+  }
+}
+
+function gatewayHealthCounts(components: GatewayHealthComponent[]) {
+  const counts = { pass: 0, warn: 0, fail: 0, skip: 0 };
+  for (const component of components) {
+    switch (normalizeGatewayStatus(component.status)) {
+      case "ok":
+        counts.pass += 1;
+        break;
+      case "degraded":
+        counts.warn += 1;
+        break;
+      case "down":
+        counts.fail += 1;
+        break;
+      case "skip":
+        counts.skip += 1;
+        break;
+    }
+  }
+  return counts;
+}
+
+function gatewayWorstComponents(components: GatewayHealthComponent[]) {
+  const rank: Record<string, number> = { down: 3, degraded: 2, unknown: 1, skip: 0, ok: 0 };
+  return [...components]
+    .filter(component => normalizeGatewayStatus(component.status) === "down" || normalizeGatewayStatus(component.status) === "degraded")
+    .sort((a, b) => (rank[normalizeGatewayStatus(b.status)] ?? 0) - (rank[normalizeGatewayStatus(a.status)] ?? 0) || stringSort(gatewayComponentLabel(a), gatewayComponentLabel(b)));
+}
+
+function gatewayComponentLabel(component: GatewayHealthComponent) {
+  if (component.kind && component.name) return `${component.kind}/${component.name}`;
+  return component.name || component.kind || "Component";
 }
 
 function gatewayBannerClass(styles: ReturnType<typeof useStyles>, status: string) {
@@ -7351,6 +7457,11 @@ function navigationSubItems(selected: ViewKey, groups: { key: string; rows: Conn
         targetID: connectionGroupID(group.key),
       };
     });
+  }
+  if (selected === "gateway-health") {
+    return [
+      { key: "components", label: "Components", count: summary?.gatewayHealth?.components?.length ?? 0, view: "gateway-health", targetID: "gateway-health-components" },
+    ];
   }
   if (selected === "clients") {
     const leases = summary?.dhcpLeases ?? [];
