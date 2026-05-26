@@ -5,6 +5,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"net"
 	"net/http"
 	"os"
@@ -172,6 +173,73 @@ func TestEventsCommandListsStateDatabaseEvents(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("events output missing %q:\n%s", want, got)
 		}
+	}
+}
+
+func TestLedgerIntegrityCheckCommand(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "routerd.db")
+	store, err := routerstate.OpenSQLite(statePath)
+	if err != nil {
+		t.Fatalf("open state: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close state: %v", err)
+	}
+
+	var out bytes.Buffer
+	if err := run([]string{"ledger", "integrity-check", "--state-file", statePath, "-o", "json"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("ledger integrity-check: %v", err)
+	}
+	if !strings.Contains(out.String(), `"result": "ok"`) {
+		t.Fatalf("integrity output = %s", out.String())
+	}
+}
+
+func TestLedgerPruneEventsDryRunCommand(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "routerd.db")
+	store, err := routerstate.OpenSQLite(statePath)
+	if err != nil {
+		t.Fatalf("open state: %v", err)
+	}
+	if err := store.RecordEvent("net.routerd.net/v1alpha1", "Interface", "wan", "Normal", "OldEvent", "old event"); err != nil {
+		t.Fatalf("record old event: %v", err)
+	}
+	if err := store.RecordEvent("net.routerd.net/v1alpha1", "Interface", "wan", "Normal", "NewEvent", "new event"); err != nil {
+		t.Fatalf("record new event: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close state: %v", err)
+	}
+	db, err := sql.Open("sqlite", statePath)
+	if err != nil {
+		t.Fatalf("open sqlite directly: %v", err)
+	}
+	_, err = db.Exec(`UPDATE events SET created_at = ? WHERE reason = ?`, time.Now().Add(-48*time.Hour).UTC().Format(time.RFC3339Nano), "OldEvent")
+	if err != nil {
+		t.Fatalf("backdate old event: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close sqlite directly: %v", err)
+	}
+
+	var out bytes.Buffer
+	if err := run([]string{"ledger", "prune-events", "--state-file", statePath, "--older-than", "24h", "--dry-run"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("ledger prune-events --dry-run: %v", err)
+	}
+	got := out.String()
+	fields := strings.Join(strings.Fields(got), "|")
+	if !strings.Contains(got, "MATCHED") || !strings.Contains(fields, "|1|0|true") {
+		t.Fatalf("prune dry-run output = %s", got)
+	}
+	store, err = routerstate.OpenSQLite(statePath)
+	if err != nil {
+		t.Fatalf("reopen state: %v", err)
+	}
+	defer store.Close()
+	events := store.Events("net.routerd.net/v1alpha1", "Interface", "wan", 10)
+	if len(events) != 2 {
+		t.Fatalf("dry-run pruned events: %+v", events)
 	}
 }
 

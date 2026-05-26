@@ -808,6 +808,68 @@ func (s *SQLiteStore) ObjectApplySource(apiVersion, kind, name string) string {
 	return path.String
 }
 
+func (s *SQLiteStore) IntegrityCheck() (string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.closed {
+		return "", nil
+	}
+	var result string
+	if err := s.db.QueryRow(`PRAGMA integrity_check`).Scan(&result); err != nil {
+		return "", err
+	}
+	return result, nil
+}
+
+func (s *SQLiteStore) Vacuum() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return nil
+	}
+	_, err := s.db.Exec(`VACUUM`)
+	return err
+}
+
+func (s *SQLiteStore) BackupTo(dest string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return nil
+	}
+	if _, err := os.Stat(dest); err == nil {
+		return fmt.Errorf("backup destination %s already exists", dest)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	_, err := s.db.Exec(`VACUUM INTO ?`, dest)
+	return err
+}
+
+func (s *SQLiteStore) CountEventsOlderThan(cutoff time.Time) (int64, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.closed {
+		return 0, nil
+	}
+	var count int64
+	err := s.db.QueryRow(`SELECT count(*) FROM events WHERE created_at < ?`, cutoff.UTC().Format(time.RFC3339Nano)).Scan(&count)
+	return count, err
+}
+
+func (s *SQLiteStore) PruneEventsOlderThan(cutoff time.Time) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return 0, nil
+	}
+	result, err := s.db.Exec(`DELETE FROM events WHERE created_at < ?`, cutoff.UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 func (s *SQLiteStore) RecordEvent(apiVersion, kind, name, eventType, reason, message string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -252,6 +252,79 @@ func TestSQLiteStoreGenerationsAndEvents(t *testing.T) {
 	}
 }
 
+func TestSQLiteStoreMaintenance(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "routerd.db")
+	store, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatalf("open sqlite store: %v", err)
+	}
+	oldTime := time.Now().Add(-48 * time.Hour).UTC()
+	newTime := time.Now().UTC()
+	store.now = func() time.Time { return oldTime }
+	if err := store.RecordEvent("net.routerd.net/v1alpha1", "Interface", "wan", "Normal", "OldEvent", "old event"); err != nil {
+		t.Fatalf("record old event: %v", err)
+	}
+	store.now = func() time.Time { return newTime }
+	if err := store.RecordEvent("net.routerd.net/v1alpha1", "Interface", "wan", "Normal", "NewEvent", "new event"); err != nil {
+		t.Fatalf("record new event: %v", err)
+	}
+
+	result, err := store.IntegrityCheck()
+	if err != nil {
+		t.Fatalf("integrity check: %v", err)
+	}
+	if result != "ok" {
+		t.Fatalf("integrity check = %q, want ok", result)
+	}
+	matched, err := store.CountEventsOlderThan(time.Now().Add(-24 * time.Hour))
+	if err != nil {
+		t.Fatalf("count old events: %v", err)
+	}
+	if matched != 1 {
+		t.Fatalf("old event count = %d, want 1", matched)
+	}
+	deleted, err := store.PruneEventsOlderThan(time.Now().Add(-24 * time.Hour))
+	if err != nil {
+		t.Fatalf("prune old events: %v", err)
+	}
+	if deleted != 1 {
+		t.Fatalf("deleted events = %d, want 1", deleted)
+	}
+	events := store.Events("net.routerd.net/v1alpha1", "Interface", "wan", 10)
+	if len(events) != 1 || events[0].Reason != "NewEvent" {
+		t.Fatalf("remaining events = %+v", events)
+	}
+
+	backupPath := filepath.Join(dir, "backup.db")
+	if err := store.BackupTo(backupPath); err != nil {
+		t.Fatalf("backup state: %v", err)
+	}
+	if _, err := os.Stat(backupPath); err != nil {
+		t.Fatalf("backup file missing: %v", err)
+	}
+	if err := store.BackupTo(backupPath); err == nil {
+		t.Fatal("backup to existing file succeeded")
+	}
+	backup, err := OpenSQLiteReadOnly(backupPath)
+	if err != nil {
+		t.Fatalf("open backup: %v", err)
+	}
+	if result, err := backup.IntegrityCheck(); err != nil || result != "ok" {
+		t.Fatalf("backup integrity = %q err=%v", result, err)
+	}
+	if err := backup.Close(); err != nil {
+		t.Fatalf("close backup: %v", err)
+	}
+
+	if err := store.Vacuum(); err != nil {
+		t.Fatalf("vacuum: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close state: %v", err)
+	}
+}
+
 func TestSQLiteStoreClosedAccessIsBenign(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "routerd.db")
 	store, err := OpenSQLite(path)
