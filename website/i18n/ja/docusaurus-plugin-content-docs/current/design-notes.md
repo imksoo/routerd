@@ -88,11 +88,11 @@ OpenRC 対応は、まず applier ではなく renderer として始めます。
 API の形は当面 `generated service artifacts` のままですが、OpenRC に写すのは init script の意味を明確に持つ field に限ります。具体的には `ExecStart`、`ExecStartPre`、environment、working directory、user/group、runtime/state/log directory です。
 systemd sandboxing、networkd、resolved、timesyncd の意味は、OpenRC 上で模倣しません。
 
-apply 時の activation は `HasOpenRC` で分岐します。
-script は内容または mode が変わる場合だけ書き込み、`rc-update show default` で登録状態を確認してから add / del し、`rc-service <name> status` を見てから start / restart / stop します。
-systemd 側と同じく、望む状態と file が変わらない場合は、service-manager command を重複実行しません。
+適用時の有効化処理は `HasOpenRC` で分岐します。
+スクリプトは内容またはモードが変わる場合だけ書き込み、`rc-update show default` で登録状態を確認してから追加・削除を行い、`rc-service <name> status` を見てから start / restart / stop を実行します。
+systemd 側と同じく、目標状態とファイルが変わっていない場合は、サービスマネージャのコマンドを重複実行しません。
 
-次の実装段階は、Alpine の導入済みホスト向け smoke harness を通常の VM job にすることです。
+次の実装段階は、Alpine の導入済みホスト向けスモークテストハーネスを通常の VM ジョブに昇格させることです。
 
 ## 8. 残課題
 
