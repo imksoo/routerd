@@ -86,3 +86,18 @@ JSON エンドポイントは `/api/v1` 配下にあり、SSE ストリームは
 | `/api/v1/generations?limit=100` | 完了した適用世代と、YAML スナップショットの有無 |
 | `/api/v1/generations/<id>/config` | 1 つの適用世代に保存された YAML |
 | `/api/v1/generations/<from>/diff/<to>` | 2 つの YAML 世代の差分（unified diff） |
+
+## シークレットの redaction
+
+config を返すエンドポイント — `/api/v1/config`、
+`/api/v1/generations/<id>/config`、
+`/api/v1/generations/<from>/diff/<to>` — は、**シリアライズ前に secrets を
+redact します**。WireGuard `privateKey` / `preSharedKey`、Tailscale
+`authKey`、BGP/PPPoE/IPsec `password`、WebConsole `initialPassword`、
+および bearer / token / API key 系のフィールドは、マーカ値
+（`***REDACTED***`）に置き換えられます。キーは残るため UI の構造は壊れません。
+
+読み取り専用の Web Console から生の secrets が見える経路はありません。
+特権ローカル経路（routerd の control socket、`routerctl describe`）は意図的に
+変更しておらず、必要なら生の intent を表示します。これらの経路はローカル
+socket の権限と `routerd` グループメンバーシップで守ってください。

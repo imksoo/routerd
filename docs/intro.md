@@ -10,7 +10,7 @@ sidebar_label: Overview
 routerd turns typed YAML resources into a working, observable router on a Linux, NixOS, or FreeBSD host. Pick the section that matches what you are trying to do.
 
 :::tip Recommended stable release
-For a new deployment, start from the recommended stable milestone **v20260525.1631**. See [Stable milestone](./releases/stable.md) for details.
+For a new deployment, start from the recommended stable milestone **v20260526.1607**. See [Stable milestone](./releases/stable.md) for details.
 :::
 
 ## By goal

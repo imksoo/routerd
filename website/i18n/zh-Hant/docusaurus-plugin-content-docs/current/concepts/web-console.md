@@ -85,3 +85,17 @@ JSON 端點位於 `/api/v1` 下，SSE 串流也可透過短名稱
 | `/api/v1/generations?limit=100` | 已完成的套用世代及 YAML 快照的有無 |
 | `/api/v1/generations/<id>/config` | 某一套用世代儲存的 YAML |
 | `/api/v1/generations/<from>/diff/<to>` | 兩個 YAML 世代的差異（unified diff） |
+
+## Secrets redaction
+
+回傳 config 的端點 —— `/api/v1/config`、
+`/api/v1/generations/<id>/config`、
+`/api/v1/generations/<from>/diff/<to>` —— **會在序列化前 redact secrets**。
+WireGuard `privateKey` / `preSharedKey`、Tailscale `authKey`、
+BGP/PPPoE/IPsec `password`、WebConsole `initialPassword`，以及
+bearer / token / API key 類欄位，會被取代為標記值（`***REDACTED***`）；
+鍵保留，UI 結構不受影響。
+
+唯讀 Web Console 不會洩漏原始 secret。特權本地路徑（routerd 的 control
+socket、`routerctl describe`）刻意保持不變，並在適當時顯示原始 intent。請
+透過本地 socket 權限與 `routerd` 群組成員資格保護這些路徑。

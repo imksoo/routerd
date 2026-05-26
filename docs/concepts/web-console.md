@@ -90,3 +90,20 @@ SSE stream is also available through the short `/api/events/stream` alias.
 | `/api/v1/generations?limit=100` | completed apply generations and whether a YAML snapshot is stored |
 | `/api/v1/generations/<id>/config` | stored YAML for one apply generation |
 | `/api/v1/generations/<from>/diff/<to>` | unified diff between two stored YAML generations |
+
+## Secret redaction
+
+The config-bearing endpoints — `/api/v1/config`,
+`/api/v1/generations/<id>/config`, and
+`/api/v1/generations/<from>/diff/<to>` — **redact secrets before
+serializing**. WireGuard `privateKey` / `preSharedKey`, Tailscale
+`authKey`, BGP/PPPoE/IPsec `password`, WebConsole `initialPassword`, and
+bearer/token/API-key style fields are replaced with a marker value
+(`***REDACTED***`); keys stay in place so the UI structure is
+unaffected.
+
+The read-only Web Console never exposes raw secret material. Privileged
+local control paths (the routerd control socket, `routerctl describe`)
+are intentionally unchanged and continue to show raw intent where
+appropriate; those paths should be protected by local socket permissions
+and `routerd` group membership.

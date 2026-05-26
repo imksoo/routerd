@@ -12,19 +12,64 @@ routerd は `vYYYYMMDD.HHmm` 形式で頻繁にリリースしますが、その
 
 | 項目 | 内容 |
 | --- | --- |
-| バージョン | **v20260525.1631** |
-| 位置づけ | 推奨安定版（v20260525.0112 を置き換え） |
-| 稼働実績 | 本番ルーター（homert02）で稼働中。BGP の 2-way ECMP を維持し、DNS リゾルバは routerd 再起動をまたいで応答を継続し、Graceful Restart により無瞬断でアップグレードできます |
+| バージョン | **v20260526.1607** |
+| 位置づけ | 推奨安定版（v20260525.1631 を置き換え） |
+| 稼働実績 | 本番ルーター（homert02）で検証済み: routerd 再起動・install 中も DNS は無瞬断（NG 0）、`/api/v1/config` の生 secrets 検出 0、`gatewayHealth` は 26 components で overall=ok、`routerctl doctor` は rc=0（pass=32 warn=4 fail=0 skip=1）、install 跨ぎで BGP 2/2 と 2-way ECMP を維持 |
 | バイナリ | 静的リンク（`CGO_ENABLED=0`）、CI と Release ワークフローを通過 |
 
-## v20260525.1631 を推奨する理由
+## v20260526.1607 を推奨する理由
 
-- **routerd 再起動をまたいで DNS が応答し続けます。** `DNSResolver` は独立した長寿命サービスユニット（`routerd-dns-resolver@<name>.service`）として動くようになりました。routerd の再起動・アップグレードで DNS が中断せず、config 変更（DHCPv6-PD 収束を含む）はデーモンの reload エンドポイント経由でプロセスを再起動せずに反映され、`routerctl restart-dns-resolver` で明示的に復旧できます。起動時は部分起動もし、すでに解決済みの listen アドレスと source で応答を開始（`phase: Degraded` と `waiting` リスト）して `Applied` に収束するため、プレフィックス委任待ちで DNS を拒否する起動直後の隙間がありません。
-- **BGP 制御プレーンの成果をすべて備えています。** FRR を使わず routerd 自前の `routerd-bgp` デーモンで eBGP peer を保持し、next-hop 書き換えの修正（#26）により第三者 next-hop を広告する上流でも 2-way ECMP を維持し、Alpine/OpenRC の live ISO でも `routerd-bgp` が OpenRC 下で起動します（#28）。
-- **アップグレードが BGP も DNS も乱しません。** `install.sh` はバイナリ更新時に `routerd-bgp` も DNS リゾルバも自動再起動しなくなり、routerd 更新をまたいで eBGP セッション・ECMP・DNS を維持します。
-- **運用が容易になりました。** `routerd rollback --list` / `--to <generation>` で保存済みの設定世代を再適用でき、`routerctl set-log-level` でログ詳細度を実行時に変更でき、`routerctl describe` が Phase・Reason・Message と是正ヒントを表示します。
-- **非 root での status 取得。** 読み取り専用の status ソケットは `root:routerd`・モード `0o660` で作成されるため、`routerd` グループに属する運用者は sudo なしで `routerctl status` を実行できます。
-- **本番ルーター（homert02）で稼働**し、静的バイナリ（`CGO_ENABLED=0`）で配布、CI と Release ワークフローを通過しています。
+推奨の理由は**新機能の追加ではなく運用上の成熟**です。
+v20260526.1607 は前推奨版の本番安全な DNS / BGP アップグレード挙動をそのまま受け継ぎ、
+本番ルーター（homert02）で検証された 4 つの運用契約を加えています:
+
+- **Web Console が secrets を漏らさなくなりました。** `/api/v1/config` と
+  generation の config / diff エンドポイントは、シリアライズ前に
+  WireGuard `privateKey` / `preSharedKey`、Tailscale `authKey`、
+  BGP/PPPoE/IPsec `password`、WebConsole `initialPassword`、bearer/token 系を
+  redact します。キーは残しマーカに置換するため UI は壊れません。homert02
+  実トラフィック検証で **生 secrets 検出 0**。
+- **`gatewayHealth` が出口経路全体を集約します。** `/api/v1/summary` は
+  DNSResolver / DSLiteTunnel / DHCPv6PrefixDelegation に加えて
+  EgressRoutePolicy / NAT44Rule / HealthCheck も束ねます。Web Console バナーは
+  選択中 path と preferred の一致状態を表示し、fallback 候補使用中は警告を
+  目立たせます。homert02 検証で **overall=ok / 26 components**。
+- **`routerctl doctor` は機械可読な安定契約になりました。** `-o json` 出力は
+  v1alpha1 の運用者向け契約として明文化（area・status enum・summary・終了コード）。
+  fail で非0 終了するためスクリプトから扱えます。homert02 検証で
+  **rc=0（pass=32 warn=4 fail=0 skip=1）**。
+- **`ManagementAccess` による宣言的 apply ガード。** 管理 IF の欠落、firewall が
+  SSH を遮断する状況、WebConsole の全アドレス bind を、apply 前 preflight で
+  検出し（`--allow-mgmt-lockout` で上書き可）非 dry-run apply を中止します。
+  同じチェックは `routerctl doctor mgmt` でも実行できます。
+
+**継承事項（v20260525.1631 等から）:** DNS リゾルバが独立長寿命サービスユニット
+として動き、routerd 再起動・アップグレードで DNS が中断しません（homert02 検証:
+`routerd.service` restart 中・install 中とも DNS probe NG 0）。`install.sh` は
+バイナリ更新時に `routerd-bgp` を自動再起動せず、eBGP セッション・ECMP を維持
+します（homert02 検証: 2/2 Established・2-way ECMP・HTTP 200 を install 跨ぎで
+維持）。完全な BGP 制御プレーン（FRR 不使用、#26 next-hop 書き換え、#28
+OpenRC live ISO 起動）。`routerctl ledger` 保守（`integrity-check` / `vacuum` /
+`backup` / `prune-events`、非 dry-run prune には監査イベントを発行）。
+
+## 既知の観測（リリースを止めない事項）
+
+- **DS-Lite の doctor WARN は egress が正常でも出ることがある。** AFTR の AAAA
+  プローブまたは tunnel device 検出が間欠的に noisy なとき、doctor の `dslite`
+  area が WARN を返すことがあります（`gatewayHealth=ok`、実際の egress も
+  HTTP 200 で通る場合）。dataplane 障害ではなく保守的診断ノイズと扱います。
+  次の調整で DS-Lite doctor の severity を `gatewayHealth` の selected-path
+  証拠と整合させる予定です。
+- **`install.sh` 後に `routerd-bgp` が旧 inode のままで動く場合がある。** これは
+  意図どおりです。`install.sh` は upgrade 時に `routerd-bgp` を自動再起動せず、
+  確立済み BGP セッションと ECMP が routerd バイナリ更新をまたいで残ります。
+  運用者が Graceful Restart のタイミングで `systemctl restart routerd-bgp` を
+  実行するまで、プロセスは旧 inode のバイナリを掴み続けます。
+- **`ManagementAccess` 未宣言の構成では `routerctl doctor mgmt` が SKIP になる。**
+  これは live config 側の選択であり、リリースの欠陥ではありません。apply の
+  lockout ガードと doctor mgmt の判定を有効にしたいなら `ManagementAccess`
+  リソースを宣言してください（[`examples/home-router-mgmt-protected.yaml`](https://github.com/imksoo/routerd/blob/main/examples/home-router-mgmt-protected.yaml)
+  参照）。
 
 :::warning アップグレード時の注意
 - **v20260523.1542 以前から上げる場合:** `disabled:` フィールド（`enabled: false` を使用）と no-op の `--controller-chain*` / `--observe-interval` フラグが削除済みです。該当する設定とホストの service unit をアップグレード前に書き直してください。

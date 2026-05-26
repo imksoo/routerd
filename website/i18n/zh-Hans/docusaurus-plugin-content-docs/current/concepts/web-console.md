@@ -85,3 +85,17 @@ JSON 端点位于 `/api/v1` 下，SSE 流也可通过短名称
 | `/api/v1/generations?limit=100` | 已完成的应用世代及 YAML 快照的有无 |
 | `/api/v1/generations/<id>/config` | 某一应用世代保存的 YAML |
 | `/api/v1/generations/<from>/diff/<to>` | 两个 YAML 世代的差异（unified diff） |
+
+## Secrets redaction
+
+返回 config 的端点 —— `/api/v1/config`、
+`/api/v1/generations/<id>/config`、
+`/api/v1/generations/<from>/diff/<to>` —— **会在序列化前 redact secrets**。
+WireGuard `privateKey` / `preSharedKey`、Tailscale `authKey`、
+BGP/PPPoE/IPsec `password`、WebConsole `initialPassword`，以及
+bearer / token / API key 类字段，会被替换为标记值（`***REDACTED***`）；
+键保留，UI 结构不受影响。
+
+只读 Web Console 不会暴露原始 secret。特权本地路径（routerd 的 control
+socket、`routerctl describe`）保持不变，并在适当时显示原始 intent。请通过
+本地 socket 权限与 `routerd` 组成员资格保护这些路径。
