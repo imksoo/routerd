@@ -7,7 +7,7 @@ import Layout from '@theme/Layout';
 import Heading from '@theme/Heading';
 import styles from './index.module.css';
 
-const STABLE_VERSION = 'v20260526.2241';
+const STABLE_VERSION = 'v20260526.2335';
 
 const copy = {
   en: {

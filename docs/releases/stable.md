@@ -12,18 +12,31 @@ routerd ships frequently using the `vYYYYMMDD.HHmm` scheme. From those builds we
 
 | Item | Value |
 | --- | --- |
-| Version | **v20260526.2241** |
-| Status | Recommended stable release (supersedes v20260526.1607) |
-| Track record | Production-validated on a home router (homert02) across **two successive in-place upgrades** (1607 → 2152 → 2241): each routerd restart left `routerd-bgp` untouched (MainPID unchanged), BGP stayed 2/2 Established with uptime climbing through every upgrade (1h19m → 1h27m → 2h0m → 2h15m, never reset), 2-way ECMP via .38/.53 stayed in the kernel, `routerctl doctor dslite` finished at pass=12 warn=0, and the Web Console Gateway Health page recorded good=90 / bad=0 over 180s |
+| Version | **v20260526.2335** |
+| Status | Recommended stable release (supersedes v20260526.2241; doc/CI consistency follow-up — no runtime behavior change) |
+| Track record | Production-validated on a home router (homert02) across **three successive in-place upgrades** (1607 → 2152 → 2241 → 2335): every routerd restart left `routerd-bgp` untouched (MainPID 2394269 unchanged across all four hops), BGP stayed 2/2 Established with uptime climbing through every upgrade (1h19m → 1h27m → 2h0m → 2h15m → 3h7m → 3h10m, never reset), 2-way ECMP via .38/.53 stayed in the kernel, `routerctl doctor dslite` finished at pass=12 warn=0, the Web Console Gateway Health page recorded good=90 / bad=0 over 180s, and `install.sh` exited rc=0 with the correct cd-into-package-dir pattern |
 | Binary | Statically linked (`CGO_ENABLED=0`), passes CI and the Release workflow |
 
-## Why v20260526.2241 is recommended
+## Why v20260526.2335 is recommended
 
-The recommendation is **operational maturity, not feature scope.** v20260526.2241
-inherits every production-safe property of v20260526.1607 (Web Console secret
-redaction, `gatewayHealth` aggregation, machine-readable `routerctl doctor`,
-`ManagementAccess` apply guard) and adds five contracts that have been observed
-in real production on homert02:
+The recommendation is **operational maturity, not feature scope.** v20260526.2335
+inherits every production-safe property of v20260526.2241 (which itself inherited
+v20260526.1607's Web Console secret redaction, `gatewayHealth` aggregation,
+machine-readable `routerctl doctor`, and `ManagementAccess` apply guard) and
+adds one documentation/CI hardening on top of the five v20260526.2241
+contracts observed in real production on homert02:
+
+- **The recommended-stable display cannot silently drift.** A new CI guard
+  (`scripts/check-active-stable.sh`) reads `STABLE_VERSION` from
+  `website/src/pages/index.tsx` and fails when the homepage hero, the
+  per-locale intro tip, the announcement bar, or `docusaurus.config.ts`
+  point at a different `vYYYYMMDD.HHmm`. The `v20260526.2241` promotion
+  had left the homepage hero and four intro tips at `v20260526.1607`; the
+  guard now prevents that class of split state from re-emerging in
+  future promotions.
+
+The five operationally-significant contracts carried forward from
+v20260526.2241 and validated again across the 2335 apply on homert02:
 
 - **BGP sessions survive routerd binary upgrades.** The BGP controller now
   hydrates its in-memory applied-policy state on reconcile, so a routerd

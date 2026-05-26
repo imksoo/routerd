@@ -12,18 +12,30 @@ routerd は `vYYYYMMDD.HHmm` 形式で頻繁にリリースしますが、その
 
 | 項目 | 内容 |
 | --- | --- |
-| バージョン | **v20260526.2241** |
-| 位置づけ | 推奨安定版（v20260526.1607 を置き換え） |
-| 稼働実績 | 本番ルーター（homert02）で **2 回連続の in-place アップグレード**（1607 → 2152 → 2241）を検証済み: routerd 再起動のたびに `routerd-bgp` は触られず（MainPID 不変）、BGP は 2/2 Established を維持、uptime は再起動ごとに途切れず伸び続け（1h19m → 1h27m → 2h0m → 2h15m）、2-way ECMP（.38/.53）も kernel に残ったまま、`routerctl doctor dslite` は pass=12 warn=0、Web Console Gateway Health 画面は 180s / 90 samples で good=90 / bad=0 |
+| バージョン | **v20260526.2335** |
+| 位置づけ | 推奨安定版（v20260526.2241 を置き換え。docs / CI 整合の follow-up でランタイム挙動の変更なし） |
+| 稼働実績 | 本番ルーター（homert02）で **3 回連続の in-place アップグレード**（1607 → 2152 → 2241 → 2335）を検証済み: routerd 再起動のたびに `routerd-bgp` は触られず（MainPID 2394269 が 4 回連続不変）、BGP は 2/2 Established を維持、uptime は再起動ごとに途切れず伸び続け（1h19m → 1h27m → 2h0m → 2h15m → 3h7m → 3h10m）、2-way ECMP（.38/.53）も kernel に残ったまま、`routerctl doctor dslite` は pass=12 warn=0、Web Console Gateway Health 画面は 180s / 90 samples で good=90 / bad=0、`install.sh` は正規 cd-into-package-dir パターンで rc=0 |
 | バイナリ | 静的リンク（`CGO_ENABLED=0`）、CI と Release ワークフローを通過 |
 
-## v20260526.2241 を推奨する理由
+## v20260526.2335 を推奨する理由
 
-推奨の理由は**新機能の追加ではなく運用上の成熟**です。v20260526.2241 は
-v20260526.1607 の本番安全特性（Web Console secrets redaction、`gatewayHealth`
-集約、機械可読 `routerctl doctor`、`ManagementAccess` apply ガード）をすべて
-受け継ぎ、本番ルーター（homert02）で観測された 5 つの運用契約を追加して
-います:
+推奨の理由は**新機能の追加ではなく運用上の成熟**です。v20260526.2335 は
+v20260526.2241 の本番安全特性をすべて受け継ぎ（v20260526.2241 自身が
+v20260526.1607 の Web Console secrets redaction、`gatewayHealth` 集約、
+機械可読 `routerctl doctor`、`ManagementAccess` apply ガードを継承して
+います）、その上に docs / CI のハードニングを 1 つ追加しています:
+
+- **推奨安定版の表示が静かに乖離しなくなりました。** 新しい CI 守護
+  (`scripts/check-active-stable.sh`) が `website/src/pages/index.tsx`
+  の `STABLE_VERSION` を source of truth として、homepage hero、各
+  ロケールの intro tip、announcement bar、`docusaurus.config.ts` が
+  別の `vYYYYMMDD.HHmm` を指していたら CI で fail します。
+  v20260526.2241 への promote 時に homepage hero と 4 言語の intro tip
+  が `v20260526.1607` のまま取り残されていた事象を、今後の promote で
+  再発させないための保険です。
+
+v20260526.2241 から継承し、2335 の homert02 apply でも再検証された
+5 つの運用契約:
 
 - **routerd 本体のバイナリ更新で BGP セッションが落ちなくなりました。** BGP
   コントローラーが reconcile 入口で applied 済みポリシー状態を hydrate する
