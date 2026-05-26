@@ -11,6 +11,34 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 新增
+
+- `/api/v1/summary` 中的 `gatewayHealth` 現在依元件輸出
+  `selectedPath` / `preferredPath` / `fallbackReason` / `failedProbes` /
+  `lastTransition` 等佐證欄位。當選擇中的 egress path 與 preferred 不
+  一致時，Web Console 會突顯目前使用中的 fallback 目標。
+
+### 變更
+
+- Web Console 將 Gateway Health 從 Overview 拆出獨立畫面（與
+  Connections / Clients 一致）。Overview 僅保留彙整卡片：overall 狀態、
+  pass / warn / fail / skip 件數、跳轉按鈕，以及 degraded / down 時
+  顯示 worst 元件名稱的一行提示。
+
+### 修正
+
+- BGP 控制器在 reconcile 入口會先 hydrate 已套用的策略狀態，因此
+  routerd 重新啟動時不會再次 PUT 內容未變的 import-policy 指派並
+  重置所有 BGP 工作階段。先前在生產環境（homert02）每次 routerd 重新
+  啟動都會讓所有 peer 中斷後重建，ECMP 必須等到 hold-time 過期才能
+  復原。
+- `routerctl doctor dslite` 現在會把 DSLiteTunnel `phase=Up` 視為健康，
+  並透過 `status.selectedSource = "DSLiteTunnel/<name>"` 辨識
+  EgressRoutePolicy 的選擇（同時保留舊有 `selectedCandidate` 名稱比對
+  作為相容回退）。先前在採用 `dslite-pd-balanced` 等彙總候選名稱的
+  生產設定下，即使 `gatewayHealth` 判定為 `ok`，所有健康的 DSLiteTunnel
+  仍會顯示為 WARN。
+
 ## v20260526.1607
 
 ### 新增

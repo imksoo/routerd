@@ -12,6 +12,38 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Added
+
+- `gatewayHealth` in `/api/v1/summary` now exposes per-component
+  evidence: `selectedPath`, `preferredPath`, `fallbackReason`,
+  `failedProbes`, and `lastTransition`. The Web Console highlights the
+  active fallback target when the selected path differs from the
+  preferred one.
+
+### Changed
+
+- The Web Console moves Gateway Health off the Overview into its own
+  screen, mirroring the Connections/Clients pattern. Overview keeps a
+  compact summary card with overall status, pass/warn/fail/skip counts,
+  a jump button, and a one-line worst-component hint when degraded or
+  down.
+
+### Fixed
+
+- The BGP controller now hydrates its in-memory applied-policy state on
+  reconcile, so restarting routerd no longer re-PUTs the unchanged
+  import-policy assignment and resets every BGP session. Production
+  users (homert02) previously saw all peers drop and re-establish on
+  each routerd restart; ECMP recovery then took up to a hold-time worth
+  of stale paths.
+- `routerctl doctor dslite` now treats DSLiteTunnel `phase=Up` as
+  healthy and recognizes EgressRoutePolicy selection through
+  `status.selectedSource = "DSLiteTunnel/<name>"` in addition to the
+  legacy `selectedCandidate` name match. Previously every healthy
+  DSLiteTunnel showed up as WARN on production-style configurations
+  using aggregate candidate names such as `dslite-pd-balanced`, even
+  while `gatewayHealth` correctly reported them as `ok`.
+
 ## v20260526.1607
 
 ### Added

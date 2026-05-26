@@ -11,6 +11,35 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 追加
+
+- `/api/v1/summary` の `gatewayHealth` がコンポーネントごとに
+  `selectedPath` / `preferredPath` / `fallbackReason` / `failedProbes` /
+  `lastTransition` の根拠フィールドを返すようになりました。Web Console
+  は選択中の egress path が preferred と異なる場合に、現在使用している
+  fallback ターゲットを強調表示します。
+
+### 変更
+
+- Web Console の Gateway Health を Overview から専用画面へ分離しました
+  （Connections / Clients と同じ構成）。Overview には、overall ステータス、
+  pass / warn / fail / skip 件数、詳細画面へのジャンプボタン、degraded /
+  down 時の worst コンポーネント名一行を含む集約カードのみを残します。
+
+### 修正
+
+- BGP コントローラーが reconcile 時に applied 済みポリシー状態を
+  hydrate するようになり、routerd を再起動しても同一内容の
+  import-policy 割り当てを再 PUT しなくなりました。これまで本番運用
+  （homert02）では routerd 再起動のたびに全 BGP ピアが drop / 再確立
+  し、hold-time 分の stale path を経て ECMP が回復していました。
+- `routerctl doctor dslite` が DSLiteTunnel `phase=Up` を健全とみなし、
+  EgressRoutePolicy の選択を `status.selectedSource = "DSLiteTunnel/<name>"`
+  経由でも認識するようになりました（旧来の `selectedCandidate` 名一致も
+  併用）。これまで `dslite-pd-balanced` のような集約候補名を使う本番
+  構成では、`gatewayHealth` が `ok` と判定している DSLiteTunnel が
+  毎回 WARN 表示になっていました。
+
 ## v20260526.1607
 
 ### 追加
