@@ -11,6 +11,8 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260526.1607
+
 ### 新增
 
 - `routerctl ledger prune-events` 非 dry-run 執行後會發出稽核事件

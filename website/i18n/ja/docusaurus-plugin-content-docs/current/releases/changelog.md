@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260526.1607
+
 ### 追加
 
 - `routerctl ledger prune-events` の非 dry-run 実行時に監査イベント
