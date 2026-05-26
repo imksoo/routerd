@@ -2,6 +2,29 @@
 # SPDX-License-Identifier: BSD-3-Clause
 set -eu
 
+# Resolve the directory that contains this script so that payload paths
+# (bin/, etc/, share/, systemd/, rc.d/) are looked up next to the script
+# regardless of the caller's working directory. Without this guard, a
+# caller doing `cd /tmp && sudo ./pkg/install.sh ...` would land with
+# cwd=/tmp, leave every `bin/*` glob unexpanded, and silently install
+# nothing while still printing "routerd upgrade completed".
+script_path=$0
+case "${script_path}" in
+    */*) script_dir=$(cd "$(dirname "${script_path}")" 2>/dev/null && pwd) ;;
+    *)
+        if resolved=$(command -v "${script_path}" 2>/dev/null) && [ -n "${resolved}" ]; then
+            script_dir=$(cd "$(dirname "${resolved}")" 2>/dev/null && pwd)
+        else
+            script_dir=$(pwd)
+        fi
+        ;;
+esac
+if [ -z "${script_dir}" ] || [ ! -d "${script_dir}" ]; then
+    echo "install.sh: could not resolve script directory from \$0=${script_path}" >&2
+    exit 2
+fi
+cd "${script_dir}"
+
 prefix=/usr/local
 command_mode=install
 enable_service=0
@@ -1822,6 +1845,13 @@ if [ "${list_deps}" -eq 1 ] || [ "${deps_only}" -eq 1 ]; then
     exit 0
 fi
 
+if [ ! -x bin/routerd ]; then
+    echo "install.sh: required payload bin/routerd not found under ${script_dir}" >&2
+    echo "install.sh: this release archive looks incomplete or was unpacked into a subdirectory" >&2
+    echo "install.sh: extract the routerd release archive and run install.sh from the directory containing bin/, etc/, systemd/, ..." >&2
+    exit 2
+fi
+
 backup_dir=$(mktemp -d "${TMPDIR:-/tmp}/routerd-install.XXXXXX")
 touch "${backup_dir}/restore.list" "${backup_dir}/remove.list"
 trap cleanup EXIT HUP INT TERM
@@ -1833,10 +1863,7 @@ else
     mode=fresh
     old_version=
 fi
-new_version=
-if [ -x bin/routerd ]; then
-    new_version=$(bin/routerd --version 2>/dev/null || true)
-fi
+new_version=$(bin/routerd --version 2>/dev/null || true)
 
 echo "routerd install mode: ${mode}"
 if [ -n "${old_version}" ]; then

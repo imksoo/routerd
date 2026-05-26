@@ -90,6 +90,9 @@ jobs:
       - name: Smoke installer dependency plans
         run: make check-install-deps
 
+      - name: Smoke install.sh script-dir resolution
+        run: bash scripts/install-sh-cwd-smoke.sh
+
   examples:
     name: Example configs
     runs-on: ubuntu-latest
@@ -124,7 +127,7 @@ jobs:
 
       - name: Lint shell scripts
         run: |
-          shellcheck packaging/install.sh packaging/uninstall.sh scripts/pre-commit.sh scripts/release.sh scripts/build-live-iso.sh scripts/install-deps-smoke.sh scripts/alpine-vm-smoke.sh
+          shellcheck packaging/install.sh packaging/uninstall.sh scripts/pre-commit.sh scripts/release.sh scripts/build-live-iso.sh scripts/install-deps-smoke.sh scripts/install-sh-cwd-smoke.sh scripts/alpine-vm-smoke.sh
 
   website:
     name: Website build
