@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260528.0325
+
 ### 追加
 
 - HealthCheck の各プローブ結果に egress / source / route の根拠情報を

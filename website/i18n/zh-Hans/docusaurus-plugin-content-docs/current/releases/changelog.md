@@ -11,6 +11,8 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260528.0325
+
 ### 新增
 
 - HealthCheck 每次探测结果都会记录 egress / source / route 证据，

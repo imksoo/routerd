@@ -87,6 +87,10 @@
                   "maxDuration": {
                     "type": "string"
                   },
+                  "maxDurationAt": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
                   "maxDurationMillis": {
                     "type": "number"
                   },
@@ -111,6 +115,48 @@
                   },
                   "reconcileErrorCount": {
                     "type": "integer"
+                  },
+                  "reconcileErrorHistory": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "completedAt": {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        "duration": {
+                          "type": "string"
+                        },
+                        "durationMs": {
+                          "type": "number"
+                        },
+                        "error": {
+                          "type": "string"
+                        },
+                        "resourceKind": {
+                          "type": "string"
+                        },
+                        "resourceName": {
+                          "type": "string"
+                        },
+                        "startedAt": {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        "trigger": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "startedAt",
+                        "completedAt",
+                        "duration",
+                        "durationMs",
+                        "error"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
                   },
                   "resourceKinds": {
                     "items": {

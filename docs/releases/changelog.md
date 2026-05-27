@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260528.0325
+
 ### Added
 
 - HealthCheck probes now record egress / source / route evidence on
