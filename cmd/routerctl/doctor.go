@@ -12,9 +12,11 @@ import (
 	"strconv"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/config"
+	"github.com/imksoo/routerd/pkg/controlapi"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -52,7 +54,17 @@ type doctorRunner struct {
 	store  routerstate.Store
 }
 
-var doctorAreas = []string{"wan", "dns", "dslite", "dhcpv6-pd", "nat", "firewall", "rollback", "disk", "mgmt"}
+var doctorAreas = []string{"wan", "dns", "dslite", "dhcpv6-pd", "nat", "firewall", "rollback", "disk", "mgmt", "reconcile"}
+
+// doctorReconcileWarnThreshold and doctorReconcileFailThreshold are total error
+// counts (across all controllers) that promote the reconcile area to warn/fail.
+const (
+	doctorReconcileWarnThreshold = 1
+	doctorReconcileFailThreshold = 10
+)
+
+// reconcileStatusFetcher allows tests to stub the controllers fetch.
+var reconcileStatusFetcher = fetchReconcileControllers
 
 func doctorCommand(args []string, stdout, stderr io.Writer) error {
 	opts, err := parseDiagnoseOptions("doctor", args, stdout)
@@ -118,9 +130,99 @@ func (r doctorRunner) runArea(area string) []doctorCheck {
 		return r.doctorDisk()
 	case "mgmt":
 		return r.doctorMgmt()
+	case "reconcile":
+		return r.doctorReconcile()
 	default:
 		return []doctorCheck{{Area: area, Name: "area", Status: doctorSkip, Detail: "unknown area"}}
 	}
+}
+
+func (r doctorRunner) doctorReconcile() []doctorCheck {
+	controllers, err := reconcileStatusFetcher(r.opts.Socket, r.opts.Timeout)
+	if err != nil {
+		return []doctorCheck{{Area: "reconcile", Name: "controllers", Status: doctorSkip, Detail: "routerd status socket unavailable: " + err.Error()}}
+	}
+	if len(controllers) == 0 {
+		return []doctorCheck{{Area: "reconcile", Name: "controllers", Status: doctorSkip, Detail: "no controller history reported"}}
+	}
+	since := r.opts.Since
+	cutoff := time.Time{}
+	window := "all-time"
+	if since > 0 {
+		cutoff = time.Now().UTC().Add(-since)
+		window = "last " + since.String()
+	}
+	totalErrors := 0
+	affectedControllers := 0
+	currentlyFailing := 0
+	var samples []string
+	for _, controller := range controllers {
+		count := 0
+		for _, entry := range controller.ReconcileErrorHistory {
+			if !cutoff.IsZero() && entry.CompletedAt.Before(cutoff) {
+				continue
+			}
+			count++
+			if len(samples) < 5 {
+				resource := entry.ResourceKind
+				if entry.ResourceName != "" {
+					if resource != "" {
+						resource = resource + "/" + entry.ResourceName
+					} else {
+						resource = entry.ResourceName
+					}
+				}
+				sample := controller.Name + "@" + entry.CompletedAt.Format(time.RFC3339) + " trigger=" + firstNonEmpty(entry.Trigger, "-")
+				if resource != "" {
+					sample += " resource=" + resource
+				}
+				sample += " error=" + truncateForDetail(entry.Error, 80)
+				samples = append(samples, sample)
+			}
+		}
+		if count > 0 {
+			affectedControllers++
+		}
+		totalErrors += count
+		if controller.CurrentError {
+			currentlyFailing++
+		}
+	}
+	status := doctorPass
+	switch {
+	case totalErrors >= doctorReconcileFailThreshold:
+		status = doctorFail
+	case totalErrors >= doctorReconcileWarnThreshold:
+		status = doctorWarn
+	}
+	if currentlyFailing > 0 && status == doctorPass {
+		status = doctorWarn
+	}
+	detail := fmt.Sprintf("%d reconcile errors in %s across %d controllers (current failures=%d, controllers=%d)", totalErrors, window, affectedControllers, currentlyFailing, len(controllers))
+	if len(samples) > 0 {
+		detail = detail + "; " + strings.Join(samples, " | ")
+	}
+	check := doctorCheck{Area: "reconcile", Name: "controllers", Status: status, Detail: detail}
+	if status != doctorPass {
+		check.Remedy = "inspect routerctl status --show-errors and routerd logs for the affected controllers"
+	}
+	return []doctorCheck{check}
+}
+
+func fetchReconcileControllers(socketPath string, timeout time.Duration) ([]controlapi.ControllerStatus, error) {
+	if timeout <= 0 {
+		timeout = 5 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	status, err := controlapi.NewUnixClient(socketPath).Status(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if status == nil {
+		return nil, nil
+	}
+	return status.Status.Controllers, nil
 }
 
 func (r doctorRunner) doctorWAN() []doctorCheck {

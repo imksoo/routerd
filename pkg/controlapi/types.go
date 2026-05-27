@@ -36,32 +36,47 @@ type StatusStatus struct {
 }
 
 type ControllerStatus struct {
-	Name                  string               `json:"name" yaml:"name"`
-	Mode                  string               `json:"mode" yaml:"mode"`
-	Reason                ControllerModeReason `json:"reason,omitempty" yaml:"reason,omitempty"`
-	Message               string               `json:"message,omitempty" yaml:"message,omitempty"`
-	ResourceKinds         []string             `json:"resourceKinds,omitempty" yaml:"resourceKinds,omitempty"`
-	Interval              string               `json:"interval,omitempty" yaml:"interval,omitempty"`
-	LastTrigger           string               `json:"lastTrigger,omitempty" yaml:"lastTrigger,omitempty"`
-	LastReconcileTime     *time.Time           `json:"lastReconcileTime,omitempty" yaml:"lastReconcileTime,omitempty"`
-	LastSuccessTime       *time.Time           `json:"lastSuccessTime,omitempty" yaml:"lastSuccessTime,omitempty"`
-	LastReloadAt          *time.Time           `json:"lastReloadAt,omitempty" yaml:"lastReloadAt,omitempty"`
-	LastRestartAt         *time.Time           `json:"lastRestartAt,omitempty" yaml:"lastRestartAt,omitempty"`
-	LastChangeReason      string               `json:"lastChangeReason,omitempty" yaml:"lastChangeReason,omitempty"`
-	NextReconcileTime     *time.Time           `json:"nextReconcileTime,omitempty" yaml:"nextReconcileTime,omitempty"`
-	ReconcileCount        int64                `json:"reconcileCount,omitempty" yaml:"reconcileCount,omitempty"`
-	ReconcileErrorCount   int64                `json:"reconcileErrorCount,omitempty" yaml:"reconcileErrorCount,omitempty"`
-	ConsecutiveErrorCount int64                `json:"consecutiveErrorCount,omitempty" yaml:"consecutiveErrorCount,omitempty"`
-	CurrentError          bool                 `json:"currentError" yaml:"currentError"`
-	LastDuration          string               `json:"lastDuration,omitempty" yaml:"lastDuration,omitempty"`
-	MaxDuration           string               `json:"maxDuration,omitempty" yaml:"maxDuration,omitempty"`
-	AverageDuration       string               `json:"averageDuration,omitempty" yaml:"averageDuration,omitempty"`
-	LastDurationMillis    float64              `json:"lastDurationMillis,omitempty" yaml:"lastDurationMillis,omitempty"`
-	MaxDurationMillis     float64              `json:"maxDurationMillis,omitempty" yaml:"maxDurationMillis,omitempty"`
-	AverageDurationMillis float64              `json:"averageDurationMillis,omitempty" yaml:"averageDurationMillis,omitempty"`
-	LastError             string               `json:"lastError,omitempty" yaml:"lastError,omitempty"`
-	LastErrorTime         *time.Time           `json:"lastErrorTime,omitempty" yaml:"lastErrorTime,omitempty"`
-	LastErrorClearedAt    *time.Time           `json:"lastErrorClearedAt,omitempty" yaml:"lastErrorClearedAt,omitempty"`
+	Name                  string                  `json:"name" yaml:"name"`
+	Mode                  string                  `json:"mode" yaml:"mode"`
+	Reason                ControllerModeReason    `json:"reason,omitempty" yaml:"reason,omitempty"`
+	Message               string                  `json:"message,omitempty" yaml:"message,omitempty"`
+	ResourceKinds         []string                `json:"resourceKinds,omitempty" yaml:"resourceKinds,omitempty"`
+	Interval              string                  `json:"interval,omitempty" yaml:"interval,omitempty"`
+	LastTrigger           string                  `json:"lastTrigger,omitempty" yaml:"lastTrigger,omitempty"`
+	LastReconcileTime     *time.Time              `json:"lastReconcileTime,omitempty" yaml:"lastReconcileTime,omitempty"`
+	LastSuccessTime       *time.Time              `json:"lastSuccessTime,omitempty" yaml:"lastSuccessTime,omitempty"`
+	LastReloadAt          *time.Time              `json:"lastReloadAt,omitempty" yaml:"lastReloadAt,omitempty"`
+	LastRestartAt         *time.Time              `json:"lastRestartAt,omitempty" yaml:"lastRestartAt,omitempty"`
+	LastChangeReason      string                  `json:"lastChangeReason,omitempty" yaml:"lastChangeReason,omitempty"`
+	NextReconcileTime     *time.Time              `json:"nextReconcileTime,omitempty" yaml:"nextReconcileTime,omitempty"`
+	ReconcileCount        int64                   `json:"reconcileCount,omitempty" yaml:"reconcileCount,omitempty"`
+	ReconcileErrorCount   int64                   `json:"reconcileErrorCount,omitempty" yaml:"reconcileErrorCount,omitempty"`
+	ConsecutiveErrorCount int64                   `json:"consecutiveErrorCount,omitempty" yaml:"consecutiveErrorCount,omitempty"`
+	CurrentError          bool                    `json:"currentError" yaml:"currentError"`
+	LastDuration          string                  `json:"lastDuration,omitempty" yaml:"lastDuration,omitempty"`
+	MaxDuration           string                  `json:"maxDuration,omitempty" yaml:"maxDuration,omitempty"`
+	MaxDurationAt         *time.Time              `json:"maxDurationAt,omitempty" yaml:"maxDurationAt,omitempty"`
+	AverageDuration       string                  `json:"averageDuration,omitempty" yaml:"averageDuration,omitempty"`
+	LastDurationMillis    float64                 `json:"lastDurationMillis,omitempty" yaml:"lastDurationMillis,omitempty"`
+	MaxDurationMillis     float64                 `json:"maxDurationMillis,omitempty" yaml:"maxDurationMillis,omitempty"`
+	AverageDurationMillis float64                 `json:"averageDurationMillis,omitempty" yaml:"averageDurationMillis,omitempty"`
+	LastError             string                  `json:"lastError,omitempty" yaml:"lastError,omitempty"`
+	LastErrorTime         *time.Time              `json:"lastErrorTime,omitempty" yaml:"lastErrorTime,omitempty"`
+	LastErrorClearedAt    *time.Time              `json:"lastErrorClearedAt,omitempty" yaml:"lastErrorClearedAt,omitempty"`
+	ReconcileErrorHistory []ReconcileErrorEntry   `json:"reconcileErrorHistory,omitempty" yaml:"reconcileErrorHistory,omitempty"`
+}
+
+// ReconcileErrorEntry describes a single failed reconcile attempt. The history
+// is kept in-memory per process; restarting routerd clears the history.
+type ReconcileErrorEntry struct {
+	StartedAt    time.Time `json:"startedAt" yaml:"startedAt"`
+	CompletedAt  time.Time `json:"completedAt" yaml:"completedAt"`
+	Duration     string    `json:"duration" yaml:"duration"`
+	DurationMs   float64   `json:"durationMs" yaml:"durationMs"`
+	Trigger      string    `json:"trigger,omitempty" yaml:"trigger,omitempty"`
+	ResourceKind string    `json:"resourceKind,omitempty" yaml:"resourceKind,omitempty"`
+	ResourceName string    `json:"resourceName,omitempty" yaml:"resourceName,omitempty"`
+	Error        string    `json:"error" yaml:"error"`
 }
 
 type ControllerModeReason string

@@ -8,15 +8,37 @@ import (
 	"time"
 )
 
+// DefaultReconcileErrorHistoryLimit caps the per-controller in-memory error
+// history retained by ControllerRuntimeStore.
+const DefaultReconcileErrorHistoryLimit = 20
+
 type ControllerRuntimeStore struct {
-	mu          sync.RWMutex
-	controllers map[string]ControllerStatus
+	mu                sync.RWMutex
+	controllers       map[string]ControllerStatus
+	errorHistoryLimit int
 }
 
 func NewControllerRuntimeStore(base []ControllerStatus) *ControllerRuntimeStore {
-	store := &ControllerRuntimeStore{controllers: map[string]ControllerStatus{}}
+	store := &ControllerRuntimeStore{
+		controllers:       map[string]ControllerStatus{},
+		errorHistoryLimit: DefaultReconcileErrorHistoryLimit,
+	}
 	store.SetBase(base)
 	return store
+}
+
+// SetErrorHistoryLimit overrides the per-controller history cap. Values <= 0
+// fall back to DefaultReconcileErrorHistoryLimit.
+func (s *ControllerRuntimeStore) SetErrorHistoryLimit(limit int) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if limit <= 0 {
+		limit = DefaultReconcileErrorHistoryLimit
+	}
+	s.errorHistoryLimit = limit
 }
 
 func (s *ControllerRuntimeStore) SetBase(base []ControllerStatus) {
@@ -51,6 +73,8 @@ func (s *ControllerRuntimeStore) SetBase(base []ControllerStatus) {
 		controller.LastError = current.LastError
 		controller.LastErrorTime = current.LastErrorTime
 		controller.LastErrorClearedAt = current.LastErrorClearedAt
+		controller.MaxDurationAt = current.MaxDurationAt
+		controller.ReconcileErrorHistory = append([]ReconcileErrorEntry(nil), current.ReconcileErrorHistory...)
 		s.controllers[controller.Name] = controller
 	}
 }
@@ -63,6 +87,9 @@ func (s *ControllerRuntimeStore) Snapshot() []ControllerStatus {
 	defer s.mu.RUnlock()
 	out := make([]ControllerStatus, 0, len(s.controllers))
 	for _, controller := range s.controllers {
+		if len(controller.ReconcileErrorHistory) > 0 {
+			controller.ReconcileErrorHistory = append([]ReconcileErrorEntry(nil), controller.ReconcileErrorHistory...)
+		}
 		out = append(out, controller)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
@@ -80,7 +107,26 @@ func (s *ControllerRuntimeStore) ControllerStarted(name string, interval time.Du
 	s.controllers[name] = controller
 }
 
+// ReconcileResource carries optional context about the resource that triggered
+// a reconcile cycle. It is recorded alongside reconcile error history so callers
+// can correlate failures with specific resources.
+type ReconcileResource struct {
+	Kind string
+	Name string
+}
+
 func (s *ControllerRuntimeStore) ControllerReconciled(name, trigger string, interval, duration time.Duration, err error) {
+	s.ControllerReconciledWithResource(name, trigger, ReconcileResource{}, interval, duration, err)
+}
+
+// ControllerReconciledResource implements the framework ResourceObserver
+// interface so the store can record the resource kind/name that triggered a
+// reconcile run.
+func (s *ControllerRuntimeStore) ControllerReconciledResource(name, trigger, resourceKind, resourceName string, interval, duration time.Duration, err error) {
+	s.ControllerReconciledWithResource(name, trigger, ReconcileResource{Kind: resourceKind, Name: resourceName}, interval, duration, err)
+}
+
+func (s *ControllerRuntimeStore) ControllerReconciledWithResource(name, trigger string, resource ReconcileResource, interval, duration time.Duration, err error) {
 	if s == nil || name == "" {
 		return
 	}
@@ -98,6 +144,7 @@ func (s *ControllerRuntimeStore) ControllerReconciled(name, trigger string, inte
 	if duration > durationFromMillis(controller.MaxDurationMillis) {
 		controller.MaxDuration = duration.String()
 		controller.MaxDurationMillis = durationMillis(duration)
+		controller.MaxDurationAt = ptrTime(now)
 	}
 	previousTotal := controller.AverageDurationMillis * float64(controller.ReconcileCount-1)
 	controller.AverageDurationMillis = (previousTotal + durationMillis(duration)) / float64(controller.ReconcileCount)
@@ -108,6 +155,21 @@ func (s *ControllerRuntimeStore) ControllerReconciled(name, trigger string, inte
 		controller.CurrentError = true
 		controller.LastError = err.Error()
 		controller.LastErrorTime = ptrTime(now)
+		entry := ReconcileErrorEntry{
+			StartedAt:    now.Add(-duration),
+			CompletedAt:  now,
+			Duration:     duration.String(),
+			DurationMs:   durationMillis(duration),
+			Trigger:      trigger,
+			ResourceKind: resource.Kind,
+			ResourceName: resource.Name,
+			Error:        err.Error(),
+		}
+		limit := s.errorHistoryLimit
+		if limit <= 0 {
+			limit = DefaultReconcileErrorHistoryLimit
+		}
+		controller.ReconcileErrorHistory = appendReconcileErrorEntry(controller.ReconcileErrorHistory, entry, limit)
 	} else {
 		if controller.CurrentError || controller.ConsecutiveErrorCount > 0 || controller.LastError != "" {
 			controller.LastErrorClearedAt = ptrTime(now)
@@ -118,6 +180,19 @@ func (s *ControllerRuntimeStore) ControllerReconciled(name, trigger string, inte
 		controller.LastSuccessTime = ptrTime(now)
 	}
 	s.controllers[name] = controller
+}
+
+func appendReconcileErrorEntry(history []ReconcileErrorEntry, entry ReconcileErrorEntry, limit int) []ReconcileErrorEntry {
+	if limit <= 0 {
+		limit = DefaultReconcileErrorHistoryLimit
+	}
+	history = append(history, entry)
+	if len(history) > limit {
+		// drop oldest entries first
+		excess := len(history) - limit
+		history = append([]ReconcileErrorEntry(nil), history[excess:]...)
+	}
+	return history
 }
 
 func (s *ControllerRuntimeStore) controllerLocked(name string) ControllerStatus {

@@ -31,6 +31,13 @@ type Observer interface {
 	ControllerReconciled(name, trigger string, interval, duration time.Duration, err error)
 }
 
+// ResourceObserver optionally augments Observer with the resource that
+// triggered the reconcile. Observers that implement this interface receive the
+// resource kind/name in addition to the trigger label.
+type ResourceObserver interface {
+	ControllerReconciledResource(name, trigger, resourceKind, resourceName string, interval, duration time.Duration, err error)
+}
+
 type Runner struct {
 	Bus      EventBus
 	Locker   *lock.ResourceLocker
@@ -124,7 +131,7 @@ func runController(ctx context.Context, logger *slog.Logger, locker *lock.Resour
 		observer.ControllerStarted(controller.Name(), interval)
 	}
 	bootstrap := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "event-loop"}, "routerd.controller.bootstrap", daemonapi.SeverityInfo)
-	runLocked(ctx, logger, locker, observer, controller.Name()+":bootstrap", controller.Name(), "bootstrap", interval, func(runCtx context.Context) error {
+	runLocked(ctx, logger, locker, observer, controller.Name()+":bootstrap", controller.Name(), "bootstrap", "", "", interval, func(runCtx context.Context) error {
 		return controller.Reconcile(runCtx, bootstrap)
 	})
 	for {
@@ -134,11 +141,12 @@ func runController(ctx context.Context, logger *slog.Logger, locker *lock.Resour
 				return
 			}
 			key := eventResourceKey(event)
-			runLocked(ctx, logger, locker, observer, key, controller.Name(), event.Type, interval, func(runCtx context.Context) error {
+			kind, name := eventResourceKindName(event)
+			runLocked(ctx, logger, locker, observer, key, controller.Name(), event.Type, kind, name, interval, func(runCtx context.Context) error {
 				return controller.Reconcile(runCtx, event)
 			})
 		case <-ticker.C:
-			runLocked(ctx, logger, locker, observer, controller.Name()+":periodic", controller.Name(), "periodic", interval, controller.PeriodicReconcile)
+			runLocked(ctx, logger, locker, observer, controller.Name()+":periodic", controller.Name(), "periodic", "", "", interval, controller.PeriodicReconcile)
 		case <-ctx.Done():
 			return
 		}
@@ -157,7 +165,7 @@ func controllerInterval(controller Controller, fallback time.Duration) time.Dura
 	return fallback
 }
 
-func runLocked(ctx context.Context, logger *slog.Logger, locker *lock.ResourceLocker, observer Observer, key, name, trigger string, interval time.Duration, fn func(context.Context) error) {
+func runLocked(ctx context.Context, logger *slog.Logger, locker *lock.ResourceLocker, observer Observer, key, name, trigger, resourceKind, resourceName string, interval time.Duration, fn func(context.Context) error) {
 	unlock, err := locker.Lock(ctx, key)
 	if err != nil {
 		logger.Warn("controller lock skipped", "controller", name, "error", err)
@@ -173,7 +181,11 @@ func runLocked(ctx context.Context, logger *slog.Logger, locker *lock.ResourceLo
 	err = routerotel.Reconcile(ctx, name, trigger, interval, fn)
 	duration := time.Since(start)
 	if observer != nil {
-		observer.ControllerReconciled(name, trigger, interval, duration, err)
+		if resourceObserver, ok := observer.(ResourceObserver); ok {
+			resourceObserver.ControllerReconciledResource(name, trigger, resourceKind, resourceName, interval, duration, err)
+		} else {
+			observer.ControllerReconciled(name, trigger, interval, duration, err)
+		}
 	}
 	attrs := []any{"controller", name, "trigger", trigger, "duration", duration.String(), "interval", interval.String()}
 	if err != nil {
@@ -192,4 +204,11 @@ func eventResourceKey(event daemonapi.DaemonEvent) string {
 		return event.Daemon.Kind + "/" + event.Daemon.Name
 	}
 	return event.Resource.APIVersion + "/" + event.Resource.Kind + "/" + event.Resource.Name
+}
+
+func eventResourceKindName(event daemonapi.DaemonEvent) (string, string) {
+	if event.Resource == nil {
+		return "", ""
+	}
+	return event.Resource.Kind, event.Resource.Name
 }

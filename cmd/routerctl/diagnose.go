@@ -29,6 +29,8 @@ type diagnoseOptions struct {
 	Server     string
 	Names      string
 	Timeout    time.Duration
+	Since      time.Duration
+	Socket     string
 }
 
 type diagnoseReport struct {
@@ -263,6 +265,8 @@ func parseDiagnoseOptions(name string, args []string, helpOutput io.Writer) (dia
 	fs.StringVar(&opts.Server, "server", "", "DNS server for diagnose dns")
 	fs.StringVar(&opts.Names, "name", "", "comma-separated DNS names for diagnose dns")
 	fs.DurationVar(&opts.Timeout, "timeout", opts.Timeout, "host command timeout")
+	fs.DurationVar(&opts.Since, "since", 0, "doctor reconcile area: only count errors newer than this duration (e.g. 1h, 24h)")
+	fs.StringVar(&opts.Socket, "status-socket", defaultStatusSocketPath(), "doctor reconcile area: routerd read-only status Unix domain socket path")
 	normalized, err := normalizeDiagnoseArgs(args)
 	if err != nil {
 		return opts, err
@@ -289,6 +293,7 @@ func normalizeDiagnoseArgs(args []string) ([]string, error) {
 	valueFlags := map[string]bool{
 		"-o": true, "--output": true, "--config": true, "--state-file": true,
 		"--server": true, "--name": true, "--timeout": true,
+		"--since": true, "--status-socket": true,
 	}
 	var flags []string
 	var positionals []string
