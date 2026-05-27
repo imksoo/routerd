@@ -11,6 +11,33 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 修正
+
+- `/api/v1/summary` の polling が OpenTelemetry instrument の割り当てを
+  リクエストごとに積み上げる問題を解消しました。`recordConsoleMetrics`
+  は従来リクエスト経路の中で `meter.Int64Gauge` /
+  `meter.Float64Gauge` を呼んでおり、7 つのゲージ
+  (`routerd.controller.dry_run.count`、
+  `routerd.controller.reconcile.errors`、
+  `routerd.controller.reconcile.last_duration_ms`、
+  `routerd.resource.phase.count`、`routerd.dhcp.lease.active`、
+  `routerd.dhcp.sticky.held`、`routerd.client.active.count`) を
+  ポーリングのたびに作り直していました。本リリースでは
+  `sync.Once` シングルトン (`getConsoleMetrics()`) で 1 度だけ生成し、
+  以降はプロセス寿命を通して再利用します。#39 / #40 と合わせて、
+  summary polling が起こしていた API 呼び出しごとの heap 増加経路は
+  これで塞がります。
+- `reverseDNSCache` が期限切れエントリを削除しなかったうえ、上限が
+  無かった問題を修正しました。これまで TTL は再ルックアップの可否
+  判定にしか使われておらず、ファイアウォールログ / コネクション表 /
+  通信フローに現れた個別の宛先アドレスがそのままキャッシュに永久に
+  残っていました。新たに導入した `pruneLocked` が `lookupMany` の
+  入口で期限切れエントリを削除し、それでも
+  `reverseDNSCacheMaxEntries = 4096` を超えていれば、期限切れが
+  早い順にエントリを落として上限内に戻します。挙動を守る 2 件の
+  テスト (`TestReverseDNSCachePrunesExpiredEntries`、
+  `TestReverseDNSCacheCapsAtMaxEntries`) を追加しています。
+
 ## v20260528.0402
 
 ### 修正

@@ -12,6 +12,32 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- `/api/v1/summary` polling no longer accumulates OpenTelemetry
+  instrument allocations on every request. `recordConsoleMetrics`
+  used to call `meter.Int64Gauge` / `meter.Float64Gauge` inside the
+  request path, so the seven gauges (`routerd.controller.dry_run.count`,
+  `routerd.controller.reconcile.errors`,
+  `routerd.controller.reconcile.last_duration_ms`,
+  `routerd.resource.phase.count`, `routerd.dhcp.lease.active`,
+  `routerd.dhcp.sticky.held`, `routerd.client.active.count`) were
+  re-constructed on every poll. They are now built exactly once via
+  a `sync.Once` singleton (`getConsoleMetrics()`) and reused for the
+  lifetime of the process. Combined with #39 / #40, this closes the
+  remaining per-API-call heap growth path that summary polling
+  produced.
+- `reverseDNSCache` now drops expired entries and enforces an upper
+  bound. Before this fix the cache only used its TTL to decide
+  whether to re-lookup; expired entries stayed in the map, and every
+  distinct remote address that appeared in firewall logs / the
+  connection table / traffic flows added a permanent entry. The new
+  `pruneLocked` removes expired entries on each `lookupMany`, and if
+  the cache is still over `reverseDNSCacheMaxEntries = 4096` it drops
+  the oldest-expiring entries until it is back under the cap. Two new
+  tests (`TestReverseDNSCachePrunesExpiredEntries`,
+  `TestReverseDNSCacheCapsAtMaxEntries`) lock in the behaviour.
+
 ## v20260528.0402
 
 ### Fixed

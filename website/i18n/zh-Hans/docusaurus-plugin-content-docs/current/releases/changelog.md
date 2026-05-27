@@ -11,6 +11,29 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 修复
+
+- 修复 `/api/v1/summary` 轮询每次都为 OpenTelemetry instrument 重新
+  分配的问题。`recordConsoleMetrics` 此前在请求路径内调用
+  `meter.Int64Gauge` / `meter.Float64Gauge`，导致 7 个 gauge
+  (`routerd.controller.dry_run.count`、
+  `routerd.controller.reconcile.errors`、
+  `routerd.controller.reconcile.last_duration_ms`、
+  `routerd.resource.phase.count`、`routerd.dhcp.lease.active`、
+  `routerd.dhcp.sticky.held`、`routerd.client.active.count`) 在每次
+  轮询中都被重新构造。现在通过 `sync.Once` 单例
+  (`getConsoleMetrics()`) 在整个进程生命周期内只构造一次并重复使用。
+  连同 #39 / #40，本次修复关闭了 summary polling 仍在产生的、按 API
+  调用累积的 heap 增长路径。
+- 修复 `reverseDNSCache` 既不清理过期项也无上限的问题。此前 TTL 只
+  决定是否重新查询，过期项始终保留在 map 中，使得 firewall log /
+  connection 表 / traffic flow 中每个不同的远端地址都会成为永久条目。
+  新增的 `pruneLocked` 会在每次 `lookupMany` 入口移除过期项；如果仍
+  超过 `reverseDNSCacheMaxEntries = 4096`，则按过期时间最早的顺序
+  剔除，直到回到上限以内。新增 2 个测试
+  (`TestReverseDNSCachePrunesExpiredEntries`、
+  `TestReverseDNSCacheCapsAtMaxEntries`) 锁定该行为。
+
 ## v20260528.0402
 
 ### 修复

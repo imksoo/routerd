@@ -3184,15 +3184,49 @@ func annotateDHCPLeasesWithSticky(leases []DHCPLease, sticky []logstore.DHCPStic
 	return leases
 }
 
+// consoleMetricInstruments holds the gauges recordConsoleMetrics writes to.
+// Built once per process via getConsoleMetrics(); reusing the same instrument
+// objects on every /api/v1/summary call keeps the OTel SDK from accumulating
+// duplicate-instrument metadata on each request (which we saw as steady heap
+// growth tied to summary polling).
+type consoleMetricInstruments struct {
+	dryRunGauge                 metric.Int64Gauge
+	controllerErrorGauge        metric.Int64Gauge
+	controllerLastDurationGauge metric.Float64Gauge
+	phaseGauge                  metric.Int64Gauge
+	leaseGauge                  metric.Int64Gauge
+	stickyGauge                 metric.Int64Gauge
+	clientGauge                 metric.Int64Gauge
+}
+
+var (
+	consoleMetricsOnce sync.Once
+	consoleMetrics     consoleMetricInstruments
+)
+
+func getConsoleMetrics() consoleMetricInstruments {
+	consoleMetricsOnce.Do(func() {
+		meter := otel.Meter("routerd")
+		consoleMetrics.dryRunGauge, _ = meter.Int64Gauge("routerd.controller.dry_run.count")
+		consoleMetrics.controllerErrorGauge, _ = meter.Int64Gauge("routerd.controller.reconcile.errors")
+		consoleMetrics.controllerLastDurationGauge, _ = meter.Float64Gauge("routerd.controller.reconcile.last_duration_ms")
+		consoleMetrics.phaseGauge, _ = meter.Int64Gauge("routerd.resource.phase.count")
+		consoleMetrics.leaseGauge, _ = meter.Int64Gauge("routerd.dhcp.lease.active")
+		consoleMetrics.stickyGauge, _ = meter.Int64Gauge("routerd.dhcp.sticky.held")
+		consoleMetrics.clientGauge, _ = meter.Int64Gauge("routerd.client.active.count")
+	})
+	return consoleMetrics
+}
+
 func recordConsoleMetrics(ctx context.Context, resources []routerstate.ObjectStatus, controllers []controlapi.ControllerStatus, leases []DHCPLease, clients []ClientEntry, sticky []logstore.DHCPStickyLease, now time.Time) {
-	meter := otel.Meter("routerd")
-	dryRunGauge, _ := meter.Int64Gauge("routerd.controller.dry_run.count")
-	controllerErrorGauge, _ := meter.Int64Gauge("routerd.controller.reconcile.errors")
-	controllerLastDurationGauge, _ := meter.Float64Gauge("routerd.controller.reconcile.last_duration_ms")
-	phaseGauge, _ := meter.Int64Gauge("routerd.resource.phase.count")
-	leaseGauge, _ := meter.Int64Gauge("routerd.dhcp.lease.active")
-	stickyGauge, _ := meter.Int64Gauge("routerd.dhcp.sticky.held")
-	clientGauge, _ := meter.Int64Gauge("routerd.client.active.count")
+	m := getConsoleMetrics()
+	dryRunGauge := m.dryRunGauge
+	controllerErrorGauge := m.controllerErrorGauge
+	controllerLastDurationGauge := m.controllerLastDurationGauge
+	phaseGauge := m.phaseGauge
+	leaseGauge := m.leaseGauge
+	stickyGauge := m.stickyGauge
+	clientGauge := m.clientGauge
 	var dryRun int64
 	for _, controller := range controllers {
 		if strings.EqualFold(strings.TrimSpace(controller.Mode), "dry-run") {
@@ -3767,6 +3801,14 @@ func shouldReverseLookup(address string) bool {
 	return addr.IsValid() && !addr.IsUnspecified() && !addr.IsMulticast()
 }
 
+// reverseDNSCacheMaxEntries caps the size of the in-memory reverse DNS cache.
+// Without an upper bound, every distinct remote IP seen by /api/v1/summary
+// (firewall logs, connection table, flow log) would accumulate a permanent
+// entry: TTL alone only governs re-lookup, not pruning. 4096 covers a
+// generous "every endpoint a busy home network has ever talked to" working
+// set while keeping the heap bounded.
+const reverseDNSCacheMaxEntries = 4096
+
 type reverseDNSCache struct {
 	mu      sync.Mutex
 	ttl     time.Duration
@@ -3782,11 +3824,41 @@ func newReverseDNSCache(ttl time.Duration) *reverseDNSCache {
 	return &reverseDNSCache{ttl: ttl, entries: map[string]reverseDNSEntry{}}
 }
 
+// pruneLocked drops expired entries first, then if the cache is still over
+// capacity, removes the oldest-expiring entries until we are back under the
+// cap. Caller must hold c.mu.
+func (c *reverseDNSCache) pruneLocked(now time.Time) {
+	for address, entry := range c.entries {
+		if now.After(entry.expires) {
+			delete(c.entries, address)
+		}
+	}
+	if len(c.entries) <= reverseDNSCacheMaxEntries {
+		return
+	}
+	type item struct {
+		address string
+		expires time.Time
+	}
+	items := make([]item, 0, len(c.entries))
+	for address, entry := range c.entries {
+		items = append(items, item{address: address, expires: entry.expires})
+	}
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].expires.Before(items[j].expires)
+	})
+	excess := len(c.entries) - reverseDNSCacheMaxEntries
+	for i := 0; i < excess && i < len(items); i++ {
+		delete(c.entries, items[i].address)
+	}
+}
+
 func (c *reverseDNSCache) lookupMany(ctx context.Context, addresses []string, lookup func(context.Context, string) ([]string, error)) map[string]string {
 	now := time.Now()
 	out := map[string]string{}
 	var pending []string
 	c.mu.Lock()
+	c.pruneLocked(now)
 	for _, address := range addresses {
 		if entry, ok := c.entries[address]; ok && now.Before(entry.expires) {
 			if entry.name != "" {
