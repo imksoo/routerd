@@ -11,6 +11,24 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 修正
+
+- 修正 `routerd serve` 在 BGP 控制器週期 reconcile 中洩漏
+  `/run/routerd/bgp/control.sock` 上 Unix socket fd 的問題
+  （homert02 v20260528.0325 上即便已套用伺服器端
+  `SetKeepAlivesEnabled(false)`，仍殘留 fd 成長的根本原因）。
+  `pkg/controller/bgp/gobgp_client.go` 是唯一未在 Transport 設定
+  `DisableKeepAlives: true` 的內部 HTTP 用戶端。每次 BGP reconcile
+  （約 30 秒）都會對 routerd-bgp 控制 socket 進行兩次 dial
+  （AppliedConfig + SaveAppliedConfig），連線被 Transport 的閒置池
+  保留直到 GC，正好對應 +約 4 fd/分鐘 的漂移。修正比照
+  conntrack-observer / dhcpv4-client 的做法: Transport 設
+  `DisableKeepAlives: true`、請求設 `req.Close = true`、返回時
+  `defer client.CloseIdleConnections()`，以確保下一次 reconcile 之前
+  連線已關閉。其他內部 HTTP 用戶端
+  （ingressservice / conntrackobserver / dhcpv4client / chain / phase2 /
+  pppoesession / dnsresolver）原本即為相同模式，本次一併稽核。
+
 ## v20260528.0325
 
 ### 新增

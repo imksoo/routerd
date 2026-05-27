@@ -12,6 +12,26 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- `routerd serve` no longer leaks Unix socket file descriptors against
+  `/run/routerd/bgp/control.sock` from the BGP controller's periodic
+  reconcile (root cause for the residual fd growth still observed on
+  homert02 v20260528.0325 even after the server-side
+  `SetKeepAlivesEnabled(false)` fix). `pkg/controller/bgp/gobgp_client.go`
+  was the only internal HTTP client whose Transport was missing
+  `DisableKeepAlives: true`. Every BGP reconcile (~30 s) dialed the
+  routerd-bgp control socket twice (AppliedConfig + SaveAppliedConfig)
+  and left the connection in the Transport's idle pool until garbage
+  collection, accounting for the steady +~4 fd / minute drift. The
+  fix mirrors the conntrack-observer / dhcpv4-client pattern: set
+  `DisableKeepAlives: true` on the Transport, set `req.Close = true`,
+  and `defer client.CloseIdleConnections()` so the connection is gone
+  before the next reconcile tick. Other in-tree internal HTTP clients
+  (ingressservice, conntrackobserver, dhcpv4client, chain, phase2,
+  pppoesession, dnsresolver) were already on that pattern and were
+  audited as part of this fix.
+
 ## v20260528.0325
 
 ### Added

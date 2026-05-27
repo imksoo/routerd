@@ -11,6 +11,26 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 修正
+
+- `routerd serve` の BGP コントローラー周期 reconcile で
+  `/run/routerd/bgp/control.sock` 宛ての Unix ソケット fd を漏らしていた
+  件を修正しました（homert02 v20260528.0325 でサーバー側
+  `SetKeepAlivesEnabled(false)` 適用後にも残っていた fd 増加の根本原因）。
+  `pkg/controller/bgp/gobgp_client.go` だけが内部 HTTP クライアントの
+  Transport で `DisableKeepAlives: true` を設定していませんでした。
+  BGP の reconcile（約 30 秒間隔）ごとに routerd-bgp の control socket を
+  2 回（AppliedConfig + SaveAppliedConfig）dial し、それぞれ Transport
+  のアイドルプールに残ったままガベージコレクションを待つ状態だったため、
+  +約 4 fd / 分のドリフトが説明できます。修正は conntrack-observer /
+  dhcpv4-client と同じパターンを採用しています: Transport に
+  `DisableKeepAlives: true`、リクエストに `req.Close = true`、
+  返却時に `defer client.CloseIdleConnections()` を入れ、次の reconcile
+  までに接続が確実に閉じるようにしました。他の内部 HTTP クライアント
+  （ingressservice / conntrackobserver / dhcpv4client / chain / phase2 /
+  pppoesession / dnsresolver）は元から同じ対策が入っており、本修正で
+  あわせて監査しました。
+
 ## v20260528.0325
 
 ### 追加

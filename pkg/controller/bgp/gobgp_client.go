@@ -59,10 +59,23 @@ func (s *remoteGoBGPServer) api(ctx context.Context) (gobgpapi.GobgpApiClient, e
 }
 
 func (s *remoteGoBGPServer) httpClient() *http.Client {
-	return &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-		dialer := net.Dialer{Timeout: 3 * time.Second}
-		return dialer.DialContext(ctx, "unix", s.daemon.ControlSocket())
-	}}}
+	// Issue #40: this client is called from the BGP controller's periodic
+	// reconcile (AppliedConfig + SaveAppliedConfig, roughly every 30 s),
+	// dialing /run/routerd/bgp/control.sock on the routerd-bgp daemon.
+	// Without DisableKeepAlives the Transport's idle-conn pool kept one
+	// Unix socket open per dial until GC, accounting for the +4 fd /
+	// minute drift observed on homert02 v20260528.0244 / .0325 after the
+	// SQLite ledger leak (#39) was already closed. Mirror the
+	// conntrack-observer / dhcpv4-client pattern: disable keep-alives,
+	// flag the request Close, and CloseIdleConnections() on return so
+	// the connection is gone before the next reconcile tick.
+	return &http.Client{Transport: &http.Transport{
+		DisableKeepAlives: true,
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			dialer := net.Dialer{Timeout: 3 * time.Second}
+			return dialer.DialContext(ctx, "unix", s.daemon.ControlSocket())
+		},
+	}}
 }
 
 func (s *remoteGoBGPServer) AppliedConfig(ctx context.Context) (bgpdaemon.AppliedConfig, error) {
@@ -73,7 +86,10 @@ func (s *remoteGoBGPServer) AppliedConfig(ctx context.Context) (bgpdaemon.Applie
 	if err != nil {
 		return bgpdaemon.AppliedConfig{}, err
 	}
-	resp, err := s.httpClient().Do(req)
+	req.Close = true
+	client := s.httpClient()
+	defer client.CloseIdleConnections()
+	resp, err := client.Do(req)
 	if err != nil {
 		return bgpdaemon.AppliedConfig{}, err
 	}
@@ -102,7 +118,10 @@ func (s *remoteGoBGPServer) SaveAppliedConfig(ctx context.Context, config bgpdae
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := s.httpClient().Do(req)
+	req.Close = true
+	client := s.httpClient()
+	defer client.CloseIdleConnections()
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
