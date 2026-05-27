@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260528.0244
+
 ### 修正
 
 - `routerd serve` の制御ソケット (`/run/routerd/routerd.sock`) と
