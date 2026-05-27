@@ -12,6 +12,65 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- **production-critical**: `routerd serve` no longer leaks SQLite file
+  descriptors against `/var/lib/routerd/routerd.db` on every reconcile
+  (#39). The `Ledger` interface gains a `Close()` method,
+  `SQLiteLedger.Close()` closes the underlying `*sql.DB`, and every
+  `resource.LoadLedger()` call site now defers `Close()`. The primary
+  leak was `IPv4PolicyRouteController.cleanupLedgerOwnedPolicyRoutes`,
+  which ran every ~30 s and added one new `routerd.db` + one new
+  `routerd.db-wal` fd per cycle on homert02 v20260526.2335.
+  `OpenSQLiteLedger` also gains `SetMaxOpenConns(1)` /
+  `SetMaxIdleConns(1)` defensively, mirroring `pkg/state/sqlite.go`,
+  so a missed Close cannot hold more than one connection per path. Two
+  Linux-only regression tests (`pkg/resource` and
+  `pkg/controller/chain`) assert `/proc/self/fd` does not grow across
+  10 open/close cycles.
+- `routerctl doctor` NAT/firewall nftables checks no longer reduce a
+  failure to bare "exit status 1" (#34). The check now reports
+  `table=<family>/<name> cmd=<command> exit=<N> stderr=<≤200 chars>
+  stdout=<≤200 chars>`, and downgrades to **warn** (rather than fail)
+  when `nft` exits non-zero but the table listing is actually present
+  in stdout. Adjacent `NAT44Rule` / `FirewallZone` / `FirewallPolicy` /
+  `FirewallRule` status tallies (active / pending / missing) are
+  appended to the detail so an operator can correlate the nft-side
+  signal with the resource-side signal in one place.
+
+### Added
+
+- Every `routerctl` subcommand now prints proper `Usage: / summary /
+  Flags: / Examples:` when invoked with `--help` (#35), instead of
+  the previous bare "flag: help requested". Covered subcommands:
+  `dns-queries`, `connections`, `traffic-flows`, `firewall-logs`,
+  `status`, `events`, `tailscale peers`, `wireguard list`, `ledger`
+  (integrity-check / vacuum / backup / prune-events), `apply`,
+  `delete`, `set-log-level`, `restart-dns-resolver`, `firewall test`,
+  `diagnose`, `doctor`. Summaries document the duration form of
+  `--since` explicitly and note that absolute-time `--from` / `--to`
+  arrive in this same release.
+- `routerctl dns-queries` and `routerctl traffic-flows` gain
+  absolute-time range and aggregation (#36):
+  `--from` / `--to` accept `RFC3339`, `2006-01-02T15:04:05` (UTC if no
+  zone), and `2006-01-02 15:04:05`. New filters: `--rcode`,
+  `--upstream`, `--qname-suffix`, `--duration-min` (DNS);
+  `--peer-suffix`, `--protocol`, `--asymmetric` (flows). New
+  `--agg` / `--stats` mode emits a `SUMMARY` plus
+  `BY RESPONSE CODE` / `BY CLIENT` / `BY UPSTREAM` /
+  `BY QNAME SUFFIX` (DNS) or `BY CLIENT` / `BY PEER` / `BY PROTOCOL`
+  (flows) with p50 / p95 / p99 duration percentiles. Direct-DB fetch
+  is now chunked (`--chunk-size`) so each chunk gets its own ctx
+  deadline; on `DeadlineExceeded` the error message includes how many
+  rows were fetched so far and which `last ts` to narrow against.
+  Default `--limit` raised from 100 to 500, `--timeout` from 5 s to
+  30 s, and the underlying `DNSQueryFilter` / `TrafficFlowFilter`
+  hard-cap raised from 1000 to 10000. The Web Console gains
+  `/api/v1/dns-queries/aggregate` and
+  `/api/v1/traffic-flows/aggregate` endpoints and the same filter
+  query parameters on the existing row endpoints (UI unchanged for
+  this release).
+
 ## v20260526.2335
 
 Documentation and CI consistency follow-up to v20260526.2241. No

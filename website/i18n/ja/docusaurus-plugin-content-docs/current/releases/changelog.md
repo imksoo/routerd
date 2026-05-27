@@ -11,6 +11,65 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 修正
+
+- **本番影響あり**: `routerd serve` が `/var/lib/routerd/routerd.db`
+  に対する SQLite ファイル記述子を reconcile のたびに漏洩しなくなり
+  ました (#39)。`Ledger` インターフェースに `Close()` を追加し、
+  `SQLiteLedger.Close()` で内部の `*sql.DB` を閉じ、`resource.LoadLedger()`
+  の全呼び出し元で `defer Close()` するようにしました。主たる漏洩源は
+  約 30 秒周期で走る `IPv4PolicyRouteController.cleanupLedgerOwnedPolicyRoutes`
+  で、homert02 の v20260526.2335 では reconcile ごとに `routerd.db` と
+  `routerd.db-wal` の fd を 1 組ずつ増やしていました。あわせて
+  `OpenSQLiteLedger` に `SetMaxOpenConns(1)` / `SetMaxIdleConns(1)` を
+  入れ、`pkg/state/sqlite.go` と同じ防御を行っています。万一 `Close()`
+  が呼ばれなくても 1 つの SQLite path につき 1 接続を超えない保険です。
+  Linux 限定の回帰テスト 2 件（`pkg/resource` と
+  `pkg/controller/chain`）で、10 回の open / close サイクル後に
+  `/proc/self/fd` が増えないことを検証しています。
+- `routerctl doctor` の NAT / firewall の nftables チェックで、失敗時に
+  「exit status 1」だけが表示される問題を解消しました (#34)。チェック
+  失敗時には `table=<family>/<name> cmd=<command> exit=<N>
+  stderr=<≤200 文字> stdout=<≤200 文字>` 形式で原因を表示します。
+  `nft` が非 0 で終了していても標準出力にテーブルの内容が含まれる場合は
+  **warn** 扱いに格下げします。`NAT44Rule` / `FirewallZone` /
+  `FirewallPolicy` / `FirewallRule` の active / pending / missing 件数も
+  detail に併記され、nft 側のシグナルとリソース側のシグナルを 1 か所で
+  突き合わせられるようになりました。
+
+### 追加
+
+- `routerctl` の全サブコマンドで `--help` を渡したときに、これまでの
+  「flag: help requested」ではなく `Usage: / 要約 / Flags: / Examples:`
+  が表示されるようになりました (#35)。対象は `dns-queries`、
+  `connections`、`traffic-flows`、`firewall-logs`、`status`、`events`、
+  `tailscale peers`、`wireguard list`、`ledger`（integrity-check /
+  vacuum / backup / prune-events）、`apply`、`delete`、
+  `set-log-level`、`restart-dns-resolver`、`firewall test`、
+  `diagnose`、`doctor`。要約では `--since` が duration 形式である
+  ことを明示し、絶対時刻指定の `--from` / `--to` も本リリースで同時に
+  追加されたことを案内しています。
+- `routerctl dns-queries` と `routerctl traffic-flows` に絶対時刻範囲
+  と集計機能を追加しました (#36)。`--from` / `--to` は `RFC3339`、
+  `2006-01-02T15:04:05`（タイムゾーン省略時は UTC）、
+  `2006-01-02 15:04:05` を受け付けます。新規フィルタ: `--rcode`、
+  `--upstream`、`--qname-suffix`、`--duration-min`（DNS）、
+  `--peer-suffix`、`--protocol`、`--asymmetric`（flows）。新規
+  `--agg` / `--stats` モードでは `SUMMARY` と、DNS では
+  `BY RESPONSE CODE` / `BY CLIENT` / `BY UPSTREAM` /
+  `BY QNAME SUFFIX`、flows では `BY CLIENT` / `BY PEER` /
+  `BY PROTOCOL` を、duration の p50 / p95 / p99 とあわせて出力します。
+  直接 DB 取得は `--chunk-size` で分割され、各チャンクが個別の ctx
+  デッドラインを持ちます。`DeadlineExceeded` のエラーには「ここまでに
+  N 行取得済み、最後の `last ts` は…」というヒントを含めます。
+  `--limit` 既定値は 100 から 500 へ、`--timeout` は 5 秒から 30 秒へ
+  引き上げ、内部の `DNSQueryFilter` / `TrafficFlowFilter` のハード
+  上限も 1000 から 10000 へ引き上げました。Web Console には
+  `/api/v1/dns-queries/aggregate` と
+  `/api/v1/traffic-flows/aggregate` エンドポイントが追加され、既存の
+  行取得エンドポイントにも同じフィルタクエリパラメータが追加されて
+  います（UI 側は本リリースでは変更なし）。
+
 ## v20260526.2335
 
 v20260526.2241 のドキュメントと CI の整合性を取り直した追従リリースです。

@@ -11,6 +11,59 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 修复
+
+- **影响生产环境**: `routerd serve` 不再每次 reconcile 都泄漏
+  `/var/lib/routerd/routerd.db` 的 SQLite 文件描述符 (#39)。给
+  `Ledger` 接口增加了 `Close()` 方法，`SQLiteLedger.Close()` 会关闭
+  底层 `*sql.DB`，并在 `resource.LoadLedger()` 的全部调用点添加
+  `defer Close()`。主要泄漏源是大约 30 秒周期运行的
+  `IPv4PolicyRouteController.cleanupLedgerOwnedPolicyRoutes`，在
+  homert02 的 v20260526.2335 上，每次 reconcile 都会增加一组
+  `routerd.db` / `routerd.db-wal` 文件描述符。同时给
+  `OpenSQLiteLedger` 加上 `SetMaxOpenConns(1)` / `SetMaxIdleConns(1)`，
+  与 `pkg/state/sqlite.go` 采取同样的保护措施，作为即便漏掉
+  `Close()` 也不会超过 1 个连接的兜底。新增 2 个 Linux 限定回归测试
+  （`pkg/resource` 与 `pkg/controller/chain`），验证 10 次 open /
+  close 循环后 `/proc/self/fd` 数不增长。
+- 修复 `routerctl doctor` 的 NAT / firewall nftables 检查在失败时
+  仅输出「exit status 1」的问题 (#34)。检查失败时现在会输出
+  `table=<family>/<name> cmd=<command> exit=<N>
+  stderr=<≤200 字符> stdout=<≤200 字符>` 的结构化信息。当 `nft`
+  以非 0 退出但标准输出中确实包含表的列表时，会降级为 **warn**
+  而不是 fail。`NAT44Rule` / `FirewallZone` / `FirewallPolicy` /
+  `FirewallRule` 的 active / pending / missing 统计同样被附加到
+  detail 中，便于一次性比对 nft 侧与资源侧的信号。
+
+### 新增
+
+- `routerctl` 全部子命令在 `--help` 时现在显示标准的 `Usage: /
+  summary / Flags: / Examples:`，而非以往的「flag: help requested」
+  (#35)。覆盖：`dns-queries`、`connections`、`traffic-flows`、
+  `firewall-logs`、`status`、`events`、`tailscale peers`、
+  `wireguard list`、`ledger`（integrity-check / vacuum / backup /
+  prune-events）、`apply`、`delete`、`set-log-level`、
+  `restart-dns-resolver`、`firewall test`、`diagnose`、`doctor`。
+  summary 明确说明 `--since` 接受 duration 形式，并指出绝对时刻指定
+  `--from` / `--to` 已在本次同步发布。
+- `routerctl dns-queries` 与 `routerctl traffic-flows` 增加绝对时刻
+  范围与聚合 (#36)。`--from` / `--to` 接受 `RFC3339`、
+  `2006-01-02T15:04:05`（省略时区时按 UTC 处理）、
+  `2006-01-02 15:04:05`。新增过滤项: `--rcode`、`--upstream`、
+  `--qname-suffix`、`--duration-min`（DNS）；`--peer-suffix`、
+  `--protocol`、`--asymmetric`（flows）。新增 `--agg` / `--stats`
+  模式输出 `SUMMARY`，DNS 列出 `BY RESPONSE CODE` / `BY CLIENT` /
+  `BY UPSTREAM` / `BY QNAME SUFFIX`，flows 列出 `BY CLIENT` /
+  `BY PEER` / `BY PROTOCOL`，同时附 duration 的 p50 / p95 / p99
+  分位。直接读取 DB 时支持 `--chunk-size` 分块，每个 chunk 拥有自己的
+  ctx 截止时间。出现 `DeadlineExceeded` 时错误信息包含「已取 N 行，
+  最后的 `last ts` 是 …」之类的提示。`--limit` 默认值从 100 提到
+  500，`--timeout` 从 5 秒提到 30 秒，内部 `DNSQueryFilter` /
+  `TrafficFlowFilter` 的硬上限从 1000 提到 10000。Web Console 新增
+  `/api/v1/dns-queries/aggregate` 与
+  `/api/v1/traffic-flows/aggregate` 端点，并在既有行端点上加入相同的
+  过滤查询参数（本次发布 UI 不变）。
+
 ## v20260526.2335
 
 v20260526.2241 的文档 / CI 一致性 follow-up 发布。二进制与运行时行为
