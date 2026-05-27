@@ -327,13 +327,18 @@ func (r doctorRunner) doctorNAT() []doctorCheck {
 		return []doctorCheck{{Area: "nat", Name: "NAT44Rule", Status: doctorSkip, Detail: "no NAT44Rule resources configured"}}
 	}
 	var checks []doctorCheck
+	natCounts := doctorResourceStatusCounts{}
 	for _, res := range rules {
-		checks = append(checks, doctorResourceCheck("nat", res, objectStatus(r.store, res.APIVersion, res.Kind, res.Metadata.Name), healthyPhases("Applied", "Active", "Ready")))
+		status := objectStatus(r.store, res.APIVersion, res.Kind, res.Metadata.Name)
+		checks = append(checks, doctorResourceCheck("nat", res, status, healthyPhases("Applied", "Active", "Ready")))
+		natCounts.tally(status, healthyPhases("Applied", "Active", "Ready"))
 	}
 	if r.opts.Host {
 		ctx, cancel := context.WithTimeout(context.Background(), r.opts.Timeout)
 		defer cancel()
-		checks = append(checks, doctorCommandStatus("nat", runDiagnosticCommand(ctx, "nft list table ip routerd_nat", "nft", "list", "table", "ip", "routerd_nat"), doctorFail, "apply NAT44Rule resources or inspect nftables errors"))
+		command := runDiagnosticCommand(ctx, "nft list table ip routerd_nat", "nft", "list", "table", "ip", "routerd_nat")
+		extra := fmt.Sprintf("NAT44Rule active=%d pending=%d", natCounts.Active, natCounts.Pending)
+		checks = append(checks, doctorNftCheckStatus("nat", command, "ip", "routerd_nat", doctorFail, "apply NAT44Rule resources or inspect nftables errors", extra))
 	} else {
 		checks = append(checks, doctorHostSkipped("nat", "nft routerd_nat"))
 	}
@@ -341,22 +346,31 @@ func (r doctorRunner) doctorNAT() []doctorCheck {
 }
 
 func (r doctorRunner) doctorFirewall() []doctorCheck {
-	firewallResources := append(selectResources(r.router.Spec.Resources, "FirewallZone", ""), selectResources(r.router.Spec.Resources, "FirewallPolicy", "")...)
+	zones := selectResources(r.router.Spec.Resources, "FirewallZone", "")
+	policies := selectResources(r.router.Spec.Resources, "FirewallPolicy", "")
+	firewallResources := append(zones, policies...)
 	if len(firewallResources) == 0 {
 		return []doctorCheck{{Area: "firewall", Name: "FirewallZone/Policy", Status: doctorWarn, Detail: "no firewall zones or policy configured; router may be permissive", Remedy: "declare FirewallZone and FirewallPolicy resources"}}
 	}
 	var checks []doctorCheck
+	zoneCounts := doctorResourceStatusCounts{}
 	for _, res := range firewallResources {
-		checks = append(checks, doctorResourceCheck("firewall", res, objectStatus(r.store, res.APIVersion, res.Kind, res.Metadata.Name), healthyPhases("Applied", "Active", "Ready")))
+		status := objectStatus(r.store, res.APIVersion, res.Kind, res.Metadata.Name)
+		checks = append(checks, doctorResourceCheck("firewall", res, status, healthyPhases("Applied", "Active", "Ready")))
+		if res.Kind == "FirewallZone" {
+			zoneCounts.tally(status, healthyPhases("Applied", "Active", "Ready"))
+		}
 	}
 	if r.opts.Host {
 		ctx, cancel := context.WithTimeout(context.Background(), r.opts.Timeout)
 		defer cancel()
 		command := runDiagnosticCommand(ctx, "nft list table inet routerd_filter", "nft", "list", "table", "inet", "routerd_filter")
-		check := doctorCommandStatus("firewall", command, doctorFail, "apply firewall resources or inspect nftables errors")
-		if command.OK && (!strings.Contains(command.Output, "hook input") || !strings.Contains(command.Output, "policy drop")) {
+		extra := fmt.Sprintf("FirewallZone active=%d", zoneCounts.Active)
+		check := doctorNftCheckStatus("firewall", command, "inet", "routerd_filter", doctorFail, "apply firewall resources or inspect nftables errors", extra)
+		if command.OK && (!strings.Contains(command.Stdout, "hook input") || !strings.Contains(command.Stdout, "policy drop")) {
 			check.Status = doctorWarn
-			check.Detail = "routerd_filter exists but input policy drop was not found"
+			check.Detail = appendDoctorDetail("routerd_filter exists but input policy drop was not found", "table=inet/routerd_filter")
+			check.Detail = appendDoctorDetail(check.Detail, extra)
 			check.Remedy = "check rendered firewall policy"
 		}
 		checks = append(checks, check)
@@ -500,6 +514,87 @@ func doctorCommandStatus(area string, command diagnoseCommandCheck, failStatus, 
 		return doctorCheck{Area: area, Name: command.Name, Status: doctorPass, Detail: oneLine(detail)}
 	}
 	return doctorCheck{Area: area, Name: command.Name, Status: failStatus, Detail: firstNonEmpty(command.Error, oneLine(command.Output)), Remedy: remedy}
+}
+
+// doctorResourceStatusCounts tallies resource status phases for compact
+// reporting alongside nftables checks. Active counts pass-mapped phases,
+// Pending counts everything else with a non-empty status, and Missing counts
+// resources without observed status.
+type doctorResourceStatusCounts struct {
+	Active  int
+	Pending int
+	Missing int
+}
+
+func (c *doctorResourceStatusCounts) tally(status map[string]any, pass map[string]bool) {
+	if len(status) == 0 {
+		c.Missing++
+		return
+	}
+	if pass[stringStatus(status, "phase")] {
+		c.Active++
+		return
+	}
+	c.Pending++
+}
+
+// doctorNftCheckStatus produces a doctorCheck from an nft command invocation.
+// When the command exits non-zero but the requested table still appears in
+// stdout the check is downgraded to warn (the listing is usable, but stderr
+// flagged something). When stdout is empty and the command failed, detail
+// records command/exit/stderr/stdout for triage. Successful checks append an
+// optional structured detail (e.g. resource counts).
+func doctorNftCheckStatus(area string, command diagnoseCommandCheck, family, table, failStatus, remedy, extra string) doctorCheck {
+	tableLabel := "table=" + family + "/" + table
+	if command.OK {
+		detail := strings.TrimSpace(command.Stdout)
+		if detail == "" {
+			detail = "command succeeded"
+		}
+		base := appendDoctorDetail(tableLabel, oneLine(detail))
+		if extra != "" {
+			base = appendDoctorDetail(base, extra)
+		}
+		check := doctorCheck{Area: area, Name: command.Name, Status: doctorPass, Detail: base}
+		if stderr := strings.TrimSpace(command.Stderr); stderr != "" {
+			check.Detail = appendDoctorDetail(check.Detail, "stderr="+truncateForDetail(stderr, 200))
+		}
+		return check
+	}
+	status := failStatus
+	tableMarker := "table " + family + " " + table
+	if strings.Contains(command.Stdout, tableMarker) {
+		status = doctorWarn
+	}
+	detail := nftFailureDetail(command, tableLabel)
+	if extra != "" {
+		detail = appendDoctorDetail(detail, extra)
+	}
+	return doctorCheck{Area: area, Name: command.Name, Status: status, Detail: detail, Remedy: remedy}
+}
+
+func nftFailureDetail(command diagnoseCommandCheck, tableLabel string) string {
+	parts := []string{tableLabel}
+	if command.Command != "" {
+		parts = append(parts, "cmd="+command.Command)
+	}
+	parts = append(parts, fmt.Sprintf("exit=%d", command.ExitCode))
+	if stderr := strings.TrimSpace(command.Stderr); stderr != "" {
+		parts = append(parts, "stderr="+truncateForDetail(stderr, 200))
+	}
+	if stdout := strings.TrimSpace(command.Stdout); stdout != "" {
+		parts = append(parts, "stdout="+truncateForDetail(stdout, 200))
+	}
+	return strings.Join(parts, " ")
+}
+
+func truncateForDetail(value string, max int) string {
+	value = strings.ReplaceAll(value, "\n", " | ")
+	value = strings.TrimSpace(value)
+	if max > 0 && len(value) > max {
+		return value[:max] + "..."
+	}
+	return value
 }
 
 func doctorHostSkipped(area, name string) doctorCheck {

@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"flag"
@@ -46,10 +47,14 @@ type diagnoseResource struct {
 }
 
 type diagnoseCommandCheck struct {
-	Name   string `json:"name" yaml:"name"`
-	OK     bool   `json:"ok" yaml:"ok"`
-	Output string `json:"output,omitempty" yaml:"output,omitempty"`
-	Error  string `json:"error,omitempty" yaml:"error,omitempty"`
+	Name     string `json:"name" yaml:"name"`
+	OK       bool   `json:"ok" yaml:"ok"`
+	Output   string `json:"output,omitempty" yaml:"output,omitempty"`
+	Error    string `json:"error,omitempty" yaml:"error,omitempty"`
+	Command  string `json:"command,omitempty" yaml:"command,omitempty"`
+	Stdout   string `json:"stdout,omitempty" yaml:"stdout,omitempty"`
+	Stderr   string `json:"stderr,omitempty" yaml:"stderr,omitempty"`
+	ExitCode int    `json:"exitCode" yaml:"exitCode"`
 }
 
 func diagnoseCommand(args []string, stdout, stderr io.Writer) error {
@@ -277,12 +282,53 @@ func objectStatus(store routerstate.Store, apiVersion, kind, name string) map[st
 
 func runDiagnosticCommand(ctx context.Context, label, name string, args ...string) diagnoseCommandCheck {
 	cmd := exec.CommandContext(ctx, name, args...)
-	out, err := cmd.CombinedOutput()
-	check := diagnoseCommandCheck{Name: label, OK: err == nil, Output: strings.TrimSpace(string(out))}
-	if err != nil {
+	var stdoutBuf, stderrBuf bytes.Buffer
+	cmd.Stdout = &stdoutBuf
+	cmd.Stderr = &stderrBuf
+	err := cmd.Run()
+	stdout := strings.TrimSpace(stdoutBuf.String())
+	stderr := strings.TrimSpace(stderrBuf.String())
+	check := diagnoseCommandCheck{
+		Name:    label,
+		OK:      err == nil,
+		Command: diagnoseCommandLine(name, args),
+		Stdout:  stdout,
+		Stderr:  stderr,
+	}
+	switch {
+	case err == nil:
+		check.ExitCode = 0
+	default:
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			check.ExitCode = exitErr.ExitCode()
+		} else {
+			check.ExitCode = -1
+		}
 		check.Error = err.Error()
 	}
+	check.Output = combineDiagnosticOutput(stdout, stderr)
 	return check
+}
+
+func diagnoseCommandLine(name string, args []string) string {
+	if len(args) == 0 {
+		return name
+	}
+	return name + " " + strings.Join(args, " ")
+}
+
+func combineDiagnosticOutput(stdout, stderr string) string {
+	switch {
+	case stdout == "" && stderr == "":
+		return ""
+	case stderr == "":
+		return stdout
+	case stdout == "":
+		return stderr
+	default:
+		return stdout + "\n--- stderr ---\n" + stderr
+	}
 }
 
 func writeDiagnoseReport(stdout io.Writer, report diagnoseReport, output string) error {

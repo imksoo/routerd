@@ -4,11 +4,13 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
 	routerstate "github.com/imksoo/routerd/pkg/state"
@@ -370,4 +372,246 @@ func closeDoctorState(t *testing.T, store *routerstate.SQLiteStore) {
 	if err := store.Close(); err != nil {
 		t.Fatalf("close sqlite state: %v", err)
 	}
+}
+
+func TestRunDiagnosticCommandSeparatesStreamsAndExitCode(t *testing.T) {
+	binDir := filepath.Join(t.TempDir(), "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/sh\necho 'this is stdout'\necho 'this is stderr' >&2\nexit 7\n"
+	writeTestCommand(t, filepath.Join(binDir, "fakecmd"), script)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	check := runDiagnosticCommand(ctx, "fakecmd run", filepath.Join(binDir, "fakecmd"), "alpha", "beta")
+	if check.OK {
+		t.Fatalf("expected non-OK, got %#v", check)
+	}
+	if check.ExitCode != 7 {
+		t.Fatalf("expected exit 7, got %d", check.ExitCode)
+	}
+	if check.Stdout != "this is stdout" {
+		t.Fatalf("stdout = %q", check.Stdout)
+	}
+	if check.Stderr != "this is stderr" {
+		t.Fatalf("stderr = %q", check.Stderr)
+	}
+	if !strings.HasSuffix(check.Command, "fakecmd alpha beta") {
+		t.Fatalf("command = %q", check.Command)
+	}
+	if !strings.Contains(check.Output, "this is stdout") || !strings.Contains(check.Output, "this is stderr") {
+		t.Fatalf("output = %q (must retain both streams)", check.Output)
+	}
+}
+
+func TestDoctorNftCheckStatusWarnsWhenStdoutHasTableButExitNonZero(t *testing.T) {
+	command := diagnoseCommandCheck{
+		Name:     "nft list table ip routerd_nat",
+		OK:       false,
+		Command:  "nft list table ip routerd_nat",
+		Stdout:   "table ip routerd_nat {\n\tchain postrouting {\n\t}\n}",
+		Stderr:   "warning: ignoring unknown attribute",
+		ExitCode: 1,
+		Output:   "table ip routerd_nat {...}\n--- stderr ---\nwarning: ignoring unknown attribute",
+	}
+	check := doctorNftCheckStatus("nat", command, "ip", "routerd_nat", doctorFail, "remedy here", "NAT44Rule active=1 pending=0")
+	if check.Status != doctorWarn {
+		t.Fatalf("expected warn, got %#v", check)
+	}
+	if !strings.Contains(check.Detail, "table=ip/routerd_nat") {
+		t.Fatalf("detail missing table label: %q", check.Detail)
+	}
+	if !strings.Contains(check.Detail, "exit=1") {
+		t.Fatalf("detail missing exit code: %q", check.Detail)
+	}
+	if !strings.Contains(check.Detail, "stderr=warning: ignoring unknown attribute") {
+		t.Fatalf("detail missing stderr excerpt: %q", check.Detail)
+	}
+	if !strings.Contains(check.Detail, "NAT44Rule active=1 pending=0") {
+		t.Fatalf("detail missing resource count: %q", check.Detail)
+	}
+}
+
+func TestDoctorNftCheckStatusFailsWhenStdoutEmpty(t *testing.T) {
+	command := diagnoseCommandCheck{
+		Name:     "nft list table ip routerd_nat",
+		OK:       false,
+		Command:  "nft list table ip routerd_nat",
+		Stdout:   "",
+		Stderr:   "Error: No such file or directory; did you mean table 'routerd' in family ip?",
+		ExitCode: 1,
+		Output:   "Error: No such file or directory",
+	}
+	check := doctorNftCheckStatus("nat", command, "ip", "routerd_nat", doctorFail, "apply NAT44Rule resources", "NAT44Rule active=0 pending=2")
+	if check.Status != doctorFail {
+		t.Fatalf("expected fail, got %#v", check)
+	}
+	if !strings.Contains(check.Detail, "table=ip/routerd_nat") {
+		t.Fatalf("detail missing table label: %q", check.Detail)
+	}
+	if !strings.Contains(check.Detail, "cmd=nft list table ip routerd_nat") {
+		t.Fatalf("detail missing cmd: %q", check.Detail)
+	}
+	if !strings.Contains(check.Detail, "exit=1") {
+		t.Fatalf("detail missing exit code: %q", check.Detail)
+	}
+	if !strings.Contains(check.Detail, "stderr=Error: No such file or directory") {
+		t.Fatalf("detail missing stderr excerpt: %q", check.Detail)
+	}
+	if !strings.Contains(check.Detail, "NAT44Rule active=0 pending=2") {
+		t.Fatalf("detail missing resource counts: %q", check.Detail)
+	}
+	if check.Remedy != "apply NAT44Rule resources" {
+		t.Fatalf("remedy = %q", check.Remedy)
+	}
+}
+
+func TestDoctorNftCheckStatusPassesWithStdout(t *testing.T) {
+	command := diagnoseCommandCheck{
+		Name:     "nft list table ip routerd_nat",
+		OK:       true,
+		Command:  "nft list table ip routerd_nat",
+		Stdout:   "table ip routerd_nat {\n}",
+		ExitCode: 0,
+		Output:   "table ip routerd_nat {\n}",
+	}
+	check := doctorNftCheckStatus("nat", command, "ip", "routerd_nat", doctorFail, "remedy", "NAT44Rule active=2 pending=0")
+	if check.Status != doctorPass {
+		t.Fatalf("expected pass, got %#v", check)
+	}
+	if !strings.Contains(check.Detail, "table=ip/routerd_nat") {
+		t.Fatalf("detail missing table label: %q", check.Detail)
+	}
+	if !strings.Contains(check.Detail, "NAT44Rule active=2 pending=0") {
+		t.Fatalf("detail missing resource counts: %q", check.Detail)
+	}
+}
+
+func TestDoctorNATEmitsExitAndStderrOnNftFailure(t *testing.T) {
+	configPath, statePath := writeDoctorNATFixture(t)
+	store := openDoctorState(t, statePath)
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "NAT44Rule", "wan-masq", map[string]any{"phase": "Applied"}); err != nil {
+		t.Fatalf("save nat status: %v", err)
+	}
+	closeDoctorState(t, store)
+
+	binDir := filepath.Join(t.TempDir(), "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeTestCommand(t, filepath.Join(binDir, "nft"), "#!/bin/sh\necho 'Error: No such file or directory' >&2\nexit 1\n")
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	var out bytes.Buffer
+	err := run([]string{"doctor", "nat", "--config", configPath, "--state-file", statePath, "-o", "json"}, &out, &bytes.Buffer{})
+	if err == nil {
+		t.Fatalf("doctor nat expected to fail when nft listing is empty:\n%s", out.String())
+	}
+	var report doctorReport
+	if unmarshalErr := json.Unmarshal(out.Bytes(), &report); unmarshalErr != nil {
+		t.Fatalf("unmarshal: %v\n%s", unmarshalErr, out.String())
+	}
+	check := findDoctorCheck(t, report, "nft list table ip routerd_nat")
+	if check.Status != doctorFail {
+		t.Fatalf("nft check = %#v", check)
+	}
+	for _, want := range []string{"table=ip/routerd_nat", "exit=1", "stderr=Error: No such file or directory", "NAT44Rule active=1 pending=0"} {
+		if !strings.Contains(check.Detail, want) {
+			t.Fatalf("nft check detail missing %q: %q", want, check.Detail)
+		}
+	}
+}
+
+func TestDoctorNATWarnsWhenNftListingPresentDespiteExit(t *testing.T) {
+	configPath, statePath := writeDoctorNATFixture(t)
+	store := openDoctorState(t, statePath)
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "NAT44Rule", "wan-masq", map[string]any{"phase": "Applied"}); err != nil {
+		t.Fatalf("save nat status: %v", err)
+	}
+	closeDoctorState(t, store)
+
+	binDir := filepath.Join(t.TempDir(), "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeTestCommand(t, filepath.Join(binDir, "nft"), "#!/bin/sh\ncat <<'EOF'\ntable ip routerd_nat {\n\tchain postrouting {\n\t}\n}\nEOF\necho 'warning: noisy attribute' >&2\nexit 1\n")
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	var out bytes.Buffer
+	if err := run([]string{"doctor", "nat", "--config", configPath, "--state-file", statePath, "-o", "json"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("doctor nat unexpectedly failed for warn case: %v\n%s", err, out.String())
+	}
+	var report doctorReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("unmarshal: %v\n%s", err, out.String())
+	}
+	check := findDoctorCheck(t, report, "nft list table ip routerd_nat")
+	if check.Status != doctorWarn {
+		t.Fatalf("expected warn (table present in stdout, exit !=0); got %#v", check)
+	}
+	for _, want := range []string{"table=ip/routerd_nat", "exit=1", "stderr=warning: noisy attribute"} {
+		if !strings.Contains(check.Detail, want) {
+			t.Fatalf("nft check detail missing %q: %q", want, check.Detail)
+		}
+	}
+}
+
+func TestDoctorNATPassesWhenNftSucceeds(t *testing.T) {
+	configPath, statePath := writeDoctorNATFixture(t)
+	store := openDoctorState(t, statePath)
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "NAT44Rule", "wan-masq", map[string]any{"phase": "Applied"}); err != nil {
+		t.Fatalf("save nat status: %v", err)
+	}
+	closeDoctorState(t, store)
+
+	binDir := filepath.Join(t.TempDir(), "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeTestCommand(t, filepath.Join(binDir, "nft"), "#!/bin/sh\ncat <<'EOF'\ntable ip routerd_nat {\n}\nEOF\n")
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	var out bytes.Buffer
+	if err := run([]string{"doctor", "nat", "--config", configPath, "--state-file", statePath, "-o", "json"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("doctor nat: %v\n%s", err, out.String())
+	}
+	var report doctorReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("unmarshal: %v\n%s", err, out.String())
+	}
+	check := findDoctorCheck(t, report, "nft list table ip routerd_nat")
+	if check.Status != doctorPass {
+		t.Fatalf("expected pass; got %#v", check)
+	}
+	if !strings.Contains(check.Detail, "table=ip/routerd_nat") {
+		t.Fatalf("detail missing table label: %q", check.Detail)
+	}
+	if !strings.Contains(check.Detail, "NAT44Rule active=1 pending=0") {
+		t.Fatalf("detail missing resource counts: %q", check.Detail)
+	}
+}
+
+func writeDoctorNATFixture(t *testing.T) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "router.yaml")
+	data := []byte(`apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: test
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: NAT44Rule
+      metadata:
+        name: wan-masq
+      spec:
+        action: masquerade
+        outboundInterface: wan
+`)
+	if err := os.WriteFile(configPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	return configPath, filepath.Join(dir, "routerd.db")
 }
