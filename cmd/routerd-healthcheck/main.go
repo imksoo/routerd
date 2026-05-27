@@ -42,6 +42,9 @@ type options struct {
 	fwmark             int
 	sourceInterface    string
 	sourceAddress      string
+	sourceOrigin       string
+	tunnelLocal        string
+	tunnelRemote       string
 	port               int
 	interval           time.Duration
 	timeout            time.Duration
@@ -110,6 +113,9 @@ func parseOptions(name string, args []string) (options, error) {
 	fs.IntVar(&opts.fwmark, "fwmark", 0, "Linux socket mark used for policy routing")
 	fs.StringVar(&opts.sourceInterface, "source-interface", "", "source interface for probes")
 	fs.StringVar(&opts.sourceAddress, "source-address", "", "source IP address for probes")
+	fs.StringVar(&opts.sourceOrigin, "source-origin", "", "source address origin hint: pd, ra, static, dynamic")
+	fs.StringVar(&opts.tunnelLocal, "tunnel-local", "", "tunnel local address hint (informational, recorded in history)")
+	fs.StringVar(&opts.tunnelRemote, "tunnel-remote", "", "tunnel remote address hint (informational, recorded in history)")
 	fs.IntVar(&opts.port, "port", 0, "probe port")
 	fs.DurationVar(&opts.interval, "interval", 30*time.Second, "probe interval")
 	fs.DurationVar(&opts.timeout, "timeout", 3*time.Second, "probe timeout")
@@ -249,7 +255,15 @@ func (d *daemon) probeOnce(ctx context.Context) error {
 	result := healthcheck.Probe(spanCtx, d.spec)
 	if probeCtx.Err() == context.DeadlineExceeded && !result.OK {
 		result.Timeout = true
+		if result.FailureKind == "" {
+			result.FailureKind = healthcheck.FailureKindTimeout
+		}
 	}
+	result.ProbeEvidence = healthcheck.EnrichEvidence(spanCtx, d.spec, result.ProbeEvidence)
+	// Tunnel hint flags from the daemon CLI are layered last so they overwrite
+	// nothing the probe or kernel reported, but provide ground truth on probes
+	// that don't have access to the tunnel device themselves (e.g. dslite).
+	d.applyTunnelHints(&result.ProbeEvidence)
 	span.End()
 	now := time.Now().UTC()
 	d.mu.Lock()
@@ -266,6 +280,23 @@ func (d *daemon) probeOnce(ctx context.Context) error {
 		d.publishEvent(evaluation.Event)
 	}
 	return nil
+}
+
+// applyTunnelHints layers operator-provided egress hints onto the evidence
+// without clobbering anything the probe / kernel already detected.
+func (d *daemon) applyTunnelHints(ev *healthcheck.ProbeEvidence) {
+	if ev == nil {
+		return
+	}
+	if ev.SourceOrigin == "" && d.opts.sourceOrigin != "" {
+		ev.SourceOrigin = d.opts.sourceOrigin
+	}
+	if ev.TunnelLocal == "" && d.opts.tunnelLocal != "" {
+		ev.TunnelLocal = d.opts.tunnelLocal
+	}
+	if ev.TunnelRemote == "" && d.opts.tunnelRemote != "" {
+		ev.TunnelRemote = d.opts.tunnelRemote
+	}
 }
 
 func (d *daemon) recordMetrics(ctx context.Context, evaluation healthcheck.Evaluation) {
@@ -483,12 +514,48 @@ func (d *daemon) statusLocked() daemonapi.DaemonStatus {
 		"lastTransitionAt":  d.state.LastTransitionAt.UTC().Format(time.RFC3339Nano),
 		"consecutivePassed": strconv.Itoa(d.state.ConsecutivePassed),
 		"consecutiveFailed": strconv.Itoa(d.state.ConsecutiveFailed),
+		"failureCount":      strconv.Itoa(d.state.FailureCount),
 		"via":               d.spec.Via,
 		"sourceInterface":   d.spec.SourceInterface,
 		"sourceAddress":     d.spec.SourceAddress,
 	}
 	if d.spec.FwMark != 0 {
 		observed["fwmark"] = fmt.Sprintf("0x%x", d.spec.FwMark)
+	}
+	if !d.state.LastSuccessTime.IsZero() {
+		observed["lastSuccessTime"] = d.state.LastSuccessTime.UTC().Format(time.RFC3339Nano)
+	}
+	if !d.state.LastFailureTime.IsZero() {
+		observed["lastFailureTime"] = d.state.LastFailureTime.UTC().Format(time.RFC3339Nano)
+	}
+	if !d.state.FirstFailureTime.IsZero() {
+		observed["firstFailureTime"] = d.state.FirstFailureTime.UTC().Format(time.RFC3339Nano)
+	}
+	if ev := d.state.LastEvidence; ev != (healthcheck.ProbeEvidence{}) {
+		if ev.FailureKind != "" {
+			observed["failureKind"] = ev.FailureKind
+		}
+		if ev.EgressInterface != "" {
+			observed["egressInterface"] = ev.EgressInterface
+		}
+		if ev.SourceOrigin != "" {
+			observed["sourceOrigin"] = ev.SourceOrigin
+		}
+		if ev.NextHop != "" {
+			observed["nextHop"] = ev.NextHop
+		}
+		if ev.OutInterface != "" {
+			observed["outInterface"] = ev.OutInterface
+		}
+		if ev.RouteSource != "" {
+			observed["routeSource"] = ev.RouteSource
+		}
+		if ev.TunnelLocal != "" {
+			observed["tunnelLocal"] = ev.TunnelLocal
+		}
+		if ev.TunnelRemote != "" {
+			observed["tunnelRemote"] = ev.TunnelRemote
+		}
 	}
 	resourceStatus := daemonapi.ResourceStatus{
 		Resource: daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "HealthCheck", Name: d.opts.resource},
