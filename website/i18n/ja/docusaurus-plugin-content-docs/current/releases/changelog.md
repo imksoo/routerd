@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260528.0402
+
 ### 修正
 
 - `routerd serve` の BGP コントローラー周期 reconcile で

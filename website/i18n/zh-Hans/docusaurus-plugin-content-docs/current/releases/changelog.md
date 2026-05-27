@@ -11,6 +11,8 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260528.0402
+
 ### 修复
 
 - 修复 `routerd serve` 在 BGP 控制器周期 reconcile 中泄漏
