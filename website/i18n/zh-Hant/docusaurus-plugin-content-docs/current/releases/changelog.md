@@ -11,6 +11,8 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260528.0158
+
 ### 修正
 
 - 修正 Release / CI 工作流的「Capture Web Console screenshots」工作在

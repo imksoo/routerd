@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260528.0158
+
 ### 修正
 
 - Release / CI ワークフローの「Capture Web Console screenshots」ジョブ
