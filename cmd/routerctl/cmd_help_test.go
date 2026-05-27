@@ -150,8 +150,25 @@ func TestDNSQueriesHelpMentionsRelativeTime(t *testing.T) {
 	if !strings.Contains(combined, "duration") {
 		t.Errorf("dns-queries --help should mention duration / 相対時間 form, got:\n%s", combined)
 	}
-	if !strings.Contains(combined, "#36") {
-		t.Errorf("dns-queries --help should mention issue #36 for absolute time, got:\n%s", combined)
+	// Issue #36: absolute time (--from / --to) and --agg are now implemented;
+	// the help text should document them.
+	for _, want := range []string{"-from", "-to", "-agg", "-rcode", "-qname-suffix", "-chunk-size"} {
+		if !strings.Contains(combined, want) {
+			t.Errorf("dns-queries --help should mention %s flag, got:\n%s", want, combined)
+		}
+	}
+}
+
+func TestTrafficFlowsHelpMentionsAbsoluteTimeAndAgg(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if err := run([]string{"traffic-flows", "--help"}, &stdout, &stderr); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	combined := stdout.String() + stderr.String()
+	for _, want := range []string{"-from", "-to", "-agg", "-protocol", "-peer-suffix", "-asymmetric", "-chunk-size"} {
+		if !strings.Contains(combined, want) {
+			t.Errorf("traffic-flows --help should mention %s flag, got:\n%s", want, combined)
+		}
 	}
 }
 

@@ -305,27 +305,51 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 			return &apiTable, nil
 		},
 		DNSQueries: func(r *http.Request, req controlapi.DNSQueriesRequest) (*controlapi.DNSQueries, error) {
-			since, err := logQuerySince(req.Since)
+			filter, err := dnsQueryFilterFromRequest(req)
 			if err != nil {
 				return nil, err
 			}
-			rows, err := listDNSQueriesReadOnly(r.Context(), configuredDNSQueryLogPath(router), logstore.DNSQueryFilter{Since: since, Client: req.Client, QName: req.QName, Limit: req.Limit})
+			rows, err := listDNSQueriesReadOnly(r.Context(), configuredDNSQueryLogPath(router), filter)
 			if err != nil {
 				return nil, err
 			}
 			result := controlapi.NewDNSQueries(rows)
 			return &result, nil
 		},
-		TrafficFlows: func(r *http.Request, req controlapi.TrafficFlowsRequest) (*controlapi.TrafficFlows, error) {
-			since, err := logQuerySince(req.Since)
+		DNSQueriesAggregate: func(r *http.Request, req controlapi.DNSQueriesRequest) (*controlapi.DNSQueriesAggregate, error) {
+			filter, err := dnsQueryFilterFromRequest(req)
 			if err != nil {
 				return nil, err
 			}
-			rows, err := listTrafficFlowsReadOnly(r.Context(), configuredTrafficFlowLogPath(router), logstore.TrafficFlowFilter{Since: since, Client: req.Client, Peer: req.Peer, Limit: req.Limit})
+			agg, err := aggregateDNSQueriesReadOnly(r.Context(), configuredDNSQueryLogPath(router), filter)
+			if err != nil {
+				return nil, err
+			}
+			result := controlapi.NewDNSQueriesAggregate(agg)
+			return &result, nil
+		},
+		TrafficFlows: func(r *http.Request, req controlapi.TrafficFlowsRequest) (*controlapi.TrafficFlows, error) {
+			filter, err := trafficFlowFilterFromRequest(req)
+			if err != nil {
+				return nil, err
+			}
+			rows, err := listTrafficFlowsReadOnly(r.Context(), configuredTrafficFlowLogPath(router), filter)
 			if err != nil {
 				return nil, err
 			}
 			result := controlapi.NewTrafficFlows(rows)
+			return &result, nil
+		},
+		TrafficFlowsAggregate: func(r *http.Request, req controlapi.TrafficFlowsRequest) (*controlapi.TrafficFlowsAggregate, error) {
+			filter, err := trafficFlowFilterFromRequest(req)
+			if err != nil {
+				return nil, err
+			}
+			agg, err := aggregateTrafficFlowsReadOnly(r.Context(), configuredTrafficFlowLogPath(router), filter)
+			if err != nil {
+				return nil, err
+			}
+			result := controlapi.NewTrafficFlowsAggregate(agg)
 			return &result, nil
 		},
 		FirewallLogs: func(r *http.Request, req controlapi.FirewallLogsRequest) (*controlapi.FirewallLogs, error) {
@@ -531,6 +555,18 @@ func listDNSQueriesReadOnly(ctx context.Context, path string, filter logstore.DN
 	return store.List(ctx, filter)
 }
 
+func aggregateDNSQueriesReadOnly(ctx context.Context, path string, filter logstore.DNSQueryFilter) (logstore.DNSQueryAggregate, error) {
+	store, err := logstore.OpenDNSQueryLogReadOnly(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return logstore.DNSQueryAggregate{Since: filter.Since, Until: filter.Until}, nil
+		}
+		return logstore.DNSQueryAggregate{}, err
+	}
+	defer store.Close()
+	return store.Aggregate(ctx, filter)
+}
+
 func listTrafficFlowsReadOnly(ctx context.Context, path string, filter logstore.TrafficFlowFilter) ([]logstore.TrafficFlow, error) {
 	store, err := logstore.OpenTrafficFlowLogReadOnly(path)
 	if err != nil {
@@ -541,6 +577,97 @@ func listTrafficFlowsReadOnly(ctx context.Context, path string, filter logstore.
 	}
 	defer store.Close()
 	return store.List(ctx, filter)
+}
+
+func aggregateTrafficFlowsReadOnly(ctx context.Context, path string, filter logstore.TrafficFlowFilter) (logstore.TrafficFlowAggregate, error) {
+	store, err := logstore.OpenTrafficFlowLogReadOnly(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return logstore.TrafficFlowAggregate{Since: filter.Since, Until: filter.Until}, nil
+		}
+		return logstore.TrafficFlowAggregate{}, err
+	}
+	defer store.Close()
+	return store.Aggregate(ctx, filter)
+}
+
+func dnsQueryFilterFromRequest(req controlapi.DNSQueriesRequest) (logstore.DNSQueryFilter, error) {
+	since, until, err := resolveSinceUntil(req.Since, req.From, req.To)
+	if err != nil {
+		return logstore.DNSQueryFilter{}, err
+	}
+	return logstore.DNSQueryFilter{
+		Since:         since,
+		Until:         until,
+		Client:        req.Client,
+		QName:         req.QName,
+		QNameSuffix:   req.QNameSuffix,
+		ResponseCode:  req.ResponseCode,
+		Upstream:      req.Upstream,
+		DurationMinUS: req.DurationMinUS,
+		Limit:         req.Limit,
+	}, nil
+}
+
+func trafficFlowFilterFromRequest(req controlapi.TrafficFlowsRequest) (logstore.TrafficFlowFilter, error) {
+	since, until, err := resolveSinceUntil(req.Since, req.From, req.To)
+	if err != nil {
+		return logstore.TrafficFlowFilter{}, err
+	}
+	return logstore.TrafficFlowFilter{
+		Since:      since,
+		Until:      until,
+		Client:     req.Client,
+		Peer:       req.Peer,
+		PeerSuffix: req.PeerSuffix,
+		Protocol:   req.Protocol,
+		Asymmetric: req.Asymmetric,
+		Limit:      req.Limit,
+	}, nil
+}
+
+// resolveSinceUntil picks (since, until) from a duration-based "since" and the
+// optional absolute "from" / "to" parameters. Absolute parameters take precedence.
+func resolveSinceUntil(sinceStr, fromStr, toStr string) (time.Time, time.Time, error) {
+	var since, until time.Time
+	if v := strings.TrimSpace(fromStr); v != "" {
+		t, err := parseControlAbsTime(v)
+		if err != nil {
+			return time.Time{}, time.Time{}, err
+		}
+		since = t
+	} else if v := strings.TrimSpace(sinceStr); v != "" {
+		t, err := logQuerySince(v)
+		if err != nil {
+			return time.Time{}, time.Time{}, err
+		}
+		since = t
+	} else {
+		t, err := logQuerySince("1h")
+		if err != nil {
+			return time.Time{}, time.Time{}, err
+		}
+		since = t
+	}
+	if v := strings.TrimSpace(toStr); v != "" {
+		t, err := parseControlAbsTime(v)
+		if err != nil {
+			return time.Time{}, time.Time{}, err
+		}
+		until = t
+	}
+	return since, until, nil
+}
+
+// parseControlAbsTime parses an absolute timestamp using several layouts.
+// Bare layouts without timezone are interpreted as UTC.
+func parseControlAbsTime(value string) (time.Time, error) {
+	for _, layout := range []string{time.RFC3339, "2006-01-02T15:04:05Z07:00", "2006-01-02T15:04:05", "2006-01-02 15:04:05", "2006-01-02"} {
+		if t, err := time.Parse(layout, value); err == nil {
+			return t.UTC(), nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("could not parse %q (expected RFC3339 like 2026-05-27T20:00:00+09:00)", value)
 }
 
 func listFirewallLogsReadOnly(ctx context.Context, path string, filter logstore.FirewallLogFilter) ([]logstore.FirewallLogEntry, error) {

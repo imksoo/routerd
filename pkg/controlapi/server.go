@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 )
 
 const (
@@ -16,17 +17,19 @@ const (
 )
 
 type Handler struct {
-	Status         func(*http.Request) (*Status, error)
-	Controllers    func(*http.Request) (*Controllers, error)
-	Connections    func(*http.Request, ConnectionsRequest) (*ConnectionTable, error)
-	DNSQueries     func(*http.Request, DNSQueriesRequest) (*DNSQueries, error)
-	TrafficFlows   func(*http.Request, TrafficFlowsRequest) (*TrafficFlows, error)
-	FirewallLogs   func(*http.Request, FirewallLogsRequest) (*FirewallLogs, error)
-	Apply          func(*http.Request, ApplyRequest) (*ApplyResult, error)
-	Delete         func(*http.Request, DeleteRequest) (*DeleteResult, error)
-	SetLogLevel    func(*http.Request, LogLevelRequest) (*LogLevelResult, error)
-	DHCPv6Event    func(*http.Request, DHCPv6EventRequest) (*DHCPv6EventResult, error)
-	DHCPLeaseEvent func(*http.Request, DHCPLeaseEventRequest) (*DHCPLeaseEventResult, error)
+	Status                func(*http.Request) (*Status, error)
+	Controllers           func(*http.Request) (*Controllers, error)
+	Connections           func(*http.Request, ConnectionsRequest) (*ConnectionTable, error)
+	DNSQueries            func(*http.Request, DNSQueriesRequest) (*DNSQueries, error)
+	DNSQueriesAggregate   func(*http.Request, DNSQueriesRequest) (*DNSQueriesAggregate, error)
+	TrafficFlows          func(*http.Request, TrafficFlowsRequest) (*TrafficFlows, error)
+	TrafficFlowsAggregate func(*http.Request, TrafficFlowsRequest) (*TrafficFlowsAggregate, error)
+	FirewallLogs          func(*http.Request, FirewallLogsRequest) (*FirewallLogs, error)
+	Apply                 func(*http.Request, ApplyRequest) (*ApplyResult, error)
+	Delete                func(*http.Request, DeleteRequest) (*DeleteResult, error)
+	SetLogLevel           func(*http.Request, LogLevelRequest) (*LogLevelResult, error)
+	DHCPv6Event           func(*http.Request, DHCPv6EventRequest) (*DHCPv6EventResult, error)
+	DHCPLeaseEvent        func(*http.Request, DHCPLeaseEventRequest) (*DHCPLeaseEventResult, error)
 }
 
 type ConnectionsRequest struct {
@@ -43,8 +46,12 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleConnections(w, r)
 	case r.Method == http.MethodGet && r.URL.Path == Prefix+"/dns-queries":
 		h.handleDNSQueries(w, r)
+	case r.Method == http.MethodGet && r.URL.Path == Prefix+"/dns-queries/aggregate":
+		h.handleDNSQueriesAggregate(w, r)
 	case r.Method == http.MethodGet && r.URL.Path == Prefix+"/traffic-flows":
 		h.handleTrafficFlows(w, r)
+	case r.Method == http.MethodGet && r.URL.Path == Prefix+"/traffic-flows/aggregate":
+		h.handleTrafficFlowsAggregate(w, r)
 	case r.Method == http.MethodGet && r.URL.Path == Prefix+"/firewall-logs":
 		h.handleFirewallLogs(w, r)
 	case r.Method == http.MethodPost && r.URL.Path == Prefix+"/apply":
@@ -149,11 +156,21 @@ func (h Handler) handleDNSQueries(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotImplemented, "dns query log handler is not configured")
 		return
 	}
-	req, ok := logQueryRequest(w, r)
+	req, ok := buildDNSQueriesRequest(w, r)
 	if !ok {
 		return
 	}
-	rows, err := h.DNSQueries(r, DNSQueriesRequest{Since: req.since, Client: r.URL.Query().Get("client"), QName: r.URL.Query().Get("qname"), Limit: req.limit})
+	// Allow ?agg=1 to route through the aggregate handler if configured.
+	if r.URL.Query().Get("agg") == "1" && h.DNSQueriesAggregate != nil {
+		agg, err := h.DNSQueriesAggregate(r, req)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, agg)
+		return
+	}
+	rows, err := h.DNSQueries(r, req)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -161,21 +178,112 @@ func (h Handler) handleDNSQueries(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, rows)
 }
 
+func (h Handler) handleDNSQueriesAggregate(w http.ResponseWriter, r *http.Request) {
+	if h.DNSQueriesAggregate == nil {
+		writeError(w, http.StatusNotImplemented, "dns query aggregate handler is not configured")
+		return
+	}
+	req, ok := buildDNSQueriesRequest(w, r)
+	if !ok {
+		return
+	}
+	agg, err := h.DNSQueriesAggregate(r, req)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, agg)
+}
+
 func (h Handler) handleTrafficFlows(w http.ResponseWriter, r *http.Request) {
 	if h.TrafficFlows == nil {
 		writeError(w, http.StatusNotImplemented, "traffic flow log handler is not configured")
 		return
 	}
-	req, ok := logQueryRequest(w, r)
+	req, ok := buildTrafficFlowsRequest(w, r)
 	if !ok {
 		return
 	}
-	rows, err := h.TrafficFlows(r, TrafficFlowsRequest{Since: req.since, Client: r.URL.Query().Get("client"), Peer: r.URL.Query().Get("peer"), Limit: req.limit})
+	if r.URL.Query().Get("agg") == "1" && h.TrafficFlowsAggregate != nil {
+		agg, err := h.TrafficFlowsAggregate(r, req)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, agg)
+		return
+	}
+	rows, err := h.TrafficFlows(r, req)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, rows)
+}
+
+func (h Handler) handleTrafficFlowsAggregate(w http.ResponseWriter, r *http.Request) {
+	if h.TrafficFlowsAggregate == nil {
+		writeError(w, http.StatusNotImplemented, "traffic flow aggregate handler is not configured")
+		return
+	}
+	req, ok := buildTrafficFlowsRequest(w, r)
+	if !ok {
+		return
+	}
+	agg, err := h.TrafficFlowsAggregate(r, req)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, agg)
+}
+
+func buildDNSQueriesRequest(w http.ResponseWriter, r *http.Request) (DNSQueriesRequest, bool) {
+	base, ok := logQueryRequest(w, r)
+	if !ok {
+		return DNSQueriesRequest{}, false
+	}
+	q := r.URL.Query()
+	var durMinUS int64
+	if raw := strings.TrimSpace(q.Get("duration-min-us")); raw != "" {
+		parsed, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || parsed < 0 {
+			writeError(w, http.StatusBadRequest, "duration-min-us must be a non-negative integer")
+			return DNSQueriesRequest{}, false
+		}
+		durMinUS = parsed
+	}
+	return DNSQueriesRequest{
+		Since:         base.since,
+		From:          q.Get("from"),
+		To:            q.Get("to"),
+		Client:        q.Get("client"),
+		QName:         q.Get("qname"),
+		QNameSuffix:   q.Get("qname-suffix"),
+		ResponseCode:  q.Get("rcode"),
+		Upstream:      q.Get("upstream"),
+		DurationMinUS: durMinUS,
+		Limit:         base.limit,
+	}, true
+}
+
+func buildTrafficFlowsRequest(w http.ResponseWriter, r *http.Request) (TrafficFlowsRequest, bool) {
+	base, ok := logQueryRequest(w, r)
+	if !ok {
+		return TrafficFlowsRequest{}, false
+	}
+	q := r.URL.Query()
+	return TrafficFlowsRequest{
+		Since:      base.since,
+		From:       q.Get("from"),
+		To:         q.Get("to"),
+		Client:     q.Get("client"),
+		Peer:       q.Get("peer"),
+		PeerSuffix: q.Get("peer-suffix"),
+		Protocol:   q.Get("protocol"),
+		Asymmetric: q.Get("asymmetric") == "1" || strings.EqualFold(q.Get("asymmetric"), "true"),
+		Limit:      base.limit,
+	}, true
 }
 
 func (h Handler) handleFirewallLogs(w http.ResponseWriter, r *http.Request) {
@@ -208,8 +316,10 @@ func logQueryRequest(w http.ResponseWriter, r *http.Request) (parsedLogQuery, bo
 			writeError(w, http.StatusBadRequest, "limit must be a non-negative integer")
 			return parsedLogQuery{}, false
 		}
-		if parsed > 1000 {
-			parsed = 1000
+		// Issue #36: raise hard cap from 1000 to 10000 to support
+		// longer-range investigations through the HTTP API.
+		if parsed > 10000 {
+			parsed = 10000
 		}
 		limit = parsed
 	}

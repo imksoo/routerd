@@ -139,10 +139,7 @@ func (c *Client) Connections(ctx context.Context, limit int) (*ConnectionTable, 
 }
 
 func (c *Client) DNSQueries(ctx context.Context, query DNSQueriesRequest) (*DNSQueries, error) {
-	path := c.baseURL + Prefix + "/dns-queries?" + logQueryValues(query.Since, query.Limit, map[string]string{
-		"client": query.Client,
-		"qname":  query.QName,
-	}).Encode()
+	path := c.baseURL + Prefix + "/dns-queries?" + dnsQueryValues(query).Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return nil, err
@@ -154,11 +151,21 @@ func (c *Client) DNSQueries(ctx context.Context, query DNSQueriesRequest) (*DNSQ
 	return &rows, nil
 }
 
+func (c *Client) DNSQueriesAggregate(ctx context.Context, query DNSQueriesRequest) (*DNSQueriesAggregate, error) {
+	path := c.baseURL + Prefix + "/dns-queries/aggregate?" + dnsQueryValues(query).Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	var agg DNSQueriesAggregate
+	if err := c.do(req, &agg); err != nil {
+		return nil, err
+	}
+	return &agg, nil
+}
+
 func (c *Client) TrafficFlows(ctx context.Context, query TrafficFlowsRequest) (*TrafficFlows, error) {
-	path := c.baseURL + Prefix + "/traffic-flows?" + logQueryValues(query.Since, query.Limit, map[string]string{
-		"client": query.Client,
-		"peer":   query.Peer,
-	}).Encode()
+	path := c.baseURL + Prefix + "/traffic-flows?" + trafficFlowValues(query).Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return nil, err
@@ -168,6 +175,50 @@ func (c *Client) TrafficFlows(ctx context.Context, query TrafficFlowsRequest) (*
 		return nil, err
 	}
 	return &rows, nil
+}
+
+func (c *Client) TrafficFlowsAggregate(ctx context.Context, query TrafficFlowsRequest) (*TrafficFlowsAggregate, error) {
+	path := c.baseURL + Prefix + "/traffic-flows/aggregate?" + trafficFlowValues(query).Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	var agg TrafficFlowsAggregate
+	if err := c.do(req, &agg); err != nil {
+		return nil, err
+	}
+	return &agg, nil
+}
+
+func dnsQueryValues(query DNSQueriesRequest) url.Values {
+	values := logQueryValues(query.Since, query.Limit, map[string]string{
+		"client":          query.Client,
+		"qname":           query.QName,
+		"qname-suffix":    query.QNameSuffix,
+		"rcode":           query.ResponseCode,
+		"upstream":        query.Upstream,
+		"from":            query.From,
+		"to":              query.To,
+	})
+	if query.DurationMinUS > 0 {
+		values.Set("duration-min-us", strconv.FormatInt(query.DurationMinUS, 10))
+	}
+	return values
+}
+
+func trafficFlowValues(query TrafficFlowsRequest) url.Values {
+	values := logQueryValues(query.Since, query.Limit, map[string]string{
+		"client":      query.Client,
+		"peer":        query.Peer,
+		"peer-suffix": query.PeerSuffix,
+		"protocol":    query.Protocol,
+		"from":        query.From,
+		"to":          query.To,
+	})
+	if query.Asymmetric {
+		values.Set("asymmetric", "1")
+	}
+	return values
 }
 
 func (c *Client) FirewallLogs(ctx context.Context, query FirewallLogsRequest) (*FirewallLogs, error) {

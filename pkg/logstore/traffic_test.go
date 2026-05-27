@@ -12,6 +12,104 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+func TestTrafficFlowLogFiltersAndAggregate(t *testing.T) {
+	log, err := OpenTrafficFlowLog(filepath.Join(t.TempDir(), "traffic-flows.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer log.Close()
+	base := time.Date(2026, 5, 27, 10, 0, 0, 0, time.UTC)
+	flows := []TrafficFlow{
+		{StartedAt: base, ClientAddress: "192.168.1.10", ClientPort: 10001, PeerAddress: "8.8.8.8", PeerPort: 443, Protocol: "tcp", BytesOut: 100, BytesIn: 200, ResolvedHostname: "dns.google"},
+		{StartedAt: base.Add(10 * time.Second), ClientAddress: "192.168.1.10", ClientPort: 10002, PeerAddress: "1.1.1.1", PeerPort: 443, Protocol: "tcp", BytesOut: 50, BytesIn: 0, ResolvedHostname: "one.one.one.one"},
+		{StartedAt: base.Add(20 * time.Second), ClientAddress: "192.168.1.11", ClientPort: 10003, PeerAddress: "9.9.9.9", PeerPort: 53, Protocol: "udp", BytesOut: 60, BytesIn: 80, ResolvedHostname: "dns.quad9.net"},
+		{StartedAt: base.Add(30 * time.Second), ClientAddress: "192.168.1.11", ClientPort: 10004, PeerAddress: "8.8.4.4", PeerPort: 443, Protocol: "tcp", BytesOut: 0, BytesIn: 90, ResolvedHostname: "dns.google"},
+	}
+	for _, f := range flows {
+		f.FlowKey = FlowKey(f.Protocol, f.ClientAddress, f.ClientPort, f.PeerAddress, f.PeerPort)
+		if err := log.UpsertActive(context.Background(), f); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Until filter
+	rows, err := log.List(context.Background(), TrafficFlowFilter{Since: base.Add(-time.Minute), Until: base.Add(15 * time.Second), Limit: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("until expected 2, got %d", len(rows))
+	}
+
+	// Protocol filter
+	rows, err = log.List(context.Background(), TrafficFlowFilter{Since: base.Add(-time.Minute), Protocol: "udp", Limit: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].Protocol != "udp" {
+		t.Fatalf("udp filter rows=%#v", rows)
+	}
+
+	// Asymmetric filter (rx==0 OR tx==0)
+	rows, err = log.List(context.Background(), TrafficFlowFilter{Since: base.Add(-time.Minute), Asymmetric: true, Limit: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("asymmetric expected 2, got %d (rows=%#v)", len(rows), rows)
+	}
+
+	// PeerSuffix matches against peer_address OR resolved_hostname.
+	rows, err = log.List(context.Background(), TrafficFlowFilter{Since: base.Add(-time.Minute), PeerSuffix: "dns.google", Limit: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("peer-suffix expected 2, got %d", len(rows))
+	}
+
+	// Aggregate
+	agg, err := log.Aggregate(context.Background(), TrafficFlowFilter{Since: base.Add(-time.Minute), Until: base.Add(time.Minute)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg.Total != 4 {
+		t.Fatalf("total = %d", agg.Total)
+	}
+	if agg.TotalBytesIn != 370 || agg.TotalBytesOut != 210 {
+		t.Fatalf("bytes = (in=%d, out=%d)", agg.TotalBytesIn, agg.TotalBytesOut)
+	}
+	if agg.ByClient["192.168.1.10"] != 2 || agg.ByClient["192.168.1.11"] != 2 {
+		t.Fatalf("ByClient = %#v", agg.ByClient)
+	}
+	if agg.ByProtocol["tcp"] != 3 || agg.ByProtocol["udp"] != 1 {
+		t.Fatalf("ByProtocol = %#v", agg.ByProtocol)
+	}
+}
+
+func TestTrafficFlowLogLimitHardCap(t *testing.T) {
+	log, err := OpenTrafficFlowLog(filepath.Join(t.TempDir(), "traffic-flows.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer log.Close()
+	base := time.Date(2026, 5, 27, 10, 0, 0, 0, time.UTC)
+	for i := 0; i < 3; i++ {
+		f := TrafficFlow{StartedAt: base.Add(time.Duration(i) * time.Second), ClientAddress: "192.168.1.10", ClientPort: 10000 + i, PeerAddress: "8.8.8.8", PeerPort: 443, Protocol: "tcp"}
+		f.FlowKey = FlowKey(f.Protocol, f.ClientAddress, f.ClientPort, f.PeerAddress, f.PeerPort)
+		if err := log.UpsertActive(context.Background(), f); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows, err := log.List(context.Background(), TrafficFlowFilter{Since: base.Add(-time.Minute), Limit: TrafficFlowFilterLimitMax + 5000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 3 {
+		t.Fatalf("rows = %d", len(rows))
+	}
+}
+
 func TestTrafficFlowLogUpsertAndEndMissing(t *testing.T) {
 	log, err := OpenTrafficFlowLog(filepath.Join(t.TempDir(), "traffic-flows.db"))
 	if err != nil {

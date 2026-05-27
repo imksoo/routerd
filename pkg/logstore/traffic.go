@@ -49,11 +49,34 @@ type TrafficFlow struct {
 	ResolvedHostname     string            `json:"resolvedHostname,omitempty"`
 }
 
+// TrafficFlowFilterLimitMax is the maximum number of rows returned by a single List call.
+// Issue #36: raised from 1000 to 10000.
+const TrafficFlowFilterLimitMax = 10000
+
+// TrafficFlowFilter selects rows from the traffic flow log.
+//
+// Issue #36: added Until / PeerSuffix / Protocol / Asymmetric.
 type TrafficFlowFilter struct {
-	Since  time.Time
-	Client string
-	Peer   string
-	Limit  int
+	Since      time.Time
+	Until      time.Time
+	Client     string
+	Peer       string
+	PeerSuffix string
+	Protocol   string
+	Asymmetric bool
+	Limit      int
+}
+
+// TrafficFlowAggregate is the summary returned by Aggregate.
+type TrafficFlowAggregate struct {
+	Total         int            `json:"total"`
+	Since         time.Time      `json:"since"`
+	Until         time.Time      `json:"until"`
+	TotalBytesIn  int64          `json:"totalBytesIn"`
+	TotalBytesOut int64          `json:"totalBytesOut"`
+	ByClient      map[string]int `json:"byClient"`
+	ByPeer        map[string]int `json:"byPeer"`
+	ByProtocol    map[string]int `json:"byProtocol"`
 }
 
 type TrafficFlowLog struct {
@@ -280,6 +303,43 @@ func (l *TrafficFlowLog) EndMissing(ctx context.Context, activeKeys []string, en
 	return err
 }
 
+func (l *TrafficFlowLog) buildTrafficQuery(filter TrafficFlowFilter) (string, []any) {
+	var clauses []string
+	var args []any
+	if !filter.Since.IsZero() {
+		clauses = append(clauses, "ts_started >= ?")
+		args = append(args, filter.Since.UnixNano())
+	}
+	if !filter.Until.IsZero() {
+		clauses = append(clauses, "ts_started <= ?")
+		args = append(args, filter.Until.UnixNano())
+	}
+	if strings.TrimSpace(filter.Client) != "" {
+		clauses = append(clauses, "client_address = ?")
+		args = append(args, filter.Client)
+	}
+	if strings.TrimSpace(filter.Peer) != "" {
+		clauses = append(clauses, "peer_address = ?")
+		args = append(args, filter.Peer)
+	}
+	if suffix := strings.TrimSpace(filter.PeerSuffix); suffix != "" {
+		clauses = append(clauses, "(peer_address LIKE ? OR resolved_hostname LIKE ?)")
+		args = append(args, "%"+suffix, "%"+suffix)
+	}
+	if proto := strings.TrimSpace(filter.Protocol); proto != "" {
+		clauses = append(clauses, "protocol = ?")
+		args = append(args, proto)
+	}
+	if filter.Asymmetric {
+		clauses = append(clauses, "(coalesce(bytes_in,0) = 0 OR coalesce(bytes_out,0) = 0)")
+	}
+	where := ""
+	if len(clauses) > 0 {
+		where = " WHERE " + strings.Join(clauses, " AND ")
+	}
+	return where, args
+}
+
 func (l *TrafficFlowLog) List(ctx context.Context, filter TrafficFlowFilter) ([]TrafficFlow, error) {
 	if l == nil || l.db == nil {
 		return nil, nil
@@ -292,27 +352,10 @@ func (l *TrafficFlowLog) List(ctx context.Context, filter TrafficFlowFilter) ([]
 	if limit <= 0 {
 		limit = 50
 	}
-	if limit > 1000 {
-		limit = 1000
+	if limit > TrafficFlowFilterLimitMax {
+		limit = TrafficFlowFilterLimitMax
 	}
-	var clauses []string
-	var args []any
-	if !filter.Since.IsZero() {
-		clauses = append(clauses, "ts_started >= ?")
-		args = append(args, filter.Since.UnixNano())
-	}
-	if strings.TrimSpace(filter.Client) != "" {
-		clauses = append(clauses, "client_address = ?")
-		args = append(args, filter.Client)
-	}
-	if strings.TrimSpace(filter.Peer) != "" {
-		clauses = append(clauses, "peer_address = ?")
-		args = append(args, filter.Peer)
-	}
-	where := ""
-	if len(clauses) > 0 {
-		where = " WHERE " + strings.Join(clauses, " AND ")
-	}
+	where, args := l.buildTrafficQuery(filter)
 	args = append(args, limit)
 	rows, err := l.db.QueryContext(ctx, `SELECT flow_key,ts_started,coalesce(ts_ended,0),coalesce(client_address,''),coalesce(client_port,0),coalesce(peer_address,''),coalesce(peer_port,0),protocol,coalesce(nat_translated_address,''),`+optionalIntColumn(columns, "accounting")+`,coalesce(bytes_out,0),coalesce(bytes_in,0),coalesce(packets_out,0),coalesce(packets_in,0),coalesce(app_name,''),coalesce(app_category,''),coalesce(app_confidence,0),`+optionalTextColumn(columns, "detected_protocol")+`,`+optionalTextColumn(columns, "master_protocol")+`,`+optionalTextColumn(columns, "application_protocol")+`,`+optionalTextColumn(columns, "category")+`,`+optionalTextColumn(columns, "risk")+`,`+optionalIntColumn(columns, "confidence")+`,`+optionalTextColumn(columns, "metadata_json")+`,`+optionalTextColumn(columns, "engine")+`,`+optionalTextColumn(columns, "source")+`,coalesce(tls_sni,''),`+optionalTextColumn(columns, "http_host")+`,`+optionalTextColumn(columns, "dns_query")+`,coalesce(resolved_hostname,'')
 FROM flows`+where+` ORDER BY ts_started DESC LIMIT ?`, args...)
@@ -342,4 +385,42 @@ FROM flows`+where+` ORDER BY ts_started DESC LIMIT ?`, args...)
 func FlowKey(protocol, clientAddress string, clientPort int, peerAddress string, peerPort int) string {
 	sum := sha256.Sum256([]byte(strings.Join([]string{strings.ToLower(protocol), clientAddress, strconv.Itoa(clientPort), peerAddress, strconv.Itoa(peerPort)}, "|")))
 	return hex.EncodeToString(sum[:16])
+}
+
+// Aggregate returns summary statistics for flows matching filter.
+func (l *TrafficFlowLog) Aggregate(ctx context.Context, filter TrafficFlowFilter) (TrafficFlowAggregate, error) {
+	if l == nil || l.db == nil {
+		return TrafficFlowAggregate{Since: filter.Since, Until: filter.Until}, nil
+	}
+	result := TrafficFlowAggregate{
+		Since:      filter.Since,
+		Until:      filter.Until,
+		ByClient:   map[string]int{},
+		ByPeer:     map[string]int{},
+		ByProtocol: map[string]int{},
+	}
+	where, args := l.buildTrafficQuery(filter)
+	var total int
+	var sumIn, sumOut sql.NullInt64
+	row := l.db.QueryRowContext(ctx, `SELECT count(*), coalesce(sum(bytes_in),0), coalesce(sum(bytes_out),0) FROM flows`+where, args...)
+	if err := row.Scan(&total, &sumIn, &sumOut); err != nil {
+		return result, err
+	}
+	result.Total = total
+	if sumIn.Valid {
+		result.TotalBytesIn = sumIn.Int64
+	}
+	if sumOut.Valid {
+		result.TotalBytesOut = sumOut.Int64
+	}
+	if err := aggregateGroupBy(ctx, l.db, `SELECT coalesce(client_address,''), count(*) FROM flows`+where+` GROUP BY client_address`, args, result.ByClient); err != nil {
+		return result, err
+	}
+	if err := aggregateGroupBy(ctx, l.db, `SELECT coalesce(peer_address,''), count(*) FROM flows`+where+` GROUP BY peer_address`, args, result.ByPeer); err != nil {
+		return result, err
+	}
+	if err := aggregateGroupBy(ctx, l.db, `SELECT protocol, count(*) FROM flows`+where+` GROUP BY protocol`, args, result.ByProtocol); err != nil {
+		return result, err
+	}
+	return result, nil
 }

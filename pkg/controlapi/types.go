@@ -160,10 +160,16 @@ type ConnectionTable struct {
 }
 
 type DNSQueriesRequest struct {
-	Since  string `json:"since,omitempty" yaml:"since,omitempty"`
-	Client string `json:"client,omitempty" yaml:"client,omitempty"`
-	QName  string `json:"qname,omitempty" yaml:"qname,omitempty"`
-	Limit  int    `json:"limit,omitempty" yaml:"limit,omitempty"`
+	Since         string `json:"since,omitempty" yaml:"since,omitempty"`
+	From          string `json:"from,omitempty" yaml:"from,omitempty"`
+	To            string `json:"to,omitempty" yaml:"to,omitempty"`
+	Client        string `json:"client,omitempty" yaml:"client,omitempty"`
+	QName         string `json:"qname,omitempty" yaml:"qname,omitempty"`
+	QNameSuffix   string `json:"qnameSuffix,omitempty" yaml:"qnameSuffix,omitempty"`
+	ResponseCode  string `json:"rcode,omitempty" yaml:"rcode,omitempty"`
+	Upstream      string `json:"upstream,omitempty" yaml:"upstream,omitempty"`
+	DurationMinUS int64  `json:"durationMinUs,omitempty" yaml:"durationMinUs,omitempty"`
+	Limit         int    `json:"limit,omitempty" yaml:"limit,omitempty"`
 }
 
 type DNSQueries struct {
@@ -172,17 +178,34 @@ type DNSQueries struct {
 	Items    []logstore.DNSQuery `json:"items" yaml:"items"`
 }
 
+type DNSQueriesAggregate struct {
+	TypeMeta  `json:",inline" yaml:",inline"`
+	Metadata  ObjectMeta                  `json:"metadata" yaml:"metadata"`
+	Aggregate logstore.DNSQueryAggregate  `json:"aggregate" yaml:"aggregate"`
+}
+
 type TrafficFlowsRequest struct {
-	Since  string `json:"since,omitempty" yaml:"since,omitempty"`
-	Client string `json:"client,omitempty" yaml:"client,omitempty"`
-	Peer   string `json:"peer,omitempty" yaml:"peer,omitempty"`
-	Limit  int    `json:"limit,omitempty" yaml:"limit,omitempty"`
+	Since      string `json:"since,omitempty" yaml:"since,omitempty"`
+	From       string `json:"from,omitempty" yaml:"from,omitempty"`
+	To         string `json:"to,omitempty" yaml:"to,omitempty"`
+	Client     string `json:"client,omitempty" yaml:"client,omitempty"`
+	Peer       string `json:"peer,omitempty" yaml:"peer,omitempty"`
+	PeerSuffix string `json:"peerSuffix,omitempty" yaml:"peerSuffix,omitempty"`
+	Protocol   string `json:"protocol,omitempty" yaml:"protocol,omitempty"`
+	Asymmetric bool   `json:"asymmetric,omitempty" yaml:"asymmetric,omitempty"`
+	Limit      int    `json:"limit,omitempty" yaml:"limit,omitempty"`
 }
 
 type TrafficFlows struct {
 	TypeMeta `json:",inline" yaml:",inline"`
 	Metadata ObjectMeta             `json:"metadata" yaml:"metadata"`
 	Items    []logstore.TrafficFlow `json:"items" yaml:"items"`
+}
+
+type TrafficFlowsAggregate struct {
+	TypeMeta  `json:",inline" yaml:",inline"`
+	Metadata  ObjectMeta                     `json:"metadata" yaml:"metadata"`
+	Aggregate logstore.TrafficFlowAggregate  `json:"aggregate" yaml:"aggregate"`
 }
 
 type FirewallLogsRequest struct {
@@ -237,6 +260,22 @@ func NewTrafficFlows(rows []logstore.TrafficFlow) TrafficFlows {
 		TypeMeta: TypeMeta{APIVersion: APIVersion, Kind: "TrafficFlows"},
 		Metadata: ObjectMeta{Name: "traffic-flows"},
 		Items:    rows,
+	}
+}
+
+func NewDNSQueriesAggregate(agg logstore.DNSQueryAggregate) DNSQueriesAggregate {
+	return DNSQueriesAggregate{
+		TypeMeta:  TypeMeta{APIVersion: APIVersion, Kind: "DNSQueriesAggregate"},
+		Metadata:  ObjectMeta{Name: "dns-queries-aggregate"},
+		Aggregate: agg,
+	}
+}
+
+func NewTrafficFlowsAggregate(agg logstore.TrafficFlowAggregate) TrafficFlowsAggregate {
+	return TrafficFlowsAggregate{
+		TypeMeta:  TypeMeta{APIVersion: APIVersion, Kind: "TrafficFlowsAggregate"},
+		Metadata:  ObjectMeta{Name: "traffic-flows-aggregate"},
+		Aggregate: agg,
 	}
 }
 
