@@ -11,6 +11,21 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 修正
+
+- `routerd serve` 不再在控制 socket
+  (`/run/routerd/routerd.sock`) 與唯讀狀態 socket
+  (`/run/routerd/routerd-status.sock`) 上洩漏 Unix socket file
+  descriptor (#40)。兩個 `http.Server` 例項先前僅設定
+  `ReadHeaderTimeout`，因此來自 polling 客戶端（routerctl、
+  webconsole、內部 daemon）的已接受連線會無限期保持開啟。本次
+  修正後，兩個 socket 採用與 Web Console HTTP server 相同的三類
+  socket 層逾時: `ReadTimeout: 30 s` / `WriteTimeout: 60 s` /
+  `IdleTimeout: 2 分鐘`。兩個 socket 均不提供 Server-Sent Events，
+  因此嚴格的 `WriteTimeout` 是安全的。homert02 上的 v20260528.0158
+  觀測顯示，`routerd.db` ledger fd（依 #39）保持為 4，但 `all_fd`
+  在大約 12 分鐘內仍由 41 成長到 86 — 本次修正消除該殘餘成長。
+
 ## v20260528.0158
 
 ### 修正

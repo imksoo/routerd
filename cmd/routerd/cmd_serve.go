@@ -449,12 +449,22 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	// on the unit's Group= setting.
 	groupOwnStatusSocket(*statusSocketPath)
 	defer statusListener.Close()
+	// Issue #40: without IdleTimeout, accepted Unix-socket connections from
+	// polling clients (routerctl, webconsole, etc.) stay open indefinitely,
+	// so fd count grows on every reconnect even though routerd's own logic
+	// no longer leaks SQLite handles. Cap idle / read / write here just
+	// like the webconsole HTTP server already does. Neither the control
+	// nor the status socket exposes SSE, so we can apply a strict
+	// WriteTimeout without breaking long-lived streams.
 	statusServer := &http.Server{
 		Handler: controlapi.Handler{
 			Status:      handler.Status,
 			Controllers: handler.Controllers,
 		},
 		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       2 * time.Minute,
 	}
 	defer statusServer.Close()
 	go func() {
@@ -462,7 +472,13 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 			logger.Emit(eventlog.LevelError, "serve", "read-only status API stopped", map[string]string{"error": serveErr.Error()})
 		}
 	}()
-	server := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second}
+	server := &http.Server{
+		Handler:           handler,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       2 * time.Minute,
+	}
 	go func() {
 		<-signalCtx.Done()
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)

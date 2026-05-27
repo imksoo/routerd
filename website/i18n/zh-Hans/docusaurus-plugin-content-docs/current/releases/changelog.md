@@ -11,6 +11,21 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 修复
+
+- `routerd serve` 不再在控制套接字
+  (`/run/routerd/routerd.sock`) 与只读状态套接字
+  (`/run/routerd/routerd-status.sock`) 上泄漏 Unix 套接字 file
+  descriptor (#40)。两个 `http.Server` 实例此前仅设置了
+  `ReadHeaderTimeout`，因此来自 polling 客户端（routerctl、
+  webconsole、内部 daemon）的接受连接会无限期保持打开。本次修复后，
+  两个套接字与 Web Console HTTP server 一致，设置三类套接字层超时:
+  `ReadTimeout: 30 s` / `WriteTimeout: 60 s` /
+  `IdleTimeout: 2 分钟`。这两个套接字均不暴露 Server-Sent Events，
+  因此严格的 `WriteTimeout` 是安全的。homert02 上的 v20260528.0158
+  观测显示，`routerd.db` ledger fd（按 #39）保持在 4，但 `all_fd`
+  在大约 12 分钟内仍由 41 增长到 86 — 本次修复消除该残余增长。
+
 ## v20260528.0158
 
 ### 修复

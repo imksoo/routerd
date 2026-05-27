@@ -12,6 +12,23 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- `routerd serve` no longer leaks Unix-socket file descriptors on the
+  control (`/run/routerd/routerd.sock`) and read-only status
+  (`/run/routerd/routerd-status.sock`) endpoints (#40). Both
+  `http.Server` instances previously only set `ReadHeaderTimeout`, so
+  accepted connections from polling clients (routerctl, webconsole,
+  internal daemons) stayed open indefinitely. After this fix, all
+  three socket-level deadlines are bounded the same way the Web
+  Console HTTP server already was: `ReadTimeout: 30 s`,
+  `WriteTimeout: 60 s`, `IdleTimeout: 2 min`. Neither socket exposes
+  Server-Sent Events, so a strict `WriteTimeout` is safe.
+  Production observation on homert02 v20260528.0158 showed
+  `routerd.db` ledger fds flat at 4 (per #39) while `all_fd` still
+  climbed from 41 to 86 over ~12 minutes — that residual growth is
+  what this fix targets.
+
 ## v20260528.0158
 
 ### Fixed

@@ -11,6 +11,22 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 修正
+
+- `routerd serve` の制御ソケット (`/run/routerd/routerd.sock`) と
+  読み取り専用ステータスソケット (`/run/routerd/routerd-status.sock`)
+  で、Unix ソケットの file descriptor が漏洩しなくなりました (#40)。
+  両方の `http.Server` インスタンスはこれまで `ReadHeaderTimeout`
+  しか設定しておらず、polling 系クライアント（routerctl、webconsole、
+  内部 daemon 群）から受け付けた接続が無期限に open のままでした。
+  本リリースでは、Web Console の HTTP サーバーと同じ 3 つのソケット
+  レベル deadline を設定します: `ReadTimeout: 30 s` /
+  `WriteTimeout: 60 s` / `IdleTimeout: 2 分`。どちらのソケットも
+  Server-Sent Events を提供しないため、厳しめの `WriteTimeout` でも
+  安全です。homert02 上の v20260528.0158 では、`routerd.db` の
+  ledger fd は (#39 の通り) 4 で flat でしたが `all_fd` は約 12 分で
+  41 → 86 に増加しており、本修正はその残存する増加を解消します。
+
 ## v20260528.0158
 
 ### 修正
