@@ -88,9 +88,9 @@ const config: Config = {
   themeConfig: {
     image: 'img/routerd-social-card.svg',
     announcementBar: {
-      id: 'stable-milestone-20260526-2335',
+      id: 'stable-milestone-20260528-0402',
       content:
-        'Stable milestone: <a href="/docs/releases/stable"><b>v20260526.2335</b></a> — production-validated on homert02 across three successive in-place upgrades',
+        'Stable milestone: <a href="/docs/releases/stable"><b>v20260528.0402</b></a> — production-validated on homert02 with flat fd footprint after closing two leaks',
       backgroundColor: '#1f6feb',
       textColor: '#ffffff',
       isCloseable: true,

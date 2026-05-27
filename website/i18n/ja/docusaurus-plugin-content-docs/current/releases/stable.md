@@ -12,31 +12,104 @@ routerd は `vYYYYMMDD.HHmm` 形式で頻繁にリリースしますが、その
 
 | 項目 | 内容 |
 | --- | --- |
-| バージョン | **v20260526.2335** |
-| 位置づけ | 推奨安定版（v20260526.2241 を置き換え。ドキュメントと CI の整合性を取り直した追従対応で、ランタイムの挙動変更はありません） |
-| 稼働実績 | 本番ルーター（homert02）で **3 回連続のインプレースアップグレード**（1607 → 2152 → 2241 → 2335）を検証済みです。routerd 再起動のたびに `routerd-bgp` には触れず（MainPID 2394269 が 4 回連続で不変）、BGP は 2/2 Established を維持、uptime は再起動ごとに途切れず伸び続け（1h19m → 1h27m → 2h0m → 2h15m → 3h7m → 3h10m）、2-way ECMP（.38 / .53）もカーネルに残ったまま、`routerctl doctor dslite` は pass=12 / warn=0、Web Console の Gateway Health 画面は 180 秒 / 90 サンプルで good=90 / bad=0、`install.sh` は正規のパッケージディレクトリに `cd` してから実行するパターンで終了コード 0 でした |
+| バージョン | **v20260528.0402** |
+| 位置づけ | 推奨安定版（v20260526.2335 を置き換え。本番影響のある fd 漏洩を 2 件解消し、運用者向けの観測性を 3 件追加） |
+| 稼働実績 | 本番ルーター（homert02）で検証済みです。適用後、routerd プロセス全体のファイル記述子は 16 分間 / 4 サンプルにわたり完全に flat（all_fd=24、sockets=16、SQLite ledger 系=4 が毎サンプル不変）で、BGP は 2/2 Established を維持、`routerctl doctor dslite` は pass=12 / warn=0、新規 `routerctl doctor reconcile` も pass=1 / warn=0 を返し、controller error history の機構が本番で稼働していることが確認できました。同一系列の v20260526.2335 で残存していた fd 増加（#39 修正前は SQLite が 300 まで蓄積、#40 修正前は Unix socket が +20/5分 で増加）の根本原因は 2 つに分けて 3 段階のリリースで解消されました。本リリースで観測される flat な fd は、本プロジェクトがこれまでに出荷したなかで最も強い本番健全性のシグナルです |
 | バイナリ | 静的リンク（`CGO_ENABLED=0`）、CI と Release ワークフローをすべて通過 |
 
-## v20260526.2335 を推奨する理由
+## v20260528.0402 を推奨する理由
 
-推奨の理由は**新機能の追加ではなく運用上の成熟**です。v20260526.2335 は
-v20260526.2241 の本番安全特性をすべて受け継いでいます（v20260526.2241
-自身が v20260526.1607 の Web Console シークレット伏字化、`gatewayHealth`
-集約、機械可読な `routerctl doctor`、`ManagementAccess` の適用ガードを
-継承しています）。その上にドキュメント / CI の堅牢化を 1 件追加して
-います。
+推奨の理由は**新機能の追加ではなく運用上の成熟**です。v20260528.0402 は
+v20260526.2335 の本番安全特性（BGP の idempotent reconcile、doctor
+dslite の selectedSource 整合、Gateway Health の独立画面化、`install.sh`
+の即時失敗、シークレット伏字化、`ManagementAccess` 適用ガード、機械
+可読な `routerctl doctor`、推奨安定版表示の整合 CI ガード）をすべて
+受け継ぎ、その上に本番影響のある fd 漏洩修正 2 件と運用者向けの観測性
+契約 3 件を追加しています。
 
-- **推奨安定版の表示が静かに乖離しなくなりました。** 新しい CI ガード
-  (`scripts/check-active-stable.sh`) が `website/src/pages/index.tsx`
-  の `STABLE_VERSION` を正本として、ホームページ冒頭のカード、各
-  ロケールの導入ヒント、告知バー、`docusaurus.config.ts` が別の
-  `vYYYYMMDD.HHmm` を指していた場合に CI を失敗させます。
-  v20260526.2241 への昇格時にホームページのカードと 4 言語の導入
-  ヒントが `v20260526.1607` のまま取り残されていた事象を、今後の昇格で
-  再発させないための保険です。
+- **routerd serve が SQLite ledger の fd を漏らさなくなりました。**
+  これまで `resource.LoadLedger` は呼び出しごとに
+  `/var/lib/routerd/routerd.db` を新しい `*sql.DB` で開いていましたが、
+  `Ledger` には `Close()` がありませんでした。
+  `IPv4PolicyRouteController.cleanupLedgerOwnedPolicyRoutes` の reconcile
+  経路は約 30 秒周期で走り、毎回 `routerd.db` と `routerd.db-wal` の
+  fd を 1 組ずつ増やしていました。homert02 v20260526.2335 では SQLite fd
+  が約 300 まで蓄積していました。本修正では `Ledger` インターフェースに
+  `Close()` を追加し、`LoadLedger` の全呼び出し元で `defer` し、
+  `OpenSQLiteLedger` に `SetMaxOpenConns(1)` / `SetMaxIdleConns(1)` も
+  追加して、Close 漏れでも 1 接続を超えないようにしました。Linux 限定の
+  回帰テスト 2 件で 10 回の open/close サイクル後に `/proc/self/fd` が
+  増えないことを検証しています。homert02 検証では SQLite ledger 系
+  fd が ~300 から flat 4 に下がりました（#39）。
 
-v20260526.2241 から受け継ぎ、2335 の homert02 適用でも再検証された
-5 つの運用契約は以下のとおりです。
+- **routerd serve は Unix socket の fd も漏らさなくなりました。** 2 つ
+  の別個の原因を解消しました。(a) 制御 / ステータスソケットの
+  `http.Server` で `SetKeepAlivesEnabled(false)` を呼び、
+  `controlapi.NewUnixClient` の `Transport.DisableKeepAlives` を
+  `true` に。これまで polling 系クライアントが IdleTimeout 未満で
+  再接続することで keep-alive 接続が「アイドル」にならず、無期限に
+  open のままでした。(b) BGP コントローラーの gobgp HTTP クライアント
+  (`pkg/controller/bgp/gobgp_client.go`) は ~30 秒 reconcile ごとに
+  `/run/routerd/bgp/control.sock` を 2 回 dial しますが、`DisableKeepAlives`
+  / `req.Close` / `defer CloseIdleConnections()` のパターンが抜けていた
+  唯一の内部 HTTP クライアントで、+4 fd / 分の残存ドリフトの正体でした。
+  homert02 v20260528.0402 検証では、16 分間の 5 分間隔 4 サンプルで
+  `all_fd=24` と `sockets=16` が完全に flat、Unix ストリームの ESTAB は
+  71 から 9 に減少しました（#40）。
+
+- **HealthCheck プローブが egress / source / route の根拠情報を記録
+  し、リソースごとに直近 N 件の失敗履歴を保持するようになりました。**
+  各結果は `FailureKind`（timeout / connection_refused /
+  network_unreachable / host_unreachable / no_route / dns_error /
+  tls_error / ...）、`EgressInterface`、`SourceAddress`、
+  `SourceOrigin`（pd / ra / static / dynamic）、`NextHop`、
+  `OutInterface`、`RouteSource`、`TunnelLocal`、`TunnelRemote` を
+  保持します。`State` には `FirstFailureTime` / `LastFailureTime` /
+  `LastSuccessTime` / `FailureCount` と、設定可能な 20 件履歴
+  `History []ProbeRecord` が入りました。`cmd/routerd-healthcheck` に
+  運用者ヒント用フラグ `--source-origin` / `--tunnel-local` /
+  `--tunnel-remote` を追加し、プローブが推定できない情報を補えます。
+  イベント属性と既存の `StatusMap` にも新フィールドを反映している
+  ため、`routerctl show / describe` で自動的に閲覧できます（#37）。
+
+- **コントローラーごとの reconcile 失敗履歴を control API に公開
+  します。** `ControllerStatus` に `ReconcileErrorHistory
+  []ReconcileErrorEntry` と `MaxDurationAt *time.Time` を追加。各
+  エントリは `StartedAt` / `CompletedAt` / `Duration` / `DurationMs` /
+  `Trigger` / `ResourceKind` / `ResourceName` / `Error` を持ちます。
+  controller framework にはオプショナルな `ResourceObserver` 拡張を
+  追加し、reconcile の対象 resource kind / name を runtime store まで
+  配線します（既存 Observer 実装には互換）。`routerctl status
+  --show-errors` でテーブル表示の各 controller 行の下に縦に履歴を
+  表示します。JSON / YAML 出力では既存の StatusMap 経由で自動的に
+  含まれます。新規 `routerctl doctor reconcile --since <duration>`
+  はステータスソケットに問い合わせ、指定窓内の reconcile エラー件数を
+  pass / warn (≥1) / fail (≥10) で判定し、detail に最大 5 件のサンプル
+  を表示します。homert02 v20260528.0402 で `doctor reconcile` が
+  `pass=1 warn=0` を返し、本番稼働が確認されています（#38）。
+
+- **dns-queries / traffic-flows に絶対時刻範囲、フィルタ、集計が追加
+  されました。** `--from` / `--to` は RFC3339 や `2006-01-02T15:04:05`、
+  `2006-01-02 15:04:05` などの一般的な形式を受け取ります（タイムゾーン
+  省略時は UTC）。DNS は `--rcode` / `--upstream` / `--qname-suffix` /
+  `--duration-min`、flows は `--peer-suffix` / `--protocol` /
+  `--asymmetric` を追加。新規 `--agg` / `--stats` モードは
+  `SUMMARY` と、DNS では `BY RESPONSE CODE` / `BY CLIENT` /
+  `BY UPSTREAM` / `BY QNAME SUFFIX`、flows では `BY CLIENT` /
+  `BY PEER` / `BY PROTOCOL` を、duration の p50 / p95 / p99 と
+  あわせて出力します。直接 DB 取得は `--chunk-size` で分割され、
+  各 chunk が個別の ctx デッドラインを持ちます。`DeadlineExceeded`
+  時のエラーには、ここまで取得した行数を含めます。`--limit` の
+  既定値は 100 → 500、`--timeout` は 5 秒 → 30 秒、内部
+  `DNSQueryFilter` / `TrafficFlowFilter` のハード上限は 1000 → 10000
+  に引き上げました。Web Console には
+  `/api/v1/dns-queries/aggregate` と
+  `/api/v1/traffic-flows/aggregate` のエンドポイントが追加されています
+  (#36)。
+
+doctor の detail 表示、サブコマンド --help、推奨安定版表示の整合に
+ついては v20260526.2335 から受け継ぎ、homert02 v20260528.0402 でも
+再検証されています。
 
 - **routerd 本体のバイナリ更新で BGP セッションが落ちなくなりました。**
   BGP コントローラーが reconcile の入り口で適用済みのポリシー状態を

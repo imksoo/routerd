@@ -12,31 +12,100 @@ routerd ships frequently using the `vYYYYMMDD.HHmm` scheme. From those builds we
 
 | Item | Value |
 | --- | --- |
-| Version | **v20260526.2335** |
-| Status | Recommended stable release (supersedes v20260526.2241; doc/CI consistency follow-up — no runtime behavior change) |
-| Track record | Production-validated on a home router (homert02) across **three successive in-place upgrades** (1607 → 2152 → 2241 → 2335): every routerd restart left `routerd-bgp` untouched (MainPID 2394269 unchanged across all four hops), BGP stayed 2/2 Established with uptime climbing through every upgrade (1h19m → 1h27m → 2h0m → 2h15m → 3h7m → 3h10m, never reset), 2-way ECMP via .38/.53 stayed in the kernel, `routerctl doctor dslite` finished at pass=12 warn=0, the Web Console Gateway Health page recorded good=90 / bad=0 over 180s, and `install.sh` exited rc=0 with the correct cd-into-package-dir pattern |
+| Version | **v20260528.0402** |
+| Status | Recommended stable release (supersedes v20260526.2335; closes two production-critical fd leaks and adds operator-facing observability) |
+| Track record | Production-validated on a home router (homert02). After the apply, routerd's full file-descriptor footprint stayed completely flat across a four-sample / 16-minute window (all_fd=24, sockets=16, SQLite ledger family=4 at every sample) while BGP held 2/2 Established, `routerctl doctor dslite` returned pass=12 / warn=0, and the new `routerctl doctor reconcile` area returned pass=1 / warn=0 with the controller-error history machinery live. Earlier in the same series, v20260526.2335's residual fd growth (300 SQLite handles before #39, then +20/5min on Unix sockets before #40) was hunted down to two distinct root causes and fixed in three iterative releases — the resulting flat fd is the strongest production health signal the project has shipped to date |
+| Binary | Statically linked (`CGO_ENABLED=0`), passes CI and the Release workflow |
 | Binary | Statically linked (`CGO_ENABLED=0`), passes CI and the Release workflow |
 
-## Why v20260526.2335 is recommended
+## Why v20260528.0402 is recommended
 
-The recommendation is **operational maturity, not feature scope.** v20260526.2335
-inherits every production-safe property of v20260526.2241 (which itself inherited
-v20260526.1607's Web Console secret redaction, `gatewayHealth` aggregation,
-machine-readable `routerctl doctor`, and `ManagementAccess` apply guard) and
-adds one documentation/CI hardening on top of the five v20260526.2241
-contracts observed in real production on homert02:
+The recommendation is **operational maturity, not feature scope.**
+v20260528.0402 inherits every production-safe property of v20260526.2335
+(the previous stable's BGP idempotent reconcile, doctor dslite alignment,
+Gateway Health dedicated screen, install.sh fail-fast, secret redaction,
+ManagementAccess apply guard, machine-readable `routerctl doctor`, the
+recommended-stable display consistency guard) and adds two
+production-critical fd-leak fixes plus three operator-facing observability
+contracts:
 
-- **The recommended-stable display cannot silently drift.** A new CI guard
-  (`scripts/check-active-stable.sh`) reads `STABLE_VERSION` from
-  `website/src/pages/index.tsx` and fails when the homepage hero, the
-  per-locale intro tip, the announcement bar, or `docusaurus.config.ts`
-  point at a different `vYYYYMMDD.HHmm`. The `v20260526.2241` promotion
-  had left the homepage hero and four intro tips at `v20260526.1607`; the
-  guard now prevents that class of split state from re-emerging in
-  future promotions.
+- **routerd serve no longer leaks SQLite ledger fds.** `resource.LoadLedger`
+  used to open a fresh `*sql.DB` against `/var/lib/routerd/routerd.db` on
+  every call, and `Ledger` had no `Close()`. The
+  `IPv4PolicyRouteController.cleanupLedgerOwnedPolicyRoutes` reconcile path
+  ran every ~30 s and added one new `routerd.db` + one new
+  `routerd.db-wal` fd per cycle — homert02 v20260526.2335 had grown to
+  ~300 SQLite fds. The fix adds `Close()` to the `Ledger` interface,
+  defers it at every `LoadLedger` call site, and sets
+  `SetMaxOpenConns(1)` / `SetMaxIdleConns(1)` on `OpenSQLiteLedger` as a
+  belt-and-suspenders cap. Two Linux-only regression tests assert
+  `/proc/self/fd` does not grow across 10 open/close cycles. Validated:
+  homert02 saw `routerd.db` family drop from ~300 to a flat 4 (#39).
 
-The five operationally-significant contracts carried forward from
-v20260526.2241 and validated again across the 2335 apply on homert02:
+- **routerd serve no longer leaks Unix-socket fds either.** Two separate
+  issues, both fixed: (a) the control / status `http.Server` instances
+  now call `SetKeepAlivesEnabled(false)`, and `controlapi.NewUnixClient`
+  sets `Transport.DisableKeepAlives: true` — accepted connections used
+  to stay open indefinitely when polling clients reused the keep-alive
+  channel inside `IdleTimeout`. (b) The BGP controller's gobgp
+  HTTP client (`pkg/controller/bgp/gobgp_client.go`), called twice per
+  ~30 s reconcile against `/run/routerd/bgp/control.sock`, was the only
+  in-tree HTTP client missing the `DisableKeepAlives` / `req.Close` /
+  `defer CloseIdleConnections()` pattern; it accounted for the
+  remaining +4 fd / minute drift. Validated: homert02 v20260528.0402
+  ran 16 minutes with `all_fd=24` and `sockets=16` completely flat at
+  every 5-minute sample, and Unix-stream ESTAB dropped from 71 to 9
+  (#40).
+
+- **HealthCheck probes now record egress / source / route evidence and
+  keep a rolling per-resource failure history.** Every result carries
+  `FailureKind` (timeout / connection_refused / network_unreachable /
+  host_unreachable / no_route / dns_error / tls_error / ...),
+  `EgressInterface`, `SourceAddress`, `SourceOrigin` (pd / ra / static /
+  dynamic), `NextHop`, `OutInterface`, `RouteSource`, `TunnelLocal`,
+  `TunnelRemote`. `State` exposes `FirstFailureTime`, `LastFailureTime`,
+  `LastSuccessTime`, `FailureCount`, and a configurable 20-entry
+  `History []ProbeRecord`. `cmd/routerd-healthcheck` gains
+  `--source-origin` / `--tunnel-local` / `--tunnel-remote` operator
+  hints so the daemon can label what the probe cannot infer. Event
+  attributes and the existing `StatusMap` carry the new fields so
+  `routerctl show / describe` surface them automatically (#37).
+
+- **Per-controller reconcile error history surfaced via control API.**
+  `ControllerStatus` gains `ReconcileErrorHistory []ReconcileErrorEntry`
+  and `MaxDurationAt *time.Time`. Each entry records `StartedAt` /
+  `CompletedAt` / `Duration` / `DurationMs` / `Trigger` /
+  `ResourceKind` / `ResourceName` / `Error`. The controller framework
+  gains an optional `ResourceObserver` interface to plumb resource
+  kind / name from each reconcile into the history without touching
+  existing in-tree observers. `routerctl status --show-errors` renders
+  the history vertically under each controller row in table mode;
+  JSON / YAML pick up the new fields via the existing StatusMap.
+  New `routerctl doctor reconcile --since <duration>` queries the
+  status socket and reports pass / warn (≥1) / fail (≥10) with up to
+  5 sample entries in detail. Validated on homert02 v20260528.0402:
+  `doctor reconcile` returns `pass=1 warn=0`, machinery live in
+  production (#38).
+
+- **dns-queries / traffic-flows gain absolute-time range, filters, and
+  aggregation.** `--from` / `--to` accept RFC3339 and other common
+  forms (bare layouts treated as UTC). DNS gains `--rcode`,
+  `--upstream`, `--qname-suffix`, `--duration-min`; flows gain
+  `--peer-suffix`, `--protocol`, `--asymmetric`. New `--agg` /
+  `--stats` mode emits `SUMMARY` plus `BY RESPONSE CODE` /
+  `BY CLIENT` / `BY UPSTREAM` / `BY QNAME SUFFIX` (DNS) or
+  `BY CLIENT` / `BY PEER` / `BY PROTOCOL` (flows) with duration p50 /
+  p95 / p99. Direct-DB fetch is chunked (`--chunk-size`) so each chunk
+  gets its own ctx deadline; on `DeadlineExceeded` the error message
+  includes how many rows were fetched so far. Default `--limit`
+  raised from 100 to 500, `--timeout` from 5 s to 30 s, and the
+  underlying `DNSQueryFilter` / `TrafficFlowFilter` hard-cap raised
+  from 1000 to 10000. Web Console gains
+  `/api/v1/dns-queries/aggregate` and
+  `/api/v1/traffic-flows/aggregate` endpoints (#36).
+
+The doctor-detail, --help, and CI-display contracts carried forward
+from v20260526.2335 and re-verified against homert02 v20260528.0402:
 
 - **BGP sessions survive routerd binary upgrades.** The BGP controller now
   hydrates its in-memory applied-policy state on reconcile, so a routerd
