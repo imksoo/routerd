@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -14,7 +15,14 @@ import (
 
 func statusCommand(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs.SetOutput(stdout)
+	fs.Usage = func() {
+		printSubcommandHelp(fs,
+			"routerd の現在の status (resource phase / conditions など) を読み取り専用 socket 経由で取得する。",
+			"routerctl status -o json\n"+
+				"routerctl status -o yaml\n"+
+				"routerctl status --socket /run/routerd/status.sock")
+	}
 	socketPath := fs.String("socket", defaultStatusSocketPath(), "routerd read-only status Unix domain socket path")
 	timeout := fs.Duration("timeout", 5*time.Second, "request timeout")
 	output := "json"
@@ -22,6 +30,9 @@ func statusCommand(args []string, stdout io.Writer) error {
 	fs.StringVar(&output, "o", output, "output format: json, yaml")
 	fs.StringVar(&output, "output", output, "output format: json, yaml")
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
 		return err
 	}
 	if *jsonOutput {

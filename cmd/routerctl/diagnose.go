@@ -76,8 +76,11 @@ func diagnoseCommand(args []string, stdout, stderr io.Writer) error {
 }
 
 func diagnoseEgressCommand(args []string, stdout, stderr io.Writer) error {
-	opts, err := parseDiagnoseOptions("diagnose egress", args)
+	opts, err := parseDiagnoseOptions("diagnose egress", args, stdout)
 	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
 		usage(stderr)
 		return err
 	}
@@ -137,8 +140,11 @@ func diagnoseEgressCommand(args []string, stdout, stderr io.Writer) error {
 }
 
 func diagnoseDNSCommand(args []string, stdout, stderr io.Writer) error {
-	opts, err := parseDiagnoseOptions("diagnose dns", args)
+	opts, err := parseDiagnoseOptions("diagnose dns", args, stdout)
 	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
 		usage(stderr)
 		return err
 	}
@@ -176,8 +182,11 @@ func diagnoseDNSCommand(args []string, stdout, stderr io.Writer) error {
 }
 
 func diagnoseLANClientCommand(args []string, stdout, stderr io.Writer) error {
-	opts, err := parseDiagnoseOptions("diagnose lan-client", args)
+	opts, err := parseDiagnoseOptions("diagnose lan-client", args, stdout)
 	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
 		usage(stderr)
 		return err
 	}
@@ -197,7 +206,7 @@ func diagnoseLANClientCommand(args []string, stdout, stderr io.Writer) error {
 	return writeDiagnoseReport(stdout, report, opts.Output)
 }
 
-func parseDiagnoseOptions(name string, args []string) (diagnoseOptions, error) {
+func parseDiagnoseOptions(name string, args []string, helpOutput io.Writer) (diagnoseOptions, error) {
 	opts := diagnoseOptions{
 		Output:     "table",
 		ConfigPath: defaultConfigPath(),
@@ -206,7 +215,45 @@ func parseDiagnoseOptions(name string, args []string) (diagnoseOptions, error) {
 		Timeout:    5 * time.Second,
 	}
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	if helpOutput == nil {
+		helpOutput = io.Discard
+	}
+	fs.SetOutput(helpOutput)
+	fs.Usage = func() {
+		var summary, examples string
+		switch name {
+		case "diagnose egress":
+			summary = "EgressRoutePolicy + HealthCheck + IPv4Route + NAT44Rule の status を集約し、\n" +
+				"--host が有効なら ip route / nft / conntrack コマンドも実行して結果を表示する。\n" +
+				"位置引数: [policy] (EgressRoutePolicy 名。省略時は全 policy 対象)"
+			examples = "routerctl diagnose egress\n" +
+				"routerctl diagnose egress ipv4-default -o json\n" +
+				"routerctl diagnose egress --no-host -o yaml"
+		case "diagnose dns":
+			summary = "DNSResolver の status を集約し、--host が有効なら dig で実 query を投げて確認する。\n" +
+				"位置引数: [resolver] (DNSResolver 名。省略時は全 resolver 対象)"
+			examples = "routerctl diagnose dns\n" +
+				"routerctl diagnose dns lan --server 127.0.0.1 --name example.com,routerd.io\n" +
+				"routerctl diagnose dns --no-host -o json"
+		case "diagnose lan-client":
+			summary = "LAN client に対して ping / ip neigh / conntrack で疎通と NAT を確認する。\n" +
+				"位置引数: <ip> (LAN client IP, 必須)"
+			examples = "routerctl diagnose lan-client 192.168.1.10\n" +
+				"routerctl diagnose lan-client 192.168.1.10 --no-host\n" +
+				"routerctl diagnose lan-client 192.168.1.10 -o json"
+		case "doctor":
+			summary = "routerd の各 area (wan/dns/dslite/dhcpv6-pd/nat/firewall/rollback/disk/mgmt) の\n" +
+				"健全性チェックをまとめて実行する。\n" +
+				"位置引数: [area] (省略時は全 area)"
+			examples = "routerctl doctor\n" +
+				"routerctl doctor wan\n" +
+				"routerctl doctor --no-host -o json"
+		default:
+			summary = "routerd の resource 状態と host 実情を突き合わせて診断する。"
+			examples = "routerctl " + name + " --help"
+		}
+		printSubcommandHelp(fs, summary, examples)
+	}
 	fs.StringVar(&opts.Output, "o", opts.Output, "output format: table, json, yaml")
 	fs.StringVar(&opts.Output, "output", opts.Output, "output format: table, json, yaml")
 	fs.StringVar(&opts.ConfigPath, "config", opts.ConfigPath, "config path")
@@ -221,6 +268,9 @@ func parseDiagnoseOptions(name string, args []string) (diagnoseOptions, error) {
 		return opts, err
 	}
 	if err := fs.Parse(normalized); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return opts, err
+		}
 		return opts, err
 	}
 	if *noHost {

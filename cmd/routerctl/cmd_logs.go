@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -19,7 +20,16 @@ import (
 
 func dnsQueriesCommand(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("dns-queries", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs.SetOutput(stdout)
+	fs.Usage = func() {
+		printSubcommandHelp(fs,
+			"DNS 問い合わせ履歴 (DNSResolver の query log) を表示する。\n"+
+				"--since には Go の duration 形式 (例: 1h, 30m, 24h) を渡す。\n"+
+				"絶対時刻 (--from / --to) の指定は別途 issue #36 で対応予定。",
+			"routerctl dns-queries --since 1h --limit 100 -o json\n"+
+				"routerctl dns-queries --client 192.168.1.10 --qname example.com\n"+
+				"routerctl dns-queries --db /var/log/routerd/dns-queries.db --since 24h")
+	}
 	dbPath := fs.String("db", "", "read a DNS query log database file directly instead of using routerd")
 	socketPath := fs.String("socket", defaultSocketPath(), "routerd Unix domain socket path")
 	timeout := fs.Duration("timeout", 5*time.Second, "request timeout")
@@ -31,6 +41,9 @@ func dnsQueriesCommand(args []string, stdout io.Writer) error {
 	fs.StringVar(&output, "o", "table", "output format: table, json, yaml")
 	fs.StringVar(&output, "output", "table", "output format: table, json, yaml")
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
 		return err
 	}
 	var rows []logstore.DNSQuery
@@ -89,7 +102,13 @@ func writeDNSQueriesTable(stdout io.Writer, rows []logstore.DNSQuery) error {
 
 func connectionsCommand(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("connections", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs.SetOutput(stdout)
+	fs.Usage = func() {
+		printSubcommandHelp(fs,
+			"アクティブな conntrack エントリ一覧を表示する。",
+			"routerctl connections --limit 200\n"+
+				"routerctl connections -o json")
+	}
 	socketPath := fs.String("socket", defaultSocketPath(), "routerd Unix domain socket path")
 	timeout := fs.Duration("timeout", 5*time.Second, "request timeout")
 	limit := fs.Int("limit", 100, "maximum number of entries")
@@ -97,6 +116,9 @@ func connectionsCommand(args []string, stdout io.Writer) error {
 	fs.StringVar(&output, "o", "table", "output format: table, json, yaml")
 	fs.StringVar(&output, "output", "table", "output format: table, json, yaml")
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
 		return err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
@@ -179,7 +201,16 @@ func connectionNATDelta(entry observe.ConnectionEntry) string {
 
 func trafficFlowsCommand(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("traffic-flows", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs.SetOutput(stdout)
+	fs.Usage = func() {
+		printSubcommandHelp(fs,
+			"NAT44 / DPI flow log を表示する。\n"+
+				"--since は Go の duration 形式 (例: 1h, 30m, 24h)。\n"+
+				"絶対時刻 (--from / --to) の指定は別途 issue #36 で対応予定。",
+			"routerctl traffic-flows --since 1h --client 192.168.1.10 -o json\n"+
+				"routerctl traffic-flows --peer 8.8.8.8 --limit 200\n"+
+				"routerctl traffic-flows --db /var/log/routerd/traffic-flows.db --since 24h")
+	}
 	dbPath := fs.String("db", "", "read a traffic flow log database file directly instead of using routerd")
 	socketPath := fs.String("socket", defaultSocketPath(), "routerd Unix domain socket path")
 	timeout := fs.Duration("timeout", 5*time.Second, "request timeout")
@@ -191,6 +222,9 @@ func trafficFlowsCommand(args []string, stdout io.Writer) error {
 	fs.StringVar(&output, "o", "table", "output format: table, json, yaml")
 	fs.StringVar(&output, "output", "table", "output format: table, json, yaml")
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
 		return err
 	}
 	var rows []logstore.TrafficFlow
@@ -256,7 +290,16 @@ func writeTrafficFlowsTable(stdout io.Writer, rows []logstore.TrafficFlow) error
 
 func firewallLogsCommand(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("firewall-logs", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs.SetOutput(stdout)
+	fs.Usage = func() {
+		printSubcommandHelp(fs,
+			"firewall (nftables / pf) のログを表示する。\n"+
+				"--since は Go の duration 形式 (例: 1h, 30m, 24h)。\n"+
+				"絶対時刻 (--from / --to) の指定は別途 issue #36 で対応予定。",
+			"routerctl firewall-logs --since 24h --action drop\n"+
+				"routerctl firewall-logs --src 192.168.1.10 -o json\n"+
+				"routerctl firewall-logs --db /var/log/routerd/firewall-logs.db --since 7d")
+	}
 	dbPath := fs.String("db", "", "read a firewall log database file directly instead of using routerd")
 	socketPath := fs.String("socket", defaultSocketPath(), "routerd Unix domain socket path")
 	timeout := fs.Duration("timeout", 5*time.Second, "request timeout")
@@ -268,6 +311,9 @@ func firewallLogsCommand(args []string, stdout io.Writer) error {
 	fs.StringVar(&output, "o", "table", "output format: table, json, yaml")
 	fs.StringVar(&output, "output", "table", "output format: table, json, yaml")
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
 		return err
 	}
 	var rows []logstore.FirewallLogEntry

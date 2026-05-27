@@ -25,11 +25,22 @@ import (
 
 func applyCommand(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("apply", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs.SetOutput(stdout)
+	fs.Usage = func() {
+		printSubcommandHelp(fs,
+			"現在の config (config.yaml) を routerd に reconcile させる。\n"+
+				"--dry-run を付けると plan だけ生成し host 状態は変更しない。",
+			"routerctl apply --dry-run config.yaml\n"+
+				"routerctl apply\n"+
+				"routerctl apply --socket /run/routerd/control.sock")
+	}
 	socketPath := fs.String("socket", defaultSocketPath(), "routerd Unix domain socket path")
 	timeout := fs.Duration("timeout", 30*time.Second, "request timeout")
 	dryRun := fs.Bool("dry-run", false, "plan without applying changes")
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
 		return err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
@@ -43,13 +54,24 @@ func applyCommand(args []string, stdout io.Writer) error {
 
 func deleteCommand(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("delete", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs.SetOutput(stdout)
+	fs.Usage = func() {
+		printSubcommandHelp(fs,
+			"指定 <kind>/<name> resource を routerd の state から削除する。\n"+
+				"位置引数: <kind>/<name> (必須)",
+			"routerctl delete DSLiteTunnel/home\n"+
+				"routerctl delete --dry-run NAT44Rule/lan-to-wan\n"+
+				"routerctl delete --force --api-version net.routerd.io/v1alpha1 LegacyKind/old")
+	}
 	socketPath := fs.String("socket", defaultSocketPath(), "routerd Unix domain socket path")
 	timeout := fs.Duration("timeout", 30*time.Second, "request timeout")
 	dryRun := fs.Bool("dry-run", false, "show what would be deleted without changing host state")
 	force := fs.Bool("force", false, "delete stale state even when the kind is no longer in the current schema")
 	apiVersion := fs.String("api-version", "", "apiVersion to use with --force when a stale kind is ambiguous")
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
 		return err
 	}
 	if fs.NArg() != 1 {
@@ -66,10 +88,21 @@ func deleteCommand(args []string, stdout io.Writer) error {
 
 func setLogLevelCommand(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("set-log-level", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs.SetOutput(stdout)
+	fs.Usage = func() {
+		printSubcommandHelp(fs,
+			"動作中の routerd の slog ログレベルを動的に変更する。\n"+
+				"位置引数: <debug|info|warning|error|default> (default は起動時の値に戻す)",
+			"routerctl set-log-level debug\n"+
+				"routerctl set-log-level info\n"+
+				"routerctl set-log-level default")
+	}
 	socketPath := fs.String("socket", defaultSocketPath(), "routerd Unix domain socket path")
 	timeout := fs.Duration("timeout", 5*time.Second, "request timeout")
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
 		return err
 	}
 	if fs.NArg() != 1 {
@@ -92,10 +125,21 @@ func setLogLevelCommand(args []string, stdout io.Writer) error {
 
 func restartDNSResolverCommand(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("restart-dns-resolver", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs.SetOutput(stdout)
+	fs.Usage = func() {
+		printSubcommandHelp(fs,
+			"DNSResolver resource ごとに紐付く systemd unit (routerd-dns-resolver@<name>) を restart する。\n"+
+				"位置引数: [name] (DNSResolver 名。1 個しかない場合は省略可)",
+			"routerctl restart-dns-resolver\n"+
+				"routerctl restart-dns-resolver lan\n"+
+				"routerctl restart-dns-resolver --config /etc/routerd/config.yaml")
+	}
 	configPath := fs.String("config", defaultConfigPath(), "config path")
 	timeout := fs.Duration("timeout", 30*time.Second, "restart timeout")
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
 		return err
 	}
 	if fs.NArg() > 1 {

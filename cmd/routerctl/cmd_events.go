@@ -3,6 +3,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -14,7 +15,14 @@ import (
 
 func eventsCommand(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("events", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs.SetOutput(stdout)
+	fs.Usage = func() {
+		printSubcommandHelp(fs,
+			"routerd の event ledger (resource phase 遷移 / controller の reason) を表示する。",
+			"routerctl events --limit 200 --resource DSLiteTunnel/home\n"+
+				"routerctl events --topic routerd.controller.reconcile -o json\n"+
+				"routerctl events --kind DSLiteTunnel --limit 50")
+	}
 	statePath := fs.String("state-file", defaultStatePath(), "routerd state database file")
 	output := "table"
 	fs.StringVar(&output, "o", "table", "output format: table, json, yaml")
@@ -26,6 +34,9 @@ func eventsCommand(args []string, stdout io.Writer) error {
 	kind := fs.String("kind", "", "legacy event kind filter")
 	name := fs.String("name", "", "legacy event name filter")
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
 		return err
 	}
 	store, err := routerstate.Open(*statePath)

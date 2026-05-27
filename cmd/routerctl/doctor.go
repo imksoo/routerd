@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"sort"
@@ -54,8 +55,11 @@ type doctorRunner struct {
 var doctorAreas = []string{"wan", "dns", "dslite", "dhcpv6-pd", "nat", "firewall", "rollback", "disk", "mgmt"}
 
 func doctorCommand(args []string, stdout, stderr io.Writer) error {
-	opts, err := parseDiagnoseOptions("doctor", args)
+	opts, err := parseDiagnoseOptions("doctor", args, stdout)
 	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
 		usage(stderr)
 		return err
 	}

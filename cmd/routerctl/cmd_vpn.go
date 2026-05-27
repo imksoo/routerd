@@ -35,13 +35,23 @@ func tailscaleCommand(args []string, stdout, stderr io.Writer) error {
 
 func tailscalePeersCommand(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("tailscale peers", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs.SetOutput(stdout)
+	fs.Usage = func() {
+		printSubcommandHelp(fs,
+			"tailscale peers の status を 'tailscale status --json' から取得して整形表示する。",
+			"routerctl tailscale peers\n"+
+				"routerctl tailscale peers -o json\n"+
+				"routerctl tailscale peers --binary /usr/local/bin/tailscale")
+	}
 	timeout := fs.Duration("timeout", 5*time.Second, "request timeout")
 	binary := fs.String("binary", "tailscale", "tailscale binary path")
 	output := "table"
 	fs.StringVar(&output, "o", "table", "output format: table, json, yaml")
 	fs.StringVar(&output, "output", "table", "output format: table, json, yaml")
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
 		return err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
@@ -113,12 +123,21 @@ func wireGuardCommand(args []string, stdout, stderr io.Writer) error {
 
 func wireGuardListCommand(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("wireguard list", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs.SetOutput(stdout)
+	fs.Usage = func() {
+		printSubcommandHelp(fs,
+			"WireGuard 全 interface / peer の状態を 'wg show all dump' から取得して表示する。",
+			"routerctl wireguard list\n"+
+				"routerctl wireguard list -o json")
+	}
 	timeout := fs.Duration("timeout", 5*time.Second, "request timeout")
 	output := "table"
 	fs.StringVar(&output, "o", "table", "output format: table, json, yaml")
 	fs.StringVar(&output, "output", "table", "output format: table, json, yaml")
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
 		return err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)

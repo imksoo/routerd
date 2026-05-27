@@ -42,12 +42,21 @@ func ledgerCommand(args []string, stdout, stderr io.Writer) error {
 
 func ledgerIntegrityCheckCommand(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("ledger integrity-check", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs.SetOutput(stdout)
+	fs.Usage = func() {
+		printSubcommandHelp(fs,
+			"state ledger (SQLite) の PRAGMA integrity_check を実行する。",
+			"routerctl ledger integrity-check\n"+
+				"routerctl ledger integrity-check -o json")
+	}
 	statePath := fs.String("state-file", defaultStatePath(), "routerd state database file")
 	output := "table"
 	fs.StringVar(&output, "o", "table", "output format: table, json")
 	fs.StringVar(&output, "output", "table", "output format: table, json")
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
 		return err
 	}
 	if fs.NArg() != 0 {
@@ -83,9 +92,18 @@ func ledgerIntegrityCheckCommand(args []string, stdout io.Writer) error {
 
 func ledgerVacuumCommand(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("ledger vacuum", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs.SetOutput(stdout)
+	fs.Usage = func() {
+		printSubcommandHelp(fs,
+			"state ledger (SQLite) を VACUUM して断片化を解消する。",
+			"routerctl ledger vacuum\n"+
+				"routerctl ledger vacuum --state-file /var/lib/routerd/state.db")
+	}
 	statePath := fs.String("state-file", defaultStatePath(), "routerd state database file")
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
 		return err
 	}
 	if fs.NArg() != 0 {
@@ -115,9 +133,19 @@ func ledgerVacuumCommand(args []string, stdout io.Writer) error {
 
 func ledgerBackupCommand(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("ledger backup", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs.SetOutput(stdout)
+	fs.Usage = func() {
+		printSubcommandHelp(fs,
+			"state ledger (SQLite) を <dest> へオンラインバックアップする。\n"+
+				"位置引数: <dest> = バックアップ先のファイルパス (必須)",
+			"routerctl ledger backup /var/backups/routerd-state.db\n"+
+				"routerctl ledger backup --state-file /var/lib/routerd/state.db /tmp/state.db")
+	}
 	statePath := fs.String("state-file", defaultStatePath(), "routerd state database file")
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
 		return err
 	}
 	if fs.NArg() != 1 {
@@ -144,11 +172,23 @@ func ledgerBackupCommand(args []string, stdout io.Writer) error {
 
 func ledgerPruneEventsCommand(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("ledger prune-events", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs.SetOutput(stdout)
+	fs.Usage = func() {
+		printSubcommandHelp(fs,
+			"--older-than より古い event ledger レコードを削除する。\n"+
+				"--older-than は duration 形式 (例: 24h, 720h, 30d)。\n"+
+				"--dry-run を付けると削除はせずに件数だけ返す。",
+			"routerctl ledger prune-events --older-than 720h --dry-run\n"+
+				"routerctl ledger prune-events --older-than 30d\n"+
+				"routerctl ledger prune-events --older-than 24h --state-file /var/lib/routerd/state.db")
+	}
 	statePath := fs.String("state-file", defaultStatePath(), "routerd state database file")
 	olderThan := fs.String("older-than", "", "delete events older than duration, for example 24h or 30d")
 	dryRun := fs.Bool("dry-run", false, "count matching events without deleting")
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
 		return err
 	}
 	if fs.NArg() != 0 {

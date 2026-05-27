@@ -57,7 +57,16 @@ func describeFirewall(stdout io.Writer, router *api.Router) error {
 
 func firewallTestCommand(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("firewall test", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs.SetOutput(stdout)
+	fs.Usage = func() {
+		printSubcommandHelp(fs,
+			"FirewallZone / FirewallRule / 内部 hole / 暗黙 zone matrix を引いて、\n"+
+				"from / to / proto / dport の組み合わせに対して accept か drop かを判定する。\n"+
+				"引数は --from trust --to self の形でも from=trust to=self の形でも受け付ける。",
+			"routerctl firewall test from=trust to=self proto=tcp dport=22\n"+
+				"routerctl firewall test --from untrust --to trust --proto udp --dport 53\n"+
+				"routerctl firewall test --config /etc/routerd/config.yaml from=trust to=untrust")
+	}
 	configPath := fs.String("config", defaultConfigPath(), "config path")
 	from := fs.String("from", "", "source zone")
 	to := fs.String("to", "self", "destination zone")
@@ -75,6 +84,9 @@ func firewallTestCommand(args []string, stdout io.Writer) error {
 		normalized = append(normalized, arg)
 	}
 	if err := fs.Parse(normalized); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
 		return err
 	}
 	if *from == "" && *src != "" {
