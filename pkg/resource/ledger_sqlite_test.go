@@ -27,11 +27,15 @@ func TestSQLiteLedgerPersistsArtifacts(t *testing.T) {
 	if !ledger.Owns(artifact) {
 		t.Fatal("sqlite ledger does not own remembered artifact")
 	}
+	if err := ledger.Close(); err != nil {
+		t.Fatalf("close sqlite ledger: %v", err)
+	}
 
 	reloaded, err := OpenSQLiteLedger(path)
 	if err != nil {
 		t.Fatalf("reopen sqlite ledger: %v", err)
 	}
+	defer func() { _ = reloaded.Close() }()
 	if !reloaded.Owns(artifact) {
 		t.Fatal("reloaded sqlite ledger does not own artifact")
 	}
@@ -54,6 +58,7 @@ INSERT INTO artifacts(id,kind,name,owner,attributes,source,generation,observed_a
 	if err != nil {
 		t.Fatalf("open sqlite ledger: %v", err)
 	}
+	defer func() { _ = ledger.Close() }()
 	artifact := Artifact{Kind: "nft.table", Name: "routerd_nat", Owner: "net.routerd.net/v1alpha1/NAT44Rule/lan"}
 	if !ledger.Owns(artifact) {
 		t.Fatal("migrated ledger does not own artifact")
@@ -82,6 +87,7 @@ func TestSQLiteLedgerMigratesLegacyJSONAndRenames(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open sqlite ledger: %v", err)
 	}
+	defer func() { _ = ledger.Close() }()
 	artifact := Artifact{Kind: "nft.table", Name: "routerd_nat", Owner: "net.routerd.net/v1alpha1/NAT44Rule/lan"}
 	if !ledger.Owns(artifact) {
 		t.Fatal("migrated ledger does not own artifact")

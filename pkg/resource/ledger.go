@@ -21,6 +21,7 @@ type Ledger interface {
 	Owns(Artifact) bool
 	Save(string) error
 	All() []Artifact
+	Close() error
 }
 
 type JSONLedger struct {
@@ -121,6 +122,12 @@ func (l *JSONLedger) All() []Artifact {
 	return out
 }
 
+// Close is a no-op for JSONLedger; it exists to satisfy the Ledger interface
+// so callers can uniformly defer ledger.Close() regardless of the backing store.
+func (l *JSONLedger) Close() error {
+	return nil
+}
+
 type SQLiteLedger struct {
 	path       string
 	db         *sql.DB
@@ -135,6 +142,11 @@ func OpenSQLiteLedger(path string) (*SQLiteLedger, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Match pkg/state/sqlite.go: bound the pool to a single connection so
+	// repeated OpenSQLiteLedger calls (e.g. routerd serve's 30s reconcile
+	// loop) cannot accumulate idle file descriptors against routerd.db.
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 	if _, err := db.Exec(`PRAGMA busy_timeout = 5000`); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -406,6 +418,16 @@ func (l *SQLiteLedger) All() []Artifact {
 
 func (l *SQLiteLedger) SetGeneration(generation int64) {
 	l.generation = generation
+}
+
+// Close releases the underlying *sql.DB. Callers must defer Close on every
+// successful LoadLedger/OpenSQLiteLedger return; otherwise the SQLite file
+// descriptor (and its WAL) leaks for the lifetime of the process.
+func (l *SQLiteLedger) Close() error {
+	if l == nil || l.db == nil {
+		return nil
+	}
+	return l.db.Close()
 }
 
 func effectiveGeneration(generation int64) any {

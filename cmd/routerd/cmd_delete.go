@@ -62,6 +62,7 @@ func performDeleteTargets(targets []deleteTarget, statePath, ledgerPath string, 
 	if err != nil {
 		return controlapi.DeleteResult{}, err
 	}
+	defer func() { _ = ledger.Close() }()
 	result := controlapi.DeleteResult{TypeMeta: controlapi.TypeMeta{APIVersion: controlapi.APIVersion, Kind: "DeleteResult"}, DryRun: dryRun}
 	for _, target := range targets {
 		owner := target.APIVersion + "/" + target.Kind + "/" + target.Name

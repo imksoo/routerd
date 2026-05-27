@@ -677,6 +677,7 @@ func TestDeleteCommandRemovesStateAndLedgerForResource(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load ledger: %v", err)
 	}
+	defer func() { _ = loadedLedger.Close() }()
 	if len(loadedLedger.All()) != 0 {
 		t.Fatalf("ledger after delete = %+v, want empty", loadedLedger.All())
 	}

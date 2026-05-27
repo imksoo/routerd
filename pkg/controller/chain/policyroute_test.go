@@ -4,8 +4,10 @@ package chain
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -479,6 +481,7 @@ func TestIPv4PolicyRouteCleansOnlyLedgerOwnedStaleRulesAndTables(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer func() { _ = loaded.Close() }()
 	if loaded.Owns(resource.Artifact{Kind: "linux.ipv4.fwmarkRule", Name: "priority=10110,mark=0x110,table=110"}) {
 		t.Fatalf("stale rule remained in ledger: %+v", loaded.All())
 	}
@@ -581,4 +584,89 @@ func TestIPv4PolicyRouteGatewayResolution(t *testing.T) {
 	if _, err := controller.routeGateway(ctx, "wan0", "static", ""); err == nil {
 		t.Fatal("empty static gateway should be rejected")
 	}
+}
+
+// TestCleanupLedgerOwnedPolicyRoutesDoesNotLeakFDs is the controller-level
+// regression test for issue #39. routerd serve drives the cleanup at 30s
+// reconcile, so a leaked *sql.DB per call would accumulate hundreds of
+// fds/day against routerd.db. Linux-only because it inspects /proc/self/fd.
+func TestCleanupLedgerOwnedPolicyRoutesDoesNotLeakFDs(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("/proc/self/fd only available on linux")
+	}
+	dir := t.TempDir()
+	// Use a routerd.db path so LoadLedger picks the SQLite backend (the
+	// JSON backend has no fd lifetime concern).
+	ledgerPath := filepath.Join(dir, "routerd.db")
+	seed, err := resource.LoadLedger(ledgerPath)
+	if err != nil {
+		t.Fatalf("seed open: %v", err)
+	}
+	if err := seed.Close(); err != nil {
+		t.Fatalf("seed close: %v", err)
+	}
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan-b"}, Spec: api.InterfaceSpec{IfName: "lo"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "ipv4-default"}, Spec: api.EgressRoutePolicySpec{
+			Mode: "priority",
+			Candidates: []api.EgressRoutePolicyCandidate{{
+				Name: "dslite",
+				Targets: []api.EgressRoutePolicyTarget{{
+					Name: "ds-lite-b", Interface: "wan-b", Priority: 10111, Mark: 0x111, Table: 111,
+				}},
+			}},
+		}},
+	}}}
+	controller := IPv4PolicyRouteController{
+		Router:     router,
+		Store:      mapStore{},
+		LedgerPath: ledgerPath,
+		CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			switch name + " " + strings.Join(args, " ") {
+			case "ip -4 rule show":
+				return []byte(""), nil
+			case "ip -4 route show table all":
+				return []byte(""), nil
+			default:
+				return []byte(""), nil
+			}
+		},
+	}
+	// Warm up: settle any first-call fd churn (e.g. table creation).
+	if err := controller.cleanupLedgerOwnedPolicyRoutes(t.Context(), map[string]string{"wan-b": "lo"}); err != nil {
+		t.Fatalf("warmup cleanup: %v", err)
+	}
+	base := countLedgerFDs(t, ledgerPath)
+	for i := 0; i < 10; i++ {
+		if err := controller.cleanupLedgerOwnedPolicyRoutes(t.Context(), map[string]string{"wan-b": "lo"}); err != nil {
+			t.Fatalf("iter %d cleanup: %v", i, err)
+		}
+	}
+	after := countLedgerFDs(t, ledgerPath)
+	if after > base {
+		t.Fatalf("fd leak across 10 cleanup reconciles: before=%d after=%d", base, after)
+	}
+}
+
+func countLedgerFDs(t *testing.T, path string) int {
+	t.Helper()
+	entries, err := os.ReadDir("/proc/self/fd")
+	if err != nil {
+		t.Fatalf("read /proc/self/fd: %v", err)
+	}
+	suffixes := []string{"", "-journal", "-wal", "-shm"}
+	count := 0
+	for _, entry := range entries {
+		target, err := os.Readlink(fmt.Sprintf("/proc/self/fd/%s", entry.Name()))
+		if err != nil {
+			continue
+		}
+		for _, suffix := range suffixes {
+			if strings.HasSuffix(target, path+suffix) {
+				count++
+				break
+			}
+		}
+	}
+	return count
 }

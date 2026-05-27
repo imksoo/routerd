@@ -966,6 +966,9 @@ func TestDescribeIPv6PDIncludesStatusLedgerEvents(t *testing.T) {
 		t.Fatalf("open sqlite ledger: %v", err)
 	}
 	ledger.Remember([]resource.Artifact{{Kind: "dhcp.ipv6.prefixDelegation", Name: "ens18", Owner: "net.routerd.net/v1alpha1/DHCPv6PrefixDelegation/wan-pd"}})
+	if err := ledger.Close(); err != nil {
+		t.Fatalf("close sqlite ledger: %v", err)
+	}
 
 	var out bytes.Buffer
 	err = run([]string{"describe", "pd/wan-pd", "--config", configPath, "--state-file", dbPath, "--ledger-file", dbPath}, &out, &bytes.Buffer{})

@@ -225,6 +225,7 @@ func appendLedgerOwnedOrphans(result *apply.Result, router *api.Router, ledgerPa
 	if err != nil {
 		return err
 	}
+	defer func() { _ = ledger.Close() }()
 	engine := apply.New()
 	orphans, _, err := engine.LedgerOwnedOrphans(router, ledger)
 	if err != nil {
@@ -288,6 +289,7 @@ func cleanupLedgerOwnedOrphansMatching(router *api.Router, ledgerPath string, ma
 	if err != nil {
 		return nil, err
 	}
+	defer func() { _ = ledger.Close() }()
 	engine := apply.New()
 	_, artifacts, err := engine.LedgerOwnedOrphans(router, ledger)
 	if err != nil {
@@ -788,6 +790,7 @@ func rememberAppliedArtifacts(router *api.Router, ledgerPath string, generation 
 	if err != nil {
 		return 0, err
 	}
+	defer func() { _ = ledger.Close() }()
 	if sqliteLedger, ok := ledger.(interface{ SetGeneration(int64) }); ok {
 		sqliteLedger.SetGeneration(generation)
 	}

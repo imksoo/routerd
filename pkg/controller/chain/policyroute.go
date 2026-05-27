@@ -190,6 +190,7 @@ func (c IPv4PolicyRouteController) cleanupLedgerOwnedPolicyRoutes(ctx context.Co
 	if err != nil {
 		return err
 	}
+	defer func() { _ = ledger.Close() }()
 	desired := map[string]resource.Artifact{}
 	desiredTables := map[int]bool{}
 	for _, artifact := range apply.DesiredOwnedArtifacts(c.Router, aliases) {

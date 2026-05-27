@@ -149,6 +149,7 @@ func describeCommand(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
+	defer func() { _ = ledger.Close() }()
 	kind, name, err := parseResourceTarget("describe", opts.Target)
 	if err != nil {
 		return err

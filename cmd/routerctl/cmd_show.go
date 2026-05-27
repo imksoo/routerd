@@ -80,6 +80,7 @@ func showCommand(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
+	defer func() { _ = ledger.Close() }()
 	resources := selectResources(router.Spec.Resources, kind, name)
 	if len(resources) == 0 {
 		return resourceSelectionError(router.Spec.Resources, kind, name)

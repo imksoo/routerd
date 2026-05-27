@@ -98,6 +98,7 @@ func adoptCommand(args []string, stdout io.Writer) (err error) {
 	if err != nil {
 		return err
 	}
+	defer func() { _ = ledger.Close() }()
 	engine := apply.New()
 	candidates, artifacts, err := engine.AdoptionCandidateArtifacts(router, ledger)
 	if err != nil {
