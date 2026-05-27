@@ -174,4 +174,5 @@ jobs:
           cache-dependency-path: webconsole/package-lock.json
 
       - name: Capture Web Console screenshots
+        timeout-minutes: 10
         run: make webconsole-screenshot PLAYWRIGHT_INSTALL_FLAGS=--with-deps

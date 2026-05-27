@@ -12,6 +12,23 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- The release / CI workflow's "Capture Web Console screenshots" job no
+  longer hangs indefinitely waiting for `networkidle` after navigation.
+  The Web Console opens a long-lived `/api/v1/events/stream`
+  Server-Sent Events connection on mount, which kept
+  `playwright.page.goto({ waitUntil: "networkidle" })` from ever
+  resolving on certain runs. `webconsole/scripts/screenshot.mjs` now
+  uses `waitUntil: "domcontentloaded"` plus a 30 s navigation timeout,
+  a 15 s `waitForSelector("main")`, and a 5 s soft
+  `waitForLoadState("networkidle")` that swallows its own timeout.
+  `.github/workflows/quality.yaml` also caps the screenshot step at
+  `timeout-minutes: 10` as belt-and-suspenders so a future flaky run
+  cannot stall the entire release. The `v20260528.0114` tag exists but
+  was never published because of this hang — this release supersedes it
+  with identical functional content plus the CI fix.
+
 ## v20260528.0114
 
 ### Fixed

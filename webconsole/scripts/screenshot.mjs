@@ -90,8 +90,15 @@ await writeFile(
 console.log(`Wrote Web Console screenshots to ${outputDir}`);
 
 async function capture(page, hash, fileName) {
-  await page.goto(`${baseURL}${hash}`, { waitUntil: "networkidle" });
-  await page.waitForSelector("main");
+  // domcontentloaded is enough for the screenshot — the Web Console opens a
+  // long-lived /api/v1/events/stream Server-Sent Events connection on mount,
+  // which means waitUntil: "networkidle" can stall indefinitely (idle
+  // requires 2 s of zero in-flight requests, but SSE keeps the connection
+  // open). Bound the goto and the optional networkidle wait so a flaky run
+  // cannot hang the release workflow.
+  await page.goto(`${baseURL}${hash}`, { waitUntil: "domcontentloaded", timeout: 30000 });
+  await page.waitForSelector("main", { timeout: 15000 });
+  await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
   await page.screenshot({ path: path.join(outputDir, fileName), fullPage: true });
 }
 

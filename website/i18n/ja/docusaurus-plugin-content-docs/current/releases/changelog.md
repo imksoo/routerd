@@ -11,6 +11,23 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 修正
+
+- Release / CI ワークフローの「Capture Web Console screenshots」ジョブ
+  が、ナビゲーション後の `networkidle` 待ちで無限に hang する問題を
+  解消しました。Web Console はマウント時に `/api/v1/events/stream` の
+  Server-Sent Events 接続を張り続けるため、`playwright.page.goto({
+  waitUntil: "networkidle" })` が解決しないことがあったのが原因です。
+  `webconsole/scripts/screenshot.mjs` は `waitUntil: "domcontentloaded"`
+  + 30 秒の navigation timeout、15 秒の `waitForSelector("main")`、
+  そして 5 秒のソフトな `waitForLoadState("networkidle")`（timeout は
+  飲み込む）に切り替えました。`.github/workflows/quality.yaml` の
+  screenshot ステップにも `timeout-minutes: 10` を保険として入れており、
+  将来 flaky な実行があってもリリース全体を止められません。
+  `v20260528.0114` タグはこの hang のため publish されないまま残って
+  いますが、本リリースは機能面で完全に同等の内容に CI fix を加えた
+  ものに置き換わります。
+
 ## v20260528.0114
 
 ### 修正

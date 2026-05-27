@@ -11,6 +11,20 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 修正
+
+- 修正 Release / CI 工作流的「Capture Web Console screenshots」工作在
+  瀏覽完成後等待 `networkidle` 時無限掛起的問題。Web Console 在掛載
+  時會開啟 `/api/v1/events/stream` 的 Server-Sent Events 長連線，
+  使得 `playwright.page.goto({ waitUntil: "networkidle" })` 始終無法
+  完成。`webconsole/scripts/screenshot.mjs` 改為 `waitUntil:
+  "domcontentloaded"` + 30 秒導航逾時、15 秒 `waitForSelector("main")`、
+  以及 5 秒軟性 `waitForLoadState("networkidle")`（吞掉自身逾時）。
+  `.github/workflows/quality.yaml` 同時為 screenshot 步驟加上
+  `timeout-minutes: 10` 作為保險，使未來 flaky 執行也無法卡住整條
+  release 流水線。`v20260528.0114` 標籤因這次掛起未能發布，本次
+  release 在功能上與之完全等價，並附帶該 CI 修正。
+
 ## v20260528.0114
 
 ### 修正
