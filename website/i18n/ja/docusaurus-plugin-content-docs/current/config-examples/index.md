@@ -73,7 +73,7 @@ DS-Lite 優先 + PPPoE フォールバック、apply 時のロックアウト防
 - 管理通信がどのインターフェースを通っているか把握する。
 - `routerd validate`、`routerd plan`、dry-run apply を先に実行する。
 - plan が管理インターフェースのアドレス、経路、ファイアウォールの開放を消さないことを確認する。
-- ルーター上にインストールした release バイナリで apply し、別の開発 tree から実行しない。
+- ルーター上にインストールしたリリースバイナリで適用し、別の開発ツリーからは実行しない。
 
 ```bash
 routerd validate --config router.yaml

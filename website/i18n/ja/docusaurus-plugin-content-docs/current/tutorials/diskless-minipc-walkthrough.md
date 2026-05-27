@@ -161,7 +161,7 @@ USB 永続化は、USB への書き込みを減らすために、既定で `asyn
 特定の試験で同期書き込みが必要な場合だけ、kernel command line に
 `routerd.usb_mount=sync` を追加します。
 
-選択した USB パーティションは `/media/routerd-usb` に mount します。
+選択した USB パーティションは `/media/routerd-usb` にマウントします。
 保存先の設定ファイルは `/media/routerd-usb/routerd/router.yaml` であり、
 `/mnt/routerd/router.yaml` ではありません。
 
@@ -254,7 +254,7 @@ USB メモリーを接続したまま、mini PC を再起動します。
 起動時に、ライブ ISO は次を行います。
 
 1. 記録済みデバイス、`routerd.usb=`、`ROUTERD` ラベルの順で USB デバイスを探します。
-2. USB デバイスを `/media/routerd-usb` に mount します。
+2. USB デバイスを `/media/routerd-usb` にマウントします。
 3. `/media/routerd-usb/routerd/router.yaml` を復元します。
 4. `/run/routerd/logs` を tmpfs として準備します。
 5. ルーター設定を反映します。

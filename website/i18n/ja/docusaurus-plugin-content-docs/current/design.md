@@ -206,7 +206,7 @@ routerd の設定ファイル（既定では `/usr/local/etc/routerd/router.yaml
 本番ホストへの反映は routerd 経由で宣言型に行い、ホスト上で `nft add rule`、`ip route add`、`sysctl -w` のような ad hoc な変更を加えないでください。
 ad hoc な変更は、次回の reconcile で打ち消されるか、あるいは routerd の状態 DB と OS の実状態との間に drift を生みます。
 
-drift を見つけたときは、設定ファイル側で表現し直してから apply するのが正解です。
+差分（drift）を見つけたときは、設定ファイル側で表現し直してから適用するのが正解です。
 これにより、設定ファイル ↔ 状態 DB ↔ OS の実状態の三者が常に一致します。
 
 ---

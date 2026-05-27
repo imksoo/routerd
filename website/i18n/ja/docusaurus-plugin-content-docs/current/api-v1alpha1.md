@@ -330,9 +330,9 @@ DNAT/SNAT rule 数、該当する conntrack flow 数も表示します。`DETAIL
 `hairpinMode`、hairpin が必要か、期待される nftables SNAT rule が present/missing
 のどちらか、も出します。Ingress、NAT 系、DS-Lite、IPv6 PD/RA、routing resource から、
 forwarding、redirect suppression、reverse path filter exception、interface ごとの RA 受信など、
-必要な runtime sysctl を導出します。`routerd apply --once` は派生設定を plan / render しますが、
-host 変更は明示的な `Sysctl` / `SysctlProfile` の escape hatch だけに限定します。
-派生 runtime 設定の適用は、`routerd serve` の controller reconcile が担当します。
+必要なランタイムの sysctl を導出します。`routerd apply --once` は派生設定をプランしレンダリングしますが、
+ホスト側への変更は明示的な `Sysctl` / `SysctlProfile` のエスケープハッチだけに限定します。
+派生したランタイム設定の適用は、`routerd serve` のコントローラー調整ループが担当します。
 保守中は `routerctl drain
 ingress/<service> backend=<name> --duration 10m` で、backend を runtime state 上の
 drain 状態にできます。controller は、duration が切れるか `routerctl undrain
