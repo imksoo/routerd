@@ -11,6 +11,27 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 修正
+
+- Release ワークフローが Web Console screenshot ジョブの遅延を
+  リリースのブロッカーとして扱わなくなりました。v20260528.0751
+  は実際にリリースコミットとタグを作りましたが、screenshot ジョブ
+  の 13 件キャプチャが CI ランナー上で 10 分 21 秒掛かり、#40 期に
+  SSE 由来の hang 対策として入れていた `timeout-minutes: 10` が
+  fire してしまい、Quality ワークフローが失敗扱いとなって、
+  依存する build / publish ジョブはすべて skip されました。結果、
+  ヒープリーク修正を載せるはずだったバイナリが GitHub Releases
+  に届きませんでした。screenshot は doc サイト用の参照画像であり、
+  routerd バイナリの契約には含まれません。本リリースでは
+  `webconsole-screenshot` ジョブに `continue-on-error: true` を
+  付与し、失敗は記録するが `needs: [quality]` の Release
+  ワークフローには伝搬しないようにしました。あわせて
+  `Capture Web Console screenshots` ステップの `timeout-minutes`
+  を 10 → 15 に引き上げ、遅いランナーへの余裕を確保しています。
+  `v20260528.0751` タグはこの fail のため publish されないまま
+  残っていますが、本リリースは同じヒープリーク修正に CI ガードを
+  加えた等価内容で置き換わります。
+
 ## v20260528.0751
 
 ### 修正

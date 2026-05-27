@@ -11,6 +11,22 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 修复
+
+- Release 工作流不再将慢的 Web Console screenshot 任务视为发布阻塞。
+  v20260528.0751 已实际产出 release commit 与 tag，但 screenshot
+  任务的 13 张截图在 CI runner 上耗时 10 分 21 秒，触发了 #40 期为
+  防止 SSE hang 而设置的 `timeout-minutes: 10`，Quality 工作流被
+  判失败，依赖它的 build / publish 任务被全部 skip，因此本想搭载
+  heap leak 修复的二进制未能上架 GitHub Releases。screenshot 仅
+  是文档站点的参考图，并非 routerd 二进制的契约。本次为
+  `webconsole-screenshot` 任务加上 `continue-on-error: true`，任务
+  失败仅作记录，不再传播到 Release 工作流的 `needs: [quality]`。
+  同时把 `Capture Web Console screenshots` 步骤的 `timeout-minutes`
+  从 10 提到 15，给较慢的 runner 一些余量。`v20260528.0751` 标签
+  因这次失败未能发布，本次 release 以相同的 heap leak 修复加上该
+  CI 守护取而代之。
+
 ## v20260528.0751
 
 ### 修复

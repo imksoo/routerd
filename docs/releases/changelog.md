@@ -12,6 +12,26 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- The Release workflow no longer treats a slow Web Console screenshot
+  job as a release blocker. v20260528.0751 cut a real release commit
+  and tag, but the screenshots job's 13 captures took 10 minutes 21
+  seconds on the CI runner, the `timeout-minutes: 10` we'd added as
+  protection against SSE-driven hangs (#40 era) fired, the Quality
+  workflow reported failure, and the dependent build / publish jobs
+  were skipped — so the binary the heap-leak fixes were meant to land
+  in never reached GitHub Releases. Screenshots are a "nice to have"
+  visual reference for the docs site, not a contract the routerd
+  binary must honor. `webconsole-screenshot` now declares
+  `continue-on-error: true` at the job level so its failure is
+  reported but does not propagate into `needs: [quality]` on the
+  Release workflow. The `Capture Web Console screenshots` step
+  `timeout-minutes` is also raised from 10 to 15 minutes as a small
+  cushion for slower runners. The `v20260528.0751` tag exists but
+  was never published because of this hang — this release
+  supersedes it with the same heap-leak fixes plus this CI guard.
+
 ## v20260528.0751
 
 ### Fixed
