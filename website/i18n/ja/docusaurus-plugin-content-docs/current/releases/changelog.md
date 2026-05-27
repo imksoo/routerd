@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260528.0751
+
 ### 修正
 
 - `/api/v1/summary` の polling が OpenTelemetry instrument の割り当てを

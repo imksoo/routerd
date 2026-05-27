@@ -11,6 +11,8 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260528.0751
+
 ### 修正
 
 - 修正 `/api/v1/summary` 輪詢每次都為 OpenTelemetry instrument 重新

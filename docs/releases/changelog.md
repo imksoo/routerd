@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260528.0751
+
 ### Fixed
 
 - `/api/v1/summary` polling no longer accumulates OpenTelemetry
