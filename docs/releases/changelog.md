@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260528.0832
+
 ### Fixed
 
 - The Release workflow no longer treats a slow Web Console screenshot

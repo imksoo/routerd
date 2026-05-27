@@ -11,6 +11,8 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260528.0832
+
 ### 修复
 
 - Release 工作流不再将慢的 Web Console screenshot 任务视为发布阻塞。
