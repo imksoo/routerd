@@ -11,6 +11,71 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 追加
+
+- HealthCheck の各プローブ結果に egress / source / route の根拠情報を
+  記録し、リソースごとに直近 N 件の履歴を保持するようにしました
+  (#37)。`pkg/healthcheck` の `State` に `FirstFailureTime` /
+  `LastFailureTime` / `LastSuccessTime` / `FailureCount` /
+  `History []ProbeRecord` / `LastEvidence` を追加。各 `ProbeRecord` /
+  `ProbeEvidence` は `FailureKind`（timeout / connection_refused /
+  network_unreachable / host_unreachable / no_route / dns_error /
+  tls_error / address_in_use / permission / other）、
+  `EgressInterface`、`SourceAddress`、`SourceOrigin`（pd / ra /
+  static / dynamic）、`NextHop`、`OutInterface`、`RouteSource`、
+  `TunnelLocal`、`TunnelRemote` を保持します。Linux 環境では
+  `ip -j route get` で nexthop / oif / src を取得します（非 Linux は
+  スタブで、クロスコンパイルに影響しません）。
+  `cmd/routerd-healthcheck` に運用者ヒント用フラグ
+  `--source-origin` / `--tunnel-local` / `--tunnel-remote` を追加し、
+  プローブが推定できない情報を補えるようにしました。イベント属性
+  (`routerd.healthcheck.failureKind`、`network.egress.interface`、
+  `network.source.address`、`network.source.origin`、
+  `network.nexthop.address`、`network.out.interface`、
+  `network.route.source`、`network.tunnel.local`、
+  `network.tunnel.remote`、加えて `lastSuccessAt` / `lastFailureAt` /
+  `firstFailureAt` / `failureCount`) と `StatusMap` にも新フィールド
+  を反映しているため、`routerctl show / describe` でそのまま参照
+  できます。履歴の既定数は 20 件、`ROUTERD_HEALTHCHECK_HISTORY` で
+  上書きできます。
+- コントローラーごとに直近 N 件の reconcile 失敗履歴を control API
+  に公開するようにしました (#38)。`ControllerStatus` に
+  `ReconcileErrorHistory []ReconcileErrorEntry` と
+  `MaxDurationAt *time.Time` を追加。各 `ReconcileErrorEntry` は
+  `StartedAt` / `CompletedAt` / `Duration` / `DurationMs` /
+  `Trigger` / `ResourceKind` / `ResourceName` / `Error` を持ちます。
+  controller framework にオプショナルな `ResourceObserver` 拡張を
+  追加し、各 reconcile の対象リソース kind / name を runtime store
+  まで配線するようにしました（既存の Observer 実装には互換）。
+  履歴はメモリ内のみ（永続化は本 issue のスコープ外）、controller
+  あたり既定 20 件、`SetErrorHistoryLimit` で上書き可能です。
+  `routerctl status --show-errors` を追加し、テーブル表示で各
+  controller 行の下に履歴ブロックを縦に表示します。JSON / YAML
+  出力では従来の StatusMap 経由で自動的に新フィールドが含まれます。
+  新規 `routerctl doctor reconcile --since <duration>` を追加し、
+  読み取り専用ステータスソケットに問い合わせて、指定範囲の
+  reconcile エラー件数を pass / warn (≥1) / fail (≥10) で判定し、
+  detail に最大 5 件のサンプルを表示します。`parseDiagnoseOptions`
+  にも対応する `--since` と `--status-socket` フラグを追加しました。
+
+### 修正
+
+- `routerd serve` の制御 / ステータスソケットで、polling クライアント
+  が `IdleTimeout` 未満の間隔で叩いてくる場合でも Unix ソケットの
+  ファイル記述子が漏洩しなくなりました（#40 の追加 fix）。
+  v20260528.0244 の #40 fix では timeout の設定のみでしたが、
+  polling で keep-alive 接続が「アイドル」にならず IdleTimeout が
+  発火せず、結果として homert02 v20260528.0244 では `routerd.db`
+  fd は (#39 の通り) 4 で flat な一方、`all_fd` は依然として 1 分
+  あたり +4 ほど増加していました。今回は両方の内部 API サーバーで
+  `http.Server.SetKeepAlivesEnabled(false)` を呼び、加えて
+  `controlapi.NewUnixClient` の `Transport.DisableKeepAlives` を
+  `true` にしています。各リクエストはレスポンス後に必ず接続を閉じる
+  ため、長時間運用でもソケット fd が増え続けることはなくなりました。
+  read / write / idle の timeout は不正な peer 対策の保険として
+  残しています。Unix ソケットの accept はコストが小さく、リクエスト
+  ごとの close も hot path に再ダイヤルのペナルティをもたらしません。
+
 ## v20260528.0244
 
 ### 修正

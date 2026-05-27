@@ -449,13 +449,17 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	// on the unit's Group= setting.
 	groupOwnStatusSocket(*statusSocketPath)
 	defer statusListener.Close()
-	// Issue #40: without IdleTimeout, accepted Unix-socket connections from
-	// polling clients (routerctl, webconsole, etc.) stay open indefinitely,
-	// so fd count grows on every reconnect even though routerd's own logic
-	// no longer leaks SQLite handles. Cap idle / read / write here just
-	// like the webconsole HTTP server already does. Neither the control
-	// nor the status socket exposes SSE, so we can apply a strict
-	// WriteTimeout without breaking long-lived streams.
+	// Issue #40 (follow-up to .0244): IdleTimeout only fires when the
+	// connection is *idle*. Polling clients that fire every <120 s keep
+	// the keep-alive connection technically non-idle, so an idle timeout
+	// of 2 m never triggers. The end result was the same fd accumulation
+	// .0244 was supposed to fix: routerd.db fds flat at 4, but all_fd
+	// climbing ~+4 per minute. Disable HTTP keep-alives on both internal
+	// API servers so every request gets a fresh accept that closes
+	// immediately after the response. Unix-socket accept is cheap; this
+	// trades a tiny per-request cost for a hard guarantee that fd count
+	// cannot drift upward over long uptime. Read/write/idle timeouts are
+	// kept as belt-and-suspenders for malformed peers.
 	statusServer := &http.Server{
 		Handler: controlapi.Handler{
 			Status:      handler.Status,
@@ -466,6 +470,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		WriteTimeout:      60 * time.Second,
 		IdleTimeout:       2 * time.Minute,
 	}
+	statusServer.SetKeepAlivesEnabled(false)
 	defer statusServer.Close()
 	go func() {
 		if serveErr := statusServer.Serve(statusListener); serveErr != nil && serveErr != http.ErrServerClosed {
@@ -479,6 +484,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		WriteTimeout:      60 * time.Second,
 		IdleTimeout:       2 * time.Minute,
 	}
+	server.SetKeepAlivesEnabled(false)
 	go func() {
 		<-signalCtx.Done()
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)

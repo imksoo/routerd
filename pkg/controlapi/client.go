@@ -25,7 +25,15 @@ type Client struct {
 }
 
 func NewUnixClient(socketPath string) *Client {
+	// Issue #40: DisableKeepAlives so every request closes its connection
+	// after the response. The routerd control / status http.Server already
+	// sets SetKeepAlivesEnabled(false), but a polite client also closes
+	// from its end immediately rather than relying on the server-side
+	// Connection: close header. Unix-socket dial is cheap; the upside is
+	// that internal/polling daemons cannot accumulate fd state in
+	// routerd's accept queue over long uptimes.
 	transport := &http.Transport{
+		DisableKeepAlives: true,
 		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
 			var dialer net.Dialer
 			return dialer.DialContext(ctx, "unix", socketPath)

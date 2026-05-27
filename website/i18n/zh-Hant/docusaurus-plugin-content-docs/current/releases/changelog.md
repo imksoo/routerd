@@ -11,6 +11,64 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 新增
+
+- HealthCheck 每次探測結果現在會記錄 egress / source / route 佐證，
+  並依 resource 保留滾動歷史 (#37)。`pkg/healthcheck` 的 `State`
+  新增 `FirstFailureTime` / `LastFailureTime` / `LastSuccessTime` /
+  `FailureCount` / `History []ProbeRecord` / `LastEvidence`。每個
+  `ProbeRecord` / `ProbeEvidence` 攜帶 `FailureKind`（timeout /
+  connection_refused / network_unreachable / host_unreachable /
+  no_route / dns_error / tls_error / address_in_use / permission /
+  other）、`EgressInterface`、`SourceAddress`、`SourceOrigin`
+  （pd / ra / static / dynamic）、`NextHop`、`OutInterface`、
+  `RouteSource`、`TunnelLocal`、`TunnelRemote`。Linux 上會呼叫
+  `ip -j route get` 取得 nexthop / oif / src，非 Linux 走 stub，
+  跨平台編譯不受影響。`cmd/routerd-healthcheck` 新增
+  `--source-origin` / `--tunnel-local` / `--tunnel-remote` 維運提示
+  flag，可標註探測無法自動推斷的資訊。事件屬性
+  (`routerd.healthcheck.failureKind`、`network.egress.interface`、
+  `network.source.address`、`network.source.origin`、
+  `network.nexthop.address`、`network.out.interface`、
+  `network.route.source`、`network.tunnel.local`、
+  `network.tunnel.remote`，以及 `lastSuccessAt` / `lastFailureAt` /
+  `firstFailureAt` / `failureCount`) 與 `StatusMap` 都已納入新欄位，
+  因此 `routerctl show / describe` 經由既有 status map 即可呈現。
+  歷史預設 20 筆，可透過 `ROUTERD_HEALTHCHECK_HISTORY` 覆寫。
+- 透過 control API 公開每個 controller 的 reconcile 失敗歷史 (#38)。
+  `ControllerStatus` 新增 `ReconcileErrorHistory
+  []ReconcileErrorEntry` 與 `MaxDurationAt *time.Time`。每個
+  `ReconcileErrorEntry` 內含 `StartedAt` / `CompletedAt` /
+  `Duration` / `DurationMs` / `Trigger` / `ResourceKind` /
+  `ResourceName` / `Error`。controller framework 新增可選的
+  `ResourceObserver` 介面，使 runtime store 在每次 reconcile 中能
+  接收 resource kind / name，既有 Observer 實作完全相容。歷史僅保存
+  於記憶體（持久化為本 issue 的 out-of-scope），每個 controller
+  預設 20 筆，可透過 `SetErrorHistoryLimit` 覆寫。
+  `routerctl status --show-errors` 在 table 模式中以縱向區塊呈現
+  每個 controller 的錯誤歷史；JSON / YAML 輸出透過既有 StatusMap
+  路徑自動包含新欄位。新增 `routerctl doctor reconcile --since
+  <duration>` 子檢查，會查詢唯讀 status socket，在指定區間內統計
+  reconcile 錯誤，依 pass / warn (≥1) / fail (≥10) 判定，並在
+  detail 中給出最多 5 筆樣本。`parseDiagnoseOptions` 同步新增
+  `--since` 與 `--status-socket` flag。
+
+### 修正
+
+- 即便 polling 用戶端以小於 `IdleTimeout` 的間隔不斷請求，
+  `routerd serve` 在控制 / 狀態 socket 上也不再洩漏 Unix socket
+  file descriptor (#40 的後續修正)。v20260528.0244 對 #40 的修正僅
+  設逾時，但 polling 讓 keep-alive 連線始終保持非 idle，IdleTimeout
+  從未觸發，結果 homert02 v20260528.0244 上 `routerd.db` fd 依 #39
+  保持為 4，而 `all_fd` 仍以約 +4/分鐘 的速度成長。本次修正在兩個
+  內部 API server 上呼叫
+  `http.Server.SetKeepAlivesEnabled(false)`，並讓
+  `controlapi.NewUnixClient` 在 `Transport.DisableKeepAlives` 設定
+  `true`。每個請求都在 response 之後立刻關閉連線，長時間執行也
+  不會讓 socket fd 漂移上升。read / write / idle 逾時仍保留作為對
+  異常 peer 的保險。Unix socket accept 成本很小，本修正在任何
+  hot path 上都不會造成實質的重新撥接負擔。
+
 ## v20260528.0244
 
 ### 修正

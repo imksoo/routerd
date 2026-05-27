@@ -12,6 +12,72 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Added
+
+- HealthCheck probes now record egress / source / route evidence on
+  every result and keep a rolling per-resource history (#37).
+  `pkg/healthcheck`'s `State` gains `FirstFailureTime`,
+  `LastFailureTime`, `LastSuccessTime`, `FailureCount`,
+  `History []ProbeRecord`, and `LastEvidence`. Each `ProbeRecord` /
+  `ProbeEvidence` carries `FailureKind` (timeout /
+  connection_refused / network_unreachable / host_unreachable /
+  no_route / dns_error / tls_error / address_in_use / permission /
+  other), `EgressInterface`, `SourceAddress`, `SourceOrigin`
+  (pd / ra / static / dynamic), `NextHop`, `OutInterface`,
+  `RouteSource`, `TunnelLocal`, `TunnelRemote`. Linux probes call
+  `ip -j route get` for nexthop / oif / src; non-Linux stubs keep
+  cross-compile clean. `cmd/routerd-healthcheck` adds
+  `--source-origin`, `--tunnel-local`, `--tunnel-remote` operator
+  hints so the daemon can label evidence it cannot infer. Event
+  attributes (`routerd.healthcheck.failureKind`,
+  `network.egress.interface`, `network.source.address`,
+  `network.source.origin`, `network.nexthop.address`,
+  `network.out.interface`, `network.route.source`,
+  `network.tunnel.local`, `network.tunnel.remote`, plus
+  `lastSuccessAt` / `lastFailureAt` / `firstFailureAt` /
+  `failureCount`) and `StatusMap` carry the new fields, so
+  `routerctl show / describe` already surface them via the existing
+  status map. History defaults to 20 entries, configurable via
+  `ROUTERD_HEALTHCHECK_HISTORY`.
+- Per-controller reconcile error history surfaced through the
+  control API (#38). `ControllerStatus` gains
+  `ReconcileErrorHistory []ReconcileErrorEntry` and
+  `MaxDurationAt *time.Time`. Each `ReconcileErrorEntry` records
+  `StartedAt`, `CompletedAt`, `Duration`, `DurationMs`, `Trigger`,
+  `ResourceKind`, `ResourceName`, `Error`. The controller framework
+  gains an optional `ResourceObserver` interface so the runtime
+  store can plumb resource kind / name from each reconcile through
+  to the history entry without touching existing in-tree observers.
+  History is in-memory only (per the issue's out-of-scope clause),
+  capped at 20 entries per controller, settable via
+  `SetErrorHistoryLimit`. `routerctl status --show-errors` renders
+  the history as a vertical block under each controller row in
+  table mode; JSON / YAML output pick up the new fields via the
+  existing StatusMap path. New `routerctl doctor reconcile --since
+  <duration>` queries the read-only status socket and reports
+  pass / warn (≥ 1 error in window) / fail (≥ 10 errors) with up to
+  5 sample entries in detail. `parseDiagnoseOptions` gained the
+  corresponding `--since` and `--status-socket` flags.
+
+### Fixed
+
+- `routerd serve` no longer leaks Unix-socket file descriptors on
+  the control or status endpoints even when polling clients fire
+  every < `IdleTimeout` seconds (follow-up to #40). The
+  v20260528.0244 attempt at fixing #40 only set timeouts; idle
+  timeout never fired because polling kept the keep-alive
+  connection technically non-idle, so on homert02 v20260528.0244
+  the routerd.db fds stayed flat at 4 (per #39) but `all_fd` still
+  climbed +4 / minute. The new fix calls
+  `http.Server.SetKeepAlivesEnabled(false)` on both internal API
+  servers, and `controlapi.NewUnixClient` now sets
+  `Transport.DisableKeepAlives: true`. Every request closes its
+  connection after the response, so socket fd cannot drift upward
+  over long uptime. Read / write / idle timeouts remain as
+  belt-and-suspenders for malformed peers. Unix-socket accept is
+  cheap; this is a per-request close, not a re-dial penalty in any
+  hot path.
+
 ## v20260528.0244
 
 ### Fixed
