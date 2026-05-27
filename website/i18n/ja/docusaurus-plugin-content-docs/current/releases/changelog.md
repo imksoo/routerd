@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260528.0114
+
 ### 修正
 
 - **本番影響あり**: `routerd serve` が `/var/lib/routerd/routerd.db`

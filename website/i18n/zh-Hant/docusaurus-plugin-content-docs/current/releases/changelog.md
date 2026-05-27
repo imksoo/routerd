@@ -11,6 +11,8 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260528.0114
+
 ### 修正
 
 - **影響正式環境**: `routerd serve` 不再每次 reconcile 都洩漏
