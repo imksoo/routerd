@@ -3,6 +3,7 @@
 package webconsole
 
 import (
+	"context"
 	"testing"
 	"time"
 )
@@ -99,6 +100,39 @@ func TestReverseDNSCacheCapsAtMaxEntries(t *testing.T) {
 
 	if got != reverseDNSCacheMaxEntries {
 		t.Fatalf("after prune: cache size = %d, want %d", got, reverseDNSCacheMaxEntries)
+	}
+}
+
+// TestReverseDNSCacheLookupManyEnforcesCapAfterStore asserts that a single
+// lookupMany() call, even when it resolves more new addresses than the cap
+// allows, ends with len(entries) <= reverseDNSCacheMaxEntries. The entry-
+// time pruneLocked alone left a short window where the cache could briefly
+// exceed the cap; the exit-time prune was added to close it.
+func TestReverseDNSCacheLookupManyEnforcesCapAfterStore(t *testing.T) {
+	c := newReverseDNSCache(time.Hour)
+	now := time.Now()
+	// Pre-fill cap-100 live entries (oldest expiries first) so a single
+	// lookupMany has to evict during the exit prune.
+	for i := 0; i < reverseDNSCacheMaxEntries-100; i++ {
+		c.store(encodeIPv4Address(uint32(i)), "host", now.Add(time.Duration(i)*time.Second))
+	}
+	// Request 200 brand-new addresses — more than the 100 slots free, so
+	// the post-store cache size will exceed the cap by 100 entries until
+	// the exit prune runs.
+	pending := make([]string, 0, 200)
+	for i := reverseDNSCacheMaxEntries - 100; i < reverseDNSCacheMaxEntries+100; i++ {
+		pending = append(pending, encodeIPv4Address(uint32(i)))
+	}
+	lookup := func(ctx context.Context, address string) ([]string, error) {
+		return []string{"resolved-" + address + "."}, nil
+	}
+	_ = c.lookupMany(context.Background(), pending, lookup)
+
+	c.mu.Lock()
+	got := len(c.entries)
+	c.mu.Unlock()
+	if got > reverseDNSCacheMaxEntries {
+		t.Fatalf("after lookupMany: cache size = %d, want <= %d", got, reverseDNSCacheMaxEntries)
 	}
 }
 

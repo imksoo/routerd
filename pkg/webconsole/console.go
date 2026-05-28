@@ -3908,6 +3908,16 @@ func (c *reverseDNSCache) lookupMany(ctx context.Context, addresses []string, lo
 			out[item.address] = item.name
 		}
 	}
+	// Run pruneLocked a second time at the end of the call so the post-
+	// store state is strictly within reverseDNSCacheMaxEntries. The entry-
+	// time prune alone leaves a short window where, if a single summary
+	// request resolves many never-seen addresses, the cache can briefly
+	// hold (cap + new entries) until the next lookupMany call shrinks it
+	// again. With this exit prune the hard cap is invariant across every
+	// boundary an external observer can see.
+	c.mu.Lock()
+	c.pruneLocked(time.Now())
+	c.mu.Unlock()
 	return out
 }
 
