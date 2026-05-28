@@ -11,6 +11,24 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 修正
+
+- `reverseDNSCache.lookupMany` が、新規解決エントリを store した後に
+  `pruneLocked` をもう一度実行するようになり、
+  `reverseDNSCacheMaxEntries`（4096）のハード上限が呼び出し入口だけ
+  でなく、あらゆる呼び出し境界で保たれるようになりました。これまでは
+  1 回のリクエストが空きスロット数を超える新規アドレスを解決すると、
+  次回 lookup の prune まで一時的に上限を超えることがありました。
+  exit 時 prune によりこの不変条件が常時維持されます。回帰テスト
+  (`TestReverseDNSCacheLookupManyEnforcesCapAfterStore`) を追加し、
+  cap-100 まで事前充填してから 200 件の新規アドレスを解決させ、
+  呼び出し後のサイズが上限内に収まることを検証しています。これは
+  v20260528.0832 のヒープリーク修正に対する外部レビューの仕上げ
+  項目で、単調増加自体はすでに解消済みでした。homert02 の 2 時間
+  soak で `RssAnon` が plateau する（warm-up の ~70 MB から GC dip
+  を伴う ~104 MB の定常帯へ）こと、fd が all_fd=24 / sockets=16 /
+  db_family=4 で flat、NRestarts=0 を維持することを確認しています。
+
 ## v20260528.0832
 
 ### 修正

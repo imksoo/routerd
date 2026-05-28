@@ -11,6 +11,20 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 修复
+
+- `reverseDNSCache.lookupMany` 现在会在存入新解析条目后再次执行
+  `pruneLocked`，使 `reverseDNSCacheMaxEntries`（4096）的硬上限不仅在
+  调用入口、而是在每个调用边界都保持。此前若单次请求解析的新地址
+  超过空闲槽位数，缓存可能短暂超过上限，直到下次 lookup 的 prune
+  才回落；exit 时 prune 让该不变量得以持续维持。新增回归测试
+  (`TestReverseDNSCacheLookupManyEnforcesCapAfterStore`)，先填充到
+  cap-100，再解析 200 个全新地址，并断言调用后大小仍在上限内。这是
+  v20260528.0832 堆泄漏修复的外部评审收尾项，单调增长本身已消除。
+  homert02 的 2 小时 soak 确认 `RssAnon` 进入 plateau（从 warm-up
+  的 ~70 MB 到带 GC 回落的 ~104 MB 稳态区间），fd 保持
+  all_fd=24 / sockets=16 / db_family=4，NRestarts=0。
+
 ## v20260528.0832
 
 ### 修复

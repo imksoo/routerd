@@ -12,6 +12,25 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- `reverseDNSCache.lookupMany` now runs `pruneLocked` a second time
+  after storing freshly resolved entries, so the
+  `reverseDNSCacheMaxEntries` (4096) hard cap holds across every call
+  boundary, not just at call entry. Previously a single request that
+  resolved more new addresses than the free slot count could briefly
+  push the cache past the cap until the next lookup pruned it; with
+  the exit-time prune the invariant is maintained continuously. A
+  new regression test
+  (`TestReverseDNSCacheLookupManyEnforcesCapAfterStore`) pre-fills the
+  cache to cap-100, resolves 200 brand-new addresses, and asserts the
+  post-call size stays within the cap. This is the polish item from
+  the external review of the v20260528.0832 heap-leak fixes; the
+  underlying monotonic growth was already gone, and a 2-hour homert02
+  soak confirmed `RssAnon` plateaus (~70 MB warm-up to a ~104 MB
+  steady-state band with GC dips) while fd stays flat at all_fd=24 /
+  sockets=16 / db_family=4 with NRestarts=0.
+
 ## v20260528.0832
 
 ### Fixed
