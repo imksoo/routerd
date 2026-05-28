@@ -88,9 +88,9 @@ const config: Config = {
   themeConfig: {
     image: 'img/routerd-social-card.svg',
     announcementBar: {
-      id: 'stable-milestone-20260528-1805',
+      id: 'stable-milestone-20260528-2308',
       content:
-        'Stable milestone: <a href="/docs/releases/stable"><b>v20260528.1805</b></a> — flat fd and bounded heap over a 2-hour homert02 soak',
+        'Stable milestone: <a href="/docs/releases/stable"><b>v20260528.2308</b></a> — bounded goroutines + routerctl doctor runtime, verified by a live homert02 runtime soak',
       backgroundColor: '#1f6feb',
       textColor: '#ffffff',
       isCloseable: true,

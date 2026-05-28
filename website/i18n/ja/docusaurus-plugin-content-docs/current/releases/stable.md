@@ -12,20 +12,46 @@ routerd は `vYYYYMMDD.HHmm` 形式で頻繁にリリースしますが、その
 
 | 項目 | 内容 |
 | --- | --- |
-| バージョン | **v20260528.1805** |
-| 位置づけ | 推奨安定版（v20260528.0402 を置き換え。fd 漏洩対応を完結させる heap 漏洩修正を追加し、2 時間の本番 soak で検証済み） |
-| 稼働実績 | 本番ルーター（homert02）で fd・heap ともに bounded であることを検証済みです。fd は 2 時間 / 24 サンプルの soak で完全に flat（all_fd=24、sockets=16、SQLite ledger 系=4 が毎サンプル不変、NRestarts=0、PID 不変）。`RssAnon`（page cache を除く実 heap）は 1 時間目に ~70 MB から ~104 MB の定常帯まで warm-up した後、2 時間目は 96〜107 MB で振動し plateau しました。GC reclaim の明確な dip を伴っており、これは leak ではなく bounded な working set の特徴です。BGP は 2/2 Established を維持、`routerctl doctor dslite` は pass=12 / warn=0、`routerctl doctor reconcile` は pass=1 / warn=0。v20260528 系列を通じて、3 つの fd 漏洩根本原因（#39 SQLite ledger、#40 control/status socket の keep-alive、#40 BGP gobgp client）と 2 つの heap 増加源（リクエストごとの OTel instrument 再生成、無制限の reverse DNS cache）をそれぞれ突き止めて解消しました |
+| バージョン | **v20260528.2308** |
+| 位置づけ | 推奨安定版（v20260528.1805 を置き換え。reverse DNS lookup の goroutine 数を上限化し、heap/goroutine/fd を継続観測する `routerctl doctor runtime` を追加。実機 runtime soak で検証済み） |
+| 稼働実績 | 本番ルーター（homert02）で検証済みです。`routerctl doctor runtime -o json` soak（10 分間隔 ×4 サンプル）で `numGoroutine` は 123、`openFds` は 25（/ 524287）で終始 flat、各サンプル `status=pass` でした。heap は健全な GC sawtooth（heapObjects 28k → 52k → 41k → 83k、numGC 29 → 277 と頻繁に reclaim）で単調増加ではありません。BGP は 2/2 Established を維持、`routerctl doctor dslite` / `routerctl doctor reconcile` ともに PASS、routerd-bgp PID 不変、NRestarts=0。これは v20260528.1805 の 2 時間 fd+heap soak（all_fd / sockets / SQLite ledger fd が flat、RssAnon plateau）の上に積み上げたものです。v20260528 系列を通じて、3 つの fd 漏洩根本原因（#39 SQLite ledger、#40 control/status socket keep-alive、#40 BGP gobgp client）、2 つの heap 増加源（リクエストごとの OTel instrument 再生成、無制限の reverse DNS cache）、そして reverse DNS lookup の goroutine fan-out をそれぞれ解消しました |
 | バイナリ | 静的リンク（`CGO_ENABLED=0`）、CI と Release ワークフローをすべて通過 |
 
-## v20260528.1805 を推奨する理由
+## v20260528.2308 を推奨する理由
 
-推奨の理由は**新機能の追加ではなく運用上の成熟**です。v20260528.1805 は
-v20260528.0402 の本番安全特性（fd 漏洩修正 #39 / #40、#36 / #37 / #38 の
-観測性契約、BGP の idempotent reconcile、doctor dslite の selectedSource
-整合、Gateway Health の独立画面化、`install.sh` の即時失敗、シークレット
-伏字化、`ManagementAccess` 適用ガード、機械可読な `routerctl doctor`、
-推奨安定版表示の整合 CI ガード）をすべて受け継ぎ、長期にわたった
-リソース漏洩調査を締めくくる heap 漏洩修正を追加しています。
+推奨の理由は**新機能の追加ではなく運用上の成熟**です。v20260528.2308 は
+v20260528.1805 の本番安全特性（#39 / #40 fd 漏洩修正、v20260528.1805 の
+heap 漏洩修正＝OTel instrument singleton ＋ bounded reverse DNS cache、
+#36 / #37 / #38 の観測性契約、BGP の idempotent reconcile、doctor dslite
+の selectedSource 整合、Gateway Health の独立画面化、`install.sh` の即時
+失敗、シークレット伏字化、`ManagementAccess` 適用ガード、機械可読な
+`routerctl doctor`、推奨安定版表示の整合 CI ガード）をすべて受け継ぎ、
+リソース漏洩調査の最後の 2 ピースと小さな Web Console UX 修正を加えて
+います。
+
+- **reverse DNS lookup の goroutine 数が上限化されました。**
+  `reverseDNSCache.lookupMany` は従来 pending アドレスごとに goroutine を
+  起動していました（並列 lookup は semaphore で 8 に制限していたが
+  goroutine 自体は大量に作られた）。1 回の `/api/v1/summary`（最大
+  1000 行）で ~1000 個の blocked goroutine が生じ得ました。現在は固定
+  サイズの worker pool (`reverseDNSLookupConcurrency = 8`) を使い、
+  `reverseDNSPendingMax = 1000` が呼び出し側に依存せず 1 回あたりの
+  処理件数を上限化します。homert02 soak で summary polling 下でも
+  `numGoroutine` が flat（123）であることを確認しました。
+
+- **`routerctl doctor runtime` で継続的なリソース可視性を提供します。**
+  新しい doctor area ＋ 読み取り専用 control-API `/runtime` エンドポイント
+  が routerd 自身の heap / goroutine / GC / fd footprint を報告するため、
+  この一連の調査で行ったようなリーク調査が self-service になります
+  （ssh ＋ /proc 不要）。`numGoroutine` 10000 超または fd が
+  `RLIMIT_NOFILE` の 80% 以上で WARN。観測用で FAIL にはなりません。
+
+- **Web Console の Firewall「Deny activity」を軸ラベル付き棒グラフに**
+  変更しました（従来はラベルの無い曖昧な sparkline）。縦軸（peak / 0、
+  「高いほど拒否が多い」）と横軸（「24h ago」→「now」）を明示します。
+
+v20260528.1805 から受け継ぎ、homert02 v20260528.2308 でも再検証された
+本番安全契約:
 
 - **`/api/v1/summary` の polling で heap が無制限に増えなくなりました。**
   `recordConsoleMetrics` は従来リクエストごとに 7 つの OpenTelemetry

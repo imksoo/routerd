@@ -12,21 +12,46 @@ routerd ships frequently using the `vYYYYMMDD.HHmm` scheme. From those builds we
 
 | Item | Value |
 | --- | --- |
-| Version | **v20260528.1805** |
-| Status | Recommended stable release (supersedes v20260528.0402; adds the heap-leak fixes that complete the fd-leak work, validated by a 2-hour production soak) |
-| Track record | Production-validated on a home router (homert02) with both fd and heap held bounded. fd stayed completely flat across a 2-hour / 24-sample soak (all_fd=24, sockets=16, SQLite ledger family=4 at every sample, NRestarts=0, PID unchanged). `RssAnon` (true heap, excluding page cache) warmed up from ~70 MB to a ~104 MB steady-state band over the first hour and then plateaued for the second hour, oscillating 96–107 MB with clear GC reclaim dips — the signature of a bounded working set, not a leak. BGP held 2/2 Established, `routerctl doctor dslite` returned pass=12 / warn=0, and `routerctl doctor reconcile` returned pass=1 / warn=0. Across the v20260528 series, three distinct fd-leak root causes (#39 SQLite ledger, #40 control/status socket keep-alive, #40 BGP gobgp client) and two heap-growth sources (per-request OTel instrument churn, unbounded reverse-DNS cache) were each hunted down and fixed |
+| Version | **v20260528.2308** |
+| Status | Recommended stable release (supersedes v20260528.1805; bounds the reverse-DNS lookup goroutine count and adds `routerctl doctor runtime` for ongoing heap/goroutine/fd visibility, validated by a live runtime soak) |
+| Track record | Production-validated on a home router (homert02). A `routerctl doctor runtime -o json` soak (4 samples, 10-minute intervals) held `numGoroutine` flat at 123 and `openFds` flat at 25 (of 524287) the whole time, with `status=pass` at every sample; heap was a healthy GC sawtooth (heapObjects 28k → 52k → 41k → 83k, numGC 29 → 277, i.e. frequent reclaim, not a monotonic climb). BGP stayed 2/2 Established, `routerctl doctor dslite` and `routerctl doctor reconcile` both PASS, routerd-bgp PID unchanged, NRestarts=0. This builds on v20260528.1805's 2-hour fd+heap soak (all_fd / sockets / SQLite ledger fds flat; RssAnon plateaued). Across the v20260528 series, three fd-leak root causes (#39 SQLite ledger, #40 control/status socket keep-alive, #40 BGP gobgp client), two heap-growth sources (per-request OTel instrument churn, unbounded reverse-DNS cache), and the reverse-DNS lookup goroutine fan-out were each hunted down and fixed |
 | Binary | Statically linked (`CGO_ENABLED=0`), passes CI and the Release workflow |
 
-## Why v20260528.1805 is recommended
+## Why v20260528.2308 is recommended
 
 The recommendation is **operational maturity, not feature scope.**
-v20260528.1805 inherits every production-safe property of v20260528.0402
-(the fd-leak fixes #39 / #40, the #36 / #37 / #38 observability contracts,
-BGP idempotent reconcile, doctor dslite alignment, Gateway Health
-dedicated screen, install.sh fail-fast, secret redaction,
-ManagementAccess apply guard, machine-readable `routerctl doctor`, the
-recommended-stable display consistency guard) and adds the heap-leak
-fixes that close out the long-running resource-leak investigation:
+v20260528.2308 inherits every production-safe property of v20260528.1805
+(the #39 / #40 fd-leak fixes, the v20260528.1805 heap-leak fixes — OTel
+instrument singleton + bounded reverse-DNS cache, the #36 / #37 / #38
+observability contracts, BGP idempotent reconcile, doctor dslite
+alignment, Gateway Health dedicated screen, install.sh fail-fast, secret
+redaction, ManagementAccess apply guard, machine-readable
+`routerctl doctor`, the recommended-stable display consistency guard) and
+adds the last two pieces of the resource-leak investigation plus a
+small Web Console UX fix:
+
+- **The reverse-DNS lookup goroutine count is now bounded.**
+  `reverseDNSCache.lookupMany` used to spawn one goroutine per pending
+  address (limiting only the concurrent lookups to 8 via a semaphore); a
+  single `/api/v1/summary` capped at 1000 rows could create ~1000 blocked
+  goroutines. It now uses a fixed-size worker pool
+  (`reverseDNSLookupConcurrency = 8`), and a `reverseDNSPendingMax = 1000`
+  caps the per-call work independent of the caller. The homert02 soak
+  confirmed `numGoroutine` stays flat (123) under summary polling.
+
+- **`routerctl doctor runtime` gives ongoing resource visibility.** A new
+  doctor area + read-only control-API `/runtime` endpoint reports
+  routerd's own heap / goroutine / GC / fd footprint, so the kind of
+  leak investigation that produced this whole series is now self-service
+  (no ssh + /proc poking). WARN on >10000 goroutines or fd usage ≥80% of
+  `RLIMIT_NOFILE`; observational, never FAILs.
+
+- **Web Console Firewall "Deny activity" is now a labeled bar chart**
+  instead of an ambiguous unlabeled sparkline, with an explicit Y axis
+  (peak / 0, "taller = more denies") and an X axis ("24h ago" → "now").
+
+The production-safe contracts inherited from v20260528.1805 and
+re-verified on homert02 v20260528.2308:
 
 - **`/api/v1/summary` polling no longer grows the heap unbounded.**
   `recordConsoleMetrics` used to re-create seven OpenTelemetry gauges on
