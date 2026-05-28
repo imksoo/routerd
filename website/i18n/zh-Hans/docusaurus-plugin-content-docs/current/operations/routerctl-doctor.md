@@ -42,6 +42,8 @@ routerctl doctor -o yaml
 | `rollback` | 至少存在一个已保存世代，使 `routerctl rollback --to` 可用。 |
 | `disk` | `/var/lib/routerd` 与 `/run/routerd` 的容量。≥90% 或 `<256 MiB` 时 WARN，≥98% 或 `<64 MiB` 时 FAIL。 |
 | `mgmt` | 管理接口的存在性（从 `ManagementAccess` 或 `FirewallZone role=mgmt` 推断）；WebConsole 的 bind（`0.0.0.0` / `::` 为 WARN/FAIL）。 |
+| `reconcile` | 从只读状态 socket 读取每个 controller 的 reconcile 失败历史。`--since <duration>` 限定时间窗口。窗口内 ≥1 条为 WARN，≥10 条为 FAIL；detail 中最多展示 5 条样本。 |
+| `runtime` | 从只读状态 socket 读取 routerd 自身的 heap / goroutine / fd：`heapAlloc`、`heapObjects`、`numGoroutine`、`numGC`、`openFds`/`maxFds`。当 `numGoroutine` 超过 10000，或打开的 fd 达到 `RLIMIT_NOFILE` 的 80% 以上时为 WARN。仅作观测，不会 FAIL。 |
 
 每个检查返回 `pass`、`warn`、`fail`、`skip`（资源或信号不存在）之一。
 

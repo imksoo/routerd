@@ -44,6 +44,8 @@ Per-call options reuse the `diagnose` flag set: `--config`, `--state-file`,
 | `rollback` | At least one stored generation exists, so `routerctl rollback --to` is usable. |
 | `disk` | `/var/lib/routerd` and `/run/routerd` capacity; WARN at 90% or `<256 MiB`, FAIL at 98% or `<64 MiB`. |
 | `mgmt` | Management interface presence (best-effort from `ManagementAccess` or `FirewallZone role=mgmt`); WebConsole binding (FAIL/WARN on `0.0.0.0` / `::`). |
+| `reconcile` | Per-controller reconcile error history from the read-only status socket. `--since <duration>` bounds the window. WARN at ≥1 error in the window, FAIL at ≥10; up to 5 sample entries are shown in the detail. |
+| `runtime` | routerd's own heap / goroutine / fd footprint from the read-only status socket: `heapAlloc`, `heapObjects`, `numGoroutine`, `numGC`, `openFds`/`maxFds`. WARN when `numGoroutine` exceeds 10000 or open fds reach ≥80% of `RLIMIT_NOFILE`. Observational — never FAILs. |
 
 Each check returns one of `pass`, `warn`, `fail`, or `skip` (the resource
 or signal is not present on this router).
