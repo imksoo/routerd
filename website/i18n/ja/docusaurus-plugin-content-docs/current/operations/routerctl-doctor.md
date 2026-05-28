@@ -83,6 +83,23 @@ routerctl doctor -o yaml
 - `checks[].name` は人間可読。厳密な形にパターンマッチしないこと。
 - `detail` / `remedy` は任意のフリーフォーム文字列で、運用者向け。
 
+例えば `routerctl doctor runtime -o json` は、読み取り専用ステータス
+ソケットから routerd 自身のプロセス footprint を表示します:
+
+```jsonc
+{
+  "summary": { "overall": "pass", "pass": 1, "warn": 0, "fail": 0, "skip": 0 },
+  "checks": [
+    {
+      "area": "runtime",
+      "name": "process",
+      "status": "pass",
+      "detail": "heapAlloc=11.0MiB heapObjects=84213 numGoroutine=187 numGC=14 openFds=23/1024"
+    }
+  ]
+}
+```
+
 ## 終了コード
 
 - `0` — `fail` が 1 件も無い（`pass` / `warn` / `skip` は失敗扱いではない）。

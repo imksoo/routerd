@@ -36,34 +36,34 @@ type StatusStatus struct {
 }
 
 type ControllerStatus struct {
-	Name                  string                  `json:"name" yaml:"name"`
-	Mode                  string                  `json:"mode" yaml:"mode"`
-	Reason                ControllerModeReason    `json:"reason,omitempty" yaml:"reason,omitempty"`
-	Message               string                  `json:"message,omitempty" yaml:"message,omitempty"`
-	ResourceKinds         []string                `json:"resourceKinds,omitempty" yaml:"resourceKinds,omitempty"`
-	Interval              string                  `json:"interval,omitempty" yaml:"interval,omitempty"`
-	LastTrigger           string                  `json:"lastTrigger,omitempty" yaml:"lastTrigger,omitempty"`
-	LastReconcileTime     *time.Time              `json:"lastReconcileTime,omitempty" yaml:"lastReconcileTime,omitempty"`
-	LastSuccessTime       *time.Time              `json:"lastSuccessTime,omitempty" yaml:"lastSuccessTime,omitempty"`
-	LastReloadAt          *time.Time              `json:"lastReloadAt,omitempty" yaml:"lastReloadAt,omitempty"`
-	LastRestartAt         *time.Time              `json:"lastRestartAt,omitempty" yaml:"lastRestartAt,omitempty"`
-	LastChangeReason      string                  `json:"lastChangeReason,omitempty" yaml:"lastChangeReason,omitempty"`
-	NextReconcileTime     *time.Time              `json:"nextReconcileTime,omitempty" yaml:"nextReconcileTime,omitempty"`
-	ReconcileCount        int64                   `json:"reconcileCount,omitempty" yaml:"reconcileCount,omitempty"`
-	ReconcileErrorCount   int64                   `json:"reconcileErrorCount,omitempty" yaml:"reconcileErrorCount,omitempty"`
-	ConsecutiveErrorCount int64                   `json:"consecutiveErrorCount,omitempty" yaml:"consecutiveErrorCount,omitempty"`
-	CurrentError          bool                    `json:"currentError" yaml:"currentError"`
-	LastDuration          string                  `json:"lastDuration,omitempty" yaml:"lastDuration,omitempty"`
-	MaxDuration           string                  `json:"maxDuration,omitempty" yaml:"maxDuration,omitempty"`
-	MaxDurationAt         *time.Time              `json:"maxDurationAt,omitempty" yaml:"maxDurationAt,omitempty"`
-	AverageDuration       string                  `json:"averageDuration,omitempty" yaml:"averageDuration,omitempty"`
-	LastDurationMillis    float64                 `json:"lastDurationMillis,omitempty" yaml:"lastDurationMillis,omitempty"`
-	MaxDurationMillis     float64                 `json:"maxDurationMillis,omitempty" yaml:"maxDurationMillis,omitempty"`
-	AverageDurationMillis float64                 `json:"averageDurationMillis,omitempty" yaml:"averageDurationMillis,omitempty"`
-	LastError             string                  `json:"lastError,omitempty" yaml:"lastError,omitempty"`
-	LastErrorTime         *time.Time              `json:"lastErrorTime,omitempty" yaml:"lastErrorTime,omitempty"`
-	LastErrorClearedAt    *time.Time              `json:"lastErrorClearedAt,omitempty" yaml:"lastErrorClearedAt,omitempty"`
-	ReconcileErrorHistory []ReconcileErrorEntry   `json:"reconcileErrorHistory,omitempty" yaml:"reconcileErrorHistory,omitempty"`
+	Name                  string                `json:"name" yaml:"name"`
+	Mode                  string                `json:"mode" yaml:"mode"`
+	Reason                ControllerModeReason  `json:"reason,omitempty" yaml:"reason,omitempty"`
+	Message               string                `json:"message,omitempty" yaml:"message,omitempty"`
+	ResourceKinds         []string              `json:"resourceKinds,omitempty" yaml:"resourceKinds,omitempty"`
+	Interval              string                `json:"interval,omitempty" yaml:"interval,omitempty"`
+	LastTrigger           string                `json:"lastTrigger,omitempty" yaml:"lastTrigger,omitempty"`
+	LastReconcileTime     *time.Time            `json:"lastReconcileTime,omitempty" yaml:"lastReconcileTime,omitempty"`
+	LastSuccessTime       *time.Time            `json:"lastSuccessTime,omitempty" yaml:"lastSuccessTime,omitempty"`
+	LastReloadAt          *time.Time            `json:"lastReloadAt,omitempty" yaml:"lastReloadAt,omitempty"`
+	LastRestartAt         *time.Time            `json:"lastRestartAt,omitempty" yaml:"lastRestartAt,omitempty"`
+	LastChangeReason      string                `json:"lastChangeReason,omitempty" yaml:"lastChangeReason,omitempty"`
+	NextReconcileTime     *time.Time            `json:"nextReconcileTime,omitempty" yaml:"nextReconcileTime,omitempty"`
+	ReconcileCount        int64                 `json:"reconcileCount,omitempty" yaml:"reconcileCount,omitempty"`
+	ReconcileErrorCount   int64                 `json:"reconcileErrorCount,omitempty" yaml:"reconcileErrorCount,omitempty"`
+	ConsecutiveErrorCount int64                 `json:"consecutiveErrorCount,omitempty" yaml:"consecutiveErrorCount,omitempty"`
+	CurrentError          bool                  `json:"currentError" yaml:"currentError"`
+	LastDuration          string                `json:"lastDuration,omitempty" yaml:"lastDuration,omitempty"`
+	MaxDuration           string                `json:"maxDuration,omitempty" yaml:"maxDuration,omitempty"`
+	MaxDurationAt         *time.Time            `json:"maxDurationAt,omitempty" yaml:"maxDurationAt,omitempty"`
+	AverageDuration       string                `json:"averageDuration,omitempty" yaml:"averageDuration,omitempty"`
+	LastDurationMillis    float64               `json:"lastDurationMillis,omitempty" yaml:"lastDurationMillis,omitempty"`
+	MaxDurationMillis     float64               `json:"maxDurationMillis,omitempty" yaml:"maxDurationMillis,omitempty"`
+	AverageDurationMillis float64               `json:"averageDurationMillis,omitempty" yaml:"averageDurationMillis,omitempty"`
+	LastError             string                `json:"lastError,omitempty" yaml:"lastError,omitempty"`
+	LastErrorTime         *time.Time            `json:"lastErrorTime,omitempty" yaml:"lastErrorTime,omitempty"`
+	LastErrorClearedAt    *time.Time            `json:"lastErrorClearedAt,omitempty" yaml:"lastErrorClearedAt,omitempty"`
+	ReconcileErrorHistory []ReconcileErrorEntry `json:"reconcileErrorHistory,omitempty" yaml:"reconcileErrorHistory,omitempty"`
 }
 
 // ReconcileErrorEntry describes a single failed reconcile attempt. The history
@@ -195,8 +195,8 @@ type DNSQueries struct {
 
 type DNSQueriesAggregate struct {
 	TypeMeta  `json:",inline" yaml:",inline"`
-	Metadata  ObjectMeta                  `json:"metadata" yaml:"metadata"`
-	Aggregate logstore.DNSQueryAggregate  `json:"aggregate" yaml:"aggregate"`
+	Metadata  ObjectMeta                 `json:"metadata" yaml:"metadata"`
+	Aggregate logstore.DNSQueryAggregate `json:"aggregate" yaml:"aggregate"`
 }
 
 type TrafficFlowsRequest struct {
@@ -219,8 +219,8 @@ type TrafficFlows struct {
 
 type TrafficFlowsAggregate struct {
 	TypeMeta  `json:",inline" yaml:",inline"`
-	Metadata  ObjectMeta                     `json:"metadata" yaml:"metadata"`
-	Aggregate logstore.TrafficFlowAggregate  `json:"aggregate" yaml:"aggregate"`
+	Metadata  ObjectMeta                    `json:"metadata" yaml:"metadata"`
+	Aggregate logstore.TrafficFlowAggregate `json:"aggregate" yaml:"aggregate"`
 }
 
 type FirewallLogsRequest struct {
@@ -252,8 +252,12 @@ type RuntimeStats struct {
 	NumGC           uint32    `json:"numGC" yaml:"numGC"`
 	GCPauseTotalNs  uint64    `json:"gcPauseTotalNs" yaml:"gcPauseTotalNs"`
 	LastGC          time.Time `json:"lastGC,omitempty" yaml:"lastGC,omitempty"`
-	OpenFDs         int       `json:"openFds" yaml:"openFds"` // count of /proc/self/fd; 0 if unavailable
-	MaxFDs          uint64    `json:"maxFds" yaml:"maxFds"`   // RLIMIT_NOFILE soft; 0 if unavailable
+	// OpenFDs is a sample-time approximate count of open file descriptors from
+	// /proc/self/fd (the transient directory-read fd is excluded). It is 0 when
+	// the count is unavailable (e.g. non-Linux, /proc not mounted). Treat it as
+	// an indicator, not an exact accounting.
+	OpenFDs int    `json:"openFds" yaml:"openFds"`
+	MaxFDs  uint64 `json:"maxFds" yaml:"maxFds"` // RLIMIT_NOFILE soft; 0 if unavailable
 }
 
 type Error struct {

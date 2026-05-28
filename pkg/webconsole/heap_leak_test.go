@@ -5,6 +5,7 @@ package webconsole
 import (
 	"context"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -186,6 +187,42 @@ func TestReverseDNSLookupManyBoundsGoroutines(t *testing.T) {
 		if got := out[addr]; got != want {
 			t.Fatalf("out[%s] = %q, want %q", addr, got, want)
 		}
+	}
+}
+
+// TestReverseDNSLookupManyCapsPending asserts that a single lookupMany call
+// resolves at most reverseDNSPendingMax addresses, independent of how many the
+// caller passes in. The lookup func records the distinct addresses it actually
+// sees; that count must not exceed the local cap even when far more addresses
+// are pending.
+func TestReverseDNSLookupManyCapsPending(t *testing.T) {
+	c := newReverseDNSCache(time.Hour)
+
+	const pendingCount = 1200
+	if pendingCount <= reverseDNSPendingMax {
+		t.Fatalf("test setup: pendingCount %d must exceed reverseDNSPendingMax %d", pendingCount, reverseDNSPendingMax)
+	}
+	pending := make([]string, 0, pendingCount)
+	for i := 0; i < pendingCount; i++ {
+		pending = append(pending, encodeIPv4Address(uint32(i)))
+	}
+
+	var mu sync.Mutex
+	seen := map[string]struct{}{}
+	lookup := func(ctx context.Context, address string) ([]string, error) {
+		mu.Lock()
+		seen[address] = struct{}{}
+		mu.Unlock()
+		return []string{"resolved-" + address + "."}, nil
+	}
+
+	_ = c.lookupMany(context.Background(), pending, lookup)
+
+	mu.Lock()
+	got := len(seen)
+	mu.Unlock()
+	if got > reverseDNSPendingMax {
+		t.Fatalf("lookup saw %d distinct addresses, want <= %d", got, reverseDNSPendingMax)
 	}
 }
 

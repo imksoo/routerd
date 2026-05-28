@@ -86,6 +86,23 @@ Field guarantees:
 - `checks[].name` is human-readable; do not pattern-match on its exact form.
 - `detail` and `remedy` are optional, free-form text intended for operators.
 
+For example, `routerctl doctor runtime -o json` surfaces routerd's own
+process footprint from the read-only status socket:
+
+```jsonc
+{
+  "summary": { "overall": "pass", "pass": 1, "warn": 0, "fail": 0, "skip": 0 },
+  "checks": [
+    {
+      "area": "runtime",
+      "name": "process",
+      "status": "pass",
+      "detail": "heapAlloc=11.0MiB heapObjects=84213 numGoroutine=187 numGC=14 openFds=23/1024"
+    }
+  ]
+}
+```
+
 ## Exit code
 
 - `0` — no `fail` checks (`pass`, `warn`, and `skip` are all considered non-failure for exit purposes).

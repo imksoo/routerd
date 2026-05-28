@@ -59,7 +59,11 @@ type Options struct {
 	ControllerModes        []controlapi.ControllerStatus
 	ControllerStatuses     func() []controlapi.ControllerStatus
 	Bus                    *bus.Bus
-	ReverseLookup          func(ctx context.Context, address string) ([]string, error)
+	// ReverseLookup resolves an address to names. Implementations MUST honor
+	// ctx cancellation / deadline: lookupMany runs these in a bounded worker
+	// pool and waits for every dispatched lookup to return, so a lookup that
+	// ignores ctx can stall the pool's drain.
+	ReverseLookup func(ctx context.Context, address string) ([]string, error)
 }
 
 type Handler struct {
@@ -3817,6 +3821,13 @@ const reverseDNSCacheMaxEntries = 4096
 // preserving the same effective in-flight concurrency.
 const reverseDNSLookupConcurrency = 8
 
+// reverseDNSPendingMax bounds how many addresses a single lookupMany call
+// will resolve, independent of the caller's own limit. Summary callers
+// already cap query rows at 1000; this keeps the bound local to the cache
+// utility. Excess addresses are simply not resolved this call and get
+// picked up on a subsequent lookup once earlier results are cached.
+const reverseDNSPendingMax = 1000
+
 type reverseDNSCache struct {
 	mu      sync.Mutex
 	ttl     time.Duration
@@ -3879,6 +3890,11 @@ func (c *reverseDNSCache) lookupMany(ctx context.Context, addresses []string, lo
 	c.mu.Unlock()
 	if len(pending) == 0 || lookup == nil {
 		return out
+	}
+	// Cap the work this call does, independent of the caller's own limit.
+	// Excess addresses stay unresolved this call and are picked up next time.
+	if len(pending) > reverseDNSPendingMax {
+		pending = pending[:reverseDNSPendingMax]
 	}
 	type result struct {
 		address string

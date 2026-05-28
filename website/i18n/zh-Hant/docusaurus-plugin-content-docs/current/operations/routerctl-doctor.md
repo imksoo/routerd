@@ -82,6 +82,23 @@ routerctl doctor -o yaml
 - `checks[].name` 為人類可讀，請勿對其精確形式做樣式比對。
 - `detail` / `remedy` 為可選的自由文字，面向維運人員。
 
+例如 `routerctl doctor runtime -o json` 會從唯讀狀態 socket 顯示 routerd
+自身的程序 footprint：
+
+```jsonc
+{
+  "summary": { "overall": "pass", "pass": 1, "warn": 0, "fail": 0, "skip": 0 },
+  "checks": [
+    {
+      "area": "runtime",
+      "name": "process",
+      "status": "pass",
+      "detail": "heapAlloc=11.0MiB heapObjects=84213 numGoroutine=187 numGC=14 openFds=23/1024"
+    }
+  ]
+}
+```
+
 ## 結束碼
 
 - `0` — 沒有 `fail` 檢查（`pass`、`warn`、`skip` 都不視為失敗）。
