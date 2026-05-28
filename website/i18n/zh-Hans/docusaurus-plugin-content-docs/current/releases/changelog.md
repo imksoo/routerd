@@ -11,6 +11,33 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 新增
+
+- `routerctl doctor runtime`：新增 doctor area，从新的只读 control-API
+  `/runtime` 端点报告 routerd 自身的进程 footprint（heap、goroutine 数、
+  GC、open / max 文件描述符）。当 `numGoroutine` 超过 10000，或 open fd
+  达到 `RLIMIT_NOFILE` 的 80% 以上时为 WARN；仅作观测，不会 FAIL。该
+  端点同时接入 control socket 与免 sudo 的只读状态 socket，并已记录
+  `routerctl doctor runtime -o json` 的形态。
+
+### 变更
+
+- Web Console 的 Firewall「Deny activity」图表由无标签的裸 sparkline
+  改为带轴标签的柱状图。24h 内每个 5 分钟桶一根柱，配纵轴（顶部为
+  peak，底部 baseline 为 0，「越高表示拒绝越多」）、横轴（「24h ago」→
+  「now」）、可访问的 `role="img"` 标签，以及拒绝为 0 时的「No denies
+  in the last 24 hours」空状态。
+
+### 修复
+
+- `reverseDNSCache.lookupMany` 不再为每个 pending 地址各起一个 goroutine。
+  固定大小的 worker pool（`reverseDNSLookupConcurrency = 8`）使 goroutine
+  数与单次 `/api/v1/summary` 解析的地址数无关而被上限化；并新增
+  `reverseDNSPendingMax = 1000`，不依赖调用方 limit 即对单次处理量上限
+  （超出部分在后续调用解析）。`Options.ReverseLookup` 的 contract 现已
+  注明实现必须尊重 ctx cancellation，`RuntimeStats.OpenFDs` 也注释为
+  sample-time 的近似计数。
+
 ## v20260528.1805
 
 ### 修复

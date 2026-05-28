@@ -12,6 +12,35 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Added
+
+- `routerctl doctor runtime`: a new doctor area that reports routerd's own
+  process footprint (heap, goroutine count, GC, open / max file
+  descriptors) from a new read-only control-API `/runtime` endpoint. WARN
+  when `numGoroutine` exceeds 10000 or open fds reach ≥80% of
+  `RLIMIT_NOFILE`; observational, never FAILs. The endpoint is wired into
+  both the control socket and the no-sudo read-only status socket, and the
+  `routerctl doctor runtime -o json` shape is documented.
+
+### Changed
+
+- The Web Console Firewall "Deny activity" chart is now an explicit
+  labeled bar chart instead of a bare unlabeled sparkline. One bar per
+  5-minute bucket over 24h, with a Y axis (peak at top, 0 at the baseline,
+  "taller = more denies"), an X axis ("24h ago" → "now"), an accessible
+  `role="img"` label, and a "No denies in the last 24 hours" empty state.
+
+### Fixed
+
+- `reverseDNSCache.lookupMany` no longer spawns one goroutine per pending
+  address. A fixed-size worker pool (`reverseDNSLookupConcurrency = 8`)
+  bounds the goroutine count regardless of how many addresses a single
+  `/api/v1/summary` resolves, and a new `reverseDNSPendingMax = 1000` caps
+  the per-call work independent of the caller's own limit (excess addresses
+  resolve on a later call). The `Options.ReverseLookup` contract now
+  documents that implementations must honor ctx cancellation, and
+  `RuntimeStats.OpenFDs` is documented as a sample-time approximate count.
+
 ## v20260528.1805
 
 ### Fixed

@@ -11,6 +11,38 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 追加
+
+- `routerctl doctor runtime`: routerd 自身のプロセス footprint（heap、
+  goroutine 数、GC、open / max ファイル記述子）を、新しい読み取り専用
+  control-API `/runtime` エンドポイントから報告する doctor area を追加
+  しました。`numGoroutine` が 10000 超、または open fd が
+  `RLIMIT_NOFILE` の 80% 以上で WARN。観測用で FAIL にはなりません。
+  エンドポイントは control socket と sudo 不要の読み取り専用ステータス
+  ソケットの両方に配線され、`routerctl doctor runtime -o json` の形も
+  ドキュメント化しています。
+
+### 変更
+
+- Web Console の Firewall「Deny activity」グラフを、ラベルの無い素の
+  sparkline から、軸ラベル付きの棒グラフに変更しました。24h を 5 分
+  バケットごとに 1 本の棒で表し、縦軸（上端に peak、下端の baseline が
+  0、「高いほど拒否が多い」）、横軸（「24h ago」→「now」）、
+  アクセシブルな `role="img"` ラベル、拒否ゼロ時の「No denies in the
+  last 24 hours」空状態を備えます。
+
+### 修正
+
+- `reverseDNSCache.lookupMany` が pending アドレスごとに goroutine を
+  起動しなくなりました。固定サイズの worker pool
+  (`reverseDNSLookupConcurrency = 8`) により、1 回の `/api/v1/summary`
+  が解決するアドレス数に関係なく goroutine 数が上限化され、さらに
+  新規 `reverseDNSPendingMax = 1000` が呼び出し側の limit に依存せず
+  1 回あたりの処理件数を上限化します（超過分は次回以降に解決）。
+  `Options.ReverseLookup` の contract に「実装は ctx cancellation を
+  honor する必要がある」を明記し、`RuntimeStats.OpenFDs` は
+  sample-time の近似カウントであることをコメント化しました。
+
 ## v20260528.1805
 
 ### 修正
