@@ -4,6 +4,8 @@ package webconsole
 
 import (
 	"context"
+	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -133,6 +135,57 @@ func TestReverseDNSCacheLookupManyEnforcesCapAfterStore(t *testing.T) {
 	c.mu.Unlock()
 	if got > reverseDNSCacheMaxEntries {
 		t.Fatalf("after lookupMany: cache size = %d, want <= %d", got, reverseDNSCacheMaxEntries)
+	}
+}
+
+// TestReverseDNSLookupManyBoundsGoroutines asserts that lookupMany resolves
+// every pending address while never running more than
+// reverseDNSLookupConcurrency lookups concurrently — i.e. the goroutine /
+// in-flight count is flat regardless of len(pending). Counting goroutines via
+// runtime.NumGoroutine() is flaky, so instead the lookup func records the peak
+// number of simultaneously in-flight calls with atomics, which directly proves
+// the concurrency bound that matters.
+func TestReverseDNSLookupManyBoundsGoroutines(t *testing.T) {
+	c := newReverseDNSCache(time.Hour)
+
+	const pendingCount = 500
+	pending := make([]string, 0, pendingCount)
+	for i := 0; i < pendingCount; i++ {
+		pending = append(pending, encodeIPv4Address(uint32(i)))
+	}
+
+	var inFlight int64
+	var maxInFlight int64
+	lookup := func(ctx context.Context, address string) ([]string, error) {
+		cur := atomic.AddInt64(&inFlight, 1)
+		// Track the high-water mark of concurrent calls.
+		for {
+			prev := atomic.LoadInt64(&maxInFlight)
+			if cur <= prev || atomic.CompareAndSwapInt64(&maxInFlight, prev, cur) {
+				break
+			}
+		}
+		// Hold the slot briefly so many addresses pile up behind the pool,
+		// forcing real contention without making the test slow.
+		time.Sleep(time.Millisecond)
+		atomic.AddInt64(&inFlight, -1)
+		return []string{"resolved-" + address + "."}, nil
+	}
+
+	out := c.lookupMany(context.Background(), pending, lookup)
+
+	if peak := atomic.LoadInt64(&maxInFlight); peak > reverseDNSLookupConcurrency {
+		t.Fatalf("max in-flight lookups = %d, want <= %d", peak, reverseDNSLookupConcurrency)
+	}
+	if got := len(out); got != pendingCount {
+		t.Fatalf("resolved %d addresses, want %d", got, pendingCount)
+	}
+	for i := 0; i < pendingCount; i++ {
+		addr := encodeIPv4Address(uint32(i))
+		want := fmt.Sprintf("resolved-%s", addr)
+		if got := out[addr]; got != want {
+			t.Fatalf("out[%s] = %q, want %q", addr, got, want)
+		}
 	}
 }
 

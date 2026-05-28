@@ -3809,6 +3809,14 @@ func shouldReverseLookup(address string) bool {
 // set while keeping the heap bounded.
 const reverseDNSCacheMaxEntries = 4096
 
+// reverseDNSLookupConcurrency bounds the number of worker goroutines a single
+// lookupMany call spawns. Without this bound, lookupMany spawned one goroutine
+// per pending address: a /api/v1/summary request capped at 1000 rows could
+// produce ~1000 goroutines (mostly blocked on a semaphore). A fixed-size
+// worker pool keeps the goroutine count flat regardless of len(pending) while
+// preserving the same effective in-flight concurrency.
+const reverseDNSLookupConcurrency = 8
+
 type reverseDNSCache struct {
 	mu      sync.Mutex
 	ttl     time.Duration
@@ -3876,28 +3884,50 @@ func (c *reverseDNSCache) lookupMany(ctx context.Context, addresses []string, lo
 		address string
 		name    string
 	}
-	sem := make(chan struct{}, 8)
+	// Bound the goroutine count with a fixed-size worker pool. Each worker
+	// pulls addresses from jobs, resolves them, and reports on results. The
+	// total goroutines spawned per call is reverseDNSLookupConcurrency (capped
+	// further when len(pending) is smaller) plus the feeder and the closer,
+	// independent of len(pending).
+	jobs := make(chan string)
 	results := make(chan result, len(pending))
+	workers := reverseDNSLookupConcurrency
+	if len(pending) < workers {
+		workers = len(pending)
+	}
 	var wg sync.WaitGroup
-	for _, address := range pending {
-		address := address
+	for w := 0; w < workers; w++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			for address := range jobs {
+				select {
+				case <-ctx.Done():
+					results <- result{address: address}
+					continue
+				default:
+				}
+				names, err := lookup(ctx, address)
+				if err != nil {
+					results <- result{address: address}
+					continue
+				}
+				results <- result{address: address, name: normalizeReverseDNSName(names)}
+			}
+		}()
+	}
+	// Feeder: queue every pending address, stopping early if ctx is cancelled.
+	// Addresses left unqueued on cancellation simply get retried next call.
+	go func() {
+		defer close(jobs)
+		for _, address := range pending {
 			select {
-			case sem <- struct{}{}:
-				defer func() { <-sem }()
+			case jobs <- address:
 			case <-ctx.Done():
 				return
 			}
-			names, err := lookup(ctx, address)
-			if err != nil {
-				results <- result{address: address}
-				return
-			}
-			results <- result{address: address, name: normalizeReverseDNSName(names)}
-		}()
-	}
+		}
+	}()
 	go func() {
 		wg.Wait()
 		close(results)
