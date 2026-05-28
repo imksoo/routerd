@@ -1993,6 +1993,42 @@ const useStyles = makeStyles({
     display: "grid",
     gap: "8px",
   },
+  denyChart: {
+    display: "grid",
+    gap: "6px",
+  },
+  denyChartPlot: {
+    display: "grid",
+    gridTemplateColumns: "max-content minmax(0, 1fr)",
+    columnGap: "8px",
+  },
+  denyChartYAxis: {
+    display: "flex",
+    flexDirection: "column",
+    justifyContent: "space-between",
+    alignItems: "flex-end",
+    height: "120px",
+    fontSize: "11px",
+    lineHeight: "1",
+    color: tokens.colorNeutralForeground3,
+    fontVariantNumeric: "tabular-nums",
+  },
+  denyChartSvg: {
+    width: "100%",
+    height: "120px",
+    display: "block",
+  },
+  denyChartXAxis: {
+    display: "flex",
+    justifyContent: "space-between",
+    fontSize: "11px",
+    color: tokens.colorNeutralForeground3,
+  },
+  denyChartCaption: {
+    textAlign: "center",
+    fontSize: "11px",
+    color: tokens.colorNeutralForeground3,
+  },
   firewallTopN: {
     display: "grid",
     gap: "8px",
@@ -5702,12 +5738,63 @@ function RecentDeny({
 function DenyRateChart({ timeline }: { timeline: FirewallDenyTimelineBucket[] }) {
   const styles = useStyles();
   const samples = denyTimelineSamples(timeline);
-  const max = Math.max(0, ...samples);
-  const total = samples.reduce((sum, value) => sum + value, 0);
+  const peak = denyTimelinePeak(timeline);
+  const total = denyTimelineTotal(timeline);
+
+  if (peak <= 0) {
+    return (
+      <div className={styles.firewallChartWrap}>
+        <Text size={200} className={styles.muted}>No denies in the last 24 hours</Text>
+      </div>
+    );
+  }
+
+  // SVG drawing space: 100 wide x 100 tall, plus a small top margin so the
+  // peak gridline reads cleanly. Bars grow upward (taller = more denies).
+  const topMargin = 4;
+  const baseline = 100;
+  const plotHeight = baseline - topMargin;
+  const nBuckets = Math.max(1, samples.length);
+  const slot = 100 / nBuckets;
+  // Tiny gap between bars when wide enough; with ~288 buckets bars are thin,
+  // so collapse the gap to keep them visible.
+  const gap = slot > 1 ? Math.min(0.3, slot * 0.15) : 0;
+  const barWidth = Math.max(0.05, slot - gap);
+
   return (
     <div className={styles.firewallChartWrap}>
-      <Sparkline samples={samples} color="#ff8a80" />
-      <Text size={200} className={styles.muted}>{total} denies / peak {max} per 5 min bucket</Text>
+      <div className={styles.denyChart}>
+        <div className={styles.denyChartPlot}>
+          <div className={styles.denyChartYAxis} aria-hidden="true">
+            <span>{peak}</span>
+            <span>0</span>
+          </div>
+          <svg
+            className={styles.denyChartSvg}
+            viewBox="0 0 100 100"
+            preserveAspectRatio="none"
+            role="img"
+            aria-label={`Firewall deny counts per 5-minute bucket over the last 24 hours; taller bars mean more denies; peak ${peak} per bucket, ${total} total`}
+          >
+            {/* faint peak gridline (top) */}
+            <line x1="0" y1={topMargin} x2="100" y2={topMargin} stroke="#ff8a80" strokeOpacity="0.25" strokeWidth="0.4" vectorEffect="non-scaling-stroke" />
+            {/* faint baseline (bottom = 0 denies) */}
+            <line x1="0" y1={baseline} x2="100" y2={baseline} stroke="currentColor" strokeOpacity="0.35" strokeWidth="0.6" vectorEffect="non-scaling-stroke" />
+            {samples.map((value, index) => {
+              const height = peak > 0 ? (value / peak) * plotHeight : 0;
+              const x = index * slot;
+              const y = baseline - height;
+              return <rect key={index} x={x} y={y} width={barWidth} height={height} fill="#ff8a80" />;
+            })}
+          </svg>
+        </div>
+        <div className={styles.denyChartXAxis} aria-hidden="true">
+          <span>24h ago</span>
+          <span>now</span>
+        </div>
+        <Text className={styles.denyChartCaption}>denies / 5-min bucket (taller = more)</Text>
+      </div>
+      <Text size={200} className={styles.muted}>{total} denies over 24h · peak {peak} / 5-min bucket</Text>
     </div>
   );
 }
