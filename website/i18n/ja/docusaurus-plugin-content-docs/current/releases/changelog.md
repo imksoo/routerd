@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260528.2308
+
 ### 追加
 
 - `routerctl doctor runtime`: routerd 自身のプロセス footprint（heap、

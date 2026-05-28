@@ -11,6 +11,8 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260528.2308
+
 ### 新增
 
 - `routerctl doctor runtime`：新增 doctor area，從新的唯讀 control-API

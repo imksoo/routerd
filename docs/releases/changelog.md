@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260528.2308
+
 ### Added
 
 - `routerctl doctor runtime`: a new doctor area that reports routerd's own
