@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260528.1805
+
 ### 修正
 
 - `reverseDNSCache.lookupMany` が、新規解決エントリを store した後に

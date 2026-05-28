@@ -11,6 +11,8 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260528.1805
+
 ### 修正
 
 - `reverseDNSCache.lookupMany` 現在會在存入新解析項目後再次執行
