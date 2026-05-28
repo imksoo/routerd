@@ -12,22 +12,37 @@ routerd ships frequently using the `vYYYYMMDD.HHmm` scheme. From those builds we
 
 | Item | Value |
 | --- | --- |
-| Version | **v20260528.0402** |
-| Status | Recommended stable release (supersedes v20260526.2335; closes two production-critical fd leaks and adds operator-facing observability) |
-| Track record | Production-validated on a home router (homert02). After the apply, routerd's full file-descriptor footprint stayed completely flat across a four-sample / 16-minute window (all_fd=24, sockets=16, SQLite ledger family=4 at every sample) while BGP held 2/2 Established, `routerctl doctor dslite` returned pass=12 / warn=0, and the new `routerctl doctor reconcile` area returned pass=1 / warn=0 with the controller-error history machinery live. Earlier in the same series, v20260526.2335's residual fd growth (300 SQLite handles before #39, then +20/5min on Unix sockets before #40) was hunted down to two distinct root causes and fixed in three iterative releases — the resulting flat fd is the strongest production health signal the project has shipped to date |
-| Binary | Statically linked (`CGO_ENABLED=0`), passes CI and the Release workflow |
+| Version | **v20260528.1805** |
+| Status | Recommended stable release (supersedes v20260528.0402; adds the heap-leak fixes that complete the fd-leak work, validated by a 2-hour production soak) |
+| Track record | Production-validated on a home router (homert02) with both fd and heap held bounded. fd stayed completely flat across a 2-hour / 24-sample soak (all_fd=24, sockets=16, SQLite ledger family=4 at every sample, NRestarts=0, PID unchanged). `RssAnon` (true heap, excluding page cache) warmed up from ~70 MB to a ~104 MB steady-state band over the first hour and then plateaued for the second hour, oscillating 96–107 MB with clear GC reclaim dips — the signature of a bounded working set, not a leak. BGP held 2/2 Established, `routerctl doctor dslite` returned pass=12 / warn=0, and `routerctl doctor reconcile` returned pass=1 / warn=0. Across the v20260528 series, three distinct fd-leak root causes (#39 SQLite ledger, #40 control/status socket keep-alive, #40 BGP gobgp client) and two heap-growth sources (per-request OTel instrument churn, unbounded reverse-DNS cache) were each hunted down and fixed |
 | Binary | Statically linked (`CGO_ENABLED=0`), passes CI and the Release workflow |
 
-## Why v20260528.0402 is recommended
+## Why v20260528.1805 is recommended
 
 The recommendation is **operational maturity, not feature scope.**
-v20260528.0402 inherits every production-safe property of v20260526.2335
-(the previous stable's BGP idempotent reconcile, doctor dslite alignment,
-Gateway Health dedicated screen, install.sh fail-fast, secret redaction,
+v20260528.1805 inherits every production-safe property of v20260528.0402
+(the fd-leak fixes #39 / #40, the #36 / #37 / #38 observability contracts,
+BGP idempotent reconcile, doctor dslite alignment, Gateway Health
+dedicated screen, install.sh fail-fast, secret redaction,
 ManagementAccess apply guard, machine-readable `routerctl doctor`, the
-recommended-stable display consistency guard) and adds two
-production-critical fd-leak fixes plus three operator-facing observability
-contracts:
+recommended-stable display consistency guard) and adds the heap-leak
+fixes that close out the long-running resource-leak investigation:
+
+- **`/api/v1/summary` polling no longer grows the heap unbounded.**
+  `recordConsoleMetrics` used to re-create seven OpenTelemetry gauges on
+  every request; they are now built once via a `sync.Once` singleton
+  (`getConsoleMetrics`). The `reverseDNSCache` only used its TTL to
+  decide re-lookup, never pruning expired entries or capping size, so
+  every distinct remote address seen in firewall logs / the connection
+  table / traffic flows became a permanent map entry; it now prunes
+  expired entries and enforces a 4096-entry hard cap on both call entry
+  and call exit. A 2-hour homert02 soak confirmed `RssAnon` plateaus
+  rather than climbing. These complete the v20260528.0402 fd-leak work
+  with the matching heap-side fixes.
+
+The two production-critical fd-leak fixes and three observability
+contracts carried forward from v20260528.0402 and re-verified on
+homert02 v20260528.1805:
 
 - **routerd serve no longer leaks SQLite ledger fds.** `resource.LoadLedger`
   used to open a fresh `*sql.DB` against `/var/lib/routerd/routerd.db` on

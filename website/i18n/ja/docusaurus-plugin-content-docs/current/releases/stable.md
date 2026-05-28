@@ -12,20 +12,36 @@ routerd は `vYYYYMMDD.HHmm` 形式で頻繁にリリースしますが、その
 
 | 項目 | 内容 |
 | --- | --- |
-| バージョン | **v20260528.0402** |
-| 位置づけ | 推奨安定版（v20260526.2335 を置き換え。本番影響のある fd 漏洩を 2 件解消し、運用者向けの観測性を 3 件追加） |
-| 稼働実績 | 本番ルーター（homert02）で検証済みです。適用後、routerd プロセス全体のファイル記述子は 16 分間 / 4 サンプルにわたり完全に flat（all_fd=24、sockets=16、SQLite ledger 系=4 が毎サンプル不変）で、BGP は 2/2 Established を維持、`routerctl doctor dslite` は pass=12 / warn=0、新規 `routerctl doctor reconcile` も pass=1 / warn=0 を返し、controller error history の機構が本番で稼働していることが確認できました。同一系列の v20260526.2335 で残存していた fd 増加（#39 修正前は SQLite が 300 まで蓄積、#40 修正前は Unix socket が +20/5分 で増加）の根本原因は 2 つに分けて 3 段階のリリースで解消されました。本リリースで観測される flat な fd は、本プロジェクトがこれまでに出荷したなかで最も強い本番健全性のシグナルです |
+| バージョン | **v20260528.1805** |
+| 位置づけ | 推奨安定版（v20260528.0402 を置き換え。fd 漏洩対応を完結させる heap 漏洩修正を追加し、2 時間の本番 soak で検証済み） |
+| 稼働実績 | 本番ルーター（homert02）で fd・heap ともに bounded であることを検証済みです。fd は 2 時間 / 24 サンプルの soak で完全に flat（all_fd=24、sockets=16、SQLite ledger 系=4 が毎サンプル不変、NRestarts=0、PID 不変）。`RssAnon`（page cache を除く実 heap）は 1 時間目に ~70 MB から ~104 MB の定常帯まで warm-up した後、2 時間目は 96〜107 MB で振動し plateau しました。GC reclaim の明確な dip を伴っており、これは leak ではなく bounded な working set の特徴です。BGP は 2/2 Established を維持、`routerctl doctor dslite` は pass=12 / warn=0、`routerctl doctor reconcile` は pass=1 / warn=0。v20260528 系列を通じて、3 つの fd 漏洩根本原因（#39 SQLite ledger、#40 control/status socket の keep-alive、#40 BGP gobgp client）と 2 つの heap 増加源（リクエストごとの OTel instrument 再生成、無制限の reverse DNS cache）をそれぞれ突き止めて解消しました |
 | バイナリ | 静的リンク（`CGO_ENABLED=0`）、CI と Release ワークフローをすべて通過 |
 
-## v20260528.0402 を推奨する理由
+## v20260528.1805 を推奨する理由
 
-推奨の理由は**新機能の追加ではなく運用上の成熟**です。v20260528.0402 は
-v20260526.2335 の本番安全特性（BGP の idempotent reconcile、doctor
-dslite の selectedSource 整合、Gateway Health の独立画面化、`install.sh`
-の即時失敗、シークレット伏字化、`ManagementAccess` 適用ガード、機械
-可読な `routerctl doctor`、推奨安定版表示の整合 CI ガード）をすべて
-受け継ぎ、その上に本番影響のある fd 漏洩修正 2 件と運用者向けの観測性
-契約 3 件を追加しています。
+推奨の理由は**新機能の追加ではなく運用上の成熟**です。v20260528.1805 は
+v20260528.0402 の本番安全特性（fd 漏洩修正 #39 / #40、#36 / #37 / #38 の
+観測性契約、BGP の idempotent reconcile、doctor dslite の selectedSource
+整合、Gateway Health の独立画面化、`install.sh` の即時失敗、シークレット
+伏字化、`ManagementAccess` 適用ガード、機械可読な `routerctl doctor`、
+推奨安定版表示の整合 CI ガード）をすべて受け継ぎ、長期にわたった
+リソース漏洩調査を締めくくる heap 漏洩修正を追加しています。
+
+- **`/api/v1/summary` の polling で heap が無制限に増えなくなりました。**
+  `recordConsoleMetrics` は従来リクエストごとに 7 つの OpenTelemetry
+  ゲージを作り直していましたが、`sync.Once` シングルトン
+  (`getConsoleMetrics`) で一度だけ生成するようにしました。
+  `reverseDNSCache` は TTL を再ルックアップ判定にしか使っておらず、
+  期限切れエントリの削除もサイズ上限もなかったため、ファイアウォール
+  ログ / コネクション表 / 通信フローに現れた個別の宛先アドレスが
+  すべて永久エントリになっていました。現在は期限切れを削除し、
+  4096 件のハード上限を呼び出しの入口と出口の両方で適用します。
+  homert02 の 2 時間 soak で `RssAnon` が単調増加せず plateau する
+  ことを確認しました。これらは v20260528.0402 の fd 漏洩対応に
+  対応する heap 側の修正として、調査を完結させるものです。
+
+v20260528.0402 から受け継ぎ、homert02 v20260528.1805 でも再検証された
+本番影響のある fd 漏洩修正 2 件と観測性契約 3 件:
 
 - **routerd serve が SQLite ledger の fd を漏らさなくなりました。**
   これまで `resource.LoadLedger` は呼び出しごとに
