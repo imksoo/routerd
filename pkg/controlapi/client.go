@@ -59,6 +59,18 @@ func (c *Client) Status(ctx context.Context) (*Status, error) {
 	return &status, nil
 }
 
+func (c *Client) Runtime(ctx context.Context) (*RuntimeStats, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+Prefix+"/runtime", nil)
+	if err != nil {
+		return nil, err
+	}
+	var stats RuntimeStats
+	if err := c.do(req, &stats); err != nil {
+		return nil, err
+	}
+	return &stats, nil
+}
+
 func (c *Client) Controllers(ctx context.Context) (*Controllers, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+Prefix+"/controllers", nil)
 	if err != nil {

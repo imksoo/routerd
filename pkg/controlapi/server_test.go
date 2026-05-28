@@ -132,6 +132,45 @@ func TestSetLogLevelHandlerRejectsAPIVersion(t *testing.T) {
 	}
 }
 
+func TestRuntimeHandler(t *testing.T) {
+	handler := Handler{
+		Runtime: func(r *http.Request) (*RuntimeStats, error) {
+			stats := NewRuntimeStats()
+			stats.HeapAllocBytes = 9 * 1024 * 1024
+			stats.NumGoroutine = 33
+			stats.OpenFDs = 12
+			stats.MaxFDs = 1024
+			return &stats, nil
+		},
+	}
+	req := httptest.NewRequest(http.MethodGet, Prefix+"/runtime", nil)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status code = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `"kind": "RuntimeStats"`) {
+		t.Fatalf("body missing RuntimeStats kind: %s", body)
+	}
+	if !strings.Contains(body, `"numGoroutine": 33`) || !strings.Contains(body, `"openFds": 12`) {
+		t.Fatalf("body missing runtime fields: %s", body)
+	}
+}
+
+func TestRuntimeHandlerNotConfigured(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, Prefix+"/runtime", nil)
+	rec := httptest.NewRecorder()
+
+	Handler{}.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotImplemented {
+		t.Fatalf("status code = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestSetLogLevelHandlerNotConfigured(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, Prefix+"/log-level", strings.NewReader(`{"apiVersion":"control.routerd.net/v1alpha1","kind":"LogLevelRequest","level":"debug"}`))
 	rec := httptest.NewRecorder()

@@ -54,7 +54,7 @@ type doctorRunner struct {
 	store  routerstate.Store
 }
 
-var doctorAreas = []string{"wan", "dns", "dslite", "dhcpv6-pd", "nat", "firewall", "rollback", "disk", "mgmt", "reconcile"}
+var doctorAreas = []string{"wan", "dns", "dslite", "dhcpv6-pd", "nat", "firewall", "rollback", "disk", "mgmt", "reconcile", "runtime"}
 
 // doctorReconcileWarnThreshold and doctorReconcileFailThreshold are total error
 // counts (across all controllers) that promote the reconcile area to warn/fail.
@@ -65,6 +65,21 @@ const (
 
 // reconcileStatusFetcher allows tests to stub the controllers fetch.
 var reconcileStatusFetcher = fetchReconcileControllers
+
+// runtimeStatsFetcher allows tests to stub the runtime-stats fetch.
+var runtimeStatsFetcher = fetchRuntimeStats
+
+// doctorRuntimeGoroutineWarn and doctorRuntimeFDWarnPercent are conservative,
+// observational thresholds. They never fail the run; they only flag footprints
+// worth a closer look during a resource-leak investigation.
+const (
+	// 10000 goroutines is far above routerd's steady-state (a few hundred); a
+	// count this high usually signals a leak (e.g. blocked-forever goroutines).
+	doctorRuntimeGoroutineWarn = 10000
+	// 80% of RLIMIT_NOFILE leaves little headroom before accept()/open() start
+	// failing with EMFILE.
+	doctorRuntimeFDWarnPercent = 80
+)
 
 func doctorCommand(args []string, stdout, stderr io.Writer) error {
 	opts, err := parseDiagnoseOptions("doctor", args, stdout)
@@ -132,6 +147,8 @@ func (r doctorRunner) runArea(area string) []doctorCheck {
 		return r.doctorMgmt()
 	case "reconcile":
 		return r.doctorReconcile()
+	case "runtime":
+		return r.doctorRuntime()
 	default:
 		return []doctorCheck{{Area: area, Name: "area", Status: doctorSkip, Detail: "unknown area"}}
 	}
@@ -223,6 +240,52 @@ func fetchReconcileControllers(socketPath string, timeout time.Duration) ([]cont
 		return nil, nil
 	}
 	return status.Status.Controllers, nil
+}
+
+// doctorRuntime reports routerd's own process footprint (heap, goroutines, fds)
+// from the read-only status socket. It is purely observational: success emits an
+// informational pass with the footprint summary, and unusual footprints are
+// downgraded to warn. It never fails the run.
+func (r doctorRunner) doctorRuntime() []doctorCheck {
+	stats, err := runtimeStatsFetcher(r.opts.Socket, r.opts.Timeout)
+	if err != nil {
+		return []doctorCheck{{Area: "runtime", Name: "process", Status: doctorSkip, Detail: "routerd status socket unavailable: " + err.Error()}}
+	}
+	if stats == nil {
+		return []doctorCheck{{Area: "runtime", Name: "process", Status: doctorSkip, Detail: "no runtime stats reported"}}
+	}
+	heapMiB := float64(stats.HeapAllocBytes) / (1024 * 1024)
+	fdSummary := "n/a"
+	if stats.MaxFDs > 0 {
+		fdSummary = fmt.Sprintf("%d/%d", stats.OpenFDs, stats.MaxFDs)
+	} else if stats.OpenFDs > 0 {
+		fdSummary = fmt.Sprintf("%d/?", stats.OpenFDs)
+	}
+	detail := fmt.Sprintf("heapAlloc=%.1fMiB heapObjects=%d numGoroutine=%d numGC=%d openFds=%s",
+		heapMiB, stats.HeapObjects, stats.NumGoroutine, stats.NumGC, fdSummary)
+
+	status := doctorPass
+	remedy := ""
+	if stats.NumGoroutine > doctorRuntimeGoroutineWarn {
+		status = doctorWarn
+		detail = appendDoctorDetail(detail, fmt.Sprintf("unusually high goroutine count (%d > %d)", stats.NumGoroutine, doctorRuntimeGoroutineWarn))
+		remedy = "capture a goroutine profile and inspect routerd for leaked goroutines"
+	}
+	if stats.MaxFDs > 0 && uint64(stats.OpenFDs)*100/stats.MaxFDs >= doctorRuntimeFDWarnPercent {
+		status = doctorWarn
+		detail = appendDoctorDetail(detail, fmt.Sprintf("fd usage >=%d%% of RLIMIT_NOFILE (%d/%d)", doctorRuntimeFDWarnPercent, stats.OpenFDs, stats.MaxFDs))
+		remedy = "inspect /proc/<pid>/fd for leaked descriptors or raise RLIMIT_NOFILE"
+	}
+	return []doctorCheck{{Area: "runtime", Name: "process", Status: status, Detail: detail, Remedy: remedy}}
+}
+
+func fetchRuntimeStats(socketPath string, timeout time.Duration) (*controlapi.RuntimeStats, error) {
+	if timeout <= 0 {
+		timeout = 5 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	return controlapi.NewUnixClient(socketPath).Runtime(ctx)
 }
 
 func (r doctorRunner) doctorWAN() []doctorCheck {

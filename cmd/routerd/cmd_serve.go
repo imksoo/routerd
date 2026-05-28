@@ -17,6 +17,7 @@ import (
 	"os/signal"
 	"os/user"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -296,6 +297,10 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 			controllers := controlapi.NewControllers(statuses)
 			return &controllers, nil
 		},
+		Runtime: func(r *http.Request) (*controlapi.RuntimeStats, error) {
+			stats := collectRuntimeStats()
+			return &stats, nil
+		},
 		Connections: func(r *http.Request, req controlapi.ConnectionsRequest) (*controlapi.ConnectionTable, error) {
 			table, err := observe.Connections(req.Limit)
 			if err != nil {
@@ -464,6 +469,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		Handler: controlapi.Handler{
 			Status:      handler.Status,
 			Controllers: handler.Controllers,
+			Runtime:     handler.Runtime,
 		},
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       30 * time.Second,
@@ -516,6 +522,67 @@ func groupOwnStatusSocket(path string) {
 		}
 	}
 	_ = os.Chmod(path, 0o666)
+}
+
+// collectRuntimeStats samples the current process's heap, goroutine, GC, and
+// file-descriptor footprint. It runs inside the live `routerd serve` process so
+// runtime.ReadMemStats / runtime.NumGoroutine reflect routerd itself. All fields
+// are observational and best-effort: fd counts are 0 when /proc or the rlimit
+// syscall is unavailable (e.g. non-Linux), never an error.
+func collectRuntimeStats() controlapi.RuntimeStats {
+	stats := controlapi.NewRuntimeStats()
+	stats.CollectedAt = time.Now().UTC()
+
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	stats.HeapAllocBytes = m.HeapAlloc
+	stats.HeapInuseBytes = m.HeapInuse
+	stats.HeapObjects = m.HeapObjects
+	stats.StackInuseBytes = m.StackInuse
+	stats.SysBytes = m.Sys
+	stats.NumGC = m.NumGC
+	stats.GCPauseTotalNs = m.PauseTotalNs
+	if m.LastGC != 0 {
+		stats.LastGC = time.Unix(0, int64(m.LastGC)).UTC()
+	}
+
+	stats.NumGoroutine = runtime.NumGoroutine()
+
+	if count, ok := openFDCount(); ok {
+		stats.OpenFDs = count
+	}
+	stats.MaxFDs = softFDLimit()
+	return stats
+}
+
+// openFDCount counts entries in /proc/self/fd. It returns (0, false) when the
+// directory cannot be read (non-Linux, restricted /proc, etc.).
+func openFDCount() (int, bool) {
+	entries, err := os.ReadDir("/proc/self/fd")
+	if err != nil {
+		return 0, false
+	}
+	// Subtract one for the fd opened by ReadDir on the directory itself so the
+	// count reflects fds that exist independent of this sample.
+	count := len(entries)
+	if count > 0 {
+		count--
+	}
+	return count, true
+}
+
+// softFDLimit returns the RLIMIT_NOFILE soft limit, or 0 when unavailable.
+// syscall.Rlimit.Cur is uint64 on Linux and int64 on FreeBSD, so normalize via
+// uint64() and treat any negative value (or error) as unavailable.
+func softFDLimit() uint64 {
+	var rl syscall.Rlimit
+	if err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &rl); err != nil {
+		return 0
+	}
+	if rl.Cur < 0 {
+		return 0
+	}
+	return uint64(rl.Cur)
 }
 
 func listenUnixSocket(path string, perm os.FileMode) (net.Listener, error) {

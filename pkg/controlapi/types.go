@@ -236,6 +236,26 @@ type FirewallLogs struct {
 	Items    []logstore.FirewallLogEntry `json:"items" yaml:"items"`
 }
 
+// RuntimeStats reports routerd's own process-level runtime footprint (heap,
+// goroutines, GC, and file descriptors). It is collected inside the running
+// `routerd serve` process so external tooling (e.g. `routerctl doctor runtime`)
+// can observe resource usage without sshing in and poking /proc directly.
+type RuntimeStats struct {
+	TypeMeta        `json:",inline" yaml:",inline"`
+	CollectedAt     time.Time `json:"collectedAt" yaml:"collectedAt"`
+	HeapAllocBytes  uint64    `json:"heapAllocBytes" yaml:"heapAllocBytes"`
+	HeapInuseBytes  uint64    `json:"heapInuseBytes" yaml:"heapInuseBytes"`
+	HeapObjects     uint64    `json:"heapObjects" yaml:"heapObjects"`
+	StackInuseBytes uint64    `json:"stackInuseBytes" yaml:"stackInuseBytes"`
+	SysBytes        uint64    `json:"sysBytes" yaml:"sysBytes"`
+	NumGoroutine    int       `json:"numGoroutine" yaml:"numGoroutine"`
+	NumGC           uint32    `json:"numGC" yaml:"numGC"`
+	GCPauseTotalNs  uint64    `json:"gcPauseTotalNs" yaml:"gcPauseTotalNs"`
+	LastGC          time.Time `json:"lastGC,omitempty" yaml:"lastGC,omitempty"`
+	OpenFDs         int       `json:"openFds" yaml:"openFds"` // count of /proc/self/fd; 0 if unavailable
+	MaxFDs          uint64    `json:"maxFds" yaml:"maxFds"`   // RLIMIT_NOFILE soft; 0 if unavailable
+}
+
 type Error struct {
 	TypeMeta `json:",inline" yaml:",inline"`
 	Error    ErrorStatus `json:"error" yaml:"error"`
@@ -361,6 +381,12 @@ func NewDHCPLeaseEventResult() DHCPLeaseEventResult {
 	return DHCPLeaseEventResult{
 		TypeMeta: TypeMeta{APIVersion: APIVersion, Kind: "DHCPLeaseEventResult"},
 		Accepted: true,
+	}
+}
+
+func NewRuntimeStats() RuntimeStats {
+	return RuntimeStats{
+		TypeMeta: TypeMeta{APIVersion: APIVersion, Kind: "RuntimeStats"},
 	}
 }
 

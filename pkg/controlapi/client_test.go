@@ -5,9 +5,12 @@ package controlapi
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"io"
 	"net"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -65,6 +68,42 @@ func TestUnixClientRetriesTransientStartupErrors(t *testing.T) {
 		t.Fatalf("delayed server failed: %v", err)
 	case <-time.After(time.Second):
 		t.Fatal("delayed server did not start")
+	}
+}
+
+func TestClientRuntimeDecodesResponse(t *testing.T) {
+	want := NewRuntimeStats()
+	want.HeapAllocBytes = 7 * 1024 * 1024
+	want.NumGoroutine = 21
+	want.OpenFDs = 9
+	want.MaxFDs = 1024
+	payload, err := json.Marshal(want)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var gotPath string
+	client := &Client{
+		httpClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			gotPath = req.URL.Path
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(string(payload))),
+				Header:     make(http.Header),
+			}, nil
+		})},
+		baseURL:       "http://routerd",
+		retryAttempts: 1,
+		retryDelay:    time.Millisecond,
+	}
+	stats, err := client.Runtime(context.Background())
+	if err != nil {
+		t.Fatalf("Runtime: %v", err)
+	}
+	if gotPath != Prefix+"/runtime" {
+		t.Fatalf("requested path = %q", gotPath)
+	}
+	if stats.NumGoroutine != 21 || stats.OpenFDs != 9 || stats.MaxFDs != 1024 || stats.HeapAllocBytes != want.HeapAllocBytes {
+		t.Fatalf("stats = %#v", stats)
 	}
 }
 

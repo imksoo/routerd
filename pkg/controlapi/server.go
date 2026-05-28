@@ -19,6 +19,7 @@ const (
 type Handler struct {
 	Status                func(*http.Request) (*Status, error)
 	Controllers           func(*http.Request) (*Controllers, error)
+	Runtime               func(*http.Request) (*RuntimeStats, error)
 	Connections           func(*http.Request, ConnectionsRequest) (*ConnectionTable, error)
 	DNSQueries            func(*http.Request, DNSQueriesRequest) (*DNSQueries, error)
 	DNSQueriesAggregate   func(*http.Request, DNSQueriesRequest) (*DNSQueriesAggregate, error)
@@ -42,6 +43,8 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleStatus(w, r)
 	case r.Method == http.MethodGet && r.URL.Path == Prefix+"/controllers":
 		h.handleControllers(w, r)
+	case r.Method == http.MethodGet && r.URL.Path == Prefix+"/runtime":
+		h.handleRuntime(w, r)
 	case r.Method == http.MethodGet && r.URL.Path == Prefix+"/connections":
 		h.handleConnections(w, r)
 	case r.Method == http.MethodGet && r.URL.Path == Prefix+"/dns-queries":
@@ -111,6 +114,19 @@ func (h Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, status)
+}
+
+func (h Handler) handleRuntime(w http.ResponseWriter, r *http.Request) {
+	if h.Runtime == nil {
+		writeError(w, http.StatusNotImplemented, "runtime stats handler is not configured")
+		return
+	}
+	stats, err := h.Runtime(r)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, stats)
 }
 
 func (h Handler) handleControllers(w http.ResponseWriter, r *http.Request) {
