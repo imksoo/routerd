@@ -3,6 +3,7 @@
 package wireguard
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -44,6 +45,73 @@ func TestRenderSetConf(t *testing.T) {
 			t.Fatalf("rendered config missing %q:\n%s", want, got)
 		}
 	}
+}
+
+func TestApplyLinuxSetconfUsesStdin(t *testing.T) {
+	conf := []byte("[Interface]\nPrivateKey = priv\n")
+	var calls []string
+	var gotStdin []byte
+	run := func(_ context.Context, name string, args ...string) ([]byte, error) {
+		calls = append(calls, name+" "+strings.Join(args, " "))
+		if name == "ip" && strings.Join(args, " ") == "link show wg0" {
+			return nil, os.ErrNotExist
+		}
+		return nil, nil
+	}
+	runStdin := func(_ context.Context, stdin []byte, name string, args ...string) ([]byte, error) {
+		calls = append(calls, name+" "+strings.Join(args, " "))
+		gotStdin = append([]byte(nil), stdin...)
+		return nil, nil
+	}
+	if _, err := applyLinux(context.Background(), run, runStdin, InterfaceConfig{Name: "wg0"}, conf); err != nil {
+		t.Fatal(err)
+	}
+	if string(gotStdin) != string(conf) {
+		t.Fatalf("stdin = %q, want %q", gotStdin, conf)
+	}
+	assertWireGuardCall(t, calls, "wg setconf wg0 /dev/stdin")
+	for _, call := range calls {
+		if strings.Contains(call, "routerd-wg-") || strings.HasPrefix(call, "wg setconf wg0 /tmp/") {
+			t.Fatalf("setconf used temp path in calls %#v", calls)
+		}
+	}
+}
+
+func TestApplyFreeBSDSetconfUsesStdin(t *testing.T) {
+	conf := []byte("[Interface]\nPrivateKey = priv\n")
+	var calls []string
+	var gotStdin []byte
+	run := func(_ context.Context, name string, args ...string) ([]byte, error) {
+		calls = append(calls, name+" "+strings.Join(args, " "))
+		return nil, nil
+	}
+	runStdin := func(_ context.Context, stdin []byte, name string, args ...string) ([]byte, error) {
+		calls = append(calls, name+" "+strings.Join(args, " "))
+		gotStdin = append([]byte(nil), stdin...)
+		return nil, nil
+	}
+	if _, err := applyFreeBSD(context.Background(), run, runStdin, InterfaceConfig{Name: "wg0"}, conf); err != nil {
+		t.Fatal(err)
+	}
+	if string(gotStdin) != string(conf) {
+		t.Fatalf("stdin = %q, want %q", gotStdin, conf)
+	}
+	assertWireGuardCall(t, calls, "wg setconf wg0 /dev/stdin")
+	for _, call := range calls {
+		if strings.Contains(call, "routerd-wg-") || strings.HasPrefix(call, "wg setconf wg0 /tmp/") {
+			t.Fatalf("setconf used temp path in calls %#v", calls)
+		}
+	}
+}
+
+func assertWireGuardCall(t *testing.T, calls []string, want string) {
+	t.Helper()
+	for _, call := range calls {
+		if call == want {
+			return
+		}
+	}
+	t.Fatalf("missing call %q in %#v", want, calls)
 }
 
 func TestResolveKeyFiles(t *testing.T) {

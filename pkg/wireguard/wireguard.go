@@ -23,6 +23,7 @@ import (
 )
 
 type CommandRunner func(ctx context.Context, name string, args ...string) ([]byte, error)
+type CommandStdinRunner func(ctx context.Context, stdin []byte, name string, args ...string) ([]byte, error)
 
 type InterfaceConfig struct {
 	Name           string
@@ -63,12 +64,17 @@ type InterfaceStatus struct {
 }
 
 type Controller struct {
-	Command CommandRunner
-	DryRun  bool
+	Command      CommandRunner
+	CommandStdin CommandStdinRunner
+	DryRun       bool
 }
 
 func DefaultCommandRunner(ctx context.Context, name string, args ...string) ([]byte, error) {
 	return runCommand(ctx, name, args...)
+}
+
+func DefaultCommandStdinRunner(ctx context.Context, stdin []byte, name string, args ...string) ([]byte, error) {
+	return runCommandStdin(ctx, stdin, name, args...)
 }
 
 func BuildInterface(resource api.Resource, peers []api.Resource) (InterfaceConfig, error) {
@@ -187,7 +193,17 @@ func (c Controller) Apply(ctx context.Context, cfg InterfaceConfig) ([]byte, err
 	if run == nil {
 		run = runCommand
 	}
-	return applyWithCommands(ctx, run, cfg, conf)
+	runStdin := c.CommandStdin
+	if runStdin == nil {
+		if c.Command == nil {
+			runStdin = runCommandStdin
+		} else {
+			runStdin = func(ctx context.Context, _ []byte, name string, args ...string) ([]byte, error) {
+				return run(ctx, name, args...)
+			}
+		}
+	}
+	return applyWithCommands(ctx, run, runStdin, cfg, conf)
 }
 
 func ResolveKeyFiles(cfg InterfaceConfig) (InterfaceConfig, error) {
@@ -223,14 +239,14 @@ func readSecretFile(path string) (string, error) {
 	return value, nil
 }
 
-func applyWithCommands(ctx context.Context, run CommandRunner, cfg InterfaceConfig, conf []byte) ([]byte, error) {
+func applyWithCommands(ctx context.Context, run CommandRunner, runStdin CommandStdinRunner, cfg InterfaceConfig, conf []byte) ([]byte, error) {
 	if platform.CurrentOS() == platform.OSFreeBSD {
-		return applyFreeBSD(ctx, run, cfg, conf)
+		return applyFreeBSD(ctx, run, runStdin, cfg, conf)
 	}
-	return applyLinux(ctx, run, cfg, conf)
+	return applyLinux(ctx, run, runStdin, cfg, conf)
 }
 
-func applyLinux(ctx context.Context, run CommandRunner, cfg InterfaceConfig, conf []byte) ([]byte, error) {
+func applyLinux(ctx context.Context, run CommandRunner, runStdin CommandStdinRunner, cfg InterfaceConfig, conf []byte) ([]byte, error) {
 	if _, err := run(ctx, "ip", "link", "show", cfg.Name); err != nil {
 		if _, err := run(ctx, "ip", "link", "add", "dev", cfg.Name, "type", "wireguard"); err != nil {
 			return nil, err
@@ -241,19 +257,7 @@ func applyLinux(ctx context.Context, run CommandRunner, cfg InterfaceConfig, con
 			return nil, err
 		}
 	}
-	file, err := os.CreateTemp("", "routerd-wg-*.conf")
-	if err != nil {
-		return nil, err
-	}
-	defer os.Remove(file.Name())
-	if _, err := file.Write(conf); err != nil {
-		_ = file.Close()
-		return nil, err
-	}
-	if err := file.Close(); err != nil {
-		return nil, err
-	}
-	if _, err := run(ctx, "wg", "setconf", cfg.Name, file.Name()); err != nil {
+	if _, err := runStdin(ctx, conf, "wg", "setconf", cfg.Name, "/dev/stdin"); err != nil {
 		return nil, err
 	}
 	if _, err := run(ctx, "ip", "link", "set", "up", "dev", cfg.Name); err != nil {
@@ -262,7 +266,7 @@ func applyLinux(ctx context.Context, run CommandRunner, cfg InterfaceConfig, con
 	return conf, nil
 }
 
-func applyFreeBSD(ctx context.Context, run CommandRunner, cfg InterfaceConfig, conf []byte) ([]byte, error) {
+func applyFreeBSD(ctx context.Context, run CommandRunner, runStdin CommandStdinRunner, cfg InterfaceConfig, conf []byte) ([]byte, error) {
 	_, _ = run(ctx, "kldload", "if_wg")
 	if _, err := run(ctx, "ifconfig", cfg.Name); err != nil {
 		if _, err := run(ctx, "ifconfig", cfg.Name, "create"); err != nil {
@@ -271,19 +275,7 @@ func applyFreeBSD(ctx context.Context, run CommandRunner, cfg InterfaceConfig, c
 			}
 		}
 	}
-	file, err := os.CreateTemp("", "routerd-wg-*.conf")
-	if err != nil {
-		return nil, err
-	}
-	defer os.Remove(file.Name())
-	if _, err := file.Write(conf); err != nil {
-		_ = file.Close()
-		return nil, err
-	}
-	if err := file.Close(); err != nil {
-		return nil, err
-	}
-	if _, err := run(ctx, "wg", "setconf", cfg.Name, file.Name()); err != nil {
+	if _, err := runStdin(ctx, conf, "wg", "setconf", cfg.Name, "/dev/stdin"); err != nil {
 		return nil, err
 	}
 	if cfg.MTU != 0 {
@@ -450,4 +442,10 @@ func RecordPeerMetrics(ctx context.Context, iface string, peers []PeerStatus) {
 
 func runCommand(ctx context.Context, name string, args ...string) ([]byte, error) {
 	return exec.CommandContext(ctx, hostcmd.Resolve(name), args...).CombinedOutput()
+}
+
+func runCommandStdin(ctx context.Context, stdin []byte, name string, args ...string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, hostcmd.Resolve(name), args...)
+	cmd.Stdin = bytes.NewReader(stdin)
+	return cmd.CombinedOutput()
 }

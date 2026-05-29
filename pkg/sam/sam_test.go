@@ -92,7 +92,7 @@ func TestPlanCaptureProxyARP(t *testing.T) {
 	}
 }
 
-func TestPlanCaptureProviderSecondaryIPDoesNotAddProxyOrLocalAddress(t *testing.T) {
+func TestPlanCaptureProviderSecondaryIPDeassignsOSAddress(t *testing.T) {
 	router := testRouter()
 	router.Spec.Resources = router.Spec.Resources[:4]
 	actions, err := PlanCapture(router, platform.OSLinux)
@@ -104,8 +104,56 @@ func TestPlanCaptureProviderSecondaryIPDoesNotAddProxyOrLocalAddress(t *testing.
 			t.Fatalf("unexpected action for provider-secondary-ip: %#v", actions)
 		}
 	}
+	if !hasAction(actions, "deassign-os-address", "", "10.0.1.122/32", "") {
+		t.Fatalf("actions missing OS address deassign: %#v", actions)
+	}
 	if !hasAction(actions, "sysctl", "net.ipv4.ip_forward", "", "") {
 		t.Fatalf("actions missing ip_forward: %#v", actions)
+	}
+}
+
+func TestPlanCaptureProviderSecondaryIPConfigureOSAddressTrueSkipsDeassign(t *testing.T) {
+	router := testRouter()
+	router.Spec.Resources = router.Spec.Resources[:4]
+	spec := router.Spec.Resources[3].Spec.(api.RemoteAddressClaimSpec)
+	spec.Capture.ConfigureOSAddress = true
+	router.Spec.Resources[3].Spec = spec
+	actions, err := PlanCapture(router, platform.OSLinux)
+	if err != nil {
+		t.Fatalf("PlanCapture: %v", err)
+	}
+	if hasAction(actions, "deassign-os-address", "", "10.0.1.122/32", "") {
+		t.Fatalf("unexpected OS address deassign: %#v", actions)
+	}
+}
+
+func TestPlanCaptureProviderSecondaryIPDeassignPlanningStable(t *testing.T) {
+	router := testRouter()
+	router.Spec.Resources = router.Spec.Resources[:4]
+	first, err := PlanCapture(router, platform.OSLinux)
+	if err != nil {
+		t.Fatalf("PlanCapture first: %v", err)
+	}
+	second, err := PlanCapture(router, platform.OSLinux)
+	if err != nil {
+		t.Fatalf("PlanCapture second: %v", err)
+	}
+	if !reflect.DeepEqual(first, second) {
+		t.Fatalf("actions changed between runs:\nfirst=%#v\nsecond=%#v", first, second)
+	}
+}
+
+func TestPlanCaptureProxyARPDoesNotDeassignOSAddress(t *testing.T) {
+	router := testRouter()
+	router.Spec.Resources = append(router.Spec.Resources[:3], router.Spec.Resources[4])
+	actions, err := PlanCapture(router, platform.OSLinux)
+	if err != nil {
+		t.Fatalf("PlanCapture: %v", err)
+	}
+	for _, action := range actions {
+		if action.Kind == "deassign-os-address" {
+			t.Fatalf("unexpected OS address deassign for proxy-arp: %#v", actions)
+		}
 	}
 }
 

@@ -19,11 +19,18 @@ import (
 type samProxyNeighborApplier interface {
 	EnsureProxyNeighbor(ctx context.Context, address, ifname string) error
 	DeleteProxyNeighbor(ctx context.Context, address, ifname string) error
+	EnsureOSAddressAbsent(ctx context.Context, address string) (samOSAddressDeassignResult, error)
 }
 
 type samStoredProxyNeighbor struct {
 	address string
 	ifname  string
+}
+
+type samOSAddressDeassignResult struct {
+	address    string
+	ifname     string
+	deassigned bool
 }
 
 func samSelectResources(resources []api.Resource, kind string) []api.Resource {
@@ -55,7 +62,7 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 		targetOS = platform.CurrentOS()
 	}
 	if targetOS != platform.OSLinux {
-		return c.reconcileStatuses(targetOS)
+		return c.reconcileStatuses(targetOS, nil)
 	}
 	statuses, err := c.listObjectStatuses()
 	if err != nil {
@@ -72,22 +79,43 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 		return err
 	}
 	var failures []string
+	deassignResults := map[string]samOSAddressDeassignResult{}
 	for _, action := range actions {
-		if action.Kind != "proxy-neighbor" {
+		switch action.Kind {
+		case "proxy-neighbor":
+			if c.DryRun {
+				continue
+			}
+			applier := c.Applier
+			if applier == nil {
+				applier = defaultSAMProxyNeighborApplier()
+			}
+			if err := applier.EnsureProxyNeighbor(ctx, action.Address, action.Interface); err != nil {
+				failures = append(failures, fmt.Sprintf("%s %s dev %s: %v", action.ClaimName, action.Address, action.Interface, err))
+			}
+		case "deassign-os-address":
+			result := samOSAddressDeassignResult{address: strings.TrimSpace(action.Address)}
+			deassignResults[action.ClaimName] = result
+			if c.DryRun {
+				continue
+			}
+			applier := c.Applier
+			if applier == nil {
+				applier = defaultSAMProxyNeighborApplier()
+			}
+			result, err := applier.EnsureOSAddressAbsent(ctx, action.Address)
+			if result.address == "" {
+				result.address = strings.TrimSpace(action.Address)
+			}
+			deassignResults[action.ClaimName] = result
+			if err != nil {
+				failures = append(failures, fmt.Sprintf("%s deassign %s: %v", action.ClaimName, action.Address, err))
+			}
+		default:
 			continue
-		}
-		if c.DryRun {
-			continue
-		}
-		applier := c.Applier
-		if applier == nil {
-			applier = defaultSAMProxyNeighborApplier()
-		}
-		if err := applier.EnsureProxyNeighbor(ctx, action.Address, action.Interface); err != nil {
-			failures = append(failures, fmt.Sprintf("%s %s dev %s: %v", action.ClaimName, action.Address, action.Interface, err))
 		}
 	}
-	if err := c.reconcileStatuses(targetOS); err != nil {
+	if err := c.reconcileStatuses(targetOS, deassignResults); err != nil {
 		return err
 	}
 	if len(failures) > 0 {
@@ -96,7 +124,7 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 	return nil
 }
 
-func (c SAMController) reconcileStatuses(targetOS platform.OS) error {
+func (c SAMController) reconcileStatuses(targetOS platform.OS, deassignResults map[string]samOSAddressDeassignResult) error {
 	claims := samSelectResources(c.Router.Spec.Resources, "RemoteAddressClaim")
 	for _, claim := range claims {
 		status := sam.StatusForRemoteAddressClaim(claim, c.Lowerings, c.Store, targetOS)
@@ -107,6 +135,17 @@ func (c SAMController) reconcileStatuses(targetOS platform.OS) error {
 					"address":   strings.TrimSpace(spec.Address),
 					"interface": strings.TrimSpace(spec.Capture.Interface),
 				}
+			} else if err == nil && strings.TrimSpace(spec.Capture.Type) == "provider-secondary-ip" && !spec.Capture.ConfigureOSAddress {
+				result := deassignResults[claim.Metadata.Name]
+				note := map[string]any{
+					"address":    firstNonEmpty(result.address, strings.TrimSpace(spec.Address)),
+					"enforced":   true,
+					"deassigned": result.deassigned,
+				}
+				if result.ifname != "" {
+					note["interface"] = result.ifname
+				}
+				status["captureDeassignedOSAddress"] = note
 			}
 		}
 		if err := c.Store.SaveObjectStatus(api.HybridAPIVersion, "RemoteAddressClaim", claim.Metadata.Name, status); err != nil {

@@ -165,6 +165,9 @@ func PlanCapture(router *api.Router, targetOS platform.OS) ([]CaptureAction, err
 			return nil, err
 		}
 		if strings.TrimSpace(spec.Capture.Type) != "proxy-arp" {
+			if strings.TrimSpace(spec.Capture.Type) == "provider-secondary-ip" && !spec.Capture.ConfigureOSAddress {
+				actions = append(actions, CaptureAction{Kind: "deassign-os-address", ClaimName: resource.Metadata.Name, Address: address})
+			}
 			continue
 		}
 		iface := strings.TrimSpace(spec.Capture.Interface)

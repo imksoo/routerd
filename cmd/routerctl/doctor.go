@@ -290,18 +290,24 @@ func (r doctorRunner) doctorSAMLiveChecks(name string, spec api.RemoteAddressCla
 	checks := []doctorCheck{
 		doctorSAMIPForwardCheck(ctx, name),
 		doctorSAMDeliveryRouteCheck(ctx, name, routeName, address, tunnel),
+		doctorSAMRouteGetCheck(ctx, name, address),
 	}
 	if strings.TrimSpace(spec.Capture.Type) == "proxy-arp" {
 		captureInterface := strings.TrimSpace(spec.Capture.Interface)
 		checks = append(checks, doctorSAMCaptureInterfaceCheck(ctx, name, captureInterface))
+		checks = append(checks, doctorSAMProxyARPEnabledCheck(ctx, name, captureInterface))
 		checks = append(checks, doctorSAMProxyNeighborCheck(ctx, name, address, captureInterface))
 		checks = append(checks, doctorSAMRPFilterCheck(ctx, name, captureInterface))
+		checks = append(checks, doctorSAMForwardPolicyCheck(ctx, name, captureInterface, tunnel, address))
 	}
 	if iface := strings.TrimSpace(spec.Delivery.TunnelInterface); iface != "" {
 		checks = append(checks, doctorSAMRPFilterCheck(ctx, name, iface))
 	}
 	if strings.TrimSpace(spec.Capture.Type) == "provider-secondary-ip" {
-		checks = append(checks, doctorCheck{Area: "hybrid", Name: "RemoteAddressClaim/" + name + " provider capture", Status: doctorSkip, Detail: "cloud fabric secondary-IP assignment is external to routerd; checking only local forwarding and delivery route"})
+		if !spec.Capture.ConfigureOSAddress {
+			checks = append(checks, doctorSAMLocalAddressAbsentCheck(ctx, name, address))
+		}
+		checks = append(checks, doctorSAMForwardPolicyCheck(ctx, name, strings.TrimSpace(spec.Capture.Interface), tunnel, address))
 	}
 	return checks
 }
@@ -333,6 +339,19 @@ func doctorSAMIPForwardCheck(ctx context.Context, name string) doctorCheck {
 	return doctorCheck{Area: "hybrid", Name: label, Status: doctorWarn, Detail: firstNonEmpty(command.Error, oneLine(command.Output), "net.ipv4.ip_forward is not 1"), Remedy: "wait for routerd sysctl reconciliation or set net.ipv4.ip_forward=1"}
 }
 
+func doctorSAMRouteGetCheck(ctx context.Context, name, address string) doctorCheck {
+	label := "RemoteAddressClaim/" + name + " route get"
+	ip := strings.TrimSuffix(strings.TrimSpace(address), "/32")
+	if ip == "" {
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorSkip, Detail: "address unavailable"}
+	}
+	command := doctorRunDiagnosticCommand(ctx, "ip route get "+ip, "ip", "-4", "route", "get", ip)
+	if command.OK {
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: oneLine(command.Stdout)}
+	}
+	return doctorCheck{Area: "hybrid", Name: label, Status: doctorWarn, Detail: firstNonEmpty(command.Error, oneLine(command.Output), "route lookup failed"), Remedy: "inspect Linux route selection for the SAM claim address"}
+}
+
 func doctorSAMDeliveryRouteCheck(ctx context.Context, name, routeName, address, tunnel string) doctorCheck {
 	label := "RemoteAddressClaim/" + name + " delivery route"
 	command := doctorRunDiagnosticCommand(ctx, "ip route show "+address, "ip", "-4", "route", "show", address)
@@ -345,6 +364,19 @@ func doctorSAMDeliveryRouteCheck(ctx context.Context, name, routeName, address, 
 	return doctorCheck{Area: "hybrid", Name: label, Status: doctorWarn, Detail: firstNonEmpty(command.Error, oneLine(command.Output), "route not found"), Remedy: "wait for routerd to install lowered IPv4Route/" + routeName}
 }
 
+func doctorSAMProxyARPEnabledCheck(ctx context.Context, name, iface string) doctorCheck {
+	label := "RemoteAddressClaim/" + name + " proxy_arp " + iface
+	if strings.TrimSpace(iface) == "" {
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorSkip, Detail: "interface unavailable"}
+	}
+	key := "net.ipv4.conf." + iface + ".proxy_arp"
+	command := doctorRunDiagnosticCommand(ctx, "sysctl "+key, "sysctl", "-n", key)
+	if command.OK && strings.TrimSpace(command.Stdout) == "1" {
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: key + "=1"}
+	}
+	return doctorCheck{Area: "hybrid", Name: label, Status: doctorWarn, Detail: firstNonEmpty(command.Error, oneLine(command.Output), key+" is not 1"), Remedy: "wait for routerd SAM capture reconciliation or set " + key + "=1"}
+}
+
 func doctorSAMProxyNeighborCheck(ctx context.Context, name, address, iface string) doctorCheck {
 	label := "RemoteAddressClaim/" + name + " proxy neighbor"
 	command := doctorRunDiagnosticCommand(ctx, "ip neigh show proxy "+address+" dev "+iface, "ip", "neigh", "show", "proxy", address, "dev", iface)
@@ -352,6 +384,62 @@ func doctorSAMProxyNeighborCheck(ctx context.Context, name, address, iface strin
 		return doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: oneLine(command.Stdout)}
 	}
 	return doctorCheck{Area: "hybrid", Name: label, Status: doctorWarn, Detail: firstNonEmpty(command.Error, oneLine(command.Output), "proxy neighbor not found"), Remedy: "wait for routerd SAM capture reconciliation or inspect proxy_arp and netlink neighbor state"}
+}
+
+func doctorSAMLocalAddressAbsentCheck(ctx context.Context, name, address string) doctorCheck {
+	label := "RemoteAddressClaim/" + name + " local OS address"
+	command := doctorRunDiagnosticCommand(ctx, "ip addr show "+address, "ip", "-o", "-4", "addr", "show", "to", address)
+	if command.OK && strings.TrimSpace(command.Stdout) == "" {
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: strings.TrimSpace(address) + " absent from local interfaces"}
+	}
+	if command.OK {
+		return doctorCheck{
+			Area:   "hybrid",
+			Name:   label,
+			Status: doctorWarn,
+			Detail: oneLine(command.Stdout),
+			Remedy: "routerd de-assigns this address on reconcile; if it keeps reappearing, disable the guest cloud-init/netplan config for that IP",
+		}
+	}
+	return doctorCheck{Area: "hybrid", Name: label, Status: doctorWarn, Detail: firstNonEmpty(command.Error, oneLine(command.Output), "local address check failed"), Remedy: "verify the captured address is not assigned to the guest OS"}
+}
+
+func doctorSAMForwardPolicyCheck(ctx context.Context, name, captureIface, tunnel, address string) doctorCheck {
+	label := "RemoteAddressClaim/" + name + " FORWARD policy"
+	command := doctorRunDiagnosticCommand(ctx, "nft list table inet routerd_filter", "nft", "list", "table", "inet", "routerd_filter")
+	if !command.OK {
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorSkip, Detail: firstNonEmpty(command.Error, oneLine(command.Output), "routerd_filter table unavailable")}
+	}
+	detail := "SAM delivery traverses FORWARD"
+	if captureIface != "" || tunnel != "" {
+		detail = appendDoctorDetail(detail, "path "+firstNonEmpty(captureIface, "<capture-interface>")+" -> "+firstNonEmpty(tunnel, "<tunnel-interface>"))
+	}
+	if address != "" {
+		detail = appendDoctorDetail(detail, "claim "+address)
+	}
+	if nftForwardPolicyDrop(command.Stdout) {
+		return doctorCheck{
+			Area:   "hybrid",
+			Name:   label,
+			Status: doctorWarn,
+			Detail: appendDoctorDetail(detail, "default-drop FORWARD policy observed"),
+			Remedy: "verify firewall policy permits SAM forwarding between the capture interface and tunnel interface for the captured /32",
+		}
+	}
+	return doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: detail}
+}
+
+func nftForwardPolicyDrop(output string) bool {
+	lower := strings.ToLower(output)
+	for _, block := range strings.Split(lower, "chain ") {
+		if !strings.Contains(block, "forward") {
+			continue
+		}
+		if strings.Contains(block, "hook forward") && strings.Contains(block, "policy drop") {
+			return true
+		}
+	}
+	return false
 }
 
 func doctorSAMRPFilterCheck(ctx context.Context, name, iface string) doctorCheck {

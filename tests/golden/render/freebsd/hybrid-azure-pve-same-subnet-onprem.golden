@@ -196,7 +196,7 @@ routerd_wireguard_wg_hybrid_start() {
   fi
   ifconfig 'wg-hybrid' mtu '1420'
   wg set 'wg-hybrid' listen-port '51820' private-key '/usr/local/etc/routerd/secrets/wg-hybrid.key'
-  wg set 'wg-hybrid' peer 'CLOUD_PEER_PUBLIC_KEY_REPLACE_ME' allowed-ips '169.254.110.1/32,10.0.0.7/32,10.0.0.9/32' endpoint '203.0.113.20:51820' persistent-keepalive '25'
+  wg set 'wg-hybrid' peer 'CLOUD_PEER_PUBLIC_KEY_REPLACE_ME' allowed-ips '169.254.110.1/32,10.0.0.7/32' endpoint '203.0.113.20:51820' persistent-keepalive '25'
   ifconfig 'wg-hybrid' up
 }
 

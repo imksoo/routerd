@@ -65,14 +65,18 @@ entry を netlink で追加し、通常の sysctl controller で
 
 `provider-secondary-ip` では provider fabric が address capture を担当します。
 `configureOSAddress: false` の場合、routerd は mobile address を local OS
-address として設定しません。routerd は IPv4 forwarding と overlay への `/32`
-delivery route だけを管理します。
+address として設定しません。Linux では、cloud-init、netplan、guest agent など
+がその address を戻した場合でも、その特定 address だけを local interface から
+削除します。そのうえで IPv4 forwarding と overlay への `/32` delivery route を
+管理します。Claim を削除しても routerd は address を戻しません。Guest OS への
+address assignment は routerd が所有していないためです。
 
 FreeBSD など non-Linux host では live SAM capture は未対応です。Controller は
 host を変更せず、`SAM capture not implemented on this OS` と報告します。
 
-Linux live dataplane は実装済みですが、Azure + PVE lab の real kernel ではまだ
-検証されていません。Production 利用前に lab smoke validation が必要です。
+Linux live dataplane は Azure + PVE same-subnet lab で smoke test 済みです。
+ただし pre-release behavior なので、production 利用前に provider と firewall
+policy の実構成で検証してください。
 
 ## Reverse Path Filtering
 
@@ -132,6 +136,11 @@ Mobile address に firewall や NAT を適用する場合は、既存の `Firewa
 MVP ではこれらの Kind から `RemoteAddressClaim` への cross-kind reference は
 ありません。SAM-forwarded traffic は、他の forwarded traffic と同じく既存の
 firewall/conntrack path を通ります。
+
+特に、delivery された `/32` traffic は capture interface と tunnel interface
+の間で Linux firewall の `FORWARD` chain を通過します。Forwarding policy が
+default-drop の router では、その captured address の forwarding path を明示的
+に許可してください。SAM 自体は firewall rule を追加しません。
 
 ## Out Of Scope
 

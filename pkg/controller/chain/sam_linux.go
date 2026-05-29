@@ -39,6 +39,38 @@ func (netlinkSAMProxyNeighborApplier) DeleteProxyNeighbor(_ context.Context, add
 	return nil
 }
 
+func (netlinkSAMProxyNeighborApplier) EnsureOSAddressAbsent(_ context.Context, address string) (samOSAddressDeassignResult, error) {
+	ip, _, err := net.ParseCIDR(address)
+	if err != nil {
+		ip = net.ParseIP(address)
+	}
+	if ip == nil || ip.To4() == nil {
+		return samOSAddressDeassignResult{}, fmt.Errorf("invalid IPv4 address %q", address)
+	}
+	result := samOSAddressDeassignResult{address: address}
+	links, err := netlink.LinkList()
+	if err != nil {
+		return result, err
+	}
+	for _, link := range links {
+		addrs, err := netlink.AddrList(link, netlink.FAMILY_V4)
+		if err != nil {
+			return result, err
+		}
+		for _, addr := range addrs {
+			if addr.IP == nil || !addr.IP.Equal(ip.To4()) {
+				continue
+			}
+			if err := netlink.AddrDel(link, &addr); err != nil && !isNetlinkNotFound(err) {
+				return result, err
+			}
+			result.ifname = link.Attrs().Name
+			result.deassigned = true
+		}
+	}
+	return result, nil
+}
+
 func samProxyNeighbor(address, ifname string) (netlink.Link, *netlink.Neigh, error) {
 	ip, _, err := net.ParseCIDR(address)
 	if err != nil {

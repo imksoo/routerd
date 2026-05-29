@@ -21,12 +21,13 @@ import (
 )
 
 type WireGuardController struct {
-	Router  *api.Router
-	Bus     *bus.Bus
-	Store   Store
-	DryRun  bool
-	Command wireguard.CommandRunner
-	Logger  *slog.Logger
+	Router       *api.Router
+	Bus          *bus.Bus
+	Store        Store
+	DryRun       bool
+	Command      wireguard.CommandRunner
+	CommandStdin wireguard.CommandStdinRunner
+	Logger       *slog.Logger
 }
 
 func (c WireGuardController) Reconcile(ctx context.Context) error {
@@ -189,7 +190,7 @@ func (c WireGuardController) reconcileInterface(ctx context.Context, resource ap
 		c.savePeerPendingStatuses(resource.Metadata.Name, cfg.Peers, "InterfacePending")
 		return nil
 	}
-	controller := wireguard.Controller{Command: c.Command, DryRun: c.DryRun}
+	controller := wireguard.Controller{Command: c.Command, CommandStdin: c.CommandStdin, DryRun: c.DryRun}
 	observed, statusErr := c.interfaceStatus(ctx, cfg.Name)
 	applied := false
 	current := c.Store.ObjectStatus(api.NetAPIVersion, "WireGuardInterface", resource.Metadata.Name)

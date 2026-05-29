@@ -415,6 +415,12 @@ func TestDoctorHybridSAMLiveChecksStubbed(t *testing.T) {
 			return diagnoseCommandCheck{Name: label, OK: true, Stdout: "1", Output: "1"}
 		case strings.HasPrefix(label, "ip route show"):
 			return diagnoseCommandCheck{Name: label, OK: true, Stdout: "10.0.0.9 dev wg-hybrid", Output: "10.0.0.9 dev wg-hybrid"}
+		case strings.HasPrefix(label, "ip route get"):
+			return diagnoseCommandCheck{Name: label, OK: true, Stdout: "10.0.0.9 dev wg-hybrid src 10.0.0.4", Output: "10.0.0.9 dev wg-hybrid src 10.0.0.4"}
+		case strings.HasPrefix(label, "ip addr show"):
+			return diagnoseCommandCheck{Name: label, OK: true}
+		case label == "nft list table inet routerd_filter":
+			return diagnoseCommandCheck{Name: label, OK: true, Stdout: "table inet routerd_filter {\n chain forward { type filter hook forward priority 0; policy accept; }\n}", Output: "table inet routerd_filter"}
 		case strings.Contains(label, "rp_filter"):
 			return diagnoseCommandCheck{Name: label, OK: true, Stdout: "1", Output: "1"}
 		default:
@@ -439,8 +445,14 @@ func TestDoctorHybridSAMLiveChecksStubbed(t *testing.T) {
 	if check := findDoctorCheck(t, report, "RemoteAddressClaim/azure-vm rp_filter wg-hybrid"); check.Status != doctorWarn || !strings.Contains(check.Remedy, "loose") {
 		t.Fatalf("rp_filter check = %#v", check)
 	}
-	if check := findDoctorCheck(t, report, "RemoteAddressClaim/azure-vm provider capture"); check.Status != doctorSkip {
-		t.Fatalf("provider capture check = %#v", check)
+	if check := findDoctorCheck(t, report, "RemoteAddressClaim/azure-vm local OS address"); check.Status != doctorPass {
+		t.Fatalf("local OS address check = %#v", check)
+	}
+	if check := findDoctorCheck(t, report, "RemoteAddressClaim/azure-vm route get"); check.Status != doctorPass {
+		t.Fatalf("route get check = %#v", check)
+	}
+	if check := findDoctorCheck(t, report, "RemoteAddressClaim/azure-vm FORWARD policy"); check.Status != doctorPass {
+		t.Fatalf("FORWARD policy check = %#v", check)
 	}
 }
 
@@ -469,12 +481,18 @@ func TestDoctorHybridSAMProxyARPInterfaceLiveChecksStubbed(t *testing.T) {
 					return diagnoseCommandCheck{Name: label, OK: true, Stdout: "1", Output: "1"}
 				case strings.HasPrefix(label, "ip route show"):
 					return diagnoseCommandCheck{Name: label, OK: true, Stdout: "10.0.0.7 dev wg-hybrid", Output: "10.0.0.7 dev wg-hybrid"}
+				case strings.HasPrefix(label, "ip route get"):
+					return diagnoseCommandCheck{Name: label, OK: true, Stdout: "10.0.0.7 dev wg-hybrid src 10.0.0.4", Output: "10.0.0.7 dev wg-hybrid src 10.0.0.4"}
 				case label == "ip link show br-lan" && tc.linkExists:
 					return diagnoseCommandCheck{Name: label, OK: true, Stdout: "2: br-lan: <BROADCAST,MULTICAST,UP>", Output: "2: br-lan: <BROADCAST,MULTICAST,UP>"}
 				case label == "ip link show br-lan":
 					return diagnoseCommandCheck{Name: label, OK: false, Error: "Device \"br-lan\" does not exist.", Output: "Device \"br-lan\" does not exist."}
+				case label == "sysctl net.ipv4.conf.br-lan.proxy_arp":
+					return diagnoseCommandCheck{Name: label, OK: true, Stdout: "1", Output: "1"}
 				case strings.HasPrefix(label, "ip neigh show proxy"):
 					return diagnoseCommandCheck{Name: label, OK: true, Stdout: "10.0.0.7 dev br-lan proxy", Output: "10.0.0.7 dev br-lan proxy"}
+				case label == "nft list table inet routerd_filter":
+					return diagnoseCommandCheck{Name: label, OK: true, Stdout: "table inet routerd_filter {\n chain forward { type filter hook forward priority 0; policy accept; }\n}", Output: "table inet routerd_filter"}
 				case strings.Contains(label, "rp_filter"):
 					return diagnoseCommandCheck{Name: label, OK: true, Stdout: "0", Output: "0"}
 				default:
@@ -502,6 +520,49 @@ func TestDoctorHybridSAMProxyARPInterfaceLiveChecksStubbed(t *testing.T) {
 				t.Fatalf("capture interface detail/remedy = %#v", check)
 			}
 		})
+	}
+}
+
+func TestDoctorHybridSAMProviderLocalAddressWarnsWhenPresent(t *testing.T) {
+	oldRun := doctorRunDiagnosticCommand
+	oldOS := doctorCurrentOS
+	defer func() {
+		doctorRunDiagnosticCommand = oldRun
+		doctorCurrentOS = oldOS
+	}()
+	doctorCurrentOS = func() platform.OS { return platform.OSLinux }
+	doctorRunDiagnosticCommand = func(_ context.Context, label, name string, args ...string) diagnoseCommandCheck {
+		switch {
+		case label == "sysctl net.ipv4.ip_forward":
+			return diagnoseCommandCheck{Name: label, OK: true, Stdout: "1", Output: "1"}
+		case strings.HasPrefix(label, "ip route show"):
+			return diagnoseCommandCheck{Name: label, OK: true, Stdout: "10.0.0.9 dev wg-hybrid", Output: "10.0.0.9 dev wg-hybrid"}
+		case strings.HasPrefix(label, "ip route get"):
+			return diagnoseCommandCheck{Name: label, OK: true, Stdout: "local 10.0.0.9 dev lo src 10.0.0.9", Output: "local 10.0.0.9 dev lo src 10.0.0.9"}
+		case strings.HasPrefix(label, "ip addr show"):
+			return diagnoseCommandCheck{Name: label, OK: true, Stdout: "2: eth0    inet 10.0.0.9/32 scope global eth0", Output: "2: eth0    inet 10.0.0.9/32 scope global eth0"}
+		case label == "nft list table inet routerd_filter":
+			return diagnoseCommandCheck{Name: label, OK: true, Stdout: "table inet routerd_filter {\n chain forward { type filter hook forward priority 0; policy drop; }\n}", Output: "table inet routerd_filter"}
+		case strings.Contains(label, "rp_filter"):
+			return diagnoseCommandCheck{Name: label, OK: true, Stdout: "0", Output: "0"}
+		default:
+			return diagnoseCommandCheck{Name: label, OK: false, Error: "unexpected command"}
+		}
+	}
+	configPath, statePath := writeDoctorAddressMobilityFixture(t)
+	var out bytes.Buffer
+	if err := run([]string{"doctor", "hybrid", "--config", configPath, "--state-file", statePath, "-o", "json"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("doctor hybrid: %v\n%s", err, out.String())
+	}
+	var report doctorReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("unmarshal doctor report: %v\n%s", err, out.String())
+	}
+	if check := findDoctorCheck(t, report, "RemoteAddressClaim/azure-vm local OS address"); check.Status != doctorWarn || !strings.Contains(check.Remedy, "cloud-init/netplan") {
+		t.Fatalf("local OS address check = %#v", check)
+	}
+	if check := findDoctorCheck(t, report, "RemoteAddressClaim/azure-vm FORWARD policy"); check.Status != doctorWarn || !strings.Contains(check.Remedy, "permits SAM forwarding") {
+		t.Fatalf("FORWARD policy check = %#v", check)
 	}
 }
 

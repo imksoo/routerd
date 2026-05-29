@@ -100,15 +100,18 @@ For `proxy-arp` capture on Linux, routerd:
 
 For `provider-secondary-ip`, the provider fabric owns address capture. routerd
 does not assign the mobile address to the local OS when
-`configureOSAddress: false`; it only ensures IPv4 forwarding and installs the
-`/32` delivery route into the overlay.
+`configureOSAddress: false`; on Linux it also removes that specific address
+from local interfaces if cloud-init, netplan, or another guest agent adds it
+back. It then ensures IPv4 forwarding and installs the `/32` delivery route
+into the overlay. routerd does not re-add the address when the claim is
+removed, because it never owned the guest OS assignment.
 
 FreeBSD and other non-Linux hosts do not have live SAM capture yet. The
 controller no-ops and reports `SAM capture not implemented on this OS`.
 
-The live Linux dataplane is implemented but not yet validated against a real
-kernel in the Azure + PVE lab. Treat it as pending lab smoke validation before
-production use.
+The live Linux dataplane has been smoke-tested in an Azure + PVE same-subnet
+lab. Treat it as pre-release behavior and validate the exact provider and
+firewall policy before production use.
 
 ## Reverse Path Filtering
 
@@ -177,6 +180,11 @@ added later if it proves useful.
 SAM-forwarded traffic still traverses the existing firewall and conntrack path
 like any other forwarded traffic. Independence means the mobility resources do
 not configure firewall or NAT policy; it does not mean bypass.
+
+In particular, the delivered `/32` traffic crosses the Linux firewall
+`FORWARD` chain between the capture interface and the tunnel interface. Permit
+that forwarding path for the captured address explicitly when the router has a
+default-drop forwarding policy. SAM does not add firewall rules by itself.
 
 ## Out Of Scope
 
