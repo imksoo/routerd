@@ -78,18 +78,113 @@ func TestSAMControllerCleansRemovedProxyNeighbor(t *testing.T) {
 	}
 }
 
+func TestSAMControllerCleansChangedProxyNeighborInterface(t *testing.T) {
+	router := samControllerRouterWithClaim("10.0.1.123/32", "proxy-arp", "br-new")
+	store := &samStore{objects: map[string]map[string]any{}, statuses: []routerstate.ObjectStatus{
+		samRemoteAddressClaimStatus("app", "10.0.1.123/32", "br-old"),
+	}}
+	applier := &fakeSAMApplier{}
+	controller := SAMController{Router: router, Store: store, OS: platform.OSLinux, Applier: applier}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	assertSAMCalls(t, applier.calls, []string{
+		"delete:10.0.1.123/32@br-old",
+		"ensure:10.0.1.123/32@br-new",
+	})
+}
+
+func TestSAMControllerCleansChangedProxyNeighborAddress(t *testing.T) {
+	router := samControllerRouterWithClaim("10.0.1.124/32", "proxy-arp", "lan0")
+	store := &samStore{objects: map[string]map[string]any{}, statuses: []routerstate.ObjectStatus{
+		samRemoteAddressClaimStatus("app", "10.0.1.123/32", "lan0"),
+	}}
+	applier := &fakeSAMApplier{}
+	controller := SAMController{Router: router, Store: store, OS: platform.OSLinux, Applier: applier}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	assertSAMCalls(t, applier.calls, []string{
+		"delete:10.0.1.123/32@lan0",
+		"ensure:10.0.1.124/32@lan0",
+	})
+}
+
+func TestSAMControllerCleansProxyNeighborWhenCaptureTypeChanges(t *testing.T) {
+	router := samControllerRouterWithClaim("10.0.1.123/32", "provider-secondary-ip", "")
+	store := &samStore{objects: map[string]map[string]any{}, statuses: []routerstate.ObjectStatus{
+		samRemoteAddressClaimStatus("app", "10.0.1.123/32", "lan0"),
+	}}
+	applier := &fakeSAMApplier{}
+	controller := SAMController{Router: router, Store: store, OS: platform.OSLinux, Applier: applier}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	assertSAMCalls(t, applier.calls, []string{"delete:10.0.1.123/32@lan0"})
+	if len(applier.ensure) != 0 {
+		t.Fatalf("ensure = %#v, want none", applier.ensure)
+	}
+}
+
+func TestSAMControllerLeavesUnchangedProxyNeighbor(t *testing.T) {
+	router := samControllerRouter()
+	store := &samStore{objects: map[string]map[string]any{}, statuses: []routerstate.ObjectStatus{
+		samRemoteAddressClaimStatus("app", "10.0.1.123/32", "lan0"),
+	}}
+	applier := &fakeSAMApplier{}
+	controller := SAMController{Router: router, Store: store, OS: platform.OSLinux, Applier: applier}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(applier.delete) != 0 {
+		t.Fatalf("delete = %#v, want none", applier.delete)
+	}
+	assertSAMCalls(t, applier.calls, []string{"ensure:10.0.1.123/32@lan0"})
+}
+
+func TestSAMControllerDryRunSkipsProxyNeighborActions(t *testing.T) {
+	router := samControllerRouterWithClaim("10.0.1.123/32", "proxy-arp", "br-new")
+	store := &samStore{objects: map[string]map[string]any{}, statuses: []routerstate.ObjectStatus{
+		samRemoteAddressClaimStatus("app", "10.0.1.123/32", "br-old"),
+	}}
+	applier := &fakeSAMApplier{}
+	controller := SAMController{Router: router, Store: store, DryRun: true, OS: platform.OSLinux, Applier: applier}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(applier.ensure) != 0 || len(applier.delete) != 0 || len(applier.calls) != 0 {
+		t.Fatalf("host actions = ensure %#v delete %#v calls %#v, want none", applier.ensure, applier.delete, applier.calls)
+	}
+}
+
+func TestSAMControllerNoClaimsNoProxyNeighborActions(t *testing.T) {
+	router := &api.Router{}
+	store := &samStore{objects: map[string]map[string]any{}}
+	applier := &fakeSAMApplier{}
+	controller := SAMController{Router: router, Store: store, OS: platform.OSLinux, Applier: applier}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(applier.ensure) != 0 || len(applier.delete) != 0 || len(applier.calls) != 0 {
+		t.Fatalf("host actions = ensure %#v delete %#v calls %#v, want none", applier.ensure, applier.delete, applier.calls)
+	}
+}
+
 type fakeSAMApplier struct {
 	ensure []string
 	delete []string
+	calls  []string
 }
 
 func (a *fakeSAMApplier) EnsureProxyNeighbor(_ context.Context, address, ifname string) error {
 	a.ensure = append(a.ensure, address+"@"+ifname)
+	a.calls = append(a.calls, "ensure:"+address+"@"+ifname)
 	return nil
 }
 
 func (a *fakeSAMApplier) DeleteProxyNeighbor(_ context.Context, address, ifname string) error {
 	a.delete = append(a.delete, address+"@"+ifname)
+	a.calls = append(a.calls, "delete:"+address+"@"+ifname)
 	return nil
 }
 
@@ -128,6 +223,10 @@ func (s *samStore) DeleteObject(apiVersion, kind, name string) error {
 }
 
 func samControllerRouter() *api.Router {
+	return samControllerRouterWithClaim("10.0.1.123/32", "proxy-arp", "lan0")
+}
+
+func samControllerRouterWithClaim(address, captureType, captureInterface string) *api.Router {
 	return &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "OverlayPeer"}, Metadata: api.ObjectMeta{Name: "cloud"}, Spec: api.OverlayPeerSpec{
 			Role:     "cloud",
@@ -136,10 +235,33 @@ func samControllerRouter() *api.Router {
 		}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "RemoteAddressClaim"}, Metadata: api.ObjectMeta{Name: "app"}, Spec: api.RemoteAddressClaimSpec{
 			DomainRef: "same-subnet",
-			Address:   "10.0.1.123/32",
+			Address:   address,
 			OwnerSide: "onprem",
-			Capture:   api.AddressCapture{Type: "proxy-arp", Interface: "lan0"},
+			Capture:   api.AddressCapture{Type: captureType, Interface: captureInterface},
 			Delivery:  api.AddressDelivery{PeerRef: "cloud", Mode: "route", TunnelInterface: "wg-sam"},
 		}},
 	}}}
+}
+
+func samRemoteAddressClaimStatus(name, address, ifname string) routerstate.ObjectStatus {
+	return routerstate.ObjectStatus{
+		APIVersion: api.HybridAPIVersion,
+		Kind:       "RemoteAddressClaim",
+		Name:       name,
+		Status: map[string]any{
+			"captureProxyNeighbor": map[string]any{"address": address, "interface": ifname},
+		},
+	}
+}
+
+func assertSAMCalls(t *testing.T, got, want []string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("calls = %#v, want %#v", got, want)
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			t.Fatalf("calls = %#v, want %#v", got, want)
+		}
+	}
 }

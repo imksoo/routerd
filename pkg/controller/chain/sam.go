@@ -21,6 +21,11 @@ type samProxyNeighborApplier interface {
 	DeleteProxyNeighbor(ctx context.Context, address, ifname string) error
 }
 
+type samStoredProxyNeighbor struct {
+	address string
+	ifname  string
+}
+
 func samSelectResources(resources []api.Resource, kind string) []api.Resource {
 	var out []api.Resource
 	for _, resource := range resources {
@@ -52,11 +57,18 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 	if targetOS != platform.OSLinux {
 		return c.reconcileStatuses(targetOS)
 	}
-	if err := c.cleanupRemovedCaptures(ctx); err != nil {
+	statuses, err := c.listObjectStatuses()
+	if err != nil {
+		return err
+	}
+	if err := c.cleanupRemovedCaptures(ctx, statuses); err != nil {
 		return err
 	}
 	actions, err := sam.PlanCapture(c.Router, targetOS)
 	if err != nil {
+		return err
+	}
+	if err := c.cleanupChangedCaptures(ctx, statuses, actions); err != nil {
 		return err
 	}
 	var failures []string
@@ -110,14 +122,8 @@ func (c SAMController) reconcileStatuses(targetOS platform.OS) error {
 	return nil
 }
 
-func (c SAMController) cleanupRemovedCaptures(ctx context.Context) error {
+func (c SAMController) cleanupRemovedCaptures(ctx context.Context, statuses []routerstate.ObjectStatus) error {
 	if c.Store == nil {
-		return nil
-	}
-	lister, ok := c.Store.(interface {
-		ListObjectStatuses() ([]routerstate.ObjectStatus, error)
-	})
-	if !ok {
 		return nil
 	}
 	deleter, ok := c.Store.(interface {
@@ -125,10 +131,6 @@ func (c SAMController) cleanupRemovedCaptures(ctx context.Context) error {
 	})
 	if !ok {
 		return nil
-	}
-	statuses, err := lister.ListObjectStatuses()
-	if err != nil {
-		return err
 	}
 	desired := map[string]bool{}
 	for _, resource := range c.Router.Spec.Resources {
@@ -145,13 +147,9 @@ func (c SAMController) cleanupRemovedCaptures(ctx context.Context) error {
 			continue
 		}
 		if !c.DryRun {
-			if capture, ok := status.Status["captureProxyNeighbor"].(map[string]any); ok {
-				address := strings.TrimSpace(fmt.Sprint(capture["address"]))
-				ifname := strings.TrimSpace(fmt.Sprint(capture["interface"]))
-				if address != "" && address != "<nil>" && ifname != "" && ifname != "<nil>" {
-					if err := applier.DeleteProxyNeighbor(ctx, address, ifname); err != nil {
-						return fmt.Errorf("delete removed SAM proxy neighbor %s dev %s: %w", address, ifname, err)
-					}
+			if capture, ok := samStoredProxyNeighborFromStatus(status); ok {
+				if err := applier.DeleteProxyNeighbor(ctx, capture.address, capture.ifname); err != nil {
+					return fmt.Errorf("delete removed SAM proxy neighbor %s dev %s: %w", capture.address, capture.ifname, err)
 				}
 			}
 		}
@@ -168,4 +166,82 @@ func (c SAMController) cleanupRemovedCaptures(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func (c SAMController) cleanupChangedCaptures(ctx context.Context, statuses []routerstate.ObjectStatus, actions []sam.CaptureAction) error {
+	if c.Store == nil || c.DryRun {
+		return nil
+	}
+	prior := samStoredProxyNeighbors(statuses)
+	if len(prior) == 0 {
+		return nil
+	}
+	desiredClaims := map[string]bool{}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion == api.HybridAPIVersion && resource.Kind == "RemoteAddressClaim" {
+			desiredClaims[resource.Metadata.Name] = true
+		}
+	}
+	desiredNeighbors := map[string]samStoredProxyNeighbor{}
+	for _, action := range actions {
+		if action.Kind == "proxy-neighbor" {
+			desiredNeighbors[action.ClaimName] = samStoredProxyNeighbor{address: strings.TrimSpace(action.Address), ifname: strings.TrimSpace(action.Interface)}
+		}
+	}
+	applier := c.Applier
+	if applier == nil {
+		applier = defaultSAMProxyNeighborApplier()
+	}
+	for name, old := range prior {
+		if !desiredClaims[name] {
+			continue
+		}
+		next, ok := desiredNeighbors[name]
+		if ok && next == old {
+			continue
+		}
+		if err := applier.DeleteProxyNeighbor(ctx, old.address, old.ifname); err != nil {
+			return fmt.Errorf("delete changed SAM proxy neighbor %s dev %s: %w", old.address, old.ifname, err)
+		}
+	}
+	return nil
+}
+
+func (c SAMController) listObjectStatuses() ([]routerstate.ObjectStatus, error) {
+	if c.Store == nil {
+		return nil, nil
+	}
+	lister, ok := c.Store.(interface {
+		ListObjectStatuses() ([]routerstate.ObjectStatus, error)
+	})
+	if !ok {
+		return nil, nil
+	}
+	return lister.ListObjectStatuses()
+}
+
+func samStoredProxyNeighbors(statuses []routerstate.ObjectStatus) map[string]samStoredProxyNeighbor {
+	out := map[string]samStoredProxyNeighbor{}
+	for _, status := range statuses {
+		if status.APIVersion != api.HybridAPIVersion || status.Kind != "RemoteAddressClaim" {
+			continue
+		}
+		if capture, ok := samStoredProxyNeighborFromStatus(status); ok {
+			out[status.Name] = capture
+		}
+	}
+	return out
+}
+
+func samStoredProxyNeighborFromStatus(status routerstate.ObjectStatus) (samStoredProxyNeighbor, bool) {
+	capture, ok := status.Status["captureProxyNeighbor"].(map[string]any)
+	if !ok {
+		return samStoredProxyNeighbor{}, false
+	}
+	address := strings.TrimSpace(fmt.Sprint(capture["address"]))
+	ifname := strings.TrimSpace(fmt.Sprint(capture["interface"]))
+	if address == "" || address == "<nil>" || ifname == "" || ifname == "<nil>" {
+		return samStoredProxyNeighbor{}, false
+	}
+	return samStoredProxyNeighbor{address: address, ifname: ifname}, true
 }
