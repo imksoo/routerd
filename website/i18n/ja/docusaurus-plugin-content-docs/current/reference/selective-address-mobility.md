@@ -90,6 +90,32 @@ remedy を表示します。
 | OCI | VNIC private IP object と source/destination check disabled。 |
 | GCP | Alias IP または route capability。provider profile の capability で gate します。 |
 
+## Same-Subnet Flow
+
+`10.0.0.0/24` lab では、`10.0.0.7/32` が cloud VM の address、
+`10.0.0.9/32` が on-prem/PVE VM の address です。目的は、cloud VM
+`10.0.0.7` から on-prem VM `10.0.0.9` へ TCP connection を開始し、両方の VM
+の default gateway は local のまま、NAT なしで通信させることです。
+
+1. Cloud VM が `10.0.0.9` へ送信します。
+2. Azure NIC secondary IP capture が `10.0.0.9/32` 宛の packet を cloud
+   routerd node へ届けます。
+3. Cloud routerd node は packet を `wg-hybrid` 経由で on-prem routerd peer
+   へ delivery します。
+4. On-prem 側は `10.0.0.9` の owner へ forwarding します。
+5. Source/destination IP は元の endpoint address のままです。
+
+Reverse path の `10.0.0.7/32` は on-prem 側の proxy-ARP で capture します。
+PVE LAN host は `.7` へ on-prem routerd node 経由で到達し、on-prem routerd
+node が overlay 経由で cloud routerd node へ delivery します。
+
+Split example config は次の 2 つです。
+
+- `examples/hybrid-azure-pve-same-subnet-cloud.yaml`: cloud routerd node に適用し、
+  on-prem VM `10.0.0.9/32` の provider-secondary-IP claim を含みます。
+- `examples/hybrid-azure-pve-same-subnet-onprem.yaml`: on-prem routerd node に適用し、
+  cloud VM `10.0.0.7/32` の proxy-ARP claim を含みます。
+
 ## Firewall And NAT Composition
 
 Selective Address Mobility は通常の switching/forwarding plane にあります。

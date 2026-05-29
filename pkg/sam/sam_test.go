@@ -127,34 +127,48 @@ func TestPlanCaptureNoClaimsAndNonLinuxNoActions(t *testing.T) {
 	}
 }
 
-func TestHybridAzurePVESameSubnetExampleLowersDeliveryRoutes(t *testing.T) {
-	router, err := config.Load(filepath.Join("..", "..", "examples", "hybrid-azure-pve-same-subnet.yaml"))
-	if err != nil {
-		t.Fatalf("load example: %v", err)
+func TestHybridAzurePVESameSubnetExamplesLowerDeliveryRoutes(t *testing.T) {
+	tests := []struct {
+		name        string
+		routeName   string
+		destination string
+	}{
+		{
+			name:        "hybrid-azure-pve-same-subnet-cloud.yaml",
+			routeName:   "sam-onprem-vm-10-0-0-9-delivery",
+			destination: "10.0.0.9/32",
+		},
+		{
+			name:        "hybrid-azure-pve-same-subnet-onprem.yaml",
+			routeName:   "sam-cloud-vm-10-0-0-7-delivery",
+			destination: "10.0.0.7/32",
+		},
 	}
-	if err := config.Validate(router); err != nil {
-		t.Fatalf("validate example: %v", err)
-	}
-	expanded, lowerings, err := ExpandRemoteAddressClaimRoutes(*router)
-	if err != nil {
-		t.Fatalf("ExpandRemoteAddressClaimRoutes: %v", err)
-	}
-	if len(lowerings) != 2 {
-		t.Fatalf("lowerings = %#v, want two", lowerings)
-	}
-	routes := ipv4Routes(expanded)
-	for routeName, destination := range map[string]string{
-		"sam-azure-vm-10-0-0-9-delivery": "10.0.0.9/32",
-		"sam-pve-vm-10-0-0-7-delivery":   "10.0.0.7/32",
-	} {
-		route := findRoute(t, routes, routeName)
-		spec, err := route.IPv4RouteSpec()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if spec.Destination != destination || spec.Device != "wg-hybrid" || spec.Metric != DeliveryRouteMetricDefault {
-			t.Fatalf("route %s spec = %#v", route.Metadata.Name, spec)
-		}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			router, err := config.Load(filepath.Join("..", "..", "examples", tt.name))
+			if err != nil {
+				t.Fatalf("load example: %v", err)
+			}
+			if err := config.Validate(router); err != nil {
+				t.Fatalf("validate example: %v", err)
+			}
+			expanded, lowerings, err := ExpandRemoteAddressClaimRoutes(*router)
+			if err != nil {
+				t.Fatalf("ExpandRemoteAddressClaimRoutes: %v", err)
+			}
+			if len(lowerings) != 1 {
+				t.Fatalf("lowerings = %#v, want one", lowerings)
+			}
+			route := findRoute(t, ipv4Routes(expanded), tt.routeName)
+			spec, err := route.IPv4RouteSpec()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if spec.Destination != tt.destination || spec.Device != "wg-hybrid" || spec.Metric != DeliveryRouteMetricDefault {
+				t.Fatalf("route %s spec = %#v", route.Metadata.Name, spec)
+			}
+		})
 	}
 }
 

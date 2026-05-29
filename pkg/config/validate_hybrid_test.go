@@ -185,6 +185,15 @@ func TestValidateHybridFailures(t *testing.T) {
 			want: "spec.capture.nicRef is required",
 		},
 		{
+			name: "remote claim provider configure OS address rejected",
+			mutate: func(router *api.Router) {
+				spec := router.Spec.Resources[6].Spec.(api.RemoteAddressClaimSpec)
+				spec.Capture.ConfigureOSAddress = true
+				router.Spec.Resources[6].Spec = spec
+			},
+			want: "spec.capture.configureOSAddress=true is not implemented in the MVP",
+		},
+		{
 			name: "remote claim proxy arp missing interface",
 			mutate: func(router *api.Router) {
 				spec := router.Spec.Resources[6].Spec.(api.RemoteAddressClaimSpec)
@@ -279,17 +288,24 @@ func TestCloudInventoryPluginExampleValidates(t *testing.T) {
 	}
 }
 
-func TestHybridAzurePVESameSubnetExampleValidates(t *testing.T) {
-	path := filepath.Join("..", "..", "examples", "hybrid-azure-pve-same-subnet.yaml")
-	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("example missing: %v", err)
-	}
-	router, err := Load(path)
-	if err != nil {
-		t.Fatalf("load example: %v", err)
-	}
-	if err := Validate(router); err != nil {
-		t.Fatalf("validate example: %v", err)
+func TestHybridAzurePVESameSubnetExamplesValidate(t *testing.T) {
+	for _, name := range []string{
+		"hybrid-azure-pve-same-subnet-cloud.yaml",
+		"hybrid-azure-pve-same-subnet-onprem.yaml",
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join("..", "..", "examples", name)
+			if _, err := os.Stat(path); err != nil {
+				t.Fatalf("example missing: %v", err)
+			}
+			router, err := Load(path)
+			if err != nil {
+				t.Fatalf("load example: %v", err)
+			}
+			if err := Validate(router); err != nil {
+				t.Fatalf("validate example: %v", err)
+			}
+		})
 	}
 }
 

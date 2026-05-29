@@ -37,11 +37,11 @@ is delivered:
 ```yaml
 apiVersion: hybrid.routerd.net/v1alpha1
 kind: RemoteAddressClaim
-metadata: { name: azure-vm-10-0-0-9 }
+metadata: { name: onprem-vm-10-0-0-9 }
 spec:
   domainRef: lab-same-subnet
   address: 10.0.0.9/32
-  ownerSide: cloud
+  ownerSide: onprem
   capture:
     type: provider-secondary-ip
     providerRef: azure-lab
@@ -132,18 +132,30 @@ provider route tables.
 
 ## Same-Subnet Flow
 
-In a `10.0.0.0/24` lab, suppose `10.0.0.7/32` is owned on-prem and
-`10.0.0.9/32` is owned in Azure.
+In a `10.0.0.0/24` lab, suppose `10.0.0.7/32` is the cloud VM address and
+`10.0.0.9/32` is the on-prem/PVE VM address. The goal is for the cloud VM at
+`10.0.0.7` to open a TCP connection to the on-prem VM at `10.0.0.9` while both
+VMs keep local default gateways and no NAT is introduced.
 
-1. A cloud host sends to `10.0.0.7`.
-2. The cloud-side capture mechanism directs packets for `10.0.0.7/32` to the
+1. The cloud VM sends to `10.0.0.9`.
+2. Azure NIC secondary IP capture directs packets for `10.0.0.9/32` to the
    cloud routerd node.
-3. routerd delivers the packet over `wg-hybrid` to the on-prem routerd peer.
-4. The on-prem side forwards it to the owner of `10.0.0.7`.
+3. The cloud routerd node delivers the packet over `wg-hybrid` to the on-prem
+   routerd peer.
+4. The on-prem side forwards it to the owner of `10.0.0.9`.
 5. Source and destination IPs remain the original endpoint addresses.
 
-The reverse path for `10.0.0.9/32` works the same way with the provider
-secondary IP capture on the cloud side.
+The reverse path for `10.0.0.7/32` is captured on the on-prem side with
+proxy-ARP. PVE LAN hosts reach `.7` through the on-prem routerd node, which
+delivers the packet over the overlay to the cloud routerd node.
+
+The split example configs are:
+
+- `examples/hybrid-azure-pve-same-subnet-cloud.yaml`, applied on the cloud
+  routerd node, contains the provider-secondary-IP claim for on-prem VM
+  `10.0.0.9/32`.
+- `examples/hybrid-azure-pve-same-subnet-onprem.yaml`, applied on the on-prem
+  routerd node, contains the proxy-ARP claim for cloud VM `10.0.0.7/32`.
 
 ## Firewall And NAT Composition
 
