@@ -221,6 +221,15 @@ func TestValidateHybridFailures(t *testing.T) {
 			want: "spec.domainRef references missing AddressMobilityDomain",
 		},
 		{
+			name: "remote claim address outside domain",
+			mutate: func(router *api.Router) {
+				spec := router.Spec.Resources[6].Spec.(api.RemoteAddressClaimSpec)
+				spec.Address = "10.1.0.9/32"
+				router.Spec.Resources[6].Spec = spec
+			},
+			want: "spec.address \"10.1.0.9/32\" is outside AddressMobilityDomain",
+		},
+		{
 			name: "remote claim unresolved delivery peer",
 			mutate: func(router *api.Router) {
 				spec := router.Spec.Resources[6].Spec.(api.RemoteAddressClaimSpec)
@@ -228,6 +237,24 @@ func TestValidateHybridFailures(t *testing.T) {
 				router.Spec.Resources[6].Spec = spec
 			},
 			want: "spec.delivery.peerRef references missing OverlayPeer",
+		},
+		{
+			name: "address mobility domain unresolved peer",
+			mutate: func(router *api.Router) {
+				spec := router.Spec.Resources[4].Spec.(api.AddressMobilityDomainSpec)
+				spec.PeerRef = "missing"
+				router.Spec.Resources[4].Spec = spec
+			},
+			want: "spec.peerRef references missing OverlayPeer",
+		},
+		{
+			name: "remote claim unresolved provider profile",
+			mutate: func(router *api.Router) {
+				spec := router.Spec.Resources[6].Spec.(api.RemoteAddressClaimSpec)
+				spec.Capture.ProviderRef = "missing"
+				router.Spec.Resources[6].Spec = spec
+			},
+			want: "spec.capture.providerRef references missing CloudProviderProfile",
 		},
 	}
 	for _, tt := range tests {
@@ -251,11 +278,44 @@ func TestValidateHybridWarnsForExternalWireGuardInterface(t *testing.T) {
 	}
 }
 
-func TestValidateHybridWarnsForExternalCloudProviderProfile(t *testing.T) {
+func TestValidateHybridWarnsForProviderModeNotDeclared(t *testing.T) {
 	router := validHybridRouter()
-	router.Spec.Resources = append(router.Spec.Resources[:5], router.Spec.Resources[6:]...)
+	spec := router.Spec.Resources[6].Spec.(api.RemoteAddressClaimSpec)
+	spec.Capture.ProviderMode = "floating-private-ip"
+	router.Spec.Resources[6].Spec = spec
+	if err := Validate(router); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
 	warnings := Warnings(router)
-	if len(warnings) != 1 || !strings.Contains(warnings[0], "assuming the provider profile is managed externally") {
+	if len(warnings) != 1 || !strings.Contains(warnings[0], `spec.capture.providerMode "floating-private-ip" is not declared`) {
+		t.Fatalf("warnings = %#v", warnings)
+	}
+}
+
+func TestValidateHybridWarnsForExternalProxyARPInterface(t *testing.T) {
+	router := validHybridRouter()
+	spec := router.Spec.Resources[6].Spec.(api.RemoteAddressClaimSpec)
+	spec.Capture = api.AddressCapture{Type: "proxy-arp", Interface: "br-lan"}
+	router.Spec.Resources[6].Spec = spec
+	if err := Validate(router); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	warnings := Warnings(router)
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "assuming the interface is managed externally") {
+		t.Fatalf("warnings = %#v", warnings)
+	}
+}
+
+func TestValidateHybridProxyARPInterfaceWarningAcceptsInterfaceIfName(t *testing.T) {
+	router := validHybridRouter()
+	spec := router.Spec.Resources[6].Spec.(api.RemoteAddressClaimSpec)
+	spec.Capture = api.AddressCapture{Type: "proxy-arp", Interface: "br-lan"}
+	router.Spec.Resources[6].Spec = spec
+	router.Spec.Resources = append(router.Spec.Resources, testResource(api.NetAPIVersion, "Interface", "lan", api.InterfaceSpec{IfName: "br-lan"}))
+	if err := Validate(router); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if warnings := Warnings(router); len(warnings) != 0 {
 		t.Fatalf("warnings = %#v", warnings)
 	}
 }
