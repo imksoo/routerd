@@ -1154,6 +1154,36 @@ type IPv4RouteSpec struct {
 	ReadyWhen   []ReadyWhenSpec          `yaml:"ready_when,omitempty" json:"-"`
 }
 
+type OverlayPeerSpec struct {
+	Role     string          `yaml:"role" json:"role" jsonschema:"enum=onprem,enum=cloud"`
+	NodeID   string          `yaml:"nodeID" json:"nodeID"`
+	Underlay OverlayUnderlay `yaml:"underlay" json:"underlay"`
+	Remote   OverlayRemote   `yaml:"remote,omitempty" json:"remote,omitempty"`
+}
+
+type OverlayUnderlay struct {
+	Type      string `yaml:"type" json:"type" jsonschema:"enum=wireguard,enum=tailscale,enum=ipsec,enum=route"`
+	Interface string `yaml:"interface,omitempty" json:"interface,omitempty"`
+	Address   string `yaml:"address,omitempty" json:"address,omitempty"`
+}
+
+type OverlayRemote struct {
+	NodeID  string `yaml:"nodeID,omitempty" json:"nodeID,omitempty"`
+	Address string `yaml:"address,omitempty" json:"address,omitempty"`
+}
+
+type HybridRouteSpec struct {
+	DestinationCIDRs []string           `yaml:"destinationCIDRs" json:"destinationCIDRs"`
+	PeerRef          string             `yaml:"peerRef" json:"peerRef"`
+	Install          HybridRouteInstall `yaml:"install,omitempty" json:"install,omitempty"`
+	HealthCheckRef   string             `yaml:"healthCheckRef,omitempty" json:"healthCheckRef,omitempty"`
+}
+
+type HybridRouteInstall struct {
+	Table  string `yaml:"table,omitempty" json:"table,omitempty" jsonschema:"enum=,enum=main"`
+	Metric int    `yaml:"metric,omitempty" json:"metric,omitempty" jsonschema:"minimum=0"`
+}
+
 type HealthCheckSpec struct {
 	// Enabled defaults to true; set enabled: false to keep the check disabled.
 	Enabled            *bool                 `yaml:"enabled,omitempty" json:"enabled,omitempty"`
@@ -1765,6 +1795,14 @@ func (r Resource) DSLiteTunnelSpec() (DSLiteTunnelSpec, error) {
 
 func (r Resource) IPv4RouteSpec() (IPv4RouteSpec, error) {
 	return specAs[IPv4RouteSpec](r)
+}
+
+func (r Resource) OverlayPeerSpec() (OverlayPeerSpec, error) {
+	return specAs[OverlayPeerSpec](r)
+}
+
+func (r Resource) HybridRouteSpec() (HybridRouteSpec, error) {
+	return specAs[HybridRouteSpec](r)
 }
 
 func (r Resource) HealthCheckSpec() (HealthCheckSpec, error) {

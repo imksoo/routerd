@@ -5729,6 +5729,176 @@
                 "additionalProperties": false,
                 "properties": {
                   "apiVersion": {
+                    "const": "hybrid.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "OverlayPeer",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "nodeID": {
+                        "type": "string"
+                      },
+                      "remote": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "address": {
+                            "type": "string"
+                          },
+                          "nodeID": {
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "role": {
+                        "enum": [
+                          "onprem",
+                          "cloud"
+                        ],
+                        "type": "string"
+                      },
+                      "underlay": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "address": {
+                            "type": "string"
+                          },
+                          "interface": {
+                            "type": "string"
+                          },
+                          "type": {
+                            "enum": [
+                              "wireguard",
+                              "tailscale",
+                              "ipsec",
+                              "route"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "type"
+                        ],
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "role",
+                      "nodeID",
+                      "underlay"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "hybrid.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "HybridRoute",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "destinationCIDRs": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "healthCheckRef": {
+                        "type": "string"
+                      },
+                      "install": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "metric": {
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "table": {
+                            "enum": [
+                              "",
+                              "main"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "peerRef": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "destinationCIDRs",
+                      "peerRef"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
                     "const": "net.routerd.net/v1alpha1",
                     "type": "string"
                   },

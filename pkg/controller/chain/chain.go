@@ -42,6 +42,7 @@ import (
 	"github.com/imksoo/routerd/pkg/eventrule"
 	"github.com/imksoo/routerd/pkg/ha"
 	"github.com/imksoo/routerd/pkg/healthcheck"
+	"github.com/imksoo/routerd/pkg/hybrid"
 	"github.com/imksoo/routerd/pkg/logstore"
 	"github.com/imksoo/routerd/pkg/observabilitypipeline"
 	"github.com/imksoo/routerd/pkg/platform"
@@ -168,7 +169,7 @@ func resourceOwnerController(kind string) string {
 		return "package"
 	case "PPPoESession":
 		return "pppoesession"
-	case "IPv4Route", "IPv4StaticRoute", "IPv6StaticRoute", "EgressRoutePolicy":
+	case "IPv4Route", "IPv4StaticRoute", "IPv6StaticRoute", "EgressRoutePolicy", "HybridRoute":
 		return "route"
 	case "ServiceUnit", "TailscaleNode", "HealthCheck", "NTPClient", "NTPServer", "SysctlProfile", "Sysctl", "LogRetention", "Hostname", "ConntrackTuning":
 		return "service-unit"
@@ -683,6 +684,17 @@ func (r *Runner) Start(ctx context.Context) error {
 		opts.DryRunServiceUnit = true
 	}
 	r.Opts = opts
+	routeRouter := r.Router
+	hybridLowerings := []hybrid.HybridLowering(nil)
+	if hybrid.HasHybridRoutes(r.Router) {
+		expanded, lowerings, err := hybrid.ExpandHybridRoutes(*r.Router)
+		if err != nil {
+			return err
+		}
+		routeRouter = &expanded
+		hybridLowerings = lowerings
+	}
+
 	packages := PackageController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunPackage}
 	sysctl := SysctlController{Router: r.Router, Bus: r.Bus, Store: store}
 	kernelModules := KernelModuleController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunPackage}
@@ -697,7 +709,8 @@ func (r *Runner) Start(ctx context.Context) error {
 	ipv4Static := IPv4StaticAddressController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunAddress, Logger: logger}
 	lan := LANAddressController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunAddress, Logger: logger}
 	dslite := DSLiteTunnelController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunDSLite, ResolverPort: r.Opts.DnsmasqPort, Logger: logger}
-	route := IPv4RouteController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunRoute, Logger: logger}
+	route := IPv4RouteController{Router: routeRouter, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunRoute, Logger: logger}
+	hybridRoute := HybridRouteController{Router: r.Router, EffectiveRouter: routeRouter, Lowerings: hybridLowerings, Store: store}
 	policyRoute := IPv4PolicyRouteController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunRoute, NftCommand: r.Opts.NftCommand, LedgerPath: r.Opts.LedgerPath, Logger: logger}
 	pathMTU := PathMTUController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunRoute, NftCommand: r.Opts.NftCommand}
 	dhcpv6 := DHCPv6ServerController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunDHCPv6, Command: r.Opts.DnsmasqCommand, ConfigPath: r.Opts.DnsmasqConfig, PIDFile: r.Opts.DnsmasqPID, Port: r.Opts.DnsmasqPort, ListenAddresses: r.Opts.DnsmasqListen, Logger: logger}
@@ -785,6 +798,7 @@ func (r *Runner) Start(ctx context.Context) error {
 		framework.FuncController{ControllerName: "dslite", Every: 30 * time.Second, Subs: statusSubscriptions("DHCPv6Information", "IPv6DelegatedAddress", "DNSResolver"), PeriodicFunc: dslite.reconcile},
 		framework.FuncController{ControllerName: "ipv4-policy-route", Subs: statusSubscriptions("DSLiteTunnel", "HealthCheck", "IPv4StaticAddress", "Interface"), PeriodicFunc: policyRoute.Reconcile},
 		framework.FuncController{ControllerName: "ipv4-route", Every: 30 * time.Second, Subs: statusSubscriptions("DSLiteTunnel", "EgressRoutePolicy"), PeriodicFunc: route.reconcile},
+		framework.FuncController{ControllerName: "hybrid-route", Subs: statusSubscriptions("IPv4Route", "HealthCheck", "WireGuardInterface", "Interface"), PeriodicFunc: hybridRoute.Reconcile},
 		framework.FuncController{ControllerName: "path-mtu", Subs: statusSubscriptions("DSLiteTunnel", "PPPoESession", "WireGuardInterface", "Interface", "FirewallZone", "DHCPv6Server", "IPv6RouterAdvertisement"), PeriodicFunc: pathMTU.Reconcile},
 		framework.FuncController{ControllerName: "dhcpv6-server", Every: 30 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed", "routerd.dhcp.lease.**"}}}, PeriodicFunc: dhcpv6.reconcile},
 		framework.FuncController{ControllerName: "dhcpv4-lease", Every: 10 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.dhcpv4.client.**"}}}, ReconcileFunc: func(ctx context.Context, _ daemonapi.DaemonEvent) error {

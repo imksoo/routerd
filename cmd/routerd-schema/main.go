@@ -324,6 +324,8 @@ func resourceUnionSchema() map[string]any {
 			resourceSchema(api.NetAPIVersion, "DNSForwarder", api.DNSForwarderSpec{}),
 			resourceSchema(api.NetAPIVersion, "DNSUpstream", api.DNSUpstreamSpec{}),
 			resourceSchema(api.NetAPIVersion, "DSLiteTunnel", api.DSLiteTunnelSpec{}),
+			resourceSchema(api.HybridAPIVersion, "OverlayPeer", api.OverlayPeerSpec{}),
+			resourceSchema(api.HybridAPIVersion, "HybridRoute", api.HybridRouteSpec{}),
 			resourceSchema(api.NetAPIVersion, "IPv4Route", api.IPv4RouteSpec{}),
 			resourceSchema(api.NetAPIVersion, "HealthCheck", api.HealthCheckSpec{}),
 			resourceSchema(api.NetAPIVersion, "EgressRoutePolicy", api.EgressRoutePolicySpec{}),

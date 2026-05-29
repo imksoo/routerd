@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/netip"
 	"os"
 	"sort"
 	"strconv"
@@ -19,6 +20,7 @@ import (
 	"github.com/imksoo/routerd/pkg/config"
 	"github.com/imksoo/routerd/pkg/controlapi"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
+	"github.com/imksoo/routerd/pkg/hybrid"
 	routerplugin "github.com/imksoo/routerd/pkg/plugin"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
@@ -57,7 +59,7 @@ type doctorRunner struct {
 	store  routerstate.Store
 }
 
-var doctorAreas = []string{"wan", "dns", "dslite", "dhcpv6-pd", "nat", "firewall", "rollback", "disk", "mgmt", "reconcile", "runtime", "dynamic", "plugin"}
+var doctorAreas = []string{"wan", "dns", "dslite", "dhcpv6-pd", "nat", "firewall", "rollback", "disk", "mgmt", "reconcile", "runtime", "dynamic", "plugin", "hybrid"}
 
 // doctorReconcileWarnThreshold and doctorReconcileFailThreshold are total error
 // counts (across all controllers) that promote the reconcile area to warn/fail.
@@ -161,9 +163,152 @@ func (r doctorRunner) runArea(area string) []doctorCheck {
 		return r.doctorDynamic()
 	case "plugin":
 		return r.doctorPlugin()
+	case "hybrid":
+		return r.doctorHybrid()
 	default:
 		return []doctorCheck{{Area: area, Name: "area", Status: doctorSkip, Detail: "unknown area"}}
 	}
+}
+
+func (r doctorRunner) doctorHybrid() []doctorCheck {
+	if r.router == nil {
+		return []doctorCheck{{Area: "hybrid", Name: "startup config", Status: doctorSkip, Detail: "startup config unavailable"}}
+	}
+	routes := selectResources(r.router.Spec.Resources, "HybridRoute", "")
+	peers := selectResources(r.router.Spec.Resources, "OverlayPeer", "")
+	if len(routes) == 0 && len(peers) == 0 {
+		return []doctorCheck{{Area: "hybrid", Name: "HybridRoute", Status: doctorSkip, Detail: "no HybridRoute or OverlayPeer resources configured"}}
+	}
+	peerMap := map[string]api.Resource{}
+	for _, peer := range peers {
+		peerMap[peer.Metadata.Name] = peer
+	}
+	wgInterfaces := map[string]bool{}
+	for _, res := range selectResources(r.router.Spec.Resources, "WireGuardInterface", "") {
+		wgInterfaces[res.Metadata.Name] = true
+	}
+	var checks []doctorCheck
+	for _, peer := range peers {
+		spec, err := peer.OverlayPeerSpec()
+		if err != nil {
+			checks = append(checks, doctorCheck{Area: "hybrid", Name: "OverlayPeer/" + peer.Metadata.Name, Status: doctorFail, Detail: err.Error(), Remedy: "fix OverlayPeer spec"})
+			continue
+		}
+		if spec.Underlay.Type == "wireguard" {
+			name := "OverlayPeer/" + peer.Metadata.Name + " underlay interface"
+			if wgInterfaces[spec.Underlay.Interface] {
+				checks = append(checks, doctorCheck{Area: "hybrid", Name: name, Status: doctorPass, Detail: "WireGuardInterface/" + spec.Underlay.Interface})
+			} else {
+				checks = append(checks, doctorCheck{Area: "hybrid", Name: name, Status: doctorFail, Detail: "missing WireGuardInterface/" + spec.Underlay.Interface, Remedy: "declare the WireGuardInterface or change OverlayPeer underlay.interface"})
+			}
+		}
+	}
+	for _, route := range routes {
+		spec, err := route.HybridRouteSpec()
+		if err != nil {
+			checks = append(checks, doctorCheck{Area: "hybrid", Name: "HybridRoute/" + route.Metadata.Name, Status: doctorFail, Detail: err.Error(), Remedy: "fix HybridRoute spec"})
+			continue
+		}
+		peerName := doctorHybridRefName(spec.PeerRef, "OverlayPeer")
+		if _, ok := peerMap[peerName]; ok {
+			checks = append(checks, doctorCheck{Area: "hybrid", Name: "HybridRoute/" + route.Metadata.Name + " peerRef", Status: doctorPass, Detail: "OverlayPeer/" + peerName})
+		} else {
+			checks = append(checks, doctorCheck{Area: "hybrid", Name: "HybridRoute/" + route.Metadata.Name + " peerRef", Status: doctorFail, Detail: "missing OverlayPeer/" + peerName, Remedy: "declare the OverlayPeer or update spec.peerRef"})
+		}
+		checks = append(checks, doctorHybridDefaultRouteCheck(route.Metadata.Name, spec.DestinationCIDRs))
+		checks = append(checks, r.doctorHybridMTUCheck(route.Metadata.Name, peerName))
+		checks = append(checks, r.doctorHybridHealthCheck(route.Metadata.Name, spec.HealthCheckRef))
+		checks = append(checks, r.doctorHybridRouteInstalledChecks(route.Metadata.Name, spec.DestinationCIDRs)...)
+	}
+	return checks
+}
+
+func doctorHybridDefaultRouteCheck(name string, destinations []string) doctorCheck {
+	for _, destination := range destinations {
+		if doctorHybridDefaultDestination(destination) {
+			return doctorCheck{Area: "hybrid", Name: "HybridRoute/" + name + " default route untouched", Status: doctorFail, Detail: "default destination " + destination + " is not allowed", Remedy: "remove default from spec.destinationCIDRs"}
+		}
+	}
+	return doctorCheck{Area: "hybrid", Name: "HybridRoute/" + name + " default route untouched", Status: doctorPass, Detail: "no default destinations"}
+}
+
+func (r doctorRunner) doctorHybridMTUCheck(routeName, peerName string) doctorCheck {
+	estimate, ok := hybrid.EstimateMTU(*r.router, peerName)
+	name := "HybridRoute/" + routeName + " MTU estimate"
+	if !ok || estimate.UnderlayMTU == 0 {
+		return doctorCheck{Area: "hybrid", Name: name, Status: doctorSkip, Detail: "underlay MTU unavailable"}
+	}
+	detail := fmt.Sprintf("underlay=%d overhead=%d estimate=%d", estimate.UnderlayMTU, estimate.Overhead, estimate.EstimatedMTU)
+	if estimate.Warning != "" {
+		return doctorCheck{Area: "hybrid", Name: name, Status: doctorWarn, Detail: appendDoctorDetail(detail, estimate.Warning), Remedy: "increase underlay MTU or reduce overlay payload MTU"}
+	}
+	return doctorCheck{Area: "hybrid", Name: name, Status: doctorPass, Detail: detail}
+}
+
+func (r doctorRunner) doctorHybridHealthCheck(routeName, ref string) doctorCheck {
+	name := "HybridRoute/" + routeName + " healthCheckRef"
+	if strings.TrimSpace(ref) == "" {
+		return doctorCheck{Area: "hybrid", Name: name, Status: doctorSkip, Detail: "no healthCheckRef configured"}
+	}
+	if !resourceExists(r.router.Spec.Resources, "HealthCheck", ref) {
+		return doctorCheck{Area: "hybrid", Name: name, Status: doctorFail, Detail: "missing HealthCheck/" + ref, Remedy: "declare the HealthCheck or update spec.healthCheckRef"}
+	}
+	if !r.opts.Host {
+		return doctorCheck{Area: "hybrid", Name: name, Status: doctorSkip, Detail: "host commands disabled by --no-host"}
+	}
+	status := objectStatus(r.store, api.NetAPIVersion, "HealthCheck", ref)
+	return doctorNamedStatusCheck("hybrid", name, status, healthyPhases("Healthy", "Passing", "Applied", "Ready"))
+}
+
+func (r doctorRunner) doctorHybridRouteInstalledChecks(routeName string, destinations []string) []doctorCheck {
+	if !r.opts.Host {
+		return []doctorCheck{doctorHostSkipped("hybrid", "HybridRoute/"+routeName+" route installed")}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), r.opts.Timeout)
+	defer cancel()
+	var checks []doctorCheck
+	for _, destination := range destinations {
+		label := "HybridRoute/" + routeName + " route " + destination
+		command := runDiagnosticCommand(ctx, "ip route show "+destination, "ip", "-4", "route", "show", destination)
+		if command.OK && strings.Contains(command.Stdout, destination) {
+			checks = append(checks, doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: oneLine(command.Stdout)})
+			continue
+		}
+		detail := firstNonEmpty(command.Error, oneLine(command.Output), oneLine(command.Stdout), "route not found")
+		checks = append(checks, doctorCheck{Area: "hybrid", Name: label, Status: doctorWarn, Detail: detail, Remedy: "wait for routerd to install the lowered IPv4Route or inspect route controller status"})
+	}
+	return checks
+}
+
+func doctorHybridDefaultDestination(value string) bool {
+	value = strings.TrimSpace(value)
+	if strings.EqualFold(value, "default") {
+		return true
+	}
+	prefix, err := netip.ParsePrefix(value)
+	if err != nil {
+		return false
+	}
+	prefix = prefix.Masked()
+	return prefix.Bits() == 0 && (prefix.Addr().Is4() || prefix.Addr().Is6())
+}
+
+func doctorHybridRefName(ref, kind string) string {
+	ref = strings.TrimSpace(ref)
+	if strings.HasPrefix(ref, kind+"/") {
+		return strings.TrimPrefix(ref, kind+"/")
+	}
+	return ref
+}
+
+func resourceExists(resources []api.Resource, kind, name string) bool {
+	name = doctorHybridRefName(name, kind)
+	for _, resource := range resources {
+		if resource.Kind == kind && resource.Metadata.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 func (r doctorRunner) doctorDynamic() []doctorCheck {

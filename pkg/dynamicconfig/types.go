@@ -14,7 +14,7 @@ const (
 	// ConfigAPIVersion is the API group for dynamic configuration objects.
 	ConfigAPIVersion = api.ConfigAPIVersion
 	// HybridAPIVersion is the API group for hybrid cloud/on-prem resources.
-	HybridAPIVersion = "hybrid.routerd.net/v1alpha1"
+	HybridAPIVersion = api.HybridAPIVersion
 
 	// DirectiveOpMask suppresses a matching startup-config resource while the
 	// directive is active.

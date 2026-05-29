@@ -1,0 +1,54 @@
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: hybrid-l3-wireguard
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardInterface
+      metadata:
+        name: wg-hybrid
+      spec:
+        privateKeyFile: /usr/local/etc/routerd/secrets/wg-hybrid.key
+        listenPort: 51820
+        mtu: 1420
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardPeer
+      metadata:
+        name: cloud-main
+      spec:
+        interface: wg-hybrid
+        publicKey: CLOUD_PEER_PUBLIC_KEY_REPLACE_ME
+        endpoint: 198.51.100.20:51820
+        allowedIPs:
+          - 10.20.0.0/16
+          - 169.254.100.2/32
+        persistentKeepalive: 25
+
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: OverlayPeer
+      metadata:
+        name: cloud-main
+      spec:
+        role: cloud
+        nodeID: cloud-main
+        underlay:
+          type: wireguard
+          interface: wg-hybrid
+          address: 169.254.100.1
+        remote:
+          nodeID: onprem-main
+          address: 169.254.100.2
+
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: HybridRoute
+      metadata:
+        name: cloud-private
+      spec:
+        destinationCIDRs:
+          - 10.20.0.0/16
+        peerRef: cloud-main
+        install:
+          table: main
+          metric: 120

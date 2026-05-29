@@ -358,6 +358,44 @@ func TestDoctorDSLiteDownStatusIsNotOverriddenBySelectedPolicy(t *testing.T) {
 	}
 }
 
+func TestDoctorHybridHealthyNoHost(t *testing.T) {
+	configPath, statePath := writeDoctorHybridFixture(t, false)
+	var out bytes.Buffer
+	if err := run([]string{"doctor", "hybrid", "--config", configPath, "--state-file", statePath, "--no-host", "-o", "json"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("doctor hybrid: %v\n%s", err, out.String())
+	}
+	var report doctorReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("unmarshal doctor report: %v\n%s", err, out.String())
+	}
+	if report.Summary.Fail != 0 || report.Summary.Pass == 0 {
+		t.Fatalf("summary = %#v checks=%#v", report.Summary, report.Checks)
+	}
+	if check := findDoctorCheck(t, report, "HybridRoute/cloud-private peerRef"); check.Status != doctorPass {
+		t.Fatalf("peerRef check = %#v", check)
+	}
+	if check := findDoctorCheck(t, report, "HybridRoute/cloud-private default route untouched"); check.Status != doctorPass {
+		t.Fatalf("default route check = %#v", check)
+	}
+}
+
+func TestDoctorHybridFailsUnresolvedPeerRef(t *testing.T) {
+	configPath, statePath := writeDoctorHybridFixture(t, true)
+	var out bytes.Buffer
+	err := run([]string{"doctor", "hybrid", "--config", configPath, "--state-file", statePath, "--no-host", "-o", "json"}, &out, &bytes.Buffer{})
+	if err == nil {
+		t.Fatalf("doctor hybrid succeeded with unresolved peer:\n%s", out.String())
+	}
+	var report doctorReport
+	if unmarshalErr := json.Unmarshal(out.Bytes(), &report); unmarshalErr != nil {
+		t.Fatalf("unmarshal doctor report: %v\n%s", unmarshalErr, out.String())
+	}
+	check := findDoctorCheck(t, report, "HybridRoute/cloud-private peerRef")
+	if check.Status != doctorFail || !strings.Contains(check.Detail, "missing OverlayPeer") {
+		t.Fatalf("peerRef check = %#v", check)
+	}
+}
+
 func writeDoctorFixture(t *testing.T) (string, string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -390,6 +428,54 @@ spec:
       spec:
         interface: wan
         prefixLength: 60
+`)
+	if err := os.WriteFile(configPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	return configPath, filepath.Join(dir, "routerd.db")
+}
+
+func writeDoctorHybridFixture(t *testing.T, missingPeer bool) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "router.yaml")
+	peerRef := "cloud-main"
+	if missingPeer {
+		peerRef = "missing"
+	}
+	data := []byte(`apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: test
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardInterface
+      metadata:
+        name: wg-hybrid
+      spec:
+        listenPort: 51820
+        mtu: 1420
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: OverlayPeer
+      metadata:
+        name: cloud-main
+      spec:
+        role: cloud
+        nodeID: cloud-main
+        underlay:
+          type: wireguard
+          interface: wg-hybrid
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: HybridRoute
+      metadata:
+        name: cloud-private
+      spec:
+        destinationCIDRs: [10.20.0.0/16]
+        peerRef: ` + peerRef + `
+        install:
+          table: main
+          metric: 120
 `)
 	if err := os.WriteFile(configPath, data, 0644); err != nil {
 		t.Fatalf("write config: %v", err)

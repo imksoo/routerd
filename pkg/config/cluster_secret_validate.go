@@ -110,6 +110,12 @@ func Warnings(router *api.Router) []string {
 	}
 	var warnings []string
 	dnsZones, dnsResolverZones := dnsZoneCoverage(router)
+	wireGuardInterfaces := map[string]bool{}
+	for _, res := range router.Spec.Resources {
+		if res.APIVersion == api.NetAPIVersion && res.Kind == "WireGuardInterface" {
+			wireGuardInterfaces[res.Metadata.Name] = true
+		}
+	}
 	for _, res := range router.Spec.Resources {
 		switch res.Kind {
 		case "BGPPeer":
@@ -127,6 +133,11 @@ func Warnings(router *api.Router) []string {
 			spec, err := res.IngressServiceSpec()
 			if err == nil {
 				warnings = append(warnings, hostnameDNSCoverageWarnings(res.ID(), spec.Hostname, spec.ExternalDNS, dnsZones, dnsResolverZones)...)
+			}
+		case "OverlayPeer":
+			spec, err := res.OverlayPeerSpec()
+			if err == nil && spec.Underlay.Type == "wireguard" && spec.Underlay.Interface != "" && !wireGuardInterfaces[spec.Underlay.Interface] {
+				warnings = append(warnings, fmt.Sprintf("%s spec.underlay.interface references WireGuardInterface %q which is not declared; assuming the interface is managed externally", res.ID(), spec.Underlay.Interface))
 			}
 		}
 	}

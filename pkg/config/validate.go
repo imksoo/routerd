@@ -369,6 +369,18 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 				return fmt.Errorf("%s references missing local IPv6DelegatedAddress %q", res.ID(), spec.LocalDelegatedAddress)
 			}
 		}
+		if res.Kind == "HybridRoute" {
+			spec, err := res.HybridRouteSpec()
+			if err != nil {
+				return err
+			}
+			if _, ok := idx.OverlayPeers[spec.PeerRef]; !ok {
+				return fmt.Errorf("%s spec.peerRef references missing OverlayPeer %q", res.ID(), spec.PeerRef)
+			}
+			if spec.HealthCheckRef != "" && !idx.HealthChecks[spec.HealthCheckRef] {
+				return fmt.Errorf("%s spec.healthCheckRef references missing HealthCheck %q", res.ID(), spec.HealthCheckRef)
+			}
+		}
 		if res.Kind == "HealthCheck" {
 			spec, err := res.HealthCheckSpec()
 			if err != nil {
@@ -664,6 +676,7 @@ func validateResource(res api.Resource, targetOS platform.OS) error {
 		validateDNSResource,
 		validateDHCPResource,
 		validateRouteResource,
+		validateHybridResource,
 		validateFirewallResource,
 	}
 	for _, validate := range validators {
