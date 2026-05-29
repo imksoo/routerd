@@ -102,9 +102,12 @@ func pluginRunCommand(args []string, stdout io.Writer) error {
 		return err
 	}
 	source := "Plugin/" + name
-	previousGeneration, err := previousPluginGeneration(opts.statePath, source)
-	if err != nil {
-		return err
+	var previousGeneration int64
+	if !opts.dryRun {
+		previousGeneration, err = previousPluginGeneration(opts.statePath, source)
+		if err != nil {
+			return err
+		}
 	}
 	now := time.Now().UTC()
 	runOpts := routerplugin.RunOptions{

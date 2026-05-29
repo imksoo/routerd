@@ -41,6 +41,20 @@ spec:
           table: main
           metric: 120
         healthCheckRef: cloud-health
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: CloudAddressClaim
+      metadata:
+        name: app-10-0-1-123
+      spec:
+        providerRef: oci-prod
+        address: 10.0.1.123/32
+        cloudAttachment:
+          type: secondary-private-ip
+          vnicID: ocid1.vnic.oc1..example
+        delivery:
+          peerRef: cloud-main
+          mode: route
+          targetAddress: 169.254.100.2
 `)
 	var router Router
 	if err := yaml.Unmarshal(data, &router); err != nil {
@@ -59,5 +73,12 @@ spec:
 	}
 	if route.PeerRef != "cloud-main" || route.Install.Metric != 120 {
 		t.Fatalf("route = %#v", route)
+	}
+	claim, err := router.Spec.Resources[2].CloudAddressClaimSpec()
+	if err != nil {
+		t.Fatalf("claim spec: %v", err)
+	}
+	if claim.ProviderRef != "oci-prod" || claim.CloudAttachment.Type != "secondary-private-ip" || claim.Delivery.Mode != "route" {
+		t.Fatalf("claim = %#v", claim)
 	}
 }

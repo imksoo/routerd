@@ -159,7 +159,15 @@ environment.
         "spec": {
           "address": "10.0.1.123/32",
           "providerRef": "oci-prod",
-          "peerRef": "onprem-main"
+          "cloudAttachment": {
+            "type": "secondary-private-ip",
+            "vnicID": "ocid1.vnic.oc1..example"
+          },
+          "delivery": {
+            "peerRef": "onprem-main",
+            "mode": "route",
+            "targetAddress": "169.254.100.2"
+          }
         }
       }
     ],
@@ -176,15 +184,15 @@ environment.
     ],
     "actionPlans": [
       {
-        "name": "attach-vnic-app",
+        "name": "assign-cloud-secondary-ip",
         "provider": "oci",
-        "action": "AttachVNIC",
+        "action": "assignSecondaryPrivateIP",
         "target": {
           "vnicID": "ocid1.vnic.oc1..example",
           "address": "10.0.1.123"
         },
         "undo": {
-          "action": "DetachVNIC"
+          "action": "unassignSecondaryPrivateIP"
         }
       }
     ],
@@ -208,6 +216,10 @@ plugin result shape, stores accepted output as a `DynamicConfigPart`, and derive
 `expiresAt` from `observedAt + ttl`. Full effective-config validation, including
 dynamic override policy evaluation, happens when dynamic parts are merged with
 startup config.
+
+`actionPlans` describe provider operations an operator may choose to perform
+outside routerd. They are display-only in the MVP; routerd does not execute
+cloud API mutations or secondary-private-IP assignment.
 
 ## CLI
 

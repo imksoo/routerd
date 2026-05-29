@@ -41,7 +41,7 @@ spec:
 | `system.routerd.net/v1alpha1` | `Hostname`, `Sysctl`, `SysctlProfile`, `Package`, `NTPClient`, `NTPServer`, `LogSink`, `ObservabilityPipeline`, `RouterdCluster`, `LogRetention`, `WebConsole` |
 | `observability.routerd.net/v1alpha1` | `Telemetry` |
 | `plugin.routerd.net/v1alpha1` | plugin manifests |
-| `hybrid.routerd.net/v1alpha1` | `OverlayPeer`, `HybridRoute` |
+| `hybrid.routerd.net/v1alpha1` | `OverlayPeer`, `HybridRoute`, `CloudAddressClaim` |
 
 ## System Bootstrap
 

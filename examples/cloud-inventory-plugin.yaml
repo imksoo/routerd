@@ -1,0 +1,29 @@
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: cloud-inventory-plugin
+spec:
+  resources:
+    - apiVersion: plugin.routerd.net/v1alpha1
+      kind: Plugin
+      metadata:
+        name: oci-inventory
+      spec:
+        executable: /home/imksoo/routerd/examples/plugins/oci-inventory/bin/oci-inventory
+        timeout: 10s
+        capabilities:
+          - observe.cloud
+          - propose.dynamicConfig
+        triggers:
+          - type: interval
+            every: 300s
+
+    - apiVersion: plugin.routerd.net/v1alpha1
+      kind: DynamicConfigSource
+      metadata:
+        name: oci-inventory
+      spec:
+        pluginRef: oci-inventory
+        ttl: 300s
+        mergePolicy:
+          conflict: reject

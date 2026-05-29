@@ -69,10 +69,55 @@ func validateHybridResource(res api.Resource, _ platform.OS) (bool, error) {
 		if spec.Install.Metric < 0 {
 			return true, fmt.Errorf("%s spec.install.metric must be >= 0", res.ID())
 		}
+	case "CloudAddressClaim":
+		if res.APIVersion != api.HybridAPIVersion {
+			return true, fmt.Errorf("%s must use apiVersion %s", res.ID(), api.HybridAPIVersion)
+		}
+		spec, err := res.CloudAddressClaimSpec()
+		if err != nil {
+			return true, err
+		}
+		if strings.TrimSpace(spec.ProviderRef) == "" {
+			return true, fmt.Errorf("%s spec.providerRef is required", res.ID())
+		}
+		if err := validateCloudClaimAddress(spec.Address); err != nil {
+			return true, fmt.Errorf("%s spec.address: %w", res.ID(), err)
+		}
+		switch strings.TrimSpace(spec.CloudAttachment.Type) {
+		case "secondary-private-ip":
+		case "":
+			return true, fmt.Errorf("%s spec.cloudAttachment.type is required", res.ID())
+		default:
+			return true, fmt.Errorf("%s spec.cloudAttachment.type must be secondary-private-ip", res.ID())
+		}
+		switch strings.TrimSpace(spec.Delivery.Mode) {
+		case "route":
+		default:
+			return true, fmt.Errorf("%s spec.delivery.mode must be route", res.ID())
+		}
+		if target := strings.TrimSpace(spec.Delivery.TargetAddress); target != "" {
+			if _, err := netip.ParseAddr(target); err != nil {
+				return true, fmt.Errorf("%s spec.delivery.targetAddress must be an IP address", res.ID())
+			}
+		}
 	default:
 		return false, nil
 	}
 	return true, nil
+}
+
+func validateCloudClaimAddress(value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return fmt.Errorf("is required")
+	}
+	if _, err := netip.ParseAddr(value); err == nil {
+		return nil
+	}
+	if _, err := netip.ParsePrefix(value); err == nil {
+		return nil
+	}
+	return fmt.Errorf("must be an IP address or CIDR")
 }
 
 func validateHybridDestinationCIDR(value string) error {

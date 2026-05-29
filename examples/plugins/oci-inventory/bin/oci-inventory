@@ -1,0 +1,68 @@
+#!/bin/sh
+# Observe-only routerd CloudEdge example.
+# This script reads the PluginRequest JSON from stdin, ignores it, and emits a
+# static fake OCI inventory result. It never calls a cloud API or the oci CLI.
+# routerd CloudEdge MVP captures actionPlans for display only and never
+# executes them.
+
+cat >/dev/null
+
+cat <<'JSON'
+{
+  "apiVersion": "plugin.routerd.net/v1alpha1",
+  "kind": "PluginResult",
+  "metadata": {
+    "name": "oci-inventory"
+  },
+  "status": {
+    "observedAt": "2026-05-29T12:00:00Z",
+    "ttl": "300s",
+    "resources": [
+      {
+        "apiVersion": "hybrid.routerd.net/v1alpha1",
+        "kind": "CloudAddressClaim",
+        "metadata": {
+          "name": "app-10-0-1-123"
+        },
+        "spec": {
+          "providerRef": "oci-prod",
+          "address": "10.0.1.123/32",
+          "cloudAttachment": {
+            "type": "secondary-private-ip",
+            "vnicID": "ocid1.vnic.oc1..example"
+          },
+          "delivery": {
+            "peerRef": "cloud-main",
+            "mode": "route",
+            "targetAddress": "169.254.100.2"
+          }
+        }
+      }
+    ],
+    "actionPlans": [
+      {
+        "name": "assign-cloud-secondary-ip",
+        "provider": "oci",
+        "action": "assignSecondaryPrivateIP",
+        "target": {
+          "vnicID": "ocid1.vnic.oc1..example",
+          "address": "10.0.1.123"
+        },
+        "undo": {
+          "action": "unassignSecondaryPrivateIP"
+        }
+      }
+    ],
+    "events": [
+      {
+        "type": "InventoryObserved",
+        "message": "observed fake OCI private address inventory",
+        "attributes": {
+          "provider": "oci",
+          "address": "10.0.1.123"
+        }
+      }
+    ]
+  }
+}
+JSON

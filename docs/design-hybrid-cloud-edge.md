@@ -100,7 +100,8 @@ In scope for the CloudEdge MVP foundation:
 
 - `config.routerd.net/v1alpha1` type definitions for `DynamicConfigPart` and
   `DynamicOverridePolicy`
-- `hybrid.routerd.net/v1alpha1` API group constant for future hybrid resources
+- `hybrid.routerd.net/v1alpha1` `OverlayPeer`, `HybridRoute`, and
+  observe-only `CloudAddressClaim` resource shapes
 - `plugin.routerd.net/v1alpha1` request/result contract types
 - documentation for layering, merge behavior, plugin I/O, policy, and future
   operator commands
@@ -115,13 +116,31 @@ Out of scope for this PR:
 - schema generation changes
 - remote plugin install, remote plugin registry, or remote provider execution
 
+## Observe-only cloud inventory
+
+Cloud inventory plugins can observe provider state and return dynamic resources
+without mutating the provider. The example `oci-inventory` plugin emits a static
+`CloudAddressClaim` candidate plus an OCI-style `actionPlan` that describes how
+a secondary private IP could be assigned outside routerd.
+
+`CloudAddressClaim` is declarative and dry-run/plan only in this MVP. It records
+the provider reference, observed IP or CIDR, cloud attachment metadata such as a
+secondary private IP on a VNIC, and the route delivery hint for an overlay peer.
+routerd validates and displays the resource as dynamic-config, but no controller
+calls a cloud API, assigns a secondary IP, or mutates host networking for this
+kind.
+
+Provider `actionPlans` stay display-only. They are useful for dry-run review and
+operator handoff, but they are not an imperative queue and routerd never
+executes them.
+
 ## Roadmap
 
 The intended path is L3 hybrid first. Future PRs can add typed hybrid resources
-such as cloud address claims, route advertisements, VPN attachment observations,
-and provider inventory snapshots. These resources should become normal
-effective-config resources after validation, so existing route, firewall, NAT,
-and observability flows can consume them without a separate cloud control path.
+such as route advertisements, VPN attachment observations, and provider
+inventory snapshots. These resources should become normal effective-config
+resources after validation, so existing route, firewall, NAT, and observability
+flows can consume them without a separate cloud control path.
 
 Selective L2 extension is future work and should stay narrow. VXLAN, EVPN, VRF,
 WireGuard, and IPsec groundwork already exists, but CloudEdge should prefer L3

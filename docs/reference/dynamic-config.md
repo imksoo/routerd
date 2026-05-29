@@ -34,7 +34,11 @@ spec:
     - apiVersion: hybrid.routerd.net/v1alpha1
       kind: CloudAddressClaim
       metadata: { name: app-10-0-1-123 }
-      spec: { address: 10.0.1.123/32, providerRef: oci-prod, peerRef: onprem-main }
+      spec:
+        address: 10.0.1.123/32
+        providerRef: oci-prod
+        cloudAttachment: { type: secondary-private-ip, vnicID: ocid1.vnic.oc1..example }
+        delivery: { peerRef: onprem-main, mode: route, targetAddress: 169.254.100.2 }
   directives:
     - op: mask
       target: { apiVersion: net.routerd.net/v1alpha1, kind: IPv4Route, name: cloud-app-static-fallback }

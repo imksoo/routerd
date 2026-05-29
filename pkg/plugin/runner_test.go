@@ -58,6 +58,119 @@ JSON
 	}
 }
 
+func TestRunCloudAddressClaimActionPlanIsDisplayOnly(t *testing.T) {
+	requireShell(t)
+	path := writePluginScript(t, `#!/bin/sh
+cat <<'JSON'
+{
+  "apiVersion": "plugin.routerd.net/v1alpha1",
+  "kind": "PluginResult",
+  "metadata": { "name": "oci-inventory" },
+  "status": {
+    "observedAt": "2026-05-29T12:00:00Z",
+    "ttl": "300s",
+    "resources": [
+      {
+        "apiVersion": "hybrid.routerd.net/v1alpha1",
+        "kind": "CloudAddressClaim",
+        "metadata": { "name": "app-10-0-1-123" },
+        "spec": {
+          "providerRef": "oci-prod",
+          "address": "10.0.1.123/32",
+          "cloudAttachment": {
+            "type": "secondary-private-ip",
+            "vnicID": "ocid1.vnic.oc1..example"
+          },
+          "delivery": {
+            "peerRef": "cloud-main",
+            "mode": "route",
+            "targetAddress": "169.254.100.2"
+          }
+        }
+      }
+    ],
+    "actionPlans": [
+      {
+        "name": "assign-cloud-secondary-ip",
+        "provider": "oci",
+        "action": "assignSecondaryPrivateIP",
+        "target": {
+          "vnicID": "ocid1.vnic.oc1..example",
+          "address": "10.0.1.123"
+        },
+        "undo": {
+          "action": "unassignSecondaryPrivateIP"
+        }
+      }
+    ]
+  }
+}
+JSON
+`)
+	now := time.Date(2026, 5, 29, 12, 0, 0, 0, time.UTC)
+	result, _, err := Run(context.Background(), api.PluginSpec{Executable: path}, "oci-inventory", RunOptions{
+		Now:     now,
+		Trigger: TriggerRef{Type: "manual"},
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(result.Status.ActionPlans) != 1 {
+		t.Fatalf("actionPlans = %#v", result.Status.ActionPlans)
+	}
+	if result.Status.ActionPlans[0].Action != "assignSecondaryPrivateIP" {
+		t.Fatalf("actionPlan action = %q", result.Status.ActionPlans[0].Action)
+	}
+	part, err := DynamicConfigPartFromResult("Plugin/oci-inventory", 1, result, now)
+	if err != nil {
+		t.Fatalf("DynamicConfigPartFromResult: %v", err)
+	}
+	if len(part.Spec.Resources) != 1 {
+		t.Fatalf("resources = %#v", part.Spec.Resources)
+	}
+	spec, ok := part.Spec.Resources[0].Spec.(api.CloudAddressClaimSpec)
+	if !ok {
+		t.Fatalf("resource spec type = %T, want api.CloudAddressClaimSpec", part.Spec.Resources[0].Spec)
+	}
+	if spec.ProviderRef != "oci-prod" || spec.Delivery.Mode != "route" {
+		t.Fatalf("claim spec = %#v", spec)
+	}
+	// ActionPlans are intentionally not part of DynamicConfigPart. The runner
+	// captures them for display; routerd has no execution path for them.
+	if len(part.Spec.Directives) != 0 {
+		t.Fatalf("directives = %#v", part.Spec.Directives)
+	}
+}
+
+func TestOCIInventoryExampleScriptProducesCloudAddressClaim(t *testing.T) {
+	requireShell(t)
+	path := filepath.Join("..", "..", "examples", "plugins", "oci-inventory", "bin", "oci-inventory")
+	if _, err := os.Stat(path); err != nil {
+		t.Skipf("example plugin is unavailable: %v", err)
+	}
+	now := time.Date(2026, 5, 29, 12, 0, 0, 0, time.UTC)
+	result, _, err := Run(context.Background(), api.PluginSpec{Executable: path}, "oci-inventory", RunOptions{
+		Now:     now,
+		Trigger: TriggerRef{Type: "manual"},
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	part, err := DynamicConfigPartFromResult("Plugin/oci-inventory", 1, result, now)
+	if err != nil {
+		t.Fatalf("DynamicConfigPartFromResult: %v", err)
+	}
+	if len(part.Spec.Resources) != 1 {
+		t.Fatalf("resources = %#v", part.Spec.Resources)
+	}
+	if _, ok := part.Spec.Resources[0].Spec.(api.CloudAddressClaimSpec); !ok {
+		t.Fatalf("resource spec type = %T, want api.CloudAddressClaimSpec", part.Spec.Resources[0].Spec)
+	}
+	if len(result.Status.ActionPlans) != 1 {
+		t.Fatalf("actionPlans = %#v", result.Status.ActionPlans)
+	}
+}
+
 func TestRunTimeout(t *testing.T) {
 	requireShell(t)
 	path := writePluginScript(t, "#!/bin/sh\nsleep 1\n")

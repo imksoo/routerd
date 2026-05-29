@@ -47,7 +47,9 @@ routerd の主要なルーター機能は、本体のリソースと専用デー
 
 CloudEdge MVP のプラグインは、信頼済みのローカル実行ファイルだけを対象にします。
 routerd はリモートレジストリから取得せず、プラグインが返す `actionPlans` も実行しません。
-`actionPlans` は表示専用です。
+`actionPlans` は表示専用で、クラウド API の変更や secondary private IP の割り当ては
+routerd の対象外です。プラグインは `CloudAddressClaim` などの動的リソース候補を返せますが、
+MVP では観測結果として検証・表示されるだけです。
 
 起動設定では `Plugin` と `DynamicConfigSource` を宣言できます。
 

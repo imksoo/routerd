@@ -1184,6 +1184,24 @@ type HybridRouteInstall struct {
 	Metric int    `yaml:"metric,omitempty" json:"metric,omitempty" jsonschema:"minimum=0"`
 }
 
+type CloudAddressClaimSpec struct {
+	ProviderRef     string          `yaml:"providerRef" json:"providerRef"`
+	Address         string          `yaml:"address" json:"address"`
+	CloudAttachment CloudAttachment `yaml:"cloudAttachment" json:"cloudAttachment"`
+	Delivery        CloudDelivery   `yaml:"delivery" json:"delivery"`
+}
+
+type CloudAttachment struct {
+	Type   string `yaml:"type" json:"type" jsonschema:"enum=secondary-private-ip"`
+	VNICID string `yaml:"vnicID,omitempty" json:"vnicID,omitempty"`
+}
+
+type CloudDelivery struct {
+	PeerRef       string `yaml:"peerRef,omitempty" json:"peerRef,omitempty"`
+	Mode          string `yaml:"mode" json:"mode" jsonschema:"enum=route"`
+	TargetAddress string `yaml:"targetAddress,omitempty" json:"targetAddress,omitempty"`
+}
+
 type HealthCheckSpec struct {
 	// Enabled defaults to true; set enabled: false to keep the check disabled.
 	Enabled            *bool                 `yaml:"enabled,omitempty" json:"enabled,omitempty"`
@@ -1803,6 +1821,10 @@ func (r Resource) OverlayPeerSpec() (OverlayPeerSpec, error) {
 
 func (r Resource) HybridRouteSpec() (HybridRouteSpec, error) {
 	return specAs[HybridRouteSpec](r)
+}
+
+func (r Resource) CloudAddressClaimSpec() (CloudAddressClaimSpec, error) {
+	return specAs[CloudAddressClaimSpec](r)
 }
 
 func (r Resource) HealthCheckSpec() (HealthCheckSpec, error) {

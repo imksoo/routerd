@@ -5899,6 +5899,100 @@
                 "additionalProperties": false,
                 "properties": {
                   "apiVersion": {
+                    "const": "hybrid.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "CloudAddressClaim",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "address": {
+                        "type": "string"
+                      },
+                      "cloudAttachment": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "type": {
+                            "enum": [
+                              "secondary-private-ip"
+                            ],
+                            "type": "string"
+                          },
+                          "vnicID": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "type"
+                        ],
+                        "type": "object"
+                      },
+                      "delivery": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "mode": {
+                            "enum": [
+                              "route"
+                            ],
+                            "type": "string"
+                          },
+                          "peerRef": {
+                            "type": "string"
+                          },
+                          "targetAddress": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "mode"
+                        ],
+                        "type": "object"
+                      },
+                      "providerRef": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "providerRef",
+                      "address",
+                      "cloudAttachment",
+                      "delivery"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
                     "const": "net.routerd.net/v1alpha1",
                     "type": "string"
                   },
