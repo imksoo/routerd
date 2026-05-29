@@ -292,8 +292,10 @@ func (r doctorRunner) doctorSAMLiveChecks(name string, spec api.RemoteAddressCla
 		doctorSAMDeliveryRouteCheck(ctx, name, routeName, address, tunnel),
 	}
 	if strings.TrimSpace(spec.Capture.Type) == "proxy-arp" {
-		checks = append(checks, doctorSAMProxyNeighborCheck(ctx, name, address, strings.TrimSpace(spec.Capture.Interface)))
-		checks = append(checks, doctorSAMRPFilterCheck(ctx, name, strings.TrimSpace(spec.Capture.Interface)))
+		captureInterface := strings.TrimSpace(spec.Capture.Interface)
+		checks = append(checks, doctorSAMCaptureInterfaceCheck(ctx, name, captureInterface))
+		checks = append(checks, doctorSAMProxyNeighborCheck(ctx, name, address, captureInterface))
+		checks = append(checks, doctorSAMRPFilterCheck(ctx, name, captureInterface))
 	}
 	if iface := strings.TrimSpace(spec.Delivery.TunnelInterface); iface != "" {
 		checks = append(checks, doctorSAMRPFilterCheck(ctx, name, iface))
@@ -302,6 +304,24 @@ func (r doctorRunner) doctorSAMLiveChecks(name string, spec api.RemoteAddressCla
 		checks = append(checks, doctorCheck{Area: "hybrid", Name: "RemoteAddressClaim/" + name + " provider capture", Status: doctorSkip, Detail: "cloud fabric secondary-IP assignment is external to routerd; checking only local forwarding and delivery route"})
 	}
 	return checks
+}
+
+func doctorSAMCaptureInterfaceCheck(ctx context.Context, name, iface string) doctorCheck {
+	label := "RemoteAddressClaim/" + name + " proxy-arp interface"
+	if strings.TrimSpace(iface) == "" {
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorSkip, Detail: "interface unavailable"}
+	}
+	command := doctorRunDiagnosticCommand(ctx, "ip link show "+iface, "ip", "-o", "link", "show", "dev", iface)
+	if command.OK {
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: firstNonEmpty(oneLine(command.Stdout), "interface "+iface+" found")}
+	}
+	return doctorCheck{
+		Area:   "hybrid",
+		Name:   label,
+		Status: doctorFail,
+		Detail: "RemoteAddressClaim/" + name + " proxy-arp interface " + iface + " not found",
+		Remedy: "create or rename the interface; routerd cannot set proxy_arp on a missing interface",
+	}
 }
 
 func doctorSAMIPForwardCheck(ctx context.Context, name string) doctorCheck {

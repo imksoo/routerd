@@ -444,6 +444,104 @@ func TestDoctorHybridSAMLiveChecksStubbed(t *testing.T) {
 	}
 }
 
+func TestDoctorHybridSAMProxyARPInterfaceLiveChecksStubbed(t *testing.T) {
+	oldRun := doctorRunDiagnosticCommand
+	oldOS := doctorCurrentOS
+	defer func() {
+		doctorRunDiagnosticCommand = oldRun
+		doctorCurrentOS = oldOS
+	}()
+	doctorCurrentOS = func() platform.OS { return platform.OSLinux }
+
+	for _, tc := range []struct {
+		name       string
+		linkExists bool
+		wantErr    bool
+		wantStatus string
+	}{
+		{name: "present", linkExists: true, wantStatus: doctorPass},
+		{name: "missing", linkExists: false, wantErr: true, wantStatus: doctorFail},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			doctorRunDiagnosticCommand = func(_ context.Context, label, name string, args ...string) diagnoseCommandCheck {
+				switch {
+				case label == "sysctl net.ipv4.ip_forward":
+					return diagnoseCommandCheck{Name: label, OK: true, Stdout: "1", Output: "1"}
+				case strings.HasPrefix(label, "ip route show"):
+					return diagnoseCommandCheck{Name: label, OK: true, Stdout: "10.0.0.7 dev wg-hybrid", Output: "10.0.0.7 dev wg-hybrid"}
+				case label == "ip link show br-lan" && tc.linkExists:
+					return diagnoseCommandCheck{Name: label, OK: true, Stdout: "2: br-lan: <BROADCAST,MULTICAST,UP>", Output: "2: br-lan: <BROADCAST,MULTICAST,UP>"}
+				case label == "ip link show br-lan":
+					return diagnoseCommandCheck{Name: label, OK: false, Error: "Device \"br-lan\" does not exist.", Output: "Device \"br-lan\" does not exist."}
+				case strings.HasPrefix(label, "ip neigh show proxy"):
+					return diagnoseCommandCheck{Name: label, OK: true, Stdout: "10.0.0.7 dev br-lan proxy", Output: "10.0.0.7 dev br-lan proxy"}
+				case strings.Contains(label, "rp_filter"):
+					return diagnoseCommandCheck{Name: label, OK: true, Stdout: "0", Output: "0"}
+				default:
+					return diagnoseCommandCheck{Name: label, OK: false, Error: "unexpected command"}
+				}
+			}
+			configPath, statePath := writeDoctorProxyARPAddressMobilityFixture(t)
+			var out bytes.Buffer
+			err := run([]string{"doctor", "hybrid", "--config", configPath, "--state-file", statePath, "-o", "json"}, &out, &bytes.Buffer{})
+			if tc.wantErr && err == nil {
+				t.Fatalf("doctor hybrid succeeded with missing interface:\n%s", out.String())
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("doctor hybrid: %v\n%s", err, out.String())
+			}
+			var report doctorReport
+			if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+				t.Fatalf("unmarshal doctor report: %v\n%s", err, out.String())
+			}
+			check := findDoctorCheck(t, report, "RemoteAddressClaim/cloud-vm proxy-arp interface")
+			if check.Status != tc.wantStatus {
+				t.Fatalf("capture interface check = %#v", check)
+			}
+			if tc.wantStatus == doctorFail && (!strings.Contains(check.Detail, "br-lan not found") || !strings.Contains(check.Remedy, "proxy_arp")) {
+				t.Fatalf("capture interface detail/remedy = %#v", check)
+			}
+		})
+	}
+}
+
+func TestDoctorHybridSAMProxyARPInterfaceHostSkips(t *testing.T) {
+	t.Run("no-host", func(t *testing.T) {
+		configPath, statePath := writeDoctorProxyARPAddressMobilityFixture(t)
+		var out bytes.Buffer
+		if err := run([]string{"doctor", "hybrid", "--config", configPath, "--state-file", statePath, "--no-host", "-o", "json"}, &out, &bytes.Buffer{}); err != nil {
+			t.Fatalf("doctor hybrid: %v\n%s", err, out.String())
+		}
+		var report doctorReport
+		if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+			t.Fatalf("unmarshal doctor report: %v\n%s", err, out.String())
+		}
+		if check := findDoctorCheck(t, report, "RemoteAddressClaim/cloud-vm SAM dataplane"); check.Status != doctorSkip || !strings.Contains(check.Detail, "--no-host") {
+			t.Fatalf("dataplane check = %#v", check)
+		}
+		assertDoctorCheckAbsent(t, report, "RemoteAddressClaim/cloud-vm proxy-arp interface")
+	})
+
+	t.Run("non-linux", func(t *testing.T) {
+		oldOS := doctorCurrentOS
+		defer func() { doctorCurrentOS = oldOS }()
+		doctorCurrentOS = func() platform.OS { return platform.OSFreeBSD }
+		configPath, statePath := writeDoctorProxyARPAddressMobilityFixture(t)
+		var out bytes.Buffer
+		if err := run([]string{"doctor", "hybrid", "--config", configPath, "--state-file", statePath, "-o", "json"}, &out, &bytes.Buffer{}); err != nil {
+			t.Fatalf("doctor hybrid: %v\n%s", err, out.String())
+		}
+		var report doctorReport
+		if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+			t.Fatalf("unmarshal doctor report: %v\n%s", err, out.String())
+		}
+		if check := findDoctorCheck(t, report, "RemoteAddressClaim/cloud-vm SAM dataplane"); check.Status != doctorSkip || !strings.Contains(check.Detail, "not implemented") {
+			t.Fatalf("dataplane check = %#v", check)
+		}
+		assertDoctorCheckAbsent(t, report, "RemoteAddressClaim/cloud-vm proxy-arp interface")
+	})
+}
+
 func TestDoctorHybridSAMNonLinuxSkip(t *testing.T) {
 	oldOS := doctorCurrentOS
 	defer func() { doctorCurrentOS = oldOS }()
@@ -537,6 +635,63 @@ spec:
           providerRef: azure-lab
           providerMode: nic-secondary-ip
           nicRef: azure-nic
+        delivery:
+          peerRef: cloud-main
+          mode: route
+          tunnelInterface: wg-hybrid
+`)
+	if err := os.WriteFile(configPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	return configPath, filepath.Join(dir, "routerd.db")
+}
+
+func writeDoctorProxyARPAddressMobilityFixture(t *testing.T) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "router.yaml")
+	data := []byte(`apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: test
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardInterface
+      metadata:
+        name: wg-hybrid
+      spec:
+        listenPort: 51820
+        mtu: 1420
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: OverlayPeer
+      metadata:
+        name: cloud-main
+      spec:
+        role: cloud
+        nodeID: cloud-main
+        underlay:
+          type: wireguard
+          interface: wg-hybrid
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: AddressMobilityDomain
+      metadata:
+        name: same-subnet
+      spec:
+        prefix: 10.0.0.0/24
+        mode: selective-address
+        peerRef: cloud-main
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: RemoteAddressClaim
+      metadata:
+        name: cloud-vm
+      spec:
+        domainRef: same-subnet
+        address: 10.0.0.7/32
+        ownerSide: cloud
+        capture:
+          type: proxy-arp
+          interface: br-lan
         delivery:
           peerRef: cloud-main
           mode: route
@@ -788,6 +943,15 @@ func findDoctorCheck(t *testing.T, report doctorReport, name string) doctorCheck
 	}
 	t.Fatalf("missing check %q in %#v", name, report.Checks)
 	return doctorCheck{}
+}
+
+func assertDoctorCheckAbsent(t *testing.T, report doctorReport, name string) {
+	t.Helper()
+	for _, check := range report.Checks {
+		if check.Name == name {
+			t.Fatalf("unexpected check %q in %#v", name, report.Checks)
+		}
+	}
 }
 
 func openDoctorState(t *testing.T, path string) *routerstate.SQLiteStore {

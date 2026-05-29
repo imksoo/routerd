@@ -28,7 +28,6 @@ spec:
         endpoint: 198.51.100.20:51820
         allowedIPs:
           - 169.254.110.2/32
-          - 10.0.0.7/32
           - 10.0.0.9/32
         persistentKeepalive: 25
 

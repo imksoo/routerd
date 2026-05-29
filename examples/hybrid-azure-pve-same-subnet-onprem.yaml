@@ -29,7 +29,6 @@ spec:
         allowedIPs:
           - 169.254.110.1/32
           - 10.0.0.7/32
-          - 10.0.0.9/32
         persistentKeepalive: 25
 
     - apiVersion: hybrid.routerd.net/v1alpha1

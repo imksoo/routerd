@@ -54,6 +54,11 @@ spec:
     tunnelInterface: wg-hybrid
 ```
 
+`AddressMobilityDomain.spec.peerRef` is a domain-level default/documentation
+peer for grouping metadata. The MVP dataplane uses
+`RemoteAddressClaim.spec.delivery.peerRef` as the actual delivery peer, and it
+is required on each claim.
+
 `CloudProviderProfile` describes provider capabilities and how an external
 tool would authenticate. It is only a capability/profile descriptor in this MVP;
 routerd makes no cloud API calls.
