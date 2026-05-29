@@ -23,6 +23,7 @@ import (
 	"github.com/imksoo/routerd/pkg/hybrid"
 	"github.com/imksoo/routerd/pkg/platform"
 	routerplugin "github.com/imksoo/routerd/pkg/plugin"
+	"github.com/imksoo/routerd/pkg/render"
 	"github.com/imksoo/routerd/pkg/sam"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
@@ -398,7 +399,7 @@ func doctorSAMLocalAddressAbsentCheck(ctx context.Context, name, address string)
 			Name:   label,
 			Status: doctorWarn,
 			Detail: oneLine(command.Stdout),
-			Remedy: "routerd de-assigns this address on reconcile; if it keeps reappearing, disable the guest cloud-init/netplan config for that IP",
+			Remedy: "routerd enforces OS-absence and removes this address during reconcile when present; if it keeps reappearing, disable the guest cloud-init/netplan config for that IP",
 		}
 	}
 	return doctorCheck{Area: "hybrid", Name: label, Status: doctorWarn, Detail: firstNonEmpty(command.Error, oneLine(command.Output), "local address check failed"), Remedy: "verify the captured address is not assigned to the guest OS"}
@@ -1146,10 +1147,10 @@ func (r doctorRunner) doctorFirewall() []doctorCheck {
 	zones := selectResources(r.router.Spec.Resources, "FirewallZone", "")
 	policies := selectResources(r.router.Spec.Resources, "FirewallPolicy", "")
 	firewallResources := append(zones, policies...)
-	if len(firewallResources) == 0 {
-		return []doctorCheck{{Area: "firewall", Name: "FirewallZone/Policy", Status: doctorWarn, Detail: "no firewall zones or policy configured; router may be permissive", Remedy: "declare FirewallZone and FirewallPolicy resources"}}
-	}
 	var checks []doctorCheck
+	if len(firewallResources) == 0 {
+		checks = append(checks, doctorCheck{Area: "firewall", Name: "FirewallZone/Policy", Status: doctorWarn, Detail: "no firewall zones or policy configured; router may be permissive", Remedy: "declare FirewallZone and FirewallPolicy resources"})
+	}
 	zoneCounts := doctorResourceStatusCounts{}
 	for _, res := range firewallResources {
 		status := objectStatus(r.store, res.APIVersion, res.Kind, res.Metadata.Name)
@@ -1161,20 +1162,128 @@ func (r doctorRunner) doctorFirewall() []doctorCheck {
 	if r.opts.Host {
 		ctx, cancel := context.WithTimeout(context.Background(), r.opts.Timeout)
 		defer cancel()
-		command := runDiagnosticCommand(ctx, "nft list table inet routerd_filter", "nft", "list", "table", "inet", "routerd_filter")
-		extra := fmt.Sprintf("FirewallZone active=%d", zoneCounts.Active)
-		check := doctorNftCheckStatus("firewall", command, "inet", "routerd_filter", doctorFail, "apply firewall resources or inspect nftables errors", extra)
-		if command.OK && (!strings.Contains(command.Stdout, "hook input") || !strings.Contains(command.Stdout, "policy drop")) {
-			check.Status = doctorWarn
-			check.Detail = appendDoctorDetail("routerd_filter exists but input policy drop was not found", "table=inet/routerd_filter")
-			check.Detail = appendDoctorDetail(check.Detail, extra)
-			check.Remedy = "check rendered firewall policy"
+		if len(firewallResources) > 0 {
+			command := runDiagnosticCommand(ctx, "nft list table inet routerd_filter", "nft", "list", "table", "inet", "routerd_filter")
+			extra := fmt.Sprintf("FirewallZone active=%d", zoneCounts.Active)
+			check := doctorNftCheckStatus("firewall", command, "inet", "routerd_filter", doctorFail, "apply firewall resources or inspect nftables errors", extra)
+			if command.OK && (!strings.Contains(command.Stdout, "hook input") || !strings.Contains(command.Stdout, "policy drop")) {
+				check.Status = doctorWarn
+				check.Detail = appendDoctorDetail("routerd_filter exists but input policy drop was not found", "table=inet/routerd_filter")
+				check.Detail = appendDoctorDetail(check.Detail, extra)
+				check.Remedy = "check rendered firewall policy"
+			}
+			checks = append(checks, check)
 		}
-		checks = append(checks, check)
+		checks = append(checks, r.doctorStaleNftTablesCheck(ctx))
 	} else {
 		checks = append(checks, doctorHostSkipped("firewall", "nft routerd_filter"))
 	}
 	return checks
+}
+
+func (r doctorRunner) doctorStaleNftTablesCheck(ctx context.Context) doctorCheck {
+	name := "stale routerd nft tables"
+	if doctorCurrentOS() != platform.OSLinux {
+		return doctorCheck{Area: "firewall", Name: name, Status: doctorSkip, Detail: "nftables host table check is Linux-only"}
+	}
+	expected, err := expectedRouterdNftTables(r.router)
+	if err != nil {
+		return doctorCheck{Area: "firewall", Name: name, Status: doctorWarn, Detail: "could not render expected nft tables: " + err.Error(), Remedy: "fix config render errors, then rerun doctor firewall"}
+	}
+	command := runDiagnosticCommand(ctx, "nft list tables", "nft", "list", "tables")
+	if !command.OK {
+		return doctorCheck{Area: "firewall", Name: name, Status: doctorSkip, Detail: firstNonEmpty(command.Error, oneLine(command.Output), "nft list tables unavailable")}
+	}
+	present := parseNftTables(command.Stdout)
+	var stale []string
+	for _, table := range present {
+		if !strings.HasPrefix(table.name, "routerd_") {
+			continue
+		}
+		if !expected[table.key()] {
+			stale = append(stale, table.key())
+		}
+	}
+	sort.Strings(stale)
+	if len(stale) == 0 {
+		return doctorCheck{Area: "firewall", Name: name, Status: doctorPass, Detail: fmt.Sprintf("%d routerd-prefixed tables match current config heuristic", countRouterdNftTables(present))}
+	}
+	return doctorCheck{
+		Area:   "firewall",
+		Name:   name,
+		Status: doctorWarn,
+		Detail: "present but not expected by current config heuristic: " + strings.Join(stale, ","),
+		Remedy: "inspect the listed nft tables and remove stale routerd-owned tables only after confirming they are not intentionally managed by this generation",
+	}
+}
+
+type doctorNftTable struct {
+	family string
+	name   string
+}
+
+func (t doctorNftTable) key() string {
+	return t.family + "/" + t.name
+}
+
+func parseNftTables(output string) []doctorNftTable {
+	var tables []doctorNftTable
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) < 3 || fields[0] != "table" {
+			continue
+		}
+		name := strings.TrimSuffix(fields[2], "{")
+		tables = append(tables, doctorNftTable{family: fields[1], name: name})
+	}
+	return tables
+}
+
+func expectedRouterdNftTables(router *api.Router) (map[string]bool, error) {
+	expected := map[string]bool{}
+	if router == nil {
+		return expected, nil
+	}
+	// Heuristic: routerd's nft tables do not currently carry a generation
+	// marker, so doctor compares routerd-prefixed host tables with tables
+	// implied by a fresh render of the current config plus controller-only
+	// default-route policy tables. A fuller solution needs persisted table
+	// ownership/generation metadata in nftables itself.
+	data, err := render.NftablesNAT44(router)
+	if err != nil {
+		return nil, err
+	}
+	for _, table := range parseNftTables(string(data)) {
+		expected[table.key()] = true
+	}
+	for _, res := range selectResources(router.Spec.Resources, "EgressRoutePolicy", "") {
+		spec, err := res.EgressRoutePolicySpec()
+		if err != nil {
+			return nil, err
+		}
+		switch strings.TrimSpace(spec.Mode) {
+		case "priority":
+			expected["ip/routerd_default_route"] = true
+		case "mark", "hash":
+			expected["ip/routerd_policy"] = true
+		}
+		for _, candidate := range spec.Candidates {
+			if len(candidate.Targets) > 0 || candidate.Mark != 0 && strings.TrimSpace(spec.Mode) != "priority" {
+				expected["ip/routerd_policy"] = true
+			}
+		}
+	}
+	return expected, nil
+}
+
+func countRouterdNftTables(tables []doctorNftTable) int {
+	count := 0
+	for _, table := range tables {
+		if strings.HasPrefix(table.name, "routerd_") {
+			count++
+		}
+	}
+	return count
 }
 
 func (r doctorRunner) doctorRollback() []doctorCheck {

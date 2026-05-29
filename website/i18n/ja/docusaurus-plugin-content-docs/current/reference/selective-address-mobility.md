@@ -71,6 +71,12 @@ address として設定しません。Linux では、cloud-init、netplan、gues
 管理します。Claim を削除しても routerd は address を戻しません。Guest OS への
 address assignment は routerd が所有していないためです。
 
+Status ではこれを `captureOSAddressAbsence` として報告します。
+`enforced: true` は、routerd が captured address を local OS interface から
+無くすことを継続的に enforcement している、という audit flag です。
+`lastReconcileRemoved: true` は、直近の reconcile が実際にその address を削除した
+ことを示します。Address がすでに無い steady state では通常 `false` です。
+
 FreeBSD など non-Linux host では live SAM capture は未対応です。Controller は
 host を変更せず、`SAM capture not implemented on this OS` と報告します。
 

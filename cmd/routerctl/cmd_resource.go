@@ -125,6 +125,7 @@ func parseGetOptions(args []string) (getOptions, error) {
 
 type describeOptions struct {
 	Target      string
+	Output      string
 	ConfigPath  string
 	StatePath   string
 	LedgerPath  string
@@ -155,9 +156,15 @@ func describeCommand(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	if kind == "FirewallPolicy" && (name == "" || name == "firewall") {
+		if opts.Output != "" && opts.Output != "table" {
+			return fmt.Errorf("unsupported output %q", opts.Output)
+		}
 		return describeFirewall(stdout, router)
 	}
 	if kind == "Orphan" {
+		if opts.Output != "" && opts.Output != "table" {
+			return fmt.Errorf("unsupported output %q", opts.Output)
+		}
 		return writeOrphans(stdout, router, ledger)
 	}
 	if name == "" {
@@ -168,7 +175,7 @@ func describeCommand(args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
-		return writeDescribe(stdout, row, store)
+		return writeDescribeOutput(stdout, row, store, opts.Output)
 	}
 	resources := selectResources(router.Spec.Resources, kind, name)
 	if len(resources) == 0 {
@@ -182,7 +189,7 @@ func describeCommand(args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("describe expected one resource, got %d", len(rows))
 	}
 	rows[0].Events = eventsForResourceLimit(store, resources[0], opts.EventsLimit)
-	return writeDescribe(stdout, rows[0], store)
+	return writeDescribeOutput(stdout, rows[0], store, opts.Output)
 }
 
 func parseDescribeOptions(args []string) (describeOptions, error) {
@@ -195,6 +202,12 @@ func parseDescribeOptions(args []string) (describeOptions, error) {
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		switch arg {
+		case "-o", "--output":
+			i++
+			if i >= len(args) {
+				return opts, errors.New("-o requires a value")
+			}
+			opts.Output = args[i]
 		case "--config":
 			i++
 			if i >= len(args) {
@@ -222,6 +235,14 @@ func parseDescribeOptions(args []string) (describeOptions, error) {
 				return opts, errors.New("--events-limit must be a non-negative integer")
 			}
 		default:
+			if strings.HasPrefix(arg, "-o=") {
+				opts.Output = strings.TrimPrefix(arg, "-o=")
+				continue
+			}
+			if strings.HasPrefix(arg, "--output=") {
+				opts.Output = strings.TrimPrefix(arg, "--output=")
+				continue
+			}
 			if strings.HasPrefix(arg, "--config=") {
 				opts.ConfigPath = strings.TrimPrefix(arg, "--config=")
 				continue

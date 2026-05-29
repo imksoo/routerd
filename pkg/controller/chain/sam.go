@@ -28,9 +28,11 @@ type samStoredProxyNeighbor struct {
 }
 
 type samOSAddressDeassignResult struct {
-	address    string
-	ifname     string
-	deassigned bool
+	address string
+	ifname  string
+	// removedThisReconcile is true only when this reconcile deleted the
+	// captured address from a local OS interface.
+	removedThisReconcile bool
 }
 
 func samSelectResources(resources []api.Resource, kind string) []api.Resource {
@@ -138,14 +140,18 @@ func (c SAMController) reconcileStatuses(targetOS platform.OS, deassignResults m
 			} else if err == nil && strings.TrimSpace(spec.Capture.Type) == "provider-secondary-ip" && !spec.Capture.ConfigureOSAddress {
 				result := deassignResults[claim.Metadata.Name]
 				note := map[string]any{
-					"address":    firstNonEmpty(result.address, strings.TrimSpace(spec.Address)),
-					"enforced":   true,
-					"deassigned": result.deassigned,
+					"address": firstNonEmpty(result.address, strings.TrimSpace(spec.Address)),
+					// enforced is an audit flag: routerd is actively enforcing
+					// OS-absence for this provider-captured address.
+					"enforced": true,
+					// lastReconcileRemoved is a per-reconcile action signal. It
+					// is false in steady state when the address was already absent.
+					"lastReconcileRemoved": result.removedThisReconcile,
 				}
 				if result.ifname != "" {
 					note["interface"] = result.ifname
 				}
-				status["captureDeassignedOSAddress"] = note
+				status["captureOSAddressAbsence"] = note
 			}
 		}
 		if err := c.Store.SaveObjectStatus(api.HybridAPIVersion, "RemoteAddressClaim", claim.Metadata.Name, status); err != nil {

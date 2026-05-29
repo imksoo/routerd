@@ -106,6 +106,12 @@ back. It then ensures IPv4 forwarding and installs the `/32` delivery route
 into the overlay. routerd does not re-add the address when the claim is
 removed, because it never owned the guest OS assignment.
 
+Status reports this as `captureOSAddressAbsence`. `enforced: true` means
+routerd is actively enforcing that the captured address is absent from local OS
+interfaces. `lastReconcileRemoved: true` means the most recent reconcile
+actually removed the address; it is normally `false` in steady state once the
+address is already absent.
+
 FreeBSD and other non-Linux hosts do not have live SAM capture yet. The
 controller no-ops and reports `SAM capture not implemented on this OS`.
 

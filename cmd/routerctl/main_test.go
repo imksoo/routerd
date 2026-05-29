@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -23,6 +24,7 @@ import (
 	"github.com/imksoo/routerd/pkg/logstore"
 	"github.com/imksoo/routerd/pkg/resource"
 	routerstate "github.com/imksoo/routerd/pkg/state"
+	"gopkg.in/yaml.v3"
 )
 
 func TestShowIPv6PDTableIncludesSpecStateLedger(t *testing.T) {
@@ -1142,6 +1144,48 @@ func TestDescribeIPv6PDIncludesStatusLedgerEvents(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("describe output missing %q:\n%s", want, got)
 		}
+	}
+}
+
+func TestDescribeResourceSupportsJSONAndYAMLOutput(t *testing.T) {
+	dir := t.TempDir()
+	configPath := writeShowConfig(t, dir)
+	dbPath := filepath.Join(dir, "routerd.db")
+	store, err := routerstate.OpenSQLite(dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite state: %v", err)
+	}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "Interface", "wan", map[string]any{
+		"phase":  "Ready",
+		"reason": "TestSeeded",
+	}); err != nil {
+		t.Fatalf("save interface status: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close sqlite state: %v", err)
+	}
+
+	for _, output := range []string{"json", "yaml"} {
+		t.Run(output, func(t *testing.T) {
+			var out bytes.Buffer
+			err := run([]string{"describe", "interface/wan", "--config", configPath, "--state-file", dbPath, "--ledger-file", dbPath, "-o", output}, &out, &bytes.Buffer{})
+			if err != nil {
+				t.Fatalf("describe interface -o %s: %v", output, err)
+			}
+			var row showResource
+			switch output {
+			case "json":
+				err = json.Unmarshal(out.Bytes(), &row)
+			case "yaml":
+				err = yaml.Unmarshal(out.Bytes(), &row)
+			}
+			if err != nil {
+				t.Fatalf("unmarshal %s: %v\n%s", output, err, out.String())
+			}
+			if row.Kind != "Interface" || row.Name != "wan" || row.State["phase"] != "Ready" || row.Spec == nil {
+				t.Fatalf("describe %s row = %#v", output, row)
+			}
+		})
 	}
 }
 

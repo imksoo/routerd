@@ -39,9 +39,9 @@ func TestSAMControllerDeassignsProviderSecondaryOSAddressAndStatus(t *testing.T)
 	router := samControllerRouterWithClaim("10.0.1.122/32", "provider-secondary-ip", "")
 	store := &samStore{objects: map[string]map[string]any{}}
 	applier := &fakeSAMApplier{deassignResult: samOSAddressDeassignResult{
-		address:    "10.0.1.122/32",
-		ifname:     "eth0",
-		deassigned: true,
+		address:              "10.0.1.122/32",
+		ifname:               "eth0",
+		removedThisReconcile: true,
 	}}
 	controller := SAMController{Router: router, Store: store, OS: platform.OSLinux, Applier: applier}
 	if err := controller.Reconcile(context.Background()); err != nil {
@@ -49,11 +49,11 @@ func TestSAMControllerDeassignsProviderSecondaryOSAddressAndStatus(t *testing.T)
 	}
 	assertSAMCalls(t, applier.calls, []string{"deassign:10.0.1.122/32"})
 	status := store.ObjectStatus(api.HybridAPIVersion, "RemoteAddressClaim", "app")
-	note, ok := status["captureDeassignedOSAddress"].(map[string]any)
+	note, ok := status["captureOSAddressAbsence"].(map[string]any)
 	if !ok {
-		t.Fatalf("missing captureDeassignedOSAddress in status %#v", status)
+		t.Fatalf("missing captureOSAddressAbsence in status %#v", status)
 	}
-	if note["address"] != "10.0.1.122/32" || note["interface"] != "eth0" || note["deassigned"] != true {
+	if note["address"] != "10.0.1.122/32" || note["interface"] != "eth0" || note["enforced"] != true || note["lastReconcileRemoved"] != true {
 		t.Fatalf("deassign note = %#v", note)
 	}
 }
@@ -68,11 +68,11 @@ func TestSAMControllerDeassignAbsentAddressIsNoopButTracked(t *testing.T) {
 	}
 	assertSAMCalls(t, applier.calls, []string{"deassign:10.0.1.122/32"})
 	status := store.ObjectStatus(api.HybridAPIVersion, "RemoteAddressClaim", "app")
-	note, ok := status["captureDeassignedOSAddress"].(map[string]any)
+	note, ok := status["captureOSAddressAbsence"].(map[string]any)
 	if !ok {
-		t.Fatalf("missing captureDeassignedOSAddress in status %#v", status)
+		t.Fatalf("missing captureOSAddressAbsence in status %#v", status)
 	}
-	if note["address"] != "10.0.1.122/32" || note["deassigned"] != false {
+	if note["address"] != "10.0.1.122/32" || note["enforced"] != true || note["lastReconcileRemoved"] != false {
 		t.Fatalf("deassign note = %#v", note)
 	}
 	if _, ok := note["interface"]; ok {

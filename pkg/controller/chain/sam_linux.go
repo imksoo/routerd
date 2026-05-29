@@ -65,7 +65,7 @@ func (netlinkSAMProxyNeighborApplier) EnsureOSAddressAbsent(_ context.Context, a
 				return result, err
 			}
 			result.ifname = link.Attrs().Name
-			result.deassigned = true
+			result.removedThisReconcile = true
 		}
 	}
 	return result, nil

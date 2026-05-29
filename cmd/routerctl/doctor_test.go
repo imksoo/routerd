@@ -638,6 +638,47 @@ func TestDoctorHybridFailsUnresolvedPeerRef(t *testing.T) {
 	}
 }
 
+func TestDoctorFirewallWarnsAboutStaleRouterdNftTables(t *testing.T) {
+	configPath, statePath := writeDoctorFirewallFixture(t)
+	installDoctorFirewallNftTablesCommand(t, []string{
+		"table inet routerd_filter",
+		"table inet routerd_stale_filter",
+	})
+
+	var out bytes.Buffer
+	if err := run([]string{"doctor", "firewall", "--config", configPath, "--state-file", statePath, "-o", "json"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("doctor firewall: %v\n%s", err, out.String())
+	}
+	var report doctorReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("unmarshal doctor report: %v\n%s", err, out.String())
+	}
+	check := findDoctorCheck(t, report, "stale routerd nft tables")
+	if check.Status != doctorWarn || !strings.Contains(check.Detail, "inet/routerd_stale_filter") {
+		t.Fatalf("stale nft check = %#v", check)
+	}
+}
+
+func TestDoctorFirewallPassesWhenRouterdNftTablesMatchExpected(t *testing.T) {
+	configPath, statePath := writeDoctorFirewallFixture(t)
+	installDoctorFirewallNftTablesCommand(t, []string{
+		"table inet routerd_filter",
+	})
+
+	var out bytes.Buffer
+	if err := run([]string{"doctor", "firewall", "--config", configPath, "--state-file", statePath, "-o", "json"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("doctor firewall: %v\n%s", err, out.String())
+	}
+	var report doctorReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("unmarshal doctor report: %v\n%s", err, out.String())
+	}
+	check := findDoctorCheck(t, report, "stale routerd nft tables")
+	if check.Status != doctorPass {
+		t.Fatalf("stale nft check = %#v", check)
+	}
+}
+
 func writeDoctorAddressMobilityFixture(t *testing.T) (string, string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -705,6 +746,81 @@ spec:
 		t.Fatalf("write config: %v", err)
 	}
 	return configPath, filepath.Join(dir, "routerd.db")
+}
+
+func writeDoctorFirewallFixture(t *testing.T) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "router.yaml")
+	data := []byte(`apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: test
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: lan
+      spec:
+        ifname: eth0
+        managed: false
+        owner: external
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallZone
+      metadata:
+        name: lan
+      spec:
+        role: trust
+        interfaces: [lan]
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallPolicy
+      metadata:
+        name: default
+      spec:
+        logDeny: true
+`)
+	if err := os.WriteFile(configPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	statePath := filepath.Join(dir, "routerd.db")
+	store := openDoctorState(t, statePath)
+	if err := store.SaveObjectStatus(api.FirewallAPIVersion, "FirewallZone", "lan", map[string]any{"phase": "Applied"}); err != nil {
+		t.Fatalf("save firewall zone status: %v", err)
+	}
+	if err := store.SaveObjectStatus(api.FirewallAPIVersion, "FirewallPolicy", "default", map[string]any{"phase": "Applied"}); err != nil {
+		t.Fatalf("save firewall policy status: %v", err)
+	}
+	closeDoctorState(t, store)
+	return configPath, statePath
+}
+
+func installDoctorFirewallNftTablesCommand(t *testing.T, tables []string) {
+	t.Helper()
+	binDir := filepath.Join(t.TempDir(), "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	listTables := strings.Join(tables, "\n")
+	writeTestCommand(t, filepath.Join(binDir, "nft"), `#!/bin/sh
+if [ "$1" = "list" ] && [ "$2" = "table" ] && [ "$3" = "inet" ] && [ "$4" = "routerd_filter" ]; then
+cat <<'EOF'
+table inet routerd_filter {
+ chain input { type filter hook input priority 0; policy drop; }
+}
+EOF
+exit 0
+fi
+if [ "$1" = "list" ] && [ "$2" = "tables" ]; then
+cat <<'EOF'
+`+listTables+`
+EOF
+exit 0
+fi
+echo "unexpected nft $*" >&2
+exit 1
+`)
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
 func writeDoctorProxyARPAddressMobilityFixture(t *testing.T) (string, string) {

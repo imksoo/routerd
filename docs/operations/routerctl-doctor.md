@@ -40,7 +40,7 @@ Per-call options reuse the `diagnose` flag set: `--config`, `--state-file`,
 | `dslite` | `DSLiteTunnel` resource status; AFTR FQDN AAAA probe; tunnel device existence (`ip link show`). |
 | `dhcpv6-pd` | `DHCPv6PrefixDelegation` status (Bound, delegated prefix). PD pending is **WARN** by design (do not advertise stale IPv6 on the LAN). |
 | `nat` | `NAT44Rule` resource status; `nft list table ip routerd_nat` exists. |
-| `firewall` | `FirewallZone` / `FirewallPolicy` resource status; `nft list table inet routerd_filter` exists with `policy drop` on the input chain (otherwise the router is permissive). |
+| `firewall` | `FirewallZone` / `FirewallPolicy` resource status; `nft list table inet routerd_filter` exists with `policy drop` on the input chain (otherwise the router is permissive); Linux host check for routerd-prefixed nft tables that are present but not expected by the current config-rendered ruleset. |
 | `rollback` | At least one stored generation exists, so `routerctl rollback --to` is usable. |
 | `disk` | `/var/lib/routerd` and `/run/routerd` capacity; WARN at 90% or `<256 MiB`, FAIL at 98% or `<64 MiB`. |
 | `mgmt` | Management interface presence (best-effort from `ManagementAccess` or `FirewallZone role=mgmt`); WebConsole binding (FAIL/WARN on `0.0.0.0` / `::`). |
