@@ -242,5 +242,5 @@ database.
 
 The main router features are advanced inside the routerd binary and its managed daemons. The plugin protocol is the safe foundation for site-local extensions; the manifest format and the I/O contract may still change before the protocol is frozen as a stable public surface.
 
-See also [Hybrid cloud edge design](./design-hybrid-cloud-edge.md) and
-[Dynamic config reference](./reference/dynamic-config.md).
+See also [Hybrid cloud edge design](../design-hybrid-cloud-edge) and
+[Dynamic config reference](./dynamic-config).

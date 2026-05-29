@@ -20,7 +20,7 @@ CloudEdge has two declarative pillars in this MVP:
   without stretching L2.
 
 The model extends the existing routerd architecture in
-[Architecture overview](./design.md): controllers still reconcile one desired
+[Architecture overview](./design): controllers still reconcile one desired
 configuration, resources still use the same `apiVersion`, `kind`,
 `metadata.name`, `spec`, and `status` shape, and the state database remains the
 runtime record for generated state.
@@ -158,7 +158,7 @@ intrinsic, not a configurable field. Operators compose firewall and NAT policy
 separately by referencing literal addresses in existing `FirewallZone`,
 `FirewallRule`, or `NAT44Rule` resources.
 
-See [Selective Address Mobility](./reference/selective-address-mobility.md) for
+See [Selective Address Mobility](./reference/selective-address-mobility) for
 the resource model and provider capability framing.
 
 ## Observe-only cloud inventory
@@ -193,5 +193,5 @@ explicit per-address mobility before bridging remote fault domains. Any full L2
 design needs a separate safety discussion covering loop avoidance, failure
 isolation, MTU, broadcast containment, and operational rollback.
 
-See also [Dynamic config reference](./reference/dynamic-config.md) and
-[Plugin protocol](./plugin-protocol.md).
+See also [Dynamic config reference](./reference/dynamic-config) and
+[Plugin protocol](./reference/plugin-protocol).

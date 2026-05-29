@@ -178,5 +178,5 @@ prints effective-config. `dynamic diff` compares startup-config to
 effective-config. `plugin run --dry-run` prints a candidate dynamic part without
 writing the state database.
 
-See [Hybrid cloud edge design](../design-hybrid-cloud-edge.md) and
-[Plugin protocol](../plugin-protocol.md).
+See [Hybrid cloud edge design](../design-hybrid-cloud-edge) and
+[Plugin protocol](./plugin-protocol).
