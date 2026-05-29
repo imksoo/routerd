@@ -11,7 +11,7 @@ import (
 
 const (
 	// PluginAPIVersion is the API group for routerd plugin protocol objects.
-	PluginAPIVersion = "plugin.routerd.net/v1alpha1"
+	PluginAPIVersion = api.PluginAPIVersion
 )
 
 // PluginRequest is the JSON object routerd sends to a trusted local plugin on
@@ -19,6 +19,7 @@ const (
 // directory, not remote code fetched by routerd.
 type PluginRequest struct {
 	api.TypeMeta `yaml:",inline" json:",inline"`
+	Metadata     api.ObjectMeta    `yaml:"metadata" json:"metadata"`
 	Spec         PluginRequestSpec `yaml:"spec" json:"spec"`
 }
 
@@ -43,6 +44,7 @@ type TriggerRef struct {
 // effective configuration.
 type PluginResult struct {
 	api.TypeMeta `yaml:",inline" json:",inline"`
+	Metadata     api.ObjectMeta     `yaml:"metadata" json:"metadata"`
 	Status       PluginResultStatus `yaml:"status" json:"status"`
 }
 

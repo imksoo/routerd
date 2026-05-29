@@ -56,10 +56,12 @@ kind: Plugin
 metadata:
   name: oci-inventory
 spec:
-  executable: bin/oci-inventory
+  executable: /usr/local/libexec/routerd/plugins/oci-inventory/bin/oci-inventory
+  timeout: 10s
+  capabilities: [observe.cloud, propose.dynamicConfig]
   triggers:
     - type: interval
-      interval: 300s
+      every: 300s
     - type: event
       topic: routerd.cloud.oci.refresh
 ```
@@ -67,18 +69,21 @@ spec:
 A dynamic config source binds a plugin to dynamic-config production policy:
 
 ```yaml
-apiVersion: config.routerd.net/v1alpha1
+apiVersion: plugin.routerd.net/v1alpha1
 kind: DynamicConfigSource
 metadata:
   name: oci-inventory
 spec:
   pluginRef: oci-inventory
-  source: Plugin/oci-inventory
+  ttl: 300s
+  mergePolicy:
+    conflict: reject
 ```
 
-These resource shapes document the intended API surface. The MVP foundation PR
-only defines the Go I/O and dynamic-config types; controller and CLI wiring come
-later.
+The MVP runner requires `spec.executable` to be an absolute executable file.
+Plugin capabilities are currently `observe.cloud` and
+`propose.dynamicConfig`. Interval triggers use `every`; event triggers use
+`topic`.
 
 ## Triggers
 
@@ -99,12 +104,20 @@ routerd starts the plugin executable, writes one `PluginRequest` JSON object to
 stdin, and expects one `PluginResult` JSON object on stdout. Timestamps use
 RFC3339. Duration strings use Go-style duration syntax such as `300s`.
 
+The child process receives a minimal environment: `PATH` from routerd's
+environment, or a fixed system fallback if `PATH` is unset, plus explicit
+`Plugin.spec.env` entries. routerd does not pass through the full parent
+environment.
+
 ### PluginRequest
 
 ```json
 {
   "apiVersion": "plugin.routerd.net/v1alpha1",
   "kind": "PluginRequest",
+  "metadata": {
+    "name": "oci-inventory"
+  },
   "spec": {
     "trigger": {
       "type": "interval",
@@ -132,6 +145,9 @@ RFC3339. Duration strings use Go-style duration syntax such as `300s`.
 {
   "apiVersion": "plugin.routerd.net/v1alpha1",
   "kind": "PluginResult",
+  "metadata": {
+    "name": "oci-inventory"
+  },
   "status": {
     "observedAt": "2026-05-29T12:00:00Z",
     "ttl": "300s",
@@ -186,9 +202,26 @@ RFC3339. Duration strings use Go-style duration syntax such as `300s`.
 }
 ```
 
-routerd validates `status.resources` as routerd resources, validates
-`status.directives` against dynamic override policy, stores accepted output as a
-`DynamicConfigPart`, and derives `expiresAt` from `observedAt + ttl`.
+routerd decodes plugin stdout with YAML decoding, even when the plugin emits
+JSON, so resource specs are restored to typed routerd structs. It validates the
+plugin result shape, stores accepted output as a `DynamicConfigPart`, and derives
+`expiresAt` from `observedAt + ttl`. Full effective-config validation, including
+dynamic override policy evaluation, happens when dynamic parts are merged with
+startup config.
+
+## CLI
+
+The MVP operator commands are:
+
+```text
+routerctl plugin list [--config <startup>] [-o table|json|yaml]
+routerctl plugin run <name> [--dry-run] [--config <startup>] [--state-file <db>] [-o table|json|yaml]
+```
+
+`plugin run --dry-run` executes the plugin and prints the candidate
+`DynamicConfigPart` without writing state. Without `--dry-run`, routerctl records
+the plugin run and stores the validated dynamic part in the local state
+database.
 
 ## Current status
 

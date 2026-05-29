@@ -12,6 +12,8 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/config"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
@@ -412,7 +414,7 @@ func decodeDynamicResources(raw string) ([]api.Resource, error) {
 		return nil, nil
 	}
 	var resources []api.Resource
-	if err := json.Unmarshal([]byte(raw), &resources); err != nil {
+	if err := yaml.Unmarshal([]byte(raw), &resources); err != nil {
 		return nil, err
 	}
 	return resources, nil

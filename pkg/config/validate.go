@@ -656,6 +656,7 @@ func validateResource(res api.Resource, targetOS platform.OS) error {
 	}
 
 	validators := []func(api.Resource, platform.OS) (bool, error){
+		validatePluginResource,
 		validateConfigResource,
 		validateSystemResource,
 		validateInterfaceResource,

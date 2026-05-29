@@ -118,6 +118,31 @@ type ApplyPolicySpec struct {
 	AutoTuneConntrack   bool     `yaml:"autoTuneConntrack,omitempty" json:"autoTuneConntrack,omitempty"`
 }
 
+type PluginSpec struct {
+	Executable   string            `yaml:"executable" json:"executable"`
+	Timeout      string            `yaml:"timeout,omitempty" json:"timeout,omitempty"`
+	Env          map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
+	Capabilities []string          `yaml:"capabilities,omitempty" json:"capabilities,omitempty" jsonschema:"enum=observe.cloud,enum=propose.dynamicConfig"`
+	Triggers     []PluginTrigger   `yaml:"triggers,omitempty" json:"triggers,omitempty"`
+}
+
+type PluginTrigger struct {
+	Type  string `yaml:"type" json:"type" jsonschema:"enum=interval,enum=event"`
+	Every string `yaml:"every,omitempty" json:"every,omitempty"`
+	Topic string `yaml:"topic,omitempty" json:"topic,omitempty"`
+}
+
+type DynamicConfigSourceSpec struct {
+	PluginRef   string          `yaml:"pluginRef" json:"pluginRef"`
+	TTL         string          `yaml:"ttl,omitempty" json:"ttl,omitempty"`
+	MergePolicy *MergePolicy    `yaml:"mergePolicy,omitempty" json:"mergePolicy,omitempty"`
+	Triggers    []PluginTrigger `yaml:"triggers,omitempty" json:"triggers,omitempty"`
+}
+
+type MergePolicy struct {
+	Conflict string `yaml:"conflict,omitempty" json:"conflict,omitempty" jsonschema:"enum=,enum=reject"`
+}
+
 // DynamicOverridePolicySpec is defined in api because DynamicOverridePolicy is
 // authored in startup config. pkg/dynamicconfig keeps its runtime policy type
 // and converts this shape there to avoid an api -> dynamicconfig import cycle.
@@ -1820,6 +1845,14 @@ func (r Resource) RouterdClusterSpec() (RouterdClusterSpec, error) {
 
 func (r Resource) HostnameSpec() (HostnameSpec, error) {
 	return specAs[HostnameSpec](r)
+}
+
+func (r Resource) PluginSpec() (PluginSpec, error) {
+	return specAs[PluginSpec](r)
+}
+
+func (r Resource) DynamicConfigSourceSpec() (DynamicConfigSourceSpec, error) {
+	return specAs[DynamicConfigSourceSpec](r)
 }
 
 func (r Resource) DynamicOverridePolicySpec() (DynamicOverridePolicySpec, error) {

@@ -10,9 +10,9 @@ editing startup-config. routerd derives one effective-config from startup YAML,
 active dynamic parts, and active masks. Effective-config is the only reconcile
 target.
 
-This page documents the API shape for the CloudEdge MVP foundation. The PR that
-adds these types does not add CLI wiring, controllers, state persistence, or
-dataplane behavior.
+This page documents the dynamic-config API shape for the CloudEdge MVP. The
+plugin runner can store validated plugin output as `DynamicConfigPart` records;
+provider actions from plugin `actionPlans` remain display-only.
 
 ## DynamicConfigPart
 
@@ -53,6 +53,24 @@ spec:
 
 Plugins return a TTL duration in `PluginResult.status.ttl`; routerd resolves it
 against `observedAt` into the stored `expiresAt`.
+
+## DynamicConfigSource
+
+`DynamicConfigSource` is startup-config policy that binds one plugin to dynamic
+config production.
+
+```yaml
+apiVersion: plugin.routerd.net/v1alpha1
+kind: DynamicConfigSource
+metadata: { name: oci-inventory }
+spec:
+  pluginRef: oci-inventory
+  ttl: 300s
+  mergePolicy:
+    conflict: reject
+```
+
+The MVP merge policy supports only `conflict: reject`.
 
 ## DynamicConfigDirective
 
@@ -136,25 +154,24 @@ routerd restores the startup-config resource to effective-config during the
 next merge. There is no destructive cleanup step because no startup resource was
 modified.
 
-## Planned CLI
+## CLI
 
-The intended operator surface is:
+The current operator surface is:
 
 ```text
 routerctl dynamic list
 routerctl dynamic describe <source-or-part>
 routerctl dynamic render
 routerctl dynamic diff
-routerctl dynamic expire <source-or-part>
-routerctl doctor dynamic
+routerctl plugin list
+routerctl plugin run <name> [--dry-run]
 ```
 
-`list` shows active and expired parts. `describe` explains source, generation,
-digest, resources, directives, and expiry. `render` prints effective-config.
-`diff` compares startup-config to effective-config. `expire` marks a dynamic
-part inactive so startup fallbacks can return. `doctor dynamic` reports expired
-parts, denied directives, duplicate resources, conflicts, and masks that have no
-matching startup target.
+`dynamic list` shows active and expired parts. `dynamic describe` explains
+source, generation, digest, resources, directives, and expiry. `dynamic render`
+prints effective-config. `dynamic diff` compares startup-config to
+effective-config. `plugin run --dry-run` prints a candidate dynamic part without
+writing the state database.
 
 See [Hybrid cloud edge design](../design-hybrid-cloud-edge.md) and
 [Plugin protocol](../plugin-protocol.md).

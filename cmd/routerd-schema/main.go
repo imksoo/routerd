@@ -279,6 +279,8 @@ func schemaRef(name string) map[string]any {
 func resourceUnionSchema() map[string]any {
 	return map[string]any{
 		"oneOf": []any{
+			resourceSchema(api.PluginAPIVersion, "Plugin", api.PluginSpec{}),
+			resourceSchema(api.PluginAPIVersion, "DynamicConfigSource", api.DynamicConfigSourceSpec{}),
 			resourceSchema(api.ConfigAPIVersion, "DynamicOverridePolicy", api.DynamicOverridePolicySpec{}),
 			resourceSchema(api.SystemAPIVersion, "LogSink", api.LogSinkSpec{}),
 			resourceSchema(api.ObservabilityAPIVersion, "Telemetry", api.TelemetrySpec{}),

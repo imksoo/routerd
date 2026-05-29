@@ -53,6 +53,7 @@ const (
 	FirewallAPIVersion      = "firewall.routerd.net/v1alpha1"
 	ObservabilityAPIVersion = "observability.routerd.net/v1alpha1"
 	ConfigAPIVersion        = "config.routerd.net/v1alpha1"
+	PluginAPIVersion        = "plugin.routerd.net/v1alpha1"
 )
 
 func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
@@ -72,6 +73,18 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 	r.Status = raw.Status
 
 	switch raw.Kind {
+	case "Plugin":
+		var spec PluginSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	case "DynamicConfigSource":
+		var spec DynamicConfigSourceSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
 	case "DynamicOverridePolicy":
 		var spec DynamicOverridePolicySpec
 		if err := raw.Spec.Decode(&spec); err != nil {

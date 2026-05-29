@@ -148,6 +148,189 @@
                 "additionalProperties": false,
                 "properties": {
                   "apiVersion": {
+                    "const": "plugin.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "Plugin",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "capabilities": {
+                        "items": {
+                          "enum": [
+                            "observe.cloud",
+                            "propose.dynamicConfig"
+                          ],
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "env": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "type": "object"
+                      },
+                      "executable": {
+                        "type": "string"
+                      },
+                      "timeout": {
+                        "type": "string"
+                      },
+                      "triggers": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "every": {
+                              "type": "string"
+                            },
+                            "topic": {
+                              "type": "string"
+                            },
+                            "type": {
+                              "enum": [
+                                "interval",
+                                "event"
+                              ],
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "type"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      }
+                    },
+                    "required": [
+                      "executable"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "plugin.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "DynamicConfigSource",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "mergePolicy": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "conflict": {
+                            "enum": [
+                              "",
+                              "reject"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "pluginRef": {
+                        "type": "string"
+                      },
+                      "triggers": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "every": {
+                              "type": "string"
+                            },
+                            "topic": {
+                              "type": "string"
+                            },
+                            "type": {
+                              "enum": [
+                                "interval",
+                                "event"
+                              ],
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "type"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "ttl": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "pluginRef"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
                     "const": "config.routerd.net/v1alpha1",
                     "type": "string"
                   },
