@@ -325,6 +325,76 @@ func TestSQLiteStoreMaintenance(t *testing.T) {
 	}
 }
 
+func TestSQLiteStoreDynamicConfigParts(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "routerd.db")
+	store, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatalf("open sqlite store: %v", err)
+	}
+	defer store.Close()
+	now := time.Date(2026, 5, 29, 12, 0, 0, 0, time.UTC)
+	store.now = func() time.Time { return now }
+
+	gen1 := DynamicConfigPartRecord{
+		Source:         "cloudedge",
+		Generation:     1,
+		ObservedAt:     now.Add(-2 * time.Hour),
+		ExpiresAt:      now.Add(time.Hour),
+		Digest:         "sha256:old",
+		ResourcesJSON:  `[{"apiVersion":"net.routerd.net/v1alpha1","kind":"Interface","metadata":{"name":"wan"},"spec":{}}]`,
+		DirectivesJSON: `[]`,
+		Status:         "active",
+	}
+	if err := store.UpsertDynamicConfigPart(gen1); err != nil {
+		t.Fatalf("upsert generation 1: %v", err)
+	}
+	gen1.Digest = "sha256:updated"
+	if err := store.UpsertDynamicConfigPart(gen1); err != nil {
+		t.Fatalf("replace generation 1: %v", err)
+	}
+	gen2 := DynamicConfigPartRecord{
+		Source:         "cloudedge",
+		Generation:     2,
+		ObservedAt:     now.Add(-time.Hour),
+		ExpiresAt:      now.Add(-time.Minute),
+		Digest:         "sha256:new",
+		ResourcesJSON:  `[]`,
+		DirectivesJSON: `[{"op":"mask","target":{"apiVersion":"net.routerd.net/v1alpha1","kind":"Interface","name":"wan"},"reason":"test"}]`,
+		Status:         "active",
+	}
+	if err := store.UpsertDynamicConfigPart(gen2); err != nil {
+		t.Fatalf("upsert generation 2: %v", err)
+	}
+
+	parts, err := store.ListDynamicConfigParts()
+	if err != nil {
+		t.Fatalf("list dynamic config parts: %v", err)
+	}
+	if len(parts) != 2 {
+		t.Fatalf("parts len = %d, want 2: %+v", len(parts), parts)
+	}
+	if parts[0].Generation != 2 || parts[1].Generation != 1 {
+		t.Fatalf("parts ordering = %+v, want generation 2 then 1", parts)
+	}
+	if parts[1].Digest != "sha256:updated" {
+		t.Fatalf("generation 1 digest = %q, want replacement value", parts[1].Digest)
+	}
+	if parts[0].Status != "active" || parts[0].EffectiveStatus(now) != "expired" {
+		t.Fatalf("expired status raw=%q effective=%q", parts[0].Status, parts[0].EffectiveStatus(now))
+	}
+	if got := parts[1].EffectiveStatus(now); got != "active" {
+		t.Fatalf("active effective status = %q", got)
+	}
+
+	sourceParts, err := store.GetDynamicConfigPartsBySource("cloudedge")
+	if err != nil {
+		t.Fatalf("get dynamic config parts by source: %v", err)
+	}
+	if len(sourceParts) != 2 || sourceParts[0].Generation != 2 || sourceParts[1].Generation != 1 {
+		t.Fatalf("source parts = %+v, want generation 2 then 1", sourceParts)
+	}
+}
+
 func TestSQLiteStoreClosedAccessIsBenign(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "routerd.db")
 	store, err := OpenSQLite(path)

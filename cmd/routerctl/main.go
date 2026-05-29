@@ -52,6 +52,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return describeCommand(args[1:], stdout, stderr)
 	case "firewall":
 		return firewallCommand(args[1:], stdout, stderr)
+	case "dynamic":
+		return dynamicCommand(args[1:], stdout, stderr)
 	case "wireguard", "wg":
 		return wireGuardCommand(args[1:], stdout, stderr)
 	case "tailscale", "ts":
@@ -103,6 +105,8 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  describe <kind>/<name> [--config <path>] [--state-file <path>] [--ledger-file <path>] [--events-limit <n>]")
 	fmt.Fprintln(w, "  describe firewall [--config <path>]")
 	fmt.Fprintln(w, "  firewall test from=<zone> to=<zone|self> proto=<tcp|udp> dport=<port> [--config <path>]")
+	fmt.Fprintln(w, "  dynamic list [--state-file <path>] [-o table|json|yaml]")
+	fmt.Fprintln(w, "  dynamic describe <source> [--state-file <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  wireguard list [-o table|json|yaml]")
 	fmt.Fprintln(w, "  wireguard show <interface> [-o table|json|yaml]")
 	fmt.Fprintln(w, "  tailscale peers [-o table|json|yaml] [--binary tailscale]")
