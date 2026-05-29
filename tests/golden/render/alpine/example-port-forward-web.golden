@@ -7,6 +7,7 @@ flush table inet routerd_filter
 destroy set inet routerd_filter if_lan
 destroy set inet routerd_filter if_wan
 table inet routerd_filter {
+  comment "routerd.owner=routerd routerd.generation=1"
   set if_lan { type ifname; elements = { "ens19" } }
   set if_wan { type ifname; elements = { "ens18" } }
   chain input {
@@ -59,6 +60,7 @@ flush table inet routerd_filter
 destroy set inet routerd_filter if_lan
 destroy set inet routerd_filter if_wan
 table inet routerd_filter {
+  comment "routerd.owner=routerd routerd.generation=1"
   set if_lan { type ifname; elements = { "ens19" } }
   set if_wan { type ifname; elements = { "ens18" } }
   chain input {
@@ -107,6 +109,7 @@ table inet routerd_filter {
 add table ip routerd_nat
 flush table ip routerd_nat
 table ip routerd_nat {
+  comment "routerd.owner=routerd routerd.generation=1"
   chain prerouting {
     type nat hook prerouting priority dstnat; policy accept;
     iifname "ens18" ip daddr 203.0.113.10 tcp dport 443 counter dnat to 192.168.10.20:443 comment "routerd PortForward web-https"

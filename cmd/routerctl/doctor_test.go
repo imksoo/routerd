@@ -8,12 +8,14 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/platform"
+	"github.com/imksoo/routerd/pkg/render"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -621,6 +623,42 @@ func TestDoctorHybridSAMNonLinuxSkip(t *testing.T) {
 	}
 }
 
+func TestDoctorSAMForwardPolicyUnavailableDetailClassifiesFailures(t *testing.T) {
+	tests := []struct {
+		name    string
+		command diagnoseCommandCheck
+		want    string
+	}{
+		{
+			name:    "nft unavailable",
+			command: diagnoseCommandCheck{Error: `exec: "nft": executable file not found in $PATH`, ExitCode: -1},
+			want:    "nft unavailable",
+		},
+		{
+			name:    "permission denied",
+			command: diagnoseCommandCheck{Stderr: "Error: Could not process rule: Operation not permitted", ExitCode: 1, Output: "Error: Could not process rule: Operation not permitted"},
+			want:    "permission denied running nft",
+		},
+		{
+			name:    "table absent",
+			command: diagnoseCommandCheck{Stderr: "Error: No such file or directory", ExitCode: 1, Output: "Error: No such file or directory"},
+			want:    "routerd_filter table absent; no routerd firewall policy observed",
+		},
+		{
+			name:    "other failure",
+			command: diagnoseCommandCheck{Error: "exit status 2", Stderr: "syntax error", ExitCode: 2, Output: "syntax error"},
+			want:    "nft list table inet routerd_filter failed: exit status 2",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := doctorSAMForwardPolicyUnavailableDetail(tc.command); got != tc.want {
+				t.Fatalf("detail = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestDoctorHybridFailsUnresolvedPeerRef(t *testing.T) {
 	configPath, statePath := writeDoctorHybridFixture(t, true)
 	var out bytes.Buffer
@@ -640,9 +678,9 @@ func TestDoctorHybridFailsUnresolvedPeerRef(t *testing.T) {
 
 func TestDoctorFirewallWarnsAboutStaleRouterdNftTables(t *testing.T) {
 	configPath, statePath := writeDoctorFirewallFixture(t)
-	installDoctorFirewallNftTablesCommand(t, []string{
-		"table inet routerd_filter",
-		"table inet routerd_stale_filter",
+	installDoctorFirewallNftTablesCommand(t, map[string]bool{
+		"inet/routerd_filter":       true,
+		"inet/routerd_stale_filter": true,
 	})
 
 	var out bytes.Buffer
@@ -657,12 +695,15 @@ func TestDoctorFirewallWarnsAboutStaleRouterdNftTables(t *testing.T) {
 	if check.Status != doctorWarn || !strings.Contains(check.Detail, "inet/routerd_stale_filter") {
 		t.Fatalf("stale nft check = %#v", check)
 	}
+	if !strings.Contains(check.Detail, "marked routerd-owned") {
+		t.Fatalf("stale nft check should be marker-based: %#v", check)
+	}
 }
 
 func TestDoctorFirewallPassesWhenRouterdNftTablesMatchExpected(t *testing.T) {
 	configPath, statePath := writeDoctorFirewallFixture(t)
-	installDoctorFirewallNftTablesCommand(t, []string{
-		"table inet routerd_filter",
+	installDoctorFirewallNftTablesCommand(t, map[string]bool{
+		"inet/routerd_filter": true,
 	})
 
 	var out bytes.Buffer
@@ -675,6 +716,27 @@ func TestDoctorFirewallPassesWhenRouterdNftTablesMatchExpected(t *testing.T) {
 	}
 	check := findDoctorCheck(t, report, "stale routerd nft tables")
 	if check.Status != doctorPass {
+		t.Fatalf("stale nft check = %#v", check)
+	}
+}
+
+func TestDoctorFirewallIgnoresUnmarkedRouterdPrefixedNftTables(t *testing.T) {
+	configPath, statePath := writeDoctorFirewallFixture(t)
+	installDoctorFirewallNftTablesCommand(t, map[string]bool{
+		"inet/routerd_filter":       true,
+		"inet/routerd_stale_filter": false,
+	})
+
+	var out bytes.Buffer
+	if err := run([]string{"doctor", "firewall", "--config", configPath, "--state-file", statePath, "-o", "json"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("doctor firewall: %v\n%s", err, out.String())
+	}
+	var report doctorReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("unmarshal doctor report: %v\n%s", err, out.String())
+	}
+	check := findDoctorCheck(t, report, "stale routerd nft tables")
+	if check.Status != doctorPass || !strings.Contains(check.Detail, "unmarked routerd-prefixed tables ignored") {
 		t.Fatalf("stale nft check = %#v", check)
 	}
 }
@@ -795,22 +857,38 @@ spec:
 	return configPath, statePath
 }
 
-func installDoctorFirewallNftTablesCommand(t *testing.T, tables []string) {
+func installDoctorFirewallNftTablesCommand(t *testing.T, tables map[string]bool) {
 	t.Helper()
 	binDir := filepath.Join(t.TempDir(), "bin")
 	if err := os.MkdirAll(binDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	listTables := strings.Join(tables, "\n")
-	writeTestCommand(t, filepath.Join(binDir, "nft"), `#!/bin/sh
-if [ "$1" = "list" ] && [ "$2" = "table" ] && [ "$3" = "inet" ] && [ "$4" = "routerd_filter" ]; then
+	var lines []string
+	for key := range tables {
+		parts := strings.Split(key, "/")
+		lines = append(lines, "table "+parts[0]+" "+parts[1])
+	}
+	sort.Strings(lines)
+	listTables := strings.Join(lines, "\n")
+	var cases strings.Builder
+	for key, marked := range tables {
+		parts := strings.Split(key, "/")
+		marker := ""
+		if marked {
+			marker = "  comment \"" + render.NftablesRouterdOwnerMarker + "\"\n"
+		}
+		cases.WriteString(`if [ "$1" = "list" ] && [ "$2" = "table" ] && [ "$3" = "` + parts[0] + `" ] && [ "$4" = "` + parts[1] + `" ]; then
 cat <<'EOF'
-table inet routerd_filter {
- chain input { type filter hook input priority 0; policy drop; }
+table ` + parts[0] + ` ` + parts[1] + ` {
+` + marker + ` chain input { type filter hook input priority 0; policy drop; }
 }
 EOF
 exit 0
 fi
+`)
+	}
+	writeTestCommand(t, filepath.Join(binDir, "nft"), `#!/bin/sh
+`+cases.String()+`
 if [ "$1" = "list" ] && [ "$2" = "tables" ]; then
 cat <<'EOF'
 `+listTables+`

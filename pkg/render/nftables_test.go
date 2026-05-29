@@ -57,6 +57,35 @@ func TestNftablesNAT44RuleSourceNATFields(t *testing.T) {
 	}
 }
 
+func TestNftablesRouterdTablesCarryOwnerMarker(t *testing.T) {
+	router := &api.Router{
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "wan"},
+				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44Rule"},
+				Metadata: api.ObjectMeta{Name: "lan-to-wan"},
+				Spec: api.NAT44RuleSpec{
+					OutboundInterface: "wan",
+					SourceCIDRs:       []string{"192.168.10.0/24"},
+					Translation:       api.IPv4NATTranslationSpec{Type: "interfaceAddress"},
+				},
+			},
+		}},
+	}
+	data, err := NftablesNAT44(router)
+	if err != nil {
+		t.Fatalf("render nftables: %v", err)
+	}
+	want := `comment "` + NftablesRouterdOwnerMarker + `"`
+	if !strings.Contains(string(data), want) {
+		t.Fatalf("nftables output missing owner marker %q:\n%s", want, string(data))
+	}
+}
+
 func TestNftablesNAT44RuleCanUseDSLiteTunnel(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{Resources: []api.Resource{

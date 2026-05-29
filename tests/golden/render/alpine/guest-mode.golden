@@ -25,6 +25,7 @@ destroy set inet routerd_filter if_lan
 destroy set inet routerd_filter if_wan
 destroy set inet routerd_filter client_policy_guest_devices
 table inet routerd_filter {
+  comment "routerd.owner=routerd routerd.generation=1"
   set if_lan { type ifname; elements = { "ens19" } }
   set if_wan { type ifname; elements = { "ens18" } }
   set client_policy_guest_devices { type ether_addr; elements = { 18:ec:e7:33:12:6c } }
@@ -90,6 +91,7 @@ destroy set inet routerd_filter if_lan
 destroy set inet routerd_filter if_wan
 destroy set inet routerd_filter client_policy_guest_devices
 table inet routerd_filter {
+  comment "routerd.owner=routerd routerd.generation=1"
   set if_lan { type ifname; elements = { "ens19" } }
   set if_wan { type ifname; elements = { "ens18" } }
   set client_policy_guest_devices { type ether_addr; elements = { 18:ec:e7:33:12:6c } }
@@ -150,6 +152,7 @@ table inet routerd_filter {
 add table ip routerd_nat
 flush table ip routerd_nat
 table ip routerd_nat {
+  comment "routerd.owner=routerd routerd.generation=1"
   chain postrouting {
     type nat hook postrouting priority srcnat; policy accept;
     oifname "ens18" ip saddr 172.18.0.0/16 ip daddr !=10.0.0.0/8 ip daddr !=172.16.0.0/12 ip daddr !=192.168.0.0/16 masquerade

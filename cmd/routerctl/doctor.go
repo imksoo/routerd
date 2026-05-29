@@ -409,7 +409,7 @@ func doctorSAMForwardPolicyCheck(ctx context.Context, name, captureIface, tunnel
 	label := "RemoteAddressClaim/" + name + " FORWARD policy"
 	command := doctorRunDiagnosticCommand(ctx, "nft list table inet routerd_filter", "nft", "list", "table", "inet", "routerd_filter")
 	if !command.OK {
-		return doctorCheck{Area: "hybrid", Name: label, Status: doctorSkip, Detail: firstNonEmpty(command.Error, oneLine(command.Output), "routerd_filter table unavailable")}
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorSkip, Detail: doctorSAMForwardPolicyUnavailableDetail(command)}
 	}
 	detail := "SAM delivery traverses FORWARD"
 	if captureIface != "" || tunnel != "" {
@@ -428,6 +428,21 @@ func doctorSAMForwardPolicyCheck(ctx context.Context, name, captureIface, tunnel
 		}
 	}
 	return doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: detail}
+}
+
+func doctorSAMForwardPolicyUnavailableDetail(command diagnoseCommandCheck) string {
+	combined := strings.ToLower(strings.Join([]string{command.Error, command.Stderr, command.Stdout, command.Output}, " "))
+	switch {
+	case strings.Contains(combined, "executable file not found") || strings.Contains(combined, "no such file or directory") && strings.Contains(strings.ToLower(command.Error), "exec"):
+		return "nft unavailable"
+	case strings.Contains(combined, "permission denied") || strings.Contains(combined, "operation not permitted"):
+		return "permission denied running nft"
+	case strings.Contains(combined, "no such file or directory") || strings.Contains(combined, "no such table") || strings.Contains(combined, "table does not exist"):
+		return "routerd_filter table absent; no routerd firewall policy observed"
+	default:
+		detail := firstNonEmpty(command.Error, oneLine(command.Output), "exit "+strconv.Itoa(command.ExitCode))
+		return "nft list table inet routerd_filter failed: " + detail
+	}
 }
 
 func nftForwardPolicyDrop(output string) bool {
@@ -1196,24 +1211,44 @@ func (r doctorRunner) doctorStaleNftTablesCheck(ctx context.Context) doctorCheck
 	}
 	present := parseNftTables(command.Stdout)
 	var stale []string
+	marked := 0
+	unmarked := 0
+	unverified := 0
 	for _, table := range present {
 		if !strings.HasPrefix(table.name, "routerd_") {
 			continue
 		}
+		tableCommand := runDiagnosticCommand(ctx, "nft list table "+table.family+" "+table.name, "nft", "list", "table", table.family, table.name)
+		if !tableCommand.OK {
+			unverified++
+			continue
+		}
+		if !strings.Contains(tableCommand.Stdout, render.NftablesRouterdOwnerMarker) {
+			unmarked++
+			continue
+		}
+		marked++
 		if !expected[table.key()] {
 			stale = append(stale, table.key())
 		}
 	}
 	sort.Strings(stale)
 	if len(stale) == 0 {
-		return doctorCheck{Area: "firewall", Name: name, Status: doctorPass, Detail: fmt.Sprintf("%d routerd-prefixed tables match current config heuristic", countRouterdNftTables(present))}
+		detail := fmt.Sprintf("%d marked routerd-owned nft tables match current config", marked)
+		if unmarked > 0 {
+			detail = appendDoctorDetail(detail, fmt.Sprintf("%d unmarked routerd-prefixed tables ignored", unmarked))
+		}
+		if unverified > 0 {
+			detail = appendDoctorDetail(detail, fmt.Sprintf("%d routerd-prefixed tables could not be inspected for ownership marker", unverified))
+		}
+		return doctorCheck{Area: "firewall", Name: name, Status: doctorPass, Detail: detail}
 	}
 	return doctorCheck{
 		Area:   "firewall",
 		Name:   name,
 		Status: doctorWarn,
-		Detail: "present but not expected by current config heuristic: " + strings.Join(stale, ","),
-		Remedy: "inspect the listed nft tables and remove stale routerd-owned tables only after confirming they are not intentionally managed by this generation",
+		Detail: "marked routerd-owned tables not expected by current config: " + strings.Join(stale, ","),
+		Remedy: "inspect the listed nft tables and remove stale marked routerd-owned tables only after confirming they are not intentionally managed by this generation",
 	}
 }
 
@@ -1244,11 +1279,6 @@ func expectedRouterdNftTables(router *api.Router) (map[string]bool, error) {
 	if router == nil {
 		return expected, nil
 	}
-	// Heuristic: routerd's nft tables do not currently carry a generation
-	// marker, so doctor compares routerd-prefixed host tables with tables
-	// implied by a fresh render of the current config plus controller-only
-	// default-route policy tables. A fuller solution needs persisted table
-	// ownership/generation metadata in nftables itself.
 	data, err := render.NftablesNAT44(router)
 	if err != nil {
 		return nil, err
@@ -1274,16 +1304,6 @@ func expectedRouterdNftTables(router *api.Router) (map[string]bool, error) {
 		}
 	}
 	return expected, nil
-}
-
-func countRouterdNftTables(tables []doctorNftTable) int {
-	count := 0
-	for _, table := range tables {
-		if strings.HasPrefix(table.name, "routerd_") {
-			count++
-		}
-	}
-	return count
 }
 
 func (r doctorRunner) doctorRollback() []doctorCheck {
