@@ -375,4 +375,3 @@ func boolInt(v bool) int {
 	}
 	return 0
 }
-
