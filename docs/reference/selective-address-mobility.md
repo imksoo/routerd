@@ -81,8 +81,41 @@ Reserved capture types rejected by MVP validation:
 
 Delivery mode is `route`: routerd represents delivery as forwarding the
 captured `/32` over the named overlay peer and optional tunnel interface. The
-live capture and `/32` forwarding dataplane is intentionally deferred to a
-later implementation step.
+Linux dataplane lowers this delivery into a managed `IPv4Route` for the exact
+claim address, for example `10.0.0.9/32 dev wg-hybrid`. routerd never lowers a
+SAM claim into a default route.
+
+For `proxy-arp` capture on Linux, routerd:
+
+- enables `net.ipv4.conf.<capture-interface>.proxy_arp=1` through the normal
+  sysctl controller,
+- installs a proxy neighbor entry equivalent to
+  `ip neigh add proxy <address> dev <capture-interface>`, and
+- enables `net.ipv4.ip_forward=1` through the normal sysctl controller.
+
+For `provider-secondary-ip`, the provider fabric owns address capture. routerd
+does not assign the mobile address to the local OS when
+`configureOSAddress: false`; it only ensures IPv4 forwarding and installs the
+`/32` delivery route into the overlay.
+
+FreeBSD and other non-Linux hosts do not have live SAM capture yet. The
+controller no-ops and reports `SAM capture not implemented on this OS`.
+
+The live Linux dataplane is implemented but not yet validated against a real
+kernel in the Azure + PVE lab. Treat it as pending lab smoke validation before
+production use.
+
+## Reverse Path Filtering
+
+Strict reverse-path filtering can drop forwarded SAM traffic because the mobile
+`/32` may appear to belong to a directly attached subnet while the return path
+is through the overlay. routerd does not silently change `rp_filter` for SAM,
+because that is an invasive interface policy decision.
+
+`routerctl doctor hybrid` reads
+`net.ipv4.conf.<capture-or-tunnel-interface>.rp_filter` when host checks are
+enabled. It warns when the value is strict (`1`) and recommends evaluating loose
+mode (`2`) on the affected interfaces.
 
 ## Provider Capabilities
 
@@ -132,5 +165,5 @@ not configure firewall or NAT policy; it does not mean bypass.
 
 The MVP does not implement full L2 extension, EVPN, BUM forwarding,
 broadcast/multicast extension, automatic cloud API mutation, dynamic patch or
-replace semantics, netlink programming, proxy-ARP programming, `/32` route
-forwarding, or `ip_forward` changes.
+replace semantics, provider-side address assignment, or automatic `rp_filter`
+changes.

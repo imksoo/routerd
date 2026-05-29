@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/platform"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -395,7 +396,68 @@ func TestDoctorHybridAddressMobilityNoHost(t *testing.T) {
 	if check := findDoctorCheck(t, report, "RemoteAddressClaim/azure-vm delivery.peerRef"); check.Status != doctorPass {
 		t.Fatalf("delivery.peerRef check = %#v", check)
 	}
-	if check := findDoctorCheck(t, report, "RemoteAddressClaim/azure-vm dataplane"); check.Status != doctorSkip || !strings.Contains(check.Detail, "not implemented") {
+	if check := findDoctorCheck(t, report, "RemoteAddressClaim/azure-vm SAM dataplane"); check.Status != doctorSkip || !strings.Contains(check.Detail, "--no-host") {
+		t.Fatalf("dataplane check = %#v", check)
+	}
+}
+
+func TestDoctorHybridSAMLiveChecksStubbed(t *testing.T) {
+	oldRun := doctorRunDiagnosticCommand
+	oldOS := doctorCurrentOS
+	defer func() {
+		doctorRunDiagnosticCommand = oldRun
+		doctorCurrentOS = oldOS
+	}()
+	doctorCurrentOS = func() platform.OS { return platform.OSLinux }
+	doctorRunDiagnosticCommand = func(_ context.Context, label, name string, args ...string) diagnoseCommandCheck {
+		switch {
+		case label == "sysctl net.ipv4.ip_forward":
+			return diagnoseCommandCheck{Name: label, OK: true, Stdout: "1", Output: "1"}
+		case strings.HasPrefix(label, "ip route show"):
+			return diagnoseCommandCheck{Name: label, OK: true, Stdout: "10.0.0.9 dev wg-hybrid", Output: "10.0.0.9 dev wg-hybrid"}
+		case strings.Contains(label, "rp_filter"):
+			return diagnoseCommandCheck{Name: label, OK: true, Stdout: "1", Output: "1"}
+		default:
+			return diagnoseCommandCheck{Name: label, OK: false, Error: "unexpected command"}
+		}
+	}
+	configPath, statePath := writeDoctorAddressMobilityFixture(t)
+	var out bytes.Buffer
+	if err := run([]string{"doctor", "hybrid", "--config", configPath, "--state-file", statePath, "-o", "json"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("doctor hybrid: %v\n%s", err, out.String())
+	}
+	var report doctorReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("unmarshal doctor report: %v\n%s", err, out.String())
+	}
+	if check := findDoctorCheck(t, report, "RemoteAddressClaim/azure-vm ip_forward"); check.Status != doctorPass {
+		t.Fatalf("ip_forward check = %#v", check)
+	}
+	if check := findDoctorCheck(t, report, "RemoteAddressClaim/azure-vm delivery route"); check.Status != doctorPass {
+		t.Fatalf("delivery route check = %#v", check)
+	}
+	if check := findDoctorCheck(t, report, "RemoteAddressClaim/azure-vm rp_filter wg-hybrid"); check.Status != doctorWarn || !strings.Contains(check.Remedy, "loose") {
+		t.Fatalf("rp_filter check = %#v", check)
+	}
+	if check := findDoctorCheck(t, report, "RemoteAddressClaim/azure-vm provider capture"); check.Status != doctorSkip {
+		t.Fatalf("provider capture check = %#v", check)
+	}
+}
+
+func TestDoctorHybridSAMNonLinuxSkip(t *testing.T) {
+	oldOS := doctorCurrentOS
+	defer func() { doctorCurrentOS = oldOS }()
+	doctorCurrentOS = func() platform.OS { return platform.OSFreeBSD }
+	configPath, statePath := writeDoctorAddressMobilityFixture(t)
+	var out bytes.Buffer
+	if err := run([]string{"doctor", "hybrid", "--config", configPath, "--state-file", statePath, "-o", "json"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("doctor hybrid: %v\n%s", err, out.String())
+	}
+	var report doctorReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("unmarshal doctor report: %v\n%s", err, out.String())
+	}
+	if check := findDoctorCheck(t, report, "RemoteAddressClaim/azure-vm SAM dataplane"); check.Status != doctorSkip || !strings.Contains(check.Detail, "not implemented") {
 		t.Fatalf("dataplane check = %#v", check)
 	}
 }

@@ -47,8 +47,39 @@ Reserved capture types rejected by MVP validation:
 | `garp` | Later dataplane design 用に予約されています。 |
 
 Delivery mode は `route` です。Captured `/32` を named overlay peer と任意の
-tunnel interface へ転送する intent として表します。Live capture と `/32`
-forwarding dataplane は後続 step です。
+tunnel interface へ転送する intent として表します。Linux dataplane では、この
+delivery は claim address そのものの managed `IPv4Route` に lowering されます
+（例: `10.0.0.9/32 dev wg-hybrid`）。SAM claim が default route に lowering
+されることはありません。
+
+Linux の `proxy-arp` capture では、routerd は通常の sysctl controller で
+`net.ipv4.conf.<capture-interface>.proxy_arp=1` を有効化し、
+`ip neigh add proxy <address> dev <capture-interface>` 相当の proxy neighbor
+entry を netlink で追加し、通常の sysctl controller で
+`net.ipv4.ip_forward=1` を有効化します。
+
+`provider-secondary-ip` では provider fabric が address capture を担当します。
+`configureOSAddress: false` の場合、routerd は mobile address を local OS
+address として設定しません。routerd は IPv4 forwarding と overlay への `/32`
+delivery route だけを管理します。
+
+FreeBSD など non-Linux host では live SAM capture は未対応です。Controller は
+host を変更せず、`SAM capture not implemented on this OS` と報告します。
+
+Linux live dataplane は実装済みですが、Azure + PVE lab の real kernel ではまだ
+検証されていません。Production 利用前に lab smoke validation が必要です。
+
+## Reverse Path Filtering
+
+Strict reverse-path filtering は SAM forwarded traffic を drop する可能性が
+あります。Mobile `/32` が直接接続 subnet に属して見える一方で、return path が
+overlay になるためです。routerd は SAM のために `rp_filter` を黙って変更しませ
+ん。これは interface policy として影響が大きいためです。
+
+`routerctl doctor hybrid` は host check が有効な場合に
+`net.ipv4.conf.<capture-or-tunnel-interface>.rp_filter` を読みます。値が strict
+(`1`) の場合は warning を出し、対象 interface で loose mode (`2`) を検討する
+remedy を表示します。
 
 ## Provider Capabilities
 
@@ -74,6 +105,5 @@ firewall/conntrack path を通ります。
 ## Out Of Scope
 
 MVP は full L2 extension、EVPN、BUM forwarding、broadcast/multicast
-extension、automatic cloud API mutation、dynamic patch/replace、netlink
-programming、proxy-ARP programming、`/32` route forwarding、`ip_forward`
-変更を実装しません。
+extension、automatic cloud API mutation、dynamic patch/replace、
+provider-side address assignment、自動 `rp_filter` 変更を実装しません。

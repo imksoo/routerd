@@ -21,7 +21,9 @@ import (
 	"github.com/imksoo/routerd/pkg/controlapi"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	"github.com/imksoo/routerd/pkg/hybrid"
+	"github.com/imksoo/routerd/pkg/platform"
 	routerplugin "github.com/imksoo/routerd/pkg/plugin"
+	"github.com/imksoo/routerd/pkg/sam"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -73,6 +75,9 @@ var reconcileStatusFetcher = fetchReconcileControllers
 
 // runtimeStatsFetcher allows tests to stub the runtime-stats fetch.
 var runtimeStatsFetcher = fetchRuntimeStats
+
+var doctorRunDiagnosticCommand = runDiagnosticCommand
+var doctorCurrentOS = platform.CurrentOS
 
 // doctorRuntimeGoroutineWarn and doctorRuntimeFDWarnPercent are conservative,
 // observational thresholds. They never fail the run; they only flag footprints
@@ -262,9 +267,88 @@ func (r doctorRunner) doctorHybrid() []doctorCheck {
 			checks = append(checks, doctorCheck{Area: "hybrid", Name: "RemoteAddressClaim/" + claim.Metadata.Name + " delivery.peerRef", Status: doctorFail, Detail: "missing OverlayPeer/" + peerName, Remedy: "declare the OverlayPeer or update spec.delivery.peerRef"})
 		}
 		checks = append(checks, doctorHybridCaptureTypeCheck(claim.Metadata.Name, spec.Capture.Type))
-		checks = append(checks, doctorCheck{Area: "hybrid", Name: "RemoteAddressClaim/" + claim.Metadata.Name + " dataplane", Status: doctorSkip, Detail: "live capture and /32 forwarding checks are not implemented in this MVP"})
+		checks = append(checks, r.doctorSAMLiveChecks(claim.Metadata.Name, spec)...)
 	}
 	return checks
+}
+
+func (r doctorRunner) doctorSAMLiveChecks(name string, spec api.RemoteAddressClaimSpec) []doctorCheck {
+	if !r.opts.Host {
+		return []doctorCheck{doctorHostSkipped("hybrid", "RemoteAddressClaim/"+name+" SAM dataplane")}
+	}
+	if doctorCurrentOS() != platform.OSLinux {
+		return []doctorCheck{{Area: "hybrid", Name: "RemoteAddressClaim/" + name + " SAM dataplane", Status: doctorSkip, Detail: "SAM capture not implemented on this OS"}}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), r.opts.Timeout)
+	defer cancel()
+	address := strings.TrimSpace(spec.Address)
+	routeName := sam.DeliveryRouteName(name)
+	tunnel := strings.TrimSpace(spec.Delivery.TunnelInterface)
+	if tunnel == "" {
+		tunnel = "delivery tunnel interface unresolved from OverlayPeer in doctor"
+	}
+	checks := []doctorCheck{
+		doctorSAMIPForwardCheck(ctx, name),
+		doctorSAMDeliveryRouteCheck(ctx, name, routeName, address, tunnel),
+	}
+	if strings.TrimSpace(spec.Capture.Type) == "proxy-arp" {
+		checks = append(checks, doctorSAMProxyNeighborCheck(ctx, name, address, strings.TrimSpace(spec.Capture.Interface)))
+		checks = append(checks, doctorSAMRPFilterCheck(ctx, name, strings.TrimSpace(spec.Capture.Interface)))
+	}
+	if iface := strings.TrimSpace(spec.Delivery.TunnelInterface); iface != "" {
+		checks = append(checks, doctorSAMRPFilterCheck(ctx, name, iface))
+	}
+	if strings.TrimSpace(spec.Capture.Type) == "provider-secondary-ip" {
+		checks = append(checks, doctorCheck{Area: "hybrid", Name: "RemoteAddressClaim/" + name + " provider capture", Status: doctorSkip, Detail: "cloud fabric secondary-IP assignment is external to routerd; checking only local forwarding and delivery route"})
+	}
+	return checks
+}
+
+func doctorSAMIPForwardCheck(ctx context.Context, name string) doctorCheck {
+	label := "RemoteAddressClaim/" + name + " ip_forward"
+	command := doctorRunDiagnosticCommand(ctx, "sysctl net.ipv4.ip_forward", "sysctl", "-n", "net.ipv4.ip_forward")
+	if command.OK && strings.TrimSpace(command.Stdout) == "1" {
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: "net.ipv4.ip_forward=1"}
+	}
+	return doctorCheck{Area: "hybrid", Name: label, Status: doctorWarn, Detail: firstNonEmpty(command.Error, oneLine(command.Output), "net.ipv4.ip_forward is not 1"), Remedy: "wait for routerd sysctl reconciliation or set net.ipv4.ip_forward=1"}
+}
+
+func doctorSAMDeliveryRouteCheck(ctx context.Context, name, routeName, address, tunnel string) doctorCheck {
+	label := "RemoteAddressClaim/" + name + " delivery route"
+	command := doctorRunDiagnosticCommand(ctx, "ip route show "+address, "ip", "-4", "route", "show", address)
+	if command.OK && (strings.Contains(command.Stdout, strings.TrimSpace(address)) || strings.Contains(command.Stdout, strings.TrimSuffix(strings.TrimSpace(address), "/32"))) {
+		if strings.HasPrefix(tunnel, "delivery tunnel interface unresolved") || strings.Contains(command.Stdout, "dev "+tunnel) {
+			return doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: appendDoctorDetail(oneLine(command.Stdout), "lowered IPv4Route/"+routeName)}
+		}
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorWarn, Detail: appendDoctorDetail(oneLine(command.Stdout), "expected dev "+tunnel), Remedy: "inspect lowered IPv4Route/" + routeName + " and OverlayPeer delivery settings"}
+	}
+	return doctorCheck{Area: "hybrid", Name: label, Status: doctorWarn, Detail: firstNonEmpty(command.Error, oneLine(command.Output), "route not found"), Remedy: "wait for routerd to install lowered IPv4Route/" + routeName}
+}
+
+func doctorSAMProxyNeighborCheck(ctx context.Context, name, address, iface string) doctorCheck {
+	label := "RemoteAddressClaim/" + name + " proxy neighbor"
+	command := doctorRunDiagnosticCommand(ctx, "ip neigh show proxy "+address+" dev "+iface, "ip", "neigh", "show", "proxy", address, "dev", iface)
+	if command.OK && strings.Contains(command.Stdout, strings.TrimSuffix(address, "/32")) {
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: oneLine(command.Stdout)}
+	}
+	return doctorCheck{Area: "hybrid", Name: label, Status: doctorWarn, Detail: firstNonEmpty(command.Error, oneLine(command.Output), "proxy neighbor not found"), Remedy: "wait for routerd SAM capture reconciliation or inspect proxy_arp and netlink neighbor state"}
+}
+
+func doctorSAMRPFilterCheck(ctx context.Context, name, iface string) doctorCheck {
+	label := "RemoteAddressClaim/" + name + " rp_filter " + iface
+	if strings.TrimSpace(iface) == "" {
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorSkip, Detail: "interface unavailable"}
+	}
+	key := "net.ipv4.conf." + iface + ".rp_filter"
+	command := doctorRunDiagnosticCommand(ctx, "sysctl "+key, "sysctl", "-n", key)
+	value := strings.TrimSpace(command.Stdout)
+	if command.OK && value == "1" {
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorWarn, Detail: key + "=1 (strict); SAM forwarded /32 traffic may be dropped", Remedy: "consider setting " + key + "=2 (loose) after validating router policy"}
+	}
+	if command.OK {
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: key + "=" + value}
+	}
+	return doctorCheck{Area: "hybrid", Name: label, Status: doctorSkip, Detail: firstNonEmpty(command.Error, oneLine(command.Output), "rp_filter unavailable")}
 }
 
 func doctorHybridCaptureTypeCheck(name, captureType string) doctorCheck {

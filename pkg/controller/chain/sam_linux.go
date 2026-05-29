@@ -1,0 +1,69 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
+//go:build linux
+
+package chain
+
+import (
+	"context"
+	"fmt"
+	"net"
+	"strings"
+
+	"github.com/vishvananda/netlink"
+)
+
+type netlinkSAMProxyNeighborApplier struct{}
+
+func defaultSAMProxyNeighborApplier() samProxyNeighborApplier {
+	return netlinkSAMProxyNeighborApplier{}
+}
+
+func (netlinkSAMProxyNeighborApplier) EnsureProxyNeighbor(_ context.Context, address, ifname string) error {
+	link, neigh, err := samProxyNeighbor(address, ifname)
+	if err != nil {
+		return err
+	}
+	_ = link
+	return netlink.NeighSet(neigh)
+}
+
+func (netlinkSAMProxyNeighborApplier) DeleteProxyNeighbor(_ context.Context, address, ifname string) error {
+	_, neigh, err := samProxyNeighbor(address, ifname)
+	if err != nil {
+		return err
+	}
+	if err := netlink.NeighDel(neigh); err != nil && !isNetlinkNotFound(err) {
+		return err
+	}
+	return nil
+}
+
+func samProxyNeighbor(address, ifname string) (netlink.Link, *netlink.Neigh, error) {
+	ip, _, err := net.ParseCIDR(address)
+	if err != nil {
+		ip = net.ParseIP(address)
+	}
+	if ip == nil || ip.To4() == nil {
+		return nil, nil, fmt.Errorf("invalid IPv4 address %q", address)
+	}
+	link, err := netlink.LinkByName(ifname)
+	if err != nil {
+		return nil, nil, err
+	}
+	return link, &netlink.Neigh{
+		LinkIndex: link.Attrs().Index,
+		Family:    netlink.FAMILY_V4,
+		State:     netlink.NUD_PERMANENT,
+		Flags:     netlink.NTF_PROXY,
+		IP:        ip.To4(),
+	}, nil
+}
+
+func isNetlinkNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "no such file") || strings.Contains(message, "not found")
+}

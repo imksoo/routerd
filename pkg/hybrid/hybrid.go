@@ -72,7 +72,7 @@ func ExpandHybridRoutes(router api.Router) (api.Router, []HybridLowering, error)
 		if !ok {
 			return router, nil, fmt.Errorf("%s spec.peerRef references missing OverlayPeer %q", resource.ID(), spec.PeerRef)
 		}
-		device, gateway, err := routeTarget(peer)
+		device, gateway, err := RouteTarget(peer)
 		if err != nil {
 			return router, nil, fmt.Errorf("%s: %w", resource.ID(), err)
 		}
@@ -227,7 +227,7 @@ func overlayPeers(router api.Router) map[string]api.OverlayPeerSpec {
 	return out
 }
 
-func routeTarget(peer api.OverlayPeerSpec) (string, string, error) {
+func RouteTarget(peer api.OverlayPeerSpec) (string, string, error) {
 	device := strings.TrimSpace(peer.Underlay.Interface)
 	if device == "" {
 		return "", "", fmt.Errorf("spec.underlay.interface is required to lower HybridRoute to IPv4Route")
