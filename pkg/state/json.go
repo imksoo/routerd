@@ -102,6 +102,15 @@ type EventLister interface {
 	ListEvents(query EventQuery) ([]StoredEvent, error)
 }
 
+type DynamicConfigPartLister interface {
+	ListDynamicConfigParts() ([]DynamicConfigPartRecord, error)
+	GetDynamicConfigPartsBySource(source string) ([]DynamicConfigPartRecord, error)
+}
+
+type PluginRunLister interface {
+	ListPluginRuns(plugin string) ([]PluginRunRecord, error)
+}
+
 type ObjectGenerationReader interface {
 	ObjectGeneration(apiVersion, kind, name string) int64
 }

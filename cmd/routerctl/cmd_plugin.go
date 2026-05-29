@@ -18,6 +18,7 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/config"
+	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	routerplugin "github.com/imksoo/routerd/pkg/plugin"
 	routerstate "github.com/imksoo/routerd/pkg/state"
@@ -132,12 +133,16 @@ func pluginRunCommand(args []string, stdout io.Writer) error {
 		if err != nil {
 			return err
 		}
+		recordPluginEvent(store, "routerd.plugin.run.started", daemonapi.SeverityInfo, "PluginRunStarted", "plugin run started", map[string]string{
+			"plugin.name": name,
+		})
 	}
 
 	result, outcome, runErr := routerplugin.Run(context.Background(), pluginSpec, name, runOpts)
 	if runErr != nil {
 		if store != nil {
 			_ = completePluginRun(store, runID, outcome, "failed", runErr.Error())
+			recordPluginRunFinishedEvent(store, "routerd.plugin.run.failed", daemonapi.SeverityError, name, outcome)
 		}
 		return runErr
 	}
@@ -145,6 +150,8 @@ func pluginRunCommand(args []string, stdout io.Writer) error {
 	if err != nil {
 		if store != nil {
 			_ = completePluginRun(store, runID, outcome, "failed", err.Error())
+			recordDynamicPartRejectedEvent(store, source, err)
+			recordPluginRunFinishedEvent(store, "routerd.plugin.run.failed", daemonapi.SeverityError, name, outcome)
 		}
 		return err
 	}
@@ -163,15 +170,21 @@ func pluginRunCommand(args []string, stdout io.Writer) error {
 		record, err := dynamicPartRecord(part)
 		if err != nil {
 			_ = completePluginRun(store, runID, outcome, "failed", err.Error())
+			recordDynamicPartRejectedEvent(store, source, err)
+			recordPluginRunFinishedEvent(store, "routerd.plugin.run.failed", daemonapi.SeverityError, name, outcome)
 			return err
 		}
 		if err := store.UpsertDynamicConfigPart(record); err != nil {
 			_ = completePluginRun(store, runID, outcome, "failed", err.Error())
+			recordDynamicPartRejectedEvent(store, source, err)
+			recordPluginRunFinishedEvent(store, "routerd.plugin.run.failed", daemonapi.SeverityError, name, outcome)
 			return err
 		}
+		recordDynamicPartAcceptedEvent(store, part)
 		if err := completePluginRun(store, runID, outcome, "succeeded", ""); err != nil {
 			return err
 		}
+		recordPluginRunFinishedEvent(store, "routerd.plugin.run.succeeded", daemonapi.SeverityInfo, name, outcome)
 	}
 	switch opts.output {
 	case "", "table":
@@ -375,6 +388,69 @@ func completePluginRun(store *routerstate.SQLiteStore, id int64, outcome routerp
 		runError = outcome.Error
 	}
 	return store.CompletePluginRun(id, time.Now().UTC(), exitCode, status, outcome.StdoutDigest, outcome.Stderr, runError)
+}
+
+func recordPluginRunFinishedEvent(store *routerstate.SQLiteStore, topic, severity, name string, outcome routerplugin.RunOutcome) {
+	exitCode := "-1"
+	if outcome.HasExitCode {
+		exitCode = fmt.Sprint(outcome.ExitCode)
+	}
+	attrs := map[string]string{
+		"plugin.name":       name,
+		"plugin.exitCode":   exitCode,
+		"plugin.durationMs": fmt.Sprint(outcome.DurationMs),
+	}
+	recordPluginEvent(store, topic, severity, pluginEventReason(topic), pluginEventMessage(topic, name), attrs)
+}
+
+func recordDynamicPartAcceptedEvent(store *routerstate.SQLiteStore, part dynamicconfig.DynamicConfigPart) {
+	recordPluginEvent(store, "routerd.dynamic.part.accepted", daemonapi.SeverityInfo, "DynamicPartAccepted", "dynamic config part accepted", map[string]string{
+		"dynamic.source":     part.Spec.Source,
+		"dynamic.generation": fmt.Sprint(part.Spec.Generation),
+		"dynamic.expiresAt":  formatDynamicTime(part.Spec.ExpiresAt),
+		"dynamic.resources":  fmt.Sprint(len(part.Spec.Resources)),
+		"dynamic.directives": fmt.Sprint(len(part.Spec.Directives)),
+	})
+}
+
+func recordDynamicPartRejectedEvent(store *routerstate.SQLiteStore, source string, err error) {
+	recordPluginEvent(store, "routerd.dynamic.part.rejected", daemonapi.SeverityError, "DynamicPartRejected", "dynamic config part rejected", map[string]string{
+		"dynamic.source": source,
+		"error":          err.Error(),
+	})
+}
+
+func recordPluginEvent(store *routerstate.SQLiteStore, topic, severity, reason, message string, attrs map[string]string) {
+	if store == nil {
+		return
+	}
+	event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerctl", Kind: "routerctl", Instance: "plugin"}, topic, severity)
+	event.Reason = reason
+	event.Message = message
+	event.Attributes = attrs
+	_, _ = store.RecordBusEvent(context.Background(), event)
+}
+
+func pluginEventReason(topic string) string {
+	switch topic {
+	case "routerd.plugin.run.succeeded":
+		return "PluginRunSucceeded"
+	case "routerd.plugin.run.failed":
+		return "PluginRunFailed"
+	default:
+		return "PluginRun"
+	}
+}
+
+func pluginEventMessage(topic, name string) string {
+	switch topic {
+	case "routerd.plugin.run.succeeded":
+		return "plugin " + name + " run succeeded"
+	case "routerd.plugin.run.failed":
+		return "plugin " + name + " run failed"
+	default:
+		return "plugin " + name + " run completed"
+	}
 }
 
 func pluginResultSummary(result routerplugin.PluginResult) pluginRunSummary {

@@ -96,6 +96,159 @@ func TestDoctorJSONOutputIncludesSummaryAndChecks(t *testing.T) {
 	}
 }
 
+func TestDoctorDynamicHealthyMaskPolicyPasses(t *testing.T) {
+	configPath, statePath := writeDoctorDynamicFixture(t, true)
+	now := time.Now().UTC()
+	store := openDoctorState(t, statePath)
+	if err := store.UpsertDynamicConfigPart(routerstate.DynamicConfigPartRecord{
+		Source:         "Plugin/cloud",
+		Generation:     1,
+		ObservedAt:     now,
+		ExpiresAt:      now.Add(time.Hour),
+		Digest:         "sha256:dynamic",
+		ResourcesJSON:  `[{"apiVersion":"net.routerd.net/v1alpha1","kind":"IPv4Route","metadata":{"name":"cloud-route"},"spec":{"destination":"10.20.0.0/24","gateway":"192.0.2.1"}}]`,
+		DirectivesJSON: `[{"op":"mask","target":{"apiVersion":"net.routerd.net/v1alpha1","kind":"IPv4Route","name":"static-cloud-route"},"reason":"cloud route observed"}]`,
+		Status:         "active",
+	}); err != nil {
+		t.Fatalf("upsert dynamic part: %v", err)
+	}
+	closeDoctorState(t, store)
+
+	var out bytes.Buffer
+	if err := run([]string{"doctor", "dynamic", "--config", configPath, "--state-file", statePath, "--no-host", "-o", "json"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("doctor dynamic: %v\n%s", err, out.String())
+	}
+	var report doctorReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("unmarshal doctor report: %v\n%s", err, out.String())
+	}
+	for _, name := range []string{"dynamic parts decode", "expired parts ignored", "effective config builds", "override policies present for masks"} {
+		check := findDoctorCheck(t, report, name)
+		if check.Status != doctorPass {
+			t.Fatalf("%s check = %#v", name, check)
+		}
+	}
+	if check := findDoctorCheck(t, report, "effective config builds"); !strings.Contains(check.Detail, "1 suppressed, 1 dynamic resources added") {
+		t.Fatalf("effective detail = %q", check.Detail)
+	}
+}
+
+func TestDoctorDynamicMaskWithoutPolicyFailsEffectiveBuild(t *testing.T) {
+	configPath, statePath := writeDoctorDynamicFixture(t, false)
+	now := time.Now().UTC()
+	store := openDoctorState(t, statePath)
+	if err := store.UpsertDynamicConfigPart(routerstate.DynamicConfigPartRecord{
+		Source:         "Plugin/cloud",
+		Generation:     1,
+		ObservedAt:     now,
+		ExpiresAt:      now.Add(time.Hour),
+		Digest:         "sha256:dynamic",
+		ResourcesJSON:  `[]`,
+		DirectivesJSON: `[{"op":"mask","target":{"apiVersion":"net.routerd.net/v1alpha1","kind":"IPv4Route","name":"static-cloud-route"},"reason":"cloud route observed"}]`,
+		Status:         "active",
+	}); err != nil {
+		t.Fatalf("upsert dynamic part: %v", err)
+	}
+	closeDoctorState(t, store)
+
+	var out bytes.Buffer
+	err := run([]string{"doctor", "dynamic", "--config", configPath, "--state-file", statePath, "--no-host", "-o", "json"}, &out, &bytes.Buffer{})
+	if err == nil {
+		t.Fatalf("doctor dynamic succeeded with disallowed mask:\n%s", out.String())
+	}
+	var report doctorReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("unmarshal doctor report: %v\n%s", err, out.String())
+	}
+	check := findDoctorCheck(t, report, "effective config builds")
+	if check.Status != doctorFail || !strings.Contains(check.Detail, "dynamic mask not allowed") {
+		t.Fatalf("effective check = %#v", check)
+	}
+}
+
+func TestDoctorPluginExecutableRunAndFreshnessChecks(t *testing.T) {
+	dir := t.TempDir()
+	pluginPath := filepath.Join(dir, "cloud-plugin.sh")
+	writeTestCommand(t, pluginPath, "#!/bin/sh\nexit 0\n")
+	missingPath := filepath.Join(dir, "missing-plugin.sh")
+	configPath := filepath.Join(dir, "router.yaml")
+	if err := os.WriteFile(configPath, []byte(`apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: test
+spec:
+  resources:
+    - apiVersion: plugin.routerd.net/v1alpha1
+      kind: Plugin
+      metadata:
+        name: cloud
+      spec:
+        executable: `+pluginPath+`
+        timeout: 2s
+        capabilities: [observe.cloud, propose.dynamicConfig]
+    - apiVersion: plugin.routerd.net/v1alpha1
+      kind: Plugin
+      metadata:
+        name: missing
+      spec:
+        executable: `+missingPath+`
+        timeout: 2s
+        capabilities: [observe.cloud, propose.dynamicConfig]
+`), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	statePath := filepath.Join(dir, "routerd.db")
+	now := time.Now().UTC()
+	store := openDoctorState(t, statePath)
+	runID, err := store.RecordPluginRun(routerstate.PluginRunRecord{
+		Plugin:      "cloud",
+		TriggerType: "manual",
+		StartedAt:   now.Add(-time.Minute),
+		Status:      "running",
+	})
+	if err != nil {
+		t.Fatalf("record plugin run: %v", err)
+	}
+	exitCode := 0
+	if err := store.CompletePluginRun(runID, now, &exitCode, "succeeded", "sha256:stdout", "", ""); err != nil {
+		t.Fatalf("complete plugin run: %v", err)
+	}
+	if err := store.UpsertDynamicConfigPart(routerstate.DynamicConfigPartRecord{
+		Source:         "Plugin/cloud",
+		Generation:     1,
+		ObservedAt:     now,
+		ExpiresAt:      now.Add(time.Hour),
+		Digest:         "sha256:dynamic",
+		ResourcesJSON:  `[]`,
+		DirectivesJSON: `[]`,
+		Status:         "active",
+	}); err != nil {
+		t.Fatalf("upsert dynamic part: %v", err)
+	}
+	closeDoctorState(t, store)
+
+	var out bytes.Buffer
+	err = run([]string{"doctor", "plugin", "--config", configPath, "--state-file", statePath, "-o", "json"}, &out, &bytes.Buffer{})
+	if err == nil {
+		t.Fatalf("doctor plugin succeeded despite missing executable:\n%s", out.String())
+	}
+	var report doctorReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("unmarshal doctor report: %v\n%s", err, out.String())
+	}
+	for _, name := range []string{"Plugin/cloud executable exists", "Plugin/cloud executable is executable", "Plugin/cloud last run", "Plugin/cloud last result fresh"} {
+		if check := findDoctorCheck(t, report, name); check.Status != doctorPass {
+			t.Fatalf("%s check = %#v", name, check)
+		}
+	}
+	if check := findDoctorCheck(t, report, "Plugin/missing executable exists"); check.Status != doctorFail {
+		t.Fatalf("missing executable check = %#v", check)
+	}
+	if check := findDoctorCheck(t, report, "Plugin/missing last run"); check.Status != doctorWarn || !strings.Contains(check.Detail, "never run") {
+		t.Fatalf("missing last run check = %#v", check)
+	}
+}
+
 func TestDoctorDSLiteSelectedHealthyPolicyIgnoresAFTRProbeFailure(t *testing.T) {
 	configPath, statePath := writeDoctorDSLiteFixture(t)
 	saveDoctorDSLiteState(t, statePath, map[string]any{"phase": "Applied", "health": "HealthOK"}, "ds-lite", map[string]any{"phase": "Applied", "selectedCandidate": "ds-lite", "selectedDevice": "ds-routerd"}, map[string]any{"phase": "Healthy"})
@@ -238,6 +391,47 @@ spec:
         interface: wan
         prefixLength: 60
 `)
+	if err := os.WriteFile(configPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	return configPath, filepath.Join(dir, "routerd.db")
+}
+
+func writeDoctorDynamicFixture(t *testing.T, includePolicy bool) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "router.yaml")
+	policy := ""
+	if includePolicy {
+		policy = `
+    - apiVersion: config.routerd.net/v1alpha1
+      kind: DynamicOverridePolicy
+      metadata:
+        name: cloud-masks
+      spec:
+        allow:
+          - source: Plugin/cloud
+            operations: [mask]
+            targets:
+              - apiVersion: net.routerd.net/v1alpha1
+                kind: IPv4Route
+                name: static-cloud-route
+`
+	}
+	data := []byte(`apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: test
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4Route
+      metadata:
+        name: static-cloud-route
+      spec:
+        destination: 10.10.0.0/24
+        gateway: 192.0.2.1
+` + policy)
 	if err := os.WriteFile(configPath, data, 0644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}

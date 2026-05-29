@@ -46,7 +46,7 @@ type RunOutcome struct {
 
 func Run(ctx context.Context, spec api.PluginSpec, name string, opts RunOptions) (PluginResult, RunOutcome, error) {
 	var result PluginResult
-	if err := validateExecutable(spec.Executable); err != nil {
+	if err := ValidateExecutable(spec.Executable); err != nil {
 		outcome := RunOutcome{Error: err.Error()}
 		return result, outcome, err
 	}
@@ -118,7 +118,7 @@ func Run(ctx context.Context, spec api.PluginSpec, name string, opts RunOptions)
 	return result, outcome, nil
 }
 
-func validateExecutable(path string) error {
+func ValidateExecutable(path string) error {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		return errors.New("plugin executable is required")
@@ -134,6 +134,10 @@ func validateExecutable(path string) error {
 		return fmt.Errorf("plugin executable %q is not executable", path)
 	}
 	return nil
+}
+
+func validateExecutable(path string) error {
+	return ValidateExecutable(path)
 }
 
 func pluginTimeout(value string) (time.Duration, error) {

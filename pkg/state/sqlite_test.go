@@ -395,6 +395,80 @@ func TestSQLiteStoreDynamicConfigParts(t *testing.T) {
 	}
 }
 
+func TestSQLiteStorePluginRunsListNewestFirstAndFilter(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "routerd.db")
+	store, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatalf("open sqlite store: %v", err)
+	}
+	defer store.Close()
+	now := time.Date(2026, 5, 29, 12, 0, 0, 0, time.UTC)
+	firstID, err := store.RecordPluginRun(PluginRunRecord{
+		Plugin:      "cloud",
+		TriggerType: "manual",
+		StartedAt:   now.Add(-time.Minute),
+		Status:      "running",
+	})
+	if err != nil {
+		t.Fatalf("record first run: %v", err)
+	}
+	firstExit := 1
+	if err := store.CompletePluginRun(firstID, now.Add(-30*time.Second), &firstExit, "failed", "sha256:first", "boom", "exit 1"); err != nil {
+		t.Fatalf("complete first run: %v", err)
+	}
+	secondID, err := store.RecordPluginRun(PluginRunRecord{
+		Plugin:       "cloud",
+		TriggerType:  "event",
+		TriggerTopic: "routerd.test",
+		StartedAt:    now,
+		Status:       "running",
+	})
+	if err != nil {
+		t.Fatalf("record second run: %v", err)
+	}
+	secondExit := 0
+	if err := store.CompletePluginRun(secondID, now.Add(time.Second), &secondExit, "succeeded", "sha256:second", "", ""); err != nil {
+		t.Fatalf("complete second run: %v", err)
+	}
+	otherID, err := store.RecordPluginRun(PluginRunRecord{
+		Plugin:      "other",
+		TriggerType: "manual",
+		StartedAt:   now.Add(time.Minute),
+		Status:      "running",
+	})
+	if err != nil {
+		t.Fatalf("record other run: %v", err)
+	}
+	if err := store.CompletePluginRun(otherID, now.Add(time.Minute+time.Second), nil, "failed", "", "", "validate failed"); err != nil {
+		t.Fatalf("complete other run: %v", err)
+	}
+
+	cloudRuns, err := store.ListPluginRuns("cloud")
+	if err != nil {
+		t.Fatalf("list cloud plugin runs: %v", err)
+	}
+	if len(cloudRuns) != 2 {
+		t.Fatalf("cloud runs len = %d, want 2: %+v", len(cloudRuns), cloudRuns)
+	}
+	if cloudRuns[0].ID != secondID || cloudRuns[1].ID != firstID {
+		t.Fatalf("cloud run ordering = %+v, want newest first", cloudRuns)
+	}
+	if cloudRuns[0].Status != "succeeded" || !cloudRuns[0].HasExitCode || cloudRuns[0].ExitCode != 0 || cloudRuns[0].TriggerTopic != "routerd.test" {
+		t.Fatalf("latest cloud run = %+v", cloudRuns[0])
+	}
+	if cloudRuns[1].Status != "failed" || cloudRuns[1].Error != "exit 1" || cloudRuns[1].Stderr != "boom" {
+		t.Fatalf("older cloud run = %+v", cloudRuns[1])
+	}
+
+	allRuns, err := store.ListPluginRuns("")
+	if err != nil {
+		t.Fatalf("list all plugin runs: %v", err)
+	}
+	if len(allRuns) != 3 || allRuns[0].Plugin != "other" || allRuns[1].ID != secondID {
+		t.Fatalf("all runs = %+v, want newest-first across plugins", allRuns)
+	}
+}
+
 func TestSQLiteStoreClosedAccessIsBenign(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "routerd.db")
 	store, err := OpenSQLite(path)

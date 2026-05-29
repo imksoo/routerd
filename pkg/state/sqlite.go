@@ -727,6 +727,46 @@ func (s *SQLiteStore) CompletePluginRun(id int64, completedAt time.Time, exitCod
 	return err
 }
 
+func (s *SQLiteStore) ListPluginRuns(plugin string) ([]PluginRunRecord, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.closed {
+		return []PluginRunRecord{}, nil
+	}
+	query := `SELECT id,plugin,trigger_type,coalesce(trigger_topic,''),started_at,coalesce(completed_at,''),exit_code,status,coalesce(stdout_digest,''),coalesce(stderr,''),coalesce(error,'') FROM plugin_runs`
+	var args []any
+	if strings.TrimSpace(plugin) != "" {
+		query += ` WHERE plugin = ?`
+		args = append(args, plugin)
+	}
+	query += ` ORDER BY started_at DESC,id DESC`
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []PluginRunRecord
+	for rows.Next() {
+		var rec PluginRunRecord
+		var started, completed string
+		var exit sql.NullInt64
+		if err := rows.Scan(&rec.ID, &rec.Plugin, &rec.TriggerType, &rec.TriggerTopic, &started, &completed, &exit, &rec.Status, &rec.StdoutDigest, &rec.Stderr, &rec.Error); err != nil {
+			return nil, err
+		}
+		rec.StartedAt = parseStateTime(started)
+		rec.CompletedAt = parseStateTime(completed)
+		if exit.Valid {
+			rec.ExitCode = int(exit.Int64)
+			rec.HasExitCode = true
+		}
+		out = append(out, rec)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func formatStateTime(t time.Time) string {
 	return t.UTC().Format(time.RFC3339Nano)
 }

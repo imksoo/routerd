@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,6 +18,8 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/config"
 	"github.com/imksoo/routerd/pkg/controlapi"
+	"github.com/imksoo/routerd/pkg/dynamicconfig"
+	routerplugin "github.com/imksoo/routerd/pkg/plugin"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -54,7 +57,7 @@ type doctorRunner struct {
 	store  routerstate.Store
 }
 
-var doctorAreas = []string{"wan", "dns", "dslite", "dhcpv6-pd", "nat", "firewall", "rollback", "disk", "mgmt", "reconcile", "runtime"}
+var doctorAreas = []string{"wan", "dns", "dslite", "dhcpv6-pd", "nat", "firewall", "rollback", "disk", "mgmt", "reconcile", "runtime", "dynamic", "plugin"}
 
 // doctorReconcileWarnThreshold and doctorReconcileFailThreshold are total error
 // counts (across all controllers) that promote the reconcile area to warn/fail.
@@ -95,6 +98,11 @@ func doctorCommand(args []string, stdout, stderr io.Writer) error {
 	}
 	router, store, err := loadDiagnoseInputs(opts)
 	if err != nil {
+		if opts.Target == "dynamic" || opts.Target == "plugin" {
+			report := doctorReport{Checks: []doctorCheck{{Area: opts.Target, Name: "inputs", Status: doctorSkip, Detail: err.Error()}}}
+			report.Summary = summarizeDoctorChecks(report.Checks)
+			return writeDoctorReport(stdout, report, opts.Output)
+		}
 		return err
 	}
 	runner := doctorRunner{opts: opts, router: router, store: store}
@@ -149,9 +157,237 @@ func (r doctorRunner) runArea(area string) []doctorCheck {
 		return r.doctorReconcile()
 	case "runtime":
 		return r.doctorRuntime()
+	case "dynamic":
+		return r.doctorDynamic()
+	case "plugin":
+		return r.doctorPlugin()
 	default:
 		return []doctorCheck{{Area: area, Name: "area", Status: doctorSkip, Detail: "unknown area"}}
 	}
+}
+
+func (r doctorRunner) doctorDynamic() []doctorCheck {
+	if r.router == nil {
+		return []doctorCheck{{Area: "dynamic", Name: "startup config", Status: doctorSkip, Detail: "startup config unavailable"}}
+	}
+	lister, ok := r.store.(routerstate.DynamicConfigPartLister)
+	if !ok {
+		return []doctorCheck{{Area: "dynamic", Name: "state database", Status: doctorSkip, Detail: "state store does not expose dynamic config parts"}}
+	}
+	records, err := lister.ListDynamicConfigParts()
+	if err != nil {
+		return []doctorCheck{{Area: "dynamic", Name: "state database", Status: doctorSkip, Detail: "dynamic config parts unavailable: " + err.Error()}}
+	}
+	now := time.Now().UTC()
+	checks := []doctorCheck{}
+	parts, err := dynamicPartsFromRecords(records)
+	if err != nil {
+		checks = append(checks, doctorCheck{Area: "dynamic", Name: "dynamic parts decode", Status: doctorFail, Detail: err.Error(), Remedy: "remove or replace the malformed DynamicConfigPart generation"})
+		checks = append(checks, doctorCheck{Area: "dynamic", Name: "effective config builds", Status: doctorSkip, Detail: "skipped because stored dynamic parts did not decode"})
+		return checks
+	}
+	resources, directives := 0, 0
+	for _, part := range parts {
+		resources += len(part.Spec.Resources)
+		directives += len(part.Spec.Directives)
+	}
+	checks = append(checks, doctorCheck{Area: "dynamic", Name: "dynamic parts decode", Status: doctorPass, Detail: fmt.Sprintf("%d parts, %d resources, %d directives", len(parts), resources, directives)})
+
+	activeParts := make([]dynamicconfig.DynamicConfigPart, 0, len(parts))
+	activeBySource := map[string]int{}
+	expiredBySource := map[string]int{}
+	for _, part := range parts {
+		if part.IsExpired(now) {
+			expiredBySource[part.Spec.Source]++
+			continue
+		}
+		activeParts = append(activeParts, part)
+		activeBySource[part.Spec.Source]++
+	}
+	staleSources := []string{}
+	for source, expired := range expiredBySource {
+		if expired > 0 && activeBySource[source] == 0 {
+			staleSources = append(staleSources, source)
+		}
+	}
+	sort.Strings(staleSources)
+	expiredStatus := doctorPass
+	expiredDetail := fmt.Sprintf("%d active, %d expired (ignored)", len(activeParts), len(parts)-len(activeParts))
+	if len(staleSources) > 0 {
+		expiredStatus = doctorWarn
+		expiredDetail = appendDoctorDetail(expiredDetail, "stale: source "+strings.Join(staleSources, ",")+" has only expired generations")
+	}
+	checks = append(checks, doctorCheck{Area: "dynamic", Name: "expired parts ignored", Status: expiredStatus, Detail: expiredDetail})
+
+	policies, err := dynamicconfig.ExtractDynamicOverridePolicies(*r.router)
+	if err != nil {
+		checks = append(checks, doctorCheck{Area: "dynamic", Name: "effective config builds", Status: doctorFail, Detail: err.Error(), Remedy: "fix DynamicOverridePolicy resources in startup config"})
+		return checks
+	}
+	_, result, err := dynamicconfig.BuildEffectiveConfig(*r.router, activeParts, policies, now)
+	if err != nil {
+		checks = append(checks, doctorCheck{Area: "dynamic", Name: "effective config builds", Status: doctorFail, Detail: err.Error(), Remedy: "fix dynamic masks, conflicting resources, or override policy grants"})
+	} else {
+		checks = append(checks, doctorCheck{Area: "dynamic", Name: "effective config builds", Status: doctorPass, Detail: fmt.Sprintf("%d suppressed, %d dynamic resources added", len(result.Suppressed), len(result.AddedResources))})
+	}
+	checks = append(checks, r.doctorDynamicOverridePolicyCheck(activeParts, policies))
+	return checks
+}
+
+func (r doctorRunner) doctorDynamicOverridePolicyCheck(parts []dynamicconfig.DynamicConfigPart, policies []dynamicconfig.DynamicOverridePolicy) doctorCheck {
+	activeMasks := map[string]bool{}
+	for _, part := range parts {
+		for _, directive := range part.Spec.Directives {
+			if directive.Op == dynamicconfig.DirectiveOpMask {
+				activeMasks[dynamicPolicyKey(part.Spec.Source, directive.Target)] = true
+			}
+		}
+	}
+	if len(policies) == 0 {
+		if len(activeMasks) == 0 {
+			return doctorCheck{Area: "dynamic", Name: "override policies present for masks", Status: doctorPass, Detail: "no active masks"}
+		}
+		return doctorCheck{Area: "dynamic", Name: "override policies present for masks", Status: doctorWarn, Detail: "active masks exist but no DynamicOverridePolicy resources are configured"}
+	}
+	deadRules := 0
+	totalRules := 0
+	for _, policy := range policies {
+		for _, rule := range policy.Spec.Allow {
+			for _, target := range rule.Targets {
+				totalRules++
+				if !doctorContainsString(rule.Operations, dynamicconfig.DirectiveOpMask) {
+					deadRules++
+					continue
+				}
+				if !activeMasks[dynamicPolicyKey(rule.Source, target)] {
+					deadRules++
+				}
+			}
+		}
+	}
+	if deadRules > 0 {
+		return doctorCheck{Area: "dynamic", Name: "override policies present for masks", Status: doctorWarn, Detail: fmt.Sprintf("%d/%d DynamicOverridePolicy target rules match no current mask", deadRules, totalRules)}
+	}
+	return doctorCheck{Area: "dynamic", Name: "override policies present for masks", Status: doctorPass, Detail: fmt.Sprintf("%d active masks covered", len(activeMasks))}
+}
+
+func dynamicPolicyKey(source string, target dynamicconfig.DirectiveTarget) string {
+	return source + "|" + target.APIVersion + "|" + target.Kind + "|" + target.Name
+}
+
+func doctorContainsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func (r doctorRunner) doctorPlugin() []doctorCheck {
+	if r.router == nil {
+		return []doctorCheck{{Area: "plugin", Name: "startup config", Status: doctorSkip, Detail: "startup config unavailable"}}
+	}
+	plugins := selectResources(r.router.Spec.Resources, "Plugin", "")
+	if len(plugins) == 0 {
+		return []doctorCheck{{Area: "plugin", Name: "no plugins configured", Status: doctorSkip, Detail: "no Plugin resources configured"}}
+	}
+	runLister, runOK := r.store.(routerstate.PluginRunLister)
+	partLister, partOK := r.store.(routerstate.DynamicConfigPartLister)
+	var checks []doctorCheck
+	for _, res := range plugins {
+		name := res.Metadata.Name
+		spec, err := res.PluginSpec()
+		if err != nil {
+			checks = append(checks, doctorCheck{Area: "plugin", Name: "Plugin/" + name, Status: doctorFail, Detail: err.Error(), Remedy: "fix Plugin resource spec"})
+			continue
+		}
+		checks = append(checks, doctorPluginExecutableChecks(name, spec.Executable, r.opts.Host)...)
+		if !runOK {
+			checks = append(checks, doctorCheck{Area: "plugin", Name: "Plugin/" + name + " last run", Status: doctorSkip, Detail: "state store does not expose plugin runs"})
+		} else {
+			checks = append(checks, doctorPluginLastRunCheck(runLister, name))
+		}
+		if !partOK {
+			checks = append(checks, doctorCheck{Area: "plugin", Name: "Plugin/" + name + " last result fresh", Status: doctorSkip, Detail: "state store does not expose dynamic config parts"})
+		} else {
+			checks = append(checks, doctorPluginLastResultCheck(partLister, name, time.Now().UTC()))
+		}
+	}
+	return checks
+}
+
+func doctorPluginExecutableChecks(name, executable string, host bool) []doctorCheck {
+	existsName := "Plugin/" + name + " executable exists"
+	execName := "Plugin/" + name + " executable is executable"
+	if !host {
+		return []doctorCheck{
+			{Area: "plugin", Name: existsName, Status: doctorSkip, Detail: "host commands disabled by --no-host"},
+			{Area: "plugin", Name: execName, Status: doctorSkip, Detail: "host commands disabled by --no-host"},
+		}
+	}
+	info, err := os.Stat(strings.TrimSpace(executable))
+	if err != nil {
+		return []doctorCheck{
+			{Area: "plugin", Name: existsName, Status: doctorFail, Detail: err.Error(), Remedy: "install the plugin executable on this host"},
+			{Area: "plugin", Name: execName, Status: doctorSkip, Detail: "skipped because executable was not found"},
+		}
+	}
+	exists := doctorCheck{Area: "plugin", Name: existsName, Status: doctorPass, Detail: executable}
+	if !info.Mode().IsRegular() {
+		exists.Status = doctorFail
+		exists.Detail = "not a regular file: " + executable
+		exists.Remedy = "replace the plugin path with a regular executable file"
+		return []doctorCheck{exists, doctorCheck{Area: "plugin", Name: execName, Status: doctorSkip, Detail: "skipped because executable is not a regular file"}}
+	}
+	if err := routerplugin.ValidateExecutable(executable); err != nil {
+		return []doctorCheck{
+			exists,
+			{Area: "plugin", Name: execName, Status: doctorFail, Detail: err.Error(), Remedy: "set executable mode bits on the plugin file"},
+		}
+	}
+	return []doctorCheck{
+		exists,
+		{Area: "plugin", Name: execName, Status: doctorPass, Detail: "executable bit set"},
+	}
+}
+
+func doctorPluginLastRunCheck(lister routerstate.PluginRunLister, name string) doctorCheck {
+	runs, err := lister.ListPluginRuns(name)
+	if err != nil {
+		return doctorCheck{Area: "plugin", Name: "Plugin/" + name + " last run", Status: doctorSkip, Detail: "plugin run history unavailable: " + err.Error()}
+	}
+	if len(runs) == 0 {
+		return doctorCheck{Area: "plugin", Name: "Plugin/" + name + " last run", Status: doctorWarn, Detail: "never run", Remedy: "run routerctl plugin run " + name}
+	}
+	latest := runs[0]
+	if latest.Status == "failed" {
+		return doctorCheck{Area: "plugin", Name: "Plugin/" + name + " last run", Status: doctorFail, Detail: firstNonEmpty(latest.Error, latest.Stderr, "last run failed"), Remedy: "inspect plugin stderr and rerun the plugin"}
+	}
+	if latest.Status != "succeeded" {
+		return doctorCheck{Area: "plugin", Name: "Plugin/" + name + " last run", Status: doctorWarn, Detail: "last run status " + latest.Status}
+	}
+	exit := "exit unknown"
+	if latest.HasExitCode {
+		exit = fmt.Sprintf("exit %d", latest.ExitCode)
+	}
+	return doctorCheck{Area: "plugin", Name: "Plugin/" + name + " last run", Status: doctorPass, Detail: fmt.Sprintf("last run %s, %s", formatDynamicTime(latest.CompletedAt), exit)}
+}
+
+func doctorPluginLastResultCheck(lister routerstate.DynamicConfigPartLister, name string, now time.Time) doctorCheck {
+	source := "Plugin/" + name
+	parts, err := lister.GetDynamicConfigPartsBySource(source)
+	if err != nil {
+		return doctorCheck{Area: "plugin", Name: "Plugin/" + name + " last result fresh", Status: doctorSkip, Detail: "dynamic part unavailable: " + err.Error()}
+	}
+	if len(parts) == 0 {
+		return doctorCheck{Area: "plugin", Name: "Plugin/" + name + " last result fresh", Status: doctorWarn, Detail: "no dynamic part", Remedy: "run routerctl plugin run " + name}
+	}
+	latest := parts[0]
+	if latest.EffectiveStatus(now) == "expired" {
+		return doctorCheck{Area: "plugin", Name: "Plugin/" + name + " last result fresh", Status: doctorWarn, Detail: "stale (expired " + formatDynamicTime(latest.ExpiresAt) + ")", Remedy: "rerun the plugin or adjust its result TTL"}
+	}
+	return doctorCheck{Area: "plugin", Name: "Plugin/" + name + " last result fresh", Status: doctorPass, Detail: fmt.Sprintf("generation %d active until %s", latest.Generation, formatDynamicTime(latest.ExpiresAt))}
 }
 
 func (r doctorRunner) doctorReconcile() []doctorCheck {
