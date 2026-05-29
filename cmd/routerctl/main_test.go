@@ -241,6 +241,86 @@ func TestDynamicListCommandShowsActiveAndExpired(t *testing.T) {
 	}
 }
 
+func TestDynamicRenderCommandMergesStateDB(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "router.yaml")
+	if err := os.WriteFile(configPath, []byte(`apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: test
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: wan
+      spec:
+        ifname: ens18
+        managed: true
+        owner: routerd
+    - apiVersion: config.routerd.net/v1alpha1
+      kind: DynamicOverridePolicy
+      metadata:
+        name: cloudedge
+      spec:
+        allow:
+          - source: cloudedge
+            operations:
+              - mask
+            targets:
+              - apiVersion: net.routerd.net/v1alpha1
+                kind: Interface
+                name: wan
+`), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	statePath := filepath.Join(dir, "routerd.db")
+	store, err := routerstate.OpenSQLite(statePath)
+	if err != nil {
+		t.Fatalf("open state: %v", err)
+	}
+	now := time.Now().UTC()
+	if err := store.UpsertDynamicConfigPart(routerstate.DynamicConfigPartRecord{
+		Source:     "cloudedge",
+		Generation: 7,
+		ObservedAt: now.Add(-time.Minute),
+		ExpiresAt:  now.Add(time.Hour),
+		Digest:     "sha256:render",
+		ResourcesJSON: `[{
+			"apiVersion":"net.routerd.net/v1alpha1",
+			"kind":"Interface",
+			"metadata":{"name":"wan-dynamic"},
+			"spec":{"ifname":"ens19","managed":true,"owner":"routerd"}
+		}]`,
+		DirectivesJSON: `[{
+			"op":"mask",
+			"target":{"apiVersion":"net.routerd.net/v1alpha1","kind":"Interface","name":"wan"},
+			"reason":"cloud edge replacement"
+		}]`,
+		Status: "active",
+	}); err != nil {
+		t.Fatalf("upsert dynamic part: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close state: %v", err)
+	}
+
+	var out bytes.Buffer
+	if err := run([]string{"dynamic", "render", "--config", configPath, "--state-file", statePath}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("dynamic render: %v", err)
+	}
+	got := out.String()
+	for _, want := range []string{"kind: Interface", "name: wan-dynamic", "ifname: ens19"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("dynamic render output missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "ifname: ens18") {
+		t.Fatalf("dynamic render output still contains suppressed startup interface:\n%s", got)
+	}
+}
+
 func TestLedgerIntegrityCheckCommand(t *testing.T) {
 	statePath := filepath.Join(t.TempDir(), "routerd.db")
 	store, err := routerstate.OpenSQLite(statePath)

@@ -12,7 +12,7 @@ import (
 
 const (
 	// ConfigAPIVersion is the API group for dynamic configuration objects.
-	ConfigAPIVersion = "config.routerd.net/v1alpha1"
+	ConfigAPIVersion = api.ConfigAPIVersion
 	// HybridAPIVersion is the API group for hybrid cloud/on-prem resources.
 	HybridAPIVersion = "hybrid.routerd.net/v1alpha1"
 

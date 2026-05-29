@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/config"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
@@ -27,12 +28,115 @@ func dynamicCommand(args []string, stdout, stderr io.Writer) error {
 		return dynamicListCommand(args[1:], stdout)
 	case "describe":
 		return dynamicDescribeCommand(args[1:], stdout)
+	case "render":
+		return dynamicRenderCommand(args[1:], stdout)
+	case "diff":
+		return dynamicDiffCommand(args[1:], stdout)
 	case "help", "-h", "--help":
 		dynamicUsage(stdout)
 		return nil
 	default:
 		return fmt.Errorf("unknown dynamic subcommand %q", args[0])
 	}
+}
+
+func dynamicRenderCommand(args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("dynamic render", flag.ContinueOnError)
+	fs.SetOutput(stdout)
+	fs.Usage = func() {
+		printSubcommandHelp(fs,
+			"Render startup config merged with active DynamicConfigPart records.",
+			"routerctl dynamic render --config /usr/local/etc/routerd/router.yaml\n"+
+				"routerctl dynamic render --state-file /var/lib/routerd/routerd.db -o json")
+	}
+	configPath := fs.String("config", defaultConfigPath(), "startup config path")
+	statePath := fs.String("state-file", defaultStatePath(), "routerd state database file")
+	output := "yaml"
+	fs.StringVar(&output, "o", "yaml", "output format: yaml, json")
+	fs.StringVar(&output, "output", "yaml", "output format: yaml, json")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("unexpected dynamic render argument %q", fs.Arg(0))
+	}
+	effective, _, err := loadEffectiveDynamicConfig(*configPath, *statePath, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	switch output {
+	case "", "yaml":
+		return writeYAML(stdout, effective)
+	case "json":
+		return writeJSON(stdout, effective)
+	default:
+		return fmt.Errorf("unsupported output %q", output)
+	}
+}
+
+func dynamicDiffCommand(args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("dynamic diff", flag.ContinueOnError)
+	fs.SetOutput(stdout)
+	fs.Usage = func() {
+		printSubcommandHelp(fs,
+			"Show active dynamic resources added to startup config and startup resources suppressed by masks.",
+			"routerctl dynamic diff --config /usr/local/etc/routerd/router.yaml\n"+
+				"routerctl dynamic diff --state-file /var/lib/routerd/routerd.db -o json")
+	}
+	configPath := fs.String("config", defaultConfigPath(), "startup config path")
+	statePath := fs.String("state-file", defaultStatePath(), "routerd state database file")
+	output := "text"
+	fs.StringVar(&output, "o", "text", "output format: text, json")
+	fs.StringVar(&output, "output", "text", "output format: text, json")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("unexpected dynamic diff argument %q", fs.Arg(0))
+	}
+	_, result, err := loadEffectiveDynamicConfig(*configPath, *statePath, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	switch output {
+	case "", "text", "table":
+		return writeDynamicDiff(stdout, result)
+	case "json":
+		return writeJSON(stdout, result)
+	default:
+		return fmt.Errorf("unsupported output %q", output)
+	}
+}
+
+func loadEffectiveDynamicConfig(configPath, statePath string, now time.Time) (api.Router, dynamicconfig.EffectiveResult, error) {
+	router, err := config.Load(configPath)
+	if err != nil {
+		return api.Router{}, dynamicconfig.EffectiveResult{}, err
+	}
+	store, err := openLedgerStateReadOnly(statePath)
+	if err != nil {
+		return api.Router{}, dynamicconfig.EffectiveResult{}, err
+	}
+	defer store.Close()
+	records, err := store.ListDynamicConfigParts()
+	if err != nil {
+		return api.Router{}, dynamicconfig.EffectiveResult{}, err
+	}
+	parts, err := dynamicPartsFromRecords(records)
+	if err != nil {
+		return api.Router{}, dynamicconfig.EffectiveResult{}, err
+	}
+	policies, err := dynamicconfig.ExtractDynamicOverridePolicies(*router)
+	if err != nil {
+		return api.Router{}, dynamicconfig.EffectiveResult{}, err
+	}
+	return dynamicconfig.BuildEffectiveConfig(*router, parts, policies, now)
 }
 
 func dynamicListCommand(args []string, stdout io.Writer) error {
@@ -262,6 +366,36 @@ func dynamicPartDetails(parts []routerstate.DynamicConfigPartRecord, now time.Ti
 	return details, nil
 }
 
+func dynamicPartsFromRecords(records []routerstate.DynamicConfigPartRecord) ([]dynamicconfig.DynamicConfigPart, error) {
+	parts := make([]dynamicconfig.DynamicConfigPart, 0, len(records))
+	for _, record := range records {
+		resources, err := decodeDynamicResources(record.ResourcesJSON)
+		if err != nil {
+			return nil, fmt.Errorf("%s generation %d resources: %w", record.Source, record.Generation, err)
+		}
+		directives, err := decodeDynamicDirectives(record.DirectivesJSON)
+		if err != nil {
+			return nil, fmt.Errorf("%s generation %d directives: %w", record.Source, record.Generation, err)
+		}
+		parts = append(parts, dynamicconfig.DynamicConfigPart{
+			TypeMeta: api.TypeMeta{APIVersion: dynamicconfig.ConfigAPIVersion, Kind: "DynamicConfigPart"},
+			Metadata: api.ObjectMeta{
+				Name: fmt.Sprintf("%s-%d", record.Source, record.Generation),
+			},
+			Spec: dynamicconfig.DynamicConfigPartSpec{
+				Source:     record.Source,
+				Generation: record.Generation,
+				ObservedAt: record.ObservedAt,
+				ExpiresAt:  record.ExpiresAt,
+				Digest:     record.Digest,
+				Resources:  resources,
+				Directives: directives,
+			},
+		})
+	}
+	return parts, nil
+}
+
 func countJSONArray(raw string) (int, error) {
 	if strings.TrimSpace(raw) == "" {
 		return 0, nil
@@ -358,6 +492,36 @@ func writeDynamicDescribeTable(stdout io.Writer, details []dynamicPartDetail) er
 	return w.Flush()
 }
 
+func writeDynamicDiff(stdout io.Writer, result dynamicconfig.EffectiveResult) error {
+	w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
+	for _, added := range result.AddedResources {
+		fmt.Fprintf(w, "+ %s/%s/%s\tsource=%s\tgeneration=%d\n",
+			added.APIVersion,
+			added.Kind,
+			added.Name,
+			added.Source,
+			added.Generation,
+		)
+	}
+	for _, suppressed := range result.Suppressed {
+		fmt.Fprintf(w, "- %s/%s/%s\tmaskedBy=%s\tmaskedUntil=%s",
+			suppressed.Target.APIVersion,
+			suppressed.Target.Kind,
+			suppressed.Target.Name,
+			suppressed.MaskedBy,
+			formatDynamicTime(suppressed.MaskedUntil),
+		)
+		if suppressed.Reason != "" {
+			fmt.Fprintf(w, "\treason=%s", suppressed.Reason)
+		}
+		fmt.Fprintln(w)
+	}
+	if len(result.AddedResources) == 0 && len(result.Suppressed) == 0 {
+		fmt.Fprintln(w, "no dynamic config changes")
+	}
+	return w.Flush()
+}
+
 func formatDynamicTime(value time.Time) string {
 	if value.IsZero() {
 		return "-"
@@ -371,4 +535,6 @@ func dynamicUsage(w io.Writer) {
 	fmt.Fprintln(w, "subcommands:")
 	fmt.Fprintln(w, "  list [--state-file <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  describe <source> [--state-file <path>] [-o table|json|yaml]")
+	fmt.Fprintln(w, "  render [--config <path>] [--state-file <path>] [-o yaml|json]")
+	fmt.Fprintln(w, "  diff [--config <path>] [--state-file <path>] [-o text|json]")
 }

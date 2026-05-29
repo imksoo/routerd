@@ -118,6 +118,25 @@ type ApplyPolicySpec struct {
 	AutoTuneConntrack   bool     `yaml:"autoTuneConntrack,omitempty" json:"autoTuneConntrack,omitempty"`
 }
 
+// DynamicOverridePolicySpec is defined in api because DynamicOverridePolicy is
+// authored in startup config. pkg/dynamicconfig keeps its runtime policy type
+// and converts this shape there to avoid an api -> dynamicconfig import cycle.
+type DynamicOverridePolicySpec struct {
+	Allow []DynamicOverrideAllowRule `yaml:"allow" json:"allow"`
+}
+
+type DynamicOverrideAllowRule struct {
+	Source     string                  `yaml:"source" json:"source"`
+	Operations []string                `yaml:"operations" json:"operations"`
+	Targets    []DynamicOverrideTarget `yaml:"targets" json:"targets"`
+}
+
+type DynamicOverrideTarget struct {
+	APIVersion string `yaml:"apiVersion" json:"apiVersion"`
+	Kind       string `yaml:"kind" json:"kind"`
+	Name       string `yaml:"name" json:"name"`
+}
+
 type LogSinkSyslogSpec struct {
 	Network  string `yaml:"network,omitempty" json:"network,omitempty" jsonschema:"enum=,enum=unix,enum=unixgram,enum=tcp,enum=udp"`
 	Address  string `yaml:"address,omitempty" json:"address,omitempty"`
@@ -1801,6 +1820,10 @@ func (r Resource) RouterdClusterSpec() (RouterdClusterSpec, error) {
 
 func (r Resource) HostnameSpec() (HostnameSpec, error) {
 	return specAs[HostnameSpec](r)
+}
+
+func (r Resource) DynamicOverridePolicySpec() (DynamicOverridePolicySpec, error) {
+	return specAs[DynamicOverridePolicySpec](r)
 }
 
 func specAs[T any](r Resource) (T, error) {

@@ -107,6 +107,8 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  firewall test from=<zone> to=<zone|self> proto=<tcp|udp> dport=<port> [--config <path>]")
 	fmt.Fprintln(w, "  dynamic list [--state-file <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  dynamic describe <source> [--state-file <path>] [-o table|json|yaml]")
+	fmt.Fprintln(w, "  dynamic render [--config <path>] [--state-file <path>] [-o yaml|json]")
+	fmt.Fprintln(w, "  dynamic diff [--config <path>] [--state-file <path>] [-o text|json]")
 	fmt.Fprintln(w, "  wireguard list [-o table|json|yaml]")
 	fmt.Fprintln(w, "  wireguard show <interface> [-o table|json|yaml]")
 	fmt.Fprintln(w, "  tailscale peers [-o table|json|yaml] [--binary tailscale]")

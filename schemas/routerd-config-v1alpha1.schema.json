@@ -148,6 +148,99 @@
                 "additionalProperties": false,
                 "properties": {
                   "apiVersion": {
+                    "const": "config.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "DynamicOverridePolicy",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "description": "DynamicOverridePolicySpec is defined in api because DynamicOverridePolicy is authored in startup config.",
+                    "properties": {
+                      "allow": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "operations": {
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            },
+                            "source": {
+                              "type": "string"
+                            },
+                            "targets": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "apiVersion": {
+                                    "type": "string"
+                                  },
+                                  "kind": {
+                                    "type": "string"
+                                  },
+                                  "name": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "apiVersion",
+                                  "kind",
+                                  "name"
+                                ],
+                                "type": "object"
+                              },
+                              "type": "array"
+                            }
+                          },
+                          "required": [
+                            "source",
+                            "operations",
+                            "targets"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      }
+                    },
+                    "required": [
+                      "allow"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
                     "const": "system.routerd.net/v1alpha1",
                     "type": "string"
                   },

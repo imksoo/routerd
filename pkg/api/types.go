@@ -52,6 +52,7 @@ const (
 	SystemAPIVersion        = "system.routerd.net/v1alpha1"
 	FirewallAPIVersion      = "firewall.routerd.net/v1alpha1"
 	ObservabilityAPIVersion = "observability.routerd.net/v1alpha1"
+	ConfigAPIVersion        = "config.routerd.net/v1alpha1"
 )
 
 func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
@@ -71,6 +72,12 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 	r.Status = raw.Status
 
 	switch raw.Kind {
+	case "DynamicOverridePolicy":
+		var spec DynamicOverridePolicySpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
 	case "LogSink":
 		if hasMappingKey(&raw.Spec, "plugin") {
 			return fmt.Errorf("%s spec.plugin is not supported; use type webhook, file, journald, or otlp for log forwarding sinks", r.ID())
