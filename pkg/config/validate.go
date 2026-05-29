@@ -381,6 +381,29 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 				return fmt.Errorf("%s spec.healthCheckRef references missing HealthCheck %q", res.ID(), spec.HealthCheckRef)
 			}
 		}
+		if res.Kind == "AddressMobilityDomain" {
+			spec, err := res.AddressMobilityDomainSpec()
+			if err != nil {
+				return err
+			}
+			if spec.PeerRef != "" {
+				if _, ok := idx.OverlayPeers[spec.PeerRef]; !ok {
+					return fmt.Errorf("%s spec.peerRef references missing OverlayPeer %q", res.ID(), spec.PeerRef)
+				}
+			}
+		}
+		if res.Kind == "RemoteAddressClaim" {
+			spec, err := res.RemoteAddressClaimSpec()
+			if err != nil {
+				return err
+			}
+			if _, ok := idx.AddressMobilityDomains[spec.DomainRef]; !ok {
+				return fmt.Errorf("%s spec.domainRef references missing AddressMobilityDomain %q", res.ID(), spec.DomainRef)
+			}
+			if _, ok := idx.OverlayPeers[spec.Delivery.PeerRef]; !ok {
+				return fmt.Errorf("%s spec.delivery.peerRef references missing OverlayPeer %q", res.ID(), spec.Delivery.PeerRef)
+			}
+		}
 		if res.Kind == "HealthCheck" {
 			spec, err := res.HealthCheckSpec()
 			if err != nil {

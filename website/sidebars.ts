@@ -146,6 +146,7 @@ const sidebars: SidebarsConfig = {
       collapsed: true,
       items: [
         'api-v1alpha1',
+        'reference/selective-address-mobility',
         'control-api-v1alpha1',
         'plugin-protocol',
         'platforms',

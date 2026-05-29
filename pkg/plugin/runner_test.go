@@ -58,7 +58,7 @@ JSON
 	}
 }
 
-func TestRunCloudAddressClaimActionPlanIsDisplayOnly(t *testing.T) {
+func TestRunRemoteAddressClaimActionPlanIsDisplayOnly(t *testing.T) {
 	requireShell(t)
 	path := writePluginScript(t, `#!/bin/sh
 cat <<'JSON'
@@ -69,22 +69,25 @@ cat <<'JSON'
   "status": {
     "observedAt": "2026-05-29T12:00:00Z",
     "ttl": "300s",
-    "resources": [
+        "resources": [
       {
         "apiVersion": "hybrid.routerd.net/v1alpha1",
-        "kind": "CloudAddressClaim",
+        "kind": "RemoteAddressClaim",
         "metadata": { "name": "app-10-0-1-123" },
         "spec": {
-          "providerRef": "oci-prod",
+          "domainRef": "cloudedge-same-subnet",
           "address": "10.0.1.123/32",
-          "cloudAttachment": {
-            "type": "secondary-private-ip",
-            "vnicID": "ocid1.vnic.oc1..example"
+          "ownerSide": "cloud",
+          "capture": {
+            "type": "provider-secondary-ip",
+            "providerRef": "oci-prod",
+            "providerMode": "vnic-private-ip",
+            "nicRef": "ocid1.vnic.oc1..example"
           },
           "delivery": {
             "peerRef": "cloud-main",
             "mode": "route",
-            "targetAddress": "169.254.100.2"
+            "tunnelInterface": "wg-hybrid"
           }
         }
       }
@@ -128,11 +131,11 @@ JSON
 	if len(part.Spec.Resources) != 1 {
 		t.Fatalf("resources = %#v", part.Spec.Resources)
 	}
-	spec, ok := part.Spec.Resources[0].Spec.(api.CloudAddressClaimSpec)
+	spec, ok := part.Spec.Resources[0].Spec.(api.RemoteAddressClaimSpec)
 	if !ok {
-		t.Fatalf("resource spec type = %T, want api.CloudAddressClaimSpec", part.Spec.Resources[0].Spec)
+		t.Fatalf("resource spec type = %T, want api.RemoteAddressClaimSpec", part.Spec.Resources[0].Spec)
 	}
-	if spec.ProviderRef != "oci-prod" || spec.Delivery.Mode != "route" {
+	if spec.Capture.ProviderRef != "oci-prod" || spec.Delivery.Mode != "route" {
 		t.Fatalf("claim spec = %#v", spec)
 	}
 	// ActionPlans are intentionally not part of DynamicConfigPart. The runner
@@ -142,7 +145,7 @@ JSON
 	}
 }
 
-func TestOCIInventoryExampleScriptProducesCloudAddressClaim(t *testing.T) {
+func TestOCIInventoryExampleScriptProducesRemoteAddressClaim(t *testing.T) {
 	requireShell(t)
 	path := filepath.Join("..", "..", "examples", "plugins", "oci-inventory", "bin", "oci-inventory")
 	if _, err := os.Stat(path); err != nil {
@@ -163,8 +166,8 @@ func TestOCIInventoryExampleScriptProducesCloudAddressClaim(t *testing.T) {
 	if len(part.Spec.Resources) != 1 {
 		t.Fatalf("resources = %#v", part.Spec.Resources)
 	}
-	if _, ok := part.Spec.Resources[0].Spec.(api.CloudAddressClaimSpec); !ok {
-		t.Fatalf("resource spec type = %T, want api.CloudAddressClaimSpec", part.Spec.Resources[0].Spec)
+	if _, ok := part.Spec.Resources[0].Spec.(api.RemoteAddressClaimSpec); !ok {
+		t.Fatalf("resource spec type = %T, want api.RemoteAddressClaimSpec", part.Spec.Resources[0].Spec)
 	}
 	if len(result.Status.ActionPlans) != 1 {
 		t.Fatalf("actionPlans = %#v", result.Status.ActionPlans)

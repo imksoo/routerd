@@ -1,0 +1,106 @@
+# Selective Address Mobility example for an Azure and Proxmox same-subnet lab.
+# Capture is manual or pre-provisioned in this MVP, and routerd does not install
+# a live capture/forwarding dataplane for these resources yet.
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: hybrid-azure-pve-same-subnet
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardInterface
+      metadata:
+        name: wg-hybrid
+      spec:
+        privateKeyFile: /usr/local/etc/routerd/secrets/wg-hybrid.key
+        listenPort: 51820
+        mtu: 1420
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardPeer
+      metadata:
+        name: cloud-main
+      spec:
+        interface: wg-hybrid
+        publicKey: CLOUD_PEER_PUBLIC_KEY_REPLACE_ME
+        endpoint: 203.0.113.20:51820
+        allowedIPs:
+          - 169.254.110.2/32
+          - 10.0.0.7/32
+          - 10.0.0.9/32
+        persistentKeepalive: 25
+
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: OverlayPeer
+      metadata:
+        name: cloud-main
+      spec:
+        role: cloud
+        nodeID: azure-router
+        underlay:
+          type: wireguard
+          interface: wg-hybrid
+          address: 169.254.110.1
+        remote:
+          nodeID: pve-router
+          address: 169.254.110.2
+
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: AddressMobilityDomain
+      metadata:
+        name: lab-same-subnet
+      spec:
+        prefix: 10.0.0.0/24
+        mode: selective-address
+        peerRef: cloud-main
+
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: CloudProviderProfile
+      metadata:
+        name: azure-lab
+      spec:
+        provider: azure
+        subscriptionID: 00000000-0000-0000-0000-000000000000
+        resourceGroup: rg-routerd-lab
+        capabilities:
+          - nic-secondary-ip
+          - ip-forwarding
+        auth:
+          mode: external-command
+          command: /usr/local/libexec/routerd/plugins/azure-auth
+
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: RemoteAddressClaim
+      metadata:
+        name: azure-vm-10-0-0-9
+      spec:
+        domainRef: lab-same-subnet
+        address: 10.0.0.9/32
+        ownerSide: cloud
+        capture:
+          type: provider-secondary-ip
+          providerRef: azure-lab
+          providerMode: nic-secondary-ip
+          nicRef: /subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-routerd-lab/providers/Microsoft.Network/networkInterfaces/routerd-nic
+          configureOSAddress: false
+        delivery:
+          peerRef: cloud-main
+          mode: route
+          tunnelInterface: wg-hybrid
+
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: RemoteAddressClaim
+      metadata:
+        name: pve-vm-10-0-0-7
+      spec:
+        domainRef: lab-same-subnet
+        address: 10.0.0.7/32
+        ownerSide: onprem
+        capture:
+          type: proxy-arp
+          interface: br-lan
+          gratuitousARP: true
+        delivery:
+          peerRef: cloud-main
+          mode: route
+          tunnelInterface: wg-hybrid

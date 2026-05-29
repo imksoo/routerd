@@ -42,19 +42,40 @@ spec:
           metric: 120
         healthCheckRef: cloud-health
     - apiVersion: hybrid.routerd.net/v1alpha1
-      kind: CloudAddressClaim
+      kind: AddressMobilityDomain
+      metadata:
+        name: same-subnet
+      spec:
+        prefix: 10.0.0.0/24
+        mode: selective-address
+        peerRef: cloud-main
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: CloudProviderProfile
+      metadata:
+        name: oci-prod
+      spec:
+        provider: oci
+        capabilities: [vnic-private-ip, disable-source-dest-check]
+        auth:
+          mode: external-command
+          command: /usr/local/libexec/routerd/plugins/oci-token
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: RemoteAddressClaim
       metadata:
         name: app-10-0-1-123
       spec:
-        providerRef: oci-prod
+        domainRef: same-subnet
         address: 10.0.1.123/32
-        cloudAttachment:
-          type: secondary-private-ip
-          vnicID: ocid1.vnic.oc1..example
+        ownerSide: cloud
+        capture:
+          type: provider-secondary-ip
+          providerRef: oci-prod
+          providerMode: vnic-private-ip
+          nicRef: ocid1.vnic.oc1..example
         delivery:
           peerRef: cloud-main
           mode: route
-          targetAddress: 169.254.100.2
+          tunnelInterface: wg-hybrid
 `)
 	var router Router
 	if err := yaml.Unmarshal(data, &router); err != nil {
@@ -74,11 +95,25 @@ spec:
 	if route.PeerRef != "cloud-main" || route.Install.Metric != 120 {
 		t.Fatalf("route = %#v", route)
 	}
-	claim, err := router.Spec.Resources[2].CloudAddressClaimSpec()
+	domain, err := router.Spec.Resources[2].AddressMobilityDomainSpec()
+	if err != nil {
+		t.Fatalf("domain spec: %v", err)
+	}
+	if domain.Prefix != "10.0.0.0/24" || domain.Mode != "selective-address" {
+		t.Fatalf("domain = %#v", domain)
+	}
+	profile, err := router.Spec.Resources[3].CloudProviderProfileSpec()
+	if err != nil {
+		t.Fatalf("profile spec: %v", err)
+	}
+	if profile.Provider != "oci" || profile.Auth.Mode != "external-command" {
+		t.Fatalf("profile = %#v", profile)
+	}
+	claim, err := router.Spec.Resources[4].RemoteAddressClaimSpec()
 	if err != nil {
 		t.Fatalf("claim spec: %v", err)
 	}
-	if claim.ProviderRef != "oci-prod" || claim.CloudAttachment.Type != "secondary-private-ip" || claim.Delivery.Mode != "route" {
+	if claim.DomainRef != "same-subnet" || claim.Capture.ProviderRef != "oci-prod" || claim.Capture.Type != "provider-secondary-ip" || claim.Delivery.Mode != "route" {
 		t.Fatalf("claim = %#v", claim)
 	}
 }

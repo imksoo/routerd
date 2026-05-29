@@ -11,6 +11,14 @@ only design documentation and Go type definitions. It introduces the API shapes
 for dynamic configuration, plugin I/O, and future hybrid resources; it does not
 wire controllers, the CLI, or dataplane renderers.
 
+CloudEdge has two declarative pillars in this MVP:
+
+- L3 hybrid routing, where `HybridRoute` lowers remote IPv4 prefixes through an
+  `OverlayPeer`.
+- Selective Address Mobility, where selected `/32` IPv4 addresses are captured
+  locally and delivered to the owning side over a routerd-to-routerd overlay
+  without stretching L2.
+
 The model extends the existing routerd architecture in
 [Architecture overview](./design.md): controllers still reconcile one desired
 configuration, resources still use the same `apiVersion`, `kind`,
@@ -23,7 +31,7 @@ CloudEdge is aimed at mixed cloud and on-prem deployments where a router needs
 runtime intent from a trusted local source:
 
 - cloud inventory that changes faster than the startup YAML should change
-- cloud-side address claims, route hints, or VPN attachment observations
+- selective address claims, route hints, or VPN attachment observations
 - provider actions that should be visible during plan/dry-run before operators
   decide whether to apply provider-side changes outside routerd
 - selective suppression of static fallback resources while a dynamic cloud
@@ -100,15 +108,16 @@ In scope for the CloudEdge MVP foundation:
 
 - `config.routerd.net/v1alpha1` type definitions for `DynamicConfigPart` and
   `DynamicOverridePolicy`
-- `hybrid.routerd.net/v1alpha1` `OverlayPeer`, `HybridRoute`, and
-  observe-only `CloudAddressClaim` resource shapes
+- `hybrid.routerd.net/v1alpha1` `OverlayPeer`, `HybridRoute`,
+  `AddressMobilityDomain`, `CloudProviderProfile`, and `RemoteAddressClaim`
+  resource shapes
 - `plugin.routerd.net/v1alpha1` request/result contract types
 - documentation for layering, merge behavior, plugin I/O, policy, and future
   operator commands
 
 Out of scope for this PR:
 
-- dataplane behavior
+- live address capture or forwarding dataplane behavior
 - controllers or reconcile-loop integration
 - CLI commands
 - plugin process execution
@@ -116,19 +125,55 @@ Out of scope for this PR:
 - schema generation changes
 - remote plugin install, remote plugin registry, or remote provider execution
 
+## L3 hybrid routing
+
+`HybridRoute` is the conservative L3 pillar. It represents non-default remote
+IPv4 prefixes that should be lowered through an `OverlayPeer`. The lowering and
+status path is intentionally explicit: default routes are rejected, and
+operators can review the generated route intent through the normal routerd plan
+and dry-run flow.
+
+## Selective Address Mobility
+
+Selective Address Mobility is the second CloudEdge pillar. It is not full L2
+extension. Public cloud fabrics do not expose an operator-controlled Ethernet
+segment, and provider address ownership models differ. routerd therefore models
+only selected mobile `/32` IPv4 addresses:
+
+- `AddressMobilityDomain` defines the IPv4 prefix and requires
+  `mode: selective-address`.
+- `CloudProviderProfile` describes a provider and its declared capabilities; it
+  does not call provider APIs.
+- `RemoteAddressClaim` declares one `/32`, its owner side, a capture mechanism,
+  and route delivery over an `OverlayPeer`.
+
+The MVP layer is declarative only. No controller assigns secondary cloud IPs,
+enables proxy ARP, installs `/32` forwarding routes, toggles `ip_forward`, or
+programs netlink for these resources. Live capture and forwarding are a later
+dataplane step.
+
+Selective Address Mobility lives in the ordinary switching/forwarding plane and
+contains no firewall or NAT concept. Source and destination transparency is
+intrinsic, not a configurable field. Operators compose firewall and NAT policy
+separately by referencing literal addresses in existing `FirewallZone`,
+`FirewallRule`, or `NAT44Rule` resources.
+
+See [Selective Address Mobility](./reference/selective-address-mobility.md) for
+the resource model and provider capability framing.
+
 ## Observe-only cloud inventory
 
 Cloud inventory plugins can observe provider state and return dynamic resources
 without mutating the provider. The example `oci-inventory` plugin emits a static
-`CloudAddressClaim` candidate plus an OCI-style `actionPlan` that describes how
-a secondary private IP could be assigned outside routerd.
+`RemoteAddressClaim` candidate plus an OCI-style `actionPlan` that describes
+how a secondary private IP could be assigned outside routerd.
 
-`CloudAddressClaim` is declarative and dry-run/plan only in this MVP. It records
-the provider reference, observed IP or CIDR, cloud attachment metadata such as a
-secondary private IP on a VNIC, and the route delivery hint for an overlay peer.
-routerd validates and displays the resource as dynamic-config, but no controller
-calls a cloud API, assigns a secondary IP, or mutates host networking for this
-kind.
+`RemoteAddressClaim` is declarative and dry-run/plan only in this MVP. It
+records the mobility domain, `/32` address, owner side, capture metadata such as
+a provider secondary IP or proxy-ARP interface, and the route delivery hint for
+an overlay peer. routerd validates and displays the resource as dynamic-config,
+but no controller calls a cloud API, assigns a secondary IP, or mutates host
+networking for this kind.
 
 Provider `actionPlans` stay display-only. They are useful for dry-run review and
 operator handoff, but they are not an imperative queue and routerd never
@@ -136,18 +181,17 @@ executes them.
 
 ## Roadmap
 
-The intended path is L3 hybrid first. Future PRs can add typed hybrid resources
-such as route advertisements, VPN attachment observations, and provider
-inventory snapshots. These resources should become normal effective-config
-resources after validation, so existing route, firewall, NAT, and observability
-flows can consume them without a separate cloud control path.
+Future PRs can add live capture and forwarding for Selective Address Mobility,
+route advertisements, VPN attachment observations, and provider inventory
+snapshots. These resources should remain normal effective-config resources
+after validation, so existing route, firewall, NAT, and observability flows can
+consume them without a separate cloud control path.
 
-Selective L2 extension is future work and should stay narrow. VXLAN, EVPN, VRF,
-WireGuard, and IPsec groundwork already exists, but CloudEdge should prefer L3
-reachability and explicit routing policy before bridging remote fault domains.
-Any selective L2 design needs a separate safety discussion covering loop
-avoidance, failure isolation, MTU, broadcast containment, and operational
-rollback.
+Full L2 extension remains out of scope. VXLAN, EVPN, VRF, WireGuard, and IPsec
+groundwork already exists, but CloudEdge should prefer L3 reachability and
+explicit per-address mobility before bridging remote fault domains. Any full L2
+design needs a separate safety discussion covering loop avoidance, failure
+isolation, MTU, broadcast containment, and operational rollback.
 
 See also [Dynamic config reference](./reference/dynamic-config.md) and
 [Plugin protocol](./plugin-protocol.md).

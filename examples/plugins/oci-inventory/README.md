@@ -4,7 +4,7 @@ This example is a static CloudEdge inventory plugin. It reads the routerd
 `PluginRequest` JSON from stdin, ignores the request body, and writes one
 `PluginResult` JSON object to stdout.
 
-The result contains one `CloudAddressClaim` candidate and one OCI-style
+The result contains one `RemoteAddressClaim` candidate and one OCI-style
 `actionPlan`. The action plan is display-only in the CloudEdge MVP; routerd
 does not execute it and this script does not call any OCI API or `oci` CLI.
 

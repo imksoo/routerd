@@ -45,7 +45,7 @@ routerctl doctor -o yaml
 | `mgmt` | 管理用 interface の存在（`ManagementAccess` または `FirewallZone role=mgmt` から推定）。WebConsole の bind 先（`0.0.0.0` / `::` は WARN/FAIL）。 |
 | `reconcile` | 読み取り専用ステータスソケットから、コントローラーごとの reconcile 失敗履歴を確認します。`--since <duration>` で対象期間を区切ります。期間内に 1 件以上で WARN、10 件以上で FAIL。detail に最大 5 件のサンプルを表示します。 |
 | `runtime` | 読み取り専用ステータスソケットから、routerd 自身の heap / goroutine / fd を確認します: `heapAlloc`、`heapObjects`、`numGoroutine`、`numGC`、`openFds`/`maxFds`。`numGoroutine` が 10000 超、または open fd が `RLIMIT_NOFILE` の 80% 以上で WARN。観測用で FAIL にはなりません。 |
-| `hybrid` | `HybridRoute` / `OverlayPeer` の参照、デフォルト経路を触らない安全性、MTU 推定、任意の `HealthCheck` status、読み取り専用の経路表確認（`ip -4 route show <prefix>`）。 |
+| `hybrid` | `HybridRoute` / `OverlayPeer` の参照、Selective Address Mobility の設定参照、デフォルト経路を触らない安全性、MTU 推定、任意の `HealthCheck` status、読み取り専用の経路表確認（`ip -4 route show <prefix>`）。MVP では remote address capture の dataplane check は未実装です。 |
 
 各チェックは `pass` / `warn` / `fail` / `skip`（該当リソース/シグナルが無い）のいずれかを返します。
 

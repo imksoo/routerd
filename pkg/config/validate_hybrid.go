@@ -69,36 +69,101 @@ func validateHybridResource(res api.Resource, _ platform.OS) (bool, error) {
 		if spec.Install.Metric < 0 {
 			return true, fmt.Errorf("%s spec.install.metric must be >= 0", res.ID())
 		}
-	case "CloudAddressClaim":
+	case "AddressMobilityDomain":
 		if res.APIVersion != api.HybridAPIVersion {
 			return true, fmt.Errorf("%s must use apiVersion %s", res.ID(), api.HybridAPIVersion)
 		}
-		spec, err := res.CloudAddressClaimSpec()
+		spec, err := res.AddressMobilityDomainSpec()
 		if err != nil {
 			return true, err
 		}
-		if strings.TrimSpace(spec.ProviderRef) == "" {
-			return true, fmt.Errorf("%s spec.providerRef is required", res.ID())
+		if err := validateAddressMobilityDomainPrefix(spec.Prefix); err != nil {
+			return true, fmt.Errorf("%s spec.prefix: %w", res.ID(), err)
 		}
-		if err := validateCloudClaimAddress(spec.Address); err != nil {
+		switch strings.TrimSpace(spec.Mode) {
+		case "selective-address":
+		case "full-l2":
+			return true, fmt.Errorf("%s spec.mode full L2 extension is not supported; routerd implements Selective Address Mobility", res.ID())
+		default:
+			return true, fmt.Errorf("%s spec.mode full L2 extension is not supported; routerd implements Selective Address Mobility", res.ID())
+		}
+	case "CloudProviderProfile":
+		if res.APIVersion != api.HybridAPIVersion {
+			return true, fmt.Errorf("%s must use apiVersion %s", res.ID(), api.HybridAPIVersion)
+		}
+		spec, err := res.CloudProviderProfileSpec()
+		if err != nil {
+			return true, err
+		}
+		switch strings.TrimSpace(spec.Provider) {
+		case "azure", "aws", "oci", "gcp":
+		default:
+			return true, fmt.Errorf("%s spec.provider must be azure, aws, oci, or gcp", res.ID())
+		}
+		if len(spec.Capabilities) == 0 {
+			return true, fmt.Errorf("%s spec.capabilities is required", res.ID())
+		}
+		for i, capability := range spec.Capabilities {
+			if strings.TrimSpace(capability) == "" {
+				return true, fmt.Errorf("%s spec.capabilities[%d] must not be empty", res.ID(), i)
+			}
+		}
+		switch strings.TrimSpace(spec.Auth.Mode) {
+		case "external-command":
+			if strings.TrimSpace(spec.Auth.Command) == "" {
+				return true, fmt.Errorf("%s spec.auth.command is required when spec.auth.mode is external-command", res.ID())
+			}
+		default:
+			return true, fmt.Errorf("%s spec.auth.mode must be external-command", res.ID())
+		}
+	case "RemoteAddressClaim":
+		if res.APIVersion != api.HybridAPIVersion {
+			return true, fmt.Errorf("%s must use apiVersion %s", res.ID(), api.HybridAPIVersion)
+		}
+		spec, err := res.RemoteAddressClaimSpec()
+		if err != nil {
+			return true, err
+		}
+		if strings.TrimSpace(spec.DomainRef) == "" {
+			return true, fmt.Errorf("%s spec.domainRef is required", res.ID())
+		}
+		if err := validateRemoteClaimAddress(spec.Address); err != nil {
 			return true, fmt.Errorf("%s spec.address: %w", res.ID(), err)
 		}
-		switch strings.TrimSpace(spec.CloudAttachment.Type) {
-		case "secondary-private-ip":
-		case "":
-			return true, fmt.Errorf("%s spec.cloudAttachment.type is required", res.ID())
+		switch strings.TrimSpace(spec.OwnerSide) {
+		case "cloud", "onprem":
 		default:
-			return true, fmt.Errorf("%s spec.cloudAttachment.type must be secondary-private-ip", res.ID())
+			return true, fmt.Errorf("%s spec.ownerSide must be cloud or onprem", res.ID())
+		}
+		switch strings.TrimSpace(spec.Capture.Type) {
+		case "provider-secondary-ip":
+			if strings.TrimSpace(spec.Capture.ProviderRef) == "" {
+				return true, fmt.Errorf("%s spec.capture.providerRef is required when spec.capture.type is provider-secondary-ip", res.ID())
+			}
+			if strings.TrimSpace(spec.Capture.ProviderMode) == "" {
+				return true, fmt.Errorf("%s spec.capture.providerMode is required when spec.capture.type is provider-secondary-ip", res.ID())
+			}
+			if strings.TrimSpace(spec.Capture.NICRef) == "" {
+				return true, fmt.Errorf("%s spec.capture.nicRef is required when spec.capture.type is provider-secondary-ip", res.ID())
+			}
+		case "proxy-arp":
+			if strings.TrimSpace(spec.Capture.Interface) == "" {
+				return true, fmt.Errorf("%s spec.capture.interface is required when spec.capture.type is proxy-arp", res.ID())
+			}
+		case "":
+			return true, fmt.Errorf("%s spec.capture.type is required", res.ID())
+		case "static-host-route", "garp":
+			return true, fmt.Errorf("%s spec.capture.type %q is reserved/not implemented in MVP", res.ID(), strings.TrimSpace(spec.Capture.Type))
+		default:
+			return true, fmt.Errorf("%s spec.capture.type %q is reserved/not implemented in MVP", res.ID(), strings.TrimSpace(spec.Capture.Type))
 		}
 		switch strings.TrimSpace(spec.Delivery.Mode) {
 		case "route":
 		default:
 			return true, fmt.Errorf("%s spec.delivery.mode must be route", res.ID())
 		}
-		if target := strings.TrimSpace(spec.Delivery.TargetAddress); target != "" {
-			if _, err := netip.ParseAddr(target); err != nil {
-				return true, fmt.Errorf("%s spec.delivery.targetAddress must be an IP address", res.ID())
-			}
+		if strings.TrimSpace(spec.Delivery.PeerRef) == "" {
+			return true, fmt.Errorf("%s spec.delivery.peerRef is required", res.ID())
 		}
 	default:
 		return false, nil
@@ -106,18 +171,35 @@ func validateHybridResource(res api.Resource, _ platform.OS) (bool, error) {
 	return true, nil
 }
 
-func validateCloudClaimAddress(value string) error {
+func validateAddressMobilityDomainPrefix(value string) error {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return fmt.Errorf("is required")
 	}
-	if _, err := netip.ParseAddr(value); err == nil {
-		return nil
+	prefix, err := netip.ParsePrefix(value)
+	if err != nil {
+		return fmt.Errorf("must be a valid IPv4 CIDR: %w", err)
 	}
-	if _, err := netip.ParsePrefix(value); err == nil {
-		return nil
+	if !prefix.Addr().Is4() {
+		return fmt.Errorf("must be an IPv4 CIDR")
 	}
-	return fmt.Errorf("must be an IP address or CIDR")
+	return nil
+}
+
+func validateRemoteClaimAddress(value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return fmt.Errorf("is required")
+	}
+	prefix, err := netip.ParsePrefix(value)
+	if err != nil {
+		return fmt.Errorf("must be a valid IPv4 /32 CIDR: %w", err)
+	}
+	prefix = prefix.Masked()
+	if !prefix.Addr().Is4() || prefix.Bits() != 32 {
+		return fmt.Errorf("must be an IPv4 /32 CIDR")
+	}
+	return nil
 }
 
 func validateHybridDestinationCIDR(value string) error {

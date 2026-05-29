@@ -379,6 +379,27 @@ func TestDoctorHybridHealthyNoHost(t *testing.T) {
 	}
 }
 
+func TestDoctorHybridAddressMobilityNoHost(t *testing.T) {
+	configPath, statePath := writeDoctorAddressMobilityFixture(t)
+	var out bytes.Buffer
+	if err := run([]string{"doctor", "hybrid", "--config", configPath, "--state-file", statePath, "--no-host", "-o", "json"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("doctor hybrid: %v\n%s", err, out.String())
+	}
+	var report doctorReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("unmarshal doctor report: %v\n%s", err, out.String())
+	}
+	if check := findDoctorCheck(t, report, "RemoteAddressClaim/azure-vm domainRef"); check.Status != doctorPass {
+		t.Fatalf("domainRef check = %#v", check)
+	}
+	if check := findDoctorCheck(t, report, "RemoteAddressClaim/azure-vm delivery.peerRef"); check.Status != doctorPass {
+		t.Fatalf("delivery.peerRef check = %#v", check)
+	}
+	if check := findDoctorCheck(t, report, "RemoteAddressClaim/azure-vm dataplane"); check.Status != doctorSkip || !strings.Contains(check.Detail, "not implemented") {
+		t.Fatalf("dataplane check = %#v", check)
+	}
+}
+
 func TestDoctorHybridFailsUnresolvedPeerRef(t *testing.T) {
 	configPath, statePath := writeDoctorHybridFixture(t, true)
 	var out bytes.Buffer
@@ -394,6 +415,75 @@ func TestDoctorHybridFailsUnresolvedPeerRef(t *testing.T) {
 	if check.Status != doctorFail || !strings.Contains(check.Detail, "missing OverlayPeer") {
 		t.Fatalf("peerRef check = %#v", check)
 	}
+}
+
+func writeDoctorAddressMobilityFixture(t *testing.T) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "router.yaml")
+	data := []byte(`apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: test
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardInterface
+      metadata:
+        name: wg-hybrid
+      spec:
+        listenPort: 51820
+        mtu: 1420
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: OverlayPeer
+      metadata:
+        name: cloud-main
+      spec:
+        role: cloud
+        nodeID: cloud-main
+        underlay:
+          type: wireguard
+          interface: wg-hybrid
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: AddressMobilityDomain
+      metadata:
+        name: same-subnet
+      spec:
+        prefix: 10.0.0.0/24
+        mode: selective-address
+        peerRef: cloud-main
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: CloudProviderProfile
+      metadata:
+        name: azure-lab
+      spec:
+        provider: azure
+        capabilities: [nic-secondary-ip, ip-forwarding]
+        auth:
+          mode: external-command
+          command: /usr/local/libexec/routerd/plugins/azure-auth
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: RemoteAddressClaim
+      metadata:
+        name: azure-vm
+      spec:
+        domainRef: same-subnet
+        address: 10.0.0.9/32
+        ownerSide: cloud
+        capture:
+          type: provider-secondary-ip
+          providerRef: azure-lab
+          providerMode: nic-secondary-ip
+          nicRef: azure-nic
+        delivery:
+          peerRef: cloud-main
+          mode: route
+          tunnelInterface: wg-hybrid
+`)
+	if err := os.WriteFile(configPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	return configPath, filepath.Join(dir, "routerd.db")
 }
 
 func writeDoctorFixture(t *testing.T) (string, string) {

@@ -111,9 +111,13 @@ func Warnings(router *api.Router) []string {
 	var warnings []string
 	dnsZones, dnsResolverZones := dnsZoneCoverage(router)
 	wireGuardInterfaces := map[string]bool{}
+	cloudProviderProfiles := map[string]bool{}
 	for _, res := range router.Spec.Resources {
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "WireGuardInterface" {
 			wireGuardInterfaces[res.Metadata.Name] = true
+		}
+		if res.APIVersion == api.HybridAPIVersion && res.Kind == "CloudProviderProfile" {
+			cloudProviderProfiles[res.Metadata.Name] = true
 		}
 	}
 	for _, res := range router.Spec.Resources {
@@ -138,6 +142,11 @@ func Warnings(router *api.Router) []string {
 			spec, err := res.OverlayPeerSpec()
 			if err == nil && spec.Underlay.Type == "wireguard" && spec.Underlay.Interface != "" && !wireGuardInterfaces[spec.Underlay.Interface] {
 				warnings = append(warnings, fmt.Sprintf("%s spec.underlay.interface references WireGuardInterface %q which is not declared; assuming the interface is managed externally", res.ID(), spec.Underlay.Interface))
+			}
+		case "RemoteAddressClaim":
+			spec, err := res.RemoteAddressClaimSpec()
+			if err == nil && spec.Capture.Type == "provider-secondary-ip" && spec.Capture.ProviderRef != "" && !cloudProviderProfiles[spec.Capture.ProviderRef] {
+				warnings = append(warnings, fmt.Sprintf("%s spec.capture.providerRef references CloudProviderProfile %q which is not declared; assuming the provider profile is managed externally", res.ID(), spec.Capture.ProviderRef))
 			}
 		}
 	}

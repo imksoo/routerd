@@ -5903,7 +5903,153 @@
                     "type": "string"
                   },
                   "kind": {
-                    "const": "CloudAddressClaim",
+                    "const": "AddressMobilityDomain",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "mode": {
+                        "enum": [
+                          "selective-address"
+                        ],
+                        "type": "string"
+                      },
+                      "peerRef": {
+                        "type": "string"
+                      },
+                      "prefix": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "prefix",
+                      "mode"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "hybrid.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "CloudProviderProfile",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "auth": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "command": {
+                            "type": "string"
+                          },
+                          "mode": {
+                            "enum": [
+                              "external-command"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "mode"
+                        ],
+                        "type": "object"
+                      },
+                      "capabilities": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "provider": {
+                        "enum": [
+                          "azure",
+                          "aws",
+                          "oci",
+                          "gcp"
+                        ],
+                        "type": "string"
+                      },
+                      "resourceGroup": {
+                        "type": "string"
+                      },
+                      "subscriptionID": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "provider",
+                      "capabilities",
+                      "auth"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "hybrid.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "RemoteAddressClaim",
                     "type": "string"
                   },
                   "metadata": {
@@ -5925,16 +6071,32 @@
                       "address": {
                         "type": "string"
                       },
-                      "cloudAttachment": {
+                      "capture": {
                         "additionalProperties": false,
                         "properties": {
-                          "type": {
-                            "enum": [
-                              "secondary-private-ip"
-                            ],
+                          "configureOSAddress": {
+                            "type": "boolean"
+                          },
+                          "gratuitousARP": {
+                            "type": "boolean"
+                          },
+                          "interface": {
                             "type": "string"
                           },
-                          "vnicID": {
+                          "nicRef": {
+                            "type": "string"
+                          },
+                          "providerMode": {
+                            "type": "string"
+                          },
+                          "providerRef": {
+                            "type": "string"
+                          },
+                          "type": {
+                            "enum": [
+                              "provider-secondary-ip",
+                              "proxy-arp"
+                            ],
                             "type": "string"
                           }
                         },
@@ -5955,23 +6117,32 @@
                           "peerRef": {
                             "type": "string"
                           },
-                          "targetAddress": {
+                          "tunnelInterface": {
                             "type": "string"
                           }
                         },
                         "required": [
+                          "peerRef",
                           "mode"
                         ],
                         "type": "object"
                       },
-                      "providerRef": {
+                      "domainRef": {
+                        "type": "string"
+                      },
+                      "ownerSide": {
+                        "enum": [
+                          "cloud",
+                          "onprem"
+                        ],
                         "type": "string"
                       }
                     },
                     "required": [
-                      "providerRef",
+                      "domainRef",
                       "address",
-                      "cloudAttachment",
+                      "ownerSide",
+                      "capture",
                       "delivery"
                     ],
                     "type": "object"

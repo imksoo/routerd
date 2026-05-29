@@ -1184,22 +1184,47 @@ type HybridRouteInstall struct {
 	Metric int    `yaml:"metric,omitempty" json:"metric,omitempty" jsonschema:"minimum=0"`
 }
 
-type CloudAddressClaimSpec struct {
-	ProviderRef     string          `yaml:"providerRef" json:"providerRef"`
-	Address         string          `yaml:"address" json:"address"`
-	CloudAttachment CloudAttachment `yaml:"cloudAttachment" json:"cloudAttachment"`
-	Delivery        CloudDelivery   `yaml:"delivery" json:"delivery"`
+type AddressMobilityDomainSpec struct {
+	Prefix  string `yaml:"prefix" json:"prefix"`
+	Mode    string `yaml:"mode" json:"mode" jsonschema:"enum=selective-address"`
+	PeerRef string `yaml:"peerRef,omitempty" json:"peerRef,omitempty"`
 }
 
-type CloudAttachment struct {
-	Type   string `yaml:"type" json:"type" jsonschema:"enum=secondary-private-ip"`
-	VNICID string `yaml:"vnicID,omitempty" json:"vnicID,omitempty"`
+type CloudProviderProfileSpec struct {
+	Provider       string       `yaml:"provider" json:"provider" jsonschema:"enum=azure,enum=aws,enum=oci,enum=gcp"`
+	SubscriptionID string       `yaml:"subscriptionID,omitempty" json:"subscriptionID,omitempty"`
+	ResourceGroup  string       `yaml:"resourceGroup,omitempty" json:"resourceGroup,omitempty"`
+	Capabilities   []string     `yaml:"capabilities" json:"capabilities"`
+	Auth           ProviderAuth `yaml:"auth" json:"auth"`
 }
 
-type CloudDelivery struct {
-	PeerRef       string `yaml:"peerRef,omitempty" json:"peerRef,omitempty"`
-	Mode          string `yaml:"mode" json:"mode" jsonschema:"enum=route"`
-	TargetAddress string `yaml:"targetAddress,omitempty" json:"targetAddress,omitempty"`
+type ProviderAuth struct {
+	Mode    string `yaml:"mode" json:"mode" jsonschema:"enum=external-command"`
+	Command string `yaml:"command,omitempty" json:"command,omitempty"`
+}
+
+type RemoteAddressClaimSpec struct {
+	DomainRef string          `yaml:"domainRef" json:"domainRef"`
+	Address   string          `yaml:"address" json:"address"`
+	OwnerSide string          `yaml:"ownerSide" json:"ownerSide" jsonschema:"enum=cloud,enum=onprem"`
+	Capture   AddressCapture  `yaml:"capture" json:"capture"`
+	Delivery  AddressDelivery `yaml:"delivery" json:"delivery"`
+}
+
+type AddressCapture struct {
+	Type               string `yaml:"type" json:"type" jsonschema:"enum=provider-secondary-ip,enum=proxy-arp"`
+	ProviderRef        string `yaml:"providerRef,omitempty" json:"providerRef,omitempty"`
+	ProviderMode       string `yaml:"providerMode,omitempty" json:"providerMode,omitempty"`
+	NICRef             string `yaml:"nicRef,omitempty" json:"nicRef,omitempty"`
+	ConfigureOSAddress bool   `yaml:"configureOSAddress,omitempty" json:"configureOSAddress,omitempty"`
+	Interface          string `yaml:"interface,omitempty" json:"interface,omitempty"`
+	GratuitousARP      bool   `yaml:"gratuitousARP,omitempty" json:"gratuitousARP,omitempty"`
+}
+
+type AddressDelivery struct {
+	PeerRef         string `yaml:"peerRef" json:"peerRef"`
+	Mode            string `yaml:"mode" json:"mode" jsonschema:"enum=route"`
+	TunnelInterface string `yaml:"tunnelInterface,omitempty" json:"tunnelInterface,omitempty"`
 }
 
 type HealthCheckSpec struct {
@@ -1823,8 +1848,16 @@ func (r Resource) HybridRouteSpec() (HybridRouteSpec, error) {
 	return specAs[HybridRouteSpec](r)
 }
 
-func (r Resource) CloudAddressClaimSpec() (CloudAddressClaimSpec, error) {
-	return specAs[CloudAddressClaimSpec](r)
+func (r Resource) AddressMobilityDomainSpec() (AddressMobilityDomainSpec, error) {
+	return specAs[AddressMobilityDomainSpec](r)
+}
+
+func (r Resource) CloudProviderProfileSpec() (CloudProviderProfileSpec, error) {
+	return specAs[CloudProviderProfileSpec](r)
+}
+
+func (r Resource) RemoteAddressClaimSpec() (RemoteAddressClaimSpec, error) {
+	return specAs[RemoteAddressClaimSpec](r)
 }
 
 func (r Resource) HealthCheckSpec() (HealthCheckSpec, error) {

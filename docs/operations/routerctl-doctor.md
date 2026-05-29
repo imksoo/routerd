@@ -46,7 +46,7 @@ Per-call options reuse the `diagnose` flag set: `--config`, `--state-file`,
 | `mgmt` | Management interface presence (best-effort from `ManagementAccess` or `FirewallZone role=mgmt`); WebConsole binding (FAIL/WARN on `0.0.0.0` / `::`). |
 | `reconcile` | Per-controller reconcile error history from the read-only status socket. `--since <duration>` bounds the window. WARN at ≥1 error in the window, FAIL at ≥10; up to 5 sample entries are shown in the detail. |
 | `runtime` | routerd's own heap / goroutine / fd footprint from the read-only status socket: `heapAlloc`, `heapObjects`, `numGoroutine`, `numGC`, `openFds`/`maxFds`. WARN when `numGoroutine` exceeds 10000 or open fds reach ≥80% of `RLIMIT_NOFILE`. Observational — never FAILs. |
-| `hybrid` | `HybridRoute` / `OverlayPeer` references, default-route safety, MTU estimate, optional `HealthCheck` status, and read-only route-table observation (`ip -4 route show <prefix>`). |
+| `hybrid` | `HybridRoute` / `OverlayPeer` references, Selective Address Mobility config references, default-route safety, MTU estimate, optional `HealthCheck` status, and read-only route-table observation (`ip -4 route show <prefix>`). Remote address capture dataplane checks are not implemented in the MVP. |
 
 Each check returns one of `pass`, `warn`, `fail`, or `skip` (the resource
 or signal is not present on this router).

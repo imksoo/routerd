@@ -86,40 +86,139 @@ func TestValidateHybridFailures(t *testing.T) {
 			want: "spec.peerRef references missing OverlayPeer",
 		},
 		{
-			name: "cloud claim missing providerRef",
+			name: "address mobility domain full l2 rejected",
 			mutate: func(router *api.Router) {
-				spec := router.Spec.Resources[4].Spec.(api.CloudAddressClaimSpec)
-				spec.ProviderRef = ""
+				spec := router.Spec.Resources[4].Spec.(api.AddressMobilityDomainSpec)
+				spec.Mode = "full-l2"
 				router.Spec.Resources[4].Spec = spec
 			},
-			want: "spec.providerRef is required",
+			want: "full L2 extension is not supported; routerd implements Selective Address Mobility",
 		},
 		{
-			name: "cloud claim bad address",
+			name: "address mobility domain ipv6 rejected",
 			mutate: func(router *api.Router) {
-				spec := router.Spec.Resources[4].Spec.(api.CloudAddressClaimSpec)
-				spec.Address = "not-an-ip"
+				spec := router.Spec.Resources[4].Spec.(api.AddressMobilityDomainSpec)
+				spec.Prefix = "2001:db8::/64"
 				router.Spec.Resources[4].Spec = spec
 			},
-			want: "spec.address: must be an IP address or CIDR",
+			want: "spec.prefix: must be an IPv4 CIDR",
 		},
 		{
-			name: "cloud claim unknown attachment type",
+			name: "cloud provider profile unknown provider",
 			mutate: func(router *api.Router) {
-				spec := router.Spec.Resources[4].Spec.(api.CloudAddressClaimSpec)
-				spec.CloudAttachment.Type = "primary-private-ip"
-				router.Spec.Resources[4].Spec = spec
+				spec := router.Spec.Resources[5].Spec.(api.CloudProviderProfileSpec)
+				spec.Provider = "do"
+				router.Spec.Resources[5].Spec = spec
 			},
-			want: "spec.cloudAttachment.type must be secondary-private-ip",
+			want: "spec.provider must be azure, aws, oci, or gcp",
 		},
 		{
-			name: "cloud claim bad delivery mode",
+			name: "cloud provider profile empty capabilities",
 			mutate: func(router *api.Router) {
-				spec := router.Spec.Resources[4].Spec.(api.CloudAddressClaimSpec)
+				spec := router.Spec.Resources[5].Spec.(api.CloudProviderProfileSpec)
+				spec.Capabilities = nil
+				router.Spec.Resources[5].Spec = spec
+			},
+			want: "spec.capabilities is required",
+		},
+		{
+			name: "cloud provider profile external command required",
+			mutate: func(router *api.Router) {
+				spec := router.Spec.Resources[5].Spec.(api.CloudProviderProfileSpec)
+				spec.Auth.Command = ""
+				router.Spec.Resources[5].Spec = spec
+			},
+			want: "spec.auth.command is required",
+		},
+		{
+			name: "remote claim missing domainRef",
+			mutate: func(router *api.Router) {
+				spec := router.Spec.Resources[6].Spec.(api.RemoteAddressClaimSpec)
+				spec.DomainRef = ""
+				router.Spec.Resources[6].Spec = spec
+			},
+			want: "spec.domainRef is required",
+		},
+		{
+			name: "remote claim address must be /32",
+			mutate: func(router *api.Router) {
+				spec := router.Spec.Resources[6].Spec.(api.RemoteAddressClaimSpec)
+				spec.Address = "10.0.1.0/24"
+				router.Spec.Resources[6].Spec = spec
+			},
+			want: "spec.address: must be an IPv4 /32 CIDR",
+		},
+		{
+			name: "remote claim unsupported capture type",
+			mutate: func(router *api.Router) {
+				spec := router.Spec.Resources[6].Spec.(api.RemoteAddressClaimSpec)
+				spec.Capture.Type = "garp"
+				router.Spec.Resources[6].Spec = spec
+			},
+			want: "reserved/not implemented in MVP",
+		},
+		{
+			name: "remote claim provider capture missing providerRef",
+			mutate: func(router *api.Router) {
+				spec := router.Spec.Resources[6].Spec.(api.RemoteAddressClaimSpec)
+				spec.Capture.ProviderRef = ""
+				router.Spec.Resources[6].Spec = spec
+			},
+			want: "spec.capture.providerRef is required",
+		},
+		{
+			name: "remote claim provider capture missing providerMode",
+			mutate: func(router *api.Router) {
+				spec := router.Spec.Resources[6].Spec.(api.RemoteAddressClaimSpec)
+				spec.Capture.ProviderMode = ""
+				router.Spec.Resources[6].Spec = spec
+			},
+			want: "spec.capture.providerMode is required",
+		},
+		{
+			name: "remote claim provider capture missing nicRef",
+			mutate: func(router *api.Router) {
+				spec := router.Spec.Resources[6].Spec.(api.RemoteAddressClaimSpec)
+				spec.Capture.NICRef = ""
+				router.Spec.Resources[6].Spec = spec
+			},
+			want: "spec.capture.nicRef is required",
+		},
+		{
+			name: "remote claim proxy arp missing interface",
+			mutate: func(router *api.Router) {
+				spec := router.Spec.Resources[6].Spec.(api.RemoteAddressClaimSpec)
+				spec.Capture = api.AddressCapture{Type: "proxy-arp"}
+				router.Spec.Resources[6].Spec = spec
+			},
+			want: "spec.capture.interface is required",
+		},
+		{
+			name: "remote claim bad delivery mode",
+			mutate: func(router *api.Router) {
+				spec := router.Spec.Resources[6].Spec.(api.RemoteAddressClaimSpec)
 				spec.Delivery.Mode = "attach"
-				router.Spec.Resources[4].Spec = spec
+				router.Spec.Resources[6].Spec = spec
 			},
 			want: "spec.delivery.mode must be route",
+		},
+		{
+			name: "remote claim unresolved domain",
+			mutate: func(router *api.Router) {
+				spec := router.Spec.Resources[6].Spec.(api.RemoteAddressClaimSpec)
+				spec.DomainRef = "missing"
+				router.Spec.Resources[6].Spec = spec
+			},
+			want: "spec.domainRef references missing AddressMobilityDomain",
+		},
+		{
+			name: "remote claim unresolved delivery peer",
+			mutate: func(router *api.Router) {
+				spec := router.Spec.Resources[6].Spec.(api.RemoteAddressClaimSpec)
+				spec.Delivery.PeerRef = "missing"
+				router.Spec.Resources[6].Spec = spec
+			},
+			want: "spec.delivery.peerRef references missing OverlayPeer",
 		},
 	}
 	for _, tt := range tests {
@@ -143,6 +242,15 @@ func TestValidateHybridWarnsForExternalWireGuardInterface(t *testing.T) {
 	}
 }
 
+func TestValidateHybridWarnsForExternalCloudProviderProfile(t *testing.T) {
+	router := validHybridRouter()
+	router.Spec.Resources = append(router.Spec.Resources[:5], router.Spec.Resources[6:]...)
+	warnings := Warnings(router)
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "assuming the provider profile is managed externally") {
+		t.Fatalf("warnings = %#v", warnings)
+	}
+}
+
 func TestHybridExampleValidates(t *testing.T) {
 	path := filepath.Join("..", "..", "examples", "hybrid-l3-wireguard.yaml")
 	if _, err := os.Stat(path); err != nil {
@@ -159,6 +267,20 @@ func TestHybridExampleValidates(t *testing.T) {
 
 func TestCloudInventoryPluginExampleValidates(t *testing.T) {
 	path := filepath.Join("..", "..", "examples", "cloud-inventory-plugin.yaml")
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("example missing: %v", err)
+	}
+	router, err := Load(path)
+	if err != nil {
+		t.Fatalf("load example: %v", err)
+	}
+	if err := Validate(router); err != nil {
+		t.Fatalf("validate example: %v", err)
+	}
+}
+
+func TestHybridAzurePVESameSubnetExampleValidates(t *testing.T) {
+	path := filepath.Join("..", "..", "examples", "hybrid-azure-pve-same-subnet.yaml")
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("example missing: %v", err)
 	}
@@ -194,17 +316,32 @@ func validHybridRouter() *api.Router {
 				Install:          api.HybridRouteInstall{Table: "main", Metric: 120},
 				HealthCheckRef:   "cloud-health",
 			}),
-			testResource(api.HybridAPIVersion, "CloudAddressClaim", "app-10-0-1-123", api.CloudAddressClaimSpec{
-				ProviderRef: "oci-prod",
-				Address:     "10.0.1.123/32",
-				CloudAttachment: api.CloudAttachment{
-					Type:   "secondary-private-ip",
-					VNICID: "ocid1.vnic.oc1..example",
+			testResource(api.HybridAPIVersion, "AddressMobilityDomain", "cloudedge-same-subnet", api.AddressMobilityDomainSpec{
+				Prefix:  "10.0.1.0/24",
+				Mode:    "selective-address",
+				PeerRef: "cloud-main",
+			}),
+			testResource(api.HybridAPIVersion, "CloudProviderProfile", "oci-prod", api.CloudProviderProfileSpec{
+				Provider:       "oci",
+				SubscriptionID: "ocid1.tenancy.oc1..example",
+				ResourceGroup:  "compartment-a",
+				Capabilities:   []string{"vnic-private-ip", "disable-source-dest-check"},
+				Auth:           api.ProviderAuth{Mode: "external-command", Command: "/usr/local/libexec/routerd/plugins/oci-auth"},
+			}),
+			testResource(api.HybridAPIVersion, "RemoteAddressClaim", "app-10-0-1-123", api.RemoteAddressClaimSpec{
+				DomainRef: "cloudedge-same-subnet",
+				Address:   "10.0.1.123/32",
+				OwnerSide: "cloud",
+				Capture: api.AddressCapture{
+					Type:         "provider-secondary-ip",
+					ProviderRef:  "oci-prod",
+					ProviderMode: "vnic-private-ip",
+					NICRef:       "ocid1.vnic.oc1..example",
 				},
-				Delivery: api.CloudDelivery{
-					PeerRef:       "cloud-main",
-					Mode:          "route",
-					TargetAddress: "169.254.100.2",
+				Delivery: api.AddressDelivery{
+					PeerRef:         "cloud-main",
+					Mode:            "route",
+					TunnelInterface: "wg-hybrid",
 				},
 			}),
 		}},

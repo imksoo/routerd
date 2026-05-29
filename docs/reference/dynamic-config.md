@@ -32,17 +32,18 @@ spec:
   digest: sha256:...
   resources:
     - apiVersion: hybrid.routerd.net/v1alpha1
-      kind: CloudAddressClaim
+      kind: RemoteAddressClaim
       metadata: { name: app-10-0-1-123 }
       spec:
+        domainRef: cloudedge-same-subnet
         address: 10.0.1.123/32
-        providerRef: oci-prod
-        cloudAttachment: { type: secondary-private-ip, vnicID: ocid1.vnic.oc1..example }
-        delivery: { peerRef: onprem-main, mode: route, targetAddress: 169.254.100.2 }
+        ownerSide: cloud
+        capture: { type: provider-secondary-ip, providerRef: oci-prod, providerMode: vnic-private-ip, nicRef: ocid1.vnic.oc1..example }
+        delivery: { peerRef: cloud-main, mode: route, tunnelInterface: wg-hybrid }
   directives:
     - op: mask
       target: { apiVersion: net.routerd.net/v1alpha1, kind: IPv4Route, name: cloud-app-static-fallback }
-      reason: "CloudAddressClaim/app-10-0-1-123 is active"
+      reason: "RemoteAddressClaim/app-10-0-1-123 is active"
 ```
 
 | Field | Meaning |

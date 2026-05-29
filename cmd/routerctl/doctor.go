@@ -176,12 +176,18 @@ func (r doctorRunner) doctorHybrid() []doctorCheck {
 	}
 	routes := selectResources(r.router.Spec.Resources, "HybridRoute", "")
 	peers := selectResources(r.router.Spec.Resources, "OverlayPeer", "")
-	if len(routes) == 0 && len(peers) == 0 {
-		return []doctorCheck{{Area: "hybrid", Name: "HybridRoute", Status: doctorSkip, Detail: "no HybridRoute or OverlayPeer resources configured"}}
+	domains := selectResources(r.router.Spec.Resources, "AddressMobilityDomain", "")
+	claims := selectResources(r.router.Spec.Resources, "RemoteAddressClaim", "")
+	if len(routes) == 0 && len(peers) == 0 && len(domains) == 0 && len(claims) == 0 {
+		return []doctorCheck{{Area: "hybrid", Name: "HybridRoute", Status: doctorSkip, Detail: "no hybrid resources configured"}}
 	}
 	peerMap := map[string]api.Resource{}
 	for _, peer := range peers {
 		peerMap[peer.Metadata.Name] = peer
+	}
+	domainMap := map[string]api.Resource{}
+	for _, domain := range domains {
+		domainMap[domain.Metadata.Name] = domain
 	}
 	wgInterfaces := map[string]bool{}
 	for _, res := range selectResources(r.router.Spec.Resources, "WireGuardInterface", "") {
@@ -220,7 +226,56 @@ func (r doctorRunner) doctorHybrid() []doctorCheck {
 		checks = append(checks, r.doctorHybridHealthCheck(route.Metadata.Name, spec.HealthCheckRef))
 		checks = append(checks, r.doctorHybridRouteInstalledChecks(route.Metadata.Name, spec.DestinationCIDRs)...)
 	}
+	for _, domain := range domains {
+		spec, err := domain.AddressMobilityDomainSpec()
+		if err != nil {
+			checks = append(checks, doctorCheck{Area: "hybrid", Name: "AddressMobilityDomain/" + domain.Metadata.Name, Status: doctorFail, Detail: err.Error(), Remedy: "fix AddressMobilityDomain spec"})
+			continue
+		}
+		if spec.PeerRef == "" {
+			checks = append(checks, doctorCheck{Area: "hybrid", Name: "AddressMobilityDomain/" + domain.Metadata.Name + " peerRef", Status: doctorSkip, Detail: "no default peerRef configured"})
+			continue
+		}
+		peerName := doctorHybridRefName(spec.PeerRef, "OverlayPeer")
+		if _, ok := peerMap[peerName]; ok {
+			checks = append(checks, doctorCheck{Area: "hybrid", Name: "AddressMobilityDomain/" + domain.Metadata.Name + " peerRef", Status: doctorPass, Detail: "OverlayPeer/" + peerName})
+		} else {
+			checks = append(checks, doctorCheck{Area: "hybrid", Name: "AddressMobilityDomain/" + domain.Metadata.Name + " peerRef", Status: doctorFail, Detail: "missing OverlayPeer/" + peerName, Remedy: "declare the OverlayPeer or update spec.peerRef"})
+		}
+	}
+	for _, claim := range claims {
+		spec, err := claim.RemoteAddressClaimSpec()
+		if err != nil {
+			checks = append(checks, doctorCheck{Area: "hybrid", Name: "RemoteAddressClaim/" + claim.Metadata.Name, Status: doctorFail, Detail: err.Error(), Remedy: "fix RemoteAddressClaim spec"})
+			continue
+		}
+		domainName := doctorHybridRefName(spec.DomainRef, "AddressMobilityDomain")
+		if _, ok := domainMap[domainName]; ok {
+			checks = append(checks, doctorCheck{Area: "hybrid", Name: "RemoteAddressClaim/" + claim.Metadata.Name + " domainRef", Status: doctorPass, Detail: "AddressMobilityDomain/" + domainName})
+		} else {
+			checks = append(checks, doctorCheck{Area: "hybrid", Name: "RemoteAddressClaim/" + claim.Metadata.Name + " domainRef", Status: doctorFail, Detail: "missing AddressMobilityDomain/" + domainName, Remedy: "declare the AddressMobilityDomain or update spec.domainRef"})
+		}
+		peerName := doctorHybridRefName(spec.Delivery.PeerRef, "OverlayPeer")
+		if _, ok := peerMap[peerName]; ok {
+			checks = append(checks, doctorCheck{Area: "hybrid", Name: "RemoteAddressClaim/" + claim.Metadata.Name + " delivery.peerRef", Status: doctorPass, Detail: "OverlayPeer/" + peerName})
+		} else {
+			checks = append(checks, doctorCheck{Area: "hybrid", Name: "RemoteAddressClaim/" + claim.Metadata.Name + " delivery.peerRef", Status: doctorFail, Detail: "missing OverlayPeer/" + peerName, Remedy: "declare the OverlayPeer or update spec.delivery.peerRef"})
+		}
+		checks = append(checks, doctorHybridCaptureTypeCheck(claim.Metadata.Name, spec.Capture.Type))
+		checks = append(checks, doctorCheck{Area: "hybrid", Name: "RemoteAddressClaim/" + claim.Metadata.Name + " dataplane", Status: doctorSkip, Detail: "live capture and /32 forwarding checks are not implemented in this MVP"})
+	}
 	return checks
+}
+
+func doctorHybridCaptureTypeCheck(name, captureType string) doctorCheck {
+	switch strings.TrimSpace(captureType) {
+	case "provider-secondary-ip", "proxy-arp":
+		return doctorCheck{Area: "hybrid", Name: "RemoteAddressClaim/" + name + " capture.type", Status: doctorPass, Detail: captureType}
+	case "static-host-route", "garp":
+		return doctorCheck{Area: "hybrid", Name: "RemoteAddressClaim/" + name + " capture.type", Status: doctorFail, Detail: captureType + " is reserved/not implemented in MVP", Remedy: "use provider-secondary-ip or proxy-arp"}
+	default:
+		return doctorCheck{Area: "hybrid", Name: "RemoteAddressClaim/" + name + " capture.type", Status: doctorFail, Detail: "unsupported capture type " + captureType, Remedy: "use provider-secondary-ip or proxy-arp"}
+	}
 }
 
 func doctorHybridDefaultRouteCheck(name string, destinations []string) doctorCheck {
