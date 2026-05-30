@@ -1,0 +1,15 @@
+apiVersion: plugin.routerd.net/v1alpha1
+kind: Plugin
+metadata:
+  name: event-to-remote-claim
+spec:
+  executable: /usr/local/libexec/routerd/plugins/event-to-remote-claim/bin/event-to-remote-claim
+  timeout: 10s
+  capabilities:
+    - observe.cloud
+    - propose.dynamicConfig
+  # Invoked by the EventSubscriptionController for matched federation events
+  # (ADR 0006, Phase 3); no interval trigger is needed.
+  triggers:
+    - type: event
+      topic: routerd.federation.subscription
