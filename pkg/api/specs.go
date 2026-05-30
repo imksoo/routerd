@@ -122,7 +122,7 @@ type PluginSpec struct {
 	Executable   string            `yaml:"executable" json:"executable"`
 	Timeout      string            `yaml:"timeout,omitempty" json:"timeout,omitempty"`
 	Env          map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
-	Capabilities []string          `yaml:"capabilities,omitempty" json:"capabilities,omitempty" jsonschema:"enum=observe.cloud,enum=propose.dynamicConfig,enum=propose.providerAction"`
+	Capabilities []string          `yaml:"capabilities,omitempty" json:"capabilities,omitempty" jsonschema:"enum=observe.cloud,enum=propose.dynamicConfig,enum=propose.providerAction,enum=execute.providerAction"`
 	Triggers     []PluginTrigger   `yaml:"triggers,omitempty" json:"triggers,omitempty"`
 	// Context is the least-privilege allowlist of config resources the plugin
 	// may read on stdin. Empty/absent = the plugin receives no configuration
@@ -1357,6 +1357,47 @@ type AddressDelivery struct {
 	TunnelInterface string `yaml:"tunnelInterface,omitempty" json:"tunnelInterface,omitempty"`
 }
 
+// ProviderActionPolicySpec gates whether routerd may execute plugin-proposed
+// provider actions (ADR 0007, Phase 5). It is EXPERIMENTAL.
+//
+// The default zero value is the safe, locked-down state: execution is disabled,
+// only dry-run is permitted, approval is required, and no provider/action is
+// allowlisted. routerd core never holds or passes provider credentials; an
+// executor plugin (capability execute.providerAction) performs the mutation in
+// its own process with its own cloud-native identity. This policy only decides
+// whether an approved action is permitted to be handed to an executor.
+type ProviderActionPolicySpec struct {
+	// Enabled must be true before any execution is permitted. The bool zero
+	// value (false) keeps execution disabled by default.
+	Enabled bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	// DryRunOnly, when nil or true, permits only dry-run; live mutation is
+	// rejected. Set explicitly to false to allow live execution (still gated by
+	// Enabled, approval, and the allowlists).
+	DryRunOnly *bool `yaml:"dryRunOnly,omitempty" json:"dryRunOnly,omitempty"`
+	// RequireApproval, when nil or true, requires an operator approval before an
+	// action is executed. Set to false only to allow policy auto-approve.
+	RequireApproval *bool `yaml:"requireApproval,omitempty" json:"requireApproval,omitempty"`
+	// AllowedProviders restricts which providers may be executed. Empty = none.
+	AllowedProviders []string `yaml:"allowedProviders,omitempty" json:"allowedProviders,omitempty"`
+	// AllowedProviderRefs optionally restricts to specific CloudProviderProfile
+	// references. Empty = no provider-ref restriction.
+	AllowedProviderRefs []string `yaml:"allowedProviderRefs,omitempty" json:"allowedProviderRefs,omitempty"`
+	// AllowedActions restricts which canonical action verbs may be executed.
+	// Empty = none.
+	AllowedActions []string `yaml:"allowedActions,omitempty" json:"allowedActions,omitempty"`
+	// AllowedCIDRs restricts execution to actions whose target.address falls
+	// within one of these CIDRs. Empty = no CIDR restriction.
+	AllowedCIDRs []string `yaml:"allowedCIDRs,omitempty" json:"allowedCIDRs,omitempty"`
+	// MaxActionsPerRun caps how many actions one execution run may perform. The
+	// zero value means 0 (no actions): the operator must set a positive bound.
+	MaxActionsPerRun int `yaml:"maxActionsPerRun,omitempty" json:"maxActionsPerRun,omitempty"`
+	// AllowUndo permits best-effort rollback. The zero value (false) disables it.
+	AllowUndo bool `yaml:"allowUndo,omitempty" json:"allowUndo,omitempty"`
+	// ExecutionWindow optionally restricts execution to a time window. It is
+	// validated leniently (free-form, cron-ish); empty = no window restriction.
+	ExecutionWindow string `yaml:"executionWindow,omitempty" json:"executionWindow,omitempty"`
+}
+
 type HealthCheckSpec struct {
 	// Enabled defaults to true; set enabled: false to keep the check disabled.
 	Enabled            *bool                 `yaml:"enabled,omitempty" json:"enabled,omitempty"`
@@ -2000,6 +2041,10 @@ func (r Resource) CloudProviderProfileSpec() (CloudProviderProfileSpec, error) {
 
 func (r Resource) RemoteAddressClaimSpec() (RemoteAddressClaimSpec, error) {
 	return specAs[RemoteAddressClaimSpec](r)
+}
+
+func (r Resource) ProviderActionPolicySpec() (ProviderActionPolicySpec, error) {
+	return specAs[ProviderActionPolicySpec](r)
 }
 
 func (r Resource) HealthCheckSpec() (HealthCheckSpec, error) {

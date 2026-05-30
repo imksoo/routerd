@@ -58,6 +58,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return dynamicCommand(args[1:], stdout, stderr)
 	case "plugin":
 		return pluginCommand(args[1:], stdout, stderr)
+	case "action":
+		return actionCommand(args[1:], stdout, stderr)
 	case "wireguard", "wg":
 		return wireGuardCommand(args[1:], stdout, stderr)
 	case "tailscale", "ts":
@@ -117,6 +119,13 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  dynamic diff [--config <path>] [--state-file <path>] [-o text|json]")
 	fmt.Fprintln(w, "  plugin list [--config <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  plugin run <name> [--dry-run] [--config <path>] [--state-file <path>] [-o table|json|yaml]")
+	fmt.Fprintln(w, "  action import [--config <path>] [--state-file <path>]")
+	fmt.Fprintln(w, "  action list [--status <s>] [--provider <p>] [--state-file <path>] [-o table|json|yaml]")
+	fmt.Fprintln(w, "  action show <id> [--state-file <path>] [-o table|json|yaml]")
+	fmt.Fprintln(w, "  action approve <id> [--by <name>] [--state-file <path>]")
+	fmt.Fprintln(w, "  action execute <id> --dry-run|--approved [--config <path>] [--state-file <path>]")
+	fmt.Fprintln(w, "  action journal [--state-file <path>] [-o table|json|yaml]")
+	fmt.Fprintln(w, "  action rollback <id> --dry-run|--approved [--config <path>] [--state-file <path>]")
 	fmt.Fprintln(w, "  wireguard list [-o table|json|yaml]")
 	fmt.Fprintln(w, "  wireguard show <interface> [-o table|json|yaml]")
 	fmt.Fprintln(w, "  tailscale peers [-o table|json|yaml] [--binary tailscale]")

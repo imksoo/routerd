@@ -202,6 +202,27 @@ CREATE TABLE IF NOT EXISTS event_subscription_runs (
   UNIQUE(subscription, event_id)
 );
 CREATE INDEX IF NOT EXISTS event_subscription_runs_sub ON event_subscription_runs(subscription, status);
+CREATE TABLE IF NOT EXISTS action_executions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  source TEXT,
+  provider TEXT NOT NULL,
+  provider_ref TEXT,
+  action TEXT NOT NULL,
+  target_json TEXT,
+  parameters_json TEXT,
+  undo_json TEXT,
+  risk_level TEXT,
+  status TEXT NOT NULL,
+  approved_by TEXT,
+  approved_at TEXT,
+  executed_at TEXT,
+  result_message TEXT,
+  error TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS action_executions_status ON action_executions(status, id);
 `); err != nil {
 		return err
 	}
@@ -221,6 +242,9 @@ CREATE INDEX IF NOT EXISTS event_subscription_runs_sub ON event_subscription_run
 		return err
 	}
 	if err := s.ensureArtifactsTable(); err != nil {
+		return err
+	}
+	if err := s.ensureActionExecutionColumns(); err != nil {
 		return err
 	}
 	return nil

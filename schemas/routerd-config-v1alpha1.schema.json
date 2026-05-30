@@ -176,7 +176,8 @@
                           "enum": [
                             "observe.cloud",
                             "propose.dynamicConfig",
-                            "propose.providerAction"
+                            "propose.providerAction",
+                            "execute.providerAction"
                           ],
                           "type": "string"
                         },
@@ -6176,6 +6177,102 @@
                       "capture",
                       "delivery"
                     ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "hybrid.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "ProviderActionPolicy",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "description": "ProviderActionPolicySpec gates whether routerd may execute plugin-proposed provider actions (ADR 0007, Phase 5).",
+                    "properties": {
+                      "allowUndo": {
+                        "description": "AllowUndo permits best-effort rollback. The zero value (false) disables it.",
+                        "type": "boolean"
+                      },
+                      "allowedActions": {
+                        "description": "AllowedActions restricts which canonical action verbs may be executed.\nEmpty = none.",
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "allowedCIDRs": {
+                        "description": "AllowedCIDRs restricts execution to actions whose target.address falls\nwithin one of these CIDRs. Empty = no CIDR restriction.",
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "allowedProviderRefs": {
+                        "description": "AllowedProviderRefs optionally restricts to specific CloudProviderProfile\nreferences. Empty = no provider-ref restriction.",
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "allowedProviders": {
+                        "description": "AllowedProviders restricts which providers may be executed. Empty = none.",
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "dryRunOnly": {
+                        "description": "DryRunOnly, when nil or true, permits only dry-run; live mutation is\nrejected. Set explicitly to false to allow live execution (still gated by\nEnabled, approval, and the allowlists).",
+                        "type": "boolean"
+                      },
+                      "enabled": {
+                        "description": "Enabled must be true before any execution is permitted. The bool zero\nvalue (false) keeps execution disabled by default.",
+                        "type": "boolean"
+                      },
+                      "executionWindow": {
+                        "description": "ExecutionWindow optionally restricts execution to a time window. It is\nvalidated leniently (free-form, cron-ish); empty = no window restriction.",
+                        "type": "string"
+                      },
+                      "maxActionsPerRun": {
+                        "description": "MaxActionsPerRun caps how many actions one execution run may perform. The\nzero value means 0 (no actions): the operator must set a positive bound.",
+                        "type": "integer"
+                      },
+                      "requireApproval": {
+                        "description": "RequireApproval, when nil or true, requires an operator approval before an\naction is executed. Set to false only to allow policy auto-approve.",
+                        "type": "boolean"
+                      }
+                    },
                     "type": "object"
                   },
                   "status": {

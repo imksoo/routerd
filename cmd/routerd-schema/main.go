@@ -329,6 +329,7 @@ func resourceUnionSchema() map[string]any {
 			resourceSchema(api.HybridAPIVersion, "AddressMobilityDomain", api.AddressMobilityDomainSpec{}),
 			resourceSchema(api.HybridAPIVersion, "CloudProviderProfile", api.CloudProviderProfileSpec{}),
 			resourceSchema(api.HybridAPIVersion, "RemoteAddressClaim", api.RemoteAddressClaimSpec{}),
+			resourceSchema(api.HybridAPIVersion, "ProviderActionPolicy", api.ProviderActionPolicySpec{}),
 			resourceSchema(api.FederationAPIVersion, "EventGroup", api.EventGroupSpec{}),
 			resourceSchema(api.FederationAPIVersion, "EventPeer", api.EventPeerSpec{}),
 			resourceSchema(api.FederationAPIVersion, "EventSubscription", api.EventSubscriptionSpec{}),
