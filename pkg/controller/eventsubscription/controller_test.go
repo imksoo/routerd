@@ -9,11 +9,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
+	routerplugin "github.com/imksoo/routerd/pkg/plugin"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -372,6 +374,173 @@ func TestReconcileDryRunNoPluginNoPart(t *testing.T) {
 	runs, _ := store.ListSubscriptionRuns("EventSubscription/claim-sub")
 	if len(runs) != 1 || runs[0].Status != "pending" {
 		t.Fatalf("want 1 pending run in dry-run, got %+v", runs)
+	}
+}
+
+// pluginResourceWithContext builds a Plugin that allowlists the given context refs.
+func pluginResourceWithContext(name, executable string, refs ...api.PluginContextResourceRef) api.Resource {
+	return api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.PluginAPIVersion, Kind: "Plugin"},
+		Metadata: api.ObjectMeta{Name: name},
+		Spec:     api.PluginSpec{Executable: executable, Context: api.PluginContextSpec{Resources: refs}},
+	}
+}
+
+// fakeRunner captures the RunOptions a reconcile would pass to the plugin and
+// returns a minimal successful PluginResult, so the test can assert the context
+// the controller built without compiling a real binary.
+func fakeRunner(captured *routerplugin.RunOptions) PluginRunner {
+	return func(_ context.Context, _ api.PluginSpec, _ string, opts routerplugin.RunOptions) (routerplugin.PluginResult, routerplugin.RunOutcome, error) {
+		*captured = opts
+		return routerplugin.PluginResult{
+			Status: routerplugin.PluginResultStatus{TTL: "10m"},
+		}, routerplugin.RunOutcome{HasExitCode: true}, nil
+	}
+}
+
+func TestReconcilePassesRedactedContextToPlugin(t *testing.T) {
+	store := mustStore(t)
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		pluginResourceWithContext("claim-plugin", "/unused",
+			api.PluginContextResourceRef{APIVersion: api.NetAPIVersion, Kind: "WireGuardInterface", Name: "wg0"}),
+		subscriptionResource("claim-plugin", api.EventSubscriptionMatch{Types: []string{"routerd.client.ipv4.observed"}}),
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardInterface"},
+			Metadata: api.ObjectMeta{Name: "wg0"},
+			Spec:     api.WireGuardInterfaceSpec{PrivateKey: "PRIVATE-SECRET-XYZ", PrivateKeyFile: "/etc/routerd/wg.key", ListenPort: 51820},
+		},
+		// A second secret-bearing resource that is NOT allowlisted: must not appear.
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPsecConnection"},
+			Metadata: api.ObjectMeta{Name: "ipsec0"},
+			Spec:     api.IPsecConnectionSpec{LocalAddress: "203.0.113.1", RemoteAddress: "198.51.100.1", PreSharedKey: "PSK-SECRET-ABC", LeftSubnet: "10.0.0.0/24", RightSubnet: "10.1.0.0/24"},
+		},
+	}}}
+	recordEvent(t, store, routerstate.EventRecord{ID: "e1", Group: "cloudedge", Type: "routerd.client.ipv4.observed", Subject: "10.88.60.9/32"})
+
+	var captured routerplugin.RunOptions
+	c := newController(t, store, router)
+	c.PluginRunner = fakeRunner(&captured)
+	if err := c.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	if len(captured.Context.Resources) != 1 {
+		t.Fatalf("want 1 context resource passed to plugin, got %d", len(captured.Context.Resources))
+	}
+	res := captured.Context.Resources[0]
+	if res.Kind != "WireGuardInterface" || res.Name != "wg0" {
+		t.Fatalf("unexpected context resource %s/%s", res.Kind, res.Name)
+	}
+	raw, _ := json.Marshal(captured.Context)
+	jsonStr := string(raw)
+	for _, secret := range []string{"PRIVATE-SECRET-XYZ", "/etc/routerd/wg.key", "PSK-SECRET-ABC", "IPsecConnection"} {
+		if strings.Contains(jsonStr, secret) {
+			t.Errorf("plugin context leaked %q: %s", secret, jsonStr)
+		}
+	}
+	if !strings.Contains(jsonStr, "51820") {
+		t.Errorf("non-secret listenPort missing from context: %s", jsonStr)
+	}
+}
+
+func TestReconcileNoContextAllowlistPassesNothing(t *testing.T) {
+	store := mustStore(t)
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		pluginResource("claim-plugin", "/unused"),
+		subscriptionResource("claim-plugin", api.EventSubscriptionMatch{Types: []string{"routerd.client.ipv4.observed"}}),
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardInterface"},
+			Metadata: api.ObjectMeta{Name: "wg0"},
+			Spec:     api.WireGuardInterfaceSpec{PrivateKey: "PRIVATE-SECRET-XYZ", ListenPort: 51820},
+		},
+	}}}
+	recordEvent(t, store, routerstate.EventRecord{ID: "e1", Group: "cloudedge", Type: "routerd.client.ipv4.observed", Subject: "10.88.60.9/32"})
+
+	var captured routerplugin.RunOptions
+	c := newController(t, store, router)
+	c.PluginRunner = fakeRunner(&captured)
+	if err := c.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if len(captured.Context.Resources) != 0 {
+		t.Fatalf("default-deny: want no context, got %d resources", len(captured.Context.Resources))
+	}
+}
+
+// runnerWithActionPlans returns a successful PluginResult carrying one resource
+// and one display-only ActionPlan, so the test can assert the EventSubscription
+// path preserves action plans on the stored DynamicConfigPart for review.
+func runnerWithActionPlans() PluginRunner {
+	return func(_ context.Context, _ api.PluginSpec, _ string, _ routerplugin.RunOptions) (routerplugin.PluginResult, routerplugin.RunOutcome, error) {
+		return routerplugin.PluginResult{
+			TypeMeta: api.TypeMeta{APIVersion: routerplugin.PluginAPIVersion, Kind: "PluginResult"},
+			Metadata: api.ObjectMeta{Name: "fake"},
+			Status: routerplugin.PluginResultStatus{
+				TTL: "10m",
+				Resources: []api.Resource{{
+					TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "RemoteAddressClaim"},
+					Metadata: api.ObjectMeta{Name: "claim-e1"},
+					Spec: api.RemoteAddressClaimSpec{
+						DomainRef: "amd-1",
+						Address:   "10.88.60.9/32",
+						OwnerSide: "cloud",
+						Capture:   api.AddressCapture{Type: "proxy-arp", Interface: "eth0"},
+						Delivery:  api.AddressDelivery{Mode: "route", PeerRef: "peer-1"},
+					},
+				}},
+				ActionPlans: []routerplugin.ActionPlan{{
+					Name:            "claim-secondary",
+					Provider:        "oci",
+					Action:          routerplugin.ActionAssignSecondaryIP,
+					Mode:            routerplugin.ActionModeDryRun,
+					RiskLevel:       "low",
+					Target:          map[string]string{"address": "10.88.60.9", "nicRef": "vnic-abc"},
+					ExpectedEffects: []string{"secondary IP attached"},
+				}},
+			},
+		}, routerplugin.RunOutcome{HasExitCode: true}, nil
+	}
+}
+
+func TestReconcilePreservesActionPlansOnStoredPart(t *testing.T) {
+	store := mustStore(t)
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		pluginResource("claim-plugin", "/unused"),
+		subscriptionResource("claim-plugin", api.EventSubscriptionMatch{Types: []string{"routerd.client.ipv4.observed"}}),
+	}}}
+	recordEvent(t, store, routerstate.EventRecord{ID: "e1", Group: "cloudedge", Type: "routerd.client.ipv4.observed", Subject: "10.88.60.9/32"})
+
+	c := newController(t, store, router)
+	c.PluginRunner = runnerWithActionPlans()
+	if err := c.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	parts, err := store.ListDynamicConfigParts()
+	if err != nil {
+		t.Fatalf("list parts: %v", err)
+	}
+	if len(parts) != 1 {
+		t.Fatalf("want 1 part, got %d", len(parts))
+	}
+	if parts[0].ActionPlansJSON == "" {
+		t.Fatalf("stored part lost action plans (empty actionPlansJson)")
+	}
+	var plans []dynamicconfig.ActionPlan
+	if err := json.Unmarshal([]byte(parts[0].ActionPlansJSON), &plans); err != nil {
+		t.Fatalf("decode action plans: %v", err)
+	}
+	if len(plans) != 1 || plans[0].Name != "claim-secondary" || plans[0].Action != routerplugin.ActionAssignSecondaryIP {
+		t.Fatalf("unexpected action plans: %+v", plans)
+	}
+	if plans[0].Mode != routerplugin.ActionModeDryRun {
+		t.Fatalf("action plan mode = %q, want dry-run", plans[0].Mode)
+	}
+	// Resources must still be present and unaffected (action plans are not resources).
+	part := decodePart(t, parts[0])
+	if len(part.Spec.Resources) != 1 || part.Spec.Resources[0].Kind != "RemoteAddressClaim" {
+		t.Fatalf("resources changed by action plans: %+v", part.Spec.Resources)
 	}
 }
 

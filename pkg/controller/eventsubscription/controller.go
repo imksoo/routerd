@@ -204,10 +204,22 @@ func (c Controller) reconcileSubscription(ctx context.Context, resource api.Reso
 		})
 	}
 
+	// Build the least-privilege plugin context (Phase 4.0): only the resources
+	// the Plugin allowlisted via spec.context.resources, with secrets always
+	// redacted. No allowlist -> empty context (default-deny, no config passed).
+	pluginContext, err := routerplugin.BuildPluginContext(pluginSpec.Context.Resources, c.Router.Spec.Resources)
+	if err != nil {
+		c.failBatch(batch, subKey, err.Error())
+		c.completeRun(runID, routerplugin.RunOutcome{}, "failed", err.Error())
+		c.saveStatus(subName, "Degraded", err.Error(), len(batch))
+		return nil
+	}
+
 	runOpts := routerplugin.RunOptions{
 		Now:     now,
 		Trigger: routerplugin.TriggerRef{Type: triggerType, Topic: subscriptionTopic(subName)},
 		Events:  matched,
+		Context: pluginContext,
 	}
 
 	result, outcome, runErr := c.runner()(ctx, pluginSpec, pluginName, runOpts)
@@ -450,14 +462,25 @@ func dynamicPartRecord(part dynamicconfig.DynamicConfigPart) (routerstate.Dynami
 	if err != nil {
 		return routerstate.DynamicConfigPartRecord{}, err
 	}
+	var actionPlansJSON string
+	if len(part.Spec.ActionPlans) > 0 {
+		// Preserve the plugin's display-only ActionPlans so federation-triggered
+		// runs stay reviewable. routerd never executes them.
+		data, err := json.Marshal(part.Spec.ActionPlans)
+		if err != nil {
+			return routerstate.DynamicConfigPartRecord{}, err
+		}
+		actionPlansJSON = string(data)
+	}
 	return routerstate.DynamicConfigPartRecord{
-		Source:         part.Spec.Source,
-		Generation:     part.Spec.Generation,
-		ObservedAt:     part.Spec.ObservedAt,
-		ExpiresAt:      part.Spec.ExpiresAt,
-		Digest:         part.Spec.Digest,
-		ResourcesJSON:  string(resources),
-		DirectivesJSON: string(directives),
-		Status:         "active",
+		Source:          part.Spec.Source,
+		Generation:      part.Spec.Generation,
+		ObservedAt:      part.Spec.ObservedAt,
+		ExpiresAt:       part.Spec.ExpiresAt,
+		Digest:          part.Spec.Digest,
+		ResourcesJSON:   string(resources),
+		DirectivesJSON:  string(directives),
+		ActionPlansJSON: actionPlansJSON,
+		Status:          "active",
 	}, nil
 }

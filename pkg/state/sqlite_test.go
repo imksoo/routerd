@@ -395,6 +395,74 @@ func TestSQLiteStoreDynamicConfigParts(t *testing.T) {
 	}
 }
 
+func TestSQLiteStoreDynamicConfigPartActionPlansRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "routerd.db")
+	store, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatalf("open sqlite store: %v", err)
+	}
+	defer store.Close()
+	now := time.Date(2026, 5, 29, 12, 0, 0, 0, time.UTC)
+	store.now = func() time.Time { return now }
+
+	const actionPlansJSON = `[{"name":"claim-secondary","provider":"oci","action":"assign-secondary-ip","mode":"dry-run","riskLevel":"low","target":{"address":"10.0.0.5","nicRef":"vnic-abc"},"expectedEffects":["secondary IP attached"]}]`
+	rec := DynamicConfigPartRecord{
+		Source:          "EventSubscription/sam/abc123",
+		Generation:      1,
+		ObservedAt:      now.Add(-time.Minute),
+		ExpiresAt:       now.Add(time.Hour),
+		Digest:          "sha256:plans",
+		ResourcesJSON:   `[]`,
+		DirectivesJSON:  `[]`,
+		ActionPlansJSON: actionPlansJSON,
+		Status:          "active",
+	}
+	if err := store.UpsertDynamicConfigPart(rec); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	parts, err := store.GetDynamicConfigPartsBySource("EventSubscription/sam/abc123")
+	if err != nil {
+		t.Fatalf("get by source: %v", err)
+	}
+	if len(parts) != 1 {
+		t.Fatalf("parts len = %d, want 1", len(parts))
+	}
+	if parts[0].ActionPlansJSON != actionPlansJSON {
+		t.Fatalf("actionPlansJSON round-trip = %q, want %q", parts[0].ActionPlansJSON, actionPlansJSON)
+	}
+
+	listed, err := store.ListDynamicConfigParts()
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(listed) != 1 || listed[0].ActionPlansJSON != actionPlansJSON {
+		t.Fatalf("list actionPlansJSON = %+v", listed)
+	}
+
+	// A record with no action plans must round-trip as empty (column NULL).
+	empty := DynamicConfigPartRecord{
+		Source:         "EventSubscription/sam/empty",
+		Generation:     1,
+		ObservedAt:     now.Add(-time.Minute),
+		ExpiresAt:      now.Add(time.Hour),
+		Digest:         "sha256:none",
+		ResourcesJSON:  `[]`,
+		DirectivesJSON: `[]`,
+		Status:         "active",
+	}
+	if err := store.UpsertDynamicConfigPart(empty); err != nil {
+		t.Fatalf("upsert empty: %v", err)
+	}
+	emptyParts, err := store.GetDynamicConfigPartsBySource("EventSubscription/sam/empty")
+	if err != nil {
+		t.Fatalf("get empty by source: %v", err)
+	}
+	if len(emptyParts) != 1 || emptyParts[0].ActionPlansJSON != "" {
+		t.Fatalf("empty actionPlansJSON = %q, want empty", emptyParts[0].ActionPlansJSON)
+	}
+}
+
 func TestSQLiteStorePluginRunsListNewestFirstAndFilter(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "routerd.db")
 	store, err := OpenSQLite(path)

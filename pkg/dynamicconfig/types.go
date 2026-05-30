@@ -34,14 +34,59 @@ type DynamicConfigPart struct {
 
 // DynamicConfigPartSpec describes the resources and directives observed from a
 // dynamic source at one generation.
+//
+// ActionPlans are advisory, display-only provider operations a plugin proposed.
+// routerd NEVER executes an ActionPlan and NEVER invokes a provider CLI/SDK
+// from these: they are persisted purely so EventSubscription-driven plugin runs
+// stay reviewable. They are NOT resources and are not merged into the effective
+// config.
 type DynamicConfigPartSpec struct {
-	Source     string                   `yaml:"source" json:"source"`
-	Generation int64                    `yaml:"generation" json:"generation"`
-	ObservedAt time.Time                `yaml:"observedAt" json:"observedAt"`
-	ExpiresAt  time.Time                `yaml:"expiresAt" json:"expiresAt"`
-	Digest     string                   `yaml:"digest" json:"digest"`
-	Resources  []api.Resource           `yaml:"resources" json:"resources"`
-	Directives []DynamicConfigDirective `yaml:"directives" json:"directives"`
+	Source      string                   `yaml:"source" json:"source"`
+	Generation  int64                    `yaml:"generation" json:"generation"`
+	ObservedAt  time.Time                `yaml:"observedAt" json:"observedAt"`
+	ExpiresAt   time.Time                `yaml:"expiresAt" json:"expiresAt"`
+	Digest      string                   `yaml:"digest" json:"digest"`
+	Resources   []api.Resource           `yaml:"resources" json:"resources"`
+	Directives  []DynamicConfigDirective `yaml:"directives" json:"directives"`
+	ActionPlans []ActionPlan             `yaml:"actionPlans,omitempty" json:"actionPlans,omitempty"`
+}
+
+// ActionPlan is a plugin-proposed provider operation recorded for dry-run and
+// display only. routerd never executes an ActionPlan and never invokes a
+// provider CLI/SDK; it is data the operator reviews.
+//
+// It is defined here (the lower-level package) rather than in pkg/plugin so
+// DynamicConfigPartSpec can carry it without an import cycle (pkg/plugin imports
+// pkg/dynamicconfig, not the reverse). pkg/plugin aliases these types.
+type ActionPlan struct {
+	Name            string            `yaml:"name" json:"name"`
+	Provider        string            `yaml:"provider" json:"provider"`
+	Action          string            `yaml:"action" json:"action"`
+	Target          map[string]string `yaml:"target" json:"target"`
+	ProviderRef     string            `yaml:"providerRef,omitempty" json:"providerRef,omitempty"`
+	Mode            string            `yaml:"mode,omitempty" json:"mode,omitempty"`
+	Description     string            `yaml:"description,omitempty" json:"description,omitempty"`
+	RiskLevel       string            `yaml:"riskLevel,omitempty" json:"riskLevel,omitempty"`
+	IdempotencyKey  string            `yaml:"idempotencyKey,omitempty" json:"idempotencyKey,omitempty"`
+	Parameters      map[string]string `yaml:"parameters,omitempty" json:"parameters,omitempty"`
+	Preconditions   []ActionCheck     `yaml:"preconditions,omitempty" json:"preconditions,omitempty"`
+	ExpectedEffects []string          `yaml:"expectedEffects,omitempty" json:"expectedEffects,omitempty"`
+	Undo            *ActionUndo       `yaml:"undo,omitempty" json:"undo,omitempty"`
+}
+
+// ActionCheck is a display-only precondition a plugin attached to an ActionPlan.
+// routerd does not evaluate it.
+type ActionCheck struct {
+	Name   string            `yaml:"name" json:"name"`
+	Expect string            `yaml:"expect,omitempty" json:"expect,omitempty"`
+	Detail string            `yaml:"detail,omitempty" json:"detail,omitempty"`
+	Target map[string]string `yaml:"target,omitempty" json:"target,omitempty"`
+}
+
+// ActionUndo describes the inverse provider operation for display only.
+type ActionUndo struct {
+	Action     string            `yaml:"action" json:"action"`
+	Parameters map[string]string `yaml:"parameters,omitempty" json:"parameters,omitempty"`
 }
 
 // IsExpired reports whether the part's expiresAt timestamp is at or before now.

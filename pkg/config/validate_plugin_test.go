@@ -14,8 +14,11 @@ func TestValidatePluginResources(t *testing.T) {
 		testPluginResource(api.PluginSpec{
 			Executable:   "/usr/local/libexec/routerd/plugins/cloud/bin/cloud",
 			Timeout:      "10s",
-			Capabilities: []string{"observe.cloud", "propose.dynamicConfig"},
+			Capabilities: []string{"observe.cloud", "propose.dynamicConfig", "propose.providerAction"},
 			Triggers:     []api.PluginTrigger{{Type: "interval", Every: "5m"}, {Type: "event", Topic: "routerd.cloud.refresh"}},
+			Context: api.PluginContextSpec{Resources: []api.PluginContextResourceRef{
+				{APIVersion: api.HybridAPIVersion, Kind: "CloudProviderProfile", Name: "azure-1"},
+			}},
 		}),
 		testDynamicConfigSourceResource(api.DynamicConfigSourceSpec{
 			PluginRef: "cloud",
@@ -60,7 +63,22 @@ func TestValidatePluginRejectsInvalidResources(t *testing.T) {
 		{
 			name: "plugin unknown capability",
 			res:  testPluginResource(api.PluginSpec{Executable: "/x", Capabilities: []string{"mutate.cloud"}}),
-			want: "spec.capabilities[0] must be observe.cloud or propose.dynamicConfig",
+			want: "spec.capabilities[0] must be observe.cloud, propose.dynamicConfig, or propose.providerAction",
+		},
+		{
+			name: "plugin context missing apiVersion",
+			res:  testPluginResource(api.PluginSpec{Executable: "/x", Context: api.PluginContextSpec{Resources: []api.PluginContextResourceRef{{Kind: "CloudProviderProfile", Name: "azure-1"}}}}),
+			want: "spec.context.resources[0].apiVersion is required",
+		},
+		{
+			name: "plugin context missing kind",
+			res:  testPluginResource(api.PluginSpec{Executable: "/x", Context: api.PluginContextSpec{Resources: []api.PluginContextResourceRef{{APIVersion: api.HybridAPIVersion, Name: "azure-1"}}}}),
+			want: "spec.context.resources[0].kind is required",
+		},
+		{
+			name: "plugin context missing name",
+			res:  testPluginResource(api.PluginSpec{Executable: "/x", Context: api.PluginContextSpec{Resources: []api.PluginContextResourceRef{{APIVersion: api.HybridAPIVersion, Kind: "CloudProviderProfile"}}}}),
+			want: "spec.context.resources[0].name is required",
 		},
 		{
 			name: "plugin unknown trigger",

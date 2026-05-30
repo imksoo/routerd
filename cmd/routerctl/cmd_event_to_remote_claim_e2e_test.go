@@ -95,10 +95,16 @@ func TestEventToRemoteClaimEndToEnd(t *testing.T) {
 		}},
 	}
 
+	// Use a now anchored to real wall-clock: the controller stamps the
+	// DynamicConfigPart ExpiresAt = now + plugin TTL (30m), but `dynamic render`
+	// below filters expired parts by the REAL time.Now(). A hardcoded historical
+	// now made the part expire before render ran (flaky once wall-clock passed
+	// now+TTL). Anchoring to time.Now keeps the part active for the render call.
+	now := time.Now().UTC()
 	ctrl := eventsubscription.Controller{
 		Router: router,
 		Store:  store,
-		Now:    func() time.Time { return time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC) },
+		Now:    func() time.Time { return now },
 	}
 	if err := ctrl.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)

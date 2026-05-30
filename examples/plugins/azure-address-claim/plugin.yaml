@@ -1,0 +1,22 @@
+apiVersion: plugin.routerd.net/v1alpha1
+kind: Plugin
+metadata:
+  name: azure-address-claim
+spec:
+  executable: /usr/local/libexec/routerd/plugins/azure-address-claim/bin/azure-address-claim
+  timeout: 10s
+  capabilities:
+    - observe.cloud
+    - propose.dynamicConfig
+  # Least-privilege, secret-redacted context the plugin may read (Phase 4.0).
+  context:
+    resources:
+      - apiVersion: hybrid.routerd.net/v1alpha1
+        kind: CloudProviderProfile
+      - apiVersion: hybrid.routerd.net/v1alpha1
+        kind: AddressMobilityDomain
+      - apiVersion: hybrid.routerd.net/v1alpha1
+        kind: OverlayPeer
+  triggers:
+    - type: event
+      topic: routerd.federation.subscription

@@ -36,6 +36,10 @@ type RunOptions struct {
 	// Events are the matched federation events delivered to the plugin on
 	// stdin (EventSubscriptionController). Empty for non-subscription triggers.
 	Events []PluginMatchedEvent
+	// Context is the least-privilege, secret-redacted config the plugin may
+	// read (Phase 4.0). The caller builds it via BuildPluginContext from the
+	// Plugin's spec.context allowlist; empty = default-deny (no config passed).
+	Context PluginContext
 }
 
 type RunOutcome struct {
@@ -74,6 +78,7 @@ func Run(ctx context.Context, spec api.PluginSpec, name string, opts RunOptions)
 			PreviousDynamicGeneration: opts.PreviousGeneration,
 			Now:                       now,
 			Events:                    opts.Events,
+			Context:                   opts.Context,
 		},
 	}
 	stdin, err := json.Marshal(request)

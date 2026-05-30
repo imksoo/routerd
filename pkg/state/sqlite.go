@@ -141,6 +141,7 @@ CREATE TABLE IF NOT EXISTS dynamic_config_parts (
   digest TEXT NOT NULL,
   resources_json TEXT,
   directives_json TEXT,
+  actionplans_json TEXT,
   status TEXT NOT NULL,
   error TEXT,
   created_at TEXT NOT NULL,
@@ -216,8 +217,34 @@ CREATE INDEX IF NOT EXISTS event_subscription_runs_sub ON event_subscription_run
 	if err := s.ensureGenerationColumns(); err != nil {
 		return err
 	}
+	if err := s.ensureDynamicConfigPartColumns(); err != nil {
+		return err
+	}
 	if err := s.ensureArtifactsTable(); err != nil {
 		return err
+	}
+	return nil
+}
+
+// ensureDynamicConfigPartColumns additively adds columns introduced after the
+// dynamic_config_parts table shipped, so existing databases upgrade in place.
+func (s *SQLiteStore) ensureDynamicConfigPartColumns() error {
+	columns := map[string]string{
+		// actionplans_json persists plugin-proposed, display-only ActionPlans so
+		// EventSubscription-driven runs stay reviewable. routerd never executes
+		// them; missing/empty column simply means no action plans.
+		"actionplans_json": "TEXT",
+	}
+	for column, typ := range columns {
+		hasColumn, err := s.tableHasColumn("dynamic_config_parts", column)
+		if err != nil {
+			return err
+		}
+		if !hasColumn {
+			if _, err := s.db.Exec(`ALTER TABLE dynamic_config_parts ADD COLUMN ` + column + ` ` + typ); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
@@ -631,6 +658,9 @@ type DynamicConfigPartRecord struct {
 	Digest         string    `json:"digest" yaml:"digest"`
 	ResourcesJSON  string    `json:"resourcesJson,omitempty" yaml:"resourcesJson,omitempty"`
 	DirectivesJSON string    `json:"directivesJson,omitempty" yaml:"directivesJson,omitempty"`
+	// ActionPlansJSON holds the JSON-encoded display-only ActionPlans. routerd
+	// never executes these; empty means none.
+	ActionPlansJSON string `json:"actionPlansJson,omitempty" yaml:"actionPlansJson,omitempty"`
 	// Status is the writer-provided state stored in SQLite. Readers should call
 	// EffectiveStatus so active records age into expired without a rewrite.
 	Status    string    `json:"status" yaml:"status"`
@@ -677,10 +707,10 @@ func (s *SQLiteStore) UpsertDynamicConfigPart(part DynamicConfigPartRecord) erro
 	if part.UpdatedAt.IsZero() {
 		part.UpdatedAt = now
 	}
-	_, err := s.db.Exec(`INSERT INTO dynamic_config_parts(source,generation,observed_at,expires_at,digest,resources_json,directives_json,status,error,created_at,updated_at)
-VALUES(?,?,?,?,?,?,?,?,?,?,?)
-ON CONFLICT(source,generation) DO UPDATE SET observed_at=excluded.observed_at,expires_at=excluded.expires_at,digest=excluded.digest,resources_json=excluded.resources_json,directives_json=excluded.directives_json,status=excluded.status,error=excluded.error,updated_at=excluded.updated_at`,
-		part.Source, part.Generation, formatStateTime(part.ObservedAt), formatStateTime(part.ExpiresAt), part.Digest, nullableString(part.ResourcesJSON), nullableString(part.DirectivesJSON), part.Status, nullableString(part.Error), formatStateTime(part.CreatedAt), formatStateTime(part.UpdatedAt))
+	_, err := s.db.Exec(`INSERT INTO dynamic_config_parts(source,generation,observed_at,expires_at,digest,resources_json,directives_json,actionplans_json,status,error,created_at,updated_at)
+VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+ON CONFLICT(source,generation) DO UPDATE SET observed_at=excluded.observed_at,expires_at=excluded.expires_at,digest=excluded.digest,resources_json=excluded.resources_json,directives_json=excluded.directives_json,actionplans_json=excluded.actionplans_json,status=excluded.status,error=excluded.error,updated_at=excluded.updated_at`,
+		part.Source, part.Generation, formatStateTime(part.ObservedAt), formatStateTime(part.ExpiresAt), part.Digest, nullableString(part.ResourcesJSON), nullableString(part.DirectivesJSON), nullableString(part.ActionPlansJSON), part.Status, nullableString(part.Error), formatStateTime(part.CreatedAt), formatStateTime(part.UpdatedAt))
 	return err
 }
 
@@ -690,7 +720,7 @@ func (s *SQLiteStore) ListDynamicConfigParts() ([]DynamicConfigPartRecord, error
 	if s.closed {
 		return []DynamicConfigPartRecord{}, nil
 	}
-	rows, err := s.db.Query(`SELECT id,source,generation,observed_at,expires_at,digest,coalesce(resources_json,''),coalesce(directives_json,''),status,coalesce(error,''),created_at,updated_at FROM dynamic_config_parts ORDER BY observed_at DESC,generation DESC,id DESC`)
+	rows, err := s.db.Query(`SELECT id,source,generation,observed_at,expires_at,digest,coalesce(resources_json,''),coalesce(directives_json,''),coalesce(actionplans_json,''),status,coalesce(error,''),created_at,updated_at FROM dynamic_config_parts ORDER BY observed_at DESC,generation DESC,id DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -704,7 +734,7 @@ func (s *SQLiteStore) GetDynamicConfigPartsBySource(source string) ([]DynamicCon
 	if s.closed {
 		return []DynamicConfigPartRecord{}, nil
 	}
-	rows, err := s.db.Query(`SELECT id,source,generation,observed_at,expires_at,digest,coalesce(resources_json,''),coalesce(directives_json,''),status,coalesce(error,''),created_at,updated_at FROM dynamic_config_parts WHERE source = ? ORDER BY generation DESC,observed_at DESC,id DESC`, source)
+	rows, err := s.db.Query(`SELECT id,source,generation,observed_at,expires_at,digest,coalesce(resources_json,''),coalesce(directives_json,''),coalesce(actionplans_json,''),status,coalesce(error,''),created_at,updated_at FROM dynamic_config_parts WHERE source = ? ORDER BY generation DESC,observed_at DESC,id DESC`, source)
 	if err != nil {
 		return nil, err
 	}
@@ -717,7 +747,7 @@ func scanDynamicConfigPartRecords(rows *sql.Rows) ([]DynamicConfigPartRecord, er
 	for rows.Next() {
 		var rec DynamicConfigPartRecord
 		var observed, expires, created, updated string
-		if err := rows.Scan(&rec.ID, &rec.Source, &rec.Generation, &observed, &expires, &rec.Digest, &rec.ResourcesJSON, &rec.DirectivesJSON, &rec.Status, &rec.Error, &created, &updated); err != nil {
+		if err := rows.Scan(&rec.ID, &rec.Source, &rec.Generation, &observed, &expires, &rec.Digest, &rec.ResourcesJSON, &rec.DirectivesJSON, &rec.ActionPlansJSON, &rec.Status, &rec.Error, &created, &updated); err != nil {
 			return nil, err
 		}
 		rec.ObservedAt = parseStateTime(observed)

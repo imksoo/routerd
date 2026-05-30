@@ -46,13 +46,14 @@ cat <<'JSON'
       {
         "name": "assign-cloud-secondary-ip",
         "provider": "oci",
-        "action": "assignSecondaryPrivateIP",
+        "action": "assign-secondary-ip",
+        "mode": "dry-run",
         "target": {
-          "vnicID": "ocid1.vnic.oc1..example",
+          "nicRef": "ocid1.vnic.oc1..example",
           "address": "10.0.1.123"
         },
         "undo": {
-          "action": "unassignSecondaryPrivateIP"
+          "action": "unassign-secondary-ip"
         }
       }
     ],

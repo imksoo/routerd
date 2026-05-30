@@ -49,9 +49,10 @@ cat <<'JSON'
     "actionPlans": [
       {
         "name": "attach-route",
-        "provider": "test",
-        "action": "AttachRoute",
-        "target": { "route": "cloud-route" }
+        "provider": "oci",
+        "action": "ensure-forwarding-enabled",
+        "mode": "dry-run",
+        "riskLevel": "low"
       }
     ]
   }
