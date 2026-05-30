@@ -18,7 +18,7 @@ generalized as designed. The only provider-specific work is provisioning-side
 - On-prem client (PVE VM): `10.88.60.9/24`
 - Cloud router (AWS EC2): primary `10.88.60.4/24`, ENI secondary capture `10.88.60.9`
 - On-prem router (PVE, router07): `10.88.60.1/24` on `vmbr470`
-- Overlay: `wg-hybrid`, `169.254.120.1/32` (cloud) <-> `169.254.120.2/32` (on-prem)
+- Overlay: `wg-hybrid`, `169.254.120.1/32` (cloud) ↔ `169.254.120.2/32` (on-prem)
 - Region: ap-northeast-1. WireGuard: on-prem -> AWS public endpoint, persistent keepalive.
 
 ## AWS capture prerequisites (provisioning-side)
