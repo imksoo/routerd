@@ -1,8 +1,9 @@
-# CloudEdge / SAM — pre-merge stocktake (Azure×PVE + AWS×PVE smokes)
+# CloudEdge / SAM — pre-merge stocktake (Azure×PVE + AWS×PVE + OCI×PVE smokes)
 
-Date: 2026-05-29 · Branch `cloudedge-mvp` · Purpose: inventory of manual interventions,
-config ergonomics, and routerd capability gaps observed during the two clean smokes,
-to scope the experimental main merge and follow-ups.
+Date: 2026-05-29 (updated 2026-05-30 with OCI×PVE) · Branch `cloudedge-mvp` · Purpose:
+inventory of manual interventions, config ergonomics, and routerd capability gaps
+observed during the three clean smokes, to scope the experimental main merge and
+follow-ups.
 
 ## 1. Manual workarounds during smokes — ALL now routerd-native / resolved
 
@@ -13,9 +14,12 @@ to scope the experimental main merge and follow-ups.
 | Azure: stale `routerd_filter` nft table dropped forwarding → manual delete | **#42 / 439ec316** doctor warn + docs; **#47 / f60e7d9a** nft ownership diagnostics |
 | `routerctl describe` lacked `-o` → plain output | **#45 / 40a99208** |
 | AWS: secondary `.9` briefly OS-visible | **No manual step** — routerd de-assign (#41) handled it automatically (validates the fix generalizes across providers) |
+| OCI: TCP black-holed (ping OK, SSH/scp timeout) on lower-PMTU underlay | **#53 / 3c540656** — PMTU/MSS clamp made FirewallZone-independent + type-agnostic; `routerd_mss` now derived for SAM forwarded paths (MSS 1300 via `hybrid.EstimateMTU`). Predicted by #50. |
+| OCI: Ubuntu image default `iptables` reject-all FORWARD/INPUT blocks WG/overlay forward | **#52** — `doctor hybrid` detects + surfaces the needed host rule; host firewall handled host-side (routerd warns, does not auto-provision) |
 
-→ Every smoke-time manual correction is now handled by routerd itself; the AWS run needed
-none, confirming provider-generality.
+→ Every smoke-time routerd-level correction is now handled by routerd itself. The AWS run
+needed none. The OCI run surfaced the #53 PMTU/MSS gap (real bug, now fixed in routerd
+core) and the #52 host-firewall prerequisite (by-design host-side, surfaced by doctor).
 
 ## 2. Host/cloud bootstrap — manual (deployment gap, mostly outside routerd core)
 
@@ -62,8 +66,13 @@ none, confirming provider-generality.
 
 ## Takeaways for the experimental merge
 
-- The dataplane + the smoke-time corrections are routerd-native and validated on two clouds.
+- The dataplane + the smoke-time corrections are routerd-native and validated on **three
+  clouds** (Azure / AWS / OCI), all clean.
+- Multi-cloud testing paid off: OCI's lower-PMTU underlay exposed a **real routerd-core
+  bug** (#53 — PMTU/MSS clamp was FirewallZone-gated, so SAM never clamped on any cloud;
+  it only manifested as a black-hole where the underlay PMTU was low enough). The fix is
+  general (FirewallZone-independent + interface-type-agnostic) and home-router-safe.
 - Remaining manual work is either **by-design (provider provisioning, MVP scope-out)** or
-  **experimental rough edges** (config ergonomics around allowedIPs/nicRef/peerRef/keys, and
-  host bootstrap). These justify the **experimental** label and are tracked as follow-ups, not
-  merge blockers.
+  **experimental rough edges** (config ergonomics around allowedIPs/nicRef/peerRef/keys,
+  host bootstrap, and the OCI host-firewall prerequisite #52). These justify the
+  **experimental** label and are tracked as follow-ups, not merge blockers.
