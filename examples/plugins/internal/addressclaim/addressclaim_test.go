@@ -283,10 +283,18 @@ func TestBuildMissingNICRef(t *testing.T) {
 	}
 }
 
-// TestNoExecImports is the no-execution invariant: the shared core and all three
-// plugin mains must import neither os/exec nor any provider SDK, and make no
-// network call. We assert it statically by parsing every .go file under
-// examples/plugins and rejecting forbidden import paths.
+// TestNoExecImports is the no-execution invariant: the address-claim PLANNER
+// plugins and the FAKE provider executor (and the shared core) must import
+// neither os/exec nor any provider SDK, and make no network call. We assert it
+// statically by parsing every .go file under examples/plugins and rejecting
+// forbidden import paths.
+//
+// SCOPING (Phase 5.1): the aws-provider-executor is a REAL executor that
+// LEGITIMATELY uses os/exec to run the `aws` CLI binary (it links no cloud SDK).
+// It is therefore EXCLUDED from this os/exec-forbidding invariant; its own test
+// (TestExecutorImportsNoCloudSDK) asserts it imports no cloud SDK and uses
+// os/exec only to exec `aws`. Planners + the fake executor remain bound by the
+// invariant here.
 func TestNoExecImports(t *testing.T) {
 	_, thisFile, _, ok := runtime.Caller(0)
 	if !ok {
@@ -294,6 +302,11 @@ func TestNoExecImports(t *testing.T) {
 	}
 	// .../examples/plugins/internal/addressclaim/addressclaim_test.go -> examples/plugins
 	pluginsDir := filepath.Clean(filepath.Join(filepath.Dir(thisFile), "..", ".."))
+
+	// The real AWS executor legitimately execs the `aws` CLI; it is exempt from
+	// the os/exec ban (but not from the no-cloud-SDK rule, asserted in its own
+	// package test).
+	awsExecutorDir := filepath.Join(pluginsDir, "aws-provider-executor")
 
 	forbidden := []string{
 		"os/exec",
@@ -311,7 +324,14 @@ func TestNoExecImports(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if info.IsDir() || !strings.HasSuffix(path, ".go") {
+		if info.IsDir() {
+			if path == awsExecutorDir {
+				// Skip the whole real-AWS-executor dir: it may exec `aws`.
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") {
 			return nil
 		}
 		// The conformance test (this file) legitimately imports pkg/plugin; skip

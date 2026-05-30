@@ -21,7 +21,7 @@ type Store interface {
 	ImportAction(rec state.ActionExecutionRecord) (bool, error)
 	GetActionByID(id int64) (state.ActionExecutionRecord, bool, error)
 	ApproveAction(id int64, approvedBy string, now time.Time) error
-	MarkActionResult(id int64, status, message, errMsg string, executedAt time.Time) error
+	MarkActionResult(id int64, status, message, errMsg string, observed map[string]string, executedAt time.Time) error
 	MarkActionRolledBack(id int64, message string, now time.Time) error
 	ListDynamicConfigParts() ([]state.DynamicConfigPartRecord, error)
 }
@@ -255,7 +255,7 @@ func (e *Engine) Execute(ctx context.Context, id int64, mode string, policy api.
 	if runErr != nil {
 		// Executor process error: journal a failure (never succeeded).
 		msg := fmt.Sprintf("executor invocation failed (mode=%s)", mode)
-		if markErr := e.store.MarkActionResult(id, state.ActionFailed, msg, runErr.Error(), executedAt); markErr != nil {
+		if markErr := e.store.MarkActionResult(id, state.ActionFailed, msg, runErr.Error(), nil, executedAt); markErr != nil {
 			return fmt.Errorf("execute action %d: run failed (%v) and journaling failed: %w", id, runErr, markErr)
 		}
 		return fmt.Errorf("execute action %d: %w", id, runErr)
@@ -265,14 +265,16 @@ func (e *Engine) Execute(ctx context.Context, id int64, mode string, policy api.
 	// executor reported failed.
 	switch result.Status.Status {
 	case ResultSucceeded:
-		return e.store.MarkActionResult(id, state.ActionSucceeded, result.Status.Message, "", executedAt)
+		// Journal the executor's Observed facts (e.g. priorSourceDestCheck) so the
+		// undo path can later restore exactly the prior state.
+		return e.store.MarkActionResult(id, state.ActionSucceeded, result.Status.Message, "", result.Status.Observed, executedAt)
 	case ResultSkipped:
-		return e.store.MarkActionResult(id, state.ActionSkipped, result.Status.Message, "", executedAt)
+		return e.store.MarkActionResult(id, state.ActionSkipped, result.Status.Message, "", result.Status.Observed, executedAt)
 	case ResultFailed:
-		return e.store.MarkActionResult(id, state.ActionFailed, result.Status.Message, result.Status.Error, executedAt)
+		return e.store.MarkActionResult(id, state.ActionFailed, result.Status.Message, result.Status.Error, result.Status.Observed, executedAt)
 	default:
 		errMsg := fmt.Sprintf("executor returned invalid status %q", result.Status.Status)
-		if markErr := e.store.MarkActionResult(id, state.ActionFailed, "invalid executor status", errMsg, executedAt); markErr != nil {
+		if markErr := e.store.MarkActionResult(id, state.ActionFailed, "invalid executor status", errMsg, nil, executedAt); markErr != nil {
 			return fmt.Errorf("execute action %d: %s; journaling failed: %w", id, errMsg, markErr)
 		}
 		return fmt.Errorf("execute action %d: %s", id, errMsg)
@@ -401,7 +403,7 @@ func (e *Engine) Rollback(ctx context.Context, id int64, policy api.ProviderActi
 		Provider:       rec.Provider,
 		ProviderRef:    rec.ProviderRef,
 		Target:         decodeStringMap(rec.TargetJSON),
-		Parameters:     undo.Parameters,
+		Parameters:     undoParameters(undo.Parameters, rec.Observed),
 		Mode:           ModeExecute,
 		IdempotencyKey: rec.IdempotencyKey + ":undo",
 	})
@@ -461,7 +463,7 @@ func (e *Engine) RollbackPreview(ctx context.Context, id int64, policy api.Provi
 		Provider:       rec.Provider,
 		ProviderRef:    rec.ProviderRef,
 		Target:         decodeStringMap(rec.TargetJSON),
-		Parameters:     undo.Parameters,
+		Parameters:     undoParameters(undo.Parameters, rec.Observed),
 		Mode:           ModeDryRun,
 		IdempotencyKey: rec.IdempotencyKey + ":undo",
 	})
@@ -611,6 +613,37 @@ func inList(list []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// undoActionPriorFacts is the set of Observed keys the engine injects from the
+// journal into an undo's Parameters so the executor can RESTORE the exact prior
+// state it captured at execute time. The load-bearing one is
+// priorSourceDestCheck: ensure-forwarding-disabled (undo of
+// ensure-forwarding-enabled) reads it to decide whether to re-enable the ENI
+// source/dest check (priorSourceDestCheck=="true") or NO-OP/skip
+// (priorSourceDestCheck=="false"). The undo MUST NOT blindly re-enable; it
+// reverts only what was actually changed (see docs/how-to/aws-provider-action-execution.md).
+var undoActionPriorFacts = []string{"priorSourceDestCheck"}
+
+// undoParameters merges the planned undo parameters with the prior facts the
+// engine read back from the journal's Observed map. Planned parameters win on a
+// key collision (the planner is explicit); otherwise the journaled prior fact is
+// injected so the executor restores the captured state. Returns a fresh map so
+// the stored record is never mutated.
+func undoParameters(planned, observed map[string]string) map[string]string {
+	if len(planned) == 0 && len(observed) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(planned)+len(undoActionPriorFacts))
+	for _, key := range undoActionPriorFacts {
+		if v, ok := observed[key]; ok {
+			out[key] = v
+		}
+	}
+	for k, v := range planned {
+		out[k] = v
+	}
+	return out
 }
 
 func decodeStringMap(s string) map[string]string {

@@ -4,6 +4,7 @@ package state
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -49,8 +50,13 @@ type ActionExecutionRecord struct {
 	ExecutedAt     time.Time `json:"executedAt,omitempty" yaml:"executedAt,omitempty"`
 	ResultMessage  string    `json:"resultMessage,omitempty" yaml:"resultMessage,omitempty"`
 	Error          string    `json:"error,omitempty" yaml:"error,omitempty"`
-	CreatedAt      time.Time `json:"createdAt" yaml:"createdAt"`
-	UpdatedAt      time.Time `json:"updatedAt" yaml:"updatedAt"`
+	// Observed are the non-secret facts the executor reported on its last
+	// terminal result (decoded from the observed_json column). The undo of
+	// ensure-forwarding-enabled relies on Observed["priorSourceDestCheck"], which
+	// the executor captures BEFORE mutating. Never contains credentials.
+	Observed  map[string]string `json:"observed,omitempty" yaml:"observed,omitempty"`
+	CreatedAt time.Time         `json:"createdAt" yaml:"createdAt"`
+	UpdatedAt time.Time         `json:"updatedAt" yaml:"updatedAt"`
 }
 
 // ActionExecutionFilter narrows ListActions. Empty fields match anything.
@@ -89,6 +95,19 @@ CREATE TABLE IF NOT EXISTS action_executions (
 CREATE INDEX IF NOT EXISTS action_executions_status ON action_executions(status, id);
 `); err != nil {
 		return err
+	}
+	// Additive column for the executor's Observed facts (e.g.
+	// priorSourceDestCheck). Backward compatible: a pre-existing table without it
+	// gets the column added; a table created fresh above does not yet have it, so
+	// we add it here either way via the tableHasColumn guard.
+	hasObserved, err := s.tableHasColumn("action_executions", "observed_json")
+	if err != nil {
+		return err
+	}
+	if !hasObserved {
+		if _, err := s.db.Exec(`ALTER TABLE action_executions ADD COLUMN observed_json TEXT`); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -138,20 +157,27 @@ ON CONFLICT(idempotency_key) DO NOTHING`,
 	return affected > 0, nil
 }
 
-const actionExecutionColumns = `id,idempotency_key,coalesce(source,''),provider,coalesce(provider_ref,''),action,coalesce(target_json,''),coalesce(parameters_json,''),coalesce(undo_json,''),coalesce(risk_level,''),status,coalesce(approved_by,''),coalesce(approved_at,''),coalesce(executed_at,''),coalesce(result_message,''),coalesce(error,''),created_at,updated_at`
+const actionExecutionColumns = `id,idempotency_key,coalesce(source,''),provider,coalesce(provider_ref,''),action,coalesce(target_json,''),coalesce(parameters_json,''),coalesce(undo_json,''),coalesce(risk_level,''),status,coalesce(approved_by,''),coalesce(approved_at,''),coalesce(executed_at,''),coalesce(result_message,''),coalesce(error,''),coalesce(observed_json,''),created_at,updated_at`
 
 func scanActionExecution(scan func(...any) error) (ActionExecutionRecord, error) {
 	var rec ActionExecutionRecord
-	var approved, executed, created, updated string
+	var approved, executed, created, updated, observed string
 	if err := scan(&rec.ID, &rec.IdempotencyKey, &rec.Source, &rec.Provider, &rec.ProviderRef, &rec.Action,
 		&rec.TargetJSON, &rec.ParametersJSON, &rec.UndoJSON, &rec.RiskLevel, &rec.Status, &rec.ApprovedBy,
-		&approved, &executed, &rec.ResultMessage, &rec.Error, &created, &updated); err != nil {
+		&approved, &executed, &rec.ResultMessage, &rec.Error, &observed, &created, &updated); err != nil {
 		return ActionExecutionRecord{}, err
 	}
 	rec.ApprovedAt = parseStateTime(approved)
 	rec.ExecutedAt = parseStateTime(executed)
 	rec.CreatedAt = parseStateTime(created)
 	rec.UpdatedAt = parseStateTime(updated)
+	if strings.TrimSpace(observed) != "" {
+		var m map[string]string
+		if err := json.Unmarshal([]byte(observed), &m); err != nil {
+			return ActionExecutionRecord{}, fmt.Errorf("decode observed_json for action %d: %w", rec.ID, err)
+		}
+		rec.Observed = m
+	}
 	return rec, nil
 }
 
@@ -255,8 +281,10 @@ func (s *SQLiteStore) ApproveAction(id int64, approvedBy string, now time.Time) 
 
 // MarkActionResult records a terminal execution outcome (succeeded, failed, or
 // skipped) for an approved action. It errors if the row is not currently
-// approved.
-func (s *SQLiteStore) MarkActionResult(id int64, status, message, errMsg string, executedAt time.Time) error {
+// approved. The observed map carries the executor's non-secret reported facts
+// (e.g. priorSourceDestCheck), which the undo path later reads back from the
+// journal; nil or empty leaves observed_json NULL.
+func (s *SQLiteStore) MarkActionResult(id int64, status, message, errMsg string, observed map[string]string, executedAt time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
@@ -271,8 +299,16 @@ func (s *SQLiteStore) MarkActionResult(id int64, status, message, errMsg string,
 	if executedAt.IsZero() {
 		executedAt = now
 	}
-	result, err := s.db.Exec(`UPDATE action_executions SET status = ?, result_message = ?, error = ?, executed_at = ?, updated_at = ? WHERE id = ? AND status = ?`,
-		status, nullableString(message), nullableString(errMsg), formatStateTime(executedAt), formatStateTime(now), id, ActionApproved)
+	observedJSON := ""
+	if len(observed) > 0 {
+		b, err := json.Marshal(observed)
+		if err != nil {
+			return fmt.Errorf("encode observed for action %d: %w", id, err)
+		}
+		observedJSON = string(b)
+	}
+	result, err := s.db.Exec(`UPDATE action_executions SET status = ?, result_message = ?, error = ?, observed_json = ?, executed_at = ?, updated_at = ? WHERE id = ? AND status = ?`,
+		status, nullableString(message), nullableString(errMsg), nullableString(observedJSON), formatStateTime(executedAt), formatStateTime(now), id, ActionApproved)
 	if err != nil {
 		return err
 	}

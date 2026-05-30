@@ -1,0 +1,21 @@
+apiVersion: plugin.routerd.net/v1alpha1
+kind: Plugin
+metadata:
+  # Executor-resolution convention (ADR 0007): "<provider>-executor". The engine
+  # resolves the AWS executor by the name "aws-executor"; this plugin is the AWS
+  # implementation of that role. Name it aws-executor when wiring it as the AWS
+  # provider's executor.
+  name: aws-executor
+spec:
+  executable: /usr/local/libexec/routerd/plugins/aws-provider-executor/bin/aws-provider-executor
+  timeout: 30s
+  capabilities:
+    # Marks this Plugin as an EXECUTOR. RunExecutor refuses any plugin lacking
+    # this capability. REAL — mutates AWS in execute mode only (dry-run issues
+    # describe-* calls and mutates nothing).
+    - execute.providerAction
+  # No context.resources and NO credentials: the executor authenticates with the
+  # EC2 instance IAM role (instance profile) resolved by the `aws` CLI itself.
+  # routerd passes it NO secrets and inherits NO parent environment to it (per
+  # ADR 0007). The instance profile is least-privilege (4 EC2 actions) per
+  # docs/how-to/aws-provider-action-execution.md.
