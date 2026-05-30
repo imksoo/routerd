@@ -1,0 +1,18 @@
+apiVersion: plugin.routerd.net/v1alpha1
+kind: Plugin
+metadata:
+  # The executor-resolution convention (ADR 0007, Phase 5.0) is
+  # "<provider>-executor". This fake is provider-agnostic; rename per provider
+  # (e.g. aws-executor) when wiring a specific CloudProviderProfile, or keep it
+  # as the sole executor for single-provider labs.
+  name: fake-provider-executor
+spec:
+  executable: /usr/local/libexec/routerd/plugins/fake-provider-executor/bin/fake-provider-executor
+  timeout: 10s
+  capabilities:
+    # Marks this Plugin as an EXECUTOR. RunExecutor refuses any plugin lacking
+    # this capability. FAKE — performs no real cloud action (Phase 5.0).
+    - execute.providerAction
+  # No context.resources: the fake needs no config and holds no credentials.
+  # A real executor authenticates itself with cloud-native identity; routerd
+  # passes it NO secrets and inherits NO parent environment to it.
