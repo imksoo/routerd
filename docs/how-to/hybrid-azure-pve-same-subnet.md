@@ -30,6 +30,11 @@ for resource semantics.
   through the normal sysctl path.
 - Permit forwarding between the capture interface and the WireGuard tunnel for
   the captured `/32`. SAM does not add firewall or NAT rules.
+- On cloud guest images, also check host firewall defaults before assuming the
+  provider fabric is dropping packets. The router must accept the WireGuard UDP
+  listen port, and it must permit forwarding between the capture interface and
+  `wg-hybrid`. `routerctl doctor hybrid` warns on terminal iptables
+  drop/reject patterns and missing SAM MSS clamp rules.
 
 ## Tunnel And Routing
 
@@ -55,3 +60,7 @@ doctor reports the captured `/32` absent from local `ip addr`, the delivery
 route points at the tunnel, and `ip_forward=1`. For `proxy-arp`, confirm
 `proxy_arp=1`, the proxy neighbor exists, the delivery route points at the
 tunnel, and `ip_forward=1`.
+
+For low-MTU overlays, confirm `doctor hybrid` reports a SAM MSS clamp and
+`nft list table inet routerd_mss` contains both capture-to-tunnel and
+tunnel-to-capture rules for the selected `/32` path.

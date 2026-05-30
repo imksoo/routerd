@@ -419,10 +419,22 @@ func TestDoctorHybridSAMLiveChecksStubbed(t *testing.T) {
 			return diagnoseCommandCheck{Name: label, OK: true, Stdout: "10.0.0.9 dev wg-hybrid", Output: "10.0.0.9 dev wg-hybrid"}
 		case strings.HasPrefix(label, "ip route get"):
 			return diagnoseCommandCheck{Name: label, OK: true, Stdout: "10.0.0.9 dev wg-hybrid src 10.0.0.4", Output: "10.0.0.9 dev wg-hybrid src 10.0.0.4"}
+		case label == "ip link show wg-hybrid":
+			return diagnoseCommandCheck{Name: label, OK: true, Stdout: "3: wg-hybrid: <POINTOPOINT,UP> mtu 1420", Output: "3: wg-hybrid: <POINTOPOINT,UP> mtu 1420"}
 		case strings.HasPrefix(label, "ip addr show"):
 			return diagnoseCommandCheck{Name: label, OK: true}
+		case label == "nft list table inet routerd_mss":
+			return diagnoseCommandCheck{Name: label, OK: true, Stdout: `table inet routerd_mss {
+ chain forward {
+  iifname "eth0" oifname "wg-hybrid" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1380 tcp option maxseg size set 1380
+ }
+}`, Output: "table inet routerd_mss"}
 		case label == "nft list table inet routerd_filter":
 			return diagnoseCommandCheck{Name: label, OK: true, Stdout: "table inet routerd_filter {\n chain forward { type filter hook forward priority 0; policy accept; }\n}", Output: "table inet routerd_filter"}
+		case label == "iptables -S INPUT":
+			return diagnoseCommandCheck{Name: label, OK: true, Stdout: "-P INPUT ACCEPT\n-A INPUT -p udp --dport 51820 -j ACCEPT", Output: "-P INPUT ACCEPT"}
+		case label == "iptables -S FORWARD":
+			return diagnoseCommandCheck{Name: label, OK: true, Stdout: "-P FORWARD ACCEPT\n-A FORWARD -i eth0 -o wg-hybrid -j ACCEPT\n-A FORWARD -i wg-hybrid -o eth0 -j ACCEPT", Output: "-P FORWARD ACCEPT"}
 		case strings.Contains(label, "rp_filter"):
 			return diagnoseCommandCheck{Name: label, OK: true, Stdout: "1", Output: "1"}
 		default:
@@ -452,6 +464,12 @@ func TestDoctorHybridSAMLiveChecksStubbed(t *testing.T) {
 	}
 	if check := findDoctorCheck(t, report, "RemoteAddressClaim/azure-vm route get"); check.Status != doctorPass {
 		t.Fatalf("route get check = %#v", check)
+	}
+	if check := findDoctorCheck(t, report, "RemoteAddressClaim/azure-vm MSS clamp"); check.Status != doctorPass {
+		t.Fatalf("MSS clamp check = %#v", check)
+	}
+	if check := findDoctorCheck(t, report, "RemoteAddressClaim/azure-vm host firewall"); check.Status != doctorPass {
+		t.Fatalf("host firewall check = %#v", check)
 	}
 	if check := findDoctorCheck(t, report, "RemoteAddressClaim/azure-vm FORWARD policy"); check.Status != doctorPass {
 		t.Fatalf("FORWARD policy check = %#v", check)
@@ -485,16 +503,28 @@ func TestDoctorHybridSAMProxyARPInterfaceLiveChecksStubbed(t *testing.T) {
 					return diagnoseCommandCheck{Name: label, OK: true, Stdout: "10.0.0.7 dev wg-hybrid", Output: "10.0.0.7 dev wg-hybrid"}
 				case strings.HasPrefix(label, "ip route get"):
 					return diagnoseCommandCheck{Name: label, OK: true, Stdout: "10.0.0.7 dev wg-hybrid src 10.0.0.4", Output: "10.0.0.7 dev wg-hybrid src 10.0.0.4"}
+				case label == "ip link show wg-hybrid":
+					return diagnoseCommandCheck{Name: label, OK: true, Stdout: "3: wg-hybrid: <POINTOPOINT,UP> mtu 1420", Output: "3: wg-hybrid: <POINTOPOINT,UP> mtu 1420"}
 				case label == "ip link show br-lan" && tc.linkExists:
 					return diagnoseCommandCheck{Name: label, OK: true, Stdout: "2: br-lan: <BROADCAST,MULTICAST,UP>", Output: "2: br-lan: <BROADCAST,MULTICAST,UP>"}
 				case label == "ip link show br-lan":
 					return diagnoseCommandCheck{Name: label, OK: false, Error: "Device \"br-lan\" does not exist.", Output: "Device \"br-lan\" does not exist."}
+				case label == "nft list table inet routerd_mss":
+					return diagnoseCommandCheck{Name: label, OK: true, Stdout: `table inet routerd_mss {
+ chain forward {
+  iifname "br-lan" oifname "wg-hybrid" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1380 tcp option maxseg size set 1380
+ }
+}`, Output: "table inet routerd_mss"}
 				case label == "sysctl net.ipv4.conf.br-lan.proxy_arp":
 					return diagnoseCommandCheck{Name: label, OK: true, Stdout: "1", Output: "1"}
 				case strings.HasPrefix(label, "ip neigh show proxy"):
 					return diagnoseCommandCheck{Name: label, OK: true, Stdout: "10.0.0.7 dev br-lan proxy", Output: "10.0.0.7 dev br-lan proxy"}
 				case label == "nft list table inet routerd_filter":
 					return diagnoseCommandCheck{Name: label, OK: true, Stdout: "table inet routerd_filter {\n chain forward { type filter hook forward priority 0; policy accept; }\n}", Output: "table inet routerd_filter"}
+				case label == "iptables -S INPUT":
+					return diagnoseCommandCheck{Name: label, OK: true, Stdout: "-P INPUT ACCEPT\n-A INPUT -p udp --dport 51820 -j ACCEPT", Output: "-P INPUT ACCEPT"}
+				case label == "iptables -S FORWARD":
+					return diagnoseCommandCheck{Name: label, OK: true, Stdout: "-P FORWARD ACCEPT\n-A FORWARD -i br-lan -o wg-hybrid -j ACCEPT\n-A FORWARD -i wg-hybrid -o br-lan -j ACCEPT", Output: "-P FORWARD ACCEPT"}
 				case strings.Contains(label, "rp_filter"):
 					return diagnoseCommandCheck{Name: label, OK: true, Stdout: "0", Output: "0"}
 				default:
@@ -541,10 +571,22 @@ func TestDoctorHybridSAMProviderLocalAddressWarnsWhenPresent(t *testing.T) {
 			return diagnoseCommandCheck{Name: label, OK: true, Stdout: "10.0.0.9 dev wg-hybrid", Output: "10.0.0.9 dev wg-hybrid"}
 		case strings.HasPrefix(label, "ip route get"):
 			return diagnoseCommandCheck{Name: label, OK: true, Stdout: "local 10.0.0.9 dev lo src 10.0.0.9", Output: "local 10.0.0.9 dev lo src 10.0.0.9"}
+		case label == "ip link show wg-hybrid":
+			return diagnoseCommandCheck{Name: label, OK: true, Stdout: "3: wg-hybrid: <POINTOPOINT,UP> mtu 1420", Output: "3: wg-hybrid: <POINTOPOINT,UP> mtu 1420"}
 		case strings.HasPrefix(label, "ip addr show"):
 			return diagnoseCommandCheck{Name: label, OK: true, Stdout: "2: eth0    inet 10.0.0.9/32 scope global eth0", Output: "2: eth0    inet 10.0.0.9/32 scope global eth0"}
+		case label == "nft list table inet routerd_mss":
+			return diagnoseCommandCheck{Name: label, OK: true, Stdout: `table inet routerd_mss {
+ chain forward {
+  iifname "eth0" oifname "wg-hybrid" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1380 tcp option maxseg size set 1380
+ }
+}`, Output: "table inet routerd_mss"}
 		case label == "nft list table inet routerd_filter":
 			return diagnoseCommandCheck{Name: label, OK: true, Stdout: "table inet routerd_filter {\n chain forward { type filter hook forward priority 0; policy drop; }\n}", Output: "table inet routerd_filter"}
+		case label == "iptables -S INPUT":
+			return diagnoseCommandCheck{Name: label, OK: true, Stdout: "-P INPUT ACCEPT\n-A INPUT -p udp --dport 51820 -j ACCEPT", Output: "-P INPUT ACCEPT"}
+		case label == "iptables -S FORWARD":
+			return diagnoseCommandCheck{Name: label, OK: true, Stdout: "-P FORWARD ACCEPT\n-A FORWARD -i eth0 -o wg-hybrid -j ACCEPT\n-A FORWARD -i wg-hybrid -o eth0 -j ACCEPT", Output: "-P FORWARD ACCEPT"}
 		case strings.Contains(label, "rp_filter"):
 			return diagnoseCommandCheck{Name: label, OK: true, Stdout: "0", Output: "0"}
 		default:
@@ -752,6 +794,14 @@ metadata:
 spec:
   resources:
     - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: eth0
+      spec:
+        ifname: eth0
+        managed: false
+        owner: external
+    - apiVersion: net.routerd.net/v1alpha1
       kind: WireGuardInterface
       metadata:
         name: wg-hybrid
@@ -799,6 +849,7 @@ spec:
           providerRef: azure-lab
           providerMode: nic-secondary-ip
           nicRef: azure-nic
+          interface: eth0
         delivery:
           peerRef: cloud-main
           mode: route

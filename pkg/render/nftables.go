@@ -472,6 +472,11 @@ func nftOutboundAliases(router *api.Router) (map[string]string, error) {
 			aliases[res.Metadata.Name] = res.Metadata.Name
 		}
 	}
+	for _, iface := range pathMTUForwardedPathInterfaces(router) {
+		if aliases[iface] == "" {
+			aliases[iface] = iface
+		}
+	}
 	return aliases, nil
 }
 

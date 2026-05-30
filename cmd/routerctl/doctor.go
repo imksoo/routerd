@@ -288,13 +288,15 @@ func (r doctorRunner) doctorSAMLiveChecks(name string, spec api.RemoteAddressCla
 	if tunnel == "" {
 		tunnel = "delivery tunnel interface unresolved from OverlayPeer in doctor"
 	}
+	captureInterface := strings.TrimSpace(spec.Capture.Interface)
 	checks := []doctorCheck{
 		doctorSAMIPForwardCheck(ctx, name),
 		doctorSAMDeliveryRouteCheck(ctx, name, routeName, address, tunnel),
 		doctorSAMRouteGetCheck(ctx, name, address),
+		doctorSAMMSSClampCheck(ctx, name, captureInterface, tunnel),
+		doctorSAMHostFirewallCheck(ctx, name, captureInterface, tunnel, r.doctorWireGuardListenPort(tunnel)),
 	}
 	if strings.TrimSpace(spec.Capture.Type) == "proxy-arp" {
-		captureInterface := strings.TrimSpace(spec.Capture.Interface)
 		checks = append(checks, doctorSAMCaptureInterfaceCheck(ctx, name, captureInterface))
 		checks = append(checks, doctorSAMProxyARPEnabledCheck(ctx, name, captureInterface))
 		checks = append(checks, doctorSAMProxyNeighborCheck(ctx, name, address, captureInterface))
@@ -311,6 +313,22 @@ func (r doctorRunner) doctorSAMLiveChecks(name string, spec api.RemoteAddressCla
 		checks = append(checks, doctorSAMForwardPolicyCheck(ctx, name, strings.TrimSpace(spec.Capture.Interface), tunnel, address))
 	}
 	return checks
+}
+
+func (r doctorRunner) doctorWireGuardListenPort(iface string) int {
+	if r.router == nil {
+		return 0
+	}
+	for _, res := range r.router.Spec.Resources {
+		if res.APIVersion != api.NetAPIVersion || res.Kind != "WireGuardInterface" || res.Metadata.Name != iface {
+			continue
+		}
+		spec, err := res.WireGuardInterfaceSpec()
+		if err == nil {
+			return spec.ListenPort
+		}
+	}
+	return 0
 }
 
 func doctorSAMCaptureInterfaceCheck(ctx context.Context, name, iface string) doctorCheck {
@@ -428,6 +446,161 @@ func doctorSAMForwardPolicyCheck(ctx context.Context, name, captureIface, tunnel
 		}
 	}
 	return doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: detail}
+}
+
+func doctorSAMMSSClampCheck(ctx context.Context, name, captureIface, tunnel string) doctorCheck {
+	label := "RemoteAddressClaim/" + name + " MSS clamp"
+	tunnel = strings.TrimSpace(tunnel)
+	captureIface = strings.TrimSpace(captureIface)
+	if tunnel == "" || strings.HasPrefix(tunnel, "delivery tunnel interface unresolved") {
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorSkip, Detail: "delivery tunnel interface unavailable"}
+	}
+	link := doctorRunDiagnosticCommand(ctx, "ip link show "+tunnel, "ip", "-o", "link", "show", "dev", tunnel)
+	detail := "SAM delivery tunnel " + tunnel
+	if link.OK {
+		if mtu := doctorExtractLinkMTU(link.Stdout); mtu != "" {
+			detail = appendDoctorDetail(detail, "mtu="+mtu)
+		} else {
+			detail = appendDoctorDetail(detail, oneLine(link.Stdout))
+		}
+	}
+	if captureIface == "" {
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorWarn, Detail: appendDoctorDetail(detail, "capture interface unavailable"), Remedy: "set spec.capture.interface on the RemoteAddressClaim so routerd can derive and diagnose SAM MSS clamp rules"}
+	}
+	table := doctorRunDiagnosticCommand(ctx, "nft list table inet routerd_mss", "nft", "list", "table", "inet", "routerd_mss")
+	if !table.OK {
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorWarn, Detail: appendDoctorDetail(detail, doctorSAMMSSClampUnavailableDetail(table)), Remedy: "wait for routerd PathMTUController to install routerd_mss or inspect TCP MSS clamp rendering for the SAM path"}
+	}
+	if nftMSSClampHasPath(table.Stdout, captureIface, tunnel) {
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: appendDoctorDetail(detail, "routerd_mss covers "+captureIface+" -> "+tunnel)}
+	}
+	return doctorCheck{Area: "hybrid", Name: label, Status: doctorWarn, Detail: appendDoctorDetail(detail, "routerd_mss missing "+captureIface+" -> "+tunnel), Remedy: "ensure SAM Path MTU derivation includes the capture interface and WireGuard delivery tunnel"}
+}
+
+func doctorSAMMSSClampUnavailableDetail(command diagnoseCommandCheck) string {
+	combined := strings.ToLower(strings.Join([]string{command.Error, command.Stderr, command.Stdout, command.Output}, " "))
+	switch {
+	case strings.Contains(combined, "executable file not found") || strings.Contains(combined, "no such file or directory") && strings.Contains(strings.ToLower(command.Error), "exec"):
+		return "nft unavailable"
+	case strings.Contains(combined, "permission denied") || strings.Contains(combined, "operation not permitted"):
+		return "permission denied running nft"
+	case strings.Contains(combined, "no such file or directory") || strings.Contains(combined, "no such table") || strings.Contains(combined, "table does not exist"):
+		return "routerd_mss table absent"
+	default:
+		return firstNonEmpty(command.Error, oneLine(command.Output), "exit "+strconv.Itoa(command.ExitCode))
+	}
+}
+
+func doctorExtractLinkMTU(output string) string {
+	fields := strings.Fields(output)
+	for i, field := range fields {
+		if field == "mtu" && i+1 < len(fields) {
+			return fields[i+1]
+		}
+	}
+	return ""
+}
+
+func nftMSSClampHasPath(output, from, to string) bool {
+	for _, line := range strings.Split(output, "\n") {
+		if strings.Contains(line, `iifname "`+from+`"`) && strings.Contains(line, `oifname "`+to+`"`) && strings.Contains(line, "maxseg") {
+			return true
+		}
+	}
+	return false
+}
+
+func doctorSAMHostFirewallCheck(ctx context.Context, name, captureIface, tunnel string, listenPort int) doctorCheck {
+	label := "RemoteAddressClaim/" + name + " host firewall"
+	var warnings []string
+	var details []string
+	input := doctorRunDiagnosticCommand(ctx, "iptables -S INPUT", "iptables", "-S", "INPUT")
+	if input.OK {
+		if listenPort > 0 {
+			if iptablesChainHasTerminalDropReject(input.Stdout) && !iptablesInputAllowsUDPPort(input.Stdout, listenPort) {
+				warnings = append(warnings, fmt.Sprintf("INPUT has terminal drop/reject without UDP/%d accept", listenPort))
+			} else {
+				details = append(details, fmt.Sprintf("INPUT permits or does not block UDP/%d", listenPort))
+			}
+		}
+	} else {
+		details = append(details, "iptables INPUT unavailable: "+firstNonEmpty(input.Error, oneLine(input.Output), "exit "+strconv.Itoa(input.ExitCode)))
+	}
+	forward := doctorRunDiagnosticCommand(ctx, "iptables -S FORWARD", "iptables", "-S", "FORWARD")
+	if forward.OK {
+		if captureIface != "" && tunnel != "" && !strings.HasPrefix(tunnel, "delivery tunnel interface unresolved") {
+			forwardOK := iptablesForwardAllowsPath(forward.Stdout, captureIface, tunnel) && iptablesForwardAllowsPath(forward.Stdout, tunnel, captureIface)
+			if iptablesChainHasTerminalDropReject(forward.Stdout) && !forwardOK {
+				warnings = append(warnings, "FORWARD has terminal drop/reject without "+captureIface+" <-> "+tunnel+" accept")
+			} else {
+				details = append(details, "FORWARD permits or does not block "+captureIface+" <-> "+tunnel)
+			}
+		} else {
+			details = append(details, "FORWARD path unavailable")
+		}
+	} else {
+		details = append(details, "iptables FORWARD unavailable: "+firstNonEmpty(forward.Error, oneLine(forward.Output), "exit "+strconv.Itoa(forward.ExitCode)))
+	}
+	if len(warnings) > 0 {
+		return doctorCheck{
+			Area:   "hybrid",
+			Name:   label,
+			Status: doctorWarn,
+			Detail: strings.Join(warnings, "; "),
+			Remedy: "permit WireGuard UDP ingress and forwarding between the SAM capture interface and delivery tunnel in the host firewall",
+		}
+	}
+	if len(details) == 0 {
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorSkip, Detail: "host firewall state unavailable"}
+	}
+	return doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: strings.Join(details, "; ")}
+}
+
+func iptablesChainHasTerminalDropReject(output string) bool {
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if strings.Contains(line, "-P ") && (strings.HasSuffix(line, " DROP") || strings.HasSuffix(line, " REJECT")) {
+			return true
+		}
+		if strings.Contains(line, "-j DROP") || strings.Contains(line, "-j REJECT") {
+			return true
+		}
+	}
+	return false
+}
+
+func iptablesInputAllowsUDPPort(output string, port int) bool {
+	portString := strconv.Itoa(port)
+	for _, line := range strings.Split(output, "\n") {
+		if !strings.Contains(line, "-A INPUT") || !strings.Contains(line, "-j ACCEPT") {
+			continue
+		}
+		if strings.Contains(line, "-p udp") && (strings.Contains(line, "--dport "+portString) || strings.Contains(line, "dpt:"+portString)) {
+			return true
+		}
+	}
+	return false
+}
+
+func iptablesForwardAllowsPath(output, from, to string) bool {
+	for _, line := range strings.Split(output, "\n") {
+		if !strings.Contains(line, "-A FORWARD") || !strings.Contains(line, "-j ACCEPT") {
+			continue
+		}
+		hasFrom := strings.Contains(line, "-i "+from) || strings.Contains(line, "-i "+shellQuoteForIptablesMatch(from))
+		hasTo := strings.Contains(line, "-o "+to) || strings.Contains(line, "-o "+shellQuoteForIptablesMatch(to))
+		if hasFrom && hasTo {
+			return true
+		}
+	}
+	return false
+}
+
+func shellQuoteForIptablesMatch(value string) string {
+	return "'" + value + "'"
 }
 
 func doctorSAMForwardPolicyUnavailableDetail(command diagnoseCommandCheck) string {

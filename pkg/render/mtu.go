@@ -4,9 +4,13 @@ package render
 
 import (
 	"fmt"
+	"reflect"
 	"sort"
+	"strconv"
+	"strings"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/hybrid"
 )
 
 type pathMTUPolicy struct {
@@ -18,6 +22,7 @@ type pathMTUPolicy struct {
 type pathMTUPolicySpec struct {
 	FromInterface string
 	ToInterfaces  []string
+	MTU           int
 	IPv6RA        pathMTUPolicyIPv6RASpec
 	TCPMSSClamp   pathMTUPolicyTCPMSSSpec
 }
@@ -38,13 +43,19 @@ type pathMTUTunnel struct {
 	MTU      int
 }
 
+type pathMTUForwardedPath struct {
+	FromInterface string
+	ToInterface   string
+	MTU           int
+}
+
 func pathMTUPolicies(router *api.Router) ([]pathMTUPolicy, error) {
 	mtus, err := resourceMTUs(router)
 	if err != nil {
 		return nil, err
 	}
 	var policies []pathMTUPolicy
-	for _, spec := range derivedPathMTUPolicySpecs(router) {
+	for _, spec := range derivedPathMTUPolicySpecs(router, mtus) {
 		if len(spec.ToInterfaces) == 0 {
 			continue
 		}
@@ -55,6 +66,9 @@ func pathMTUPolicies(router *api.Router) ([]pathMTUPolicy, error) {
 		toInterfacesByMTU := map[int][]string{}
 		for _, name := range spec.ToInterfaces {
 			candidate := mtus[name]
+			if spec.MTU > 0 {
+				candidate = spec.MTU
+			}
 			if candidate == 0 {
 				return nil, fmt.Errorf("%s references interface with unknown MTU %q", specResourceID(spec), name)
 			}
@@ -89,48 +103,26 @@ func pathMTUPolicies(router *api.Router) ([]pathMTUPolicy, error) {
 
 func resourceMTUs(router *api.Router) (map[string]int, error) {
 	mtus := map[string]int{}
-	for _, res := range router.Spec.Resources {
-		switch res.Kind {
-		case "Interface":
-			spec, err := res.InterfaceSpec()
-			if err != nil {
-				return nil, err
-			}
-			mtus[res.Metadata.Name] = defaultInt(spec.MTU, 1500)
-		case "PPPoESession":
-			spec, err := res.PPPoESessionSpec()
-			if err != nil {
-				return nil, err
-			}
-			mtus[res.Metadata.Name] = defaultInt(spec.MTU, 1454)
-		case "DSLiteTunnel":
-			spec, err := res.DSLiteTunnelSpec()
-			if err != nil {
-				return nil, err
-			}
-			if !api.BoolDefault(spec.Enabled, true) {
-				continue
-			}
-			mtus[res.Metadata.Name] = defaultInt(spec.MTU, 1454)
-		case "WireGuardInterface":
-			spec, err := res.WireGuardInterfaceSpec()
-			if err != nil {
-				return nil, err
-			}
-			mtus[res.Metadata.Name] = defaultInt(spec.MTU, 1420)
+	for _, iface := range pathMTUResourceInterfaces(router) {
+		mtus[iface.Name] = iface.MTU
+	}
+	for _, iface := range pathMTUForwardedPathInterfaces(router) {
+		if mtus[iface] == 0 {
+			mtus[iface] = 1500
 		}
 	}
 	return mtus, nil
 }
 
-func derivedPathMTUPolicySpecs(router *api.Router) []pathMTUPolicySpec {
+func derivedPathMTUPolicySpecs(router *api.Router, mtus map[string]int) []pathMTUPolicySpec {
 	tunnels := pathMTUTunnels(router)
+	forwardedPathPolicies := derivedForwardedPathMTUPolicySpecs(router, mtus)
 	if len(tunnels) == 0 {
-		return nil
+		return forwardedPathPolicies
 	}
 	sources := pathMTUSourceInterfaces(router)
 	if len(sources) == 0 {
-		return nil
+		return forwardedPathPolicies
 	}
 	untrust := pathMTUUntrustInterfaces(router)
 	var tunnelTargets []string
@@ -145,7 +137,7 @@ func derivedPathMTUPolicySpecs(router *api.Router) []pathMTUPolicySpec {
 	}
 	tunnelTargets = compactStrings(sortedStrings(tunnelTargets))
 	if len(tunnelTargets) == 0 {
-		return nil
+		return forwardedPathPolicies
 	}
 	raScopes := pathMTURAScopesByInterface(router)
 	var policies []pathMTUPolicySpec
@@ -163,34 +155,260 @@ func derivedPathMTUPolicySpecs(router *api.Router) []pathMTUPolicySpec {
 		}
 		policies = append(policies, spec)
 	}
-	return policies
+	policies = append(policies, forwardedPathPolicies...)
+	return compactPathMTUPolicySpecs(policies)
+}
+
+func derivedForwardedPathMTUPolicySpecs(router *api.Router, mtus map[string]int) []pathMTUPolicySpec {
+	var policies []pathMTUPolicySpec
+	for _, path := range pathMTUForwardedPaths(router) {
+		if path.FromInterface == "" || path.ToInterface == "" || path.FromInterface == path.ToInterface {
+			continue
+		}
+		fromMTU := mtus[path.FromInterface]
+		toMTU := path.MTU
+		if toMTU == 0 {
+			toMTU = mtus[path.ToInterface]
+		}
+		if fromMTU == 0 || toMTU == 0 || toMTU >= fromMTU {
+			continue
+		}
+		clamp := pathMTUPolicyTCPMSSSpec{Enabled: true, Families: []string{"ipv4"}}
+		policies = append(policies, pathMTUPolicySpec{FromInterface: path.FromInterface, ToInterfaces: []string{path.ToInterface}, MTU: toMTU, TCPMSSClamp: clamp})
+	}
+	return compactPathMTUPolicySpecs(policies)
+}
+
+func pathMTUForwardedPaths(router *api.Router) []pathMTUForwardedPath {
+	if router == nil {
+		return nil
+	}
+	peers := pathMTUOverlayPeers(router)
+	defaultSources := pathMTUDefaultForwardedPathSourceInterfaces(router)
+	var paths []pathMTUForwardedPath
+	for _, res := range router.Spec.Resources {
+		if res.APIVersion != api.HybridAPIVersion || res.Kind != "RemoteAddressClaim" {
+			continue
+		}
+		spec, err := res.RemoteAddressClaimSpec()
+		if err != nil {
+			continue
+		}
+		peer := peers[refName(spec.Delivery.PeerRef)]
+		tunnel := firstNonEmpty(strings.TrimSpace(spec.Delivery.TunnelInterface), strings.TrimSpace(peer.Underlay.Interface))
+		if tunnel == "" {
+			continue
+		}
+		tunnelMTU := pathMTUOverlayPeerEffectiveMTU(router, refName(spec.Delivery.PeerRef))
+		for _, source := range pathMTUClaimSourceInterfaces(spec, defaultSources) {
+			if source == "" || source == tunnel {
+				continue
+			}
+			paths = append(paths, pathMTUForwardedPath{FromInterface: source, ToInterface: tunnel, MTU: tunnelMTU})
+		}
+	}
+	return compactForwardedPaths(paths)
+}
+
+func pathMTUOverlayPeerEffectiveMTU(router *api.Router, peerName string) int {
+	if router == nil || strings.TrimSpace(peerName) == "" {
+		return 0
+	}
+	estimate, ok := hybrid.EstimateMTU(*router, peerName)
+	if !ok || estimate.EstimatedMTU <= 0 {
+		return 0
+	}
+	return estimate.EstimatedMTU
+}
+
+func pathMTUOverlayPeers(router *api.Router) map[string]api.OverlayPeerSpec {
+	out := map[string]api.OverlayPeerSpec{}
+	if router == nil {
+		return out
+	}
+	for _, res := range router.Spec.Resources {
+		if res.APIVersion != api.HybridAPIVersion || res.Kind != "OverlayPeer" {
+			continue
+		}
+		spec, err := res.OverlayPeerSpec()
+		if err == nil {
+			out[res.Metadata.Name] = spec
+		}
+	}
+	return out
+}
+
+func pathMTUClaimSourceInterfaces(spec api.RemoteAddressClaimSpec, defaults []string) []string {
+	if iface := strings.TrimSpace(spec.Capture.Interface); iface != "" {
+		return []string{iface}
+	}
+	if strings.TrimSpace(spec.Capture.Type) == "provider-secondary-ip" {
+		return defaults
+	}
+	return nil
+}
+
+func pathMTUForwardedPathInterfaces(router *api.Router) []string {
+	if router == nil {
+		return nil
+	}
+	var out []string
+	for _, path := range pathMTUForwardedPaths(router) {
+		out = append(out, path.FromInterface, path.ToInterface)
+	}
+	return compactStrings(sortedStrings(out))
+}
+
+func pathMTUDefaultForwardedPathSourceInterfaces(router *api.Router) []string {
+	if router == nil {
+		return nil
+	}
+	var out []string
+	for _, res := range router.Spec.Resources {
+		if res.APIVersion == api.NetAPIVersion && res.Kind == "Interface" {
+			out = append(out, res.Metadata.Name)
+		}
+	}
+	return compactStrings(sortedStrings(out))
+}
+
+func compactForwardedPaths(paths []pathMTUForwardedPath) []pathMTUForwardedPath {
+	byKey := map[string]pathMTUForwardedPath{}
+	for _, path := range paths {
+		key := path.FromInterface + ">" + path.ToInterface
+		existing, ok := byKey[key]
+		if ok && (existing.MTU == 0 || (path.MTU != 0 && existing.MTU <= path.MTU)) {
+			continue
+		}
+		byKey[key] = path
+	}
+	var out []pathMTUForwardedPath
+	for _, path := range byKey {
+		out = append(out, path)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].FromInterface == out[j].FromInterface {
+			return out[i].ToInterface < out[j].ToInterface
+		}
+		return out[i].FromInterface < out[j].FromInterface
+	})
+	return out
+}
+
+func pathMTUResourceInterfaces(router *api.Router) []pathMTUTunnel {
+	if router == nil {
+		return nil
+	}
+	var out []pathMTUTunnel
+	for _, res := range router.Spec.Resources {
+		item, ok := pathMTUResourceInterface(res)
+		if ok {
+			out = append(out, item)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+func pathMTUResourceInterface(res api.Resource) (pathMTUTunnel, bool) {
+	if strings.TrimSpace(res.Metadata.Name) == "" {
+		return pathMTUTunnel{}, false
+	}
+	value := reflect.ValueOf(res.Spec)
+	if !value.IsValid() {
+		return pathMTUTunnel{}, false
+	}
+	if value.Kind() == reflect.Pointer {
+		if value.IsNil() {
+			return pathMTUTunnel{}, false
+		}
+		value = value.Elem()
+	}
+	if value.Kind() != reflect.Struct || !pathMTUResourceEnabled(value) || !pathMTUResourceLooksLikeInterface(res, value) {
+		return pathMTUTunnel{}, false
+	}
+	mtu := pathMTUResourceMTU(res, value)
+	if mtu == 0 {
+		return pathMTUTunnel{}, false
+	}
+	return pathMTUTunnel{Name: res.Metadata.Name, Underlay: pathMTUResourceUnderlay(value), MTU: mtu}, true
+}
+
+func pathMTUResourceEnabled(value reflect.Value) bool {
+	field := value.FieldByName("Enabled")
+	if !field.IsValid() {
+		return true
+	}
+	switch field.Kind() {
+	case reflect.Bool:
+		return field.Bool()
+	case reflect.Pointer:
+		if field.IsNil() {
+			return true
+		}
+		if field.Elem().Kind() == reflect.Bool {
+			return field.Elem().Bool()
+		}
+	}
+	return true
+}
+
+func pathMTUResourceLooksLikeInterface(res api.Resource, value reflect.Value) bool {
+	if value.FieldByName("IfName").IsValid() || value.FieldByName("TunnelName").IsValid() || value.FieldByName("UnderlayInterface").IsValid() {
+		return true
+	}
+	return strings.HasSuffix(res.Kind, "Interface")
+}
+
+func pathMTUResourceMTU(res api.Resource, value reflect.Value) int {
+	if field := value.FieldByName("MTU"); field.IsValid() && field.Kind() == reflect.Int && field.Int() > 0 {
+		return int(field.Int())
+	}
+	// Keep zero-value compatibility for resources whose existing renderers
+	// already imply a non-1500 tunnel MTU. New tunnel-like resources participate
+	// automatically when they expose an explicit spec.mtu.
+	switch res.Kind {
+	case "Interface":
+		return 1500
+	case "PPPoESession", "DSLiteTunnel":
+		return 1454
+	case "WireGuardInterface":
+		return 1420
+	default:
+		return 0
+	}
+}
+
+func pathMTUResourceUnderlay(value reflect.Value) string {
+	for _, name := range []string{"UnderlayInterface", "Interface"} {
+		field := value.FieldByName(name)
+		if field.IsValid() && field.Kind() == reflect.String {
+			return strings.TrimSpace(field.String())
+		}
+	}
+	return ""
+}
+
+func compactPathMTUPolicySpecs(specs []pathMTUPolicySpec) []pathMTUPolicySpec {
+	seen := map[string]bool{}
+	var out []pathMTUPolicySpec
+	for _, spec := range specs {
+		spec.ToInterfaces = compactStrings(sortedStrings(spec.ToInterfaces))
+		key := spec.FromInterface + "|" + strings.Join(spec.ToInterfaces, ",") + "|" + strconv.Itoa(spec.MTU) + "|" + strings.Join(spec.TCPMSSClamp.Families, ",") + "|" + strconv.FormatBool(spec.IPv6RA.Enabled) + "|" + spec.IPv6RA.Scope
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, spec)
+	}
+	return out
 }
 
 func pathMTUTunnels(router *api.Router) []pathMTUTunnel {
 	var tunnels []pathMTUTunnel
-	for _, res := range router.Spec.Resources {
-		switch res.Kind {
-		case "DSLiteTunnel":
-			spec, err := res.DSLiteTunnelSpec()
-			if err != nil {
-				continue
-			}
-			if !api.BoolDefault(spec.Enabled, true) {
-				continue
-			}
-			tunnels = append(tunnels, pathMTUTunnel{Name: res.Metadata.Name, Underlay: spec.Interface, MTU: defaultInt(spec.MTU, 1454)})
-		case "PPPoESession":
-			spec, err := res.PPPoESessionSpec()
-			if err != nil {
-				continue
-			}
-			tunnels = append(tunnels, pathMTUTunnel{Name: res.Metadata.Name, Underlay: spec.Interface, MTU: defaultInt(spec.MTU, 1454)})
-		case "WireGuardInterface":
-			spec, err := res.WireGuardInterfaceSpec()
-			if err != nil {
-				continue
-			}
-			tunnels = append(tunnels, pathMTUTunnel{Name: res.Metadata.Name, MTU: defaultInt(spec.MTU, 1420)})
+	for _, iface := range pathMTUResourceInterfaces(router) {
+		if iface.Underlay != "" || iface.MTU < 1500 {
+			tunnels = append(tunnels, iface)
 		}
 	}
 	sort.Slice(tunnels, func(i, j int) bool { return tunnels[i].Name < tunnels[j].Name })
