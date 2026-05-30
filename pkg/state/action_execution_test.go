@@ -129,14 +129,14 @@ func TestActionResultTransitions(t *testing.T) {
 		}
 
 		// Cannot record result before approval.
-		if err := store.MarkActionResult(rec.ID, c.status, "msg", "", time.Time{}); err == nil {
+		if err := store.MarkActionResult(rec.ID, c.status, "msg", "", nil, time.Time{}); err == nil {
 			t.Fatalf("%s: marking result on pending action should error", c.key)
 		}
 
 		if err := store.ApproveAction(rec.ID, "op", time.Time{}); err != nil {
 			t.Fatalf("%s approve: %v", c.key, err)
 		}
-		if err := store.MarkActionResult(rec.ID, c.status, "done", "boom", time.Time{}); err != nil {
+		if err := store.MarkActionResult(rec.ID, c.status, "done", "boom", nil, time.Time{}); err != nil {
 			t.Fatalf("%s mark result: %v", c.key, err)
 		}
 		got, _, err := store.GetActionByID(rec.ID)
@@ -157,8 +157,66 @@ func TestActionResultTransitions(t *testing.T) {
 	}
 	rec, _, _ := store.GetActionByIdempotencyKey("bad-status")
 	_ = store.ApproveAction(rec.ID, "op", time.Time{})
-	if err := store.MarkActionResult(rec.ID, "pending", "", "", time.Time{}); err == nil {
+	if err := store.MarkActionResult(rec.ID, "pending", "", "", nil, time.Time{}); err == nil {
 		t.Fatalf("invalid result status should error")
+	}
+}
+
+func TestActionResultObservedRoundTrip(t *testing.T) {
+	store := mustOpenStore(t)
+	defer store.Close()
+
+	if _, err := store.ImportAction(sampleActionRecord("obs-1")); err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	rec, _, err := store.GetActionByIdempotencyKey("obs-1")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if err := store.ApproveAction(rec.ID, "op", time.Time{}); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	observed := map[string]string{"priorSourceDestCheck": "true", "nicState": "in-use"}
+	if err := store.MarkActionResult(rec.ID, ActionSucceeded, "applied", "", observed, time.Time{}); err != nil {
+		t.Fatalf("mark result: %v", err)
+	}
+
+	got, _, err := store.GetActionByID(rec.ID)
+	if err != nil {
+		t.Fatalf("reget: %v", err)
+	}
+	if got.Observed["priorSourceDestCheck"] != "true" || got.Observed["nicState"] != "in-use" {
+		t.Fatalf("observed not round-tripped: %+v", got.Observed)
+	}
+
+	// ListActions returns Observed too.
+	rows, err := store.ListActions(ActionExecutionFilter{Status: ActionSucceeded})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(rows) != 1 || rows[0].Observed["priorSourceDestCheck"] != "true" {
+		t.Fatalf("list did not return observed: %+v", rows)
+	}
+}
+
+func TestActionResultEmptyObservedLeavesNull(t *testing.T) {
+	store := mustOpenStore(t)
+	defer store.Close()
+
+	if _, err := store.ImportAction(sampleActionRecord("obs-empty")); err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	rec, _, _ := store.GetActionByIdempotencyKey("obs-empty")
+	if err := store.ApproveAction(rec.ID, "op", time.Time{}); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	// nil observed -> observed_json stays NULL, Observed decodes to nil/empty.
+	if err := store.MarkActionResult(rec.ID, ActionSucceeded, "applied", "", nil, time.Time{}); err != nil {
+		t.Fatalf("mark result: %v", err)
+	}
+	got, _, _ := store.GetActionByID(rec.ID)
+	if len(got.Observed) != 0 {
+		t.Fatalf("expected empty Observed, got %+v", got.Observed)
 	}
 }
 
@@ -179,7 +237,7 @@ func TestActionRolledBack(t *testing.T) {
 	if err := store.ApproveAction(rec.ID, "op", time.Time{}); err != nil {
 		t.Fatalf("approve: %v", err)
 	}
-	if err := store.MarkActionResult(rec.ID, ActionSucceeded, "applied", "", time.Time{}); err != nil {
+	if err := store.MarkActionResult(rec.ID, ActionSucceeded, "applied", "", nil, time.Time{}); err != nil {
 		t.Fatalf("mark succeeded: %v", err)
 	}
 	if err := store.MarkActionRolledBack(rec.ID, "undo applied", time.Time{}); err != nil {
@@ -283,5 +341,62 @@ func TestActionExecutionBackwardCompat(t *testing.T) {
 	}
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row after backward-compat upgrade, got %d", len(rows))
+	}
+}
+
+// TestActionExecutionObservedColumnBackwardCompat verifies a database whose
+// action_executions table predates the observed_json column gets the column
+// added on open (additive migration), then Observed persists + round-trips.
+func TestActionExecutionObservedColumnBackwardCompat(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "legacy-observed.db")
+
+	store, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	// Simulate an older table that lacks observed_json by dropping the column.
+	// SQLite supports DROP COLUMN since 3.35; if unavailable, recreate without it.
+	if _, err := store.db.Exec(`ALTER TABLE action_executions DROP COLUMN observed_json`); err != nil {
+		t.Fatalf("drop observed_json column: %v", err)
+	}
+	hadColumn, err := store.tableHasColumn("action_executions", "observed_json")
+	if err != nil {
+		t.Fatalf("tableHasColumn: %v", err)
+	}
+	if hadColumn {
+		t.Fatalf("setup failed: observed_json should be absent after drop")
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	reopened, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer reopened.Close()
+
+	hasColumn, err := reopened.tableHasColumn("action_executions", "observed_json")
+	if err != nil {
+		t.Fatalf("tableHasColumn after reopen: %v", err)
+	}
+	if !hasColumn {
+		t.Fatalf("observed_json column should be re-added on open")
+	}
+
+	if _, err := reopened.ImportAction(sampleActionRecord("after-observed-upgrade")); err != nil {
+		t.Fatalf("import after upgrade: %v", err)
+	}
+	rec, _, _ := reopened.GetActionByIdempotencyKey("after-observed-upgrade")
+	if err := reopened.ApproveAction(rec.ID, "op", time.Time{}); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	if err := reopened.MarkActionResult(rec.ID, ActionSucceeded, "ok", "", map[string]string{"priorSourceDestCheck": "false"}, time.Time{}); err != nil {
+		t.Fatalf("mark result: %v", err)
+	}
+	got, _, _ := reopened.GetActionByID(rec.ID)
+	if got.Observed["priorSourceDestCheck"] != "false" {
+		t.Fatalf("observed not persisted after column re-add: %+v", got.Observed)
 	}
 }

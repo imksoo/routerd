@@ -354,6 +354,55 @@ func TestExecuteSkippedExecutorJournaledSkipped(t *testing.T) {
 	}
 }
 
+// TestExecuteJournalsObserved verifies the executor's Observed facts are
+// persisted to the journal on a successful execute.
+func TestExecuteJournalsObserved(t *testing.T) {
+	store := mustStore(t)
+	res := succeededResult()
+	res.Status.Observed = map[string]string{"priorSourceDestCheck": "true"}
+	runner := &fakeRunner{result: res}
+	e := newEngine(t, store, runner.run, []api.Resource{executorPlugin("aws")})
+	id := importOne(t, store, e, "k1")
+	if err := e.Approve(id, "alice"); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	if err := e.Execute(context.Background(), id, ModeExecute, allowPolicy()); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	rec, _, _ := store.GetActionByID(id)
+	if rec.Observed["priorSourceDestCheck"] != "true" {
+		t.Fatalf("want priorSourceDestCheck journaled, got %+v", rec.Observed)
+	}
+}
+
+// TestRollbackInjectsPriorObserved verifies Rollback reads the journal's
+// Observed and injects priorSourceDestCheck into the undo request Parameters so
+// the executor can restore the captured prior state.
+func TestRollbackInjectsPriorObserved(t *testing.T) {
+	store := mustStore(t)
+	res := succeededResult()
+	res.Status.Observed = map[string]string{"priorSourceDestCheck": "true"}
+	runner := &fakeRunner{result: res}
+	e := newEngine(t, store, runner.run, []api.Resource{executorPlugin("aws")})
+	id := importOne(t, store, e, "k1")
+	if err := e.Approve(id, "alice"); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	if err := e.Execute(context.Background(), id, ModeExecute, allowPolicy()); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if err := e.Rollback(context.Background(), id, allowPolicy()); err != nil {
+		t.Fatalf("rollback: %v", err)
+	}
+	if got := runner.last.Spec.Parameters["priorSourceDestCheck"]; got != "true" {
+		t.Fatalf("undo request must carry injected priorSourceDestCheck=true, got %q (params=%+v)", got, runner.last.Spec.Parameters)
+	}
+	// The planned undo parameter (address) must survive the merge.
+	if runner.last.Spec.Parameters["address"] != "10.0.0.5/32" {
+		t.Fatalf("planned undo parameter lost: %+v", runner.last.Spec.Parameters)
+	}
+}
+
 func TestRollbackBestEffort(t *testing.T) {
 	store := mustStore(t)
 	runner := &fakeRunner{result: succeededResult()}
