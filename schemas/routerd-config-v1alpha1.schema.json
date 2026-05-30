@@ -175,11 +175,42 @@
                         "items": {
                           "enum": [
                             "observe.cloud",
-                            "propose.dynamicConfig"
+                            "propose.dynamicConfig",
+                            "propose.providerAction"
                           ],
                           "type": "string"
                         },
                         "type": "array"
+                      },
+                      "context": {
+                        "additionalProperties": false,
+                        "description": "Context is the least-privilege allowlist of config resources the plugin\nmay read on stdin. Empty/absent = the plugin receives no configuration\n(default-deny). Secrets are ALWAYS redacted from whatever is passed.",
+                        "properties": {
+                          "resources": {
+                            "items": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "apiVersion": {
+                                  "type": "string"
+                                },
+                                "kind": {
+                                  "type": "string"
+                                },
+                                "name": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "apiVersion",
+                                "kind",
+                                "name"
+                              ],
+                              "type": "object"
+                            },
+                            "type": "array"
+                          }
+                        },
+                        "type": "object"
                       },
                       "env": {
                         "additionalProperties": {

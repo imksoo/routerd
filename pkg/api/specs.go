@@ -122,8 +122,25 @@ type PluginSpec struct {
 	Executable   string            `yaml:"executable" json:"executable"`
 	Timeout      string            `yaml:"timeout,omitempty" json:"timeout,omitempty"`
 	Env          map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
-	Capabilities []string          `yaml:"capabilities,omitempty" json:"capabilities,omitempty" jsonschema:"enum=observe.cloud,enum=propose.dynamicConfig"`
+	Capabilities []string          `yaml:"capabilities,omitempty" json:"capabilities,omitempty" jsonschema:"enum=observe.cloud,enum=propose.dynamicConfig,enum=propose.providerAction"`
 	Triggers     []PluginTrigger   `yaml:"triggers,omitempty" json:"triggers,omitempty"`
+	// Context is the least-privilege allowlist of config resources the plugin
+	// may read on stdin. Empty/absent = the plugin receives no configuration
+	// (default-deny). Secrets are ALWAYS redacted from whatever is passed.
+	Context PluginContextSpec `yaml:"context,omitempty" json:"context,omitempty"`
+}
+
+// PluginContextSpec is the allowlist of config resources the plugin may read.
+// Empty = the plugin receives no configuration (default-deny). Secrets are
+// ALWAYS redacted from whatever is passed; there is no opt-out.
+type PluginContextSpec struct {
+	Resources []PluginContextResourceRef `yaml:"resources,omitempty" json:"resources,omitempty"`
+}
+
+type PluginContextResourceRef struct {
+	APIVersion string `yaml:"apiVersion" json:"apiVersion"`
+	Kind       string `yaml:"kind" json:"kind"`
+	Name       string `yaml:"name" json:"name"`
 }
 
 type PluginTrigger struct {

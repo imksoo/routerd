@@ -33,10 +33,13 @@ func validatePluginResource(res api.Resource, _ platform.OS) (bool, error) {
 		}
 		for i, capability := range spec.Capabilities {
 			switch strings.TrimSpace(capability) {
-			case "observe.cloud", "propose.dynamicConfig":
+			case "observe.cloud", "propose.dynamicConfig", "propose.providerAction":
 			default:
-				return true, fmt.Errorf("%s spec.capabilities[%d] must be observe.cloud or propose.dynamicConfig", res.ID(), i)
+				return true, fmt.Errorf("%s spec.capabilities[%d] must be observe.cloud, propose.dynamicConfig, or propose.providerAction", res.ID(), i)
 			}
+		}
+		if err := validatePluginContext(res.ID(), "spec.context", spec.Context); err != nil {
+			return true, err
 		}
 		if err := validatePluginTriggers(res.ID(), "spec.triggers", spec.Triggers); err != nil {
 			return true, err
@@ -73,6 +76,25 @@ func validatePluginResource(res api.Resource, _ platform.OS) (bool, error) {
 	default:
 		return false, nil
 	}
+}
+
+// validatePluginContext checks the least-privilege context allowlist. Each ref
+// must fully identify a resource (apiVersion/kind/name). The referenced resource
+// is NOT required to exist at validate-time: the runner resolves it at run-time
+// and a missing ref simply yields no context entry.
+func validatePluginContext(resourceID, path string, ctx api.PluginContextSpec) error {
+	for i, ref := range ctx.Resources {
+		if strings.TrimSpace(ref.APIVersion) == "" {
+			return fmt.Errorf("%s %s.resources[%d].apiVersion is required", resourceID, path, i)
+		}
+		if strings.TrimSpace(ref.Kind) == "" {
+			return fmt.Errorf("%s %s.resources[%d].kind is required", resourceID, path, i)
+		}
+		if strings.TrimSpace(ref.Name) == "" {
+			return fmt.Errorf("%s %s.resources[%d].name is required", resourceID, path, i)
+		}
+	}
+	return nil
 }
 
 func validatePluginTriggers(resourceID, path string, triggers []api.PluginTrigger) error {

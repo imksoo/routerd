@@ -9,11 +9,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
+	routerplugin "github.com/imksoo/routerd/pkg/plugin"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -372,6 +374,97 @@ func TestReconcileDryRunNoPluginNoPart(t *testing.T) {
 	runs, _ := store.ListSubscriptionRuns("EventSubscription/claim-sub")
 	if len(runs) != 1 || runs[0].Status != "pending" {
 		t.Fatalf("want 1 pending run in dry-run, got %+v", runs)
+	}
+}
+
+// pluginResourceWithContext builds a Plugin that allowlists the given context refs.
+func pluginResourceWithContext(name, executable string, refs ...api.PluginContextResourceRef) api.Resource {
+	return api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.PluginAPIVersion, Kind: "Plugin"},
+		Metadata: api.ObjectMeta{Name: name},
+		Spec:     api.PluginSpec{Executable: executable, Context: api.PluginContextSpec{Resources: refs}},
+	}
+}
+
+// fakeRunner captures the RunOptions a reconcile would pass to the plugin and
+// returns a minimal successful PluginResult, so the test can assert the context
+// the controller built without compiling a real binary.
+func fakeRunner(captured *routerplugin.RunOptions) PluginRunner {
+	return func(_ context.Context, _ api.PluginSpec, _ string, opts routerplugin.RunOptions) (routerplugin.PluginResult, routerplugin.RunOutcome, error) {
+		*captured = opts
+		return routerplugin.PluginResult{
+			Status: routerplugin.PluginResultStatus{TTL: "10m"},
+		}, routerplugin.RunOutcome{HasExitCode: true}, nil
+	}
+}
+
+func TestReconcilePassesRedactedContextToPlugin(t *testing.T) {
+	store := mustStore(t)
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		pluginResourceWithContext("claim-plugin", "/unused",
+			api.PluginContextResourceRef{APIVersion: api.NetAPIVersion, Kind: "WireGuardInterface", Name: "wg0"}),
+		subscriptionResource("claim-plugin", api.EventSubscriptionMatch{Types: []string{"routerd.client.ipv4.observed"}}),
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardInterface"},
+			Metadata: api.ObjectMeta{Name: "wg0"},
+			Spec:     api.WireGuardInterfaceSpec{PrivateKey: "PRIVATE-SECRET-XYZ", PrivateKeyFile: "/etc/routerd/wg.key", ListenPort: 51820},
+		},
+		// A second secret-bearing resource that is NOT allowlisted: must not appear.
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPsecConnection"},
+			Metadata: api.ObjectMeta{Name: "ipsec0"},
+			Spec:     api.IPsecConnectionSpec{LocalAddress: "203.0.113.1", RemoteAddress: "198.51.100.1", PreSharedKey: "PSK-SECRET-ABC", LeftSubnet: "10.0.0.0/24", RightSubnet: "10.1.0.0/24"},
+		},
+	}}}
+	recordEvent(t, store, routerstate.EventRecord{ID: "e1", Group: "cloudedge", Type: "routerd.client.ipv4.observed", Subject: "10.88.60.9/32"})
+
+	var captured routerplugin.RunOptions
+	c := newController(t, store, router)
+	c.PluginRunner = fakeRunner(&captured)
+	if err := c.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	if len(captured.Context.Resources) != 1 {
+		t.Fatalf("want 1 context resource passed to plugin, got %d", len(captured.Context.Resources))
+	}
+	res := captured.Context.Resources[0]
+	if res.Kind != "WireGuardInterface" || res.Name != "wg0" {
+		t.Fatalf("unexpected context resource %s/%s", res.Kind, res.Name)
+	}
+	raw, _ := json.Marshal(captured.Context)
+	jsonStr := string(raw)
+	for _, secret := range []string{"PRIVATE-SECRET-XYZ", "/etc/routerd/wg.key", "PSK-SECRET-ABC", "IPsecConnection"} {
+		if strings.Contains(jsonStr, secret) {
+			t.Errorf("plugin context leaked %q: %s", secret, jsonStr)
+		}
+	}
+	if !strings.Contains(jsonStr, "51820") {
+		t.Errorf("non-secret listenPort missing from context: %s", jsonStr)
+	}
+}
+
+func TestReconcileNoContextAllowlistPassesNothing(t *testing.T) {
+	store := mustStore(t)
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		pluginResource("claim-plugin", "/unused"),
+		subscriptionResource("claim-plugin", api.EventSubscriptionMatch{Types: []string{"routerd.client.ipv4.observed"}}),
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardInterface"},
+			Metadata: api.ObjectMeta{Name: "wg0"},
+			Spec:     api.WireGuardInterfaceSpec{PrivateKey: "PRIVATE-SECRET-XYZ", ListenPort: 51820},
+		},
+	}}}
+	recordEvent(t, store, routerstate.EventRecord{ID: "e1", Group: "cloudedge", Type: "routerd.client.ipv4.observed", Subject: "10.88.60.9/32"})
+
+	var captured routerplugin.RunOptions
+	c := newController(t, store, router)
+	c.PluginRunner = fakeRunner(&captured)
+	if err := c.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if len(captured.Context.Resources) != 0 {
+		t.Fatalf("default-deny: want no context, got %d resources", len(captured.Context.Resources))
 	}
 }
 

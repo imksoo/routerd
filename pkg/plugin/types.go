@@ -37,6 +37,12 @@ type PluginRequestSpec struct {
 	// facts only — routerd never places config or secrets here, preserving the
 	// no-config/no-secret-to-plugin guarantee.
 	Events []PluginMatchedEvent `yaml:"events,omitempty" json:"events,omitempty"`
+	// Context carries the least-privilege, allowlisted, secret-redacted config
+	// resources the plugin is permitted to read (Phase 4.0). It is empty unless
+	// the Plugin declares spec.context.resources (default-deny). SECURITY:
+	// secrets are ALWAYS stripped by BuildPluginContext before they reach here;
+	// there is no opt-out.
+	Context PluginContext `yaml:"context,omitempty" json:"context,omitempty"`
 }
 
 // PluginMatchedEvent is a lightweight DTO describing a federation event that a
