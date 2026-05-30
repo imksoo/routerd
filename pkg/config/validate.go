@@ -717,6 +717,7 @@ func validateResource(res api.Resource, targetOS platform.OS) error {
 		validateDHCPResource,
 		validateRouteResource,
 		validateHybridResource,
+		validateEventResource,
 		validateFirewallResource,
 	}
 	for _, validate := range validators {

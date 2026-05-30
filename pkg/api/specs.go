@@ -1190,6 +1190,45 @@ type AddressMobilityDomainSpec struct {
 	PeerRef string `yaml:"peerRef,omitempty" json:"peerRef,omitempty"`
 }
 
+// EventGroupSpec declares a CloudEdge Event Federation bus identity (ADR 0006).
+//
+// An EventGroup names a cross-node event bus that routerd nodes share. It is the
+// Phase 1 anchor for Event Federation and is intentionally distinct from the
+// observability event* subsystems (eventlog/eventfile) and the local EventRule
+// automation primitive — those are node-local, EventGroup is cross-node.
+type EventGroupSpec struct {
+	// NodeName is this node's identity within the group; it is stamped as the
+	// sourceNode on events emitted into this group.
+	NodeName string `yaml:"nodeName" json:"nodeName"`
+	// Retention bounds how many federation events and for how long the local
+	// store keeps them. Empty/zero values mean unlimited.
+	Retention EventGroupRetention `yaml:"retention,omitempty" json:"retention,omitempty"`
+	// Auth is reserved for Phase 2 peer delivery (HMAC over the overlay). It is
+	// accepted but unused in Phase 1.
+	Auth EventGroupAuth `yaml:"auth,omitempty" json:"auth,omitempty"`
+}
+
+// EventGroupRetention bounds local retention of federation events for a group.
+type EventGroupRetention struct {
+	// MaxEvents caps the number of retained events for the group; 0 means
+	// unlimited.
+	MaxEvents int `yaml:"maxEvents,omitempty" json:"maxEvents,omitempty" jsonschema:"minimum=0"`
+	// MaxAge is a Go duration (e.g. "30m", "24h") bounding event age; "" means
+	// unlimited.
+	MaxAge string `yaml:"maxAge,omitempty" json:"maxAge,omitempty"`
+}
+
+// EventGroupAuth is reserved for Phase 2 peer delivery integrity (message-level
+// HMAC with a shared secret). It is validated leniently and unused in Phase 1.
+type EventGroupAuth struct {
+	// Mode selects the integrity scheme; only "hmac" (or empty) is recognized.
+	Mode string `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=,enum=hmac"`
+	// SecretRef references a secret resource carrying the shared HMAC key.
+	SecretRef string `yaml:"secretRef,omitempty" json:"secretRef,omitempty"`
+	// SecretFile is a filesystem path to the shared HMAC key.
+	SecretFile string `yaml:"secretFile,omitempty" json:"secretFile,omitempty"`
+}
+
 type CloudProviderProfileSpec struct {
 	Provider       string       `yaml:"provider" json:"provider" jsonschema:"enum=azure,enum=aws,enum=oci,enum=gcp"`
 	SubscriptionID string       `yaml:"subscriptionID,omitempty" json:"subscriptionID,omitempty"`
@@ -1850,6 +1889,10 @@ func (r Resource) HybridRouteSpec() (HybridRouteSpec, error) {
 
 func (r Resource) AddressMobilityDomainSpec() (AddressMobilityDomainSpec, error) {
 	return specAs[AddressMobilityDomainSpec](r)
+}
+
+func (r Resource) EventGroupSpec() (EventGroupSpec, error) {
+	return specAs[EventGroupSpec](r)
 }
 
 func (r Resource) CloudProviderProfileSpec() (CloudProviderProfileSpec, error) {

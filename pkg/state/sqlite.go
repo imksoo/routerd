@@ -160,6 +160,19 @@ CREATE TABLE IF NOT EXISTS plugin_runs (
   stderr TEXT,
   error TEXT
 );
+CREATE TABLE IF NOT EXISTS federation_events (
+  id TEXT PRIMARY KEY,
+  group_name TEXT NOT NULL,
+  source_node TEXT,
+  type TEXT NOT NULL,
+  subject TEXT,
+  dedupe_key TEXT,
+  payload TEXT,
+  observed_at INTEGER,
+  expires_at INTEGER,
+  recorded_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS federation_events_group ON federation_events(group_name, observed_at);
 `); err != nil {
 		return err
 	}
