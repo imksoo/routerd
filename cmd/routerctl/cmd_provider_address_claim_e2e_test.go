@@ -22,7 +22,7 @@ import (
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
-// TestEventSubscriptionProviderActionPlanE2E is the Phase 4.1-E fixture e2e: it
+// TestEventSubscriptionProviderActionPlanFixtureE2E is the Phase 4.1-E fixture e2e: it
 // proves, for ALL THREE cloud providers (AWS, Azure, OCI), the full receiver
 // path
 //
@@ -40,7 +40,7 @@ import (
 // The static no-exec / no-SDK invariant for aws/azure/oci-address-claim is
 // already covered by examples/plugins/internal/addressclaim.TestNoExecImports
 // (it walks all of examples/plugins); it is intentionally NOT duplicated here.
-func TestEventSubscriptionProviderActionPlanE2E(t *testing.T) {
+func TestEventSubscriptionProviderActionPlanFixtureE2E(t *testing.T) {
 	// A secret value + a secret-file path planted in the receiver Router. The
 	// controller builds the plugin context with secrets redacted, so neither
 	// must ever surface in the stored DynamicConfigPart (resources + actionPlans)
