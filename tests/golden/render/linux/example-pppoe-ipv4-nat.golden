@@ -35,6 +35,7 @@ flush table inet routerd_filter
 destroy set inet routerd_filter if_lan
 destroy set inet routerd_filter if_wan
 table inet routerd_filter {
+  comment "routerd.owner=routerd routerd.generation=1"
   set if_lan { type ifname; elements = { "ens19" } }
   set if_wan { type ifname; elements = { "ens18", "ppp-home" } }
   chain input {
@@ -84,6 +85,7 @@ flush table inet routerd_filter
 destroy set inet routerd_filter if_lan
 destroy set inet routerd_filter if_wan
 table inet routerd_filter {
+  comment "routerd.owner=routerd routerd.generation=1"
   set if_lan { type ifname; elements = { "ens19" } }
   set if_wan { type ifname; elements = { "ens18", "ppp-home" } }
   chain input {
@@ -129,6 +131,7 @@ table inet routerd_filter {
 add table inet routerd_mss
 flush table inet routerd_mss
 table inet routerd_mss {
+  comment "routerd.owner=routerd routerd.generation=1"
   chain forward {
     type filter hook forward priority mangle; policy accept;
     iifname "ens19" oifname "ppp-home" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1414 tcp option maxseg size set 1414
@@ -140,6 +143,7 @@ table inet routerd_mss {
 add table ip routerd_nat
 flush table ip routerd_nat
 table ip routerd_nat {
+  comment "routerd.owner=routerd routerd.generation=1"
   chain postrouting {
     type nat hook postrouting priority srcnat; policy accept;
     oifname "ppp-home" ip saddr 192.168.40.0/24 ip daddr !=10.0.0.0/8 ip daddr !=172.16.0.0/12 ip daddr !=192.168.0.0/16 masquerade

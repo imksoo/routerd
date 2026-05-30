@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -23,6 +24,7 @@ import (
 	"github.com/imksoo/routerd/pkg/logstore"
 	"github.com/imksoo/routerd/pkg/resource"
 	routerstate "github.com/imksoo/routerd/pkg/state"
+	"gopkg.in/yaml.v3"
 )
 
 func TestShowIPv6PDTableIncludesSpecStateLedger(t *testing.T) {
@@ -174,6 +176,150 @@ func TestEventsCommandListsStateDatabaseEvents(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("events output missing %q:\n%s", want, got)
 		}
+	}
+}
+
+func TestDynamicListCommandShowsActiveAndExpired(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "routerd.db")
+	store, err := routerstate.OpenSQLite(statePath)
+	if err != nil {
+		t.Fatalf("open state: %v", err)
+	}
+	now := time.Now().UTC()
+	if err := store.UpsertDynamicConfigPart(routerstate.DynamicConfigPartRecord{
+		Source:         "cloudedge",
+		Generation:     1,
+		ObservedAt:     now.Add(-2 * time.Hour),
+		ExpiresAt:      now.Add(time.Hour),
+		Digest:         "sha256:active",
+		ResourcesJSON:  `[{"apiVersion":"net.routerd.net/v1alpha1","kind":"Interface","metadata":{"name":"wan"},"spec":{}}]`,
+		DirectivesJSON: `[]`,
+		Status:         "active",
+	}); err != nil {
+		t.Fatalf("upsert active dynamic part: %v", err)
+	}
+	if err := store.UpsertDynamicConfigPart(routerstate.DynamicConfigPartRecord{
+		Source:         "cloudedge",
+		Generation:     2,
+		ObservedAt:     now.Add(-time.Hour),
+		ExpiresAt:      now.Add(-time.Hour),
+		Digest:         "sha256:expired",
+		ResourcesJSON:  `[]`,
+		DirectivesJSON: `[{"op":"mask","target":{"apiVersion":"net.routerd.net/v1alpha1","kind":"Interface","name":"wan"},"reason":"test"}]`,
+		Status:         "active",
+	}); err != nil {
+		t.Fatalf("upsert expired dynamic part: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close state: %v", err)
+	}
+
+	var out bytes.Buffer
+	if err := run([]string{"dynamic", "list", "--state-file", statePath}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("dynamic list: %v", err)
+	}
+	got := out.String()
+	for _, want := range []string{"SOURCE", "GEN", "STATUS", "RESOURCES", "DIRECTIVES", "EXPIRES", "cloudedge"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("dynamic list output missing %q:\n%s", want, got)
+		}
+	}
+	for _, want := range []string{"active", "expired", "1"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("dynamic list output missing %q:\n%s", want, got)
+		}
+	}
+
+	out.Reset()
+	if err := run([]string{"dynamic", "describe", "cloudedge", "--state-file", statePath}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("dynamic describe: %v", err)
+	}
+	got = out.String()
+	for _, want := range []string{"Generation:", "Status:", "expired", "sha256:expired", "Directives:", "mask", "net.routerd.net/v1alpha1/Interface/wan"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("dynamic describe output missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestDynamicRenderCommandMergesStateDB(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "router.yaml")
+	if err := os.WriteFile(configPath, []byte(`apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: test
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: wan
+      spec:
+        ifname: ens18
+        managed: true
+        owner: routerd
+    - apiVersion: config.routerd.net/v1alpha1
+      kind: DynamicOverridePolicy
+      metadata:
+        name: cloudedge
+      spec:
+        allow:
+          - source: cloudedge
+            operations:
+              - mask
+            targets:
+              - apiVersion: net.routerd.net/v1alpha1
+                kind: Interface
+                name: wan
+`), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	statePath := filepath.Join(dir, "routerd.db")
+	store, err := routerstate.OpenSQLite(statePath)
+	if err != nil {
+		t.Fatalf("open state: %v", err)
+	}
+	now := time.Now().UTC()
+	if err := store.UpsertDynamicConfigPart(routerstate.DynamicConfigPartRecord{
+		Source:     "cloudedge",
+		Generation: 7,
+		ObservedAt: now.Add(-time.Minute),
+		ExpiresAt:  now.Add(time.Hour),
+		Digest:     "sha256:render",
+		ResourcesJSON: `[{
+			"apiVersion":"net.routerd.net/v1alpha1",
+			"kind":"Interface",
+			"metadata":{"name":"wan-dynamic"},
+			"spec":{"ifname":"ens19","managed":true,"owner":"routerd"}
+		}]`,
+		DirectivesJSON: `[{
+			"op":"mask",
+			"target":{"apiVersion":"net.routerd.net/v1alpha1","kind":"Interface","name":"wan"},
+			"reason":"cloud edge replacement"
+		}]`,
+		Status: "active",
+	}); err != nil {
+		t.Fatalf("upsert dynamic part: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close state: %v", err)
+	}
+
+	var out bytes.Buffer
+	if err := run([]string{"dynamic", "render", "--config", configPath, "--state-file", statePath}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("dynamic render: %v", err)
+	}
+	got := out.String()
+	for _, want := range []string{"kind: Interface", "name: wan-dynamic", "ifname: ens19"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("dynamic render output missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "ifname: ens18") {
+		t.Fatalf("dynamic render output still contains suppressed startup interface:\n%s", got)
 	}
 }
 
@@ -998,6 +1144,48 @@ func TestDescribeIPv6PDIncludesStatusLedgerEvents(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("describe output missing %q:\n%s", want, got)
 		}
+	}
+}
+
+func TestDescribeResourceSupportsJSONAndYAMLOutput(t *testing.T) {
+	dir := t.TempDir()
+	configPath := writeShowConfig(t, dir)
+	dbPath := filepath.Join(dir, "routerd.db")
+	store, err := routerstate.OpenSQLite(dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite state: %v", err)
+	}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "Interface", "wan", map[string]any{
+		"phase":  "Ready",
+		"reason": "TestSeeded",
+	}); err != nil {
+		t.Fatalf("save interface status: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close sqlite state: %v", err)
+	}
+
+	for _, output := range []string{"json", "yaml"} {
+		t.Run(output, func(t *testing.T) {
+			var out bytes.Buffer
+			err := run([]string{"describe", "interface/wan", "--config", configPath, "--state-file", dbPath, "--ledger-file", dbPath, "-o", output}, &out, &bytes.Buffer{})
+			if err != nil {
+				t.Fatalf("describe interface -o %s: %v", output, err)
+			}
+			var row showResource
+			switch output {
+			case "json":
+				err = json.Unmarshal(out.Bytes(), &row)
+			case "yaml":
+				err = yaml.Unmarshal(out.Bytes(), &row)
+			}
+			if err != nil {
+				t.Fatalf("unmarshal %s: %v\n%s", output, err, out.String())
+			}
+			if row.Kind != "Interface" || row.Name != "wan" || row.State["phase"] != "Ready" || row.Spec == nil {
+				t.Fatalf("describe %s row = %#v", output, row)
+			}
+		})
 	}
 }
 

@@ -1,0 +1,66 @@
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: cloud-inventory-plugin
+spec:
+  resources:
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: OverlayPeer
+      metadata:
+        name: cloud-main
+      spec:
+        role: cloud
+        nodeID: cloud-main
+        underlay:
+          type: route
+          address: 169.254.100.1
+        remote:
+          nodeID: onprem-main
+          address: 169.254.100.2
+
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: AddressMobilityDomain
+      metadata:
+        name: cloudedge-same-subnet
+      spec:
+        prefix: 10.0.1.0/24
+        mode: selective-address
+        peerRef: cloud-main
+
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: CloudProviderProfile
+      metadata:
+        name: oci-prod
+      spec:
+        provider: oci
+        resourceGroup: compartment-a
+        capabilities:
+          - vnic-private-ip
+          - disable-source-dest-check
+        auth:
+          mode: external-command
+          command: /usr/local/libexec/routerd/plugins/oci-auth
+
+    - apiVersion: plugin.routerd.net/v1alpha1
+      kind: Plugin
+      metadata:
+        name: oci-inventory
+      spec:
+        executable: /home/imksoo/routerd/examples/plugins/oci-inventory/bin/oci-inventory
+        timeout: 10s
+        capabilities:
+          - observe.cloud
+          - propose.dynamicConfig
+        triggers:
+          - type: interval
+            every: 300s
+
+    - apiVersion: plugin.routerd.net/v1alpha1
+      kind: DynamicConfigSource
+      metadata:
+        name: oci-inventory
+      spec:
+        pluginRef: oci-inventory
+        ttl: 300s
+        mergePolicy:
+          conflict: reject

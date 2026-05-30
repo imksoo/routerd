@@ -369,6 +369,58 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 				return fmt.Errorf("%s references missing local IPv6DelegatedAddress %q", res.ID(), spec.LocalDelegatedAddress)
 			}
 		}
+		if res.Kind == "HybridRoute" {
+			spec, err := res.HybridRouteSpec()
+			if err != nil {
+				return err
+			}
+			if _, ok := idx.OverlayPeers[spec.PeerRef]; !ok {
+				return fmt.Errorf("%s spec.peerRef references missing OverlayPeer %q", res.ID(), spec.PeerRef)
+			}
+			if spec.HealthCheckRef != "" && !idx.HealthChecks[spec.HealthCheckRef] {
+				return fmt.Errorf("%s spec.healthCheckRef references missing HealthCheck %q", res.ID(), spec.HealthCheckRef)
+			}
+		}
+		if res.Kind == "AddressMobilityDomain" {
+			spec, err := res.AddressMobilityDomainSpec()
+			if err != nil {
+				return err
+			}
+			if spec.PeerRef != "" {
+				if _, ok := idx.OverlayPeers[spec.PeerRef]; !ok {
+					return fmt.Errorf("%s spec.peerRef references missing OverlayPeer %q", res.ID(), spec.PeerRef)
+				}
+			}
+		}
+		if res.Kind == "RemoteAddressClaim" {
+			spec, err := res.RemoteAddressClaimSpec()
+			if err != nil {
+				return err
+			}
+			domain, ok := idx.AddressMobilityDomains[spec.DomainRef]
+			if !ok {
+				return fmt.Errorf("%s spec.domainRef references missing AddressMobilityDomain %q", res.ID(), spec.DomainRef)
+			}
+			domainPrefix, err := netip.ParsePrefix(domain.Prefix)
+			if err != nil {
+				return fmt.Errorf("%s spec.domainRef references AddressMobilityDomain %q with invalid prefix %q", res.ID(), spec.DomainRef, domain.Prefix)
+			}
+			claimPrefix, err := netip.ParsePrefix(spec.Address)
+			if err != nil {
+				return fmt.Errorf("%s spec.address is invalid: %w", res.ID(), err)
+			}
+			if !domainPrefix.Masked().Contains(claimPrefix.Masked().Addr()) {
+				return fmt.Errorf("%s spec.address %q is outside AddressMobilityDomain %q prefix %q", res.ID(), claimPrefix.Masked().String(), spec.DomainRef, domainPrefix.Masked().String())
+			}
+			if _, ok := idx.OverlayPeers[spec.Delivery.PeerRef]; !ok {
+				return fmt.Errorf("%s spec.delivery.peerRef references missing OverlayPeer %q", res.ID(), spec.Delivery.PeerRef)
+			}
+			if spec.Capture.Type == "provider-secondary-ip" {
+				if _, ok := idx.CloudProviderProfiles[spec.Capture.ProviderRef]; !ok {
+					return fmt.Errorf("%s spec.capture.providerRef references missing CloudProviderProfile %q", res.ID(), spec.Capture.ProviderRef)
+				}
+			}
+		}
 		if res.Kind == "HealthCheck" {
 			spec, err := res.HealthCheckSpec()
 			if err != nil {
@@ -656,12 +708,16 @@ func validateResource(res api.Resource, targetOS platform.OS) error {
 	}
 
 	validators := []func(api.Resource, platform.OS) (bool, error){
+		validatePluginResource,
+		validateConfigResource,
 		validateSystemResource,
 		validateInterfaceResource,
 		validateWANResource,
 		validateDNSResource,
 		validateDHCPResource,
 		validateRouteResource,
+		validateHybridResource,
+		validateEventResource,
 		validateFirewallResource,
 	}
 	for _, validate := range validators {

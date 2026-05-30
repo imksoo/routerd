@@ -35,6 +35,7 @@ add table inet routerd_filter
 flush table inet routerd_filter
 destroy set inet routerd_filter if_lan
 table inet routerd_filter {
+  comment "routerd.owner=routerd routerd.generation=1"
   set if_lan { type ifname; elements = { "ens19" } }
   chain input {
     type filter hook input priority filter; policy drop;
@@ -66,6 +67,7 @@ add table inet routerd_filter
 flush table inet routerd_filter
 destroy set inet routerd_filter if_lan
 table inet routerd_filter {
+  comment "routerd.owner=routerd routerd.generation=1"
   set if_lan { type ifname; elements = { "ens19" } }
   chain input {
     type filter hook input priority filter; policy drop;
@@ -94,6 +96,7 @@ table inet routerd_filter {
 add table ip routerd_nat
 flush table ip routerd_nat
 table ip routerd_nat {
+  comment "routerd.owner=routerd routerd.generation=1"
   set ip_address_set_public_dns { type ipv4_addr; }
   chain prerouting {
     type nat hook prerouting priority dstnat; policy accept;
@@ -107,6 +110,7 @@ table ip routerd_nat {
 add table ip6 routerd_nat
 flush table ip6 routerd_nat
 table ip6 routerd_nat {
+  comment "routerd.owner=routerd routerd.generation=1"
   set ip_address_set_public_dns { type ipv6_addr; }
   chain prerouting {
     type nat hook prerouting priority dstnat; policy accept;

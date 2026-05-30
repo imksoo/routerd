@@ -118,6 +118,50 @@ type ApplyPolicySpec struct {
 	AutoTuneConntrack   bool     `yaml:"autoTuneConntrack,omitempty" json:"autoTuneConntrack,omitempty"`
 }
 
+type PluginSpec struct {
+	Executable   string            `yaml:"executable" json:"executable"`
+	Timeout      string            `yaml:"timeout,omitempty" json:"timeout,omitempty"`
+	Env          map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
+	Capabilities []string          `yaml:"capabilities,omitempty" json:"capabilities,omitempty" jsonschema:"enum=observe.cloud,enum=propose.dynamicConfig"`
+	Triggers     []PluginTrigger   `yaml:"triggers,omitempty" json:"triggers,omitempty"`
+}
+
+type PluginTrigger struct {
+	Type  string `yaml:"type" json:"type" jsonschema:"enum=interval,enum=event"`
+	Every string `yaml:"every,omitempty" json:"every,omitempty"`
+	Topic string `yaml:"topic,omitempty" json:"topic,omitempty"`
+}
+
+type DynamicConfigSourceSpec struct {
+	PluginRef   string          `yaml:"pluginRef" json:"pluginRef"`
+	TTL         string          `yaml:"ttl,omitempty" json:"ttl,omitempty"`
+	MergePolicy *MergePolicy    `yaml:"mergePolicy,omitempty" json:"mergePolicy,omitempty"`
+	Triggers    []PluginTrigger `yaml:"triggers,omitempty" json:"triggers,omitempty"`
+}
+
+type MergePolicy struct {
+	Conflict string `yaml:"conflict,omitempty" json:"conflict,omitempty" jsonschema:"enum=,enum=reject"`
+}
+
+// DynamicOverridePolicySpec is defined in api because DynamicOverridePolicy is
+// authored in startup config. pkg/dynamicconfig keeps its runtime policy type
+// and converts this shape there to avoid an api -> dynamicconfig import cycle.
+type DynamicOverridePolicySpec struct {
+	Allow []DynamicOverrideAllowRule `yaml:"allow" json:"allow"`
+}
+
+type DynamicOverrideAllowRule struct {
+	Source     string                  `yaml:"source" json:"source"`
+	Operations []string                `yaml:"operations" json:"operations"`
+	Targets    []DynamicOverrideTarget `yaml:"targets" json:"targets"`
+}
+
+type DynamicOverrideTarget struct {
+	APIVersion string `yaml:"apiVersion" json:"apiVersion"`
+	Kind       string `yaml:"kind" json:"kind"`
+	Name       string `yaml:"name" json:"name"`
+}
+
 type LogSinkSyslogSpec struct {
 	Network  string `yaml:"network,omitempty" json:"network,omitempty" jsonschema:"enum=,enum=unix,enum=unixgram,enum=tcp,enum=udp"`
 	Address  string `yaml:"address,omitempty" json:"address,omitempty"`
@@ -1110,6 +1154,192 @@ type IPv4RouteSpec struct {
 	ReadyWhen   []ReadyWhenSpec          `yaml:"ready_when,omitempty" json:"-"`
 }
 
+type OverlayPeerSpec struct {
+	Role     string          `yaml:"role" json:"role" jsonschema:"enum=onprem,enum=cloud"`
+	NodeID   string          `yaml:"nodeID" json:"nodeID"`
+	Underlay OverlayUnderlay `yaml:"underlay" json:"underlay"`
+	Remote   OverlayRemote   `yaml:"remote,omitempty" json:"remote,omitempty"`
+}
+
+type OverlayUnderlay struct {
+	Type      string `yaml:"type" json:"type" jsonschema:"enum=wireguard,enum=tailscale,enum=ipsec,enum=route"`
+	Interface string `yaml:"interface,omitempty" json:"interface,omitempty"`
+	Address   string `yaml:"address,omitempty" json:"address,omitempty"`
+}
+
+type OverlayRemote struct {
+	NodeID  string `yaml:"nodeID,omitempty" json:"nodeID,omitempty"`
+	Address string `yaml:"address,omitempty" json:"address,omitempty"`
+}
+
+type HybridRouteSpec struct {
+	DestinationCIDRs []string           `yaml:"destinationCIDRs" json:"destinationCIDRs"`
+	PeerRef          string             `yaml:"peerRef" json:"peerRef"`
+	Install          HybridRouteInstall `yaml:"install,omitempty" json:"install,omitempty"`
+	HealthCheckRef   string             `yaml:"healthCheckRef,omitempty" json:"healthCheckRef,omitempty"`
+}
+
+type HybridRouteInstall struct {
+	Table  string `yaml:"table,omitempty" json:"table,omitempty" jsonschema:"enum=,enum=main"`
+	Metric int    `yaml:"metric,omitempty" json:"metric,omitempty" jsonschema:"minimum=0"`
+}
+
+type AddressMobilityDomainSpec struct {
+	Prefix  string `yaml:"prefix" json:"prefix"`
+	Mode    string `yaml:"mode" json:"mode" jsonschema:"enum=selective-address"`
+	PeerRef string `yaml:"peerRef,omitempty" json:"peerRef,omitempty"`
+}
+
+// EventGroupSpec declares a CloudEdge Event Federation bus identity (ADR 0006).
+//
+// An EventGroup names a cross-node event bus that routerd nodes share. It is the
+// Phase 1 anchor for Event Federation and is intentionally distinct from the
+// observability event* subsystems (eventlog/eventfile) and the local EventRule
+// automation primitive — those are node-local, EventGroup is cross-node.
+type EventGroupSpec struct {
+	// NodeName is this node's identity within the group; it is stamped as the
+	// sourceNode on events emitted into this group.
+	NodeName string `yaml:"nodeName" json:"nodeName"`
+	// Retention bounds how many federation events and for how long the local
+	// store keeps them. Empty/zero values mean unlimited.
+	Retention EventGroupRetention `yaml:"retention,omitempty" json:"retention,omitempty"`
+	// Auth is reserved for Phase 2 peer delivery (HMAC over the overlay). It is
+	// accepted but unused in Phase 1.
+	Auth EventGroupAuth `yaml:"auth,omitempty" json:"auth,omitempty"`
+	// Listen is the receiver bind for inbound peer pushes. Empty Address means
+	// this node is push-only (no receiver).
+	Listen EventGroupListen `yaml:"listen,omitempty" json:"listen,omitempty"`
+	// ReplayWindow is a Go duration bounding the accepted message timestamp skew
+	// for replay protection; empty is treated as "5m" downstream.
+	ReplayWindow string `yaml:"replayWindow,omitempty" json:"replayWindow,omitempty"`
+}
+
+// EventGroupListen is the receiver bind for inbound peer pushes. Empty Address
+// means this node is push-only (no receiver). Bind to the overlay address (e.g.
+// the wg-hybrid address), never 0.0.0.0 implicitly.
+type EventGroupListen struct {
+	Address string `yaml:"address,omitempty" json:"address,omitempty"`
+	Port    int    `yaml:"port,omitempty" json:"port,omitempty" jsonschema:"minimum=0,maximum=65535"`
+}
+
+// EventGroupRetention bounds local retention of federation events for a group.
+type EventGroupRetention struct {
+	// MaxEvents caps the number of retained events for the group; 0 means
+	// unlimited.
+	MaxEvents int `yaml:"maxEvents,omitempty" json:"maxEvents,omitempty" jsonschema:"minimum=0"`
+	// MaxAge is a Go duration (e.g. "30m", "24h") bounding event age; "" means
+	// unlimited.
+	MaxAge string `yaml:"maxAge,omitempty" json:"maxAge,omitempty"`
+}
+
+// EventGroupAuth is reserved for Phase 2 peer delivery integrity (message-level
+// HMAC with a shared secret). It is validated leniently and unused in Phase 1.
+type EventGroupAuth struct {
+	// Mode selects the integrity scheme; only "hmac" (or empty) is recognized.
+	Mode string `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=,enum=hmac"`
+	// SecretRef references a secret resource carrying the shared HMAC key.
+	SecretRef string `yaml:"secretRef,omitempty" json:"secretRef,omitempty"`
+	// SecretFile is a filesystem path to the shared HMAC key.
+	SecretFile string `yaml:"secretFile,omitempty" json:"secretFile,omitempty"`
+}
+
+// EventPeerSpec declares a remote node a routerd node pushes federation events
+// to within an EventGroup (ADR 0006, Phase 2). It is the delivery target; the
+// EventGroup names the bus, the EventPeer names where to forward.
+type EventPeerSpec struct {
+	// GroupRef is the EventGroup this peer belongs to (required).
+	GroupRef string `yaml:"groupRef" json:"groupRef"`
+	// NodeName is the remote peer node identity (required).
+	NodeName string `yaml:"nodeName" json:"nodeName"`
+	// Endpoint is the base URL to push to, e.g. http://10.99.0.7:8787. Required
+	// for push delivery.
+	Endpoint string `yaml:"endpoint,omitempty" json:"endpoint,omitempty"`
+	// Direction selects delivery direction; only "push" is supported in Phase 2.
+	// Empty defaults to "push".
+	Direction string `yaml:"direction,omitempty" json:"direction,omitempty" jsonschema:"enum=push"`
+	// Types optionally filters delivery to these event types; empty delivers all.
+	Types []string `yaml:"types,omitempty" json:"types,omitempty"`
+	// SubjectPrefixes optionally filters delivery to subjects carrying one of
+	// these prefixes; empty delivers all.
+	SubjectPrefixes []string `yaml:"subjectPrefixes,omitempty" json:"subjectPrefixes,omitempty"`
+}
+
+// EventSubscriptionSpec declares that received federation events matching a
+// predicate trigger a local Plugin (ADR 0006, Phase 3): the cloud-side rule that
+// turns an observed fact into a DynamicConfigPart via a trusted local plugin.
+type EventSubscriptionSpec struct {
+	// GroupRef is the EventGroup whose events this subscription watches.
+	GroupRef string `yaml:"groupRef" json:"groupRef"`
+	// Match selects which events fire the subscription. Types is required so a
+	// subscription cannot blanket-trigger a plugin on every event in the group.
+	Match EventSubscriptionMatch `yaml:"match" json:"match"`
+	// Trigger names the plugin to invoke and optional batching.
+	Trigger EventSubscriptionTrigger `yaml:"trigger" json:"trigger"`
+}
+
+// EventSubscriptionMatch is the event predicate. Types is required (>=1);
+// the rest narrow further. Empty optional slices/maps mean "any".
+type EventSubscriptionMatch struct {
+	// Types restricts to these event types (required, at least one), e.g.
+	// routerd.client.ipv4.observed.
+	Types []string `yaml:"types" json:"types"`
+	// SubjectPrefixes restricts to subjects with one of these prefixes.
+	SubjectPrefixes []string `yaml:"subjectPrefixes,omitempty" json:"subjectPrefixes,omitempty"`
+	// Payload requires each listed key to equal the given value in the event payload.
+	Payload map[string]string `yaml:"payload,omitempty" json:"payload,omitempty"`
+	// SourceNodes restricts to events whose sourceNode is one of these (loop/scope guard).
+	SourceNodes []string `yaml:"sourceNodes,omitempty" json:"sourceNodes,omitempty"`
+}
+
+// EventSubscriptionTrigger names the Plugin and optional coalescing windows.
+type EventSubscriptionTrigger struct {
+	// PluginRef names the Plugin resource invoked for matched events.
+	PluginRef string `yaml:"pluginRef" json:"pluginRef"`
+	// BatchWindow optionally coalesces matched events into one invocation
+	// (Go duration). MVP invokes per poll tick; this is accepted forward-compat.
+	BatchWindow string `yaml:"batchWindow,omitempty" json:"batchWindow,omitempty"`
+	// Debounce optionally delays invocation after the last matched event
+	// (Go duration). Accepted forward-compat; MVP uses poll-tick batching.
+	Debounce string `yaml:"debounce,omitempty" json:"debounce,omitempty"`
+}
+
+type CloudProviderProfileSpec struct {
+	Provider       string       `yaml:"provider" json:"provider" jsonschema:"enum=azure,enum=aws,enum=oci,enum=gcp"`
+	SubscriptionID string       `yaml:"subscriptionID,omitempty" json:"subscriptionID,omitempty"`
+	ResourceGroup  string       `yaml:"resourceGroup,omitempty" json:"resourceGroup,omitempty"`
+	Capabilities   []string     `yaml:"capabilities" json:"capabilities"`
+	Auth           ProviderAuth `yaml:"auth" json:"auth"`
+}
+
+type ProviderAuth struct {
+	Mode    string `yaml:"mode" json:"mode" jsonschema:"enum=external-command"`
+	Command string `yaml:"command,omitempty" json:"command,omitempty"`
+}
+
+type RemoteAddressClaimSpec struct {
+	DomainRef string          `yaml:"domainRef" json:"domainRef"`
+	Address   string          `yaml:"address" json:"address"`
+	OwnerSide string          `yaml:"ownerSide" json:"ownerSide" jsonschema:"enum=cloud,enum=onprem"`
+	Capture   AddressCapture  `yaml:"capture" json:"capture"`
+	Delivery  AddressDelivery `yaml:"delivery" json:"delivery"`
+}
+
+type AddressCapture struct {
+	Type               string `yaml:"type" json:"type" jsonschema:"enum=provider-secondary-ip,enum=proxy-arp"`
+	ProviderRef        string `yaml:"providerRef,omitempty" json:"providerRef,omitempty"`
+	ProviderMode       string `yaml:"providerMode,omitempty" json:"providerMode,omitempty"`
+	NICRef             string `yaml:"nicRef,omitempty" json:"nicRef,omitempty"`
+	ConfigureOSAddress bool   `yaml:"configureOSAddress,omitempty" json:"configureOSAddress,omitempty"`
+	Interface          string `yaml:"interface,omitempty" json:"interface,omitempty"`
+	GratuitousARP      bool   `yaml:"gratuitousARP,omitempty" json:"gratuitousARP,omitempty"`
+}
+
+type AddressDelivery struct {
+	PeerRef         string `yaml:"peerRef" json:"peerRef"`
+	Mode            string `yaml:"mode" json:"mode" jsonschema:"enum=route"`
+	TunnelInterface string `yaml:"tunnelInterface,omitempty" json:"tunnelInterface,omitempty"`
+}
+
 type HealthCheckSpec struct {
 	// Enabled defaults to true; set enabled: false to keep the check disabled.
 	Enabled            *bool                 `yaml:"enabled,omitempty" json:"enabled,omitempty"`
@@ -1723,6 +1953,38 @@ func (r Resource) IPv4RouteSpec() (IPv4RouteSpec, error) {
 	return specAs[IPv4RouteSpec](r)
 }
 
+func (r Resource) OverlayPeerSpec() (OverlayPeerSpec, error) {
+	return specAs[OverlayPeerSpec](r)
+}
+
+func (r Resource) HybridRouteSpec() (HybridRouteSpec, error) {
+	return specAs[HybridRouteSpec](r)
+}
+
+func (r Resource) AddressMobilityDomainSpec() (AddressMobilityDomainSpec, error) {
+	return specAs[AddressMobilityDomainSpec](r)
+}
+
+func (r Resource) EventGroupSpec() (EventGroupSpec, error) {
+	return specAs[EventGroupSpec](r)
+}
+
+func (r Resource) EventPeerSpec() (EventPeerSpec, error) {
+	return specAs[EventPeerSpec](r)
+}
+
+func (r Resource) EventSubscriptionSpec() (EventSubscriptionSpec, error) {
+	return specAs[EventSubscriptionSpec](r)
+}
+
+func (r Resource) CloudProviderProfileSpec() (CloudProviderProfileSpec, error) {
+	return specAs[CloudProviderProfileSpec](r)
+}
+
+func (r Resource) RemoteAddressClaimSpec() (RemoteAddressClaimSpec, error) {
+	return specAs[RemoteAddressClaimSpec](r)
+}
+
 func (r Resource) HealthCheckSpec() (HealthCheckSpec, error) {
 	return specAs[HealthCheckSpec](r)
 }
@@ -1801,6 +2063,18 @@ func (r Resource) RouterdClusterSpec() (RouterdClusterSpec, error) {
 
 func (r Resource) HostnameSpec() (HostnameSpec, error) {
 	return specAs[HostnameSpec](r)
+}
+
+func (r Resource) PluginSpec() (PluginSpec, error) {
+	return specAs[PluginSpec](r)
+}
+
+func (r Resource) DynamicConfigSourceSpec() (DynamicConfigSourceSpec, error) {
+	return specAs[DynamicConfigSourceSpec](r)
+}
+
+func (r Resource) DynamicOverridePolicySpec() (DynamicOverridePolicySpec, error) {
+	return specAs[DynamicOverridePolicySpec](r)
 }
 
 func specAs[T any](r Resource) (T, error) {

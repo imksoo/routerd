@@ -51,6 +51,11 @@ routerd associates host-side artefacts with the resource that produced them. Rec
 | Derived host runtime | Kernel module load state and systemd-networkd / systemd-resolved drop-ins derived from router resources |
 | `NTPClient` | NTP client configuration |
 
+Linux nftables tables rendered by routerd carry a table comment marker
+(`routerd.owner=routerd routerd.generation=1`). Doctor uses this marker, not a
+name-prefix heuristic alone, when deciding whether a present `routerd_*` table
+is stale relative to the current rendered config.
+
 ## How removal works
 
 routerd does **not** silently delete artefacts it does not own. When a resource is removed from the YAML, only artefacts that routerd previously created (or explicitly adopted) are eligible for deletion.

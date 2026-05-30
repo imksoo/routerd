@@ -8,6 +8,7 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/platform"
+	"github.com/imksoo/routerd/pkg/sam"
 	"github.com/imksoo/routerd/pkg/sysctlprofile"
 )
 
@@ -297,12 +298,47 @@ func DerivedSysctlResources(router *api.Router) []api.Resource {
 			}
 		}
 	}
+	for _, setting := range derivedSAMSysctls(router) {
+		if explicit[setting.Spec.Key] {
+			continue
+		}
+		out = append(out, sysctlResourceFor(setting.Name, setting.Spec))
+		explicit[setting.Spec.Key] = true
+	}
 	for _, setting := range derivedInterfaceSysctls(router) {
 		if explicit[setting.Spec.Key] {
 			continue
 		}
 		out = append(out, sysctlResourceFor(setting.Name, setting.Spec))
 		explicit[setting.Spec.Key] = true
+	}
+	return out
+}
+
+func derivedSAMSysctls(router *api.Router) []sysctlResource {
+	if router == nil || !sam.HasRemoteAddressClaims(router) {
+		return nil
+	}
+	var out []sysctlResource
+	out = append(out, sysctlResource{
+		Name: "sam-ip-forward",
+		Spec: api.SysctlSpec{
+			Key:        "net.ipv4.ip_forward",
+			Value:      "1",
+			Runtime:    boolPtr(true),
+			Persistent: true,
+		},
+	})
+	for _, iface := range sam.ProxyARPInterfaces(router) {
+		out = append(out, sysctlResource{
+			Name: "sam-proxy-arp-" + safeResourceName(iface),
+			Spec: api.SysctlSpec{
+				Key:      "net.ipv4.conf." + iface + ".proxy_arp",
+				Value:    "1",
+				Runtime:  boolPtr(true),
+				Optional: true,
+			},
+		})
 	}
 	return out
 }

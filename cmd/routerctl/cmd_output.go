@@ -140,6 +140,19 @@ func writeDescribe(stdout io.Writer, row showResource, store routerstate.Store) 
 	return w.Flush()
 }
 
+func writeDescribeOutput(stdout io.Writer, row showResource, store routerstate.Store, output string) error {
+	switch output {
+	case "", "table":
+		return writeDescribe(stdout, row, store)
+	case "json":
+		return writeJSON(stdout, row)
+	case "yaml":
+		return writeYAML(stdout, row)
+	default:
+		return fmt.Errorf("unsupported output %q", output)
+	}
+}
+
 func writeDescribeStatus(w io.Writer, row showResource) {
 	if row.Kind == "Inventory" {
 		fmt.Fprintf(w, "Currently observable:\t%s\n", yesNo(len(row.State) > 0))

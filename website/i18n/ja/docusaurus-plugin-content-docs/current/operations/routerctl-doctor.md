@@ -39,12 +39,13 @@ routerctl doctor -o yaml
 | `dslite` | `DSLiteTunnel` のリソース status、AFTR FQDN の AAAA プローブ、tunnel device の存在（`ip link show`）。 |
 | `dhcpv6-pd` | `DHCPv6PrefixDelegation` の status（Bound、委任 prefix）。PD 未取得時は設計上 **WARN**（壊れている IPv6 を LAN に出さない）。 |
 | `nat` | `NAT44Rule` のリソース status、`nft list table ip routerd_nat` の存在。 |
-| `firewall` | `FirewallZone` / `FirewallPolicy` の status、`nft list table inet routerd_filter` の存在と input チェインの `policy drop`（無いと permissive）。 |
+| `firewall` | `FirewallZone` / `FirewallPolicy` の status、`nft list table inet routerd_filter` の存在と input チェインの `policy drop`（無いと permissive）、current config から render される ruleset に含まれない routerd-prefixed nft table が Linux host 上に残っていないか。 |
 | `rollback` | 1 つ以上の世代が保存されていて `routerctl rollback --to` が使えること。 |
 | `disk` | `/var/lib/routerd` と `/run/routerd` の容量。90% 以上 or 256 MiB 未満で WARN、98% 以上 or 64 MiB 未満で FAIL。 |
 | `mgmt` | 管理用 interface の存在（`ManagementAccess` または `FirewallZone role=mgmt` から推定）。WebConsole の bind 先（`0.0.0.0` / `::` は WARN/FAIL）。 |
 | `reconcile` | 読み取り専用ステータスソケットから、コントローラーごとの reconcile 失敗履歴を確認します。`--since <duration>` で対象期間を区切ります。期間内に 1 件以上で WARN、10 件以上で FAIL。detail に最大 5 件のサンプルを表示します。 |
 | `runtime` | 読み取り専用ステータスソケットから、routerd 自身の heap / goroutine / fd を確認します: `heapAlloc`、`heapObjects`、`numGoroutine`、`numGC`、`openFds`/`maxFds`。`numGoroutine` が 10000 超、または open fd が `RLIMIT_NOFILE` の 80% 以上で WARN。観測用で FAIL にはなりません。 |
+| `hybrid` | `HybridRoute` / `OverlayPeer` の参照、Selective Address Mobility の設定参照、デフォルト経路を触らない安全性、MTU 推定、任意の `HealthCheck` status、読み取り専用の経路表確認（`ip -4 route show <prefix>`）。Linux SAM では `/32` delivery route、provider local-address absence、proxy neighbor capture、`proxy_arp`、`ip_forward`、route lookup、warning-only の `rp_filter`、default-drop `FORWARD` policy heuristic も確認します。 |
 
 各チェックは `pass` / `warn` / `fail` / `skip`（該当リソース/シグナルが無い）のいずれかを返します。
 

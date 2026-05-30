@@ -279,6 +279,9 @@ func schemaRef(name string) map[string]any {
 func resourceUnionSchema() map[string]any {
 	return map[string]any{
 		"oneOf": []any{
+			resourceSchema(api.PluginAPIVersion, "Plugin", api.PluginSpec{}),
+			resourceSchema(api.PluginAPIVersion, "DynamicConfigSource", api.DynamicConfigSourceSpec{}),
+			resourceSchema(api.ConfigAPIVersion, "DynamicOverridePolicy", api.DynamicOverridePolicySpec{}),
 			resourceSchema(api.SystemAPIVersion, "LogSink", api.LogSinkSpec{}),
 			resourceSchema(api.ObservabilityAPIVersion, "Telemetry", api.TelemetrySpec{}),
 			resourceSchema(api.SystemAPIVersion, "ObservabilityPipeline", api.ObservabilityPipelineSpec{}),
@@ -321,6 +324,14 @@ func resourceUnionSchema() map[string]any {
 			resourceSchema(api.NetAPIVersion, "DNSForwarder", api.DNSForwarderSpec{}),
 			resourceSchema(api.NetAPIVersion, "DNSUpstream", api.DNSUpstreamSpec{}),
 			resourceSchema(api.NetAPIVersion, "DSLiteTunnel", api.DSLiteTunnelSpec{}),
+			resourceSchema(api.HybridAPIVersion, "OverlayPeer", api.OverlayPeerSpec{}),
+			resourceSchema(api.HybridAPIVersion, "HybridRoute", api.HybridRouteSpec{}),
+			resourceSchema(api.HybridAPIVersion, "AddressMobilityDomain", api.AddressMobilityDomainSpec{}),
+			resourceSchema(api.HybridAPIVersion, "CloudProviderProfile", api.CloudProviderProfileSpec{}),
+			resourceSchema(api.HybridAPIVersion, "RemoteAddressClaim", api.RemoteAddressClaimSpec{}),
+			resourceSchema(api.FederationAPIVersion, "EventGroup", api.EventGroupSpec{}),
+			resourceSchema(api.FederationAPIVersion, "EventPeer", api.EventPeerSpec{}),
+			resourceSchema(api.FederationAPIVersion, "EventSubscription", api.EventSubscriptionSpec{}),
 			resourceSchema(api.NetAPIVersion, "IPv4Route", api.IPv4RouteSpec{}),
 			resourceSchema(api.NetAPIVersion, "HealthCheck", api.HealthCheckSpec{}),
 			resourceSchema(api.NetAPIVersion, "EgressRoutePolicy", api.EgressRoutePolicySpec{}),

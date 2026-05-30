@@ -212,13 +212,13 @@ func (c *Client) TrafficFlowsAggregate(ctx context.Context, query TrafficFlowsRe
 
 func dnsQueryValues(query DNSQueriesRequest) url.Values {
 	values := logQueryValues(query.Since, query.Limit, map[string]string{
-		"client":          query.Client,
-		"qname":           query.QName,
-		"qname-suffix":    query.QNameSuffix,
-		"rcode":           query.ResponseCode,
-		"upstream":        query.Upstream,
-		"from":            query.From,
-		"to":              query.To,
+		"client":       query.Client,
+		"qname":        query.QName,
+		"qname-suffix": query.QNameSuffix,
+		"rcode":        query.ResponseCode,
+		"upstream":     query.Upstream,
+		"from":         query.From,
+		"to":           query.To,
 	})
 	if query.DurationMinUS > 0 {
 		values.Set("duration-min-us", strconv.FormatInt(query.DurationMinUS, 10))

@@ -22,6 +22,7 @@ flush table inet routerd_filter
 destroy set inet routerd_filter if_lan
 destroy set inet routerd_filter if_wan
 table inet routerd_filter {
+  comment "routerd.owner=routerd routerd.generation=1"
   set if_lan { type ifname; elements = { "ens19" } }
   set if_wan { type ifname; elements = { "ds-nixos", "ens18" } }
   chain input {
@@ -73,6 +74,7 @@ flush table inet routerd_filter
 destroy set inet routerd_filter if_lan
 destroy set inet routerd_filter if_wan
 table inet routerd_filter {
+  comment "routerd.owner=routerd routerd.generation=1"
   set if_lan { type ifname; elements = { "ens19" } }
   set if_wan { type ifname; elements = { "ds-nixos", "ens18" } }
   chain input {
@@ -120,6 +122,7 @@ table inet routerd_filter {
 add table inet routerd_mss
 flush table inet routerd_mss
 table inet routerd_mss {
+  comment "routerd.owner=routerd routerd.generation=1"
   chain forward {
     type filter hook forward priority mangle; policy accept;
     iifname "ens19" oifname "ds-nixos" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1414 tcp option maxseg size set 1414
@@ -131,6 +134,7 @@ table inet routerd_mss {
 add table ip routerd_nat
 flush table ip routerd_nat
 table ip routerd_nat {
+  comment "routerd.owner=routerd routerd.generation=1"
   chain postrouting {
     type nat hook postrouting priority srcnat; policy accept;
     oifname "ds-nixos" ip saddr 192.0.2.0/24 masquerade

@@ -8,6 +8,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/netip"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,6 +19,12 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/config"
 	"github.com/imksoo/routerd/pkg/controlapi"
+	"github.com/imksoo/routerd/pkg/dynamicconfig"
+	"github.com/imksoo/routerd/pkg/hybrid"
+	"github.com/imksoo/routerd/pkg/platform"
+	routerplugin "github.com/imksoo/routerd/pkg/plugin"
+	"github.com/imksoo/routerd/pkg/render"
+	"github.com/imksoo/routerd/pkg/sam"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -54,7 +62,7 @@ type doctorRunner struct {
 	store  routerstate.Store
 }
 
-var doctorAreas = []string{"wan", "dns", "dslite", "dhcpv6-pd", "nat", "firewall", "rollback", "disk", "mgmt", "reconcile", "runtime"}
+var doctorAreas = []string{"wan", "dns", "dslite", "dhcpv6-pd", "nat", "firewall", "rollback", "disk", "mgmt", "reconcile", "runtime", "dynamic", "plugin", "hybrid"}
 
 // doctorReconcileWarnThreshold and doctorReconcileFailThreshold are total error
 // counts (across all controllers) that promote the reconcile area to warn/fail.
@@ -68,6 +76,9 @@ var reconcileStatusFetcher = fetchReconcileControllers
 
 // runtimeStatsFetcher allows tests to stub the runtime-stats fetch.
 var runtimeStatsFetcher = fetchRuntimeStats
+
+var doctorRunDiagnosticCommand = runDiagnosticCommand
+var doctorCurrentOS = platform.CurrentOS
 
 // doctorRuntimeGoroutineWarn and doctorRuntimeFDWarnPercent are conservative,
 // observational thresholds. They never fail the run; they only flag footprints
@@ -95,6 +106,11 @@ func doctorCommand(args []string, stdout, stderr io.Writer) error {
 	}
 	router, store, err := loadDiagnoseInputs(opts)
 	if err != nil {
+		if opts.Target == "dynamic" || opts.Target == "plugin" {
+			report := doctorReport{Checks: []doctorCheck{{Area: opts.Target, Name: "inputs", Status: doctorSkip, Detail: err.Error()}}}
+			report.Summary = summarizeDoctorChecks(report.Checks)
+			return writeDoctorReport(stdout, report, opts.Output)
+		}
 		return err
 	}
 	runner := doctorRunner{opts: opts, router: router, store: store}
@@ -149,9 +165,810 @@ func (r doctorRunner) runArea(area string) []doctorCheck {
 		return r.doctorReconcile()
 	case "runtime":
 		return r.doctorRuntime()
+	case "dynamic":
+		return r.doctorDynamic()
+	case "plugin":
+		return r.doctorPlugin()
+	case "hybrid":
+		return r.doctorHybrid()
 	default:
 		return []doctorCheck{{Area: area, Name: "area", Status: doctorSkip, Detail: "unknown area"}}
 	}
+}
+
+func (r doctorRunner) doctorHybrid() []doctorCheck {
+	if r.router == nil {
+		return []doctorCheck{{Area: "hybrid", Name: "startup config", Status: doctorSkip, Detail: "startup config unavailable"}}
+	}
+	routes := selectResources(r.router.Spec.Resources, "HybridRoute", "")
+	peers := selectResources(r.router.Spec.Resources, "OverlayPeer", "")
+	domains := selectResources(r.router.Spec.Resources, "AddressMobilityDomain", "")
+	claims := selectResources(r.router.Spec.Resources, "RemoteAddressClaim", "")
+	if len(routes) == 0 && len(peers) == 0 && len(domains) == 0 && len(claims) == 0 {
+		return []doctorCheck{{Area: "hybrid", Name: "HybridRoute", Status: doctorSkip, Detail: "no hybrid resources configured"}}
+	}
+	peerMap := map[string]api.Resource{}
+	for _, peer := range peers {
+		peerMap[peer.Metadata.Name] = peer
+	}
+	domainMap := map[string]api.Resource{}
+	for _, domain := range domains {
+		domainMap[domain.Metadata.Name] = domain
+	}
+	wgInterfaces := map[string]bool{}
+	for _, res := range selectResources(r.router.Spec.Resources, "WireGuardInterface", "") {
+		wgInterfaces[res.Metadata.Name] = true
+	}
+	var checks []doctorCheck
+	for _, peer := range peers {
+		spec, err := peer.OverlayPeerSpec()
+		if err != nil {
+			checks = append(checks, doctorCheck{Area: "hybrid", Name: "OverlayPeer/" + peer.Metadata.Name, Status: doctorFail, Detail: err.Error(), Remedy: "fix OverlayPeer spec"})
+			continue
+		}
+		if spec.Underlay.Type == "wireguard" {
+			name := "OverlayPeer/" + peer.Metadata.Name + " underlay interface"
+			if wgInterfaces[spec.Underlay.Interface] {
+				checks = append(checks, doctorCheck{Area: "hybrid", Name: name, Status: doctorPass, Detail: "WireGuardInterface/" + spec.Underlay.Interface})
+			} else {
+				checks = append(checks, doctorCheck{Area: "hybrid", Name: name, Status: doctorFail, Detail: "missing WireGuardInterface/" + spec.Underlay.Interface, Remedy: "declare the WireGuardInterface or change OverlayPeer underlay.interface"})
+			}
+		}
+	}
+	for _, route := range routes {
+		spec, err := route.HybridRouteSpec()
+		if err != nil {
+			checks = append(checks, doctorCheck{Area: "hybrid", Name: "HybridRoute/" + route.Metadata.Name, Status: doctorFail, Detail: err.Error(), Remedy: "fix HybridRoute spec"})
+			continue
+		}
+		peerName := doctorHybridRefName(spec.PeerRef, "OverlayPeer")
+		if _, ok := peerMap[peerName]; ok {
+			checks = append(checks, doctorCheck{Area: "hybrid", Name: "HybridRoute/" + route.Metadata.Name + " peerRef", Status: doctorPass, Detail: "OverlayPeer/" + peerName})
+		} else {
+			checks = append(checks, doctorCheck{Area: "hybrid", Name: "HybridRoute/" + route.Metadata.Name + " peerRef", Status: doctorFail, Detail: "missing OverlayPeer/" + peerName, Remedy: "declare the OverlayPeer or update spec.peerRef"})
+		}
+		checks = append(checks, doctorHybridDefaultRouteCheck(route.Metadata.Name, spec.DestinationCIDRs))
+		checks = append(checks, r.doctorHybridMTUCheck(route.Metadata.Name, peerName))
+		checks = append(checks, r.doctorHybridHealthCheck(route.Metadata.Name, spec.HealthCheckRef))
+		checks = append(checks, r.doctorHybridRouteInstalledChecks(route.Metadata.Name, spec.DestinationCIDRs)...)
+	}
+	for _, domain := range domains {
+		spec, err := domain.AddressMobilityDomainSpec()
+		if err != nil {
+			checks = append(checks, doctorCheck{Area: "hybrid", Name: "AddressMobilityDomain/" + domain.Metadata.Name, Status: doctorFail, Detail: err.Error(), Remedy: "fix AddressMobilityDomain spec"})
+			continue
+		}
+		if spec.PeerRef == "" {
+			checks = append(checks, doctorCheck{Area: "hybrid", Name: "AddressMobilityDomain/" + domain.Metadata.Name + " peerRef", Status: doctorSkip, Detail: "no default peerRef configured"})
+			continue
+		}
+		peerName := doctorHybridRefName(spec.PeerRef, "OverlayPeer")
+		if _, ok := peerMap[peerName]; ok {
+			checks = append(checks, doctorCheck{Area: "hybrid", Name: "AddressMobilityDomain/" + domain.Metadata.Name + " peerRef", Status: doctorPass, Detail: "OverlayPeer/" + peerName})
+		} else {
+			checks = append(checks, doctorCheck{Area: "hybrid", Name: "AddressMobilityDomain/" + domain.Metadata.Name + " peerRef", Status: doctorFail, Detail: "missing OverlayPeer/" + peerName, Remedy: "declare the OverlayPeer or update spec.peerRef"})
+		}
+	}
+	for _, claim := range claims {
+		spec, err := claim.RemoteAddressClaimSpec()
+		if err != nil {
+			checks = append(checks, doctorCheck{Area: "hybrid", Name: "RemoteAddressClaim/" + claim.Metadata.Name, Status: doctorFail, Detail: err.Error(), Remedy: "fix RemoteAddressClaim spec"})
+			continue
+		}
+		domainName := doctorHybridRefName(spec.DomainRef, "AddressMobilityDomain")
+		if _, ok := domainMap[domainName]; ok {
+			checks = append(checks, doctorCheck{Area: "hybrid", Name: "RemoteAddressClaim/" + claim.Metadata.Name + " domainRef", Status: doctorPass, Detail: "AddressMobilityDomain/" + domainName})
+		} else {
+			checks = append(checks, doctorCheck{Area: "hybrid", Name: "RemoteAddressClaim/" + claim.Metadata.Name + " domainRef", Status: doctorFail, Detail: "missing AddressMobilityDomain/" + domainName, Remedy: "declare the AddressMobilityDomain or update spec.domainRef"})
+		}
+		peerName := doctorHybridRefName(spec.Delivery.PeerRef, "OverlayPeer")
+		if _, ok := peerMap[peerName]; ok {
+			checks = append(checks, doctorCheck{Area: "hybrid", Name: "RemoteAddressClaim/" + claim.Metadata.Name + " delivery.peerRef", Status: doctorPass, Detail: "OverlayPeer/" + peerName})
+		} else {
+			checks = append(checks, doctorCheck{Area: "hybrid", Name: "RemoteAddressClaim/" + claim.Metadata.Name + " delivery.peerRef", Status: doctorFail, Detail: "missing OverlayPeer/" + peerName, Remedy: "declare the OverlayPeer or update spec.delivery.peerRef"})
+		}
+		checks = append(checks, doctorHybridCaptureTypeCheck(claim.Metadata.Name, spec.Capture.Type))
+		checks = append(checks, r.doctorSAMLiveChecks(claim.Metadata.Name, spec)...)
+	}
+	return checks
+}
+
+func (r doctorRunner) doctorSAMLiveChecks(name string, spec api.RemoteAddressClaimSpec) []doctorCheck {
+	if !r.opts.Host {
+		return []doctorCheck{doctorHostSkipped("hybrid", "RemoteAddressClaim/"+name+" SAM dataplane")}
+	}
+	if doctorCurrentOS() != platform.OSLinux {
+		return []doctorCheck{{Area: "hybrid", Name: "RemoteAddressClaim/" + name + " SAM dataplane", Status: doctorSkip, Detail: "SAM capture not implemented on this OS"}}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), r.opts.Timeout)
+	defer cancel()
+	address := strings.TrimSpace(spec.Address)
+	routeName := sam.DeliveryRouteName(name)
+	tunnel := strings.TrimSpace(spec.Delivery.TunnelInterface)
+	if tunnel == "" {
+		tunnel = "delivery tunnel interface unresolved from OverlayPeer in doctor"
+	}
+	captureInterface := strings.TrimSpace(spec.Capture.Interface)
+	checks := []doctorCheck{
+		doctorSAMIPForwardCheck(ctx, name),
+		doctorSAMDeliveryRouteCheck(ctx, name, routeName, address, tunnel),
+		doctorSAMRouteGetCheck(ctx, name, address),
+		doctorSAMMSSClampCheck(ctx, name, captureInterface, tunnel),
+		doctorSAMHostFirewallCheck(ctx, name, captureInterface, tunnel, r.doctorWireGuardListenPort(tunnel)),
+	}
+	if strings.TrimSpace(spec.Capture.Type) == "proxy-arp" {
+		checks = append(checks, doctorSAMCaptureInterfaceCheck(ctx, name, captureInterface))
+		checks = append(checks, doctorSAMProxyARPEnabledCheck(ctx, name, captureInterface))
+		checks = append(checks, doctorSAMProxyNeighborCheck(ctx, name, address, captureInterface))
+		checks = append(checks, doctorSAMRPFilterCheck(ctx, name, captureInterface))
+		checks = append(checks, doctorSAMForwardPolicyCheck(ctx, name, captureInterface, tunnel, address))
+	}
+	if iface := strings.TrimSpace(spec.Delivery.TunnelInterface); iface != "" {
+		checks = append(checks, doctorSAMRPFilterCheck(ctx, name, iface))
+	}
+	if strings.TrimSpace(spec.Capture.Type) == "provider-secondary-ip" {
+		if !spec.Capture.ConfigureOSAddress {
+			checks = append(checks, doctorSAMLocalAddressAbsentCheck(ctx, name, address))
+		}
+		checks = append(checks, doctorSAMForwardPolicyCheck(ctx, name, strings.TrimSpace(spec.Capture.Interface), tunnel, address))
+	}
+	return checks
+}
+
+func (r doctorRunner) doctorWireGuardListenPort(iface string) int {
+	if r.router == nil {
+		return 0
+	}
+	for _, res := range r.router.Spec.Resources {
+		if res.APIVersion != api.NetAPIVersion || res.Kind != "WireGuardInterface" || res.Metadata.Name != iface {
+			continue
+		}
+		spec, err := res.WireGuardInterfaceSpec()
+		if err == nil {
+			return spec.ListenPort
+		}
+	}
+	return 0
+}
+
+func doctorSAMCaptureInterfaceCheck(ctx context.Context, name, iface string) doctorCheck {
+	label := "RemoteAddressClaim/" + name + " proxy-arp interface"
+	if strings.TrimSpace(iface) == "" {
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorSkip, Detail: "interface unavailable"}
+	}
+	command := doctorRunDiagnosticCommand(ctx, "ip link show "+iface, "ip", "-o", "link", "show", "dev", iface)
+	if command.OK {
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: firstNonEmpty(oneLine(command.Stdout), "interface "+iface+" found")}
+	}
+	return doctorCheck{
+		Area:   "hybrid",
+		Name:   label,
+		Status: doctorFail,
+		Detail: "RemoteAddressClaim/" + name + " proxy-arp interface " + iface + " not found",
+		Remedy: "create or rename the interface; routerd cannot set proxy_arp on a missing interface",
+	}
+}
+
+func doctorSAMIPForwardCheck(ctx context.Context, name string) doctorCheck {
+	label := "RemoteAddressClaim/" + name + " ip_forward"
+	command := doctorRunDiagnosticCommand(ctx, "sysctl net.ipv4.ip_forward", "sysctl", "-n", "net.ipv4.ip_forward")
+	if command.OK && strings.TrimSpace(command.Stdout) == "1" {
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: "net.ipv4.ip_forward=1"}
+	}
+	return doctorCheck{Area: "hybrid", Name: label, Status: doctorWarn, Detail: firstNonEmpty(command.Error, oneLine(command.Output), "net.ipv4.ip_forward is not 1"), Remedy: "wait for routerd sysctl reconciliation or set net.ipv4.ip_forward=1"}
+}
+
+func doctorSAMRouteGetCheck(ctx context.Context, name, address string) doctorCheck {
+	label := "RemoteAddressClaim/" + name + " route get"
+	ip := strings.TrimSuffix(strings.TrimSpace(address), "/32")
+	if ip == "" {
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorSkip, Detail: "address unavailable"}
+	}
+	command := doctorRunDiagnosticCommand(ctx, "ip route get "+ip, "ip", "-4", "route", "get", ip)
+	if command.OK {
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: oneLine(command.Stdout)}
+	}
+	return doctorCheck{Area: "hybrid", Name: label, Status: doctorWarn, Detail: firstNonEmpty(command.Error, oneLine(command.Output), "route lookup failed"), Remedy: "inspect Linux route selection for the SAM claim address"}
+}
+
+func doctorSAMDeliveryRouteCheck(ctx context.Context, name, routeName, address, tunnel string) doctorCheck {
+	label := "RemoteAddressClaim/" + name + " delivery route"
+	command := doctorRunDiagnosticCommand(ctx, "ip route show "+address, "ip", "-4", "route", "show", address)
+	if command.OK && (strings.Contains(command.Stdout, strings.TrimSpace(address)) || strings.Contains(command.Stdout, strings.TrimSuffix(strings.TrimSpace(address), "/32"))) {
+		if strings.HasPrefix(tunnel, "delivery tunnel interface unresolved") || strings.Contains(command.Stdout, "dev "+tunnel) {
+			return doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: appendDoctorDetail(oneLine(command.Stdout), "lowered IPv4Route/"+routeName)}
+		}
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorWarn, Detail: appendDoctorDetail(oneLine(command.Stdout), "expected dev "+tunnel), Remedy: "inspect lowered IPv4Route/" + routeName + " and OverlayPeer delivery settings"}
+	}
+	return doctorCheck{Area: "hybrid", Name: label, Status: doctorWarn, Detail: firstNonEmpty(command.Error, oneLine(command.Output), "route not found"), Remedy: "wait for routerd to install lowered IPv4Route/" + routeName}
+}
+
+func doctorSAMProxyARPEnabledCheck(ctx context.Context, name, iface string) doctorCheck {
+	label := "RemoteAddressClaim/" + name + " proxy_arp " + iface
+	if strings.TrimSpace(iface) == "" {
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorSkip, Detail: "interface unavailable"}
+	}
+	key := "net.ipv4.conf." + iface + ".proxy_arp"
+	command := doctorRunDiagnosticCommand(ctx, "sysctl "+key, "sysctl", "-n", key)
+	if command.OK && strings.TrimSpace(command.Stdout) == "1" {
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: key + "=1"}
+	}
+	return doctorCheck{Area: "hybrid", Name: label, Status: doctorWarn, Detail: firstNonEmpty(command.Error, oneLine(command.Output), key+" is not 1"), Remedy: "wait for routerd SAM capture reconciliation or set " + key + "=1"}
+}
+
+func doctorSAMProxyNeighborCheck(ctx context.Context, name, address, iface string) doctorCheck {
+	label := "RemoteAddressClaim/" + name + " proxy neighbor"
+	command := doctorRunDiagnosticCommand(ctx, "ip neigh show proxy "+address+" dev "+iface, "ip", "neigh", "show", "proxy", address, "dev", iface)
+	if command.OK && strings.Contains(command.Stdout, strings.TrimSuffix(address, "/32")) {
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: oneLine(command.Stdout)}
+	}
+	return doctorCheck{Area: "hybrid", Name: label, Status: doctorWarn, Detail: firstNonEmpty(command.Error, oneLine(command.Output), "proxy neighbor not found"), Remedy: "wait for routerd SAM capture reconciliation or inspect proxy_arp and netlink neighbor state"}
+}
+
+func doctorSAMLocalAddressAbsentCheck(ctx context.Context, name, address string) doctorCheck {
+	label := "RemoteAddressClaim/" + name + " local OS address"
+	command := doctorRunDiagnosticCommand(ctx, "ip addr show "+address, "ip", "-o", "-4", "addr", "show", "to", address)
+	if command.OK && strings.TrimSpace(command.Stdout) == "" {
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: strings.TrimSpace(address) + " absent from local interfaces"}
+	}
+	if command.OK {
+		return doctorCheck{
+			Area:   "hybrid",
+			Name:   label,
+			Status: doctorWarn,
+			Detail: oneLine(command.Stdout),
+			Remedy: "routerd enforces OS-absence and removes this address during reconcile when present; if it keeps reappearing, disable the guest cloud-init/netplan config for that IP",
+		}
+	}
+	return doctorCheck{Area: "hybrid", Name: label, Status: doctorWarn, Detail: firstNonEmpty(command.Error, oneLine(command.Output), "local address check failed"), Remedy: "verify the captured address is not assigned to the guest OS"}
+}
+
+func doctorSAMForwardPolicyCheck(ctx context.Context, name, captureIface, tunnel, address string) doctorCheck {
+	label := "RemoteAddressClaim/" + name + " FORWARD policy"
+	command := doctorRunDiagnosticCommand(ctx, "nft list table inet routerd_filter", "nft", "list", "table", "inet", "routerd_filter")
+	if !command.OK {
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorSkip, Detail: doctorSAMForwardPolicyUnavailableDetail(command)}
+	}
+	detail := "SAM delivery traverses FORWARD"
+	if captureIface != "" || tunnel != "" {
+		detail = appendDoctorDetail(detail, "path "+firstNonEmpty(captureIface, "<capture-interface>")+" -> "+firstNonEmpty(tunnel, "<tunnel-interface>"))
+	}
+	if address != "" {
+		detail = appendDoctorDetail(detail, "claim "+address)
+	}
+	if nftForwardPolicyDrop(command.Stdout) {
+		return doctorCheck{
+			Area:   "hybrid",
+			Name:   label,
+			Status: doctorWarn,
+			Detail: appendDoctorDetail(detail, "default-drop FORWARD policy observed"),
+			Remedy: "verify firewall policy permits SAM forwarding between the capture interface and tunnel interface for the captured /32",
+		}
+	}
+	return doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: detail}
+}
+
+func doctorSAMMSSClampCheck(ctx context.Context, name, captureIface, tunnel string) doctorCheck {
+	label := "RemoteAddressClaim/" + name + " MSS clamp"
+	tunnel = strings.TrimSpace(tunnel)
+	captureIface = strings.TrimSpace(captureIface)
+	if tunnel == "" || strings.HasPrefix(tunnel, "delivery tunnel interface unresolved") {
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorSkip, Detail: "delivery tunnel interface unavailable"}
+	}
+	link := doctorRunDiagnosticCommand(ctx, "ip link show "+tunnel, "ip", "-o", "link", "show", "dev", tunnel)
+	detail := "SAM delivery tunnel " + tunnel
+	if link.OK {
+		if mtu := doctorExtractLinkMTU(link.Stdout); mtu != "" {
+			detail = appendDoctorDetail(detail, "mtu="+mtu)
+		} else {
+			detail = appendDoctorDetail(detail, oneLine(link.Stdout))
+		}
+	}
+	if captureIface == "" {
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorWarn, Detail: appendDoctorDetail(detail, "capture interface unavailable"), Remedy: "set spec.capture.interface on the RemoteAddressClaim so routerd can derive and diagnose SAM MSS clamp rules"}
+	}
+	table := doctorRunDiagnosticCommand(ctx, "nft list table inet routerd_mss", "nft", "list", "table", "inet", "routerd_mss")
+	if !table.OK {
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorWarn, Detail: appendDoctorDetail(detail, doctorSAMMSSClampUnavailableDetail(table)), Remedy: "wait for routerd PathMTUController to install routerd_mss or inspect TCP MSS clamp rendering for the SAM path"}
+	}
+	if nftMSSClampHasPath(table.Stdout, captureIface, tunnel) {
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: appendDoctorDetail(detail, "routerd_mss covers "+captureIface+" -> "+tunnel)}
+	}
+	return doctorCheck{Area: "hybrid", Name: label, Status: doctorWarn, Detail: appendDoctorDetail(detail, "routerd_mss missing "+captureIface+" -> "+tunnel), Remedy: "ensure SAM Path MTU derivation includes the capture interface and WireGuard delivery tunnel"}
+}
+
+func doctorSAMMSSClampUnavailableDetail(command diagnoseCommandCheck) string {
+	combined := strings.ToLower(strings.Join([]string{command.Error, command.Stderr, command.Stdout, command.Output}, " "))
+	switch {
+	case strings.Contains(combined, "executable file not found") || strings.Contains(combined, "no such file or directory") && strings.Contains(strings.ToLower(command.Error), "exec"):
+		return "nft unavailable"
+	case strings.Contains(combined, "permission denied") || strings.Contains(combined, "operation not permitted"):
+		return "permission denied running nft"
+	case strings.Contains(combined, "no such file or directory") || strings.Contains(combined, "no such table") || strings.Contains(combined, "table does not exist"):
+		return "routerd_mss table absent"
+	default:
+		return firstNonEmpty(command.Error, oneLine(command.Output), "exit "+strconv.Itoa(command.ExitCode))
+	}
+}
+
+func doctorExtractLinkMTU(output string) string {
+	fields := strings.Fields(output)
+	for i, field := range fields {
+		if field == "mtu" && i+1 < len(fields) {
+			return fields[i+1]
+		}
+	}
+	return ""
+}
+
+func nftMSSClampHasPath(output, from, to string) bool {
+	for _, line := range strings.Split(output, "\n") {
+		if strings.Contains(line, `iifname "`+from+`"`) && strings.Contains(line, `oifname "`+to+`"`) && strings.Contains(line, "maxseg") {
+			return true
+		}
+	}
+	return false
+}
+
+func doctorSAMHostFirewallCheck(ctx context.Context, name, captureIface, tunnel string, listenPort int) doctorCheck {
+	label := "RemoteAddressClaim/" + name + " host firewall"
+	var warnings []string
+	var details []string
+	input := doctorRunDiagnosticCommand(ctx, "iptables -S INPUT", "iptables", "-S", "INPUT")
+	if input.OK {
+		if listenPort > 0 {
+			if iptablesChainHasTerminalDropReject(input.Stdout) && !iptablesInputAllowsUDPPort(input.Stdout, listenPort) {
+				warnings = append(warnings, fmt.Sprintf("INPUT has terminal drop/reject without UDP/%d accept", listenPort))
+			} else {
+				details = append(details, fmt.Sprintf("INPUT permits or does not block UDP/%d", listenPort))
+			}
+		}
+	} else {
+		details = append(details, "iptables INPUT unavailable: "+firstNonEmpty(input.Error, oneLine(input.Output), "exit "+strconv.Itoa(input.ExitCode)))
+	}
+	forward := doctorRunDiagnosticCommand(ctx, "iptables -S FORWARD", "iptables", "-S", "FORWARD")
+	if forward.OK {
+		if captureIface != "" && tunnel != "" && !strings.HasPrefix(tunnel, "delivery tunnel interface unresolved") {
+			forwardOK := iptablesForwardAllowsPath(forward.Stdout, captureIface, tunnel) && iptablesForwardAllowsPath(forward.Stdout, tunnel, captureIface)
+			if iptablesChainHasTerminalDropReject(forward.Stdout) && !forwardOK {
+				warnings = append(warnings, "FORWARD has terminal drop/reject without "+captureIface+" <-> "+tunnel+" accept")
+			} else {
+				details = append(details, "FORWARD permits or does not block "+captureIface+" <-> "+tunnel)
+			}
+		} else {
+			details = append(details, "FORWARD path unavailable")
+		}
+	} else {
+		details = append(details, "iptables FORWARD unavailable: "+firstNonEmpty(forward.Error, oneLine(forward.Output), "exit "+strconv.Itoa(forward.ExitCode)))
+	}
+	if len(warnings) > 0 {
+		return doctorCheck{
+			Area:   "hybrid",
+			Name:   label,
+			Status: doctorWarn,
+			Detail: strings.Join(warnings, "; "),
+			Remedy: "permit WireGuard UDP ingress and forwarding between the SAM capture interface and delivery tunnel in the host firewall",
+		}
+	}
+	if len(details) == 0 {
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorSkip, Detail: "host firewall state unavailable"}
+	}
+	return doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: strings.Join(details, "; ")}
+}
+
+func iptablesChainHasTerminalDropReject(output string) bool {
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if strings.Contains(line, "-P ") && (strings.HasSuffix(line, " DROP") || strings.HasSuffix(line, " REJECT")) {
+			return true
+		}
+		if strings.Contains(line, "-j DROP") || strings.Contains(line, "-j REJECT") {
+			return true
+		}
+	}
+	return false
+}
+
+func iptablesInputAllowsUDPPort(output string, port int) bool {
+	portString := strconv.Itoa(port)
+	for _, line := range strings.Split(output, "\n") {
+		if !strings.Contains(line, "-A INPUT") || !strings.Contains(line, "-j ACCEPT") {
+			continue
+		}
+		if strings.Contains(line, "-p udp") && (strings.Contains(line, "--dport "+portString) || strings.Contains(line, "dpt:"+portString)) {
+			return true
+		}
+	}
+	return false
+}
+
+func iptablesForwardAllowsPath(output, from, to string) bool {
+	for _, line := range strings.Split(output, "\n") {
+		if !strings.Contains(line, "-A FORWARD") || !strings.Contains(line, "-j ACCEPT") {
+			continue
+		}
+		hasFrom := strings.Contains(line, "-i "+from) || strings.Contains(line, "-i "+shellQuoteForIptablesMatch(from))
+		hasTo := strings.Contains(line, "-o "+to) || strings.Contains(line, "-o "+shellQuoteForIptablesMatch(to))
+		if hasFrom && hasTo {
+			return true
+		}
+	}
+	return false
+}
+
+func shellQuoteForIptablesMatch(value string) string {
+	return "'" + value + "'"
+}
+
+func doctorSAMForwardPolicyUnavailableDetail(command diagnoseCommandCheck) string {
+	combined := strings.ToLower(strings.Join([]string{command.Error, command.Stderr, command.Stdout, command.Output}, " "))
+	switch {
+	case strings.Contains(combined, "executable file not found") || strings.Contains(combined, "no such file or directory") && strings.Contains(strings.ToLower(command.Error), "exec"):
+		return "nft unavailable"
+	case strings.Contains(combined, "permission denied") || strings.Contains(combined, "operation not permitted"):
+		return "permission denied running nft"
+	case strings.Contains(combined, "no such file or directory") || strings.Contains(combined, "no such table") || strings.Contains(combined, "table does not exist"):
+		return "routerd_filter table absent; no routerd firewall policy observed"
+	default:
+		detail := firstNonEmpty(command.Error, oneLine(command.Output), "exit "+strconv.Itoa(command.ExitCode))
+		return "nft list table inet routerd_filter failed: " + detail
+	}
+}
+
+func nftForwardPolicyDrop(output string) bool {
+	lower := strings.ToLower(output)
+	for _, block := range strings.Split(lower, "chain ") {
+		if !strings.Contains(block, "forward") {
+			continue
+		}
+		if strings.Contains(block, "hook forward") && strings.Contains(block, "policy drop") {
+			return true
+		}
+	}
+	return false
+}
+
+func doctorSAMRPFilterCheck(ctx context.Context, name, iface string) doctorCheck {
+	label := "RemoteAddressClaim/" + name + " rp_filter " + iface
+	if strings.TrimSpace(iface) == "" {
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorSkip, Detail: "interface unavailable"}
+	}
+	key := "net.ipv4.conf." + iface + ".rp_filter"
+	command := doctorRunDiagnosticCommand(ctx, "sysctl "+key, "sysctl", "-n", key)
+	value := strings.TrimSpace(command.Stdout)
+	if command.OK && value == "1" {
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorWarn, Detail: key + "=1 (strict); SAM forwarded /32 traffic may be dropped", Remedy: "consider setting " + key + "=2 (loose) after validating router policy"}
+	}
+	if command.OK {
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: key + "=" + value}
+	}
+	return doctorCheck{Area: "hybrid", Name: label, Status: doctorSkip, Detail: firstNonEmpty(command.Error, oneLine(command.Output), "rp_filter unavailable")}
+}
+
+func doctorHybridCaptureTypeCheck(name, captureType string) doctorCheck {
+	switch strings.TrimSpace(captureType) {
+	case "provider-secondary-ip", "proxy-arp":
+		return doctorCheck{Area: "hybrid", Name: "RemoteAddressClaim/" + name + " capture.type", Status: doctorPass, Detail: captureType}
+	case "static-host-route", "garp":
+		return doctorCheck{Area: "hybrid", Name: "RemoteAddressClaim/" + name + " capture.type", Status: doctorFail, Detail: captureType + " is reserved/not implemented in MVP", Remedy: "use provider-secondary-ip or proxy-arp"}
+	default:
+		return doctorCheck{Area: "hybrid", Name: "RemoteAddressClaim/" + name + " capture.type", Status: doctorFail, Detail: "unsupported capture type " + captureType, Remedy: "use provider-secondary-ip or proxy-arp"}
+	}
+}
+
+func doctorHybridDefaultRouteCheck(name string, destinations []string) doctorCheck {
+	for _, destination := range destinations {
+		if doctorHybridDefaultDestination(destination) {
+			return doctorCheck{Area: "hybrid", Name: "HybridRoute/" + name + " default route untouched", Status: doctorFail, Detail: "default destination " + destination + " is not allowed", Remedy: "remove default from spec.destinationCIDRs"}
+		}
+	}
+	return doctorCheck{Area: "hybrid", Name: "HybridRoute/" + name + " default route untouched", Status: doctorPass, Detail: "no default destinations"}
+}
+
+func (r doctorRunner) doctorHybridMTUCheck(routeName, peerName string) doctorCheck {
+	estimate, ok := hybrid.EstimateMTU(*r.router, peerName)
+	name := "HybridRoute/" + routeName + " MTU estimate"
+	if !ok || estimate.UnderlayMTU == 0 {
+		return doctorCheck{Area: "hybrid", Name: name, Status: doctorSkip, Detail: "underlay MTU unavailable"}
+	}
+	detail := fmt.Sprintf("underlay=%d overhead=%d estimate=%d", estimate.UnderlayMTU, estimate.Overhead, estimate.EstimatedMTU)
+	if estimate.Warning != "" {
+		return doctorCheck{Area: "hybrid", Name: name, Status: doctorWarn, Detail: appendDoctorDetail(detail, estimate.Warning), Remedy: "increase underlay MTU or reduce overlay payload MTU"}
+	}
+	return doctorCheck{Area: "hybrid", Name: name, Status: doctorPass, Detail: detail}
+}
+
+func (r doctorRunner) doctorHybridHealthCheck(routeName, ref string) doctorCheck {
+	name := "HybridRoute/" + routeName + " healthCheckRef"
+	if strings.TrimSpace(ref) == "" {
+		return doctorCheck{Area: "hybrid", Name: name, Status: doctorSkip, Detail: "no healthCheckRef configured"}
+	}
+	if !resourceExists(r.router.Spec.Resources, "HealthCheck", ref) {
+		return doctorCheck{Area: "hybrid", Name: name, Status: doctorFail, Detail: "missing HealthCheck/" + ref, Remedy: "declare the HealthCheck or update spec.healthCheckRef"}
+	}
+	if !r.opts.Host {
+		return doctorCheck{Area: "hybrid", Name: name, Status: doctorSkip, Detail: "host commands disabled by --no-host"}
+	}
+	status := objectStatus(r.store, api.NetAPIVersion, "HealthCheck", ref)
+	return doctorNamedStatusCheck("hybrid", name, status, healthyPhases("Healthy", "Passing", "Applied", "Ready"))
+}
+
+func (r doctorRunner) doctorHybridRouteInstalledChecks(routeName string, destinations []string) []doctorCheck {
+	if !r.opts.Host {
+		return []doctorCheck{doctorHostSkipped("hybrid", "HybridRoute/"+routeName+" route installed")}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), r.opts.Timeout)
+	defer cancel()
+	var checks []doctorCheck
+	for _, destination := range destinations {
+		label := "HybridRoute/" + routeName + " route " + destination
+		command := runDiagnosticCommand(ctx, "ip route show "+destination, "ip", "-4", "route", "show", destination)
+		if command.OK && strings.Contains(command.Stdout, destination) {
+			checks = append(checks, doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: oneLine(command.Stdout)})
+			continue
+		}
+		detail := firstNonEmpty(command.Error, oneLine(command.Output), oneLine(command.Stdout), "route not found")
+		checks = append(checks, doctorCheck{Area: "hybrid", Name: label, Status: doctorWarn, Detail: detail, Remedy: "wait for routerd to install the lowered IPv4Route or inspect route controller status"})
+	}
+	return checks
+}
+
+func doctorHybridDefaultDestination(value string) bool {
+	value = strings.TrimSpace(value)
+	if strings.EqualFold(value, "default") {
+		return true
+	}
+	prefix, err := netip.ParsePrefix(value)
+	if err != nil {
+		return false
+	}
+	prefix = prefix.Masked()
+	return prefix.Bits() == 0 && (prefix.Addr().Is4() || prefix.Addr().Is6())
+}
+
+func doctorHybridRefName(ref, kind string) string {
+	ref = strings.TrimSpace(ref)
+	if strings.HasPrefix(ref, kind+"/") {
+		return strings.TrimPrefix(ref, kind+"/")
+	}
+	return ref
+}
+
+func resourceExists(resources []api.Resource, kind, name string) bool {
+	name = doctorHybridRefName(name, kind)
+	for _, resource := range resources {
+		if resource.Kind == kind && resource.Metadata.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func (r doctorRunner) doctorDynamic() []doctorCheck {
+	if r.router == nil {
+		return []doctorCheck{{Area: "dynamic", Name: "startup config", Status: doctorSkip, Detail: "startup config unavailable"}}
+	}
+	lister, ok := r.store.(routerstate.DynamicConfigPartLister)
+	if !ok {
+		return []doctorCheck{{Area: "dynamic", Name: "state database", Status: doctorSkip, Detail: "state store does not expose dynamic config parts"}}
+	}
+	records, err := lister.ListDynamicConfigParts()
+	if err != nil {
+		return []doctorCheck{{Area: "dynamic", Name: "state database", Status: doctorSkip, Detail: "dynamic config parts unavailable: " + err.Error()}}
+	}
+	now := time.Now().UTC()
+	checks := []doctorCheck{}
+	parts, err := dynamicPartsFromRecords(records)
+	if err != nil {
+		checks = append(checks, doctorCheck{Area: "dynamic", Name: "dynamic parts decode", Status: doctorFail, Detail: err.Error(), Remedy: "remove or replace the malformed DynamicConfigPart generation"})
+		checks = append(checks, doctorCheck{Area: "dynamic", Name: "effective config builds", Status: doctorSkip, Detail: "skipped because stored dynamic parts did not decode"})
+		return checks
+	}
+	resources, directives := 0, 0
+	for _, part := range parts {
+		resources += len(part.Spec.Resources)
+		directives += len(part.Spec.Directives)
+	}
+	checks = append(checks, doctorCheck{Area: "dynamic", Name: "dynamic parts decode", Status: doctorPass, Detail: fmt.Sprintf("%d parts, %d resources, %d directives", len(parts), resources, directives)})
+
+	activeParts := make([]dynamicconfig.DynamicConfigPart, 0, len(parts))
+	activeBySource := map[string]int{}
+	expiredBySource := map[string]int{}
+	for _, part := range parts {
+		if part.IsExpired(now) {
+			expiredBySource[part.Spec.Source]++
+			continue
+		}
+		activeParts = append(activeParts, part)
+		activeBySource[part.Spec.Source]++
+	}
+	staleSources := []string{}
+	for source, expired := range expiredBySource {
+		if expired > 0 && activeBySource[source] == 0 {
+			staleSources = append(staleSources, source)
+		}
+	}
+	sort.Strings(staleSources)
+	expiredStatus := doctorPass
+	expiredDetail := fmt.Sprintf("%d active, %d expired (ignored)", len(activeParts), len(parts)-len(activeParts))
+	if len(staleSources) > 0 {
+		expiredStatus = doctorWarn
+		expiredDetail = appendDoctorDetail(expiredDetail, "stale: source "+strings.Join(staleSources, ",")+" has only expired generations")
+	}
+	checks = append(checks, doctorCheck{Area: "dynamic", Name: "expired parts ignored", Status: expiredStatus, Detail: expiredDetail})
+
+	policies, err := dynamicconfig.ExtractDynamicOverridePolicies(*r.router)
+	if err != nil {
+		checks = append(checks, doctorCheck{Area: "dynamic", Name: "effective config builds", Status: doctorFail, Detail: err.Error(), Remedy: "fix DynamicOverridePolicy resources in startup config"})
+		return checks
+	}
+	_, result, err := dynamicconfig.BuildEffectiveConfig(*r.router, activeParts, policies, now)
+	if err != nil {
+		checks = append(checks, doctorCheck{Area: "dynamic", Name: "effective config builds", Status: doctorFail, Detail: err.Error(), Remedy: "fix dynamic masks, conflicting resources, or override policy grants"})
+	} else {
+		checks = append(checks, doctorCheck{Area: "dynamic", Name: "effective config builds", Status: doctorPass, Detail: fmt.Sprintf("%d suppressed, %d dynamic resources added", len(result.Suppressed), len(result.AddedResources))})
+	}
+	checks = append(checks, r.doctorDynamicOverridePolicyCheck(activeParts, policies))
+	return checks
+}
+
+func (r doctorRunner) doctorDynamicOverridePolicyCheck(parts []dynamicconfig.DynamicConfigPart, policies []dynamicconfig.DynamicOverridePolicy) doctorCheck {
+	activeMasks := map[string]bool{}
+	for _, part := range parts {
+		for _, directive := range part.Spec.Directives {
+			if directive.Op == dynamicconfig.DirectiveOpMask {
+				activeMasks[dynamicPolicyKey(part.Spec.Source, directive.Target)] = true
+			}
+		}
+	}
+	if len(policies) == 0 {
+		if len(activeMasks) == 0 {
+			return doctorCheck{Area: "dynamic", Name: "override policies present for masks", Status: doctorPass, Detail: "no active masks"}
+		}
+		return doctorCheck{Area: "dynamic", Name: "override policies present for masks", Status: doctorWarn, Detail: "active masks exist but no DynamicOverridePolicy resources are configured"}
+	}
+	deadRules := 0
+	totalRules := 0
+	for _, policy := range policies {
+		for _, rule := range policy.Spec.Allow {
+			for _, target := range rule.Targets {
+				totalRules++
+				if !doctorContainsString(rule.Operations, dynamicconfig.DirectiveOpMask) {
+					deadRules++
+					continue
+				}
+				if !activeMasks[dynamicPolicyKey(rule.Source, target)] {
+					deadRules++
+				}
+			}
+		}
+	}
+	if deadRules > 0 {
+		return doctorCheck{Area: "dynamic", Name: "override policies present for masks", Status: doctorWarn, Detail: fmt.Sprintf("%d/%d DynamicOverridePolicy target rules match no current mask", deadRules, totalRules)}
+	}
+	return doctorCheck{Area: "dynamic", Name: "override policies present for masks", Status: doctorPass, Detail: fmt.Sprintf("%d active masks covered", len(activeMasks))}
+}
+
+func dynamicPolicyKey(source string, target dynamicconfig.DirectiveTarget) string {
+	return source + "|" + target.APIVersion + "|" + target.Kind + "|" + target.Name
+}
+
+func doctorContainsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func (r doctorRunner) doctorPlugin() []doctorCheck {
+	if r.router == nil {
+		return []doctorCheck{{Area: "plugin", Name: "startup config", Status: doctorSkip, Detail: "startup config unavailable"}}
+	}
+	plugins := selectResources(r.router.Spec.Resources, "Plugin", "")
+	if len(plugins) == 0 {
+		return []doctorCheck{{Area: "plugin", Name: "no plugins configured", Status: doctorSkip, Detail: "no Plugin resources configured"}}
+	}
+	runLister, runOK := r.store.(routerstate.PluginRunLister)
+	partLister, partOK := r.store.(routerstate.DynamicConfigPartLister)
+	var checks []doctorCheck
+	for _, res := range plugins {
+		name := res.Metadata.Name
+		spec, err := res.PluginSpec()
+		if err != nil {
+			checks = append(checks, doctorCheck{Area: "plugin", Name: "Plugin/" + name, Status: doctorFail, Detail: err.Error(), Remedy: "fix Plugin resource spec"})
+			continue
+		}
+		checks = append(checks, doctorPluginExecutableChecks(name, spec.Executable, r.opts.Host)...)
+		if !runOK {
+			checks = append(checks, doctorCheck{Area: "plugin", Name: "Plugin/" + name + " last run", Status: doctorSkip, Detail: "state store does not expose plugin runs"})
+		} else {
+			checks = append(checks, doctorPluginLastRunCheck(runLister, name))
+		}
+		if !partOK {
+			checks = append(checks, doctorCheck{Area: "plugin", Name: "Plugin/" + name + " last result fresh", Status: doctorSkip, Detail: "state store does not expose dynamic config parts"})
+		} else {
+			checks = append(checks, doctorPluginLastResultCheck(partLister, name, time.Now().UTC()))
+		}
+	}
+	return checks
+}
+
+func doctorPluginExecutableChecks(name, executable string, host bool) []doctorCheck {
+	existsName := "Plugin/" + name + " executable exists"
+	execName := "Plugin/" + name + " executable is executable"
+	if !host {
+		return []doctorCheck{
+			{Area: "plugin", Name: existsName, Status: doctorSkip, Detail: "host commands disabled by --no-host"},
+			{Area: "plugin", Name: execName, Status: doctorSkip, Detail: "host commands disabled by --no-host"},
+		}
+	}
+	info, err := os.Stat(strings.TrimSpace(executable))
+	if err != nil {
+		return []doctorCheck{
+			{Area: "plugin", Name: existsName, Status: doctorFail, Detail: err.Error(), Remedy: "install the plugin executable on this host"},
+			{Area: "plugin", Name: execName, Status: doctorSkip, Detail: "skipped because executable was not found"},
+		}
+	}
+	exists := doctorCheck{Area: "plugin", Name: existsName, Status: doctorPass, Detail: executable}
+	if !info.Mode().IsRegular() {
+		exists.Status = doctorFail
+		exists.Detail = "not a regular file: " + executable
+		exists.Remedy = "replace the plugin path with a regular executable file"
+		return []doctorCheck{exists, doctorCheck{Area: "plugin", Name: execName, Status: doctorSkip, Detail: "skipped because executable is not a regular file"}}
+	}
+	if err := routerplugin.ValidateExecutable(executable); err != nil {
+		return []doctorCheck{
+			exists,
+			{Area: "plugin", Name: execName, Status: doctorFail, Detail: err.Error(), Remedy: "set executable mode bits on the plugin file"},
+		}
+	}
+	return []doctorCheck{
+		exists,
+		{Area: "plugin", Name: execName, Status: doctorPass, Detail: "executable bit set"},
+	}
+}
+
+func doctorPluginLastRunCheck(lister routerstate.PluginRunLister, name string) doctorCheck {
+	runs, err := lister.ListPluginRuns(name)
+	if err != nil {
+		return doctorCheck{Area: "plugin", Name: "Plugin/" + name + " last run", Status: doctorSkip, Detail: "plugin run history unavailable: " + err.Error()}
+	}
+	if len(runs) == 0 {
+		return doctorCheck{Area: "plugin", Name: "Plugin/" + name + " last run", Status: doctorWarn, Detail: "never run", Remedy: "run routerctl plugin run " + name}
+	}
+	latest := runs[0]
+	if latest.Status == "failed" {
+		return doctorCheck{Area: "plugin", Name: "Plugin/" + name + " last run", Status: doctorFail, Detail: firstNonEmpty(latest.Error, latest.Stderr, "last run failed"), Remedy: "inspect plugin stderr and rerun the plugin"}
+	}
+	if latest.Status != "succeeded" {
+		return doctorCheck{Area: "plugin", Name: "Plugin/" + name + " last run", Status: doctorWarn, Detail: "last run status " + latest.Status}
+	}
+	exit := "exit unknown"
+	if latest.HasExitCode {
+		exit = fmt.Sprintf("exit %d", latest.ExitCode)
+	}
+	return doctorCheck{Area: "plugin", Name: "Plugin/" + name + " last run", Status: doctorPass, Detail: fmt.Sprintf("last run %s, %s", formatDynamicTime(latest.CompletedAt), exit)}
+}
+
+func doctorPluginLastResultCheck(lister routerstate.DynamicConfigPartLister, name string, now time.Time) doctorCheck {
+	source := "Plugin/" + name
+	parts, err := lister.GetDynamicConfigPartsBySource(source)
+	if err != nil {
+		return doctorCheck{Area: "plugin", Name: "Plugin/" + name + " last result fresh", Status: doctorSkip, Detail: "dynamic part unavailable: " + err.Error()}
+	}
+	if len(parts) == 0 {
+		return doctorCheck{Area: "plugin", Name: "Plugin/" + name + " last result fresh", Status: doctorWarn, Detail: "no dynamic part", Remedy: "run routerctl plugin run " + name}
+	}
+	latest := parts[0]
+	if latest.EffectiveStatus(now) == "expired" {
+		return doctorCheck{Area: "plugin", Name: "Plugin/" + name + " last result fresh", Status: doctorWarn, Detail: "stale (expired " + formatDynamicTime(latest.ExpiresAt) + ")", Remedy: "rerun the plugin or adjust its result TTL"}
+	}
+	return doctorCheck{Area: "plugin", Name: "Plugin/" + name + " last result fresh", Status: doctorPass, Detail: fmt.Sprintf("generation %d active until %s", latest.Generation, formatDynamicTime(latest.ExpiresAt))}
 }
 
 func (r doctorRunner) doctorReconcile() []doctorCheck {
@@ -518,10 +1335,10 @@ func (r doctorRunner) doctorFirewall() []doctorCheck {
 	zones := selectResources(r.router.Spec.Resources, "FirewallZone", "")
 	policies := selectResources(r.router.Spec.Resources, "FirewallPolicy", "")
 	firewallResources := append(zones, policies...)
-	if len(firewallResources) == 0 {
-		return []doctorCheck{{Area: "firewall", Name: "FirewallZone/Policy", Status: doctorWarn, Detail: "no firewall zones or policy configured; router may be permissive", Remedy: "declare FirewallZone and FirewallPolicy resources"}}
-	}
 	var checks []doctorCheck
+	if len(firewallResources) == 0 {
+		checks = append(checks, doctorCheck{Area: "firewall", Name: "FirewallZone/Policy", Status: doctorWarn, Detail: "no firewall zones or policy configured; router may be permissive", Remedy: "declare FirewallZone and FirewallPolicy resources"})
+	}
 	zoneCounts := doctorResourceStatusCounts{}
 	for _, res := range firewallResources {
 		status := objectStatus(r.store, res.APIVersion, res.Kind, res.Metadata.Name)
@@ -533,20 +1350,133 @@ func (r doctorRunner) doctorFirewall() []doctorCheck {
 	if r.opts.Host {
 		ctx, cancel := context.WithTimeout(context.Background(), r.opts.Timeout)
 		defer cancel()
-		command := runDiagnosticCommand(ctx, "nft list table inet routerd_filter", "nft", "list", "table", "inet", "routerd_filter")
-		extra := fmt.Sprintf("FirewallZone active=%d", zoneCounts.Active)
-		check := doctorNftCheckStatus("firewall", command, "inet", "routerd_filter", doctorFail, "apply firewall resources or inspect nftables errors", extra)
-		if command.OK && (!strings.Contains(command.Stdout, "hook input") || !strings.Contains(command.Stdout, "policy drop")) {
-			check.Status = doctorWarn
-			check.Detail = appendDoctorDetail("routerd_filter exists but input policy drop was not found", "table=inet/routerd_filter")
-			check.Detail = appendDoctorDetail(check.Detail, extra)
-			check.Remedy = "check rendered firewall policy"
+		if len(firewallResources) > 0 {
+			command := runDiagnosticCommand(ctx, "nft list table inet routerd_filter", "nft", "list", "table", "inet", "routerd_filter")
+			extra := fmt.Sprintf("FirewallZone active=%d", zoneCounts.Active)
+			check := doctorNftCheckStatus("firewall", command, "inet", "routerd_filter", doctorFail, "apply firewall resources or inspect nftables errors", extra)
+			if command.OK && (!strings.Contains(command.Stdout, "hook input") || !strings.Contains(command.Stdout, "policy drop")) {
+				check.Status = doctorWarn
+				check.Detail = appendDoctorDetail("routerd_filter exists but input policy drop was not found", "table=inet/routerd_filter")
+				check.Detail = appendDoctorDetail(check.Detail, extra)
+				check.Remedy = "check rendered firewall policy"
+			}
+			checks = append(checks, check)
 		}
-		checks = append(checks, check)
+		checks = append(checks, r.doctorStaleNftTablesCheck(ctx))
 	} else {
 		checks = append(checks, doctorHostSkipped("firewall", "nft routerd_filter"))
 	}
 	return checks
+}
+
+func (r doctorRunner) doctorStaleNftTablesCheck(ctx context.Context) doctorCheck {
+	name := "stale routerd nft tables"
+	if doctorCurrentOS() != platform.OSLinux {
+		return doctorCheck{Area: "firewall", Name: name, Status: doctorSkip, Detail: "nftables host table check is Linux-only"}
+	}
+	expected, err := expectedRouterdNftTables(r.router)
+	if err != nil {
+		return doctorCheck{Area: "firewall", Name: name, Status: doctorWarn, Detail: "could not render expected nft tables: " + err.Error(), Remedy: "fix config render errors, then rerun doctor firewall"}
+	}
+	command := runDiagnosticCommand(ctx, "nft list tables", "nft", "list", "tables")
+	if !command.OK {
+		return doctorCheck{Area: "firewall", Name: name, Status: doctorSkip, Detail: firstNonEmpty(command.Error, oneLine(command.Output), "nft list tables unavailable")}
+	}
+	present := parseNftTables(command.Stdout)
+	var stale []string
+	marked := 0
+	unmarked := 0
+	unverified := 0
+	for _, table := range present {
+		if !strings.HasPrefix(table.name, "routerd_") {
+			continue
+		}
+		tableCommand := runDiagnosticCommand(ctx, "nft list table "+table.family+" "+table.name, "nft", "list", "table", table.family, table.name)
+		if !tableCommand.OK {
+			unverified++
+			continue
+		}
+		if !strings.Contains(tableCommand.Stdout, render.NftablesRouterdOwnerMarker) {
+			unmarked++
+			continue
+		}
+		marked++
+		if !expected[table.key()] {
+			stale = append(stale, table.key())
+		}
+	}
+	sort.Strings(stale)
+	if len(stale) == 0 {
+		detail := fmt.Sprintf("%d marked routerd-owned nft tables match current config", marked)
+		if unmarked > 0 {
+			detail = appendDoctorDetail(detail, fmt.Sprintf("%d unmarked routerd-prefixed tables ignored", unmarked))
+		}
+		if unverified > 0 {
+			detail = appendDoctorDetail(detail, fmt.Sprintf("%d routerd-prefixed tables could not be inspected for ownership marker", unverified))
+		}
+		return doctorCheck{Area: "firewall", Name: name, Status: doctorPass, Detail: detail}
+	}
+	return doctorCheck{
+		Area:   "firewall",
+		Name:   name,
+		Status: doctorWarn,
+		Detail: "marked routerd-owned tables not expected by current config: " + strings.Join(stale, ","),
+		Remedy: "inspect the listed nft tables and remove stale marked routerd-owned tables only after confirming they are not intentionally managed by this generation",
+	}
+}
+
+type doctorNftTable struct {
+	family string
+	name   string
+}
+
+func (t doctorNftTable) key() string {
+	return t.family + "/" + t.name
+}
+
+func parseNftTables(output string) []doctorNftTable {
+	var tables []doctorNftTable
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) < 3 || fields[0] != "table" {
+			continue
+		}
+		name := strings.TrimSuffix(fields[2], "{")
+		tables = append(tables, doctorNftTable{family: fields[1], name: name})
+	}
+	return tables
+}
+
+func expectedRouterdNftTables(router *api.Router) (map[string]bool, error) {
+	expected := map[string]bool{}
+	if router == nil {
+		return expected, nil
+	}
+	data, err := render.NftablesNAT44(router)
+	if err != nil {
+		return nil, err
+	}
+	for _, table := range parseNftTables(string(data)) {
+		expected[table.key()] = true
+	}
+	for _, res := range selectResources(router.Spec.Resources, "EgressRoutePolicy", "") {
+		spec, err := res.EgressRoutePolicySpec()
+		if err != nil {
+			return nil, err
+		}
+		switch strings.TrimSpace(spec.Mode) {
+		case "priority":
+			expected["ip/routerd_default_route"] = true
+		case "mark", "hash":
+			expected["ip/routerd_policy"] = true
+		}
+		for _, candidate := range spec.Candidates {
+			if len(candidate.Targets) > 0 || candidate.Mark != 0 && strings.TrimSpace(spec.Mode) != "priority" {
+				expected["ip/routerd_policy"] = true
+			}
+		}
+	}
+	return expected, nil
 }
 
 func (r doctorRunner) doctorRollback() []doctorCheck {

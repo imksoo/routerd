@@ -102,6 +102,29 @@ type EventLister interface {
 	ListEvents(query EventQuery) ([]StoredEvent, error)
 }
 
+// FederationEventStore is the cross-node Event Federation store surface
+// (ADR 0006), distinct from EventLister (observability events).
+type FederationEventStore interface {
+	RecordFederationEvent(rec EventRecord) error
+	ListFederationEvents(group string, includeExpired bool, now int64) ([]EventRecord, error)
+}
+
+// FederationDeliveryStore is the read surface for per-(event,peer) delivery
+// tracking in the event_deliveries table (ADR 0006, Phase 2).
+type FederationDeliveryStore interface {
+	ListDeliveries(eventID, peer string) ([]DeliveryRecord, error)
+	ListDeliveriesFiltered(group, eventID, peer, status string) ([]DeliveryRecord, error)
+}
+
+type DynamicConfigPartLister interface {
+	ListDynamicConfigParts() ([]DynamicConfigPartRecord, error)
+	GetDynamicConfigPartsBySource(source string) ([]DynamicConfigPartRecord, error)
+}
+
+type PluginRunLister interface {
+	ListPluginRuns(plugin string) ([]PluginRunRecord, error)
+}
+
 type ObjectGenerationReader interface {
 	ObjectGeneration(apiVersion, kind, name string) int64
 }

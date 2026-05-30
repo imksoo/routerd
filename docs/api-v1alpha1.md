@@ -41,6 +41,7 @@ spec:
 | `system.routerd.net/v1alpha1` | `Hostname`, `Sysctl`, `SysctlProfile`, `Package`, `NTPClient`, `NTPServer`, `LogSink`, `ObservabilityPipeline`, `RouterdCluster`, `LogRetention`, `WebConsole` |
 | `observability.routerd.net/v1alpha1` | `Telemetry` |
 | `plugin.routerd.net/v1alpha1` | plugin manifests |
+| `hybrid.routerd.net/v1alpha1` | `OverlayPeer`, `HybridRoute`, `AddressMobilityDomain`, `CloudProviderProfile`, `RemoteAddressClaim` |
 
 ## System Bootstrap
 
@@ -172,6 +173,11 @@ for DoH or DoT endpoint name resolution.
 | Kind | Role |
 | --- | --- |
 | `DSLiteTunnel` | Creates an `ip6tnl` tunnel to an AFTR. The AFTR can be static IPv6, FQDN, or DHCPv6 information. |
+| `OverlayPeer` | Describes an on-prem or cloud overlay peer and the local underlay used to reach it. |
+| `HybridRoute` | Lowers non-default remote IPv4 prefixes through an `OverlayPeer` into managed `IPv4Route` resources. |
+| `AddressMobilityDomain` | Defines an IPv4 prefix for Selective Address Mobility; full L2 extension is not supported. |
+| `CloudProviderProfile` | Describes provider capabilities and external-command auth for declarative address capture planning. |
+| `RemoteAddressClaim` | Declares one mobile IPv4 `/32`, its capture mechanism, and route delivery over an `OverlayPeer`. |
 | `IPAddressSet` | Defines reusable IP address sets from literal addresses and FQDNs. Linux nftables renderers materialize these as named sets for firewall, redirect, NAT, and policy-routing consumers. |
 | `IPv4Route` | Adds IPv4 routes, including DS-Lite defaults and explicit drop routes. |
 | `ClusterNetworkRoute` | Expands Kubernetes Pod and Service CIDRs into static IPv4 routes through worker next hops. |
@@ -190,6 +196,15 @@ sets without expanding addresses directly into the policy resource. Use
 `mode: priority` for default-route failover, `mode: mark` for one marked route
 table, and `mode: hash` or `candidates[].targets` for source/destination hash
 distribution across multiple route tables.
+
+`HybridRoute` is intentionally conservative in the MVP: it rejects default
+routes, accepts only the main table, and lowers IPv4 destinations into the
+existing `IPv4Route` controller path instead of installing routes directly.
+
+Selective Address Mobility is declarative in this MVP. `RemoteAddressClaim`
+does not configure firewall or NAT policy and does not program live capture,
+proxy ARP, `/32` forwarding, or cloud APIs. Operators compose firewall/NAT by
+referencing literal addresses in the existing firewall and NAT resources.
 
 routerd derives reverse path filter sysctls, tunnel MTU, RA MTU, and TCP MSS
 clamping from router role, tunnel, firewall zone, and RA/DHCPv6 resources.
@@ -503,6 +518,8 @@ and fields outside the target kind's `provides` set.
 | `DNSUpstream` | `address` (string), `phase` (string), `url` (string) |
 | `DNSZone` | `pendingRecords` (objectList), `phase` (string), `records` (int), `updatedAt` (timestamp), `zone` (string) |
 | `DSLiteTunnel` | `aftrIPv6` (string), `aftrName` (string), `device` (string), `dryRun` (bool), `innerLocalIPv4` (string), `innerRemoteIPv4` (string), `interface` (string), `localIPv6` (string), `localInterface` (string), `mtu` (int), `phase` (string), `tunnelName` (string) |
+| `AddressMobilityDomain` | `mode` (string), `peerRef` (string), `phase` (string), `prefix` (string) |
+| `CloudProviderProfile` | `capabilities` (stringList), `phase` (string), `provider` (string) |
 | `DerivedEvent` | `phase` (string), `topic` (string) |
 | `EgressRoutePolicy` | `advisory` (bool), `candidates` (objectList), `dryRun` (bool), `family` (string), `lastTransitionAt` (timestamp), `phase` (string), `role` (string), `selectedCandidate` (string), `selectedDevice` (string), `selectedGateway` (string), `selectedGatewaySource` (string), `selectedInterface` (string), `selectedMetric` (int), `selectedRouteTable` (int), `selectedSource` (string), `selectedTargets` (int), `selectedWeight` (int), `updatedAt` (timestamp) |
 | `EventRule` | `phase` (string), `topic` (string) |
@@ -512,6 +529,7 @@ and fields outside the target kind's `provides` set.
 | `FirewallZone` | `interfaces` (stringList), `phase` (string) |
 | `HealthCheck` | `consecutiveFailed` (int), `lastCheckedAt` (timestamp), `phase` (string), `protocol` (string), `role` (string), `sourceAddress` (string), `sourceInterface` (string), `target` (string) |
 | `Hostname` | `hostname` (string), `phase` (string) |
+| `HybridRoute` | `defaultRouteUntouched` (bool), `estimatedMTU` (int), `peerRef` (string), `phase` (string), `routes` (objectList) |
 | `IPAddressSet` | `addresses` (stringList), `ipv4Addresses` (stringList), `ipv6Addresses` (stringList), `phase` (string), `updatedAt` (timestamp) |
 | `IPsecConnection` | `phase` (string) |
 | `IPv4Route` | `destination` (string), `device` (string), `dryRun` (bool), `gateway` (string), `metric` (int), `phase` (string), `type` (string) |
@@ -533,11 +551,13 @@ and fields outside the target kind's `provides` set.
 | `NTPClient` | `phase` (string), `servers` (stringList), `source` (string), `updatedAt` (timestamp) |
 | `NTPServer` | `allowCIDRs` (stringList), `listenAddresses` (stringList), `phase` (string), `servers` (stringList), `source` (string), `updatedAt` (timestamp) |
 | `ObservabilityPipeline` | `phase` (string), `signals` (stringList) |
+| `OverlayPeer` | `nodeID` (string), `phase` (string), `role` (string), `underlayInterface` (string), `underlayType` (string) |
 | `PPPoESession` | `connectedAt` (timestamp), `currentAddress` (string), `device` (string), `dnsServers` (stringList), `dryRun` (bool), `gateway` (string), `interface` (string), `peerAddress` (string), `phase` (string) |
 | `Package` | `dryRun` (bool), `packages` (stringList), `phase` (string) |
 | `PortForward` | `dryRun` (bool), `listenAddress` (string), `phase` (string), `target` (object) |
 | `RouterdCluster` | `leader` (string), `leaseExpiresAt` (timestamp), `phase` (string) |
 | `SelfAddressPolicy` | `address` (string), `phase` (string), `source` (string) |
+| `RemoteAddressClaim` | `address` (string), `captureType` (string), `deliveryMode` (string), `domainRef` (string), `ownerSide` (string), `peerRef` (string), `phase` (string) |
 | `Sysctl` | `dryRun` (bool), `key` (string), `phase` (string), `value` (string) |
 | `SysctlProfile` | `dryRun` (bool), `phase` (string), `profile` (string) |
 | `TailscaleNode` | `advertiseRoutes` (stringList), `peerCount` (int), `phase` (string), `tailnetName` (string) |

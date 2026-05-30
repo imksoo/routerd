@@ -158,4 +158,3 @@ func TestLiveISOSSHOptIn(t *testing.T) {
 		t.Fatal("live SSH must not use PermitRootLogin yes; use prohibit-password")
 	}
 }
-

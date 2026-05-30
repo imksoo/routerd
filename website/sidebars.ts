@@ -109,6 +109,8 @@ const sidebars: SidebarsConfig = {
         'how-to/guest-mode',
         'how-to/os-bootstrap',
         'how-to/pve-overlay',
+        'how-to/hybrid-azure-pve-same-subnet',
+        'how-to/event-federation-subscription',
         'how-to/troubleshooting',
       ],
     },
@@ -146,6 +148,7 @@ const sidebars: SidebarsConfig = {
       collapsed: true,
       items: [
         'api-v1alpha1',
+        'reference/selective-address-mobility',
         'control-api-v1alpha1',
         'plugin-protocol',
         'platforms',

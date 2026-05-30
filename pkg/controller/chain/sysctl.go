@@ -17,6 +17,7 @@ import (
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/hostdeps"
 	"github.com/imksoo/routerd/pkg/logstore"
+	routerstate "github.com/imksoo/routerd/pkg/state"
 	"github.com/imksoo/routerd/pkg/sysctlprofile"
 )
 
@@ -33,7 +34,9 @@ type SysctlController struct {
 }
 
 func (c SysctlController) Reconcile(ctx context.Context) error {
+	desired := map[string]bool{}
 	for _, resource := range hostdeps.SysctlResources(c.Router) {
+		desired[resource.Kind+"/"+resource.Metadata.Name] = true
 		switch resource.Kind {
 		case "Sysctl":
 			spec, err := resource.SysctlSpec()
@@ -100,6 +103,9 @@ func (c SysctlController) Reconcile(ctx context.Context) error {
 		if err := c.applyConntrackTuning(ctx); err != nil {
 			return err
 		}
+	}
+	if err := c.cleanupRemovedSAMProxyARP(ctx, desired); err != nil {
+		return err
 	}
 	return nil
 }
@@ -213,7 +219,7 @@ func (c SysctlController) applyOne(ctx context.Context, name, kind string, spec 
 		}
 	}
 	changed := runtimeChanged || persistentChanged
-	if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, kind, name, map[string]any{
+	status := map[string]any{
 		"phase":         "Applied",
 		"key":           spec.Key,
 		"value":         spec.Value,
@@ -226,10 +232,60 @@ func (c SysctlController) applyOne(ctx context.Context, name, kind string, spec 
 		"optional":      spec.Optional,
 		"path":          persistentPath,
 		"updatedAt":     time.Now().UTC().Format(time.RFC3339Nano),
-	}); err != nil {
+	}
+	if runtimeChanged && currentErr == nil {
+		status["previousValue"] = normalizeSysctlRuntimeValue(string(currentOut))
+	}
+	if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, kind, name, status); err != nil {
 		return sysctlApplyResult{}, err
 	}
 	return sysctlApplyResult{changed: changed}, nil
+}
+
+func (c SysctlController) cleanupRemovedSAMProxyARP(ctx context.Context, desired map[string]bool) error {
+	if c.Store == nil {
+		return nil
+	}
+	lister, ok := c.Store.(interface {
+		ListObjectStatuses() ([]routerstate.ObjectStatus, error)
+	})
+	if !ok {
+		return nil
+	}
+	deleter, ok := c.Store.(interface {
+		DeleteObject(apiVersion, kind, name string) error
+	})
+	if !ok {
+		return nil
+	}
+	statuses, err := lister.ListObjectStatuses()
+	if err != nil {
+		return err
+	}
+	command := c.Command
+	if command == nil {
+		command = runOutputCommandContext
+	}
+	for _, status := range statuses {
+		if status.APIVersion != api.SystemAPIVersion || status.Kind != "Sysctl" || desired["Sysctl/"+status.Name] {
+			continue
+		}
+		if !strings.HasPrefix(status.Name, "sam-proxy-arp-") {
+			continue
+		}
+		key := strings.TrimSpace(fmt.Sprint(status.Status["key"]))
+		previous := strings.TrimSpace(fmt.Sprint(status.Status["previousValue"]))
+		changed, _ := statusBool(status.Status["changed"])
+		if changed && key != "" && key != "<nil>" && previous != "" && previous != "<nil>" && previous != "1" {
+			if out, err := command(ctx, "sysctl", "-w", key+"="+previous); err != nil {
+				return fmt.Errorf("restore removed SAM proxy_arp sysctl %s: %w: %s", key, err, strings.TrimSpace(string(out)))
+			}
+		}
+		if err := deleter.DeleteObject(api.SystemAPIVersion, "Sysctl", status.Name); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (c SysctlController) publishApplied(ctx context.Context, kind, name, key, value string) error {

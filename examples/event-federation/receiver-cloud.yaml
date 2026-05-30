@@ -1,0 +1,129 @@
+# CloudEdge Event Federation — receiver (cloud) side (ADR 0006, Phase 3).
+#
+# Flow: an on-prem routerd observes a LAN client and emits a
+# routerd.client.ipv4.observed event into the shared EventGroup. Phase 2
+# delivers it over the overlay to this node. The EventSubscription below matches
+# it and runs the provider-AGNOSTIC example plugin (event-to-remote-claim),
+# which proposes a RemoteAddressClaim as a DynamicConfigPart. Inspect the result
+# with:
+#
+#   routerctl dynamic render --state-file /var/lib/routerd/routerd.db
+#
+# The example plugin performs NO cloud calls; provider actionPlan execution is
+# Phase 4/5. The hybrid resources below are the receiver-side context the
+# resulting RemoteAddressClaim resolves against (delivery peer, mobility domain,
+# provider profile). The claim itself is not authored here — it arrives
+# dynamically from the plugin.
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: cloudedge-receiver
+spec:
+  resources:
+    # --- Event Federation receiver wiring ---
+    - apiVersion: federation.routerd.net/v1alpha1
+      kind: EventGroup
+      metadata:
+        name: cloudedge
+      spec:
+        nodeName: cloud-router
+        retention:
+          maxEvents: 1000
+          maxAge: 24h
+        # Receiver bind for inbound peer pushes (Phase 2). Bind to the overlay
+        # address, never 0.0.0.0.
+        listen:
+          address: 169.254.110.2
+          port: 8787
+        replayWindow: 5m
+
+    - apiVersion: federation.routerd.net/v1alpha1
+      kind: EventSubscription
+      metadata:
+        name: cloud-claims
+      spec:
+        groupRef: cloudedge
+        match:
+          # Required: never blanket-trigger on every event in the group.
+          types:
+            - routerd.client.ipv4.observed
+          subjectPrefixes:
+            - 10.88.60.
+          # Loop/scope guard: only act on events sourced from the on-prem node.
+          sourceNodes:
+            - onprem-router
+        trigger:
+          pluginRef: event-to-remote-claim
+
+    - apiVersion: plugin.routerd.net/v1alpha1
+      kind: Plugin
+      metadata:
+        name: event-to-remote-claim
+      spec:
+        # Path to the installed example plugin binary (see
+        # examples/plugins/event-to-remote-claim/).
+        executable: /usr/local/libexec/routerd/plugins/event-to-remote-claim/bin/event-to-remote-claim
+        timeout: 10s
+        capabilities:
+          - observe.cloud
+          - propose.dynamicConfig
+
+    # --- Receiver-side hybrid context the dynamic RemoteAddressClaim resolves against ---
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardInterface
+      metadata:
+        name: wg-hybrid
+      spec:
+        privateKeyFile: /usr/local/etc/routerd/secrets/wg-hybrid.key
+        listenPort: 51820
+        mtu: 1420
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardPeer
+      metadata:
+        name: onprem-main
+      spec:
+        interface: wg-hybrid
+        publicKey: ONPREM_PEER_PUBLIC_KEY_REPLACE_ME
+        endpoint: 203.0.113.10:51820
+        allowedIPs:
+          - 169.254.110.1/32
+          - 10.88.60.0/24
+        persistentKeepalive: 25
+
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: OverlayPeer
+      metadata:
+        name: onprem-main
+      spec:
+        role: onprem
+        nodeID: onprem-router
+        underlay:
+          type: wireguard
+          interface: wg-hybrid
+          address: 169.254.110.2
+        remote:
+          nodeID: cloud-router
+          address: 169.254.110.1
+
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: AddressMobilityDomain
+      metadata:
+        name: cloudedge-same-subnet
+      spec:
+        prefix: 10.88.60.0/24
+        mode: selective-address
+        peerRef: onprem-main
+
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: CloudProviderProfile
+      metadata:
+        name: example-provider
+      spec:
+        # Provider is a placeholder; the example plugin never calls it.
+        provider: oci
+        capabilities:
+          - assign-secondary-ip
+        auth:
+          mode: external-command
+          command: /usr/local/libexec/routerd/example-provider-auth

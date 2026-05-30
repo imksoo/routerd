@@ -313,6 +313,12 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 		if err := c.cleanupStaleDNSResolverUnits(ctx, command); err != nil {
 			return err
 		}
+		if err := c.reconcileEventFederationUnits(ctx, defaults.StateDir, command); err != nil {
+			return err
+		}
+		if err := c.cleanupStaleEventFederationUnits(ctx, command); err != nil {
+			return err
+		}
 		if c.SynthesizeClientDaemonUnits {
 			if err := c.reconcileClientDaemonUnits(ctx, explicitUnits, telemetryEnv, command); err != nil {
 				return err
@@ -690,6 +696,25 @@ func (c SystemdUnitController) reconcileDNSResolverUnits(ctx context.Context, st
 
 func dnsResolverUnitName(name string) string {
 	return "routerd-dns-resolver@" + name + ".service"
+}
+
+func (c SystemdUnitController) reconcileEventFederationUnits(ctx context.Context, stateDir string, command outputCommandFunc) error {
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.Kind != "EventGroup" {
+			continue
+		}
+		group := resource.Metadata.Name
+		unitName := eventFederationUnitName(group)
+		configPath := filepath.Join(stateDir, "eventd", group, "config.json")
+		if err := c.reconcileLongLivedSystemdHelperUnit(ctx, unitName, "Router/"+c.Router.Metadata.Name+"/EventGroup/"+group, render.EventdSystemdSpec(group, "/usr/local/sbin/routerd-eventd", configPath), command); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func eventFederationUnitName(group string) string {
+	return "routerd-eventd@" + group + ".service"
 }
 
 func (c SystemdUnitController) reconcileSyntheticSystemdUnit(ctx context.Context, apiVersion, kind, resourceName, unitName string, spec api.SystemdUnitSpec, command outputCommandFunc) error {
@@ -1159,6 +1184,68 @@ func (c SystemdUnitController) cleanupStaleDNSResolverUnits(ctx context.Context,
 				return saveErr
 			}
 			return fmt.Errorf("disable stale DNS resolver unit %s: %w", unitName, err)
+		}
+		_, _ = command(ctx, "systemctl", "reset-failed", unitName)
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		status["phase"] = "Removed"
+		status["updatedAt"] = time.Now().UTC().Format(time.RFC3339Nano)
+		if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName, status); err != nil {
+			return err
+		}
+		removed = true
+	}
+	if removed {
+		if _, err := command(ctx, "systemctl", "daemon-reload"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c SystemdUnitController) cleanupStaleEventFederationUnits(ctx context.Context, command outputCommandFunc) error {
+	if c.DryRun {
+		return nil
+	}
+	desired := map[string]bool{}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.Kind != "EventGroup" {
+			continue
+		}
+		if _, err := resource.EventGroupSpec(); err != nil {
+			return err
+		}
+		desired[eventFederationUnitName(resource.Metadata.Name)] = true
+	}
+	matches, err := filepath.Glob(filepath.Join(c.SystemdSystemDir, "routerd-eventd@*.service"))
+	if err != nil {
+		return err
+	}
+	var removed bool
+	for _, path := range matches {
+		unitName := filepath.Base(path)
+		if desired[unitName] {
+			continue
+		}
+		status := map[string]any{
+			"phase":     "Removing",
+			"reason":    "StaleEventFederationUnit",
+			"unitName":  unitName,
+			"path":      path,
+			"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
+		}
+		if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName, status); err != nil {
+			return err
+		}
+		if _, err := command(ctx, "systemctl", "disable", "--now", unitName); err != nil {
+			status["phase"] = "Error"
+			status["error"] = err.Error()
+			status["updatedAt"] = time.Now().UTC().Format(time.RFC3339Nano)
+			if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName, status); saveErr != nil {
+				return saveErr
+			}
+			return fmt.Errorf("disable stale event federation unit %s: %w", unitName, err)
 		}
 		_, _ = command(ctx, "systemctl", "reset-failed", unitName)
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {

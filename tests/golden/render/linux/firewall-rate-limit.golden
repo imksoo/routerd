@@ -5,6 +5,7 @@ flush table inet routerd_filter
 destroy set inet routerd_filter if_lan
 destroy set inet routerd_filter if_wan
 table inet routerd_filter {
+  comment "routerd.owner=routerd routerd.generation=1"
   set if_lan { type ifname; elements = { "ens19" } }
   set if_wan { type ifname; elements = { "ens18" } }
   chain input {
@@ -59,6 +60,7 @@ flush table inet routerd_filter
 destroy set inet routerd_filter if_lan
 destroy set inet routerd_filter if_wan
 table inet routerd_filter {
+  comment "routerd.owner=routerd routerd.generation=1"
   set if_lan { type ifname; elements = { "ens19" } }
   set if_wan { type ifname; elements = { "ens18" } }
   chain input {

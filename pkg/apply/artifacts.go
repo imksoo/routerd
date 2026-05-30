@@ -11,6 +11,7 @@ import (
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/render"
 	"github.com/imksoo/routerd/pkg/resource"
+	"github.com/imksoo/routerd/pkg/sam"
 	"github.com/imksoo/routerd/pkg/servicemgr"
 	"github.com/imksoo/routerd/pkg/sysctlprofile"
 )
@@ -200,6 +201,23 @@ func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]str
 		intents := make([]resource.Intent, 0, len(entries))
 		for _, entry := range entries {
 			intents = append(intents, artifact("host.sysctl", entry.Key, resource.ActionEnsure, "sysctl", map[string]string{"value": entry.Value, "profile": spec.Profile}))
+		}
+		return intents
+	case "RemoteAddressClaim":
+		spec, err := res.RemoteAddressClaimSpec()
+		if err != nil {
+			return nil
+		}
+		intents := []resource.Intent{
+			artifact("net.ipv4.route", strings.TrimSpace(spec.Address), resource.ActionEnsure, "ipv4-route", map[string]string{"routeName": sam.DeliveryRouteName(res.Metadata.Name), "purpose": "sam-delivery"}),
+			artifact("host.sysctl", "net.ipv4.ip_forward", resource.ActionEnsure, "sysctl", map[string]string{"value": "1", "purpose": "sam-forwarding"}),
+		}
+		if targetOS == platform.OSLinux && strings.TrimSpace(spec.Capture.Type) == "proxy-arp" {
+			iface := strings.TrimSpace(spec.Capture.Interface)
+			intents = append(intents,
+				artifact("host.sysctl", "net.ipv4.conf."+iface+".proxy_arp", resource.ActionEnsure, "sysctl", map[string]string{"value": "1", "purpose": "sam-proxy-arp"}),
+				artifact("linux.proxy.neighbor", strings.TrimSpace(spec.Address)+"@"+iface, resource.ActionEnsure, "netlink", map[string]string{"address": strings.TrimSpace(spec.Address), "interface": iface}),
+			)
 		}
 		return intents
 	case "NTPClient":

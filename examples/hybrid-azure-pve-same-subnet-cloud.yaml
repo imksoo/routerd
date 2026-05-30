@@ -1,0 +1,90 @@
+# Selective Address Mobility — cloud side of the Azure↔PVE same-subnet lab.
+# Capture on the cloud side is manual/pre-provisioned (Azure NIC secondary IP).
+# On Linux, routerd installs the local forwarding route (and, for proxy-arp claims,
+# the proxy-ARP capture) for the RemoteAddressClaim resources in THIS config.
+# Azure + PVE lab smoke validation is still pending.
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: hybrid-azure-pve-same-subnet-cloud
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardInterface
+      metadata:
+        name: wg-hybrid
+      spec:
+        privateKeyFile: /usr/local/etc/routerd/secrets/wg-hybrid.key
+        listenPort: 51820
+        mtu: 1420
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardPeer
+      metadata:
+        name: onprem-main
+      spec:
+        interface: wg-hybrid
+        publicKey: ONPREM_PEER_PUBLIC_KEY_REPLACE_ME
+        endpoint: 198.51.100.20:51820
+        allowedIPs:
+          - 169.254.110.2/32
+          - 10.0.0.9/32
+        persistentKeepalive: 25
+
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: OverlayPeer
+      metadata:
+        name: onprem-main
+      spec:
+        role: onprem
+        nodeID: pve-router
+        underlay:
+          type: wireguard
+          interface: wg-hybrid
+          address: 169.254.110.2
+        remote:
+          nodeID: azure-router
+          address: 169.254.110.1
+
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: AddressMobilityDomain
+      metadata:
+        name: lab-same-subnet
+      spec:
+        prefix: 10.0.0.0/24
+        mode: selective-address
+        peerRef: onprem-main
+
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: CloudProviderProfile
+      metadata:
+        name: azure-lab
+      spec:
+        provider: azure
+        subscriptionID: 00000000-0000-0000-0000-000000000000
+        resourceGroup: rg-routerd-lab
+        capabilities:
+          - nic-secondary-ip
+          - ip-forwarding
+        auth:
+          mode: external-command
+          command: /usr/local/libexec/routerd/plugins/azure-auth
+
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: RemoteAddressClaim
+      metadata:
+        name: onprem-vm-10-0-0-9
+      spec:
+        domainRef: lab-same-subnet
+        address: 10.0.0.9/32
+        ownerSide: onprem
+        capture:
+          type: provider-secondary-ip
+          providerRef: azure-lab
+          providerMode: nic-secondary-ip
+          nicRef: /subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-routerd-lab/providers/Microsoft.Network/networkInterfaces/routerd-nic
+          configureOSAddress: false
+        delivery:
+          peerRef: onprem-main
+          mode: route
+          tunnelInterface: wg-hybrid

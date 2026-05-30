@@ -16,6 +16,11 @@ type TypeMeta struct {
 type ObjectMeta struct {
 	Name      string     `yaml:"name" json:"name"`
 	OwnerRefs []OwnerRef `yaml:"ownerRefs,omitempty" json:"ownerRefs,omitempty"`
+	// Annotations carry non-identifying provenance metadata. They are
+	// omitempty so resources without annotations serialize identically to
+	// before this field existed. The EventSubscriptionController stamps
+	// routerd.net/* provenance keys on dynamic resources it produces.
+	Annotations map[string]string `yaml:"annotations,omitempty" json:"annotations,omitempty"`
 }
 
 type OwnerRef struct {
@@ -52,6 +57,10 @@ const (
 	SystemAPIVersion        = "system.routerd.net/v1alpha1"
 	FirewallAPIVersion      = "firewall.routerd.net/v1alpha1"
 	ObservabilityAPIVersion = "observability.routerd.net/v1alpha1"
+	ConfigAPIVersion        = "config.routerd.net/v1alpha1"
+	PluginAPIVersion        = "plugin.routerd.net/v1alpha1"
+	HybridAPIVersion        = "hybrid.routerd.net/v1alpha1"
+	FederationAPIVersion    = "federation.routerd.net/v1alpha1"
 )
 
 func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
@@ -71,6 +80,24 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 	r.Status = raw.Status
 
 	switch raw.Kind {
+	case "Plugin":
+		var spec PluginSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	case "DynamicConfigSource":
+		var spec DynamicConfigSourceSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	case "DynamicOverridePolicy":
+		var spec DynamicOverridePolicySpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
 	case "LogSink":
 		if hasMappingKey(&raw.Spec, "plugin") {
 			return fmt.Errorf("%s spec.plugin is not supported; use type webhook, file, journald, or otlp for log forwarding sinks", r.ID())
@@ -431,6 +458,36 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
 		r.Spec = spec
+	case "OverlayPeer":
+		var spec OverlayPeerSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	case "HybridRoute":
+		var spec HybridRouteSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	case "AddressMobilityDomain":
+		var spec AddressMobilityDomainSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	case "CloudProviderProfile":
+		var spec CloudProviderProfileSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	case "RemoteAddressClaim":
+		var spec RemoteAddressClaimSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
 	case "IPv4Route":
 		var spec IPv4RouteSpec
 		if err := raw.Spec.Decode(&spec); err != nil {
@@ -462,6 +519,24 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 		r.Spec = spec
 	case "DerivedEvent":
 		var spec DerivedEventSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	case "EventGroup":
+		var spec EventGroupSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	case "EventPeer":
+		var spec EventPeerSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	case "EventSubscription":
+		var spec EventSubscriptionSpec
 		if err := raw.Spec.Decode(&spec); err != nil {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}

@@ -3,6 +3,7 @@
 add table ip routerd_nat
 flush table ip routerd_nat
 table ip routerd_nat {
+  comment "routerd.owner=routerd routerd.generation=1"
   chain prerouting {
     type nat hook prerouting priority dstnat; policy accept;
     iifname "eth0" ip daddr 192.0.2.10 tcp dport 6443 counter dnat to 192.0.2.11:6443 comment "routerd IngressService kubernetes-api"

@@ -36,6 +36,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return statusCommand(args[1:], stdout)
 	case "events":
 		return eventsCommand(args[1:], stdout)
+	case "federation", "fed":
+		return federationCommand(args[1:], stdout, stderr)
 	case "ledger":
 		return ledgerCommand(args[1:], stdout, stderr)
 	case "dns-queries":
@@ -52,6 +54,10 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return describeCommand(args[1:], stdout, stderr)
 	case "firewall":
 		return firewallCommand(args[1:], stdout, stderr)
+	case "dynamic":
+		return dynamicCommand(args[1:], stdout, stderr)
+	case "plugin":
+		return pluginCommand(args[1:], stdout, stderr)
 	case "wireguard", "wg":
 		return wireGuardCommand(args[1:], stdout, stderr)
 	case "tailscale", "ts":
@@ -91,6 +97,8 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "commands:")
 	fmt.Fprintln(w, "  status [--socket <path>] [--json|-o json|yaml]")
 	fmt.Fprintln(w, "  events [--state-file <path>] [--topic <topic>] [--resource <kind>/<name>] [--limit <n>] [-o table|json|yaml]")
+	fmt.Fprintln(w, "  federation event emit --group <name> --type <topic> [--subject <s>] [--source-node <n>] [--payload k=v ...] [--ttl <dur>] [--state-file <path>] [-o table|json|yaml]")
+	fmt.Fprintln(w, "  federation event list [--group <name>] [--include-expired] [--state-file <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  ledger integrity-check [--state-file <path>] [-o table|json]")
 	fmt.Fprintln(w, "  ledger vacuum [--state-file <path>]")
 	fmt.Fprintln(w, "  ledger backup <dest-path> [--state-file <path>]")
@@ -100,9 +108,15 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  traffic-flows [--socket <path>] [--db <path>] [--since 1h] [--client <ip>] [--peer <ip>] [--limit 100] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  firewall-logs [--socket <path>] [--db <path>] [--since 1h] [--action drop] [--src <ip>] [--limit 100] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  get <kind>[/<name>] [--list-kinds] [--config <path>] [-o table|json|yaml]")
-	fmt.Fprintln(w, "  describe <kind>/<name> [--config <path>] [--state-file <path>] [--ledger-file <path>] [--events-limit <n>]")
+	fmt.Fprintln(w, "  describe <kind>/<name> [--config <path>] [--state-file <path>] [--ledger-file <path>] [--events-limit <n>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  describe firewall [--config <path>]")
 	fmt.Fprintln(w, "  firewall test from=<zone> to=<zone|self> proto=<tcp|udp> dport=<port> [--config <path>]")
+	fmt.Fprintln(w, "  dynamic list [--state-file <path>] [-o table|json|yaml]")
+	fmt.Fprintln(w, "  dynamic describe <source> [--state-file <path>] [-o table|json|yaml]")
+	fmt.Fprintln(w, "  dynamic render [--config <path>] [--state-file <path>] [-o yaml|json]")
+	fmt.Fprintln(w, "  dynamic diff [--config <path>] [--state-file <path>] [-o text|json]")
+	fmt.Fprintln(w, "  plugin list [--config <path>] [-o table|json|yaml]")
+	fmt.Fprintln(w, "  plugin run <name> [--dry-run] [--config <path>] [--state-file <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  wireguard list [-o table|json|yaml]")
 	fmt.Fprintln(w, "  wireguard show <interface> [-o table|json|yaml]")
 	fmt.Fprintln(w, "  tailscale peers [-o table|json|yaml] [--binary tailscale]")

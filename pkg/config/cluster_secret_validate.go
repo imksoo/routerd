@@ -110,6 +110,27 @@ func Warnings(router *api.Router) []string {
 	}
 	var warnings []string
 	dnsZones, dnsResolverZones := dnsZoneCoverage(router)
+	wireGuardInterfaces := map[string]bool{}
+	interfaces := map[string]bool{}
+	cloudProviderProfiles := map[string]api.CloudProviderProfileSpec{}
+	for _, res := range router.Spec.Resources {
+		if res.APIVersion == api.NetAPIVersion && res.Kind == "Interface" {
+			interfaces[res.Metadata.Name] = true
+			spec, err := res.InterfaceSpec()
+			if err == nil && spec.IfName != "" {
+				interfaces[spec.IfName] = true
+			}
+		}
+		if res.APIVersion == api.NetAPIVersion && res.Kind == "WireGuardInterface" {
+			wireGuardInterfaces[res.Metadata.Name] = true
+		}
+		if res.APIVersion == api.HybridAPIVersion && res.Kind == "CloudProviderProfile" {
+			spec, err := res.CloudProviderProfileSpec()
+			if err == nil {
+				cloudProviderProfiles[res.Metadata.Name] = spec
+			}
+		}
+	}
 	for _, res := range router.Spec.Resources {
 		switch res.Kind {
 		case "BGPPeer":
@@ -127,6 +148,24 @@ func Warnings(router *api.Router) []string {
 			spec, err := res.IngressServiceSpec()
 			if err == nil {
 				warnings = append(warnings, hostnameDNSCoverageWarnings(res.ID(), spec.Hostname, spec.ExternalDNS, dnsZones, dnsResolverZones)...)
+			}
+		case "OverlayPeer":
+			spec, err := res.OverlayPeerSpec()
+			if err == nil && spec.Underlay.Type == "wireguard" && spec.Underlay.Interface != "" && !wireGuardInterfaces[spec.Underlay.Interface] {
+				warnings = append(warnings, fmt.Sprintf("%s spec.underlay.interface references WireGuardInterface %q which is not declared; assuming the interface is managed externally", res.ID(), spec.Underlay.Interface))
+			}
+		case "RemoteAddressClaim":
+			spec, err := res.RemoteAddressClaimSpec()
+			if err != nil {
+				continue
+			}
+			if spec.Capture.Type == "provider-secondary-ip" && spec.Capture.ProviderRef != "" {
+				if profile, ok := cloudProviderProfiles[spec.Capture.ProviderRef]; ok && !stringInSlice(spec.Capture.ProviderMode, profile.Capabilities) {
+					warnings = append(warnings, fmt.Sprintf("%s spec.capture.providerMode %q is not declared in CloudProviderProfile %q capabilities; the provider profile may not support this capture mode", res.ID(), spec.Capture.ProviderMode, spec.Capture.ProviderRef))
+				}
+			}
+			if spec.Capture.Type == "proxy-arp" && spec.Capture.Interface != "" && !interfaces[spec.Capture.Interface] {
+				warnings = append(warnings, fmt.Sprintf("%s spec.capture.interface references Interface %q which is not declared; assuming the interface is managed externally", res.ID(), spec.Capture.Interface))
 			}
 		}
 	}

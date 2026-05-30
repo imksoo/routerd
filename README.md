@@ -258,6 +258,8 @@ routerd apply --config examples/home-router.yaml --once --dry-run
 routerctl status
 routerctl events --limit 20
 routerctl connections --limit 50
+routerctl plugin list
+routerctl plugin run <name> --dry-run
 ```
 
 ## Runtime Layout

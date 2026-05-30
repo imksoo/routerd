@@ -25,6 +25,9 @@ type RouterIndex struct {
 	DelegatedAddressInterfaces map[string]string
 	SelfAddressPolicies        map[string]bool
 	DSLiteTunnels              map[string]bool
+	OverlayPeers               map[string]api.OverlayPeerSpec
+	AddressMobilityDomains     map[string]api.AddressMobilityDomainSpec
+	CloudProviderProfiles      map[string]api.CloudProviderProfileSpec
 	HealthChecks               map[string]bool
 	BGPRouters                 map[string]bool
 	BFDSpecs                   map[string]api.BFDSpec
@@ -79,6 +82,9 @@ func newRouterIndex(router *api.Router) *RouterIndex {
 		DelegatedAddressInterfaces: map[string]string{},
 		SelfAddressPolicies:        map[string]bool{},
 		DSLiteTunnels:              map[string]bool{},
+		OverlayPeers:               map[string]api.OverlayPeerSpec{},
+		AddressMobilityDomains:     map[string]api.AddressMobilityDomainSpec{},
+		CloudProviderProfiles:      map[string]api.CloudProviderProfileSpec{},
 		HealthChecks:               map[string]bool{},
 		BGPRouters:                 map[string]bool{},
 		BFDSpecs:                   map[string]api.BFDSpec{},
@@ -251,6 +257,27 @@ func (idx *RouterIndex) build(router *api.Router, targetOS platform.OS) error {
 		}
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "DSLiteTunnel" {
 			idx.DSLiteTunnels[res.Metadata.Name] = true
+		}
+		if res.APIVersion == api.HybridAPIVersion && res.Kind == "OverlayPeer" {
+			spec, err := res.OverlayPeerSpec()
+			if err != nil {
+				return err
+			}
+			idx.OverlayPeers[res.Metadata.Name] = spec
+		}
+		if res.APIVersion == api.HybridAPIVersion && res.Kind == "AddressMobilityDomain" {
+			spec, err := res.AddressMobilityDomainSpec()
+			if err != nil {
+				return err
+			}
+			idx.AddressMobilityDomains[res.Metadata.Name] = spec
+		}
+		if res.APIVersion == api.HybridAPIVersion && res.Kind == "CloudProviderProfile" {
+			spec, err := res.CloudProviderProfileSpec()
+			if err != nil {
+				return err
+			}
+			idx.CloudProviderProfiles[res.Metadata.Name] = spec
 		}
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "HealthCheck" {
 			idx.HealthChecks[res.Metadata.Name] = true

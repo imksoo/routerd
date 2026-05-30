@@ -80,6 +80,33 @@ func TestExplicitSysctlSuppressesDerivedDuplicate(t *testing.T) {
 	}
 }
 
+func TestDerivedSysctlResourcesForSAMAreStrictlyGated(t *testing.T) {
+	empty := &api.Router{}
+	if keys := derivedSysctlKeys(t, empty); len(keys) != 0 {
+		t.Fatalf("empty router derived sysctls = %#v, want none", keys)
+	}
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "RemoteAddressClaim"}, Metadata: api.ObjectMeta{Name: "app"}, Spec: api.RemoteAddressClaimSpec{
+			DomainRef: "same-subnet",
+			Address:   "10.0.1.123/32",
+			OwnerSide: "onprem",
+			Capture:   api.AddressCapture{Type: "proxy-arp", Interface: "lan0"},
+			Delivery:  api.AddressDelivery{PeerRef: "cloud-main", Mode: "route", TunnelInterface: "wg-sam"},
+		}},
+	}}}
+	keys := derivedSysctlKeys(t, router)
+	for _, want := range []string{"net.ipv4.ip_forward", "net.ipv4.conf.lan0.proxy_arp"} {
+		if !keys[want] {
+			t.Fatalf("missing SAM sysctl %s in %#v", want, sortedKeys(keys))
+		}
+	}
+	for _, unwanted := range []string{"net.ipv4.conf.all.rp_filter", "net.ipv4.conf.default.rp_filter"} {
+		if keys[unwanted] {
+			t.Fatalf("SAM must not derive rp_filter sysctl %s: %#v", unwanted, sortedKeys(keys))
+		}
+	}
+}
+
 func TestPackageFeaturesCoverStandaloneDataplaneResources(t *testing.T) {
 	for _, tc := range []struct {
 		kind string

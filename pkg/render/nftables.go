@@ -14,6 +14,8 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 )
 
+const NftablesRouterdOwnerMarker = "routerd.owner=routerd routerd.generation=1"
+
 func NftablesNAT44(router *api.Router) ([]byte, error) {
 	aliases, err := nftOutboundAliases(router)
 	if err != nil {
@@ -291,6 +293,7 @@ func NftablesEgressRoutePolicyDefaultMarks(resourceID string, spec api.EgressRou
 	var buf bytes.Buffer
 	writeNftTablePreamble(&buf, "ip", "routerd_default_route")
 	buf.WriteString("table ip routerd_default_route {\n")
+	writeNftTableOwnerMarker(&buf)
 	buf.WriteString("  chain prerouting {\n")
 	buf.WriteString("    type filter hook prerouting priority -151; policy accept;\n")
 	activeTargetCandidate := len(active.Targets) > 0
@@ -335,6 +338,10 @@ func writeNftTablePreamble(buf *bytes.Buffer, family, name string) {
 	buf.WriteString("flush table " + family + " " + name + "\n")
 }
 
+func writeNftTableOwnerMarker(buf *bytes.Buffer) {
+	buf.WriteString("  comment " + nftQuote(NftablesRouterdOwnerMarker) + "\n")
+}
+
 func writeNftSetReset(buf *bytes.Buffer, family, table, name string) {
 	buf.WriteString("destroy set " + family + " " + table + " " + name + "\n")
 }
@@ -377,6 +384,7 @@ func NftablesNAT44RulesForRouter(router *api.Router, rules []NAT44RenderRule) ([
 	if len(rules) > 0 || len(ingressRules) > 0 || hasIPv4LocalServiceRedirectRules(redirectRules) {
 		writeNftTablePreamble(&buf, "ip", "routerd_nat")
 		buf.WriteString("table ip routerd_nat {\n")
+		writeNftTableOwnerMarker(&buf)
 		writeIPv4AddressSets(&buf, addressSets)
 		if len(ingressRules) > 0 || hasIPv4LocalServiceRedirectRules(redirectRules) {
 			writeIngressDNATChains(&buf, ingressRules)
@@ -414,6 +422,7 @@ func NftablesNAT44RulesForRouter(router *api.Router, rules []NAT44RenderRule) ([
 func writeIPv6LocalServiceRedirectTable(buf *bytes.Buffer, redirectRules []localServiceRedirectRule, addressSets []nftIPAddressSet) {
 	writeNftTablePreamble(buf, "ip6", "routerd_nat")
 	buf.WriteString("table ip6 routerd_nat {\n")
+	writeNftTableOwnerMarker(buf)
 	writeIPv6AddressSets(buf, addressSets)
 	buf.WriteString("  chain prerouting {\n")
 	buf.WriteString("    type nat hook prerouting priority dstnat; policy accept;\n")
@@ -463,6 +472,11 @@ func nftOutboundAliases(router *api.Router) (map[string]string, error) {
 			aliases[res.Metadata.Name] = res.Metadata.Name
 		}
 	}
+	for _, iface := range pathMTUForwardedPathInterfaces(router) {
+		if aliases[iface] == "" {
+			aliases[iface] = iface
+		}
+	}
 	return aliases, nil
 }
 
@@ -498,6 +512,7 @@ func writeBridgeL2FilterTable(buf *bytes.Buffer, vxlans []vxlanConfig) {
 	sort.Slice(vxlans, func(i, j int) bool { return vxlans[i].IfName < vxlans[j].IfName })
 	writeNftTablePreamble(buf, "bridge", "routerd_l2_filter")
 	buf.WriteString("table bridge routerd_l2_filter {\n")
+	writeNftTableOwnerMarker(buf)
 	buf.WriteString("  chain forward {\n")
 	buf.WriteString("    type filter hook forward priority filter; policy accept;\n")
 	for _, vxlan := range vxlans {
@@ -603,6 +618,7 @@ func writeFirewallFilterTable(buf *bytes.Buffer, aliases map[string]string, zone
 		}
 	}
 	buf.WriteString("table inet routerd_filter {\n")
+	writeNftTableOwnerMarker(buf)
 	for _, zone := range sortedZones {
 		if len(zone.IfNames) > 0 {
 			buf.WriteString("  set " + nftSetName("if_"+zone.Name) + " { type ifname; elements = { " + nftQuotedList(zone.IfNames) + " } }\n")
@@ -1562,6 +1578,7 @@ func nftIPv4SourcesMatch(resourceID string, sources []string) (string, error) {
 func writeNAT44Table(buf *bytes.Buffer, router *api.Router, aliases map[string]string, nat44Rules []api.Resource, ingressRules []ingressNATRule, redirectRules []localServiceRedirectRule, addressSets []nftIPAddressSet, addressSetMap map[string]nftIPAddressSet) error {
 	writeNftTablePreamble(buf, "ip", "routerd_nat")
 	buf.WriteString("table ip routerd_nat {\n")
+	writeNftTableOwnerMarker(buf)
 	writeIPv4AddressSets(buf, addressSets)
 	if len(ingressRules) > 0 || hasIPv4LocalServiceRedirectRules(redirectRules) {
 		writeIngressDNATChains(buf, ingressRules)
@@ -1783,6 +1800,7 @@ func writeNAT44RenderRule(buf *bytes.Buffer, rule NAT44RenderRule, addressSets m
 func writeTCPMSSClampTable(buf *bytes.Buffer, aliases map[string]string, policies []pathMTUPolicy) error {
 	writeNftTablePreamble(buf, "inet", "routerd_mss")
 	buf.WriteString("table inet routerd_mss {\n")
+	writeNftTableOwnerMarker(buf)
 	buf.WriteString("  chain forward {\n")
 	buf.WriteString("    type filter hook forward priority mangle; policy accept;\n")
 	for _, policy := range policies {
@@ -1826,6 +1844,7 @@ func writeTCPMSSClampTable(buf *bytes.Buffer, aliases map[string]string, policie
 func writeIPv4PolicyRouteTable(buf *bytes.Buffer, policies []api.Resource, addressSets map[string]nftIPAddressSet) error {
 	writeNftTablePreamble(buf, "ip", "routerd_policy")
 	buf.WriteString("table ip routerd_policy {\n")
+	writeNftTableOwnerMarker(buf)
 	writeIPv4AddressSets(buf, referencedIPv4PolicyIPAddressSets(policies, addressSets))
 	buf.WriteString("  chain prerouting {\n")
 	buf.WriteString("    type filter hook prerouting priority mangle; policy accept;\n")

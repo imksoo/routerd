@@ -114,4 +114,3 @@ func TestEventResourceKindName(t *testing.T) {
 		t.Fatalf("expected empty resource info, got %q/%q", kind, name)
 	}
 }
-

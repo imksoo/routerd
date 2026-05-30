@@ -57,6 +57,35 @@ func TestNftablesNAT44RuleSourceNATFields(t *testing.T) {
 	}
 }
 
+func TestNftablesRouterdTablesCarryOwnerMarker(t *testing.T) {
+	router := &api.Router{
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "wan"},
+				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44Rule"},
+				Metadata: api.ObjectMeta{Name: "lan-to-wan"},
+				Spec: api.NAT44RuleSpec{
+					OutboundInterface: "wan",
+					SourceCIDRs:       []string{"192.168.10.0/24"},
+					Translation:       api.IPv4NATTranslationSpec{Type: "interfaceAddress"},
+				},
+			},
+		}},
+	}
+	data, err := NftablesNAT44(router)
+	if err != nil {
+		t.Fatalf("render nftables: %v", err)
+	}
+	want := `comment "` + NftablesRouterdOwnerMarker + `"`
+	if !strings.Contains(string(data), want) {
+		t.Fatalf("nftables output missing owner marker %q:\n%s", want, string(data))
+	}
+}
+
 func TestNftablesNAT44RuleCanUseDSLiteTunnel(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{Resources: []api.Resource{
@@ -625,6 +654,138 @@ func TestNftablesTCPMSSClampOnlyLowersMSS(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("nftables output missing guarded MSS clamp %q:\n%s", want, got)
 		}
+	}
+}
+
+func TestNftablesTCPMSSClampForSAMOverlay(t *testing.T) {
+	router := &api.Router{
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardInterface"},
+				Metadata: api.ObjectMeta{Name: "wg-hybrid"},
+				Spec:     api.WireGuardInterfaceSpec{MTU: 1420},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "OverlayPeer"},
+				Metadata: api.ObjectMeta{Name: "onprem-main"},
+				Spec: api.OverlayPeerSpec{
+					Role:     "onprem",
+					NodeID:   "onprem-router",
+					Underlay: api.OverlayUnderlay{Type: "wireguard", Interface: "wg-hybrid"},
+				},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "AddressMobilityDomain"},
+				Metadata: api.ObjectMeta{Name: "same-subnet"},
+				Spec:     api.AddressMobilityDomainSpec{Prefix: "10.77.60.0/24", Mode: "selective-address", PeerRef: "onprem-main"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "CloudProviderProfile"},
+				Metadata: api.ObjectMeta{Name: "oci-lab"},
+				Spec: api.CloudProviderProfileSpec{
+					Provider:     "oci",
+					Capabilities: []string{"vnic-secondary-ip", "skip-source-dest-check"},
+					Auth:         api.ProviderAuth{Mode: "external-command", Command: "/bin/true"},
+				},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "RemoteAddressClaim"},
+				Metadata: api.ObjectMeta{Name: "onprem-client"},
+				Spec: api.RemoteAddressClaimSpec{
+					DomainRef: "same-subnet",
+					Address:   "10.77.60.9/32",
+					OwnerSide: "onprem",
+					Capture: api.AddressCapture{
+						Type:               "provider-secondary-ip",
+						ProviderRef:        "oci-lab",
+						ProviderMode:       "vnic-secondary-ip",
+						NICRef:             "ocid1.vnic.example",
+						ConfigureOSAddress: false,
+						Interface:          "ens3",
+					},
+					Delivery: api.AddressDelivery{PeerRef: "onprem-main", Mode: "route", TunnelInterface: "wg-hybrid"},
+				},
+			},
+		}},
+	}
+
+	data, err := NftablesTCPMSSClamp(router)
+	if err != nil {
+		t.Fatalf("render TCP MSS clamp: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		"table inet routerd_mss",
+		`iifname "ens3" oifname "wg-hybrid" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1300 tcp option maxseg size set 1300`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("nftables output missing SAM MSS clamp %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, `iifname "wg-hybrid" oifname "ens3"`) {
+		t.Fatalf("SAM MSS clamp should follow capture-to-tunnel orientation only:\n%s", got)
+	}
+	if strings.Contains(got, "meta nfproto ipv6") {
+		t.Fatalf("SAM MSS clamp should be IPv4-only:\n%s", got)
+	}
+}
+
+func TestNftablesTCPMSSClampForForwardedPathLowerMTUOverlay(t *testing.T) {
+	router := &api.Router{
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "ens3"},
+				Spec:     api.InterfaceSpec{IfName: "ens3", Managed: false, Owner: "external"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VXLANSegment"},
+				Metadata: api.ObjectMeta{Name: "vxlan-sam"},
+				Spec: api.VXLANSegmentSpec{
+					IfName:            "vxlan100",
+					VNI:               100,
+					LocalAddress:      "192.0.2.10",
+					Remotes:           []string{"192.0.2.20"},
+					UnderlayInterface: "ens3",
+					MTU:               1370,
+				},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "OverlayPeer"},
+				Metadata: api.ObjectMeta{Name: "edge-main"},
+				Spec: api.OverlayPeerSpec{
+					Role:     "onprem",
+					NodeID:   "edge-router",
+					Underlay: api.OverlayUnderlay{Type: "vxlan", Interface: "vxlan-sam"},
+				},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "AddressMobilityDomain"},
+				Metadata: api.ObjectMeta{Name: "same-subnet"},
+				Spec:     api.AddressMobilityDomainSpec{Prefix: "10.77.60.0/24", Mode: "selective-address", PeerRef: "edge-main"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "RemoteAddressClaim"},
+				Metadata: api.ObjectMeta{Name: "remote-client"},
+				Spec: api.RemoteAddressClaimSpec{
+					DomainRef: "same-subnet",
+					Address:   "10.77.60.9/32",
+					OwnerSide: "onprem",
+					Capture:   api.AddressCapture{Type: "provider-secondary-ip", ProviderRef: "lab", ProviderMode: "secondary-ip", NICRef: "nic", Interface: "ens3"},
+					Delivery:  api.AddressDelivery{PeerRef: "edge-main", Mode: "route", TunnelInterface: "vxlan-sam"},
+				},
+			},
+		}},
+	}
+
+	data, err := NftablesTCPMSSClamp(router)
+	if err != nil {
+		t.Fatalf("render TCP MSS clamp: %v", err)
+	}
+	got := string(data)
+	want := `iifname "ens3" oifname "vxlan100" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1330 tcp option maxseg size set 1330`
+	if !strings.Contains(got, want) {
+		t.Fatalf("nftables output missing generic lower-MTU overlay clamp %q:\n%s", want, got)
 	}
 }
 

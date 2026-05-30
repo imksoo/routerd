@@ -1,0 +1,48 @@
+# CloudEdge Event Federation — sender (on-prem) side (ADR 0006, Phase 1+2).
+#
+# This node observes LAN clients and emits routerd.client.ipv4.observed events
+# into the shared "cloudedge" EventGroup, then pushes them over the overlay to
+# the cloud peer (EventPeer). The cloud side (examples/event-federation/
+# receiver-cloud.yaml) subscribes and turns them into RemoteAddressClaims.
+#
+# Emitting an observed event by hand for testing:
+#
+#   routerctl federation event emit \
+#     --state-file /var/lib/routerd/routerd.db \
+#     --group cloudedge --type routerd.client.ipv4.observed \
+#     --subject 10.88.60.9/32 --source-node onprem-router \
+#     --payload address=10.88.60.9/32 --payload domain=cloudedge-same-subnet \
+#     --payload ownerSide=onprem --payload peerRef=onprem-main \
+#     --payload providerRef=example-provider --ttl 30m
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: cloudedge-sender
+spec:
+  resources:
+    - apiVersion: federation.routerd.net/v1alpha1
+      kind: EventGroup
+      metadata:
+        name: cloudedge
+      spec:
+        nodeName: onprem-router
+        retention:
+          maxEvents: 1000
+          maxAge: 24h
+        replayWindow: 5m
+
+    - apiVersion: federation.routerd.net/v1alpha1
+      kind: EventPeer
+      metadata:
+        name: cloud-router
+      spec:
+        groupRef: cloudedge
+        nodeName: cloud-router
+        # Push to the cloud receiver's overlay listen address (matches the
+        # receiver EventGroup spec.listen).
+        endpoint: http://169.254.110.2:8787
+        direction: push
+        types:
+          - routerd.client.ipv4.observed
+        subjectPrefixes:
+          - 10.88.60.

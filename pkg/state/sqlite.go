@@ -132,6 +132,75 @@ CREATE TABLE IF NOT EXISTS access_logs (
   duration_ms INTEGER,
   generation INTEGER
 );
+CREATE TABLE IF NOT EXISTS dynamic_config_parts (
+  id INTEGER PRIMARY KEY,
+  source TEXT NOT NULL,
+  generation INTEGER NOT NULL,
+  observed_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  digest TEXT NOT NULL,
+  resources_json TEXT,
+  directives_json TEXT,
+  status TEXT NOT NULL,
+  error TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(source, generation)
+);
+CREATE TABLE IF NOT EXISTS plugin_runs (
+  id INTEGER PRIMARY KEY,
+  plugin TEXT NOT NULL,
+  trigger_type TEXT NOT NULL,
+  trigger_topic TEXT,
+  started_at TEXT NOT NULL,
+  completed_at TEXT,
+  exit_code INTEGER,
+  status TEXT NOT NULL,
+  stdout_digest TEXT,
+  stderr TEXT,
+  error TEXT
+);
+CREATE TABLE IF NOT EXISTS federation_events (
+  id TEXT PRIMARY KEY,
+  group_name TEXT NOT NULL,
+  source_node TEXT,
+  type TEXT NOT NULL,
+  subject TEXT,
+  dedupe_key TEXT,
+  payload TEXT,
+  observed_at INTEGER,
+  expires_at INTEGER,
+  recorded_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS federation_events_group ON federation_events(group_name, observed_at);
+CREATE TABLE IF NOT EXISTS event_deliveries (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id TEXT NOT NULL,
+  peer TEXT NOT NULL,
+  status TEXT NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  last_attempt_at INTEGER,
+  last_error TEXT,
+  delivered_at INTEGER,
+  UNIQUE(event_id, peer)
+);
+CREATE INDEX IF NOT EXISTS event_deliveries_peer ON event_deliveries(peer, status);
+CREATE TABLE IF NOT EXISTS event_subscription_runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  subscription TEXT NOT NULL,
+  event_id TEXT NOT NULL,
+  event_group TEXT NOT NULL,
+  plugin TEXT NOT NULL,
+  status TEXT NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  started_at TEXT NOT NULL,
+  completed_at TEXT,
+  dynamic_source TEXT,
+  dynamic_generation INTEGER,
+  error TEXT,
+  UNIQUE(subscription, event_id)
+);
+CREATE INDEX IF NOT EXISTS event_subscription_runs_sub ON event_subscription_runs(subscription, status);
 `); err != nil {
 		return err
 	}
@@ -551,6 +620,224 @@ func (s *SQLiteStore) Variables() map[string]Value {
 		}
 	}
 	return out
+}
+
+type DynamicConfigPartRecord struct {
+	ID             int64     `json:"id" yaml:"id"`
+	Source         string    `json:"source" yaml:"source"`
+	Generation     int64     `json:"generation" yaml:"generation"`
+	ObservedAt     time.Time `json:"observedAt" yaml:"observedAt"`
+	ExpiresAt      time.Time `json:"expiresAt" yaml:"expiresAt"`
+	Digest         string    `json:"digest" yaml:"digest"`
+	ResourcesJSON  string    `json:"resourcesJson,omitempty" yaml:"resourcesJson,omitempty"`
+	DirectivesJSON string    `json:"directivesJson,omitempty" yaml:"directivesJson,omitempty"`
+	// Status is the writer-provided state stored in SQLite. Readers should call
+	// EffectiveStatus so active records age into expired without a rewrite.
+	Status    string    `json:"status" yaml:"status"`
+	Error     string    `json:"error,omitempty" yaml:"error,omitempty"`
+	CreatedAt time.Time `json:"createdAt" yaml:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt" yaml:"updatedAt"`
+}
+
+func (r DynamicConfigPartRecord) EffectiveStatus(now time.Time) string {
+	if !r.ExpiresAt.IsZero() && !now.UTC().Before(r.ExpiresAt.UTC()) {
+		return "expired"
+	}
+	return "active"
+}
+
+type PluginRunRecord struct {
+	ID           int64     `json:"id" yaml:"id"`
+	Plugin       string    `json:"plugin" yaml:"plugin"`
+	TriggerType  string    `json:"triggerType" yaml:"triggerType"`
+	TriggerTopic string    `json:"triggerTopic,omitempty" yaml:"triggerTopic,omitempty"`
+	StartedAt    time.Time `json:"startedAt" yaml:"startedAt"`
+	CompletedAt  time.Time `json:"completedAt,omitempty" yaml:"completedAt,omitempty"`
+	ExitCode     int       `json:"exitCode,omitempty" yaml:"exitCode,omitempty"`
+	HasExitCode  bool      `json:"hasExitCode,omitempty" yaml:"hasExitCode,omitempty"`
+	Status       string    `json:"status" yaml:"status"`
+	StdoutDigest string    `json:"stdoutDigest,omitempty" yaml:"stdoutDigest,omitempty"`
+	Stderr       string    `json:"stderr,omitempty" yaml:"stderr,omitempty"`
+	Error        string    `json:"error,omitempty" yaml:"error,omitempty"`
+}
+
+func (s *SQLiteStore) UpsertDynamicConfigPart(part DynamicConfigPartRecord) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return nil
+	}
+	now := s.now().UTC()
+	if part.ObservedAt.IsZero() {
+		part.ObservedAt = now
+	}
+	if part.CreatedAt.IsZero() {
+		part.CreatedAt = now
+	}
+	if part.UpdatedAt.IsZero() {
+		part.UpdatedAt = now
+	}
+	_, err := s.db.Exec(`INSERT INTO dynamic_config_parts(source,generation,observed_at,expires_at,digest,resources_json,directives_json,status,error,created_at,updated_at)
+VALUES(?,?,?,?,?,?,?,?,?,?,?)
+ON CONFLICT(source,generation) DO UPDATE SET observed_at=excluded.observed_at,expires_at=excluded.expires_at,digest=excluded.digest,resources_json=excluded.resources_json,directives_json=excluded.directives_json,status=excluded.status,error=excluded.error,updated_at=excluded.updated_at`,
+		part.Source, part.Generation, formatStateTime(part.ObservedAt), formatStateTime(part.ExpiresAt), part.Digest, nullableString(part.ResourcesJSON), nullableString(part.DirectivesJSON), part.Status, nullableString(part.Error), formatStateTime(part.CreatedAt), formatStateTime(part.UpdatedAt))
+	return err
+}
+
+func (s *SQLiteStore) ListDynamicConfigParts() ([]DynamicConfigPartRecord, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.closed {
+		return []DynamicConfigPartRecord{}, nil
+	}
+	rows, err := s.db.Query(`SELECT id,source,generation,observed_at,expires_at,digest,coalesce(resources_json,''),coalesce(directives_json,''),status,coalesce(error,''),created_at,updated_at FROM dynamic_config_parts ORDER BY observed_at DESC,generation DESC,id DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanDynamicConfigPartRecords(rows)
+}
+
+func (s *SQLiteStore) GetDynamicConfigPartsBySource(source string) ([]DynamicConfigPartRecord, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.closed {
+		return []DynamicConfigPartRecord{}, nil
+	}
+	rows, err := s.db.Query(`SELECT id,source,generation,observed_at,expires_at,digest,coalesce(resources_json,''),coalesce(directives_json,''),status,coalesce(error,''),created_at,updated_at FROM dynamic_config_parts WHERE source = ? ORDER BY generation DESC,observed_at DESC,id DESC`, source)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanDynamicConfigPartRecords(rows)
+}
+
+func scanDynamicConfigPartRecords(rows *sql.Rows) ([]DynamicConfigPartRecord, error) {
+	var out []DynamicConfigPartRecord
+	for rows.Next() {
+		var rec DynamicConfigPartRecord
+		var observed, expires, created, updated string
+		if err := rows.Scan(&rec.ID, &rec.Source, &rec.Generation, &observed, &expires, &rec.Digest, &rec.ResourcesJSON, &rec.DirectivesJSON, &rec.Status, &rec.Error, &created, &updated); err != nil {
+			return nil, err
+		}
+		rec.ObservedAt = parseStateTime(observed)
+		rec.ExpiresAt = parseStateTime(expires)
+		rec.CreatedAt = parseStateTime(created)
+		rec.UpdatedAt = parseStateTime(updated)
+		out = append(out, rec)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (s *SQLiteStore) RecordPluginRun(run PluginRunRecord) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return 0, nil
+	}
+	if run.StartedAt.IsZero() {
+		run.StartedAt = s.now().UTC()
+	}
+	result, err := s.db.Exec(`INSERT INTO plugin_runs(plugin,trigger_type,trigger_topic,started_at,completed_at,exit_code,status,stdout_digest,stderr,error)
+VALUES(?,?,?,?,?,?,?,?,?,?)`,
+		run.Plugin, run.TriggerType, nullableString(run.TriggerTopic), formatStateTime(run.StartedAt), nullableStateTime(run.CompletedAt), nullableExitCode(run), run.Status, nullableString(run.StdoutDigest), nullableString(run.Stderr), nullableString(run.Error))
+	if err != nil {
+		return 0, err
+	}
+	return result.LastInsertId()
+}
+
+func (s *SQLiteStore) CompletePluginRun(id int64, completedAt time.Time, exitCode *int, status, stdoutDigest, stderrText, runError string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return nil
+	}
+	if completedAt.IsZero() {
+		completedAt = s.now().UTC()
+	}
+	var exit any
+	if exitCode != nil {
+		exit = *exitCode
+	}
+	_, err := s.db.Exec(`UPDATE plugin_runs SET completed_at = ?, exit_code = ?, status = ?, stdout_digest = ?, stderr = ?, error = ? WHERE id = ?`,
+		formatStateTime(completedAt), exit, status, nullableString(stdoutDigest), nullableString(stderrText), nullableString(runError), id)
+	return err
+}
+
+func (s *SQLiteStore) ListPluginRuns(plugin string) ([]PluginRunRecord, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.closed {
+		return []PluginRunRecord{}, nil
+	}
+	query := `SELECT id,plugin,trigger_type,coalesce(trigger_topic,''),started_at,coalesce(completed_at,''),exit_code,status,coalesce(stdout_digest,''),coalesce(stderr,''),coalesce(error,'') FROM plugin_runs`
+	var args []any
+	if strings.TrimSpace(plugin) != "" {
+		query += ` WHERE plugin = ?`
+		args = append(args, plugin)
+	}
+	query += ` ORDER BY started_at DESC,id DESC`
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []PluginRunRecord
+	for rows.Next() {
+		var rec PluginRunRecord
+		var started, completed string
+		var exit sql.NullInt64
+		if err := rows.Scan(&rec.ID, &rec.Plugin, &rec.TriggerType, &rec.TriggerTopic, &started, &completed, &exit, &rec.Status, &rec.StdoutDigest, &rec.Stderr, &rec.Error); err != nil {
+			return nil, err
+		}
+		rec.StartedAt = parseStateTime(started)
+		rec.CompletedAt = parseStateTime(completed)
+		if exit.Valid {
+			rec.ExitCode = int(exit.Int64)
+			rec.HasExitCode = true
+		}
+		out = append(out, rec)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func formatStateTime(t time.Time) string {
+	return t.UTC().Format(time.RFC3339Nano)
+}
+
+func nullableStateTime(t time.Time) any {
+	if t.IsZero() {
+		return nil
+	}
+	return formatStateTime(t)
+}
+
+func nullableString(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
+}
+
+func nullableExitCode(run PluginRunRecord) any {
+	if !run.HasExitCode {
+		return nil
+	}
+	return run.ExitCode
+}
+
+func parseStateTime(value string) time.Time {
+	if parsed, err := time.Parse(time.RFC3339Nano, value); err == nil {
+		return parsed
+	}
+	return time.Time{}
 }
 
 func (s *SQLiteStore) BeginGeneration(configHash string) (int64, error) {

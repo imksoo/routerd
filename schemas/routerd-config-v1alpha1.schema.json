@@ -148,6 +148,282 @@
                 "additionalProperties": false,
                 "properties": {
                   "apiVersion": {
+                    "const": "plugin.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "Plugin",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "capabilities": {
+                        "items": {
+                          "enum": [
+                            "observe.cloud",
+                            "propose.dynamicConfig"
+                          ],
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "env": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "type": "object"
+                      },
+                      "executable": {
+                        "type": "string"
+                      },
+                      "timeout": {
+                        "type": "string"
+                      },
+                      "triggers": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "every": {
+                              "type": "string"
+                            },
+                            "topic": {
+                              "type": "string"
+                            },
+                            "type": {
+                              "enum": [
+                                "interval",
+                                "event"
+                              ],
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "type"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      }
+                    },
+                    "required": [
+                      "executable"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "plugin.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "DynamicConfigSource",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "mergePolicy": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "conflict": {
+                            "enum": [
+                              "",
+                              "reject"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "pluginRef": {
+                        "type": "string"
+                      },
+                      "triggers": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "every": {
+                              "type": "string"
+                            },
+                            "topic": {
+                              "type": "string"
+                            },
+                            "type": {
+                              "enum": [
+                                "interval",
+                                "event"
+                              ],
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "type"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "ttl": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "pluginRef"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "config.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "DynamicOverridePolicy",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "description": "DynamicOverridePolicySpec is defined in api because DynamicOverridePolicy is authored in startup config.",
+                    "properties": {
+                      "allow": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "operations": {
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            },
+                            "source": {
+                              "type": "string"
+                            },
+                            "targets": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "apiVersion": {
+                                    "type": "string"
+                                  },
+                                  "kind": {
+                                    "type": "string"
+                                  },
+                                  "name": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "apiVersion",
+                                  "kind",
+                                  "name"
+                                ],
+                                "type": "object"
+                              },
+                              "type": "array"
+                            }
+                          },
+                          "required": [
+                            "source",
+                            "operations",
+                            "targets"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      }
+                    },
+                    "required": [
+                      "allow"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
                     "const": "system.routerd.net/v1alpha1",
                     "type": "string"
                   },
@@ -5433,6 +5709,744 @@
                     },
                     "required": [
                       "interface"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "hybrid.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "OverlayPeer",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "nodeID": {
+                        "type": "string"
+                      },
+                      "remote": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "address": {
+                            "type": "string"
+                          },
+                          "nodeID": {
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "role": {
+                        "enum": [
+                          "onprem",
+                          "cloud"
+                        ],
+                        "type": "string"
+                      },
+                      "underlay": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "address": {
+                            "type": "string"
+                          },
+                          "interface": {
+                            "type": "string"
+                          },
+                          "type": {
+                            "enum": [
+                              "wireguard",
+                              "tailscale",
+                              "ipsec",
+                              "route"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "type"
+                        ],
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "role",
+                      "nodeID",
+                      "underlay"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "hybrid.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "HybridRoute",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "destinationCIDRs": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "healthCheckRef": {
+                        "type": "string"
+                      },
+                      "install": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "metric": {
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "table": {
+                            "enum": [
+                              "",
+                              "main"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "peerRef": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "destinationCIDRs",
+                      "peerRef"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "hybrid.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "AddressMobilityDomain",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "mode": {
+                        "enum": [
+                          "selective-address"
+                        ],
+                        "type": "string"
+                      },
+                      "peerRef": {
+                        "type": "string"
+                      },
+                      "prefix": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "prefix",
+                      "mode"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "hybrid.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "CloudProviderProfile",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "auth": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "command": {
+                            "type": "string"
+                          },
+                          "mode": {
+                            "enum": [
+                              "external-command"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "mode"
+                        ],
+                        "type": "object"
+                      },
+                      "capabilities": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "provider": {
+                        "enum": [
+                          "azure",
+                          "aws",
+                          "oci",
+                          "gcp"
+                        ],
+                        "type": "string"
+                      },
+                      "resourceGroup": {
+                        "type": "string"
+                      },
+                      "subscriptionID": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "provider",
+                      "capabilities",
+                      "auth"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "hybrid.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "RemoteAddressClaim",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "address": {
+                        "type": "string"
+                      },
+                      "capture": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "configureOSAddress": {
+                            "type": "boolean"
+                          },
+                          "gratuitousARP": {
+                            "type": "boolean"
+                          },
+                          "interface": {
+                            "type": "string"
+                          },
+                          "nicRef": {
+                            "type": "string"
+                          },
+                          "providerMode": {
+                            "type": "string"
+                          },
+                          "providerRef": {
+                            "type": "string"
+                          },
+                          "type": {
+                            "enum": [
+                              "provider-secondary-ip",
+                              "proxy-arp"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "type"
+                        ],
+                        "type": "object"
+                      },
+                      "delivery": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "mode": {
+                            "enum": [
+                              "route"
+                            ],
+                            "type": "string"
+                          },
+                          "peerRef": {
+                            "type": "string"
+                          },
+                          "tunnelInterface": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "peerRef",
+                          "mode"
+                        ],
+                        "type": "object"
+                      },
+                      "domainRef": {
+                        "type": "string"
+                      },
+                      "ownerSide": {
+                        "enum": [
+                          "cloud",
+                          "onprem"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "domainRef",
+                      "address",
+                      "ownerSide",
+                      "capture",
+                      "delivery"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "federation.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "EventGroup",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "description": "EventGroupSpec declares a CloudEdge Event Federation bus identity (ADR 0006).",
+                    "properties": {
+                      "auth": {
+                        "additionalProperties": false,
+                        "description": "Auth is reserved for Phase 2 peer delivery (HMAC over the overlay). It is\naccepted but unused in Phase 1.",
+                        "properties": {
+                          "mode": {
+                            "description": "Mode selects the integrity scheme; only \"hmac\" (or empty) is recognized.",
+                            "enum": [
+                              "",
+                              "hmac"
+                            ],
+                            "type": "string"
+                          },
+                          "secretFile": {
+                            "description": "SecretFile is a filesystem path to the shared HMAC key.",
+                            "type": "string"
+                          },
+                          "secretRef": {
+                            "description": "SecretRef references a secret resource carrying the shared HMAC key.",
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "listen": {
+                        "additionalProperties": false,
+                        "description": "Listen is the receiver bind for inbound peer pushes. Empty Address means\nthis node is push-only (no receiver).",
+                        "properties": {
+                          "address": {
+                            "type": "string"
+                          },
+                          "port": {
+                            "maximum": 65535,
+                            "minimum": 0,
+                            "type": "integer"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "nodeName": {
+                        "description": "NodeName is this node's identity within the group; it is stamped as the\nsourceNode on events emitted into this group.",
+                        "type": "string"
+                      },
+                      "replayWindow": {
+                        "description": "ReplayWindow is a Go duration bounding the accepted message timestamp skew\nfor replay protection; empty is treated as \"5m\" downstream.",
+                        "type": "string"
+                      },
+                      "retention": {
+                        "additionalProperties": false,
+                        "description": "Retention bounds how many federation events and for how long the local\nstore keeps them. Empty/zero values mean unlimited.",
+                        "properties": {
+                          "maxAge": {
+                            "description": "MaxAge is a Go duration (e.g. \"30m\", \"24h\") bounding event age; \"\" means\nunlimited.",
+                            "type": "string"
+                          },
+                          "maxEvents": {
+                            "description": "MaxEvents caps the number of retained events for the group; 0 means\nunlimited.",
+                            "minimum": 0,
+                            "type": "integer"
+                          }
+                        },
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "nodeName"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "federation.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "EventPeer",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "description": "EventPeerSpec declares a remote node a routerd node pushes federation events to within an EventGroup (ADR 0006, Phase 2).",
+                    "properties": {
+                      "direction": {
+                        "description": "Direction selects delivery direction; only \"push\" is supported in Phase 2.\nEmpty defaults to \"push\".",
+                        "enum": [
+                          "push"
+                        ],
+                        "type": "string"
+                      },
+                      "endpoint": {
+                        "description": "Endpoint is the base URL to push to, e.g. http://10.99.0.7:8787. Required\nfor push delivery.",
+                        "type": "string"
+                      },
+                      "groupRef": {
+                        "description": "GroupRef is the EventGroup this peer belongs to (required).",
+                        "type": "string"
+                      },
+                      "nodeName": {
+                        "description": "NodeName is the remote peer node identity (required).",
+                        "type": "string"
+                      },
+                      "subjectPrefixes": {
+                        "description": "SubjectPrefixes optionally filters delivery to subjects carrying one of\nthese prefixes; empty delivers all.",
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "types": {
+                        "description": "Types optionally filters delivery to these event types; empty delivers all.",
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      }
+                    },
+                    "required": [
+                      "groupRef",
+                      "nodeName"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "federation.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "EventSubscription",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "description": "EventSubscriptionSpec declares that received federation events matching a predicate trigger a local Plugin (ADR 0006, Phase 3): the cloud-side rule that turns an observed fact into a DynamicConfigPart via a trusted local plugin.",
+                    "properties": {
+                      "groupRef": {
+                        "description": "GroupRef is the EventGroup whose events this subscription watches.",
+                        "type": "string"
+                      },
+                      "match": {
+                        "additionalProperties": false,
+                        "description": "Match selects which events fire the subscription. Types is required so a\nsubscription cannot blanket-trigger a plugin on every event in the group.",
+                        "properties": {
+                          "payload": {
+                            "additionalProperties": {
+                              "type": "string"
+                            },
+                            "description": "Payload requires each listed key to equal the given value in the event payload.",
+                            "type": "object"
+                          },
+                          "sourceNodes": {
+                            "description": "SourceNodes restricts to events whose sourceNode is one of these (loop/scope guard).",
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
+                          "subjectPrefixes": {
+                            "description": "SubjectPrefixes restricts to subjects with one of these prefixes.",
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
+                          "types": {
+                            "description": "Types restricts to these event types (required, at least one), e.g.\nrouterd.client.ipv4.observed.",
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          }
+                        },
+                        "required": [
+                          "types"
+                        ],
+                        "type": "object"
+                      },
+                      "trigger": {
+                        "additionalProperties": false,
+                        "description": "Trigger names the plugin to invoke and optional batching.",
+                        "properties": {
+                          "batchWindow": {
+                            "description": "BatchWindow optionally coalesces matched events into one invocation\n(Go duration). MVP invokes per poll tick; this is accepted forward-compat.",
+                            "type": "string"
+                          },
+                          "debounce": {
+                            "description": "Debounce optionally delays invocation after the last matched event\n(Go duration). Accepted forward-compat; MVP uses poll-tick batching.",
+                            "type": "string"
+                          },
+                          "pluginRef": {
+                            "description": "PluginRef names the Plugin resource invoked for matched events.",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "pluginRef"
+                        ],
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "groupRef",
+                      "match",
+                      "trigger"
                     ],
                     "type": "object"
                   },

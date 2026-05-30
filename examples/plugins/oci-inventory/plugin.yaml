@@ -1,0 +1,13 @@
+apiVersion: plugin.routerd.net/v1alpha1
+kind: Plugin
+metadata:
+  name: oci-inventory
+spec:
+  executable: /usr/local/libexec/routerd/plugins/oci-inventory/bin/oci-inventory
+  timeout: 10s
+  capabilities:
+    - observe.cloud
+    - propose.dynamicConfig
+  triggers:
+    - type: interval
+      every: 300s
