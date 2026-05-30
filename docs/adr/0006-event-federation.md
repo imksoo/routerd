@@ -2,12 +2,15 @@
 
 ## Status
 
-Proposed — 2026-05-30 (design only; implementation deferred until OCI×PVE SAM
-smoke completes and `cloudedge-mvp` is merged to `main` as experimental)
+Accepted for experimental implementation — 2026-05-30.
+Phase 1 (event envelope + `EventGroup` Kind + SQLite local store + `routerctl
+federation event emit/list`) is implemented on `event-federation`. Phase 2 (peer
+delivery over the overlay) is pending.
 
 ## Context
 
-SAM ([ADR 0005](0005-cloudedge-selective-address-mobility.md)) is clean-validated
+SAM ([reference](../reference/selective-address-mobility.md),
+[milestone](../releases/cloudedge-sam-mvp-milestone.md)) is clean-validated
 on Azure×PVE and AWS×PVE (OCI×PVE in progress). It proves the
 **capture (provider-specific) / delivery+claim (routerd-common)** split. But the
 `RemoteAddressClaim` that drives it is **hand-authored** today. The next step is to
@@ -57,9 +60,12 @@ ships a working, demoable slice and gates the next.
    `routerd.client.ipv4.observed`, never a raw `RemoteAddressClaim`. The receiver's
    *trusted local plugin* decides whether/how to turn it into a typed claim +
    actionPlan. The wire never carries commands to execute.
-2. **at-least-once + idempotent**, not exactly-once. Dedupe by `dedupeKey`/event id;
-   dynamic resource names are deterministic (`onprem-10-88-60-9`); provider actions
-   are no-op if already satisfied. No consensus, no gossip, no total ordering.
+2. **at-least-once + idempotent**, not exactly-once. Store idempotency is keyed on
+   the event `id` (a duplicate `id` is a no-op insert); `dedupeKey` is a
+   subscription-side grouping key for collapsing repeated observations of the same
+   fact, **not** a DB unique constraint in Phase 1. Dynamic resource names are
+   deterministic (`onprem-10-88-60-9`); provider actions are no-op if already
+   satisfied. No consensus, no gossip, no total ordering.
 3. **Reuse, don't reinvent.** Reuse the `DaemonEvent` envelope, the control-socket
    HTTP transport idiom, the Plugin→DynamicConfigPart pipeline, SQLite state, and
    `CloudProviderProfile`/`Plugin` (no new `CloudProviderPlugin` Kind).
@@ -125,14 +131,17 @@ OS-CLI-invoking local executables, **not** SDKs statically linked into routerd
 Each phase = an independently-acceptable slice; later phases gated on earlier
 acceptance. Implementation delegated to codex; claude orchestrates + reviews.
 
-- **Phase 1 — Event model + local store.** `EventGroup` Kind; reuse/extend
+- **✅ DONE — Phase 1 — Event model + local store.** `EventGroup` Kind; reuse/extend
   `DaemonEvent` as the external `Event` envelope (id, group, sourceNode, type,
-  subject, ttl, dedupeKey, payload); SQLite `event_log`; `routerctl event
-  emit/list`. *Accept:* emit→stored w/ TTL; dup id idempotent; expired ignored.
+  subject, ttl, dedupeKey, payload); SQLite `federation_events` table; `routerctl
+  federation event emit/list`. *Accept:* emit→stored w/ TTL; dup id idempotent;
+  expired ignored.
 - **Phase 2 — Peer delivery over overlay.** `EventPeer` Kind; `routerd-eventd`
   receiver bound to `wg-hybrid`; HMAC; push + backoff; `event_deliveries`.
   *Accept:* onprem pushes to cloud over `wg-hybrid`; dup push idempotent; bad HMAC
-  rejected; `routerctl event deliveries`.
+  rejected; `routerctl event deliveries`; `routerd-eventd` periodically prunes
+  `federation_events` per `EventGroup` retention (`maxAge`/`maxEvents`), and
+  `routerctl federation event prune --dry-run` reports what would be removed.
 - **Phase 3 — Subscription-triggered plugin → DynamicConfigPart.**
   `EventSubscription` Kind; event batch → `PluginRequest`; `PluginResult` →
   `DynamicConfigPart` (with `routerd.net/dynamic-source`, `event-id`, `event-group`
@@ -147,8 +156,8 @@ acceptance. Implementation delegated to codex; claude orchestrates + reviews.
 - **Phase 5 — (post-MVP) provider action execution.** Approval/auto-apply policy;
   action journal; best-effort undo; identity docs. Out of MVP.
 
-The first end-to-end smoke is **manual `routerctl event emit` → federation →
-DynamicConfigPart** (Phases 1–3). The ARP/Clients observer plugin comes *after*
+The first end-to-end smoke is **manual `routerctl federation event emit` →
+federation → DynamicConfigPart** (Phases 1–3). The ARP/Clients observer plugin comes *after*
 that smoke (modeled on `routerd-ra-observer`), so failures are isolatable.
 
 ### MVP event types

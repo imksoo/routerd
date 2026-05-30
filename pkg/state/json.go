@@ -102,6 +102,13 @@ type EventLister interface {
 	ListEvents(query EventQuery) ([]StoredEvent, error)
 }
 
+// FederationEventStore is the cross-node Event Federation store surface
+// (ADR 0006), distinct from EventLister (observability events).
+type FederationEventStore interface {
+	RecordFederationEvent(rec EventRecord) error
+	ListFederationEvents(group string, includeExpired bool, now int64) ([]EventRecord, error)
+}
+
 type DynamicConfigPartLister interface {
 	ListDynamicConfigParts() ([]DynamicConfigPartRecord, error)
 	GetDynamicConfigPartsBySource(source string) ([]DynamicConfigPartRecord, error)

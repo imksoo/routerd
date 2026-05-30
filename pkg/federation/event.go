@@ -20,7 +20,8 @@ import (
 // nodes. It is an observed fact (e.g. "routerd.client.ipv4.observed"), not
 // config and not a command.
 type Event struct {
-	// ID is the idempotency key. Duplicate IDs are deduplicated by the store.
+	// ID is the store idempotency key. A duplicate ID is a no-op insert
+	// (the store enforces uniqueness on ID), matching at-least-once delivery.
 	ID string `json:"id" yaml:"id"`
 	// Group is the EventGroup (bus) the event belongs to.
 	Group string `json:"group" yaml:"group"`
@@ -30,7 +31,10 @@ type Event struct {
 	Type string `json:"type" yaml:"type"`
 	// Subject is the entity the event is about, e.g. "10.88.60.9/32".
 	Subject string `json:"subject,omitempty" yaml:"subject,omitempty"`
-	// DedupeKey collapses repeated observations; defaults to ID when empty.
+	// DedupeKey is a stable grouping key that subscriptions MAY use to collapse
+	// repeated observations of the same fact. It defaults to ID when empty.
+	// Unlike ID, the store does NOT enforce uniqueness on DedupeKey in Phase 1:
+	// idempotency is keyed on ID; DedupeKey is a subscription-side hint only.
 	DedupeKey string `json:"dedupeKey,omitempty" yaml:"dedupeKey,omitempty"`
 	// Payload carries additional typed-but-stringly attributes.
 	Payload map[string]string `json:"payload,omitempty" yaml:"payload,omitempty"`
