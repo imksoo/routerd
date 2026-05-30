@@ -168,10 +168,63 @@ func validateHybridResource(res api.Resource, _ platform.OS) (bool, error) {
 		if strings.TrimSpace(spec.Delivery.PeerRef) == "" {
 			return true, fmt.Errorf("%s spec.delivery.peerRef is required", res.ID())
 		}
+	case "ProviderActionPolicy":
+		if res.APIVersion != api.HybridAPIVersion {
+			return true, fmt.Errorf("%s must use apiVersion %s", res.ID(), api.HybridAPIVersion)
+		}
+		spec, err := res.ProviderActionPolicySpec()
+		if err != nil {
+			return true, err
+		}
+		if err := validateProviderActionPolicy(res, spec); err != nil {
+			return true, err
+		}
 	default:
 		return false, nil
 	}
 	return true, nil
+}
+
+// canonicalProviderActionProviders is the provider allowlist a
+// ProviderActionPolicy may reference (matches pkg/plugin canonicalProviders).
+var canonicalProviderActionProviders = map[string]bool{
+	"aws":   true,
+	"azure": true,
+	"oci":   true,
+	"gcp":   true,
+}
+
+// canonicalProviderActionVerbs is the canonical action verb set a
+// ProviderActionPolicy may allowlist (matches pkg/plugin canonicalActions).
+var canonicalProviderActionVerbs = map[string]bool{
+	"assign-secondary-ip":        true,
+	"unassign-secondary-ip":      true,
+	"ensure-forwarding-enabled":  true,
+	"ensure-forwarding-disabled": true,
+}
+
+func validateProviderActionPolicy(res api.Resource, spec api.ProviderActionPolicySpec) error {
+	for i, provider := range spec.AllowedProviders {
+		if !canonicalProviderActionProviders[strings.TrimSpace(provider)] {
+			return fmt.Errorf("%s spec.allowedProviders[%d] %q must be one of aws, azure, oci, gcp", res.ID(), i, provider)
+		}
+	}
+	for i, action := range spec.AllowedActions {
+		if !canonicalProviderActionVerbs[strings.TrimSpace(action)] {
+			return fmt.Errorf("%s spec.allowedActions[%d] %q must be one of assign-secondary-ip, unassign-secondary-ip, ensure-forwarding-enabled, ensure-forwarding-disabled", res.ID(), i, action)
+		}
+	}
+	for i, cidr := range spec.AllowedCIDRs {
+		if _, err := netip.ParsePrefix(strings.TrimSpace(cidr)); err != nil {
+			return fmt.Errorf("%s spec.allowedCIDRs[%d] must be a valid CIDR: %w", res.ID(), i, err)
+		}
+	}
+	if spec.MaxActionsPerRun < 0 {
+		return fmt.Errorf("%s spec.maxActionsPerRun must be >= 0", res.ID())
+	}
+	// ExecutionWindow is free-form and validated leniently: any non-empty string
+	// is accepted in Phase 5.0 (the executor framework interprets it later).
+	return nil
 }
 
 func validateAddressMobilityDomainPrefix(value string) error {
