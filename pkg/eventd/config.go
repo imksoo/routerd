@@ -24,6 +24,7 @@ import (
 const (
 	DefaultReplayWindow  = 5 * time.Minute
 	DefaultPruneInterval = time.Minute
+	DefaultPushInterval  = 10 * time.Second
 	DefaultMaxAttempts   = 3
 	DefaultBaseBackoff   = 200 * time.Millisecond
 	DefaultMaxBackoff    = 5 * time.Second
@@ -73,6 +74,7 @@ type Config struct {
 	Retention     Retention     `json:"retention,omitempty"`
 	PushRetry     PushRetry     `json:"pushRetry,omitempty"`
 	PruneInterval time.Duration `json:"pruneInterval,omitempty"`
+	PushInterval  time.Duration `json:"pushInterval,omitempty"`
 	StatePath     string        `json:"statePath"`
 }
 
@@ -100,6 +102,7 @@ type configWire struct {
 		MaxBackoff  string `json:"maxBackoff,omitempty"`
 	} `json:"pushRetry,omitempty"`
 	PruneInterval string `json:"pruneInterval,omitempty"`
+	PushInterval  string `json:"pushInterval,omitempty"`
 	StatePath     string `json:"statePath"`
 }
 
@@ -135,6 +138,9 @@ func DecodeConfig(unmarshal func(any) error) (Config, error) {
 		return Config{}, err
 	}
 	if cfg.PruneInterval, err = parseDuration("pruneInterval", w.PruneInterval); err != nil {
+		return Config{}, err
+	}
+	if cfg.PushInterval, err = parseDuration("pushInterval", w.PushInterval); err != nil {
 		return Config{}, err
 	}
 	if cfg.Retention.MaxAge, err = parseDuration("retention.maxAge", w.Retention.MaxAge); err != nil {
@@ -179,6 +185,7 @@ func MarshalConfigJSON(c Config) ([]byte, error) {
 		SecretFile:    c.SecretFile,
 		ReplayWindow:  marshalDuration(c.ReplayWindow),
 		PruneInterval: marshalDuration(c.PruneInterval),
+		PushInterval:  marshalDuration(c.PushInterval),
 		StatePath:     c.StatePath,
 	}
 	w.Retention.MaxEvents = c.Retention.MaxEvents
@@ -227,6 +234,9 @@ func (c *Config) ApplyDefaults() {
 	}
 	if c.PruneInterval <= 0 {
 		c.PruneInterval = DefaultPruneInterval
+	}
+	if c.PushInterval <= 0 {
+		c.PushInterval = DefaultPushInterval
 	}
 	if c.PushRetry.MaxAttempts <= 0 {
 		c.PushRetry.MaxAttempts = DefaultMaxAttempts

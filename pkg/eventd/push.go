@@ -118,6 +118,32 @@ func (p *Pusher) PushEvent(ctx context.Context, ev federation.Event) error {
 	return nil
 }
 
+// PushEventPending delivers ev to every matching peer EXCEPT those for which
+// isDelivered(peer.NodeName) reports true (the event was already confirmed
+// delivered to that peer). It is the outbox-loop entry point: the Outbox passes
+// a closure backed by the delivery store so already-delivered (event,peer) pairs
+// are not re-pushed and their attempt counters are not bumped. Delivery logic
+// (filtering, enqueue, signed POST, backoff, status recording) is reused from
+// the per-peer path. isDelivered may be nil (treat all peers as pending).
+func (p *Pusher) PushEventPending(ctx context.Context, ev federation.Event, isDelivered func(peerNode string) bool) error {
+	body, err := json.Marshal(ev)
+	if err != nil {
+		return fmt.Errorf("marshal event: %w", err)
+	}
+	for _, peer := range p.peers {
+		if !peerMatches(peer, ev) {
+			continue
+		}
+		if isDelivered != nil && isDelivered(peer.NodeName) {
+			continue
+		}
+		if err := p.deliverToPeer(ctx, peer, ev.ID, body); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // deliverToPeer enqueues then attempts delivery to a single peer with retries.
 func (p *Pusher) deliverToPeer(ctx context.Context, peer PeerConfig, eventID string, body []byte) error {
 	if err := p.store.RecordDelivery(eventID, peer.NodeName); err != nil {
