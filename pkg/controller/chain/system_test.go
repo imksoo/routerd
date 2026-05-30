@@ -878,6 +878,86 @@ func TestSystemdUnitControllerRemovesStaleDNSResolverUnits(t *testing.T) {
 	}
 }
 
+func TestSystemdUnitControllerRemovesStaleEventFederationUnits(t *testing.T) {
+	dir := t.TempDir()
+	stale := filepath.Join(dir, "routerd-eventd@old.service")
+	if err := os.WriteFile(stale, []byte("[Service]\nExecStart=/usr/local/sbin/routerd-eventd\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	kept := filepath.Join(dir, "routerd-eventd@current.service")
+	router := &api.Router{Metadata: api.ObjectMeta{Name: "home"}, Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.FederationAPIVersion, Kind: "EventGroup"}, Metadata: api.ObjectMeta{Name: "current"}, Spec: api.EventGroupSpec{NodeName: "home"}},
+	}}}
+	var commands []string
+	controller := SystemdUnitController{
+		Router:           router,
+		Store:            mapStore{},
+		SystemdSystemDir: dir,
+		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			_ = ctx
+			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
+			if name == "systemctl" && len(args) >= 2 && args[0] == "is-active" {
+				return nil, errors.New("inactive")
+			}
+			return []byte("ok"), nil
+		},
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Fatalf("stale unit still exists: %v", err)
+	}
+	gotCommands := strings.Join(commands, "\n")
+	for _, want := range []string{
+		"systemctl disable --now routerd-eventd@old.service",
+		"systemctl reset-failed routerd-eventd@old.service",
+		"systemctl daemon-reload",
+	} {
+		if !strings.Contains(gotCommands, want) {
+			t.Fatalf("commands missing %q:\n%s", want, gotCommands)
+		}
+	}
+	if _, err := os.Stat(kept); err != nil {
+		t.Fatalf("current unit missing: %v", err)
+	}
+	// The live EventGroup unit must never be disabled/removed.
+	if strings.Contains(gotCommands, "systemctl disable --now routerd-eventd@current.service") {
+		t.Fatalf("live event federation unit was disabled:\n%s", gotCommands)
+	}
+}
+
+func TestSystemdUnitControllerNoEventFederationNoAction(t *testing.T) {
+	dir := t.TempDir()
+	router := &api.Router{Metadata: api.ObjectMeta{Name: "home"}, Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSResolver"}, Metadata: api.ObjectMeta{Name: "lan-resolver"}, Spec: api.DNSResolverSpec{
+			Listen:  []api.DNSResolverListenSpec{{Addresses: []string{"127.0.0.1"}, Port: 53}},
+			Sources: []api.DNSResolverSourceSpec{{Kind: "upstream", Match: []string{"."}, Upstreams: []string{"udp://1.1.1.1:53"}}},
+		}},
+	}}}
+	var commands []string
+	controller := SystemdUnitController{
+		Router:           router,
+		Store:            mapStore{},
+		SystemdSystemDir: dir,
+		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			_ = ctx
+			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
+			if name == "systemctl" && len(args) >= 2 && args[0] == "is-active" {
+				return nil, errors.New("inactive")
+			}
+			return []byte("ok"), nil
+		},
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	gotCommands := strings.Join(commands, "\n")
+	if strings.Contains(gotCommands, "routerd-eventd@") {
+		t.Fatalf("event federation cleanup acted with no EventGroup present:\n%s", gotCommands)
+	}
+}
+
 func TestSystemdUnitControllerSynthesizesDHCPClientUnits(t *testing.T) {
 	dir := t.TempDir()
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{

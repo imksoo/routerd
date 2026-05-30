@@ -1206,6 +1206,20 @@ type EventGroupSpec struct {
 	// Auth is reserved for Phase 2 peer delivery (HMAC over the overlay). It is
 	// accepted but unused in Phase 1.
 	Auth EventGroupAuth `yaml:"auth,omitempty" json:"auth,omitempty"`
+	// Listen is the receiver bind for inbound peer pushes. Empty Address means
+	// this node is push-only (no receiver).
+	Listen EventGroupListen `yaml:"listen,omitempty" json:"listen,omitempty"`
+	// ReplayWindow is a Go duration bounding the accepted message timestamp skew
+	// for replay protection; empty is treated as "5m" downstream.
+	ReplayWindow string `yaml:"replayWindow,omitempty" json:"replayWindow,omitempty"`
+}
+
+// EventGroupListen is the receiver bind for inbound peer pushes. Empty Address
+// means this node is push-only (no receiver). Bind to the overlay address (e.g.
+// the wg-hybrid address), never 0.0.0.0 implicitly.
+type EventGroupListen struct {
+	Address string `yaml:"address,omitempty" json:"address,omitempty"`
+	Port    int    `yaml:"port,omitempty" json:"port,omitempty" jsonschema:"minimum=0,maximum=65535"`
 }
 
 // EventGroupRetention bounds local retention of federation events for a group.

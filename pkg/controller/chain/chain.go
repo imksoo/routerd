@@ -30,6 +30,7 @@ import (
 	"github.com/imksoo/routerd/pkg/controller/conntrackobserver"
 	dhcpv4client "github.com/imksoo/routerd/pkg/controller/dhcpv4client"
 	dnsresolvercontroller "github.com/imksoo/routerd/pkg/controller/dnsresolver"
+	eventfederationcontroller "github.com/imksoo/routerd/pkg/controller/eventfederation"
 	firewallcontroller "github.com/imksoo/routerd/pkg/controller/firewall"
 	"github.com/imksoo/routerd/pkg/controller/framework"
 	ingressservicecontroller "github.com/imksoo/routerd/pkg/controller/ingressservice"
@@ -516,6 +517,7 @@ type Options struct {
 	DryRunDHCPv4Client     bool
 	DryRunPPPoESession     bool
 	DryRunDNSResolver      bool
+	DryRunEventFederation  bool
 	DryRunNAT              bool
 	DryRunIngress          bool
 	DryRunFirewall         bool
@@ -672,6 +674,7 @@ func (r *Runner) Start(ctx context.Context) error {
 		opts.DryRunDHCPv4Client = true
 		opts.DryRunPPPoESession = true
 		opts.DryRunDNSResolver = true
+		opts.DryRunEventFederation = true
 		opts.DryRunNAT = true
 		opts.DryRunIngress = true
 		opts.DryRunFirewall = true
@@ -733,6 +736,7 @@ func (r *Runner) Start(ctx context.Context) error {
 	pppoeSession := pppoesession.Controller{Router: r.Router, Bus: r.Bus, Store: store, DaemonSockets: r.Opts.DaemonSockets, DryRun: r.Opts.DryRunPPPoESession, Logger: logger}
 	defaults, _ := platform.Current()
 	dnsResolver := dnsresolvercontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunDNSResolver, RuntimeDir: defaults.RuntimeDir, StateDir: defaults.StateDir}
+	eventFederation := eventfederationcontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunEventFederation, RuntimeDir: defaults.RuntimeDir, StateDir: defaults.StateDir}
 	daemonStatusSync := DaemonStatusController{Router: r.Router, Bus: r.Bus, Store: store, DaemonSockets: r.Opts.DaemonSockets, Logger: logger}
 	wan := egressroute.Controller{Router: r.Router, Bus: r.Bus, Store: store, Logger: logger}
 	rules := eventrule.Controller{Router: r.Router, Bus: r.Bus, Store: store, Logger: logger}
@@ -831,6 +835,7 @@ func (r *Runner) Start(ctx context.Context) error {
 			return nil
 		}},
 		framework.FuncController{ControllerName: "dns-resolver", Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed", "routerd.dhcp.lease.**"}}}, ReconcileFunc: dnsResolver.HandleEvent, PeriodicFunc: dnsResolver.Reconcile},
+		framework.FuncController{ControllerName: "event-federation", Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed"}}}, ReconcileFunc: eventFederation.HandleEvent, PeriodicFunc: eventFederation.Reconcile},
 		framework.FuncController{ControllerName: "egress-route-policy", Every: 15 * time.Second, Subs: statusSubscriptions("HealthCheck", "DSLiteTunnel", "Interface", "DHCPv4Client", "PPPoESession"), PeriodicFunc: wan.Reconcile},
 		framework.FuncController{ControllerName: "ingress-service", Every: 5 * time.Second, Subs: bootstrapSubscriptions(), PeriodicFunc: ingressService.Reconcile},
 		framework.FuncController{ControllerName: "nat44", Subs: statusSubscriptions("EgressRoutePolicy", "IngressService"), PeriodicFunc: nat.Reconcile},

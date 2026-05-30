@@ -159,6 +159,49 @@ func DecodeConfig(unmarshal func(any) error) (Config, error) {
 	return cfg, nil
 }
 
+// marshalDuration renders a time.Duration as the wire string form, emitting ""
+// for non-positive values so omitempty drops the field.
+func marshalDuration(d time.Duration) string {
+	if d <= 0 {
+		return ""
+	}
+	return d.String()
+}
+
+// MarshalConfigJSON renders a Config to the on-disk wire form (duration fields
+// as Go duration strings). It is the symmetric inverse of DecodeConfig: feeding
+// its output back through DecodeConfig yields an equal Config.
+func MarshalConfigJSON(c Config) ([]byte, error) {
+	w := configWire{
+		NodeName:      c.NodeName,
+		Group:         c.Group,
+		Listen:        c.Listen,
+		SecretFile:    c.SecretFile,
+		ReplayWindow:  marshalDuration(c.ReplayWindow),
+		PruneInterval: marshalDuration(c.PruneInterval),
+		StatePath:     c.StatePath,
+	}
+	w.Retention.MaxEvents = c.Retention.MaxEvents
+	w.Retention.MaxAge = marshalDuration(c.Retention.MaxAge)
+	w.PushRetry.MaxAttempts = c.PushRetry.MaxAttempts
+	w.PushRetry.BaseBackoff = marshalDuration(c.PushRetry.BaseBackoff)
+	w.PushRetry.MaxBackoff = marshalDuration(c.PushRetry.MaxBackoff)
+	for _, p := range c.Peers {
+		w.Peers = append(w.Peers, struct {
+			NodeName        string   `json:"nodeName"`
+			Endpoint        string   `json:"endpoint"`
+			Types           []string `json:"types,omitempty"`
+			SubjectPrefixes []string `json:"subjectPrefixes,omitempty"`
+		}{
+			NodeName:        p.NodeName,
+			Endpoint:        p.Endpoint,
+			Types:           p.Types,
+			SubjectPrefixes: p.SubjectPrefixes,
+		})
+	}
+	return json.MarshalIndent(w, "", "  ")
+}
+
 // LoadConfig reads the JSON config file at path, decodes durations, applies
 // defaults, and validates. It is the entry point used by cmd/routerd-eventd.
 func LoadConfig(path string) (Config, error) {

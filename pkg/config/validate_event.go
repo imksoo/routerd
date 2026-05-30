@@ -41,6 +41,16 @@ func validateEventResource(res api.Resource, _ platform.OS) (bool, error) {
 		default:
 			return true, fmt.Errorf("%s spec.auth.mode must be empty or hmac", res.ID())
 		}
+		if strings.TrimSpace(spec.Listen.Address) != "" {
+			if spec.Listen.Port < 1 || spec.Listen.Port > 65535 {
+				return true, fmt.Errorf("%s spec.listen.port must be 1..65535 when listen.address is set", res.ID())
+			}
+		}
+		if window := strings.TrimSpace(spec.ReplayWindow); window != "" {
+			if _, err := time.ParseDuration(window); err != nil {
+				return true, fmt.Errorf("%s spec.replayWindow must be a Go duration: %w", res.ID(), err)
+			}
+		}
 	case "EventPeer":
 		if res.APIVersion != api.FederationAPIVersion {
 			return true, fmt.Errorf("%s must use apiVersion %s", res.ID(), api.FederationAPIVersion)
