@@ -33,6 +33,9 @@ type RunOptions struct {
 	StartupConfigHash   string
 	EffectiveGeneration int64
 	Trigger             TriggerRef
+	// Events are the matched federation events delivered to the plugin on
+	// stdin (EventSubscriptionController). Empty for non-subscription triggers.
+	Events []PluginMatchedEvent
 }
 
 type RunOutcome struct {
@@ -70,6 +73,7 @@ func Run(ctx context.Context, spec api.PluginSpec, name string, opts RunOptions)
 			EffectiveGeneration:       opts.EffectiveGeneration,
 			PreviousDynamicGeneration: opts.PreviousGeneration,
 			Now:                       now,
+			Events:                    opts.Events,
 		},
 	}
 	stdin, err := json.Marshal(request)

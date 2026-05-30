@@ -31,6 +31,7 @@ import (
 	dhcpv4client "github.com/imksoo/routerd/pkg/controller/dhcpv4client"
 	dnsresolvercontroller "github.com/imksoo/routerd/pkg/controller/dnsresolver"
 	eventfederationcontroller "github.com/imksoo/routerd/pkg/controller/eventfederation"
+	eventsubscriptioncontroller "github.com/imksoo/routerd/pkg/controller/eventsubscription"
 	firewallcontroller "github.com/imksoo/routerd/pkg/controller/firewall"
 	"github.com/imksoo/routerd/pkg/controller/framework"
 	ingressservicecontroller "github.com/imksoo/routerd/pkg/controller/ingressservice"
@@ -64,6 +65,51 @@ type Store interface {
 type eventedStore struct {
 	Store Store
 	Bus   *bus.Bus
+}
+
+// eventSubscriptionStore composes the evented status store (ownership + bus
+// publication on status changes) with the raw SQLite data store that the
+// EventSubscriptionController needs for federation events, subscription runs,
+// dynamic config parts, and plugin runs.
+type eventSubscriptionStore struct {
+	evented eventedStore
+	data    eventsubscriptioncontroller.DataStore
+}
+
+func (s eventSubscriptionStore) SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error {
+	return s.evented.SaveObjectStatus(apiVersion, kind, name, status)
+}
+
+func (s eventSubscriptionStore) ObjectStatus(apiVersion, kind, name string) map[string]any {
+	return s.evented.ObjectStatus(apiVersion, kind, name)
+}
+
+func (s eventSubscriptionStore) ListFederationEvents(group string, includeExpired bool, now int64) ([]routerstate.EventRecord, error) {
+	return s.data.ListFederationEvents(group, includeExpired, now)
+}
+
+func (s eventSubscriptionStore) SubscriptionRunStatus(subscription, eventID string) (string, int, bool, error) {
+	return s.data.SubscriptionRunStatus(subscription, eventID)
+}
+
+func (s eventSubscriptionStore) UpsertSubscriptionRunStart(subscription, eventID, eventGroup, plugin string) error {
+	return s.data.UpsertSubscriptionRunStart(subscription, eventID, eventGroup, plugin)
+}
+
+func (s eventSubscriptionStore) MarkSubscriptionRunResult(subscription, eventID, status, dynamicSource string, dynamicGeneration int64, errMsg string) error {
+	return s.data.MarkSubscriptionRunResult(subscription, eventID, status, dynamicSource, dynamicGeneration, errMsg)
+}
+
+func (s eventSubscriptionStore) UpsertDynamicConfigPart(part routerstate.DynamicConfigPartRecord) error {
+	return s.data.UpsertDynamicConfigPart(part)
+}
+
+func (s eventSubscriptionStore) RecordPluginRun(run routerstate.PluginRunRecord) (int64, error) {
+	return s.data.RecordPluginRun(run)
+}
+
+func (s eventSubscriptionStore) CompletePluginRun(id int64, completedAt time.Time, exitCode *int, status, stdoutDigest, stderrText, runError string) error {
+	return s.data.CompletePluginRun(id, completedAt, exitCode, status, stdoutDigest, stderrText, runError)
 }
 
 func (s eventedStore) SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error {
@@ -509,41 +555,42 @@ func becamePhase(event daemonapi.DaemonEvent, phase string) bool {
 type commandFunc func(ctx context.Context, name string, args ...string) error
 
 type Options struct {
-	DaemonSockets          map[string]string
-	DryRunAddress          bool
-	DryRunDSLite           bool
-	DryRunRoute            bool
-	DryRunDHCPv6           bool
-	DryRunDHCPv4Client     bool
-	DryRunPPPoESession     bool
-	DryRunDNSResolver      bool
-	DryRunEventFederation  bool
-	DryRunNAT              bool
-	DryRunIngress          bool
-	DryRunFirewall         bool
-	DryRunBGP              bool
-	DryRunVRRP             bool
-	DryRunPackage          bool
-	DryRunNetworkAdoption  bool
-	DryRunServiceUnit      bool
-	SuperviseClientDaemons bool
-	FirewallDisabled       bool
-	DnsmasqCommand         string
-	DnsmasqConfig          string
-	DnsmasqPID             string
-	DnsmasqPort            int
-	DnsmasqListen          []string
-	NftablesPath           string
-	FirewallPath           string
-	LedgerPath             string
-	NftCommand             string
-	BGPSocketPath          string
-	BGPControlSocketPath   string
-	BGPStatePath           string
-	ConntrackInterval      time.Duration
-	Logger                 *slog.Logger
-	ControllerObserver     framework.Observer
-	EnabledControllers     []string
+	DaemonSockets           map[string]string
+	DryRunAddress           bool
+	DryRunDSLite            bool
+	DryRunRoute             bool
+	DryRunDHCPv6            bool
+	DryRunDHCPv4Client      bool
+	DryRunPPPoESession      bool
+	DryRunDNSResolver       bool
+	DryRunEventFederation   bool
+	DryRunEventSubscription bool
+	DryRunNAT               bool
+	DryRunIngress           bool
+	DryRunFirewall          bool
+	DryRunBGP               bool
+	DryRunVRRP              bool
+	DryRunPackage           bool
+	DryRunNetworkAdoption   bool
+	DryRunServiceUnit       bool
+	SuperviseClientDaemons  bool
+	FirewallDisabled        bool
+	DnsmasqCommand          string
+	DnsmasqConfig           string
+	DnsmasqPID              string
+	DnsmasqPort             int
+	DnsmasqListen           []string
+	NftablesPath            string
+	FirewallPath            string
+	LedgerPath              string
+	NftCommand              string
+	BGPSocketPath           string
+	BGPControlSocketPath    string
+	BGPStatePath            string
+	ConntrackInterval       time.Duration
+	Logger                  *slog.Logger
+	ControllerObserver      framework.Observer
+	EnabledControllers      []string
 }
 
 type Runner struct {
@@ -675,6 +722,7 @@ func (r *Runner) Start(ctx context.Context) error {
 		opts.DryRunPPPoESession = true
 		opts.DryRunDNSResolver = true
 		opts.DryRunEventFederation = true
+		opts.DryRunEventSubscription = true
 		opts.DryRunNAT = true
 		opts.DryRunIngress = true
 		opts.DryRunFirewall = true
@@ -737,6 +785,21 @@ func (r *Runner) Start(ctx context.Context) error {
 	defaults, _ := platform.Current()
 	dnsResolver := dnsresolvercontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunDNSResolver, RuntimeDir: defaults.RuntimeDir, StateDir: defaults.StateDir}
 	eventFederation := eventfederationcontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunEventFederation, RuntimeDir: defaults.RuntimeDir, StateDir: defaults.StateDir}
+	// EventSubscriptionController needs the SQLite-backed federation/dynamic/
+	// plugin methods in addition to status writes. The raw r.Store is the
+	// *state.SQLiteStore; status writes are routed through the evented store so
+	// they keep ownership annotation + bus publication parity with peers.
+	var eventSubscription eventsubscriptioncontroller.Controller
+	if rawStore, ok := r.Store.(eventsubscriptioncontroller.DataStore); ok {
+		eventSubscription = eventsubscriptioncontroller.Controller{
+			Router:     r.Router,
+			Bus:        r.Bus,
+			Store:      eventSubscriptionStore{evented: store, data: rawStore},
+			DryRun:     r.Opts.DryRunEventSubscription,
+			RuntimeDir: defaults.RuntimeDir,
+			StateDir:   defaults.StateDir,
+		}
+	}
 	daemonStatusSync := DaemonStatusController{Router: r.Router, Bus: r.Bus, Store: store, DaemonSockets: r.Opts.DaemonSockets, Logger: logger}
 	wan := egressroute.Controller{Router: r.Router, Bus: r.Bus, Store: store, Logger: logger}
 	rules := eventrule.Controller{Router: r.Router, Bus: r.Bus, Store: store, Logger: logger}
@@ -836,6 +899,7 @@ func (r *Runner) Start(ctx context.Context) error {
 		}},
 		framework.FuncController{ControllerName: "dns-resolver", Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed", "routerd.dhcp.lease.**"}}}, ReconcileFunc: dnsResolver.HandleEvent, PeriodicFunc: dnsResolver.Reconcile},
 		framework.FuncController{ControllerName: "event-federation", Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed"}}}, ReconcileFunc: eventFederation.HandleEvent, PeriodicFunc: eventFederation.Reconcile},
+		framework.FuncController{ControllerName: "event-subscription", Every: 5 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed"}}}, PeriodicFunc: eventSubscription.Reconcile},
 		framework.FuncController{ControllerName: "egress-route-policy", Every: 15 * time.Second, Subs: statusSubscriptions("HealthCheck", "DSLiteTunnel", "Interface", "DHCPv4Client", "PPPoESession"), PeriodicFunc: wan.Reconcile},
 		framework.FuncController{ControllerName: "ingress-service", Every: 5 * time.Second, Subs: bootstrapSubscriptions(), PeriodicFunc: ingressService.Reconcile},
 		framework.FuncController{ControllerName: "nat44", Subs: statusSubscriptions("EgressRoutePolicy", "IngressService"), PeriodicFunc: nat.Reconcile},

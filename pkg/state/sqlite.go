@@ -185,6 +185,22 @@ CREATE TABLE IF NOT EXISTS event_deliveries (
   UNIQUE(event_id, peer)
 );
 CREATE INDEX IF NOT EXISTS event_deliveries_peer ON event_deliveries(peer, status);
+CREATE TABLE IF NOT EXISTS event_subscription_runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  subscription TEXT NOT NULL,
+  event_id TEXT NOT NULL,
+  event_group TEXT NOT NULL,
+  plugin TEXT NOT NULL,
+  status TEXT NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  started_at TEXT NOT NULL,
+  completed_at TEXT,
+  dynamic_source TEXT,
+  dynamic_generation INTEGER,
+  error TEXT,
+  UNIQUE(subscription, event_id)
+);
+CREATE INDEX IF NOT EXISTS event_subscription_runs_sub ON event_subscription_runs(subscription, status);
 `); err != nil {
 		return err
 	}

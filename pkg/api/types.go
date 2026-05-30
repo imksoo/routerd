@@ -16,6 +16,11 @@ type TypeMeta struct {
 type ObjectMeta struct {
 	Name      string     `yaml:"name" json:"name"`
 	OwnerRefs []OwnerRef `yaml:"ownerRefs,omitempty" json:"ownerRefs,omitempty"`
+	// Annotations carry non-identifying provenance metadata. They are
+	// omitempty so resources without annotations serialize identically to
+	// before this field existed. The EventSubscriptionController stamps
+	// routerd.net/* provenance keys on dynamic resources it produces.
+	Annotations map[string]string `yaml:"annotations,omitempty" json:"annotations,omitempty"`
 }
 
 type OwnerRef struct {
