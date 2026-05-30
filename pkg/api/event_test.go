@@ -55,3 +55,57 @@ spec:
 		t.Fatalf("auth.mode = %q, want hmac", spec.Auth.Mode)
 	}
 }
+
+func TestEventPeerResourceDecoding(t *testing.T) {
+	const doc = `
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: test
+spec:
+  resources:
+    - apiVersion: federation.routerd.net/v1alpha1
+      kind: EventPeer
+      metadata:
+        name: cloud-secondary
+      spec:
+        groupRef: cloudedge
+        nodeName: cloud-router
+        endpoint: http://10.99.0.7:8787
+        direction: push
+        types:
+          - routerd.client.ipv4.observed
+        subjectPrefixes:
+          - "10.88."
+`
+
+	var router api.Router
+	if err := yaml.Unmarshal([]byte(doc), &router); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(router.Spec.Resources) != 1 {
+		t.Fatalf("want 1 resource, got %d", len(router.Spec.Resources))
+	}
+	spec, err := router.Spec.Resources[0].EventPeerSpec()
+	if err != nil {
+		t.Fatalf("event peer spec: %v", err)
+	}
+	if spec.GroupRef != "cloudedge" {
+		t.Fatalf("groupRef = %q, want cloudedge", spec.GroupRef)
+	}
+	if spec.NodeName != "cloud-router" {
+		t.Fatalf("nodeName = %q, want cloud-router", spec.NodeName)
+	}
+	if spec.Endpoint != "http://10.99.0.7:8787" {
+		t.Fatalf("endpoint = %q", spec.Endpoint)
+	}
+	if spec.Direction != "push" {
+		t.Fatalf("direction = %q, want push", spec.Direction)
+	}
+	if len(spec.Types) != 1 || spec.Types[0] != "routerd.client.ipv4.observed" {
+		t.Fatalf("types = %v", spec.Types)
+	}
+	if len(spec.SubjectPrefixes) != 1 || spec.SubjectPrefixes[0] != "10.88." {
+		t.Fatalf("subjectPrefixes = %v", spec.SubjectPrefixes)
+	}
+}

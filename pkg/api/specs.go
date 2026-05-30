@@ -1229,6 +1229,27 @@ type EventGroupAuth struct {
 	SecretFile string `yaml:"secretFile,omitempty" json:"secretFile,omitempty"`
 }
 
+// EventPeerSpec declares a remote node a routerd node pushes federation events
+// to within an EventGroup (ADR 0006, Phase 2). It is the delivery target; the
+// EventGroup names the bus, the EventPeer names where to forward.
+type EventPeerSpec struct {
+	// GroupRef is the EventGroup this peer belongs to (required).
+	GroupRef string `yaml:"groupRef" json:"groupRef"`
+	// NodeName is the remote peer node identity (required).
+	NodeName string `yaml:"nodeName" json:"nodeName"`
+	// Endpoint is the base URL to push to, e.g. http://10.99.0.7:8787. Required
+	// for push delivery.
+	Endpoint string `yaml:"endpoint,omitempty" json:"endpoint,omitempty"`
+	// Direction selects delivery direction; only "push" is supported in Phase 2.
+	// Empty defaults to "push".
+	Direction string `yaml:"direction,omitempty" json:"direction,omitempty" jsonschema:"enum=push"`
+	// Types optionally filters delivery to these event types; empty delivers all.
+	Types []string `yaml:"types,omitempty" json:"types,omitempty"`
+	// SubjectPrefixes optionally filters delivery to subjects carrying one of
+	// these prefixes; empty delivers all.
+	SubjectPrefixes []string `yaml:"subjectPrefixes,omitempty" json:"subjectPrefixes,omitempty"`
+}
+
 type CloudProviderProfileSpec struct {
 	Provider       string       `yaml:"provider" json:"provider" jsonschema:"enum=azure,enum=aws,enum=oci,enum=gcp"`
 	SubscriptionID string       `yaml:"subscriptionID,omitempty" json:"subscriptionID,omitempty"`
@@ -1893,6 +1914,10 @@ func (r Resource) AddressMobilityDomainSpec() (AddressMobilityDomainSpec, error)
 
 func (r Resource) EventGroupSpec() (EventGroupSpec, error) {
 	return specAs[EventGroupSpec](r)
+}
+
+func (r Resource) EventPeerSpec() (EventPeerSpec, error) {
+	return specAs[EventPeerSpec](r)
 }
 
 func (r Resource) CloudProviderProfileSpec() (CloudProviderProfileSpec, error) {

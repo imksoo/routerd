@@ -41,6 +41,41 @@ func validateEventResource(res api.Resource, _ platform.OS) (bool, error) {
 		default:
 			return true, fmt.Errorf("%s spec.auth.mode must be empty or hmac", res.ID())
 		}
+	case "EventPeer":
+		if res.APIVersion != api.FederationAPIVersion {
+			return true, fmt.Errorf("%s must use apiVersion %s", res.ID(), api.FederationAPIVersion)
+		}
+		spec, err := res.EventPeerSpec()
+		if err != nil {
+			return true, err
+		}
+		if strings.TrimSpace(spec.GroupRef) == "" {
+			return true, fmt.Errorf("%s spec.groupRef is required", res.ID())
+		}
+		if strings.TrimSpace(spec.NodeName) == "" {
+			return true, fmt.Errorf("%s spec.nodeName is required", res.ID())
+		}
+		// Direction defaults to push when empty; only push is supported in Phase 2.
+		direction := strings.TrimSpace(spec.Direction)
+		switch direction {
+		case "", "push":
+		default:
+			return true, fmt.Errorf("%s spec.direction must be empty or push", res.ID())
+		}
+		// Endpoint is required for push delivery (the only Phase 2 direction).
+		if strings.TrimSpace(spec.Endpoint) == "" {
+			return true, fmt.Errorf("%s spec.endpoint is required for push delivery", res.ID())
+		}
+		for i, t := range spec.Types {
+			if strings.TrimSpace(t) == "" {
+				return true, fmt.Errorf("%s spec.types[%d] must not be empty", res.ID(), i)
+			}
+		}
+		for i, p := range spec.SubjectPrefixes {
+			if strings.TrimSpace(p) == "" {
+				return true, fmt.Errorf("%s spec.subjectPrefixes[%d] must not be empty", res.ID(), i)
+			}
+		}
 	default:
 		return false, nil
 	}

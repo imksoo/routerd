@@ -173,6 +173,18 @@ CREATE TABLE IF NOT EXISTS federation_events (
   recorded_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS federation_events_group ON federation_events(group_name, observed_at);
+CREATE TABLE IF NOT EXISTS event_deliveries (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id TEXT NOT NULL,
+  peer TEXT NOT NULL,
+  status TEXT NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  last_attempt_at INTEGER,
+  last_error TEXT,
+  delivered_at INTEGER,
+  UNIQUE(event_id, peer)
+);
+CREATE INDEX IF NOT EXISTS event_deliveries_peer ON event_deliveries(peer, status);
 `); err != nil {
 		return err
 	}

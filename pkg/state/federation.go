@@ -153,5 +153,58 @@ func (s *SQLiteStore) ListFederationEvents(group string, includeExpired bool, no
 	return records, nil
 }
 
-// TODO(phase1+): PruneEvents honoring EventGroup retention (MaxEvents/MaxAge).
-// Deferred from Phase 1 — listing already filters expired events at read time.
+// PruneFederationEvents enforces EventGroup retention (ADR 0006). It removes
+// rows older than maxAge (when maxAge > 0) and, when maxEvents > 0, trims the
+// group down to the newest maxEvents rows (by observed_at desc, id desc). It
+// returns the total number of rows deleted.
+//
+// group=="" means all groups. For an empty group the maxAge prune is applied
+// across the whole table, but the maxEvents cap is intentionally SKIPPED:
+// capping a mixed-group table to N newest rows would silently delete events
+// from other groups, so per-group retention requires a group. Callers iterate
+// per EventGroup to enforce maxEvents.
+func (s *SQLiteStore) PruneFederationEvents(group string, maxAge time.Duration, maxEvents int, now time.Time) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return 0, errStoreClosed
+	}
+	var total int64
+	if maxAge > 0 {
+		cutoff := now.UTC().Add(-maxAge).Unix()
+		var (
+			res sql.Result
+			err error
+		)
+		if group != "" {
+			res, err = s.db.Exec(`DELETE FROM federation_events WHERE group_name = ? AND observed_at < ?`, group, cutoff)
+		} else {
+			res, err = s.db.Exec(`DELETE FROM federation_events WHERE observed_at < ?`, cutoff)
+		}
+		if err != nil {
+			return total, fmt.Errorf("prune federation events by age: %w", err)
+		}
+		if n, err := res.RowsAffected(); err == nil {
+			total += n
+		}
+	}
+	if maxEvents > 0 && group != "" {
+		res, err := s.db.Exec(`
+			DELETE FROM federation_events
+			WHERE group_name = ?
+			  AND id NOT IN (
+			    SELECT id FROM federation_events
+			    WHERE group_name = ?
+			    ORDER BY observed_at DESC, id DESC
+			    LIMIT ?
+			  )
+		`, group, group, maxEvents)
+		if err != nil {
+			return total, fmt.Errorf("prune federation events by count: %w", err)
+		}
+		if n, err := res.RowsAffected(); err == nil {
+			total += n
+		}
+	}
+	return total, nil
+}
