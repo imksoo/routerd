@@ -279,6 +279,89 @@ func (e *Engine) Execute(ctx context.Context, id int64, mode string, policy api.
 	}
 }
 
+// DryRunResult is the outcome of a non-destructive DryRunPreview.
+type DryRunResult struct {
+	// Status is the executor's reported result status (succeeded/skipped/failed).
+	Status string
+	// Message is the executor's human-readable summary (for a dry-run typically
+	// "would <action>").
+	Message string
+	// Error is the executor-side error description when Status=="failed".
+	Error string
+}
+
+// DryRunPreview runs the executor in dry-run mode WITHOUT mutating the journal's
+// lifecycle state. It is a non-destructive preview: it evaluates the same policy
+// gate as Execute (with mode=dry-run, so DryRunOnly never blocks it) and the same
+// approval gate, then launches the executor in dry-run mode and returns what the
+// executor reported. It NEVER transitions the action to a terminal status, so a
+// preview does not consume the action's approval — a later live Execute on the
+// same approved action proceeds normally. This is the semantics the
+// `routerctl action execute <id> --dry-run` operator command relies on.
+//
+// An already-succeeded action is reported back as a no-op preview (the live
+// effect already happened; nothing would change).
+func (e *Engine) DryRunPreview(ctx context.Context, id int64, policy api.ProviderActionPolicySpec) (DryRunResult, error) {
+	rec, found, err := e.store.GetActionByID(id)
+	if err != nil {
+		return DryRunResult{}, fmt.Errorf("load action %d: %w", id, err)
+	}
+	if !found {
+		return DryRunResult{}, fmt.Errorf("action %d not found", id)
+	}
+	if rec.Status == state.ActionRolledBack {
+		return DryRunResult{}, fmt.Errorf("dry-run action %d: action was rolled back", id)
+	}
+
+	// Policy gate (mode=dry-run is always permitted by dryRunOnly, but the
+	// allowlists / enabled / maxActionsPerRun still apply). Never launches on
+	// failure.
+	if err := evaluatePolicy(rec, ModeDryRun, policy); err != nil {
+		return DryRunResult{}, fmt.Errorf("policy gate denied dry-run of action %d: %w", id, err)
+	}
+
+	// Approval gate mirrors Execute: an action must be approved unless policy
+	// auto-approve applies. A dry-run never stamps approval (non-destructive).
+	autoApprove := policy.RequireApproval != nil && !*policy.RequireApproval &&
+		policy.Enabled && !dryRunOnly(policy)
+	switch rec.Status {
+	case state.ActionApproved, state.ActionSucceeded, state.ActionFailed, state.ActionSkipped:
+		// Approved or already-attempted actions may be previewed.
+	case state.ActionPending:
+		if !autoApprove {
+			return DryRunResult{}, fmt.Errorf("dry-run action %d: action is %s and not approved (approval required)", id, rec.Status)
+		}
+	default:
+		return DryRunResult{}, fmt.Errorf("dry-run action %d: action in unexpected status %q", id, rec.Status)
+	}
+
+	spec, pluginName, err := e.resolveExecutor(rec.Provider)
+	if err != nil {
+		return DryRunResult{}, fmt.Errorf("resolve executor for provider %q: %w", rec.Provider, err)
+	}
+	e.logf("provideraction: dry-run preview of action %d via plugin %q (no journal mutation)", id, pluginName)
+
+	req := NewExecuteActionRequest(ExecuteActionRequestSpec{
+		Action:         rec.Action,
+		Provider:       rec.Provider,
+		ProviderRef:    rec.ProviderRef,
+		Target:         decodeStringMap(rec.TargetJSON),
+		Parameters:     decodeStringMap(rec.ParametersJSON),
+		Mode:           ModeDryRun,
+		IdempotencyKey: rec.IdempotencyKey,
+	})
+
+	result, _, runErr := e.run(ctx, spec, req)
+	if runErr != nil {
+		return DryRunResult{}, fmt.Errorf("dry-run action %d: %w", id, runErr)
+	}
+	return DryRunResult{
+		Status:  result.Status.Status,
+		Message: result.Status.Message,
+		Error:   result.Status.Error,
+	}, nil
+}
+
 // Rollback is best-effort undo. It runs only if policy.AllowUndo, the action
 // succeeded, and the journal carries an undo. It builds an ExecuteActionRequest
 // for the undo action and, on executor success, marks the action rolledBack.
@@ -335,6 +418,63 @@ func (e *Engine) Rollback(ctx context.Context, id int64, policy api.ProviderActi
 		msg = "rolled back via undo " + undo.Action
 	}
 	return e.store.MarkActionRolledBack(id, msg, e.now().UTC())
+}
+
+// RollbackPreview runs the undo action in dry-run mode WITHOUT mutating the
+// journal. It applies the same refusals as Rollback (policy.AllowUndo, the action
+// must be succeeded, an undo must exist) but launches the executor with
+// Mode=dry-run and NEVER transitions the action to rolledBack. It is the
+// non-destructive preview behind `routerctl action rollback <id> --dry-run`.
+func (e *Engine) RollbackPreview(ctx context.Context, id int64, policy api.ProviderActionPolicySpec) (DryRunResult, error) {
+	if !policy.AllowUndo {
+		return DryRunResult{}, fmt.Errorf("rollback action %d refused: policy.allowUndo is false", id)
+	}
+	rec, found, err := e.store.GetActionByID(id)
+	if err != nil {
+		return DryRunResult{}, fmt.Errorf("load action %d: %w", id, err)
+	}
+	if !found {
+		return DryRunResult{}, fmt.Errorf("action %d not found", id)
+	}
+	if rec.Status != state.ActionSucceeded {
+		return DryRunResult{}, fmt.Errorf("rollback action %d refused: action is %s, not succeeded", id, rec.Status)
+	}
+	if strings.TrimSpace(rec.UndoJSON) == "" {
+		return DryRunResult{}, fmt.Errorf("rollback action %d refused: action has no undo", id)
+	}
+	var undo dynamicconfig.ActionUndo
+	if err := json.Unmarshal([]byte(rec.UndoJSON), &undo); err != nil {
+		return DryRunResult{}, fmt.Errorf("rollback action %d: decode undo: %w", id, err)
+	}
+	if strings.TrimSpace(undo.Action) == "" {
+		return DryRunResult{}, fmt.Errorf("rollback action %d refused: undo has no action", id)
+	}
+
+	spec, pluginName, err := e.resolveExecutor(rec.Provider)
+	if err != nil {
+		return DryRunResult{}, fmt.Errorf("rollback action %d: resolve executor: %w", id, err)
+	}
+	e.logf("provideraction: dry-run rollback preview of action %d via plugin %q (undo=%s, no journal mutation)", id, pluginName, undo.Action)
+
+	req := NewExecuteActionRequest(ExecuteActionRequestSpec{
+		Action:         undo.Action,
+		Provider:       rec.Provider,
+		ProviderRef:    rec.ProviderRef,
+		Target:         decodeStringMap(rec.TargetJSON),
+		Parameters:     undo.Parameters,
+		Mode:           ModeDryRun,
+		IdempotencyKey: rec.IdempotencyKey + ":undo",
+	})
+
+	result, _, runErr := e.run(ctx, spec, req)
+	if runErr != nil {
+		return DryRunResult{}, fmt.Errorf("rollback action %d: %w", id, runErr)
+	}
+	return DryRunResult{
+		Status:  result.Status.Status,
+		Message: result.Status.Message,
+		Error:   result.Status.Error,
+	}, nil
 }
 
 // resolveExecutor finds the executor Plugin for a provider. RESOLUTION RULE
