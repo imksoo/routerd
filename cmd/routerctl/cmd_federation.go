@@ -43,6 +43,8 @@ func federationEventCommand(args []string, stdout, stderr io.Writer) error {
 		return federationEventEmitCommand(args[1:], stdout)
 	case "list":
 		return federationEventListCommand(args[1:], stdout)
+	case "deliveries":
+		return federationEventDeliveriesCommand(args[1:], stdout)
 	case "help", "-h", "--help":
 		federationUsage(stdout)
 		return nil
@@ -247,6 +249,75 @@ func federationEventListCommand(args []string, stdout io.Writer) error {
 	}
 }
 
+func federationEventDeliveriesCommand(args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("federation event deliveries", flag.ContinueOnError)
+	fs.SetOutput(stdout)
+	fs.Usage = func() {
+		printSubcommandHelp(fs,
+			"List CloudEdge federation peer delivery attempts from the local store (ADR 0006, Phase 2).",
+			"routerctl federation event deliveries\n"+
+				"routerctl fed event deliveries --event-id evt-123 --peer cloud-a -o json")
+	}
+	statePath := fs.String("state-file", defaultStatePath(), "routerd state database file")
+	eventID := fs.String("event-id", "", "filter to a single event id")
+	peer := fs.String("peer", "", "filter to a single peer node name")
+	output := "table"
+	fs.StringVar(&output, "o", "table", "output format: table, json, yaml")
+	fs.StringVar(&output, "output", "table", "output format: table, json, yaml")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("unexpected federation event deliveries argument %q", fs.Arg(0))
+	}
+
+	store, err := routerstate.Open(*statePath)
+	if err != nil {
+		return err
+	}
+	if closer, ok := store.(interface{ Close() error }); ok {
+		defer closer.Close()
+	}
+	deliveryStore, ok := store.(routerstate.FederationDeliveryStore)
+	if !ok {
+		return fmt.Errorf("state file %s does not support federation deliveries", *statePath)
+	}
+	deliveries, err := deliveryStore.ListDeliveries(*eventID, *peer)
+	if err != nil {
+		return err
+	}
+	switch output {
+	case "", "table":
+		return writeFederationDeliveriesTable(stdout, deliveries)
+	case "json":
+		return writeJSON(stdout, deliveries)
+	case "yaml":
+		return writeYAML(stdout, deliveries)
+	default:
+		return fmt.Errorf("unsupported output %q", output)
+	}
+}
+
+func writeFederationDeliveriesTable(stdout io.Writer, deliveries []routerstate.DeliveryRecord) error {
+	w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "EVENT_ID\tPEER\tSTATUS\tATTEMPTS\tLAST_ATTEMPT\tLAST_ERROR\tDELIVERED")
+	for _, d := range deliveries {
+		fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\t%s\t%s\n",
+			d.EventID,
+			d.Peer,
+			d.Status,
+			d.Attempts,
+			formatDynamicTime(d.LastAttemptAt),
+			displayCell(d.LastError),
+			formatDynamicTime(d.DeliveredAt),
+		)
+	}
+	return w.Flush()
+}
+
 func writeFederationEventsTable(stdout io.Writer, events []routerstate.EventRecord) error {
 	w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "ID\tGROUP\tSOURCE\tTYPE\tSUBJECT\tOBSERVED\tEXPIRES")
@@ -279,4 +350,5 @@ func federationUsage(w io.Writer) {
 	fmt.Fprintln(w, "subcommands:")
 	fmt.Fprintln(w, "  event emit --group <name> --type <topic> [--subject <s>] [--source-node <n>] [--id <id>] [--dedupe-key <k>] [--payload k=v ...] [--ttl <dur>] [--observed-at <rfc3339>] [--state-file <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  event list [--group <name>] [--include-expired] [--state-file <path>] [-o table|json|yaml]")
+	fmt.Fprintln(w, "  event deliveries [--event-id <id>] [--peer <name>] [--state-file <path>] [-o table|json|yaml]")
 }

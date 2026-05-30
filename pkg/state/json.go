@@ -109,6 +109,12 @@ type FederationEventStore interface {
 	ListFederationEvents(group string, includeExpired bool, now int64) ([]EventRecord, error)
 }
 
+// FederationDeliveryStore is the read surface for per-(event,peer) delivery
+// tracking in the event_deliveries table (ADR 0006, Phase 2).
+type FederationDeliveryStore interface {
+	ListDeliveries(eventID, peer string) ([]DeliveryRecord, error)
+}
+
 type DynamicConfigPartLister interface {
 	ListDynamicConfigParts() ([]DynamicConfigPartRecord, error)
 	GetDynamicConfigPartsBySource(source string) ([]DynamicConfigPartRecord, error)
