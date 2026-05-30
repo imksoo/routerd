@@ -530,6 +530,12 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
 		r.Spec = spec
+	case "EventSubscription":
+		var spec EventSubscriptionSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
 	case "IPv4DefaultRoutePolicy":
 		return RemovedLegacyKindError(raw.Kind, r.ID())
 	case "NAT44Rule":

@@ -109,3 +109,69 @@ spec:
 		t.Fatalf("subjectPrefixes = %v", spec.SubjectPrefixes)
 	}
 }
+
+func TestEventSubscriptionResourceDecoding(t *testing.T) {
+	const doc = `
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: test
+spec:
+  resources:
+    - apiVersion: federation.routerd.net/v1alpha1
+      kind: EventSubscription
+      metadata:
+        name: claim-on-observe
+      spec:
+        groupRef: cloudedge
+        match:
+          types:
+            - routerd.client.ipv4.observed
+          subjectPrefixes:
+            - "10.88."
+          payload:
+            ownerSide: onprem
+          sourceNodes:
+            - onprem-router
+        trigger:
+          pluginRef: remote-claim-provisioner
+          batchWindow: 5s
+          debounce: 2s
+`
+
+	var router api.Router
+	if err := yaml.Unmarshal([]byte(doc), &router); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(router.Spec.Resources) != 1 {
+		t.Fatalf("want 1 resource, got %d", len(router.Spec.Resources))
+	}
+	spec, err := router.Spec.Resources[0].EventSubscriptionSpec()
+	if err != nil {
+		t.Fatalf("event subscription spec: %v", err)
+	}
+	if spec.GroupRef != "cloudedge" {
+		t.Fatalf("groupRef = %q, want cloudedge", spec.GroupRef)
+	}
+	if len(spec.Match.Types) != 1 || spec.Match.Types[0] != "routerd.client.ipv4.observed" {
+		t.Fatalf("match.types = %v", spec.Match.Types)
+	}
+	if len(spec.Match.SubjectPrefixes) != 1 || spec.Match.SubjectPrefixes[0] != "10.88." {
+		t.Fatalf("match.subjectPrefixes = %v", spec.Match.SubjectPrefixes)
+	}
+	if spec.Match.Payload["ownerSide"] != "onprem" {
+		t.Fatalf("match.payload[ownerSide] = %q, want onprem", spec.Match.Payload["ownerSide"])
+	}
+	if len(spec.Match.SourceNodes) != 1 || spec.Match.SourceNodes[0] != "onprem-router" {
+		t.Fatalf("match.sourceNodes = %v", spec.Match.SourceNodes)
+	}
+	if spec.Trigger.PluginRef != "remote-claim-provisioner" {
+		t.Fatalf("trigger.pluginRef = %q, want remote-claim-provisioner", spec.Trigger.PluginRef)
+	}
+	if spec.Trigger.BatchWindow != "5s" {
+		t.Fatalf("trigger.batchWindow = %q, want 5s", spec.Trigger.BatchWindow)
+	}
+	if spec.Trigger.Debounce != "2s" {
+		t.Fatalf("trigger.debounce = %q, want 2s", spec.Trigger.Debounce)
+	}
+}

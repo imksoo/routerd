@@ -1264,6 +1264,45 @@ type EventPeerSpec struct {
 	SubjectPrefixes []string `yaml:"subjectPrefixes,omitempty" json:"subjectPrefixes,omitempty"`
 }
 
+// EventSubscriptionSpec declares that received federation events matching a
+// predicate trigger a local Plugin (ADR 0006, Phase 3): the cloud-side rule that
+// turns an observed fact into a DynamicConfigPart via a trusted local plugin.
+type EventSubscriptionSpec struct {
+	// GroupRef is the EventGroup whose events this subscription watches.
+	GroupRef string `yaml:"groupRef" json:"groupRef"`
+	// Match selects which events fire the subscription. Types is required so a
+	// subscription cannot blanket-trigger a plugin on every event in the group.
+	Match EventSubscriptionMatch `yaml:"match" json:"match"`
+	// Trigger names the plugin to invoke and optional batching.
+	Trigger EventSubscriptionTrigger `yaml:"trigger" json:"trigger"`
+}
+
+// EventSubscriptionMatch is the event predicate. Types is required (>=1);
+// the rest narrow further. Empty optional slices/maps mean "any".
+type EventSubscriptionMatch struct {
+	// Types restricts to these event types (required, at least one), e.g.
+	// routerd.client.ipv4.observed.
+	Types []string `yaml:"types" json:"types"`
+	// SubjectPrefixes restricts to subjects with one of these prefixes.
+	SubjectPrefixes []string `yaml:"subjectPrefixes,omitempty" json:"subjectPrefixes,omitempty"`
+	// Payload requires each listed key to equal the given value in the event payload.
+	Payload map[string]string `yaml:"payload,omitempty" json:"payload,omitempty"`
+	// SourceNodes restricts to events whose sourceNode is one of these (loop/scope guard).
+	SourceNodes []string `yaml:"sourceNodes,omitempty" json:"sourceNodes,omitempty"`
+}
+
+// EventSubscriptionTrigger names the Plugin and optional coalescing windows.
+type EventSubscriptionTrigger struct {
+	// PluginRef names the Plugin resource invoked for matched events.
+	PluginRef string `yaml:"pluginRef" json:"pluginRef"`
+	// BatchWindow optionally coalesces matched events into one invocation
+	// (Go duration). MVP invokes per poll tick; this is accepted forward-compat.
+	BatchWindow string `yaml:"batchWindow,omitempty" json:"batchWindow,omitempty"`
+	// Debounce optionally delays invocation after the last matched event
+	// (Go duration). Accepted forward-compat; MVP uses poll-tick batching.
+	Debounce string `yaml:"debounce,omitempty" json:"debounce,omitempty"`
+}
+
 type CloudProviderProfileSpec struct {
 	Provider       string       `yaml:"provider" json:"provider" jsonschema:"enum=azure,enum=aws,enum=oci,enum=gcp"`
 	SubscriptionID string       `yaml:"subscriptionID,omitempty" json:"subscriptionID,omitempty"`
@@ -1932,6 +1971,10 @@ func (r Resource) EventGroupSpec() (EventGroupSpec, error) {
 
 func (r Resource) EventPeerSpec() (EventPeerSpec, error) {
 	return specAs[EventPeerSpec](r)
+}
+
+func (r Resource) EventSubscriptionSpec() (EventSubscriptionSpec, error) {
+	return specAs[EventSubscriptionSpec](r)
 }
 
 func (r Resource) CloudProviderProfileSpec() (CloudProviderProfileSpec, error) {

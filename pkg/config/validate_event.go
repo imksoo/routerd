@@ -86,6 +86,55 @@ func validateEventResource(res api.Resource, _ platform.OS) (bool, error) {
 				return true, fmt.Errorf("%s spec.subjectPrefixes[%d] must not be empty", res.ID(), i)
 			}
 		}
+	case "EventSubscription":
+		if res.APIVersion != api.FederationAPIVersion {
+			return true, fmt.Errorf("%s must use apiVersion %s", res.ID(), api.FederationAPIVersion)
+		}
+		spec, err := res.EventSubscriptionSpec()
+		if err != nil {
+			return true, err
+		}
+		if strings.TrimSpace(spec.GroupRef) == "" {
+			return true, fmt.Errorf("%s spec.groupRef is required", res.ID())
+		}
+		// Match.Types is required: a subscription must not blanket-trigger a
+		// plugin on every event in the group.
+		if len(spec.Match.Types) == 0 {
+			return true, fmt.Errorf("%s spec.match.types is required (at least one type)", res.ID())
+		}
+		for i, t := range spec.Match.Types {
+			if strings.TrimSpace(t) == "" {
+				return true, fmt.Errorf("%s spec.match.types[%d] must not be empty", res.ID(), i)
+			}
+		}
+		for i, p := range spec.Match.SubjectPrefixes {
+			if strings.TrimSpace(p) == "" {
+				return true, fmt.Errorf("%s spec.match.subjectPrefixes[%d] must not be empty", res.ID(), i)
+			}
+		}
+		for i, n := range spec.Match.SourceNodes {
+			if strings.TrimSpace(n) == "" {
+				return true, fmt.Errorf("%s spec.match.sourceNodes[%d] must not be empty", res.ID(), i)
+			}
+		}
+		for k := range spec.Match.Payload {
+			if strings.TrimSpace(k) == "" {
+				return true, fmt.Errorf("%s spec.match.payload has a blank key", res.ID())
+			}
+		}
+		if strings.TrimSpace(spec.Trigger.PluginRef) == "" {
+			return true, fmt.Errorf("%s spec.trigger.pluginRef is required", res.ID())
+		}
+		if window := strings.TrimSpace(spec.Trigger.BatchWindow); window != "" {
+			if _, err := time.ParseDuration(window); err != nil {
+				return true, fmt.Errorf("%s spec.trigger.batchWindow must be a Go duration: %w", res.ID(), err)
+			}
+		}
+		if debounce := strings.TrimSpace(spec.Trigger.Debounce); debounce != "" {
+			if _, err := time.ParseDuration(debounce); err != nil {
+				return true, fmt.Errorf("%s spec.trigger.debounce must be a Go duration: %w", res.ID(), err)
+			}
+		}
 	default:
 		return false, nil
 	}
