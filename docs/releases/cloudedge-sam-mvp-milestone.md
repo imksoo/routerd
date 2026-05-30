@@ -21,7 +21,7 @@ them over the overlay, preserving source/destination addresses.
 |---|---|---|
 | Azure×PVE same-subnet /32 mobility | PASS / clean | `docs/releases/evidence/cloudedge-sam-azure-pve-20260529.md` |
 | AWS×PVE same-subnet /32 mobility | PASS / clean (Azure-parity, first run) | `docs/releases/evidence/cloudedge-sam-aws-pve-20260529.md` |
-| OCI×PVE same-subnet /32 mobility | PASS / clean (after PMTU/MSS clamp fix #53) | `routerd-labs/cloudedge-sam/evidence/20260530T031247Z-oci-pve-hardening/summary.md` |
+| OCI×PVE same-subnet /32 mobility | PASS / clean (after PMTU/MSS clamp fix #53) | `routerd-labs/cloudedge-sam/evidence/20260530T031247Z-oci-pve-hardening-43a64c55/summary.md` |
 
 All three runs pass. AWS passed on the first run with **no AWS-specific code changes**.
 OCI initially black-holed TCP (ping passed, SSH/scp timed out) on its lower-PMTU

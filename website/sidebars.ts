@@ -110,6 +110,7 @@ const sidebars: SidebarsConfig = {
         'how-to/os-bootstrap',
         'how-to/pve-overlay',
         'how-to/hybrid-azure-pve-same-subnet',
+        'how-to/event-federation-subscription',
         'how-to/troubleshooting',
       ],
     },

@@ -2,16 +2,28 @@
 
 ## Status
 
-Accepted for experimental implementation — 2026-05-30.
-Phase 1 (event envelope + `EventGroup` Kind + SQLite local store + `routerctl
-federation event emit/list`) is implemented on `event-federation`. Phase 2 (peer
-delivery over the overlay) is pending.
+Accepted; experimental implementation in progress — 2026-05-30.
+Phases 1, 1.5, 2, and 3 are **implemented on `event-federation`**:
+
+- **Phase 1** (event envelope + `EventGroup` Kind + SQLite local store + `routerctl
+  federation event emit/list`) — done.
+- **Phase 1.5** (`EventPeer`/`EventSubscription` Kinds + validation) — done.
+- **Phase 2** (peer delivery over the overlay via `routerd-eventd`, HMAC, retry,
+  retention prune) — done; **lab-smoke PASS**
+  ([transport evidence](../releases/evidence/cloudedge-event-federation-transport-20260530.md)).
+- **Phase 3** (subscription → plugin → `RemoteAddressClaim` `DynamicConfigPart`) —
+  done; **lab-smoke PASS**
+  ([subscription evidence](../releases/evidence/cloudedge-event-federation-subscription-20260530.md),
+  [how-to](../how-to/event-federation-subscription.md)).
+
+Phase 4 (provider `actionPlan` plugins, dry-run) is **next, not started**.
+Phase 5 (provider action execution) is **out of MVP**.
 
 ## Context
 
 SAM ([reference](../reference/selective-address-mobility.md),
 [milestone](../releases/cloudedge-sam-mvp-milestone.md)) is clean-validated
-on Azure×PVE and AWS×PVE (OCI×PVE in progress). It proves the
+on Azure×PVE, AWS×PVE, and OCI×PVE (3-cloud parity). It proves the
 **capture (provider-specific) / delivery+claim (routerd-common)** split. But the
 `RemoteAddressClaim` that drives it is **hand-authored** today. The next step is to
 discover, propagate, and materialize claims **event-driven**:
@@ -136,20 +148,21 @@ acceptance. Implementation delegated to codex; claude orchestrates + reviews.
   subject, ttl, dedupeKey, payload); SQLite `federation_events` table; `routerctl
   federation event emit/list`. *Accept:* emit→stored w/ TTL; dup id idempotent;
   expired ignored.
-- **Phase 2 — Peer delivery over overlay.** `EventPeer` Kind; `routerd-eventd`
+- **✅ DONE (lab-smoke PASS) — Phase 1.5 — `EventPeer`/`EventSubscription` Kinds + validation.**
+- **✅ DONE (lab-smoke PASS) — Phase 2 — Peer delivery over overlay.** `EventPeer` Kind; `routerd-eventd`
   receiver bound to `wg-hybrid`; HMAC; push + backoff; `event_deliveries`.
   *Accept:* onprem pushes to cloud over `wg-hybrid`; dup push idempotent; bad HMAC
   rejected; `routerctl event deliveries`; `routerd-eventd` periodically prunes
   `federation_events` per `EventGroup` retention (`maxAge`/`maxEvents`), and
   `routerctl federation event prune --dry-run` reports what would be removed.
-- **Phase 3 — Subscription-triggered plugin → DynamicConfigPart.**
+- **✅ DONE (lab-smoke PASS) — Phase 3 — Subscription-triggered plugin → DynamicConfigPart.**
   `EventSubscription` Kind; event batch → `PluginRequest`; `PluginResult` →
   `DynamicConfigPart` (with `routerd.net/dynamic-source`, `event-id`, `event-group`
   annotations); debounce/batchWindow; `event_subscription_runs`. *Accept:* cloud
   receives `client.ipv4.observed` for `10.88.60.9/32` → plugin → `RemoteAddressClaim`
   DynamicConfigPart visible in `routerctl dynamic render`; actionPlan shown,
   not executed.
-- **Phase 4 — Provider actionPlan plugins (dry-run).** `aws/azure/oci-address-claim`
+- **⏭ NEXT (not started) — Phase 4 — Provider actionPlan plugins (dry-run).** `aws/azure/oci-address-claim`
   example plugins; standardized `actionPlan` format; instance-identity auth.
   *Accept:* plugins propose assign-secondary-IP; no mutation; plan visible in
   `routerctl plugin`/`dynamic`.
@@ -178,6 +191,16 @@ the first smoke.
 - **Scope-out (MVP):** consensus, exactly-once, gossip mesh, arbitrary remote
   command execution, automatic provider mutation, full IP lifecycle automation,
   remote plugin registry, cross-node config rewrite.
+
+## Known limitations (experimental)
+
+- **`routerd-eventd` supervision is systemd-only.** No FreeBSD `rc.d` unit is
+  generated yet; on FreeBSD the daemon must be supervised manually until the
+  `rc.d` resource is added.
+- **`EventSubscription` `batchWindow`/`debounce` are accepted but coarse.** The
+  fields validate and are honored at poll granularity — the controller batches
+  events **per poll tick**, not on a precise sub-tick timer. Tight debounce
+  windows are effectively rounded up to the tick interval.
 
 ## Out of scope / open questions for later
 
