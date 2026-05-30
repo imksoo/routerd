@@ -111,6 +111,7 @@ const sidebars: SidebarsConfig = {
         'how-to/pve-overlay',
         'how-to/hybrid-azure-pve-same-subnet',
         'how-to/event-federation-subscription',
+        'how-to/aws-provider-action-execution',
         'how-to/troubleshooting',
       ],
     },
