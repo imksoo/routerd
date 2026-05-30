@@ -155,3 +155,92 @@ func (s *SQLiteStore) ListDeliveries(eventID, peer string) ([]DeliveryRecord, er
 	}
 	return records, nil
 }
+
+// ListDeliveriesFiltered returns delivery rows filtered by any combination of
+// group, eventID, peer, and status (empty string = no filter on that column).
+// When group != "" it JOINs federation_events on event_id = id and filters by
+// group_name; otherwise it queries event_deliveries directly so deliveries for
+// pruned events still surface. Rows are ordered by event_id, peer. The shape
+// matches ListDeliveries (times decoded from unix seconds, 0/NULL -> zero time).
+func (s *SQLiteStore) ListDeliveriesFiltered(group, eventID, peer, status string) ([]DeliveryRecord, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return nil, errStoreClosed
+	}
+
+	var (
+		query   string
+		clauses []string
+		args    []any
+		col     string // column prefix: "d." when joined, "" otherwise
+	)
+	if group != "" {
+		col = "d."
+		query = `
+			SELECT d.event_id, d.peer, d.status, d.attempts, d.last_attempt_at, d.last_error, d.delivered_at
+			FROM event_deliveries d
+			JOIN federation_events e ON d.event_id = e.id
+		`
+		clauses = append(clauses, "e.group_name = ?")
+		args = append(args, group)
+	} else {
+		query = `
+			SELECT event_id, peer, status, attempts, last_attempt_at, last_error, delivered_at
+			FROM event_deliveries
+		`
+	}
+	if eventID != "" {
+		clauses = append(clauses, col+"event_id = ?")
+		args = append(args, eventID)
+	}
+	if peer != "" {
+		clauses = append(clauses, col+"peer = ?")
+		args = append(args, peer)
+	}
+	if status != "" {
+		clauses = append(clauses, col+"status = ?")
+		args = append(args, status)
+	}
+	for i, clause := range clauses {
+		if i == 0 {
+			query += " WHERE "
+		} else {
+			query += " AND "
+		}
+		query += clause
+	}
+	query += " ORDER BY " + col + "event_id, " + col + "peer"
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list deliveries filtered: %w", err)
+	}
+	defer rows.Close()
+	var records []DeliveryRecord
+	for rows.Next() {
+		var (
+			rec         DeliveryRecord
+			lastAttempt sql.NullInt64
+			lastError   sql.NullString
+			delivered   sql.NullInt64
+		)
+		if err := rows.Scan(&rec.EventID, &rec.Peer, &rec.Status, &rec.Attempts, &lastAttempt, &lastError, &delivered); err != nil {
+			return nil, fmt.Errorf("scan delivery: %w", err)
+		}
+		if lastAttempt.Valid && lastAttempt.Int64 > 0 {
+			rec.LastAttemptAt = time.Unix(lastAttempt.Int64, 0).UTC()
+		}
+		if lastError.Valid {
+			rec.LastError = lastError.String
+		}
+		if delivered.Valid && delivered.Int64 > 0 {
+			rec.DeliveredAt = time.Unix(delivered.Int64, 0).UTC()
+		}
+		records = append(records, rec)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate deliveries: %w", err)
+	}
+	return records, nil
+}

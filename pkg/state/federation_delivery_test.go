@@ -87,6 +87,110 @@ func TestDeliveryRecordUpdateListRoundTrip(t *testing.T) {
 	}
 }
 
+func TestListDeliveriesFiltered(t *testing.T) {
+	store := mustOpenStore(t)
+	defer store.Close()
+
+	now := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
+	events := []EventRecord{
+		{ID: "g1-a", Group: "g1", Type: "t", ObservedAt: now},
+		{ID: "g1-b", Group: "g1", Type: "t", ObservedAt: now},
+		{ID: "g2-a", Group: "g2", Type: "t", ObservedAt: now},
+	}
+	for _, ev := range events {
+		if err := store.RecordFederationEvent(ev); err != nil {
+			t.Fatalf("record event %s: %v", ev.ID, err)
+		}
+	}
+	// Deliveries: g1-a -> peer-x (delivered), g1-b -> peer-y (failed),
+	// g2-a -> peer-x (pending).
+	deliveries := []struct {
+		eventID, peer, status string
+		attempts              int
+	}{
+		{"g1-a", "peer-x", DeliveryDelivered, 1},
+		{"g1-b", "peer-y", DeliveryFailed, 3},
+		{"g2-a", "peer-x", DeliveryPending, 0},
+	}
+	for _, d := range deliveries {
+		if err := store.RecordDelivery(d.eventID, d.peer); err != nil {
+			t.Fatalf("record delivery %s/%s: %v", d.eventID, d.peer, err)
+		}
+		if d.status != DeliveryPending {
+			if err := store.UpdateDeliveryStatus(d.eventID, d.peer, d.status, d.attempts, "", time.Time{}); err != nil {
+				t.Fatalf("update delivery %s/%s: %v", d.eventID, d.peer, err)
+			}
+		}
+	}
+
+	deliveryIDs := func(recs []DeliveryRecord) []string {
+		ids := make([]string, 0, len(recs))
+		for _, r := range recs {
+			ids = append(ids, r.EventID)
+		}
+		return ids
+	}
+
+	// No filter -> all three.
+	all, err := store.ListDeliveriesFiltered("", "", "", "")
+	if err != nil {
+		t.Fatalf("list all: %v", err)
+	}
+	if got := deliveryIDs(all); !equalIDs(got, []string{"g1-a", "g1-b", "g2-a"}) {
+		t.Fatalf("no-filter = %v, want [g1-a g1-b g2-a]", got)
+	}
+
+	// By group -> only g1's deliveries.
+	byGroup, err := store.ListDeliveriesFiltered("g1", "", "", "")
+	if err != nil {
+		t.Fatalf("list by group: %v", err)
+	}
+	if got := deliveryIDs(byGroup); !equalIDs(got, []string{"g1-a", "g1-b"}) {
+		t.Fatalf("group=g1 = %v, want [g1-a g1-b]", got)
+	}
+
+	// By group + event-id.
+	byGroupEvent, err := store.ListDeliveriesFiltered("g1", "g1-a", "", "")
+	if err != nil {
+		t.Fatalf("list by group+event: %v", err)
+	}
+	if got := deliveryIDs(byGroupEvent); !equalIDs(got, []string{"g1-a"}) {
+		t.Fatalf("group=g1,event=g1-a = %v, want [g1-a]", got)
+	}
+
+	// By status failed.
+	failed, err := store.ListDeliveriesFiltered("", "", "", DeliveryFailed)
+	if err != nil {
+		t.Fatalf("list by status: %v", err)
+	}
+	if got := deliveryIDs(failed); !equalIDs(got, []string{"g1-b"}) {
+		t.Fatalf("status=failed = %v, want [g1-b]", got)
+	}
+	if len(failed) == 1 && failed[0].Attempts != 3 {
+		t.Fatalf("failed attempts = %d, want 3", failed[0].Attempts)
+	}
+
+	// Group with no matches -> empty (nil), not error.
+	none, err := store.ListDeliveriesFiltered("no-such-group", "", "", "")
+	if err != nil {
+		t.Fatalf("list unknown group: %v", err)
+	}
+	if len(none) != 0 {
+		t.Fatalf("unknown group leaked %d rows: %+v", len(none), none)
+	}
+
+	// Group filter joins events: a delivery whose event was pruned should not
+	// appear under a group filter, but still appears with no group filter.
+	// (g2-a present under no filter is already covered above.)
+	g2, err := store.ListDeliveriesFiltered("g2", "", "", "")
+	if err != nil {
+		t.Fatalf("list g2: %v", err)
+	}
+	if got := deliveryIDs(g2); !equalIDs(got, []string{"g2-a"}) {
+		t.Fatalf("group=g2 = %v, want [g2-a]", got)
+	}
+}
+
 func TestPruneFederationEventsByAge(t *testing.T) {
 	store := mustOpenStore(t)
 	defer store.Close()

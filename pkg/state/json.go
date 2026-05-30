@@ -113,6 +113,7 @@ type FederationEventStore interface {
 // tracking in the event_deliveries table (ADR 0006, Phase 2).
 type FederationDeliveryStore interface {
 	ListDeliveries(eventID, peer string) ([]DeliveryRecord, error)
+	ListDeliveriesFiltered(group, eventID, peer, status string) ([]DeliveryRecord, error)
 }
 
 type DynamicConfigPartLister interface {

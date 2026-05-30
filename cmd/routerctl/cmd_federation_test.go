@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"path/filepath"
 	"testing"
+	"time"
 
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
@@ -98,5 +99,120 @@ func TestFederationEventEmitThenList(t *testing.T) {
 	}
 	if len(other) != 0 {
 		t.Fatalf("group filter leaked %d events: %+v", len(other), other)
+	}
+}
+
+func TestFederationEventDeliveriesFilters(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "fed.db")
+
+	store, err := routerstate.OpenSQLite(statePath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+
+	// Seed events in two groups, then deliveries for them.
+	events := []routerstate.EventRecord{
+		{ID: "g1-a", Group: "groupone", Type: "t"},
+		{ID: "g1-b", Group: "groupone", Type: "t"},
+		{ID: "g2-a", Group: "grouptwo", Type: "t"},
+	}
+	for _, ev := range events {
+		if err := store.RecordFederationEvent(ev); err != nil {
+			t.Fatalf("record event %s: %v", ev.ID, err)
+		}
+	}
+	type seed struct {
+		eventID, peer, status string
+	}
+	seeds := []seed{
+		{"g1-a", "peer-x", routerstate.DeliveryDelivered},
+		{"g1-b", "peer-y", routerstate.DeliveryFailed},
+		{"g2-a", "peer-x", routerstate.DeliveryPending},
+	}
+	for _, s := range seeds {
+		if err := store.RecordDelivery(s.eventID, s.peer); err != nil {
+			t.Fatalf("record delivery %s/%s: %v", s.eventID, s.peer, err)
+		}
+		if s.status != routerstate.DeliveryPending {
+			if err := store.UpdateDeliveryStatus(s.eventID, s.peer, s.status, 1, "", time.Time{}); err != nil {
+				t.Fatalf("update delivery %s/%s: %v", s.eventID, s.peer, err)
+			}
+		}
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close seed store: %v", err)
+	}
+
+	listDeliveries := func(t *testing.T, extra ...string) []routerstate.DeliveryRecord {
+		t.Helper()
+		args := append([]string{
+			"federation", "event", "deliveries",
+			"--state-file", statePath,
+			"-o", "json",
+		}, extra...)
+		var out bytes.Buffer
+		if err := run(args, &out, &bytes.Buffer{}); err != nil {
+			t.Fatalf("deliveries %v: %v\n%s", extra, err, out.String())
+		}
+		var recs []routerstate.DeliveryRecord
+		if err := json.Unmarshal(out.Bytes(), &recs); err != nil {
+			t.Fatalf("decode deliveries %v: %v\n%s", extra, err, out.String())
+		}
+		return recs
+	}
+
+	idsOf := func(recs []routerstate.DeliveryRecord) []string {
+		ids := make([]string, 0, len(recs))
+		for _, r := range recs {
+			ids = append(ids, r.EventID)
+		}
+		return ids
+	}
+	wantIDs := func(t *testing.T, got, want []string) {
+		t.Helper()
+		if len(got) != len(want) {
+			t.Fatalf("event ids = %v, want %v", got, want)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("event ids = %v, want %v", got, want)
+			}
+		}
+	}
+
+	// (1) No filter -> all three.
+	wantIDs(t, idsOf(listDeliveries(t)), []string{"g1-a", "g1-b", "g2-a"})
+
+	// (2) --group filters to that group's deliveries.
+	wantIDs(t, idsOf(listDeliveries(t, "--group", "groupone")), []string{"g1-a", "g1-b"})
+
+	// (3) --event-id filters.
+	wantIDs(t, idsOf(listDeliveries(t, "--event-id", "g2-a")), []string{"g2-a"})
+
+	// (4) --group + --event-id combined.
+	wantIDs(t, idsOf(listDeliveries(t, "--group", "groupone", "--event-id", "g1-b")), []string{"g1-b"})
+
+	// (5) --status failed filters.
+	failed := listDeliveries(t, "--status", "failed")
+	wantIDs(t, idsOf(failed), []string{"g1-b"})
+	if len(failed) == 1 && failed[0].Status != routerstate.DeliveryFailed {
+		t.Fatalf("status filter returned status %q, want failed", failed[0].Status)
+	}
+
+	// (6) Unknown group -> empty result, exit 0, no error.
+	if recs := listDeliveries(t, "--group", "no-such-group"); len(recs) != 0 {
+		t.Fatalf("unknown group leaked %d rows: %+v", len(recs), recs)
+	}
+
+	// (7) Invalid --status -> error.
+	var errOut bytes.Buffer
+	if err := run([]string{
+		"federation", "event", "deliveries",
+		"--state-file", statePath,
+		"--status", "bogus",
+	}, &errOut, &bytes.Buffer{}); err == nil {
+		t.Fatalf("invalid --status should error, got nil\n%s", errOut.String())
 	}
 }
