@@ -462,14 +462,25 @@ func dynamicPartRecord(part dynamicconfig.DynamicConfigPart) (routerstate.Dynami
 	if err != nil {
 		return routerstate.DynamicConfigPartRecord{}, err
 	}
+	var actionPlansJSON string
+	if len(part.Spec.ActionPlans) > 0 {
+		// Preserve the plugin's display-only ActionPlans so federation-triggered
+		// runs stay reviewable. routerd never executes them.
+		data, err := json.Marshal(part.Spec.ActionPlans)
+		if err != nil {
+			return routerstate.DynamicConfigPartRecord{}, err
+		}
+		actionPlansJSON = string(data)
+	}
 	return routerstate.DynamicConfigPartRecord{
-		Source:         part.Spec.Source,
-		Generation:     part.Spec.Generation,
-		ObservedAt:     part.Spec.ObservedAt,
-		ExpiresAt:      part.Spec.ExpiresAt,
-		Digest:         part.Spec.Digest,
-		ResourcesJSON:  string(resources),
-		DirectivesJSON: string(directives),
-		Status:         "active",
+		Source:          part.Spec.Source,
+		Generation:      part.Spec.Generation,
+		ObservedAt:      part.Spec.ObservedAt,
+		ExpiresAt:       part.Spec.ExpiresAt,
+		Digest:          part.Spec.Digest,
+		ResourcesJSON:   string(resources),
+		DirectivesJSON:  string(directives),
+		ActionPlansJSON: actionPlansJSON,
+		Status:          "active",
 	}, nil
 }

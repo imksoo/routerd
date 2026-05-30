@@ -370,16 +370,34 @@ func dynamicPartRecord(part dynamicconfig.DynamicConfigPart) (routerstate.Dynami
 	if err != nil {
 		return routerstate.DynamicConfigPartRecord{}, err
 	}
+	actionPlansJSON, err := marshalActionPlans(part.Spec.ActionPlans)
+	if err != nil {
+		return routerstate.DynamicConfigPartRecord{}, err
+	}
 	return routerstate.DynamicConfigPartRecord{
-		Source:         part.Spec.Source,
-		Generation:     part.Spec.Generation,
-		ObservedAt:     part.Spec.ObservedAt,
-		ExpiresAt:      part.Spec.ExpiresAt,
-		Digest:         part.Spec.Digest,
-		ResourcesJSON:  string(resources),
-		DirectivesJSON: string(directives),
-		Status:         "active",
+		Source:          part.Spec.Source,
+		Generation:      part.Spec.Generation,
+		ObservedAt:      part.Spec.ObservedAt,
+		ExpiresAt:       part.Spec.ExpiresAt,
+		Digest:          part.Spec.Digest,
+		ResourcesJSON:   string(resources),
+		DirectivesJSON:  string(directives),
+		ActionPlansJSON: actionPlansJSON,
+		Status:          "active",
 	}, nil
+}
+
+// marshalActionPlans encodes display-only ActionPlans for persistence. Empty
+// input yields "" so the actionplans_json column stays NULL (no plans).
+func marshalActionPlans(plans []dynamicconfig.ActionPlan) (string, error) {
+	if len(plans) == 0 {
+		return "", nil
+	}
+	data, err := json.Marshal(plans)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
 }
 
 func completePluginRun(store *routerstate.SQLiteStore, id int64, outcome routerplugin.RunOutcome, status, runError string) error {

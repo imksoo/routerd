@@ -89,19 +89,21 @@ type PluginResultStatus struct {
 }
 
 // ActionPlan is a plugin-proposed provider operation for dry-run and display
-// only. MVP routerd never executes ActionPlans.
-type ActionPlan struct {
-	Name     string            `yaml:"name" json:"name"`
-	Provider string            `yaml:"provider" json:"provider"`
-	Action   string            `yaml:"action" json:"action"`
-	Target   map[string]string `yaml:"target" json:"target"`
-	Undo     *ActionUndo       `yaml:"undo,omitempty" json:"undo,omitempty"`
-}
+// only. routerd never executes ActionPlans and never invokes a provider
+// CLI/SDK from them.
+//
+// The type is defined in pkg/dynamicconfig (the lower-level package) so that
+// DynamicConfigPartSpec can persist action plans without an import cycle;
+// pkg/plugin re-exports it via these aliases so plugin code reads naturally.
+type ActionPlan = dynamicconfig.ActionPlan
 
-// ActionUndo describes the inverse provider action for display only.
-type ActionUndo struct {
-	Action string `yaml:"action" json:"action"`
-}
+// ActionCheck is a display-only ActionPlan precondition. Aliased from
+// pkg/dynamicconfig.
+type ActionCheck = dynamicconfig.ActionCheck
+
+// ActionUndo describes the inverse provider action for display only. Aliased
+// from pkg/dynamicconfig.
+type ActionUndo = dynamicconfig.ActionUndo
 
 // PluginEvent is an informational event emitted by a plugin.
 type PluginEvent struct {

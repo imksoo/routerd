@@ -79,6 +79,12 @@ func DynamicConfigPartFromResult(source string, generation int64, result PluginR
 		}
 	}
 
+	for i, plan := range result.Status.ActionPlans {
+		if err := ValidateActionPlan(plan); err != nil {
+			return dynamicconfig.DynamicConfigPart{}, fmt.Errorf("PluginResult status.actionPlans[%d]: %w", i, err)
+		}
+	}
+
 	digest, err := dynamicPayloadDigest(result.Status.Resources, result.Status.Directives)
 	if err != nil {
 		return dynamicconfig.DynamicConfigPart{}, err
@@ -89,13 +95,14 @@ func DynamicConfigPartFromResult(source string, generation int64, result PluginR
 			Name: dynamicPartName(source, generation),
 		},
 		Spec: dynamicconfig.DynamicConfigPartSpec{
-			Source:     source,
-			Generation: generation,
-			ObservedAt: observedAt,
-			ExpiresAt:  observedAt.Add(ttl),
-			Digest:     digest,
-			Resources:  result.Status.Resources,
-			Directives: result.Status.Directives,
+			Source:      source,
+			Generation:  generation,
+			ObservedAt:  observedAt,
+			ExpiresAt:   observedAt.Add(ttl),
+			Digest:      digest,
+			Resources:   result.Status.Resources,
+			Directives:  result.Status.Directives,
+			ActionPlans: result.Status.ActionPlans,
 		},
 	}, nil
 }

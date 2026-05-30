@@ -291,12 +291,13 @@ func printDynamicDescribeHelp(stdout io.Writer) {
 }
 
 type dynamicListRow struct {
-	Source     string    `json:"source" yaml:"source"`
-	Generation int64     `json:"generation" yaml:"generation"`
-	Status     string    `json:"status" yaml:"status"`
-	Resources  int       `json:"resources" yaml:"resources"`
-	Directives int       `json:"directives" yaml:"directives"`
-	ExpiresAt  time.Time `json:"expiresAt" yaml:"expiresAt"`
+	Source      string    `json:"source" yaml:"source"`
+	Generation  int64     `json:"generation" yaml:"generation"`
+	Status      string    `json:"status" yaml:"status"`
+	Resources   int       `json:"resources" yaml:"resources"`
+	Directives  int       `json:"directives" yaml:"directives"`
+	ActionPlans int       `json:"actionPlans" yaml:"actionPlans"`
+	ExpiresAt   time.Time `json:"expiresAt" yaml:"expiresAt"`
 }
 
 type dynamicPartDetail struct {
@@ -310,6 +311,7 @@ type dynamicPartDetail struct {
 	Digest       string                                 `json:"digest" yaml:"digest"`
 	Resources    []api.Resource                         `json:"resources" yaml:"resources"`
 	Directives   []dynamicconfig.DynamicConfigDirective `json:"directives" yaml:"directives"`
+	ActionPlans  []dynamicconfig.ActionPlan             `json:"actionPlans,omitempty" yaml:"actionPlans,omitempty"`
 	Error        string                                 `json:"error,omitempty" yaml:"error,omitempty"`
 	CreatedAt    time.Time                              `json:"createdAt" yaml:"createdAt"`
 	UpdatedAt    time.Time                              `json:"updatedAt" yaml:"updatedAt"`
@@ -326,13 +328,18 @@ func dynamicListRows(parts []routerstate.DynamicConfigPartRecord, now time.Time)
 		if err != nil {
 			return nil, fmt.Errorf("%s generation %d directives: %w", part.Source, part.Generation, err)
 		}
+		actionPlans, err := countJSONArray(part.ActionPlansJSON)
+		if err != nil {
+			return nil, fmt.Errorf("%s generation %d actionPlans: %w", part.Source, part.Generation, err)
+		}
 		rows = append(rows, dynamicListRow{
-			Source:     part.Source,
-			Generation: part.Generation,
-			Status:     part.EffectiveStatus(now),
-			Resources:  resources,
-			Directives: directives,
-			ExpiresAt:  part.ExpiresAt,
+			Source:      part.Source,
+			Generation:  part.Generation,
+			Status:      part.EffectiveStatus(now),
+			Resources:   resources,
+			Directives:  directives,
+			ActionPlans: actionPlans,
+			ExpiresAt:   part.ExpiresAt,
 		})
 	}
 	return rows, nil
@@ -349,6 +356,10 @@ func dynamicPartDetails(parts []routerstate.DynamicConfigPartRecord, now time.Ti
 		if err != nil {
 			return nil, fmt.Errorf("%s generation %d directives: %w", part.Source, part.Generation, err)
 		}
+		actionPlans, err := decodeDynamicActionPlans(part.ActionPlansJSON)
+		if err != nil {
+			return nil, fmt.Errorf("%s generation %d actionPlans: %w", part.Source, part.Generation, err)
+		}
 		details = append(details, dynamicPartDetail{
 			ID:           part.ID,
 			Source:       part.Source,
@@ -360,6 +371,7 @@ func dynamicPartDetails(parts []routerstate.DynamicConfigPartRecord, now time.Ti
 			Digest:       part.Digest,
 			Resources:    resources,
 			Directives:   directives,
+			ActionPlans:  actionPlans,
 			Error:        part.Error,
 			CreatedAt:    part.CreatedAt,
 			UpdatedAt:    part.UpdatedAt,
@@ -431,16 +443,28 @@ func decodeDynamicDirectives(raw string) ([]dynamicconfig.DynamicConfigDirective
 	return directives, nil
 }
 
+func decodeDynamicActionPlans(raw string) ([]dynamicconfig.ActionPlan, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
+	}
+	var plans []dynamicconfig.ActionPlan
+	if err := json.Unmarshal([]byte(raw), &plans); err != nil {
+		return nil, err
+	}
+	return plans, nil
+}
+
 func writeDynamicListTable(stdout io.Writer, rows []dynamicListRow) error {
 	w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "SOURCE\tGEN\tSTATUS\tRESOURCES\tDIRECTIVES\tEXPIRES")
+	fmt.Fprintln(w, "SOURCE\tGEN\tSTATUS\tRESOURCES\tDIRECTIVES\tACTIONPLANS\tEXPIRES")
 	for _, row := range rows {
-		fmt.Fprintf(w, "%s\t%d\t%s\t%d\t%d\t%s\n",
+		fmt.Fprintf(w, "%s\t%d\t%s\t%d\t%d\t%d\t%s\n",
 			row.Source,
 			row.Generation,
 			row.Status,
 			row.Resources,
 			row.Directives,
+			row.ActionPlans,
 			formatDynamicTime(row.ExpiresAt),
 		)
 	}
@@ -485,6 +509,30 @@ func writeDynamicDescribeTable(stdout io.Writer, details []dynamicPartDetail) er
 					fmt.Fprintf(w, "  - %s\t%s\n", directive.Op, target)
 				} else {
 					fmt.Fprintf(w, "  - %s\t%s\t%s\n", directive.Op, target, directive.Reason)
+				}
+			}
+		}
+		fmt.Fprintln(w, "Action Plans (dry-run / not executed):")
+		if len(detail.ActionPlans) == 0 {
+			fmt.Fprintln(w, "  <none>")
+		} else {
+			for _, plan := range detail.ActionPlans {
+				mode := plan.Mode
+				if mode == "" {
+					mode = "dry-run"
+				}
+				fmt.Fprintf(w, "  - %s\tprovider=%s\taction=%s\tmode=%s\n", plan.Name, plan.Provider, plan.Action, mode)
+				if plan.RiskLevel != "" {
+					fmt.Fprintf(w, "    riskLevel:\t%s\n", plan.RiskLevel)
+				}
+				if addr := plan.Target["address"]; addr != "" {
+					fmt.Fprintf(w, "    target.address:\t%s\n", addr)
+				}
+				if nic := plan.Target["nicRef"]; nic != "" {
+					fmt.Fprintf(w, "    target.nicRef:\t%s\n", nic)
+				}
+				if len(plan.ExpectedEffects) > 0 {
+					fmt.Fprintf(w, "    expectedEffects:\t%s\n", strings.Join(plan.ExpectedEffects, "; "))
 				}
 			}
 		}

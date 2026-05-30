@@ -96,13 +96,15 @@ cat <<'JSON'
       {
         "name": "assign-cloud-secondary-ip",
         "provider": "oci",
-        "action": "assignSecondaryPrivateIP",
+        "action": "assign-secondary-ip",
+        "mode": "dry-run",
+        "riskLevel": "low",
         "target": {
-          "vnicID": "ocid1.vnic.oc1..example",
+          "nicRef": "ocid1.vnic.oc1..example",
           "address": "10.0.1.123"
         },
         "undo": {
-          "action": "unassignSecondaryPrivateIP"
+          "action": "unassign-secondary-ip"
         }
       }
     ]
@@ -121,7 +123,7 @@ JSON
 	if len(result.Status.ActionPlans) != 1 {
 		t.Fatalf("actionPlans = %#v", result.Status.ActionPlans)
 	}
-	if result.Status.ActionPlans[0].Action != "assignSecondaryPrivateIP" {
+	if result.Status.ActionPlans[0].Action != "assign-secondary-ip" {
 		t.Fatalf("actionPlan action = %q", result.Status.ActionPlans[0].Action)
 	}
 	part, err := DynamicConfigPartFromResult("Plugin/oci-inventory", 1, result, now)

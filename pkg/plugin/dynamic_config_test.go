@@ -115,6 +115,52 @@ func TestDynamicConfigPartFromResultRejectsInvalidOutput(t *testing.T) {
 	}
 }
 
+func TestDynamicConfigPartFromResultCarriesActionPlans(t *testing.T) {
+	now := time.Date(2026, 5, 29, 12, 0, 0, 0, time.UTC)
+	result := validPluginResult(now)
+	result.Status.ActionPlans = []ActionPlan{{
+		Name:            "claim-secondary",
+		Provider:        "oci",
+		Action:          ActionAssignSecondaryIP,
+		Mode:            ActionModeDryRun,
+		RiskLevel:       "low",
+		Target:          map[string]string{"address": "10.0.0.5", "nicRef": "vnic-abc"},
+		ExpectedEffects: []string{"secondary IP attached"},
+	}}
+	part, err := DynamicConfigPartFromResult("Plugin/cloud", 1, result, now)
+	if err != nil {
+		t.Fatalf("DynamicConfigPartFromResult: %v", err)
+	}
+	if len(part.Spec.ActionPlans) != 1 {
+		t.Fatalf("actionPlans = %#v", part.Spec.ActionPlans)
+	}
+	if part.Spec.ActionPlans[0].Name != "claim-secondary" {
+		t.Fatalf("actionPlan name = %q", part.Spec.ActionPlans[0].Name)
+	}
+}
+
+func TestDynamicConfigPartFromResultRejectsInvalidActionPlan(t *testing.T) {
+	now := time.Date(2026, 5, 29, 12, 0, 0, 0, time.UTC)
+	result := validPluginResult(now)
+	result.Status.ActionPlans = []ActionPlan{{
+		Name:     "bad",
+		Provider: "oci",
+		Action:   ActionAssignSecondaryIP,
+		Mode:     "execute",
+		Target:   map[string]string{"address": "10.0.0.5", "nicRef": "vnic-abc"},
+	}}
+	_, err := DynamicConfigPartFromResult("Plugin/cloud", 1, result, now)
+	if err == nil {
+		t.Fatalf("expected error for invalid actionPlan")
+	}
+	if !strings.Contains(err.Error(), "mode=execute is not supported") {
+		t.Fatalf("error = %v, want execute rejection", err)
+	}
+	if !strings.Contains(err.Error(), "status.actionPlans[0]") {
+		t.Fatalf("error = %v, want indexed actionPlans context", err)
+	}
+}
+
 func validPluginResult(observedAt time.Time) PluginResult {
 	return PluginResult{
 		TypeMeta: api.TypeMeta{APIVersion: PluginAPIVersion, Kind: "PluginResult"},
