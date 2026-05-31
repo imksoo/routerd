@@ -320,9 +320,20 @@ func assertExpectedActionPlans(t *testing.T, node mobilityFixtureNode, plans []d
 		t.Fatalf("%s actionPlans = %d, want 4 (3 assign + 1 forwarding): %+v", node.nodeRef, len(plans), plans)
 	}
 	assigns := 0
+	forwarding := 0
 	for _, plan := range plans {
 		if err := routerplugin.ValidateActionPlan(plan); err != nil {
 			t.Fatalf("ValidateActionPlan(%s): %v", plan.Name, err)
+		}
+		if plan.Action == "ensure-forwarding-enabled" {
+			forwarding++
+			if !strings.HasPrefix(plan.Target["address"], "10.88.60.") {
+				t.Fatalf("%s forwarding target address = %q, want pool representative address", node.nodeRef, plan.Target["address"])
+			}
+			if plan.Undo == nil || plan.Undo.Parameters["address"] != plan.Target["address"] {
+				t.Fatalf("%s forwarding undo must carry target address, plan=%+v", node.nodeRef, plan)
+			}
+			continue
 		}
 		if plan.Action != "assign-secondary-ip" {
 			continue
@@ -339,6 +350,9 @@ func assertExpectedActionPlans(t *testing.T, node mobilityFixtureNode, plans []d
 	}
 	if assigns != 3 {
 		t.Fatalf("%s assign actionPlans = %d, want 3", node.nodeRef, assigns)
+	}
+	if forwarding != 1 {
+		t.Fatalf("%s forwarding actionPlans = %d, want 1", node.nodeRef, forwarding)
 	}
 }
 

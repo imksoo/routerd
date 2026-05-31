@@ -91,6 +91,12 @@ func TestPlanDynamicConfigCloudSelfGeneratesClaimAndActionPlans(t *testing.T) {
 	if forwarding == nil || forwarding.Parameters["ipForwarding"] != "true" {
 		t.Fatalf("unexpected forwarding action: %+v", forwarding)
 	}
+	if forwarding.Target["address"] != "10.88.60.9/32" {
+		t.Fatalf("forwarding target address = %q, want representative captured address", forwarding.Target["address"])
+	}
+	if forwarding.Undo == nil || forwarding.Undo.Parameters["address"] != "10.88.60.9/32" {
+		t.Fatalf("forwarding undo must carry representative address, got %+v", forwarding.Undo)
+	}
 }
 
 func TestPlanDynamicConfigResolvesDeliveryToBeforeFallback(t *testing.T) {

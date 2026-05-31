@@ -460,7 +460,6 @@ func providerActionPlans(poolName string, profile api.CloudProviderProfileSpec, 
 			return nil, err
 		}
 		fwdTarget := copyStringMap(target)
-		delete(fwdTarget, "address")
 		forwardingSeen[forwardingKey] = true
 		plans = append(plans, dynamicconfig.ActionPlan{
 			Name:           safeName("mobility-" + poolName + "-forwarding-" + nicRef),

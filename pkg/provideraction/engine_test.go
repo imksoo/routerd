@@ -101,6 +101,19 @@ func samplePlan(key string) dynamicconfig.ActionPlan {
 	}
 }
 
+func sampleForwardingPlan(key, address string) dynamicconfig.ActionPlan {
+	return dynamicconfig.ActionPlan{
+		Name:           "forwarding-" + key,
+		Provider:       "aws",
+		Action:         "ensure-forwarding-enabled",
+		ProviderRef:    "aws-prod",
+		Target:         map[string]string{"address": address, "nicRef": "eni-1"},
+		IdempotencyKey: key,
+		Parameters:     map[string]string{"sourceDestCheck": "false"},
+		Undo:           &dynamicconfig.ActionUndo{Action: "ensure-forwarding-disabled", Parameters: map[string]string{"address": address, "nicRef": "eni-1", "sourceDestCheck": "false"}},
+	}
+}
+
 func allowPolicy() api.ProviderActionPolicySpec {
 	return api.ProviderActionPolicySpec{
 		Enabled:          true,
@@ -112,6 +125,12 @@ func allowPolicy() api.ProviderActionPolicySpec {
 		MaxActionsPerRun: 5,
 		AllowUndo:        true,
 	}
+}
+
+func allowForwardingPolicy() api.ProviderActionPolicySpec {
+	pol := allowPolicy()
+	pol.AllowedActions = []string{"ensure-forwarding-enabled", "ensure-forwarding-disabled"}
+	return pol
 }
 
 func TestImportDedup(t *testing.T) {
@@ -353,6 +372,30 @@ func TestExecutePolicyAllowlistDenies(t *testing.T) {
 				t.Fatalf("executor must NOT launch on %s denial; calls=%d", tc.name, runner.calls)
 			}
 		})
+	}
+}
+
+func TestExecuteForwardingWithTargetAddressPassesAllowedCIDRs(t *testing.T) {
+	store := mustStore(t)
+	runner := &fakeRunner{result: succeededResult()}
+	e := newEngine(t, store, runner.run, []api.Resource{executorPlugin("aws")})
+	plan := sampleForwardingPlan("fwd-in-cidr", "10.0.0.5/32")
+	seedPart(t, store, "sub-fwd", []dynamicconfig.ActionPlan{plan})
+	if _, err := e.ImportFromDynamicParts(); err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	rec, ok, err := store.GetActionByIdempotencyKey(plan.IdempotencyKey)
+	if err != nil || !ok {
+		t.Fatalf("lookup %s: ok=%v err=%v", plan.IdempotencyKey, ok, err)
+	}
+	if err := e.Approve(rec.ID, "alice"); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	if err := e.Execute(context.Background(), rec.ID, ModeDryRun, allowForwardingPolicy()); err != nil {
+		t.Fatalf("forwarding dry-run should pass allowedCIDRs: %v", err)
+	}
+	if runner.calls != 1 {
+		t.Fatalf("executor calls = %d, want 1", runner.calls)
 	}
 }
 
