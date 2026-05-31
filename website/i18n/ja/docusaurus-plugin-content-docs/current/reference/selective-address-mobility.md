@@ -225,6 +225,34 @@ firewall/conntrack path を通ります。
 default-drop の router では、その captured address の forwarding path を明示的
 に許可してください。SAM 自体は firewall rule を追加しません。
 
+## クラウドノードでの overlay / federation アドレッシング
+
+Event Federation の transport(`routerd-eventd` の listen address と各
+`EventPeer.endpoint`)と、それが乗る WireGuard overlay(`OverlayPeer`、
+`WireGuardInterface`/`WireGuardPeer`)は、全ノードで自分が end-to-end に制御
+できるアドレス範囲を使ってください。クラウドインスタンスでは、provider が内部
+利用のために予約している範囲から overlay / federation アドレスを取っては
+**いけません**。
+
+- `169.254.0.0/16`(RFC 3927 link-local)。クラウドのインスタンスメタデータ
+  (IMDS)は `169.254.169.254` にあり、イメージによってはブロック全体を予約
+  します。Oracle Cloud の Linux イメージは `169.254.0.0/16` 全体を
+  `InstanceServices` chain にルーティングするため、`169.254.x` の overlay
+  アドレス宛 federation SYN は loopback に引き込まれて RST されます(同じ
+  アドレスへの ICMP は通るのに、です)。AWS/Azure も IMDS に
+  `169.254.169.254` を使います。症状: lease は収束するのにノード間の
+  `routerd-eventd` TCP が張れない。
+- `100.64.0.0/10`(RFC 6598 CGNAT)。provider underlay の CGNAT や Tailscale
+  (`100.x` の tailnet アドレス、MagicDNS)が使います。この範囲の overlay は
+  Tailscale 参加や carrier NAT と衝突します。
+
+overlay 専用に予約した RFC 1918 の範囲(例: `10.x.y.0/24`)を、WireGuard
+interface/peer アドレス・`OverlayPeer` endpoint・`routerd-eventd` の listen /
+`EventPeer` endpoint に使ってください。mobility pool の `/24`(captured
+address)とも、上記のクラウド予約範囲とも分離します。これは全 provider
+(AWS/Azure/OCI)に当てはまり、OCI が link-local 予約を最も厳格に強制するだけ
+です。
+
 ## Out Of Scope
 
 MVP は full L2 extension、EVPN、BUM forwarding、broadcast/multicast

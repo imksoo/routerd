@@ -265,6 +265,32 @@ In particular, the delivered `/32` traffic crosses the Linux firewall
 that forwarding path for the captured address explicitly when the router has a
 default-drop forwarding policy. SAM does not add firewall rules by itself.
 
+## Overlay And Federation Addressing On Cloud Nodes
+
+The Event Federation transport (the `routerd-eventd` listen address and each
+`EventPeer.endpoint`) and the WireGuard overlay it rides on (`OverlayPeer`,
+`WireGuardInterface`/`WireGuardPeer`) must use an address range you control end
+to end on every node. On cloud instances, do **not** draw overlay or federation
+addresses from ranges the provider reserves for its own internal use:
+
+- `169.254.0.0/16` (RFC 3927 link-local). Cloud instance metadata (IMDS) lives
+  at `169.254.169.254`, and some images reserve the entire block: Oracle
+  Cloud's Linux image routes all of `169.254.0.0/16` through an
+  `InstanceServices` chain, so a federation SYN to a `169.254.x` overlay
+  address is pulled to loopback and reset even though ICMP to the same address
+  succeeds. AWS and Azure also use `169.254.169.254` for IMDS. Symptom: leases
+  converge but `routerd-eventd` TCP never connects between nodes.
+- `100.64.0.0/10` (RFC 6598 carrier-grade NAT). Used by CGNAT on provider
+  underlays and by Tailscale (`100.x` tailnet addresses, MagicDNS). An overlay
+  in this range collides with any Tailscale membership and with carrier NAT.
+
+Use an RFC 1918 range you reserve for the overlay (for example a `10.x.y.0/24`)
+for the WireGuard interface/peer addresses, the `OverlayPeer` endpoints, and the
+`routerd-eventd` listen / `EventPeer` endpoints. Keep it distinct from the
+mobility pool `/24` (the captured addresses) and from every cloud-reserved range
+above. This applies to all providers (AWS/Azure/OCI); OCI is simply the
+strictest at enforcing the link-local reservation.
+
 ## Out Of Scope
 
 The MVP does not implement full L2 extension, EVPN, BUM forwarding,
