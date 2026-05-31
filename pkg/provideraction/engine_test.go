@@ -175,6 +175,99 @@ func TestImportSkipsMissingIdempotencyKey(t *testing.T) {
 	}
 }
 
+func TestImportFencesStaleMobilityCaptureEpochActions(t *testing.T) {
+	store := mustStore(t)
+	e := newEngine(t, store, (&fakeRunner{result: succeededResult()}).run, nil)
+	captureKey := "cloudedge\x0010.0.0.5/32\x00provider:aws:placement:edge"
+	if _, err := store.ReconcileMobilityCaptureEpochs([]state.MobilityCaptureEpochRecord{{
+		CaptureKey:    captureKey,
+		Pool:          "cloudedge",
+		Address:       "10.0.0.5/32",
+		CaptureDomain: "provider:aws:placement:edge",
+		Holder:        "router-a",
+	}}); err != nil {
+		t.Fatalf("seed initial capture epoch: %v", err)
+	}
+	if _, err := store.ReconcileMobilityCaptureEpochs([]state.MobilityCaptureEpochRecord{{
+		CaptureKey:    captureKey,
+		Pool:          "cloudedge",
+		Address:       "10.0.0.5/32",
+		CaptureDomain: "provider:aws:placement:edge",
+		Holder:        "router-b",
+	}}); err != nil {
+		t.Fatalf("advance capture epoch: %v", err)
+	}
+	oldPlan := samplePlan("old-assign")
+	oldPlan.Parameters = map[string]string{
+		captureParamKey:    captureKey,
+		captureParamEpoch:  "1",
+		captureParamHolder: "router-a",
+	}
+	oldRec, err := recordFromPlan("previous", oldPlan)
+	if err != nil {
+		t.Fatalf("recordFromPlan: %v", err)
+	}
+	if _, err := store.ImportAction(oldRec); err != nil {
+		t.Fatalf("seed stale pending action: %v", err)
+	}
+	seedPart(t, store, "sub-a", []dynamicconfig.ActionPlan{oldPlan})
+
+	res, err := e.ImportFromDynamicParts()
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if res.Inserted != 0 || res.Skipped != 2 {
+		t.Fatalf("want stale pending + stale plan skipped, got %+v", res)
+	}
+	rec, ok, err := store.GetActionByIdempotencyKey("old-assign")
+	if err != nil || !ok {
+		t.Fatalf("lookup stale action: ok=%v err=%v", ok, err)
+	}
+	if rec.Status != state.ActionSkipped {
+		t.Fatalf("stale pending status = %q, want skipped", rec.Status)
+	}
+}
+
+func TestImportAllowsCurrentEpochDeprovisionForPreviousHolder(t *testing.T) {
+	store := mustStore(t)
+	e := newEngine(t, store, (&fakeRunner{result: succeededResult()}).run, nil)
+	captureKey := "cloudedge\x0010.0.0.5/32\x00provider:aws:placement:edge"
+	if _, err := store.ReconcileMobilityCaptureEpochs([]state.MobilityCaptureEpochRecord{{
+		CaptureKey:    captureKey,
+		Pool:          "cloudedge",
+		Address:       "10.0.0.5/32",
+		CaptureDomain: "provider:aws:placement:edge",
+		Holder:        "router-a",
+	}}); err != nil {
+		t.Fatalf("seed initial capture epoch: %v", err)
+	}
+	if _, err := store.ReconcileMobilityCaptureEpochs([]state.MobilityCaptureEpochRecord{{
+		CaptureKey:    captureKey,
+		Pool:          "cloudedge",
+		Address:       "10.0.0.5/32",
+		CaptureDomain: "provider:aws:placement:edge",
+		Holder:        "router-b",
+	}}); err != nil {
+		t.Fatalf("advance capture epoch: %v", err)
+	}
+	plan := samplePlan("unassign-router-a-epoch-2")
+	plan.Action = "unassign-secondary-ip"
+	plan.Parameters = map[string]string{
+		captureParamKey:    captureKey,
+		captureParamEpoch:  "2",
+		captureParamHolder: "router-a",
+	}
+	seedPart(t, store, "sub-a", []dynamicconfig.ActionPlan{plan})
+
+	res, err := e.ImportFromDynamicParts()
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if res.Inserted != 1 || res.Skipped != 0 {
+		t.Fatalf("want current-epoch previous-holder deprovision imported, got %+v", res)
+	}
+}
+
 func TestImportSkipsExpiredDynamicParts(t *testing.T) {
 	store := mustStore(t)
 	now := time.Unix(1700000000, 0).UTC()

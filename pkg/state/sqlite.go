@@ -263,6 +263,17 @@ CREATE TABLE IF NOT EXISTS mobility_deprovision_markers (
   updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS mobility_deprovision_markers_source ON mobility_deprovision_markers(source, marker_key);
+CREATE TABLE IF NOT EXISTS mobility_capture_epochs (
+  capture_key TEXT PRIMARY KEY,
+  pool TEXT NOT NULL,
+  address TEXT NOT NULL,
+  capture_domain TEXT NOT NULL,
+  holder TEXT NOT NULL,
+  epoch INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS mobility_capture_epochs_pool ON mobility_capture_epochs(pool, address, capture_domain);
 `); err != nil {
 		return err
 	}
@@ -291,6 +302,9 @@ CREATE INDEX IF NOT EXISTS mobility_deprovision_markers_source ON mobility_depro
 		return err
 	}
 	if err := s.ensureMobilityDeprovisionMarkerColumns(); err != nil {
+		return err
+	}
+	if err := s.ensureMobilityCaptureEpochColumns(); err != nil {
 		return err
 	}
 	return nil

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/netip"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -22,6 +23,9 @@ const (
 	dynamicSourceKind              = "MobilityPool"
 	DefaultDeprovisionHoldDuration = 10 * time.Second
 	captureTargetAnnotationPrefix  = "mobility.routerd.net/capture-target."
+	captureParamKey                = "mobilityCaptureKey"
+	captureParamEpoch              = "mobilityCaptureEpoch"
+	captureParamHolder             = "mobilityCaptureHolder"
 )
 
 // PlannerInput is the pure lease-to-dynamic-config planning input for one
@@ -34,6 +38,7 @@ type PlannerInput struct {
 	Leases             []routerstate.AddressLeaseRecord
 	PreviousClaims     []api.Resource
 	DeprovisionMarkers []routerstate.MobilityDeprovisionMarkerRecord
+	CaptureEpochs      []routerstate.MobilityCaptureEpochRecord
 	ProviderProfiles   map[string]api.CloudProviderProfileSpec
 }
 
@@ -103,6 +108,7 @@ func PlanDynamicConfig(in PlannerInput) (PlannerOutput, error) {
 		return PlannerOutput{}, fmt.Errorf("self node %q is not a member of MobilityPool/%s", selfNode, poolName)
 	}
 	placement := evaluatePlacement(self, members)
+	captureEpochs := captureEpochsByKey(in.CaptureEpochs)
 
 	claims := []api.Resource{}
 	plans := []dynamicconfig.ActionPlan{}
@@ -112,7 +118,7 @@ func PlanDynamicConfig(in PlannerInput) (PlannerOutput, error) {
 	minExpiresAt := time.Time{}
 	if placement.Active {
 		for _, lease := range sortedLeases(in.Leases) {
-			claim, actionPlans, leaseExpiresAt, ok, err := planLease(poolName, prefix, self, members, lease, in.ProviderProfiles, now, forwardingSeen)
+			claim, actionPlans, leaseExpiresAt, ok, err := planLease(poolName, prefix, self, members, lease, in.ProviderProfiles, now, forwardingSeen, captureEpochs)
 			if err != nil {
 				return PlannerOutput{}, err
 			}
@@ -130,7 +136,7 @@ func PlanDynamicConfig(in PlannerInput) (PlannerOutput, error) {
 			}
 		}
 	}
-	deprovisionPlans, err := providerDeprovisionPlans(poolName, self, in.PreviousClaims, desiredAddresses, desiredProviderNICs, leasesByAddress(in.Leases), in.ProviderProfiles, now, deprovisionHoldDuration(in.PoolSpec), !placement.Active)
+	deprovisionPlans, err := providerDeprovisionPlans(poolName, self, in.PreviousClaims, desiredAddresses, desiredProviderNICs, leasesByAddress(in.Leases), in.ProviderProfiles, now, deprovisionHoldDuration(in.PoolSpec), !placement.Active, captureEpochs)
 	if err != nil {
 		return PlannerOutput{}, err
 	}
@@ -138,6 +144,7 @@ func PlanDynamicConfig(in PlannerInput) (PlannerOutput, error) {
 	if err != nil {
 		return PlannerOutput{}, err
 	}
+	markerPlans = filterStaleCaptureEpochPlans(markerPlans, captureEpochs)
 	deprovisionPlans = append(deprovisionPlans, markerPlans...)
 	deprovisionPlans = dedupeActionPlans(deprovisionPlans)
 	if placement.Active {
@@ -217,7 +224,19 @@ func (c Controller) reconcilePlan(res api.Resource, now time.Time) error {
 	if err != nil {
 		return fmt.Errorf("list mobility deprovision markers: %w", err)
 	}
+	captureEpochDesired, err := desiredCaptureEpochs(res.Metadata.Name, spec, selfNode, leases, previousClaims, markers, cloudProviderProfiles(c.Router), now)
+	if err != nil {
+		return err
+	}
+	captureEpochs, err := c.Store.ReconcileMobilityCaptureEpochs(captureEpochDesired)
+	if err != nil {
+		return fmt.Errorf("reconcile mobility capture epochs: %w", err)
+	}
 	markers, err = c.completeDeprovisionMarkers(markers, actionJournal)
+	if err != nil {
+		return err
+	}
+	markers, err = c.dropStaleDeprovisionMarkers(markers, captureEpochsByKey(captureEpochs))
 	if err != nil {
 		return err
 	}
@@ -229,6 +248,7 @@ func (c Controller) reconcilePlan(res api.Resource, now time.Time) error {
 		Leases:             leases,
 		PreviousClaims:     previousClaims,
 		DeprovisionMarkers: markers,
+		CaptureEpochs:      captureEpochs,
 		ProviderProfiles:   cloudProviderProfiles(c.Router),
 	})
 	if err != nil {
@@ -295,6 +315,35 @@ func (c Controller) completeDeprovisionMarkers(markers []routerstate.MobilityDep
 		if completed[key] {
 			if err := c.Store.DeleteMobilityDeprovisionMarker(key); err != nil {
 				return nil, fmt.Errorf("delete mobility deprovision marker %s: %w", key, err)
+			}
+			continue
+		}
+		pending = append(pending, marker)
+	}
+	return pending, nil
+}
+
+func (c Controller) dropStaleDeprovisionMarkers(markers []routerstate.MobilityDeprovisionMarkerRecord, epochs map[string]routerstate.MobilityCaptureEpochRecord) ([]routerstate.MobilityDeprovisionMarkerRecord, error) {
+	if len(markers) == 0 || len(epochs) == 0 {
+		return markers, nil
+	}
+	pending := make([]routerstate.MobilityDeprovisionMarkerRecord, 0, len(markers))
+	for _, marker := range markers {
+		if strings.TrimSpace(marker.ActionPlanJSON) == "" {
+			pending = append(pending, marker)
+			continue
+		}
+		var plan dynamicconfig.ActionPlan
+		if err := json.Unmarshal([]byte(marker.ActionPlanJSON), &plan); err != nil {
+			return nil, fmt.Errorf("decode mobility deprovision marker %q: %w", marker.Key, err)
+		}
+		if captureEpochPlanStale(plan, epochs) {
+			key := strings.TrimSpace(marker.Key)
+			if key == "" {
+				key = strings.TrimSpace(marker.IdempotencyKey)
+			}
+			if err := c.Store.DeleteMobilityDeprovisionMarker(key); err != nil {
+				return nil, fmt.Errorf("delete stale mobility deprovision marker %s: %w", key, err)
 			}
 			continue
 		}
@@ -453,7 +502,7 @@ func (c Controller) savePlannerStatus(poolName string, updates map[string]any) e
 	return c.Store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", poolName, status)
 }
 
-func planLease(poolName string, prefix netip.Prefix, self memberPlanInfo, members map[string]memberPlanInfo, lease routerstate.AddressLeaseRecord, profiles map[string]api.CloudProviderProfileSpec, now time.Time, forwardingSeen map[string]bool) (api.Resource, []dynamicconfig.ActionPlan, time.Time, bool, error) {
+func planLease(poolName string, prefix netip.Prefix, self memberPlanInfo, members map[string]memberPlanInfo, lease routerstate.AddressLeaseRecord, profiles map[string]api.CloudProviderProfileSpec, now time.Time, forwardingSeen map[string]bool, captureEpochs map[string]routerstate.MobilityCaptureEpochRecord) (api.Resource, []dynamicconfig.ActionPlan, time.Time, bool, error) {
 	if lease.Pool != poolName || lease.Status != routerstate.AddressLeaseStatusActive {
 		return api.Resource{}, nil, time.Time{}, false, nil
 	}
@@ -497,6 +546,7 @@ func planLease(poolName string, prefix netip.Prefix, self memberPlanInfo, member
 		if err != nil {
 			return api.Resource{}, nil, time.Time{}, false, err
 		}
+		stampCaptureEpochActionPlans(generated, captureEpochs, captureEpochKey(poolName, address, captureDomain(self)))
 		plans = append(plans, generated...)
 	}
 	return claim, plans, lease.ExpiresAt, true, nil
@@ -557,6 +607,110 @@ func evaluatePlacement(self memberPlanInfo, members map[string]memberPlanInfo) P
 		ActiveNode: activeNode,
 		Reason:     fmt.Sprintf("placement group %q active node is %q", group, activeNode),
 	}
+}
+
+func desiredCaptureEpochs(poolName string, spec api.MobilityPoolSpec, selfNode string, leases []routerstate.AddressLeaseRecord, previousClaims []api.Resource, markers []routerstate.MobilityDeprovisionMarkerRecord, profiles map[string]api.CloudProviderProfileSpec, now time.Time) ([]routerstate.MobilityCaptureEpochRecord, error) {
+	prefix, err := netip.ParsePrefix(strings.TrimSpace(spec.Prefix))
+	if err != nil {
+		return nil, fmt.Errorf("parse pool prefix: %w", err)
+	}
+	prefix = prefix.Masked()
+	members := plannerMembers(spec.Members)
+	self, ok := members[strings.TrimSpace(selfNode)]
+	if !ok {
+		return nil, fmt.Errorf("self node %q is not a member of MobilityPool/%s", selfNode, poolName)
+	}
+	placement := evaluatePlacement(self, members)
+	if placement.NoCandidate() || strings.TrimSpace(placement.ActiveNode) == "" {
+		return nil, nil
+	}
+	active, ok := members[placement.ActiveNode]
+	if !ok || active.Capture.Type != "provider-secondary-ip" {
+		return nil, nil
+	}
+	var out []routerstate.MobilityCaptureEpochRecord
+	seen := map[string]bool{}
+	addDesired := func(address string) {
+		address = strings.TrimSpace(address)
+		if address == "" {
+			return
+		}
+		domain := captureDomain(active)
+		key := captureEpochKey(poolName, address, domain)
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		out = append(out, routerstate.MobilityCaptureEpochRecord{
+			CaptureKey:    key,
+			Pool:          poolName,
+			Address:       address,
+			CaptureDomain: domain,
+			Holder:        active.NodeRef,
+		})
+	}
+	forwardingSeen := map[string]bool{}
+	emptyEpochs := map[string]routerstate.MobilityCaptureEpochRecord{}
+	for _, lease := range sortedLeases(leases) {
+		claim, _, _, ok, err := planLease(poolName, prefix, active, members, lease, profiles, now, forwardingSeen, emptyEpochs)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			continue
+		}
+		addDesired(claimAddress(claim))
+	}
+	for _, claim := range sortedClaims(previousClaims) {
+		spec, err := claim.RemoteAddressClaimSpec()
+		if err != nil {
+			return nil, err
+		}
+		if spec.Capture.Type != "provider-secondary-ip" {
+			continue
+		}
+		addDesired(spec.Address)
+	}
+	for _, marker := range markers {
+		if strings.TrimSpace(marker.ActionPlanJSON) == "" {
+			continue
+		}
+		var plan dynamicconfig.ActionPlan
+		if err := json.Unmarshal([]byte(marker.ActionPlanJSON), &plan); err != nil {
+			return nil, fmt.Errorf("decode mobility deprovision marker %q: %w", marker.Key, err)
+		}
+		if address := strings.TrimSpace(plan.Target["address"]); address != "" {
+			addDesired(address)
+		}
+	}
+	return out, nil
+}
+
+func captureEpochsByKey(records []routerstate.MobilityCaptureEpochRecord) map[string]routerstate.MobilityCaptureEpochRecord {
+	out := map[string]routerstate.MobilityCaptureEpochRecord{}
+	for _, rec := range records {
+		if key := strings.TrimSpace(rec.CaptureKey); key != "" {
+			out[key] = rec
+		}
+	}
+	return out
+}
+
+func captureDomain(member memberPlanInfo) string {
+	if member.Capture.Type == "provider-secondary-ip" {
+		scope := strings.TrimSpace(member.PlacementGroup)
+		if scope == "" {
+			scope = "node:" + strings.TrimSpace(member.NodeRef)
+		} else {
+			scope = "placement:" + scope
+		}
+		return "provider:" + strings.TrimSpace(member.Capture.ProviderRef) + ":" + scope
+	}
+	return strings.TrimSpace(member.NodeRef)
+}
+
+func captureEpochKey(poolName, address, domain string) string {
+	return strings.Join([]string{strings.TrimSpace(poolName), strings.TrimSpace(address), strings.TrimSpace(domain)}, "\x00")
 }
 
 func resolveDelivery(self memberPlanInfo, owner memberPlanInfo) (api.AddressDelivery, bool) {
@@ -793,7 +947,92 @@ func actionPlansFromMarkers(markers []routerstate.MobilityDeprovisionMarkerRecor
 	return out, nil
 }
 
-func providerDeprovisionPlans(poolName string, self memberPlanInfo, previousClaims []api.Resource, desiredAddresses, desiredProviderNICs map[string]bool, leases map[string]routerstate.AddressLeaseRecord, profiles map[string]api.CloudProviderProfileSpec, now time.Time, hold time.Duration, releaseMissingLease bool) ([]dynamicconfig.ActionPlan, error) {
+func filterStaleCaptureEpochPlans(plans []dynamicconfig.ActionPlan, epochs map[string]routerstate.MobilityCaptureEpochRecord) []dynamicconfig.ActionPlan {
+	if len(plans) == 0 || len(epochs) == 0 {
+		return plans
+	}
+	out := make([]dynamicconfig.ActionPlan, 0, len(plans))
+	for _, plan := range plans {
+		if captureEpochPlanStale(plan, epochs) {
+			continue
+		}
+		out = append(out, plan)
+	}
+	return out
+}
+
+func captureEpochPlanStale(plan dynamicconfig.ActionPlan, epochs map[string]routerstate.MobilityCaptureEpochRecord) bool {
+	key, epoch, holder, ok := actionCaptureFence(plan)
+	if !ok {
+		return false
+	}
+	current, found := epochs[key]
+	if !found {
+		return false
+	}
+	if epoch < current.Epoch {
+		return true
+	}
+	if epoch > current.Epoch {
+		return false
+	}
+	switch strings.TrimSpace(plan.Action) {
+	case "assign-secondary-ip", "ensure-forwarding-enabled":
+		return holder != "" && holder != current.Holder
+	case "unassign-secondary-ip", "ensure-forwarding-disabled":
+		return holder != "" && holder == current.Holder
+	default:
+		return false
+	}
+}
+
+func actionCaptureFence(plan dynamicconfig.ActionPlan) (string, int64, string, bool) {
+	key := strings.TrimSpace(plan.Parameters[captureParamKey])
+	holder := strings.TrimSpace(plan.Parameters[captureParamHolder])
+	epochRaw := strings.TrimSpace(plan.Parameters[captureParamEpoch])
+	if key == "" || epochRaw == "" {
+		return "", 0, "", false
+	}
+	epoch, err := strconv.ParseInt(epochRaw, 10, 64)
+	if err != nil || epoch <= 0 {
+		return "", 0, "", false
+	}
+	return key, epoch, holder, true
+}
+
+func stampCaptureEpochActionPlans(plans []dynamicconfig.ActionPlan, epochs map[string]routerstate.MobilityCaptureEpochRecord, key string) {
+	for i := range plans {
+		stampCaptureEpochActionPlan(&plans[i], epochs, key)
+	}
+}
+
+func stampCaptureEpochActionPlan(plan *dynamicconfig.ActionPlan, epochs map[string]routerstate.MobilityCaptureEpochRecord, key string) {
+	stampCaptureEpochActionPlanHolder(plan, epochs, key, "")
+}
+
+func stampCaptureEpochActionPlanHolder(plan *dynamicconfig.ActionPlan, epochs map[string]routerstate.MobilityCaptureEpochRecord, key, holder string) {
+	if plan == nil || strings.TrimSpace(key) == "" {
+		return
+	}
+	rec, ok := epochs[key]
+	if !ok || rec.Epoch <= 0 {
+		return
+	}
+	if plan.Parameters == nil {
+		plan.Parameters = map[string]string{}
+	}
+	if strings.TrimSpace(holder) == "" {
+		holder = rec.Holder
+	}
+	plan.Parameters[captureParamKey] = rec.CaptureKey
+	plan.Parameters[captureParamEpoch] = strconv.FormatInt(rec.Epoch, 10)
+	plan.Parameters[captureParamHolder] = strings.TrimSpace(holder)
+	if strings.TrimSpace(plan.IdempotencyKey) != "" {
+		plan.IdempotencyKey += ":epoch:" + strconv.FormatInt(rec.Epoch, 10)
+	}
+}
+
+func providerDeprovisionPlans(poolName string, self memberPlanInfo, previousClaims []api.Resource, desiredAddresses, desiredProviderNICs map[string]bool, leases map[string]routerstate.AddressLeaseRecord, profiles map[string]api.CloudProviderProfileSpec, now time.Time, hold time.Duration, releaseMissingLease bool, captureEpochs map[string]routerstate.MobilityCaptureEpochRecord) ([]dynamicconfig.ActionPlan, error) {
 	if self.Capture.Type != "provider-secondary-ip" {
 		return nil, nil
 	}
@@ -835,6 +1074,8 @@ func providerDeprovisionPlans(poolName string, self memberPlanInfo, previousClai
 		if err != nil {
 			return nil, err
 		}
+		captureKey := captureEpochKey(poolName, address, captureDomain(self))
+		stampCaptureEpochActionPlanHolder(&unassign, captureEpochs, captureKey, self.NodeRef)
 		plans = append(plans, unassign)
 
 		nicKey := providerNICKey("", spec.Capture.ProviderRef, spec.Capture.NICRef)
@@ -845,6 +1086,7 @@ func providerDeprovisionPlans(poolName string, self memberPlanInfo, previousClai
 		if err != nil {
 			return nil, err
 		}
+		stampCaptureEpochActionPlanHolder(&disable, captureEpochs, captureKey, self.NodeRef)
 		plans = append(plans, disable)
 		forwardingDisabled[nicKey] = true
 	}

@@ -315,6 +315,28 @@ func (s *SQLiteStore) MarkActionResult(id int64, status, message, errMsg string,
 	return requireRowAffected(result, id, "record result for", ActionApproved)
 }
 
+// MarkActionSkippedByIdempotencyKey fences an unexecuted action out of the
+// journal by idempotency key. It is used by import-time gates to retire stale
+// pending/approved work that was already imported before newer desired state
+// superseded it.
+func (s *SQLiteStore) MarkActionSkippedByIdempotencyKey(key, message string, now time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return nil
+	}
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return fmt.Errorf("action idempotencyKey is required")
+	}
+	if now.IsZero() {
+		now = s.now().UTC()
+	}
+	_, err := s.db.Exec(`UPDATE action_executions SET status = ?, result_message = ?, executed_at = ?, updated_at = ? WHERE idempotency_key = ? AND status IN (?, ?)`,
+		ActionSkipped, nullableString(message), formatStateTime(now), formatStateTime(now), key, ActionPending, ActionApproved)
+	return err
+}
+
 // MarkActionRolledBack records that an action's best-effort undo was applied. It
 // transitions a succeeded action to rolledBack.
 func (s *SQLiteStore) MarkActionRolledBack(id int64, message string, now time.Time) error {
