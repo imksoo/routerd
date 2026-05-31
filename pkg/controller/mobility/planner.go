@@ -625,8 +625,9 @@ func providerDeprovisionPlans(poolName string, self memberPlanInfo, previousClai
 		if address == "" || desiredAddresses[address] {
 			continue
 		}
-		since := deprovisionSince(leases[address])
-		if since.IsZero() || now.Before(since.Add(hold)) {
+		lease := leases[address]
+		since := deprovisionSince(lease)
+		if since.IsZero() || deprovisionShouldHold(lease, now, since, hold) {
 			continue
 		}
 		profile, ok := profiles[strings.TrimSpace(spec.Capture.ProviderRef)]
@@ -655,6 +656,13 @@ func providerDeprovisionPlans(poolName string, self memberPlanInfo, previousClai
 		forwardingDisabled[nicKey] = true
 	}
 	return plans, nil
+}
+
+func deprovisionShouldHold(lease routerstate.AddressLeaseRecord, now, since time.Time, hold time.Duration) bool {
+	if lease.Status == routerstate.AddressLeaseStatusActive {
+		return false
+	}
+	return now.Before(since.Add(hold))
 }
 
 func providerUnassignActionPlan(poolName string, profile api.CloudProviderProfileSpec, capture api.AddressCapture, captureTarget map[string]string, address string, since time.Time) (dynamicconfig.ActionPlan, error) {

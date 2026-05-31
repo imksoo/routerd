@@ -363,7 +363,7 @@ func TestPlanDynamicConfigPlacementDrainMovesCapture(t *testing.T) {
 		PoolName:         "cloudedge",
 		PoolSpec:         drained,
 		SelfNode:         "azure-router-a",
-		Now:              now.Add(time.Minute),
+		Now:              now.Add(time.Second),
 		Leases:           []routerstate.AddressLeaseRecord{lease},
 		PreviousClaims:   primary.Claims,
 		ProviderProfiles: profiles,
@@ -374,11 +374,14 @@ func TestPlanDynamicConfigPlacementDrainMovesCapture(t *testing.T) {
 	if len(drainedOld.Claims) != 0 || findActionPlan(drainedOld.ActionPlans, "unassign-secondary-ip") == nil {
 		t.Fatalf("drained old claims/actions = %d/%+v, want no claim + unassign", len(drainedOld.Claims), drainedOld.ActionPlans)
 	}
+	if findActionPlan(drainedOld.ActionPlans, "ensure-forwarding-disabled") == nil {
+		t.Fatalf("drained old actions = %+v, want forwarding disable NIC guard", drainedOld.ActionPlans)
+	}
 	drainedNew, err := PlanDynamicConfig(PlannerInput{
 		PoolName:         "cloudedge",
 		PoolSpec:         drained,
 		SelfNode:         "azure-router-b",
-		Now:              now.Add(time.Minute),
+		Now:              now.Add(time.Second),
 		Leases:           []routerstate.AddressLeaseRecord{lease},
 		ProviderProfiles: profiles,
 	})
@@ -417,6 +420,56 @@ func TestPlanDynamicConfigPlacementDrainMovesCapture(t *testing.T) {
 	}
 	if len(returnedNew.Claims) != 0 || findActionPlan(returnedNew.ActionPlans, "unassign-secondary-ip") == nil {
 		t.Fatalf("returned new claims/actions = %d/%+v, want standby unassign", len(returnedNew.Claims), returnedNew.ActionPlans)
+	}
+}
+
+func TestPlanDynamicConfigPlacementDrainActiveLeaseBypassesDeprovisionHold(t *testing.T) {
+	now := time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC)
+	spec := placementPoolSpec()
+	spec.LeasePolicy.HoldDuration = "30s"
+	profiles := plannedProviderProfiles()
+	lease := routerstate.AddressLeaseRecord{
+		Pool:       "cloudedge",
+		Address:    "10.88.60.9/32",
+		Status:     routerstate.AddressLeaseStatusActive,
+		OwnerNode:  "onprem-router",
+		OwnerSite:  "onprem",
+		OwnerRole:  "onprem",
+		Epoch:      1,
+		ObservedAt: now,
+		ExpiresAt:  now.Add(time.Hour),
+	}
+	primary, err := PlanDynamicConfig(PlannerInput{
+		PoolName:         "cloudedge",
+		PoolSpec:         spec,
+		SelfNode:         "azure-router-a",
+		Now:              now,
+		Leases:           []routerstate.AddressLeaseRecord{lease},
+		ProviderProfiles: profiles,
+	})
+	if err != nil {
+		t.Fatalf("primary PlanDynamicConfig: %v", err)
+	}
+	drained := spec
+	drained.Members = append([]api.MobilityPoolMember(nil), spec.Members...)
+	drained.Members[1].Maintenance.Drain = true
+	out, err := PlanDynamicConfig(PlannerInput{
+		PoolName:         "cloudedge",
+		PoolSpec:         drained,
+		SelfNode:         "azure-router-a",
+		Now:              now.Add(time.Second),
+		Leases:           []routerstate.AddressLeaseRecord{lease},
+		PreviousClaims:   primary.Claims,
+		ProviderProfiles: profiles,
+	})
+	if err != nil {
+		t.Fatalf("drained PlanDynamicConfig: %v", err)
+	}
+	if len(out.Claims) != 0 {
+		t.Fatalf("drained claims = %d, want none", len(out.Claims))
+	}
+	if findActionPlan(out.ActionPlans, "unassign-secondary-ip") == nil || findActionPlan(out.ActionPlans, "ensure-forwarding-disabled") == nil {
+		t.Fatalf("drained actionPlans = %+v, want immediate unassign + forwarding-disable", out.ActionPlans)
 	}
 }
 
@@ -742,6 +795,58 @@ func TestControllerPlannerPlacementDrainMovesDynamicPartBetweenNodes(t *testing.
 	}
 	if countKind(decodeResources(t, partB.ResourcesJSON), "RemoteAddressClaim") != 0 || findActionPlan(decodeActionPlans(t, partB.ActionPlansJSON), "unassign-secondary-ip") == nil {
 		t.Fatalf("returned B part resources/actions = %s / %s, want no claim + unassign", partB.ResourcesJSON, partB.ActionPlansJSON)
+	}
+}
+
+func TestControllerPlannerPlacementDrainRestartReadsPreviousClaimForImmediateDeprovision(t *testing.T) {
+	now := time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC)
+	path := t.TempDir() + "/routerd.db"
+	store, err := routerstate.OpenSQLite(path)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	lease := routerstate.AddressLeaseRecord{
+		Pool:       "cloudedge",
+		Address:    "10.88.60.9/32",
+		Status:     routerstate.AddressLeaseStatusActive,
+		OwnerNode:  "onprem-router",
+		OwnerSite:  "onprem",
+		OwnerRole:  "onprem",
+		Epoch:      1,
+		ObservedAt: now,
+		ExpiresAt:  now.Add(time.Hour),
+	}
+	if err := store.UpsertAddressLease(lease); err != nil {
+		t.Fatalf("UpsertAddressLease: %v", err)
+	}
+	spec := placementPoolSpec()
+	controller := Controller{Router: planningRouterForNode("azure-router-a", spec), Store: store, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("initial reconcile: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close store before restart: %v", err)
+	}
+
+	reopened, err := routerstate.OpenSQLite(path)
+	if err != nil {
+		t.Fatalf("reopen sqlite: %v", err)
+	}
+	defer reopened.Close()
+	drained := spec
+	drained.Members = append([]api.MobilityPoolMember(nil), spec.Members...)
+	drained.Members[1].Maintenance.Drain = true
+	restarted := Controller{Router: planningRouterForNode("azure-router-a", drained), Store: reopened, Now: func() time.Time { return now.Add(time.Second) }}
+	if err := restarted.Reconcile(context.Background()); err != nil {
+		t.Fatalf("drain reconcile after restart: %v", err)
+	}
+	part := latestPart(t, reopened, DynamicSource("cloudedge", "azure-router-a"))
+	if countKind(decodeResources(t, part.ResourcesJSON), "RemoteAddressClaim") != 0 {
+		t.Fatalf("restarted drained resources = %s, want no claim", part.ResourcesJSON)
+	}
+	actions := decodeActionPlans(t, part.ActionPlansJSON)
+	if findActionPlan(actions, "unassign-secondary-ip") == nil || findActionPlan(actions, "ensure-forwarding-disabled") == nil {
+		t.Fatalf("restarted drained actionPlans = %+v, want immediate unassign + forwarding-disable", actions)
 	}
 }
 
