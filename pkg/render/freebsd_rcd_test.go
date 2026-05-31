@@ -210,6 +210,65 @@ func TestFreeBSDRenderSynthesizesHealthCheckResourceAsRCD(t *testing.T) {
 	}
 }
 
+func TestFreeBSDEventdRCDScript(t *testing.T) {
+	data, err := FreeBSDRCDScript("routerd-eventd@cloudedge.service", freeBSDEventdSystemdSpec("cloudedge"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		`# PROVIDE: routerd_eventd_cloudedge`,
+		`# REQUIRE: NETWORKING`,
+		`daemon_command="/usr/sbin/daemon"`,
+		`daemon_args="-P ${daemon_pidfile} -p ${child_pidfile} -r -f -- '/usr/local/sbin/routerd-eventd' 'daemon' '--config-file' '/var/db/routerd/eventd/cloudedge/config.json'"`,
+		`mkdir -p "/var/run/${name}"`,
+		`mkdir -p '/var/run/routerd/eventd'`,
+		`mkdir -p '/var/db/routerd/eventd'`,
+		`mkdir -p '/var/db/routerd/eventd/cloudedge'`,
+		`mkdir -p '/var/log/routerd'`,
+		`: ${routerd_eventd_cloudedge_enable:="YES"}`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("eventd rc.d script missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "apply") || strings.Contains(got, "secretFile") || strings.Contains(got, "/usr/local/etc/routerd/secrets/eventd.key") {
+		t.Fatalf("eventd rc.d script must not run routerd apply or expose HMAC secret args:\n%s", got)
+	}
+}
+
+func TestFreeBSDRenderSynthesizesEventFederationRCD(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.FederationAPIVersion, Kind: "EventGroup"},
+			Metadata: api.ObjectMeta{Name: "cloudedge"},
+			Spec: api.EventGroupSpec{
+				NodeName: "freebsd-router",
+				Auth:     api.EventGroupAuth{Mode: "hmac", SecretFile: "/usr/local/etc/routerd/secrets/eventd.key"},
+			},
+		},
+	}}}
+	cfg, err := FreeBSD(router)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(cfg.RCConf), `routerd_eventd_cloudedge_enable="YES"`) {
+		t.Fatalf("rc.conf missing eventd enable flag:\n%s", cfg.RCConf)
+	}
+	script := string(cfg.RCDScripts["routerd_eventd_cloudedge"])
+	for _, want := range []string{
+		`PROVIDE: routerd_eventd_cloudedge`,
+		`'/usr/local/sbin/routerd-eventd' 'daemon' '--config-file' '/var/db/routerd/eventd/cloudedge/config.json'`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("eventd rc.d script missing %q:\n%s", want, script)
+		}
+	}
+	if strings.Contains(script, "/usr/local/etc/routerd/secrets/eventd.key") {
+		t.Fatalf("eventd rc.d script must keep HMAC path in runtime config, not command args:\n%s", script)
+	}
+}
+
 func TestFreeBSDRenderSynthesizesHealthCheckDaemonRCD(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{

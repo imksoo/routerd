@@ -146,6 +146,23 @@ func freeBSDRCDScripts(router *api.Router) (map[string][]byte, error) {
 		}
 		out[name] = data
 	}
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "EventGroup" {
+			continue
+		}
+		if _, err := res.EventGroupSpec(); err != nil {
+			return nil, err
+		}
+		name := freeBSDServiceName("routerd-eventd@" + res.Metadata.Name + ".service")
+		if explicit[name] {
+			continue
+		}
+		data, err := FreeBSDRCDScript(name, freeBSDEventdSystemdSpec(res.Metadata.Name))
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", res.ID(), err)
+		}
+		out[name] = data
+	}
 	carpConfig, err := CARPConfig(router, aliases)
 	if err != nil {
 		return nil, err
@@ -233,6 +250,10 @@ func freeBSDDNSResolverSystemdSpec(name string, spec api.DNSResolverSpec) api.Sy
 		"--event-file", "/var/db/routerd/dns-resolver/"+name+"/events.jsonl",
 	)
 	return unit
+}
+
+func freeBSDEventdSystemdSpec(group string) api.SystemdUnitSpec {
+	return EventdSystemdSpec(group, "/usr/local/sbin/routerd-eventd", "/var/db/routerd/eventd/"+group+"/config.json")
 }
 
 func FreeBSDCARPRCDScript(config CARPConfigData) []byte {

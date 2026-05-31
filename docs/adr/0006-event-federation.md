@@ -194,9 +194,9 @@ the first smoke.
 
 ## Known limitations (experimental)
 
-- **`routerd-eventd` supervision is systemd-only.** No FreeBSD `rc.d` unit is
-  generated yet; on FreeBSD the daemon must be supervised manually until the
-  `rc.d` resource is added.
+- **`routerd-eventd` supervision is generated for systemd and FreeBSD `rc.d`.**
+  Other service managers still need explicit renderer support before eventd can
+  be supervised there automatically.
 - **`EventSubscription` `batchWindow`/`debounce` are accepted but coarse.** The
   fields validate and are honored at poll granularity — the controller batches
   events **per poll tick**, not on a precise sub-tick timer. Tight debounce
