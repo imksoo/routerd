@@ -84,12 +84,55 @@ func TestPlanDynamicConfigCloudSelfGeneratesClaimAndActionPlans(t *testing.T) {
 	if assign == nil {
 		t.Fatal("missing assign-secondary-ip action plan")
 	}
-	if assign.Target["resourceGroup"] != "rg-router" || assign.Target["nicName"] != "router-nic" || assign.Target["ipConfigName"] == "" {
+	if assign.Target["resourceGroup"] != "rg-router" || assign.Target["nicName"] != "router-nic" || assign.Target["ipConfigName"] == "" || assign.Target["region"] != "japaneast" {
 		t.Fatalf("assign target missing azure fields: %+v", assign.Target)
 	}
 	forwarding := findActionPlan(out.ActionPlans, "ensure-forwarding-enabled")
 	if forwarding == nil || forwarding.Parameters["ipForwarding"] != "true" {
 		t.Fatalf("unexpected forwarding action: %+v", forwarding)
+	}
+}
+
+func TestPlanDynamicConfigResolvesDeliveryToBeforeFallback(t *testing.T) {
+	now := time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC)
+	spec := plannedPoolSpec()
+	spec.Members = append(spec.Members,
+		api.MobilityPoolMember{NodeRef: "aws-router", Site: "aws", Role: "cloud"},
+		api.MobilityPoolMember{NodeRef: "oci-router", Site: "oci", Role: "cloud"},
+	)
+	spec.Members[0].Delivery = api.MobilityMemberDelivery{PeerRef: "fallback-cloud", Mode: "route", TunnelInterface: "wg-fallback"}
+	spec.Members[0].DeliveryTo = []api.MobilityMemberDeliveryTarget{
+		{NodeRef: "aws-router", PeerRef: "aws-main", Mode: "route", TunnelInterface: "wg-aws"},
+		{Site: "azure", PeerRef: "azure-main", Mode: "route", TunnelInterface: "wg-azure"},
+		{Role: "cloud", PeerRef: "generic-cloud", Mode: "route", TunnelInterface: "wg-cloud"},
+	}
+	out, err := PlanDynamicConfig(PlannerInput{
+		PoolName: "cloudedge",
+		PoolSpec: spec,
+		SelfNode: "onprem-router",
+		Now:      now,
+		Leases: []routerstate.AddressLeaseRecord{
+			{Pool: "cloudedge", Address: "10.88.60.11/32", Status: routerstate.AddressLeaseStatusActive, OwnerNode: "aws-router", OwnerSite: "aws", OwnerRole: "cloud", Epoch: 1, ExpiresAt: now.Add(time.Minute)},
+			{Pool: "cloudedge", Address: "10.88.60.12/32", Status: routerstate.AddressLeaseStatusActive, OwnerNode: "azure-router", OwnerSite: "azure", OwnerRole: "cloud", Epoch: 1, ExpiresAt: now.Add(time.Minute)},
+			{Pool: "cloudedge", Address: "10.88.60.13/32", Status: routerstate.AddressLeaseStatusActive, OwnerNode: "oci-router", OwnerSite: "oci", OwnerRole: "cloud", Epoch: 1, ExpiresAt: now.Add(time.Minute)},
+		},
+	})
+	if err != nil {
+		t.Fatalf("PlanDynamicConfig: %v", err)
+	}
+	wantPeers := map[string]string{
+		"10.88.60.11/32": "aws-main",
+		"10.88.60.12/32": "azure-main",
+		"10.88.60.13/32": "generic-cloud",
+	}
+	for _, claim := range out.Claims {
+		spec, err := claim.RemoteAddressClaimSpec()
+		if err != nil {
+			t.Fatalf("RemoteAddressClaimSpec: %v", err)
+		}
+		if spec.Delivery.PeerRef != wantPeers[spec.Address] {
+			t.Fatalf("claim %s peerRef=%q want %q", spec.Address, spec.Delivery.PeerRef, wantPeers[spec.Address])
+		}
 	}
 }
 
@@ -200,6 +243,7 @@ func plannedPoolSpec() api.MobilityPoolSpec {
 					ProviderRef:  "azure-provider",
 					ProviderMode: "nic-secondary-ip",
 					NICRef:       "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic",
+					Target:       map[string]string{"region": "japaneast"},
 				},
 				Delivery: api.MobilityMemberDelivery{PeerRef: "onprem", Mode: "route", TunnelInterface: "wg-hybrid"},
 			},

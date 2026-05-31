@@ -35,6 +35,11 @@ spec:
       capture:
         type: proxy-arp
         interface: lan
+      deliveryTo:
+        - nodeRef: cloud-router
+          peerRef: cloud-main
+          mode: route
+          tunnelInterface: wg-hybrid
       delivery:
         peerRef: cloud-main
         mode: route
@@ -48,6 +53,9 @@ spec:
         providerMode: nic-secondary-ip
         nicRef: /subscriptions/.../networkInterfaces/routerd-nic
         configureOSAddress: false
+        target:
+          region: japaneast
+          ipConfigName: mobility-capture
       delivery:
         peerRef: onprem-main
         mode: route
@@ -110,6 +118,16 @@ tunnel interface へ転送する intent として表します。Linux dataplane 
 delivery は claim address そのものの managed `IPv4Route` に lowering されます
 （例: `10.0.0.9/32 dev wg-hybrid`）。SAM claim が default route に lowering
 されることはありません。
+
+`members[].deliveryTo[]` は owner の `nodeRef`、次に `site`、最後に `role` の
+順で delivery を選びます。`members[].delivery` は fallback です。これにより、
+on-prem router が AWS、Azure、OCI へ異なる overlay peer で delivery する
+4-site demo でも、全 node に同じ `MobilityPool` config を配れます。
+
+`members[].capture.target` は生成される provider `ActionPlan.target` へコピーする
+non-secret な provider target hint です。region、compartment ID、resource
+group、NIC name、IP config name などの識別子だけを置き、credential、token、
+private key は provider auth mechanism 側に置きます。
 
 Linux の `proxy-arp` capture では、routerd は通常の sysctl controller で
 `net.ipv4.conf.<capture-interface>.proxy_arp=1` を有効化し、

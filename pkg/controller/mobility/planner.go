@@ -41,10 +41,19 @@ type PlannerOutput struct {
 }
 
 type memberPlanInfo struct {
+	NodeRef       string
+	Site          string
+	Role          string
+	Capture       api.AddressCapture
+	CaptureTarget map[string]string
+	Delivery      api.AddressDelivery
+	DeliveryTo    []deliveryTargetPlanInfo
+}
+
+type deliveryTargetPlanInfo struct {
 	NodeRef  string
 	Site     string
 	Role     string
-	Capture  api.AddressCapture
 	Delivery api.AddressDelivery
 }
 
@@ -275,20 +284,22 @@ func planLease(poolName string, prefix netip.Prefix, self memberPlanInfo, member
 	if ownerRole != "onprem" && ownerRole != "cloud" {
 		return api.Resource{}, nil, time.Time{}, false, fmt.Errorf("AddressLease/%s ownerRole %q is not supported", lease.Address, lease.OwnerRole)
 	}
+	owner.Role = ownerRole
 	if strings.TrimSpace(self.Capture.Type) == "" {
 		return api.Resource{}, nil, time.Time{}, false, fmt.Errorf("MobilityPool/%s member %q capture is required to plan remote lease %s", poolName, self.NodeRef, lease.Address)
 	}
-	if strings.TrimSpace(self.Delivery.PeerRef) == "" {
-		return api.Resource{}, nil, time.Time{}, false, fmt.Errorf("MobilityPool/%s member %q delivery.peerRef is required to plan remote lease %s", poolName, self.NodeRef, lease.Address)
+	delivery, ok := resolveDelivery(self, owner)
+	if !ok {
+		return api.Resource{}, nil, time.Time{}, false, fmt.Errorf("MobilityPool/%s member %q has no delivery for owner node=%q site=%q role=%q", poolName, self.NodeRef, owner.NodeRef, owner.Site, ownerRole)
 	}
-	claim := claimResource(poolName, self, lease, address, ownerRole)
+	claim := claimResource(poolName, self, lease, address, ownerRole, delivery)
 	var plans []dynamicconfig.ActionPlan
 	if self.Capture.Type == "provider-secondary-ip" {
 		profile, ok := profiles[strings.TrimSpace(self.Capture.ProviderRef)]
 		if !ok {
 			return api.Resource{}, nil, time.Time{}, false, fmt.Errorf("CloudProviderProfile/%s not found for MobilityPool/%s member %q", self.Capture.ProviderRef, poolName, self.NodeRef)
 		}
-		generated, err := providerActionPlans(poolName, profile, self.Capture, address, forwardingSeen)
+		generated, err := providerActionPlans(poolName, profile, self.Capture, self.CaptureTarget, address, forwardingSeen)
 		if err != nil {
 			return api.Resource{}, nil, time.Time{}, false, err
 		}
@@ -302,14 +313,38 @@ func plannerMembers(members []api.MobilityPoolMember) map[string]memberPlanInfo 
 	for _, member := range members {
 		nodeRef := strings.TrimSpace(member.NodeRef)
 		out[nodeRef] = memberPlanInfo{
-			NodeRef:  nodeRef,
-			Site:     strings.TrimSpace(member.Site),
-			Role:     strings.TrimSpace(member.Role),
-			Capture:  trimCapture(member.Capture),
-			Delivery: trimDelivery(member.Delivery),
+			NodeRef:       nodeRef,
+			Site:          strings.TrimSpace(member.Site),
+			Role:          strings.TrimSpace(member.Role),
+			Capture:       trimCapture(member.Capture),
+			CaptureTarget: copyStringMap(member.Capture.Target),
+			Delivery:      trimDelivery(member.Delivery),
+			DeliveryTo:    trimDeliveryTargets(member.DeliveryTo),
 		}
 	}
 	return out
+}
+
+func resolveDelivery(self memberPlanInfo, owner memberPlanInfo) (api.AddressDelivery, bool) {
+	for _, target := range self.DeliveryTo {
+		if target.NodeRef != "" && target.NodeRef == owner.NodeRef {
+			return target.Delivery, true
+		}
+	}
+	for _, target := range self.DeliveryTo {
+		if target.Site != "" && target.Site == owner.Site {
+			return target.Delivery, true
+		}
+	}
+	for _, target := range self.DeliveryTo {
+		if target.Role != "" && target.Role == owner.Role {
+			return target.Delivery, true
+		}
+	}
+	if strings.TrimSpace(self.Delivery.PeerRef) != "" {
+		return self.Delivery, true
+	}
+	return api.AddressDelivery{}, false
 }
 
 func sortedLeases(leases []routerstate.AddressLeaseRecord) []routerstate.AddressLeaseRecord {
@@ -339,7 +374,7 @@ func domainResource(poolName string, spec api.MobilityPoolSpec, self memberPlanI
 	}
 }
 
-func claimResource(poolName string, self memberPlanInfo, lease routerstate.AddressLeaseRecord, address, ownerRole string) api.Resource {
+func claimResource(poolName string, self memberPlanInfo, lease routerstate.AddressLeaseRecord, address, ownerRole string, delivery api.AddressDelivery) api.Resource {
 	claimName := safeName("mobility-" + poolName + "-" + address)
 	annotations := map[string]string{
 		"mobility.routerd.net/lease-epoch":     fmt.Sprint(lease.Epoch),
@@ -364,7 +399,7 @@ func claimResource(poolName string, self memberPlanInfo, lease routerstate.Addre
 			Address:   address,
 			OwnerSide: ownerRole,
 			Capture:   self.Capture,
-			Delivery:  self.Delivery,
+			Delivery:  delivery,
 		},
 	}
 }
@@ -380,7 +415,7 @@ func stampGeneratedResource(res *api.Resource, source, poolName, selfNode string
 	res.Metadata.Annotations["routerd.net/managed-by"] = "routerd"
 }
 
-func providerActionPlans(poolName string, profile api.CloudProviderProfileSpec, capture api.AddressCapture, address string, forwardingSeen map[string]bool) ([]dynamicconfig.ActionPlan, error) {
+func providerActionPlans(poolName string, profile api.CloudProviderProfileSpec, capture api.AddressCapture, captureTarget map[string]string, address string, forwardingSeen map[string]bool) ([]dynamicconfig.ActionPlan, error) {
 	provider := strings.TrimSpace(profile.Provider)
 	providerRef := strings.TrimSpace(capture.ProviderRef)
 	nicRef := strings.TrimSpace(capture.NICRef)
@@ -390,7 +425,14 @@ func providerActionPlans(poolName string, profile api.CloudProviderProfileSpec, 
 		"nicRef":      nicRef,
 		"address":     address,
 	}
+	for key, value := range captureTarget {
+		target[strings.TrimSpace(key)] = strings.TrimSpace(value)
+	}
 	addProfileTargetFields(target, provider, profile, poolName, address, nicRef)
+	target["provider"] = provider
+	target["providerRef"] = providerRef
+	target["nicRef"] = nicRef
+	target["address"] = address
 	assign := dynamicconfig.ActionPlan{
 		Name:           safeName("mobility-" + poolName + "-assign-" + address),
 		Provider:       provider,
@@ -444,10 +486,10 @@ func providerActionPlans(poolName string, profile api.CloudProviderProfileSpec, 
 }
 
 func addProfileTargetFields(target map[string]string, provider string, profile api.CloudProviderProfileSpec, poolName, address, nicRef string) {
-	if profile.SubscriptionID != "" {
+	if profile.SubscriptionID != "" && strings.TrimSpace(target["subscriptionId"]) == "" {
 		target["subscriptionId"] = strings.TrimSpace(profile.SubscriptionID)
 	}
-	if profile.ResourceGroup != "" {
+	if profile.ResourceGroup != "" && strings.TrimSpace(target["resourceGroup"]) == "" {
 		target["resourceGroup"] = strings.TrimSpace(profile.ResourceGroup)
 	}
 	if provider == "azure" {
@@ -530,6 +572,23 @@ func trimDelivery(d api.MobilityMemberDelivery) api.AddressDelivery {
 		Mode:            mode,
 		TunnelInterface: strings.TrimSpace(d.TunnelInterface),
 	}
+}
+
+func trimDeliveryTargets(targets []api.MobilityMemberDeliveryTarget) []deliveryTargetPlanInfo {
+	out := make([]deliveryTargetPlanInfo, 0, len(targets))
+	for _, target := range targets {
+		out = append(out, deliveryTargetPlanInfo{
+			NodeRef: strings.TrimSpace(target.NodeRef),
+			Site:    strings.TrimSpace(target.Site),
+			Role:    strings.TrimSpace(target.Role),
+			Delivery: api.AddressDelivery{
+				PeerRef:         strings.TrimSpace(target.PeerRef),
+				Mode:            firstNonEmpty(strings.TrimSpace(target.Mode), "route"),
+				TunnelInterface: strings.TrimSpace(target.TunnelInterface),
+			},
+		})
+	}
+	return out
 }
 
 func dynamicPartRecord(part dynamicconfig.DynamicConfigPart) (routerstate.DynamicConfigPartRecord, error) {

@@ -86,7 +86,29 @@ func TestValidateMobilityPoolRejectsInvalidFields(t *testing.T) {
 			mut: func(spec *api.MobilityPoolSpec) {
 				spec.Members[0].Capture = api.MobilityMemberCapture{Type: "proxy-arp", Interface: "lan"}
 			},
-			want: "delivery.peerRef is required when capture.type is set",
+			want: "delivery.peerRef or deliveryTo is required when capture.type is set",
+		},
+		{
+			name: "deliveryTo selector",
+			mut: func(spec *api.MobilityPoolSpec) {
+				spec.Members[0].Capture = api.MobilityMemberCapture{Type: "proxy-arp", Interface: "lan"}
+				spec.Members[0].DeliveryTo = []api.MobilityMemberDeliveryTarget{{PeerRef: "azure"}}
+			},
+			want: "must set nodeRef, site, or role",
+		},
+		{
+			name: "secret target",
+			mut: func(spec *api.MobilityPoolSpec) {
+				spec.Members[1].Capture = api.MobilityMemberCapture{
+					Type:         "provider-secondary-ip",
+					ProviderRef:  "azure-provider",
+					ProviderMode: "nic-secondary-ip",
+					NICRef:       "nic-1",
+					Target:       map[string]string{"accessToken": "nope"},
+				}
+				spec.Members[1].Delivery = api.MobilityMemberDelivery{PeerRef: "onprem"}
+			},
+			want: "looks secret-like",
 		},
 	}
 	for _, tt := range tests {

@@ -1321,7 +1321,7 @@ type EventSubscriptionTrigger struct {
 }
 
 // MobilityPoolSpec declares a selective-address mobility pool for the CloudEdge
-// Mobility Control Plane (Step 1). It is the ONLY operator-authored Kind in the
+// Mobility Control Plane. It is the ONLY operator-authored Kind in the
 // mobility plane: the operator declares the /24, which routerd nodes are members
 // and at which site, and the capture/authority policy ONCE. The system then
 // derives AddressLease runtime state (which IP is currently owned by which
@@ -1345,10 +1345,9 @@ type MobilityPoolSpec struct {
 	// LeasePolicy controls the lifetime and owner-change hold window for
 	// observed AddressLease state.
 	LeasePolicy MobilityLeasePolicy `yaml:"leasePolicy,omitempty" json:"leasePolicy,omitempty"`
-	// DeliveryPolicy is reserved for Step 2, where AddressLease records are
-	// lowered into AddressMobilityDomain and RemoteAddressClaim DynamicConfigPart
-	// resources. It is accepted now so MobilityPool remains the only
-	// operator-authored mobility intent.
+	// DeliveryPolicy is reserved for pool-level delivery defaults. Per-member
+	// Delivery/DeliveryTo currently drives generated AddressMobilityDomain and
+	// RemoteAddressClaim DynamicConfigPart resources.
 	DeliveryPolicy MobilityDeliveryPolicy `yaml:"deliveryPolicy,omitempty" json:"deliveryPolicy,omitempty"`
 	// Authority declares who arbitrates ownership. The MVP supports static
 	// arbitration only. Empty means every node deterministically projects the
@@ -1373,6 +1372,10 @@ type MobilityPoolMember struct {
 	// Delivery declares how this member forwards captured traffic toward the
 	// owner site. Empty keeps the pool in lease-registry-only mode.
 	Delivery MobilityMemberDelivery `yaml:"delivery,omitempty" json:"delivery,omitempty"`
+	// DeliveryTo optionally selects delivery per owner identity. The planner
+	// resolves entries against the lease owner in nodeRef -> site -> role order,
+	// then falls back to Delivery.
+	DeliveryTo []MobilityMemberDeliveryTarget `yaml:"deliveryTo,omitempty" json:"deliveryTo,omitempty"`
 }
 
 type MobilityMemberCapture struct {
@@ -1383,10 +1386,23 @@ type MobilityMemberCapture struct {
 	ConfigureOSAddress bool   `yaml:"configureOSAddress,omitempty" json:"configureOSAddress,omitempty"`
 	Interface          string `yaml:"interface,omitempty" json:"interface,omitempty"`
 	GratuitousARP      bool   `yaml:"gratuitousARP,omitempty" json:"gratuitousARP,omitempty"`
+	// Target carries non-secret provider target hints such as region,
+	// compartmentId, resourceGroup, nicName, or ipConfigName. It is copied to
+	// provider ActionPlan.target; credentials and tokens do not belong here.
+	Target map[string]string `yaml:"target,omitempty" json:"target,omitempty"`
 }
 
 type MobilityMemberDelivery struct {
 	PeerRef         string `yaml:"peerRef,omitempty" json:"peerRef,omitempty"`
+	Mode            string `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=,enum=route"`
+	TunnelInterface string `yaml:"tunnelInterface,omitempty" json:"tunnelInterface,omitempty"`
+}
+
+type MobilityMemberDeliveryTarget struct {
+	NodeRef         string `yaml:"nodeRef,omitempty" json:"nodeRef,omitempty"`
+	Site            string `yaml:"site,omitempty" json:"site,omitempty"`
+	Role            string `yaml:"role,omitempty" json:"role,omitempty" jsonschema:"enum=,enum=onprem,enum=cloud"`
+	PeerRef         string `yaml:"peerRef" json:"peerRef"`
 	Mode            string `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=,enum=route"`
 	TunnelInterface string `yaml:"tunnelInterface,omitempty" json:"tunnelInterface,omitempty"`
 }

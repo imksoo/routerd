@@ -6617,7 +6617,7 @@
                   },
                   "spec": {
                     "additionalProperties": false,
-                    "description": "MobilityPoolSpec declares a selective-address mobility pool for the CloudEdge Mobility Control Plane (Step 1).",
+                    "description": "MobilityPoolSpec declares a selective-address mobility pool for the CloudEdge Mobility Control Plane.",
                     "properties": {
                       "authority": {
                         "additionalProperties": false,
@@ -6655,7 +6655,7 @@
                       },
                       "deliveryPolicy": {
                         "additionalProperties": false,
-                        "description": "DeliveryPolicy is reserved for Step 2, where AddressLease records are\nlowered into AddressMobilityDomain and RemoteAddressClaim DynamicConfigPart\nresources. It is accepted now so MobilityPool remains the only\noperator-authored mobility intent.",
+                        "description": "DeliveryPolicy is reserved for pool-level delivery defaults. Per-member\nDelivery/DeliveryTo currently drives generated AddressMobilityDomain and\nRemoteAddressClaim DynamicConfigPart resources.",
                         "properties": {
                           "mode": {
                             "description": "Mode is accepted for forward compatibility. Empty means route delivery.",
@@ -6715,6 +6715,13 @@
                                 "providerRef": {
                                   "type": "string"
                                 },
+                                "target": {
+                                  "additionalProperties": {
+                                    "type": "string"
+                                  },
+                                  "description": "Target carries non-secret provider target hints such as region,\ncompartmentId, resourceGroup, nicName, or ipConfigName. It is copied to\nprovider ActionPlan.target; credentials and tokens do not belong here.",
+                                  "type": "object"
+                                },
                                 "type": {
                                   "enum": [
                                     "provider-secondary-ip",
@@ -6744,6 +6751,46 @@
                                 }
                               },
                               "type": "object"
+                            },
+                            "deliveryTo": {
+                              "description": "DeliveryTo optionally selects delivery per owner identity. The planner\nresolves entries against the lease owner in nodeRef -\u003e site -\u003e role order,\nthen falls back to Delivery.",
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "mode": {
+                                    "enum": [
+                                      "",
+                                      "route"
+                                    ],
+                                    "type": "string"
+                                  },
+                                  "nodeRef": {
+                                    "type": "string"
+                                  },
+                                  "peerRef": {
+                                    "type": "string"
+                                  },
+                                  "role": {
+                                    "enum": [
+                                      "",
+                                      "onprem",
+                                      "cloud"
+                                    ],
+                                    "type": "string"
+                                  },
+                                  "site": {
+                                    "type": "string"
+                                  },
+                                  "tunnelInterface": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "peerRef"
+                                ],
+                                "type": "object"
+                              },
+                              "type": "array"
                             },
                             "nodeRef": {
                               "description": "NodeRef is the routerd node identity (matches federation sourceNode).",

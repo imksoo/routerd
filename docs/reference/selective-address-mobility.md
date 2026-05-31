@@ -36,6 +36,11 @@ spec:
       capture:
         type: proxy-arp
         interface: lan
+      deliveryTo:
+        - nodeRef: cloud-router
+          peerRef: cloud-main
+          mode: route
+          tunnelInterface: wg-hybrid
       delivery:
         peerRef: cloud-main
         mode: route
@@ -49,6 +54,9 @@ spec:
         providerMode: nic-secondary-ip
         nicRef: /subscriptions/.../networkInterfaces/routerd-nic
         configureOSAddress: false
+        target:
+          region: japaneast
+          ipConfigName: mobility-capture
       delivery:
         peerRef: onprem-main
         mode: route
@@ -143,6 +151,16 @@ captured `/32` over the named overlay peer and optional tunnel interface. The
 Linux dataplane lowers this delivery into a managed `IPv4Route` for the exact
 claim address, for example `10.0.0.9/32 dev wg-hybrid`. routerd never lowers a
 SAM claim into a default route.
+
+`members[].deliveryTo[]` can select delivery by owner `nodeRef`, then `site`,
+then `role`; `members[].delivery` is the fallback. This keeps one shared
+`MobilityPool` config usable across four-site demos where the on-prem router
+must deliver to AWS, Azure, and OCI through different overlay peers.
+
+`members[].capture.target` carries non-secret provider target hints copied into
+generated provider `ActionPlan.target` values. Put identifiers such as region,
+compartment ID, resource group, NIC name, or IP config name there; credentials,
+tokens, and private keys must stay in provider auth mechanisms.
 
 For `proxy-arp` capture on Linux, routerd:
 

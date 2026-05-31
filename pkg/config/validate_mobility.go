@@ -115,6 +115,46 @@ func validateMobilityResource(res api.Resource, _ platform.OS) (bool, error) {
 
 func validateMobilityMemberCapture(res api.Resource, index int, member api.MobilityPoolMember) error {
 	captureType := strings.TrimSpace(member.Capture.Type)
+	switch strings.TrimSpace(member.Delivery.Mode) {
+	case "", "route":
+	default:
+		return fmt.Errorf("%s spec.members[%d].delivery.mode must be empty or route", res.ID(), index)
+	}
+	if captureType != "" && strings.TrimSpace(member.Delivery.PeerRef) == "" {
+		if len(member.DeliveryTo) == 0 {
+			return fmt.Errorf("%s spec.members[%d].delivery.peerRef or deliveryTo is required when capture.type is set", res.ID(), index)
+		}
+	}
+	for j, delivery := range member.DeliveryTo {
+		if strings.TrimSpace(delivery.NodeRef) == "" && strings.TrimSpace(delivery.Site) == "" && strings.TrimSpace(delivery.Role) == "" {
+			return fmt.Errorf("%s spec.members[%d].deliveryTo[%d] must set nodeRef, site, or role", res.ID(), index, j)
+		}
+		switch strings.TrimSpace(delivery.Role) {
+		case "", "onprem", "cloud":
+		default:
+			return fmt.Errorf("%s spec.members[%d].deliveryTo[%d].role must be onprem or cloud", res.ID(), index, j)
+		}
+		if strings.TrimSpace(delivery.PeerRef) == "" {
+			return fmt.Errorf("%s spec.members[%d].deliveryTo[%d].peerRef is required", res.ID(), index, j)
+		}
+		switch strings.TrimSpace(delivery.Mode) {
+		case "", "route":
+		default:
+			return fmt.Errorf("%s spec.members[%d].deliveryTo[%d].mode must be empty or route", res.ID(), index, j)
+		}
+	}
+	for key, value := range member.Capture.Target {
+		if strings.TrimSpace(key) == "" {
+			return fmt.Errorf("%s spec.members[%d].capture.target contains an empty key", res.ID(), index)
+		}
+		if strings.TrimSpace(value) == "" {
+			return fmt.Errorf("%s spec.members[%d].capture.target[%q] must not be empty", res.ID(), index, key)
+		}
+		lowerKey := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(key), "-", "_"))
+		if strings.Contains(lowerKey, "secret") || strings.Contains(lowerKey, "token") || strings.Contains(lowerKey, "password") || strings.Contains(lowerKey, "credential") || strings.Contains(lowerKey, "private_key") || strings.Contains(lowerKey, "access_key") {
+			return fmt.Errorf("%s spec.members[%d].capture.target[%q] looks secret-like; target may only carry non-secret provider identifiers", res.ID(), index, key)
+		}
+	}
 	if captureType == "" {
 		return nil
 	}
@@ -149,14 +189,6 @@ func validateMobilityMemberCapture(res api.Resource, index int, member api.Mobil
 		}
 	default:
 		return fmt.Errorf("%s spec.members[%d].capture.type %q is reserved/not implemented in MVP", res.ID(), index, captureType)
-	}
-	switch strings.TrimSpace(member.Delivery.Mode) {
-	case "", "route":
-	default:
-		return fmt.Errorf("%s spec.members[%d].delivery.mode must be empty or route", res.ID(), index)
-	}
-	if strings.TrimSpace(member.Delivery.PeerRef) == "" {
-		return fmt.Errorf("%s spec.members[%d].delivery.peerRef is required when capture.type is set", res.ID(), index)
 	}
 	return nil
 }

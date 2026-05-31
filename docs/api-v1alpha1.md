@@ -176,7 +176,7 @@ for DoH or DoT endpoint name resolution.
 | `DSLiteTunnel` | Creates an `ip6tnl` tunnel to an AFTR. The AFTR can be static IPv6, FQDN, or DHCPv6 information. |
 | `OverlayPeer` | Describes an on-prem or cloud overlay peer and the local underlay used to reach it. |
 | `HybridRoute` | Lowers non-default remote IPv4 prefixes through an `OverlayPeer` into managed `IPv4Route` resources. |
-| `MobilityPool` | Declares the only operator-authored CloudEdge mobility intent: pool prefix, federation group, node-to-site membership, per-member capture/delivery policy, and lease policy. routerd derives `AddressLease` runtime state and generated SAM dynamic config from observed federation events. |
+| `MobilityPool` | Declares the only operator-authored CloudEdge mobility intent: pool prefix, federation group, node-to-site membership, per-member capture/delivery policy, owner-specific `deliveryTo`, non-secret provider `capture.target` hints, and lease policy. routerd derives `AddressLease` runtime state and generated SAM dynamic config from observed federation events. |
 | `AddressMobilityDomain` | Defines an IPv4 prefix for Selective Address Mobility; full L2 extension is not supported. |
 | `CloudProviderProfile` | Describes provider capabilities and external-command auth for declarative address capture planning. |
 | `RemoteAddressClaim` | Declares one mobile IPv4 `/32`, its capture mechanism, and route delivery over an `OverlayPeer`. |
@@ -210,6 +210,11 @@ and `AddressLease` rows are derived runtime state visible through
 `AddressMobilityDomain` and `RemoteAddressClaim` DynamicConfigPart resources
 from leases; operators should not hand-author per-address leases or capture
 procedures for the mobility control plane.
+
+`MobilityPool.spec.members[].deliveryTo[]` selects delivery for an owner by
+`nodeRef`, then `site`, then `role`, with `members[].delivery` as fallback.
+`members[].capture.target` carries non-secret provider target identifiers into
+generated provider action plans.
 
 Selective Address Mobility is declarative in this MVP. `RemoteAddressClaim`
 does not configure firewall or NAT policy. Operators compose firewall/NAT by
