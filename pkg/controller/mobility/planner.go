@@ -128,6 +128,15 @@ func PlanDynamicConfig(in PlannerInput) (PlannerOutput, error) {
 				minExpiresAt = leaseExpiresAt
 			}
 		}
+		if len(in.Leases) == 0 {
+			for _, claim := range carryForwardProviderClaims(in.PreviousClaims) {
+				claims = append(claims, claim)
+				desiredAddresses[claimAddress(claim)] = true
+				if key := providerNICKeyFromClaim(claim); key != "" {
+					desiredProviderNICs[key] = true
+				}
+			}
+		}
 	}
 	deprovisionPlans, err := providerDeprovisionPlans(poolName, self, in.PreviousClaims, desiredAddresses, desiredProviderNICs, leasesByAddress(in.Leases), in.ProviderProfiles, now, deprovisionHoldDuration(in.PoolSpec), !placement.Active)
 	if err != nil {
@@ -607,6 +616,21 @@ func providerActionPlans(poolName string, profile api.CloudProviderProfileSpec, 
 	return plans, nil
 }
 
+func carryForwardProviderClaims(previousClaims []api.Resource) []api.Resource {
+	var out []api.Resource
+	for _, claim := range sortedClaims(previousClaims) {
+		spec, err := claim.RemoteAddressClaimSpec()
+		if err != nil {
+			continue
+		}
+		if strings.TrimSpace(spec.Capture.Type) != "provider-secondary-ip" || strings.TrimSpace(spec.Address) == "" {
+			continue
+		}
+		out = append(out, cloneResource(claim))
+	}
+	return out
+}
+
 func providerDeprovisionPlans(poolName string, self memberPlanInfo, previousClaims []api.Resource, desiredAddresses, desiredProviderNICs map[string]bool, leases map[string]routerstate.AddressLeaseRecord, profiles map[string]api.CloudProviderProfileSpec, now time.Time, hold time.Duration, releaseMissingLease bool) ([]dynamicconfig.ActionPlan, error) {
 	if self.Capture.Type != "provider-secondary-ip" {
 		return nil, nil
@@ -1018,6 +1042,13 @@ func dynamicPartRecord(part dynamicconfig.DynamicConfigPart) (routerstate.Dynami
 		ActionPlansJSON: actionPlansJSON,
 		Status:          "active",
 	}, nil
+}
+
+func cloneResource(res api.Resource) api.Resource {
+	out := res
+	out.Metadata.Annotations = copyStringMap(res.Metadata.Annotations)
+	out.Metadata.OwnerRefs = append([]api.OwnerRef(nil), res.Metadata.OwnerRefs...)
+	return out
 }
 
 func digestDynamicPart(part dynamicconfig.DynamicConfigPart) string {

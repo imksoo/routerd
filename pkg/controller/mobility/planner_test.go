@@ -517,6 +517,9 @@ func TestPlanDynamicConfigActivePlacementMissingLeaseDoesNotDeprovision(t *testi
 	if !out.Placement.Active {
 		t.Fatalf("placement = %+v, want active self", out.Placement)
 	}
+	if len(out.Claims) != 1 {
+		t.Fatalf("active placement missing lease claims = %d, want prior provider claim carried forward", len(out.Claims))
+	}
 	if findActionPlan(out.ActionPlans, "unassign-secondary-ip") != nil || findActionPlan(out.ActionPlans, "ensure-forwarding-disabled") != nil {
 		t.Fatalf("active placement missing lease actionPlans = %+v, want no de-provision", out.ActionPlans)
 	}
@@ -972,6 +975,91 @@ func TestControllerPlannerPlacementDrainRestartWithoutLeaseStillDeprovisions(t *
 	}
 	if findActionPlan(actions, "ensure-forwarding-disabled") == nil {
 		t.Fatalf("restarted drained actionPlans = %+v, want forwarding-disable", actions)
+	}
+}
+
+func TestControllerPlannerActiveStartupMissingLeaseRetainsMemoryThenDrainDeprovisions(t *testing.T) {
+	now := time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC)
+	path := t.TempDir() + "/routerd.db"
+	store, err := routerstate.OpenSQLite(path)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	spec := placementPoolSpec()
+	prior, err := PlanDynamicConfig(PlannerInput{
+		PoolName: "cloudedge",
+		PoolSpec: spec,
+		SelfNode: "azure-router-a",
+		Now:      now,
+		Leases: []routerstate.AddressLeaseRecord{{
+			Pool:       "cloudedge",
+			Address:    "10.88.60.9/32",
+			Status:     routerstate.AddressLeaseStatusActive,
+			OwnerNode:  "onprem-router",
+			OwnerSite:  "onprem",
+			OwnerRole:  "onprem",
+			Epoch:      1,
+			ObservedAt: now,
+			ExpiresAt:  now.Add(time.Hour),
+		}},
+		ProviderProfiles: plannedProviderProfiles(),
+	})
+	if err != nil {
+		t.Fatalf("prior PlanDynamicConfig: %v", err)
+	}
+	record, err := dynamicPartRecord(prior.Part)
+	if err != nil {
+		t.Fatalf("dynamicPartRecord: %v", err)
+	}
+	if err := store.UpsertDynamicConfigPart(record); err != nil {
+		t.Fatalf("UpsertDynamicConfigPart: %v", err)
+	}
+	part := latestPart(t, store, DynamicSource("cloudedge", "azure-router-a"))
+	if countKind(decodeResources(t, part.ResourcesJSON), "RemoteAddressClaim") != 1 {
+		t.Fatalf("initial resources = %s, want claim", part.ResourcesJSON)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close store after active reconcile: %v", err)
+	}
+
+	reopened, err := routerstate.OpenSQLite(path)
+	if err != nil {
+		t.Fatalf("reopen sqlite: %v", err)
+	}
+	leases, err := reopened.ListAddressLeases("cloudedge", true, now.Add(time.Second))
+	if err != nil {
+		t.Fatalf("ListAddressLeases: %v", err)
+	}
+	if len(leases) != 0 {
+		t.Fatalf("seeded leases = %+v, want none", leases)
+	}
+	activeRestart := Controller{Router: planningRouterForNode("azure-router-a", spec), Store: reopened, Now: func() time.Time { return now.Add(time.Second) }}
+	if err := activeRestart.Reconcile(context.Background()); err != nil {
+		t.Fatalf("active restart reconcile with missing lease: %v", err)
+	}
+	part = latestPart(t, reopened, DynamicSource("cloudedge", "azure-router-a"))
+	if got := countKind(decodeResources(t, part.ResourcesJSON), "RemoteAddressClaim"); got != 1 {
+		t.Fatalf("active restart missing lease resources = %s, want previous claim memory retained", part.ResourcesJSON)
+	}
+	if err := reopened.Close(); err != nil {
+		t.Fatalf("close store after active restart: %v", err)
+	}
+
+	reopened, err = routerstate.OpenSQLite(path)
+	if err != nil {
+		t.Fatalf("reopen sqlite for drain: %v", err)
+	}
+	defer reopened.Close()
+	drained := spec
+	drained.Members = append([]api.MobilityPoolMember(nil), spec.Members...)
+	drained.Members[1].Maintenance.Drain = true
+	drainRestart := Controller{Router: planningRouterForNode("azure-router-a", drained), Store: reopened, Now: func() time.Time { return now.Add(2 * time.Second) }}
+	if err := drainRestart.Reconcile(context.Background()); err != nil {
+		t.Fatalf("drain restart reconcile: %v", err)
+	}
+	actions := decodeActionPlans(t, latestPart(t, reopened, DynamicSource("cloudedge", "azure-router-a")).ActionPlansJSON)
+	if findActionPlan(actions, "unassign-secondary-ip") == nil {
+		t.Fatalf("drain restart actionPlans = %+v, want unassign after retained memory", actions)
 	}
 }
 
