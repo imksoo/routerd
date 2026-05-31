@@ -111,6 +111,7 @@ const sidebars: SidebarsConfig = {
         'how-to/pve-overlay',
         'how-to/hybrid-azure-pve-same-subnet',
         'how-to/event-federation-subscription',
+        'how-to/cloudedge-sam-oci-firewall-bootstrap',
         'how-to/aws-provider-action-execution',
         'how-to/troubleshooting',
       ],
@@ -150,6 +151,7 @@ const sidebars: SidebarsConfig = {
       items: [
         'api-v1alpha1',
         'reference/selective-address-mobility',
+        'reference/event-federation',
         'control-api-v1alpha1',
         'plugin-protocol',
         'platforms',
