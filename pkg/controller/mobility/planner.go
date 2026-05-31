@@ -128,19 +128,21 @@ func PlanDynamicConfig(in PlannerInput) (PlannerOutput, error) {
 				minExpiresAt = leaseExpiresAt
 			}
 		}
-		if len(in.Leases) == 0 {
-			for _, claim := range carryForwardProviderClaims(in.PreviousClaims) {
-				claims = append(claims, claim)
-				desiredAddresses[claimAddress(claim)] = true
-				if key := providerNICKeyFromClaim(claim); key != "" {
-					desiredProviderNICs[key] = true
-				}
-			}
-		}
 	}
 	deprovisionPlans, err := providerDeprovisionPlans(poolName, self, in.PreviousClaims, desiredAddresses, desiredProviderNICs, leasesByAddress(in.Leases), in.ProviderProfiles, now, deprovisionHoldDuration(in.PoolSpec), !placement.Active)
 	if err != nil {
 		return PlannerOutput{}, err
+	}
+	if placement.Active {
+		deprovisionedAddresses := actionPlanAddresses(deprovisionPlans, "unassign-secondary-ip")
+		for _, claim := range carryForwardProviderClaims(in.PreviousClaims, desiredAddresses, deprovisionedAddresses) {
+			claims = append(claims, claim)
+			desiredAddresses[claimAddress(claim)] = true
+			if key := providerNICKeyFromClaim(claim); key != "" {
+				desiredProviderNICs[key] = true
+			}
+		}
+		deprovisionPlans = filterForwardingDisablePlans(deprovisionPlans, desiredProviderNICs)
 	}
 	plans = append(plans, deprovisionPlans...)
 
@@ -616,7 +618,7 @@ func providerActionPlans(poolName string, profile api.CloudProviderProfileSpec, 
 	return plans, nil
 }
 
-func carryForwardProviderClaims(previousClaims []api.Resource) []api.Resource {
+func carryForwardProviderClaims(previousClaims []api.Resource, desiredAddresses, deprovisionedAddresses map[string]bool) []api.Resource {
 	var out []api.Resource
 	for _, claim := range sortedClaims(previousClaims) {
 		spec, err := claim.RemoteAddressClaimSpec()
@@ -626,7 +628,45 @@ func carryForwardProviderClaims(previousClaims []api.Resource) []api.Resource {
 		if strings.TrimSpace(spec.Capture.Type) != "provider-secondary-ip" || strings.TrimSpace(spec.Address) == "" {
 			continue
 		}
+		address := strings.TrimSpace(spec.Address)
+		if desiredAddresses[address] || deprovisionedAddresses[address] {
+			continue
+		}
 		out = append(out, cloneResource(claim))
+	}
+	return out
+}
+
+func actionPlanAddresses(plans []dynamicconfig.ActionPlan, action string) map[string]bool {
+	out := map[string]bool{}
+	for _, plan := range plans {
+		if plan.Action != action {
+			continue
+		}
+		if address := strings.TrimSpace(plan.Target["address"]); address != "" {
+			out[address] = true
+		}
+	}
+	return out
+}
+
+func filterForwardingDisablePlans(plans []dynamicconfig.ActionPlan, desiredProviderNICs map[string]bool) []dynamicconfig.ActionPlan {
+	if len(plans) == 0 || len(desiredProviderNICs) == 0 {
+		return plans
+	}
+	out := make([]dynamicconfig.ActionPlan, 0, len(plans))
+	for _, plan := range plans {
+		if plan.Action == "ensure-forwarding-disabled" {
+			providerRef := strings.TrimSpace(plan.ProviderRef)
+			if providerRef == "" {
+				providerRef = strings.TrimSpace(plan.Target["providerRef"])
+			}
+			key := providerNICKey("", providerRef, plan.Target["nicRef"])
+			if key != "" && desiredProviderNICs[key] {
+				continue
+			}
+		}
+		out = append(out, plan)
 	}
 	return out
 }

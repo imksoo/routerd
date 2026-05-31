@@ -525,6 +525,62 @@ func TestPlanDynamicConfigActivePlacementMissingLeaseDoesNotDeprovision(t *testi
 	}
 }
 
+func TestPlanDynamicConfigActivePlacementMissingOneLeaseCarriesPreviousClaim(t *testing.T) {
+	now := time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC)
+	spec := placementPoolSpec()
+	profiles := plannedProviderProfiles()
+	initial, err := PlanDynamicConfig(PlannerInput{
+		PoolName: "cloudedge",
+		PoolSpec: spec,
+		SelfNode: "azure-router-a",
+		Now:      now,
+		Leases: []routerstate.AddressLeaseRecord{{
+			Pool:       "cloudedge",
+			Address:    "10.88.60.9/32",
+			Status:     routerstate.AddressLeaseStatusActive,
+			OwnerNode:  "onprem-router",
+			OwnerSite:  "onprem",
+			OwnerRole:  "onprem",
+			Epoch:      1,
+			ObservedAt: now,
+			ExpiresAt:  now.Add(time.Hour),
+		}},
+		ProviderProfiles: profiles,
+	})
+	if err != nil {
+		t.Fatalf("initial PlanDynamicConfig: %v", err)
+	}
+
+	out, err := PlanDynamicConfig(PlannerInput{
+		PoolName: "cloudedge",
+		PoolSpec: spec,
+		SelfNode: "azure-router-a",
+		Now:      now.Add(time.Second),
+		Leases: []routerstate.AddressLeaseRecord{{
+			Pool:       "cloudedge",
+			Address:    "10.88.60.10/32",
+			Status:     routerstate.AddressLeaseStatusActive,
+			OwnerNode:  "onprem-router",
+			OwnerSite:  "onprem",
+			OwnerRole:  "onprem",
+			Epoch:      1,
+			ObservedAt: now.Add(time.Second),
+			ExpiresAt:  now.Add(time.Hour),
+		}},
+		PreviousClaims:   initial.Claims,
+		ProviderProfiles: profiles,
+	})
+	if err != nil {
+		t.Fatalf("partial missing PlanDynamicConfig: %v", err)
+	}
+	if len(out.Claims) != 2 {
+		t.Fatalf("claims = %d, want new desired + carried previous: %+v", len(out.Claims), out.Claims)
+	}
+	if findActionPlan(out.ActionPlans, "unassign-secondary-ip") != nil {
+		t.Fatalf("partial missing actionPlans = %+v, want no de-provision without proof", out.ActionPlans)
+	}
+}
+
 func TestPlanDynamicConfigPlacementAllDrainedNoCandidate(t *testing.T) {
 	now := time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC)
 	spec := placementPoolSpec()
@@ -607,8 +663,8 @@ func TestPlanDynamicConfigDeprovisionsStaleProviderClaimAfterHold(t *testing.T) 
 	if err != nil {
 		t.Fatalf("before-hold PlanDynamicConfig: %v", err)
 	}
-	if len(beforeHold.Claims) != 0 || len(beforeHold.ActionPlans) != 0 {
-		t.Fatalf("before hold claims/actionPlans = %d/%d, want none", len(beforeHold.Claims), len(beforeHold.ActionPlans))
+	if len(beforeHold.Claims) != 1 || len(beforeHold.ActionPlans) != 0 {
+		t.Fatalf("before hold claims/actionPlans = %d/%d, want carried claim + no action", len(beforeHold.Claims), len(beforeHold.ActionPlans))
 	}
 
 	afterHold, err := PlanDynamicConfig(PlannerInput{
