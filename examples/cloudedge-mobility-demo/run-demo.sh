@@ -1,0 +1,216 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+ENV_FILE=${ENV_FILE:-"$ROOT/env"}
+WORKDIR=${WORKDIR:-"$ROOT/.rendered"}
+
+if [[ ! -f "$ENV_FILE" ]]; then
+  echo "missing env file: $ENV_FILE (copy env.example to env)" >&2
+  exit 1
+fi
+
+set -a
+# shellcheck disable=SC1090
+source "$ENV_FILE"
+set +a
+
+require() {
+  command -v "$1" >/dev/null || { echo "missing command: $1" >&2; exit 1; }
+}
+
+require envsubst
+require jq
+require ssh
+require scp
+
+SSH_OPTS=(-i "$SSH_KEY_FILE" -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10)
+
+router_host() {
+  case "$1" in
+    onprem) echo "$ONPREM_ROUTER_SSH_HOST" ;;
+    aws-a) echo "$AWS_ROUTER_A_SSH_HOST" ;;
+    aws-b) echo "$AWS_ROUTER_B_SSH_HOST" ;;
+    azure) echo "$AZURE_ROUTER_SSH_HOST" ;;
+    oci) echo "$OCI_ROUTER_SSH_HOST" ;;
+    *) echo "unknown router $1" >&2; return 1 ;;
+  esac
+}
+
+router_user() {
+  case "$1" in
+    onprem) echo "${ONPREM_SSH_USER:-$SSH_USER}" ;;
+    aws-a) echo "${AWS_ROUTER_A_SSH_USER:-$SSH_USER}" ;;
+    aws-b) echo "${AWS_ROUTER_B_SSH_USER:-$SSH_USER}" ;;
+    azure) echo "${AZURE_ROUTER_SSH_USER:-$SSH_USER}" ;;
+    oci) echo "${OCI_ROUTER_SSH_USER:-$SSH_USER}" ;;
+  esac
+}
+
+router_ssh() {
+  local node=$1
+  shift
+  ssh "${SSH_OPTS[@]}" "$(router_user "$node")@$(router_host "$node")" "$@"
+}
+
+router_scp() {
+  local src=$1 node=$2 dst=$3
+  scp "${SSH_OPTS[@]}" "$src" "$(router_user "$node")@$(router_host "$node"):$dst" >/dev/null
+}
+
+render_configs() {
+  mkdir -p "$WORKDIR"
+  envsubst < "$ROOT/onprem.yaml" > "$WORKDIR/onprem.yaml"
+  envsubst < "$ROOT/aws.yaml" > "$WORKDIR/aws-a.yaml"
+  envsubst < "$ROOT/azure.yaml" > "$WORKDIR/azure.yaml"
+  envsubst < "$ROOT/oci.yaml" > "$WORKDIR/oci.yaml"
+
+  cp "$WORKDIR/aws-a.yaml" "$WORKDIR/aws-b.yaml"
+  perl -0pi -e 's/cloudedge-mobility-aws-router-a-demo/cloudedge-mobility-aws-router-b-demo/g;
+                s/nodeName: aws-router-a/nodeName: aws-router-b/g;
+                s/remote:\n          nodeID: aws-router-a\n          address: 10\.99\.0\.2/remote:\n          nodeID: aws-router-b\n          address: 10.99.0.5/g;
+                s/address: 10\.99\.0\.2\/32/address: 10.99.0.5\/32/g;
+                s/listen:\n          address: 10\.99\.0\.2/listen:\n          address: 10.99.0.5/g' "$WORKDIR/aws-b.yaml"
+
+  cp "$WORKDIR/aws-a.yaml" "$WORKDIR/aws-a-drain.yaml"
+  cp "$WORKDIR/onprem.yaml" "$WORKDIR/onprem-drain.yaml"
+  cp "$WORKDIR/aws-b.yaml" "$WORKDIR/aws-b-drain.yaml"
+
+  perl -0pi -e 's/(placement: \{ group: aws-edge, priority: 10 \})/$1\n            maintenance: { drain: true }/' \
+    "$WORKDIR/aws-a-drain.yaml" "$WORKDIR/aws-b-drain.yaml" "$WORKDIR/onprem-drain.yaml"
+  perl -0pi -e 's/allowedIPs: \[10\.99\.0\.2\/32, 10\.77\.60\.11\/32\]/allowedIPs: [10.99.0.2\/32]/;
+                s/allowedIPs: \[10\.99\.0\.5\/32\]/allowedIPs: [10.99.0.5\/32, 10.77.60.11\/32]/' \
+    "$WORKDIR/onprem-drain.yaml"
+}
+
+validate_rendered() {
+  for cfg in "$WORKDIR"/*.yaml; do
+    "$ROUTERD_BIN" validate --config "$cfg"
+  done
+}
+
+install_secret_and_config() {
+  local node=$1 cfg=$2
+  router_scp "$cfg" "$node" /tmp/router.yaml
+  router_ssh "$node" "set -euo pipefail
+    sudo install -d -m 0700 \$(dirname '$EVENT_HMAC_SECRET_FILE')
+    printf '%s\n' '$EVENT_HMAC_SECRET_VALUE' | sudo tee '$EVENT_HMAC_SECRET_FILE' >/dev/null
+    sudo chmod 0600 '$EVENT_HMAC_SECRET_FILE'
+    sudo install -m 0600 /tmp/router.yaml /usr/local/etc/routerd/router.yaml
+    sudo systemctl restart routerd
+    sudo systemctl restart routerd-eventd@cloudedge.service
+    sudo systemctl is-active routerd
+    sudo systemctl is-active routerd-eventd@cloudedge.service"
+}
+
+emit_observed() {
+  local node=$1 source_node=$2 address=$3
+  router_ssh "$node" "sudo $ROUTERCTL_BIN federation event emit --group cloudedge --type routerd.client.ipv4.observed --subject ${address}/32 --source-node $source_node --payload address=${address}/32 --ttl 10m -o json"
+}
+
+execute_provider_actions() {
+  local node=$1
+  router_ssh "$node" "sudo $ROUTERCTL_BIN action import"
+  local ids
+  ids=$(router_ssh "$node" "sudo $ROUTERCTL_BIN action list --status pending -o json" | jq -r '.[].id')
+  for id in $ids; do
+    router_ssh "$node" "sudo $ROUTERCTL_BIN action approve $id --by cloudedge-demo && sudo $ROUTERCTL_BIN action execute $id --approved"
+  done
+}
+
+client_jump() {
+  case "$1" in
+    onprem) echo "$(router_user onprem)@$(router_host onprem)" ;;
+    aws) echo "$(router_user aws-a)@$(router_host aws-a)" ;;
+    azure) echo "$(router_user azure)@$(router_host azure)" ;;
+    oci) echo "$(router_user oci)@$(router_host oci)" ;;
+    aws-b) echo "$(router_user aws-b)@$(router_host aws-b)" ;;
+  esac
+}
+
+client_host() {
+  case "$1" in
+    onprem) echo "$ONPREM_CLIENT_SSH_HOST" ;;
+    aws) echo "$AWS_CLIENT_SSH_HOST" ;;
+    azure) echo "$AZURE_CLIENT_SSH_HOST" ;;
+    oci) echo "$OCI_CLIENT_SSH_HOST" ;;
+  esac
+}
+
+client_exec() {
+  local site=$1
+  shift
+  ssh "${SSH_OPTS[@]}" -J "$(client_jump "$site")" "$CLIENT_SSH_USER@$(client_host "$site")" "$@"
+}
+
+run_d3_matrix() {
+  local sites=(onprem aws azure oci)
+  local ips=("$ONPREM_CLIENT_IP" "$AWS_CLIENT_IP" "$AZURE_CLIENT_IP" "$OCI_CLIENT_IP")
+  for i in "${!sites[@]}"; do
+    for j in "${!sites[@]}"; do
+      [[ "$i" == "$j" ]] && continue
+      local src=${sites[$i]} dst_ip=${ips[$j]}
+      echo "D3 $src -> $dst_ip ping"
+      client_exec "$src" "ping -c3 -W2 $dst_ip"
+      echo "D3 $src -> $dst_ip ssh source"
+      client_exec "$src" "ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=8 $CLIENT_SSH_USER@$dst_ip 'printenv SSH_CONNECTION; ip route show default'"
+    done
+  done
+}
+
+probe_stale_gate_on_aws_b() {
+  router_ssh aws-b "set -euo pipefail
+    now=\$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    sudo sqlite3 /var/lib/routerd/routerd.db \"insert into action_executions(idempotency_key,source,provider,provider_ref,action,target_json,parameters_json,undo_json,risk_level,status,created_at,updated_at) values('cloudedge-demo-stale-probe-epoch1','stale-gate-probe','aws','aws-lab','assign-secondary-ip',json_object('provider','aws','providerRef','aws-lab','region','$AWS_REGION','nicRef','$AWS_ROUTER_B_ENI_REF','address','10.77.60.10/32'),json_object('mobilityCaptureKey','cloudedge'||char(0)||'10.77.60.10/32'||char(0)||'provider:aws-lab:placement:aws-edge','mobilityCaptureEpoch','1','mobilityCaptureHolder','aws-router-a'),'{}','medium','pending','\$now','\$now') on conflict(idempotency_key) do nothing;\"
+    sudo $ROUTERCTL_BIN action import
+    sudo $ROUTERCTL_BIN action list -o json | jq -r '.[] | select(.idempotencyKey==\"cloudedge-demo-stale-probe-epoch1\") | [.status,.resultMessage] | @tsv'"
+}
+
+main() {
+  render_configs
+  validate_rendered
+
+  echo "Deploy initial D3/D5 baseline configs"
+  install_secret_and_config onprem "$WORKDIR/onprem.yaml"
+  install_secret_and_config aws-a "$WORKDIR/aws-a.yaml"
+  install_secret_and_config aws-b "$WORKDIR/aws-b.yaml"
+  install_secret_and_config azure "$WORKDIR/azure.yaml"
+  install_secret_and_config oci "$WORKDIR/oci.yaml"
+
+  echo "Emit D3 observed events"
+  emit_observed onprem onprem-router "$ONPREM_CLIENT_IP"
+  emit_observed aws-a aws-router-a "$AWS_CLIENT_IP"
+  emit_observed azure azure-router "$AZURE_CLIENT_IP"
+  emit_observed oci oci-router "$OCI_CLIENT_IP"
+  sleep 20
+
+  echo "Execute provider actions for D3"
+  execute_provider_actions aws-a
+  execute_provider_actions azure
+  execute_provider_actions oci
+
+  echo "Run D3 12-directed connectivity matrix"
+  run_d3_matrix
+
+  echo "Apply D5 drain for aws-router-a"
+  install_secret_and_config onprem "$WORKDIR/onprem-drain.yaml"
+  install_secret_and_config aws-a "$WORKDIR/aws-a-drain.yaml"
+  install_secret_and_config aws-b "$WORKDIR/aws-b-drain.yaml"
+  emit_observed onprem onprem-router "$ONPREM_CLIENT_IP"
+  emit_observed aws-b aws-router-b "$AWS_CLIENT_IP"
+  sleep 20
+
+  echo "Execute D5 migration actions"
+  execute_provider_actions aws-a
+  execute_provider_actions aws-b
+  echo "Probe stale epoch gate on aws-router-b"
+  probe_stale_gate_on_aws_b
+
+  echo "Verify D5 dataplane via aws-router-b"
+  ssh "${SSH_OPTS[@]}" -J "$(client_jump aws-b)" "$CLIENT_SSH_USER@$AWS_CLIENT_SSH_HOST" "ping -c3 -W2 $ONPREM_CLIENT_IP"
+  ssh "${SSH_OPTS[@]}" -J "$(client_jump aws-b),$CLIENT_SSH_USER@$AWS_CLIENT_SSH_HOST" "$CLIENT_SSH_USER@$ONPREM_CLIENT_IP" "printenv SSH_CONNECTION; ip route show default"
+
+  echo "CloudEdge Mobility demo PASS"
+}
+
+main "$@"

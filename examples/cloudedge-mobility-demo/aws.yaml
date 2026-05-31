@@ -1,0 +1,259 @@
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: cloudedge-mobility-aws-router-a-demo
+spec:
+  resources:
+    - apiVersion: federation.routerd.net/v1alpha1
+      kind: EventGroup
+      metadata:
+        name: cloudedge
+      spec:
+        nodeName: aws-router-a
+        retention:
+          maxEvents: 1000
+          maxAge: 24h
+        auth:
+          mode: hmac
+          secretFile: "${EVENT_HMAC_SECRET_FILE}"
+        listen:
+          address: 10.99.0.2
+          port: 9443
+        replayWindow: 5m
+
+    - apiVersion: federation.routerd.net/v1alpha1
+      kind: EventPeer
+      metadata:
+        name: onprem-router
+      spec:
+        groupRef: cloudedge
+        nodeName: onprem-router
+        endpoint: http://10.99.0.1:9443
+        direction: push
+        types: [routerd.client.ipv4.observed, routerd.client.ipv4.expired]
+        subjectPrefixes: [10.77.60.]
+
+    - apiVersion: federation.routerd.net/v1alpha1
+      kind: EventPeer
+      metadata:
+        name: azure-router
+      spec:
+        groupRef: cloudedge
+        nodeName: azure-router
+        endpoint: http://10.99.0.3:9443
+        direction: push
+        types: [routerd.client.ipv4.observed, routerd.client.ipv4.expired]
+        subjectPrefixes: [10.77.60.]
+
+    - apiVersion: federation.routerd.net/v1alpha1
+      kind: EventPeer
+      metadata:
+        name: oci-router
+      spec:
+        groupRef: cloudedge
+        nodeName: oci-router
+        endpoint: http://10.99.0.4:9443
+        direction: push
+        types: [routerd.client.ipv4.observed, routerd.client.ipv4.expired]
+        subjectPrefixes: [10.77.60.]
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardInterface
+      metadata:
+        name: wg-hybrid
+      spec:
+        privateKeyFile: /usr/local/etc/routerd/secrets/wg-hybrid.key
+        listenPort: 51820
+        mtu: 1420
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4StaticAddress
+      metadata:
+        name: wg-hybrid-ipv4
+      spec:
+        interface: wg-hybrid
+        address: 10.99.0.2/32
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4Route
+      metadata:
+        name: route-onprem-wg-overlay
+      spec:
+        destination: 10.99.0.1/32
+        device: wg-hybrid
+        metric: 80
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4Route
+      metadata:
+        name: route-azure-wg-overlay-transit
+      spec:
+        destination: 10.99.0.3/32
+        device: wg-hybrid
+        metric: 80
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4Route
+      metadata:
+        name: route-oci-wg-overlay-transit
+      spec:
+        destination: 10.99.0.4/32
+        device: wg-hybrid
+        metric: 80
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardPeer
+      metadata:
+        name: onprem-main
+      spec:
+        interface: wg-hybrid
+        publicKey: "${ONPREM_WG_PUBLIC_KEY}"
+        endpoint: "${ONPREM_WG_ENDPOINT}"
+        allowedIPs:
+          - 10.99.0.1/32
+          - 10.99.0.3/32
+          - 10.99.0.4/32
+          - 10.77.60.10/32
+          - 10.77.60.12/32
+          - 10.77.60.13/32
+        persistentKeepalive: 25
+
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: OverlayPeer
+      metadata:
+        name: onprem-main
+      spec:
+        role: onprem
+        nodeID: onprem-router
+        underlay:
+          type: wireguard
+          interface: wg-hybrid
+          address: 10.99.0.1
+        remote:
+          nodeID: aws-router-a
+          address: 10.99.0.2
+
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: CloudProviderProfile
+      metadata:
+        name: aws-lab
+      spec:
+        provider: aws
+        accountID: "${AWS_ACCOUNT_ID}"
+        region: "${AWS_REGION}"
+        capabilities:
+          - eni-secondary-ip
+          - source-dest-check-disable
+        auth:
+          mode: external-command
+          command: /usr/local/libexec/routerd/plugins/aws-auth
+
+    - apiVersion: mobility.routerd.net/v1alpha1
+      kind: MobilityPool
+      metadata:
+        name: cloudedge
+      spec:
+        prefix: 10.77.60.0/24
+        groupRef: cloudedge
+        members:
+          - nodeRef: onprem-router
+            site: onprem
+            role: onprem
+            capture:
+              type: proxy-arp
+              interface: ens21
+              gratuitousARP: true
+            deliveryTo:
+              - { nodeRef: aws-router-a, peerRef: onprem-main, mode: route, tunnelInterface: wg-hybrid }
+              - { nodeRef: aws-router-b, peerRef: onprem-main, mode: route, tunnelInterface: wg-hybrid }
+              - { nodeRef: azure-router, peerRef: onprem-main, mode: route, tunnelInterface: wg-hybrid }
+              - { nodeRef: oci-router, peerRef: onprem-main, mode: route, tunnelInterface: wg-hybrid }
+          - nodeRef: aws-router-a
+            site: aws
+            role: cloud
+            capture:
+              type: provider-secondary-ip
+              interface: ens5
+              providerRef: aws-lab
+              providerMode: eni-secondary-ip
+              nicRef: "${AWS_ROUTER_A_ENI_REF}"
+              configureOSAddress: false
+              target:
+                region: "${AWS_REGION}"
+            delivery: { peerRef: onprem-main, mode: route, tunnelInterface: wg-hybrid }
+            placement: { group: aws-edge, priority: 10 }
+          - nodeRef: aws-router-b
+            site: aws
+            role: cloud
+            capture:
+              type: provider-secondary-ip
+              interface: ens5
+              providerRef: aws-lab
+              providerMode: eni-secondary-ip
+              nicRef: "${AWS_ROUTER_B_ENI_REF}"
+              configureOSAddress: false
+              target:
+                region: "${AWS_REGION}"
+            delivery: { peerRef: onprem-main, mode: route, tunnelInterface: wg-hybrid }
+            placement: { group: aws-edge, priority: 20 }
+          - nodeRef: azure-router
+            site: azure
+            role: cloud
+            capture:
+              type: provider-secondary-ip
+              interface: eth0
+              providerRef: azure-lab
+              providerMode: nic-secondary-ip
+              nicRef: "${AZURE_ROUTER_NIC_REF}"
+              configureOSAddress: false
+              target:
+                region: "${AZURE_REGION}"
+                resourceGroup: "${AZURE_RESOURCE_GROUP}"
+                nicName: "${AZURE_ROUTER_NIC_NAME}"
+            delivery: { peerRef: onprem-main, mode: route, tunnelInterface: wg-hybrid }
+          - nodeRef: oci-router
+            site: oci
+            role: cloud
+            capture:
+              type: provider-secondary-ip
+              interface: ens3
+              providerRef: oci-lab
+              providerMode: vnic-secondary-ip
+              nicRef: "${OCI_ROUTER_VNIC_REF}"
+              configureOSAddress: false
+              target:
+                region: "${OCI_REGION}"
+                compartmentId: "${OCI_COMPARTMENT_REF}"
+            delivery: { peerRef: onprem-main, mode: route, tunnelInterface: wg-hybrid }
+        leasePolicy: { ttl: 30m, holdDuration: 5s }
+        capturePolicy: { mode: all-non-owner-sites, deprovisionHoldDuration: 5s }
+
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: ProviderActionPolicy
+      metadata:
+        name: aws-live-mutation
+      spec:
+        enabled: true
+        dryRunOnly: false
+        requireApproval: true
+        allowedProviders: [aws]
+        allowedProviderRefs: [aws-lab]
+        allowedActions:
+          - assign-secondary-ip
+          - unassign-secondary-ip
+          - ensure-forwarding-enabled
+          - ensure-forwarding-disabled
+        allowedCIDRs: [10.77.60.0/24]
+        maxActionsPerRun: 8
+        allowUndo: true
+
+    - apiVersion: plugin.routerd.net/v1alpha1
+      kind: Plugin
+      metadata:
+        name: aws-executor
+      spec:
+        executable: /usr/local/libexec/routerd/plugins/aws-provider-executor/bin/aws-provider-executor
+        timeout: 120s
+        env:
+          AWS_DEFAULT_REGION: "${AWS_REGION}"
+        capabilities: [execute.providerAction]
