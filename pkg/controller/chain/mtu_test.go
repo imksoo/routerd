@@ -7,8 +7,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/platform"
+	"github.com/imksoo/routerd/pkg/render"
+	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
 func TestPathMTUControllerRendersMSSClamp(t *testing.T) {
@@ -76,6 +80,85 @@ func TestPathMTUControllerSkipsUnchangedLiveReload(t *testing.T) {
 	}
 	if count := countLogLine(got, "-c -f "+controller.Path); count != 2 {
 		t.Fatalf("nft -c -f count = %d, want 2:\n%s", count, got)
+	}
+}
+
+func TestPathMTUControllerRendersDynamicRemoteAddressClaimMSSClamp(t *testing.T) {
+	dir := t.TempDir()
+	startup := startupHybridContextRouter()
+	startup.Spec.Resources = append(startup.Spec.Resources,
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardInterface"},
+			Metadata: api.ObjectMeta{Name: "wg-sam"},
+			Spec:     api.WireGuardInterfaceSpec{MTU: 1420},
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "CloudProviderProfile"},
+			Metadata: api.ObjectMeta{Name: "lab-cloud"},
+			Spec: api.CloudProviderProfileSpec{
+				Provider:     "oci",
+				Capabilities: []string{"vnic-secondary-ip"},
+				Auth:         api.ProviderAuth{Mode: "external-command", Command: "/bin/true"},
+			},
+		},
+	)
+	claim := remoteAddressClaimResource("app", "10.0.1.123/32", "provider-secondary-ip", "ens3")
+	claimSpec := claim.Spec.(api.RemoteAddressClaimSpec)
+	claimSpec.Capture.ProviderRef = "lab-cloud"
+	claimSpec.Capture.ProviderMode = "vnic-secondary-ip"
+	claimSpec.Capture.NICRef = "ocid1.vnic.example"
+	claim.Spec = claimSpec
+	store := &dynamicRouteSAMStore{
+		records: []routerstate.DynamicConfigPartRecord{dynamicPartRecord(t, "MobilityPool/cloudedge/node/cloud", []api.Resource{
+			addressMobilityDomainResource(),
+			claim,
+		}, time.Now().Add(time.Hour))},
+		objects: map[string]map[string]any{},
+	}
+	view, err := buildDynamicRouteSAMView(startup, store, time.Now().UTC(), platform.OSLinux)
+	if err != nil {
+		t.Fatalf("buildDynamicRouteSAMView: %v", err)
+	}
+	controller := PathMTUController{Router: view.EffectiveRouter, Store: store, DryRun: true, Path: filepath.Join(dir, "mss.nft")}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(controller.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		"table inet routerd_mss",
+		`iifname "ens3" oifname "wg-sam" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1300 tcp option maxseg size set 1300`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("dynamic SAM MSS clamp missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestPathMTUEffectiveViewEmptyPartsMatchesRawRouter(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite-a"}, Spec: api.DSLiteTunnelSpec{TunnelName: "ds-lite-a", MTU: 1454}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"lan"}}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.FirewallZoneSpec{Role: "untrust", Interfaces: []string{"ds-lite-a"}}},
+	}}}
+	view, err := buildDynamicRouteSAMView(router, &dynamicRouteSAMStore{objects: map[string]map[string]any{}}, time.Now().UTC(), platform.OSLinux)
+	if err != nil {
+		t.Fatalf("buildDynamicRouteSAMView: %v", err)
+	}
+	raw, err := render.NftablesTCPMSSClamp(router)
+	if err != nil {
+		t.Fatalf("raw render: %v", err)
+	}
+	effective, err := render.NftablesTCPMSSClamp(view.EffectiveRouter)
+	if err != nil {
+		t.Fatalf("effective render: %v", err)
+	}
+	if string(effective) != string(raw) {
+		t.Fatalf("effective MSS render differs from raw\nraw:\n%s\neffective:\n%s", raw, effective)
 	}
 }
 

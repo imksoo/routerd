@@ -940,7 +940,15 @@ func (r *Runner) Start(ctx context.Context) error {
 			current.Lowerings = view.SAMLowerings
 			return current.Reconcile(ctx)
 		}},
-		framework.FuncController{ControllerName: "path-mtu", Subs: statusSubscriptions("DSLiteTunnel", "PPPoESession", "WireGuardInterface", "Interface", "FirewallZone", "DHCPv6Server", "IPv6RouterAdvertisement"), PeriodicFunc: pathMTU.Reconcile},
+		framework.FuncController{ControllerName: "path-mtu", Subs: statusSubscriptions("DSLiteTunnel", "PPPoESession", "WireGuardInterface", "Interface", "FirewallZone", "DHCPv6Server", "IPv6RouterAdvertisement", "MobilityPool"), PeriodicFunc: func(ctx context.Context) error {
+			view, err := buildDynamicRouteSAMView(r.Router, r.Store, time.Now().UTC(), platform.CurrentOS())
+			if err != nil {
+				return err
+			}
+			current := pathMTU
+			current.Router = view.EffectiveRouter
+			return current.Reconcile(ctx)
+		}},
 		framework.FuncController{ControllerName: "dhcpv6-server", Every: 30 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed", "routerd.dhcp.lease.**"}}}, PeriodicFunc: dhcpv6.reconcile},
 		framework.FuncController{ControllerName: "dhcpv4-lease", Every: 10 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.dhcpv4.client.**"}}}, ReconcileFunc: func(ctx context.Context, _ daemonapi.DaemonEvent) error {
 			return dhcp4Client.ReconcileAll(ctx)
