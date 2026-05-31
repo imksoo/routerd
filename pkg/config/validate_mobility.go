@@ -50,6 +50,7 @@ func validateMobilityResource(res api.Resource, _ platform.OS) (bool, error) {
 			return true, fmt.Errorf("%s spec.members requires at least one member", res.ID())
 		}
 		nodeRefs := map[string]bool{}
+		placementGroups := map[string]mobilityPlacementGroup{}
 		for i, member := range spec.Members {
 			nodeRef := strings.TrimSpace(member.NodeRef)
 			if nodeRef == "" {
@@ -68,6 +69,9 @@ func validateMobilityResource(res api.Resource, _ platform.OS) (bool, error) {
 			}
 			nodeRefs[nodeRef] = true
 			if err := validateMobilityMemberCapture(res, i, member); err != nil {
+				return true, err
+			}
+			if err := validateMobilityMemberPlacement(res, i, member, placementGroups); err != nil {
 				return true, err
 			}
 		}
@@ -120,6 +124,53 @@ func validateMobilityResource(res api.Resource, _ platform.OS) (bool, error) {
 		return true, nil
 	}
 	return false, nil
+}
+
+type mobilityPlacementGroup struct {
+	site        string
+	role        string
+	providerRef string
+}
+
+func validateMobilityMemberPlacement(res api.Resource, index int, member api.MobilityPoolMember, groups map[string]mobilityPlacementGroup) error {
+	group := strings.TrimSpace(member.Placement.Group)
+	if group == "" {
+		if member.Placement.Priority != 0 {
+			return fmt.Errorf("%s spec.members[%d].placement.priority requires placement.group", res.ID(), index)
+		}
+		if member.Maintenance.Drain {
+			return fmt.Errorf("%s spec.members[%d].maintenance.drain requires placement.group", res.ID(), index)
+		}
+		return nil
+	}
+	if member.Placement.Priority < 0 || member.Placement.Priority > 1000000 {
+		return fmt.Errorf("%s spec.members[%d].placement.priority must be between 0 and 1000000", res.ID(), index)
+	}
+	if strings.TrimSpace(member.Role) != "cloud" {
+		return fmt.Errorf("%s spec.members[%d].placement.group is supported only for role cloud", res.ID(), index)
+	}
+	if strings.TrimSpace(member.Capture.Type) != "provider-secondary-ip" {
+		return fmt.Errorf("%s spec.members[%d].placement.group requires provider-secondary-ip capture", res.ID(), index)
+	}
+	current := mobilityPlacementGroup{
+		site:        strings.TrimSpace(member.Site),
+		role:        strings.TrimSpace(member.Role),
+		providerRef: strings.TrimSpace(member.Capture.ProviderRef),
+	}
+	if existing, ok := groups[group]; ok {
+		if existing.site != current.site {
+			return fmt.Errorf("%s spec.members[%d].placement.group %q must use one site; got %q and %q", res.ID(), index, group, existing.site, current.site)
+		}
+		if existing.role != current.role {
+			return fmt.Errorf("%s spec.members[%d].placement.group %q must use one role; got %q and %q", res.ID(), index, group, existing.role, current.role)
+		}
+		if existing.providerRef != current.providerRef {
+			return fmt.Errorf("%s spec.members[%d].placement.group %q must use one providerRef; got %q and %q", res.ID(), index, group, existing.providerRef, current.providerRef)
+		}
+	} else {
+		groups[group] = current
+	}
+	return nil
 }
 
 func validateMobilityMemberCapture(res api.Resource, index int, member api.MobilityPoolMember) error {

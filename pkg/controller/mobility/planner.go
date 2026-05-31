@@ -41,16 +41,31 @@ type PlannerOutput struct {
 	Part        dynamicconfig.DynamicConfigPart
 	Claims      []api.Resource
 	ActionPlans []dynamicconfig.ActionPlan
+	Placement   PlacementDecision
+}
+
+type PlacementDecision struct {
+	Group      string
+	Active     bool
+	ActiveNode string
+	Reason     string
+}
+
+func (d PlacementDecision) NoCandidate() bool {
+	return d.Group != "" && d.ActiveNode == ""
 }
 
 type memberPlanInfo struct {
-	NodeRef       string
-	Site          string
-	Role          string
-	Capture       api.AddressCapture
-	CaptureTarget map[string]string
-	Delivery      api.AddressDelivery
-	DeliveryTo    []deliveryTargetPlanInfo
+	NodeRef           string
+	Site              string
+	Role              string
+	Capture           api.AddressCapture
+	CaptureTarget     map[string]string
+	Delivery          api.AddressDelivery
+	DeliveryTo        []deliveryTargetPlanInfo
+	PlacementGroup    string
+	PlacementPriority int
+	MaintenanceDrain  bool
 }
 
 type deliveryTargetPlanInfo struct {
@@ -86,6 +101,7 @@ func PlanDynamicConfig(in PlannerInput) (PlannerOutput, error) {
 	if !ok {
 		return PlannerOutput{}, fmt.Errorf("self node %q is not a member of MobilityPool/%s", selfNode, poolName)
 	}
+	placement := evaluatePlacement(self, members)
 
 	claims := []api.Resource{}
 	plans := []dynamicconfig.ActionPlan{}
@@ -93,22 +109,24 @@ func PlanDynamicConfig(in PlannerInput) (PlannerOutput, error) {
 	desiredAddresses := map[string]bool{}
 	desiredProviderNICs := map[string]bool{}
 	minExpiresAt := time.Time{}
-	for _, lease := range sortedLeases(in.Leases) {
-		claim, actionPlans, leaseExpiresAt, ok, err := planLease(poolName, prefix, self, members, lease, in.ProviderProfiles, now, forwardingSeen)
-		if err != nil {
-			return PlannerOutput{}, err
-		}
-		if !ok {
-			continue
-		}
-		claims = append(claims, claim)
-		plans = append(plans, actionPlans...)
-		desiredAddresses[claimAddress(claim)] = true
-		if key := providerNICKeyFromClaim(claim); key != "" {
-			desiredProviderNICs[key] = true
-		}
-		if !leaseExpiresAt.IsZero() && (minExpiresAt.IsZero() || leaseExpiresAt.Before(minExpiresAt)) {
-			minExpiresAt = leaseExpiresAt
+	if placement.Active {
+		for _, lease := range sortedLeases(in.Leases) {
+			claim, actionPlans, leaseExpiresAt, ok, err := planLease(poolName, prefix, self, members, lease, in.ProviderProfiles, now, forwardingSeen)
+			if err != nil {
+				return PlannerOutput{}, err
+			}
+			if !ok {
+				continue
+			}
+			claims = append(claims, claim)
+			plans = append(plans, actionPlans...)
+			desiredAddresses[claimAddress(claim)] = true
+			if key := providerNICKeyFromClaim(claim); key != "" {
+				desiredProviderNICs[key] = true
+			}
+			if !leaseExpiresAt.IsZero() && (minExpiresAt.IsZero() || leaseExpiresAt.Before(minExpiresAt)) {
+				minExpiresAt = leaseExpiresAt
+			}
 		}
 	}
 	deprovisionPlans, err := providerDeprovisionPlans(poolName, self, in.PreviousClaims, desiredAddresses, desiredProviderNICs, leasesByAddress(in.Leases), in.ProviderProfiles, now, deprovisionHoldDuration(in.PoolSpec))
@@ -152,7 +170,7 @@ func PlanDynamicConfig(in PlannerInput) (PlannerOutput, error) {
 		},
 	}
 	part.Spec.Digest = digestDynamicPart(part)
-	return PlannerOutput{Part: part, Claims: claims, ActionPlans: plans}, nil
+	return PlannerOutput{Part: part, Claims: claims, ActionPlans: plans, Placement: placement}, nil
 }
 
 func (c Controller) reconcilePlan(res api.Resource, now time.Time) error {
@@ -192,9 +210,14 @@ func (c Controller) reconcilePlan(res api.Resource, now time.Time) error {
 	if err := c.Store.UpsertDynamicConfigPart(record); err != nil {
 		return fmt.Errorf("upsert dynamic config part: %w", err)
 	}
-	return c.savePlannerStatus(res.Metadata.Name, map[string]any{
-		"plannerPhase":       "Planned",
-		"plannerReason":      "",
+	plannerPhase := "Planned"
+	plannerReason := out.Placement.Reason
+	if out.Placement.NoCandidate() {
+		plannerPhase = "NoPlacementCandidate"
+	}
+	status := map[string]any{
+		"plannerPhase":       plannerPhase,
+		"plannerReason":      plannerReason,
 		"selfNode":           selfNode,
 		"dynamicSource":      out.Part.Spec.Source,
 		"dynamicGeneration":  out.Part.Spec.Generation,
@@ -205,7 +228,13 @@ func (c Controller) reconcilePlan(res api.Resource, now time.Time) error {
 		"plannedAt":          now.Format(time.RFC3339Nano),
 		"operatorIntent":     "MobilityPool",
 		"derivedConfigKinds": []string{"AddressMobilityDomain", "RemoteAddressClaim"},
-	})
+	}
+	if out.Placement.Group != "" {
+		status["placementGroup"] = out.Placement.Group
+		status["placementActive"] = out.Placement.Active
+		status["placementActiveNode"] = out.Placement.ActiveNode
+	}
+	return c.savePlannerStatus(res.Metadata.Name, status)
 }
 
 func (c Controller) upsertEmptyPlan(poolName string, spec api.MobilityPoolSpec, selfNode string, now time.Time) error {
@@ -360,16 +389,56 @@ func plannerMembers(members []api.MobilityPoolMember) map[string]memberPlanInfo 
 	for _, member := range members {
 		nodeRef := strings.TrimSpace(member.NodeRef)
 		out[nodeRef] = memberPlanInfo{
-			NodeRef:       nodeRef,
-			Site:          strings.TrimSpace(member.Site),
-			Role:          strings.TrimSpace(member.Role),
-			Capture:       trimCapture(member.Capture),
-			CaptureTarget: copyStringMap(member.Capture.Target),
-			Delivery:      trimDelivery(member.Delivery),
-			DeliveryTo:    trimDeliveryTargets(member.DeliveryTo),
+			NodeRef:           nodeRef,
+			Site:              strings.TrimSpace(member.Site),
+			Role:              strings.TrimSpace(member.Role),
+			Capture:           trimCapture(member.Capture),
+			CaptureTarget:     copyStringMap(member.Capture.Target),
+			Delivery:          trimDelivery(member.Delivery),
+			DeliveryTo:        trimDeliveryTargets(member.DeliveryTo),
+			PlacementGroup:    strings.TrimSpace(member.Placement.Group),
+			PlacementPriority: member.Placement.Priority,
+			MaintenanceDrain:  member.Maintenance.Drain,
 		}
 	}
 	return out
+}
+
+func evaluatePlacement(self memberPlanInfo, members map[string]memberPlanInfo) PlacementDecision {
+	group := strings.TrimSpace(self.PlacementGroup)
+	if group == "" {
+		return PlacementDecision{Active: true, ActiveNode: self.NodeRef}
+	}
+	candidates := make([]memberPlanInfo, 0, len(members))
+	for _, member := range members {
+		if strings.TrimSpace(member.PlacementGroup) != group || member.MaintenanceDrain {
+			continue
+		}
+		candidates = append(candidates, member)
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].PlacementPriority == candidates[j].PlacementPriority {
+			return candidates[i].NodeRef < candidates[j].NodeRef
+		}
+		return candidates[i].PlacementPriority < candidates[j].PlacementPriority
+	})
+	if len(candidates) == 0 {
+		return PlacementDecision{
+			Group:  group,
+			Active: false,
+			Reason: fmt.Sprintf("placement group %q has no non-drained members", group),
+		}
+	}
+	activeNode := candidates[0].NodeRef
+	if activeNode == self.NodeRef {
+		return PlacementDecision{Group: group, Active: true, ActiveNode: activeNode}
+	}
+	return PlacementDecision{
+		Group:      group,
+		Active:     false,
+		ActiveNode: activeNode,
+		Reason:     fmt.Sprintf("placement group %q active node is %q", group, activeNode),
+	}
 }
 
 func resolveDelivery(self memberPlanInfo, owner memberPlanInfo) (api.AddressDelivery, bool) {

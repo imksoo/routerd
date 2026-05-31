@@ -1376,6 +1376,22 @@ type MobilityPoolMember struct {
 	// resolves entries against the lease owner in nodeRef -> site -> role order,
 	// then falls back to Delivery.
 	DeliveryTo []MobilityMemberDeliveryTarget `yaml:"deliveryTo,omitempty" json:"deliveryTo,omitempty"`
+	// Placement optionally places this member in an active/standby capture group.
+	// When set, only the highest-priority non-drained member in the same group
+	// captures provider-side addresses.
+	Placement MobilityMemberPlacement `yaml:"placement,omitempty" json:"placement,omitempty"`
+	// Maintenance carries declarative operator maintenance intent for this member.
+	// Drained placement members are excluded from active capture selection.
+	Maintenance MobilityMemberMaintenance `yaml:"maintenance,omitempty" json:"maintenance,omitempty"`
+}
+
+type MobilityMemberPlacement struct {
+	Group    string `yaml:"group,omitempty" json:"group,omitempty"`
+	Priority int    `yaml:"priority,omitempty" json:"priority,omitempty"`
+}
+
+type MobilityMemberMaintenance struct {
+	Drain bool `yaml:"drain,omitempty" json:"drain,omitempty"`
 }
 
 type MobilityMemberCapture struct {

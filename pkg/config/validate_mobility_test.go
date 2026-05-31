@@ -42,6 +42,46 @@ func TestValidateMobilityPool(t *testing.T) {
 	}
 }
 
+func TestValidateMobilityPoolPlacement(t *testing.T) {
+	spec := api.MobilityPoolSpec{
+		Prefix:   "10.88.60.0/24",
+		GroupRef: "cloudedge",
+		Members: []api.MobilityPoolMember{
+			{NodeRef: "onprem-router", Site: "onprem", Role: "onprem"},
+			{
+				NodeRef: "azure-router-a",
+				Site:    "azure",
+				Role:    "cloud",
+				Capture: api.MobilityMemberCapture{
+					Type:         "provider-secondary-ip",
+					ProviderRef:  "azure-provider",
+					ProviderMode: "nic-secondary-ip",
+					NICRef:       "nic-a",
+				},
+				Delivery:    api.MobilityMemberDelivery{PeerRef: "onprem"},
+				Placement:   api.MobilityMemberPlacement{Group: "azure-edge", Priority: 10},
+				Maintenance: api.MobilityMemberMaintenance{Drain: true},
+			},
+			{
+				NodeRef: "azure-router-b",
+				Site:    "azure",
+				Role:    "cloud",
+				Capture: api.MobilityMemberCapture{
+					Type:         "provider-secondary-ip",
+					ProviderRef:  "azure-provider",
+					ProviderMode: "nic-secondary-ip",
+					NICRef:       "nic-b",
+				},
+				Delivery:  api.MobilityMemberDelivery{PeerRef: "onprem"},
+				Placement: api.MobilityMemberPlacement{Group: "azure-edge", Priority: 20},
+			},
+		},
+	}
+	if err := Validate(mobilityPoolRouter(spec)); err != nil {
+		t.Fatalf("Validate placement MobilityPool: %v", err)
+	}
+}
+
 func TestValidateMobilityPoolRejectsInvalidFields(t *testing.T) {
 	tests := []struct {
 		name string
@@ -72,6 +112,56 @@ func TestValidateMobilityPoolRejectsInvalidFields(t *testing.T) {
 			name: "bad deprovision hold",
 			mut:  func(spec *api.MobilityPoolSpec) { spec.CapturePolicy.DeprovisionHoldDuration = "-1s" },
 			want: "deprovisionHoldDuration must be >= 0",
+		},
+		{
+			name: "placement priority without group",
+			mut:  func(spec *api.MobilityPoolSpec) { spec.Members[1].Placement.Priority = 10 },
+			want: "placement.priority requires placement.group",
+		},
+		{
+			name: "drain without placement",
+			mut:  func(spec *api.MobilityPoolSpec) { spec.Members[1].Maintenance.Drain = true },
+			want: "maintenance.drain requires placement.group",
+		},
+		{
+			name: "placement priority range",
+			mut: func(spec *api.MobilityPoolSpec) {
+				spec.Members[1].Capture = api.MobilityMemberCapture{Type: "provider-secondary-ip", ProviderRef: "azure-provider", ProviderMode: "nic-secondary-ip", NICRef: "nic-1"}
+				spec.Members[1].Delivery = api.MobilityMemberDelivery{PeerRef: "onprem"}
+				spec.Members[1].Placement = api.MobilityMemberPlacement{Group: "azure-edge", Priority: -1}
+			},
+			want: "placement.priority must be between 0 and 1000000",
+		},
+		{
+			name: "placement role",
+			mut: func(spec *api.MobilityPoolSpec) {
+				spec.Members[0].Capture = api.MobilityMemberCapture{Type: "proxy-arp", Interface: "lan"}
+				spec.Members[0].Delivery = api.MobilityMemberDelivery{PeerRef: "azure"}
+				spec.Members[0].Placement = api.MobilityMemberPlacement{Group: "onprem-edge", Priority: 10}
+			},
+			want: "placement.group is supported only for role cloud",
+		},
+		{
+			name: "placement group provider mismatch",
+			mut: func(spec *api.MobilityPoolSpec) {
+				spec.Members = append(spec.Members, api.MobilityPoolMember{
+					NodeRef: "azure-router-b",
+					Site:    "azure",
+					Role:    "cloud",
+					Capture: api.MobilityMemberCapture{
+						Type:         "provider-secondary-ip",
+						ProviderRef:  "other-provider",
+						ProviderMode: "nic-secondary-ip",
+						NICRef:       "nic-2",
+					},
+					Delivery:  api.MobilityMemberDelivery{PeerRef: "onprem"},
+					Placement: api.MobilityMemberPlacement{Group: "azure-edge", Priority: 20},
+				})
+				spec.Members[1].Capture = api.MobilityMemberCapture{Type: "provider-secondary-ip", ProviderRef: "azure-provider", ProviderMode: "nic-secondary-ip", NICRef: "nic-1"}
+				spec.Members[1].Delivery = api.MobilityMemberDelivery{PeerRef: "onprem"}
+				spec.Members[1].Placement = api.MobilityMemberPlacement{Group: "azure-edge", Priority: 10}
+			},
+			want: "must use one providerRef",
 		},
 		{
 			name: "unknown authority node",

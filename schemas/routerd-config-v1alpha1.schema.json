@@ -6828,9 +6828,32 @@
                               },
                               "type": "array"
                             },
+                            "maintenance": {
+                              "additionalProperties": false,
+                              "description": "Maintenance carries declarative operator maintenance intent for this member.\nDrained placement members are excluded from active capture selection.",
+                              "properties": {
+                                "drain": {
+                                  "type": "boolean"
+                                }
+                              },
+                              "type": "object"
+                            },
                             "nodeRef": {
                               "description": "NodeRef is the routerd node identity (matches federation sourceNode).",
                               "type": "string"
+                            },
+                            "placement": {
+                              "additionalProperties": false,
+                              "description": "Placement optionally places this member in an active/standby capture group.\nWhen set, only the highest-priority non-drained member in the same group\ncaptures provider-side addresses.",
+                              "properties": {
+                                "group": {
+                                  "type": "string"
+                                },
+                                "priority": {
+                                  "type": "integer"
+                                }
+                              },
+                              "type": "object"
                             },
                             "role": {
                               "description": "Role selects the SAM side semantics for this node. It is separate from Site\nso sites can be named for topology while role remains provider-agnostic.",

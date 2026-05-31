@@ -167,6 +167,10 @@ DNSSEC validation は `DNSForwarder.spec.dnssecValidate` に書きます。
 `MobilityPool.spec.capturePolicy.deprovisionHoldDuration` は、生成済みの cloud
 capture がこの node の desired capture set から外れた後、provider 側の
 de-provision action plan を出すまでの待ち時間です。
+`members[].placement` は同一 provider の cloud router を deterministic な
+active/standby capture group にまとめます。`members[].maintenance.drain` を
+true にすると、その member は active 選出から外れます。placement projection を
+揃えるため、mobility demo の全 node に同じ `MobilityPool` config を配ります。
 
 `EgressRoutePolicy` は、CIDR 指定に加えて `destinationSetRefs` と
 `excludeDestinationSetRefs` を持ちます。これにより、FQDN-backed な宛先 set を policy
@@ -510,7 +514,7 @@ validator がエラーにします。
 | `LogRetention` | `phase` (string), `targets` (objectList), `updatedAt` (timestamp) |
 | `LogSink` | `phase` (string), `type` (string) |
 | `ManagementAccess` | `interfaces` (stringList), `phase` (string) |
-| `MobilityPool` | `activeLeases` (int), `dynamicSource` (string), `expiredLeases` (int), `generatedActions` (int), `generatedClaims` (int), `groupRef` (string), `holdingLeases` (int), `leaseCount` (int), `phase` (string), `plannerPhase` (string), `prefix` (string), `projectedAt` (timestamp) |
+| `MobilityPool` | `activeLeases` (int), `dynamicSource` (string), `expiredLeases` (int), `generatedActions` (int), `generatedClaims` (int), `groupRef` (string), `holdingLeases` (int), `leaseCount` (int), `phase` (string), `placementActive` (bool), `placementActiveNode` (string), `placementGroup` (string), `plannerPhase` (string), `plannerReason` (string), `prefix` (string), `projectedAt` (timestamp) |
 | `NAT44Rule` | `dryRun` (bool), `egressInterface` (string), `phase` (string), `snatAddress` (string) |
 | `NTPClient` | `phase` (string), `servers` (stringList), `source` (string), `updatedAt` (timestamp) |
 | `NTPServer` | `allowCIDRs` (stringList), `listenAddresses` (stringList), `phase` (string), `servers` (stringList), `source` (string), `updatedAt` (timestamp) |

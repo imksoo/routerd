@@ -5,6 +5,7 @@ package mobility
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -202,6 +203,250 @@ func TestPlanDynamicConfigSkipsOwnSiteHoldingAndExpiredLeases(t *testing.T) {
 	}
 	if len(out.Part.Spec.Resources) != 1 || out.Part.Spec.Resources[0].Kind != "AddressMobilityDomain" {
 		t.Fatalf("resources = %+v, want domain-only part", out.Part.Spec.Resources)
+	}
+}
+
+func TestPlacementDecision(t *testing.T) {
+	base := placementPoolSpec()
+	tests := []struct {
+		name        string
+		mut         func(*api.MobilityPoolSpec)
+		self        string
+		active      bool
+		activeNode  string
+		noCandidate bool
+	}{
+		{
+			name:       "primary active",
+			self:       "azure-router-a",
+			active:     true,
+			activeNode: "azure-router-a",
+		},
+		{
+			name:       "standby inactive",
+			self:       "azure-router-b",
+			active:     false,
+			activeNode: "azure-router-a",
+		},
+		{
+			name: "drain primary promotes next",
+			mut: func(spec *api.MobilityPoolSpec) {
+				spec.Members[1].Maintenance.Drain = true
+			},
+			self:       "azure-router-b",
+			active:     true,
+			activeNode: "azure-router-b",
+		},
+		{
+			name: "nodeRef tiebreak",
+			mut: func(spec *api.MobilityPoolSpec) {
+				spec.Members[1].Placement.Priority = 10
+				spec.Members[2].Placement.Priority = 10
+			},
+			self:       "azure-router-a",
+			active:     true,
+			activeNode: "azure-router-a",
+		},
+		{
+			name: "all drained",
+			mut: func(spec *api.MobilityPoolSpec) {
+				spec.Members[1].Maintenance.Drain = true
+				spec.Members[2].Maintenance.Drain = true
+			},
+			self:        "azure-router-a",
+			active:      false,
+			noCandidate: true,
+		},
+		{
+			name:       "placement unspecified unchanged",
+			self:       "onprem-router",
+			active:     true,
+			activeNode: "onprem-router",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spec := base
+			spec.Members = append([]api.MobilityPoolMember(nil), base.Members...)
+			if tt.mut != nil {
+				tt.mut(&spec)
+			}
+			members := plannerMembers(spec.Members)
+			decision := evaluatePlacement(members[tt.self], members)
+			if decision.Active != tt.active || decision.ActiveNode != tt.activeNode || decision.NoCandidate() != tt.noCandidate {
+				t.Fatalf("decision = %+v, want active=%t activeNode=%q noCandidate=%t", decision, tt.active, tt.activeNode, tt.noCandidate)
+			}
+		})
+	}
+}
+
+func TestPlanDynamicConfigPlacementActiveOnly(t *testing.T) {
+	now := time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC)
+	lease := routerstate.AddressLeaseRecord{
+		Pool:       "cloudedge",
+		Address:    "10.88.60.9/32",
+		Status:     routerstate.AddressLeaseStatusActive,
+		OwnerNode:  "onprem-router",
+		OwnerSite:  "onprem",
+		OwnerRole:  "onprem",
+		Epoch:      1,
+		ObservedAt: now,
+		ExpiresAt:  now.Add(time.Hour),
+	}
+	spec := placementPoolSpec()
+	profiles := plannedProviderProfiles()
+	active, err := PlanDynamicConfig(PlannerInput{
+		PoolName:         "cloudedge",
+		PoolSpec:         spec,
+		SelfNode:         "azure-router-a",
+		Now:              now,
+		Leases:           []routerstate.AddressLeaseRecord{lease},
+		ProviderProfiles: profiles,
+	})
+	if err != nil {
+		t.Fatalf("active PlanDynamicConfig: %v", err)
+	}
+	if len(active.Claims) != 1 || findActionPlan(active.ActionPlans, "assign-secondary-ip") == nil {
+		t.Fatalf("active claims/actionPlans = %d/%+v, want claim + assign", len(active.Claims), active.ActionPlans)
+	}
+
+	inactive, err := PlanDynamicConfig(PlannerInput{
+		PoolName:         "cloudedge",
+		PoolSpec:         spec,
+		SelfNode:         "azure-router-b",
+		Now:              now,
+		Leases:           []routerstate.AddressLeaseRecord{lease},
+		ProviderProfiles: profiles,
+	})
+	if err != nil {
+		t.Fatalf("inactive PlanDynamicConfig: %v", err)
+	}
+	if len(inactive.Claims) != 0 || len(inactive.ActionPlans) != 0 || inactive.Placement.ActiveNode != "azure-router-a" {
+		t.Fatalf("inactive output = claims %d actions %+v placement %+v, want no claim/action and active a", len(inactive.Claims), inactive.ActionPlans, inactive.Placement)
+	}
+}
+
+func TestPlanDynamicConfigPlacementDrainMovesCapture(t *testing.T) {
+	now := time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC)
+	spec := placementPoolSpec()
+	profiles := plannedProviderProfiles()
+	lease := routerstate.AddressLeaseRecord{
+		Pool:       "cloudedge",
+		Address:    "10.88.60.9/32",
+		Status:     routerstate.AddressLeaseStatusActive,
+		OwnerNode:  "onprem-router",
+		OwnerSite:  "onprem",
+		OwnerRole:  "onprem",
+		Epoch:      1,
+		ObservedAt: now,
+		ExpiresAt:  now.Add(time.Hour),
+	}
+	primary, err := PlanDynamicConfig(PlannerInput{
+		PoolName:         "cloudedge",
+		PoolSpec:         spec,
+		SelfNode:         "azure-router-a",
+		Now:              now,
+		Leases:           []routerstate.AddressLeaseRecord{lease},
+		ProviderProfiles: profiles,
+	})
+	if err != nil {
+		t.Fatalf("primary PlanDynamicConfig: %v", err)
+	}
+	if len(primary.Claims) != 1 {
+		t.Fatalf("primary claims = %d, want one", len(primary.Claims))
+	}
+
+	drained := spec
+	drained.Members = append([]api.MobilityPoolMember(nil), spec.Members...)
+	drained.Members[1].Maintenance.Drain = true
+	drainedOld, err := PlanDynamicConfig(PlannerInput{
+		PoolName:         "cloudedge",
+		PoolSpec:         drained,
+		SelfNode:         "azure-router-a",
+		Now:              now.Add(time.Minute),
+		Leases:           []routerstate.AddressLeaseRecord{lease},
+		PreviousClaims:   primary.Claims,
+		ProviderProfiles: profiles,
+	})
+	if err != nil {
+		t.Fatalf("drained old PlanDynamicConfig: %v", err)
+	}
+	if len(drainedOld.Claims) != 0 || findActionPlan(drainedOld.ActionPlans, "unassign-secondary-ip") == nil {
+		t.Fatalf("drained old claims/actions = %d/%+v, want no claim + unassign", len(drainedOld.Claims), drainedOld.ActionPlans)
+	}
+	drainedNew, err := PlanDynamicConfig(PlannerInput{
+		PoolName:         "cloudedge",
+		PoolSpec:         drained,
+		SelfNode:         "azure-router-b",
+		Now:              now.Add(time.Minute),
+		Leases:           []routerstate.AddressLeaseRecord{lease},
+		ProviderProfiles: profiles,
+	})
+	if err != nil {
+		t.Fatalf("drained new PlanDynamicConfig: %v", err)
+	}
+	if len(drainedNew.Claims) != 1 || findActionPlan(drainedNew.ActionPlans, "assign-secondary-ip") == nil {
+		t.Fatalf("drained new claims/actions = %d/%+v, want claim + assign", len(drainedNew.Claims), drainedNew.ActionPlans)
+	}
+
+	returnedOld, err := PlanDynamicConfig(PlannerInput{
+		PoolName:         "cloudedge",
+		PoolSpec:         spec,
+		SelfNode:         "azure-router-a",
+		Now:              now.Add(2 * time.Minute),
+		Leases:           []routerstate.AddressLeaseRecord{lease},
+		ProviderProfiles: profiles,
+	})
+	if err != nil {
+		t.Fatalf("returned old PlanDynamicConfig: %v", err)
+	}
+	if len(returnedOld.Claims) != 1 || findActionPlan(returnedOld.ActionPlans, "assign-secondary-ip") == nil {
+		t.Fatalf("returned old claims/actions = %d/%+v, want primary claim + assign", len(returnedOld.Claims), returnedOld.ActionPlans)
+	}
+	returnedNew, err := PlanDynamicConfig(PlannerInput{
+		PoolName:         "cloudedge",
+		PoolSpec:         spec,
+		SelfNode:         "azure-router-b",
+		Now:              now.Add(2 * time.Minute),
+		Leases:           []routerstate.AddressLeaseRecord{lease},
+		PreviousClaims:   drainedNew.Claims,
+		ProviderProfiles: profiles,
+	})
+	if err != nil {
+		t.Fatalf("returned new PlanDynamicConfig: %v", err)
+	}
+	if len(returnedNew.Claims) != 0 || findActionPlan(returnedNew.ActionPlans, "unassign-secondary-ip") == nil {
+		t.Fatalf("returned new claims/actions = %d/%+v, want standby unassign", len(returnedNew.Claims), returnedNew.ActionPlans)
+	}
+}
+
+func TestPlanDynamicConfigPlacementAllDrainedNoCandidate(t *testing.T) {
+	now := time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC)
+	spec := placementPoolSpec()
+	spec.Members[1].Maintenance.Drain = true
+	spec.Members[2].Maintenance.Drain = true
+	out, err := PlanDynamicConfig(PlannerInput{
+		PoolName: "cloudedge",
+		PoolSpec: spec,
+		SelfNode: "azure-router-a",
+		Now:      now,
+		Leases: []routerstate.AddressLeaseRecord{{
+			Pool:      "cloudedge",
+			Address:   "10.88.60.9/32",
+			Status:    routerstate.AddressLeaseStatusActive,
+			OwnerNode: "onprem-router",
+			OwnerSite: "onprem",
+			OwnerRole: "onprem",
+			Epoch:     1,
+			ExpiresAt: now.Add(time.Hour),
+		}},
+		ProviderProfiles: plannedProviderProfiles(),
+	})
+	if err != nil {
+		t.Fatalf("PlanDynamicConfig: %v", err)
+	}
+	if !out.Placement.NoCandidate() || len(out.Claims) != 0 || len(out.ActionPlans) != 0 {
+		t.Fatalf("output = placement %+v claims %d actions %+v, want no candidate with no claim/action", out.Placement, len(out.Claims), out.ActionPlans)
 	}
 }
 
@@ -424,6 +669,110 @@ func TestControllerPlannerUsesEventGroupNodeNameAndOverwritesGenerationOne(t *te
 	}
 }
 
+func TestControllerPlannerPlacementDrainMovesDynamicPartBetweenNodes(t *testing.T) {
+	now := time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC)
+	store := testStore(t, now)
+	if err := store.UpsertAddressLease(routerstate.AddressLeaseRecord{
+		Pool:       "cloudedge",
+		Address:    "10.88.60.9/32",
+		Status:     routerstate.AddressLeaseStatusActive,
+		OwnerNode:  "onprem-router",
+		OwnerSite:  "onprem",
+		OwnerRole:  "onprem",
+		Epoch:      1,
+		ObservedAt: now,
+		ExpiresAt:  now.Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("UpsertAddressLease: %v", err)
+	}
+	spec := placementPoolSpec()
+	controllerA := Controller{Router: planningRouterForNode("azure-router-a", spec), Store: store, Now: func() time.Time { return now }}
+	controllerB := Controller{Router: planningRouterForNode("azure-router-b", spec), Store: store, Now: func() time.Time { return now }}
+	if err := controllerA.Reconcile(context.Background()); err != nil {
+		t.Fatalf("initial reconcile A: %v", err)
+	}
+	if err := controllerB.Reconcile(context.Background()); err != nil {
+		t.Fatalf("initial reconcile B: %v", err)
+	}
+	partA := latestPart(t, store, DynamicSource("cloudedge", "azure-router-a"))
+	partB := latestPart(t, store, DynamicSource("cloudedge", "azure-router-b"))
+	if countKind(decodeResources(t, partA.ResourcesJSON), "RemoteAddressClaim") != 1 || findActionPlan(decodeActionPlans(t, partA.ActionPlansJSON), "assign-secondary-ip") == nil {
+		t.Fatalf("initial A part resources/actions = %s / %s, want active claim+assign", partA.ResourcesJSON, partA.ActionPlansJSON)
+	}
+	if countKind(decodeResources(t, partB.ResourcesJSON), "RemoteAddressClaim") != 0 || len(decodeActionPlans(t, partB.ActionPlansJSON)) != 0 {
+		t.Fatalf("initial B part resources/actions = %s / %s, want inactive", partB.ResourcesJSON, partB.ActionPlansJSON)
+	}
+
+	drained := spec
+	drained.Members = append([]api.MobilityPoolMember(nil), spec.Members...)
+	drained.Members[1].Maintenance.Drain = true
+	controllerA.Router = planningRouterForNode("azure-router-a", drained)
+	controllerB.Router = planningRouterForNode("azure-router-b", drained)
+	controllerA.Now = func() time.Time { return now.Add(time.Minute) }
+	controllerB.Now = func() time.Time { return now.Add(time.Minute) }
+	if err := controllerA.Reconcile(context.Background()); err != nil {
+		t.Fatalf("drain reconcile A: %v", err)
+	}
+	if err := controllerB.Reconcile(context.Background()); err != nil {
+		t.Fatalf("drain reconcile B: %v", err)
+	}
+	partA = latestPart(t, store, DynamicSource("cloudedge", "azure-router-a"))
+	partB = latestPart(t, store, DynamicSource("cloudedge", "azure-router-b"))
+	if countKind(decodeResources(t, partA.ResourcesJSON), "RemoteAddressClaim") != 0 || findActionPlan(decodeActionPlans(t, partA.ActionPlansJSON), "unassign-secondary-ip") == nil {
+		t.Fatalf("drained A part resources/actions = %s / %s, want no claim + unassign", partA.ResourcesJSON, partA.ActionPlansJSON)
+	}
+	if countKind(decodeResources(t, partB.ResourcesJSON), "RemoteAddressClaim") != 1 || findActionPlan(decodeActionPlans(t, partB.ActionPlansJSON), "assign-secondary-ip") == nil {
+		t.Fatalf("drained B part resources/actions = %s / %s, want claim + assign", partB.ResourcesJSON, partB.ActionPlansJSON)
+	}
+
+	controllerA.Router = planningRouterForNode("azure-router-a", spec)
+	controllerB.Router = planningRouterForNode("azure-router-b", spec)
+	controllerA.Now = func() time.Time { return now.Add(2 * time.Minute) }
+	controllerB.Now = func() time.Time { return now.Add(2 * time.Minute) }
+	if err := controllerA.Reconcile(context.Background()); err != nil {
+		t.Fatalf("return reconcile A: %v", err)
+	}
+	if err := controllerB.Reconcile(context.Background()); err != nil {
+		t.Fatalf("return reconcile B: %v", err)
+	}
+	partA = latestPart(t, store, DynamicSource("cloudedge", "azure-router-a"))
+	partB = latestPart(t, store, DynamicSource("cloudedge", "azure-router-b"))
+	if countKind(decodeResources(t, partA.ResourcesJSON), "RemoteAddressClaim") != 1 || findActionPlan(decodeActionPlans(t, partA.ActionPlansJSON), "assign-secondary-ip") == nil {
+		t.Fatalf("returned A part resources/actions = %s / %s, want claim + assign", partA.ResourcesJSON, partA.ActionPlansJSON)
+	}
+	if countKind(decodeResources(t, partB.ResourcesJSON), "RemoteAddressClaim") != 0 || findActionPlan(decodeActionPlans(t, partB.ActionPlansJSON), "unassign-secondary-ip") == nil {
+		t.Fatalf("returned B part resources/actions = %s / %s, want no claim + unassign", partB.ResourcesJSON, partB.ActionPlansJSON)
+	}
+}
+
+func TestControllerPlannerPlacementAllDrainedStatus(t *testing.T) {
+	now := time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC)
+	store := testStore(t, now)
+	if err := store.UpsertAddressLease(routerstate.AddressLeaseRecord{
+		Pool:      "cloudedge",
+		Address:   "10.88.60.9/32",
+		Status:    routerstate.AddressLeaseStatusActive,
+		OwnerNode: "onprem-router",
+		OwnerSite: "onprem",
+		OwnerRole: "onprem",
+		Epoch:     1,
+		ExpiresAt: now.Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("UpsertAddressLease: %v", err)
+	}
+	spec := placementPoolSpec()
+	spec.Members[1].Maintenance.Drain = true
+	spec.Members[2].Maintenance.Drain = true
+	controller := Controller{Router: planningRouterForNode("azure-router-a", spec), Store: store, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	if status["plannerPhase"] != "NoPlacementCandidate" || !strings.Contains(fmt.Sprint(status["plannerReason"]), "no non-drained members") {
+		t.Fatalf("status = %#v, want NoPlacementCandidate with reason", status)
+	}
+}
+
 func plannedPoolSpec() api.MobilityPoolSpec {
 	return api.MobilityPoolSpec{
 		Prefix:   "10.88.60.0/24",
@@ -454,6 +803,42 @@ func plannedPoolSpec() api.MobilityPoolSpec {
 	}
 }
 
+func placementPoolSpec() api.MobilityPoolSpec {
+	spec := plannedPoolSpec()
+	spec.Members = []api.MobilityPoolMember{
+		spec.Members[0],
+		api.MobilityPoolMember{
+			NodeRef: "azure-router-a",
+			Site:    "azure",
+			Role:    "cloud",
+			Capture: api.MobilityMemberCapture{
+				Type:         "provider-secondary-ip",
+				ProviderRef:  "azure-provider",
+				ProviderMode: "nic-secondary-ip",
+				NICRef:       "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic-a",
+				Target:       map[string]string{"region": "japaneast", "ipConfigName": "capture-a"},
+			},
+			Delivery:  api.MobilityMemberDelivery{PeerRef: "onprem", Mode: "route", TunnelInterface: "wg-hybrid"},
+			Placement: api.MobilityMemberPlacement{Group: "azure-edge", Priority: 10},
+		},
+		api.MobilityPoolMember{
+			NodeRef: "azure-router-b",
+			Site:    "azure",
+			Role:    "cloud",
+			Capture: api.MobilityMemberCapture{
+				Type:         "provider-secondary-ip",
+				ProviderRef:  "azure-provider",
+				ProviderMode: "nic-secondary-ip",
+				NICRef:       "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic-b",
+				Target:       map[string]string{"region": "japaneast", "ipConfigName": "capture-b"},
+			},
+			Delivery:  api.MobilityMemberDelivery{PeerRef: "onprem", Mode: "route", TunnelInterface: "wg-hybrid"},
+			Placement: api.MobilityMemberPlacement{Group: "azure-edge", Priority: 20},
+		},
+	}
+	return spec
+}
+
 func plannedProviderProfiles() map[string]api.CloudProviderProfileSpec {
 	return map[string]api.CloudProviderProfileSpec{
 		"azure-provider": {
@@ -467,6 +852,10 @@ func plannedProviderProfiles() map[string]api.CloudProviderProfileSpec {
 }
 
 func planningRouter() *api.Router {
+	return planningRouterForNode("azure-router", plannedPoolSpec())
+}
+
+func planningRouterForNode(nodeName string, spec api.MobilityPoolSpec) *api.Router {
 	return &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 		Metadata: api.ObjectMeta{Name: "test"},
@@ -474,12 +863,12 @@ func planningRouter() *api.Router {
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.FederationAPIVersion, Kind: "EventGroup"},
 				Metadata: api.ObjectMeta{Name: "cloudedge"},
-				Spec:     api.EventGroupSpec{NodeName: "azure-router"},
+				Spec:     api.EventGroupSpec{NodeName: nodeName},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"},
 				Metadata: api.ObjectMeta{Name: "cloudedge"},
-				Spec:     plannedPoolSpec(),
+				Spec:     spec,
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "CloudProviderProfile"},
@@ -494,6 +883,20 @@ func planningRouter() *api.Router {
 			},
 		}},
 	}
+}
+
+func latestPart(t *testing.T, store interface {
+	GetDynamicConfigPartsBySource(string) ([]routerstate.DynamicConfigPartRecord, error)
+}, source string) routerstate.DynamicConfigPartRecord {
+	t.Helper()
+	parts, err := store.GetDynamicConfigPartsBySource(source)
+	if err != nil {
+		t.Fatalf("GetDynamicConfigPartsBySource(%s): %v", source, err)
+	}
+	if len(parts) == 0 {
+		t.Fatalf("GetDynamicConfigPartsBySource(%s) returned no parts", source)
+	}
+	return parts[0]
 }
 
 func findActionPlan(plans []dynamicconfig.ActionPlan, action string) *dynamicconfig.ActionPlan {

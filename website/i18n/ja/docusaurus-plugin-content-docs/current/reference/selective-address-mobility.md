@@ -56,6 +56,11 @@ spec:
         target:
           region: japaneast
           ipConfigName: mobility-capture
+      placement:
+        group: azure-edge
+        priority: 10
+      maintenance:
+        drain: false
       delivery:
         peerRef: onprem-main
         mode: route
@@ -71,6 +76,13 @@ spec:
 routerd は `routerd.client.ipv4.observed` federation event を read-only な
 `AddressLease` state に射影します。Lease は config Kind ではなく、手で書くもの
 ではありません。`routerctl mobility leases` で確認します。
+
+同一 provider の cloud router maintenance では、`members[].placement.group`
+内の non-drained member から `priority`、次に `nodeRef` の順で active capture
+member を選びます。`members[].maintenance.drain: true` にすると、その member は
+active 選出から外れ、planner が generated capture claim と provider action plan
+を次の候補へ移します。placement projection を deterministic に保つため、pool の
+全 node に同じ `MobilityPool` config を配ります。
 
 `AddressMobilityDomain` と `RemoteAddressClaim` は低位の SAM 表現です。既存の
 hand-authored SAM config は引き続きサポートしますが、CloudEdge Mobility の本線では

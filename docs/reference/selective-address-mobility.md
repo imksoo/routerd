@@ -57,6 +57,11 @@ spec:
         target:
           region: japaneast
           ipConfigName: mobility-capture
+      placement:
+        group: azure-edge
+        priority: 10
+      maintenance:
+        drain: false
       delivery:
         peerRef: onprem-main
         mode: route
@@ -72,6 +77,13 @@ spec:
 routerd projects `routerd.client.ipv4.observed` federation events into
 read-only `AddressLease` state. A lease is not a config Kind and should not be
 hand-authored. Inspect it with `routerctl mobility leases`.
+
+For same-provider cloud router maintenance, `members[].placement.group` elects
+one non-drained active capture member by `priority` and then `nodeRef`.
+`members[].maintenance.drain: true` removes that member from active selection,
+so the planner moves generated capture claims and provider action plans to the
+next candidate. Distribute the same `MobilityPool` config to every node in the
+pool to keep placement projection deterministic.
 
 `AddressMobilityDomain` and `RemoteAddressClaim` are the lower-level SAM
 representation. Existing hand-authored SAM configs remain supported, but in the

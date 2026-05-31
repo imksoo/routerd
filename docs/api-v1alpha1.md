@@ -217,6 +217,10 @@ procedures for the mobility control plane.
 generated provider action plans. `capturePolicy.deprovisionHoldDuration`
 optionally delays provider de-provision action plans after a generated cloud
 capture leaves this node's desired capture set.
+`members[].placement` can group same-provider cloud routers into deterministic
+active/standby capture placement; `members[].maintenance.drain` removes that
+member from active selection. All nodes in a mobility demo should receive the
+same `MobilityPool` config so they project the same placement decision.
 
 Selective Address Mobility is declarative in this MVP. `RemoteAddressClaim`
 does not configure firewall or NAT policy. Operators compose firewall/NAT by
@@ -563,7 +567,7 @@ and fields outside the target kind's `provides` set.
 | `LogRetention` | `phase` (string), `targets` (objectList), `updatedAt` (timestamp) |
 | `LogSink` | `phase` (string), `type` (string) |
 | `ManagementAccess` | `interfaces` (stringList), `phase` (string) |
-| `MobilityPool` | `activeLeases` (int), `dynamicSource` (string), `expiredLeases` (int), `generatedActions` (int), `generatedClaims` (int), `groupRef` (string), `holdingLeases` (int), `leaseCount` (int), `phase` (string), `plannerPhase` (string), `prefix` (string), `projectedAt` (timestamp) |
+| `MobilityPool` | `activeLeases` (int), `dynamicSource` (string), `expiredLeases` (int), `generatedActions` (int), `generatedClaims` (int), `groupRef` (string), `holdingLeases` (int), `leaseCount` (int), `phase` (string), `placementActive` (bool), `placementActiveNode` (string), `placementGroup` (string), `plannerPhase` (string), `plannerReason` (string), `prefix` (string), `projectedAt` (timestamp) |
 | `NAT44Rule` | `dryRun` (bool), `egressInterface` (string), `phase` (string), `snatAddress` (string) |
 | `NTPClient` | `phase` (string), `servers` (stringList), `source` (string), `updatedAt` (timestamp) |
 | `NTPServer` | `allowCIDRs` (stringList), `listenAddresses` (stringList), `phase` (string), `servers` (stringList), `source` (string), `updatedAt` (timestamp) |
