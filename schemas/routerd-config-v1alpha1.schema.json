@@ -6658,6 +6658,10 @@
                         "additionalProperties": false,
                         "description": "CapturePolicy declares how non-owner sites capture an address that has\nmoved.",
                         "properties": {
+                          "deprovisionHoldDuration": {
+                            "description": "DeprovisionHoldDuration delays provider-side de-provision action plans\nafter a previously captured address leaves this node's desired capture set.\nEmpty defaults to leasePolicy.holdDuration, then the controller default.",
+                            "type": "string"
+                          },
                           "mode": {
                             "description": "Mode selects the capture behavior. Only \"all-non-owner-sites\" is supported\nin the MVP; empty defaults to it.",
                             "enum": [

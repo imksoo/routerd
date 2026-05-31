@@ -18,8 +18,10 @@ import (
 )
 
 const (
-	dynamicGeneration = int64(1)
-	dynamicSourceKind = "MobilityPool"
+	dynamicGeneration              = int64(1)
+	dynamicSourceKind              = "MobilityPool"
+	DefaultDeprovisionHoldDuration = 10 * time.Second
+	captureTargetAnnotationPrefix  = "mobility.routerd.net/capture-target."
 )
 
 // PlannerInput is the pure lease-to-dynamic-config planning input for one
@@ -30,6 +32,7 @@ type PlannerInput struct {
 	SelfNode         string
 	Now              time.Time
 	Leases           []routerstate.AddressLeaseRecord
+	PreviousClaims   []api.Resource
 	ProviderProfiles map[string]api.CloudProviderProfileSpec
 }
 
@@ -87,6 +90,8 @@ func PlanDynamicConfig(in PlannerInput) (PlannerOutput, error) {
 	claims := []api.Resource{}
 	plans := []dynamicconfig.ActionPlan{}
 	forwardingSeen := map[string]bool{}
+	desiredAddresses := map[string]bool{}
+	desiredProviderNICs := map[string]bool{}
 	minExpiresAt := time.Time{}
 	for _, lease := range sortedLeases(in.Leases) {
 		claim, actionPlans, leaseExpiresAt, ok, err := planLease(poolName, prefix, self, members, lease, in.ProviderProfiles, now, forwardingSeen)
@@ -98,10 +103,19 @@ func PlanDynamicConfig(in PlannerInput) (PlannerOutput, error) {
 		}
 		claims = append(claims, claim)
 		plans = append(plans, actionPlans...)
+		desiredAddresses[claimAddress(claim)] = true
+		if key := providerNICKeyFromClaim(claim); key != "" {
+			desiredProviderNICs[key] = true
+		}
 		if !leaseExpiresAt.IsZero() && (minExpiresAt.IsZero() || leaseExpiresAt.Before(minExpiresAt)) {
 			minExpiresAt = leaseExpiresAt
 		}
 	}
+	deprovisionPlans, err := providerDeprovisionPlans(poolName, self, in.PreviousClaims, desiredAddresses, desiredProviderNICs, leasesByAddress(in.Leases), in.ProviderProfiles, now, deprovisionHoldDuration(in.PoolSpec))
+	if err != nil {
+		return PlannerOutput{}, err
+	}
+	plans = append(plans, deprovisionPlans...)
 
 	resources := []api.Resource{domainResource(poolName, in.PoolSpec, self)}
 	resources = append(resources, claims...)
@@ -154,12 +168,17 @@ func (c Controller) reconcilePlan(res api.Resource, now time.Time) error {
 	if err != nil {
 		return fmt.Errorf("list address leases: %w", err)
 	}
+	previousClaims, err := c.previousGeneratedClaims(res.Metadata.Name, selfNode)
+	if err != nil {
+		return err
+	}
 	out, err := PlanDynamicConfig(PlannerInput{
 		PoolName:         res.Metadata.Name,
 		PoolSpec:         spec,
 		SelfNode:         selfNode,
 		Now:              now,
 		Leases:           leases,
+		PreviousClaims:   previousClaims,
 		ProviderProfiles: cloudProviderProfiles(c.Router),
 	})
 	if err != nil {
@@ -216,6 +235,34 @@ func (c Controller) upsertEmptyPlan(poolName string, spec api.MobilityPoolSpec, 
 		return err
 	}
 	return c.Store.UpsertDynamicConfigPart(record)
+}
+
+func (c Controller) previousGeneratedClaims(poolName, selfNode string) ([]api.Resource, error) {
+	source := DynamicSource(poolName, selfNode)
+	parts, err := c.Store.GetDynamicConfigPartsBySource(source)
+	if err != nil {
+		return nil, fmt.Errorf("get previous dynamic config part %s: %w", source, err)
+	}
+	if len(parts) == 0 {
+		return nil, nil
+	}
+	sort.SliceStable(parts, func(i, j int) bool {
+		if parts[i].Generation == parts[j].Generation {
+			return parts[i].UpdatedAt.After(parts[j].UpdatedAt)
+		}
+		return parts[i].Generation > parts[j].Generation
+	})
+	resources, err := decodeDynamicConfigResources(parts[0].ResourcesJSON)
+	if err != nil {
+		return nil, fmt.Errorf("decode previous dynamic config part %s: %w", source, err)
+	}
+	var claims []api.Resource
+	for _, res := range resources {
+		if res.APIVersion == api.HybridAPIVersion && res.Kind == "RemoteAddressClaim" {
+			claims = append(claims, res)
+		}
+	}
+	return claims, nil
 }
 
 // DynamicSource is the stable DynamicConfigPart source for one pool x node. The
@@ -383,6 +430,13 @@ func claimResource(poolName string, self memberPlanInfo, lease routerstate.Addre
 		"mobility.routerd.net/owner-role":      ownerRole,
 		"mobility.routerd.net/source-event-id": strings.TrimSpace(lease.SourceEventID),
 	}
+	for key, value := range self.CaptureTarget {
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		if key != "" && value != "" {
+			annotations[captureTargetAnnotationPrefix+key] = value
+		}
+	}
 	return api.Resource{
 		TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "RemoteAddressClaim"},
 		Metadata: api.ObjectMeta{
@@ -484,6 +538,139 @@ func providerActionPlans(poolName string, profile api.CloudProviderProfileSpec, 
 	return plans, nil
 }
 
+func providerDeprovisionPlans(poolName string, self memberPlanInfo, previousClaims []api.Resource, desiredAddresses, desiredProviderNICs map[string]bool, leases map[string]routerstate.AddressLeaseRecord, profiles map[string]api.CloudProviderProfileSpec, now time.Time, hold time.Duration) ([]dynamicconfig.ActionPlan, error) {
+	if self.Capture.Type != "provider-secondary-ip" {
+		return nil, nil
+	}
+	var plans []dynamicconfig.ActionPlan
+	forwardingDisabled := map[string]bool{}
+	for _, claim := range sortedClaims(previousClaims) {
+		spec, err := claim.RemoteAddressClaimSpec()
+		if err != nil {
+			return nil, err
+		}
+		if spec.Capture.Type != "provider-secondary-ip" {
+			continue
+		}
+		address := strings.TrimSpace(spec.Address)
+		if address == "" || desiredAddresses[address] {
+			continue
+		}
+		since := deprovisionSince(leases[address])
+		if since.IsZero() || now.Before(since.Add(hold)) {
+			continue
+		}
+		profile, ok := profiles[strings.TrimSpace(spec.Capture.ProviderRef)]
+		if !ok {
+			return nil, fmt.Errorf("CloudProviderProfile/%s not found for stale MobilityPool/%s claim %q", spec.Capture.ProviderRef, poolName, claim.Metadata.Name)
+		}
+		captureTarget := captureTargetFromClaim(claim)
+		if len(captureTarget) == 0 {
+			captureTarget = self.CaptureTarget
+		}
+		unassign, err := providerUnassignActionPlan(poolName, profile, spec.Capture, captureTarget, address, since)
+		if err != nil {
+			return nil, err
+		}
+		plans = append(plans, unassign)
+
+		nicKey := providerNICKey("", spec.Capture.ProviderRef, spec.Capture.NICRef)
+		if nicKey == "" || desiredProviderNICs[nicKey] || forwardingDisabled[nicKey] {
+			continue
+		}
+		disable, err := providerForwardingDisableActionPlan(poolName, profile, spec.Capture, captureTarget, address)
+		if err != nil {
+			return nil, err
+		}
+		plans = append(plans, disable)
+		forwardingDisabled[nicKey] = true
+	}
+	return plans, nil
+}
+
+func providerUnassignActionPlan(poolName string, profile api.CloudProviderProfileSpec, capture api.AddressCapture, captureTarget map[string]string, address string, since time.Time) (dynamicconfig.ActionPlan, error) {
+	provider := strings.TrimSpace(profile.Provider)
+	providerRef := strings.TrimSpace(capture.ProviderRef)
+	nicRef := strings.TrimSpace(capture.NICRef)
+	target := providerActionTarget(poolName, profile, capture, captureTarget, address)
+	return dynamicconfig.ActionPlan{
+		Name:           safeName("mobility-" + poolName + "-unassign-" + address),
+		Provider:       provider,
+		Action:         "unassign-secondary-ip",
+		Target:         target,
+		ProviderRef:    providerRef,
+		Mode:           "dry-run",
+		Description:    fmt.Sprintf("Unassign stale secondary IP %s from %s NIC %s for MobilityPool/%s", address, provider, nicRef, poolName),
+		RiskLevel:      "medium",
+		IdempotencyKey: "mobility:" + poolName + ":" + provider + ":" + nicRef + ":unassign-secondary-ip:" + address,
+		Parameters: map[string]string{
+			"deprovisionSince": since.UTC().Format(time.RFC3339Nano),
+		},
+		ExpectedEffects: []string{
+			fmt.Sprintf("%s NIC %s would stop advertising stale secondary IP %s", provider, nicRef, address),
+		},
+		Undo: &dynamicconfig.ActionUndo{
+			Action:     "assign-secondary-ip",
+			Parameters: copyStringMap(target),
+		},
+	}, nil
+}
+
+func providerForwardingDisableActionPlan(poolName string, profile api.CloudProviderProfileSpec, capture api.AddressCapture, captureTarget map[string]string, address string) (dynamicconfig.ActionPlan, error) {
+	provider := strings.TrimSpace(profile.Provider)
+	providerRef := strings.TrimSpace(capture.ProviderRef)
+	nicRef := strings.TrimSpace(capture.NICRef)
+	params, err := forwardingDisableParams(provider)
+	if err != nil {
+		return dynamicconfig.ActionPlan{}, err
+	}
+	target := providerActionTarget(poolName, profile, capture, captureTarget, address)
+	return dynamicconfig.ActionPlan{
+		Name:           safeName("mobility-" + poolName + "-forwarding-disable-" + nicRef),
+		Provider:       provider,
+		Action:         "ensure-forwarding-disabled",
+		Target:         target,
+		ProviderRef:    providerRef,
+		Mode:           "dry-run",
+		Description:    fmt.Sprintf("Disable forwarding on %s NIC %s after MobilityPool/%s no longer captures addresses there", provider, nicRef, poolName),
+		RiskLevel:      "medium",
+		IdempotencyKey: "mobility:" + poolName + ":" + provider + ":" + nicRef + ":ensure-forwarding-disabled",
+		Parameters:     params,
+		ExpectedEffects: []string{
+			fmt.Sprintf("%s NIC %s would stop forwarding mobility capture traffic", provider, nicRef),
+		},
+		Undo: &dynamicconfig.ActionUndo{
+			Action:     "ensure-forwarding-enabled",
+			Parameters: mergeStringMaps(target, mustForwardingParams(provider)),
+		},
+	}, nil
+}
+
+func providerActionTarget(poolName string, profile api.CloudProviderProfileSpec, capture api.AddressCapture, captureTarget map[string]string, address string) map[string]string {
+	provider := strings.TrimSpace(profile.Provider)
+	providerRef := strings.TrimSpace(capture.ProviderRef)
+	nicRef := strings.TrimSpace(capture.NICRef)
+	target := map[string]string{
+		"provider":    provider,
+		"providerRef": providerRef,
+		"nicRef":      nicRef,
+		"address":     strings.TrimSpace(address),
+	}
+	for key, value := range captureTarget {
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		if key != "" && value != "" {
+			target[key] = value
+		}
+	}
+	addProfileTargetFields(target, provider, profile, poolName, address, nicRef)
+	target["provider"] = provider
+	target["providerRef"] = providerRef
+	target["nicRef"] = nicRef
+	target["address"] = strings.TrimSpace(address)
+	return target
+}
+
 func addProfileTargetFields(target map[string]string, provider string, profile api.CloudProviderProfileSpec, poolName, address, nicRef string) {
 	if profile.SubscriptionID != "" && strings.TrimSpace(target["subscriptionId"]) == "" {
 		target["subscriptionId"] = strings.TrimSpace(profile.SubscriptionID)
@@ -516,6 +703,131 @@ func forwardingParams(provider string) (map[string]string, error) {
 	default:
 		return nil, fmt.Errorf("provider %q is not supported for mobility action plans", provider)
 	}
+}
+
+func forwardingDisableParams(provider string) (map[string]string, error) {
+	switch provider {
+	case "aws":
+		return map[string]string{"priorSourceDestCheck": "true"}, nil
+	case "azure":
+		return map[string]string{"priorIpForwarding": "false"}, nil
+	case "oci":
+		return map[string]string{"priorSkipSourceDestCheck": "false"}, nil
+	case "gcp":
+		return map[string]string{"priorCanIpForward": "false"}, nil
+	default:
+		return nil, fmt.Errorf("provider %q is not supported for mobility action plans", provider)
+	}
+}
+
+func mustForwardingParams(provider string) map[string]string {
+	params, err := forwardingParams(provider)
+	if err != nil {
+		return map[string]string{}
+	}
+	return params
+}
+
+func deprovisionHoldDuration(spec api.MobilityPoolSpec) time.Duration {
+	if strings.TrimSpace(spec.CapturePolicy.DeprovisionHoldDuration) != "" {
+		return durationDefault(spec.CapturePolicy.DeprovisionHoldDuration, DefaultDeprovisionHoldDuration)
+	}
+	if strings.TrimSpace(spec.LeasePolicy.HoldDuration) != "" {
+		return durationDefault(spec.LeasePolicy.HoldDuration, DefaultDeprovisionHoldDuration)
+	}
+	return DefaultDeprovisionHoldDuration
+}
+
+func leasesByAddress(leases []routerstate.AddressLeaseRecord) map[string]routerstate.AddressLeaseRecord {
+	out := map[string]routerstate.AddressLeaseRecord{}
+	for _, lease := range leases {
+		out[strings.TrimSpace(lease.Address)] = lease
+	}
+	return out
+}
+
+func deprovisionSince(lease routerstate.AddressLeaseRecord) time.Time {
+	switch lease.Status {
+	case routerstate.AddressLeaseStatusExpired:
+		return firstNonZeroTime(lease.ExpiresAt, lease.UpdatedAt, lease.ObservedAt, lease.RecordedAt)
+	case routerstate.AddressLeaseStatusHolding:
+		return firstNonZeroTime(lease.CandidateObservedAt, lease.UpdatedAt, lease.ObservedAt, lease.RecordedAt)
+	case routerstate.AddressLeaseStatusActive:
+		return firstNonZeroTime(lease.ObservedAt, lease.UpdatedAt, lease.RecordedAt)
+	default:
+		return firstNonZeroTime(lease.UpdatedAt, lease.ObservedAt, lease.RecordedAt)
+	}
+}
+
+func firstNonZeroTime(values ...time.Time) time.Time {
+	for _, value := range values {
+		if !value.IsZero() {
+			return value.UTC()
+		}
+	}
+	return time.Time{}
+}
+
+func sortedClaims(claims []api.Resource) []api.Resource {
+	out := append([]api.Resource(nil), claims...)
+	sort.SliceStable(out, func(i, j int) bool {
+		left := claimAddress(out[i])
+		right := claimAddress(out[j])
+		if left == right {
+			return out[i].Metadata.Name < out[j].Metadata.Name
+		}
+		return left < right
+	})
+	return out
+}
+
+func claimAddress(claim api.Resource) string {
+	spec, err := claim.RemoteAddressClaimSpec()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(spec.Address)
+}
+
+func providerNICKeyFromClaim(claim api.Resource) string {
+	spec, err := claim.RemoteAddressClaimSpec()
+	if err != nil || spec.Capture.Type != "provider-secondary-ip" {
+		return ""
+	}
+	return providerNICKey("", spec.Capture.ProviderRef, spec.Capture.NICRef)
+}
+
+func providerNICKey(provider, providerRef, nicRef string) string {
+	providerRef = strings.TrimSpace(providerRef)
+	nicRef = strings.TrimSpace(nicRef)
+	if providerRef == "" || nicRef == "" {
+		return ""
+	}
+	return strings.TrimSpace(provider) + "\x00" + providerRef + "\x00" + nicRef
+}
+
+func captureTargetFromClaim(claim api.Resource) map[string]string {
+	out := map[string]string{}
+	for key, value := range claim.Metadata.Annotations {
+		if strings.HasPrefix(key, captureTargetAnnotationPrefix) {
+			targetKey := strings.TrimSpace(strings.TrimPrefix(key, captureTargetAnnotationPrefix))
+			if targetKey != "" && strings.TrimSpace(value) != "" {
+				out[targetKey] = strings.TrimSpace(value)
+			}
+		}
+	}
+	return out
+}
+
+func decodeDynamicConfigResources(raw string) ([]api.Resource, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
+	}
+	var resources []api.Resource
+	if err := json.Unmarshal([]byte(raw), &resources); err != nil {
+		return nil, err
+	}
+	return resources, nil
 }
 
 func azureNICName(nicRef string) string {

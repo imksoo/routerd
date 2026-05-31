@@ -66,6 +66,7 @@ spec:
     holdDuration: 30s
   capturePolicy:
     mode: all-non-owner-sites
+    deprovisionHoldDuration: 30s
 ```
 
 routerd projects `routerd.client.ipv4.observed` federation events into

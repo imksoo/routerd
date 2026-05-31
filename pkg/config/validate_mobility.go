@@ -76,6 +76,15 @@ func validateMobilityResource(res api.Resource, _ platform.OS) (bool, error) {
 		default:
 			return true, fmt.Errorf("%s spec.capturePolicy.mode %q is not supported; only all-non-owner-sites", res.ID(), spec.CapturePolicy.Mode)
 		}
+		if hold := strings.TrimSpace(spec.CapturePolicy.DeprovisionHoldDuration); hold != "" {
+			parsed, err := time.ParseDuration(hold)
+			if err != nil {
+				return true, fmt.Errorf("%s spec.capturePolicy.deprovisionHoldDuration must be a Go duration: %w", res.ID(), err)
+			}
+			if parsed < 0 {
+				return true, fmt.Errorf("%s spec.capturePolicy.deprovisionHoldDuration must be >= 0", res.ID())
+			}
+		}
 		if ttl := strings.TrimSpace(spec.LeasePolicy.TTL); ttl != "" {
 			parsed, err := time.ParseDuration(ttl)
 			if err != nil {

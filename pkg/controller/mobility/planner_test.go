@@ -205,6 +205,163 @@ func TestPlanDynamicConfigSkipsOwnSiteHoldingAndExpiredLeases(t *testing.T) {
 	}
 }
 
+func TestPlanDynamicConfigDeprovisionsStaleProviderClaimAfterHold(t *testing.T) {
+	now := time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC)
+	profiles := plannedProviderProfiles()
+	initial, err := PlanDynamicConfig(PlannerInput{
+		PoolName: "cloudedge",
+		PoolSpec: plannedPoolSpec(),
+		SelfNode: "azure-router",
+		Now:      now,
+		Leases: []routerstate.AddressLeaseRecord{{
+			Pool:       "cloudedge",
+			Address:    "10.88.60.9/32",
+			Status:     routerstate.AddressLeaseStatusActive,
+			OwnerNode:  "onprem-router",
+			OwnerSite:  "onprem",
+			OwnerRole:  "onprem",
+			Epoch:      1,
+			ObservedAt: now,
+			ExpiresAt:  now.Add(time.Minute),
+		}},
+		ProviderProfiles: profiles,
+	})
+	if err != nil {
+		t.Fatalf("initial PlanDynamicConfig: %v", err)
+	}
+	if len(initial.Claims) != 1 {
+		t.Fatalf("initial claims = %d, want one", len(initial.Claims))
+	}
+
+	expired := routerstate.AddressLeaseRecord{
+		Pool:       "cloudedge",
+		Address:    "10.88.60.9/32",
+		Status:     routerstate.AddressLeaseStatusExpired,
+		OwnerNode:  "onprem-router",
+		OwnerSite:  "onprem",
+		OwnerRole:  "onprem",
+		Epoch:      1,
+		ObservedAt: now,
+		ExpiresAt:  now.Add(5 * time.Second),
+		UpdatedAt:  now.Add(5 * time.Second),
+	}
+	beforeHold, err := PlanDynamicConfig(PlannerInput{
+		PoolName:         "cloudedge",
+		PoolSpec:         plannedPoolSpec(),
+		SelfNode:         "azure-router",
+		Now:              now.Add(20 * time.Second),
+		Leases:           []routerstate.AddressLeaseRecord{expired},
+		PreviousClaims:   initial.Claims,
+		ProviderProfiles: profiles,
+	})
+	if err != nil {
+		t.Fatalf("before-hold PlanDynamicConfig: %v", err)
+	}
+	if len(beforeHold.Claims) != 0 || len(beforeHold.ActionPlans) != 0 {
+		t.Fatalf("before hold claims/actionPlans = %d/%d, want none", len(beforeHold.Claims), len(beforeHold.ActionPlans))
+	}
+
+	afterHold, err := PlanDynamicConfig(PlannerInput{
+		PoolName:         "cloudedge",
+		PoolSpec:         plannedPoolSpec(),
+		SelfNode:         "azure-router",
+		Now:              now.Add(40 * time.Second),
+		Leases:           []routerstate.AddressLeaseRecord{expired},
+		PreviousClaims:   initial.Claims,
+		ProviderProfiles: profiles,
+	})
+	if err != nil {
+		t.Fatalf("after-hold PlanDynamicConfig: %v", err)
+	}
+	if len(afterHold.Claims) != 0 {
+		t.Fatalf("after hold claims = %d, want none", len(afterHold.Claims))
+	}
+	if len(afterHold.ActionPlans) != 2 {
+		t.Fatalf("after hold actionPlans = %d, want unassign + forwarding-disable: %+v", len(afterHold.ActionPlans), afterHold.ActionPlans)
+	}
+	for _, plan := range afterHold.ActionPlans {
+		if err := routerplugin.ValidateActionPlan(plan); err != nil {
+			t.Fatalf("ValidateActionPlan(%s): %v", plan.Name, err)
+		}
+	}
+	unassign := findActionPlan(afterHold.ActionPlans, "unassign-secondary-ip")
+	if unassign == nil {
+		t.Fatalf("missing unassign plan: %+v", afterHold.ActionPlans)
+	}
+	if unassign.Target["address"] != "10.88.60.9/32" || unassign.Target["nicRef"] == "" || unassign.Parameters["deprovisionSince"] != expired.ExpiresAt.Format(time.RFC3339Nano) {
+		t.Fatalf("unexpected unassign plan: %+v", unassign)
+	}
+	if unassign.Undo == nil || unassign.Undo.Action != "assign-secondary-ip" || unassign.Undo.Parameters["address"] != "10.88.60.9/32" {
+		t.Fatalf("unexpected unassign undo: %+v", unassign.Undo)
+	}
+	disable := findActionPlan(afterHold.ActionPlans, "ensure-forwarding-disabled")
+	if disable == nil {
+		t.Fatalf("missing forwarding-disable plan: %+v", afterHold.ActionPlans)
+	}
+	if disable.Target["address"] != "10.88.60.9/32" || disable.Parameters["priorIpForwarding"] != "false" {
+		t.Fatalf("unexpected forwarding-disable plan: %+v", disable)
+	}
+
+	converged, err := PlanDynamicConfig(PlannerInput{
+		PoolName:         "cloudedge",
+		PoolSpec:         plannedPoolSpec(),
+		SelfNode:         "azure-router",
+		Now:              now.Add(time.Minute),
+		Leases:           []routerstate.AddressLeaseRecord{expired},
+		PreviousClaims:   nil,
+		ProviderProfiles: profiles,
+	})
+	if err != nil {
+		t.Fatalf("converged PlanDynamicConfig: %v", err)
+	}
+	if len(converged.ActionPlans) != 0 {
+		t.Fatalf("converged actionPlans = %+v, want none", converged.ActionPlans)
+	}
+}
+
+func TestPlanDynamicConfigKeepsForwardingEnabledWhenNICStillHasDesiredCapture(t *testing.T) {
+	now := time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC)
+	profiles := plannedProviderProfiles()
+	initial, err := PlanDynamicConfig(PlannerInput{
+		PoolName: "cloudedge",
+		PoolSpec: plannedPoolSpec(),
+		SelfNode: "azure-router",
+		Now:      now,
+		Leases: []routerstate.AddressLeaseRecord{
+			{Pool: "cloudedge", Address: "10.88.60.9/32", Status: routerstate.AddressLeaseStatusActive, OwnerNode: "onprem-router", OwnerSite: "onprem", OwnerRole: "onprem", Epoch: 1, ObservedAt: now, ExpiresAt: now.Add(time.Minute)},
+			{Pool: "cloudedge", Address: "10.88.60.10/32", Status: routerstate.AddressLeaseStatusActive, OwnerNode: "onprem-router", OwnerSite: "onprem", OwnerRole: "onprem", Epoch: 1, ObservedAt: now, ExpiresAt: now.Add(time.Minute)},
+		},
+		ProviderProfiles: profiles,
+	})
+	if err != nil {
+		t.Fatalf("initial PlanDynamicConfig: %v", err)
+	}
+	if len(initial.Claims) != 2 {
+		t.Fatalf("initial claims = %d, want two", len(initial.Claims))
+	}
+	out, err := PlanDynamicConfig(PlannerInput{
+		PoolName: "cloudedge",
+		PoolSpec: plannedPoolSpec(),
+		SelfNode: "azure-router",
+		Now:      now.Add(time.Minute),
+		Leases: []routerstate.AddressLeaseRecord{
+			{Pool: "cloudedge", Address: "10.88.60.9/32", Status: routerstate.AddressLeaseStatusExpired, OwnerNode: "onprem-router", OwnerSite: "onprem", OwnerRole: "onprem", Epoch: 1, ObservedAt: now, ExpiresAt: now.Add(10 * time.Second), UpdatedAt: now.Add(10 * time.Second)},
+			{Pool: "cloudedge", Address: "10.88.60.10/32", Status: routerstate.AddressLeaseStatusActive, OwnerNode: "onprem-router", OwnerSite: "onprem", OwnerRole: "onprem", Epoch: 1, ObservedAt: now, ExpiresAt: now.Add(time.Hour)},
+		},
+		PreviousClaims:   initial.Claims,
+		ProviderProfiles: profiles,
+	})
+	if err != nil {
+		t.Fatalf("PlanDynamicConfig: %v", err)
+	}
+	if findActionPlan(out.ActionPlans, "unassign-secondary-ip") == nil {
+		t.Fatalf("missing stale unassign in %+v", out.ActionPlans)
+	}
+	if findActionPlan(out.ActionPlans, "ensure-forwarding-disabled") != nil {
+		t.Fatalf("forwarding-disable should not be generated while another capture remains desired: %+v", out.ActionPlans)
+	}
+}
+
 func TestControllerPlannerUsesEventGroupNodeNameAndOverwritesGenerationOne(t *testing.T) {
 	now := time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC)
 	store := testStore(t, now)
@@ -262,6 +419,9 @@ func TestControllerPlannerUsesEventGroupNodeNameAndOverwritesGenerationOne(t *te
 	if resources := decodeResources(t, parts[0].ResourcesJSON); countKind(resources, "RemoteAddressClaim") != 0 || countKind(resources, "AddressMobilityDomain") != 1 {
 		t.Fatalf("overwritten resources = %+v, want domain only", resources)
 	}
+	if actions := decodeActionPlans(t, parts[0].ActionPlansJSON); findActionPlan(actions, "unassign-secondary-ip") == nil || findActionPlan(actions, "ensure-forwarding-disabled") == nil {
+		t.Fatalf("overwritten action plans = %+v, want de-provision plans", actions)
+	}
 }
 
 func plannedPoolSpec() api.MobilityPoolSpec {
@@ -291,6 +451,18 @@ func plannedPoolSpec() api.MobilityPoolSpec {
 			},
 		},
 		LeasePolicy: api.MobilityLeasePolicy{TTL: "5m", HoldDuration: "30s"},
+	}
+}
+
+func plannedProviderProfiles() map[string]api.CloudProviderProfileSpec {
+	return map[string]api.CloudProviderProfileSpec{
+		"azure-provider": {
+			Provider:       "azure",
+			SubscriptionID: "sub-1",
+			ResourceGroup:  "rg-router",
+			Capabilities:   []string{"nic-secondary-ip", "ip-forwarding"},
+			Auth:           api.ProviderAuth{Mode: "external-command", Command: "az"},
+		},
 	}
 }
 
@@ -340,6 +512,18 @@ func decodeResources(t *testing.T, raw string) []api.Resource {
 		t.Fatalf("decode resources: %v raw=%s", err, raw)
 	}
 	return resources
+}
+
+func decodeActionPlans(t *testing.T, raw string) []dynamicconfig.ActionPlan {
+	t.Helper()
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	var plans []dynamicconfig.ActionPlan
+	if err := json.Unmarshal([]byte(raw), &plans); err != nil {
+		t.Fatalf("decode action plans: %v raw=%s", err, raw)
+	}
+	return plans
 }
 
 func countKind(resources []api.Resource, kind string) int {

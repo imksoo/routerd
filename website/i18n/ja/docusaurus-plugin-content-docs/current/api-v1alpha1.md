@@ -164,6 +164,10 @@ DNSSEC validation は `DNSForwarder.spec.dnssecValidate` に書きます。
 | `LocalServiceRedirect` | LAN 側 client から `IPAddressSet` 宛てに出る IPv4/IPv6 通信を、router の local port へ redirect します。平文 DNS/NTP の集約を想定し、DoH や DoT の port には触れません。 |
 | `EgressRoutePolicy` | 既定経路の選択、mark ベースの IPv4 policy routing、複数 target への hash 分散を表します。 |
 
+`MobilityPool.spec.capturePolicy.deprovisionHoldDuration` は、生成済みの cloud
+capture がこの node の desired capture set から外れた後、provider 側の
+de-provision action plan を出すまでの待ち時間です。
+
 `EgressRoutePolicy` は、CIDR 指定に加えて `destinationSetRefs` と
 `excludeDestinationSetRefs` を持ちます。これにより、FQDN-backed な宛先 set を policy
 resource にアドレス展開せず、経路制御や除外条件として使えます。

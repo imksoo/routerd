@@ -214,7 +214,9 @@ procedures for the mobility control plane.
 `MobilityPool.spec.members[].deliveryTo[]` selects delivery for an owner by
 `nodeRef`, then `site`, then `role`, with `members[].delivery` as fallback.
 `members[].capture.target` carries non-secret provider target identifiers into
-generated provider action plans.
+generated provider action plans. `capturePolicy.deprovisionHoldDuration`
+optionally delays provider de-provision action plans after a generated cloud
+capture leaves this node's desired capture set.
 
 Selective Address Mobility is declarative in this MVP. `RemoteAddressClaim`
 does not configure firewall or NAT policy. Operators compose firewall/NAT by

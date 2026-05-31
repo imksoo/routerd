@@ -1418,6 +1418,10 @@ type MobilityCapturePolicy struct {
 	// Mode selects the capture behavior. Only "all-non-owner-sites" is supported
 	// in the MVP; empty defaults to it.
 	Mode string `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=,enum=all-non-owner-sites"`
+	// DeprovisionHoldDuration delays provider-side de-provision action plans
+	// after a previously captured address leaves this node's desired capture set.
+	// Empty defaults to leasePolicy.holdDuration, then the controller default.
+	DeprovisionHoldDuration string `yaml:"deprovisionHoldDuration,omitempty" json:"deprovisionHoldDuration,omitempty"`
 }
 
 // MobilityLeasePolicy controls AddressLease state derived from federation events.

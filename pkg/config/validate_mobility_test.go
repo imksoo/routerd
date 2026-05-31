@@ -69,6 +69,11 @@ func TestValidateMobilityPoolRejectsInvalidFields(t *testing.T) {
 			want: "holdDuration must be >= 0",
 		},
 		{
+			name: "bad deprovision hold",
+			mut:  func(spec *api.MobilityPoolSpec) { spec.CapturePolicy.DeprovisionHoldDuration = "-1s" },
+			want: "deprovisionHoldDuration must be >= 0",
+		},
+		{
 			name: "unknown authority node",
 			mut:  func(spec *api.MobilityPoolSpec) { spec.Authority.NodeRef = "other" },
 			want: "must be one of the member nodeRefs",

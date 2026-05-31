@@ -65,6 +65,7 @@ spec:
     holdDuration: 30s
   capturePolicy:
     mode: all-non-owner-sites
+    deprovisionHoldDuration: 30s
 ```
 
 routerd は `routerd.client.ipv4.observed` federation event を read-only な
