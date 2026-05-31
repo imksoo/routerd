@@ -304,6 +304,30 @@ mobility pool `/24` (the captured addresses) and from every cloud-reserved range
 above. This applies to all providers (AWS/Azure/OCI); OCI is simply the
 strictest at enforcing the link-local reservation.
 
+## Client Endpoint Addressing vs Router-Overlay Reachability
+
+A globally-unique `/32` on a **client** guest's `lo`/dummy interface is **not**
+reachable across cloud fabrics just because the guest OS owns the address. The
+cloud fabric (VPC/VNet/VCN) only delivers destinations within the provider subnet
+CIDR to a client ENI/NIC; a destination outside the VPC CIDR is dropped by the
+fabric before it reaches the client, regardless of overlay routes on the routers.
+
+Concretely, in a distinct-addressing 4-site test:
+
+- **Router endpoint `/32`s on the overlay itself** are reachable end-to-end (the
+  routers carry them over WireGuard). A distinct-mesh of router endpoints passes
+  12 directed ping+SSH.
+- **Client dummy/lo `/32`s outside the VPC CIDR are not** — the cloud fabric does
+  not deliver them to the client ENI even with overlay routes and provider
+  forwarding enabled.
+
+Therefore: treat distinct-mesh shortcut endpoints as **router endpoints only**. To
+give clients globally-unique, cross-fabric-routable addresses you need either
+provider-routable client subnets or provider-assigned client IPs (a secondary IP /
+captured address that the fabric actually delivers), not a guest-local dummy `/32`.
+Do not confuse router-overlay reachability with client-fabric reachability when
+designing a multi-site lab.
+
 ## Out Of Scope
 
 The MVP does not implement full L2 extension, EVPN, BUM forwarding,
