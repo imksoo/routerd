@@ -82,9 +82,7 @@ func (b *Bus) Publish(ctx context.Context, event Event) error {
 			targets = append(targets, sub.ch)
 		}
 	}
-	b.mu.Unlock()
-	logEvent(ctx, logger, event)
-
+	var sendErr error
 	for _, target := range targets {
 		select {
 		case target <- event:
@@ -93,11 +91,16 @@ func (b *Bus) Publish(ctx context.Context, event Event) error {
 			case target <- event:
 			case <-time.After(100 * time.Millisecond):
 			case <-ctx.Done():
-				return ctx.Err()
+				sendErr = ctx.Err()
 			}
 		}
+		if sendErr != nil {
+			break
+		}
 	}
-	return nil
+	b.mu.Unlock()
+	logEvent(ctx, logger, event)
+	return sendErr
 }
 
 func logEvent(ctx context.Context, logger *slog.Logger, event Event) {
