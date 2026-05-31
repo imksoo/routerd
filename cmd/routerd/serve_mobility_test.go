@@ -137,9 +137,7 @@ func TestServeChainMobilityReemitsMarkerBackedUnassignUntilExecuted(t *testing.T
 		return countServeKind(t, part.ResourcesJSON, "RemoteAddressClaim") == 0 &&
 			!serveHasAction(t, part.ActionPlansJSON, "unassign-secondary-ip", "10.88.60.10/32")
 	})
-	if got := countServeMarkers(t, store); got != 0 {
-		t.Fatalf("completed marker count = %d, want 0", got)
-	}
+	waitForServeMarkers(t, store, 0)
 	stop()
 	if err := store.Close(); err != nil {
 		t.Fatalf("close store after marker test: %v", err)
@@ -493,6 +491,20 @@ func countServeMarkers(t *testing.T, store *routerstate.SQLiteStore) int {
 	return len(markers)
 }
 
+func waitForServeMarkers(t *testing.T, store *routerstate.SQLiteStore, want int) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	var got int
+	for time.Now().Before(deadline) {
+		got = countServeMarkers(t, store)
+		if got == want {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatalf("marker count = %d, want %d; markers=%s actions=%s", got, want, serveMarkerStatuses(t, store), serveActionStatuses(t, store))
+}
+
 func countServeActions(t *testing.T, store *routerstate.SQLiteStore, action, address, status string) int {
 	t.Helper()
 	rows, err := store.ListActions(routerstate.ActionExecutionFilter{Status: status})
@@ -506,6 +518,20 @@ func countServeActions(t *testing.T, store *routerstate.SQLiteStore, action, add
 		}
 	}
 	return count
+}
+
+func serveMarkerStatuses(t *testing.T, store *routerstate.SQLiteStore) string {
+	t.Helper()
+	markers, err := store.ListMobilityDeprovisionMarkers(mobilitycontroller.DynamicSource("cloudedge", "azure-router-a"))
+	if err != nil {
+		t.Fatalf("ListMobilityDeprovisionMarkers: %v", err)
+	}
+	var parts []string
+	for _, marker := range markers {
+		parts = append(parts, marker.Action+":"+marker.IdempotencyKey)
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, ";")
 }
 
 func serveCaptureEpoch(t *testing.T, store *routerstate.SQLiteStore) string {
