@@ -110,14 +110,14 @@ func TestAssignExecuteIssuesCreate(t *testing.T) {
 	if res.Status.Status != statusSucceeded {
 		t.Fatalf("want succeeded, got %q err=%q", res.Status.Status, res.Status.Error)
 	}
-	if res.Status.Observed["assignedAddress"] != "10.88.60.9/32" {
+	if res.Status.Observed["assignedAddress"] != "10.88.60.9" {
 		t.Errorf("want assignedAddress observed, got %+v", res.Status.Observed)
 	}
 	if len(f.calls) != 1 {
 		t.Fatalf("execute assign should issue exactly one call, got %v", f.calls)
 	}
 	got := strings.Join(f.calls[0], " ")
-	want := "network private-ip create --vnic-id ocid1.vnic.oc1..vnic1 --ip-address 10.88.60.9/32"
+	want := "network private-ip create --vnic-id ocid1.vnic.oc1..vnic1 --ip-address 10.88.60.9"
 	if got != want {
 		t.Fatalf("assign argv mismatch:\n got: %s\nwant: %s", got, want)
 	}
@@ -233,6 +233,9 @@ func TestUnassignExecuteLooksUpThenDeletes(t *testing.T) {
 	wantDel := "network private-ip delete --private-ip-id ocid1.privateip.oc1..pip9 --force"
 	if gotDel != wantDel {
 		t.Fatalf("delete argv mismatch:\n got: %s\nwant: %s", gotDel, wantDel)
+	}
+	if !strings.Contains(res.Status.Message, "unassigned 10.88.60.9 from") {
+		t.Fatalf("unassign message should use provider-form bare IP, got %q", res.Status.Message)
 	}
 }
 

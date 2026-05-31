@@ -32,7 +32,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -159,12 +161,26 @@ func requireNICID(spec executeActionRequestSpec) (nicTarget, error) {
 		resourceGroup: spec.Target["resourceGroup"],
 		nicName:       spec.Target["nicName"],
 		ipConfigName:  spec.Target["ipConfigName"],
-		address:       spec.Target["address"],
+		address:       bareIP(spec.Target["address"]),
 	}
 	if t.nicID == "" {
 		return nicTarget{}, fmt.Errorf("target.nicRef (NIC resource id) is required")
 	}
 	return t, nil
+}
+
+// bareIP converts routerd's canonical host CIDR form ("10.88.60.9/32") into the
+// provider API form ("10.88.60.9"). Invalid values are left unchanged so the
+// provider CLI returns its native validation error.
+func bareIP(address string) string {
+	address = strings.TrimSpace(address)
+	if ip, _, err := net.ParseCIDR(address); err == nil {
+		return ip.String()
+	}
+	if ip := net.ParseIP(address); ip != nil {
+		return ip.String()
+	}
+	return address
 }
 
 // requireIPConfigTarget requires the fields az ip-config create/delete need:

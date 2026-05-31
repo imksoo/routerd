@@ -98,14 +98,14 @@ func TestAssignExecuteIssuesAssign(t *testing.T) {
 	if res.Status.Status != statusSucceeded {
 		t.Fatalf("want succeeded, got %q err=%q", res.Status.Status, res.Status.Error)
 	}
-	if res.Status.Observed["assignedAddress"] != "10.88.60.9/32" {
+	if res.Status.Observed["assignedAddress"] != "10.88.60.9" {
 		t.Errorf("want assignedAddress observed, got %+v", res.Status.Observed)
 	}
 	if len(f.calls) != 1 {
 		t.Fatalf("execute assign should issue exactly one call, got %v", f.calls)
 	}
 	got := strings.Join(f.calls[0], " ")
-	want := "ec2 assign-private-ip-addresses --network-interface-id eni-1 --private-ip-addresses 10.88.60.9/32 --region ap-northeast-1"
+	want := "ec2 assign-private-ip-addresses --network-interface-id eni-1 --private-ip-addresses 10.88.60.9 --region ap-northeast-1"
 	if got != want {
 		t.Fatalf("assign argv mismatch:\n got: %s\nwant: %s", got, want)
 	}
@@ -205,7 +205,7 @@ func TestUnassignExecuteIssuesUnassign(t *testing.T) {
 		t.Fatalf("want succeeded, got %q", res.Status.Status)
 	}
 	got := strings.Join(f.calls[0], " ")
-	want := "ec2 unassign-private-ip-addresses --network-interface-id eni-1 --private-ip-addresses 10.88.60.9/32 --region ap-northeast-1"
+	want := "ec2 unassign-private-ip-addresses --network-interface-id eni-1 --private-ip-addresses 10.88.60.9 --region ap-northeast-1"
 	if got != want {
 		t.Fatalf("unassign argv mismatch:\n got: %s\nwant: %s", got, want)
 	}

@@ -30,7 +30,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -154,7 +156,24 @@ func requireTarget(spec executeActionRequestSpec, needAddress bool) (vnic, addre
 	if needAddress && address == "" {
 		return "", "", fmt.Errorf("target.address is required")
 	}
+	if address != "" {
+		address = bareIP(address)
+	}
 	return vnic, address, nil
+}
+
+// bareIP converts routerd's canonical host CIDR form ("10.88.60.9/32") into the
+// provider API form ("10.88.60.9"). Invalid values are left unchanged so the
+// provider CLI returns its native validation error.
+func bareIP(address string) string {
+	address = strings.TrimSpace(address)
+	if ip, _, err := net.ParseCIDR(address); err == nil {
+		return ip.String()
+	}
+	if ip := net.ParseIP(address); ip != nil {
+		return ip.String()
+	}
+	return address
 }
 
 // dispatch routes by (Action, Mode). It NEVER mutates in dry-run mode: dry-run

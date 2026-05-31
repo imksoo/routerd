@@ -106,7 +106,7 @@ func TestAssignExecuteIssuesIPConfigCreate(t *testing.T) {
 	if res.Status.Status != statusSucceeded {
 		t.Fatalf("want succeeded, got %q err=%q", res.Status.Status, res.Status.Error)
 	}
-	if res.Status.Observed["assignedAddress"] != "10.88.60.9/32" {
+	if res.Status.Observed["assignedAddress"] != "10.88.60.9" {
 		t.Errorf("want assignedAddress observed, got %+v", res.Status.Observed)
 	}
 	if res.Status.Observed["ipConfigName"] != "ipcfg-mobility" {
@@ -116,7 +116,7 @@ func TestAssignExecuteIssuesIPConfigCreate(t *testing.T) {
 		t.Fatalf("execute assign should issue exactly one call, got %v", f.calls)
 	}
 	got := strings.Join(f.calls[0], " ")
-	want := "network nic ip-config create --resource-group rg1 --nic-name nic1 --name ipcfg-mobility --private-ip-address 10.88.60.9/32"
+	want := "network nic ip-config create --resource-group rg1 --nic-name nic1 --name ipcfg-mobility --private-ip-address 10.88.60.9"
 	if got != want {
 		t.Fatalf("assign argv mismatch:\n got: %s\nwant: %s", got, want)
 	}
@@ -226,6 +226,9 @@ func TestUnassignExecuteDeletesIPConfig(t *testing.T) {
 	want := "network nic ip-config delete --resource-group rg1 --nic-name nic1 --name ipcfg-mobility"
 	if got != want {
 		t.Fatalf("unassign argv mismatch:\n got: %s\nwant: %s", got, want)
+	}
+	if strings.Contains(res.Status.Message, "/32") {
+		t.Fatalf("unassign message should not leak CIDR-form address, got %q", res.Status.Message)
 	}
 }
 
