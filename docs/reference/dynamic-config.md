@@ -12,7 +12,10 @@ target.
 
 This page documents the dynamic-config API shape for the CloudEdge MVP. The
 plugin runner can store validated plugin output as `DynamicConfigPart` records;
-provider actions from plugin `actionPlans` remain display-only.
+provider actions from `actionPlans` remain inert inside dynamic config and are
+not merged into effective config. The separate provider-action engine can import
+them into its journal and execute them only through `ProviderActionPolicy`,
+approval, and executor-plugin gates.
 
 ## DynamicConfigPart
 
@@ -55,6 +58,7 @@ spec:
 | `spec.digest` | Digest of the validated part payload. |
 | `spec.resources` | Resources contributed to effective-config while active. |
 | `spec.directives` | Merge directives, currently only `op: mask`. |
+| `spec.actionPlans` | Provider action proposals. They are not resources; the provider-action engine imports only active parts and applies its own gates before execution. |
 
 Plugins return a TTL duration in `PluginResult.status.ttl`; routerd resolves it
 against `observedAt` into the stored `expiresAt`.

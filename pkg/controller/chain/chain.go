@@ -81,6 +81,7 @@ type mobilityDataStore interface {
 	ListFederationEvents(group string, includeExpired bool, now int64) ([]routerstate.EventRecord, error)
 	UpsertAddressLease(routerstate.AddressLeaseRecord) error
 	ListAddressLeases(pool string, includeExpired bool, now time.Time) ([]routerstate.AddressLeaseRecord, error)
+	UpsertDynamicConfigPart(routerstate.DynamicConfigPartRecord) error
 }
 
 type mobilityStore struct {
@@ -106,6 +107,10 @@ func (s mobilityStore) UpsertAddressLease(rec routerstate.AddressLeaseRecord) er
 
 func (s mobilityStore) ListAddressLeases(pool string, includeExpired bool, now time.Time) ([]routerstate.AddressLeaseRecord, error) {
 	return s.data.ListAddressLeases(pool, includeExpired, now)
+}
+
+func (s mobilityStore) UpsertDynamicConfigPart(rec routerstate.DynamicConfigPartRecord) error {
+	return s.data.UpsertDynamicConfigPart(rec)
 }
 
 func (s eventSubscriptionStore) SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error {

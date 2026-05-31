@@ -67,6 +67,9 @@ func validateMobilityResource(res api.Resource, _ platform.OS) (bool, error) {
 				return true, fmt.Errorf("%s spec.members nodeRef %q is duplicated", res.ID(), nodeRef)
 			}
 			nodeRefs[nodeRef] = true
+			if err := validateMobilityMemberCapture(res, i, member); err != nil {
+				return true, err
+			}
 		}
 		switch strings.TrimSpace(spec.CapturePolicy.Mode) {
 		case "", "all-non-owner-sites":
@@ -108,4 +111,52 @@ func validateMobilityResource(res api.Resource, _ platform.OS) (bool, error) {
 		return true, nil
 	}
 	return false, nil
+}
+
+func validateMobilityMemberCapture(res api.Resource, index int, member api.MobilityPoolMember) error {
+	captureType := strings.TrimSpace(member.Capture.Type)
+	if captureType == "" {
+		return nil
+	}
+	role := strings.TrimSpace(member.Role)
+	switch role {
+	case "cloud":
+		if captureType != "provider-secondary-ip" {
+			return fmt.Errorf("%s spec.members[%d].capture.type must be provider-secondary-ip for role cloud", res.ID(), index)
+		}
+	case "onprem":
+		if captureType != "proxy-arp" {
+			return fmt.Errorf("%s spec.members[%d].capture.type must be proxy-arp for role onprem", res.ID(), index)
+		}
+	}
+	switch captureType {
+	case "provider-secondary-ip":
+		if strings.TrimSpace(member.Capture.ProviderRef) == "" {
+			return fmt.Errorf("%s spec.members[%d].capture.providerRef is required when capture.type is provider-secondary-ip", res.ID(), index)
+		}
+		if strings.TrimSpace(member.Capture.ProviderMode) == "" {
+			return fmt.Errorf("%s spec.members[%d].capture.providerMode is required when capture.type is provider-secondary-ip", res.ID(), index)
+		}
+		if strings.TrimSpace(member.Capture.NICRef) == "" {
+			return fmt.Errorf("%s spec.members[%d].capture.nicRef is required when capture.type is provider-secondary-ip", res.ID(), index)
+		}
+		if member.Capture.ConfigureOSAddress {
+			return fmt.Errorf("%s spec.members[%d].capture.configureOSAddress=true is not implemented in the MVP", res.ID(), index)
+		}
+	case "proxy-arp":
+		if strings.TrimSpace(member.Capture.Interface) == "" {
+			return fmt.Errorf("%s spec.members[%d].capture.interface is required when capture.type is proxy-arp", res.ID(), index)
+		}
+	default:
+		return fmt.Errorf("%s spec.members[%d].capture.type %q is reserved/not implemented in MVP", res.ID(), index, captureType)
+	}
+	switch strings.TrimSpace(member.Delivery.Mode) {
+	case "", "route":
+	default:
+		return fmt.Errorf("%s spec.members[%d].delivery.mode must be empty or route", res.ID(), index)
+	}
+	if strings.TrimSpace(member.Delivery.PeerRef) == "" {
+		return fmt.Errorf("%s spec.members[%d].delivery.peerRef is required when capture.type is set", res.ID(), index)
+	}
+	return nil
 }

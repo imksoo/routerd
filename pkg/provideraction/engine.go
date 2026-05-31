@@ -108,6 +108,9 @@ func (e *Engine) ImportFromDynamicParts() (ImportResult, error) {
 		return res, fmt.Errorf("list dynamic config parts: %w", err)
 	}
 	for _, part := range parts {
+		if part.EffectiveStatus(e.now()) == "expired" {
+			continue
+		}
 		if strings.TrimSpace(part.ActionPlansJSON) == "" {
 			continue
 		}

@@ -6693,6 +6693,58 @@
                           "additionalProperties": false,
                           "description": "MobilityPoolMember binds a routerd node to a site within a MobilityPool.",
                           "properties": {
+                            "capture": {
+                              "additionalProperties": false,
+                              "description": "Capture declares how this member captures addresses currently owned by\nanother site. Empty keeps the pool in lease-registry-only mode until Step 2\nplanning is enabled for this node.",
+                              "properties": {
+                                "configureOSAddress": {
+                                  "type": "boolean"
+                                },
+                                "gratuitousARP": {
+                                  "type": "boolean"
+                                },
+                                "interface": {
+                                  "type": "string"
+                                },
+                                "nicRef": {
+                                  "type": "string"
+                                },
+                                "providerMode": {
+                                  "type": "string"
+                                },
+                                "providerRef": {
+                                  "type": "string"
+                                },
+                                "type": {
+                                  "enum": [
+                                    "provider-secondary-ip",
+                                    "proxy-arp"
+                                  ],
+                                  "type": "string"
+                                }
+                              },
+                              "type": "object"
+                            },
+                            "delivery": {
+                              "additionalProperties": false,
+                              "description": "Delivery declares how this member forwards captured traffic toward the\nowner site. Empty keeps the pool in lease-registry-only mode.",
+                              "properties": {
+                                "mode": {
+                                  "enum": [
+                                    "",
+                                    "route"
+                                  ],
+                                  "type": "string"
+                                },
+                                "peerRef": {
+                                  "type": "string"
+                                },
+                                "tunnelInterface": {
+                                  "type": "string"
+                                }
+                              },
+                              "type": "object"
+                            },
                             "nodeRef": {
                               "description": "NodeRef is the routerd node identity (matches federation sourceNode).",
                               "type": "string"

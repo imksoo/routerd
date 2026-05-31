@@ -31,7 +31,9 @@ type Store interface {
 	ListFederationEvents(group string, includeExpired bool, now int64) ([]routerstate.EventRecord, error)
 	UpsertAddressLease(routerstate.AddressLeaseRecord) error
 	ListAddressLeases(pool string, includeExpired bool, now time.Time) ([]routerstate.AddressLeaseRecord, error)
+	UpsertDynamicConfigPart(routerstate.DynamicConfigPartRecord) error
 	SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error
+	ObjectStatus(apiVersion, kind, name string) map[string]any
 }
 
 type Controller struct {
@@ -58,6 +60,14 @@ func (c Controller) Reconcile(_ context.Context) error {
 			_ = c.Store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", res.Metadata.Name, map[string]any{
 				"phase":  "Degraded",
 				"reason": err.Error(),
+			})
+			continue
+		}
+		if err := c.reconcilePlan(res, now); err != nil {
+			_ = c.savePlannerStatus(res.Metadata.Name, map[string]any{
+				"plannerPhase":  "Degraded",
+				"plannerReason": err.Error(),
+				"plannedAt":     now.Format(time.RFC3339Nano),
 			})
 		}
 	}

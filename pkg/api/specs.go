@@ -1366,6 +1366,29 @@ type MobilityPoolMember struct {
 	// Role selects the SAM side semantics for this node. It is separate from Site
 	// so sites can be named for topology while role remains provider-agnostic.
 	Role string `yaml:"role" json:"role" jsonschema:"enum=onprem,enum=cloud"`
+	// Capture declares how this member captures addresses currently owned by
+	// another site. Empty keeps the pool in lease-registry-only mode until Step 2
+	// planning is enabled for this node.
+	Capture MobilityMemberCapture `yaml:"capture,omitempty" json:"capture,omitempty"`
+	// Delivery declares how this member forwards captured traffic toward the
+	// owner site. Empty keeps the pool in lease-registry-only mode.
+	Delivery MobilityMemberDelivery `yaml:"delivery,omitempty" json:"delivery,omitempty"`
+}
+
+type MobilityMemberCapture struct {
+	Type               string `yaml:"type,omitempty" json:"type,omitempty" jsonschema:"enum=provider-secondary-ip,enum=proxy-arp"`
+	ProviderRef        string `yaml:"providerRef,omitempty" json:"providerRef,omitempty"`
+	ProviderMode       string `yaml:"providerMode,omitempty" json:"providerMode,omitempty"`
+	NICRef             string `yaml:"nicRef,omitempty" json:"nicRef,omitempty"`
+	ConfigureOSAddress bool   `yaml:"configureOSAddress,omitempty" json:"configureOSAddress,omitempty"`
+	Interface          string `yaml:"interface,omitempty" json:"interface,omitempty"`
+	GratuitousARP      bool   `yaml:"gratuitousARP,omitempty" json:"gratuitousARP,omitempty"`
+}
+
+type MobilityMemberDelivery struct {
+	PeerRef         string `yaml:"peerRef,omitempty" json:"peerRef,omitempty"`
+	Mode            string `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=,enum=route"`
+	TunnelInterface string `yaml:"tunnelInterface,omitempty" json:"tunnelInterface,omitempty"`
 }
 
 // MobilityCapturePolicy declares how non-owner sites capture a moved address.

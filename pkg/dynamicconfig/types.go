@@ -35,11 +35,12 @@ type DynamicConfigPart struct {
 // DynamicConfigPartSpec describes the resources and directives observed from a
 // dynamic source at one generation.
 //
-// ActionPlans are advisory, display-only provider operations a plugin proposed.
-// routerd NEVER executes an ActionPlan and NEVER invokes a provider CLI/SDK
-// from these: they are persisted purely so EventSubscription-driven plugin runs
-// stay reviewable. They are NOT resources and are not merged into the effective
-// config.
+// ActionPlans are provider operations proposed by a trusted dynamic source.
+// They are not resources and are not merged into effective config. The core
+// reconciler never invokes provider CLIs/SDKs from a DynamicConfigPart; the
+// separate provider-action engine may import these plans into its journal and
+// hand them to an executor plugin only after ProviderActionPolicy and approval
+// gates allow it.
 type DynamicConfigPartSpec struct {
 	Source      string                   `yaml:"source" json:"source"`
 	Generation  int64                    `yaml:"generation" json:"generation"`
@@ -51,9 +52,9 @@ type DynamicConfigPartSpec struct {
 	ActionPlans []ActionPlan             `yaml:"actionPlans,omitempty" json:"actionPlans,omitempty"`
 }
 
-// ActionPlan is a plugin-proposed provider operation recorded for dry-run and
-// display only. routerd never executes an ActionPlan and never invokes a
-// provider CLI/SDK; it is data the operator reviews.
+// ActionPlan is a provider operation proposed by a dynamic source. It remains
+// inert while attached to DynamicConfigPart; execution is possible only through
+// the separate provider-action journal/approval/policy path.
 //
 // It is defined here (the lower-level package) rather than in pkg/plugin so
 // DynamicConfigPartSpec can carry it without an import cycle (pkg/plugin imports

@@ -33,9 +33,26 @@ spec:
     - nodeRef: onprem-router
       site: onprem
       role: onprem
+      capture:
+        type: proxy-arp
+        interface: lan
+      delivery:
+        peerRef: cloud-main
+        mode: route
+        tunnelInterface: wg-hybrid
     - nodeRef: cloud-router
       site: azure
       role: cloud
+      capture:
+        type: provider-secondary-ip
+        providerRef: azure-lab
+        providerMode: nic-secondary-ip
+        nicRef: /subscriptions/.../networkInterfaces/routerd-nic
+        configureOSAddress: false
+      delivery:
+        peerRef: onprem-main
+        mode: route
+        tunnelInterface: wg-hybrid
   leasePolicy:
     ttl: 5m
     holdDuration: 30s
@@ -49,8 +66,8 @@ hand-authored. Inspect it with `routerctl mobility leases`.
 
 `AddressMobilityDomain` and `RemoteAddressClaim` are the lower-level SAM
 representation. Existing hand-authored SAM configs remain supported, but in the
-CloudEdge Mobility path they are intended to be derived from `MobilityPool` and
-`AddressLease` state by the Step 2 planner.
+CloudEdge Mobility path they are derived from `MobilityPool` and `AddressLease`
+state by the mobility planner and stored as a `DynamicConfigPart`.
 
 `AddressMobilityDomain` defines the IPv4 prefix where selected addresses may
 move:
@@ -94,8 +111,11 @@ peer for grouping metadata. The MVP dataplane uses
 is required on each claim.
 
 `CloudProviderProfile` describes provider capabilities and how an external
-tool would authenticate. It is only a capability/profile descriptor in this MVP;
-routerd makes no cloud API calls.
+tool would authenticate. The mobility planner does not call provider APIs
+directly. For cloud capture it emits dry-run `ActionPlan` records such as
+`assign-secondary-ip` and `ensure-forwarding-enabled`; the separate
+provider-action executor path may import and execute those only when explicitly
+allowed by `ProviderActionPolicy`.
 
 `OverlayPeer` identifies the remote routerd peer and underlay. `HybridRoute`
 continues to model ordinary L3 remote-prefix routing. Address mobility uses the
@@ -174,9 +194,10 @@ mode (`2`) on the affected interfaces.
 | OCI | VNIC private IP object plus source/destination check disabled. |
 | GCP | Alias IP or route capability, gated by the declared provider profile. |
 
-The profile is declarative. In the MVP, routerd can validate and display the
-intent, but it does not assign cloud addresses, change NIC flags, or replace
-provider route tables.
+The profile is declarative. The mobility planner can produce provider
+`ActionPlan` records, but address assignment and NIC flag changes remain gated
+by the provider-action execution policy and executor plugin. The planner itself
+never mutates provider state.
 
 ## Same-Subnet Flow
 
@@ -229,6 +250,5 @@ default-drop forwarding policy. SAM does not add firewall rules by itself.
 ## Out Of Scope
 
 The MVP does not implement full L2 extension, EVPN, BUM forwarding,
-broadcast/multicast extension, automatic cloud API mutation, dynamic patch or
-replace semantics, provider-side address assignment, or automatic `rp_filter`
-changes.
+broadcast/multicast extension, automatic ungated cloud API mutation, dynamic
+patch/replace semantics, or automatic `rp_filter` changes.

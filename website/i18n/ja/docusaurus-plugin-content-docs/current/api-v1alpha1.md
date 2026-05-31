@@ -151,7 +151,7 @@ DNSSEC validation は `DNSForwarder.spec.dnssecValidate` に書きます。
 | Kind | 役割 |
 | --- | --- |
 | `DSLiteTunnel` | AFTR へ `ip6tnl` トンネルを張ります。AFTR は IPv6 を直接指定するか、FQDN、または DHCPv6 情報から得ます。 |
-| `MobilityPool` | CloudEdge mobility の唯一の operator-authored intent です。pool prefix、federation group、node-to-site membership、lease/capture policy を宣言し、routerd は observed federation event から `AddressLease` runtime state を導出します。 |
+| `MobilityPool` | CloudEdge mobility の唯一の operator-authored intent です。pool prefix、federation group、node-to-site membership、member ごとの capture/delivery policy、lease policy を宣言し、routerd は observed federation event から `AddressLease` runtime state と SAM dynamic config を導出します。 |
 | `IPAddressSet` | 直接指定したアドレスや FQDN から、再利用可能な IP address set を定義します。Linux nftables renderer はこれを named set として出力し、redirect、NAT、policy routing から参照できます。 |
 | `IPv4Route` | IPv4 経路を追加します。DS-Lite 経由の既定経路や、明示的な破棄経路にも使います。 |
 | `ClusterNetworkRoute` | Kubernetes の Pod / Service CIDR を、worker の next hop 経由の static IPv4 route に展開します。 |
@@ -506,7 +506,7 @@ validator がエラーにします。
 | `LogRetention` | `phase` (string), `targets` (objectList), `updatedAt` (timestamp) |
 | `LogSink` | `phase` (string), `type` (string) |
 | `ManagementAccess` | `interfaces` (stringList), `phase` (string) |
-| `MobilityPool` | `activeLeases` (int), `expiredLeases` (int), `groupRef` (string), `holdingLeases` (int), `leaseCount` (int), `phase` (string), `prefix` (string), `projectedAt` (timestamp) |
+| `MobilityPool` | `activeLeases` (int), `dynamicSource` (string), `expiredLeases` (int), `generatedActions` (int), `generatedClaims` (int), `groupRef` (string), `holdingLeases` (int), `leaseCount` (int), `phase` (string), `plannerPhase` (string), `prefix` (string), `projectedAt` (timestamp) |
 | `NAT44Rule` | `dryRun` (bool), `egressInterface` (string), `phase` (string), `snatAddress` (string) |
 | `NTPClient` | `phase` (string), `servers` (stringList), `source` (string), `updatedAt` (timestamp) |
 | `NTPServer` | `allowCIDRs` (stringList), `listenAddresses` (stringList), `phase` (string), `servers` (stringList), `source` (string), `updatedAt` (timestamp) |

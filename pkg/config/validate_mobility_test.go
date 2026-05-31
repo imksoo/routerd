@@ -14,8 +14,25 @@ func TestValidateMobilityPool(t *testing.T) {
 		Prefix:   "10.88.60.0/24",
 		GroupRef: "cloudedge",
 		Members: []api.MobilityPoolMember{
-			{NodeRef: "onprem-router", Site: "onprem", Role: "onprem"},
-			{NodeRef: "azure-router", Site: "azure", Role: "cloud"},
+			{
+				NodeRef:  "onprem-router",
+				Site:     "onprem",
+				Role:     "onprem",
+				Capture:  api.MobilityMemberCapture{Type: "proxy-arp", Interface: "lan"},
+				Delivery: api.MobilityMemberDelivery{PeerRef: "azure", Mode: "route", TunnelInterface: "wg-hybrid"},
+			},
+			{
+				NodeRef: "azure-router",
+				Site:    "azure",
+				Role:    "cloud",
+				Capture: api.MobilityMemberCapture{
+					Type:         "provider-secondary-ip",
+					ProviderRef:  "azure-provider",
+					ProviderMode: "nic-secondary-ip",
+					NICRef:       "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Network/networkInterfaces/router-nic",
+				},
+				Delivery: api.MobilityMemberDelivery{PeerRef: "onprem", Mode: "route", TunnelInterface: "wg-hybrid"},
+			},
 		},
 		LeasePolicy: api.MobilityLeasePolicy{TTL: "5m", HoldDuration: "30s"},
 		Authority:   api.MobilityAuthority{Mode: "static"},
@@ -55,6 +72,21 @@ func TestValidateMobilityPoolRejectsInvalidFields(t *testing.T) {
 			name: "unknown authority node",
 			mut:  func(spec *api.MobilityPoolSpec) { spec.Authority.NodeRef = "other" },
 			want: "must be one of the member nodeRefs",
+		},
+		{
+			name: "cloud capture type",
+			mut: func(spec *api.MobilityPoolSpec) {
+				spec.Members[1].Capture = api.MobilityMemberCapture{Type: "proxy-arp", Interface: "lan"}
+				spec.Members[1].Delivery = api.MobilityMemberDelivery{PeerRef: "onprem"}
+			},
+			want: "capture.type must be provider-secondary-ip for role cloud",
+		},
+		{
+			name: "capture needs delivery",
+			mut: func(spec *api.MobilityPoolSpec) {
+				spec.Members[0].Capture = api.MobilityMemberCapture{Type: "proxy-arp", Interface: "lan"}
+			},
+			want: "delivery.peerRef is required when capture.type is set",
 		},
 	}
 	for _, tt := range tests {

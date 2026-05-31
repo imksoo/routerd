@@ -176,7 +176,7 @@ for DoH or DoT endpoint name resolution.
 | `DSLiteTunnel` | Creates an `ip6tnl` tunnel to an AFTR. The AFTR can be static IPv6, FQDN, or DHCPv6 information. |
 | `OverlayPeer` | Describes an on-prem or cloud overlay peer and the local underlay used to reach it. |
 | `HybridRoute` | Lowers non-default remote IPv4 prefixes through an `OverlayPeer` into managed `IPv4Route` resources. |
-| `MobilityPool` | Declares the only operator-authored CloudEdge mobility intent: pool prefix, federation group, node-to-site membership, and lease/capture policy. routerd derives `AddressLease` runtime state from observed federation events. |
+| `MobilityPool` | Declares the only operator-authored CloudEdge mobility intent: pool prefix, federation group, node-to-site membership, per-member capture/delivery policy, and lease policy. routerd derives `AddressLease` runtime state and generated SAM dynamic config from observed federation events. |
 | `AddressMobilityDomain` | Defines an IPv4 prefix for Selective Address Mobility; full L2 extension is not supported. |
 | `CloudProviderProfile` | Describes provider capabilities and external-command auth for declarative address capture planning. |
 | `RemoteAddressClaim` | Declares one mobile IPv4 `/32`, its capture mechanism, and route delivery over an `OverlayPeer`. |
@@ -206,7 +206,7 @@ existing `IPv4Route` controller path instead of installing routes directly.
 CloudEdge Mobility keeps the operator-authored surface declarative:
 `MobilityPool` is the high-level intent, federation events are observed facts,
 and `AddressLease` rows are derived runtime state visible through
-`routerctl mobility leases`. In the Step 2 planner, routerd will derive
+`routerctl mobility leases`. The mobility planner derives
 `AddressMobilityDomain` and `RemoteAddressClaim` DynamicConfigPart resources
 from leases; operators should not hand-author per-address leases or capture
 procedures for the mobility control plane.
@@ -556,7 +556,7 @@ and fields outside the target kind's `provides` set.
 | `LogRetention` | `phase` (string), `targets` (objectList), `updatedAt` (timestamp) |
 | `LogSink` | `phase` (string), `type` (string) |
 | `ManagementAccess` | `interfaces` (stringList), `phase` (string) |
-| `MobilityPool` | `activeLeases` (int), `expiredLeases` (int), `groupRef` (string), `holdingLeases` (int), `leaseCount` (int), `phase` (string), `prefix` (string), `projectedAt` (timestamp) |
+| `MobilityPool` | `activeLeases` (int), `dynamicSource` (string), `expiredLeases` (int), `generatedActions` (int), `generatedClaims` (int), `groupRef` (string), `holdingLeases` (int), `leaseCount` (int), `phase` (string), `plannerPhase` (string), `prefix` (string), `projectedAt` (timestamp) |
 | `NAT44Rule` | `dryRun` (bool), `egressInterface` (string), `phase` (string), `snatAddress` (string) |
 | `NTPClient` | `phase` (string), `servers` (stringList), `source` (string), `updatedAt` (timestamp) |
 | `NTPServer` | `allowCIDRs` (stringList), `listenAddresses` (stringList), `phase` (string), `servers` (stringList), `source` (string), `updatedAt` (timestamp) |

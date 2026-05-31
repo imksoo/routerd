@@ -156,6 +156,45 @@ func TestImportSkipsMissingIdempotencyKey(t *testing.T) {
 	}
 }
 
+func TestImportSkipsExpiredDynamicParts(t *testing.T) {
+	store := mustStore(t)
+	now := time.Unix(1700000000, 0).UTC()
+	plan := samplePlan("expired-key")
+	data, err := json.Marshal([]dynamicconfig.ActionPlan{plan})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertDynamicConfigPart(state.DynamicConfigPartRecord{
+		Source:          "MobilityPool/cloudedge/node/cloud",
+		Generation:      1,
+		ObservedAt:      now.Add(-time.Hour),
+		ExpiresAt:       now.Add(-time.Minute),
+		Digest:          "expired-digest",
+		ActionPlansJSON: string(data),
+		Status:          "active",
+	}); err != nil {
+		t.Fatalf("seed expired part: %v", err)
+	}
+	e, err := NewEngine(Config{Store: store, Runner: (&fakeRunner{result: succeededResult()}).run, Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	res, err := e.ImportFromDynamicParts()
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if res.Inserted != 0 || res.Duplicates != 0 || res.Skipped != 0 {
+		t.Fatalf("want no imports from expired part, got %+v", res)
+	}
+	rows, err := store.ListActions(state.ActionExecutionFilter{})
+	if err != nil {
+		t.Fatalf("ListActions: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("want no journal rows, got %d", len(rows))
+	}
+}
+
 // importOne imports one plan and returns the journal id.
 func importOne(t *testing.T, store *state.SQLiteStore, e *Engine, key string) int64 {
 	t.Helper()
