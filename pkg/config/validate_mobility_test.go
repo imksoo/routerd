@@ -110,6 +110,22 @@ func TestValidateMobilityPoolRejectsInvalidFields(t *testing.T) {
 			},
 			want: "looks secret-like",
 		},
+		{
+			name: "activeWhen missing ref",
+			mut: func(spec *api.MobilityPoolSpec) {
+				spec.Members[0].Capture = api.MobilityMemberCapture{Type: "proxy-arp", Interface: "lan", ActiveWhen: api.CaptureActiveWhen{Type: "vrrp-master"}}
+				spec.Members[0].Delivery = api.MobilityMemberDelivery{PeerRef: "azure"}
+			},
+			want: "capture.activeWhen.virtualAddressRef is required",
+		},
+		{
+			name: "activeWhen unresolved virtual address",
+			mut: func(spec *api.MobilityPoolSpec) {
+				spec.Members[0].Capture = api.MobilityMemberCapture{Type: "proxy-arp", Interface: "lan", ActiveWhen: api.CaptureActiveWhen{Type: "vrrp-master", VirtualAddressRef: "onprem-vip"}}
+				spec.Members[0].Delivery = api.MobilityMemberDelivery{PeerRef: "azure"}
+			},
+			want: "references missing VirtualAddress",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

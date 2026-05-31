@@ -160,6 +160,9 @@ func validateHybridResource(res api.Resource, _ platform.OS) (bool, error) {
 		default:
 			return true, fmt.Errorf("%s spec.capture.type %q is reserved/not implemented in MVP", res.ID(), strings.TrimSpace(spec.Capture.Type))
 		}
+		if err := validateCaptureActiveWhen(res.ID()+" spec.capture.activeWhen", spec.Capture.ActiveWhen); err != nil {
+			return true, err
+		}
 		switch strings.TrimSpace(spec.Delivery.Mode) {
 		case "route":
 		default:
@@ -183,6 +186,21 @@ func validateHybridResource(res api.Resource, _ platform.OS) (bool, error) {
 		return false, nil
 	}
 	return true, nil
+}
+
+func validateCaptureActiveWhen(path string, activeWhen api.CaptureActiveWhen) error {
+	gateType := strings.TrimSpace(activeWhen.Type)
+	ref := strings.TrimSpace(activeWhen.VirtualAddressRef)
+	if gateType == "" && ref == "" {
+		return nil
+	}
+	if gateType != "vrrp-master" {
+		return fmt.Errorf("%s.type must be vrrp-master", path)
+	}
+	if ref == "" {
+		return fmt.Errorf("%s.virtualAddressRef is required when type is vrrp-master", path)
+	}
+	return nil
 }
 
 // canonicalProviderActionProviders is the provider allowlist a

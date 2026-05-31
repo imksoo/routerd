@@ -558,6 +558,10 @@ func trimCapture(c api.MobilityMemberCapture) api.AddressCapture {
 		ConfigureOSAddress: c.ConfigureOSAddress,
 		Interface:          strings.TrimSpace(c.Interface),
 		GratuitousARP:      c.GratuitousARP,
+		ActiveWhen: api.CaptureActiveWhen{
+			Type:              strings.TrimSpace(c.ActiveWhen.Type),
+			VirtualAddressRef: strings.TrimSpace(c.ActiveWhen.VirtualAddressRef),
+		},
 	}
 }
 

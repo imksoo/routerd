@@ -155,6 +155,9 @@ func validateMobilityMemberCapture(res api.Resource, index int, member api.Mobil
 			return fmt.Errorf("%s spec.members[%d].capture.target[%q] looks secret-like; target may only carry non-secret provider identifiers", res.ID(), index, key)
 		}
 	}
+	if err := validateCaptureActiveWhen(fmt.Sprintf("%s spec.members[%d].capture.activeWhen", res.ID(), index), member.Capture.ActiveWhen); err != nil {
+		return err
+	}
 	if captureType == "" {
 		return nil
 	}

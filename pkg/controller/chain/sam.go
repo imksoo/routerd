@@ -22,6 +22,10 @@ type samProxyNeighborApplier interface {
 	EnsureOSAddressAbsent(ctx context.Context, address string) (samOSAddressDeassignResult, error)
 }
 
+type samGratuitousARPAnnouncer interface {
+	SendGratuitousARP(ctx context.Context, address, ifname string) error
+}
+
 type samStoredProxyNeighbor struct {
 	address string
 	ifname  string
@@ -53,6 +57,7 @@ type SAMController struct {
 	DryRun    bool
 	OS        platform.OS
 	Applier   samProxyNeighborApplier
+	GARP      samGratuitousARPAnnouncer
 }
 
 func (c SAMController) Reconcile(ctx context.Context) error {
@@ -73,7 +78,7 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 	if err := c.cleanupRemovedCaptures(ctx, statuses); err != nil {
 		return err
 	}
-	actions, err := sam.PlanCapture(c.Router, targetOS)
+	actions, err := sam.PlanCaptureWithOptions(c.Router, targetOS, sam.PlanOptions{StatusReader: c.Store})
 	if err != nil {
 		return err
 	}
@@ -82,6 +87,7 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 	}
 	var failures []string
 	deassignResults := map[string]samOSAddressDeassignResult{}
+	priorNeighbors := samStoredProxyNeighbors(statuses)
 	for _, action := range actions {
 		switch action.Kind {
 		case "proxy-neighbor":
@@ -94,6 +100,17 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 			}
 			if err := applier.EnsureProxyNeighbor(ctx, action.Address, action.Interface); err != nil {
 				failures = append(failures, fmt.Sprintf("%s %s dev %s: %v", action.ClaimName, action.Address, action.Interface, err))
+				continue
+			}
+			current := samStoredProxyNeighbor{address: strings.TrimSpace(action.Address), ifname: strings.TrimSpace(action.Interface)}
+			if action.GratuitousARP && priorNeighbors[action.ClaimName] != current {
+				announcer := c.GARP
+				if announcer == nil {
+					announcer = defaultSAMGratuitousARPAnnouncer()
+				}
+				if err := announcer.SendGratuitousARP(ctx, action.Address, action.Interface); err != nil {
+					failures = append(failures, fmt.Sprintf("%s gratuitous ARP %s dev %s: %v", action.ClaimName, action.Address, action.Interface, err))
+				}
 			}
 		case "deassign-os-address":
 			result := samOSAddressDeassignResult{address: strings.TrimSpace(action.Address)}

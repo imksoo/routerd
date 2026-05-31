@@ -420,6 +420,24 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 					return fmt.Errorf("%s spec.capture.providerRef references missing CloudProviderProfile %q", res.ID(), spec.Capture.ProviderRef)
 				}
 			}
+			if ref := captureActiveWhenVirtualAddressRef(spec.Capture.ActiveWhen); ref != "" {
+				if _, ok := idx.VirtualAddresses[ref]; !ok {
+					return fmt.Errorf("%s spec.capture.activeWhen.virtualAddressRef references missing VirtualAddress %q", res.ID(), ref)
+				}
+			}
+		}
+		if res.Kind == "MobilityPool" {
+			spec, err := res.MobilityPoolSpec()
+			if err != nil {
+				return err
+			}
+			for i, member := range spec.Members {
+				if ref := captureActiveWhenVirtualAddressRef(member.Capture.ActiveWhen); ref != "" {
+					if _, ok := idx.VirtualAddresses[ref]; !ok {
+						return fmt.Errorf("%s spec.members[%d].capture.activeWhen.virtualAddressRef references missing VirtualAddress %q", res.ID(), i, ref)
+					}
+				}
+			}
 		}
 		if res.Kind == "HealthCheck" {
 			spec, err := res.HealthCheckSpec()
@@ -623,6 +641,11 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 		}
 	}
 	return nil
+}
+
+func captureActiveWhenVirtualAddressRef(activeWhen api.CaptureActiveWhen) string {
+	ref := strings.TrimSpace(activeWhen.VirtualAddressRef)
+	return strings.TrimPrefix(ref, "VirtualAddress/")
 }
 
 func isExternalIPv6PDClient(client string) bool {

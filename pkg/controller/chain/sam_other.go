@@ -15,6 +15,10 @@ func defaultSAMProxyNeighborApplier() samProxyNeighborApplier {
 	return unsupportedSAMProxyNeighborApplier{}
 }
 
+func defaultSAMGratuitousARPAnnouncer() samGratuitousARPAnnouncer {
+	return unsupportedSAMGratuitousARPAnnouncer{}
+}
+
 func (unsupportedSAMProxyNeighborApplier) EnsureProxyNeighbor(context.Context, string, string) error {
 	return fmt.Errorf("SAM capture not implemented on this OS")
 }
@@ -25,4 +29,10 @@ func (unsupportedSAMProxyNeighborApplier) DeleteProxyNeighbor(context.Context, s
 
 func (unsupportedSAMProxyNeighborApplier) EnsureOSAddressAbsent(context.Context, string) (samOSAddressDeassignResult, error) {
 	return samOSAddressDeassignResult{}, nil
+}
+
+type unsupportedSAMGratuitousARPAnnouncer struct{}
+
+func (unsupportedSAMGratuitousARPAnnouncer) SendGratuitousARP(context.Context, string, string) error {
+	return fmt.Errorf("SAM capture not implemented on this OS")
 }

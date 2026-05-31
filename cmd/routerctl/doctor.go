@@ -280,6 +280,15 @@ func (r doctorRunner) doctorSAMLiveChecks(name string, spec api.RemoteAddressCla
 	if doctorCurrentOS() != platform.OSLinux {
 		return []doctorCheck{{Area: "hybrid", Name: "RemoteAddressClaim/" + name + " SAM dataplane", Status: doctorSkip, Detail: "SAM capture not implemented on this OS"}}
 	}
+	statusReader, _ := r.store.(sam.StatusReader)
+	if gate := sam.EvaluateCaptureGate(spec.Capture, statusReader); !gate.Active {
+		return []doctorCheck{{
+			Area:   "hybrid",
+			Name:   "RemoteAddressClaim/" + name + " SAM dataplane",
+			Status: doctorSkip,
+			Detail: "capture gated inactive: " + gate.Message,
+		}}
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), r.opts.Timeout)
 	defer cancel()
 	address := strings.TrimSpace(spec.Address)

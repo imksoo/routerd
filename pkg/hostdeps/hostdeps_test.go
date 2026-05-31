@@ -107,6 +107,27 @@ func TestDerivedSysctlResourcesForSAMAreStrictlyGated(t *testing.T) {
 	}
 }
 
+func TestPackageFeaturesIncludeArpingForVRRPGatedSAMCapture(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
+		TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "RemoteAddressClaim"},
+		Metadata: api.ObjectMeta{Name: "app"},
+		Spec: api.RemoteAddressClaimSpec{
+			DomainRef: "same-subnet",
+			Address:   "10.0.1.123/32",
+			OwnerSide: "onprem",
+			Capture: api.AddressCapture{
+				Type:       "proxy-arp",
+				Interface:  "lan0",
+				ActiveWhen: api.CaptureActiveWhen{Type: "vrrp-master", VirtualAddressRef: "onprem-vip"},
+			},
+			Delivery: api.AddressDelivery{PeerRef: "cloud-main", Mode: "route", TunnelInterface: "wg-sam"},
+		},
+	}}}}
+	if features := packageFeatures(router); !features["arping"] {
+		t.Fatalf("features = %#v, want arping for VRRP-gated SAM capture", features)
+	}
+}
+
 func TestPackageFeaturesCoverStandaloneDataplaneResources(t *testing.T) {
 	for _, tc := range []struct {
 		kind string

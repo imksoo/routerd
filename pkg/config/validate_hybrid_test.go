@@ -203,6 +203,24 @@ func TestValidateHybridFailures(t *testing.T) {
 			want: "spec.capture.interface is required",
 		},
 		{
+			name: "remote claim activeWhen missing ref",
+			mutate: func(router *api.Router) {
+				spec := router.Spec.Resources[6].Spec.(api.RemoteAddressClaimSpec)
+				spec.Capture.ActiveWhen = api.CaptureActiveWhen{Type: "vrrp-master"}
+				router.Spec.Resources[6].Spec = spec
+			},
+			want: "spec.capture.activeWhen.virtualAddressRef is required",
+		},
+		{
+			name: "remote claim unresolved activeWhen virtual address",
+			mutate: func(router *api.Router) {
+				spec := router.Spec.Resources[6].Spec.(api.RemoteAddressClaimSpec)
+				spec.Capture.ActiveWhen = api.CaptureActiveWhen{Type: "vrrp-master", VirtualAddressRef: "onprem-vip"}
+				router.Spec.Resources[6].Spec = spec
+			},
+			want: "spec.capture.activeWhen.virtualAddressRef references missing VirtualAddress",
+		},
+		{
 			name: "remote claim bad delivery mode",
 			mutate: func(router *api.Router) {
 				spec := router.Spec.Resources[6].Spec.(api.RemoteAddressClaimSpec)

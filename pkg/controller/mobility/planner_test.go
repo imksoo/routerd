@@ -142,6 +142,42 @@ func TestPlanDynamicConfigResolvesDeliveryToBeforeFallback(t *testing.T) {
 	}
 }
 
+func TestPlanDynamicConfigCopiesCaptureActiveWhen(t *testing.T) {
+	now := time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC)
+	spec := plannedPoolSpec()
+	spec.Members[0].Capture.ActiveWhen = api.CaptureActiveWhen{Type: "vrrp-master", VirtualAddressRef: "onprem-vip"}
+	out, err := PlanDynamicConfig(PlannerInput{
+		PoolName: "cloudedge",
+		PoolSpec: spec,
+		SelfNode: "onprem-router",
+		Now:      now,
+		Leases: []routerstate.AddressLeaseRecord{{
+			Pool:      "cloudedge",
+			Address:   "10.88.60.10/32",
+			Status:    routerstate.AddressLeaseStatusActive,
+			OwnerNode: "azure-router",
+			OwnerSite: "azure",
+			OwnerRole: "cloud",
+			Epoch:     2,
+			ExpiresAt: now.Add(2 * time.Minute),
+		}},
+	})
+	if err != nil {
+		t.Fatalf("PlanDynamicConfig: %v", err)
+	}
+	claim := firstKind(out.Part.Spec.Resources, "RemoteAddressClaim")
+	if claim.Kind == "" {
+		t.Fatalf("missing RemoteAddressClaim in %+v", out.Part.Spec.Resources)
+	}
+	claimSpec, err := claim.RemoteAddressClaimSpec()
+	if err != nil {
+		t.Fatalf("RemoteAddressClaimSpec: %v", err)
+	}
+	if claimSpec.Capture.ActiveWhen.Type != "vrrp-master" || claimSpec.Capture.ActiveWhen.VirtualAddressRef != "onprem-vip" {
+		t.Fatalf("activeWhen not copied: %+v", claimSpec.Capture.ActiveWhen)
+	}
+}
+
 func TestPlanDynamicConfigSkipsOwnSiteHoldingAndExpiredLeases(t *testing.T) {
 	now := time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC)
 	out, err := PlanDynamicConfig(PlannerInput{
@@ -314,4 +350,13 @@ func countKind(resources []api.Resource, kind string) int {
 		}
 	}
 	return count
+}
+
+func firstKind(resources []api.Resource, kind string) api.Resource {
+	for _, res := range resources {
+		if strings.EqualFold(res.Kind, kind) {
+			return res
+		}
+	}
+	return api.Resource{}
 }

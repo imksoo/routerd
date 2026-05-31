@@ -187,6 +187,67 @@ func TestSAMControllerLeavesUnchangedProxyNeighbor(t *testing.T) {
 	assertSAMCalls(t, applier.calls, []string{"ensure:10.0.1.123/32@lan0"})
 }
 
+func TestSAMControllerGatedProxyNeighborSendsGARPOnlyOnInactiveToActive(t *testing.T) {
+	router := samControllerRouterWithClaim("10.0.1.123/32", "proxy-arp", "lan0")
+	spec := router.Spec.Resources[1].Spec.(api.RemoteAddressClaimSpec)
+	spec.Capture.ActiveWhen = api.CaptureActiveWhen{Type: "vrrp-master", VirtualAddressRef: "onprem-vip"}
+	router.Spec.Resources[1].Spec = spec
+
+	store := &samStore{objects: map[string]map[string]any{
+		api.NetAPIVersion + "/VirtualAddress/onprem-vip": {"role": "master"},
+	}}
+	applier := &fakeSAMApplier{}
+	garp := &fakeSAMGARP{}
+	controller := SAMController{Router: router, Store: store, OS: platform.OSLinux, Applier: applier, GARP: garp}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("first Reconcile: %v", err)
+	}
+	assertSAMCalls(t, applier.calls, []string{"ensure:10.0.1.123/32@lan0"})
+	if len(garp.calls) != 1 || garp.calls[0] != "10.0.1.123/32@lan0" {
+		t.Fatalf("first GARP calls = %#v", garp.calls)
+	}
+
+	store.statuses = []routerstate.ObjectStatus{samRemoteAddressClaimStatus("app", "10.0.1.123/32", "lan0")}
+	applier.calls = nil
+	applier.ensure = nil
+	garp.calls = nil
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("steady Reconcile: %v", err)
+	}
+	assertSAMCalls(t, applier.calls, []string{"ensure:10.0.1.123/32@lan0"})
+	if len(garp.calls) != 0 {
+		t.Fatalf("steady-state GARP calls = %#v, want none", garp.calls)
+	}
+}
+
+func TestSAMControllerGatedProxyNeighborCleansOnMasterToBackupWithoutGARP(t *testing.T) {
+	router := samControllerRouterWithClaim("10.0.1.123/32", "proxy-arp", "lan0")
+	spec := router.Spec.Resources[1].Spec.(api.RemoteAddressClaimSpec)
+	spec.Capture.ActiveWhen = api.CaptureActiveWhen{Type: "vrrp-master", VirtualAddressRef: "onprem-vip"}
+	router.Spec.Resources[1].Spec = spec
+
+	store := &samStore{
+		objects: map[string]map[string]any{
+			api.NetAPIVersion + "/VirtualAddress/onprem-vip": {"role": "backup"},
+		},
+		statuses: []routerstate.ObjectStatus{samRemoteAddressClaimStatus("app", "10.0.1.123/32", "lan0")},
+	}
+	applier := &fakeSAMApplier{}
+	garp := &fakeSAMGARP{}
+	controller := SAMController{Router: router, Store: store, OS: platform.OSLinux, Applier: applier, GARP: garp}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	assertSAMCalls(t, applier.calls, []string{"delete:10.0.1.123/32@lan0"})
+	if len(garp.calls) != 0 {
+		t.Fatalf("backup transition GARP calls = %#v, want none", garp.calls)
+	}
+	status := store.ObjectStatus(api.HybridAPIVersion, "RemoteAddressClaim", "app")
+	if status["phase"] != "Gated" || status["reason"] != "CaptureGateInactive" || status["captureActive"] != false {
+		t.Fatalf("gated status = %#v", status)
+	}
+}
+
 func TestSAMControllerDryRunSkipsProxyNeighborActions(t *testing.T) {
 	router := samControllerRouterWithClaim("10.0.1.123/32", "proxy-arp", "br-new")
 	store := &samStore{objects: map[string]map[string]any{}, statuses: []routerstate.ObjectStatus{
@@ -221,6 +282,15 @@ type fakeSAMApplier struct {
 	deassign       []string
 	calls          []string
 	deassignResult samOSAddressDeassignResult
+}
+
+type fakeSAMGARP struct {
+	calls []string
+}
+
+func (g *fakeSAMGARP) SendGratuitousARP(_ context.Context, address, ifname string) error {
+	g.calls = append(g.calls, address+"@"+ifname)
+	return nil
 }
 
 func (a *fakeSAMApplier) EnsureProxyNeighbor(_ context.Context, address, ifname string) error {

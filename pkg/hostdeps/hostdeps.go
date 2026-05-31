@@ -63,6 +63,7 @@ func PackageSets(router *api.Router) []api.OSPackageSetSpec {
 }
 
 var ubuntuPackages = map[string][]string{
+	"arping":        {"iputils-arping"},
 	"base":          {"iproute2", "systemd"},
 	"bgp":           {},
 	"conntrack":     {"conntrack"},
@@ -83,6 +84,7 @@ var ubuntuPackages = map[string][]string{
 var debianPackages = ubuntuPackages
 
 var nixosPackages = map[string][]string{
+	"arping":        {"iputils"},
 	"base":          {"iproute2", "systemd"},
 	"bgp":           {},
 	"conntrack":     {"conntrack-tools"},
@@ -101,6 +103,7 @@ var nixosPackages = map[string][]string{
 }
 
 var alpinePackages = map[string][]string{
+	"arping":        {"iputils"},
 	"base":          {"iproute2"},
 	"bgp":           {},
 	"conntrack":     {"conntrack-tools"},
@@ -177,6 +180,10 @@ func packageFeatures(router *api.Router) map[string]bool {
 			features["ipsec"] = true
 		case "TailscaleNode":
 			features["tailscale"] = true
+		case "RemoteAddressClaim":
+			if spec, err := res.RemoteAddressClaimSpec(); err == nil && spec.Capture.Type == "proxy-arp" && (spec.Capture.GratuitousARP || spec.Capture.ActiveWhen.Type == "vrrp-master") {
+				features["arping"] = true
+			}
 		}
 	}
 	if len(KernelModules(router)) > 0 {

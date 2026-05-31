@@ -26,6 +26,7 @@ type RouterIndex struct {
 	SelfAddressPolicies        map[string]bool
 	DSLiteTunnels              map[string]bool
 	OverlayPeers               map[string]api.OverlayPeerSpec
+	VirtualAddresses           map[string]api.VirtualAddressSpec
 	AddressMobilityDomains     map[string]api.AddressMobilityDomainSpec
 	CloudProviderProfiles      map[string]api.CloudProviderProfileSpec
 	HealthChecks               map[string]bool
@@ -83,6 +84,7 @@ func newRouterIndex(router *api.Router) *RouterIndex {
 		SelfAddressPolicies:        map[string]bool{},
 		DSLiteTunnels:              map[string]bool{},
 		OverlayPeers:               map[string]api.OverlayPeerSpec{},
+		VirtualAddresses:           map[string]api.VirtualAddressSpec{},
 		AddressMobilityDomains:     map[string]api.AddressMobilityDomainSpec{},
 		CloudProviderProfiles:      map[string]api.CloudProviderProfileSpec{},
 		HealthChecks:               map[string]bool{},
@@ -264,6 +266,13 @@ func (idx *RouterIndex) build(router *api.Router, targetOS platform.OS) error {
 				return err
 			}
 			idx.OverlayPeers[res.Metadata.Name] = spec
+		}
+		if res.APIVersion == api.NetAPIVersion && res.Kind == "VirtualAddress" {
+			spec, err := res.VirtualAddressSpec()
+			if err != nil {
+				return err
+			}
+			idx.VirtualAddresses[res.Metadata.Name] = spec
 		}
 		if res.APIVersion == api.HybridAPIVersion && res.Kind == "AddressMobilityDomain" {
 			spec, err := res.AddressMobilityDomainSpec()

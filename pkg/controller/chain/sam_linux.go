@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"os/exec"
 	"strings"
 
 	"github.com/vishvananda/netlink"
@@ -17,6 +18,34 @@ type netlinkSAMProxyNeighborApplier struct{}
 
 func defaultSAMProxyNeighborApplier() samProxyNeighborApplier {
 	return netlinkSAMProxyNeighborApplier{}
+}
+
+func defaultSAMGratuitousARPAnnouncer() samGratuitousARPAnnouncer {
+	return commandSAMGratuitousARPAnnouncer{}
+}
+
+type commandSAMGratuitousARPAnnouncer struct {
+	Command func(context.Context, string, ...string) ([]byte, error)
+}
+
+func (a commandSAMGratuitousARPAnnouncer) SendGratuitousARP(ctx context.Context, address, ifname string) error {
+	ip, _, err := net.ParseCIDR(address)
+	if err != nil {
+		ip = net.ParseIP(address)
+	}
+	if ip == nil || ip.To4() == nil {
+		return fmt.Errorf("invalid IPv4 address %q", address)
+	}
+	run := a.Command
+	if run == nil {
+		run = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			return exec.CommandContext(ctx, name, args...).CombinedOutput()
+		}
+	}
+	if out, err := run(ctx, "arping", "-U", "-c", "3", "-I", ifname, ip.To4().String()); err != nil {
+		return fmt.Errorf("arping gratuitous ARP: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 func (netlinkSAMProxyNeighborApplier) EnsureProxyNeighbor(_ context.Context, address, ifname string) error {

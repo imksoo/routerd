@@ -63,6 +63,37 @@ func TestExpandRemoteAddressClaimRoutesNoClaimsUnchanged(t *testing.T) {
 	}
 }
 
+func TestExpandRemoteAddressClaimRoutesHonorsVRRPMasterGate(t *testing.T) {
+	router := testRouter()
+	spec := router.Spec.Resources[4].Spec.(api.RemoteAddressClaimSpec)
+	spec.Capture.ActiveWhen = api.CaptureActiveWhen{Type: "vrrp-master", VirtualAddressRef: "onprem-vip"}
+	router.Spec.Resources[4].Spec = spec
+
+	backupStore := gateStore{api.NetAPIVersion + "/VirtualAddress/onprem-vip": {"role": "backup"}}
+	expanded, lowerings, err := ExpandRemoteAddressClaimRoutesWithOptions(*router, PlanOptions{StatusReader: backupStore})
+	if err != nil {
+		t.Fatalf("ExpandRemoteAddressClaimRoutesWithOptions backup: %v", err)
+	}
+	if len(lowerings) != 1 {
+		t.Fatalf("backup lowerings = %#v, want only provider claim without gate", lowerings)
+	}
+	if findRouteName(ipv4Routes(expanded), "sam-app-10-0-1-123-delivery") {
+		t.Fatalf("backup should not lower gated proxy route: %#v", ipv4Routes(expanded))
+	}
+
+	masterStore := gateStore{api.NetAPIVersion + "/VirtualAddress/onprem-vip": {"role": "master"}}
+	expanded, lowerings, err = ExpandRemoteAddressClaimRoutesWithOptions(*router, PlanOptions{StatusReader: masterStore})
+	if err != nil {
+		t.Fatalf("ExpandRemoteAddressClaimRoutesWithOptions master: %v", err)
+	}
+	if len(lowerings) != 2 {
+		t.Fatalf("master lowerings = %#v, want both claims", lowerings)
+	}
+	if !findRouteName(ipv4Routes(expanded), "sam-app-10-0-1-123-delivery") {
+		t.Fatalf("master should lower gated proxy route: %#v", ipv4Routes(expanded))
+	}
+}
+
 func TestExpandRemoteAddressClaimRoutesRejectsUserRouteCollision(t *testing.T) {
 	router := testRouter()
 	router.Spec.Resources = append(router.Spec.Resources, api.Resource{
@@ -89,6 +120,36 @@ func TestPlanCaptureProxyARP(t *testing.T) {
 	}
 	if !hasAction(actions, "proxy-neighbor", "", "10.0.1.123/32", "lan0") {
 		t.Fatalf("actions missing proxy neighbor: %#v", actions)
+	}
+}
+
+func TestPlanCaptureHonorsVRRPMasterGate(t *testing.T) {
+	router := testRouter()
+	spec := router.Spec.Resources[4].Spec.(api.RemoteAddressClaimSpec)
+	spec.Capture.ActiveWhen = api.CaptureActiveWhen{Type: "vrrp-master", VirtualAddressRef: "VirtualAddress/onprem-vip"}
+	router.Spec.Resources[4].Spec = spec
+
+	backupStore := gateStore{api.NetAPIVersion + "/VirtualAddress/onprem-vip": {"role": "backup"}}
+	actions, err := PlanCaptureWithOptions(router, platform.OSLinux, PlanOptions{StatusReader: backupStore})
+	if err != nil {
+		t.Fatalf("PlanCaptureWithOptions backup: %v", err)
+	}
+	if hasAction(actions, "proxy-neighbor", "", "10.0.1.123/32", "lan0") {
+		t.Fatalf("backup actions included gated proxy neighbor: %#v", actions)
+	}
+
+	masterStore := gateStore{api.NetAPIVersion + "/VirtualAddress/onprem-vip": {"role": "master"}}
+	actions, err = PlanCaptureWithOptions(router, platform.OSLinux, PlanOptions{StatusReader: masterStore})
+	if err != nil {
+		t.Fatalf("PlanCaptureWithOptions master: %v", err)
+	}
+	if !hasAction(actions, "proxy-neighbor", "", "10.0.1.123/32", "lan0") {
+		t.Fatalf("master actions missing gated proxy neighbor: %#v", actions)
+	}
+	for _, action := range actions {
+		if action.Kind == "proxy-neighbor" && action.ClaimName == "app-10-0-1-123" && !action.GratuitousARP {
+			t.Fatalf("VRRP-gated proxy neighbor should request GARP: %#v", action)
+		}
 	}
 }
 
@@ -258,6 +319,24 @@ func findRoute(t *testing.T, routes []api.Resource, name string) api.Resource {
 	}
 	t.Fatalf("missing route %s in %#v", name, routes)
 	return api.Resource{}
+}
+
+func findRouteName(routes []api.Resource, name string) bool {
+	for _, route := range routes {
+		if route.Metadata.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+type gateStore map[string]map[string]any
+
+func (s gateStore) ObjectStatus(apiVersion, kind, name string) map[string]any {
+	if status := s[apiVersion+"/"+kind+"/"+name]; status != nil {
+		return status
+	}
+	return map[string]any{}
 }
 
 func testRouter() *api.Router {

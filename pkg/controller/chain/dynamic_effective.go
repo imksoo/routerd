@@ -67,7 +67,7 @@ func buildDynamicRouteSAMView(startup *api.Router, store any, now time.Time, tar
 
 	samLowerings := []sam.DeliveryLowering(nil)
 	if targetOS == platform.OSLinux && sam.HasRemoteAddressClaims(&effective) {
-		expanded, lowerings, err := sam.ExpandRemoteAddressClaimRoutes(routeRouter)
+		expanded, lowerings, err := sam.ExpandRemoteAddressClaimRoutesWithOptions(routeRouter, sam.PlanOptions{StatusReader: statusReaderFromStore(store)})
 		if err != nil {
 			return dynamicRouteSAMView{}, err
 		}
@@ -81,6 +81,11 @@ func buildDynamicRouteSAMView(startup *api.Router, store any, now time.Time, tar
 		HybridLowerings: hybridLowerings,
 		SAMLowerings:    samLowerings,
 	}, nil
+}
+
+func statusReaderFromStore(store any) sam.StatusReader {
+	reader, _ := store.(sam.StatusReader)
+	return reader
 }
 
 func dynamicConfigPartsFromRecords(records []routerstate.DynamicConfigPartRecord) ([]dynamicconfig.DynamicConfigPart, error) {

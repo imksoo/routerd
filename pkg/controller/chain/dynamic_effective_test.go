@@ -133,6 +133,102 @@ func TestDynamicRouteSAMClaimRemovalTriggersRouteAndSAMCleanup(t *testing.T) {
 	}
 }
 
+func TestDynamicRouteSAMViewGatesRouteAndSAMCleanupOnVRRPBackup(t *testing.T) {
+	startup := startupHybridContextRouter()
+	startup.Spec.Resources = append(startup.Spec.Resources,
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+			Metadata: api.ObjectMeta{Name: "lan0"},
+			Spec:     api.InterfaceSpec{IfName: "lan0", Managed: true},
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"},
+			Metadata: api.ObjectMeta{Name: "onprem-vip"},
+			Spec:     api.VirtualAddressSpec{Family: "ipv4", Interface: "lan0", Address: "10.0.1.1/32", Mode: "vrrp", VRRP: api.VirtualAddressVRRPSpec{VirtualRouterID: 40, Peers: []string{"10.0.1.2"}}},
+		},
+	)
+	now := time.Now().UTC()
+	claim := remoteAddressClaimResource("app", "10.0.1.123/32", "proxy-arp", "lan0")
+	claimSpec := claim.Spec.(api.RemoteAddressClaimSpec)
+	claimSpec.Capture.ActiveWhen = api.CaptureActiveWhen{Type: "vrrp-master", VirtualAddressRef: "onprem-vip"}
+	claim.Spec = claimSpec
+
+	activeStore := &dynamicRouteSAMStore{
+		records: []routerstate.DynamicConfigPartRecord{dynamicPartRecord(t, "MobilityPool/cloudedge/node/onprem-a", []api.Resource{
+			addressMobilityDomainResource(),
+			claim,
+		}, now.Add(time.Hour))},
+		objects: map[string]map[string]any{
+			api.NetAPIVersion + "/VirtualAddress/onprem-vip": {"role": "master"},
+		},
+	}
+	activeView, err := buildDynamicRouteSAMView(startup, activeStore, now, platform.OSLinux)
+	if err != nil {
+		t.Fatalf("active view: %v", err)
+	}
+	if countResources(activeView.RouteRouter, api.NetAPIVersion, "IPv4Route") != 1 || len(activeView.SAMLowerings) != 1 {
+		t.Fatalf("active view route/lowerings = %d/%d", countResources(activeView.RouteRouter, api.NetAPIVersion, "IPv4Route"), len(activeView.SAMLowerings))
+	}
+	routeName := activeView.SAMLowerings[0].IPv4RouteName
+
+	backupStore := &dynamicRouteSAMStore{
+		records: activeStore.records,
+		objects: map[string]map[string]any{
+			api.NetAPIVersion + "/VirtualAddress/onprem-vip": {"role": "backup"},
+		},
+		statuses: []routerstate.ObjectStatus{
+			{
+				APIVersion: api.NetAPIVersion,
+				Kind:       "IPv4Route",
+				Name:       routeName,
+				Status: map[string]any{
+					"phase":       "Installed",
+					"type":        "unicast",
+					"destination": "10.0.1.123/32",
+					"device":      "wg-sam",
+					"metric":      120,
+				},
+			},
+			samRemoteAddressClaimStatus("app", "10.0.1.123/32", "lan0"),
+		},
+	}
+	backupView, err := buildDynamicRouteSAMView(startup, backupStore, now, platform.OSLinux)
+	if err != nil {
+		t.Fatalf("backup view: %v", err)
+	}
+	if countResources(backupView.RouteRouter, api.NetAPIVersion, "IPv4Route") != 0 || len(backupView.SAMLowerings) != 0 {
+		t.Fatalf("backup view route/lowerings = %d/%d, want none", countResources(backupView.RouteRouter, api.NetAPIVersion, "IPv4Route"), len(backupView.SAMLowerings))
+	}
+
+	var commands [][]string
+	routeController := IPv4RouteController{
+		Router: backupView.RouteRouter,
+		Store:  backupStore,
+		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			commands = append(commands, append([]string{name}, args...))
+			return nil, nil
+		},
+	}
+	if err := routeController.reconcile(context.Background()); err != nil {
+		t.Fatalf("route reconcile: %v", err)
+	}
+	wantRouteDelete := []string{"ip", "route", "del", "10.0.1.123/32", "dev", "wg-sam", "metric", "120"}
+	if len(commands) != 1 || !reflect.DeepEqual(commands[0], wantRouteDelete) {
+		t.Fatalf("route cleanup commands = %#v, want %#v", commands, wantRouteDelete)
+	}
+
+	applier := &fakeSAMApplier{}
+	samController := SAMController{Router: backupView.EffectiveRouter, Store: backupStore, Lowerings: backupView.SAMLowerings, OS: platform.OSLinux, Applier: applier, GARP: &fakeSAMGARP{}}
+	if err := samController.Reconcile(context.Background()); err != nil {
+		t.Fatalf("SAM reconcile: %v", err)
+	}
+	assertSAMCalls(t, applier.calls, []string{"delete:10.0.1.123/32@lan0"})
+	status := backupStore.ObjectStatus(api.HybridAPIVersion, "RemoteAddressClaim", "app")
+	if status["phase"] != "Gated" {
+		t.Fatalf("backup claim status = %#v", status)
+	}
+}
+
 type dynamicRouteSAMStore struct {
 	records  []routerstate.DynamicConfigPartRecord
 	objects  map[string]map[string]any

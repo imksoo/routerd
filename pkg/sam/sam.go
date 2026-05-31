@@ -31,12 +31,26 @@ type DeliveryLowering struct {
 }
 
 type CaptureAction struct {
-	Kind      string
-	ClaimName string
-	Address   string
-	Interface string
-	Key       string
-	Value     string
+	Kind          string
+	ClaimName     string
+	Address       string
+	Interface     string
+	Key           string
+	Value         string
+	GratuitousARP bool
+}
+
+type PlanOptions struct {
+	StatusReader StatusReader
+}
+
+type CaptureGateStatus struct {
+	Active             bool
+	Type               string
+	VirtualAddressRef  string
+	VirtualAddressRole string
+	Reason             string
+	Message            string
 }
 
 func HasRemoteAddressClaims(router *api.Router) bool {
@@ -52,6 +66,10 @@ func HasRemoteAddressClaims(router *api.Router) bool {
 }
 
 func ExpandRemoteAddressClaimRoutes(router api.Router) (api.Router, []DeliveryLowering, error) {
+	return ExpandRemoteAddressClaimRoutesWithOptions(router, PlanOptions{})
+}
+
+func ExpandRemoteAddressClaimRoutesWithOptions(router api.Router, opts PlanOptions) (api.Router, []DeliveryLowering, error) {
 	if !HasRemoteAddressClaims(&router) {
 		return router, nil, nil
 	}
@@ -87,6 +105,9 @@ func ExpandRemoteAddressClaimRoutes(router api.Router) (api.Router, []DeliveryLo
 		cidr, err := normalizeClaimAddress(spec.Address)
 		if err != nil {
 			return router, nil, fmt.Errorf("%s spec.address: %w", resource.ID(), err)
+		}
+		if gate := EvaluateCaptureGate(spec.Capture, opts.StatusReader); !gate.Active {
+			continue
 		}
 		if existing := userRouteDestinations[cidr]; existing != "" {
 			return router, nil, fmt.Errorf("%s destination %s collides with user IPv4Route/%s", resource.ID(), cidr, existing)
@@ -147,11 +168,23 @@ func ExpandRemoteAddressClaimRoutes(router api.Router) (api.Router, []DeliveryLo
 }
 
 func PlanCapture(router *api.Router, targetOS platform.OS) ([]CaptureAction, error) {
+	return PlanCaptureWithOptions(router, targetOS, PlanOptions{})
+}
+
+func PlanCaptureWithOptions(router *api.Router, targetOS platform.OS, opts PlanOptions) ([]CaptureAction, error) {
 	if router == nil || !HasRemoteAddressClaims(router) || targetOS != platform.OSLinux {
 		return nil, nil
 	}
 	interfaces := map[string]bool{}
-	actions := []CaptureAction{{Kind: "sysctl", Key: "net.ipv4.ip_forward", Value: "1"}}
+	forwardingAdded := false
+	var actions []CaptureAction
+	addForwarding := func() {
+		if forwardingAdded {
+			return
+		}
+		actions = append(actions, CaptureAction{Kind: "sysctl", Key: "net.ipv4.ip_forward", Value: "1"})
+		forwardingAdded = true
+	}
 	for _, resource := range router.Spec.Resources {
 		if resource.APIVersion != api.HybridAPIVersion || resource.Kind != "RemoteAddressClaim" {
 			continue
@@ -164,6 +197,10 @@ func PlanCapture(router *api.Router, targetOS platform.OS) ([]CaptureAction, err
 		if err != nil {
 			return nil, err
 		}
+		if gate := EvaluateCaptureGate(spec.Capture, opts.StatusReader); !gate.Active {
+			continue
+		}
+		addForwarding()
 		if strings.TrimSpace(spec.Capture.Type) != "proxy-arp" {
 			if strings.TrimSpace(spec.Capture.Type) == "provider-secondary-ip" && !spec.Capture.ConfigureOSAddress {
 				actions = append(actions, CaptureAction{Kind: "deassign-os-address", ClaimName: resource.Metadata.Name, Address: address})
@@ -178,9 +215,55 @@ func PlanCapture(router *api.Router, targetOS platform.OS) ([]CaptureAction, err
 			interfaces[iface] = true
 			actions = append(actions, CaptureAction{Kind: "sysctl", Key: "net.ipv4.conf." + iface + ".proxy_arp", Value: "1", Interface: iface})
 		}
-		actions = append(actions, CaptureAction{Kind: "proxy-neighbor", ClaimName: resource.Metadata.Name, Address: address, Interface: iface})
+		actions = append(actions, CaptureAction{Kind: "proxy-neighbor", ClaimName: resource.Metadata.Name, Address: address, Interface: iface, GratuitousARP: wantsGratuitousARP(spec.Capture)})
 	}
 	return actions, nil
+}
+
+func EvaluateCaptureGate(capture api.AddressCapture, store StatusReader) CaptureGateStatus {
+	activeWhen := capture.ActiveWhen
+	gateType := strings.TrimSpace(activeWhen.Type)
+	ref := normalizeRefName(activeWhen.VirtualAddressRef, "VirtualAddress")
+	if gateType == "" && ref == "" {
+		return CaptureGateStatus{Active: true, Reason: "AlwaysActive"}
+	}
+	status := CaptureGateStatus{
+		Type:              gateType,
+		VirtualAddressRef: ref,
+		Reason:            "CaptureGateInactive",
+	}
+	if gateType != "vrrp-master" {
+		status.Message = fmt.Sprintf("unsupported capture activeWhen type %q", gateType)
+		return status
+	}
+	if ref == "" {
+		status.Message = "capture activeWhen virtualAddressRef is empty"
+		return status
+	}
+	if store == nil {
+		status.Message = fmt.Sprintf("VirtualAddress/%s status is unavailable", ref)
+		return status
+	}
+	role := strings.TrimSpace(fmt.Sprint(store.ObjectStatus(api.NetAPIVersion, "VirtualAddress", ref)["role"]))
+	if role == "<nil>" {
+		role = ""
+	}
+	status.VirtualAddressRole = role
+	if strings.EqualFold(role, "master") {
+		status.Active = true
+		status.Reason = "CaptureGateActive"
+		status.Message = fmt.Sprintf("VirtualAddress/%s role is master", ref)
+		return status
+	}
+	status.Message = fmt.Sprintf("VirtualAddress/%s role is %s", ref, firstNonEmpty(role, "unknown"))
+	return status
+}
+
+func wantsGratuitousARP(capture api.AddressCapture) bool {
+	if capture.GratuitousARP {
+		return true
+	}
+	return strings.TrimSpace(capture.ActiveWhen.Type) == "vrrp-master"
 }
 
 func ProxyARPInterfaces(router *api.Router) []string {
@@ -226,6 +309,21 @@ func StatusForRemoteAddressClaim(resource api.Resource, lowerings []DeliveryLowe
 		status["reason"] = "CaptureUnsupported"
 		status["message"] = "SAM capture not implemented on this OS"
 		return status
+	}
+	if gate := EvaluateCaptureGate(spec.Capture, store); !gate.Active {
+		status["phase"] = "Gated"
+		status["reason"] = gate.Reason
+		status["message"] = gate.Message
+		status["captureActive"] = false
+		status["activeWhenType"] = gate.Type
+		status["activeWhenVirtualAddressRef"] = gate.VirtualAddressRef
+		status["activeWhenVirtualAddressRole"] = gate.VirtualAddressRole
+		return status
+	} else if gate.Type != "" || gate.VirtualAddressRef != "" {
+		status["captureActive"] = true
+		status["activeWhenType"] = gate.Type
+		status["activeWhenVirtualAddressRef"] = gate.VirtualAddressRef
+		status["activeWhenVirtualAddressRole"] = gate.VirtualAddressRole
 	}
 	lowering, ok := deliveryLoweringForClaim(resource.Metadata.Name, lowerings)
 	if !ok {
@@ -340,6 +438,15 @@ func normalizeRefName(ref, kind string) string {
 		return strings.TrimPrefix(ref, kind+"/")
 	}
 	return ref
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 var safeNamePattern = regexp.MustCompile(`[^A-Za-z0-9.-]+`)

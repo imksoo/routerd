@@ -1379,17 +1379,23 @@ type MobilityPoolMember struct {
 }
 
 type MobilityMemberCapture struct {
-	Type               string `yaml:"type,omitempty" json:"type,omitempty" jsonschema:"enum=provider-secondary-ip,enum=proxy-arp"`
-	ProviderRef        string `yaml:"providerRef,omitempty" json:"providerRef,omitempty"`
-	ProviderMode       string `yaml:"providerMode,omitempty" json:"providerMode,omitempty"`
-	NICRef             string `yaml:"nicRef,omitempty" json:"nicRef,omitempty"`
-	ConfigureOSAddress bool   `yaml:"configureOSAddress,omitempty" json:"configureOSAddress,omitempty"`
-	Interface          string `yaml:"interface,omitempty" json:"interface,omitempty"`
-	GratuitousARP      bool   `yaml:"gratuitousARP,omitempty" json:"gratuitousARP,omitempty"`
+	Type               string            `yaml:"type,omitempty" json:"type,omitempty" jsonschema:"enum=provider-secondary-ip,enum=proxy-arp"`
+	ProviderRef        string            `yaml:"providerRef,omitempty" json:"providerRef,omitempty"`
+	ProviderMode       string            `yaml:"providerMode,omitempty" json:"providerMode,omitempty"`
+	NICRef             string            `yaml:"nicRef,omitempty" json:"nicRef,omitempty"`
+	ConfigureOSAddress bool              `yaml:"configureOSAddress,omitempty" json:"configureOSAddress,omitempty"`
+	Interface          string            `yaml:"interface,omitempty" json:"interface,omitempty"`
+	GratuitousARP      bool              `yaml:"gratuitousARP,omitempty" json:"gratuitousARP,omitempty"`
+	ActiveWhen         CaptureActiveWhen `yaml:"activeWhen,omitempty" json:"activeWhen,omitempty"`
 	// Target carries non-secret provider target hints such as region,
 	// compartmentId, resourceGroup, nicName, or ipConfigName. It is copied to
 	// provider ActionPlan.target; credentials and tokens do not belong here.
 	Target map[string]string `yaml:"target,omitempty" json:"target,omitempty"`
+}
+
+type CaptureActiveWhen struct {
+	Type              string `yaml:"type,omitempty" json:"type,omitempty" jsonschema:"enum=,enum=vrrp-master"`
+	VirtualAddressRef string `yaml:"virtualAddressRef,omitempty" json:"virtualAddressRef,omitempty"`
 }
 
 type MobilityMemberDelivery struct {
@@ -1463,13 +1469,14 @@ type RemoteAddressClaimSpec struct {
 }
 
 type AddressCapture struct {
-	Type               string `yaml:"type" json:"type" jsonschema:"enum=provider-secondary-ip,enum=proxy-arp"`
-	ProviderRef        string `yaml:"providerRef,omitempty" json:"providerRef,omitempty"`
-	ProviderMode       string `yaml:"providerMode,omitempty" json:"providerMode,omitempty"`
-	NICRef             string `yaml:"nicRef,omitempty" json:"nicRef,omitempty"`
-	ConfigureOSAddress bool   `yaml:"configureOSAddress,omitempty" json:"configureOSAddress,omitempty"`
-	Interface          string `yaml:"interface,omitempty" json:"interface,omitempty"`
-	GratuitousARP      bool   `yaml:"gratuitousARP,omitempty" json:"gratuitousARP,omitempty"`
+	Type               string            `yaml:"type" json:"type" jsonschema:"enum=provider-secondary-ip,enum=proxy-arp"`
+	ProviderRef        string            `yaml:"providerRef,omitempty" json:"providerRef,omitempty"`
+	ProviderMode       string            `yaml:"providerMode,omitempty" json:"providerMode,omitempty"`
+	NICRef             string            `yaml:"nicRef,omitempty" json:"nicRef,omitempty"`
+	ConfigureOSAddress bool              `yaml:"configureOSAddress,omitempty" json:"configureOSAddress,omitempty"`
+	Interface          string            `yaml:"interface,omitempty" json:"interface,omitempty"`
+	GratuitousARP      bool              `yaml:"gratuitousARP,omitempty" json:"gratuitousARP,omitempty"`
+	ActiveWhen         CaptureActiveWhen `yaml:"activeWhen,omitempty" json:"activeWhen,omitempty"`
 }
 
 type AddressDelivery struct {
