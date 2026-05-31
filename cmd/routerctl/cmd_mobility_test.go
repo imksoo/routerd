@@ -18,7 +18,7 @@ func TestMobilityLeasesCommand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenSQLite: %v", err)
 	}
-	now := time.Date(2026, 5, 31, 10, 0, 0, 0, time.UTC)
+	now := time.Now().UTC()
 	if err := store.UpsertAddressLease(routerstate.AddressLeaseRecord{
 		Pool:       "cloudedge",
 		Address:    "10.88.60.9/32",
@@ -27,7 +27,7 @@ func TestMobilityLeasesCommand(t *testing.T) {
 		OwnerSite:  "onprem",
 		OwnerRole:  "onprem",
 		Epoch:      1,
-		ObservedAt: now,
+		ObservedAt: now.Add(-time.Minute),
 		ExpiresAt:  now.Add(5 * time.Minute),
 	}); err != nil {
 		t.Fatalf("UpsertAddressLease: %v", err)
