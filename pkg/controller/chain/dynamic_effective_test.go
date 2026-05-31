@@ -1,0 +1,254 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
+package chain
+
+import (
+	"context"
+	"encoding/json"
+	"reflect"
+	"testing"
+	"time"
+
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/platform"
+	routerstate "github.com/imksoo/routerd/pkg/state"
+)
+
+func TestDynamicRouteSAMViewEmptyPartsMatchesStaticExpansion(t *testing.T) {
+	startup := staticSAMRouter("10.0.1.123/32", "proxy-arp", "lan0")
+	store := &dynamicRouteSAMStore{objects: map[string]map[string]any{}}
+	view, err := buildDynamicRouteSAMView(startup, store, time.Now().UTC(), platform.OSLinux)
+	if err != nil {
+		t.Fatalf("buildDynamicRouteSAMView: %v", err)
+	}
+	if countResources(view.EffectiveRouter, api.HybridAPIVersion, "RemoteAddressClaim") != 1 {
+		t.Fatalf("effective claims = %d, want 1", countResources(view.EffectiveRouter, api.HybridAPIVersion, "RemoteAddressClaim"))
+	}
+	if countResources(view.RouteRouter, api.NetAPIVersion, "IPv4Route") != 1 {
+		t.Fatalf("route IPv4Routes = %d, want static SAM delivery route", countResources(view.RouteRouter, api.NetAPIVersion, "IPv4Route"))
+	}
+	if len(view.SAMLowerings) != 1 || view.SAMLowerings[0].AddressCIDR != "10.0.1.123/32" {
+		t.Fatalf("SAM lowerings = %+v, want one static lowering", view.SAMLowerings)
+	}
+}
+
+func TestDynamicRouteSAMViewIncludesDynamicRemoteAddressClaim(t *testing.T) {
+	startup := startupHybridContextRouter()
+	claim := remoteAddressClaimResource("app", "10.0.1.123/32", "proxy-arp", "lan0")
+	store := &dynamicRouteSAMStore{
+		records: []routerstate.DynamicConfigPartRecord{dynamicPartRecord(t, "MobilityPool/cloudedge/node/onprem", []api.Resource{
+			addressMobilityDomainResource(),
+			claim,
+		}, time.Now().Add(time.Hour))},
+		objects: map[string]map[string]any{},
+	}
+	view, err := buildDynamicRouteSAMView(startup, store, time.Now().UTC(), platform.OSLinux)
+	if err != nil {
+		t.Fatalf("buildDynamicRouteSAMView: %v", err)
+	}
+	if countResources(view.EffectiveRouter, api.HybridAPIVersion, "RemoteAddressClaim") != 1 {
+		t.Fatalf("effective claims = %d, want dynamic claim", countResources(view.EffectiveRouter, api.HybridAPIVersion, "RemoteAddressClaim"))
+	}
+	if countResources(view.RouteRouter, api.NetAPIVersion, "IPv4Route") != 1 {
+		t.Fatalf("route IPv4Routes = %d, want dynamic SAM delivery route", countResources(view.RouteRouter, api.NetAPIVersion, "IPv4Route"))
+	}
+	if len(view.SAMLowerings) != 1 || view.SAMLowerings[0].ClaimName != "app" {
+		t.Fatalf("SAM lowerings = %+v, want dynamic claim lowering", view.SAMLowerings)
+	}
+}
+
+func TestDynamicRouteSAMClaimRemovalTriggersRouteAndSAMCleanup(t *testing.T) {
+	startup := startupHybridContextRouter()
+	now := time.Now().UTC()
+	activeStore := &dynamicRouteSAMStore{
+		records: []routerstate.DynamicConfigPartRecord{dynamicPartRecord(t, "MobilityPool/cloudedge/node/onprem", []api.Resource{
+			addressMobilityDomainResource(),
+			remoteAddressClaimResource("app", "10.0.1.123/32", "proxy-arp", "lan0"),
+		}, now.Add(time.Hour))},
+		objects: map[string]map[string]any{},
+	}
+	activeView, err := buildDynamicRouteSAMView(startup, activeStore, now, platform.OSLinux)
+	if err != nil {
+		t.Fatalf("active view: %v", err)
+	}
+	if len(activeView.SAMLowerings) != 1 {
+		t.Fatalf("active lowerings = %+v, want one", activeView.SAMLowerings)
+	}
+	routeName := activeView.SAMLowerings[0].IPv4RouteName
+
+	removedStore := &dynamicRouteSAMStore{
+		records: []routerstate.DynamicConfigPartRecord{dynamicPartRecord(t, "MobilityPool/cloudedge/node/onprem", []api.Resource{
+			addressMobilityDomainResource(),
+			remoteAddressClaimResource("app", "10.0.1.123/32", "proxy-arp", "lan0"),
+		}, now.Add(-time.Minute))},
+		objects: map[string]map[string]any{},
+		statuses: []routerstate.ObjectStatus{
+			{
+				APIVersion: api.NetAPIVersion,
+				Kind:       "IPv4Route",
+				Name:       routeName,
+				Status: map[string]any{
+					"phase":       "Installed",
+					"type":        "unicast",
+					"destination": "10.0.1.123/32",
+					"device":      "wg-sam",
+					"metric":      200,
+				},
+			},
+			samRemoteAddressClaimStatus("app", "10.0.1.123/32", "lan0"),
+		},
+	}
+	removedView, err := buildDynamicRouteSAMView(startup, removedStore, now, platform.OSLinux)
+	if err != nil {
+		t.Fatalf("removed view: %v", err)
+	}
+	var commands [][]string
+	routeController := IPv4RouteController{
+		Router: removedView.RouteRouter,
+		Store:  removedStore,
+		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			commands = append(commands, append([]string{name}, args...))
+			return nil, nil
+		},
+	}
+	if err := routeController.reconcile(context.Background()); err != nil {
+		t.Fatalf("route reconcile: %v", err)
+	}
+	wantRouteDelete := []string{"ip", "route", "del", "10.0.1.123/32", "dev", "wg-sam", "metric", "200"}
+	if len(commands) != 1 || !reflect.DeepEqual(commands[0], wantRouteDelete) {
+		t.Fatalf("route cleanup commands = %#v, want %#v", commands, wantRouteDelete)
+	}
+
+	applier := &fakeSAMApplier{}
+	samController := SAMController{Router: removedView.EffectiveRouter, Store: removedStore, Lowerings: removedView.SAMLowerings, OS: platform.OSLinux, Applier: applier}
+	if err := samController.Reconcile(context.Background()); err != nil {
+		t.Fatalf("SAM reconcile: %v", err)
+	}
+	assertSAMCalls(t, applier.calls, []string{"delete:10.0.1.123/32@lan0"})
+	if !removedStore.deleted[api.NetAPIVersion+"/IPv4Route/"+routeName] {
+		t.Fatalf("route status was not deleted: %#v", removedStore.deleted)
+	}
+	if !removedStore.deleted[api.HybridAPIVersion+"/RemoteAddressClaim/app"] {
+		t.Fatalf("claim status was not deleted: %#v", removedStore.deleted)
+	}
+}
+
+type dynamicRouteSAMStore struct {
+	records  []routerstate.DynamicConfigPartRecord
+	objects  map[string]map[string]any
+	statuses []routerstate.ObjectStatus
+	deleted  map[string]bool
+}
+
+func (s *dynamicRouteSAMStore) SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error {
+	if s.objects != nil {
+		s.objects[apiVersion+"/"+kind+"/"+name] = status
+	}
+	return nil
+}
+
+func (s *dynamicRouteSAMStore) ObjectStatus(apiVersion, kind, name string) map[string]any {
+	if s.objects != nil {
+		if status := s.objects[apiVersion+"/"+kind+"/"+name]; status != nil {
+			return status
+		}
+	}
+	return map[string]any{}
+}
+
+func (s *dynamicRouteSAMStore) ListObjectStatuses() ([]routerstate.ObjectStatus, error) {
+	return s.statuses, nil
+}
+
+func (s *dynamicRouteSAMStore) DeleteObject(apiVersion, kind, name string) error {
+	if s.deleted == nil {
+		s.deleted = map[string]bool{}
+	}
+	s.deleted[apiVersion+"/"+kind+"/"+name] = true
+	return nil
+}
+
+func (s *dynamicRouteSAMStore) ListDynamicConfigParts() ([]routerstate.DynamicConfigPartRecord, error) {
+	return s.records, nil
+}
+
+func dynamicPartRecord(t *testing.T, source string, resources []api.Resource, expiresAt time.Time) routerstate.DynamicConfigPartRecord {
+	t.Helper()
+	raw, err := json.Marshal(resources)
+	if err != nil {
+		t.Fatalf("marshal resources: %v", err)
+	}
+	return routerstate.DynamicConfigPartRecord{
+		Source:        source,
+		Generation:    1,
+		ObservedAt:    time.Now().UTC(),
+		ExpiresAt:     expiresAt,
+		Digest:        source + "-digest",
+		ResourcesJSON: string(raw),
+		Status:        "active",
+	}
+}
+
+func staticSAMRouter(address, captureType, captureInterface string) *api.Router {
+	router := startupHybridContextRouter()
+	router.Spec.Resources = append(router.Spec.Resources,
+		addressMobilityDomainResource(),
+		remoteAddressClaimResource("app", address, captureType, captureInterface),
+	)
+	return router
+}
+
+func startupHybridContextRouter() *api.Router {
+	return &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test-router"},
+		Spec: api.RouterSpec{Resources: []api.Resource{{
+			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "OverlayPeer"},
+			Metadata: api.ObjectMeta{Name: "cloud"},
+			Spec: api.OverlayPeerSpec{
+				Role:     "cloud",
+				NodeID:   "cloud",
+				Underlay: api.OverlayUnderlay{Type: "wireguard", Interface: "wg-sam"},
+			},
+		}}},
+	}
+}
+
+func addressMobilityDomainResource() api.Resource {
+	return api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "AddressMobilityDomain"},
+		Metadata: api.ObjectMeta{Name: "same-subnet"},
+		Spec: api.AddressMobilityDomainSpec{
+			Prefix:  "10.0.1.0/24",
+			Mode:    "selective-address",
+			PeerRef: "cloud",
+		},
+	}
+}
+
+func remoteAddressClaimResource(name, address, captureType, captureInterface string) api.Resource {
+	return api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "RemoteAddressClaim"},
+		Metadata: api.ObjectMeta{Name: name},
+		Spec: api.RemoteAddressClaimSpec{
+			DomainRef: "same-subnet",
+			Address:   address,
+			OwnerSide: "onprem",
+			Capture:   api.AddressCapture{Type: captureType, Interface: captureInterface},
+			Delivery:  api.AddressDelivery{PeerRef: "cloud", Mode: "route", TunnelInterface: "wg-sam"},
+		},
+	}
+}
+
+func countResources(router *api.Router, apiVersion, kind string) int {
+	if router == nil {
+		return 0
+	}
+	count := 0
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion == apiVersion && resource.Kind == kind {
+			count++
+		}
+	}
+	return count
+}
