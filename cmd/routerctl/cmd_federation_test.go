@@ -6,9 +6,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/imksoo/routerd/pkg/api"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -99,6 +101,95 @@ func TestFederationEventEmitThenList(t *testing.T) {
 	}
 	if len(other) != 0 {
 		t.Fatalf("group filter leaked %d events: %+v", len(other), other)
+	}
+}
+
+func TestFederationEventEmitRejectsSelfCapturedObservedAddress(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "fed.db")
+	store, err := routerstate.OpenSQLite(statePath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	resources, err := json.Marshal([]api.Resource{{
+		TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "RemoteAddressClaim"},
+		Metadata: api.ObjectMeta{
+			Name:        "claim-local",
+			Annotations: map[string]string{"routerd.net/dynamic-source": "MobilityPool/cloudedge/node/cloud-a"},
+		},
+		Spec: api.RemoteAddressClaimSpec{
+			Address:   "10.88.60.9/32",
+			OwnerSide: "onprem",
+			Capture:   api.AddressCapture{Type: "proxy-arp", Interface: "lan0"},
+			Delivery:  api.AddressDelivery{Mode: "route", PeerRef: "onprem"},
+		},
+	}})
+	if err != nil {
+		t.Fatalf("marshal resources: %v", err)
+	}
+	if err := store.UpsertDynamicConfigPart(routerstate.DynamicConfigPartRecord{
+		Source:        "MobilityPool/cloudedge/node/cloud-a",
+		Generation:    1,
+		ObservedAt:    time.Now().UTC(),
+		ExpiresAt:     time.Now().UTC().Add(time.Hour),
+		ResourcesJSON: string(resources),
+		Status:        "active",
+	}); err != nil {
+		t.Fatalf("seed dynamic part: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close seed store: %v", err)
+	}
+
+	var out bytes.Buffer
+	err = run([]string{
+		"federation", "event", "emit",
+		"--state-file", statePath,
+		"--group", "cloudedge",
+		"--type", "routerd.client.ipv4.observed",
+		"--subject", "10.88.60.9/32",
+		"--source-node", "cloud-a",
+		"--id", "evt-self-capture",
+	}, &out, &bytes.Buffer{})
+	if err == nil {
+		t.Fatalf("self-captured observed event should be rejected")
+	}
+	if !strings.Contains(err.Error(), "locally captured") {
+		t.Fatalf("error = %q, want locally captured message", err)
+	}
+
+	store, err = routerstate.OpenSQLite(statePath)
+	if err != nil {
+		t.Fatalf("reopen store: %v", err)
+	}
+	defer store.Close()
+	events, err := store.ListFederationEvents("cloudedge", true, time.Now().Unix())
+	if err != nil {
+		t.Fatalf("list events: %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("rejected event was recorded: %+v", events)
+	}
+
+	out.Reset()
+	if err := run([]string{
+		"federation", "event", "emit",
+		"--state-file", statePath,
+		"--group", "cloudedge",
+		"--type", "routerd.client.ipv4.observed",
+		"--subject", "10.88.60.10/32",
+		"--source-node", "onprem",
+		"--id", "evt-remote",
+		"-o", "json",
+	}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("non-self observed event should pass: %v", err)
+	}
+	events, err = store.ListFederationEvents("cloudedge", true, time.Now().Unix())
+	if err != nil {
+		t.Fatalf("list events after pass: %v", err)
+	}
+	if len(events) != 1 || events[0].ID != "evt-remote" {
+		t.Fatalf("want only non-self event recorded, got %+v", events)
 	}
 }
 

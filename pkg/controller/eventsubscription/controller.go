@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
@@ -67,6 +68,12 @@ type Store interface {
 // fake without an executable; the production wiring uses plugin.Run.
 type PluginRunner func(ctx context.Context, spec api.PluginSpec, name string, opts routerplugin.RunOptions) (routerplugin.PluginResult, routerplugin.RunOutcome, error)
 
+type triggerTimer interface {
+	Reset(time.Duration) bool
+}
+
+type triggerTimerFactory func(time.Duration, func()) triggerTimer
+
 // Controller reconciles EventSubscription resources. See package doc.
 type Controller struct {
 	Router       *api.Router
@@ -78,39 +85,59 @@ type Controller struct {
 	PluginRunner PluginRunner
 	Now          func() time.Time
 	MaxAttempts  int
+	NewTimer     triggerTimerFactory
+
+	mu         sync.Mutex
+	schedules  map[string]*subscriptionSchedule
+	processing map[string]bool
 }
 
 // HandleEvent reconciles in response to a bus event (bridge for FuncController).
-func (c Controller) HandleEvent(ctx context.Context, _ daemonapi.DaemonEvent) error {
+func (c *Controller) HandleEvent(ctx context.Context, _ daemonapi.DaemonEvent) error {
 	return c.Reconcile(ctx)
 }
 
-func (c Controller) now() time.Time {
+type subscriptionSchedule struct {
+	resource api.Resource
+	spec     api.EventSubscriptionSpec
+	firstAt  time.Time
+	events   map[string]routerstate.EventRecord
+	timer    triggerTimer
+}
+
+func (c *Controller) now() time.Time {
 	if c.Now != nil {
 		return c.Now().UTC()
 	}
 	return time.Now().UTC()
 }
 
-func (c Controller) maxAttempts() int {
+func (c *Controller) maxAttempts() int {
 	if c.MaxAttempts > 0 {
 		return c.MaxAttempts
 	}
 	return defaultMaxAttempts
 }
 
-func (c Controller) runner() PluginRunner {
+func (c *Controller) runner() PluginRunner {
 	if c.PluginRunner != nil {
 		return c.PluginRunner
 	}
 	return routerplugin.Run
 }
 
+func (c *Controller) newTimer(d time.Duration, fn func()) triggerTimer {
+	if c.NewTimer != nil {
+		return c.NewTimer(d, fn)
+	}
+	return time.AfterFunc(d, fn)
+}
+
 // Reconcile processes every EventSubscription once. With no EventSubscription it
 // returns nil. It never aborts the whole tick on a single subscription error so
 // that one misconfigured subscription does not stall the rest; per-subscription
 // problems are recorded in object status and event_subscription_runs.
-func (c Controller) Reconcile(ctx context.Context) error {
+func (c *Controller) Reconcile(ctx context.Context) error {
 	if c.Router == nil || c.Store == nil {
 		return nil
 	}
@@ -126,7 +153,7 @@ func (c Controller) Reconcile(ctx context.Context) error {
 	return nil
 }
 
-func (c Controller) reconcileSubscription(ctx context.Context, resource api.Resource) error {
+func (c *Controller) reconcileSubscription(ctx context.Context, resource api.Resource) error {
 	subName := resource.Metadata.Name
 	// subKey is the qualified subscription key used for run rows and the
 	// DynamicConfigPart source so they match the dynamic-source annotation.
@@ -166,7 +193,31 @@ func (c Controller) reconcileSubscription(ctx context.Context, resource api.Reso
 		c.saveStatus(subName, "Idle", "", 0)
 		return nil
 	}
+	if c.deferBatch(ctx, resource, spec, batch, now) {
+		return nil
+	}
+	return c.processBatch(ctx, resource, spec, pluginSpec, batch, now)
+}
 
+func (c *Controller) processBatch(ctx context.Context, resource api.Resource, spec api.EventSubscriptionSpec, pluginSpec api.PluginSpec, batch []routerstate.EventRecord, now time.Time) error {
+	subName := resource.Metadata.Name
+	subKey := "EventSubscription/" + subName
+	pluginName := strings.TrimSpace(spec.Trigger.PluginRef)
+	filtered := make([]routerstate.EventRecord, 0, len(batch))
+	for _, ev := range batch {
+		eligible, err := c.eligible(subKey, ev.ID)
+		if err != nil {
+			return err
+		}
+		if eligible {
+			filtered = append(filtered, ev)
+		}
+	}
+	batch = filtered
+	if len(batch) == 0 {
+		c.saveStatus(subName, "Idle", "", 0)
+		return nil
+	}
 	// Record start (pending/attempts++) for each event in the batch.
 	for _, ev := range batch {
 		if err := c.Store.UpsertSubscriptionRunStart(subKey, ev.ID, ev.Group, pluginName); err != nil {
@@ -275,10 +326,135 @@ func (c Controller) reconcileSubscription(ctx context.Context, resource api.Reso
 	return nil
 }
 
+func (c *Controller) deferBatch(_ context.Context, resource api.Resource, spec api.EventSubscriptionSpec, batch []routerstate.EventRecord, now time.Time) bool {
+	batchWindow := parseTriggerDuration(spec.Trigger.BatchWindow)
+	debounce := parseTriggerDuration(spec.Trigger.Debounce)
+	if batchWindow <= 0 && debounce <= 0 {
+		return false
+	}
+	subName := resource.Metadata.Name
+	subKey := "EventSubscription/" + subName
+	c.mu.Lock()
+	if c.schedules == nil {
+		c.schedules = map[string]*subscriptionSchedule{}
+	}
+	if c.processing != nil && c.processing[subKey] {
+		c.mu.Unlock()
+		c.saveStatus(subName, "Waiting", "Waiting for trigger window processing to finish", len(batch))
+		return true
+	}
+	sched := c.schedules[subKey]
+	if sched == nil {
+		sched = &subscriptionSchedule{
+			resource: resource,
+			spec:     spec,
+			firstAt:  now,
+			events:   map[string]routerstate.EventRecord{},
+		}
+		c.schedules[subKey] = sched
+	} else {
+		sched.resource = resource
+		sched.spec = spec
+	}
+	newEvent := false
+	for _, ev := range batch {
+		if _, found := sched.events[ev.ID]; !found {
+			newEvent = true
+		}
+		sched.events[ev.ID] = ev
+	}
+	if sched.timer == nil || newEvent || debounce <= 0 {
+		delay := coalesceDelay(now, sched.firstAt, batchWindow, debounce)
+		if sched.timer == nil {
+			sched.timer = c.newTimer(delay, func() {
+				c.fireScheduled(subKey)
+			})
+		} else {
+			sched.timer.Reset(delay)
+		}
+	}
+	matched := len(sched.events)
+	c.mu.Unlock()
+	c.saveStatus(subName, "Waiting", fmt.Sprintf("Waiting for trigger window (%d event(s) matched)", matched), matched)
+	return true
+}
+
+func (c *Controller) fireScheduled(subKey string) {
+	c.mu.Lock()
+	sched := c.schedules[subKey]
+	if sched == nil {
+		c.mu.Unlock()
+		return
+	}
+	delete(c.schedules, subKey)
+	if c.processing == nil {
+		c.processing = map[string]bool{}
+	}
+	c.processing[subKey] = true
+	batch := make([]routerstate.EventRecord, 0, len(sched.events))
+	for _, ev := range sched.events {
+		batch = append(batch, ev)
+	}
+	sort.Slice(batch, func(i, j int) bool {
+		if batch[i].ObservedAt.Equal(batch[j].ObservedAt) {
+			return batch[i].ID < batch[j].ID
+		}
+		return batch[i].ObservedAt.Before(batch[j].ObservedAt)
+	})
+	resource := sched.resource
+	spec := sched.spec
+	c.mu.Unlock()
+
+	pluginSpec, found := c.findPlugin(strings.TrimSpace(spec.Trigger.PluginRef))
+	if !found {
+		c.saveStatus(resource.Metadata.Name, "Pending", fmt.Sprintf("Plugin %q not found", spec.Trigger.PluginRef), len(batch))
+		c.finishProcessing(subKey)
+		return
+	}
+	if err := c.processBatch(context.Background(), resource, spec, pluginSpec, batch, c.now()); err != nil {
+		c.saveStatus(resource.Metadata.Name, "Degraded", err.Error(), len(batch))
+	}
+	c.finishProcessing(subKey)
+}
+
+func (c *Controller) finishProcessing(subKey string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.processing, subKey)
+}
+
+func parseTriggerDuration(raw string) time.Duration {
+	if strings.TrimSpace(raw) == "" {
+		return 0
+	}
+	d, err := time.ParseDuration(strings.TrimSpace(raw))
+	if err != nil {
+		return 0
+	}
+	return d
+}
+
+func coalesceDelay(now, firstAt time.Time, batchWindow, debounce time.Duration) time.Duration {
+	var deadline time.Time
+	if batchWindow > 0 {
+		deadline = firstAt.Add(batchWindow)
+	}
+	if debounce > 0 {
+		debounceDeadline := now.Add(debounce)
+		if deadline.IsZero() || debounceDeadline.Before(deadline) {
+			deadline = debounceDeadline
+		}
+	}
+	if deadline.IsZero() || !deadline.After(now) {
+		return 0
+	}
+	return deadline.Sub(now)
+}
+
 // eligible reports whether an event should be processed this tick: new events,
 // pending events, and failed events with retries remaining are eligible;
 // succeeded events and failed events that have exhausted MaxAttempts are not.
-func (c Controller) eligible(subscription, eventID string) (bool, error) {
+func (c *Controller) eligible(subscription, eventID string) (bool, error) {
 	status, attempts, found, err := c.Store.SubscriptionRunStatus(subscription, eventID)
 	if err != nil {
 		return false, err
@@ -299,13 +475,13 @@ func (c Controller) eligible(subscription, eventID string) (bool, error) {
 	}
 }
 
-func (c Controller) failBatch(batch []routerstate.EventRecord, subName, msg string) {
+func (c *Controller) failBatch(batch []routerstate.EventRecord, subName, msg string) {
 	for _, ev := range batch {
 		_ = c.Store.MarkSubscriptionRunResult(subName, ev.ID, "failed", "", 0, msg)
 	}
 }
 
-func (c Controller) completeRun(runID int64, outcome routerplugin.RunOutcome, status, runError string) {
+func (c *Controller) completeRun(runID int64, outcome routerplugin.RunOutcome, status, runError string) {
 	if runID == 0 {
 		return
 	}
@@ -319,7 +495,7 @@ func (c Controller) completeRun(runID int64, outcome routerplugin.RunOutcome, st
 	_ = c.Store.CompletePluginRun(runID, c.now(), exitCode, status, outcome.StdoutDigest, outcome.Stderr, runError)
 }
 
-func (c Controller) findPlugin(name string) (api.PluginSpec, bool) {
+func (c *Controller) findPlugin(name string) (api.PluginSpec, bool) {
 	if name == "" {
 		return api.PluginSpec{}, false
 	}
@@ -335,7 +511,7 @@ func (c Controller) findPlugin(name string) (api.PluginSpec, bool) {
 	return api.PluginSpec{}, false
 }
 
-func (c Controller) saveStatus(subName, phase, message string, matched int) {
+func (c *Controller) saveStatus(subName, phase, message string, matched int) {
 	if c.Store == nil {
 		return
 	}
