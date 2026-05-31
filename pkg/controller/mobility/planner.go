@@ -129,7 +129,7 @@ func PlanDynamicConfig(in PlannerInput) (PlannerOutput, error) {
 			}
 		}
 	}
-	deprovisionPlans, err := providerDeprovisionPlans(poolName, self, in.PreviousClaims, desiredAddresses, desiredProviderNICs, leasesByAddress(in.Leases), in.ProviderProfiles, now, deprovisionHoldDuration(in.PoolSpec))
+	deprovisionPlans, err := providerDeprovisionPlans(poolName, self, in.PreviousClaims, desiredAddresses, desiredProviderNICs, leasesByAddress(in.Leases), in.ProviderProfiles, now, deprovisionHoldDuration(in.PoolSpec), !placement.Active)
 	if err != nil {
 		return PlannerOutput{}, err
 	}
@@ -607,7 +607,7 @@ func providerActionPlans(poolName string, profile api.CloudProviderProfileSpec, 
 	return plans, nil
 }
 
-func providerDeprovisionPlans(poolName string, self memberPlanInfo, previousClaims []api.Resource, desiredAddresses, desiredProviderNICs map[string]bool, leases map[string]routerstate.AddressLeaseRecord, profiles map[string]api.CloudProviderProfileSpec, now time.Time, hold time.Duration) ([]dynamicconfig.ActionPlan, error) {
+func providerDeprovisionPlans(poolName string, self memberPlanInfo, previousClaims []api.Resource, desiredAddresses, desiredProviderNICs map[string]bool, leases map[string]routerstate.AddressLeaseRecord, profiles map[string]api.CloudProviderProfileSpec, now time.Time, hold time.Duration, releaseMissingLease bool) ([]dynamicconfig.ActionPlan, error) {
 	if self.Capture.Type != "provider-secondary-ip" {
 		return nil, nil
 	}
@@ -627,8 +627,15 @@ func providerDeprovisionPlans(poolName string, self memberPlanInfo, previousClai
 		}
 		lease := leases[address]
 		since := deprovisionSince(lease)
-		if since.IsZero() || deprovisionShouldHold(lease, now, since, hold) {
-			continue
+		if since.IsZero() {
+			if !releaseMissingLease {
+				continue
+			}
+			since = now
+		} else {
+			if deprovisionShouldHold(lease, now, since, hold) {
+				continue
+			}
 		}
 		profile, ok := profiles[strings.TrimSpace(spec.Capture.ProviderRef)]
 		if !ok {
