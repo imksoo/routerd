@@ -61,6 +61,7 @@ const (
 	PluginAPIVersion        = "plugin.routerd.net/v1alpha1"
 	HybridAPIVersion        = "hybrid.routerd.net/v1alpha1"
 	FederationAPIVersion    = "federation.routerd.net/v1alpha1"
+	MobilityAPIVersion      = "mobility.routerd.net/v1alpha1"
 )
 
 func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
@@ -543,6 +544,12 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 		r.Spec = spec
 	case "EventSubscription":
 		var spec EventSubscriptionSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	case "MobilityPool":
+		var spec MobilityPoolSpec
 		if err := raw.Spec.Decode(&spec); err != nil {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}

@@ -223,6 +223,36 @@ CREATE TABLE IF NOT EXISTS action_executions (
   updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS action_executions_status ON action_executions(status, id);
+CREATE TABLE IF NOT EXISTS address_leases (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  pool TEXT NOT NULL,
+  address TEXT NOT NULL,
+  status TEXT NOT NULL,
+  owner_node TEXT NOT NULL,
+  owner_site TEXT NOT NULL,
+  owner_role TEXT,
+  source_event_id TEXT,
+  source_group TEXT,
+  source_type TEXT,
+  dedupe_key TEXT,
+  epoch INTEGER NOT NULL DEFAULT 1,
+  observed_at TEXT,
+  expires_at TEXT,
+  candidate_owner_node TEXT,
+  candidate_owner_site TEXT,
+  candidate_owner_role TEXT,
+  candidate_event_id TEXT,
+  candidate_group TEXT,
+  candidate_type TEXT,
+  candidate_dedupe_key TEXT,
+  candidate_observed_at TEXT,
+  candidate_expires_at TEXT,
+  conflict_reason TEXT,
+  recorded_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(pool, address)
+);
+CREATE INDEX IF NOT EXISTS address_leases_pool ON address_leases(pool, address);
 `); err != nil {
 		return err
 	}
@@ -246,6 +276,80 @@ CREATE INDEX IF NOT EXISTS action_executions_status ON action_executions(status,
 	}
 	if err := s.ensureActionExecutionColumns(); err != nil {
 		return err
+	}
+	if err := s.ensureAddressLeaseColumns(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ensureAddressLeaseColumns additively creates the address_leases table (and any
+// columns introduced after it shipped) so existing databases upgrade in place.
+// AddressLease is derived runtime state for the CloudEdge Mobility Control Plane
+// (Step 1); it is never operator-authored.
+func (s *SQLiteStore) ensureAddressLeaseColumns() error {
+	if _, err := s.db.Exec(`
+CREATE TABLE IF NOT EXISTS address_leases (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  pool TEXT NOT NULL,
+  address TEXT NOT NULL,
+  status TEXT NOT NULL,
+  owner_node TEXT NOT NULL,
+  owner_site TEXT NOT NULL,
+  owner_role TEXT,
+  source_event_id TEXT,
+  source_group TEXT,
+  source_type TEXT,
+  dedupe_key TEXT,
+  epoch INTEGER NOT NULL DEFAULT 1,
+  observed_at TEXT,
+  expires_at TEXT,
+  candidate_owner_node TEXT,
+  candidate_owner_site TEXT,
+  candidate_owner_role TEXT,
+  candidate_event_id TEXT,
+  candidate_group TEXT,
+  candidate_type TEXT,
+  candidate_dedupe_key TEXT,
+  candidate_observed_at TEXT,
+  candidate_expires_at TEXT,
+  conflict_reason TEXT,
+  recorded_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(pool, address)
+);
+CREATE INDEX IF NOT EXISTS address_leases_pool ON address_leases(pool, address);
+`); err != nil {
+		return err
+	}
+	columns := map[string]string{
+		"status":                "TEXT NOT NULL DEFAULT 'active'",
+		"owner_role":            "TEXT",
+		"source_event_id":       "TEXT",
+		"source_group":          "TEXT",
+		"source_type":           "TEXT",
+		"dedupe_key":            "TEXT",
+		"candidate_owner_node":  "TEXT",
+		"candidate_owner_site":  "TEXT",
+		"candidate_owner_role":  "TEXT",
+		"candidate_event_id":    "TEXT",
+		"candidate_group":       "TEXT",
+		"candidate_type":        "TEXT",
+		"candidate_dedupe_key":  "TEXT",
+		"candidate_observed_at": "TEXT",
+		"candidate_expires_at":  "TEXT",
+		"conflict_reason":       "TEXT",
+	}
+	for column, typ := range columns {
+		hasColumn, err := s.tableHasColumn("address_leases", column)
+		if err != nil {
+			return err
+		}
+		if !hasColumn {
+			if _, err := s.db.Exec(`ALTER TABLE address_leases ADD COLUMN ` + column + ` ` + typ); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }

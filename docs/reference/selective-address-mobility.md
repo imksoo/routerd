@@ -18,6 +18,40 @@ fields on mobility resources.
 
 ## Resource Model
 
+For the CloudEdge Mobility control plane, `MobilityPool` is the only
+operator-authored mobility intent. It declares the logical IPv4 pool, the
+EventGroup to read, member nodes and sites, and the lease/capture policy:
+
+```yaml
+apiVersion: mobility.routerd.net/v1alpha1
+kind: MobilityPool
+metadata: { name: lab-same-subnet }
+spec:
+  prefix: 10.0.0.0/24
+  groupRef: cloudedge
+  members:
+    - nodeRef: onprem-router
+      site: onprem
+      role: onprem
+    - nodeRef: cloud-router
+      site: azure
+      role: cloud
+  leasePolicy:
+    ttl: 5m
+    holdDuration: 30s
+  capturePolicy:
+    mode: all-non-owner-sites
+```
+
+routerd projects `routerd.client.ipv4.observed` federation events into
+read-only `AddressLease` state. A lease is not a config Kind and should not be
+hand-authored. Inspect it with `routerctl mobility leases`.
+
+`AddressMobilityDomain` and `RemoteAddressClaim` are the lower-level SAM
+representation. Existing hand-authored SAM configs remain supported, but in the
+CloudEdge Mobility path they are intended to be derived from `MobilityPool` and
+`AddressLease` state by the Step 2 planner.
+
 `AddressMobilityDomain` defines the IPv4 prefix where selected addresses may
 move:
 

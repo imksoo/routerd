@@ -6595,6 +6595,167 @@
                 "additionalProperties": false,
                 "properties": {
                   "apiVersion": {
+                    "const": "mobility.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "MobilityPool",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "description": "MobilityPoolSpec declares a selective-address mobility pool for the CloudEdge Mobility Control Plane (Step 1).",
+                    "properties": {
+                      "authority": {
+                        "additionalProperties": false,
+                        "description": "Authority declares who arbitrates ownership. The MVP supports static\narbitration only. Empty means every node deterministically projects the\nshared event stream locally.",
+                        "properties": {
+                          "mode": {
+                            "description": "Mode selects the arbitration scheme. Only \"static\" is supported in the\nMVP; empty defaults to it.",
+                            "enum": [
+                              "",
+                              "static"
+                            ],
+                            "type": "string"
+                          },
+                          "nodeRef": {
+                            "description": "NodeRef optionally names the arbitrating node. When set, it must be one of\nthe member NodeRefs.",
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "capturePolicy": {
+                        "additionalProperties": false,
+                        "description": "CapturePolicy declares how non-owner sites capture an address that has\nmoved.",
+                        "properties": {
+                          "mode": {
+                            "description": "Mode selects the capture behavior. Only \"all-non-owner-sites\" is supported\nin the MVP; empty defaults to it.",
+                            "enum": [
+                              "",
+                              "all-non-owner-sites"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "deliveryPolicy": {
+                        "additionalProperties": false,
+                        "description": "DeliveryPolicy is reserved for Step 2, where AddressLease records are\nlowered into AddressMobilityDomain and RemoteAddressClaim DynamicConfigPart\nresources. It is accepted now so MobilityPool remains the only\noperator-authored mobility intent.",
+                        "properties": {
+                          "mode": {
+                            "description": "Mode is accepted for forward compatibility. Empty means route delivery.",
+                            "enum": [
+                              "",
+                              "route"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "groupRef": {
+                        "description": "GroupRef is the EventGroup whose federation events are projected into\nAddressLease runtime state for this pool (required).",
+                        "type": "string"
+                      },
+                      "leasePolicy": {
+                        "additionalProperties": false,
+                        "description": "LeasePolicy controls the lifetime and owner-change hold window for\nobserved AddressLease state.",
+                        "properties": {
+                          "holdDuration": {
+                            "description": "HoldDuration delays owner changes so short flaps do not immediately move\ncapture intent. Empty defaults to the controller default.",
+                            "type": "string"
+                          },
+                          "ttl": {
+                            "description": "TTL is used when an observed event does not carry an explicit expiresAt.\nEmpty defaults to the controller default.",
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "members": {
+                        "description": "Members maps routerd nodes to the site they serve within the pool\n(required, at least one).",
+                        "items": {
+                          "additionalProperties": false,
+                          "description": "MobilityPoolMember binds a routerd node to a site within a MobilityPool.",
+                          "properties": {
+                            "nodeRef": {
+                              "description": "NodeRef is the routerd node identity (matches federation sourceNode).",
+                              "type": "string"
+                            },
+                            "role": {
+                              "description": "Role selects the SAM side semantics for this node. It is separate from Site\nso sites can be named for topology while role remains provider-agnostic.",
+                              "enum": [
+                                "onprem",
+                                "cloud"
+                              ],
+                              "type": "string"
+                            },
+                            "site": {
+                              "description": "Site is the location label the node serves within the pool.",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "nodeRef",
+                            "site",
+                            "role"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "mode": {
+                        "description": "Mode selects the mobility scheme. Only \"selective-address\" is supported in\nthe MVP; empty defaults to it.",
+                        "enum": [
+                          "",
+                          "selective-address"
+                        ],
+                        "type": "string"
+                      },
+                      "prefix": {
+                        "description": "Prefix is the CIDR managed by this pool, e.g. 10.88.60.0/24 (required).",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "prefix",
+                      "groupRef",
+                      "members"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
                     "const": "net.routerd.net/v1alpha1",
                     "type": "string"
                   },

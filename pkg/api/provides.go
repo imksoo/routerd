@@ -141,6 +141,7 @@ func resourceProvidesTable() map[string][]ProvidedFieldSpec {
 		"LogRetention":            withCommon(os("targets", "Retention targets"), t("updatedAt", "Update time")),
 		"LogSink":                 withCommon(s("type", "Sink type")),
 		"ManagementAccess":        withCommon(ss("interfaces", "Management interfaces")),
+		"MobilityPool":            withCommon(s("groupRef", "Federation event group"), s("prefix", "Mobility pool IPv4 prefix"), i("leaseCount", "Projected lease count"), i("activeLeases", "Active lease count"), i("holdingLeases", "Held owner-change lease count"), i("expiredLeases", "Expired lease count"), t("projectedAt", "Last projection time")),
 		"NAT44Rule":               withCommon(s("egressInterface", "Resolved egress interface"), s("snatAddress", "Resolved SNAT address"), b("dryRun", "Dry-run status")),
 		"NTPClient":               withCommon(ss("servers", "Configured upstream servers"), s("source", "Server source"), t("updatedAt", "Update time")),
 		"NTPServer":               withCommon(ss("servers", "Configured upstream servers"), ss("listenAddresses", "Resolved listen addresses"), ss("allowCIDRs", "Resolved client allow CIDRs"), s("source", "Server source"), t("updatedAt", "Update time")),

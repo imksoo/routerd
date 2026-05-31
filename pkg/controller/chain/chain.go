@@ -35,6 +35,7 @@ import (
 	firewallcontroller "github.com/imksoo/routerd/pkg/controller/firewall"
 	"github.com/imksoo/routerd/pkg/controller/framework"
 	ingressservicecontroller "github.com/imksoo/routerd/pkg/controller/ingressservice"
+	mobilitycontroller "github.com/imksoo/routerd/pkg/controller/mobility"
 	"github.com/imksoo/routerd/pkg/controller/nat44"
 	"github.com/imksoo/routerd/pkg/controller/pppoesession"
 	vrrpcontroller "github.com/imksoo/routerd/pkg/controller/vrrp"
@@ -74,6 +75,37 @@ type eventedStore struct {
 type eventSubscriptionStore struct {
 	evented eventedStore
 	data    eventsubscriptioncontroller.DataStore
+}
+
+type mobilityDataStore interface {
+	ListFederationEvents(group string, includeExpired bool, now int64) ([]routerstate.EventRecord, error)
+	UpsertAddressLease(routerstate.AddressLeaseRecord) error
+	ListAddressLeases(pool string, includeExpired bool, now time.Time) ([]routerstate.AddressLeaseRecord, error)
+}
+
+type mobilityStore struct {
+	evented eventedStore
+	data    mobilityDataStore
+}
+
+func (s mobilityStore) SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error {
+	return s.evented.SaveObjectStatus(apiVersion, kind, name, status)
+}
+
+func (s mobilityStore) ObjectStatus(apiVersion, kind, name string) map[string]any {
+	return s.evented.ObjectStatus(apiVersion, kind, name)
+}
+
+func (s mobilityStore) ListFederationEvents(group string, includeExpired bool, now int64) ([]routerstate.EventRecord, error) {
+	return s.data.ListFederationEvents(group, includeExpired, now)
+}
+
+func (s mobilityStore) UpsertAddressLease(rec routerstate.AddressLeaseRecord) error {
+	return s.data.UpsertAddressLease(rec)
+}
+
+func (s mobilityStore) ListAddressLeases(pool string, includeExpired bool, now time.Time) ([]routerstate.AddressLeaseRecord, error) {
+	return s.data.ListAddressLeases(pool, includeExpired, now)
 }
 
 func (s eventSubscriptionStore) SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error {
@@ -800,6 +832,14 @@ func (r *Runner) Start(ctx context.Context) error {
 			StateDir:   defaults.StateDir,
 		}
 	}
+	var mobility mobilitycontroller.Controller
+	if rawStore, ok := r.Store.(mobilityDataStore); ok {
+		mobility = mobilitycontroller.Controller{
+			Router: r.Router,
+			Bus:    r.Bus,
+			Store:  mobilityStore{evented: store, data: rawStore},
+		}
+	}
 	daemonStatusSync := DaemonStatusController{Router: r.Router, Bus: r.Bus, Store: store, DaemonSockets: r.Opts.DaemonSockets, Logger: logger}
 	wan := egressroute.Controller{Router: r.Router, Bus: r.Bus, Store: store, Logger: logger}
 	rules := eventrule.Controller{Router: r.Router, Bus: r.Bus, Store: store, Logger: logger}
@@ -900,6 +940,7 @@ func (r *Runner) Start(ctx context.Context) error {
 		framework.FuncController{ControllerName: "dns-resolver", Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed", "routerd.dhcp.lease.**"}}}, ReconcileFunc: dnsResolver.HandleEvent, PeriodicFunc: dnsResolver.Reconcile},
 		framework.FuncController{ControllerName: "event-federation", Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed"}}}, ReconcileFunc: eventFederation.HandleEvent, PeriodicFunc: eventFederation.Reconcile},
 		framework.FuncController{ControllerName: "event-subscription", Every: 5 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed"}}}, PeriodicFunc: eventSubscription.Reconcile},
+		framework.FuncController{ControllerName: "mobility", Every: 5 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed"}}}, ReconcileFunc: mobility.HandleEvent, PeriodicFunc: mobility.Reconcile},
 		framework.FuncController{ControllerName: "egress-route-policy", Every: 15 * time.Second, Subs: statusSubscriptions("HealthCheck", "DSLiteTunnel", "Interface", "DHCPv4Client", "PPPoESession"), PeriodicFunc: wan.Reconcile},
 		framework.FuncController{ControllerName: "ingress-service", Every: 5 * time.Second, Subs: bootstrapSubscriptions(), PeriodicFunc: ingressService.Reconcile},
 		framework.FuncController{ControllerName: "nat44", Subs: statusSubscriptions("EgressRoutePolicy", "IngressService"), PeriodicFunc: nat.Reconcile},

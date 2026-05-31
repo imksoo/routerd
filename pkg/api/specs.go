@@ -1320,6 +1320,88 @@ type EventSubscriptionTrigger struct {
 	Debounce string `yaml:"debounce,omitempty" json:"debounce,omitempty"`
 }
 
+// MobilityPoolSpec declares a selective-address mobility pool for the CloudEdge
+// Mobility Control Plane (Step 1). It is the ONLY operator-authored Kind in the
+// mobility plane: the operator declares the /24, which routerd nodes are members
+// and at which site, and the capture/authority policy ONCE. The system then
+// derives AddressLease runtime state (which IP is currently owned by which
+// node/site) from observed-client federation events. AddressLease is never
+// hand-authored.
+type MobilityPoolSpec struct {
+	// Prefix is the CIDR managed by this pool, e.g. 10.88.60.0/24 (required).
+	Prefix string `yaml:"prefix" json:"prefix"`
+	// GroupRef is the EventGroup whose federation events are projected into
+	// AddressLease runtime state for this pool (required).
+	GroupRef string `yaml:"groupRef" json:"groupRef"`
+	// Mode selects the mobility scheme. Only "selective-address" is supported in
+	// the MVP; empty defaults to it.
+	Mode string `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=,enum=selective-address"`
+	// Members maps routerd nodes to the site they serve within the pool
+	// (required, at least one).
+	Members []MobilityPoolMember `yaml:"members" json:"members"`
+	// CapturePolicy declares how non-owner sites capture an address that has
+	// moved.
+	CapturePolicy MobilityCapturePolicy `yaml:"capturePolicy,omitempty" json:"capturePolicy,omitempty"`
+	// LeasePolicy controls the lifetime and owner-change hold window for
+	// observed AddressLease state.
+	LeasePolicy MobilityLeasePolicy `yaml:"leasePolicy,omitempty" json:"leasePolicy,omitempty"`
+	// DeliveryPolicy is reserved for Step 2, where AddressLease records are
+	// lowered into AddressMobilityDomain and RemoteAddressClaim DynamicConfigPart
+	// resources. It is accepted now so MobilityPool remains the only
+	// operator-authored mobility intent.
+	DeliveryPolicy MobilityDeliveryPolicy `yaml:"deliveryPolicy,omitempty" json:"deliveryPolicy,omitempty"`
+	// Authority declares who arbitrates ownership. The MVP supports static
+	// arbitration only. Empty means every node deterministically projects the
+	// shared event stream locally.
+	Authority MobilityAuthority `yaml:"authority,omitempty" json:"authority,omitempty"`
+}
+
+// MobilityPoolMember binds a routerd node to a site within a MobilityPool. Both
+// fields are required; NodeRef must be unique within the pool.
+type MobilityPoolMember struct {
+	// NodeRef is the routerd node identity (matches federation sourceNode).
+	NodeRef string `yaml:"nodeRef" json:"nodeRef"`
+	// Site is the location label the node serves within the pool.
+	Site string `yaml:"site" json:"site"`
+	// Role selects the SAM side semantics for this node. It is separate from Site
+	// so sites can be named for topology while role remains provider-agnostic.
+	Role string `yaml:"role" json:"role" jsonschema:"enum=onprem,enum=cloud"`
+}
+
+// MobilityCapturePolicy declares how non-owner sites capture a moved address.
+type MobilityCapturePolicy struct {
+	// Mode selects the capture behavior. Only "all-non-owner-sites" is supported
+	// in the MVP; empty defaults to it.
+	Mode string `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=,enum=all-non-owner-sites"`
+}
+
+// MobilityLeasePolicy controls AddressLease state derived from federation events.
+type MobilityLeasePolicy struct {
+	// TTL is used when an observed event does not carry an explicit expiresAt.
+	// Empty defaults to the controller default.
+	TTL string `yaml:"ttl,omitempty" json:"ttl,omitempty"`
+	// HoldDuration delays owner changes so short flaps do not immediately move
+	// capture intent. Empty defaults to the controller default.
+	HoldDuration string `yaml:"holdDuration,omitempty" json:"holdDuration,omitempty"`
+}
+
+// MobilityDeliveryPolicy is reserved for Step 2 lowering. The zero value keeps
+// today's Step 1 as a read-only lease registry.
+type MobilityDeliveryPolicy struct {
+	// Mode is accepted for forward compatibility. Empty means route delivery.
+	Mode string `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=,enum=route"`
+}
+
+// MobilityAuthority declares who arbitrates address ownership in the pool.
+type MobilityAuthority struct {
+	// Mode selects the arbitration scheme. Only "static" is supported in the
+	// MVP; empty defaults to it.
+	Mode string `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=,enum=static"`
+	// NodeRef optionally names the arbitrating node. When set, it must be one of
+	// the member NodeRefs.
+	NodeRef string `yaml:"nodeRef,omitempty" json:"nodeRef,omitempty"`
+}
+
 type CloudProviderProfileSpec struct {
 	Provider       string       `yaml:"provider" json:"provider" jsonschema:"enum=azure,enum=aws,enum=oci,enum=gcp"`
 	SubscriptionID string       `yaml:"subscriptionID,omitempty" json:"subscriptionID,omitempty"`
@@ -2033,6 +2115,10 @@ func (r Resource) EventPeerSpec() (EventPeerSpec, error) {
 
 func (r Resource) EventSubscriptionSpec() (EventSubscriptionSpec, error) {
 	return specAs[EventSubscriptionSpec](r)
+}
+
+func (r Resource) MobilityPoolSpec() (MobilityPoolSpec, error) {
+	return specAs[MobilityPoolSpec](r)
 }
 
 func (r Resource) CloudProviderProfileSpec() (CloudProviderProfileSpec, error) {

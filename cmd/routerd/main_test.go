@@ -37,6 +37,9 @@ func TestApplyFilesReportsCreatedAndChanged(t *testing.T) {
 	if err := os.WriteFile(dropinPath, dropinData, 0644); err != nil {
 		t.Fatalf("seed dropin: %v", err)
 	}
+	if err := os.Chmod(dropinPath, 0644); err != nil {
+		t.Fatalf("chmod dropin: %v", err)
+	}
 
 	changed, created, err := applyFiles([]render.File{
 		{Path: netdevPath, Data: netdevData},
@@ -627,6 +630,9 @@ func TestApplyNetworkConfigSkipsUnchangedFiles(t *testing.T) {
 	}
 	if err := os.WriteFile(dropinPath, dropinData, 0644); err != nil {
 		t.Fatalf("write dropin fixture: %v", err)
+	}
+	if err := os.Chmod(dropinPath, 0644); err != nil {
+		t.Fatalf("chmod dropin fixture: %v", err)
 	}
 
 	changed, err := applyNetworkConfig(netplanPath, netplanData, []render.File{

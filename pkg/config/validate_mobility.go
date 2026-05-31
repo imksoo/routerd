@@ -1,0 +1,111 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
+package config
+
+import (
+	"fmt"
+	"net/netip"
+	"strings"
+	"time"
+
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/platform"
+)
+
+// validateMobilityResource performs local field validation for CloudEdge
+// Mobility Control Plane Kinds (Step 1). The only operator-authored Kind is
+// MobilityPool; AddressLease is derived runtime state and is intentionally not a
+// config Kind, so it never appears here. It returns handled=true for Kinds it
+// owns so the caller's Kind switch accepts them.
+func validateMobilityResource(res api.Resource, _ platform.OS) (bool, error) {
+	switch res.Kind {
+	case "MobilityPool":
+		if res.APIVersion != api.MobilityAPIVersion {
+			return true, fmt.Errorf("%s must use apiVersion %s", res.ID(), api.MobilityAPIVersion)
+		}
+		spec, err := res.MobilityPoolSpec()
+		if err != nil {
+			return true, err
+		}
+		prefix := strings.TrimSpace(spec.Prefix)
+		if prefix == "" {
+			return true, fmt.Errorf("%s spec.prefix is required", res.ID())
+		}
+		parsedPrefix, err := netip.ParsePrefix(prefix)
+		if err != nil {
+			return true, fmt.Errorf("%s spec.prefix must be a CIDR: %w", res.ID(), err)
+		}
+		if !parsedPrefix.Addr().Is4() {
+			return true, fmt.Errorf("%s spec.prefix must be an IPv4 CIDR", res.ID())
+		}
+		if strings.TrimSpace(spec.GroupRef) == "" {
+			return true, fmt.Errorf("%s spec.groupRef is required", res.ID())
+		}
+		switch strings.TrimSpace(spec.Mode) {
+		case "", "selective-address":
+		default:
+			return true, fmt.Errorf("%s spec.mode %q is not supported; only selective-address", res.ID(), spec.Mode)
+		}
+		if len(spec.Members) == 0 {
+			return true, fmt.Errorf("%s spec.members requires at least one member", res.ID())
+		}
+		nodeRefs := map[string]bool{}
+		for i, member := range spec.Members {
+			nodeRef := strings.TrimSpace(member.NodeRef)
+			if nodeRef == "" {
+				return true, fmt.Errorf("%s spec.members[%d].nodeRef is required", res.ID(), i)
+			}
+			if strings.TrimSpace(member.Site) == "" {
+				return true, fmt.Errorf("%s spec.members[%d].site is required", res.ID(), i)
+			}
+			switch strings.TrimSpace(member.Role) {
+			case "onprem", "cloud":
+			default:
+				return true, fmt.Errorf("%s spec.members[%d].role must be onprem or cloud", res.ID(), i)
+			}
+			if nodeRefs[nodeRef] {
+				return true, fmt.Errorf("%s spec.members nodeRef %q is duplicated", res.ID(), nodeRef)
+			}
+			nodeRefs[nodeRef] = true
+		}
+		switch strings.TrimSpace(spec.CapturePolicy.Mode) {
+		case "", "all-non-owner-sites":
+		default:
+			return true, fmt.Errorf("%s spec.capturePolicy.mode %q is not supported; only all-non-owner-sites", res.ID(), spec.CapturePolicy.Mode)
+		}
+		if ttl := strings.TrimSpace(spec.LeasePolicy.TTL); ttl != "" {
+			parsed, err := time.ParseDuration(ttl)
+			if err != nil {
+				return true, fmt.Errorf("%s spec.leasePolicy.ttl must be a Go duration: %w", res.ID(), err)
+			}
+			if parsed <= 0 {
+				return true, fmt.Errorf("%s spec.leasePolicy.ttl must be > 0", res.ID())
+			}
+		}
+		if hold := strings.TrimSpace(spec.LeasePolicy.HoldDuration); hold != "" {
+			parsed, err := time.ParseDuration(hold)
+			if err != nil {
+				return true, fmt.Errorf("%s spec.leasePolicy.holdDuration must be a Go duration: %w", res.ID(), err)
+			}
+			if parsed < 0 {
+				return true, fmt.Errorf("%s spec.leasePolicy.holdDuration must be >= 0", res.ID())
+			}
+		}
+		switch strings.TrimSpace(spec.DeliveryPolicy.Mode) {
+		case "", "route":
+		default:
+			return true, fmt.Errorf("%s spec.deliveryPolicy.mode %q is not supported; only route", res.ID(), spec.DeliveryPolicy.Mode)
+		}
+		switch strings.TrimSpace(spec.Authority.Mode) {
+		case "", "static":
+			authNode := strings.TrimSpace(spec.Authority.NodeRef)
+			if authNode != "" && !nodeRefs[authNode] {
+				return true, fmt.Errorf("%s spec.authority.nodeRef %q must be one of the member nodeRefs", res.ID(), authNode)
+			}
+		default:
+			return true, fmt.Errorf("%s spec.authority.mode %q is not supported; only static", res.ID(), spec.Authority.Mode)
+		}
+		return true, nil
+	}
+	return false, nil
+}
