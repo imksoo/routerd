@@ -27,13 +27,14 @@ const (
 // PlannerInput is the pure lease-to-dynamic-config planning input for one
 // MobilityPool on one routerd node.
 type PlannerInput struct {
-	PoolName         string
-	PoolSpec         api.MobilityPoolSpec
-	SelfNode         string
-	Now              time.Time
-	Leases           []routerstate.AddressLeaseRecord
-	PreviousClaims   []api.Resource
-	ProviderProfiles map[string]api.CloudProviderProfileSpec
+	PoolName           string
+	PoolSpec           api.MobilityPoolSpec
+	SelfNode           string
+	Now                time.Time
+	Leases             []routerstate.AddressLeaseRecord
+	PreviousClaims     []api.Resource
+	DeprovisionMarkers []routerstate.MobilityDeprovisionMarkerRecord
+	ProviderProfiles   map[string]api.CloudProviderProfileSpec
 }
 
 // PlannerOutput is the deterministic generated config for one pool x node.
@@ -133,6 +134,12 @@ func PlanDynamicConfig(in PlannerInput) (PlannerOutput, error) {
 	if err != nil {
 		return PlannerOutput{}, err
 	}
+	markerPlans, err := actionPlansFromMarkers(in.DeprovisionMarkers)
+	if err != nil {
+		return PlannerOutput{}, err
+	}
+	deprovisionPlans = append(deprovisionPlans, markerPlans...)
+	deprovisionPlans = dedupeActionPlans(deprovisionPlans)
 	if placement.Active {
 		deprovisionedAddresses := actionPlanAddresses(deprovisionPlans, "unassign-secondary-ip")
 		for _, claim := range carryForwardProviderClaims(in.PreviousClaims, desiredAddresses, deprovisionedAddresses) {
@@ -201,17 +208,34 @@ func (c Controller) reconcilePlan(res api.Resource, now time.Time) error {
 	if err != nil {
 		return err
 	}
+	source := DynamicSource(res.Metadata.Name, selfNode)
+	actionJournal, err := c.Store.ListActions(routerstate.ActionExecutionFilter{})
+	if err != nil {
+		return fmt.Errorf("list action journal: %w", err)
+	}
+	markers, err := c.Store.ListMobilityDeprovisionMarkers(source)
+	if err != nil {
+		return fmt.Errorf("list mobility deprovision markers: %w", err)
+	}
+	markers, err = c.completeDeprovisionMarkers(markers, actionJournal)
+	if err != nil {
+		return err
+	}
 	out, err := PlanDynamicConfig(PlannerInput{
-		PoolName:         res.Metadata.Name,
-		PoolSpec:         spec,
-		SelfNode:         selfNode,
-		Now:              now,
-		Leases:           leases,
-		PreviousClaims:   previousClaims,
-		ProviderProfiles: cloudProviderProfiles(c.Router),
+		PoolName:           res.Metadata.Name,
+		PoolSpec:           spec,
+		SelfNode:           selfNode,
+		Now:                now,
+		Leases:             leases,
+		PreviousClaims:     previousClaims,
+		DeprovisionMarkers: markers,
+		ProviderProfiles:   cloudProviderProfiles(c.Router),
 	})
 	if err != nil {
 		_ = c.upsertEmptyPlan(res.Metadata.Name, spec, selfNode, now)
+		return err
+	}
+	if err := c.persistDeprovisionMarkers(source, out.ActionPlans); err != nil {
 		return err
 	}
 	record, err := dynamicPartRecord(out.Part)
@@ -246,6 +270,89 @@ func (c Controller) reconcilePlan(res api.Resource, now time.Time) error {
 		status["placementActiveNode"] = out.Placement.ActiveNode
 	}
 	return c.savePlannerStatus(res.Metadata.Name, status)
+}
+
+func (c Controller) completeDeprovisionMarkers(markers []routerstate.MobilityDeprovisionMarkerRecord, journal []routerstate.ActionExecutionRecord) ([]routerstate.MobilityDeprovisionMarkerRecord, error) {
+	completed := map[string]bool{}
+	for _, action := range journal {
+		if !markerCompletedByAction(action.Status) {
+			continue
+		}
+		key := strings.TrimSpace(action.IdempotencyKey)
+		if key != "" {
+			completed[key] = true
+		}
+	}
+	if len(completed) == 0 {
+		return markers, nil
+	}
+	pending := make([]routerstate.MobilityDeprovisionMarkerRecord, 0, len(markers))
+	for _, marker := range markers {
+		key := strings.TrimSpace(marker.Key)
+		if key == "" {
+			key = strings.TrimSpace(marker.IdempotencyKey)
+		}
+		if completed[key] {
+			if err := c.Store.DeleteMobilityDeprovisionMarker(key); err != nil {
+				return nil, fmt.Errorf("delete mobility deprovision marker %s: %w", key, err)
+			}
+			continue
+		}
+		pending = append(pending, marker)
+	}
+	return pending, nil
+}
+
+func markerCompletedByAction(status string) bool {
+	switch strings.TrimSpace(status) {
+	case routerstate.ActionSucceeded, "canceled", "cancelled":
+		return true
+	default:
+		return false
+	}
+}
+
+func (c Controller) persistDeprovisionMarkers(source string, plans []dynamicconfig.ActionPlan) error {
+	for _, plan := range plans {
+		if !isDeprovisionAction(plan.Action) {
+			continue
+		}
+		marker, err := deprovisionMarkerFromPlan(source, plan)
+		if err != nil {
+			return err
+		}
+		if err := c.Store.UpsertMobilityDeprovisionMarker(marker); err != nil {
+			return fmt.Errorf("upsert mobility deprovision marker %s: %w", marker.Key, err)
+		}
+	}
+	return nil
+}
+
+func isDeprovisionAction(action string) bool {
+	switch strings.TrimSpace(action) {
+	case "unassign-secondary-ip", "ensure-forwarding-disabled":
+		return true
+	default:
+		return false
+	}
+}
+
+func deprovisionMarkerFromPlan(source string, plan dynamicconfig.ActionPlan) (routerstate.MobilityDeprovisionMarkerRecord, error) {
+	key := strings.TrimSpace(plan.IdempotencyKey)
+	if key == "" {
+		return routerstate.MobilityDeprovisionMarkerRecord{}, fmt.Errorf("deprovision action %q is missing idempotencyKey", plan.Name)
+	}
+	data, err := json.Marshal(plan)
+	if err != nil {
+		return routerstate.MobilityDeprovisionMarkerRecord{}, fmt.Errorf("marshal deprovision action plan %q: %w", key, err)
+	}
+	return routerstate.MobilityDeprovisionMarkerRecord{
+		Key:            key,
+		Source:         strings.TrimSpace(source),
+		IdempotencyKey: key,
+		Action:         strings.TrimSpace(plan.Action),
+		ActionPlanJSON: string(data),
+	}, nil
 }
 
 func (c Controller) upsertEmptyPlan(poolName string, spec api.MobilityPoolSpec, selfNode string, now time.Time) error {
@@ -671,6 +778,21 @@ func filterForwardingDisablePlans(plans []dynamicconfig.ActionPlan, desiredProvi
 	return out
 }
 
+func actionPlansFromMarkers(markers []routerstate.MobilityDeprovisionMarkerRecord) ([]dynamicconfig.ActionPlan, error) {
+	var out []dynamicconfig.ActionPlan
+	for _, marker := range markers {
+		if strings.TrimSpace(marker.ActionPlanJSON) == "" {
+			continue
+		}
+		var plan dynamicconfig.ActionPlan
+		if err := json.Unmarshal([]byte(marker.ActionPlanJSON), &plan); err != nil {
+			return nil, fmt.Errorf("decode mobility deprovision marker %q: %w", marker.Key, err)
+		}
+		out = append(out, plan)
+	}
+	return out, nil
+}
+
 func providerDeprovisionPlans(poolName string, self memberPlanInfo, previousClaims []api.Resource, desiredAddresses, desiredProviderNICs map[string]bool, leases map[string]routerstate.AddressLeaseRecord, profiles map[string]api.CloudProviderProfileSpec, now time.Time, hold time.Duration, releaseMissingLease bool) ([]dynamicconfig.ActionPlan, error) {
 	if self.Capture.Type != "provider-secondary-ip" {
 		return nil, nil
@@ -963,6 +1085,26 @@ func captureTargetFromClaim(claim api.Resource) map[string]string {
 				out[targetKey] = strings.TrimSpace(value)
 			}
 		}
+	}
+	return out
+}
+
+func dedupeActionPlans(plans []dynamicconfig.ActionPlan) []dynamicconfig.ActionPlan {
+	if len(plans) < 2 {
+		return plans
+	}
+	seen := map[string]bool{}
+	out := make([]dynamicconfig.ActionPlan, 0, len(plans))
+	for _, plan := range plans {
+		key := strings.TrimSpace(plan.IdempotencyKey)
+		if key == "" {
+			key = strings.TrimSpace(plan.Action) + "\x00" + strings.TrimSpace(plan.Target["providerRef"]) + "\x00" + strings.TrimSpace(plan.Target["nicRef"]) + "\x00" + strings.TrimSpace(plan.Target["address"])
+		}
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, plan)
 	}
 	return out
 }

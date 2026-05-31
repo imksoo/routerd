@@ -81,6 +81,10 @@ type mobilityDataStore interface {
 	ListAddressLeases(pool string, includeExpired bool, now time.Time) ([]routerstate.AddressLeaseRecord, error)
 	UpsertDynamicConfigPart(routerstate.DynamicConfigPartRecord) error
 	GetDynamicConfigPartsBySource(source string) ([]routerstate.DynamicConfigPartRecord, error)
+	ListActions(routerstate.ActionExecutionFilter) ([]routerstate.ActionExecutionRecord, error)
+	UpsertMobilityDeprovisionMarker(routerstate.MobilityDeprovisionMarkerRecord) error
+	ListMobilityDeprovisionMarkers(source string) ([]routerstate.MobilityDeprovisionMarkerRecord, error)
+	DeleteMobilityDeprovisionMarker(key string) error
 }
 
 type mobilityStore struct {
@@ -114,6 +118,22 @@ func (s mobilityStore) UpsertDynamicConfigPart(rec routerstate.DynamicConfigPart
 
 func (s mobilityStore) GetDynamicConfigPartsBySource(source string) ([]routerstate.DynamicConfigPartRecord, error) {
 	return s.data.GetDynamicConfigPartsBySource(source)
+}
+
+func (s mobilityStore) ListActions(filter routerstate.ActionExecutionFilter) ([]routerstate.ActionExecutionRecord, error) {
+	return s.data.ListActions(filter)
+}
+
+func (s mobilityStore) UpsertMobilityDeprovisionMarker(rec routerstate.MobilityDeprovisionMarkerRecord) error {
+	return s.data.UpsertMobilityDeprovisionMarker(rec)
+}
+
+func (s mobilityStore) ListMobilityDeprovisionMarkers(source string) ([]routerstate.MobilityDeprovisionMarkerRecord, error) {
+	return s.data.ListMobilityDeprovisionMarkers(source)
+}
+
+func (s mobilityStore) DeleteMobilityDeprovisionMarker(key string) error {
+	return s.data.DeleteMobilityDeprovisionMarker(key)
 }
 
 func (s eventSubscriptionStore) SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error {

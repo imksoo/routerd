@@ -253,6 +253,16 @@ CREATE TABLE IF NOT EXISTS address_leases (
   UNIQUE(pool, address)
 );
 CREATE INDEX IF NOT EXISTS address_leases_pool ON address_leases(pool, address);
+CREATE TABLE IF NOT EXISTS mobility_deprovision_markers (
+  marker_key TEXT PRIMARY KEY,
+  source TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL,
+  action TEXT NOT NULL,
+  actionplan_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS mobility_deprovision_markers_source ON mobility_deprovision_markers(source, marker_key);
 `); err != nil {
 		return err
 	}
@@ -278,6 +288,9 @@ CREATE INDEX IF NOT EXISTS address_leases_pool ON address_leases(pool, address);
 		return err
 	}
 	if err := s.ensureAddressLeaseColumns(); err != nil {
+		return err
+	}
+	if err := s.ensureMobilityDeprovisionMarkerColumns(); err != nil {
 		return err
 	}
 	return nil

@@ -1119,6 +1119,49 @@ func TestControllerPlannerActiveStartupMissingLeaseRetainsMemoryThenDrainDeprovi
 	}
 }
 
+func TestPlanDynamicConfigMarkerBackedDeprovisionWithoutPreviousClaim(t *testing.T) {
+	now := time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC)
+	spec := placementPoolSpec()
+	spec.Members[1].Maintenance.Drain = true
+	unassign := markerBackedUnassignPlan(t, now)
+	disable := markerBackedForwardingDisablePlan(t)
+	source := DynamicSource("cloudedge", "azure-router-a")
+	out, err := PlanDynamicConfig(PlannerInput{
+		PoolName:           "cloudedge",
+		PoolSpec:           spec,
+		SelfNode:           "azure-router-a",
+		Now:                now,
+		DeprovisionMarkers: []routerstate.MobilityDeprovisionMarkerRecord{markerFromPlan(t, source, unassign), markerFromPlan(t, source, disable)},
+		ProviderProfiles:   plannedProviderProfiles(),
+	})
+	if err != nil {
+		t.Fatalf("PlanDynamicConfig: %v", err)
+	}
+	if countKind(out.Part.Spec.Resources, "RemoteAddressClaim") != 0 {
+		t.Fatalf("resources = %+v, want no claim while drained", out.Part.Spec.Resources)
+	}
+	if findActionPlan(out.ActionPlans, "unassign-secondary-ip") == nil || findActionPlan(out.ActionPlans, "ensure-forwarding-disabled") == nil {
+		t.Fatalf("marker-backed actionPlans = %+v, want unassign + forwarding-disable", out.ActionPlans)
+	}
+}
+
+func TestDeprovisionMarkerCompletionKeepsFailedActionsPending(t *testing.T) {
+	marker := routerstate.MobilityDeprovisionMarkerRecord{
+		Key:            "mobility:cloudedge:aws:eni-1:unassign-secondary-ip:10.88.60.9/32",
+		IdempotencyKey: "mobility:cloudedge:aws:eni-1:unassign-secondary-ip:10.88.60.9/32",
+	}
+	pending, err := (Controller{}).completeDeprovisionMarkers([]routerstate.MobilityDeprovisionMarkerRecord{marker}, []routerstate.ActionExecutionRecord{{
+		IdempotencyKey: marker.IdempotencyKey,
+		Status:         routerstate.ActionFailed,
+	}})
+	if err != nil {
+		t.Fatalf("completeDeprovisionMarkers: %v", err)
+	}
+	if len(pending) != 1 {
+		t.Fatalf("pending markers = %+v, want failed action to keep marker", pending)
+	}
+}
+
 func TestControllerPlannerPlacementAllDrainedStatus(t *testing.T) {
 	now := time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC)
 	store := testStore(t, now)
@@ -1222,6 +1265,49 @@ func plannedProviderProfiles() map[string]api.CloudProviderProfileSpec {
 			Capabilities:   []string{"nic-secondary-ip", "ip-forwarding"},
 			Auth:           api.ProviderAuth{Mode: "external-command", Command: "az"},
 		},
+	}
+}
+
+func markerBackedUnassignPlan(t *testing.T, now time.Time) dynamicconfig.ActionPlan {
+	t.Helper()
+	plan, err := providerUnassignActionPlan("cloudedge", plannedProviderProfiles()["azure-provider"], api.AddressCapture{
+		Type:         "provider-secondary-ip",
+		ProviderRef:  "azure-provider",
+		ProviderMode: "nic-secondary-ip",
+		NICRef:       "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic-a",
+	}, map[string]string{"region": "japaneast", "ipConfigName": "capture-a"}, "10.88.60.9/32", now)
+	if err != nil {
+		t.Fatalf("providerUnassignActionPlan: %v", err)
+	}
+	return plan
+}
+
+func markerBackedForwardingDisablePlan(t *testing.T) dynamicconfig.ActionPlan {
+	t.Helper()
+	plan, err := providerForwardingDisableActionPlan("cloudedge", plannedProviderProfiles()["azure-provider"], api.AddressCapture{
+		Type:         "provider-secondary-ip",
+		ProviderRef:  "azure-provider",
+		ProviderMode: "nic-secondary-ip",
+		NICRef:       "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic-a",
+	}, map[string]string{"region": "japaneast", "ipConfigName": "capture-a"}, "10.88.60.9/32")
+	if err != nil {
+		t.Fatalf("providerForwardingDisableActionPlan: %v", err)
+	}
+	return plan
+}
+
+func markerFromPlan(t *testing.T, source string, plan dynamicconfig.ActionPlan) routerstate.MobilityDeprovisionMarkerRecord {
+	t.Helper()
+	data, err := json.Marshal(plan)
+	if err != nil {
+		t.Fatalf("marshal marker plan: %v", err)
+	}
+	return routerstate.MobilityDeprovisionMarkerRecord{
+		Key:            plan.IdempotencyKey,
+		Source:         source,
+		IdempotencyKey: plan.IdempotencyKey,
+		Action:         plan.Action,
+		ActionPlanJSON: string(data),
 	}
 }
 
