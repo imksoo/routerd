@@ -9,6 +9,8 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -19,6 +21,7 @@ import (
 	mobilitycontroller "github.com/imksoo/routerd/pkg/controller/mobility"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
+	"github.com/imksoo/routerd/pkg/provideraction"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 	_ "modernc.org/sqlite"
 )
@@ -143,6 +146,65 @@ func TestServeChainMobilityReemitsMarkerBackedUnassignUntilExecuted(t *testing.T
 	}
 }
 
+func TestServeChainMobilityCancelsPendingDeprovisionWhenDesiredAgain(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	path := filepath.Join(t.TempDir(), "routerd.db")
+	store, err := routerstate.OpenSQLite(path)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+
+	if err := store.RecordFederationEvent(mobilityObservedEvent("evt-10", "10.88.60.10/32", now)); err != nil {
+		t.Fatalf("RecordFederationEvent .10: %v", err)
+	}
+	stop := startMobilityServeChain(t, mobilityServeRouter(false), store)
+	active := waitForMobilityPart(t, store, func(part routerstate.DynamicConfigPartRecord) bool {
+		return countServeKind(t, part.ResourcesJSON, "RemoteAddressClaim") == 1 &&
+			serveHasAction(t, part.ActionPlansJSON, "assign-secondary-ip", "10.88.60.10/32")
+	})
+	importServeActions(t, store)
+	succeedServeAction(t, store, "assign-secondary-ip", "10.88.60.10/32", now.Add(time.Second))
+	succeedServeAction(t, store, "ensure-forwarding-enabled", "10.88.60.10/32", now.Add(2*time.Second))
+	stop()
+
+	stop = startMobilityServeChain(t, mobilityServeRouter(true), store)
+	drained := waitForMobilityPartUpdatedAfter(t, store, active.UpdatedAt, func(part routerstate.DynamicConfigPartRecord) bool {
+		return countServeKind(t, part.ResourcesJSON, "RemoteAddressClaim") == 0 &&
+			serveActionCount(t, part.ActionPlansJSON, "unassign-secondary-ip", "10.88.60.10/32") == 1 &&
+			serveActionCount(t, part.ActionPlansJSON, "ensure-forwarding-disabled", "10.88.60.10/32") == 1
+	})
+	if got := countServeMarkers(t, store); got != 2 {
+		t.Fatalf("drain marker count = %d, want 2", got)
+	}
+	importServeActions(t, store)
+	if got := countServeActions(t, store, "unassign-secondary-ip", "10.88.60.10/32", routerstate.ActionPending); got != 1 {
+		t.Fatalf("pending unassign count after drain import = %d, want 1; epoch=%s actions=%s", got, serveCaptureEpoch(t, store), serveActionStatuses(t, store))
+	}
+	stop()
+
+	stop = startMobilityServeChain(t, mobilityServeRouter(false), store)
+	waitForMobilityPartUpdatedAfter(t, store, drained.UpdatedAt, func(part routerstate.DynamicConfigPartRecord) bool {
+		return countServeKind(t, part.ResourcesJSON, "RemoteAddressClaim") == 1 &&
+			serveActionCount(t, part.ActionPlansJSON, "assign-secondary-ip", "10.88.60.10/32") == 1 &&
+			serveActionCount(t, part.ActionPlansJSON, "unassign-secondary-ip", "10.88.60.10/32") == 0 &&
+			serveActionCount(t, part.ActionPlansJSON, "ensure-forwarding-disabled", "10.88.60.10/32") == 0
+	})
+	if got := countServeMarkers(t, store); got != 0 {
+		t.Fatalf("re-desired marker count = %d, want 0", got)
+	}
+	importServeActions(t, store)
+	if got := countServeActions(t, store, "unassign-secondary-ip", "10.88.60.10/32", routerstate.ActionPending); got != 0 {
+		t.Fatalf("pending unassign count after re-desire import = %d, want 0; epoch=%s actions=%s", got, serveCaptureEpoch(t, store), serveActionStatuses(t, store))
+	}
+	if got := countServeActions(t, store, "unassign-secondary-ip", "10.88.60.10/32", routerstate.ActionSkipped); got != 1 {
+		t.Fatalf("skipped stale unassign count = %d, want 1", got)
+	}
+	stop()
+	if err := store.Close(); err != nil {
+		t.Fatalf("close store after cancel test: %v", err)
+	}
+}
+
 func startMobilityServeChain(t *testing.T, router *api.Router, store *routerstate.SQLiteStore) func() {
 	stop, _ := startMobilityServeChainWithBus(t, router, store)
 	return stop
@@ -174,7 +236,7 @@ func startMobilityServeChainWithBus(t *testing.T, router *api.Router, store *rou
 	}
 	return func() {
 		cancel()
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(250 * time.Millisecond)
 	}, eventBus
 }
 
@@ -218,54 +280,23 @@ func triggerMobilityReconcile(t *testing.T, eventBus *bus.Bus) {
 
 func importServeActions(t *testing.T, store *routerstate.SQLiteStore) {
 	t.Helper()
-	parts, err := store.ListDynamicConfigParts()
+	engine, err := provideraction.NewEngine(provideraction.Config{
+		Store:  store,
+		Runner: serveProviderActionRunner,
+	})
 	if err != nil {
-		t.Fatalf("ListDynamicConfigParts: %v", err)
+		t.Fatalf("provideraction engine: %v", err)
 	}
-	for _, part := range parts {
-		if strings.TrimSpace(part.ActionPlansJSON) == "" {
-			continue
-		}
-		var plans []dynamicconfig.ActionPlan
-		if err := json.Unmarshal([]byte(part.ActionPlansJSON), &plans); err != nil {
-			t.Fatalf("decode actionPlans: %v", err)
-		}
-		for _, plan := range plans {
-			rec := routerstate.ActionExecutionRecord{
-				IdempotencyKey: plan.IdempotencyKey,
-				Source:         part.Source,
-				Provider:       plan.Provider,
-				ProviderRef:    plan.ProviderRef,
-				Action:         plan.Action,
-				RiskLevel:      plan.RiskLevel,
-				Status:         routerstate.ActionPending,
-			}
-			if len(plan.Target) > 0 {
-				data, err := json.Marshal(plan.Target)
-				if err != nil {
-					t.Fatalf("marshal action target: %v", err)
-				}
-				rec.TargetJSON = string(data)
-			}
-			if len(plan.Parameters) > 0 {
-				data, err := json.Marshal(plan.Parameters)
-				if err != nil {
-					t.Fatalf("marshal action parameters: %v", err)
-				}
-				rec.ParametersJSON = string(data)
-			}
-			if plan.Undo != nil {
-				data, err := json.Marshal(plan.Undo)
-				if err != nil {
-					t.Fatalf("marshal action undo: %v", err)
-				}
-				rec.UndoJSON = string(data)
-			}
-			if _, err := store.ImportAction(rec); err != nil {
-				t.Fatalf("ImportAction(%s): %v", plan.IdempotencyKey, err)
-			}
-		}
+	if _, err := engine.ImportFromDynamicParts(); err != nil {
+		t.Fatalf("ImportFromDynamicParts: %v", err)
 	}
+}
+
+func serveProviderActionRunner(ctx context.Context, spec api.PluginSpec, req provideraction.ExecuteActionRequest) (provideraction.ExecuteActionResult, provideraction.RunOutcome, error) {
+	return provideraction.ExecuteActionResult{
+		TypeMeta: provideraction.TypeMeta{APIVersion: provideraction.ProtocolAPIVersion, Kind: provideraction.KindExecuteActionResult},
+		Status:   provideraction.ExecuteActionResultStatus{Status: provideraction.ResultSucceeded, Message: "ok"},
+	}, provideraction.RunOutcome{}, nil
 }
 
 func succeedServeAction(t *testing.T, store *routerstate.SQLiteStore, action, address string, at time.Time) {
@@ -460,4 +491,48 @@ func countServeMarkers(t *testing.T, store *routerstate.SQLiteStore) int {
 		t.Fatalf("ListMobilityDeprovisionMarkers: %v", err)
 	}
 	return len(markers)
+}
+
+func countServeActions(t *testing.T, store *routerstate.SQLiteStore, action, address, status string) int {
+	t.Helper()
+	rows, err := store.ListActions(routerstate.ActionExecutionFilter{Status: status})
+	if err != nil {
+		t.Fatalf("ListActions: %v", err)
+	}
+	count := 0
+	for _, row := range rows {
+		if row.Action == action && strings.Contains(row.TargetJSON, address) {
+			count++
+		}
+	}
+	return count
+}
+
+func serveCaptureEpoch(t *testing.T, store *routerstate.SQLiteStore) string {
+	t.Helper()
+	key := "cloudedge\x0010.88.60.10/32\x00provider:azure-provider:placement:azure-edge"
+	rec, ok, err := store.GetMobilityCaptureEpoch(key)
+	if err != nil {
+		t.Fatalf("GetMobilityCaptureEpoch: %v", err)
+	}
+	if !ok {
+		return "missing"
+	}
+	return rec.Holder + "/" + strconv.FormatInt(rec.Epoch, 10)
+}
+
+func serveActionStatuses(t *testing.T, store *routerstate.SQLiteStore) string {
+	t.Helper()
+	rows, err := store.ListActions(routerstate.ActionExecutionFilter{})
+	if err != nil {
+		t.Fatalf("ListActions: %v", err)
+	}
+	var parts []string
+	for _, row := range rows {
+		if strings.Contains(row.TargetJSON, "10.88.60.10/32") {
+			parts = append(parts, row.Action+":"+row.Status+":"+row.IdempotencyKey)
+		}
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, ";")
 }

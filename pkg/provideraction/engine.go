@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,7 +21,10 @@ import (
 type Store interface {
 	ImportAction(rec state.ActionExecutionRecord) (bool, error)
 	GetActionByID(id int64) (state.ActionExecutionRecord, bool, error)
+	GetMobilityCaptureEpoch(key string) (state.MobilityCaptureEpochRecord, bool, error)
 	ApproveAction(id int64, approvedBy string, now time.Time) error
+	ListActions(state.ActionExecutionFilter) ([]state.ActionExecutionRecord, error)
+	MarkActionSkippedByIdempotencyKey(key, message string, now time.Time) error
 	MarkActionResult(id int64, status, message, errMsg string, observed map[string]string, executedAt time.Time) error
 	MarkActionRolledBack(id int64, message string, now time.Time) error
 	ListDynamicConfigParts() ([]state.DynamicConfigPartRecord, error)
@@ -57,6 +61,12 @@ type Config struct {
 	// Execute/Rollback.
 	Plugins []api.Resource
 }
+
+const (
+	captureParamKey    = "mobilityCaptureKey"
+	captureParamEpoch  = "mobilityCaptureEpoch"
+	captureParamHolder = "mobilityCaptureHolder"
+)
 
 // NewEngine builds an Engine.
 func NewEngine(cfg Config) (*Engine, error) {
@@ -103,6 +113,11 @@ type ImportResult struct {
 // import, so a repeated key never creates a second row.
 func (e *Engine) ImportFromDynamicParts() (ImportResult, error) {
 	var res ImportResult
+	fenced, err := e.fenceStalePendingActions()
+	if err != nil {
+		return res, err
+	}
+	res.Skipped += fenced
 	parts, err := e.store.ListDynamicConfigParts()
 	if err != nil {
 		return res, fmt.Errorf("list dynamic config parts: %w", err)
@@ -124,6 +139,15 @@ func (e *Engine) ImportFromDynamicParts() (ImportResult, error) {
 				e.logf("provideraction: skipping plan %q from source %q: missing idempotencyKey", plan.Name, part.Source)
 				continue
 			}
+			stale, err := e.planStaleByCaptureEpoch(plan)
+			if err != nil {
+				return res, err
+			}
+			if stale {
+				res.Skipped++
+				e.logf("provideraction: skipping stale capture action %q from source %q", plan.IdempotencyKey, part.Source)
+				continue
+			}
 			rec, err := recordFromPlan(part.Source, plan)
 			if err != nil {
 				return res, err
@@ -140,6 +164,85 @@ func (e *Engine) ImportFromDynamicParts() (ImportResult, error) {
 		}
 	}
 	return res, nil
+}
+
+func (e *Engine) fenceStalePendingActions() (int, error) {
+	rows, err := e.store.ListActions(state.ActionExecutionFilter{})
+	if err != nil {
+		return 0, fmt.Errorf("list action journal for capture fencing: %w", err)
+	}
+	count := 0
+	for _, row := range rows {
+		switch row.Status {
+		case state.ActionPending, state.ActionApproved:
+		default:
+			continue
+		}
+		plan := dynamicconfig.ActionPlan{
+			IdempotencyKey: row.IdempotencyKey,
+			Provider:       row.Provider,
+			ProviderRef:    row.ProviderRef,
+			Action:         row.Action,
+			RiskLevel:      row.RiskLevel,
+		}
+		if strings.TrimSpace(row.ParametersJSON) != "" {
+			if err := json.Unmarshal([]byte(row.ParametersJSON), &plan.Parameters); err != nil {
+				return count, fmt.Errorf("decode action parameters for %q: %w", row.IdempotencyKey, err)
+			}
+		}
+		stale, err := e.planStaleByCaptureEpoch(plan)
+		if err != nil {
+			return count, err
+		}
+		if !stale {
+			continue
+		}
+		if err := e.store.MarkActionSkippedByIdempotencyKey(row.IdempotencyKey, "stale mobility capture epoch", e.now().UTC()); err != nil {
+			return count, fmt.Errorf("mark stale action %q skipped: %w", row.IdempotencyKey, err)
+		}
+		count++
+		e.logf("provideraction: fenced stale capture action %q", row.IdempotencyKey)
+	}
+	return count, nil
+}
+
+func (e *Engine) planStaleByCaptureEpoch(plan dynamicconfig.ActionPlan) (bool, error) {
+	key, epoch, holder, ok := captureFenceFromPlan(plan)
+	if !ok {
+		return false, nil
+	}
+	current, found, err := e.store.GetMobilityCaptureEpoch(key)
+	if err != nil {
+		return false, fmt.Errorf("load mobility capture epoch %q: %w", key, err)
+	}
+	if !found {
+		return false, nil
+	}
+	if epoch != current.Epoch {
+		return true, nil
+	}
+	switch strings.TrimSpace(plan.Action) {
+	case "assign-secondary-ip", "ensure-forwarding-enabled":
+		return holder != "" && holder != current.Holder, nil
+	case "unassign-secondary-ip", "ensure-forwarding-disabled":
+		return holder != "" && holder == current.Holder, nil
+	default:
+		return false, nil
+	}
+}
+
+func captureFenceFromPlan(plan dynamicconfig.ActionPlan) (string, int64, string, bool) {
+	key := strings.TrimSpace(plan.Parameters[captureParamKey])
+	holder := strings.TrimSpace(plan.Parameters[captureParamHolder])
+	epochRaw := strings.TrimSpace(plan.Parameters[captureParamEpoch])
+	if key == "" || epochRaw == "" {
+		return "", 0, "", false
+	}
+	epoch, err := strconv.ParseInt(epochRaw, 10, 64)
+	if err != nil || epoch <= 0 {
+		return "", 0, "", false
+	}
+	return key, epoch, holder, true
 }
 
 // recordFromPlan converts a planned action into a journal record (pending). It
