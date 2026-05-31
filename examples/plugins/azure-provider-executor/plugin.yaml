@@ -1,0 +1,19 @@
+apiVersion: plugin.routerd.net/v1alpha1
+kind: Plugin
+metadata:
+  # Executor-resolution convention (ADR 0007): "<provider>-executor". The engine
+  # resolves the Azure executor by the name "azure-executor"; this plugin is the
+  # Azure implementation of that role. Name it azure-executor when wiring it as
+  # the Azure provider's executor.
+  name: azure-executor
+spec:
+  executable: /usr/local/libexec/routerd/plugins/azure-provider-executor/bin/azure-provider-executor
+  timeout: 30s
+  capabilities:
+    # Marks this Plugin as an EXECUTOR. RunExecutor refuses any plugin lacking
+    # this capability. REAL — mutates Azure in execute mode only (dry-run issues
+    # show/list calls and mutates nothing).
+    - execute.providerAction
+  # No context.resources and NO credentials: the executor authenticates with the
+  # Azure managed identity resolved by the `az` CLI itself. routerd passes it NO
+  # secrets and inherits NO parent environment to it (per ADR 0007).

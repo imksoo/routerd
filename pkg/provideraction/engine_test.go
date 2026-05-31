@@ -403,6 +403,43 @@ func TestRollbackInjectsPriorObserved(t *testing.T) {
 	}
 }
 
+// TestRollbackInjectsFullObserved verifies Rollback injects the FULL journaled
+// Observed map into the undo request Parameters (provider-agnostic), so a
+// non-AWS prior key (e.g. OCI's priorSkipSourceDestCheck) also flows to its
+// executor — not just the legacy AWS-specific priorSourceDestCheck.
+func TestRollbackInjectsFullObserved(t *testing.T) {
+	store := mustStore(t)
+	res := succeededResult()
+	res.Status.Observed = map[string]string{
+		"priorSkipSourceDestCheck": "false",
+		"priorIpForwarding":        "true",
+		"assignedAddress":          "10.0.0.5/32",
+	}
+	runner := &fakeRunner{result: res}
+	e := newEngine(t, store, runner.run, []api.Resource{executorPlugin("aws")})
+	id := importOne(t, store, e, "k1")
+	if err := e.Approve(id, "alice"); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	if err := e.Execute(context.Background(), id, ModeExecute, allowPolicy()); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if err := e.Rollback(context.Background(), id, allowPolicy()); err != nil {
+		t.Fatalf("rollback: %v", err)
+	}
+	params := runner.last.Spec.Parameters
+	if params["priorSkipSourceDestCheck"] != "false" {
+		t.Fatalf("undo must carry injected priorSkipSourceDestCheck=false, got %+v", params)
+	}
+	if params["priorIpForwarding"] != "true" {
+		t.Fatalf("undo must carry injected priorIpForwarding=true, got %+v", params)
+	}
+	// The planned undo parameter (address) must still win the merge.
+	if params["address"] != "10.0.0.5/32" {
+		t.Fatalf("planned undo parameter lost: %+v", params)
+	}
+}
+
 func TestRollbackBestEffort(t *testing.T) {
 	store := mustStore(t)
 	runner := &fakeRunner{result: succeededResult()}

@@ -1,0 +1,20 @@
+apiVersion: plugin.routerd.net/v1alpha1
+kind: Plugin
+metadata:
+  # Executor-resolution convention (ADR 0007): "<provider>-executor". The engine
+  # resolves the OCI executor by the name "oci-executor"; this plugin is the OCI
+  # implementation of that role. Name it oci-executor when wiring it as the OCI
+  # provider's executor.
+  name: oci-executor
+spec:
+  executable: /usr/local/libexec/routerd/plugins/oci-provider-executor/bin/oci-provider-executor
+  timeout: 30s
+  capabilities:
+    # Marks this Plugin as an EXECUTOR. RunExecutor refuses any plugin lacking
+    # this capability. REAL — mutates OCI in execute mode only (dry-run issues
+    # get/list calls and mutates nothing).
+    - execute.providerAction
+  # No context.resources and NO credentials: the executor authenticates with the
+  # OCI instance principal resolved by the `oci` CLI itself (--auth
+  # instance_principal). routerd passes it NO secrets and inherits NO parent
+  # environment to it (per ADR 0007).

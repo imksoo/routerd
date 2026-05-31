@@ -289,11 +289,12 @@ func TestBuildMissingNICRef(t *testing.T) {
 // statically by parsing every .go file under examples/plugins and rejecting
 // forbidden import paths.
 //
-// SCOPING (Phase 5.1): the aws-provider-executor is a REAL executor that
-// LEGITIMATELY uses os/exec to run the `aws` CLI binary (it links no cloud SDK).
-// It is therefore EXCLUDED from this os/exec-forbidding invariant; its own test
+// SCOPING (Phase 5.1): the REAL provider executors (aws-provider-executor,
+// oci-provider-executor, azure-provider-executor) LEGITIMATELY use os/exec to run
+// their provider CLI binary (`aws`/`oci`/`az`) and link no cloud SDK. They are
+// therefore EXCLUDED from this os/exec-forbidding invariant; each one's own test
 // (TestExecutorImportsNoCloudSDK) asserts it imports no cloud SDK and uses
-// os/exec only to exec `aws`. Planners + the fake executor remain bound by the
+// os/exec only to exec its CLI. Planners + the fake executor remain bound by the
 // invariant here.
 func TestNoExecImports(t *testing.T) {
 	_, thisFile, _, ok := runtime.Caller(0)
@@ -303,10 +304,14 @@ func TestNoExecImports(t *testing.T) {
 	// .../examples/plugins/internal/addressclaim/addressclaim_test.go -> examples/plugins
 	pluginsDir := filepath.Clean(filepath.Join(filepath.Dir(thisFile), "..", ".."))
 
-	// The real AWS executor legitimately execs the `aws` CLI; it is exempt from
-	// the os/exec ban (but not from the no-cloud-SDK rule, asserted in its own
-	// package test).
-	awsExecutorDir := filepath.Join(pluginsDir, "aws-provider-executor")
+	// The real provider executors legitimately exec their CLI (`aws`/`oci`/`az`);
+	// they are exempt from the os/exec ban (but not from the no-cloud-SDK rule,
+	// asserted in each one's own package test).
+	exemptDirs := map[string]bool{
+		filepath.Join(pluginsDir, "aws-provider-executor"):   true,
+		filepath.Join(pluginsDir, "oci-provider-executor"):   true,
+		filepath.Join(pluginsDir, "azure-provider-executor"): true,
+	}
 
 	forbidden := []string{
 		"os/exec",
@@ -325,8 +330,8 @@ func TestNoExecImports(t *testing.T) {
 			return err
 		}
 		if info.IsDir() {
-			if path == awsExecutorDir {
-				// Skip the whole real-AWS-executor dir: it may exec `aws`.
+			if exemptDirs[path] {
+				// Skip the whole real-executor dir: it may exec its CLI.
 				return filepath.SkipDir
 			}
 			return nil

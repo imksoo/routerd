@@ -615,30 +615,26 @@ func inList(list []string, want string) bool {
 	return false
 }
 
-// undoActionPriorFacts is the set of Observed keys the engine injects from the
-// journal into an undo's Parameters so the executor can RESTORE the exact prior
-// state it captured at execute time. The load-bearing one is
-// priorSourceDestCheck: ensure-forwarding-disabled (undo of
-// ensure-forwarding-enabled) reads it to decide whether to re-enable the ENI
-// source/dest check (priorSourceDestCheck=="true") or NO-OP/skip
-// (priorSourceDestCheck=="false"). The undo MUST NOT blindly re-enable; it
-// reverts only what was actually changed (see docs/how-to/aws-provider-action-execution.md).
-var undoActionPriorFacts = []string{"priorSourceDestCheck"}
-
-// undoParameters merges the planned undo parameters with the prior facts the
-// engine read back from the journal's Observed map. Planned parameters win on a
-// key collision (the planner is explicit); otherwise the journaled prior fact is
-// injected so the executor restores the captured state. Returns a fresh map so
-// the stored record is never mutated.
+// undoParameters merges the planned undo parameters with ALL the prior facts the
+// engine read back from the journal's Observed map. The FULL Observed map is
+// injected (provider-agnostic): each provider executor reads only its own prior
+// key from the undo request Parameters — AWS reads priorSourceDestCheck, OCI
+// reads priorSkipSourceDestCheck, Azure reads priorIpForwarding. The undo MUST
+// NOT blindly revert; it reverts only what was actually changed using its
+// captured prior fact (see docs/how-to/aws-provider-action-execution.md). This
+// is why the engine injects every Observed fact rather than an AWS-specific
+// allowlist: the executor, not the engine, knows which key it captured.
+//
+// Planned parameters win on a key collision (the planner is explicit); otherwise
+// the journaled prior fact is injected so the executor restores the captured
+// state. Returns a fresh map so the stored record is never mutated.
 func undoParameters(planned, observed map[string]string) map[string]string {
 	if len(planned) == 0 && len(observed) == 0 {
 		return nil
 	}
-	out := make(map[string]string, len(planned)+len(undoActionPriorFacts))
-	for _, key := range undoActionPriorFacts {
-		if v, ok := observed[key]; ok {
-			out[key] = v
-		}
+	out := make(map[string]string, len(planned)+len(observed))
+	for k, v := range observed {
+		out[k] = v
 	}
 	for k, v := range planned {
 		out[k] = v
