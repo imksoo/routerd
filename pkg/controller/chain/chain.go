@@ -576,6 +576,18 @@ func bootstrapSubscriptions() []bus.Subscription {
 	return []bus.Subscription{{Topics: []string{"routerd.controller.bootstrap"}}}
 }
 
+func ipv4RouteStatusSubscriptions() []bus.Subscription {
+	return statusSubscriptions("DSLiteTunnel", "EgressRoutePolicy", "VirtualAddress")
+}
+
+func hybridRouteStatusSubscriptions() []bus.Subscription {
+	return statusSubscriptions("IPv4Route", "HealthCheck", "WireGuardInterface", "Interface", "VirtualAddress")
+}
+
+func samStatusSubscriptions() []bus.Subscription {
+	return statusSubscriptions("IPv4Route", "Sysctl", "WireGuardInterface", "Interface", "VirtualAddress")
+}
+
 func becamePhase(event daemonapi.DaemonEvent, phase string) bool {
 	if event.Resource == nil {
 		return false
@@ -898,7 +910,7 @@ func (r *Runner) Start(ctx context.Context) error {
 		}},
 		framework.FuncController{ControllerName: "dslite", Every: 30 * time.Second, Subs: statusSubscriptions("DHCPv6Information", "IPv6DelegatedAddress", "DNSResolver"), PeriodicFunc: dslite.reconcile},
 		framework.FuncController{ControllerName: "ipv4-policy-route", Subs: statusSubscriptions("DSLiteTunnel", "HealthCheck", "IPv4StaticAddress", "Interface"), PeriodicFunc: policyRoute.Reconcile},
-		framework.FuncController{ControllerName: "ipv4-route", Every: 30 * time.Second, Subs: statusSubscriptions("DSLiteTunnel", "EgressRoutePolicy"), PeriodicFunc: func(ctx context.Context) error {
+		framework.FuncController{ControllerName: "ipv4-route", Every: 30 * time.Second, Subs: ipv4RouteStatusSubscriptions(), PeriodicFunc: func(ctx context.Context) error {
 			view, err := buildDynamicRouteSAMView(r.Router, r.Store, time.Now().UTC(), platform.CurrentOS())
 			if err != nil {
 				return err
@@ -907,7 +919,7 @@ func (r *Runner) Start(ctx context.Context) error {
 			current.Router = view.RouteRouter
 			return current.reconcile(ctx)
 		}},
-		framework.FuncController{ControllerName: "hybrid-route", Subs: statusSubscriptions("IPv4Route", "HealthCheck", "WireGuardInterface", "Interface"), PeriodicFunc: func(ctx context.Context) error {
+		framework.FuncController{ControllerName: "hybrid-route", Subs: hybridRouteStatusSubscriptions(), PeriodicFunc: func(ctx context.Context) error {
 			view, err := buildDynamicRouteSAMView(r.Router, r.Store, time.Now().UTC(), platform.CurrentOS())
 			if err != nil {
 				return err
@@ -918,7 +930,7 @@ func (r *Runner) Start(ctx context.Context) error {
 			current.Lowerings = view.HybridLowerings
 			return current.Reconcile(ctx)
 		}},
-		framework.FuncController{ControllerName: "sam", Subs: statusSubscriptions("IPv4Route", "Sysctl", "WireGuardInterface", "Interface"), PeriodicFunc: func(ctx context.Context) error {
+		framework.FuncController{ControllerName: "sam", Subs: samStatusSubscriptions(), PeriodicFunc: func(ctx context.Context) error {
 			view, err := buildDynamicRouteSAMView(r.Router, r.Store, time.Now().UTC(), platform.CurrentOS())
 			if err != nil {
 				return err
