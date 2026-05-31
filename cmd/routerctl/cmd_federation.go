@@ -158,6 +158,11 @@ func federationEventEmitCommand(args []string, stdout io.Writer) error {
 	if !ok {
 		return fmt.Errorf("state file %s does not support federation events", *statePath)
 	}
+	if captureStore, ok := store.(federation.DynamicConfigPartStore); ok {
+		if err := federation.RejectSelfCapturedObservedEvent(captureStore, ev, now); err != nil {
+			return err
+		}
+	}
 
 	rec := routerstate.EventRecord{
 		ID:         ev.ID,

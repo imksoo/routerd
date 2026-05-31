@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -107,13 +108,20 @@ func mustStore(t *testing.T) *routerstate.SQLiteStore {
 }
 
 func subscriptionResource(pluginRef string, match api.EventSubscriptionMatch) api.Resource {
+	return subscriptionResourceWithTrigger(pluginRef, match, api.EventSubscriptionTrigger{PluginRef: pluginRef})
+}
+
+func subscriptionResourceWithTrigger(pluginRef string, match api.EventSubscriptionMatch, trigger api.EventSubscriptionTrigger) api.Resource {
+	if strings.TrimSpace(trigger.PluginRef) == "" {
+		trigger.PluginRef = pluginRef
+	}
 	return api.Resource{
 		TypeMeta: api.TypeMeta{APIVersion: api.FederationAPIVersion, Kind: "EventSubscription"},
 		Metadata: api.ObjectMeta{Name: "claim-sub"},
 		Spec: api.EventSubscriptionSpec{
 			GroupRef: "cloudedge",
 			Match:    match,
-			Trigger:  api.EventSubscriptionTrigger{PluginRef: pluginRef},
+			Trigger:  trigger,
 		},
 	}
 }
@@ -318,6 +326,104 @@ func TestReconcileTwoDistinctEventsCoexistInEffectiveConfig(t *testing.T) {
 	}
 }
 
+func TestReconcileDebounceCoalescesUntilQuietPeriod(t *testing.T) {
+	store := mustStore(t)
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		pluginResource("claim-plugin", "/unused"),
+		subscriptionResourceWithTrigger("claim-plugin", api.EventSubscriptionMatch{Types: []string{"routerd.client.ipv4.observed"}}, api.EventSubscriptionTrigger{
+			PluginRef: "claim-plugin",
+			Debounce:  "80ms",
+		}),
+	}}}
+	calls := make(chan []string, 2)
+	timers := &fakeTriggerTimerFactory{}
+	c := newController(t, store, router)
+	c.NewTimer = timers.newTimer
+	c.PluginRunner = func(_ context.Context, _ api.PluginSpec, _ string, opts routerplugin.RunOptions) (routerplugin.PluginResult, routerplugin.RunOutcome, error) {
+		calls <- pluginEventIDs(opts.Events)
+		return routerplugin.PluginResult{Status: routerplugin.PluginResultStatus{TTL: "10m"}}, routerplugin.RunOutcome{HasExitCode: true}, nil
+	}
+	recordEvent(t, store, routerstate.EventRecord{ID: "e1", Group: "cloudedge", Type: "routerd.client.ipv4.observed", Subject: "10.88.60.9/32"})
+	if err := c.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile e1: %v", err)
+	}
+	assertNoExtraPluginCall(t, calls)
+	if got := timers.last().delay; got != 80*time.Millisecond {
+		t.Fatalf("first debounce delay = %s, want 80ms", got)
+	}
+	recordEvent(t, store, routerstate.EventRecord{ID: "e2", Group: "cloudedge", Type: "routerd.client.ipv4.observed", Subject: "10.88.60.10/32"})
+	if err := c.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile e2: %v", err)
+	}
+	assertNoExtraPluginCall(t, calls)
+	if len(timers.timers) != 1 {
+		t.Fatalf("debounce timers = %d, want 1 reset timer", len(timers.timers))
+	}
+	if got := timers.last().delay; got != 80*time.Millisecond {
+		t.Fatalf("reset debounce delay = %s, want 80ms", got)
+	}
+	timers.fireLast()
+	got := waitPluginCall(t, calls)
+	if strings.Join(got, ",") != "e1,e2" {
+		t.Fatalf("debounced batch ids = %v, want [e1 e2]", got)
+	}
+	assertNoExtraPluginCall(t, calls)
+	runs, err := store.ListSubscriptionRuns("EventSubscription/claim-sub")
+	if err != nil {
+		t.Fatalf("list runs: %v", err)
+	}
+	if len(runs) != 2 {
+		t.Fatalf("debounced run rows = %d, want 2: %+v", len(runs), runs)
+	}
+}
+
+func TestReconcileBatchWindowCoalescesFromFirstEvent(t *testing.T) {
+	store := mustStore(t)
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		pluginResource("claim-plugin", "/unused"),
+		subscriptionResourceWithTrigger("claim-plugin", api.EventSubscriptionMatch{Types: []string{"routerd.client.ipv4.observed"}}, api.EventSubscriptionTrigger{
+			PluginRef:   "claim-plugin",
+			BatchWindow: "80ms",
+		}),
+	}}}
+	calls := make(chan []string, 2)
+	timers := &fakeTriggerTimerFactory{}
+	now := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
+	c := newController(t, store, router)
+	c.Now = func() time.Time { return now }
+	c.NewTimer = timers.newTimer
+	c.PluginRunner = func(_ context.Context, _ api.PluginSpec, _ string, opts routerplugin.RunOptions) (routerplugin.PluginResult, routerplugin.RunOutcome, error) {
+		calls <- pluginEventIDs(opts.Events)
+		return routerplugin.PluginResult{Status: routerplugin.PluginResultStatus{TTL: "10m"}}, routerplugin.RunOutcome{HasExitCode: true}, nil
+	}
+	recordEvent(t, store, routerstate.EventRecord{ID: "e1", Group: "cloudedge", Type: "routerd.client.ipv4.observed", Subject: "10.88.60.9/32"})
+	if err := c.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile e1: %v", err)
+	}
+	assertNoExtraPluginCall(t, calls)
+	if got := timers.last().delay; got != 80*time.Millisecond {
+		t.Fatalf("first batchWindow delay = %s, want 80ms", got)
+	}
+	now = now.Add(30 * time.Millisecond)
+	recordEvent(t, store, routerstate.EventRecord{ID: "e2", Group: "cloudedge", Type: "routerd.client.ipv4.observed", Subject: "10.88.60.10/32"})
+	if err := c.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile e2: %v", err)
+	}
+	assertNoExtraPluginCall(t, calls)
+	if len(timers.timers) != 1 {
+		t.Fatalf("batchWindow timers = %d, want 1 reset timer", len(timers.timers))
+	}
+	if got := timers.last().delay; got != 50*time.Millisecond {
+		t.Fatalf("reset batchWindow delay = %s, want 50ms", got)
+	}
+	timers.fireLast()
+	got := waitPluginCall(t, calls)
+	if strings.Join(got, ",") != "e1,e2" {
+		t.Fatalf("batchWindow ids = %v, want [e1 e2]", got)
+	}
+	assertNoExtraPluginCall(t, calls)
+}
+
 func TestReconcileFailureRetriesThenGivesUp(t *testing.T) {
 	store := mustStore(t)
 	bin := buildFakePlugin(t)
@@ -395,6 +501,69 @@ func fakeRunner(captured *routerplugin.RunOptions) PluginRunner {
 		return routerplugin.PluginResult{
 			Status: routerplugin.PluginResultStatus{TTL: "10m"},
 		}, routerplugin.RunOutcome{HasExitCode: true}, nil
+	}
+}
+
+func pluginEventIDs(events []routerplugin.PluginMatchedEvent) []string {
+	ids := make([]string, 0, len(events))
+	for _, ev := range events {
+		ids = append(ids, ev.ID)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+type fakeTriggerTimerFactory struct {
+	timers []*fakeTriggerTimer
+}
+
+type fakeTriggerTimer struct {
+	delay time.Duration
+	fn    func()
+}
+
+func (f *fakeTriggerTimerFactory) newTimer(d time.Duration, fn func()) triggerTimer {
+	timer := &fakeTriggerTimer{delay: d, fn: fn}
+	f.timers = append(f.timers, timer)
+	return timer
+}
+
+func (f *fakeTriggerTimerFactory) last() *fakeTriggerTimer {
+	if len(f.timers) == 0 {
+		return nil
+	}
+	return f.timers[len(f.timers)-1]
+}
+
+func (f *fakeTriggerTimerFactory) fireLast() {
+	timer := f.last()
+	if timer != nil && timer.fn != nil {
+		timer.fn()
+	}
+}
+
+func (t *fakeTriggerTimer) Reset(d time.Duration) bool {
+	t.delay = d
+	return true
+}
+
+func waitPluginCall(t *testing.T, calls <-chan []string) []string {
+	t.Helper()
+	select {
+	case got := <-calls:
+		return got
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("timed out waiting for plugin call")
+		return nil
+	}
+}
+
+func assertNoExtraPluginCall(t *testing.T, calls <-chan []string) {
+	t.Helper()
+	select {
+	case got := <-calls:
+		t.Fatalf("unexpected extra plugin call: %v", got)
+	default:
 	}
 }
 
