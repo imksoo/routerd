@@ -333,6 +333,7 @@ func resourceUnionSchema() map[string]any {
 			resourceSchema(api.FederationAPIVersion, "EventGroup", api.EventGroupSpec{}),
 			resourceSchema(api.FederationAPIVersion, "EventPeer", api.EventPeerSpec{}),
 			resourceSchema(api.FederationAPIVersion, "EventSubscription", api.EventSubscriptionSpec{}),
+			resourceSchema(api.MobilityAPIVersion, "MobilityPool", api.MobilityPoolSpec{}),
 			resourceSchema(api.NetAPIVersion, "IPv4Route", api.IPv4RouteSpec{}),
 			resourceSchema(api.NetAPIVersion, "HealthCheck", api.HealthCheckSpec{}),
 			resourceSchema(api.NetAPIVersion, "EgressRoutePolicy", api.EgressRoutePolicySpec{}),
