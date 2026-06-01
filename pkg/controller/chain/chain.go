@@ -77,10 +77,12 @@ type eventSubscriptionStore struct {
 
 type mobilityDataStore interface {
 	ListFederationEvents(group string, includeExpired bool, now int64) ([]routerstate.EventRecord, error)
+	RecordFederationEvent(routerstate.EventRecord) error
 	UpsertAddressLease(routerstate.AddressLeaseRecord) error
 	ListAddressLeases(pool string, includeExpired bool, now time.Time) ([]routerstate.AddressLeaseRecord, error)
 	ReconcileMobilityCaptureEpochs([]routerstate.MobilityCaptureEpochRecord) ([]routerstate.MobilityCaptureEpochRecord, error)
 	ReconcileMobilityOwnershipEpochs([]routerstate.MobilityOwnershipEpochRecord) ([]routerstate.MobilityOwnershipEpochRecord, error)
+	ListMobilityOwnershipEpochs(pool string) ([]routerstate.MobilityOwnershipEpochRecord, error)
 	UpsertDynamicConfigPart(routerstate.DynamicConfigPartRecord) error
 	GetDynamicConfigPartsBySource(source string) ([]routerstate.DynamicConfigPartRecord, error)
 	ListActions(routerstate.ActionExecutionFilter) ([]routerstate.ActionExecutionRecord, error)
@@ -106,6 +108,10 @@ func (s mobilityStore) ListFederationEvents(group string, includeExpired bool, n
 	return s.data.ListFederationEvents(group, includeExpired, now)
 }
 
+func (s mobilityStore) RecordFederationEvent(rec routerstate.EventRecord) error {
+	return s.data.RecordFederationEvent(rec)
+}
+
 func (s mobilityStore) UpsertAddressLease(rec routerstate.AddressLeaseRecord) error {
 	return s.data.UpsertAddressLease(rec)
 }
@@ -120,6 +126,10 @@ func (s mobilityStore) ReconcileMobilityCaptureEpochs(desired []routerstate.Mobi
 
 func (s mobilityStore) ReconcileMobilityOwnershipEpochs(desired []routerstate.MobilityOwnershipEpochRecord) ([]routerstate.MobilityOwnershipEpochRecord, error) {
 	return s.data.ReconcileMobilityOwnershipEpochs(desired)
+}
+
+func (s mobilityStore) ListMobilityOwnershipEpochs(pool string) ([]routerstate.MobilityOwnershipEpochRecord, error) {
+	return s.data.ListMobilityOwnershipEpochs(pool)
 }
 
 func (s mobilityStore) UpsertDynamicConfigPart(rec routerstate.DynamicConfigPartRecord) error {

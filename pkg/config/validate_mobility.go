@@ -131,7 +131,13 @@ func validateMobilityResource(res api.Resource, _ platform.OS) (bool, error) {
 
 func validateMobilityIPOwnershipPolicy(res api.Resource, spec api.MobilityPoolSpec, nodeRefs map[string]bool) error {
 	policy := spec.IPOwnershipPolicy
-	policySet := strings.TrimSpace(policy.Type) != "" || policy.EpochLocking != nil || len(policy.PreferNodes) > 0 || policy.AutoFailover
+	policySet := strings.TrimSpace(policy.Type) != "" ||
+		policy.EpochLocking != nil ||
+		len(policy.PreferNodes) > 0 ||
+		policy.AutoFailover ||
+		strings.TrimSpace(policy.HeartbeatInterval) != "" ||
+		strings.TrimSpace(policy.HeartbeatTTL) != "" ||
+		strings.TrimSpace(policy.PromotionHoldDuration) != ""
 	if !policySet {
 		return nil
 	}
@@ -152,7 +158,50 @@ func validateMobilityIPOwnershipPolicy(res api.Resource, spec api.MobilityPoolSp
 		}
 		seen[nodeRef] = true
 	}
+	interval, intervalSet, err := parseOptionalMobilityDuration(res.ID()+" spec.ipOwnershipPolicy.heartbeatInterval", policy.HeartbeatInterval, true)
+	if err != nil {
+		return err
+	}
+	ttl, ttlSet, err := parseOptionalMobilityDuration(res.ID()+" spec.ipOwnershipPolicy.heartbeatTTL", policy.HeartbeatTTL, true)
+	if err != nil {
+		return err
+	}
+	hold, _, err := parseOptionalMobilityDuration(res.ID()+" spec.ipOwnershipPolicy.promotionHoldDuration", policy.PromotionHoldDuration, false)
+	if err != nil {
+		return err
+	}
+	_ = hold
+	if policy.AutoFailover {
+		if !intervalSet {
+			return fmt.Errorf("%s spec.ipOwnershipPolicy.heartbeatInterval is required when autoFailover is true", res.ID())
+		}
+		if !ttlSet {
+			return fmt.Errorf("%s spec.ipOwnershipPolicy.heartbeatTTL is required when autoFailover is true", res.ID())
+		}
+	}
+	if intervalSet && ttlSet && ttl < interval {
+		return fmt.Errorf("%s spec.ipOwnershipPolicy.heartbeatTTL must be >= heartbeatInterval", res.ID())
+	}
 	return nil
+}
+
+func parseOptionalMobilityDuration(field, raw string, positive bool) (time.Duration, bool, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, false, nil
+	}
+	parsed, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, false, fmt.Errorf("%s must be a Go duration: %w", field, err)
+	}
+	if positive {
+		if parsed <= 0 {
+			return 0, false, fmt.Errorf("%s must be > 0", field)
+		}
+	} else if parsed < 0 {
+		return 0, false, fmt.Errorf("%s must be >= 0", field)
+	}
+	return parsed, true, nil
 }
 
 type mobilityPlacementGroup struct {

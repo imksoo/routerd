@@ -52,10 +52,52 @@ where eligibility is the intersection of:
 - on-prem: **VRRP-master** authority signal (`activeWhen{vrrp-master}`,
   `sam.EvaluateCaptureGate`) — non-master is fail-closed.
 
-Because TTL is evaluated against each node's own clock (`projectionNow` differs),
-promotion uses a **promotion hold** (`heartbeatTTL + holdDuration`) to absorb clock
-skew and suppress flapping. Drain is immediate; failure-driven promotion waits the
-hold.
+Liveness is evaluated **stream-relative**, not against each node's wall clock:
+"now" is the **maximum event time observed in the pool's federation stream**
+(`streamMaxObservedAt`), and a member is stale when
+`lastHeartbeat(node) + heartbeatTTL + promotionHoldDuration <= streamMaxObservedAt`.
+Because every node that has seen the same stream computes the same verdict, the
+eligible set — and therefore the owner map (ADR 0010) — **stays deterministically
+convergent** even with liveness added. Emitter clock skew is absorbed by
+`heartbeatTTL + promotionHoldDuration`; projection does **not** clamp future
+timestamps against a local clock (that would be non-deterministic) — future skew is
+surfaced via status/`doctor` instead. A fully stopped stream stops failover too,
+which is correct ("never declare failure without observation"); any connected
+component with a live member keeps stream time advancing. The **promotion hold**
+absorbs transient gaps and suppresses flapping; `maintenance.drain` remains an
+**immediate** exclusion (cooperative, no hold).
+
+### Phase 2 implementation decisions (locked 2026-06-01)
+
+- **Heartbeat event**: type `routerd.mobility.member.heartbeat`, group =
+  `MobilityPool.groupRef`, payload `{pool, node, emittedAt, seq}`. Emitted by the
+  **mobility controller** at its reconcile tick, **only for `autoFailover: true`
+  pools** and only for the self node (cloud `provider-secondary-ip` role), rate-limited
+  by `heartbeatInterval`. The staleness decision uses the event's `ObservedAt`;
+  `lastHeartbeat` is derived from the same projected event stream as leases (no
+  wall-clock admixture).
+- **Hold fields** live flat under `ipOwnershipPolicy`:
+  `heartbeatInterval` / `heartbeatTTL` / `promotionHoldDuration` (duration strings),
+  distinct from the lease owner-change hold. No dedicated state table — eligibility
+  is the pure `lastHeartbeat + ttl + hold <= streamMaxObservedAt` test. Validation
+  requires `heartbeatInterval`/`heartbeatTTL` when `autoFailover` is true and
+  `heartbeatTTL >= heartbeatInterval`.
+- **Seize action**: the existing `assign-secondary-ip` verb gains an
+  `allowReassignment` parameter (rather than a new verb), set when the new owner must
+  take an address whose stale/dead prior owner cannot itself `unassign`. The AWS
+  executor maps it to `--allow-reassignment`; the `ActionPlan` description/risk
+  reads as a seize/reassign. `ownershipEpoch` stamping/fencing is unchanged from
+  ADR 0010.
+- **`autoFailover` gate**: heartbeat staleness enters arbitration eligibility **only
+  when `autoFailover: true`**. Unset/false pools keep the current behavior (drain is
+  the only owner-change driver), so #76 Phase 1 / SAM / captureEpoch paths are
+  unaffected; heartbeats are emitted/consumed only for `autoFailover: true` pools.
+- **Scope**: Phase 2 is cloud `provider-secondary-ip` + **AWS** seize only; on-prem
+  (proxy-ARP / VRRP-master) and Azure/OCI reassign executors are Phase 3.
+- **Known follow-up**: heartbeat events have no TTL/expiry so a dead member's last
+  heartbeat stays observable for staleness; consequently heartbeat rows accumulate
+  and are not pruned (tracked for a later hygiene pass — pruning must not erase the
+  last heartbeat a stale verdict depends on).
 
 ### Liveness-driven seize
 

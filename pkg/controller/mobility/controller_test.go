@@ -168,6 +168,35 @@ func TestControllerProjectsExpiredEvent(t *testing.T) {
 	}
 }
 
+func TestControllerEmitsAutoFailoverHeartbeatForCloudSelf(t *testing.T) {
+	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := centralizedOwnershipPoolSpec()
+	spec.IPOwnershipPolicy.AutoFailover = true
+	spec.IPOwnershipPolicy.HeartbeatInterval = "10s"
+	spec.IPOwnershipPolicy.HeartbeatTTL = "30s"
+	controller := Controller{Router: planningRouterForNode("azure-router-a", spec), Store: store, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	events, err := store.ListFederationEvents("cloudedge", true, now.Unix())
+	if err != nil {
+		t.Fatalf("ListFederationEvents: %v", err)
+	}
+	var heartbeats []routerstate.EventRecord
+	for _, ev := range events {
+		if ev.Type == HeartbeatEventType {
+			heartbeats = append(heartbeats, ev)
+		}
+	}
+	if len(heartbeats) != 1 {
+		t.Fatalf("heartbeats = %+v, want one", heartbeats)
+	}
+	if heartbeats[0].SourceNode != "azure-router-a" || heartbeats[0].Payload["pool"] != "cloudedge" || heartbeats[0].Payload["node"] != "azure-router-a" {
+		t.Fatalf("heartbeat = %+v", heartbeats[0])
+	}
+}
+
 func testStore(t *testing.T, now time.Time) *routerstate.SQLiteStore {
 	t.Helper()
 	_ = now

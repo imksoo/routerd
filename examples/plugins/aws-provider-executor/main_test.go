@@ -111,6 +111,24 @@ func TestAssignExecuteIssuesAssign(t *testing.T) {
 	}
 }
 
+func TestAssignExecuteAllowReassignment(t *testing.T) {
+	f := &fakeAWS{}
+	spec := reqSpec(actionAssignSecondaryIP, modeExecute)
+	spec.Parameters = map[string]string{"allowReassignment": "true"}
+	res := dispatchWith(spec, f.run)
+	if res.Status.Status != statusSucceeded {
+		t.Fatalf("want succeeded, got %q err=%q", res.Status.Status, res.Status.Error)
+	}
+	got := strings.Join(f.calls[0], " ")
+	want := "ec2 assign-private-ip-addresses --network-interface-id eni-1 --private-ip-addresses 10.88.60.9 --region ap-northeast-1 --allow-reassignment"
+	if got != want {
+		t.Fatalf("assign argv mismatch:\n got: %s\nwant: %s", got, want)
+	}
+	if !strings.Contains(res.Status.Message, "seized/reassigned") {
+		t.Fatalf("message = %q, want seize/reassign", res.Status.Message)
+	}
+}
+
 func TestEnsureForwardingEnabledDryRunCapturesPriorNoMutation(t *testing.T) {
 	f := &fakeAWS{describeOut: cannedDescribe(true, "10.88.60.5")}
 	res := dispatchWith(reqSpec(actionEnsureFwdEnabled, modeDryRun), f.run)
