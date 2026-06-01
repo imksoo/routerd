@@ -35,18 +35,20 @@ const (
 // PlannerInput is the pure lease-to-dynamic-config planning input for one
 // MobilityPool on one routerd node.
 type PlannerInput struct {
-	PoolName           string
-	PoolSpec           api.MobilityPoolSpec
-	SelfNode           string
-	Now                time.Time
-	Leases             []routerstate.AddressLeaseRecord
-	PreviousClaims     []api.Resource
-	DeprovisionMarkers []routerstate.MobilityDeprovisionMarkerRecord
-	CaptureEpochs      []routerstate.MobilityCaptureEpochRecord
-	OwnershipEpochs    []routerstate.MobilityOwnershipEpochRecord
-	PreviousOwnership  []routerstate.MobilityOwnershipEpochRecord
-	Liveness           OwnershipLiveness
-	ProviderProfiles   map[string]api.CloudProviderProfileSpec
+	PoolName            string
+	PoolSpec            api.MobilityPoolSpec
+	SelfNode            string
+	Now                 time.Time
+	Leases              []routerstate.AddressLeaseRecord
+	PreviousClaims      []api.Resource
+	DeprovisionMarkers  []routerstate.MobilityDeprovisionMarkerRecord
+	CaptureEpochs       []routerstate.MobilityCaptureEpochRecord
+	OwnershipEpochs     []routerstate.MobilityOwnershipEpochRecord
+	PreviousOwnership   []routerstate.MobilityOwnershipEpochRecord
+	PreviousActionPlans []dynamicconfig.ActionPlan
+	ActionJournal       []routerstate.ActionExecutionRecord
+	Liveness            OwnershipLiveness
+	ProviderProfiles    map[string]api.CloudProviderProfileSpec
 }
 
 // PlannerOutput is the deterministic generated config for one pool x node.
@@ -121,7 +123,7 @@ func PlanDynamicConfig(in PlannerInput) (PlannerOutput, error) {
 	if !ok {
 		return PlannerOutput{}, fmt.Errorf("self node %q is not a member of MobilityPool/%s", selfNode, poolName)
 	}
-	placement := evaluatePlacement(self, members)
+	placement := evaluatePlacementWithLiveness(self, members, in.PoolSpec.IPOwnershipPolicy, in.Liveness)
 	captureEpochs := captureEpochsByKey(in.CaptureEpochs)
 	ownershipEpochs := ownershipEpochsByAddress(in.OwnershipEpochs)
 	centralizedOwnership := ipOwnershipPolicyCentralized(in.PoolSpec.IPOwnershipPolicy)
@@ -145,7 +147,11 @@ func PlanDynamicConfig(in PlannerInput) (PlannerOutput, error) {
 					continue
 				}
 			}
-			seize := centralizedOwnership && shouldSeizeOwnership(lease.Address, self.NodeRef, in.PreviousOwnership, in.Liveness)
+			address := normalizeAddressString(lease.Address)
+			seize := centralizedOwnership && shouldSeizeOwnership(address, self.NodeRef, in.PreviousOwnership, in.Liveness)
+			if centralizedOwnership && !seize {
+				seize = shouldMaintainSeizeIntent(poolName, address, self.NodeRef, ownershipEpochs[address], in.PreviousActionPlans, in.ActionJournal)
+			}
 			claim, actionPlans, leaseExpiresAt, ok, err := planLease(poolName, prefix, self, members, lease, in.ProviderProfiles, now, forwardingSeen, captureEpochs, actionOwnershipEpochs, seize)
 			if err != nil {
 				return PlannerOutput{}, err
@@ -243,6 +249,10 @@ func (c Controller) reconcilePlan(res api.Resource, now time.Time) error {
 	if err != nil {
 		return err
 	}
+	previousActionPlans, err := c.previousGeneratedActionPlans(res.Metadata.Name, selfNode)
+	if err != nil {
+		return err
+	}
 	source := DynamicSource(res.Metadata.Name, selfNode)
 	actionJournal, err := c.Store.ListActions(routerstate.ActionExecutionFilter{})
 	if err != nil {
@@ -256,17 +266,17 @@ func (c Controller) reconcilePlan(res api.Resource, now time.Time) error {
 	if err != nil {
 		return fmt.Errorf("list mobility ownership epochs: %w", err)
 	}
-	captureEpochDesired, err := desiredCaptureEpochs(res.Metadata.Name, spec, selfNode, leases, previousClaims, markers, cloudProviderProfiles(c.Router), now)
+	liveness, err := c.ownershipLiveness(res.Metadata.Name, spec, now)
+	if err != nil {
+		return err
+	}
+	captureEpochDesired, err := desiredCaptureEpochs(res.Metadata.Name, spec, selfNode, leases, previousClaims, markers, cloudProviderProfiles(c.Router), liveness, now)
 	if err != nil {
 		return err
 	}
 	captureEpochs, err := c.Store.ReconcileMobilityCaptureEpochs(captureEpochDesired)
 	if err != nil {
 		return fmt.Errorf("reconcile mobility capture epochs: %w", err)
-	}
-	liveness, err := c.ownershipLiveness(res.Metadata.Name, spec, now)
-	if err != nil {
-		return err
 	}
 	ownershipDesired, err := desiredOwnershipEpochs(res.Metadata.Name, spec, leases, liveness, now)
 	if err != nil {
@@ -285,18 +295,20 @@ func (c Controller) reconcilePlan(res api.Resource, now time.Time) error {
 		return err
 	}
 	out, err := PlanDynamicConfig(PlannerInput{
-		PoolName:           res.Metadata.Name,
-		PoolSpec:           spec,
-		SelfNode:           selfNode,
-		Now:                now,
-		Leases:             leases,
-		PreviousClaims:     previousClaims,
-		DeprovisionMarkers: markers,
-		CaptureEpochs:      captureEpochs,
-		OwnershipEpochs:    ownershipEpochs,
-		PreviousOwnership:  previousOwnership,
-		Liveness:           liveness,
-		ProviderProfiles:   cloudProviderProfiles(c.Router),
+		PoolName:            res.Metadata.Name,
+		PoolSpec:            spec,
+		SelfNode:            selfNode,
+		Now:                 now,
+		Leases:              leases,
+		PreviousClaims:      previousClaims,
+		DeprovisionMarkers:  markers,
+		CaptureEpochs:       captureEpochs,
+		OwnershipEpochs:     ownershipEpochs,
+		PreviousOwnership:   previousOwnership,
+		PreviousActionPlans: previousActionPlans,
+		ActionJournal:       actionJournal,
+		Liveness:            liveness,
+		ProviderProfiles:    cloudProviderProfiles(c.Router),
 	})
 	if err != nil {
 		_ = c.upsertEmptyPlan(res.Metadata.Name, spec, selfNode, now)
@@ -518,6 +530,31 @@ func (c Controller) previousGeneratedClaims(poolName, selfNode string) ([]api.Re
 	return claims, nil
 }
 
+func (c Controller) previousGeneratedActionPlans(poolName, selfNode string) ([]dynamicconfig.ActionPlan, error) {
+	source := DynamicSource(poolName, selfNode)
+	parts, err := c.Store.GetDynamicConfigPartsBySource(source)
+	if err != nil {
+		return nil, fmt.Errorf("get previous dynamic config part %s: %w", source, err)
+	}
+	if len(parts) == 0 {
+		return nil, nil
+	}
+	sort.SliceStable(parts, func(i, j int) bool {
+		if parts[i].Generation == parts[j].Generation {
+			return parts[i].UpdatedAt.After(parts[j].UpdatedAt)
+		}
+		return parts[i].Generation > parts[j].Generation
+	})
+	if strings.TrimSpace(parts[0].ActionPlansJSON) == "" {
+		return nil, nil
+	}
+	var plans []dynamicconfig.ActionPlan
+	if err := json.Unmarshal([]byte(parts[0].ActionPlansJSON), &plans); err != nil {
+		return nil, fmt.Errorf("decode previous dynamic config part action plans %s: %w", source, err)
+	}
+	return plans, nil
+}
+
 // DynamicSource is the stable DynamicConfigPart source for one pool x node. The
 // planner always writes generation 1 for this source and replaces the complete
 // generated resource set on every reconcile.
@@ -632,13 +669,21 @@ func plannerMembers(members []api.MobilityPoolMember) map[string]memberPlanInfo 
 }
 
 func evaluatePlacement(self memberPlanInfo, members map[string]memberPlanInfo) PlacementDecision {
+	return evaluatePlacementWithLiveness(self, members, api.MobilityIPOwnershipPolicy{}, OwnershipLiveness{})
+}
+
+func evaluatePlacementWithLiveness(self memberPlanInfo, members map[string]memberPlanInfo, policy api.MobilityIPOwnershipPolicy, liveness OwnershipLiveness) PlacementDecision {
 	group := strings.TrimSpace(self.PlacementGroup)
 	if group == "" {
 		return PlacementDecision{Active: true, ActiveNode: self.NodeRef}
 	}
+	autoFailover := ipOwnershipAutoFailover(policy)
 	candidates := make([]memberPlanInfo, 0, len(members))
 	for _, member := range members {
 		if strings.TrimSpace(member.PlacementGroup) != group || member.MaintenanceDrain {
+			continue
+		}
+		if autoFailover && member.Role == "cloud" && member.Capture.Type == "provider-secondary-ip" && liveness.StaleNodes[member.NodeRef] {
 			continue
 		}
 		candidates = append(candidates, member)
@@ -668,7 +713,7 @@ func evaluatePlacement(self memberPlanInfo, members map[string]memberPlanInfo) P
 	}
 }
 
-func desiredCaptureEpochs(poolName string, spec api.MobilityPoolSpec, selfNode string, leases []routerstate.AddressLeaseRecord, previousClaims []api.Resource, markers []routerstate.MobilityDeprovisionMarkerRecord, profiles map[string]api.CloudProviderProfileSpec, now time.Time) ([]routerstate.MobilityCaptureEpochRecord, error) {
+func desiredCaptureEpochs(poolName string, spec api.MobilityPoolSpec, selfNode string, leases []routerstate.AddressLeaseRecord, previousClaims []api.Resource, markers []routerstate.MobilityDeprovisionMarkerRecord, profiles map[string]api.CloudProviderProfileSpec, liveness OwnershipLiveness, now time.Time) ([]routerstate.MobilityCaptureEpochRecord, error) {
 	prefix, err := netip.ParsePrefix(strings.TrimSpace(spec.Prefix))
 	if err != nil {
 		return nil, fmt.Errorf("parse pool prefix: %w", err)
@@ -679,7 +724,7 @@ func desiredCaptureEpochs(poolName string, spec api.MobilityPoolSpec, selfNode s
 	if !ok {
 		return nil, fmt.Errorf("self node %q is not a member of MobilityPool/%s", selfNode, poolName)
 	}
-	placement := evaluatePlacement(self, members)
+	placement := evaluatePlacementWithLiveness(self, members, spec.IPOwnershipPolicy, liveness)
 	if placement.NoCandidate() || strings.TrimSpace(placement.ActiveNode) == "" {
 		return nil, nil
 	}
@@ -888,6 +933,83 @@ func shouldSeizeOwnership(address, selfNode string, previous []routerstate.Mobil
 		return previousOwner != "" && previousOwner != selfNode && liveness.StaleNodes[previousOwner]
 	}
 	return false
+}
+
+func shouldMaintainSeizeIntent(poolName, address, selfNode string, current routerstate.MobilityOwnershipEpochRecord, previousPlans []dynamicconfig.ActionPlan, journal []routerstate.ActionExecutionRecord) bool {
+	poolName = strings.TrimSpace(poolName)
+	address = normalizeAddressString(address)
+	selfNode = strings.TrimSpace(selfNode)
+	if poolName == "" || address == "" || selfNode == "" || current.Epoch <= 0 || strings.TrimSpace(current.OwnerNode) != selfNode {
+		return false
+	}
+	if ownershipAssignSucceeded(poolName, address, selfNode, current.Epoch, journal) {
+		return false
+	}
+	if previousSeizePlanExists(poolName, address, selfNode, current.Epoch, previousPlans) {
+		return true
+	}
+	return pendingSeizeActionExists(poolName, address, selfNode, current.Epoch, journal)
+}
+
+func previousSeizePlanExists(poolName, address, selfNode string, epoch int64, plans []dynamicconfig.ActionPlan) bool {
+	for _, plan := range plans {
+		if plan.Action != "assign-secondary-ip" || plan.Parameters["allowReassignment"] != "true" {
+			continue
+		}
+		if ownershipParamsMatch(plan.Parameters, poolName, address, selfNode, epoch) {
+			return true
+		}
+	}
+	return false
+}
+
+func pendingSeizeActionExists(poolName, address, selfNode string, epoch int64, journal []routerstate.ActionExecutionRecord) bool {
+	for _, action := range journal {
+		if action.Action != "assign-secondary-ip" || action.Status == routerstate.ActionSucceeded {
+			continue
+		}
+		params := decodeActionParameters(action.ParametersJSON)
+		if params["allowReassignment"] != "true" {
+			continue
+		}
+		if ownershipParamsMatch(params, poolName, address, selfNode, epoch) {
+			return true
+		}
+	}
+	return false
+}
+
+func ownershipAssignSucceeded(poolName, address, selfNode string, epoch int64, journal []routerstate.ActionExecutionRecord) bool {
+	for _, action := range journal {
+		if action.Action != "assign-secondary-ip" || action.Status != routerstate.ActionSucceeded {
+			continue
+		}
+		if ownershipParamsMatch(decodeActionParameters(action.ParametersJSON), poolName, address, selfNode, epoch) {
+			return true
+		}
+	}
+	return false
+}
+
+func ownershipParamsMatch(params map[string]string, poolName, address, owner string, epoch int64) bool {
+	if len(params) == 0 || epoch <= 0 {
+		return false
+	}
+	return strings.TrimSpace(params[ownershipParamPool]) == strings.TrimSpace(poolName) &&
+		normalizeAddressString(params[ownershipParamAddress]) == normalizeAddressString(address) &&
+		strings.TrimSpace(params[ownershipParamOwner]) == strings.TrimSpace(owner) &&
+		strings.TrimSpace(params[ownershipParamEpoch]) == strconv.FormatInt(epoch, 10)
+}
+
+func decodeActionParameters(raw string) map[string]string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	out := map[string]string{}
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		return nil
+	}
+	return out
 }
 
 func ownershipPreferRank(nodeRef string, prefer map[string]int) int {

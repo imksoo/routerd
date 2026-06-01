@@ -1432,6 +1432,94 @@ func TestPlanDynamicConfigSeizeActionOnStaleOwnerChange(t *testing.T) {
 	}
 }
 
+func TestControllerKeepsSeizeAllowReassignmentUntilAssignSucceeds(t *testing.T) {
+	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	store := testStore(t, now)
+	defer store.Close()
+	spec := centralizedOwnershipPoolSpec()
+	spec.IPOwnershipPolicy.AutoFailover = true
+	spec.IPOwnershipPolicy.HeartbeatInterval = "10s"
+	spec.IPOwnershipPolicy.HeartbeatTTL = "30s"
+	spec.IPOwnershipPolicy.PromotionHoldDuration = "0s"
+	spec.IPOwnershipPolicy.PreferNodes = []string{"azure-router-a", "azure-router-b"}
+	lease := routerstate.AddressLeaseRecord{
+		Pool:      "cloudedge",
+		Address:   "10.88.60.10/32",
+		Status:    routerstate.AddressLeaseStatusActive,
+		OwnerNode: "onprem-router",
+		OwnerSite: "onprem",
+		OwnerRole: "onprem",
+		Epoch:     1,
+		ExpiresAt: now.Add(time.Minute),
+	}
+	if err := store.UpsertAddressLease(lease); err != nil {
+		t.Fatalf("UpsertAddressLease: %v", err)
+	}
+	if _, err := store.ReconcileMobilityOwnershipEpochs([]routerstate.MobilityOwnershipEpochRecord{{
+		Pool:      "cloudedge",
+		Address:   "10.88.60.10/32",
+		OwnerNode: "azure-router-a",
+	}}); err != nil {
+		t.Fatalf("seed ownership: %v", err)
+	}
+	recordEvent(t, store, routerstate.EventRecord{
+		ID:         "heartbeat-a",
+		Group:      "cloudedge",
+		SourceNode: "azure-router-a",
+		Type:       HeartbeatEventType,
+		Payload:    map[string]string{"pool": "cloudedge", "node": "azure-router-a"},
+		ObservedAt: now.Add(-time.Minute),
+	})
+	recordEvent(t, store, routerstate.EventRecord{
+		ID:         "stream-advance",
+		Group:      "cloudedge",
+		SourceNode: "azure-router-b",
+		Type:       "routerd.test.advance",
+		ObservedAt: now,
+	})
+	router := planningRouterForNode("azure-router-b", spec)
+	controller := Controller{Router: router, Store: store, Now: func() time.Time { return now }}
+	pool := router.Spec.Resources[1]
+	if err := controller.reconcilePlan(pool, now); err != nil {
+		t.Fatalf("tick1 reconcilePlan: %v", err)
+	}
+	tick1Assign := findActionPlan(decodeActionPlans(t, latestPart(t, store, DynamicSource("cloudedge", "azure-router-b")).ActionPlansJSON), "assign-secondary-ip")
+	if tick1Assign == nil || tick1Assign.Parameters["allowReassignment"] != "true" || tick1Assign.Parameters["mobilityOwnershipEpoch"] != "2" {
+		t.Fatalf("tick1 assign = %+v, want seize allowReassignment at ownership epoch 2", tick1Assign)
+	}
+	if tick1Assign.Parameters["mobilityCaptureHolder"] != "azure-router-b" {
+		t.Fatalf("tick1 capture holder = %+v, want liveness-aware holder azure-router-b", tick1Assign.Parameters)
+	}
+
+	controller.Now = func() time.Time { return now.Add(time.Second) }
+	if err := controller.reconcilePlan(pool, now.Add(time.Second)); err != nil {
+		t.Fatalf("tick2 reconcilePlan: %v", err)
+	}
+	tick2Assign := findActionPlan(decodeActionPlans(t, latestPart(t, store, DynamicSource("cloudedge", "azure-router-b")).ActionPlansJSON), "assign-secondary-ip")
+	if tick2Assign == nil || tick2Assign.Parameters["allowReassignment"] != "true" || tick2Assign.Parameters["mobilityOwnershipEpoch"] != "2" {
+		t.Fatalf("tick2 assign = %+v, want seize allowReassignment to survive plan regeneration before execution", tick2Assign)
+	}
+
+	id, err := importApprovedAction(t, tick2Assign, DynamicSource("cloudedge", "azure-router-b"), store, now.Add(2*time.Second))
+	if err != nil {
+		t.Fatalf("import approved action: %v", err)
+	}
+	if err := store.MarkActionResult(id, routerstate.ActionSucceeded, "assigned", "", nil, now.Add(3*time.Second)); err != nil {
+		t.Fatalf("MarkActionResult: %v", err)
+	}
+	controller.Now = func() time.Time { return now.Add(4 * time.Second) }
+	if err := controller.reconcilePlan(pool, now.Add(4*time.Second)); err != nil {
+		t.Fatalf("tick3 reconcilePlan: %v", err)
+	}
+	tick3Assign := findActionPlan(decodeActionPlans(t, latestPart(t, store, DynamicSource("cloudedge", "azure-router-b")).ActionPlansJSON), "assign-secondary-ip")
+	if tick3Assign == nil {
+		t.Fatalf("tick3 missing assign action")
+	}
+	if tick3Assign.Parameters["allowReassignment"] == "true" {
+		t.Fatalf("tick3 assign = %+v, want allowReassignment cleared after same-epoch assign succeeded", tick3Assign)
+	}
+}
+
 func TestStaleOwnerExclusionBumpsOwnershipEpoch(t *testing.T) {
 	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
 	store := testStore(t, now)
@@ -1470,6 +1558,41 @@ func TestStaleOwnerExclusionBumpsOwnershipEpoch(t *testing.T) {
 	}
 	if len(rows) != 1 || rows[0].OwnerNode != "azure-router-b" || rows[0].Epoch != 2 {
 		t.Fatalf("next rows = %+v, want router-b epoch 2", rows)
+	}
+}
+
+func TestDesiredCaptureEpochsAutoFailoverExcludesStalePlacementMember(t *testing.T) {
+	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	spec := centralizedOwnershipPoolSpec()
+	spec.IPOwnershipPolicy.AutoFailover = true
+	spec.IPOwnershipPolicy.HeartbeatInterval = "10s"
+	spec.IPOwnershipPolicy.HeartbeatTTL = "30s"
+	spec.IPOwnershipPolicy.PreferNodes = []string{"azure-router-a", "azure-router-b"}
+	lease := routerstate.AddressLeaseRecord{
+		Pool:      "cloudedge",
+		Address:   "10.88.60.10/32",
+		Status:    routerstate.AddressLeaseStatusActive,
+		OwnerNode: "onprem-router",
+		OwnerSite: "onprem",
+		OwnerRole: "onprem",
+		ExpiresAt: now.Add(time.Minute),
+	}
+	rows, err := desiredCaptureEpochs("cloudedge", spec, "azure-router-b", []routerstate.AddressLeaseRecord{lease}, nil, nil, plannedProviderProfiles(), OwnershipLiveness{StaleNodes: map[string]bool{"azure-router-a": true}}, now)
+	if err != nil {
+		t.Fatalf("desiredCaptureEpochs: %v", err)
+	}
+	if len(rows) != 1 || rows[0].Holder != "azure-router-b" {
+		t.Fatalf("capture epochs = %+v, want stale router-a excluded and holder router-b", rows)
+	}
+
+	withoutFailover := spec
+	withoutFailover.IPOwnershipPolicy.AutoFailover = false
+	rows, err = desiredCaptureEpochs("cloudedge", withoutFailover, "azure-router-b", []routerstate.AddressLeaseRecord{lease}, nil, nil, plannedProviderProfiles(), OwnershipLiveness{StaleNodes: map[string]bool{"azure-router-a": true}}, now)
+	if err != nil {
+		t.Fatalf("desiredCaptureEpochs without failover: %v", err)
+	}
+	if len(rows) != 1 || rows[0].Holder != "azure-router-a" {
+		t.Fatalf("capture epochs without failover = %+v, want original placement holder router-a", rows)
 	}
 }
 
@@ -1766,6 +1889,47 @@ func decodeActionPlans(t *testing.T, raw string) []dynamicconfig.ActionPlan {
 		t.Fatalf("decode action plans: %v raw=%s", err, raw)
 	}
 	return plans
+}
+
+func importApprovedAction(t *testing.T, plan *dynamicconfig.ActionPlan, source string, store *routerstate.SQLiteStore, now time.Time) (int64, error) {
+	t.Helper()
+	targetJSON, err := json.Marshal(plan.Target)
+	if err != nil {
+		return 0, err
+	}
+	paramsJSON, err := json.Marshal(plan.Parameters)
+	if err != nil {
+		return 0, err
+	}
+	_, err = store.ImportAction(routerstate.ActionExecutionRecord{
+		IdempotencyKey: plan.IdempotencyKey,
+		Source:         source,
+		Provider:       plan.Provider,
+		ProviderRef:    plan.ProviderRef,
+		Action:         plan.Action,
+		TargetJSON:     string(targetJSON),
+		ParametersJSON: string(paramsJSON),
+		RiskLevel:      plan.RiskLevel,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	})
+	if err != nil {
+		return 0, err
+	}
+	rows, err := store.ListActions(routerstate.ActionExecutionFilter{})
+	if err != nil {
+		return 0, err
+	}
+	for _, row := range rows {
+		if row.IdempotencyKey != plan.IdempotencyKey {
+			continue
+		}
+		if err := store.ApproveAction(row.ID, "test", now); err != nil {
+			return 0, err
+		}
+		return row.ID, nil
+	}
+	return 0, fmt.Errorf("imported action %q not found", plan.IdempotencyKey)
 }
 
 func countKind(resources []api.Resource, kind string) int {
