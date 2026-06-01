@@ -207,12 +207,39 @@ func TestServeChainMobilityCancelsPendingDeprovisionWhenDesiredAgain(t *testing.
 	}
 }
 
+func TestServeChainAutoExecutesMobilityProviderActions(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "routerd.db"))
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	defer store.Close()
+	if err := store.RecordFederationEvent(mobilityObservedEvent("evt-10", "10.88.60.10/32", now)); err != nil {
+		t.Fatalf("RecordFederationEvent .10: %v", err)
+	}
+	stop, _ := startMobilityServeChainWithConfig(t, mobilityServeRouterWithProviderActionPolicy(false), store, []string{
+		"mobility",
+		"provider-action-execution",
+	}, serveProviderActionRunner)
+	defer stop()
+	waitForServeActionStatus(t, store, "assign-secondary-ip", "10.88.60.10/32", routerstate.ActionSucceeded)
+	waitForServeActionStatus(t, store, "ensure-forwarding-enabled", "10.88.60.10/32", routerstate.ActionSucceeded)
+}
+
 func startMobilityServeChain(t *testing.T, router *api.Router, store *routerstate.SQLiteStore) func() {
 	stop, _ := startMobilityServeChainWithBus(t, router, store)
 	return stop
 }
 
 func startMobilityServeChainWithBus(t *testing.T, router *api.Router, store *routerstate.SQLiteStore) (func(), *bus.Bus) {
+	return startMobilityServeChainWithConfig(t, router, store, []string{
+		"mobility",
+		"sam",
+		"ipv4-route",
+	}, nil)
+}
+
+func startMobilityServeChainWithConfig(t *testing.T, router *api.Router, store *routerstate.SQLiteStore, controllers []string, actionRunner provideraction.ExecutorRunner) (func(), *bus.Bus) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	eventBus := bus.NewWithStore(store)
@@ -221,15 +248,12 @@ func startMobilityServeChainWithBus(t *testing.T, router *api.Router, store *rou
 		Bus:    eventBus,
 		Store:  store,
 		Opts: controllerchain.Options{
-			DryRunAddress:     true,
-			DryRunRoute:       true,
-			DryRunServiceUnit: true,
-			EnabledControllers: []string{
-				"mobility",
-				"sam",
-				"ipv4-route",
-			},
-			Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+			DryRunAddress:        true,
+			DryRunRoute:          true,
+			DryRunServiceUnit:    true,
+			EnabledControllers:   controllers,
+			ProviderActionRunner: actionRunner,
+			Logger:               slog.New(slog.NewTextHandler(io.Discard, nil)),
 		},
 	}
 	if err := runner.Start(ctx); err != nil {
@@ -299,6 +323,25 @@ func serveProviderActionRunner(ctx context.Context, spec api.PluginSpec, req pro
 		TypeMeta: provideraction.TypeMeta{APIVersion: provideraction.ProtocolAPIVersion, Kind: provideraction.KindExecuteActionResult},
 		Status:   provideraction.ExecuteActionResultStatus{Status: provideraction.ResultSucceeded, Message: "ok"},
 	}, provideraction.RunOutcome{}, nil
+}
+
+func waitForServeActionStatus(t *testing.T, store *routerstate.SQLiteStore, action, address, status string) routerstate.ActionExecutionRecord {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		rows, err := store.ListActions(routerstate.ActionExecutionFilter{})
+		if err != nil {
+			t.Fatalf("ListActions: %v", err)
+		}
+		for _, row := range rows {
+			if row.Action == action && strings.Contains(row.TargetJSON, address) && row.Status == status {
+				return row
+			}
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for action %s %s status %s; actions=%s", action, address, status, serveActionStatuses(t, store))
+	return routerstate.ActionExecutionRecord{}
 }
 
 func succeedServeAction(t *testing.T, store *routerstate.SQLiteStore, action, address string, at time.Time) {
@@ -440,6 +483,42 @@ func mobilityServeRouter(drainA bool) *api.Router {
 			},
 		}},
 	}
+}
+
+func mobilityServeRouterWithProviderActionPolicy(drainA bool) *api.Router {
+	router := mobilityServeRouter(drainA)
+	live := false
+	auto := false
+	router.Spec.Resources = append(router.Spec.Resources,
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "ProviderActionPolicy"},
+			Metadata: api.ObjectMeta{Name: "auto-provider-actions"},
+			Spec: api.ProviderActionPolicySpec{
+				Enabled:             true,
+				DryRunOnly:          &live,
+				RequireApproval:     &auto,
+				AllowedProviders:    []string{"azure"},
+				AllowedProviderRefs: []string{"azure-provider"},
+				AllowedActions: []string{
+					"assign-secondary-ip",
+					"unassign-secondary-ip",
+					"ensure-forwarding-enabled",
+					"ensure-forwarding-disabled",
+				},
+				AllowedCIDRs:     []string{"10.88.60.0/24"},
+				MaxActionsPerRun: 8,
+			},
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.PluginAPIVersion, Kind: "Plugin"},
+			Metadata: api.ObjectMeta{Name: "azure-executor"},
+			Spec: map[string]any{
+				"executable":   "/bin/true",
+				"capabilities": []any{provideraction.CapabilityExecuteProviderAction},
+			},
+		},
+	)
+	return router
 }
 
 func countServeKind(t *testing.T, raw, kind string) int {

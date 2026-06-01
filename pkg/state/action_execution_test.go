@@ -162,6 +162,49 @@ func TestActionResultTransitions(t *testing.T) {
 	}
 }
 
+func TestBeginActionExecutionClaimsApprovedOnce(t *testing.T) {
+	store := mustOpenStore(t)
+	defer store.Close()
+
+	if _, err := store.ImportAction(sampleActionRecord("running-claim")); err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	rec, _, err := store.GetActionByIdempotencyKey("running-claim")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if ok, err := store.BeginActionExecution(rec.ID, time.Time{}); err != nil || ok {
+		t.Fatalf("pending BeginActionExecution ok=%v err=%v, want false nil", ok, err)
+	}
+	if err := store.ApproveAction(rec.ID, "op", time.Time{}); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	ok, err := store.BeginActionExecution(rec.ID, time.Time{})
+	if err != nil {
+		t.Fatalf("BeginActionExecution: %v", err)
+	}
+	if !ok {
+		t.Fatal("approved action was not claimed")
+	}
+	ok, err = store.BeginActionExecution(rec.ID, time.Time{})
+	if err != nil {
+		t.Fatalf("second BeginActionExecution: %v", err)
+	}
+	if ok {
+		t.Fatal("second BeginActionExecution claimed the same action")
+	}
+	got, _, err := store.GetActionByID(rec.ID)
+	if err != nil {
+		t.Fatalf("get after claim: %v", err)
+	}
+	if got.Status != ActionRunning {
+		t.Fatalf("status = %q, want running", got.Status)
+	}
+	if err := store.MarkActionResult(rec.ID, ActionSucceeded, "done", "", nil, time.Time{}); err != nil {
+		t.Fatalf("MarkActionResult running: %v", err)
+	}
+}
+
 func TestActionResultObservedRoundTrip(t *testing.T) {
 	store := mustOpenStore(t)
 	defer store.Close()

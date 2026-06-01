@@ -116,7 +116,7 @@ func actionListCommand(args []string, stdout io.Writer) error {
 				"routerctl action list --status pending -o json")
 	}
 	statePath := fs.String("state-file", defaultStatePath(), "routerd state database file")
-	status := fs.String("status", "", "filter by status (pending|approved|succeeded|failed|skipped|rolledBack)")
+	status := fs.String("status", "", "filter by status (pending|approved|running|succeeded|failed|skipped|rolledBack)")
 	provider := fs.String("provider", "", "filter by provider")
 	output := "table"
 	fs.StringVar(&output, "o", "table", "output format: table, json, yaml")
@@ -455,29 +455,7 @@ func loadActionPolicyAndPlugins(configPath string) (api.ProviderActionPolicySpec
 	if err != nil {
 		return api.ProviderActionPolicySpec{}, nil, err
 	}
-	var policy api.ProviderActionPolicySpec
-	var foundPolicy bool
-	var plugins []api.Resource
-	for _, res := range router.Spec.Resources {
-		switch res.Kind {
-		case "ProviderActionPolicy":
-			if foundPolicy {
-				continue
-			}
-			spec, err := res.ProviderActionPolicySpec()
-			if err != nil {
-				return api.ProviderActionPolicySpec{}, nil, fmt.Errorf("ProviderActionPolicy %q: %w", res.Metadata.Name, err)
-			}
-			policy = spec
-			foundPolicy = true
-		case "Plugin":
-			plugins = append(plugins, res)
-		}
-	}
-	// Absent policy -> zero value (disabled); the engine rejects execute, which
-	// is the safe default. No error so dry-run/show still work against a config
-	// without a policy.
-	return policy, plugins, nil
+	return provideraction.PolicyAndPlugins(router)
 }
 
 // splitActionID extracts the first positional <id> token from args (regardless

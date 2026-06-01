@@ -24,6 +24,7 @@ type Store interface {
 	GetMobilityCaptureEpoch(key string) (state.MobilityCaptureEpochRecord, bool, error)
 	GetMobilityOwnershipEpoch(pool, address string) (state.MobilityOwnershipEpochRecord, bool, error)
 	ApproveAction(id int64, approvedBy string, now time.Time) error
+	BeginActionExecution(id int64, now time.Time) (bool, error)
 	ListActions(state.ActionExecutionFilter) ([]state.ActionExecutionRecord, error)
 	MarkActionSkippedByIdempotencyKey(key, message string, now time.Time) error
 	MarkActionResult(id int64, status, message, errMsg string, observed map[string]string, executedAt time.Time) error
@@ -183,17 +184,9 @@ func (e *Engine) fenceStalePendingActions() (int, error) {
 		default:
 			continue
 		}
-		plan := dynamicconfig.ActionPlan{
-			IdempotencyKey: row.IdempotencyKey,
-			Provider:       row.Provider,
-			ProviderRef:    row.ProviderRef,
-			Action:         row.Action,
-			RiskLevel:      row.RiskLevel,
-		}
-		if strings.TrimSpace(row.ParametersJSON) != "" {
-			if err := json.Unmarshal([]byte(row.ParametersJSON), &plan.Parameters); err != nil {
-				return count, fmt.Errorf("decode action parameters for %q: %w", row.IdempotencyKey, err)
-			}
+		plan, err := planFromRecord(row)
+		if err != nil {
+			return count, err
 		}
 		stale, err := e.planStaleByOwnershipOrCaptureEpoch(plan)
 		if err != nil {
@@ -353,6 +346,10 @@ func (e *Engine) Execute(ctx context.Context, id int64, mode string, policy api.
 		e.logf("provideraction: action %d already succeeded; skipping (idempotent)", id)
 		return nil
 	}
+	if rec.Status == state.ActionRunning {
+		e.logf("provideraction: action %d is already running; skipping", id)
+		return nil
+	}
 	if rec.Status == state.ActionRolledBack {
 		return fmt.Errorf("execute action %d: action was rolled back", id)
 	}
@@ -360,6 +357,21 @@ func (e *Engine) Execute(ctx context.Context, id int64, mode string, policy api.
 	// Policy gate (do not launch the executor on failure).
 	if err := evaluatePolicy(rec, mode, policy); err != nil {
 		return fmt.Errorf("policy gate denied action %d: %w", id, err)
+	}
+	plan, err := planFromRecord(rec)
+	if err != nil {
+		return err
+	}
+	stale, err := e.planStaleByOwnershipOrCaptureEpoch(plan)
+	if err != nil {
+		return err
+	}
+	if stale {
+		if err := e.store.MarkActionSkippedByIdempotencyKey(rec.IdempotencyKey, "stale mobility capture epoch", e.now().UTC()); err != nil {
+			return fmt.Errorf("mark stale action %q skipped: %w", rec.IdempotencyKey, err)
+		}
+		e.logf("provideraction: fenced stale capture action %q before execution", rec.IdempotencyKey)
+		return nil
 	}
 
 	// Approval gate. The action must be approved, unless policy auto-approve
@@ -387,6 +399,14 @@ func (e *Engine) Execute(ctx context.Context, id int64, mode string, policy api.
 	spec, pluginName, err := e.resolveExecutor(rec.Provider)
 	if err != nil {
 		return fmt.Errorf("resolve executor for provider %q: %w", rec.Provider, err)
+	}
+	claimed, err := e.store.BeginActionExecution(id, e.now().UTC())
+	if err != nil {
+		return fmt.Errorf("claim action %d for execution: %w", id, err)
+	}
+	if !claimed {
+		e.logf("provideraction: action %d was already claimed or completed; skipping", id)
+		return nil
 	}
 	e.logf("provideraction: executing action %d via plugin %q (mode=%s)", id, pluginName, mode)
 
@@ -429,6 +449,27 @@ func (e *Engine) Execute(ctx context.Context, id int64, mode string, policy api.
 		}
 		return fmt.Errorf("execute action %d: %s", id, errMsg)
 	}
+}
+
+func planFromRecord(row state.ActionExecutionRecord) (dynamicconfig.ActionPlan, error) {
+	plan := dynamicconfig.ActionPlan{
+		IdempotencyKey: row.IdempotencyKey,
+		Provider:       row.Provider,
+		ProviderRef:    row.ProviderRef,
+		Action:         row.Action,
+		RiskLevel:      row.RiskLevel,
+	}
+	if strings.TrimSpace(row.TargetJSON) != "" {
+		if err := json.Unmarshal([]byte(row.TargetJSON), &plan.Target); err != nil {
+			return plan, fmt.Errorf("decode action target for %q: %w", row.IdempotencyKey, err)
+		}
+	}
+	if strings.TrimSpace(row.ParametersJSON) != "" {
+		if err := json.Unmarshal([]byte(row.ParametersJSON), &plan.Parameters); err != nil {
+			return plan, fmt.Errorf("decode action parameters for %q: %w", row.IdempotencyKey, err)
+		}
+	}
+	return plan, nil
 }
 
 // DryRunResult is the outcome of a non-destructive DryRunPreview.
