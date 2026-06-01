@@ -217,6 +217,7 @@ func assignSecondaryIP(ctx context.Context, spec executeActionRequestSpec, mode 
 	}
 	res := newResult()
 	res.Status.UndoAvailable = true
+	allowReassignment := stringBool(spec.Parameters["allowReassignment"])
 
 	if mode == modeDryRun {
 		iface, derr := describeInterface(ctx, runner, eni, region)
@@ -224,19 +225,31 @@ func assignSecondaryIP(ctx context.Context, spec executeActionRequestSpec, mode 
 			return failed("assign-secondary-ip dry-run: describe failed", derr)
 		}
 		res.Status.Status = statusSucceeded
-		res.Status.Message = fmt.Sprintf("would assign %s to %s", address, eni)
+		if allowReassignment {
+			res.Status.Message = fmt.Sprintf("would seize/reassign %s to %s", address, eni)
+		} else {
+			res.Status.Message = fmt.Sprintf("would assign %s to %s", address, eni)
+		}
 		res.Status.Observed = map[string]string{"currentSecondaryIps": iface.secondaryIPsCSV()}
 		return res
 	}
 
-	if _, err := runner(ctx, "ec2", "assign-private-ip-addresses",
+	args := []string{"ec2", "assign-private-ip-addresses",
 		"--network-interface-id", eni,
 		"--private-ip-addresses", address,
-		"--region", region); err != nil {
+		"--region", region}
+	if allowReassignment {
+		args = append(args, "--allow-reassignment")
+	}
+	if _, err := runner(ctx, args...); err != nil {
 		return failed("assign-secondary-ip execute: assign failed", err)
 	}
 	res.Status.Status = statusSucceeded
-	res.Status.Message = fmt.Sprintf("assigned %s to %s", address, eni)
+	if allowReassignment {
+		res.Status.Message = fmt.Sprintf("seized/reassigned %s to %s", address, eni)
+	} else {
+		res.Status.Message = fmt.Sprintf("assigned %s to %s", address, eni)
+	}
 	res.Status.Observed = map[string]string{"assignedAddress": address}
 	return res
 }
@@ -360,6 +373,15 @@ func boolStr(b bool) string {
 		return "true"
 	}
 	return "false"
+}
+
+func stringBool(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 // commandTimeout is the per-aws-invocation timeout.

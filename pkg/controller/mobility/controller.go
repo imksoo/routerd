@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/netip"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,8 +20,9 @@ import (
 )
 
 const (
-	ObservedEventType = "routerd.client.ipv4.observed"
-	ExpiredEventType  = "routerd.client.ipv4.expired"
+	ObservedEventType  = "routerd.client.ipv4.observed"
+	ExpiredEventType   = "routerd.client.ipv4.expired"
+	HeartbeatEventType = "routerd.mobility.member.heartbeat"
 
 	DefaultLeaseTTL      = 5 * time.Minute
 	DefaultHoldDuration  = 30 * time.Second
@@ -29,10 +31,12 @@ const (
 
 type Store interface {
 	ListFederationEvents(group string, includeExpired bool, now int64) ([]routerstate.EventRecord, error)
+	RecordFederationEvent(routerstate.EventRecord) error
 	UpsertAddressLease(routerstate.AddressLeaseRecord) error
 	ListAddressLeases(pool string, includeExpired bool, now time.Time) ([]routerstate.AddressLeaseRecord, error)
 	ReconcileMobilityCaptureEpochs([]routerstate.MobilityCaptureEpochRecord) ([]routerstate.MobilityCaptureEpochRecord, error)
 	ReconcileMobilityOwnershipEpochs([]routerstate.MobilityOwnershipEpochRecord) ([]routerstate.MobilityOwnershipEpochRecord, error)
+	ListMobilityOwnershipEpochs(pool string) ([]routerstate.MobilityOwnershipEpochRecord, error)
 	UpsertDynamicConfigPart(routerstate.DynamicConfigPartRecord) error
 	GetDynamicConfigPartsBySource(source string) ([]routerstate.DynamicConfigPartRecord, error)
 	ListActions(routerstate.ActionExecutionFilter) ([]routerstate.ActionExecutionRecord, error)
@@ -63,6 +67,13 @@ func (c Controller) Reconcile(_ context.Context) error {
 		if res.APIVersion != api.MobilityAPIVersion || res.Kind != "MobilityPool" {
 			continue
 		}
+		if err := c.emitHeartbeat(res, now); err != nil {
+			_ = c.Store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", res.Metadata.Name, map[string]any{
+				"phase":  "Degraded",
+				"reason": err.Error(),
+			})
+			continue
+		}
 		if err := c.reconcilePool(res, now); err != nil {
 			_ = c.Store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", res.Metadata.Name, map[string]any{
 				"phase":  "Degraded",
@@ -79,6 +90,62 @@ func (c Controller) Reconcile(_ context.Context) error {
 		}
 	}
 	return nil
+}
+
+func (c Controller) emitHeartbeat(res api.Resource, now time.Time) error {
+	spec, err := res.MobilityPoolSpec()
+	if err != nil {
+		return err
+	}
+	if !ipOwnershipAutoFailover(spec.IPOwnershipPolicy) {
+		return nil
+	}
+	selfNode, err := c.selfNode(spec.GroupRef)
+	if err != nil {
+		return err
+	}
+	self, ok := plannerMembers(spec.Members)[selfNode]
+	if !ok || self.Role != "cloud" || self.Capture.Type != "provider-secondary-ip" {
+		return nil
+	}
+	interval := durationDefault(spec.IPOwnershipPolicy.HeartbeatInterval, 0)
+	if interval <= 0 {
+		return fmt.Errorf("MobilityPool/%s ipOwnershipPolicy.heartbeatInterval is required when autoFailover is true", res.Metadata.Name)
+	}
+	events, err := c.Store.ListFederationEvents(spec.GroupRef, false, now.Unix())
+	if err != nil {
+		return fmt.Errorf("list federation events for heartbeat: %w", err)
+	}
+	var last time.Time
+	for _, ev := range events {
+		if ev.Type != HeartbeatEventType || strings.TrimSpace(ev.SourceNode) != selfNode || strings.TrimSpace(ev.Payload["pool"]) != res.Metadata.Name {
+			continue
+		}
+		if ev.ObservedAt.After(last) {
+			last = ev.ObservedAt.UTC()
+		}
+	}
+	if !last.IsZero() && last.Add(interval).After(now) {
+		return nil
+	}
+	seq := strconv.FormatInt(now.UTC().UnixNano(), 10)
+	emittedAt := now.UTC().Format(time.RFC3339Nano)
+	return c.Store.RecordFederationEvent(routerstate.EventRecord{
+		ID:         "mobility-heartbeat:" + res.Metadata.Name + ":" + selfNode + ":" + seq,
+		Group:      spec.GroupRef,
+		SourceNode: selfNode,
+		Type:       HeartbeatEventType,
+		Subject:    res.Metadata.Name + "/" + selfNode,
+		DedupeKey:  "mobility-heartbeat:" + res.Metadata.Name + ":" + selfNode,
+		Payload: map[string]string{
+			"pool":      res.Metadata.Name,
+			"node":      selfNode,
+			"emittedAt": emittedAt,
+			"seq":       seq,
+		},
+		ObservedAt: now.UTC(),
+		RecordedAt: now.UTC(),
+	})
 }
 
 func (c Controller) reconcilePool(res api.Resource, now time.Time) error {

@@ -6787,11 +6787,20 @@
                           "epochLocking": {
                             "type": "boolean"
                           },
+                          "heartbeatInterval": {
+                            "type": "string"
+                          },
+                          "heartbeatTTL": {
+                            "type": "string"
+                          },
                           "preferNodes": {
                             "items": {
                               "type": "string"
                             },
                             "type": "array"
+                          },
+                          "promotionHoldDuration": {
+                            "type": "string"
                           },
                           "type": {
                             "enum": [

@@ -355,6 +355,35 @@ func TestImportAllowsCurrentOwnershipEpochDeprovisionForPreviousOwner(t *testing
 	}
 }
 
+func TestImportFencesWrongOwnerAtCurrentOwnershipEpoch(t *testing.T) {
+	store := mustStore(t)
+	e := newEngine(t, store, (&fakeRunner{result: succeededResult()}).run, nil)
+	rows, err := store.ReconcileMobilityOwnershipEpochs([]state.MobilityOwnershipEpochRecord{{
+		Pool:      "cloudedge",
+		Address:   "10.0.0.5/32",
+		OwnerNode: "router-b",
+	}})
+	if err != nil {
+		t.Fatalf("seed ownership epoch: %v", err)
+	}
+	plan := samplePlan("wrong-owner-assign")
+	plan.Parameters = map[string]string{
+		ownershipParamPool:    "cloudedge",
+		ownershipParamAddress: "10.0.0.5/32",
+		ownershipParamEpoch:   fmt.Sprint(rows[0].Epoch),
+		ownershipParamOwner:   "router-a",
+	}
+	seedPart(t, store, "sub-a", []dynamicconfig.ActionPlan{plan})
+
+	res, err := e.ImportFromDynamicParts()
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if res.Inserted != 0 || res.Skipped != 1 {
+		t.Fatalf("want wrong-owner plan skipped, got %+v", res)
+	}
+}
+
 func TestImportSkipsExpiredDynamicParts(t *testing.T) {
 	store := mustStore(t)
 	now := time.Unix(1700000000, 0).UTC()

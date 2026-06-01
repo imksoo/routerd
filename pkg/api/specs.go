@@ -1409,10 +1409,13 @@ type MobilityMemberMaintenance struct {
 }
 
 type MobilityIPOwnershipPolicy struct {
-	Type         string   `yaml:"type,omitempty" json:"type,omitempty" jsonschema:"enum=,enum=centralized"`
-	EpochLocking *bool    `yaml:"epochLocking,omitempty" json:"epochLocking,omitempty"`
-	PreferNodes  []string `yaml:"preferNodes,omitempty" json:"preferNodes,omitempty"`
-	AutoFailover bool     `yaml:"autoFailover,omitempty" json:"autoFailover,omitempty"`
+	Type                  string   `yaml:"type,omitempty" json:"type,omitempty" jsonschema:"enum=,enum=centralized"`
+	EpochLocking          *bool    `yaml:"epochLocking,omitempty" json:"epochLocking,omitempty"`
+	PreferNodes           []string `yaml:"preferNodes,omitempty" json:"preferNodes,omitempty"`
+	AutoFailover          bool     `yaml:"autoFailover,omitempty" json:"autoFailover,omitempty"`
+	HeartbeatInterval     string   `yaml:"heartbeatInterval,omitempty" json:"heartbeatInterval,omitempty"`
+	HeartbeatTTL          string   `yaml:"heartbeatTTL,omitempty" json:"heartbeatTTL,omitempty"`
+	PromotionHoldDuration string   `yaml:"promotionHoldDuration,omitempty" json:"promotionHoldDuration,omitempty"`
 }
 
 type MobilityMemberCapture struct {
