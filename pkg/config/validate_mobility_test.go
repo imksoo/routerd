@@ -169,6 +169,25 @@ func TestValidateMobilityPoolRejectsInvalidFields(t *testing.T) {
 			want: "must be one of the member nodeRefs",
 		},
 		{
+			name: "bad ownership policy type",
+			mut:  func(spec *api.MobilityPoolSpec) { spec.IPOwnershipPolicy.Type = "lock-service" },
+			want: "spec.ipOwnershipPolicy.type",
+		},
+		{
+			name: "ownership prefer missing node",
+			mut: func(spec *api.MobilityPoolSpec) {
+				spec.IPOwnershipPolicy = api.MobilityIPOwnershipPolicy{Type: "centralized", PreferNodes: []string{"missing-router"}}
+			},
+			want: "spec.ipOwnershipPolicy.preferNodes[0]",
+		},
+		{
+			name: "ownership prefer duplicate node",
+			mut: func(spec *api.MobilityPoolSpec) {
+				spec.IPOwnershipPolicy = api.MobilityIPOwnershipPolicy{Type: "centralized", PreferNodes: []string{"azure-router", "azure-router"}}
+			},
+			want: "contains duplicate nodeRef",
+		},
+		{
 			name: "cloud capture type",
 			mut: func(spec *api.MobilityPoolSpec) {
 				spec.Members[1].Capture = api.MobilityMemberCapture{Type: "proxy-arp", Interface: "lan"}

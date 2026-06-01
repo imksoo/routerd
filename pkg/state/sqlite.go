@@ -274,6 +274,16 @@ CREATE TABLE IF NOT EXISTS mobility_capture_epochs (
   updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS mobility_capture_epochs_pool ON mobility_capture_epochs(pool, address, capture_domain);
+CREATE TABLE IF NOT EXISTS mobility_ownership_epochs (
+  pool TEXT NOT NULL,
+  address TEXT NOT NULL,
+  owner_node TEXT NOT NULL,
+  epoch INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY(pool, address)
+);
+CREATE INDEX IF NOT EXISTS mobility_ownership_epochs_owner ON mobility_ownership_epochs(owner_node, pool);
 `); err != nil {
 		return err
 	}
@@ -305,6 +315,9 @@ CREATE INDEX IF NOT EXISTS mobility_capture_epochs_pool ON mobility_capture_epoc
 		return err
 	}
 	if err := s.ensureMobilityCaptureEpochColumns(); err != nil {
+		return err
+	}
+	if err := s.ensureMobilityOwnershipEpochColumns(); err != nil {
 		return err
 	}
 	return nil

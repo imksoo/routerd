@@ -32,6 +32,7 @@ type Store interface {
 	UpsertAddressLease(routerstate.AddressLeaseRecord) error
 	ListAddressLeases(pool string, includeExpired bool, now time.Time) ([]routerstate.AddressLeaseRecord, error)
 	ReconcileMobilityCaptureEpochs([]routerstate.MobilityCaptureEpochRecord) ([]routerstate.MobilityCaptureEpochRecord, error)
+	ReconcileMobilityOwnershipEpochs([]routerstate.MobilityOwnershipEpochRecord) ([]routerstate.MobilityOwnershipEpochRecord, error)
 	UpsertDynamicConfigPart(routerstate.DynamicConfigPartRecord) error
 	GetDynamicConfigPartsBySource(source string) ([]routerstate.DynamicConfigPartRecord, error)
 	ListActions(routerstate.ActionExecutionFilter) ([]routerstate.ActionExecutionRecord, error)

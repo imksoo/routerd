@@ -5,6 +5,7 @@ package provideraction
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -265,6 +266,92 @@ func TestImportAllowsCurrentEpochDeprovisionForPreviousHolder(t *testing.T) {
 	}
 	if res.Inserted != 1 || res.Skipped != 0 {
 		t.Fatalf("want current-epoch previous-holder deprovision imported, got %+v", res)
+	}
+}
+
+func TestImportFencesStaleMobilityOwnershipEpochActions(t *testing.T) {
+	store := mustStore(t)
+	e := newEngine(t, store, (&fakeRunner{result: succeededResult()}).run, nil)
+	if _, err := store.ReconcileMobilityOwnershipEpochs([]state.MobilityOwnershipEpochRecord{{
+		Pool:      "cloudedge",
+		Address:   "10.0.0.5/32",
+		OwnerNode: "router-a",
+	}}); err != nil {
+		t.Fatalf("seed initial ownership epoch: %v", err)
+	}
+	if _, err := store.ReconcileMobilityOwnershipEpochs([]state.MobilityOwnershipEpochRecord{{
+		Pool:      "cloudedge",
+		Address:   "10.0.0.5/32",
+		OwnerNode: "router-b",
+	}}); err != nil {
+		t.Fatalf("advance ownership epoch: %v", err)
+	}
+	oldPlan := samplePlan("old-assign")
+	oldPlan.Parameters = map[string]string{
+		ownershipParamPool:    "cloudedge",
+		ownershipParamAddress: "10.0.0.5/32",
+		ownershipParamEpoch:   "1",
+		ownershipParamOwner:   "router-a",
+	}
+	oldRec, err := recordFromPlan("previous", oldPlan)
+	if err != nil {
+		t.Fatalf("recordFromPlan: %v", err)
+	}
+	if _, err := store.ImportAction(oldRec); err != nil {
+		t.Fatalf("seed stale pending action: %v", err)
+	}
+	seedPart(t, store, "sub-a", []dynamicconfig.ActionPlan{oldPlan})
+
+	res, err := e.ImportFromDynamicParts()
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if res.Inserted != 0 || res.Skipped != 2 {
+		t.Fatalf("want stale pending + stale plan skipped, got %+v", res)
+	}
+	rec, ok, err := store.GetActionByIdempotencyKey("old-assign")
+	if err != nil || !ok {
+		t.Fatalf("lookup stale action: ok=%v err=%v", ok, err)
+	}
+	if rec.Status != state.ActionSkipped {
+		t.Fatalf("stale pending status = %q, want skipped", rec.Status)
+	}
+}
+
+func TestImportAllowsCurrentOwnershipEpochDeprovisionForPreviousOwner(t *testing.T) {
+	store := mustStore(t)
+	e := newEngine(t, store, (&fakeRunner{result: succeededResult()}).run, nil)
+	if _, err := store.ReconcileMobilityOwnershipEpochs([]state.MobilityOwnershipEpochRecord{{
+		Pool:      "cloudedge",
+		Address:   "10.0.0.5/32",
+		OwnerNode: "router-a",
+	}}); err != nil {
+		t.Fatalf("seed initial ownership epoch: %v", err)
+	}
+	rows, err := store.ReconcileMobilityOwnershipEpochs([]state.MobilityOwnershipEpochRecord{{
+		Pool:      "cloudedge",
+		Address:   "10.0.0.5/32",
+		OwnerNode: "router-b",
+	}})
+	if err != nil {
+		t.Fatalf("advance ownership epoch: %v", err)
+	}
+	plan := samplePlan("unassign-router-a-epoch-2")
+	plan.Action = "unassign-secondary-ip"
+	plan.Parameters = map[string]string{
+		ownershipParamPool:    "cloudedge",
+		ownershipParamAddress: "10.0.0.5/32",
+		ownershipParamEpoch:   fmt.Sprint(rows[0].Epoch),
+		ownershipParamOwner:   "router-a",
+	}
+	seedPart(t, store, "sub-a", []dynamicconfig.ActionPlan{plan})
+
+	res, err := e.ImportFromDynamicParts()
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if res.Inserted != 1 || res.Skipped != 0 {
+		t.Fatalf("want current-epoch previous-owner deprovision imported, got %+v", res)
 	}
 }
 

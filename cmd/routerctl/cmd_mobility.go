@@ -23,6 +23,8 @@ func mobilityCommand(args []string, stdout, stderr io.Writer) error {
 	switch args[0] {
 	case "leases", "list":
 		return mobilityLeasesCommand(args[1:], stdout)
+	case "ownership", "owners":
+		return mobilityOwnershipCommand(args[1:], stdout)
 	case "show":
 		return mobilityShowCommand(args[1:], stdout)
 	case "help", "-h", "--help":
@@ -67,6 +69,41 @@ func mobilityLeasesCommand(args []string, stdout io.Writer) error {
 		return err
 	}
 	return writeMobilityLeases(stdout, leases, output)
+}
+
+func mobilityOwnershipCommand(args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("mobility ownership", flag.ContinueOnError)
+	fs.SetOutput(stdout)
+	fs.Usage = func() {
+		printSubcommandHelp(fs,
+			"Show MobilityPool deterministic address ownership epochs.",
+			"routerctl mobility ownership --pool cloudedge\n"+
+				"routerctl mobility ownership -o json")
+	}
+	statePath := fs.String("state-file", defaultStatePath(), "routerd state database file")
+	pool := fs.String("pool", "", "MobilityPool name")
+	output := "table"
+	fs.StringVar(&output, "o", "table", "output format: table, json, yaml")
+	fs.StringVar(&output, "output", "table", "output format: table, json, yaml")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("unexpected mobility ownership argument %q", fs.Arg(0))
+	}
+	store, err := openLedgerStateReadOnly(*statePath)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	records, err := store.ListMobilityOwnershipEpochs(*pool)
+	if err != nil {
+		return err
+	}
+	return writeMobilityOwnership(stdout, records, output)
 }
 
 func mobilityShowCommand(args []string, stdout io.Writer) error {
@@ -136,6 +173,7 @@ func mobilityUsage(w io.Writer) {
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "commands:")
 	fmt.Fprintln(w, "  leases [--pool <name>] [--include-expired] [--state-file <path>] [-o table|json|yaml]")
+	fmt.Fprintln(w, "  ownership [--pool <name>] [--state-file <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  show --pool <name> --address <ipv4/32> [--state-file <path>] [-o table|json|yaml]")
 }
 
@@ -169,6 +207,30 @@ func writeMobilityLeases(stdout io.Writer, leases []routerstate.AddressLeaseReco
 		return writeJSON(stdout, leases)
 	case "yaml":
 		return writeYAML(stdout, leases)
+	default:
+		return fmt.Errorf("unsupported output %q", output)
+	}
+}
+
+func writeMobilityOwnership(stdout io.Writer, records []routerstate.MobilityOwnershipEpochRecord, output string) error {
+	switch output {
+	case "", "table":
+		w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(w, "POOL\tADDRESS\tOWNER\tOWNERSHIP_EPOCH\tUPDATED")
+		for _, rec := range records {
+			fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\n",
+				rec.Pool,
+				rec.Address,
+				displayCell(rec.OwnerNode),
+				rec.Epoch,
+				displayTime(rec.UpdatedAt),
+			)
+		}
+		return w.Flush()
+	case "json":
+		return writeJSON(stdout, records)
+	case "yaml":
+		return writeYAML(stdout, records)
 	default:
 		return fmt.Errorf("unsupported output %q", output)
 	}

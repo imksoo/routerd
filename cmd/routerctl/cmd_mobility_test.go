@@ -45,3 +45,30 @@ func TestMobilityLeasesCommand(t *testing.T) {
 		t.Fatalf("unexpected output:\n%s", out)
 	}
 }
+
+func TestMobilityOwnershipCommand(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "routerd.db")
+	store, err := routerstate.OpenSQLite(path)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	if _, err := store.ReconcileMobilityOwnershipEpochs([]routerstate.MobilityOwnershipEpochRecord{{
+		Pool:      "cloudedge",
+		Address:   "10.88.60.10/32",
+		OwnerNode: "azure-router-a",
+	}}); err != nil {
+		t.Fatalf("ReconcileMobilityOwnershipEpochs: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	if err := mobilityCommand([]string{"ownership", "--state-file", path, "--pool", "cloudedge"}, &stdout, &stderr); err != nil {
+		t.Fatalf("mobility ownership: %v stderr=%s", err, stderr.String())
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "10.88.60.10/32") || !strings.Contains(out, "azure-router-a") || !strings.Contains(out, "OWNERSHIP_EPOCH") {
+		t.Fatalf("unexpected output:\n%s", out)
+	}
+}
