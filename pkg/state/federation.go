@@ -7,12 +7,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
 // errStoreClosed is returned by the federation event store methods once the
 // underlying SQLiteStore has been closed.
 var errStoreClosed = errors.New("state store is closed")
+
+const mobilityHeartbeatEventType = "routerd.mobility.member.heartbeat"
 
 // EventRecord is a persisted CloudEdge Event Federation event (ADR 0006). It is
 // stored in the federation_events table, which is distinct from the
@@ -49,7 +52,11 @@ func (s *SQLiteStore) RecordFederationEvent(rec EventRecord) error {
 		return fmt.Errorf("federation event type is required")
 	}
 	if rec.DedupeKey == "" {
-		rec.DedupeKey = rec.ID
+		if key, ok := mobilityHeartbeatDedupeKey(rec); ok {
+			rec.DedupeKey = key
+		} else {
+			rec.DedupeKey = rec.ID
+		}
 	}
 	now := s.now().UTC()
 	if rec.RecordedAt.IsZero() {
@@ -78,7 +85,160 @@ func (s *SQLiteStore) RecordFederationEvent(rec EventRecord) error {
 	if err != nil {
 		return fmt.Errorf("record federation event: %w", err)
 	}
+	if isCompactableMobilityHeartbeat(rec) {
+		if _, err := s.compactFederationHeartbeatsLocked(rec.Group, rec.DedupeKey); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// FederationHeartbeatCompactionStats reports duplicate compactable mobility
+// heartbeat rows that should normally be removed by RecordFederationEvent.
+type FederationHeartbeatCompactionStats struct {
+	DuplicateRows int64
+	Keys          []string
+}
+
+func (s *SQLiteStore) CompactFederationHeartbeats(group string) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return 0, errStoreClosed
+	}
+	return s.compactFederationHeartbeatsLocked(group, "")
+}
+
+func (s *SQLiteStore) FederationHeartbeatCompactionStats(group string) (FederationHeartbeatCompactionStats, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return FederationHeartbeatCompactionStats{}, errStoreClosed
+	}
+	return s.federationHeartbeatCompactionStatsLocked(group)
+}
+
+func (s *SQLiteStore) compactFederationHeartbeatsLocked(group, dedupeKey string) (int64, error) {
+	if group != "" && dedupeKey != "" {
+		res, err := s.db.Exec(`
+			DELETE FROM federation_events
+			WHERE type = ?
+			  AND group_name = ?
+			  AND dedupe_key = ?
+			  AND id NOT IN (
+			    SELECT id
+			    FROM federation_events
+			    WHERE type = ?
+			      AND group_name = ?
+			      AND dedupe_key = ?
+			    ORDER BY observed_at DESC, recorded_at DESC, id DESC
+			    LIMIT 1
+			  )
+		`, mobilityHeartbeatEventType, group, dedupeKey, mobilityHeartbeatEventType, group, dedupeKey)
+		if err != nil {
+			return 0, fmt.Errorf("compact federation heartbeats: %w", err)
+		}
+		n, _ := res.RowsAffected()
+		return n, nil
+	}
+
+	where := `old.type = ? AND old.dedupe_key <> ''`
+	args := []any{mobilityHeartbeatEventType}
+	if group != "" {
+		where += ` AND old.group_name = ?`
+		args = append(args, group)
+	}
+	if dedupeKey != "" {
+		where += ` AND old.dedupe_key = ?`
+		args = append(args, dedupeKey)
+	}
+	query := fmt.Sprintf(`
+		DELETE FROM federation_events AS old
+		WHERE %s
+		  AND EXISTS (
+		    SELECT 1
+		    FROM federation_events AS newer
+		    WHERE newer.type = old.type
+		      AND newer.group_name = old.group_name
+		      AND newer.dedupe_key = old.dedupe_key
+		      AND (
+		        newer.observed_at > old.observed_at
+		        OR (newer.observed_at = old.observed_at AND newer.recorded_at > old.recorded_at)
+		        OR (newer.observed_at = old.observed_at AND newer.recorded_at = old.recorded_at AND newer.id > old.id)
+		      )
+		  )
+	`, where)
+	res, err := s.db.Exec(query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("compact federation heartbeats: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
+func (s *SQLiteStore) federationHeartbeatCompactionStatsLocked(group string) (FederationHeartbeatCompactionStats, error) {
+	query := `
+		SELECT group_name, dedupe_key, count(*)
+		FROM federation_events
+		WHERE type = ? AND dedupe_key <> ''
+	`
+	args := []any{mobilityHeartbeatEventType}
+	if group != "" {
+		query += ` AND group_name = ?`
+		args = append(args, group)
+	}
+	query += `
+		GROUP BY group_name, dedupe_key
+		HAVING count(*) > 1
+		ORDER BY group_name, dedupe_key
+	`
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return FederationHeartbeatCompactionStats{}, fmt.Errorf("inspect federation heartbeat compaction: %w", err)
+	}
+	defer rows.Close()
+	var stats FederationHeartbeatCompactionStats
+	for rows.Next() {
+		var groupName, key string
+		var count int64
+		if err := rows.Scan(&groupName, &key, &count); err != nil {
+			return FederationHeartbeatCompactionStats{}, fmt.Errorf("scan federation heartbeat compaction stats: %w", err)
+		}
+		stats.DuplicateRows += count - 1
+		stats.Keys = append(stats.Keys, groupName+"/"+key)
+	}
+	if err := rows.Err(); err != nil {
+		return FederationHeartbeatCompactionStats{}, fmt.Errorf("iterate federation heartbeat compaction stats: %w", err)
+	}
+	return stats, nil
+}
+
+func isCompactableMobilityHeartbeat(rec EventRecord) bool {
+	return rec.Type == mobilityHeartbeatEventType && strings.TrimSpace(rec.DedupeKey) != ""
+}
+
+func mobilityHeartbeatDedupeKey(rec EventRecord) (string, bool) {
+	if rec.Type != mobilityHeartbeatEventType {
+		return "", false
+	}
+	pool := strings.TrimSpace(rec.Payload["pool"])
+	node := strings.TrimSpace(rec.Payload["node"])
+	if pool == "" || node == "" {
+		subjectPool, subjectNode, ok := strings.Cut(strings.TrimSpace(rec.Subject), "/")
+		if ok && pool == "" {
+			pool = strings.TrimSpace(subjectPool)
+		}
+		if ok && node == "" {
+			node = strings.TrimSpace(subjectNode)
+		}
+	}
+	if node == "" {
+		node = strings.TrimSpace(rec.SourceNode)
+	}
+	if pool == "" || node == "" {
+		return "", false
+	}
+	return "mobility-heartbeat:" + pool + ":" + node, true
 }
 
 // ListFederationEvents returns federation events ordered by observed_at. When

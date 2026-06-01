@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"sort"
@@ -125,7 +126,7 @@ func TestDoctorDynamicHealthyMaskPolicyPasses(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
 		t.Fatalf("unmarshal doctor report: %v\n%s", err, out.String())
 	}
-	for _, name := range []string{"dynamic parts decode", "expired parts ignored", "effective config builds", "override policies present for masks"} {
+	for _, name := range []string{"dynamic parts decode", "expired parts ignored", "federation heartbeat compaction", "effective config builds", "override policies present for masks"} {
 		check := findDoctorCheck(t, report, name)
 		if check.Status != doctorPass {
 			t.Fatalf("%s check = %#v", name, check)
@@ -134,6 +135,40 @@ func TestDoctorDynamicHealthyMaskPolicyPasses(t *testing.T) {
 	if check := findDoctorCheck(t, report, "effective config builds"); !strings.Contains(check.Detail, "1 suppressed, 1 dynamic resources added") {
 		t.Fatalf("effective detail = %q", check.Detail)
 	}
+}
+
+func TestDoctorFederationHeartbeatCompactionCheckWarnsOnLag(t *testing.T) {
+	check := doctorFederationHeartbeatCompactionCheck(fakeHeartbeatCompactionStats{
+		stats: routerstate.FederationHeartbeatCompactionStats{
+			DuplicateRows: 3,
+			Keys:          []string{"cloudedge/mobility-heartbeat:cloudedge:aws-router"},
+		},
+	})
+	if check.Status != doctorWarn {
+		t.Fatalf("warning check = %#v", check)
+	}
+	if !strings.Contains(check.Detail, "3 duplicate") || !strings.Contains(check.Remedy, "compact") {
+		t.Fatalf("warning check detail/remedy = %#v", check)
+	}
+
+	check = doctorFederationHeartbeatCompactionCheck(fakeHeartbeatCompactionStats{})
+	if check.Status != doctorPass {
+		t.Fatalf("healthy check = %#v", check)
+	}
+
+	check = doctorFederationHeartbeatCompactionCheck(fakeHeartbeatCompactionStats{err: errors.New("boom")})
+	if check.Status != doctorWarn || !strings.Contains(check.Detail, "boom") {
+		t.Fatalf("error check = %#v", check)
+	}
+}
+
+type fakeHeartbeatCompactionStats struct {
+	stats routerstate.FederationHeartbeatCompactionStats
+	err   error
+}
+
+func (f fakeHeartbeatCompactionStats) FederationHeartbeatCompactionStats(string) (routerstate.FederationHeartbeatCompactionStats, error) {
+	return f.stats, f.err
 }
 
 func TestDoctorDynamicMaskWithoutPolicyFailsEffectiveBuild(t *testing.T) {

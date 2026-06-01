@@ -174,6 +174,7 @@ CREATE TABLE IF NOT EXISTS federation_events (
   recorded_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS federation_events_group ON federation_events(group_name, observed_at);
+CREATE INDEX IF NOT EXISTS federation_events_heartbeat_compact ON federation_events(type, group_name, dedupe_key, observed_at, recorded_at, id);
 CREATE TABLE IF NOT EXISTS event_deliveries (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   event_id TEXT NOT NULL,

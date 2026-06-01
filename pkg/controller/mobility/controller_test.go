@@ -4,6 +4,7 @@ package mobility
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -197,6 +198,62 @@ func TestControllerEmitsAutoFailoverHeartbeatForCloudSelf(t *testing.T) {
 	}
 }
 
+func TestOwnershipLivenessSurvivesCompactedHeartbeatStream(t *testing.T) {
+	base := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	store := testStore(t, base)
+	spec := centralizedOwnershipPoolSpec()
+	spec.IPOwnershipPolicy.AutoFailover = true
+	spec.IPOwnershipPolicy.HeartbeatInterval = "10s"
+	spec.IPOwnershipPolicy.HeartbeatTTL = "30s"
+	spec.IPOwnershipPolicy.PromotionHoldDuration = "20s"
+
+	for hour := 0; hour < 24; hour++ {
+		observed := base.Add(time.Duration(hour) * time.Hour)
+		recordEvent(t, store, routerstate.EventRecord{
+			ID:         fmt.Sprintf("hb-a-%02d", hour),
+			Group:      "cloudedge",
+			SourceNode: "azure-router-a",
+			Type:       HeartbeatEventType,
+			Subject:    "cloudedge/azure-router-a",
+			DedupeKey:  "mobility-heartbeat:cloudedge:azure-router-a",
+			Payload:    map[string]string{"pool": "cloudedge", "node": "azure-router-a", "seq": fmt.Sprint(hour)},
+			ObservedAt: observed,
+			RecordedAt: observed,
+		})
+	}
+	fresh := base.Add(25 * time.Hour)
+	recordEvent(t, store, routerstate.EventRecord{
+		ID:         "hb-b-fresh",
+		Group:      "cloudedge",
+		SourceNode: "azure-router-b",
+		Type:       HeartbeatEventType,
+		Subject:    "cloudedge/azure-router-b",
+		DedupeKey:  "mobility-heartbeat:cloudedge:azure-router-b",
+		Payload:    map[string]string{"pool": "cloudedge", "node": "azure-router-b"},
+		ObservedAt: fresh,
+		RecordedAt: fresh,
+	})
+
+	events, err := store.ListFederationEvents("cloudedge", true, fresh.Unix())
+	if err != nil {
+		t.Fatalf("ListFederationEvents: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("compacted heartbeat events = %d, want 2: ids=%v", len(events), idsOfEvents(events))
+	}
+	controller := Controller{Router: planningRouterForNode("azure-router-b", spec), Store: store, Now: func() time.Time { return fresh }}
+	view, err := controller.ownershipLiveness("cloudedge", spec, fresh)
+	if err != nil {
+		t.Fatalf("ownershipLiveness: %v", err)
+	}
+	if !view.StaleNodes["azure-router-a"] {
+		t.Fatalf("azure-router-a should remain stale after heartbeat compaction: %+v", view)
+	}
+	if view.StaleNodes["azure-router-b"] {
+		t.Fatalf("fresh router marked stale after heartbeat compaction: %+v", view)
+	}
+}
+
 func testStore(t *testing.T, now time.Time) *routerstate.SQLiteStore {
 	t.Helper()
 	_ = now
@@ -213,6 +270,14 @@ func recordEvent(t *testing.T, store *routerstate.SQLiteStore, rec routerstate.E
 	if err := store.RecordFederationEvent(rec); err != nil {
 		t.Fatalf("RecordFederationEvent: %v", err)
 	}
+}
+
+func idsOfEvents(events []routerstate.EventRecord) []string {
+	ids := make([]string, 0, len(events))
+	for _, ev := range events {
+		ids = append(ids, ev.ID)
+	}
+	return ids
 }
 
 func testRouter() *api.Router {
