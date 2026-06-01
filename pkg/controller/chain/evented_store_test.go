@@ -162,6 +162,155 @@ func TestEventedStoreDoesNotPublishTimestampOnlyStatusChange(t *testing.T) {
 	}
 }
 
+func TestEventedStoreDoesNotPublishMobilityTimestampOnlyStatusRefresh(t *testing.T) {
+	base := mapStore{
+		api.MobilityAPIVersion + "/MobilityPool/cloudedge": statusWithOwnership(api.MobilityAPIVersion, "MobilityPool", map[string]any{
+			"plannerPhase":       "Planned",
+			"phase":              "Projected",
+			"dynamicDigest":      "sha256:abc",
+			"generatedClaims":    1,
+			"generatedActions":   2,
+			"placementActive":    false,
+			"plannedAt":          "2026-06-01T10:00:00Z",
+			"projectedAt":        "2026-06-01T10:00:00Z",
+			"dynamicExpiresAt":   "2026-06-01T10:05:00Z",
+			"operatorIntent":     "MobilityPool",
+			"derivedConfigKinds": []string{"AddressMobilityDomain", "RemoteAddressClaim"},
+		}),
+	}
+	eventBus := bus.New()
+	resource := daemonapi.ResourceRef{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool", Name: "cloudedge"}
+	ch, cancel := eventBus.Subscribe(context.Background(), bus.Subscription{
+		Topics:   []string{"routerd.resource.status.changed"},
+		Resource: &resource,
+	}, 1)
+	defer cancel()
+
+	store := eventedStore{Store: base, Bus: eventBus}
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"plannerPhase":       "Planned",
+		"phase":              "Projected",
+		"dynamicDigest":      "sha256:abc",
+		"generatedClaims":    1,
+		"generatedActions":   2,
+		"placementActive":    false,
+		"plannedAt":          "2026-06-01T10:00:30Z",
+		"projectedAt":        "2026-06-01T10:00:30Z",
+		"dynamicExpiresAt":   "2026-06-01T10:05:30Z",
+		"operatorIntent":     "MobilityPool",
+		"derivedConfigKinds": []string{"AddressMobilityDomain", "RemoteAddressClaim"},
+	}); err != nil {
+		t.Fatalf("save mobility status refresh: %v", err)
+	}
+
+	select {
+	case event := <-ch:
+		t.Fatalf("unexpected mobility timestamp-only event: %#v", event)
+	case <-time.After(20 * time.Millisecond):
+	}
+	if got := base.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")["plannedAt"]; got != "2026-06-01T10:00:30Z" {
+		t.Fatalf("plannedAt was not persisted: %v", got)
+	}
+
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"plannerPhase":       "Planned",
+		"phase":              "Projected",
+		"dynamicDigest":      "sha256:def",
+		"generatedClaims":    1,
+		"generatedActions":   3,
+		"placementActive":    false,
+		"plannedAt":          "2026-06-01T10:01:00Z",
+		"projectedAt":        "2026-06-01T10:01:00Z",
+		"dynamicExpiresAt":   "2026-06-01T10:06:00Z",
+		"operatorIntent":     "MobilityPool",
+		"derivedConfigKinds": []string{"AddressMobilityDomain", "RemoteAddressClaim"},
+	}); err != nil {
+		t.Fatalf("save semantic mobility status: %v", err)
+	}
+
+	select {
+	case event := <-ch:
+		fields := event.Attributes["changedFields"]
+		if !strings.Contains(fields, "dynamicDigest") || !strings.Contains(fields, "generatedActions") {
+			t.Fatalf("changedFields = %q, want semantic fields", fields)
+		}
+		for _, volatile := range []string{"plannedAt", "projectedAt", "dynamicExpiresAt"} {
+			if strings.Contains(fields, volatile) {
+				t.Fatalf("changedFields = %q, should omit volatile %s", fields, volatile)
+			}
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for semantic mobility status event")
+	}
+}
+
+func TestMobilityStatusEventComparisonKeepsBehavioralFields(t *testing.T) {
+	current := map[string]any{
+		"phase":               "Projected",
+		"plannerPhase":        "Planned",
+		"owner":               "mobility",
+		"holder":              "azure-router-a",
+		"ownershipEpoch":      4,
+		"captureEpoch":        7,
+		"captureStatus":       "Captured",
+		"captureActive":       true,
+		"allowReassignment":   false,
+		"deliveryRoute":       "Installed",
+		"generatedActions":    1,
+		"plannedAt":           "2026-06-01T10:00:00Z",
+		"projectedAt":         "2026-06-01T10:00:00Z",
+		"dynamicExpiresAt":    "2026-06-01T10:05:00Z",
+		"streamMaxObservedAt": "2026-06-01T10:00:00Z",
+	}
+	for _, field := range []string{
+		"phase",
+		"plannerPhase",
+		"owner",
+		"holder",
+		"ownershipEpoch",
+		"captureEpoch",
+		"captureStatus",
+		"captureActive",
+		"allowReassignment",
+		"deliveryRoute",
+		"generatedActions",
+		"streamMaxObservedAt",
+	} {
+		next := map[string]any{}
+		for key, value := range current {
+			next[key] = value
+		}
+		next[field] = changedMobilityStatusValue(current[field])
+		if !statusChangedForEvent(api.MobilityAPIVersion, "MobilityPool", current, next) {
+			t.Fatalf("mobility status field %s must remain event-significant", field)
+		}
+	}
+
+	next := map[string]any{}
+	for key, value := range current {
+		next[key] = value
+	}
+	next["plannedAt"] = "2026-06-01T10:00:30Z"
+	next["projectedAt"] = "2026-06-01T10:00:30Z"
+	next["dynamicExpiresAt"] = "2026-06-01T10:05:30Z"
+	if statusChangedForEvent(api.MobilityAPIVersion, "MobilityPool", current, next) {
+		t.Fatalf("mobility timestamp-only refresh should not be event-significant")
+	}
+}
+
+func changedMobilityStatusValue(value any) any {
+	switch typed := value.(type) {
+	case bool:
+		return !typed
+	case int:
+		return typed + 1
+	case string:
+		return typed + "-changed"
+	default:
+		return "changed"
+	}
+}
+
 func TestStatusChangedIgnoresRuntimeTelemetry(t *testing.T) {
 	current := map[string]any{
 		"phase":               "Connected",

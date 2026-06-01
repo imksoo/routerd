@@ -100,11 +100,13 @@ func TestServeChainMobilityReemitsMarkerBackedUnassignUntilExecuted(t *testing.T
 	stop()
 
 	stop, eventBus := startMobilityServeChainWithBus(t, mobilityServeRouter(true), store)
+	drainStarted := time.Now()
 	drained := waitForMobilityPart(t, store, func(part routerstate.DynamicConfigPartRecord) bool {
 		return part.UpdatedAt.After(initial.UpdatedAt) &&
 			countServeKind(t, part.ResourcesJSON, "RemoteAddressClaim") == 0 &&
 			serveActionCount(t, part.ActionPlansJSON, "unassign-secondary-ip", "10.88.60.10/32") == 1
 	})
+	t.Logf("mobility marker-backed drain convergence latency=%s", time.Since(drainStarted))
 	if got := countServeMarkers(t, store); got != 2 {
 		t.Fatalf("first drain marker count = %d, want 2", got)
 	}
@@ -132,12 +134,14 @@ func TestServeChainMobilityReemitsMarkerBackedUnassignUntilExecuted(t *testing.T
 	importServeActions(t, store)
 	succeedServeAction(t, store, "unassign-secondary-ip", "10.88.60.10/32", now.Add(3*time.Second))
 	succeedServeAction(t, store, "ensure-forwarding-disabled", "10.88.60.10/32", now.Add(4*time.Second))
+	completionStarted := time.Now()
 	triggerMobilityReconcile(t, eventBus)
 	waitForMobilityPartUpdatedAfter(t, store, drained.UpdatedAt, func(part routerstate.DynamicConfigPartRecord) bool {
 		return countServeKind(t, part.ResourcesJSON, "RemoteAddressClaim") == 0 &&
 			!serveHasAction(t, part.ActionPlansJSON, "unassign-secondary-ip", "10.88.60.10/32")
 	})
 	waitForServeMarkers(t, store, 0)
+	t.Logf("mobility marker completion convergence latency=%s", time.Since(completionStarted))
 	stop()
 	if err := store.Close(); err != nil {
 		t.Fatalf("close store after marker test: %v", err)
