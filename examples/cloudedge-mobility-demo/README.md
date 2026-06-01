@@ -6,6 +6,10 @@ This example packages the live CloudEdge Mobility demo that exercised:
 - D5: AWS cloud-router maintenance drain with provider capture migration from
   router A to router B.
 
+> For an illustrated, conceptual walkthrough of what this demo shows (topology,
+> address design, data/control plane), see the how-to:
+> [`docs/how-to/cloudedge-mobility-demo.md`](../../docs/how-to/cloudedge-mobility-demo.md).
+
 The demo assumes the lab instances, NICs/VNICs, IAM/identity permissions, SSH,
 WireGuard keys, and provider CLIs are already prepared. The scripts here do not
 provision cloud resources.

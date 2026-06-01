@@ -1,6 +1,5 @@
 ---
 title: Selective Address Mobility
-slug: /reference/selective-address-mobility
 ---
 
 # Selective Address Mobility
