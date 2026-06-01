@@ -1298,27 +1298,27 @@ func TestDesiredOwnershipEpochsArbitratesPreferPriorityAndDrain(t *testing.T) {
 	spec.IPOwnershipPolicy.PreferNodes = []string{"azure-router-b", "azure-router-a"}
 	leases := []routerstate.AddressLeaseRecord{{
 		Pool:      "cloudedge",
-		Address:   "10.88.60.10/32",
+		Address:   "10.88.60.12/32",
 		Status:    routerstate.AddressLeaseStatusActive,
-		OwnerNode: "onprem-router",
-		OwnerSite: "onprem",
-		OwnerRole: "onprem",
+		OwnerNode: "azure-router-a",
+		OwnerSite: "azure",
+		OwnerRole: "cloud",
 		ExpiresAt: now.Add(time.Minute),
 	}}
 	rows, err := desiredOwnershipEpochs("cloudedge", spec, leases, OwnershipLiveness{}, now)
 	if err != nil {
 		t.Fatalf("desiredOwnershipEpochs: %v", err)
 	}
-	if len(rows) != 1 || rows[0].OwnerNode != "azure-router-b" {
-		t.Fatalf("ownership rows = %+v, want preferred router-b", rows)
+	if len(rows) != 1 || rows[0].OwnerNode != "azure-router-a" {
+		t.Fatalf("ownership rows = %+v, want home owner router-a", rows)
 	}
-	spec.Members[2].Maintenance.Drain = true
+	spec.Members[1].Maintenance.Drain = true
 	rows, err = desiredOwnershipEpochs("cloudedge", spec, leases, OwnershipLiveness{}, now)
 	if err != nil {
 		t.Fatalf("desiredOwnershipEpochs drained: %v", err)
 	}
-	if len(rows) != 1 || rows[0].OwnerNode != "azure-router-a" {
-		t.Fatalf("drained ownership rows = %+v, want router-a", rows)
+	if len(rows) != 1 || rows[0].OwnerNode != "azure-router-b" {
+		t.Fatalf("drained ownership rows = %+v, want standby router-b", rows)
 	}
 }
 
@@ -1345,12 +1345,12 @@ func TestDesiredOwnershipEpochsKeepsHoldingLeaseOwner(t *testing.T) {
 	if err != nil {
 		t.Fatalf("desiredOwnershipEpochs: %v", err)
 	}
-	if len(rows) != 1 || rows[0].OwnerNode != "azure-router-b" {
-		t.Fatalf("holding ownership rows = %+v, want current owner projection through preferred router-b", rows)
+	if len(rows) != 1 || rows[0].OwnerNode != "onprem-router" {
+		t.Fatalf("holding ownership rows = %+v, want current home owner projection", rows)
 	}
 }
 
-func TestDesiredOwnershipEpochsDistributesSamePriorityByAddress(t *testing.T) {
+func TestDesiredOwnershipEpochsKeepsHomeOwnerForManyAddresses(t *testing.T) {
 	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
 	spec := centralizedOwnershipPoolSpec()
 	spec.Members[1].Placement.Priority = 10
@@ -1371,12 +1371,10 @@ func TestDesiredOwnershipEpochsDistributesSamePriorityByAddress(t *testing.T) {
 	if err != nil {
 		t.Fatalf("desiredOwnershipEpochs: %v", err)
 	}
-	owners := map[string]bool{}
 	for _, row := range rows {
-		owners[row.OwnerNode] = true
-	}
-	if !owners["azure-router-a"] || !owners["azure-router-b"] {
-		t.Fatalf("ownership owners = %+v, want both routers represented", owners)
+		if row.OwnerNode != "onprem-router" {
+			t.Fatalf("ownership row = %+v, want home owner onprem-router", row)
+		}
 	}
 }
 
@@ -1390,11 +1388,11 @@ func TestDesiredOwnershipEpochsAutoFailoverUsesStreamRelativeLiveness(t *testing
 	spec.IPOwnershipPolicy.PreferNodes = []string{"azure-router-a", "azure-router-b"}
 	leases := []routerstate.AddressLeaseRecord{{
 		Pool:      "cloudedge",
-		Address:   "10.88.60.10/32",
+		Address:   "10.88.60.12/32",
 		Status:    routerstate.AddressLeaseStatusActive,
-		OwnerNode: "onprem-router",
-		OwnerSite: "onprem",
-		OwnerRole: "onprem",
+		OwnerNode: "azure-router-a",
+		OwnerSite: "azure",
+		OwnerRole: "cloud",
 		ExpiresAt: base.Add(time.Hour),
 	}}
 	fresh := OwnershipLiveness{StaleNodes: map[string]bool{}}
@@ -1403,7 +1401,7 @@ func TestDesiredOwnershipEpochsAutoFailoverUsesStreamRelativeLiveness(t *testing
 		t.Fatalf("desiredOwnershipEpochs fresh: %v", err)
 	}
 	if len(rows) != 1 || rows[0].OwnerNode != "azure-router-a" {
-		t.Fatalf("fresh rows = %+v, want preferred router-a", rows)
+		t.Fatalf("fresh rows = %+v, want home owner router-a", rows)
 	}
 	staleA := OwnershipLiveness{StaleNodes: map[string]bool{"azure-router-a": true}}
 	rows, err = desiredOwnershipEpochs("cloudedge", spec, leases, staleA, base.Add(30*time.Minute))
@@ -1419,7 +1417,49 @@ func TestDesiredOwnershipEpochsAutoFailoverUsesStreamRelativeLiveness(t *testing
 		t.Fatalf("desiredOwnershipEpochs disabled: %v", err)
 	}
 	if len(rows) != 1 || rows[0].OwnerNode != "azure-router-a" {
-		t.Fatalf("autoFailover=false rows = %+v, want router-a unchanged", rows)
+		t.Fatalf("autoFailover=false rows = %+v, want home owner unchanged", rows)
+	}
+}
+
+func TestCentralizedAutoFailoverFreshD3KeepsHomeOwnerAndNonOwnerCapture(t *testing.T) {
+	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	spec := plannedPoolSpec()
+	spec.IPOwnershipPolicy = api.MobilityIPOwnershipPolicy{
+		Type:                  "centralized",
+		AutoFailover:          true,
+		HeartbeatInterval:     "10s",
+		HeartbeatTTL:          "30s",
+		PromotionHoldDuration: "5s",
+	}
+	lease := routerstate.AddressLeaseRecord{
+		Pool:      "cloudedge",
+		Address:   "10.88.60.12/32",
+		Status:    routerstate.AddressLeaseStatusActive,
+		OwnerNode: "azure-router",
+		OwnerSite: "azure",
+		OwnerRole: "cloud",
+		ExpiresAt: now.Add(time.Minute),
+	}
+	ownership, err := desiredOwnershipEpochs("cloudedge", spec, []routerstate.AddressLeaseRecord{lease}, OwnershipLiveness{}, now)
+	if err != nil {
+		t.Fatalf("desiredOwnershipEpochs: %v", err)
+	}
+	if len(ownership) != 1 || ownership[0].OwnerNode != "azure-router" {
+		t.Fatalf("ownership = %+v, want cloud home owner azure-router", ownership)
+	}
+	out, err := PlanDynamicConfig(PlannerInput{
+		PoolName:        "cloudedge",
+		PoolSpec:        spec,
+		SelfNode:        "onprem-router",
+		Now:             now,
+		Leases:          []routerstate.AddressLeaseRecord{lease},
+		OwnershipEpochs: ownership,
+	})
+	if err != nil {
+		t.Fatalf("PlanDynamicConfig: %v", err)
+	}
+	if len(out.Claims) != 1 {
+		t.Fatalf("claims = %d, want non-owner onprem capture to remain in fresh D3", len(out.Claims))
 	}
 }
 
@@ -1490,11 +1530,11 @@ func TestPlanDynamicConfigSeizeActionOnStaleOwnerChange(t *testing.T) {
 	spec.IPOwnershipPolicy.PromotionHoldDuration = "0s"
 	lease := routerstate.AddressLeaseRecord{
 		Pool:      "cloudedge",
-		Address:   "10.88.60.10/32",
+		Address:   "10.88.60.12/32",
 		Status:    routerstate.AddressLeaseStatusActive,
-		OwnerNode: "onprem-router",
-		OwnerSite: "onprem",
-		OwnerRole: "onprem",
+		OwnerNode: "azure-router-a",
+		OwnerSite: "azure",
+		OwnerRole: "cloud",
 		Epoch:     1,
 		ExpiresAt: now.Add(time.Minute),
 	}
@@ -1506,13 +1546,13 @@ func TestPlanDynamicConfigSeizeActionOnStaleOwnerChange(t *testing.T) {
 		Leases:   []routerstate.AddressLeaseRecord{lease},
 		PreviousOwnership: []routerstate.MobilityOwnershipEpochRecord{{
 			Pool:      "cloudedge",
-			Address:   "10.88.60.10/32",
+			Address:   "10.88.60.12/32",
 			OwnerNode: "azure-router-a",
 			Epoch:     1,
 		}},
 		OwnershipEpochs: []routerstate.MobilityOwnershipEpochRecord{{
 			Pool:      "cloudedge",
-			Address:   "10.88.60.10/32",
+			Address:   "10.88.60.12/32",
 			OwnerNode: "azure-router-b",
 			Epoch:     2,
 		}},
@@ -1549,11 +1589,11 @@ func TestControllerKeepsSeizeAllowReassignmentUntilAssignSucceeds(t *testing.T) 
 	spec.IPOwnershipPolicy.PreferNodes = []string{"azure-router-a", "azure-router-b"}
 	lease := routerstate.AddressLeaseRecord{
 		Pool:      "cloudedge",
-		Address:   "10.88.60.10/32",
+		Address:   "10.88.60.12/32",
 		Status:    routerstate.AddressLeaseStatusActive,
-		OwnerNode: "onprem-router",
-		OwnerSite: "onprem",
-		OwnerRole: "onprem",
+		OwnerNode: "azure-router-a",
+		OwnerSite: "azure",
+		OwnerRole: "cloud",
 		Epoch:     1,
 		ExpiresAt: now.Add(time.Minute),
 	}
@@ -1562,7 +1602,7 @@ func TestControllerKeepsSeizeAllowReassignmentUntilAssignSucceeds(t *testing.T) 
 	}
 	if _, err := store.ReconcileMobilityOwnershipEpochs([]routerstate.MobilityOwnershipEpochRecord{{
 		Pool:      "cloudedge",
-		Address:   "10.88.60.10/32",
+		Address:   "10.88.60.12/32",
 		OwnerNode: "azure-router-a",
 	}}); err != nil {
 		t.Fatalf("seed ownership: %v", err)
@@ -1635,11 +1675,11 @@ func TestStaleOwnerExclusionBumpsOwnershipEpoch(t *testing.T) {
 	spec.IPOwnershipPolicy.PreferNodes = []string{"azure-router-a", "azure-router-b"}
 	lease := routerstate.AddressLeaseRecord{
 		Pool:      "cloudedge",
-		Address:   "10.88.60.10/32",
+		Address:   "10.88.60.12/32",
 		Status:    routerstate.AddressLeaseStatusActive,
-		OwnerNode: "onprem-router",
-		OwnerSite: "onprem",
-		OwnerRole: "onprem",
+		OwnerNode: "azure-router-a",
+		OwnerSite: "azure",
+		OwnerRole: "cloud",
 		ExpiresAt: now.Add(time.Minute),
 	}
 	initial, err := desiredOwnershipEpochs("cloudedge", spec, []routerstate.AddressLeaseRecord{lease}, OwnershipLiveness{}, now)
@@ -1701,33 +1741,45 @@ func TestDesiredCaptureEpochsAutoFailoverExcludesStalePlacementMember(t *testing
 	}
 }
 
-func TestPlanDynamicConfigCentralizedUsesOwnershipMap(t *testing.T) {
+func TestPlanDynamicConfigCentralizedUsesOwnershipMapForSameSiteSeize(t *testing.T) {
 	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
 	spec := centralizedOwnershipPoolSpec()
+	spec.IPOwnershipPolicy.AutoFailover = true
+	spec.IPOwnershipPolicy.HeartbeatInterval = "10s"
+	spec.IPOwnershipPolicy.HeartbeatTTL = "30s"
 	lease := routerstate.AddressLeaseRecord{
 		Pool:      "cloudedge",
-		Address:   "10.88.60.10/32",
+		Address:   "10.88.60.12/32",
 		Status:    routerstate.AddressLeaseStatusActive,
-		OwnerNode: "onprem-router",
-		OwnerSite: "onprem",
-		OwnerRole: "onprem",
+		OwnerNode: "azure-router-a",
+		OwnerSite: "azure",
+		OwnerRole: "cloud",
 		Epoch:     1,
 		ExpiresAt: now.Add(time.Minute),
 	}
+	previous := []routerstate.MobilityOwnershipEpochRecord{{
+		Pool:      "cloudedge",
+		Address:   "10.88.60.12/32",
+		OwnerNode: "azure-router-a",
+		Epoch:     6,
+	}}
 	ownership := []routerstate.MobilityOwnershipEpochRecord{{
 		Pool:      "cloudedge",
-		Address:   "10.88.60.10/32",
+		Address:   "10.88.60.12/32",
 		OwnerNode: "azure-router-b",
 		Epoch:     7,
 	}}
+	liveness := OwnershipLiveness{StaleNodes: map[string]bool{"azure-router-a": true}}
 	outA, err := PlanDynamicConfig(PlannerInput{
-		PoolName:         "cloudedge",
-		PoolSpec:         spec,
-		SelfNode:         "azure-router-a",
-		Now:              now,
-		Leases:           []routerstate.AddressLeaseRecord{lease},
-		OwnershipEpochs:  ownership,
-		ProviderProfiles: plannedProviderProfiles(),
+		PoolName:          "cloudedge",
+		PoolSpec:          spec,
+		SelfNode:          "azure-router-a",
+		Now:               now,
+		Leases:            []routerstate.AddressLeaseRecord{lease},
+		PreviousOwnership: previous,
+		OwnershipEpochs:   ownership,
+		Liveness:          liveness,
+		ProviderProfiles:  plannedProviderProfiles(),
 	})
 	if err != nil {
 		t.Fatalf("PlanDynamicConfig A: %v", err)
@@ -1736,13 +1788,15 @@ func TestPlanDynamicConfigCentralizedUsesOwnershipMap(t *testing.T) {
 		t.Fatalf("router-a claims/actions = %d/%+v, want no capture", len(outA.Claims), outA.ActionPlans)
 	}
 	outB, err := PlanDynamicConfig(PlannerInput{
-		PoolName:         "cloudedge",
-		PoolSpec:         spec,
-		SelfNode:         "azure-router-b",
-		Now:              now,
-		Leases:           []routerstate.AddressLeaseRecord{lease},
-		OwnershipEpochs:  ownership,
-		ProviderProfiles: plannedProviderProfiles(),
+		PoolName:          "cloudedge",
+		PoolSpec:          spec,
+		SelfNode:          "azure-router-b",
+		Now:               now,
+		Leases:            []routerstate.AddressLeaseRecord{lease},
+		PreviousOwnership: previous,
+		OwnershipEpochs:   ownership,
+		Liveness:          liveness,
+		ProviderProfiles:  plannedProviderProfiles(),
 	})
 	if err != nil {
 		t.Fatalf("PlanDynamicConfig B: %v", err)
