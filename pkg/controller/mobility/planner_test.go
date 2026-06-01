@@ -1463,6 +1463,90 @@ func TestCentralizedAutoFailoverFreshD3KeepsHomeOwnerAndNonOwnerCapture(t *testi
 	}
 }
 
+func TestCentralizedAutoFailoverAWSStaleOwnerSeizesStandby(t *testing.T) {
+	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	lease := awsFailoverLease(now)
+	ownership, err := desiredOwnershipEpochs("cloudedge", spec, []routerstate.AddressLeaseRecord{lease}, OwnershipLiveness{
+		StaleNodes: map[string]bool{"aws-router-a": true},
+	}, now)
+	if err != nil {
+		t.Fatalf("desiredOwnershipEpochs: %v", err)
+	}
+	if len(ownership) != 1 || ownership[0].OwnerNode != "aws-router-b" {
+		t.Fatalf("ownership = %+v, want aws-router-b to own stale aws-router-a lease", ownership)
+	}
+	if ownership[0].Epoch != 0 {
+		t.Fatalf("ownership epoch = %d, want desired rows to leave epoch assignment to store reconcile", ownership[0].Epoch)
+	}
+	out, err := PlanDynamicConfig(PlannerInput{
+		PoolName:          "cloudedge",
+		PoolSpec:          spec,
+		SelfNode:          "aws-router-b",
+		Now:               now,
+		Leases:            []routerstate.AddressLeaseRecord{lease},
+		PreviousOwnership: []routerstate.MobilityOwnershipEpochRecord{{Pool: "cloudedge", Address: lease.Address, OwnerNode: "aws-router-a", Epoch: 7}},
+		OwnershipEpochs:   []routerstate.MobilityOwnershipEpochRecord{{Pool: "cloudedge", Address: lease.Address, OwnerNode: "aws-router-b", Epoch: 8}},
+		CaptureEpochs:     []routerstate.MobilityCaptureEpochRecord{awsFailoverCaptureEpoch(lease.Address, "aws-router-b", 8)},
+		Liveness:          OwnershipLiveness{StaleNodes: map[string]bool{"aws-router-a": true}},
+		ProviderProfiles:  awsFailoverProviderProfiles(),
+	})
+	if err != nil {
+		t.Fatalf("PlanDynamicConfig: %v", err)
+	}
+	if len(out.Claims) != 1 {
+		t.Fatalf("claims = %d, want aws-router-b capture claim", len(out.Claims))
+	}
+	assign := findActionPlan(out.ActionPlans, "assign-secondary-ip")
+	if assign == nil {
+		t.Fatalf("missing assign action: %+v", out.ActionPlans)
+	}
+	if assign.Provider != "aws" || assign.Target["nicRef"] != "eni-b" || assign.Target["address"] != "10.88.60.11/32" {
+		t.Fatalf("assign = %+v, want aws router-b secondary IP assignment", assign)
+	}
+	if assign.Parameters["allowReassignment"] != "true" || assign.Parameters["mobilityOwnershipEpoch"] != "8" {
+		t.Fatalf("assign params = %+v, want allowReassignment with ownership epoch 8", assign.Parameters)
+	}
+	if assign.Parameters["mobilityCaptureHolder"] != "aws-router-b" {
+		t.Fatalf("assign params = %+v, want capture holder aws-router-b", assign.Parameters)
+	}
+}
+
+func TestCentralizedAutoFailoverAWSDrainOwnerSeizesStandby(t *testing.T) {
+	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	spec.Members[1].Maintenance.Drain = true
+	lease := awsFailoverLease(now)
+	ownership, err := desiredOwnershipEpochs("cloudedge", spec, []routerstate.AddressLeaseRecord{lease}, OwnershipLiveness{}, now)
+	if err != nil {
+		t.Fatalf("desiredOwnershipEpochs: %v", err)
+	}
+	if len(ownership) != 1 || ownership[0].OwnerNode != "aws-router-b" {
+		t.Fatalf("ownership = %+v, want aws-router-b to own drained aws-router-a lease", ownership)
+	}
+	out, err := PlanDynamicConfig(PlannerInput{
+		PoolName:          "cloudedge",
+		PoolSpec:          spec,
+		SelfNode:          "aws-router-b",
+		Now:               now,
+		Leases:            []routerstate.AddressLeaseRecord{lease},
+		PreviousOwnership: []routerstate.MobilityOwnershipEpochRecord{{Pool: "cloudedge", Address: lease.Address, OwnerNode: "aws-router-a", Epoch: 4}},
+		OwnershipEpochs:   []routerstate.MobilityOwnershipEpochRecord{{Pool: "cloudedge", Address: lease.Address, OwnerNode: "aws-router-b", Epoch: 5}},
+		CaptureEpochs:     []routerstate.MobilityCaptureEpochRecord{awsFailoverCaptureEpoch(lease.Address, "aws-router-b", 5)},
+		ProviderProfiles:  awsFailoverProviderProfiles(),
+	})
+	if err != nil {
+		t.Fatalf("PlanDynamicConfig: %v", err)
+	}
+	assign := findActionPlan(out.ActionPlans, "assign-secondary-ip")
+	if assign == nil {
+		t.Fatalf("missing assign action: %+v", out.ActionPlans)
+	}
+	if assign.Parameters["allowReassignment"] != "true" || assign.Parameters["mobilityOwnershipEpoch"] != "5" {
+		t.Fatalf("assign params = %+v, want drain-triggered seize with ownership epoch 5", assign.Parameters)
+	}
+}
+
 func TestOwnershipLivenessStreamRelativeIgnoresLocalClockAndPromotionHold(t *testing.T) {
 	streamBase := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
 	spec := centralizedOwnershipPoolSpec()
@@ -1917,6 +2001,74 @@ func centralizedOwnershipPoolSpec() api.MobilityPoolSpec {
 	return spec
 }
 
+func awsFailoverPoolSpec() api.MobilityPoolSpec {
+	spec := plannedPoolSpec()
+	spec.Members = []api.MobilityPoolMember{
+		spec.Members[0],
+		{
+			NodeRef: "aws-router-a",
+			Site:    "aws",
+			Role:    "cloud",
+			Capture: api.MobilityMemberCapture{
+				Type:         "provider-secondary-ip",
+				ProviderRef:  "aws-provider",
+				ProviderMode: "nic-secondary-ip",
+				NICRef:       "eni-a",
+				Target:       map[string]string{"region": "ap-northeast-1"},
+			},
+			Delivery:  api.MobilityMemberDelivery{PeerRef: "onprem", Mode: "route", TunnelInterface: "wg-hybrid"},
+			Placement: api.MobilityMemberPlacement{Group: "aws-edge", Priority: 10},
+		},
+		{
+			NodeRef: "aws-router-b",
+			Site:    "aws",
+			Role:    "cloud",
+			Capture: api.MobilityMemberCapture{
+				Type:         "provider-secondary-ip",
+				ProviderRef:  "aws-provider",
+				ProviderMode: "nic-secondary-ip",
+				NICRef:       "eni-b",
+				Target:       map[string]string{"region": "ap-northeast-1"},
+			},
+			Delivery:  api.MobilityMemberDelivery{PeerRef: "onprem", Mode: "route", TunnelInterface: "wg-hybrid"},
+			Placement: api.MobilityMemberPlacement{Group: "aws-edge", Priority: 20},
+		},
+	}
+	spec.IPOwnershipPolicy = api.MobilityIPOwnershipPolicy{
+		Type:                  "centralized",
+		AutoFailover:          true,
+		HeartbeatInterval:     "10s",
+		HeartbeatTTL:          "30s",
+		PromotionHoldDuration: "0s",
+	}
+	return spec
+}
+
+func awsFailoverLease(now time.Time) routerstate.AddressLeaseRecord {
+	return routerstate.AddressLeaseRecord{
+		Pool:      "cloudedge",
+		Address:   "10.88.60.11/32",
+		Status:    routerstate.AddressLeaseStatusActive,
+		OwnerNode: "aws-router-a",
+		OwnerSite: "aws",
+		OwnerRole: "cloud",
+		Epoch:     1,
+		ExpiresAt: now.Add(time.Minute),
+	}
+}
+
+func awsFailoverCaptureEpoch(address, holder string, epoch int64) routerstate.MobilityCaptureEpochRecord {
+	domain := "provider:aws-provider:placement:aws-edge"
+	return routerstate.MobilityCaptureEpochRecord{
+		CaptureKey:    captureEpochKey("cloudedge", address, domain),
+		Pool:          "cloudedge",
+		Address:       address,
+		CaptureDomain: domain,
+		Holder:        holder,
+		Epoch:         epoch,
+	}
+}
+
 func plannedProviderProfiles() map[string]api.CloudProviderProfileSpec {
 	return map[string]api.CloudProviderProfileSpec{
 		"azure-provider": {
@@ -1925,6 +2077,16 @@ func plannedProviderProfiles() map[string]api.CloudProviderProfileSpec {
 			ResourceGroup:  "rg-router",
 			Capabilities:   []string{"nic-secondary-ip", "ip-forwarding"},
 			Auth:           api.ProviderAuth{Mode: "external-command", Command: "az"},
+		},
+	}
+}
+
+func awsFailoverProviderProfiles() map[string]api.CloudProviderProfileSpec {
+	return map[string]api.CloudProviderProfileSpec{
+		"aws-provider": {
+			Provider:     "aws",
+			Capabilities: []string{"nic-secondary-ip", "ip-forwarding"},
+			Auth:         api.ProviderAuth{Mode: "external-command", Command: "aws"},
 		},
 	}
 }

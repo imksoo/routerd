@@ -145,10 +145,17 @@ func PlanDynamicConfig(in PlannerInput) (PlannerOutput, error) {
 		for _, lease := range sortedLeases(in.Leases) {
 			address := normalizeAddressString(lease.Address)
 			seizeOrigin, seize := seizeOriginOwner(address, self.NodeRef, in.PreviousOwnership, in.Liveness)
+			leaseOwner := members[strings.TrimSpace(lease.OwnerNode)]
+			if !seize {
+				if origin, ok := ownershipFailoverSeizeOrigin(address, self, leaseOwner, ownershipEpochs[address], in.PreviousOwnership, in.PoolSpec.IPOwnershipPolicy, in.Liveness); ok {
+					seizeOrigin = origin
+					seize = true
+				}
+			}
 			if centralizedOwnership && !seize {
 				seize = shouldMaintainSeizeIntent(poolName, address, self.NodeRef, ownershipEpochs[address], in.PreviousActionPlans, in.ActionJournal)
 			}
-			sameSiteCapture := seize || ownershipAllowsSameSiteCapture(self, members[strings.TrimSpace(lease.OwnerNode)], ownershipEpochs[address])
+			sameSiteCapture := seize || ownershipAllowsSameSiteCapture(self, leaseOwner, ownershipEpochs[address])
 			claim, actionPlans, leaseExpiresAt, ok, err := planLease(poolName, prefix, self, members, lease, in.ProviderProfiles, now, forwardingSeen, captureEpochs, actionOwnershipEpochs, sameSiteCapture, seize, preferredSource)
 			if err != nil {
 				return PlannerOutput{}, err
@@ -942,6 +949,24 @@ func ownershipAllowsSameSiteCapture(self, owner memberPlanInfo, current routerst
 		self.Site != "" &&
 		self.Site == owner.Site &&
 		strings.TrimSpace(current.OwnerNode) == self.NodeRef
+}
+
+func ownershipFailoverSeizeOrigin(address string, self, owner memberPlanInfo, current routerstate.MobilityOwnershipEpochRecord, previous []routerstate.MobilityOwnershipEpochRecord, policy api.MobilityIPOwnershipPolicy, liveness OwnershipLiveness) (string, bool) {
+	if !ownershipAllowsSameSiteCapture(self, owner, current) || !ownershipOwnerNeedsFailover(owner, policy, liveness.StaleNodes) {
+		return "", false
+	}
+	address = normalizeAddressString(address)
+	for _, rec := range previous {
+		if normalizeAddressString(rec.Address) != address {
+			continue
+		}
+		previousOwner := strings.TrimSpace(rec.OwnerNode)
+		if previousOwner != "" && previousOwner != self.NodeRef {
+			return previousOwner, true
+		}
+		return "", false
+	}
+	return "", false
 }
 
 func sortOwnershipCandidates(candidates []memberPlanInfo, address string, policy api.MobilityIPOwnershipPolicy) {
