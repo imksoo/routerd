@@ -201,17 +201,17 @@ func (s eventedStore) SaveObjectStatus(apiVersion, kind, name string, status map
 	if newerStatus(current, status) {
 		return nil
 	}
-	changed := statusChanged(current, status)
+	publishChanged := statusChangedForEvent(apiVersion, kind, current, status)
 	if err := s.Store.SaveObjectStatus(apiVersion, kind, name, status); err != nil {
 		return err
 	}
-	if changed && s.Bus != nil {
+	if publishChanged && s.Bus != nil {
 		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "store"}, "routerd.resource.status.changed", daemonapi.SeverityInfo)
 		event.Resource = &daemonapi.ResourceRef{APIVersion: apiVersion, Kind: kind, Name: name}
 		event.Attributes = map[string]string{
 			"phase":         fmt.Sprint(status["phase"]),
 			"previousPhase": fmt.Sprint(current["phase"]),
-			"changedFields": strings.Join(statusChangedFields(current, status), ","),
+			"changedFields": strings.Join(statusChangedFieldsForEvent(apiVersion, kind, current, status), ","),
 		}
 		return s.Bus.Publish(context.Background(), event)
 	}
@@ -464,6 +464,10 @@ func objectStatusChanged(kind string, current, next map[string]any) bool {
 func statusChangedFields(current, next map[string]any) []string {
 	currentStable := stableStatus(current)
 	nextStable := stableStatus(next)
+	return changedFields(currentStable, nextStable)
+}
+
+func changedFields(currentStable, nextStable map[string]any) []string {
 	keys := map[string]bool{}
 	for key := range currentStable {
 		keys[key] = true
@@ -479,6 +483,45 @@ func statusChangedFields(current, next map[string]any) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+func statusChangedForEvent(apiVersion, kind string, current, next map[string]any) bool {
+	currentStable := statusForEvent(apiVersion, kind, current)
+	nextStable := statusForEvent(apiVersion, kind, next)
+	currentData, currentErr := json.Marshal(currentStable)
+	nextData, nextErr := json.Marshal(nextStable)
+	if currentErr == nil && nextErr == nil {
+		return !bytes.Equal(currentData, nextData)
+	}
+	return !reflect.DeepEqual(currentStable, nextStable)
+}
+
+func statusChangedFieldsForEvent(apiVersion, kind string, current, next map[string]any) []string {
+	return changedFields(statusForEvent(apiVersion, kind, current), statusForEvent(apiVersion, kind, next))
+}
+
+func statusForEvent(apiVersion, kind string, status map[string]any) map[string]any {
+	stable := stableStatus(status)
+	if apiVersion != api.MobilityAPIVersion || kind != "MobilityPool" {
+		return stable
+	}
+	out := make(map[string]any, len(stable))
+	for key, value := range stable {
+		if mobilityStatusEventVolatileField(key) {
+			continue
+		}
+		out[key] = value
+	}
+	return out
+}
+
+func mobilityStatusEventVolatileField(key string) bool {
+	switch key {
+	case "plannedAt", "projectedAt", "dynamicExpiresAt":
+		return true
+	default:
+		return false
+	}
 }
 
 func stableStatus(status map[string]any) map[string]any {
