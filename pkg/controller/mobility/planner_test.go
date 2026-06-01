@@ -1463,7 +1463,7 @@ func TestCentralizedAutoFailoverFreshD3KeepsHomeOwnerAndNonOwnerCapture(t *testi
 	}
 }
 
-func TestCentralizedAutoFailoverAWSStaleOwnerSeizesStandby(t *testing.T) {
+func TestCentralizedAutoFailoverAWSStaleOwnerMovesOwnershipWithoutOwnSiteCapture(t *testing.T) {
 	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
 	spec := awsFailoverPoolSpec()
 	lease := awsFailoverLease(now)
@@ -1494,25 +1494,12 @@ func TestCentralizedAutoFailoverAWSStaleOwnerSeizesStandby(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PlanDynamicConfig: %v", err)
 	}
-	if len(out.Claims) != 1 {
-		t.Fatalf("claims = %d, want aws-router-b capture claim", len(out.Claims))
-	}
-	assign := findActionPlan(out.ActionPlans, "assign-secondary-ip")
-	if assign == nil {
-		t.Fatalf("missing assign action: %+v", out.ActionPlans)
-	}
-	if assign.Provider != "aws" || assign.Target["nicRef"] != "eni-b" || assign.Target["address"] != "10.88.60.11/32" {
-		t.Fatalf("assign = %+v, want aws router-b secondary IP assignment", assign)
-	}
-	if assign.Parameters["allowReassignment"] != "true" || assign.Parameters["mobilityOwnershipEpoch"] != "8" {
-		t.Fatalf("assign params = %+v, want allowReassignment with ownership epoch 8", assign.Parameters)
-	}
-	if assign.Parameters["mobilityCaptureHolder"] != "aws-router-b" {
-		t.Fatalf("assign params = %+v, want capture holder aws-router-b", assign.Parameters)
+	if len(out.Claims) != 0 || findActionPlan(out.ActionPlans, "assign-secondary-ip") != nil {
+		t.Fatalf("claims/actions = %d/%+v, want own-site aws .11 to remain local, not provider-captured", len(out.Claims), out.ActionPlans)
 	}
 }
 
-func TestCentralizedAutoFailoverAWSDrainOwnerSeizesStandby(t *testing.T) {
+func TestCentralizedAutoFailoverAWSDrainOwnerMovesOwnershipWithoutOwnSiteCapture(t *testing.T) {
 	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
 	spec := awsFailoverPoolSpec()
 	spec.Members[1].Maintenance.Drain = true
@@ -1538,12 +1525,56 @@ func TestCentralizedAutoFailoverAWSDrainOwnerSeizesStandby(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PlanDynamicConfig: %v", err)
 	}
-	assign := findActionPlan(out.ActionPlans, "assign-secondary-ip")
-	if assign == nil {
-		t.Fatalf("missing assign action: %+v", out.ActionPlans)
+	if len(out.Claims) != 0 || findActionPlan(out.ActionPlans, "assign-secondary-ip") != nil {
+		t.Fatalf("claims/actions = %d/%+v, want drained own-site aws .11 to remain local, not provider-captured", len(out.Claims), out.ActionPlans)
 	}
-	if assign.Parameters["allowReassignment"] != "true" || assign.Parameters["mobilityOwnershipEpoch"] != "5" {
-		t.Fatalf("assign params = %+v, want drain-triggered seize with ownership epoch 5", assign.Parameters)
+}
+
+func TestCapturePlacementFailoverAWSDrainSeizesNonOwnerCapturesOnly(t *testing.T) {
+	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	spec.Members[1].Maintenance.Drain = true
+	leases := awsFailoverLeases(now)
+	previous := []routerstate.MobilityCaptureEpochRecord{
+		awsFailoverCaptureEpoch("10.88.60.10/32", "aws-router-a", 4),
+		awsFailoverCaptureEpoch("10.88.60.12/32", "aws-router-a", 4),
+		awsFailoverCaptureEpoch("10.88.60.13/32", "aws-router-a", 4),
+	}
+	current := []routerstate.MobilityCaptureEpochRecord{
+		awsFailoverCaptureEpoch("10.88.60.10/32", "aws-router-b", 5),
+		awsFailoverCaptureEpoch("10.88.60.12/32", "aws-router-b", 5),
+		awsFailoverCaptureEpoch("10.88.60.13/32", "aws-router-b", 5),
+	}
+	out, err := PlanDynamicConfig(PlannerInput{
+		PoolName:              "cloudedge",
+		PoolSpec:              spec,
+		SelfNode:              "aws-router-b",
+		Now:                   now,
+		Leases:                leases,
+		CaptureEpochs:         current,
+		PreviousCaptureEpochs: previous,
+		ProviderProfiles:      awsFailoverProviderProfiles(),
+	})
+	if err != nil {
+		t.Fatalf("PlanDynamicConfig: %v", err)
+	}
+	if len(out.Claims) != 3 {
+		t.Fatalf("claims = %d, want captures for .10/.12/.13 only", len(out.Claims))
+	}
+	for _, address := range []string{"10.88.60.10/32", "10.88.60.12/32", "10.88.60.13/32"} {
+		assign := findActionPlanByAddress(out.ActionPlans, "assign-secondary-ip", address)
+		if assign == nil {
+			t.Fatalf("missing assign for %s in %+v", address, out.ActionPlans)
+		}
+		if assign.Parameters["allowReassignment"] != "true" || assign.Parameters["mobilityCaptureHolder"] != "aws-router-b" || assign.Parameters["mobilityCaptureEpoch"] != "5" {
+			t.Fatalf("assign %s params = %+v, want capture takeover", address, assign.Parameters)
+		}
+		if assign.Target["nicRef"] != "eni-b" {
+			t.Fatalf("assign %s target = %+v, want eni-b", address, assign.Target)
+		}
+	}
+	if assign := findActionPlanByAddress(out.ActionPlans, "assign-secondary-ip", "10.88.60.11/32"); assign != nil {
+		t.Fatalf("unexpected own-site .11 assign: %+v", assign)
 	}
 }
 
@@ -1605,7 +1636,7 @@ func TestOwnershipLivenessStreamRelativeIgnoresLocalClockAndPromotionHold(t *tes
 	}
 }
 
-func TestPlanDynamicConfigSeizeActionOnStaleOwnerChange(t *testing.T) {
+func TestPlanDynamicConfigSkipsOwnSiteCaptureOnStaleOwnerChange(t *testing.T) {
 	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
 	spec := centralizedOwnershipPoolSpec()
 	spec.IPOwnershipPolicy.AutoFailover = true
@@ -1646,90 +1677,78 @@ func TestPlanDynamicConfigSeizeActionOnStaleOwnerChange(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PlanDynamicConfig: %v", err)
 	}
-	assign := findActionPlan(out.ActionPlans, "assign-secondary-ip")
-	if assign == nil {
-		t.Fatalf("missing assign action: %+v", out.ActionPlans)
-	}
-	if assign.Parameters["allowReassignment"] != "true" || assign.Parameters["mobilityOwnershipEpoch"] != "2" {
-		t.Fatalf("assign params = %+v, want allowReassignment + ownership epoch", assign.Parameters)
-	}
-	if assign.Target["selfNicName"] != "router-nic-b" || assign.Target["displacedNicName"] != "router-nic-a" || assign.Target["displacedIpConfigName"] != "capture-a" {
-		t.Fatalf("assign azure seize target = %+v, want self/displaced NIC enrichment", assign.Target)
-	}
-	if assign.RiskLevel != "high" || !strings.Contains(assign.Description, "Seize/reassign") {
-		t.Fatalf("assign description/risk = %q/%q", assign.Description, assign.RiskLevel)
+	if len(out.Claims) != 0 || findActionPlan(out.ActionPlans, "assign-secondary-ip") != nil {
+		t.Fatalf("claims/actions = %d/%+v, want own-site address to stay local despite ownership failover", len(out.Claims), out.ActionPlans)
 	}
 }
 
-func TestControllerKeepsSeizeAllowReassignmentUntilAssignSucceeds(t *testing.T) {
+func TestControllerKeepsCaptureTakeoverAllowReassignmentUntilAssignSucceeds(t *testing.T) {
 	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
 	store := testStore(t, now)
 	defer store.Close()
-	spec := centralizedOwnershipPoolSpec()
+	spec := awsFailoverPoolSpec()
 	spec.IPOwnershipPolicy.AutoFailover = true
 	spec.IPOwnershipPolicy.HeartbeatInterval = "10s"
 	spec.IPOwnershipPolicy.HeartbeatTTL = "30s"
 	spec.IPOwnershipPolicy.PromotionHoldDuration = "0s"
-	spec.IPOwnershipPolicy.PreferNodes = []string{"azure-router-a", "azure-router-b"}
 	lease := routerstate.AddressLeaseRecord{
 		Pool:      "cloudedge",
-		Address:   "10.88.60.12/32",
+		Address:   "10.88.60.10/32",
 		Status:    routerstate.AddressLeaseStatusActive,
-		OwnerNode: "azure-router-a",
-		OwnerSite: "azure",
-		OwnerRole: "cloud",
+		OwnerNode: "onprem-router",
+		OwnerSite: "onprem",
+		OwnerRole: "onprem",
 		Epoch:     1,
 		ExpiresAt: now.Add(time.Minute),
 	}
 	if err := store.UpsertAddressLease(lease); err != nil {
 		t.Fatalf("UpsertAddressLease: %v", err)
 	}
-	if _, err := store.ReconcileMobilityOwnershipEpochs([]routerstate.MobilityOwnershipEpochRecord{{
-		Pool:      "cloudedge",
-		Address:   "10.88.60.12/32",
-		OwnerNode: "azure-router-a",
-	}}); err != nil {
-		t.Fatalf("seed ownership: %v", err)
+	if _, err := store.ReconcileMobilityCaptureEpochs([]routerstate.MobilityCaptureEpochRecord{
+		awsFailoverCaptureEpoch("10.88.60.10/32", "aws-router-a", 0),
+	}); err != nil {
+		t.Fatalf("seed capture epoch: %v", err)
 	}
 	recordEvent(t, store, routerstate.EventRecord{
 		ID:         "heartbeat-a",
 		Group:      "cloudedge",
-		SourceNode: "azure-router-a",
+		SourceNode: "aws-router-a",
 		Type:       HeartbeatEventType,
-		Payload:    map[string]string{"pool": "cloudedge", "node": "azure-router-a"},
+		Payload:    map[string]string{"pool": "cloudedge", "node": "aws-router-a"},
 		ObservedAt: now.Add(-time.Minute),
 	})
 	recordEvent(t, store, routerstate.EventRecord{
 		ID:         "stream-advance",
 		Group:      "cloudedge",
-		SourceNode: "azure-router-b",
+		SourceNode: "aws-router-b",
 		Type:       "routerd.test.advance",
 		ObservedAt: now,
 	})
-	router := planningRouterForNode("azure-router-b", spec)
+	router := planningRouterForNode("aws-router-b", spec)
 	controller := Controller{Router: router, Store: store, Now: func() time.Time { return now }}
 	pool := router.Spec.Resources[1]
 	if err := controller.reconcilePlan(pool, now); err != nil {
 		t.Fatalf("tick1 reconcilePlan: %v", err)
 	}
-	tick1Assign := findActionPlan(decodeActionPlans(t, latestPart(t, store, DynamicSource("cloudedge", "azure-router-b")).ActionPlansJSON), "assign-secondary-ip")
-	if tick1Assign == nil || tick1Assign.Parameters["allowReassignment"] != "true" || tick1Assign.Parameters["mobilityOwnershipEpoch"] != "2" {
-		t.Fatalf("tick1 assign = %+v, want seize allowReassignment at ownership epoch 2", tick1Assign)
+	source := DynamicSource("cloudedge", "aws-router-b")
+	tick1Assign := findActionPlanByAddress(decodeActionPlans(t, latestPart(t, store, source).ActionPlansJSON), "assign-secondary-ip", "10.88.60.10/32")
+	if tick1Assign == nil || tick1Assign.Parameters["allowReassignment"] != "true" || tick1Assign.Parameters["mobilityCaptureEpoch"] != "2" {
+		t.Fatalf("tick1 assign = %+v, want capture takeover allowReassignment at capture epoch 2", tick1Assign)
 	}
-	if tick1Assign.Parameters["mobilityCaptureHolder"] != "azure-router-b" {
-		t.Fatalf("tick1 capture holder = %+v, want liveness-aware holder azure-router-b", tick1Assign.Parameters)
+	if tick1Assign.Parameters["mobilityCaptureHolder"] != "aws-router-b" {
+		t.Fatalf("tick1 capture holder = %+v, want liveness-aware holder aws-router-b", tick1Assign.Parameters)
 	}
 
 	controller.Now = func() time.Time { return now.Add(time.Second) }
 	if err := controller.reconcilePlan(pool, now.Add(time.Second)); err != nil {
 		t.Fatalf("tick2 reconcilePlan: %v", err)
 	}
-	tick2Assign := findActionPlan(decodeActionPlans(t, latestPart(t, store, DynamicSource("cloudedge", "azure-router-b")).ActionPlansJSON), "assign-secondary-ip")
-	if tick2Assign == nil || tick2Assign.Parameters["allowReassignment"] != "true" || tick2Assign.Parameters["mobilityOwnershipEpoch"] != "2" {
-		t.Fatalf("tick2 assign = %+v, want seize allowReassignment to survive plan regeneration before execution", tick2Assign)
+	tick2Assign := findActionPlanByAddress(decodeActionPlans(t, latestPart(t, store, source).ActionPlansJSON), "assign-secondary-ip", "10.88.60.10/32")
+	if tick2Assign == nil || tick2Assign.Parameters["allowReassignment"] != "true" || tick2Assign.Parameters["mobilityCaptureEpoch"] != "2" {
+		t.Fatalf("tick2 assign = %+v, want capture takeover allowReassignment to survive plan regeneration before execution", tick2Assign)
 	}
 
-	id, err := importApprovedAction(t, tick2Assign, DynamicSource("cloudedge", "azure-router-b"), store, now.Add(2*time.Second))
+	id, err := importApprovedAction(t, tick2Assign, source, store, now.Add(2*time.Second))
 	if err != nil {
 		t.Fatalf("import approved action: %v", err)
 	}
@@ -1740,7 +1759,7 @@ func TestControllerKeepsSeizeAllowReassignmentUntilAssignSucceeds(t *testing.T) 
 	if err := controller.reconcilePlan(pool, now.Add(4*time.Second)); err != nil {
 		t.Fatalf("tick3 reconcilePlan: %v", err)
 	}
-	tick3Assign := findActionPlan(decodeActionPlans(t, latestPart(t, store, DynamicSource("cloudedge", "azure-router-b")).ActionPlansJSON), "assign-secondary-ip")
+	tick3Assign := findActionPlanByAddress(decodeActionPlans(t, latestPart(t, store, source).ActionPlansJSON), "assign-secondary-ip", "10.88.60.10/32")
 	if tick3Assign == nil {
 		t.Fatalf("tick3 missing assign action")
 	}
@@ -1825,7 +1844,7 @@ func TestDesiredCaptureEpochsAutoFailoverExcludesStalePlacementMember(t *testing
 	}
 }
 
-func TestPlanDynamicConfigCentralizedUsesOwnershipMapForSameSiteSeize(t *testing.T) {
+func TestPlanDynamicConfigCentralizedOwnershipMapDoesNotCaptureOwnSite(t *testing.T) {
 	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
 	spec := centralizedOwnershipPoolSpec()
 	spec.IPOwnershipPolicy.AutoFailover = true
@@ -1885,15 +1904,8 @@ func TestPlanDynamicConfigCentralizedUsesOwnershipMapForSameSiteSeize(t *testing
 	if err != nil {
 		t.Fatalf("PlanDynamicConfig B: %v", err)
 	}
-	if len(outB.Claims) != 1 || findActionPlan(outB.ActionPlans, "assign-secondary-ip") == nil {
-		t.Fatalf("router-b claims/actions = %d/%+v, want capture", len(outB.Claims), outB.ActionPlans)
-	}
-	assign := findActionPlan(outB.ActionPlans, "assign-secondary-ip")
-	if assign.Parameters["mobilityOwnershipEpoch"] != "7" || !strings.Contains(assign.IdempotencyKey, ":owner:azure-router-b:ownership-epoch:7") {
-		t.Fatalf("assign ownership fence = key %q params %+v", assign.IdempotencyKey, assign.Parameters)
-	}
-	if got := outB.Claims[0].Metadata.Annotations["mobility.routerd.net/ownership-epoch"]; got != "7" {
-		t.Fatalf("claim ownership epoch annotation = %q, want 7", got)
+	if len(outB.Claims) != 0 || findActionPlan(outB.ActionPlans, "assign-secondary-ip") != nil {
+		t.Fatalf("router-b claims/actions = %d/%+v, want no own-site provider capture", len(outB.Claims), outB.ActionPlans)
 	}
 }
 
@@ -2033,6 +2045,20 @@ func awsFailoverPoolSpec() api.MobilityPoolSpec {
 			Delivery:  api.MobilityMemberDelivery{PeerRef: "onprem", Mode: "route", TunnelInterface: "wg-hybrid"},
 			Placement: api.MobilityMemberPlacement{Group: "aws-edge", Priority: 20},
 		},
+		{
+			NodeRef:  "azure-router",
+			Site:     "azure",
+			Role:     "cloud",
+			Capture:  api.MobilityMemberCapture{Type: "provider-secondary-ip", ProviderRef: "azure-provider", ProviderMode: "nic-secondary-ip", NICRef: "azure-nic"},
+			Delivery: api.MobilityMemberDelivery{PeerRef: "onprem", Mode: "route", TunnelInterface: "wg-hybrid"},
+		},
+		{
+			NodeRef:  "oci-router",
+			Site:     "oci",
+			Role:     "cloud",
+			Capture:  api.MobilityMemberCapture{Type: "provider-secondary-ip", ProviderRef: "oci-provider", ProviderMode: "vnic-secondary-ip", NICRef: "oci-vnic"},
+			Delivery: api.MobilityMemberDelivery{PeerRef: "onprem", Mode: "route", TunnelInterface: "wg-hybrid"},
+		},
 	}
 	spec.IPOwnershipPolicy = api.MobilityIPOwnershipPolicy{
 		Type:                  "centralized",
@@ -2054,6 +2080,42 @@ func awsFailoverLease(now time.Time) routerstate.AddressLeaseRecord {
 		OwnerRole: "cloud",
 		Epoch:     1,
 		ExpiresAt: now.Add(time.Minute),
+	}
+}
+
+func awsFailoverLeases(now time.Time) []routerstate.AddressLeaseRecord {
+	return []routerstate.AddressLeaseRecord{
+		{
+			Pool:      "cloudedge",
+			Address:   "10.88.60.10/32",
+			Status:    routerstate.AddressLeaseStatusActive,
+			OwnerNode: "onprem-router",
+			OwnerSite: "onprem",
+			OwnerRole: "onprem",
+			Epoch:     1,
+			ExpiresAt: now.Add(time.Minute),
+		},
+		awsFailoverLease(now),
+		{
+			Pool:      "cloudedge",
+			Address:   "10.88.60.12/32",
+			Status:    routerstate.AddressLeaseStatusActive,
+			OwnerNode: "azure-router",
+			OwnerSite: "azure",
+			OwnerRole: "cloud",
+			Epoch:     1,
+			ExpiresAt: now.Add(time.Minute),
+		},
+		{
+			Pool:      "cloudedge",
+			Address:   "10.88.60.13/32",
+			Status:    routerstate.AddressLeaseStatusActive,
+			OwnerNode: "oci-router",
+			OwnerSite: "oci",
+			OwnerRole: "cloud",
+			Epoch:     1,
+			ExpiresAt: now.Add(time.Minute),
+		},
 	}
 }
 
@@ -2164,6 +2226,15 @@ func planningRouterForNode(nodeName string, spec api.MobilityPoolSpec) *api.Rout
 					Auth:           api.ProviderAuth{Mode: "external-command", Command: "az"},
 				},
 			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "CloudProviderProfile"},
+				Metadata: api.ObjectMeta{Name: "aws-provider"},
+				Spec: api.CloudProviderProfileSpec{
+					Provider:     "aws",
+					Capabilities: []string{"nic-secondary-ip", "ip-forwarding"},
+					Auth:         api.ProviderAuth{Mode: "external-command", Command: "aws"},
+				},
+			},
 		}},
 	}
 }
@@ -2185,6 +2256,15 @@ func latestPart(t *testing.T, store interface {
 func findActionPlan(plans []dynamicconfig.ActionPlan, action string) *dynamicconfig.ActionPlan {
 	for i := range plans {
 		if plans[i].Action == action {
+			return &plans[i]
+		}
+	}
+	return nil
+}
+
+func findActionPlanByAddress(plans []dynamicconfig.ActionPlan, action, address string) *dynamicconfig.ActionPlan {
+	for i := range plans {
+		if plans[i].Action == action && plans[i].Target["address"] == address {
 			return &plans[i]
 		}
 	}

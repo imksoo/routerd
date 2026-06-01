@@ -83,6 +83,7 @@ type mobilityDataStore interface {
 	UpsertAddressLease(routerstate.AddressLeaseRecord) error
 	ListAddressLeases(pool string, includeExpired bool, now time.Time) ([]routerstate.AddressLeaseRecord, error)
 	ReconcileMobilityCaptureEpochs([]routerstate.MobilityCaptureEpochRecord) ([]routerstate.MobilityCaptureEpochRecord, error)
+	GetMobilityCaptureEpoch(key string) (routerstate.MobilityCaptureEpochRecord, bool, error)
 	ReconcileMobilityOwnershipEpochs([]routerstate.MobilityOwnershipEpochRecord) ([]routerstate.MobilityOwnershipEpochRecord, error)
 	ListMobilityOwnershipEpochs(pool string) ([]routerstate.MobilityOwnershipEpochRecord, error)
 	UpsertDynamicConfigPart(routerstate.DynamicConfigPartRecord) error
@@ -124,6 +125,10 @@ func (s mobilityStore) ListAddressLeases(pool string, includeExpired bool, now t
 
 func (s mobilityStore) ReconcileMobilityCaptureEpochs(desired []routerstate.MobilityCaptureEpochRecord) ([]routerstate.MobilityCaptureEpochRecord, error) {
 	return s.data.ReconcileMobilityCaptureEpochs(desired)
+}
+
+func (s mobilityStore) GetMobilityCaptureEpoch(key string) (routerstate.MobilityCaptureEpochRecord, bool, error) {
+	return s.data.GetMobilityCaptureEpoch(key)
 }
 
 func (s mobilityStore) ReconcileMobilityOwnershipEpochs(desired []routerstate.MobilityOwnershipEpochRecord) ([]routerstate.MobilityOwnershipEpochRecord, error) {
