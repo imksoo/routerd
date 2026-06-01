@@ -168,6 +168,58 @@ func TestPlanDynamicConfigAnnotatesUniqueSelfOwnerPreferredSource(t *testing.T) 
 	}
 }
 
+func TestPlanDynamicConfigSkipsPreferredSourceWhenProviderCaptureDoesNotConfigureOSAddress(t *testing.T) {
+	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	out, err := PlanDynamicConfig(PlannerInput{
+		PoolName: "cloudedge",
+		PoolSpec: plannedPoolSpec(),
+		SelfNode: "azure-router",
+		Now:      now,
+		Leases: []routerstate.AddressLeaseRecord{
+			{Pool: "cloudedge", Address: "10.88.60.12/32", Status: routerstate.AddressLeaseStatusActive, OwnerNode: "azure-router", OwnerSite: "azure", OwnerRole: "cloud", Epoch: 1, ExpiresAt: now.Add(time.Minute)},
+			{Pool: "cloudedge", Address: "10.88.60.10/32", Status: routerstate.AddressLeaseStatusActive, OwnerNode: "onprem-router", OwnerSite: "onprem", OwnerRole: "onprem", Epoch: 1, ExpiresAt: now.Add(time.Minute)},
+		},
+		ProviderProfiles: plannedProviderProfiles(),
+	})
+	if err != nil {
+		t.Fatalf("PlanDynamicConfig: %v", err)
+	}
+	claim := firstKind(out.Part.Spec.Resources, "RemoteAddressClaim")
+	if claim.Kind == "" {
+		t.Fatalf("missing RemoteAddressClaim in %+v", out.Part.Spec.Resources)
+	}
+	if got := claim.Metadata.Annotations[sam.DeliveryPreferredSourceAnnotation]; got != "" {
+		t.Fatalf("preferred source annotation = %q, want empty when provider capture does not configure OS address", got)
+	}
+}
+
+func TestPlanDynamicConfigAnnotatesPreferredSourceWhenProviderCaptureConfiguresOSAddress(t *testing.T) {
+	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	spec := plannedPoolSpec()
+	spec.Members[1].Capture.ConfigureOSAddress = true
+	out, err := PlanDynamicConfig(PlannerInput{
+		PoolName: "cloudedge",
+		PoolSpec: spec,
+		SelfNode: "azure-router",
+		Now:      now,
+		Leases: []routerstate.AddressLeaseRecord{
+			{Pool: "cloudedge", Address: "10.88.60.12/32", Status: routerstate.AddressLeaseStatusActive, OwnerNode: "azure-router", OwnerSite: "azure", OwnerRole: "cloud", Epoch: 1, ExpiresAt: now.Add(time.Minute)},
+			{Pool: "cloudedge", Address: "10.88.60.10/32", Status: routerstate.AddressLeaseStatusActive, OwnerNode: "onprem-router", OwnerSite: "onprem", OwnerRole: "onprem", Epoch: 1, ExpiresAt: now.Add(time.Minute)},
+		},
+		ProviderProfiles: plannedProviderProfiles(),
+	})
+	if err != nil {
+		t.Fatalf("PlanDynamicConfig: %v", err)
+	}
+	claim := firstKind(out.Part.Spec.Resources, "RemoteAddressClaim")
+	if claim.Kind == "" {
+		t.Fatalf("missing RemoteAddressClaim in %+v", out.Part.Spec.Resources)
+	}
+	if got := claim.Metadata.Annotations[sam.DeliveryPreferredSourceAnnotation]; got != "10.88.60.12" {
+		t.Fatalf("preferred source annotation = %q, want 10.88.60.12", got)
+	}
+}
+
 func TestPlanDynamicConfigSkipsPreferredSourceWhenSelfOwnsMultipleAddresses(t *testing.T) {
 	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
 	out, err := PlanDynamicConfig(PlannerInput{

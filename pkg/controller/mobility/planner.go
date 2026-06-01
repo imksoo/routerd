@@ -1233,6 +1233,9 @@ func sortedLeases(leases []routerstate.AddressLeaseRecord) []routerstate.Address
 }
 
 func uniqueSelfOwnerPreferredSource(poolName string, prefix netip.Prefix, self memberPlanInfo, leases []routerstate.AddressLeaseRecord, now time.Time) string {
+	if !selfOwnerAddressMayBeLocalOS(self) {
+		return ""
+	}
 	seen := ""
 	for _, lease := range leases {
 		if lease.Pool != poolName || lease.Status != routerstate.AddressLeaseStatusActive {
@@ -1258,6 +1261,17 @@ func uniqueSelfOwnerPreferredSource(poolName string, prefix netip.Prefix, self m
 		seen = pfx.Addr().String()
 	}
 	return seen
+}
+
+func selfOwnerAddressMayBeLocalOS(self memberPlanInfo) bool {
+	switch strings.TrimSpace(self.Capture.Type) {
+	case "provider-secondary-ip":
+		return self.Capture.ConfigureOSAddress
+	case "proxy-arp":
+		return true
+	default:
+		return false
+	}
 }
 
 func domainResource(poolName string, spec api.MobilityPoolSpec, self memberPlanInfo) api.Resource {
