@@ -206,7 +206,8 @@ func dispatch(ctx context.Context, req executeActionRequest, runner ociRunner) e
 
 // assignSecondaryIP attaches the captured /32 to the VNIC.
 //   - dry-run: get the VNIC (read-only), report "would assign".
-//   - execute: network private-ip create on the VNIC.
+//   - execute: network private-ip create on the VNIC, or vnic assign-private-ip
+//     with force reassignment when allowReassignment is set.
 func assignSecondaryIP(ctx context.Context, spec executeActionRequestSpec, mode string, runner ociRunner) executeActionResult {
 	vnic, address, err := requireTarget(spec, true)
 	if err != nil {
@@ -214,23 +215,39 @@ func assignSecondaryIP(ctx context.Context, spec executeActionRequestSpec, mode 
 	}
 	res := newResult()
 	res.Status.UndoAvailable = true
+	allowReassignment := stringBool(spec.Parameters["allowReassignment"])
 
 	if mode == modeDryRun {
 		if _, derr := getVNIC(ctx, runner, vnic); derr != nil {
 			return failed("assign-secondary-ip dry-run: vnic get failed", derr)
 		}
 		res.Status.Status = statusSucceeded
-		res.Status.Message = fmt.Sprintf("would assign %s to %s", address, vnic)
+		if allowReassignment {
+			res.Status.Message = fmt.Sprintf("would seize/reassign %s to %s", address, vnic)
+		} else {
+			res.Status.Message = fmt.Sprintf("would assign %s to %s", address, vnic)
+		}
 		return res
 	}
 
-	if _, err := runner(ctx, "network", "private-ip", "create",
+	args := []string{"network", "private-ip", "create",
 		"--vnic-id", vnic,
-		"--ip-address", address); err != nil {
-		return failed("assign-secondary-ip execute: private-ip create failed", err)
+		"--ip-address", address}
+	if allowReassignment {
+		args = []string{"network", "vnic", "assign-private-ip",
+			"--vnic-id", vnic,
+			"--ip-address", address,
+			"--unassign-if-already-assigned"}
+	}
+	if _, err := runner(ctx, args...); err != nil {
+		return failed("assign-secondary-ip execute: assign failed", err)
 	}
 	res.Status.Status = statusSucceeded
-	res.Status.Message = fmt.Sprintf("assigned %s to %s", address, vnic)
+	if allowReassignment {
+		res.Status.Message = fmt.Sprintf("seized/reassigned %s to %s", address, vnic)
+	} else {
+		res.Status.Message = fmt.Sprintf("assigned %s to %s", address, vnic)
+	}
 	res.Status.Observed = map[string]string{"assignedAddress": address}
 	return res
 }
@@ -362,6 +379,15 @@ func boolStr(b bool) string {
 		return "true"
 	}
 	return "false"
+}
+
+func stringBool(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 // commandTimeout is the per-oci-invocation timeout.
