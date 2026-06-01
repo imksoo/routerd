@@ -730,6 +730,58 @@ func TestNftablesTCPMSSClampForSAMOverlay(t *testing.T) {
 	}
 }
 
+func TestNftablesTCPMSSClampForSAMIPIPOverlay(t *testing.T) {
+	router := &api.Router{
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
+				Metadata: api.ObjectMeta{Name: "tun-ipip"},
+				Spec: api.TunnelInterfaceSpec{
+					Mode:            "ipip",
+					Local:           "192.0.2.10",
+					Remote:          "192.0.2.20",
+					TrustedUnderlay: true,
+				},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "OverlayPeer"},
+				Metadata: api.ObjectMeta{Name: "onprem-main"},
+				Spec: api.OverlayPeerSpec{
+					Role:     "onprem",
+					NodeID:   "onprem-router",
+					Underlay: api.OverlayUnderlay{Type: "ipip", Interface: "tun-ipip"},
+				},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "AddressMobilityDomain"},
+				Metadata: api.ObjectMeta{Name: "same-subnet"},
+				Spec:     api.AddressMobilityDomainSpec{Prefix: "10.77.60.0/24", Mode: "selective-address", PeerRef: "onprem-main"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "RemoteAddressClaim"},
+				Metadata: api.ObjectMeta{Name: "onprem-client"},
+				Spec: api.RemoteAddressClaimSpec{
+					DomainRef: "same-subnet",
+					Address:   "10.77.60.9/32",
+					OwnerSide: "onprem",
+					Capture:   api.AddressCapture{Type: "provider-secondary-ip", ProviderRef: "oci-lab", ProviderMode: "vnic-secondary-ip", NICRef: "ocid1.vnic.example", Interface: "ens3"},
+					Delivery:  api.AddressDelivery{PeerRef: "onprem-main", Mode: "route", TunnelInterface: "tun-ipip"},
+				},
+			},
+		}},
+	}
+
+	data, err := NftablesTCPMSSClamp(router)
+	if err != nil {
+		t.Fatalf("render TCP MSS clamp: %v", err)
+	}
+	got := string(data)
+	want := `iifname "ens3" oifname "tun-ipip" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1420 tcp option maxseg size set 1420`
+	if !strings.Contains(got, want) {
+		t.Fatalf("nftables output missing ipip SAM MSS clamp %q:\n%s", want, got)
+	}
+}
+
 func TestNftablesTCPMSSClampForForwardedPathLowerMTUOverlay(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{Resources: []api.Resource{

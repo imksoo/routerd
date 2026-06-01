@@ -215,6 +215,12 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
 		r.Spec = spec
+	case "TunnelInterface":
+		var spec TunnelInterfaceSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
 	case "WireGuardPeer":
 		var spec WireGuardPeerSpec
 		if err := raw.Spec.Decode(&spec); err != nil {

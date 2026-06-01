@@ -111,6 +111,7 @@ func Warnings(router *api.Router) []string {
 	var warnings []string
 	dnsZones, dnsResolverZones := dnsZoneCoverage(router)
 	wireGuardInterfaces := map[string]bool{}
+	tunnelInterfaces := map[string]bool{}
 	interfaces := map[string]bool{}
 	cloudProviderProfiles := map[string]api.CloudProviderProfileSpec{}
 	for _, res := range router.Spec.Resources {
@@ -123,6 +124,9 @@ func Warnings(router *api.Router) []string {
 		}
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "WireGuardInterface" {
 			wireGuardInterfaces[res.Metadata.Name] = true
+		}
+		if res.APIVersion == api.HybridAPIVersion && res.Kind == "TunnelInterface" {
+			tunnelInterfaces[res.Metadata.Name] = true
 		}
 		if res.APIVersion == api.HybridAPIVersion && res.Kind == "CloudProviderProfile" {
 			spec, err := res.CloudProviderProfileSpec()
@@ -153,6 +157,9 @@ func Warnings(router *api.Router) []string {
 			spec, err := res.OverlayPeerSpec()
 			if err == nil && spec.Underlay.Type == "wireguard" && spec.Underlay.Interface != "" && !wireGuardInterfaces[spec.Underlay.Interface] {
 				warnings = append(warnings, fmt.Sprintf("%s spec.underlay.interface references WireGuardInterface %q which is not declared; assuming the interface is managed externally", res.ID(), spec.Underlay.Interface))
+			}
+			if err == nil && (spec.Underlay.Type == "ipip" || spec.Underlay.Type == "gre") && spec.Underlay.Interface != "" && !tunnelInterfaces[spec.Underlay.Interface] {
+				warnings = append(warnings, fmt.Sprintf("%s spec.underlay.interface references TunnelInterface %q which is not declared", res.ID(), spec.Underlay.Interface))
 			}
 		case "RemoteAddressClaim":
 			spec, err := res.RemoteAddressClaimSpec()

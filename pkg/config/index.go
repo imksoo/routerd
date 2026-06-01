@@ -16,6 +16,7 @@ type RouterIndex struct {
 	BaseInterfaces             map[string]bool
 	Interfaces                 map[string]bool
 	WireGuardInterfaces        map[string]bool
+	TunnelInterfaces           map[string]bool
 	DHCPv4ServerSpecs          map[string]api.DHCPv4ServerSpec
 	DirectDHCPv4Servers        map[string]bool
 	DHCPv4Reservations         map[string]bool
@@ -74,6 +75,7 @@ func newRouterIndex(router *api.Router) *RouterIndex {
 		BaseInterfaces:             map[string]bool{},
 		Interfaces:                 map[string]bool{},
 		WireGuardInterfaces:        map[string]bool{},
+		TunnelInterfaces:           map[string]bool{},
 		DHCPv4ServerSpecs:          map[string]api.DHCPv4ServerSpec{},
 		DirectDHCPv4Servers:        map[string]bool{},
 		DHCPv4Reservations:         map[string]bool{},
@@ -157,6 +159,10 @@ func (idx *RouterIndex) build(router *api.Router, targetOS platform.OS) error {
 				}
 				idx.UDPListenPorts[spec.ListenPort] = res.ID()
 			}
+		}
+		if res.APIVersion == api.HybridAPIVersion && res.Kind == "TunnelInterface" {
+			idx.TunnelInterfaces[res.Metadata.Name] = true
+			idx.Interfaces[res.Metadata.Name] = true
 		}
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "TailscaleNode" {
 			spec, err := res.TailscaleNodeSpec()

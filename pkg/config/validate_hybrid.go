@@ -5,6 +5,7 @@ package config
 import (
 	"fmt"
 	"net/netip"
+	"strconv"
 	"strings"
 
 	"github.com/imksoo/routerd/pkg/api"
@@ -30,17 +31,68 @@ func validateHybridResource(res api.Resource, _ platform.OS) (bool, error) {
 			return true, fmt.Errorf("%s spec.nodeID is required", res.ID())
 		}
 		switch strings.TrimSpace(spec.Underlay.Type) {
-		case "wireguard", "tailscale", "ipsec", "route":
+		case "wireguard", "tailscale", "ipsec", "route", "ipip", "gre":
 		default:
-			return true, fmt.Errorf("%s spec.underlay.type must be wireguard, tailscale, ipsec, or route", res.ID())
+			return true, fmt.Errorf("%s spec.underlay.type must be wireguard, tailscale, ipsec, route, ipip, or gre", res.ID())
 		}
-		if spec.Underlay.Type == "wireguard" && strings.TrimSpace(spec.Underlay.Interface) == "" {
-			return true, fmt.Errorf("%s spec.underlay.interface is required when spec.underlay.type is wireguard", res.ID())
+		switch spec.Underlay.Type {
+		case "wireguard", "ipip", "gre":
+			if strings.TrimSpace(spec.Underlay.Interface) == "" {
+				return true, fmt.Errorf("%s spec.underlay.interface is required when spec.underlay.type is %s", res.ID(), spec.Underlay.Type)
+			}
 		}
 		if address := strings.TrimSpace(spec.Underlay.Address); address != "" {
 			if _, err := netip.ParseAddr(address); err != nil {
 				return true, fmt.Errorf("%s spec.underlay.address must be an IP address", res.ID())
 			}
+		}
+	case "TunnelInterface":
+		if res.APIVersion != api.HybridAPIVersion {
+			return true, fmt.Errorf("%s must use apiVersion %s", res.ID(), api.HybridAPIVersion)
+		}
+		spec, err := res.TunnelInterfaceSpec()
+		if err != nil {
+			return true, err
+		}
+		switch strings.TrimSpace(spec.Mode) {
+		case "ipip", "gre":
+		default:
+			return true, fmt.Errorf("%s spec.mode must be ipip or gre", res.ID())
+		}
+		if strings.TrimSpace(spec.Local) == "" {
+			return true, fmt.Errorf("%s spec.local is required", res.ID())
+		}
+		if err := validateTunnelEndpoint(spec.Local); err != nil {
+			return true, fmt.Errorf("%s spec.local: %w", res.ID(), err)
+		}
+		if strings.TrimSpace(spec.Remote) == "" {
+			return true, fmt.Errorf("%s spec.remote is required", res.ID())
+		}
+		if err := validateTunnelEndpoint(spec.Remote); err != nil {
+			return true, fmt.Errorf("%s spec.remote: %w", res.ID(), err)
+		}
+		if strings.TrimSpace(spec.Address) != "" {
+			if err := validateTunnelAddress(spec.Address); err != nil {
+				return true, fmt.Errorf("%s spec.address: %w", res.ID(), err)
+			}
+		}
+		if spec.MTU != 0 && (spec.MTU < 576 || spec.MTU > 9216) {
+			return true, fmt.Errorf("%s spec.mtu must be within 576-9216", res.ID())
+		}
+		if spec.TTL != 0 && (spec.TTL < 1 || spec.TTL > 255) {
+			return true, fmt.Errorf("%s spec.ttl must be within 1-255", res.ID())
+		}
+		if spec.Key < 0 {
+			return true, fmt.Errorf("%s spec.key must be >= 0", res.ID())
+		}
+		if strconv.IntSize >= 64 && int64(spec.Key) > 4294967295 {
+			return true, fmt.Errorf("%s spec.key must be <= 4294967295", res.ID())
+		}
+		if spec.Mode != "gre" && spec.Key != 0 {
+			return true, fmt.Errorf("%s spec.key is only supported when spec.mode is gre", res.ID())
+		}
+		if !spec.TrustedUnderlay {
+			return true, fmt.Errorf("%s spec.trustedUnderlay must be true; ipip/gre tunnels are unencrypted and unauthenticated and require a trusted underlay", res.ID())
 		}
 	case "HybridRoute":
 		if res.APIVersion != api.HybridAPIVersion {
@@ -186,6 +238,28 @@ func validateHybridResource(res api.Resource, _ platform.OS) (bool, error) {
 		return false, nil
 	}
 	return true, nil
+}
+
+func validateTunnelEndpoint(value string) error {
+	addr, err := netip.ParseAddr(strings.TrimSpace(value))
+	if err != nil {
+		return fmt.Errorf("must be an IP address: %w", err)
+	}
+	if !addr.Is4() {
+		return fmt.Errorf("must be an IPv4 address")
+	}
+	return nil
+}
+
+func validateTunnelAddress(value string) error {
+	prefix, err := netip.ParsePrefix(strings.TrimSpace(value))
+	if err != nil {
+		return fmt.Errorf("must be an IPv4 prefix: %w", err)
+	}
+	if !prefix.Addr().Is4() {
+		return fmt.Errorf("must be an IPv4 prefix")
+	}
+	return nil
 }
 
 func validateCaptureActiveWhen(path string, activeWhen api.CaptureActiveWhen) error {

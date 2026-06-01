@@ -108,6 +108,73 @@ func TestHybridRouteStatusAndMTUEstimate(t *testing.T) {
 	}
 }
 
+func TestRouteTargetSupportsTunnelUnderlays(t *testing.T) {
+	for _, underlayType := range []string{"ipip", "gre"} {
+		device, gateway, err := RouteTarget(api.OverlayPeerSpec{Underlay: api.OverlayUnderlay{Type: underlayType, Interface: "tun0"}})
+		if err != nil {
+			t.Fatalf("RouteTarget(%s): %v", underlayType, err)
+		}
+		if device != "tun0" || gateway != "" {
+			t.Fatalf("RouteTarget(%s) = device %q gateway %q", underlayType, device, gateway)
+		}
+	}
+}
+
+func TestTunnelUnderlayMTUEstimate(t *testing.T) {
+	tests := []struct {
+		name          string
+		tunnel        api.TunnelInterfaceSpec
+		underlayType  string
+		wantMTU       int
+		wantOverhead  int
+		wantEstimated int
+	}{
+		{
+			name:          "ipip default",
+			tunnel:        api.TunnelInterfaceSpec{Mode: "ipip"},
+			underlayType:  "ipip",
+			wantMTU:       TunnelIPIPDefaultMTU,
+			wantOverhead:  IPIPOverheadBytes,
+			wantEstimated: 1460,
+		},
+		{
+			name:          "gre default",
+			tunnel:        api.TunnelInterfaceSpec{Mode: "gre"},
+			underlayType:  "gre",
+			wantMTU:       TunnelGREDefaultMTU,
+			wantOverhead:  GREOverheadBytes,
+			wantEstimated: 1452,
+		},
+		{
+			name:          "gre key",
+			tunnel:        api.TunnelInterfaceSpec{Mode: "gre", MTU: 1472, Key: 42},
+			underlayType:  "gre",
+			wantMTU:       1472,
+			wantOverhead:  GREOverheadBytes + GREKeyOverheadBytes,
+			wantEstimated: 1444,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+				{TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"}, Metadata: api.ObjectMeta{Name: "tun0"}, Spec: tt.tunnel},
+				{TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "OverlayPeer"}, Metadata: api.ObjectMeta{Name: "edge"}, Spec: api.OverlayPeerSpec{
+					Role:     "cloud",
+					NodeID:   "edge-1",
+					Underlay: api.OverlayUnderlay{Type: tt.underlayType, Interface: "tun0"},
+				}},
+			}}}
+			estimate, ok := EstimateMTU(*router, "edge")
+			if !ok {
+				t.Fatal("EstimateMTU returned !ok")
+			}
+			if estimate.UnderlayMTU != tt.wantMTU || estimate.Overhead != tt.wantOverhead || estimate.EstimatedMTU != tt.wantEstimated {
+				t.Fatalf("estimate = %#v, want mtu=%d overhead=%d estimated=%d", estimate, tt.wantMTU, tt.wantOverhead, tt.wantEstimated)
+			}
+		})
+	}
+}
+
 type mapStore map[string]map[string]any
 
 func (s mapStore) ObjectStatus(apiVersion, kind, name string) map[string]any {

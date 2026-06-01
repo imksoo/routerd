@@ -381,6 +381,18 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 				return fmt.Errorf("%s spec.healthCheckRef references missing HealthCheck %q", res.ID(), spec.HealthCheckRef)
 			}
 		}
+		if res.Kind == "OverlayPeer" {
+			spec, err := res.OverlayPeerSpec()
+			if err != nil {
+				return err
+			}
+			switch spec.Underlay.Type {
+			case "ipip", "gre":
+				if !idx.TunnelInterfaces[spec.Underlay.Interface] {
+					return fmt.Errorf("%s spec.underlay.interface references missing TunnelInterface %q", res.ID(), spec.Underlay.Interface)
+				}
+			}
+		}
 		if res.Kind == "AddressMobilityDomain" {
 			spec, err := res.AddressMobilityDomainSpec()
 			if err != nil {

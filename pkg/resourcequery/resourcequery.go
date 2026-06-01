@@ -139,7 +139,7 @@ func APIVersionForKind(kind string) string {
 		return api.SystemAPIVersion
 	case "FirewallZone", "FirewallPolicy", "FirewallEventLog", "FirewallRule", "ClientPolicy", "PortForward", "IngressService", "LocalServiceRedirect":
 		return api.FirewallAPIVersion
-	case "OverlayPeer", "HybridRoute", "AddressMobilityDomain", "CloudProviderProfile", "RemoteAddressClaim":
+	case "TunnelInterface", "OverlayPeer", "HybridRoute", "AddressMobilityDomain", "CloudProviderProfile", "RemoteAddressClaim":
 		return api.HybridAPIVersion
 	case "MobilityPool":
 		return api.MobilityAPIVersion
