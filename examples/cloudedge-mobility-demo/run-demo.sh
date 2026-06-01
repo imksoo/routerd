@@ -26,6 +26,10 @@ require scp
 
 SSH_OPTS=(-i "$SSH_KEY_FILE" -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10)
 
+oci_cli() {
+  oci --config-file "$OCI_CONFIG_FILE" --profile "$OCI_PROFILE" --region "$OCI_REGION" --auth security_token "$@" --output json
+}
+
 router_host() {
   case "$1" in
     onprem) echo "$ONPREM_ROUTER_SSH_HOST" ;;
@@ -103,6 +107,80 @@ install_secret_and_config() {
     sudo systemctl is-active routerd-eventd@cloudedge.service"
 }
 
+oci_client_vnic_ref() {
+  if [[ -n "${OCI_CLIENT_VNIC_REF:-}" ]]; then
+    echo "$OCI_CLIENT_VNIC_REF"
+    return 0
+  fi
+  oci_cli compute vnic-attachment list \
+    --compartment-id "$OCI_COMPARTMENT_REF" \
+    --instance-id "$OCI_CLIENT_INSTANCE_REF" |
+    jq -r '.data[] | select(."lifecycle-state" == "ATTACHED") | ."vnic-id"' |
+    head -n1
+}
+
+preflight_oci_private_ip() {
+  local vnic_ref
+  vnic_ref=$(oci_client_vnic_ref)
+  if [[ -z "$vnic_ref" || "$vnic_ref" == "null" ]]; then
+    echo "OCI preflight failed: could not resolve OCI client VNIC" >&2
+    return 1
+  fi
+  if ! oci_cli network private-ip list --vnic-id "$vnic_ref" |
+    jq -e --arg ip "$OCI_CLIENT_IP" '.data[] | select(."ip-address" == $ip)' >/dev/null; then
+    echo "OCI preflight failed: client VNIC $vnic_ref does not have private IP $OCI_CLIENT_IP" >&2
+    return 1
+  fi
+}
+
+preflight_oci_wireguard() {
+  router_ssh oci "set -euo pipefail
+    if ! sudo ss -lun | awk '{print \$5}' | grep -Eq '(^|:)51820$'; then
+      echo 'OCI preflight failed: UDP/51820 listener missing' >&2
+      exit 1
+    fi
+    latest=0
+    for _ in \$(seq 1 12); do
+      latest=\$(sudo wg show wg-hybrid latest-handshakes | awk -v key='$ONPREM_WG_PUBLIC_KEY' '\$1 == key {print \$2; found=1} END {if (!found) print 0}')
+      now=\$(date +%s)
+      if [ \"\$latest\" != 0 ] && [ \$((now - latest)) -le 180 ]; then
+        exit 0
+      fi
+      sleep 5
+    done
+    echo \"OCI preflight failed: wg-hybrid has no recent onprem handshake (latest=\$latest)\" >&2
+    exit 1"
+}
+
+preflight_oci_forwarding() {
+  router_ssh oci "set -euo pipefail
+    if [ \"\$(sysctl -n net.ipv4.ip_forward)\" != 1 ]; then
+      echo 'OCI preflight failed: net.ipv4.ip_forward is not enabled' >&2
+      exit 1
+    fi
+    if command -v iptables >/dev/null 2>&1; then
+      sudo iptables -C FORWARD -i ens3 -o wg-hybrid -j ACCEPT 2>/dev/null || {
+        echo 'OCI preflight failed: missing FORWARD allow ens3 -> wg-hybrid' >&2
+        exit 1
+      }
+      sudo iptables -C FORWARD -i wg-hybrid -o ens3 -j ACCEPT 2>/dev/null || {
+        echo 'OCI preflight failed: missing FORWARD allow wg-hybrid -> ens3' >&2
+        exit 1
+      }
+    else
+      echo 'OCI preflight failed: iptables command unavailable; cannot assert ens3<->wg-hybrid FORWARD allow' >&2
+      exit 1
+    fi"
+}
+
+preflight_mesh() {
+  echo "Preflight OCI mesh prerequisites"
+  require oci
+  preflight_oci_private_ip
+  preflight_oci_wireguard
+  preflight_oci_forwarding
+}
+
 emit_observed() {
   local node=$1 source_node=$2 address=$3
   router_ssh "$node" "sudo $ROUTERCTL_BIN federation event emit --group cloudedge --type routerd.client.ipv4.observed --subject ${address}/32 --source-node $source_node --payload address=${address}/32 --ttl 10m -o json"
@@ -176,6 +254,7 @@ main() {
   install_secret_and_config aws-b "$WORKDIR/aws-b.yaml"
   install_secret_and_config azure "$WORKDIR/azure.yaml"
   install_secret_and_config oci "$WORKDIR/oci.yaml"
+  preflight_mesh
 
   echo "Emit D3 observed events"
   emit_observed onprem onprem-router "$ONPREM_CLIENT_IP"

@@ -413,18 +413,27 @@ func validateRouteResource(res api.Resource, targetOS platform.OS) (bool, error)
 		if strings.Contains(spec.Gateway, "${") {
 			return true, fmt.Errorf("%s spec.gateway status expressions were removed; use gatewayFrom", res.ID())
 		}
+		if strings.Contains(spec.PreferredSource, "${") {
+			return true, fmt.Errorf("%s spec.preferredSource status expressions are not supported", res.ID())
+		}
 		if len(spec.ReadyWhen) > 0 {
 			return true, fmt.Errorf("%s spec.ready_when was removed; use spec.dependsOn", res.ID())
 		}
 		if routeType == "blackhole" {
-			if spec.Device != "" || spec.DeviceFrom.Resource != "" || spec.Gateway != "" || spec.GatewayFrom.Resource != "" {
-				return true, fmt.Errorf("%s spec.device, spec.deviceFrom, spec.gateway, and spec.gatewayFrom are not valid when spec.type is blackhole", res.ID())
+			if spec.Device != "" || spec.DeviceFrom.Resource != "" || spec.Gateway != "" || spec.GatewayFrom.Resource != "" || spec.PreferredSource != "" {
+				return true, fmt.Errorf("%s spec.device, spec.deviceFrom, spec.gateway, spec.gatewayFrom, and spec.preferredSource are not valid when spec.type is blackhole", res.ID())
 			}
 		}
 		if spec.Gateway != "" {
 			addr, err := netip.ParseAddr(spec.Gateway)
 			if err != nil || !addr.Is4() {
 				return true, fmt.Errorf("%s spec.gateway must be an IPv4 address", res.ID())
+			}
+		}
+		if spec.PreferredSource != "" {
+			addr, err := netip.ParseAddr(spec.PreferredSource)
+			if err != nil || !addr.Is4() {
+				return true, fmt.Errorf("%s spec.preferredSource must be an IPv4 address", res.ID())
 			}
 		}
 	default:

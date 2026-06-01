@@ -7142,6 +7142,10 @@
                         "minimum": 0,
                         "type": "integer"
                       },
+                      "preferredSource": {
+                        "description": "PreferredSource programs the Linux route preferred source (RTA_PREFSRC).\nIt is useful for host-originated traffic that must use a stable logical\nsource address while still following an explicit delivery route.",
+                        "type": "string"
+                      },
                       "type": {
                         "enum": [
                           "unicast",

@@ -1171,15 +1171,19 @@ type DSLiteTunnelSpec struct {
 }
 
 type IPv4RouteSpec struct {
-	Destination string                   `yaml:"destination" json:"destination"`
-	Type        string                   `yaml:"type,omitempty" json:"type,omitempty" jsonschema:"enum=unicast,enum=blackhole"`
-	Device      string                   `yaml:"device,omitempty" json:"device,omitempty"`
-	DeviceFrom  StatusValueSourceSpec    `yaml:"deviceFrom,omitempty" json:"deviceFrom,omitempty"`
-	Gateway     string                   `yaml:"gateway,omitempty" json:"gateway,omitempty"`
-	GatewayFrom StatusValueSourceSpec    `yaml:"gatewayFrom,omitempty" json:"gatewayFrom,omitempty"`
-	Metric      int                      `yaml:"metric,omitempty" json:"metric,omitempty" jsonschema:"minimum=0"`
-	DependsOn   []ResourceDependencySpec `yaml:"dependsOn,omitempty" json:"dependsOn,omitempty"`
-	ReadyWhen   []ReadyWhenSpec          `yaml:"ready_when,omitempty" json:"-"`
+	Destination string                `yaml:"destination" json:"destination"`
+	Type        string                `yaml:"type,omitempty" json:"type,omitempty" jsonschema:"enum=unicast,enum=blackhole"`
+	Device      string                `yaml:"device,omitempty" json:"device,omitempty"`
+	DeviceFrom  StatusValueSourceSpec `yaml:"deviceFrom,omitempty" json:"deviceFrom,omitempty"`
+	Gateway     string                `yaml:"gateway,omitempty" json:"gateway,omitempty"`
+	GatewayFrom StatusValueSourceSpec `yaml:"gatewayFrom,omitempty" json:"gatewayFrom,omitempty"`
+	// PreferredSource programs the Linux route preferred source (RTA_PREFSRC).
+	// It is useful for host-originated traffic that must use a stable logical
+	// source address while still following an explicit delivery route.
+	PreferredSource string                   `yaml:"preferredSource,omitempty" json:"preferredSource,omitempty"`
+	Metric          int                      `yaml:"metric,omitempty" json:"metric,omitempty" jsonschema:"minimum=0"`
+	DependsOn       []ResourceDependencySpec `yaml:"dependsOn,omitempty" json:"dependsOn,omitempty"`
+	ReadyWhen       []ReadyWhenSpec          `yaml:"ready_when,omitempty" json:"-"`
 }
 
 type OverlayPeerSpec struct {

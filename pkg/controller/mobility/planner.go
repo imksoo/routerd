@@ -15,6 +15,7 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
+	"github.com/imksoo/routerd/pkg/sam"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -139,6 +140,7 @@ func PlanDynamicConfig(in PlannerInput) (PlannerOutput, error) {
 	desiredAddresses := map[string]bool{}
 	desiredProviderNICs := map[string]bool{}
 	minExpiresAt := time.Time{}
+	preferredSource := uniqueSelfOwnerPreferredSource(poolName, prefix, self, in.Leases, now)
 	if placement.Active || centralizedOwnership {
 		for _, lease := range sortedLeases(in.Leases) {
 			if centralizedOwnership {
@@ -152,7 +154,7 @@ func PlanDynamicConfig(in PlannerInput) (PlannerOutput, error) {
 			if centralizedOwnership && !seize {
 				seize = shouldMaintainSeizeIntent(poolName, address, self.NodeRef, ownershipEpochs[address], in.PreviousActionPlans, in.ActionJournal)
 			}
-			claim, actionPlans, leaseExpiresAt, ok, err := planLease(poolName, prefix, self, members, lease, in.ProviderProfiles, now, forwardingSeen, captureEpochs, actionOwnershipEpochs, seize)
+			claim, actionPlans, leaseExpiresAt, ok, err := planLease(poolName, prefix, self, members, lease, in.ProviderProfiles, now, forwardingSeen, captureEpochs, actionOwnershipEpochs, seize, preferredSource)
 			if err != nil {
 				return PlannerOutput{}, err
 			}
@@ -599,7 +601,7 @@ func (c Controller) savePlannerStatus(poolName string, updates map[string]any) e
 	return c.Store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", poolName, status)
 }
 
-func planLease(poolName string, prefix netip.Prefix, self memberPlanInfo, members map[string]memberPlanInfo, lease routerstate.AddressLeaseRecord, profiles map[string]api.CloudProviderProfileSpec, now time.Time, forwardingSeen map[string]bool, captureEpochs map[string]routerstate.MobilityCaptureEpochRecord, ownershipEpochs map[string]routerstate.MobilityOwnershipEpochRecord, seize bool) (api.Resource, []dynamicconfig.ActionPlan, time.Time, bool, error) {
+func planLease(poolName string, prefix netip.Prefix, self memberPlanInfo, members map[string]memberPlanInfo, lease routerstate.AddressLeaseRecord, profiles map[string]api.CloudProviderProfileSpec, now time.Time, forwardingSeen map[string]bool, captureEpochs map[string]routerstate.MobilityCaptureEpochRecord, ownershipEpochs map[string]routerstate.MobilityOwnershipEpochRecord, seize bool, preferredSource string) (api.Resource, []dynamicconfig.ActionPlan, time.Time, bool, error) {
 	if lease.Pool != poolName || lease.Status != routerstate.AddressLeaseStatusActive {
 		return api.Resource{}, nil, time.Time{}, false, nil
 	}
@@ -632,7 +634,7 @@ func planLease(poolName string, prefix netip.Prefix, self memberPlanInfo, member
 	if !ok {
 		return api.Resource{}, nil, time.Time{}, false, fmt.Errorf("MobilityPool/%s member %q has no delivery for owner node=%q site=%q role=%q", poolName, self.NodeRef, owner.NodeRef, owner.Site, ownerRole)
 	}
-	claim := claimResource(poolName, self, lease, address, ownerRole, delivery)
+	claim := claimResource(poolName, self, lease, address, ownerRole, delivery, preferredSource)
 	stampOwnershipEpochResource(&claim, ownershipEpochs[address])
 	var plans []dynamicconfig.ActionPlan
 	if self.Capture.Type == "provider-secondary-ip" {
@@ -759,7 +761,7 @@ func desiredCaptureEpochs(poolName string, spec api.MobilityPoolSpec, selfNode s
 	forwardingSeen := map[string]bool{}
 	emptyEpochs := map[string]routerstate.MobilityCaptureEpochRecord{}
 	for _, lease := range sortedLeases(leases) {
-		claim, _, _, ok, err := planLease(poolName, prefix, active, members, lease, profiles, now, forwardingSeen, emptyEpochs, nil, false)
+		claim, _, _, ok, err := planLease(poolName, prefix, active, members, lease, profiles, now, forwardingSeen, emptyEpochs, nil, false, "")
 		if err != nil {
 			return nil, err
 		}
@@ -1230,6 +1232,34 @@ func sortedLeases(leases []routerstate.AddressLeaseRecord) []routerstate.Address
 	return out
 }
 
+func uniqueSelfOwnerPreferredSource(poolName string, prefix netip.Prefix, self memberPlanInfo, leases []routerstate.AddressLeaseRecord, now time.Time) string {
+	seen := ""
+	for _, lease := range leases {
+		if lease.Pool != poolName || lease.Status != routerstate.AddressLeaseStatusActive {
+			continue
+		}
+		if !lease.ExpiresAt.IsZero() && !now.Before(lease.ExpiresAt) {
+			continue
+		}
+		if strings.TrimSpace(lease.OwnerNode) != self.NodeRef {
+			continue
+		}
+		address, ok := normalizeLeaseAddress(lease.Address, prefix)
+		if !ok {
+			continue
+		}
+		pfx, err := netip.ParsePrefix(address)
+		if err != nil {
+			continue
+		}
+		if seen != "" && seen != pfx.Addr().String() {
+			return ""
+		}
+		seen = pfx.Addr().String()
+	}
+	return seen
+}
+
 func domainResource(poolName string, spec api.MobilityPoolSpec, self memberPlanInfo) api.Resource {
 	return api.Resource{
 		TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "AddressMobilityDomain"},
@@ -1249,7 +1279,7 @@ func domainResource(poolName string, spec api.MobilityPoolSpec, self memberPlanI
 	}
 }
 
-func claimResource(poolName string, self memberPlanInfo, lease routerstate.AddressLeaseRecord, address, ownerRole string, delivery api.AddressDelivery) api.Resource {
+func claimResource(poolName string, self memberPlanInfo, lease routerstate.AddressLeaseRecord, address, ownerRole string, delivery api.AddressDelivery, preferredSource string) api.Resource {
 	claimName := safeName("mobility-" + poolName + "-" + address)
 	annotations := map[string]string{
 		"mobility.routerd.net/lease-epoch":     fmt.Sprint(lease.Epoch),
@@ -1257,6 +1287,9 @@ func claimResource(poolName string, self memberPlanInfo, lease routerstate.Addre
 		"mobility.routerd.net/owner-site":      strings.TrimSpace(lease.OwnerSite),
 		"mobility.routerd.net/owner-role":      ownerRole,
 		"mobility.routerd.net/source-event-id": strings.TrimSpace(lease.SourceEventID),
+	}
+	if strings.TrimSpace(preferredSource) != "" {
+		annotations[sam.DeliveryPreferredSourceAnnotation] = strings.TrimSpace(preferredSource)
 	}
 	for key, value := range self.CaptureTarget {
 		key = strings.TrimSpace(key)

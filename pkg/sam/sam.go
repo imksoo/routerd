@@ -16,6 +16,8 @@ import (
 
 const DeliveryRouteMetricDefault = 120
 
+const DeliveryPreferredSourceAnnotation = "mobility.routerd.net/delivery-preferred-source"
+
 const (
 	CaptureStatusCaptured = "Captured"
 	CaptureStatusStandby  = "Standby"
@@ -23,17 +25,18 @@ const (
 )
 
 type DeliveryLowering struct {
-	ClaimName      string
-	AddressCIDR    string
-	IPv4RouteName  string
-	Device         string
-	Metric         int
-	OwnerSide      string
-	CaptureType    string
-	DeliveryPeer   string
-	DeliveryMode   string
-	CaptureIface   string
-	CaptureMessage string
+	ClaimName       string
+	AddressCIDR     string
+	IPv4RouteName   string
+	Device          string
+	PreferredSource string
+	Metric          int
+	OwnerSide       string
+	CaptureType     string
+	DeliveryPeer    string
+	DeliveryMode    string
+	CaptureIface    string
+	CaptureMessage  string
 }
 
 type CaptureAction struct {
@@ -139,6 +142,7 @@ func ExpandRemoteAddressClaimRoutesWithOptions(router api.Router, opts PlanOptio
 			device = resolvedDevice
 		}
 		syntheticNames[name] = true
+		preferredSource := strings.TrimSpace(resource.Metadata.Annotations[DeliveryPreferredSourceAnnotation])
 		route := api.Resource{
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4Route"},
 			Metadata: api.ObjectMeta{
@@ -150,24 +154,26 @@ func ExpandRemoteAddressClaimRoutesWithOptions(router api.Router, opts PlanOptio
 				}},
 			},
 			Spec: api.IPv4RouteSpec{
-				Destination: cidr,
-				Type:        "unicast",
-				Device:      device,
-				Metric:      DeliveryRouteMetricDefault,
+				Destination:     cidr,
+				Type:            "unicast",
+				Device:          device,
+				PreferredSource: preferredSource,
+				Metric:          DeliveryRouteMetricDefault,
 			},
 		}
 		out.Spec.Resources = append(out.Spec.Resources, route)
 		lowerings = append(lowerings, DeliveryLowering{
-			ClaimName:     resource.Metadata.Name,
-			AddressCIDR:   cidr,
-			IPv4RouteName: name,
-			Device:        device,
-			Metric:        DeliveryRouteMetricDefault,
-			OwnerSide:     strings.TrimSpace(spec.OwnerSide),
-			CaptureType:   strings.TrimSpace(spec.Capture.Type),
-			DeliveryPeer:  peerName,
-			DeliveryMode:  strings.TrimSpace(spec.Delivery.Mode),
-			CaptureIface:  strings.TrimSpace(spec.Capture.Interface),
+			ClaimName:       resource.Metadata.Name,
+			AddressCIDR:     cidr,
+			IPv4RouteName:   name,
+			Device:          device,
+			PreferredSource: preferredSource,
+			Metric:          DeliveryRouteMetricDefault,
+			OwnerSide:       strings.TrimSpace(spec.OwnerSide),
+			CaptureType:     strings.TrimSpace(spec.Capture.Type),
+			DeliveryPeer:    peerName,
+			DeliveryMode:    strings.TrimSpace(spec.Delivery.Mode),
+			CaptureIface:    strings.TrimSpace(spec.Capture.Interface),
 		})
 	}
 	return out, lowerings, nil
@@ -344,6 +350,9 @@ func StatusForRemoteAddressClaim(resource api.Resource, lowerings []DeliveryLowe
 	}
 	status["deliveryRouteName"] = lowering.IPv4RouteName
 	status["deliveryDevice"] = lowering.Device
+	if strings.TrimSpace(lowering.PreferredSource) != "" {
+		status["deliveryPreferredSource"] = strings.TrimSpace(lowering.PreferredSource)
+	}
 	status["deliveryMetric"] = lowering.Metric
 	if strings.TrimSpace(spec.Capture.Interface) != "" {
 		status["captureInterface"] = strings.TrimSpace(spec.Capture.Interface)
