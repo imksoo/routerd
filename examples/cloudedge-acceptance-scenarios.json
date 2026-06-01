@@ -1,0 +1,119 @@
+{
+  "version": 1,
+  "logicalSubnet": "10.77.60.0/24",
+  "sites": ["onprem", "aws", "azure", "oci"],
+  "scenarios": [
+    {
+      "id": "d3-4site-directed-matrix",
+      "demo": "D3",
+      "description": "Four-site directed dataplane matrix: every source site reaches every other site over the logical /24 with source IP preserved and no NAT.",
+      "profile": "full",
+      "providers": ["onprem", "aws", "azure", "oci"],
+      "fault": { "type": "none" },
+      "matrix": { "name": "d3", "expectedDirectedFlows": 12 },
+      "expectedAssertions": [
+        "directed_ping_ssh_matrix",
+        "source_ip_preserved",
+        "default_gateway_unchanged",
+        "no_nat"
+      ]
+    },
+    {
+      "id": "d5-aws-maintenance-drain-migration",
+      "demo": "D5",
+      "description": "AWS same-provider cloud router maintenance drain moves captured secondary IP from router A to router B and cleans old-holder residue.",
+      "profile": "provider",
+      "providers": ["aws", "onprem"],
+      "fault": { "provider": "aws", "type": "drain", "target": "active-router" },
+      "matrix": { "name": "d3", "expectedDirectedFlows": 12 },
+      "expectedAssertions": [
+        "ownership_epoch_bumped",
+        "source_ip_preserved",
+        "default_gateway_unchanged",
+        "old_holder_residue_absent",
+        "stale_action_fenced"
+      ]
+    },
+    {
+      "id": "d6-azure-active-stop-seize",
+      "demo": "D6",
+      "description": "Azure active router loss drives liveness-based seize with two-step secondary-IP remove+add and fenced action retry.",
+      "profile": "provider",
+      "providers": ["azure", "onprem"],
+      "fault": { "provider": "azure", "type": "stop-active", "target": "active-router" },
+      "matrix": { "name": "d3", "expectedDirectedFlows": 12 },
+      "expectedAssertions": [
+        "ownership_epoch_bumped",
+        "allow_reassignment_maintained_until_success",
+        "source_ip_preserved",
+        "default_gateway_unchanged",
+        "old_holder_residue_absent",
+        "stale_action_fenced"
+      ]
+    },
+    {
+      "id": "d7-oci-active-stop-seize",
+      "demo": "D7",
+      "description": "OCI active router loss drives liveness-based seize using unassign-if-already-assigned parity.",
+      "profile": "provider",
+      "providers": ["oci", "onprem"],
+      "fault": { "provider": "oci", "type": "stop-active", "target": "active-router" },
+      "matrix": { "name": "d3", "expectedDirectedFlows": 12 },
+      "expectedAssertions": [
+        "ownership_epoch_bumped",
+        "allow_reassignment_maintained_until_success",
+        "source_ip_preserved",
+        "default_gateway_unchanged",
+        "old_holder_residue_absent",
+        "stale_action_fenced"
+      ]
+    },
+    {
+      "id": "d8-onprem-vrrp-master-failover",
+      "demo": "D8",
+      "description": "On-prem VRRP master loss gates proxy-ARP capture off on the old master and on at the standby with GARP takeover.",
+      "profile": "full",
+      "providers": ["onprem", "aws", "azure", "oci"],
+      "fault": { "provider": "onprem", "type": "stop-active", "target": "vrrp-master" },
+      "matrix": { "name": "d3", "expectedDirectedFlows": 12 },
+      "expectedAssertions": [
+        "source_ip_preserved",
+        "default_gateway_unchanged",
+        "old_holder_residue_absent",
+        "stale_action_fenced"
+      ]
+    },
+    {
+      "id": "d9-cross-provider-simultaneous-capture-consistency",
+      "demo": "D9",
+      "description": "Simultaneous non-owner capture across AWS, Azure, OCI, and on-prem converges to one ownership/capture view without NAT or stale provider residue.",
+      "profile": "full",
+      "providers": ["onprem", "aws", "azure", "oci"],
+      "fault": { "provider": "aws,azure,oci", "type": "drain", "target": "active-router" },
+      "matrix": { "name": "d3", "expectedDirectedFlows": 12 },
+      "expectedAssertions": [
+        "ownership_epoch_bumped",
+        "source_ip_preserved",
+        "default_gateway_unchanged",
+        "old_holder_residue_absent",
+        "stale_action_fenced"
+      ]
+    },
+    {
+      "id": "d10-event-replay-restart-convergence",
+      "demo": "D10",
+      "description": "Routerd/eventd restart and event replay converge to the same lease, ownership epoch, dynamic plan, and dataplane result.",
+      "profile": "full",
+      "providers": ["onprem", "aws", "azure", "oci"],
+      "fault": { "provider": "aws,azure,oci,onprem", "type": "heartbeat-stop", "target": "all-routerd" },
+      "matrix": { "name": "d3", "expectedDirectedFlows": 12 },
+      "expectedAssertions": [
+        "ownership_epoch_bumped",
+        "source_ip_preserved",
+        "default_gateway_unchanged",
+        "old_holder_residue_absent",
+        "stale_action_fenced"
+      ]
+    }
+  ]
+}

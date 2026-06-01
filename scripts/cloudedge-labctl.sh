@@ -427,13 +427,17 @@ $SELF evidence - assemble an evidence bundle and emit result JSON
 
 USAGE:
   $SELF evidence collect --out <dir> [--run-id <id>] [--scenario <name>]
-                         [--commit <ref>] [--matrix-json <file>] [--result pass|fail]
+                         [--commit <ref>] [--matrix-json <file>]
+                         [--provider-state-json <file>] [--result pass|fail]
 
   --out DIR        Evidence bundle output directory (required).
   --run-id ID      Run id (default: latest manifest). Sets runId in the JSON.
   --scenario NAME  Scenario label (default: from run-id).
   --commit REF     Commit under test (default: HEAD sha).
   --matrix-json F  Connectivity-matrix JSON to fold into providers/assertions.
+  --provider-state-json F
+                  Optional provider inventory check states. Accepted shapes:
+                  {"aws":"pass"} or {"aws":{"providerState":"pass"}}.
   --result R       Force overall result; default derived from inputs.
 
 Writes <out>/result.json validating against cloudedge-evidence-schema.json plus a
@@ -445,23 +449,97 @@ derive_check() {
   # Map a matrix flow result presence to a check state. Echoes pass|fail|na.
   local matrix_json=$1 provider=$2
   [[ -z "$matrix_json" || ! -f "$matrix_json" ]] && { echo "na"; return; }
-  if ! have jq; then echo "na"; return; fi
-  # provider is a site name in the matrix; pass if every flow touching it as src passed.
-  local bad
-  bad=$(jq -r --arg p "$provider" \
-    '[.flows[] | select(.src==$p) | select(.result!="pass")] | length' "$matrix_json" 2>/dev/null || echo "x")
-  case "$bad" in
-    0) echo "pass" ;;
-    x|"") echo "na" ;;
-    *) echo "fail" ;;
-  esac
+  have python3 || { echo "na"; return; }
+  python3 - "$matrix_json" "$provider" <<'PY'
+import json, sys
+try:
+    data = json.load(open(sys.argv[1]))
+except Exception:
+    print("na")
+    raise SystemExit(0)
+provider = sys.argv[2]
+flows = [
+    f for f in data.get("flows", [])
+    if f.get("src") == provider or f.get("dst") == provider
+]
+if not flows:
+    print("na")
+elif all(f.get("result") == "pass" for f in flows):
+    print("pass")
+else:
+    print("fail")
+PY
+}
+
+matrix_assertion() {
+  local matrix_json=$1 field=$2 expected_total=${3:-0}
+  [[ -z "$matrix_json" || ! -f "$matrix_json" ]] && { echo "na"; return; }
+  have python3 || { echo "na"; return; }
+  python3 - "$matrix_json" "$field" "$expected_total" <<'PY'
+import json, sys
+try:
+    data = json.load(open(sys.argv[1]))
+except Exception:
+    print("na")
+    raise SystemExit(0)
+field = sys.argv[2]
+expected_total = int(sys.argv[3])
+flows = data.get("flows", [])
+summary = data.get("summary", {})
+if not flows:
+    print("na")
+    raise SystemExit(0)
+if field == "directed":
+    ok = summary.get("result") == "pass"
+    if expected_total:
+        ok = ok and summary.get("total") == expected_total
+else:
+    ok = all(f.get(field) == "pass" for f in flows)
+print("pass" if ok else "fail")
+PY
+}
+
+matrix_summary_result() {
+  local matrix_json=$1
+  [[ -z "$matrix_json" || ! -f "$matrix_json" ]] && { echo "na"; return; }
+  have python3 || { echo "na"; return; }
+  python3 - "$matrix_json" <<'PY'
+import json, sys
+try:
+    data = json.load(open(sys.argv[1]))
+except Exception:
+    print("na")
+    raise SystemExit(0)
+result = data.get("summary", {}).get("result")
+print(result if result in ("pass", "fail") else "na")
+PY
+}
+
+provider_state_check() {
+  local provider_state_json=$1 provider=$2
+  [[ -z "$provider_state_json" || ! -f "$provider_state_json" ]] && { echo "na"; return; }
+  have python3 || { echo "na"; return; }
+  python3 - "$provider_state_json" "$provider" <<'PY'
+import json, sys
+try:
+    data = json.load(open(sys.argv[1]))
+except Exception:
+    print("na")
+    raise SystemExit(0)
+provider = sys.argv[2]
+valid = {"pass", "fail", "skip", "na"}
+value = data.get(provider, "na") if isinstance(data, dict) else "na"
+if isinstance(value, dict):
+    value = value.get("providerState", value.get("result", "na"))
+print(value if value in valid else "na")
+PY
 }
 
 cmd_evidence() {
   local sub="${1:-}"; [[ "$sub" == "-h" || "$sub" == "--help" ]] && { evidence_usage; exit 0; }
   [[ "$sub" == "collect" ]] || { evidence_usage >&2; die "evidence: expected subcommand 'collect'"; }
   shift
-  local out="" run_id="" scenario="" commit="" matrix_json="" forced_result=""
+  local out="" run_id="" scenario="" commit="" matrix_json="" provider_state_json="" forced_result=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --out) out="${2:-}"; shift 2 ;;
@@ -469,6 +547,7 @@ cmd_evidence() {
       --scenario) scenario="${2:-}"; shift 2 ;;
       --commit) commit="${2:-}"; shift 2 ;;
       --matrix-json) matrix_json="${2:-}"; shift 2 ;;
+      --provider-state-json) provider_state_json="${2:-}"; shift 2 ;;
       --result) forced_result="${2:-}"; shift 2 ;;
       -h|--help) evidence_usage; exit 0 ;;
       *) die "evidence: unknown argument: $1" ;;
@@ -498,15 +577,20 @@ cmd_evidence() {
   az_dp=$(derive_check "$matrix_json" azure)
   onprem_dp=$(derive_check "$matrix_json" onprem)
 
-  # Source-IP-preserved / default-gw-unchanged come straight from the matrix.
-  local src_pres="na" gw_ok="na" matrix_overall="na"
-  if [[ -n "$matrix_json" && -f "$matrix_json" ]] && have jq; then
-    matrix_overall=$(jq -r '.summary.result // "na"' "$matrix_json")
-    src_pres=$(jq -r '[.flows[]|select(.sourceIpPreserved!="pass")]|length' "$matrix_json" \
-      | awk '{print ($1==0)?"pass":"fail"}')
-    gw_ok=$(jq -r '[.flows[]|select(.defaultGwUnchanged!="pass")]|length' "$matrix_json" \
-      | awk '{print ($1==0)?"pass":"fail"}')
-  fi
+  local aws_ps oci_ps az_ps onprem_ps
+  aws_ps=$(provider_state_check "$provider_state_json" aws)
+  oci_ps=$(provider_state_check "$provider_state_json" oci)
+  az_ps=$(provider_state_check "$provider_state_json" azure)
+  onprem_ps=$(provider_state_check "$provider_state_json" onprem)
+
+  # Directed matrix / Source-IP-preserved / default-gw-unchanged / no-NAT come
+  # straight from the matrix and are intentionally independent of cloud APIs.
+  local directed_matrix src_pres gw_ok no_nat matrix_overall
+  directed_matrix=$(matrix_assertion "$matrix_json" directed 12)
+  src_pres=$(matrix_assertion "$matrix_json" sourceIpPreserved)
+  gw_ok=$(matrix_assertion "$matrix_json" defaultGwUnchanged)
+  no_nat=$(matrix_assertion "$matrix_json" noNat)
+  matrix_overall=$(matrix_summary_result "$matrix_json")
 
   # Fencing/seize assertions: na until a failover scenario records them. Folding
   # real journal/epoch evidence is the lab operator's wire-up (TODO).
@@ -514,9 +598,9 @@ cmd_evidence() {
 
   local result="$forced_result"
   if [[ -z "$result" ]]; then
-    if [[ "$matrix_overall" == "fail" || "$src_pres" == "fail" || "$gw_ok" == "fail" ]]; then
+    if [[ "$matrix_overall" == "fail" || "$directed_matrix" == "fail" || "$src_pres" == "fail" || "$gw_ok" == "fail" || "$no_nat" == "fail" ]]; then
       result="fail"
-    elif [[ "$matrix_overall" == "pass" ]]; then
+    elif [[ "$matrix_overall" == "pass" && "$directed_matrix" == "pass" ]]; then
       result="pass"
     else
       result="fail"   # no positive evidence => not a pass
@@ -531,16 +615,18 @@ cmd_evidence() {
   "scenario": "$scenario",
   "result": "$result",
   "providers": {
-    "aws":    { "dataplane": "$aws_dp",    "providerState": "na" },
-    "oci":    { "dataplane": "$oci_dp",    "providerState": "na" },
-    "azure":  { "dataplane": "$az_dp",     "providerState": "na" },
-    "onprem": { "dataplane": "$onprem_dp", "providerState": "na" }
+    "aws":    { "dataplane": "$aws_dp",    "providerState": "$aws_ps" },
+    "oci":    { "dataplane": "$oci_dp",    "providerState": "$oci_ps" },
+    "azure":  { "dataplane": "$az_dp",     "providerState": "$az_ps" },
+    "onprem": { "dataplane": "$onprem_dp", "providerState": "$onprem_ps" }
   },
   "assertions": [
+    { "name": "directed_ping_ssh_matrix", "result": "$directed_matrix" },
     { "name": "ownership_epoch_bumped", "result": "$a_epoch" },
     { "name": "allow_reassignment_maintained_until_success", "result": "$a_reassign" },
     { "name": "source_ip_preserved", "result": "$src_pres" },
     { "name": "default_gateway_unchanged", "result": "$gw_ok" },
+    { "name": "no_nat", "result": "$no_nat" },
     { "name": "old_holder_residue_absent", "result": "$a_residue" },
     { "name": "stale_action_fenced", "result": "$a_stale" }
   ],
@@ -562,7 +648,8 @@ EOF
 - commit: $commit
 - result: $result
 - dataplane (matrix): aws=$aws_dp oci=$oci_dp azure=$az_dp onprem=$onprem_dp
-- source_ip_preserved=$src_pres default_gateway_unchanged=$gw_ok
+- provider state: aws=$aws_ps oci=$oci_ps azure=$az_ps onprem=$onprem_ps
+- directed_ping_ssh_matrix=$directed_matrix source_ip_preserved=$src_pres default_gateway_unchanged=$gw_ok no_nat=$no_nat
 
 TODO(lab-operator): fold provider inventory (routerctl status, action journal,
 mobility_capture_epochs, wg show, packet capture) into this bundle, and record the
@@ -585,6 +672,15 @@ import json, sys
 data = json.load(open(sys.argv[1]))
 schema = json.load(open(sys.argv[2]))
 errs = []
+try:
+    import jsonschema
+except Exception:
+    jsonschema = None
+if jsonschema is not None:
+    try:
+        jsonschema.validate(instance=data, schema=schema)
+    except Exception as e:
+        errs.append(f"jsonschema validation failed: {e}")
 for k in schema["required"]:
     if k not in data:
         errs.append(f"missing top-level key: {k}")
