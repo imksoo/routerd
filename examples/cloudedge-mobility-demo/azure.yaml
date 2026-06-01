@@ -222,4 +222,9 @@ spec:
       spec:
         executable: /usr/local/libexec/routerd/plugins/azure-provider-executor/bin/azure-provider-executor
         timeout: 120s
+        # The executor inherits only PATH + this env (least-privilege; the
+        # routerd process env is NOT inherited). Point `az` at a service-writable
+        # config dir so it never falls back to /root/.azure, which the routerd
+        # service user cannot access (and which systemd ProtectHome=yes masks).
+        env: { AZURE_CONFIG_DIR: /var/lib/routerd/azure }
         capabilities: [execute.providerAction]
