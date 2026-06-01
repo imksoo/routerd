@@ -3,6 +3,7 @@
 package state
 
 import (
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -94,6 +95,129 @@ func TestListEventsGroupAndExpiredFilter(t *testing.T) {
 	}
 	if ids := idsOf(got); !equalIDs(ids, []string{"a", "c", "d"}) {
 		t.Fatalf("all non-expired ids = %v, want [a c d]", ids)
+	}
+}
+
+func TestRecordFederationMobilityHeartbeatsCompactToLatestPerGroupNode(t *testing.T) {
+	store := mustOpenStore(t)
+	defer store.Close()
+
+	base := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	for minute := 0; minute < 24*60; minute += 5 {
+		now := base.Add(time.Duration(minute) * time.Minute)
+		for _, node := range []string{"aws-router", "azure-router"} {
+			if err := store.RecordFederationEvent(EventRecord{
+				ID:         fmt.Sprintf("hb-%s-%04d", node, minute),
+				Group:      "cloudedge",
+				SourceNode: node,
+				Type:       mobilityHeartbeatEventType,
+				Subject:    "cloudedge/" + node,
+				DedupeKey:  heartbeatDedupeKeyForTest(node),
+				Payload: map[string]string{
+					"pool": "cloudedge",
+					"node": node,
+					"seq":  fmt.Sprint(minute),
+				},
+				ObservedAt: now,
+				RecordedAt: now,
+			}); err != nil {
+				t.Fatalf("record heartbeat %s minute %d: %v", node, minute, err)
+			}
+		}
+	}
+	if err := store.RecordFederationEvent(EventRecord{
+		ID:         "observed-client",
+		Group:      "cloudedge",
+		SourceNode: "onprem",
+		Type:       "routerd.client.ipv4.observed",
+		Subject:    "10.77.60.10/32",
+		ObservedAt: base.Add(24*time.Hour + time.Minute),
+	}); err != nil {
+		t.Fatalf("record non-heartbeat event: %v", err)
+	}
+
+	events, err := store.ListFederationEvents("cloudedge", false, base.Add(25*time.Hour).Unix())
+	if err != nil {
+		t.Fatalf("list events: %v", err)
+	}
+	if got, want := len(events), 3; got != want {
+		t.Fatalf("event rows after 24h heartbeats = %d, want %d: ids=%v", got, want, idsOf(events))
+	}
+	wantLatest := map[string]string{
+		"mobility-heartbeat:cloudedge:aws-router":   "1435",
+		"mobility-heartbeat:cloudedge:azure-router": "1435",
+	}
+	for _, ev := range events {
+		if wantSeq, ok := wantLatest[ev.DedupeKey]; ok {
+			if ev.Payload["seq"] != wantSeq {
+				t.Fatalf("latest heartbeat %s seq = %q, want %q", ev.DedupeKey, ev.Payload["seq"], wantSeq)
+			}
+			delete(wantLatest, ev.DedupeKey)
+		}
+	}
+	if len(wantLatest) != 0 {
+		t.Fatalf("missing latest heartbeats for %v", wantLatest)
+	}
+	stats, err := store.FederationHeartbeatCompactionStats("cloudedge")
+	if err != nil {
+		t.Fatalf("heartbeat compaction stats: %v", err)
+	}
+	if stats.DuplicateRows != 0 || len(stats.Keys) != 0 {
+		t.Fatalf("heartbeat duplicates after write compaction = %+v", stats)
+	}
+}
+
+func heartbeatDedupeKeyForTest(node string) string {
+	if node == "azure-router" {
+		return ""
+	}
+	return "mobility-heartbeat:cloudedge:" + node
+}
+
+func TestCompactFederationHeartbeatsPrunesLegacyDuplicatesPerGroup(t *testing.T) {
+	store := mustOpenStore(t)
+	defer store.Close()
+
+	base := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	insertLegacyHeartbeat := func(id, group, key string, observed time.Time) {
+		t.Helper()
+		if _, err := store.db.Exec(`
+			INSERT INTO federation_events (id, group_name, source_node, type, subject, dedupe_key, payload, observed_at, expires_at, recorded_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
+		`, id, group, "aws-router", mobilityHeartbeatEventType, "cloudedge/aws-router", key, `{"pool":"cloudedge","node":"aws-router"}`, observed.Unix(), observed.Unix()); err != nil {
+			t.Fatalf("insert legacy heartbeat %s: %v", id, err)
+		}
+	}
+	insertLegacyHeartbeat("g1-old", "g1", "mobility-heartbeat:cloudedge:aws-router", base)
+	insertLegacyHeartbeat("g1-new", "g1", "mobility-heartbeat:cloudedge:aws-router", base.Add(time.Minute))
+	insertLegacyHeartbeat("g2-old", "g2", "mobility-heartbeat:cloudedge:aws-router", base)
+	insertLegacyHeartbeat("g2-new", "g2", "mobility-heartbeat:cloudedge:aws-router", base.Add(2*time.Minute))
+
+	stats, err := store.FederationHeartbeatCompactionStats("")
+	if err != nil {
+		t.Fatalf("heartbeat compaction stats before: %v", err)
+	}
+	if stats.DuplicateRows != 2 {
+		t.Fatalf("duplicates before compaction = %+v, want 2 duplicate rows", stats)
+	}
+	removed, err := store.CompactFederationHeartbeats("")
+	if err != nil {
+		t.Fatalf("compact heartbeats: %v", err)
+	}
+	if removed != 2 {
+		t.Fatalf("removed = %d, want 2", removed)
+	}
+	for _, group := range []string{"g1", "g2"} {
+		events, err := store.ListFederationEvents(group, false, base.Add(time.Hour).Unix())
+		if err != nil {
+			t.Fatalf("list %s: %v", group, err)
+		}
+		if len(events) != 1 {
+			t.Fatalf("%s events after compaction = %v, want 1", group, idsOf(events))
+		}
+		if events[0].ID != group+"-new" {
+			t.Fatalf("%s retained id = %q, want %s-new", group, events[0].ID, group)
+		}
 	}
 }
 
