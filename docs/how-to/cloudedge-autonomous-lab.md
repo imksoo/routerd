@@ -61,9 +61,12 @@ Cost guard rules:
 - `up --ttl <dur>` stamps `ttl_expires_at`. Pick the shortest TTL that fits the run.
 - `down --run-id <id>` tears down one run; `down --expired` tears down **any** run
   past its TTL (safe no-op when there is no lab — exit 0).
-- An **EXIT trap** in the harness tears down the active run if an orchestrated
-  chain aborts unexpectedly (armed for chained/sourced flows; a normal `up`
-  leaves the lab alive until explicit `down` or TTL).
+- `up` validates `--ttl` up-front and **hard-fails** (non-zero) on an invalid
+  duration, so a lab is never started with a broken/already-expired cost guard.
+- An **EXIT trap** in the harness tears down the run if `up` is interrupted or a
+  provider fails **mid bring-up** (armed only during the in-progress window, then
+  disarmed on clean success; a successful `up` leaves the lab alive until explicit
+  `down` or TTL). `up --keep` opts out and leaves the partial state for inspection.
 - Always run `down` (or `down --expired` from a janitor) after every run, even on
   failure. Past-TTL labs are cleanable without knowing the run-id.
 

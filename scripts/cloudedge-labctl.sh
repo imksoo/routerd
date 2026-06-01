@@ -146,7 +146,9 @@ USAGE:
   --provider  Comma list to bring up (default depends on profile).
   --ttl       Lab lifetime, e.g. 90m, 4h, 2d (default 4h). Stamped as ttl_expires_at.
   --scenario  Scenario label used in the run-id (default derived from profile).
-  --keep      Do NOT arm the EXIT teardown trap (lab persists until 'down').
+  --keep      Do NOT arm the in-progress EXIT teardown trap; leave a partially
+              brought-up lab in place for inspection (default: a failed/interrupted
+              'up' auto-tears-down; a clean 'up' always persists until 'down'/TTL).
 
 Prints the run-id on stdout. Per-provider start either wraps the existing lab env
 or is a clearly-marked TODO(lab-operator) stub. No credentials are needed for --help.
@@ -207,6 +209,17 @@ cmd_up() {
   validate_providers "$providers"
   [[ -n "$scenario" ]] || scenario="$profile"
 
+  # Validate --ttl up-front and hard-fail before any provider_start. duration_to_secs
+  # die()s on a bad duration, but when called only inside the nested command
+  # substitution of cloudedge_ttl_expires_at its exit is swallowed and ttl_expires
+  # silently collapses to ~now (an already-expired stamp), letting 'up' continue at
+  # exit 0 with a broken cost guard. Calling it here (not in a substitution that
+  # masks the status) propagates the die. See cmd_up TTL guard test.
+  local ttl_secs
+  ttl_secs=$(duration_to_secs "$ttl")
+  [[ "$ttl_secs" =~ ^[0-9]+$ && "$ttl_secs" -gt 0 ]] \
+    || die "up: invalid --ttl '$ttl' (want a positive duration like 90m, 4h, 2d)"
+
   local run_id ttl_expires
   run_id=$(cloudedge_run_id "$scenario")
   ttl_expires=$(cloudedge_ttl_expires_at "$ttl")
@@ -215,9 +228,13 @@ cmd_up() {
   write_manifest "$run_id" "$ttl" "$ttl_expires" "$profile" "$providers"
 
   ACTIVE_RUN_ID="$run_id"
-  [[ "$keep" == "1" ]] || TEARDOWN_ON_EXIT="0"  # 'up' itself returns success; trap
-  # is primarily for orchestrators that source/chain commands. Keep is the default
-  # operational mode (lab persists until explicit 'down' or TTL expiry).
+  # Arm the EXIT teardown trap for the in-progress bring-up window: if a
+  # provider_start fails or the chain is interrupted (set -e / signal) before
+  # 'up' completes, the partially-allocated run is torn down so a half-built lab
+  # cannot leak past its cost guard. On clean success we disarm below so the lab
+  # persists until an explicit 'down' or TTL expiry. --keep opts out entirely
+  # (leaves the partial state in place for inspection instead of auto-cleaning).
+  [[ "$keep" == "1" ]] || TEARDOWN_ON_EXIT="1"
 
   local p
   IFS=',' read -ra _ps <<<"$providers"
@@ -225,7 +242,7 @@ cmd_up() {
     provider_start "$p" "$run_id" "$ttl_expires"
   done
 
-  # Success: do not auto-teardown a freshly-started lab.
+  # Clean success: disarm so we do not auto-teardown a freshly-started lab.
   TEARDOWN_ON_EXIT="0"
   printf '%s\n' "$run_id"
 }
