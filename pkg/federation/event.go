@@ -16,6 +16,16 @@ import (
 	"time"
 )
 
+const (
+	// ObservedIPv4EventType is the data-plane observation topic used by
+	// CloudEdge Mobility lease projection.
+	ObservedIPv4EventType = "routerd.client.ipv4.observed"
+
+	// MobilityMemberHeartbeatType is the control-plane liveness topic emitted
+	// by MobilityPool auto-failover members.
+	MobilityMemberHeartbeatType = "routerd.mobility.member.heartbeat"
+)
+
 // Event is the external Event Federation envelope exchanged between routerd
 // nodes. It is an observed fact (e.g. "routerd.client.ipv4.observed"), not
 // config and not a command.
@@ -80,4 +90,10 @@ func (e Event) IsExpired(now time.Time) bool {
 		return false
 	}
 	return now.After(e.ExpiresAt)
+}
+
+// IsControlPlaneLivenessType reports whether typ is a control-plane liveness
+// topic. These events must not be scoped by data-plane subject prefixes.
+func IsControlPlaneLivenessType(typ string) bool {
+	return strings.TrimSpace(typ) == MobilityMemberHeartbeatType
 }

@@ -16,13 +16,14 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/federation"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
 const (
 	ObservedEventType  = "routerd.client.ipv4.observed"
 	ExpiredEventType   = "routerd.client.ipv4.expired"
-	HeartbeatEventType = "routerd.mobility.member.heartbeat"
+	HeartbeatEventType = federation.MobilityMemberHeartbeatType
 
 	DefaultLeaseTTL      = 5 * time.Minute
 	DefaultHoldDuration  = 30 * time.Second

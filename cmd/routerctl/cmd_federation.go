@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/federation"
+	"github.com/imksoo/routerd/pkg/federationguard"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -158,8 +159,8 @@ func federationEventEmitCommand(args []string, stdout io.Writer) error {
 	if !ok {
 		return fmt.Errorf("state file %s does not support federation events", *statePath)
 	}
-	if captureStore, ok := store.(federation.DynamicConfigPartStore); ok {
-		if err := federation.RejectSelfCapturedObservedEvent(captureStore, ev, now); err != nil {
+	if captureStore, ok := store.(federationguard.DynamicConfigPartStore); ok {
+		if err := federationguard.RejectSelfCapturedObservedEvent(captureStore, ev, now); err != nil {
 			return err
 		}
 	}

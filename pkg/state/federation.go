@@ -9,13 +9,15 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/imksoo/routerd/pkg/federation"
 )
 
 // errStoreClosed is returned by the federation event store methods once the
 // underlying SQLiteStore has been closed.
 var errStoreClosed = errors.New("state store is closed")
 
-const mobilityHeartbeatEventType = "routerd.mobility.member.heartbeat"
+const mobilityHeartbeatEventType = federation.MobilityMemberHeartbeatType
 
 // EventRecord is a persisted CloudEdge Event Federation event (ADR 0006). It is
 // stored in the federation_events table, which is distinct from the

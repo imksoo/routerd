@@ -83,7 +83,7 @@ func peerMatches(peer PeerConfig, ev federation.Event) bool {
 			return false
 		}
 	}
-	if len(peer.SubjectPrefixes) > 0 {
+	if len(peer.SubjectPrefixes) > 0 && !federation.IsControlPlaneLivenessType(ev.Type) {
 		ok := false
 		for _, p := range peer.SubjectPrefixes {
 			if strings.HasPrefix(ev.Subject, p) {
