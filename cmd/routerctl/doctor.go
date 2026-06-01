@@ -199,6 +199,10 @@ func (r doctorRunner) doctorHybrid() []doctorCheck {
 	for _, res := range selectResources(r.router.Spec.Resources, "WireGuardInterface", "") {
 		wgInterfaces[res.Metadata.Name] = true
 	}
+	tunnelInterfaces := map[string]bool{}
+	for _, res := range selectResources(r.router.Spec.Resources, "TunnelInterface", "") {
+		tunnelInterfaces[res.Metadata.Name] = true
+	}
 	var checks []doctorCheck
 	for _, peer := range peers {
 		spec, err := peer.OverlayPeerSpec()
@@ -212,6 +216,14 @@ func (r doctorRunner) doctorHybrid() []doctorCheck {
 				checks = append(checks, doctorCheck{Area: "hybrid", Name: name, Status: doctorPass, Detail: "WireGuardInterface/" + spec.Underlay.Interface})
 			} else {
 				checks = append(checks, doctorCheck{Area: "hybrid", Name: name, Status: doctorFail, Detail: "missing WireGuardInterface/" + spec.Underlay.Interface, Remedy: "declare the WireGuardInterface or change OverlayPeer underlay.interface"})
+			}
+		}
+		if spec.Underlay.Type == "ipip" || spec.Underlay.Type == "gre" {
+			name := "OverlayPeer/" + peer.Metadata.Name + " underlay interface"
+			if tunnelInterfaces[spec.Underlay.Interface] {
+				checks = append(checks, doctorCheck{Area: "hybrid", Name: name, Status: doctorPass, Detail: "TunnelInterface/" + spec.Underlay.Interface})
+			} else {
+				checks = append(checks, doctorCheck{Area: "hybrid", Name: name, Status: doctorFail, Detail: "missing TunnelInterface/" + spec.Underlay.Interface, Remedy: "declare the TunnelInterface or change OverlayPeer underlay.interface"})
 			}
 		}
 	}

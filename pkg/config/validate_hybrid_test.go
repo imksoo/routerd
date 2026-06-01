@@ -18,6 +18,13 @@ func TestValidateHybridResources(t *testing.T) {
 	}
 }
 
+func TestValidateTunnelInterfaceResources(t *testing.T) {
+	router := validTunnelHybridRouter()
+	if err := Validate(router); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+}
+
 func TestValidateHybridFailures(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -287,11 +294,94 @@ func TestValidateHybridFailures(t *testing.T) {
 	}
 }
 
+func TestValidateTunnelInterfaceFailures(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*api.Router)
+		want   string
+	}{
+		{
+			name: "trusted underlay required",
+			mutate: func(router *api.Router) {
+				spec := router.Spec.Resources[0].Spec.(api.TunnelInterfaceSpec)
+				spec.TrustedUnderlay = false
+				router.Spec.Resources[0].Spec = spec
+			},
+			want: "spec.trustedUnderlay must be true",
+		},
+		{
+			name: "local required",
+			mutate: func(router *api.Router) {
+				spec := router.Spec.Resources[0].Spec.(api.TunnelInterfaceSpec)
+				spec.Local = ""
+				router.Spec.Resources[0].Spec = spec
+			},
+			want: "spec.local is required",
+		},
+		{
+			name: "remote required",
+			mutate: func(router *api.Router) {
+				spec := router.Spec.Resources[0].Spec.(api.TunnelInterfaceSpec)
+				spec.Remote = ""
+				router.Spec.Resources[0].Spec = spec
+			},
+			want: "spec.remote is required",
+		},
+		{
+			name: "mode invalid",
+			mutate: func(router *api.Router) {
+				spec := router.Spec.Resources[0].Spec.(api.TunnelInterfaceSpec)
+				spec.Mode = "fou"
+				router.Spec.Resources[0].Spec = spec
+			},
+			want: "spec.mode must be ipip or gre",
+		},
+		{
+			name: "key requires gre",
+			mutate: func(router *api.Router) {
+				spec := router.Spec.Resources[0].Spec.(api.TunnelInterfaceSpec)
+				spec.Mode = "ipip"
+				spec.Key = 10
+				router.Spec.Resources[0].Spec = spec
+			},
+			want: "spec.key is only supported when spec.mode is gre",
+		},
+		{
+			name: "overlay peer tunnel reference required",
+			mutate: func(router *api.Router) {
+				spec := router.Spec.Resources[1].Spec.(api.OverlayPeerSpec)
+				spec.Underlay.Interface = "missing"
+				router.Spec.Resources[1].Spec = spec
+			},
+			want: "spec.underlay.interface references missing TunnelInterface",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			router := validTunnelHybridRouter()
+			tt.mutate(router)
+			err := Validate(router)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("Validate error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
 func TestValidateHybridWarnsForExternalWireGuardInterface(t *testing.T) {
 	router := validHybridRouter()
 	router.Spec.Resources = append(router.Spec.Resources[:0], router.Spec.Resources[1:]...)
 	warnings := Warnings(router)
 	if len(warnings) != 1 || !strings.Contains(warnings[0], "assuming the interface is managed externally") {
+		t.Fatalf("warnings = %#v", warnings)
+	}
+}
+
+func TestValidateHybridWarnsForMissingTunnelInterface(t *testing.T) {
+	router := validTunnelHybridRouter()
+	router.Spec.Resources = router.Spec.Resources[1:]
+	warnings := Warnings(router)
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "references TunnelInterface") {
 		t.Fatalf("warnings = %#v", warnings)
 	}
 }
@@ -437,6 +527,38 @@ func validHybridRouter() *api.Router {
 					Mode:            "route",
 					TunnelInterface: "wg-hybrid",
 				},
+			}),
+		}},
+	}
+}
+
+func validTunnelHybridRouter() *api.Router {
+	return &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			testResource(api.HybridAPIVersion, "TunnelInterface", "tun-gre", api.TunnelInterfaceSpec{
+				Mode:            "gre",
+				Local:           "192.0.2.10",
+				Remote:          "192.0.2.20",
+				Address:         "10.99.0.1/32",
+				MTU:             1472,
+				TTL:             64,
+				Key:             42,
+				TrustedUnderlay: true,
+			}),
+			testResource(api.HybridAPIVersion, "OverlayPeer", "edge-main", api.OverlayPeerSpec{
+				Role:     "cloud",
+				NodeID:   "edge-1",
+				Underlay: api.OverlayUnderlay{Type: "gre", Interface: "tun-gre", Address: "10.99.0.2"},
+			}),
+			testResource(api.HybridAPIVersion, "HybridRoute", "edge-lan", api.HybridRouteSpec{
+				DestinationCIDRs: []string{"10.20.0.0/16"},
+				PeerRef:          "edge-main",
+			}),
+			testResource(api.NetAPIVersion, "IPv4StaticAddress", "tun-gre-address", api.IPv4StaticAddressSpec{
+				Interface: "tun-gre",
+				Address:   "10.99.0.1/32",
 			}),
 		}},
 	}

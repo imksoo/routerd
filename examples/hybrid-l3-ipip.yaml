@@ -1,0 +1,51 @@
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: hybrid-l3-ipip
+spec:
+  resources:
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: TunnelInterface
+      metadata:
+        name: tun-edge-a
+      spec:
+        mode: ipip
+        local: 192.0.2.10
+        remote: 192.0.2.20
+        address: 10.99.0.1/32
+        trustedUnderlay: true
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4StaticAddress
+      metadata:
+        name: tun-edge-a-address
+      spec:
+        interface: tun-edge-a
+        address: 10.99.0.1/32
+
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: OverlayPeer
+      metadata:
+        name: edge-b
+      spec:
+        role: cloud
+        nodeID: edge-b
+        underlay:
+          type: ipip
+          interface: tun-edge-a
+          address: 10.99.0.2
+        remote:
+          nodeID: edge-b
+          address: 10.99.0.2
+
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: HybridRoute
+      metadata:
+        name: edge-b-lan
+      spec:
+        peerRef: edge-b
+        destinationCIDRs:
+          - 10.20.0.0/24
+        install:
+          table: main
+          metric: 120

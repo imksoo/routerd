@@ -435,6 +435,17 @@ type WireGuardInterfaceSpec struct {
 	Table          int    `yaml:"-" json:"-"`
 }
 
+type TunnelInterfaceSpec struct {
+	Mode            string `yaml:"mode" json:"mode" jsonschema:"enum=ipip,enum=gre"`
+	Local           string `yaml:"local" json:"local"`
+	Remote          string `yaml:"remote" json:"remote"`
+	Address         string `yaml:"address,omitempty" json:"address,omitempty"`
+	MTU             int    `yaml:"mtu,omitempty" json:"mtu,omitempty" jsonschema:"minimum=576,maximum=9216"`
+	TTL             int    `yaml:"ttl,omitempty" json:"ttl,omitempty" jsonschema:"minimum=1,maximum=255"`
+	Key             int    `yaml:"key,omitempty" json:"key,omitempty" jsonschema:"minimum=0,maximum=4294967295"`
+	TrustedUnderlay bool   `yaml:"trustedUnderlay" json:"trustedUnderlay"`
+}
+
 type WireGuardPeerSpec struct {
 	Interface           string   `yaml:"interface" json:"interface"`
 	PublicKey           string   `yaml:"publicKey" json:"publicKey"`
@@ -1179,7 +1190,7 @@ type OverlayPeerSpec struct {
 }
 
 type OverlayUnderlay struct {
-	Type      string `yaml:"type" json:"type" jsonschema:"enum=wireguard,enum=tailscale,enum=ipsec,enum=route"`
+	Type      string `yaml:"type" json:"type" jsonschema:"enum=wireguard,enum=tailscale,enum=ipsec,enum=route,enum=ipip,enum=gre"`
 	Interface string `yaml:"interface,omitempty" json:"interface,omitempty"`
 	Address   string `yaml:"address,omitempty" json:"address,omitempty"`
 }
@@ -2021,6 +2032,10 @@ func (r Resource) VXLANSegmentSpec() (VXLANSegmentSpec, error) {
 
 func (r Resource) WireGuardInterfaceSpec() (WireGuardInterfaceSpec, error) {
 	return specAs[WireGuardInterfaceSpec](r)
+}
+
+func (r Resource) TunnelInterfaceSpec() (TunnelInterfaceSpec, error) {
+	return specAs[TunnelInterfaceSpec](r)
 }
 
 func (r Resource) WireGuardPeerSpec() (WireGuardPeerSpec, error) {

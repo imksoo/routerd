@@ -88,6 +88,8 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 			e.observePPPoESession(res, aliases, includePlan, &rr)
 		case "WireGuardInterface":
 			e.observeWireGuardInterface(res, includePlan, &rr)
+		case "TunnelInterface":
+			e.observeTunnelInterface(res, includePlan, &rr)
 		case "WireGuardPeer":
 			e.observeWireGuardPeer(res, aliases, includePlan, &rr)
 		case "TailscaleNode":
@@ -720,6 +722,31 @@ func (e *Engine) observeWireGuardInterface(res api.Resource, includePlan bool, r
 	}
 	if includePlan {
 		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure WireGuard interface %s", res.Metadata.Name))
+	}
+}
+
+func (e *Engine) observeTunnelInterface(res api.Resource, includePlan bool, rr *ResourceResult) {
+	spec, err := res.TunnelInterfaceSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	rr.Observed["ifname"] = res.Metadata.Name
+	rr.Observed["mode"] = spec.Mode
+	rr.Observed["local"] = spec.Local
+	rr.Observed["remote"] = spec.Remote
+	if spec.MTU != 0 {
+		rr.Observed["mtu"] = fmt.Sprintf("%d", spec.MTU)
+	}
+	if spec.TTL != 0 {
+		rr.Observed["ttl"] = fmt.Sprintf("%d", spec.TTL)
+	}
+	if spec.Key != 0 {
+		rr.Observed["key"] = fmt.Sprintf("%d", spec.Key)
+	}
+	if includePlan {
+		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure %s tunnel interface %s exists", spec.Mode, res.Metadata.Name))
 	}
 }
 
@@ -1758,6 +1785,8 @@ func interfaceAliases(router *api.Router) map[string]string {
 		case "VXLANSegment":
 			aliases[res.Metadata.Name] = stringSpecDefault(res, "ifname", res.Metadata.Name)
 		case "WireGuardInterface":
+			aliases[res.Metadata.Name] = res.Metadata.Name
+		case "TunnelInterface":
 			aliases[res.Metadata.Name] = res.Metadata.Name
 		case "VRF":
 			aliases[res.Metadata.Name] = stringSpecDefault(res, "ifname", res.Metadata.Name)

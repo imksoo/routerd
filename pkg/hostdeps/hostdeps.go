@@ -176,6 +176,9 @@ func packageFeatures(router *api.Router) map[string]bool {
 			features["wireguard"] = true
 			features["kmod"] = true
 			features["nft"] = true
+		case "TunnelInterface":
+			features["base"] = true
+			features["kmod"] = true
 		case "IPsecConnection":
 			features["ipsec"] = true
 		case "TailscaleNode":
@@ -254,6 +257,17 @@ func KernelModules(router *api.Router) []string {
 			needed["nfnetlink_log"] = true
 		case "WireGuardInterface", "WireGuardPeer":
 			needed["wireguard"] = true
+		case "TunnelInterface":
+			spec, err := res.TunnelInterfaceSpec()
+			if err != nil {
+				continue
+			}
+			switch spec.Mode {
+			case "ipip":
+				needed["ipip"] = true
+			case "gre":
+				needed["ip_gre"] = true
+			}
 		}
 	}
 	return sortedKeys(needed)

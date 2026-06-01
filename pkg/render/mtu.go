@@ -374,6 +374,18 @@ func pathMTUResourceMTU(res api.Resource, value reflect.Value) int {
 		return 1454
 	case "WireGuardInterface":
 		return 1420
+	case "TunnelInterface":
+		mode := ""
+		if field := value.FieldByName("Mode"); field.IsValid() && field.Kind() == reflect.String {
+			mode = strings.TrimSpace(field.String())
+		}
+		if mode == "ipip" {
+			return 1480
+		}
+		if mode == "gre" {
+			return 1476
+		}
+		return 0
 	default:
 		return 0
 	}

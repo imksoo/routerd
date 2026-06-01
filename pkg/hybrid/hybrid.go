@@ -17,6 +17,11 @@ const (
 	TailscaleOverheadBytes = 80
 	IPsecOverheadBytes     = 74
 	RouteOverheadBytes     = 0
+	IPIPOverheadBytes      = 20
+	GREOverheadBytes       = 24
+	GREKeyOverheadBytes    = 4
+	TunnelIPIPDefaultMTU   = 1480
+	TunnelGREDefaultMTU    = 1476
 	MinimumIPv6MTU         = 1280
 )
 
@@ -203,9 +208,9 @@ func EstimateMTU(router api.Router, peerName string) (MTUEstimate, bool) {
 	}
 	underlayMTU := underlayMTU(router, peer)
 	if underlayMTU == 0 {
-		return MTUEstimate{Overhead: overheadFor(peer.Underlay.Type)}, true
+		return MTUEstimate{Overhead: overheadForPeer(router, peer)}, true
 	}
-	overhead := overheadFor(peer.Underlay.Type)
+	overhead := overheadForPeer(router, peer)
 	estimate := MTUEstimate{UnderlayMTU: underlayMTU, Overhead: overhead, EstimatedMTU: underlayMTU - overhead}
 	if estimate.EstimatedMTU > 0 && estimate.EstimatedMTU < MinimumIPv6MTU {
 		estimate.Warning = fmt.Sprintf("estimated MTU %d is below IPv6 minimum %d", estimate.EstimatedMTU, MinimumIPv6MTU)
@@ -233,7 +238,7 @@ func RouteTarget(peer api.OverlayPeerSpec) (string, string, error) {
 		return "", "", fmt.Errorf("spec.underlay.interface is required to lower HybridRoute to IPv4Route")
 	}
 	switch strings.TrimSpace(peer.Underlay.Type) {
-	case "wireguard", "route", "tailscale":
+	case "wireguard", "route", "tailscale", "ipip", "gre":
 		return device, "", nil
 	case "ipsec":
 		gateway := ""
@@ -330,9 +335,49 @@ func underlayMTU(router api.Router, peer api.OverlayPeerSpec) int {
 			if err == nil {
 				return spec.MTU
 			}
+		case "TunnelInterface":
+			spec, err := resource.TunnelInterfaceSpec()
+			if err == nil {
+				return tunnelInterfaceMTU(spec)
+			}
 		}
 	}
 	return 0
+}
+
+func tunnelInterfaceMTU(spec api.TunnelInterfaceSpec) int {
+	if spec.MTU > 0 {
+		return spec.MTU
+	}
+	switch strings.TrimSpace(spec.Mode) {
+	case "ipip":
+		return TunnelIPIPDefaultMTU
+	case "gre":
+		return TunnelGREDefaultMTU
+	default:
+		return 0
+	}
+}
+
+func overheadForPeer(router api.Router, peer api.OverlayPeerSpec) int {
+	overhead := overheadFor(peer.Underlay.Type)
+	if strings.TrimSpace(peer.Underlay.Type) != "gre" {
+		return overhead
+	}
+	iface := strings.TrimSpace(peer.Underlay.Interface)
+	if iface == "" {
+		return overhead
+	}
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.HybridAPIVersion || resource.Kind != "TunnelInterface" || resource.Metadata.Name != iface {
+			continue
+		}
+		spec, err := resource.TunnelInterfaceSpec()
+		if err == nil && spec.Key != 0 {
+			return overhead + GREKeyOverheadBytes
+		}
+	}
+	return overhead
 }
 
 func overheadFor(underlayType string) int {
@@ -345,6 +390,10 @@ func overheadFor(underlayType string) int {
 		return IPsecOverheadBytes
 	case "route":
 		return RouteOverheadBytes
+	case "ipip":
+		return IPIPOverheadBytes
+	case "gre":
+		return GREOverheadBytes
 	default:
 		return 0
 	}
