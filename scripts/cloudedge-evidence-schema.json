@@ -66,6 +66,52 @@
           "enum": ["completed", "pending", "failed", "skipped"]
         }
       }
+    },
+    "timings": {
+      "type": "object",
+      "description": "Optional auto-failover timing measurements.",
+      "additionalProperties": true,
+      "properties": {
+        "status": { "$ref": "#/definitions/checkState" },
+        "thresholdSeconds": { "type": "number", "minimum": 0 },
+        "events": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+              "provider": { "type": "string" },
+              "fault": { "type": "string" },
+              "detectionSeconds": { "type": "number", "minimum": 0 },
+              "switchoverSeconds": { "type": "number", "minimum": 0 },
+              "recoverySeconds": { "type": "number", "minimum": 0 },
+              "recoveryUnderThreshold": { "$ref": "#/definitions/checkState" }
+            }
+          }
+        }
+      }
+    },
+    "protocols": {
+      "type": "object",
+      "description": "Optional FTP/NFS/RPC/bulk/PMTU transparency probe results.",
+      "additionalProperties": true,
+      "properties": {
+        "status": { "$ref": "#/definitions/checkState" },
+        "pairs": { "type": "array" },
+        "summary": { "type": "object" }
+      }
+    },
+    "l2Loop": {
+      "type": "object",
+      "description": "Optional L2 loop / broadcast storm / STP-RSTP stability observations.",
+      "additionalProperties": true,
+      "properties": {
+        "status": { "$ref": "#/definitions/checkState" },
+        "mechanism": { "type": "string" },
+        "thresholds": { "type": "object" },
+        "phases": { "type": "array" },
+        "summary": { "type": "object" }
+      }
     }
   },
   "definitions": {

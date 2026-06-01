@@ -428,7 +428,9 @@ $SELF evidence - assemble an evidence bundle and emit result JSON
 USAGE:
   $SELF evidence collect --out <dir> [--run-id <id>] [--scenario <name>]
                          [--commit <ref>] [--matrix-json <file>]
-                         [--provider-state-json <file>] [--result pass|fail]
+                         [--provider-state-json <file>] [--timing-json <file>]
+                         [--protocol-json <file>] [--l2-loop-json <file>]
+                         [--result pass|fail]
 
   --out DIR        Evidence bundle output directory (required).
   --run-id ID      Run id (default: latest manifest). Sets runId in the JSON.
@@ -438,6 +440,12 @@ USAGE:
   --provider-state-json F
                   Optional provider inventory check states. Accepted shapes:
                   {"aws":"pass"} or {"aws":{"providerState":"pass"}}.
+  --timing-json F
+                  Auto-failover timing JSON from cloudedge-failover-timing.sh.
+  --protocol-json F
+                  Protocol transparency JSON from cloudedge-protocol-probe.sh.
+  --l2-loop-json F
+                  L2 loop/STP stability JSON from cloudedge-l2-loop-probe.sh.
   --result R       Force overall result; default derived from inputs.
 
 Writes <out>/result.json validating against cloudedge-evidence-schema.json plus a
@@ -535,11 +543,114 @@ print(value if value in valid else "na")
 PY
 }
 
+json_object_or_default() {
+  local json_file=$1 default_json=$2
+  [[ -n "$json_file" && -f "$json_file" ]] || { printf '%s\n' "$default_json"; return; }
+  have python3 || { printf '%s\n' "$default_json"; return; }
+  python3 - "$json_file" "$default_json" <<'PY'
+import json, sys
+try:
+    data = json.load(open(sys.argv[1]))
+    if not isinstance(data, dict):
+        raise ValueError("not an object")
+except Exception:
+    data = json.loads(sys.argv[2])
+print(json.dumps(data, sort_keys=True))
+PY
+}
+
+timing_recovery_check() {
+  local timing_json=$1
+  [[ -n "$timing_json" && -f "$timing_json" ]] || { echo "na"; return; }
+  have python3 || { echo "na"; return; }
+  python3 - "$timing_json" <<'PY'
+import json, sys
+try:
+    data = json.load(open(sys.argv[1]))
+except Exception:
+    print("na")
+    raise SystemExit(0)
+events = data.get("events", [])
+if not events:
+    print("na")
+elif data.get("status") == "pass" and all(e.get("recoveryUnderThreshold") == "pass" for e in events):
+    print("pass")
+else:
+    print("fail")
+PY
+}
+
+protocol_check() {
+  local protocol_json=$1 check=$2
+  [[ -n "$protocol_json" && -f "$protocol_json" ]] || { echo "na"; return; }
+  have python3 || { echo "na"; return; }
+  python3 - "$protocol_json" "$check" <<'PY'
+import json, sys
+try:
+    data = json.load(open(sys.argv[1]))
+except Exception:
+    print("na")
+    raise SystemExit(0)
+check = sys.argv[2]
+summary = data.get("summary", {})
+checks = summary.get("checks", {})
+if check == "protocol_transparency":
+    result = data.get("status", "na")
+elif check == "ftp_active_passive":
+    vals = [checks.get("ftpActive"), checks.get("ftpPassive")]
+    result = "pass" if all(v == "pass" for v in vals) else "fail"
+elif check == "nfs_rpc":
+    vals = [checks.get("nfs"), checks.get("rpc")]
+    result = "pass" if all(v == "pass" for v in vals) else "fail"
+elif check == "bulk_transfer_pmtu":
+    vals = [checks.get("bulkTransfer"), checks.get("pmtu")]
+    result = "pass" if all(v == "pass" for v in vals) else "fail"
+elif check == "protocol_source_ip_preserved":
+    result = checks.get("sourceIpPreserved", "na")
+elif check == "protocol_no_nat":
+    result = checks.get("noNat", "na")
+else:
+    result = "na"
+print(result if result in ("pass", "fail", "skip", "na") else "na")
+PY
+}
+
+l2_loop_check() {
+  local l2_loop_json=$1 check=$2
+  [[ -n "$l2_loop_json" && -f "$l2_loop_json" ]] || { echo "na"; return; }
+  have python3 || { echo "na"; return; }
+  python3 - "$l2_loop_json" "$check" <<'PY'
+import json, sys
+try:
+    data = json.load(open(sys.argv[1]))
+except Exception:
+    print("na")
+    raise SystemExit(0)
+check = sys.argv[2]
+summary = data.get("summary", {})
+if check == "l2_loop_free":
+    result = data.get("status", "na")
+elif check == "broadcast_storm_absent":
+    result = summary.get("broadcastStormAbsent", "na")
+elif check == "stp_rstp_stable":
+    result = summary.get("stpRstpStable", "na")
+elif check == "mac_flap_absent":
+    result = summary.get("macFlapAbsent", "na")
+elif check == "failover_ping_stable":
+    result = summary.get("failoverPingStable", "na")
+elif check == "l2_suppression_mechanism_recorded":
+    result = summary.get("suppressionMechanismRecorded", "na")
+else:
+    result = "na"
+print(result if result in ("pass", "fail", "skip", "na") else "na")
+PY
+}
+
 cmd_evidence() {
   local sub="${1:-}"; [[ "$sub" == "-h" || "$sub" == "--help" ]] && { evidence_usage; exit 0; }
   [[ "$sub" == "collect" ]] || { evidence_usage >&2; die "evidence: expected subcommand 'collect'"; }
   shift
-  local out="" run_id="" scenario="" commit="" matrix_json="" provider_state_json="" forced_result=""
+  local out="" run_id="" scenario="" commit="" matrix_json="" provider_state_json="" timing_json="" protocol_json="" l2_loop_json="" forced_result=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --out) out="${2:-}"; shift 2 ;;
@@ -548,6 +659,9 @@ cmd_evidence() {
       --commit) commit="${2:-}"; shift 2 ;;
       --matrix-json) matrix_json="${2:-}"; shift 2 ;;
       --provider-state-json) provider_state_json="${2:-}"; shift 2 ;;
+      --timing-json) timing_json="${2:-}"; shift 2 ;;
+      --protocol-json) protocol_json="${2:-}"; shift 2 ;;
+      --l2-loop-json) l2_loop_json="${2:-}"; shift 2 ;;
       --result) forced_result="${2:-}"; shift 2 ;;
       -h|--help) evidence_usage; exit 0 ;;
       *) die "evidence: unknown argument: $1" ;;
@@ -592,13 +706,35 @@ cmd_evidence() {
   no_nat=$(matrix_assertion "$matrix_json" noNat)
   matrix_overall=$(matrix_summary_result "$matrix_json")
 
+  local timings_obj protocols_obj l2_loop_obj
+  timings_obj=$(json_object_or_default "$timing_json" '{"status":"na","thresholdSeconds":60,"events":[]}')
+  protocols_obj=$(json_object_or_default "$protocol_json" '{"status":"na","pairs":[],"summary":{"total":0,"passed":0,"failed":0,"checks":{}}}')
+  l2_loop_obj=$(json_object_or_default "$l2_loop_json" '{"status":"na","mechanism":"","phases":[],"summary":{}}')
+
+  local failover_recovery protocol_transparency ftp_active_passive nfs_rpc bulk_transfer_pmtu protocol_src_pres protocol_no_nat
+  failover_recovery=$(timing_recovery_check "$timing_json")
+  protocol_transparency=$(protocol_check "$protocol_json" protocol_transparency)
+  ftp_active_passive=$(protocol_check "$protocol_json" ftp_active_passive)
+  nfs_rpc=$(protocol_check "$protocol_json" nfs_rpc)
+  bulk_transfer_pmtu=$(protocol_check "$protocol_json" bulk_transfer_pmtu)
+  protocol_src_pres=$(protocol_check "$protocol_json" protocol_source_ip_preserved)
+  protocol_no_nat=$(protocol_check "$protocol_json" protocol_no_nat)
+
+  local l2_loop_free broadcast_storm_absent stp_rstp_stable mac_flap_absent failover_ping_stable l2_mechanism_recorded
+  l2_loop_free=$(l2_loop_check "$l2_loop_json" l2_loop_free)
+  broadcast_storm_absent=$(l2_loop_check "$l2_loop_json" broadcast_storm_absent)
+  stp_rstp_stable=$(l2_loop_check "$l2_loop_json" stp_rstp_stable)
+  mac_flap_absent=$(l2_loop_check "$l2_loop_json" mac_flap_absent)
+  failover_ping_stable=$(l2_loop_check "$l2_loop_json" failover_ping_stable)
+  l2_mechanism_recorded=$(l2_loop_check "$l2_loop_json" l2_suppression_mechanism_recorded)
+
   # Fencing/seize assertions: na until a failover scenario records them. Folding
   # real journal/epoch evidence is the lab operator's wire-up (TODO).
   local a_epoch="na" a_reassign="na" a_residue="na" a_stale="na"
 
   local result="$forced_result"
   if [[ -z "$result" ]]; then
-    if [[ "$matrix_overall" == "fail" || "$directed_matrix" == "fail" || "$src_pres" == "fail" || "$gw_ok" == "fail" || "$no_nat" == "fail" ]]; then
+    if [[ "$matrix_overall" == "fail" || "$directed_matrix" == "fail" || "$src_pres" == "fail" || "$gw_ok" == "fail" || "$no_nat" == "fail" || "$failover_recovery" == "fail" || "$protocol_transparency" == "fail" || "$ftp_active_passive" == "fail" || "$nfs_rpc" == "fail" || "$bulk_transfer_pmtu" == "fail" || "$protocol_src_pres" == "fail" || "$protocol_no_nat" == "fail" || "$l2_loop_free" == "fail" || "$broadcast_storm_absent" == "fail" || "$stp_rstp_stable" == "fail" || "$mac_flap_absent" == "fail" || "$failover_ping_stable" == "fail" || "$l2_mechanism_recorded" == "fail" ]]; then
       result="fail"
     elif [[ "$matrix_overall" == "pass" && "$directed_matrix" == "pass" ]]; then
       result="pass"
@@ -627,9 +763,25 @@ cmd_evidence() {
     { "name": "source_ip_preserved", "result": "$src_pres" },
     { "name": "default_gateway_unchanged", "result": "$gw_ok" },
     { "name": "no_nat", "result": "$no_nat" },
+    { "name": "failover_recovery_under_60s", "result": "$failover_recovery" },
+    { "name": "protocol_transparency", "result": "$protocol_transparency" },
+    { "name": "ftp_active_passive", "result": "$ftp_active_passive" },
+    { "name": "nfs_rpc", "result": "$nfs_rpc" },
+    { "name": "bulk_transfer_pmtu", "result": "$bulk_transfer_pmtu" },
+    { "name": "protocol_source_ip_preserved", "result": "$protocol_src_pres" },
+    { "name": "protocol_no_nat", "result": "$protocol_no_nat" },
+    { "name": "l2_loop_free", "result": "$l2_loop_free" },
+    { "name": "broadcast_storm_absent", "result": "$broadcast_storm_absent" },
+    { "name": "stp_rstp_stable", "result": "$stp_rstp_stable" },
+    { "name": "mac_flap_absent", "result": "$mac_flap_absent" },
+    { "name": "failover_ping_stable", "result": "$failover_ping_stable" },
+    { "name": "l2_suppression_mechanism_recorded", "result": "$l2_mechanism_recorded" },
     { "name": "old_holder_residue_absent", "result": "$a_residue" },
     { "name": "stale_action_fenced", "result": "$a_stale" }
   ],
+  "timings": $timings_obj,
+  "protocols": $protocols_obj,
+  "l2Loop": $l2_loop_obj,
   "costGuard": {
     "ttlHours": $ttl_hours,
     "teardown": "$teardown_state"
@@ -639,6 +791,15 @@ EOF
 
   if [[ -n "$matrix_json" && -f "$matrix_json" ]]; then
     cp "$matrix_json" "$out/connectivity-matrix.json" 2>/dev/null || true
+  fi
+  if [[ -n "$timing_json" && -f "$timing_json" ]]; then
+    cp "$timing_json" "$out/failover-timing.json" 2>/dev/null || true
+  fi
+  if [[ -n "$protocol_json" && -f "$protocol_json" ]]; then
+    cp "$protocol_json" "$out/protocol-probe.json" 2>/dev/null || true
+  fi
+  if [[ -n "$l2_loop_json" && -f "$l2_loop_json" ]]; then
+    cp "$l2_loop_json" "$out/l2-loop-probe.json" 2>/dev/null || true
   fi
 
   cat > "$out/summary.md" <<EOF
@@ -650,6 +811,9 @@ EOF
 - dataplane (matrix): aws=$aws_dp oci=$oci_dp azure=$az_dp onprem=$onprem_dp
 - provider state: aws=$aws_ps oci=$oci_ps azure=$az_ps onprem=$onprem_ps
 - directed_ping_ssh_matrix=$directed_matrix source_ip_preserved=$src_pres default_gateway_unchanged=$gw_ok no_nat=$no_nat
+- failover_recovery_under_60s=$failover_recovery
+- protocol_transparency=$protocol_transparency ftp_active_passive=$ftp_active_passive nfs_rpc=$nfs_rpc bulk_transfer_pmtu=$bulk_transfer_pmtu protocol_source_ip_preserved=$protocol_src_pres protocol_no_nat=$protocol_no_nat
+- l2_loop_free=$l2_loop_free broadcast_storm_absent=$broadcast_storm_absent stp_rstp_stable=$stp_rstp_stable mac_flap_absent=$mac_flap_absent failover_ping_stable=$failover_ping_stable l2_suppression_mechanism_recorded=$l2_mechanism_recorded
 
 TODO(lab-operator): fold provider inventory (routerctl status, action journal,
 mobility_capture_epochs, wg show, packet capture) into this bundle, and record the
