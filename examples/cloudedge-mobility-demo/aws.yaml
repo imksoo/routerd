@@ -48,11 +48,35 @@ spec:
     - apiVersion: federation.routerd.net/v1alpha1
       kind: EventPeer
       metadata:
+        name: azure-router-b
+      spec:
+        groupRef: cloudedge
+        nodeName: azure-router-b
+        endpoint: http://10.99.0.6:9443
+        direction: push
+        types: [routerd.client.ipv4.observed, routerd.client.ipv4.expired]
+        subjectPrefixes: [10.77.60.]
+
+    - apiVersion: federation.routerd.net/v1alpha1
+      kind: EventPeer
+      metadata:
         name: oci-router
       spec:
         groupRef: cloudedge
         nodeName: oci-router
         endpoint: http://10.99.0.4:9443
+        direction: push
+        types: [routerd.client.ipv4.observed, routerd.client.ipv4.expired]
+        subjectPrefixes: [10.77.60.]
+
+    - apiVersion: federation.routerd.net/v1alpha1
+      kind: EventPeer
+      metadata:
+        name: oci-router-b
+      spec:
+        groupRef: cloudedge
+        nodeName: oci-router-b
+        endpoint: http://10.99.0.7:9443
         direction: push
         types: [routerd.client.ipv4.observed, routerd.client.ipv4.expired]
         subjectPrefixes: [10.77.60.]
@@ -113,6 +137,8 @@ spec:
           - 10.99.0.1/32
           - 10.99.0.3/32
           - 10.99.0.4/32
+          - 10.99.0.6/32
+          - 10.99.0.7/32
           - 10.77.60.10/32
           - 10.77.60.12/32
           - 10.77.60.13/32
@@ -163,11 +189,14 @@ spec:
               type: proxy-arp
               interface: ens21
               gratuitousARP: true
+              activeWhen: { type: vrrp-master, virtualAddressRef: onprem-gate-vip }
             deliveryTo:
               - { nodeRef: aws-router-a, peerRef: onprem-main, mode: route, tunnelInterface: wg-hybrid }
               - { nodeRef: aws-router-b, peerRef: onprem-main, mode: route, tunnelInterface: wg-hybrid }
               - { nodeRef: azure-router, peerRef: onprem-main, mode: route, tunnelInterface: wg-hybrid }
+              - { nodeRef: azure-router-b, peerRef: onprem-main, mode: route, tunnelInterface: wg-hybrid }
               - { nodeRef: oci-router, peerRef: onprem-main, mode: route, tunnelInterface: wg-hybrid }
+              - { nodeRef: oci-router-b, peerRef: onprem-main, mode: route, tunnelInterface: wg-hybrid }
           - nodeRef: aws-router-a
             site: aws
             role: cloud
@@ -211,6 +240,23 @@ spec:
                 resourceGroup: "${AZURE_RESOURCE_GROUP}"
                 nicName: "${AZURE_ROUTER_NIC_NAME}"
             delivery: { peerRef: onprem-main, mode: route, tunnelInterface: wg-hybrid }
+            placement: { group: azure-edge, priority: 10 }
+          - nodeRef: azure-router-b
+            site: azure
+            role: cloud
+            capture:
+              type: provider-secondary-ip
+              interface: eth0
+              providerRef: azure-lab
+              providerMode: nic-secondary-ip
+              nicRef: "${AZURE_ROUTER_B_NIC_REF}"
+              configureOSAddress: false
+              target:
+                region: "${AZURE_REGION}"
+                resourceGroup: "${AZURE_RESOURCE_GROUP}"
+                nicName: "${AZURE_ROUTER_B_NIC_NAME}"
+            delivery: { peerRef: onprem-main, mode: route, tunnelInterface: wg-hybrid }
+            placement: { group: azure-edge, priority: 20 }
           - nodeRef: oci-router
             site: oci
             role: cloud
@@ -225,8 +271,25 @@ spec:
                 region: "${OCI_REGION}"
                 compartmentId: "${OCI_COMPARTMENT_REF}"
             delivery: { peerRef: onprem-main, mode: route, tunnelInterface: wg-hybrid }
+            placement: { group: oci-edge, priority: 10 }
+          - nodeRef: oci-router-b
+            site: oci
+            role: cloud
+            capture:
+              type: provider-secondary-ip
+              interface: ens3
+              providerRef: oci-lab
+              providerMode: vnic-secondary-ip
+              nicRef: "${OCI_ROUTER_B_VNIC_REF}"
+              configureOSAddress: false
+              target:
+                region: "${OCI_REGION}"
+                compartmentId: "${OCI_COMPARTMENT_REF}"
+            delivery: { peerRef: onprem-main, mode: route, tunnelInterface: wg-hybrid }
+            placement: { group: oci-edge, priority: 20 }
         leasePolicy: { ttl: 30m, holdDuration: 5s }
         capturePolicy: { mode: all-non-owner-sites, deprovisionHoldDuration: 5s }
+        ipOwnershipPolicy: { type: centralized, autoFailover: true, heartbeatInterval: 10s, heartbeatTTL: 30s, promotionHoldDuration: 5s }
 
     - apiVersion: hybrid.routerd.net/v1alpha1
       kind: ProviderActionPolicy

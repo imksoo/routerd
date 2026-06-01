@@ -42,6 +42,51 @@ func TestValidateMobilityPool(t *testing.T) {
 	}
 }
 
+func TestValidateMobilityPoolActiveWhenVirtualAddressReferenceIsLocalToSelfNode(t *testing.T) {
+	spec := api.MobilityPoolSpec{
+		Prefix:   "10.88.60.0/24",
+		GroupRef: "cloudedge",
+		Members: []api.MobilityPoolMember{
+			{
+				NodeRef: "onprem-router",
+				Site:    "onprem",
+				Role:    "onprem",
+				Capture: api.MobilityMemberCapture{
+					Type:       "proxy-arp",
+					Interface:  "lan",
+					ActiveWhen: api.CaptureActiveWhen{Type: "vrrp-master", VirtualAddressRef: "onprem-vip"},
+				},
+				Delivery: api.MobilityMemberDelivery{PeerRef: "azure", Mode: "route", TunnelInterface: "wg-hybrid"},
+			},
+			{
+				NodeRef: "azure-router",
+				Site:    "azure",
+				Role:    "cloud",
+				Capture: api.MobilityMemberCapture{
+					Type:         "provider-secondary-ip",
+					ProviderRef:  "azure-provider",
+					ProviderMode: "nic-secondary-ip",
+					NICRef:       "nic-1",
+				},
+				Delivery: api.MobilityMemberDelivery{PeerRef: "onprem", Mode: "route", TunnelInterface: "wg-hybrid"},
+			},
+		},
+		LeasePolicy: api.MobilityLeasePolicy{TTL: "5m", HoldDuration: "30s"},
+	}
+	router := mobilityPoolRouter(spec, testEventGroupResource("cloudedge", "azure-router"))
+	if err := Validate(router); err != nil {
+		t.Fatalf("Validate cloud node with non-local onprem VirtualAddress ref: %v", err)
+	}
+	router = mobilityPoolRouter(spec, testEventGroupResource("cloudedge", "onprem-router"))
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "references missing VirtualAddress") {
+		t.Fatalf("Validate onprem node without local VirtualAddress err = %v", err)
+	}
+	router = mobilityPoolRouter(spec, testEventGroupResource("cloudedge", "onprem-router"), testInterfaceResource("lan"), testVirtualAddressResource("onprem-vip"))
+	if err := Validate(router); err != nil {
+		t.Fatalf("Validate onprem node with local VirtualAddress: %v", err)
+	}
+}
+
 func TestValidateMobilityPoolPlacement(t *testing.T) {
 	spec := api.MobilityPoolSpec{
 		Prefix:   "10.88.60.0/24",
@@ -138,6 +183,14 @@ func TestValidateMobilityPoolRejectsInvalidFields(t *testing.T) {
 				spec.Members[0].Capture = api.MobilityMemberCapture{Type: "proxy-arp", Interface: "lan"}
 				spec.Members[0].Delivery = api.MobilityMemberDelivery{PeerRef: "azure"}
 				spec.Members[0].Placement = api.MobilityMemberPlacement{Group: "onprem-edge", Priority: 10}
+			},
+			want: "capture.activeWhen.type must be vrrp-master",
+		},
+		{
+			name: "onprem proxy arp missing activeWhen",
+			mut: func(spec *api.MobilityPoolSpec) {
+				spec.Members[0].Capture = api.MobilityMemberCapture{Type: "proxy-arp", Interface: "lan"}
+				spec.Members[0].Delivery = api.MobilityMemberDelivery{PeerRef: "azure"}
 			},
 			want: "capture.activeWhen.type must be vrrp-master",
 		},
@@ -253,14 +306,6 @@ func TestValidateMobilityPoolRejectsInvalidFields(t *testing.T) {
 			want: "looks secret-like",
 		},
 		{
-			name: "onprem proxy arp missing activeWhen",
-			mut: func(spec *api.MobilityPoolSpec) {
-				spec.Members[0].Capture = api.MobilityMemberCapture{Type: "proxy-arp", Interface: "lan"}
-				spec.Members[0].Delivery = api.MobilityMemberDelivery{PeerRef: "azure"}
-			},
-			want: "capture.activeWhen.type must be vrrp-master",
-		},
-		{
 			name: "activeWhen missing ref",
 			mut: func(spec *api.MobilityPoolSpec) {
 				spec.Members[0].Capture = api.MobilityMemberCapture{Type: "proxy-arp", Interface: "lan", ActiveWhen: api.CaptureActiveWhen{Type: "vrrp-master"}}
@@ -321,6 +366,17 @@ func testVirtualAddressResource(name string) api.Resource {
 			Address:   "10.88.60.1/32",
 			Mode:      "vrrp",
 			VRRP:      api.VirtualAddressVRRPSpec{VirtualRouterID: 60, Peers: []string{"10.88.60.2"}},
+		},
+	}
+}
+
+func testEventGroupResource(name, nodeName string) api.Resource {
+	return api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.FederationAPIVersion, Kind: "EventGroup"},
+		Metadata: api.ObjectMeta{Name: name},
+		Spec: api.EventGroupSpec{
+			NodeName: nodeName,
+			Auth:     api.EventGroupAuth{Mode: "hmac", SecretFile: "/run/routerd/event.key"},
 		},
 	}
 }

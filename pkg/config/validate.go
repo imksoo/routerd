@@ -443,7 +443,11 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 			if err != nil {
 				return err
 			}
+			selfNode := mobilitySelfNode(router, spec.GroupRef)
 			for i, member := range spec.Members {
+				if selfNode != "" && strings.TrimSpace(member.NodeRef) != selfNode {
+					continue
+				}
 				if ref := captureActiveWhenVirtualAddressRef(member.Capture.ActiveWhen); ref != "" {
 					if _, ok := idx.VirtualAddresses[ref]; !ok {
 						return fmt.Errorf("%s spec.members[%d].capture.activeWhen.virtualAddressRef references missing VirtualAddress %q", res.ID(), i, ref)
@@ -658,6 +662,24 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 func captureActiveWhenVirtualAddressRef(activeWhen api.CaptureActiveWhen) string {
 	ref := strings.TrimSpace(activeWhen.VirtualAddressRef)
 	return strings.TrimPrefix(ref, "VirtualAddress/")
+}
+
+func mobilitySelfNode(router *api.Router, groupRef string) string {
+	groupRef = strings.TrimSpace(groupRef)
+	if router == nil || groupRef == "" {
+		return ""
+	}
+	for _, res := range router.Spec.Resources {
+		if res.APIVersion != api.FederationAPIVersion || res.Kind != "EventGroup" || res.Metadata.Name != groupRef {
+			continue
+		}
+		spec, err := res.EventGroupSpec()
+		if err != nil {
+			return ""
+		}
+		return strings.TrimSpace(spec.NodeName)
+	}
+	return ""
 }
 
 func isExternalIPv6PDClient(client string) bool {

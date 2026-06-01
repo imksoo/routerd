@@ -36,7 +36,9 @@ router_host() {
     aws-a) echo "$AWS_ROUTER_A_SSH_HOST" ;;
     aws-b) echo "$AWS_ROUTER_B_SSH_HOST" ;;
     azure) echo "$AZURE_ROUTER_SSH_HOST" ;;
+    azure-b) echo "$AZURE_ROUTER_B_SSH_HOST" ;;
     oci) echo "$OCI_ROUTER_SSH_HOST" ;;
+    oci-b) echo "$OCI_ROUTER_B_SSH_HOST" ;;
     *) echo "unknown router $1" >&2; return 1 ;;
   esac
 }
@@ -47,7 +49,9 @@ router_user() {
     aws-a) echo "${AWS_ROUTER_A_SSH_USER:-$SSH_USER}" ;;
     aws-b) echo "${AWS_ROUTER_B_SSH_USER:-$SSH_USER}" ;;
     azure) echo "${AZURE_ROUTER_SSH_USER:-$SSH_USER}" ;;
+    azure-b) echo "${AZURE_ROUTER_B_SSH_USER:-$SSH_USER}" ;;
     oci) echo "${OCI_ROUTER_SSH_USER:-$SSH_USER}" ;;
+    oci-b) echo "${OCI_ROUTER_B_SSH_USER:-$SSH_USER}" ;;
   esac
 }
 
@@ -75,6 +79,20 @@ render_configs() {
                 s/remote:\n          nodeID: aws-router-a\n          address: 10\.99\.0\.2/remote:\n          nodeID: aws-router-b\n          address: 10.99.0.5/g;
                 s/address: 10\.99\.0\.2\/32/address: 10.99.0.5\/32/g;
                 s/listen:\n          address: 10\.99\.0\.2/listen:\n          address: 10.99.0.5/g' "$WORKDIR/aws-b.yaml"
+
+  cp "$WORKDIR/azure.yaml" "$WORKDIR/azure-b.yaml"
+  perl -0pi -e 's/cloudedge-mobility-azure-demo/cloudedge-mobility-azure-b-demo/g;
+                s/nodeName: azure-router/nodeName: azure-router-b/g;
+                s/remote: \{ nodeID: azure-router, address: 10\.99\.0\.3 \}/remote: { nodeID: azure-router-b, address: 10.99.0.6 }/g;
+                s/address: 10\.99\.0\.3\/32/address: 10.99.0.6\/32/g;
+                s/listen:\n          address: 10\.99\.0\.3/listen:\n          address: 10.99.0.6/g' "$WORKDIR/azure-b.yaml"
+
+  cp "$WORKDIR/oci.yaml" "$WORKDIR/oci-b.yaml"
+  perl -0pi -e 's/cloudedge-mobility-oci-demo/cloudedge-mobility-oci-b-demo/g;
+                s/nodeName: oci-router/nodeName: oci-router-b/g;
+                s/remote: \{ nodeID: oci-router, address: 10\.99\.0\.4 \}/remote: { nodeID: oci-router-b, address: 10.99.0.7 }/g;
+                s/address: 10\.99\.0\.4\/32/address: 10.99.0.7\/32/g;
+                s/listen:\n          address: 10\.99\.0\.4/listen:\n          address: 10.99.0.7/g' "$WORKDIR/oci-b.yaml"
 
   cp "$WORKDIR/aws-a.yaml" "$WORKDIR/aws-a-drain.yaml"
   cp "$WORKDIR/onprem.yaml" "$WORKDIR/onprem-drain.yaml"
@@ -253,7 +271,9 @@ main() {
   install_secret_and_config aws-a "$WORKDIR/aws-a.yaml"
   install_secret_and_config aws-b "$WORKDIR/aws-b.yaml"
   install_secret_and_config azure "$WORKDIR/azure.yaml"
+  install_secret_and_config azure-b "$WORKDIR/azure-b.yaml"
   install_secret_and_config oci "$WORKDIR/oci.yaml"
+  install_secret_and_config oci-b "$WORKDIR/oci-b.yaml"
   preflight_mesh
 
   echo "Emit D3 observed events"
