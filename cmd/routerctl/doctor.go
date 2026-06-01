@@ -293,13 +293,13 @@ func (r doctorRunner) doctorSAMLiveChecks(name string, spec api.RemoteAddressCla
 		return []doctorCheck{{Area: "hybrid", Name: "RemoteAddressClaim/" + name + " SAM dataplane", Status: doctorSkip, Detail: "SAM capture not implemented on this OS"}}
 	}
 	statusReader, _ := r.store.(sam.StatusReader)
-	if gate := sam.EvaluateCaptureGate(spec.Capture, statusReader); !gate.Active {
-		return []doctorCheck{{
-			Area:   "hybrid",
-			Name:   "RemoteAddressClaim/" + name + " SAM dataplane",
-			Status: doctorSkip,
-			Detail: "capture gated inactive: " + gate.Message,
-		}}
+	gate := sam.EvaluateCaptureGate(spec.Capture, statusReader)
+	var gateChecks []doctorCheck
+	if gate.Type == "vrrp-master" || gate.VirtualAddressRef != "" {
+		gateChecks = append(gateChecks, doctorSAMActiveWhenVRRPCheck(name, gate))
+	}
+	if !gate.Active {
+		return append(gateChecks, doctorSAMInactiveCaptureChecks(name, spec, gate)...)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), r.opts.Timeout)
 	defer cancel()
@@ -310,13 +310,14 @@ func (r doctorRunner) doctorSAMLiveChecks(name string, spec api.RemoteAddressCla
 		tunnel = "delivery tunnel interface unresolved from OverlayPeer in doctor"
 	}
 	captureInterface := strings.TrimSpace(spec.Capture.Interface)
-	checks := []doctorCheck{
+	checks := append([]doctorCheck{}, gateChecks...)
+	checks = append(checks,
 		doctorSAMIPForwardCheck(ctx, name),
 		doctorSAMDeliveryRouteCheck(ctx, name, routeName, address, tunnel),
 		doctorSAMRouteGetCheck(ctx, name, address),
 		doctorSAMMSSClampCheck(ctx, name, captureInterface, tunnel),
 		doctorSAMHostFirewallCheck(ctx, name, captureInterface, tunnel, r.doctorWireGuardListenPort(tunnel)),
-	}
+	)
 	if strings.TrimSpace(spec.Capture.Type) == "proxy-arp" {
 		checks = append(checks, doctorSAMCaptureInterfaceCheck(ctx, name, captureInterface))
 		checks = append(checks, doctorSAMProxyARPEnabledCheck(ctx, name, captureInterface))
@@ -334,6 +335,34 @@ func (r doctorRunner) doctorSAMLiveChecks(name string, spec api.RemoteAddressCla
 		checks = append(checks, doctorSAMForwardPolicyCheck(ctx, name, strings.TrimSpace(spec.Capture.Interface), tunnel, address))
 	}
 	return checks
+}
+
+func doctorSAMActiveWhenVRRPCheck(name string, gate sam.CaptureGateStatus) doctorCheck {
+	label := "RemoteAddressClaim/" + name + " activeWhen vrrp-master"
+	if gate.Active {
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: gate.Message}
+	}
+	return doctorCheck{Area: "hybrid", Name: label, Status: doctorSkip, Detail: "capture gated inactive: " + gate.Message}
+}
+
+func doctorSAMInactiveCaptureChecks(name string, spec api.RemoteAddressClaimSpec, gate sam.CaptureGateStatus) []doctorCheck {
+	base := doctorCheck{
+		Area:   "hybrid",
+		Name:   "RemoteAddressClaim/" + name + " SAM dataplane",
+		Status: doctorSkip,
+		Detail: "capture gated inactive: " + gate.Message,
+	}
+	if strings.TrimSpace(spec.Capture.Type) != "proxy-arp" {
+		return []doctorCheck{base}
+	}
+	iface := strings.TrimSpace(spec.Capture.Interface)
+	if iface == "" {
+		return []doctorCheck{base}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	proxy := doctorSAMProxyNeighborAbsentCheck(ctx, name, strings.TrimSpace(spec.Address), iface, gate)
+	return []doctorCheck{base, proxy}
 }
 
 func (r doctorRunner) doctorWireGuardListenPort(iface string) int {
@@ -423,7 +452,22 @@ func doctorSAMProxyNeighborCheck(ctx context.Context, name, address, iface strin
 	if command.OK && strings.Contains(command.Stdout, strings.TrimSuffix(address, "/32")) {
 		return doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: oneLine(command.Stdout)}
 	}
-	return doctorCheck{Area: "hybrid", Name: label, Status: doctorWarn, Detail: firstNonEmpty(command.Error, oneLine(command.Output), "proxy neighbor not found"), Remedy: "wait for routerd SAM capture reconciliation or inspect proxy_arp and netlink neighbor state"}
+	return doctorCheck{Area: "hybrid", Name: label, Status: doctorFail, Detail: firstNonEmpty(command.Error, oneLine(command.Output), "proxy neighbor not found"), Remedy: "wait for routerd SAM capture reconciliation or inspect proxy_arp and netlink neighbor state"}
+}
+
+func doctorSAMProxyNeighborAbsentCheck(ctx context.Context, name, address, iface string, gate sam.CaptureGateStatus) doctorCheck {
+	label := "RemoteAddressClaim/" + name + " proxy neighbor absent"
+	command := doctorRunDiagnosticCommand(ctx, "ip neigh show proxy "+address+" dev "+iface, "ip", "neigh", "show", "proxy", address, "dev", iface)
+	if command.OK && strings.Contains(command.Stdout, strings.TrimSuffix(address, "/32")) {
+		return doctorCheck{
+			Area:   "hybrid",
+			Name:   label,
+			Status: doctorFail,
+			Detail: "capture gated inactive but proxy neighbor is present: " + oneLine(command.Stdout),
+			Remedy: "wait for routerd SAM cleanup; if it persists, inspect VirtualAddress/" + gate.VirtualAddressRef + " role and remove the stale proxy neighbor",
+		}
+	}
+	return doctorCheck{Area: "hybrid", Name: label, Status: doctorSkip, Detail: "capture gated inactive and proxy neighbor absent"}
 }
 
 func doctorSAMLocalAddressAbsentCheck(ctx context.Context, name, address string) doctorCheck {

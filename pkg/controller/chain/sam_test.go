@@ -30,7 +30,7 @@ func TestSAMControllerAppliesProxyNeighborAndStatus(t *testing.T) {
 		t.Fatalf("ensure = %#v", applier.ensure)
 	}
 	status := store.ObjectStatus(api.HybridAPIVersion, "RemoteAddressClaim", "app")
-	if status["phase"] != "Ready" || status["deliveryRouteName"] != lowerings[0].IPv4RouteName || status["captureType"] != "proxy-arp" {
+	if status["phase"] != "Ready" || status["deliveryRouteName"] != lowerings[0].IPv4RouteName || status["captureType"] != "proxy-arp" || status["captureStatus"] != sam.CaptureStatusCaptured {
 		t.Fatalf("status = %#v", status)
 	}
 }
@@ -196,15 +196,24 @@ func TestSAMControllerGatedProxyNeighborSendsGARPOnlyOnInactiveToActive(t *testi
 	store := &samStore{objects: map[string]map[string]any{
 		api.NetAPIVersion + "/VirtualAddress/onprem-vip": {"role": "master"},
 	}}
+	expanded, lowerings, err := sam.ExpandRemoteAddressClaimRoutesWithOptions(*router, sam.PlanOptions{StatusReader: store})
+	if err != nil {
+		t.Fatalf("ExpandRemoteAddressClaimRoutesWithOptions: %v", err)
+	}
+	router = &expanded
 	applier := &fakeSAMApplier{}
 	garp := &fakeSAMGARP{}
-	controller := SAMController{Router: router, Store: store, OS: platform.OSLinux, Applier: applier, GARP: garp}
+	controller := SAMController{Router: router, Store: store, Lowerings: lowerings, OS: platform.OSLinux, Applier: applier, GARP: garp}
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("first Reconcile: %v", err)
 	}
 	assertSAMCalls(t, applier.calls, []string{"ensure:10.0.1.123/32@lan0"})
 	if len(garp.calls) != 1 || garp.calls[0] != "10.0.1.123/32@lan0" {
 		t.Fatalf("first GARP calls = %#v", garp.calls)
+	}
+	status := store.ObjectStatus(api.HybridAPIVersion, "RemoteAddressClaim", "app")
+	if status["captureStatus"] != sam.CaptureStatusCaptured || status["lastGARPSent"] != true {
+		t.Fatalf("first status = %#v", status)
 	}
 
 	store.statuses = []routerstate.ObjectStatus{samRemoteAddressClaimStatus("app", "10.0.1.123/32", "lan0")}
@@ -217,6 +226,10 @@ func TestSAMControllerGatedProxyNeighborSendsGARPOnlyOnInactiveToActive(t *testi
 	assertSAMCalls(t, applier.calls, []string{"ensure:10.0.1.123/32@lan0"})
 	if len(garp.calls) != 0 {
 		t.Fatalf("steady-state GARP calls = %#v, want none", garp.calls)
+	}
+	status = store.ObjectStatus(api.HybridAPIVersion, "RemoteAddressClaim", "app")
+	if _, ok := status["lastGARPSent"]; ok {
+		t.Fatalf("steady status should not mark GARP sent: %#v", status)
 	}
 }
 
@@ -243,8 +256,36 @@ func TestSAMControllerGatedProxyNeighborCleansOnMasterToBackupWithoutGARP(t *tes
 		t.Fatalf("backup transition GARP calls = %#v, want none", garp.calls)
 	}
 	status := store.ObjectStatus(api.HybridAPIVersion, "RemoteAddressClaim", "app")
-	if status["phase"] != "Gated" || status["reason"] != "CaptureGateInactive" || status["captureActive"] != false {
+	if status["phase"] != "Gated" || status["reason"] != "CaptureGateInactive" || status["captureActive"] != false || status["captureStatus"] != sam.CaptureStatusStandby {
 		t.Fatalf("gated status = %#v", status)
+	}
+	if _, ok := status["captureProxyNeighbor"]; ok {
+		t.Fatalf("standby status must not retain captureProxyNeighbor: %#v", status)
+	}
+}
+
+func TestSAMControllerGatedProxyNeighborUnknownStatusIsBlockedFailClosed(t *testing.T) {
+	router := samControllerRouterWithClaim("10.0.1.123/32", "proxy-arp", "lan0")
+	spec := router.Spec.Resources[1].Spec.(api.RemoteAddressClaimSpec)
+	spec.Capture.ActiveWhen = api.CaptureActiveWhen{Type: "vrrp-master", VirtualAddressRef: "onprem-vip"}
+	router.Spec.Resources[1].Spec = spec
+
+	store := &samStore{
+		objects:  map[string]map[string]any{},
+		statuses: []routerstate.ObjectStatus{samRemoteAddressClaimStatus("app", "10.0.1.123/32", "lan0")},
+	}
+	applier := &fakeSAMApplier{}
+	controller := SAMController{Router: router, Store: store, OS: platform.OSLinux, Applier: applier, GARP: &fakeSAMGARP{}}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	assertSAMCalls(t, applier.calls, []string{"delete:10.0.1.123/32@lan0"})
+	status := store.ObjectStatus(api.HybridAPIVersion, "RemoteAddressClaim", "app")
+	if status["phase"] != "Gated" || status["captureStatus"] != sam.CaptureStatusBlocked {
+		t.Fatalf("unknown gate status = %#v", status)
+	}
+	if _, ok := status["captureProxyNeighbor"]; ok {
+		t.Fatalf("blocked status must not retain captureProxyNeighbor: %#v", status)
 	}
 }
 

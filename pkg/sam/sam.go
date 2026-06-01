@@ -16,6 +16,12 @@ import (
 
 const DeliveryRouteMetricDefault = 120
 
+const (
+	CaptureStatusCaptured = "Captured"
+	CaptureStatusStandby  = "Standby"
+	CaptureStatusBlocked  = "Blocked"
+)
+
 type DeliveryLowering struct {
 	ClaimName      string
 	AddressCIDR    string
@@ -293,7 +299,7 @@ func DeliveryRouteName(claimName string) string {
 func StatusForRemoteAddressClaim(resource api.Resource, lowerings []DeliveryLowering, store StatusReader, targetOS platform.OS) map[string]any {
 	spec, err := resource.RemoteAddressClaimSpec()
 	if err != nil {
-		return map[string]any{"phase": "Degraded", "reason": "SpecInvalid", "message": err.Error()}
+		return map[string]any{"phase": "Degraded", "reason": "SpecInvalid", "message": err.Error(), "captureStatus": CaptureStatusBlocked}
 	}
 	status := map[string]any{
 		"phase":        "Ready",
@@ -308,6 +314,7 @@ func StatusForRemoteAddressClaim(resource api.Resource, lowerings []DeliveryLowe
 		status["phase"] = "Degraded"
 		status["reason"] = "CaptureUnsupported"
 		status["message"] = "SAM capture not implemented on this OS"
+		status["captureStatus"] = CaptureStatusBlocked
 		return status
 	}
 	if gate := EvaluateCaptureGate(spec.Capture, store); !gate.Active {
@@ -315,12 +322,14 @@ func StatusForRemoteAddressClaim(resource api.Resource, lowerings []DeliveryLowe
 		status["reason"] = gate.Reason
 		status["message"] = gate.Message
 		status["captureActive"] = false
+		status["captureStatus"] = captureStatusForInactiveGate(gate)
 		status["activeWhenType"] = gate.Type
 		status["activeWhenVirtualAddressRef"] = gate.VirtualAddressRef
 		status["activeWhenVirtualAddressRole"] = gate.VirtualAddressRole
 		return status
 	} else if gate.Type != "" || gate.VirtualAddressRef != "" {
 		status["captureActive"] = true
+		status["captureStatus"] = CaptureStatusCaptured
 		status["activeWhenType"] = gate.Type
 		status["activeWhenVirtualAddressRef"] = gate.VirtualAddressRef
 		status["activeWhenVirtualAddressRole"] = gate.VirtualAddressRole
@@ -330,6 +339,7 @@ func StatusForRemoteAddressClaim(resource api.Resource, lowerings []DeliveryLowe
 		status["phase"] = "Degraded"
 		status["reason"] = "RouteNotLowered"
 		status["message"] = "delivery route was not lowered to an IPv4Route"
+		status["captureStatus"] = CaptureStatusBlocked
 		return status
 	}
 	status["deliveryRouteName"] = lowering.IPv4RouteName
@@ -346,10 +356,27 @@ func StatusForRemoteAddressClaim(resource api.Resource, lowerings []DeliveryLowe
 				status["phase"] = "Degraded"
 				status["reason"] = "RouteNotInstalled"
 				status["message"] = "lowered delivery route is not installed"
+				status["captureStatus"] = CaptureStatusBlocked
 			}
 		}
 	}
+	if strings.TrimSpace(spec.Capture.Type) == "proxy-arp" {
+		if _, exists := status["captureStatus"]; !exists {
+			status["captureStatus"] = CaptureStatusCaptured
+		}
+	}
 	return status
+}
+
+func captureStatusForInactiveGate(gate CaptureGateStatus) string {
+	if gate.Type != "vrrp-master" || gate.VirtualAddressRef == "" {
+		return CaptureStatusBlocked
+	}
+	role := strings.TrimSpace(gate.VirtualAddressRole)
+	if role == "" {
+		return CaptureStatusBlocked
+	}
+	return CaptureStatusStandby
 }
 
 func StatusForAddressMobilityDomain(domain api.Resource, claims []api.Resource, store StatusReader) map[string]any {

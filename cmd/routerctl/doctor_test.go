@@ -647,6 +647,63 @@ func TestDoctorHybridSAMProxyARPInterfaceHostSkips(t *testing.T) {
 	})
 }
 
+func TestDoctorHybridSAMVRRPGatedProxyARPDetectsInactiveArtifacts(t *testing.T) {
+	oldRun := doctorRunDiagnosticCommand
+	oldOS := doctorCurrentOS
+	defer func() {
+		doctorRunDiagnosticCommand = oldRun
+		doctorCurrentOS = oldOS
+	}()
+	doctorCurrentOS = func() platform.OS { return platform.OSLinux }
+
+	for _, tc := range []struct {
+		name        string
+		proxyExists bool
+		wantStatus  string
+	}{
+		{name: "standby-clean", wantStatus: doctorSkip},
+		{name: "standby-stale-proxy", proxyExists: true, wantStatus: doctorFail},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			doctorRunDiagnosticCommand = func(_ context.Context, label, name string, args ...string) diagnoseCommandCheck {
+				if strings.HasPrefix(label, "ip neigh show proxy") {
+					if tc.proxyExists {
+						return diagnoseCommandCheck{Name: label, OK: true, Stdout: "10.0.0.7 dev br-lan proxy", Output: "10.0.0.7 dev br-lan proxy"}
+					}
+					return diagnoseCommandCheck{Name: label, OK: true}
+				}
+				return diagnoseCommandCheck{Name: label, OK: false, Error: "unexpected command"}
+			}
+			configPath, statePath := writeDoctorVRRPGatedProxyARPAddressMobilityFixture(t)
+			store := openDoctorState(t, statePath)
+			if err := store.SaveObjectStatus(api.NetAPIVersion, "VirtualAddress", "onprem-vip", map[string]any{"role": "backup"}); err != nil {
+				t.Fatalf("save VirtualAddress status: %v", err)
+			}
+			closeDoctorState(t, store)
+
+			var out bytes.Buffer
+			err := run([]string{"doctor", "hybrid", "--config", configPath, "--state-file", statePath, "-o", "json"}, &out, &bytes.Buffer{})
+			if tc.wantStatus == doctorFail && err == nil {
+				t.Fatalf("doctor hybrid succeeded with stale proxy neighbor:\n%s", out.String())
+			}
+			if tc.wantStatus != doctorFail && err != nil {
+				t.Fatalf("doctor hybrid: %v\n%s", err, out.String())
+			}
+			var report doctorReport
+			if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+				t.Fatalf("unmarshal doctor report: %v\n%s", err, out.String())
+			}
+			if check := findDoctorCheck(t, report, "RemoteAddressClaim/cloud-vm activeWhen vrrp-master"); check.Status != doctorSkip {
+				t.Fatalf("activeWhen check = %#v", check)
+			}
+			check := findDoctorCheck(t, report, "RemoteAddressClaim/cloud-vm proxy neighbor absent")
+			if check.Status != tc.wantStatus {
+				t.Fatalf("proxy absent check = %#v", check)
+			}
+		})
+	}
+}
+
 func TestDoctorHybridSAMNonLinuxSkip(t *testing.T) {
 	oldOS := doctorCurrentOS
 	defer func() { doctorCurrentOS = oldOS }()
@@ -998,6 +1055,78 @@ spec:
         capture:
           type: proxy-arp
           interface: br-lan
+        delivery:
+          peerRef: cloud-main
+          mode: route
+          tunnelInterface: wg-hybrid
+`)
+	if err := os.WriteFile(configPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	return configPath, filepath.Join(dir, "routerd.db")
+}
+
+func writeDoctorVRRPGatedProxyARPAddressMobilityFixture(t *testing.T) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "router.yaml")
+	data := []byte(`apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: test
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: VirtualAddress
+      metadata:
+        name: onprem-vip
+      spec:
+        family: ipv4
+        interface: br-lan
+        address: 10.0.0.1/32
+        mode: vrrp
+        vrrp:
+          virtualRouterID: 60
+          peers: ["10.0.0.2"]
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardInterface
+      metadata:
+        name: wg-hybrid
+      spec:
+        listenPort: 51820
+        mtu: 1420
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: OverlayPeer
+      metadata:
+        name: cloud-main
+      spec:
+        role: cloud
+        nodeID: cloud-main
+        underlay:
+          type: wireguard
+          interface: wg-hybrid
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: AddressMobilityDomain
+      metadata:
+        name: same-subnet
+      spec:
+        prefix: 10.0.0.0/24
+        mode: selective-address
+        peerRef: cloud-main
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: RemoteAddressClaim
+      metadata:
+        name: cloud-vm
+      spec:
+        domainRef: same-subnet
+        address: 10.0.0.7/32
+        ownerSide: cloud
+        capture:
+          type: proxy-arp
+          interface: br-lan
+          activeWhen:
+            type: vrrp-master
+            virtualAddressRef: onprem-vip
         delivery:
           peerRef: cloud-main
           mode: route
