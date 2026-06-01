@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fakeAz is a FAKE az command runner: it records every argv and returns canned
@@ -21,6 +22,7 @@ import (
 type fakeAz struct {
 	calls   [][]string
 	showOut []byte
+	listOut []byte
 	err     error
 }
 
@@ -34,18 +36,144 @@ func (f *fakeAz) run(ctx context.Context, argv ...string) ([]byte, error) {
 	if len(toks) > 0 {
 		verb = toks[len(toks)-1]
 	}
-	if verb == "show" {
+	switch verb {
+	case "show":
 		if f.showOut != nil {
 			return f.showOut, nil
 		}
 		return cannedNICShow(false), nil
+	case "list":
+		if f.listOut != nil {
+			return f.listOut, nil
+		}
+		return cannedNICList("rg1", "nic1", "ipcfg-mobility", "10.88.60.9"), nil
 	}
 	// Mutating verbs return a benign (ignored) JSON body.
 	return []byte(`{}`), nil
 }
 
+type seizeFakeAz struct {
+	calls                    [][]string
+	selfHolds                bool
+	oldHolds                 bool
+	createErr                error
+	createErrOnce            bool
+	conflictRevealsOld       bool
+	alreadyExistsRevealsSelf bool
+	deleteErr                error
+	verifyShowErr            error
+	showCount                int
+	createCount              int
+	deleteCount              int
+	postCreateShowCount      int
+	postDeleteListCount      int
+	selfVerifyMisses         int
+	oldReleaseMisses         int
+	listResource             string
+	oldResource              string
+	oldNIC                   string
+	oldIPConfig              string
+	selfIPConfig             string
+	address                  string
+	nestedAltIPField         bool
+}
+
+func newSeizeFakeAz() *seizeFakeAz {
+	return &seizeFakeAz{
+		oldHolds:     true,
+		listResource: "rg1",
+		oldResource:  "rg1",
+		oldNIC:       "nic-old",
+		oldIPConfig:  "ipcfg-mobility",
+		selfIPConfig: "ipcfg-mobility",
+		address:      "10.88.60.9",
+	}
+}
+
+func (f *seizeFakeAz) run(ctx context.Context, argv ...string) ([]byte, error) {
+	f.calls = append(f.calls, append([]string(nil), argv...))
+	toks := strings.Join(leadingTokens(argv), " ")
+	switch toks {
+	case "network nic show":
+		f.showCount++
+		if f.verifyShowErr != nil && f.showCount > 1 {
+			return nil, f.verifyShowErr
+		}
+		if f.selfHolds {
+			if f.createCount > 0 && f.postCreateShowCount < f.selfVerifyMisses {
+				f.postCreateShowCount++
+				return cannedNICShow(false), nil
+			}
+			return cannedNICShowWithConfig(false, f.selfIPConfig, f.address), nil
+		}
+		return cannedNICShow(false), nil
+	case "network nic list":
+		if f.oldHolds {
+			return cannedNICList(f.oldResource, f.oldNIC, f.oldIPConfig, f.address), nil
+		}
+		return []byte(`[]`), nil
+	case "network nic ip-config list":
+		if f.oldHolds {
+			if f.nestedAltIPField {
+				return cannedIPConfigListNestedAlt(f.oldIPConfig, f.address), nil
+			}
+			return cannedIPConfigList(f.oldIPConfig, f.address), nil
+		}
+		if f.deleteCount > 0 && f.postDeleteListCount < f.oldReleaseMisses {
+			f.postDeleteListCount++
+			return cannedIPConfigList(f.oldIPConfig, f.address), nil
+		}
+		return []byte(`[]`), nil
+	case "network nic ip-config delete":
+		if f.deleteErr != nil {
+			if isNotFoundError(f.deleteErr) {
+				f.oldHolds = false
+			}
+			return nil, f.deleteErr
+		}
+		f.oldHolds = false
+		f.deleteCount++
+		return []byte(`{}`), nil
+	case "network nic ip-config create":
+		if f.createErr != nil {
+			err := f.createErr
+			if f.conflictRevealsOld && isAddressConflictError(err) {
+				f.oldHolds = true
+			}
+			if f.alreadyExistsRevealsSelf && isAlreadyExistsError(err) {
+				f.selfHolds = true
+			}
+			if f.createErrOnce {
+				f.createErr = nil
+			}
+			return nil, err
+		}
+		f.selfHolds = true
+		f.createCount++
+		return []byte(`{}`), nil
+	default:
+		return []byte(`{}`), nil
+	}
+}
+
 func cannedNICShow(ipForwarding bool) []byte {
-	return []byte(fmt.Sprintf(`{"enableIPForwarding":%t}`, ipForwarding))
+	return []byte(fmt.Sprintf(`{"id":"/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/nic1","name":"nic1","resourceGroup":"rg1","enableIPForwarding":%t,"ipConfigurations":[]}`, ipForwarding))
+}
+
+func cannedNICShowWithConfig(ipForwarding bool, name, address string) []byte {
+	return []byte(fmt.Sprintf(`{"id":"/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/nic1","name":"nic1","resourceGroup":"rg1","enableIPForwarding":%t,"ipConfigurations":[{"name":%q,"privateIPAddress":%q}]}`, ipForwarding, name, address))
+}
+
+func cannedNICList(resourceGroup, nicName, ipConfigName, address string) []byte {
+	return []byte(fmt.Sprintf(`[{"id":"/subscriptions/s1/resourceGroups/%s/providers/Microsoft.Network/networkInterfaces/%s","name":%q,"resourceGroup":%q,"ipConfigurations":[{"name":%q,"privateIPAddress":%q}]}]`, resourceGroup, nicName, nicName, resourceGroup, ipConfigName, address))
+}
+
+func cannedIPConfigList(ipConfigName, address string) []byte {
+	return []byte(fmt.Sprintf(`[{"name":%q,"privateIPAddress":%q}]`, ipConfigName, address))
+}
+
+func cannedIPConfigListNestedAlt(ipConfigName, address string) []byte {
+	return []byte(fmt.Sprintf(`[{"name":%q,"properties":{"privateIpAddress":%q}}]`, ipConfigName, address))
 }
 
 func reqSpec(action, mode string) executeActionRequestSpec {
@@ -79,6 +207,40 @@ func verbsOf(calls [][]string) []string {
 		}
 	}
 	return out
+}
+
+func joinedCalls(calls [][]string) []string {
+	out := make([]string, 0, len(calls))
+	for _, call := range calls {
+		out = append(out, strings.Join(call, " "))
+	}
+	return out
+}
+
+func containsCall(calls []string, want string) bool {
+	for _, call := range calls {
+		if call == want {
+			return true
+		}
+	}
+	return false
+}
+
+func countCall(calls []string, want string) int {
+	count := 0
+	for _, call := range calls {
+		if call == want {
+			count++
+		}
+	}
+	return count
+}
+
+func withNoRetrySleep(t *testing.T) {
+	t.Helper()
+	orig := sleep
+	sleep = func(time.Duration) {}
+	t.Cleanup(func() { sleep = orig })
 }
 
 func TestAssignDryRunReadsOnly(t *testing.T) {
@@ -119,6 +281,260 @@ func TestAssignExecuteIssuesIPConfigCreate(t *testing.T) {
 	want := "network nic ip-config create --resource-group rg1 --nic-name nic1 --name ipcfg-mobility --private-ip-address 10.88.60.9"
 	if got != want {
 		t.Fatalf("assign argv mismatch:\n got: %s\nwant: %s", got, want)
+	}
+}
+
+func TestAssignDryRunAllowReassignmentReadsOnly(t *testing.T) {
+	f := &fakeAz{}
+	spec := reqSpec(actionAssignSecondaryIP, modeDryRun)
+	spec.Parameters = map[string]string{"allowReassignment": "true"}
+	res := dispatchWith(spec, f.run)
+	if res.Status.Status != statusSucceeded {
+		t.Fatalf("want succeeded, got %q err=%q", res.Status.Status, res.Status.Error)
+	}
+	if !strings.Contains(res.Status.Message, "would seize/reassign") {
+		t.Fatalf("dry-run message = %q, want seize/reassign", res.Status.Message)
+	}
+	for _, c := range f.calls {
+		if !isReadOnlyVerb(c) {
+			t.Fatalf("dry-run issued a non-read-only command (must NOT mutate); call=%v", c)
+		}
+	}
+}
+
+func TestAssignExecuteAllowReassignmentDeletesOldThenCreatesSelf(t *testing.T) {
+	f := newSeizeFakeAz()
+	spec := reqSpec(actionAssignSecondaryIP, modeExecute)
+	spec.Parameters = map[string]string{"allowReassignment": "true"}
+	spec.Target["displacedResourceGroup"] = "rg1"
+	spec.Target["displacedNicName"] = "nic-old"
+	spec.Target["displacedIpConfigName"] = "ipcfg-mobility"
+	res := dispatchWith(spec, f.run)
+	if res.Status.Status != statusSucceeded {
+		t.Fatalf("want succeeded, got %q err=%q message=%q", res.Status.Status, res.Status.Error, res.Status.Message)
+	}
+	got := joinedCalls(f.calls)
+	want := []string{
+		"network nic show --ids /subscriptions/s1/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/nic1",
+		"network nic ip-config list --resource-group rg1 --nic-name nic-old",
+		"network nic ip-config delete --resource-group rg1 --nic-name nic-old --name ipcfg-mobility",
+		"network nic ip-config create --resource-group rg1 --nic-name nic1 --name ipcfg-mobility --private-ip-address 10.88.60.9",
+		"network nic show --ids /subscriptions/s1/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/nic1",
+		"network nic ip-config list --resource-group rg1 --nic-name nic-old",
+	}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("seize calls mismatch:\n got: %v\nwant: %v", got, want)
+	}
+	if res.Status.Observed["assignedAddress"] != "10.88.60.9" || res.Status.Observed["ipConfigName"] != "ipcfg-mobility" {
+		t.Fatalf("observed = %+v", res.Status.Observed)
+	}
+	if !strings.Contains(res.Status.Message, "seized/reassigned") {
+		t.Fatalf("message = %q, want seize/reassign", res.Status.Message)
+	}
+}
+
+func TestAssignExecuteAllowReassignmentFallsBackToInventoryDiscovery(t *testing.T) {
+	f := newSeizeFakeAz()
+	spec := reqSpec(actionAssignSecondaryIP, modeExecute)
+	spec.Parameters = map[string]string{"allowReassignment": "true"}
+	res := dispatchWith(spec, f.run)
+	if res.Status.Status != statusSucceeded {
+		t.Fatalf("want succeeded, got %q err=%q message=%q", res.Status.Status, res.Status.Error, res.Status.Message)
+	}
+	got := joinedCalls(f.calls)
+	if len(got) < 3 || got[1] != "network nic list --resource-group rg1" {
+		t.Fatalf("calls = %v, want inventory discovery via nic list", got)
+	}
+	if !containsCall(got, "network nic ip-config delete --resource-group rg1 --nic-name nic-old --name ipcfg-mobility") {
+		t.Fatalf("calls = %v, want delete of discovered old holder", got)
+	}
+}
+
+func TestAssignExecuteAllowReassignmentParsesNestedPrivateIPAddress(t *testing.T) {
+	f := newSeizeFakeAz()
+	f.nestedAltIPField = true
+	spec := reqSpec(actionAssignSecondaryIP, modeExecute)
+	spec.Parameters = map[string]string{"allowReassignment": "true"}
+	spec.Target["displacedResourceGroup"] = "rg1"
+	spec.Target["displacedNicName"] = "nic-old"
+	spec.Target["displacedIpConfigName"] = "ipcfg-mobility"
+
+	res := dispatchWith(spec, f.run)
+	if res.Status.Status != statusSucceeded {
+		t.Fatalf("want succeeded, got %q err=%q message=%q", res.Status.Status, res.Status.Error, res.Status.Message)
+	}
+	if !containsCall(joinedCalls(f.calls), "network nic ip-config delete --resource-group rg1 --nic-name nic-old --name ipcfg-mobility") {
+		t.Fatalf("calls = %v, want old holder discovered from nested privateIpAddress", joinedCalls(f.calls))
+	}
+}
+
+func TestAssignExecuteAllowReassignmentIdempotentWhenSelfAlreadyHolds(t *testing.T) {
+	f := newSeizeFakeAz()
+	f.oldHolds = false
+	f.selfHolds = true
+	spec := reqSpec(actionAssignSecondaryIP, modeExecute)
+	spec.Parameters = map[string]string{"allowReassignment": "true"}
+	res := dispatchWith(spec, f.run)
+	if res.Status.Status != statusSucceeded {
+		t.Fatalf("want succeeded, got %q err=%q", res.Status.Status, res.Status.Error)
+	}
+	if len(f.calls) != 1 || strings.Join(f.calls[0], " ") != "network nic show --ids /subscriptions/s1/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/nic1" {
+		t.Fatalf("calls = %v, want only self show", f.calls)
+	}
+	if res.Status.Observed["seizeAlreadyPresent"] != "true" {
+		t.Fatalf("observed = %+v, want already-present convergence", res.Status.Observed)
+	}
+}
+
+func TestAssignExecuteAllowReassignmentRetriesAfterRemoveSucceededAddFailed(t *testing.T) {
+	first := newSeizeFakeAz()
+	first.createErr = fmt.Errorf("injected create failure")
+	spec := reqSpec(actionAssignSecondaryIP, modeExecute)
+	spec.Parameters = map[string]string{"allowReassignment": "true"}
+	res := dispatchWith(spec, first.run)
+	if res.Status.Status != statusFailed {
+		t.Fatalf("first attempt should fail at create, got %q", res.Status.Status)
+	}
+	if first.oldHolds {
+		t.Fatal("old holder should have been removed before create failure")
+	}
+
+	retry := newSeizeFakeAz()
+	retry.oldHolds = false
+	res = dispatchWith(spec, retry.run)
+	if res.Status.Status != statusSucceeded {
+		t.Fatalf("retry should add self after old removal, got %q err=%q", res.Status.Status, res.Status.Error)
+	}
+	if !containsCall(joinedCalls(retry.calls), "network nic ip-config create --resource-group rg1 --nic-name nic1 --name ipcfg-mobility --private-ip-address 10.88.60.9") {
+		t.Fatalf("retry calls = %v, want create self", joinedCalls(retry.calls))
+	}
+}
+
+func TestAssignExecuteAllowReassignmentVerifyFailureRetriesToSelfPresent(t *testing.T) {
+	withNoRetrySleep(t)
+	first := newSeizeFakeAz()
+	first.verifyShowErr = fmt.Errorf("injected verify failure")
+	spec := reqSpec(actionAssignSecondaryIP, modeExecute)
+	spec.Parameters = map[string]string{"allowReassignment": "true"}
+	res := dispatchWith(spec, first.run)
+	if res.Status.Status != statusFailed {
+		t.Fatalf("first attempt should fail at verify, got %q", res.Status.Status)
+	}
+	if !first.selfHolds {
+		t.Fatal("self should hold IP after create even if verify failed")
+	}
+
+	retry := newSeizeFakeAz()
+	retry.oldHolds = false
+	retry.selfHolds = true
+	res = dispatchWith(spec, retry.run)
+	if res.Status.Status != statusSucceeded || res.Status.Observed["seizeAlreadyPresent"] != "true" {
+		t.Fatalf("retry should converge from self-present state, status=%q observed=%+v err=%q", res.Status.Status, res.Status.Observed, res.Status.Error)
+	}
+}
+
+func TestAssignExecuteAllowReassignmentWaitsForEventualSelfAndOldVisibility(t *testing.T) {
+	withNoRetrySleep(t)
+	f := newSeizeFakeAz()
+	f.selfVerifyMisses = 2
+	f.oldReleaseMisses = 1
+	spec := reqSpec(actionAssignSecondaryIP, modeExecute)
+	spec.Parameters = map[string]string{"allowReassignment": "true"}
+	spec.Target["displacedResourceGroup"] = "rg1"
+	spec.Target["displacedNicName"] = "nic-old"
+	spec.Target["displacedIpConfigName"] = "ipcfg-mobility"
+	res := dispatchWith(spec, f.run)
+	if res.Status.Status != statusSucceeded {
+		t.Fatalf("eventual visibility should converge, got status=%q message=%q err=%q", res.Status.Status, res.Status.Message, res.Status.Error)
+	}
+	got := joinedCalls(f.calls)
+	showSelf := "network nic show --ids /subscriptions/s1/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/nic1"
+	if countCall(got, showSelf) < 4 {
+		t.Fatalf("calls = %v, want initial show plus repeated self verify", got)
+	}
+	oldList := "network nic ip-config list --resource-group rg1 --nic-name nic-old"
+	if countCall(got, oldList) < 3 {
+		t.Fatalf("calls = %v, want holder discovery plus repeated old release verify", got)
+	}
+}
+
+func TestAssignExecuteAllowReassignmentDeleteNotFoundIsIdempotent(t *testing.T) {
+	f := newSeizeFakeAz()
+	f.deleteErr = fmt.Errorf("ResourceNotFound: ip configuration could not be found")
+	spec := reqSpec(actionAssignSecondaryIP, modeExecute)
+	spec.Parameters = map[string]string{"allowReassignment": "true"}
+	spec.Target["displacedResourceGroup"] = "rg1"
+	spec.Target["displacedNicName"] = "nic-old"
+	spec.Target["displacedIpConfigName"] = "ipcfg-mobility"
+	res := dispatchWith(spec, f.run)
+	if res.Status.Status != statusSucceeded {
+		t.Fatalf("delete not-found should be idempotent, got %q err=%q", res.Status.Status, res.Status.Error)
+	}
+}
+
+func TestAssignExecuteAllowReassignmentDeleteFailureIsRetriedLater(t *testing.T) {
+	f := newSeizeFakeAz()
+	f.deleteErr = fmt.Errorf("AuthorizationFailed: missing write permission on old NIC")
+	spec := reqSpec(actionAssignSecondaryIP, modeExecute)
+	spec.Parameters = map[string]string{"allowReassignment": "true"}
+	spec.Target["displacedResourceGroup"] = "rg1"
+	spec.Target["displacedNicName"] = "nic-old"
+	spec.Target["displacedIpConfigName"] = "ipcfg-mobility"
+	res := dispatchWith(spec, f.run)
+	if res.Status.Status != statusFailed {
+		t.Fatalf("delete permission failure should fail hard, got %q", res.Status.Status)
+	}
+	if !f.oldHolds {
+		t.Fatal("old holder should remain when delete fails before removal")
+	}
+	if containsCall(joinedCalls(f.calls), "network nic ip-config create --resource-group rg1 --nic-name nic1 --name ipcfg-mobility --private-ip-address 10.88.60.9") {
+		t.Fatalf("calls = %v, must not create self after old delete failed", joinedCalls(f.calls))
+	}
+}
+
+func TestAssignExecuteAllowReassignmentCreateAlreadyExistsVerifiesSelf(t *testing.T) {
+	f := newSeizeFakeAz()
+	f.oldHolds = false
+	f.createErr = fmt.Errorf("AlreadyExists: IP configuration already exists")
+	f.alreadyExistsRevealsSelf = true
+	spec := reqSpec(actionAssignSecondaryIP, modeExecute)
+	spec.Parameters = map[string]string{"allowReassignment": "true"}
+	res := dispatchWith(spec, f.run)
+	if res.Status.Status != statusSucceeded {
+		t.Fatalf("already-exists self verify should converge, got %q err=%q message=%q", res.Status.Status, res.Status.Error, res.Status.Message)
+	}
+	if res.Status.Observed["seizeAlreadyPresent"] != "true" {
+		t.Fatalf("observed = %+v, want already-present convergence", res.Status.Observed)
+	}
+}
+
+func TestAssignExecuteAllowReassignmentConflictRediscovery(t *testing.T) {
+	f := newSeizeFakeAz()
+	f.oldHolds = false
+	f.createErr = fmt.Errorf("PrivateIPAddressIsInUse: private IP address is in use")
+	f.createErrOnce = true
+	f.conflictRevealsOld = true
+	spec := reqSpec(actionAssignSecondaryIP, modeExecute)
+	spec.Parameters = map[string]string{"allowReassignment": "true"}
+	res := dispatchWith(spec, f.run)
+	if res.Status.Status != statusSucceeded {
+		t.Fatalf("conflict rediscovery should delete holder and retry create, got status=%q message=%q err=%q", res.Status.Status, res.Status.Message, res.Status.Error)
+	}
+	got := joinedCalls(f.calls)
+	if !containsCall(got, "network nic ip-config delete --resource-group rg1 --nic-name nic-old --name ipcfg-mobility") {
+		t.Fatalf("calls = %v, want delete after rediscovery", got)
+	}
+	createCount := 0
+	for _, call := range got {
+		if call == "network nic ip-config create --resource-group rg1 --nic-name nic1 --name ipcfg-mobility --private-ip-address 10.88.60.9" {
+			createCount++
+		}
+	}
+	if createCount != 2 {
+		t.Fatalf("calls = %v, want create attempted twice around conflict", got)
+	}
+	if !containsCall(got, "network nic ip-config list --resource-group rg1 --nic-name nic-old") {
+		t.Fatalf("calls = %v, want displaced verify after conflict retry", got)
 	}
 }
 
@@ -299,6 +715,17 @@ func TestGuardedRunnerRejectsNonReadOnly(t *testing.T) {
 	}
 	if _, err := guarded(context.Background(), "network", "nic", "list"); err != nil {
 		t.Fatalf("guarded runner must allow list: %v", err)
+	}
+}
+
+func TestAzCommandArgsForcesJSONAndQuietErrors(t *testing.T) {
+	got := strings.Join(azCommandArgs("network", "nic", "ip-config", "delete",
+		"--resource-group", "rg1",
+		"--nic-name", "nic1",
+		"--name", "ipcfg-mobility"), " ")
+	want := "network nic ip-config delete --resource-group rg1 --nic-name nic1 --name ipcfg-mobility --only-show-errors --output json"
+	if got != want {
+		t.Fatalf("az argv mismatch:\n got: %s\nwant: %s", got, want)
 	}
 }
 

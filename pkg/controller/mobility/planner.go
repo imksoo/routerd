@@ -148,7 +148,7 @@ func PlanDynamicConfig(in PlannerInput) (PlannerOutput, error) {
 				}
 			}
 			address := normalizeAddressString(lease.Address)
-			seize := centralizedOwnership && shouldSeizeOwnership(address, self.NodeRef, in.PreviousOwnership, in.Liveness)
+			seizeOrigin, seize := seizeOriginOwner(address, self.NodeRef, in.PreviousOwnership, in.Liveness)
 			if centralizedOwnership && !seize {
 				seize = shouldMaintainSeizeIntent(poolName, address, self.NodeRef, ownershipEpochs[address], in.PreviousActionPlans, in.ActionJournal)
 			}
@@ -158,6 +158,9 @@ func PlanDynamicConfig(in PlannerInput) (PlannerOutput, error) {
 			}
 			if !ok {
 				continue
+			}
+			if seize {
+				enrichAzureSeizeDisplacedTargets(poolName, address, self, members, seizeOrigin, in.ProviderProfiles, ownershipEpochs[address], actionPlans, in.PreviousActionPlans)
 			}
 			claims = append(claims, claim)
 			plans = append(plans, actionPlans...)
@@ -920,19 +923,27 @@ func arbitrateOwnership(address, leaseOwnerNode string, members map[string]membe
 }
 
 func shouldSeizeOwnership(address, selfNode string, previous []routerstate.MobilityOwnershipEpochRecord, liveness OwnershipLiveness) bool {
+	_, ok := seizeOriginOwner(address, selfNode, previous, liveness)
+	return ok
+}
+
+func seizeOriginOwner(address, selfNode string, previous []routerstate.MobilityOwnershipEpochRecord, liveness OwnershipLiveness) (string, bool) {
 	address = normalizeAddressString(address)
 	selfNode = strings.TrimSpace(selfNode)
 	if address == "" || selfNode == "" || len(liveness.StaleNodes) == 0 {
-		return false
+		return "", false
 	}
 	for _, rec := range previous {
 		if normalizeAddressString(rec.Address) != address {
 			continue
 		}
 		previousOwner := strings.TrimSpace(rec.OwnerNode)
-		return previousOwner != "" && previousOwner != selfNode && liveness.StaleNodes[previousOwner]
+		if previousOwner != "" && previousOwner != selfNode && liveness.StaleNodes[previousOwner] {
+			return previousOwner, true
+		}
+		return "", false
 	}
-	return false
+	return "", false
 }
 
 func shouldMaintainSeizeIntent(poolName, address, selfNode string, current routerstate.MobilityOwnershipEpochRecord, previousPlans []dynamicconfig.ActionPlan, journal []routerstate.ActionExecutionRecord) bool {
@@ -999,6 +1010,85 @@ func ownershipParamsMatch(params map[string]string, poolName, address, owner str
 		normalizeAddressString(params[ownershipParamAddress]) == normalizeAddressString(address) &&
 		strings.TrimSpace(params[ownershipParamOwner]) == strings.TrimSpace(owner) &&
 		strings.TrimSpace(params[ownershipParamEpoch]) == strconv.FormatInt(epoch, 10)
+}
+
+func enrichAzureSeizeDisplacedTargets(poolName, address string, self memberPlanInfo, members map[string]memberPlanInfo, originOwner string, profiles map[string]api.CloudProviderProfileSpec, current routerstate.MobilityOwnershipEpochRecord, plans []dynamicconfig.ActionPlan, previousPlans []dynamicconfig.ActionPlan) {
+	for i := range plans {
+		plan := &plans[i]
+		if plan.Provider != "azure" || plan.Action != "assign-secondary-ip" || plan.Parameters["allowReassignment"] != "true" {
+			continue
+		}
+		if plan.Target == nil {
+			plan.Target = map[string]string{}
+		}
+		copyAzureSelfTargetAliases(plan.Target)
+		if originOwner != "" {
+			if origin, ok := members[strings.TrimSpace(originOwner)]; ok {
+				if displaced := azureDisplacedTarget(poolName, address, origin, profiles); len(displaced) > 0 {
+					for key, value := range displaced {
+						plan.Target[key] = value
+					}
+					continue
+				}
+			}
+		}
+		copyAzureDisplacedTargetFromPrevious(plan.Target, poolName, address, self.NodeRef, current, previousPlans)
+	}
+}
+
+func copyAzureSelfTargetAliases(target map[string]string) {
+	if target == nil {
+		return
+	}
+	copyIfMissing(target, "selfNicRef", target["nicRef"])
+	copyIfMissing(target, "selfResourceGroup", target["resourceGroup"])
+	copyIfMissing(target, "selfNicName", target["nicName"])
+	copyIfMissing(target, "selfIpConfigName", target["ipConfigName"])
+}
+
+func azureDisplacedTarget(poolName, address string, member memberPlanInfo, profiles map[string]api.CloudProviderProfileSpec) map[string]string {
+	if member.Capture.Type != "provider-secondary-ip" {
+		return nil
+	}
+	profile, ok := profiles[strings.TrimSpace(member.Capture.ProviderRef)]
+	if !ok || strings.TrimSpace(profile.Provider) != "azure" {
+		return nil
+	}
+	target := providerActionTarget(poolName, profile, member.Capture, member.CaptureTarget, address)
+	out := map[string]string{}
+	copyIfMissing(out, "displacedNicRef", target["nicRef"])
+	copyIfMissing(out, "displacedResourceGroup", target["resourceGroup"])
+	copyIfMissing(out, "displacedNicName", target["nicName"])
+	copyIfMissing(out, "displacedIpConfigName", target["ipConfigName"])
+	return out
+}
+
+func copyAzureDisplacedTargetFromPrevious(target map[string]string, poolName, address, selfNode string, current routerstate.MobilityOwnershipEpochRecord, previousPlans []dynamicconfig.ActionPlan) {
+	if target == nil || current.Epoch <= 0 {
+		return
+	}
+	keys := []string{"displacedNicRef", "displacedResourceGroup", "displacedNicName", "displacedIpConfigName"}
+	for _, plan := range previousPlans {
+		if plan.Provider != "azure" || plan.Action != "assign-secondary-ip" || plan.Parameters["allowReassignment"] != "true" {
+			continue
+		}
+		if !ownershipParamsMatch(plan.Parameters, poolName, address, selfNode, current.Epoch) {
+			continue
+		}
+		for _, key := range keys {
+			copyIfMissing(target, key, plan.Target[key])
+		}
+		return
+	}
+}
+
+func copyIfMissing(target map[string]string, key, value string) {
+	if strings.TrimSpace(value) == "" {
+		return
+	}
+	if strings.TrimSpace(target[key]) == "" {
+		target[key] = strings.TrimSpace(value)
+	}
 }
 
 func decodeActionParameters(raw string) map[string]string {

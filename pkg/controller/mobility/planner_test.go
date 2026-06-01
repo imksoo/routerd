@@ -1427,6 +1427,9 @@ func TestPlanDynamicConfigSeizeActionOnStaleOwnerChange(t *testing.T) {
 	if assign.Parameters["allowReassignment"] != "true" || assign.Parameters["mobilityOwnershipEpoch"] != "2" {
 		t.Fatalf("assign params = %+v, want allowReassignment + ownership epoch", assign.Parameters)
 	}
+	if assign.Target["selfNicName"] != "router-nic-b" || assign.Target["displacedNicName"] != "router-nic-a" || assign.Target["displacedIpConfigName"] != "capture-a" {
+		t.Fatalf("assign azure seize target = %+v, want self/displaced NIC enrichment", assign.Target)
+	}
 	if assign.RiskLevel != "high" || !strings.Contains(assign.Description, "Seize/reassign") {
 		t.Fatalf("assign description/risk = %q/%q", assign.Description, assign.RiskLevel)
 	}
