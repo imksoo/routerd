@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/netip"
 	"os"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -34,6 +35,8 @@ const (
 	doctorFail = "fail"
 	doctorSkip = "skip"
 )
+
+var doctorMACAddressPattern = regexp.MustCompile(`(?i)\b(?:[0-9a-f]{2}:){5}[0-9a-f]{2}\b`)
 
 type doctorCheck struct {
 	Area   string `json:"area" yaml:"area"`
@@ -326,6 +329,9 @@ func (r doctorRunner) doctorSAMLiveChecks(name string, spec api.RemoteAddressCla
 		checks = append(checks, doctorSAMCaptureInterfaceCheck(ctx, name, captureInterface))
 		checks = append(checks, doctorSAMProxyARPEnabledCheck(ctx, name, captureInterface))
 		checks = append(checks, doctorSAMProxyNeighborCheck(ctx, name, address, captureInterface))
+		if gate.Type == "vrrp-master" || gate.VirtualAddressRef != "" {
+			checks = append(checks, doctorSAMProxyARPDuplicateResponderCheck(ctx, name, address, captureInterface))
+		}
 		checks = append(checks, doctorSAMRPFilterCheck(ctx, name, captureInterface))
 		checks = append(checks, doctorSAMForwardPolicyCheck(ctx, name, captureInterface, tunnel, address))
 	}
@@ -472,6 +478,68 @@ func doctorSAMProxyNeighborAbsentCheck(ctx context.Context, name, address, iface
 		}
 	}
 	return doctorCheck{Area: "hybrid", Name: label, Status: doctorSkip, Detail: "capture gated inactive and proxy neighbor absent"}
+}
+
+func doctorSAMProxyARPDuplicateResponderCheck(ctx context.Context, name, address, iface string) doctorCheck {
+	label := "RemoteAddressClaim/" + name + " proxy-arp duplicate responders"
+	if strings.TrimSpace(iface) == "" {
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorSkip, Detail: "interface unavailable"}
+	}
+	ip, ok := doctorProbeIPv4(address)
+	if !ok {
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorSkip, Detail: "IPv4 address unavailable"}
+	}
+	command := doctorRunDiagnosticCommand(ctx, "arping "+ip+" dev "+iface, "arping", "-c", "3", "-w", "2", "-I", iface, ip)
+	macs := doctorUniqueMACAddresses(command.Output)
+	switch {
+	case len(macs) > 1:
+		return doctorCheck{
+			Area:   "hybrid",
+			Name:   label,
+			Status: doctorFail,
+			Detail: fmt.Sprintf("multiple ARP responders for %s on %s: %s", ip, iface, strings.Join(macs, ", ")),
+			Remedy: "split-brain proxy-ARP capture detected; verify only the VRRP master captures this /32 and inspect L2 loop/storm stability evidence",
+		}
+	case len(macs) == 1:
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: fmt.Sprintf("single ARP responder for %s on %s: %s", ip, iface, macs[0])}
+	case command.OK:
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: fmt.Sprintf("no duplicate ARP responders observed for %s on %s", ip, iface)}
+	default:
+		return doctorCheck{
+			Area:   "hybrid",
+			Name:   label,
+			Status: doctorWarn,
+			Detail: "duplicate responder probe unavailable: " + firstNonEmpty(command.Error, oneLine(command.Output), "arping produced no output"),
+			Remedy: "install arping or run doctor with privileges that can send ARP probes to verify split-brain proxy-ARP capture",
+		}
+	}
+}
+
+func doctorProbeIPv4(address string) (string, bool) {
+	address = strings.TrimSpace(address)
+	if address == "" {
+		return "", false
+	}
+	if prefix, err := netip.ParsePrefix(address); err == nil && prefix.Addr().Is4() {
+		return prefix.Addr().String(), true
+	}
+	if addr, err := netip.ParseAddr(address); err == nil && addr.Is4() {
+		return addr.String(), true
+	}
+	return "", false
+}
+
+func doctorUniqueMACAddresses(output string) []string {
+	seen := map[string]bool{}
+	for _, match := range doctorMACAddressPattern.FindAllString(output, -1) {
+		seen[strings.ToLower(match)] = true
+	}
+	macs := make([]string, 0, len(seen))
+	for mac := range seen {
+		macs = append(macs, mac)
+	}
+	sort.Strings(macs)
+	return macs
 }
 
 func doctorSAMLocalAddressAbsentCheck(ctx context.Context, name, address string) doctorCheck {
