@@ -38,6 +38,7 @@ import (
 	mobilitycontroller "github.com/imksoo/routerd/pkg/controller/mobility"
 	"github.com/imksoo/routerd/pkg/controller/nat44"
 	"github.com/imksoo/routerd/pkg/controller/pppoesession"
+	provideractioncontroller "github.com/imksoo/routerd/pkg/controller/provideraction"
 	vrrpcontroller "github.com/imksoo/routerd/pkg/controller/vrrp"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/derived"
@@ -48,6 +49,7 @@ import (
 	"github.com/imksoo/routerd/pkg/logstore"
 	"github.com/imksoo/routerd/pkg/observabilitypipeline"
 	"github.com/imksoo/routerd/pkg/platform"
+	provideraction "github.com/imksoo/routerd/pkg/provideraction"
 	"github.com/imksoo/routerd/pkg/render"
 	"github.com/imksoo/routerd/pkg/resourcequery"
 	daemonsource "github.com/imksoo/routerd/pkg/source/daemon"
@@ -702,6 +704,7 @@ type Options struct {
 	DryRunDNSResolver       bool
 	DryRunEventFederation   bool
 	DryRunEventSubscription bool
+	DryRunProviderAction    bool
 	DryRunNAT               bool
 	DryRunIngress           bool
 	DryRunFirewall          bool
@@ -728,6 +731,7 @@ type Options struct {
 	Logger                  *slog.Logger
 	ControllerObserver      framework.Observer
 	EnabledControllers      []string
+	ProviderActionRunner    provideraction.ExecutorRunner
 }
 
 type Runner struct {
@@ -860,6 +864,7 @@ func (r *Runner) Start(ctx context.Context) error {
 		opts.DryRunDNSResolver = true
 		opts.DryRunEventFederation = true
 		opts.DryRunEventSubscription = true
+		opts.DryRunProviderAction = true
 		opts.DryRunNAT = true
 		opts.DryRunIngress = true
 		opts.DryRunFirewall = true
@@ -920,6 +925,16 @@ func (r *Runner) Start(ctx context.Context) error {
 			Router: r.Router,
 			Bus:    r.Bus,
 			Store:  mobilityStore{evented: store, data: rawStore},
+		}
+	}
+	var providerAction provideractioncontroller.Controller
+	if rawStore, ok := r.Store.(provideractioncontroller.Store); ok {
+		providerAction = provideractioncontroller.Controller{
+			Router: r.Router,
+			Store:  rawStore,
+			Runner: r.Opts.ProviderActionRunner,
+			DryRun: r.Opts.DryRunProviderAction,
+			Logger: logger,
 		}
 	}
 	daemonStatusSync := DaemonStatusController{Router: r.Router, Bus: r.Bus, Store: store, DaemonSockets: r.Opts.DaemonSockets, Logger: logger}
@@ -1059,6 +1074,7 @@ func (r *Runner) Start(ctx context.Context) error {
 		framework.FuncController{ControllerName: "event-federation", Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed"}}}, ReconcileFunc: eventFederation.HandleEvent, PeriodicFunc: eventFederation.Reconcile},
 		framework.FuncController{ControllerName: "event-subscription", Every: 5 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed"}}}, PeriodicFunc: eventSubscription.Reconcile},
 		framework.FuncController{ControllerName: "mobility", Every: 5 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed"}}}, ReconcileFunc: mobility.HandleEvent, PeriodicFunc: mobility.Reconcile},
+		framework.FuncController{ControllerName: "provider-action-execution", Every: 5 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed"}}}, PeriodicFunc: providerAction.Reconcile},
 		framework.FuncController{ControllerName: "egress-route-policy", Every: 15 * time.Second, Subs: statusSubscriptions("HealthCheck", "DSLiteTunnel", "Interface", "DHCPv4Client", "PPPoESession"), PeriodicFunc: wan.Reconcile},
 		framework.FuncController{ControllerName: "ingress-service", Every: 5 * time.Second, Subs: bootstrapSubscriptions(), PeriodicFunc: ingressService.Reconcile},
 		framework.FuncController{ControllerName: "nat44", Subs: statusSubscriptions("EgressRoutePolicy", "IngressService"), PeriodicFunc: nat.Reconcile},

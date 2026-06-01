@@ -531,6 +531,75 @@ func TestExecutePolicyAutoApprove(t *testing.T) {
 	}
 }
 
+func TestExecuteSkipsStaleOwnershipEpochAtExecutionBoundary(t *testing.T) {
+	store := mustStore(t)
+	if _, err := store.ReconcileMobilityOwnershipEpochs([]state.MobilityOwnershipEpochRecord{{
+		Pool: "cloudedge", Address: "10.0.0.5/32", OwnerNode: "node-a",
+	}}); err != nil {
+		t.Fatalf("seed ownership: %v", err)
+	}
+	plan := samplePlan("stale-execute")
+	plan.Parameters = map[string]string{
+		ownershipParamPool:    "cloudedge",
+		ownershipParamAddress: "10.0.0.5/32",
+		ownershipParamEpoch:   "1",
+		ownershipParamOwner:   "node-a",
+	}
+	seedPart(t, store, "sub-a", []dynamicconfig.ActionPlan{plan})
+	runner := &fakeRunner{result: succeededResult()}
+	e := newEngine(t, store, runner.run, []api.Resource{executorPlugin("aws")})
+	if _, err := e.ImportFromDynamicParts(); err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	rec, ok, err := store.GetActionByIdempotencyKey("stale-execute")
+	if err != nil || !ok {
+		t.Fatalf("lookup stale-execute: ok=%v err=%v", ok, err)
+	}
+	if _, err := store.ReconcileMobilityOwnershipEpochs([]state.MobilityOwnershipEpochRecord{{
+		Pool: "cloudedge", Address: "10.0.0.5/32", OwnerNode: "node-b",
+	}}); err != nil {
+		t.Fatalf("bump ownership: %v", err)
+	}
+	pol := allowPolicy()
+	pol.RequireApproval = boolPtr(false)
+	if err := e.Execute(context.Background(), rec.ID, ModeExecute, pol); err != nil {
+		t.Fatalf("execute stale: %v", err)
+	}
+	if runner.calls != 0 {
+		t.Fatalf("stale action launched executor; calls=%d", runner.calls)
+	}
+	rec, _, err = store.GetActionByIdempotencyKey("stale-execute")
+	if err != nil {
+		t.Fatalf("reget stale action: %v", err)
+	}
+	if rec.Status != state.ActionSkipped {
+		t.Fatalf("stale action status = %q, want skipped", rec.Status)
+	}
+}
+
+func TestExecuteRunningActionIsNotReexecuted(t *testing.T) {
+	store := mustStore(t)
+	runner := &fakeRunner{result: succeededResult()}
+	e := newEngine(t, store, runner.run, []api.Resource{executorPlugin("aws")})
+	id := importOne(t, store, e, "running")
+	if err := e.Approve(id, "alice"); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	claimed, err := store.BeginActionExecution(id, time.Now())
+	if err != nil {
+		t.Fatalf("BeginActionExecution: %v", err)
+	}
+	if !claimed {
+		t.Fatal("action was not claimed")
+	}
+	if err := e.Execute(context.Background(), id, ModeExecute, allowPolicy()); err != nil {
+		t.Fatalf("execute running: %v", err)
+	}
+	if runner.calls != 0 {
+		t.Fatalf("running action must not reexecute; calls=%d", runner.calls)
+	}
+}
+
 func TestExecuteDuplicateNotReExecuted(t *testing.T) {
 	store := mustStore(t)
 	runner := &fakeRunner{result: succeededResult()}
