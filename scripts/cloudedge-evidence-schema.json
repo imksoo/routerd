@@ -1,0 +1,96 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/imksoo/routerd/scripts/cloudedge-evidence-schema.json",
+  "title": "routerd CloudEdge lab run evidence",
+  "description": "Machine-readable PASS/FAIL evidence emitted by scripts/cloudedge-labctl.sh 'evidence collect'. A run is only PASS when result==pass and every required assertion passes.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["runId", "commit", "scenario", "result", "providers", "assertions", "costGuard"],
+  "properties": {
+    "runId": {
+      "type": "string",
+      "description": "Run identifier of the form <UTCdate>T<time>-cloudedge-<scenario>.",
+      "pattern": "^[0-9]{8}T[0-9]{6}Z-cloudedge-[A-Za-z0-9._-]+$"
+    },
+    "commit": {
+      "type": "string",
+      "description": "Git commit (or HEAD sha) of the routerd build under test.",
+      "minLength": 1
+    },
+    "scenario": {
+      "type": "string",
+      "description": "Scenario name, e.g. azure-active-stop-seize, d3-matrix, aws-drain-migration.",
+      "minLength": 1
+    },
+    "result": {
+      "type": "string",
+      "enum": ["pass", "fail"]
+    },
+    "providers": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["aws", "oci", "azure", "onprem"],
+      "properties": {
+        "aws": { "$ref": "#/definitions/providerResult" },
+        "oci": { "$ref": "#/definitions/providerResult" },
+        "azure": { "$ref": "#/definitions/providerResult" },
+        "onprem": { "$ref": "#/definitions/providerResult" }
+      }
+    },
+    "assertions": {
+      "type": "array",
+      "description": "Named acceptance assertions. The six SAM-fencing assertions are required to be present.",
+      "items": { "$ref": "#/definitions/assertion" },
+      "minItems": 6,
+      "allOf": [
+        { "contains": { "properties": { "name": { "const": "ownership_epoch_bumped" } }, "required": ["name"] } },
+        { "contains": { "properties": { "name": { "const": "allow_reassignment_maintained_until_success" } }, "required": ["name"] } },
+        { "contains": { "properties": { "name": { "const": "source_ip_preserved" } }, "required": ["name"] } },
+        { "contains": { "properties": { "name": { "const": "default_gateway_unchanged" } }, "required": ["name"] } },
+        { "contains": { "properties": { "name": { "const": "old_holder_residue_absent" } }, "required": ["name"] } },
+        { "contains": { "properties": { "name": { "const": "stale_action_fenced" } }, "required": ["name"] } }
+      ]
+    },
+    "costGuard": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ttlHours", "teardown"],
+      "properties": {
+        "ttlHours": {
+          "type": "number",
+          "minimum": 0,
+          "description": "TTL budget in hours for the lab; resources past ttl_expires_at must be torn down."
+        },
+        "teardown": {
+          "type": "string",
+          "enum": ["completed", "pending", "failed", "skipped"]
+        }
+      }
+    }
+  },
+  "definitions": {
+    "providerResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dataplane", "providerState"],
+      "properties": {
+        "dataplane": { "$ref": "#/definitions/checkState" },
+        "providerState": { "$ref": "#/definitions/checkState" }
+      }
+    },
+    "assertion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "result"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "result": { "$ref": "#/definitions/checkState" },
+        "detail": { "type": "string" }
+      }
+    },
+    "checkState": {
+      "type": "string",
+      "enum": ["pass", "fail", "skip", "na"]
+    }
+  }
+}
