@@ -129,7 +129,14 @@ func fourNodeMobilityFixture(now time.Time) mobilityFixture {
 			site:    "onprem",
 			role:    "onprem",
 			address: "10.88.60.10/32",
-			capture: api.MobilityMemberCapture{Type: "proxy-arp", Interface: "lan"},
+			capture: api.MobilityMemberCapture{
+				Type:      "proxy-arp",
+				Interface: "lan",
+				ActiveWhen: api.CaptureActiveWhen{
+					Type:              "vrrp-master",
+					VirtualAddressRef: "onprem-vip",
+				},
+			},
 			deliveryTo: []api.MobilityMemberDeliveryTarget{
 				{NodeRef: "aws-router", PeerRef: "aws-main", Mode: "route", TunnelInterface: "wg-aws"},
 				{NodeRef: "azure-router", PeerRef: "azure-main", Mode: "route", TunnelInterface: "wg-azure"},
@@ -204,6 +211,22 @@ func fourNodeMobilityRouter(selfNode string, fixture mobilityFixture) *api.Route
 			Spec: api.EventGroupSpec{
 				NodeName: selfNode,
 				Listen:   api.EventGroupListen{Address: "169.254.200.1", Port: 8787},
+			},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+			Metadata: api.ObjectMeta{Name: "lan"},
+			Spec:     api.InterfaceSpec{IfName: "lan", Managed: true},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"},
+			Metadata: api.ObjectMeta{Name: "onprem-vip"},
+			Spec: api.VirtualAddressSpec{
+				Family:    "ipv4",
+				Interface: "lan",
+				Address:   "10.88.60.1/32",
+				Mode:      "vrrp",
+				VRRP:      api.VirtualAddressVRRPSpec{VirtualRouterID: 60, Peers: []string{"10.88.60.2"}},
 			},
 		},
 	}

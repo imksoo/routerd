@@ -69,7 +69,7 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 		targetOS = platform.CurrentOS()
 	}
 	if targetOS != platform.OSLinux {
-		return c.reconcileStatuses(targetOS, nil)
+		return c.reconcileStatuses(targetOS, nil, nil)
 	}
 	statuses, err := c.listObjectStatuses()
 	if err != nil {
@@ -87,6 +87,7 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 	}
 	var failures []string
 	deassignResults := map[string]samOSAddressDeassignResult{}
+	garpSent := map[string]bool{}
 	priorNeighbors := samStoredProxyNeighbors(statuses)
 	for _, action := range actions {
 		switch action.Kind {
@@ -110,6 +111,8 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 				}
 				if err := announcer.SendGratuitousARP(ctx, action.Address, action.Interface); err != nil {
 					failures = append(failures, fmt.Sprintf("%s gratuitous ARP %s dev %s: %v", action.ClaimName, action.Address, action.Interface, err))
+				} else {
+					garpSent[action.ClaimName] = true
 				}
 			}
 		case "deassign-os-address":
@@ -134,7 +137,7 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 			continue
 		}
 	}
-	if err := c.reconcileStatuses(targetOS, deassignResults); err != nil {
+	if err := c.reconcileStatuses(targetOS, deassignResults, garpSent); err != nil {
 		return err
 	}
 	if len(failures) > 0 {
@@ -143,16 +146,21 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 	return nil
 }
 
-func (c SAMController) reconcileStatuses(targetOS platform.OS, deassignResults map[string]samOSAddressDeassignResult) error {
+func (c SAMController) reconcileStatuses(targetOS platform.OS, deassignResults map[string]samOSAddressDeassignResult, garpSent map[string]bool) error {
 	claims := samSelectResources(c.Router.Spec.Resources, "RemoteAddressClaim")
 	for _, claim := range claims {
 		status := sam.StatusForRemoteAddressClaim(claim, c.Lowerings, c.Store, targetOS)
 		status["dryRun"] = c.DryRun
 		if targetOS == platform.OSLinux {
 			if spec, err := claim.RemoteAddressClaimSpec(); err == nil && strings.TrimSpace(spec.Capture.Type) == "proxy-arp" {
-				status["captureProxyNeighbor"] = map[string]any{
-					"address":   strings.TrimSpace(spec.Address),
-					"interface": strings.TrimSpace(spec.Capture.Interface),
+				if status["captureStatus"] == sam.CaptureStatusCaptured {
+					status["captureProxyNeighbor"] = map[string]any{
+						"address":   strings.TrimSpace(spec.Address),
+						"interface": strings.TrimSpace(spec.Capture.Interface),
+					}
+					if garpSent[claim.Metadata.Name] {
+						status["lastGARPSent"] = true
+					}
 				}
 			} else if err == nil && strings.TrimSpace(spec.Capture.Type) == "provider-secondary-ip" && !spec.Capture.ConfigureOSAddress {
 				result := deassignResults[claim.Metadata.Name]

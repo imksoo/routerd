@@ -18,7 +18,7 @@ func TestValidateMobilityPool(t *testing.T) {
 				NodeRef:  "onprem-router",
 				Site:     "onprem",
 				Role:     "onprem",
-				Capture:  api.MobilityMemberCapture{Type: "proxy-arp", Interface: "lan"},
+				Capture:  api.MobilityMemberCapture{Type: "proxy-arp", Interface: "lan", ActiveWhen: api.CaptureActiveWhen{Type: "vrrp-master", VirtualAddressRef: "onprem-vip"}},
 				Delivery: api.MobilityMemberDelivery{PeerRef: "azure", Mode: "route", TunnelInterface: "wg-hybrid"},
 			},
 			{
@@ -36,7 +36,7 @@ func TestValidateMobilityPool(t *testing.T) {
 		},
 		LeasePolicy: api.MobilityLeasePolicy{TTL: "5m", HoldDuration: "30s"},
 		Authority:   api.MobilityAuthority{Mode: "static"},
-	})
+	}, testInterfaceResource("lan"), testVirtualAddressResource("onprem-vip"))
 	if err := Validate(router); err != nil {
 		t.Fatalf("Validate MobilityPool: %v", err)
 	}
@@ -139,7 +139,7 @@ func TestValidateMobilityPoolRejectsInvalidFields(t *testing.T) {
 				spec.Members[0].Delivery = api.MobilityMemberDelivery{PeerRef: "azure"}
 				spec.Members[0].Placement = api.MobilityMemberPlacement{Group: "onprem-edge", Priority: 10}
 			},
-			want: "placement.group is supported only for role cloud",
+			want: "capture.activeWhen.type must be vrrp-master",
 		},
 		{
 			name: "placement group provider mismatch",
@@ -253,6 +253,14 @@ func TestValidateMobilityPoolRejectsInvalidFields(t *testing.T) {
 			want: "looks secret-like",
 		},
 		{
+			name: "onprem proxy arp missing activeWhen",
+			mut: func(spec *api.MobilityPoolSpec) {
+				spec.Members[0].Capture = api.MobilityMemberCapture{Type: "proxy-arp", Interface: "lan"}
+				spec.Members[0].Delivery = api.MobilityMemberDelivery{PeerRef: "azure"}
+			},
+			want: "capture.activeWhen.type must be vrrp-master",
+		},
+		{
 			name: "activeWhen missing ref",
 			mut: func(spec *api.MobilityPoolSpec) {
 				spec.Members[0].Capture = api.MobilityMemberCapture{Type: "proxy-arp", Interface: "lan", ActiveWhen: api.CaptureActiveWhen{Type: "vrrp-master"}}
@@ -289,14 +297,38 @@ func TestValidateMobilityPoolRejectsInvalidFields(t *testing.T) {
 	}
 }
 
-func mobilityPoolRouter(spec api.MobilityPoolSpec) *api.Router {
+func mobilityPoolRouter(spec api.MobilityPoolSpec, extra ...api.Resource) *api.Router {
+	resources := []api.Resource{{
+		TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"},
+		Metadata: api.ObjectMeta{Name: "cloudedge"},
+		Spec:     spec,
+	}}
+	resources = append(resources, extra...)
 	return &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 		Metadata: api.ObjectMeta{Name: "test"},
-		Spec: api.RouterSpec{Resources: []api.Resource{{
-			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"},
-			Metadata: api.ObjectMeta{Name: "cloudedge"},
-			Spec:     spec,
-		}}},
+		Spec:     api.RouterSpec{Resources: resources},
+	}
+}
+
+func testVirtualAddressResource(name string) api.Resource {
+	return api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"},
+		Metadata: api.ObjectMeta{Name: name},
+		Spec: api.VirtualAddressSpec{
+			Family:    "ipv4",
+			Interface: "lan",
+			Address:   "10.88.60.1/32",
+			Mode:      "vrrp",
+			VRRP:      api.VirtualAddressVRRPSpec{VirtualRouterID: 60, Peers: []string{"10.88.60.2"}},
+		},
+	}
+}
+
+func testInterfaceResource(name string) api.Resource {
+	return api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+		Metadata: api.ObjectMeta{Name: name},
+		Spec:     api.InterfaceSpec{IfName: name, Managed: true},
 	}
 }
