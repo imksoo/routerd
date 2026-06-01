@@ -120,6 +120,7 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  dynamic render [--config <path>] [--state-file <path>] [-o yaml|json]")
 	fmt.Fprintln(w, "  dynamic diff [--config <path>] [--state-file <path>] [-o text|json]")
 	fmt.Fprintln(w, "  mobility leases [--pool <name>] [--include-expired] [--state-file <path>] [-o table|json|yaml]")
+	fmt.Fprintln(w, "  mobility ownership [--pool <name>] [--state-file <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  mobility show --pool <name> --address <ipv4/32> [--state-file <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  plugin list [--config <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  plugin run <name> [--dry-run] [--config <path>] [--state-file <path>] [-o table|json|yaml]")

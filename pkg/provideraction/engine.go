@@ -22,6 +22,7 @@ type Store interface {
 	ImportAction(rec state.ActionExecutionRecord) (bool, error)
 	GetActionByID(id int64) (state.ActionExecutionRecord, bool, error)
 	GetMobilityCaptureEpoch(key string) (state.MobilityCaptureEpochRecord, bool, error)
+	GetMobilityOwnershipEpoch(pool, address string) (state.MobilityOwnershipEpochRecord, bool, error)
 	ApproveAction(id int64, approvedBy string, now time.Time) error
 	ListActions(state.ActionExecutionFilter) ([]state.ActionExecutionRecord, error)
 	MarkActionSkippedByIdempotencyKey(key, message string, now time.Time) error
@@ -63,9 +64,13 @@ type Config struct {
 }
 
 const (
-	captureParamKey    = "mobilityCaptureKey"
-	captureParamEpoch  = "mobilityCaptureEpoch"
-	captureParamHolder = "mobilityCaptureHolder"
+	captureParamKey       = "mobilityCaptureKey"
+	captureParamEpoch     = "mobilityCaptureEpoch"
+	captureParamHolder    = "mobilityCaptureHolder"
+	ownershipParamPool    = "mobilityOwnershipPool"
+	ownershipParamAddress = "mobilityOwnershipAddress"
+	ownershipParamEpoch   = "mobilityOwnershipEpoch"
+	ownershipParamOwner   = "mobilityOwnershipOwner"
 )
 
 // NewEngine builds an Engine.
@@ -139,7 +144,7 @@ func (e *Engine) ImportFromDynamicParts() (ImportResult, error) {
 				e.logf("provideraction: skipping plan %q from source %q: missing idempotencyKey", plan.Name, part.Source)
 				continue
 			}
-			stale, err := e.planStaleByCaptureEpoch(plan)
+			stale, err := e.planStaleByOwnershipOrCaptureEpoch(plan)
 			if err != nil {
 				return res, err
 			}
@@ -190,7 +195,7 @@ func (e *Engine) fenceStalePendingActions() (int, error) {
 				return count, fmt.Errorf("decode action parameters for %q: %w", row.IdempotencyKey, err)
 			}
 		}
-		stale, err := e.planStaleByCaptureEpoch(plan)
+		stale, err := e.planStaleByOwnershipOrCaptureEpoch(plan)
 		if err != nil {
 			return count, err
 		}
@@ -231,6 +236,30 @@ func (e *Engine) planStaleByCaptureEpoch(plan dynamicconfig.ActionPlan) (bool, e
 	}
 }
 
+func (e *Engine) planStaleByOwnershipOrCaptureEpoch(plan dynamicconfig.ActionPlan) (bool, error) {
+	if pool, address, epoch, owner, ok := ownershipFenceFromPlan(plan); ok {
+		current, found, err := e.store.GetMobilityOwnershipEpoch(pool, address)
+		if err != nil {
+			return false, fmt.Errorf("load mobility ownership epoch %s/%s: %w", pool, address, err)
+		}
+		if !found {
+			return false, nil
+		}
+		if epoch != current.Epoch {
+			return true, nil
+		}
+		switch strings.TrimSpace(plan.Action) {
+		case "assign-secondary-ip", "ensure-forwarding-enabled":
+			return owner != "" && owner != current.OwnerNode, nil
+		case "unassign-secondary-ip", "ensure-forwarding-disabled":
+			return owner != "" && owner == current.OwnerNode, nil
+		default:
+			return false, nil
+		}
+	}
+	return e.planStaleByCaptureEpoch(plan)
+}
+
 func captureFenceFromPlan(plan dynamicconfig.ActionPlan) (string, int64, string, bool) {
 	key := strings.TrimSpace(plan.Parameters[captureParamKey])
 	holder := strings.TrimSpace(plan.Parameters[captureParamHolder])
@@ -243,6 +272,21 @@ func captureFenceFromPlan(plan dynamicconfig.ActionPlan) (string, int64, string,
 		return "", 0, "", false
 	}
 	return key, epoch, holder, true
+}
+
+func ownershipFenceFromPlan(plan dynamicconfig.ActionPlan) (string, string, int64, string, bool) {
+	pool := strings.TrimSpace(plan.Parameters[ownershipParamPool])
+	address := strings.TrimSpace(plan.Parameters[ownershipParamAddress])
+	owner := strings.TrimSpace(plan.Parameters[ownershipParamOwner])
+	epochRaw := strings.TrimSpace(plan.Parameters[ownershipParamEpoch])
+	if pool == "" || address == "" || epochRaw == "" {
+		return "", "", 0, "", false
+	}
+	epoch, err := strconv.ParseInt(epochRaw, 10, 64)
+	if err != nil || epoch <= 0 {
+		return "", "", 0, "", false
+	}
+	return pool, address, epoch, owner, true
 }
 
 // recordFromPlan converts a planned action into a journal record (pending). It

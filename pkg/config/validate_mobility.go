@@ -80,6 +80,9 @@ func validateMobilityResource(res api.Resource, _ platform.OS) (bool, error) {
 		default:
 			return true, fmt.Errorf("%s spec.capturePolicy.mode %q is not supported; only all-non-owner-sites", res.ID(), spec.CapturePolicy.Mode)
 		}
+		if err := validateMobilityIPOwnershipPolicy(res, spec, nodeRefs); err != nil {
+			return true, err
+		}
 		if hold := strings.TrimSpace(spec.CapturePolicy.DeprovisionHoldDuration); hold != "" {
 			parsed, err := time.ParseDuration(hold)
 			if err != nil {
@@ -124,6 +127,32 @@ func validateMobilityResource(res api.Resource, _ platform.OS) (bool, error) {
 		return true, nil
 	}
 	return false, nil
+}
+
+func validateMobilityIPOwnershipPolicy(res api.Resource, spec api.MobilityPoolSpec, nodeRefs map[string]bool) error {
+	policy := spec.IPOwnershipPolicy
+	policySet := strings.TrimSpace(policy.Type) != "" || policy.EpochLocking != nil || len(policy.PreferNodes) > 0 || policy.AutoFailover
+	if !policySet {
+		return nil
+	}
+	if strings.TrimSpace(policy.Type) != "centralized" {
+		return fmt.Errorf("%s spec.ipOwnershipPolicy.type %q is not supported; only centralized", res.ID(), policy.Type)
+	}
+	seen := map[string]bool{}
+	for i, nodeRef := range policy.PreferNodes {
+		nodeRef = strings.TrimSpace(nodeRef)
+		if nodeRef == "" {
+			return fmt.Errorf("%s spec.ipOwnershipPolicy.preferNodes[%d] must not be empty", res.ID(), i)
+		}
+		if !nodeRefs[nodeRef] {
+			return fmt.Errorf("%s spec.ipOwnershipPolicy.preferNodes[%d] %q must be one of the member nodeRefs", res.ID(), i, nodeRef)
+		}
+		if seen[nodeRef] {
+			return fmt.Errorf("%s spec.ipOwnershipPolicy.preferNodes contains duplicate nodeRef %q", res.ID(), nodeRef)
+		}
+		seen[nodeRef] = true
+	}
+	return nil
 }
 
 type mobilityPlacementGroup struct {

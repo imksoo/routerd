@@ -1353,6 +1353,9 @@ type MobilityPoolSpec struct {
 	// CapturePolicy declares how non-owner sites capture an address that has
 	// moved.
 	CapturePolicy MobilityCapturePolicy `yaml:"capturePolicy,omitempty" json:"capturePolicy,omitempty"`
+	// IPOwnershipPolicy optionally enables deterministic per-address capture
+	// ownership arbitration. Empty preserves the legacy placement behavior.
+	IPOwnershipPolicy MobilityIPOwnershipPolicy `yaml:"ipOwnershipPolicy,omitempty" json:"ipOwnershipPolicy,omitempty"`
 	// LeasePolicy controls the lifetime and owner-change hold window for
 	// observed AddressLease state.
 	LeasePolicy MobilityLeasePolicy `yaml:"leasePolicy,omitempty" json:"leasePolicy,omitempty"`
@@ -1403,6 +1406,13 @@ type MobilityMemberPlacement struct {
 
 type MobilityMemberMaintenance struct {
 	Drain bool `yaml:"drain,omitempty" json:"drain,omitempty"`
+}
+
+type MobilityIPOwnershipPolicy struct {
+	Type         string   `yaml:"type,omitempty" json:"type,omitempty" jsonschema:"enum=,enum=centralized"`
+	EpochLocking *bool    `yaml:"epochLocking,omitempty" json:"epochLocking,omitempty"`
+	PreferNodes  []string `yaml:"preferNodes,omitempty" json:"preferNodes,omitempty"`
+	AutoFailover bool     `yaml:"autoFailover,omitempty" json:"autoFailover,omitempty"`
 }
 
 type MobilityMemberCapture struct {

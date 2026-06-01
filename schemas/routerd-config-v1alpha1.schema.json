@@ -6777,6 +6777,32 @@
                         "description": "GroupRef is the EventGroup whose federation events are projected into\nAddressLease runtime state for this pool (required).",
                         "type": "string"
                       },
+                      "ipOwnershipPolicy": {
+                        "additionalProperties": false,
+                        "description": "IPOwnershipPolicy optionally enables deterministic per-address capture\nownership arbitration. Empty preserves the legacy placement behavior.",
+                        "properties": {
+                          "autoFailover": {
+                            "type": "boolean"
+                          },
+                          "epochLocking": {
+                            "type": "boolean"
+                          },
+                          "preferNodes": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
+                          "type": {
+                            "enum": [
+                              "",
+                              "centralized"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
+                      },
                       "leasePolicy": {
                         "additionalProperties": false,
                         "description": "LeasePolicy controls the lifetime and owner-change hold window for\nobserved AddressLease state.",
