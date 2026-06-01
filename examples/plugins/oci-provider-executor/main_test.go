@@ -104,6 +104,24 @@ func TestAssignDryRunReadsOnly(t *testing.T) {
 	}
 }
 
+func TestAssignDryRunAllowReassignmentReadsOnly(t *testing.T) {
+	f := &fakeOCI{}
+	spec := reqSpec(actionAssignSecondaryIP, modeDryRun)
+	spec.Parameters = map[string]string{"allowReassignment": "true"}
+	res := dispatchWith(spec, f.run)
+	if res.Status.Status != statusSucceeded {
+		t.Fatalf("want succeeded, got %q err=%q", res.Status.Status, res.Status.Error)
+	}
+	if !strings.Contains(res.Status.Message, "would seize/reassign") {
+		t.Fatalf("dry-run message = %q, want seize/reassign", res.Status.Message)
+	}
+	for _, c := range f.calls {
+		if !isReadOnlyVerb(c) {
+			t.Fatalf("dry-run issued a non-read-only command (must NOT mutate); call=%v", c)
+		}
+	}
+}
+
 func TestAssignExecuteIssuesCreate(t *testing.T) {
 	f := &fakeOCI{}
 	res := dispatchWith(reqSpec(actionAssignSecondaryIP, modeExecute), f.run)
@@ -120,6 +138,30 @@ func TestAssignExecuteIssuesCreate(t *testing.T) {
 	want := "network private-ip create --vnic-id ocid1.vnic.oc1..vnic1 --ip-address 10.88.60.9"
 	if got != want {
 		t.Fatalf("assign argv mismatch:\n got: %s\nwant: %s", got, want)
+	}
+}
+
+func TestAssignExecuteAllowReassignment(t *testing.T) {
+	f := &fakeOCI{}
+	spec := reqSpec(actionAssignSecondaryIP, modeExecute)
+	spec.Parameters = map[string]string{"allowReassignment": "true"}
+	res := dispatchWith(spec, f.run)
+	if res.Status.Status != statusSucceeded {
+		t.Fatalf("want succeeded, got %q err=%q", res.Status.Status, res.Status.Error)
+	}
+	if res.Status.Observed["assignedAddress"] != "10.88.60.9" {
+		t.Errorf("want assignedAddress observed, got %+v", res.Status.Observed)
+	}
+	if len(f.calls) != 1 {
+		t.Fatalf("execute assign should issue exactly one call, got %v", f.calls)
+	}
+	got := strings.Join(f.calls[0], " ")
+	want := "network vnic assign-private-ip --vnic-id ocid1.vnic.oc1..vnic1 --ip-address 10.88.60.9 --unassign-if-already-assigned"
+	if got != want {
+		t.Fatalf("assign argv mismatch:\n got: %s\nwant: %s", got, want)
+	}
+	if !strings.Contains(res.Status.Message, "seized/reassigned") {
+		t.Fatalf("message = %q, want seize/reassign", res.Status.Message)
 	}
 }
 
