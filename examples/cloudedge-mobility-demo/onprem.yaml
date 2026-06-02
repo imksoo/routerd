@@ -160,7 +160,7 @@ spec:
         interface: wg-hybrid
         publicKey: "${AWS_ROUTER_A_WG_PUBLIC_KEY}"
         endpoint: "${AWS_ROUTER_A_WG_ENDPOINT}"
-        allowedIPs: [10.99.0.2/32, 10.77.60.11/32]
+        allowedIPs: [10.99.0.2/32]
         persistentKeepalive: 25
 
     - apiVersion: net.routerd.net/v1alpha1
@@ -180,7 +180,7 @@ spec:
         interface: wg-hybrid
         publicKey: "${AZURE_WG_PUBLIC_KEY}"
         endpoint: "${AZURE_WG_ENDPOINT}"
-        allowedIPs: [10.99.0.3/32, 10.77.60.12/32]
+        allowedIPs: [10.99.0.3/32]
         persistentKeepalive: 25
 
     - apiVersion: net.routerd.net/v1alpha1
@@ -200,7 +200,7 @@ spec:
         interface: wg-hybrid
         publicKey: "${OCI_WG_PUBLIC_KEY}"
         endpoint: "${OCI_WG_ENDPOINT}"
-        allowedIPs: [10.99.0.4/32, 10.77.60.13/32]
+        allowedIPs: [10.99.0.4/32]
         persistentKeepalive: 25
 
     - apiVersion: net.routerd.net/v1alpha1
@@ -267,12 +267,55 @@ spec:
         underlay: { type: wireguard, interface: wg-hybrid, address: 10.99.0.7 }
         remote: { nodeID: onprem-router, address: 10.99.0.1 }
 
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: BGPRouter
+      metadata: { name: mobility-bgp }
+      spec:
+        asn: 64577
+        routerID: 10.99.0.1
+        listen: { address: 10.99.0.1, port: 179 }
+        importPolicy: { allowedPrefixes: [10.77.60.0/24], nextHopRewrite: unchanged }
+        exportPolicy: { allowedPrefixes: [10.77.60.0/24] }
+        timers: { profile: fast }
+        convergenceProfile: fast
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: BGPPeer
+      metadata: { name: bgp-aws-a-rr-client }
+      spec: { routerRef: BGPRouter/mobility-bgp, peerASN: 64577, peers: [10.99.0.2], routeReflectorClient: true, routeReflectorClusterID: 10.99.0.1, timers: { profile: fast } }
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: BGPPeer
+      metadata: { name: bgp-aws-b-rr-client }
+      spec: { routerRef: BGPRouter/mobility-bgp, peerASN: 64577, peers: [10.99.0.5], routeReflectorClient: true, routeReflectorClusterID: 10.99.0.1, timers: { profile: fast } }
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: BGPPeer
+      metadata: { name: bgp-azure-rr-client }
+      spec: { routerRef: BGPRouter/mobility-bgp, peerASN: 64577, peers: [10.99.0.3], routeReflectorClient: true, routeReflectorClusterID: 10.99.0.1, timers: { profile: fast } }
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: BGPPeer
+      metadata: { name: bgp-azure-b-rr-client }
+      spec: { routerRef: BGPRouter/mobility-bgp, peerASN: 64577, peers: [10.99.0.6], routeReflectorClient: true, routeReflectorClusterID: 10.99.0.1, timers: { profile: fast } }
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: BGPPeer
+      metadata: { name: bgp-oci-rr-client }
+      spec: { routerRef: BGPRouter/mobility-bgp, peerASN: 64577, peers: [10.99.0.4], routeReflectorClient: true, routeReflectorClusterID: 10.99.0.1, timers: { profile: fast } }
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: BGPPeer
+      metadata: { name: bgp-oci-b-rr-client }
+      spec: { routerRef: BGPRouter/mobility-bgp, peerASN: 64577, peers: [10.99.0.7], routeReflectorClient: true, routeReflectorClusterID: 10.99.0.1, timers: { profile: fast } }
+
     - apiVersion: mobility.routerd.net/v1alpha1
       kind: MobilityPool
       metadata: { name: cloudedge }
       spec:
         prefix: 10.77.60.0/24
         groupRef: cloudedge
+        deliveryPolicy: { mode: bgp }
         members:
           - nodeRef: onprem-router
             site: onprem

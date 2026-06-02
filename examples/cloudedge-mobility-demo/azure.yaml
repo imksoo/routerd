@@ -134,8 +134,25 @@ spec:
         interface: wg-hybrid
         publicKey: "${ONPREM_WG_PUBLIC_KEY}"
         endpoint: "${ONPREM_WG_ENDPOINT}"
-        allowedIPs: [10.99.0.1/32, 10.99.0.2/32, 10.99.0.4/32, 10.99.0.5/32, "${DEMO_SAMESITE_PEER_IP}/32", 10.99.0.7/32, 10.77.60.10/32, 10.77.60.11/32, 10.77.60.13/32]
+        allowedIPs: [10.99.0.1/32, 10.99.0.2/32, 10.99.0.4/32, 10.99.0.5/32, "${DEMO_SAMESITE_PEER_IP}/32", 10.99.0.7/32]
         persistentKeepalive: 25
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: BGPRouter
+      metadata: { name: mobility-bgp }
+      spec:
+        asn: 64577
+        routerID: "${DEMO_SELF_IP}"
+        listen: { address: "${DEMO_SELF_IP}", port: 179 }
+        importPolicy: { allowedPrefixes: [10.77.60.0/24], nextHopRewrite: unchanged }
+        exportPolicy: { allowedPrefixes: [10.77.60.0/24] }
+        timers: { profile: fast }
+        convergenceProfile: fast
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: BGPPeer
+      metadata: { name: onprem-rr }
+      spec: { routerRef: BGPRouter/mobility-bgp, peerASN: 64577, peers: [10.99.0.1], timers: { profile: fast } }
 
     - apiVersion: hybrid.routerd.net/v1alpha1
       kind: OverlayPeer
@@ -163,6 +180,7 @@ spec:
       spec:
         prefix: 10.77.60.0/24
         groupRef: cloudedge
+        deliveryPolicy: { mode: bgp }
         members:
           - nodeRef: onprem-router
             site: onprem

@@ -98,9 +98,6 @@ render_configs() {
 
   perl -0pi -e 's/(placement: \{ group: aws-edge, priority: 10 \})/$1\n            maintenance: { drain: true }/' \
     "$WORKDIR/aws-a-drain.yaml" "$WORKDIR/aws-b-drain.yaml" "$WORKDIR/onprem-drain.yaml"
-  perl -0pi -e 's/allowedIPs: \[10\.99\.0\.2\/32, 10\.77\.60\.11\/32\]/allowedIPs: [10.99.0.2\/32]/;
-                s/allowedIPs: \[10\.99\.0\.5\/32\]/allowedIPs: [10.99.0.5\/32, 10.77.60.11\/32]/' \
-    "$WORKDIR/onprem-drain.yaml"
 }
 
 validate_rendered() {
