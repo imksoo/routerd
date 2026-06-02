@@ -1354,6 +1354,10 @@ type MobilityPoolSpec struct {
 	// Members maps routerd nodes to the site they serve within the pool
 	// (required, at least one).
 	Members []MobilityPoolMember `yaml:"members" json:"members"`
+	// StaticHandovers declares planned static-owned address movement from an
+	// on-prem member to another member. The controller releases the from member
+	// first and only projects the to member after observing the release event.
+	StaticHandovers []MobilityStaticHandover `yaml:"staticHandovers,omitempty" json:"staticHandovers,omitempty"`
 	// CapturePolicy declares how non-owner sites capture an address that has
 	// moved.
 	CapturePolicy MobilityCapturePolicy `yaml:"capturePolicy,omitempty" json:"capturePolicy,omitempty"`
@@ -1394,6 +1398,10 @@ type MobilityPoolMember struct {
 	// resolves entries against the lease owner in nodeRef -> site -> role order,
 	// then falls back to Delivery.
 	DeliveryTo []MobilityMemberDeliveryTarget `yaml:"deliveryTo,omitempty" json:"deliveryTo,omitempty"`
+	// StaticOwnedAddresses declares IPv4 /32 addresses in the pool that this
+	// member owns without relying on observed-client federation events. It is
+	// intended for on-prem static-IP segments.
+	StaticOwnedAddresses []string `yaml:"staticOwnedAddresses,omitempty" json:"staticOwnedAddresses,omitempty"`
 	// Placement optionally places this member in an active/standby capture group.
 	// When set, only the highest-priority non-drained member in the same group
 	// captures provider-side addresses.
@@ -1401,6 +1409,12 @@ type MobilityPoolMember struct {
 	// Maintenance carries declarative operator maintenance intent for this member.
 	// Drained placement members are excluded from active capture selection.
 	Maintenance MobilityMemberMaintenance `yaml:"maintenance,omitempty" json:"maintenance,omitempty"`
+}
+
+type MobilityStaticHandover struct {
+	Address     string `yaml:"address" json:"address"`
+	FromNodeRef string `yaml:"fromNodeRef" json:"fromNodeRef"`
+	ToNodeRef   string `yaml:"toNodeRef" json:"toNodeRef"`
 }
 
 type MobilityMemberPlacement struct {

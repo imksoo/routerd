@@ -127,6 +127,26 @@ func TestValidateMobilityPoolPlacement(t *testing.T) {
 	}
 }
 
+func TestValidateMobilityPoolStaticOwnedAndHandover(t *testing.T) {
+	spec := api.MobilityPoolSpec{
+		Prefix:   "10.88.60.0/24",
+		GroupRef: "cloudedge",
+		Members: []api.MobilityPoolMember{
+			{NodeRef: "onprem-router", Site: "onprem", Role: "onprem", StaticOwnedAddresses: []string{"10.88.60.10/32"}},
+			{NodeRef: "azure-router", Site: "azure", Role: "cloud"},
+		},
+		StaticHandovers: []api.MobilityStaticHandover{{
+			Address:     "10.88.60.10/32",
+			FromNodeRef: "onprem-router",
+			ToNodeRef:   "azure-router",
+		}},
+		LeasePolicy: api.MobilityLeasePolicy{TTL: "5m", HoldDuration: "30s"},
+	}
+	if err := Validate(mobilityPoolRouter(spec)); err != nil {
+		t.Fatalf("Validate static mobility pool: %v", err)
+	}
+}
+
 func TestValidateMobilityPoolRejectsInvalidFields(t *testing.T) {
 	tests := []struct {
 		name string
@@ -320,6 +340,43 @@ func TestValidateMobilityPoolRejectsInvalidFields(t *testing.T) {
 				spec.Members[0].Delivery = api.MobilityMemberDelivery{PeerRef: "azure"}
 			},
 			want: "references missing VirtualAddress",
+		},
+		{
+			name: "static owned on cloud",
+			mut:  func(spec *api.MobilityPoolSpec) { spec.Members[1].StaticOwnedAddresses = []string{"10.88.60.20/32"} },
+			want: "staticOwnedAddresses is supported only for role onprem",
+		},
+		{
+			name: "static owned outside prefix",
+			mut:  func(spec *api.MobilityPoolSpec) { spec.Members[0].StaticOwnedAddresses = []string{"10.88.61.10/32"} },
+			want: "must be within spec.prefix",
+		},
+		{
+			name: "static owned requires host prefix",
+			mut:  func(spec *api.MobilityPoolSpec) { spec.Members[0].StaticOwnedAddresses = []string{"10.88.60.10/24"} },
+			want: "must be an IPv4 /32 CIDR",
+		},
+		{
+			name: "static owned duplicate",
+			mut: func(spec *api.MobilityPoolSpec) {
+				spec.Members = append(spec.Members, api.MobilityPoolMember{NodeRef: "onprem-router-b", Site: "onprem", Role: "onprem", StaticOwnedAddresses: []string{"10.88.60.10/32"}})
+				spec.Members[0].StaticOwnedAddresses = []string{"10.88.60.10/32"}
+			},
+			want: "duplicates staticOwnedAddresses",
+		},
+		{
+			name: "handover from missing",
+			mut: func(spec *api.MobilityPoolSpec) {
+				spec.StaticHandovers = []api.MobilityStaticHandover{{Address: "10.88.60.10/32", FromNodeRef: "missing", ToNodeRef: "azure-router"}}
+			},
+			want: "fromNodeRef \"missing\" must be one of the member nodeRefs",
+		},
+		{
+			name: "handover from must be onprem",
+			mut: func(spec *api.MobilityPoolSpec) {
+				spec.StaticHandovers = []api.MobilityStaticHandover{{Address: "10.88.60.10/32", FromNodeRef: "azure-router", ToNodeRef: "onprem-router"}}
+			},
+			want: "must reference an onprem member",
 		},
 	}
 	for _, tt := range tests {

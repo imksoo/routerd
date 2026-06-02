@@ -24,6 +24,8 @@ const (
 	ObservedEventType  = "routerd.client.ipv4.observed"
 	ExpiredEventType   = "routerd.client.ipv4.expired"
 	HeartbeatEventType = federation.MobilityMemberHeartbeatType
+	staticOwnedType    = "routerd.mobility.static-owned"
+	staticHandoverType = "routerd.mobility.static-handover"
 
 	DefaultLeaseTTL      = 5 * time.Minute
 	DefaultHoldDuration  = 30 * time.Second
@@ -163,6 +165,7 @@ func (c Controller) reconcilePool(res api.Resource, now time.Time) error {
 	members := mobilityMembers(spec.Members)
 	ttl := durationDefault(spec.LeasePolicy.TTL, DefaultLeaseTTL)
 	hold := durationDefault(spec.LeasePolicy.HoldDuration, DefaultHoldDuration)
+	handoversByFrom := staticHandoversByFrom(spec.StaticHandovers, prefix)
 
 	events, err := c.Store.ListFederationEvents(spec.GroupRef, false, now.Unix())
 	if err != nil {
@@ -181,6 +184,11 @@ func (c Controller) reconcilePool(res api.Resource, now time.Time) error {
 		address, ok := normalizeLeaseAddress(firstNonEmpty(ev.Payload["address"], ev.Subject), prefix)
 		if !ok {
 			continue
+		}
+		if ev.Type == ObservedEventType {
+			if _, moving := handoversByFrom[staticHandoverKey(address, strings.TrimSpace(ev.SourceNode))]; moving {
+				continue
+			}
 		}
 		candidate := leaseCandidate{
 			Address:    address,
@@ -218,6 +226,25 @@ func (c Controller) reconcilePool(res api.Resource, now time.Time) error {
 	for _, lease := range existing {
 		existingByAddress[lease.Address] = lease
 		addresses[lease.Address] = true
+	}
+	staticObserved, staticExpired, staticEvents, err := c.staticLeaseProjection(res.Metadata.Name, spec, members, prefix, handoversByFrom, existingByAddress, latestExpired, now)
+	if err != nil {
+		return err
+	}
+	for _, ev := range staticEvents {
+		if err := c.Store.RecordFederationEvent(ev); err != nil {
+			return fmt.Errorf("record static mobility event %q: %w", ev.ID, err)
+		}
+	}
+	for address, candidate := range staticObserved {
+		if existing, found := latestObserved[address]; !found || candidate.Greater(existing) {
+			latestObserved[address] = candidate
+		}
+	}
+	for address, candidate := range staticExpired {
+		if existing, found := latestExpired[address]; !found || candidate.Greater(existing) {
+			latestExpired[address] = candidate
+		}
 	}
 	for address := range latestObserved {
 		addresses[address] = true
@@ -257,6 +284,251 @@ func (c Controller) reconcilePool(res api.Resource, now time.Time) error {
 		"operatorIntent": "MobilityPool",
 	}
 	return c.Store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", res.Metadata.Name, status)
+}
+
+func (c Controller) staticLeaseProjection(poolName string, spec api.MobilityPoolSpec, members map[string]memberInfo, prefix netip.Prefix, handoversByFrom map[string]api.MobilityStaticHandover, existing map[string]routerstate.AddressLeaseRecord, expiredEvents map[string]leaseCandidate, now time.Time) (map[string]leaseCandidate, map[string]leaseCandidate, []routerstate.EventRecord, error) {
+	observed := map[string]leaseCandidate{}
+	expired := map[string]leaseCandidate{}
+	var events []routerstate.EventRecord
+	selfNode, selfErr := c.selfNode(spec.GroupRef)
+	if selfErr != nil && hasStaticMobilityIntent(spec) {
+		return nil, nil, nil, selfErr
+	}
+
+	for _, member := range spec.Members {
+		nodeRef := strings.TrimSpace(member.NodeRef)
+		info, ok := members[nodeRef]
+		if !ok {
+			continue
+		}
+		for _, raw := range member.StaticOwnedAddresses {
+			address, ok := normalizeLeaseAddress(raw, prefix)
+			if !ok {
+				continue
+			}
+			if _, moving := handoversByFrom[staticHandoverKey(address, nodeRef)]; moving {
+				continue
+			}
+			candidate := staticOwnedCandidate(poolName, spec.GroupRef, address, nodeRef, info, existing[address], now)
+			observed[address] = candidate
+			if ev, emit := staticObservedFederationEvent(poolName, spec.GroupRef, address, nodeRef, selfNode, selfErr, existing[address], now); emit {
+				events = append(events, ev)
+			}
+		}
+	}
+
+	for _, handover := range spec.StaticHandovers {
+		address, ok := normalizeLeaseAddress(handover.Address, prefix)
+		if !ok {
+			continue
+		}
+		fromNode := strings.TrimSpace(handover.FromNodeRef)
+		fromInfo, ok := members[fromNode]
+		if !ok {
+			continue
+		}
+		current := existing[address]
+		if selfNode == fromNode && current.OwnerNode == fromNode && current.Status != routerstate.AddressLeaseStatusExpired && isStaticLeaseSource(current.SourceType) {
+			candidate, ok := staticExpiredCandidate(poolName, spec.GroupRef, address, fromNode, fromInfo, now)
+			if ok {
+				expired[address] = candidate
+			}
+		}
+		if ev, emit := staticExpiredFederationEvent(poolName, spec.GroupRef, address, fromNode, selfNode, selfErr, current, expiredEvents[address], now); emit {
+			events = append(events, ev)
+		}
+		release := expiredEvents[address]
+		if staticHandoverReleaseObserved(handover, current, release) {
+			if toInfo, ok := members[strings.TrimSpace(handover.ToNodeRef)]; ok {
+				observed[address] = staticHandoverCandidate(poolName, spec.GroupRef, address, strings.TrimSpace(handover.ToNodeRef), toInfo, release, now)
+			}
+		}
+	}
+
+	for address, current := range existing {
+		if !isStaticLeaseSource(current.SourceType) || current.Status == routerstate.AddressLeaseStatusExpired {
+			continue
+		}
+		if _, stillOwned := observed[address]; stillOwned {
+			continue
+		}
+		if _, moving := handoversByFrom[staticHandoverKey(address, current.OwnerNode)]; moving {
+			continue
+		}
+		info, ok := members[strings.TrimSpace(current.OwnerNode)]
+		if !ok {
+			continue
+		}
+		candidate, ok := staticExpiredCandidate(poolName, spec.GroupRef, address, current.OwnerNode, info, now)
+		if !ok {
+			continue
+		}
+		if latest, found := expired[address]; !found || candidate.Greater(latest) {
+			expired[address] = candidate
+		}
+		if ev, emit := staticExpiredFederationEvent(poolName, spec.GroupRef, address, current.OwnerNode, selfNode, selfErr, current, expiredEvents[address], now); emit {
+			events = append(events, ev)
+		}
+	}
+	return observed, expired, events, nil
+}
+
+func hasStaticMobilityIntent(spec api.MobilityPoolSpec) bool {
+	if len(spec.StaticHandovers) > 0 {
+		return true
+	}
+	for _, member := range spec.Members {
+		if len(member.StaticOwnedAddresses) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func staticOwnedCandidate(poolName, group, address, nodeRef string, member memberInfo, current routerstate.AddressLeaseRecord, now time.Time) leaseCandidate {
+	observedAt := now.UTC()
+	if current.OwnerNode == nodeRef && current.Status == routerstate.AddressLeaseStatusActive && current.SourceType == staticOwnedType && !current.ObservedAt.IsZero() {
+		observedAt = current.ObservedAt.UTC()
+	}
+	eventID := staticEventID(staticOwnedType, poolName, nodeRef, address, observedAt)
+	return leaseCandidate{
+		Address:    address,
+		OwnerNode:  nodeRef,
+		OwnerSite:  member.Site,
+		OwnerRole:  member.Role,
+		EventID:    eventID,
+		Group:      group,
+		Type:       staticOwnedType,
+		DedupeKey:  staticDedupeKey(staticOwnedType, poolName, nodeRef, address),
+		ObservedAt: observedAt,
+	}
+}
+
+func staticExpiredCandidate(poolName, group, address, nodeRef string, member memberInfo, now time.Time) (leaseCandidate, bool) {
+	if strings.TrimSpace(nodeRef) == "" || strings.TrimSpace(address) == "" {
+		return leaseCandidate{}, false
+	}
+	observedAt := now.UTC()
+	return leaseCandidate{
+		Address:    address,
+		OwnerNode:  strings.TrimSpace(nodeRef),
+		OwnerSite:  member.Site,
+		OwnerRole:  member.Role,
+		EventID:    staticEventID(ExpiredEventType, poolName, nodeRef, address, observedAt),
+		Group:      group,
+		Type:       ExpiredEventType,
+		DedupeKey:  staticDedupeKey(staticOwnedType, poolName, nodeRef, address),
+		ObservedAt: observedAt,
+		ExpiresAt:  observedAt,
+	}, true
+}
+
+func staticHandoverCandidate(poolName, group, address, nodeRef string, member memberInfo, release leaseCandidate, now time.Time) leaseCandidate {
+	observedAt := release.ObservedAt.UTC()
+	if observedAt.IsZero() {
+		observedAt = now.UTC()
+	}
+	observedAt = observedAt.Add(time.Nanosecond)
+	return leaseCandidate{
+		Address:    address,
+		OwnerNode:  strings.TrimSpace(nodeRef),
+		OwnerSite:  member.Site,
+		OwnerRole:  member.Role,
+		EventID:    staticEventID(staticHandoverType+":"+release.EventID, poolName, nodeRef, address, observedAt),
+		Group:      group,
+		Type:       staticHandoverType,
+		DedupeKey:  staticDedupeKey(staticHandoverType, poolName, nodeRef, address),
+		ObservedAt: observedAt,
+	}
+}
+
+func staticObservedFederationEvent(poolName, group, address, ownerNode, selfNode string, selfErr error, current routerstate.AddressLeaseRecord, now time.Time) (routerstate.EventRecord, bool) {
+	if selfErr != nil || strings.TrimSpace(selfNode) != strings.TrimSpace(ownerNode) {
+		return routerstate.EventRecord{}, false
+	}
+	if current.OwnerNode == ownerNode && current.Status == routerstate.AddressLeaseStatusActive && current.SourceType == staticOwnedType {
+		return routerstate.EventRecord{}, false
+	}
+	return staticFederationEvent(poolName, group, address, ownerNode, ObservedEventType, now), true
+}
+
+func staticExpiredFederationEvent(poolName, group, address, ownerNode, selfNode string, selfErr error, current routerstate.AddressLeaseRecord, latestExpired leaseCandidate, now time.Time) (routerstate.EventRecord, bool) {
+	if selfErr != nil || strings.TrimSpace(selfNode) != strings.TrimSpace(ownerNode) {
+		return routerstate.EventRecord{}, false
+	}
+	if current.Address != "" && (current.OwnerNode != strings.TrimSpace(ownerNode) || current.Status == routerstate.AddressLeaseStatusExpired || !isStaticLeaseSource(current.SourceType)) {
+		return routerstate.EventRecord{}, false
+	}
+	if latestExpired.Address == address && latestExpired.OwnerNode == ownerNode && latestExpired.Greater(candidateFromLease(current)) {
+		return routerstate.EventRecord{}, false
+	}
+	return staticFederationEvent(poolName, group, address, ownerNode, ExpiredEventType, now), true
+}
+
+func staticFederationEvent(poolName, group, address, ownerNode, eventType string, now time.Time) routerstate.EventRecord {
+	observedAt := now.UTC()
+	return routerstate.EventRecord{
+		ID:         staticEventID(eventType, poolName, ownerNode, address, observedAt),
+		Group:      group,
+		SourceNode: strings.TrimSpace(ownerNode),
+		Type:       eventType,
+		Subject:    address,
+		DedupeKey:  staticDedupeKey(staticOwnedType, poolName, ownerNode, address),
+		Payload: map[string]string{
+			"address": address,
+			"pool":    poolName,
+			"source":  staticOwnedType,
+		},
+		ObservedAt: observedAt,
+		RecordedAt: observedAt,
+	}
+}
+
+func staticHandoverReleaseObserved(handover api.MobilityStaticHandover, current routerstate.AddressLeaseRecord, release leaseCandidate) bool {
+	if release.Address == "" || release.OwnerNode != strings.TrimSpace(handover.FromNodeRef) || release.Type != ExpiredEventType {
+		return false
+	}
+	if current.OwnerNode == strings.TrimSpace(handover.FromNodeRef) && current.Status != routerstate.AddressLeaseStatusExpired {
+		return release.Greater(candidateFromLease(current))
+	}
+	return true
+}
+
+func staticHandoversByFrom(handovers []api.MobilityStaticHandover, prefix netip.Prefix) map[string]api.MobilityStaticHandover {
+	out := map[string]api.MobilityStaticHandover{}
+	for _, handover := range handovers {
+		address, ok := normalizeLeaseAddress(handover.Address, prefix)
+		if !ok {
+			continue
+		}
+		fromNode := strings.TrimSpace(handover.FromNodeRef)
+		if fromNode == "" {
+			continue
+		}
+		out[staticHandoverKey(address, fromNode)] = handover
+	}
+	return out
+}
+
+func staticHandoverKey(address, fromNode string) string {
+	return strings.TrimSpace(address) + "|" + strings.TrimSpace(fromNode)
+}
+
+func isStaticLeaseSource(sourceType string) bool {
+	switch strings.TrimSpace(sourceType) {
+	case staticOwnedType, staticHandoverType:
+		return true
+	default:
+		return false
+	}
+}
+
+func staticDedupeKey(kind, poolName, nodeRef, address string) string {
+	return strings.Join([]string{"mobility", kind, strings.TrimSpace(poolName), strings.TrimSpace(nodeRef), strings.ReplaceAll(strings.TrimSpace(address), "/", "_")}, ":")
+}
+
+func staticEventID(kind, poolName, nodeRef, address string, observedAt time.Time) string {
+	return staticDedupeKey(kind, poolName, nodeRef, address) + ":" + strconv.FormatInt(observedAt.UTC().UnixNano(), 10)
 }
 
 func (c Controller) now() time.Time {

@@ -50,6 +50,8 @@ func validateMobilityResource(res api.Resource, _ platform.OS) (bool, error) {
 			return true, fmt.Errorf("%s spec.members requires at least one member", res.ID())
 		}
 		nodeRefs := map[string]bool{}
+		memberRoles := map[string]string{}
+		staticOwners := map[string]string{}
 		placementGroups := map[string]mobilityPlacementGroup{}
 		for i, member := range spec.Members {
 			nodeRef := strings.TrimSpace(member.NodeRef)
@@ -68,6 +70,10 @@ func validateMobilityResource(res api.Resource, _ platform.OS) (bool, error) {
 				return true, fmt.Errorf("%s spec.members nodeRef %q is duplicated", res.ID(), nodeRef)
 			}
 			nodeRefs[nodeRef] = true
+			memberRoles[nodeRef] = strings.TrimSpace(member.Role)
+			if err := validateMobilityStaticOwnedAddresses(res, i, member, parsedPrefix.Masked(), staticOwners); err != nil {
+				return true, err
+			}
 			if err := validateMobilityMemberCapture(res, i, member); err != nil {
 				return true, err
 			}
@@ -81,6 +87,9 @@ func validateMobilityResource(res api.Resource, _ platform.OS) (bool, error) {
 			return true, fmt.Errorf("%s spec.capturePolicy.mode %q is not supported; only all-non-owner-sites", res.ID(), spec.CapturePolicy.Mode)
 		}
 		if err := validateMobilityIPOwnershipPolicy(res, spec, nodeRefs); err != nil {
+			return true, err
+		}
+		if err := validateMobilityStaticHandovers(res, spec, parsedPrefix.Masked(), nodeRefs, memberRoles, staticOwners); err != nil {
 			return true, err
 		}
 		if hold := strings.TrimSpace(spec.CapturePolicy.DeprovisionHoldDuration); hold != "" {
@@ -127,6 +136,83 @@ func validateMobilityResource(res api.Resource, _ platform.OS) (bool, error) {
 		return true, nil
 	}
 	return false, nil
+}
+
+func validateMobilityStaticOwnedAddresses(res api.Resource, index int, member api.MobilityPoolMember, pool netip.Prefix, owners map[string]string) error {
+	if len(member.StaticOwnedAddresses) == 0 {
+		return nil
+	}
+	if strings.TrimSpace(member.Role) != "onprem" {
+		return fmt.Errorf("%s spec.members[%d].staticOwnedAddresses is supported only for role onprem", res.ID(), index)
+	}
+	for j, raw := range member.StaticOwnedAddresses {
+		address, err := parseMobilityStaticAddress(raw, pool)
+		if err != nil {
+			return fmt.Errorf("%s spec.members[%d].staticOwnedAddresses[%d]: %w", res.ID(), index, j, err)
+		}
+		if existing := owners[address]; existing != "" {
+			return fmt.Errorf("%s spec.members[%d].staticOwnedAddresses[%d] %q duplicates staticOwnedAddresses owned by member %q", res.ID(), index, j, address, existing)
+		}
+		owners[address] = strings.TrimSpace(member.NodeRef)
+	}
+	return nil
+}
+
+func validateMobilityStaticHandovers(res api.Resource, spec api.MobilityPoolSpec, pool netip.Prefix, nodeRefs map[string]bool, memberRoles, staticOwners map[string]string) error {
+	seen := map[string]bool{}
+	for i, handover := range spec.StaticHandovers {
+		address, err := parseMobilityStaticAddress(handover.Address, pool)
+		if err != nil {
+			return fmt.Errorf("%s spec.staticHandovers[%d].address: %w", res.ID(), i, err)
+		}
+		fromNode := strings.TrimSpace(handover.FromNodeRef)
+		toNode := strings.TrimSpace(handover.ToNodeRef)
+		if fromNode == "" {
+			return fmt.Errorf("%s spec.staticHandovers[%d].fromNodeRef is required", res.ID(), i)
+		}
+		if toNode == "" {
+			return fmt.Errorf("%s spec.staticHandovers[%d].toNodeRef is required", res.ID(), i)
+		}
+		if fromNode == toNode {
+			return fmt.Errorf("%s spec.staticHandovers[%d].toNodeRef must differ from fromNodeRef", res.ID(), i)
+		}
+		if !nodeRefs[fromNode] {
+			return fmt.Errorf("%s spec.staticHandovers[%d].fromNodeRef %q must be one of the member nodeRefs", res.ID(), i, fromNode)
+		}
+		if !nodeRefs[toNode] {
+			return fmt.Errorf("%s spec.staticHandovers[%d].toNodeRef %q must be one of the member nodeRefs", res.ID(), i, toNode)
+		}
+		if memberRoles[fromNode] != "onprem" {
+			return fmt.Errorf("%s spec.staticHandovers[%d].fromNodeRef %q must reference an onprem member", res.ID(), i, fromNode)
+		}
+		if owner := staticOwners[address]; owner != "" && owner != fromNode {
+			return fmt.Errorf("%s spec.staticHandovers[%d].address %q is static-owned by member %q, not fromNodeRef %q", res.ID(), i, address, owner, fromNode)
+		}
+		if seen[address] {
+			return fmt.Errorf("%s spec.staticHandovers[%d] duplicates handover for %s", res.ID(), i, address)
+		}
+		seen[address] = true
+	}
+	return nil
+}
+
+func parseMobilityStaticAddress(raw string, pool netip.Prefix) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", fmt.Errorf("address is required")
+	}
+	prefix, err := netip.ParsePrefix(raw)
+	if err != nil {
+		return "", fmt.Errorf("must be an IPv4 /32 CIDR: %w", err)
+	}
+	prefix = prefix.Masked()
+	if !prefix.Addr().Is4() || prefix.Bits() != 32 {
+		return "", fmt.Errorf("must be an IPv4 /32 CIDR")
+	}
+	if !pool.Contains(prefix.Addr()) {
+		return "", fmt.Errorf("%q must be within spec.prefix %s", prefix.String(), pool.String())
+	}
+	return prefix.String(), nil
 }
 
 func validateMobilityIPOwnershipPolicy(res api.Resource, spec api.MobilityPoolSpec, nodeRefs map[string]bool) error {

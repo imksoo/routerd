@@ -169,6 +169,108 @@ func TestControllerProjectsExpiredEvent(t *testing.T) {
 	}
 }
 
+func TestControllerProjectsStaticOwnedAddressAndEmitsObserved(t *testing.T) {
+	now := time.Date(2026, 6, 2, 9, 0, 0, 0, time.UTC)
+	store := testStore(t, now)
+	controller := Controller{Router: staticRouter("onprem-router", staticPoolSpec()), Store: store, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	lease, found, err := store.GetAddressLease("cloudedge", "10.88.60.10/32")
+	if err != nil {
+		t.Fatalf("GetAddressLease: %v", err)
+	}
+	if !found {
+		t.Fatal("static lease not found")
+	}
+	if lease.OwnerNode != "onprem-router" || lease.OwnerSite != "onprem" || lease.SourceType != staticOwnedType || lease.Status != routerstate.AddressLeaseStatusActive || lease.Epoch != 1 {
+		t.Fatalf("unexpected static lease: %+v", lease)
+	}
+	if !lease.ExpiresAt.IsZero() {
+		t.Fatalf("static lease expiresAt = %s, want zero", lease.ExpiresAt)
+	}
+	events, err := store.ListFederationEvents("cloudedge", true, now.Unix())
+	if err != nil {
+		t.Fatalf("ListFederationEvents: %v", err)
+	}
+	if got := countEvents(events, ObservedEventType, "onprem-router", "10.88.60.10/32"); got != 1 {
+		t.Fatalf("observed event count = %d, events=%+v", got, events)
+	}
+}
+
+func TestControllerStaticOwnedRemovalExpiresLeaseAndEmitsExpired(t *testing.T) {
+	base := time.Date(2026, 6, 2, 9, 0, 0, 0, time.UTC)
+	store := testStore(t, base)
+	spec := staticPoolSpec()
+	controller := Controller{Router: staticRouter("onprem-router", spec), Store: store, Now: func() time.Time { return base }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("initial Reconcile: %v", err)
+	}
+
+	spec.Members[0].StaticOwnedAddresses = nil
+	controller.Router = staticRouter("onprem-router", spec)
+	controller.Now = func() time.Time { return base.Add(time.Minute) }
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("removal Reconcile: %v", err)
+	}
+	lease, _, err := store.GetAddressLease("cloudedge", "10.88.60.10/32")
+	if err != nil {
+		t.Fatalf("GetAddressLease: %v", err)
+	}
+	if lease.Status != routerstate.AddressLeaseStatusExpired || lease.OwnerNode != "onprem-router" || lease.SourceType != ExpiredEventType {
+		t.Fatalf("unexpected expired static lease: %+v", lease)
+	}
+	events, err := store.ListFederationEvents("cloudedge", true, base.Add(time.Minute).Unix())
+	if err != nil {
+		t.Fatalf("ListFederationEvents: %v", err)
+	}
+	if got := countEvents(events, ExpiredEventType, "onprem-router", "10.88.60.10/32"); got != 1 {
+		t.Fatalf("expired event count = %d, events=%+v", got, events)
+	}
+}
+
+func TestControllerStaticHandoverWaitsForFromReleaseEvent(t *testing.T) {
+	base := time.Date(2026, 6, 2, 9, 0, 0, 0, time.UTC)
+	store := testStore(t, base)
+	spec := staticPoolSpec()
+	controller := Controller{Router: staticRouter("onprem-router", spec), Store: store, Now: func() time.Time { return base }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("initial Reconcile: %v", err)
+	}
+
+	spec.Members[0].StaticOwnedAddresses = nil
+	spec.StaticHandovers = []api.MobilityStaticHandover{{Address: "10.88.60.10/32", FromNodeRef: "onprem-router", ToNodeRef: "azure-router"}}
+	controller.Router = staticRouter("azure-router", spec)
+	controller.Now = func() time.Time { return base.Add(time.Minute) }
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("cloud handover before release Reconcile: %v", err)
+	}
+	lease, _, err := store.GetAddressLease("cloudedge", "10.88.60.10/32")
+	if err != nil {
+		t.Fatalf("GetAddressLease before release: %v", err)
+	}
+	if lease.OwnerNode != "onprem-router" {
+		t.Fatalf("owner changed before release event: %+v", lease)
+	}
+
+	controller.Router = staticRouter("onprem-router", spec)
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("onprem release Reconcile: %v", err)
+	}
+	controller.Router = staticRouter("azure-router", spec)
+	controller.Now = func() time.Time { return base.Add(time.Minute + 31*time.Second) }
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("cloud handover after release Reconcile: %v", err)
+	}
+	lease, _, err = store.GetAddressLease("cloudedge", "10.88.60.10/32")
+	if err != nil {
+		t.Fatalf("GetAddressLease after release: %v", err)
+	}
+	if lease.OwnerNode != "azure-router" || lease.OwnerSite != "azure" || lease.SourceType != staticHandoverType || lease.Status != routerstate.AddressLeaseStatusActive || lease.Epoch != 2 {
+		t.Fatalf("unexpected handed-over lease: %+v", lease)
+	}
+}
+
 func TestControllerEmitsAutoFailoverHeartbeatForCloudSelf(t *testing.T) {
 	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
 	store := testStore(t, now)
@@ -280,6 +382,16 @@ func idsOfEvents(events []routerstate.EventRecord) []string {
 	return ids
 }
 
+func countEvents(events []routerstate.EventRecord, eventType, sourceNode, subject string) int {
+	var count int
+	for _, ev := range events {
+		if ev.Type == eventType && ev.SourceNode == sourceNode && ev.Subject == subject {
+			count++
+		}
+	}
+	return count
+}
+
 func testRouter() *api.Router {
 	return &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
@@ -297,5 +409,36 @@ func testRouter() *api.Router {
 				LeasePolicy: api.MobilityLeasePolicy{TTL: "5m", HoldDuration: "30s"},
 			},
 		}}},
+	}
+}
+
+func staticPoolSpec() api.MobilityPoolSpec {
+	return api.MobilityPoolSpec{
+		Prefix:   "10.88.60.0/24",
+		GroupRef: "cloudedge",
+		Members: []api.MobilityPoolMember{
+			{NodeRef: "onprem-router", Site: "onprem", Role: "onprem", StaticOwnedAddresses: []string{"10.88.60.10/32"}},
+			{NodeRef: "azure-router", Site: "azure", Role: "cloud"},
+		},
+		LeasePolicy: api.MobilityLeasePolicy{TTL: "5m", HoldDuration: "30s"},
+	}
+}
+
+func staticRouter(nodeName string, spec api.MobilityPoolSpec) *api.Router {
+	return &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.FederationAPIVersion, Kind: "EventGroup"},
+				Metadata: api.ObjectMeta{Name: "cloudedge"},
+				Spec:     api.EventGroupSpec{NodeName: nodeName},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"},
+				Metadata: api.ObjectMeta{Name: "cloudedge"},
+				Spec:     spec,
+			},
+		}},
 	}
 }

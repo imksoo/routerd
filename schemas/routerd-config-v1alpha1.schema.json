@@ -6986,6 +6986,13 @@
                             "site": {
                               "description": "Site is the location label the node serves within the pool.",
                               "type": "string"
+                            },
+                            "staticOwnedAddresses": {
+                              "description": "StaticOwnedAddresses declares IPv4 /32 addresses in the pool that this\nmember owns without relying on observed-client federation events. It is\nintended for on-prem static-IP segments.",
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
                             }
                           },
                           "required": [
@@ -7008,6 +7015,30 @@
                       "prefix": {
                         "description": "Prefix is the CIDR managed by this pool, e.g. 10.88.60.0/24 (required).",
                         "type": "string"
+                      },
+                      "staticHandovers": {
+                        "description": "StaticHandovers declares planned static-owned address movement from an\non-prem member to another member. The controller releases the from member\nfirst and only projects the to member after observing the release event.",
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "address": {
+                              "type": "string"
+                            },
+                            "fromNodeRef": {
+                              "type": "string"
+                            },
+                            "toNodeRef": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "address",
+                            "fromNodeRef",
+                            "toNodeRef"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
