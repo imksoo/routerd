@@ -1,7 +1,7 @@
 apiVersion: routerd.net/v1alpha1
 kind: Router
 metadata:
-  name: cloudedge-mobility-aws-router-a-demo
+  name: "${DEMO_ROUTER_NAME}"
 spec:
   resources:
     - apiVersion: federation.routerd.net/v1alpha1
@@ -9,7 +9,7 @@ spec:
       metadata:
         name: cloudedge
       spec:
-        nodeName: aws-router-a
+        nodeName: "${DEMO_SELF_NODE}"
         retention:
           maxEvents: 1000
           maxAge: 24h
@@ -17,7 +17,7 @@ spec:
           mode: hmac
           secretFile: "${EVENT_HMAC_SECRET_FILE}"
         listen:
-          address: 10.99.0.2
+          address: "${DEMO_SELF_IP}"
           port: 9443
         replayWindow: 5m
 
@@ -31,6 +31,18 @@ spec:
         endpoint: http://10.99.0.1:9443
         direction: push
         types: [routerd.client.ipv4.observed, routerd.client.ipv4.expired]
+        subjectPrefixes: [10.77.60.]
+
+    - apiVersion: federation.routerd.net/v1alpha1
+      kind: EventPeer
+      metadata:
+        name: "${DEMO_SAMESITE_PEER_NODE}"
+      spec:
+        groupRef: cloudedge
+        nodeName: "${DEMO_SAMESITE_PEER_NODE}"
+        endpoint: "http://${DEMO_SAMESITE_PEER_IP}:9443"
+        direction: push
+        types: [routerd.client.ipv4.observed, routerd.client.ipv4.expired, routerd.mobility.member.heartbeat]
         subjectPrefixes: [10.77.60.]
 
     - apiVersion: federation.routerd.net/v1alpha1
@@ -96,7 +108,7 @@ spec:
         name: wg-hybrid-ipv4
       spec:
         interface: wg-hybrid
-        address: 10.99.0.2/32
+        address: "${DEMO_SELF_IP}/32"
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4Route
@@ -137,6 +149,7 @@ spec:
           - 10.99.0.1/32
           - 10.99.0.3/32
           - 10.99.0.4/32
+          - "${DEMO_SAMESITE_PEER_IP}/32"
           - 10.99.0.6/32
           - 10.99.0.7/32
           - 10.77.60.10/32
@@ -156,8 +169,8 @@ spec:
           interface: wg-hybrid
           address: 10.99.0.1
         remote:
-          nodeID: aws-router-a
-          address: 10.99.0.2
+          nodeID: "${DEMO_SELF_NODE}"
+          address: "${DEMO_SELF_IP}"
 
     - apiVersion: hybrid.routerd.net/v1alpha1
       kind: CloudProviderProfile

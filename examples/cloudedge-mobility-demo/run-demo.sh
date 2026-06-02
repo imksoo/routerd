@@ -66,33 +66,31 @@ router_scp() {
   scp "${SSH_OPTS[@]}" "$src" "$(router_user "$node")@$(router_host "$node"):$dst" >/dev/null
 }
 
+render_cloud_config() {
+  local template=$1 out=$2 router_name=$3 self_node=$4 self_ip=$5 same_site_peer_node=$6 same_site_peer_ip=$7
+  DEMO_ROUTER_NAME=$router_name \
+    DEMO_SELF_NODE=$self_node \
+    DEMO_SELF_IP=$self_ip \
+    DEMO_SAMESITE_PEER_NODE=$same_site_peer_node \
+    DEMO_SAMESITE_PEER_IP=$same_site_peer_ip \
+    envsubst < "$template" > "$out"
+}
+
 render_configs() {
   mkdir -p "$WORKDIR"
   envsubst < "$ROOT/onprem.yaml" > "$WORKDIR/onprem.yaml"
-  envsubst < "$ROOT/aws.yaml" > "$WORKDIR/aws-a.yaml"
-  envsubst < "$ROOT/azure.yaml" > "$WORKDIR/azure.yaml"
-  envsubst < "$ROOT/oci.yaml" > "$WORKDIR/oci.yaml"
-
-  cp "$WORKDIR/aws-a.yaml" "$WORKDIR/aws-b.yaml"
-  perl -0pi -e 's/cloudedge-mobility-aws-router-a-demo/cloudedge-mobility-aws-router-b-demo/g;
-                s/nodeName: aws-router-a/nodeName: aws-router-b/g;
-                s/remote:\n          nodeID: aws-router-a\n          address: 10\.99\.0\.2/remote:\n          nodeID: aws-router-b\n          address: 10.99.0.5/g;
-                s/address: 10\.99\.0\.2\/32/address: 10.99.0.5\/32/g;
-                s/listen:\n          address: 10\.99\.0\.2/listen:\n          address: 10.99.0.5/g' "$WORKDIR/aws-b.yaml"
-
-  cp "$WORKDIR/azure.yaml" "$WORKDIR/azure-b.yaml"
-  perl -0pi -e 's/cloudedge-mobility-azure-demo/cloudedge-mobility-azure-b-demo/g;
-                s/nodeName: azure-router/nodeName: azure-router-b/g;
-                s/remote: \{ nodeID: azure-router, address: 10\.99\.0\.3 \}/remote: { nodeID: azure-router-b, address: 10.99.0.6 }/g;
-                s/address: 10\.99\.0\.3\/32/address: 10.99.0.6\/32/g;
-                s/listen:\n          address: 10\.99\.0\.3/listen:\n          address: 10.99.0.6/g' "$WORKDIR/azure-b.yaml"
-
-  cp "$WORKDIR/oci.yaml" "$WORKDIR/oci-b.yaml"
-  perl -0pi -e 's/cloudedge-mobility-oci-demo/cloudedge-mobility-oci-b-demo/g;
-                s/nodeName: oci-router/nodeName: oci-router-b/g;
-                s/remote: \{ nodeID: oci-router, address: 10\.99\.0\.4 \}/remote: { nodeID: oci-router-b, address: 10.99.0.7 }/g;
-                s/address: 10\.99\.0\.4\/32/address: 10.99.0.7\/32/g;
-                s/listen:\n          address: 10\.99\.0\.4/listen:\n          address: 10.99.0.7/g' "$WORKDIR/oci-b.yaml"
+  render_cloud_config "$ROOT/aws.yaml" "$WORKDIR/aws-a.yaml" \
+    cloudedge-mobility-aws-router-a-demo aws-router-a 10.99.0.2 aws-router-b 10.99.0.5
+  render_cloud_config "$ROOT/aws.yaml" "$WORKDIR/aws-b.yaml" \
+    cloudedge-mobility-aws-router-b-demo aws-router-b 10.99.0.5 aws-router-a 10.99.0.2
+  render_cloud_config "$ROOT/azure.yaml" "$WORKDIR/azure.yaml" \
+    cloudedge-mobility-azure-demo azure-router 10.99.0.3 azure-router-b 10.99.0.6
+  render_cloud_config "$ROOT/azure.yaml" "$WORKDIR/azure-b.yaml" \
+    cloudedge-mobility-azure-b-demo azure-router-b 10.99.0.6 azure-router 10.99.0.3
+  render_cloud_config "$ROOT/oci.yaml" "$WORKDIR/oci.yaml" \
+    cloudedge-mobility-oci-demo oci-router 10.99.0.4 oci-router-b 10.99.0.7
+  render_cloud_config "$ROOT/oci.yaml" "$WORKDIR/oci-b.yaml" \
+    cloudedge-mobility-oci-b-demo oci-router-b 10.99.0.7 oci-router 10.99.0.4
 
   cp "$WORKDIR/aws-a.yaml" "$WORKDIR/aws-a-drain.yaml"
   cp "$WORKDIR/onprem.yaml" "$WORKDIR/onprem-drain.yaml"
