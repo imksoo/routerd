@@ -4,6 +4,8 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 ENV_FILE=${ENV_FILE:-"$ROOT/env"}
 WORKDIR=${WORKDIR:-"$ROOT/.rendered"}
+INVENTORY_PLUGIN_SRC=${INVENTORY_PLUGIN_SRC:-"$ROOT/plugins/provider-private-ip-inventory"}
+DISCOVERY_WAIT_SECONDS=${DISCOVERY_WAIT_SECONDS:-75}
 
 if [[ ! -f "$ENV_FILE" ]]; then
   echo "missing env file: $ENV_FILE (copy env.example to env)" >&2
@@ -109,11 +111,15 @@ validate_rendered() {
 install_secret_and_config() {
   local node=$1 cfg=$2
   router_scp "$cfg" "$node" /tmp/router.yaml
+  router_scp "$INVENTORY_PLUGIN_SRC" "$node" /tmp/provider-private-ip-inventory
   router_ssh "$node" "set -euo pipefail
     sudo install -d -m 0700 \$(dirname '$EVENT_HMAC_SECRET_FILE')
     printf '%s\n' '$EVENT_HMAC_SECRET_VALUE' | sudo tee '$EVENT_HMAC_SECRET_FILE' >/dev/null
     sudo chmod 0600 '$EVENT_HMAC_SECRET_FILE'
+    sudo install -d -m 0755 /usr/local/libexec/routerd/plugins
+    sudo install -m 0755 /tmp/provider-private-ip-inventory /usr/local/libexec/routerd/plugins/provider-private-ip-inventory
     sudo install -m 0600 /tmp/router.yaml /usr/local/etc/routerd/router.yaml
+    command -v python3 >/dev/null
     sudo systemctl restart routerd
     sudo systemctl restart routerd-eventd@cloudedge.service
     sudo systemctl is-active routerd
@@ -194,11 +200,6 @@ preflight_mesh() {
   preflight_oci_forwarding
 }
 
-emit_observed() {
-  local node=$1 source_node=$2 address=$3
-  router_ssh "$node" "sudo $ROUTERCTL_BIN federation event emit --group cloudedge --type routerd.client.ipv4.observed --subject ${address}/32 --source-node $source_node --payload address=${address}/32 --ttl 10m -o json"
-}
-
 execute_provider_actions() {
   local node=$1
   router_ssh "$node" "sudo $ROUTERCTL_BIN action import"
@@ -258,6 +259,11 @@ probe_stale_gate_on_aws_b() {
 }
 
 main() {
+  if [[ ! -x "$INVENTORY_PLUGIN_SRC" ]]; then
+    echo "missing executable provider inventory plugin: $INVENTORY_PLUGIN_SRC" >&2
+    exit 1
+  fi
+
   render_configs
   validate_rendered
 
@@ -271,11 +277,8 @@ main() {
   install_secret_and_config oci-b "$WORKDIR/oci-b.yaml"
   preflight_mesh
 
-  echo "Emit D3 cloud observed events"
-  emit_observed aws-a aws-router-a "$AWS_CLIENT_IP"
-  emit_observed azure azure-router "$AZURE_CLIENT_IP"
-  emit_observed oci oci-router "$OCI_CLIENT_IP"
-  sleep 20
+  echo "Wait for D3 cloud ownership discovery"
+  sleep "$DISCOVERY_WAIT_SECONDS"
 
   echo "Execute provider actions for D3"
   execute_provider_actions aws-a
@@ -289,8 +292,8 @@ main() {
   install_secret_and_config onprem "$WORKDIR/onprem-drain.yaml"
   install_secret_and_config aws-a "$WORKDIR/aws-a-drain.yaml"
   install_secret_and_config aws-b "$WORKDIR/aws-b-drain.yaml"
-  emit_observed aws-b aws-router-b "$AWS_CLIENT_IP"
-  sleep 20
+  echo "Wait for D5 cloud ownership discovery after drain"
+  sleep "$DISCOVERY_WAIT_SECONDS"
 
   echo "Execute D5 migration actions"
   execute_provider_actions aws-a

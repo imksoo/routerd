@@ -217,12 +217,14 @@ spec:
             capture: { type: provider-secondary-ip, interface: eth0, providerRef: azure-lab, providerMode: nic-secondary-ip, nicRef: "${AZURE_ROUTER_NIC_REF}", configureOSAddress: false, target: { region: "${AZURE_REGION}", resourceGroup: "${AZURE_RESOURCE_GROUP}", nicName: "${AZURE_ROUTER_NIC_NAME}" } }
             delivery: { peerRef: onprem-main, mode: route, tunnelInterface: wg-hybrid }
             placement: { group: azure-edge, priority: 10 }
+            ownershipDiscovery: { mode: provider-private-ip, providerRef: azure-lab, scanInterval: 60s, leaseTTL: 10m }
           - nodeRef: azure-router-b
             site: azure
             role: cloud
             capture: { type: provider-secondary-ip, interface: eth0, providerRef: azure-lab, providerMode: nic-secondary-ip, nicRef: "${AZURE_ROUTER_B_NIC_REF}", configureOSAddress: false, target: { region: "${AZURE_REGION}", resourceGroup: "${AZURE_RESOURCE_GROUP}", nicName: "${AZURE_ROUTER_B_NIC_NAME}" } }
             delivery: { peerRef: onprem-main, mode: route, tunnelInterface: wg-hybrid }
             placement: { group: azure-edge, priority: 20 }
+            ownershipDiscovery: { mode: provider-private-ip, providerRef: azure-lab, scanInterval: 60s, leaseTTL: 10m }
           - nodeRef: oci-router
             site: oci
             role: cloud
@@ -265,3 +267,12 @@ spec:
         # service user cannot access (and which systemd ProtectHome=yes masks).
         env: { AZURE_CONFIG_DIR: /var/lib/routerd/azure }
         capabilities: [execute.providerAction]
+
+    - apiVersion: plugin.routerd.net/v1alpha1
+      kind: Plugin
+      metadata: { name: azure-inventory }
+      spec:
+        executable: /usr/local/libexec/routerd/plugins/provider-private-ip-inventory
+        timeout: 60s
+        env: { AZURE_CONFIG_DIR: /var/lib/routerd/azure }
+        capabilities: [observe.providerPrivateIPs]

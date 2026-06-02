@@ -38,8 +38,9 @@ assigned to ENI-B, and confirms traffic recovers via `aws-router-b`.
 
 - `env.example`: copy to `env` and fill all account-specific values.
 - `onprem.yaml`, `aws.yaml`, `azure.yaml`, `oci.yaml`: routerd config templates.
-- `run-demo.sh`: renders configs, deploys them, emits observed events, runs D3
-  connectivity, then performs D5 AWS drain/capture migration.
+- `run-demo.sh`: renders configs, deploys them, waits for cloud provider
+  private-IP discovery, runs D3 connectivity, then performs D5 AWS drain/capture
+  migration.
 - `phase-f/`: declarative diff snippets for static-owned release, handover to
   AWS, and rollback. These snippets are not standalone router configs.
 - `collect-evidence.sh`: collects provider state, routerd journals, dynamic
@@ -48,10 +49,11 @@ assigned to ENI-B, and confirms traffic recovers via `aws-router-b`.
   forwarding checks, stop cloud compute, and prevent unattended cost.
 
 The D3/D5 demo path uses `MobilityPool` as the declarative control-plane object
-that consumes federation observed events and derives leases, claims, routes, and
-provider action plans. The on-prem `.10` owner is declared through
-`staticOwnedAddresses`, so `run-demo.sh` no longer injects an on-prem observed
-event for `.10`; cloud `.11/.12/.13` ownership remains observed-event driven.
+that consumes federation observed events and derives leases, BGP /32
+advertisements, routes, and provider action plans. The on-prem `.10` owner is
+declared through `staticOwnedAddresses`. Cloud `.11/.12/.13` ownership is
+observed by the router-local `observe.providerPrivateIPs` inventory plugin, so
+`run-demo.sh` no longer injects owner events manually.
 It does not include an `EventSubscription` plugin path; that narrower Phase 3
 mechanism remains documented in
 `examples/event-federation/`.

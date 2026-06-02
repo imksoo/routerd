@@ -1,0 +1,219 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# Read-only provider private-IP inventory plugin for the CloudEdge Mobility demo.
+# The protocol is defined by pkg/providerinventory.
+
+import json
+import os
+import subprocess
+import sys
+
+API_VERSION = "providerinventory.routerd.net/v1alpha1"
+KIND_RESULT = "ObservePrivateIPsResult"
+
+
+def result(status, ips=None, message="", error=""):
+    out = {
+        "apiVersion": API_VERSION,
+        "kind": KIND_RESULT,
+        "status": {"status": status},
+    }
+    if ips:
+        out["status"]["ips"] = ips
+    if message:
+        out["status"]["message"] = message
+    if error:
+        out["status"]["error"] = error
+    print(json.dumps(out, sort_keys=True, separators=(",", ":")))
+
+
+def run_json(argv):
+    proc = subprocess.run(argv, check=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if proc.stdout.strip() == "":
+        return {}
+    return json.loads(proc.stdout)
+
+
+def opt_region(argv, region):
+    if region:
+        argv.extend(["--region", region])
+    return argv
+
+
+def aws_cli(region, args):
+    argv = ["aws"]
+    argv.extend(opt_region([], region))
+    argv.extend(args)
+    argv.extend(["--output", "json", "--no-cli-pager"])
+    return run_json(argv)
+
+
+def az_cli(args):
+    argv = ["az"]
+    argv.extend(args)
+    argv.extend(["--output", "json"])
+    return run_json(argv)
+
+
+def oci_base(region):
+    argv = ["oci"]
+    config_file = os.environ.get("OCI_CONFIG_FILE", "").strip()
+    profile = os.environ.get("OCI_PROFILE", "").strip()
+    auth = os.environ.get("OCI_AUTH_MODE", "").strip()
+    if config_file:
+        argv.extend(["--config-file", config_file])
+    if profile:
+        argv.extend(["--profile", profile])
+    if region:
+        argv.extend(["--region", region])
+    if auth:
+        argv.extend(["--auth", auth])
+    return argv
+
+
+def oci_cli(region, args):
+    argv = oci_base(region)
+    argv.extend(args)
+    argv.extend(["--output", "json"])
+    return run_json(argv)
+
+
+def aws_inventory(spec):
+    target = spec.get("target") or {}
+    region = target.get("region") or os.environ.get("AWS_DEFAULT_REGION", "")
+    self_nic = spec.get("selfNicRef", "").strip()
+    subnet = (spec.get("subnetRef") or "").strip()
+    if not self_nic:
+        raise ValueError("selfNicRef is required for AWS inventory")
+    if not subnet:
+        self_doc = aws_cli(region, ["ec2", "describe-network-interfaces", "--network-interface-ids", self_nic])
+        interfaces = self_doc.get("NetworkInterfaces") or []
+        if not interfaces:
+            raise ValueError("AWS self network interface was not found")
+        subnet = interfaces[0].get("SubnetId", "")
+    if not subnet:
+        raise ValueError("AWS subnetRef could not be inferred from self NIC")
+    doc = aws_cli(region, ["ec2", "describe-network-interfaces", "--filters", "Name=subnet-id,Values=" + subnet])
+    ips = []
+    for nic in doc.get("NetworkInterfaces") or []:
+        nic_ref = nic.get("NetworkInterfaceId", "")
+        subnet_ref = nic.get("SubnetId", subnet)
+        tags = {item.get("Key", ""): item.get("Value", "") for item in nic.get("TagSet") or [] if item.get("Key")}
+        for rec in nic.get("PrivateIpAddresses") or []:
+            address = rec.get("PrivateIpAddress", "")
+            if not address:
+                continue
+            ips.append({
+                "address": address,
+                "nicRef": nic_ref,
+                "subnetRef": subnet_ref,
+                "primary": bool(rec.get("Primary")),
+                "tags": tags,
+            })
+    return ips
+
+
+def azure_inventory(spec):
+    target = spec.get("target") or {}
+    self_nic = spec.get("selfNicRef", "").strip()
+    resource_group = target.get("resourceGroup", "").strip()
+    subnet = (spec.get("subnetRef") or "").strip()
+    if not self_nic:
+        raise ValueError("selfNicRef is required for Azure inventory")
+    self_doc = az_cli(["network", "nic", "show", "--ids", self_nic])
+    if not resource_group:
+        resource_group = self_doc.get("resourceGroup", "")
+    if not subnet:
+        configs = self_doc.get("ipConfigurations") or []
+        if configs:
+            subnet = ((configs[0].get("subnet") or {}).get("id") or "")
+    if not resource_group:
+        raise ValueError("Azure resourceGroup is required or must be inferable from self NIC")
+    if not subnet:
+        raise ValueError("Azure subnetRef could not be inferred from self NIC")
+    nics = az_cli(["network", "nic", "list", "--resource-group", resource_group])
+    ips = []
+    for nic in nics or []:
+        nic_ref = nic.get("id", "")
+        tags = nic.get("tags") or {}
+        for cfg in nic.get("ipConfigurations") or []:
+            subnet_ref = ((cfg.get("subnet") or {}).get("id") or "")
+            if subnet_ref != subnet:
+                continue
+            address = cfg.get("privateIPAddress") or cfg.get("privateIpAddress") or ""
+            if not address:
+                continue
+            ips.append({
+                "address": address,
+                "nicRef": nic_ref,
+                "subnetRef": subnet_ref,
+                "primary": bool(cfg.get("primary")),
+                "tags": tags,
+            })
+    return ips
+
+
+def flatten_oci_tags(rec):
+    tags = {}
+    for key, value in (rec.get("freeform-tags") or {}).items():
+        tags[str(key)] = str(value)
+    for namespace, values in (rec.get("defined-tags") or {}).items():
+        if isinstance(values, dict):
+            for key, value in values.items():
+                tags[str(namespace) + "." + str(key)] = str(value)
+    return tags
+
+
+def oci_inventory(spec):
+    target = spec.get("target") or {}
+    region = target.get("region") or os.environ.get("OCI_REGION", "")
+    self_nic = spec.get("selfNicRef", "").strip()
+    subnet = (spec.get("subnetRef") or "").strip()
+    if not self_nic:
+        raise ValueError("selfNicRef is required for OCI inventory")
+    if not subnet:
+        self_doc = oci_cli(region, ["network", "vnic", "get", "--vnic-id", self_nic])
+        subnet = ((self_doc.get("data") or {}).get("subnet-id") or "")
+    if not subnet:
+        raise ValueError("OCI subnetRef could not be inferred from self VNIC")
+    doc = oci_cli(region, ["network", "private-ip", "list", "--subnet-id", subnet, "--all"])
+    ips = []
+    for rec in doc.get("data") or []:
+        address = rec.get("ip-address", "")
+        if not address:
+            continue
+        ips.append({
+            "address": address,
+            "nicRef": rec.get("vnic-id", ""),
+            "subnetRef": rec.get("subnet-id", subnet),
+            "primary": bool(rec.get("is-primary")),
+            "tags": flatten_oci_tags(rec),
+        })
+    return ips
+
+
+def main():
+    req = json.load(sys.stdin)
+    spec = req.get("spec") or {}
+    provider = (spec.get("provider") or "").strip().lower()
+    if provider == "aws":
+        ips = aws_inventory(spec)
+    elif provider == "azure":
+        ips = azure_inventory(spec)
+    elif provider == "oci":
+        ips = oci_inventory(spec)
+    else:
+        result("skipped", message="unsupported provider: " + provider)
+        return
+    result("succeeded", ips=ips)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except subprocess.CalledProcessError as exc:
+        stderr = (exc.stderr or "").strip()
+        result("failed", error="provider CLI failed: " + (stderr or str(exc)))
+    except Exception as exc:
+        result("failed", error=str(exc))

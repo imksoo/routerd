@@ -227,12 +227,14 @@ spec:
             capture: { type: provider-secondary-ip, interface: ens3, providerRef: oci-lab, providerMode: vnic-secondary-ip, nicRef: "${OCI_ROUTER_VNIC_REF}", configureOSAddress: false, target: { region: "${OCI_REGION}", compartmentId: "${OCI_COMPARTMENT_REF}" } }
             delivery: { peerRef: onprem-main, mode: route, tunnelInterface: wg-hybrid }
             placement: { group: oci-edge, priority: 10 }
+            ownershipDiscovery: { mode: provider-private-ip, providerRef: oci-lab, scanInterval: 60s, leaseTTL: 10m }
           - nodeRef: oci-router-b
             site: oci
             role: cloud
             capture: { type: provider-secondary-ip, interface: ens3, providerRef: oci-lab, providerMode: vnic-secondary-ip, nicRef: "${OCI_ROUTER_B_VNIC_REF}", configureOSAddress: false, target: { region: "${OCI_REGION}", compartmentId: "${OCI_COMPARTMENT_REF}" } }
             delivery: { peerRef: onprem-main, mode: route, tunnelInterface: wg-hybrid }
             placement: { group: oci-edge, priority: 20 }
+            ownershipDiscovery: { mode: provider-private-ip, providerRef: oci-lab, scanInterval: 60s, leaseTTL: 10m }
         leasePolicy: { ttl: 30m, holdDuration: 5s }
         capturePolicy: { mode: all-non-owner-sites, deprovisionHoldDuration: 5s }
         ipOwnershipPolicy: { type: centralized, autoFailover: true, heartbeatInterval: 10s, heartbeatTTL: 30s, promotionHoldDuration: 5s }
@@ -258,3 +260,16 @@ spec:
         executable: /usr/local/libexec/routerd/plugins/oci-provider-executor/bin/oci-provider-executor
         timeout: 120s
         capabilities: [execute.providerAction]
+
+    - apiVersion: plugin.routerd.net/v1alpha1
+      kind: Plugin
+      metadata: { name: oci-inventory }
+      spec:
+        executable: /usr/local/libexec/routerd/plugins/provider-private-ip-inventory
+        timeout: 60s
+        env:
+          OCI_CONFIG_FILE: "${OCI_INVENTORY_CONFIG_FILE}"
+          OCI_PROFILE: "${OCI_INVENTORY_PROFILE}"
+          OCI_REGION: "${OCI_REGION}"
+          OCI_AUTH_MODE: "${OCI_INVENTORY_AUTH_MODE}"
+        capabilities: [observe.providerPrivateIPs]

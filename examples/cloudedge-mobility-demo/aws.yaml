@@ -281,6 +281,7 @@ spec:
                 region: "${AWS_REGION}"
             delivery: { peerRef: onprem-main, mode: route, tunnelInterface: wg-hybrid }
             placement: { group: aws-edge, priority: 10 }
+            ownershipDiscovery: { mode: provider-private-ip, providerRef: aws-lab, scanInterval: 60s, leaseTTL: 10m }
           - nodeRef: aws-router-b
             site: aws
             role: cloud
@@ -295,6 +296,7 @@ spec:
                 region: "${AWS_REGION}"
             delivery: { peerRef: onprem-main, mode: route, tunnelInterface: wg-hybrid }
             placement: { group: aws-edge, priority: 20 }
+            ownershipDiscovery: { mode: provider-private-ip, providerRef: aws-lab, scanInterval: 60s, leaseTTL: 10m }
           - nodeRef: azure-router
             site: azure
             role: cloud
@@ -390,3 +392,14 @@ spec:
         env:
           AWS_DEFAULT_REGION: "${AWS_REGION}"
         capabilities: [execute.providerAction]
+
+    - apiVersion: plugin.routerd.net/v1alpha1
+      kind: Plugin
+      metadata:
+        name: aws-inventory
+      spec:
+        executable: /usr/local/libexec/routerd/plugins/provider-private-ip-inventory
+        timeout: 60s
+        env:
+          AWS_DEFAULT_REGION: "${AWS_REGION}"
+        capabilities: [observe.providerPrivateIPs]
