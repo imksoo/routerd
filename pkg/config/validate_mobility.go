@@ -80,6 +80,9 @@ func validateMobilityResource(res api.Resource, _ platform.OS) (bool, error) {
 			if err := validateMobilityMemberPlacement(res, i, member, placementGroups); err != nil {
 				return true, err
 			}
+			if err := validateMobilityOwnershipDiscovery(res, i, spec, member); err != nil {
+				return true, err
+			}
 		}
 		switch strings.TrimSpace(spec.CapturePolicy.Mode) {
 		case "", "all-non-owner-sites":
@@ -136,6 +139,70 @@ func validateMobilityResource(res api.Resource, _ platform.OS) (bool, error) {
 		return true, nil
 	}
 	return false, nil
+}
+
+func validateMobilityOwnershipDiscovery(res api.Resource, index int, spec api.MobilityPoolSpec, member api.MobilityPoolMember) error {
+	discovery := member.OwnershipDiscovery
+	discoverySet := strings.TrimSpace(discovery.Mode) != "" ||
+		strings.TrimSpace(discovery.ProviderRef) != "" ||
+		strings.TrimSpace(discovery.PluginRef) != "" ||
+		strings.TrimSpace(discovery.SubnetRef) != "" ||
+		strings.TrimSpace(discovery.ScanInterval) != "" ||
+		strings.TrimSpace(discovery.LeaseTTL) != "" ||
+		len(discovery.Selector.Tags) > 0
+	if !discoverySet {
+		return nil
+	}
+	switch strings.TrimSpace(discovery.Mode) {
+	case "", "disabled":
+		return nil
+	case "provider-private-ip":
+	default:
+		return fmt.Errorf("%s spec.members[%d].ownershipDiscovery.mode %q is not supported; only provider-private-ip", res.ID(), index, discovery.Mode)
+	}
+	if strings.TrimSpace(member.Role) != "cloud" {
+		return fmt.Errorf("%s spec.members[%d].ownershipDiscovery is supported only for role cloud", res.ID(), index)
+	}
+	if strings.TrimSpace(spec.DeliveryPolicy.Mode) != "bgp" {
+		return fmt.Errorf("%s spec.members[%d].ownershipDiscovery requires spec.deliveryPolicy.mode=bgp", res.ID(), index)
+	}
+	if strings.TrimSpace(member.Capture.Type) != "provider-secondary-ip" {
+		return fmt.Errorf("%s spec.members[%d].ownershipDiscovery requires capture.type provider-secondary-ip", res.ID(), index)
+	}
+	providerRef := strings.TrimSpace(discovery.ProviderRef)
+	if providerRef == "" {
+		providerRef = strings.TrimSpace(member.Capture.ProviderRef)
+	}
+	if providerRef == "" {
+		return fmt.Errorf("%s spec.members[%d].ownershipDiscovery.providerRef or capture.providerRef is required", res.ID(), index)
+	}
+	if strings.TrimSpace(member.Capture.NICRef) == "" {
+		return fmt.Errorf("%s spec.members[%d].ownershipDiscovery requires capture.nicRef", res.ID(), index)
+	}
+	if interval := strings.TrimSpace(discovery.ScanInterval); interval != "" {
+		parsed, err := time.ParseDuration(interval)
+		if err != nil {
+			return fmt.Errorf("%s spec.members[%d].ownershipDiscovery.scanInterval must be a Go duration: %w", res.ID(), index, err)
+		}
+		if parsed < 30*time.Second {
+			return fmt.Errorf("%s spec.members[%d].ownershipDiscovery.scanInterval must be >= 30s", res.ID(), index)
+		}
+	}
+	if ttl := strings.TrimSpace(discovery.LeaseTTL); ttl != "" {
+		parsed, err := time.ParseDuration(ttl)
+		if err != nil {
+			return fmt.Errorf("%s spec.members[%d].ownershipDiscovery.leaseTTL must be a Go duration: %w", res.ID(), index, err)
+		}
+		if parsed <= 0 {
+			return fmt.Errorf("%s spec.members[%d].ownershipDiscovery.leaseTTL must be > 0", res.ID(), index)
+		}
+	}
+	for key := range discovery.Selector.Tags {
+		if strings.TrimSpace(key) == "" {
+			return fmt.Errorf("%s spec.members[%d].ownershipDiscovery.selector.tags must not contain empty keys", res.ID(), index)
+		}
+	}
+	return nil
 }
 
 func validateMobilityStaticOwnedAddresses(res api.Resource, index int, member api.MobilityPoolMember, pool netip.Prefix, owners map[string]string) error {

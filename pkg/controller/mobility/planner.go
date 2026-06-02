@@ -80,16 +80,17 @@ type OwnershipLiveness struct {
 }
 
 type memberPlanInfo struct {
-	NodeRef           string
-	Site              string
-	Role              string
-	Capture           api.AddressCapture
-	CaptureTarget     map[string]string
-	Delivery          api.AddressDelivery
-	DeliveryTo        []deliveryTargetPlanInfo
-	PlacementGroup    string
-	PlacementPriority int
-	MaintenanceDrain  bool
+	NodeRef            string
+	Site               string
+	Role               string
+	Capture            api.AddressCapture
+	CaptureTarget      map[string]string
+	Delivery           api.AddressDelivery
+	DeliveryTo         []deliveryTargetPlanInfo
+	OwnershipDiscovery api.MobilityOwnershipDiscovery
+	PlacementGroup     string
+	PlacementPriority  int
+	MaintenanceDrain   bool
 }
 
 type deliveryTargetPlanInfo struct {
@@ -577,11 +578,18 @@ func DynamicSource(poolName, selfNode string) string {
 }
 
 func (c Controller) selfNode(groupRef string) (string, error) {
+	return routerSelfNode(c.Router, groupRef)
+}
+
+func routerSelfNode(router *api.Router, groupRef string) (string, error) {
 	groupRef = strings.TrimSpace(groupRef)
 	if groupRef == "" {
 		return "", fmt.Errorf("groupRef is required")
 	}
-	for _, res := range c.Router.Spec.Resources {
+	if router == nil {
+		return "", fmt.Errorf("EventGroup/%s not found for mobility planning", groupRef)
+	}
+	for _, res := range router.Spec.Resources {
 		if res.APIVersion != api.FederationAPIVersion || res.Kind != "EventGroup" || res.Metadata.Name != groupRef {
 			continue
 		}
@@ -667,16 +675,17 @@ func plannerMembers(members []api.MobilityPoolMember) map[string]memberPlanInfo 
 	for _, member := range members {
 		nodeRef := strings.TrimSpace(member.NodeRef)
 		out[nodeRef] = memberPlanInfo{
-			NodeRef:           nodeRef,
-			Site:              strings.TrimSpace(member.Site),
-			Role:              strings.TrimSpace(member.Role),
-			Capture:           trimCapture(member.Capture),
-			CaptureTarget:     copyStringMap(member.Capture.Target),
-			Delivery:          trimDelivery(member.Delivery),
-			DeliveryTo:        trimDeliveryTargets(member.DeliveryTo),
-			PlacementGroup:    strings.TrimSpace(member.Placement.Group),
-			PlacementPriority: member.Placement.Priority,
-			MaintenanceDrain:  member.Maintenance.Drain,
+			NodeRef:            nodeRef,
+			Site:               strings.TrimSpace(member.Site),
+			Role:               strings.TrimSpace(member.Role),
+			Capture:            trimCapture(member.Capture),
+			CaptureTarget:      copyStringMap(member.Capture.Target),
+			Delivery:           trimDelivery(member.Delivery),
+			DeliveryTo:         trimDeliveryTargets(member.DeliveryTo),
+			OwnershipDiscovery: member.OwnershipDiscovery,
+			PlacementGroup:     strings.TrimSpace(member.Placement.Group),
+			PlacementPriority:  member.Placement.Priority,
+			MaintenanceDrain:   member.Maintenance.Drain,
 		}
 	}
 	return out
@@ -844,7 +853,15 @@ func desiredOwnershipEpochs(poolName string, spec api.MobilityPoolSpec, leases [
 	return out, nil
 }
 
+type federationEventLister interface {
+	ListFederationEvents(group string, includeExpired bool, now int64) ([]routerstate.EventRecord, error)
+}
+
 func (c Controller) ownershipLiveness(poolName string, spec api.MobilityPoolSpec, now time.Time) (OwnershipLiveness, error) {
+	return ownershipLivenessFromStore(c.Store, poolName, spec, now)
+}
+
+func ownershipLivenessFromStore(store federationEventLister, poolName string, spec api.MobilityPoolSpec, now time.Time) (OwnershipLiveness, error) {
 	view := OwnershipLiveness{
 		LastHeartbeat: map[string]time.Time{},
 		StaleNodes:    map[string]bool{},
@@ -852,7 +869,7 @@ func (c Controller) ownershipLiveness(poolName string, spec api.MobilityPoolSpec
 	if !ipOwnershipAutoFailover(spec.IPOwnershipPolicy) {
 		return view, nil
 	}
-	events, err := c.Store.ListFederationEvents(spec.GroupRef, false, now.Unix())
+	events, err := store.ListFederationEvents(spec.GroupRef, false, now.Unix())
 	if err != nil {
 		return view, fmt.Errorf("list federation events for ownership liveness: %w", err)
 	}

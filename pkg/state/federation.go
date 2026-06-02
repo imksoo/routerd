@@ -18,6 +18,10 @@ import (
 var errStoreClosed = errors.New("state store is closed")
 
 const mobilityHeartbeatEventType = federation.MobilityMemberHeartbeatType
+const (
+	mobilityObservedEventType       = "routerd.client.ipv4.observed"
+	mobilityProviderDiscoverySource = "provider-discovery"
+)
 
 // EventRecord is a persisted CloudEdge Event Federation event (ADR 0006). It is
 // stored in the federation_events table, which is distinct from the
@@ -92,6 +96,11 @@ func (s *SQLiteStore) RecordFederationEvent(rec EventRecord) error {
 			return err
 		}
 	}
+	if isCompactableProviderDiscoveryObserved(rec) {
+		if _, err := s.compactFederationEventsByTypeAndDedupeLocked(rec.Type, rec.Group, rec.DedupeKey); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -122,26 +131,7 @@ func (s *SQLiteStore) FederationHeartbeatCompactionStats(group string) (Federati
 
 func (s *SQLiteStore) compactFederationHeartbeatsLocked(group, dedupeKey string) (int64, error) {
 	if group != "" && dedupeKey != "" {
-		res, err := s.db.Exec(`
-			DELETE FROM federation_events
-			WHERE type = ?
-			  AND group_name = ?
-			  AND dedupe_key = ?
-			  AND id NOT IN (
-			    SELECT id
-			    FROM federation_events
-			    WHERE type = ?
-			      AND group_name = ?
-			      AND dedupe_key = ?
-			    ORDER BY observed_at DESC, recorded_at DESC, id DESC
-			    LIMIT 1
-			  )
-		`, mobilityHeartbeatEventType, group, dedupeKey, mobilityHeartbeatEventType, group, dedupeKey)
-		if err != nil {
-			return 0, fmt.Errorf("compact federation heartbeats: %w", err)
-		}
-		n, _ := res.RowsAffected()
-		return n, nil
+		return s.compactFederationEventsByTypeAndDedupeLocked(mobilityHeartbeatEventType, group, dedupeKey)
 	}
 
 	where := `old.type = ? AND old.dedupe_key <> ''`
@@ -173,6 +163,29 @@ func (s *SQLiteStore) compactFederationHeartbeatsLocked(group, dedupeKey string)
 	res, err := s.db.Exec(query, args...)
 	if err != nil {
 		return 0, fmt.Errorf("compact federation heartbeats: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
+func (s *SQLiteStore) compactFederationEventsByTypeAndDedupeLocked(eventType, group, dedupeKey string) (int64, error) {
+	res, err := s.db.Exec(`
+			DELETE FROM federation_events
+			WHERE type = ?
+			  AND group_name = ?
+			  AND dedupe_key = ?
+			  AND id NOT IN (
+			    SELECT id
+			    FROM federation_events
+			    WHERE type = ?
+			      AND group_name = ?
+			      AND dedupe_key = ?
+			    ORDER BY observed_at DESC, recorded_at DESC, id DESC
+			    LIMIT 1
+			  )
+		`, eventType, group, dedupeKey, eventType, group, dedupeKey)
+	if err != nil {
+		return 0, fmt.Errorf("compact federation events: %w", err)
 	}
 	n, _ := res.RowsAffected()
 	return n, nil
@@ -217,6 +230,12 @@ func (s *SQLiteStore) federationHeartbeatCompactionStatsLocked(group string) (Fe
 
 func isCompactableMobilityHeartbeat(rec EventRecord) bool {
 	return rec.Type == mobilityHeartbeatEventType && strings.TrimSpace(rec.DedupeKey) != ""
+}
+
+func isCompactableProviderDiscoveryObserved(rec EventRecord) bool {
+	return rec.Type == mobilityObservedEventType &&
+		strings.TrimSpace(rec.DedupeKey) != "" &&
+		strings.TrimSpace(rec.Payload["source"]) == mobilityProviderDiscoverySource
 }
 
 func mobilityHeartbeatDedupeKey(rec EventRecord) (string, bool) {

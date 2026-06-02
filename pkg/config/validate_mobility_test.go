@@ -189,6 +189,33 @@ func TestValidateMobilityPoolRejectsInvalidFields(t *testing.T) {
 			want: "maintenance.drain requires placement.group",
 		},
 		{
+			name: "ownership discovery requires bgp",
+			mut: func(spec *api.MobilityPoolSpec) {
+				spec.Members[1].Capture = api.MobilityMemberCapture{Type: "provider-secondary-ip", ProviderRef: "azure-provider", ProviderMode: "nic-secondary-ip", NICRef: "nic-1"}
+				spec.Members[1].Delivery = api.MobilityMemberDelivery{PeerRef: "onprem", Mode: "route"}
+				spec.Members[1].OwnershipDiscovery = api.MobilityOwnershipDiscovery{Mode: "provider-private-ip"}
+			},
+			want: "ownershipDiscovery requires spec.deliveryPolicy.mode=bgp",
+		},
+		{
+			name: "ownership discovery requires cloud",
+			mut: func(spec *api.MobilityPoolSpec) {
+				spec.DeliveryPolicy.Mode = "bgp"
+				spec.Members[0].OwnershipDiscovery = api.MobilityOwnershipDiscovery{Mode: "provider-private-ip"}
+			},
+			want: "ownershipDiscovery is supported only for role cloud",
+		},
+		{
+			name: "ownership discovery scan interval minimum",
+			mut: func(spec *api.MobilityPoolSpec) {
+				spec.DeliveryPolicy.Mode = "bgp"
+				spec.Members[1].Capture = api.MobilityMemberCapture{Type: "provider-secondary-ip", ProviderRef: "azure-provider", ProviderMode: "nic-secondary-ip", NICRef: "nic-1"}
+				spec.Members[1].Delivery = api.MobilityMemberDelivery{PeerRef: "onprem", Mode: "route"}
+				spec.Members[1].OwnershipDiscovery = api.MobilityOwnershipDiscovery{Mode: "provider-private-ip", ScanInterval: "5s"}
+			},
+			want: "ownershipDiscovery.scanInterval must be >= 30s",
+		},
+		{
 			name: "placement priority range",
 			mut: func(spec *api.MobilityPoolSpec) {
 				spec.Members[1].Capture = api.MobilityMemberCapture{Type: "provider-secondary-ip", ProviderRef: "azure-provider", ProviderMode: "nic-secondary-ip", NICRef: "nic-1"}

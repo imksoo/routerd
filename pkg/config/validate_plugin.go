@@ -33,9 +33,9 @@ func validatePluginResource(res api.Resource, _ platform.OS) (bool, error) {
 		}
 		for i, capability := range spec.Capabilities {
 			switch strings.TrimSpace(capability) {
-			case "observe.cloud", "propose.dynamicConfig", "propose.providerAction", "execute.providerAction":
+			case "observe.cloud", "observe.providerPrivateIPs", "propose.dynamicConfig", "propose.providerAction", "execute.providerAction":
 			default:
-				return true, fmt.Errorf("%s spec.capabilities[%d] must be observe.cloud, propose.dynamicConfig, propose.providerAction, or execute.providerAction", res.ID(), i)
+				return true, fmt.Errorf("%s spec.capabilities[%d] must be observe.cloud, observe.providerPrivateIPs, propose.dynamicConfig, propose.providerAction, or execute.providerAction", res.ID(), i)
 			}
 		}
 		if err := validatePluginContext(res.ID(), "spec.context", spec.Context); err != nil {

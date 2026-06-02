@@ -51,6 +51,7 @@ import (
 	"github.com/imksoo/routerd/pkg/observabilitypipeline"
 	"github.com/imksoo/routerd/pkg/platform"
 	provideraction "github.com/imksoo/routerd/pkg/provideraction"
+	"github.com/imksoo/routerd/pkg/providerinventory"
 	"github.com/imksoo/routerd/pkg/render"
 	"github.com/imksoo/routerd/pkg/resourcequery"
 	daemonsource "github.com/imksoo/routerd/pkg/source/daemon"
@@ -738,6 +739,7 @@ type Options struct {
 	ControllerObserver      framework.Observer
 	EnabledControllers      []string
 	ProviderActionRunner    provideraction.ExecutorRunner
+	ProviderInventoryRunner providerinventory.Runner
 }
 
 type Runner struct {
@@ -939,7 +941,14 @@ func (r *Runner) Start(ctx context.Context) error {
 		}
 	}
 	var mobility mobilitycontroller.Controller
+	var mobilityDiscovery mobilitycontroller.DiscoveryController
 	if rawStore, ok := r.Store.(mobilityDataStore); ok {
+		mobilityDiscovery = mobilitycontroller.DiscoveryController{
+			Router: r.Router,
+			Bus:    r.Bus,
+			Store:  mobilityStore{evented: store, data: rawStore},
+			Runner: r.Opts.ProviderInventoryRunner,
+		}
 		mobility = mobilitycontroller.Controller{
 			Router:   r.Router,
 			Bus:      r.Bus,
@@ -1083,6 +1092,7 @@ func (r *Runner) Start(ctx context.Context) error {
 		framework.FuncController{ControllerName: "dns-resolver", Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed", "routerd.dhcp.lease.**"}}}, ReconcileFunc: dnsResolver.HandleEvent, PeriodicFunc: dnsResolver.Reconcile},
 		framework.FuncController{ControllerName: "event-federation", Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed"}}}, ReconcileFunc: eventFederation.HandleEvent, PeriodicFunc: eventFederation.Reconcile},
 		framework.FuncController{ControllerName: "event-subscription", Every: 5 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed"}}}, PeriodicFunc: eventSubscription.Reconcile},
+		framework.FuncController{ControllerName: "mobility-discovery", Every: 30 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed"}}}, ReconcileFunc: mobilityDiscovery.HandleEvent, PeriodicFunc: mobilityDiscovery.Reconcile},
 		framework.FuncController{ControllerName: "mobility", Every: 5 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed"}}}, ReconcileFunc: mobility.HandleEvent, PeriodicFunc: mobility.Reconcile},
 		framework.FuncController{ControllerName: "provider-action-execution", Every: 5 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed"}}}, PeriodicFunc: providerAction.Reconcile},
 		framework.FuncController{ControllerName: "egress-route-policy", Every: 15 * time.Second, Subs: statusSubscriptions("HealthCheck", "DSLiteTunnel", "Interface", "DHCPv4Client", "PPPoESession"), PeriodicFunc: wan.Reconcile},

@@ -175,6 +175,7 @@
                         "items": {
                           "enum": [
                             "observe.cloud",
+                            "observe.providerPrivateIPs",
                             "propose.dynamicConfig",
                             "propose.providerAction",
                             "execute.providerAction"
@@ -6968,6 +6969,55 @@
                             "nodeRef": {
                               "description": "NodeRef is the routerd node identity (matches federation sourceNode).",
                               "type": "string"
+                            },
+                            "ownershipDiscovery": {
+                              "additionalProperties": false,
+                              "description": "OwnershipDiscovery optionally lets a cloud member discover locally owned\nprovider private IPs and emit them as observed federation facts.",
+                              "properties": {
+                                "leaseTTL": {
+                                  "description": "LeaseTTL controls the emitted observed event expiry. Empty defaults to\nleasePolicy.ttl, then the controller default.",
+                                  "type": "string"
+                                },
+                                "mode": {
+                                  "description": "Mode selects the discovery backend. Empty/disabled does nothing.",
+                                  "enum": [
+                                    "",
+                                    "disabled",
+                                    "provider-private-ip"
+                                  ],
+                                  "type": "string"
+                                },
+                                "pluginRef": {
+                                  "description": "PluginRef optionally pins the inventory plugin. Empty resolves by\nprovider name or sole observe.providerPrivateIPs plugin.",
+                                  "type": "string"
+                                },
+                                "providerRef": {
+                                  "description": "ProviderRef defaults to the member capture.providerRef.",
+                                  "type": "string"
+                                },
+                                "scanInterval": {
+                                  "description": "ScanInterval bounds provider inventory calls. Empty defaults to 60s.",
+                                  "type": "string"
+                                },
+                                "selector": {
+                                  "additionalProperties": false,
+                                  "description": "Selector optionally filters discovered IP records by provider tags/labels.",
+                                  "properties": {
+                                    "tags": {
+                                      "additionalProperties": {
+                                        "type": "string"
+                                      },
+                                      "type": "object"
+                                    }
+                                  },
+                                  "type": "object"
+                                },
+                                "subnetRef": {
+                                  "description": "SubnetRef optionally constrains the provider scan. Empty asks the plugin\nto infer it from the self NIC.",
+                                  "type": "string"
+                                }
+                              },
+                              "type": "object"
                             },
                             "placement": {
                               "additionalProperties": false,

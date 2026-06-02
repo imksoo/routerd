@@ -122,7 +122,7 @@ type PluginSpec struct {
 	Executable   string            `yaml:"executable" json:"executable"`
 	Timeout      string            `yaml:"timeout,omitempty" json:"timeout,omitempty"`
 	Env          map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
-	Capabilities []string          `yaml:"capabilities,omitempty" json:"capabilities,omitempty" jsonschema:"enum=observe.cloud,enum=propose.dynamicConfig,enum=propose.providerAction,enum=execute.providerAction"`
+	Capabilities []string          `yaml:"capabilities,omitempty" json:"capabilities,omitempty" jsonschema:"enum=observe.cloud,enum=observe.providerPrivateIPs,enum=propose.dynamicConfig,enum=propose.providerAction,enum=execute.providerAction"`
 	Triggers     []PluginTrigger   `yaml:"triggers,omitempty" json:"triggers,omitempty"`
 	// Context is the least-privilege allowlist of config resources the plugin
 	// may read on stdin. Empty/absent = the plugin receives no configuration
@@ -1404,6 +1404,9 @@ type MobilityPoolMember struct {
 	// member owns without relying on observed-client federation events. It is
 	// intended for on-prem static-IP segments.
 	StaticOwnedAddresses []string `yaml:"staticOwnedAddresses,omitempty" json:"staticOwnedAddresses,omitempty"`
+	// OwnershipDiscovery optionally lets a cloud member discover locally owned
+	// provider private IPs and emit them as observed federation facts.
+	OwnershipDiscovery MobilityOwnershipDiscovery `yaml:"ownershipDiscovery,omitempty" json:"ownershipDiscovery,omitempty"`
 	// Placement optionally places this member in an active/standby capture group.
 	// When set, only the highest-priority non-drained member in the same group
 	// captures provider-side addresses.
@@ -1426,6 +1429,30 @@ type MobilityMemberPlacement struct {
 
 type MobilityMemberMaintenance struct {
 	Drain bool `yaml:"drain,omitempty" json:"drain,omitempty"`
+}
+
+type MobilityOwnershipDiscovery struct {
+	// Mode selects the discovery backend. Empty/disabled does nothing.
+	Mode string `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=,enum=disabled,enum=provider-private-ip"`
+	// ProviderRef defaults to the member capture.providerRef.
+	ProviderRef string `yaml:"providerRef,omitempty" json:"providerRef,omitempty"`
+	// PluginRef optionally pins the inventory plugin. Empty resolves by
+	// provider name or sole observe.providerPrivateIPs plugin.
+	PluginRef string `yaml:"pluginRef,omitempty" json:"pluginRef,omitempty"`
+	// SubnetRef optionally constrains the provider scan. Empty asks the plugin
+	// to infer it from the self NIC.
+	SubnetRef string `yaml:"subnetRef,omitempty" json:"subnetRef,omitempty"`
+	// ScanInterval bounds provider inventory calls. Empty defaults to 60s.
+	ScanInterval string `yaml:"scanInterval,omitempty" json:"scanInterval,omitempty"`
+	// LeaseTTL controls the emitted observed event expiry. Empty defaults to
+	// leasePolicy.ttl, then the controller default.
+	LeaseTTL string `yaml:"leaseTTL,omitempty" json:"leaseTTL,omitempty"`
+	// Selector optionally filters discovered IP records by provider tags/labels.
+	Selector MobilityOwnershipDiscoverySelector `yaml:"selector,omitempty" json:"selector,omitempty"`
+}
+
+type MobilityOwnershipDiscoverySelector struct {
+	Tags map[string]string `yaml:"tags,omitempty" json:"tags,omitempty"`
 }
 
 type MobilityIPOwnershipPolicy struct {
