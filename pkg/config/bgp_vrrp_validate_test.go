@@ -401,6 +401,41 @@ func TestValidateBGPExportPolicy(t *testing.T) {
 	}
 }
 
+func TestValidateBGPPeerRouteReflectorRequiresIBGP(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.BGPRouterSpec{
+				ASN:      64577,
+				RouterID: "10.99.0.1",
+			}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPPeer"}, Metadata: api.ObjectMeta{Name: "client"}, Spec: api.BGPPeerSpec{
+				RouterRef:               "BGPRouter/lan",
+				PeerASN:                 64577,
+				Peers:                   []string{"10.99.0.2"},
+				RouteReflectorClient:    true,
+				RouteReflectorClusterID: "10.99.0.1",
+			}},
+		}},
+	}
+	if err := Validate(router); err != nil {
+		t.Fatalf("valid route reflector client peer should validate: %v", err)
+	}
+	peer := router.Spec.Resources[1].Spec.(api.BGPPeerSpec)
+	peer.PeerASN = 64578
+	router.Spec.Resources[1].Spec = peer
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "spec.routeReflectorClient requires iBGP") {
+		t.Fatalf("expected iBGP validation error, got %v", err)
+	}
+	peer.PeerASN = 64577
+	peer.RouteReflectorClusterID = "not-an-ip"
+	router.Spec.Resources[1].Spec = peer
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "spec.routeReflectorClusterID") {
+		t.Fatalf("expected cluster ID validation error, got %v", err)
+	}
+}
+
 func TestValidateBGPCommunitiesRejectsInvalidCommunity(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},

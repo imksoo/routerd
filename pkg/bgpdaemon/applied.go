@@ -59,15 +59,17 @@ type AppliedGracefulRestart struct {
 }
 
 type AppliedPeer struct {
-	Address            string                  `json:"address"`
-	ASN                uint32                  `json:"asn"`
-	Password           string                  `json:"password,omitempty"`
-	EbgpMultihop       int                     `json:"ebgpMultihop,omitempty"`
-	TimersProfile      string                  `json:"timersProfile,omitempty"`
-	ConvergenceProfile string                  `json:"convergenceProfile,omitempty"`
-	ImportPolicyName   string                  `json:"importPolicyName,omitempty"`
-	ImportPolicy       AppliedImportPolicy     `json:"importPolicy,omitempty"`
-	GracefulRestart    *AppliedGracefulRestart `json:"gracefulRestart,omitempty"`
+	Address                 string                  `json:"address"`
+	ASN                     uint32                  `json:"asn"`
+	Password                string                  `json:"password,omitempty"`
+	EbgpMultihop            int                     `json:"ebgpMultihop,omitempty"`
+	RouteReflectorClient    bool                    `json:"routeReflectorClient,omitempty"`
+	RouteReflectorClusterID string                  `json:"routeReflectorClusterID,omitempty"`
+	TimersProfile           string                  `json:"timersProfile,omitempty"`
+	ConvergenceProfile      string                  `json:"convergenceProfile,omitempty"`
+	ImportPolicyName        string                  `json:"importPolicyName,omitempty"`
+	ImportPolicy            AppliedImportPolicy     `json:"importPolicy,omitempty"`
+	GracefulRestart         *AppliedGracefulRestart `json:"gracefulRestart,omitempty"`
 }
 
 type AppliedPath struct {
@@ -104,6 +106,7 @@ func Normalize(config AppliedConfig) AppliedConfig {
 			if peer.EbgpMultihop < 0 || peer.EbgpMultihop > 255 {
 				peer.EbgpMultihop = 0
 			}
+			peer.RouteReflectorClusterID = strings.TrimSpace(peer.RouteReflectorClusterID)
 			peer.TimersProfile = strings.TrimSpace(peer.TimersProfile)
 			peer.ConvergenceProfile = strings.TrimSpace(peer.ConvergenceProfile)
 			peer.ImportPolicyName = strings.TrimSpace(peer.ImportPolicyName)
@@ -272,6 +275,12 @@ func Validate(config AppliedConfig) error {
 	for address, peer := range config.Peers {
 		if peer.Address == "" || peer.ASN == 0 {
 			return fmt.Errorf("applied BGP peer %q is incomplete", address)
+		}
+		if peer.RouteReflectorClusterID != "" {
+			addr, err := netip.ParseAddr(peer.RouteReflectorClusterID)
+			if err != nil || !addr.Is4() {
+				return fmt.Errorf("applied BGP peer %q routeReflectorClusterID must be an IPv4 router ID", address)
+			}
 		}
 	}
 	for _, path := range config.Paths {

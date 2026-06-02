@@ -32,6 +32,7 @@ type RouterIndex struct {
 	CloudProviderProfiles      map[string]api.CloudProviderProfileSpec
 	HealthChecks               map[string]bool
 	BGPRouters                 map[string]bool
+	BGPRouterSpecs             map[string]api.BGPRouterSpec
 	BFDSpecs                   map[string]api.BFDSpec
 	VRFs                       map[string]bool
 	Zones                      map[string]bool
@@ -91,6 +92,7 @@ func newRouterIndex(router *api.Router) *RouterIndex {
 		CloudProviderProfiles:      map[string]api.CloudProviderProfileSpec{},
 		HealthChecks:               map[string]bool{},
 		BGPRouters:                 map[string]bool{},
+		BGPRouterSpecs:             map[string]api.BGPRouterSpec{},
 		BFDSpecs:                   map[string]api.BFDSpec{},
 		VRFs:                       map[string]bool{},
 		Zones:                      map[string]bool{},
@@ -331,6 +333,9 @@ func (idx *RouterIndex) build(router *api.Router, targetOS platform.OS) error {
 		}
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "BGPRouter" {
 			idx.BGPRouters[res.Metadata.Name] = true
+			if spec, err := res.BGPRouterSpec(); err == nil {
+				idx.BGPRouterSpecs[res.Metadata.Name] = spec
+			}
 		}
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "BFD" {
 			spec, err := res.BFDSpec()

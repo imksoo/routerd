@@ -65,20 +65,36 @@ func TestAppliedPoliciesRestorePeerImportPolicyWithoutGlobalPolicy(t *testing.T)
 		assignment.GetPolicies()[0].GetName() != "routerd-lan-import" {
 		t.Fatalf("global import policy assignment = %#v, want restored policy assigned to global import", assignment)
 	}
-	restoredPeer := appliedPeer(peer, bgpdaemon.AppliedImportPolicy{})
+	restoredPeer := appliedPeer(peer, bgpdaemon.AppliedGlobal{ASN: 64512})
 	if applyPolicy := restoredPeer.GetApplyPolicy(); applyPolicy != nil && applyPolicy.GetImportPolicy() != nil {
 		t.Fatalf("restored peer import policy = %#v, want no per-neighbor import policy for normal eBGP", applyPolicy.GetImportPolicy())
 	}
 }
 
 func TestAppliedPeerEbgpMultihop(t *testing.T) {
-	direct := appliedPeer(bgpdaemon.AppliedPeer{Address: "192.0.2.2", ASN: 64513}, bgpdaemon.AppliedImportPolicy{})
+	direct := appliedPeer(bgpdaemon.AppliedPeer{Address: "192.0.2.2", ASN: 64513}, bgpdaemon.AppliedGlobal{ASN: 64512})
 	if direct.GetEbgpMultihop() != nil {
 		t.Fatalf("direct peer eBGP multihop = %#v, want nil", direct.GetEbgpMultihop())
 	}
-	multihop := appliedPeer(bgpdaemon.AppliedPeer{Address: "192.0.2.2", ASN: 64513, EbgpMultihop: 16}, bgpdaemon.AppliedImportPolicy{})
+	multihop := appliedPeer(bgpdaemon.AppliedPeer{Address: "192.0.2.2", ASN: 64513, EbgpMultihop: 16}, bgpdaemon.AppliedGlobal{ASN: 64512})
 	if got := multihop.GetEbgpMultihop(); !got.GetEnabled() || got.GetMultihopTtl() != 16 {
 		t.Fatalf("restored eBGP multihop = %#v, want enabled ttl=16", got)
+	}
+}
+
+func TestAppliedPeerRestoresInternalRouteReflectorClient(t *testing.T) {
+	peer := appliedPeer(bgpdaemon.AppliedPeer{
+		Address:                 "10.99.0.2",
+		ASN:                     64577,
+		RouteReflectorClient:    true,
+		RouteReflectorClusterID: "10.99.0.1",
+	}, bgpdaemon.AppliedGlobal{ASN: 64577})
+	if peer.GetConf().GetType() != gobgpapi.PeerType_INTERNAL {
+		t.Fatalf("peer type = %v, want internal", peer.GetConf().GetType())
+	}
+	rr := peer.GetRouteReflector()
+	if !rr.GetRouteReflectorClient() || rr.GetRouteReflectorClusterId() != "10.99.0.1" {
+		t.Fatalf("route reflector = %#v, want client cluster 10.99.0.1", rr)
 	}
 }
 

@@ -349,6 +349,23 @@ func TestGoBGPPeerEbgpMultihop(t *testing.T) {
 	}
 }
 
+func TestGoBGPPeerInternalRouteReflectorClient(t *testing.T) {
+	peer := goBGPPeer(desiredPeer{
+		Address:                 "10.99.0.2",
+		ASN:                     64577,
+		LocalASN:                64577,
+		RouteReflectorClient:    true,
+		RouteReflectorClusterID: "10.99.0.1",
+	})
+	if peer.GetConf().GetType() != gobgpapi.PeerType_INTERNAL {
+		t.Fatalf("peer type = %v, want internal", peer.GetConf().GetType())
+	}
+	rr := peer.GetRouteReflector()
+	if !rr.GetRouteReflectorClient() || rr.GetRouteReflectorClusterId() != "10.99.0.1" {
+		t.Fatalf("route reflector = %#v, want client cluster 10.99.0.1", rr)
+	}
+}
+
 func TestReconcileDoesNotRefreshUnchangedImportPolicy(t *testing.T) {
 	router := bgpRouterWithImportPrefixes("10.250.0.0/24")
 	peerResource := router.Spec.Resources[1]

@@ -640,17 +640,19 @@ type BGPWatcherSpec struct {
 }
 
 type BGPPeerSpec struct {
-	RouterRef    string                `yaml:"routerRef" json:"routerRef"`
-	PeerASN      uint32                `yaml:"peerASN" json:"peerASN" jsonschema:"minimum=1"`
-	Peers        []string              `yaml:"peers" json:"peers"`
-	Password     string                `yaml:"password,omitempty" json:"password,omitempty"`
-	PasswordFrom SecretValueSourceSpec `yaml:"passwordFrom,omitempty" json:"passwordFrom,omitempty"`
-	EbgpMultihop int                   `yaml:"ebgpMultihop,omitempty" json:"ebgpMultihop,omitempty" jsonschema:"minimum=0,maximum=255"`
-	ExportPolicy BGPExportPolicySpec   `yaml:"exportPolicy,omitempty" json:"exportPolicy,omitempty"`
-	Timers       BGPTimersSpec         `yaml:"timers,omitempty" json:"timers,omitempty"`
-	Communities  BGPCommunitiesSpec    `yaml:"communities,omitempty" json:"communities,omitempty"`
-	BFD          string                `yaml:"bfd,omitempty" json:"bfd,omitempty"`
-	When         ResourceWhenSpec      `yaml:"when,omitempty" json:"when,omitempty"`
+	RouterRef               string                `yaml:"routerRef" json:"routerRef"`
+	PeerASN                 uint32                `yaml:"peerASN" json:"peerASN" jsonschema:"minimum=1"`
+	Peers                   []string              `yaml:"peers" json:"peers"`
+	Password                string                `yaml:"password,omitempty" json:"password,omitempty"`
+	PasswordFrom            SecretValueSourceSpec `yaml:"passwordFrom,omitempty" json:"passwordFrom,omitempty"`
+	EbgpMultihop            int                   `yaml:"ebgpMultihop,omitempty" json:"ebgpMultihop,omitempty" jsonschema:"minimum=0,maximum=255"`
+	RouteReflectorClient    bool                  `yaml:"routeReflectorClient,omitempty" json:"routeReflectorClient,omitempty"`
+	RouteReflectorClusterID string                `yaml:"routeReflectorClusterID,omitempty" json:"routeReflectorClusterID,omitempty"`
+	ExportPolicy            BGPExportPolicySpec   `yaml:"exportPolicy,omitempty" json:"exportPolicy,omitempty"`
+	Timers                  BGPTimersSpec         `yaml:"timers,omitempty" json:"timers,omitempty"`
+	Communities             BGPCommunitiesSpec    `yaml:"communities,omitempty" json:"communities,omitempty"`
+	BFD                     string                `yaml:"bfd,omitempty" json:"bfd,omitempty"`
+	When                    ResourceWhenSpec      `yaml:"when,omitempty" json:"when,omitempty"`
 }
 
 type BFDSpec struct {

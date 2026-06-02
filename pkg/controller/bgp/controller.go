@@ -104,15 +104,18 @@ type Controller struct {
 }
 
 type desiredPeer struct {
-	Address            string
-	ASN                uint32
-	Password           string
-	EbgpMultihop       int
-	Timers             routerapi.BGPTimersSpec
-	GracefulRestart    routerapi.BGPGracefulRestartSpec
-	ConvergenceProfile string
-	ImportPolicy       routerapi.BGPImportPolicySpec
-	ImportPolicyName   string
+	Address                 string
+	ASN                     uint32
+	LocalASN                uint32
+	Password                string
+	EbgpMultihop            int
+	RouteReflectorClient    bool
+	RouteReflectorClusterID string
+	Timers                  routerapi.BGPTimersSpec
+	GracefulRestart         routerapi.BGPGracefulRestartSpec
+	ConvergenceProfile      string
+	ImportPolicy            routerapi.BGPImportPolicySpec
+	ImportPolicyName        string
 }
 
 func (c *Controller) Reconcile(ctx context.Context) error {
@@ -164,7 +167,7 @@ func (c *Controller) reconcileLocked(ctx context.Context) error {
 	if err != nil {
 		return c.savePendingAll("GoBGPImportPolicyApplyFailed", err)
 	}
-	desired, err := c.desiredPeers(routerResource.Metadata.Name)
+	desired, err := c.desiredPeers(routerResource.Metadata.Name, routerSpec.ASN)
 	if err != nil {
 		return c.savePendingAll("GoBGPPeerConfigInvalid", err)
 	}
@@ -367,7 +370,7 @@ func sleepContext(ctx context.Context, d time.Duration) bool {
 func (c *Controller) hydrateAppliedState(applied bgpdaemon.AppliedConfig) {
 	applied = bgpdaemon.Normalize(applied)
 	c.appliedConfig = applied
-	c.appliedPeerKeys = desiredPeersFromApplied(applied.Peers)
+	c.appliedPeerKeys = desiredPeersFromApplied(applied.Global.ASN, applied.Peers)
 	if c.importPolicyKey != "" || !appliedGlobalConfigured(applied.Global) {
 		return
 	}
@@ -489,7 +492,7 @@ func globalMatches(live, desired *gobgpapi.Global) bool {
 	return sameStringSet(liveListen, desiredListen)
 }
 
-func (c *Controller) desiredPeers(routerName string) (map[string]desiredPeer, error) {
+func (c *Controller) desiredPeers(routerName string, localASN uint32) (map[string]desiredPeer, error) {
 	out := map[string]desiredPeer{}
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.APIVersion != routerapi.NetAPIVersion || resource.Kind != "BGPPeer" {
@@ -509,7 +512,16 @@ func (c *Controller) desiredPeers(routerName string) (map[string]desiredPeer, er
 		}
 		for _, peer := range spec.Peers {
 			peer = strings.TrimSpace(peer)
-			out[peer] = desiredPeer{Address: peer, ASN: spec.PeerASN, Password: password, EbgpMultihop: spec.EbgpMultihop, Timers: spec.Timers}
+			out[peer] = desiredPeer{
+				Address:                 peer,
+				ASN:                     spec.PeerASN,
+				LocalASN:                localASN,
+				Password:                password,
+				EbgpMultihop:            spec.EbgpMultihop,
+				RouteReflectorClient:    spec.RouteReflectorClient,
+				RouteReflectorClusterID: strings.TrimSpace(spec.RouteReflectorClusterID),
+				Timers:                  spec.Timers,
+			}
 		}
 	}
 	return out, nil
@@ -585,7 +597,7 @@ func (c *Controller) softResetImportPolicy(ctx context.Context, desired map[stri
 	return nil
 }
 
-func desiredPeersFromApplied(peers map[string]bgpdaemon.AppliedPeer) map[string]desiredPeer {
+func desiredPeersFromApplied(localASN uint32, peers map[string]bgpdaemon.AppliedPeer) map[string]desiredPeer {
 	out := map[string]desiredPeer{}
 	for address, peer := range peers {
 		gr := routerapi.BGPGracefulRestartSpec{}
@@ -596,13 +608,16 @@ func desiredPeersFromApplied(peers map[string]bgpdaemon.AppliedPeer) map[string]
 			gr.StalePathTime = fmt.Sprintf("%ds", peer.GracefulRestart.StaleRoutesTime)
 		}
 		out[address] = desiredPeer{
-			Address:            peer.Address,
-			ASN:                peer.ASN,
-			Password:           peer.Password,
-			EbgpMultihop:       peer.EbgpMultihop,
-			Timers:             routerapi.BGPTimersSpec{Profile: peer.TimersProfile},
-			GracefulRestart:    gr,
-			ConvergenceProfile: peer.ConvergenceProfile,
+			Address:                 peer.Address,
+			ASN:                     peer.ASN,
+			LocalASN:                localASN,
+			Password:                peer.Password,
+			EbgpMultihop:            peer.EbgpMultihop,
+			RouteReflectorClient:    peer.RouteReflectorClient,
+			RouteReflectorClusterID: peer.RouteReflectorClusterID,
+			Timers:                  routerapi.BGPTimersSpec{Profile: peer.TimersProfile},
+			GracefulRestart:         gr,
+			ConvergenceProfile:      peer.ConvergenceProfile,
 			ImportPolicy: routerapi.BGPImportPolicySpec{
 				AllowedPrefixes: peer.ImportPolicy.AllowedPrefixes,
 				NextHopRewrite:  peer.ImportPolicy.NextHopRewrite,
@@ -656,13 +671,15 @@ func appliedGlobalFromSpec(spec routerapi.BGPRouterSpec, router *routerapi.Route
 
 func appliedPeer(peer desiredPeer) bgpdaemon.AppliedPeer {
 	out := bgpdaemon.AppliedPeer{
-		Address:            peer.Address,
-		ASN:                peer.ASN,
-		Password:           peer.Password,
-		EbgpMultihop:       peer.EbgpMultihop,
-		TimersProfile:      strings.TrimSpace(peer.Timers.Profile),
-		ConvergenceProfile: peer.ConvergenceProfile,
-		ImportPolicyName:   peer.ImportPolicyName,
+		Address:                 peer.Address,
+		ASN:                     peer.ASN,
+		Password:                peer.Password,
+		EbgpMultihop:            peer.EbgpMultihop,
+		RouteReflectorClient:    peer.RouteReflectorClient,
+		RouteReflectorClusterID: peer.RouteReflectorClusterID,
+		TimersProfile:           strings.TrimSpace(peer.Timers.Profile),
+		ConvergenceProfile:      peer.ConvergenceProfile,
+		ImportPolicyName:        peer.ImportPolicyName,
 		ImportPolicy: bgpdaemon.AppliedImportPolicy{
 			AllowedPrefixes: cleanStrings(peer.ImportPolicy.AllowedPrefixes),
 			NextHopRewrite:  importNextHopRewrite(peer.ImportPolicy),
@@ -1034,12 +1051,16 @@ func bgpListenAddresses(spec routerapi.BGPListenSpec) []string {
 }
 
 func goBGPPeer(peer desiredPeer) *gobgpapi.Peer {
+	peerType := gobgpapi.PeerType_EXTERNAL
+	if peer.LocalASN != 0 && peer.ASN == peer.LocalASN {
+		peerType = gobgpapi.PeerType_INTERNAL
+	}
 	out := &gobgpapi.Peer{
 		Conf: &gobgpapi.PeerConf{
 			NeighborAddress: peer.Address,
 			PeerAsn:         peer.ASN,
 			AuthPassword:    peer.Password,
-			Type:            gobgpapi.PeerType_EXTERNAL,
+			Type:            peerType,
 			SendCommunity:   3,
 		},
 		Timers: &gobgpapi.Timers{Config: goBGPTimers(peer.Timers)},
@@ -1053,6 +1074,12 @@ func goBGPPeer(peer desiredPeer) *gobgpapi.Peer {
 	}
 	if peer.EbgpMultihop > 1 {
 		out.EbgpMultihop = &gobgpapi.EbgpMultihop{Enabled: true, MultihopTtl: uint32(peer.EbgpMultihop)}
+	}
+	if peer.RouteReflectorClient {
+		out.RouteReflector = &gobgpapi.RouteReflector{
+			RouteReflectorClient:    true,
+			RouteReflectorClusterId: strings.TrimSpace(peer.RouteReflectorClusterID),
+		}
 	}
 	return out
 }

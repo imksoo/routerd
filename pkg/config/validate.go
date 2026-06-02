@@ -134,6 +134,12 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 			if kind != "BGPRouter" || !idx.BGPRouters[name] {
 				return fmt.Errorf("%s spec.routerRef references missing BGPRouter %q", res.ID(), spec.RouterRef)
 			}
+			if spec.RouteReflectorClient {
+				routerSpec := idx.BGPRouterSpecs[name]
+				if routerSpec.ASN != spec.PeerASN {
+					return fmt.Errorf("%s spec.routeReflectorClient requires iBGP peerASN matching %s spec.asn", res.ID(), spec.RouterRef)
+				}
+			}
 			if strings.TrimSpace(spec.BFD) != "" {
 				refKind, refName, ok := strings.Cut(strings.TrimSpace(spec.BFD), "/")
 				bfdSpec, exists := idx.BFDSpecs[refName]

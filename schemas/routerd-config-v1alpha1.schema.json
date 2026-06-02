@@ -3049,6 +3049,12 @@
                         },
                         "type": "array"
                       },
+                      "routeReflectorClient": {
+                        "type": "boolean"
+                      },
+                      "routeReflectorClusterID": {
+                        "type": "string"
+                      },
                       "routerRef": {
                         "type": "string"
                       },

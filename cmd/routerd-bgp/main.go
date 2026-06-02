@@ -233,7 +233,7 @@ func restoreApplied(ctx context.Context, server *gobgpserver.BgpServer, statePat
 		}
 	}
 	for _, peer := range sortedPeers(applied.Peers) {
-		if err := server.AddPeer(ctx, &gobgpapi.AddPeerRequest{Peer: appliedPeer(peer, applied.Global.ImportPolicy)}); err != nil {
+		if err := server.AddPeer(ctx, &gobgpapi.AddPeerRequest{Peer: appliedPeer(peer, applied.Global)}); err != nil {
 			return fmt.Errorf("restore BGP peer %s: %w", peer.Address, err)
 		}
 	}
@@ -292,13 +292,17 @@ func appliedGlobal(global bgpdaemon.AppliedGlobal) *gobgpapi.Global {
 	return out
 }
 
-func appliedPeer(peer bgpdaemon.AppliedPeer, _ bgpdaemon.AppliedImportPolicy) *gobgpapi.Peer {
+func appliedPeer(peer bgpdaemon.AppliedPeer, global bgpdaemon.AppliedGlobal) *gobgpapi.Peer {
+	peerType := gobgpapi.PeerType_EXTERNAL
+	if global.ASN != 0 && peer.ASN == global.ASN {
+		peerType = gobgpapi.PeerType_INTERNAL
+	}
 	out := &gobgpapi.Peer{
 		Conf: &gobgpapi.PeerConf{
 			NeighborAddress: peer.Address,
 			PeerAsn:         peer.ASN,
 			AuthPassword:    peer.Password,
-			Type:            gobgpapi.PeerType_EXTERNAL,
+			Type:            peerType,
 			SendCommunity:   3,
 		},
 		Timers: &gobgpapi.Timers{Config: timers(peer.TimersProfile)},
@@ -312,6 +316,12 @@ func appliedPeer(peer bgpdaemon.AppliedPeer, _ bgpdaemon.AppliedImportPolicy) *g
 	}
 	if peer.EbgpMultihop > 1 {
 		out.EbgpMultihop = &gobgpapi.EbgpMultihop{Enabled: true, MultihopTtl: uint32(peer.EbgpMultihop)}
+	}
+	if peer.RouteReflectorClient {
+		out.RouteReflector = &gobgpapi.RouteReflector{
+			RouteReflectorClient:    true,
+			RouteReflectorClusterId: strings.TrimSpace(peer.RouteReflectorClusterID),
+		}
 	}
 	return out
 }
