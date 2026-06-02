@@ -600,6 +600,53 @@ func TestExecuteRunningActionIsNotReexecuted(t *testing.T) {
 	}
 }
 
+func TestRecoverStaleRunningActionReexecutesThroughNormalPath(t *testing.T) {
+	store := mustStore(t)
+	runner := &fakeRunner{result: succeededResult()}
+	now := time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)
+	e, err := NewEngine(Config{
+		Store:               store,
+		Runner:              runner.run,
+		Now:                 func() time.Time { return now },
+		Plugins:             []api.Resource{executorPlugin("aws")},
+		StaleRunningTimeout: 2 * time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	id := importOne(t, store, e, "stale-running")
+	if err := e.Approve(id, "alice"); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	claimed, err := store.BeginActionExecution(id, now.Add(-3*time.Minute))
+	if err != nil {
+		t.Fatalf("BeginActionExecution: %v", err)
+	}
+	if !claimed {
+		t.Fatal("action was not claimed")
+	}
+	requeued, err := e.RecoverStaleRunningActions()
+	if err != nil {
+		t.Fatalf("RecoverStaleRunningActions: %v", err)
+	}
+	if requeued != 1 {
+		t.Fatalf("requeued = %d, want 1", requeued)
+	}
+	if err := e.Execute(context.Background(), id, ModeExecute, allowPolicy()); err != nil {
+		t.Fatalf("execute recovered action: %v", err)
+	}
+	if runner.calls != 1 {
+		t.Fatalf("runner calls = %d, want 1", runner.calls)
+	}
+	rec, _, err := store.GetActionByID(id)
+	if err != nil {
+		t.Fatalf("get action: %v", err)
+	}
+	if rec.Status != state.ActionSucceeded {
+		t.Fatalf("status = %q, want succeeded", rec.Status)
+	}
+}
+
 func TestExecuteDuplicateNotReExecuted(t *testing.T) {
 	store := mustStore(t)
 	runner := &fakeRunner{result: succeededResult()}

@@ -67,6 +67,9 @@ func (c Controller) Reconcile(ctx context.Context) error {
 		c.log("provideraction: auto execution disabled: " + reason)
 		return nil
 	}
+	if _, err := engine.RecoverStaleRunningActions(); err != nil {
+		return err
+	}
 	rows, err := c.Store.ListActions(routerstate.ActionExecutionFilter{})
 	if err != nil {
 		return fmt.Errorf("list action journal: %w", err)

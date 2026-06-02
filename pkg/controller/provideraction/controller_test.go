@@ -108,6 +108,53 @@ func TestControllerHonorsMaxActionsPerRun(t *testing.T) {
 	}
 }
 
+func TestControllerRequeuesAndExecutesStaleRunningAction(t *testing.T) {
+	store := controllerStore(t)
+	plan := controllerPlan("stale-running", "10.0.0.5/32")
+	target, err := json.Marshal(plan.Target)
+	if err != nil {
+		t.Fatalf("marshal target: %v", err)
+	}
+	if _, err := store.ImportAction(routerstate.ActionExecutionRecord{
+		IdempotencyKey: plan.IdempotencyKey,
+		Source:         "test",
+		Provider:       plan.Provider,
+		ProviderRef:    plan.ProviderRef,
+		Action:         plan.Action,
+		TargetJSON:     string(target),
+		Status:         routerstate.ActionPending,
+	}); err != nil {
+		t.Fatalf("ImportAction: %v", err)
+	}
+	rec := actionByKey(t, store, "stale-running")
+	if err := store.ApproveAction(rec.ID, "policy:auto-approve", fixedNow().Add(-4*time.Minute)); err != nil {
+		t.Fatalf("ApproveAction: %v", err)
+	}
+	claimed, err := store.BeginActionExecution(rec.ID, fixedNow().Add(-3*time.Minute))
+	if err != nil {
+		t.Fatalf("BeginActionExecution: %v", err)
+	}
+	if !claimed {
+		t.Fatal("stale action was not claimed")
+	}
+
+	runner := &fakeRunner{}
+	controller := Controller{Router: controllerRouter(controllerPolicy(false, 5)), Store: store, Runner: runner.run, Now: fixedNow}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if runner.calls != 1 {
+		t.Fatalf("runner calls = %d, want 1", runner.calls)
+	}
+	rec = actionByKey(t, store, "stale-running")
+	if rec.Status != routerstate.ActionSucceeded {
+		t.Fatalf("status = %q, want succeeded", rec.Status)
+	}
+	if rec.ResultMessage != "ok" {
+		t.Fatalf("resultMessage = %q, want ok", rec.ResultMessage)
+	}
+}
+
 func TestControllerSkipsStaleOwnershipEpochBeforeExecute(t *testing.T) {
 	store := controllerStore(t)
 	if _, err := store.ReconcileMobilityOwnershipEpochs([]routerstate.MobilityOwnershipEpochRecord{{

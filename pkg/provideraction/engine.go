@@ -25,6 +25,7 @@ type Store interface {
 	GetMobilityOwnershipEpoch(pool, address string) (state.MobilityOwnershipEpochRecord, bool, error)
 	ApproveAction(id int64, approvedBy string, now time.Time) error
 	BeginActionExecution(id int64, now time.Time) (bool, error)
+	RequeueStaleRunningActions(cutoff, now time.Time) (int, error)
 	ListActions(state.ActionExecutionFilter) ([]state.ActionExecutionRecord, error)
 	MarkActionSkippedByIdempotencyKey(key, message string, now time.Time) error
 	MarkActionResult(id int64, status, message, errMsg string, observed map[string]string, executedAt time.Time) error
@@ -41,11 +42,12 @@ type Logger interface {
 // Engine drives the gated provider-action execution path. It is pure-ish: the
 // executor runner, clock, store, and logger are all injected.
 type Engine struct {
-	store   Store
-	run     ExecutorRunner
-	now     func() time.Time
-	log     Logger
-	plugins []api.Resource
+	store               Store
+	run                 ExecutorRunner
+	now                 func() time.Time
+	log                 Logger
+	plugins             []api.Resource
+	staleRunningTimeout time.Duration
 }
 
 // Config configures an Engine.
@@ -62,6 +64,10 @@ type Config struct {
 	// provider (see resolveExecutor). Optional for import/approve; required for
 	// Execute/Rollback.
 	Plugins []api.Resource
+	// StaleRunningTimeout is the minimum age of a running action before it may
+	// be requeued for execution after a daemon crash/restart. Defaults to
+	// DefaultStaleRunningTimeout.
+	StaleRunningTimeout time.Duration
 }
 
 const (
@@ -72,6 +78,8 @@ const (
 	ownershipParamAddress = "mobilityOwnershipAddress"
 	ownershipParamEpoch   = "mobilityOwnershipEpoch"
 	ownershipParamOwner   = "mobilityOwnershipOwner"
+
+	DefaultStaleRunningTimeout = 2 * time.Minute
 )
 
 // NewEngine builds an Engine.
@@ -86,12 +94,17 @@ func NewEngine(cfg Config) (*Engine, error) {
 	if now == nil {
 		now = time.Now
 	}
+	staleRunningTimeout := cfg.StaleRunningTimeout
+	if staleRunningTimeout <= 0 {
+		staleRunningTimeout = DefaultStaleRunningTimeout
+	}
 	return &Engine{
-		store:   cfg.Store,
-		run:     cfg.Runner,
-		now:     now,
-		log:     cfg.Log,
-		plugins: cfg.Plugins,
+		store:               cfg.Store,
+		run:                 cfg.Runner,
+		now:                 now,
+		log:                 cfg.Log,
+		plugins:             cfg.Plugins,
+		staleRunningTimeout: staleRunningTimeout,
 	}, nil
 }
 
@@ -170,6 +183,21 @@ func (e *Engine) ImportFromDynamicParts() (ImportResult, error) {
 		}
 	}
 	return res, nil
+}
+
+// RecoverStaleRunningActions requeues orphaned running actions so they can flow
+// through the existing policy, fencing, approval, and executor path again.
+func (e *Engine) RecoverStaleRunningActions() (int, error) {
+	now := e.now().UTC()
+	cutoff := now.Add(-e.staleRunningTimeout)
+	count, err := e.store.RequeueStaleRunningActions(cutoff, now)
+	if err != nil {
+		return 0, fmt.Errorf("requeue stale running provider actions: %w", err)
+	}
+	if count > 0 {
+		e.logf("provideraction: requeued %d stale running action(s)", count)
+	}
+	return count, nil
 }
 
 func (e *Engine) fenceStalePendingActions() (int, error) {

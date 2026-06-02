@@ -307,6 +307,35 @@ func (s *SQLiteStore) BeginActionExecution(id int64, now time.Time) (bool, error
 	return affected > 0, nil
 }
 
+// RequeueStaleRunningActions moves orphaned running actions back to approved so
+// the normal execution path can reclaim them. The cutoff is compared against
+// updated_at, which BeginActionExecution sets when the action is claimed.
+func (s *SQLiteStore) RequeueStaleRunningActions(cutoff, now time.Time) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return 0, nil
+	}
+	if cutoff.IsZero() {
+		return 0, fmt.Errorf("stale running cutoff is required")
+	}
+	if now.IsZero() {
+		now = s.now().UTC()
+	}
+	result, err := s.db.Exec(`UPDATE action_executions
+SET status = ?, result_message = ?, error = NULL, executed_at = NULL, observed_json = NULL, updated_at = ?
+WHERE status = ? AND updated_at <= ?`,
+		ActionApproved, nullableString("requeued stale running action"), formatStateTime(now), ActionRunning, formatStateTime(cutoff))
+	if err != nil {
+		return 0, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return int(affected), nil
+}
+
 // MarkActionResult records a terminal execution outcome (succeeded, failed, or
 // skipped) for a running action. For backward-compatible tests and migration
 // helpers it also accepts approved, but the Engine claims running before it
