@@ -196,8 +196,6 @@ spec:
         importPolicy:
           allowedPrefixes: [10.77.60.0/24]
           nextHopRewrite: unchanged
-        exportPolicy:
-          allowedPrefixes: [10.77.60.0/24]
         timers: { profile: fast }
         convergenceProfile: fast
 

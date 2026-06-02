@@ -275,7 +275,6 @@ spec:
         routerID: 10.99.0.1
         listen: { address: 10.99.0.1, port: 179 }
         importPolicy: { allowedPrefixes: [10.77.60.0/24], nextHopRewrite: unchanged }
-        exportPolicy: { allowedPrefixes: [10.77.60.0/24] }
         timers: { profile: fast }
         convergenceProfile: fast
 
