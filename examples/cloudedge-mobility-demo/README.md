@@ -57,6 +57,8 @@ observed by the router-local `observe.providerPrivateIPs` inventory plugin, so
 Cloud router `capture.nicRef` is intentionally omitted from the demo templates:
 each router resolves its own NIC/VNIC through the inventory plugin from the
 declared provider subnet segment.
+The discovery scope excludes provider-primary private IPs so infrastructure
+addresses on the same subnet are not advertised or trapped as mobility /32s.
 It does not include an `EventSubscription` plugin path; that narrower Phase 3
 mechanism remains documented in
 `examples/event-federation/`.

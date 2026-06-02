@@ -6999,6 +6999,31 @@
                                   "description": "ScanInterval bounds provider inventory calls. Empty defaults to 60s.",
                                   "type": "string"
                                 },
+                                "scope": {
+                                  "additionalProperties": false,
+                                  "description": "Scope narrows which provider private IPs become mobility ownership facts.\nEmpty keeps the historical broad scan behavior.",
+                                  "properties": {
+                                    "excludeAddresses": {
+                                      "description": "ExcludeAddresses optionally denylists discovered addresses by IPv4 CIDR or\nbare IPv4 address.",
+                                      "items": {
+                                        "type": "string"
+                                      },
+                                      "type": "array"
+                                    },
+                                    "includeAddresses": {
+                                      "description": "IncludeAddresses optionally allowlists discovered addresses by IPv4 CIDR or\nbare IPv4 address. Empty means all pool addresses are candidates.",
+                                      "items": {
+                                        "type": "string"
+                                      },
+                                      "type": "array"
+                                    },
+                                    "includePrimary": {
+                                      "description": "IncludePrimary controls whether provider-primary private IPs may become\nmobility-owned addresses. Nil defaults to true for backward compatibility.",
+                                      "type": "boolean"
+                                    }
+                                  },
+                                  "type": "object"
+                                },
                                 "selector": {
                                   "additionalProperties": false,
                                   "description": "Selector optionally filters discovered IP records by provider tags/labels.",

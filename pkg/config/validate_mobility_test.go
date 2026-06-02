@@ -64,8 +64,17 @@ func TestValidateMobilityPoolAllowsDiscoveredCloudNICOnlyInBGPDiscoveryMode(t *t
 					ProviderRef:  "azure-provider",
 					ProviderMode: "nic-secondary-ip",
 				},
-				Delivery:           api.MobilityMemberDelivery{PeerRef: "onprem", Mode: "route", TunnelInterface: "wg-hybrid"},
-				OwnershipDiscovery: api.MobilityOwnershipDiscovery{Mode: "provider-private-ip", ProviderRef: "azure-provider", SubnetRef: "/subnets/demo"},
+				Delivery: api.MobilityMemberDelivery{PeerRef: "onprem", Mode: "route", TunnelInterface: "wg-hybrid"},
+				OwnershipDiscovery: api.MobilityOwnershipDiscovery{
+					Mode:        "provider-private-ip",
+					ProviderRef: "azure-provider",
+					SubnetRef:   "/subnets/demo",
+					Scope: api.MobilityOwnershipDiscoveryScope{
+						IncludePrimary:   boolPtr(false),
+						IncludeAddresses: []string{"10.88.60.0/25"},
+						ExcludeAddresses: []string{"10.88.60.7"},
+					},
+				},
 			},
 		},
 		LeasePolicy: api.MobilityLeasePolicy{TTL: "5m", HoldDuration: "30s"},
@@ -258,6 +267,36 @@ func TestValidateMobilityPoolRejectsInvalidFields(t *testing.T) {
 				spec.Members[1].OwnershipDiscovery = api.MobilityOwnershipDiscovery{Mode: "provider-private-ip", ScanInterval: "5s"}
 			},
 			want: "ownershipDiscovery.scanInterval must be >= 30s",
+		},
+		{
+			name: "ownership discovery include address outside pool",
+			mut: func(spec *api.MobilityPoolSpec) {
+				spec.DeliveryPolicy.Mode = "bgp"
+				spec.Members[1].Capture = api.MobilityMemberCapture{Type: "provider-secondary-ip", ProviderRef: "azure-provider", ProviderMode: "nic-secondary-ip", NICRef: "nic-1"}
+				spec.Members[1].Delivery = api.MobilityMemberDelivery{PeerRef: "onprem", Mode: "route"}
+				spec.Members[1].OwnershipDiscovery = api.MobilityOwnershipDiscovery{
+					Mode: "provider-private-ip",
+					Scope: api.MobilityOwnershipDiscoveryScope{
+						IncludeAddresses: []string{"10.88.61.1"},
+					},
+				}
+			},
+			want: "ownershipDiscovery.scope.includeAddresses[0]",
+		},
+		{
+			name: "ownership discovery exclude aggregate outside pool",
+			mut: func(spec *api.MobilityPoolSpec) {
+				spec.DeliveryPolicy.Mode = "bgp"
+				spec.Members[1].Capture = api.MobilityMemberCapture{Type: "provider-secondary-ip", ProviderRef: "azure-provider", ProviderMode: "nic-secondary-ip", NICRef: "nic-1"}
+				spec.Members[1].Delivery = api.MobilityMemberDelivery{PeerRef: "onprem", Mode: "route"}
+				spec.Members[1].OwnershipDiscovery = api.MobilityOwnershipDiscovery{
+					Mode: "provider-private-ip",
+					Scope: api.MobilityOwnershipDiscoveryScope{
+						ExcludeAddresses: []string{"10.88.60.0/23"},
+					},
+				}
+			},
+			want: "ownershipDiscovery.scope.excludeAddresses[0]",
 		},
 		{
 			name: "placement priority range",

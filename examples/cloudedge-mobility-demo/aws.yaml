@@ -280,7 +280,7 @@ spec:
                 region: "${AWS_REGION}"
             delivery: { peerRef: onprem-main, mode: route, tunnelInterface: wg-hybrid }
             placement: { group: aws-edge, priority: 10 }
-            ownershipDiscovery: { mode: provider-private-ip, providerRef: aws-lab, subnetRef: "${AWS_SUBNET_REF}", scanInterval: 60s, leaseTTL: 10m }
+            ownershipDiscovery: { mode: provider-private-ip, providerRef: aws-lab, scope: { includePrimary: false }, subnetRef: "${AWS_SUBNET_REF}", scanInterval: 60s, leaseTTL: 10m }
           - nodeRef: aws-router-b
             site: aws
             role: cloud
@@ -294,7 +294,7 @@ spec:
                 region: "${AWS_REGION}"
             delivery: { peerRef: onprem-main, mode: route, tunnelInterface: wg-hybrid }
             placement: { group: aws-edge, priority: 20 }
-            ownershipDiscovery: { mode: provider-private-ip, providerRef: aws-lab, subnetRef: "${AWS_SUBNET_REF}", scanInterval: 60s, leaseTTL: 10m }
+            ownershipDiscovery: { mode: provider-private-ip, providerRef: aws-lab, scope: { includePrimary: false }, subnetRef: "${AWS_SUBNET_REF}", scanInterval: 60s, leaseTTL: 10m }
           - nodeRef: azure-router
             site: azure
             role: cloud
@@ -309,7 +309,7 @@ spec:
                 resourceGroup: "${AZURE_RESOURCE_GROUP}"
             delivery: { peerRef: onprem-main, mode: route, tunnelInterface: wg-hybrid }
             placement: { group: azure-edge, priority: 10 }
-            ownershipDiscovery: { mode: provider-private-ip, providerRef: azure-lab, subnetRef: "${AZURE_SUBNET_REF}", scanInterval: 60s, leaseTTL: 10m }
+            ownershipDiscovery: { mode: provider-private-ip, providerRef: azure-lab, scope: { includePrimary: false }, subnetRef: "${AZURE_SUBNET_REF}", scanInterval: 60s, leaseTTL: 10m }
           - nodeRef: azure-router-b
             site: azure
             role: cloud
@@ -324,7 +324,7 @@ spec:
                 resourceGroup: "${AZURE_RESOURCE_GROUP}"
             delivery: { peerRef: onprem-main, mode: route, tunnelInterface: wg-hybrid }
             placement: { group: azure-edge, priority: 20 }
-            ownershipDiscovery: { mode: provider-private-ip, providerRef: azure-lab, subnetRef: "${AZURE_SUBNET_REF}", scanInterval: 60s, leaseTTL: 10m }
+            ownershipDiscovery: { mode: provider-private-ip, providerRef: azure-lab, scope: { includePrimary: false }, subnetRef: "${AZURE_SUBNET_REF}", scanInterval: 60s, leaseTTL: 10m }
           - nodeRef: oci-router
             site: oci
             role: cloud
@@ -339,7 +339,7 @@ spec:
                 compartmentId: "${OCI_COMPARTMENT_REF}"
             delivery: { peerRef: onprem-main, mode: route, tunnelInterface: wg-hybrid }
             placement: { group: oci-edge, priority: 10 }
-            ownershipDiscovery: { mode: provider-private-ip, providerRef: oci-lab, subnetRef: "${OCI_SUBNET_REF}", scanInterval: 60s, leaseTTL: 10m }
+            ownershipDiscovery: { mode: provider-private-ip, providerRef: oci-lab, scope: { includePrimary: false }, subnetRef: "${OCI_SUBNET_REF}", scanInterval: 60s, leaseTTL: 10m }
           - nodeRef: oci-router-b
             site: oci
             role: cloud
@@ -354,7 +354,7 @@ spec:
                 compartmentId: "${OCI_COMPARTMENT_REF}"
             delivery: { peerRef: onprem-main, mode: route, tunnelInterface: wg-hybrid }
             placement: { group: oci-edge, priority: 20 }
-            ownershipDiscovery: { mode: provider-private-ip, providerRef: oci-lab, subnetRef: "${OCI_SUBNET_REF}", scanInterval: 60s, leaseTTL: 10m }
+            ownershipDiscovery: { mode: provider-private-ip, providerRef: oci-lab, scope: { includePrimary: false }, subnetRef: "${OCI_SUBNET_REF}", scanInterval: 60s, leaseTTL: 10m }
         leasePolicy: { ttl: 30m, holdDuration: 5s }
         capturePolicy: { mode: all-non-owner-sites, deprovisionHoldDuration: 5s }
         ipOwnershipPolicy: { type: centralized, autoFailover: true, heartbeatInterval: 10s, heartbeatTTL: 30s, promotionHoldDuration: 5s }

@@ -21,6 +21,10 @@ type fakeInventoryRunner struct {
 	err    error
 }
 
+func boolPtr(value bool) *bool {
+	return &value
+}
+
 func (f *fakeInventoryRunner) run(_ context.Context, _ api.PluginSpec, req providerinventory.ObservePrivateIPsRequest) (providerinventory.ObservePrivateIPsResult, providerinventory.RunOutcome, error) {
 	f.calls++
 	f.last = req
@@ -117,6 +121,101 @@ func TestDiscoveryControllerUsesPluginResolvedSelfNICWhenCaptureNICIsImplicit(t 
 	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
 	if status["discoverySelfNICRef"] != "resolved-router-nic" || status["discoverySelfSubnetRef"] != "subnet-a" {
 		t.Fatalf("status = %#v", status)
+	}
+}
+
+func TestDiscoveryControllerScopeExcludesProviderPrimaryAddresses(t *testing.T) {
+	now := time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := discoveryPoolSpec()
+	spec.Members[1].OwnershipDiscovery.Scope.IncludePrimary = boolPtr(false)
+	runner := &fakeInventoryRunner{result: providerinventory.ObservePrivateIPsResult{
+		TypeMeta: providerinventory.TypeMeta{APIVersion: providerinventory.ProtocolAPIVersion, Kind: providerinventory.KindObservePrivateIPsResult},
+		Status: providerinventory.ObservePrivateIPsResultStatus{
+			Status: providerinventory.ResultSucceeded,
+			Self:   &providerinventory.PrivateIPSelf{NICRef: "router-nic", SubnetRef: "subnet-a"},
+			IPs: []providerinventory.PrivateIPRecord{
+				{Address: "10.88.60.7", NICRef: "client-nic", SubnetRef: "subnet-a", Primary: true, Tags: map[string]string{"cloudedge-mobility": "true"}},
+				{Address: "10.88.60.13", NICRef: "client-nic", SubnetRef: "subnet-a", Primary: false, Tags: map[string]string{"cloudedge-mobility": "true"}},
+			},
+		},
+	}}
+	controller := DiscoveryController{Router: discoveryRouter("azure-router-a", spec), Store: store, Runner: runner.run, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	events, err := store.ListFederationEvents("cloudedge", false, now.Unix())
+	if err != nil {
+		t.Fatalf("ListFederationEvents: %v", err)
+	}
+	if len(events) != 1 || events[0].Subject != "10.88.60.13/32" {
+		t.Fatalf("events = %#v, want only secondary mobility address", events)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	if fmt.Sprint(status["discoveryObserved"]) != "1" || fmt.Sprint(status["discoveryExcludedPrimary"]) != "1" || fmt.Sprint(status["discoveryExcluded"]) != "1" {
+		t.Fatalf("status = %#v", status)
+	}
+}
+
+func TestDiscoveryControllerDefaultScopeAllowsProviderPrimaryAddresses(t *testing.T) {
+	now := time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := discoveryPoolSpec()
+	runner := &fakeInventoryRunner{result: providerinventory.ObservePrivateIPsResult{
+		TypeMeta: providerinventory.TypeMeta{APIVersion: providerinventory.ProtocolAPIVersion, Kind: providerinventory.KindObservePrivateIPsResult},
+		Status: providerinventory.ObservePrivateIPsResultStatus{
+			Status: providerinventory.ResultSucceeded,
+			Self:   &providerinventory.PrivateIPSelf{NICRef: "router-nic", SubnetRef: "subnet-a"},
+			IPs: []providerinventory.PrivateIPRecord{
+				{Address: "10.88.60.7", NICRef: "client-nic", SubnetRef: "subnet-a", Primary: true, Tags: map[string]string{"cloudedge-mobility": "true"}},
+			},
+		},
+	}}
+	controller := DiscoveryController{Router: discoveryRouter("azure-router-a", spec), Store: store, Runner: runner.run, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	events, err := store.ListFederationEvents("cloudedge", false, now.Unix())
+	if err != nil {
+		t.Fatalf("ListFederationEvents: %v", err)
+	}
+	if len(events) != 1 || events[0].Subject != "10.88.60.7/32" {
+		t.Fatalf("events = %#v, want default primary address accepted", events)
+	}
+}
+
+func TestDiscoveryControllerScopeIncludeExcludeAddresses(t *testing.T) {
+	now := time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := discoveryPoolSpec()
+	spec.Members[1].OwnershipDiscovery.Scope.IncludeAddresses = []string{"10.88.60.10/31"}
+	spec.Members[1].OwnershipDiscovery.Scope.ExcludeAddresses = []string{"10.88.60.10"}
+	runner := &fakeInventoryRunner{result: providerinventory.ObservePrivateIPsResult{
+		TypeMeta: providerinventory.TypeMeta{APIVersion: providerinventory.ProtocolAPIVersion, Kind: providerinventory.KindObservePrivateIPsResult},
+		Status: providerinventory.ObservePrivateIPsResultStatus{
+			Status: providerinventory.ResultSucceeded,
+			Self:   &providerinventory.PrivateIPSelf{NICRef: "router-nic", SubnetRef: "subnet-a"},
+			IPs: []providerinventory.PrivateIPRecord{
+				{Address: "10.88.60.9", NICRef: "client-a", Tags: map[string]string{"cloudedge-mobility": "true"}},
+				{Address: "10.88.60.10", NICRef: "client-b", Tags: map[string]string{"cloudedge-mobility": "true"}},
+				{Address: "10.88.60.11", NICRef: "client-c", Tags: map[string]string{"cloudedge-mobility": "true"}},
+			},
+		},
+	}}
+	controller := DiscoveryController{Router: discoveryRouter("azure-router-a", spec), Store: store, Runner: runner.run, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	events, err := store.ListFederationEvents("cloudedge", false, now.Unix())
+	if err != nil {
+		t.Fatalf("ListFederationEvents: %v", err)
+	}
+	if len(events) != 1 || events[0].Subject != "10.88.60.11/32" {
+		t.Fatalf("events = %#v, want only address allowed by include and not excluded", events)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	if fmt.Sprint(status["discoveryExcludedScope"]) != "2" {
+		t.Fatalf("status = %#v, want two scope exclusions", status)
 	}
 }
 

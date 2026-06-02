@@ -162,42 +162,66 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 		excludedNICs[selfInventory.NICRef] = true
 	}
 	ttl := discoveryLeaseTTL(discovery, spec)
-	var emitted, excluded int
+	counters := discoveryExclusionCounters{}
 	for _, rec := range sortedPrivateIPs(result.Status.IPs) {
 		address, ok := normalizeDiscoveredAddress(rec.Address, prefix)
 		if !ok {
-			excluded++
+			counters.Scope++
 			continue
 		}
 		if strings.TrimSpace(rec.NICRef) != "" && excludedNICs[strings.TrimSpace(rec.NICRef)] {
-			excluded++
+			counters.RouterNIC++
+			continue
+		}
+		if !discoveryPrimaryAllowed(discovery.Scope) && rec.Primary {
+			counters.Primary++
+			continue
+		}
+		if !discoveryScopeAllowsAddress(discovery.Scope, address) {
+			counters.Scope++
 			continue
 		}
 		if !discoverySelectorMatches(discovery.Selector, rec.Tags) {
-			excluded++
+			counters.Selector++
 			continue
 		}
 		ev := providerDiscoveryObservedEvent(poolName, spec.GroupRef, self.NodeRef, address, profile.Provider, profileRef, rec, now, ttl)
 		if err := c.Store.RecordFederationEvent(ev); err != nil {
 			return err
 		}
-		emitted++
+		counters.Observed++
 	}
 	c.saveDiscoveryStatus(poolName, map[string]any{
-		"discoveryPhase":          "Observed",
-		"discoveryReason":         "",
-		"discoveryProvider":       profile.Provider,
-		"discoveryProviderRef":    profileRef,
-		"discoveryPlugin":         pluginName,
-		"discoverySelfNICRef":     selfInventory.NICRef,
-		"discoverySelfSubnetRef":  selfInventory.SubnetRef,
-		"discoverySelfPrivateIPs": append([]string(nil), selfInventory.PrivateIPs...),
-		"discoveryObserved":       emitted,
-		"discoveryExcluded":       excluded,
-		"discoveryLastScanAt":     now.Format(time.RFC3339Nano),
-		"discoveryNextScanAt":     now.Add(interval).Format(time.RFC3339Nano),
+		"discoveryPhase":             "Observed",
+		"discoveryReason":            "",
+		"discoveryProvider":          profile.Provider,
+		"discoveryProviderRef":       profileRef,
+		"discoveryPlugin":            pluginName,
+		"discoverySelfNICRef":        selfInventory.NICRef,
+		"discoverySelfSubnetRef":     selfInventory.SubnetRef,
+		"discoverySelfPrivateIPs":    append([]string(nil), selfInventory.PrivateIPs...),
+		"discoveryObserved":          counters.Observed,
+		"discoveryExcluded":          counters.Excluded(),
+		"discoveryExcludedPrimary":   counters.Primary,
+		"discoveryExcludedRouterNIC": counters.RouterNIC,
+		"discoveryExcludedScope":     counters.Scope,
+		"discoveryExcludedSelector":  counters.Selector,
+		"discoveryLastScanAt":        now.Format(time.RFC3339Nano),
+		"discoveryNextScanAt":        now.Add(interval).Format(time.RFC3339Nano),
 	})
 	return nil
+}
+
+type discoveryExclusionCounters struct {
+	Observed  int
+	Primary   int
+	RouterNIC int
+	Scope     int
+	Selector  int
+}
+
+func (c discoveryExclusionCounters) Excluded() int {
+	return c.Primary + c.RouterNIC + c.Scope + c.Selector
 }
 
 type discoverySelfInventory struct {
@@ -311,6 +335,59 @@ func discoveryScanInterval(discovery api.MobilityOwnershipDiscovery) time.Durati
 
 func discoveryLeaseTTL(discovery api.MobilityOwnershipDiscovery, spec api.MobilityPoolSpec) time.Duration {
 	return durationDefault(firstNonEmpty(discovery.LeaseTTL, spec.LeasePolicy.TTL), DefaultLeaseTTL)
+}
+
+func discoveryPrimaryAllowed(scope api.MobilityOwnershipDiscoveryScope) bool {
+	if scope.IncludePrimary == nil {
+		return true
+	}
+	return *scope.IncludePrimary
+}
+
+func discoveryScopeAllowsAddress(scope api.MobilityOwnershipDiscoveryScope, address string) bool {
+	addr, err := netip.ParsePrefix(strings.TrimSpace(address))
+	if err != nil {
+		return false
+	}
+	if len(scope.IncludeAddresses) > 0 {
+		matched := false
+		for _, raw := range scope.IncludeAddresses {
+			prefix, ok := parseDiscoveryScopePrefix(raw)
+			if ok && prefix.Contains(addr.Addr()) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false
+		}
+	}
+	for _, raw := range scope.ExcludeAddresses {
+		prefix, ok := parseDiscoveryScopePrefix(raw)
+		if ok && prefix.Contains(addr.Addr()) {
+			return false
+		}
+	}
+	return true
+}
+
+func parseDiscoveryScopePrefix(raw string) (netip.Prefix, bool) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return netip.Prefix{}, false
+	}
+	if !strings.Contains(value, "/") {
+		addr, err := netip.ParseAddr(value)
+		if err != nil || !addr.Is4() {
+			return netip.Prefix{}, false
+		}
+		return netip.PrefixFrom(addr, 32), true
+	}
+	prefix, err := netip.ParsePrefix(value)
+	if err != nil || !prefix.Addr().Is4() {
+		return netip.Prefix{}, false
+	}
+	return prefix.Masked(), true
 }
 
 func normalizeDiscoveredAddress(value string, poolPrefix netip.Prefix) (string, bool) {

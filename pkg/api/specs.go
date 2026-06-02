@@ -1447,8 +1447,23 @@ type MobilityOwnershipDiscovery struct {
 	// LeaseTTL controls the emitted observed event expiry. Empty defaults to
 	// leasePolicy.ttl, then the controller default.
 	LeaseTTL string `yaml:"leaseTTL,omitempty" json:"leaseTTL,omitempty"`
+	// Scope narrows which provider private IPs become mobility ownership facts.
+	// Empty keeps the historical broad scan behavior.
+	Scope MobilityOwnershipDiscoveryScope `yaml:"scope,omitempty" json:"scope,omitempty"`
 	// Selector optionally filters discovered IP records by provider tags/labels.
 	Selector MobilityOwnershipDiscoverySelector `yaml:"selector,omitempty" json:"selector,omitempty"`
+}
+
+type MobilityOwnershipDiscoveryScope struct {
+	// IncludePrimary controls whether provider-primary private IPs may become
+	// mobility-owned addresses. Nil defaults to true for backward compatibility.
+	IncludePrimary *bool `yaml:"includePrimary,omitempty" json:"includePrimary,omitempty"`
+	// IncludeAddresses optionally allowlists discovered addresses by IPv4 CIDR or
+	// bare IPv4 address. Empty means all pool addresses are candidates.
+	IncludeAddresses []string `yaml:"includeAddresses,omitempty" json:"includeAddresses,omitempty"`
+	// ExcludeAddresses optionally denylists discovered addresses by IPv4 CIDR or
+	// bare IPv4 address.
+	ExcludeAddresses []string `yaml:"excludeAddresses,omitempty" json:"excludeAddresses,omitempty"`
 }
 
 type MobilityOwnershipDiscoverySelector struct {

@@ -149,6 +149,9 @@ func validateMobilityOwnershipDiscovery(res api.Resource, index int, spec api.Mo
 		strings.TrimSpace(discovery.SubnetRef) != "" ||
 		strings.TrimSpace(discovery.ScanInterval) != "" ||
 		strings.TrimSpace(discovery.LeaseTTL) != "" ||
+		discovery.Scope.IncludePrimary != nil ||
+		len(discovery.Scope.IncludeAddresses) > 0 ||
+		len(discovery.Scope.ExcludeAddresses) > 0 ||
 		len(discovery.Selector.Tags) > 0
 	if !discoverySet {
 		return nil
@@ -194,12 +197,70 @@ func validateMobilityOwnershipDiscovery(res api.Resource, index int, spec api.Mo
 			return fmt.Errorf("%s spec.members[%d].ownershipDiscovery.leaseTTL must be > 0", res.ID(), index)
 		}
 	}
+	if err := validateMobilityOwnershipDiscoveryScope(res, index, discovery.Scope, mustParsePrefixForValidation(spec.Prefix)); err != nil {
+		return err
+	}
 	for key := range discovery.Selector.Tags {
 		if strings.TrimSpace(key) == "" {
 			return fmt.Errorf("%s spec.members[%d].ownershipDiscovery.selector.tags must not contain empty keys", res.ID(), index)
 		}
 	}
 	return nil
+}
+
+func validateMobilityOwnershipDiscoveryScope(res api.Resource, index int, scope api.MobilityOwnershipDiscoveryScope, pool netip.Prefix) error {
+	for i, raw := range scope.IncludeAddresses {
+		if _, err := parseMobilityDiscoveryScopePrefix(raw, pool); err != nil {
+			return fmt.Errorf("%s spec.members[%d].ownershipDiscovery.scope.includeAddresses[%d]: %w", res.ID(), index, i, err)
+		}
+	}
+	for i, raw := range scope.ExcludeAddresses {
+		if _, err := parseMobilityDiscoveryScopePrefix(raw, pool); err != nil {
+			return fmt.Errorf("%s spec.members[%d].ownershipDiscovery.scope.excludeAddresses[%d]: %w", res.ID(), index, i, err)
+		}
+	}
+	return nil
+}
+
+func parseMobilityDiscoveryScopePrefix(raw string, pool netip.Prefix) (netip.Prefix, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return netip.Prefix{}, fmt.Errorf("must not be empty")
+	}
+	if !strings.Contains(value, "/") {
+		addr, err := netip.ParseAddr(value)
+		if err != nil {
+			return netip.Prefix{}, fmt.Errorf("must be an IPv4 address or CIDR: %w", err)
+		}
+		if !addr.Is4() {
+			return netip.Prefix{}, fmt.Errorf("must be an IPv4 address or CIDR")
+		}
+		prefix := netip.PrefixFrom(addr, 32)
+		if !pool.Contains(addr) {
+			return netip.Prefix{}, fmt.Errorf("%s is outside pool prefix %s", prefix.String(), pool.String())
+		}
+		return prefix, nil
+	}
+	prefix, err := netip.ParsePrefix(value)
+	if err != nil {
+		return netip.Prefix{}, fmt.Errorf("must be an IPv4 address or CIDR: %w", err)
+	}
+	prefix = prefix.Masked()
+	if !prefix.Addr().Is4() {
+		return netip.Prefix{}, fmt.Errorf("must be an IPv4 address or CIDR")
+	}
+	if prefix.Bits() < pool.Bits() || !pool.Contains(prefix.Addr()) {
+		return netip.Prefix{}, fmt.Errorf("%s is outside pool prefix %s", prefix.String(), pool.String())
+	}
+	return prefix, nil
+}
+
+func mustParsePrefixForValidation(raw string) netip.Prefix {
+	prefix, err := netip.ParsePrefix(strings.TrimSpace(raw))
+	if err != nil {
+		return netip.Prefix{}
+	}
+	return prefix.Masked()
 }
 
 func validateMobilityStaticOwnedAddresses(res api.Resource, index int, member api.MobilityPoolMember, pool netip.Prefix, owners map[string]string) error {
