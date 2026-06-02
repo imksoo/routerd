@@ -55,7 +55,14 @@ type ObservePrivateIPsResultStatus struct {
 	Status  string            `json:"status" yaml:"status"`
 	Message string            `json:"message,omitempty" yaml:"message,omitempty"`
 	Error   string            `json:"error,omitempty" yaml:"error,omitempty"`
+	Self    *PrivateIPSelf    `json:"self,omitempty" yaml:"self,omitempty"`
 	IPs     []PrivateIPRecord `json:"ips,omitempty" yaml:"ips,omitempty"`
+}
+
+type PrivateIPSelf struct {
+	NICRef     string   `json:"nicRef,omitempty" yaml:"nicRef,omitempty"`
+	SubnetRef  string   `json:"subnetRef,omitempty" yaml:"subnetRef,omitempty"`
+	PrivateIPs []string `json:"privateIPs,omitempty" yaml:"privateIPs,omitempty"`
 }
 
 type PrivateIPRecord struct {

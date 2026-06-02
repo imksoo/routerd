@@ -42,6 +42,50 @@ func TestValidateMobilityPool(t *testing.T) {
 	}
 }
 
+func TestValidateMobilityPoolAllowsDiscoveredCloudNICOnlyInBGPDiscoveryMode(t *testing.T) {
+	spec := api.MobilityPoolSpec{
+		Prefix:         "10.88.60.0/24",
+		GroupRef:       "cloudedge",
+		DeliveryPolicy: api.MobilityDeliveryPolicy{Mode: "bgp"},
+		Members: []api.MobilityPoolMember{
+			{
+				NodeRef:  "onprem-router",
+				Site:     "onprem",
+				Role:     "onprem",
+				Capture:  api.MobilityMemberCapture{Type: "proxy-arp", Interface: "lan", ActiveWhen: api.CaptureActiveWhen{Type: "vrrp-master", VirtualAddressRef: "onprem-vip"}},
+				Delivery: api.MobilityMemberDelivery{PeerRef: "azure", Mode: "route", TunnelInterface: "wg-hybrid"},
+			},
+			{
+				NodeRef: "azure-router",
+				Site:    "azure",
+				Role:    "cloud",
+				Capture: api.MobilityMemberCapture{
+					Type:         "provider-secondary-ip",
+					ProviderRef:  "azure-provider",
+					ProviderMode: "nic-secondary-ip",
+				},
+				Delivery:           api.MobilityMemberDelivery{PeerRef: "onprem", Mode: "route", TunnelInterface: "wg-hybrid"},
+				OwnershipDiscovery: api.MobilityOwnershipDiscovery{Mode: "provider-private-ip", ProviderRef: "azure-provider", SubnetRef: "/subnets/demo"},
+			},
+		},
+		LeasePolicy: api.MobilityLeasePolicy{TTL: "5m", HoldDuration: "30s"},
+	}
+	if err := Validate(mobilityPoolRouter(spec, testInterfaceResource("lan"), testVirtualAddressResource("onprem-vip"))); err != nil {
+		t.Fatalf("Validate discovered NIC MobilityPool: %v", err)
+	}
+
+	spec.Members[1].OwnershipDiscovery = api.MobilityOwnershipDiscovery{}
+	if err := Validate(mobilityPoolRouter(spec, testInterfaceResource("lan"), testVirtualAddressResource("onprem-vip"))); err == nil || !strings.Contains(err.Error(), "capture.nicRef is required") {
+		t.Fatalf("Validate without discovery err = %v, want nicRef required", err)
+	}
+
+	spec.Members[1].OwnershipDiscovery = api.MobilityOwnershipDiscovery{Mode: "provider-private-ip", ProviderRef: "azure-provider"}
+	spec.DeliveryPolicy.Mode = ""
+	if err := Validate(mobilityPoolRouter(spec, testInterfaceResource("lan"), testVirtualAddressResource("onprem-vip"))); err == nil || !strings.Contains(err.Error(), "capture.nicRef is required") {
+		t.Fatalf("Validate route-mode err = %v, want nicRef required before discovery", err)
+	}
+}
+
 func TestValidateMobilityPoolActiveWhenVirtualAddressReferenceIsLocalToSelfNode(t *testing.T) {
 	spec := api.MobilityPoolSpec{
 		Prefix:   "10.88.60.0/24",

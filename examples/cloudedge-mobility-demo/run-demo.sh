@@ -252,8 +252,13 @@ run_d3_matrix() {
 
 probe_stale_gate_on_aws_b() {
   router_ssh aws-b "set -euo pipefail
+    aws_b_nic=\$(sudo sqlite3 /var/lib/routerd/routerd.db \"select json_extract(status,'$.discoverySelfNICRef') from objects where api_version='mobility.routerd.net/v1alpha1' and kind='MobilityPool' and name='cloudedge';\")
+    if [ -z \"\$aws_b_nic\" ]; then
+      echo 'stale probe skipped: aws-router-b discoverySelfNICRef is not resolved yet' >&2
+      exit 0
+    fi
     now=\$(date -u +%Y-%m-%dT%H:%M:%SZ)
-    sudo sqlite3 /var/lib/routerd/routerd.db \"insert into action_executions(idempotency_key,source,provider,provider_ref,action,target_json,parameters_json,undo_json,risk_level,status,created_at,updated_at) values('cloudedge-demo-stale-probe-epoch1','stale-gate-probe','aws','aws-lab','assign-secondary-ip',json_object('provider','aws','providerRef','aws-lab','region','$AWS_REGION','nicRef','$AWS_ROUTER_B_ENI_REF','address','10.77.60.10/32'),json_object('mobilityCaptureKey','cloudedge'||char(0)||'10.77.60.10/32'||char(0)||'provider:aws-lab:placement:aws-edge','mobilityCaptureEpoch','1','mobilityCaptureHolder','aws-router-a'),'{}','medium','pending','\$now','\$now') on conflict(idempotency_key) do nothing;\"
+    sudo sqlite3 /var/lib/routerd/routerd.db \"insert into action_executions(idempotency_key,source,provider,provider_ref,action,target_json,parameters_json,undo_json,risk_level,status,created_at,updated_at) values('cloudedge-demo-stale-probe-epoch1','stale-gate-probe','aws','aws-lab','assign-secondary-ip',json_object('provider','aws','providerRef','aws-lab','region','$AWS_REGION','nicRef','\$aws_b_nic','address','10.77.60.10/32'),json_object('mobilityCaptureKey','cloudedge'||char(0)||'10.77.60.10/32'||char(0)||'provider:aws-lab:placement:aws-edge','mobilityCaptureEpoch','1','mobilityCaptureHolder','aws-router-a'),'{}','medium','pending','\$now','\$now') on conflict(idempotency_key) do nothing;\"
     sudo $ROUTERCTL_BIN action import
     sudo $ROUTERCTL_BIN action list -o json | jq -r '.[] | select(.idempotencyKey==\"cloudedge-demo-stale-probe-epoch1\") | [.status,.resultMessage] | @tsv'"
 }

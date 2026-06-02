@@ -157,6 +157,10 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 		return fmt.Errorf("provider inventory plugin %q returned invalid status %q", pluginName, result.Status.Status)
 	}
 	excludedNICs := mobilityRouterNICRefs(spec.Members)
+	selfInventory := resolvedDiscoverySelfInventory(self, discovery, result.Status.Self)
+	if selfInventory.NICRef != "" {
+		excludedNICs[selfInventory.NICRef] = true
+	}
 	ttl := discoveryLeaseTTL(discovery, spec)
 	var emitted, excluded int
 	for _, rec := range sortedPrivateIPs(result.Status.IPs) {
@@ -180,17 +184,42 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 		emitted++
 	}
 	c.saveDiscoveryStatus(poolName, map[string]any{
-		"discoveryPhase":       "Observed",
-		"discoveryReason":      "",
-		"discoveryProvider":    profile.Provider,
-		"discoveryProviderRef": profileRef,
-		"discoveryPlugin":      pluginName,
-		"discoveryObserved":    emitted,
-		"discoveryExcluded":    excluded,
-		"discoveryLastScanAt":  now.Format(time.RFC3339Nano),
-		"discoveryNextScanAt":  now.Add(interval).Format(time.RFC3339Nano),
+		"discoveryPhase":          "Observed",
+		"discoveryReason":         "",
+		"discoveryProvider":       profile.Provider,
+		"discoveryProviderRef":    profileRef,
+		"discoveryPlugin":         pluginName,
+		"discoverySelfNICRef":     selfInventory.NICRef,
+		"discoverySelfSubnetRef":  selfInventory.SubnetRef,
+		"discoverySelfPrivateIPs": append([]string(nil), selfInventory.PrivateIPs...),
+		"discoveryObserved":       emitted,
+		"discoveryExcluded":       excluded,
+		"discoveryLastScanAt":     now.Format(time.RFC3339Nano),
+		"discoveryNextScanAt":     now.Add(interval).Format(time.RFC3339Nano),
 	})
 	return nil
+}
+
+type discoverySelfInventory struct {
+	NICRef     string
+	SubnetRef  string
+	PrivateIPs []string
+}
+
+func resolvedDiscoverySelfInventory(self memberPlanInfo, discovery api.MobilityOwnershipDiscovery, pluginSelf *providerinventory.PrivateIPSelf) discoverySelfInventory {
+	out := discoverySelfInventory{}
+	if pluginSelf != nil {
+		out.NICRef = strings.TrimSpace(pluginSelf.NICRef)
+		out.SubnetRef = strings.TrimSpace(pluginSelf.SubnetRef)
+		out.PrivateIPs = cleanStrings(pluginSelf.PrivateIPs)
+	}
+	if explicit := strings.TrimSpace(self.Capture.NICRef); explicit != "" {
+		out.NICRef = explicit
+	}
+	if explicit := strings.TrimSpace(discovery.SubnetRef); explicit != "" {
+		out.SubnetRef = explicit
+	}
+	return out
 }
 
 func (c DiscoveryController) scanDue(poolName string, interval time.Duration, now time.Time) bool {

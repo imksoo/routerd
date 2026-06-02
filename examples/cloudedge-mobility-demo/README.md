@@ -54,6 +54,9 @@ advertisements, routes, and provider action plans. The on-prem `.10` owner is
 declared through `staticOwnedAddresses`. Cloud `.11/.12/.13` ownership is
 observed by the router-local `observe.providerPrivateIPs` inventory plugin, so
 `run-demo.sh` no longer injects owner events manually.
+Cloud router `capture.nicRef` is intentionally omitted from the demo templates:
+each router resolves its own NIC/VNIC through the inventory plugin from the
+declared provider subnet segment.
 It does not include an `EventSubscription` plugin path; that narrower Phase 3
 mechanism remains documented in
 `examples/event-federation/`.

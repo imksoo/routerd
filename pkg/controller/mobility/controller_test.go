@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -628,6 +629,61 @@ func TestControllerBGPModeProviderActionFailureDoesNotRemoveBGPPath(t *testing.T
 	part = latestPart(t, store, source)
 	if findActionPlanByAddress(decodeActionPlans(t, part.ActionPlansJSON), "assign-secondary-ip", "10.88.60.10/32") == nil {
 		t.Fatalf("actionPlans after failure = %s, want desired provider assign retained", part.ActionPlansJSON)
+	}
+}
+
+func TestControllerBGPModeUsesDiscoveredSelfNICForProviderActions(t *testing.T) {
+	now := time.Date(2026, 6, 2, 10, 0, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := plannedPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	spec.Members[1].Capture.NICRef = ""
+	spec.Members[1].OwnershipDiscovery = api.MobilityOwnershipDiscovery{Mode: "provider-private-ip", ProviderRef: "azure-provider", SubnetRef: "/subnets/demo"}
+	recordEvent(t, store, routerstate.EventRecord{
+		ID:         "evt-onprem",
+		Group:      "cloudedge",
+		SourceNode: "onprem-router",
+		Type:       ObservedEventType,
+		Subject:    "10.88.60.10/32",
+		ObservedAt: now.Add(-time.Second),
+		ExpiresAt:  now.Add(time.Hour),
+	})
+	saveBGPInstalledNextHops(t, store, map[string][]string{"10.88.60.10/32": {"10.99.0.1"}})
+	bgp := &fakeBGPPaths{}
+	source := DynamicSource("cloudedge", "azure-router")
+	controller := Controller{Router: routerWithBGPRouter(planningRouterForNode("azure-router", spec)), Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("unresolved Reconcile: %v", err)
+	}
+	part := latestPart(t, store, source)
+	if plans := decodeActionPlans(t, part.ActionPlansJSON); len(plans) != 0 {
+		t.Fatalf("unresolved plans = %#v, want no provider actions", plans)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	if status["plannerPhase"] != "Degraded" || !strings.Contains(fmt.Sprint(status["plannerReason"]), "self NIC is unresolved") {
+		t.Fatalf("status = %#v, want unresolved self NIC degraded", status)
+	}
+	if len(bgp.upserts) != 0 {
+		t.Fatalf("bgp upserts = %#v, want no self-owned path for remote owner", bgp.upserts)
+	}
+
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"discoverySelfNICRef":    "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/resolved-router-nic",
+		"discoverySelfSubnetRef": "/subnets/demo",
+	}); err != nil {
+		t.Fatalf("SaveObjectStatus: %v", err)
+	}
+	controller.Now = func() time.Time { return now.Add(time.Second) }
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("resolved Reconcile: %v", err)
+	}
+	plans := decodeActionPlans(t, latestPart(t, store, source).ActionPlansJSON)
+	assign := findActionPlanByAddress(plans, "assign-secondary-ip", "10.88.60.10/32")
+	if assign == nil {
+		t.Fatalf("resolved plans = %#v status=%#v, want provider assign", plans, store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge"))
+	}
+	if assign.Target["nicRef"] != "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/resolved-router-nic" {
+		t.Fatalf("assign target = %#v, want discovered nicRef", assign.Target)
 	}
 }
 

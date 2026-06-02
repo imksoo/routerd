@@ -8,17 +8,21 @@ import json
 import os
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 
 API_VERSION = "providerinventory.routerd.net/v1alpha1"
 KIND_RESULT = "ObservePrivateIPsResult"
 
 
-def result(status, ips=None, message="", error=""):
+def result(status, ips=None, self_info=None, message="", error=""):
     out = {
         "apiVersion": API_VERSION,
         "kind": KIND_RESULT,
         "status": {"status": status},
     }
+    if self_info:
+        out["status"]["self"] = self_info
     if ips:
         out["status"]["ips"] = ips
     if message:
@@ -47,6 +51,83 @@ def aws_cli(region, args):
     argv.extend(args)
     argv.extend(["--output", "json", "--no-cli-pager"])
     return run_json(argv)
+
+
+def http_text(url, headers=None, method="GET", data=None, timeout=1.0):
+    req = urllib.request.Request(url, data=data, method=method, headers=headers or {})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return resp.read().decode("utf-8")
+
+
+def local_ipv4s():
+    configured = os.environ.get("ROUTERD_PROVIDER_INVENTORY_LOCAL_IPS", "").strip()
+    if configured:
+        return sorted(set([item.strip() for item in configured.replace(",", " ").split() if item.strip()]))
+    try:
+        doc = run_json(["ip", "-j", "-4", "addr", "show", "scope", "global"])
+    except Exception:
+        return []
+    out = []
+    for link in doc or []:
+        for rec in link.get("addr_info") or []:
+            address = rec.get("local", "")
+            if address and not address.startswith("127."):
+                out.append(address)
+    return sorted(set(out))
+
+
+def aws_imds_ipv4():
+    headers = {}
+    try:
+        token = http_text(
+            "http://169.254.169.254/latest/api/token",
+            headers={"X-aws-ec2-metadata-token-ttl-seconds": "60"},
+            method="PUT",
+            timeout=1.0,
+        ).strip()
+        if token:
+            headers["X-aws-ec2-metadata-token"] = token
+    except Exception:
+        pass
+    try:
+        return http_text("http://169.254.169.254/latest/meta-data/local-ipv4", headers=headers, timeout=1.0).strip()
+    except Exception:
+        return ""
+
+
+def azure_imds_ipv4s():
+    try:
+        doc = json.loads(http_text(
+            "http://169.254.169.254/metadata/instance/network/interface?api-version=2021-02-01",
+            headers={"Metadata": "true"},
+            timeout=1.0,
+        ))
+    except Exception:
+        return []
+    out = []
+    for iface in doc.get("interface") or []:
+        for rec in ((iface.get("ipv4") or {}).get("ipAddress") or []):
+            address = rec.get("privateIpAddress", "")
+            if address:
+                out.append(address)
+    return sorted(set(out))
+
+
+def oci_imds_vnic_id():
+    headers = {"Authorization": "Bearer Oracle"}
+    for url in (
+        "http://169.254.169.254/opc/v2/vnics/",
+        "http://169.254.169.254/opc/v1/vnics/",
+    ):
+        try:
+            doc = json.loads(http_text(url, headers=headers, timeout=1.0))
+        except Exception:
+            continue
+        if isinstance(doc, list) and doc:
+            vnic_id = doc[0].get("vnicId") or doc[0].get("id") or ""
+            if vnic_id:
+                return vnic_id
+    return ""
 
 
 def az_cli(args):
@@ -84,14 +165,28 @@ def aws_inventory(spec):
     region = target.get("region") or os.environ.get("AWS_DEFAULT_REGION", "")
     self_nic = spec.get("selfNicRef", "").strip()
     subnet = (spec.get("subnetRef") or "").strip()
+    self_private_ips = []
     if not self_nic:
-        raise ValueError("selfNicRef is required for AWS inventory")
-    if not subnet:
+        local_ips = local_ipv4s() or [ip for ip in [aws_imds_ipv4()] if ip]
+        if not local_ips:
+            raise ValueError("AWS selfNicRef is empty and no local private IP could be discovered")
+        self_doc = aws_cli(region, ["ec2", "describe-network-interfaces", "--filters", "Name=addresses.private-ip-address,Values=" + ",".join(local_ips)])
+        interfaces = self_doc.get("NetworkInterfaces") or []
+        if subnet:
+            interfaces = [nic for nic in interfaces if nic.get("SubnetId") == subnet]
+        if not interfaces:
+            raise ValueError("AWS self network interface could not be resolved from local IPs")
+        interfaces.sort(key=lambda nic: nic.get("NetworkInterfaceId", ""))
+        self_nic = interfaces[0].get("NetworkInterfaceId", "")
+        subnet = subnet or interfaces[0].get("SubnetId", "")
+        self_private_ips = [rec.get("PrivateIpAddress", "") for rec in interfaces[0].get("PrivateIpAddresses") or [] if rec.get("PrivateIpAddress")]
+    if not subnet or not self_private_ips:
         self_doc = aws_cli(region, ["ec2", "describe-network-interfaces", "--network-interface-ids", self_nic])
         interfaces = self_doc.get("NetworkInterfaces") or []
         if not interfaces:
             raise ValueError("AWS self network interface was not found")
-        subnet = interfaces[0].get("SubnetId", "")
+        subnet = subnet or interfaces[0].get("SubnetId", "")
+        self_private_ips = self_private_ips or [rec.get("PrivateIpAddress", "") for rec in interfaces[0].get("PrivateIpAddresses") or [] if rec.get("PrivateIpAddress")]
     if not subnet:
         raise ValueError("AWS subnetRef could not be inferred from self NIC")
     doc = aws_cli(region, ["ec2", "describe-network-interfaces", "--filters", "Name=subnet-id,Values=" + subnet])
@@ -111,7 +206,7 @@ def aws_inventory(spec):
                 "primary": bool(rec.get("Primary")),
                 "tags": tags,
             })
-    return ips
+    return {"nicRef": self_nic, "subnetRef": subnet, "privateIPs": sorted(set(self_private_ips))}, ips
 
 
 def azure_inventory(spec):
@@ -119,20 +214,40 @@ def azure_inventory(spec):
     self_nic = spec.get("selfNicRef", "").strip()
     resource_group = target.get("resourceGroup", "").strip()
     subnet = (spec.get("subnetRef") or "").strip()
-    if not self_nic:
-        raise ValueError("selfNicRef is required for Azure inventory")
-    self_doc = az_cli(["network", "nic", "show", "--ids", self_nic])
     if not resource_group:
-        resource_group = self_doc.get("resourceGroup", "")
+        if self_nic:
+            self_doc = az_cli(["network", "nic", "show", "--ids", self_nic])
+            resource_group = self_doc.get("resourceGroup", "")
+        if not resource_group:
+            raise ValueError("Azure resourceGroup is required for segment inventory")
+    nics = az_cli(["network", "nic", "list", "--resource-group", resource_group])
+    self_doc = {}
+    local_ips = local_ipv4s() or azure_imds_ipv4s()
+    if self_nic:
+        self_doc = az_cli(["network", "nic", "show", "--ids", self_nic])
+    else:
+        for nic in nics or []:
+            for cfg in nic.get("ipConfigurations") or []:
+                address = cfg.get("privateIPAddress") or cfg.get("privateIpAddress") or ""
+                if address in local_ips:
+                    self_doc = nic
+                    self_nic = nic.get("id", "")
+                    break
+            if self_nic:
+                break
+    if not self_nic:
+        raise ValueError("Azure self NIC could not be resolved from local IPs")
     if not subnet:
         configs = self_doc.get("ipConfigurations") or []
         if configs:
             subnet = ((configs[0].get("subnet") or {}).get("id") or "")
-    if not resource_group:
-        raise ValueError("Azure resourceGroup is required or must be inferable from self NIC")
     if not subnet:
         raise ValueError("Azure subnetRef could not be inferred from self NIC")
-    nics = az_cli(["network", "nic", "list", "--resource-group", resource_group])
+    self_private_ips = []
+    for cfg in self_doc.get("ipConfigurations") or []:
+        address = cfg.get("privateIPAddress") or cfg.get("privateIpAddress") or ""
+        if address:
+            self_private_ips.append(address)
     ips = []
     for nic in nics or []:
         nic_ref = nic.get("id", "")
@@ -151,7 +266,7 @@ def azure_inventory(spec):
                 "primary": bool(cfg.get("primary")),
                 "tags": tags,
             })
-    return ips
+    return {"nicRef": self_nic, "subnetRef": subnet, "privateIPs": sorted(set(self_private_ips))}, ips
 
 
 def flatten_oci_tags(rec):
@@ -171,7 +286,10 @@ def oci_inventory(spec):
     self_nic = spec.get("selfNicRef", "").strip()
     subnet = (spec.get("subnetRef") or "").strip()
     if not self_nic:
-        raise ValueError("selfNicRef is required for OCI inventory")
+        self_nic = oci_imds_vnic_id()
+    if not self_nic:
+        raise ValueError("OCI self VNIC could not be resolved from IMDS")
+    self_private_ips = []
     if not subnet:
         self_doc = oci_cli(region, ["network", "vnic", "get", "--vnic-id", self_nic])
         subnet = ((self_doc.get("data") or {}).get("subnet-id") or "")
@@ -183,6 +301,8 @@ def oci_inventory(spec):
         address = rec.get("ip-address", "")
         if not address:
             continue
+        if rec.get("vnic-id", "") == self_nic:
+            self_private_ips.append(address)
         ips.append({
             "address": address,
             "nicRef": rec.get("vnic-id", ""),
@@ -190,7 +310,7 @@ def oci_inventory(spec):
             "primary": bool(rec.get("is-primary")),
             "tags": flatten_oci_tags(rec),
         })
-    return ips
+    return {"nicRef": self_nic, "subnetRef": subnet, "privateIPs": sorted(set(self_private_ips))}, ips
 
 
 def main():
@@ -198,15 +318,15 @@ def main():
     spec = req.get("spec") or {}
     provider = (spec.get("provider") or "").strip().lower()
     if provider == "aws":
-        ips = aws_inventory(spec)
+        self_info, ips = aws_inventory(spec)
     elif provider == "azure":
-        ips = azure_inventory(spec)
+        self_info, ips = azure_inventory(spec)
     elif provider == "oci":
-        ips = oci_inventory(spec)
+        self_info, ips = oci_inventory(spec)
     else:
         result("skipped", message="unsupported provider: " + provider)
         return
-    result("succeeded", ips=ips)
+    result("succeeded", ips=ips, self_info=self_info)
 
 
 if __name__ == "__main__":

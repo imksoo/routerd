@@ -93,14 +93,14 @@ func (c Controller) Reconcile(ctx context.Context) error {
 			continue
 		}
 		if err := c.emitHeartbeat(res, now); err != nil {
-			_ = c.Store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", res.Metadata.Name, map[string]any{
+			_ = c.savePlannerStatus(res.Metadata.Name, map[string]any{
 				"phase":  "Degraded",
 				"reason": err.Error(),
 			})
 			continue
 		}
 		if err := c.reconcilePool(res, now); err != nil {
-			_ = c.Store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", res.Metadata.Name, map[string]any{
+			_ = c.savePlannerStatus(res.Metadata.Name, map[string]any{
 				"phase":  "Degraded",
 				"reason": err.Error(),
 			})
@@ -155,6 +155,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 	if _, ok := plannerMembers(spec.Members)[selfNode]; !ok {
 		return fmt.Errorf("self node %q is not a member of MobilityPool/%s", selfNode, res.Metadata.Name)
 	}
+	spec, selfCaptureResolved, selfCaptureReason := c.specWithDiscoveredSelfCapture(res.Metadata.Name, selfNode, spec)
 	source := DynamicSource(res.Metadata.Name, selfNode)
 	leases, err := c.Store.ListAddressLeases(res.Metadata.Name, false, now)
 	if err != nil {
@@ -202,9 +203,14 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 	if err != nil {
 		return err
 	}
-	actionPlans, err := bgpProviderActionPlans(res.Metadata.Name, selfNode, spec, desiredTrapAddresses, previousActionPlans, markers, cloudProviderProfiles(c.Router), captureEpochs, ownershipEpochs, actionJournal, now)
-	if err != nil {
-		return err
+	var actionPlans []dynamicconfig.ActionPlan
+	if len(desiredTrapAddresses) > 0 && !selfCaptureResolved {
+		actionPlans = nil
+	} else {
+		actionPlans, err = bgpProviderActionPlans(res.Metadata.Name, selfNode, spec, desiredTrapAddresses, previousActionPlans, markers, cloudProviderProfiles(c.Router), captureEpochs, ownershipEpochs, actionJournal, now)
+		if err != nil {
+			return err
+		}
 	}
 	if err := c.persistDeprovisionMarkers(source, actionPlans); err != nil {
 		return err
@@ -247,6 +253,11 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		"operatorIntent":     "MobilityPool",
 		"derivedConfigKinds": []string{"BGPPath"},
 	}
+	if len(desiredTrapAddresses) > 0 && !selfCaptureResolved {
+		status["plannerPhase"] = "Degraded"
+		status["plannerReason"] = selfCaptureReason
+		status["providerActionPhase"] = "Blocked"
+	}
 	if ipOwnershipPolicyCentralized(spec.IPOwnershipPolicy) {
 		status["ownershipPolicy"] = "centralized"
 		status["ownershipCount"] = len(ownershipEpochs)
@@ -258,6 +269,40 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		}
 	}
 	return c.savePlannerStatus(res.Metadata.Name, status)
+}
+
+func (c Controller) specWithDiscoveredSelfCapture(poolName, selfNode string, spec api.MobilityPoolSpec) (api.MobilityPoolSpec, bool, string) {
+	for i := range spec.Members {
+		member := &spec.Members[i]
+		if strings.TrimSpace(member.NodeRef) != strings.TrimSpace(selfNode) {
+			continue
+		}
+		if member.Capture.Type != "provider-secondary-ip" || member.OwnershipDiscovery.Mode != "provider-private-ip" {
+			return spec, true, ""
+		}
+		if strings.TrimSpace(member.Capture.NICRef) != "" {
+			return spec, true, ""
+		}
+		status := c.Store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", poolName)
+		nicRef := strings.TrimSpace(fmt.Sprint(status["discoverySelfNICRef"]))
+		if nicRef == "" || nicRef == "<nil>" {
+			return spec, false, "provider inventory self NIC is unresolved"
+		}
+		member.Capture.NICRef = nicRef
+		if strings.TrimSpace(member.OwnershipDiscovery.SubnetRef) == "" {
+			if subnetRef := strings.TrimSpace(fmt.Sprint(status["discoverySelfSubnetRef"])); subnetRef != "" && subnetRef != "<nil>" {
+				member.OwnershipDiscovery.SubnetRef = subnetRef
+				if member.Capture.Target == nil {
+					member.Capture.Target = map[string]string{}
+				}
+				if strings.TrimSpace(member.Capture.Target["subnetRef"]) == "" {
+					member.Capture.Target["subnetRef"] = subnetRef
+				}
+			}
+		}
+		return spec, true, ""
+	}
+	return spec, true, ""
 }
 
 func (c Controller) reconcileBGPOwnership(poolName string, spec api.MobilityPoolSpec, leases []routerstate.AddressLeaseRecord, liveness OwnershipLiveness, now time.Time) ([]routerstate.MobilityOwnershipEpochRecord, error) {
@@ -516,7 +561,7 @@ func (c Controller) reconcilePool(res api.Resource, now time.Time) error {
 		"management":     "managed",
 		"operatorIntent": "MobilityPool",
 	}
-	return c.Store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", res.Metadata.Name, status)
+	return c.savePlannerStatus(res.Metadata.Name, status)
 }
 
 func (c Controller) staticLeaseProjection(poolName string, spec api.MobilityPoolSpec, members map[string]memberInfo, prefix netip.Prefix, handoversByFrom map[string]api.MobilityStaticHandover, existing map[string]routerstate.AddressLeaseRecord, expiredEvents map[string]leaseCandidate, now time.Time) (map[string]leaseCandidate, map[string]leaseCandidate, []routerstate.EventRecord, error) {

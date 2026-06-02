@@ -74,7 +74,7 @@ func validateMobilityResource(res api.Resource, _ platform.OS) (bool, error) {
 			if err := validateMobilityStaticOwnedAddresses(res, i, member, parsedPrefix.Masked(), staticOwners); err != nil {
 				return true, err
 			}
-			if err := validateMobilityMemberCapture(res, i, member); err != nil {
+			if err := validateMobilityMemberCapture(res, i, spec, member); err != nil {
 				return true, err
 			}
 			if err := validateMobilityMemberPlacement(res, i, member, placementGroups); err != nil {
@@ -175,9 +175,6 @@ func validateMobilityOwnershipDiscovery(res api.Resource, index int, spec api.Mo
 	}
 	if providerRef == "" {
 		return fmt.Errorf("%s spec.members[%d].ownershipDiscovery.providerRef or capture.providerRef is required", res.ID(), index)
-	}
-	if strings.TrimSpace(member.Capture.NICRef) == "" {
-		return fmt.Errorf("%s spec.members[%d].ownershipDiscovery requires capture.nicRef", res.ID(), index)
 	}
 	if interval := strings.TrimSpace(discovery.ScanInterval); interval != "" {
 		parsed, err := time.ParseDuration(interval)
@@ -404,7 +401,7 @@ func validateMobilityMemberPlacement(res api.Resource, index int, member api.Mob
 	return nil
 }
 
-func validateMobilityMemberCapture(res api.Resource, index int, member api.MobilityPoolMember) error {
+func validateMobilityMemberCapture(res api.Resource, index int, spec api.MobilityPoolSpec, member api.MobilityPoolMember) error {
 	captureType := strings.TrimSpace(member.Capture.Type)
 	switch strings.TrimSpace(member.Delivery.Mode) {
 	case "", "route":
@@ -477,7 +474,7 @@ func validateMobilityMemberCapture(res api.Resource, index int, member api.Mobil
 		if strings.TrimSpace(member.Capture.ProviderMode) == "" {
 			return fmt.Errorf("%s spec.members[%d].capture.providerMode is required when capture.type is provider-secondary-ip", res.ID(), index)
 		}
-		if strings.TrimSpace(member.Capture.NICRef) == "" {
+		if strings.TrimSpace(member.Capture.NICRef) == "" && !mobilityProviderCaptureAllowsDiscoveredNIC(spec, member) {
 			return fmt.Errorf("%s spec.members[%d].capture.nicRef is required when capture.type is provider-secondary-ip", res.ID(), index)
 		}
 		if member.Capture.ConfigureOSAddress {
@@ -491,4 +488,11 @@ func validateMobilityMemberCapture(res api.Resource, index int, member api.Mobil
 		return fmt.Errorf("%s spec.members[%d].capture.type %q is reserved/not implemented in MVP", res.ID(), index, captureType)
 	}
 	return nil
+}
+
+func mobilityProviderCaptureAllowsDiscoveredNIC(spec api.MobilityPoolSpec, member api.MobilityPoolMember) bool {
+	return strings.TrimSpace(spec.DeliveryPolicy.Mode) == "bgp" &&
+		strings.TrimSpace(member.Role) == "cloud" &&
+		strings.TrimSpace(member.Capture.Type) == "provider-secondary-ip" &&
+		strings.TrimSpace(member.OwnershipDiscovery.Mode) == "provider-private-ip"
 }

@@ -16,7 +16,12 @@ import (
 type inventoryResult struct {
 	Status struct {
 		Status string `json:"status"`
-		IPs    []struct {
+		Self   struct {
+			NICRef     string   `json:"nicRef"`
+			SubnetRef  string   `json:"subnetRef"`
+			PrivateIPs []string `json:"privateIPs"`
+		} `json:"self"`
+		IPs []struct {
 			Address   string            `json:"address"`
 			NICRef    string            `json:"nicRef"`
 			SubnetRef string            `json:"subnetRef"`
@@ -47,6 +52,36 @@ esac
 	if res.Status.Status != "succeeded" {
 		t.Fatalf("status = %q error=%q", res.Status.Status, res.Status.Error)
 	}
+	if res.Status.Self.NICRef != "eni-router" || res.Status.Self.SubnetRef != "subnet-a" {
+		t.Fatalf("self = %+v, want eni-router/subnet-a", res.Status.Self)
+	}
+	assertIP(t, res, "10.77.60.11", "eni-client", "subnet-a")
+}
+
+func TestProviderPrivateIPInventoryPluginAWSResolvesSelfFromLocalIP(t *testing.T) {
+	requirePython(t)
+	bin := fakeBinDir(t)
+	writeExecutable(t, filepath.Join(bin, "aws"), `#!/bin/sh
+case "$*" in
+  *"Name=addresses.private-ip-address,Values=10.77.60.21"*)
+    printf '%s\n' '{"NetworkInterfaces":[{"NetworkInterfaceId":"eni-router","SubnetId":"subnet-a","PrivateIpAddresses":[{"PrivateIpAddress":"10.77.60.21","Primary":true}]}]}'
+    ;;
+  *"Name=subnet-id,Values=subnet-a"*)
+    printf '%s\n' '{"NetworkInterfaces":[{"NetworkInterfaceId":"eni-router","SubnetId":"subnet-a","PrivateIpAddresses":[{"PrivateIpAddress":"10.77.60.21","Primary":true}]},{"NetworkInterfaceId":"eni-client","SubnetId":"subnet-a","PrivateIpAddresses":[{"PrivateIpAddress":"10.77.60.11","Primary":false}]}]}'
+    ;;
+  *)
+    echo "unexpected aws args: $*" >&2
+    exit 2
+    ;;
+esac
+`)
+	res := runInventoryPluginWithEnv(t, bin, `{"spec":{"provider":"aws","target":{"region":"us-east-1"}}}`, []string{"ROUTERD_PROVIDER_INVENTORY_LOCAL_IPS=10.77.60.21"})
+	if res.Status.Status != "succeeded" {
+		t.Fatalf("status = %q error=%q", res.Status.Status, res.Status.Error)
+	}
+	if res.Status.Self.NICRef != "eni-router" || res.Status.Self.SubnetRef != "subnet-a" {
+		t.Fatalf("self = %+v, want resolved eni-router/subnet-a", res.Status.Self)
+	}
 	assertIP(t, res, "10.77.60.11", "eni-client", "subnet-a")
 }
 
@@ -70,6 +105,9 @@ esac
 	res := runInventoryPlugin(t, bin, `{"spec":{"provider":"azure","selfNicRef":"/nic/router","target":{"resourceGroup":"rg-demo"}}}`)
 	if res.Status.Status != "succeeded" {
 		t.Fatalf("status = %q error=%q", res.Status.Status, res.Status.Error)
+	}
+	if res.Status.Self.NICRef != "/nic/router" || res.Status.Self.SubnetRef != "/subnets/demo" {
+		t.Fatalf("self = %+v, want /nic/router//subnets/demo", res.Status.Self)
 	}
 	assertIP(t, res, "10.77.60.12", "/nic/client", "/subnets/demo")
 }
@@ -95,14 +133,23 @@ esac
 	if res.Status.Status != "succeeded" {
 		t.Fatalf("status = %q error=%q", res.Status.Status, res.Status.Error)
 	}
+	if res.Status.Self.NICRef != "vnic-router" || res.Status.Self.SubnetRef != "subnet-oci" {
+		t.Fatalf("self = %+v, want vnic-router/subnet-oci", res.Status.Self)
+	}
 	assertIP(t, res, "10.77.60.13", "vnic-client", "subnet-oci")
 }
 
 func runInventoryPlugin(t *testing.T, fakeBin, stdin string) inventoryResult {
 	t.Helper()
+	return runInventoryPluginWithEnv(t, fakeBin, stdin, nil)
+}
+
+func runInventoryPluginWithEnv(t *testing.T, fakeBin, stdin string, extraEnv []string) inventoryResult {
+	t.Helper()
 	cmd := exec.Command("./provider-private-ip-inventory")
 	cmd.Stdin = strings.NewReader(stdin)
 	cmd.Env = append(os.Environ(), "PATH="+fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	cmd.Env = append(cmd.Env, extraEnv...)
 	var out, errOut bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &errOut
