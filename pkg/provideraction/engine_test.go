@@ -5,7 +5,6 @@ package provideraction
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -176,33 +175,12 @@ func TestImportSkipsMissingIdempotencyKey(t *testing.T) {
 	}
 }
 
-func TestImportFencesStaleMobilityCaptureEpochActions(t *testing.T) {
+func TestImportFencesStaleMobilityPathActions(t *testing.T) {
 	store := mustStore(t)
 	e := newEngine(t, store, (&fakeRunner{result: succeededResult()}).run, nil)
-	captureKey := "cloudedge\x0010.0.0.5/32\x00provider:aws:placement:edge"
-	if _, err := store.ReconcileMobilityCaptureEpochs([]state.MobilityCaptureEpochRecord{{
-		CaptureKey:    captureKey,
-		Pool:          "cloudedge",
-		Address:       "10.0.0.5/32",
-		CaptureDomain: "provider:aws:placement:edge",
-		Holder:        "router-a",
-	}}); err != nil {
-		t.Fatalf("seed initial capture epoch: %v", err)
-	}
-	if _, err := store.ReconcileMobilityCaptureEpochs([]state.MobilityCaptureEpochRecord{{
-		CaptureKey:    captureKey,
-		Pool:          "cloudedge",
-		Address:       "10.0.0.5/32",
-		CaptureDomain: "provider:aws:placement:edge",
-		Holder:        "router-b",
-	}}); err != nil {
-		t.Fatalf("advance capture epoch: %v", err)
-	}
 	oldPlan := samplePlan("old-assign")
 	oldPlan.Parameters = map[string]string{
-		captureParamKey:    captureKey,
-		captureParamEpoch:  "1",
-		captureParamHolder: "router-a",
+		pathSigParam: "prefix=10.0.0.5/32;nextHops=10.99.0.1",
 	}
 	oldRec, err := recordFromPlan("previous", oldPlan)
 	if err != nil {
@@ -211,14 +189,18 @@ func TestImportFencesStaleMobilityCaptureEpochActions(t *testing.T) {
 	if _, err := store.ImportAction(oldRec); err != nil {
 		t.Fatalf("seed stale pending action: %v", err)
 	}
-	seedPart(t, store, "sub-a", []dynamicconfig.ActionPlan{oldPlan})
+	currentPlan := samplePlan("current-assign")
+	currentPlan.Parameters = map[string]string{
+		pathSigParam: "prefix=10.0.0.5/32;nextHops=10.99.0.2",
+	}
+	seedPart(t, store, "sub-a", []dynamicconfig.ActionPlan{currentPlan})
 
 	res, err := e.ImportFromDynamicParts()
 	if err != nil {
 		t.Fatalf("import: %v", err)
 	}
-	if res.Inserted != 0 || res.Skipped != 2 {
-		t.Fatalf("want stale pending + stale plan skipped, got %+v", res)
+	if res.Inserted != 1 || res.Skipped != 1 {
+		t.Fatalf("want stale pending skipped and current path inserted, got %+v", res)
 	}
 	rec, ok, err := store.GetActionByIdempotencyKey("old-assign")
 	if err != nil || !ok {
@@ -229,34 +211,13 @@ func TestImportFencesStaleMobilityCaptureEpochActions(t *testing.T) {
 	}
 }
 
-func TestImportAllowsCurrentEpochDeprovisionForPreviousHolder(t *testing.T) {
+func TestImportAllowsCurrentMobilityPathDeprovision(t *testing.T) {
 	store := mustStore(t)
 	e := newEngine(t, store, (&fakeRunner{result: succeededResult()}).run, nil)
-	captureKey := "cloudedge\x0010.0.0.5/32\x00provider:aws:placement:edge"
-	if _, err := store.ReconcileMobilityCaptureEpochs([]state.MobilityCaptureEpochRecord{{
-		CaptureKey:    captureKey,
-		Pool:          "cloudedge",
-		Address:       "10.0.0.5/32",
-		CaptureDomain: "provider:aws:placement:edge",
-		Holder:        "router-a",
-	}}); err != nil {
-		t.Fatalf("seed initial capture epoch: %v", err)
-	}
-	if _, err := store.ReconcileMobilityCaptureEpochs([]state.MobilityCaptureEpochRecord{{
-		CaptureKey:    captureKey,
-		Pool:          "cloudedge",
-		Address:       "10.0.0.5/32",
-		CaptureDomain: "provider:aws:placement:edge",
-		Holder:        "router-b",
-	}}); err != nil {
-		t.Fatalf("advance capture epoch: %v", err)
-	}
-	plan := samplePlan("unassign-router-a-epoch-2")
+	plan := samplePlan("unassign-current-path")
 	plan.Action = "unassign-secondary-ip"
 	plan.Parameters = map[string]string{
-		captureParamKey:    captureKey,
-		captureParamEpoch:  "2",
-		captureParamHolder: "router-a",
+		pathSigParam: "prefix=10.0.0.5/32;nextHops=10.99.0.1",
 	}
 	seedPart(t, store, "sub-a", []dynamicconfig.ActionPlan{plan})
 
@@ -265,85 +226,20 @@ func TestImportAllowsCurrentEpochDeprovisionForPreviousHolder(t *testing.T) {
 		t.Fatalf("import: %v", err)
 	}
 	if res.Inserted != 1 || res.Skipped != 0 {
-		t.Fatalf("want current-epoch previous-holder deprovision imported, got %+v", res)
+		t.Fatalf("want current path deprovision imported, got %+v", res)
 	}
 }
 
-func TestImportFencesStaleMobilityOwnershipEpochActions(t *testing.T) {
+func TestImportKeepsLegacyEpochParametersNonFencing(t *testing.T) {
 	store := mustStore(t)
 	e := newEngine(t, store, (&fakeRunner{result: succeededResult()}).run, nil)
-	if _, err := store.ReconcileMobilityOwnershipEpochs([]state.MobilityOwnershipEpochRecord{{
-		Pool:      "cloudedge",
-		Address:   "10.0.0.5/32",
-		OwnerNode: "router-a",
-	}}); err != nil {
-		t.Fatalf("seed initial ownership epoch: %v", err)
-	}
-	if _, err := store.ReconcileMobilityOwnershipEpochs([]state.MobilityOwnershipEpochRecord{{
-		Pool:      "cloudedge",
-		Address:   "10.0.0.5/32",
-		OwnerNode: "router-b",
-	}}); err != nil {
-		t.Fatalf("advance ownership epoch: %v", err)
-	}
-	oldPlan := samplePlan("old-assign")
-	oldPlan.Parameters = map[string]string{
+	plan := samplePlan("legacy-epoch-assign")
+	plan.Parameters = map[string]string{
 		ownershipParamPool:    "cloudedge",
 		ownershipParamAddress: "10.0.0.5/32",
 		ownershipParamEpoch:   "1",
 		ownershipParamOwner:   "router-a",
 	}
-	oldRec, err := recordFromPlan("previous", oldPlan)
-	if err != nil {
-		t.Fatalf("recordFromPlan: %v", err)
-	}
-	if _, err := store.ImportAction(oldRec); err != nil {
-		t.Fatalf("seed stale pending action: %v", err)
-	}
-	seedPart(t, store, "sub-a", []dynamicconfig.ActionPlan{oldPlan})
-
-	res, err := e.ImportFromDynamicParts()
-	if err != nil {
-		t.Fatalf("import: %v", err)
-	}
-	if res.Inserted != 0 || res.Skipped != 2 {
-		t.Fatalf("want stale pending + stale plan skipped, got %+v", res)
-	}
-	rec, ok, err := store.GetActionByIdempotencyKey("old-assign")
-	if err != nil || !ok {
-		t.Fatalf("lookup stale action: ok=%v err=%v", ok, err)
-	}
-	if rec.Status != state.ActionSkipped {
-		t.Fatalf("stale pending status = %q, want skipped", rec.Status)
-	}
-}
-
-func TestImportAllowsCurrentOwnershipEpochDeprovisionForPreviousOwner(t *testing.T) {
-	store := mustStore(t)
-	e := newEngine(t, store, (&fakeRunner{result: succeededResult()}).run, nil)
-	if _, err := store.ReconcileMobilityOwnershipEpochs([]state.MobilityOwnershipEpochRecord{{
-		Pool:      "cloudedge",
-		Address:   "10.0.0.5/32",
-		OwnerNode: "router-a",
-	}}); err != nil {
-		t.Fatalf("seed initial ownership epoch: %v", err)
-	}
-	rows, err := store.ReconcileMobilityOwnershipEpochs([]state.MobilityOwnershipEpochRecord{{
-		Pool:      "cloudedge",
-		Address:   "10.0.0.5/32",
-		OwnerNode: "router-b",
-	}})
-	if err != nil {
-		t.Fatalf("advance ownership epoch: %v", err)
-	}
-	plan := samplePlan("unassign-router-a-epoch-2")
-	plan.Action = "unassign-secondary-ip"
-	plan.Parameters = map[string]string{
-		ownershipParamPool:    "cloudedge",
-		ownershipParamAddress: "10.0.0.5/32",
-		ownershipParamEpoch:   fmt.Sprint(rows[0].Epoch),
-		ownershipParamOwner:   "router-a",
-	}
 	seedPart(t, store, "sub-a", []dynamicconfig.ActionPlan{plan})
 
 	res, err := e.ImportFromDynamicParts()
@@ -351,36 +247,23 @@ func TestImportAllowsCurrentOwnershipEpochDeprovisionForPreviousOwner(t *testing
 		t.Fatalf("import: %v", err)
 	}
 	if res.Inserted != 1 || res.Skipped != 0 {
-		t.Fatalf("want current-epoch previous-owner deprovision imported, got %+v", res)
+		t.Fatalf("want legacy epoch-only plan imported without B2 path fencing, got %+v", res)
 	}
 }
 
-func TestImportFencesWrongOwnerAtCurrentOwnershipEpoch(t *testing.T) {
+func TestImportAllowsNonMobilityPathActions(t *testing.T) {
 	store := mustStore(t)
 	e := newEngine(t, store, (&fakeRunner{result: succeededResult()}).run, nil)
-	rows, err := store.ReconcileMobilityOwnershipEpochs([]state.MobilityOwnershipEpochRecord{{
-		Pool:      "cloudedge",
-		Address:   "10.0.0.5/32",
-		OwnerNode: "router-b",
-	}})
-	if err != nil {
-		t.Fatalf("seed ownership epoch: %v", err)
-	}
-	plan := samplePlan("wrong-owner-assign")
-	plan.Parameters = map[string]string{
-		ownershipParamPool:    "cloudedge",
-		ownershipParamAddress: "10.0.0.5/32",
-		ownershipParamEpoch:   fmt.Sprint(rows[0].Epoch),
-		ownershipParamOwner:   "router-a",
-	}
+	plan := samplePlan("unassign-no-path")
+	plan.Action = "unassign-secondary-ip"
 	seedPart(t, store, "sub-a", []dynamicconfig.ActionPlan{plan})
 
 	res, err := e.ImportFromDynamicParts()
 	if err != nil {
 		t.Fatalf("import: %v", err)
 	}
-	if res.Inserted != 0 || res.Skipped != 1 {
-		t.Fatalf("want wrong-owner plan skipped, got %+v", res)
+	if res.Inserted != 1 || res.Skipped != 0 {
+		t.Fatalf("want non path-fenced plan imported, got %+v", res)
 	}
 }
 
@@ -533,17 +416,9 @@ func TestExecutePolicyAutoApprove(t *testing.T) {
 
 func TestExecuteSkipsStaleOwnershipEpochAtExecutionBoundary(t *testing.T) {
 	store := mustStore(t)
-	if _, err := store.ReconcileMobilityOwnershipEpochs([]state.MobilityOwnershipEpochRecord{{
-		Pool: "cloudedge", Address: "10.0.0.5/32", OwnerNode: "node-a",
-	}}); err != nil {
-		t.Fatalf("seed ownership: %v", err)
-	}
 	plan := samplePlan("stale-execute")
 	plan.Parameters = map[string]string{
-		ownershipParamPool:    "cloudedge",
-		ownershipParamAddress: "10.0.0.5/32",
-		ownershipParamEpoch:   "1",
-		ownershipParamOwner:   "node-a",
+		pathSigParam: "prefix=10.0.0.5/32;nextHops=10.99.0.1",
 	}
 	seedPart(t, store, "sub-a", []dynamicconfig.ActionPlan{plan})
 	runner := &fakeRunner{result: succeededResult()}
@@ -555,11 +430,11 @@ func TestExecuteSkipsStaleOwnershipEpochAtExecutionBoundary(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("lookup stale-execute: ok=%v err=%v", ok, err)
 	}
-	if _, err := store.ReconcileMobilityOwnershipEpochs([]state.MobilityOwnershipEpochRecord{{
-		Pool: "cloudedge", Address: "10.0.0.5/32", OwnerNode: "node-b",
-	}}); err != nil {
-		t.Fatalf("bump ownership: %v", err)
+	current := samplePlan("current-execute")
+	current.Parameters = map[string]string{
+		pathSigParam: "prefix=10.0.0.5/32;nextHops=10.99.0.2",
 	}
+	seedPart(t, store, "sub-a", []dynamicconfig.ActionPlan{current})
 	pol := allowPolicy()
 	pol.RequireApproval = boolPtr(false)
 	if err := e.Execute(context.Background(), rec.ID, ModeExecute, pol); err != nil {

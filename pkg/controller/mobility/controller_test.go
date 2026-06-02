@@ -550,8 +550,8 @@ func TestControllerBGPModeProviderActionFailureDoesNotRemoveBGPPath(t *testing.T
 	if findActionPlanByAddress(plans, "assign-secondary-ip", "10.88.60.11/32") != nil {
 		t.Fatalf("actionPlans = %#v, want no self-owned provider assign", plans)
 	}
-	if assign.Parameters[ownershipParamEpoch] != "" || assign.Parameters[captureParamEpoch] == "" {
-		t.Fatalf("assign parameters = %#v, want capture fence without ownership epoch", assign.Parameters)
+	if assign.Parameters[ownershipParamEpoch] != "" || assign.Parameters[captureParamEpoch] != "" || assign.Parameters[bgpPathSigParam] == "" {
+		t.Fatalf("assign parameters = %#v, want BGP path fence without epoch fences", assign.Parameters)
 	}
 	if _, err := importApprovedAction(t, assign, source, store, now); err != nil {
 		t.Fatalf("import action: %v", err)
@@ -689,8 +689,8 @@ func TestControllerBGPModeProviderStateFollowsBestPathOwnerChange(t *testing.T) 
 	if assignB == nil {
 		t.Fatalf("router-b plans = %#v, want background assign", standbyPlans)
 	}
-	if assignB.Parameters["allowReassignment"] != "true" || assignB.Parameters[ownershipParamOwner] != "" || assignB.Parameters[captureParamHolder] != "azure-router-b" {
-		t.Fatalf("router-b assign parameters = %#v, want capture-fenced trap reassignment to active placement holder", assignB.Parameters)
+	if assignB.Parameters[ownershipParamOwner] != "" || assignB.Parameters[captureParamEpoch] != "" || assignB.Parameters[bgpPathSigParam] == "" || assignB.Parameters[captureParamHolder] != "azure-router-b" {
+		t.Fatalf("router-b assign parameters = %#v, want path-fenced trap to active placement holder", assignB.Parameters)
 	}
 }
 
@@ -728,6 +728,9 @@ func TestControllerBGPModeProviderTrapUsesRemoteInstalledNextHops(t *testing.T) 
 		}
 		if assign.Parameters[captureParamHolder] != "aws-router-a" {
 			t.Fatalf("assign %s parameters = %#v, want trap holder aws-router-a", address, assign.Parameters)
+		}
+		if assign.Parameters[bgpPathSigParam] == "" || assign.Parameters[captureParamEpoch] != "" {
+			t.Fatalf("assign %s parameters = %#v, want BGP path fence without capture epoch", address, assign.Parameters)
 		}
 	}
 	if findActionPlanByAddress(plans, "assign-secondary-ip", "10.88.60.11/32") != nil {
@@ -769,8 +772,11 @@ func TestControllerBGPModeProviderTrapRecapturesAfterSuccessfulRelease(t *testin
 		if assign == nil {
 			t.Fatalf("plans = %#v, want recapture assign for %s", plans, address)
 		}
-		if assign.Parameters[captureParamEpoch] != "2" {
-			t.Fatalf("assign %s parameters = %#v, want capture epoch 2 after release", address, assign.Parameters)
+		if assign.Parameters[bgpPathSigParam] == "" || assign.Parameters[captureParamEpoch] != "" {
+			t.Fatalf("assign %s parameters = %#v, want BGP path fence after release", address, assign.Parameters)
+		}
+		if assign.Parameters["allowReassignment"] != "true" {
+			t.Fatalf("assign %s parameters = %#v, want reassignment after successful release", address, assign.Parameters)
 		}
 	}
 }
@@ -808,8 +814,11 @@ func TestControllerBGPModeProviderTrapRecapturesWhenObservedProviderStateLost(t 
 	if assign == nil {
 		t.Fatalf("plans = %#v, want recapture assign for provider-observed missing trap", plans)
 	}
-	if assign.Parameters[captureParamEpoch] != "2" {
-		t.Fatalf("assign parameters = %#v, want capture epoch 2 after provider-observed loss", assign.Parameters)
+	if assign.Parameters[bgpPathSigParam] == "" || assign.Parameters[captureParamEpoch] != "" {
+		t.Fatalf("assign parameters = %#v, want BGP path fence after provider-observed loss", assign.Parameters)
+	}
+	if assign.Parameters["allowReassignment"] != "true" {
+		t.Fatalf("assign parameters = %#v, want reassignment after provider-observed loss", assign.Parameters)
 	}
 	if assign.Parameters[captureParamHolder] != "aws-router-a" {
 		t.Fatalf("assign parameters = %#v, want aws-router-a holder", assign.Parameters)
@@ -824,8 +833,8 @@ func TestControllerBGPModeProviderTrapRecapturesWhenObservedProviderStateLost(t 
 	if secondAssign == nil {
 		t.Fatalf("second plans = %#v, want recapture assign retained", secondPlans)
 	}
-	if secondAssign.Parameters[captureParamEpoch] != "2" {
-		t.Fatalf("second assign parameters = %#v, want pending recapture epoch retained", secondAssign.Parameters)
+	if secondAssign.Parameters[bgpPathSigParam] == "" || secondAssign.Parameters[captureParamEpoch] != "" {
+		t.Fatalf("second assign parameters = %#v, want pending path fence retained", secondAssign.Parameters)
 	}
 }
 
@@ -850,8 +859,8 @@ func TestControllerBGPModeProviderTrapUsesStaticOwnedOwnerWhenOwnershipMissing(t
 	if assign == nil {
 		t.Fatalf("plans = %#v, want static-owned onprem trap assign without ownership row", plans)
 	}
-	if assign.Parameters[captureParamEpoch] == "" || assign.Parameters[captureParamHolder] != "azure-router" {
-		t.Fatalf("assign parameters = %#v, want capture fence for static-owned trap", assign.Parameters)
+	if assign.Parameters[bgpPathSigParam] == "" || assign.Parameters[captureParamEpoch] != "" || assign.Parameters[captureParamHolder] != "azure-router" {
+		t.Fatalf("assign parameters = %#v, want BGP path fence for static-owned trap", assign.Parameters)
 	}
 	if assign.Parameters[ownershipParamEpoch] != "" {
 		t.Fatalf("assign parameters = %#v, want no stale ownership fence when ownership row is missing", assign.Parameters)
@@ -912,6 +921,29 @@ func TestControllerBGPModeProviderTrapRIBStartupIsConservative(t *testing.T) {
 	emptyPlans := decodeActionPlans(t, latestPart(t, store, source).ActionPlansJSON)
 	if findActionPlanByAddress(emptyPlans, "unassign-secondary-ip", "10.88.60.10/32") == nil {
 		t.Fatalf("observed empty plans = %#v, want stale trap unassign", emptyPlans)
+	}
+}
+
+func TestControllerBGPModeDeprovisionRegeneratesFromActionJournal(t *testing.T) {
+	now := time.Date(2026, 6, 2, 10, 0, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	seedSucceededBGPCaptureAction(t, store, "aws-provider", "eni-a", "aws-router-a", "10.88.60.10/32", "assign-secondary-ip", 1, now.Add(-time.Minute))
+	saveBGPInstalledNextHops(t, store, map[string][]string{})
+
+	bgp := &fakeBGPPaths{}
+	controller := Controller{Router: routerWithBGPRouter(planningRouterForNode("aws-router-a", spec)), Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	plans := decodeActionPlans(t, latestPart(t, store, DynamicSource("cloudedge", "aws-router-a")).ActionPlansJSON)
+	unassign := findActionPlanByAddress(plans, "unassign-secondary-ip", "10.88.60.10/32")
+	if unassign == nil {
+		t.Fatalf("plans = %#v, want unassign regenerated from succeeded assign journal", plans)
+	}
+	if unassign.Parameters[bgpPathSigParam] == "" || unassign.Parameters[captureParamEpoch] != "" {
+		t.Fatalf("unassign parameters = %#v, want path fence without capture epoch", unassign.Parameters)
 	}
 }
 

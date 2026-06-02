@@ -78,6 +78,7 @@ const (
 	ownershipParamAddress = "mobilityOwnershipAddress"
 	ownershipParamEpoch   = "mobilityOwnershipEpoch"
 	ownershipParamOwner   = "mobilityOwnershipOwner"
+	pathSigParam          = "mobilityPathSig"
 
 	DefaultStaleRunningTimeout = 2 * time.Minute
 )
@@ -158,7 +159,7 @@ func (e *Engine) ImportFromDynamicParts() (ImportResult, error) {
 				e.logf("provideraction: skipping plan %q from source %q: missing idempotencyKey", plan.Name, part.Source)
 				continue
 			}
-			stale, err := e.planStaleByOwnershipOrCaptureEpoch(plan)
+			stale, err := e.planStaleByCurrentDesired(plan)
 			if err != nil {
 				return res, err
 			}
@@ -216,20 +217,57 @@ func (e *Engine) fenceStalePendingActions() (int, error) {
 		if err != nil {
 			return count, err
 		}
-		stale, err := e.planStaleByOwnershipOrCaptureEpoch(plan)
+		stale, err := e.planStaleByCurrentDesired(plan)
 		if err != nil {
 			return count, err
 		}
 		if !stale {
 			continue
 		}
-		if err := e.store.MarkActionSkippedByIdempotencyKey(row.IdempotencyKey, "stale mobility capture epoch", e.now().UTC()); err != nil {
+		if err := e.store.MarkActionSkippedByIdempotencyKey(row.IdempotencyKey, "stale mobility desired path", e.now().UTC()); err != nil {
 			return count, fmt.Errorf("mark stale action %q skipped: %w", row.IdempotencyKey, err)
 		}
 		count++
 		e.logf("provideraction: fenced stale capture action %q", row.IdempotencyKey)
 	}
 	return count, nil
+}
+
+func (e *Engine) planStaleByCurrentDesired(plan dynamicconfig.ActionPlan) (bool, error) {
+	if strings.TrimSpace(plan.Parameters[pathSigParam]) == "" {
+		return e.planStaleByOwnershipOrCaptureEpoch(plan)
+	}
+	desired, err := e.currentDesiredPathFenceKeys()
+	if err != nil {
+		return false, err
+	}
+	return !desired[strings.TrimSpace(plan.IdempotencyKey)], nil
+}
+
+func (e *Engine) currentDesiredPathFenceKeys() (map[string]bool, error) {
+	out := map[string]bool{}
+	parts, err := e.store.ListDynamicConfigParts()
+	if err != nil {
+		return nil, fmt.Errorf("list dynamic config parts for provider action fencing: %w", err)
+	}
+	for _, part := range parts {
+		if part.EffectiveStatus(e.now()) == "expired" || strings.TrimSpace(part.ActionPlansJSON) == "" {
+			continue
+		}
+		var plans []dynamicconfig.ActionPlan
+		if err := json.Unmarshal([]byte(part.ActionPlansJSON), &plans); err != nil {
+			return nil, fmt.Errorf("decode actionPlans for source %q: %w", part.Source, err)
+		}
+		for _, plan := range plans {
+			if strings.TrimSpace(plan.Parameters[pathSigParam]) == "" {
+				continue
+			}
+			if key := strings.TrimSpace(plan.IdempotencyKey); key != "" {
+				out[key] = true
+			}
+		}
+	}
+	return out, nil
 }
 
 func (e *Engine) planStaleByCaptureEpoch(plan dynamicconfig.ActionPlan) (bool, error) {
@@ -390,12 +428,12 @@ func (e *Engine) Execute(ctx context.Context, id int64, mode string, policy api.
 	if err != nil {
 		return err
 	}
-	stale, err := e.planStaleByOwnershipOrCaptureEpoch(plan)
+	stale, err := e.planStaleByCurrentDesired(plan)
 	if err != nil {
 		return err
 	}
 	if stale {
-		if err := e.store.MarkActionSkippedByIdempotencyKey(rec.IdempotencyKey, "stale mobility capture epoch", e.now().UTC()); err != nil {
+		if err := e.store.MarkActionSkippedByIdempotencyKey(rec.IdempotencyKey, "stale mobility desired path", e.now().UTC()); err != nil {
 			return fmt.Errorf("mark stale action %q skipped: %w", rec.IdempotencyKey, err)
 		}
 		e.logf("provideraction: fenced stale capture action %q before execution", rec.IdempotencyKey)
