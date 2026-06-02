@@ -137,6 +137,35 @@ spec:
         device: wg-hybrid
         metric: 80
 
+    # other-site standby overlay /32 transit (full overlay mesh, hub-routed)
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4Route
+      metadata:
+        name: route-azure-b-wg-overlay-transit
+      spec:
+        destination: 10.99.0.6/32
+        device: wg-hybrid
+        metric: 80
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4Route
+      metadata:
+        name: route-oci-b-wg-overlay-transit
+      spec:
+        destination: 10.99.0.7/32
+        device: wg-hybrid
+        metric: 80
+
+    # same-site standby overlay /32 (A<->B event push + heartbeat over the hub)
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4Route
+      metadata:
+        name: route-samesite-wg-overlay-transit
+      spec:
+        destination: "${DEMO_SAMESITE_PEER_IP}/32"
+        device: wg-hybrid
+        metric: 80
+
     - apiVersion: net.routerd.net/v1alpha1
       kind: WireGuardPeer
       metadata:
