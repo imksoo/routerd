@@ -45,10 +45,11 @@ type fakeServer struct {
 	assigns  int
 	resets   int
 
-	global  *gobgpapi.Global
-	peers   map[string]*gobgpapi.Peer
-	routes  []*gobgpapi.Destination
-	applied bgpdaemon.AppliedConfig
+	global           *gobgpapi.Global
+	peers            map[string]*gobgpapi.Peer
+	routes           []*gobgpapi.Destination
+	applied          bgpdaemon.AppliedConfig
+	deletedPathUUIDs [][]byte
 
 	policyRequest     *gobgpapi.SetPoliciesRequest
 	policyAssignment  *gobgpapi.PolicyAssignment
@@ -166,7 +167,10 @@ func (s *fakeServer) AddPath(_ context.Context, req *gobgpapi.AddPathRequest) (*
 	return &gobgpapi.AddPathResponse{Uuid: uuid}, nil
 }
 
-func (s *fakeServer) DeletePath(context.Context, *gobgpapi.DeletePathRequest) error { return nil }
+func (s *fakeServer) DeletePath(_ context.Context, req *gobgpapi.DeletePathRequest) error {
+	s.deletedPathUUIDs = append(s.deletedPathUUIDs, append([]byte(nil), req.GetUuid()...))
+	return nil
+}
 
 func (s *fakeServer) ListPath(_ context.Context, _ *gobgpapi.ListPathRequest, fn func(*gobgpapi.Destination)) error {
 	for _, dst := range s.routes {
@@ -601,6 +605,88 @@ func TestReconcileReattachesToLiveDaemonWithoutPeerOrPathChurn(t *testing.T) {
 	}
 	if server.adds != adds || server.deletes != deletes || server.paths != paths {
 		t.Fatalf("restart reattach churned GoBGP state: adds %d->%d deletes %d->%d paths %d->%d", adds, server.adds, deletes, server.deletes, paths, server.paths)
+	}
+}
+
+func TestReconcilePreservesMobilityPathsWhenStaticAdvertisementsChange(t *testing.T) {
+	router := bgpRouter()
+	server := &fakeServer{
+		applied: bgpdaemon.AppliedConfig{
+			Version: bgpdaemon.AppliedVersion,
+			Global:  bgpdaemon.AppliedGlobal{ASN: 64512, RouterID: "10.0.0.1"},
+			Peers:   map[string]bgpdaemon.AppliedPeer{},
+			Paths: []bgpdaemon.AppliedPath{
+				bgpdaemon.StaticAppliedPath("10.20.0.0/24", []byte{9}),
+				{
+					Source: "MobilityPool/demo/node/aws-router-a",
+					Prefix: "10.77.60.11/32",
+					Family: bgpdaemon.AppliedPathFamilyIPv4Unicast,
+					UUID:   bgpdaemon.EncodeUUID([]byte{7}),
+				},
+			},
+		},
+	}
+	controller := Controller{
+		Router: router,
+		Store:  mapStore{},
+		Server: server,
+		FIB:    &fakeFIB{},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if len(server.deletedPathUUIDs) != 1 || !reflect.DeepEqual(server.deletedPathUUIDs[0], []byte{9}) {
+		t.Fatalf("deleted path UUIDs = %#v, want old static only", server.deletedPathUUIDs)
+	}
+	pathsByKey := map[string]bgpdaemon.AppliedPath{}
+	for _, path := range server.applied.Paths {
+		pathsByKey[bgpdaemon.AppliedPathKey(path)] = path
+	}
+	mobilityKey := bgpdaemon.AppliedPathKey(bgpdaemon.AppliedPath{Source: "MobilityPool/demo/node/aws-router-a", Prefix: "10.77.60.11/32"})
+	if pathsByKey[mobilityKey].UUID != bgpdaemon.EncodeUUID([]byte{7}) {
+		t.Fatalf("mobility path was not preserved: %#v", server.applied.Paths)
+	}
+	staticKey := bgpdaemon.AppliedPathKey(bgpdaemon.StaticAppliedPath("10.0.0.0/16", nil))
+	if pathsByKey[staticKey].Source != bgpdaemon.AppliedPathSourceStatic || pathsByKey[staticKey].UUID == "" {
+		t.Fatalf("desired static path missing from applied state: %#v", server.applied.Paths)
+	}
+	if len(server.applied.Advertisements) != 1 || server.applied.Advertisements[0] != "10.0.0.0/16" {
+		t.Fatalf("legacy static advertisements = %#v", server.applied.Advertisements)
+	}
+}
+
+func TestReconcileKeepsUnchangedStaticAdvertisementWithoutReadd(t *testing.T) {
+	router := bgpRouter()
+	server := &fakeServer{
+		applied: bgpdaemon.AppliedConfig{
+			Version: bgpdaemon.AppliedVersion,
+			Global:  bgpdaemon.AppliedGlobal{ASN: 64512, RouterID: "10.0.0.1"},
+			Peers:   map[string]bgpdaemon.AppliedPeer{},
+			Paths: []bgpdaemon.AppliedPath{
+				bgpdaemon.StaticAppliedPath("10.0.0.0/16", []byte{9}),
+				{
+					Source: "MobilityPool/demo/node/aws-router-a",
+					Prefix: "10.77.60.11/32",
+					Family: bgpdaemon.AppliedPathFamilyIPv4Unicast,
+					UUID:   bgpdaemon.EncodeUUID([]byte{7}),
+				},
+			},
+		},
+	}
+	controller := Controller{
+		Router: router,
+		Store:  mapStore{},
+		Server: server,
+		FIB:    &fakeFIB{},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if len(server.deletedPathUUIDs) != 0 {
+		t.Fatalf("deleted paths = %#v, want no static churn", server.deletedPathUUIDs)
+	}
+	if server.paths != 0 {
+		t.Fatalf("AddPath calls = %d, want no static readd", server.paths)
 	}
 }
 

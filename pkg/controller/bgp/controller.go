@@ -166,10 +166,10 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	if err != nil {
 		return c.savePendingAll("GoBGPPeerApplyFailed", err)
 	}
-	if err := c.reconcileAdvertisements(ctx, routerSpec); err != nil {
+	if err := c.reconcileAdvertisements(ctx, routerSpec, applied.Paths); err != nil {
 		return c.savePendingAll("GoBGPPathApplyFailed", err)
 	}
-	applied = c.buildAppliedConfig(routerSpec, desired, advertisedPrefixes(routerSpec))
+	applied = c.buildAppliedConfig(routerSpec, desired, advertisedPrefixes(routerSpec), applied.Paths)
 	if err := c.Server.SaveAppliedConfig(ctx, applied); err != nil {
 		return c.savePendingAll("GoBGPAppliedStatePersistFailed", err)
 	}
@@ -466,12 +466,16 @@ func desiredPeersFromApplied(peers map[string]bgpdaemon.AppliedPeer) map[string]
 	return out
 }
 
-func (c *Controller) buildAppliedConfig(spec routerapi.BGPRouterSpec, peers map[string]desiredPeer, advertisements map[string]bool) bgpdaemon.AppliedConfig {
+func (c *Controller) buildAppliedConfig(spec routerapi.BGPRouterSpec, peers map[string]desiredPeer, advertisements map[string]bool, existingPaths []bgpdaemon.AppliedPath) bgpdaemon.AppliedConfig {
 	out := bgpdaemon.AppliedConfig{
 		Version:        bgpdaemon.AppliedVersion,
 		Global:         appliedGlobalFromSpec(spec, c.Router),
 		Peers:          map[string]bgpdaemon.AppliedPeer{},
 		Advertisements: mapKeys(advertisements),
+		Paths:          bgpdaemon.NonStaticPaths(existingPaths),
+	}
+	for prefix := range advertisements {
+		out.Paths = append(out.Paths, bgpdaemon.StaticAppliedPath(prefix, c.pathUUIDs[prefix]))
 	}
 	for address, peer := range peers {
 		out.Peers[address] = appliedPeer(peer)
@@ -592,17 +596,15 @@ func (c *Controller) reconcilePeers(ctx context.Context, desired map[string]desi
 	return changed, nil
 }
 
-func (c *Controller) reconcileAdvertisements(ctx context.Context, spec routerapi.BGPRouterSpec) error {
+func (c *Controller) reconcileAdvertisements(ctx context.Context, spec routerapi.BGPRouterSpec, appliedPaths []bgpdaemon.AppliedPath) error {
 	desired := advertisedPrefixes(spec)
-	livePaths, err := c.advertisedPathUUIDs(ctx)
-	if err != nil {
-		return err
-	}
-	c.pathUUIDs = livePaths
+	c.pathUUIDs = staticPathUUIDs(appliedPaths)
 	for prefix := range c.pathUUIDs {
 		if !desired[prefix] {
-			if err := c.Server.DeletePath(ctx, &gobgpapi.DeletePathRequest{TableType: gobgpapi.TableType_GLOBAL, Uuid: c.pathUUIDs[prefix]}); err != nil {
-				return err
+			if len(c.pathUUIDs[prefix]) > 0 {
+				if err := c.Server.DeletePath(ctx, &gobgpapi.DeletePathRequest{TableType: gobgpapi.TableType_GLOBAL, Uuid: c.pathUUIDs[prefix]}); err != nil {
+					return err
+				}
 			}
 			delete(c.pathUUIDs, prefix)
 		}
@@ -622,6 +624,21 @@ func (c *Controller) reconcileAdvertisements(ctx context.Context, spec routerapi
 		c.pathUUIDs[prefix] = resp.GetUuid()
 	}
 	return nil
+}
+
+func staticPathUUIDs(paths []bgpdaemon.AppliedPath) map[string][]byte {
+	out := map[string][]byte{}
+	for _, path := range bgpdaemon.Normalize(bgpdaemon.AppliedConfig{Paths: paths}).Paths {
+		if path.Source != bgpdaemon.AppliedPathSourceStatic {
+			continue
+		}
+		uuid, err := bgpdaemon.DecodeUUID(path.UUID)
+		if err != nil {
+			continue
+		}
+		out[path.Prefix] = uuid
+	}
+	return out
 }
 
 func (c *Controller) advertisedPathUUIDs(ctx context.Context) (map[string][]byte, error) {

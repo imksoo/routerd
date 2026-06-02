@@ -3,12 +3,37 @@
 package main
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"io"
+	"net"
+	"net/http"
+	"path/filepath"
 	"testing"
 
 	gobgpapi "github.com/osrg/gobgp/v3/api"
 
 	"github.com/imksoo/routerd/pkg/bgpdaemon"
 )
+
+type fakePathServer struct {
+	added   []*gobgpapi.AddPathRequest
+	deleted [][]byte
+	nextID  byte
+}
+
+func (s *fakePathServer) AddPath(_ context.Context, req *gobgpapi.AddPathRequest) (*gobgpapi.AddPathResponse, error) {
+	s.nextID++
+	uuid := []byte{s.nextID}
+	s.added = append(s.added, req)
+	return &gobgpapi.AddPathResponse{Uuid: uuid}, nil
+}
+
+func (s *fakePathServer) DeletePath(_ context.Context, req *gobgpapi.DeletePathRequest) error {
+	s.deleted = append(s.deleted, append([]byte(nil), req.GetUuid()...))
+	return nil
+}
 
 func TestAppliedPoliciesRestorePeerImportPolicyWithoutGlobalPolicy(t *testing.T) {
 	peer := bgpdaemon.AppliedPeer{
@@ -55,4 +80,160 @@ func TestAppliedPeerEbgpMultihop(t *testing.T) {
 	if got := multihop.GetEbgpMultihop(); !got.GetEnabled() || got.GetMultihopTtl() != 16 {
 		t.Fatalf("restored eBGP multihop = %#v, want enabled ttl=16", got)
 	}
+}
+
+func TestRestoreAppliedRestoresStaticAndMobilityPathsWithFreshUUIDs(t *testing.T) {
+	server := &fakePathServer{}
+	applied := bgpdaemon.AppliedConfig{
+		Global:         bgpdaemon.AppliedGlobal{ASN: 64512, RouterID: "10.0.0.1", ListenPort: 179},
+		Advertisements: []string{"10.20.0.0/24"},
+		Paths: []bgpdaemon.AppliedPath{{
+			Source: "MobilityPool/demo/node/aws-router-a",
+			Prefix: "10.77.60.11/32",
+			Attrs:  bgpdaemon.AppliedPathAttrs{LocalPref: 200},
+		}},
+	}
+	if err := restoreAppliedPaths(context.Background(), server, &applied); err != nil {
+		t.Fatalf("restore paths: %v", err)
+	}
+	if len(server.added) != 2 {
+		t.Fatalf("AddPath calls = %d, want static + mobility", len(server.added))
+	}
+	bySource := map[string]bgpdaemon.AppliedPath{}
+	for _, path := range applied.Paths {
+		bySource[path.Source] = path
+		if path.UUID == "" {
+			t.Fatalf("path missing restored UUID: %#v", path)
+		}
+	}
+	if bySource[bgpdaemon.AppliedPathSourceStatic].Prefix != "10.20.0.0/24" {
+		t.Fatalf("static restored path = %#v", bySource[bgpdaemon.AppliedPathSourceStatic])
+	}
+	if bySource["MobilityPool/demo/node/aws-router-a"].Prefix != "10.77.60.11/32" {
+		t.Fatalf("mobility restored path = %#v", bySource["MobilityPool/demo/node/aws-router-a"])
+	}
+}
+
+func TestControlPathAPISourceScopedMobilityUpsertAndDelete(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "applied.json")
+	initial := bgpdaemon.AppliedConfig{
+		Global:         bgpdaemon.AppliedGlobal{ASN: 64512, RouterID: "10.0.0.1", ListenPort: 179},
+		Advertisements: []string{"10.20.0.0/24"},
+	}
+	if err := bgpdaemon.WriteApplied(statePath, initial); err != nil {
+		t.Fatalf("write initial applied: %v", err)
+	}
+	socketPath := filepath.Join(dir, "control.sock")
+	paths := &fakePathServer{}
+	server, err := serveControlSocket(socketPath, statePath, paths)
+	if err != nil {
+		t.Fatalf("serve control socket: %v", err)
+	}
+	defer server.Shutdown(context.Background())
+	client := unixHTTPClient(socketPath)
+	defer client.CloseIdleConnections()
+
+	body := bgpdaemon.AppliedPath{
+		Source: "MobilityPool/demo/node/aws-router-a",
+		Prefix: "10.77.60.11/32",
+		Attrs:  bgpdaemon.AppliedPathAttrs{LocalPref: 200, Communities: []string{"64512:77"}},
+	}
+	resp := doJSON(t, client, http.MethodPost, "/v1/paths", body)
+	if resp.StatusCode != http.StatusOK {
+		data, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("POST /v1/paths status = %d body=%s", resp.StatusCode, bytes.TrimSpace(data))
+	}
+	var got bgpdaemon.AppliedPath
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode path response: %v", err)
+	}
+	resp.Body.Close()
+	if got.Source != body.Source || got.Prefix != body.Prefix || got.UUID == "" {
+		t.Fatalf("upsert response = %#v", got)
+	}
+	if len(paths.added) != 1 {
+		t.Fatalf("AddPath calls = %d, want 1", len(paths.added))
+	}
+
+	resp = doJSON(t, client, http.MethodDelete, "/v1/paths?source=MobilityPool/demo/node/aws-router-a&prefix=10.77.60.11/32", nil)
+	if resp.StatusCode != http.StatusOK {
+		data, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("DELETE /v1/paths status = %d body=%s", resp.StatusCode, bytes.TrimSpace(data))
+	}
+	resp.Body.Close()
+	if len(paths.deleted) != 1 || bgpdaemon.EncodeUUID(paths.deleted[0]) != got.UUID {
+		t.Fatalf("deleted UUIDs = %#v, want %s", paths.deleted, got.UUID)
+	}
+	applied, _, err := bgpdaemon.ReadApplied(statePath)
+	if err != nil {
+		t.Fatalf("read applied after delete: %v", err)
+	}
+	if len(bgpdaemon.NonStaticPaths(applied.Paths)) != 0 {
+		t.Fatalf("dynamic paths after delete = %#v", bgpdaemon.NonStaticPaths(applied.Paths))
+	}
+	if len(applied.Advertisements) != 1 || applied.Advertisements[0] != "10.20.0.0/24" {
+		t.Fatalf("static advertisements changed: %#v", applied.Advertisements)
+	}
+}
+
+func TestControlPathAPIRejectsNonMobilityAndNonHostPaths(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "applied.json")
+	if err := bgpdaemon.WriteApplied(statePath, bgpdaemon.AppliedConfig{Global: bgpdaemon.AppliedGlobal{ASN: 64512, RouterID: "10.0.0.1"}}); err != nil {
+		t.Fatalf("write applied: %v", err)
+	}
+	socketPath := filepath.Join(dir, "control.sock")
+	server, err := serveControlSocket(socketPath, statePath, &fakePathServer{})
+	if err != nil {
+		t.Fatalf("serve control socket: %v", err)
+	}
+	defer server.Shutdown(context.Background())
+	client := unixHTTPClient(socketPath)
+	defer client.CloseIdleConnections()
+	for _, body := range []bgpdaemon.AppliedPath{
+		{Source: bgpdaemon.AppliedPathSourceStatic, Prefix: "10.77.60.11/32"},
+		{Source: "MobilityPool/demo/node/aws-router-a", Prefix: "10.77.60.0/24"},
+	} {
+		resp := doJSON(t, client, http.MethodPost, "/v1/paths", body)
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusOK {
+			t.Fatalf("POST accepted invalid path %#v", body)
+		}
+	}
+}
+
+func unixHTTPClient(socketPath string) *http.Client {
+	return &http.Client{Transport: &http.Transport{
+		DisableKeepAlives: true,
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "unix", socketPath)
+		},
+	}}
+}
+
+func doJSON(t *testing.T, client *http.Client, method, path string, body any) *http.Response {
+	t.Helper()
+	var reader io.Reader
+	if body != nil {
+		data, err := json.Marshal(body)
+		if err != nil {
+			t.Fatalf("marshal request: %v", err)
+		}
+		reader = bytes.NewReader(data)
+	}
+	req, err := http.NewRequest(method, "http://routerd-bgp"+path, reader)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("%s %s: %v", method, path, err)
+	}
+	return resp
 }
