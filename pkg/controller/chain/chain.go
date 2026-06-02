@@ -987,6 +987,9 @@ func (r *Runner) Start(ctx context.Context) error {
 	if r.controllerEnabled("conntrack-observer") {
 		conntrackObs.Start(ctx)
 	}
+	if r.controllerEnabled("bgp") {
+		bgp.Start(ctx)
+	}
 	controllers := []framework.Controller{
 		framework.FuncController{ControllerName: "daemon-status", Every: 5 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.dhcpv6.client.**", "routerd.dhcpv4.client.**", "routerd.healthcheck.**", "routerd.pppoe.client.**"}}}, PeriodicFunc: daemonStatusSync.Reconcile},
 		framework.FuncController{ControllerName: "package", Every: 5 * time.Minute, PeriodicFunc: packages.Reconcile},

@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -54,6 +55,13 @@ type fakeServer struct {
 	policyRequest     *gobgpapi.SetPoliciesRequest
 	policyAssignment  *gobgpapi.PolicyAssignment
 	thirdPartyNextHop string
+	watchSessions     chan watchSession
+	watchRequests     []*gobgpapi.WatchEventRequest
+}
+
+type watchSession struct {
+	events []*gobgpapi.WatchEventResponse
+	err    error
 }
 
 func (s *fakeServer) Serve() {}
@@ -191,6 +199,28 @@ func (s *fakeServer) ListPath(_ context.Context, _ *gobgpapi.ListPathRequest, fn
 	return nil
 }
 
+func (s *fakeServer) WatchEvent(ctx context.Context, req *gobgpapi.WatchEventRequest, fn func(*gobgpapi.WatchEventResponse) error) error {
+	s.watchRequests = append(s.watchRequests, req)
+	if s.watchSessions == nil {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case session := <-s.watchSessions:
+		for _, event := range session.events {
+			if err := fn(event); err != nil {
+				return err
+			}
+		}
+		if session.err != nil {
+			return session.err
+		}
+		return nil
+	}
+}
+
 func (s *fakeServer) importPolicyRewritesPeerAddress() bool {
 	if s.policyAssignment.GetName() != "global" || s.policyAssignment.GetDirection() != gobgpapi.PolicyDirection_IMPORT {
 		return false
@@ -213,13 +243,18 @@ func (s *fakeServer) importPolicyRewritesPeerAddress() bool {
 }
 
 type fakeFIB struct {
+	mu          sync.Mutex
 	routes      []FIBRoute
+	history     [][]FIBRoute
 	unsupported map[string]string
 	err         error
 }
 
 func (f *fakeFIB) SyncBGP(_ context.Context, routes []FIBRoute) (FIBSyncResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.routes = append([]FIBRoute(nil), routes...)
+	f.history = append(f.history, append([]FIBRoute(nil), routes...))
 	result := FIBSyncResult{Installed: map[string]bool{}, Unsupported: map[string]string{}}
 	for _, route := range routes {
 		prefix := normalizeRoutePrefix(route.Prefix)
@@ -232,6 +267,18 @@ func (f *fakeFIB) SyncBGP(_ context.Context, routes []FIBRoute) (FIBSyncResult, 
 		result.Unsupported[prefix] = reason
 	}
 	return result, f.err
+}
+
+func (f *fakeFIB) calls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.history)
+}
+
+func (f *fakeFIB) lastRoutes() []FIBRoute {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]FIBRoute(nil), f.routes...)
 }
 
 func TestReconcileStartsGoBGPAndDoesNotReaddUnchangedPeer(t *testing.T) {
@@ -470,6 +517,114 @@ func TestReconcileImportsFourSiteMobilityHostRoutes(t *testing.T) {
 	}
 	if !reflect.DeepEqual(fib.routes, want) {
 		t.Fatalf("FIB routes = %#v, want 4-site mobility /32 routes %#v", fib.routes, want)
+	}
+}
+
+func TestWatchEventTriggersImmediateFIBSync(t *testing.T) {
+	server := &fakeServer{
+		routes:        []*gobgpapi.Destination{testDestination("10.77.60.11/32", "10.99.0.11")},
+		watchSessions: make(chan watchSession, 1),
+	}
+	fib := &fakeFIB{}
+	controller := Controller{
+		Router:              bgpRouterWithImportPrefixes("10.77.60.0/24"),
+		Store:               mapStore{},
+		Server:              server,
+		FIB:                 fib,
+		WatchReconnectDelay: time.Millisecond,
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("initial reconcile: %v", err)
+	}
+	if fib.calls() != 1 {
+		t.Fatalf("initial FIB calls = %d, want 1", fib.calls())
+	}
+	server.routes = []*gobgpapi.Destination{testDestination("10.77.60.11/32", "10.99.0.12")}
+	server.watchSessions <- watchSession{events: []*gobgpapi.WatchEventResponse{watchTableEvent("10.77.60.11/32", "10.99.0.12")}}
+	if err := controller.watchBestPathEvents(context.Background()); err != nil {
+		t.Fatalf("watch events: %v", err)
+	}
+	want := []FIBRoute{{Prefix: "10.77.60.11/32", NextHops: []string{"10.99.0.12"}}}
+	if !reflect.DeepEqual(fib.lastRoutes(), want) {
+		t.Fatalf("FIB routes = %#v, want event-updated routes %#v", fib.lastRoutes(), want)
+	}
+	if fib.calls() != 2 {
+		t.Fatalf("FIB calls = %d, want event-triggered second sync", fib.calls())
+	}
+}
+
+func TestWatchEventReconnectsAfterStreamError(t *testing.T) {
+	server := &fakeServer{
+		routes:        []*gobgpapi.Destination{testDestination("10.77.60.11/32", "10.99.0.11")},
+		watchSessions: make(chan watchSession, 2),
+	}
+	fib := &fakeFIB{}
+	controller := Controller{
+		Router:              bgpRouterWithImportPrefixes("10.77.60.0/24"),
+		Store:               mapStore{},
+		Server:              server,
+		FIB:                 fib,
+		WatchReconnectDelay: time.Millisecond,
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("initial reconcile: %v", err)
+	}
+	server.watchSessions <- watchSession{err: errors.New("stream reset")}
+	server.routes = []*gobgpapi.Destination{testDestination("10.77.60.11/32", "10.99.0.13")}
+	server.watchSessions <- watchSession{events: []*gobgpapi.WatchEventResponse{watchTableEvent("10.77.60.11/32", "10.99.0.13")}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	controller.Start(ctx)
+	waitForCondition(t, 500*time.Millisecond, func() bool {
+		return fib.calls() >= 2
+	})
+	want := []FIBRoute{{Prefix: "10.77.60.11/32", NextHops: []string{"10.99.0.13"}}}
+	if !reflect.DeepEqual(fib.lastRoutes(), want) {
+		t.Fatalf("FIB routes after reconnect = %#v, want %#v", fib.lastRoutes(), want)
+	}
+	if len(server.watchRequests) < 2 {
+		t.Fatalf("watch requests = %d, want reconnect after stream error", len(server.watchRequests))
+	}
+}
+
+func TestWatchEventSkipsDuplicateFIBApplyAndPollFallbackStillWorks(t *testing.T) {
+	server := &fakeServer{
+		routes:        []*gobgpapi.Destination{testDestination("10.77.60.11/32", "10.99.0.11")},
+		watchSessions: make(chan watchSession, 1),
+	}
+	fib := &fakeFIB{}
+	controller := Controller{
+		Router: bgpRouterWithImportPrefixes("10.77.60.0/24"),
+		Store:  mapStore{},
+		Server: server,
+		FIB:    fib,
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("initial reconcile: %v", err)
+	}
+	server.watchSessions <- watchSession{events: []*gobgpapi.WatchEventResponse{watchTableEvent("10.77.60.11/32", "10.99.0.11")}}
+	if err := controller.watchBestPathEvents(context.Background()); err != nil {
+		t.Fatalf("watch event: %v", err)
+	}
+	if fib.calls() != 1 {
+		t.Fatalf("FIB calls after duplicate watch event = %d, want unchanged", fib.calls())
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("poll reconcile duplicate: %v", err)
+	}
+	if fib.calls() != 1 {
+		t.Fatalf("FIB calls after duplicate poll = %d, want unchanged", fib.calls())
+	}
+	server.routes = []*gobgpapi.Destination{testDestination("10.77.60.11/32", "10.99.0.14")}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("poll fallback reconcile: %v", err)
+	}
+	want := []FIBRoute{{Prefix: "10.77.60.11/32", NextHops: []string{"10.99.0.14"}}}
+	if !reflect.DeepEqual(fib.lastRoutes(), want) {
+		t.Fatalf("FIB routes after poll fallback = %#v, want %#v", fib.lastRoutes(), want)
+	}
+	if fib.calls() != 2 {
+		t.Fatalf("FIB calls after poll fallback = %d, want 2", fib.calls())
 	}
 }
 
@@ -914,6 +1069,30 @@ func testRankedDestination(prefix string, ranked ...rankedPath) *gobgpapi.Destin
 		})
 	}
 	return &gobgpapi.Destination{Prefix: prefix, Paths: paths}
+}
+
+func watchTableEvent(prefix, nextHop string) *gobgpapi.WatchEventResponse {
+	return &gobgpapi.WatchEventResponse{
+		Event: &gobgpapi.WatchEventResponse_Table{
+			Table: &gobgpapi.WatchEventResponse_TableEvent{
+				Paths: testDestination(prefix, nextHop).GetPaths(),
+			},
+		},
+	}
+}
+
+func waitForCondition(t *testing.T, timeout time.Duration, fn func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if fn() {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if !fn() {
+		t.Fatalf("condition not satisfied within %s", timeout)
+	}
 }
 
 func bgpRouter() *api.Router {

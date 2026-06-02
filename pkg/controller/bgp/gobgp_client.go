@@ -270,3 +270,28 @@ func (s *remoteGoBGPServer) ListPath(ctx context.Context, req *gobgpapi.ListPath
 		fn(resp.GetDestination())
 	}
 }
+
+func (s *remoteGoBGPServer) WatchEvent(ctx context.Context, req *gobgpapi.WatchEventRequest, fn func(*gobgpapi.WatchEventResponse) error) error {
+	client, err := s.api(ctx)
+	if err != nil {
+		return err
+	}
+	stream, err := client.WatchEvent(ctx, req)
+	if err != nil {
+		s.Stop()
+		return err
+	}
+	for {
+		resp, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			s.Stop()
+			return err
+		}
+		if err := fn(resp); err != nil {
+			return err
+		}
+	}
+}

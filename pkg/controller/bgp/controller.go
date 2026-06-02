@@ -16,6 +16,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	gobgpapi "github.com/osrg/gobgp/v3/api"
@@ -50,6 +51,7 @@ type GoBGPServer interface {
 	AddPath(context.Context, *gobgpapi.AddPathRequest) (*gobgpapi.AddPathResponse, error)
 	DeletePath(context.Context, *gobgpapi.DeletePathRequest) error
 	ListPath(context.Context, *gobgpapi.ListPathRequest, func(*gobgpapi.Destination)) error
+	WatchEvent(context.Context, *gobgpapi.WatchEventRequest, func(*gobgpapi.WatchEventResponse) error) error
 	AppliedConfig(context.Context) (bgpdaemon.AppliedConfig, error)
 	SaveAppliedConfig(context.Context, bgpdaemon.AppliedConfig) error
 }
@@ -82,18 +84,23 @@ type Controller struct {
 	Daemon    manageddaemon.Spec
 	FIB       FIBSyncer
 
-	MaxPrefixes int
+	MaxPrefixes         int
+	WatchReconnectDelay time.Duration
 
-	started         bool
-	globalKey       string
-	desiredPeerKeys map[string]desiredPeer
-	appliedPeerKeys map[string]desiredPeer
-	appliedConfig   bgpdaemon.AppliedConfig
-	importPolicyKey string
-	pathUUIDs       map[string][]byte
-	observed        bool
-	lastState       bgpstate.State
-	peerEvents      map[string]time.Time
+	mu               sync.Mutex
+	started          bool
+	globalKey        string
+	desiredPeerKeys  map[string]desiredPeer
+	appliedPeerKeys  map[string]desiredPeer
+	appliedConfig    bgpdaemon.AppliedConfig
+	importPolicyKey  string
+	pathUUIDs        map[string][]byte
+	observed         bool
+	lastState        bgpstate.State
+	peerEvents       map[string]time.Time
+	lastFIBRoutesSig string
+	lastFIBResult    FIBSyncResult
+	lastFIBValid     bool
 }
 
 type desiredPeer struct {
@@ -109,6 +116,12 @@ type desiredPeer struct {
 }
 
 func (c *Controller) Reconcile(ctx context.Context) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.reconcileLocked(ctx)
+}
+
+func (c *Controller) reconcileLocked(ctx context.Context) error {
 	if c.Router == nil || c.Store == nil || !hasBGP(c.Router) {
 		return nil
 	}
@@ -195,7 +208,7 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	if c.FIB == nil {
 		c.FIB = defaultFIBSyncer()
 	}
-	fibResult, err := c.FIB.SyncBGP(ctx, routes)
+	fibResult, err := c.syncBGPFIBLocked(ctx, routes)
 	if err != nil {
 		return c.savePendingAll("GoBGPFIBSyncFailed", err)
 	}
@@ -215,6 +228,140 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		c.publishBGPEvent(ctx, event)
 	}
 	return nil
+}
+
+func (c *Controller) Start(ctx context.Context) {
+	go c.watchEventLoop(ctx)
+}
+
+func (c *Controller) watchEventLoop(ctx context.Context) {
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		if err := c.watchBestPathEvents(ctx); err != nil {
+			c.logDebug("bgp watch event stream unavailable; poll fallback remains active", "error", err)
+		}
+		if !sleepContext(ctx, c.watchReconnectDelay()) {
+			return
+		}
+	}
+}
+
+func (c *Controller) watchBestPathEvents(ctx context.Context) error {
+	c.mu.Lock()
+	server := c.Server
+	watchable := c.Router != nil && c.Store != nil && hasBGP(c.Router) && !c.DryRun && server != nil && c.started
+	c.mu.Unlock()
+	if !watchable {
+		return nil
+	}
+	req := &gobgpapi.WatchEventRequest{
+		Table: &gobgpapi.WatchEventRequest_Table{
+			Filters: []*gobgpapi.WatchEventRequest_Table_Filter{{
+				Type: gobgpapi.WatchEventRequest_Table_Filter_BEST,
+				Init: false,
+			}},
+		},
+		BatchSize: 1,
+	}
+	return server.WatchEvent(ctx, req, func(resp *gobgpapi.WatchEventResponse) error {
+		if !watchEventHasBestPathChange(resp) {
+			return nil
+		}
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		return c.observeAndSyncFromWatchLocked(ctx)
+	})
+}
+
+func (c *Controller) observeAndSyncFromWatchLocked(ctx context.Context) error {
+	if c.Router == nil || c.Store == nil || c.Server == nil || c.DryRun {
+		return nil
+	}
+	routers := c.bgpRouters()
+	if len(routers) != 1 {
+		return nil
+	}
+	routerResource := routers[0]
+	routerSpec, err := routerResource.BGPRouterSpec()
+	if err != nil {
+		return err
+	}
+	state, routes, err := c.observeState(ctx, importAllowedPrefixes(routerSpec))
+	if err != nil {
+		return c.savePendingAll("GoBGPWatchObserveFailed", err)
+	}
+	if c.FIB == nil {
+		c.FIB = defaultFIBSyncer()
+	}
+	fibResult, err := c.syncBGPFIBLocked(ctx, routes)
+	if err != nil {
+		return c.savePendingAll("GoBGPWatchFIBSyncFailed", err)
+	}
+	state = applyFIBResult(state, routes, fibResult)
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	state.Peers = c.applyPeerHistory(state.Peers, now)
+	var events []bgpstate.Event
+	if c.observed {
+		events = bgpstate.Diff(c.lastState, state)
+	}
+	c.lastState = state
+	c.observed = true
+	if err := c.saveObservedStatuses(routerResource.Metadata.Name, routerSpec, state, routes, false, fibResult); err != nil {
+		return err
+	}
+	for _, event := range events {
+		c.publishBGPEvent(ctx, event)
+	}
+	return nil
+}
+
+func (c *Controller) syncBGPFIBLocked(ctx context.Context, routes []FIBRoute) (FIBSyncResult, error) {
+	if c.FIB == nil {
+		c.FIB = defaultFIBSyncer()
+	}
+	sig := fibRoutesSignature(routes)
+	if c.lastFIBValid && sig == c.lastFIBRoutesSig {
+		return c.lastFIBResult, nil
+	}
+	result, err := c.FIB.SyncBGP(ctx, routes)
+	if err != nil {
+		return result, err
+	}
+	c.lastFIBRoutesSig = sig
+	c.lastFIBResult = normalizeFIBSyncResult(result)
+	c.lastFIBValid = true
+	return c.lastFIBResult, nil
+}
+
+func watchEventHasBestPathChange(resp *gobgpapi.WatchEventResponse) bool {
+	table := resp.GetTable()
+	if table == nil {
+		return false
+	}
+	return len(table.GetPaths()) > 0
+}
+
+func (c *Controller) watchReconnectDelay() time.Duration {
+	if c.WatchReconnectDelay > 0 {
+		return c.WatchReconnectDelay
+	}
+	return time.Second
+}
+
+func sleepContext(ctx context.Context, d time.Duration) bool {
+	if d <= 0 {
+		return true
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
 }
 
 func (c *Controller) hydrateAppliedState(applied bgpdaemon.AppliedConfig) {
@@ -1685,6 +1832,53 @@ func PollInterval(router *routerapi.Router) time.Duration {
 		}
 	}
 	return out
+}
+
+func fibRoutesSignature(routes []FIBRoute) string {
+	normalized := make([]FIBRoute, 0, len(routes))
+	for _, route := range routes {
+		route = normalizeFIBRouteForSignature(route)
+		if route.Prefix != "" {
+			normalized = append(normalized, route)
+		}
+	}
+	sort.SliceStable(normalized, func(i, j int) bool { return normalized[i].Prefix < normalized[j].Prefix })
+	var b strings.Builder
+	for _, route := range normalized {
+		b.WriteString(route.Prefix)
+		b.WriteByte('=')
+		b.WriteString(strings.Join(route.NextHops, ","))
+		b.WriteByte(';')
+	}
+	sum := sha256.Sum256([]byte(b.String()))
+	return hex.EncodeToString(sum[:])
+}
+
+func normalizeFIBRouteForSignature(route FIBRoute) FIBRoute {
+	prefix := normalizeRoutePrefix(route.Prefix)
+	nextHops := normalizeRouteNextHops(route.NextHops)
+	return FIBRoute{Prefix: prefix, NextHops: nextHops}
+}
+
+func normalizeFIBSyncResult(result FIBSyncResult) FIBSyncResult {
+	out := FIBSyncResult{Installed: map[string]bool{}, Unsupported: map[string]string{}}
+	for prefix, installed := range result.Installed {
+		if normalized := normalizeRoutePrefix(prefix); normalized != "" {
+			out.Installed[normalized] = installed
+		}
+	}
+	for prefix, reason := range result.Unsupported {
+		if normalized := normalizeRoutePrefix(prefix); normalized != "" {
+			out.Unsupported[normalized] = reason
+		}
+	}
+	return out
+}
+
+func (c *Controller) logDebug(msg string, args ...any) {
+	if c.Logger != nil {
+		c.Logger.Debug(msg, args...)
+	}
 }
 
 func (c *Controller) maxPrefixes() int {
