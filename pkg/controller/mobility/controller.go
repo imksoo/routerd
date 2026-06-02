@@ -183,11 +183,13 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		return err
 	}
 	installedNextHops, bgpRIBObserved := c.bgpInstalledNextHops()
-	desiredTrapAddresses, err := bgpTrapAddresses(res.Metadata.Name, selfNode, spec, ownershipEpochs, installedNextHops, bgpRIBObserved, previousActionPlans, liveness)
+	trapOwnershipEpochs := bgpTrapOwnershipEpochs(res.Metadata.Name, spec, ownershipEpochs)
+	actionOwnershipEpochs := bgpTrapActionOwnershipEpochs(spec, ownershipEpochs)
+	desiredTrapAddresses, err := bgpTrapAddresses(res.Metadata.Name, selfNode, spec, trapOwnershipEpochs, installedNextHops, bgpRIBObserved, previousActionPlans, liveness)
 	if err != nil {
 		return err
 	}
-	captureEpochDesired, err := desiredBGPCaptureEpochs(res.Metadata.Name, spec, ownershipEpochs, liveness)
+	captureEpochDesired, err := desiredBGPCaptureEpochs(res.Metadata.Name, spec, trapOwnershipEpochs, liveness)
 	if err != nil {
 		return err
 	}
@@ -207,7 +209,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 	if len(desiredTrapAddresses) > 0 && !selfCaptureResolved {
 		actionPlans = nil
 	} else {
-		actionPlans, err = bgpProviderActionPlans(res.Metadata.Name, selfNode, spec, desiredTrapAddresses, previousActionPlans, markers, cloudProviderProfiles(c.Router), captureEpochs, ownershipEpochs, actionJournal, now)
+		actionPlans, err = bgpProviderActionPlans(res.Metadata.Name, selfNode, spec, desiredTrapAddresses, previousActionPlans, markers, cloudProviderProfiles(c.Router), captureEpochs, actionOwnershipEpochs, actionJournal, now)
 		if err != nil {
 			return err
 		}
@@ -803,6 +805,77 @@ func bgpProviderActionPlans(poolName, selfNode string, spec api.MobilityPoolSpec
 		plans = append(plans, plan)
 	}
 	return dedupeActionPlans(plans), nil
+}
+
+func bgpTrapOwnershipEpochs(poolName string, spec api.MobilityPoolSpec, ownership []routerstate.MobilityOwnershipEpochRecord) []routerstate.MobilityOwnershipEpochRecord {
+	byAddress := ownershipEpochsByAddress(ownership)
+	for address, ownerNode := range staticOwnedOwnerNodesByAddress(spec) {
+		rec := byAddress[address]
+		epoch := rec.Epoch
+		if epoch < 1 {
+			epoch = 1
+		}
+		byAddress[address] = routerstate.MobilityOwnershipEpochRecord{
+			Pool:      poolName,
+			Address:   address,
+			OwnerNode: ownerNode,
+			Epoch:     epoch,
+			CreatedAt: rec.CreatedAt,
+			UpdatedAt: rec.UpdatedAt,
+		}
+	}
+	return ownershipStatusOrder(mapValuesOwnership(byAddress))
+}
+
+func bgpTrapActionOwnershipEpochs(spec api.MobilityPoolSpec, ownership []routerstate.MobilityOwnershipEpochRecord) []routerstate.MobilityOwnershipEpochRecord {
+	staticOwners := staticOwnedOwnerNodesByAddress(spec)
+	out := make([]routerstate.MobilityOwnershipEpochRecord, 0, len(ownership))
+	for _, rec := range ownership {
+		address := strings.TrimSpace(rec.Address)
+		if ownerNode := strings.TrimSpace(staticOwners[address]); ownerNode != "" && ownerNode != strings.TrimSpace(rec.OwnerNode) {
+			// The BGP/FIB path and static config already identify the remote owner.
+			// Do not stamp a stale ownership row onto the provider action; the
+			// capture epoch remains the execution fence for this trap.
+			continue
+		}
+		out = append(out, rec)
+	}
+	return ownershipStatusOrder(out)
+}
+
+func staticOwnedOwnerNodesByAddress(spec api.MobilityPoolSpec) map[string]string {
+	out := map[string]string{}
+	prefix, err := netip.ParsePrefix(strings.TrimSpace(spec.Prefix))
+	if err != nil {
+		return out
+	}
+	prefix = prefix.Masked()
+	handoversByFrom := staticHandoversByFrom(spec.StaticHandovers, prefix)
+	for _, member := range spec.Members {
+		nodeRef := strings.TrimSpace(member.NodeRef)
+		if nodeRef == "" {
+			continue
+		}
+		for _, raw := range member.StaticOwnedAddresses {
+			address, ok := normalizeLeaseAddress(raw, prefix)
+			if !ok {
+				continue
+			}
+			if _, moving := handoversByFrom[staticHandoverKey(address, nodeRef)]; moving {
+				continue
+			}
+			out[address] = nodeRef
+		}
+	}
+	return out
+}
+
+func mapValuesOwnership(values map[string]routerstate.MobilityOwnershipEpochRecord) []routerstate.MobilityOwnershipEpochRecord {
+	out := make([]routerstate.MobilityOwnershipEpochRecord, 0, len(values))
+	for _, rec := range values {
+		out = append(out, rec)
+	}
+	return out
 }
 
 func (c Controller) bgpInstalledNextHops() (map[string][]string, bool) {

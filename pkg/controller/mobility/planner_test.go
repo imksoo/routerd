@@ -2249,6 +2249,17 @@ func routerWithBGPRouter(router *api.Router) *api.Router {
 	return &cp
 }
 
+func mobilityPoolResource(t *testing.T, router *api.Router, name string) api.Resource {
+	t.Helper()
+	for _, res := range router.Spec.Resources {
+		if res.APIVersion == api.MobilityAPIVersion && res.Kind == "MobilityPool" && res.Metadata.Name == name {
+			return res
+		}
+	}
+	t.Fatalf("MobilityPool/%s not found", name)
+	return api.Resource{}
+}
+
 func saveBGPInstalledNextHops(t *testing.T, store interface {
 	SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error
 }, nextHops map[string][]string) {

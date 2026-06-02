@@ -782,6 +782,35 @@ func TestControllerBGPModeProviderTrapUsesRemoteInstalledNextHops(t *testing.T) 
 	}
 }
 
+func TestControllerBGPModeProviderTrapUsesStaticOwnedOwnerWhenOwnershipMissing(t *testing.T) {
+	now := time.Date(2026, 6, 2, 10, 0, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := plannedPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	spec.Members[0].StaticOwnedAddresses = []string{"10.88.60.10/32"}
+	saveBGPInstalledNextHops(t, store, map[string][]string{"10.88.60.10/32": {"10.99.0.1"}})
+
+	bgp := &fakeBGPPaths{}
+	router := routerWithBGPRouter(planningRouterForNode("azure-router", spec))
+	res := mobilityPoolResource(t, router, "cloudedge")
+	controller := Controller{Router: router, Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controller.reconcileBGPDelivery(context.Background(), res, spec, now); err != nil {
+		t.Fatalf("reconcileBGPDelivery: %v", err)
+	}
+
+	plans := decodeActionPlans(t, latestPart(t, store, DynamicSource("cloudedge", "azure-router")).ActionPlansJSON)
+	assign := findActionPlanByAddress(plans, "assign-secondary-ip", "10.88.60.10/32")
+	if assign == nil {
+		t.Fatalf("plans = %#v, want static-owned onprem trap assign without ownership row", plans)
+	}
+	if assign.Parameters[captureParamEpoch] == "" || assign.Parameters[captureParamHolder] != "azure-router" {
+		t.Fatalf("assign parameters = %#v, want capture fence for static-owned trap", assign.Parameters)
+	}
+	if assign.Parameters[ownershipParamEpoch] != "" {
+		t.Fatalf("assign parameters = %#v, want no stale ownership fence when ownership row is missing", assign.Parameters)
+	}
+}
+
 func TestControllerBGPModeProviderTrapRIBStartupIsConservative(t *testing.T) {
 	now := time.Date(2026, 6, 2, 10, 0, 0, 0, time.UTC)
 	store := testStore(t, now)
