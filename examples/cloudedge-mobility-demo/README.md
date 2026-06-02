@@ -5,6 +5,8 @@ This example packages the live CloudEdge Mobility demo that exercised:
 - D3: four-site selective address mobility across on-prem, AWS, Azure, and OCI.
 - D5: AWS cloud-router maintenance drain with provider capture migration from
   router A to router B.
+- Phase F: on-prem static-owned address declaration plus release/handover
+  examples for planned `.10` ownership movement.
 
 > For an illustrated, conceptual walkthrough of what this demo shows (topology,
 > address design, data/control plane), see the how-to:
@@ -38,6 +40,8 @@ assigned to ENI-B, and confirms traffic recovers via `aws-router-b`.
 - `onprem.yaml`, `aws.yaml`, `azure.yaml`, `oci.yaml`: routerd config templates.
 - `run-demo.sh`: renders configs, deploys them, emits observed events, runs D3
   connectivity, then performs D5 AWS drain/capture migration.
+- `phase-f/`: declarative diff snippets for static-owned release, handover to
+  AWS, and rollback. These snippets are not standalone router configs.
 - `collect-evidence.sh`: collects provider state, routerd journals, dynamic
   state, doctor output, and connectivity evidence.
 - `reset-lab.sh`: best-effort cleanup to remove secondary captures, restore
@@ -45,8 +49,11 @@ assigned to ENI-B, and confirms traffic recovers via `aws-router-b`.
 
 The D3/D5 demo path uses `MobilityPool` as the declarative control-plane object
 that consumes federation observed events and derives leases, claims, routes, and
-provider action plans. It does not include an `EventSubscription` plugin path;
-that narrower Phase 3 mechanism remains documented in
+provider action plans. The on-prem `.10` owner is declared through
+`staticOwnedAddresses`, so `run-demo.sh` no longer injects an on-prem observed
+event for `.10`; cloud `.11/.12/.13` ownership remains observed-event driven.
+It does not include an `EventSubscription` plugin path; that narrower Phase 3
+mechanism remains documented in
 `examples/event-federation/`.
 
 ## Prerequisites

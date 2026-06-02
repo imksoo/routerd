@@ -227,6 +227,8 @@ spec:
           - nodeRef: onprem-router
             site: onprem
             role: onprem
+            staticOwnedAddresses:
+              - 10.77.60.10/32
             capture:
               type: proxy-arp
               interface: ens21

@@ -274,8 +274,7 @@ main() {
   install_secret_and_config oci-b "$WORKDIR/oci-b.yaml"
   preflight_mesh
 
-  echo "Emit D3 observed events"
-  emit_observed onprem onprem-router "$ONPREM_CLIENT_IP"
+  echo "Emit D3 cloud observed events"
   emit_observed aws-a aws-router-a "$AWS_CLIENT_IP"
   emit_observed azure azure-router "$AZURE_CLIENT_IP"
   emit_observed oci oci-router "$OCI_CLIENT_IP"
@@ -293,7 +292,6 @@ main() {
   install_secret_and_config onprem "$WORKDIR/onprem-drain.yaml"
   install_secret_and_config aws-a "$WORKDIR/aws-a-drain.yaml"
   install_secret_and_config aws-b "$WORKDIR/aws-b-drain.yaml"
-  emit_observed onprem onprem-router "$ONPREM_CLIENT_IP"
   emit_observed aws-b aws-router-b "$AWS_CLIENT_IP"
   sleep 20
 
