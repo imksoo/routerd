@@ -730,6 +730,79 @@ func TestNftablesTCPMSSClampForSAMOverlay(t *testing.T) {
 	}
 }
 
+func TestNftablesTCPMSSClampForBGPMobilityOverlay(t *testing.T) {
+	router := &api.Router{
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.FederationAPIVersion, Kind: "EventGroup"},
+				Metadata: api.ObjectMeta{Name: "cloudedge"},
+				Spec:     api.EventGroupSpec{NodeName: "oci-router"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardInterface"},
+				Metadata: api.ObjectMeta{Name: "wg-hybrid"},
+				Spec:     api.WireGuardInterfaceSpec{MTU: 1420},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "OverlayPeer"},
+				Metadata: api.ObjectMeta{Name: "onprem-main"},
+				Spec: api.OverlayPeerSpec{
+					Role:     "onprem",
+					NodeID:   "onprem-router",
+					Underlay: api.OverlayUnderlay{Type: "wireguard", Interface: "wg-hybrid"},
+				},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"},
+				Metadata: api.ObjectMeta{Name: "cloudedge"},
+				Spec: api.MobilityPoolSpec{
+					Prefix:         "10.77.60.0/24",
+					GroupRef:       "cloudedge",
+					DeliveryPolicy: api.MobilityDeliveryPolicy{Mode: "bgp"},
+					Members: []api.MobilityPoolMember{
+						{
+							NodeRef: "onprem-router",
+							Site:    "onprem",
+							Role:    "onprem",
+							Capture: api.MobilityMemberCapture{Type: "proxy-arp", Interface: "ens21"},
+							DeliveryTo: []api.MobilityMemberDeliveryTarget{
+								{NodeRef: "oci-router", PeerRef: "onprem-main", Mode: "route", TunnelInterface: "wg-hybrid"},
+							},
+						},
+						{
+							NodeRef:  "oci-router",
+							Site:     "oci",
+							Role:     "cloud",
+							Capture:  api.MobilityMemberCapture{Type: "provider-secondary-ip", Interface: "ens3", ProviderRef: "oci-lab"},
+							Delivery: api.MobilityMemberDelivery{PeerRef: "onprem-main", Mode: "route", TunnelInterface: "wg-hybrid"},
+						},
+					},
+				},
+			},
+		}},
+	}
+
+	data, err := NftablesTCPMSSClamp(router)
+	if err != nil {
+		t.Fatalf("render TCP MSS clamp: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		"table inet routerd_mss",
+		`iifname "ens3" oifname "wg-hybrid" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1300 tcp option maxseg size set 1300`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("nftables output missing BGP mobility clamp %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, `iifname "ens21"`) {
+		t.Fatalf("BGP mobility MSS clamp should only use the self member capture interface:\n%s", got)
+	}
+	if strings.Contains(got, "meta nfproto ipv6") {
+		t.Fatalf("BGP mobility MSS clamp should be IPv4-only:\n%s", got)
+	}
+}
+
 func TestNftablesTCPMSSClampForSAMIPIPOverlay(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{Resources: []api.Resource{

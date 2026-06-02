@@ -185,7 +185,7 @@ func pathMTUForwardedPaths(router *api.Router) []pathMTUForwardedPath {
 	}
 	peers := pathMTUOverlayPeers(router)
 	defaultSources := pathMTUDefaultForwardedPathSourceInterfaces(router)
-	var paths []pathMTUForwardedPath
+	paths := pathMTUBGPMobilityForwardedPaths(router, peers)
 	for _, res := range router.Spec.Resources {
 		if res.APIVersion != api.HybridAPIVersion || res.Kind != "RemoteAddressClaim" {
 			continue
@@ -208,6 +208,84 @@ func pathMTUForwardedPaths(router *api.Router) []pathMTUForwardedPath {
 		}
 	}
 	return compactForwardedPaths(paths)
+}
+
+func pathMTUBGPMobilityForwardedPaths(router *api.Router, peers map[string]api.OverlayPeerSpec) []pathMTUForwardedPath {
+	if router == nil {
+		return nil
+	}
+	var paths []pathMTUForwardedPath
+	for _, res := range router.Spec.Resources {
+		if res.APIVersion != api.MobilityAPIVersion || res.Kind != "MobilityPool" {
+			continue
+		}
+		spec, err := res.MobilityPoolSpec()
+		if err != nil || strings.TrimSpace(spec.DeliveryPolicy.Mode) != "bgp" {
+			continue
+		}
+		selfNode := pathMTUSelfNode(router, spec.GroupRef)
+		if selfNode == "" {
+			continue
+		}
+		for _, member := range spec.Members {
+			if strings.TrimSpace(member.NodeRef) != selfNode {
+				continue
+			}
+			source := strings.TrimSpace(member.Capture.Interface)
+			if source == "" {
+				break
+			}
+			deliveries := pathMTUMemberDeliveries(member)
+			for _, delivery := range deliveries {
+				tunnel := firstNonEmpty(strings.TrimSpace(delivery.TunnelInterface), strings.TrimSpace(peers[refName(delivery.PeerRef)].Underlay.Interface))
+				if tunnel == "" || tunnel == source {
+					continue
+				}
+				tunnelMTU := 0
+				if strings.TrimSpace(delivery.PeerRef) != "" {
+					tunnelMTU = pathMTUOverlayPeerEffectiveMTU(router, refName(delivery.PeerRef))
+				}
+				paths = append(paths, pathMTUForwardedPath{FromInterface: source, ToInterface: tunnel, MTU: tunnelMTU})
+			}
+			break
+		}
+	}
+	return compactForwardedPaths(paths)
+}
+
+func pathMTUSelfNode(router *api.Router, groupRef string) string {
+	if router == nil || strings.TrimSpace(groupRef) == "" {
+		return ""
+	}
+	for _, res := range router.Spec.Resources {
+		if res.APIVersion != api.FederationAPIVersion || res.Kind != "EventGroup" || res.Metadata.Name != strings.TrimSpace(groupRef) {
+			continue
+		}
+		spec, err := res.EventGroupSpec()
+		if err != nil {
+			return ""
+		}
+		return strings.TrimSpace(spec.NodeName)
+	}
+	return ""
+}
+
+func pathMTUMemberDeliveries(member api.MobilityPoolMember) []api.MobilityMemberDelivery {
+	var out []api.MobilityMemberDelivery
+	if strings.TrimSpace(member.Delivery.PeerRef) != "" || strings.TrimSpace(member.Delivery.TunnelInterface) != "" {
+		out = append(out, member.Delivery)
+	}
+	for _, target := range member.DeliveryTo {
+		delivery := api.MobilityMemberDelivery{
+			PeerRef:         target.PeerRef,
+			Mode:            target.Mode,
+			TunnelInterface: target.TunnelInterface,
+		}
+		if strings.TrimSpace(delivery.PeerRef) != "" || strings.TrimSpace(delivery.TunnelInterface) != "" {
+			out = append(out, delivery)
+		}
+	}
+	return out
 }
 
 func pathMTUOverlayPeerEffectiveMTU(router *api.Router, peerName string) int {
