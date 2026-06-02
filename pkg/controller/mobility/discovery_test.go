@@ -4,12 +4,14 @@ package mobility
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	"github.com/imksoo/routerd/pkg/providerinventory"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
@@ -121,6 +123,215 @@ func TestDiscoveryControllerUsesPluginResolvedSelfNICWhenCaptureNICIsImplicit(t 
 	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
 	if status["discoverySelfNICRef"] != "resolved-router-nic" || status["discoverySelfSubnetRef"] != "subnet-a" {
 		t.Fatalf("status = %#v", status)
+	}
+}
+
+func TestDiscoveryControllerExcludesPluginSelfPrivateIPs(t *testing.T) {
+	now := time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := discoveryPoolSpec()
+	spec.Members[1].Capture.NICRef = ""
+	runner := &fakeInventoryRunner{result: providerinventory.ObservePrivateIPsResult{
+		TypeMeta: providerinventory.TypeMeta{APIVersion: providerinventory.ProtocolAPIVersion, Kind: providerinventory.KindObservePrivateIPsResult},
+		Status: providerinventory.ObservePrivateIPsResultStatus{
+			Status: providerinventory.ResultSucceeded,
+			Self:   &providerinventory.PrivateIPSelf{NICRef: "resolved-router-nic", SubnetRef: "subnet-a", PrivateIPs: []string{"10.88.60.10", "10.88.60.12/32"}},
+			IPs: []providerinventory.PrivateIPRecord{
+				// Missing NICRef reproduces the provider-inventory shape that used
+				// to turn a trap secondary on the router NIC into an ownership fact.
+				{Address: "10.88.60.10", SubnetRef: "subnet-a", Tags: map[string]string{"cloudedge-mobility": "true"}},
+				{Address: "10.88.60.12", NICRef: "different-router-nic-ref", SubnetRef: "subnet-a", Tags: map[string]string{"cloudedge-mobility": "true"}},
+				{Address: "10.88.60.11", NICRef: "client-nic", SubnetRef: "subnet-a", Tags: map[string]string{"cloudedge-mobility": "true"}},
+			},
+		},
+	}}
+	controller := DiscoveryController{Router: discoveryRouter("azure-router-a", spec), Store: store, Runner: runner.run, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	events, err := store.ListFederationEvents("cloudedge", false, now.Unix())
+	if err != nil {
+		t.Fatalf("ListFederationEvents: %v", err)
+	}
+	if len(events) != 1 || events[0].Subject != "10.88.60.11/32" {
+		t.Fatalf("events = %#v, want only client IP", events)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	if fmt.Sprint(status["discoveryExcludedSelfIP"]) != "2" {
+		t.Fatalf("status = %#v, want two self-private-IP exclusions", status)
+	}
+}
+
+func TestDiscoveryControllerDoesNotStealStaticOwnedAddress(t *testing.T) {
+	now := time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := discoveryPoolSpec()
+	spec.Members[0].StaticOwnedAddresses = []string{"10.88.60.10/32"}
+	runner := &fakeInventoryRunner{result: providerinventory.ObservePrivateIPsResult{
+		TypeMeta: providerinventory.TypeMeta{APIVersion: providerinventory.ProtocolAPIVersion, Kind: providerinventory.KindObservePrivateIPsResult},
+		Status: providerinventory.ObservePrivateIPsResultStatus{
+			Status: providerinventory.ResultSucceeded,
+			Self:   &providerinventory.PrivateIPSelf{NICRef: "router-nic", SubnetRef: "subnet-a"},
+			IPs: []providerinventory.PrivateIPRecord{
+				{Address: "10.88.60.10", NICRef: "client-looking-nic", SubnetRef: "subnet-a", Tags: map[string]string{"cloudedge-mobility": "true"}},
+				{Address: "10.88.60.11", NICRef: "client-nic", SubnetRef: "subnet-a", Tags: map[string]string{"cloudedge-mobility": "true"}},
+			},
+		},
+	}}
+	controller := DiscoveryController{Router: discoveryRouter("azure-router-a", spec), Store: store, Runner: runner.run, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	events, err := store.ListFederationEvents("cloudedge", false, now.Unix())
+	if err != nil {
+		t.Fatalf("ListFederationEvents: %v", err)
+	}
+	if len(events) != 1 || events[0].Subject != "10.88.60.11/32" {
+		t.Fatalf("events = %#v, want static-owned address excluded and client IP accepted", events)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	if fmt.Sprint(status["discoveryExcludedStatic"]) != "1" {
+		t.Fatalf("status = %#v, want one static-owned exclusion", status)
+	}
+}
+
+func TestDiscoveryControllerDoesNotStealRemoteSiteLease(t *testing.T) {
+	now := time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := discoveryPoolSpec()
+	if err := store.UpsertAddressLease(routerstate.AddressLeaseRecord{
+		Pool:       "cloudedge",
+		Address:    "10.88.60.12/32",
+		Status:     routerstate.AddressLeaseStatusActive,
+		OwnerNode:  "onprem-router",
+		OwnerSite:  "onprem",
+		OwnerRole:  "onprem",
+		Epoch:      1,
+		ObservedAt: now.Add(-time.Minute),
+		ExpiresAt:  now.Add(time.Hour),
+		RecordedAt: now.Add(-time.Minute),
+	}); err != nil {
+		t.Fatalf("UpsertAddressLease: %v", err)
+	}
+	runner := &fakeInventoryRunner{result: providerinventory.ObservePrivateIPsResult{
+		TypeMeta: providerinventory.TypeMeta{APIVersion: providerinventory.ProtocolAPIVersion, Kind: providerinventory.KindObservePrivateIPsResult},
+		Status: providerinventory.ObservePrivateIPsResultStatus{
+			Status: providerinventory.ResultSucceeded,
+			Self:   &providerinventory.PrivateIPSelf{NICRef: "router-nic", SubnetRef: "subnet-a"},
+			IPs: []providerinventory.PrivateIPRecord{
+				{Address: "10.88.60.12", NICRef: "subnet-nic", SubnetRef: "subnet-a", Tags: map[string]string{"cloudedge-mobility": "true"}},
+				{Address: "10.88.60.11", NICRef: "client-nic", SubnetRef: "subnet-a", Tags: map[string]string{"cloudedge-mobility": "true"}},
+			},
+		},
+	}}
+	controller := DiscoveryController{Router: discoveryRouter("azure-router-a", spec), Store: store, Runner: runner.run, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	events, err := store.ListFederationEvents("cloudedge", false, now.Unix())
+	if err != nil {
+		t.Fatalf("ListFederationEvents: %v", err)
+	}
+	if len(events) != 1 || events[0].Subject != "10.88.60.11/32" {
+		t.Fatalf("events = %#v, want remote-site lease excluded and local client IP accepted", events)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	if fmt.Sprint(status["discoveryExcludedRemote"]) != "1" {
+		t.Fatalf("status = %#v, want one remote lease exclusion", status)
+	}
+}
+
+func TestDiscoveryControllerAllowsSameSiteLeaseHandoverDiscovery(t *testing.T) {
+	now := time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := discoveryPoolSpec()
+	spec.IPOwnershipPolicy.PreferNodes = []string{"azure-router-b", "azure-router-a"}
+	spec.Members[1].Placement.Priority = 20
+	spec.Members[2].Placement.Priority = 10
+	if err := store.UpsertAddressLease(routerstate.AddressLeaseRecord{
+		Pool:       "cloudedge",
+		Address:    "10.88.60.11/32",
+		Status:     routerstate.AddressLeaseStatusActive,
+		OwnerNode:  "azure-router-a",
+		OwnerSite:  "azure",
+		OwnerRole:  "cloud",
+		Epoch:      1,
+		ObservedAt: now.Add(-time.Minute),
+		ExpiresAt:  now.Add(time.Hour),
+		RecordedAt: now.Add(-time.Minute),
+	}); err != nil {
+		t.Fatalf("UpsertAddressLease: %v", err)
+	}
+	runner := &fakeInventoryRunner{result: providerinventory.ObservePrivateIPsResult{
+		TypeMeta: providerinventory.TypeMeta{APIVersion: providerinventory.ProtocolAPIVersion, Kind: providerinventory.KindObservePrivateIPsResult},
+		Status: providerinventory.ObservePrivateIPsResultStatus{
+			Status: providerinventory.ResultSucceeded,
+			Self:   &providerinventory.PrivateIPSelf{NICRef: "router-b-nic", SubnetRef: "subnet-a"},
+			IPs: []providerinventory.PrivateIPRecord{
+				{Address: "10.88.60.11", NICRef: "client-nic", SubnetRef: "subnet-a", Tags: map[string]string{"cloudedge-mobility": "true"}},
+			},
+		},
+	}}
+	controller := DiscoveryController{Router: discoveryRouter("azure-router-b", spec), Store: store, Runner: runner.run, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	events, err := store.ListFederationEvents("cloudedge", false, now.Unix())
+	if err != nil {
+		t.Fatalf("ListFederationEvents: %v", err)
+	}
+	if len(events) != 1 || events[0].SourceNode != "azure-router-b" || events[0].Subject != "10.88.60.11/32" {
+		t.Fatalf("events = %#v, want same-site handover discovery accepted", events)
+	}
+}
+
+func TestDiscoveryControllerExcludesCurrentTrapActionTargets(t *testing.T) {
+	now := time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := discoveryPoolSpec()
+	rawPlans, err := json.Marshal([]dynamicconfig.ActionPlan{{
+		Name:   "trap-remote",
+		Action: "assign-secondary-ip",
+		Target: map[string]string{"address": "10.88.60.12/32", "nicRef": "router-nic"},
+	}})
+	if err != nil {
+		t.Fatalf("marshal action plans: %v", err)
+	}
+	if err := store.UpsertDynamicConfigPart(routerstate.DynamicConfigPartRecord{
+		Source:          DynamicSource("cloudedge", "azure-router-a"),
+		Generation:      1,
+		ObservedAt:      now.Add(-time.Second),
+		ExpiresAt:       now.Add(time.Hour),
+		ActionPlansJSON: string(rawPlans),
+		Status:          "active",
+	}); err != nil {
+		t.Fatalf("UpsertDynamicConfigPart: %v", err)
+	}
+	runner := &fakeInventoryRunner{result: providerinventory.ObservePrivateIPsResult{
+		TypeMeta: providerinventory.TypeMeta{APIVersion: providerinventory.ProtocolAPIVersion, Kind: providerinventory.KindObservePrivateIPsResult},
+		Status: providerinventory.ObservePrivateIPsResultStatus{
+			Status: providerinventory.ResultSucceeded,
+			Self:   &providerinventory.PrivateIPSelf{NICRef: "router-nic", SubnetRef: "subnet-a"},
+			IPs: []providerinventory.PrivateIPRecord{
+				{Address: "10.88.60.12", NICRef: "unknown-nic", SubnetRef: "subnet-a", Tags: map[string]string{"cloudedge-mobility": "true"}},
+				{Address: "10.88.60.11", NICRef: "client-nic", SubnetRef: "subnet-a", Tags: map[string]string{"cloudedge-mobility": "true"}},
+			},
+		},
+	}}
+	controller := DiscoveryController{Router: discoveryRouter("azure-router-a", spec), Store: store, Runner: runner.run, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	events, err := store.ListFederationEvents("cloudedge", false, now.Unix())
+	if err != nil {
+		t.Fatalf("ListFederationEvents: %v", err)
+	}
+	if len(events) != 1 || events[0].Subject != "10.88.60.11/32" {
+		t.Fatalf("events = %#v, want current trap action target excluded", events)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	if fmt.Sprint(status["discoveryExcludedTrap"]) != "1" {
+		t.Fatalf("status = %#v, want one trap action exclusion", status)
 	}
 }
 

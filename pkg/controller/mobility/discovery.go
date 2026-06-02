@@ -4,6 +4,7 @@ package mobility
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/netip"
 	"sort"
@@ -14,6 +15,7 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	"github.com/imksoo/routerd/pkg/plugin"
 	"github.com/imksoo/routerd/pkg/providerinventory"
 	routerstate "github.com/imksoo/routerd/pkg/state"
@@ -28,6 +30,9 @@ const (
 type DiscoveryStore interface {
 	RecordFederationEvent(routerstate.EventRecord) error
 	ListFederationEvents(group string, includeExpired bool, now int64) ([]routerstate.EventRecord, error)
+	ListAddressLeases(pool string, includeExpired bool, now time.Time) ([]routerstate.AddressLeaseRecord, error)
+	GetDynamicConfigPartsBySource(source string) ([]routerstate.DynamicConfigPartRecord, error)
+	ListActions(routerstate.ActionExecutionFilter) ([]routerstate.ActionExecutionRecord, error)
 	SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error
 	ObjectStatus(apiVersion, kind, name string) map[string]any
 }
@@ -161,6 +166,16 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 	if selfInventory.NICRef != "" {
 		excludedNICs[selfInventory.NICRef] = true
 	}
+	selfPrivateIPs := discoverySelfPrivateIPSet(selfInventory.PrivateIPs, prefix)
+	staticOwners := staticOwnedOwnerNodesByAddress(spec)
+	remoteOwners, err := discoveryRemoteOwnerSites(c.Store, poolName, self, now)
+	if err != nil {
+		return err
+	}
+	trapAddresses, err := discoveryCurrentTrapAddresses(c.Store, poolName, selfNode, prefix, now)
+	if err != nil {
+		return err
+	}
 	ttl := discoveryLeaseTTL(discovery, spec)
 	counters := discoveryExclusionCounters{}
 	for _, rec := range sortedPrivateIPs(result.Status.IPs) {
@@ -169,8 +184,24 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 			counters.Scope++
 			continue
 		}
+		if selfPrivateIPs[address] {
+			counters.SelfPrivateIP++
+			continue
+		}
 		if strings.TrimSpace(rec.NICRef) != "" && excludedNICs[strings.TrimSpace(rec.NICRef)] {
 			counters.RouterNIC++
+			continue
+		}
+		if ownerNode := strings.TrimSpace(staticOwners[address]); ownerNode != "" && ownerNode != self.NodeRef {
+			counters.StaticOwned++
+			continue
+		}
+		if ownerSite := strings.TrimSpace(remoteOwners[address]); ownerSite != "" && ownerSite != self.Site {
+			counters.RemoteOwner++
+			continue
+		}
+		if trapAddresses[address] {
+			counters.TrapAction++
 			continue
 		}
 		if !discoveryPrimaryAllowed(discovery.Scope) && rec.Primary {
@@ -204,6 +235,10 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 		"discoveryExcluded":          counters.Excluded(),
 		"discoveryExcludedPrimary":   counters.Primary,
 		"discoveryExcludedRouterNIC": counters.RouterNIC,
+		"discoveryExcludedSelfIP":    counters.SelfPrivateIP,
+		"discoveryExcludedStatic":    counters.StaticOwned,
+		"discoveryExcludedRemote":    counters.RemoteOwner,
+		"discoveryExcludedTrap":      counters.TrapAction,
 		"discoveryExcludedScope":     counters.Scope,
 		"discoveryExcludedSelector":  counters.Selector,
 		"discoveryLastScanAt":        now.Format(time.RFC3339Nano),
@@ -213,15 +248,19 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 }
 
 type discoveryExclusionCounters struct {
-	Observed  int
-	Primary   int
-	RouterNIC int
-	Scope     int
-	Selector  int
+	Observed      int
+	Primary       int
+	RouterNIC     int
+	SelfPrivateIP int
+	StaticOwned   int
+	RemoteOwner   int
+	TrapAction    int
+	Scope         int
+	Selector      int
 }
 
 func (c discoveryExclusionCounters) Excluded() int {
-	return c.Primary + c.RouterNIC + c.Scope + c.Selector
+	return c.Primary + c.RouterNIC + c.SelfPrivateIP + c.StaticOwned + c.RemoteOwner + c.TrapAction + c.Scope + c.Selector
 }
 
 type discoverySelfInventory struct {
@@ -414,6 +453,99 @@ func mobilityRouterNICRefs(members []api.MobilityPoolMember) map[string]bool {
 		}
 	}
 	return out
+}
+
+func discoverySelfPrivateIPSet(values []string, poolPrefix netip.Prefix) map[string]bool {
+	out := map[string]bool{}
+	for _, raw := range values {
+		address, ok := normalizeDiscoveredAddress(raw, poolPrefix)
+		if ok {
+			out[address] = true
+		}
+	}
+	return out
+}
+
+func discoveryRemoteOwnerSites(store DiscoveryStore, poolName string, self memberPlanInfo, now time.Time) (map[string]string, error) {
+	leases, err := store.ListAddressLeases(poolName, false, now)
+	if err != nil {
+		return nil, fmt.Errorf("list discovery leases for MobilityPool/%s: %w", poolName, err)
+	}
+	out := map[string]string{}
+	selfSite := strings.TrimSpace(self.Site)
+	for _, lease := range leases {
+		if lease.Status != routerstate.AddressLeaseStatusActive {
+			continue
+		}
+		address := strings.TrimSpace(lease.Address)
+		ownerSite := strings.TrimSpace(lease.OwnerSite)
+		if address == "" || ownerSite == "" || ownerSite == selfSite {
+			continue
+		}
+		out[address] = ownerSite
+	}
+	return out, nil
+}
+
+func discoveryCurrentTrapAddresses(store DiscoveryStore, poolName, selfNode string, poolPrefix netip.Prefix, now time.Time) (map[string]bool, error) {
+	out := map[string]bool{}
+	source := DynamicSource(poolName, selfNode)
+	parts, err := store.GetDynamicConfigPartsBySource(source)
+	if err != nil {
+		return nil, fmt.Errorf("get discovery dynamic config part %s: %w", source, err)
+	}
+	for _, part := range parts {
+		if part.EffectiveStatus(now) != "active" {
+			continue
+		}
+		for _, plan := range decodeDiscoveryActionPlans(part.ActionPlansJSON) {
+			if plan.Action != "assign-secondary-ip" {
+				continue
+			}
+			address, ok := normalizeDiscoveredAddress(plan.Target["address"], poolPrefix)
+			if ok {
+				out[address] = true
+			}
+		}
+	}
+	actions, err := store.ListActions(routerstate.ActionExecutionFilter{})
+	if err != nil {
+		return nil, fmt.Errorf("list discovery action journal: %w", err)
+	}
+	for _, action := range actions {
+		if action.Action != "assign-secondary-ip" || !discoveryActionStatusCurrent(action.Status) {
+			continue
+		}
+		var target map[string]string
+		if err := json.Unmarshal([]byte(action.TargetJSON), &target); err != nil {
+			continue
+		}
+		address, ok := normalizeDiscoveredAddress(target["address"], poolPrefix)
+		if ok {
+			out[address] = true
+		}
+	}
+	return out, nil
+}
+
+func decodeDiscoveryActionPlans(raw string) []dynamicconfig.ActionPlan {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	var plans []dynamicconfig.ActionPlan
+	if err := json.Unmarshal([]byte(raw), &plans); err != nil {
+		return nil
+	}
+	return plans
+}
+
+func discoveryActionStatusCurrent(status string) bool {
+	switch strings.TrimSpace(status) {
+	case routerstate.ActionPending, routerstate.ActionApproved, routerstate.ActionRunning:
+		return true
+	default:
+		return false
+	}
 }
 
 func discoverySelectorMatches(selector api.MobilityOwnershipDiscoverySelector, tags map[string]string) bool {
