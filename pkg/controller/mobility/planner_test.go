@@ -2239,6 +2239,25 @@ func planningRouterForNode(nodeName string, spec api.MobilityPoolSpec) *api.Rout
 	}
 }
 
+func routerWithBGPRouter(router *api.Router) *api.Router {
+	cp := *router
+	cp.Spec.Resources = append(append([]api.Resource(nil), router.Spec.Resources...), api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"},
+		Metadata: api.ObjectMeta{Name: "mobility-bgp"},
+		Spec:     api.BGPRouterSpec{ASN: 64512, RouterID: "10.99.0.1"},
+	})
+	return &cp
+}
+
+func saveBGPInstalledNextHops(t *testing.T, store interface {
+	SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error
+}, nextHops map[string][]string) {
+	t.Helper()
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "BGPRouter", "mobility-bgp", map[string]any{"installedNextHops": nextHops}); err != nil {
+		t.Fatalf("SaveObjectStatus(BGPRouter/mobility-bgp): %v", err)
+	}
+}
+
 func latestPart(t *testing.T, store interface {
 	GetDynamicConfigPartsBySource(string) ([]routerstate.DynamicConfigPartRecord, error)
 }, source string) routerstate.DynamicConfigPartRecord {
