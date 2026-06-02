@@ -689,9 +689,6 @@ func bgpOwnedPaths(poolName, source, selfNode string, spec api.MobilityPoolSpec,
 		return nil
 	}
 	placement := evaluatePlacementWithLiveness(self, members, spec.IPOwnershipPolicy, OwnershipLiveness{})
-	if !placement.Active {
-		return nil
-	}
 	owned := bgpLocalOwnedAddressesFromConfigAndEvents(poolName, selfNode, spec, events, poolPrefix, now)
 	var out []bgpdaemon.AppliedPath
 	for _, owner := range owned {
@@ -704,7 +701,7 @@ func bgpOwnedPaths(poolName, source, selfNode string, spec api.MobilityPoolSpec,
 			Source: source,
 			Prefix: prefix.String(),
 			Family: bgpdaemon.AppliedPathFamilyIPv4Unicast,
-			Attrs:  bgpMobilityPathAttrs(self, owner.SourceType),
+			Attrs:  bgpMobilityPathAttrs(self, owner.SourceType, placement.Active),
 		}))
 	}
 	sort.SliceStable(out, func(i, j int) bool {
@@ -727,8 +724,11 @@ func bgpLocalOwnedAddressesFromConfigAndEvents(poolName, selfNode string, spec a
 	owned := map[string]bgpOwnedAddress{}
 	latest := map[string]routerstate.EventRecord{}
 	staticHandovers := staticHandoversByFrom(spec.StaticHandovers, poolPrefix)
+	members := plannerMembers(spec.Members)
+	self := members[strings.TrimSpace(selfNode)]
 	for _, member := range spec.Members {
-		if strings.TrimSpace(member.NodeRef) != strings.TrimSpace(selfNode) {
+		nodeRef := strings.TrimSpace(member.NodeRef)
+		if !bgpMemberAdvertisesOwnedAddress(self, members[nodeRef]) {
 			continue
 		}
 		for _, raw := range member.StaticOwnedAddresses {
@@ -764,7 +764,7 @@ func bgpLocalOwnedAddressesFromConfigAndEvents(poolName, selfNode string, spec a
 			delete(owned, address)
 			continue
 		}
-		if strings.TrimSpace(ev.SourceNode) == strings.TrimSpace(selfNode) {
+		if bgpMemberAdvertisesOwnedAddress(self, members[strings.TrimSpace(ev.SourceNode)]) {
 			sourceType := strings.TrimSpace(ev.Payload["sourceType"])
 			if sourceType == "" {
 				sourceType = bgpMobilitySourceFromEvent(ev)
@@ -773,7 +773,7 @@ func bgpLocalOwnedAddressesFromConfigAndEvents(poolName, selfNode string, spec a
 		}
 	}
 	for _, handover := range spec.StaticHandovers {
-		if strings.TrimSpace(handover.ToNodeRef) != strings.TrimSpace(selfNode) {
+		if !bgpMemberAdvertisesOwnedAddress(self, members[strings.TrimSpace(handover.ToNodeRef)]) {
 			continue
 		}
 		address, ok := normalizeLeaseAddress(handover.Address, poolPrefix)
@@ -793,6 +793,20 @@ func bgpLocalOwnedAddressesFromConfigAndEvents(poolName, selfNode string, spec a
 		return out[i].Address < out[j].Address
 	})
 	return out
+}
+
+func bgpMemberAdvertisesOwnedAddress(self, owner memberPlanInfo) bool {
+	if strings.TrimSpace(self.NodeRef) == "" || strings.TrimSpace(owner.NodeRef) == "" {
+		return false
+	}
+	if strings.TrimSpace(owner.NodeRef) == strings.TrimSpace(self.NodeRef) {
+		return true
+	}
+	if strings.TrimSpace(self.PlacementGroup) == "" {
+		return false
+	}
+	return strings.TrimSpace(self.PlacementGroup) == strings.TrimSpace(owner.PlacementGroup) &&
+		strings.TrimSpace(self.Site) == strings.TrimSpace(owner.Site)
 }
 
 func eventRecordGreater(candidate, current routerstate.EventRecord) bool {
@@ -1356,7 +1370,7 @@ func bgpCommunityContains(values []string, want string) bool {
 	return false
 }
 
-func bgpMobilityPathAttrs(member memberPlanInfo, sourceType string) bgpdaemon.AppliedPathAttrs {
+func bgpMobilityPathAttrs(member memberPlanInfo, sourceType string, active bool) bgpdaemon.AppliedPathAttrs {
 	communities := []string{bgpMobilityCommunityOwner}
 	switch member.Role {
 	case "onprem":
@@ -1372,8 +1386,12 @@ func bgpMobilityPathAttrs(member memberPlanInfo, sourceType string) bgpdaemon.Ap
 	default:
 		communities = append(communities, bgpMobilityCommunitySourceObserved)
 	}
+	localPref := bgpMobilityLocalPrefBase
+	if active {
+		localPref = bgpMobilityLocalPref(1)
+	}
 	attrs := bgpdaemon.AppliedPathAttrs{
-		LocalPref:   bgpMobilityLocalPref(1),
+		LocalPref:   localPref,
 		Communities: communities,
 	}
 	if member.PlacementPriority > 0 {

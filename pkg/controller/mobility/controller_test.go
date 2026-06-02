@@ -51,6 +51,28 @@ func (f *fakeBGPPaths) DeletePath(_ context.Context, path bgpdaemon.AppliedPath)
 	return nil
 }
 
+func pathBySourcePrefix(t *testing.T, bgp *fakeBGPPaths, source, prefix string) bgpdaemon.AppliedPath {
+	t.Helper()
+	path, ok := maybePathBySourcePrefix(bgp, source, prefix)
+	if !ok {
+		t.Fatalf("BGP path %s %s not found; paths=%#v", source, prefix, bgp.paths)
+	}
+	return path
+}
+
+func maybePathBySourcePrefix(bgp *fakeBGPPaths, source, prefix string) (bgpdaemon.AppliedPath, bool) {
+	if bgp == nil {
+		return bgpdaemon.AppliedPath{}, false
+	}
+	key := bgpdaemon.AppliedPathKey(bgpdaemon.NormalizeAppliedPath(bgpdaemon.AppliedPath{
+		Source: source,
+		Prefix: prefix,
+		Family: bgpdaemon.AppliedPathFamilyIPv4Unicast,
+	}))
+	path, ok := bgp.paths[key]
+	return path, ok
+}
+
 func TestControllerProjectsObservedEventToAddressLease(t *testing.T) {
 	now := time.Date(2026, 5, 31, 10, 0, 0, 0, time.UTC)
 	store := testStore(t, now)
@@ -735,6 +757,91 @@ func TestControllerBGPModeProviderTrapUsesRemoteInstalledNextHops(t *testing.T) 
 	}
 	if findActionPlanByAddress(plans, "assign-secondary-ip", "10.88.60.11/32") != nil {
 		t.Fatalf("plans = %#v, want no same-site/self-owned trap assign", plans)
+	}
+}
+
+func TestControllerBGPModeRestoreKeepsOwnerPreferredOverStandby(t *testing.T) {
+	now := time.Date(2026, 6, 2, 10, 0, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	recordEvent(t, store, routerstate.EventRecord{
+		ID:         "evt-aws-a",
+		Group:      "cloudedge",
+		SourceNode: "aws-router-a",
+		Type:       ObservedEventType,
+		Subject:    "10.88.60.11/32",
+		ObservedAt: now.Add(-time.Second),
+		ExpiresAt:  now.Add(time.Hour),
+	})
+	saveBGPInstalledNextHops(t, store, map[string][]string{
+		"10.88.60.11/32": {"10.99.0.22"},
+	})
+	bgp := &fakeBGPPaths{}
+
+	controllerA := Controller{Router: routerWithBGPRouter(planningRouterForNode("aws-router-a", spec)), Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controllerA.Reconcile(context.Background()); err != nil {
+		t.Fatalf("initial router-a Reconcile: %v", err)
+	}
+	controllerB := Controller{Router: routerWithBGPRouter(planningRouterForNode("aws-router-b", spec)), Store: store, BGPPaths: bgp, Now: func() time.Time { return now.Add(time.Second) }}
+	if err := controllerB.Reconcile(context.Background()); err != nil {
+		t.Fatalf("initial router-b Reconcile: %v", err)
+	}
+	aPath := pathBySourcePrefix(t, bgp, DynamicSource("cloudedge", "aws-router-a"), "10.88.60.11/32")
+	bPath := pathBySourcePrefix(t, bgp, DynamicSource("cloudedge", "aws-router-b"), "10.88.60.11/32")
+	if aPath.Attrs.LocalPref <= bPath.Attrs.LocalPref {
+		t.Fatalf("initial localPref A=%d B=%d, want active A preferred over standby B", aPath.Attrs.LocalPref, bPath.Attrs.LocalPref)
+	}
+	if findActionPlanByAddress(decodeActionPlans(t, latestPart(t, store, DynamicSource("cloudedge", "aws-router-b")).ActionPlansJSON), "assign-secondary-ip", "10.88.60.11/32") != nil {
+		t.Fatalf("standby B generated self-site trap for .11")
+	}
+
+	drained := awsFailoverPoolSpec()
+	drained.DeliveryPolicy.Mode = "bgp"
+	drained.Members[1].Maintenance.Drain = true
+	controllerA.Router = routerWithBGPRouter(planningRouterForNode("aws-router-a", drained))
+	controllerA.Now = func() time.Time { return now.Add(2 * time.Second) }
+	if err := controllerA.Reconcile(context.Background()); err != nil {
+		t.Fatalf("drained router-a Reconcile: %v", err)
+	}
+	controllerB.Router = routerWithBGPRouter(planningRouterForNode("aws-router-b", drained))
+	controllerB.Now = func() time.Time { return now.Add(3 * time.Second) }
+	if err := controllerB.Reconcile(context.Background()); err != nil {
+		t.Fatalf("takeover router-b Reconcile: %v", err)
+	}
+	if _, ok := maybePathBySourcePrefix(bgp, DynamicSource("cloudedge", "aws-router-a"), "10.88.60.11/32"); ok {
+		t.Fatalf("drained router-a path still present")
+	}
+	bTakeover := pathBySourcePrefix(t, bgp, DynamicSource("cloudedge", "aws-router-b"), "10.88.60.11/32")
+	if bTakeover.Attrs.LocalPref != bgpMobilityLocalPrefBase+1 {
+		t.Fatalf("takeover B localPref = %d, want active high", bTakeover.Attrs.LocalPref)
+	}
+	if findActionPlanByAddress(decodeActionPlans(t, latestPart(t, store, DynamicSource("cloudedge", "aws-router-b")).ActionPlansJSON), "assign-secondary-ip", "10.88.60.11/32") != nil {
+		t.Fatalf("active B generated provider trap for same-site .11")
+	}
+
+	restored := awsFailoverPoolSpec()
+	restored.DeliveryPolicy.Mode = "bgp"
+	controllerA.Router = routerWithBGPRouter(planningRouterForNode("aws-router-a", restored))
+	controllerA.Now = func() time.Time { return now.Add(4 * time.Second) }
+	if err := controllerA.Reconcile(context.Background()); err != nil {
+		t.Fatalf("restored router-a Reconcile: %v", err)
+	}
+	controllerB.Router = routerWithBGPRouter(planningRouterForNode("aws-router-b", restored))
+	controllerB.Now = func() time.Time { return now.Add(5 * time.Second) }
+	if err := controllerB.Reconcile(context.Background()); err != nil {
+		t.Fatalf("restored router-b Reconcile: %v", err)
+	}
+	aRestored := pathBySourcePrefix(t, bgp, DynamicSource("cloudedge", "aws-router-a"), "10.88.60.11/32")
+	bRestored := pathBySourcePrefix(t, bgp, DynamicSource("cloudedge", "aws-router-b"), "10.88.60.11/32")
+	if aRestored.Attrs.LocalPref != bgpMobilityLocalPrefBase+1 || bRestored.Attrs.LocalPref != bgpMobilityLocalPrefBase || aRestored.Attrs.LocalPref <= bRestored.Attrs.LocalPref {
+		t.Fatalf("restored localPref A=%d B=%d, want A high and B standby low", aRestored.Attrs.LocalPref, bRestored.Attrs.LocalPref)
+	}
+	if bRestored.Attrs.MED != 20 {
+		t.Fatalf("restored B MED = %d, want placement priority 20", bRestored.Attrs.MED)
+	}
+	if findActionPlanByAddress(decodeActionPlans(t, latestPart(t, store, DynamicSource("cloudedge", "aws-router-b")).ActionPlansJSON), "assign-secondary-ip", "10.88.60.11/32") != nil {
+		t.Fatalf("restored standby B retained provider trap for .11")
 	}
 }
 
