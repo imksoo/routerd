@@ -421,6 +421,9 @@ func TestControllerBGPModeAdvertisesSelfOwnedHostRouteAndSuppressesSAMPart(t *te
 	if len(bgp.upserts) != 1 || bgp.upserts[0].Source != DynamicSource("cloudedge", "azure-router") || bgp.upserts[0].Prefix != "10.88.60.11/32" {
 		t.Fatalf("upserts = %#v, want self-owned /32", bgp.upserts)
 	}
+	if bgp.upserts[0].Attrs.LocalPref != bgpMobilityLocalPrefBase+1 || !stringSliceContains(bgp.upserts[0].Attrs.Communities, bgpMobilityCommunityRoleCloud) || !stringSliceContains(bgp.upserts[0].Attrs.Communities, bgpMobilityCommunitySourceObserved) {
+		t.Fatalf("upsert attrs = %#v, want cloud observed owner attributes", bgp.upserts[0].Attrs)
+	}
 	if len(bgp.deletes) != 1 || bgp.deletes[0].Prefix != "10.88.60.99/32" {
 		t.Fatalf("deletes = %#v, want stale source path deleted", bgp.deletes)
 	}
@@ -432,6 +435,184 @@ func TestControllerBGPModeAdvertisesSelfOwnedHostRouteAndSuppressesSAMPart(t *te
 	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
 	if status["plannerPhase"] != "BGPPlanned" || status["deliveryMode"] != "bgp" || fmt.Sprint(status["generatedBGPPaths"]) != "1" {
 		t.Fatalf("BGP status = %#v", status)
+	}
+}
+
+func TestControllerBGPModeFailoverWithdrawsOldOwnerAndAdvertisesStandby(t *testing.T) {
+	now := time.Date(2026, 6, 2, 10, 0, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := centralizedOwnershipPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	spec.Members[1].Maintenance.Drain = true
+	if err := store.UpsertAddressLease(routerstate.AddressLeaseRecord{
+		Pool:      "cloudedge",
+		Address:   "10.88.60.12/32",
+		Status:    routerstate.AddressLeaseStatusActive,
+		OwnerNode: "azure-router-a",
+		OwnerSite: "azure",
+		OwnerRole: "cloud",
+		Epoch:     1,
+		ExpiresAt: now.Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("UpsertAddressLease: %v", err)
+	}
+	if _, err := store.ReconcileMobilityOwnershipEpochs([]routerstate.MobilityOwnershipEpochRecord{{
+		Pool:      "cloudedge",
+		Address:   "10.88.60.12/32",
+		OwnerNode: "azure-router-a",
+	}}); err != nil {
+		t.Fatalf("seed ownership epoch: %v", err)
+	}
+	aSource := DynamicSource("cloudedge", "azure-router-a")
+	bSource := DynamicSource("cloudedge", "azure-router-b")
+	bgp := &fakeBGPPaths{paths: map[string]bgpdaemon.AppliedPath{
+		bgpdaemon.AppliedPathKey(bgpdaemon.AppliedPath{Source: aSource, Prefix: "10.88.60.12/32"}): bgpdaemon.NormalizeAppliedPath(bgpdaemon.AppliedPath{
+			Source: aSource,
+			Prefix: "10.88.60.12/32",
+			Family: bgpdaemon.AppliedPathFamilyIPv4Unicast,
+			Attrs:  bgpdaemon.AppliedPathAttrs{LocalPref: bgpMobilityLocalPrefBase + 1},
+		}),
+	}}
+
+	controllerA := Controller{Router: planningRouterForNode("azure-router-a", spec), Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controllerA.Reconcile(context.Background()); err != nil {
+		t.Fatalf("old owner Reconcile: %v", err)
+	}
+	if len(bgp.deletes) != 1 || bgp.deletes[0].Source != aSource || bgp.deletes[0].Prefix != "10.88.60.12/32" {
+		t.Fatalf("old owner deletes = %#v, want withdraw", bgp.deletes)
+	}
+
+	controllerB := Controller{Router: planningRouterForNode("azure-router-b", spec), Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controllerB.Reconcile(context.Background()); err != nil {
+		t.Fatalf("standby Reconcile: %v", err)
+	}
+	if len(bgp.upserts) != 1 || bgp.upserts[0].Source != bSource || bgp.upserts[0].Prefix != "10.88.60.12/32" {
+		t.Fatalf("standby upserts = %#v, want advertise", bgp.upserts)
+	}
+	if bgp.upserts[0].Attrs.LocalPref != bgpMobilityLocalPrefBase+2 || !stringSliceContains(bgp.upserts[0].Attrs.Communities, bgpMobilityCommunityFailover) {
+		t.Fatalf("standby attrs = %#v, want epoch-2 failover path", bgp.upserts[0].Attrs)
+	}
+	ownership, err := store.ListMobilityOwnershipEpochs("cloudedge")
+	if err != nil {
+		t.Fatalf("ListMobilityOwnershipEpochs: %v", err)
+	}
+	if len(ownership) != 1 || ownership[0].OwnerNode != "azure-router-b" || ownership[0].Epoch != 2 {
+		t.Fatalf("ownership = %+v, want azure-router-b epoch 2", ownership)
+	}
+}
+
+func TestControllerBGPModeStaleOwnerAdvertisesStandby(t *testing.T) {
+	base := time.Date(2026, 6, 2, 10, 0, 0, 0, time.UTC)
+	store := testStore(t, base)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	spec.IPOwnershipPolicy = api.MobilityIPOwnershipPolicy{
+		Type:                  "centralized",
+		AutoFailover:          true,
+		HeartbeatInterval:     "10s",
+		HeartbeatTTL:          "30s",
+		PromotionHoldDuration: "0s",
+	}
+	if err := store.UpsertAddressLease(routerstate.AddressLeaseRecord{
+		Pool:      "cloudedge",
+		Address:   "10.88.60.11/32",
+		Status:    routerstate.AddressLeaseStatusActive,
+		OwnerNode: "aws-router-a",
+		OwnerSite: "aws",
+		OwnerRole: "cloud",
+		Epoch:     1,
+		ExpiresAt: base.Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("UpsertAddressLease: %v", err)
+	}
+	if _, err := store.ReconcileMobilityOwnershipEpochs([]routerstate.MobilityOwnershipEpochRecord{{
+		Pool:      "cloudedge",
+		Address:   "10.88.60.11/32",
+		OwnerNode: "aws-router-a",
+	}}); err != nil {
+		t.Fatalf("seed ownership epoch: %v", err)
+	}
+	recordEvent(t, store, routerstate.EventRecord{
+		ID:         "hb-a",
+		Group:      "cloudedge",
+		SourceNode: "aws-router-a",
+		Type:       HeartbeatEventType,
+		Subject:    "mobility/cloudedge/aws-router-a",
+		Payload:    map[string]string{"pool": "cloudedge", "node": "aws-router-a"},
+		ObservedAt: base,
+		ExpiresAt:  base.Add(time.Hour),
+	})
+
+	now := base.Add(2 * time.Minute)
+	bgp := &fakeBGPPaths{}
+	controller := Controller{Router: planningRouterForNode("aws-router-b", spec), Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(bgp.upserts) != 1 || bgp.upserts[0].Source != DynamicSource("cloudedge", "aws-router-b") || bgp.upserts[0].Prefix != "10.88.60.11/32" {
+		t.Fatalf("upserts = %#v, want stale-owner standby advertise", bgp.upserts)
+	}
+	if bgp.upserts[0].Attrs.LocalPref != bgpMobilityLocalPrefBase+2 || !stringSliceContains(bgp.upserts[0].Attrs.Communities, bgpMobilityCommunityFailover) {
+		t.Fatalf("attrs = %#v, want epoch-2 stale failover path", bgp.upserts[0].Attrs)
+	}
+}
+
+func TestControllerBGPModeStaticOwnedAdvertisesOnPremOwner(t *testing.T) {
+	now := time.Date(2026, 6, 2, 9, 0, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := staticPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	bgp := &fakeBGPPaths{}
+	controller := Controller{Router: staticRouter("onprem-router", spec), Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(bgp.upserts) != 1 || bgp.upserts[0].Prefix != "10.88.60.10/32" || bgp.upserts[0].Source != DynamicSource("cloudedge", "onprem-router") {
+		t.Fatalf("upserts = %#v, want static-owned onprem /32", bgp.upserts)
+	}
+	if !stringSliceContains(bgp.upserts[0].Attrs.Communities, bgpMobilityCommunityRoleOnPrem) || !stringSliceContains(bgp.upserts[0].Attrs.Communities, bgpMobilityCommunitySourceStatic) {
+		t.Fatalf("attrs = %#v, want onprem static communities", bgp.upserts[0].Attrs)
+	}
+}
+
+func TestControllerBGPModeStaticHandoverSwitchesAdvertisementSource(t *testing.T) {
+	base := time.Date(2026, 6, 2, 9, 0, 0, 0, time.UTC)
+	store := testStore(t, base)
+	spec := staticPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	bgp := &fakeBGPPaths{}
+	onpremSource := DynamicSource("cloudedge", "onprem-router")
+	azureSource := DynamicSource("cloudedge", "azure-router")
+
+	controller := Controller{Router: staticRouter("onprem-router", spec), Store: store, BGPPaths: bgp, Now: func() time.Time { return base }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("initial Reconcile: %v", err)
+	}
+	if len(bgp.upserts) != 1 || bgp.upserts[0].Source != onpremSource || bgp.upserts[0].Prefix != "10.88.60.10/32" {
+		t.Fatalf("initial upserts = %#v, want onprem advertise", bgp.upserts)
+	}
+
+	spec.Members[0].StaticOwnedAddresses = nil
+	spec.StaticHandovers = []api.MobilityStaticHandover{{Address: "10.88.60.10/32", FromNodeRef: "onprem-router", ToNodeRef: "azure-router"}}
+	controller.Router = staticRouter("onprem-router", spec)
+	controller.Now = func() time.Time { return base.Add(time.Minute) }
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("release Reconcile: %v", err)
+	}
+	if len(bgp.deletes) != 1 || bgp.deletes[0].Source != onpremSource || bgp.deletes[0].Prefix != "10.88.60.10/32" {
+		t.Fatalf("handover deletes = %#v, want onprem withdraw", bgp.deletes)
+	}
+
+	controller.Router = staticRouter("azure-router", spec)
+	controller.Now = func() time.Time { return base.Add(time.Minute + 31*time.Second) }
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("cloud handover Reconcile: %v", err)
+	}
+	if len(bgp.upserts) != 2 || bgp.upserts[1].Source != azureSource || bgp.upserts[1].Prefix != "10.88.60.10/32" {
+		t.Fatalf("handover upserts = %#v, want azure advertise after release", bgp.upserts)
+	}
+	if !stringSliceContains(bgp.upserts[1].Attrs.Communities, bgpMobilityCommunitySourceHandover) {
+		t.Fatalf("handover attrs = %#v, want handover source community", bgp.upserts[1].Attrs)
 	}
 }
 
@@ -504,6 +685,15 @@ func countEvents(events []routerstate.EventRecord, eventType, sourceNode, subjec
 		}
 	}
 	return count
+}
+
+func stringSliceContains(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func testRouter() *api.Router {

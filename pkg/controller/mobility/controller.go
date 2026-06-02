@@ -33,6 +33,18 @@ const (
 	statusPhaseProjected = "Projected"
 )
 
+const (
+	bgpMobilityLocalPrefBase uint32 = 200
+
+	bgpMobilityCommunityOwner          = "64512:100"
+	bgpMobilityCommunityRoleOnPrem     = "64512:101"
+	bgpMobilityCommunityRoleCloud      = "64512:102"
+	bgpMobilityCommunitySourceObserved = "64512:110"
+	bgpMobilityCommunitySourceStatic   = "64512:111"
+	bgpMobilityCommunitySourceHandover = "64512:112"
+	bgpMobilityCommunityFailover       = "64512:120"
+)
+
 type Store interface {
 	ListFederationEvents(group string, includeExpired bool, now int64) ([]routerstate.EventRecord, error)
 	RecordFederationEvent(routerstate.EventRecord) error
@@ -139,12 +151,23 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 	if err != nil {
 		return err
 	}
+	if _, ok := plannerMembers(spec.Members)[selfNode]; !ok {
+		return fmt.Errorf("self node %q is not a member of MobilityPool/%s", selfNode, res.Metadata.Name)
+	}
 	source := DynamicSource(res.Metadata.Name, selfNode)
 	leases, err := c.Store.ListAddressLeases(res.Metadata.Name, false, now)
 	if err != nil {
 		return fmt.Errorf("list address leases: %w", err)
 	}
-	desired := bgpOwnedPaths(res.Metadata.Name, source, selfNode, leases, now)
+	liveness, err := c.ownershipLiveness(res.Metadata.Name, spec, now)
+	if err != nil {
+		return err
+	}
+	ownershipEpochs, err := c.reconcileBGPOwnership(res.Metadata.Name, spec, leases, liveness, now)
+	if err != nil {
+		return err
+	}
+	desired := bgpOwnedPaths(res.Metadata.Name, source, selfNode, spec, leases, ownershipEpochs, now)
 	current, err := c.BGPPaths.ListPaths(ctx, source)
 	if err != nil {
 		return fmt.Errorf("list BGP mobility paths: %w", err)
@@ -181,7 +204,32 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		"operatorIntent":     "MobilityPool",
 		"derivedConfigKinds": []string{"BGPPath"},
 	}
+	if ipOwnershipPolicyCentralized(spec.IPOwnershipPolicy) {
+		status["ownershipPolicy"] = "centralized"
+		status["ownershipCount"] = len(ownershipEpochs)
+		status["ownershipMap"] = ownershipStatusMap(ownershipEpochs)
+		if spec.IPOwnershipPolicy.AutoFailover {
+			status["autoFailover"] = true
+			status["streamMaxObservedAt"] = liveness.StreamMaxObservedAt.Format(time.RFC3339Nano)
+			status["staleMembers"] = staleMembersStatus(liveness.StaleNodes)
+		}
+	}
 	return c.savePlannerStatus(res.Metadata.Name, status)
+}
+
+func (c Controller) reconcileBGPOwnership(poolName string, spec api.MobilityPoolSpec, leases []routerstate.AddressLeaseRecord, liveness OwnershipLiveness, now time.Time) ([]routerstate.MobilityOwnershipEpochRecord, error) {
+	if ipOwnershipPolicyCentralized(spec.IPOwnershipPolicy) {
+		desired, err := desiredOwnershipEpochs(poolName, spec, leases, liveness, now)
+		if err != nil {
+			return nil, err
+		}
+		ownership, err := c.Store.ReconcileMobilityOwnershipEpochs(desired)
+		if err != nil {
+			return nil, fmt.Errorf("reconcile BGP mobility ownership epochs: %w", err)
+		}
+		return ownership, nil
+	}
+	return bgpLeaseOwnershipEpochs(poolName, spec, leases, now), nil
 }
 
 func (c Controller) reconcileBGPDeliveryDisabled(ctx context.Context, res api.Resource, spec api.MobilityPoolSpec, now time.Time) error {
@@ -499,36 +547,133 @@ func mobilityBGPMode(spec api.MobilityPoolSpec) bool {
 	return strings.TrimSpace(spec.DeliveryPolicy.Mode) == "bgp"
 }
 
-func bgpOwnedPaths(poolName, source, selfNode string, leases []routerstate.AddressLeaseRecord, now time.Time) []bgpdaemon.AppliedPath {
+func bgpOwnedPaths(poolName, source, selfNode string, spec api.MobilityPoolSpec, leases []routerstate.AddressLeaseRecord, ownership []routerstate.MobilityOwnershipEpochRecord, now time.Time) []bgpdaemon.AppliedPath {
+	poolPrefix, err := netip.ParsePrefix(strings.TrimSpace(spec.Prefix))
+	if err != nil {
+		return nil
+	}
+	poolPrefix = poolPrefix.Masked()
+	members := plannerMembers(spec.Members)
+	self := members[strings.TrimSpace(selfNode)]
+	owners := bgpOwnershipByAddress(ownership)
 	var out []bgpdaemon.AppliedPath
 	for _, lease := range leases {
 		if lease.Pool != poolName || lease.Status != routerstate.AddressLeaseStatusActive {
 			continue
 		}
-		if strings.TrimSpace(lease.OwnerNode) != strings.TrimSpace(selfNode) {
-			continue
-		}
 		if !lease.ExpiresAt.IsZero() && !now.Before(lease.ExpiresAt) {
 			continue
 		}
-		prefix, err := netip.ParsePrefix(strings.TrimSpace(lease.Address))
+		address, ok := normalizeLeaseAddress(lease.Address, poolPrefix)
+		if !ok {
+			continue
+		}
+		owner, ok := owners[address]
+		if !ok || strings.TrimSpace(owner.OwnerNode) != strings.TrimSpace(selfNode) {
+			continue
+		}
+		prefix, err := netip.ParsePrefix(address)
 		if err != nil {
 			continue
 		}
 		prefix = prefix.Masked()
-		if !prefix.Addr().Is4() || prefix.Bits() != 32 {
-			continue
-		}
 		out = append(out, bgpdaemon.NormalizeAppliedPath(bgpdaemon.AppliedPath{
 			Source: source,
 			Prefix: prefix.String(),
 			Family: bgpdaemon.AppliedPathFamilyIPv4Unicast,
+			Attrs:  bgpMobilityPathAttrs(self, lease, owner),
 		}))
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		return out[i].Prefix < out[j].Prefix
 	})
 	return out
+}
+
+func bgpLeaseOwnershipEpochs(poolName string, spec api.MobilityPoolSpec, leases []routerstate.AddressLeaseRecord, now time.Time) []routerstate.MobilityOwnershipEpochRecord {
+	poolPrefix, err := netip.ParsePrefix(strings.TrimSpace(spec.Prefix))
+	if err != nil {
+		return nil
+	}
+	poolPrefix = poolPrefix.Masked()
+	members := plannerMembers(spec.Members)
+	var out []routerstate.MobilityOwnershipEpochRecord
+	for _, lease := range sortedLeases(leases) {
+		if lease.Pool != poolName || lease.Status != routerstate.AddressLeaseStatusActive {
+			continue
+		}
+		if !lease.ExpiresAt.IsZero() && !now.Before(lease.ExpiresAt) {
+			continue
+		}
+		address, ok := normalizeLeaseAddress(lease.Address, poolPrefix)
+		if !ok {
+			continue
+		}
+		if _, ok := members[strings.TrimSpace(lease.OwnerNode)]; !ok {
+			continue
+		}
+		epoch := lease.Epoch
+		if epoch < 1 {
+			epoch = 1
+		}
+		out = append(out, routerstate.MobilityOwnershipEpochRecord{
+			Pool:      poolName,
+			Address:   address,
+			OwnerNode: strings.TrimSpace(lease.OwnerNode),
+			Epoch:     epoch,
+		})
+	}
+	return out
+}
+
+func bgpOwnershipByAddress(records []routerstate.MobilityOwnershipEpochRecord) map[string]routerstate.MobilityOwnershipEpochRecord {
+	out := map[string]routerstate.MobilityOwnershipEpochRecord{}
+	for _, rec := range records {
+		if address := normalizeAddressString(rec.Address); address != "" {
+			out[address] = rec
+		}
+	}
+	return out
+}
+
+func bgpMobilityPathAttrs(member memberPlanInfo, lease routerstate.AddressLeaseRecord, owner routerstate.MobilityOwnershipEpochRecord) bgpdaemon.AppliedPathAttrs {
+	communities := []string{bgpMobilityCommunityOwner}
+	switch member.Role {
+	case "onprem":
+		communities = append(communities, bgpMobilityCommunityRoleOnPrem)
+	case "cloud":
+		communities = append(communities, bgpMobilityCommunityRoleCloud)
+	}
+	switch strings.TrimSpace(lease.SourceType) {
+	case staticOwnedType:
+		communities = append(communities, bgpMobilityCommunitySourceStatic)
+	case staticHandoverType:
+		communities = append(communities, bgpMobilityCommunitySourceHandover)
+	default:
+		communities = append(communities, bgpMobilityCommunitySourceObserved)
+	}
+	if strings.TrimSpace(lease.OwnerNode) != "" && strings.TrimSpace(lease.OwnerNode) != strings.TrimSpace(owner.OwnerNode) {
+		communities = append(communities, bgpMobilityCommunityFailover)
+	}
+	attrs := bgpdaemon.AppliedPathAttrs{
+		LocalPref:   bgpMobilityLocalPref(owner.Epoch),
+		Communities: communities,
+	}
+	if member.PlacementPriority > 0 {
+		attrs.MED = uint32(member.PlacementPriority)
+	}
+	return attrs
+}
+
+func bgpMobilityLocalPref(epoch int64) uint32 {
+	if epoch < 1 {
+		epoch = 1
+	}
+	const maxEpoch = int64(1000000)
+	if epoch > maxEpoch {
+		epoch = maxEpoch
+	}
+	return bgpMobilityLocalPrefBase + uint32(epoch)
 }
 
 func staticOwnedCandidate(poolName, group, address, nodeRef string, member memberInfo, current routerstate.AddressLeaseRecord, now time.Time) leaseCandidate {

@@ -863,6 +863,17 @@ func TestBestFIBRoutesBuildsECMPAndSkipsLocalAdvertisements(t *testing.T) {
 	}
 }
 
+func TestFIBRoutesFromDestinationChoosesHigherLocalPref(t *testing.T) {
+	routes := fibRoutesFromDestination(testRankedDestination("10.77.60.12/32",
+		rankedPath{nextHop: "10.99.0.11", localPref: 201, med: 20},
+		rankedPath{nextHop: "10.99.0.12", localPref: 202, med: 10},
+	), []netip.Prefix{netip.MustParsePrefix("10.77.60.0/24")})
+	want := []FIBRoute{{Prefix: "10.77.60.12/32", NextHops: []string{"10.99.0.12"}}}
+	if !reflect.DeepEqual(routes, want) {
+		t.Fatalf("routes = %#v, want %#v", routes, want)
+	}
+}
+
 func TestPrefixAllowedRequiresSameFamilyAndCoveredLength(t *testing.T) {
 	allowed := []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8"), netip.MustParsePrefix("2001:db8::/32")}
 	tests := []struct {
@@ -880,6 +891,29 @@ func TestPrefixAllowedRequiresSameFamilyAndCoveredLength(t *testing.T) {
 			t.Fatalf("prefixAllowed(%s) = %t, want %t", tt.prefix, got, tt.want)
 		}
 	}
+}
+
+type rankedPath struct {
+	nextHop   string
+	localPref uint32
+	med       uint32
+}
+
+func testRankedDestination(prefix string, ranked ...rankedPath) *gobgpapi.Destination {
+	parsed := netip.MustParsePrefix(prefix)
+	nlri, _ := anypb.New(&gobgpapi.IPAddressPrefix{Prefix: parsed.Addr().String(), PrefixLen: uint32(parsed.Bits())})
+	var paths []*gobgpapi.Path
+	for _, path := range ranked {
+		nh, _ := anypb.New(&gobgpapi.NextHopAttribute{NextHop: path.nextHop})
+		localPref, _ := anypb.New(&gobgpapi.LocalPrefAttribute{LocalPref: path.localPref})
+		med, _ := anypb.New(&gobgpapi.MultiExitDiscAttribute{Med: path.med})
+		paths = append(paths, &gobgpapi.Path{
+			Family: ipv4Family(),
+			Nlri:   nlri,
+			Pattrs: []*anypb.Any{nh, localPref, med},
+		})
+	}
+	return &gobgpapi.Destination{Prefix: prefix, Paths: paths}
 }
 
 func bgpRouter() *api.Router {
