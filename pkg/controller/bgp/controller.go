@@ -108,6 +108,7 @@ type desiredPeer struct {
 	ASN                     uint32
 	LocalASN                uint32
 	Password                string
+	BFD                     string
 	EbgpMultihop            int
 	RouteReflectorClient    bool
 	RouteReflectorClusterID string
@@ -145,10 +146,6 @@ func (c *Controller) reconcileLocked(ctx context.Context) error {
 		err := fmt.Errorf("routerd-bgp MVP does not yet support BGPRouter.spec.vrf")
 		return c.savePendingAll("GoBGPVRFUnsupported", err)
 	}
-	if c.usesBFD() {
-		err := fmt.Errorf("routerd-bgp MVP does not yet support BFD; remove BGPPeer.spec.bfd and BFD resources until routerd owns a BFD implementation")
-		return c.savePendingAll("GoBGPBFDUnsupported", err)
-	}
 	if c.DryRun {
 		return c.saveServeManagedStatuses("Planned", false, map[string]any{
 			"reason":    "GoBGPServeManaged",
@@ -171,6 +168,7 @@ func (c *Controller) reconcileLocked(ctx context.Context) error {
 	if err != nil {
 		return c.savePendingAll("GoBGPPeerConfigInvalid", err)
 	}
+	desired = c.applyBFDPeerGate(desired)
 	for address, peer := range desired {
 		peer.GracefulRestart = routerSpec.GracefulRestart
 		peer.ConvergenceProfile = routerSpec.ConvergenceProfile
@@ -517,6 +515,7 @@ func (c *Controller) desiredPeers(routerName string, localASN uint32) (map[strin
 				ASN:                     spec.PeerASN,
 				LocalASN:                localASN,
 				Password:                password,
+				BFD:                     strings.TrimSpace(spec.BFD),
 				EbgpMultihop:            spec.EbgpMultihop,
 				RouteReflectorClient:    spec.RouteReflectorClient,
 				RouteReflectorClusterID: strings.TrimSpace(spec.RouteReflectorClusterID),
@@ -612,6 +611,7 @@ func desiredPeersFromApplied(localASN uint32, peers map[string]bgpdaemon.Applied
 			ASN:                     peer.ASN,
 			LocalASN:                localASN,
 			Password:                peer.Password,
+			BFD:                     peer.BFD,
 			EbgpMultihop:            peer.EbgpMultihop,
 			RouteReflectorClient:    peer.RouteReflectorClient,
 			RouteReflectorClusterID: peer.RouteReflectorClusterID,
@@ -674,6 +674,7 @@ func appliedPeer(peer desiredPeer) bgpdaemon.AppliedPeer {
 		Address:                 peer.Address,
 		ASN:                     peer.ASN,
 		Password:                peer.Password,
+		BFD:                     peer.BFD,
 		EbgpMultihop:            peer.EbgpMultihop,
 		RouteReflectorClient:    peer.RouteReflectorClient,
 		RouteReflectorClusterID: peer.RouteReflectorClusterID,
@@ -689,6 +690,69 @@ func appliedPeer(peer desiredPeer) bgpdaemon.AppliedPeer {
 		out.GracefulRestart = &bgpdaemon.AppliedGracefulRestart{Enabled: true, RestartTime: gr.GetRestartTime(), StaleRoutesTime: gr.GetStaleRoutesTime()}
 	}
 	return out
+}
+
+func (c *Controller) applyBFDPeerGate(desired map[string]desiredPeer) map[string]desiredPeer {
+	if c.Store == nil || len(desired) == 0 {
+		return desired
+	}
+	out := make(map[string]desiredPeer, len(desired))
+	for address, peer := range desired {
+		if c.bfdPeerDown(peer.BFD, address) {
+			continue
+		}
+		out[address] = peer
+	}
+	return out
+}
+
+func (c *Controller) bfdPeerDown(ref, address string) bool {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return false
+	}
+	kind, name, ok := strings.Cut(ref, "/")
+	if !ok || kind != "BFD" || strings.TrimSpace(name) == "" {
+		return false
+	}
+	status := c.Store.ObjectStatus(routerapi.NetAPIVersion, "BFD", strings.TrimSpace(name))
+	state := bfdPeerState(status, address)
+	return strings.EqualFold(state, "Down")
+}
+
+func bfdPeerState(status map[string]any, address string) string {
+	address = strings.TrimSpace(address)
+	peerStates, ok := status["peerStates"].(map[string]any)
+	if ok {
+		return strings.TrimSpace(fmt.Sprint(peerStates[address]))
+	}
+	if typed, ok := status["peerStates"].(map[string]string); ok {
+		return strings.TrimSpace(typed[address])
+	}
+	for _, item := range statusSlice(status["peers"]) {
+		itemAddress := strings.TrimSpace(fmt.Sprint(item["address"]))
+		if itemAddress == address {
+			return strings.TrimSpace(fmt.Sprint(item["state"]))
+		}
+	}
+	return ""
+}
+
+func statusSlice(value any) []map[string]any {
+	switch typed := value.(type) {
+	case []map[string]any:
+		return typed
+	case []any:
+		out := make([]map[string]any, 0, len(typed))
+		for _, item := range typed {
+			if m, ok := item.(map[string]any); ok {
+				out = append(out, m)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
 }
 
 func mapKeys(values map[string]bool) []string {
@@ -1009,27 +1073,6 @@ func (c *Controller) bgpRouters() []routerapi.Resource {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Metadata.Name < out[j].Metadata.Name })
 	return out
-}
-
-func (c *Controller) usesBFD() bool {
-	if c.Router == nil {
-		return false
-	}
-	for _, resource := range c.Router.Spec.Resources {
-		if resource.APIVersion != routerapi.NetAPIVersion {
-			continue
-		}
-		switch resource.Kind {
-		case "BFD":
-			return true
-		case "BGPPeer":
-			spec, err := resource.BGPPeerSpec()
-			if err == nil && strings.TrimSpace(spec.BFD) != "" {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func bgpGlobalKey(spec routerapi.BGPRouterSpec) string {

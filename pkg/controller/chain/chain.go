@@ -27,6 +27,7 @@ import (
 	"github.com/imksoo/routerd/pkg/bgpdaemon"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/conntrack"
+	bfdcontroller "github.com/imksoo/routerd/pkg/controller/bfd"
 	bgpcontroller "github.com/imksoo/routerd/pkg/controller/bgp"
 	"github.com/imksoo/routerd/pkg/controller/conntrackobserver"
 	dhcpv4client "github.com/imksoo/routerd/pkg/controller/dhcpv4client"
@@ -284,6 +285,8 @@ func resourceOwnerController(kind string) string {
 		return "vrrp"
 	case "BGPRouter", "BGPPeer":
 		return "bgp"
+	case "BFD":
+		return "bfd"
 	case "DHCPv4Client":
 		return "dhcpv4client"
 	case "DHCPv4Server", "DHCPv6Server", "DHCPv6Information", "IPv6RouterAdvertisement":
@@ -974,6 +977,7 @@ func (r *Runner) Start(ctx context.Context) error {
 	health := healthcheck.Controller{Router: r.Router, Bus: r.Bus, Store: store, Logger: logger}
 	nat := nat44.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunNAT, IngressLive: !r.Opts.DryRunIngress, NftablesPath: r.Opts.NftablesPath, NftCommand: r.Opts.NftCommand, Logger: logger}
 	ingressService := ingressservicecontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunIngress, Resolver: ingressServiceDNSResolver(r.Router, store), Logger: logger}
+	bfd := bfdcontroller.Controller{Router: r.Router, Store: store, DryRun: r.Opts.DryRunBGP, RuntimeDir: defaults.RuntimeDir}
 	bgp := bgpcontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunBGP, Logger: logger, Daemon: bgpDaemon}
 	vrrp := vrrpcontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunVRRP, Logger: logger}
 	ipAddressSet := IPAddressSetController{Router: r.Router, Store: store, DryRunNAT: r.Opts.DryRunNAT, DryRunRoute: r.Opts.DryRunRoute, DryRunFirewall: r.Opts.DryRunFirewall, NftCommand: r.Opts.NftCommand, RuntimeDir: defaults.RuntimeDir}
@@ -1098,7 +1102,8 @@ func (r *Runner) Start(ctx context.Context) error {
 		framework.FuncController{ControllerName: "egress-route-policy", Every: 15 * time.Second, Subs: statusSubscriptions("HealthCheck", "DSLiteTunnel", "Interface", "DHCPv4Client", "PPPoESession"), PeriodicFunc: wan.Reconcile},
 		framework.FuncController{ControllerName: "ingress-service", Every: 5 * time.Second, Subs: bootstrapSubscriptions(), PeriodicFunc: ingressService.Reconcile},
 		framework.FuncController{ControllerName: "nat44", Subs: statusSubscriptions("EgressRoutePolicy", "IngressService"), PeriodicFunc: nat.Reconcile},
-		framework.FuncController{ControllerName: "bgp", Every: bgpcontroller.PollInterval(r.Router), Subs: bootstrapSubscriptions(), PeriodicFunc: bgp.Reconcile},
+		framework.FuncController{ControllerName: "bfd", Every: time.Second, Subs: statusSubscriptions("BGPPeer", "BFD"), PeriodicFunc: bfd.Reconcile},
+		framework.FuncController{ControllerName: "bgp", Every: bgpcontroller.PollInterval(r.Router), Subs: statusSubscriptions("BFD", "BGPRouter", "BGPPeer"), PeriodicFunc: bgp.Reconcile},
 		framework.FuncController{ControllerName: "vrrp", Every: 15 * time.Second, Subs: statusSubscriptions("BGPRouter", "BGPPeer", "IngressService"), PeriodicFunc: vrrp.Reconcile},
 		framework.FuncController{ControllerName: "ip-address-set", Every: 30 * time.Second, Subs: statusSubscriptions("IPAddressSet", "LocalServiceRedirect"), PeriodicFunc: ipAddressSet.Reconcile},
 	}

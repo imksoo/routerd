@@ -62,6 +62,7 @@ type AppliedPeer struct {
 	Address                 string                  `json:"address"`
 	ASN                     uint32                  `json:"asn"`
 	Password                string                  `json:"password,omitempty"`
+	BFD                     string                  `json:"bfd,omitempty"`
 	EbgpMultihop            int                     `json:"ebgpMultihop,omitempty"`
 	RouteReflectorClient    bool                    `json:"routeReflectorClient,omitempty"`
 	RouteReflectorClusterID string                  `json:"routeReflectorClusterID,omitempty"`
@@ -103,6 +104,7 @@ func Normalize(config AppliedConfig) AppliedConfig {
 		peers := make(map[string]AppliedPeer, len(config.Peers))
 		for key, peer := range config.Peers {
 			peer.Address = firstNonEmpty(strings.TrimSpace(peer.Address), strings.TrimSpace(key))
+			peer.BFD = strings.TrimSpace(peer.BFD)
 			if peer.EbgpMultihop < 0 || peer.EbgpMultihop > 255 {
 				peer.EbgpMultihop = 0
 			}

@@ -768,7 +768,7 @@ func TestReconcileReportsFIBSyncFailure(t *testing.T) {
 	}
 }
 
-func TestReconcileReportsBFDUnsupported(t *testing.T) {
+func TestReconcileBFDDownDeletesPeerAndUpRestoresPeer(t *testing.T) {
 	router := bgpRouter()
 	peer := router.Spec.Resources[1].Spec.(api.BGPPeerSpec)
 	peer.BFD = "BFD/k8s"
@@ -780,16 +780,33 @@ func TestReconcileReportsBFDUnsupported(t *testing.T) {
 	})
 	controller := Controller{
 		Router: router,
-		Store:  mapStore{},
+		Store: mapStore{
+			api.NetAPIVersion + "/BFD/k8s": {
+				"phase":      "Down",
+				"peerStates": map[string]any{"10.0.0.21": "Down"},
+			},
+		},
 		Server: &fakeServer{},
 		FIB:    &fakeFIB{},
 	}
-	if err := controller.Reconcile(context.Background()); err == nil || !strings.Contains(err.Error(), "GoBGPBFDUnsupported") {
-		t.Fatalf("reconcile error = %v, want GoBGPBFDUnsupported", err)
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("first reconcile: %v", err)
 	}
-	status := controller.Store.ObjectStatus(api.NetAPIVersion, "BFD", "k8s")
-	if status["phase"] != "Pending" || status["pendingReason"] != "GoBGPBFDUnsupported" {
-		t.Fatalf("bfd status = %#v", status)
+	if controller.Server.(*fakeServer).adds != 0 {
+		t.Fatalf("adds while BFD Down = %d, want 0", controller.Server.(*fakeServer).adds)
+	}
+	controller.Store.SaveObjectStatus(api.NetAPIVersion, "BFD", "k8s", map[string]any{
+		"phase":      "Up",
+		"peerStates": map[string]any{"10.0.0.21": "Up"},
+	})
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("second reconcile: %v", err)
+	}
+	if controller.Server.(*fakeServer).adds != 1 {
+		t.Fatalf("adds after BFD Up = %d, want 1", controller.Server.(*fakeServer).adds)
+	}
+	if _, ok := controller.Server.(*fakeServer).peers["10.0.0.21"]; !ok {
+		t.Fatalf("peer was not restored: %#v", controller.Server.(*fakeServer).peers)
 	}
 }
 
