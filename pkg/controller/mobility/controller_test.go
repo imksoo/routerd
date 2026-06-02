@@ -827,6 +827,60 @@ func TestControllerBGPModeProviderTrapRecapturesAfterSuccessfulRelease(t *testin
 	}
 }
 
+func TestControllerBGPModeProviderTrapRecapturesWhenObservedProviderStateLost(t *testing.T) {
+	now := time.Date(2026, 6, 2, 10, 0, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	spec.Members[0].StaticOwnedAddresses = []string{"10.88.60.10/32"}
+	if _, err := store.ReconcileMobilityCaptureEpochs([]routerstate.MobilityCaptureEpochRecord{
+		awsFailoverCaptureEpoch("10.88.60.10/32", "aws-router-a", 1),
+	}); err != nil {
+		t.Fatalf("seed capture epochs: %v", err)
+	}
+	seedSucceededBGPCaptureAction(t, store, "aws-provider", "eni-a", "aws-router-a", "10.88.60.10/32", "assign-secondary-ip", 1, now.Add(-3*time.Minute))
+	saveBGPInstalledNextHops(t, store, map[string][]string{
+		"10.88.60.10/32": {"10.99.0.1"},
+	})
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"discoverySelfPrivateIPs": []string{"10.88.60.11"},
+		"discoveryLastScanAt":     now.Add(-time.Second).Format(time.RFC3339Nano),
+	}); err != nil {
+		t.Fatalf("SaveObjectStatus(MobilityPool/cloudedge): %v", err)
+	}
+
+	bgp := &fakeBGPPaths{}
+	router := routerWithBGPRouter(planningRouterForNode("aws-router-a", spec))
+	controller := Controller{Router: router, Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	plans := decodeActionPlans(t, latestPart(t, store, DynamicSource("cloudedge", "aws-router-a")).ActionPlansJSON)
+	assign := findActionPlanByAddress(plans, "assign-secondary-ip", "10.88.60.10/32")
+	if assign == nil {
+		t.Fatalf("plans = %#v, want recapture assign for provider-observed missing trap", plans)
+	}
+	if assign.Parameters[captureParamEpoch] != "2" {
+		t.Fatalf("assign parameters = %#v, want capture epoch 2 after provider-observed loss", assign.Parameters)
+	}
+	if assign.Parameters[captureParamHolder] != "aws-router-a" {
+		t.Fatalf("assign parameters = %#v, want aws-router-a holder", assign.Parameters)
+	}
+
+	controller.Now = func() time.Time { return now.Add(time.Second) }
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("second Reconcile: %v", err)
+	}
+	secondPlans := decodeActionPlans(t, latestPart(t, store, DynamicSource("cloudedge", "aws-router-a")).ActionPlansJSON)
+	secondAssign := findActionPlanByAddress(secondPlans, "assign-secondary-ip", "10.88.60.10/32")
+	if secondAssign == nil {
+		t.Fatalf("second plans = %#v, want recapture assign retained", secondPlans)
+	}
+	if secondAssign.Parameters[captureParamEpoch] != "2" {
+		t.Fatalf("second assign parameters = %#v, want pending recapture epoch retained", secondAssign.Parameters)
+	}
+}
+
 func TestControllerBGPModeProviderTrapUsesStaticOwnedOwnerWhenOwnershipMissing(t *testing.T) {
 	now := time.Date(2026, 6, 2, 10, 0, 0, 0, time.UTC)
 	store := testStore(t, now)

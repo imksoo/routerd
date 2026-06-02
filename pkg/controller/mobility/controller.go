@@ -184,17 +184,20 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		return err
 	}
 	installedNextHops, bgpRIBObserved := c.bgpInstalledNextHops()
-	trapOwnershipEpochs := bgpTrapOwnershipEpochs(res.Metadata.Name, spec, ownershipEpochs)
-	actionOwnershipEpochs := bgpTrapActionOwnershipEpochs(spec, ownershipEpochs)
-	desiredTrapAddresses, err := bgpTrapAddresses(res.Metadata.Name, selfNode, spec, trapOwnershipEpochs, installedNextHops, bgpRIBObserved, previousActionPlans, liveness)
+	trapOwners, err := bgpTrapOwnerRecords(res.Metadata.Name, spec, ownershipEpochs, installedNextHops, bgpRIBObserved, previousActionPlans)
 	if err != nil {
 		return err
 	}
-	captureEpochDesired, err := desiredBGPCaptureEpochs(res.Metadata.Name, spec, trapOwnershipEpochs, liveness)
+	desiredTrapAddresses, err := bgpTrapAddresses(res.Metadata.Name, selfNode, spec, trapOwners, liveness)
 	if err != nil {
 		return err
 	}
-	if err := c.bumpBGPCaptureEpochsAfterRelease(captureEpochDesired, actionJournal); err != nil {
+	captureEpochDesired, err := desiredBGPCaptureEpochs(res.Metadata.Name, spec, trapOwners, liveness)
+	if err != nil {
+		return err
+	}
+	observedSelfIPs, observedSelfIPsOK := c.discoverySelfPrivateIPSet(res.Metadata.Name, spec)
+	if err := c.bumpBGPCaptureEpochsAfterRelease(captureEpochDesired, actionJournal, selfNode, observedSelfIPs, observedSelfIPsOK); err != nil {
 		return err
 	}
 	captureEpochs, err := c.Store.ReconcileMobilityCaptureEpochs(captureEpochDesired)
@@ -213,7 +216,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 	if len(desiredTrapAddresses) > 0 && !selfCaptureResolved {
 		actionPlans = nil
 	} else {
-		actionPlans, err = bgpProviderActionPlans(res.Metadata.Name, selfNode, spec, desiredTrapAddresses, previousActionPlans, markers, cloudProviderProfiles(c.Router), captureEpochs, actionOwnershipEpochs, actionJournal, now)
+		actionPlans, err = bgpProviderActionPlans(res.Metadata.Name, selfNode, spec, desiredTrapAddresses, previousActionPlans, markers, cloudProviderProfiles(c.Router), captureEpochs, trapOwners, actionJournal, now)
 		if err != nil {
 			return err
 		}
@@ -716,11 +719,11 @@ func bgpOwnedPaths(poolName, source, selfNode string, spec api.MobilityPoolSpec,
 	return out
 }
 
-func desiredBGPCaptureEpochs(poolName string, spec api.MobilityPoolSpec, ownership []routerstate.MobilityOwnershipEpochRecord, liveness OwnershipLiveness) ([]routerstate.MobilityCaptureEpochRecord, error) {
+func desiredBGPCaptureEpochs(poolName string, spec api.MobilityPoolSpec, owners []routerstate.MobilityOwnershipEpochRecord, liveness OwnershipLiveness) ([]routerstate.MobilityCaptureEpochRecord, error) {
 	members := plannerMembers(spec.Members)
 	seen := map[string]bool{}
 	var out []routerstate.MobilityCaptureEpochRecord
-	for _, owner := range ownershipStatusOrder(ownership) {
+	for _, owner := range ownershipStatusOrder(owners) {
 		ownerMember, ok := members[strings.TrimSpace(owner.OwnerNode)]
 		if !ok {
 			continue
@@ -755,20 +758,51 @@ func desiredBGPCaptureEpochs(poolName string, spec api.MobilityPoolSpec, ownersh
 	return out, nil
 }
 
-func (c Controller) bumpBGPCaptureEpochsAfterRelease(desired []routerstate.MobilityCaptureEpochRecord, journal []routerstate.ActionExecutionRecord) error {
-	released := captureReleasePendingRecapture(journal)
-	if len(released) == 0 {
+func (c Controller) discoverySelfPrivateIPSet(poolName string, spec api.MobilityPoolSpec) (map[string]bool, bool) {
+	status := c.Store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", poolName)
+	raw, ok := status["discoverySelfPrivateIPs"]
+	if !ok {
+		return nil, false
+	}
+	prefix, err := netip.ParsePrefix(strings.TrimSpace(spec.Prefix))
+	if err != nil {
+		return nil, false
+	}
+	prefix = prefix.Masked()
+	out := map[string]bool{}
+	for _, value := range statusStringSlice(raw) {
+		address, ok := normalizeDiscoveredAddress(value, prefix)
+		if !ok {
+			continue
+		}
+		out[address] = true
+	}
+	return out, true
+}
+
+func (c Controller) bumpBGPCaptureEpochsAfterRelease(desired []routerstate.MobilityCaptureEpochRecord, journal []routerstate.ActionExecutionRecord, selfNode string, observedSelfIPs map[string]bool, observedSelfIPsOK bool) error {
+	transitions := captureLatestTransitions(journal)
+	if len(transitions) == 0 {
 		return nil
 	}
 	for i := range desired {
 		rec := &desired[i]
 		key := captureReleaseKey(rec.CaptureKey, rec.Holder, rec.Address)
-		if !released[key] {
+		latest, ok := transitions[key]
+		if !ok {
 			continue
 		}
 		current, ok, err := c.Store.GetMobilityCaptureEpoch(rec.CaptureKey)
 		if err != nil {
 			return fmt.Errorf("get mobility capture epoch %q: %w", rec.CaptureKey, err)
+		}
+		if ok && current.Epoch > 0 && latest.epoch > 0 && latest.epoch < current.Epoch {
+			continue
+		}
+		released := !latest.assign
+		missingAfterAssign := latest.assign && observedSelfIPsOK && strings.TrimSpace(rec.Holder) == strings.TrimSpace(selfNode) && !observedSelfIPs[normalizeAddressString(rec.Address)]
+		if !released && !missingAfterAssign {
+			continue
 		}
 		if !ok {
 			if rec.Epoch < 1 {
@@ -783,13 +817,15 @@ func (c Controller) bumpBGPCaptureEpochsAfterRelease(desired []routerstate.Mobil
 	return nil
 }
 
-func captureReleasePendingRecapture(journal []routerstate.ActionExecutionRecord) map[string]bool {
-	type transition struct {
-		at     time.Time
-		id     int64
-		assign bool
-	}
-	latest := map[string]transition{}
+type captureTransition struct {
+	at     time.Time
+	id     int64
+	epoch  int64
+	assign bool
+}
+
+func captureLatestTransitions(journal []routerstate.ActionExecutionRecord) map[string]captureTransition {
+	latest := map[string]captureTransition{}
 	for _, row := range journal {
 		if row.Status != routerstate.ActionSucceeded {
 			continue
@@ -806,6 +842,7 @@ func captureReleasePendingRecapture(journal []routerstate.ActionExecutionRecord)
 		params := decodeActionRecordMap(row.ParametersJSON)
 		key := strings.TrimSpace(params[captureParamKey])
 		holder := strings.TrimSpace(params[captureParamHolder])
+		epoch, _ := strconv.ParseInt(strings.TrimSpace(params[captureParamEpoch]), 10, 64)
 		address := normalizeAddressString(decodeActionRecordMap(row.TargetJSON)["address"])
 		releaseKey := captureReleaseKey(key, holder, address)
 		if releaseKey == "" {
@@ -816,11 +853,15 @@ func captureReleasePendingRecapture(journal []routerstate.ActionExecutionRecord)
 			at = row.UpdatedAt
 		}
 		if prev, ok := latest[releaseKey]; !ok || at.After(prev.at) || (at.Equal(prev.at) && row.ID > prev.id) {
-			latest[releaseKey] = transition{at: at, id: row.ID, assign: assign}
+			latest[releaseKey] = captureTransition{at: at, id: row.ID, epoch: epoch, assign: assign}
 		}
 	}
+	return latest
+}
+
+func captureReleasePendingRecapture(journal []routerstate.ActionExecutionRecord) map[string]bool {
 	out := map[string]bool{}
-	for key, tr := range latest {
+	for key, tr := range captureLatestTransitions(journal) {
 		if !tr.assign {
 			out[key] = true
 		}
@@ -905,40 +946,72 @@ func bgpProviderActionPlans(poolName, selfNode string, spec api.MobilityPoolSpec
 	return dedupeActionPlans(plans), nil
 }
 
-func bgpTrapOwnershipEpochs(poolName string, spec api.MobilityPoolSpec, ownership []routerstate.MobilityOwnershipEpochRecord) []routerstate.MobilityOwnershipEpochRecord {
-	byAddress := ownershipEpochsByAddress(ownership)
-	for address, ownerNode := range staticOwnedOwnerNodesByAddress(spec) {
-		rec := byAddress[address]
-		epoch := rec.Epoch
-		if epoch < 1 {
-			epoch = 1
+func bgpTrapOwnerRecords(poolName string, spec api.MobilityPoolSpec, ownership []routerstate.MobilityOwnershipEpochRecord, installedNextHops map[string][]string, ribObserved bool, previousPlans []dynamicconfig.ActionPlan) ([]routerstate.MobilityOwnershipEpochRecord, error) {
+	prefix, err := netip.ParsePrefix(strings.TrimSpace(spec.Prefix))
+	if err != nil {
+		return nil, fmt.Errorf("parse pool prefix: %w", err)
+	}
+	prefix = prefix.Masked()
+	candidates := map[string]bool{}
+	for rawPrefix, nextHops := range installedNextHops {
+		if len(cleanStrings(nextHops)) == 0 {
+			continue
 		}
-		byAddress[address] = routerstate.MobilityOwnershipEpochRecord{
+		address, ok := normalizeBGPTrapPrefix(rawPrefix, prefix)
+		if ok {
+			candidates[address] = true
+		}
+	}
+	if !ribObserved {
+		for _, address := range previousBGPTrapCandidateAddresses(previousPlans, prefix) {
+			candidates[address] = true
+		}
+	}
+	ownershipByAddress := bgpOwnershipByAddress(ownership)
+	out := make([]routerstate.MobilityOwnershipEpochRecord, 0, len(candidates))
+	for _, address := range mapKeysSorted(candidates) {
+		rec, ok := bgpTrapOwnerRecord(poolName, spec, ownershipByAddress, address)
+		if ok {
+			out = append(out, rec)
+		}
+	}
+	return ownershipStatusOrder(out), nil
+}
+
+func bgpTrapOwnerRecord(poolName string, spec api.MobilityPoolSpec, ownershipByAddress map[string]routerstate.MobilityOwnershipEpochRecord, address string) (routerstate.MobilityOwnershipEpochRecord, bool) {
+	address = normalizeAddressString(address)
+	if address == "" {
+		return routerstate.MobilityOwnershipEpochRecord{}, false
+	}
+	if ownerNode := strings.TrimSpace(staticOwnedOwnerNodesByAddress(spec)[address]); ownerNode != "" {
+		rec := routerstate.MobilityOwnershipEpochRecord{
 			Pool:      poolName,
 			Address:   address,
 			OwnerNode: ownerNode,
-			Epoch:     epoch,
-			CreatedAt: rec.CreatedAt,
-			UpdatedAt: rec.UpdatedAt,
 		}
+		if existing := ownershipByAddress[address]; strings.TrimSpace(existing.OwnerNode) == ownerNode {
+			rec.Epoch = existing.Epoch
+			rec.CreatedAt = existing.CreatedAt
+			rec.UpdatedAt = existing.UpdatedAt
+		}
+		return rec, true
 	}
-	return ownershipStatusOrder(mapValuesOwnership(byAddress))
+	rec, ok := ownershipByAddress[address]
+	return rec, ok
 }
 
-func bgpTrapActionOwnershipEpochs(spec api.MobilityPoolSpec, ownership []routerstate.MobilityOwnershipEpochRecord) []routerstate.MobilityOwnershipEpochRecord {
-	staticOwners := staticOwnedOwnerNodesByAddress(spec)
-	out := make([]routerstate.MobilityOwnershipEpochRecord, 0, len(ownership))
-	for _, rec := range ownership {
-		address := strings.TrimSpace(rec.Address)
-		if ownerNode := strings.TrimSpace(staticOwners[address]); ownerNode != "" && ownerNode != strings.TrimSpace(rec.OwnerNode) {
-			// The BGP/FIB path and static config already identify the remote owner.
-			// Do not stamp a stale ownership row onto the provider action; the
-			// capture epoch remains the execution fence for this trap.
+func previousBGPTrapCandidateAddresses(previousPlans []dynamicconfig.ActionPlan, poolPrefix netip.Prefix) []string {
+	seen := map[string]bool{}
+	for _, plan := range previousPlans {
+		if plan.Action != "assign-secondary-ip" {
 			continue
 		}
-		out = append(out, rec)
+		address, ok := normalizeBGPTrapPrefix(plan.Target["address"], poolPrefix)
+		if ok {
+			seen[address] = true
+		}
 	}
-	return ownershipStatusOrder(out)
+	return mapKeysSorted(seen)
 }
 
 func staticOwnedOwnerNodesByAddress(spec api.MobilityPoolSpec) map[string]string {
@@ -964,14 +1037,6 @@ func staticOwnedOwnerNodesByAddress(spec api.MobilityPoolSpec) map[string]string
 			}
 			out[address] = nodeRef
 		}
-	}
-	return out
-}
-
-func mapValuesOwnership(values map[string]routerstate.MobilityOwnershipEpochRecord) []routerstate.MobilityOwnershipEpochRecord {
-	out := make([]routerstate.MobilityOwnershipEpochRecord, 0, len(values))
-	for _, rec := range values {
-		out = append(out, rec)
 	}
 	return out
 }
@@ -1014,12 +1079,7 @@ func bgpInstalledNextHopsValue(value any) map[string][]string {
 	return out
 }
 
-func bgpTrapAddresses(poolName, selfNode string, spec api.MobilityPoolSpec, ownership []routerstate.MobilityOwnershipEpochRecord, installedNextHops map[string][]string, ribObserved bool, previousPlans []dynamicconfig.ActionPlan, liveness OwnershipLiveness) (map[string]bool, error) {
-	prefix, err := netip.ParsePrefix(strings.TrimSpace(spec.Prefix))
-	if err != nil {
-		return nil, fmt.Errorf("parse pool prefix: %w", err)
-	}
-	prefix = prefix.Masked()
+func bgpTrapAddresses(poolName, selfNode string, spec api.MobilityPoolSpec, owners []routerstate.MobilityOwnershipEpochRecord, liveness OwnershipLiveness) (map[string]bool, error) {
 	members := plannerMembers(spec.Members)
 	self, ok := members[strings.TrimSpace(selfNode)]
 	if !ok {
@@ -1033,21 +1093,13 @@ func bgpTrapAddresses(poolName, selfNode string, spec api.MobilityPoolSpec, owne
 	if !placement.Active {
 		return out, nil
 	}
-	ownershipByAddress := bgpOwnershipByAddress(ownership)
-	for rawPrefix, nextHops := range installedNextHops {
-		if len(cleanStrings(nextHops)) == 0 {
-			continue
-		}
-		address, ok := normalizeBGPTrapPrefix(rawPrefix, prefix)
-		if !ok || !bgpAddressIsRemoteOwned(address, self, members, ownershipByAddress) {
+	ownershipByAddress := bgpOwnershipByAddress(owners)
+	for _, owner := range ownershipStatusOrder(owners) {
+		address := normalizeAddressString(owner.Address)
+		if address == "" || !bgpAddressIsRemoteOwned(address, self, members, ownershipByAddress) {
 			continue
 		}
 		out[address] = true
-	}
-	if !ribObserved {
-		for _, address := range previousBGPTrapAddresses(self, previousPlans, prefix, members, ownershipByAddress) {
-			out[address] = true
-		}
 	}
 	return out, nil
 }
@@ -1074,28 +1126,6 @@ func bgpAddressIsRemoteOwned(address string, self memberPlanInfo, members map[st
 		return false
 	}
 	return strings.TrimSpace(ownerMember.Site) != "" && strings.TrimSpace(ownerMember.Site) != strings.TrimSpace(self.Site)
-}
-
-func previousBGPTrapAddresses(self memberPlanInfo, previousPlans []dynamicconfig.ActionPlan, poolPrefix netip.Prefix, members map[string]memberPlanInfo, ownership map[string]routerstate.MobilityOwnershipEpochRecord) []string {
-	seen := map[string]bool{}
-	for _, plan := range previousPlans {
-		if plan.Action != "assign-secondary-ip" {
-			continue
-		}
-		capture := captureFromActionPlan(self.Capture, plan)
-		if capture.Type != "provider-secondary-ip" {
-			continue
-		}
-		if strings.TrimSpace(capture.ProviderRef) != strings.TrimSpace(self.Capture.ProviderRef) || strings.TrimSpace(capture.NICRef) != strings.TrimSpace(self.Capture.NICRef) {
-			continue
-		}
-		address, ok := normalizeBGPTrapPrefix(plan.Target["address"], poolPrefix)
-		if !ok || !bgpAddressIsRemoteOwned(address, self, members, ownership) {
-			continue
-		}
-		seen[address] = true
-	}
-	return mapKeysSorted(seen)
 }
 
 func statusStringSlice(value any) []string {
