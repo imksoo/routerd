@@ -93,20 +93,6 @@ func (c Controller) Reconcile(ctx context.Context) error {
 		if res.APIVersion != api.MobilityAPIVersion || res.Kind != "MobilityPool" {
 			continue
 		}
-		if err := c.emitHeartbeat(res, now); err != nil {
-			_ = c.savePlannerStatus(res.Metadata.Name, map[string]any{
-				"phase":  "Degraded",
-				"reason": err.Error(),
-			})
-			continue
-		}
-		if err := c.reconcilePool(res, now); err != nil {
-			_ = c.savePlannerStatus(res.Metadata.Name, map[string]any{
-				"phase":  "Degraded",
-				"reason": err.Error(),
-			})
-			continue
-		}
 		spec, err := res.MobilityPoolSpec()
 		if err != nil {
 			_ = c.savePlannerStatus(res.Metadata.Name, map[string]any{
@@ -124,6 +110,20 @@ func (c Controller) Reconcile(ctx context.Context) error {
 					"plannedAt":     now.Format(time.RFC3339Nano),
 				})
 			}
+			continue
+		}
+		if err := c.emitHeartbeat(res, now); err != nil {
+			_ = c.savePlannerStatus(res.Metadata.Name, map[string]any{
+				"phase":  "Degraded",
+				"reason": err.Error(),
+			})
+			continue
+		}
+		if err := c.reconcilePool(res, now); err != nil {
+			_ = c.savePlannerStatus(res.Metadata.Name, map[string]any{
+				"phase":  "Degraded",
+				"reason": err.Error(),
+			})
 			continue
 		}
 		if err := c.reconcileBGPDeliveryDisabled(ctx, res, spec, now); err != nil {
@@ -158,19 +158,17 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 	}
 	spec, selfCaptureResolved, selfCaptureReason := c.specWithDiscoveredSelfCapture(res.Metadata.Name, selfNode, spec)
 	source := DynamicSource(res.Metadata.Name, selfNode)
-	leases, err := c.Store.ListAddressLeases(res.Metadata.Name, false, now)
+	events, err := c.Store.ListFederationEvents(spec.GroupRef, false, now.Unix())
 	if err != nil {
-		return fmt.Errorf("list address leases: %w", err)
+		return fmt.Errorf("list federation events: %w", err)
 	}
-	liveness, err := c.ownershipLiveness(res.Metadata.Name, spec, now)
-	if err != nil {
-		return err
-	}
-	ownershipEpochs, err := c.reconcileBGPOwnership(res.Metadata.Name, spec, leases, liveness, now)
+	releaseEvents, err := c.recordBGPStaticHandoverReleaseEvents(res.Metadata.Name, selfNode, spec, events, now)
 	if err != nil {
 		return err
 	}
-	desired := bgpOwnedPaths(res.Metadata.Name, source, selfNode, spec, leases, ownershipEpochs, now)
+	events = append(events, releaseEvents...)
+	desired := bgpOwnedPaths(res.Metadata.Name, source, selfNode, spec, events, now)
+	localOwned := bgpLocalOwnedAddresses(desired)
 	actionJournal, err := c.Store.ListActions(routerstate.ActionExecutionFilter{})
 	if err != nil {
 		return fmt.Errorf("list action journal: %w", err)
@@ -184,15 +182,11 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		return err
 	}
 	installedNextHops, bgpRIBObserved := c.bgpInstalledNextHops()
-	trapOwners, err := bgpTrapOwnerRecords(res.Metadata.Name, spec, ownershipEpochs, installedNextHops, bgpRIBObserved, previousActionPlans)
+	desiredTrapAddresses, err := bgpTrapAddresses(res.Metadata.Name, selfNode, spec, installedNextHops, bgpRIBObserved, previousActionPlans, localOwned)
 	if err != nil {
 		return err
 	}
-	desiredTrapAddresses, err := bgpTrapAddresses(res.Metadata.Name, selfNode, spec, trapOwners, liveness)
-	if err != nil {
-		return err
-	}
-	captureEpochDesired, err := desiredBGPCaptureEpochs(res.Metadata.Name, spec, trapOwners, liveness)
+	captureEpochDesired, err := desiredBGPCaptureEpochs(res.Metadata.Name, selfNode, spec, desiredTrapAddresses)
 	if err != nil {
 		return err
 	}
@@ -216,7 +210,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 	if len(desiredTrapAddresses) > 0 && !selfCaptureResolved {
 		actionPlans = nil
 	} else {
-		actionPlans, err = bgpProviderActionPlans(res.Metadata.Name, selfNode, spec, desiredTrapAddresses, previousActionPlans, markers, cloudProviderProfiles(c.Router), captureEpochs, trapOwners, actionJournal, now)
+		actionPlans, err = bgpProviderActionPlans(res.Metadata.Name, selfNode, spec, desiredTrapAddresses, previousActionPlans, markers, cloudProviderProfiles(c.Router), captureEpochs, nil, actionJournal, now)
 		if err != nil {
 			return err
 		}
@@ -267,17 +261,59 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		status["plannerReason"] = selfCaptureReason
 		status["providerActionPhase"] = "Blocked"
 	}
-	if ipOwnershipPolicyCentralized(spec.IPOwnershipPolicy) {
-		status["ownershipPolicy"] = "centralized"
-		status["ownershipCount"] = len(ownershipEpochs)
-		status["ownershipMap"] = ownershipStatusMap(ownershipEpochs)
-		if spec.IPOwnershipPolicy.AutoFailover {
-			status["autoFailover"] = true
-			status["streamMaxObservedAt"] = liveness.StreamMaxObservedAt.Format(time.RFC3339Nano)
-			status["staleMembers"] = staleMembersStatus(liveness.StaleNodes)
+	return c.savePlannerStatus(res.Metadata.Name, status)
+}
+
+func (c Controller) recordBGPStaticHandoverReleaseEvents(poolName, selfNode string, spec api.MobilityPoolSpec, events []routerstate.EventRecord, now time.Time) ([]routerstate.EventRecord, error) {
+	if len(spec.StaticHandovers) == 0 {
+		return nil, nil
+	}
+	prefix, err := netip.ParsePrefix(strings.TrimSpace(spec.Prefix))
+	if err != nil {
+		return nil, err
+	}
+	prefix = prefix.Masked()
+	existing := map[string]bool{}
+	for _, ev := range events {
+		if ev.Type != ExpiredEventType || strings.TrimSpace(ev.SourceNode) != strings.TrimSpace(selfNode) {
+			continue
+		}
+		address, ok := normalizeLeaseAddress(firstNonEmpty(ev.Payload["address"], ev.Subject), prefix)
+		if ok {
+			existing[address] = true
 		}
 	}
-	return c.savePlannerStatus(res.Metadata.Name, status)
+	var emitted []routerstate.EventRecord
+	for _, handover := range spec.StaticHandovers {
+		if strings.TrimSpace(handover.FromNodeRef) != strings.TrimSpace(selfNode) {
+			continue
+		}
+		address, ok := normalizeLeaseAddress(handover.Address, prefix)
+		if !ok || existing[address] {
+			continue
+		}
+		ev := routerstate.EventRecord{
+			ID:         "mobility:bgp-static-release:" + poolName + ":" + selfNode + ":" + safeName(address),
+			Group:      spec.GroupRef,
+			SourceNode: selfNode,
+			Type:       ExpiredEventType,
+			Subject:    address,
+			DedupeKey:  "mobility:bgp-static-release:" + poolName + ":" + selfNode + ":" + address,
+			Payload: map[string]string{
+				"address":    address,
+				"pool":       poolName,
+				"sourceType": staticHandoverType,
+			},
+			ObservedAt: now.UTC(),
+			RecordedAt: now.UTC(),
+			ExpiresAt:  now.UTC().Add(durationDefault(spec.LeasePolicy.TTL, DefaultLeaseTTL)),
+		}
+		if err := c.Store.RecordFederationEvent(ev); err != nil {
+			return nil, fmt.Errorf("record BGP static handover release %q: %w", ev.ID, err)
+		}
+		emitted = append(emitted, ev)
+	}
+	return emitted, nil
 }
 
 func (c Controller) specWithDiscoveredSelfCapture(poolName, selfNode string, spec api.MobilityPoolSpec) (api.MobilityPoolSpec, bool, string) {
@@ -312,24 +348,6 @@ func (c Controller) specWithDiscoveredSelfCapture(poolName, selfNode string, spe
 		return spec, true, ""
 	}
 	return spec, true, ""
-}
-
-func (c Controller) reconcileBGPOwnership(poolName string, spec api.MobilityPoolSpec, leases []routerstate.AddressLeaseRecord, liveness OwnershipLiveness, now time.Time) ([]routerstate.MobilityOwnershipEpochRecord, error) {
-	var desired []routerstate.MobilityOwnershipEpochRecord
-	if ipOwnershipPolicyCentralized(spec.IPOwnershipPolicy) {
-		var err error
-		desired, err = desiredOwnershipEpochs(poolName, spec, leases, liveness, now)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		desired = bgpLeaseOwnershipEpochs(poolName, spec, leases, now)
-	}
-	ownership, err := c.Store.ReconcileMobilityOwnershipEpochs(desired)
-	if err != nil {
-		return nil, fmt.Errorf("reconcile BGP mobility ownership epochs: %w", err)
-	}
-	return ownership, nil
 }
 
 func (c Controller) upsertBGPPlan(poolName string, spec api.MobilityPoolSpec, selfNode string, actionPlans []dynamicconfig.ActionPlan, now time.Time) error {
@@ -676,7 +694,12 @@ func mobilityBGPMode(spec api.MobilityPoolSpec) bool {
 	return strings.TrimSpace(spec.DeliveryPolicy.Mode) == "bgp"
 }
 
-func bgpOwnedPaths(poolName, source, selfNode string, spec api.MobilityPoolSpec, leases []routerstate.AddressLeaseRecord, ownership []routerstate.MobilityOwnershipEpochRecord, now time.Time) []bgpdaemon.AppliedPath {
+type bgpOwnedAddress struct {
+	Address    string
+	SourceType string
+}
+
+func bgpOwnedPaths(poolName, source, selfNode string, spec api.MobilityPoolSpec, events []routerstate.EventRecord, now time.Time) []bgpdaemon.AppliedPath {
 	poolPrefix, err := netip.ParsePrefix(strings.TrimSpace(spec.Prefix))
 	if err != nil {
 		return nil
@@ -684,24 +707,17 @@ func bgpOwnedPaths(poolName, source, selfNode string, spec api.MobilityPoolSpec,
 	poolPrefix = poolPrefix.Masked()
 	members := plannerMembers(spec.Members)
 	self := members[strings.TrimSpace(selfNode)]
-	owners := bgpOwnershipByAddress(ownership)
+	if self.MaintenanceDrain {
+		return nil
+	}
+	placement := evaluatePlacementWithLiveness(self, members, spec.IPOwnershipPolicy, OwnershipLiveness{})
+	if !placement.Active {
+		return nil
+	}
+	owned := bgpLocalOwnedAddressesFromConfigAndEvents(poolName, selfNode, spec, events, poolPrefix, now)
 	var out []bgpdaemon.AppliedPath
-	for _, lease := range leases {
-		if lease.Pool != poolName || lease.Status != routerstate.AddressLeaseStatusActive {
-			continue
-		}
-		if !lease.ExpiresAt.IsZero() && !now.Before(lease.ExpiresAt) {
-			continue
-		}
-		address, ok := normalizeLeaseAddress(lease.Address, poolPrefix)
-		if !ok {
-			continue
-		}
-		owner, ok := owners[address]
-		if !ok || strings.TrimSpace(owner.OwnerNode) != strings.TrimSpace(selfNode) {
-			continue
-		}
-		prefix, err := netip.ParsePrefix(address)
+	for _, owner := range owned {
+		prefix, err := netip.ParsePrefix(owner.Address)
 		if err != nil {
 			continue
 		}
@@ -710,7 +726,7 @@ func bgpOwnedPaths(poolName, source, selfNode string, spec api.MobilityPoolSpec,
 			Source: source,
 			Prefix: prefix.String(),
 			Family: bgpdaemon.AppliedPathFamilyIPv4Unicast,
-			Attrs:  bgpMobilityPathAttrs(self, lease, owner),
+			Attrs:  bgpMobilityPathAttrs(self, owner.SourceType),
 		}))
 	}
 	sort.SliceStable(out, func(i, j int) bool {
@@ -719,41 +735,133 @@ func bgpOwnedPaths(poolName, source, selfNode string, spec api.MobilityPoolSpec,
 	return out
 }
 
-func desiredBGPCaptureEpochs(poolName string, spec api.MobilityPoolSpec, owners []routerstate.MobilityOwnershipEpochRecord, liveness OwnershipLiveness) ([]routerstate.MobilityCaptureEpochRecord, error) {
-	members := plannerMembers(spec.Members)
-	seen := map[string]bool{}
-	var out []routerstate.MobilityCaptureEpochRecord
-	for _, owner := range ownershipStatusOrder(owners) {
-		ownerMember, ok := members[strings.TrimSpace(owner.OwnerNode)]
+func bgpLocalOwnedAddresses(paths []bgpdaemon.AppliedPath) map[string]bool {
+	out := map[string]bool{}
+	for _, path := range paths {
+		if address := normalizeAddressString(path.Prefix); address != "" {
+			out[address] = true
+		}
+	}
+	return out
+}
+
+func bgpLocalOwnedAddressesFromConfigAndEvents(poolName, selfNode string, spec api.MobilityPoolSpec, events []routerstate.EventRecord, poolPrefix netip.Prefix, now time.Time) []bgpOwnedAddress {
+	owned := map[string]bgpOwnedAddress{}
+	latest := map[string]routerstate.EventRecord{}
+	staticHandovers := staticHandoversByFrom(spec.StaticHandovers, poolPrefix)
+	for _, member := range spec.Members {
+		if strings.TrimSpace(member.NodeRef) != strings.TrimSpace(selfNode) {
+			continue
+		}
+		for _, raw := range member.StaticOwnedAddresses {
+			address, ok := normalizeLeaseAddress(raw, poolPrefix)
+			if !ok {
+				continue
+			}
+			if _, moving := staticHandovers[staticHandoverKey(address, selfNode)]; moving {
+				continue
+			}
+			owned[address] = bgpOwnedAddress{Address: address, SourceType: staticOwnedType}
+		}
+	}
+	for _, ev := range events {
+		if ev.Group != spec.GroupRef || ev.Type != ObservedEventType && ev.Type != ExpiredEventType {
+			continue
+		}
+		address, ok := normalizeLeaseAddress(firstNonEmpty(ev.Payload["address"], ev.Subject), poolPrefix)
 		if !ok {
 			continue
 		}
-		address := strings.TrimSpace(owner.Address)
-		if address == "" {
+		current, found := latest[address]
+		candidate := ev
+		if candidate.ObservedAt.IsZero() {
+			candidate.ObservedAt = now
+		}
+		if !found || eventRecordGreater(candidate, current) {
+			latest[address] = candidate
+		}
+	}
+	for address, ev := range latest {
+		if ev.Type == ExpiredEventType || (!ev.ExpiresAt.IsZero() && !now.Before(ev.ExpiresAt)) {
+			delete(owned, address)
 			continue
 		}
-		for _, member := range members {
-			if member.Capture.Type != "provider-secondary-ip" || member.Site == ownerMember.Site {
-				continue
+		if strings.TrimSpace(ev.SourceNode) == strings.TrimSpace(selfNode) {
+			sourceType := strings.TrimSpace(ev.Payload["sourceType"])
+			if sourceType == "" {
+				sourceType = bgpMobilitySourceFromEvent(ev)
 			}
-			placement := evaluatePlacementWithLiveness(member, members, spec.IPOwnershipPolicy, liveness)
-			if !placement.Active {
-				continue
-			}
-			domain := captureDomain(member)
-			key := captureEpochKey(poolName, address, domain)
-			if seen[key] {
-				continue
-			}
-			seen[key] = true
-			out = append(out, routerstate.MobilityCaptureEpochRecord{
-				CaptureKey:    key,
-				Pool:          poolName,
-				Address:       address,
-				CaptureDomain: domain,
-				Holder:        member.NodeRef,
-			})
+			owned[address] = bgpOwnedAddress{Address: address, SourceType: sourceType}
 		}
+	}
+	for _, handover := range spec.StaticHandovers {
+		if strings.TrimSpace(handover.ToNodeRef) != strings.TrimSpace(selfNode) {
+			continue
+		}
+		address, ok := normalizeLeaseAddress(handover.Address, poolPrefix)
+		if !ok {
+			continue
+		}
+		release := latest[address]
+		if release.Type == ExpiredEventType && strings.TrimSpace(release.SourceNode) == strings.TrimSpace(handover.FromNodeRef) {
+			owned[address] = bgpOwnedAddress{Address: address, SourceType: staticHandoverType}
+		}
+	}
+	out := make([]bgpOwnedAddress, 0, len(owned))
+	for _, rec := range owned {
+		out = append(out, rec)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		return out[i].Address < out[j].Address
+	})
+	return out
+}
+
+func eventRecordGreater(candidate, current routerstate.EventRecord) bool {
+	candidateAt := candidate.ObservedAt.UTC()
+	currentAt := current.ObservedAt.UTC()
+	if candidateAt.After(currentAt) {
+		return true
+	}
+	if candidateAt.Before(currentAt) {
+		return false
+	}
+	return strings.TrimSpace(candidate.ID) > strings.TrimSpace(current.ID)
+}
+
+func bgpMobilitySourceFromEvent(ev routerstate.EventRecord) string {
+	switch strings.TrimSpace(ev.Type) {
+	case staticOwnedType, staticHandoverType:
+		return strings.TrimSpace(ev.Type)
+	}
+	switch strings.TrimSpace(ev.Payload["source"]) {
+	case providerDiscoverySource:
+		return providerDiscoverySource
+	}
+	return ""
+}
+
+func desiredBGPCaptureEpochs(poolName, selfNode string, spec api.MobilityPoolSpec, desiredTrapAddresses map[string]bool) ([]routerstate.MobilityCaptureEpochRecord, error) {
+	members := plannerMembers(spec.Members)
+	var out []routerstate.MobilityCaptureEpochRecord
+	self, ok := members[strings.TrimSpace(selfNode)]
+	if !ok || self.Capture.Type != "provider-secondary-ip" {
+		return out, nil
+	}
+	placement := evaluatePlacementWithLiveness(self, members, spec.IPOwnershipPolicy, OwnershipLiveness{})
+	if !placement.Active {
+		return out, nil
+	}
+	domain := captureDomain(self)
+	for _, address := range mapKeysSorted(desiredTrapAddresses) {
+		key := captureEpochKey(poolName, address, domain)
+		out = append(out, routerstate.MobilityCaptureEpochRecord{
+			CaptureKey:    key,
+			Pool:          poolName,
+			Address:       address,
+			CaptureDomain: domain,
+			Holder:        self.NodeRef,
+		})
 	}
 	return out, nil
 }
@@ -946,60 +1054,6 @@ func bgpProviderActionPlans(poolName, selfNode string, spec api.MobilityPoolSpec
 	return dedupeActionPlans(plans), nil
 }
 
-func bgpTrapOwnerRecords(poolName string, spec api.MobilityPoolSpec, ownership []routerstate.MobilityOwnershipEpochRecord, installedNextHops map[string][]string, ribObserved bool, previousPlans []dynamicconfig.ActionPlan) ([]routerstate.MobilityOwnershipEpochRecord, error) {
-	prefix, err := netip.ParsePrefix(strings.TrimSpace(spec.Prefix))
-	if err != nil {
-		return nil, fmt.Errorf("parse pool prefix: %w", err)
-	}
-	prefix = prefix.Masked()
-	candidates := map[string]bool{}
-	for rawPrefix, nextHops := range installedNextHops {
-		if len(cleanStrings(nextHops)) == 0 {
-			continue
-		}
-		address, ok := normalizeBGPTrapPrefix(rawPrefix, prefix)
-		if ok {
-			candidates[address] = true
-		}
-	}
-	if !ribObserved {
-		for _, address := range previousBGPTrapCandidateAddresses(previousPlans, prefix) {
-			candidates[address] = true
-		}
-	}
-	ownershipByAddress := bgpOwnershipByAddress(ownership)
-	out := make([]routerstate.MobilityOwnershipEpochRecord, 0, len(candidates))
-	for _, address := range mapKeysSorted(candidates) {
-		rec, ok := bgpTrapOwnerRecord(poolName, spec, ownershipByAddress, address)
-		if ok {
-			out = append(out, rec)
-		}
-	}
-	return ownershipStatusOrder(out), nil
-}
-
-func bgpTrapOwnerRecord(poolName string, spec api.MobilityPoolSpec, ownershipByAddress map[string]routerstate.MobilityOwnershipEpochRecord, address string) (routerstate.MobilityOwnershipEpochRecord, bool) {
-	address = normalizeAddressString(address)
-	if address == "" {
-		return routerstate.MobilityOwnershipEpochRecord{}, false
-	}
-	if ownerNode := strings.TrimSpace(staticOwnedOwnerNodesByAddress(spec)[address]); ownerNode != "" {
-		rec := routerstate.MobilityOwnershipEpochRecord{
-			Pool:      poolName,
-			Address:   address,
-			OwnerNode: ownerNode,
-		}
-		if existing := ownershipByAddress[address]; strings.TrimSpace(existing.OwnerNode) == ownerNode {
-			rec.Epoch = existing.Epoch
-			rec.CreatedAt = existing.CreatedAt
-			rec.UpdatedAt = existing.UpdatedAt
-		}
-		return rec, true
-	}
-	rec, ok := ownershipByAddress[address]
-	return rec, ok
-}
-
 func previousBGPTrapCandidateAddresses(previousPlans []dynamicconfig.ActionPlan, poolPrefix netip.Prefix) []string {
 	seen := map[string]bool{}
 	for _, plan := range previousPlans {
@@ -1079,7 +1133,12 @@ func bgpInstalledNextHopsValue(value any) map[string][]string {
 	return out
 }
 
-func bgpTrapAddresses(poolName, selfNode string, spec api.MobilityPoolSpec, owners []routerstate.MobilityOwnershipEpochRecord, liveness OwnershipLiveness) (map[string]bool, error) {
+func bgpTrapAddresses(poolName, selfNode string, spec api.MobilityPoolSpec, installedNextHops map[string][]string, ribObserved bool, previousPlans []dynamicconfig.ActionPlan, localOwned map[string]bool) (map[string]bool, error) {
+	prefix, err := netip.ParsePrefix(strings.TrimSpace(spec.Prefix))
+	if err != nil {
+		return nil, fmt.Errorf("parse pool prefix: %w", err)
+	}
+	prefix = prefix.Masked()
 	members := plannerMembers(spec.Members)
 	self, ok := members[strings.TrimSpace(selfNode)]
 	if !ok {
@@ -1089,17 +1148,26 @@ func bgpTrapAddresses(poolName, selfNode string, spec api.MobilityPoolSpec, owne
 	if self.Capture.Type != "provider-secondary-ip" {
 		return out, nil
 	}
-	placement := evaluatePlacementWithLiveness(self, members, spec.IPOwnershipPolicy, liveness)
+	placement := evaluatePlacementWithLiveness(self, members, spec.IPOwnershipPolicy, OwnershipLiveness{})
 	if !placement.Active {
 		return out, nil
 	}
-	ownershipByAddress := bgpOwnershipByAddress(owners)
-	for _, owner := range ownershipStatusOrder(owners) {
-		address := normalizeAddressString(owner.Address)
-		if address == "" || !bgpAddressIsRemoteOwned(address, self, members, ownershipByAddress) {
+	for rawPrefix, nextHops := range installedNextHops {
+		if len(cleanStrings(nextHops)) == 0 {
+			continue
+		}
+		address, ok := normalizeBGPTrapPrefix(rawPrefix, prefix)
+		if !ok || localOwned[address] {
 			continue
 		}
 		out[address] = true
+	}
+	if !ribObserved {
+		for _, address := range previousBGPTrapCandidateAddresses(previousPlans, prefix) {
+			if !localOwned[address] {
+				out[address] = true
+			}
+		}
 	}
 	return out, nil
 }
@@ -1114,18 +1182,6 @@ func normalizeBGPTrapPrefix(value string, poolPrefix netip.Prefix) (string, bool
 		return "", false
 	}
 	return prefix.String(), true
-}
-
-func bgpAddressIsRemoteOwned(address string, self memberPlanInfo, members map[string]memberPlanInfo, ownership map[string]routerstate.MobilityOwnershipEpochRecord) bool {
-	owner, ok := ownership[strings.TrimSpace(address)]
-	if !ok {
-		return false
-	}
-	ownerMember, ok := members[strings.TrimSpace(owner.OwnerNode)]
-	if !ok {
-		return false
-	}
-	return strings.TrimSpace(ownerMember.Site) != "" && strings.TrimSpace(ownerMember.Site) != strings.TrimSpace(self.Site)
 }
 
 func statusStringSlice(value any) []string {
@@ -1273,64 +1329,7 @@ func bgpCommunityContains(values []string, want string) bool {
 	return false
 }
 
-func ownershipStatusOrder(records []routerstate.MobilityOwnershipEpochRecord) []routerstate.MobilityOwnershipEpochRecord {
-	out := append([]routerstate.MobilityOwnershipEpochRecord(nil), records...)
-	sort.SliceStable(out, func(i, j int) bool {
-		if out[i].Address == out[j].Address {
-			return out[i].OwnerNode < out[j].OwnerNode
-		}
-		return out[i].Address < out[j].Address
-	})
-	return out
-}
-
-func bgpLeaseOwnershipEpochs(poolName string, spec api.MobilityPoolSpec, leases []routerstate.AddressLeaseRecord, now time.Time) []routerstate.MobilityOwnershipEpochRecord {
-	poolPrefix, err := netip.ParsePrefix(strings.TrimSpace(spec.Prefix))
-	if err != nil {
-		return nil
-	}
-	poolPrefix = poolPrefix.Masked()
-	members := plannerMembers(spec.Members)
-	var out []routerstate.MobilityOwnershipEpochRecord
-	for _, lease := range sortedLeases(leases) {
-		if lease.Pool != poolName || lease.Status != routerstate.AddressLeaseStatusActive {
-			continue
-		}
-		if !lease.ExpiresAt.IsZero() && !now.Before(lease.ExpiresAt) {
-			continue
-		}
-		address, ok := normalizeLeaseAddress(lease.Address, poolPrefix)
-		if !ok {
-			continue
-		}
-		if _, ok := members[strings.TrimSpace(lease.OwnerNode)]; !ok {
-			continue
-		}
-		epoch := lease.Epoch
-		if epoch < 1 {
-			epoch = 1
-		}
-		out = append(out, routerstate.MobilityOwnershipEpochRecord{
-			Pool:      poolName,
-			Address:   address,
-			OwnerNode: strings.TrimSpace(lease.OwnerNode),
-			Epoch:     epoch,
-		})
-	}
-	return out
-}
-
-func bgpOwnershipByAddress(records []routerstate.MobilityOwnershipEpochRecord) map[string]routerstate.MobilityOwnershipEpochRecord {
-	out := map[string]routerstate.MobilityOwnershipEpochRecord{}
-	for _, rec := range records {
-		if address := normalizeAddressString(rec.Address); address != "" {
-			out[address] = rec
-		}
-	}
-	return out
-}
-
-func bgpMobilityPathAttrs(member memberPlanInfo, lease routerstate.AddressLeaseRecord, owner routerstate.MobilityOwnershipEpochRecord) bgpdaemon.AppliedPathAttrs {
+func bgpMobilityPathAttrs(member memberPlanInfo, sourceType string) bgpdaemon.AppliedPathAttrs {
 	communities := []string{bgpMobilityCommunityOwner}
 	switch member.Role {
 	case "onprem":
@@ -1338,7 +1337,7 @@ func bgpMobilityPathAttrs(member memberPlanInfo, lease routerstate.AddressLeaseR
 	case "cloud":
 		communities = append(communities, bgpMobilityCommunityRoleCloud)
 	}
-	switch strings.TrimSpace(lease.SourceType) {
+	switch strings.TrimSpace(sourceType) {
 	case staticOwnedType:
 		communities = append(communities, bgpMobilityCommunitySourceStatic)
 	case staticHandoverType:
@@ -1346,11 +1345,8 @@ func bgpMobilityPathAttrs(member memberPlanInfo, lease routerstate.AddressLeaseR
 	default:
 		communities = append(communities, bgpMobilityCommunitySourceObserved)
 	}
-	if strings.TrimSpace(lease.OwnerNode) != "" && strings.TrimSpace(lease.OwnerNode) != strings.TrimSpace(owner.OwnerNode) {
-		communities = append(communities, bgpMobilityCommunityFailover)
-	}
 	attrs := bgpdaemon.AppliedPathAttrs{
-		LocalPref:   bgpMobilityLocalPref(owner.Epoch),
+		LocalPref:   bgpMobilityLocalPref(1),
 		Communities: communities,
 	}
 	if member.PlacementPriority > 0 {

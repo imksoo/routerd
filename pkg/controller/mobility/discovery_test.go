@@ -195,7 +195,7 @@ func TestDiscoveryControllerDoesNotStealStaticOwnedAddress(t *testing.T) {
 	}
 }
 
-func TestDiscoveryControllerDoesNotStealRemoteSiteLease(t *testing.T) {
+func TestDiscoveryControllerDoesNotUseLeaseTableForRemoteExclusion(t *testing.T) {
 	now := time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)
 	store := testStore(t, now)
 	spec := discoveryPoolSpec()
@@ -232,12 +232,12 @@ func TestDiscoveryControllerDoesNotStealRemoteSiteLease(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListFederationEvents: %v", err)
 	}
-	if len(events) != 1 || events[0].Subject != "10.88.60.11/32" {
-		t.Fatalf("events = %#v, want remote-site lease excluded and local client IP accepted", events)
+	if len(events) != 2 {
+		t.Fatalf("events = %#v, want lease table ignored in BGP clean mode", events)
 	}
 	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
-	if fmt.Sprint(status["discoveryExcludedRemote"]) != "1" {
-		t.Fatalf("status = %#v, want one remote lease exclusion", status)
+	if fmt.Sprint(status["discoveryExcludedRemote"]) != "0" {
+		t.Fatalf("status = %#v, want no lease-driven remote exclusion", status)
 	}
 }
 
@@ -477,12 +477,10 @@ func TestDiscoveryControllerObservedEventFeedsBGPAdvertisement(t *testing.T) {
 	if len(bgp.upserts) != 1 || bgp.upserts[0].Prefix != "10.88.60.11/32" || bgp.upserts[0].Source != DynamicSource("cloudedge", "azure-router-a") {
 		t.Fatalf("bgp upserts = %#v, want discovered local /32 advertisement", bgp.upserts)
 	}
-	lease, found, err := store.GetAddressLease("cloudedge", "10.88.60.11/32")
-	if err != nil {
+	if lease, found, err := store.GetAddressLease("cloudedge", "10.88.60.11/32"); err != nil {
 		t.Fatalf("GetAddressLease: %v", err)
-	}
-	if !found || lease.OwnerNode != "azure-router-a" || lease.Status != routerstate.AddressLeaseStatusActive {
-		t.Fatalf("lease = %+v found=%t", lease, found)
+	} else if found {
+		t.Fatalf("lease = %+v, want BGP advertisement without AddressLease projection", lease)
 	}
 }
 

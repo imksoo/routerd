@@ -30,7 +30,6 @@ const (
 type DiscoveryStore interface {
 	RecordFederationEvent(routerstate.EventRecord) error
 	ListFederationEvents(group string, includeExpired bool, now int64) ([]routerstate.EventRecord, error)
-	ListAddressLeases(pool string, includeExpired bool, now time.Time) ([]routerstate.AddressLeaseRecord, error)
 	GetDynamicConfigPartsBySource(source string) ([]routerstate.DynamicConfigPartRecord, error)
 	ListActions(routerstate.ActionExecutionFilter) ([]routerstate.ActionExecutionRecord, error)
 	SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error
@@ -168,10 +167,6 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 	}
 	selfPrivateIPs := discoverySelfPrivateIPSet(selfInventory.PrivateIPs, prefix)
 	staticOwners := staticOwnedOwnerNodesByAddress(spec)
-	remoteOwners, err := discoveryRemoteOwnerSites(c.Store, poolName, self, now)
-	if err != nil {
-		return err
-	}
 	trapAddresses, err := discoveryCurrentTrapAddresses(c.Store, poolName, selfNode, prefix, now)
 	if err != nil {
 		return err
@@ -194,10 +189,6 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 		}
 		if ownerNode := strings.TrimSpace(staticOwners[address]); ownerNode != "" && ownerNode != self.NodeRef {
 			counters.StaticOwned++
-			continue
-		}
-		if ownerSite := strings.TrimSpace(remoteOwners[address]); ownerSite != "" && ownerSite != self.Site {
-			counters.RemoteOwner++
 			continue
 		}
 		if trapAddresses[address] {
@@ -464,27 +455,6 @@ func discoverySelfPrivateIPSet(values []string, poolPrefix netip.Prefix) map[str
 		}
 	}
 	return out
-}
-
-func discoveryRemoteOwnerSites(store DiscoveryStore, poolName string, self memberPlanInfo, now time.Time) (map[string]string, error) {
-	leases, err := store.ListAddressLeases(poolName, false, now)
-	if err != nil {
-		return nil, fmt.Errorf("list discovery leases for MobilityPool/%s: %w", poolName, err)
-	}
-	out := map[string]string{}
-	selfSite := strings.TrimSpace(self.Site)
-	for _, lease := range leases {
-		if lease.Status != routerstate.AddressLeaseStatusActive {
-			continue
-		}
-		address := strings.TrimSpace(lease.Address)
-		ownerSite := strings.TrimSpace(lease.OwnerSite)
-		if address == "" || ownerSite == "" || ownerSite == selfSite {
-			continue
-		}
-		out[address] = ownerSite
-	}
-	return out, nil
 }
 
 func discoveryCurrentTrapAddresses(store DiscoveryStore, poolName, selfNode string, poolPrefix netip.Prefix, now time.Time) (map[string]bool, error) {
