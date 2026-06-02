@@ -650,11 +650,18 @@ func TestGeneratedImportPolicyIsAcceptedByGoBGP(t *testing.T) {
 	go server.Serve()
 	defer server.Stop()
 	spec := api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.250.0.0/24"}}
+	prefixes := importPolicyPrefixes(spec)
+	if !prefixSetAllows(prefixes, "10.250.0.0/24") || !prefixSetAllows(prefixes, "10.250.0.42/32") {
+		t.Fatalf("import prefixes = %#v, want /24 and contained /32 allowed", prefixes)
+	}
+	if prefixSetAllows(prefixes, "10.88.0.1/32") {
+		t.Fatalf("import prefixes = %#v, want unrelated /32 rejected", prefixes)
+	}
 	req := &gobgpapi.SetPoliciesRequest{
 		DefinedSets: []*gobgpapi.DefinedSet{{
 			DefinedType: gobgpapi.DefinedType_PREFIX,
 			Name:        "routerd-test-import-prefixes",
-			Prefixes:    importPolicyPrefixes(spec),
+			Prefixes:    prefixes,
 		}},
 		Policies: []*gobgpapi.Policy{{
 			Name: "routerd-test-import",
@@ -674,6 +681,44 @@ func TestGeneratedImportPolicyIsAcceptedByGoBGP(t *testing.T) {
 	if err := server.SetPolicies(context.Background(), req); err != nil {
 		t.Fatalf("SetPolicies rejected generated import policy: %v", err)
 	}
+}
+
+func TestImportPolicyPrefixesAllowMoreSpecifics(t *testing.T) {
+	prefixes := importPolicyPrefixes(api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.77.60.0/24", "2001:db8:77::/64"}})
+	if !prefixSetAllows(prefixes, "10.77.60.0/24") || !prefixSetAllows(prefixes, "10.77.60.11/32") {
+		t.Fatalf("import prefixes = %#v, want IPv4 prefix and more-specific accepted", prefixes)
+	}
+	if prefixSetAllows(prefixes, "10.77.0.0/16") || prefixSetAllows(prefixes, "10.88.0.1/32") {
+		t.Fatalf("import prefixes = %#v, want less-specific and unrelated IPv4 rejected", prefixes)
+	}
+	if !prefixSetAllows(prefixes, "2001:db8:77::/64") || !prefixSetAllows(prefixes, "2001:db8:77::11/128") {
+		t.Fatalf("import prefixes = %#v, want IPv6 prefix and /128 accepted", prefixes)
+	}
+	if prefixSetAllows(prefixes, "2001:db8:88::1/128") {
+		t.Fatalf("import prefixes = %#v, want unrelated IPv6 rejected", prefixes)
+	}
+}
+
+func prefixSetAllows(prefixes []*gobgpapi.Prefix, candidate string) bool {
+	parsed, err := netip.ParsePrefix(candidate)
+	if err != nil {
+		return false
+	}
+	parsed = parsed.Masked()
+	for _, allowed := range prefixes {
+		parent, err := netip.ParsePrefix(allowed.GetIpPrefix())
+		if err != nil {
+			continue
+		}
+		parent = parent.Masked()
+		if parent.Addr().Is4() != parsed.Addr().Is4() {
+			continue
+		}
+		if parent.Contains(parsed.Addr()) && uint32(parsed.Bits()) >= allowed.GetMaskLengthMin() && uint32(parsed.Bits()) <= allowed.GetMaskLengthMax() {
+			return true
+		}
+	}
+	return false
 }
 
 func TestReconcileDegradesWhenSomePrefixesCannotInstall(t *testing.T) {

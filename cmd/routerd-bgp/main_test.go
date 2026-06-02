@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"path/filepath"
 	"testing"
 
@@ -80,6 +81,44 @@ func TestAppliedPeerEbgpMultihop(t *testing.T) {
 	if got := multihop.GetEbgpMultihop(); !got.GetEnabled() || got.GetMultihopTtl() != 16 {
 		t.Fatalf("restored eBGP multihop = %#v, want enabled ttl=16", got)
 	}
+}
+
+func TestAppliedPolicyPrefixesAllowMoreSpecifics(t *testing.T) {
+	prefixes := appliedPolicyPrefixes(bgpdaemon.AppliedImportPolicy{AllowedPrefixes: []string{"10.77.60.0/24", "2001:db8:77::/64"}})
+	if !appliedPrefixSetAllows(prefixes, "10.77.60.0/24") || !appliedPrefixSetAllows(prefixes, "10.77.60.11/32") {
+		t.Fatalf("applied prefixes = %#v, want IPv4 prefix and more-specific accepted", prefixes)
+	}
+	if appliedPrefixSetAllows(prefixes, "10.77.0.0/16") || appliedPrefixSetAllows(prefixes, "10.88.0.1/32") {
+		t.Fatalf("applied prefixes = %#v, want less-specific and unrelated IPv4 rejected", prefixes)
+	}
+	if !appliedPrefixSetAllows(prefixes, "2001:db8:77::/64") || !appliedPrefixSetAllows(prefixes, "2001:db8:77::11/128") {
+		t.Fatalf("applied prefixes = %#v, want IPv6 prefix and /128 accepted", prefixes)
+	}
+	if appliedPrefixSetAllows(prefixes, "2001:db8:88::1/128") {
+		t.Fatalf("applied prefixes = %#v, want unrelated IPv6 rejected", prefixes)
+	}
+}
+
+func appliedPrefixSetAllows(prefixes []*gobgpapi.Prefix, candidate string) bool {
+	parsed, err := netip.ParsePrefix(candidate)
+	if err != nil {
+		return false
+	}
+	parsed = parsed.Masked()
+	for _, allowed := range prefixes {
+		parent, err := netip.ParsePrefix(allowed.GetIpPrefix())
+		if err != nil {
+			continue
+		}
+		parent = parent.Masked()
+		if parent.Addr().Is4() != parsed.Addr().Is4() {
+			continue
+		}
+		if parent.Contains(parsed.Addr()) && uint32(parsed.Bits()) >= allowed.GetMaskLengthMin() && uint32(parsed.Bits()) <= allowed.GetMaskLengthMax() {
+			return true
+		}
+	}
+	return false
 }
 
 func TestAppliedPeerRestoresInternalRouteReflectorClient(t *testing.T) {

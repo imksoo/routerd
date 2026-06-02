@@ -432,9 +432,16 @@ func appliedPolicyPrefixes(spec bgpdaemon.AppliedImportPolicy) []*gobgpapi.Prefi
 		}
 		prefix = prefix.Masked()
 		bits := uint32(prefix.Bits())
-		out = append(out, &gobgpapi.Prefix{IpPrefix: prefix.String(), MaskLengthMin: bits, MaskLengthMax: bits})
+		out = append(out, &gobgpapi.Prefix{IpPrefix: prefix.String(), MaskLengthMin: bits, MaskLengthMax: appliedPrefixMaxLength(prefix)})
 	}
 	return out
+}
+
+func appliedPrefixMaxLength(prefix netip.Prefix) uint32 {
+	if prefix.Addr().Is6() {
+		return 128
+	}
+	return 32
 }
 
 func appliedNextHopAction(spec bgpdaemon.AppliedImportPolicy) *gobgpapi.NexthopAction {

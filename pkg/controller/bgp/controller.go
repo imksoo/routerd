@@ -1544,10 +1544,17 @@ func importPolicyPrefixes(spec routerapi.BGPImportPolicySpec) []*gobgpapi.Prefix
 		out = append(out, &gobgpapi.Prefix{
 			IpPrefix:      prefix.String(),
 			MaskLengthMin: bits,
-			MaskLengthMax: bits,
+			MaskLengthMax: bgpPrefixMaxLength(prefix),
 		})
 	}
 	return out
+}
+
+func bgpPrefixMaxLength(prefix netip.Prefix) uint32 {
+	if prefix.Addr().Is6() {
+		return 128
+	}
+	return 32
 }
 
 func importPolicyRefreshNeeded(spec routerapi.BGPImportPolicySpec, desired map[string]desiredPeer, routes []FIBRoute) bool {
