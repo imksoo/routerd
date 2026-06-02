@@ -557,6 +557,124 @@ func TestControllerBGPModeStaleOwnerAdvertisesStandby(t *testing.T) {
 	}
 }
 
+func TestControllerBGPModeProviderActionFailureDoesNotRemoveBGPPath(t *testing.T) {
+	now := time.Date(2026, 6, 2, 10, 0, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := plannedPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	recordEvent(t, store, routerstate.EventRecord{
+		ID:         "evt-azure",
+		Group:      "cloudedge",
+		SourceNode: "azure-router",
+		Type:       ObservedEventType,
+		Subject:    "10.88.60.11/32",
+		ObservedAt: now.Add(-time.Second),
+		ExpiresAt:  now.Add(time.Hour),
+	})
+	bgp := &fakeBGPPaths{}
+	source := DynamicSource("cloudedge", "azure-router")
+	controller := Controller{Router: planningRouterForNode("azure-router", spec), Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("initial Reconcile: %v", err)
+	}
+	part := latestPart(t, store, source)
+	resources := decodeResources(t, part.ResourcesJSON)
+	if len(resources) != 0 {
+		t.Fatalf("BGP mode resources = %#v, want no SAM resources", resources)
+	}
+	plans := decodeActionPlans(t, part.ActionPlansJSON)
+	assign := findActionPlanByAddress(plans, "assign-secondary-ip", "10.88.60.11/32")
+	if assign == nil {
+		t.Fatalf("actionPlans = %#v, want background provider assign", plans)
+	}
+	if assign.Parameters[ownershipParamEpoch] == "" || assign.Parameters[captureParamEpoch] == "" {
+		t.Fatalf("assign parameters = %#v, want ownership and capture fences", assign.Parameters)
+	}
+	if _, err := importApprovedAction(t, assign, source, store, now); err != nil {
+		t.Fatalf("import action: %v", err)
+	}
+	rows, err := store.ListActions(routerstate.ActionExecutionFilter{})
+	if err != nil {
+		t.Fatalf("ListActions: %v", err)
+	}
+	if len(rows) == 0 {
+		t.Fatal("imported action not found")
+	}
+	if err := store.MarkActionResult(rows[0].ID, routerstate.ActionFailed, "failed", "provider API unavailable", nil, now.Add(time.Second)); err != nil {
+		t.Fatalf("MarkActionResult failed: %v", err)
+	}
+
+	bgp.upserts = nil
+	controller.Now = func() time.Time { return now.Add(2 * time.Second) }
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("second Reconcile: %v", err)
+	}
+	if len(bgp.upserts) != 1 || bgp.upserts[0].Prefix != "10.88.60.11/32" {
+		t.Fatalf("BGP upserts after failed provider action = %#v, want route retained", bgp.upserts)
+	}
+	part = latestPart(t, store, source)
+	if findActionPlanByAddress(decodeActionPlans(t, part.ActionPlansJSON), "assign-secondary-ip", "10.88.60.11/32") == nil {
+		t.Fatalf("actionPlans after failure = %s, want desired provider assign retained", part.ActionPlansJSON)
+	}
+}
+
+func TestControllerBGPModeProviderStateFollowsBestPathOwnerChange(t *testing.T) {
+	now := time.Date(2026, 6, 2, 10, 0, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := centralizedOwnershipPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	if err := store.UpsertAddressLease(routerstate.AddressLeaseRecord{
+		Pool:      "cloudedge",
+		Address:   "10.88.60.12/32",
+		Status:    routerstate.AddressLeaseStatusActive,
+		OwnerNode: "azure-router-a",
+		OwnerSite: "azure",
+		OwnerRole: "cloud",
+		Epoch:     1,
+		ExpiresAt: now.Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("UpsertAddressLease: %v", err)
+	}
+	bgp := &fakeBGPPaths{}
+	sourceA := DynamicSource("cloudedge", "azure-router-a")
+	sourceB := DynamicSource("cloudedge", "azure-router-b")
+	controllerA := Controller{Router: planningRouterForNode("azure-router-a", spec), Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controllerA.Reconcile(context.Background()); err != nil {
+		t.Fatalf("initial router-a Reconcile: %v", err)
+	}
+	initialPlans := decodeActionPlans(t, latestPart(t, store, sourceA).ActionPlansJSON)
+	if findActionPlanByAddress(initialPlans, "assign-secondary-ip", "10.88.60.12/32") == nil {
+		t.Fatalf("initial plans = %#v, want router-a assign", initialPlans)
+	}
+
+	spec.Members[1].Maintenance.Drain = true
+	controllerA.Router = planningRouterForNode("azure-router-a", spec)
+	controllerA.Now = func() time.Time { return now.Add(time.Second) }
+	if err := controllerA.Reconcile(context.Background()); err != nil {
+		t.Fatalf("drained router-a Reconcile: %v", err)
+	}
+	drainedA := decodeActionPlans(t, latestPart(t, store, sourceA).ActionPlansJSON)
+	if findActionPlanByAddress(drainedA, "unassign-secondary-ip", "10.88.60.12/32") == nil {
+		t.Fatalf("drained router-a plans = %#v, want background unassign", drainedA)
+	}
+	if findActionPlanByAddress(drainedA, "assign-secondary-ip", "10.88.60.12/32") != nil {
+		t.Fatalf("drained router-a plans = %#v, want no assign", drainedA)
+	}
+
+	controllerB := Controller{Router: planningRouterForNode("azure-router-b", spec), Store: store, BGPPaths: bgp, Now: func() time.Time { return now.Add(2 * time.Second) }}
+	if err := controllerB.Reconcile(context.Background()); err != nil {
+		t.Fatalf("router-b Reconcile: %v", err)
+	}
+	standbyPlans := decodeActionPlans(t, latestPart(t, store, sourceB).ActionPlansJSON)
+	assignB := findActionPlanByAddress(standbyPlans, "assign-secondary-ip", "10.88.60.12/32")
+	if assignB == nil {
+		t.Fatalf("router-b plans = %#v, want background assign", standbyPlans)
+	}
+	if assignB.Parameters["allowReassignment"] != "true" || assignB.Parameters[ownershipParamOwner] != "azure-router-b" {
+		t.Fatalf("router-b assign parameters = %#v, want fenced reassignment to best-path owner", assignB.Parameters)
+	}
+}
+
 func TestControllerBGPModeStaticOwnedAdvertisesOnPremOwner(t *testing.T) {
 	now := time.Date(2026, 6, 2, 9, 0, 0, 0, time.UTC)
 	store := testStore(t, now)
