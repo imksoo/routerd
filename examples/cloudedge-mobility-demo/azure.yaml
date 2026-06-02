@@ -225,7 +225,7 @@ spec:
       spec:
         enabled: true
         dryRunOnly: false
-        requireApproval: true
+        requireApproval: false
         allowedProviders: [azure]
         allowedProviderRefs: [azure-lab]
         allowedActions: [assign-secondary-ip, unassign-secondary-ip, ensure-forwarding-enabled, ensure-forwarding-disabled]

@@ -340,7 +340,7 @@ spec:
       spec:
         enabled: true
         dryRunOnly: false
-        requireApproval: true
+        requireApproval: false
         allowedProviders: [aws]
         allowedProviderRefs: [aws-lab]
         allowedActions:
