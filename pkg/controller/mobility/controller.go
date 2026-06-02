@@ -6,6 +6,7 @@ package mobility
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/netip"
 	"sort"
@@ -191,6 +192,9 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 	}
 	captureEpochDesired, err := desiredBGPCaptureEpochs(res.Metadata.Name, spec, trapOwnershipEpochs, liveness)
 	if err != nil {
+		return err
+	}
+	if err := c.bumpBGPCaptureEpochsAfterRelease(captureEpochDesired, actionJournal); err != nil {
 		return err
 	}
 	captureEpochs, err := c.Store.ReconcileMobilityCaptureEpochs(captureEpochDesired)
@@ -749,6 +753,100 @@ func desiredBGPCaptureEpochs(poolName string, spec api.MobilityPoolSpec, ownersh
 		}
 	}
 	return out, nil
+}
+
+func (c Controller) bumpBGPCaptureEpochsAfterRelease(desired []routerstate.MobilityCaptureEpochRecord, journal []routerstate.ActionExecutionRecord) error {
+	released := captureReleasePendingRecapture(journal)
+	if len(released) == 0 {
+		return nil
+	}
+	for i := range desired {
+		rec := &desired[i]
+		key := captureReleaseKey(rec.CaptureKey, rec.Holder, rec.Address)
+		if !released[key] {
+			continue
+		}
+		current, ok, err := c.Store.GetMobilityCaptureEpoch(rec.CaptureKey)
+		if err != nil {
+			return fmt.Errorf("get mobility capture epoch %q: %w", rec.CaptureKey, err)
+		}
+		if !ok {
+			if rec.Epoch < 1 {
+				rec.Epoch = 1
+			}
+			continue
+		}
+		if rec.Epoch <= current.Epoch {
+			rec.Epoch = current.Epoch + 1
+		}
+	}
+	return nil
+}
+
+func captureReleasePendingRecapture(journal []routerstate.ActionExecutionRecord) map[string]bool {
+	type transition struct {
+		at     time.Time
+		id     int64
+		assign bool
+	}
+	latest := map[string]transition{}
+	for _, row := range journal {
+		if row.Status != routerstate.ActionSucceeded {
+			continue
+		}
+		assign := false
+		switch strings.TrimSpace(row.Action) {
+		case "assign-secondary-ip":
+			assign = true
+		case "unassign-secondary-ip":
+			assign = false
+		default:
+			continue
+		}
+		params := decodeActionRecordMap(row.ParametersJSON)
+		key := strings.TrimSpace(params[captureParamKey])
+		holder := strings.TrimSpace(params[captureParamHolder])
+		address := normalizeAddressString(decodeActionRecordMap(row.TargetJSON)["address"])
+		releaseKey := captureReleaseKey(key, holder, address)
+		if releaseKey == "" {
+			continue
+		}
+		at := row.ExecutedAt
+		if at.IsZero() {
+			at = row.UpdatedAt
+		}
+		if prev, ok := latest[releaseKey]; !ok || at.After(prev.at) || (at.Equal(prev.at) && row.ID > prev.id) {
+			latest[releaseKey] = transition{at: at, id: row.ID, assign: assign}
+		}
+	}
+	out := map[string]bool{}
+	for key, tr := range latest {
+		if !tr.assign {
+			out[key] = true
+		}
+	}
+	return out
+}
+
+func captureReleaseKey(captureKey, holder, address string) string {
+	captureKey = strings.TrimSpace(captureKey)
+	holder = strings.TrimSpace(holder)
+	address = normalizeAddressString(address)
+	if captureKey == "" || holder == "" || address == "" {
+		return ""
+	}
+	return captureKey + "\x00" + holder + "\x00" + address
+}
+
+func decodeActionRecordMap(raw string) map[string]string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	var out map[string]string
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		return nil
+	}
+	return out
 }
 
 func bgpProviderActionPlans(poolName, selfNode string, spec api.MobilityPoolSpec, desiredTrapAddresses map[string]bool, previousPlans []dynamicconfig.ActionPlan, markers []routerstate.MobilityDeprovisionMarkerRecord, profiles map[string]api.CloudProviderProfileSpec, captureEpochs []routerstate.MobilityCaptureEpochRecord, ownership []routerstate.MobilityOwnershipEpochRecord, actionJournal []routerstate.ActionExecutionRecord, now time.Time) ([]dynamicconfig.ActionPlan, error) {

@@ -53,6 +53,7 @@ func (s *SQLiteStore) ReconcileMobilityCaptureEpochs(desired []MobilityCaptureEp
 	out := make([]MobilityCaptureEpochRecord, 0, len(desired))
 	for _, rec := range desired {
 		rec = normalizeMobilityCaptureEpoch(rec)
+		desiredEpoch := rec.Epoch
 		if rec.CaptureKey == "" {
 			return nil, fmt.Errorf("mobility capture epoch key is required")
 		}
@@ -69,9 +70,15 @@ func (s *SQLiteStore) ReconcileMobilityCaptureEpochs(desired []MobilityCaptureEp
 			if current.Holder != rec.Holder {
 				rec.Epoch++
 			}
+			if desiredEpoch > rec.Epoch {
+				rec.Epoch = desiredEpoch
+			}
 		} else {
 			rec.CreatedAt = now
 			rec.Epoch = 1
+			if desiredEpoch > rec.Epoch {
+				rec.Epoch = desiredEpoch
+			}
 		}
 		rec.UpdatedAt = now
 		if _, err := s.db.Exec(`

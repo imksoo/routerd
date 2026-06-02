@@ -45,3 +45,41 @@ func TestMobilityCaptureEpochBumpsOnHolderChange(t *testing.T) {
 		t.Fatalf("stored epoch = %+v, want epoch 2 holder b", got)
 	}
 }
+
+func TestMobilityCaptureEpochHonorsDesiredMinimumEpoch(t *testing.T) {
+	store := mustOpenStore(t)
+	defer store.Close()
+
+	rec := MobilityCaptureEpochRecord{
+		CaptureKey:    "cloudedge|10.88.60.10/32|provider:azure-provider:placement:azure-edge",
+		Pool:          "cloudedge",
+		Address:       "10.88.60.10/32",
+		CaptureDomain: "provider:azure-provider:placement:azure-edge",
+		Holder:        "azure-router-a",
+	}
+	rows, err := store.ReconcileMobilityCaptureEpochs([]MobilityCaptureEpochRecord{rec})
+	if err != nil {
+		t.Fatalf("initial reconcile: %v", err)
+	}
+	if rows[0].Epoch != 1 {
+		t.Fatalf("initial epoch = %d, want 1", rows[0].Epoch)
+	}
+
+	rec.Epoch = 3
+	rows, err = store.ReconcileMobilityCaptureEpochs([]MobilityCaptureEpochRecord{rec})
+	if err != nil {
+		t.Fatalf("minimum reconcile: %v", err)
+	}
+	if rows[0].Epoch != 3 || rows[0].Holder != "azure-router-a" {
+		t.Fatalf("minimum rows = %+v, want same holder epoch 3", rows)
+	}
+
+	rec.Epoch = 2
+	rows, err = store.ReconcileMobilityCaptureEpochs([]MobilityCaptureEpochRecord{rec})
+	if err != nil {
+		t.Fatalf("lower minimum reconcile: %v", err)
+	}
+	if rows[0].Epoch != 3 {
+		t.Fatalf("lower minimum epoch = %d, want monotonic 3", rows[0].Epoch)
+	}
+}

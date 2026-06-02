@@ -2363,6 +2363,51 @@ func importApprovedAction(t *testing.T, plan *dynamicconfig.ActionPlan, source s
 	return 0, fmt.Errorf("imported action %q not found", plan.IdempotencyKey)
 }
 
+func seedSucceededBGPCaptureAction(t *testing.T, store *routerstate.SQLiteStore, providerRef, nicRef, holder, address, action string, epoch int64, at time.Time) {
+	t.Helper()
+	domain := "provider:" + providerRef + ":placement:aws-edge"
+	captureKey := captureEpochKey("cloudedge", address, domain)
+	targetJSON, err := json.Marshal(map[string]string{"address": address, "nicRef": nicRef})
+	if err != nil {
+		t.Fatalf("marshal target: %v", err)
+	}
+	paramsJSON, err := json.Marshal(map[string]string{
+		captureParamKey:    captureKey,
+		captureParamHolder: holder,
+		captureParamEpoch:  fmt.Sprint(epoch),
+	})
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+	key := strings.Join([]string{"test", providerRef, nicRef, action, address, "epoch", fmt.Sprint(epoch), fmt.Sprint(at.UnixNano())}, ":")
+	if _, err := store.ImportAction(routerstate.ActionExecutionRecord{
+		IdempotencyKey: key,
+		Source:         "test",
+		Provider:       strings.TrimSuffix(providerRef, "-provider"),
+		ProviderRef:    providerRef,
+		Action:         action,
+		TargetJSON:     string(targetJSON),
+		ParametersJSON: string(paramsJSON),
+		Status:         routerstate.ActionPending,
+	}); err != nil {
+		t.Fatalf("ImportAction: %v", err)
+	}
+	rec, ok, err := store.GetActionByIdempotencyKey(key)
+	if err != nil || !ok {
+		t.Fatalf("GetActionByIdempotencyKey: ok=%v err=%v", ok, err)
+	}
+	if err := store.ApproveAction(rec.ID, "test", at.Add(-time.Second)); err != nil {
+		t.Fatalf("ApproveAction: %v", err)
+	}
+	claimed, err := store.BeginActionExecution(rec.ID, at.Add(-500*time.Millisecond))
+	if err != nil || !claimed {
+		t.Fatalf("BeginActionExecution: claimed=%v err=%v", claimed, err)
+	}
+	if err := store.MarkActionResult(rec.ID, routerstate.ActionSucceeded, "ok", "", nil, at); err != nil {
+		t.Fatalf("MarkActionResult: %v", err)
+	}
+}
+
 func countKind(resources []api.Resource, kind string) int {
 	count := 0
 	for _, res := range resources {

@@ -782,6 +782,51 @@ func TestControllerBGPModeProviderTrapUsesRemoteInstalledNextHops(t *testing.T) 
 	}
 }
 
+func TestControllerBGPModeProviderTrapRecapturesAfterSuccessfulRelease(t *testing.T) {
+	now := time.Date(2026, 6, 2, 10, 0, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	for _, lease := range awsFailoverLeases(now) {
+		if err := store.UpsertAddressLease(lease); err != nil {
+			t.Fatalf("UpsertAddressLease(%s): %v", lease.Address, err)
+		}
+	}
+	if _, err := store.ReconcileMobilityCaptureEpochs([]routerstate.MobilityCaptureEpochRecord{
+		awsFailoverCaptureEpoch("10.88.60.10/32", "aws-router-a", 1),
+		awsFailoverCaptureEpoch("10.88.60.12/32", "aws-router-a", 1),
+		awsFailoverCaptureEpoch("10.88.60.13/32", "aws-router-a", 1),
+	}); err != nil {
+		t.Fatalf("seed capture epochs: %v", err)
+	}
+	for _, address := range []string{"10.88.60.12/32", "10.88.60.13/32"} {
+		seedSucceededBGPCaptureAction(t, store, "aws-provider", "eni-a", "aws-router-a", address, "assign-secondary-ip", 1, now.Add(-3*time.Minute))
+		seedSucceededBGPCaptureAction(t, store, "aws-provider", "eni-a", "aws-router-a", address, "unassign-secondary-ip", 1, now.Add(-2*time.Minute))
+	}
+	saveBGPInstalledNextHops(t, store, map[string][]string{
+		"10.88.60.10/32": {"10.99.0.1"},
+		"10.88.60.12/32": {"10.99.0.3"},
+		"10.88.60.13/32": {"10.99.0.4"},
+	})
+
+	bgp := &fakeBGPPaths{}
+	router := routerWithBGPRouter(planningRouterForNode("aws-router-a", spec))
+	controller := Controller{Router: router, Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	plans := decodeActionPlans(t, latestPart(t, store, DynamicSource("cloudedge", "aws-router-a")).ActionPlansJSON)
+	for _, address := range []string{"10.88.60.12/32", "10.88.60.13/32"} {
+		assign := findActionPlanByAddress(plans, "assign-secondary-ip", address)
+		if assign == nil {
+			t.Fatalf("plans = %#v, want recapture assign for %s", plans, address)
+		}
+		if assign.Parameters[captureParamEpoch] != "2" {
+			t.Fatalf("assign %s parameters = %#v, want capture epoch 2 after release", address, assign.Parameters)
+		}
+	}
+}
+
 func TestControllerBGPModeProviderTrapUsesStaticOwnedOwnerWhenOwnershipMissing(t *testing.T) {
 	now := time.Date(2026, 6, 2, 10, 0, 0, 0, time.UTC)
 	store := testStore(t, now)
