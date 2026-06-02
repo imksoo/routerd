@@ -6760,13 +6760,14 @@
                       },
                       "deliveryPolicy": {
                         "additionalProperties": false,
-                        "description": "DeliveryPolicy is reserved for pool-level delivery defaults. Per-member\nDelivery/DeliveryTo currently drives generated AddressMobilityDomain and\nRemoteAddressClaim DynamicConfigPart resources.",
+                        "description": "DeliveryPolicy selects the pool-level delivery control plane. Empty/route\nkeeps the legacy generated AddressMobilityDomain/RemoteAddressClaim route\nlowering. bgp advertises owned /32s and learns remote /32s through BGP.",
                         "properties": {
                           "mode": {
-                            "description": "Mode is accepted for forward compatibility. Empty means route delivery.",
+                            "description": "Mode selects delivery. Empty means route delivery.",
                             "enum": [
                               "",
-                              "route"
+                              "route",
+                              "bgp"
                             ],
                             "type": "string"
                           }

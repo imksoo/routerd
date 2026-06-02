@@ -120,9 +120,9 @@ func validateMobilityResource(res api.Resource, _ platform.OS) (bool, error) {
 			}
 		}
 		switch strings.TrimSpace(spec.DeliveryPolicy.Mode) {
-		case "", "route":
+		case "", "route", "bgp":
 		default:
-			return true, fmt.Errorf("%s spec.deliveryPolicy.mode %q is not supported; only route", res.ID(), spec.DeliveryPolicy.Mode)
+			return true, fmt.Errorf("%s spec.deliveryPolicy.mode %q is not supported; only route or bgp", res.ID(), spec.DeliveryPolicy.Mode)
 		}
 		switch strings.TrimSpace(spec.Authority.Mode) {
 		case "", "static":

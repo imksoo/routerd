@@ -65,6 +65,7 @@ func buildDynamicRouteSAMView(startup *api.Router, store any, now time.Time, tar
 		hybridLowerings = lowerings
 	}
 
+	routeRouter = suppressBGPModeMobilityClaims(effective, routeRouter)
 	samLowerings := []sam.DeliveryLowering(nil)
 	if targetOS == platform.OSLinux && sam.HasRemoteAddressClaims(&effective) {
 		expanded, lowerings, err := sam.ExpandRemoteAddressClaimRoutesWithOptions(routeRouter, sam.PlanOptions{StatusReader: statusReaderFromStore(store)})
@@ -81,6 +82,41 @@ func buildDynamicRouteSAMView(startup *api.Router, store any, now time.Time, tar
 		HybridLowerings: hybridLowerings,
 		SAMLowerings:    samLowerings,
 	}, nil
+}
+
+func suppressBGPModeMobilityClaims(effective, routeRouter api.Router) api.Router {
+	pools := bgpMobilityPools(effective)
+	if len(pools) == 0 {
+		return routeRouter
+	}
+	out := routeRouter
+	out.Spec.Resources = make([]api.Resource, 0, len(routeRouter.Spec.Resources))
+	for _, resource := range routeRouter.Spec.Resources {
+		if resource.APIVersion == api.HybridAPIVersion && resource.Kind == "RemoteAddressClaim" {
+			if pool := strings.TrimSpace(resource.Metadata.Annotations["mobility.routerd.net/pool"]); pool != "" && pools[pool] {
+				continue
+			}
+		}
+		out.Spec.Resources = append(out.Spec.Resources, resource)
+	}
+	return out
+}
+
+func bgpMobilityPools(router api.Router) map[string]bool {
+	out := map[string]bool{}
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "MobilityPool" {
+			continue
+		}
+		spec, err := resource.MobilityPoolSpec()
+		if err != nil {
+			continue
+		}
+		if strings.TrimSpace(spec.DeliveryPolicy.Mode) == "bgp" {
+			out[resource.Metadata.Name] = true
+		}
+	}
+	return out
 }
 
 func statusReaderFromStore(store any) sam.StatusReader {

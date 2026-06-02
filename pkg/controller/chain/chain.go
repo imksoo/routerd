@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/bgpdaemon"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/conntrack"
 	bgpcontroller "github.com/imksoo/routerd/pkg/controller/bgp"
@@ -909,6 +910,19 @@ func (r *Runner) Start(ctx context.Context) error {
 	defaults, _ := platform.Current()
 	dnsResolver := dnsresolvercontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunDNSResolver, RuntimeDir: defaults.RuntimeDir, StateDir: defaults.StateDir}
 	eventFederation := eventfederationcontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunEventFederation, RuntimeDir: defaults.RuntimeDir, StateDir: defaults.StateDir}
+	bgpDaemon := bgpcontroller.DefaultDaemonSpec()
+	if strings.TrimSpace(r.Opts.BGPSocketPath) != "" {
+		bgpDaemon.SocketPath = strings.TrimSpace(r.Opts.BGPSocketPath)
+		if strings.TrimSpace(r.Opts.BGPControlSocketPath) == "" {
+			bgpDaemon.ControlSocketPath = filepath.Join(filepath.Dir(bgpDaemon.SocketPath), "control.sock")
+		}
+	}
+	if strings.TrimSpace(r.Opts.BGPControlSocketPath) != "" {
+		bgpDaemon.ControlSocketPath = strings.TrimSpace(r.Opts.BGPControlSocketPath)
+	}
+	if strings.TrimSpace(r.Opts.BGPStatePath) != "" {
+		bgpDaemon.StatePath = strings.TrimSpace(r.Opts.BGPStatePath)
+	}
 	// EventSubscriptionController needs the SQLite-backed federation/dynamic/
 	// plugin methods in addition to status writes. The raw r.Store is the
 	// *state.SQLiteStore; status writes are routed through the evented store so
@@ -927,9 +941,10 @@ func (r *Runner) Start(ctx context.Context) error {
 	var mobility mobilitycontroller.Controller
 	if rawStore, ok := r.Store.(mobilityDataStore); ok {
 		mobility = mobilitycontroller.Controller{
-			Router: r.Router,
-			Bus:    r.Bus,
-			Store:  mobilityStore{evented: store, data: rawStore},
+			Router:   r.Router,
+			Bus:      r.Bus,
+			Store:    mobilityStore{evented: store, data: rawStore},
+			BGPPaths: bgpdaemon.NewControlClient(bgpDaemon.ControlSocketPath),
 		}
 	}
 	var providerAction provideractioncontroller.Controller
@@ -950,19 +965,6 @@ func (r *Runner) Start(ctx context.Context) error {
 	health := healthcheck.Controller{Router: r.Router, Bus: r.Bus, Store: store, Logger: logger}
 	nat := nat44.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunNAT, IngressLive: !r.Opts.DryRunIngress, NftablesPath: r.Opts.NftablesPath, NftCommand: r.Opts.NftCommand, Logger: logger}
 	ingressService := ingressservicecontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunIngress, Resolver: ingressServiceDNSResolver(r.Router, store), Logger: logger}
-	bgpDaemon := bgpcontroller.DefaultDaemonSpec()
-	if strings.TrimSpace(r.Opts.BGPSocketPath) != "" {
-		bgpDaemon.SocketPath = strings.TrimSpace(r.Opts.BGPSocketPath)
-		if strings.TrimSpace(r.Opts.BGPControlSocketPath) == "" {
-			bgpDaemon.ControlSocketPath = filepath.Join(filepath.Dir(bgpDaemon.SocketPath), "control.sock")
-		}
-	}
-	if strings.TrimSpace(r.Opts.BGPControlSocketPath) != "" {
-		bgpDaemon.ControlSocketPath = strings.TrimSpace(r.Opts.BGPControlSocketPath)
-	}
-	if strings.TrimSpace(r.Opts.BGPStatePath) != "" {
-		bgpDaemon.StatePath = strings.TrimSpace(r.Opts.BGPStatePath)
-	}
 	bgp := bgpcontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunBGP, Logger: logger, Daemon: bgpDaemon}
 	vrrp := vrrpcontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunVRRP, Logger: logger}
 	ipAddressSet := IPAddressSetController{Router: r.Router, Store: store, DryRunNAT: r.Opts.DryRunNAT, DryRunRoute: r.Opts.DryRunRoute, DryRunFirewall: r.Opts.DryRunFirewall, NftCommand: r.Opts.NftCommand, RuntimeDir: defaults.RuntimeDir}

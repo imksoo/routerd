@@ -445,6 +445,34 @@ func TestReconcileCanLeaveImportNextHopUnchanged(t *testing.T) {
 	}
 }
 
+func TestReconcileImportsFourSiteMobilityHostRoutes(t *testing.T) {
+	server := &fakeServer{routes: []*gobgpapi.Destination{
+		testDestination("10.77.60.10/32", "10.99.0.10"),
+		testDestination("10.77.60.11/32", "10.99.0.11"),
+		testDestination("10.77.60.12/32", "10.99.0.12"),
+		testDestination("10.77.60.13/32", "10.99.0.13"),
+	}}
+	fib := &fakeFIB{}
+	controller := Controller{
+		Router: bgpRouterWithImportPrefixes("10.77.60.0/24"),
+		Store:  mapStore{},
+		Server: server,
+		FIB:    fib,
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	want := []FIBRoute{
+		{Prefix: "10.77.60.10/32", NextHops: []string{"10.99.0.10"}},
+		{Prefix: "10.77.60.11/32", NextHops: []string{"10.99.0.11"}},
+		{Prefix: "10.77.60.12/32", NextHops: []string{"10.99.0.12"}},
+		{Prefix: "10.77.60.13/32", NextHops: []string{"10.99.0.13"}},
+	}
+	if !reflect.DeepEqual(fib.routes, want) {
+		t.Fatalf("FIB routes = %#v, want 4-site mobility /32 routes %#v", fib.routes, want)
+	}
+}
+
 func TestGeneratedImportPolicyIsAcceptedByGoBGP(t *testing.T) {
 	server := gobgpserver.NewBgpServer()
 	go server.Serve()

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/bgpdaemon"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/federation"
@@ -51,18 +52,25 @@ type Store interface {
 	ObjectStatus(apiVersion, kind, name string) map[string]any
 }
 
+type BGPPathClient interface {
+	ListPaths(ctx context.Context, source string) ([]bgpdaemon.AppliedPath, error)
+	UpsertPath(ctx context.Context, path bgpdaemon.AppliedPath) (bgpdaemon.AppliedPath, error)
+	DeletePath(ctx context.Context, path bgpdaemon.AppliedPath) error
+}
+
 type Controller struct {
-	Router *api.Router
-	Bus    *bus.Bus
-	Store  Store
-	Now    func() time.Time
+	Router   *api.Router
+	Bus      *bus.Bus
+	Store    Store
+	BGPPaths BGPPathClient
+	Now      func() time.Time
 }
 
 func (c Controller) HandleEvent(ctx context.Context, _ daemonapi.DaemonEvent) error {
 	return c.Reconcile(ctx)
 }
 
-func (c Controller) Reconcile(_ context.Context) error {
+func (c Controller) Reconcile(ctx context.Context) error {
 	if c.Router == nil || c.Store == nil {
 		return nil
 	}
@@ -85,6 +93,33 @@ func (c Controller) Reconcile(_ context.Context) error {
 			})
 			continue
 		}
+		spec, err := res.MobilityPoolSpec()
+		if err != nil {
+			_ = c.savePlannerStatus(res.Metadata.Name, map[string]any{
+				"plannerPhase":  "Degraded",
+				"plannerReason": err.Error(),
+				"plannedAt":     now.Format(time.RFC3339Nano),
+			})
+			continue
+		}
+		if mobilityBGPMode(spec) {
+			if err := c.reconcileBGPDelivery(ctx, res, spec, now); err != nil {
+				_ = c.savePlannerStatus(res.Metadata.Name, map[string]any{
+					"plannerPhase":  "Degraded",
+					"plannerReason": err.Error(),
+					"plannedAt":     now.Format(time.RFC3339Nano),
+				})
+			}
+			continue
+		}
+		if err := c.reconcileBGPDeliveryDisabled(ctx, res, spec, now); err != nil {
+			_ = c.savePlannerStatus(res.Metadata.Name, map[string]any{
+				"plannerPhase":  "Degraded",
+				"plannerReason": err.Error(),
+				"plannedAt":     now.Format(time.RFC3339Nano),
+			})
+			continue
+		}
 		if err := c.reconcilePlan(res, now); err != nil {
 			_ = c.savePlannerStatus(res.Metadata.Name, map[string]any{
 				"plannerPhase":  "Degraded",
@@ -93,6 +128,81 @@ func (c Controller) Reconcile(_ context.Context) error {
 			})
 		}
 	}
+	return nil
+}
+
+func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, spec api.MobilityPoolSpec, now time.Time) error {
+	if c.BGPPaths == nil {
+		return fmt.Errorf("MobilityPool/%s deliveryPolicy.mode=bgp requires routerd-bgp control client", res.Metadata.Name)
+	}
+	selfNode, err := c.selfNode(spec.GroupRef)
+	if err != nil {
+		return err
+	}
+	source := DynamicSource(res.Metadata.Name, selfNode)
+	leases, err := c.Store.ListAddressLeases(res.Metadata.Name, false, now)
+	if err != nil {
+		return fmt.Errorf("list address leases: %w", err)
+	}
+	desired := bgpOwnedPaths(res.Metadata.Name, source, selfNode, leases, now)
+	current, err := c.BGPPaths.ListPaths(ctx, source)
+	if err != nil {
+		return fmt.Errorf("list BGP mobility paths: %w", err)
+	}
+	currentByPrefix := map[string]bgpdaemon.AppliedPath{}
+	for _, path := range current {
+		currentByPrefix[path.Prefix] = path
+	}
+	for _, path := range desired {
+		if _, err := c.BGPPaths.UpsertPath(ctx, path); err != nil {
+			return fmt.Errorf("upsert BGP mobility path %s: %w", path.Prefix, err)
+		}
+		delete(currentByPrefix, path.Prefix)
+	}
+	for _, path := range currentByPrefix {
+		if err := c.BGPPaths.DeletePath(ctx, path); err != nil {
+			return fmt.Errorf("delete stale BGP mobility path %s: %w", path.Prefix, err)
+		}
+	}
+	if err := c.upsertEmptyPlan(res.Metadata.Name, spec, selfNode, now); err != nil {
+		return err
+	}
+	status := map[string]any{
+		"plannerPhase":       "BGPPlanned",
+		"plannerReason":      "deliveryPolicy.mode=bgp",
+		"selfNode":           selfNode,
+		"dynamicSource":      source,
+		"deliveryMode":       "bgp",
+		"bgpPathSource":      source,
+		"generatedBGPPaths":  len(desired),
+		"generatedClaims":    0,
+		"generatedActions":   0,
+		"plannedAt":          now.Format(time.RFC3339Nano),
+		"operatorIntent":     "MobilityPool",
+		"derivedConfigKinds": []string{"BGPPath"},
+	}
+	return c.savePlannerStatus(res.Metadata.Name, status)
+}
+
+func (c Controller) reconcileBGPDeliveryDisabled(ctx context.Context, res api.Resource, spec api.MobilityPoolSpec, now time.Time) error {
+	if c.BGPPaths == nil {
+		return nil
+	}
+	selfNode, err := c.selfNode(spec.GroupRef)
+	if err != nil {
+		return err
+	}
+	source := DynamicSource(res.Metadata.Name, selfNode)
+	paths, err := c.BGPPaths.ListPaths(ctx, source)
+	if err != nil {
+		return nil
+	}
+	for _, path := range paths {
+		if err := c.BGPPaths.DeletePath(ctx, path); err != nil {
+			continue
+		}
+	}
+	_ = now
 	return nil
 }
 
@@ -383,6 +493,42 @@ func hasStaticMobilityIntent(spec api.MobilityPoolSpec) bool {
 		}
 	}
 	return false
+}
+
+func mobilityBGPMode(spec api.MobilityPoolSpec) bool {
+	return strings.TrimSpace(spec.DeliveryPolicy.Mode) == "bgp"
+}
+
+func bgpOwnedPaths(poolName, source, selfNode string, leases []routerstate.AddressLeaseRecord, now time.Time) []bgpdaemon.AppliedPath {
+	var out []bgpdaemon.AppliedPath
+	for _, lease := range leases {
+		if lease.Pool != poolName || lease.Status != routerstate.AddressLeaseStatusActive {
+			continue
+		}
+		if strings.TrimSpace(lease.OwnerNode) != strings.TrimSpace(selfNode) {
+			continue
+		}
+		if !lease.ExpiresAt.IsZero() && !now.Before(lease.ExpiresAt) {
+			continue
+		}
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(lease.Address))
+		if err != nil {
+			continue
+		}
+		prefix = prefix.Masked()
+		if !prefix.Addr().Is4() || prefix.Bits() != 32 {
+			continue
+		}
+		out = append(out, bgpdaemon.NormalizeAppliedPath(bgpdaemon.AppliedPath{
+			Source: source,
+			Prefix: prefix.String(),
+			Family: bgpdaemon.AppliedPathFamilyIPv4Unicast,
+		}))
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		return out[i].Prefix < out[j].Prefix
+	})
+	return out
 }
 
 func staticOwnedCandidate(poolName, group, address, nodeRef string, member memberInfo, current routerstate.AddressLeaseRecord, now time.Time) leaseCandidate {

@@ -57,6 +57,42 @@ func TestDynamicRouteSAMViewIncludesDynamicRemoteAddressClaim(t *testing.T) {
 	}
 }
 
+func TestDynamicRouteSAMViewSuppressesMobilityClaimsWhenPoolUsesBGPDelivery(t *testing.T) {
+	startup := startupHybridContextRouter()
+	startup.Spec.Resources = append(startup.Spec.Resources, api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"},
+		Metadata: api.ObjectMeta{Name: "cloudedge"},
+		Spec: api.MobilityPoolSpec{
+			Prefix:         "10.0.1.0/24",
+			GroupRef:       "cloudedge",
+			DeliveryPolicy: api.MobilityDeliveryPolicy{Mode: "bgp"},
+			Members: []api.MobilityPoolMember{
+				{NodeRef: "onprem-router", Site: "onprem", Role: "onprem"},
+				{NodeRef: "cloud-router", Site: "cloud", Role: "cloud"},
+			},
+		},
+	})
+	claim := remoteAddressClaimResource("app", "10.0.1.123/32", "proxy-arp", "lan0")
+	claim.Metadata.Annotations = map[string]string{"mobility.routerd.net/pool": "cloudedge"}
+	store := &dynamicRouteSAMStore{
+		records: []routerstate.DynamicConfigPartRecord{dynamicPartRecord(t, "MobilityPool/cloudedge/node/onprem", []api.Resource{
+			addressMobilityDomainResource(),
+			claim,
+		}, time.Now().Add(time.Hour))},
+		objects: map[string]map[string]any{},
+	}
+	view, err := buildDynamicRouteSAMView(startup, store, time.Now().UTC(), platform.OSLinux)
+	if err != nil {
+		t.Fatalf("buildDynamicRouteSAMView: %v", err)
+	}
+	if countResources(view.EffectiveRouter, api.HybridAPIVersion, "RemoteAddressClaim") != 1 {
+		t.Fatalf("effective claims = %d, want generated claim visible in effective config", countResources(view.EffectiveRouter, api.HybridAPIVersion, "RemoteAddressClaim"))
+	}
+	if countResources(view.RouteRouter, api.NetAPIVersion, "IPv4Route") != 0 || len(view.SAMLowerings) != 0 {
+		t.Fatalf("route IPv4Routes/lowerings = %d/%d, want BGP delivery suppressing SAM lowering", countResources(view.RouteRouter, api.NetAPIVersion, "IPv4Route"), len(view.SAMLowerings))
+	}
+}
+
 func TestDynamicRouteSAMClaimRemovalTriggersRouteAndSAMCleanup(t *testing.T) {
 	startup := startupHybridContextRouter()
 	now := time.Now().UTC()

@@ -6,12 +6,49 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"testing"
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/bgpdaemon"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
+
+type fakeBGPPaths struct {
+	paths   map[string]bgpdaemon.AppliedPath
+	upserts []bgpdaemon.AppliedPath
+	deletes []bgpdaemon.AppliedPath
+}
+
+func (f *fakeBGPPaths) ListPaths(_ context.Context, source string) ([]bgpdaemon.AppliedPath, error) {
+	var out []bgpdaemon.AppliedPath
+	for _, path := range f.paths {
+		if path.Source == source {
+			out = append(out, path)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Prefix < out[j].Prefix })
+	return out, nil
+}
+
+func (f *fakeBGPPaths) UpsertPath(_ context.Context, path bgpdaemon.AppliedPath) (bgpdaemon.AppliedPath, error) {
+	if f.paths == nil {
+		f.paths = map[string]bgpdaemon.AppliedPath{}
+	}
+	path = bgpdaemon.NormalizeAppliedPath(path)
+	key := bgpdaemon.AppliedPathKey(path)
+	f.paths[key] = path
+	f.upserts = append(f.upserts, path)
+	return path, nil
+}
+
+func (f *fakeBGPPaths) DeletePath(_ context.Context, path bgpdaemon.AppliedPath) error {
+	path = bgpdaemon.NormalizeAppliedPath(path)
+	delete(f.paths, bgpdaemon.AppliedPathKey(path))
+	f.deletes = append(f.deletes, path)
+	return nil
+}
 
 func TestControllerProjectsObservedEventToAddressLease(t *testing.T) {
 	now := time.Date(2026, 5, 31, 10, 0, 0, 0, time.UTC)
@@ -353,6 +390,83 @@ func TestOwnershipLivenessSurvivesCompactedHeartbeatStream(t *testing.T) {
 	}
 	if view.StaleNodes["azure-router-b"] {
 		t.Fatalf("fresh router marked stale after heartbeat compaction: %+v", view)
+	}
+}
+
+func TestControllerBGPModeAdvertisesSelfOwnedHostRouteAndSuppressesSAMPart(t *testing.T) {
+	now := time.Date(2026, 6, 2, 10, 0, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := plannedPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	bgp := &fakeBGPPaths{paths: map[string]bgpdaemon.AppliedPath{
+		bgpdaemon.AppliedPathKey(bgpdaemon.AppliedPath{Source: DynamicSource("cloudedge", "azure-router"), Prefix: "10.88.60.99/32"}): bgpdaemon.NormalizeAppliedPath(bgpdaemon.AppliedPath{
+			Source: DynamicSource("cloudedge", "azure-router"),
+			Prefix: "10.88.60.99/32",
+			Family: bgpdaemon.AppliedPathFamilyIPv4Unicast,
+		}),
+	}}
+	recordEvent(t, store, routerstate.EventRecord{
+		ID:         "evt-azure",
+		Group:      "cloudedge",
+		SourceNode: "azure-router",
+		Type:       ObservedEventType,
+		Subject:    "10.88.60.11/32",
+		ObservedAt: now.Add(-time.Second),
+		ExpiresAt:  now.Add(time.Hour),
+	})
+	controller := Controller{Router: planningRouterForNode("azure-router", spec), Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(bgp.upserts) != 1 || bgp.upserts[0].Source != DynamicSource("cloudedge", "azure-router") || bgp.upserts[0].Prefix != "10.88.60.11/32" {
+		t.Fatalf("upserts = %#v, want self-owned /32", bgp.upserts)
+	}
+	if len(bgp.deletes) != 1 || bgp.deletes[0].Prefix != "10.88.60.99/32" {
+		t.Fatalf("deletes = %#v, want stale source path deleted", bgp.deletes)
+	}
+	part := latestPart(t, store, DynamicSource("cloudedge", "azure-router"))
+	resources := decodeResources(t, part.ResourcesJSON)
+	if len(resources) != 0 {
+		t.Fatalf("BGP mode dynamic resources = %#v, want empty SAM part", resources)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	if status["plannerPhase"] != "BGPPlanned" || status["deliveryMode"] != "bgp" || fmt.Sprint(status["generatedBGPPaths"]) != "1" {
+		t.Fatalf("BGP status = %#v", status)
+	}
+}
+
+func TestControllerRouteModeDeletesBGPPathsAndKeepsLegacySAMPlanner(t *testing.T) {
+	now := time.Date(2026, 6, 2, 10, 0, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := plannedPoolSpec()
+	source := DynamicSource("cloudedge", "azure-router")
+	bgp := &fakeBGPPaths{paths: map[string]bgpdaemon.AppliedPath{
+		bgpdaemon.AppliedPathKey(bgpdaemon.AppliedPath{Source: source, Prefix: "10.88.60.10/32"}): bgpdaemon.NormalizeAppliedPath(bgpdaemon.AppliedPath{
+			Source: source,
+			Prefix: "10.88.60.10/32",
+			Family: bgpdaemon.AppliedPathFamilyIPv4Unicast,
+		}),
+	}}
+	recordEvent(t, store, routerstate.EventRecord{
+		ID:         "evt-onprem",
+		Group:      "cloudedge",
+		SourceNode: "onprem-router",
+		Type:       ObservedEventType,
+		Subject:    "10.88.60.10/32",
+		ObservedAt: now.Add(-time.Second),
+		ExpiresAt:  now.Add(time.Hour),
+	})
+	controller := Controller{Router: planningRouterForNode("azure-router", spec), Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(bgp.deletes) != 1 || bgp.deletes[0].Prefix != "10.88.60.10/32" {
+		t.Fatalf("route mode BGP deletes = %#v, want rollback cleanup", bgp.deletes)
+	}
+	part := latestPart(t, store, source)
+	resources := decodeResources(t, part.ResourcesJSON)
+	if countKind(resources, "RemoteAddressClaim") != 1 {
+		t.Fatalf("route mode resources = %#v, want legacy RemoteAddressClaim", resources)
 	}
 }
 

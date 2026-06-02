@@ -1367,9 +1367,9 @@ type MobilityPoolSpec struct {
 	// LeasePolicy controls the lifetime and owner-change hold window for
 	// observed AddressLease state.
 	LeasePolicy MobilityLeasePolicy `yaml:"leasePolicy,omitempty" json:"leasePolicy,omitempty"`
-	// DeliveryPolicy is reserved for pool-level delivery defaults. Per-member
-	// Delivery/DeliveryTo currently drives generated AddressMobilityDomain and
-	// RemoteAddressClaim DynamicConfigPart resources.
+	// DeliveryPolicy selects the pool-level delivery control plane. Empty/route
+	// keeps the legacy generated AddressMobilityDomain/RemoteAddressClaim route
+	// lowering. bgp advertises owned /32s and learns remote /32s through BGP.
 	DeliveryPolicy MobilityDeliveryPolicy `yaml:"deliveryPolicy,omitempty" json:"deliveryPolicy,omitempty"`
 	// Authority declares who arbitrates ownership. The MVP supports static
 	// arbitration only. Empty means every node deterministically projects the
@@ -1495,8 +1495,8 @@ type MobilityLeasePolicy struct {
 // MobilityDeliveryPolicy is reserved for Step 2 lowering. The zero value keeps
 // today's Step 1 as a read-only lease registry.
 type MobilityDeliveryPolicy struct {
-	// Mode is accepted for forward compatibility. Empty means route delivery.
-	Mode string `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=,enum=route"`
+	// Mode selects delivery. Empty means route delivery.
+	Mode string `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=,enum=route,enum=bgp"`
 }
 
 // MobilityAuthority declares who arbitrates address ownership in the pool.
