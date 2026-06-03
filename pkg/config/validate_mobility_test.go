@@ -90,8 +90,8 @@ func TestValidateMobilityPoolAllowsDiscoveredCloudNICOnlyInBGPDiscoveryMode(t *t
 
 	spec.Members[1].OwnershipDiscovery = api.MobilityOwnershipDiscovery{Mode: "provider-private-ip", ProviderRef: "azure-provider"}
 	spec.DeliveryPolicy.Mode = ""
-	if err := Validate(mobilityPoolRouter(spec, testInterfaceResource("lan"), testVirtualAddressResource("onprem-vip"))); err == nil || !strings.Contains(err.Error(), "capture.nicRef is required") {
-		t.Fatalf("Validate route-mode err = %v, want nicRef required before discovery", err)
+	if err := Validate(mobilityPoolRouter(spec, testInterfaceResource("lan"), testVirtualAddressResource("onprem-vip"))); err != nil {
+		t.Fatalf("Validate default-BGP discovery err = %v", err)
 	}
 }
 
@@ -242,13 +242,14 @@ func TestValidateMobilityPoolRejectsInvalidFields(t *testing.T) {
 			want: "maintenance.drain requires placement.group",
 		},
 		{
-			name: "ownership discovery requires bgp",
+			name: "delivery policy route mode rejected",
 			mut: func(spec *api.MobilityPoolSpec) {
+				spec.DeliveryPolicy.Mode = "route"
 				spec.Members[1].Capture = api.MobilityMemberCapture{Type: "provider-secondary-ip", ProviderRef: "azure-provider", ProviderMode: "nic-secondary-ip", NICRef: "nic-1"}
 				spec.Members[1].Delivery = api.MobilityMemberDelivery{PeerRef: "onprem", Mode: "route"}
 				spec.Members[1].OwnershipDiscovery = api.MobilityOwnershipDiscovery{Mode: "provider-private-ip"}
 			},
-			want: "ownershipDiscovery requires spec.deliveryPolicy.mode=bgp",
+			want: "spec.deliveryPolicy.mode \"route\" is not supported; only bgp",
 		},
 		{
 			name: "ownership discovery requires cloud",

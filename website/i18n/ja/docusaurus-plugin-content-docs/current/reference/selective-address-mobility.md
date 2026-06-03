@@ -72,9 +72,9 @@ spec:
     deprovisionHoldDuration: 30s
 ```
 
-routerd は `routerd.client.ipv4.observed` federation event を read-only な
-`AddressLease` state に射影します。Lease は config Kind ではなく、手で書くもの
-ではありません。`routerctl mobility leases` で確認します。
+routerd は federation や provider discovery の observed fact から、owned `/32`
+path を BGP で advertise します。operator は `MobilityPool` だけを編集し、
+per-address advertisement と provider trap action plan は controller が導出します。
 
 同一 provider の cloud router maintenance では、`members[].placement.group`
 内の non-drained member から `priority`、次に `nodeRef` の順で active capture
@@ -84,9 +84,8 @@ active 選出から外れ、planner が generated capture claim と provider act
 全 node に同じ `MobilityPool` config を配ります。
 
 `AddressMobilityDomain` と `RemoteAddressClaim` は低位の SAM 表現です。既存の
-hand-authored SAM config は引き続きサポートしますが、CloudEdge Mobility の本線では
-mobility planner が `MobilityPool` と `AddressLease` state から導出し、
-`DynamicConfigPart` として保存します。
+hand-authored SAM config は引き続きサポートしますが、CloudEdge MobilityPool の
+本線は generated SAM claim ではなく BGP `/32` advertisement を使います。
 
 `AddressMobilityDomain` は mobile address が属する IPv4 prefix を定義します。
 `mode` は `selective-address` のみです。

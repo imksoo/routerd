@@ -6767,13 +6767,12 @@
                       },
                       "deliveryPolicy": {
                         "additionalProperties": false,
-                        "description": "DeliveryPolicy selects the pool-level delivery control plane. Empty/route\nkeeps the legacy generated AddressMobilityDomain/RemoteAddressClaim route\nlowering. bgp advertises owned /32s and learns remote /32s through BGP.",
+                        "description": "DeliveryPolicy selects the pool-level delivery control plane. Empty means\nbgp; owned /32s are advertised and remote /32s are learned through BGP.",
                         "properties": {
                           "mode": {
-                            "description": "Mode selects delivery. Empty means route delivery.",
+                            "description": "Mode selects delivery. Empty means bgp delivery.",
                             "enum": [
                               "",
-                              "route",
                               "bgp"
                             ],
                             "type": "string"

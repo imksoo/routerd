@@ -3,7 +3,6 @@
 package mobility
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -98,6 +97,13 @@ func TestPlanDynamicConfigCloudSelfGeneratesClaimAndActionPlans(t *testing.T) {
 	}
 	if forwarding.Undo == nil || forwarding.Undo.Parameters["address"] != "10.88.60.9/32" {
 		t.Fatalf("forwarding undo must carry representative address, got %+v", forwarding.Undo)
+	}
+}
+
+func reconcilePlanForTest(t *testing.T, controller Controller, now time.Time) {
+	t.Helper()
+	if err := controller.reconcilePlan(mobilityPoolResource(t, controller.Router, "cloudedge"), now); err != nil {
+		t.Fatalf("reconcilePlan: %v", err)
 	}
 }
 
@@ -886,9 +892,7 @@ func TestControllerPlannerUsesEventGroupNodeNameAndOverwritesGenerationOne(t *te
 		t.Fatalf("UpsertAddressLease: %v", err)
 	}
 	controller := Controller{Router: planningRouter(), Store: store, Now: func() time.Time { return now }}
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("Reconcile: %v", err)
-	}
+	reconcilePlanForTest(t, controller, now)
 	source := DynamicSource("cloudedge", "azure-router")
 	parts, err := store.GetDynamicConfigPartsBySource(source)
 	if err != nil {
@@ -914,9 +918,7 @@ func TestControllerPlannerUsesEventGroupNodeNameAndOverwritesGenerationOne(t *te
 		t.Fatalf("expire lease: %v", err)
 	}
 	controller.Now = func() time.Time { return now.Add(time.Minute) }
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("second Reconcile: %v", err)
-	}
+	reconcilePlanForTest(t, controller, now.Add(time.Minute))
 	parts, err = store.GetDynamicConfigPartsBySource(source)
 	if err != nil {
 		t.Fatalf("GetDynamicConfigPartsBySource after overwrite: %v", err)
@@ -951,12 +953,8 @@ func TestControllerPlannerPlacementDrainMovesDynamicPartBetweenNodes(t *testing.
 	spec := placementPoolSpec()
 	controllerA := Controller{Router: planningRouterForNode("azure-router-a", spec), Store: store, Now: func() time.Time { return now }}
 	controllerB := Controller{Router: planningRouterForNode("azure-router-b", spec), Store: store, Now: func() time.Time { return now }}
-	if err := controllerA.Reconcile(context.Background()); err != nil {
-		t.Fatalf("initial reconcile A: %v", err)
-	}
-	if err := controllerB.Reconcile(context.Background()); err != nil {
-		t.Fatalf("initial reconcile B: %v", err)
-	}
+	reconcilePlanForTest(t, controllerA, now)
+	reconcilePlanForTest(t, controllerB, now)
 	partA := latestPart(t, store, DynamicSource("cloudedge", "azure-router-a"))
 	partB := latestPart(t, store, DynamicSource("cloudedge", "azure-router-b"))
 	if countKind(decodeResources(t, partA.ResourcesJSON), "RemoteAddressClaim") != 1 || findActionPlan(decodeActionPlans(t, partA.ActionPlansJSON), "assign-secondary-ip") == nil {
@@ -973,12 +971,8 @@ func TestControllerPlannerPlacementDrainMovesDynamicPartBetweenNodes(t *testing.
 	controllerB.Router = planningRouterForNode("azure-router-b", drained)
 	controllerA.Now = func() time.Time { return now.Add(time.Minute) }
 	controllerB.Now = func() time.Time { return now.Add(time.Minute) }
-	if err := controllerA.Reconcile(context.Background()); err != nil {
-		t.Fatalf("drain reconcile A: %v", err)
-	}
-	if err := controllerB.Reconcile(context.Background()); err != nil {
-		t.Fatalf("drain reconcile B: %v", err)
-	}
+	reconcilePlanForTest(t, controllerA, now.Add(time.Minute))
+	reconcilePlanForTest(t, controllerB, now.Add(time.Minute))
 	partA = latestPart(t, store, DynamicSource("cloudedge", "azure-router-a"))
 	partB = latestPart(t, store, DynamicSource("cloudedge", "azure-router-b"))
 	if countKind(decodeResources(t, partA.ResourcesJSON), "RemoteAddressClaim") != 0 || findActionPlan(decodeActionPlans(t, partA.ActionPlansJSON), "unassign-secondary-ip") == nil {
@@ -992,12 +986,8 @@ func TestControllerPlannerPlacementDrainMovesDynamicPartBetweenNodes(t *testing.
 	controllerB.Router = planningRouterForNode("azure-router-b", spec)
 	controllerA.Now = func() time.Time { return now.Add(2 * time.Minute) }
 	controllerB.Now = func() time.Time { return now.Add(2 * time.Minute) }
-	if err := controllerA.Reconcile(context.Background()); err != nil {
-		t.Fatalf("return reconcile A: %v", err)
-	}
-	if err := controllerB.Reconcile(context.Background()); err != nil {
-		t.Fatalf("return reconcile B: %v", err)
-	}
+	reconcilePlanForTest(t, controllerA, now.Add(2*time.Minute))
+	reconcilePlanForTest(t, controllerB, now.Add(2*time.Minute))
 	partA = latestPart(t, store, DynamicSource("cloudedge", "azure-router-a"))
 	partB = latestPart(t, store, DynamicSource("cloudedge", "azure-router-b"))
 	if countKind(decodeResources(t, partA.ResourcesJSON), "RemoteAddressClaim") != 1 || findActionPlan(decodeActionPlans(t, partA.ActionPlansJSON), "assign-secondary-ip") == nil {
@@ -1031,9 +1021,7 @@ func TestControllerPlannerPlacementDrainRestartReadsPreviousClaimForImmediateDep
 	}
 	spec := placementPoolSpec()
 	controller := Controller{Router: planningRouterForNode("azure-router-a", spec), Store: store, Now: func() time.Time { return now }}
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("initial reconcile: %v", err)
-	}
+	reconcilePlanForTest(t, controller, now)
 	if err := store.Close(); err != nil {
 		t.Fatalf("close store before restart: %v", err)
 	}
@@ -1047,9 +1035,7 @@ func TestControllerPlannerPlacementDrainRestartReadsPreviousClaimForImmediateDep
 	drained.Members = append([]api.MobilityPoolMember(nil), spec.Members...)
 	drained.Members[1].Maintenance.Drain = true
 	restarted := Controller{Router: planningRouterForNode("azure-router-a", drained), Store: reopened, Now: func() time.Time { return now.Add(time.Second) }}
-	if err := restarted.Reconcile(context.Background()); err != nil {
-		t.Fatalf("drain reconcile after restart: %v", err)
-	}
+	reconcilePlanForTest(t, restarted, now.Add(time.Second))
 	part := latestPart(t, reopened, DynamicSource("cloudedge", "azure-router-a"))
 	if countKind(decodeResources(t, part.ResourcesJSON), "RemoteAddressClaim") != 0 {
 		t.Fatalf("restarted drained resources = %s, want no claim", part.ResourcesJSON)
@@ -1116,9 +1102,7 @@ func TestControllerPlannerPlacementDrainRestartWithoutLeaseStillDeprovisions(t *
 	drained.Members = append([]api.MobilityPoolMember(nil), spec.Members...)
 	drained.Members[1].Maintenance.Drain = true
 	restarted := Controller{Router: planningRouterForNode("azure-router-a", drained), Store: reopened, Now: func() time.Time { return now.Add(time.Second) }}
-	if err := restarted.Reconcile(context.Background()); err != nil {
-		t.Fatalf("drain reconcile after restart without leases: %v", err)
-	}
+	reconcilePlanForTest(t, restarted, now.Add(time.Second))
 	part := latestPart(t, reopened, DynamicSource("cloudedge", "azure-router-a"))
 	if countKind(decodeResources(t, part.ResourcesJSON), "RemoteAddressClaim") != 0 {
 		t.Fatalf("restarted drained resources = %s, want no claim", part.ResourcesJSON)
@@ -1192,9 +1176,7 @@ func TestControllerPlannerActiveStartupMissingLeaseRetainsMemoryThenDrainDeprovi
 		t.Fatalf("seeded leases = %+v, want none", leases)
 	}
 	activeRestart := Controller{Router: planningRouterForNode("azure-router-a", spec), Store: reopened, Now: func() time.Time { return now.Add(time.Second) }}
-	if err := activeRestart.Reconcile(context.Background()); err != nil {
-		t.Fatalf("active restart reconcile with missing lease: %v", err)
-	}
+	reconcilePlanForTest(t, activeRestart, now.Add(time.Second))
 	part = latestPart(t, reopened, DynamicSource("cloudedge", "azure-router-a"))
 	if got := countKind(decodeResources(t, part.ResourcesJSON), "RemoteAddressClaim"); got != 1 {
 		t.Fatalf("active restart missing lease resources = %s, want previous claim memory retained", part.ResourcesJSON)
@@ -1212,9 +1194,7 @@ func TestControllerPlannerActiveStartupMissingLeaseRetainsMemoryThenDrainDeprovi
 	drained.Members = append([]api.MobilityPoolMember(nil), spec.Members...)
 	drained.Members[1].Maintenance.Drain = true
 	drainRestart := Controller{Router: planningRouterForNode("azure-router-a", drained), Store: reopened, Now: func() time.Time { return now.Add(2 * time.Second) }}
-	if err := drainRestart.Reconcile(context.Background()); err != nil {
-		t.Fatalf("drain restart reconcile: %v", err)
-	}
+	reconcilePlanForTest(t, drainRestart, now.Add(2*time.Second))
 	actions := decodeActionPlans(t, latestPart(t, reopened, DynamicSource("cloudedge", "azure-router-a")).ActionPlansJSON)
 	if findActionPlan(actions, "unassign-secondary-ip") == nil {
 		t.Fatalf("drain restart actionPlans = %+v, want unassign after retained memory", actions)
@@ -1283,9 +1263,7 @@ func TestControllerPlannerPlacementAllDrainedStatus(t *testing.T) {
 	spec.Members[1].Maintenance.Drain = true
 	spec.Members[2].Maintenance.Drain = true
 	controller := Controller{Router: planningRouterForNode("azure-router-a", spec), Store: store, Now: func() time.Time { return now }}
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("Reconcile: %v", err)
-	}
+	reconcilePlanForTest(t, controller, now)
 	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
 	if status["plannerPhase"] != "NoPlacementCandidate" || !strings.Contains(fmt.Sprint(status["plannerReason"]), "no non-drained members") {
 		t.Fatalf("status = %#v, want NoPlacementCandidate with reason", status)

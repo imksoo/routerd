@@ -73,9 +73,10 @@ spec:
     deprovisionHoldDuration: 30s
 ```
 
-routerd projects `routerd.client.ipv4.observed` federation events into
-read-only `AddressLease` state. A lease is not a config Kind and should not be
-hand-authored. Inspect it with `routerctl mobility leases`.
+routerd uses observed facts from federation or provider discovery to advertise
+owned `/32` paths through BGP. Operators keep the control plane declarative by
+editing only `MobilityPool`; per-address advertisements and provider trap action
+plans are derived by the controller.
 
 For same-provider cloud router maintenance, `members[].placement.group` elects
 one non-drained active capture member by `priority` and then `nodeRef`.
@@ -85,9 +86,9 @@ next candidate. Distribute the same `MobilityPool` config to every node in the
 pool to keep placement projection deterministic.
 
 `AddressMobilityDomain` and `RemoteAddressClaim` are the lower-level SAM
-representation. Existing hand-authored SAM configs remain supported, but in the
-CloudEdge Mobility path they are derived from `MobilityPool` and `AddressLease`
-state by the mobility planner and stored as a `DynamicConfigPart`.
+representation. Existing hand-authored SAM configs remain supported for
+compatibility, but the CloudEdge MobilityPool path now uses BGP `/32`
+advertisements rather than generated SAM claims.
 
 `AddressMobilityDomain` defines the IPv4 prefix where selected addresses may
 move:

@@ -73,6 +73,13 @@ func maybePathBySourcePrefix(bgp *fakeBGPPaths, source, prefix string) (bgpdaemo
 	return path, ok
 }
 
+func reconcilePoolForTest(t *testing.T, controller Controller, now time.Time) {
+	t.Helper()
+	if err := controller.reconcilePool(mobilityPoolResource(t, controller.Router, "cloudedge"), now); err != nil {
+		t.Fatalf("reconcilePool: %v", err)
+	}
+}
+
 func TestControllerProjectsObservedEventToAddressLease(t *testing.T) {
 	now := time.Date(2026, 5, 31, 10, 0, 0, 0, time.UTC)
 	store := testStore(t, now)
@@ -87,9 +94,7 @@ func TestControllerProjectsObservedEventToAddressLease(t *testing.T) {
 	})
 
 	controller := Controller{Router: testRouter(), Store: store, Now: func() time.Time { return now }}
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("Reconcile: %v", err)
-	}
+	reconcilePoolForTest(t, controller, now)
 	lease, found, err := store.GetAddressLease("cloudedge", "10.88.60.9/32")
 	if err != nil {
 		t.Fatalf("GetAddressLease: %v", err)
@@ -118,9 +123,7 @@ func TestControllerHoldsThenAdoptsOwnerChange(t *testing.T) {
 		ExpiresAt:  base.Add(time.Hour),
 	})
 	controller := Controller{Router: testRouter(), Store: store, Now: func() time.Time { return base }}
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("initial Reconcile: %v", err)
-	}
+	reconcilePoolForTest(t, controller, base)
 
 	recordEvent(t, store, routerstate.EventRecord{
 		ID:         "evt-2",
@@ -132,9 +135,7 @@ func TestControllerHoldsThenAdoptsOwnerChange(t *testing.T) {
 		ExpiresAt:  base.Add(time.Hour),
 	})
 	controller.Now = func() time.Time { return base.Add(20 * time.Second) }
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("holding Reconcile: %v", err)
-	}
+	reconcilePoolForTest(t, controller, base.Add(20*time.Second))
 	lease, _, err := store.GetAddressLease("cloudedge", "10.88.60.9/32")
 	if err != nil {
 		t.Fatalf("GetAddressLease holding: %v", err)
@@ -144,9 +145,7 @@ func TestControllerHoldsThenAdoptsOwnerChange(t *testing.T) {
 	}
 
 	controller.Now = func() time.Time { return base.Add(45 * time.Second) }
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("adopt Reconcile: %v", err)
-	}
+	reconcilePoolForTest(t, controller, base.Add(45*time.Second))
 	lease, _, err = store.GetAddressLease("cloudedge", "10.88.60.9/32")
 	if err != nil {
 		t.Fatalf("GetAddressLease adopted: %v", err)
@@ -179,9 +178,7 @@ func TestControllerTieBreaksDeterministically(t *testing.T) {
 		ExpiresAt:  now.Add(time.Hour),
 	})
 	controller := Controller{Router: testRouter(), Store: store, Now: func() time.Time { return now }}
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("Reconcile: %v", err)
-	}
+	reconcilePoolForTest(t, controller, now)
 	lease, _, err := store.GetAddressLease("cloudedge", "10.88.60.9/32")
 	if err != nil {
 		t.Fatalf("GetAddressLease: %v", err)
@@ -204,9 +201,7 @@ func TestControllerProjectsExpiredEvent(t *testing.T) {
 		ExpiresAt:  base.Add(time.Hour),
 	})
 	controller := Controller{Router: testRouter(), Store: store, Now: func() time.Time { return base }}
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("initial Reconcile: %v", err)
-	}
+	reconcilePoolForTest(t, controller, base)
 	recordEvent(t, store, routerstate.EventRecord{
 		ID:         "evt-2",
 		Group:      "cloudedge",
@@ -217,9 +212,7 @@ func TestControllerProjectsExpiredEvent(t *testing.T) {
 		ExpiresAt:  base.Add(time.Hour),
 	})
 	controller.Now = func() time.Time { return base.Add(2 * time.Minute) }
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("expired Reconcile: %v", err)
-	}
+	reconcilePoolForTest(t, controller, base.Add(2*time.Minute))
 	lease, _, err := store.GetAddressLease("cloudedge", "10.88.60.9/32")
 	if err != nil {
 		t.Fatalf("GetAddressLease: %v", err)
@@ -233,9 +226,7 @@ func TestControllerProjectsStaticOwnedAddressAndEmitsObserved(t *testing.T) {
 	now := time.Date(2026, 6, 2, 9, 0, 0, 0, time.UTC)
 	store := testStore(t, now)
 	controller := Controller{Router: staticRouter("onprem-router", staticPoolSpec()), Store: store, Now: func() time.Time { return now }}
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("Reconcile: %v", err)
-	}
+	reconcilePoolForTest(t, controller, now)
 	lease, found, err := store.GetAddressLease("cloudedge", "10.88.60.10/32")
 	if err != nil {
 		t.Fatalf("GetAddressLease: %v", err)
@@ -263,16 +254,12 @@ func TestControllerStaticOwnedRemovalExpiresLeaseAndEmitsExpired(t *testing.T) {
 	store := testStore(t, base)
 	spec := staticPoolSpec()
 	controller := Controller{Router: staticRouter("onprem-router", spec), Store: store, Now: func() time.Time { return base }}
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("initial Reconcile: %v", err)
-	}
+	reconcilePoolForTest(t, controller, base)
 
 	spec.Members[0].StaticOwnedAddresses = nil
 	controller.Router = staticRouter("onprem-router", spec)
 	controller.Now = func() time.Time { return base.Add(time.Minute) }
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("removal Reconcile: %v", err)
-	}
+	reconcilePoolForTest(t, controller, base.Add(time.Minute))
 	lease, _, err := store.GetAddressLease("cloudedge", "10.88.60.10/32")
 	if err != nil {
 		t.Fatalf("GetAddressLease: %v", err)
@@ -294,17 +281,13 @@ func TestControllerStaticHandoverWaitsForFromReleaseEvent(t *testing.T) {
 	store := testStore(t, base)
 	spec := staticPoolSpec()
 	controller := Controller{Router: staticRouter("onprem-router", spec), Store: store, Now: func() time.Time { return base }}
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("initial Reconcile: %v", err)
-	}
+	reconcilePoolForTest(t, controller, base)
 
 	spec.Members[0].StaticOwnedAddresses = nil
 	spec.StaticHandovers = []api.MobilityStaticHandover{{Address: "10.88.60.10/32", FromNodeRef: "onprem-router", ToNodeRef: "azure-router"}}
 	controller.Router = staticRouter("azure-router", spec)
 	controller.Now = func() time.Time { return base.Add(time.Minute) }
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("cloud handover before release Reconcile: %v", err)
-	}
+	reconcilePoolForTest(t, controller, base.Add(time.Minute))
 	lease, _, err := store.GetAddressLease("cloudedge", "10.88.60.10/32")
 	if err != nil {
 		t.Fatalf("GetAddressLease before release: %v", err)
@@ -314,14 +297,10 @@ func TestControllerStaticHandoverWaitsForFromReleaseEvent(t *testing.T) {
 	}
 
 	controller.Router = staticRouter("onprem-router", spec)
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("onprem release Reconcile: %v", err)
-	}
+	reconcilePoolForTest(t, controller, base.Add(time.Minute))
 	controller.Router = staticRouter("azure-router", spec)
 	controller.Now = func() time.Time { return base.Add(time.Minute + 31*time.Second) }
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("cloud handover after release Reconcile: %v", err)
-	}
+	reconcilePoolForTest(t, controller, base.Add(time.Minute+31*time.Second))
 	lease, _, err = store.GetAddressLease("cloudedge", "10.88.60.10/32")
 	if err != nil {
 		t.Fatalf("GetAddressLease after release: %v", err)
@@ -339,8 +318,8 @@ func TestControllerEmitsAutoFailoverHeartbeatForCloudSelf(t *testing.T) {
 	spec.IPOwnershipPolicy.HeartbeatInterval = "10s"
 	spec.IPOwnershipPolicy.HeartbeatTTL = "30s"
 	controller := Controller{Router: planningRouterForNode("azure-router-a", spec), Store: store, Now: func() time.Time { return now }}
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("Reconcile: %v", err)
+	if err := controller.emitHeartbeat(mobilityPoolResource(t, controller.Router, "cloudedge"), now); err != nil {
+		t.Fatalf("emitHeartbeat: %v", err)
 	}
 	events, err := store.ListFederationEvents("cloudedge", true, now.Unix())
 	if err != nil {
@@ -1113,10 +1092,11 @@ func TestControllerBGPModeStaticHandoverSwitchesAdvertisementSource(t *testing.T
 	}
 }
 
-func TestControllerRouteModeDeletesBGPPathsAndKeepsLegacySAMPlanner(t *testing.T) {
+func TestControllerRouteModeIsRejectedByMainlinePlanner(t *testing.T) {
 	now := time.Date(2026, 6, 2, 10, 0, 0, 0, time.UTC)
 	store := testStore(t, now)
 	spec := plannedPoolSpec()
+	spec.DeliveryPolicy.Mode = "route"
 	source := DynamicSource("cloudedge", "azure-router")
 	bgp := &fakeBGPPaths{paths: map[string]bgpdaemon.AppliedPath{
 		bgpdaemon.AppliedPathKey(bgpdaemon.AppliedPath{Source: source, Prefix: "10.88.60.10/32"}): bgpdaemon.NormalizeAppliedPath(bgpdaemon.AppliedPath{
@@ -1138,13 +1118,19 @@ func TestControllerRouteModeDeletesBGPPathsAndKeepsLegacySAMPlanner(t *testing.T
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
-	if len(bgp.deletes) != 1 || bgp.deletes[0].Prefix != "10.88.60.10/32" {
-		t.Fatalf("route mode BGP deletes = %#v, want rollback cleanup", bgp.deletes)
+	if len(bgp.upserts) != 0 || len(bgp.deletes) != 0 {
+		t.Fatalf("route mode BGP mutations = upserts:%#v deletes:%#v, want none", bgp.upserts, bgp.deletes)
 	}
-	part := latestPart(t, store, source)
-	resources := decodeResources(t, part.ResourcesJSON)
-	if countKind(resources, "RemoteAddressClaim") != 1 {
-		t.Fatalf("route mode resources = %#v, want legacy RemoteAddressClaim", resources)
+	parts, err := store.GetDynamicConfigPartsBySource(source)
+	if err != nil {
+		t.Fatalf("GetDynamicConfigPartsBySource: %v", err)
+	}
+	if len(parts) != 0 {
+		t.Fatalf("route mode generated parts = %+v, want none", parts)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	if status["plannerPhase"] != "Degraded" || !strings.Contains(fmt.Sprint(status["plannerReason"]), "deliveryPolicy.mode=route is no longer supported") {
+		t.Fatalf("route mode status = %#v", status)
 	}
 }
 

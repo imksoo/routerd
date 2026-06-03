@@ -106,39 +106,16 @@ func (c Controller) Reconcile(ctx context.Context) error {
 			})
 			continue
 		}
-		if mobilityBGPMode(spec) {
-			if err := c.reconcileBGPDelivery(ctx, res, spec, now); err != nil {
-				_ = c.savePlannerStatus(res.Metadata.Name, map[string]any{
-					"plannerPhase":  "Degraded",
-					"plannerReason": err.Error(),
-					"plannedAt":     now.Format(time.RFC3339Nano),
-				})
-			}
-			continue
-		}
-		if err := c.emitHeartbeat(res, now); err != nil {
-			_ = c.savePlannerStatus(res.Metadata.Name, map[string]any{
-				"phase":  "Degraded",
-				"reason": err.Error(),
-			})
-			continue
-		}
-		if err := c.reconcilePool(res, now); err != nil {
-			_ = c.savePlannerStatus(res.Metadata.Name, map[string]any{
-				"phase":  "Degraded",
-				"reason": err.Error(),
-			})
-			continue
-		}
-		if err := c.reconcileBGPDeliveryDisabled(ctx, res, spec, now); err != nil {
+		if mobilityDeliveryMode(spec) != "bgp" {
 			_ = c.savePlannerStatus(res.Metadata.Name, map[string]any{
 				"plannerPhase":  "Degraded",
-				"plannerReason": err.Error(),
+				"plannerReason": fmt.Sprintf("deliveryPolicy.mode=%s is no longer supported; use bgp", mobilityDeliveryMode(spec)),
 				"plannedAt":     now.Format(time.RFC3339Nano),
+				"deliveryMode":  mobilityDeliveryMode(spec),
 			})
 			continue
 		}
-		if err := c.reconcilePlan(res, now); err != nil {
+		if err := c.reconcileBGPDelivery(ctx, res, spec, now); err != nil {
 			_ = c.savePlannerStatus(res.Metadata.Name, map[string]any{
 				"plannerPhase":  "Degraded",
 				"plannerReason": err.Error(),
@@ -669,7 +646,15 @@ func hasStaticMobilityIntent(spec api.MobilityPoolSpec) bool {
 }
 
 func mobilityBGPMode(spec api.MobilityPoolSpec) bool {
-	return strings.TrimSpace(spec.DeliveryPolicy.Mode) == "bgp"
+	return mobilityDeliveryMode(spec) == "bgp"
+}
+
+func mobilityDeliveryMode(spec api.MobilityPoolSpec) string {
+	mode := strings.TrimSpace(spec.DeliveryPolicy.Mode)
+	if mode == "" {
+		return "bgp"
+	}
+	return mode
 }
 
 type bgpOwnedAddress struct {

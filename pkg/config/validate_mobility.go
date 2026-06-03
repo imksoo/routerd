@@ -49,6 +49,11 @@ func validateMobilityResource(res api.Resource, _ platform.OS) (bool, error) {
 		if len(spec.Members) == 0 {
 			return true, fmt.Errorf("%s spec.members requires at least one member", res.ID())
 		}
+		switch strings.TrimSpace(spec.DeliveryPolicy.Mode) {
+		case "", "bgp":
+		default:
+			return true, fmt.Errorf("%s spec.deliveryPolicy.mode %q is not supported; only bgp", res.ID(), spec.DeliveryPolicy.Mode)
+		}
 		nodeRefs := map[string]bool{}
 		memberRoles := map[string]string{}
 		staticOwners := map[string]string{}
@@ -122,11 +127,6 @@ func validateMobilityResource(res api.Resource, _ platform.OS) (bool, error) {
 				return true, fmt.Errorf("%s spec.leasePolicy.holdDuration must be >= 0", res.ID())
 			}
 		}
-		switch strings.TrimSpace(spec.DeliveryPolicy.Mode) {
-		case "", "route", "bgp":
-		default:
-			return true, fmt.Errorf("%s spec.deliveryPolicy.mode %q is not supported; only route or bgp", res.ID(), spec.DeliveryPolicy.Mode)
-		}
 		switch strings.TrimSpace(spec.Authority.Mode) {
 		case "", "static":
 			authNode := strings.TrimSpace(spec.Authority.NodeRef)
@@ -166,7 +166,7 @@ func validateMobilityOwnershipDiscovery(res api.Resource, index int, spec api.Mo
 	if strings.TrimSpace(member.Role) != "cloud" {
 		return fmt.Errorf("%s spec.members[%d].ownershipDiscovery is supported only for role cloud", res.ID(), index)
 	}
-	if strings.TrimSpace(spec.DeliveryPolicy.Mode) != "bgp" {
+	if effectiveMobilityDeliveryMode(spec) != "bgp" {
 		return fmt.Errorf("%s spec.members[%d].ownershipDiscovery requires spec.deliveryPolicy.mode=bgp", res.ID(), index)
 	}
 	if strings.TrimSpace(member.Capture.Type) != "provider-secondary-ip" {
@@ -552,8 +552,16 @@ func validateMobilityMemberCapture(res api.Resource, index int, spec api.Mobilit
 }
 
 func mobilityProviderCaptureAllowsDiscoveredNIC(spec api.MobilityPoolSpec, member api.MobilityPoolMember) bool {
-	return strings.TrimSpace(spec.DeliveryPolicy.Mode) == "bgp" &&
+	return effectiveMobilityDeliveryMode(spec) == "bgp" &&
 		strings.TrimSpace(member.Role) == "cloud" &&
 		strings.TrimSpace(member.Capture.Type) == "provider-secondary-ip" &&
 		strings.TrimSpace(member.OwnershipDiscovery.Mode) == "provider-private-ip"
+}
+
+func effectiveMobilityDeliveryMode(spec api.MobilityPoolSpec) string {
+	mode := strings.TrimSpace(spec.DeliveryPolicy.Mode)
+	if mode == "" {
+		return "bgp"
+	}
+	return mode
 }

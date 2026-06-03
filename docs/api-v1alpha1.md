@@ -176,7 +176,7 @@ for DoH or DoT endpoint name resolution.
 | `DSLiteTunnel` | Creates an `ip6tnl` tunnel to an AFTR. The AFTR can be static IPv6, FQDN, or DHCPv6 information. |
 | `OverlayPeer` | Describes an on-prem or cloud overlay peer and the local underlay used to reach it. |
 | `HybridRoute` | Lowers non-default remote IPv4 prefixes through an `OverlayPeer` into managed `IPv4Route` resources. |
-| `MobilityPool` | Declares the only operator-authored CloudEdge mobility intent: pool prefix, federation group, node-to-site membership, per-member capture/delivery policy, owner-specific `deliveryTo`, non-secret provider `capture.target` hints, and lease policy. routerd derives `AddressLease` runtime state and generated SAM dynamic config from observed federation events. |
+| `MobilityPool` | Declares the only operator-authored CloudEdge mobility intent: pool prefix, federation group, node-to-site membership, per-member capture policy, owner-specific `deliveryTo`, non-secret provider `capture.target` hints, and BGP delivery policy. routerd derives BGP `/32` advertisements and provider trap action plans from observed facts. |
 | `AddressMobilityDomain` | Defines an IPv4 prefix for Selective Address Mobility; full L2 extension is not supported. |
 | `CloudProviderProfile` | Describes provider capabilities and external-command auth for declarative address capture planning. |
 | `RemoteAddressClaim` | Declares one mobile IPv4 `/32`, its capture mechanism, and route delivery over an `OverlayPeer`. |
@@ -205,11 +205,12 @@ existing `IPv4Route` controller path instead of installing routes directly.
 
 CloudEdge Mobility keeps the operator-authored surface declarative:
 `MobilityPool` is the high-level intent, federation events are observed facts,
-and `AddressLease` rows are derived runtime state visible through
-`routerctl mobility leases`. The mobility planner derives
-`AddressMobilityDomain` and `RemoteAddressClaim` DynamicConfigPart resources
-from leases; operators should not hand-author per-address leases or capture
-procedures for the mobility control plane.
+and BGP best paths are the mobility ownership/delivery view. The mobility
+planner derives BGP `/32` advertisements and provider trap action plans;
+operators should not hand-author per-address leases or capture procedures for
+the mobility control plane. `AddressMobilityDomain` and `RemoteAddressClaim`
+remain supported as lower-level SAM compatibility Kinds outside the MobilityPool
+BGP path.
 
 `MobilityPool.spec.members[].deliveryTo[]` selects delivery for an owner by
 `nodeRef`, then `site`, then `role`, with `members[].delivery` as fallback.
