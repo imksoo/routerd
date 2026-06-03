@@ -217,6 +217,9 @@ spec:
       spec:
         peer: BGPPeer/onprem-rr
         profile: fast
+        minRx: 1s
+        minTx: 1s
+        detectMultiplier: 5
 
     - apiVersion: hybrid.routerd.net/v1alpha1
       kind: OverlayPeer

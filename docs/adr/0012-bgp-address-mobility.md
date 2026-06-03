@@ -107,8 +107,9 @@ directly:
   matches; the old ownership/capture epoch tables are gone.
 - **Liveness:** mobility failover relies on BGP withdrawal and best-path
   convergence. Fast failure detection is provided by `BFD` resources rendered to
-  FRR `bfdd`; routerd bridges BFD Down/Up into BGP peer disable/enable. Custom
-  mobility heartbeat/staleness projection is removed.
+  FRR `bfdd`; BGP hold timers remain the non-destructive authority for route
+  withdrawal when BFD is unstable. Custom mobility heartbeat/staleness
+  projection is removed.
 - **On-prem LAN authority:** VRRP-master gating, proxy-ARP, GARP,
   non-master fail-closed behavior, and duplicate proxy-ARP doctor checks remain
   local safety mechanisms.

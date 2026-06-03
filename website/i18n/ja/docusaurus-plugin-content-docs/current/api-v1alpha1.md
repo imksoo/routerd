@@ -157,7 +157,7 @@ DNSSEC validation は `DNSForwarder.spec.dnssecValidate` に書きます。
 | `ClusterNetworkRoute` | Kubernetes の Pod / Service CIDR を、worker の next hop 経由の static IPv4 route に展開します。 |
 | `BGPRouter` | ローカルの BGP router を宣言します。現在の backend は長寿命の `routerd-bgp` GoBGP daemon で、import policy は default deny です。 |
 | `BGPPeer` | `BGPRouter` にぶら下がる、GoBGP 管理の BGP peer を宣言します。Kubernetes BGP speaker などに使います。 |
-| `BFD` | BFD session の intent を宣言します。Linux では routerd が FRR `bfdd` 設定を render し、観測した BFD 状態で参照先 GoBGP peer を有効化または withdraw します。 |
+| `BFD` | BFD session の intent を宣言します。Linux では routerd が FRR `bfdd` 設定を render し、観測した BFD 状態を記録します。参照先 GoBGP peer は BFD false-down では deconfigure しません。 |
 | `NAT44Rule` | nftables の `routerd_nat` テーブルで IPv4 NAPT を行います。 |
 | `PortForward` | WAN 側の IPv4 TCP/UDP ポートを、1 つの内部 IPv4 宛先へ DNAT します。 |
 | `IngressService` | WAN 側の IPv4 TCP/UDP サービスを公開します。複数 backend、TCP/HTTP health check、`failover` / `sourceHash` / `random` selection を受け付けます。 |

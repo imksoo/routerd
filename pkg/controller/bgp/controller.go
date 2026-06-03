@@ -72,8 +72,6 @@ type FIBSyncResult struct {
 
 const MinPollInterval = 3 * time.Second
 
-const bfdPeerDownGateDelay = 15 * time.Second
-
 type Controller struct {
 	Router *routerapi.Router
 	Bus    *bus.Bus
@@ -172,7 +170,7 @@ func (c *Controller) reconcileLocked(ctx context.Context) error {
 	if err != nil {
 		return c.savePendingAll("GoBGPPeerConfigInvalid", err)
 	}
-	desired = c.applyBFDPeerGate(desired)
+	c.observeBFDPeerStates(desired)
 	for address, peer := range desired {
 		peer.GracefulRestart = routerSpec.GracefulRestart
 		peer.ConvergenceProfile = routerSpec.ConvergenceProfile
@@ -696,9 +694,9 @@ func appliedPeer(peer desiredPeer) bgpdaemon.AppliedPeer {
 	return out
 }
 
-func (c *Controller) applyBFDPeerGate(desired map[string]desiredPeer) map[string]desiredPeer {
+func (c *Controller) observeBFDPeerStates(desired map[string]desiredPeer) {
 	if c.Store == nil || len(desired) == 0 {
-		return desired
+		return
 	}
 	if c.bfdPeerSeenUp == nil {
 		c.bfdPeerSeenUp = map[string]bool{}
@@ -707,33 +705,22 @@ func (c *Controller) applyBFDPeerGate(desired map[string]desiredPeer) map[string
 		c.bfdPeerDownSince = map[string]time.Time{}
 	}
 	now := time.Now()
-	out := make(map[string]desiredPeer, len(desired))
 	for address, peer := range desired {
 		state := c.bfdPeerState(peer.BFD, address)
 		key := bfdPeerGateKey(peer.BFD, address)
 		if strings.EqualFold(state, "Up") {
 			c.bfdPeerSeenUp[key] = true
 			delete(c.bfdPeerDownSince, key)
-			out[address] = peer
 			continue
 		}
 		if strings.EqualFold(state, "Down") && c.bfdPeerSeenUp[key] {
-			downSince, ok := c.bfdPeerDownSince[key]
-			if !ok {
+			if _, ok := c.bfdPeerDownSince[key]; !ok {
 				c.bfdPeerDownSince[key] = now
-				out[address] = peer
-				continue
 			}
-			if now.Sub(downSince) >= bfdPeerDownGateDelay {
-				continue
-			}
-			out[address] = peer
 			continue
 		}
 		delete(c.bfdPeerDownSince, key)
-		out[address] = peer
 	}
-	return out
 }
 
 func bfdPeerGateKey(ref, address string) string {

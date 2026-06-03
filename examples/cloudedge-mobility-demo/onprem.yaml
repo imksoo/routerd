@@ -286,7 +286,12 @@ spec:
     - apiVersion: net.routerd.net/v1alpha1
       kind: BFD
       metadata: { name: bgp-aws-a-rr-client }
-      spec: { peer: BGPPeer/bgp-aws-a-rr-client, profile: fast }
+      spec:
+        peer: BGPPeer/bgp-aws-a-rr-client
+        profile: fast
+        minRx: 1s
+        minTx: 1s
+        detectMultiplier: 5
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: BGPPeer
@@ -296,7 +301,12 @@ spec:
     - apiVersion: net.routerd.net/v1alpha1
       kind: BFD
       metadata: { name: bgp-aws-b-rr-client }
-      spec: { peer: BGPPeer/bgp-aws-b-rr-client, profile: fast }
+      spec:
+        peer: BGPPeer/bgp-aws-b-rr-client
+        profile: fast
+        minRx: 1s
+        minTx: 1s
+        detectMultiplier: 5
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: BGPPeer
@@ -306,7 +316,12 @@ spec:
     - apiVersion: net.routerd.net/v1alpha1
       kind: BFD
       metadata: { name: bgp-azure-rr-client }
-      spec: { peer: BGPPeer/bgp-azure-rr-client, profile: fast }
+      spec:
+        peer: BGPPeer/bgp-azure-rr-client
+        profile: fast
+        minRx: 1s
+        minTx: 1s
+        detectMultiplier: 5
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: BGPPeer
@@ -316,7 +331,12 @@ spec:
     - apiVersion: net.routerd.net/v1alpha1
       kind: BFD
       metadata: { name: bgp-azure-b-rr-client }
-      spec: { peer: BGPPeer/bgp-azure-b-rr-client, profile: fast }
+      spec:
+        peer: BGPPeer/bgp-azure-b-rr-client
+        profile: fast
+        minRx: 1s
+        minTx: 1s
+        detectMultiplier: 5
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: BGPPeer
@@ -326,7 +346,12 @@ spec:
     - apiVersion: net.routerd.net/v1alpha1
       kind: BFD
       metadata: { name: bgp-oci-rr-client }
-      spec: { peer: BGPPeer/bgp-oci-rr-client, profile: fast }
+      spec:
+        peer: BGPPeer/bgp-oci-rr-client
+        profile: fast
+        minRx: 1s
+        minTx: 1s
+        detectMultiplier: 5
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: BGPPeer
@@ -336,7 +361,12 @@ spec:
     - apiVersion: net.routerd.net/v1alpha1
       kind: BFD
       metadata: { name: bgp-oci-b-rr-client }
-      spec: { peer: BGPPeer/bgp-oci-b-rr-client, profile: fast }
+      spec:
+        peer: BGPPeer/bgp-oci-b-rr-client
+        profile: fast
+        minRx: 1s
+        minTx: 1s
+        detectMultiplier: 5
 
     - apiVersion: mobility.routerd.net/v1alpha1
       kind: MobilityPool

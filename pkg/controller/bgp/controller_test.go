@@ -768,7 +768,7 @@ func TestReconcileReportsFIBSyncFailure(t *testing.T) {
 	}
 }
 
-func TestReconcileBFDGateAllowsBootstrapAndDisablesOnlyAfterUpDown(t *testing.T) {
+func TestReconcileBFDObservationNeverDeconfiguresPeer(t *testing.T) {
 	router := bgpRouter()
 	peer := router.Spec.Resources[1].Spec.(api.BGPPeerSpec)
 	peer.BFD = "BFD/k8s"
@@ -822,15 +822,15 @@ func TestReconcileBFDGateAllowsBootstrapAndDisablesOnlyAfterUpDown(t *testing.T)
 	if _, ok := server.peers["10.0.0.21"]; !ok {
 		t.Fatalf("peer missing after transient BFD Up->Down before sustained gate: %#v", server.peers)
 	}
-	controller.bfdPeerDownSince[bfdPeerGateKey("BFD/k8s", "10.0.0.21")] = time.Now().Add(-bfdPeerDownGateDelay - time.Second)
+	controller.bfdPeerDownSince[bfdPeerGateKey("BFD/k8s", "10.0.0.21")] = time.Now().Add(-time.Minute)
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("sustained down reconcile: %v", err)
 	}
-	if server.deletes != 1 {
-		t.Fatalf("deletes after sustained Up->Down = %d, want 1", server.deletes)
+	if server.deletes != 0 {
+		t.Fatalf("deletes after sustained Up->Down = %d, want 0", server.deletes)
 	}
-	if _, ok := server.peers["10.0.0.21"]; ok {
-		t.Fatalf("peer still present after sustained BFD Up->Down gate: %#v", server.peers)
+	if _, ok := server.peers["10.0.0.21"]; !ok {
+		t.Fatalf("peer missing after sustained BFD Up->Down: %#v", server.peers)
 	}
 	controller.Store.SaveObjectStatus(api.NetAPIVersion, "BFD", "k8s", map[string]any{
 		"phase":      "Up",
@@ -839,8 +839,8 @@ func TestReconcileBFDGateAllowsBootstrapAndDisablesOnlyAfterUpDown(t *testing.T)
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("fourth reconcile: %v", err)
 	}
-	if server.adds != 2 {
-		t.Fatalf("adds after BFD re-Up = %d, want 2", server.adds)
+	if server.adds != 1 {
+		t.Fatalf("adds after BFD re-Up = %d, want 1", server.adds)
 	}
 	if _, ok := server.peers["10.0.0.21"]; !ok {
 		t.Fatalf("peer was not restored after BFD Up: %#v", server.peers)
