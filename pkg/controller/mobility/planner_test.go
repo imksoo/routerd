@@ -104,6 +104,36 @@ func TestBGPCapturePlacementUsesCanonicalAdvertisedMarkerForReverseNodeRefForms(
 	}
 }
 
+func TestBGPCapturePlacementRecognizesEventGroupAliasMarkerForActiveMember(t *testing.T) {
+	members := map[string]memberPlanInfo{
+		"azure-router-a": {
+			NodeRef:           "azure-router-a",
+			Capture:           api.AddressCapture{Type: "provider-secondary-ip"},
+			PlacementGroup:    "azure-edge",
+			PlacementPriority: 10,
+		},
+		"azure-router-b": {
+			NodeRef:           "azure-router-b",
+			Capture:           api.AddressCapture{Type: "provider-secondary-ip"},
+			PlacementGroup:    "azure-edge",
+			PlacementPriority: 20,
+		},
+	}
+	present := map[string]string{
+		bgpstate.MobilityNodeIdentityCommunity("azure-router"):   "10.99.0.3/32",
+		bgpstate.MobilityNodeIdentityCommunity("azure-router-b"): "10.99.0.6/32",
+	}
+	if got := evaluateBGPCapturePlacement(members["azure-router-b"], members, present, true); got.Active || got.Seize || !got.ActiveMarkerPresent {
+		t.Fatalf("placement with active alias marker = %+v, want standby defer", got)
+	}
+	absent := map[string]string{
+		bgpstate.MobilityNodeIdentityCommunity("azure-router-b"): "10.99.0.6/32",
+	}
+	if got := evaluateBGPCapturePlacement(members["azure-router-b"], members, absent, true); !got.Active || !got.Seize || got.ActiveMarkerPresent {
+		t.Fatalf("placement without active alias marker = %+v, want standby seize", got)
+	}
+}
+
 func plannedPoolSpec() api.MobilityPoolSpec {
 	return api.MobilityPoolSpec{
 		Prefix:   "10.88.60.0/24",

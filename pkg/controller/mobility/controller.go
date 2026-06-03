@@ -881,7 +881,25 @@ func lookupMemberByNodeRef(members map[string]memberPlanInfo, nodeRef string) (m
 			return member, true
 		}
 	}
-	return memberPlanInfo{}, false
+	var matches []memberPlanInfo
+	for _, member := range members {
+		for _, alias := range nodeIdentityAliases(member.NodeRef) {
+			if alias == canonical {
+				matches = append(matches, member)
+				break
+			}
+		}
+	}
+	if len(matches) == 0 {
+		return memberPlanInfo{}, false
+	}
+	sort.SliceStable(matches, func(i, j int) bool {
+		if matches[i].PlacementPriority == matches[j].PlacementPriority {
+			return matches[i].NodeRef < matches[j].NodeRef
+		}
+		return matches[i].PlacementPriority < matches[j].PlacementPriority
+	})
+	return matches[0], true
 }
 
 func livenessMarkerForNode(markers map[string]string, nodeRef string) (string, string, bool) {
@@ -900,13 +918,34 @@ func livenessMarkerForNode(markers map[string]string, nodeRef string) (string, s
 func nodeIdentityCommunities(nodeRef string) []string {
 	seen := map[string]bool{}
 	var out []string
-	for _, candidate := range []string{canonicalNodeIdentity(nodeRef), strings.TrimSpace(nodeRef)} {
+	for _, candidate := range nodeIdentityAliases(nodeRef) {
 		community := bgpstate.MobilityNodeIdentityCommunity(candidate)
 		if community == "" || seen[community] {
 			continue
 		}
 		seen[community] = true
 		out = append(out, community)
+	}
+	return out
+}
+
+func nodeIdentityAliases(nodeRef string) []string {
+	canonical := canonicalNodeIdentity(nodeRef)
+	candidates := []string{canonical, strings.TrimSpace(nodeRef)}
+	for _, suffix := range []string{"-a", "-b"} {
+		if strings.HasSuffix(canonical, suffix) {
+			candidates = append(candidates, strings.TrimSuffix(canonical, suffix))
+		}
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" || seen[candidate] {
+			continue
+		}
+		seen[candidate] = true
+		out = append(out, candidate)
 	}
 	return out
 }

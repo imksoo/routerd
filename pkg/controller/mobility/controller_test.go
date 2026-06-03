@@ -441,6 +441,32 @@ func TestControllerBGPModeAdvertisesCanonicalSelfLivenessMarker(t *testing.T) {
 	}
 }
 
+func TestControllerBGPModeAdvertisesMemberNodeIdentityWhenEventGroupUsesSiteAlias(t *testing.T) {
+	now := time.Date(2026, 6, 3, 10, 43, 4, 0, time.UTC)
+	store := testStore(t, now)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	for i := range spec.Members {
+		switch spec.Members[i].NodeRef {
+		case "azure-router":
+			spec.Members[i].NodeRef = "azure-router-a"
+		}
+	}
+	bgp := &fakeBGPPaths{}
+	router := routerWithBGPRouter(routerWithEventGroupListen(planningRouterForNode("azure-router", spec), "10.99.0.3"))
+	controller := Controller{Router: router, Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	marker := pathBySourcePrefix(t, bgp, DynamicSource("cloudedge", "azure-router-a"), "10.99.0.3/32")
+	if !stringSliceContains(marker.Attrs.Communities, bgpstate.MobilityNodeIdentityCommunity("azure-router-a")) {
+		t.Fatalf("marker attrs = %#v, want member nodeRef identity community", marker.Attrs)
+	}
+	if stringSliceContains(marker.Attrs.Communities, bgpstate.MobilityNodeIdentityCommunity("azure-router")) {
+		t.Fatalf("marker attrs = %#v, want no EventGroup alias identity community", marker.Attrs)
+	}
+}
+
 func TestControllerBGPModeStandbyDefersTrapWhenActiveLivenessMarkerPresent(t *testing.T) {
 	now := time.Date(2026, 6, 2, 10, 0, 0, 0, time.UTC)
 	store := testStore(t, now)
@@ -531,6 +557,55 @@ func TestControllerBGPModeStandbySeizesTrapWhenActiveLivenessMarkerWithdrawn(t *
 	if election["selfCommunity"] != bgpstate.MobilityNodeIdentityCommunity("aws-router-b") ||
 		election["activeCommunity"] != bgpstate.MobilityNodeIdentityCommunity("aws-router-a") {
 		t.Fatalf("bgpCaptureElection communities = %#v, want aws-b self and aws-a active", election)
+	}
+}
+
+func TestControllerBGPModeBG24RuntimeSeizesWhenAWSActiveMarkerAbsent(t *testing.T) {
+	now := time.Date(2026, 6, 3, 10, 43, 4, 0, time.UTC)
+	store := testStore(t, now)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	recordEvent(t, store, routerstate.EventRecord{
+		ID:         "evt-aws-a",
+		Group:      "cloudedge",
+		SourceNode: "aws-router-a",
+		Type:       ObservedEventType,
+		Subject:    "10.88.60.11/32",
+		ObservedAt: now.Add(-time.Minute),
+		ExpiresAt:  now.Add(time.Hour),
+	})
+	saveBGPStatus(t, store, map[string][]string{
+		"10.88.60.10/32": {"10.99.0.1"},
+		"10.88.60.11/32": {"10.99.0.5"},
+		"10.88.60.12/32": {"10.99.0.3"},
+		"10.88.60.13/32": {"10.99.0.4"},
+	}, []map[string]any{}, map[string]string{
+		bgpstate.MobilityNodeIdentityCommunity("onprem-router"):  "10.99.0.1/32",
+		bgpstate.MobilityNodeIdentityCommunity("aws-router-b"):   "10.99.0.5/32",
+		bgpstate.MobilityNodeIdentityCommunity("azure-router-b"): "10.99.0.6/32",
+		bgpstate.MobilityNodeIdentityCommunity("azure-router"):   "10.99.0.3/32",
+		bgpstate.MobilityNodeIdentityCommunity("oci-router"):     "10.99.0.4/32",
+	})
+	bgp := &fakeBGPPaths{}
+	controller := Controller{Router: routerWithBGPRouter(planningRouterForNode("aws-router-b", spec)), Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	plans := decodeActionPlans(t, latestPart(t, store, DynamicSource("cloudedge", "aws-router-b")).ActionPlansJSON)
+	for _, address := range []string{"10.88.60.10/32", "10.88.60.12/32", "10.88.60.13/32"} {
+		assign := findActionPlanByAddress(plans, "assign-secondary-ip", address)
+		if assign == nil {
+			t.Fatalf("plans = %#v, want BG24 standby seize assign for %s", plans, address)
+		}
+		if assign.Parameters["allowReassignment"] != "true" {
+			t.Fatalf("assign %s parameters = %#v, want allowReassignment", address, assign.Parameters)
+		}
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	election, ok := status["bgpCaptureElection"].(map[string]any)
+	if !ok || election["seize"] != true || election["selfCommunity"] != bgpstate.MobilityNodeIdentityCommunity("aws-router-b") ||
+		election["activeCommunity"] != bgpstate.MobilityNodeIdentityCommunity("aws-router-a") || election["activeMarkerPresent"] != false {
+		t.Fatalf("bgpCaptureElection = %#v, want BG24 aws-b seize with aws-a marker absent", status["bgpCaptureElection"])
 	}
 }
 
