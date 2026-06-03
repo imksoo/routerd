@@ -23,11 +23,19 @@ const (
 )
 
 type PlacementDecision struct {
-	Group      string
-	Active     bool
-	ActiveNode string
-	Reason     string
-	Seize      bool
+	Group                 string
+	Active                bool
+	ActiveNode            string
+	Reason                string
+	Seize                 bool
+	LivenessObserved      bool
+	SelfCommunity         string
+	SelfMarker            string
+	SelfMarkerPresent     bool
+	ActiveCommunity       string
+	ActiveMarker          string
+	ActiveMarkerPresent   bool
+	ActiveIdentityNodeRef string
 }
 
 func (d PlacementDecision) NoCandidate() bool {

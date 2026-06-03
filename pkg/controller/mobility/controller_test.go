@@ -421,6 +421,26 @@ func TestControllerBGPModeAdvertisesSelfLivenessMarker(t *testing.T) {
 	}
 }
 
+func TestControllerBGPModeAdvertisesCanonicalSelfLivenessMarker(t *testing.T) {
+	now := time.Date(2026, 6, 2, 10, 0, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	bgp := &fakeBGPPaths{}
+	router := routerWithBGPRouter(routerWithEventGroupListen(planningRouterForNode("Node/aws-router-a", spec), "10.99.0.2"))
+	controller := Controller{Router: router, Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	marker := pathBySourcePrefix(t, bgp, DynamicSource("cloudedge", "aws-router-a"), "10.99.0.2/32")
+	if !stringSliceContains(marker.Attrs.Communities, bgpstate.MobilityNodeIdentityCommunity("aws-router-a")) {
+		t.Fatalf("marker attrs = %#v, want canonical node identity community", marker.Attrs)
+	}
+	if stringSliceContains(marker.Attrs.Communities, bgpstate.MobilityNodeIdentityCommunity("Node/aws-router-a")) {
+		t.Fatalf("marker attrs = %#v, want no raw non-canonical node identity community", marker.Attrs)
+	}
+}
+
 func TestControllerBGPModeStandbyDefersTrapWhenActiveLivenessMarkerPresent(t *testing.T) {
 	now := time.Date(2026, 6, 2, 10, 0, 0, 0, time.UTC)
 	store := testStore(t, now)
@@ -499,6 +519,18 @@ func TestControllerBGPModeStandbySeizesTrapWhenActiveLivenessMarkerWithdrawn(t *
 	}
 	if findActionPlanByAddress(plans, "assign-secondary-ip", "10.88.60.11/32") != nil {
 		t.Fatalf("plans = %#v, want no same-site self-owned trap despite standby .11 path", plans)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	election, ok := status["bgpCaptureElection"].(map[string]any)
+	if !ok {
+		t.Fatalf("bgpCaptureElection = %#v, want map status", status["bgpCaptureElection"])
+	}
+	if election["seize"] != true || election["selfMarkerPresent"] != true || election["activeMarkerPresent"] != false {
+		t.Fatalf("bgpCaptureElection = %#v, want self marker present, active marker absent, seize", election)
+	}
+	if election["selfCommunity"] != bgpstate.MobilityNodeIdentityCommunity("aws-router-b") ||
+		election["activeCommunity"] != bgpstate.MobilityNodeIdentityCommunity("aws-router-a") {
+		t.Fatalf("bgpCaptureElection communities = %#v, want aws-b self and aws-a active", election)
 	}
 }
 

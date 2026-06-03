@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	bgpstate "github.com/imksoo/routerd/pkg/bgp"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
@@ -36,6 +37,70 @@ func TestPlacementDecision(t *testing.T) {
 	ungrouped := plannerMembers(plannedPoolSpec().Members)
 	if got := evaluatePlacement(ungrouped["azure-router"], ungrouped); !got.Active || got.ActiveNode != "azure-router" {
 		t.Fatalf("ungrouped placement = %+v, want active", got)
+	}
+}
+
+func TestBGPCapturePlacementSeizesWhenActiveMarkerAbsentWithCanonicalNodeIdentity(t *testing.T) {
+	members := map[string]memberPlanInfo{
+		"aws-router-a": {
+			NodeRef:            "Node/aws-router-a",
+			Capture:            api.AddressCapture{Type: "provider-secondary-ip"},
+			PlacementGroup:     "aws-edge",
+			PlacementPriority:  10,
+			MaintenanceDrain:   false,
+			OwnershipDiscovery: api.MobilityOwnershipDiscovery{},
+		},
+		"aws-router-b": {
+			NodeRef:           "Node/aws-router-b",
+			Capture:           api.AddressCapture{Type: "provider-secondary-ip"},
+			PlacementGroup:    "aws-edge",
+			PlacementPriority: 20,
+		},
+	}
+	markers := map[string]string{
+		bgpstate.MobilityNodeIdentityCommunity("aws-router-b"): "10.99.0.5/32",
+	}
+	got := evaluateBGPCapturePlacement(members["aws-router-b"], members, markers, true)
+	if !got.Active || !got.Seize || got.ActiveNode != "Node/aws-router-b" {
+		t.Fatalf("placement = %+v, want canonical identity failover seize by aws-router-b", got)
+	}
+	if got.SelfCommunity != bgpstate.MobilityNodeIdentityCommunity("aws-router-b") || !got.SelfMarkerPresent {
+		t.Fatalf("self liveness = %+v, want canonical aws-router-b marker present", got)
+	}
+	if got.ActiveCommunity != bgpstate.MobilityNodeIdentityCommunity("aws-router-a") || got.ActiveMarkerPresent {
+		t.Fatalf("active liveness = %+v, want canonical aws-router-a marker absent", got)
+	}
+}
+
+func TestBGPCapturePlacementUsesCanonicalAdvertisedMarkerForReverseNodeRefForms(t *testing.T) {
+	members := map[string]memberPlanInfo{
+		"aws-router-a": {
+			NodeRef:           "aws-router-a",
+			Capture:           api.AddressCapture{Type: "provider-secondary-ip"},
+			PlacementGroup:    "aws-edge",
+			PlacementPriority: 10,
+		},
+		"aws-router-b": {
+			NodeRef:           "aws-router-b",
+			Capture:           api.AddressCapture{Type: "provider-secondary-ip"},
+			PlacementGroup:    "aws-edge",
+			PlacementPriority: 20,
+		},
+	}
+	self := members["aws-router-b"]
+	self.NodeRef = "Node/aws-router-b"
+	present := map[string]string{
+		bgpstate.MobilityNodeIdentityCommunity("aws-router-a"): "10.99.0.2/32",
+		bgpstate.MobilityNodeIdentityCommunity("aws-router-b"): "10.99.0.5/32",
+	}
+	if got := evaluateBGPCapturePlacement(self, members, present, true); got.Active || got.Seize || !got.ActiveMarkerPresent {
+		t.Fatalf("placement with active marker = %+v, want standby defer", got)
+	}
+	absent := map[string]string{
+		bgpstate.MobilityNodeIdentityCommunity("aws-router-b"): "10.99.0.5/32",
+	}
+	if got := evaluateBGPCapturePlacement(self, members, absent, true); !got.Active || !got.Seize || got.ActiveNode != "Node/aws-router-b" {
+		t.Fatalf("placement without active marker = %+v, want canonical reverse-form seize", got)
 	}
 }
 

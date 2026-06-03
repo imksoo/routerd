@@ -124,9 +124,12 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 	if err != nil {
 		return err
 	}
-	if _, ok := plannerMembers(spec.Members)[selfNode]; !ok {
+	members := plannerMembers(spec.Members)
+	self, ok := lookupMemberByNodeRef(members, selfNode)
+	if !ok {
 		return fmt.Errorf("self node %q is not a member of MobilityPool/%s", selfNode, res.Metadata.Name)
 	}
+	selfNode = self.NodeRef
 	spec, selfCaptureResolved, selfCaptureReason := c.specWithDiscoveredSelfCapture(res.Metadata.Name, selfNode, spec)
 	source := DynamicSource(res.Metadata.Name, selfNode)
 	events, err := c.Store.ListFederationEvents(spec.GroupRef, false, now.Unix())
@@ -154,7 +157,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 	}
 	installedNextHops, bgpRIBObserved := c.bgpInstalledNextHops()
 	livenessMarkers, livenessMarkersObserved := c.bgpLivenessMarkers()
-	desiredTrapAddresses, err := c.bgpTrapAddresses(res.Metadata.Name, selfNode, spec, installedNextHops, bgpRIBObserved, livenessMarkers, livenessMarkersObserved, previousActionPlans, localOwned, now)
+	desiredTrapAddresses, capturePlacement, err := c.bgpTrapAddresses(res.Metadata.Name, selfNode, spec, installedNextHops, bgpRIBObserved, livenessMarkers, livenessMarkersObserved, previousActionPlans, localOwned, now)
 	if err != nil {
 		return err
 	}
@@ -199,6 +202,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		"bgpPathSource":      source,
 		"generatedBGPPaths":  len(desired),
 		"bgpRIBObserved":     bgpRIBObserved,
+		"bgpCaptureElection": bgpCaptureElectionStatus(capturePlacement),
 		"generatedBGPTraps":  len(desiredTrapAddresses),
 		"generatedClaims":    0,
 		"generatedActions":   len(actionPlans),
@@ -384,7 +388,7 @@ func (c Controller) bgpLivenessMarkerPath(poolName, source, selfNode, groupRef s
 	if !ok {
 		return bgpdaemon.AppliedPath{}, false
 	}
-	nodeCommunity := bgpstate.MobilityNodeIdentityCommunity(selfNode)
+	nodeCommunity := bgpstate.MobilityNodeIdentityCommunity(canonicalNodeIdentity(selfNode))
 	if nodeCommunity == "" {
 		return bgpdaemon.AppliedPath{}, false
 	}
@@ -768,24 +772,24 @@ func normalizeObservedBGPPrefix(value string) string {
 	return prefix.Masked().String()
 }
 
-func (c Controller) bgpTrapAddresses(poolName, selfNode string, spec api.MobilityPoolSpec, installedNextHops map[string][]string, ribObserved bool, livenessMarkers map[string]string, livenessMarkersObserved bool, previousPlans []dynamicconfig.ActionPlan, localOwned map[string]bool, now time.Time) (map[string]bgpTrapCandidate, error) {
+func (c Controller) bgpTrapAddresses(poolName, selfNode string, spec api.MobilityPoolSpec, installedNextHops map[string][]string, ribObserved bool, livenessMarkers map[string]string, livenessMarkersObserved bool, previousPlans []dynamicconfig.ActionPlan, localOwned map[string]bool, now time.Time) (map[string]bgpTrapCandidate, PlacementDecision, error) {
 	prefix, err := netip.ParsePrefix(strings.TrimSpace(spec.Prefix))
 	if err != nil {
-		return nil, fmt.Errorf("parse pool prefix: %w", err)
+		return nil, PlacementDecision{}, fmt.Errorf("parse pool prefix: %w", err)
 	}
 	prefix = prefix.Masked()
 	members := plannerMembers(spec.Members)
-	self, ok := members[strings.TrimSpace(selfNode)]
+	self, ok := lookupMemberByNodeRef(members, selfNode)
 	if !ok {
-		return nil, fmt.Errorf("self node %q is not a member of MobilityPool/%s", selfNode, poolName)
+		return nil, PlacementDecision{}, fmt.Errorf("self node %q is not a member of MobilityPool/%s", selfNode, poolName)
 	}
 	out := map[string]bgpTrapCandidate{}
 	if self.Capture.Type != "provider-secondary-ip" {
-		return out, nil
+		return out, PlacementDecision{Active: false, ActiveNode: self.NodeRef, Reason: "self capture is not provider-secondary-ip"}, nil
 	}
 	placement := evaluateBGPCapturePlacement(self, members, livenessMarkers, livenessMarkersObserved)
 	if !placement.Active {
-		return out, nil
+		return out, placement, nil
 	}
 	for rawPrefix, nextHops := range installedNextHops {
 		if len(cleanStrings(nextHops)) == 0 {
@@ -811,36 +815,136 @@ func (c Controller) bgpTrapAddresses(poolName, selfNode string, spec api.Mobilit
 			out[address] = candidate
 		}
 	}
-	return out, nil
+	return out, placement, nil
 }
 
 func evaluateBGPCapturePlacement(self memberPlanInfo, members map[string]memberPlanInfo, livenessMarkers map[string]string, livenessMarkersObserved bool) PlacementDecision {
 	placement := evaluatePlacement(self, members)
+	placement.LivenessObserved = livenessMarkersObserved
+	selfCommunity, selfMarker, selfMarkerPresent := livenessMarkerForNode(livenessMarkers, self.NodeRef)
+	placement.SelfCommunity = selfCommunity
+	placement.SelfMarker = selfMarker
+	placement.SelfMarkerPresent = selfMarkerPresent
 	if placement.Active || placement.NoCandidate() || strings.TrimSpace(placement.ActiveNode) == "" {
 		return placement
 	}
 	if !livenessMarkersObserved {
 		return placement
 	}
-	selfCommunity := bgpstate.MobilityNodeIdentityCommunity(self.NodeRef)
-	if selfCommunity == "" || strings.TrimSpace(livenessMarkers[selfCommunity]) == "" {
+	if !selfMarkerPresent {
 		return placement
 	}
-	active := members[strings.TrimSpace(placement.ActiveNode)]
+	active, ok := lookupMemberByNodeRef(members, placement.ActiveNode)
+	if !ok {
+		placement.Reason = fmt.Sprintf("placement group %q active node %q is not resolvable for BGP liveness identity", placement.Group, placement.ActiveNode)
+		return placement
+	}
 	if strings.TrimSpace(active.NodeRef) == "" {
 		return placement
 	}
-	activeCommunity := bgpstate.MobilityNodeIdentityCommunity(active.NodeRef)
-	if activeCommunity == "" || strings.TrimSpace(livenessMarkers[activeCommunity]) != "" {
+	activeCommunity, activeMarker, activeMarkerPresent := livenessMarkerForNode(livenessMarkers, active.NodeRef)
+	placement.ActiveIdentityNodeRef = active.NodeRef
+	placement.ActiveCommunity = activeCommunity
+	placement.ActiveMarker = activeMarker
+	placement.ActiveMarkerPresent = activeMarkerPresent
+	if activeCommunity == "" || activeMarkerPresent {
 		return placement
 	}
 	return PlacementDecision{
-		Group:      placement.Group,
-		Active:     true,
-		ActiveNode: self.NodeRef,
-		Reason:     fmt.Sprintf("placement group %q configured active %q has no live BGP identity path", placement.Group, active.NodeRef),
-		Seize:      true,
+		Group:                 placement.Group,
+		Active:                true,
+		ActiveNode:            self.NodeRef,
+		Reason:                fmt.Sprintf("placement group %q configured active %q has no live BGP identity path", placement.Group, active.NodeRef),
+		Seize:                 true,
+		LivenessObserved:      placement.LivenessObserved,
+		SelfCommunity:         placement.SelfCommunity,
+		SelfMarker:            placement.SelfMarker,
+		SelfMarkerPresent:     placement.SelfMarkerPresent,
+		ActiveIdentityNodeRef: active.NodeRef,
+		ActiveCommunity:       activeCommunity,
+		ActiveMarker:          activeMarker,
+		ActiveMarkerPresent:   false,
 	}
+}
+
+func lookupMemberByNodeRef(members map[string]memberPlanInfo, nodeRef string) (memberPlanInfo, bool) {
+	nodeRef = strings.TrimSpace(nodeRef)
+	if nodeRef == "" {
+		return memberPlanInfo{}, false
+	}
+	if member, ok := members[nodeRef]; ok {
+		return member, true
+	}
+	canonical := canonicalNodeIdentity(nodeRef)
+	for _, member := range members {
+		if canonicalNodeIdentity(member.NodeRef) == canonical {
+			return member, true
+		}
+	}
+	return memberPlanInfo{}, false
+}
+
+func livenessMarkerForNode(markers map[string]string, nodeRef string) (string, string, bool) {
+	for _, community := range nodeIdentityCommunities(nodeRef) {
+		if marker := strings.TrimSpace(markers[community]); marker != "" {
+			return community, marker, true
+		}
+	}
+	communities := nodeIdentityCommunities(nodeRef)
+	if len(communities) == 0 {
+		return "", "", false
+	}
+	return communities[0], "", false
+}
+
+func nodeIdentityCommunities(nodeRef string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, candidate := range []string{canonicalNodeIdentity(nodeRef), strings.TrimSpace(nodeRef)} {
+		community := bgpstate.MobilityNodeIdentityCommunity(candidate)
+		if community == "" || seen[community] {
+			continue
+		}
+		seen[community] = true
+		out = append(out, community)
+	}
+	return out
+}
+
+func canonicalNodeIdentity(nodeRef string) string {
+	nodeRef = strings.TrimSpace(nodeRef)
+	if nodeRef == "" {
+		return ""
+	}
+	if idx := strings.LastIndex(nodeRef, "/"); idx >= 0 && idx+1 < len(nodeRef) {
+		return strings.TrimSpace(nodeRef[idx+1:])
+	}
+	return nodeRef
+}
+
+func bgpCaptureElectionStatus(decision PlacementDecision) map[string]any {
+	status := map[string]any{
+		"group":               decision.Group,
+		"active":              decision.Active,
+		"activeNode":          decision.ActiveNode,
+		"reason":              decision.Reason,
+		"seize":               decision.Seize,
+		"livenessObserved":    decision.LivenessObserved,
+		"selfCommunity":       decision.SelfCommunity,
+		"selfMarkerPresent":   decision.SelfMarkerPresent,
+		"activeCommunity":     decision.ActiveCommunity,
+		"activeMarkerPresent": decision.ActiveMarkerPresent,
+	}
+	if decision.SelfMarker != "" {
+		status["selfMarker"] = decision.SelfMarker
+	}
+	if decision.ActiveMarker != "" {
+		status["activeMarker"] = decision.ActiveMarker
+	}
+	if decision.ActiveIdentityNodeRef != "" {
+		status["activeIdentityNodeRef"] = decision.ActiveIdentityNodeRef
+	}
+	return status
 }
 
 func parseBGPTrapLastSeenAt(value string) time.Time {
