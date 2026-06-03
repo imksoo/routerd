@@ -243,25 +243,46 @@ func (s *fakeServer) importPolicyRewritesPeerAddress() bool {
 }
 
 type fakeFIB struct {
-	mu          sync.Mutex
-	routes      []FIBRoute
-	history     [][]FIBRoute
-	unsupported map[string]string
-	err         error
+	mu                    sync.Mutex
+	routes                []FIBRoute
+	history               [][]FIBRoute
+	unsupported           map[string]string
+	err                   error
+	guardPreferredSource  bool
+	localPreferredSources map[string]bool
 }
 
 func (f *fakeFIB) SyncBGP(_ context.Context, routes []FIBRoute) (FIBSyncResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.routes = append([]FIBRoute(nil), routes...)
-	f.history = append(f.history, append([]FIBRoute(nil), routes...))
-	result := FIBSyncResult{Installed: map[string]bool{}, Unsupported: map[string]string{}}
+	result := FIBSyncResult{
+		Installed:                    map[string]bool{},
+		Unsupported:                  map[string]string{},
+		PreferredSource:              map[string]string{},
+		PreferredSourceSkipped:       map[string]bool{},
+		PreferredSourceSkippedReason: map[string]string{},
+	}
+	normalized := make([]FIBRoute, 0, len(routes))
 	for _, route := range routes {
 		prefix := normalizeRoutePrefix(route.Prefix)
 		if prefix != "" {
+			if f.guardPreferredSource && strings.TrimSpace(route.PreferredSource) != "" && !f.localPreferredSources[strings.TrimSpace(route.PreferredSource)] {
+				result.PreferredSourceSkipped[prefix] = true
+				result.PreferredSourceSkippedReason[prefix] = "LocalAddressMissing"
+				route.PreferredSource = ""
+			}
 			result.Installed[prefix] = true
+			if source := strings.TrimSpace(route.PreferredSource); source != "" {
+				result.PreferredSource[prefix] = source
+			}
+			route.Prefix = prefix
+			route.NextHops = normalizeRouteNextHops(route.NextHops)
+			route.PreferredSource = strings.TrimSpace(route.PreferredSource)
+			normalized = append(normalized, route)
 		}
 	}
+	f.routes = append([]FIBRoute(nil), normalized...)
+	f.history = append(f.history, append([]FIBRoute(nil), normalized...))
 	for prefix, reason := range f.unsupported {
 		delete(result.Installed, prefix)
 		result.Unsupported[prefix] = reason
@@ -534,6 +555,70 @@ func TestReconcileImportsFourSiteMobilityHostRoutes(t *testing.T) {
 	}
 	if !reflect.DeepEqual(fib.routes, want) {
 		t.Fatalf("FIB routes = %#v, want 4-site mobility /32 routes %#v", fib.routes, want)
+	}
+}
+
+func TestReconcileAddsMobilityPreferredSourceForLocalStaticOwnedAddress(t *testing.T) {
+	router := bgpRouterWithImportPrefixes("10.77.60.0/24")
+	router.Spec.Resources = append(router.Spec.Resources, bgpMobilityPreferredSourceResources("onprem-router")...)
+	server := &fakeServer{routes: []*gobgpapi.Destination{
+		testDestination("10.77.60.11/32", "10.99.0.2"),
+	}}
+	fib := &fakeFIB{guardPreferredSource: true, localPreferredSources: map[string]bool{"10.77.60.10": true}}
+	controller := Controller{Router: router, Store: mapStore{}, Server: server, FIB: fib}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	want := []FIBRoute{{Prefix: "10.77.60.11/32", NextHops: []string{"10.99.0.2"}, PreferredSource: "10.77.60.10"}}
+	if !reflect.DeepEqual(fib.routes, want) {
+		t.Fatalf("fib routes = %#v, want preferred source %#v", fib.routes, want)
+	}
+	status := controller.Store.ObjectStatus(api.NetAPIVersion, "BGPRouter", "lan")
+	if got := status["preferredSources"].(map[string]string)["10.77.60.11/32"]; got != "10.77.60.10" {
+		t.Fatalf("preferredSources = %#v, want 10.77.60.10 for 10.77.60.11/32", status["preferredSources"])
+	}
+}
+
+func TestReconcileSkipsMobilityPreferredSourceWhenLocalAddressMissing(t *testing.T) {
+	router := bgpRouterWithImportPrefixes("10.77.60.0/24")
+	router.Spec.Resources = append(router.Spec.Resources, bgpMobilityPreferredSourceResources("onprem-router")...)
+	server := &fakeServer{routes: []*gobgpapi.Destination{
+		testDestination("10.77.60.11/32", "10.99.0.2"),
+	}}
+	fib := &fakeFIB{guardPreferredSource: true, localPreferredSources: map[string]bool{}}
+	controller := Controller{Router: router, Store: mapStore{}, Server: server, FIB: fib}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	want := []FIBRoute{{Prefix: "10.77.60.11/32", NextHops: []string{"10.99.0.2"}}}
+	if !reflect.DeepEqual(fib.routes, want) {
+		t.Fatalf("fib routes = %#v, want source skipped %#v", fib.routes, want)
+	}
+	status := controller.Store.ObjectStatus(api.NetAPIVersion, "BGPRouter", "lan")
+	skipped, ok := status["preferredSourceSkipped"].(map[string]bool)
+	if !ok || !skipped["10.77.60.11/32"] {
+		t.Fatalf("preferredSourceSkipped = %#v, want 10.77.60.11/32 skipped", status["preferredSourceSkipped"])
+	}
+	reasons, ok := status["preferredSourceSkippedReason"].(map[string]string)
+	if !ok || reasons["10.77.60.11/32"] != "LocalAddressMissing" {
+		t.Fatalf("preferredSourceSkippedReason = %#v, want LocalAddressMissing", status["preferredSourceSkippedReason"])
+	}
+}
+
+func TestReconcileDoesNotAddMobilityPreferredSourceForCloudNonOwner(t *testing.T) {
+	router := bgpRouterWithImportPrefixes("10.77.60.0/24")
+	router.Spec.Resources = append(router.Spec.Resources, bgpMobilityPreferredSourceResources("aws-router")...)
+	server := &fakeServer{routes: []*gobgpapi.Destination{
+		testDestination("10.77.60.10/32", "10.99.0.1"),
+	}}
+	fib := &fakeFIB{guardPreferredSource: true, localPreferredSources: map[string]bool{"10.77.60.11": true}}
+	controller := Controller{Router: router, Store: mapStore{}, Server: server, FIB: fib}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	want := []FIBRoute{{Prefix: "10.77.60.10/32", NextHops: []string{"10.99.0.1"}}}
+	if !reflect.DeepEqual(fib.routes, want) {
+		t.Fatalf("fib routes = %#v, want no preferred source for cloud non-owner %#v", fib.routes, want)
 	}
 }
 
@@ -1237,6 +1322,40 @@ func bgpRouterWithImportPrefixes(prefixes ...string) *api.Router {
 			},
 		},
 	}}}
+}
+
+func bgpMobilityPreferredSourceResources(selfNode string) []api.Resource {
+	return []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.FederationAPIVersion, Kind: "EventGroup"},
+			Metadata: api.ObjectMeta{Name: "cloudedge"},
+			Spec:     api.EventGroupSpec{NodeName: selfNode},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"},
+			Metadata: api.ObjectMeta{Name: "cloudedge"},
+			Spec: api.MobilityPoolSpec{
+				Prefix:         "10.77.60.0/24",
+				GroupRef:       "cloudedge",
+				DeliveryPolicy: api.MobilityDeliveryPolicy{Mode: "bgp"},
+				Members: []api.MobilityPoolMember{
+					{
+						NodeRef:              "onprem-router",
+						Site:                 "onprem",
+						Role:                 "onprem",
+						StaticOwnedAddresses: []string{"10.77.60.10/32"},
+						Capture:              api.MobilityMemberCapture{Type: "proxy-arp", Interface: "ens21"},
+					},
+					{
+						NodeRef: "aws-router",
+						Site:    "aws",
+						Role:    "cloud",
+						Capture: api.MobilityMemberCapture{Type: "provider-secondary-ip", Interface: "ens5", ConfigureOSAddress: false},
+					},
+				},
+			},
+		},
+	}
 }
 
 func testDestination(prefix string, nextHops ...string) *gobgpapi.Destination {

@@ -92,9 +92,23 @@ spec:
       spec: { ifname: ens21, adminUp: true, managed: true }
 
     - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata: { name: lo }
+      spec: { ifname: lo, managed: false, owner: external }
+
+    - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4StaticAddress
       metadata: { name: ens21-lan-ipv4 }
       spec: { interface: ens21, address: 10.77.60.1/24 }
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4StaticAddress
+      metadata: { name: onprem-mobility-source-ipv4 }
+      spec:
+        interface: lo
+        address: 10.77.60.10/32
+        allowOverlap: true
+        allowOverlapReason: "onprem router-originated mobility source address"
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: VirtualAddress

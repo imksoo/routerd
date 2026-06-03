@@ -231,6 +231,51 @@ client_exec() {
   ssh "${SSH_OPTS[@]}" -J "$(client_jump "$site")" "$CLIENT_SSH_USER@$(client_host "$site")" "$@"
 }
 
+client_mobility_ip() {
+  case "$1" in
+    onprem) echo "$ONPREM_CLIENT_IP" ;;
+    aws) echo "$AWS_CLIENT_IP" ;;
+    azure) echo "$AZURE_CLIENT_IP" ;;
+    oci) echo "$OCI_CLIENT_IP" ;;
+    *) echo "unknown client site $1" >&2; return 1 ;;
+  esac
+}
+
+preflight_client_mobility_ip() {
+  local site=$1 ip
+  ip=$(client_mobility_ip "$site")
+  echo "Preflight $site client mobility IP $ip"
+  client_exec "$site" "set -euo pipefail
+    dev=\$(ip -4 route show default | awk '{for (i=1;i<=NF;i++) if (\$i == \"dev\") {print \$(i+1); exit}}')
+    if [ -z \"\$dev\" ]; then
+      echo '$site client preflight failed: default-route interface not found' >&2
+      exit 1
+    fi
+    sudo ip addr replace '$ip/32' dev \"\$dev\"
+    if ! ip -4 addr show dev \"\$dev\" | grep -F '$ip/32' >/dev/null; then
+      echo '$site client preflight failed: mobility IP $ip/32 is not present on' \"\$dev\" >&2
+      exit 1
+    fi
+    if systemctl list-unit-files ssh.service >/dev/null 2>&1; then
+      sudo systemctl is-active ssh >/dev/null
+    elif systemctl list-unit-files sshd.service >/dev/null 2>&1; then
+      sudo systemctl is-active sshd >/dev/null
+    elif ! pgrep -x sshd >/dev/null 2>&1; then
+      echo '$site client preflight failed: ssh/sshd service is not active' >&2
+      exit 1
+    fi
+    if ! ss -ltn | awk 'NR > 1 {print \$4}' | grep -Eq '(^|:)22$'; then
+      echo '$site client preflight failed: TCP/22 listener missing' >&2
+      exit 1
+    fi"
+}
+
+preflight_cloud_client_mobility_ips() {
+  preflight_client_mobility_ip aws
+  preflight_client_mobility_ip azure
+  preflight_client_mobility_ip oci
+}
+
 run_d3_matrix() {
   local sites=(onprem aws azure oci)
   local ips=("$ONPREM_CLIENT_IP" "$AWS_CLIENT_IP" "$AZURE_CLIENT_IP" "$OCI_CLIENT_IP")
@@ -277,6 +322,7 @@ main() {
   install_secret_and_config oci "$WORKDIR/oci.yaml"
   install_secret_and_config oci-b "$WORKDIR/oci-b.yaml"
   preflight_mesh
+  preflight_cloud_client_mobility_ips
 
   echo "Wait for D3 cloud ownership discovery"
   sleep "$DISCOVERY_WAIT_SECONDS"

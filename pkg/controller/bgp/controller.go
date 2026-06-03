@@ -61,13 +61,17 @@ type FIBSyncer interface {
 }
 
 type FIBRoute struct {
-	Prefix   string
-	NextHops []string
+	Prefix          string
+	NextHops        []string
+	PreferredSource string
 }
 
 type FIBSyncResult struct {
-	Installed   map[string]bool
-	Unsupported map[string]string
+	Installed                    map[string]bool
+	Unsupported                  map[string]string
+	PreferredSource              map[string]string
+	PreferredSourceSkipped       map[string]bool
+	PreferredSourceSkippedReason map[string]string
 }
 
 const MinPollInterval = 3 * time.Second
@@ -928,6 +932,7 @@ func (c *Controller) observeState(ctx context.Context, allowedImportPrefixes []n
 		}
 	}
 	routes = mergeFIBRoutes(routes)
+	routes = c.applyMobilityPreferredSources(routes)
 	limited, truncated := bgpstate.LimitPrefixes(bgpstate.Normalize(state), c.maxPrefixes())
 	if truncated {
 		limited.Prefixes = append(limited.Prefixes, bgpstate.Prefix{Prefix: "truncated", SelectionReason: "prefix limit reached"})
@@ -979,8 +984,13 @@ func (c *Controller) saveObservedStatuses(routerName string, spec routerapi.BGPR
 				"fibUnsupportedRoutes": fibUnsupported,
 				"nextHopRewrite":       importNextHopRewrite(spec.ImportPolicy),
 				"installedNextHops":    installedNextHops(routes, fibResult),
+				"preferredSources":     fibResult.PreferredSource,
 				"observedAt":           now,
 				"conditions":           []map[string]any{{"type": "Observed", "status": "True", "reason": "GoBGPStatus"}},
+			}
+			if len(fibResult.PreferredSourceSkipped) > 0 {
+				status["preferredSourceSkipped"] = fibResult.PreferredSourceSkipped
+				status["preferredSourceSkippedReason"] = fibResult.PreferredSourceSkippedReason
 			}
 			if fibUnsupported > 0 {
 				status["reason"] = "GoBGPFIBPartial"
@@ -1396,30 +1406,140 @@ func fibRoutesFromDestination(dst *gobgpapi.Destination, allowed []netip.Prefix)
 }
 
 func mergeFIBRoutes(routes []FIBRoute) []FIBRoute {
-	byPrefix := map[string]map[string]bool{}
+	type mergedRoute struct {
+		nextHops        map[string]bool
+		preferredSource string
+	}
+	byPrefix := map[string]mergedRoute{}
 	for _, route := range routes {
 		prefix := normalizeRoutePrefix(route.Prefix)
 		if prefix == "" {
 			continue
 		}
-		if byPrefix[prefix] == nil {
-			byPrefix[prefix] = map[string]bool{}
+		merged := byPrefix[prefix]
+		if merged.nextHops == nil {
+			merged.nextHops = map[string]bool{}
 		}
 		for _, nextHop := range normalizeRouteNextHops(route.NextHops) {
-			byPrefix[prefix][nextHop] = true
+			merged.nextHops[nextHop] = true
 		}
+		source := strings.TrimSpace(route.PreferredSource)
+		if source != "" {
+			if merged.preferredSource == "" {
+				merged.preferredSource = source
+			} else if merged.preferredSource != source {
+				merged.preferredSource = ""
+			}
+		}
+		byPrefix[prefix] = merged
 	}
 	out := make([]FIBRoute, 0, len(byPrefix))
-	for prefix, nextHops := range byPrefix {
+	for prefix, merged := range byPrefix {
 		var hops []string
-		for hop := range nextHops {
+		for hop := range merged.nextHops {
 			hops = append(hops, hop)
 		}
 		sort.Strings(hops)
-		out = append(out, FIBRoute{Prefix: prefix, NextHops: hops})
+		out = append(out, FIBRoute{Prefix: prefix, NextHops: hops, PreferredSource: merged.preferredSource})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Prefix < out[j].Prefix })
 	return out
+}
+
+func (c *Controller) applyMobilityPreferredSources(routes []FIBRoute) []FIBRoute {
+	sources := c.mobilityPreferredSources()
+	if len(sources) == 0 {
+		return routes
+	}
+	out := make([]FIBRoute, 0, len(routes))
+	for _, route := range routes {
+		route.Prefix = normalizeRoutePrefix(route.Prefix)
+		if route.Prefix == "" {
+			continue
+		}
+		routePrefix, err := netip.ParsePrefix(route.Prefix)
+		if err != nil {
+			continue
+		}
+		for _, source := range sources {
+			if source.prefix.Contains(routePrefix.Addr()) && route.Prefix != source.addressPrefix {
+				route.PreferredSource = source.address
+				break
+			}
+		}
+		out = append(out, route)
+	}
+	return out
+}
+
+type mobilityPreferredSource struct {
+	prefix        netip.Prefix
+	address       string
+	addressPrefix string
+}
+
+func (c *Controller) mobilityPreferredSources() []mobilityPreferredSource {
+	if c.Router == nil {
+		return nil
+	}
+	selfByGroup := map[string]string{}
+	for _, res := range c.Router.Spec.Resources {
+		if res.APIVersion != routerapi.FederationAPIVersion || res.Kind != "EventGroup" {
+			continue
+		}
+		spec, err := res.EventGroupSpec()
+		if err == nil {
+			selfByGroup[res.Metadata.Name] = strings.TrimSpace(spec.NodeName)
+		}
+	}
+	var out []mobilityPreferredSource
+	for _, res := range c.Router.Spec.Resources {
+		if res.APIVersion != routerapi.MobilityAPIVersion || res.Kind != "MobilityPool" {
+			continue
+		}
+		spec, err := res.MobilityPoolSpec()
+		if err != nil || mobilityDeliveryMode(spec) != "bgp" {
+			continue
+		}
+		self := selfByGroup[strings.TrimSpace(spec.GroupRef)]
+		if self == "" {
+			continue
+		}
+		pool, err := netip.ParsePrefix(strings.TrimSpace(spec.Prefix))
+		if err != nil {
+			continue
+		}
+		pool = pool.Masked()
+		var owned []netip.Prefix
+		for _, member := range spec.Members {
+			if strings.TrimSpace(member.NodeRef) != self {
+				continue
+			}
+			for _, raw := range member.StaticOwnedAddresses {
+				prefix, err := netip.ParsePrefix(strings.TrimSpace(raw))
+				if err != nil {
+					continue
+				}
+				prefix = prefix.Masked()
+				if prefix.Addr().Is4() && prefix.Bits() == 32 && pool.Contains(prefix.Addr()) {
+					owned = append(owned, prefix)
+				}
+			}
+		}
+		if len(owned) != 1 {
+			continue
+		}
+		out = append(out, mobilityPreferredSource{prefix: pool, address: owned[0].Addr().String(), addressPrefix: owned[0].String()})
+	}
+	return out
+}
+
+func mobilityDeliveryMode(spec routerapi.MobilityPoolSpec) string {
+	mode := strings.TrimSpace(spec.DeliveryPolicy.Mode)
+	if mode == "" {
+		return "bgp"
+	}
+	return mode
 }
 
 func normalizeRouteNextHops(values []string) []string {
@@ -1945,6 +2065,10 @@ func fibRoutesSignature(routes []FIBRoute) string {
 		b.WriteString(route.Prefix)
 		b.WriteByte('=')
 		b.WriteString(strings.Join(route.NextHops, ","))
+		if route.PreferredSource != "" {
+			b.WriteString("|src=")
+			b.WriteString(route.PreferredSource)
+		}
 		b.WriteByte(';')
 	}
 	sum := sha256.Sum256([]byte(b.String()))
@@ -1954,11 +2078,17 @@ func fibRoutesSignature(routes []FIBRoute) string {
 func normalizeFIBRouteForSignature(route FIBRoute) FIBRoute {
 	prefix := normalizeRoutePrefix(route.Prefix)
 	nextHops := normalizeRouteNextHops(route.NextHops)
-	return FIBRoute{Prefix: prefix, NextHops: nextHops}
+	return FIBRoute{Prefix: prefix, NextHops: nextHops, PreferredSource: strings.TrimSpace(route.PreferredSource)}
 }
 
 func normalizeFIBSyncResult(result FIBSyncResult) FIBSyncResult {
-	out := FIBSyncResult{Installed: map[string]bool{}, Unsupported: map[string]string{}}
+	out := FIBSyncResult{
+		Installed:                    map[string]bool{},
+		Unsupported:                  map[string]string{},
+		PreferredSource:              map[string]string{},
+		PreferredSourceSkipped:       map[string]bool{},
+		PreferredSourceSkippedReason: map[string]string{},
+	}
 	for prefix, installed := range result.Installed {
 		if normalized := normalizeRoutePrefix(prefix); normalized != "" {
 			out.Installed[normalized] = installed
@@ -1967,6 +2097,21 @@ func normalizeFIBSyncResult(result FIBSyncResult) FIBSyncResult {
 	for prefix, reason := range result.Unsupported {
 		if normalized := normalizeRoutePrefix(prefix); normalized != "" {
 			out.Unsupported[normalized] = reason
+		}
+	}
+	for prefix, source := range result.PreferredSource {
+		if normalized := normalizeRoutePrefix(prefix); normalized != "" && strings.TrimSpace(source) != "" {
+			out.PreferredSource[normalized] = strings.TrimSpace(source)
+		}
+	}
+	for prefix, skipped := range result.PreferredSourceSkipped {
+		if normalized := normalizeRoutePrefix(prefix); normalized != "" {
+			out.PreferredSourceSkipped[normalized] = skipped
+		}
+	}
+	for prefix, reason := range result.PreferredSourceSkippedReason {
+		if normalized := normalizeRoutePrefix(prefix); normalized != "" && strings.TrimSpace(reason) != "" {
+			out.PreferredSourceSkippedReason[normalized] = strings.TrimSpace(reason)
 		}
 	}
 	return out
