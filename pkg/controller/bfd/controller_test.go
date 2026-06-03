@@ -75,6 +75,56 @@ func TestRenderFRRConfigUsesFRRFileSyntaxAndMultihopLocalAddress(t *testing.T) {
 	}
 }
 
+func TestRenderFRRConfigCloudRRMultihopLocalAddress(t *testing.T) {
+	router := cloudRRRouter("10.99.0.3")
+	controller := Controller{Router: router, Store: testStore{}}
+	sessions, byBFD, err := controller.sessions()
+	if err != nil {
+		t.Fatalf("sessions: %v", err)
+	}
+	if len(sessions) != 1 {
+		t.Fatalf("sessions len = %d, want 1; sessions=%#v", len(sessions), sessions)
+	}
+	if len(byBFD["onprem-rr"]) != 1 {
+		t.Fatalf("byBFD[onprem-rr] = %#v, want one session", byBFD["onprem-rr"])
+	}
+	config := RenderFRRConfig(sessions)
+	want := " peer 10.99.0.1 multihop local-address 10.99.0.3\n"
+	if !strings.Contains(config, want) {
+		t.Fatalf("rendered cloud RR config missing %q:\n%s", want, config)
+	}
+}
+
+func TestSessionsRecoverFromBGPPeerBFDReferenceWithoutBFDResource(t *testing.T) {
+	router := cloudRRRouter("10.99.0.4")
+	router.Spec.Resources = router.Spec.Resources[:2]
+	controller := Controller{Router: router, Store: testStore{}}
+	sessions, byBFD, err := controller.sessions()
+	if err != nil {
+		t.Fatalf("sessions: %v", err)
+	}
+	if len(sessions) != 1 || sessions[0].BFDName != "onprem-rr" || sessions[0].Address != "10.99.0.1" || sessions[0].LocalAddr != "10.99.0.4" {
+		t.Fatalf("sessions = %#v, want synthesized onprem-rr session", sessions)
+	}
+	if len(byBFD["onprem-rr"]) != 1 {
+		t.Fatalf("byBFD = %#v, want synthesized BFD bucket", byBFD)
+	}
+}
+
+func TestSessionsRejectMissingBGPPeerReference(t *testing.T) {
+	router := cloudRRRouter("10.99.0.3")
+	bfdRes := router.Spec.Resources[2]
+	spec := bfdRes.Spec.(api.BFDSpec)
+	spec.Peer = "BGPPeer/missing"
+	bfdRes.Spec = spec
+	router.Spec.Resources[2] = bfdRes
+	controller := Controller{Router: router, Store: testStore{}}
+	_, _, err := controller.sessions()
+	if err == nil || !strings.Contains(err.Error(), "missing BGPPeer") {
+		t.Fatalf("sessions err = %v, want missing BGPPeer error", err)
+	}
+}
+
 func TestParseFRRBFDPeersJSON(t *testing.T) {
 	got := ParseFRRBFDPeersJSON([]byte(`{
 		"10.99.0.2": {"status": "up"},
@@ -180,4 +230,35 @@ func bfdMultihopRouter() *api.Router {
 	bfdRes.Spec = spec
 	router.Spec.Resources[2] = bfdRes
 	return router
+}
+
+func cloudRRRouter(routerID string) *api.Router {
+	return &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"},
+			Metadata: api.ObjectMeta{Name: "mobility-bgp"},
+			Spec: api.BGPRouterSpec{
+				ASN:      64577,
+				RouterID: routerID,
+			},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPPeer"},
+			Metadata: api.ObjectMeta{Name: "onprem-rr"},
+			Spec: api.BGPPeerSpec{
+				RouterRef: "BGPRouter/mobility-bgp",
+				PeerASN:   64577,
+				Peers:     []string{"10.99.0.1"},
+				BFD:       "BFD/onprem-rr",
+			},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BFD"},
+			Metadata: api.ObjectMeta{Name: "onprem-rr"},
+			Spec: api.BFDSpec{
+				Peer:    "BGPPeer/onprem-rr",
+				Profile: "fast",
+			},
+		},
+	}}}
 }

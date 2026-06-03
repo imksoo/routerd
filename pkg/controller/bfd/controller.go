@@ -126,6 +126,7 @@ func (c Controller) Reconcile(ctx context.Context) error {
 func (c Controller) sessions() ([]session, map[string][]session, error) {
 	bgpPeers := map[string]api.BGPPeerSpec{}
 	bgpRouters := map[string]api.BGPRouterSpec{}
+	bfdSpecs := map[string]api.BFDSpec{}
 	for _, res := range c.Router.Spec.Resources {
 		if res.APIVersion != api.NetAPIVersion {
 			continue
@@ -143,22 +144,28 @@ func (c Controller) sessions() ([]session, map[string][]session, error) {
 				return nil, nil, err
 			}
 			bgpPeers[res.Metadata.Name] = spec
+		case "BFD":
+			spec, err := res.BFDSpec()
+			if err != nil {
+				return nil, nil, err
+			}
+			bfdSpecs[res.Metadata.Name] = spec
 		}
 	}
 	var out []session
 	byBFD := map[string][]session{}
-	for _, res := range c.Router.Spec.Resources {
-		if res.APIVersion != api.NetAPIVersion || res.Kind != "BFD" {
-			continue
-		}
-		spec, err := res.BFDSpec()
+	seenBFD := map[string]bool{}
+	addSessions := func(name string, spec api.BFDSpec) error {
+		endpoints, err := bfdPeerEndpoints(spec, bgpPeers, bgpRouters)
 		if err != nil {
-			return nil, nil, err
+			return err
 		}
-		endpoints := bfdPeerEndpoints(spec, bgpPeers, bgpRouters)
+		if len(endpoints) == 0 {
+			return fmt.Errorf("BFD/%s resolved no peer endpoints from spec.peer %q", name, spec.Peer)
+		}
 		for _, endpoint := range endpoints {
 			s := session{
-				BFDName:    res.Metadata.Name,
+				BFDName:    name,
 				Address:    endpoint.Address,
 				LocalAddr:  endpoint.LocalAddr,
 				Interface:  strings.TrimSpace(spec.Interface),
@@ -167,7 +174,37 @@ func (c Controller) sessions() ([]session, map[string][]session, error) {
 				Multiplier: bfdMultiplier(spec),
 			}
 			out = append(out, s)
-			byBFD[res.Metadata.Name] = append(byBFD[res.Metadata.Name], s)
+			byBFD[name] = append(byBFD[name], s)
+		}
+		seenBFD[name] = true
+		return nil
+	}
+	for name, spec := range bfdSpecs {
+		if err := addSessions(name, spec); err != nil {
+			return nil, nil, err
+		}
+	}
+	for peerName, peerSpec := range bgpPeers {
+		ref := strings.TrimSpace(peerSpec.BFD)
+		if ref == "" {
+			continue
+		}
+		kind, name, ok := strings.Cut(ref, "/")
+		if !ok || kind != "BFD" {
+			return nil, nil, fmt.Errorf("BGPPeer/%s spec.bfd must reference BFD/<name>, got %q", peerName, peerSpec.BFD)
+		}
+		if seenBFD[name] {
+			continue
+		}
+		spec, ok := bfdSpecs[name]
+		if !ok {
+			spec = api.BFDSpec{Peer: "BGPPeer/" + peerName}
+		}
+		if strings.TrimSpace(spec.Peer) == "" {
+			spec.Peer = "BGPPeer/" + peerName
+		}
+		if err := addSessions(name, spec); err != nil {
+			return nil, nil, err
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool {
@@ -187,37 +224,58 @@ type bfdPeerEndpoint struct {
 	LocalAddr string
 }
 
-func bfdPeerEndpoints(spec api.BFDSpec, peers map[string]api.BGPPeerSpec, routers map[string]api.BGPRouterSpec) []bfdPeerEndpoint {
+func bfdPeerEndpoints(spec api.BFDSpec, peers map[string]api.BGPPeerSpec, routers map[string]api.BGPRouterSpec) ([]bfdPeerEndpoint, error) {
 	peer := strings.TrimSpace(spec.Peer)
 	if kind, name, ok := strings.Cut(peer, "/"); ok && kind == "BGPPeer" {
-		peerSpec := peers[name]
-		localAddr := bgpPeerLocalAddress(peerSpec, routers)
-		return cleanEndpoints(peerSpec.Peers, localAddr)
+		peerSpec, ok := peers[name]
+		if !ok {
+			return nil, fmt.Errorf("BFD spec.peer references missing BGPPeer %q", peer)
+		}
+		localAddr, err := bgpPeerLocalAddress(peerSpec, routers)
+		if err != nil {
+			return nil, fmt.Errorf("BFD spec.peer %q: %w", peer, err)
+		}
+		return cleanEndpoints(peerSpec.Peers, localAddr), nil
 	}
-	return cleanEndpoints([]string{peer}, soleBGPRouterID(routers))
-}
-
-func bgpPeerLocalAddress(peer api.BGPPeerSpec, routers map[string]api.BGPRouterSpec) string {
-	kind, name, ok := strings.Cut(strings.TrimSpace(peer.RouterRef), "/")
-	if !ok || kind != "BGPRouter" {
-		return ""
-	}
-	if addr, err := netip.ParseAddr(strings.TrimSpace(routers[name].RouterID)); err == nil {
-		return addr.String()
-	}
-	return ""
-}
-
-func soleBGPRouterID(routers map[string]api.BGPRouterSpec) string {
-	if len(routers) != 1 {
-		return ""
-	}
-	for _, router := range routers {
-		if addr, err := netip.ParseAddr(strings.TrimSpace(router.RouterID)); err == nil {
-			return addr.String()
+	localAddr := ""
+	if strings.TrimSpace(spec.Interface) == "" {
+		var err error
+		localAddr, err = soleBGPRouterID(routers)
+		if err != nil {
+			return nil, err
 		}
 	}
-	return ""
+	return cleanEndpoints([]string{peer}, localAddr), nil
+}
+
+func bgpPeerLocalAddress(peer api.BGPPeerSpec, routers map[string]api.BGPRouterSpec) (string, error) {
+	kind, name, ok := strings.Cut(strings.TrimSpace(peer.RouterRef), "/")
+	if !ok || kind != "BGPRouter" {
+		return "", fmt.Errorf("BGPPeer spec.routerRef must reference BGPRouter/<name>, got %q", peer.RouterRef)
+	}
+	router, ok := routers[name]
+	if !ok {
+		return "", fmt.Errorf("BGPPeer spec.routerRef references missing BGPRouter %q", peer.RouterRef)
+	}
+	addr, err := netip.ParseAddr(strings.TrimSpace(router.RouterID))
+	if err != nil {
+		return "", fmt.Errorf("%s spec.routerID must be a valid address: %w", peer.RouterRef, err)
+	}
+	return addr.String(), nil
+}
+
+func soleBGPRouterID(routers map[string]api.BGPRouterSpec) (string, error) {
+	if len(routers) != 1 {
+		return "", fmt.Errorf("direct BFD peer requires exactly one BGPRouter for local-address resolution, got %d", len(routers))
+	}
+	for name, router := range routers {
+		addr, err := netip.ParseAddr(strings.TrimSpace(router.RouterID))
+		if err != nil {
+			return "", fmt.Errorf("BGPRouter/%s spec.routerID must be a valid address: %w", name, err)
+		}
+		return addr.String(), nil
+	}
+	return "", fmt.Errorf("direct BFD peer requires a BGPRouter")
 }
 
 func cleanEndpoints(values []string, localAddr string) []bfdPeerEndpoint {
