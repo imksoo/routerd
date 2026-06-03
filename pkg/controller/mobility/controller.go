@@ -163,10 +163,11 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 	}
 	var actionPlans []dynamicconfig.ActionPlan
 	observedSelfIPs, observedSelfIPsOK := c.discoverySelfPrivateIPSet(res.Metadata.Name, spec)
+	forwardingObserved, forwardingEnabled, forwardingObservedAt := c.discoverySelfForwardingState(res.Metadata.Name)
 	if len(desiredTrapAddresses) > 0 && !selfCaptureResolved {
 		actionPlans = nil
 	} else {
-		actionPlans, err = bgpProviderActionPlans(res.Metadata.Name, selfNode, spec, desiredTrapAddresses, previousActionPlans, cloudProviderProfiles(c.Router), actionJournal, observedSelfIPs, observedSelfIPsOK, now)
+		actionPlans, err = bgpProviderActionPlans(res.Metadata.Name, selfNode, spec, desiredTrapAddresses, previousActionPlans, cloudProviderProfiles(c.Router), actionJournal, observedSelfIPs, observedSelfIPsOK, forwardingObserved, forwardingEnabled, forwardingObservedAt, now)
 		if err != nil {
 			return err
 		}
@@ -569,6 +570,40 @@ func (c Controller) discoverySelfPrivateIPSet(poolName string, spec api.Mobility
 	return out, true
 }
 
+func (c Controller) discoverySelfForwardingState(poolName string) (observed bool, enabled bool, observedAt time.Time) {
+	if c.Store == nil {
+		return false, false, time.Time{}
+	}
+	status := c.Store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", poolName)
+	raw, ok := status["discoverySelfForwardingEnabled"]
+	if !ok {
+		return false, false, time.Time{}
+	}
+	enabled, ok = statusBool(raw)
+	if !ok {
+		return false, false, time.Time{}
+	}
+	if parsed, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(fmt.Sprint(status["discoveryLastScanAt"]))); err == nil {
+		observedAt = parsed.UTC()
+	}
+	return true, enabled, observedAt
+}
+
+func statusBool(value any) (bool, bool) {
+	switch typed := value.(type) {
+	case bool:
+		return typed, true
+	case string:
+		switch strings.ToLower(strings.TrimSpace(typed)) {
+		case "true":
+			return true, true
+		case "false":
+			return false, true
+		}
+	}
+	return false, false
+}
+
 func decodeActionRecordMap(raw string) map[string]string {
 	if strings.TrimSpace(raw) == "" {
 		return nil
@@ -580,7 +615,7 @@ func decodeActionRecordMap(raw string) map[string]string {
 	return out
 }
 
-func bgpProviderActionPlans(poolName, selfNode string, spec api.MobilityPoolSpec, desiredTrapAddresses map[string]bgpTrapCandidate, previousPlans []dynamicconfig.ActionPlan, profiles map[string]api.CloudProviderProfileSpec, actionJournal []routerstate.ActionExecutionRecord, observedSelfIPs map[string]bool, observedSelfIPsOK bool, now time.Time) ([]dynamicconfig.ActionPlan, error) {
+func bgpProviderActionPlans(poolName, selfNode string, spec api.MobilityPoolSpec, desiredTrapAddresses map[string]bgpTrapCandidate, previousPlans []dynamicconfig.ActionPlan, profiles map[string]api.CloudProviderProfileSpec, actionJournal []routerstate.ActionExecutionRecord, observedSelfIPs map[string]bool, observedSelfIPsOK bool, forwardingObserved, forwardingEnabled bool, forwardingObservedAt time.Time, now time.Time) ([]dynamicconfig.ActionPlan, error) {
 	members := plannerMembers(spec.Members)
 	self, ok := members[strings.TrimSpace(selfNode)]
 	if !ok {
@@ -612,6 +647,7 @@ func bgpProviderActionPlans(poolName, selfNode string, spec api.MobilityPoolSpec
 			}
 			stampBGPPathFenceActionPlans(generated, address, candidate.PathSig, self.NodeRef, candidate.LastSeenAt)
 			stampBGPProviderTransitionFence(generated, self, address, actionJournal, observedSelfIPs, observedSelfIPsOK)
+			stampForwardingDriftFence(generated, forwardingObserved, forwardingEnabled, forwardingObservedAt)
 			plans = append(plans, generated...)
 		}
 	}
@@ -1226,6 +1262,27 @@ func stampBGPProviderTransitionFence(plans []dynamicconfig.ActionPlan, self memb
 		}
 		plan.Parameters[bgpTrapTransitionParam] = token
 		plan.IdempotencyKey += ":transition:" + safeName(token)
+	}
+}
+
+func stampForwardingDriftFence(plans []dynamicconfig.ActionPlan, observed, enabled bool, observedAt time.Time) {
+	if !observed || enabled {
+		return
+	}
+	token := "observed-disabled"
+	if !observedAt.IsZero() {
+		token += "-" + observedAt.UTC().Format("20060102T150405.000000000Z")
+	}
+	for i := range plans {
+		plan := &plans[i]
+		if plan.Action != "ensure-forwarding-enabled" || strings.TrimSpace(plan.IdempotencyKey) == "" {
+			continue
+		}
+		if plan.Parameters == nil {
+			plan.Parameters = map[string]string{}
+		}
+		plan.Parameters["mobilityForwardingDrift"] = token
+		plan.IdempotencyKey += ":forwarding-drift:" + safeName(token)
 	}
 }
 

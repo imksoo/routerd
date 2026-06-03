@@ -17,9 +17,10 @@ type inventoryResult struct {
 	Status struct {
 		Status string `json:"status"`
 		Self   struct {
-			NICRef     string   `json:"nicRef"`
-			SubnetRef  string   `json:"subnetRef"`
-			PrivateIPs []string `json:"privateIPs"`
+			NICRef            string   `json:"nicRef"`
+			SubnetRef         string   `json:"subnetRef"`
+			PrivateIPs        []string `json:"privateIPs"`
+			ForwardingEnabled *bool    `json:"forwardingEnabled"`
 		} `json:"self"`
 		IPs []struct {
 			Address   string            `json:"address"`
@@ -37,7 +38,7 @@ func TestProviderPrivateIPInventoryPluginAWS(t *testing.T) {
 	writeExecutable(t, filepath.Join(bin, "aws"), `#!/bin/sh
 case "$*" in
   *"--network-interface-ids eni-router"*)
-    printf '%s\n' '{"NetworkInterfaces":[{"NetworkInterfaceId":"eni-router","SubnetId":"subnet-a"}]}'
+    printf '%s\n' '{"NetworkInterfaces":[{"NetworkInterfaceId":"eni-router","SubnetId":"subnet-a","SourceDestCheck":false}]}'
     ;;
   *"Name=subnet-id,Values=subnet-a"*)
     printf '%s\n' '{"NetworkInterfaces":[{"NetworkInterfaceId":"eni-router","SubnetId":"subnet-a","PrivateIpAddresses":[{"PrivateIpAddress":"10.77.60.21","Primary":true}],"TagSet":[{"Key":"role","Value":"router"}]},{"NetworkInterfaceId":"eni-client","SubnetId":"subnet-a","PrivateIpAddresses":[{"PrivateIpAddress":"10.77.60.11","Primary":false}],"TagSet":[{"Key":"role","Value":"client"}]}]}'
@@ -55,6 +56,9 @@ esac
 	if res.Status.Self.NICRef != "eni-router" || res.Status.Self.SubnetRef != "subnet-a" {
 		t.Fatalf("self = %+v, want eni-router/subnet-a", res.Status.Self)
 	}
+	if res.Status.Self.ForwardingEnabled == nil || !*res.Status.Self.ForwardingEnabled {
+		t.Fatalf("self.forwardingEnabled = %#v, want true", res.Status.Self.ForwardingEnabled)
+	}
 	assertIP(t, res, "10.77.60.11", "eni-client", "subnet-a")
 }
 
@@ -64,7 +68,7 @@ func TestProviderPrivateIPInventoryPluginAWSResolvesSelfFromLocalIP(t *testing.T
 	writeExecutable(t, filepath.Join(bin, "aws"), `#!/bin/sh
 case "$*" in
   *"Name=addresses.private-ip-address,Values=10.77.60.21"*)
-    printf '%s\n' '{"NetworkInterfaces":[{"NetworkInterfaceId":"eni-router","SubnetId":"subnet-a","PrivateIpAddresses":[{"PrivateIpAddress":"10.77.60.21","Primary":true}]}]}'
+    printf '%s\n' '{"NetworkInterfaces":[{"NetworkInterfaceId":"eni-router","SubnetId":"subnet-a","SourceDestCheck":true,"PrivateIpAddresses":[{"PrivateIpAddress":"10.77.60.21","Primary":true}]}]}'
     ;;
   *"Name=subnet-id,Values=subnet-a"*)
     printf '%s\n' '{"NetworkInterfaces":[{"NetworkInterfaceId":"eni-router","SubnetId":"subnet-a","PrivateIpAddresses":[{"PrivateIpAddress":"10.77.60.21","Primary":true}]},{"NetworkInterfaceId":"eni-client","SubnetId":"subnet-a","PrivateIpAddresses":[{"PrivateIpAddress":"10.77.60.11","Primary":false}]}]}'
@@ -82,6 +86,9 @@ esac
 	if res.Status.Self.NICRef != "eni-router" || res.Status.Self.SubnetRef != "subnet-a" {
 		t.Fatalf("self = %+v, want resolved eni-router/subnet-a", res.Status.Self)
 	}
+	if res.Status.Self.ForwardingEnabled == nil || *res.Status.Self.ForwardingEnabled {
+		t.Fatalf("self.forwardingEnabled = %#v, want false", res.Status.Self.ForwardingEnabled)
+	}
 	assertIP(t, res, "10.77.60.11", "eni-client", "subnet-a")
 }
 
@@ -91,7 +98,7 @@ func TestProviderPrivateIPInventoryPluginAzure(t *testing.T) {
 	writeExecutable(t, filepath.Join(bin, "az"), `#!/bin/sh
 case "$*" in
   *"network nic show --ids /nic/router"*)
-    printf '%s\n' '{"id":"/nic/router","resourceGroup":"rg-demo","ipConfigurations":[{"subnet":{"id":"/subnets/demo"}}]}'
+    printf '%s\n' '{"id":"/nic/router","resourceGroup":"rg-demo","enableIPForwarding":true,"ipConfigurations":[{"subnet":{"id":"/subnets/demo"}}]}'
     ;;
   *"network nic list --resource-group rg-demo"*)
     printf '%s\n' '[{"id":"/nic/router","tags":{"role":"router"},"ipConfigurations":[{"privateIPAddress":"10.77.60.22","primary":true,"subnet":{"id":"/subnets/demo"}}]},{"id":"/nic/client","tags":{"role":"client"},"ipConfigurations":[{"privateIPAddress":"10.77.60.12","primary":false,"subnet":{"id":"/subnets/demo"}}]}]'
@@ -109,6 +116,9 @@ esac
 	if res.Status.Self.NICRef != "/nic/router" || res.Status.Self.SubnetRef != "/subnets/demo" {
 		t.Fatalf("self = %+v, want /nic/router//subnets/demo", res.Status.Self)
 	}
+	if res.Status.Self.ForwardingEnabled == nil || !*res.Status.Self.ForwardingEnabled {
+		t.Fatalf("self.forwardingEnabled = %#v, want true", res.Status.Self.ForwardingEnabled)
+	}
 	assertIP(t, res, "10.77.60.12", "/nic/client", "/subnets/demo")
 }
 
@@ -118,7 +128,7 @@ func TestProviderPrivateIPInventoryPluginOCI(t *testing.T) {
 	writeExecutable(t, filepath.Join(bin, "oci"), `#!/bin/sh
 case "$*" in
   *"network vnic get --vnic-id vnic-router"*)
-    printf '%s\n' '{"data":{"id":"vnic-router","subnet-id":"subnet-oci"}}'
+    printf '%s\n' '{"data":{"id":"vnic-router","subnet-id":"subnet-oci","skip-source-dest-check":true}}'
     ;;
   *"network private-ip list --subnet-id subnet-oci"*)
     printf '%s\n' '{"data":[{"ip-address":"10.77.60.23","vnic-id":"vnic-router","subnet-id":"subnet-oci","is-primary":true},{"ip-address":"10.77.60.13","vnic-id":"vnic-client","subnet-id":"subnet-oci","is-primary":false,"freeform-tags":{"role":"client"}}]}'
@@ -135,6 +145,9 @@ esac
 	}
 	if res.Status.Self.NICRef != "vnic-router" || res.Status.Self.SubnetRef != "subnet-oci" {
 		t.Fatalf("self = %+v, want vnic-router/subnet-oci", res.Status.Self)
+	}
+	if res.Status.Self.ForwardingEnabled == nil || !*res.Status.Self.ForwardingEnabled {
+		t.Fatalf("self.forwardingEnabled = %#v, want true", res.Status.Self.ForwardingEnabled)
 	}
 	assertIP(t, res, "10.77.60.13", "vnic-client", "subnet-oci")
 }

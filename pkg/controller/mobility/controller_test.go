@@ -14,6 +14,7 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	bgpstate "github.com/imksoo/routerd/pkg/bgp"
 	"github.com/imksoo/routerd/pkg/bgpdaemon"
+	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -400,6 +401,45 @@ func TestControllerBGPModeProviderTrapUsesRemoteInstalledNextHops(t *testing.T) 
 	}
 	if findActionPlanByAddress(plans, "assign-secondary-ip", "10.88.60.11/32") != nil {
 		t.Fatalf("plans = %#v, want no same-site/self-owned trap assign", plans)
+	}
+}
+
+func TestControllerBGPModeReappliesForwardingWhenProviderObservedDisabled(t *testing.T) {
+	now := time.Date(2026, 6, 3, 14, 20, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	saveBGPInstalledNextHops(t, store, map[string][]string{
+		"10.88.60.10/32": {"10.99.0.1"},
+		"10.88.60.12/32": {"10.99.0.3"},
+	})
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"discoverySelfNICRef":            "eni-a",
+		"discoverySelfSubnetRef":         "subnet-a",
+		"discoverySelfPrivateIPs":        []string{"10.88.60.11"},
+		"discoverySelfForwardingEnabled": false,
+		"discoveryLastScanAt":            now.Format(time.RFC3339Nano),
+	}); err != nil {
+		t.Fatalf("SaveObjectStatus: %v", err)
+	}
+	bgp := &fakeBGPPaths{}
+	controller := Controller{Router: routerWithBGPRouter(planningRouterForNode("aws-router-a", spec)), Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	plans := decodeActionPlans(t, latestPart(t, store, DynamicSource("cloudedge", "aws-router-a")).ActionPlansJSON)
+	var forwarding *dynamicconfig.ActionPlan
+	for i := range plans {
+		if plans[i].Action == "ensure-forwarding-enabled" {
+			forwarding = &plans[i]
+			break
+		}
+	}
+	if forwarding == nil {
+		t.Fatalf("plans = %#v, want ensure-forwarding-enabled", plans)
+	}
+	if !strings.Contains(forwarding.IdempotencyKey, ":forwarding-drift:") || forwarding.Parameters["mobilityForwardingDrift"] == "" {
+		t.Fatalf("forwarding plan = %#v, want provider-observed drift fence", forwarding)
 	}
 }
 

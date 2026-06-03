@@ -43,9 +43,10 @@ func TestDiscoveryControllerEmitsObservedEventsForActiveCloudMember(t *testing.T
 		Status: providerinventory.ObservePrivateIPsResultStatus{
 			Status: providerinventory.ResultSucceeded,
 			Self: &providerinventory.PrivateIPSelf{
-				NICRef:     "plugin-router-nic",
-				SubnetRef:  "plugin-subnet",
-				PrivateIPs: []string{"10.88.60.21"},
+				NICRef:            "plugin-router-nic",
+				SubnetRef:         "plugin-subnet",
+				PrivateIPs:        []string{"10.88.60.21"},
+				ForwardingEnabled: boolPtr(false),
 			},
 			IPs: []providerinventory.PrivateIPRecord{
 				{Address: "10.88.60.11", NICRef: "client-nic", SubnetRef: "subnet-a", Tags: map[string]string{"cloudedge-mobility": "true"}},
@@ -88,6 +89,9 @@ func TestDiscoveryControllerEmitsObservedEventsForActiveCloudMember(t *testing.T
 	}
 	if status["discoverySelfNICRef"] != "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic-a" || status["discoverySelfSubnetRef"] != "plugin-subnet" {
 		t.Fatalf("self status = %#v", status)
+	}
+	if status["discoverySelfForwardingEnabled"] != false {
+		t.Fatalf("forwarding status = %#v, want false", status)
 	}
 }
 

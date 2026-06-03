@@ -166,6 +166,7 @@ def aws_inventory(spec):
     self_nic = spec.get("selfNicRef", "").strip()
     subnet = (spec.get("subnetRef") or "").strip()
     self_private_ips = []
+    self_forwarding_enabled = None
     if not self_nic:
         local_ips = local_ipv4s() or [ip for ip in [aws_imds_ipv4()] if ip]
         if not local_ips:
@@ -180,13 +181,17 @@ def aws_inventory(spec):
         self_nic = interfaces[0].get("NetworkInterfaceId", "")
         subnet = subnet or interfaces[0].get("SubnetId", "")
         self_private_ips = [rec.get("PrivateIpAddress", "") for rec in interfaces[0].get("PrivateIpAddresses") or [] if rec.get("PrivateIpAddress")]
-    if not subnet or not self_private_ips:
+        if "SourceDestCheck" in interfaces[0]:
+            self_forwarding_enabled = not bool(interfaces[0].get("SourceDestCheck"))
+    if not subnet or not self_private_ips or self_forwarding_enabled is None:
         self_doc = aws_cli(region, ["ec2", "describe-network-interfaces", "--network-interface-ids", self_nic])
         interfaces = self_doc.get("NetworkInterfaces") or []
         if not interfaces:
             raise ValueError("AWS self network interface was not found")
         subnet = subnet or interfaces[0].get("SubnetId", "")
         self_private_ips = self_private_ips or [rec.get("PrivateIpAddress", "") for rec in interfaces[0].get("PrivateIpAddresses") or [] if rec.get("PrivateIpAddress")]
+        if "SourceDestCheck" in interfaces[0]:
+            self_forwarding_enabled = not bool(interfaces[0].get("SourceDestCheck"))
     if not subnet:
         raise ValueError("AWS subnetRef could not be inferred from self NIC")
     doc = aws_cli(region, ["ec2", "describe-network-interfaces", "--filters", "Name=subnet-id,Values=" + subnet])
@@ -206,7 +211,10 @@ def aws_inventory(spec):
                 "primary": bool(rec.get("Primary")),
                 "tags": tags,
             })
-    return {"nicRef": self_nic, "subnetRef": subnet, "privateIPs": sorted(set(self_private_ips))}, ips
+    self_info = {"nicRef": self_nic, "subnetRef": subnet, "privateIPs": sorted(set(self_private_ips))}
+    if self_forwarding_enabled is not None:
+        self_info["forwardingEnabled"] = bool(self_forwarding_enabled)
+    return self_info, ips
 
 
 def azure_inventory(spec):
@@ -222,6 +230,7 @@ def azure_inventory(spec):
             raise ValueError("Azure resourceGroup is required for segment inventory")
     nics = az_cli(["network", "nic", "list", "--resource-group", resource_group])
     self_doc = {}
+    self_forwarding_enabled = None
     local_ips = local_ipv4s() or azure_imds_ipv4s()
     if self_nic:
         self_doc = az_cli(["network", "nic", "show", "--ids", self_nic])
@@ -237,6 +246,8 @@ def azure_inventory(spec):
                 break
     if not self_nic:
         raise ValueError("Azure self NIC could not be resolved from local IPs")
+    if "enableIPForwarding" in self_doc:
+        self_forwarding_enabled = bool(self_doc.get("enableIPForwarding"))
     if not subnet:
         configs = self_doc.get("ipConfigurations") or []
         if configs:
@@ -266,7 +277,10 @@ def azure_inventory(spec):
                 "primary": bool(cfg.get("primary")),
                 "tags": tags,
             })
-    return {"nicRef": self_nic, "subnetRef": subnet, "privateIPs": sorted(set(self_private_ips))}, ips
+    self_info = {"nicRef": self_nic, "subnetRef": subnet, "privateIPs": sorted(set(self_private_ips))}
+    if self_forwarding_enabled is not None:
+        self_info["forwardingEnabled"] = bool(self_forwarding_enabled)
+    return self_info, ips
 
 
 def flatten_oci_tags(rec):
@@ -290,9 +304,10 @@ def oci_inventory(spec):
     if not self_nic:
         raise ValueError("OCI self VNIC could not be resolved from IMDS")
     self_private_ips = []
+    self_doc = oci_cli(region, ["network", "vnic", "get", "--vnic-id", self_nic])
+    self_data = self_doc.get("data") or {}
     if not subnet:
-        self_doc = oci_cli(region, ["network", "vnic", "get", "--vnic-id", self_nic])
-        subnet = ((self_doc.get("data") or {}).get("subnet-id") or "")
+        subnet = (self_data.get("subnet-id") or "")
     if not subnet:
         raise ValueError("OCI subnetRef could not be inferred from self VNIC")
     doc = oci_cli(region, ["network", "private-ip", "list", "--subnet-id", subnet, "--all"])
@@ -310,7 +325,10 @@ def oci_inventory(spec):
             "primary": bool(rec.get("is-primary")),
             "tags": flatten_oci_tags(rec),
         })
-    return {"nicRef": self_nic, "subnetRef": subnet, "privateIPs": sorted(set(self_private_ips))}, ips
+    self_info = {"nicRef": self_nic, "subnetRef": subnet, "privateIPs": sorted(set(self_private_ips))}
+    if "skip-source-dest-check" in self_data:
+        self_info["forwardingEnabled"] = bool(self_data.get("skip-source-dest-check"))
+    return self_info, ips
 
 
 def main():

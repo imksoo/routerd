@@ -155,19 +155,17 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 		if err := c.expireStaleProviderDiscoveryEvents(poolName, spec, self.NodeRef, prefix, nil, now, discoveryLeaseTTL(discovery, spec)); err != nil {
 			return err
 		}
-		c.saveDiscoveryStatus(poolName, map[string]any{
-			"discoveryPhase":          "Standby",
-			"discoveryReason":         placement.Reason,
-			"discoveryProvider":       profile.Provider,
-			"discoveryProviderRef":    profileRef,
-			"discoveryPlugin":         pluginName,
-			"discoverySelfNICRef":     selfInventory.NICRef,
-			"discoverySelfSubnetRef":  selfInventory.SubnetRef,
-			"discoverySelfPrivateIPs": append([]string(nil), selfInventory.PrivateIPs...),
-			"discoveryObserved":       0,
-			"discoveryLastScanAt":     now.Format(time.RFC3339Nano),
-			"discoveryNextScanAt":     now.Add(interval).Format(time.RFC3339Nano),
+		status := mergeAnyMaps(discoverySelfInventoryStatus(selfInventory), map[string]any{
+			"discoveryPhase":       "Standby",
+			"discoveryReason":      placement.Reason,
+			"discoveryProvider":    profile.Provider,
+			"discoveryProviderRef": profileRef,
+			"discoveryPlugin":      pluginName,
+			"discoveryObserved":    0,
+			"discoveryLastScanAt":  now.Format(time.RFC3339Nano),
+			"discoveryNextScanAt":  now.Add(interval).Format(time.RFC3339Nano),
 		})
+		c.saveDiscoveryStatus(poolName, status)
 		return nil
 	}
 	if selfInventory.NICRef != "" {
@@ -226,15 +224,12 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 	if err := c.expireStaleProviderDiscoveryEvents(poolName, spec, self.NodeRef, prefix, observedThisScan, now, ttl); err != nil {
 		return err
 	}
-	c.saveDiscoveryStatus(poolName, map[string]any{
+	status := mergeAnyMaps(discoverySelfInventoryStatus(selfInventory), map[string]any{
 		"discoveryPhase":             "Observed",
 		"discoveryReason":            "",
 		"discoveryProvider":          profile.Provider,
 		"discoveryProviderRef":       profileRef,
 		"discoveryPlugin":            pluginName,
-		"discoverySelfNICRef":        selfInventory.NICRef,
-		"discoverySelfSubnetRef":     selfInventory.SubnetRef,
-		"discoverySelfPrivateIPs":    append([]string(nil), selfInventory.PrivateIPs...),
 		"discoveryObserved":          counters.Observed,
 		"discoveryExcluded":          counters.Excluded(),
 		"discoveryExcludedPrimary":   counters.Primary,
@@ -248,6 +243,7 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 		"discoveryLastScanAt":        now.Format(time.RFC3339Nano),
 		"discoveryNextScanAt":        now.Add(interval).Format(time.RFC3339Nano),
 	})
+	c.saveDiscoveryStatus(poolName, status)
 	return nil
 }
 
@@ -324,9 +320,10 @@ func (c discoveryExclusionCounters) Excluded() int {
 }
 
 type discoverySelfInventory struct {
-	NICRef     string
-	SubnetRef  string
-	PrivateIPs []string
+	NICRef            string
+	SubnetRef         string
+	PrivateIPs        []string
+	ForwardingEnabled *bool
 }
 
 func resolvedDiscoverySelfInventory(self memberPlanInfo, discovery api.MobilityOwnershipDiscovery, pluginSelf *providerinventory.PrivateIPSelf) discoverySelfInventory {
@@ -335,12 +332,36 @@ func resolvedDiscoverySelfInventory(self memberPlanInfo, discovery api.MobilityO
 		out.NICRef = strings.TrimSpace(pluginSelf.NICRef)
 		out.SubnetRef = strings.TrimSpace(pluginSelf.SubnetRef)
 		out.PrivateIPs = cleanStrings(pluginSelf.PrivateIPs)
+		out.ForwardingEnabled = pluginSelf.ForwardingEnabled
 	}
 	if explicit := strings.TrimSpace(self.Capture.NICRef); explicit != "" {
 		out.NICRef = explicit
 	}
 	if explicit := strings.TrimSpace(discovery.SubnetRef); explicit != "" {
 		out.SubnetRef = explicit
+	}
+	return out
+}
+
+func discoverySelfInventoryStatus(self discoverySelfInventory) map[string]any {
+	status := map[string]any{
+		"discoverySelfNICRef":     self.NICRef,
+		"discoverySelfSubnetRef":  self.SubnetRef,
+		"discoverySelfPrivateIPs": append([]string(nil), self.PrivateIPs...),
+	}
+	if self.ForwardingEnabled != nil {
+		status["discoverySelfForwardingEnabled"] = *self.ForwardingEnabled
+	}
+	return status
+}
+
+func mergeAnyMaps(a, b map[string]any) map[string]any {
+	out := map[string]any{}
+	for k, v := range a {
+		out[k] = v
+	}
+	for k, v := range b {
+		out[k] = v
 	}
 	return out
 }
