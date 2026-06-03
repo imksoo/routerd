@@ -69,12 +69,13 @@ router_scp() {
 }
 
 render_cloud_config() {
-  local template=$1 out=$2 router_name=$3 self_node=$4 self_ip=$5 same_site_peer_node=$6 same_site_peer_ip=$7
+  local template=$1 out=$2 router_name=$3 self_node=$4 self_ip=$5 same_site_peer_node=$6 same_site_peer_ip=$7 self_nic_ref=${8:-}
   DEMO_ROUTER_NAME=$router_name \
     DEMO_SELF_NODE=$self_node \
     DEMO_SELF_IP=$self_ip \
     DEMO_SAMESITE_PEER_NODE=$same_site_peer_node \
     DEMO_SAMESITE_PEER_IP=$same_site_peer_ip \
+    DEMO_SELF_NIC_REF=$self_nic_ref \
     envsubst < "$template" > "$out"
 }
 
@@ -90,9 +91,9 @@ render_configs() {
   render_cloud_config "$ROOT/azure.yaml" "$WORKDIR/azure-b.yaml" \
     cloudedge-mobility-azure-b-demo azure-router-b 10.99.0.6 azure-router 10.99.0.3
   render_cloud_config "$ROOT/oci.yaml" "$WORKDIR/oci.yaml" \
-    cloudedge-mobility-oci-demo oci-router 10.99.0.4 oci-router-b 10.99.0.7
+    cloudedge-mobility-oci-demo oci-router 10.99.0.4 oci-router-b 10.99.0.7 "${OCI_ROUTER_VNIC_REF:-}"
   render_cloud_config "$ROOT/oci.yaml" "$WORKDIR/oci-b.yaml" \
-    cloudedge-mobility-oci-b-demo oci-router-b 10.99.0.7 oci-router 10.99.0.4
+    cloudedge-mobility-oci-b-demo oci-router-b 10.99.0.7 oci-router 10.99.0.4 "${OCI_ROUTER_B_VNIC_REF:-}"
 
   cp "$WORKDIR/aws-a.yaml" "$WORKDIR/aws-a-drain.yaml"
   cp "$WORKDIR/onprem.yaml" "$WORKDIR/onprem-drain.yaml"

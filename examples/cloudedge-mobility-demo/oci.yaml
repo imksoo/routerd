@@ -271,4 +271,5 @@ spec:
           OCI_PROFILE: "${OCI_INVENTORY_PROFILE}"
           OCI_REGION: "${OCI_REGION}"
           OCI_AUTH_MODE: "${OCI_INVENTORY_AUTH_MODE}"
+          ROUTERD_PROVIDER_INVENTORY_SELF_NIC_REF: "${DEMO_SELF_NIC_REF}"
         capabilities: [observe.providerPrivateIPs]

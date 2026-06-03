@@ -300,6 +300,9 @@ def oci_inventory(spec):
     self_nic = spec.get("selfNicRef", "").strip()
     subnet = (spec.get("subnetRef") or "").strip()
     if not self_nic:
+        self_nic = (os.environ.get("ROUTERD_PROVIDER_INVENTORY_SELF_NIC_REF", "").strip()
+                    or os.environ.get("OCI_SELF_VNIC_REF", "").strip())
+    if not self_nic:
         self_nic = oci_imds_vnic_id()
     if not self_nic:
         raise ValueError("OCI self VNIC could not be resolved from IMDS")

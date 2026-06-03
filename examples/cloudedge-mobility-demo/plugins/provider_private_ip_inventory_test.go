@@ -152,6 +152,36 @@ esac
 	assertIP(t, res, "10.77.60.13", "vnic-client", "subnet-oci")
 }
 
+func TestProviderPrivateIPInventoryPluginOCIResolvesSelfFromEnv(t *testing.T) {
+	requirePython(t)
+	bin := fakeBinDir(t)
+	writeExecutable(t, filepath.Join(bin, "oci"), `#!/bin/sh
+case "$*" in
+  *"network vnic get --vnic-id vnic-router-b"*)
+    printf '%s\n' '{"data":{"id":"vnic-router-b","subnet-id":"subnet-oci","skip-source-dest-check":false}}'
+    ;;
+  *"network private-ip list --subnet-id subnet-oci"*)
+    printf '%s\n' '{"data":[{"ip-address":"10.77.60.5","vnic-id":"vnic-router-b","subnet-id":"subnet-oci","is-primary":true},{"ip-address":"10.77.60.13","vnic-id":"vnic-client","subnet-id":"subnet-oci","is-primary":false}]}'
+    ;;
+  *)
+    echo "unexpected oci args: $*" >&2
+    exit 2
+    ;;
+esac
+`)
+	res := runInventoryPluginWithEnv(t, bin, `{"spec":{"provider":"oci","target":{"region":"ap-tokyo-1"}}}`, []string{"ROUTERD_PROVIDER_INVENTORY_SELF_NIC_REF=vnic-router-b"})
+	if res.Status.Status != "succeeded" {
+		t.Fatalf("status = %q error=%q", res.Status.Status, res.Status.Error)
+	}
+	if res.Status.Self.NICRef != "vnic-router-b" || res.Status.Self.SubnetRef != "subnet-oci" {
+		t.Fatalf("self = %+v, want env-resolved vnic-router-b/subnet-oci", res.Status.Self)
+	}
+	if res.Status.Self.ForwardingEnabled == nil || *res.Status.Self.ForwardingEnabled {
+		t.Fatalf("self.forwardingEnabled = %#v, want false", res.Status.Self.ForwardingEnabled)
+	}
+	assertIP(t, res, "10.77.60.13", "vnic-client", "subnet-oci")
+}
+
 func runInventoryPlugin(t *testing.T, fakeBin, stdin string) inventoryResult {
 	t.Helper()
 	return runInventoryPluginWithEnv(t, fakeBin, stdin, nil)
