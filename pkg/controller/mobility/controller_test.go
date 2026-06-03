@@ -402,6 +402,89 @@ func TestControllerBGPModeProviderTrapUsesRemoteInstalledNextHops(t *testing.T) 
 	}
 }
 
+func TestControllerBGPModeStandbyDefersTrapWhenActiveIdentityPathAlive(t *testing.T) {
+	now := time.Date(2026, 6, 2, 10, 0, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	recordEvent(t, store, routerstate.EventRecord{
+		ID:         "evt-aws-a",
+		Group:      "cloudedge",
+		SourceNode: "aws-router-a",
+		Type:       ObservedEventType,
+		Subject:    "10.88.60.11/32",
+		ObservedAt: now.Add(-time.Second),
+		ExpiresAt:  now.Add(time.Hour),
+	})
+	saveBGPStatus(t, store, map[string][]string{
+		"10.88.60.10/32": {"10.99.0.1"},
+		"10.88.60.11/32": {"10.99.0.2", "10.99.0.5"},
+		"10.88.60.12/32": {"10.99.0.3"},
+		"10.88.60.13/32": {"10.99.0.4"},
+	}, []map[string]any{
+		bgpStatusPrefix("10.88.60.11/32", "10.99.0.2", bgpMobilityCommunityOwner, bgpMobilityCommunityRoleCloud, bgpMobilityCommunitySourceObserved),
+		bgpStatusPrefix("10.88.60.11/32", "10.99.0.5", bgpMobilityCommunityOwner, bgpMobilityCommunityRoleCloud, bgpMobilityCommunitySourceObserved),
+	})
+	bgp := &fakeBGPPaths{}
+	router := routerWithBGPRouter(routerWithBGPNodeIdentities(planningRouterForNode("aws-router-b", spec)))
+	controller := Controller{Router: router, Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	plans := decodeActionPlans(t, latestPart(t, store, DynamicSource("cloudedge", "aws-router-b")).ActionPlansJSON)
+	if findActionPlanByAddress(plans, "assign-secondary-ip", "10.88.60.10/32") != nil ||
+		findActionPlanByAddress(plans, "assign-secondary-ip", "10.88.60.12/32") != nil ||
+		findActionPlanByAddress(plans, "assign-secondary-ip", "10.88.60.13/32") != nil {
+		t.Fatalf("standby plans = %#v, want no provider traps while active identity next-hop is alive", plans)
+	}
+}
+
+func TestControllerBGPModeStandbySeizesTrapWhenActiveIdentityWithdrawn(t *testing.T) {
+	now := time.Date(2026, 6, 2, 10, 0, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	recordEvent(t, store, routerstate.EventRecord{
+		ID:         "evt-aws-a",
+		Group:      "cloudedge",
+		SourceNode: "aws-router-a",
+		Type:       ObservedEventType,
+		Subject:    "10.88.60.11/32",
+		ObservedAt: now.Add(-time.Second),
+		ExpiresAt:  now.Add(time.Hour),
+	})
+	saveBGPStatus(t, store, map[string][]string{
+		"10.88.60.10/32": {"10.99.0.1"},
+		"10.88.60.11/32": {"10.99.0.5"},
+		"10.88.60.12/32": {"10.99.0.3"},
+		"10.88.60.13/32": {"10.99.0.4"},
+	}, []map[string]any{
+		bgpStatusPrefix("10.88.60.11/32", "10.99.0.5", bgpMobilityCommunityOwner, bgpMobilityCommunityRoleCloud, bgpMobilityCommunitySourceObserved),
+	})
+	bgp := &fakeBGPPaths{}
+	router := routerWithBGPRouter(routerWithBGPNodeIdentities(planningRouterForNode("aws-router-b", spec)))
+	controller := Controller{Router: router, Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	plans := decodeActionPlans(t, latestPart(t, store, DynamicSource("cloudedge", "aws-router-b")).ActionPlansJSON)
+	for _, address := range []string{"10.88.60.10/32", "10.88.60.12/32", "10.88.60.13/32"} {
+		assign := findActionPlanByAddress(plans, "assign-secondary-ip", address)
+		if assign == nil {
+			t.Fatalf("plans = %#v, want standby seize assign for %s", plans, address)
+		}
+		if assign.Parameters["allowReassignment"] != "true" {
+			t.Fatalf("assign %s parameters = %#v, want allowReassignment for liveness-driven seize", address, assign.Parameters)
+		}
+		if assign.Parameters[captureParamHolder] != "aws-router-b" || assign.Parameters[bgpPathSigParam] == "" {
+			t.Fatalf("assign %s parameters = %#v, want path-fenced holder aws-router-b", address, assign.Parameters)
+		}
+	}
+	if findActionPlanByAddress(plans, "assign-secondary-ip", "10.88.60.11/32") != nil {
+		t.Fatalf("plans = %#v, want no same-site self-owned trap despite standby .11 path", plans)
+	}
+}
+
 func TestControllerBGPModeRestoreKeepsOwnerPreferredOverStandby(t *testing.T) {
 	now := time.Date(2026, 6, 2, 10, 0, 0, 0, time.UTC)
 	store := testStore(t, now)

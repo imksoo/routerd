@@ -27,6 +27,7 @@ type PlacementDecision struct {
 	Active     bool
 	ActiveNode string
 	Reason     string
+	Seize      bool
 }
 
 func (d PlacementDecision) NoCandidate() bool {

@@ -216,6 +216,49 @@ func routerWithBGPRouter(router *api.Router) *api.Router {
 	return &cp
 }
 
+func routerWithBGPNodeIdentities(router *api.Router) *api.Router {
+	cp := *router
+	resources := append([]api.Resource(nil), router.Spec.Resources...)
+	for i := range resources {
+		if resources[i].APIVersion != api.FederationAPIVersion || resources[i].Kind != "EventGroup" {
+			continue
+		}
+		spec, err := resources[i].EventGroupSpec()
+		if err != nil {
+			continue
+		}
+		switch spec.NodeName {
+		case "aws-router-a":
+			spec.Listen.Address = "10.99.0.2"
+		case "aws-router-b":
+			spec.Listen.Address = "10.99.0.5"
+		}
+		resources[i].Spec = spec
+	}
+	resources = append(resources,
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.FederationAPIVersion, Kind: "EventPeer"},
+			Metadata: api.ObjectMeta{Name: "aws-router-a"},
+			Spec: api.EventPeerSpec{
+				GroupRef: "cloudedge",
+				NodeName: "aws-router-a",
+				Endpoint: "http://10.99.0.2:9443",
+			},
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.FederationAPIVersion, Kind: "EventPeer"},
+			Metadata: api.ObjectMeta{Name: "aws-router-b"},
+			Spec: api.EventPeerSpec{
+				GroupRef: "cloudedge",
+				NodeName: "aws-router-b",
+				Endpoint: "http://10.99.0.5:9443",
+			},
+		},
+	)
+	cp.Spec.Resources = resources
+	return &cp
+}
+
 func mobilityPoolResource(t *testing.T, router *api.Router, name string) api.Resource {
 	t.Helper()
 	for _, res := range router.Spec.Resources {
@@ -233,6 +276,27 @@ func saveBGPInstalledNextHops(t *testing.T, store interface {
 	t.Helper()
 	if err := store.SaveObjectStatus(api.NetAPIVersion, "BGPRouter", "mobility-bgp", map[string]any{"installedNextHops": nextHops}); err != nil {
 		t.Fatalf("SaveObjectStatus(BGPRouter/mobility-bgp): %v", err)
+	}
+}
+
+func saveBGPStatus(t *testing.T, store interface {
+	SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error
+}, nextHops map[string][]string, prefixes []map[string]any) {
+	t.Helper()
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "BGPRouter", "mobility-bgp", map[string]any{"installedNextHops": nextHops, "prefixes": prefixes}); err != nil {
+		t.Fatalf("SaveObjectStatus(BGPRouter/mobility-bgp): %v", err)
+	}
+}
+
+func bgpStatusPrefix(prefix, nextHop string, communities ...string) map[string]any {
+	return map[string]any{
+		"prefix":      prefix,
+		"nextHop":     nextHop,
+		"best":        true,
+		"valid":       true,
+		"installed":   true,
+		"selected":    true,
+		"communities": communities,
 	}
 }
 
