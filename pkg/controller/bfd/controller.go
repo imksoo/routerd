@@ -39,6 +39,7 @@ type Controller struct {
 type session struct {
 	BFDName    string
 	Address    string
+	LocalAddr  string
 	Interface  string
 	MinRxMS    int
 	MinTxMS    int
@@ -124,15 +125,25 @@ func (c Controller) Reconcile(ctx context.Context) error {
 
 func (c Controller) sessions() ([]session, map[string][]session, error) {
 	bgpPeers := map[string]api.BGPPeerSpec{}
+	bgpRouters := map[string]api.BGPRouterSpec{}
 	for _, res := range c.Router.Spec.Resources {
-		if res.APIVersion != api.NetAPIVersion || res.Kind != "BGPPeer" {
+		if res.APIVersion != api.NetAPIVersion {
 			continue
 		}
-		spec, err := res.BGPPeerSpec()
-		if err != nil {
-			return nil, nil, err
+		switch res.Kind {
+		case "BGPRouter":
+			spec, err := res.BGPRouterSpec()
+			if err != nil {
+				return nil, nil, err
+			}
+			bgpRouters[res.Metadata.Name] = spec
+		case "BGPPeer":
+			spec, err := res.BGPPeerSpec()
+			if err != nil {
+				return nil, nil, err
+			}
+			bgpPeers[res.Metadata.Name] = spec
 		}
-		bgpPeers[res.Metadata.Name] = spec
 	}
 	var out []session
 	byBFD := map[string][]session{}
@@ -144,11 +155,12 @@ func (c Controller) sessions() ([]session, map[string][]session, error) {
 		if err != nil {
 			return nil, nil, err
 		}
-		addresses := bfdPeerAddresses(spec, bgpPeers)
-		for _, address := range addresses {
+		endpoints := bfdPeerEndpoints(spec, bgpPeers, bgpRouters)
+		for _, endpoint := range endpoints {
 			s := session{
 				BFDName:    res.Metadata.Name,
-				Address:    address,
+				Address:    endpoint.Address,
+				LocalAddr:  endpoint.LocalAddr,
 				Interface:  strings.TrimSpace(spec.Interface),
 				MinRxMS:    bfdDurationMS(spec.MinRx, spec.Profile, true),
 				MinTxMS:    bfdDurationMS(spec.MinTx, spec.Profile, false),
@@ -170,15 +182,45 @@ func (c Controller) sessions() ([]session, map[string][]session, error) {
 	return out, byBFD, nil
 }
 
-func bfdPeerAddresses(spec api.BFDSpec, peers map[string]api.BGPPeerSpec) []string {
-	peer := strings.TrimSpace(spec.Peer)
-	if kind, name, ok := strings.Cut(peer, "/"); ok && kind == "BGPPeer" {
-		return cleanAddresses(peers[name].Peers)
-	}
-	return cleanAddresses([]string{peer})
+type bfdPeerEndpoint struct {
+	Address   string
+	LocalAddr string
 }
 
-func cleanAddresses(values []string) []string {
+func bfdPeerEndpoints(spec api.BFDSpec, peers map[string]api.BGPPeerSpec, routers map[string]api.BGPRouterSpec) []bfdPeerEndpoint {
+	peer := strings.TrimSpace(spec.Peer)
+	if kind, name, ok := strings.Cut(peer, "/"); ok && kind == "BGPPeer" {
+		peerSpec := peers[name]
+		localAddr := bgpPeerLocalAddress(peerSpec, routers)
+		return cleanEndpoints(peerSpec.Peers, localAddr)
+	}
+	return cleanEndpoints([]string{peer}, soleBGPRouterID(routers))
+}
+
+func bgpPeerLocalAddress(peer api.BGPPeerSpec, routers map[string]api.BGPRouterSpec) string {
+	kind, name, ok := strings.Cut(strings.TrimSpace(peer.RouterRef), "/")
+	if !ok || kind != "BGPRouter" {
+		return ""
+	}
+	if addr, err := netip.ParseAddr(strings.TrimSpace(routers[name].RouterID)); err == nil {
+		return addr.String()
+	}
+	return ""
+}
+
+func soleBGPRouterID(routers map[string]api.BGPRouterSpec) string {
+	if len(routers) != 1 {
+		return ""
+	}
+	for _, router := range routers {
+		if addr, err := netip.ParseAddr(strings.TrimSpace(router.RouterID)); err == nil {
+			return addr.String()
+		}
+	}
+	return ""
+}
+
+func cleanEndpoints(values []string, localAddr string) []bfdPeerEndpoint {
 	seen := map[string]bool{}
 	for _, value := range values {
 		value = strings.TrimSpace(value)
@@ -190,11 +232,11 @@ func cleanAddresses(values []string) []string {
 		}
 		seen[value] = true
 	}
-	out := make([]string, 0, len(seen))
+	out := make([]bfdPeerEndpoint, 0, len(seen))
 	for value := range seen {
-		out = append(out, value)
+		out = append(out, bfdPeerEndpoint{Address: value, LocalAddr: localAddr})
 	}
-	sort.Strings(out)
+	sort.Slice(out, func(i, j int) bool { return out[i].Address < out[j].Address })
 	return out
 }
 
@@ -230,7 +272,6 @@ func bfdMultiplier(spec api.BFDSpec) int {
 
 func RenderFRRConfig(sessions []session) string {
 	var b strings.Builder
-	b.WriteString("configure terminal\n")
 	b.WriteString("bfd\n")
 	for _, s := range sessions {
 		b.WriteString(" peer " + s.Address)
@@ -238,6 +279,9 @@ func RenderFRRConfig(sessions []session) string {
 			b.WriteString(" interface " + interfaceName(s.Interface))
 		} else {
 			b.WriteString(" multihop")
+			if s.LocalAddr != "" {
+				b.WriteString(" local-address " + s.LocalAddr)
+			}
 		}
 		b.WriteString("\n")
 		b.WriteString(fmt.Sprintf("  receive-interval %d\n", s.MinRxMS))
@@ -245,7 +289,6 @@ func RenderFRRConfig(sessions []session) string {
 		b.WriteString(fmt.Sprintf("  detect-multiplier %d\n", s.Multiplier))
 		b.WriteString(" exit\n")
 	}
-	b.WriteString("end\n")
 	return b.String()
 }
 
@@ -271,6 +314,7 @@ func (c Controller) saveStatus(name, phase string, sessions []session, observed 
 		peerStates[s.Address] = state
 		peers = append(peers, map[string]any{
 			"address":          s.Address,
+			"localAddress":     s.LocalAddr,
 			"state":            state,
 			"interface":        s.Interface,
 			"minRx":            s.MinRxMS,

@@ -31,6 +31,11 @@ func TestRenderFRRConfigUsesBGPPeerAddresses(t *testing.T) {
 		t.Fatalf("sessions: %v", err)
 	}
 	config := RenderFRRConfig(sessions)
+	for _, forbidden := range []string{"configure terminal", "\nend\n", "local-address"} {
+		if strings.Contains(config, forbidden) {
+			t.Fatalf("rendered single-hop config contains forbidden %q:\n%s", forbidden, config)
+		}
+	}
 	for _, want := range []string{
 		"peer 10.99.0.2 interface wg-hybrid",
 		"peer 10.99.0.3 interface wg-hybrid",
@@ -40,6 +45,32 @@ func TestRenderFRRConfigUsesBGPPeerAddresses(t *testing.T) {
 	} {
 		if !strings.Contains(config, want) {
 			t.Fatalf("rendered config missing %q:\n%s", want, config)
+		}
+	}
+}
+
+func TestRenderFRRConfigUsesFRRFileSyntaxAndMultihopLocalAddress(t *testing.T) {
+	router := bfdMultihopRouter()
+	controller := Controller{Router: router, Store: testStore{}}
+	sessions, _, err := controller.sessions()
+	if err != nil {
+		t.Fatalf("sessions: %v", err)
+	}
+	config := RenderFRRConfig(sessions)
+	if strings.Contains(config, "configure terminal") || strings.Contains(config, "\nend\n") {
+		t.Fatalf("rendered config must be vtysh -f/frr.conf syntax, got:\n%s", config)
+	}
+	for _, want := range []string{
+		"bfd\n",
+		" peer 10.99.0.2 multihop local-address 10.99.0.1\n",
+		" peer 10.99.0.3 multihop local-address 10.99.0.1\n",
+		"  receive-interval 300\n",
+		"  transmit-interval 300\n",
+		"  detect-multiplier 3\n",
+		" exit\n",
+	} {
+		if !strings.Contains(config, want) {
+			t.Fatalf("rendered multihop config missing %q:\n%s", want, config)
 		}
 	}
 }
@@ -139,4 +170,14 @@ func bfdRouter() *api.Router {
 			},
 		},
 	}}}
+}
+
+func bfdMultihopRouter() *api.Router {
+	router := bfdRouter()
+	bfdRes := router.Spec.Resources[2]
+	spec := bfdRes.Spec.(api.BFDSpec)
+	spec.Interface = ""
+	bfdRes.Spec = spec
+	router.Spec.Resources[2] = bfdRes
+	return router
 }
