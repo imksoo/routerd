@@ -4,6 +4,7 @@ package mobility
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -501,6 +502,68 @@ func TestControllerBGPModeProviderTrapUsesRemoteInstalledNextHops(t *testing.T) 
 	}
 	if findActionPlanByAddress(plans, "assign-secondary-ip", "10.88.60.11/32") != nil {
 		t.Fatalf("plans = %#v, want no same-site/self-owned trap assign", plans)
+	}
+}
+
+func TestControllerBGPModeProviderTrapExcludesFreshOwnedAddressAndDeprovisionsStickySelfTrap(t *testing.T) {
+	now := time.Date(2026, 6, 3, 16, 30, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := plannedPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	source := DynamicSource("cloudedge", "azure-router")
+	previousPlans, err := json.Marshal([]dynamicconfig.ActionPlan{{
+		Name:        "mobility-cloudedge-assign-10-88-60-11-32",
+		Provider:    "azure",
+		ProviderRef: "azure-provider",
+		Action:      "assign-secondary-ip",
+		Target: map[string]string{
+			"address":     "10.88.60.11/32",
+			"nicRef":      "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic",
+			"provider":    "azure",
+			"providerRef": "azure-provider",
+			"region":      "japaneast",
+		},
+		Parameters: map[string]string{
+			bgpPathSigParam:        "prefix=10.88.60.11/32;nextHops=10.99.0.2",
+			bgpTrapLastSeenAtParam: now.Add(-time.Minute).Format(time.RFC3339Nano),
+		},
+	}})
+	if err != nil {
+		t.Fatalf("marshal previous plans: %v", err)
+	}
+	if err := store.UpsertDynamicConfigPart(routerstate.DynamicConfigPartRecord{
+		Source:          source,
+		Generation:      dynamicGeneration,
+		ObservedAt:      now.Add(-time.Minute),
+		ExpiresAt:       now.Add(time.Hour),
+		ActionPlansJSON: string(previousPlans),
+		Status:          "active",
+	}); err != nil {
+		t.Fatalf("UpsertDynamicConfigPart: %v", err)
+	}
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"discoveryOwnedAddresses": []string{"10.88.60.11/32"},
+		"discoverySelfPrivateIPs": []string{"10.88.60.4"},
+		"discoveryLastScanAt":     now.Format(time.RFC3339Nano),
+	}); err != nil {
+		t.Fatalf("SaveObjectStatus(MobilityPool/cloudedge): %v", err)
+	}
+	saveBGPStatus(t, store, map[string][]string{
+		"10.88.60.10/32": {"10.99.0.1"},
+		"10.88.60.11/32": {"10.99.0.2"},
+	}, nil, map[string]string{bgpstate.MobilityNodeIdentityCommunity("azure-router"): "10.99.0.3/32"})
+
+	bgp := &fakeBGPPaths{}
+	controller := Controller{Router: routerWithBGPRouter(planningRouterForNode("azure-router", spec)), Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	plans := decodeActionPlans(t, latestPart(t, store, source).ActionPlansJSON)
+	if findActionPlanByAddress(plans, "assign-secondary-ip", "10.88.60.11/32") != nil {
+		t.Fatalf("plans = %#v, want no trap assign for fresh-owned self address despite transient remote next-hop", plans)
+	}
+	if findActionPlanByAddress(plans, "unassign-secondary-ip", "10.88.60.11/32") == nil {
+		t.Fatalf("plans = %#v, want sticky self-trap deprovisioned", plans)
 	}
 }
 

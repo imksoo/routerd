@@ -159,7 +159,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 	}
 	installedNextHops, bgpRIBObserved := c.bgpInstalledNextHops()
 	livenessMarkers, livenessMarkersObserved := c.bgpLivenessMarkers()
-	desiredTrapAddresses, capturePlacement, err := c.bgpTrapAddresses(res.Metadata.Name, selfNode, spec, installedNextHops, bgpRIBObserved, livenessMarkers, livenessMarkersObserved, previousActionPlans, localOwned, now)
+	desiredTrapAddresses, capturePlacement, err := c.bgpTrapAddresses(res.Metadata.Name, selfNode, spec, installedNextHops, bgpRIBObserved, livenessMarkers, livenessMarkersObserved, previousActionPlans, localOwned, discoveryOwnedAddresses, now)
 	if err != nil {
 		return err
 	}
@@ -854,7 +854,7 @@ func normalizeObservedBGPPrefix(value string) string {
 	return prefix.Masked().String()
 }
 
-func (c Controller) bgpTrapAddresses(poolName, selfNode string, spec api.MobilityPoolSpec, installedNextHops map[string][]string, ribObserved bool, livenessMarkers map[string]string, livenessMarkersObserved bool, previousPlans []dynamicconfig.ActionPlan, localOwned map[string]bool, now time.Time) (map[string]bgpTrapCandidate, PlacementDecision, error) {
+func (c Controller) bgpTrapAddresses(poolName, selfNode string, spec api.MobilityPoolSpec, installedNextHops map[string][]string, ribObserved bool, livenessMarkers map[string]string, livenessMarkersObserved bool, previousPlans []dynamicconfig.ActionPlan, localOwned map[string]bool, freshOwned map[string]bool, now time.Time) (map[string]bgpTrapCandidate, PlacementDecision, error) {
 	prefix, err := netip.ParsePrefix(strings.TrimSpace(spec.Prefix))
 	if err != nil {
 		return nil, PlacementDecision{}, fmt.Errorf("parse pool prefix: %w", err)
@@ -883,13 +883,16 @@ func (c Controller) bgpTrapAddresses(poolName, selfNode string, spec api.Mobilit
 		if !ok {
 			continue
 		}
+		if freshOwned[address] {
+			continue
+		}
 		if localOwned[address] && !bgpTrapHasRemoteNextHop(cleanNextHops, selfNextHop) {
 			continue
 		}
 		out[address] = bgpTrapCandidate{PathSig: bgpTrapPathSig(address, cleanNextHops), LastSeenAt: now.UTC(), Seize: placement.Seize}
 	}
 	for address, candidate := range previousBGPTrapCandidateAddresses(previousPlans, prefix) {
-		if localOwned[address] {
+		if localOwned[address] || freshOwned[address] {
 			continue
 		}
 		if _, desired := out[address]; desired {
