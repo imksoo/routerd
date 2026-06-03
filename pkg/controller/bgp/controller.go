@@ -101,6 +101,7 @@ type Controller struct {
 	lastFIBRoutesSig string
 	lastFIBResult    FIBSyncResult
 	lastFIBValid     bool
+	bfdPeerSeenUp    map[string]bool
 }
 
 type desiredPeer struct {
@@ -696,9 +697,19 @@ func (c *Controller) applyBFDPeerGate(desired map[string]desiredPeer) map[string
 	if c.Store == nil || len(desired) == 0 {
 		return desired
 	}
+	if c.bfdPeerSeenUp == nil {
+		c.bfdPeerSeenUp = map[string]bool{}
+	}
 	out := make(map[string]desiredPeer, len(desired))
 	for address, peer := range desired {
-		if c.bfdPeerDown(peer.BFD, address) {
+		state := c.bfdPeerState(peer.BFD, address)
+		key := bfdPeerGateKey(peer.BFD, address)
+		if strings.EqualFold(state, "Up") {
+			c.bfdPeerSeenUp[key] = true
+			out[address] = peer
+			continue
+		}
+		if strings.EqualFold(state, "Down") && c.bfdPeerSeenUp[key] {
 			continue
 		}
 		out[address] = peer
@@ -706,18 +717,21 @@ func (c *Controller) applyBFDPeerGate(desired map[string]desiredPeer) map[string
 	return out
 }
 
-func (c *Controller) bfdPeerDown(ref, address string) bool {
+func bfdPeerGateKey(ref, address string) string {
+	return strings.TrimSpace(ref) + "|" + strings.TrimSpace(address)
+}
+
+func (c *Controller) bfdPeerState(ref, address string) string {
 	ref = strings.TrimSpace(ref)
 	if ref == "" {
-		return false
+		return ""
 	}
 	kind, name, ok := strings.Cut(ref, "/")
 	if !ok || kind != "BFD" || strings.TrimSpace(name) == "" {
-		return false
+		return ""
 	}
 	status := c.Store.ObjectStatus(routerapi.NetAPIVersion, "BFD", strings.TrimSpace(name))
-	state := bfdPeerState(status, address)
-	return strings.EqualFold(state, "Down")
+	return bfdPeerState(status, address)
 }
 
 func bfdPeerState(status map[string]any, address string) string {

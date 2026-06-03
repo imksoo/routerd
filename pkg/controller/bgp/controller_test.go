@@ -768,7 +768,7 @@ func TestReconcileReportsFIBSyncFailure(t *testing.T) {
 	}
 }
 
-func TestReconcileBFDDownDeletesPeerAndUpRestoresPeer(t *testing.T) {
+func TestReconcileBFDGateAllowsBootstrapAndDisablesOnlyAfterUpDown(t *testing.T) {
 	router := bgpRouter()
 	peer := router.Spec.Resources[1].Spec.(api.BGPPeerSpec)
 	peer.BFD = "BFD/k8s"
@@ -792,8 +792,12 @@ func TestReconcileBFDDownDeletesPeerAndUpRestoresPeer(t *testing.T) {
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("first reconcile: %v", err)
 	}
-	if controller.Server.(*fakeServer).adds != 0 {
-		t.Fatalf("adds while BFD Down = %d, want 0", controller.Server.(*fakeServer).adds)
+	server := controller.Server.(*fakeServer)
+	if server.adds != 1 || server.deletes != 0 {
+		t.Fatalf("bootstrap with never-up BFD Down counts adds=%d deletes=%d, want 1/0", server.adds, server.deletes)
+	}
+	if _, ok := server.peers["10.0.0.21"]; !ok {
+		t.Fatalf("bootstrap peer missing while BFD has never been Up: %#v", server.peers)
 	}
 	controller.Store.SaveObjectStatus(api.NetAPIVersion, "BFD", "k8s", map[string]any{
 		"phase":      "Up",
@@ -802,11 +806,34 @@ func TestReconcileBFDDownDeletesPeerAndUpRestoresPeer(t *testing.T) {
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("second reconcile: %v", err)
 	}
-	if controller.Server.(*fakeServer).adds != 1 {
-		t.Fatalf("adds after BFD Up = %d, want 1", controller.Server.(*fakeServer).adds)
+	if server.adds != 1 || server.deletes != 0 {
+		t.Fatalf("after BFD Up counts adds=%d deletes=%d, want no peer churn", server.adds, server.deletes)
 	}
-	if _, ok := controller.Server.(*fakeServer).peers["10.0.0.21"]; !ok {
-		t.Fatalf("peer was not restored: %#v", controller.Server.(*fakeServer).peers)
+	controller.Store.SaveObjectStatus(api.NetAPIVersion, "BFD", "k8s", map[string]any{
+		"phase":      "Down",
+		"peerStates": map[string]any{"10.0.0.21": "Down"},
+	})
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("third reconcile: %v", err)
+	}
+	if server.deletes != 1 {
+		t.Fatalf("deletes after Up->Down = %d, want 1", server.deletes)
+	}
+	if _, ok := server.peers["10.0.0.21"]; ok {
+		t.Fatalf("peer still present after BFD Up->Down gate: %#v", server.peers)
+	}
+	controller.Store.SaveObjectStatus(api.NetAPIVersion, "BFD", "k8s", map[string]any{
+		"phase":      "Up",
+		"peerStates": map[string]any{"10.0.0.21": "Up"},
+	})
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("fourth reconcile: %v", err)
+	}
+	if server.adds != 2 {
+		t.Fatalf("adds after BFD re-Up = %d, want 2", server.adds)
+	}
+	if _, ok := server.peers["10.0.0.21"]; !ok {
+		t.Fatalf("peer was not restored after BFD Up: %#v", server.peers)
 	}
 }
 
