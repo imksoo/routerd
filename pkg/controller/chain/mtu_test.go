@@ -211,6 +211,68 @@ func TestPathMTUControllerRendersBGPMobilityMSSClamp(t *testing.T) {
 	}
 }
 
+func TestPathMTUControllerRendersBGPMobilityMSSClampWithoutMemberDelivery(t *testing.T) {
+	dir := t.TempDir()
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.FederationAPIVersion, Kind: "EventGroup"},
+			Metadata: api.ObjectMeta{Name: "cloudedge"},
+			Spec:     api.EventGroupSpec{NodeName: "oci-router"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardInterface"},
+			Metadata: api.ObjectMeta{Name: "wg-hybrid"},
+			Spec:     api.WireGuardInterfaceSpec{MTU: 1420},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "OverlayPeer"},
+			Metadata: api.ObjectMeta{Name: "onprem-main"},
+			Spec: api.OverlayPeerSpec{
+				Role:     "onprem",
+				NodeID:   "onprem-router",
+				Underlay: api.OverlayUnderlay{Type: "wireguard", Interface: "wg-hybrid"},
+			},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"},
+			Metadata: api.ObjectMeta{Name: "cloudedge"},
+			Spec: api.MobilityPoolSpec{
+				Prefix:         "10.77.60.0/24",
+				GroupRef:       "cloudedge",
+				DeliveryPolicy: api.MobilityDeliveryPolicy{Mode: "bgp"},
+				Members: []api.MobilityPoolMember{
+					{
+						NodeRef: "onprem-router",
+						Site:    "onprem",
+						Role:    "onprem",
+						Capture: api.MobilityMemberCapture{Type: "proxy-arp", Interface: "ens21"},
+					},
+					{
+						NodeRef: "oci-router",
+						Site:    "oci",
+						Role:    "cloud",
+						Capture: api.MobilityMemberCapture{Type: "provider-secondary-ip", Interface: "ens3", ProviderRef: "oci-lab"},
+					},
+				},
+			},
+		},
+	}}}
+	store := mapStore{}
+	controller := PathMTUController{Router: router, Store: store, DryRun: true, Path: filepath.Join(dir, "mss.nft")}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(controller.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(data)
+	want := `iifname "ens3" oifname "wg-hybrid" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1300 tcp option maxseg size set 1300`
+	if !strings.Contains(got, want) {
+		t.Fatalf("BGP mobility MSS clamp without member delivery missing %q:\n%s", want, got)
+	}
+}
+
 func TestPathMTUEffectiveViewEmptyPartsMatchesRawRouter(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},

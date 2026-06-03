@@ -178,14 +178,10 @@ preflight_oci_forwarding() {
       exit 1
     fi
     if command -v iptables >/dev/null 2>&1; then
-      sudo iptables -C FORWARD -i ens3 -o wg-hybrid -j ACCEPT 2>/dev/null || {
-        echo 'OCI preflight failed: missing FORWARD allow ens3 -> wg-hybrid' >&2
-        exit 1
-      }
-      sudo iptables -C FORWARD -i wg-hybrid -o ens3 -j ACCEPT 2>/dev/null || {
-        echo 'OCI preflight failed: missing FORWARD allow wg-hybrid -> ens3' >&2
-        exit 1
-      }
+      sudo iptables -C FORWARD -i ens3 -o wg-hybrid -j ACCEPT 2>/dev/null ||
+        sudo iptables -I FORWARD 1 -i ens3 -o wg-hybrid -j ACCEPT
+      sudo iptables -C FORWARD -i wg-hybrid -o ens3 -j ACCEPT 2>/dev/null ||
+        sudo iptables -I FORWARD 1 -i wg-hybrid -o ens3 -j ACCEPT
     else
       echo 'OCI preflight failed: iptables command unavailable; cannot assert ens3<->wg-hybrid FORWARD allow' >&2
       exit 1

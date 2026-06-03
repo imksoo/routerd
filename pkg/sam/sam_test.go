@@ -126,6 +126,30 @@ func TestExpandRemoteAddressClaimRoutesHonorsVRRPMasterGate(t *testing.T) {
 	}
 }
 
+func TestExpandRemoteAddressClaimRoutesSkipsBGPDelivery(t *testing.T) {
+	router := testRouter()
+	spec := router.Spec.Resources[4].Spec.(api.RemoteAddressClaimSpec)
+	spec.Delivery = api.AddressDelivery{Mode: "bgp"}
+	router.Spec.Resources[4].Spec = spec
+
+	expanded, lowerings, err := ExpandRemoteAddressClaimRoutes(*router)
+	if err != nil {
+		t.Fatalf("ExpandRemoteAddressClaimRoutes: %v", err)
+	}
+	if findRouteName(ipv4Routes(expanded), "sam-app-10-0-1-123-delivery") {
+		t.Fatalf("BGP delivery must not lower route: %#v", ipv4Routes(expanded))
+	}
+	for _, lowering := range lowerings {
+		if lowering.ClaimName == "app-10-0-1-123" {
+			t.Fatalf("BGP delivery produced lowering: %#v", lowerings)
+		}
+	}
+	status := StatusForRemoteAddressClaim(router.Spec.Resources[4], nil, nil, platform.OSLinux)
+	if status["phase"] != "Ready" || status["captureStatus"] != CaptureStatusCaptured || status["deliveryMode"] != "bgp" {
+		t.Fatalf("BGP delivery status = %#v", status)
+	}
+}
+
 func TestExpandRemoteAddressClaimRoutesRejectsUserRouteCollision(t *testing.T) {
 	router := testRouter()
 	router.Spec.Resources = append(router.Spec.Resources, api.Resource{

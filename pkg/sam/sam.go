@@ -118,6 +118,9 @@ func ExpandRemoteAddressClaimRoutesWithOptions(router api.Router, opts PlanOptio
 		if gate := EvaluateCaptureGate(spec.Capture, opts.StatusReader); !gate.Active {
 			continue
 		}
+		if strings.TrimSpace(spec.Delivery.Mode) == "bgp" {
+			continue
+		}
 		if existing := userRouteDestinations[cidr]; existing != "" {
 			return router, nil, fmt.Errorf("%s destination %s collides with user IPv4Route/%s", resource.ID(), cidr, existing)
 		}
@@ -339,6 +342,17 @@ func StatusForRemoteAddressClaim(resource api.Resource, lowerings []DeliveryLowe
 		status["activeWhenType"] = gate.Type
 		status["activeWhenVirtualAddressRef"] = gate.VirtualAddressRef
 		status["activeWhenVirtualAddressRole"] = gate.VirtualAddressRole
+	}
+	if strings.TrimSpace(spec.Delivery.Mode) == "bgp" {
+		if strings.TrimSpace(spec.Capture.Interface) != "" {
+			status["captureInterface"] = strings.TrimSpace(spec.Capture.Interface)
+		}
+		if strings.TrimSpace(spec.Capture.Type) == "proxy-arp" {
+			if _, exists := status["captureStatus"]; !exists {
+				status["captureStatus"] = CaptureStatusCaptured
+			}
+		}
+		return status
 	}
 	lowering, ok := deliveryLoweringForClaim(resource.Metadata.Name, lowerings)
 	if !ok {

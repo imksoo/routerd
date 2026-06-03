@@ -93,6 +93,84 @@ func TestDynamicRouteSAMViewSuppressesMobilityClaimsWhenPoolUsesBGPDelivery(t *t
 	}
 }
 
+func TestDynamicRouteSAMViewDerivesBGPProxyARPClaimsWithoutRouteLowering(t *testing.T) {
+	startup := startupHybridContextRouter()
+	startup.Spec.Resources = append(startup.Spec.Resources,
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.FederationAPIVersion, Kind: "EventGroup"},
+			Metadata: api.ObjectMeta{Name: "cloudedge"},
+			Spec:     api.EventGroupSpec{NodeName: "onprem-router"},
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"},
+			Metadata: api.ObjectMeta{Name: "mobility-bgp"},
+			Spec:     api.BGPRouterSpec{ASN: 64577, RouterID: "10.99.0.1"},
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"},
+			Metadata: api.ObjectMeta{Name: "onprem-vip"},
+			Spec:     api.VirtualAddressSpec{Family: "ipv4", Interface: "lan0", Address: "10.0.1.1/32", Mode: "vrrp", VRRP: api.VirtualAddressVRRPSpec{VirtualRouterID: 40, Peers: []string{"10.0.1.2"}}},
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"},
+			Metadata: api.ObjectMeta{Name: "cloudedge"},
+			Spec: api.MobilityPoolSpec{
+				Prefix:         "10.0.1.0/24",
+				GroupRef:       "cloudedge",
+				DeliveryPolicy: api.MobilityDeliveryPolicy{Mode: "bgp"},
+				Members: []api.MobilityPoolMember{
+					{
+						NodeRef:              "onprem-router",
+						Site:                 "onprem",
+						Role:                 "onprem",
+						StaticOwnedAddresses: []string{"10.0.1.10/32"},
+						Capture: api.MobilityMemberCapture{
+							Type:          "proxy-arp",
+							Interface:     "lan0",
+							GratuitousARP: false,
+							ActiveWhen:    api.CaptureActiveWhen{Type: "vrrp-master", VirtualAddressRef: "onprem-vip"},
+						},
+					},
+					{NodeRef: "aws-router", Site: "aws", Role: "cloud", Capture: api.MobilityMemberCapture{Type: "provider-secondary-ip", Interface: "ens5"}},
+				},
+			},
+		},
+	)
+	store := mapStore{
+		api.NetAPIVersion + "/BGPRouter/mobility-bgp": {
+			"installedNextHops": map[string]any{
+				"10.0.1.10/32": []any{"10.99.0.1"},
+				"10.0.1.11/32": []any{"10.99.0.2"},
+				"10.0.1.12/32": []any{"10.99.0.3"},
+			},
+		},
+		api.NetAPIVersion + "/VirtualAddress/onprem-vip": {"role": "master"},
+	}
+	view, err := buildDynamicRouteSAMView(startup, store, time.Now().UTC(), platform.OSLinux)
+	if err != nil {
+		t.Fatalf("buildDynamicRouteSAMView: %v", err)
+	}
+	if got := countResources(view.EffectiveRouter, api.HybridAPIVersion, "RemoteAddressClaim"); got != 2 {
+		t.Fatalf("effective BGP proxy claims = %d, want 2", got)
+	}
+	if got := countResources(view.RouteRouter, api.NetAPIVersion, "IPv4Route"); got != 0 {
+		t.Fatalf("BGP proxy claims must not lower IPv4Routes, got %d", got)
+	}
+	if len(view.SAMLowerings) != 0 {
+		t.Fatalf("BGP proxy claims produced SAM lowerings: %#v", view.SAMLowerings)
+	}
+	applier := &fakeSAMApplier{}
+	garp := &fakeSAMGARP{}
+	controller := SAMController{Router: view.EffectiveRouter, Store: store, Lowerings: view.SAMLowerings, OS: platform.OSLinux, Applier: applier, GARP: garp}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("SAM reconcile: %v", err)
+	}
+	assertSAMCalls(t, applier.calls, []string{
+		"ensure:10.0.1.11/32@lan0",
+		"ensure:10.0.1.12/32@lan0",
+	})
+}
+
 func TestDynamicRouteSAMClaimRemovalTriggersRouteAndSAMCleanup(t *testing.T) {
 	startup := startupHybridContextRouter()
 	now := time.Now().UTC()

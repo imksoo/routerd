@@ -5,6 +5,8 @@ package chain
 import (
 	"encoding/json"
 	"fmt"
+	"net/netip"
+	"sort"
 	"strings"
 	"time"
 
@@ -54,6 +56,8 @@ func buildDynamicRouteSAMView(startup *api.Router, store any, now time.Time, tar
 		}
 	}
 
+	effective = appendBGPMobilityProxyARPClaims(effective, store)
+
 	routeRouter := effective
 	hybridLowerings := []hybrid.HybridLowering(nil)
 	if hybrid.HasHybridRoutes(&effective) {
@@ -102,6 +106,234 @@ func suppressBGPModeMobilityClaims(effective, routeRouter api.Router) api.Router
 	return out
 }
 
+func appendBGPMobilityProxyARPClaims(router api.Router, store any) api.Router {
+	reader := statusReaderFromStore(store)
+	if reader == nil {
+		return router
+	}
+	installed := bgpInstalledNextHopsFromRouterStatus(router, reader)
+	if len(installed) == 0 {
+		return router
+	}
+	selfByGroup := eventGroupSelfNodes(router)
+	var claims []api.Resource
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "MobilityPool" {
+			continue
+		}
+		spec, err := resource.MobilityPoolSpec()
+		if err != nil || mobilityDeliveryMode(spec) != "bgp" {
+			continue
+		}
+		selfNode := strings.TrimSpace(selfByGroup[strings.TrimSpace(spec.GroupRef)])
+		if selfNode == "" {
+			continue
+		}
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(spec.Prefix))
+		if err != nil {
+			continue
+		}
+		prefix = prefix.Masked()
+		self, ok := mobilityPoolMemberByNode(spec.Members, selfNode)
+		if !ok || strings.TrimSpace(self.Capture.Type) != "proxy-arp" || strings.TrimSpace(self.Capture.Interface) == "" {
+			continue
+		}
+		owned := mobilityStaticOwnedAddresses(self, prefix)
+		for _, address := range bgpMobilityInstalledAddresses(installed, prefix) {
+			if owned[address] {
+				continue
+			}
+			claims = append(claims, bgpMobilityProxyARPClaim(resource.Metadata.Name, self, address))
+		}
+	}
+	if len(claims) == 0 {
+		return router
+	}
+	out := router
+	out.Spec.Resources = append(append([]api.Resource(nil), router.Spec.Resources...), claims...)
+	return out
+}
+
+func bgpInstalledNextHopsFromRouterStatus(router api.Router, reader sam.StatusReader) map[string][]string {
+	out := map[string][]string{}
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "BGPRouter" {
+			continue
+		}
+		status := reader.ObjectStatus(api.NetAPIVersion, "BGPRouter", resource.Metadata.Name)
+		for prefix, nextHops := range bgpInstalledNextHopsStatusValue(status["installedNextHops"]) {
+			out[prefix] = bgpMergeStrings(out[prefix], nextHops)
+		}
+	}
+	return out
+}
+
+func bgpInstalledNextHopsStatusValue(value any) map[string][]string {
+	out := map[string][]string{}
+	switch typed := value.(type) {
+	case map[string][]string:
+		for prefix, nextHops := range typed {
+			out[strings.TrimSpace(prefix)] = bgpCleanStrings(nextHops)
+		}
+	case map[string]any:
+		for prefix, raw := range typed {
+			out[strings.TrimSpace(prefix)] = bgpStatusStringSlice(raw)
+		}
+	}
+	return out
+}
+
+func eventGroupSelfNodes(router api.Router) map[string]string {
+	out := map[string]string{}
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.FederationAPIVersion || resource.Kind != "EventGroup" {
+			continue
+		}
+		spec, err := resource.EventGroupSpec()
+		if err == nil {
+			out[resource.Metadata.Name] = strings.TrimSpace(spec.NodeName)
+		}
+	}
+	return out
+}
+
+func mobilityPoolMemberByNode(members []api.MobilityPoolMember, node string) (api.MobilityPoolMember, bool) {
+	for _, member := range members {
+		if strings.TrimSpace(member.NodeRef) == strings.TrimSpace(node) {
+			return member, true
+		}
+	}
+	return api.MobilityPoolMember{}, false
+}
+
+func mobilityStaticOwnedAddresses(member api.MobilityPoolMember, pool netip.Prefix) map[string]bool {
+	out := map[string]bool{}
+	for _, raw := range member.StaticOwnedAddresses {
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(raw))
+		if err != nil {
+			continue
+		}
+		prefix = prefix.Masked()
+		if prefix.Addr().Is4() && prefix.Bits() == 32 && pool.Contains(prefix.Addr()) {
+			out[prefix.String()] = true
+		}
+	}
+	return out
+}
+
+func bgpMobilityInstalledAddresses(installed map[string][]string, pool netip.Prefix) []string {
+	seen := map[string]bool{}
+	for raw, nextHops := range installed {
+		if len(bgpCleanStrings(nextHops)) == 0 {
+			continue
+		}
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(raw))
+		if err != nil {
+			continue
+		}
+		prefix = prefix.Masked()
+		if prefix.Addr().Is4() && prefix.Bits() == 32 && pool.Contains(prefix.Addr()) {
+			seen[prefix.String()] = true
+		}
+	}
+	return bgpSortedStringKeys(seen)
+}
+
+func bgpMobilityProxyARPClaim(poolName string, member api.MobilityPoolMember, address string) api.Resource {
+	name := "bgp-" + safeResourceName(poolName) + "-" + safeResourceName(strings.TrimSuffix(address, "/32"))
+	return api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "RemoteAddressClaim"},
+		Metadata: api.ObjectMeta{
+			Name: name,
+			Annotations: map[string]string{
+				"mobility.routerd.net/pool":   poolName,
+				"mobility.routerd.net/source": "bgp-best-path",
+			},
+		},
+		Spec: api.RemoteAddressClaimSpec{
+			DomainRef: "bgp-" + poolName,
+			Address:   address,
+			OwnerSide: "remote",
+			Capture: api.AddressCapture{
+				Type:          member.Capture.Type,
+				Interface:     member.Capture.Interface,
+				GratuitousARP: member.Capture.GratuitousARP,
+				ActiveWhen:    member.Capture.ActiveWhen,
+			},
+			Delivery: api.AddressDelivery{Mode: "bgp"},
+		},
+	}
+}
+
+func bgpStatusStringSlice(value any) []string {
+	switch typed := value.(type) {
+	case []string:
+		return bgpCleanStrings(typed)
+	case []any:
+		var out []string
+		for _, item := range typed {
+			if value := strings.TrimSpace(fmt.Sprint(item)); value != "" && value != "<nil>" {
+				out = append(out, value)
+			}
+		}
+		return bgpCleanStrings(out)
+	default:
+		if value := strings.TrimSpace(fmt.Sprint(value)); value != "" && value != "<nil>" {
+			return []string{value}
+		}
+	}
+	return nil
+}
+
+func bgpMergeStrings(base, extra []string) []string {
+	seen := map[string]bool{}
+	for _, value := range append(base, extra...) {
+		if value = strings.TrimSpace(value); value != "" {
+			seen[value] = true
+		}
+	}
+	return bgpSortedStringKeys(seen)
+}
+
+func bgpCleanStrings(values []string) []string {
+	seen := map[string]bool{}
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			seen[value] = true
+		}
+	}
+	return bgpSortedStringKeys(seen)
+}
+
+func bgpSortedStringKeys(values map[string]bool) []string {
+	out := make([]string, 0, len(values))
+	for value := range values {
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func safeResourceName(value string) string {
+	value = strings.TrimSpace(strings.ToLower(value))
+	var b strings.Builder
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('-')
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	if out == "" {
+		return "resource"
+	}
+	return out
+}
+
 func bgpMobilityPools(router api.Router) map[string]bool {
 	out := map[string]bool{}
 	for _, resource := range router.Spec.Resources {
@@ -112,11 +344,19 @@ func bgpMobilityPools(router api.Router) map[string]bool {
 		if err != nil {
 			continue
 		}
-		if strings.TrimSpace(spec.DeliveryPolicy.Mode) == "bgp" {
+		if mobilityDeliveryMode(spec) == "bgp" {
 			out[resource.Metadata.Name] = true
 		}
 	}
 	return out
+}
+
+func mobilityDeliveryMode(spec api.MobilityPoolSpec) string {
+	mode := strings.TrimSpace(spec.DeliveryPolicy.Mode)
+	if mode == "" {
+		return "bgp"
+	}
+	return mode
 }
 
 func statusReaderFromStore(store any) sam.StatusReader {

@@ -236,6 +236,16 @@ func pathMTUBGPMobilityForwardedPaths(router *api.Router, peers map[string]api.O
 				break
 			}
 			deliveries := pathMTUMemberDeliveries(member)
+			if len(deliveries) == 0 {
+				for peerName, peer := range peers {
+					tunnel := strings.TrimSpace(peer.Underlay.Interface)
+					if tunnel == "" || tunnel == source {
+						continue
+					}
+					paths = append(paths, pathMTUForwardedPath{FromInterface: source, ToInterface: tunnel, MTU: pathMTUOverlayPeerEffectiveMTU(router, peerName)})
+				}
+				break
+			}
 			for _, delivery := range deliveries {
 				tunnel := firstNonEmpty(strings.TrimSpace(delivery.TunnelInterface), strings.TrimSpace(peers[refName(delivery.PeerRef)].Underlay.Interface))
 				if tunnel == "" || tunnel == source {
