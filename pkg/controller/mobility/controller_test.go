@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	bgpstate "github.com/imksoo/routerd/pkg/bgp"
 	"github.com/imksoo/routerd/pkg/bgpdaemon"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
@@ -402,7 +403,25 @@ func TestControllerBGPModeProviderTrapUsesRemoteInstalledNextHops(t *testing.T) 
 	}
 }
 
-func TestControllerBGPModeStandbyDefersTrapWhenActiveIdentityPathAlive(t *testing.T) {
+func TestControllerBGPModeAdvertisesSelfLivenessMarker(t *testing.T) {
+	now := time.Date(2026, 6, 2, 10, 0, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	bgp := &fakeBGPPaths{}
+	router := routerWithBGPRouter(routerWithEventGroupListen(planningRouterForNode("aws-router-a", spec), "10.99.0.2"))
+	controller := Controller{Router: router, Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	marker := pathBySourcePrefix(t, bgp, DynamicSource("cloudedge", "aws-router-a"), "10.99.0.2/32")
+	if !stringSliceContains(marker.Attrs.Communities, bgpstate.MobilityCommunityNodeLiveness) ||
+		!stringSliceContains(marker.Attrs.Communities, bgpstate.MobilityNodeIdentityCommunity("aws-router-a")) {
+		t.Fatalf("marker attrs = %#v, want liveness + node identity communities", marker.Attrs)
+	}
+}
+
+func TestControllerBGPModeStandbyDefersTrapWhenActiveLivenessMarkerPresent(t *testing.T) {
 	now := time.Date(2026, 6, 2, 10, 0, 0, 0, time.UTC)
 	store := testStore(t, now)
 	spec := awsFailoverPoolSpec()
@@ -421,12 +440,12 @@ func TestControllerBGPModeStandbyDefersTrapWhenActiveIdentityPathAlive(t *testin
 		"10.88.60.11/32": {"10.99.0.2", "10.99.0.5"},
 		"10.88.60.12/32": {"10.99.0.3"},
 		"10.88.60.13/32": {"10.99.0.4"},
-	}, []map[string]any{
-		bgpStatusPrefix("10.88.60.11/32", "10.99.0.2", bgpMobilityCommunityOwner, bgpMobilityCommunityRoleCloud, bgpMobilityCommunitySourceObserved),
-		bgpStatusPrefix("10.88.60.11/32", "10.99.0.5", bgpMobilityCommunityOwner, bgpMobilityCommunityRoleCloud, bgpMobilityCommunitySourceObserved),
+	}, []map[string]any{}, map[string]string{
+		bgpstate.MobilityNodeIdentityCommunity("aws-router-a"): "10.99.0.2/32",
+		bgpstate.MobilityNodeIdentityCommunity("aws-router-b"): "10.99.0.5/32",
 	})
 	bgp := &fakeBGPPaths{}
-	router := routerWithBGPRouter(routerWithBGPNodeIdentities(planningRouterForNode("aws-router-b", spec)))
+	router := routerWithBGPRouter(planningRouterForNode("aws-router-b", spec))
 	controller := Controller{Router: router, Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("Reconcile: %v", err)
@@ -435,11 +454,11 @@ func TestControllerBGPModeStandbyDefersTrapWhenActiveIdentityPathAlive(t *testin
 	if findActionPlanByAddress(plans, "assign-secondary-ip", "10.88.60.10/32") != nil ||
 		findActionPlanByAddress(plans, "assign-secondary-ip", "10.88.60.12/32") != nil ||
 		findActionPlanByAddress(plans, "assign-secondary-ip", "10.88.60.13/32") != nil {
-		t.Fatalf("standby plans = %#v, want no provider traps while active identity next-hop is alive", plans)
+		t.Fatalf("standby plans = %#v, want no provider traps while active liveness marker is present", plans)
 	}
 }
 
-func TestControllerBGPModeStandbySeizesTrapWhenActiveIdentityWithdrawn(t *testing.T) {
+func TestControllerBGPModeStandbySeizesTrapWhenActiveLivenessMarkerWithdrawn(t *testing.T) {
 	now := time.Date(2026, 6, 2, 10, 0, 0, 0, time.UTC)
 	store := testStore(t, now)
 	spec := awsFailoverPoolSpec()
@@ -458,11 +477,9 @@ func TestControllerBGPModeStandbySeizesTrapWhenActiveIdentityWithdrawn(t *testin
 		"10.88.60.11/32": {"10.99.0.5"},
 		"10.88.60.12/32": {"10.99.0.3"},
 		"10.88.60.13/32": {"10.99.0.4"},
-	}, []map[string]any{
-		bgpStatusPrefix("10.88.60.11/32", "10.99.0.5", bgpMobilityCommunityOwner, bgpMobilityCommunityRoleCloud, bgpMobilityCommunitySourceObserved),
-	})
+	}, []map[string]any{}, map[string]string{bgpstate.MobilityNodeIdentityCommunity("aws-router-b"): "10.99.0.5/32"})
 	bgp := &fakeBGPPaths{}
-	router := routerWithBGPRouter(routerWithBGPNodeIdentities(planningRouterForNode("aws-router-b", spec)))
+	router := routerWithBGPRouter(planningRouterForNode("aws-router-b", spec))
 	controller := Controller{Router: router, Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("Reconcile: %v", err)

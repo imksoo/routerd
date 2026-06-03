@@ -10,14 +10,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"net"
 	"net/netip"
-	"net/url"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	bgpstate "github.com/imksoo/routerd/pkg/bgp"
 	"github.com/imksoo/routerd/pkg/bgpdaemon"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
@@ -139,8 +138,12 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		return err
 	}
 	events = append(events, releaseEvents...)
-	desired := bgpOwnedPaths(res.Metadata.Name, source, selfNode, spec, events, now)
-	localOwned := bgpLocalOwnedAddresses(desired)
+	ownedPaths := bgpOwnedPaths(res.Metadata.Name, source, selfNode, spec, events, now)
+	localOwned := bgpLocalOwnedAddresses(ownedPaths)
+	desired := append([]bgpdaemon.AppliedPath(nil), ownedPaths...)
+	if marker, ok := c.bgpLivenessMarkerPath(res.Metadata.Name, source, selfNode, spec.GroupRef); ok {
+		desired = append(desired, marker)
+	}
 	actionJournal, err := c.Store.ListActions(routerstate.ActionExecutionFilter{})
 	if err != nil {
 		return fmt.Errorf("list action journal: %w", err)
@@ -150,8 +153,8 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		return err
 	}
 	installedNextHops, bgpRIBObserved := c.bgpInstalledNextHops()
-	observedPaths, bgpPathIdentityObserved := c.bgpObservedPaths()
-	desiredTrapAddresses, err := c.bgpTrapAddresses(res.Metadata.Name, selfNode, spec, installedNextHops, bgpRIBObserved, observedPaths, bgpPathIdentityObserved, previousActionPlans, localOwned, now)
+	livenessMarkers, livenessMarkersObserved := c.bgpLivenessMarkers()
+	desiredTrapAddresses, err := c.bgpTrapAddresses(res.Metadata.Name, selfNode, spec, installedNextHops, bgpRIBObserved, livenessMarkers, livenessMarkersObserved, previousActionPlans, localOwned, now)
 	if err != nil {
 		return err
 	}
@@ -374,6 +377,47 @@ func bgpOwnedPaths(poolName, source, selfNode string, spec api.MobilityPoolSpec,
 		return out[i].Prefix < out[j].Prefix
 	})
 	return out
+}
+
+func (c Controller) bgpLivenessMarkerPath(poolName, source, selfNode, groupRef string) (bgpdaemon.AppliedPath, bool) {
+	prefix, ok := c.selfLivenessMarkerPrefix(groupRef)
+	if !ok {
+		return bgpdaemon.AppliedPath{}, false
+	}
+	nodeCommunity := bgpstate.MobilityNodeIdentityCommunity(selfNode)
+	if nodeCommunity == "" {
+		return bgpdaemon.AppliedPath{}, false
+	}
+	return bgpdaemon.NormalizeAppliedPath(bgpdaemon.AppliedPath{
+		Source: source,
+		Prefix: prefix,
+		Family: bgpdaemon.AppliedPathFamilyIPv4Unicast,
+		Attrs: bgpdaemon.AppliedPathAttrs{
+			LocalPref:   50,
+			Communities: []string{bgpstate.MobilityCommunityNodeLiveness, nodeCommunity},
+		},
+	}), true
+}
+
+func (c Controller) selfLivenessMarkerPrefix(groupRef string) (string, bool) {
+	if c.Router == nil {
+		return "", false
+	}
+	for _, res := range c.Router.Spec.Resources {
+		if res.APIVersion != api.FederationAPIVersion || res.Kind != "EventGroup" || strings.TrimSpace(res.Metadata.Name) != strings.TrimSpace(groupRef) {
+			continue
+		}
+		spec, err := res.EventGroupSpec()
+		if err != nil {
+			return "", false
+		}
+		addr, err := netip.ParseAddr(strings.TrimSpace(spec.Listen.Address))
+		if err != nil || !addr.Is4() {
+			return "", false
+		}
+		return netip.PrefixFrom(addr, 32).String(), true
+	}
+	return "", false
 }
 
 func bgpLocalOwnedAddresses(paths []bgpdaemon.AppliedPath) map[string]bool {
@@ -667,75 +711,53 @@ func bgpInstalledNextHopsValue(value any) map[string][]string {
 	return out
 }
 
-type bgpObservedPath struct {
-	Prefix      string
-	NextHop     string
-	Best        bool
-	Valid       bool
-	Installed   bool
-	Stale       bool
-	Communities []string
-}
-
-func (c Controller) bgpObservedPaths() ([]bgpObservedPath, bool) {
-	if c.Router == nil || c.Store == nil {
-		return nil, false
-	}
-	var out []bgpObservedPath
+func (c Controller) bgpLivenessMarkers() (map[string]string, bool) {
+	out := map[string]string{}
 	observed := false
+	if c.Router == nil || c.Store == nil {
+		return out, observed
+	}
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "BGPRouter" {
 			continue
 		}
 		status := c.Store.ObjectStatus(api.NetAPIVersion, "BGPRouter", resource.Metadata.Name)
-		raw, ok := status["prefixes"]
+		raw, ok := status["livenessMarkers"]
 		if !ok {
 			continue
 		}
 		observed = true
-		out = append(out, bgpObservedPathsValue(raw)...)
+		for community, prefix := range bgpLivenessMarkersValue(raw) {
+			out[community] = prefix
+		}
 	}
 	return out, observed
 }
 
-func bgpObservedPathsValue(value any) []bgpObservedPath {
-	var out []bgpObservedPath
+func bgpLivenessMarkersValue(value any) map[string]string {
+	out := map[string]string{}
 	switch typed := value.(type) {
-	case []bgpObservedPath:
-		return append(out, typed...)
-	case []map[string]any:
-		for _, item := range typed {
-			out = append(out, bgpObservedPathFromMap(item))
+	case map[string]string:
+		for community, prefix := range typed {
+			community = strings.TrimSpace(community)
+			if community != "" {
+				out[community] = normalizeObservedBGPPrefix(prefix)
+			}
 		}
-	case []any:
-		for _, raw := range typed {
-			if item, ok := raw.(map[string]any); ok {
-				out = append(out, bgpObservedPathFromMap(item))
+	case map[string]any:
+		for community, raw := range typed {
+			community = strings.TrimSpace(community)
+			if community != "" {
+				out[community] = normalizeObservedBGPPrefix(fmt.Sprint(raw))
 			}
 		}
 	}
-	var filtered []bgpObservedPath
-	for _, path := range out {
-		path.Prefix = normalizeObservedBGPPrefix(path.Prefix)
-		path.NextHop = normalizeAddressString(path.NextHop)
-		path.Communities = cleanStrings(path.Communities)
-		if path.Prefix != "" && path.NextHop != "" {
-			filtered = append(filtered, path)
+	for community, prefix := range out {
+		if prefix == "" {
+			delete(out, community)
 		}
 	}
-	return filtered
-}
-
-func bgpObservedPathFromMap(item map[string]any) bgpObservedPath {
-	return bgpObservedPath{
-		Prefix:      strings.TrimSpace(fmt.Sprint(item["prefix"])),
-		NextHop:     strings.TrimSpace(fmt.Sprint(item["nextHop"])),
-		Best:        truthy(item["best"]),
-		Valid:       truthy(item["valid"]),
-		Installed:   truthy(item["installed"]),
-		Stale:       truthy(item["stale"]),
-		Communities: statusStringSlice(item["communities"]),
-	}
+	return out
 }
 
 func normalizeObservedBGPPrefix(value string) string {
@@ -746,18 +768,7 @@ func normalizeObservedBGPPrefix(value string) string {
 	return prefix.Masked().String()
 }
 
-func truthy(value any) bool {
-	switch typed := value.(type) {
-	case bool:
-		return typed
-	case string:
-		return strings.EqualFold(strings.TrimSpace(typed), "true")
-	default:
-		return strings.EqualFold(strings.TrimSpace(fmt.Sprint(value)), "true")
-	}
-}
-
-func (c Controller) bgpTrapAddresses(poolName, selfNode string, spec api.MobilityPoolSpec, installedNextHops map[string][]string, ribObserved bool, observedPaths []bgpObservedPath, pathIdentityObserved bool, previousPlans []dynamicconfig.ActionPlan, localOwned map[string]bool, now time.Time) (map[string]bgpTrapCandidate, error) {
+func (c Controller) bgpTrapAddresses(poolName, selfNode string, spec api.MobilityPoolSpec, installedNextHops map[string][]string, ribObserved bool, livenessMarkers map[string]string, livenessMarkersObserved bool, previousPlans []dynamicconfig.ActionPlan, localOwned map[string]bool, now time.Time) (map[string]bgpTrapCandidate, error) {
 	prefix, err := netip.ParsePrefix(strings.TrimSpace(spec.Prefix))
 	if err != nil {
 		return nil, fmt.Errorf("parse pool prefix: %w", err)
@@ -772,7 +783,7 @@ func (c Controller) bgpTrapAddresses(poolName, selfNode string, spec api.Mobilit
 	if self.Capture.Type != "provider-secondary-ip" {
 		return out, nil
 	}
-	placement := c.evaluateBGPCapturePlacement(self, members, spec.GroupRef, prefix, observedPaths, pathIdentityObserved)
+	placement := evaluateBGPCapturePlacement(self, members, livenessMarkers, livenessMarkersObserved)
 	if !placement.Active {
 		return out, nil
 	}
@@ -803,24 +814,24 @@ func (c Controller) bgpTrapAddresses(poolName, selfNode string, spec api.Mobilit
 	return out, nil
 }
 
-func (c Controller) evaluateBGPCapturePlacement(self memberPlanInfo, members map[string]memberPlanInfo, groupRef string, poolPrefix netip.Prefix, observedPaths []bgpObservedPath, pathIdentityObserved bool) PlacementDecision {
+func evaluateBGPCapturePlacement(self memberPlanInfo, members map[string]memberPlanInfo, livenessMarkers map[string]string, livenessMarkersObserved bool) PlacementDecision {
 	placement := evaluatePlacement(self, members)
 	if placement.Active || placement.NoCandidate() || strings.TrimSpace(placement.ActiveNode) == "" {
 		return placement
 	}
-	if !pathIdentityObserved {
+	if !livenessMarkersObserved {
+		return placement
+	}
+	selfCommunity := bgpstate.MobilityNodeIdentityCommunity(self.NodeRef)
+	if selfCommunity == "" || strings.TrimSpace(livenessMarkers[selfCommunity]) == "" {
 		return placement
 	}
 	active := members[strings.TrimSpace(placement.ActiveNode)]
 	if strings.TrimSpace(active.NodeRef) == "" {
 		return placement
 	}
-	nodeAddresses := c.mobilityNodeOverlayAddresses(groupRef)
-	activeAddrs := nodeAddresses[strings.TrimSpace(active.NodeRef)]
-	if len(activeAddrs) == 0 {
-		return placement
-	}
-	if bgpMemberIdentityPathAlive(active, activeAddrs, poolPrefix, observedPaths) {
+	activeCommunity := bgpstate.MobilityNodeIdentityCommunity(active.NodeRef)
+	if activeCommunity == "" || strings.TrimSpace(livenessMarkers[activeCommunity]) != "" {
 		return placement
 	}
 	return PlacementDecision{
@@ -830,100 +841,6 @@ func (c Controller) evaluateBGPCapturePlacement(self memberPlanInfo, members map
 		Reason:     fmt.Sprintf("placement group %q configured active %q has no live BGP identity path", placement.Group, active.NodeRef),
 		Seize:      true,
 	}
-}
-
-func bgpMemberIdentityPathAlive(member memberPlanInfo, nextHops []string, poolPrefix netip.Prefix, observedPaths []bgpObservedPath) bool {
-	allowedNextHops := map[string]bool{}
-	for _, hop := range nextHops {
-		if hop = normalizeAddressString(hop); hop != "" {
-			allowedNextHops[hop] = true
-		}
-	}
-	if len(allowedNextHops) == 0 {
-		return false
-	}
-	for _, path := range observedPaths {
-		if _, ok := normalizeBGPTrapPrefix(path.Prefix, poolPrefix); !ok {
-			continue
-		}
-		if !path.Valid || path.Stale || !allowedNextHops[normalizeAddressString(path.NextHop)] {
-			continue
-		}
-		if len(path.Communities) > 0 && !bgpCommunityContains(path.Communities, bgpMobilityCommunityOwner) {
-			continue
-		}
-		if member.Role != "" && len(path.Communities) > 0 {
-			switch member.Role {
-			case "onprem":
-				if !bgpCommunityContains(path.Communities, bgpMobilityCommunityRoleOnPrem) {
-					continue
-				}
-			case "cloud":
-				if !bgpCommunityContains(path.Communities, bgpMobilityCommunityRoleCloud) {
-					continue
-				}
-			}
-		}
-		return true
-	}
-	return false
-}
-
-func (c Controller) mobilityNodeOverlayAddresses(groupRef string) map[string][]string {
-	out := map[string][]string{}
-	if c.Router == nil {
-		return out
-	}
-	for _, res := range c.Router.Spec.Resources {
-		switch {
-		case res.APIVersion == api.FederationAPIVersion && res.Kind == "EventGroup":
-			if strings.TrimSpace(res.Metadata.Name) != strings.TrimSpace(groupRef) {
-				continue
-			}
-			spec, err := res.EventGroupSpec()
-			if err != nil {
-				continue
-			}
-			node := strings.TrimSpace(spec.NodeName)
-			if node == "" {
-				continue
-			}
-			out[node] = mergeStringSet(out[node], []string{spec.Listen.Address})
-		case res.APIVersion == api.FederationAPIVersion && res.Kind == "EventPeer":
-			spec, err := res.EventPeerSpec()
-			if err != nil || strings.TrimSpace(spec.GroupRef) != strings.TrimSpace(groupRef) {
-				continue
-			}
-			node := strings.TrimSpace(spec.NodeName)
-			if node == "" {
-				continue
-			}
-			out[node] = mergeStringSet(out[node], []string{hostAddressFromEndpoint(spec.Endpoint)})
-		case res.APIVersion == api.HybridAPIVersion && res.Kind == "OverlayPeer":
-			spec, err := res.OverlayPeerSpec()
-			if err != nil || strings.TrimSpace(spec.NodeID) == "" {
-				continue
-			}
-			out[strings.TrimSpace(spec.NodeID)] = mergeStringSet(out[strings.TrimSpace(spec.NodeID)], []string{spec.Underlay.Address})
-		}
-	}
-	return out
-}
-
-func hostAddressFromEndpoint(endpoint string) string {
-	endpoint = strings.TrimSpace(endpoint)
-	if endpoint == "" {
-		return ""
-	}
-	parsed, err := url.Parse(endpoint)
-	if err != nil || parsed.Host == "" {
-		return normalizeAddressString(endpoint)
-	}
-	host := parsed.Hostname()
-	if host == "" {
-		host, _, _ = net.SplitHostPort(parsed.Host)
-	}
-	return normalizeAddressString(host)
 }
 
 func parseBGPTrapLastSeenAt(value string) time.Time {

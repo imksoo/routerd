@@ -195,7 +195,7 @@ func (c *Controller) reconcileLocked(ctx context.Context) error {
 	}
 	c.appliedConfig = applied
 	allowedImportPrefixes := importAllowedPrefixes(routerSpec)
-	state, routes, err := c.observeState(ctx, allowedImportPrefixes)
+	state, routes, livenessMarkers, err := c.observeState(ctx, allowedImportPrefixes)
 	if err != nil {
 		return c.savePendingAll("GoBGPObserveFailed", err)
 	}
@@ -207,7 +207,7 @@ func (c *Controller) reconcileLocked(ctx context.Context) error {
 		if err := c.softResetImportPolicy(ctx, desired); err != nil {
 			return c.savePendingAll("GoBGPImportPolicyRefreshFailed", err)
 		}
-		state, routes, err = c.observeState(ctx, allowedImportPrefixes)
+		state, routes, livenessMarkers, err = c.observeState(ctx, allowedImportPrefixes)
 		if err != nil {
 			return c.savePendingAll("GoBGPObserveFailed", err)
 		}
@@ -228,7 +228,7 @@ func (c *Controller) reconcileLocked(ctx context.Context) error {
 	}
 	c.lastState = state
 	c.observed = true
-	if err := c.saveObservedStatuses(routerResource.Metadata.Name, routerSpec, state, routes, changed, fibResult); err != nil {
+	if err := c.saveObservedStatuses(routerResource.Metadata.Name, routerSpec, state, routes, changed, fibResult, livenessMarkers); err != nil {
 		return err
 	}
 	for _, event := range events {
@@ -295,7 +295,7 @@ func (c *Controller) observeAndSyncFromWatchLocked(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	state, routes, err := c.observeState(ctx, importAllowedPrefixes(routerSpec))
+	state, routes, livenessMarkers, err := c.observeState(ctx, importAllowedPrefixes(routerSpec))
 	if err != nil {
 		return c.savePendingAll("GoBGPWatchObserveFailed", err)
 	}
@@ -315,7 +315,7 @@ func (c *Controller) observeAndSyncFromWatchLocked(ctx context.Context) error {
 	}
 	c.lastState = state
 	c.observed = true
-	if err := c.saveObservedStatuses(routerResource.Metadata.Name, routerSpec, state, routes, false, fibResult); err != nil {
+	if err := c.saveObservedStatuses(routerResource.Metadata.Name, routerSpec, state, routes, false, fibResult, livenessMarkers); err != nil {
 		return err
 	}
 	for _, event := range events {
@@ -914,21 +914,23 @@ func (c *Controller) advertisedPathUUIDs(ctx context.Context) (map[string][]byte
 	return out, nil
 }
 
-func (c *Controller) observeState(ctx context.Context, allowedImportPrefixes []netip.Prefix) (bgpstate.State, []FIBRoute, error) {
+func (c *Controller) observeState(ctx context.Context, allowedImportPrefixes []netip.Prefix) (bgpstate.State, []FIBRoute, map[string]string, error) {
 	var state bgpstate.State
 	var routes []FIBRoute
+	livenessMarkers := map[string]string{}
 	if err := c.Server.ListPeer(ctx, &gobgpapi.ListPeerRequest{EnableAdvertised: true}, func(peer *gobgpapi.Peer) {
 		state.Peers = append(state.Peers, statePeer(peer))
 	}); err != nil {
-		return bgpstate.State{}, nil, err
+		return bgpstate.State{}, nil, nil, err
 	}
 	for _, family := range bgpFamiliesForRouter(c.Router) {
 		err := c.Server.ListPath(ctx, &gobgpapi.ListPathRequest{TableType: gobgpapi.TableType_GLOBAL, Family: family}, func(dst *gobgpapi.Destination) {
 			state.Prefixes = append(state.Prefixes, statePrefixes(dst)...)
+			mergeStringMap(livenessMarkers, mobilityLivenessMarkersFromDestination(dst))
 			routes = append(routes, fibRoutesFromDestination(dst, allowedImportPrefixes)...)
 		})
 		if err != nil {
-			return bgpstate.State{}, nil, err
+			return bgpstate.State{}, nil, nil, err
 		}
 	}
 	routes = mergeFIBRoutes(routes)
@@ -937,10 +939,10 @@ func (c *Controller) observeState(ctx context.Context, allowedImportPrefixes []n
 	if truncated {
 		limited.Prefixes = append(limited.Prefixes, bgpstate.Prefix{Prefix: "truncated", SelectionReason: "prefix limit reached"})
 	}
-	return bgpstate.Normalize(limited), routes, nil
+	return bgpstate.Normalize(limited), routes, livenessMarkers, nil
 }
 
-func (c *Controller) saveObservedStatuses(routerName string, spec routerapi.BGPRouterSpec, state bgpstate.State, routes []FIBRoute, changed bool, fibResult FIBSyncResult) error {
+func (c *Controller) saveObservedStatuses(routerName string, spec routerapi.BGPRouterSpec, state bgpstate.State, routes []FIBRoute, changed bool, fibResult FIBSyncResult, livenessMarkers map[string]string) error {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	peersByResource := c.peersByResource(state)
 	fibRoutes := fibInstalledCount(fibResult)
@@ -978,6 +980,7 @@ func (c *Controller) saveObservedStatuses(routerName string, spec routerapi.BGPR
 				"peers":                state.Peers,
 				"prefixes":             state.Prefixes,
 				"observedCommunities":  observedCommunities(state.Prefixes),
+				"livenessMarkers":      livenessMarkers,
 				"establishedPeers":     established,
 				"acceptedPrefixes":     len(state.Prefixes),
 				"fibRoutes":            fibRoutes,
@@ -1274,6 +1277,9 @@ func statePrefixes(dst *gobgpapi.Destination) []bgpstate.Prefix {
 		if path.GetIsWithdraw() {
 			continue
 		}
+		if bgpstate.HasCommunity(pathCommunities(path), bgpstate.MobilityCommunityNodeLiveness) {
+			continue
+		}
 		prefix := firstNonEmpty(dst.GetPrefix(), pathPrefix(path))
 		if prefix == "" {
 			continue
@@ -1295,7 +1301,7 @@ func statePrefixes(dst *gobgpapi.Destination) []bgpstate.Prefix {
 func bestFIBRoutes(prefixes []bgpstate.Prefix, allowed []netip.Prefix) []FIBRoute {
 	byPrefix := map[string]map[string]bool{}
 	for _, prefix := range prefixes {
-		if !prefix.Best || !prefix.Valid || strings.TrimSpace(prefix.Prefix) == "" {
+		if !prefix.Best || !prefix.Valid || strings.TrimSpace(prefix.Prefix) == "" || bgpstate.HasCommunity(prefix.Communities, bgpstate.MobilityCommunityNodeLiveness) {
 			continue
 		}
 		nextHop := strings.TrimSpace(prefix.NextHop)
@@ -1345,6 +1351,9 @@ func fibRoutesFromDestination(dst *gobgpapi.Destination, allowed []netip.Prefix)
 	}
 	for _, path := range dst.GetPaths() {
 		if path.GetIsWithdraw() || path.GetIsNexthopInvalid() {
+			continue
+		}
+		if bgpstate.HasCommunity(pathCommunities(path), bgpstate.MobilityCommunityNodeLiveness) {
 			continue
 		}
 		pathPrefix := firstNonEmpty(prefix, normalizeRoutePrefix(pathPrefix(path)))
@@ -2296,6 +2305,61 @@ func observedCommunities(prefixes []bgpstate.Prefix) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+func mobilityLivenessMarkers(prefixes []bgpstate.Prefix) map[string]string {
+	out := map[string]string{}
+	for _, prefix := range prefixes {
+		if !prefix.Valid || prefix.Stale || !bgpstate.HasCommunity(prefix.Communities, bgpstate.MobilityCommunityNodeLiveness) {
+			continue
+		}
+		normalized := normalizeRoutePrefix(prefix.Prefix)
+		if normalized == "" {
+			continue
+		}
+		for _, community := range prefix.Communities {
+			community = strings.TrimSpace(community)
+			if !bgpstate.IsMobilityNodeIdentityCommunity(community) {
+				continue
+			}
+			out[community] = normalized
+		}
+	}
+	return out
+}
+
+func mobilityLivenessMarkersFromDestination(dst *gobgpapi.Destination) map[string]string {
+	return mobilityLivenessMarkers(statePrefixesIncludingMobilityMarkers(dst))
+}
+
+func statePrefixesIncludingMobilityMarkers(dst *gobgpapi.Destination) []bgpstate.Prefix {
+	var out []bgpstate.Prefix
+	for _, path := range dst.GetPaths() {
+		if path.GetIsWithdraw() {
+			continue
+		}
+		prefix := firstNonEmpty(dst.GetPrefix(), pathPrefix(path))
+		if prefix == "" {
+			continue
+		}
+		out = append(out, bgpstate.Prefix{
+			Prefix:      prefix,
+			NextHop:     pathNextHop(path),
+			Best:        path.GetBest(),
+			Valid:       !path.GetIsNexthopInvalid(),
+			Installed:   path.GetBest() && !path.GetIsNexthopInvalid(),
+			Selected:    path.GetBest(),
+			Stale:       path.GetStale(),
+			Communities: pathCommunities(path),
+		})
+	}
+	return out
+}
+
+func mergeStringMap(dst, src map[string]string) {
+	for key, value := range src {
+		dst[key] = value
+	}
 }
 
 func hasBGP(router *routerapi.Router) bool {

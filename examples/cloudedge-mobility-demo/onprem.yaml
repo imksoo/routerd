@@ -288,7 +288,7 @@ spec:
         asn: 64577
         routerID: 10.99.0.1
         listen: { address: 10.99.0.1, port: 179 }
-        importPolicy: { allowedPrefixes: [10.77.60.0/24], nextHopRewrite: unchanged }
+        importPolicy: { allowedPrefixes: [10.77.60.0/24, 10.99.0.0/24], nextHopRewrite: unchanged }
         timers: { profile: fast }
         convergenceProfile: fast
 

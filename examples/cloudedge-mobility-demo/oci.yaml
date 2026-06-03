@@ -144,7 +144,7 @@ spec:
         asn: 64577
         routerID: "${DEMO_SELF_IP}"
         listen: { address: "${DEMO_SELF_IP}", port: 179 }
-        importPolicy: { allowedPrefixes: [10.77.60.0/24], nextHopRewrite: unchanged }
+        importPolicy: { allowedPrefixes: [10.77.60.0/24, 10.99.0.0/24], nextHopRewrite: unchanged }
         timers: { profile: fast }
         convergenceProfile: fast
 

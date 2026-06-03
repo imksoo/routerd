@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/netip"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -619,6 +620,48 @@ func TestReconcileDoesNotAddMobilityPreferredSourceForCloudNonOwner(t *testing.T
 	want := []FIBRoute{{Prefix: "10.77.60.10/32", NextHops: []string{"10.99.0.1"}}}
 	if !reflect.DeepEqual(fib.routes, want) {
 		t.Fatalf("fib routes = %#v, want no preferred source for cloud non-owner %#v", fib.routes, want)
+	}
+}
+
+func TestReconcileExposesMobilityLivenessMarkerWithoutInstallingFIBRoute(t *testing.T) {
+	router := bgpRouterWithImportPrefixes("10.77.60.0/24", "10.99.0.0/24")
+	server := &fakeServer{routes: []*gobgpapi.Destination{
+		testDestination("10.77.60.10/32", "10.99.0.1"),
+		testDestinationWithCommunities("10.99.0.2/32", "10.99.0.1", bgpstate.MobilityCommunityNodeLiveness, bgpstate.MobilityNodeIdentityCommunity("aws-router-a")),
+	}}
+	fib := &fakeFIB{}
+	controller := Controller{Router: router, Store: mapStore{}, Server: server, FIB: fib}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	want := []FIBRoute{{Prefix: "10.77.60.10/32", NextHops: []string{"10.99.0.1"}}}
+	if !reflect.DeepEqual(fib.routes, want) {
+		t.Fatalf("fib routes = %#v, want marker excluded %#v", fib.routes, want)
+	}
+	status := controller.Store.ObjectStatus(api.NetAPIVersion, "BGPRouter", "lan")
+	markers, ok := status["livenessMarkers"].(map[string]string)
+	if !ok {
+		t.Fatalf("livenessMarkers = %#v, want map[string]string", status["livenessMarkers"])
+	}
+	community := bgpstate.MobilityNodeIdentityCommunity("aws-router-a")
+	if got := markers[community]; got != "10.99.0.2/32" {
+		t.Fatalf("livenessMarkers[%s] = %q, want 10.99.0.2/32", community, got)
+	}
+	prefixes, ok := status["prefixes"].([]bgpstate.Prefix)
+	if !ok {
+		t.Fatalf("prefixes = %#v, want []bgpstate.Prefix", status["prefixes"])
+	}
+	for _, prefix := range prefixes {
+		if prefix.Prefix == "10.99.0.2/32" || bgpstate.HasCommunity(prefix.Communities, bgpstate.MobilityCommunityNodeLiveness) {
+			t.Fatalf("status prefixes include liveness marker: %#v", prefixes)
+		}
+	}
+	installed, ok := status["installedNextHops"].(map[string][]string)
+	if !ok {
+		t.Fatalf("installedNextHops = %#v, want map[string][]string", status["installedNextHops"])
+	}
+	if _, ok := installed["10.99.0.2/32"]; ok {
+		t.Fatalf("installedNextHops include liveness marker: %#v", installed)
 	}
 }
 
@@ -1375,6 +1418,50 @@ func testDestination(prefix string, nextHops ...string) *gobgpapi.Destination {
 		Prefix: prefix,
 		Paths:  paths,
 	}
+}
+
+func testDestinationWithCommunities(prefix, nextHop string, communities ...string) *gobgpapi.Destination {
+	parsed := netip.MustParsePrefix(prefix)
+	nlri, _ := anypb.New(&gobgpapi.IPAddressPrefix{Prefix: parsed.Addr().String(), PrefixLen: uint32(parsed.Bits())})
+	nh, _ := anypb.New(&gobgpapi.NextHopAttribute{NextHop: nextHop})
+	attrs := []*anypb.Any{nh}
+	if len(communities) > 0 {
+		values, err := standardCommunityValuesForTest(communities)
+		if err != nil {
+			panic(err)
+		}
+		attr, _ := anypb.New(&gobgpapi.CommunitiesAttribute{Communities: values})
+		attrs = append(attrs, attr)
+	}
+	return &gobgpapi.Destination{
+		Prefix: prefix,
+		Paths: []*gobgpapi.Path{{
+			Family: ipv4Family(),
+			Nlri:   nlri,
+			Pattrs: attrs,
+			Best:   true,
+		}},
+	}
+}
+
+func standardCommunityValuesForTest(values []string) ([]uint32, error) {
+	var out []uint32
+	for _, value := range values {
+		parts := strings.Split(strings.TrimSpace(value), ":")
+		if len(parts) != 2 {
+			return nil, errors.New("invalid community")
+		}
+		left, err := strconv.ParseUint(parts[0], 10, 16)
+		if err != nil {
+			return nil, err
+		}
+		right, err := strconv.ParseUint(parts[1], 10, 16)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, uint32(left)<<16|uint32(right))
+	}
+	return out, nil
 }
 
 var _ bgpstate.State
