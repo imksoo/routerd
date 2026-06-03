@@ -282,11 +282,12 @@ run_d3_matrix() {
   for i in "${!sites[@]}"; do
     for j in "${!sites[@]}"; do
       [[ "$i" == "$j" ]] && continue
-      local src=${sites[$i]} dst_ip=${ips[$j]}
+      local src=${sites[$i]} src_ip dst_ip=${ips[$j]}
+      src_ip=$(client_mobility_ip "$src")
       echo "D3 $src -> $dst_ip ping"
-      client_exec "$src" "ping -c3 -W2 $dst_ip"
+      client_exec "$src" "ping -I $src_ip -c3 -W2 $dst_ip"
       echo "D3 $src -> $dst_ip ssh source"
-      client_exec "$src" "ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=8 $CLIENT_SSH_USER@$dst_ip 'printenv SSH_CONNECTION; ip route show default'"
+      client_exec "$src" "ssh -b $src_ip -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=8 $CLIENT_SSH_USER@$dst_ip 'printenv SSH_CONNECTION; ip route show default'"
     done
   done
 }
