@@ -624,6 +624,102 @@ func TestDiscoveryControllerHonorsScanInterval(t *testing.T) {
 	}
 }
 
+func TestDiscoveryControllerRescansWhenForwardingStatusMissing(t *testing.T) {
+	now := time.Date(2026, 6, 3, 15, 0, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := discoveryPoolSpec()
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"discoveryLastScanAt": now.Add(-10 * time.Second).Format(time.RFC3339Nano),
+	}); err != nil {
+		t.Fatalf("SaveObjectStatus: %v", err)
+	}
+	runner := &fakeInventoryRunner{result: providerinventory.ObservePrivateIPsResult{
+		TypeMeta: providerinventory.TypeMeta{APIVersion: providerinventory.ProtocolAPIVersion, Kind: providerinventory.KindObservePrivateIPsResult},
+		Status: providerinventory.ObservePrivateIPsResultStatus{
+			Status: providerinventory.ResultSucceeded,
+			Self:   &providerinventory.PrivateIPSelf{NICRef: "router-nic", SubnetRef: "subnet-a", ForwardingEnabled: boolPtr(false)},
+		},
+	}}
+	controller := DiscoveryController{Router: discoveryRouter("azure-router-a", spec), Store: store, Runner: runner.run, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if runner.calls != 1 {
+		t.Fatalf("runner calls = %d, want scan despite recent legacy status without forwarding observation", runner.calls)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	if status["discoverySelfForwardingObserved"] != true || status["discoverySelfForwardingEnabled"] != false {
+		t.Fatalf("status = %#v, want forwarding observation populated", status)
+	}
+}
+
+func TestDiscoveryControllerDoesNotExpireProviderDiscoveryOnTransientActiveMiss(t *testing.T) {
+	now := time.Date(2026, 6, 3, 15, 0, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := discoveryPoolSpec()
+	recordEvent(t, store, providerDiscoveryObservedEvent("cloudedge", "cloudedge", "azure-router-a", "10.88.60.12/32", "azure", "azure-provider", providerinventory.PrivateIPRecord{
+		Address:   "10.88.60.12",
+		NICRef:    "client-nic",
+		SubnetRef: "subnet-a",
+		Tags:      map[string]string{"cloudedge-mobility": "true"},
+	}, now.Add(-time.Minute), 2*time.Minute))
+	runner := &fakeInventoryRunner{result: providerinventory.ObservePrivateIPsResult{
+		TypeMeta: providerinventory.TypeMeta{APIVersion: providerinventory.ProtocolAPIVersion, Kind: providerinventory.KindObservePrivateIPsResult},
+		Status: providerinventory.ObservePrivateIPsResultStatus{
+			Status: providerinventory.ResultSucceeded,
+			Self:   &providerinventory.PrivateIPSelf{NICRef: "router-nic", SubnetRef: "subnet-a", ForwardingEnabled: boolPtr(true)},
+		},
+	}}
+	controller := DiscoveryController{Router: discoveryRouter("azure-router-a", spec), Store: store, Runner: runner.run, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	events, err := store.ListFederationEvents("cloudedge", false, now.Unix())
+	if err != nil {
+		t.Fatalf("ListFederationEvents: %v", err)
+	}
+	if countEvents(events, ExpiredEventType, "azure-router-a", "10.88.60.12/32") != 0 {
+		t.Fatalf("events = %#v, want no immediate active expire for transient missing scan", events)
+	}
+}
+
+func TestDiscoveryControllerRetainsExcludedProviderDiscoveryAddress(t *testing.T) {
+	now := time.Date(2026, 6, 3, 15, 0, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := discoveryPoolSpec()
+	recordEvent(t, store, providerDiscoveryObservedEvent("cloudedge", "cloudedge", "azure-router-a", "10.88.60.12/32", "azure", "azure-provider", providerinventory.PrivateIPRecord{
+		Address:   "10.88.60.12",
+		NICRef:    "client-nic",
+		SubnetRef: "subnet-a",
+		Tags:      map[string]string{"cloudedge-mobility": "true"},
+	}, now.Add(-3*time.Minute), 5*time.Minute))
+	runner := &fakeInventoryRunner{result: providerinventory.ObservePrivateIPsResult{
+		TypeMeta: providerinventory.TypeMeta{APIVersion: providerinventory.ProtocolAPIVersion, Kind: providerinventory.KindObservePrivateIPsResult},
+		Status: providerinventory.ObservePrivateIPsResultStatus{
+			Status: providerinventory.ResultSucceeded,
+			Self:   &providerinventory.PrivateIPSelf{NICRef: "router-nic", SubnetRef: "subnet-a", ForwardingEnabled: boolPtr(true)},
+			IPs: []providerinventory.PrivateIPRecord{
+				{Address: "10.88.60.12", NICRef: "client-nic", SubnetRef: "subnet-a", Tags: map[string]string{"cloudedge-mobility": "false"}},
+			},
+		},
+	}}
+	controller := DiscoveryController{Router: discoveryRouter("azure-router-a", spec), Store: store, Runner: runner.run, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	events, err := store.ListFederationEvents("cloudedge", false, now.Unix())
+	if err != nil {
+		t.Fatalf("ListFederationEvents: %v", err)
+	}
+	if countEvents(events, ExpiredEventType, "azure-router-a", "10.88.60.12/32") != 0 {
+		t.Fatalf("events = %#v, want retained provider-present address not expired by selector exclusion", events)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	if fmt.Sprint(status["discoveryExcludedSelector"]) != "1" {
+		t.Fatalf("status = %#v, want selector exclusion counted", status)
+	}
+}
+
 func discoveryPoolSpec() api.MobilityPoolSpec {
 	spec := centralizedOwnershipPoolSpec()
 	spec.DeliveryPolicy.Mode = "bgp"

@@ -90,12 +90,12 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 	if strings.TrimSpace(discovery.Mode) != "provider-private-ip" {
 		return nil
 	}
-	interval := discoveryScanInterval(discovery)
-	if !c.scanDue(poolName, interval, now) {
-		return nil
-	}
 	if self.Role != "cloud" || self.Capture.Type != "provider-secondary-ip" {
 		return fmt.Errorf("ownershipDiscovery requires cloud provider-secondary-ip member %q", self.NodeRef)
+	}
+	interval := discoveryScanInterval(discovery)
+	if !c.scanDue(poolName, interval, now, true) {
+		return nil
 	}
 	placement := evaluatePlacement(self, members)
 	profileRef := strings.TrimSpace(discovery.ProviderRef)
@@ -152,7 +152,7 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 	excludedNICs := mobilityRouterNICRefs(spec.Members)
 	selfInventory := resolvedDiscoverySelfInventory(self, discovery, result.Status.Self)
 	if !placement.Active {
-		if err := c.expireStaleProviderDiscoveryEvents(poolName, spec, self.NodeRef, prefix, nil, now, discoveryLeaseTTL(discovery, spec)); err != nil {
+		if err := c.expireStaleProviderDiscoveryEvents(poolName, spec, self.NodeRef, prefix, nil, now, discoveryLeaseTTL(discovery, spec), 0); err != nil {
 			return err
 		}
 		status := mergeAnyMaps(discoverySelfInventoryStatus(selfInventory), map[string]any{
@@ -179,6 +179,7 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 	}
 	ttl := discoveryLeaseTTL(discovery, spec)
 	observedThisScan := map[string]bool{}
+	retainedThisScan := map[string]bool{}
 	counters := discoveryExclusionCounters{}
 	for _, rec := range sortedPrivateIPs(result.Status.IPs) {
 		address, ok := normalizeDiscoveredAddress(rec.Address, prefix)
@@ -186,6 +187,7 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 			counters.Scope++
 			continue
 		}
+		retainedThisScan[address] = true
 		if selfPrivateIPs[address] {
 			counters.SelfPrivateIP++
 			continue
@@ -221,7 +223,10 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 		observedThisScan[address] = true
 		counters.Observed++
 	}
-	if err := c.expireStaleProviderDiscoveryEvents(poolName, spec, self.NodeRef, prefix, observedThisScan, now, ttl); err != nil {
+	for address := range observedThisScan {
+		retainedThisScan[address] = true
+	}
+	if err := c.expireStaleProviderDiscoveryEvents(poolName, spec, self.NodeRef, prefix, retainedThisScan, now, ttl, ttl); err != nil {
 		return err
 	}
 	status := mergeAnyMaps(discoverySelfInventoryStatus(selfInventory), map[string]any{
@@ -247,18 +252,27 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 	return nil
 }
 
-func (c DiscoveryController) expireStaleProviderDiscoveryEvents(poolName string, spec api.MobilityPoolSpec, selfNode string, poolPrefix netip.Prefix, observed map[string]bool, now time.Time, ttl time.Duration) error {
+func (c DiscoveryController) expireStaleProviderDiscoveryEvents(poolName string, spec api.MobilityPoolSpec, selfNode string, poolPrefix netip.Prefix, retained map[string]bool, now time.Time, ttl time.Duration, missingHold time.Duration) error {
 	latest, err := c.latestProviderDiscoveryEvents(poolName, spec.GroupRef, selfNode, poolPrefix, now)
 	if err != nil {
 		return err
 	}
 	for _, address := range mapStringKeysSorted(latest) {
-		if observed[address] {
+		if retained[address] {
 			continue
 		}
 		ev := latest[address]
 		if ev.Type != ObservedEventType {
 			continue
+		}
+		if missingHold > 0 {
+			observedAt := ev.ObservedAt
+			if observedAt.IsZero() {
+				observedAt = now
+			}
+			if observedAt.Add(missingHold).After(now) {
+				continue
+			}
 		}
 		expired := providerDiscoveryExpiredEvent(poolName, spec.GroupRef, selfNode, address, ev, now, ttl)
 		if err := c.Store.RecordFederationEvent(expired); err != nil {
@@ -345,9 +359,10 @@ func resolvedDiscoverySelfInventory(self memberPlanInfo, discovery api.MobilityO
 
 func discoverySelfInventoryStatus(self discoverySelfInventory) map[string]any {
 	status := map[string]any{
-		"discoverySelfNICRef":     self.NICRef,
-		"discoverySelfSubnetRef":  self.SubnetRef,
-		"discoverySelfPrivateIPs": append([]string(nil), self.PrivateIPs...),
+		"discoverySelfNICRef":             self.NICRef,
+		"discoverySelfSubnetRef":          self.SubnetRef,
+		"discoverySelfPrivateIPs":         append([]string(nil), self.PrivateIPs...),
+		"discoverySelfForwardingObserved": self.ForwardingEnabled != nil,
 	}
 	if self.ForwardingEnabled != nil {
 		status["discoverySelfForwardingEnabled"] = *self.ForwardingEnabled
@@ -366,8 +381,13 @@ func mergeAnyMaps(a, b map[string]any) map[string]any {
 	return out
 }
 
-func (c DiscoveryController) scanDue(poolName string, interval time.Duration, now time.Time) bool {
+func (c DiscoveryController) scanDue(poolName string, interval time.Duration, now time.Time, requireForwardingState bool) bool {
 	status := c.Store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", poolName)
+	if requireForwardingState {
+		if _, ok := status["discoverySelfForwardingObserved"]; !ok {
+			return true
+		}
+	}
 	last, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(fmt.Sprint(status["discoveryLastScanAt"])))
 	if err != nil || last.IsZero() {
 		return true

@@ -374,12 +374,22 @@ func TestControllerBGPModeProviderTrapUsesRemoteInstalledNextHops(t *testing.T) 
 		ObservedAt: now.Add(-time.Second),
 		ExpiresAt:  now.Add(time.Hour),
 	})
-	saveBGPInstalledNextHops(t, store, map[string][]string{
+	recordEvent(t, store, routerstate.EventRecord{
+		ID:         "evt-aws-a-stale-oci",
+		Group:      "cloudedge",
+		SourceNode: "aws-router-a",
+		Type:       ObservedEventType,
+		Subject:    "10.88.60.13/32",
+		ObservedAt: now.Add(-time.Second),
+		ExpiresAt:  now.Add(time.Hour),
+		Payload:    map[string]string{"source": providerDiscoverySource, "pool": "cloudedge"},
+	})
+	saveBGPStatus(t, store, map[string][]string{
 		"10.88.60.10/32": {"10.99.0.1"},
 		"10.88.60.11/32": {"10.99.0.2"},
 		"10.88.60.12/32": {"10.99.0.3"},
 		"10.88.60.13/32": {"10.99.0.4"},
-	})
+	}, nil, map[string]string{bgpstate.MobilityNodeIdentityCommunity("aws-router-a"): "10.99.0.2/32"})
 	bgp := &fakeBGPPaths{}
 	router := routerWithBGPRouter(planningRouterForNode("aws-router-a", spec))
 	controller := Controller{Router: router, Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
