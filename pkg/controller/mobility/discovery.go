@@ -156,14 +156,15 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 			return err
 		}
 		status := mergeAnyMaps(discoverySelfInventoryStatus(selfInventory), map[string]any{
-			"discoveryPhase":       "Standby",
-			"discoveryReason":      placement.Reason,
-			"discoveryProvider":    profile.Provider,
-			"discoveryProviderRef": profileRef,
-			"discoveryPlugin":      pluginName,
-			"discoveryObserved":    0,
-			"discoveryLastScanAt":  now.Format(time.RFC3339Nano),
-			"discoveryNextScanAt":  now.Add(interval).Format(time.RFC3339Nano),
+			"discoveryPhase":          "Standby",
+			"discoveryReason":         placement.Reason,
+			"discoveryProvider":       profile.Provider,
+			"discoveryProviderRef":    profileRef,
+			"discoveryPlugin":         pluginName,
+			"discoveryObserved":       0,
+			"discoveryOwnedAddresses": []string{},
+			"discoveryLastScanAt":     now.Format(time.RFC3339Nano),
+			"discoveryNextScanAt":     now.Add(interval).Format(time.RFC3339Nano),
 		})
 		c.saveDiscoveryStatus(poolName, status)
 		return nil
@@ -236,6 +237,7 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 		"discoveryProviderRef":       profileRef,
 		"discoveryPlugin":            pluginName,
 		"discoveryObserved":          counters.Observed,
+		"discoveryOwnedAddresses":    mapStringKeysSorted(observedThisScan),
 		"discoveryExcluded":          counters.Excluded(),
 		"discoveryExcludedPrimary":   counters.Primary,
 		"discoveryExcludedRouterNIC": counters.RouterNIC,

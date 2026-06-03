@@ -93,6 +93,9 @@ func TestDiscoveryControllerEmitsObservedEventsForActiveCloudMember(t *testing.T
 	if status["discoverySelfForwardingEnabled"] != false {
 		t.Fatalf("forwarding status = %#v, want false", status)
 	}
+	if got := statusStringSlice(status["discoveryOwnedAddresses"]); len(got) != 1 || got[0] != "10.88.60.11/32" {
+		t.Fatalf("owned address status = %#v, want fresh observed owner", status)
+	}
 }
 
 func TestDiscoveryControllerUsesPluginResolvedSelfNICWhenCaptureNICIsImplicit(t *testing.T) {
@@ -438,6 +441,9 @@ func TestDiscoveryControllerResolvesSelfNICForStandbyPlacementMember(t *testing.
 	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
 	if status["discoveryPhase"] != "Standby" || !strings.Contains(status["discoveryReason"].(string), "active node") {
 		t.Fatalf("status = %#v", status)
+	}
+	if got := statusStringSlice(status["discoveryOwnedAddresses"]); len(got) != 0 {
+		t.Fatalf("status = %#v, want standby to publish empty owned-address backing", status)
 	}
 	if status["discoverySelfNICRef"] != "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic-b" || status["discoverySelfSubnetRef"] != "subnet-b" {
 		t.Fatalf("self status = %#v, want standby self NIC resolved", status)

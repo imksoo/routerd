@@ -120,6 +120,96 @@ func TestControllerBGPModeAdvertisesSelfOwnedHostRouteAndSuppressesSAMPart(t *te
 	}
 }
 
+func TestControllerBGPModeProviderDiscoveryAdvertisesOnlyFreshInventoryOwnedAddresses(t *testing.T) {
+	now := time.Date(2026, 6, 3, 16, 0, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := plannedPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	source := DynamicSource("cloudedge", "azure-router")
+	for _, address := range []string{"10.88.60.11/32", "10.88.60.12/32"} {
+		recordEvent(t, store, routerstate.EventRecord{
+			ID:         "evt-" + strings.ReplaceAll(address, "/", "-"),
+			Group:      "cloudedge",
+			SourceNode: "azure-router",
+			Type:       ObservedEventType,
+			Subject:    address,
+			ObservedAt: now.Add(-time.Minute),
+			ExpiresAt:  now.Add(time.Hour),
+			Payload: map[string]string{
+				"address": address,
+				"pool":    "cloudedge",
+				"source":  providerDiscoverySource,
+				"nicRef":  "client-nic",
+			},
+		})
+	}
+
+	bgp := &fakeBGPPaths{}
+	controller := Controller{Router: planningRouterForNode("azure-router", spec), Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile without fresh discovery status: %v", err)
+	}
+	if _, ok := maybePathBySourcePrefix(bgp, source, "10.88.60.11/32"); ok {
+		t.Fatalf("paths = %#v, want provider-discovery self-origin held until fresh inventory status", bgp.paths)
+	}
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"discoveryOwnedAddresses": []string{"10.88.60.11/32"},
+		"discoverySelfPrivateIPs": []string{"10.88.60.21"},
+		"discoveryLastScanAt":     now.Format(time.RFC3339Nano),
+	}); err != nil {
+		t.Fatalf("SaveObjectStatus: %v", err)
+	}
+
+	controller.Now = func() time.Time { return now.Add(time.Second) }
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile with fresh discovery status: %v", err)
+	}
+	if _, ok := maybePathBySourcePrefix(bgp, source, "10.88.60.11/32"); !ok {
+		t.Fatalf("paths = %#v, want fresh inventory-backed provider-discovery owner advertised", bgp.paths)
+	}
+	if _, ok := maybePathBySourcePrefix(bgp, source, "10.88.60.12/32"); ok {
+		t.Fatalf("paths = %#v, want stale provider-discovery owner not advertised", bgp.paths)
+	}
+}
+
+func TestControllerBGPModeProviderDiscoveryDoesNotAdvertiseRouterNICTrapAsOwner(t *testing.T) {
+	now := time.Date(2026, 6, 3, 16, 5, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := plannedPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	recordEvent(t, store, routerstate.EventRecord{
+		ID:         "evt-router-nic-trap",
+		Group:      "cloudedge",
+		SourceNode: "azure-router",
+		Type:       ObservedEventType,
+		Subject:    "10.88.60.12/32",
+		ObservedAt: now.Add(-time.Second),
+		ExpiresAt:  now.Add(time.Hour),
+		Payload: map[string]string{
+			"address": "10.88.60.12/32",
+			"pool":    "cloudedge",
+			"source":  providerDiscoverySource,
+			"nicRef":  "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic",
+		},
+	})
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"discoveryOwnedAddresses": []string{"10.88.60.12/32"},
+		"discoverySelfPrivateIPs": []string{"10.88.60.12"},
+		"discoveryLastScanAt":     now.Format(time.RFC3339Nano),
+	}); err != nil {
+		t.Fatalf("SaveObjectStatus: %v", err)
+	}
+
+	bgp := &fakeBGPPaths{}
+	controller := Controller{Router: planningRouterForNode("azure-router", spec), Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if _, ok := maybePathBySourcePrefix(bgp, DynamicSource("cloudedge", "azure-router"), "10.88.60.12/32"); ok {
+		t.Fatalf("paths = %#v, want router-NIC trap excluded from self-origin ownership", bgp.paths)
+	}
+}
+
 func TestControllerBGPModeDrainWithdrawsLocalPathWithoutOwnershipEpoch(t *testing.T) {
 	now := time.Date(2026, 6, 2, 10, 0, 0, 0, time.UTC)
 	store := testStore(t, now)

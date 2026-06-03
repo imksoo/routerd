@@ -141,7 +141,9 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		return err
 	}
 	events = append(events, releaseEvents...)
-	ownedPaths := bgpOwnedPaths(res.Metadata.Name, source, selfNode, spec, events, now)
+	discoveryOwnedAddresses, discoveryOwnedObserved := c.discoveryProviderOwnedAddressSet(res.Metadata.Name, spec)
+	discoverySelfIPs, discoverySelfIPsObserved := c.discoverySelfPrivateIPSet(res.Metadata.Name, spec)
+	ownedPaths := bgpOwnedPaths(res.Metadata.Name, source, selfNode, spec, events, discoveryOwnedAddresses, discoveryOwnedObserved, discoverySelfIPs, discoverySelfIPsObserved, now)
 	localOwned := bgpLocalOwnedAddresses(ownedPaths)
 	desired := append([]bgpdaemon.AppliedPath(nil), ownedPaths...)
 	if marker, ok := c.bgpLivenessMarkerPath(res.Metadata.Name, source, selfNode, spec.GroupRef); ok {
@@ -162,12 +164,11 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		return err
 	}
 	var actionPlans []dynamicconfig.ActionPlan
-	observedSelfIPs, observedSelfIPsOK := c.discoverySelfPrivateIPSet(res.Metadata.Name, spec)
 	forwardingObserved, forwardingEnabled, forwardingObservedAt := c.discoverySelfForwardingState(res.Metadata.Name)
 	if len(desiredTrapAddresses) > 0 && !selfCaptureResolved {
 		actionPlans = nil
 	} else {
-		actionPlans, err = bgpProviderActionPlans(res.Metadata.Name, selfNode, spec, desiredTrapAddresses, previousActionPlans, cloudProviderProfiles(c.Router), actionJournal, observedSelfIPs, observedSelfIPsOK, forwardingObserved, forwardingEnabled, forwardingObservedAt, now)
+		actionPlans, err = bgpProviderActionPlans(res.Metadata.Name, selfNode, spec, desiredTrapAddresses, previousActionPlans, cloudProviderProfiles(c.Router), actionJournal, discoverySelfIPs, discoverySelfIPsObserved, forwardingObserved, forwardingEnabled, forwardingObservedAt, now)
 		if err != nil {
 			return err
 		}
@@ -351,7 +352,7 @@ type bgpOwnedAddress struct {
 	SourceType string
 }
 
-func bgpOwnedPaths(poolName, source, selfNode string, spec api.MobilityPoolSpec, events []routerstate.EventRecord, now time.Time) []bgpdaemon.AppliedPath {
+func bgpOwnedPaths(poolName, source, selfNode string, spec api.MobilityPoolSpec, events []routerstate.EventRecord, discoveryOwnedAddresses map[string]bool, discoveryOwnedObserved bool, discoverySelfIPs map[string]bool, discoverySelfIPsObserved bool, now time.Time) []bgpdaemon.AppliedPath {
 	poolPrefix, err := netip.ParsePrefix(strings.TrimSpace(spec.Prefix))
 	if err != nil {
 		return nil
@@ -363,7 +364,7 @@ func bgpOwnedPaths(poolName, source, selfNode string, spec api.MobilityPoolSpec,
 		return nil
 	}
 	placement := evaluatePlacement(self, members)
-	owned := bgpLocalOwnedAddressesFromConfigAndEvents(poolName, selfNode, spec, events, poolPrefix, now)
+	owned := bgpLocalOwnedAddressesFromConfigAndEvents(poolName, selfNode, spec, events, discoveryOwnedAddresses, discoveryOwnedObserved, discoverySelfIPs, discoverySelfIPsObserved, poolPrefix, now)
 	var out []bgpdaemon.AppliedPath
 	for _, owner := range owned {
 		prefix, err := netip.ParsePrefix(owner.Address)
@@ -435,7 +436,7 @@ func bgpLocalOwnedAddresses(paths []bgpdaemon.AppliedPath) map[string]bool {
 	return out
 }
 
-func bgpLocalOwnedAddressesFromConfigAndEvents(poolName, selfNode string, spec api.MobilityPoolSpec, events []routerstate.EventRecord, poolPrefix netip.Prefix, now time.Time) []bgpOwnedAddress {
+func bgpLocalOwnedAddressesFromConfigAndEvents(poolName, selfNode string, spec api.MobilityPoolSpec, events []routerstate.EventRecord, discoveryOwnedAddresses map[string]bool, discoveryOwnedObserved bool, discoverySelfIPs map[string]bool, discoverySelfIPsObserved bool, poolPrefix netip.Prefix, now time.Time) []bgpOwnedAddress {
 	owned := map[string]bgpOwnedAddress{}
 	latest := map[string]routerstate.EventRecord{}
 	staticHandovers := staticHandoversByFrom(spec.StaticHandovers, poolPrefix)
@@ -479,11 +480,16 @@ func bgpLocalOwnedAddressesFromConfigAndEvents(poolName, selfNode string, spec a
 			delete(owned, address)
 			continue
 		}
-		if bgpMemberAdvertisesOwnedAddress(self, members[strings.TrimSpace(ev.SourceNode)]) {
-			sourceType := strings.TrimSpace(ev.Payload["sourceType"])
-			if sourceType == "" {
-				sourceType = bgpMobilitySourceFromEvent(ev)
+		sourceType := strings.TrimSpace(ev.Payload["sourceType"])
+		if sourceType == "" {
+			sourceType = bgpMobilitySourceFromEvent(ev)
+		}
+		if sourceType == providerDiscoverySource && strings.TrimSpace(ev.SourceNode) == strings.TrimSpace(selfNode) {
+			if !selfProviderDiscoveryEventBackedByFreshInventory(address, ev, self, discoveryOwnedAddresses, discoveryOwnedObserved, discoverySelfIPs, discoverySelfIPsObserved) {
+				continue
 			}
+		}
+		if bgpMemberAdvertisesOwnedAddress(self, members[strings.TrimSpace(ev.SourceNode)]) {
 			owned[address] = bgpOwnedAddress{Address: address, SourceType: sourceType}
 		}
 	}
@@ -508,6 +514,24 @@ func bgpLocalOwnedAddressesFromConfigAndEvents(poolName, selfNode string, spec a
 		return out[i].Address < out[j].Address
 	})
 	return out
+}
+
+func selfProviderDiscoveryEventBackedByFreshInventory(address string, ev routerstate.EventRecord, self memberPlanInfo, discoveryOwnedAddresses map[string]bool, discoveryOwnedObserved bool, discoverySelfIPs map[string]bool, discoverySelfIPsObserved bool) bool {
+	if !discoveryOwnedObserved {
+		return false
+	}
+	if !discoveryOwnedAddresses[address] {
+		return false
+	}
+	if discoverySelfIPsObserved && discoverySelfIPs[address] {
+		return false
+	}
+	eventNIC := strings.TrimSpace(ev.Payload["nicRef"])
+	selfNIC := strings.TrimSpace(self.Capture.NICRef)
+	if eventNIC != "" && selfNIC != "" && eventNIC == selfNIC {
+		return false
+	}
+	return true
 }
 
 func bgpMemberAdvertisesOwnedAddress(self, owner memberPlanInfo) bool {
@@ -551,6 +575,28 @@ func bgpMobilitySourceFromEvent(ev routerstate.EventRecord) string {
 func (c Controller) discoverySelfPrivateIPSet(poolName string, spec api.MobilityPoolSpec) (map[string]bool, bool) {
 	status := c.Store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", poolName)
 	raw, ok := status["discoverySelfPrivateIPs"]
+	if !ok {
+		return nil, false
+	}
+	prefix, err := netip.ParsePrefix(strings.TrimSpace(spec.Prefix))
+	if err != nil {
+		return nil, false
+	}
+	prefix = prefix.Masked()
+	out := map[string]bool{}
+	for _, value := range statusStringSlice(raw) {
+		address, ok := normalizeDiscoveredAddress(value, prefix)
+		if !ok {
+			continue
+		}
+		out[address] = true
+	}
+	return out, true
+}
+
+func (c Controller) discoveryProviderOwnedAddressSet(poolName string, spec api.MobilityPoolSpec) (map[string]bool, bool) {
+	status := c.Store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", poolName)
+	raw, ok := status["discoveryOwnedAddresses"]
 	if !ok {
 		return nil, false
 	}
