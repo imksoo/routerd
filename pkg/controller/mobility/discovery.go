@@ -81,10 +81,11 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 		return err
 	}
 	members := plannerMembers(spec.Members)
-	self, ok := members[selfNode]
+	self, ok := lookupMemberByNodeRef(members, selfNode)
 	if !ok {
 		return fmt.Errorf("self node %q is not a member of MobilityPool/%s", selfNode, poolName)
 	}
+	selfNode = self.NodeRef
 	discovery := self.OwnershipDiscovery
 	if strings.TrimSpace(discovery.Mode) != "provider-private-ip" {
 		return nil
@@ -97,14 +98,6 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 		return fmt.Errorf("ownershipDiscovery requires cloud provider-secondary-ip member %q", self.NodeRef)
 	}
 	placement := evaluatePlacement(self, members)
-	if !placement.Active {
-		c.saveDiscoveryStatus(poolName, map[string]any{
-			"discoveryPhase":      "Standby",
-			"discoveryReason":     placement.Reason,
-			"discoveryLastScanAt": now.Format(time.RFC3339Nano),
-		})
-		return nil
-	}
 	profileRef := strings.TrimSpace(discovery.ProviderRef)
 	if profileRef == "" {
 		profileRef = strings.TrimSpace(self.Capture.ProviderRef)
@@ -158,6 +151,22 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 	}
 	excludedNICs := mobilityRouterNICRefs(spec.Members)
 	selfInventory := resolvedDiscoverySelfInventory(self, discovery, result.Status.Self)
+	if !placement.Active {
+		c.saveDiscoveryStatus(poolName, map[string]any{
+			"discoveryPhase":          "Standby",
+			"discoveryReason":         placement.Reason,
+			"discoveryProvider":       profile.Provider,
+			"discoveryProviderRef":    profileRef,
+			"discoveryPlugin":         pluginName,
+			"discoverySelfNICRef":     selfInventory.NICRef,
+			"discoverySelfSubnetRef":  selfInventory.SubnetRef,
+			"discoverySelfPrivateIPs": append([]string(nil), selfInventory.PrivateIPs...),
+			"discoveryObserved":       0,
+			"discoveryLastScanAt":     now.Format(time.RFC3339Nano),
+			"discoveryNextScanAt":     now.Add(interval).Format(time.RFC3339Nano),
+		})
+		return nil
+	}
 	if selfInventory.NICRef != "" {
 		excludedNICs[selfInventory.NICRef] = true
 	}

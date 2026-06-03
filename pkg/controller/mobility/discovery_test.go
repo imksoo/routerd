@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	bgpstate "github.com/imksoo/routerd/pkg/bgp"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	"github.com/imksoo/routerd/pkg/providerinventory"
 	routerstate "github.com/imksoo/routerd/pkg/state"
@@ -402,24 +403,83 @@ func TestDiscoveryControllerScopeIncludeExcludeAddresses(t *testing.T) {
 	}
 }
 
-func TestDiscoveryControllerSkipsStandbyPlacementMember(t *testing.T) {
+func TestDiscoveryControllerResolvesSelfNICForStandbyPlacementMember(t *testing.T) {
 	now := time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)
 	store := testStore(t, now)
 	spec := discoveryPoolSpec()
 	runner := &fakeInventoryRunner{result: providerinventory.ObservePrivateIPsResult{
 		TypeMeta: providerinventory.TypeMeta{APIVersion: providerinventory.ProtocolAPIVersion, Kind: providerinventory.KindObservePrivateIPsResult},
-		Status:   providerinventory.ObservePrivateIPsResultStatus{Status: providerinventory.ResultSucceeded},
+		Status: providerinventory.ObservePrivateIPsResultStatus{
+			Status: providerinventory.ResultSucceeded,
+			Self:   &providerinventory.PrivateIPSelf{NICRef: "standby-router-nic", SubnetRef: "subnet-b", PrivateIPs: []string{"10.88.60.22"}},
+			IPs: []providerinventory.PrivateIPRecord{
+				{Address: "10.88.60.12", NICRef: "standby-client-nic", Tags: map[string]string{"cloudedge-mobility": "true"}},
+			},
+		},
 	}}
 	controller := DiscoveryController{Router: discoveryRouter("azure-router-b", spec), Store: store, Runner: runner.run, Now: func() time.Time { return now }}
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
-	if runner.calls != 0 {
-		t.Fatalf("runner calls = %d, want standby to skip scan", runner.calls)
+	if runner.calls != 1 {
+		t.Fatalf("runner calls = %d, want standby to scan for self NIC", runner.calls)
+	}
+	events, err := store.ListFederationEvents("cloudedge", false, now.Unix())
+	if err != nil {
+		t.Fatalf("ListFederationEvents: %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("events = %#v, want no standby ownership observations", events)
 	}
 	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
 	if status["discoveryPhase"] != "Standby" || !strings.Contains(status["discoveryReason"].(string), "active node") {
 		t.Fatalf("status = %#v", status)
+	}
+	if status["discoverySelfNICRef"] != "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic-b" || status["discoverySelfSubnetRef"] != "subnet-b" {
+		t.Fatalf("self status = %#v, want standby self NIC resolved", status)
+	}
+}
+
+func TestDiscoveryControllerStandbySelfNICEnablesLivenessSeizeActions(t *testing.T) {
+	now := time.Date(2026, 6, 3, 11, 56, 21, 0, time.UTC)
+	store := testStore(t, now)
+	spec := discoveryPoolSpec()
+	spec.Members[1].Capture.NICRef = ""
+	spec.Members[2].Capture.NICRef = ""
+	runner := &fakeInventoryRunner{result: providerinventory.ObservePrivateIPsResult{
+		TypeMeta: providerinventory.TypeMeta{APIVersion: providerinventory.ProtocolAPIVersion, Kind: providerinventory.KindObservePrivateIPsResult},
+		Status: providerinventory.ObservePrivateIPsResultStatus{
+			Status: providerinventory.ResultSucceeded,
+			Self:   &providerinventory.PrivateIPSelf{NICRef: "standby-router-nic", SubnetRef: "subnet-b", PrivateIPs: []string{"10.88.60.22"}},
+		},
+	}}
+	router := discoveryRouter("azure-router-b", spec)
+	discovery := DiscoveryController{Router: router, Store: store, Runner: runner.run, Now: func() time.Time { return now }}
+	if err := discovery.Reconcile(context.Background()); err != nil {
+		t.Fatalf("discovery Reconcile: %v", err)
+	}
+	saveBGPStatus(t, store, map[string][]string{
+		"10.88.60.10/32": {"10.99.0.1"},
+		"10.88.60.11/32": {"10.99.0.2"},
+		"10.88.60.13/32": {"10.99.0.4"},
+	}, []map[string]any{}, map[string]string{
+		bgpstate.MobilityNodeIdentityCommunity("azure-router-b"): "10.99.0.6/32",
+	})
+	mobility := Controller{Router: routerWithBGPRouter(router), Store: store, BGPPaths: &fakeBGPPaths{}, Now: func() time.Time { return now.Add(time.Second) }}
+	if err := mobility.Reconcile(context.Background()); err != nil {
+		t.Fatalf("mobility Reconcile: %v", err)
+	}
+	plans := decodeActionPlans(t, latestPart(t, store, DynamicSource("cloudedge", "azure-router-b")).ActionPlansJSON)
+	assign := findActionPlanByAddress(plans, "assign-secondary-ip", "10.88.60.10/32")
+	if assign == nil {
+		t.Fatalf("plans = %#v, want standby seize assign after self NIC discovery", plans)
+	}
+	if assign.Target["nicRef"] != "standby-router-nic" || assign.Parameters["allowReassignment"] != "true" {
+		t.Fatalf("assign = %#v, want discovered standby NIC and allowReassignment", assign)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	if status["generatedActions"] == 0 || status["plannerPhase"] == "Degraded" {
+		t.Fatalf("mobility status = %#v, want generated actions after self NIC discovery", status)
 	}
 }
 
