@@ -8,28 +8,6 @@ import (
 	"github.com/imksoo/routerd/pkg/federation"
 )
 
-func TestPeerMatchesControlPlaneLivenessBypassesSubjectPrefixes(t *testing.T) {
-	peer := PeerConfig{SubjectPrefixes: []string{"10.77.60."}}
-	ev := federation.Event{
-		Type:    federation.MobilityMemberHeartbeatType,
-		Subject: "cloudedge/aws-router-a",
-	}
-	if !peerMatches(peer, ev) {
-		t.Fatalf("heartbeat event did not match peer with data-plane subject prefix")
-	}
-}
-
-func TestPeerMatchesControlPlaneLivenessRespectsTypes(t *testing.T) {
-	peer := PeerConfig{Types: []string{"routerd.client.ipv4.observed"}, SubjectPrefixes: []string{"10.77.60."}}
-	ev := federation.Event{
-		Type:    federation.MobilityMemberHeartbeatType,
-		Subject: "cloudedge/aws-router-a",
-	}
-	if peerMatches(peer, ev) {
-		t.Fatalf("heartbeat event matched peer with excluding type filter")
-	}
-}
-
 func TestPeerMatchesAddressEventStillUsesSubjectPrefixes(t *testing.T) {
 	peer := PeerConfig{SubjectPrefixes: []string{"10.77.60."}}
 	ev := federation.Event{

@@ -58,7 +58,7 @@ func TestRejectSelfCapturedObservedEventIgnoresNonObservedTypes(t *testing.T) {
 		dynamicPart(t, now, remoteAddressClaim("capture-10", "10.77.60.10/32", "proxy-arp")),
 	}}
 	if err := RejectSelfCapturedObservedEvent(store, federation.Event{
-		Type:    federation.MobilityMemberHeartbeatType,
+		Type:    "routerd.mobility.unrelated",
 		Subject: "10.77.60.10/32",
 	}, now); err != nil {
 		t.Fatalf("RejectSelfCapturedObservedEvent: %v, want nil", err)

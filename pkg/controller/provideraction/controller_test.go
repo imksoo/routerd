@@ -155,24 +155,11 @@ func TestControllerRequeuesAndExecutesStaleRunningAction(t *testing.T) {
 	}
 }
 
-func TestControllerSkipsStaleOwnershipEpochBeforeExecute(t *testing.T) {
+func TestControllerSkipsStaleMobilityPathBeforeExecute(t *testing.T) {
 	store := controllerStore(t)
-	if _, err := store.ReconcileMobilityOwnershipEpochs([]routerstate.MobilityOwnershipEpochRecord{{
-		Pool: "cloudedge", Address: "10.0.0.5/32", OwnerNode: "node-a",
-	}}); err != nil {
-		t.Fatalf("seed ownership: %v", err)
-	}
-	if _, err := store.ReconcileMobilityOwnershipEpochs([]routerstate.MobilityOwnershipEpochRecord{{
-		Pool: "cloudedge", Address: "10.0.0.5/32", OwnerNode: "node-b",
-	}}); err != nil {
-		t.Fatalf("bump ownership: %v", err)
-	}
 	plan := controllerPlan("k-stale", "10.0.0.5/32")
 	plan.Parameters = map[string]string{
-		"mobilityOwnershipPool":    "cloudedge",
-		"mobilityOwnershipAddress": "10.0.0.5/32",
-		"mobilityOwnershipEpoch":   "1",
-		"mobilityOwnershipOwner":   "node-a",
+		"mobilityPathSig": "prefix=10.0.0.5/32;nextHops=old",
 	}
 	params, err := json.Marshal(plan.Parameters)
 	if err != nil {

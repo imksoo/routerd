@@ -199,20 +199,6 @@ func TestDiscoveryControllerDoesNotUseLeaseTableForRemoteExclusion(t *testing.T)
 	now := time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)
 	store := testStore(t, now)
 	spec := discoveryPoolSpec()
-	if err := store.UpsertAddressLease(routerstate.AddressLeaseRecord{
-		Pool:       "cloudedge",
-		Address:    "10.88.60.12/32",
-		Status:     routerstate.AddressLeaseStatusActive,
-		OwnerNode:  "onprem-router",
-		OwnerSite:  "onprem",
-		OwnerRole:  "onprem",
-		Epoch:      1,
-		ObservedAt: now.Add(-time.Minute),
-		ExpiresAt:  now.Add(time.Hour),
-		RecordedAt: now.Add(-time.Minute),
-	}); err != nil {
-		t.Fatalf("UpsertAddressLease: %v", err)
-	}
 	runner := &fakeInventoryRunner{result: providerinventory.ObservePrivateIPsResult{
 		TypeMeta: providerinventory.TypeMeta{APIVersion: providerinventory.ProtocolAPIVersion, Kind: providerinventory.KindObservePrivateIPsResult},
 		Status: providerinventory.ObservePrivateIPsResultStatus{
@@ -248,20 +234,6 @@ func TestDiscoveryControllerAllowsSameSiteLeaseHandoverDiscovery(t *testing.T) {
 	spec.IPOwnershipPolicy.PreferNodes = []string{"azure-router-b", "azure-router-a"}
 	spec.Members[1].Placement.Priority = 20
 	spec.Members[2].Placement.Priority = 10
-	if err := store.UpsertAddressLease(routerstate.AddressLeaseRecord{
-		Pool:       "cloudedge",
-		Address:    "10.88.60.11/32",
-		Status:     routerstate.AddressLeaseStatusActive,
-		OwnerNode:  "azure-router-a",
-		OwnerSite:  "azure",
-		OwnerRole:  "cloud",
-		Epoch:      1,
-		ObservedAt: now.Add(-time.Minute),
-		ExpiresAt:  now.Add(time.Hour),
-		RecordedAt: now.Add(-time.Minute),
-	}); err != nil {
-		t.Fatalf("UpsertAddressLease: %v", err)
-	}
 	runner := &fakeInventoryRunner{result: providerinventory.ObservePrivateIPsResult{
 		TypeMeta: providerinventory.TypeMeta{APIVersion: providerinventory.ProtocolAPIVersion, Kind: providerinventory.KindObservePrivateIPsResult},
 		Status: providerinventory.ObservePrivateIPsResultStatus{
@@ -476,11 +448,6 @@ func TestDiscoveryControllerObservedEventFeedsBGPAdvertisement(t *testing.T) {
 	}
 	if len(bgp.upserts) != 1 || bgp.upserts[0].Prefix != "10.88.60.11/32" || bgp.upserts[0].Source != DynamicSource("cloudedge", "azure-router-a") {
 		t.Fatalf("bgp upserts = %#v, want discovered local /32 advertisement", bgp.upserts)
-	}
-	if lease, found, err := store.GetAddressLease("cloudedge", "10.88.60.11/32"); err != nil {
-		t.Fatalf("GetAddressLease: %v", err)
-	} else if found {
-		t.Fatalf("lease = %+v, want BGP advertisement without AddressLease projection", lease)
 	}
 }
 

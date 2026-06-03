@@ -13,10 +13,10 @@ import (
 )
 
 // validateMobilityResource performs local field validation for CloudEdge
-// Mobility Control Plane Kinds (Step 1). The only operator-authored Kind is
-// MobilityPool; AddressLease is derived runtime state and is intentionally not a
-// config Kind, so it never appears here. It returns handled=true for Kinds it
-// owns so the caller's Kind switch accepts them.
+// Mobility Control Plane Kinds. The only operator-authored Kind is MobilityPool;
+// derived BGP paths and provider trap actions are runtime state and never appear
+// as config Kinds. It returns handled=true for Kinds it owns so the caller's Kind
+// switch accepts them.
 func validateMobilityResource(res api.Resource, _ platform.OS) (bool, error) {
 	switch res.Kind {
 	case "MobilityPool":
@@ -345,10 +345,7 @@ func validateMobilityIPOwnershipPolicy(res api.Resource, spec api.MobilityPoolSp
 	policySet := strings.TrimSpace(policy.Type) != "" ||
 		policy.EpochLocking != nil ||
 		len(policy.PreferNodes) > 0 ||
-		policy.AutoFailover ||
-		strings.TrimSpace(policy.HeartbeatInterval) != "" ||
-		strings.TrimSpace(policy.HeartbeatTTL) != "" ||
-		strings.TrimSpace(policy.PromotionHoldDuration) != ""
+		policy.AutoFailover
 	if !policySet {
 		return nil
 	}
@@ -368,30 +365,6 @@ func validateMobilityIPOwnershipPolicy(res api.Resource, spec api.MobilityPoolSp
 			return fmt.Errorf("%s spec.ipOwnershipPolicy.preferNodes contains duplicate nodeRef %q", res.ID(), nodeRef)
 		}
 		seen[nodeRef] = true
-	}
-	interval, intervalSet, err := parseOptionalMobilityDuration(res.ID()+" spec.ipOwnershipPolicy.heartbeatInterval", policy.HeartbeatInterval, true)
-	if err != nil {
-		return err
-	}
-	ttl, ttlSet, err := parseOptionalMobilityDuration(res.ID()+" spec.ipOwnershipPolicy.heartbeatTTL", policy.HeartbeatTTL, true)
-	if err != nil {
-		return err
-	}
-	hold, _, err := parseOptionalMobilityDuration(res.ID()+" spec.ipOwnershipPolicy.promotionHoldDuration", policy.PromotionHoldDuration, false)
-	if err != nil {
-		return err
-	}
-	_ = hold
-	if policy.AutoFailover {
-		if !intervalSet {
-			return fmt.Errorf("%s spec.ipOwnershipPolicy.heartbeatInterval is required when autoFailover is true", res.ID())
-		}
-		if !ttlSet {
-			return fmt.Errorf("%s spec.ipOwnershipPolicy.heartbeatTTL is required when autoFailover is true", res.ID())
-		}
-	}
-	if intervalSet && ttlSet && ttl < interval {
-		return fmt.Errorf("%s spec.ipOwnershipPolicy.heartbeatTTL must be >= heartbeatInterval", res.ID())
 	}
 	return nil
 }

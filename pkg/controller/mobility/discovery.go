@@ -96,11 +96,7 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 	if self.Role != "cloud" || self.Capture.Type != "provider-secondary-ip" {
 		return fmt.Errorf("ownershipDiscovery requires cloud provider-secondary-ip member %q", self.NodeRef)
 	}
-	liveness, err := ownershipLivenessFromStore(c.Store, poolName, spec, now)
-	if err != nil {
-		return err
-	}
-	placement := evaluatePlacementWithLiveness(self, members, spec.IPOwnershipPolicy, liveness)
+	placement := evaluatePlacement(self, members)
 	if !placement.Active {
 		c.saveDiscoveryStatus(poolName, map[string]any{
 			"discoveryPhase":      "Standby",

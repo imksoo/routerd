@@ -143,19 +143,17 @@ sql_value() {
 }
 
 observe_detection_default() {
-  local provider=$1 expected stopped address owner holder
+  local provider=$1 expected stopped address holder_count action_count
   expected=$(expected_standby_node "$provider")
   stopped=$(stopped_node "$provider")
   address=$(capture_address "$provider")
   if [[ -n "$expected" ]]; then
-    owner=$(sql_value "$provider" "SELECT owner_node FROM mobility_ownership_epochs WHERE owner_node = '$expected' ORDER BY updated_at DESC LIMIT 1;")
-    holder=$(sql_value "$provider" "SELECT holder FROM mobility_capture_epochs WHERE holder = '$expected' ORDER BY updated_at DESC LIMIT 1;")
-    [[ "$owner" == "$expected" || "$holder" == "$expected" ]] && return 0
+    holder_count=$(sql_value "$provider" "SELECT COUNT(*) FROM action_executions WHERE json_extract(parameters_json,'$.mobilityCaptureHolder') = '$expected' AND updated_at >= datetime('now','-10 minutes');")
+    [[ "${holder_count:-0}" =~ ^[0-9]+$ && "$holder_count" -gt 0 ]] && return 0
   fi
   if [[ -n "$stopped" && -n "$address" ]]; then
-    owner=$(sql_value "$provider" "SELECT owner_node FROM mobility_ownership_epochs WHERE address LIKE '$address%' ORDER BY updated_at DESC LIMIT 1;")
-    holder=$(sql_value "$provider" "SELECT holder FROM mobility_capture_epochs WHERE address LIKE '$address%' ORDER BY updated_at DESC LIMIT 1;")
-    [[ -n "$owner$holder" && "$owner" != "$stopped" && "$holder" != "$stopped" ]] && return 0
+    action_count=$(sql_value "$provider" "SELECT COUNT(*) FROM action_executions WHERE target_json LIKE '%$address%' AND json_extract(parameters_json,'$.mobilityCaptureHolder') != '$stopped' AND updated_at >= datetime('now','-10 minutes');")
+    [[ "${action_count:-0}" =~ ^[0-9]+$ && "$action_count" -gt 0 ]] && return 0
   fi
   return 1
 }
@@ -169,7 +167,7 @@ observe_switchover_default() {
     return 0
   fi
   if [[ -n "$expected" && -n "$address" ]]; then
-    holder=$(sql_value "$provider" "SELECT holder FROM mobility_capture_epochs WHERE address LIKE '$address%' ORDER BY updated_at DESC LIMIT 1;")
+    holder=$(sql_value "$provider" "SELECT json_extract(parameters_json,'$.mobilityCaptureHolder') FROM action_executions WHERE target_json LIKE '%$address%' ORDER BY updated_at DESC LIMIT 1;")
     [[ "$holder" == "$expected" ]] && return 0
   fi
   [[ "$provider" == "onprem" ]] && observe_detection_default "$provider"
@@ -200,15 +198,14 @@ cmd_observe() {
 }
 
 cmd_detail() {
-  local provider=$1 stage=$2 expected stopped address owner holder actions
+  local provider=$1 stage=$2 expected stopped address holder actions
   expected=$(expected_standby_node "$provider")
   stopped=$(stopped_node "$provider")
   address=$(capture_address "$provider")
-  owner=$(sql_value "$provider" "SELECT owner_node FROM mobility_ownership_epochs ORDER BY updated_at DESC LIMIT 1;")
-  holder=$(sql_value "$provider" "SELECT holder FROM mobility_capture_epochs ORDER BY updated_at DESC LIMIT 1;")
+  holder=$(sql_value "$provider" "SELECT json_extract(parameters_json,'$.mobilityCaptureHolder') FROM action_executions ORDER BY updated_at DESC LIMIT 1;")
   actions=$(sql_value "$provider" "SELECT COUNT(*) FROM action_executions WHERE status = 'succeeded' AND updated_at >= datetime('now','-10 minutes');")
-  printf 'stage=%s provider=%s expected_standby=%s stopped_node=%s address=%s owner=%s holder=%s recent_succeeded_actions=%s\n' \
-    "$stage" "$provider" "$expected" "$stopped" "$address" "$owner" "$holder" "${actions:-0}"
+  printf 'stage=%s provider=%s expected_standby=%s stopped_node=%s address=%s holder=%s recent_succeeded_actions=%s\n' \
+    "$stage" "$provider" "$expected" "$stopped" "$address" "$holder" "${actions:-0}"
 }
 
 main() {

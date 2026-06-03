@@ -258,9 +258,9 @@ probe_stale_gate_on_aws_b() {
       exit 0
     fi
     now=\$(date -u +%Y-%m-%dT%H:%M:%SZ)
-    sudo sqlite3 /var/lib/routerd/routerd.db \"insert into action_executions(idempotency_key,source,provider,provider_ref,action,target_json,parameters_json,undo_json,risk_level,status,created_at,updated_at) values('cloudedge-demo-stale-probe-epoch1','stale-gate-probe','aws','aws-lab','assign-secondary-ip',json_object('provider','aws','providerRef','aws-lab','region','$AWS_REGION','nicRef','\$aws_b_nic','address','10.77.60.10/32'),json_object('mobilityCaptureKey','cloudedge'||char(0)||'10.77.60.10/32'||char(0)||'provider:aws-lab:placement:aws-edge','mobilityCaptureEpoch','1','mobilityCaptureHolder','aws-router-a'),'{}','medium','pending','\$now','\$now') on conflict(idempotency_key) do nothing;\"
+    sudo sqlite3 /var/lib/routerd/routerd.db \"insert into action_executions(idempotency_key,source,provider,provider_ref,action,target_json,parameters_json,undo_json,risk_level,status,created_at,updated_at) values('cloudedge-demo-stale-probe-pathsig1','stale-gate-probe','aws','aws-lab','assign-secondary-ip',json_object('provider','aws','providerRef','aws-lab','region','$AWS_REGION','nicRef','\$aws_b_nic','address','10.77.60.10/32'),json_object('mobilityPathSig','prefix=10.77.60.10/32;nextHops=stale','mobilityCaptureHolder','aws-router-a'),'{}','medium','pending','\$now','\$now') on conflict(idempotency_key) do nothing;\"
     sudo $ROUTERCTL_BIN action import
-    sudo $ROUTERCTL_BIN action list -o json | jq -r '.[] | select(.idempotencyKey==\"cloudedge-demo-stale-probe-epoch1\") | [.status,.resultMessage] | @tsv'"
+    sudo $ROUTERCTL_BIN action list -o json | jq -r '.[] | select(.idempotencyKey==\"cloudedge-demo-stale-probe-pathsig1\") | [.status,.resultMessage] | @tsv'"
 }
 
 main() {

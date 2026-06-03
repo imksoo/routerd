@@ -60,8 +60,11 @@ The operator declares only intent; everything else is derived.
 
 - **MobilityPool** — the single operator-authored intent (members, capture mode,
   delivery, placement, maintenance drain).
-- **AddressLease** — derived runtime state projected from federation events.
-- **RemoteAddressClaim** — derived capture/delivery for an address owned elsewhere.
+- **BGP /32 mobility paths** — each owner advertises its owned host route; other
+  sites learn the current best path over the overlay.
+- **Provider trap actions** — cloud routers eventually assign/unassign remote
+  owned /32s as secondary IPs for local trapping; these actions are no longer on
+  the critical forwarding path.
 - **Event Federation** — `routerd.client.ipv4.observed` facts propagate between
   sites (`EventGroup` / `EventPeer` / `EventSubscription`, see
   [Event Federation](../reference/event-federation.md)).
@@ -69,10 +72,9 @@ The operator declares only intent; everything else is derived.
   unassign secondary IP, forwarding) under `ProviderActionPolicy`, using the
   instance's own cloud-native identity (see
   [ADR 0007](../adr/0007-provider-action-execution.md)).
-- **captureEpoch fencing** — a per-(pool, address, captureDomain) monotonic token
-  fences stale provider actions at the import/execute gate, so a drained/old holder
-  cannot strip an address re-captured elsewhere (see
-  [ADR 0008](../adr/0008-capture-coordination-fencing.md)).
+- **pathSig fencing** — provider actions are fenced against the current BGP
+  desired path signature and holder, so stale actions cannot mutate a route that
+  has reconverged elsewhere.
 
 ## How to run it
 

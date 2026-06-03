@@ -30,8 +30,8 @@ collect_router() {
     ssh_router "$host" "$user" "sudo $ROUTERCTL_BIN dynamic list -o json || true; sudo $ROUTERCTL_BIN dynamic render -o json || true"
     echo "--- actions"
     ssh_router "$host" "$user" "sudo $ROUTERCTL_BIN action list -o json || true"
-    echo "--- mobility db"
-    ssh_router "$host" "$user" "sudo sqlite3 -header -column /var/lib/routerd/routerd.db 'select * from mobility_capture_epochs;' || true; sudo sqlite3 -header -column /var/lib/routerd/routerd.db 'select * from mobility_deprovision_markers;' || true"
+    echo "--- mobility"
+    ssh_router "$host" "$user" "sudo $ROUTERCTL_BIN mobility paths -o json || true; sudo $ROUTERCTL_BIN mobility traps -o json || true"
   } > "$OUT/$name.txt" 2>&1
 }
 
@@ -63,7 +63,7 @@ Collected: $TS
 
 - Router evidence: onprem, aws-a, aws-b, azure, oci.
 - Provider evidence: AWS ENIs, Azure NIC, OCI VNIC when matching CLIs are available.
-- Inspect action journals and mobility_capture_epochs to confirm D5 epoch migration.
+- Inspect BGP mobility paths, provider trap action plans, and action journals to confirm D5 migration.
 EOF
 
 echo "wrote $OUT"

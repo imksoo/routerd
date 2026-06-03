@@ -372,34 +372,6 @@ func TestValidateMobilityPoolRejectsInvalidFields(t *testing.T) {
 			want: "contains duplicate nodeRef",
 		},
 		{
-			name: "auto failover missing heartbeat interval",
-			mut: func(spec *api.MobilityPoolSpec) {
-				spec.IPOwnershipPolicy = api.MobilityIPOwnershipPolicy{Type: "centralized", AutoFailover: true, HeartbeatTTL: "30s"}
-			},
-			want: "heartbeatInterval is required when autoFailover is true",
-		},
-		{
-			name: "auto failover missing heartbeat ttl",
-			mut: func(spec *api.MobilityPoolSpec) {
-				spec.IPOwnershipPolicy = api.MobilityIPOwnershipPolicy{Type: "centralized", AutoFailover: true, HeartbeatInterval: "10s"}
-			},
-			want: "heartbeatTTL is required when autoFailover is true",
-		},
-		{
-			name: "heartbeat ttl below interval",
-			mut: func(spec *api.MobilityPoolSpec) {
-				spec.IPOwnershipPolicy = api.MobilityIPOwnershipPolicy{Type: "centralized", AutoFailover: true, HeartbeatInterval: "30s", HeartbeatTTL: "10s"}
-			},
-			want: "heartbeatTTL must be >= heartbeatInterval",
-		},
-		{
-			name: "bad promotion hold",
-			mut: func(spec *api.MobilityPoolSpec) {
-				spec.IPOwnershipPolicy = api.MobilityIPOwnershipPolicy{Type: "centralized", PromotionHoldDuration: "-1s"}
-			},
-			want: "promotionHoldDuration must be >= 0",
-		},
-		{
 			name: "cloud capture type",
 			mut: func(spec *api.MobilityPoolSpec) {
 				spec.Members[1].Capture = api.MobilityMemberCapture{Type: "proxy-arp", Interface: "lan"}

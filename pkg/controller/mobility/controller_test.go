@@ -73,328 +73,6 @@ func maybePathBySourcePrefix(bgp *fakeBGPPaths, source, prefix string) (bgpdaemo
 	return path, ok
 }
 
-func reconcilePoolForTest(t *testing.T, controller Controller, now time.Time) {
-	t.Helper()
-	if err := controller.reconcilePool(mobilityPoolResource(t, controller.Router, "cloudedge"), now); err != nil {
-		t.Fatalf("reconcilePool: %v", err)
-	}
-}
-
-func TestControllerProjectsObservedEventToAddressLease(t *testing.T) {
-	now := time.Date(2026, 5, 31, 10, 0, 0, 0, time.UTC)
-	store := testStore(t, now)
-	recordEvent(t, store, routerstate.EventRecord{
-		ID:         "evt-1",
-		Group:      "cloudedge",
-		SourceNode: "onprem-router",
-		Type:       ObservedEventType,
-		Subject:    "10.88.60.9/32",
-		DedupeKey:  "client-9",
-		ObservedAt: now.Add(-time.Minute),
-	})
-
-	controller := Controller{Router: testRouter(), Store: store, Now: func() time.Time { return now }}
-	reconcilePoolForTest(t, controller, now)
-	lease, found, err := store.GetAddressLease("cloudedge", "10.88.60.9/32")
-	if err != nil {
-		t.Fatalf("GetAddressLease: %v", err)
-	}
-	if !found {
-		t.Fatal("lease not found")
-	}
-	if lease.OwnerNode != "onprem-router" || lease.OwnerSite != "onprem" || lease.OwnerRole != "onprem" || lease.Status != routerstate.AddressLeaseStatusActive || lease.Epoch != 1 {
-		t.Fatalf("unexpected lease: %+v", lease)
-	}
-	if lease.ExpiresAt != now.Add(-time.Minute).Add(DefaultLeaseTTL) {
-		t.Fatalf("expiresAt = %s", lease.ExpiresAt)
-	}
-}
-
-func TestControllerHoldsThenAdoptsOwnerChange(t *testing.T) {
-	base := time.Date(2026, 5, 31, 10, 0, 0, 0, time.UTC)
-	store := testStore(t, base)
-	recordEvent(t, store, routerstate.EventRecord{
-		ID:         "evt-1",
-		Group:      "cloudedge",
-		SourceNode: "onprem-router",
-		Type:       ObservedEventType,
-		Subject:    "10.88.60.9/32",
-		ObservedAt: base.Add(-time.Minute),
-		ExpiresAt:  base.Add(time.Hour),
-	})
-	controller := Controller{Router: testRouter(), Store: store, Now: func() time.Time { return base }}
-	reconcilePoolForTest(t, controller, base)
-
-	recordEvent(t, store, routerstate.EventRecord{
-		ID:         "evt-2",
-		Group:      "cloudedge",
-		SourceNode: "azure-router",
-		Type:       ObservedEventType,
-		Subject:    "10.88.60.9/32",
-		ObservedAt: base.Add(10 * time.Second),
-		ExpiresAt:  base.Add(time.Hour),
-	})
-	controller.Now = func() time.Time { return base.Add(20 * time.Second) }
-	reconcilePoolForTest(t, controller, base.Add(20*time.Second))
-	lease, _, err := store.GetAddressLease("cloudedge", "10.88.60.9/32")
-	if err != nil {
-		t.Fatalf("GetAddressLease holding: %v", err)
-	}
-	if lease.OwnerNode != "onprem-router" || lease.CandidateOwnerNode != "azure-router" || lease.Status != routerstate.AddressLeaseStatusHolding || lease.Epoch != 1 {
-		t.Fatalf("unexpected held lease: %+v", lease)
-	}
-
-	controller.Now = func() time.Time { return base.Add(45 * time.Second) }
-	reconcilePoolForTest(t, controller, base.Add(45*time.Second))
-	lease, _, err = store.GetAddressLease("cloudedge", "10.88.60.9/32")
-	if err != nil {
-		t.Fatalf("GetAddressLease adopted: %v", err)
-	}
-	if lease.OwnerNode != "azure-router" || lease.CandidateOwnerNode != "" || lease.Status != routerstate.AddressLeaseStatusActive || lease.Epoch != 2 {
-		t.Fatalf("unexpected adopted lease: %+v", lease)
-	}
-}
-
-func TestControllerTieBreaksDeterministically(t *testing.T) {
-	now := time.Date(2026, 5, 31, 10, 0, 0, 0, time.UTC)
-	store := testStore(t, now)
-	observedAt := now.Add(-time.Minute)
-	recordEvent(t, store, routerstate.EventRecord{
-		ID:         "evt-1",
-		Group:      "cloudedge",
-		SourceNode: "onprem-router",
-		Type:       ObservedEventType,
-		Subject:    "10.88.60.9/32",
-		ObservedAt: observedAt,
-		ExpiresAt:  now.Add(time.Hour),
-	})
-	recordEvent(t, store, routerstate.EventRecord{
-		ID:         "evt-2",
-		Group:      "cloudedge",
-		SourceNode: "azure-router",
-		Type:       ObservedEventType,
-		Subject:    "10.88.60.9/32",
-		ObservedAt: observedAt,
-		ExpiresAt:  now.Add(time.Hour),
-	})
-	controller := Controller{Router: testRouter(), Store: store, Now: func() time.Time { return now }}
-	reconcilePoolForTest(t, controller, now)
-	lease, _, err := store.GetAddressLease("cloudedge", "10.88.60.9/32")
-	if err != nil {
-		t.Fatalf("GetAddressLease: %v", err)
-	}
-	if lease.OwnerNode != "azure-router" || lease.SourceEventID != "evt-2" {
-		t.Fatalf("unexpected deterministic winner: %+v", lease)
-	}
-}
-
-func TestControllerProjectsExpiredEvent(t *testing.T) {
-	base := time.Date(2026, 5, 31, 10, 0, 0, 0, time.UTC)
-	store := testStore(t, base)
-	recordEvent(t, store, routerstate.EventRecord{
-		ID:         "evt-1",
-		Group:      "cloudedge",
-		SourceNode: "onprem-router",
-		Type:       ObservedEventType,
-		Subject:    "10.88.60.9/32",
-		ObservedAt: base.Add(-time.Minute),
-		ExpiresAt:  base.Add(time.Hour),
-	})
-	controller := Controller{Router: testRouter(), Store: store, Now: func() time.Time { return base }}
-	reconcilePoolForTest(t, controller, base)
-	recordEvent(t, store, routerstate.EventRecord{
-		ID:         "evt-2",
-		Group:      "cloudedge",
-		SourceNode: "onprem-router",
-		Type:       ExpiredEventType,
-		Subject:    "10.88.60.9/32",
-		ObservedAt: base.Add(time.Minute),
-		ExpiresAt:  base.Add(time.Hour),
-	})
-	controller.Now = func() time.Time { return base.Add(2 * time.Minute) }
-	reconcilePoolForTest(t, controller, base.Add(2*time.Minute))
-	lease, _, err := store.GetAddressLease("cloudedge", "10.88.60.9/32")
-	if err != nil {
-		t.Fatalf("GetAddressLease: %v", err)
-	}
-	if lease.Status != routerstate.AddressLeaseStatusExpired || lease.SourceEventID != "evt-2" || lease.Epoch != 1 {
-		t.Fatalf("unexpected expired lease: %+v", lease)
-	}
-}
-
-func TestControllerProjectsStaticOwnedAddressAndEmitsObserved(t *testing.T) {
-	now := time.Date(2026, 6, 2, 9, 0, 0, 0, time.UTC)
-	store := testStore(t, now)
-	controller := Controller{Router: staticRouter("onprem-router", staticPoolSpec()), Store: store, Now: func() time.Time { return now }}
-	reconcilePoolForTest(t, controller, now)
-	lease, found, err := store.GetAddressLease("cloudedge", "10.88.60.10/32")
-	if err != nil {
-		t.Fatalf("GetAddressLease: %v", err)
-	}
-	if !found {
-		t.Fatal("static lease not found")
-	}
-	if lease.OwnerNode != "onprem-router" || lease.OwnerSite != "onprem" || lease.SourceType != staticOwnedType || lease.Status != routerstate.AddressLeaseStatusActive || lease.Epoch != 1 {
-		t.Fatalf("unexpected static lease: %+v", lease)
-	}
-	if !lease.ExpiresAt.IsZero() {
-		t.Fatalf("static lease expiresAt = %s, want zero", lease.ExpiresAt)
-	}
-	events, err := store.ListFederationEvents("cloudedge", true, now.Unix())
-	if err != nil {
-		t.Fatalf("ListFederationEvents: %v", err)
-	}
-	if got := countEvents(events, ObservedEventType, "onprem-router", "10.88.60.10/32"); got != 1 {
-		t.Fatalf("observed event count = %d, events=%+v", got, events)
-	}
-}
-
-func TestControllerStaticOwnedRemovalExpiresLeaseAndEmitsExpired(t *testing.T) {
-	base := time.Date(2026, 6, 2, 9, 0, 0, 0, time.UTC)
-	store := testStore(t, base)
-	spec := staticPoolSpec()
-	controller := Controller{Router: staticRouter("onprem-router", spec), Store: store, Now: func() time.Time { return base }}
-	reconcilePoolForTest(t, controller, base)
-
-	spec.Members[0].StaticOwnedAddresses = nil
-	controller.Router = staticRouter("onprem-router", spec)
-	controller.Now = func() time.Time { return base.Add(time.Minute) }
-	reconcilePoolForTest(t, controller, base.Add(time.Minute))
-	lease, _, err := store.GetAddressLease("cloudedge", "10.88.60.10/32")
-	if err != nil {
-		t.Fatalf("GetAddressLease: %v", err)
-	}
-	if lease.Status != routerstate.AddressLeaseStatusExpired || lease.OwnerNode != "onprem-router" || lease.SourceType != ExpiredEventType {
-		t.Fatalf("unexpected expired static lease: %+v", lease)
-	}
-	events, err := store.ListFederationEvents("cloudedge", true, base.Add(time.Minute).Unix())
-	if err != nil {
-		t.Fatalf("ListFederationEvents: %v", err)
-	}
-	if got := countEvents(events, ExpiredEventType, "onprem-router", "10.88.60.10/32"); got != 1 {
-		t.Fatalf("expired event count = %d, events=%+v", got, events)
-	}
-}
-
-func TestControllerStaticHandoverWaitsForFromReleaseEvent(t *testing.T) {
-	base := time.Date(2026, 6, 2, 9, 0, 0, 0, time.UTC)
-	store := testStore(t, base)
-	spec := staticPoolSpec()
-	controller := Controller{Router: staticRouter("onprem-router", spec), Store: store, Now: func() time.Time { return base }}
-	reconcilePoolForTest(t, controller, base)
-
-	spec.Members[0].StaticOwnedAddresses = nil
-	spec.StaticHandovers = []api.MobilityStaticHandover{{Address: "10.88.60.10/32", FromNodeRef: "onprem-router", ToNodeRef: "azure-router"}}
-	controller.Router = staticRouter("azure-router", spec)
-	controller.Now = func() time.Time { return base.Add(time.Minute) }
-	reconcilePoolForTest(t, controller, base.Add(time.Minute))
-	lease, _, err := store.GetAddressLease("cloudedge", "10.88.60.10/32")
-	if err != nil {
-		t.Fatalf("GetAddressLease before release: %v", err)
-	}
-	if lease.OwnerNode != "onprem-router" {
-		t.Fatalf("owner changed before release event: %+v", lease)
-	}
-
-	controller.Router = staticRouter("onprem-router", spec)
-	reconcilePoolForTest(t, controller, base.Add(time.Minute))
-	controller.Router = staticRouter("azure-router", spec)
-	controller.Now = func() time.Time { return base.Add(time.Minute + 31*time.Second) }
-	reconcilePoolForTest(t, controller, base.Add(time.Minute+31*time.Second))
-	lease, _, err = store.GetAddressLease("cloudedge", "10.88.60.10/32")
-	if err != nil {
-		t.Fatalf("GetAddressLease after release: %v", err)
-	}
-	if lease.OwnerNode != "azure-router" || lease.OwnerSite != "azure" || lease.SourceType != staticHandoverType || lease.Status != routerstate.AddressLeaseStatusActive || lease.Epoch != 2 {
-		t.Fatalf("unexpected handed-over lease: %+v", lease)
-	}
-}
-
-func TestControllerEmitsAutoFailoverHeartbeatForCloudSelf(t *testing.T) {
-	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
-	store := testStore(t, now)
-	spec := centralizedOwnershipPoolSpec()
-	spec.IPOwnershipPolicy.AutoFailover = true
-	spec.IPOwnershipPolicy.HeartbeatInterval = "10s"
-	spec.IPOwnershipPolicy.HeartbeatTTL = "30s"
-	controller := Controller{Router: planningRouterForNode("azure-router-a", spec), Store: store, Now: func() time.Time { return now }}
-	if err := controller.emitHeartbeat(mobilityPoolResource(t, controller.Router, "cloudedge"), now); err != nil {
-		t.Fatalf("emitHeartbeat: %v", err)
-	}
-	events, err := store.ListFederationEvents("cloudedge", true, now.Unix())
-	if err != nil {
-		t.Fatalf("ListFederationEvents: %v", err)
-	}
-	var heartbeats []routerstate.EventRecord
-	for _, ev := range events {
-		if ev.Type == HeartbeatEventType {
-			heartbeats = append(heartbeats, ev)
-		}
-	}
-	if len(heartbeats) != 1 {
-		t.Fatalf("heartbeats = %+v, want one", heartbeats)
-	}
-	if heartbeats[0].SourceNode != "azure-router-a" || heartbeats[0].Payload["pool"] != "cloudedge" || heartbeats[0].Payload["node"] != "azure-router-a" {
-		t.Fatalf("heartbeat = %+v", heartbeats[0])
-	}
-}
-
-func TestOwnershipLivenessSurvivesCompactedHeartbeatStream(t *testing.T) {
-	base := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
-	store := testStore(t, base)
-	spec := centralizedOwnershipPoolSpec()
-	spec.IPOwnershipPolicy.AutoFailover = true
-	spec.IPOwnershipPolicy.HeartbeatInterval = "10s"
-	spec.IPOwnershipPolicy.HeartbeatTTL = "30s"
-	spec.IPOwnershipPolicy.PromotionHoldDuration = "20s"
-
-	for hour := 0; hour < 24; hour++ {
-		observed := base.Add(time.Duration(hour) * time.Hour)
-		recordEvent(t, store, routerstate.EventRecord{
-			ID:         fmt.Sprintf("hb-a-%02d", hour),
-			Group:      "cloudedge",
-			SourceNode: "azure-router-a",
-			Type:       HeartbeatEventType,
-			Subject:    "cloudedge/azure-router-a",
-			DedupeKey:  "mobility-heartbeat:cloudedge:azure-router-a",
-			Payload:    map[string]string{"pool": "cloudedge", "node": "azure-router-a", "seq": fmt.Sprint(hour)},
-			ObservedAt: observed,
-			RecordedAt: observed,
-		})
-	}
-	fresh := base.Add(25 * time.Hour)
-	recordEvent(t, store, routerstate.EventRecord{
-		ID:         "hb-b-fresh",
-		Group:      "cloudedge",
-		SourceNode: "azure-router-b",
-		Type:       HeartbeatEventType,
-		Subject:    "cloudedge/azure-router-b",
-		DedupeKey:  "mobility-heartbeat:cloudedge:azure-router-b",
-		Payload:    map[string]string{"pool": "cloudedge", "node": "azure-router-b"},
-		ObservedAt: fresh,
-		RecordedAt: fresh,
-	})
-
-	events, err := store.ListFederationEvents("cloudedge", true, fresh.Unix())
-	if err != nil {
-		t.Fatalf("ListFederationEvents: %v", err)
-	}
-	if len(events) != 2 {
-		t.Fatalf("compacted heartbeat events = %d, want 2: ids=%v", len(events), idsOfEvents(events))
-	}
-	controller := Controller{Router: planningRouterForNode("azure-router-b", spec), Store: store, Now: func() time.Time { return fresh }}
-	view, err := controller.ownershipLiveness("cloudedge", spec, fresh)
-	if err != nil {
-		t.Fatalf("ownershipLiveness: %v", err)
-	}
-	if !view.StaleNodes["azure-router-a"] {
-		t.Fatalf("azure-router-a should remain stale after heartbeat compaction: %+v", view)
-	}
-	if view.StaleNodes["azure-router-b"] {
-		t.Fatalf("fresh router marked stale after heartbeat compaction: %+v", view)
-	}
-}
-
 func TestControllerBGPModeAdvertisesSelfOwnedHostRouteAndSuppressesSAMPart(t *testing.T) {
 	now := time.Date(2026, 6, 2, 10, 0, 0, 0, time.UTC)
 	store := testStore(t, now)
@@ -480,17 +158,14 @@ func TestControllerBGPModeDoesNotUseHeartbeatLivenessForOwnership(t *testing.T) 
 	spec := awsFailoverPoolSpec()
 	spec.DeliveryPolicy.Mode = "bgp"
 	spec.IPOwnershipPolicy = api.MobilityIPOwnershipPolicy{
-		Type:                  "centralized",
-		AutoFailover:          true,
-		HeartbeatInterval:     "10s",
-		HeartbeatTTL:          "30s",
-		PromotionHoldDuration: "0s",
+		Type:         "centralized",
+		AutoFailover: true,
 	}
 	recordEvent(t, store, routerstate.EventRecord{
 		ID:         "hb-a",
 		Group:      "cloudedge",
 		SourceNode: "aws-router-a",
-		Type:       HeartbeatEventType,
+		Type:       "routerd.mobility.ignored-liveness",
 		Subject:    "mobility/cloudedge/aws-router-a",
 		Payload:    map[string]string{"pool": "cloudedge", "node": "aws-router-a"},
 		ObservedAt: base,
@@ -551,7 +226,7 @@ func TestControllerBGPModeProviderActionFailureDoesNotRemoveBGPPath(t *testing.T
 	if findActionPlanByAddress(plans, "assign-secondary-ip", "10.88.60.11/32") != nil {
 		t.Fatalf("actionPlans = %#v, want no self-owned provider assign", plans)
 	}
-	if assign.Parameters[ownershipParamEpoch] != "" || assign.Parameters[captureParamEpoch] != "" || assign.Parameters[bgpPathSigParam] == "" {
+	if assign.Parameters[bgpPathSigParam] == "" {
 		t.Fatalf("assign parameters = %#v, want BGP path fence without epoch fences", assign.Parameters)
 	}
 	if _, err := importApprovedAction(t, assign, source, store, now); err != nil {
@@ -642,18 +317,6 @@ func TestControllerBGPModeProviderStateFollowsBestPathOwnerChange(t *testing.T) 
 	store := testStore(t, now)
 	spec := centralizedOwnershipPoolSpec()
 	spec.DeliveryPolicy.Mode = "bgp"
-	if err := store.UpsertAddressLease(routerstate.AddressLeaseRecord{
-		Pool:      "cloudedge",
-		Address:   "10.88.60.10/32",
-		Status:    routerstate.AddressLeaseStatusActive,
-		OwnerNode: "onprem-router",
-		OwnerSite: "onprem",
-		OwnerRole: "onprem",
-		Epoch:     1,
-		ExpiresAt: now.Add(time.Hour),
-	}); err != nil {
-		t.Fatalf("UpsertAddressLease: %v", err)
-	}
 	saveBGPInstalledNextHops(t, store, map[string][]string{"10.88.60.10/32": {"10.99.0.1"}})
 	bgp := &fakeBGPPaths{}
 	sourceA := DynamicSource("cloudedge", "azure-router-a")
@@ -690,7 +353,7 @@ func TestControllerBGPModeProviderStateFollowsBestPathOwnerChange(t *testing.T) 
 	if assignB == nil {
 		t.Fatalf("router-b plans = %#v, want background assign", standbyPlans)
 	}
-	if assignB.Parameters[ownershipParamOwner] != "" || assignB.Parameters[captureParamEpoch] != "" || assignB.Parameters[bgpPathSigParam] == "" || assignB.Parameters[captureParamHolder] != "azure-router-b" {
+	if assignB.Parameters[bgpPathSigParam] == "" || assignB.Parameters[captureParamHolder] != "azure-router-b" {
 		t.Fatalf("router-b assign parameters = %#v, want path-fenced trap to active placement holder", assignB.Parameters)
 	}
 }
@@ -730,7 +393,7 @@ func TestControllerBGPModeProviderTrapUsesRemoteInstalledNextHops(t *testing.T) 
 		if assign.Parameters[captureParamHolder] != "aws-router-a" {
 			t.Fatalf("assign %s parameters = %#v, want trap holder aws-router-a", address, assign.Parameters)
 		}
-		if assign.Parameters[bgpPathSigParam] == "" || assign.Parameters[captureParamEpoch] != "" {
+		if assign.Parameters[bgpPathSigParam] == "" {
 			t.Fatalf("assign %s parameters = %#v, want BGP path fence without capture epoch", address, assign.Parameters)
 		}
 	}
@@ -829,13 +492,6 @@ func TestControllerBGPModeProviderTrapRecapturesAfterSuccessfulRelease(t *testin
 	store := testStore(t, now)
 	spec := awsFailoverPoolSpec()
 	spec.DeliveryPolicy.Mode = "bgp"
-	if _, err := store.ReconcileMobilityCaptureEpochs([]routerstate.MobilityCaptureEpochRecord{
-		awsFailoverCaptureEpoch("10.88.60.10/32", "aws-router-a", 1),
-		awsFailoverCaptureEpoch("10.88.60.12/32", "aws-router-a", 1),
-		awsFailoverCaptureEpoch("10.88.60.13/32", "aws-router-a", 1),
-	}); err != nil {
-		t.Fatalf("seed capture epochs: %v", err)
-	}
 	for _, address := range []string{"10.88.60.12/32", "10.88.60.13/32"} {
 		seedSucceededBGPCaptureAction(t, store, "aws-provider", "eni-a", "aws-router-a", address, "assign-secondary-ip", 1, now.Add(-3*time.Minute))
 		seedSucceededBGPCaptureAction(t, store, "aws-provider", "eni-a", "aws-router-a", address, "unassign-secondary-ip", 1, now.Add(-2*time.Minute))
@@ -858,7 +514,7 @@ func TestControllerBGPModeProviderTrapRecapturesAfterSuccessfulRelease(t *testin
 		if assign == nil {
 			t.Fatalf("plans = %#v, want recapture assign for %s", plans, address)
 		}
-		if assign.Parameters[bgpPathSigParam] == "" || assign.Parameters[captureParamEpoch] != "" {
+		if assign.Parameters[bgpPathSigParam] == "" {
 			t.Fatalf("assign %s parameters = %#v, want BGP path fence after release", address, assign.Parameters)
 		}
 		if assign.Parameters["allowReassignment"] != "true" {
@@ -873,11 +529,6 @@ func TestControllerBGPModeProviderTrapRecapturesWhenObservedProviderStateLost(t 
 	spec := awsFailoverPoolSpec()
 	spec.DeliveryPolicy.Mode = "bgp"
 	spec.Members[0].StaticOwnedAddresses = []string{"10.88.60.10/32"}
-	if _, err := store.ReconcileMobilityCaptureEpochs([]routerstate.MobilityCaptureEpochRecord{
-		awsFailoverCaptureEpoch("10.88.60.10/32", "aws-router-a", 1),
-	}); err != nil {
-		t.Fatalf("seed capture epochs: %v", err)
-	}
 	seedSucceededBGPCaptureAction(t, store, "aws-provider", "eni-a", "aws-router-a", "10.88.60.10/32", "assign-secondary-ip", 1, now.Add(-3*time.Minute))
 	saveBGPInstalledNextHops(t, store, map[string][]string{
 		"10.88.60.10/32": {"10.99.0.1"},
@@ -900,7 +551,7 @@ func TestControllerBGPModeProviderTrapRecapturesWhenObservedProviderStateLost(t 
 	if assign == nil {
 		t.Fatalf("plans = %#v, want recapture assign for provider-observed missing trap", plans)
 	}
-	if assign.Parameters[bgpPathSigParam] == "" || assign.Parameters[captureParamEpoch] != "" {
+	if assign.Parameters[bgpPathSigParam] == "" {
 		t.Fatalf("assign parameters = %#v, want BGP path fence after provider-observed loss", assign.Parameters)
 	}
 	if assign.Parameters["allowReassignment"] != "true" {
@@ -919,7 +570,7 @@ func TestControllerBGPModeProviderTrapRecapturesWhenObservedProviderStateLost(t 
 	if secondAssign == nil {
 		t.Fatalf("second plans = %#v, want recapture assign retained", secondPlans)
 	}
-	if secondAssign.Parameters[bgpPathSigParam] == "" || secondAssign.Parameters[captureParamEpoch] != "" {
+	if secondAssign.Parameters[bgpPathSigParam] == "" {
 		t.Fatalf("second assign parameters = %#v, want pending path fence retained", secondAssign.Parameters)
 	}
 }
@@ -945,11 +596,8 @@ func TestControllerBGPModeProviderTrapUsesStaticOwnedOwnerWhenOwnershipMissing(t
 	if assign == nil {
 		t.Fatalf("plans = %#v, want static-owned onprem trap assign without ownership row", plans)
 	}
-	if assign.Parameters[bgpPathSigParam] == "" || assign.Parameters[captureParamEpoch] != "" || assign.Parameters[captureParamHolder] != "azure-router" {
+	if assign.Parameters[bgpPathSigParam] == "" || assign.Parameters[captureParamHolder] != "azure-router" {
 		t.Fatalf("assign parameters = %#v, want BGP path fence for static-owned trap", assign.Parameters)
-	}
-	if assign.Parameters[ownershipParamEpoch] != "" {
-		t.Fatalf("assign parameters = %#v, want no stale ownership fence when ownership row is missing", assign.Parameters)
 	}
 }
 
@@ -958,18 +606,6 @@ func TestControllerBGPModeProviderTrapRIBStartupIsConservative(t *testing.T) {
 	store := testStore(t, now)
 	spec := plannedPoolSpec()
 	spec.DeliveryPolicy.Mode = "bgp"
-	if err := store.UpsertAddressLease(routerstate.AddressLeaseRecord{
-		Pool:      "cloudedge",
-		Address:   "10.88.60.10/32",
-		Status:    routerstate.AddressLeaseStatusActive,
-		OwnerNode: "onprem-router",
-		OwnerSite: "onprem",
-		OwnerRole: "onprem",
-		Epoch:     1,
-		ExpiresAt: now.Add(time.Hour),
-	}); err != nil {
-		t.Fatalf("UpsertAddressLease: %v", err)
-	}
 	router := routerWithBGPRouter(planningRouterForNode("azure-router", spec))
 	saveBGPInstalledNextHops(t, store, map[string][]string{"10.88.60.10/32": {"10.99.0.1"}})
 	bgp := &fakeBGPPaths{}
@@ -1028,7 +664,7 @@ func TestControllerBGPModeDeprovisionRegeneratesFromActionJournal(t *testing.T) 
 	if unassign == nil {
 		t.Fatalf("plans = %#v, want unassign regenerated from succeeded assign journal", plans)
 	}
-	if unassign.Parameters[bgpPathSigParam] == "" || unassign.Parameters[captureParamEpoch] != "" {
+	if unassign.Parameters[bgpPathSigParam] == "" {
 		t.Fatalf("unassign parameters = %#v, want path fence without capture epoch", unassign.Parameters)
 	}
 }

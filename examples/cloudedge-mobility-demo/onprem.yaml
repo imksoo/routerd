@@ -377,4 +377,4 @@ spec:
             ownershipDiscovery: { mode: provider-private-ip, providerRef: oci-lab, scope: { includePrimary: false }, subnetRef: "${OCI_SUBNET_REF}", scanInterval: 60s, leaseTTL: 10m }
         leasePolicy: { ttl: 30m, holdDuration: 5s }
         capturePolicy: { mode: all-non-owner-sites, deprovisionHoldDuration: 5s }
-        ipOwnershipPolicy: { type: centralized, autoFailover: true, heartbeatInterval: 10s, heartbeatTTL: 30s, promotionHoldDuration: 5s }
+        ipOwnershipPolicy: { type: centralized, autoFailover: true }

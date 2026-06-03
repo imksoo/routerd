@@ -230,15 +230,15 @@ func TestImportAllowsCurrentMobilityPathDeprovision(t *testing.T) {
 	}
 }
 
-func TestImportKeepsLegacyEpochParametersNonFencing(t *testing.T) {
+func TestImportKeepsUnfencedParametersNonFencing(t *testing.T) {
 	store := mustStore(t)
 	e := newEngine(t, store, (&fakeRunner{result: succeededResult()}).run, nil)
-	plan := samplePlan("legacy-epoch-assign")
+	plan := samplePlan("unfenced-assign")
 	plan.Parameters = map[string]string{
-		ownershipParamPool:    "cloudedge",
-		ownershipParamAddress: "10.0.0.5/32",
-		ownershipParamEpoch:   "1",
-		ownershipParamOwner:   "router-a",
+		"legacyPool":    "cloudedge",
+		"legacyAddress": "10.0.0.5/32",
+		"legacyToken":   "1",
+		"legacyOwner":   "router-a",
 	}
 	seedPart(t, store, "sub-a", []dynamicconfig.ActionPlan{plan})
 
@@ -247,7 +247,7 @@ func TestImportKeepsLegacyEpochParametersNonFencing(t *testing.T) {
 		t.Fatalf("import: %v", err)
 	}
 	if res.Inserted != 1 || res.Skipped != 0 {
-		t.Fatalf("want legacy epoch-only plan imported without B2 path fencing, got %+v", res)
+		t.Fatalf("want non path-fenced plan imported without path fencing, got %+v", res)
 	}
 }
 

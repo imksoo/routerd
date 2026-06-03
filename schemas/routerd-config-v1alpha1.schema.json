@@ -6781,12 +6781,12 @@
                         "type": "object"
                       },
                       "groupRef": {
-                        "description": "GroupRef is the EventGroup whose federation events are projected into\nAddressLease runtime state for this pool (required).",
+                        "description": "GroupRef is the EventGroup whose observed/expired events feed BGP\nmobility ownership for this pool (required).",
                         "type": "string"
                       },
                       "ipOwnershipPolicy": {
                         "additionalProperties": false,
-                        "description": "IPOwnershipPolicy optionally enables deterministic per-address capture\nownership arbitration. Empty preserves the legacy placement behavior.",
+                        "description": "IPOwnershipPolicy retains high-level failover intent for BGP-mode\nmobility. Ownership itself is represented by BGP best-path.",
                         "properties": {
                           "autoFailover": {
                             "type": "boolean"
@@ -6794,20 +6794,11 @@
                           "epochLocking": {
                             "type": "boolean"
                           },
-                          "heartbeatInterval": {
-                            "type": "string"
-                          },
-                          "heartbeatTTL": {
-                            "type": "string"
-                          },
                           "preferNodes": {
                             "items": {
                               "type": "string"
                             },
                             "type": "array"
-                          },
-                          "promotionHoldDuration": {
-                            "type": "string"
                           },
                           "type": {
                             "enum": [
@@ -6821,10 +6812,10 @@
                       },
                       "leasePolicy": {
                         "additionalProperties": false,
-                        "description": "LeasePolicy controls the lifetime and owner-change hold window for\nobserved AddressLease state.",
+                        "description": "LeasePolicy controls observed event expiry defaults.",
                         "properties": {
                           "holdDuration": {
-                            "description": "HoldDuration delays owner changes so short flaps do not immediately move\ncapture intent. Empty defaults to the controller default.",
+                            "description": "HoldDuration is retained for config compatibility. BGP-mode mobility uses\nBGP/BFD convergence instead of lease owner hold windows.",
                             "type": "string"
                           },
                           "ttl": {
@@ -6916,7 +6907,7 @@
                               "type": "object"
                             },
                             "deliveryTo": {
-                              "description": "DeliveryTo optionally selects delivery per owner identity. The planner\nresolves entries against the lease owner in nodeRef -\u003e site -\u003e role order,\nthen falls back to Delivery.",
+                              "description": "DeliveryTo optionally selects delivery per owner identity. It is retained\nfor SAM compatibility; BGP-mode mobility does not lower per-lease routes.",
                               "items": {
                                 "additionalProperties": false,
                                 "properties": {

@@ -116,8 +116,9 @@ Data-plane checks and `source_ip_preserved` / `default_gateway_unchanged` are
 derived automatically from the connectivity matrix. The seize/fencing assertions
 (`ownership_epoch_bumped`, `allow_reassignment_maintained_until_success`,
 `old_holder_residue_absent`, `stale_action_fenced`) and `providerState` start as
-`na` and are folded in by the lab operator from provider inventory / action
-journal / `mobility_capture_epochs` (see `collect-evidence.sh`). A run is only
+`na` and are folded in by the lab operator from provider inventory, BGP mobility
+paths, provider trap action plans, and the action journal (see
+`collect-evidence.sh`). A run is only
 **PASS** when `result == pass` and every required assertion passes.
 
 ## The connectivity matrix

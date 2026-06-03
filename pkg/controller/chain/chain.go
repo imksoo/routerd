@@ -83,18 +83,9 @@ type eventSubscriptionStore struct {
 type mobilityDataStore interface {
 	ListFederationEvents(group string, includeExpired bool, now int64) ([]routerstate.EventRecord, error)
 	RecordFederationEvent(routerstate.EventRecord) error
-	UpsertAddressLease(routerstate.AddressLeaseRecord) error
-	ListAddressLeases(pool string, includeExpired bool, now time.Time) ([]routerstate.AddressLeaseRecord, error)
-	ReconcileMobilityCaptureEpochs([]routerstate.MobilityCaptureEpochRecord) ([]routerstate.MobilityCaptureEpochRecord, error)
-	GetMobilityCaptureEpoch(key string) (routerstate.MobilityCaptureEpochRecord, bool, error)
-	ReconcileMobilityOwnershipEpochs([]routerstate.MobilityOwnershipEpochRecord) ([]routerstate.MobilityOwnershipEpochRecord, error)
-	ListMobilityOwnershipEpochs(pool string) ([]routerstate.MobilityOwnershipEpochRecord, error)
 	UpsertDynamicConfigPart(routerstate.DynamicConfigPartRecord) error
 	GetDynamicConfigPartsBySource(source string) ([]routerstate.DynamicConfigPartRecord, error)
 	ListActions(routerstate.ActionExecutionFilter) ([]routerstate.ActionExecutionRecord, error)
-	UpsertMobilityDeprovisionMarker(routerstate.MobilityDeprovisionMarkerRecord) error
-	ListMobilityDeprovisionMarkers(source string) ([]routerstate.MobilityDeprovisionMarkerRecord, error)
-	DeleteMobilityDeprovisionMarker(key string) error
 }
 
 type mobilityStore struct {
@@ -118,30 +109,6 @@ func (s mobilityStore) RecordFederationEvent(rec routerstate.EventRecord) error 
 	return s.data.RecordFederationEvent(rec)
 }
 
-func (s mobilityStore) UpsertAddressLease(rec routerstate.AddressLeaseRecord) error {
-	return s.data.UpsertAddressLease(rec)
-}
-
-func (s mobilityStore) ListAddressLeases(pool string, includeExpired bool, now time.Time) ([]routerstate.AddressLeaseRecord, error) {
-	return s.data.ListAddressLeases(pool, includeExpired, now)
-}
-
-func (s mobilityStore) ReconcileMobilityCaptureEpochs(desired []routerstate.MobilityCaptureEpochRecord) ([]routerstate.MobilityCaptureEpochRecord, error) {
-	return s.data.ReconcileMobilityCaptureEpochs(desired)
-}
-
-func (s mobilityStore) GetMobilityCaptureEpoch(key string) (routerstate.MobilityCaptureEpochRecord, bool, error) {
-	return s.data.GetMobilityCaptureEpoch(key)
-}
-
-func (s mobilityStore) ReconcileMobilityOwnershipEpochs(desired []routerstate.MobilityOwnershipEpochRecord) ([]routerstate.MobilityOwnershipEpochRecord, error) {
-	return s.data.ReconcileMobilityOwnershipEpochs(desired)
-}
-
-func (s mobilityStore) ListMobilityOwnershipEpochs(pool string) ([]routerstate.MobilityOwnershipEpochRecord, error) {
-	return s.data.ListMobilityOwnershipEpochs(pool)
-}
-
 func (s mobilityStore) UpsertDynamicConfigPart(rec routerstate.DynamicConfigPartRecord) error {
 	return s.data.UpsertDynamicConfigPart(rec)
 }
@@ -152,18 +119,6 @@ func (s mobilityStore) GetDynamicConfigPartsBySource(source string) ([]routersta
 
 func (s mobilityStore) ListActions(filter routerstate.ActionExecutionFilter) ([]routerstate.ActionExecutionRecord, error) {
 	return s.data.ListActions(filter)
-}
-
-func (s mobilityStore) UpsertMobilityDeprovisionMarker(rec routerstate.MobilityDeprovisionMarkerRecord) error {
-	return s.data.UpsertMobilityDeprovisionMarker(rec)
-}
-
-func (s mobilityStore) ListMobilityDeprovisionMarkers(source string) ([]routerstate.MobilityDeprovisionMarkerRecord, error) {
-	return s.data.ListMobilityDeprovisionMarkers(source)
-}
-
-func (s mobilityStore) DeleteMobilityDeprovisionMarker(key string) error {
-	return s.data.DeleteMobilityDeprovisionMarker(key)
 }
 
 func (s eventSubscriptionStore) SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error {

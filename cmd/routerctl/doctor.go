@@ -65,10 +65,6 @@ type doctorRunner struct {
 	store  routerstate.Store
 }
 
-type federationHeartbeatCompactionInspector interface {
-	FederationHeartbeatCompactionStats(group string) (routerstate.FederationHeartbeatCompactionStats, error)
-}
-
 var doctorAreas = []string{"wan", "dns", "dslite", "dhcpv6-pd", "nat", "firewall", "rollback", "disk", "mgmt", "reconcile", "runtime", "dynamic", "plugin", "hybrid"}
 
 // doctorReconcileWarnThreshold and doctorReconcileFailThreshold are total error
@@ -936,7 +932,6 @@ func (r doctorRunner) doctorDynamic() []doctorCheck {
 		expiredDetail = appendDoctorDetail(expiredDetail, "stale: source "+strings.Join(staleSources, ",")+" has only expired generations")
 	}
 	checks = append(checks, doctorCheck{Area: "dynamic", Name: "expired parts ignored", Status: expiredStatus, Detail: expiredDetail})
-	checks = append(checks, doctorFederationHeartbeatCompactionCheck(r.store))
 
 	policies, err := dynamicconfig.ExtractDynamicOverridePolicies(*r.router)
 	if err != nil {
@@ -951,32 +946,6 @@ func (r doctorRunner) doctorDynamic() []doctorCheck {
 	}
 	checks = append(checks, r.doctorDynamicOverridePolicyCheck(activeParts, policies))
 	return checks
-}
-
-func doctorFederationHeartbeatCompactionCheck(store any) doctorCheck {
-	inspector, ok := store.(federationHeartbeatCompactionInspector)
-	if !ok {
-		return doctorCheck{Area: "dynamic", Name: "federation heartbeat compaction", Status: doctorSkip, Detail: "state store does not expose federation heartbeat compaction stats"}
-	}
-	stats, err := inspector.FederationHeartbeatCompactionStats("")
-	if err != nil {
-		return doctorCheck{Area: "dynamic", Name: "federation heartbeat compaction", Status: doctorWarn, Detail: "compaction stats unavailable: " + err.Error()}
-	}
-	if stats.DuplicateRows == 0 {
-		return doctorCheck{Area: "dynamic", Name: "federation heartbeat compaction", Status: doctorPass, Detail: "no duplicate compactable heartbeat rows"}
-	}
-	keys := append([]string(nil), stats.Keys...)
-	sort.Strings(keys)
-	if len(keys) > 5 {
-		keys = append(keys[:5], fmt.Sprintf("+%d more", len(stats.Keys)-5))
-	}
-	return doctorCheck{
-		Area:   "dynamic",
-		Name:   "federation heartbeat compaction",
-		Status: doctorWarn,
-		Detail: fmt.Sprintf("%d duplicate compactable heartbeat rows across %d keys: %s", stats.DuplicateRows, len(stats.Keys), strings.Join(keys, ",")),
-		Remedy: "new heartbeat writes compact automatically; restart routerd or run a store compaction pass if stale rows persist",
-	}
 }
 
 func (r doctorRunner) doctorDynamicOverridePolicyCheck(parts []dynamicconfig.DynamicConfigPart, policies []dynamicconfig.DynamicOverridePolicy) doctorCheck {

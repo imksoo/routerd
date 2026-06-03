@@ -42,7 +42,7 @@ spec:
         nodeName: "${DEMO_SAMESITE_PEER_NODE}"
         endpoint: "http://${DEMO_SAMESITE_PEER_IP}:9443"
         direction: push
-        types: [routerd.client.ipv4.observed, routerd.client.ipv4.expired, routerd.mobility.member.heartbeat]
+        types: [routerd.client.ipv4.observed, routerd.client.ipv4.expired]
         subjectPrefixes: [10.77.60.]
 
     - apiVersion: federation.routerd.net/v1alpha1
@@ -355,7 +355,7 @@ spec:
             ownershipDiscovery: { mode: provider-private-ip, providerRef: oci-lab, scope: { includePrimary: false }, subnetRef: "${OCI_SUBNET_REF}", scanInterval: 60s, leaseTTL: 10m }
         leasePolicy: { ttl: 30m, holdDuration: 5s }
         capturePolicy: { mode: all-non-owner-sites, deprovisionHoldDuration: 5s }
-        ipOwnershipPolicy: { type: centralized, autoFailover: true, heartbeatInterval: 10s, heartbeatTTL: 30s, promotionHoldDuration: 5s }
+        ipOwnershipPolicy: { type: centralized, autoFailover: true }
 
     - apiVersion: hybrid.routerd.net/v1alpha1
       kind: ProviderActionPolicy
