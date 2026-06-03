@@ -816,11 +816,21 @@ func TestReconcileBFDGateAllowsBootstrapAndDisablesOnlyAfterUpDown(t *testing.T)
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("third reconcile: %v", err)
 	}
+	if server.deletes != 0 {
+		t.Fatalf("deletes after transient Up->Down = %d, want 0", server.deletes)
+	}
+	if _, ok := server.peers["10.0.0.21"]; !ok {
+		t.Fatalf("peer missing after transient BFD Up->Down before sustained gate: %#v", server.peers)
+	}
+	controller.bfdPeerDownSince[bfdPeerGateKey("BFD/k8s", "10.0.0.21")] = time.Now().Add(-bfdPeerDownGateDelay - time.Second)
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("sustained down reconcile: %v", err)
+	}
 	if server.deletes != 1 {
-		t.Fatalf("deletes after Up->Down = %d, want 1", server.deletes)
+		t.Fatalf("deletes after sustained Up->Down = %d, want 1", server.deletes)
 	}
 	if _, ok := server.peers["10.0.0.21"]; ok {
-		t.Fatalf("peer still present after BFD Up->Down gate: %#v", server.peers)
+		t.Fatalf("peer still present after sustained BFD Up->Down gate: %#v", server.peers)
 	}
 	controller.Store.SaveObjectStatus(api.NetAPIVersion, "BFD", "k8s", map[string]any{
 		"phase":      "Up",

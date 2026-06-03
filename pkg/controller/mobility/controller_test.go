@@ -520,6 +520,9 @@ func TestControllerBGPModeProviderTrapRecapturesAfterSuccessfulRelease(t *testin
 		if assign.Parameters["allowReassignment"] != "true" {
 			t.Fatalf("assign %s parameters = %#v, want reassignment after successful release", address, assign.Parameters)
 		}
+		if !strings.Contains(assign.IdempotencyKey, ":transition:after-unassign-") || assign.Parameters[bgpTrapTransitionParam] == "" {
+			t.Fatalf("assign %s key/parameters = %q %#v, want transition-fenced recapture after unassign", address, assign.IdempotencyKey, assign.Parameters)
+		}
 	}
 }
 
@@ -641,8 +644,20 @@ func TestControllerBGPModeProviderTrapRIBStartupIsConservative(t *testing.T) {
 		t.Fatalf("observed empty RIB Reconcile: %v", err)
 	}
 	emptyPlans := decodeActionPlans(t, latestPart(t, store, source).ActionPlansJSON)
-	if findActionPlanByAddress(emptyPlans, "unassign-secondary-ip", "10.88.60.10/32") == nil {
-		t.Fatalf("observed empty plans = %#v, want stale trap unassign", emptyPlans)
+	if findActionPlanByAddress(emptyPlans, "unassign-secondary-ip", "10.88.60.10/32") != nil {
+		t.Fatalf("observed empty plans = %#v, want short RIB gap held without unassign", emptyPlans)
+	}
+	if findActionPlanByAddress(emptyPlans, "assign-secondary-ip", "10.88.60.10/32") == nil {
+		t.Fatalf("observed empty plans = %#v, want previous trap carried through short RIB gap", emptyPlans)
+	}
+
+	controller.Now = func() time.Time { return now.Add(bgpTrapRIBMissingHold + time.Second) }
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("sustained empty RIB Reconcile: %v", err)
+	}
+	stalePlans := decodeActionPlans(t, latestPart(t, store, source).ActionPlansJSON)
+	if findActionPlanByAddress(stalePlans, "unassign-secondary-ip", "10.88.60.10/32") == nil {
+		t.Fatalf("sustained empty plans = %#v, want stale trap unassign", stalePlans)
 	}
 }
 

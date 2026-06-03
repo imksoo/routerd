@@ -72,6 +72,8 @@ type FIBSyncResult struct {
 
 const MinPollInterval = 3 * time.Second
 
+const bfdPeerDownGateDelay = 15 * time.Second
+
 type Controller struct {
 	Router *routerapi.Router
 	Bus    *bus.Bus
@@ -102,6 +104,7 @@ type Controller struct {
 	lastFIBResult    FIBSyncResult
 	lastFIBValid     bool
 	bfdPeerSeenUp    map[string]bool
+	bfdPeerDownSince map[string]time.Time
 }
 
 type desiredPeer struct {
@@ -700,18 +703,34 @@ func (c *Controller) applyBFDPeerGate(desired map[string]desiredPeer) map[string
 	if c.bfdPeerSeenUp == nil {
 		c.bfdPeerSeenUp = map[string]bool{}
 	}
+	if c.bfdPeerDownSince == nil {
+		c.bfdPeerDownSince = map[string]time.Time{}
+	}
+	now := time.Now()
 	out := make(map[string]desiredPeer, len(desired))
 	for address, peer := range desired {
 		state := c.bfdPeerState(peer.BFD, address)
 		key := bfdPeerGateKey(peer.BFD, address)
 		if strings.EqualFold(state, "Up") {
 			c.bfdPeerSeenUp[key] = true
+			delete(c.bfdPeerDownSince, key)
 			out[address] = peer
 			continue
 		}
 		if strings.EqualFold(state, "Down") && c.bfdPeerSeenUp[key] {
+			downSince, ok := c.bfdPeerDownSince[key]
+			if !ok {
+				c.bfdPeerDownSince[key] = now
+				out[address] = peer
+				continue
+			}
+			if now.Sub(downSince) >= bfdPeerDownGateDelay {
+				continue
+			}
+			out[address] = peer
 			continue
 		}
+		delete(c.bfdPeerDownSince, key)
 		out[address] = peer
 	}
 	return out
