@@ -104,7 +104,7 @@ Run `reset-lab.sh` after every run, even on failure.
 - **D4** on-prem HA / VRRP capture failover.
 - **D5** cloud maintenance / **capture migration PASS** — drain `aws-router-a`, the
   captured address moves to `aws-router-b`, traffic recovers via B; the stale
-  epoch-1 action is fenced (`skipped: stale mobility capture epoch`). See
+  pathSig action is fenced (`skipped: stale mobility desired path`). See
   [the D5 evidence](../releases/evidence/cloudedge-mobility-d5-aws-maintenance-20260531.md).
 
 ## Caveats

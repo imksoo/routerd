@@ -360,7 +360,7 @@ func discoveryScanInterval(discovery api.MobilityOwnershipDiscovery) time.Durati
 }
 
 func discoveryLeaseTTL(discovery api.MobilityOwnershipDiscovery, spec api.MobilityPoolSpec) time.Duration {
-	return durationDefault(firstNonEmpty(discovery.LeaseTTL, spec.LeasePolicy.TTL), DefaultLeaseTTL)
+	return durationDefault(discovery.LeaseTTL, DefaultLeaseTTL)
 }
 
 func discoveryPrimaryAllowed(scope api.MobilityOwnershipDiscoveryScope) bool {

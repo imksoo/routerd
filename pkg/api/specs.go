@@ -1346,7 +1346,7 @@ type EventSubscriptionTrigger struct {
 type MobilityPoolSpec struct {
 	// Prefix is the CIDR managed by this pool, e.g. 10.88.60.0/24 (required).
 	Prefix string `yaml:"prefix" json:"prefix"`
-	// GroupRef is the EventGroup whose observed/expired events feed BGP
+	// GroupRef is the EventGroup whose observed/expired events can feed BGP
 	// mobility ownership for this pool (required).
 	GroupRef string `yaml:"groupRef" json:"groupRef"`
 	// Mode selects the mobility scheme. Only "selective-address" is supported in
@@ -1365,8 +1365,6 @@ type MobilityPoolSpec struct {
 	// IPOwnershipPolicy retains high-level failover intent for BGP-mode
 	// mobility. Ownership itself is represented by BGP best-path.
 	IPOwnershipPolicy MobilityIPOwnershipPolicy `yaml:"ipOwnershipPolicy,omitempty" json:"ipOwnershipPolicy,omitempty"`
-	// LeasePolicy controls observed event expiry defaults.
-	LeasePolicy MobilityLeasePolicy `yaml:"leasePolicy,omitempty" json:"leasePolicy,omitempty"`
 	// DeliveryPolicy selects the pool-level delivery control plane. Empty means
 	// bgp; owned /32s are advertised and remote /32s are learned through BGP.
 	DeliveryPolicy MobilityDeliveryPolicy `yaml:"deliveryPolicy,omitempty" json:"deliveryPolicy,omitempty"`
@@ -1387,11 +1385,10 @@ type MobilityPoolMember struct {
 	// so sites can be named for topology while role remains provider-agnostic.
 	Role string `yaml:"role" json:"role" jsonschema:"enum=onprem,enum=cloud"`
 	// Capture declares how this member captures addresses currently owned by
-	// another site. Empty keeps the pool in lease-registry-only mode until Step 2
-	// planning is enabled for this node.
+	// another site.
 	Capture MobilityMemberCapture `yaml:"capture,omitempty" json:"capture,omitempty"`
-	// Delivery declares how this member forwards captured traffic toward the
-	// owner site. Empty keeps the pool in lease-registry-only mode.
+	// Delivery is retained for hand-authored SAM compatibility. BGP-mode
+	// MobilityPool delivery does not require per-member delivery routes.
 	Delivery MobilityMemberDelivery `yaml:"delivery,omitempty" json:"delivery,omitempty"`
 	// DeliveryTo optionally selects delivery per owner identity. It is retained
 	// for SAM compatibility; BGP-mode mobility does not lower per-lease routes.
@@ -1440,8 +1437,8 @@ type MobilityOwnershipDiscovery struct {
 	SubnetRef string `yaml:"subnetRef,omitempty" json:"subnetRef,omitempty"`
 	// ScanInterval bounds provider inventory calls. Empty defaults to 60s.
 	ScanInterval string `yaml:"scanInterval,omitempty" json:"scanInterval,omitempty"`
-	// LeaseTTL controls the emitted observed event expiry. Empty defaults to
-	// leasePolicy.ttl, then the controller default.
+	// LeaseTTL controls the emitted observed event expiry. Empty defaults to the
+	// controller default.
 	LeaseTTL string `yaml:"leaseTTL,omitempty" json:"leaseTTL,omitempty"`
 	// Scope narrows which provider private IPs become mobility ownership facts.
 	// Empty keeps the historical broad scan behavior.
@@ -1468,7 +1465,6 @@ type MobilityOwnershipDiscoverySelector struct {
 
 type MobilityIPOwnershipPolicy struct {
 	Type         string   `yaml:"type,omitempty" json:"type,omitempty" jsonschema:"enum=,enum=centralized"`
-	EpochLocking *bool    `yaml:"epochLocking,omitempty" json:"epochLocking,omitempty"`
 	PreferNodes  []string `yaml:"preferNodes,omitempty" json:"preferNodes,omitempty"`
 	AutoFailover bool     `yaml:"autoFailover,omitempty" json:"autoFailover,omitempty"`
 }
@@ -1513,20 +1509,6 @@ type MobilityCapturePolicy struct {
 	// Mode selects the capture behavior. Only "all-non-owner-sites" is supported
 	// in the MVP; empty defaults to it.
 	Mode string `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=,enum=all-non-owner-sites"`
-	// DeprovisionHoldDuration delays provider-side de-provision action plans
-	// after a previously captured address leaves this node's desired capture set.
-	// Empty defaults to leasePolicy.holdDuration, then the controller default.
-	DeprovisionHoldDuration string `yaml:"deprovisionHoldDuration,omitempty" json:"deprovisionHoldDuration,omitempty"`
-}
-
-// MobilityLeasePolicy controls observed federation event expiry defaults.
-type MobilityLeasePolicy struct {
-	// TTL is used when an observed event does not carry an explicit expiresAt.
-	// Empty defaults to the controller default.
-	TTL string `yaml:"ttl,omitempty" json:"ttl,omitempty"`
-	// HoldDuration is retained for config compatibility. BGP-mode mobility uses
-	// BGP/BFD convergence instead of lease owner hold windows.
-	HoldDuration string `yaml:"holdDuration,omitempty" json:"holdDuration,omitempty"`
 }
 
 // MobilityDeliveryPolicy selects the mobility delivery control plane.

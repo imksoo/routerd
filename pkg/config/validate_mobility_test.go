@@ -34,8 +34,7 @@ func TestValidateMobilityPool(t *testing.T) {
 				Delivery: api.MobilityMemberDelivery{PeerRef: "onprem", Mode: "route", TunnelInterface: "wg-hybrid"},
 			},
 		},
-		LeasePolicy: api.MobilityLeasePolicy{TTL: "5m", HoldDuration: "30s"},
-		Authority:   api.MobilityAuthority{Mode: "static"},
+		Authority: api.MobilityAuthority{Mode: "static"},
 	}, testInterfaceResource("lan"), testVirtualAddressResource("onprem-vip"))
 	if err := Validate(router); err != nil {
 		t.Fatalf("Validate MobilityPool: %v", err)
@@ -77,7 +76,6 @@ func TestValidateMobilityPoolAllowsDiscoveredCloudNICOnlyInBGPDiscoveryMode(t *t
 				},
 			},
 		},
-		LeasePolicy: api.MobilityLeasePolicy{TTL: "5m", HoldDuration: "30s"},
 	}
 	if err := Validate(mobilityPoolRouter(spec, testInterfaceResource("lan"), testVirtualAddressResource("onprem-vip"))); err != nil {
 		t.Fatalf("Validate discovered NIC MobilityPool: %v", err)
@@ -124,7 +122,6 @@ func TestValidateMobilityPoolActiveWhenVirtualAddressReferenceIsLocalToSelfNode(
 				Delivery: api.MobilityMemberDelivery{PeerRef: "onprem", Mode: "route", TunnelInterface: "wg-hybrid"},
 			},
 		},
-		LeasePolicy: api.MobilityLeasePolicy{TTL: "5m", HoldDuration: "30s"},
 	}
 	router := mobilityPoolRouter(spec, testEventGroupResource("cloudedge", "azure-router"))
 	if err := Validate(router); err != nil {
@@ -193,7 +190,6 @@ func TestValidateMobilityPoolStaticOwnedAndHandover(t *testing.T) {
 			FromNodeRef: "onprem-router",
 			ToNodeRef:   "azure-router",
 		}},
-		LeasePolicy: api.MobilityLeasePolicy{TTL: "5m", HoldDuration: "30s"},
 	}
 	if err := Validate(mobilityPoolRouter(spec)); err != nil {
 		t.Fatalf("Validate static mobility pool: %v", err)
@@ -220,16 +216,6 @@ func TestValidateMobilityPoolRejectsInvalidFields(t *testing.T) {
 			name: "missing role",
 			mut:  func(spec *api.MobilityPoolSpec) { spec.Members[0].Role = "" },
 			want: "role must be onprem or cloud",
-		},
-		{
-			name: "bad hold",
-			mut:  func(spec *api.MobilityPoolSpec) { spec.LeasePolicy.HoldDuration = "-1s" },
-			want: "holdDuration must be >= 0",
-		},
-		{
-			name: "bad deprovision hold",
-			mut:  func(spec *api.MobilityPoolSpec) { spec.CapturePolicy.DeprovisionHoldDuration = "-1s" },
-			want: "deprovisionHoldDuration must be >= 0",
 		},
 		{
 			name: "placement priority without group",
@@ -380,17 +366,10 @@ func TestValidateMobilityPoolRejectsInvalidFields(t *testing.T) {
 			want: "capture.type must be provider-secondary-ip for role cloud",
 		},
 		{
-			name: "capture needs delivery",
-			mut: func(spec *api.MobilityPoolSpec) {
-				spec.Members[0].Capture = api.MobilityMemberCapture{Type: "proxy-arp", Interface: "lan"}
-			},
-			want: "delivery.peerRef or deliveryTo is required when capture.type is set",
-		},
-		{
 			name: "deliveryTo selector",
 			mut: func(spec *api.MobilityPoolSpec) {
-				spec.Members[0].Capture = api.MobilityMemberCapture{Type: "proxy-arp", Interface: "lan"}
-				spec.Members[0].DeliveryTo = []api.MobilityMemberDeliveryTarget{{PeerRef: "azure"}}
+				spec.Members[1].Capture = api.MobilityMemberCapture{Type: "provider-secondary-ip", ProviderRef: "azure-provider", ProviderMode: "nic-secondary-ip", NICRef: "nic-1"}
+				spec.Members[1].DeliveryTo = []api.MobilityMemberDeliveryTarget{{PeerRef: "onprem"}}
 			},
 			want: "must set nodeRef, site, or role",
 		},
@@ -471,7 +450,6 @@ func TestValidateMobilityPoolRejectsInvalidFields(t *testing.T) {
 					{NodeRef: "onprem-router", Site: "onprem", Role: "onprem"},
 					{NodeRef: "azure-router", Site: "azure", Role: "cloud"},
 				},
-				LeasePolicy: api.MobilityLeasePolicy{TTL: "5m", HoldDuration: "30s"},
 			}
 			tt.mut(&spec)
 			err := Validate(mobilityPoolRouter(spec))

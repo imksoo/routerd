@@ -247,7 +247,7 @@ func (c Controller) recordBGPStaticHandoverReleaseEvents(poolName, selfNode stri
 			},
 			ObservedAt: now.UTC(),
 			RecordedAt: now.UTC(),
-			ExpiresAt:  now.UTC().Add(durationDefault(spec.LeasePolicy.TTL, DefaultLeaseTTL)),
+			ExpiresAt:  now.UTC().Add(DefaultLeaseTTL),
 		}
 		if err := c.Store.RecordFederationEvent(ev); err != nil {
 			return nil, fmt.Errorf("record BGP static handover release %q: %w", ev.ID, err)
@@ -306,7 +306,7 @@ func (c Controller) upsertBGPPlan(poolName string, spec api.MobilityPoolSpec, se
 			Source:      DynamicSource(poolName, selfNode),
 			Generation:  dynamicGeneration,
 			ObservedAt:  now,
-			ExpiresAt:   now.Add(durationDefault(spec.LeasePolicy.TTL, DefaultLeaseTTL)),
+			ExpiresAt:   now.Add(DefaultLeaseTTL),
 			Resources:   []api.Resource{},
 			Directives:  []dynamicconfig.DynamicConfigDirective{},
 			ActionPlans: dedupeActionPlans(actionPlans),

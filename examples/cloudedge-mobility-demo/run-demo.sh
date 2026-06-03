@@ -303,7 +303,7 @@ main() {
   echo "Execute D5 migration actions"
   execute_provider_actions aws-a
   execute_provider_actions aws-b
-  echo "Probe stale epoch gate on aws-router-b"
+  echo "Probe stale pathSig gate on aws-router-b"
   probe_stale_gate_on_aws_b
 
   echo "Verify D5 dataplane via aws-router-b"

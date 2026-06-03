@@ -100,33 +100,6 @@ func validateMobilityResource(res api.Resource, _ platform.OS) (bool, error) {
 		if err := validateMobilityStaticHandovers(res, spec, parsedPrefix.Masked(), nodeRefs, memberRoles, staticOwners); err != nil {
 			return true, err
 		}
-		if hold := strings.TrimSpace(spec.CapturePolicy.DeprovisionHoldDuration); hold != "" {
-			parsed, err := time.ParseDuration(hold)
-			if err != nil {
-				return true, fmt.Errorf("%s spec.capturePolicy.deprovisionHoldDuration must be a Go duration: %w", res.ID(), err)
-			}
-			if parsed < 0 {
-				return true, fmt.Errorf("%s spec.capturePolicy.deprovisionHoldDuration must be >= 0", res.ID())
-			}
-		}
-		if ttl := strings.TrimSpace(spec.LeasePolicy.TTL); ttl != "" {
-			parsed, err := time.ParseDuration(ttl)
-			if err != nil {
-				return true, fmt.Errorf("%s spec.leasePolicy.ttl must be a Go duration: %w", res.ID(), err)
-			}
-			if parsed <= 0 {
-				return true, fmt.Errorf("%s spec.leasePolicy.ttl must be > 0", res.ID())
-			}
-		}
-		if hold := strings.TrimSpace(spec.LeasePolicy.HoldDuration); hold != "" {
-			parsed, err := time.ParseDuration(hold)
-			if err != nil {
-				return true, fmt.Errorf("%s spec.leasePolicy.holdDuration must be a Go duration: %w", res.ID(), err)
-			}
-			if parsed < 0 {
-				return true, fmt.Errorf("%s spec.leasePolicy.holdDuration must be >= 0", res.ID())
-			}
-		}
 		switch strings.TrimSpace(spec.Authority.Mode) {
 		case "", "static":
 			authNode := strings.TrimSpace(spec.Authority.NodeRef)
@@ -343,7 +316,6 @@ func parseMobilityStaticAddress(raw string, pool netip.Prefix) (string, error) {
 func validateMobilityIPOwnershipPolicy(res api.Resource, spec api.MobilityPoolSpec, nodeRefs map[string]bool) error {
 	policy := spec.IPOwnershipPolicy
 	policySet := strings.TrimSpace(policy.Type) != "" ||
-		policy.EpochLocking != nil ||
 		len(policy.PreferNodes) > 0 ||
 		policy.AutoFailover
 	if !policySet {
@@ -367,25 +339,6 @@ func validateMobilityIPOwnershipPolicy(res api.Resource, spec api.MobilityPoolSp
 		seen[nodeRef] = true
 	}
 	return nil
-}
-
-func parseOptionalMobilityDuration(field, raw string, positive bool) (time.Duration, bool, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return 0, false, nil
-	}
-	parsed, err := time.ParseDuration(raw)
-	if err != nil {
-		return 0, false, fmt.Errorf("%s must be a Go duration: %w", field, err)
-	}
-	if positive {
-		if parsed <= 0 {
-			return 0, false, fmt.Errorf("%s must be > 0", field)
-		}
-	} else if parsed < 0 {
-		return 0, false, fmt.Errorf("%s must be >= 0", field)
-	}
-	return parsed, true, nil
 }
 
 type mobilityPlacementGroup struct {
@@ -442,7 +395,7 @@ func validateMobilityMemberCapture(res api.Resource, index int, spec api.Mobilit
 	default:
 		return fmt.Errorf("%s spec.members[%d].delivery.mode must be empty or route", res.ID(), index)
 	}
-	if captureType != "" && strings.TrimSpace(member.Delivery.PeerRef) == "" {
+	if captureType != "" && effectiveMobilityDeliveryMode(spec) != "bgp" && strings.TrimSpace(member.Delivery.PeerRef) == "" {
 		if len(member.DeliveryTo) == 0 {
 			return fmt.Errorf("%s spec.members[%d].delivery.peerRef or deliveryTo is required when capture.type is set", res.ID(), index)
 		}

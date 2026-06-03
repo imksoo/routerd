@@ -65,7 +65,6 @@ func plannedPoolSpec() api.MobilityPoolSpec {
 				Delivery: api.MobilityMemberDelivery{PeerRef: "onprem", Mode: "route", TunnelInterface: "wg-hybrid"},
 			},
 		},
-		LeasePolicy: api.MobilityLeasePolicy{TTL: "5m", HoldDuration: "30s"},
 	}
 }
 

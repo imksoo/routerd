@@ -38,10 +38,10 @@ for real once credentials and budget are approved.
 | `minimal` | on-prem + 1 cloud | cheapest smoke; interface/CI shake-out |
 | `provider` | one provider A/B routers + client | provider parity (AWS/OCI/Azure seize) |
 | `full` | on-prem + AWS + OCI + Azure | the 4-site `/24` 12-flow demo |
-| `soak` | a `full` run held open for its whole TTL | long-running heartbeat/accumulation checks |
+| `soak` | a `full` run held open for its whole TTL | long-running reconvergence checks |
 
 `soak` is operationally a `full` run with a long `--ttl` left up (do not run
-`down` until TTL); use it to exercise heartbeat-event accumulation and reconverge.
+`down` until TTL); use it to exercise BFD/BGP reconvergence and reconverge.
 
 ## TTL and cost policy
 
@@ -76,9 +76,9 @@ Cost guard rules:
 | --- | --- | --- |
 | `stop-active` | stop the active router VM/instance | provider stop CLI (see `reset-lab.sh`) |
 | `drain` | MobilityPool `maintenance.drain=true` on active | reuse `run-demo.sh` `*-drain.yaml` |
-| `heartbeat-stop` | stop `routerd-eventd` (federation heartbeats cease) | ssh `systemctl stop` |
+| `routerd-bgp-stop` | stop `routerd-bgp` (BGP session drops) | ssh `systemctl stop routerd-bgp` |
 | `executor-fail` | provider action executor denied (identity scope-down) | identity policy |
-| `stale-replay` | replay a stale-epoch action; must be **fenced** | `probe_stale_gate_on_aws_b` |
+| `stale-replay` | replay a stale-pathSig action; must be **fenced** | `probe_stale_gate_on_aws_b` |
 
 Inject a fault, then re-run `smoke` and `evidence collect` to prove recovery.
 

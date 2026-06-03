@@ -6750,10 +6750,6 @@
                         "additionalProperties": false,
                         "description": "CapturePolicy declares how non-owner sites capture an address that has\nmoved.",
                         "properties": {
-                          "deprovisionHoldDuration": {
-                            "description": "DeprovisionHoldDuration delays provider-side de-provision action plans\nafter a previously captured address leaves this node's desired capture set.\nEmpty defaults to leasePolicy.holdDuration, then the controller default.",
-                            "type": "string"
-                          },
                           "mode": {
                             "description": "Mode selects the capture behavior. Only \"all-non-owner-sites\" is supported\nin the MVP; empty defaults to it.",
                             "enum": [
@@ -6781,7 +6777,7 @@
                         "type": "object"
                       },
                       "groupRef": {
-                        "description": "GroupRef is the EventGroup whose observed/expired events feed BGP\nmobility ownership for this pool (required).",
+                        "description": "GroupRef is the EventGroup whose observed/expired events can feed BGP\nmobility ownership for this pool (required).",
                         "type": "string"
                       },
                       "ipOwnershipPolicy": {
@@ -6789,9 +6785,6 @@
                         "description": "IPOwnershipPolicy retains high-level failover intent for BGP-mode\nmobility. Ownership itself is represented by BGP best-path.",
                         "properties": {
                           "autoFailover": {
-                            "type": "boolean"
-                          },
-                          "epochLocking": {
                             "type": "boolean"
                           },
                           "preferNodes": {
@@ -6810,21 +6803,6 @@
                         },
                         "type": "object"
                       },
-                      "leasePolicy": {
-                        "additionalProperties": false,
-                        "description": "LeasePolicy controls observed event expiry defaults.",
-                        "properties": {
-                          "holdDuration": {
-                            "description": "HoldDuration is retained for config compatibility. BGP-mode mobility uses\nBGP/BFD convergence instead of lease owner hold windows.",
-                            "type": "string"
-                          },
-                          "ttl": {
-                            "description": "TTL is used when an observed event does not carry an explicit expiresAt.\nEmpty defaults to the controller default.",
-                            "type": "string"
-                          }
-                        },
-                        "type": "object"
-                      },
                       "members": {
                         "description": "Members maps routerd nodes to the site they serve within the pool\n(required, at least one).",
                         "items": {
@@ -6833,7 +6811,7 @@
                           "properties": {
                             "capture": {
                               "additionalProperties": false,
-                              "description": "Capture declares how this member captures addresses currently owned by\nanother site. Empty keeps the pool in lease-registry-only mode until Step 2\nplanning is enabled for this node.",
+                              "description": "Capture declares how this member captures addresses currently owned by\nanother site.",
                               "properties": {
                                 "activeWhen": {
                                   "additionalProperties": false,
@@ -6888,7 +6866,7 @@
                             },
                             "delivery": {
                               "additionalProperties": false,
-                              "description": "Delivery declares how this member forwards captured traffic toward the\nowner site. Empty keeps the pool in lease-registry-only mode.",
+                              "description": "Delivery is retained for hand-authored SAM compatibility. BGP-mode\nMobilityPool delivery does not require per-member delivery routes.",
                               "properties": {
                                 "mode": {
                                   "enum": [
@@ -6965,7 +6943,7 @@
                               "description": "OwnershipDiscovery optionally lets a cloud member discover locally owned\nprovider private IPs and emit them as observed federation facts.",
                               "properties": {
                                 "leaseTTL": {
-                                  "description": "LeaseTTL controls the emitted observed event expiry. Empty defaults to\nleasePolicy.ttl, then the controller default.",
+                                  "description": "LeaseTTL controls the emitted observed event expiry. Empty defaults to the\ncontroller default.",
                                   "type": "string"
                                 },
                                 "mode": {

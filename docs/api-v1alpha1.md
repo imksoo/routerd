@@ -212,12 +212,10 @@ the mobility control plane. `AddressMobilityDomain` and `RemoteAddressClaim`
 remain supported as lower-level SAM compatibility Kinds outside the MobilityPool
 BGP path.
 
-`MobilityPool.spec.members[].deliveryTo[]` selects delivery for an owner by
-`nodeRef`, then `site`, then `role`, with `members[].delivery` as fallback.
+`MobilityPool.spec.deliveryPolicy.mode` defaults to `bgp`; route-mode
+MobilityPool planning has been removed from the mobility mainline.
 `members[].capture.target` carries non-secret provider target identifiers into
-generated provider action plans. `capturePolicy.deprovisionHoldDuration`
-optionally delays provider de-provision action plans after a generated cloud
-capture leaves this node's desired capture set.
+generated background provider action plans.
 `members[].placement` can group same-provider cloud routers into deterministic
 active/standby capture placement; `members[].maintenance.drain` removes that
 member from active selection. All nodes in a mobility demo should receive the

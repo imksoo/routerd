@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed; Accepted for Phase 1 design planning -- 2026-06-02.
+Accepted. Phase 1 clean Option B implemented through B6/B7 -- 2026-06-03.
 
 Supersedes the custom overlay-reachability source of truth introduced by
 [ADR 0006](../adr/0006-event-federation.md),
@@ -14,8 +14,8 @@ scope as background reconciliation and local capture guards.
 
 ## Context
 
-CloudEdge selective address mobility currently builds overlay reachability from a
-routerd-specific control plane:
+CloudEdge selective address mobility originally built overlay reachability from
+a routerd-specific control plane:
 
 - event federation carries observed/expired/heartbeat facts;
 - the mobility controller projects those events into `AddressLease` rows;
@@ -87,6 +87,35 @@ On-prem LAN capture remains local:
 - BGP decides remote overlay reachability; it does not replace the local L2/ARP
   authority guard.
 
+## Clean Option B Final State
+
+The pre-release implementation now uses BGP as the mobility source of truth
+directly:
+
+- **Ownership:** the owner of a mobile `/32` is the current BGP best path for
+  that prefix. There is no separate `AddressLease`, ownership epoch, or capture
+  epoch registry.
+- **Delivery:** non-owners import the BGP best path into the local FIB and route
+  the `/32` over the overlay next hop. MobilityPool route-mode planning and
+  generated SAM delivery claims are not part of the mainline.
+- **Capture/trap:** cloud provider secondary-IP actions are derived from the BGP
+  best-path view and local placement. They are background fabric-ingress
+  reconciliation, not overlay reachability prerequisites.
+- **Fencing:** provider actions carry the current mobility path signature
+  (`mobilityPathSig`) plus desired holder and observed provider/journal
+  transition. Stale actions are skipped when the desired BGP path no longer
+  matches; the old ownership/capture epoch tables are gone.
+- **Liveness:** mobility failover relies on BGP withdrawal and best-path
+  convergence. Fast failure detection is provided by `BFD` resources rendered to
+  FRR `bfdd`; routerd bridges BFD Down/Up into BGP peer disable/enable. Custom
+  mobility heartbeat/staleness projection is removed.
+- **On-prem LAN authority:** VRRP-master gating, proxy-ARP, GARP,
+  non-master fail-closed behavior, and duplicate proxy-ARP doctor checks remain
+  local safety mechanisms.
+- **State removed:** B6 physically removed the mobility lease, ownership epoch,
+  capture epoch, and deprovision marker tables and APIs, with a net reduction of
+  about 6.2k lines in that stage.
+
 ## Non-goals
 
 - Do not implement EVPN in Phase 1.
@@ -116,8 +145,8 @@ The intended steady-state mapping is:
 
 ## Phase 1 Scope
 
-Phase 1 builds the BGP unicast path while keeping the current mobility system
-available for rollback and comparison.
+Phase 1 built the BGP unicast path and then removed the superseded custom
+mobility planner/state path before release.
 
 1. Add source-aware dynamic BGP path management for routerd-generated `/32`
    advertisements.
@@ -125,7 +154,7 @@ available for rollback and comparison.
 3. Consume BGP best paths as the remote-address delivery view.
 4. Move failover and static handover overlay reachability to BGP withdraw/advertise.
 5. Convert provider secondary-IP handling into background reconciliation.
-6. After parity is proven, shrink or remove the old lease/planner/epoch path.
+6. After parity was proven, remove the old lease/planner/epoch path.
 
 ## Consequences
 
@@ -160,14 +189,14 @@ Negative / risks:
 ## Migration Rules
 
 - Keep `MobilityPool` as the only operator-authored mobility intent.
-- Add an explicit compatibility mode or feature gate so existing SAM mobility can
-  remain active while BGP mobility is developed and tested.
+- Default MobilityPool delivery to BGP. The old MobilityPool route-mode planner
+  was a migration aid and is not accepted in the clean pre-release API.
 - Never run two route-lowering sources for the same `(pool,address)` without a
   deterministic precedence rule.
 - Mark generated BGP paths with source metadata so static BGP advertisements are
   not accidentally withdrawn by mobility reconciliation.
-- Preserve provider-action idempotency and fencing while provider reconciliation
-  remains present.
+- Preserve provider-action idempotency and path-signature fencing while provider
+  reconciliation remains present.
 
 ## Exit Criteria
 
@@ -178,5 +207,5 @@ Negative / risks:
 - Delaying or failing provider secondary-IP actions does not break overlay
   reachability.
 - VRRP/proxy-ARP on-prem fail-closed semantics remain unchanged.
-- The old mobility lease/planner path can be disabled per pool and then removed
-  after tests and live evidence cover the BGP path.
+- The old mobility lease/planner path is removed after tests and live evidence
+  cover the BGP path.

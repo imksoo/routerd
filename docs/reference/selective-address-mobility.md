@@ -19,7 +19,8 @@ fields on mobility resources.
 
 For the CloudEdge Mobility control plane, `MobilityPool` is the only
 operator-authored mobility intent. It declares the logical IPv4 pool, the
-EventGroup to read, member nodes and sites, and the lease/capture policy:
+EventGroup to read, member nodes and sites, BGP delivery mode, capture policy,
+and provider trap placement:
 
 ```yaml
 apiVersion: mobility.routerd.net/v1alpha1
@@ -32,18 +33,10 @@ spec:
     - nodeRef: onprem-router
       site: onprem
       role: onprem
+      staticOwnedAddresses: [10.0.0.9/32]
       capture:
         type: proxy-arp
         interface: lan
-      deliveryTo:
-        - nodeRef: cloud-router
-          peerRef: cloud-main
-          mode: route
-          tunnelInterface: wg-hybrid
-      delivery:
-        peerRef: cloud-main
-        mode: route
-        tunnelInterface: wg-hybrid
     - nodeRef: cloud-router
       site: azure
       role: cloud
@@ -61,16 +54,17 @@ spec:
         priority: 10
       maintenance:
         drain: false
-      delivery:
-        peerRef: onprem-main
-        mode: route
-        tunnelInterface: wg-hybrid
-  leasePolicy:
-    ttl: 5m
-    holdDuration: 30s
+      ownershipDiscovery:
+        mode: provider-private-ip
+        providerRef: azure-lab
+        subnetRef: /subscriptions/.../virtualNetworks/vnet/subnets/data
+        scanInterval: 60s
+        scope:
+          includePrimary: false
+  deliveryPolicy:
+    mode: bgp
   capturePolicy:
     mode: all-non-owner-sites
-    deprovisionHoldDuration: 30s
 ```
 
 routerd uses observed facts from federation or provider discovery to advertise
@@ -81,9 +75,9 @@ plans are derived by the controller.
 For same-provider cloud router maintenance, `members[].placement.group` elects
 one non-drained active capture member by `priority` and then `nodeRef`.
 `members[].maintenance.drain: true` removes that member from active selection,
-so the planner moves generated capture claims and provider action plans to the
-next candidate. Distribute the same `MobilityPool` config to every node in the
-pool to keep placement projection deterministic.
+so only the active member emits provider trap actions while every member can
+advertise its BGP standby path. Distribute the same `MobilityPool` config to
+every node in the pool to keep placement projection deterministic.
 
 `AddressMobilityDomain` and `RemoteAddressClaim` are the lower-level SAM
 representation. Existing hand-authored SAM configs remain supported for
@@ -159,16 +153,12 @@ Reserved capture types rejected by MVP validation:
 | `static-host-route` | Reserved for a later dataplane design. |
 | `garp` | Reserved for a later dataplane design. |
 
-Delivery mode is `route`: routerd represents delivery as forwarding the
-captured `/32` over the named overlay peer and optional tunnel interface. The
-Linux dataplane lowers this delivery into a managed `IPv4Route` for the exact
-claim address, for example `10.0.0.9/32 dev wg-hybrid`. routerd never lowers a
-SAM claim into a default route.
-
-`members[].deliveryTo[]` can select delivery by owner `nodeRef`, then `site`,
-then `role`; `members[].delivery` is the fallback. This keeps one shared
-`MobilityPool` config usable across four-site demos where the on-prem router
-must deliver to AWS, Azure, and OCI through different overlay peers.
+For `MobilityPool`, delivery mode is BGP. Owned addresses are advertised as
+IPv4 unicast `/32` paths; non-owners import the BGP best path into the local FIB
+over the selected overlay next hop. `deliveryPolicy.mode: bgp` is the default
+and the only supported MobilityPool delivery mode in the current control plane.
+Older route-lowered SAM delivery remains available only for hand-authored
+`RemoteAddressClaim` compatibility configs.
 
 `members[].capture.target` carries non-secret provider target hints copied into
 generated provider `ActionPlan.target` values. Put identifiers such as region,
@@ -187,9 +177,9 @@ For `provider-secondary-ip`, the provider fabric owns address capture. routerd
 does not assign the mobile address to the local OS when
 `configureOSAddress: false`; on Linux it also removes that specific address
 from local interfaces if cloud-init, netplan, or another guest agent adds it
-back. It then ensures IPv4 forwarding and installs the `/32` delivery route
-into the overlay. routerd does not re-add the address when the claim is
-removed, because it never owned the guest OS assignment.
+back. It then ensures IPv4 forwarding; the overlay `/32` delivery route comes
+from BGP best-path import. routerd does not re-add the address when the capture
+is removed, because it never owned the guest OS assignment.
 
 Status reports this as `captureOSAddressAbsence`. `enforced: true` means
 routerd is actively enforcing that the captured address is absent from local OS
@@ -281,28 +271,30 @@ default-drop forwarding policy. SAM does not add firewall rules by itself.
 ## Overlay And Federation Addressing On Cloud Nodes
 
 The Event Federation transport (the `routerd-eventd` listen address and each
-`EventPeer.endpoint`) and the WireGuard overlay it rides on (`OverlayPeer`,
-`WireGuardInterface`/`WireGuardPeer`) must use an address range you control end
-to end on every node. On cloud instances, do **not** draw overlay or federation
-addresses from ranges the provider reserves for its own internal use:
+`EventPeer.endpoint`), BGP/BFD peer addresses, and the WireGuard overlay they
+ride on (`OverlayPeer`, `WireGuardInterface`/`WireGuardPeer`) must use an
+address range you control end to end on every node. On cloud instances, do
+**not** draw overlay, BGP/BFD, or federation addresses from ranges the provider
+reserves for its own internal use:
 
 - `169.254.0.0/16` (RFC 3927 link-local). Cloud instance metadata (IMDS) lives
   at `169.254.169.254`, and some images reserve the entire block: Oracle
   Cloud's Linux image routes all of `169.254.0.0/16` through an
   `InstanceServices` chain, so a federation SYN to a `169.254.x` overlay
   address is pulled to loopback and reset even though ICMP to the same address
-  succeeds. AWS and Azure also use `169.254.169.254` for IMDS. Symptom: leases
-  converge but `routerd-eventd` TCP never connects between nodes.
+  succeeds. AWS and Azure also use `169.254.169.254` for IMDS. Symptom: local
+  ownership facts are present, but `routerd-eventd` or BGP/BFD sessions never
+  connect between nodes.
 - `100.64.0.0/10` (RFC 6598 carrier-grade NAT). Used by CGNAT on provider
   underlays and by Tailscale (`100.x` tailnet addresses, MagicDNS). An overlay
   in this range collides with any Tailscale membership and with carrier NAT.
 
 Use an RFC 1918 range you reserve for the overlay (for example a `10.x.y.0/24`)
 for the WireGuard interface/peer addresses, the `OverlayPeer` endpoints, and the
-`routerd-eventd` listen / `EventPeer` endpoints. Keep it distinct from the
-mobility pool `/24` (the captured addresses) and from every cloud-reserved range
-above. This applies to all providers (AWS/Azure/OCI); OCI is simply the
-strictest at enforcing the link-local reservation.
+`routerd-eventd` listen / `EventPeer` endpoints and BGP/BFD peering addresses.
+Keep it distinct from the mobility pool `/24` (the captured addresses) and from
+every cloud-reserved range above. This applies to all providers (AWS/Azure/OCI);
+OCI is simply the strictest at enforcing the link-local reservation.
 
 ## Client Endpoint Addressing vs Router-Overlay Reachability
 

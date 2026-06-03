@@ -829,7 +829,6 @@ func testRouter() *api.Router {
 					{NodeRef: "onprem-router", Site: "onprem", Role: "onprem"},
 					{NodeRef: "azure-router", Site: "azure", Role: "cloud"},
 				},
-				LeasePolicy: api.MobilityLeasePolicy{TTL: "5m", HoldDuration: "30s"},
 			},
 		}}},
 	}
@@ -843,7 +842,6 @@ func staticPoolSpec() api.MobilityPoolSpec {
 			{NodeRef: "onprem-router", Site: "onprem", Role: "onprem", StaticOwnedAddresses: []string{"10.88.60.10/32"}},
 			{NodeRef: "azure-router", Site: "azure", Role: "cloud"},
 		},
-		LeasePolicy: api.MobilityLeasePolicy{TTL: "5m", HoldDuration: "30s"},
 	}
 }
 

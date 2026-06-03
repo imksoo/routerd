@@ -156,7 +156,7 @@ spec:
         device: wg-hybrid
         metric: 80
 
-    # same-site standby overlay /32 (A<->B event push + heartbeat over the hub)
+    # same-site standby overlay /32 (A<->B event push over the hub)
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4Route
       metadata:
@@ -208,6 +208,15 @@ spec:
         peerASN: 64577
         peers: [10.99.0.1]
         timers: { profile: fast }
+        bfd: BFD/onprem-rr
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: BFD
+      metadata:
+        name: onprem-rr
+      spec:
+        peer: BGPPeer/onprem-rr
+        profile: fast
 
     - apiVersion: hybrid.routerd.net/v1alpha1
       kind: OverlayPeer
@@ -258,13 +267,6 @@ spec:
               interface: ens21
               gratuitousARP: true
               activeWhen: { type: vrrp-master, virtualAddressRef: onprem-gate-vip }
-            deliveryTo:
-              - { nodeRef: aws-router-a, peerRef: onprem-main, mode: route, tunnelInterface: wg-hybrid }
-              - { nodeRef: aws-router-b, peerRef: onprem-main, mode: route, tunnelInterface: wg-hybrid }
-              - { nodeRef: azure-router, peerRef: onprem-main, mode: route, tunnelInterface: wg-hybrid }
-              - { nodeRef: azure-router-b, peerRef: onprem-main, mode: route, tunnelInterface: wg-hybrid }
-              - { nodeRef: oci-router, peerRef: onprem-main, mode: route, tunnelInterface: wg-hybrid }
-              - { nodeRef: oci-router-b, peerRef: onprem-main, mode: route, tunnelInterface: wg-hybrid }
           - nodeRef: aws-router-a
             site: aws
             role: cloud
@@ -276,7 +278,6 @@ spec:
               configureOSAddress: false
               target:
                 region: "${AWS_REGION}"
-            delivery: { peerRef: onprem-main, mode: route, tunnelInterface: wg-hybrid }
             placement: { group: aws-edge, priority: 10 }
             ownershipDiscovery: { mode: provider-private-ip, providerRef: aws-lab, scope: { includePrimary: false }, subnetRef: "${AWS_SUBNET_REF}", scanInterval: 60s, leaseTTL: 10m }
           - nodeRef: aws-router-b
@@ -290,7 +291,6 @@ spec:
               configureOSAddress: false
               target:
                 region: "${AWS_REGION}"
-            delivery: { peerRef: onprem-main, mode: route, tunnelInterface: wg-hybrid }
             placement: { group: aws-edge, priority: 20 }
             ownershipDiscovery: { mode: provider-private-ip, providerRef: aws-lab, scope: { includePrimary: false }, subnetRef: "${AWS_SUBNET_REF}", scanInterval: 60s, leaseTTL: 10m }
           - nodeRef: azure-router
@@ -305,7 +305,6 @@ spec:
               target:
                 region: "${AZURE_REGION}"
                 resourceGroup: "${AZURE_RESOURCE_GROUP}"
-            delivery: { peerRef: onprem-main, mode: route, tunnelInterface: wg-hybrid }
             placement: { group: azure-edge, priority: 10 }
             ownershipDiscovery: { mode: provider-private-ip, providerRef: azure-lab, scope: { includePrimary: false }, subnetRef: "${AZURE_SUBNET_REF}", scanInterval: 60s, leaseTTL: 10m }
           - nodeRef: azure-router-b
@@ -320,7 +319,6 @@ spec:
               target:
                 region: "${AZURE_REGION}"
                 resourceGroup: "${AZURE_RESOURCE_GROUP}"
-            delivery: { peerRef: onprem-main, mode: route, tunnelInterface: wg-hybrid }
             placement: { group: azure-edge, priority: 20 }
             ownershipDiscovery: { mode: provider-private-ip, providerRef: azure-lab, scope: { includePrimary: false }, subnetRef: "${AZURE_SUBNET_REF}", scanInterval: 60s, leaseTTL: 10m }
           - nodeRef: oci-router
@@ -335,7 +333,6 @@ spec:
               target:
                 region: "${OCI_REGION}"
                 compartmentId: "${OCI_COMPARTMENT_REF}"
-            delivery: { peerRef: onprem-main, mode: route, tunnelInterface: wg-hybrid }
             placement: { group: oci-edge, priority: 10 }
             ownershipDiscovery: { mode: provider-private-ip, providerRef: oci-lab, scope: { includePrimary: false }, subnetRef: "${OCI_SUBNET_REF}", scanInterval: 60s, leaseTTL: 10m }
           - nodeRef: oci-router-b
@@ -350,11 +347,9 @@ spec:
               target:
                 region: "${OCI_REGION}"
                 compartmentId: "${OCI_COMPARTMENT_REF}"
-            delivery: { peerRef: onprem-main, mode: route, tunnelInterface: wg-hybrid }
             placement: { group: oci-edge, priority: 20 }
             ownershipDiscovery: { mode: provider-private-ip, providerRef: oci-lab, scope: { includePrimary: false }, subnetRef: "${OCI_SUBNET_REF}", scanInterval: 60s, leaseTTL: 10m }
-        leasePolicy: { ttl: 30m, holdDuration: 5s }
-        capturePolicy: { mode: all-non-owner-sites, deprovisionHoldDuration: 5s }
+        capturePolicy: { mode: all-non-owner-sites }
         ipOwnershipPolicy: { type: centralized, autoFailover: true }
 
     - apiVersion: hybrid.routerd.net/v1alpha1
