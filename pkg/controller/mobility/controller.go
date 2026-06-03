@@ -1096,10 +1096,16 @@ func shouldAllowBGPTrapReassignment(self memberPlanInfo, address string, previou
 	latest := latestProviderCaptureTransitions(previousPlans, journal)
 	key := providerCaptureTransitionKey(self.Capture.ProviderRef, self.Capture.NICRef, address)
 	tr, ok := latest[key]
+	if !ok && observedSelfIPsOK && !observedSelfIPs[address] {
+		return true
+	}
 	if !ok {
 		return false
 	}
 	if tr.assign && observedSelfIPsOK && !observedSelfIPs[address] {
+		return true
+	}
+	if observedSelfIPsOK && !observedSelfIPs[address] {
 		return true
 	}
 	return !tr.assign

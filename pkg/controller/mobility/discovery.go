@@ -152,6 +152,9 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 	excludedNICs := mobilityRouterNICRefs(spec.Members)
 	selfInventory := resolvedDiscoverySelfInventory(self, discovery, result.Status.Self)
 	if !placement.Active {
+		if err := c.expireStaleProviderDiscoveryEvents(poolName, spec, self.NodeRef, prefix, nil, now, discoveryLeaseTTL(discovery, spec)); err != nil {
+			return err
+		}
 		c.saveDiscoveryStatus(poolName, map[string]any{
 			"discoveryPhase":          "Standby",
 			"discoveryReason":         placement.Reason,
@@ -177,6 +180,7 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 		return err
 	}
 	ttl := discoveryLeaseTTL(discovery, spec)
+	observedThisScan := map[string]bool{}
 	counters := discoveryExclusionCounters{}
 	for _, rec := range sortedPrivateIPs(result.Status.IPs) {
 		address, ok := normalizeDiscoveredAddress(rec.Address, prefix)
@@ -216,7 +220,11 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 		if err := c.Store.RecordFederationEvent(ev); err != nil {
 			return err
 		}
+		observedThisScan[address] = true
 		counters.Observed++
+	}
+	if err := c.expireStaleProviderDiscoveryEvents(poolName, spec, self.NodeRef, prefix, observedThisScan, now, ttl); err != nil {
+		return err
 	}
 	c.saveDiscoveryStatus(poolName, map[string]any{
 		"discoveryPhase":             "Observed",
@@ -241,6 +249,62 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 		"discoveryNextScanAt":        now.Add(interval).Format(time.RFC3339Nano),
 	})
 	return nil
+}
+
+func (c DiscoveryController) expireStaleProviderDiscoveryEvents(poolName string, spec api.MobilityPoolSpec, selfNode string, poolPrefix netip.Prefix, observed map[string]bool, now time.Time, ttl time.Duration) error {
+	latest, err := c.latestProviderDiscoveryEvents(poolName, spec.GroupRef, selfNode, poolPrefix, now)
+	if err != nil {
+		return err
+	}
+	for _, address := range mapStringKeysSorted(latest) {
+		if observed[address] {
+			continue
+		}
+		ev := latest[address]
+		if ev.Type != ObservedEventType {
+			continue
+		}
+		expired := providerDiscoveryExpiredEvent(poolName, spec.GroupRef, selfNode, address, ev, now, ttl)
+		if err := c.Store.RecordFederationEvent(expired); err != nil {
+			return fmt.Errorf("record provider discovery expired event %q: %w", expired.ID, err)
+		}
+	}
+	return nil
+}
+
+func (c DiscoveryController) latestProviderDiscoveryEvents(poolName, group, selfNode string, poolPrefix netip.Prefix, now time.Time) (map[string]routerstate.EventRecord, error) {
+	events, err := c.Store.ListFederationEvents(group, false, now.Unix())
+	if err != nil {
+		return nil, fmt.Errorf("list provider discovery federation events: %w", err)
+	}
+	latest := map[string]routerstate.EventRecord{}
+	for _, ev := range events {
+		if ev.Group != group || strings.TrimSpace(ev.SourceNode) != strings.TrimSpace(selfNode) {
+			continue
+		}
+		if ev.Type != ObservedEventType && ev.Type != ExpiredEventType {
+			continue
+		}
+		if strings.TrimSpace(ev.Payload["source"]) != providerDiscoverySource {
+			continue
+		}
+		if strings.TrimSpace(ev.Payload["pool"]) != strings.TrimSpace(poolName) {
+			continue
+		}
+		address, ok := normalizeDiscoveredAddress(firstNonEmpty(ev.Payload["address"], ev.Subject), poolPrefix)
+		if !ok {
+			continue
+		}
+		current, found := latest[address]
+		candidate := ev
+		if candidate.ObservedAt.IsZero() {
+			candidate.ObservedAt = now
+		}
+		if !found || eventRecordGreater(candidate, current) {
+			latest[address] = candidate
+		}
+	}
+	return latest, nil
 }
 
 type discoveryExclusionCounters struct {
@@ -558,6 +622,44 @@ func providerDiscoveryObservedEvent(poolName, group, nodeRef, address, provider,
 		Group:      strings.TrimSpace(group),
 		SourceNode: strings.TrimSpace(nodeRef),
 		Type:       ObservedEventType,
+		Subject:    address,
+		DedupeKey:  providerDiscoveryDedupeKey(poolName, nodeRef, address),
+		Payload:    payload,
+		ObservedAt: observedAt,
+		ExpiresAt:  observedAt.Add(ttl),
+		RecordedAt: observedAt,
+	}
+}
+
+func providerDiscoveryExpiredEvent(poolName, group, nodeRef, address string, previous routerstate.EventRecord, now time.Time, ttl time.Duration) routerstate.EventRecord {
+	observedAt := now.UTC()
+	provider := strings.TrimSpace(previous.Payload["provider"])
+	providerRef := strings.TrimSpace(previous.Payload["providerRef"])
+	payload := map[string]string{
+		"address": address,
+		"pool":    poolName,
+		"source":  providerDiscoverySource,
+	}
+	if provider != "" {
+		payload["provider"] = provider
+	}
+	if providerRef != "" {
+		payload["providerRef"] = providerRef
+	}
+	if value := strings.TrimSpace(previous.Payload["nicRef"]); value != "" {
+		payload["nicRef"] = value
+	}
+	if value := strings.TrimSpace(previous.Payload["subnetRef"]); value != "" {
+		payload["subnetRef"] = value
+	}
+	if ttl <= 0 {
+		ttl = DefaultLeaseTTL
+	}
+	return routerstate.EventRecord{
+		ID:         providerDiscoveryDedupeKey(poolName, nodeRef, address) + ":expired:" + strconv.FormatInt(observedAt.UnixNano(), 10),
+		Group:      strings.TrimSpace(group),
+		SourceNode: strings.TrimSpace(nodeRef),
+		Type:       ExpiredEventType,
 		Subject:    address,
 		DedupeKey:  providerDiscoveryDedupeKey(poolName, nodeRef, address),
 		Payload:    payload,
