@@ -31,7 +31,11 @@ ROUTERD_NDPI_AGENT_BIN := $(BUILDDIR)/routerd-ndpi-agent
 ROUTERD_RA_OBSERVER_BIN := $(BUILDDIR)/routerd-ra-observer
 ROUTERD_PPPOE_CLIENT_BIN := $(BUILDDIR)/routerd-pppoe-client
 ROUTERD_EVENTD_BIN := $(BUILDDIR)/routerd-eventd
-ROUTERD_RELEASE_BINS := $(ROUTERD_BIN) $(ROUTERCTL_BIN) $(ROUTERD_DHCPv4_CLIENT_BIN) $(ROUTERD_DHCPv6_CLIENT_BIN) $(ROUTERD_DHCP_EVENT_RELAY_BIN) $(ROUTERD_DHCP_FINGERPRINT_WATCHER_BIN) $(ROUTERD_HEALTHCHECK_BIN) $(ROUTERD_BGP_BIN) $(ROUTERD_DNS_RESOLVER_BIN) $(ROUTERD_FIREWALL_LOGGER_BIN) $(ROUTERD_DPI_CLASSIFIER_BIN) $(ROUTERD_NDPI_AGENT_BIN) $(ROUTERD_RA_OBSERVER_BIN) $(ROUTERD_PPPOE_CLIENT_BIN) $(ROUTERD_EVENTD_BIN)
+AWS_PROVIDER_EXECUTOR_BIN := $(BUILDDIR)/aws-provider-executor
+AZURE_PROVIDER_EXECUTOR_BIN := $(BUILDDIR)/azure-provider-executor
+OCI_PROVIDER_EXECUTOR_BIN := $(BUILDDIR)/oci-provider-executor
+ROUTERD_PROVIDER_EXECUTOR_BINS := $(AWS_PROVIDER_EXECUTOR_BIN) $(AZURE_PROVIDER_EXECUTOR_BIN) $(OCI_PROVIDER_EXECUTOR_BIN)
+ROUTERD_RELEASE_BINS := $(ROUTERD_BIN) $(ROUTERCTL_BIN) $(ROUTERD_DHCPv4_CLIENT_BIN) $(ROUTERD_DHCPv6_CLIENT_BIN) $(ROUTERD_DHCP_EVENT_RELAY_BIN) $(ROUTERD_DHCP_FINGERPRINT_WATCHER_BIN) $(ROUTERD_HEALTHCHECK_BIN) $(ROUTERD_BGP_BIN) $(ROUTERD_DNS_RESOLVER_BIN) $(ROUTERD_FIREWALL_LOGGER_BIN) $(ROUTERD_DPI_CLASSIFIER_BIN) $(ROUTERD_NDPI_AGENT_BIN) $(ROUTERD_RA_OBSERVER_BIN) $(ROUTERD_PPPOE_CLIENT_BIN) $(ROUTERD_EVENTD_BIN) $(ROUTERD_PROVIDER_EXECUTOR_BINS)
 ROUTERD_NDPI_AGENT_LIBNDPI_DISTROOT := $(DISTDIR)/ndpi-agent-libndpi-package
 ROUTERD_NDPI_AGENT_LIBNDPI_TAR := $(DISTDIR)/routerd-ndpi-agent-libndpi-$(VERSION)-$(DISTPLATFORM).tar.gz
 ROUTERD_NDPI_AGENT_LIBNDPI_ALIAS := $(DISTDIR)/routerd-ndpi-agent-libndpi-$(DISTPLATFORM).tar.gz
@@ -41,13 +45,13 @@ GO_BUILD_ENV += GOARCH=$(GOARCH)
 endif
 GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || true)
 GO_LDFLAGS ?= -s -w $(if $(GIT_COMMIT),-X github.com/imksoo/routerd/pkg/version.Commit=$(GIT_COMMIT))
-GO_BUILD_FLAGS ?= -trimpath -ldflags="$(GO_LDFLAGS)"
+GO_BUILD_FLAGS ?= -buildvcs=false -trimpath -ldflags="$(GO_LDFLAGS)"
 EXAMPLE_CONFIGS ?= $(wildcard examples/*.yaml)
 PLAYWRIGHT_INSTALL_FLAGS ?= --with-deps
 
 WEBSITE_NODE_MODULES_STAMP := website/node_modules/.package-lock.json
 
-.PHONY: test build build-daemons build-ndpi-agent build-ndpi-agent-libndpi build-daemons-freebsd check-linux-static check-ndpi-agent-libndpi check-install-deps alpine-vm-smoke webconsole-build webconsole-browser-install webconsole-screenshot generate-schema check-schema check-examples-line-limits check-render-golden update-render-golden check-bespoke-lifecycle website-deps website-build third-party-licenses check-build-deps dist dist-ndpi-agent-libndpi live-iso validate-example dry-run-example plan-config release clean
+.PHONY: test build build-daemons build-provider-executors build-ndpi-agent build-ndpi-agent-libndpi build-daemons-freebsd check-linux-static check-ndpi-agent-libndpi check-install-deps alpine-vm-smoke cloudedge-acceptance-lint cloudedge-acceptance-offline-test webconsole-build webconsole-browser-install webconsole-screenshot generate-schema check-schema check-examples-line-limits check-render-golden update-render-golden check-bespoke-lifecycle website-deps website-build third-party-licenses check-build-deps dist dist-ndpi-agent-libndpi live-iso validate-example dry-run-example plan-config release clean
 
 test:
 	go test ./...
@@ -72,6 +76,12 @@ build-daemons:
 	$(GO_BUILD_ENV) go build $(GO_BUILD_FLAGS) -o $(ROUTERD_RA_OBSERVER_BIN) ./cmd/routerd-ra-observer
 	$(GO_BUILD_ENV) go build $(GO_BUILD_FLAGS) -o $(ROUTERD_PPPOE_CLIENT_BIN) ./cmd/routerd-pppoe-client
 	$(GO_BUILD_ENV) go build $(GO_BUILD_FLAGS) -o $(ROUTERD_EVENTD_BIN) ./cmd/routerd-eventd
+
+build-provider-executors:
+	install -d $(BUILDDIR)
+	$(GO_BUILD_ENV) go build $(GO_BUILD_FLAGS) -o $(AWS_PROVIDER_EXECUTOR_BIN) ./examples/plugins/aws-provider-executor
+	$(GO_BUILD_ENV) go build $(GO_BUILD_FLAGS) -o $(AZURE_PROVIDER_EXECUTOR_BIN) ./examples/plugins/azure-provider-executor
+	$(GO_BUILD_ENV) go build $(GO_BUILD_FLAGS) -o $(OCI_PROVIDER_EXECUTOR_BIN) ./examples/plugins/oci-provider-executor
 
 build-ndpi-agent:
 	install -d $(BUILDDIR)
@@ -123,6 +133,12 @@ check-install-deps:
 
 alpine-vm-smoke:
 	./scripts/alpine-vm-smoke.sh
+
+cloudedge-acceptance-lint:
+	./scripts/cloudedge-acceptance.sh lint
+
+cloudedge-acceptance-offline-test:
+	./scripts/cloudedge-acceptance-offline-test.sh
 
 webconsole-build:
 	cd webconsole && npm ci && npm run build
@@ -180,6 +196,7 @@ check-build-deps:
 dist:
 	rm -rf $(DISTROOT) $(DISTTAR) $(DISTTAR).sha256 $(DISTTAR_ALIAS) $(DISTTAR_ALIAS).sha256
 	$(MAKE) build-daemons
+	$(MAKE) build-provider-executors
 	$(MAKE) check-linux-static
 	install -d $(DISTROOT)/bin
 	install -m 0755 $(ROUTERD_BIN) $(DISTROOT)/bin/routerd
@@ -197,6 +214,15 @@ dist:
 	install -m 0755 $(ROUTERD_RA_OBSERVER_BIN) $(DISTROOT)/bin/routerd-ra-observer
 	install -m 0755 $(ROUTERD_PPPOE_CLIENT_BIN) $(DISTROOT)/bin/routerd-pppoe-client
 	install -m 0755 $(ROUTERD_EVENTD_BIN) $(DISTROOT)/bin/routerd-eventd
+	install -d $(DISTROOT)/libexec/routerd/plugins/aws-provider-executor/bin
+	install -m 0755 $(AWS_PROVIDER_EXECUTOR_BIN) $(DISTROOT)/libexec/routerd/plugins/aws-provider-executor/bin/aws-provider-executor
+	install -m 0644 examples/plugins/aws-provider-executor/plugin.yaml $(DISTROOT)/libexec/routerd/plugins/aws-provider-executor/plugin.yaml
+	install -d $(DISTROOT)/libexec/routerd/plugins/azure-provider-executor/bin
+	install -m 0755 $(AZURE_PROVIDER_EXECUTOR_BIN) $(DISTROOT)/libexec/routerd/plugins/azure-provider-executor/bin/azure-provider-executor
+	install -m 0644 examples/plugins/azure-provider-executor/plugin.yaml $(DISTROOT)/libexec/routerd/plugins/azure-provider-executor/plugin.yaml
+	install -d $(DISTROOT)/libexec/routerd/plugins/oci-provider-executor/bin
+	install -m 0755 $(OCI_PROVIDER_EXECUTOR_BIN) $(DISTROOT)/libexec/routerd/plugins/oci-provider-executor/bin/oci-provider-executor
+	install -m 0644 examples/plugins/oci-provider-executor/plugin.yaml $(DISTROOT)/libexec/routerd/plugins/oci-provider-executor/plugin.yaml
 	install -m 0755 packaging/install.sh $(DISTROOT)/install.sh
 	install -m 0755 packaging/uninstall.sh $(DISTROOT)/uninstall.sh
 	install -d $(DISTROOT)/etc/routerd

@@ -46,8 +46,8 @@ addressing constraints.
   cloud fabric delivers them to that router.
 - **proxy-ARP capture** — on-prem, the router answers ARP for the other sites'
   owner addresses on the LAN.
-- **/32 delivery route** — each captured address is delivered over the overlay via
-  a `/32` route to the owning site's router.
+- **BGP /32 delivery** — each owner advertises its owned `/32`; other routers
+  import the best path and forward over the overlay to the owning site's router.
 - **WireGuard / Hybrid overlay** — routers interconnect over WireGuard (the Hybrid
   overlay), independent of the shared `/24`.
 
@@ -60,8 +60,15 @@ The operator declares only intent; everything else is derived.
 
 - **MobilityPool** — the single operator-authored intent (members, capture mode,
   delivery, placement, maintenance drain).
-- **AddressLease** — derived runtime state projected from federation events.
-- **RemoteAddressClaim** — derived capture/delivery for an address owned elsewhere.
+- **North-star member shape** — each rendered config declares its own site
+  completely with `profiles.cloudCaptures`, `spec.values`, `targetFrom`, and
+  `subnetRefFrom`; remote sites are identity-only peer entries. Like BGP, a node
+  needs to know the peers, not their provider NIC/subnet implementation details.
+- **BGP /32 mobility paths** — each owner advertises its owned host route; other
+  sites learn the current best path over the overlay.
+- **Provider trap actions** — cloud routers eventually assign/unassign remote
+  owned /32s as secondary IPs for local trapping; these actions are no longer on
+  the critical forwarding path.
 - **Event Federation** — `routerd.client.ipv4.observed` facts propagate between
   sites (`EventGroup` / `EventPeer` / `EventSubscription`, see
   [Event Federation](../reference/event-federation.md)).
@@ -69,10 +76,15 @@ The operator declares only intent; everything else is derived.
   unassign secondary IP, forwarding) under `ProviderActionPolicy`, using the
   instance's own cloud-native identity (see
   [ADR 0007](../adr/0007-provider-action-execution.md)).
-- **captureEpoch fencing** — a per-(pool, address, captureDomain) monotonic token
-  fences stale provider actions at the import/execute gate, so a drained/old holder
-  cannot strip an address re-captured elsewhere (see
-  [ADR 0008](../adr/0008-capture-coordination-fencing.md)).
+- **pathSig fencing** — provider actions are fenced against the current BGP
+  desired path signature and holder, so stale actions cannot mutate a route that
+  has reconverged elsewhere.
+
+The example configs intentionally avoid the older remote-full inline style. That
+style is still accepted during the pre-release period, but `routerd validate`,
+plan, and apply warn when a remote `MobilityPool` member contains local provider
+capture or discovery details. Future pre-release configs may require identity-only
+remote members.
 
 ## How to run it
 
@@ -102,7 +114,7 @@ Run `reset-lab.sh` after every run, even on failure.
 - **D4** on-prem HA / VRRP capture failover.
 - **D5** cloud maintenance / **capture migration PASS** — drain `aws-router-a`, the
   captured address moves to `aws-router-b`, traffic recovers via B; the stale
-  epoch-1 action is fenced (`skipped: stale mobility capture epoch`). See
+  pathSig action is fenced (`skipped: stale mobility desired path`). See
   [the D5 evidence](../releases/evidence/cloudedge-mobility-d5-aws-maintenance-20260531.md).
 
 ## Caveats

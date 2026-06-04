@@ -52,6 +52,7 @@ jobs:
       - name: Check Linux release binaries are static
         run: |
           make build-daemons ROUTERD_OS=linux GOARCH=amd64
+          make build-provider-executors ROUTERD_OS=linux GOARCH=amd64
           make check-linux-static ROUTERD_OS=linux GOARCH=amd64
 
   schema:

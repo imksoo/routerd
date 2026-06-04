@@ -202,6 +202,117 @@ func TestIPv4RouteControllerSkipsUnchangedKernelRoute(t *testing.T) {
 	}
 }
 
+func TestIPv4RouteControllerInstallsPreferredSource(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4Route"},
+			Metadata: api.ObjectMeta{
+				Name: "delivery",
+			},
+			Spec: api.IPv4RouteSpec{
+				Destination:     "10.77.60.11/32",
+				Device:          "wg-hybrid",
+				PreferredSource: "10.77.60.10",
+				Metric:          120,
+			},
+		},
+	}}}
+	store := mapStore{}
+	var commands [][]string
+	installed := false
+	controller := IPv4RouteController{
+		Router: router,
+		Store:  store,
+		DevicePresent: func(context.Context, string) bool {
+			return true
+		},
+		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			commands = append(commands, append([]string{name}, args...))
+			call := append([]string{name}, args...)
+			if reflect.DeepEqual(call, []string{"ip", "-j", "-4", "addr", "show"}) {
+				return []byte(`[{"addr_info":[{"family":"inet","local":"10.77.60.10"}]}]`), nil
+			}
+			if reflect.DeepEqual(call, []string{"ip", "route", "show", "10.77.60.11/32"}) {
+				if installed {
+					return []byte("10.77.60.11/32 dev wg-hybrid src 10.77.60.10 metric 120\n"), nil
+				}
+				return nil, nil
+			}
+			if reflect.DeepEqual(call, []string{"ip", "route", "replace", "10.77.60.11/32", "dev", "wg-hybrid", "src", "10.77.60.10", "metric", "120"}) {
+				installed = true
+			}
+			return nil, nil
+		},
+	}
+
+	if err := controller.reconcile(context.Background()); err != nil {
+		t.Fatalf("first reconcile: %v", err)
+	}
+	if err := controller.reconcile(context.Background()); err != nil {
+		t.Fatalf("second reconcile: %v", err)
+	}
+	want := [][]string{
+		{"ip", "-j", "-4", "addr", "show"},
+		{"ip", "route", "show", "10.77.60.11/32"},
+		{"ip", "route", "replace", "10.77.60.11/32", "dev", "wg-hybrid", "src", "10.77.60.10", "metric", "120"},
+		{"ip", "-j", "-4", "addr", "show"},
+		{"ip", "route", "show", "10.77.60.11/32"},
+	}
+	if !reflect.DeepEqual(commands, want) {
+		t.Fatalf("commands = %#v, want %#v", commands, want)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "IPv4Route", "delivery")
+	if status["preferredSource"] != "10.77.60.10" || status["kernelRouteAlreadyCurrent"] != true {
+		t.Fatalf("status = %#v", status)
+	}
+}
+
+func TestIPv4RouteControllerSkipsNonLocalPreferredSource(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4Route"},
+			Metadata: api.ObjectMeta{
+				Name: "delivery",
+			},
+			Spec: api.IPv4RouteSpec{
+				Destination:     "10.77.60.11/32",
+				Device:          "wg-hybrid",
+				PreferredSource: "10.77.60.12",
+				Metric:          120,
+			},
+		},
+	}}}
+	store := mapStore{}
+	var commands [][]string
+	controller := IPv4RouteController{
+		Router: router,
+		Store:  store,
+		DevicePresent: func(context.Context, string) bool {
+			return true
+		},
+		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			commands = append(commands, append([]string{name}, args...))
+			return []byte(`[{"addr_info":[{"family":"inet","local":"10.77.60.10"}]}]`), nil
+		},
+	}
+
+	if err := controller.reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	want := [][]string{
+		{"ip", "-j", "-4", "addr", "show"},
+		{"ip", "route", "show", "10.77.60.11/32"},
+		{"ip", "route", "replace", "10.77.60.11/32", "dev", "wg-hybrid", "metric", "120"},
+	}
+	if !reflect.DeepEqual(commands, want) {
+		t.Fatalf("commands = %#v, want %#v", commands, want)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "IPv4Route", "delivery")
+	if status["preferredSourceSkipped"] != true || status["preferredSourceSkipReason"] != "LocalAddressMissing" {
+		t.Fatalf("status = %#v", status)
+	}
+}
+
 func TestIPv4RouteControllerWaitsForDeviceBeforeApply(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{
@@ -280,7 +391,7 @@ func TestIPv4RouteControllerDeletesRemovedRoute(t *testing.T) {
 }
 
 func TestFreeBSDIPv4RouteHostCommand(t *testing.T) {
-	name, args := freeBSDIPv4RouteApplyCommand("unicast", "1.1.1.1/32", "gif41", "")
+	name, args := freeBSDIPv4RouteApplyCommand("unicast", "1.1.1.1/32", "gif41", "", "")
 	want := []string{"-n", "change", "-host", "1.1.1.1", "-interface", "gif41"}
 	if name != "route" || !reflect.DeepEqual(args, want) {
 		t.Fatalf("command = %s %#v, want route %#v", name, args, want)
@@ -288,8 +399,16 @@ func TestFreeBSDIPv4RouteHostCommand(t *testing.T) {
 }
 
 func TestFreeBSDIPv4RouteDefaultDSLiteCommand(t *testing.T) {
-	name, args := freeBSDIPv4RouteApplyCommand("unicast", "0.0.0.0/0", "gif41", "")
+	name, args := freeBSDIPv4RouteApplyCommand("unicast", "0.0.0.0/0", "gif41", "", "")
 	want := []string{"-n", "change", "default", "-interface", "gif41"}
+	if name != "route" || !reflect.DeepEqual(args, want) {
+		t.Fatalf("command = %s %#v, want route %#v", name, args, want)
+	}
+}
+
+func TestFreeBSDIPv4RoutePreferredSourceCommand(t *testing.T) {
+	name, args := freeBSDIPv4RouteApplyCommand("unicast", "10.77.60.11/32", "wg0", "", "10.77.60.10")
+	want := []string{"-n", "change", "-host", "10.77.60.11", "-interface", "wg0", "-ifa", "10.77.60.10"}
 	if name != "route" || !reflect.DeepEqual(args, want) {
 		t.Fatalf("command = %s %#v, want route %#v", name, args, want)
 	}

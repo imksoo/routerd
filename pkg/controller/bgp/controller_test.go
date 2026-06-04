@@ -7,7 +7,9 @@ import (
 	"errors"
 	"net/netip"
 	"reflect"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -45,14 +47,22 @@ type fakeServer struct {
 	assigns  int
 	resets   int
 
-	global  *gobgpapi.Global
-	peers   map[string]*gobgpapi.Peer
-	routes  []*gobgpapi.Destination
-	applied bgpdaemon.AppliedConfig
+	global           *gobgpapi.Global
+	peers            map[string]*gobgpapi.Peer
+	routes           []*gobgpapi.Destination
+	applied          bgpdaemon.AppliedConfig
+	deletedPathUUIDs [][]byte
 
 	policyRequest     *gobgpapi.SetPoliciesRequest
 	policyAssignment  *gobgpapi.PolicyAssignment
 	thirdPartyNextHop string
+	watchSessions     chan watchSession
+	watchRequests     []*gobgpapi.WatchEventRequest
+}
+
+type watchSession struct {
+	events []*gobgpapi.WatchEventResponse
+	err    error
 }
 
 func (s *fakeServer) Serve() {}
@@ -166,7 +176,10 @@ func (s *fakeServer) AddPath(_ context.Context, req *gobgpapi.AddPathRequest) (*
 	return &gobgpapi.AddPathResponse{Uuid: uuid}, nil
 }
 
-func (s *fakeServer) DeletePath(context.Context, *gobgpapi.DeletePathRequest) error { return nil }
+func (s *fakeServer) DeletePath(_ context.Context, req *gobgpapi.DeletePathRequest) error {
+	s.deletedPathUUIDs = append(s.deletedPathUUIDs, append([]byte(nil), req.GetUuid()...))
+	return nil
+}
 
 func (s *fakeServer) ListPath(_ context.Context, _ *gobgpapi.ListPathRequest, fn func(*gobgpapi.Destination)) error {
 	for _, dst := range s.routes {
@@ -185,6 +198,28 @@ func (s *fakeServer) ListPath(_ context.Context, _ *gobgpapi.ListPathRequest, fn
 	}
 	fn(testDestination("10.250.0.0/24", "192.168.1.53", "192.168.1.38"))
 	return nil
+}
+
+func (s *fakeServer) WatchEvent(ctx context.Context, req *gobgpapi.WatchEventRequest, fn func(*gobgpapi.WatchEventResponse) error) error {
+	s.watchRequests = append(s.watchRequests, req)
+	if s.watchSessions == nil {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case session := <-s.watchSessions:
+		for _, event := range session.events {
+			if err := fn(event); err != nil {
+				return err
+			}
+		}
+		if session.err != nil {
+			return session.err
+		}
+		return nil
+	}
 }
 
 func (s *fakeServer) importPolicyRewritesPeerAddress() bool {
@@ -209,25 +244,63 @@ func (s *fakeServer) importPolicyRewritesPeerAddress() bool {
 }
 
 type fakeFIB struct {
-	routes      []FIBRoute
-	unsupported map[string]string
-	err         error
+	mu                    sync.Mutex
+	routes                []FIBRoute
+	history               [][]FIBRoute
+	unsupported           map[string]string
+	err                   error
+	guardPreferredSource  bool
+	localPreferredSources map[string]bool
 }
 
 func (f *fakeFIB) SyncBGP(_ context.Context, routes []FIBRoute) (FIBSyncResult, error) {
-	f.routes = append([]FIBRoute(nil), routes...)
-	result := FIBSyncResult{Installed: map[string]bool{}, Unsupported: map[string]string{}}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	result := FIBSyncResult{
+		Installed:                    map[string]bool{},
+		Unsupported:                  map[string]string{},
+		PreferredSource:              map[string]string{},
+		PreferredSourceSkipped:       map[string]bool{},
+		PreferredSourceSkippedReason: map[string]string{},
+	}
+	normalized := make([]FIBRoute, 0, len(routes))
 	for _, route := range routes {
 		prefix := normalizeRoutePrefix(route.Prefix)
 		if prefix != "" {
+			if f.guardPreferredSource && strings.TrimSpace(route.PreferredSource) != "" && !f.localPreferredSources[strings.TrimSpace(route.PreferredSource)] {
+				result.PreferredSourceSkipped[prefix] = true
+				result.PreferredSourceSkippedReason[prefix] = "LocalAddressMissing"
+				route.PreferredSource = ""
+			}
 			result.Installed[prefix] = true
+			if source := strings.TrimSpace(route.PreferredSource); source != "" {
+				result.PreferredSource[prefix] = source
+			}
+			route.Prefix = prefix
+			route.NextHops = normalizeRouteNextHops(route.NextHops)
+			route.PreferredSource = strings.TrimSpace(route.PreferredSource)
+			normalized = append(normalized, route)
 		}
 	}
+	f.routes = append([]FIBRoute(nil), normalized...)
+	f.history = append(f.history, append([]FIBRoute(nil), normalized...))
 	for prefix, reason := range f.unsupported {
 		delete(result.Installed, prefix)
 		result.Unsupported[prefix] = reason
 	}
 	return result, f.err
+}
+
+func (f *fakeFIB) calls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.history)
+}
+
+func (f *fakeFIB) lastRoutes() []FIBRoute {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]FIBRoute(nil), f.routes...)
 }
 
 func TestReconcileStartsGoBGPAndDoesNotReaddUnchangedPeer(t *testing.T) {
@@ -295,6 +368,23 @@ func TestGoBGPPeerEbgpMultihop(t *testing.T) {
 	multihop := goBGPPeer(desiredPeer{Address: "192.0.2.2", ASN: 64513, EbgpMultihop: 8})
 	if got := multihop.GetEbgpMultihop(); !got.GetEnabled() || got.GetMultihopTtl() != 8 {
 		t.Fatalf("eBGP multihop = %#v, want enabled ttl=8", got)
+	}
+}
+
+func TestGoBGPPeerInternalRouteReflectorClient(t *testing.T) {
+	peer := goBGPPeer(desiredPeer{
+		Address:                 "10.99.0.2",
+		ASN:                     64577,
+		LocalASN:                64577,
+		RouteReflectorClient:    true,
+		RouteReflectorClusterID: "10.99.0.1",
+	})
+	if peer.GetConf().GetType() != gobgpapi.PeerType_INTERNAL {
+		t.Fatalf("peer type = %v, want internal", peer.GetConf().GetType())
+	}
+	rr := peer.GetRouteReflector()
+	if !rr.GetRouteReflectorClient() || rr.GetRouteReflectorClusterId() != "10.99.0.1" {
+		t.Fatalf("route reflector = %#v, want client cluster 10.99.0.1", rr)
 	}
 }
 
@@ -441,16 +531,265 @@ func TestReconcileCanLeaveImportNextHopUnchanged(t *testing.T) {
 	}
 }
 
+func TestReconcileImportsFourSiteMobilityHostRoutes(t *testing.T) {
+	server := &fakeServer{routes: []*gobgpapi.Destination{
+		testDestination("10.77.60.10/32", "10.99.0.10"),
+		testDestination("10.77.60.11/32", "10.99.0.11"),
+		testDestination("10.77.60.12/32", "10.99.0.12"),
+		testDestination("10.77.60.13/32", "10.99.0.13"),
+	}}
+	fib := &fakeFIB{}
+	controller := Controller{
+		Router: bgpRouterWithImportPrefixes("10.77.60.0/24"),
+		Store:  mapStore{},
+		Server: server,
+		FIB:    fib,
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	want := []FIBRoute{
+		{Prefix: "10.77.60.10/32", NextHops: []string{"10.99.0.10"}},
+		{Prefix: "10.77.60.11/32", NextHops: []string{"10.99.0.11"}},
+		{Prefix: "10.77.60.12/32", NextHops: []string{"10.99.0.12"}},
+		{Prefix: "10.77.60.13/32", NextHops: []string{"10.99.0.13"}},
+	}
+	if !reflect.DeepEqual(fib.routes, want) {
+		t.Fatalf("FIB routes = %#v, want 4-site mobility /32 routes %#v", fib.routes, want)
+	}
+}
+
+func TestReconcileAddsMobilityPreferredSourceForLocalStaticOwnedAddress(t *testing.T) {
+	router := bgpRouterWithImportPrefixes("10.77.60.0/24")
+	router.Spec.Resources = append(router.Spec.Resources, bgpMobilityPreferredSourceResources("onprem-router")...)
+	server := &fakeServer{routes: []*gobgpapi.Destination{
+		testDestination("10.77.60.11/32", "10.99.0.2"),
+	}}
+	fib := &fakeFIB{guardPreferredSource: true, localPreferredSources: map[string]bool{"10.77.60.10": true}}
+	controller := Controller{Router: router, Store: mapStore{}, Server: server, FIB: fib}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	want := []FIBRoute{{Prefix: "10.77.60.11/32", NextHops: []string{"10.99.0.2"}, PreferredSource: "10.77.60.10"}}
+	if !reflect.DeepEqual(fib.routes, want) {
+		t.Fatalf("fib routes = %#v, want preferred source %#v", fib.routes, want)
+	}
+	status := controller.Store.ObjectStatus(api.NetAPIVersion, "BGPRouter", "lan")
+	if got := status["preferredSources"].(map[string]string)["10.77.60.11/32"]; got != "10.77.60.10" {
+		t.Fatalf("preferredSources = %#v, want 10.77.60.10 for 10.77.60.11/32", status["preferredSources"])
+	}
+}
+
+func TestReconcileSkipsMobilityPreferredSourceWhenLocalAddressMissing(t *testing.T) {
+	router := bgpRouterWithImportPrefixes("10.77.60.0/24")
+	router.Spec.Resources = append(router.Spec.Resources, bgpMobilityPreferredSourceResources("onprem-router")...)
+	server := &fakeServer{routes: []*gobgpapi.Destination{
+		testDestination("10.77.60.11/32", "10.99.0.2"),
+	}}
+	fib := &fakeFIB{guardPreferredSource: true, localPreferredSources: map[string]bool{}}
+	controller := Controller{Router: router, Store: mapStore{}, Server: server, FIB: fib}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	want := []FIBRoute{{Prefix: "10.77.60.11/32", NextHops: []string{"10.99.0.2"}}}
+	if !reflect.DeepEqual(fib.routes, want) {
+		t.Fatalf("fib routes = %#v, want source skipped %#v", fib.routes, want)
+	}
+	status := controller.Store.ObjectStatus(api.NetAPIVersion, "BGPRouter", "lan")
+	skipped, ok := status["preferredSourceSkipped"].(map[string]bool)
+	if !ok || !skipped["10.77.60.11/32"] {
+		t.Fatalf("preferredSourceSkipped = %#v, want 10.77.60.11/32 skipped", status["preferredSourceSkipped"])
+	}
+	reasons, ok := status["preferredSourceSkippedReason"].(map[string]string)
+	if !ok || reasons["10.77.60.11/32"] != "LocalAddressMissing" {
+		t.Fatalf("preferredSourceSkippedReason = %#v, want LocalAddressMissing", status["preferredSourceSkippedReason"])
+	}
+}
+
+func TestReconcileDoesNotAddMobilityPreferredSourceForCloudNonOwner(t *testing.T) {
+	router := bgpRouterWithImportPrefixes("10.77.60.0/24")
+	router.Spec.Resources = append(router.Spec.Resources, bgpMobilityPreferredSourceResources("aws-router")...)
+	server := &fakeServer{routes: []*gobgpapi.Destination{
+		testDestination("10.77.60.10/32", "10.99.0.1"),
+	}}
+	fib := &fakeFIB{guardPreferredSource: true, localPreferredSources: map[string]bool{"10.77.60.11": true}}
+	controller := Controller{Router: router, Store: mapStore{}, Server: server, FIB: fib}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	want := []FIBRoute{{Prefix: "10.77.60.10/32", NextHops: []string{"10.99.0.1"}}}
+	if !reflect.DeepEqual(fib.routes, want) {
+		t.Fatalf("fib routes = %#v, want no preferred source for cloud non-owner %#v", fib.routes, want)
+	}
+}
+
+func TestReconcileExposesMobilityLivenessMarkerWithoutInstallingFIBRoute(t *testing.T) {
+	router := bgpRouterWithImportPrefixes("10.77.60.0/24", "10.99.0.0/24")
+	server := &fakeServer{routes: []*gobgpapi.Destination{
+		testDestination("10.77.60.10/32", "10.99.0.1"),
+		testDestinationWithCommunities("10.99.0.2/32", "10.99.0.1", bgpstate.MobilityCommunityNodeLiveness, bgpstate.MobilityNodeIdentityCommunity("aws-router-a")),
+	}}
+	fib := &fakeFIB{}
+	controller := Controller{Router: router, Store: mapStore{}, Server: server, FIB: fib}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	want := []FIBRoute{{Prefix: "10.77.60.10/32", NextHops: []string{"10.99.0.1"}}}
+	if !reflect.DeepEqual(fib.routes, want) {
+		t.Fatalf("fib routes = %#v, want marker excluded %#v", fib.routes, want)
+	}
+	status := controller.Store.ObjectStatus(api.NetAPIVersion, "BGPRouter", "lan")
+	markers, ok := status["livenessMarkers"].(map[string]string)
+	if !ok {
+		t.Fatalf("livenessMarkers = %#v, want map[string]string", status["livenessMarkers"])
+	}
+	community := bgpstate.MobilityNodeIdentityCommunity("aws-router-a")
+	if got := markers[community]; got != "10.99.0.2/32" {
+		t.Fatalf("livenessMarkers[%s] = %q, want 10.99.0.2/32", community, got)
+	}
+	prefixes, ok := status["prefixes"].([]bgpstate.Prefix)
+	if !ok {
+		t.Fatalf("prefixes = %#v, want []bgpstate.Prefix", status["prefixes"])
+	}
+	for _, prefix := range prefixes {
+		if prefix.Prefix == "10.99.0.2/32" || bgpstate.HasCommunity(prefix.Communities, bgpstate.MobilityCommunityNodeLiveness) {
+			t.Fatalf("status prefixes include liveness marker: %#v", prefixes)
+		}
+	}
+	installed, ok := status["installedNextHops"].(map[string][]string)
+	if !ok {
+		t.Fatalf("installedNextHops = %#v, want map[string][]string", status["installedNextHops"])
+	}
+	if _, ok := installed["10.99.0.2/32"]; ok {
+		t.Fatalf("installedNextHops include liveness marker: %#v", installed)
+	}
+}
+
+func TestWatchEventTriggersImmediateFIBSync(t *testing.T) {
+	server := &fakeServer{
+		routes:        []*gobgpapi.Destination{testDestination("10.77.60.11/32", "10.99.0.11")},
+		watchSessions: make(chan watchSession, 1),
+	}
+	fib := &fakeFIB{}
+	controller := Controller{
+		Router:              bgpRouterWithImportPrefixes("10.77.60.0/24"),
+		Store:               mapStore{},
+		Server:              server,
+		FIB:                 fib,
+		WatchReconnectDelay: time.Millisecond,
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("initial reconcile: %v", err)
+	}
+	if fib.calls() != 1 {
+		t.Fatalf("initial FIB calls = %d, want 1", fib.calls())
+	}
+	server.routes = []*gobgpapi.Destination{testDestination("10.77.60.11/32", "10.99.0.12")}
+	server.watchSessions <- watchSession{events: []*gobgpapi.WatchEventResponse{watchTableEvent("10.77.60.11/32", "10.99.0.12")}}
+	if err := controller.watchBestPathEvents(context.Background()); err != nil {
+		t.Fatalf("watch events: %v", err)
+	}
+	want := []FIBRoute{{Prefix: "10.77.60.11/32", NextHops: []string{"10.99.0.12"}}}
+	if !reflect.DeepEqual(fib.lastRoutes(), want) {
+		t.Fatalf("FIB routes = %#v, want event-updated routes %#v", fib.lastRoutes(), want)
+	}
+	if fib.calls() != 2 {
+		t.Fatalf("FIB calls = %d, want event-triggered second sync", fib.calls())
+	}
+}
+
+func TestWatchEventReconnectsAfterStreamError(t *testing.T) {
+	server := &fakeServer{
+		routes:        []*gobgpapi.Destination{testDestination("10.77.60.11/32", "10.99.0.11")},
+		watchSessions: make(chan watchSession, 2),
+	}
+	fib := &fakeFIB{}
+	controller := Controller{
+		Router:              bgpRouterWithImportPrefixes("10.77.60.0/24"),
+		Store:               mapStore{},
+		Server:              server,
+		FIB:                 fib,
+		WatchReconnectDelay: time.Millisecond,
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("initial reconcile: %v", err)
+	}
+	server.watchSessions <- watchSession{err: errors.New("stream reset")}
+	server.routes = []*gobgpapi.Destination{testDestination("10.77.60.11/32", "10.99.0.13")}
+	server.watchSessions <- watchSession{events: []*gobgpapi.WatchEventResponse{watchTableEvent("10.77.60.11/32", "10.99.0.13")}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	controller.Start(ctx)
+	waitForCondition(t, 500*time.Millisecond, func() bool {
+		return fib.calls() >= 2
+	})
+	want := []FIBRoute{{Prefix: "10.77.60.11/32", NextHops: []string{"10.99.0.13"}}}
+	if !reflect.DeepEqual(fib.lastRoutes(), want) {
+		t.Fatalf("FIB routes after reconnect = %#v, want %#v", fib.lastRoutes(), want)
+	}
+	if len(server.watchRequests) < 2 {
+		t.Fatalf("watch requests = %d, want reconnect after stream error", len(server.watchRequests))
+	}
+}
+
+func TestWatchEventSkipsDuplicateFIBApplyAndPollFallbackStillWorks(t *testing.T) {
+	server := &fakeServer{
+		routes:        []*gobgpapi.Destination{testDestination("10.77.60.11/32", "10.99.0.11")},
+		watchSessions: make(chan watchSession, 1),
+	}
+	fib := &fakeFIB{}
+	controller := Controller{
+		Router: bgpRouterWithImportPrefixes("10.77.60.0/24"),
+		Store:  mapStore{},
+		Server: server,
+		FIB:    fib,
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("initial reconcile: %v", err)
+	}
+	server.watchSessions <- watchSession{events: []*gobgpapi.WatchEventResponse{watchTableEvent("10.77.60.11/32", "10.99.0.11")}}
+	if err := controller.watchBestPathEvents(context.Background()); err != nil {
+		t.Fatalf("watch event: %v", err)
+	}
+	if fib.calls() != 1 {
+		t.Fatalf("FIB calls after duplicate watch event = %d, want unchanged", fib.calls())
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("poll reconcile duplicate: %v", err)
+	}
+	if fib.calls() != 1 {
+		t.Fatalf("FIB calls after duplicate poll = %d, want unchanged", fib.calls())
+	}
+	server.routes = []*gobgpapi.Destination{testDestination("10.77.60.11/32", "10.99.0.14")}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("poll fallback reconcile: %v", err)
+	}
+	want := []FIBRoute{{Prefix: "10.77.60.11/32", NextHops: []string{"10.99.0.14"}}}
+	if !reflect.DeepEqual(fib.lastRoutes(), want) {
+		t.Fatalf("FIB routes after poll fallback = %#v, want %#v", fib.lastRoutes(), want)
+	}
+	if fib.calls() != 2 {
+		t.Fatalf("FIB calls after poll fallback = %d, want 2", fib.calls())
+	}
+}
+
 func TestGeneratedImportPolicyIsAcceptedByGoBGP(t *testing.T) {
 	server := gobgpserver.NewBgpServer()
 	go server.Serve()
 	defer server.Stop()
 	spec := api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.250.0.0/24"}}
+	prefixes := importPolicyPrefixes(spec)
+	if !prefixSetAllows(prefixes, "10.250.0.0/24") || !prefixSetAllows(prefixes, "10.250.0.42/32") {
+		t.Fatalf("import prefixes = %#v, want /24 and contained /32 allowed", prefixes)
+	}
+	if prefixSetAllows(prefixes, "10.88.0.1/32") {
+		t.Fatalf("import prefixes = %#v, want unrelated /32 rejected", prefixes)
+	}
 	req := &gobgpapi.SetPoliciesRequest{
 		DefinedSets: []*gobgpapi.DefinedSet{{
 			DefinedType: gobgpapi.DefinedType_PREFIX,
 			Name:        "routerd-test-import-prefixes",
-			Prefixes:    importPolicyPrefixes(spec),
+			Prefixes:    prefixes,
 		}},
 		Policies: []*gobgpapi.Policy{{
 			Name: "routerd-test-import",
@@ -470,6 +809,44 @@ func TestGeneratedImportPolicyIsAcceptedByGoBGP(t *testing.T) {
 	if err := server.SetPolicies(context.Background(), req); err != nil {
 		t.Fatalf("SetPolicies rejected generated import policy: %v", err)
 	}
+}
+
+func TestImportPolicyPrefixesAllowMoreSpecifics(t *testing.T) {
+	prefixes := importPolicyPrefixes(api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.77.60.0/24", "2001:db8:77::/64"}})
+	if !prefixSetAllows(prefixes, "10.77.60.0/24") || !prefixSetAllows(prefixes, "10.77.60.11/32") {
+		t.Fatalf("import prefixes = %#v, want IPv4 prefix and more-specific accepted", prefixes)
+	}
+	if prefixSetAllows(prefixes, "10.77.0.0/16") || prefixSetAllows(prefixes, "10.88.0.1/32") {
+		t.Fatalf("import prefixes = %#v, want less-specific and unrelated IPv4 rejected", prefixes)
+	}
+	if !prefixSetAllows(prefixes, "2001:db8:77::/64") || !prefixSetAllows(prefixes, "2001:db8:77::11/128") {
+		t.Fatalf("import prefixes = %#v, want IPv6 prefix and /128 accepted", prefixes)
+	}
+	if prefixSetAllows(prefixes, "2001:db8:88::1/128") {
+		t.Fatalf("import prefixes = %#v, want unrelated IPv6 rejected", prefixes)
+	}
+}
+
+func prefixSetAllows(prefixes []*gobgpapi.Prefix, candidate string) bool {
+	parsed, err := netip.ParsePrefix(candidate)
+	if err != nil {
+		return false
+	}
+	parsed = parsed.Masked()
+	for _, allowed := range prefixes {
+		parent, err := netip.ParsePrefix(allowed.GetIpPrefix())
+		if err != nil {
+			continue
+		}
+		parent = parent.Masked()
+		if parent.Addr().Is4() != parsed.Addr().Is4() {
+			continue
+		}
+		if parent.Contains(parsed.Addr()) && uint32(parsed.Bits()) >= allowed.GetMaskLengthMin() && uint32(parsed.Bits()) <= allowed.GetMaskLengthMax() {
+			return true
+		}
+	}
+	return false
 }
 
 func TestReconcileDegradesWhenSomePrefixesCannotInstall(t *testing.T) {
@@ -519,7 +896,7 @@ func TestReconcileReportsFIBSyncFailure(t *testing.T) {
 	}
 }
 
-func TestReconcileReportsBFDUnsupported(t *testing.T) {
+func TestReconcileBFDObservationNeverDeconfiguresPeer(t *testing.T) {
 	router := bgpRouter()
 	peer := router.Spec.Resources[1].Spec.(api.BGPPeerSpec)
 	peer.BFD = "BFD/k8s"
@@ -531,16 +908,70 @@ func TestReconcileReportsBFDUnsupported(t *testing.T) {
 	})
 	controller := Controller{
 		Router: router,
-		Store:  mapStore{},
+		Store: mapStore{
+			api.NetAPIVersion + "/BFD/k8s": {
+				"phase":      "Down",
+				"peerStates": map[string]any{"10.0.0.21": "Down"},
+			},
+		},
 		Server: &fakeServer{},
 		FIB:    &fakeFIB{},
 	}
-	if err := controller.Reconcile(context.Background()); err == nil || !strings.Contains(err.Error(), "GoBGPBFDUnsupported") {
-		t.Fatalf("reconcile error = %v, want GoBGPBFDUnsupported", err)
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("first reconcile: %v", err)
 	}
-	status := controller.Store.ObjectStatus(api.NetAPIVersion, "BFD", "k8s")
-	if status["phase"] != "Pending" || status["pendingReason"] != "GoBGPBFDUnsupported" {
-		t.Fatalf("bfd status = %#v", status)
+	server := controller.Server.(*fakeServer)
+	if server.adds != 1 || server.deletes != 0 {
+		t.Fatalf("bootstrap with never-up BFD Down counts adds=%d deletes=%d, want 1/0", server.adds, server.deletes)
+	}
+	if _, ok := server.peers["10.0.0.21"]; !ok {
+		t.Fatalf("bootstrap peer missing while BFD has never been Up: %#v", server.peers)
+	}
+	controller.Store.SaveObjectStatus(api.NetAPIVersion, "BFD", "k8s", map[string]any{
+		"phase":      "Up",
+		"peerStates": map[string]any{"10.0.0.21": "Up"},
+	})
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("second reconcile: %v", err)
+	}
+	if server.adds != 1 || server.deletes != 0 {
+		t.Fatalf("after BFD Up counts adds=%d deletes=%d, want no peer churn", server.adds, server.deletes)
+	}
+	controller.Store.SaveObjectStatus(api.NetAPIVersion, "BFD", "k8s", map[string]any{
+		"phase":      "Down",
+		"peerStates": map[string]any{"10.0.0.21": "Down"},
+	})
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("third reconcile: %v", err)
+	}
+	if server.deletes != 0 {
+		t.Fatalf("deletes after transient Up->Down = %d, want 0", server.deletes)
+	}
+	if _, ok := server.peers["10.0.0.21"]; !ok {
+		t.Fatalf("peer missing after transient BFD Up->Down before sustained gate: %#v", server.peers)
+	}
+	controller.bfdPeerDownSince[bfdPeerGateKey("BFD/k8s", "10.0.0.21")] = time.Now().Add(-time.Minute)
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("sustained down reconcile: %v", err)
+	}
+	if server.deletes != 0 {
+		t.Fatalf("deletes after sustained Up->Down = %d, want 0", server.deletes)
+	}
+	if _, ok := server.peers["10.0.0.21"]; !ok {
+		t.Fatalf("peer missing after sustained BFD Up->Down: %#v", server.peers)
+	}
+	controller.Store.SaveObjectStatus(api.NetAPIVersion, "BFD", "k8s", map[string]any{
+		"phase":      "Up",
+		"peerStates": map[string]any{"10.0.0.21": "Up"},
+	})
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("fourth reconcile: %v", err)
+	}
+	if server.adds != 1 {
+		t.Fatalf("adds after BFD re-Up = %d, want 1", server.adds)
+	}
+	if _, ok := server.peers["10.0.0.21"]; !ok {
+		t.Fatalf("peer was not restored after BFD Up: %#v", server.peers)
 	}
 }
 
@@ -601,6 +1032,88 @@ func TestReconcileReattachesToLiveDaemonWithoutPeerOrPathChurn(t *testing.T) {
 	}
 	if server.adds != adds || server.deletes != deletes || server.paths != paths {
 		t.Fatalf("restart reattach churned GoBGP state: adds %d->%d deletes %d->%d paths %d->%d", adds, server.adds, deletes, server.deletes, paths, server.paths)
+	}
+}
+
+func TestReconcilePreservesMobilityPathsWhenStaticAdvertisementsChange(t *testing.T) {
+	router := bgpRouter()
+	server := &fakeServer{
+		applied: bgpdaemon.AppliedConfig{
+			Version: bgpdaemon.AppliedVersion,
+			Global:  bgpdaemon.AppliedGlobal{ASN: 64512, RouterID: "10.0.0.1"},
+			Peers:   map[string]bgpdaemon.AppliedPeer{},
+			Paths: []bgpdaemon.AppliedPath{
+				bgpdaemon.StaticAppliedPath("10.20.0.0/24", []byte{9}),
+				{
+					Source: "MobilityPool/demo/node/aws-router-a",
+					Prefix: "10.77.60.11/32",
+					Family: bgpdaemon.AppliedPathFamilyIPv4Unicast,
+					UUID:   bgpdaemon.EncodeUUID([]byte{7}),
+				},
+			},
+		},
+	}
+	controller := Controller{
+		Router: router,
+		Store:  mapStore{},
+		Server: server,
+		FIB:    &fakeFIB{},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if len(server.deletedPathUUIDs) != 1 || !reflect.DeepEqual(server.deletedPathUUIDs[0], []byte{9}) {
+		t.Fatalf("deleted path UUIDs = %#v, want old static only", server.deletedPathUUIDs)
+	}
+	pathsByKey := map[string]bgpdaemon.AppliedPath{}
+	for _, path := range server.applied.Paths {
+		pathsByKey[bgpdaemon.AppliedPathKey(path)] = path
+	}
+	mobilityKey := bgpdaemon.AppliedPathKey(bgpdaemon.AppliedPath{Source: "MobilityPool/demo/node/aws-router-a", Prefix: "10.77.60.11/32"})
+	if pathsByKey[mobilityKey].UUID != bgpdaemon.EncodeUUID([]byte{7}) {
+		t.Fatalf("mobility path was not preserved: %#v", server.applied.Paths)
+	}
+	staticKey := bgpdaemon.AppliedPathKey(bgpdaemon.StaticAppliedPath("10.0.0.0/16", nil))
+	if pathsByKey[staticKey].Source != bgpdaemon.AppliedPathSourceStatic || pathsByKey[staticKey].UUID == "" {
+		t.Fatalf("desired static path missing from applied state: %#v", server.applied.Paths)
+	}
+	if len(server.applied.Advertisements) != 1 || server.applied.Advertisements[0] != "10.0.0.0/16" {
+		t.Fatalf("legacy static advertisements = %#v", server.applied.Advertisements)
+	}
+}
+
+func TestReconcileKeepsUnchangedStaticAdvertisementWithoutReadd(t *testing.T) {
+	router := bgpRouter()
+	server := &fakeServer{
+		applied: bgpdaemon.AppliedConfig{
+			Version: bgpdaemon.AppliedVersion,
+			Global:  bgpdaemon.AppliedGlobal{ASN: 64512, RouterID: "10.0.0.1"},
+			Peers:   map[string]bgpdaemon.AppliedPeer{},
+			Paths: []bgpdaemon.AppliedPath{
+				bgpdaemon.StaticAppliedPath("10.0.0.0/16", []byte{9}),
+				{
+					Source: "MobilityPool/demo/node/aws-router-a",
+					Prefix: "10.77.60.11/32",
+					Family: bgpdaemon.AppliedPathFamilyIPv4Unicast,
+					UUID:   bgpdaemon.EncodeUUID([]byte{7}),
+				},
+			},
+		},
+	}
+	controller := Controller{
+		Router: router,
+		Store:  mapStore{},
+		Server: server,
+		FIB:    &fakeFIB{},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if len(server.deletedPathUUIDs) != 0 {
+		t.Fatalf("deleted paths = %#v, want no static churn", server.deletedPathUUIDs)
+	}
+	if server.paths != 0 {
+		t.Fatalf("AddPath calls = %d, want no static readd", server.paths)
 	}
 }
 
@@ -749,6 +1262,17 @@ func TestBestFIBRoutesBuildsECMPAndSkipsLocalAdvertisements(t *testing.T) {
 	}
 }
 
+func TestFIBRoutesFromDestinationChoosesHigherLocalPref(t *testing.T) {
+	routes := fibRoutesFromDestination(testRankedDestination("10.77.60.12/32",
+		rankedPath{nextHop: "10.99.0.11", localPref: 201, med: 20},
+		rankedPath{nextHop: "10.99.0.12", localPref: 202, med: 10},
+	), []netip.Prefix{netip.MustParsePrefix("10.77.60.0/24")})
+	want := []FIBRoute{{Prefix: "10.77.60.12/32", NextHops: []string{"10.99.0.12"}}}
+	if !reflect.DeepEqual(routes, want) {
+		t.Fatalf("routes = %#v, want %#v", routes, want)
+	}
+}
+
 func TestPrefixAllowedRequiresSameFamilyAndCoveredLength(t *testing.T) {
 	allowed := []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8"), netip.MustParsePrefix("2001:db8::/32")}
 	tests := []struct {
@@ -765,6 +1289,53 @@ func TestPrefixAllowedRequiresSameFamilyAndCoveredLength(t *testing.T) {
 		if got := prefixAllowed(netip.MustParsePrefix(tt.prefix), allowed); got != tt.want {
 			t.Fatalf("prefixAllowed(%s) = %t, want %t", tt.prefix, got, tt.want)
 		}
+	}
+}
+
+type rankedPath struct {
+	nextHop   string
+	localPref uint32
+	med       uint32
+}
+
+func testRankedDestination(prefix string, ranked ...rankedPath) *gobgpapi.Destination {
+	parsed := netip.MustParsePrefix(prefix)
+	nlri, _ := anypb.New(&gobgpapi.IPAddressPrefix{Prefix: parsed.Addr().String(), PrefixLen: uint32(parsed.Bits())})
+	var paths []*gobgpapi.Path
+	for _, path := range ranked {
+		nh, _ := anypb.New(&gobgpapi.NextHopAttribute{NextHop: path.nextHop})
+		localPref, _ := anypb.New(&gobgpapi.LocalPrefAttribute{LocalPref: path.localPref})
+		med, _ := anypb.New(&gobgpapi.MultiExitDiscAttribute{Med: path.med})
+		paths = append(paths, &gobgpapi.Path{
+			Family: ipv4Family(),
+			Nlri:   nlri,
+			Pattrs: []*anypb.Any{nh, localPref, med},
+		})
+	}
+	return &gobgpapi.Destination{Prefix: prefix, Paths: paths}
+}
+
+func watchTableEvent(prefix, nextHop string) *gobgpapi.WatchEventResponse {
+	return &gobgpapi.WatchEventResponse{
+		Event: &gobgpapi.WatchEventResponse_Table{
+			Table: &gobgpapi.WatchEventResponse_TableEvent{
+				Paths: testDestination(prefix, nextHop).GetPaths(),
+			},
+		},
+	}
+}
+
+func waitForCondition(t *testing.T, timeout time.Duration, fn func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if fn() {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if !fn() {
+		t.Fatalf("condition not satisfied within %s", timeout)
 	}
 }
 
@@ -796,6 +1367,40 @@ func bgpRouterWithImportPrefixes(prefixes ...string) *api.Router {
 	}}}
 }
 
+func bgpMobilityPreferredSourceResources(selfNode string) []api.Resource {
+	return []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.FederationAPIVersion, Kind: "EventGroup"},
+			Metadata: api.ObjectMeta{Name: "cloudedge"},
+			Spec:     api.EventGroupSpec{NodeName: selfNode},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"},
+			Metadata: api.ObjectMeta{Name: "cloudedge"},
+			Spec: api.MobilityPoolSpec{
+				Prefix:         "10.77.60.0/24",
+				GroupRef:       "cloudedge",
+				DeliveryPolicy: api.MobilityDeliveryPolicy{Mode: "bgp"},
+				Members: []api.MobilityPoolMember{
+					{
+						NodeRef:              "onprem-router",
+						Site:                 "onprem",
+						Role:                 "onprem",
+						StaticOwnedAddresses: []string{"10.77.60.10/32"},
+						Capture:              api.MobilityMemberCapture{Type: "proxy-arp", Interface: "ens21"},
+					},
+					{
+						NodeRef: "aws-router",
+						Site:    "aws",
+						Role:    "cloud",
+						Capture: api.MobilityMemberCapture{Type: "provider-secondary-ip", Interface: "ens5", ConfigureOSAddress: false},
+					},
+				},
+			},
+		},
+	}
+}
+
 func testDestination(prefix string, nextHops ...string) *gobgpapi.Destination {
 	parsed := netip.MustParsePrefix(prefix)
 	nlri, _ := anypb.New(&gobgpapi.IPAddressPrefix{Prefix: parsed.Addr().String(), PrefixLen: uint32(parsed.Bits())})
@@ -813,6 +1418,50 @@ func testDestination(prefix string, nextHops ...string) *gobgpapi.Destination {
 		Prefix: prefix,
 		Paths:  paths,
 	}
+}
+
+func testDestinationWithCommunities(prefix, nextHop string, communities ...string) *gobgpapi.Destination {
+	parsed := netip.MustParsePrefix(prefix)
+	nlri, _ := anypb.New(&gobgpapi.IPAddressPrefix{Prefix: parsed.Addr().String(), PrefixLen: uint32(parsed.Bits())})
+	nh, _ := anypb.New(&gobgpapi.NextHopAttribute{NextHop: nextHop})
+	attrs := []*anypb.Any{nh}
+	if len(communities) > 0 {
+		values, err := standardCommunityValuesForTest(communities)
+		if err != nil {
+			panic(err)
+		}
+		attr, _ := anypb.New(&gobgpapi.CommunitiesAttribute{Communities: values})
+		attrs = append(attrs, attr)
+	}
+	return &gobgpapi.Destination{
+		Prefix: prefix,
+		Paths: []*gobgpapi.Path{{
+			Family: ipv4Family(),
+			Nlri:   nlri,
+			Pattrs: attrs,
+			Best:   true,
+		}},
+	}
+}
+
+func standardCommunityValuesForTest(values []string) ([]uint32, error) {
+	var out []uint32
+	for _, value := range values {
+		parts := strings.Split(strings.TrimSpace(value), ":")
+		if len(parts) != 2 {
+			return nil, errors.New("invalid community")
+		}
+		left, err := strconv.ParseUint(parts[0], 10, 16)
+		if err != nil {
+			return nil, err
+		}
+		right, err := strconv.ParseUint(parts[1], 10, 16)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, uint32(left)<<16|uint32(right))
+	}
+	return out, nil
 }
 
 var _ bgpstate.State

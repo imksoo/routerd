@@ -162,6 +162,107 @@ func TestActionResultTransitions(t *testing.T) {
 	}
 }
 
+func TestBeginActionExecutionClaimsApprovedOnce(t *testing.T) {
+	store := mustOpenStore(t)
+	defer store.Close()
+
+	if _, err := store.ImportAction(sampleActionRecord("running-claim")); err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	rec, _, err := store.GetActionByIdempotencyKey("running-claim")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if ok, err := store.BeginActionExecution(rec.ID, time.Time{}); err != nil || ok {
+		t.Fatalf("pending BeginActionExecution ok=%v err=%v, want false nil", ok, err)
+	}
+	if err := store.ApproveAction(rec.ID, "op", time.Time{}); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	ok, err := store.BeginActionExecution(rec.ID, time.Time{})
+	if err != nil {
+		t.Fatalf("BeginActionExecution: %v", err)
+	}
+	if !ok {
+		t.Fatal("approved action was not claimed")
+	}
+	ok, err = store.BeginActionExecution(rec.ID, time.Time{})
+	if err != nil {
+		t.Fatalf("second BeginActionExecution: %v", err)
+	}
+	if ok {
+		t.Fatal("second BeginActionExecution claimed the same action")
+	}
+	got, _, err := store.GetActionByID(rec.ID)
+	if err != nil {
+		t.Fatalf("get after claim: %v", err)
+	}
+	if got.Status != ActionRunning {
+		t.Fatalf("status = %q, want running", got.Status)
+	}
+	if err := store.MarkActionResult(rec.ID, ActionSucceeded, "done", "", nil, time.Time{}); err != nil {
+		t.Fatalf("MarkActionResult running: %v", err)
+	}
+}
+
+func TestRequeueStaleRunningActionsOnlyRequeuesOldRunning(t *testing.T) {
+	store := mustOpenStore(t)
+	defer store.Close()
+	now := time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)
+	cutoff := now.Add(-2 * time.Minute)
+
+	staleID := importApproveAndClaimAt(t, store, "stale-running", now.Add(-3*time.Minute))
+	freshID := importApproveAndClaimAt(t, store, "fresh-running", now.Add(-30*time.Second))
+	terminalID := importApproveAndClaimAt(t, store, "terminal-running", now.Add(-5*time.Minute))
+	if err := store.MarkActionResult(terminalID, ActionSucceeded, "done", "", map[string]string{"applied": "true"}, now.Add(-4*time.Minute)); err != nil {
+		t.Fatalf("MarkActionResult terminal: %v", err)
+	}
+
+	count, err := store.RequeueStaleRunningActions(cutoff, now)
+	if err != nil {
+		t.Fatalf("RequeueStaleRunningActions: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("requeued count = %d, want 1", count)
+	}
+
+	stale, _, err := store.GetActionByID(staleID)
+	if err != nil {
+		t.Fatalf("get stale: %v", err)
+	}
+	if stale.Status != ActionApproved {
+		t.Fatalf("stale status = %q, want approved", stale.Status)
+	}
+	if stale.ExecutedAt.IsZero() == false {
+		t.Fatalf("stale executedAt should be cleared, got %s", stale.ExecutedAt)
+	}
+	if stale.ResultMessage != "requeued stale running action" {
+		t.Fatalf("stale resultMessage = %q", stale.ResultMessage)
+	}
+	if !stale.UpdatedAt.Equal(now) {
+		t.Fatalf("stale updatedAt = %s, want %s", stale.UpdatedAt, now)
+	}
+
+	fresh, _, err := store.GetActionByID(freshID)
+	if err != nil {
+		t.Fatalf("get fresh: %v", err)
+	}
+	if fresh.Status != ActionRunning {
+		t.Fatalf("fresh status = %q, want running", fresh.Status)
+	}
+
+	terminal, _, err := store.GetActionByID(terminalID)
+	if err != nil {
+		t.Fatalf("get terminal: %v", err)
+	}
+	if terminal.Status != ActionSucceeded {
+		t.Fatalf("terminal status = %q, want succeeded", terminal.Status)
+	}
+	if terminal.Observed["applied"] != "true" {
+		t.Fatalf("terminal observed was changed: %+v", terminal.Observed)
+	}
+}
+
 func TestActionResultObservedRoundTrip(t *testing.T) {
 	store := mustOpenStore(t)
 	defer store.Close()
@@ -197,6 +298,28 @@ func TestActionResultObservedRoundTrip(t *testing.T) {
 	if len(rows) != 1 || rows[0].Observed["priorSourceDestCheck"] != "true" {
 		t.Fatalf("list did not return observed: %+v", rows)
 	}
+}
+
+func importApproveAndClaimAt(t *testing.T, store *SQLiteStore, key string, at time.Time) int64 {
+	t.Helper()
+	if _, err := store.ImportAction(sampleActionRecord(key)); err != nil {
+		t.Fatalf("import %s: %v", key, err)
+	}
+	rec, _, err := store.GetActionByIdempotencyKey(key)
+	if err != nil {
+		t.Fatalf("get %s: %v", key, err)
+	}
+	if err := store.ApproveAction(rec.ID, "op", at.Add(-time.Second)); err != nil {
+		t.Fatalf("approve %s: %v", key, err)
+	}
+	ok, err := store.BeginActionExecution(rec.ID, at)
+	if err != nil {
+		t.Fatalf("begin %s: %v", key, err)
+	}
+	if !ok {
+		t.Fatalf("begin %s did not claim", key)
+	}
+	return rec.ID
 }
 
 func TestActionResultEmptyObservedLeavesNull(t *testing.T) {

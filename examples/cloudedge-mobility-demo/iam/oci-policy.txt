@@ -1,0 +1,23 @@
+# CloudEdge Mobility routerd least-privilege OCI policy template.
+#
+# Replace:
+# - <dynamic-group-name>: dynamic group containing only the router instance(s)
+#   that run routerd provider executor / inventory plugin.
+# - <compartment-name>: compartment containing the target VNIC and private IPs.
+#
+# Required OCI API surface:
+# - CreatePrivateIp
+# - DeletePrivateIp
+# - ListPrivateIps
+# - GetVnic
+# - UpdateVnic, for skipSourceDestCheck
+# - Read/use subnets referenced by VNIC private-IP placement
+#
+# The two statements below are the intended minimum shape for the demo. Add
+# tenancy-specific conditions only after confirming they still permit
+# CreatePrivateIp/DeletePrivateIp on the router VNIC and UpdateVnic for
+# skipSourceDestCheck.
+
+Allow dynamic-group <dynamic-group-name> to manage private-ips in compartment <compartment-name>
+Allow dynamic-group <dynamic-group-name> to use vnics in compartment <compartment-name>
+Allow dynamic-group <dynamic-group-name> to use subnets in compartment <compartment-name>

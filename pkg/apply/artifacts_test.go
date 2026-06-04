@@ -221,6 +221,44 @@ func TestMSSClampNftTableIsRouterOwnedNotOrphan(t *testing.T) {
 	}
 }
 
+func TestForceFragmentNftTableIsRouterOwnedNotOrphan(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardInterface"}, Metadata: api.ObjectMeta{Name: "wg-hybrid"}, Spec: api.WireGuardInterfaceSpec{MTU: 1420}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "OverlayPeer"}, Metadata: api.ObjectMeta{Name: "onprem-main"}, Spec: api.OverlayPeerSpec{
+				Role:     "onprem",
+				NodeID:   "onprem-router",
+				Underlay: api.OverlayUnderlay{Type: "wireguard", Interface: "wg-hybrid"},
+				PathMTU:  api.PathMTUOptions{ForceFragmentIPv4: true},
+			}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "AddressMobilityDomain"}, Metadata: api.ObjectMeta{Name: "same-subnet"}, Spec: api.AddressMobilityDomainSpec{Prefix: "10.77.60.0/24", Mode: "selective-address", PeerRef: "onprem-main"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "RemoteAddressClaim"}, Metadata: api.ObjectMeta{Name: "onprem-client"}, Spec: api.RemoteAddressClaimSpec{
+				DomainRef: "same-subnet",
+				Address:   "10.77.60.9/32",
+				OwnerSide: "onprem",
+				Capture:   api.AddressCapture{Type: "provider-secondary-ip", ProviderRef: "lab", ProviderMode: "secondary-ip", NICRef: "nic", Interface: "ens3"},
+				Delivery:  api.AddressDelivery{PeerRef: "onprem-main", Mode: "route", TunnelInterface: "wg-hybrid"},
+			}},
+		}},
+	}
+	aliases := map[string]string{"ens3": "ens3", "wg-hybrid": "wg-hybrid"}
+	desired := desiredArtifactsByKind(router, aliases, "nft.table")
+	if !hasArtifact(desired, "nft.table", "routerd_forcefrag", api.RouterAPIVersion+"/Router/test") {
+		t.Fatalf("desired nft artifacts = %+v, want router-owned routerd_forcefrag", desired)
+	}
+	engine := &Engine{Command: fakeCommand(map[string]string{
+		"nft list tables": "table ip routerd_forcefrag\n",
+	})}
+	orphans := engine.observeNftTableOrphans(router, aliases)
+	for _, orphan := range orphans {
+		if orphan.Kind == "NftTable" && orphan.Name == "routerd_forcefrag" {
+			t.Fatalf("routerd_forcefrag reported as orphan: %+v", orphans)
+		}
+	}
+}
+
 func TestVirtualAddressIPv4UsesOpenRCAndBGPRouterUsesEmbeddedGoBGP(t *testing.T) {
 	features := platform.Features{HasOpenRC: true}
 	vip := api.Resource{

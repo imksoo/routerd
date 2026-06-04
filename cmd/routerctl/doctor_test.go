@@ -647,6 +647,194 @@ func TestDoctorHybridSAMProxyARPInterfaceHostSkips(t *testing.T) {
 	})
 }
 
+func TestDoctorHybridSAMVRRPGatedProxyARPDetectsInactiveArtifacts(t *testing.T) {
+	oldRun := doctorRunDiagnosticCommand
+	oldOS := doctorCurrentOS
+	defer func() {
+		doctorRunDiagnosticCommand = oldRun
+		doctorCurrentOS = oldOS
+	}()
+	doctorCurrentOS = func() platform.OS { return platform.OSLinux }
+
+	for _, tc := range []struct {
+		name               string
+		proxyExists        bool
+		proxyARPValue      string
+		wantErr            bool
+		wantProxyStatus    string
+		wantProxyARPStatus string
+	}{
+		{name: "standby-clean", proxyARPValue: "0", wantProxyStatus: doctorSkip, wantProxyARPStatus: doctorPass},
+		{name: "standby-stale-proxy", proxyExists: true, proxyARPValue: "0", wantErr: true, wantProxyStatus: doctorFail, wantProxyARPStatus: doctorPass},
+		{name: "standby-route-based-proxy-arp", proxyARPValue: "1", wantErr: true, wantProxyStatus: doctorSkip, wantProxyARPStatus: doctorFail},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			doctorRunDiagnosticCommand = func(_ context.Context, label, name string, args ...string) diagnoseCommandCheck {
+				switch {
+				case strings.HasPrefix(label, "ip neigh show proxy"):
+					if tc.proxyExists {
+						return diagnoseCommandCheck{Name: label, OK: true, Stdout: "10.0.0.7 dev br-lan proxy", Output: "10.0.0.7 dev br-lan proxy"}
+					}
+					return diagnoseCommandCheck{Name: label, OK: true}
+				case label == "sysctl net.ipv4.conf.br-lan.proxy_arp":
+					return diagnoseCommandCheck{Name: label, OK: true, Stdout: tc.proxyARPValue, Output: tc.proxyARPValue}
+				}
+				return diagnoseCommandCheck{Name: label, OK: false, Error: "unexpected command"}
+			}
+			configPath, statePath := writeDoctorVRRPGatedProxyARPAddressMobilityFixture(t)
+			store := openDoctorState(t, statePath)
+			if err := store.SaveObjectStatus(api.NetAPIVersion, "VirtualAddress", "onprem-vip", map[string]any{"role": "backup"}); err != nil {
+				t.Fatalf("save VirtualAddress status: %v", err)
+			}
+			closeDoctorState(t, store)
+
+			var out bytes.Buffer
+			err := run([]string{"doctor", "hybrid", "--config", configPath, "--state-file", statePath, "-o", "json"}, &out, &bytes.Buffer{})
+			if tc.wantErr && err == nil {
+				t.Fatalf("doctor hybrid succeeded with inactive proxy-ARP artifact:\n%s", out.String())
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("doctor hybrid: %v\n%s", err, out.String())
+			}
+			var report doctorReport
+			if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+				t.Fatalf("unmarshal doctor report: %v\n%s", err, out.String())
+			}
+			if check := findDoctorCheck(t, report, "RemoteAddressClaim/cloud-vm activeWhen vrrp-master"); check.Status != doctorSkip {
+				t.Fatalf("activeWhen check = %#v", check)
+			}
+			check := findDoctorCheck(t, report, "RemoteAddressClaim/cloud-vm proxy neighbor absent")
+			if check.Status != tc.wantProxyStatus {
+				t.Fatalf("proxy absent check = %#v", check)
+			}
+			disabled := findDoctorCheck(t, report, "RemoteAddressClaim/cloud-vm proxy_arp disabled")
+			if disabled.Status != tc.wantProxyARPStatus {
+				t.Fatalf("proxy_arp disabled check = %#v", disabled)
+			}
+		})
+	}
+}
+
+func TestDoctorHybridSAMVRRPGatedProxyARPDetectsDuplicateResponders(t *testing.T) {
+	oldRun := doctorRunDiagnosticCommand
+	oldOS := doctorCurrentOS
+	defer func() {
+		doctorRunDiagnosticCommand = oldRun
+		doctorCurrentOS = oldOS
+	}()
+	doctorCurrentOS = func() platform.OS { return platform.OSLinux }
+
+	for _, tc := range []struct {
+		name       string
+		arpingOut  string
+		wantErr    bool
+		wantStatus string
+		localMAC   string
+	}{
+		{
+			name:       "no-responder-output",
+			wantStatus: doctorPass,
+		},
+		{
+			name:       "single-responder",
+			arpingOut:  "Unicast reply from 10.0.0.7 [aa:bb:cc:dd:ee:01]  0.812ms",
+			wantStatus: doctorPass,
+		},
+		{
+			name:       "local-master-peer-responder",
+			arpingOut:  "Unicast reply from 10.0.0.7 [aa:bb:cc:dd:ee:02]  0.812ms",
+			wantErr:    true,
+			wantStatus: doctorFail,
+			localMAC:   "aa:bb:cc:dd:ee:01",
+		},
+		{
+			name: "duplicate-responders",
+			arpingOut: strings.Join([]string{
+				"Unicast reply from 10.0.0.7 [aa:bb:cc:dd:ee:01]  0.812ms",
+				"Unicast reply from 10.0.0.7 [aa:bb:cc:dd:ee:02]  0.953ms",
+			}, "\n"),
+			wantErr:    true,
+			wantStatus: doctorFail,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			doctorRunDiagnosticCommand = func(_ context.Context, label, cmdName string, args ...string) diagnoseCommandCheck {
+				switch {
+				case label == "sysctl net.ipv4.ip_forward":
+					return diagnoseCommandCheck{Name: label, OK: true, Stdout: "1", Output: "1"}
+				case strings.HasPrefix(label, "ip route show"):
+					return diagnoseCommandCheck{Name: label, OK: true, Stdout: "10.0.0.7 dev wg-hybrid", Output: "10.0.0.7 dev wg-hybrid"}
+				case strings.HasPrefix(label, "ip route get"):
+					return diagnoseCommandCheck{Name: label, OK: true, Stdout: "10.0.0.7 dev wg-hybrid src 10.0.0.4", Output: "10.0.0.7 dev wg-hybrid src 10.0.0.4"}
+				case label == "ip link show wg-hybrid":
+					return diagnoseCommandCheck{Name: label, OK: true, Stdout: "3: wg-hybrid: <POINTOPOINT,UP> mtu 1420", Output: "3: wg-hybrid: <POINTOPOINT,UP> mtu 1420"}
+				case label == "ip link show br-lan":
+					return diagnoseCommandCheck{Name: label, OK: true, Stdout: "2: br-lan: <BROADCAST,MULTICAST,UP>", Output: "2: br-lan: <BROADCAST,MULTICAST,UP>"}
+				case label == "nft list table inet routerd_mss":
+					return diagnoseCommandCheck{Name: label, OK: true, Stdout: `table inet routerd_mss {
+ chain forward {
+  iifname "br-lan" oifname "wg-hybrid" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1380 tcp option maxseg size set 1380
+ }
+}`, Output: "table inet routerd_mss"}
+				case label == "sysctl net.ipv4.conf.br-lan.proxy_arp":
+					return diagnoseCommandCheck{Name: label, OK: true, Stdout: "1", Output: "1"}
+				case strings.HasPrefix(label, "ip neigh show proxy"):
+					return diagnoseCommandCheck{Name: label, OK: true, Stdout: "10.0.0.7 dev br-lan proxy", Output: "10.0.0.7 dev br-lan proxy"}
+				case label == "arping 10.0.0.7 dev br-lan":
+					if cmdName != "arping" || strings.Join(args, " ") != "-c 3 -w 2 -I br-lan 10.0.0.7" {
+						t.Fatalf("unexpected arping command: %s %v", cmdName, args)
+					}
+					return diagnoseCommandCheck{Name: label, OK: true, Stdout: tc.arpingOut, Output: tc.arpingOut}
+				case label == "cat /sys/class/net/br-lan/address":
+					if tc.localMAC != "" {
+						return diagnoseCommandCheck{Name: label, OK: true, Stdout: tc.localMAC + "\n", Output: tc.localMAC + "\n"}
+					}
+					return diagnoseCommandCheck{Name: label, OK: false, Error: "not checked"}
+				case label == "nft list table inet routerd_filter":
+					return diagnoseCommandCheck{Name: label, OK: true, Stdout: "table inet routerd_filter {\n chain forward { type filter hook forward priority 0; policy accept; }\n}", Output: "table inet routerd_filter"}
+				case label == "iptables -S INPUT":
+					return diagnoseCommandCheck{Name: label, OK: true, Stdout: "-P INPUT ACCEPT\n-A INPUT -p udp --dport 51820 -j ACCEPT", Output: "-P INPUT ACCEPT"}
+				case label == "iptables -S FORWARD":
+					return diagnoseCommandCheck{Name: label, OK: true, Stdout: "-P FORWARD ACCEPT\n-A FORWARD -i br-lan -o wg-hybrid -j ACCEPT\n-A FORWARD -i wg-hybrid -o br-lan -j ACCEPT", Output: "-P FORWARD ACCEPT"}
+				case strings.Contains(label, "rp_filter"):
+					return diagnoseCommandCheck{Name: label, OK: true, Stdout: "0", Output: "0"}
+				default:
+					return diagnoseCommandCheck{Name: label, OK: false, Error: "unexpected command: " + label}
+				}
+			}
+			configPath, statePath := writeDoctorVRRPGatedProxyARPAddressMobilityFixture(t)
+			store := openDoctorState(t, statePath)
+			if err := store.SaveObjectStatus(api.NetAPIVersion, "VirtualAddress", "onprem-vip", map[string]any{"role": "master"}); err != nil {
+				t.Fatalf("save VirtualAddress status: %v", err)
+			}
+			closeDoctorState(t, store)
+
+			var out bytes.Buffer
+			err := run([]string{"doctor", "hybrid", "--config", configPath, "--state-file", statePath, "-o", "json"}, &out, &bytes.Buffer{})
+			if tc.wantErr && err == nil {
+				t.Fatalf("doctor hybrid succeeded with duplicate ARP responders:\n%s", out.String())
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("doctor hybrid: %v\n%s", err, out.String())
+			}
+			var report doctorReport
+			if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+				t.Fatalf("unmarshal doctor report: %v\n%s", err, out.String())
+			}
+			if check := findDoctorCheck(t, report, "RemoteAddressClaim/cloud-vm activeWhen vrrp-master"); check.Status != doctorPass {
+				t.Fatalf("activeWhen check = %#v", check)
+			}
+			check := findDoctorCheck(t, report, "RemoteAddressClaim/cloud-vm proxy-arp duplicate responders")
+			if check.Status != tc.wantStatus {
+				t.Fatalf("duplicate responder check = %#v", check)
+			}
+			if tc.wantStatus == doctorFail && (!strings.Contains(check.Remedy, "split-brain") || (!strings.Contains(check.Detail, "aa:bb:cc:dd:ee:02") && !strings.Contains(check.Detail, "aa:bb:cc:dd:ee:01"))) {
+				t.Fatalf("duplicate responder detail/remedy = %#v", check)
+			}
+		})
+	}
+}
+
 func TestDoctorHybridSAMNonLinuxSkip(t *testing.T) {
 	oldOS := doctorCurrentOS
 	defer func() { doctorCurrentOS = oldOS }()
@@ -998,6 +1186,78 @@ spec:
         capture:
           type: proxy-arp
           interface: br-lan
+        delivery:
+          peerRef: cloud-main
+          mode: route
+          tunnelInterface: wg-hybrid
+`)
+	if err := os.WriteFile(configPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	return configPath, filepath.Join(dir, "routerd.db")
+}
+
+func writeDoctorVRRPGatedProxyARPAddressMobilityFixture(t *testing.T) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "router.yaml")
+	data := []byte(`apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: test
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: VirtualAddress
+      metadata:
+        name: onprem-vip
+      spec:
+        family: ipv4
+        interface: br-lan
+        address: 10.0.0.1/32
+        mode: vrrp
+        vrrp:
+          virtualRouterID: 60
+          peers: ["10.0.0.2"]
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardInterface
+      metadata:
+        name: wg-hybrid
+      spec:
+        listenPort: 51820
+        mtu: 1420
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: OverlayPeer
+      metadata:
+        name: cloud-main
+      spec:
+        role: cloud
+        nodeID: cloud-main
+        underlay:
+          type: wireguard
+          interface: wg-hybrid
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: AddressMobilityDomain
+      metadata:
+        name: same-subnet
+      spec:
+        prefix: 10.0.0.0/24
+        mode: selective-address
+        peerRef: cloud-main
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: RemoteAddressClaim
+      metadata:
+        name: cloud-vm
+      spec:
+        domainRef: same-subnet
+        address: 10.0.0.7/32
+        ownerSide: cloud
+        capture:
+          type: proxy-arp
+          interface: br-lan
+          activeWhen:
+            type: vrrp-master
+            virtualAddressRef: onprem-vip
         delivery:
           peerRef: cloud-main
           mode: route

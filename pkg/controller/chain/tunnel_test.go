@@ -56,6 +56,93 @@ func TestTunnelInterfaceControllerAddsIPIP(t *testing.T) {
 	}
 }
 
+func TestTunnelInterfaceControllerAddsFOU(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
+		TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
+		Metadata: api.ObjectMeta{Name: "tun-fou"},
+		Spec: api.TunnelInterfaceSpec{
+			Mode:            "fou",
+			Local:           "192.0.2.10",
+			Remote:          "192.0.2.20",
+			EncapSport:      5555,
+			EncapDport:      5556,
+			TrustedUnderlay: true,
+		},
+	}}}}
+	var calls [][]string
+	controller := TunnelInterfaceController{
+		Router: router,
+		Store:  mapStore{},
+		OS:     platform.OSLinux,
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			calls = append(calls, append([]string{name}, args...))
+			if reflect.DeepEqual(append([]string{name}, args...), []string{"ip", "-d", "-o", "link", "show", "dev", "tun-fou"}) {
+				return []byte("Cannot find device \"tun-fou\""), errors.New("missing")
+			}
+			return nil, nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	want := [][]string{
+		{"ip", "-d", "-o", "link", "show", "dev", "tun-fou"},
+		{"ip", "fou", "add", "port", "5555", "ipproto", "4"},
+		{"ip", "link", "add", "dev", "tun-fou", "type", "ipip", "local", "192.0.2.10", "remote", "192.0.2.20", "ttl", "64", "encap", "fou", "encap-sport", "5555", "encap-dport", "5556"},
+		{"ip", "link", "set", "dev", "tun-fou", "mtu", "1472", "up"},
+	}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("calls = %#v, want %#v", calls, want)
+	}
+	status := controller.Store.ObjectStatus(api.HybridAPIVersion, "TunnelInterface", "tun-fou")
+	if status["phase"] != "Up" || status["mode"] != "fou" || status["mtu"] != 1472 || status["encapSport"] != 5555 || status["encapDport"] != 5556 {
+		t.Fatalf("status = %#v", status)
+	}
+}
+
+func TestTunnelInterfaceControllerSkipsExistingGUE(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
+		TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
+		Metadata: api.ObjectMeta{Name: "tun-gue"},
+		Spec: api.TunnelInterfaceSpec{
+			Mode:            "gue",
+			Local:           "192.0.2.10",
+			Remote:          "192.0.2.20",
+			TTL:             64,
+			EncapSport:      6080,
+			EncapDport:      6081,
+			TrustedUnderlay: true,
+		},
+	}}}}
+	var calls [][]string
+	controller := TunnelInterfaceController{
+		Router: router,
+		Store:  mapStore{},
+		OS:     platform.OSLinux,
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			calls = append(calls, append([]string{name}, args...))
+			if reflect.DeepEqual(append([]string{name}, args...), []string{"ip", "fou", "add", "port", "6080", "gue"}) {
+				return []byte("RTNETLINK answers: File exists"), errors.New("exists")
+			}
+			return []byte(`7: tun-gue@NONE: <POINTOPOINT,NOARP,UP,LOWER_UP> mtu 1468 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000 link/ipip 192.0.2.10 peer 192.0.2.20 ttl 64 encap gue encap-sport 6080 encap-dport 6081`), nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	want := [][]string{
+		{"ip", "-d", "-o", "link", "show", "dev", "tun-gue"},
+		{"ip", "fou", "add", "port", "6080", "gue"},
+	}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("calls = %#v, want only observe/listener ensure", calls)
+	}
+	status := controller.Store.ObjectStatus(api.HybridAPIVersion, "TunnelInterface", "tun-gue")
+	if status["phase"] != "Up" || status["reason"] != "AlreadyConfigured" {
+		t.Fatalf("status = %#v", status)
+	}
+}
+
 func TestTunnelInterfaceControllerSkipsExistingGRE(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
 		TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},

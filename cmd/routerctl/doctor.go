@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/netip"
 	"os"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -34,6 +35,8 @@ const (
 	doctorFail = "fail"
 	doctorSkip = "skip"
 )
+
+var doctorMACAddressPattern = regexp.MustCompile(`(?i)\b(?:[0-9a-f]{2}:){5}[0-9a-f]{2}\b`)
 
 type doctorCheck struct {
 	Area   string `json:"area" yaml:"area"`
@@ -293,13 +296,13 @@ func (r doctorRunner) doctorSAMLiveChecks(name string, spec api.RemoteAddressCla
 		return []doctorCheck{{Area: "hybrid", Name: "RemoteAddressClaim/" + name + " SAM dataplane", Status: doctorSkip, Detail: "SAM capture not implemented on this OS"}}
 	}
 	statusReader, _ := r.store.(sam.StatusReader)
-	if gate := sam.EvaluateCaptureGate(spec.Capture, statusReader); !gate.Active {
-		return []doctorCheck{{
-			Area:   "hybrid",
-			Name:   "RemoteAddressClaim/" + name + " SAM dataplane",
-			Status: doctorSkip,
-			Detail: "capture gated inactive: " + gate.Message,
-		}}
+	gate := sam.EvaluateCaptureGate(spec.Capture, statusReader)
+	var gateChecks []doctorCheck
+	if gate.Type == "vrrp-master" || gate.VirtualAddressRef != "" {
+		gateChecks = append(gateChecks, doctorSAMActiveWhenVRRPCheck(name, gate))
+	}
+	if !gate.Active {
+		return append(gateChecks, doctorSAMInactiveCaptureChecks(name, spec, gate)...)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), r.opts.Timeout)
 	defer cancel()
@@ -310,17 +313,22 @@ func (r doctorRunner) doctorSAMLiveChecks(name string, spec api.RemoteAddressCla
 		tunnel = "delivery tunnel interface unresolved from OverlayPeer in doctor"
 	}
 	captureInterface := strings.TrimSpace(spec.Capture.Interface)
-	checks := []doctorCheck{
+	checks := append([]doctorCheck{}, gateChecks...)
+	checks = append(checks,
 		doctorSAMIPForwardCheck(ctx, name),
 		doctorSAMDeliveryRouteCheck(ctx, name, routeName, address, tunnel),
 		doctorSAMRouteGetCheck(ctx, name, address),
 		doctorSAMMSSClampCheck(ctx, name, captureInterface, tunnel),
+		doctorSAMForceFragmentCheck(ctx, name, captureInterface, tunnel),
 		doctorSAMHostFirewallCheck(ctx, name, captureInterface, tunnel, r.doctorWireGuardListenPort(tunnel)),
-	}
+	)
 	if strings.TrimSpace(spec.Capture.Type) == "proxy-arp" {
 		checks = append(checks, doctorSAMCaptureInterfaceCheck(ctx, name, captureInterface))
 		checks = append(checks, doctorSAMProxyARPEnabledCheck(ctx, name, captureInterface))
 		checks = append(checks, doctorSAMProxyNeighborCheck(ctx, name, address, captureInterface))
+		if gate.Type == "vrrp-master" || gate.VirtualAddressRef != "" {
+			checks = append(checks, doctorSAMProxyARPDuplicateResponderCheck(ctx, name, address, captureInterface, gate.Active))
+		}
 		checks = append(checks, doctorSAMRPFilterCheck(ctx, name, captureInterface))
 		checks = append(checks, doctorSAMForwardPolicyCheck(ctx, name, captureInterface, tunnel, address))
 	}
@@ -334,6 +342,35 @@ func (r doctorRunner) doctorSAMLiveChecks(name string, spec api.RemoteAddressCla
 		checks = append(checks, doctorSAMForwardPolicyCheck(ctx, name, strings.TrimSpace(spec.Capture.Interface), tunnel, address))
 	}
 	return checks
+}
+
+func doctorSAMActiveWhenVRRPCheck(name string, gate sam.CaptureGateStatus) doctorCheck {
+	label := "RemoteAddressClaim/" + name + " activeWhen vrrp-master"
+	if gate.Active {
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: gate.Message}
+	}
+	return doctorCheck{Area: "hybrid", Name: label, Status: doctorSkip, Detail: "capture gated inactive: " + gate.Message}
+}
+
+func doctorSAMInactiveCaptureChecks(name string, spec api.RemoteAddressClaimSpec, gate sam.CaptureGateStatus) []doctorCheck {
+	base := doctorCheck{
+		Area:   "hybrid",
+		Name:   "RemoteAddressClaim/" + name + " SAM dataplane",
+		Status: doctorSkip,
+		Detail: "capture gated inactive: " + gate.Message,
+	}
+	if strings.TrimSpace(spec.Capture.Type) != "proxy-arp" {
+		return []doctorCheck{base}
+	}
+	iface := strings.TrimSpace(spec.Capture.Interface)
+	if iface == "" {
+		return []doctorCheck{base}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	proxy := doctorSAMProxyNeighborAbsentCheck(ctx, name, strings.TrimSpace(spec.Address), iface, gate)
+	proxyARP := doctorSAMProxyARPDisabledCheck(ctx, name, iface, gate)
+	return []doctorCheck{base, proxy, proxyARP}
 }
 
 func (r doctorRunner) doctorWireGuardListenPort(iface string) int {
@@ -423,7 +460,126 @@ func doctorSAMProxyNeighborCheck(ctx context.Context, name, address, iface strin
 	if command.OK && strings.Contains(command.Stdout, strings.TrimSuffix(address, "/32")) {
 		return doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: oneLine(command.Stdout)}
 	}
-	return doctorCheck{Area: "hybrid", Name: label, Status: doctorWarn, Detail: firstNonEmpty(command.Error, oneLine(command.Output), "proxy neighbor not found"), Remedy: "wait for routerd SAM capture reconciliation or inspect proxy_arp and netlink neighbor state"}
+	return doctorCheck{Area: "hybrid", Name: label, Status: doctorFail, Detail: firstNonEmpty(command.Error, oneLine(command.Output), "proxy neighbor not found"), Remedy: "wait for routerd SAM capture reconciliation or inspect proxy_arp and netlink neighbor state"}
+}
+
+func doctorSAMProxyNeighborAbsentCheck(ctx context.Context, name, address, iface string, gate sam.CaptureGateStatus) doctorCheck {
+	label := "RemoteAddressClaim/" + name + " proxy neighbor absent"
+	command := doctorRunDiagnosticCommand(ctx, "ip neigh show proxy "+address+" dev "+iface, "ip", "neigh", "show", "proxy", address, "dev", iface)
+	if command.OK && strings.Contains(command.Stdout, strings.TrimSuffix(address, "/32")) {
+		return doctorCheck{
+			Area:   "hybrid",
+			Name:   label,
+			Status: doctorFail,
+			Detail: "capture gated inactive but proxy neighbor is present: " + oneLine(command.Stdout),
+			Remedy: "wait for routerd SAM cleanup; if it persists, inspect VirtualAddress/" + gate.VirtualAddressRef + " role and remove the stale proxy neighbor",
+		}
+	}
+	return doctorCheck{Area: "hybrid", Name: label, Status: doctorSkip, Detail: "capture gated inactive and proxy neighbor absent"}
+}
+
+func doctorSAMProxyARPDisabledCheck(ctx context.Context, name, iface string, gate sam.CaptureGateStatus) doctorCheck {
+	label := "RemoteAddressClaim/" + name + " proxy_arp disabled"
+	if strings.TrimSpace(iface) == "" {
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorSkip, Detail: "interface unavailable"}
+	}
+	key := "net.ipv4.conf." + iface + ".proxy_arp"
+	command := doctorRunDiagnosticCommand(ctx, "sysctl "+key, "sysctl", "-n", key)
+	if command.OK && strings.TrimSpace(command.Stdout) == "0" {
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: key + "=0"}
+	}
+	return doctorCheck{
+		Area:   "hybrid",
+		Name:   label,
+		Status: doctorFail,
+		Detail: "capture gated inactive but route-based proxy_arp is enabled: " + firstNonEmpty(command.Error, oneLine(command.Output), key+" is not 0"),
+		Remedy: "wait for routerd SAM cleanup; if it persists, inspect VirtualAddress/" + gate.VirtualAddressRef + " role and set " + key + "=0",
+	}
+}
+
+func doctorSAMProxyARPDuplicateResponderCheck(ctx context.Context, name, address, iface string, localMaster bool) doctorCheck {
+	label := "RemoteAddressClaim/" + name + " proxy-arp duplicate responders"
+	if strings.TrimSpace(iface) == "" {
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorSkip, Detail: "interface unavailable"}
+	}
+	ip, ok := doctorProbeIPv4(address)
+	if !ok {
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorSkip, Detail: "IPv4 address unavailable"}
+	}
+	command := doctorRunDiagnosticCommand(ctx, "arping "+ip+" dev "+iface, "arping", "-c", "3", "-w", "2", "-I", iface, ip)
+	macs := doctorUniqueMACAddresses(command.Output)
+	switch {
+	case len(macs) > 1:
+		return doctorCheck{
+			Area:   "hybrid",
+			Name:   label,
+			Status: doctorFail,
+			Detail: fmt.Sprintf("multiple ARP responders for %s on %s: %s", ip, iface, strings.Join(macs, ", ")),
+			Remedy: "split-brain proxy-ARP capture detected; verify only the VRRP master captures this /32 and inspect L2 loop/storm stability evidence",
+		}
+	case len(macs) == 1:
+		if localMaster {
+			localMAC := doctorLocalInterfaceMAC(ctx, iface)
+			if localMAC != "" && !strings.EqualFold(macs[0], localMAC) {
+				return doctorCheck{
+					Area:   "hybrid",
+					Name:   label,
+					Status: doctorFail,
+					Detail: fmt.Sprintf("local VRRP master plus peer ARP responder for %s on %s: peer %s, local %s", ip, iface, macs[0], localMAC),
+					Remedy: "split-brain proxy-ARP capture detected; backup nodes must be fail-closed and only the VRRP master may answer this /32",
+				}
+			}
+		}
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: fmt.Sprintf("single ARP responder for %s on %s: %s", ip, iface, macs[0])}
+	case command.OK:
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: fmt.Sprintf("no duplicate ARP responders observed for %s on %s", ip, iface)}
+	default:
+		return doctorCheck{
+			Area:   "hybrid",
+			Name:   label,
+			Status: doctorWarn,
+			Detail: "duplicate responder probe unavailable: " + firstNonEmpty(command.Error, oneLine(command.Output), "arping produced no output"),
+			Remedy: "install arping or run doctor with privileges that can send ARP probes to verify split-brain proxy-ARP capture",
+		}
+	}
+}
+
+func doctorLocalInterfaceMAC(ctx context.Context, iface string) string {
+	if strings.TrimSpace(iface) == "" {
+		return ""
+	}
+	command := doctorRunDiagnosticCommand(ctx, "cat /sys/class/net/"+iface+"/address", "cat", "/sys/class/net/"+iface+"/address")
+	if !command.OK {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(command.Stdout))
+}
+
+func doctorProbeIPv4(address string) (string, bool) {
+	address = strings.TrimSpace(address)
+	if address == "" {
+		return "", false
+	}
+	if prefix, err := netip.ParsePrefix(address); err == nil && prefix.Addr().Is4() {
+		return prefix.Addr().String(), true
+	}
+	if addr, err := netip.ParseAddr(address); err == nil && addr.Is4() {
+		return addr.String(), true
+	}
+	return "", false
+}
+
+func doctorUniqueMACAddresses(output string) []string {
+	seen := map[string]bool{}
+	for _, match := range doctorMACAddressPattern.FindAllString(output, -1) {
+		seen[strings.ToLower(match)] = true
+	}
+	macs := make([]string, 0, len(seen))
+	for mac := range seen {
+		macs = append(macs, mac)
+	}
+	sort.Strings(macs)
+	return macs
 }
 
 func doctorSAMLocalAddressAbsentCheck(ctx context.Context, name, address string) doctorCheck {
@@ -512,6 +668,40 @@ func doctorSAMMSSClampUnavailableDetail(command diagnoseCommandCheck) string {
 	}
 }
 
+func doctorSAMForceFragmentCheck(ctx context.Context, name, captureIface, tunnel string) doctorCheck {
+	label := "RemoteAddressClaim/" + name + " force-fragment"
+	tunnel = strings.TrimSpace(tunnel)
+	captureIface = strings.TrimSpace(captureIface)
+	if tunnel == "" || strings.HasPrefix(tunnel, "delivery tunnel interface unresolved") {
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorSkip, Detail: "delivery tunnel interface unavailable"}
+	}
+	if captureIface == "" {
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorSkip, Detail: "capture interface unavailable"}
+	}
+	table := doctorRunDiagnosticCommand(ctx, "nft list table ip routerd_forcefrag", "nft", "list", "table", "ip", "routerd_forcefrag")
+	if !table.OK {
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorSkip, Detail: appendDoctorDetail("optional IPv4 force-fragment not active", doctorForceFragmentUnavailableDetail(table))}
+	}
+	if nftForceFragmentHasPath(table.Stdout, captureIface, tunnel) {
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: "routerd_forcefrag covers " + captureIface + " -> " + tunnel}
+	}
+	return doctorCheck{Area: "hybrid", Name: label, Status: doctorSkip, Detail: "routerd_forcefrag does not cover " + captureIface + " -> " + tunnel}
+}
+
+func doctorForceFragmentUnavailableDetail(command diagnoseCommandCheck) string {
+	combined := strings.ToLower(strings.Join([]string{command.Error, command.Stderr, command.Stdout, command.Output}, " "))
+	switch {
+	case strings.Contains(combined, "executable file not found") || strings.Contains(combined, "no such file or directory") && strings.Contains(strings.ToLower(command.Error), "exec"):
+		return "nft unavailable"
+	case strings.Contains(combined, "permission denied") || strings.Contains(combined, "operation not permitted"):
+		return "permission denied running nft"
+	case strings.Contains(combined, "no such file or directory") || strings.Contains(combined, "no such table") || strings.Contains(combined, "table does not exist"):
+		return "routerd_forcefrag table absent"
+	default:
+		return firstNonEmpty(command.Error, oneLine(command.Output), "exit "+strconv.Itoa(command.ExitCode))
+	}
+}
+
 func doctorExtractLinkMTU(output string) string {
 	fields := strings.Fields(output)
 	for i, field := range fields {
@@ -525,6 +715,15 @@ func doctorExtractLinkMTU(output string) string {
 func nftMSSClampHasPath(output, from, to string) bool {
 	for _, line := range strings.Split(output, "\n") {
 		if strings.Contains(line, `iifname "`+from+`"`) && strings.Contains(line, `oifname "`+to+`"`) && strings.Contains(line, "maxseg") {
+			return true
+		}
+	}
+	return false
+}
+
+func nftForceFragmentHasPath(output, from, to string) bool {
+	for _, line := range strings.Split(output, "\n") {
+		if strings.Contains(line, `iifname "`+from+`"`) && strings.Contains(line, `oifname "`+to+`"`) && strings.Contains(line, "frag-off set 0") {
 			return true
 		}
 	}

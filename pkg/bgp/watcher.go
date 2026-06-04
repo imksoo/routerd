@@ -3,7 +3,9 @@
 package bgp
 
 import (
+	"hash/fnv"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -13,6 +15,8 @@ const (
 	EventPrefixAccepted  = "prefix accepted"
 	EventPrefixWithdrawn = "prefix withdrawn"
 	DefaultMaxPrefixes   = 4096
+
+	MobilityCommunityNodeLiveness = "64512:130"
 )
 
 type State struct {
@@ -60,6 +64,41 @@ type Event struct {
 	Prefix   string `json:"prefix,omitempty"`
 	Previous string `json:"previous,omitempty"`
 	Current  string `json:"current,omitempty"`
+}
+
+func MobilityNodeIdentityCommunity(nodeRef string) string {
+	nodeRef = strings.TrimSpace(nodeRef)
+	if nodeRef == "" {
+		return ""
+	}
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(nodeRef))
+	return "64512:" + strconv.Itoa(20000+int(h.Sum32()%40000))
+}
+
+func IsMobilityNodeIdentityCommunity(value string) bool {
+	value = strings.TrimSpace(value)
+	if !strings.HasPrefix(value, "64512:") {
+		return false
+	}
+	local, err := strconv.Atoi(strings.TrimPrefix(value, "64512:"))
+	if err != nil {
+		return false
+	}
+	return local >= 20000 && local < 60000
+}
+
+func HasCommunity(values []string, want string) bool {
+	want = strings.TrimSpace(want)
+	if want == "" {
+		return false
+	}
+	for _, value := range values {
+		if strings.TrimSpace(value) == want {
+			return true
+		}
+	}
+	return false
 }
 
 func Diff(previous, current State) []Event {

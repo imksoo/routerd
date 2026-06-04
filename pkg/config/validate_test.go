@@ -42,6 +42,36 @@ func TestValidateSysctl(t *testing.T) {
 	}
 }
 
+func TestValidateIPv4RoutePreferredSource(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4Route"},
+				Metadata: api.ObjectMeta{Name: "delivery"},
+				Spec: api.IPv4RouteSpec{
+					Destination:     "10.77.60.11/32",
+					Device:          "wg-hybrid",
+					PreferredSource: "10.77.60.10",
+				},
+			},
+		}},
+	}
+	if err := Validate(router); err != nil {
+		t.Fatalf("validate route with preferredSource: %v", err)
+	}
+
+	router.Spec.Resources[0].Spec = api.IPv4RouteSpec{
+		Destination:     "10.77.60.11/32",
+		Device:          "wg-hybrid",
+		PreferredSource: "10.77.60.0/24",
+	}
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "spec.preferredSource must be an IPv4 address") {
+		t.Fatalf("Validate invalid preferredSource err = %v", err)
+	}
+}
+
 func TestValidateManagementAccess(t *testing.T) {
 	router := testManagementRouter(
 		managementAccess("main", []string{"mgmt0", "Interface/lan0"}, nil),

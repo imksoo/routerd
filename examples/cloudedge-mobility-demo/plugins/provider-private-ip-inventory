@@ -1,0 +1,360 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# Read-only provider private-IP inventory plugin for the CloudEdge Mobility demo.
+# The protocol is defined by pkg/providerinventory.
+
+import json
+import os
+import subprocess
+import sys
+import urllib.error
+import urllib.request
+
+API_VERSION = "providerinventory.routerd.net/v1alpha1"
+KIND_RESULT = "ObservePrivateIPsResult"
+
+
+def result(status, ips=None, self_info=None, message="", error=""):
+    out = {
+        "apiVersion": API_VERSION,
+        "kind": KIND_RESULT,
+        "status": {"status": status},
+    }
+    if self_info:
+        out["status"]["self"] = self_info
+    if ips:
+        out["status"]["ips"] = ips
+    if message:
+        out["status"]["message"] = message
+    if error:
+        out["status"]["error"] = error
+    print(json.dumps(out, sort_keys=True, separators=(",", ":")))
+
+
+def run_json(argv):
+    proc = subprocess.run(argv, check=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if proc.stdout.strip() == "":
+        return {}
+    return json.loads(proc.stdout)
+
+
+def opt_region(argv, region):
+    if region:
+        argv.extend(["--region", region])
+    return argv
+
+
+def aws_cli(region, args):
+    argv = ["aws"]
+    argv.extend(opt_region([], region))
+    argv.extend(args)
+    argv.extend(["--output", "json", "--no-cli-pager"])
+    return run_json(argv)
+
+
+def http_text(url, headers=None, method="GET", data=None, timeout=1.0):
+    req = urllib.request.Request(url, data=data, method=method, headers=headers or {})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return resp.read().decode("utf-8")
+
+
+def local_ipv4s():
+    configured = os.environ.get("ROUTERD_PROVIDER_INVENTORY_LOCAL_IPS", "").strip()
+    if configured:
+        return sorted(set([item.strip() for item in configured.replace(",", " ").split() if item.strip()]))
+    try:
+        doc = run_json(["ip", "-j", "-4", "addr", "show", "scope", "global"])
+    except Exception:
+        return []
+    out = []
+    for link in doc or []:
+        for rec in link.get("addr_info") or []:
+            address = rec.get("local", "")
+            if address and not address.startswith("127."):
+                out.append(address)
+    return sorted(set(out))
+
+
+def aws_imds_ipv4():
+    headers = {}
+    try:
+        token = http_text(
+            "http://169.254.169.254/latest/api/token",
+            headers={"X-aws-ec2-metadata-token-ttl-seconds": "60"},
+            method="PUT",
+            timeout=1.0,
+        ).strip()
+        if token:
+            headers["X-aws-ec2-metadata-token"] = token
+    except Exception:
+        pass
+    try:
+        return http_text("http://169.254.169.254/latest/meta-data/local-ipv4", headers=headers, timeout=1.0).strip()
+    except Exception:
+        return ""
+
+
+def azure_imds_ipv4s():
+    try:
+        doc = json.loads(http_text(
+            "http://169.254.169.254/metadata/instance/network/interface?api-version=2021-02-01",
+            headers={"Metadata": "true"},
+            timeout=1.0,
+        ))
+    except Exception:
+        return []
+    out = []
+    for iface in doc.get("interface") or []:
+        for rec in ((iface.get("ipv4") or {}).get("ipAddress") or []):
+            address = rec.get("privateIpAddress", "")
+            if address:
+                out.append(address)
+    return sorted(set(out))
+
+
+def oci_imds_vnic_id():
+    headers = {"Authorization": "Bearer Oracle"}
+    for url in (
+        "http://169.254.169.254/opc/v2/vnics/",
+        "http://169.254.169.254/opc/v1/vnics/",
+    ):
+        try:
+            doc = json.loads(http_text(url, headers=headers, timeout=1.0))
+        except Exception:
+            continue
+        if isinstance(doc, list) and doc:
+            vnic_id = doc[0].get("vnicId") or doc[0].get("id") or ""
+            if vnic_id:
+                return vnic_id
+    return ""
+
+
+def az_cli(args):
+    argv = ["az"]
+    argv.extend(args)
+    argv.extend(["--output", "json"])
+    return run_json(argv)
+
+
+def oci_base(region):
+    argv = ["oci"]
+    config_file = os.environ.get("OCI_CONFIG_FILE", "").strip()
+    profile = os.environ.get("OCI_PROFILE", "").strip()
+    auth = os.environ.get("OCI_AUTH_MODE", "").strip()
+    if config_file:
+        argv.extend(["--config-file", config_file])
+    if profile:
+        argv.extend(["--profile", profile])
+    if region:
+        argv.extend(["--region", region])
+    if auth:
+        argv.extend(["--auth", auth])
+    return argv
+
+
+def oci_cli(region, args):
+    argv = oci_base(region)
+    argv.extend(args)
+    argv.extend(["--output", "json"])
+    return run_json(argv)
+
+
+def aws_inventory(spec):
+    target = spec.get("target") or {}
+    region = target.get("region") or os.environ.get("AWS_DEFAULT_REGION", "")
+    self_nic = spec.get("selfNicRef", "").strip()
+    subnet = (spec.get("subnetRef") or "").strip()
+    self_private_ips = []
+    self_forwarding_enabled = None
+    if not self_nic:
+        local_ips = local_ipv4s() or [ip for ip in [aws_imds_ipv4()] if ip]
+        if not local_ips:
+            raise ValueError("AWS selfNicRef is empty and no local private IP could be discovered")
+        self_doc = aws_cli(region, ["ec2", "describe-network-interfaces", "--filters", "Name=addresses.private-ip-address,Values=" + ",".join(local_ips)])
+        interfaces = self_doc.get("NetworkInterfaces") or []
+        if subnet:
+            interfaces = [nic for nic in interfaces if nic.get("SubnetId") == subnet]
+        if not interfaces:
+            raise ValueError("AWS self network interface could not be resolved from local IPs")
+        interfaces.sort(key=lambda nic: nic.get("NetworkInterfaceId", ""))
+        self_nic = interfaces[0].get("NetworkInterfaceId", "")
+        subnet = subnet or interfaces[0].get("SubnetId", "")
+        self_private_ips = [rec.get("PrivateIpAddress", "") for rec in interfaces[0].get("PrivateIpAddresses") or [] if rec.get("PrivateIpAddress")]
+        if "SourceDestCheck" in interfaces[0]:
+            self_forwarding_enabled = not bool(interfaces[0].get("SourceDestCheck"))
+    if not subnet or not self_private_ips or self_forwarding_enabled is None:
+        self_doc = aws_cli(region, ["ec2", "describe-network-interfaces", "--network-interface-ids", self_nic])
+        interfaces = self_doc.get("NetworkInterfaces") or []
+        if not interfaces:
+            raise ValueError("AWS self network interface was not found")
+        subnet = subnet or interfaces[0].get("SubnetId", "")
+        self_private_ips = self_private_ips or [rec.get("PrivateIpAddress", "") for rec in interfaces[0].get("PrivateIpAddresses") or [] if rec.get("PrivateIpAddress")]
+        if "SourceDestCheck" in interfaces[0]:
+            self_forwarding_enabled = not bool(interfaces[0].get("SourceDestCheck"))
+    if not subnet:
+        raise ValueError("AWS subnetRef could not be inferred from self NIC")
+    doc = aws_cli(region, ["ec2", "describe-network-interfaces", "--filters", "Name=subnet-id,Values=" + subnet])
+    ips = []
+    for nic in doc.get("NetworkInterfaces") or []:
+        nic_ref = nic.get("NetworkInterfaceId", "")
+        subnet_ref = nic.get("SubnetId", subnet)
+        tags = {item.get("Key", ""): item.get("Value", "") for item in nic.get("TagSet") or [] if item.get("Key")}
+        for rec in nic.get("PrivateIpAddresses") or []:
+            address = rec.get("PrivateIpAddress", "")
+            if not address:
+                continue
+            ips.append({
+                "address": address,
+                "nicRef": nic_ref,
+                "subnetRef": subnet_ref,
+                "primary": bool(rec.get("Primary")),
+                "tags": tags,
+            })
+    self_info = {"nicRef": self_nic, "subnetRef": subnet, "privateIPs": sorted(set(self_private_ips))}
+    if self_forwarding_enabled is not None:
+        self_info["forwardingEnabled"] = bool(self_forwarding_enabled)
+    return self_info, ips
+
+
+def azure_inventory(spec):
+    target = spec.get("target") or {}
+    self_nic = spec.get("selfNicRef", "").strip()
+    resource_group = target.get("resourceGroup", "").strip()
+    subnet = (spec.get("subnetRef") or "").strip()
+    if not resource_group:
+        if self_nic:
+            self_doc = az_cli(["network", "nic", "show", "--ids", self_nic])
+            resource_group = self_doc.get("resourceGroup", "")
+        if not resource_group:
+            raise ValueError("Azure resourceGroup is required for segment inventory")
+    nics = az_cli(["network", "nic", "list", "--resource-group", resource_group])
+    self_doc = {}
+    self_forwarding_enabled = None
+    local_ips = local_ipv4s() or azure_imds_ipv4s()
+    if self_nic:
+        self_doc = az_cli(["network", "nic", "show", "--ids", self_nic])
+    else:
+        for nic in nics or []:
+            for cfg in nic.get("ipConfigurations") or []:
+                address = cfg.get("privateIPAddress") or cfg.get("privateIpAddress") or ""
+                if address in local_ips:
+                    self_doc = nic
+                    self_nic = nic.get("id", "")
+                    break
+            if self_nic:
+                break
+    if not self_nic:
+        raise ValueError("Azure self NIC could not be resolved from local IPs")
+    if "enableIPForwarding" in self_doc:
+        self_forwarding_enabled = bool(self_doc.get("enableIPForwarding"))
+    if not subnet:
+        configs = self_doc.get("ipConfigurations") or []
+        if configs:
+            subnet = ((configs[0].get("subnet") or {}).get("id") or "")
+    if not subnet:
+        raise ValueError("Azure subnetRef could not be inferred from self NIC")
+    self_private_ips = []
+    for cfg in self_doc.get("ipConfigurations") or []:
+        address = cfg.get("privateIPAddress") or cfg.get("privateIpAddress") or ""
+        if address:
+            self_private_ips.append(address)
+    ips = []
+    for nic in nics or []:
+        nic_ref = nic.get("id", "")
+        tags = nic.get("tags") or {}
+        for cfg in nic.get("ipConfigurations") or []:
+            subnet_ref = ((cfg.get("subnet") or {}).get("id") or "")
+            if subnet_ref != subnet:
+                continue
+            address = cfg.get("privateIPAddress") or cfg.get("privateIpAddress") or ""
+            if not address:
+                continue
+            ips.append({
+                "address": address,
+                "nicRef": nic_ref,
+                "subnetRef": subnet_ref,
+                "primary": bool(cfg.get("primary")),
+                "tags": tags,
+            })
+    self_info = {"nicRef": self_nic, "subnetRef": subnet, "privateIPs": sorted(set(self_private_ips))}
+    if self_forwarding_enabled is not None:
+        self_info["forwardingEnabled"] = bool(self_forwarding_enabled)
+    return self_info, ips
+
+
+def flatten_oci_tags(rec):
+    tags = {}
+    for key, value in (rec.get("freeform-tags") or {}).items():
+        tags[str(key)] = str(value)
+    for namespace, values in (rec.get("defined-tags") or {}).items():
+        if isinstance(values, dict):
+            for key, value in values.items():
+                tags[str(namespace) + "." + str(key)] = str(value)
+    return tags
+
+
+def oci_inventory(spec):
+    target = spec.get("target") or {}
+    region = target.get("region") or os.environ.get("OCI_REGION", "")
+    self_nic = spec.get("selfNicRef", "").strip()
+    subnet = (spec.get("subnetRef") or "").strip()
+    if not self_nic:
+        self_nic = (os.environ.get("ROUTERD_PROVIDER_INVENTORY_SELF_NIC_REF", "").strip()
+                    or os.environ.get("OCI_SELF_VNIC_REF", "").strip())
+    if not self_nic:
+        self_nic = oci_imds_vnic_id()
+    if not self_nic:
+        raise ValueError("OCI self VNIC could not be resolved from IMDS")
+    self_private_ips = []
+    self_doc = oci_cli(region, ["network", "vnic", "get", "--vnic-id", self_nic])
+    self_data = self_doc.get("data") or {}
+    if not subnet:
+        subnet = (self_data.get("subnet-id") or "")
+    if not subnet:
+        raise ValueError("OCI subnetRef could not be inferred from self VNIC")
+    doc = oci_cli(region, ["network", "private-ip", "list", "--subnet-id", subnet, "--all"])
+    ips = []
+    for rec in doc.get("data") or []:
+        address = rec.get("ip-address", "")
+        if not address:
+            continue
+        if rec.get("vnic-id", "") == self_nic:
+            self_private_ips.append(address)
+        ips.append({
+            "address": address,
+            "nicRef": rec.get("vnic-id", ""),
+            "subnetRef": rec.get("subnet-id", subnet),
+            "primary": bool(rec.get("is-primary")),
+            "tags": flatten_oci_tags(rec),
+        })
+    self_info = {"nicRef": self_nic, "subnetRef": subnet, "privateIPs": sorted(set(self_private_ips))}
+    if "skip-source-dest-check" in self_data:
+        self_info["forwardingEnabled"] = bool(self_data.get("skip-source-dest-check"))
+    return self_info, ips
+
+
+def main():
+    req = json.load(sys.stdin)
+    spec = req.get("spec") or {}
+    provider = (spec.get("provider") or "").strip().lower()
+    if provider == "aws":
+        self_info, ips = aws_inventory(spec)
+    elif provider == "azure":
+        self_info, ips = azure_inventory(spec)
+    elif provider == "oci":
+        self_info, ips = oci_inventory(spec)
+    else:
+        result("skipped", message="unsupported provider: " + provider)
+        return
+    result("succeeded", ips=ips, self_info=self_info)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except subprocess.CalledProcessError as exc:
+        stderr = (exc.stderr or "").strip()
+        result("failed", error="provider CLI failed: " + (stderr or str(exc)))
+    except Exception as exc:
+        result("failed", error=str(exc))

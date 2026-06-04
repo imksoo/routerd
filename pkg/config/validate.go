@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/mobilityconfig"
 	"github.com/imksoo/routerd/pkg/platform"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
@@ -133,6 +134,12 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 			kind, name, _ := strings.Cut(strings.TrimSpace(spec.RouterRef), "/")
 			if kind != "BGPRouter" || !idx.BGPRouters[name] {
 				return fmt.Errorf("%s spec.routerRef references missing BGPRouter %q", res.ID(), spec.RouterRef)
+			}
+			if spec.RouteReflectorClient {
+				routerSpec := idx.BGPRouterSpecs[name]
+				if routerSpec.ASN != spec.PeerASN {
+					return fmt.Errorf("%s spec.routeReflectorClient requires iBGP peerASN matching %s spec.asn", res.ID(), spec.RouterRef)
+				}
 			}
 			if strings.TrimSpace(spec.BFD) != "" {
 				refKind, refName, ok := strings.Cut(strings.TrimSpace(spec.BFD), "/")
@@ -387,7 +394,7 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 				return err
 			}
 			switch spec.Underlay.Type {
-			case "ipip", "gre":
+			case "ipip", "gre", "fou", "gue":
 				if !idx.TunnelInterfaces[spec.Underlay.Interface] {
 					return fmt.Errorf("%s spec.underlay.interface references missing TunnelInterface %q", res.ID(), spec.Underlay.Interface)
 				}
@@ -443,7 +450,18 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 			if err != nil {
 				return err
 			}
-			for i, member := range spec.Members {
+			selfNode := mobilitySelfNode(router, spec.GroupRef)
+			normalized, _, err := mobilityconfig.NormalizeMobilityPool(spec, selfNode)
+			if err != nil {
+				return fmt.Errorf("%s %w", res.ID(), err)
+			}
+			if err := validateMobilitySelfMemberCompleteness(res, normalized, selfNode); err != nil {
+				return err
+			}
+			for i, member := range normalized.Members {
+				if selfNode != "" && strings.TrimSpace(member.NodeRef) != selfNode {
+					continue
+				}
 				if ref := captureActiveWhenVirtualAddressRef(member.Capture.ActiveWhen); ref != "" {
 					if _, ok := idx.VirtualAddresses[ref]; !ok {
 						return fmt.Errorf("%s spec.members[%d].capture.activeWhen.virtualAddressRef references missing VirtualAddress %q", res.ID(), i, ref)
@@ -658,6 +676,41 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 func captureActiveWhenVirtualAddressRef(activeWhen api.CaptureActiveWhen) string {
 	ref := strings.TrimSpace(activeWhen.VirtualAddressRef)
 	return strings.TrimPrefix(ref, "VirtualAddress/")
+}
+
+func validateMobilitySelfMemberCompleteness(res api.Resource, spec api.MobilityPoolSpec, selfNode string) error {
+	selfNode = strings.TrimSpace(selfNode)
+	if selfNode == "" || effectiveMobilityDeliveryMode(spec) != "bgp" {
+		return nil
+	}
+	for i, member := range spec.Members {
+		if strings.TrimSpace(member.NodeRef) != selfNode {
+			continue
+		}
+		if strings.TrimSpace(member.Role) == "cloud" && strings.TrimSpace(member.Capture.Type) == "" {
+			return fmt.Errorf("%s spec.members[%d] is the local cloud member %q and must resolve provider-secondary-ip capture details from capture or profileRef", res.ID(), i, selfNode)
+		}
+		return nil
+	}
+	return nil
+}
+
+func mobilitySelfNode(router *api.Router, groupRef string) string {
+	groupRef = strings.TrimSpace(groupRef)
+	if router == nil || groupRef == "" {
+		return ""
+	}
+	for _, res := range router.Spec.Resources {
+		if res.APIVersion != api.FederationAPIVersion || res.Kind != "EventGroup" || res.Metadata.Name != groupRef {
+			continue
+		}
+		spec, err := res.EventGroupSpec()
+		if err != nil {
+			return ""
+		}
+		return strings.TrimSpace(spec.NodeName)
+	}
+	return ""
 }
 
 func isExternalIPv6PDClient(client string) bool {

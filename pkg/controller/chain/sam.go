@@ -17,6 +17,7 @@ import (
 )
 
 type samProxyNeighborApplier interface {
+	SetProxyARP(ctx context.Context, ifname string, enabled bool) error
 	EnsureProxyNeighbor(ctx context.Context, address, ifname string) error
 	DeleteProxyNeighbor(ctx context.Context, address, ifname string) error
 	EnsureOSAddressAbsent(ctx context.Context, address string) (samOSAddressDeassignResult, error)
@@ -69,7 +70,7 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 		targetOS = platform.CurrentOS()
 	}
 	if targetOS != platform.OSLinux {
-		return c.reconcileStatuses(targetOS, nil)
+		return c.reconcileStatuses(targetOS, nil, nil)
 	}
 	statuses, err := c.listObjectStatuses()
 	if err != nil {
@@ -85,8 +86,12 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 	if err := c.cleanupChangedCaptures(ctx, statuses, actions); err != nil {
 		return err
 	}
+	if err := c.reconcileProxyARPInterfaces(ctx, actions); err != nil {
+		return err
+	}
 	var failures []string
 	deassignResults := map[string]samOSAddressDeassignResult{}
+	garpSent := map[string]bool{}
 	priorNeighbors := samStoredProxyNeighbors(statuses)
 	for _, action := range actions {
 		switch action.Kind {
@@ -110,6 +115,8 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 				}
 				if err := announcer.SendGratuitousARP(ctx, action.Address, action.Interface); err != nil {
 					failures = append(failures, fmt.Sprintf("%s gratuitous ARP %s dev %s: %v", action.ClaimName, action.Address, action.Interface, err))
+				} else {
+					garpSent[action.ClaimName] = true
 				}
 			}
 		case "deassign-os-address":
@@ -134,7 +141,7 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 			continue
 		}
 	}
-	if err := c.reconcileStatuses(targetOS, deassignResults); err != nil {
+	if err := c.reconcileStatuses(targetOS, deassignResults, garpSent); err != nil {
 		return err
 	}
 	if len(failures) > 0 {
@@ -143,16 +150,59 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 	return nil
 }
 
-func (c SAMController) reconcileStatuses(targetOS platform.OS, deassignResults map[string]samOSAddressDeassignResult) error {
+func (c SAMController) reconcileProxyARPInterfaces(ctx context.Context, actions []sam.CaptureAction) error {
+	if c.DryRun {
+		return nil
+	}
+	all := map[string]bool{}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion != api.HybridAPIVersion || resource.Kind != "RemoteAddressClaim" {
+			continue
+		}
+		spec, err := resource.RemoteAddressClaimSpec()
+		if err != nil || strings.TrimSpace(spec.Capture.Type) != "proxy-arp" {
+			continue
+		}
+		if iface := strings.TrimSpace(spec.Capture.Interface); iface != "" {
+			all[iface] = true
+		}
+	}
+	if len(all) == 0 {
+		return nil
+	}
+	active := map[string]bool{}
+	for _, action := range actions {
+		if action.Kind == "sysctl" && strings.HasSuffix(action.Key, ".proxy_arp") && action.Value == "1" && strings.TrimSpace(action.Interface) != "" {
+			active[strings.TrimSpace(action.Interface)] = true
+		}
+	}
+	applier := c.Applier
+	if applier == nil {
+		applier = defaultSAMProxyNeighborApplier()
+	}
+	for iface := range all {
+		if err := applier.SetProxyARP(ctx, iface, active[iface]); err != nil {
+			return fmt.Errorf("set SAM proxy_arp %s=%t: %w", iface, active[iface], err)
+		}
+	}
+	return nil
+}
+
+func (c SAMController) reconcileStatuses(targetOS platform.OS, deassignResults map[string]samOSAddressDeassignResult, garpSent map[string]bool) error {
 	claims := samSelectResources(c.Router.Spec.Resources, "RemoteAddressClaim")
 	for _, claim := range claims {
 		status := sam.StatusForRemoteAddressClaim(claim, c.Lowerings, c.Store, targetOS)
 		status["dryRun"] = c.DryRun
 		if targetOS == platform.OSLinux {
 			if spec, err := claim.RemoteAddressClaimSpec(); err == nil && strings.TrimSpace(spec.Capture.Type) == "proxy-arp" {
-				status["captureProxyNeighbor"] = map[string]any{
-					"address":   strings.TrimSpace(spec.Address),
-					"interface": strings.TrimSpace(spec.Capture.Interface),
+				if status["captureStatus"] == sam.CaptureStatusCaptured {
+					status["captureProxyNeighbor"] = map[string]any{
+						"address":   strings.TrimSpace(spec.Address),
+						"interface": strings.TrimSpace(spec.Capture.Interface),
+					}
+					if garpSent[claim.Metadata.Name] {
+						status["lastGARPSent"] = true
+					}
 				}
 			} else if err == nil && strings.TrimSpace(spec.Capture.Type) == "provider-secondary-ip" && !spec.Capture.ConfigureOSAddress {
 				result := deassignResults[claim.Metadata.Name]

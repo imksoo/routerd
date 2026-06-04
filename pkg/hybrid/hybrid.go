@@ -20,8 +20,12 @@ const (
 	IPIPOverheadBytes      = 20
 	GREOverheadBytes       = 24
 	GREKeyOverheadBytes    = 4
+	FOUOverheadBytes       = 28
+	GUEOverheadBytes       = 32
 	TunnelIPIPDefaultMTU   = 1480
 	TunnelGREDefaultMTU    = 1476
+	TunnelFOUDefaultMTU    = 1472
+	TunnelGUEDefaultMTU    = 1468
 	MinimumIPv6MTU         = 1280
 )
 
@@ -238,7 +242,7 @@ func RouteTarget(peer api.OverlayPeerSpec) (string, string, error) {
 		return "", "", fmt.Errorf("spec.underlay.interface is required to lower HybridRoute to IPv4Route")
 	}
 	switch strings.TrimSpace(peer.Underlay.Type) {
-	case "wireguard", "route", "tailscale", "ipip", "gre":
+	case "wireguard", "route", "tailscale", "ipip", "gre", "fou", "gue":
 		return device, "", nil
 	case "ipsec":
 		gateway := ""
@@ -354,6 +358,10 @@ func tunnelInterfaceMTU(spec api.TunnelInterfaceSpec) int {
 		return TunnelIPIPDefaultMTU
 	case "gre":
 		return TunnelGREDefaultMTU
+	case "fou":
+		return TunnelFOUDefaultMTU
+	case "gue":
+		return TunnelGUEDefaultMTU
 	default:
 		return 0
 	}
@@ -394,6 +402,10 @@ func overheadFor(underlayType string) int {
 		return IPIPOverheadBytes
 	case "gre":
 		return GREOverheadBytes
+	case "fou":
+		return FOUOverheadBytes
+	case "gue":
+		return GUEOverheadBytes
 	default:
 		return 0
 	}

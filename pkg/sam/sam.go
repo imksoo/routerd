@@ -16,18 +16,27 @@ import (
 
 const DeliveryRouteMetricDefault = 120
 
+const DeliveryPreferredSourceAnnotation = "mobility.routerd.net/delivery-preferred-source"
+
+const (
+	CaptureStatusCaptured = "Captured"
+	CaptureStatusStandby  = "Standby"
+	CaptureStatusBlocked  = "Blocked"
+)
+
 type DeliveryLowering struct {
-	ClaimName      string
-	AddressCIDR    string
-	IPv4RouteName  string
-	Device         string
-	Metric         int
-	OwnerSide      string
-	CaptureType    string
-	DeliveryPeer   string
-	DeliveryMode   string
-	CaptureIface   string
-	CaptureMessage string
+	ClaimName       string
+	AddressCIDR     string
+	IPv4RouteName   string
+	Device          string
+	PreferredSource string
+	Metric          int
+	OwnerSide       string
+	CaptureType     string
+	DeliveryPeer    string
+	DeliveryMode    string
+	CaptureIface    string
+	CaptureMessage  string
 }
 
 type CaptureAction struct {
@@ -109,6 +118,9 @@ func ExpandRemoteAddressClaimRoutesWithOptions(router api.Router, opts PlanOptio
 		if gate := EvaluateCaptureGate(spec.Capture, opts.StatusReader); !gate.Active {
 			continue
 		}
+		if strings.TrimSpace(spec.Delivery.Mode) == "bgp" {
+			continue
+		}
 		if existing := userRouteDestinations[cidr]; existing != "" {
 			return router, nil, fmt.Errorf("%s destination %s collides with user IPv4Route/%s", resource.ID(), cidr, existing)
 		}
@@ -133,6 +145,7 @@ func ExpandRemoteAddressClaimRoutesWithOptions(router api.Router, opts PlanOptio
 			device = resolvedDevice
 		}
 		syntheticNames[name] = true
+		preferredSource := strings.TrimSpace(resource.Metadata.Annotations[DeliveryPreferredSourceAnnotation])
 		route := api.Resource{
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4Route"},
 			Metadata: api.ObjectMeta{
@@ -144,24 +157,26 @@ func ExpandRemoteAddressClaimRoutesWithOptions(router api.Router, opts PlanOptio
 				}},
 			},
 			Spec: api.IPv4RouteSpec{
-				Destination: cidr,
-				Type:        "unicast",
-				Device:      device,
-				Metric:      DeliveryRouteMetricDefault,
+				Destination:     cidr,
+				Type:            "unicast",
+				Device:          device,
+				PreferredSource: preferredSource,
+				Metric:          DeliveryRouteMetricDefault,
 			},
 		}
 		out.Spec.Resources = append(out.Spec.Resources, route)
 		lowerings = append(lowerings, DeliveryLowering{
-			ClaimName:     resource.Metadata.Name,
-			AddressCIDR:   cidr,
-			IPv4RouteName: name,
-			Device:        device,
-			Metric:        DeliveryRouteMetricDefault,
-			OwnerSide:     strings.TrimSpace(spec.OwnerSide),
-			CaptureType:   strings.TrimSpace(spec.Capture.Type),
-			DeliveryPeer:  peerName,
-			DeliveryMode:  strings.TrimSpace(spec.Delivery.Mode),
-			CaptureIface:  strings.TrimSpace(spec.Capture.Interface),
+			ClaimName:       resource.Metadata.Name,
+			AddressCIDR:     cidr,
+			IPv4RouteName:   name,
+			Device:          device,
+			PreferredSource: preferredSource,
+			Metric:          DeliveryRouteMetricDefault,
+			OwnerSide:       strings.TrimSpace(spec.OwnerSide),
+			CaptureType:     strings.TrimSpace(spec.Capture.Type),
+			DeliveryPeer:    peerName,
+			DeliveryMode:    strings.TrimSpace(spec.Delivery.Mode),
+			CaptureIface:    strings.TrimSpace(spec.Capture.Interface),
 		})
 	}
 	return out, lowerings, nil
@@ -279,6 +294,9 @@ func ProxyARPInterfaces(router *api.Router) []string {
 		if err != nil || strings.TrimSpace(spec.Capture.Type) != "proxy-arp" {
 			continue
 		}
+		if strings.TrimSpace(spec.Capture.ActiveWhen.Type) != "" || strings.TrimSpace(spec.Capture.ActiveWhen.VirtualAddressRef) != "" {
+			continue
+		}
 		if iface := strings.TrimSpace(spec.Capture.Interface); iface != "" {
 			interfaces[iface] = true
 		}
@@ -293,7 +311,7 @@ func DeliveryRouteName(claimName string) string {
 func StatusForRemoteAddressClaim(resource api.Resource, lowerings []DeliveryLowering, store StatusReader, targetOS platform.OS) map[string]any {
 	spec, err := resource.RemoteAddressClaimSpec()
 	if err != nil {
-		return map[string]any{"phase": "Degraded", "reason": "SpecInvalid", "message": err.Error()}
+		return map[string]any{"phase": "Degraded", "reason": "SpecInvalid", "message": err.Error(), "captureStatus": CaptureStatusBlocked}
 	}
 	status := map[string]any{
 		"phase":        "Ready",
@@ -308,6 +326,7 @@ func StatusForRemoteAddressClaim(resource api.Resource, lowerings []DeliveryLowe
 		status["phase"] = "Degraded"
 		status["reason"] = "CaptureUnsupported"
 		status["message"] = "SAM capture not implemented on this OS"
+		status["captureStatus"] = CaptureStatusBlocked
 		return status
 	}
 	if gate := EvaluateCaptureGate(spec.Capture, store); !gate.Active {
@@ -315,25 +334,42 @@ func StatusForRemoteAddressClaim(resource api.Resource, lowerings []DeliveryLowe
 		status["reason"] = gate.Reason
 		status["message"] = gate.Message
 		status["captureActive"] = false
+		status["captureStatus"] = captureStatusForInactiveGate(gate)
 		status["activeWhenType"] = gate.Type
 		status["activeWhenVirtualAddressRef"] = gate.VirtualAddressRef
 		status["activeWhenVirtualAddressRole"] = gate.VirtualAddressRole
 		return status
 	} else if gate.Type != "" || gate.VirtualAddressRef != "" {
 		status["captureActive"] = true
+		status["captureStatus"] = CaptureStatusCaptured
 		status["activeWhenType"] = gate.Type
 		status["activeWhenVirtualAddressRef"] = gate.VirtualAddressRef
 		status["activeWhenVirtualAddressRole"] = gate.VirtualAddressRole
+	}
+	if strings.TrimSpace(spec.Delivery.Mode) == "bgp" {
+		if strings.TrimSpace(spec.Capture.Interface) != "" {
+			status["captureInterface"] = strings.TrimSpace(spec.Capture.Interface)
+		}
+		if strings.TrimSpace(spec.Capture.Type) == "proxy-arp" {
+			if _, exists := status["captureStatus"]; !exists {
+				status["captureStatus"] = CaptureStatusCaptured
+			}
+		}
+		return status
 	}
 	lowering, ok := deliveryLoweringForClaim(resource.Metadata.Name, lowerings)
 	if !ok {
 		status["phase"] = "Degraded"
 		status["reason"] = "RouteNotLowered"
 		status["message"] = "delivery route was not lowered to an IPv4Route"
+		status["captureStatus"] = CaptureStatusBlocked
 		return status
 	}
 	status["deliveryRouteName"] = lowering.IPv4RouteName
 	status["deliveryDevice"] = lowering.Device
+	if strings.TrimSpace(lowering.PreferredSource) != "" {
+		status["deliveryPreferredSource"] = strings.TrimSpace(lowering.PreferredSource)
+	}
 	status["deliveryMetric"] = lowering.Metric
 	if strings.TrimSpace(spec.Capture.Interface) != "" {
 		status["captureInterface"] = strings.TrimSpace(spec.Capture.Interface)
@@ -346,10 +382,27 @@ func StatusForRemoteAddressClaim(resource api.Resource, lowerings []DeliveryLowe
 				status["phase"] = "Degraded"
 				status["reason"] = "RouteNotInstalled"
 				status["message"] = "lowered delivery route is not installed"
+				status["captureStatus"] = CaptureStatusBlocked
 			}
 		}
 	}
+	if strings.TrimSpace(spec.Capture.Type) == "proxy-arp" {
+		if _, exists := status["captureStatus"]; !exists {
+			status["captureStatus"] = CaptureStatusCaptured
+		}
+	}
 	return status
+}
+
+func captureStatusForInactiveGate(gate CaptureGateStatus) string {
+	if gate.Type != "vrrp-master" || gate.VirtualAddressRef == "" {
+		return CaptureStatusBlocked
+	}
+	role := strings.TrimSpace(gate.VirtualAddressRole)
+	if role == "" {
+		return CaptureStatusBlocked
+	}
+	return CaptureStatusStandby
 }
 
 func StatusForAddressMobilityDomain(domain api.Resource, claims []api.Resource, store StatusReader) map[string]any {

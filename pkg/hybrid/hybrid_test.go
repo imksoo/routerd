@@ -109,7 +109,7 @@ func TestHybridRouteStatusAndMTUEstimate(t *testing.T) {
 }
 
 func TestRouteTargetSupportsTunnelUnderlays(t *testing.T) {
-	for _, underlayType := range []string{"ipip", "gre"} {
+	for _, underlayType := range []string{"ipip", "gre", "fou", "gue"} {
 		device, gateway, err := RouteTarget(api.OverlayPeerSpec{Underlay: api.OverlayUnderlay{Type: underlayType, Interface: "tun0"}})
 		if err != nil {
 			t.Fatalf("RouteTarget(%s): %v", underlayType, err)
@@ -152,6 +152,22 @@ func TestTunnelUnderlayMTUEstimate(t *testing.T) {
 			wantMTU:       1472,
 			wantOverhead:  GREOverheadBytes + GREKeyOverheadBytes,
 			wantEstimated: 1444,
+		},
+		{
+			name:          "fou default",
+			tunnel:        api.TunnelInterfaceSpec{Mode: "fou", EncapSport: 5555, EncapDport: 5555},
+			underlayType:  "fou",
+			wantMTU:       TunnelFOUDefaultMTU,
+			wantOverhead:  FOUOverheadBytes,
+			wantEstimated: 1444,
+		},
+		{
+			name:          "gue default",
+			tunnel:        api.TunnelInterfaceSpec{Mode: "gue", EncapSport: 6080, EncapDport: 6080},
+			underlayType:  "gue",
+			wantMTU:       TunnelGUEDefaultMTU,
+			wantOverhead:  GUEOverheadBytes,
+			wantEstimated: 1436,
 		},
 	}
 	for _, tt := range tests {

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-package federation
+package federationguard
 
 import (
 	"encoding/json"
@@ -10,10 +10,9 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/federation"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
-
-const ObservedIPv4EventType = "routerd.client.ipv4.observed"
 
 // DynamicConfigPartStore is the narrow read surface needed to reject local
 // observer feedback for addresses this node is already capturing.
@@ -39,8 +38,8 @@ func (e SelfCapturedObservedEventError) Error() string {
 // whose subject/address is currently captured by an active local
 // RemoteAddressClaim. Non-observed events and unparsable/non-IP subjects are
 // left untouched so legitimate federation traffic is not blocked.
-func RejectSelfCapturedObservedEvent(store DynamicConfigPartStore, ev Event, now time.Time) error {
-	if store == nil || strings.TrimSpace(ev.Type) != ObservedIPv4EventType {
+func RejectSelfCapturedObservedEvent(store DynamicConfigPartStore, ev federation.Event, now time.Time) error {
+	if store == nil || strings.TrimSpace(ev.Type) != federation.ObservedIPv4EventType {
 		return nil
 	}
 	addr, ok := eventAddress(ev)
@@ -84,7 +83,7 @@ func RejectSelfCapturedObservedEvent(store DynamicConfigPartStore, ev Event, now
 	return nil
 }
 
-func eventAddress(ev Event) (netip.Addr, bool) {
+func eventAddress(ev federation.Event) (netip.Addr, bool) {
 	if ev.Payload != nil {
 		if addr, ok := parseAddress(ev.Payload["address"]); ok {
 			return addr, true

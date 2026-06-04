@@ -7,12 +7,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
 // errStoreClosed is returned by the federation event store methods once the
 // underlying SQLiteStore has been closed.
 var errStoreClosed = errors.New("state store is closed")
+
+const (
+	mobilityObservedEventType       = "routerd.client.ipv4.observed"
+	mobilityProviderDiscoverySource = "provider-discovery"
+)
 
 // EventRecord is a persisted CloudEdge Event Federation event (ADR 0006). It is
 // stored in the federation_events table, which is distinct from the
@@ -78,7 +84,41 @@ func (s *SQLiteStore) RecordFederationEvent(rec EventRecord) error {
 	if err != nil {
 		return fmt.Errorf("record federation event: %w", err)
 	}
+	if isCompactableProviderDiscoveryObserved(rec) {
+		if _, err := s.compactFederationEventsByTypeAndDedupeLocked(rec.Type, rec.Group, rec.DedupeKey); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+func (s *SQLiteStore) compactFederationEventsByTypeAndDedupeLocked(eventType, group, dedupeKey string) (int64, error) {
+	res, err := s.db.Exec(`
+			DELETE FROM federation_events
+			WHERE type = ?
+			  AND group_name = ?
+			  AND dedupe_key = ?
+			  AND id NOT IN (
+			    SELECT id
+			    FROM federation_events
+			    WHERE type = ?
+			      AND group_name = ?
+			      AND dedupe_key = ?
+			    ORDER BY observed_at DESC, recorded_at DESC, id DESC
+			    LIMIT 1
+			  )
+		`, eventType, group, dedupeKey, eventType, group, dedupeKey)
+	if err != nil {
+		return 0, fmt.Errorf("compact federation events: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
+func isCompactableProviderDiscoveryObserved(rec EventRecord) bool {
+	return rec.Type == mobilityObservedEventType &&
+		strings.TrimSpace(rec.DedupeKey) != "" &&
+		strings.TrimSpace(rec.Payload["source"]) == mobilityProviderDiscoverySource
 }
 
 // ListFederationEvents returns federation events ordered by observed_at. When

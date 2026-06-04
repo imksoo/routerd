@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"reflect"
 	"sort"
+	"strings"
 
 	"github.com/vishvananda/netlink"
 )
@@ -28,12 +29,23 @@ func (s *netlinkFIBSyncer) SyncBGP(_ context.Context, routes []FIBRoute) (FIBSyn
 	if s.installed == nil {
 		s.installed = map[string]FIBRoute{}
 	}
-	result := FIBSyncResult{Installed: map[string]bool{}, Unsupported: map[string]string{}}
+	result := FIBSyncResult{
+		Installed:                    map[string]bool{},
+		Unsupported:                  map[string]string{},
+		PreferredSource:              map[string]string{},
+		PreferredSourceSkipped:       map[string]bool{},
+		PreferredSourceSkippedReason: map[string]string{},
+	}
 	desired := map[string]FIBRoute{}
 	for _, route := range routes {
 		route = normalizeFIBRoute(route)
 		if route.Prefix == "" {
 			continue
+		}
+		if route.PreferredSource != "" && !preferredSourceIsLocal(route.PreferredSource) {
+			result.PreferredSourceSkipped[route.Prefix] = true
+			result.PreferredSourceSkippedReason[route.Prefix] = "LocalAddressMissing"
+			route.PreferredSource = ""
 		}
 		desired[route.Prefix] = route
 	}
@@ -46,6 +58,9 @@ func (s *netlinkFIBSyncer) SyncBGP(_ context.Context, routes []FIBRoute) (FIBSyn
 		route := normalizeFIBRoute(desired[key])
 		if equalFIBRoute(s.installed[key], route) {
 			result.Installed[key] = true
+			if route.PreferredSource != "" {
+				result.PreferredSource[key] = route.PreferredSource
+			}
 			continue
 		}
 		nl, ok := netlinkRoute(route)
@@ -58,6 +73,9 @@ func (s *netlinkFIBSyncer) SyncBGP(_ context.Context, routes []FIBRoute) (FIBSyn
 		}
 		s.installed[key] = route
 		result.Installed[key] = true
+		if route.PreferredSource != "" {
+			result.PreferredSource[key] = route.PreferredSource
+		}
 	}
 	for key, route := range s.installed {
 		if _, ok := desired[key]; ok {
@@ -85,6 +103,9 @@ func netlinkRoute(route FIBRoute) (*netlink.Route, bool) {
 		Protocol: bgpRouteProtocol,
 		Priority: 200,
 	}
+	if source := net.ParseIP(strings.TrimSpace(route.PreferredSource)); source != nil {
+		nl.Src = source
+	}
 	nextHops := normalizeNextHops(route.NextHops)
 	switch len(nextHops) {
 	case 0:
@@ -107,7 +128,43 @@ func netlinkRoute(route FIBRoute) (*netlink.Route, bool) {
 func normalizeFIBRoute(route FIBRoute) FIBRoute {
 	route.Prefix = normalizeRoutePrefix(route.Prefix)
 	route.NextHops = normalizeNextHops(route.NextHops)
+	route.PreferredSource = normalizePreferredSource(route.PreferredSource)
 	return route
+}
+
+func normalizePreferredSource(value string) string {
+	addr, err := netip.ParseAddr(strings.TrimSpace(value))
+	if err != nil || !addr.Is4() {
+		return ""
+	}
+	return addr.String()
+}
+
+func preferredSourceIsLocal(value string) bool {
+	addr, err := netip.ParseAddr(strings.TrimSpace(value))
+	if err != nil || !addr.Is4() {
+		return false
+	}
+	links, err := netlink.LinkList()
+	if err != nil {
+		return false
+	}
+	for _, link := range links {
+		addrs, err := netlink.AddrList(link, netlink.FAMILY_V4)
+		if err != nil {
+			continue
+		}
+		for _, local := range addrs {
+			if local.IP == nil {
+				continue
+			}
+			parsed, ok := netip.AddrFromSlice(local.IP.To4())
+			if ok && parsed == addr {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func normalizeNextHops(values []string) []string {
@@ -132,7 +189,7 @@ func normalizeNextHops(values []string) []string {
 func equalFIBRoute(a, b FIBRoute) bool {
 	a = normalizeFIBRoute(a)
 	b = normalizeFIBRoute(b)
-	return a.Prefix == b.Prefix && reflect.DeepEqual(a.NextHops, b.NextHops)
+	return a.Prefix == b.Prefix && a.PreferredSource == b.PreferredSource && reflect.DeepEqual(a.NextHops, b.NextHops)
 }
 
 func unsupportedFIBReason(prefix string) string {

@@ -267,6 +267,9 @@ func KernelModules(router *api.Router) []string {
 				needed["ipip"] = true
 			case "gre":
 				needed["ip_gre"] = true
+			case "fou", "gue":
+				needed["ipip"] = true
+				needed["fou"] = true
 			}
 		}
 	}

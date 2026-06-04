@@ -16,6 +16,12 @@ import (
 	"time"
 )
 
+const (
+	// ObservedIPv4EventType is the data-plane observation topic used by
+	// CloudEdge Mobility lease projection.
+	ObservedIPv4EventType = "routerd.client.ipv4.observed"
+)
+
 // Event is the external Event Federation envelope exchanged between routerd
 // nodes. It is an observed fact (e.g. "routerd.client.ipv4.observed"), not
 // config and not a command.

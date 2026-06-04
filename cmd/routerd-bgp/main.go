@@ -14,7 +14,9 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -81,7 +83,7 @@ func run(args []string) error {
 	if err := restoreApplied(context.Background(), server, *statePath, logger); err != nil {
 		return err
 	}
-	control, err := serveControlSocket(*controlSocketPath, *statePath)
+	control, err := serveControlSocket(*controlSocketPath, *statePath, server)
 	if err != nil {
 		return err
 	}
@@ -98,7 +100,12 @@ func run(args []string) error {
 	return nil
 }
 
-func serveControlSocket(socketPath, statePath string) (*http.Server, error) {
+type pathServer interface {
+	AddPath(context.Context, *gobgpapi.AddPathRequest) (*gobgpapi.AddPathResponse, error)
+	DeletePath(context.Context, *gobgpapi.DeletePathRequest) error
+}
+
+func serveControlSocket(socketPath, statePath string, paths pathServer) (*http.Server, error) {
 	listener, err := net.Listen("unix", socketPath)
 	if err != nil {
 		return nil, fmt.Errorf("listen control socket: %w", err)
@@ -128,6 +135,57 @@ func serveControlSocket(socketPath, statePath string) (*http.Server, error) {
 				return
 			}
 			writeJSON(w, bgpdaemon.Normalize(config))
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+	mux.HandleFunc("/v1/paths", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			config, _, err := bgpdaemon.ReadApplied(statePath)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			source := strings.TrimSpace(r.URL.Query().Get("source"))
+			out := config.Paths
+			if source != "" {
+				out = nil
+				for _, path := range config.Paths {
+					if path.Source == source {
+						out = append(out, path)
+					}
+				}
+			}
+			writeJSON(w, out)
+		case http.MethodPost:
+			path, err := decodePathRequest(r)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			applied, updated, err := upsertDynamicPath(r.Context(), paths, statePath, path)
+			if err != nil {
+				http.Error(w, err.Error(), httpStatusForPathError(err))
+				return
+			}
+			if updated == nil {
+				writeJSON(w, applied)
+				return
+			}
+			writeJSON(w, updated)
+		case http.MethodDelete:
+			path, err := decodeDeletePathRequest(r)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			config, err := deleteDynamicPath(r.Context(), paths, statePath, path)
+			if err != nil {
+				http.Error(w, err.Error(), httpStatusForPathError(err))
+				return
+			}
+			writeJSON(w, config)
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
@@ -175,20 +233,37 @@ func restoreApplied(ctx context.Context, server *gobgpserver.BgpServer, statePat
 		}
 	}
 	for _, peer := range sortedPeers(applied.Peers) {
-		if err := server.AddPeer(ctx, &gobgpapi.AddPeerRequest{Peer: appliedPeer(peer, applied.Global.ImportPolicy)}); err != nil {
+		if err := server.AddPeer(ctx, &gobgpapi.AddPeerRequest{Peer: appliedPeer(peer, applied.Global)}); err != nil {
 			return fmt.Errorf("restore BGP peer %s: %w", peer.Address, err)
 		}
 	}
-	for _, prefix := range applied.Advertisements {
-		path, err := localPath(prefix)
-		if err != nil {
-			return fmt.Errorf("restore BGP advertisement %s: %w", prefix, err)
-		}
-		if _, err := server.AddPath(ctx, &gobgpapi.AddPathRequest{TableType: gobgpapi.TableType_GLOBAL, Path: path}); err != nil {
-			return fmt.Errorf("restore BGP advertisement %s: %w", prefix, err)
-		}
+	if err := restoreAppliedPaths(ctx, server, &applied); err != nil {
+		return err
 	}
-	logger.Info("restored applied BGP state", "peers", len(applied.Peers), "advertisements", len(applied.Advertisements), "hash", bgpdaemon.Hash(applied))
+	if err := bgpdaemon.WriteApplied(statePath, applied); err != nil {
+		return fmt.Errorf("persist restored BGP path UUIDs: %w", err)
+	}
+	logger.Info("restored applied BGP state", "peers", len(applied.Peers), "paths", len(applied.Paths), "advertisements", len(applied.Advertisements), "hash", bgpdaemon.Hash(applied))
+	return nil
+}
+
+func restoreAppliedPaths(ctx context.Context, server pathServer, applied *bgpdaemon.AppliedConfig) error {
+	if applied == nil {
+		return nil
+	}
+	normalized := bgpdaemon.Normalize(*applied)
+	for i, appliedPath := range normalized.Paths {
+		path, err := pathFromAppliedPath(appliedPath)
+		if err != nil {
+			return fmt.Errorf("restore BGP path %s/%s: %w", appliedPath.Source, appliedPath.Prefix, err)
+		}
+		resp, err := server.AddPath(ctx, &gobgpapi.AddPathRequest{TableType: gobgpapi.TableType_GLOBAL, Path: path})
+		if err != nil {
+			return fmt.Errorf("restore BGP path %s/%s: %w", appliedPath.Source, appliedPath.Prefix, err)
+		}
+		normalized.Paths[i].UUID = bgpdaemon.EncodeUUID(resp.GetUuid())
+	}
+	*applied = bgpdaemon.Normalize(normalized)
 	return nil
 }
 
@@ -217,13 +292,17 @@ func appliedGlobal(global bgpdaemon.AppliedGlobal) *gobgpapi.Global {
 	return out
 }
 
-func appliedPeer(peer bgpdaemon.AppliedPeer, _ bgpdaemon.AppliedImportPolicy) *gobgpapi.Peer {
+func appliedPeer(peer bgpdaemon.AppliedPeer, global bgpdaemon.AppliedGlobal) *gobgpapi.Peer {
+	peerType := gobgpapi.PeerType_EXTERNAL
+	if global.ASN != 0 && peer.ASN == global.ASN {
+		peerType = gobgpapi.PeerType_INTERNAL
+	}
 	out := &gobgpapi.Peer{
 		Conf: &gobgpapi.PeerConf{
 			NeighborAddress: peer.Address,
 			PeerAsn:         peer.ASN,
 			AuthPassword:    peer.Password,
-			Type:            gobgpapi.PeerType_EXTERNAL,
+			Type:            peerType,
 			SendCommunity:   3,
 		},
 		Timers: &gobgpapi.Timers{Config: timers(peer.TimersProfile)},
@@ -237,6 +316,12 @@ func appliedPeer(peer bgpdaemon.AppliedPeer, _ bgpdaemon.AppliedImportPolicy) *g
 	}
 	if peer.EbgpMultihop > 1 {
 		out.EbgpMultihop = &gobgpapi.EbgpMultihop{Enabled: true, MultihopTtl: uint32(peer.EbgpMultihop)}
+	}
+	if peer.RouteReflectorClient {
+		out.RouteReflector = &gobgpapi.RouteReflector{
+			RouteReflectorClient:    true,
+			RouteReflectorClusterId: strings.TrimSpace(peer.RouteReflectorClusterID),
+		}
 	}
 	return out
 }
@@ -347,9 +432,16 @@ func appliedPolicyPrefixes(spec bgpdaemon.AppliedImportPolicy) []*gobgpapi.Prefi
 		}
 		prefix = prefix.Masked()
 		bits := uint32(prefix.Bits())
-		out = append(out, &gobgpapi.Prefix{IpPrefix: prefix.String(), MaskLengthMin: bits, MaskLengthMax: bits})
+		out = append(out, &gobgpapi.Prefix{IpPrefix: prefix.String(), MaskLengthMin: bits, MaskLengthMax: appliedPrefixMaxLength(prefix)})
 	}
 	return out
+}
+
+func appliedPrefixMaxLength(prefix netip.Prefix) uint32 {
+	if prefix.Addr().Is6() {
+		return 128
+	}
+	return 32
 }
 
 func appliedNextHopAction(spec bgpdaemon.AppliedImportPolicy) *gobgpapi.NexthopAction {
@@ -359,8 +451,154 @@ func appliedNextHopAction(spec bgpdaemon.AppliedImportPolicy) *gobgpapi.NexthopA
 	return &gobgpapi.NexthopAction{PeerAddress: true}
 }
 
+func decodePathRequest(r *http.Request) (bgpdaemon.AppliedPath, error) {
+	defer r.Body.Close()
+	var path bgpdaemon.AppliedPath
+	if err := json.NewDecoder(r.Body).Decode(&path); err != nil {
+		return bgpdaemon.AppliedPath{}, err
+	}
+	return validateDynamicMobilityPath(path)
+}
+
+func decodeDeletePathRequest(r *http.Request) (bgpdaemon.AppliedPath, error) {
+	path := bgpdaemon.AppliedPath{
+		Source: strings.TrimSpace(r.URL.Query().Get("source")),
+		Prefix: strings.TrimSpace(r.URL.Query().Get("prefix")),
+	}
+	if path.Source == "" && path.Prefix == "" && r.Body != nil {
+		defer r.Body.Close()
+		_ = json.NewDecoder(r.Body).Decode(&path)
+	}
+	return validateDynamicMobilityPath(path)
+}
+
+func validateDynamicMobilityPath(path bgpdaemon.AppliedPath) (bgpdaemon.AppliedPath, error) {
+	path = bgpdaemon.NormalizeAppliedPath(path)
+	if !bgpdaemon.IsMobilityPathSource(path.Source) {
+		return bgpdaemon.AppliedPath{}, fmt.Errorf("dynamic BGP path source %q is not a MobilityPool source", path.Source)
+	}
+	prefix, err := netip.ParsePrefix(path.Prefix)
+	if err != nil {
+		return bgpdaemon.AppliedPath{}, fmt.Errorf("dynamic BGP path prefix: %w", err)
+	}
+	prefix = prefix.Masked()
+	if !prefix.Addr().Is4() || prefix.Bits() != 32 {
+		return bgpdaemon.AppliedPath{}, fmt.Errorf("dynamic mobility BGP paths must be IPv4 /32, got %s", prefix.String())
+	}
+	path.Prefix = prefix.String()
+	path.Family = bgpdaemon.AppliedPathFamilyIPv4Unicast
+	if err := bgpdaemon.ValidateAppliedPath(path); err != nil {
+		return bgpdaemon.AppliedPath{}, err
+	}
+	return path, nil
+}
+
+func upsertDynamicPath(ctx context.Context, server pathServer, statePath string, path bgpdaemon.AppliedPath) (bgpdaemon.AppliedConfig, *bgpdaemon.AppliedPath, error) {
+	applied, ok, err := bgpdaemon.ReadApplied(statePath)
+	if err != nil {
+		return bgpdaemon.AppliedConfig{}, nil, err
+	}
+	if !ok {
+		return bgpdaemon.AppliedConfig{}, nil, fmt.Errorf("applied BGP config is not initialized")
+	}
+	if err := bgpdaemon.Validate(applied); err != nil {
+		return bgpdaemon.AppliedConfig{}, nil, err
+	}
+	path, err = validateDynamicMobilityPath(path)
+	if err != nil {
+		return bgpdaemon.AppliedConfig{}, nil, err
+	}
+	key := bgpdaemon.AppliedPathKey(path)
+	for i, existing := range applied.Paths {
+		if bgpdaemon.AppliedPathKey(existing) != key {
+			continue
+		}
+		if reflect.DeepEqual(existing.Attrs, path.Attrs) && existing.UUID != "" {
+			return applied, &applied.Paths[i], nil
+		}
+		if uuid, err := bgpdaemon.DecodeUUID(existing.UUID); err == nil && len(uuid) > 0 {
+			if err := server.DeletePath(ctx, &gobgpapi.DeletePathRequest{TableType: gobgpapi.TableType_GLOBAL, Uuid: uuid}); err != nil {
+				return bgpdaemon.AppliedConfig{}, nil, err
+			}
+		}
+		applied.Paths = append(applied.Paths[:i], applied.Paths[i+1:]...)
+		break
+	}
+	reqPath, err := pathFromAppliedPath(path)
+	if err != nil {
+		return bgpdaemon.AppliedConfig{}, nil, err
+	}
+	resp, err := server.AddPath(ctx, &gobgpapi.AddPathRequest{TableType: gobgpapi.TableType_GLOBAL, Path: reqPath})
+	if err != nil {
+		return bgpdaemon.AppliedConfig{}, nil, err
+	}
+	path.UUID = bgpdaemon.EncodeUUID(resp.GetUuid())
+	applied.Paths = append(applied.Paths, path)
+	applied = bgpdaemon.Normalize(applied)
+	if err := bgpdaemon.WriteApplied(statePath, applied); err != nil {
+		return bgpdaemon.AppliedConfig{}, nil, err
+	}
+	for i := range applied.Paths {
+		if bgpdaemon.AppliedPathKey(applied.Paths[i]) == key {
+			return applied, &applied.Paths[i], nil
+		}
+	}
+	return applied, nil, nil
+}
+
+func deleteDynamicPath(ctx context.Context, server pathServer, statePath string, path bgpdaemon.AppliedPath) (bgpdaemon.AppliedConfig, error) {
+	applied, ok, err := bgpdaemon.ReadApplied(statePath)
+	if err != nil {
+		return bgpdaemon.AppliedConfig{}, err
+	}
+	if !ok {
+		return bgpdaemon.AppliedConfig{}, fmt.Errorf("applied BGP config is not initialized")
+	}
+	if err := bgpdaemon.Validate(applied); err != nil {
+		return bgpdaemon.AppliedConfig{}, err
+	}
+	path, err = validateDynamicMobilityPath(path)
+	if err != nil {
+		return bgpdaemon.AppliedConfig{}, err
+	}
+	key := bgpdaemon.AppliedPathKey(path)
+	for i, existing := range applied.Paths {
+		if bgpdaemon.AppliedPathKey(existing) != key {
+			continue
+		}
+		if uuid, err := bgpdaemon.DecodeUUID(existing.UUID); err == nil && len(uuid) > 0 {
+			if err := server.DeletePath(ctx, &gobgpapi.DeletePathRequest{TableType: gobgpapi.TableType_GLOBAL, Uuid: uuid}); err != nil {
+				return bgpdaemon.AppliedConfig{}, err
+			}
+		}
+		applied.Paths = append(applied.Paths[:i], applied.Paths[i+1:]...)
+		applied = bgpdaemon.Normalize(applied)
+		if err := bgpdaemon.WriteApplied(statePath, applied); err != nil {
+			return bgpdaemon.AppliedConfig{}, err
+		}
+		return applied, nil
+	}
+	return applied, nil
+}
+
+func httpStatusForPathError(err error) int {
+	if err == nil {
+		return http.StatusOK
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "not initialized") {
+		return http.StatusConflict
+	}
+	return http.StatusBadRequest
+}
+
 func localPath(prefix string) (*gobgpapi.Path, error) {
-	parsed, err := netip.ParsePrefix(prefix)
+	return pathFromAppliedPath(bgpdaemon.StaticAppliedPath(prefix, nil))
+}
+
+func pathFromAppliedPath(appliedPath bgpdaemon.AppliedPath) (*gobgpapi.Path, error) {
+	appliedPath = bgpdaemon.NormalizeAppliedPath(appliedPath)
+	parsed, err := netip.ParsePrefix(appliedPath.Prefix)
 	if err != nil {
 		return nil, err
 	}
@@ -377,11 +615,72 @@ func localPath(prefix string) (*gobgpapi.Path, error) {
 	if parsed.Addr().Is6() {
 		nextHop = "::"
 	}
+	if appliedPath.Attrs.NextHop != "" {
+		nextHop = appliedPath.Attrs.NextHop
+	}
 	nh, err := anypb.New(&gobgpapi.NextHopAttribute{NextHop: nextHop})
 	if err != nil {
 		return nil, err
 	}
-	return &gobgpapi.Path{Family: familyForPrefix(parsed), Nlri: nlri, Pattrs: []*anypb.Any{origin, nh}}, nil
+	attrs := []*anypb.Any{origin, nh}
+	if appliedPath.Attrs.LocalPref > 0 {
+		localPref, err := anypb.New(&gobgpapi.LocalPrefAttribute{LocalPref: appliedPath.Attrs.LocalPref})
+		if err != nil {
+			return nil, err
+		}
+		attrs = append(attrs, localPref)
+	}
+	if appliedPath.Attrs.MED > 0 {
+		med, err := anypb.New(&gobgpapi.MultiExitDiscAttribute{Med: appliedPath.Attrs.MED})
+		if err != nil {
+			return nil, err
+		}
+		attrs = append(attrs, med)
+	}
+	communities, err := standardCommunities(appliedPath.Attrs.Communities)
+	if err != nil {
+		return nil, err
+	}
+	if len(communities) > 0 {
+		attr, err := anypb.New(&gobgpapi.CommunitiesAttribute{Communities: communities})
+		if err != nil {
+			return nil, err
+		}
+		attrs = append(attrs, attr)
+	}
+	return &gobgpapi.Path{Family: familyForPrefix(parsed), Nlri: nlri, Pattrs: attrs}, nil
+}
+
+func standardCommunities(values []string) ([]uint32, error) {
+	var out []uint32
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if strings.Contains(value, ":") {
+			left, right, ok := strings.Cut(value, ":")
+			if !ok {
+				return nil, fmt.Errorf("invalid standard community %q", value)
+			}
+			hi, err := strconv.ParseUint(strings.TrimSpace(left), 10, 16)
+			if err != nil {
+				return nil, fmt.Errorf("invalid standard community %q: %w", value, err)
+			}
+			lo, err := strconv.ParseUint(strings.TrimSpace(right), 10, 16)
+			if err != nil {
+				return nil, fmt.Errorf("invalid standard community %q: %w", value, err)
+			}
+			out = append(out, uint32(hi)<<16|uint32(lo))
+			continue
+		}
+		community, err := strconv.ParseUint(value, 10, 32)
+		if err != nil {
+			return nil, fmt.Errorf("invalid standard community %q: %w", value, err)
+		}
+		out = append(out, uint32(community))
+	}
+	return out, nil
 }
 
 func familyForPrefix(prefix netip.Prefix) *gobgpapi.Family {

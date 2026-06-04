@@ -31,14 +31,21 @@ func validateHybridResource(res api.Resource, _ platform.OS) (bool, error) {
 			return true, fmt.Errorf("%s spec.nodeID is required", res.ID())
 		}
 		switch strings.TrimSpace(spec.Underlay.Type) {
-		case "wireguard", "tailscale", "ipsec", "route", "ipip", "gre":
+		case "wireguard", "tailscale", "ipsec", "route", "ipip", "gre", "fou", "gue":
 		default:
-			return true, fmt.Errorf("%s spec.underlay.type must be wireguard, tailscale, ipsec, route, ipip, or gre", res.ID())
+			return true, fmt.Errorf("%s spec.underlay.type must be wireguard, tailscale, ipsec, route, ipip, gre, fou, or gue", res.ID())
 		}
 		switch spec.Underlay.Type {
-		case "wireguard", "ipip", "gre":
+		case "wireguard", "ipip", "gre", "fou", "gue":
 			if strings.TrimSpace(spec.Underlay.Interface) == "" {
 				return true, fmt.Errorf("%s spec.underlay.interface is required when spec.underlay.type is %s", res.ID(), spec.Underlay.Type)
+			}
+		}
+		if spec.PathMTU.ForceFragmentIPv4 {
+			switch strings.TrimSpace(spec.Underlay.Type) {
+			case "wireguard", "ipip", "gre", "fou", "gue":
+			default:
+				return true, fmt.Errorf("%s spec.pathMTU.forceFragmentIPv4 is supported only for underlay.type wireguard, ipip, gre, fou, or gue", res.ID())
 			}
 		}
 		if address := strings.TrimSpace(spec.Underlay.Address); address != "" {
@@ -54,10 +61,11 @@ func validateHybridResource(res api.Resource, _ platform.OS) (bool, error) {
 		if err != nil {
 			return true, err
 		}
-		switch strings.TrimSpace(spec.Mode) {
-		case "ipip", "gre":
+		mode := strings.TrimSpace(spec.Mode)
+		switch mode {
+		case "ipip", "gre", "fou", "gue":
 		default:
-			return true, fmt.Errorf("%s spec.mode must be ipip or gre", res.ID())
+			return true, fmt.Errorf("%s spec.mode must be ipip, gre, fou, or gue", res.ID())
 		}
 		if strings.TrimSpace(spec.Local) == "" {
 			return true, fmt.Errorf("%s spec.local is required", res.ID())
@@ -88,11 +96,21 @@ func validateHybridResource(res api.Resource, _ platform.OS) (bool, error) {
 		if strconv.IntSize >= 64 && int64(spec.Key) > 4294967295 {
 			return true, fmt.Errorf("%s spec.key must be <= 4294967295", res.ID())
 		}
-		if spec.Mode != "gre" && spec.Key != 0 {
+		if mode != "gre" && spec.Key != 0 {
 			return true, fmt.Errorf("%s spec.key is only supported when spec.mode is gre", res.ID())
 		}
+		if mode == "fou" || mode == "gue" {
+			if spec.EncapSport < 1 || spec.EncapSport > 65535 {
+				return true, fmt.Errorf("%s spec.encapSport is required and must be within 1-65535 when spec.mode is %s", res.ID(), mode)
+			}
+			if spec.EncapDport < 1 || spec.EncapDport > 65535 {
+				return true, fmt.Errorf("%s spec.encapDport is required and must be within 1-65535 when spec.mode is %s", res.ID(), mode)
+			}
+		} else if spec.EncapSport != 0 || spec.EncapDport != 0 {
+			return true, fmt.Errorf("%s spec.encapSport/spec.encapDport are only supported when spec.mode is fou or gue", res.ID())
+		}
 		if !spec.TrustedUnderlay {
-			return true, fmt.Errorf("%s spec.trustedUnderlay must be true; ipip/gre tunnels are unencrypted and unauthenticated and require a trusted underlay", res.ID())
+			return true, fmt.Errorf("%s spec.trustedUnderlay must be true; ipip/gre/fou/gue tunnels are unencrypted and unauthenticated and require a trusted underlay", res.ID())
 		}
 	case "HybridRoute":
 		if res.APIVersion != api.HybridAPIVersion {

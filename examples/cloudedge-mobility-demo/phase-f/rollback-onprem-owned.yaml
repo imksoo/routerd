@@ -1,0 +1,9 @@
+# Declarative diff for MobilityPool/cloudedge.
+# Restore the steady-state on-prem owner intent and remove staticHandovers.
+spec:
+  members:
+    - nodeRef: onprem-router
+      staticOwnedAddresses:
+        - 10.77.60.10/32
+  staticHandovers: []
+

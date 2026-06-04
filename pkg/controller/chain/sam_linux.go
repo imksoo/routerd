@@ -28,6 +28,19 @@ type commandSAMGratuitousARPAnnouncer struct {
 	Command func(context.Context, string, ...string) ([]byte, error)
 }
 
+func (netlinkSAMProxyNeighborApplier) SetProxyARP(ctx context.Context, ifname string, enabled bool) error {
+	value := "0"
+	if enabled {
+		value = "1"
+	}
+	key := "net.ipv4.conf." + ifname + ".proxy_arp"
+	out, err := exec.CommandContext(ctx, "sysctl", "-w", key+"="+value).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("sysctl -w %s=%s: %w: %s", key, value, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 func (a commandSAMGratuitousARPAnnouncer) SendGratuitousARP(ctx context.Context, address, ifname string) error {
 	ip, _, err := net.ParseCIDR(address)
 	if err != nil {

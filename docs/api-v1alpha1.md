@@ -41,7 +41,7 @@ spec:
 | `system.routerd.net/v1alpha1` | `Hostname`, `Sysctl`, `SysctlProfile`, `Package`, `NTPClient`, `NTPServer`, `LogSink`, `ObservabilityPipeline`, `RouterdCluster`, `LogRetention`, `WebConsole` |
 | `observability.routerd.net/v1alpha1` | `Telemetry` |
 | `plugin.routerd.net/v1alpha1` | plugin manifests |
-| `hybrid.routerd.net/v1alpha1` | `OverlayPeer`, `HybridRoute`, `AddressMobilityDomain`, `CloudProviderProfile`, `RemoteAddressClaim` |
+| `hybrid.routerd.net/v1alpha1` | `TunnelInterface`, `OverlayPeer`, `HybridRoute`, `AddressMobilityDomain`, `CloudProviderProfile`, `RemoteAddressClaim` |
 | `mobility.routerd.net/v1alpha1` | `MobilityPool` |
 
 ## System Bootstrap
@@ -174,9 +174,10 @@ for DoH or DoT endpoint name resolution.
 | Kind | Role |
 | --- | --- |
 | `DSLiteTunnel` | Creates an `ip6tnl` tunnel to an AFTR. The AFTR can be static IPv6, FQDN, or DHCPv6 information. |
+| `TunnelInterface` | Creates a trusted Linux L3 underlay tunnel device for hybrid overlay delivery. `mode` supports `ipip`, `gre`, and IPIP-over-UDP `fou`/`gue`; `fou`/`gue` require `encapSport` and `encapDport`. |
 | `OverlayPeer` | Describes an on-prem or cloud overlay peer and the local underlay used to reach it. |
 | `HybridRoute` | Lowers non-default remote IPv4 prefixes through an `OverlayPeer` into managed `IPv4Route` resources. |
-| `MobilityPool` | Declares the only operator-authored CloudEdge mobility intent: pool prefix, federation group, node-to-site membership, per-member capture/delivery policy, owner-specific `deliveryTo`, non-secret provider `capture.target` hints, and lease policy. routerd derives `AddressLease` runtime state and generated SAM dynamic config from observed federation events. |
+| `MobilityPool` | Declares the only operator-authored CloudEdge mobility intent: pool prefix, federation group, node-to-site membership, BGP delivery policy, optional reusable cloud capture profiles, local value expansion, and provider trap placement. routerd derives BGP `/32` advertisements and provider trap action plans from observed facts and BGP best paths. |
 | `AddressMobilityDomain` | Defines an IPv4 prefix for Selective Address Mobility; full L2 extension is not supported. |
 | `CloudProviderProfile` | Describes provider capabilities and external-command auth for declarative address capture planning. |
 | `RemoteAddressClaim` | Declares one mobile IPv4 `/32`, its capture mechanism, and route delivery over an `OverlayPeer`. |
@@ -185,7 +186,7 @@ for DoH or DoT endpoint name resolution.
 | `ClusterNetworkRoute` | Expands Kubernetes Pod and Service CIDRs into static IPv4 routes through worker next hops. |
 | `BGPRouter` | Declares a local BGP router. The current backend is a long-lived `routerd-bgp` GoBGP daemon with default-deny import policy. |
 | `BGPPeer` | Declares GoBGP-managed BGP peers for a `BGPRouter`, for example Kubernetes BGP speakers. |
-| `BFD` | Declares one BFD session intent. The GoBGP backend reports BFD resources as unsupported until BFD is implemented without FRR. |
+| `BFD` | Declares one BFD session intent. On Linux, routerd renders FRR `bfdd` configuration and records observed BFD state without deconfiguring referenced GoBGP peers. |
 | `NAT44Rule` | Performs IPv4 NAPT in the nftables `routerd_nat` table. |
 | `PortForward` | Publishes one WAN-side IPv4 TCP/UDP port to one internal IPv4 target with DNAT. |
 | `IngressService` | Publishes one WAN-side IPv4 TCP/UDP service. Multiple backends, TCP/HTTP health checks, and `failover`, `sourceHash`, or `random` backend selection are accepted. |
@@ -205,22 +206,34 @@ existing `IPv4Route` controller path instead of installing routes directly.
 
 CloudEdge Mobility keeps the operator-authored surface declarative:
 `MobilityPool` is the high-level intent, federation events are observed facts,
-and `AddressLease` rows are derived runtime state visible through
-`routerctl mobility leases`. The mobility planner derives
-`AddressMobilityDomain` and `RemoteAddressClaim` DynamicConfigPart resources
-from leases; operators should not hand-author per-address leases or capture
-procedures for the mobility control plane.
+and BGP best paths are the mobility ownership/delivery view. The mobility
+planner derives BGP `/32` advertisements and provider trap action plans;
+operators should not hand-author per-address paths or capture procedures for
+the mobility control plane. `AddressMobilityDomain` and `RemoteAddressClaim`
+remain supported as lower-level SAM compatibility Kinds outside the MobilityPool
+BGP path.
 
-`MobilityPool.spec.members[].deliveryTo[]` selects delivery for an owner by
-`nodeRef`, then `site`, then `role`, with `members[].delivery` as fallback.
+`MobilityPool.spec.deliveryPolicy.mode` defaults to `bgp`; route-mode
+MobilityPool planning has been removed from the mobility mainline.
+For CloudEdge Mobility, write the self site completely and keep remote sites
+identity-only: remote members normally need only `nodeRef`, `site`, `role`, and
+optional `placement` / `maintenance`. This is the same shape as BGP peering:
+each node needs to know who the peers are, not the remote provider NICs and
+subnets. `spec.profiles.cloudCaptures` stores reusable self-site cloud capture
+defaults; `spec.values` stores non-secret local identifiers; `capture.targetFrom`
+and `ownershipDiscovery.subnetRefFrom` project those local values into generated
+provider action targets and discovery scope. Explicit member fields override
+profile defaults.
 `members[].capture.target` carries non-secret provider target identifiers into
-generated provider action plans. `capturePolicy.deprovisionHoldDuration`
-optionally delays provider de-provision action plans after a generated cloud
-capture leaves this node's desired capture set.
+generated background provider action plans.
 `members[].placement` can group same-provider cloud routers into deterministic
 active/standby capture placement; `members[].maintenance.drain` removes that
 member from active selection. All nodes in a mobility demo should receive the
-same `MobilityPool` config so they project the same placement decision.
+same `MobilityPool` identity and placement set so they project the same placement
+decision. The old remote-full inline style is still accepted for pre-release
+compatibility, but `routerd validate`, plan, and apply warn when a remote member
+contains local capture or discovery details. Future pre-release configs may
+require identity-only remote members.
 
 Selective Address Mobility is declarative in this MVP. `RemoteAddressClaim`
 does not configure firewall or NAT policy. Operators compose firewall/NAT by
@@ -230,6 +243,12 @@ routerd derives reverse path filter sysctls, tunnel MTU, RA MTU, and TCP MSS
 clamping from router role, tunnel, firewall zone, and RA/DHCPv6 resources.
 Configs should declare the tunnel and LAN/WAN intent rather than separate
 `IPv4ReversePathFilter` or `PathMTUPolicy` resources.
+For trusted overlay paths that need a non-TCP IPv4 PMTU black-hole workaround,
+`OverlayPeer.spec.pathMTU.forceFragmentIPv4` or
+`TunnelInterface.spec.pathMTU.forceFragmentIPv4` can enable a default-off Linux
+nftables `routerd_forcefrag` table. It clears DF only for oversized IPv4 packets
+on the derived forwarded path. It is supported only for `wireguard`, `ipip`,
+`gre`, `fou`, and `gue` overlay underlays.
 If an externally managed source interface has a lower MTU, such as `tailscale0`,
 set `Interface.spec.mtu`; routerd uses it only for that source path instead of
 lowering unrelated LAN paths.
@@ -305,9 +324,10 @@ GoBGP reports them. The watcher defaults to a 15 second controller interval and
 `maxPrefixes`, and `peerStateChangeThrottle`; validation rejects intervals below
 3 seconds and prefix caps of 1,000,000 or more. The GoBGP MVP supports one
 `BGPRouter` per router and does not yet support `spec.vrf`; unsupported
-multi-router, VRF, or BFD resources are reported as Pending instead of being
-silently ignored. `spec.listen.address` and `spec.listen.port` bind the
-`routerd-bgp` GoBGP listener.
+multi-router or VRF resources are reported as Pending instead of being silently
+ignored. BFD resources are applied through the Linux FRR `bfdd` bridge and
+their observed status gates the referenced GoBGP peers. `spec.listen.address`
+and `spec.listen.port` bind the `routerd-bgp` GoBGP listener.
 
 `VirtualAddress` uses keepalived on Linux and CARP on FreeBSD for
 `mode: vrrp`. `spec.family: ipv4` requires an IPv4 `/32`, and
@@ -567,12 +587,13 @@ and fields outside the target kind's `provides` set.
 | `LogRetention` | `phase` (string), `targets` (objectList), `updatedAt` (timestamp) |
 | `LogSink` | `phase` (string), `type` (string) |
 | `ManagementAccess` | `interfaces` (stringList), `phase` (string) |
-| `MobilityPool` | `activeLeases` (int), `dynamicSource` (string), `expiredLeases` (int), `generatedActions` (int), `generatedClaims` (int), `groupRef` (string), `holdingLeases` (int), `leaseCount` (int), `phase` (string), `placementActive` (bool), `placementActiveNode` (string), `placementGroup` (string), `plannerPhase` (string), `plannerReason` (string), `prefix` (string), `projectedAt` (timestamp) |
+| `MobilityPool` | `dynamicSource` (string), `generatedActions` (int), `generatedBGPPaths` (int), `generatedBGPTraps` (int), `groupRef` (string), `placementActive` (bool), `placementActiveNode` (string), `placementGroup` (string), `plannerPhase` (string), `plannerReason` (string), `prefix` (string), `deliveryMode` (string), `discoverySelfPrivateIPs` (stringList) |
 | `NAT44Rule` | `dryRun` (bool), `egressInterface` (string), `phase` (string), `snatAddress` (string) |
 | `NTPClient` | `phase` (string), `servers` (stringList), `source` (string), `updatedAt` (timestamp) |
 | `NTPServer` | `allowCIDRs` (stringList), `listenAddresses` (stringList), `phase` (string), `servers` (stringList), `source` (string), `updatedAt` (timestamp) |
 | `ObservabilityPipeline` | `phase` (string), `signals` (stringList) |
 | `OverlayPeer` | `nodeID` (string), `phase` (string), `role` (string), `underlayInterface` (string), `underlayType` (string) |
+| `TunnelInterface` | `dryRun` (bool), `encapDport` (int), `encapSport` (int), `ifname` (string), `interface` (string), `local` (string), `mode` (string), `mtu` (int), `phase` (string), `remote` (string), `ttl` (int) |
 | `PPPoESession` | `connectedAt` (timestamp), `currentAddress` (string), `device` (string), `dnsServers` (stringList), `dryRun` (bool), `gateway` (string), `interface` (string), `peerAddress` (string), `phase` (string) |
 | `Package` | `dryRun` (bool), `packages` (stringList), `phase` (string) |
 | `PortForward` | `dryRun` (bool), `listenAddress` (string), `phase` (string), `target` (object) |

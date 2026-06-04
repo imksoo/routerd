@@ -84,6 +84,17 @@ func TestValidateHybridFailures(t *testing.T) {
 			want: "spec.peerRef is required",
 		},
 		{
+			name: "force fragment unsupported underlay rejected",
+			mutate: func(router *api.Router) {
+				spec := router.Spec.Resources[1].Spec.(api.OverlayPeerSpec)
+				spec.Underlay.Type = "route"
+				spec.Underlay.Interface = ""
+				spec.PathMTU.ForceFragmentIPv4 = true
+				router.Spec.Resources[1].Spec = spec
+			},
+			want: "spec.pathMTU.forceFragmentIPv4 is supported only for underlay.type wireguard, ipip, gre, fou, or gue",
+		},
+		{
 			name: "unresolved peerRef",
 			mutate: func(router *api.Router) {
 				spec := router.Spec.Resources[3].Spec.(api.HybridRouteSpec)
@@ -331,10 +342,32 @@ func TestValidateTunnelInterfaceFailures(t *testing.T) {
 			name: "mode invalid",
 			mutate: func(router *api.Router) {
 				spec := router.Spec.Resources[0].Spec.(api.TunnelInterfaceSpec)
-				spec.Mode = "fou"
+				spec.Mode = "vxlan"
 				router.Spec.Resources[0].Spec = spec
 			},
-			want: "spec.mode must be ipip or gre",
+			want: "spec.mode must be ipip, gre, fou, or gue",
+		},
+		{
+			name: "fou requires encap ports",
+			mutate: func(router *api.Router) {
+				spec := router.Spec.Resources[0].Spec.(api.TunnelInterfaceSpec)
+				spec.Mode = "fou"
+				spec.Key = 0
+				router.Spec.Resources[0].Spec = spec
+			},
+			want: "spec.encapSport is required",
+		},
+		{
+			name: "encap ports require fou or gue",
+			mutate: func(router *api.Router) {
+				spec := router.Spec.Resources[0].Spec.(api.TunnelInterfaceSpec)
+				spec.Mode = "ipip"
+				spec.Key = 0
+				spec.EncapSport = 5555
+				spec.EncapDport = 5555
+				router.Spec.Resources[0].Spec = spec
+			},
+			want: "spec.encapSport/spec.encapDport are only supported when spec.mode is fou or gue",
 		},
 		{
 			name: "key requires gre",

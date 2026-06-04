@@ -11,6 +11,7 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/hybrid"
+	"github.com/imksoo/routerd/pkg/mobilityconfig"
 )
 
 type pathMTUPolicy struct {
@@ -20,11 +21,12 @@ type pathMTUPolicy struct {
 }
 
 type pathMTUPolicySpec struct {
-	FromInterface string
-	ToInterfaces  []string
-	MTU           int
-	IPv6RA        pathMTUPolicyIPv6RASpec
-	TCPMSSClamp   pathMTUPolicyTCPMSSSpec
+	FromInterface     string
+	ToInterfaces      []string
+	MTU               int
+	IPv6RA            pathMTUPolicyIPv6RASpec
+	TCPMSSClamp       pathMTUPolicyTCPMSSSpec
+	ForceFragmentIPv4 bool
 }
 
 type pathMTUPolicyIPv6RASpec struct {
@@ -44,9 +46,10 @@ type pathMTUTunnel struct {
 }
 
 type pathMTUForwardedPath struct {
-	FromInterface string
-	ToInterface   string
-	MTU           int
+	FromInterface     string
+	ToInterface       string
+	MTU               int
+	ForceFragmentIPv4 bool
 }
 
 func pathMTUPolicies(router *api.Router) ([]pathMTUPolicy, error) {
@@ -174,7 +177,13 @@ func derivedForwardedPathMTUPolicySpecs(router *api.Router, mtus map[string]int)
 			continue
 		}
 		clamp := pathMTUPolicyTCPMSSSpec{Enabled: true, Families: []string{"ipv4"}}
-		policies = append(policies, pathMTUPolicySpec{FromInterface: path.FromInterface, ToInterfaces: []string{path.ToInterface}, MTU: toMTU, TCPMSSClamp: clamp})
+		policies = append(policies, pathMTUPolicySpec{
+			FromInterface:     path.FromInterface,
+			ToInterfaces:      []string{path.ToInterface},
+			MTU:               toMTU,
+			TCPMSSClamp:       clamp,
+			ForceFragmentIPv4: path.ForceFragmentIPv4,
+		})
 	}
 	return compactPathMTUPolicySpecs(policies)
 }
@@ -185,7 +194,7 @@ func pathMTUForwardedPaths(router *api.Router) []pathMTUForwardedPath {
 	}
 	peers := pathMTUOverlayPeers(router)
 	defaultSources := pathMTUDefaultForwardedPathSourceInterfaces(router)
-	var paths []pathMTUForwardedPath
+	paths := pathMTUBGPMobilityForwardedPaths(router, peers)
 	for _, res := range router.Spec.Resources {
 		if res.APIVersion != api.HybridAPIVersion || res.Kind != "RemoteAddressClaim" {
 			continue
@@ -204,10 +213,117 @@ func pathMTUForwardedPaths(router *api.Router) []pathMTUForwardedPath {
 			if source == "" || source == tunnel {
 				continue
 			}
-			paths = append(paths, pathMTUForwardedPath{FromInterface: source, ToInterface: tunnel, MTU: tunnelMTU})
+			paths = append(paths, pathMTUForwardedPath{
+				FromInterface:     source,
+				ToInterface:       tunnel,
+				MTU:               tunnelMTU,
+				ForceFragmentIPv4: pathMTUOverlayPeerForceFragmentIPv4(router, refName(spec.Delivery.PeerRef), peer),
+			})
 		}
 	}
 	return compactForwardedPaths(paths)
+}
+
+func pathMTUBGPMobilityForwardedPaths(router *api.Router, peers map[string]api.OverlayPeerSpec) []pathMTUForwardedPath {
+	if router == nil {
+		return nil
+	}
+	var paths []pathMTUForwardedPath
+	for _, res := range router.Spec.Resources {
+		if res.APIVersion != api.MobilityAPIVersion || res.Kind != "MobilityPool" {
+			continue
+		}
+		spec, err := res.MobilityPoolSpec()
+		if err != nil || strings.TrimSpace(spec.DeliveryPolicy.Mode) != "bgp" {
+			continue
+		}
+		selfNode := pathMTUSelfNode(router, spec.GroupRef)
+		if selfNode == "" {
+			continue
+		}
+		spec, _, err = mobilityconfig.NormalizeMobilityPool(spec, selfNode)
+		if err != nil {
+			continue
+		}
+		for _, member := range spec.Members {
+			if strings.TrimSpace(member.NodeRef) != selfNode {
+				continue
+			}
+			source := strings.TrimSpace(member.Capture.Interface)
+			if source == "" {
+				break
+			}
+			deliveries := pathMTUMemberDeliveries(member)
+			if len(deliveries) == 0 {
+				for peerName, peer := range peers {
+					tunnel := strings.TrimSpace(peer.Underlay.Interface)
+					if tunnel == "" || tunnel == source {
+						continue
+					}
+					paths = append(paths, pathMTUForwardedPath{
+						FromInterface:     source,
+						ToInterface:       tunnel,
+						MTU:               pathMTUOverlayPeerEffectiveMTU(router, peerName),
+						ForceFragmentIPv4: pathMTUOverlayPeerForceFragmentIPv4(router, peerName, peer),
+					})
+				}
+				break
+			}
+			for _, delivery := range deliveries {
+				tunnel := firstNonEmpty(strings.TrimSpace(delivery.TunnelInterface), strings.TrimSpace(peers[refName(delivery.PeerRef)].Underlay.Interface))
+				if tunnel == "" || tunnel == source {
+					continue
+				}
+				tunnelMTU := 0
+				if strings.TrimSpace(delivery.PeerRef) != "" {
+					tunnelMTU = pathMTUOverlayPeerEffectiveMTU(router, refName(delivery.PeerRef))
+				}
+				paths = append(paths, pathMTUForwardedPath{
+					FromInterface:     source,
+					ToInterface:       tunnel,
+					MTU:               tunnelMTU,
+					ForceFragmentIPv4: pathMTUOverlayPeerForceFragmentIPv4(router, refName(delivery.PeerRef), peers[refName(delivery.PeerRef)]) || pathMTUTunnelForceFragmentIPv4(router, tunnel),
+				})
+			}
+			break
+		}
+	}
+	return compactForwardedPaths(paths)
+}
+
+func pathMTUSelfNode(router *api.Router, groupRef string) string {
+	if router == nil || strings.TrimSpace(groupRef) == "" {
+		return ""
+	}
+	for _, res := range router.Spec.Resources {
+		if res.APIVersion != api.FederationAPIVersion || res.Kind != "EventGroup" || res.Metadata.Name != strings.TrimSpace(groupRef) {
+			continue
+		}
+		spec, err := res.EventGroupSpec()
+		if err != nil {
+			return ""
+		}
+		return strings.TrimSpace(spec.NodeName)
+	}
+	return ""
+}
+
+func pathMTUMemberDeliveries(member api.MobilityPoolMember) []api.MobilityMemberDelivery {
+	var out []api.MobilityMemberDelivery
+	if strings.TrimSpace(member.Delivery.PeerRef) != "" || strings.TrimSpace(member.Delivery.TunnelInterface) != "" {
+		out = append(out, member.Delivery)
+	}
+	for _, target := range member.DeliveryTo {
+		delivery := api.MobilityMemberDelivery{
+			PeerRef:         target.PeerRef,
+			Mode:            target.Mode,
+			TunnelInterface: target.TunnelInterface,
+		}
+		if strings.TrimSpace(delivery.PeerRef) != "" || strings.TrimSpace(delivery.TunnelInterface) != "" {
+			out = append(out, delivery)
+		}
+	}
+	return out
 }
 
 func pathMTUOverlayPeerEffectiveMTU(router *api.Router, peerName string) int {
@@ -219,6 +335,30 @@ func pathMTUOverlayPeerEffectiveMTU(router *api.Router, peerName string) int {
 		return 0
 	}
 	return estimate.EstimatedMTU
+}
+
+func pathMTUOverlayPeerForceFragmentIPv4(router *api.Router, peerName string, peer api.OverlayPeerSpec) bool {
+	if peer.PathMTU.ForceFragmentIPv4 {
+		return true
+	}
+	if strings.TrimSpace(peerName) == "" {
+		return false
+	}
+	return pathMTUTunnelForceFragmentIPv4(router, peer.Underlay.Interface)
+}
+
+func pathMTUTunnelForceFragmentIPv4(router *api.Router, interfaceName string) bool {
+	if router == nil || strings.TrimSpace(interfaceName) == "" {
+		return false
+	}
+	for _, res := range router.Spec.Resources {
+		if res.APIVersion != api.HybridAPIVersion || res.Kind != "TunnelInterface" || res.Metadata.Name != strings.TrimSpace(interfaceName) {
+			continue
+		}
+		spec, err := res.TunnelInterfaceSpec()
+		return err == nil && spec.PathMTU.ForceFragmentIPv4
+	}
+	return false
 }
 
 func pathMTUOverlayPeers(router *api.Router) map[string]api.OverlayPeerSpec {
@@ -275,7 +415,7 @@ func pathMTUDefaultForwardedPathSourceInterfaces(router *api.Router) []string {
 func compactForwardedPaths(paths []pathMTUForwardedPath) []pathMTUForwardedPath {
 	byKey := map[string]pathMTUForwardedPath{}
 	for _, path := range paths {
-		key := path.FromInterface + ">" + path.ToInterface
+		key := path.FromInterface + ">" + path.ToInterface + ">" + strconv.FormatBool(path.ForceFragmentIPv4)
 		existing, ok := byKey[key]
 		if ok && (existing.MTU == 0 || (path.MTU != 0 && existing.MTU <= path.MTU)) {
 			continue
@@ -385,6 +525,12 @@ func pathMTUResourceMTU(res api.Resource, value reflect.Value) int {
 		if mode == "gre" {
 			return 1476
 		}
+		if mode == "fou" {
+			return 1472
+		}
+		if mode == "gue" {
+			return 1468
+		}
 		return 0
 	default:
 		return 0
@@ -406,7 +552,7 @@ func compactPathMTUPolicySpecs(specs []pathMTUPolicySpec) []pathMTUPolicySpec {
 	var out []pathMTUPolicySpec
 	for _, spec := range specs {
 		spec.ToInterfaces = compactStrings(sortedStrings(spec.ToInterfaces))
-		key := spec.FromInterface + "|" + strings.Join(spec.ToInterfaces, ",") + "|" + strconv.Itoa(spec.MTU) + "|" + strings.Join(spec.TCPMSSClamp.Families, ",") + "|" + strconv.FormatBool(spec.IPv6RA.Enabled) + "|" + spec.IPv6RA.Scope
+		key := spec.FromInterface + "|" + strings.Join(spec.ToInterfaces, ",") + "|" + strconv.Itoa(spec.MTU) + "|" + strings.Join(spec.TCPMSSClamp.Families, ",") + "|" + strconv.FormatBool(spec.ForceFragmentIPv4) + "|" + strconv.FormatBool(spec.IPv6RA.Enabled) + "|" + spec.IPv6RA.Scope
 		if seen[key] {
 			continue
 		}
@@ -539,6 +685,28 @@ func pathMTUMSSPolicies(router *api.Router) ([]pathMTUPolicy, error) {
 	var result []pathMTUPolicy
 	for _, policy := range policies {
 		if policy.Spec.TCPMSSClamp.Enabled {
+			result = append(result, policy)
+		}
+	}
+	return result, nil
+}
+
+func RouterWantsIPv4ForceFragment(router *api.Router) (bool, error) {
+	policies, err := pathMTUForceFragmentPolicies(router)
+	if err != nil {
+		return false, err
+	}
+	return len(policies) > 0, nil
+}
+
+func pathMTUForceFragmentPolicies(router *api.Router) ([]pathMTUPolicy, error) {
+	policies, err := pathMTUPolicies(router)
+	if err != nil {
+		return nil, err
+	}
+	var result []pathMTUPolicy
+	for _, policy := range policies {
+		if policy.Spec.ForceFragmentIPv4 {
 			result = append(result, policy)
 		}
 	}

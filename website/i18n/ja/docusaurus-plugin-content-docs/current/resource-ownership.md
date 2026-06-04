@@ -31,6 +31,7 @@ routerd は、ホスト上の構成物をリソースに対応付けて管理し
 | `DNSForwarder` | `routerd-dns-resolver` の転送ルール。リゾルバ設定として生成されます |
 | `DNSUpstream` | `routerd-dns-resolver` の上流エンドポイント。転送ルールとして生成されます |
 | `DSLiteTunnel` | Linux の `ip6tnl` インターフェース |
+| `TunnelInterface` | Linux の `ipip` / `gre` tunnel device。FOU/GUE mode では対応する `ip fou` listener port も ensure します |
 | `IPAddressSet` | Linux の生成器が参照する nftables の IPv4/IPv6 named set |
 | `IPv4Route` | カーネルの経路 |
 | `ClusterNetworkRoute` | Pod / Service CIDR を指定した next hop 経由にする、生成済みの `IPv4StaticRoute` の意図 |

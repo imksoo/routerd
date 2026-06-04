@@ -24,8 +24,10 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/bgpdaemon"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/conntrack"
+	bfdcontroller "github.com/imksoo/routerd/pkg/controller/bfd"
 	bgpcontroller "github.com/imksoo/routerd/pkg/controller/bgp"
 	"github.com/imksoo/routerd/pkg/controller/conntrackobserver"
 	dhcpv4client "github.com/imksoo/routerd/pkg/controller/dhcpv4client"
@@ -38,6 +40,7 @@ import (
 	mobilitycontroller "github.com/imksoo/routerd/pkg/controller/mobility"
 	"github.com/imksoo/routerd/pkg/controller/nat44"
 	"github.com/imksoo/routerd/pkg/controller/pppoesession"
+	provideractioncontroller "github.com/imksoo/routerd/pkg/controller/provideraction"
 	vrrpcontroller "github.com/imksoo/routerd/pkg/controller/vrrp"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/derived"
@@ -48,6 +51,8 @@ import (
 	"github.com/imksoo/routerd/pkg/logstore"
 	"github.com/imksoo/routerd/pkg/observabilitypipeline"
 	"github.com/imksoo/routerd/pkg/platform"
+	provideraction "github.com/imksoo/routerd/pkg/provideraction"
+	"github.com/imksoo/routerd/pkg/providerinventory"
 	"github.com/imksoo/routerd/pkg/render"
 	"github.com/imksoo/routerd/pkg/resourcequery"
 	daemonsource "github.com/imksoo/routerd/pkg/source/daemon"
@@ -78,17 +83,9 @@ type eventSubscriptionStore struct {
 type mobilityDataStore interface {
 	ListFederationEvents(group string, includeExpired bool, now int64) ([]routerstate.EventRecord, error)
 	RecordFederationEvent(routerstate.EventRecord) error
-	UpsertAddressLease(routerstate.AddressLeaseRecord) error
-	ListAddressLeases(pool string, includeExpired bool, now time.Time) ([]routerstate.AddressLeaseRecord, error)
-	ReconcileMobilityCaptureEpochs([]routerstate.MobilityCaptureEpochRecord) ([]routerstate.MobilityCaptureEpochRecord, error)
-	ReconcileMobilityOwnershipEpochs([]routerstate.MobilityOwnershipEpochRecord) ([]routerstate.MobilityOwnershipEpochRecord, error)
-	ListMobilityOwnershipEpochs(pool string) ([]routerstate.MobilityOwnershipEpochRecord, error)
 	UpsertDynamicConfigPart(routerstate.DynamicConfigPartRecord) error
 	GetDynamicConfigPartsBySource(source string) ([]routerstate.DynamicConfigPartRecord, error)
 	ListActions(routerstate.ActionExecutionFilter) ([]routerstate.ActionExecutionRecord, error)
-	UpsertMobilityDeprovisionMarker(routerstate.MobilityDeprovisionMarkerRecord) error
-	ListMobilityDeprovisionMarkers(source string) ([]routerstate.MobilityDeprovisionMarkerRecord, error)
-	DeleteMobilityDeprovisionMarker(key string) error
 }
 
 type mobilityStore struct {
@@ -112,26 +109,6 @@ func (s mobilityStore) RecordFederationEvent(rec routerstate.EventRecord) error 
 	return s.data.RecordFederationEvent(rec)
 }
 
-func (s mobilityStore) UpsertAddressLease(rec routerstate.AddressLeaseRecord) error {
-	return s.data.UpsertAddressLease(rec)
-}
-
-func (s mobilityStore) ListAddressLeases(pool string, includeExpired bool, now time.Time) ([]routerstate.AddressLeaseRecord, error) {
-	return s.data.ListAddressLeases(pool, includeExpired, now)
-}
-
-func (s mobilityStore) ReconcileMobilityCaptureEpochs(desired []routerstate.MobilityCaptureEpochRecord) ([]routerstate.MobilityCaptureEpochRecord, error) {
-	return s.data.ReconcileMobilityCaptureEpochs(desired)
-}
-
-func (s mobilityStore) ReconcileMobilityOwnershipEpochs(desired []routerstate.MobilityOwnershipEpochRecord) ([]routerstate.MobilityOwnershipEpochRecord, error) {
-	return s.data.ReconcileMobilityOwnershipEpochs(desired)
-}
-
-func (s mobilityStore) ListMobilityOwnershipEpochs(pool string) ([]routerstate.MobilityOwnershipEpochRecord, error) {
-	return s.data.ListMobilityOwnershipEpochs(pool)
-}
-
 func (s mobilityStore) UpsertDynamicConfigPart(rec routerstate.DynamicConfigPartRecord) error {
 	return s.data.UpsertDynamicConfigPart(rec)
 }
@@ -142,18 +119,6 @@ func (s mobilityStore) GetDynamicConfigPartsBySource(source string) ([]routersta
 
 func (s mobilityStore) ListActions(filter routerstate.ActionExecutionFilter) ([]routerstate.ActionExecutionRecord, error) {
 	return s.data.ListActions(filter)
-}
-
-func (s mobilityStore) UpsertMobilityDeprovisionMarker(rec routerstate.MobilityDeprovisionMarkerRecord) error {
-	return s.data.UpsertMobilityDeprovisionMarker(rec)
-}
-
-func (s mobilityStore) ListMobilityDeprovisionMarkers(source string) ([]routerstate.MobilityDeprovisionMarkerRecord, error) {
-	return s.data.ListMobilityDeprovisionMarkers(source)
-}
-
-func (s mobilityStore) DeleteMobilityDeprovisionMarker(key string) error {
-	return s.data.DeleteMobilityDeprovisionMarker(key)
 }
 
 func (s eventSubscriptionStore) SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error {
@@ -201,17 +166,17 @@ func (s eventedStore) SaveObjectStatus(apiVersion, kind, name string, status map
 	if newerStatus(current, status) {
 		return nil
 	}
-	changed := statusChanged(current, status)
+	publishChanged := statusChangedForEvent(apiVersion, kind, current, status)
 	if err := s.Store.SaveObjectStatus(apiVersion, kind, name, status); err != nil {
 		return err
 	}
-	if changed && s.Bus != nil {
+	if publishChanged && s.Bus != nil {
 		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "store"}, "routerd.resource.status.changed", daemonapi.SeverityInfo)
 		event.Resource = &daemonapi.ResourceRef{APIVersion: apiVersion, Kind: kind, Name: name}
 		event.Attributes = map[string]string{
 			"phase":         fmt.Sprint(status["phase"]),
 			"previousPhase": fmt.Sprint(current["phase"]),
-			"changedFields": strings.Join(statusChangedFields(current, status), ","),
+			"changedFields": strings.Join(statusChangedFieldsForEvent(apiVersion, kind, current, status), ","),
 		}
 		return s.Bus.Publish(context.Background(), event)
 	}
@@ -275,6 +240,8 @@ func resourceOwnerController(kind string) string {
 		return "vrrp"
 	case "BGPRouter", "BGPPeer":
 		return "bgp"
+	case "BFD":
+		return "bfd"
 	case "DHCPv4Client":
 		return "dhcpv4client"
 	case "DHCPv4Server", "DHCPv6Server", "DHCPv6Information", "IPv6RouterAdvertisement":
@@ -464,6 +431,10 @@ func objectStatusChanged(kind string, current, next map[string]any) bool {
 func statusChangedFields(current, next map[string]any) []string {
 	currentStable := stableStatus(current)
 	nextStable := stableStatus(next)
+	return changedFields(currentStable, nextStable)
+}
+
+func changedFields(currentStable, nextStable map[string]any) []string {
 	keys := map[string]bool{}
 	for key := range currentStable {
 		keys[key] = true
@@ -479,6 +450,45 @@ func statusChangedFields(current, next map[string]any) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+func statusChangedForEvent(apiVersion, kind string, current, next map[string]any) bool {
+	currentStable := statusForEvent(apiVersion, kind, current)
+	nextStable := statusForEvent(apiVersion, kind, next)
+	currentData, currentErr := json.Marshal(currentStable)
+	nextData, nextErr := json.Marshal(nextStable)
+	if currentErr == nil && nextErr == nil {
+		return !bytes.Equal(currentData, nextData)
+	}
+	return !reflect.DeepEqual(currentStable, nextStable)
+}
+
+func statusChangedFieldsForEvent(apiVersion, kind string, current, next map[string]any) []string {
+	return changedFields(statusForEvent(apiVersion, kind, current), statusForEvent(apiVersion, kind, next))
+}
+
+func statusForEvent(apiVersion, kind string, status map[string]any) map[string]any {
+	stable := stableStatus(status)
+	if apiVersion != api.MobilityAPIVersion || kind != "MobilityPool" {
+		return stable
+	}
+	out := make(map[string]any, len(stable))
+	for key, value := range stable {
+		if mobilityStatusEventVolatileField(key) {
+			continue
+		}
+		out[key] = value
+	}
+	return out
+}
+
+func mobilityStatusEventVolatileField(key string) bool {
+	switch key {
+	case "plannedAt", "projectedAt", "dynamicExpiresAt":
+		return true
+	default:
+		return false
+	}
 }
 
 func stableStatus(status map[string]any) map[string]any {
@@ -659,6 +669,7 @@ type Options struct {
 	DryRunDNSResolver       bool
 	DryRunEventFederation   bool
 	DryRunEventSubscription bool
+	DryRunProviderAction    bool
 	DryRunNAT               bool
 	DryRunIngress           bool
 	DryRunFirewall          bool
@@ -685,6 +696,8 @@ type Options struct {
 	Logger                  *slog.Logger
 	ControllerObserver      framework.Observer
 	EnabledControllers      []string
+	ProviderActionRunner    provideraction.ExecutorRunner
+	ProviderInventoryRunner providerinventory.Runner
 }
 
 type Runner struct {
@@ -817,6 +830,7 @@ func (r *Runner) Start(ctx context.Context) error {
 		opts.DryRunDNSResolver = true
 		opts.DryRunEventFederation = true
 		opts.DryRunEventSubscription = true
+		opts.DryRunProviderAction = true
 		opts.DryRunNAT = true
 		opts.DryRunIngress = true
 		opts.DryRunFirewall = true
@@ -856,6 +870,19 @@ func (r *Runner) Start(ctx context.Context) error {
 	defaults, _ := platform.Current()
 	dnsResolver := dnsresolvercontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunDNSResolver, RuntimeDir: defaults.RuntimeDir, StateDir: defaults.StateDir}
 	eventFederation := eventfederationcontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunEventFederation, RuntimeDir: defaults.RuntimeDir, StateDir: defaults.StateDir}
+	bgpDaemon := bgpcontroller.DefaultDaemonSpec()
+	if strings.TrimSpace(r.Opts.BGPSocketPath) != "" {
+		bgpDaemon.SocketPath = strings.TrimSpace(r.Opts.BGPSocketPath)
+		if strings.TrimSpace(r.Opts.BGPControlSocketPath) == "" {
+			bgpDaemon.ControlSocketPath = filepath.Join(filepath.Dir(bgpDaemon.SocketPath), "control.sock")
+		}
+	}
+	if strings.TrimSpace(r.Opts.BGPControlSocketPath) != "" {
+		bgpDaemon.ControlSocketPath = strings.TrimSpace(r.Opts.BGPControlSocketPath)
+	}
+	if strings.TrimSpace(r.Opts.BGPStatePath) != "" {
+		bgpDaemon.StatePath = strings.TrimSpace(r.Opts.BGPStatePath)
+	}
 	// EventSubscriptionController needs the SQLite-backed federation/dynamic/
 	// plugin methods in addition to status writes. The raw r.Store is the
 	// *state.SQLiteStore; status writes are routed through the evented store so
@@ -872,11 +899,29 @@ func (r *Runner) Start(ctx context.Context) error {
 		}
 	}
 	var mobility mobilitycontroller.Controller
+	var mobilityDiscovery mobilitycontroller.DiscoveryController
 	if rawStore, ok := r.Store.(mobilityDataStore); ok {
-		mobility = mobilitycontroller.Controller{
+		mobilityDiscovery = mobilitycontroller.DiscoveryController{
 			Router: r.Router,
 			Bus:    r.Bus,
 			Store:  mobilityStore{evented: store, data: rawStore},
+			Runner: r.Opts.ProviderInventoryRunner,
+		}
+		mobility = mobilitycontroller.Controller{
+			Router:   r.Router,
+			Bus:      r.Bus,
+			Store:    mobilityStore{evented: store, data: rawStore},
+			BGPPaths: bgpdaemon.NewControlClient(bgpDaemon.ControlSocketPath),
+		}
+	}
+	var providerAction provideractioncontroller.Controller
+	if rawStore, ok := r.Store.(provideractioncontroller.Store); ok {
+		providerAction = provideractioncontroller.Controller{
+			Router: r.Router,
+			Store:  rawStore,
+			Runner: r.Opts.ProviderActionRunner,
+			DryRun: r.Opts.DryRunProviderAction,
+			Logger: logger,
 		}
 	}
 	daemonStatusSync := DaemonStatusController{Router: r.Router, Bus: r.Bus, Store: store, DaemonSockets: r.Opts.DaemonSockets, Logger: logger}
@@ -887,19 +932,7 @@ func (r *Runner) Start(ctx context.Context) error {
 	health := healthcheck.Controller{Router: r.Router, Bus: r.Bus, Store: store, Logger: logger}
 	nat := nat44.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunNAT, IngressLive: !r.Opts.DryRunIngress, NftablesPath: r.Opts.NftablesPath, NftCommand: r.Opts.NftCommand, Logger: logger}
 	ingressService := ingressservicecontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunIngress, Resolver: ingressServiceDNSResolver(r.Router, store), Logger: logger}
-	bgpDaemon := bgpcontroller.DefaultDaemonSpec()
-	if strings.TrimSpace(r.Opts.BGPSocketPath) != "" {
-		bgpDaemon.SocketPath = strings.TrimSpace(r.Opts.BGPSocketPath)
-		if strings.TrimSpace(r.Opts.BGPControlSocketPath) == "" {
-			bgpDaemon.ControlSocketPath = filepath.Join(filepath.Dir(bgpDaemon.SocketPath), "control.sock")
-		}
-	}
-	if strings.TrimSpace(r.Opts.BGPControlSocketPath) != "" {
-		bgpDaemon.ControlSocketPath = strings.TrimSpace(r.Opts.BGPControlSocketPath)
-	}
-	if strings.TrimSpace(r.Opts.BGPStatePath) != "" {
-		bgpDaemon.StatePath = strings.TrimSpace(r.Opts.BGPStatePath)
-	}
+	bfd := bfdcontroller.Controller{Router: r.Router, Store: store, DryRun: r.Opts.DryRunBGP, RuntimeDir: defaults.RuntimeDir}
 	bgp := bgpcontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunBGP, Logger: logger, Daemon: bgpDaemon}
 	vrrp := vrrpcontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunVRRP, Logger: logger}
 	ipAddressSet := IPAddressSetController{Router: r.Router, Store: store, DryRunNAT: r.Opts.DryRunNAT, DryRunRoute: r.Opts.DryRunRoute, DryRunFirewall: r.Opts.DryRunFirewall, NftCommand: r.Opts.NftCommand, RuntimeDir: defaults.RuntimeDir}
@@ -922,6 +955,9 @@ func (r *Runner) Start(ctx context.Context) error {
 	if r.controllerEnabled("conntrack-observer") {
 		conntrackObs.Start(ctx)
 	}
+	if r.controllerEnabled("bgp") {
+		bgp.Start(ctx)
+	}
 	controllers := []framework.Controller{
 		framework.FuncController{ControllerName: "daemon-status", Every: 5 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.dhcpv6.client.**", "routerd.dhcpv4.client.**", "routerd.healthcheck.**", "routerd.pppoe.client.**"}}}, PeriodicFunc: daemonStatusSync.Reconcile},
 		framework.FuncController{ControllerName: "package", Every: 5 * time.Minute, PeriodicFunc: packages.Reconcile},
@@ -934,7 +970,7 @@ func (r *Runner) Start(ctx context.Context) error {
 		framework.FuncController{ControllerName: "ntp-server", Every: 5 * time.Minute, Subs: statusSubscriptions("DHCPv4Client", "DHCPv6Information", "IPv4StaticAddress", "IPv6DelegatedAddress"), PeriodicFunc: ntpServer.Reconcile},
 		framework.FuncController{ControllerName: "link", Every: 30 * time.Second, PeriodicFunc: link.Reconcile},
 		framework.FuncController{ControllerName: "tunnel", Every: 30 * time.Second, Subs: statusSubscriptions("TunnelInterface"), PeriodicFunc: tunnel.Reconcile},
-		framework.FuncController{ControllerName: "wireguard", Every: 30 * time.Second, Subs: statusSubscriptions("WireGuardInterface", "WireGuardPeer"), PeriodicFunc: wireGuard.Reconcile},
+		framework.FuncController{ControllerName: "wireguard", Every: 30 * time.Second, Subs: statusSubscriptions("WireGuardInterface", "WireGuardPeer", "BGPRouter"), PeriodicFunc: wireGuard.Reconcile},
 		framework.FuncController{ControllerName: "ipv4-static-address", Subs: statusSubscriptions("WireGuardInterface", "TunnelInterface"), PeriodicFunc: ipv4Static.Reconcile},
 		framework.FuncController{ControllerName: "dhcpv6-information", Every: 30 * time.Second, Subs: statusSubscriptions("DHCPv6PrefixDelegation"), ReconcileFunc: func(ctx context.Context, event daemonapi.DaemonEvent) error {
 			request := event.Type == "routerd.controller.bootstrap" || becamePhase(event, daemonapi.ResourcePhaseBound)
@@ -1015,11 +1051,14 @@ func (r *Runner) Start(ctx context.Context) error {
 		framework.FuncController{ControllerName: "dns-resolver", Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed", "routerd.dhcp.lease.**"}}}, ReconcileFunc: dnsResolver.HandleEvent, PeriodicFunc: dnsResolver.Reconcile},
 		framework.FuncController{ControllerName: "event-federation", Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed"}}}, ReconcileFunc: eventFederation.HandleEvent, PeriodicFunc: eventFederation.Reconcile},
 		framework.FuncController{ControllerName: "event-subscription", Every: 5 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed"}}}, PeriodicFunc: eventSubscription.Reconcile},
+		framework.FuncController{ControllerName: "mobility-discovery", Every: 30 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed"}}}, ReconcileFunc: mobilityDiscovery.HandleEvent, PeriodicFunc: mobilityDiscovery.Reconcile},
 		framework.FuncController{ControllerName: "mobility", Every: 5 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed"}}}, ReconcileFunc: mobility.HandleEvent, PeriodicFunc: mobility.Reconcile},
+		framework.FuncController{ControllerName: "provider-action-execution", Every: 5 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed"}}}, PeriodicFunc: providerAction.Reconcile},
 		framework.FuncController{ControllerName: "egress-route-policy", Every: 15 * time.Second, Subs: statusSubscriptions("HealthCheck", "DSLiteTunnel", "Interface", "DHCPv4Client", "PPPoESession"), PeriodicFunc: wan.Reconcile},
 		framework.FuncController{ControllerName: "ingress-service", Every: 5 * time.Second, Subs: bootstrapSubscriptions(), PeriodicFunc: ingressService.Reconcile},
 		framework.FuncController{ControllerName: "nat44", Subs: statusSubscriptions("EgressRoutePolicy", "IngressService"), PeriodicFunc: nat.Reconcile},
-		framework.FuncController{ControllerName: "bgp", Every: bgpcontroller.PollInterval(r.Router), Subs: bootstrapSubscriptions(), PeriodicFunc: bgp.Reconcile},
+		framework.FuncController{ControllerName: "bfd", Every: time.Second, Subs: statusSubscriptions("BGPPeer", "BFD"), PeriodicFunc: bfd.Reconcile},
+		framework.FuncController{ControllerName: "bgp", Every: bgpcontroller.PollInterval(r.Router), Subs: statusSubscriptions("BFD", "BGPRouter", "BGPPeer"), PeriodicFunc: bgp.Reconcile},
 		framework.FuncController{ControllerName: "vrrp", Every: 15 * time.Second, Subs: statusSubscriptions("BGPRouter", "BGPPeer", "IngressService"), PeriodicFunc: vrrp.Reconcile},
 		framework.FuncController{ControllerName: "ip-address-set", Every: 30 * time.Second, Subs: statusSubscriptions("IPAddressSet", "LocalServiceRedirect"), PeriodicFunc: ipAddressSet.Reconcile},
 	}

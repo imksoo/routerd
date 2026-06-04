@@ -1,0 +1,11 @@
+# Declarative diff for MobilityPool/cloudedge.
+# Keep 10.77.60.10/32 released from onprem-router and hand it to aws-router-a.
+spec:
+  members:
+    - nodeRef: onprem-router
+      staticOwnedAddresses: []
+  staticHandovers:
+    - address: 10.77.60.10/32
+      fromNodeRef: onprem-router
+      toNodeRef: aws-router-a
+

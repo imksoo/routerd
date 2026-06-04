@@ -1,0 +1,25 @@
+{
+  "Name": "CloudEdge Mobility Routerd Least Privilege",
+  "IsCustom": true,
+  "Description": "Least-privilege role for routerd CloudEdge Mobility secondary IP capture and NIC forwarding on one lab scope.",
+  "Actions": [
+    "Microsoft.Network/networkInterfaces/read",
+    "Microsoft.Network/networkInterfaces/write",
+    "Microsoft.Network/networkInterfaces/ipConfigurations/read",
+    "Microsoft.Network/networkInterfaces/ipConfigurations/write",
+    "Microsoft.Network/networkInterfaces/ipConfigurations/delete",
+    "Microsoft.Network/networkInterfaces/ipConfigurations/join/action",
+    "Microsoft.Network/virtualNetworks/subnets/read",
+    "Microsoft.Network/virtualNetworks/subnets/join/action",
+    "Microsoft.Network/networkSecurityGroups/read",
+    "Microsoft.Network/networkSecurityGroups/join/action",
+    "Microsoft.Network/publicIPAddresses/read",
+    "Microsoft.Network/publicIPAddresses/join/action"
+  ],
+  "NotActions": [],
+  "DataActions": [],
+  "NotDataActions": [],
+  "AssignableScopes": [
+    "/subscriptions/<subscription-id>/resourceGroups/<resource-group>"
+  ]
+}

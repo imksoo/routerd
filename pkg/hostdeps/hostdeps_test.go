@@ -80,6 +80,30 @@ func TestExplicitSysctlSuppressesDerivedDuplicate(t *testing.T) {
 	}
 }
 
+func TestKernelModulesForTunnelInterfaceModes(t *testing.T) {
+	tests := []struct {
+		mode string
+		want []string
+	}{
+		{mode: "ipip", want: []string{"ipip"}},
+		{mode: "gre", want: []string{"ip_gre"}},
+		{mode: "fou", want: []string{"fou", "ipip"}},
+		{mode: "gue", want: []string{"fou", "ipip"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.mode, func(t *testing.T) {
+			router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
+				TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
+				Metadata: api.ObjectMeta{Name: "tun0"},
+				Spec:     api.TunnelInterfaceSpec{Mode: tt.mode},
+			}}}}
+			if got := KernelModules(router); !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("KernelModules(%s) = %#v, want %#v", tt.mode, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestDerivedSysctlResourcesForSAMAreStrictlyGated(t *testing.T) {
 	empty := &api.Router{}
 	if keys := derivedSysctlKeys(t, empty); len(keys) != 0 {
@@ -104,6 +128,17 @@ func TestDerivedSysctlResourcesForSAMAreStrictlyGated(t *testing.T) {
 		if keys[unwanted] {
 			t.Fatalf("SAM must not derive rp_filter sysctl %s: %#v", unwanted, sortedKeys(keys))
 		}
+	}
+
+	spec := router.Spec.Resources[0].Spec.(api.RemoteAddressClaimSpec)
+	spec.Capture.ActiveWhen = api.CaptureActiveWhen{Type: "vrrp-master", VirtualAddressRef: "onprem-vip"}
+	router.Spec.Resources[0].Spec = spec
+	keys = derivedSysctlKeys(t, router)
+	if keys["net.ipv4.conf.lan0.proxy_arp"] {
+		t.Fatalf("VRRP-gated SAM must not derive unconditional proxy_arp sysctl: %#v", sortedKeys(keys))
+	}
+	if !keys["net.ipv4.ip_forward"] {
+		t.Fatalf("VRRP-gated SAM still needs ip_forward sysctl: %#v", sortedKeys(keys))
 	}
 }
 

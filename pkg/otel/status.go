@@ -48,7 +48,6 @@ func RecordStatusMetrics(ctx context.Context, resources []routerstate.ObjectStat
 	ingressHealthyBackendCountGauge, _ := meter.Int64Gauge("routerd.ingress.backend.healthy.count")
 	ingressFailoverCounter, _ := meter.Int64Counter("routerd.ingress.failover.total")
 	ingressBackendCheckCounter, _ := meter.Int64Counter("routerd.ingress.backend.health_check_total")
-	mobilityOwnershipGauge, _ := meter.Int64Gauge("routerd.mobility.ownership.epoch")
 
 	var dryRun int64
 	for _, controller := range controllers {
@@ -199,17 +198,6 @@ func RecordStatusMetrics(ctx context.Context, resources []routerstate.ObjectStat
 								attribute.String("to", to),
 							))
 						})
-					}
-				}
-			}
-			if resource.Kind == "MobilityPool" {
-				for _, owner := range statusMaps(resource.Status["ownershipMap"]) {
-					if epoch, ok := statusInt64(owner["ownershipEpoch"]); ok {
-						mobilityOwnershipGauge.Record(ctx, epoch, metric.WithAttributes(
-							attribute.String("routerd.resource.name", resource.Name),
-							attribute.String("network.local.address", toString(owner["address"])),
-							attribute.String("routerd.mobility.owner_node", toString(owner["ownerNode"])),
-						))
 					}
 				}
 			}

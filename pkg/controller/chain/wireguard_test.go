@@ -309,6 +309,155 @@ spec:
 	}
 }
 
+func TestWireGuardControllerAddsBGPMobilityAllowedIPs(t *testing.T) {
+	router := mustWireGuardRouter(t, `
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata: {name: test}
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: BGPRouter
+      metadata: {name: mobility-bgp}
+      spec:
+        asn: 64577
+        routerID: 10.99.0.1
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardInterface
+      metadata: {name: wg0}
+      spec:
+        privateKey: priv
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardPeer
+      metadata: {name: peer-a}
+      spec:
+        interface: wg0
+        publicKey: peerpub-a
+        allowedIPs: [10.99.0.2/32]
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardPeer
+      metadata: {name: peer-b}
+      spec:
+        interface: wg0
+        publicKey: peerpub-b
+        allowedIPs: [10.99.0.5/32]
+`)
+	store := mapStore{}
+	store.SaveObjectStatus(api.NetAPIVersion, "BGPRouter", "mobility-bgp", map[string]any{
+		"installedNextHops": map[string][]string{
+			"10.77.60.11/32": {"10.99.0.2"},
+			"10.77.60.12/32": {"10.99.0.5"},
+			"10.77.0.0/16":   {"10.99.0.2"},
+		},
+	})
+	var setconf string
+	controller := WireGuardController{
+		Router: router,
+		Store:  store,
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			call := name + " " + strings.Join(args, " ")
+			switch {
+			case call == "ip link show wg0":
+				return nil, errors.New("missing")
+			case call == "wg show wg0 dump":
+				return []byte("priv\tifacepub\t51820\toff\npeerpub-a\tpsk\t198.51.100.2:51820\t10.77.60.11/32,10.99.0.2/32\t1710000000\t100\t200\t0\npeerpub-b\tpsk\t198.51.100.5:51820\t10.77.60.12/32,10.99.0.5/32\t1710000000\t100\t200\t0\n"), nil
+			default:
+				return nil, nil
+			}
+		},
+		CommandStdin: func(_ context.Context, stdin []byte, name string, args ...string) ([]byte, error) {
+			if name == "wg" && strings.Join(args, " ") == "setconf wg0 /dev/stdin" {
+				setconf = string(stdin)
+			}
+			return nil, nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"PublicKey = peerpub-a\nAllowedIPs = 10.77.60.11/32, 10.99.0.2/32",
+		"PublicKey = peerpub-b\nAllowedIPs = 10.77.60.12/32, 10.99.0.5/32",
+	} {
+		if !strings.Contains(setconf, want) {
+			t.Fatalf("setconf missing %q:\n%s", want, setconf)
+		}
+	}
+	if strings.Contains(setconf, "10.77.0.0/16") {
+		t.Fatalf("non-/32 BGP prefix should not be added to WireGuard allowedIPs:\n%s", setconf)
+	}
+}
+
+func TestWireGuardControllerMovesAndWithdrawsBGPMobilityAllowedIPs(t *testing.T) {
+	router := mustWireGuardRouter(t, `
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata: {name: test}
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: BGPRouter
+      metadata: {name: mobility-bgp}
+      spec:
+        asn: 64577
+        routerID: 10.99.0.1
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardInterface
+      metadata: {name: wg0}
+      spec:
+        privateKey: priv
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardPeer
+      metadata: {name: peer-a}
+      spec:
+        interface: wg0
+        publicKey: peerpub-a
+        allowedIPs: [10.99.0.2/32]
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardPeer
+      metadata: {name: peer-b}
+      spec:
+        interface: wg0
+        publicKey: peerpub-b
+        allowedIPs: [10.99.0.5/32]
+`)
+	store := mapStore{}
+	controller := WireGuardController{Router: router, Store: store}
+	store.SaveObjectStatus(api.NetAPIVersion, "BGPRouter", "mobility-bgp", map[string]any{
+		"installedNextHops": map[string]any{"10.77.60.11/32": []any{"10.99.0.2"}},
+	})
+	cfg, err := wireguard.BuildInterface(router.Spec.Resources[1], router.Spec.Resources)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg = controller.withBGPMobilityAllowedIPs(cfg)
+	if !stringSetEqual(cfg.Peers[0].AllowedIPs, []string{"10.99.0.2/32", "10.77.60.11/32"}) || !stringSetEqual(cfg.Peers[1].AllowedIPs, []string{"10.99.0.5/32"}) {
+		t.Fatalf("initial derived allowedIPs = %#v", cfg.Peers)
+	}
+
+	store.SaveObjectStatus(api.NetAPIVersion, "BGPRouter", "mobility-bgp", map[string]any{
+		"installedNextHops": map[string]any{"10.77.60.11/32": []any{"10.99.0.5"}},
+	})
+	cfg, err = wireguard.BuildInterface(router.Spec.Resources[1], router.Spec.Resources)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg = controller.withBGPMobilityAllowedIPs(cfg)
+	if !stringSetEqual(cfg.Peers[0].AllowedIPs, []string{"10.99.0.2/32"}) || !stringSetEqual(cfg.Peers[1].AllowedIPs, []string{"10.99.0.5/32", "10.77.60.11/32"}) {
+		t.Fatalf("moved derived allowedIPs = %#v", cfg.Peers)
+	}
+
+	store.SaveObjectStatus(api.NetAPIVersion, "BGPRouter", "mobility-bgp", map[string]any{"installedNextHops": map[string]any{}})
+	cfg, err = wireguard.BuildInterface(router.Spec.Resources[1], router.Spec.Resources)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg = controller.withBGPMobilityAllowedIPs(cfg)
+	if !stringSetEqual(cfg.Peers[0].AllowedIPs, []string{"10.99.0.2/32"}) || !stringSetEqual(cfg.Peers[1].AllowedIPs, []string{"10.99.0.5/32"}) {
+		t.Fatalf("withdrawn derived allowedIPs = %#v", cfg.Peers)
+	}
+}
+
 func TestWireGuardControllerMarksMissingKeyPending(t *testing.T) {
 	router := mustWireGuardRouter(t, `
 apiVersion: routerd.net/v1alpha1

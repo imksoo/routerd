@@ -175,6 +175,7 @@
                         "items": {
                           "enum": [
                             "observe.cloud",
+                            "observe.providerPrivateIPs",
                             "propose.dynamicConfig",
                             "propose.providerAction",
                             "execute.providerAction"
@@ -3049,6 +3050,12 @@
                         },
                         "type": "array"
                       },
+                      "routeReflectorClient": {
+                        "type": "boolean"
+                      },
+                      "routeReflectorClusterID": {
+                        "type": "string"
+                      },
                       "routerRef": {
                         "type": "string"
                       },
@@ -5787,6 +5794,16 @@
                       "address": {
                         "type": "string"
                       },
+                      "encapDport": {
+                        "maximum": 65535,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "encapSport": {
+                        "maximum": 65535,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
                       "key": {
                         "maximum": 4294967295,
                         "minimum": 0,
@@ -5798,7 +5815,9 @@
                       "mode": {
                         "enum": [
                           "ipip",
-                          "gre"
+                          "gre",
+                          "fou",
+                          "gue"
                         ],
                         "type": "string"
                       },
@@ -5806,6 +5825,15 @@
                         "maximum": 9216,
                         "minimum": 576,
                         "type": "integer"
+                      },
+                      "pathMTU": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "forceFragmentIPv4": {
+                            "type": "boolean"
+                          }
+                        },
+                        "type": "object"
                       },
                       "remote": {
                         "type": "string"
@@ -5870,6 +5898,15 @@
                       "nodeID": {
                         "type": "string"
                       },
+                      "pathMTU": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "forceFragmentIPv4": {
+                            "type": "boolean"
+                          }
+                        },
+                        "type": "object"
+                      },
                       "remote": {
                         "additionalProperties": false,
                         "properties": {
@@ -5905,7 +5942,9 @@
                               "ipsec",
                               "route",
                               "ipip",
-                              "gre"
+                              "gre",
+                              "fou",
+                              "gue"
                             ],
                             "type": "string"
                           }
@@ -6743,10 +6782,6 @@
                         "additionalProperties": false,
                         "description": "CapturePolicy declares how non-owner sites capture an address that has\nmoved.",
                         "properties": {
-                          "deprovisionHoldDuration": {
-                            "description": "DeprovisionHoldDuration delays provider-side de-provision action plans\nafter a previously captured address leaves this node's desired capture set.\nEmpty defaults to leasePolicy.holdDuration, then the controller default.",
-                            "type": "string"
-                          },
                           "mode": {
                             "description": "Mode selects the capture behavior. Only \"all-non-owner-sites\" is supported\nin the MVP; empty defaults to it.",
                             "enum": [
@@ -6760,13 +6795,13 @@
                       },
                       "deliveryPolicy": {
                         "additionalProperties": false,
-                        "description": "DeliveryPolicy is reserved for pool-level delivery defaults. Per-member\nDelivery/DeliveryTo currently drives generated AddressMobilityDomain and\nRemoteAddressClaim DynamicConfigPart resources.",
+                        "description": "DeliveryPolicy selects the pool-level delivery control plane. Empty means\nbgp; owned /32s are advertised and remote /32s are learned through BGP.",
                         "properties": {
                           "mode": {
-                            "description": "Mode is accepted for forward compatibility. Empty means route delivery.",
+                            "description": "Mode selects delivery. Empty means bgp delivery.",
                             "enum": [
                               "",
-                              "route"
+                              "bgp"
                             ],
                             "type": "string"
                           }
@@ -6774,24 +6809,15 @@
                         "type": "object"
                       },
                       "groupRef": {
-                        "description": "GroupRef is the EventGroup whose federation events are projected into\nAddressLease runtime state for this pool (required).",
+                        "description": "GroupRef is the EventGroup whose observed/expired events can feed BGP\nmobility ownership for this pool (required).",
                         "type": "string"
                       },
                       "ipOwnershipPolicy": {
                         "additionalProperties": false,
-                        "description": "IPOwnershipPolicy optionally enables deterministic per-address capture\nownership arbitration. Empty preserves the legacy placement behavior.",
+                        "description": "IPOwnershipPolicy retains high-level failover intent for BGP-mode\nmobility. Ownership itself is represented by BGP best-path.",
                         "properties": {
                           "autoFailover": {
                             "type": "boolean"
-                          },
-                          "epochLocking": {
-                            "type": "boolean"
-                          },
-                          "heartbeatInterval": {
-                            "type": "string"
-                          },
-                          "heartbeatTTL": {
-                            "type": "string"
                           },
                           "preferNodes": {
                             "items": {
@@ -6799,29 +6825,11 @@
                             },
                             "type": "array"
                           },
-                          "promotionHoldDuration": {
-                            "type": "string"
-                          },
                           "type": {
                             "enum": [
                               "",
                               "centralized"
                             ],
-                            "type": "string"
-                          }
-                        },
-                        "type": "object"
-                      },
-                      "leasePolicy": {
-                        "additionalProperties": false,
-                        "description": "LeasePolicy controls the lifetime and owner-change hold window for\nobserved AddressLease state.",
-                        "properties": {
-                          "holdDuration": {
-                            "description": "HoldDuration delays owner changes so short flaps do not immediately move\ncapture intent. Empty defaults to the controller default.",
-                            "type": "string"
-                          },
-                          "ttl": {
-                            "description": "TTL is used when an observed event does not carry an explicit expiresAt.\nEmpty defaults to the controller default.",
                             "type": "string"
                           }
                         },
@@ -6835,7 +6843,7 @@
                           "properties": {
                             "capture": {
                               "additionalProperties": false,
-                              "description": "Capture declares how this member captures addresses currently owned by\nanother site. Empty keeps the pool in lease-registry-only mode until Step 2\nplanning is enabled for this node.",
+                              "description": "Capture declares how this member captures addresses currently owned by\nanother site.",
                               "properties": {
                                 "activeWhen": {
                                   "additionalProperties": false,
@@ -6878,6 +6886,13 @@
                                   "description": "Target carries non-secret provider target hints such as region,\ncompartmentId, resourceGroup, nicName, or ipConfigName. It is copied to\nprovider ActionPlan.target; credentials and tokens do not belong here.",
                                   "type": "object"
                                 },
+                                "targetFrom": {
+                                  "additionalProperties": {
+                                    "type": "string"
+                                  },
+                                  "description": "TargetFrom resolves provider target hints from spec.values. Keys are\nprovider target keys and values are spec.values keys. Explicit target\nentries take precedence over targetFrom.",
+                                  "type": "object"
+                                },
                                 "type": {
                                   "enum": [
                                     "provider-secondary-ip",
@@ -6890,7 +6905,7 @@
                             },
                             "delivery": {
                               "additionalProperties": false,
-                              "description": "Delivery declares how this member forwards captured traffic toward the\nowner site. Empty keeps the pool in lease-registry-only mode.",
+                              "description": "Delivery is retained for hand-authored SAM compatibility. BGP-mode\nMobilityPool delivery does not require per-member delivery routes.",
                               "properties": {
                                 "mode": {
                                   "enum": [
@@ -6909,7 +6924,7 @@
                               "type": "object"
                             },
                             "deliveryTo": {
-                              "description": "DeliveryTo optionally selects delivery per owner identity. The planner\nresolves entries against the lease owner in nodeRef -\u003e site -\u003e role order,\nthen falls back to Delivery.",
+                              "description": "DeliveryTo optionally selects delivery per owner identity. It is retained\nfor SAM compatibility; BGP-mode mobility does not lower per-lease routes.",
                               "items": {
                                 "additionalProperties": false,
                                 "properties": {
@@ -6962,18 +6977,103 @@
                               "description": "NodeRef is the routerd node identity (matches federation sourceNode).",
                               "type": "string"
                             },
+                            "ownershipDiscovery": {
+                              "additionalProperties": false,
+                              "description": "OwnershipDiscovery optionally lets a cloud member discover locally owned\nprovider private IPs and emit them as observed federation facts.",
+                              "properties": {
+                                "leaseTTL": {
+                                  "description": "LeaseTTL controls the emitted observed event expiry. Empty defaults to the\ncontroller default.",
+                                  "type": "string"
+                                },
+                                "mode": {
+                                  "description": "Mode selects the discovery backend. Empty/disabled does nothing.",
+                                  "enum": [
+                                    "",
+                                    "disabled",
+                                    "provider-private-ip"
+                                  ],
+                                  "type": "string"
+                                },
+                                "pluginRef": {
+                                  "description": "PluginRef optionally pins the inventory plugin. Empty resolves by\nprovider name or sole observe.providerPrivateIPs plugin.",
+                                  "type": "string"
+                                },
+                                "providerRef": {
+                                  "description": "ProviderRef defaults to the member capture.providerRef.",
+                                  "type": "string"
+                                },
+                                "scanInterval": {
+                                  "description": "ScanInterval bounds provider inventory calls. Empty defaults to 60s.",
+                                  "type": "string"
+                                },
+                                "scope": {
+                                  "additionalProperties": false,
+                                  "description": "Scope narrows which provider private IPs become mobility ownership facts.\nEmpty keeps the historical broad scan behavior.",
+                                  "properties": {
+                                    "excludeAddresses": {
+                                      "description": "ExcludeAddresses optionally denylists discovered addresses by IPv4 CIDR or\nbare IPv4 address.",
+                                      "items": {
+                                        "type": "string"
+                                      },
+                                      "type": "array"
+                                    },
+                                    "includeAddresses": {
+                                      "description": "IncludeAddresses optionally allowlists discovered addresses by IPv4 CIDR or\nbare IPv4 address. Empty means all pool addresses are candidates.",
+                                      "items": {
+                                        "type": "string"
+                                      },
+                                      "type": "array"
+                                    },
+                                    "includePrimary": {
+                                      "description": "IncludePrimary controls whether provider-primary private IPs may become\nmobility-owned addresses. Nil defaults to true for backward compatibility.",
+                                      "type": "boolean"
+                                    }
+                                  },
+                                  "type": "object"
+                                },
+                                "selector": {
+                                  "additionalProperties": false,
+                                  "description": "Selector optionally filters discovered IP records by provider tags/labels.",
+                                  "properties": {
+                                    "tags": {
+                                      "additionalProperties": {
+                                        "type": "string"
+                                      },
+                                      "type": "object"
+                                    }
+                                  },
+                                  "type": "object"
+                                },
+                                "subnetRef": {
+                                  "description": "SubnetRef optionally constrains the provider scan. Empty asks the plugin\nto infer it from the self NIC.",
+                                  "type": "string"
+                                },
+                                "subnetRefFrom": {
+                                  "description": "SubnetRefFrom resolves SubnetRef from spec.values when SubnetRef is not\nset explicitly.",
+                                  "type": "string"
+                                }
+                              },
+                              "type": "object"
+                            },
                             "placement": {
                               "additionalProperties": false,
-                              "description": "Placement optionally places this member in an active/standby capture group.\nWhen set, only the highest-priority non-drained member in the same group\ncaptures provider-side addresses.",
+                              "description": "Placement optionally places this member in an active/standby capture group.\nWhen set, only the highest-priority non-drained member in the same group\ncaptures provider-side addresses. Provider-secondary members that share a\nsite/providerRef with an existing placement group must declare placement.",
                               "properties": {
                                 "group": {
                                   "type": "string"
                                 },
                                 "priority": {
+                                  "description": "Priority orders active/standby candidates. Empty/0 is auto-numbered\ndeterministically within the group as 10, 20, ... while preserving any\nexplicitly configured priorities.",
+                                  "maximum": 1000000,
+                                  "minimum": 0,
                                   "type": "integer"
                                 }
                               },
                               "type": "object"
+                            },
+                            "profileRef": {
+                              "description": "ProfileRef selects a profile from spec.profiles.cloudCaptures. It is a\nlocal shorthand for the node's capture/discovery details; remote members\nshould normally remain identity-only.",
+                              "type": "string"
                             },
                             "role": {
                               "description": "Role selects the SAM side semantics for this node. It is separate from Site\nso sites can be named for topology while role remains provider-agnostic.",
@@ -6986,6 +7086,13 @@
                             "site": {
                               "description": "Site is the location label the node serves within the pool.",
                               "type": "string"
+                            },
+                            "staticOwnedAddresses": {
+                              "description": "StaticOwnedAddresses declares IPv4 /32 addresses in the pool that this\nmember owns without relying on observed-client federation events. It is\nintended for on-prem static-IP segments.",
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
                             }
                           },
                           "required": [
@@ -7008,6 +7115,194 @@
                       "prefix": {
                         "description": "Prefix is the CIDR managed by this pool, e.g. 10.88.60.0/24 (required).",
                         "type": "string"
+                      },
+                      "profiles": {
+                        "additionalProperties": false,
+                        "description": "Profiles defines reusable capture/discovery fragments. Members opt in\nwith profileRef and can override any concrete field locally.",
+                        "properties": {
+                          "cloudCaptures": {
+                            "additionalProperties": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "capture": {
+                                  "additionalProperties": false,
+                                  "description": "Capture defaults for provider-secondary-ip cloud capture.",
+                                  "properties": {
+                                    "activeWhen": {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "type": {
+                                          "enum": [
+                                            "",
+                                            "vrrp-master"
+                                          ],
+                                          "type": "string"
+                                        },
+                                        "virtualAddressRef": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "type": "object"
+                                    },
+                                    "configureOSAddress": {
+                                      "type": "boolean"
+                                    },
+                                    "gratuitousARP": {
+                                      "type": "boolean"
+                                    },
+                                    "interface": {
+                                      "type": "string"
+                                    },
+                                    "nicRef": {
+                                      "type": "string"
+                                    },
+                                    "providerMode": {
+                                      "type": "string"
+                                    },
+                                    "providerRef": {
+                                      "type": "string"
+                                    },
+                                    "target": {
+                                      "additionalProperties": {
+                                        "type": "string"
+                                      },
+                                      "description": "Target carries non-secret provider target hints such as region,\ncompartmentId, resourceGroup, nicName, or ipConfigName. It is copied to\nprovider ActionPlan.target; credentials and tokens do not belong here.",
+                                      "type": "object"
+                                    },
+                                    "targetFrom": {
+                                      "additionalProperties": {
+                                        "type": "string"
+                                      },
+                                      "description": "TargetFrom resolves provider target hints from spec.values. Keys are\nprovider target keys and values are spec.values keys. Explicit target\nentries take precedence over targetFrom.",
+                                      "type": "object"
+                                    },
+                                    "type": {
+                                      "enum": [
+                                        "provider-secondary-ip",
+                                        "proxy-arp"
+                                      ],
+                                      "type": "string"
+                                    }
+                                  },
+                                  "type": "object"
+                                },
+                                "ownershipDiscovery": {
+                                  "additionalProperties": false,
+                                  "description": "OwnershipDiscovery defaults for provider private-IP observation.",
+                                  "properties": {
+                                    "leaseTTL": {
+                                      "description": "LeaseTTL controls the emitted observed event expiry. Empty defaults to the\ncontroller default.",
+                                      "type": "string"
+                                    },
+                                    "mode": {
+                                      "description": "Mode selects the discovery backend. Empty/disabled does nothing.",
+                                      "enum": [
+                                        "",
+                                        "disabled",
+                                        "provider-private-ip"
+                                      ],
+                                      "type": "string"
+                                    },
+                                    "pluginRef": {
+                                      "description": "PluginRef optionally pins the inventory plugin. Empty resolves by\nprovider name or sole observe.providerPrivateIPs plugin.",
+                                      "type": "string"
+                                    },
+                                    "providerRef": {
+                                      "description": "ProviderRef defaults to the member capture.providerRef.",
+                                      "type": "string"
+                                    },
+                                    "scanInterval": {
+                                      "description": "ScanInterval bounds provider inventory calls. Empty defaults to 60s.",
+                                      "type": "string"
+                                    },
+                                    "scope": {
+                                      "additionalProperties": false,
+                                      "description": "Scope narrows which provider private IPs become mobility ownership facts.\nEmpty keeps the historical broad scan behavior.",
+                                      "properties": {
+                                        "excludeAddresses": {
+                                          "description": "ExcludeAddresses optionally denylists discovered addresses by IPv4 CIDR or\nbare IPv4 address.",
+                                          "items": {
+                                            "type": "string"
+                                          },
+                                          "type": "array"
+                                        },
+                                        "includeAddresses": {
+                                          "description": "IncludeAddresses optionally allowlists discovered addresses by IPv4 CIDR or\nbare IPv4 address. Empty means all pool addresses are candidates.",
+                                          "items": {
+                                            "type": "string"
+                                          },
+                                          "type": "array"
+                                        },
+                                        "includePrimary": {
+                                          "description": "IncludePrimary controls whether provider-primary private IPs may become\nmobility-owned addresses. Nil defaults to true for backward compatibility.",
+                                          "type": "boolean"
+                                        }
+                                      },
+                                      "type": "object"
+                                    },
+                                    "selector": {
+                                      "additionalProperties": false,
+                                      "description": "Selector optionally filters discovered IP records by provider tags/labels.",
+                                      "properties": {
+                                        "tags": {
+                                          "additionalProperties": {
+                                            "type": "string"
+                                          },
+                                          "type": "object"
+                                        }
+                                      },
+                                      "type": "object"
+                                    },
+                                    "subnetRef": {
+                                      "description": "SubnetRef optionally constrains the provider scan. Empty asks the plugin\nto infer it from the self NIC.",
+                                      "type": "string"
+                                    },
+                                    "subnetRefFrom": {
+                                      "description": "SubnetRefFrom resolves SubnetRef from spec.values when SubnetRef is not\nset explicitly.",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "type": "object"
+                                }
+                              },
+                              "type": "object"
+                            },
+                            "description": "CloudCaptures contains reusable cloud provider-secondary-ip capture\ndefaults. It deliberately models only cloud capture/discovery because\non-prem proxy-ARP authority must remain explicit and fail-closed.",
+                            "type": "object"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "staticHandovers": {
+                        "description": "StaticHandovers declares planned static-owned address movement from an\non-prem member to another member. The controller releases the from member\nfirst and only projects the to member after observing the release event.",
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "address": {
+                              "type": "string"
+                            },
+                            "fromNodeRef": {
+                              "type": "string"
+                            },
+                            "toNodeRef": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "address",
+                            "fromNodeRef",
+                            "toNodeRef"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "values": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Values carries non-secret per-router constants referenced by profiles.\nIt is intended for provider identifiers such as NIC, subnet, region, or\nresource group names; credentials and tokens do not belong here.",
+                        "type": "object"
                       }
                     },
                     "required": [
@@ -7141,6 +7436,10 @@
                       "metric": {
                         "minimum": 0,
                         "type": "integer"
+                      },
+                      "preferredSource": {
+                        "description": "PreferredSource programs the Linux route preferred source (RTA_PREFSRC).\nIt is useful for host-originated traffic that must use a stable logical\nsource address while still following an explicit delivery route.",
+                        "type": "string"
                       },
                       "type": {
                         "enum": [

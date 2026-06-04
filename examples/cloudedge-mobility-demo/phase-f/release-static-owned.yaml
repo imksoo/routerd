@@ -1,0 +1,7 @@
+# Declarative diff for MobilityPool/cloudedge.
+# Remove 10.77.60.10/32 from the onprem-router member.
+spec:
+  members:
+    - nodeRef: onprem-router
+      staticOwnedAddresses: []
+

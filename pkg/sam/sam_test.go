@@ -63,6 +63,38 @@ func TestExpandRemoteAddressClaimRoutesNoClaimsUnchanged(t *testing.T) {
 	}
 }
 
+func TestExpandRemoteAddressClaimRoutesCopiesPreferredSourceAnnotation(t *testing.T) {
+	router := testRouter()
+	claim := router.Spec.Resources[4]
+	claim.Metadata.Annotations = map[string]string{
+		DeliveryPreferredSourceAnnotation: "10.0.1.10",
+	}
+	router.Spec.Resources[4] = claim
+
+	expanded, lowerings, err := ExpandRemoteAddressClaimRoutes(*router)
+	if err != nil {
+		t.Fatalf("ExpandRemoteAddressClaimRoutes: %v", err)
+	}
+	route := findRoute(t, ipv4Routes(expanded), "sam-app-10-0-1-123-delivery")
+	spec, err := route.IPv4RouteSpec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.PreferredSource != "10.0.1.10" {
+		t.Fatalf("preferredSource = %q, want 10.0.1.10", spec.PreferredSource)
+	}
+	var got DeliveryLowering
+	for _, lowering := range lowerings {
+		if lowering.ClaimName == "app-10-0-1-123" {
+			got = lowering
+			break
+		}
+	}
+	if got.PreferredSource != "10.0.1.10" {
+		t.Fatalf("lowering preferredSource = %q", got.PreferredSource)
+	}
+}
+
 func TestExpandRemoteAddressClaimRoutesHonorsVRRPMasterGate(t *testing.T) {
 	router := testRouter()
 	spec := router.Spec.Resources[4].Spec.(api.RemoteAddressClaimSpec)
@@ -91,6 +123,30 @@ func TestExpandRemoteAddressClaimRoutesHonorsVRRPMasterGate(t *testing.T) {
 	}
 	if !findRouteName(ipv4Routes(expanded), "sam-app-10-0-1-123-delivery") {
 		t.Fatalf("master should lower gated proxy route: %#v", ipv4Routes(expanded))
+	}
+}
+
+func TestExpandRemoteAddressClaimRoutesSkipsBGPDelivery(t *testing.T) {
+	router := testRouter()
+	spec := router.Spec.Resources[4].Spec.(api.RemoteAddressClaimSpec)
+	spec.Delivery = api.AddressDelivery{Mode: "bgp"}
+	router.Spec.Resources[4].Spec = spec
+
+	expanded, lowerings, err := ExpandRemoteAddressClaimRoutes(*router)
+	if err != nil {
+		t.Fatalf("ExpandRemoteAddressClaimRoutes: %v", err)
+	}
+	if findRouteName(ipv4Routes(expanded), "sam-app-10-0-1-123-delivery") {
+		t.Fatalf("BGP delivery must not lower route: %#v", ipv4Routes(expanded))
+	}
+	for _, lowering := range lowerings {
+		if lowering.ClaimName == "app-10-0-1-123" {
+			t.Fatalf("BGP delivery produced lowering: %#v", lowerings)
+		}
+	}
+	status := StatusForRemoteAddressClaim(router.Spec.Resources[4], nil, nil, platform.OSLinux)
+	if status["phase"] != "Ready" || status["captureStatus"] != CaptureStatusCaptured || status["deliveryMode"] != "bgp" {
+		t.Fatalf("BGP delivery status = %#v", status)
 	}
 }
 

@@ -30,8 +30,8 @@ collect_router() {
     ssh_router "$host" "$user" "sudo $ROUTERCTL_BIN dynamic list -o json || true; sudo $ROUTERCTL_BIN dynamic render -o json || true"
     echo "--- actions"
     ssh_router "$host" "$user" "sudo $ROUTERCTL_BIN action list -o json || true"
-    echo "--- mobility db"
-    ssh_router "$host" "$user" "sudo sqlite3 -header -column /var/lib/routerd/routerd.db 'select * from mobility_capture_epochs;' || true; sudo sqlite3 -header -column /var/lib/routerd/routerd.db 'select * from mobility_deprovision_markers;' || true"
+    echo "--- mobility"
+    ssh_router "$host" "$user" "sudo $ROUTERCTL_BIN mobility paths -o json || true; sudo $ROUTERCTL_BIN mobility traps -o json || true"
   } > "$OUT/$name.txt" 2>&1
 }
 
@@ -41,17 +41,17 @@ collect_router aws-b "$AWS_ROUTER_B_SSH_HOST" "${AWS_ROUTER_B_SSH_USER:-$SSH_USE
 collect_router azure "$AZURE_ROUTER_SSH_HOST" "${AZURE_ROUTER_SSH_USER:-$SSH_USER}"
 collect_router oci "$OCI_ROUTER_SSH_HOST" "${OCI_ROUTER_SSH_USER:-$SSH_USER}"
 
-if command -v aws >/dev/null; then
+if command -v aws >/dev/null && [[ -n "${AWS_ROUTER_A_ENI_REF:-}" && -n "${AWS_ROUTER_B_ENI_REF:-}" ]]; then
   aws ec2 describe-network-interfaces --profile "$AWS_PROFILE" --region "$AWS_REGION" \
     --network-interface-ids "$AWS_ROUTER_A_ENI_REF" "$AWS_ROUTER_B_ENI_REF" \
     > "$OUT/aws-network-interfaces.json" 2>&1 || true
 fi
 
-if command -v az >/dev/null; then
+if command -v az >/dev/null && [[ -n "${AZURE_ROUTER_NIC_REF:-}" ]]; then
   az network nic show --ids "$AZURE_ROUTER_NIC_REF" > "$OUT/azure-router-nic.json" 2>&1 || true
 fi
 
-if command -v oci >/dev/null; then
+if command -v oci >/dev/null && [[ -n "${OCI_ROUTER_VNIC_REF:-}" ]]; then
   oci network vnic get --vnic-id "$OCI_ROUTER_VNIC_REF" --config-file "$OCI_CONFIG_FILE" --profile "$OCI_PROFILE" --auth security_token \
     > "$OUT/oci-router-vnic.json" 2>&1 || true
 fi
@@ -63,7 +63,7 @@ Collected: $TS
 
 - Router evidence: onprem, aws-a, aws-b, azure, oci.
 - Provider evidence: AWS ENIs, Azure NIC, OCI VNIC when matching CLIs are available.
-- Inspect action journals and mobility_capture_epochs to confirm D5 epoch migration.
+- Inspect BGP mobility paths, provider trap action plans, and action journals to confirm D5 migration.
 EOF
 
 echo "wrote $OUT"

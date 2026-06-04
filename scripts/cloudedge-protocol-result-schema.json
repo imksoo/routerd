@@ -1,0 +1,93 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/imksoo/routerd/scripts/cloudedge-protocol-result-schema.json",
+  "title": "routerd CloudEdge protocol transparency probe result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "pairs", "summary"],
+  "properties": {
+    "status": { "$ref": "#/definitions/checkState" },
+    "pairs": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/pairResult" }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total", "passed", "failed", "checks"],
+      "properties": {
+        "total": { "type": "integer", "minimum": 0 },
+        "passed": { "type": "integer", "minimum": 0 },
+        "failed": { "type": "integer", "minimum": 0 },
+        "checks": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["ftpActive", "ftpPassive", "nfs", "rpc", "bulkTransfer", "pmtu", "sourceIpPreserved", "noNat"],
+          "properties": {
+            "ftpActive": { "$ref": "#/definitions/checkState" },
+            "ftpPassive": { "$ref": "#/definitions/checkState" },
+            "nfs": { "$ref": "#/definitions/checkState" },
+            "rpc": { "$ref": "#/definitions/checkState" },
+            "bulkTransfer": { "$ref": "#/definitions/checkState" },
+            "pmtu": { "$ref": "#/definitions/checkState" },
+            "sourceIpPreserved": { "$ref": "#/definitions/checkState" },
+            "noNat": { "$ref": "#/definitions/checkState" }
+          }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "checkState": {
+      "type": "string",
+      "enum": ["pass", "fail", "skip", "na"]
+    },
+    "details": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "pairResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["client", "server", "bytesRequested", "checks", "details", "result"],
+      "properties": {
+        "client": { "type": "string", "minLength": 1 },
+        "server": { "type": "string", "minLength": 1 },
+        "bytesRequested": { "type": "integer", "minimum": 1 },
+        "result": { "$ref": "#/definitions/checkState" },
+        "checks": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["setup", "ftpActive", "ftpPassive", "nfs", "rpc", "bulkTransfer", "pmtu", "sourceIpPreserved", "noNat"],
+          "properties": {
+            "setup": { "$ref": "#/definitions/checkState" },
+            "ftpActive": { "$ref": "#/definitions/checkState" },
+            "ftpPassive": { "$ref": "#/definitions/checkState" },
+            "nfs": { "$ref": "#/definitions/checkState" },
+            "rpc": { "$ref": "#/definitions/checkState" },
+            "bulkTransfer": { "$ref": "#/definitions/checkState" },
+            "pmtu": { "$ref": "#/definitions/checkState" },
+            "sourceIpPreserved": { "$ref": "#/definitions/checkState" },
+            "noNat": { "$ref": "#/definitions/checkState" }
+          }
+        },
+        "details": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["setup", "ftpActive", "ftpPassive", "nfs", "rpc", "bulkTransfer", "pmtu", "sourceIpPreserved", "noNat"],
+          "properties": {
+            "setup": { "$ref": "#/definitions/details" },
+            "ftpActive": { "$ref": "#/definitions/details" },
+            "ftpPassive": { "$ref": "#/definitions/details" },
+            "nfs": { "$ref": "#/definitions/details" },
+            "rpc": { "$ref": "#/definitions/details" },
+            "bulkTransfer": { "$ref": "#/definitions/details" },
+            "pmtu": { "$ref": "#/definitions/details" },
+            "sourceIpPreserved": { "$ref": "#/definitions/details" },
+            "noNat": { "$ref": "#/definitions/details" }
+          }
+        }
+      }
+    }
+  }
+}

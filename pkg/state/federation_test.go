@@ -3,6 +3,7 @@
 package state
 
 import (
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -94,6 +95,47 @@ func TestListEventsGroupAndExpiredFilter(t *testing.T) {
 	}
 	if ids := idsOf(got); !equalIDs(ids, []string{"a", "c", "d"}) {
 		t.Fatalf("all non-expired ids = %v, want [a c d]", ids)
+	}
+}
+
+func TestRecordFederationProviderDiscoveryObservedCompactsToLatest(t *testing.T) {
+	store := mustOpenStore(t)
+	defer store.Close()
+
+	base := time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)
+	for i := 0; i < 3; i++ {
+		now := base.Add(time.Duration(i) * time.Minute)
+		if err := store.RecordFederationEvent(EventRecord{
+			ID:         fmt.Sprintf("provider-discovery-%d", i),
+			Group:      "cloudedge",
+			SourceNode: "azure-router-a",
+			Type:       "routerd.client.ipv4.observed",
+			Subject:    "10.88.60.11/32",
+			DedupeKey:  "mobility:provider-discovery:cloudedge:azure-router-a:10.88.60.11_32",
+			Payload:    map[string]string{"source": "provider-discovery", "address": "10.88.60.11/32"},
+			ObservedAt: now,
+			ExpiresAt:  now.Add(5 * time.Minute),
+		}); err != nil {
+			t.Fatalf("record provider discovery %d: %v", i, err)
+		}
+	}
+	if err := store.RecordFederationEvent(EventRecord{
+		ID:         "manual-observed",
+		Group:      "cloudedge",
+		SourceNode: "azure-router-a",
+		Type:       "routerd.client.ipv4.observed",
+		Subject:    "10.88.60.12/32",
+		DedupeKey:  "manual-observed",
+		ObservedAt: base,
+	}); err != nil {
+		t.Fatalf("record manual observed: %v", err)
+	}
+	events, err := store.ListFederationEvents("cloudedge", true, base.Add(10*time.Minute).Unix())
+	if err != nil {
+		t.Fatalf("ListFederationEvents: %v", err)
+	}
+	if ids := idsOf(events); !equalIDs(ids, []string{"manual-observed", "provider-discovery-2"}) {
+		t.Fatalf("ids = %v, want manual plus latest provider discovery", ids)
 	}
 }
 

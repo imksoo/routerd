@@ -20,6 +20,10 @@ const (
 	// ActionApproved is an action approved (by operator or policy) but not yet
 	// executed.
 	ActionApproved = "approved"
+	// ActionRunning is an approved action claimed by one executor invocation.
+	// It prevents daemon/manual races from launching the same provider mutation
+	// twice.
+	ActionRunning = "running"
 	// ActionSucceeded is an action the executor reported as applied.
 	ActionSucceeded = "succeeded"
 	// ActionFailed is an action the executor reported as failed.
@@ -279,11 +283,65 @@ func (s *SQLiteStore) ApproveAction(id int64, approvedBy string, now time.Time) 
 	return requireRowAffected(result, id, "approve", ActionPending)
 }
 
+// BeginActionExecution claims an approved action for execution. It is a CAS:
+// exactly one caller can move approved -> running. A false return means the row
+// is missing or no longer approved and the caller must not launch the executor.
+func (s *SQLiteStore) BeginActionExecution(id int64, now time.Time) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return false, nil
+	}
+	if now.IsZero() {
+		now = s.now().UTC()
+	}
+	result, err := s.db.Exec(`UPDATE action_executions SET status = ?, updated_at = ? WHERE id = ? AND status = ?`,
+		ActionRunning, formatStateTime(now), id, ActionApproved)
+	if err != nil {
+		return false, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return affected > 0, nil
+}
+
+// RequeueStaleRunningActions moves orphaned running actions back to approved so
+// the normal execution path can reclaim them. The cutoff is compared against
+// updated_at, which BeginActionExecution sets when the action is claimed.
+func (s *SQLiteStore) RequeueStaleRunningActions(cutoff, now time.Time) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return 0, nil
+	}
+	if cutoff.IsZero() {
+		return 0, fmt.Errorf("stale running cutoff is required")
+	}
+	if now.IsZero() {
+		now = s.now().UTC()
+	}
+	result, err := s.db.Exec(`UPDATE action_executions
+SET status = ?, result_message = ?, error = NULL, executed_at = NULL, observed_json = NULL, updated_at = ?
+WHERE status = ? AND updated_at <= ?`,
+		ActionApproved, nullableString("requeued stale running action"), formatStateTime(now), ActionRunning, formatStateTime(cutoff))
+	if err != nil {
+		return 0, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return int(affected), nil
+}
+
 // MarkActionResult records a terminal execution outcome (succeeded, failed, or
-// skipped) for an approved action. It errors if the row is not currently
-// approved. The observed map carries the executor's non-secret reported facts
-// (e.g. priorSourceDestCheck), which the undo path later reads back from the
-// journal; nil or empty leaves observed_json NULL.
+// skipped) for a running action. For backward-compatible tests and migration
+// helpers it also accepts approved, but the Engine claims running before it
+// launches an executor. The observed map carries the executor's non-secret
+// reported facts (e.g. priorSourceDestCheck), which the undo path later reads
+// back from the journal; nil or empty leaves observed_json NULL.
 func (s *SQLiteStore) MarkActionResult(id int64, status, message, errMsg string, observed map[string]string, executedAt time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -307,12 +365,12 @@ func (s *SQLiteStore) MarkActionResult(id int64, status, message, errMsg string,
 		}
 		observedJSON = string(b)
 	}
-	result, err := s.db.Exec(`UPDATE action_executions SET status = ?, result_message = ?, error = ?, observed_json = ?, executed_at = ?, updated_at = ? WHERE id = ? AND status = ?`,
-		status, nullableString(message), nullableString(errMsg), nullableString(observedJSON), formatStateTime(executedAt), formatStateTime(now), id, ActionApproved)
+	result, err := s.db.Exec(`UPDATE action_executions SET status = ?, result_message = ?, error = ?, observed_json = ?, executed_at = ?, updated_at = ? WHERE id = ? AND status IN (?, ?)`,
+		status, nullableString(message), nullableString(errMsg), nullableString(observedJSON), formatStateTime(executedAt), formatStateTime(now), id, ActionRunning, ActionApproved)
 	if err != nil {
 		return err
 	}
-	return requireRowAffected(result, id, "record result for", ActionApproved)
+	return requireRowAffected(result, id, "record result for", ActionRunning+" or "+ActionApproved)
 }
 
 // MarkActionSkippedByIdempotencyKey fences an unexecuted action out of the

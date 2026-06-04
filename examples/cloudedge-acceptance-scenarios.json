@@ -1,0 +1,201 @@
+{
+  "version": 1,
+  "logicalSubnet": "10.77.60.0/24",
+  "sites": ["onprem", "aws", "azure", "oci"],
+  "scenarios": [
+    {
+      "id": "d3-4site-directed-matrix",
+      "demo": "D3",
+      "description": "Four-site directed dataplane matrix: every source site reaches every other site over the logical /24 with source IP preserved and no NAT.",
+      "profile": "full",
+      "providers": ["onprem", "aws", "azure", "oci"],
+      "fault": { "type": "none" },
+      "matrix": { "name": "d3", "expectedDirectedFlows": 12 },
+      "expectedAssertions": [
+        "directed_ping_ssh_matrix",
+        "source_ip_preserved",
+        "default_gateway_unchanged",
+        "no_nat"
+      ]
+    },
+    {
+      "id": "d5-aws-maintenance-drain-migration",
+      "demo": "D5",
+      "description": "AWS same-provider cloud router maintenance drain moves captured secondary IP from router A to router B and cleans old-holder residue.",
+      "profile": "provider",
+      "providers": ["aws", "onprem"],
+      "fault": { "provider": "aws", "type": "drain", "target": "active-router" },
+      "timing": { "enabled": true, "provider": "aws", "fault": "drain", "thresholdSeconds": 60 },
+      "matrix": { "name": "d3", "expectedDirectedFlows": 12 },
+      "expectedAssertions": [
+        "ownership_epoch_bumped",
+        "failover_recovery_under_60s",
+        "source_ip_preserved",
+        "default_gateway_unchanged",
+        "old_holder_residue_absent",
+        "stale_action_fenced"
+      ]
+    },
+    {
+      "id": "d6-azure-active-stop-seize",
+      "demo": "D6",
+      "description": "Azure active router loss drives liveness-based seize with two-step secondary-IP remove+add and fenced action retry.",
+      "profile": "provider",
+      "providers": ["azure", "onprem"],
+      "fault": { "provider": "azure", "type": "stop-active", "target": "active-router" },
+      "timing": { "enabled": true, "provider": "azure", "fault": "stop-active", "thresholdSeconds": 60 },
+      "matrix": { "name": "d3", "expectedDirectedFlows": 12 },
+      "expectedAssertions": [
+        "ownership_epoch_bumped",
+        "allow_reassignment_maintained_until_success",
+        "failover_recovery_under_60s",
+        "source_ip_preserved",
+        "default_gateway_unchanged",
+        "old_holder_residue_absent",
+        "stale_action_fenced"
+      ]
+    },
+    {
+      "id": "d7-oci-active-stop-seize",
+      "demo": "D7",
+      "description": "OCI active router loss drives liveness-based seize using unassign-if-already-assigned parity.",
+      "profile": "provider",
+      "providers": ["oci", "onprem"],
+      "fault": { "provider": "oci", "type": "stop-active", "target": "active-router" },
+      "timing": { "enabled": true, "provider": "oci", "fault": "stop-active", "thresholdSeconds": 60 },
+      "matrix": { "name": "d3", "expectedDirectedFlows": 12 },
+      "expectedAssertions": [
+        "ownership_epoch_bumped",
+        "allow_reassignment_maintained_until_success",
+        "failover_recovery_under_60s",
+        "source_ip_preserved",
+        "default_gateway_unchanged",
+        "old_holder_residue_absent",
+        "stale_action_fenced"
+      ]
+    },
+    {
+      "id": "d8-onprem-vrrp-master-failover",
+      "demo": "D8",
+      "description": "On-prem VRRP master loss gates proxy-ARP capture off on the old master and on at the standby with GARP takeover.",
+      "profile": "full",
+      "providers": ["onprem", "aws", "azure", "oci"],
+      "fault": { "provider": "onprem", "type": "stop-active", "target": "vrrp-master" },
+      "timing": { "enabled": true, "provider": "onprem", "fault": "stop-active", "thresholdSeconds": 60 },
+      "l2Loop": {
+        "enabled": true,
+        "provider": "onprem",
+        "broadcastThresholdPps": 100,
+        "stpTcnThreshold": 5,
+        "pingLossThresholdPercent": 1
+      },
+      "matrix": { "name": "d3", "expectedDirectedFlows": 12 },
+      "expectedAssertions": [
+        "failover_recovery_under_60s",
+        "l2_loop_free",
+        "broadcast_storm_absent",
+        "stp_rstp_stable",
+        "mac_flap_absent",
+        "failover_ping_stable",
+        "l2_suppression_mechanism_recorded",
+        "source_ip_preserved",
+        "default_gateway_unchanged",
+        "old_holder_residue_absent",
+        "stale_action_fenced"
+      ]
+    },
+    {
+      "id": "d9-cross-provider-simultaneous-capture-consistency",
+      "demo": "D9",
+      "description": "Simultaneous non-owner capture across AWS, Azure, OCI, and on-prem converges to one ownership/capture view without NAT or stale provider residue.",
+      "profile": "full",
+      "providers": ["onprem", "aws", "azure", "oci"],
+      "fault": { "provider": "aws,azure,oci", "type": "drain", "target": "active-router" },
+      "matrix": { "name": "d3", "expectedDirectedFlows": 12 },
+      "expectedAssertions": [
+        "ownership_epoch_bumped",
+        "source_ip_preserved",
+        "default_gateway_unchanged",
+        "old_holder_residue_absent",
+        "stale_action_fenced"
+      ]
+    },
+    {
+      "id": "d10-event-replay-restart-convergence",
+      "demo": "D10",
+      "description": "Routerd/eventd restart and event replay converge to the same lease, ownership epoch, dynamic plan, and dataplane result.",
+      "profile": "full",
+      "providers": ["onprem", "aws", "azure", "oci"],
+      "fault": { "provider": "aws,azure,oci,onprem", "type": "heartbeat-stop", "target": "all-routerd" },
+      "matrix": { "name": "d3", "expectedDirectedFlows": 12 },
+      "expectedAssertions": [
+        "ownership_epoch_bumped",
+        "source_ip_preserved",
+        "default_gateway_unchanged",
+        "old_holder_residue_absent",
+        "stale_action_fenced"
+      ]
+    },
+    {
+      "id": "d11-protocol-transparency",
+      "demo": "D11",
+      "description": "FTP active/passive, NFS/RPC, bulk transfer, and PMTU/MSS transparency across representative cloud-cloud and cloud-onprem site pairs.",
+      "profile": "full",
+      "providers": ["onprem", "aws", "azure", "oci"],
+      "fault": { "type": "none" },
+      "matrix": { "name": "d3", "expectedDirectedFlows": 12 },
+      "protocol": {
+        "enabled": true,
+        "pairs": [
+          { "client": "aws", "server": "azure" },
+          { "client": "aws", "server": "onprem" }
+        ],
+        "bytes": 104857600
+      },
+      "expectedAssertions": [
+        "directed_ping_ssh_matrix",
+        "source_ip_preserved",
+        "default_gateway_unchanged",
+        "no_nat",
+        "protocol_transparency",
+        "ftp_active_passive",
+        "nfs_rpc",
+        "bulk_transfer_pmtu",
+        "protocol_source_ip_preserved",
+        "protocol_no_nat"
+      ]
+    },
+    {
+      "id": "d12-l2-loop-stp-stability",
+      "demo": "D12",
+      "description": "On-prem shared-L2 VRRP failover keeps SAM proxy-ARP capture single-master, non-master fail-closed, and STP/RSTP stable without broadcast storm or MAC flap.",
+      "profile": "full",
+      "providers": ["onprem", "aws", "azure", "oci"],
+      "fault": { "provider": "onprem", "type": "stop-active", "target": "vrrp-master" },
+      "timing": { "enabled": true, "provider": "onprem", "fault": "stop-active", "thresholdSeconds": 60 },
+      "l2Loop": {
+        "enabled": true,
+        "provider": "onprem",
+        "broadcastThresholdPps": 100,
+        "stpTcnThreshold": 5,
+        "pingLossThresholdPercent": 1
+      },
+      "matrix": { "name": "d3", "expectedDirectedFlows": 12 },
+      "expectedAssertions": [
+        "directed_ping_ssh_matrix",
+        "failover_recovery_under_60s",
+        "l2_loop_free",
+        "broadcast_storm_absent",
+        "stp_rstp_stable",
+        "mac_flap_absent",
+        "failover_ping_stable",
+        "l2_suppression_mechanism_recorded",
+        "source_ip_preserved",
+        "default_gateway_unchanged",
+        "no_nat",
+        "old_holder_residue_absent",
+        "stale_action_fenced"
+      ]
+    }
+  ]
+}

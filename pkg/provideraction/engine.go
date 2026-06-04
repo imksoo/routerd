@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
-	"strconv"
 	"strings"
 	"time"
 
@@ -21,9 +20,9 @@ import (
 type Store interface {
 	ImportAction(rec state.ActionExecutionRecord) (bool, error)
 	GetActionByID(id int64) (state.ActionExecutionRecord, bool, error)
-	GetMobilityCaptureEpoch(key string) (state.MobilityCaptureEpochRecord, bool, error)
-	GetMobilityOwnershipEpoch(pool, address string) (state.MobilityOwnershipEpochRecord, bool, error)
 	ApproveAction(id int64, approvedBy string, now time.Time) error
+	BeginActionExecution(id int64, now time.Time) (bool, error)
+	RequeueStaleRunningActions(cutoff, now time.Time) (int, error)
 	ListActions(state.ActionExecutionFilter) ([]state.ActionExecutionRecord, error)
 	MarkActionSkippedByIdempotencyKey(key, message string, now time.Time) error
 	MarkActionResult(id int64, status, message, errMsg string, observed map[string]string, executedAt time.Time) error
@@ -40,11 +39,12 @@ type Logger interface {
 // Engine drives the gated provider-action execution path. It is pure-ish: the
 // executor runner, clock, store, and logger are all injected.
 type Engine struct {
-	store   Store
-	run     ExecutorRunner
-	now     func() time.Time
-	log     Logger
-	plugins []api.Resource
+	store               Store
+	run                 ExecutorRunner
+	now                 func() time.Time
+	log                 Logger
+	plugins             []api.Resource
+	staleRunningTimeout time.Duration
 }
 
 // Config configures an Engine.
@@ -61,16 +61,16 @@ type Config struct {
 	// provider (see resolveExecutor). Optional for import/approve; required for
 	// Execute/Rollback.
 	Plugins []api.Resource
+	// StaleRunningTimeout is the minimum age of a running action before it may
+	// be requeued for execution after a daemon crash/restart. Defaults to
+	// DefaultStaleRunningTimeout.
+	StaleRunningTimeout time.Duration
 }
 
 const (
-	captureParamKey       = "mobilityCaptureKey"
-	captureParamEpoch     = "mobilityCaptureEpoch"
-	captureParamHolder    = "mobilityCaptureHolder"
-	ownershipParamPool    = "mobilityOwnershipPool"
-	ownershipParamAddress = "mobilityOwnershipAddress"
-	ownershipParamEpoch   = "mobilityOwnershipEpoch"
-	ownershipParamOwner   = "mobilityOwnershipOwner"
+	pathSigParam = "mobilityPathSig"
+
+	DefaultStaleRunningTimeout = 2 * time.Minute
 )
 
 // NewEngine builds an Engine.
@@ -85,12 +85,17 @@ func NewEngine(cfg Config) (*Engine, error) {
 	if now == nil {
 		now = time.Now
 	}
+	staleRunningTimeout := cfg.StaleRunningTimeout
+	if staleRunningTimeout <= 0 {
+		staleRunningTimeout = DefaultStaleRunningTimeout
+	}
 	return &Engine{
-		store:   cfg.Store,
-		run:     cfg.Runner,
-		now:     now,
-		log:     cfg.Log,
-		plugins: cfg.Plugins,
+		store:               cfg.Store,
+		run:                 cfg.Runner,
+		now:                 now,
+		log:                 cfg.Log,
+		plugins:             cfg.Plugins,
+		staleRunningTimeout: staleRunningTimeout,
 	}, nil
 }
 
@@ -144,7 +149,7 @@ func (e *Engine) ImportFromDynamicParts() (ImportResult, error) {
 				e.logf("provideraction: skipping plan %q from source %q: missing idempotencyKey", plan.Name, part.Source)
 				continue
 			}
-			stale, err := e.planStaleByOwnershipOrCaptureEpoch(plan)
+			stale, err := e.planStaleByCurrentDesired(plan)
 			if err != nil {
 				return res, err
 			}
@@ -171,6 +176,21 @@ func (e *Engine) ImportFromDynamicParts() (ImportResult, error) {
 	return res, nil
 }
 
+// RecoverStaleRunningActions requeues orphaned running actions so they can flow
+// through the existing policy, fencing, approval, and executor path again.
+func (e *Engine) RecoverStaleRunningActions() (int, error) {
+	now := e.now().UTC()
+	cutoff := now.Add(-e.staleRunningTimeout)
+	count, err := e.store.RequeueStaleRunningActions(cutoff, now)
+	if err != nil {
+		return 0, fmt.Errorf("requeue stale running provider actions: %w", err)
+	}
+	if count > 0 {
+		e.logf("provideraction: requeued %d stale running action(s)", count)
+	}
+	return count, nil
+}
+
 func (e *Engine) fenceStalePendingActions() (int, error) {
 	rows, err := e.store.ListActions(state.ActionExecutionFilter{})
 	if err != nil {
@@ -183,26 +203,18 @@ func (e *Engine) fenceStalePendingActions() (int, error) {
 		default:
 			continue
 		}
-		plan := dynamicconfig.ActionPlan{
-			IdempotencyKey: row.IdempotencyKey,
-			Provider:       row.Provider,
-			ProviderRef:    row.ProviderRef,
-			Action:         row.Action,
-			RiskLevel:      row.RiskLevel,
+		plan, err := planFromRecord(row)
+		if err != nil {
+			return count, err
 		}
-		if strings.TrimSpace(row.ParametersJSON) != "" {
-			if err := json.Unmarshal([]byte(row.ParametersJSON), &plan.Parameters); err != nil {
-				return count, fmt.Errorf("decode action parameters for %q: %w", row.IdempotencyKey, err)
-			}
-		}
-		stale, err := e.planStaleByOwnershipOrCaptureEpoch(plan)
+		stale, err := e.planStaleByCurrentDesired(plan)
 		if err != nil {
 			return count, err
 		}
 		if !stale {
 			continue
 		}
-		if err := e.store.MarkActionSkippedByIdempotencyKey(row.IdempotencyKey, "stale mobility capture epoch", e.now().UTC()); err != nil {
+		if err := e.store.MarkActionSkippedByIdempotencyKey(row.IdempotencyKey, "stale mobility desired path", e.now().UTC()); err != nil {
 			return count, fmt.Errorf("mark stale action %q skipped: %w", row.IdempotencyKey, err)
 		}
 		count++
@@ -211,82 +223,41 @@ func (e *Engine) fenceStalePendingActions() (int, error) {
 	return count, nil
 }
 
-func (e *Engine) planStaleByCaptureEpoch(plan dynamicconfig.ActionPlan) (bool, error) {
-	key, epoch, holder, ok := captureFenceFromPlan(plan)
-	if !ok {
+func (e *Engine) planStaleByCurrentDesired(plan dynamicconfig.ActionPlan) (bool, error) {
+	if strings.TrimSpace(plan.Parameters[pathSigParam]) == "" {
 		return false, nil
 	}
-	current, found, err := e.store.GetMobilityCaptureEpoch(key)
+	desired, err := e.currentDesiredPathFenceKeys()
 	if err != nil {
-		return false, fmt.Errorf("load mobility capture epoch %q: %w", key, err)
+		return false, err
 	}
-	if !found {
-		return false, nil
-	}
-	if epoch != current.Epoch {
-		return true, nil
-	}
-	switch strings.TrimSpace(plan.Action) {
-	case "assign-secondary-ip", "ensure-forwarding-enabled":
-		return holder != "" && holder != current.Holder, nil
-	case "unassign-secondary-ip", "ensure-forwarding-disabled":
-		return holder != "" && holder == current.Holder, nil
-	default:
-		return false, nil
-	}
+	return !desired[strings.TrimSpace(plan.IdempotencyKey)], nil
 }
 
-func (e *Engine) planStaleByOwnershipOrCaptureEpoch(plan dynamicconfig.ActionPlan) (bool, error) {
-	if pool, address, epoch, owner, ok := ownershipFenceFromPlan(plan); ok {
-		current, found, err := e.store.GetMobilityOwnershipEpoch(pool, address)
-		if err != nil {
-			return false, fmt.Errorf("load mobility ownership epoch %s/%s: %w", pool, address, err)
+func (e *Engine) currentDesiredPathFenceKeys() (map[string]bool, error) {
+	out := map[string]bool{}
+	parts, err := e.store.ListDynamicConfigParts()
+	if err != nil {
+		return nil, fmt.Errorf("list dynamic config parts for provider action fencing: %w", err)
+	}
+	for _, part := range parts {
+		if part.EffectiveStatus(e.now()) == "expired" || strings.TrimSpace(part.ActionPlansJSON) == "" {
+			continue
 		}
-		if !found {
-			return false, nil
+		var plans []dynamicconfig.ActionPlan
+		if err := json.Unmarshal([]byte(part.ActionPlansJSON), &plans); err != nil {
+			return nil, fmt.Errorf("decode actionPlans for source %q: %w", part.Source, err)
 		}
-		if epoch != current.Epoch {
-			return true, nil
-		}
-		switch strings.TrimSpace(plan.Action) {
-		case "assign-secondary-ip", "ensure-forwarding-enabled":
-			return owner != "" && owner != current.OwnerNode, nil
-		case "unassign-secondary-ip", "ensure-forwarding-disabled":
-			return owner != "" && owner == current.OwnerNode, nil
-		default:
-			return false, nil
+		for _, plan := range plans {
+			if strings.TrimSpace(plan.Parameters[pathSigParam]) == "" {
+				continue
+			}
+			if key := strings.TrimSpace(plan.IdempotencyKey); key != "" {
+				out[key] = true
+			}
 		}
 	}
-	return e.planStaleByCaptureEpoch(plan)
-}
-
-func captureFenceFromPlan(plan dynamicconfig.ActionPlan) (string, int64, string, bool) {
-	key := strings.TrimSpace(plan.Parameters[captureParamKey])
-	holder := strings.TrimSpace(plan.Parameters[captureParamHolder])
-	epochRaw := strings.TrimSpace(plan.Parameters[captureParamEpoch])
-	if key == "" || epochRaw == "" {
-		return "", 0, "", false
-	}
-	epoch, err := strconv.ParseInt(epochRaw, 10, 64)
-	if err != nil || epoch <= 0 {
-		return "", 0, "", false
-	}
-	return key, epoch, holder, true
-}
-
-func ownershipFenceFromPlan(plan dynamicconfig.ActionPlan) (string, string, int64, string, bool) {
-	pool := strings.TrimSpace(plan.Parameters[ownershipParamPool])
-	address := strings.TrimSpace(plan.Parameters[ownershipParamAddress])
-	owner := strings.TrimSpace(plan.Parameters[ownershipParamOwner])
-	epochRaw := strings.TrimSpace(plan.Parameters[ownershipParamEpoch])
-	if pool == "" || address == "" || epochRaw == "" {
-		return "", "", 0, "", false
-	}
-	epoch, err := strconv.ParseInt(epochRaw, 10, 64)
-	if err != nil || epoch <= 0 {
-		return "", "", 0, "", false
-	}
-	return pool, address, epoch, owner, true
+	return out, nil
 }
 
 // recordFromPlan converts a planned action into a journal record (pending). It
@@ -353,6 +324,10 @@ func (e *Engine) Execute(ctx context.Context, id int64, mode string, policy api.
 		e.logf("provideraction: action %d already succeeded; skipping (idempotent)", id)
 		return nil
 	}
+	if rec.Status == state.ActionRunning {
+		e.logf("provideraction: action %d is already running; skipping", id)
+		return nil
+	}
 	if rec.Status == state.ActionRolledBack {
 		return fmt.Errorf("execute action %d: action was rolled back", id)
 	}
@@ -360,6 +335,21 @@ func (e *Engine) Execute(ctx context.Context, id int64, mode string, policy api.
 	// Policy gate (do not launch the executor on failure).
 	if err := evaluatePolicy(rec, mode, policy); err != nil {
 		return fmt.Errorf("policy gate denied action %d: %w", id, err)
+	}
+	plan, err := planFromRecord(rec)
+	if err != nil {
+		return err
+	}
+	stale, err := e.planStaleByCurrentDesired(plan)
+	if err != nil {
+		return err
+	}
+	if stale {
+		if err := e.store.MarkActionSkippedByIdempotencyKey(rec.IdempotencyKey, "stale mobility desired path", e.now().UTC()); err != nil {
+			return fmt.Errorf("mark stale action %q skipped: %w", rec.IdempotencyKey, err)
+		}
+		e.logf("provideraction: fenced stale capture action %q before execution", rec.IdempotencyKey)
+		return nil
 	}
 
 	// Approval gate. The action must be approved, unless policy auto-approve
@@ -387,6 +377,14 @@ func (e *Engine) Execute(ctx context.Context, id int64, mode string, policy api.
 	spec, pluginName, err := e.resolveExecutor(rec.Provider)
 	if err != nil {
 		return fmt.Errorf("resolve executor for provider %q: %w", rec.Provider, err)
+	}
+	claimed, err := e.store.BeginActionExecution(id, e.now().UTC())
+	if err != nil {
+		return fmt.Errorf("claim action %d for execution: %w", id, err)
+	}
+	if !claimed {
+		e.logf("provideraction: action %d was already claimed or completed; skipping", id)
+		return nil
 	}
 	e.logf("provideraction: executing action %d via plugin %q (mode=%s)", id, pluginName, mode)
 
@@ -429,6 +427,27 @@ func (e *Engine) Execute(ctx context.Context, id int64, mode string, policy api.
 		}
 		return fmt.Errorf("execute action %d: %s", id, errMsg)
 	}
+}
+
+func planFromRecord(row state.ActionExecutionRecord) (dynamicconfig.ActionPlan, error) {
+	plan := dynamicconfig.ActionPlan{
+		IdempotencyKey: row.IdempotencyKey,
+		Provider:       row.Provider,
+		ProviderRef:    row.ProviderRef,
+		Action:         row.Action,
+		RiskLevel:      row.RiskLevel,
+	}
+	if strings.TrimSpace(row.TargetJSON) != "" {
+		if err := json.Unmarshal([]byte(row.TargetJSON), &plan.Target); err != nil {
+			return plan, fmt.Errorf("decode action target for %q: %w", row.IdempotencyKey, err)
+		}
+	}
+	if strings.TrimSpace(row.ParametersJSON) != "" {
+		if err := json.Unmarshal([]byte(row.ParametersJSON), &plan.Parameters); err != nil {
+			return plan, fmt.Errorf("decode action parameters for %q: %w", row.IdempotencyKey, err)
+		}
+	}
+	return plan, nil
 }
 
 // DryRunResult is the outcome of a non-destructive DryRunPreview.
