@@ -57,6 +57,9 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
   as a peer export policy instead of accepting the field only in API
   validation. This lets mixed Kubernetes and CloudEdge SAM deployments keep
   mobility prefixes from leaking to unrelated peers.
+- Runtime changes to `BGPPeer.spec.exportPolicy` now trigger GoBGP soft
+  reset out for affected peers, so previously advertised routes are withdrawn
+  when they no longer match the peer export policy.
 
 ## v20260528.2308
 

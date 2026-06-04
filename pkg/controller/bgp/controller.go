@@ -194,9 +194,15 @@ func (c *Controller) reconcileLocked(ctx context.Context) error {
 		peer.ImportPolicyName = importPolicyName
 		desired[address] = peer
 	}
+	exportPolicyRefreshPeers := exportPolicyChangedPeers(c.appliedPeerKeys, desired)
 	changed, err := c.reconcilePeers(ctx, desired)
 	if err != nil {
 		return c.savePendingAll("GoBGPPeerApplyFailed", err)
+	}
+	if len(exportPolicyRefreshPeers) > 0 {
+		if err := c.softResetExportPolicy(ctx, exportPolicyRefreshPeers); err != nil {
+			return c.savePendingAll("GoBGPExportPolicyRefreshFailed", err)
+		}
 	}
 	if err := c.reconcileAdvertisements(ctx, routerSpec, applied.Paths); err != nil {
 		return c.savePendingAll("GoBGPPathApplyFailed", err)
@@ -658,6 +664,42 @@ func (c *Controller) softResetImportPolicy(ctx context.Context, desired map[stri
 			Direction: gobgpapi.ResetPeerRequest_IN,
 		}); err != nil {
 			return fmt.Errorf("soft reset import policy for peer %s: %w", address, err)
+		}
+	}
+	return nil
+}
+
+func exportPolicyChangedPeers(applied, desired map[string]desiredPeer) []string {
+	var addresses []string
+	for address, peer := range desired {
+		appliedPeer, ok := applied[address]
+		if !ok {
+			continue
+		}
+		if exportPolicyEqual(appliedPeer, peer) {
+			continue
+		}
+		addresses = append(addresses, address)
+	}
+	sort.Strings(addresses)
+	return addresses
+}
+
+func exportPolicyEqual(a, b desiredPeer) bool {
+	return strings.TrimSpace(a.ExportPolicyName) == strings.TrimSpace(b.ExportPolicyName) &&
+		sameStringSet(cleanStrings(a.ExportPolicy.AllowedPrefixes), cleanStrings(b.ExportPolicy.AllowedPrefixes))
+}
+
+func (c *Controller) softResetExportPolicy(ctx context.Context, addresses []string) error {
+	addresses = append([]string(nil), addresses...)
+	sort.Strings(addresses)
+	for _, address := range addresses {
+		if err := c.Server.ResetPeer(ctx, &gobgpapi.ResetPeerRequest{
+			Address:   address,
+			Soft:      true,
+			Direction: gobgpapi.ResetPeerRequest_OUT,
+		}); err != nil {
+			return fmt.Errorf("soft reset export policy for peer %s: %w", address, err)
 		}
 	}
 	return nil
