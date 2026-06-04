@@ -52,6 +52,10 @@ type AppliedImportPolicy struct {
 	NextHopRewrite  string   `json:"nextHopRewrite,omitempty"`
 }
 
+type AppliedExportPolicy struct {
+	AllowedPrefixes []string `json:"allowedPrefixes,omitempty"`
+}
+
 type AppliedGracefulRestart struct {
 	Enabled         bool   `json:"enabled"`
 	RestartTime     uint32 `json:"restartTime"`
@@ -70,6 +74,8 @@ type AppliedPeer struct {
 	ConvergenceProfile      string                  `json:"convergenceProfile,omitempty"`
 	ImportPolicyName        string                  `json:"importPolicyName,omitempty"`
 	ImportPolicy            AppliedImportPolicy     `json:"importPolicy,omitempty"`
+	ExportPolicyName        string                  `json:"exportPolicyName,omitempty"`
+	ExportPolicy            AppliedExportPolicy     `json:"exportPolicy,omitempty"`
 	GracefulRestart         *AppliedGracefulRestart `json:"gracefulRestart,omitempty"`
 }
 
@@ -114,6 +120,8 @@ func Normalize(config AppliedConfig) AppliedConfig {
 			peer.ImportPolicyName = strings.TrimSpace(peer.ImportPolicyName)
 			peer.ImportPolicy.AllowedPrefixes = cleanStrings(peer.ImportPolicy.AllowedPrefixes)
 			peer.ImportPolicy.NextHopRewrite = strings.TrimSpace(peer.ImportPolicy.NextHopRewrite)
+			peer.ExportPolicyName = strings.TrimSpace(peer.ExportPolicyName)
+			peer.ExportPolicy.AllowedPrefixes = cleanStrings(peer.ExportPolicy.AllowedPrefixes)
 			if peer.Address != "" {
 				peers[peer.Address] = peer
 			}

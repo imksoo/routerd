@@ -51,6 +51,13 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 - The AddressLease, ownershipEpoch, and heartbeat-event based mobility
   control plane was removed as part of the clean Option B migration.
 
+### Fixed
+
+- The GoBGP backend now applies `BGPPeer.spec.exportPolicy.allowedPrefixes`
+  as a peer export policy instead of accepting the field only in API
+  validation. This lets mixed Kubernetes and CloudEdge SAM deployments keep
+  mobility prefixes from leaking to unrelated peers.
+
 ## v20260528.2308
 
 ### Added

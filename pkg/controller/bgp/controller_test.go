@@ -168,6 +168,29 @@ func (s *fakeServer) SetPolicyAssignment(_ context.Context, req *gobgpapi.SetPol
 	return nil
 }
 
+func policyRequestHasPrefixSet(req *gobgpapi.SetPoliciesRequest, name, prefix string) bool {
+	for _, set := range req.GetDefinedSets() {
+		if set.GetDefinedType() != gobgpapi.DefinedType_PREFIX || set.GetName() != name {
+			continue
+		}
+		for _, item := range set.GetPrefixes() {
+			if item.GetIpPrefix() == prefix {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func policyRequestHasPolicy(req *gobgpapi.SetPoliciesRequest, name string) bool {
+	for _, policy := range req.GetPolicies() {
+		if policy.GetName() == name {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *fakeServer) AddPath(_ context.Context, req *gobgpapi.AddPathRequest) (*gobgpapi.AddPathResponse, error) {
 	s.paths++
 	uuid := []byte{byte(s.paths)}
@@ -388,6 +411,54 @@ func TestGoBGPPeerInternalRouteReflectorClient(t *testing.T) {
 	}
 }
 
+func TestGoBGPPeerExportPolicy(t *testing.T) {
+	peer := goBGPPeer(desiredPeer{
+		Address:          "10.99.0.2",
+		ASN:              64577,
+		ExportPolicyName: "routerd-lan-export-10-99-0-2",
+		ExportPolicy:     api.BGPExportPolicySpec{AllowedPrefixes: []string{"10.77.60.0/24"}},
+	})
+	assignment := peer.GetApplyPolicy().GetExportPolicy()
+	if assignment.GetDirection() != gobgpapi.PolicyDirection_EXPORT ||
+		assignment.GetDefaultAction() != gobgpapi.RouteAction_REJECT ||
+		len(assignment.GetPolicies()) != 1 ||
+		assignment.GetPolicies()[0].GetName() != "routerd-lan-export-10-99-0-2" {
+		t.Fatalf("peer export policy = %#v, want default reject with named export policy", assignment)
+	}
+}
+
+func TestReconcileAppliesPeerExportPolicy(t *testing.T) {
+	router := bgpRouter()
+	peerResource := router.Spec.Resources[1]
+	peerSpec := peerResource.Spec.(api.BGPPeerSpec)
+	peerSpec.ExportPolicy = api.BGPExportPolicySpec{AllowedPrefixes: []string{"10.250.0.0/24"}}
+	peerResource.Spec = peerSpec
+	router.Spec.Resources[1] = peerResource
+
+	server := &fakeServer{}
+	controller := Controller{Router: router, Store: mapStore{}, Server: server, FIB: &fakeFIB{}}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	peer := server.peers["10.0.0.21"]
+	assignment := peer.GetApplyPolicy().GetExportPolicy()
+	if assignment.GetDirection() != gobgpapi.PolicyDirection_EXPORT ||
+		assignment.GetDefaultAction() != gobgpapi.RouteAction_REJECT ||
+		len(assignment.GetPolicies()) != 1 {
+		t.Fatalf("peer export assignment = %#v, want default reject with one policy", assignment)
+	}
+	policyName := assignment.GetPolicies()[0].GetName()
+	if policyName != "routerd-lan-export-10-0-0-21" {
+		t.Fatalf("peer export policy name = %q", policyName)
+	}
+	if !policyRequestHasPrefixSet(server.policyRequest, policyName+"-prefixes", "10.250.0.0/24") {
+		t.Fatalf("SetPolicies request = %#v, want export prefix set for 10.250.0.0/24", server.policyRequest)
+	}
+	if !policyRequestHasPolicy(server.policyRequest, policyName) {
+		t.Fatalf("SetPolicies request = %#v, want export policy %q", server.policyRequest, policyName)
+	}
+}
+
 func TestReconcileDoesNotRefreshUnchangedImportPolicy(t *testing.T) {
 	router := bgpRouterWithImportPrefixes("10.250.0.0/24")
 	peerResource := router.Spec.Resources[1]
@@ -492,7 +563,7 @@ func TestReconcileRefreshesImportPolicyAfterReconnectDrift(t *testing.T) {
 		Store:           mapStore{},
 		Server:          server,
 		FIB:             fib,
-		importPolicyKey: importPolicyKey(api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.250.0.0/24"}}),
+		importPolicyKey: bgpPoliciesKey(api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.250.0.0/24"}}, nil),
 	}
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
