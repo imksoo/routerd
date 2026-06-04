@@ -143,7 +143,9 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 	events = append(events, releaseEvents...)
 	discoveryOwnedAddresses, discoveryOwnedObserved := c.discoveryProviderOwnedAddressSet(res.Metadata.Name, spec)
 	discoverySelfIPs, discoverySelfIPsObserved := c.discoverySelfPrivateIPSet(res.Metadata.Name, spec)
-	ownedPaths := bgpOwnedPaths(res.Metadata.Name, source, selfNode, spec, events, discoveryOwnedAddresses, discoveryOwnedObserved, discoverySelfIPs, discoverySelfIPsObserved, now)
+	livenessMarkers, livenessMarkersObserved := c.bgpLivenessMarkers()
+	ownerPlacement := evaluateBGPCapturePlacement(self, members, livenessMarkers, livenessMarkersObserved)
+	ownedPaths := bgpOwnedPaths(res.Metadata.Name, source, selfNode, spec, events, discoveryOwnedAddresses, discoveryOwnedObserved, discoverySelfIPs, discoverySelfIPsObserved, ownerPlacement.Active, now)
 	localOwned := bgpLocalOwnedAddresses(ownedPaths)
 	desired := append([]bgpdaemon.AppliedPath(nil), ownedPaths...)
 	if marker, ok := c.bgpLivenessMarkerPath(res.Metadata.Name, source, selfNode, spec.GroupRef); ok {
@@ -158,7 +160,6 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		return err
 	}
 	installedNextHops, bgpRIBObserved := c.bgpInstalledNextHops()
-	livenessMarkers, livenessMarkersObserved := c.bgpLivenessMarkers()
 	desiredTrapAddresses, capturePlacement, err := c.bgpTrapAddresses(res.Metadata.Name, selfNode, spec, installedNextHops, bgpRIBObserved, livenessMarkers, livenessMarkersObserved, previousActionPlans, localOwned, discoveryOwnedAddresses, now)
 	if err != nil {
 		return err
@@ -352,7 +353,7 @@ type bgpOwnedAddress struct {
 	SourceType string
 }
 
-func bgpOwnedPaths(poolName, source, selfNode string, spec api.MobilityPoolSpec, events []routerstate.EventRecord, discoveryOwnedAddresses map[string]bool, discoveryOwnedObserved bool, discoverySelfIPs map[string]bool, discoverySelfIPsObserved bool, now time.Time) []bgpdaemon.AppliedPath {
+func bgpOwnedPaths(poolName, source, selfNode string, spec api.MobilityPoolSpec, events []routerstate.EventRecord, discoveryOwnedAddresses map[string]bool, discoveryOwnedObserved bool, discoverySelfIPs map[string]bool, discoverySelfIPsObserved bool, ownerActive bool, now time.Time) []bgpdaemon.AppliedPath {
 	poolPrefix, err := netip.ParsePrefix(strings.TrimSpace(spec.Prefix))
 	if err != nil {
 		return nil
@@ -363,7 +364,6 @@ func bgpOwnedPaths(poolName, source, selfNode string, spec api.MobilityPoolSpec,
 	if self.MaintenanceDrain {
 		return nil
 	}
-	placement := evaluatePlacement(self, members)
 	owned := bgpLocalOwnedAddressesFromConfigAndEvents(poolName, selfNode, spec, events, discoveryOwnedAddresses, discoveryOwnedObserved, discoverySelfIPs, discoverySelfIPsObserved, poolPrefix, now)
 	var out []bgpdaemon.AppliedPath
 	for _, owner := range owned {
@@ -376,7 +376,7 @@ func bgpOwnedPaths(poolName, source, selfNode string, spec api.MobilityPoolSpec,
 			Source: source,
 			Prefix: prefix.String(),
 			Family: bgpdaemon.AppliedPathFamilyIPv4Unicast,
-			Attrs:  bgpMobilityPathAttrs(self, owner.SourceType, placement.Active),
+			Attrs:  bgpMobilityPathAttrs(self, owner.SourceType, ownerActive),
 		}))
 	}
 	sort.SliceStable(out, func(i, j int) bool {
@@ -798,16 +798,22 @@ func bgpInstalledNextHopsValue(value any) map[string][]string {
 }
 
 func (c Controller) bgpLivenessMarkers() (map[string]string, bool) {
+	return bgpLivenessMarkersFromStatus(c.Router, c.Store)
+}
+
+func bgpLivenessMarkersFromStatus(router *api.Router, store interface {
+	ObjectStatus(apiVersion, kind, name string) map[string]any
+}) (map[string]string, bool) {
 	out := map[string]string{}
 	observed := false
-	if c.Router == nil || c.Store == nil {
+	if router == nil || store == nil {
 		return out, observed
 	}
-	for _, resource := range c.Router.Spec.Resources {
+	for _, resource := range router.Spec.Resources {
 		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "BGPRouter" {
 			continue
 		}
-		status := c.Store.ObjectStatus(api.NetAPIVersion, "BGPRouter", resource.Metadata.Name)
+		status := store.ObjectStatus(api.NetAPIVersion, "BGPRouter", resource.Metadata.Name)
 		raw, ok := status["livenessMarkers"]
 		if !ok {
 			continue

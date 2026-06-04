@@ -450,6 +450,54 @@ func TestDiscoveryControllerResolvesSelfNICForStandbyPlacementMember(t *testing.
 	}
 }
 
+func TestDiscoveryControllerLivenessSeizedStandbyAdvertisesOwnedAddress(t *testing.T) {
+	now := time.Date(2026, 6, 3, 12, 5, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := discoveryPoolSpec()
+	runner := &fakeInventoryRunner{result: providerinventory.ObservePrivateIPsResult{
+		TypeMeta: providerinventory.TypeMeta{APIVersion: providerinventory.ProtocolAPIVersion, Kind: providerinventory.KindObservePrivateIPsResult},
+		Status: providerinventory.ObservePrivateIPsResultStatus{
+			Status: providerinventory.ResultSucceeded,
+			Self:   &providerinventory.PrivateIPSelf{NICRef: "standby-router-nic", SubnetRef: "subnet-b", PrivateIPs: []string{"10.88.60.22"}},
+			IPs: []providerinventory.PrivateIPRecord{
+				{Address: "10.88.60.12", NICRef: "standby-client-nic", SubnetRef: "subnet-b", Tags: map[string]string{"cloudedge-mobility": "true"}},
+			},
+		},
+	}}
+	saveBGPStatus(t, store, map[string][]string{}, []map[string]any{}, map[string]string{
+		bgpstate.MobilityNodeIdentityCommunity("azure-router-b"): "10.99.0.6/32",
+	})
+	router := routerWithBGPRouter(discoveryRouter("azure-router-b", spec))
+	discovery := DiscoveryController{Router: router, Store: store, Runner: runner.run, Now: func() time.Time { return now }}
+	if err := discovery.Reconcile(context.Background()); err != nil {
+		t.Fatalf("discovery Reconcile: %v", err)
+	}
+	events, err := store.ListFederationEvents("cloudedge", false, now.Unix())
+	if err != nil {
+		t.Fatalf("ListFederationEvents: %v", err)
+	}
+	if len(events) != 1 || events[0].SourceNode != "azure-router-b" || events[0].Subject != "10.88.60.12/32" {
+		t.Fatalf("events = %#v, want seized standby provider-discovery owner event", events)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	if status["discoveryPhase"] != "Observed" || fmt.Sprint(status["discoveryObserved"]) != "1" {
+		t.Fatalf("status = %#v, want seized standby discovery observed", status)
+	}
+	if got := statusStringSlice(status["discoveryOwnedAddresses"]); len(got) != 1 || got[0] != "10.88.60.12/32" {
+		t.Fatalf("status = %#v, want seized standby owned address", status)
+	}
+
+	bgp := &fakeBGPPaths{}
+	mobility := Controller{Router: router, Store: store, BGPPaths: bgp, Now: func() time.Time { return now.Add(time.Second) }}
+	if err := mobility.Reconcile(context.Background()); err != nil {
+		t.Fatalf("mobility Reconcile: %v", err)
+	}
+	path := pathBySourcePrefix(t, bgp, DynamicSource("cloudedge", "azure-router-b"), "10.88.60.12/32")
+	if path.Attrs.LocalPref != bgpMobilityLocalPref(1) {
+		t.Fatalf("path attrs = %#v, want seized standby to advertise as active owner", path.Attrs)
+	}
+}
+
 func TestDiscoveryControllerExpiresPreviousProviderDiscoveryWhenStandby(t *testing.T) {
 	now := time.Date(2026, 6, 3, 13, 10, 0, 0, time.UTC)
 	store := testStore(t, now)

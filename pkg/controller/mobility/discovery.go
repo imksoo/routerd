@@ -97,7 +97,8 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 	if !c.scanDue(poolName, interval, now, true) {
 		return nil
 	}
-	placement := evaluatePlacement(self, members)
+	livenessMarkers, livenessMarkersObserved := bgpLivenessMarkersFromStatus(c.Router, c.Store)
+	placement := evaluateBGPCapturePlacement(self, members, livenessMarkers, livenessMarkersObserved)
 	profileRef := strings.TrimSpace(discovery.ProviderRef)
 	if profileRef == "" {
 		profileRef = strings.TrimSpace(self.Capture.ProviderRef)
