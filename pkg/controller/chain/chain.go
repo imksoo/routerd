@@ -669,7 +669,8 @@ type Options struct {
 	DryRunDNSResolver       bool
 	DryRunEventFederation   bool
 	DryRunEventSubscription bool
-	DryRunDHCPLeaseSync     bool
+	DryRunLeaseSync         bool
+	DryRunNAT44SessionSync  bool
 	DryRunProviderAction    bool
 	DryRunNAT               bool
 	DryRunIngress           bool
@@ -867,7 +868,8 @@ func (r *Runner) Start(ctx context.Context) error {
 		opts.DryRunDNSResolver = true
 		opts.DryRunEventFederation = true
 		opts.DryRunEventSubscription = true
-		opts.DryRunDHCPLeaseSync = true
+		opts.DryRunLeaseSync = true
+		opts.DryRunNAT44SessionSync = true
 		opts.DryRunProviderAction = true
 		opts.DryRunNAT = true
 		opts.DryRunIngress = true
@@ -908,7 +910,8 @@ func (r *Runner) Start(ctx context.Context) error {
 	defaults, _ := platform.Current()
 	dnsResolver := dnsresolvercontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunDNSResolver, RuntimeDir: defaults.RuntimeDir, StateDir: defaults.StateDir}
 	eventFederation := eventfederationcontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunEventFederation, RuntimeDir: defaults.RuntimeDir, StateDir: defaults.StateDir}
-	dhcpLeaseSync := FileSyncController{Router: r.Router, Store: store, DryRun: r.Opts.DryRunDHCPLeaseSync}
+	leaseSync := FileSyncController{Router: r.Router, Store: store, DryRun: r.Opts.DryRunLeaseSync}
+	nat44SessionSync := NAT44SessionSyncController{Router: r.Router, Store: store, DryRun: r.Opts.DryRunNAT44SessionSync}
 	bgpDaemon := bgpcontroller.DefaultDaemonSpec()
 	if strings.TrimSpace(r.Opts.BGPSocketPath) != "" {
 		bgpDaemon.SocketPath = strings.TrimSpace(r.Opts.BGPSocketPath)
@@ -1015,12 +1018,21 @@ func (r *Runner) Start(ctx context.Context) error {
 			return observabilityPipeline.Reconcile(ctx)
 		}},
 		framework.FuncController{ControllerName: "daemon-status", Every: 5 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.dhcpv6.client.**", "routerd.dhcpv4.client.**", "routerd.healthcheck.**", "routerd.pppoe.client.**"}}}, PeriodicFunc: daemonStatusSync.Reconcile},
-		framework.FuncController{ControllerName: "dhcp-lease-sync", Every: 30 * time.Second, Subs: statusSubscriptions("DHCPLeaseSync", "VirtualAddress", "RouterdCluster"), PeriodicFunc: func(ctx context.Context) error {
+		framework.FuncController{ControllerName: "dhcp-lease-sync", Every: 30 * time.Second, Subs: statusSubscriptions("DHCPv4ServerLeaseSync", "DHCPv6ServerLeaseSync", "DHCPv6PrefixDelegationLeaseSync", "VirtualAddress", "RouterdCluster"), PeriodicFunc: func(ctx context.Context) error {
 			effective, err := effectiveForReconcile()
 			if err != nil {
 				return err
 			}
-			current := dhcpLeaseSync
+			current := leaseSync
+			current.Router = effective
+			return current.Reconcile(ctx)
+		}},
+		framework.FuncController{ControllerName: "nat44-session-sync", Every: 30 * time.Second, Subs: statusSubscriptions("NAT44SessionSync", "NAT44Rule", "VirtualAddress", "RouterdCluster"), PeriodicFunc: func(ctx context.Context) error {
+			effective, err := effectiveForReconcile()
+			if err != nil {
+				return err
+			}
+			current := nat44SessionSync
 			current.Router = effective
 			return current.Reconcile(ctx)
 		}},
@@ -1460,6 +1472,9 @@ func (r *Runner) superviseClientDaemons(ctx context.Context, logger *slog.Logger
 			}
 			if spec.IAID != "" {
 				args = append(args, "--iaid", spec.IAID)
+			}
+			if spec.ClientDUID != "" {
+				args = append(args, "--client-duid", spec.ClientDUID)
 			}
 			r.startSupervisedDaemon(ctx, logger, resource.Metadata.Name, "routerd-dhcpv6-client", args)
 		case "DHCPv4Client":

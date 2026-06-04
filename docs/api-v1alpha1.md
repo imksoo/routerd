@@ -121,23 +121,27 @@ instead of silently ignoring the input.
 | `DHCPv4Client` | DHCPv4 lease, IPv4 address, and optional default route managed by `routerd-dhcpv4-client`. |
 | `DHCPv6Address` | Represents DHCPv6 IA_NA intent for platform renderers. |
 | `DHCPv6PrefixDelegation` | DHCPv6-PD lease managed by `routerd-dhcpv6-client`. |
+| `DHCPv6PrefixDelegationLeaseSync` | Mirrors a `DHCPv6PrefixDelegation` client lease snapshot from an active node to standby nodes. |
 | `DHCPv6Information` | DHCPv6 information request result, including DNS, SNTP, domain search, and AFTR observations. |
 | `IPv6DelegatedAddress` | Derives a LAN-side address from a delegated prefix. |
 | `IPv6RAAddress` | Represents IPv6 addresses learned from RA/SLAAC. |
 
 `DHCPv6PrefixDelegation` no longer selects an OS DHCPv6 client. DHCPv6-PD is
-owned by `routerd-dhcpv6-client`.
+owned by `routerd-dhcpv6-client`. `spec.iaid` and `spec.clientDUID` can pin the
+DHCPv6 client identity across HA nodes.
 
 ## LAN Services
 
 | Kind | Role |
 | --- | --- |
 | `DHCPv4Server` | Provides a dnsmasq DHCPv4 service and optional address pool. |
+| `DHCPv4ServerLeaseSync` | Mirrors the dnsmasq lease file derived from a `DHCPv4Server` resource. |
 | `DHCPv4Reservation` | Reserves an IPv4 address for a MAC address. |
 | `DHCPv4Relay` | Represents dnsmasq DHCPv4 relay. |
 | `IPv6RouterAdvertisement` | Generates RA, PIO, RDNSS, DNSSL, M/O flags, MTU, preference, and lifetimes. |
 | `RogueRADetector` | Auto-derived status resource that reports non-self IPv6 Router Advertisements observed on an RA-serving interface. |
 | `DHCPv6Server` | Provides dnsmasq DHCPv6/RA service in `stateless`, `stateful`, `both`, or `ra-only` mode. |
+| `DHCPv6ServerLeaseSync` | Mirrors the dnsmasq lease file derived from a `DHCPv6Server` resource. |
 | `DNSZone` | Owns a local authoritative zone with manual and DHCP-derived records. |
 | `DNSResolver` | Owns a `routerd-dns-resolver` daemon instance, listen profiles, cache, metrics, and query logging. |
 | `DNSForwarder` | Declares one DNS match rule for a resolver. It either serves one or more `DNSZone` resources or forwards to named `DNSUpstream` resources. |
@@ -188,6 +192,7 @@ for DoH or DoT endpoint name resolution.
 | `BGPPeer` | Declares GoBGP-managed BGP peers for a `BGPRouter`, for example Kubernetes BGP speakers. |
 | `BFD` | Declares one BFD session intent. On Linux, routerd renders FRR `bfdd` configuration and records observed BFD state without deconfiguring referenced GoBGP peers. |
 | `NAT44Rule` | Performs IPv4 NAPT in the nftables `routerd_nat` table. |
+| `NAT44SessionSync` | Mirrors selected NAT44 conntrack sessions from an active node to standby nodes over SSH. |
 | `PortForward` | Publishes one WAN-side IPv4 TCP/UDP port to one internal IPv4 target with DNAT. |
 | `IngressService` | Publishes one WAN-side IPv4 TCP/UDP service. Multiple backends, TCP/HTTP health checks, and `failover`, `sourceHash`, or `random` backend selection are accepted. |
 | `LocalServiceRedirect` | Redirects LAN-origin IPv4/IPv6 traffic for `IPAddressSet` destinations to a local router port. This is intended for plaintext DNS/NTP interception without touching DoH or DoT ports. |
@@ -277,6 +282,10 @@ prefer `destinationPorts`.
 `destinationCIDRs`, `destinationSetRefs`, `excludeDestinationCIDRs`, and
 `excludeDestinationSetRefs`. This allows internet traffic to be masqueraded
 while private routed destinations or reusable address sets stay un-NATed.
+
+`NAT44SessionSync` uses `conntrack --dump -o extended` for selected SNAT
+addresses, preserves conntrack marks, and restores sessions on each target with
+a delete-then-insert script. Use `spec.when` to run it only on the active node.
 
 `BGPRouter` and `BGPPeer` currently use the long-lived `routerd-bgp` daemon.
 routerd maps the resource specs directly to typed GoBGP API objects over a
@@ -549,10 +558,13 @@ and fields outside the target kind's `provides` set.
 | `DHCPv4Relay` | `phase` (string) |
 | `DHCPv4Reservation` | `address` (string), `hostname` (string), `phase` (string) |
 | `DHCPv4Server` | `configPath` (string), `dnsServers` (stringList), `domain` (string), `dryRun` (bool), `interface` (string), `ntpServers` (stringList), `phase` (string) |
+| `DHCPv4ServerLeaseSync` | `command` (string), `dryRun` (bool), `phase` (string), `sourceCount` (int), `sources` (objectList), `syncedAt` (timestamp), `targetCount` (int), `targets` (objectList) |
 | `DHCPv6Address` | `address` (string), `interface` (string), `phase` (string) |
 | `DHCPv6Information` | `aftrName` (string), `dnsServers` (stringList), `domainSearch` (stringList), `phase` (string), `sntpServers` (stringList), `source` (string) |
 | `DHCPv6PrefixDelegation` | `aftrName` (string), `currentPrefix` (string), `dnsServers` (stringList), `domainSearch` (stringList), `interface` (string), `phase` (string), `sntpServers` (stringList) |
+| `DHCPv6PrefixDelegationLeaseSync` | `command` (string), `dryRun` (bool), `phase` (string), `sourceCount` (int), `sources` (objectList), `syncedAt` (timestamp), `targetCount` (int), `targets` (objectList) |
 | `DHCPv6Server` | `configPath` (string), `dnsServers` (stringList), `dryRun` (bool), `interface` (string), `phase` (string), `sntpServers` (stringList) |
+| `DHCPv6ServerLeaseSync` | `command` (string), `dryRun` (bool), `phase` (string), `sourceCount` (int), `sources` (objectList), `syncedAt` (timestamp), `targetCount` (int), `targets` (objectList) |
 | `DNSForwarder` | `phase` (string), `resolver` (string), `upstreams` (stringList) |
 | `DNSResolver` | `listenAddresses` (stringList), `listeners` (int), `phase` (string), `sources` (int), `updatedAt` (timestamp) |
 | `DNSUpstream` | `address` (string), `phase` (string), `url` (string) |
@@ -589,6 +601,7 @@ and fields outside the target kind's `provides` set.
 | `ManagementAccess` | `interfaces` (stringList), `phase` (string) |
 | `MobilityPool` | `dynamicSource` (string), `generatedActions` (int), `generatedBGPPaths` (int), `generatedBGPTraps` (int), `groupRef` (string), `placementActive` (bool), `placementActiveNode` (string), `placementGroup` (string), `plannerPhase` (string), `plannerReason` (string), `prefix` (string), `deliveryMode` (string), `discoverySelfPrivateIPs` (stringList) |
 | `NAT44Rule` | `dryRun` (bool), `egressInterface` (string), `phase` (string), `snatAddress` (string) |
+| `NAT44SessionSync` | `dryRun` (bool), `mode` (string), `phase` (string), `sessionCount` (int), `snatAddresses` (stringList), `syncedAt` (timestamp), `targetCount` (int) |
 | `NTPClient` | `phase` (string), `servers` (stringList), `source` (string), `updatedAt` (timestamp) |
 | `NTPServer` | `allowCIDRs` (stringList), `listenAddresses` (stringList), `phase` (string), `servers` (stringList), `source` (string), `updatedAt` (timestamp) |
 | `ObservabilityPipeline` | `phase` (string), `signals` (stringList) |

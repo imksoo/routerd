@@ -4012,6 +4012,12 @@
                       "client": {
                         "type": "string"
                       },
+                      "clientDUID": {
+                        "type": "string"
+                      },
+                      "iaid": {
+                        "type": "string"
+                      },
                       "interface": {
                         "type": "string"
                       },
@@ -4712,6 +4718,414 @@
                       "stickyHoldDays": {
                         "minimum": 0,
                         "type": "integer"
+                      },
+                      "when": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "state": {
+                            "additionalProperties": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "contains": {
+                                  "type": "string"
+                                },
+                                "equals": {
+                                  "type": "string"
+                                },
+                                "exists": {
+                                  "type": "boolean"
+                                },
+                                "for": {
+                                  "type": "string"
+                                },
+                                "in": {
+                                  "items": {
+                                    "type": "string"
+                                  },
+                                  "type": "array"
+                                },
+                                "status": {
+                                  "enum": [
+                                    "set",
+                                    "unset",
+                                    "unknown"
+                                  ],
+                                  "type": "string"
+                                }
+                              },
+                              "type": "object"
+                            },
+                            "description": "State gates a resource on status fields from other resources.",
+                            "type": "object"
+                          }
+                        },
+                        "type": "object"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "net.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "DHCPv4ServerLeaseSync",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "command": {
+                        "type": "string"
+                      },
+                      "interval": {
+                        "type": "string"
+                      },
+                      "source": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "resource": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "resource"
+                        ],
+                        "type": "object"
+                      },
+                      "targets": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "host": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            },
+                            "options": {
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            },
+                            "sshOptions": {
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            },
+                            "user": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "host"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "when": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "state": {
+                            "additionalProperties": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "contains": {
+                                  "type": "string"
+                                },
+                                "equals": {
+                                  "type": "string"
+                                },
+                                "exists": {
+                                  "type": "boolean"
+                                },
+                                "for": {
+                                  "type": "string"
+                                },
+                                "in": {
+                                  "items": {
+                                    "type": "string"
+                                  },
+                                  "type": "array"
+                                },
+                                "status": {
+                                  "enum": [
+                                    "set",
+                                    "unset",
+                                    "unknown"
+                                  ],
+                                  "type": "string"
+                                }
+                              },
+                              "type": "object"
+                            },
+                            "description": "State gates a resource on status fields from other resources.",
+                            "type": "object"
+                          }
+                        },
+                        "type": "object"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "net.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "DHCPv6ServerLeaseSync",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "command": {
+                        "type": "string"
+                      },
+                      "interval": {
+                        "type": "string"
+                      },
+                      "source": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "resource": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "resource"
+                        ],
+                        "type": "object"
+                      },
+                      "targets": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "host": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            },
+                            "options": {
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            },
+                            "sshOptions": {
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            },
+                            "user": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "host"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "when": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "state": {
+                            "additionalProperties": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "contains": {
+                                  "type": "string"
+                                },
+                                "equals": {
+                                  "type": "string"
+                                },
+                                "exists": {
+                                  "type": "boolean"
+                                },
+                                "for": {
+                                  "type": "string"
+                                },
+                                "in": {
+                                  "items": {
+                                    "type": "string"
+                                  },
+                                  "type": "array"
+                                },
+                                "status": {
+                                  "enum": [
+                                    "set",
+                                    "unset",
+                                    "unknown"
+                                  ],
+                                  "type": "string"
+                                }
+                              },
+                              "type": "object"
+                            },
+                            "description": "State gates a resource on status fields from other resources.",
+                            "type": "object"
+                          }
+                        },
+                        "type": "object"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "net.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "DHCPv6PrefixDelegationLeaseSync",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "command": {
+                        "type": "string"
+                      },
+                      "interval": {
+                        "type": "string"
+                      },
+                      "source": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "resource": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "resource"
+                        ],
+                        "type": "object"
+                      },
+                      "targets": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "host": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            },
+                            "options": {
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            },
+                            "sshOptions": {
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            },
+                            "user": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "host"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       },
                       "when": {
                         "additionalProperties": false,

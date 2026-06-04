@@ -377,7 +377,10 @@ func whenValidationTestResources(when api.ResourceWhenSpec) []whenValidationTest
 		{specName: "DHCPv4ServerSpec", resource: testResource(api.NetAPIVersion, "DHCPv4Server", "lan", api.DHCPv4ServerSpec{Server: "dnsmasq", Interface: "lan", RangeStart: "192.0.2.100", RangeEnd: "192.0.2.150", When: when})},
 		{specName: "IPv6DelegatedAddressSpec", resource: testResource(api.NetAPIVersion, "IPv6DelegatedAddress", "lan-v6", api.IPv6DelegatedAddressSpec{PrefixDelegation: "wan-pd", Interface: "lan", AddressSuffix: "::1", When: when})},
 		{specName: "DHCPv6ServerSpec", resource: testResource(api.NetAPIVersion, "DHCPv6Server", "lan-v6", api.DHCPv6ServerSpec{Server: "dnsmasq", DelegatedAddress: "lan-v6", When: when})},
-		{specName: "DHCPLeaseSyncSpec", resource: testResource(api.NetAPIVersion, "DHCPLeaseSync", "lan-leases", api.DHCPLeaseSyncSpec{LeaseFile: "/var/lib/routerd/dnsmasq/dnsmasq.leases", Targets: []api.DHCPLeaseSyncTargetSpec{{Host: "router-b"}}, When: when})},
+		{specName: "DHCPv4ServerLeaseSyncSpec", resource: testResource(api.NetAPIVersion, "DHCPv4ServerLeaseSync", "lan-v4-leases", api.DHCPv4ServerLeaseSyncSpec{Source: api.DHCPv4ServerLeaseSyncSourceSpec{Resource: "DHCPv4Server/lan"}, Targets: []api.LeaseSyncTargetSpec{{Host: "router-b"}}, When: when})},
+		{specName: "DHCPv6ServerLeaseSyncSpec", resource: testResource(api.NetAPIVersion, "DHCPv6ServerLeaseSync", "lan-v6-leases", api.DHCPv6ServerLeaseSyncSpec{Source: api.DHCPv6ServerLeaseSyncSourceSpec{Resource: "DHCPv6Server/lan-v6"}, Targets: []api.LeaseSyncTargetSpec{{Host: "router-b"}}, When: when})},
+		{specName: "DHCPv6PrefixDelegationLeaseSyncSpec", resource: testResource(api.NetAPIVersion, "DHCPv6PrefixDelegationLeaseSync", "wan-pd-leases", api.DHCPv6PrefixDelegationLeaseSyncSpec{Source: api.DHCPv6PrefixDelegationLeaseSyncSourceSpec{Resource: "DHCPv6PrefixDelegation/wan-pd"}, Targets: []api.LeaseSyncTargetSpec{{Host: "router-b"}}, When: when})},
+		{specName: "NAT44SessionSyncSpec", resource: testResource(api.NetAPIVersion, "NAT44SessionSync", "dslite-sessions", api.NAT44SessionSyncSpec{SNATAddresses: []string{"192.0.0.2"}, Targets: []api.NAT44SessionSyncTargetSpec{{Host: "router-b"}}, When: when})},
 		{specName: "DSLiteTunnelSpec", resource: testResource(api.NetAPIVersion, "DSLiteTunnel", "dslite", api.DSLiteTunnelSpec{Interface: "wan", AFTRIPv6: "2001:db8::1", When: when})},
 		{specName: "DNSForwarderSpec", resource: testResource(api.NetAPIVersion, "DNSForwarder", "ad", api.DNSForwarderSpec{Resolver: "DNSResolver/lan", Match: []string{"corp.example"}, Upstreams: []string{"DNSUpstream/ad"}, When: when})},
 		{specName: "DNSUpstreamSpec", resource: testResource(api.NetAPIVersion, "DNSUpstream", "ad", api.DNSUpstreamSpec{Protocol: "udp", Address: "192.0.2.53", When: when})},
@@ -833,17 +836,17 @@ func TestValidatePhase15LANServiceKinds(t *testing.T) {
 	}
 }
 
-func TestValidateDHCPLeaseSyncRejectsTargetUserNewline(t *testing.T) {
+func TestValidateDHCPv4ServerLeaseSyncRejectsTargetUserNewline(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 		Metadata: api.ObjectMeta{Name: "test"},
 		Spec: api.RouterSpec{Resources: []api.Resource{
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPLeaseSync"},
-				Metadata: api.ObjectMeta{Name: "lan-leases"},
-				Spec: api.DHCPLeaseSyncSpec{
-					LeaseFile: "/var/lib/routerd/dnsmasq/dnsmasq.leases",
-					Targets: []api.DHCPLeaseSyncTargetSpec{{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4ServerLeaseSync"},
+				Metadata: api.ObjectMeta{Name: "lan-v4-leases"},
+				Spec: api.DHCPv4ServerLeaseSyncSpec{
+					Source: api.DHCPv4ServerLeaseSyncSourceSpec{Resource: "DHCPv4Server/lan"},
+					Targets: []api.LeaseSyncTargetSpec{{
 						Host: "router-b",
 						User: "routerd\nroot",
 					}},
@@ -1206,13 +1209,23 @@ func TestValidateDHCPv6PrefixDelegationIdentity(t *testing.T) {
 		t.Fatalf("validate prefix delegation identity: %v", err)
 	}
 
+	router.Spec.Resources[1].Spec = api.DHCPv6PrefixDelegationSpec{Interface: "wan", IAID: "00000001", ClientDUID: "00030001020000000103"}
+	if err := Validate(router); err != nil {
+		t.Fatalf("expected fixed IAID/clientDUID to validate, got %v", err)
+	}
+
 	router.Spec.Resources[1].Spec = api.DHCPv6PrefixDelegationSpec{Interface: "wan", IAID: "not-an-iaid"}
-	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "not supported") {
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "spec.iaid must be") {
 		t.Fatalf("expected IAID to be rejected, got %v", err)
 	}
 
+	router.Spec.Resources[1].Spec = api.DHCPv6PrefixDelegationSpec{Interface: "wan", ClientDUID: "00:03"}
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "spec.clientDUID must be plain hex") {
+		t.Fatalf("expected clientDUID to be rejected, got %v", err)
+	}
+
 	router.Spec.Resources[1].Spec = api.DHCPv6PrefixDelegationSpec{Interface: "wan", DUIDType: "unknown"}
-	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "not supported") {
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "spec.duidType is not supported") {
 		t.Fatalf("expected duidType to be rejected, got %v", err)
 	}
 }

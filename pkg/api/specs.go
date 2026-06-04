@@ -801,7 +801,8 @@ type DHCPv6PrefixDelegationSpec struct {
 	// Profile applies provider-specific defaults; NTT profiles default prefixLength to 60 and DUID type to link-layer.
 	Profile      string `yaml:"profile,omitempty" json:"profile,omitempty" jsonschema:"enum=default,enum=ntt-ngn-direct-hikari-denwa,enum=ntt-hgw-lan-pd"`
 	PrefixLength int    `yaml:"prefixLength,omitempty" json:"prefixLength,omitempty" jsonschema:"minimum=1,maximum=128"`
-	IAID         string `yaml:"-" json:"-"`
+	IAID         string `yaml:"iaid,omitempty" json:"iaid,omitempty"`
+	ClientDUID   string `yaml:"clientDUID,omitempty" json:"clientDUID,omitempty"`
 	DUIDType     string `yaml:"-" json:"-"`
 	Required     bool   `yaml:"required,omitempty" json:"required,omitempty"`
 }
@@ -1105,28 +1106,67 @@ type DHCPv6ServerSpec struct {
 	When              ResourceWhenSpec         `yaml:"when,omitempty" json:"when,omitempty"`
 }
 
-type DHCPLeaseSyncSpec struct {
-	LeaseFile string                    `yaml:"leaseFile,omitempty" json:"leaseFile,omitempty"`
-	Command   string                    `yaml:"command,omitempty" json:"command,omitempty"`
-	Interval  string                    `yaml:"interval,omitempty" json:"interval,omitempty"`
-	Sources   []DHCPLeaseSyncSourceSpec `yaml:"sources,omitempty" json:"sources,omitempty"`
-	Targets   []DHCPLeaseSyncTargetSpec `yaml:"targets,omitempty" json:"targets,omitempty"`
-	When      ResourceWhenSpec          `yaml:"when,omitempty" json:"when,omitempty"`
-}
-
-type DHCPLeaseSyncSourceSpec struct {
-	Name     string `yaml:"name,omitempty" json:"name,omitempty"`
-	Path     string `yaml:"path" json:"path"`
-	Required *bool  `yaml:"required,omitempty" json:"required,omitempty"`
-}
-
-type DHCPLeaseSyncTargetSpec struct {
+type LeaseSyncTargetSpec struct {
 	Name       string   `yaml:"name,omitempty" json:"name,omitempty"`
 	Host       string   `yaml:"host" json:"host"`
 	User       string   `yaml:"user,omitempty" json:"user,omitempty"`
-	Path       string   `yaml:"path,omitempty" json:"path,omitempty"`
 	SSHOptions []string `yaml:"sshOptions,omitempty" json:"sshOptions,omitempty"`
 	Options    []string `yaml:"options,omitempty" json:"options,omitempty"`
+}
+
+type DHCPv4ServerLeaseSyncSpec struct {
+	Source   DHCPv4ServerLeaseSyncSourceSpec `yaml:"source,omitempty" json:"source,omitempty"`
+	Command  string                          `yaml:"command,omitempty" json:"command,omitempty"`
+	Interval string                          `yaml:"interval,omitempty" json:"interval,omitempty"`
+	Targets  []LeaseSyncTargetSpec           `yaml:"targets,omitempty" json:"targets,omitempty"`
+	When     ResourceWhenSpec                `yaml:"when,omitempty" json:"when,omitempty"`
+}
+
+type DHCPv4ServerLeaseSyncSourceSpec struct {
+	Resource string `yaml:"resource" json:"resource"`
+}
+
+type DHCPv6ServerLeaseSyncSpec struct {
+	Source   DHCPv6ServerLeaseSyncSourceSpec `yaml:"source,omitempty" json:"source,omitempty"`
+	Command  string                          `yaml:"command,omitempty" json:"command,omitempty"`
+	Interval string                          `yaml:"interval,omitempty" json:"interval,omitempty"`
+	Targets  []LeaseSyncTargetSpec           `yaml:"targets,omitempty" json:"targets,omitempty"`
+	When     ResourceWhenSpec                `yaml:"when,omitempty" json:"when,omitempty"`
+}
+
+type DHCPv6ServerLeaseSyncSourceSpec struct {
+	Resource string `yaml:"resource" json:"resource"`
+}
+
+type DHCPv6PrefixDelegationLeaseSyncSpec struct {
+	Source   DHCPv6PrefixDelegationLeaseSyncSourceSpec `yaml:"source,omitempty" json:"source,omitempty"`
+	Command  string                                    `yaml:"command,omitempty" json:"command,omitempty"`
+	Interval string                                    `yaml:"interval,omitempty" json:"interval,omitempty"`
+	Targets  []LeaseSyncTargetSpec                     `yaml:"targets,omitempty" json:"targets,omitempty"`
+	When     ResourceWhenSpec                          `yaml:"when,omitempty" json:"when,omitempty"`
+}
+
+type DHCPv6PrefixDelegationLeaseSyncSourceSpec struct {
+	Resource string `yaml:"resource" json:"resource"`
+}
+
+type NAT44SessionSyncSpec struct {
+	Mode             string                       `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=snapshot"`
+	Interval         string                       `yaml:"interval,omitempty" json:"interval,omitempty"`
+	ConntrackCommand string                       `yaml:"conntrackCommand,omitempty" json:"conntrackCommand,omitempty"`
+	SNATAddresses    []string                     `yaml:"snatAddresses,omitempty" json:"snatAddresses,omitempty"`
+	NATRules         []string                     `yaml:"natRules,omitempty" json:"natRules,omitempty"`
+	ExcludeNATRules  []string                     `yaml:"excludeNatRules,omitempty" json:"excludeNatRules,omitempty"`
+	Targets          []NAT44SessionSyncTargetSpec `yaml:"targets,omitempty" json:"targets,omitempty"`
+	When             ResourceWhenSpec             `yaml:"when,omitempty" json:"when,omitempty"`
+}
+
+type NAT44SessionSyncTargetSpec struct {
+	Name           string   `yaml:"name,omitempty" json:"name,omitempty"`
+	Host           string   `yaml:"host" json:"host"`
+	User           string   `yaml:"user,omitempty" json:"user,omitempty"`
+	SSHOptions     []string `yaml:"sshOptions,omitempty" json:"sshOptions,omitempty"`
+	RestoreCommand []string `yaml:"restoreCommand,omitempty" json:"restoreCommand,omitempty"`
 }
 
 type DHCPv4RelaySpec struct {
@@ -2257,8 +2297,20 @@ func (r Resource) DHCPv6ServerSpec() (DHCPv6ServerSpec, error) {
 	return specAs[DHCPv6ServerSpec](r)
 }
 
-func (r Resource) DHCPLeaseSyncSpec() (DHCPLeaseSyncSpec, error) {
-	return specAs[DHCPLeaseSyncSpec](r)
+func (r Resource) DHCPv4ServerLeaseSyncSpec() (DHCPv4ServerLeaseSyncSpec, error) {
+	return specAs[DHCPv4ServerLeaseSyncSpec](r)
+}
+
+func (r Resource) DHCPv6ServerLeaseSyncSpec() (DHCPv6ServerLeaseSyncSpec, error) {
+	return specAs[DHCPv6ServerLeaseSyncSpec](r)
+}
+
+func (r Resource) DHCPv6PrefixDelegationLeaseSyncSpec() (DHCPv6PrefixDelegationLeaseSyncSpec, error) {
+	return specAs[DHCPv6PrefixDelegationLeaseSyncSpec](r)
+}
+
+func (r Resource) NAT44SessionSyncSpec() (NAT44SessionSyncSpec, error) {
+	return specAs[NAT44SessionSyncSpec](r)
 }
 
 func (r Resource) DHCPv4RelaySpec() (DHCPv4RelaySpec, error) {

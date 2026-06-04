@@ -674,6 +674,7 @@ func controllerDefaultStatuses() []controlapi.ControllerStatus {
 		"ingress",
 		"kernel-module",
 		"nat",
+		"nat44-session-sync",
 		"network-adoption",
 		"package",
 		"pppoesession",
