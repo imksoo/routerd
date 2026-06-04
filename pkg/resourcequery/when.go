@@ -26,6 +26,7 @@ func FilterRouterByWhen(router *api.Router, store StateStore) *api.Router {
 	if router == nil {
 		return nil
 	}
+	declaredBFDs := bfdResourceNames(router.Spec.Resources)
 	filtered := *router
 	filtered.Spec.Resources = nil
 	for _, res := range router.Spec.Resources {
@@ -37,7 +38,7 @@ func FilterRouterByWhen(router *api.Router, store StateStore) *api.Router {
 			filtered.Spec.Resources = append(filtered.Spec.Resources, res)
 		}
 	}
-	filtered.Spec.Resources = clearFilteredBFDRefs(filtered.Spec.Resources)
+	filtered.Spec.Resources = clearFilteredBFDRefs(filtered.Spec.Resources, declaredBFDs)
 	return api.ExpandClusterNetworkRoutes(&filtered)
 }
 
@@ -200,13 +201,21 @@ func filterEgressRoutePolicyCandidatesByWhen(res api.Resource, store StateStore)
 	return res
 }
 
-func clearFilteredBFDRefs(resources []api.Resource) []api.Resource {
+func bfdResourceNames(resources []api.Resource) map[string]bool {
 	bfds := map[string]bool{}
 	for _, res := range resources {
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "BFD" {
-			bfds[res.Metadata.Name] = true
+			name := strings.TrimSpace(res.Metadata.Name)
+			if name != "" {
+				bfds[name] = true
+			}
 		}
 	}
+	return bfds
+}
+
+func clearFilteredBFDRefs(resources []api.Resource, declaredBFDs map[string]bool) []api.Resource {
+	retainedBFDs := bfdResourceNames(resources)
 	out := make([]api.Resource, 0, len(resources))
 	for _, res := range resources {
 		if res.APIVersion != api.NetAPIVersion || res.Kind != "BGPPeer" {
@@ -219,7 +228,7 @@ func clearFilteredBFDRefs(resources []api.Resource) []api.Resource {
 			continue
 		}
 		kind, name, ok := SplitResource(spec.BFD)
-		if !ok || kind != "BFD" || bfds[name] {
+		if !ok || kind != "BFD" || !declaredBFDs[name] || retainedBFDs[name] {
 			out = append(out, res)
 			continue
 		}

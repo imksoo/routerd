@@ -185,3 +185,30 @@ func TestFilterRouterByWhenClearsFilteredBFDRef(t *testing.T) {
 		t.Fatalf("BGPPeer BFD ref = %q, want cleared", spec.BFD)
 	}
 }
+
+func TestFilterRouterByWhenPreservesImplicitBFDRef(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPPeer"},
+			Metadata: api.ObjectMeta{Name: "rr"},
+			Spec: api.BGPPeerSpec{
+				RouterRef: "BGPRouter/fabric",
+				PeerASN:   64512,
+				Peers:     []string{"10.99.0.2"},
+				BFD:       "BFD/implicit",
+			},
+		},
+	}}}
+
+	got := FilterRouterByWhen(router, statefulMapStore{})
+	if len(got.Spec.Resources) != 1 {
+		t.Fatalf("resources = %d, want only BGPPeer", len(got.Spec.Resources))
+	}
+	spec, err := got.Spec.Resources[0].BGPPeerSpec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.BFD != "BFD/implicit" {
+		t.Fatalf("BGPPeer BFD ref = %q, want implicit ref preserved", spec.BFD)
+	}
+}
