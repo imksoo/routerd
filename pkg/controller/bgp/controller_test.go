@@ -37,21 +37,23 @@ func (s mapStore) ObjectStatus(apiVersion, kind, name string) map[string]any {
 }
 
 type fakeServer struct {
-	starts   int
-	stops    int
-	adds     int
-	updates  int
-	deletes  int
-	paths    int
-	policies int
-	assigns  int
-	resets   int
+	starts    int
+	stops     int
+	adds      int
+	updates   int
+	deletes   int
+	paths     int
+	policies  int
+	assigns   int
+	resets    int
+	outResets int
 
 	global           *gobgpapi.Global
 	peers            map[string]*gobgpapi.Peer
 	routes           []*gobgpapi.Destination
 	applied          bgpdaemon.AppliedConfig
 	deletedPathUUIDs [][]byte
+	resetRequests    []*gobgpapi.ResetPeerRequest
 
 	policyRequest     *gobgpapi.SetPoliciesRequest
 	policyAssignment  *gobgpapi.PolicyAssignment
@@ -143,8 +145,14 @@ func (s *fakeServer) UpdatePeer(_ context.Context, req *gobgpapi.UpdatePeerReque
 }
 
 func (s *fakeServer) ResetPeer(_ context.Context, req *gobgpapi.ResetPeerRequest) error {
-	if req.GetSoft() && req.GetDirection() == gobgpapi.ResetPeerRequest_IN {
-		s.resets++
+	if req.GetSoft() {
+		s.resetRequests = append(s.resetRequests, req)
+		switch req.GetDirection() {
+		case gobgpapi.ResetPeerRequest_IN:
+			s.resets++
+		case gobgpapi.ResetPeerRequest_OUT:
+			s.outResets++
+		}
 	}
 	return nil
 }
@@ -475,6 +483,81 @@ func TestReconcileAppliesPeerExportPolicy(t *testing.T) {
 	}
 	if !policyRequestHasPolicy(server.policyRequest, policyName) {
 		t.Fatalf("SetPolicies request = %#v, want export policy %q", server.policyRequest, policyName)
+	}
+}
+
+func TestReconcileSoftResetsChangedPeerExportPolicy(t *testing.T) {
+	router := bgpRouterWithImportPrefixes()
+	peerResource := router.Spec.Resources[1]
+	peerSpec := peerResource.Spec.(api.BGPPeerSpec)
+	peerSpec.ExportPolicy = api.BGPExportPolicySpec{AllowedPrefixes: []string{"10.200.0.0/24"}}
+	peerResource.Spec = peerSpec
+	router.Spec.Resources[1] = peerResource
+
+	unchangedResource := peerResource
+	unchangedResource.Metadata.Name = "k8s-unchanged"
+	unchangedSpec := unchangedResource.Spec.(api.BGPPeerSpec)
+	unchangedSpec.Peers = []string{"10.0.0.22"}
+	unchangedResource.Spec = unchangedSpec
+	router.Spec.Resources = append(router.Spec.Resources, unchangedResource)
+
+	server := &fakeServer{}
+	controller := Controller{Router: router, Store: mapStore{}, Server: server, FIB: &fakeFIB{}}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("first reconcile: %v", err)
+	}
+	if server.outResets != 0 {
+		t.Fatalf("soft outbound resets = %d, want no reset for newly added peers", server.outResets)
+	}
+
+	peerResource = router.Spec.Resources[1]
+	peerSpec = peerResource.Spec.(api.BGPPeerSpec)
+	peerSpec.ExportPolicy = api.BGPExportPolicySpec{AllowedPrefixes: []string{"10.250.0.0/24"}}
+	peerResource.Spec = peerSpec
+	router.Spec.Resources[1] = peerResource
+	server.resets = 0
+	server.outResets = 0
+	server.resetRequests = nil
+
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("second reconcile: %v", err)
+	}
+	if server.resets != 0 {
+		t.Fatalf("soft inbound resets = %d, want export policy refresh to avoid inbound reset", server.resets)
+	}
+	if server.outResets != 1 {
+		t.Fatalf("soft outbound resets = %d, want one reset for changed export policy", server.outResets)
+	}
+	if len(server.resetRequests) != 1 {
+		t.Fatalf("ResetPeer requests = %d, want 1", len(server.resetRequests))
+	}
+	req := server.resetRequests[0]
+	if !req.GetSoft() || req.GetDirection() != gobgpapi.ResetPeerRequest_OUT || req.GetAddress() != "10.0.0.21" {
+		t.Fatalf("ResetPeer request = %#v, want soft OUT for 10.0.0.21", req)
+	}
+}
+
+func TestReconcileDoesNotSoftResetUnchangedExportPolicy(t *testing.T) {
+	router := bgpRouterWithImportPrefixes()
+	peerResource := router.Spec.Resources[1]
+	peerSpec := peerResource.Spec.(api.BGPPeerSpec)
+	peerSpec.ExportPolicy = api.BGPExportPolicySpec{AllowedPrefixes: []string{"10.250.0.0/24"}}
+	peerResource.Spec = peerSpec
+	router.Spec.Resources[1] = peerResource
+
+	server := &fakeServer{}
+	controller := Controller{Router: router, Store: mapStore{}, Server: server, FIB: &fakeFIB{}}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("first reconcile: %v", err)
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("second reconcile: %v", err)
+	}
+	if server.policies != 1 {
+		t.Fatalf("SetPolicies calls = %d, want unchanged export policy no-op after first reconcile", server.policies)
+	}
+	if server.outResets != 0 {
+		t.Fatalf("soft outbound resets = %d, want no reset for unchanged export policy", server.outResets)
 	}
 }
 
