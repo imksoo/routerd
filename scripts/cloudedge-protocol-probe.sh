@@ -37,6 +37,7 @@ The runner is responsible for package install/service setup on lab VMs
 (vsftpd, nfs-kernel-server, rpcbind, iperf3/dd/ssh as appropriate). It may print
 key=value lines such as bytes=104857600, overlay_mtu=1380, mss_clamp=1340,
 dynamic_port=32768, detail=...; this script records them in the JSON result.
+The result shape is documented in scripts/cloudedge-protocol-result-schema.json.
 EOF
 }
 

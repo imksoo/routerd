@@ -84,4 +84,41 @@ for op in ftp-active ftp-passive nfs rpc bulk pmtu source-preserved no-nat; do
     "$SCRIPT_DIR/cloudedge-protocol-runner.sh" "$op" aws azure 1024 >/dev/null
 done
 
+protocol_json="$tmp/protocol-probe.json"
+PROTOCOL_PROBE_RUNNER="$SCRIPT_DIR/cloudedge-protocol-runner.sh" \
+CE_PROTOCOL_SETUP_COMMAND='printf "detail=setup_ok\nftp_passive_min=40000\nftp_passive_max=40100\n"' \
+CE_PROTOCOL_FTP_ACTIVE_COMMAND="$protocol_ok" \
+CE_PROTOCOL_FTP_PASSIVE_COMMAND="$protocol_ok" \
+CE_PROTOCOL_NFS_COMMAND="$protocol_ok" \
+CE_PROTOCOL_RPC_COMMAND='printf "dynamic_port=32768\ndetail=rpc_ok\n"' \
+CE_PROTOCOL_BULK_COMMAND='printf "bytes=${CE_PROTOCOL_BYTES:-0}\nbytes_sent=${CE_PROTOCOL_BYTES:-0}\nretransmits=0\ndetail=bulk_ok\n"' \
+CE_PROTOCOL_PMTU_COMMAND='printf "overlay_mtu=1380\nroute_mtu=1380\nroute_advmss=1340\nmss_clamp=1340\ndf_payload_bytes=1300\ndetail=pmtu_ok\n"' \
+CE_PROTOCOL_SOURCE_PRESERVED_COMMAND='printf "peer_ip=10.77.60.11\ndetail=source_ok\n"' \
+CE_PROTOCOL_NO_NAT_COMMAND='printf "detail=no_nat_ok\n"' \
+  "$SCRIPT_DIR/../cloudedge-protocol-probe.sh" \
+    --pairs aws:azure \
+    --bytes 1024 \
+    --out "$protocol_json" >/dev/null
+
+python3 - "$protocol_json" "$SCRIPT_DIR/../cloudedge-protocol-result-schema.json" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1]))
+schema = json.load(open(sys.argv[2]))
+try:
+    import jsonschema
+except Exception:
+    jsonschema = None
+if jsonschema is not None:
+    jsonschema.validate(instance=data, schema=schema)
+if data.get("status") != "pass":
+    raise SystemExit("protocol probe did not pass")
+pair = data["pairs"][0]
+if pair["details"]["rpc"].get("dynamic_port") != 32768:
+    raise SystemExit("rpc dynamic port evidence missing")
+if pair["details"]["bulkTransfer"].get("retransmits") != 0:
+    raise SystemExit("bulk retransmit evidence missing")
+if pair["details"]["pmtu"].get("route_advmss") != 1340:
+    raise SystemExit("PMTU/advmss evidence missing")
+PY
+
 printf 'cloudedge runners offline OK\n'

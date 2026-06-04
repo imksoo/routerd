@@ -42,5 +42,31 @@ export CE_AWS_RECOVERY_COMMAND='scripts/runners/cloudedge-matrix-runner.sh ping 
 export CE_L2_METRICS_COMMAND='ssh ... collect-l2-metrics'
 ```
 
+Protocol transparency runs use `cloudedge-protocol-runner.sh` through
+`PROTOCOL_PROBE_RUNNER`. The default implementation can install/configure a
+minimal lab server stack on the client VMs (`vsftpd`, `rpcbind`, NFS, `iperf3`)
+and records FTP active/passive, NFS/RPC, bulk transfer, source-IP, no-NAT, and
+PMTU/MSS evidence:
+
+```sh
+export CE_AWS_CLIENT_SSH_HOST=...
+export AWS_CLIENT_IP=10.77.60.11
+export CE_AZURE_CLIENT_SSH_HOST=...
+export AZURE_CLIENT_IP=10.77.60.12
+export CE_ONPREM_CLIENT_SSH_HOST=...
+export ONPREM_CLIENT_IP=10.77.60.10
+export CE_PROTOCOL_OVERLAY_IFACE=wg-hybrid
+export CE_PROTOCOL_MSS_CLAMP=1340
+
+PROTOCOL_PROBE_RUNNER=scripts/runners/cloudedge-protocol-runner.sh \
+  scripts/cloudedge-protocol-probe.sh \
+    --pairs aws:azure,aws:onprem \
+    --bytes 104857600 \
+    --out evidence/protocol-probe.json
+```
+
+Use `CE_PROTOCOL_<OP>_COMMAND` overrides for lab-specific FTP/NFS/RPC setup
+without editing the shared runner.
+
 The scripts support `--help` without credentials. `cloudedge-runners-offline-test.sh`
 exercises the contracts with local fake commands and no cloud access.
