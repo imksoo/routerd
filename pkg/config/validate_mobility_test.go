@@ -192,6 +192,113 @@ func TestValidateMobilityPoolPlacement(t *testing.T) {
 	}
 }
 
+func TestValidateMobilityPoolCloudCaptureProfile(t *testing.T) {
+	spec := api.MobilityPoolSpec{
+		Prefix:   "10.88.60.0/24",
+		GroupRef: "cloudedge",
+		Values: map[string]string{
+			"subnet": "subnet-a",
+			"region": "eastus",
+		},
+		Profiles: api.MobilityPoolProfiles{CloudCaptures: map[string]api.MobilityCloudCaptureProfile{
+			"azure-edge": {
+				Capture: api.MobilityMemberCapture{
+					Type:         "provider-secondary-ip",
+					ProviderRef:  "azure-provider",
+					ProviderMode: "nic-secondary-ip",
+					TargetFrom:   map[string]string{"region": "region"},
+				},
+				OwnershipDiscovery: api.MobilityOwnershipDiscovery{
+					Mode:          "provider-private-ip",
+					SubnetRefFrom: "subnet",
+				},
+			},
+		}},
+		Members: []api.MobilityPoolMember{
+			{NodeRef: "onprem-router", Site: "onprem", Role: "onprem"},
+			{
+				NodeRef:    "azure-router",
+				Site:       "azure",
+				Role:       "cloud",
+				ProfileRef: "azure-edge",
+				Placement:  api.MobilityMemberPlacement{Group: "azure-edge"},
+			},
+		},
+	}
+	router := mobilityPoolRouter(spec, testEventGroupResource("cloudedge", "azure-router"))
+	if err := Validate(router); err != nil {
+		t.Fatalf("Validate profile-backed MobilityPool: %v", err)
+	}
+}
+
+func TestValidateMobilityPoolSelfCloudMemberMustResolveCapture(t *testing.T) {
+	spec := api.MobilityPoolSpec{
+		Prefix:   "10.88.60.0/24",
+		GroupRef: "cloudedge",
+		Members: []api.MobilityPoolMember{
+			{NodeRef: "onprem-router", Site: "onprem", Role: "onprem"},
+			{NodeRef: "azure-router", Site: "azure", Role: "cloud"},
+		},
+	}
+	router := mobilityPoolRouter(spec, testEventGroupResource("cloudedge", "azure-router"))
+	err := Validate(router)
+	if err == nil || !strings.Contains(err.Error(), "must resolve provider-secondary-ip capture details") {
+		t.Fatalf("Validate identity-only self cloud member err = %v, want capture completeness error", err)
+	}
+
+	if err := Validate(mobilityPoolRouter(spec)); err != nil {
+		t.Fatalf("Validate identity-only cloud member without self node should remain offline-compatible: %v", err)
+	}
+}
+
+func TestValidateMobilityPoolProfileReferenceErrors(t *testing.T) {
+	spec := api.MobilityPoolSpec{
+		Prefix:   "10.88.60.0/24",
+		GroupRef: "cloudedge",
+		Members: []api.MobilityPoolMember{
+			{NodeRef: "onprem-router", Site: "onprem", Role: "onprem"},
+			{NodeRef: "azure-router", Site: "azure", Role: "cloud", ProfileRef: "missing"},
+		},
+	}
+	err := Validate(mobilityPoolRouter(spec))
+	if err == nil || !strings.Contains(err.Error(), "profileRef") {
+		t.Fatalf("Validate missing profile err = %v, want profileRef failure", err)
+	}
+
+	spec.Profiles = api.MobilityPoolProfiles{CloudCaptures: map[string]api.MobilityCloudCaptureProfile{
+		"azure": {OwnershipDiscovery: api.MobilityOwnershipDiscovery{SubnetRefFrom: "missing"}},
+	}}
+	spec.Members[1].ProfileRef = "azure"
+	err = Validate(mobilityPoolRouter(spec))
+	if err == nil || !strings.Contains(err.Error(), "subnetRefFrom") {
+		t.Fatalf("Validate missing values err = %v, want subnetRefFrom failure", err)
+	}
+}
+
+func TestWarningsMobilityPoolRemoteDetails(t *testing.T) {
+	spec := api.MobilityPoolSpec{
+		Prefix:   "10.88.60.0/24",
+		GroupRef: "cloudedge",
+		Profiles: api.MobilityPoolProfiles{CloudCaptures: map[string]api.MobilityCloudCaptureProfile{
+			"azure": {Capture: api.MobilityMemberCapture{Type: "provider-secondary-ip"}},
+		}},
+		Members: []api.MobilityPoolMember{
+			{NodeRef: "aws-router", Site: "aws", Role: "cloud"},
+			{NodeRef: "azure-router", Site: "azure", Role: "cloud", ProfileRef: "azure"},
+		},
+	}
+	warnings := Warnings(mobilityPoolRouter(spec, testEventGroupResource("cloudedge", "aws-router")))
+	found := false
+	for _, warning := range warnings {
+		if strings.Contains(warning, "remote member") && strings.Contains(warning, "azure-router") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("Warnings = %#v, want remote member warning", warnings)
+	}
+}
+
 func TestValidateMobilityPoolStaticOwnedAndHandover(t *testing.T) {
 	spec := api.MobilityPoolSpec{
 		Prefix:   "10.88.60.0/24",

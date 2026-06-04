@@ -1349,6 +1349,13 @@ type MobilityPoolSpec struct {
 	// GroupRef is the EventGroup whose observed/expired events can feed BGP
 	// mobility ownership for this pool (required).
 	GroupRef string `yaml:"groupRef" json:"groupRef"`
+	// Values carries non-secret per-router constants referenced by profiles.
+	// It is intended for provider identifiers such as NIC, subnet, region, or
+	// resource group names; credentials and tokens do not belong here.
+	Values map[string]string `yaml:"values,omitempty" json:"values,omitempty"`
+	// Profiles defines reusable capture/discovery fragments. Members opt in
+	// with profileRef and can override any concrete field locally.
+	Profiles MobilityPoolProfiles `yaml:"profiles,omitempty" json:"profiles,omitempty"`
 	// Mode selects the mobility scheme. Only "selective-address" is supported in
 	// the MVP; empty defaults to it.
 	Mode string `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=,enum=selective-address"`
@@ -1374,6 +1381,20 @@ type MobilityPoolSpec struct {
 	Authority MobilityAuthority `yaml:"authority,omitempty" json:"authority,omitempty"`
 }
 
+type MobilityPoolProfiles struct {
+	// CloudCaptures contains reusable cloud provider-secondary-ip capture
+	// defaults. It deliberately models only cloud capture/discovery because
+	// on-prem proxy-ARP authority must remain explicit and fail-closed.
+	CloudCaptures map[string]MobilityCloudCaptureProfile `yaml:"cloudCaptures,omitempty" json:"cloudCaptures,omitempty"`
+}
+
+type MobilityCloudCaptureProfile struct {
+	// Capture defaults for provider-secondary-ip cloud capture.
+	Capture MobilityMemberCapture `yaml:"capture,omitempty" json:"capture,omitempty"`
+	// OwnershipDiscovery defaults for provider private-IP observation.
+	OwnershipDiscovery MobilityOwnershipDiscovery `yaml:"ownershipDiscovery,omitempty" json:"ownershipDiscovery,omitempty"`
+}
+
 // MobilityPoolMember binds a routerd node to a site within a MobilityPool. Both
 // fields are required; NodeRef must be unique within the pool.
 type MobilityPoolMember struct {
@@ -1384,6 +1405,10 @@ type MobilityPoolMember struct {
 	// Role selects the SAM side semantics for this node. It is separate from Site
 	// so sites can be named for topology while role remains provider-agnostic.
 	Role string `yaml:"role" json:"role" jsonschema:"enum=onprem,enum=cloud"`
+	// ProfileRef selects a profile from spec.profiles.cloudCaptures. It is a
+	// local shorthand for the node's capture/discovery details; remote members
+	// should normally remain identity-only.
+	ProfileRef string `yaml:"profileRef,omitempty" json:"profileRef,omitempty"`
 	// Capture declares how this member captures addresses currently owned by
 	// another site.
 	Capture MobilityMemberCapture `yaml:"capture,omitempty" json:"capture,omitempty"`
@@ -1439,6 +1464,9 @@ type MobilityOwnershipDiscovery struct {
 	// SubnetRef optionally constrains the provider scan. Empty asks the plugin
 	// to infer it from the self NIC.
 	SubnetRef string `yaml:"subnetRef,omitempty" json:"subnetRef,omitempty"`
+	// SubnetRefFrom resolves SubnetRef from spec.values when SubnetRef is not
+	// set explicitly.
+	SubnetRefFrom string `yaml:"subnetRefFrom,omitempty" json:"subnetRefFrom,omitempty"`
 	// ScanInterval bounds provider inventory calls. Empty defaults to 60s.
 	ScanInterval string `yaml:"scanInterval,omitempty" json:"scanInterval,omitempty"`
 	// LeaseTTL controls the emitted observed event expiry. Empty defaults to the
@@ -1486,6 +1514,10 @@ type MobilityMemberCapture struct {
 	// compartmentId, resourceGroup, nicName, or ipConfigName. It is copied to
 	// provider ActionPlan.target; credentials and tokens do not belong here.
 	Target map[string]string `yaml:"target,omitempty" json:"target,omitempty"`
+	// TargetFrom resolves provider target hints from spec.values. Keys are
+	// provider target keys and values are spec.values keys. Explicit target
+	// entries take precedence over targetFrom.
+	TargetFrom map[string]string `yaml:"targetFrom,omitempty" json:"targetFrom,omitempty"`
 }
 
 type CaptureActiveWhen struct {

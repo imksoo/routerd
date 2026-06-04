@@ -6854,6 +6854,13 @@
                                   "description": "Target carries non-secret provider target hints such as region,\ncompartmentId, resourceGroup, nicName, or ipConfigName. It is copied to\nprovider ActionPlan.target; credentials and tokens do not belong here.",
                                   "type": "object"
                                 },
+                                "targetFrom": {
+                                  "additionalProperties": {
+                                    "type": "string"
+                                  },
+                                  "description": "TargetFrom resolves provider target hints from spec.values. Keys are\nprovider target keys and values are spec.values keys. Explicit target\nentries take precedence over targetFrom.",
+                                  "type": "object"
+                                },
                                 "type": {
                                   "enum": [
                                     "provider-secondary-ip",
@@ -7008,6 +7015,10 @@
                                 "subnetRef": {
                                   "description": "SubnetRef optionally constrains the provider scan. Empty asks the plugin\nto infer it from the self NIC.",
                                   "type": "string"
+                                },
+                                "subnetRefFrom": {
+                                  "description": "SubnetRefFrom resolves SubnetRef from spec.values when SubnetRef is not\nset explicitly.",
+                                  "type": "string"
                                 }
                               },
                               "type": "object"
@@ -7027,6 +7038,10 @@
                                 }
                               },
                               "type": "object"
+                            },
+                            "profileRef": {
+                              "description": "ProfileRef selects a profile from spec.profiles.cloudCaptures. It is a\nlocal shorthand for the node's capture/discovery details; remote members\nshould normally remain identity-only.",
+                              "type": "string"
                             },
                             "role": {
                               "description": "Role selects the SAM side semantics for this node. It is separate from Site\nso sites can be named for topology while role remains provider-agnostic.",
@@ -7069,6 +7084,163 @@
                         "description": "Prefix is the CIDR managed by this pool, e.g. 10.88.60.0/24 (required).",
                         "type": "string"
                       },
+                      "profiles": {
+                        "additionalProperties": false,
+                        "description": "Profiles defines reusable capture/discovery fragments. Members opt in\nwith profileRef and can override any concrete field locally.",
+                        "properties": {
+                          "cloudCaptures": {
+                            "additionalProperties": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "capture": {
+                                  "additionalProperties": false,
+                                  "description": "Capture defaults for provider-secondary-ip cloud capture.",
+                                  "properties": {
+                                    "activeWhen": {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "type": {
+                                          "enum": [
+                                            "",
+                                            "vrrp-master"
+                                          ],
+                                          "type": "string"
+                                        },
+                                        "virtualAddressRef": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "type": "object"
+                                    },
+                                    "configureOSAddress": {
+                                      "type": "boolean"
+                                    },
+                                    "gratuitousARP": {
+                                      "type": "boolean"
+                                    },
+                                    "interface": {
+                                      "type": "string"
+                                    },
+                                    "nicRef": {
+                                      "type": "string"
+                                    },
+                                    "providerMode": {
+                                      "type": "string"
+                                    },
+                                    "providerRef": {
+                                      "type": "string"
+                                    },
+                                    "target": {
+                                      "additionalProperties": {
+                                        "type": "string"
+                                      },
+                                      "description": "Target carries non-secret provider target hints such as region,\ncompartmentId, resourceGroup, nicName, or ipConfigName. It is copied to\nprovider ActionPlan.target; credentials and tokens do not belong here.",
+                                      "type": "object"
+                                    },
+                                    "targetFrom": {
+                                      "additionalProperties": {
+                                        "type": "string"
+                                      },
+                                      "description": "TargetFrom resolves provider target hints from spec.values. Keys are\nprovider target keys and values are spec.values keys. Explicit target\nentries take precedence over targetFrom.",
+                                      "type": "object"
+                                    },
+                                    "type": {
+                                      "enum": [
+                                        "provider-secondary-ip",
+                                        "proxy-arp"
+                                      ],
+                                      "type": "string"
+                                    }
+                                  },
+                                  "type": "object"
+                                },
+                                "ownershipDiscovery": {
+                                  "additionalProperties": false,
+                                  "description": "OwnershipDiscovery defaults for provider private-IP observation.",
+                                  "properties": {
+                                    "leaseTTL": {
+                                      "description": "LeaseTTL controls the emitted observed event expiry. Empty defaults to the\ncontroller default.",
+                                      "type": "string"
+                                    },
+                                    "mode": {
+                                      "description": "Mode selects the discovery backend. Empty/disabled does nothing.",
+                                      "enum": [
+                                        "",
+                                        "disabled",
+                                        "provider-private-ip"
+                                      ],
+                                      "type": "string"
+                                    },
+                                    "pluginRef": {
+                                      "description": "PluginRef optionally pins the inventory plugin. Empty resolves by\nprovider name or sole observe.providerPrivateIPs plugin.",
+                                      "type": "string"
+                                    },
+                                    "providerRef": {
+                                      "description": "ProviderRef defaults to the member capture.providerRef.",
+                                      "type": "string"
+                                    },
+                                    "scanInterval": {
+                                      "description": "ScanInterval bounds provider inventory calls. Empty defaults to 60s.",
+                                      "type": "string"
+                                    },
+                                    "scope": {
+                                      "additionalProperties": false,
+                                      "description": "Scope narrows which provider private IPs become mobility ownership facts.\nEmpty keeps the historical broad scan behavior.",
+                                      "properties": {
+                                        "excludeAddresses": {
+                                          "description": "ExcludeAddresses optionally denylists discovered addresses by IPv4 CIDR or\nbare IPv4 address.",
+                                          "items": {
+                                            "type": "string"
+                                          },
+                                          "type": "array"
+                                        },
+                                        "includeAddresses": {
+                                          "description": "IncludeAddresses optionally allowlists discovered addresses by IPv4 CIDR or\nbare IPv4 address. Empty means all pool addresses are candidates.",
+                                          "items": {
+                                            "type": "string"
+                                          },
+                                          "type": "array"
+                                        },
+                                        "includePrimary": {
+                                          "description": "IncludePrimary controls whether provider-primary private IPs may become\nmobility-owned addresses. Nil defaults to true for backward compatibility.",
+                                          "type": "boolean"
+                                        }
+                                      },
+                                      "type": "object"
+                                    },
+                                    "selector": {
+                                      "additionalProperties": false,
+                                      "description": "Selector optionally filters discovered IP records by provider tags/labels.",
+                                      "properties": {
+                                        "tags": {
+                                          "additionalProperties": {
+                                            "type": "string"
+                                          },
+                                          "type": "object"
+                                        }
+                                      },
+                                      "type": "object"
+                                    },
+                                    "subnetRef": {
+                                      "description": "SubnetRef optionally constrains the provider scan. Empty asks the plugin\nto infer it from the self NIC.",
+                                      "type": "string"
+                                    },
+                                    "subnetRefFrom": {
+                                      "description": "SubnetRefFrom resolves SubnetRef from spec.values when SubnetRef is not\nset explicitly.",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "type": "object"
+                                }
+                              },
+                              "type": "object"
+                            },
+                            "description": "CloudCaptures contains reusable cloud provider-secondary-ip capture\ndefaults. It deliberately models only cloud capture/discovery because\non-prem proxy-ARP authority must remain explicit and fail-closed.",
+                            "type": "object"
+                          }
+                        },
+                        "type": "object"
+                      },
                       "staticHandovers": {
                         "description": "StaticHandovers declares planned static-owned address movement from an\non-prem member to another member. The controller releases the from member\nfirst and only projects the to member after observing the release event.",
                         "items": {
@@ -7092,6 +7264,13 @@
                           "type": "object"
                         },
                         "type": "array"
+                      },
+                      "values": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Values carries non-secret per-router constants referenced by profiles.\nIt is intended for provider identifiers such as NIC, subnet, region, or\nresource group names; credentials and tokens do not belong here.",
+                        "type": "object"
                       }
                     },
                     "required": [

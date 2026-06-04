@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/mobilityconfig"
 )
 
 func validateClusterNetworkRoute(resourceID string, spec api.ClusterNetworkRouteSpec) error {
@@ -173,6 +174,21 @@ func Warnings(router *api.Router) []string {
 			}
 			if spec.Capture.Type == "proxy-arp" && spec.Capture.Interface != "" && !interfaces[spec.Capture.Interface] {
 				warnings = append(warnings, fmt.Sprintf("%s spec.capture.interface references Interface %q which is not declared; assuming the interface is managed externally", res.ID(), spec.Capture.Interface))
+			}
+		case "MobilityPool":
+			spec, err := res.MobilityPoolSpec()
+			if err != nil {
+				continue
+			}
+			_, diagnostics, err := mobilityconfig.NormalizeMobilityPool(spec, mobilitySelfNode(router, spec.GroupRef))
+			if err != nil {
+				continue
+			}
+			for _, diagnostic := range diagnostics {
+				if diagnostic.Severity != mobilityconfig.DiagnosticWarning {
+					continue
+				}
+				warnings = append(warnings, fmt.Sprintf("%s %s: %s", res.ID(), diagnostic.Path, diagnostic.Message))
 			}
 		}
 	}

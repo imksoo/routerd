@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/mobilityconfig"
 	"github.com/imksoo/routerd/pkg/platform"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
@@ -450,7 +451,14 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 				return err
 			}
 			selfNode := mobilitySelfNode(router, spec.GroupRef)
-			for i, member := range spec.Members {
+			normalized, _, err := mobilityconfig.NormalizeMobilityPool(spec, selfNode)
+			if err != nil {
+				return fmt.Errorf("%s %w", res.ID(), err)
+			}
+			if err := validateMobilitySelfMemberCompleteness(res, normalized, selfNode); err != nil {
+				return err
+			}
+			for i, member := range normalized.Members {
 				if selfNode != "" && strings.TrimSpace(member.NodeRef) != selfNode {
 					continue
 				}
@@ -668,6 +676,23 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 func captureActiveWhenVirtualAddressRef(activeWhen api.CaptureActiveWhen) string {
 	ref := strings.TrimSpace(activeWhen.VirtualAddressRef)
 	return strings.TrimPrefix(ref, "VirtualAddress/")
+}
+
+func validateMobilitySelfMemberCompleteness(res api.Resource, spec api.MobilityPoolSpec, selfNode string) error {
+	selfNode = strings.TrimSpace(selfNode)
+	if selfNode == "" || effectiveMobilityDeliveryMode(spec) != "bgp" {
+		return nil
+	}
+	for i, member := range spec.Members {
+		if strings.TrimSpace(member.NodeRef) != selfNode {
+			continue
+		}
+		if strings.TrimSpace(member.Role) == "cloud" && strings.TrimSpace(member.Capture.Type) == "" {
+			return fmt.Errorf("%s spec.members[%d] is the local cloud member %q and must resolve provider-secondary-ip capture details from capture or profileRef", res.ID(), i, selfNode)
+		}
+		return nil
+	}
+	return nil
 }
 
 func mobilitySelfNode(router *api.Router, groupRef string) string {

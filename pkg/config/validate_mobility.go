@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/mobilityconfig"
 	"github.com/imksoo/routerd/pkg/platform"
 )
 
@@ -49,6 +50,11 @@ func validateMobilityResource(res api.Resource, _ platform.OS) (bool, error) {
 		if len(spec.Members) == 0 {
 			return true, fmt.Errorf("%s spec.members requires at least one member", res.ID())
 		}
+		normalized, _, err := mobilityconfig.NormalizeMobilityPool(spec, "")
+		if err != nil {
+			return true, fmt.Errorf("%s %w", res.ID(), err)
+		}
+		spec = normalized
 		switch strings.TrimSpace(spec.DeliveryPolicy.Mode) {
 		case "", "bgp":
 		default:
@@ -125,6 +131,7 @@ func validateMobilityOwnershipDiscovery(res api.Resource, index int, spec api.Mo
 		strings.TrimSpace(discovery.ProviderRef) != "" ||
 		strings.TrimSpace(discovery.PluginRef) != "" ||
 		strings.TrimSpace(discovery.SubnetRef) != "" ||
+		strings.TrimSpace(discovery.SubnetRefFrom) != "" ||
 		strings.TrimSpace(discovery.ScanInterval) != "" ||
 		strings.TrimSpace(discovery.LeaseTTL) != "" ||
 		discovery.Scope.IncludePrimary != nil ||
