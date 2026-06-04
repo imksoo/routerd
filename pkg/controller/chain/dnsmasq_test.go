@@ -9,9 +9,11 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/daemonapi"
+	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
 type mapStore map[string]map[string]any
@@ -26,6 +28,27 @@ func (s mapStore) ObjectStatus(apiVersion, kind, name string) map[string]any {
 		return status
 	}
 	return map[string]any{}
+}
+
+type statefulDHCPMapStore struct {
+	mapStore
+	now time.Time
+}
+
+func (s statefulDHCPMapStore) Get(name string) routerstate.Value {
+	now := s.Now()
+	return routerstate.Value{Status: routerstate.StatusUnknown, Since: now, UpdatedAt: now}
+}
+
+func (s statefulDHCPMapStore) Age(name string) time.Duration {
+	return s.Now().Sub(s.Get(name).Since)
+}
+
+func (s statefulDHCPMapStore) Now() time.Time {
+	if s.now.IsZero() {
+		return time.Now().UTC()
+	}
+	return s.now
 }
 
 func TestDnsmasqLANServiceLines(t *testing.T) {
@@ -178,7 +201,7 @@ func TestDHCPv4ServerPendingSourceOmitsScopeUntilResolved(t *testing.T) {
 		t.Fatalf("other scope was not rendered:\n%s", data)
 	}
 	controller := DHCPv6ServerController{Router: router, Store: store}
-	if err := controller.saveDHCPv4ServerStatuses(configPath, pidFile); err != nil {
+	if err := controller.saveDHCPv4ServerStatuses(router, configPath, pidFile); err != nil {
 		t.Fatal(err)
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "DHCPv4Server", "lan-pending")
@@ -198,7 +221,7 @@ func TestDHCPv4ServerPendingSourceOmitsScopeUntilResolved(t *testing.T) {
 		!strings.Contains(string(data), "dhcp-option=tag:lan-pending,option:dns-server,192.168.10.1") {
 		t.Fatalf("resolved scope or DNS option was not rendered:\n%s", data)
 	}
-	if err := controller.saveDHCPv4ServerStatuses(configPath, pidFile); err != nil {
+	if err := controller.saveDHCPv4ServerStatuses(router, configPath, pidFile); err != nil {
 		t.Fatal(err)
 	}
 	status = store.ObjectStatus(api.NetAPIVersion, "DHCPv4Server", "lan-pending")
@@ -226,6 +249,58 @@ func TestWriteDnsmasqConfigDisablesDNSPort(t *testing.T) {
 	}
 	if strings.Contains(string(data), "listen-address=") {
 		t.Fatalf("dnsmasq config should not own DNS listen addresses:\n%s", data)
+	}
+}
+
+func TestDHCPv4ServerWhenFalseRemovesDnsmasqScope(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "dnsmasq.conf")
+	pidFile := filepath.Join(dir, "dnsmasq.pid")
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"}, Metadata: api.ObjectMeta{Name: "lan-v4"}, Spec: api.DHCPv4ServerSpec{
+			Interface:   "lan",
+			AddressPool: api.DHCPAddressPoolSpec{Start: "192.168.10.100", End: "192.168.10.199", LeaseTime: "8h"},
+			When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{
+				"VirtualAddress/lan-vip.role": {Equals: "master"},
+			}},
+		}},
+	}}}
+	store := statefulDHCPMapStore{mapStore: mapStore{
+		api.NetAPIVersion + "/VirtualAddress/lan-vip": {"role": "backup"},
+	}}
+	controller := DHCPv6ServerController{Router: router, Store: store, DryRun: true}
+
+	effective := controller.effectiveRouter()
+	if changed, err := writeDnsmasqConfig(effective, store, configPath, pidFile, 53, nil); err != nil || !changed {
+		t.Fatalf("write backup config changed=%t err=%v", changed, err)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "dhcp-range=set:lan-v4") {
+		t.Fatalf("backup config still contains DHCP scope:\n%s", data)
+	}
+	if err := controller.saveDHCPv4ServerStatuses(effective, configPath, pidFile); err != nil {
+		t.Fatal(err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "DHCPv4Server", "lan-v4")
+	if status["phase"] != "Pending" || status["reason"] != "WhenFalse" {
+		t.Fatalf("backup status = %#v", status)
+	}
+
+	store.mapStore[api.NetAPIVersion+"/VirtualAddress/lan-vip"]["role"] = "master"
+	effective = controller.effectiveRouter()
+	if _, err := writeDnsmasqConfig(effective, store, configPath, pidFile, 53, nil); err != nil {
+		t.Fatal(err)
+	}
+	data, err = os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "dhcp-range=set:lan-v4,192.168.10.100,192.168.10.199,8h") {
+		t.Fatalf("master config missing DHCP scope:\n%s", data)
 	}
 }
 

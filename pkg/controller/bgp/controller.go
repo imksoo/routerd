@@ -133,7 +133,11 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 }
 
 func (c *Controller) reconcileLocked(ctx context.Context) error {
-	if c.Router == nil || c.Store == nil || !hasBGP(c.Router) {
+	if c.Router == nil || c.Store == nil {
+		return nil
+	}
+	if !hasBGP(c.Router) {
+		c.stopServerLocked()
 		return nil
 	}
 	routers := c.bgpRouters()
@@ -236,6 +240,24 @@ func (c *Controller) reconcileLocked(ctx context.Context) error {
 		c.publishBGPEvent(ctx, event)
 	}
 	return nil
+}
+
+func (c *Controller) stopServerLocked() {
+	if c.Server != nil {
+		c.Server.Stop()
+		c.Server = nil
+	}
+	c.started = false
+	c.globalKey = ""
+	c.desiredPeerKeys = nil
+	c.appliedPeerKeys = nil
+	c.appliedConfig = bgpdaemon.AppliedConfig{}
+	c.importPolicyKey = ""
+	c.pathUUIDs = nil
+	c.observed = false
+	c.lastState = bgpstate.State{}
+	c.lastFIBRoutesSig = ""
+	c.lastFIBValid = false
 }
 
 func (c *Controller) Start(ctx context.Context) {

@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
@@ -29,12 +30,25 @@ type Controller struct {
 	Store      Store
 	HTTPClient *http.Client
 	Stdout     io.Writer
+
+	mu      sync.Mutex
+	running map[string]runningExporter
 }
 
 func (c *Controller) Start(ctx context.Context) error {
+	return c.Reconcile(ctx)
+}
+
+func (c *Controller) Reconcile(ctx context.Context) error {
 	if c.Router == nil || c.Bus == nil {
 		return nil
 	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.running == nil {
+		c.running = map[string]runningExporter{}
+	}
+	desired := map[string]string{}
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.APIVersion != api.SystemAPIVersion || resource.Kind != "ObservabilityPipeline" {
 			continue
@@ -47,11 +61,39 @@ func (c *Controller) Start(ctx context.Context) error {
 		if !exporter.enabled {
 			continue
 		}
-		ch, _ := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.**"}}, 256)
-		go exporter.run(ctx, ch)
+		signature := observabilityPipelineSignature(spec)
+		desired[resource.Metadata.Name] = signature
+		if current, ok := c.running[resource.Metadata.Name]; ok && current.signature == signature {
+			continue
+		}
+		if current, ok := c.running[resource.Metadata.Name]; ok {
+			current.cancel()
+		}
+		runCtx, cancel := context.WithCancel(ctx)
+		ch, _ := c.Bus.Subscribe(runCtx, bus.Subscription{Topics: []string{"routerd.**"}}, 256)
+		go exporter.run(runCtx, ch)
+		c.running[resource.Metadata.Name] = runningExporter{cancel: cancel, signature: signature}
 		c.saveStatus(resource.Metadata.Name, "Running", exporter)
 	}
+	for name, current := range c.running {
+		if _, ok := desired[name]; ok {
+			continue
+		}
+		current.cancel()
+		delete(c.running, name)
+		c.saveStoppedStatus(name)
+	}
 	return nil
+}
+
+type runningExporter struct {
+	cancel    context.CancelFunc
+	signature string
+}
+
+func observabilityPipelineSignature(spec api.ObservabilityPipelineSpec) string {
+	data, _ := json.Marshal(spec)
+	return string(data)
 }
 
 func (c *Controller) exporter(name string, spec api.ObservabilityPipelineSpec) *Exporter {
@@ -96,6 +138,17 @@ func (c *Controller) saveStatus(name, phase string, exporter *Exporter) {
 		"backend":    "builtin",
 		"sinks":      sinkTypes,
 		"sampleRate": exporter.sampleRate,
+		"observedAt": time.Now().UTC().Format(time.RFC3339Nano),
+	})
+}
+
+func (c *Controller) saveStoppedStatus(name string) {
+	if c.Store == nil {
+		return
+	}
+	_ = c.Store.SaveObjectStatus(api.SystemAPIVersion, "ObservabilityPipeline", name, map[string]any{
+		"phase":      "Stopped",
+		"backend":    "builtin",
 		"observedAt": time.Now().UTC().Format(time.RFC3339Nano),
 	})
 }

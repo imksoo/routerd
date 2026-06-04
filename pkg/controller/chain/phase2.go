@@ -761,7 +761,8 @@ func (c DHCPv6ServerController) Start(ctx context.Context) {
 }
 
 func (c DHCPv6ServerController) reconcile(ctx context.Context) error {
-	if !routerNeedsDnsmasq(c.Router) {
+	effectiveRouter := c.effectiveRouter()
+	if !routerNeedsDnsmasq(c.Router) && !routerNeedsDnsmasq(effectiveRouter) {
 		return nil
 	}
 	configPath := firstNonEmpty(c.ConfigPath, "/run/routerd/dnsmasq-phase1.conf")
@@ -770,7 +771,7 @@ func (c DHCPv6ServerController) reconcile(ctx context.Context) error {
 	if port == 0 {
 		port = 1053
 	}
-	changed, err := writeDnsmasqConfig(c.Router, c.Store, configPath, pidFile, port, c.ListenAddresses)
+	changed, err := writeDnsmasqConfig(effectiveRouter, c.Store, configPath, pidFile, port, c.ListenAddresses)
 	if err != nil {
 		return err
 	}
@@ -784,7 +785,7 @@ func (c DHCPv6ServerController) reconcile(ctx context.Context) error {
 			return err
 		}
 	}
-	if err := c.saveDHCPv4ServerStatuses(configPath, pidFile); err != nil {
+	if err := c.saveDHCPv4ServerStatuses(effectiveRouter, configPath, pidFile); err != nil {
 		return err
 	}
 	for _, resource := range c.Router.Spec.Resources {
@@ -795,11 +796,15 @@ func (c DHCPv6ServerController) reconcile(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		if !c.resourceWhenMatches(resource) {
+			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "DHCPv6Server", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "WhenFalse", "interface": spec.Interface, "mode": firstNonEmpty(spec.Mode, "stateless"), "configPath": configPath, "pidFile": pidFile, "dryRun": c.DryRun})
+			continue
+		}
 		if !resourcequery.DependenciesReady(c.Store, spec.DependsOn) {
 			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "DHCPv6Server", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "DependsOnFalse", "dependencies": dependencyStatusSnapshot(c.Store, spec.DependsOn)})
 			continue
 		}
-		if pending := dhcpv6ServerPending(c.Router, c.Store, spec); pending != "" {
+		if pending := dhcpv6ServerPending(effectiveRouter, c.Store, spec); pending != "" {
 			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "DHCPv6Server", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": pending, "interface": spec.Interface, "mode": firstNonEmpty(spec.Mode, "stateless"), "configPath": configPath, "pidFile": pidFile, "dryRun": c.DryRun}); err != nil {
 				return err
 			}
@@ -830,7 +835,23 @@ func (c DHCPv6ServerController) reconcile(ctx context.Context) error {
 	return nil
 }
 
-func (c DHCPv6ServerController) saveDHCPv4ServerStatuses(configPath, pidFile string) error {
+func (c DHCPv6ServerController) effectiveRouter() *api.Router {
+	stateStore, ok := c.Store.(resourcequery.StateStore)
+	if !ok {
+		return c.Router
+	}
+	return resourcequery.FilterRouterByWhen(c.Router, stateStore)
+}
+
+func (c DHCPv6ServerController) resourceWhenMatches(resource api.Resource) bool {
+	stateStore, ok := c.Store.(resourcequery.StateStore)
+	if !ok {
+		return true
+	}
+	return resourcequery.ResourceWhenMatches(resourcequery.ResourceWhen(resource), stateStore)
+}
+
+func (c DHCPv6ServerController) saveDHCPv4ServerStatuses(renderRouter *api.Router, configPath, pidFile string) error {
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.Kind != "DHCPv4Server" {
 			continue
@@ -839,7 +860,14 @@ func (c DHCPv6ServerController) saveDHCPv4ServerStatuses(configPath, pidFile str
 		if err != nil {
 			return err
 		}
-		if pending := dhcpv4ServerPending(c.Router, c.Store, spec); pending != "" {
+		if !c.resourceWhenMatches(resource) {
+			status := map[string]any{"phase": "Pending", "reason": "WhenFalse", "interface": spec.Interface, "configPath": configPath, "pidFile": pidFile, "dryRun": c.DryRun}
+			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "DHCPv4Server", resource.Metadata.Name, status); err != nil {
+				return err
+			}
+			continue
+		}
+		if pending := dhcpv4ServerPending(renderRouter, c.Store, spec); pending != "" {
 			status := map[string]any{"phase": "Pending", "reason": pending, "interface": spec.Interface, "configPath": configPath, "pidFile": pidFile, "dryRun": c.DryRun}
 			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "DHCPv4Server", resource.Metadata.Name, status); err != nil {
 				return err

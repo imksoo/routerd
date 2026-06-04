@@ -5,6 +5,8 @@ package vrrp
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -448,6 +450,38 @@ func TestReconcileCleansRemovedStaticVirtualAddressIPv4(t *testing.T) {
 	}
 	if !reflect.DeepEqual(calls, want) {
 		t.Fatalf("second reconcile repeated cleanup: calls = %#v, want %#v", calls, want)
+	}
+}
+
+func TestReconcileStopsKeepalivedWhenVRRPRemoved(t *testing.T) {
+	store := mapStore{}
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "keepalived.conf")
+	if err := os.WriteFile(configPath, []byte("vrrp_instance old {}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	var calls []string
+	controller := Controller{
+		Router: &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "lan"},
+				Spec:     api.InterfaceSpec{IfName: "ens18"},
+			},
+		}}},
+		Store:      store,
+		ConfigPath: configPath,
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			calls = append(calls, name+" "+strings.Join(args, " "))
+			return []byte("ok"), nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	want := []string{"systemctl is-active --quiet keepalived.service", "systemctl stop keepalived.service"}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("calls = %#v, want %#v", calls, want)
 	}
 }
 
