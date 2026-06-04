@@ -24,8 +24,8 @@ mobility demo:
 | Cloud | API surface |
 | --- | --- |
 | AWS | `ec2:AssignPrivateIpAddresses`, `ec2:UnassignPrivateIpAddresses`, `ec2:DescribeNetworkInterfaces`, `ec2:ModifyNetworkInterfaceAttribute` |
-| Azure | `Microsoft.Network/networkInterfaces/read`, `Microsoft.Network/networkInterfaces/write`, `Microsoft.Network/networkInterfaces/ipConfigurations/read`, `Microsoft.Network/networkInterfaces/ipConfigurations/write`, `Microsoft.Network/networkInterfaces/ipConfigurations/delete` |
-| OCI | `CreatePrivateIp`, `DeletePrivateIp`, `ListPrivateIps`, `GetVnic`, `UpdateVnic` |
+| Azure | NIC read/write, child `ipConfigurations` read/write/delete/join, and linked `subnets` / `networkSecurityGroups` / `publicIPAddresses` read + join |
+| OCI | `CreatePrivateIp`, `DeletePrivateIp`, `ListPrivateIps`, `GetVnic`, `UpdateVnic`, and subnet read/use |
 
 Harness permissions are intentionally not included. Starting/stopping VMs,
 creating NICs/VNICs, changing NSGs/security lists, uploading files, and other lab
@@ -79,6 +79,27 @@ and write plus child `ipConfigurations` read/write/delete. Those are the
 operations the executor uses to enable forwarding and create/delete captured
 secondary IP configurations.
 
+Azure ARM also authorizes linked resources when an `ipConfiguration` is written.
+If the ipConfig references a subnet, network security group, or public IP,
+the managed identity needs `join/action` and read permission on those linked
+resources:
+
+- `Microsoft.Network/virtualNetworks/subnets/read`
+- `Microsoft.Network/virtualNetworks/subnets/join/action`
+- `Microsoft.Network/networkSecurityGroups/read`
+- `Microsoft.Network/networkSecurityGroups/join/action`
+- `Microsoft.Network/publicIPAddresses/read`
+- `Microsoft.Network/publicIPAddresses/join/action`
+- `Microsoft.Network/networkInterfaces/ipConfigurations/join/action`
+
+The template includes these actions. In some Azure tenants, strict custom-role
+authorization still fails linked-resource checks for fixed subnet/NSG/PIP
+resources. In that case, keep the custom role for the NIC operations and add a
+fallback assignment of the built-in **Network Contributor** role scoped only to
+the specific linked subnet, NSG, and public IP resources, or to the smallest
+resource group containing only those linked resources. That is still much
+narrower than subscription Admin or broad subscription-wide Network Contributor.
+
 For tighter deployments, scope `AssignableScopes` to a dedicated resource group
 or to the specific NIC resource ID if your Azure role assignment workflow allows
 that scope cleanly.
@@ -96,7 +117,8 @@ Replace:
 
 The `private-ips` permission covers create/delete/list of captured private IP
 objects. The `vnics` permission covers reading the VNIC and updating
-`skipSourceDestCheck`.
+`skipSourceDestCheck`. The `subnets` permission covers reading/using the subnet
+referenced by VNIC private-IP placement.
 
 Keep the dynamic group narrow. It should match the router instances only, not the
 demo clients and not the operator harness.
@@ -120,3 +142,16 @@ demo clients and not the operator harness.
 
 For this repository task, stop at templates and documentation. Applying the
 policies and rerunning the live demo is a separate cost-bearing lab step.
+
+## Scoped Retest Evidence
+
+The least-privilege surface above was corrected after a scoped provider-action
+retest captured in `evidence/20260604T051859Z-leastpriv-a2434c96`:
+
+- AWS succeeded with the ENI-scoped four-action policy in `aws-policy.json`.
+- OCI succeeded with compartment-scoped `private-ips`, `vnics`, and `subnets`
+  permissions in `oci-policy.txt`.
+- Azure required the linked-resource join/read surface above. Where a strict
+  custom role alone does not satisfy ARM linked authorization, use the
+  resource-scoped Network Contributor fallback for the fixed subnet, NSG, and
+  public IP resources.

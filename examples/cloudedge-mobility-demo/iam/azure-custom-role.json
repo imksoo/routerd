@@ -7,7 +7,14 @@
     "Microsoft.Network/networkInterfaces/write",
     "Microsoft.Network/networkInterfaces/ipConfigurations/read",
     "Microsoft.Network/networkInterfaces/ipConfigurations/write",
-    "Microsoft.Network/networkInterfaces/ipConfigurations/delete"
+    "Microsoft.Network/networkInterfaces/ipConfigurations/delete",
+    "Microsoft.Network/networkInterfaces/ipConfigurations/join/action",
+    "Microsoft.Network/virtualNetworks/subnets/read",
+    "Microsoft.Network/virtualNetworks/subnets/join/action",
+    "Microsoft.Network/networkSecurityGroups/read",
+    "Microsoft.Network/networkSecurityGroups/join/action",
+    "Microsoft.Network/publicIPAddresses/read",
+    "Microsoft.Network/publicIPAddresses/join/action"
   ],
   "NotActions": [],
   "DataActions": [],
