@@ -1,0 +1,295 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
+package chain
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"path"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/imksoo/routerd/pkg/api"
+)
+
+type fileSyncCommandFunc func(ctx context.Context, name string, args ...string) ([]byte, error)
+
+type fileSyncJob struct {
+	APIVersion string
+	Kind       string
+	Name       string
+	Command    string
+	Interval   time.Duration
+	Sources    []fileSyncSource
+	Targets    []fileSyncTarget
+}
+
+type fileSyncSource struct {
+	Name     string
+	Path     string
+	Required bool
+}
+
+type fileSyncTarget struct {
+	Name       string
+	Host       string
+	User       string
+	Path       string
+	SSHOptions []string
+	Options    []string
+}
+
+type FileSyncController struct {
+	Router  *api.Router
+	Store   Store
+	DryRun  bool
+	Command fileSyncCommandFunc
+	Now     func() time.Time
+}
+
+func (c FileSyncController) Reconcile(ctx context.Context) error {
+	for _, resource := range c.dhcpLeaseSyncResources() {
+		job, err := fileSyncJobFromDHCPLeaseSync(resource)
+		if err != nil {
+			if saveErr := c.save(resource.APIVersion, resource.Kind, resource.Metadata.Name, map[string]any{"phase": "Error", "reason": "InvalidSpec", "error": err.Error(), "dryRun": c.DryRun}); saveErr != nil {
+				return saveErr
+			}
+			continue
+		}
+		if err := c.reconcileJob(ctx, job); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c FileSyncController) dhcpLeaseSyncResources() []api.Resource {
+	if c.Router == nil {
+		return nil
+	}
+	var out []api.Resource
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.Kind == "DHCPLeaseSync" {
+			out = append(out, resource)
+		}
+	}
+	return out
+}
+
+func (c FileSyncController) reconcileJob(ctx context.Context, job fileSyncJob) error {
+	now := c.now()
+	if c.shouldSkip(job, now) {
+		return nil
+	}
+	sources, pending, err := fileSyncSourceStatuses(job.Sources)
+	if err != nil {
+		return c.save(job.APIVersion, job.Kind, job.Name, map[string]any{"phase": "Error", "reason": "SourceStatFailed", "error": err.Error(), "dryRun": c.DryRun})
+	}
+	if pending != "" {
+		return c.save(job.APIVersion, job.Kind, job.Name, map[string]any{"phase": "Pending", "reason": "SourceMissing", "source": pending, "sources": sources, "dryRun": c.DryRun})
+	}
+	if len(sources) == 0 {
+		return c.save(job.APIVersion, job.Kind, job.Name, map[string]any{"phase": "Pending", "reason": "NoSources", "dryRun": c.DryRun})
+	}
+	targetStatuses := fileSyncTargetStatuses(job.Targets)
+	if c.DryRun {
+		return c.save(job.APIVersion, job.Kind, job.Name, map[string]any{
+			"phase":       "Rendered",
+			"reason":      "DryRun",
+			"command":     firstNonEmpty(job.Command, "rsync"),
+			"sources":     sources,
+			"targets":     targetStatuses,
+			"syncedAt":    now.Format(time.RFC3339Nano),
+			"sourceCount": len(sources),
+			"targetCount": len(job.Targets),
+			"dryRun":      true,
+		})
+	}
+	run := c.Command
+	if run == nil {
+		run = runOutputCommandContext
+	}
+	command := firstNonEmpty(job.Command, "rsync")
+	for _, source := range job.Sources {
+		if !fileSyncSourcePresent(sources, source.Path) {
+			continue
+		}
+		for _, target := range job.Targets {
+			args := fileSyncRsyncArgs(source, target, len(job.Sources))
+			if out, err := run(ctx, command, args...); err != nil {
+				return c.save(job.APIVersion, job.Kind, job.Name, map[string]any{
+					"phase":   "Error",
+					"reason":  "SyncFailed",
+					"command": command,
+					"source":  source.Path,
+					"target":  target.Host,
+					"output":  strings.TrimSpace(string(out)),
+					"error":   err.Error(),
+					"dryRun":  false,
+				})
+			}
+		}
+	}
+	return c.save(job.APIVersion, job.Kind, job.Name, map[string]any{
+		"phase":       "Synced",
+		"command":     command,
+		"sources":     sources,
+		"targets":     targetStatuses,
+		"syncedAt":    now.Format(time.RFC3339Nano),
+		"sourceCount": len(sources),
+		"targetCount": len(job.Targets),
+		"dryRun":      false,
+	})
+}
+
+func (c FileSyncController) shouldSkip(job fileSyncJob, now time.Time) bool {
+	if job.Interval <= 0 || c.Store == nil {
+		return false
+	}
+	status := c.Store.ObjectStatus(job.APIVersion, job.Kind, job.Name)
+	last, _ := time.Parse(time.RFC3339Nano, fmt.Sprint(status["syncedAt"]))
+	return !last.IsZero() && now.Sub(last) < job.Interval
+}
+
+func (c FileSyncController) now() time.Time {
+	if c.Now != nil {
+		return c.Now()
+	}
+	return time.Now().UTC()
+}
+
+func (c FileSyncController) save(apiVersion, kind, name string, status map[string]any) error {
+	if c.Store == nil {
+		return nil
+	}
+	return c.Store.SaveObjectStatus(apiVersion, kind, name, status)
+}
+
+func fileSyncJobFromDHCPLeaseSync(resource api.Resource) (fileSyncJob, error) {
+	spec, err := resource.DHCPLeaseSyncSpec()
+	if err != nil {
+		return fileSyncJob{}, err
+	}
+	interval := 30 * time.Second
+	if strings.TrimSpace(spec.Interval) != "" {
+		parsed, err := time.ParseDuration(strings.TrimSpace(spec.Interval))
+		if err != nil {
+			return fileSyncJob{}, err
+		}
+		interval = parsed
+	}
+	job := fileSyncJob{
+		APIVersion: firstNonEmpty(resource.APIVersion, api.NetAPIVersion),
+		Kind:       resource.Kind,
+		Name:       resource.Metadata.Name,
+		Command:    strings.TrimSpace(spec.Command),
+		Interval:   interval,
+	}
+	if strings.TrimSpace(spec.LeaseFile) != "" {
+		job.Sources = append(job.Sources, fileSyncSource{Name: "leaseFile", Path: strings.TrimSpace(spec.LeaseFile), Required: true})
+	}
+	for _, source := range spec.Sources {
+		required := true
+		if source.Required != nil {
+			required = *source.Required
+		}
+		job.Sources = append(job.Sources, fileSyncSource{Name: strings.TrimSpace(source.Name), Path: strings.TrimSpace(source.Path), Required: required})
+	}
+	for _, target := range spec.Targets {
+		job.Targets = append(job.Targets, fileSyncTarget{
+			Name:       strings.TrimSpace(target.Name),
+			Host:       strings.TrimSpace(target.Host),
+			User:       strings.TrimSpace(target.User),
+			Path:       strings.TrimSpace(target.Path),
+			SSHOptions: append([]string(nil), target.SSHOptions...),
+			Options:    append([]string(nil), target.Options...),
+		})
+	}
+	return job, nil
+}
+
+func fileSyncSourceStatuses(sources []fileSyncSource) ([]map[string]any, string, error) {
+	var statuses []map[string]any
+	for _, source := range sources {
+		info, err := os.Stat(source.Path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				if source.Required {
+					return statuses, source.Path, nil
+				}
+				continue
+			}
+			return statuses, "", err
+		}
+		if info.IsDir() {
+			return statuses, "", fmt.Errorf("%s is a directory", source.Path)
+		}
+		statuses = append(statuses, map[string]any{
+			"name":    source.Name,
+			"path":    source.Path,
+			"size":    info.Size(),
+			"modTime": info.ModTime().UTC().Format(time.RFC3339Nano),
+		})
+	}
+	return statuses, "", nil
+}
+
+func fileSyncSourcePresent(statuses []map[string]any, sourcePath string) bool {
+	for _, status := range statuses {
+		if fmt.Sprint(status["path"]) == sourcePath {
+			return true
+		}
+	}
+	return false
+}
+
+func fileSyncTargetStatuses(targets []fileSyncTarget) []map[string]any {
+	out := make([]map[string]any, 0, len(targets))
+	for _, target := range targets {
+		out = append(out, map[string]any{
+			"name": target.Name,
+			"host": target.Host,
+			"user": target.User,
+			"path": target.Path,
+		})
+	}
+	return out
+}
+
+func fileSyncRsyncArgs(source fileSyncSource, target fileSyncTarget, sourceCount int) []string {
+	args := []string{"-a", "--delay-updates"}
+	args = append(args, target.Options...)
+	if len(target.SSHOptions) > 0 {
+		args = append(args, "-e", "ssh "+strings.Join(target.SSHOptions, " "))
+	}
+	remotePath := fileSyncTargetPath(source, target, sourceCount)
+	if dir := path.Dir(remotePath); dir != "." && dir != "/" {
+		args = append(args, "--rsync-path=mkdir -p "+fileSyncShellQuote(dir)+" && rsync")
+	}
+	args = append(args, source.Path, fileSyncDestination(target, remotePath))
+	return args
+}
+
+func fileSyncTargetPath(source fileSyncSource, target fileSyncTarget, sourceCount int) string {
+	if strings.TrimSpace(target.Path) == "" {
+		return source.Path
+	}
+	if sourceCount == 1 {
+		return target.Path
+	}
+	return path.Join(target.Path, filepath.Base(source.Path))
+}
+
+func fileSyncDestination(target fileSyncTarget, remotePath string) string {
+	host := target.Host
+	if target.User != "" {
+		host = target.User + "@" + host
+	}
+	return host + ":" + remotePath
+}
+
+func fileSyncShellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
+}

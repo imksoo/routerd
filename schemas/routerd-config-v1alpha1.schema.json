@@ -3625,6 +3625,9 @@
                       "interface": {
                         "type": "string"
                       },
+                      "leaseFile": {
+                        "type": "string"
+                      },
                       "leaseTime": {
                         "type": "string"
                       },
@@ -4624,6 +4627,9 @@
                         "type": "array"
                       },
                       "interface": {
+                        "type": "string"
+                      },
+                      "leaseFile": {
                         "type": "string"
                       },
                       "leaseTime": {

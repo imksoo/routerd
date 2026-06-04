@@ -103,6 +103,7 @@ func resourceProvidesTable() map[string][]ProvidedFieldSpec {
 		"DHCPv4Relay":             withCommon(),
 		"DHCPv4Reservation":       withCommon(s("address", "Reserved IPv4 address"), s("hostname", "Reserved hostname")),
 		"DHCPv4Server":            withCommon(s("interface", "Serving interface"), ss("dnsServers", "Advertised DNS servers"), ss("ntpServers", "Advertised NTP servers"), s("domain", "Advertised domain"), s("configPath", "Rendered dnsmasq config"), b("dryRun", "Dry-run status")),
+		"DHCPLeaseSync":           withCommon(s("command", "Sync command"), i("sourceCount", "Synced source count"), i("targetCount", "Sync target count"), os("sources", "Synced source files"), os("targets", "Sync targets"), t("syncedAt", "Last sync time"), b("dryRun", "Dry-run status")),
 		"DHCPv6Address":           withCommon(s("interface", "Logical interface"), s("address", "Observed DHCPv6 address")),
 		"DHCPv6Information":       withCommon(s("source", "Prefix delegation source"), s("aftrName", "AFTR hostname"), ss("dnsServers", "DNS servers"), ss("sntpServers", "SNTP servers"), ss("domainSearch", "Domain search list")),
 		"DHCPv6PrefixDelegation":  withCommon(s("interface", "Logical interface"), s("currentPrefix", "Delegated IPv6 prefix"), ss("dnsServers", "DNS servers"), ss("sntpServers", "SNTP servers"), ss("domainSearch", "Domain search list"), s("aftrName", "AFTR hostname")),

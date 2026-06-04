@@ -665,6 +665,7 @@ func controllerDefaultStatuses() []controlapi.ControllerStatus {
 	names := []string{
 		"address",
 		"bgp",
+		"dhcp-lease-sync",
 		"dhcpv4client",
 		"dhcpv6",
 		"dns-resolver",

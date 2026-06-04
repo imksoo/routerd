@@ -669,6 +669,7 @@ type Options struct {
 	DryRunDNSResolver       bool
 	DryRunEventFederation   bool
 	DryRunEventSubscription bool
+	DryRunDHCPLeaseSync     bool
 	DryRunProviderAction    bool
 	DryRunNAT               bool
 	DryRunIngress           bool
@@ -866,6 +867,7 @@ func (r *Runner) Start(ctx context.Context) error {
 		opts.DryRunDNSResolver = true
 		opts.DryRunEventFederation = true
 		opts.DryRunEventSubscription = true
+		opts.DryRunDHCPLeaseSync = true
 		opts.DryRunProviderAction = true
 		opts.DryRunNAT = true
 		opts.DryRunIngress = true
@@ -906,6 +908,7 @@ func (r *Runner) Start(ctx context.Context) error {
 	defaults, _ := platform.Current()
 	dnsResolver := dnsresolvercontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunDNSResolver, RuntimeDir: defaults.RuntimeDir, StateDir: defaults.StateDir}
 	eventFederation := eventfederationcontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunEventFederation, RuntimeDir: defaults.RuntimeDir, StateDir: defaults.StateDir}
+	dhcpLeaseSync := FileSyncController{Router: r.Router, Store: store, DryRun: r.Opts.DryRunDHCPLeaseSync}
 	bgpDaemon := bgpcontroller.DefaultDaemonSpec()
 	if strings.TrimSpace(r.Opts.BGPSocketPath) != "" {
 		bgpDaemon.SocketPath = strings.TrimSpace(r.Opts.BGPSocketPath)
@@ -1012,6 +1015,15 @@ func (r *Runner) Start(ctx context.Context) error {
 			return observabilityPipeline.Reconcile(ctx)
 		}},
 		framework.FuncController{ControllerName: "daemon-status", Every: 5 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.dhcpv6.client.**", "routerd.dhcpv4.client.**", "routerd.healthcheck.**", "routerd.pppoe.client.**"}}}, PeriodicFunc: daemonStatusSync.Reconcile},
+		framework.FuncController{ControllerName: "dhcp-lease-sync", Every: 30 * time.Second, Subs: statusSubscriptions("DHCPLeaseSync", "VirtualAddress", "RouterdCluster"), PeriodicFunc: func(ctx context.Context) error {
+			effective, err := effectiveForReconcile()
+			if err != nil {
+				return err
+			}
+			current := dhcpLeaseSync
+			current.Router = effective
+			return current.Reconcile(ctx)
+		}},
 		framework.FuncController{ControllerName: "package", Every: 5 * time.Minute, PeriodicFunc: packages.Reconcile},
 		framework.FuncController{ControllerName: "kernel-module", Every: 5 * time.Minute, PeriodicFunc: kernelModules.Reconcile},
 		framework.FuncController{ControllerName: "sysctl", Every: 30 * time.Second, PeriodicFunc: sysctl.Reconcile},
@@ -2260,20 +2272,14 @@ func writeDnsmasqConfig(router *api.Router, store Store, path, pidFile string, p
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return false, err
 	}
-	leaseDir := filepath.Dir(path)
-	if strings.TrimSpace(leaseDir) == "" {
-		leaseDir = filepath.Dir(pidFile)
-	}
-	leaseFile := filepath.Join(leaseDir, "dnsmasq.leases")
-	defaults, features := platform.Current()
-	if features.HasRCD {
-		leaseFile = filepath.Join(defaults.StateDir, "dnsmasq", "dnsmasq.leases")
-		leaseDir = filepath.Dir(leaseFile)
-	}
 	if err := os.MkdirAll(filepath.Dir(pidFile), 0755); err != nil {
 		return false, err
 	}
-	if err := os.MkdirAll(leaseDir, 0755); err != nil {
+	leaseFile, err := dnsmasqLeaseFile(router, path, pidFile)
+	if err != nil {
+		return false, err
+	}
+	if err := os.MkdirAll(filepath.Dir(leaseFile), 0755); err != nil {
 		return false, err
 	}
 	var b strings.Builder
@@ -2295,6 +2301,52 @@ func writeDnsmasqConfig(router *api.Router, store Store, path, pidFile string, p
 		return false, err
 	}
 	return true, os.WriteFile(path, data, 0644)
+}
+
+func dnsmasqLeaseFile(router *api.Router, configPath, pidFile string) (string, error) {
+	declared := ""
+	if router == nil {
+		router = &api.Router{}
+	}
+	for _, resource := range router.Spec.Resources {
+		var leaseFile string
+		switch resource.Kind {
+		case "DHCPv4Server":
+			spec, err := resource.DHCPv4ServerSpec()
+			if err != nil {
+				return "", err
+			}
+			leaseFile = strings.TrimSpace(spec.LeaseFile)
+		case "DHCPv6Server":
+			spec, err := resource.DHCPv6ServerSpec()
+			if err != nil {
+				return "", err
+			}
+			leaseFile = strings.TrimSpace(spec.LeaseFile)
+		default:
+			continue
+		}
+		if leaseFile == "" {
+			continue
+		}
+		if declared != "" && declared != leaseFile {
+			return "", fmt.Errorf("dnsmasq leaseFile mismatch: %s and %s", declared, leaseFile)
+		}
+		declared = leaseFile
+	}
+	if declared != "" {
+		return declared, nil
+	}
+	leaseDir := filepath.Dir(configPath)
+	if strings.TrimSpace(leaseDir) == "" {
+		leaseDir = filepath.Dir(pidFile)
+	}
+	leaseFile := filepath.Join(leaseDir, "dnsmasq.leases")
+	defaults, features := platform.Current()
+	if features.HasRCD {
+		leaseFile = filepath.Join(defaults.StateDir, "dnsmasq", "dnsmasq.leases")
+	}
+	return leaseFile, nil
 }
 
 func dnsmasqListenAddresses(addresses []string) []string {

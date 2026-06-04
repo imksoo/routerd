@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/platform"
@@ -305,6 +307,57 @@ func validateDHCPResource(res api.Resource, targetOS platform.OS) (bool, error) 
 		for i, option := range spec.Options {
 			if err := validateDHCPv4Option(option); err != nil {
 				return true, fmt.Errorf("%s spec.options[%d]: %w", res.ID(), i, err)
+			}
+		}
+	case "DHCPLeaseSync":
+		if res.APIVersion != api.NetAPIVersion {
+			return true, fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
+		}
+		spec, err := res.DHCPLeaseSyncSpec()
+		if err != nil {
+			return true, err
+		}
+		if strings.TrimSpace(spec.Interval) != "" {
+			if _, err := time.ParseDuration(strings.TrimSpace(spec.Interval)); err != nil {
+				return true, fmt.Errorf("%s spec.interval must be a duration: %w", res.ID(), err)
+			}
+		}
+		sourceCount := 0
+		if strings.TrimSpace(spec.LeaseFile) != "" {
+			sourceCount++
+			if !filepath.IsAbs(strings.TrimSpace(spec.LeaseFile)) || strings.ContainsAny(spec.LeaseFile, "\n\r") {
+				return true, fmt.Errorf("%s spec.leaseFile must be an absolute path", res.ID())
+			}
+		}
+		for i, source := range spec.Sources {
+			if strings.TrimSpace(source.Path) == "" {
+				return true, fmt.Errorf("%s spec.sources[%d].path is required", res.ID(), i)
+			}
+			if !filepath.IsAbs(strings.TrimSpace(source.Path)) || strings.ContainsAny(source.Path, "\n\r") {
+				return true, fmt.Errorf("%s spec.sources[%d].path must be an absolute path", res.ID(), i)
+			}
+			sourceCount++
+		}
+		if sourceCount == 0 {
+			return true, fmt.Errorf("%s spec.leaseFile or spec.sources is required", res.ID())
+		}
+		if len(spec.Targets) == 0 {
+			return true, fmt.Errorf("%s spec.targets is required", res.ID())
+		}
+		for i, target := range spec.Targets {
+			if strings.TrimSpace(target.Host) == "" {
+				return true, fmt.Errorf("%s spec.targets[%d].host is required", res.ID(), i)
+			}
+			if strings.ContainsAny(target.Host, "\n\r") {
+				return true, fmt.Errorf("%s spec.targets[%d].host must not contain newline", res.ID(), i)
+			}
+			if strings.TrimSpace(target.Path) != "" && (!filepath.IsAbs(strings.TrimSpace(target.Path)) || strings.ContainsAny(target.Path, "\n\r")) {
+				return true, fmt.Errorf("%s spec.targets[%d].path must be an absolute path", res.ID(), i)
+			}
+			for j, opt := range append(append([]string{}, target.SSHOptions...), target.Options...) {
+				if strings.ContainsAny(opt, "\n\r") {
+					return true, fmt.Errorf("%s spec.targets[%d] option %d must not contain newline", res.ID(), i, j)
+				}
 			}
 		}
 	case "DHCPv4Relay":
