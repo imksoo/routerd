@@ -28,6 +28,7 @@ import (
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/manageddaemon"
+	"github.com/imksoo/routerd/pkg/mobilityconfig"
 )
 
 type Store interface {
@@ -1512,6 +1513,10 @@ func (c *Controller) mobilityPreferredSources() []mobilityPreferredSource {
 		}
 		self := selfByGroup[strings.TrimSpace(spec.GroupRef)]
 		if self == "" {
+			continue
+		}
+		spec, _, err = mobilityconfig.NormalizeMobilityPool(spec, self)
+		if err != nil {
 			continue
 		}
 		pool, err := netip.ParsePrefix(strings.TrimSpace(spec.Prefix))

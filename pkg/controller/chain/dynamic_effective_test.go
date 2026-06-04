@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"reflect"
+	"sort"
 	"testing"
 	"time"
 
@@ -170,6 +171,34 @@ func TestDynamicRouteSAMViewDerivesBGPProxyARPClaimsWithoutRouteLowering(t *test
 		"ensure:10.0.1.11/32@lan0",
 		"ensure:10.0.1.12/32@lan0",
 	})
+}
+
+func TestDynamicRouteSAMViewBGPProxyARPIdentityOnlyRemoteMatchesInline(t *testing.T) {
+	now := time.Now().UTC()
+	store := mapStore{
+		api.NetAPIVersion + "/BGPRouter/mobility-bgp": {
+			"installedNextHops": map[string]any{
+				"10.0.1.10/32": []any{"10.99.0.1"},
+				"10.0.1.11/32": []any{"10.99.0.2"},
+				"10.0.1.12/32": []any{"10.99.0.3"},
+			},
+		},
+		api.NetAPIVersion + "/VirtualAddress/onprem-vip": {"role": "master"},
+	}
+	inlineView, err := buildDynamicRouteSAMView(bgpProxyARPStartup(false), store, now, platform.OSLinux)
+	if err != nil {
+		t.Fatalf("inline view: %v", err)
+	}
+	identityView, err := buildDynamicRouteSAMView(bgpProxyARPStartup(true), store, now, platform.OSLinux)
+	if err != nil {
+		t.Fatalf("identity-only view: %v", err)
+	}
+	if got, want := remoteAddressClaimSpecs(identityView.EffectiveRouter), remoteAddressClaimSpecs(inlineView.EffectiveRouter); !reflect.DeepEqual(got, want) {
+		t.Fatalf("identity-only proxy-ARP claims = %#v, want inline %#v", got, want)
+	}
+	if len(identityView.SAMLowerings) != 0 {
+		t.Fatalf("identity-only BGP proxy claims produced SAM lowerings: %#v", identityView.SAMLowerings)
+	}
 }
 
 func TestDynamicRouteSAMClaimRemovalTriggersRouteAndSAMCleanup(t *testing.T) {
@@ -407,6 +436,73 @@ func staticSAMRouter(address, captureType, captureInterface string) *api.Router 
 		remoteAddressClaimResource("app", address, captureType, captureInterface),
 	)
 	return router
+}
+
+func bgpProxyARPStartup(identityOnlyRemote bool) *api.Router {
+	startup := startupHybridContextRouter()
+	awsMember := api.MobilityPoolMember{NodeRef: "aws-router", Site: "aws", Role: "cloud", Capture: api.MobilityMemberCapture{Type: "provider-secondary-ip", Interface: "ens5"}}
+	if identityOnlyRemote {
+		awsMember = api.MobilityPoolMember{NodeRef: "aws-router", Site: "aws", Role: "cloud"}
+	}
+	startup.Spec.Resources = append(startup.Spec.Resources,
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.FederationAPIVersion, Kind: "EventGroup"},
+			Metadata: api.ObjectMeta{Name: "cloudedge"},
+			Spec:     api.EventGroupSpec{NodeName: "onprem-router"},
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"},
+			Metadata: api.ObjectMeta{Name: "mobility-bgp"},
+			Spec:     api.BGPRouterSpec{ASN: 64577, RouterID: "10.99.0.1"},
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"},
+			Metadata: api.ObjectMeta{Name: "onprem-vip"},
+			Spec:     api.VirtualAddressSpec{Family: "ipv4", Interface: "lan0", Address: "10.0.1.1/32", Mode: "vrrp", VRRP: api.VirtualAddressVRRPSpec{VirtualRouterID: 40, Peers: []string{"10.0.1.2"}}},
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"},
+			Metadata: api.ObjectMeta{Name: "cloudedge"},
+			Spec: api.MobilityPoolSpec{
+				Prefix:         "10.0.1.0/24",
+				GroupRef:       "cloudedge",
+				DeliveryPolicy: api.MobilityDeliveryPolicy{Mode: "bgp"},
+				Members: []api.MobilityPoolMember{
+					{
+						NodeRef:              "onprem-router",
+						Site:                 "onprem",
+						Role:                 "onprem",
+						StaticOwnedAddresses: []string{"10.0.1.10/32"},
+						Capture: api.MobilityMemberCapture{
+							Type:       "proxy-arp",
+							Interface:  "lan0",
+							ActiveWhen: api.CaptureActiveWhen{Type: "vrrp-master", VirtualAddressRef: "onprem-vip"},
+						},
+					},
+					awsMember,
+				},
+			},
+		},
+	)
+	return startup
+}
+
+func remoteAddressClaimSpecs(router *api.Router) []api.RemoteAddressClaimSpec {
+	if router == nil {
+		return nil
+	}
+	var out []api.RemoteAddressClaimSpec
+	for _, res := range router.Spec.Resources {
+		if res.APIVersion != api.HybridAPIVersion || res.Kind != "RemoteAddressClaim" {
+			continue
+		}
+		spec, err := res.RemoteAddressClaimSpec()
+		if err == nil {
+			out = append(out, spec)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Address < out[j].Address })
+	return out
 }
 
 func startupHybridContextRouter() *api.Router {

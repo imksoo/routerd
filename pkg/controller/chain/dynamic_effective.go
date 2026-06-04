@@ -13,6 +13,7 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	"github.com/imksoo/routerd/pkg/hybrid"
+	"github.com/imksoo/routerd/pkg/mobilityconfig"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/sam"
 	routerstate "github.com/imksoo/routerd/pkg/state"
@@ -127,6 +128,10 @@ func appendBGPMobilityProxyARPClaims(router api.Router, store any) api.Router {
 		}
 		selfNode := strings.TrimSpace(selfByGroup[strings.TrimSpace(spec.GroupRef)])
 		if selfNode == "" {
+			continue
+		}
+		spec, _, err = mobilityconfig.NormalizeMobilityPool(spec, selfNode)
+		if err != nil {
 			continue
 		}
 		prefix, err := netip.ParsePrefix(strings.TrimSpace(spec.Prefix))

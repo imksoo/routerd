@@ -98,6 +98,17 @@ func TestDiscoveryControllerEmitsObservedEventsForActiveCloudMember(t *testing.T
 	}
 }
 
+func TestDiscoveryControllerProfileSpecMatchesInlineRequest(t *testing.T) {
+	now := time.Date(2026, 6, 4, 11, 0, 0, 0, time.UTC)
+	inlineSpec := discoveryPoolSpec()
+	profileSpec := profileDiscoveryPoolSpecForNode("azure-router-a")
+	inlineReq := reconcileDiscoveryRequest(t, "azure-router-a", inlineSpec, now)
+	profileReq := reconcileDiscoveryRequest(t, "azure-router-a", profileSpec, now)
+	if got, want := canonicalJSON(t, profileReq.Spec), canonicalJSON(t, inlineReq.Spec); got != want {
+		t.Fatalf("profile discovery request differs from inline\nprofile=%s\ninline=%s", got, want)
+	}
+}
+
 func TestDiscoveryControllerUsesPluginResolvedSelfNICWhenCaptureNICIsImplicit(t *testing.T) {
 	now := time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)
 	store := testStore(t, now)
@@ -786,6 +797,65 @@ func discoveryPoolSpec() api.MobilityPoolSpec {
 	}
 	spec.Members[2].OwnershipDiscovery = spec.Members[1].OwnershipDiscovery
 	return spec
+}
+
+func profileDiscoveryPoolSpecForNode(selfNode string) api.MobilityPoolSpec {
+	spec := discoveryPoolSpec()
+	spec.Values = map[string]string{
+		"azure.nic": map[string]string{
+			"azure-router-a": "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic-a",
+			"azure-router-b": "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic-b",
+		}[selfNode],
+		"azure.ipConfigName": map[string]string{
+			"azure-router-a": "capture-a",
+			"azure-router-b": "capture-b",
+		}[selfNode],
+		"azure.region": "japaneast",
+	}
+	spec.Profiles = api.MobilityPoolProfiles{CloudCaptures: map[string]api.MobilityCloudCaptureProfile{
+		"azure-edge": {
+			Capture: api.MobilityMemberCapture{
+				Type:         "provider-secondary-ip",
+				ProviderRef:  "azure-provider",
+				ProviderMode: "nic-secondary-ip",
+				NICRef:       spec.Values["azure.nic"],
+				TargetFrom:   map[string]string{"ipConfigName": "azure.ipConfigName", "region": "azure.region"},
+			},
+			OwnershipDiscovery: api.MobilityOwnershipDiscovery{
+				Mode:         "provider-private-ip",
+				PluginRef:    "azure-inventory",
+				ScanInterval: "1m",
+				LeaseTTL:     "2m",
+				Selector:     api.MobilityOwnershipDiscoverySelector{Tags: map[string]string{"cloudedge-mobility": "true"}},
+			},
+		},
+	}}
+	spec.Members = []api.MobilityPoolMember{
+		spec.Members[0],
+		{NodeRef: "azure-router-a", Site: "azure", Role: "cloud", ProfileRef: "azure-edge", Placement: api.MobilityMemberPlacement{Group: "azure-edge", Priority: 10}},
+		{NodeRef: "azure-router-b", Site: "azure", Role: "cloud", Placement: api.MobilityMemberPlacement{Group: "azure-edge", Priority: 20}},
+	}
+	return spec
+}
+
+func reconcileDiscoveryRequest(t *testing.T, selfNode string, spec api.MobilityPoolSpec, now time.Time) providerinventory.ObservePrivateIPsRequest {
+	t.Helper()
+	store := testStore(t, now)
+	runner := &fakeInventoryRunner{result: providerinventory.ObservePrivateIPsResult{
+		TypeMeta: providerinventory.TypeMeta{APIVersion: providerinventory.ProtocolAPIVersion, Kind: providerinventory.KindObservePrivateIPsResult},
+		Status: providerinventory.ObservePrivateIPsResultStatus{
+			Status: providerinventory.ResultSucceeded,
+			Self:   &providerinventory.PrivateIPSelf{NICRef: "plugin-router-nic", SubnetRef: "plugin-subnet"},
+		},
+	}}
+	controller := DiscoveryController{Router: discoveryRouter(selfNode, spec), Store: store, Runner: runner.run, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Discovery Reconcile(%s): %v", selfNode, err)
+	}
+	if runner.calls != 1 {
+		t.Fatalf("runner calls = %d, want 1", runner.calls)
+	}
+	return runner.last
 }
 
 func discoveryRouter(nodeName string, spec api.MobilityPoolSpec) *api.Router {

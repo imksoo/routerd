@@ -121,6 +121,38 @@ func TestControllerBGPModeAdvertisesSelfOwnedHostRouteAndSuppressesSAMPart(t *te
 	}
 }
 
+func TestControllerBGPModeProfileSpecMatchesInlineSpec(t *testing.T) {
+	now := time.Date(2026, 6, 4, 10, 0, 0, 0, time.UTC)
+	inlineSpec := awsFailoverPoolSpec()
+	inlineSpec.DeliveryPolicy.Mode = "bgp"
+	profileSpec := profileAWSFailoverPoolSpecForNode("aws-router-b")
+
+	inlinePaths, inlinePlans := reconcileBGPProfileEquivalence(t, "aws-router-b", inlineSpec, now)
+	profilePaths, profilePlans := reconcileBGPProfileEquivalence(t, "aws-router-b", profileSpec, now)
+
+	if got, want := canonicalJSON(t, profilePaths), canonicalJSON(t, inlinePaths); got != want {
+		t.Fatalf("profile BGP paths differ from inline\nprofile=%s\ninline=%s", got, want)
+	}
+	if got, want := canonicalJSON(t, profilePlans), canonicalJSON(t, inlinePlans); got != want {
+		t.Fatalf("profile action plans differ from inline\nprofile=%s\ninline=%s", got, want)
+	}
+	if _, ok := pathBySourcePrefixOptional(profilePaths, DynamicSource("cloudedge", "aws-router-b"), "10.99.0.6/32"); !ok {
+		t.Fatalf("profile paths = %#v, want liveness marker", profilePaths)
+	}
+	for _, address := range []string{"10.88.60.10/32", "10.88.60.12/32", "10.88.60.13/32"} {
+		assign := findActionPlanByAddress(profilePlans, "assign-secondary-ip", address)
+		if assign == nil {
+			t.Fatalf("profile plans = %#v, want trap assign for %s", profilePlans, address)
+		}
+		if assign.Parameters["allowReassignment"] != "true" {
+			t.Fatalf("assign %s parameters = %#v, want D5 standby seize allowReassignment", address, assign.Parameters)
+		}
+	}
+	if assign := findActionPlanByAddress(profilePlans, "assign-secondary-ip", "10.88.60.11/32"); assign != nil {
+		t.Fatalf("profile plans = %#v, self/site-owned .11 must not be trapped", profilePlans)
+	}
+}
+
 func TestControllerBGPModeProviderDiscoveryAdvertisesOnlyFreshInventoryOwnedAddresses(t *testing.T) {
 	now := time.Date(2026, 6, 3, 16, 0, 0, 0, time.UTC)
 	store := testStore(t, now)
@@ -1238,6 +1270,88 @@ func stringSliceContains(values []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func reconcileBGPProfileEquivalence(t *testing.T, selfNode string, spec api.MobilityPoolSpec, now time.Time) ([]bgpdaemon.AppliedPath, []dynamicconfig.ActionPlan) {
+	t.Helper()
+	store := testStore(t, now)
+	recordEvent(t, store, routerstate.EventRecord{
+		ID:         "evt-" + selfNode,
+		Group:      "cloudedge",
+		SourceNode: selfNode,
+		Type:       ObservedEventType,
+		Subject:    "10.88.60.11/32",
+		ObservedAt: now.Add(-time.Second),
+		ExpiresAt:  now.Add(time.Hour),
+	})
+	saveBGPStatus(t, store, map[string][]string{
+		"10.88.60.10/32": {"10.99.0.1"},
+		"10.88.60.12/32": {"10.99.0.3"},
+		"10.88.60.13/32": {"10.99.0.4"},
+	}, nil, map[string]string{
+		bgpstate.MobilityNodeIdentityCommunity(selfNode): "10.99.0.6/32",
+	})
+	bgp := &fakeBGPPaths{}
+	router := routerWithBGPRouter(routerWithEventGroupListen(planningRouterForNode(selfNode, spec), "10.99.0.6"))
+	controller := Controller{Router: router, Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile(%s): %v", selfNode, err)
+	}
+	var paths []bgpdaemon.AppliedPath
+	for _, path := range bgp.paths {
+		if path.Source == DynamicSource("cloudedge", selfNode) {
+			paths = append(paths, path)
+		}
+	}
+	sort.SliceStable(paths, func(i, j int) bool { return paths[i].Prefix < paths[j].Prefix })
+	plans := decodeActionPlans(t, latestPart(t, store, DynamicSource("cloudedge", selfNode)).ActionPlansJSON)
+	return paths, plans
+}
+
+func profileAWSFailoverPoolSpecForNode(selfNode string) api.MobilityPoolSpec {
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	spec.Values = map[string]string{
+		"aws.region": "ap-northeast-1",
+		"aws.nic":    map[string]string{"aws-router-a": "eni-a", "aws-router-b": "eni-b"}[selfNode],
+	}
+	spec.Profiles = api.MobilityPoolProfiles{CloudCaptures: map[string]api.MobilityCloudCaptureProfile{
+		"aws-edge": {
+			Capture: api.MobilityMemberCapture{
+				Type:         "provider-secondary-ip",
+				ProviderRef:  "aws-provider",
+				ProviderMode: "nic-secondary-ip",
+				TargetFrom:   map[string]string{"region": "aws.region"},
+				NICRef:       spec.Values["aws.nic"],
+			},
+		},
+	}}
+	spec.Members = []api.MobilityPoolMember{
+		spec.Members[0],
+		{NodeRef: "aws-router-a", Site: "aws", Role: "cloud", Placement: api.MobilityMemberPlacement{Group: "aws-edge", Priority: 10}},
+		{NodeRef: "aws-router-b", Site: "aws", Role: "cloud", ProfileRef: "aws-edge", Placement: api.MobilityMemberPlacement{Group: "aws-edge", Priority: 20}},
+		{NodeRef: "azure-router", Site: "azure", Role: "cloud"},
+		{NodeRef: "oci-router", Site: "oci", Role: "cloud"},
+	}
+	return spec
+}
+
+func canonicalJSON(t *testing.T, value any) string {
+	t.Helper()
+	data, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("marshal canonical JSON: %v", err)
+	}
+	return string(data)
+}
+
+func pathBySourcePrefixOptional(paths []bgpdaemon.AppliedPath, source, prefix string) (bgpdaemon.AppliedPath, bool) {
+	for _, path := range paths {
+		if path.Source == source && path.Prefix == prefix {
+			return path, true
+		}
+	}
+	return bgpdaemon.AppliedPath{}, false
 }
 
 func testRouter() *api.Router {

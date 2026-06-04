@@ -11,6 +11,7 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/hybrid"
+	"github.com/imksoo/routerd/pkg/mobilityconfig"
 )
 
 type pathMTUPolicy struct {
@@ -225,6 +226,10 @@ func pathMTUBGPMobilityForwardedPaths(router *api.Router, peers map[string]api.O
 		}
 		selfNode := pathMTUSelfNode(router, spec.GroupRef)
 		if selfNode == "" {
+			continue
+		}
+		spec, _, err = mobilityconfig.NormalizeMobilityPool(spec, selfNode)
+		if err != nil {
 			continue
 		}
 		for _, member := range spec.Members {

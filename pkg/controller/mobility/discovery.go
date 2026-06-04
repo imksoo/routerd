@@ -16,6 +16,7 @@ import (
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
+	"github.com/imksoo/routerd/pkg/mobilityconfig"
 	"github.com/imksoo/routerd/pkg/plugin"
 	"github.com/imksoo/routerd/pkg/providerinventory"
 	routerstate "github.com/imksoo/routerd/pkg/state"
@@ -79,6 +80,10 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 	selfNode, err := routerSelfNode(c.Router, spec.GroupRef)
 	if err != nil {
 		return err
+	}
+	spec, _, err = mobilityconfig.NormalizeMobilityPool(spec, selfNode)
+	if err != nil {
+		return fmt.Errorf("normalize MobilityPool/%s discovery: %w", poolName, err)
 	}
 	members := plannerMembers(spec.Members)
 	self, ok := lookupMemberByNodeRef(members, selfNode)

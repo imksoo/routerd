@@ -21,6 +21,7 @@ import (
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
+	"github.com/imksoo/routerd/pkg/mobilityconfig"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -123,6 +124,10 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 	selfNode, err := c.selfNode(spec.GroupRef)
 	if err != nil {
 		return err
+	}
+	spec, _, err = mobilityconfig.NormalizeMobilityPool(spec, selfNode)
+	if err != nil {
+		return fmt.Errorf("normalize MobilityPool/%s: %w", res.Metadata.Name, err)
 	}
 	members := plannerMembers(spec.Members)
 	self, ok := lookupMemberByNodeRef(members, selfNode)
