@@ -176,7 +176,7 @@ for DoH or DoT endpoint name resolution.
 | `DSLiteTunnel` | Creates an `ip6tnl` tunnel to an AFTR. The AFTR can be static IPv6, FQDN, or DHCPv6 information. |
 | `OverlayPeer` | Describes an on-prem or cloud overlay peer and the local underlay used to reach it. |
 | `HybridRoute` | Lowers non-default remote IPv4 prefixes through an `OverlayPeer` into managed `IPv4Route` resources. |
-| `MobilityPool` | Declares the only operator-authored CloudEdge mobility intent: pool prefix, federation group, node-to-site membership, per-member capture policy, owner-specific `deliveryTo`, non-secret provider `capture.target` hints, and BGP delivery policy. routerd derives BGP `/32` advertisements and provider trap action plans from observed facts. |
+| `MobilityPool` | Declares the only operator-authored CloudEdge mobility intent: pool prefix, federation group, node-to-site membership, BGP delivery policy, optional reusable cloud capture profiles, local value expansion, and provider trap placement. routerd derives BGP `/32` advertisements and provider trap action plans from observed facts and BGP best paths. |
 | `AddressMobilityDomain` | Defines an IPv4 prefix for Selective Address Mobility; full L2 extension is not supported. |
 | `CloudProviderProfile` | Describes provider capabilities and external-command auth for declarative address capture planning. |
 | `RemoteAddressClaim` | Declares one mobile IPv4 `/32`, its capture mechanism, and route delivery over an `OverlayPeer`. |
@@ -207,19 +207,32 @@ CloudEdge Mobility keeps the operator-authored surface declarative:
 `MobilityPool` is the high-level intent, federation events are observed facts,
 and BGP best paths are the mobility ownership/delivery view. The mobility
 planner derives BGP `/32` advertisements and provider trap action plans;
-operators should not hand-author per-address leases or capture procedures for
+operators should not hand-author per-address paths or capture procedures for
 the mobility control plane. `AddressMobilityDomain` and `RemoteAddressClaim`
 remain supported as lower-level SAM compatibility Kinds outside the MobilityPool
 BGP path.
 
 `MobilityPool.spec.deliveryPolicy.mode` defaults to `bgp`; route-mode
 MobilityPool planning has been removed from the mobility mainline.
+For CloudEdge Mobility, write the self site completely and keep remote sites
+identity-only: remote members normally need only `nodeRef`, `site`, `role`, and
+optional `placement` / `maintenance`. This is the same shape as BGP peering:
+each node needs to know who the peers are, not the remote provider NICs and
+subnets. `spec.profiles.cloudCaptures` stores reusable self-site cloud capture
+defaults; `spec.values` stores non-secret local identifiers; `capture.targetFrom`
+and `ownershipDiscovery.subnetRefFrom` project those local values into generated
+provider action targets and discovery scope. Explicit member fields override
+profile defaults.
 `members[].capture.target` carries non-secret provider target identifiers into
 generated background provider action plans.
 `members[].placement` can group same-provider cloud routers into deterministic
 active/standby capture placement; `members[].maintenance.drain` removes that
 member from active selection. All nodes in a mobility demo should receive the
-same `MobilityPool` config so they project the same placement decision.
+same `MobilityPool` identity and placement set so they project the same placement
+decision. The old remote-full inline style is still accepted for pre-release
+compatibility, but `routerd validate`, plan, and apply warn when a remote member
+contains local capture or discovery details. Future pre-release configs may
+require identity-only remote members.
 
 Selective Address Mobility is declarative in this MVP. `RemoteAddressClaim`
 does not configure firewall or NAT policy. Operators compose firewall/NAT by
@@ -567,7 +580,7 @@ and fields outside the target kind's `provides` set.
 | `LogRetention` | `phase` (string), `targets` (objectList), `updatedAt` (timestamp) |
 | `LogSink` | `phase` (string), `type` (string) |
 | `ManagementAccess` | `interfaces` (stringList), `phase` (string) |
-| `MobilityPool` | `activeLeases` (int), `dynamicSource` (string), `expiredLeases` (int), `generatedActions` (int), `generatedClaims` (int), `groupRef` (string), `holdingLeases` (int), `leaseCount` (int), `phase` (string), `placementActive` (bool), `placementActiveNode` (string), `placementGroup` (string), `plannerPhase` (string), `plannerReason` (string), `prefix` (string), `projectedAt` (timestamp) |
+| `MobilityPool` | `dynamicSource` (string), `generatedActions` (int), `generatedBGPPaths` (int), `generatedBGPTraps` (int), `groupRef` (string), `placementActive` (bool), `placementActiveNode` (string), `placementGroup` (string), `plannerPhase` (string), `plannerReason` (string), `prefix` (string), `deliveryMode` (string), `discoverySelfPrivateIPs` (stringList) |
 | `NAT44Rule` | `dryRun` (bool), `egressInterface` (string), `phase` (string), `snatAddress` (string) |
 | `NTPClient` | `phase` (string), `servers` (stringList), `source` (string), `updatedAt` (timestamp) |
 | `NTPServer` | `allowCIDRs` (stringList), `listenAddresses` (stringList), `phase` (string), `servers` (stringList), `source` (string), `updatedAt` (timestamp) |

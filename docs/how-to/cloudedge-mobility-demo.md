@@ -46,8 +46,8 @@ addressing constraints.
   cloud fabric delivers them to that router.
 - **proxy-ARP capture** — on-prem, the router answers ARP for the other sites'
   owner addresses on the LAN.
-- **/32 delivery route** — each captured address is delivered over the overlay via
-  a `/32` route to the owning site's router.
+- **BGP /32 delivery** — each owner advertises its owned `/32`; other routers
+  import the best path and forward over the overlay to the owning site's router.
 - **WireGuard / Hybrid overlay** — routers interconnect over WireGuard (the Hybrid
   overlay), independent of the shared `/24`.
 
@@ -60,6 +60,10 @@ The operator declares only intent; everything else is derived.
 
 - **MobilityPool** — the single operator-authored intent (members, capture mode,
   delivery, placement, maintenance drain).
+- **North-star member shape** — each rendered config declares its own site
+  completely with `profiles.cloudCaptures`, `spec.values`, `targetFrom`, and
+  `subnetRefFrom`; remote sites are identity-only peer entries. Like BGP, a node
+  needs to know the peers, not their provider NIC/subnet implementation details.
 - **BGP /32 mobility paths** — each owner advertises its owned host route; other
   sites learn the current best path over the overlay.
 - **Provider trap actions** — cloud routers eventually assign/unassign remote
@@ -75,6 +79,12 @@ The operator declares only intent; everything else is derived.
 - **pathSig fencing** — provider actions are fenced against the current BGP
   desired path signature and holder, so stale actions cannot mutate a route that
   has reconverged elsewhere.
+
+The example configs intentionally avoid the older remote-full inline style. That
+style is still accepted during the pre-release period, but `routerd validate`,
+plan, and apply warn when a remote `MobilityPool` member contains local provider
+capture or discovery details. Future pre-release configs may require identity-only
+remote members.
 
 ## How to run it
 

@@ -151,7 +151,7 @@ DNSSEC validation は `DNSForwarder.spec.dnssecValidate` に書きます。
 | Kind | 役割 |
 | --- | --- |
 | `DSLiteTunnel` | AFTR へ `ip6tnl` トンネルを張ります。AFTR は IPv6 を直接指定するか、FQDN、または DHCPv6 情報から得ます。 |
-| `MobilityPool` | CloudEdge mobility の唯一の operator-authored intent です。pool prefix、federation group、node-to-site membership、member ごとの capture policy、owner 別の `deliveryTo`、provider action 向けの non-secret `capture.target`、BGP delivery policy を宣言し、routerd は observed fact から BGP `/32` advertisement と provider trap action plan を導出します。 |
+| `MobilityPool` | CloudEdge mobility の唯一の operator-authored intent です。pool prefix、federation group、node-to-site membership、BGP delivery policy、再利用可能な cloud capture profile、local value expansion、provider trap placement を宣言し、routerd は observed fact と BGP best path から BGP `/32` advertisement と provider trap action plan を導出します。 |
 | `IPAddressSet` | 直接指定したアドレスや FQDN から、再利用可能な IP address set を定義します。Linux nftables renderer はこれを named set として出力し、redirect、NAT、policy routing から参照できます。 |
 | `IPv4Route` | IPv4 経路を追加します。DS-Lite 経由の既定経路や、明示的な破棄経路にも使います。 |
 | `ClusterNetworkRoute` | Kubernetes の Pod / Service CIDR を、worker の next hop 経由の static IPv4 route に展開します。 |
@@ -164,13 +164,23 @@ DNSSEC validation は `DNSForwarder.spec.dnssecValidate` に書きます。
 | `LocalServiceRedirect` | LAN 側 client から `IPAddressSet` 宛てに出る IPv4/IPv6 通信を、router の local port へ redirect します。平文 DNS/NTP の集約を想定し、DoH や DoT の port には触れません。 |
 | `EgressRoutePolicy` | 既定経路の選択、mark ベースの IPv4 policy routing、複数 target への hash 分散を表します。 |
 
-`MobilityPool.spec.capturePolicy.deprovisionHoldDuration` は、生成済みの cloud
-capture がこの node の desired capture set から外れた後、provider 側の
-de-provision action plan を出すまでの待ち時間です。
+CloudEdge Mobility では、自 site は完全に宣言し、remote site は identity-only に
+保ちます。remote member は通常 `nodeRef`、`site`、`role`、必要なら `placement` /
+`maintenance` だけを持ちます。これは BGP peering と同じ形で、各 node は peer が
+誰かを知ればよく、remote provider の NIC や subnet の詳細を知る必要はありません。
+`spec.profiles.cloudCaptures` は self-site cloud capture の再利用可能な default、
+`spec.values` は non-secret な local identifier、`capture.targetFrom` と
+`ownershipDiscovery.subnetRefFrom` はそれらの local 値を generated provider
+action target と discovery scope に投影するための field です。member に明示した
+field は profile default より優先されます。
 `members[].placement` は同一 provider の cloud router を deterministic な
 active/standby capture group にまとめます。`members[].maintenance.drain` を
 true にすると、その member は active 選出から外れます。placement projection を
-揃えるため、mobility demo の全 node に同じ `MobilityPool` config を配ります。
+揃えるため、mobility demo の全 node に同じ `MobilityPool` の identity と
+placement set を配ります。古い remote-full inline style は pre-release 互換として
+まだ受け付けますが、remote member が local capture/discovery detail を持つ場合は
+`routerd validate`、plan、apply が warning を表示します。将来の pre-release では
+remote member の identity-only 化を必須にする可能性があります。
 
 `EgressRoutePolicy` は、CIDR 指定に加えて `destinationSetRefs` と
 `excludeDestinationSetRefs` を持ちます。これにより、FQDN-backed な宛先 set を policy
@@ -514,7 +524,7 @@ validator がエラーにします。
 | `LogRetention` | `phase` (string), `targets` (objectList), `updatedAt` (timestamp) |
 | `LogSink` | `phase` (string), `type` (string) |
 | `ManagementAccess` | `interfaces` (stringList), `phase` (string) |
-| `MobilityPool` | `activeLeases` (int), `dynamicSource` (string), `expiredLeases` (int), `generatedActions` (int), `generatedClaims` (int), `groupRef` (string), `holdingLeases` (int), `leaseCount` (int), `phase` (string), `placementActive` (bool), `placementActiveNode` (string), `placementGroup` (string), `plannerPhase` (string), `plannerReason` (string), `prefix` (string), `projectedAt` (timestamp) |
+| `MobilityPool` | `dynamicSource` (string), `generatedActions` (int), `generatedBGPPaths` (int), `generatedBGPTraps` (int), `groupRef` (string), `placementActive` (bool), `placementActiveNode` (string), `placementGroup` (string), `plannerPhase` (string), `plannerReason` (string), `prefix` (string), `deliveryMode` (string), `discoverySelfPrivateIPs` (stringList) |
 | `NAT44Rule` | `dryRun` (bool), `egressInterface` (string), `phase` (string), `snatAddress` (string) |
 | `NTPClient` | `phase` (string), `servers` (stringList), `source` (string), `updatedAt` (timestamp) |
 | `NTPServer` | `allowCIDRs` (stringList), `listenAddresses` (stringList), `phase` (string), `servers` (stringList), `source` (string), `updatedAt` (timestamp) |
