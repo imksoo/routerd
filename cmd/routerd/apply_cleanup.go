@@ -12,176 +12,29 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/apply"
 	"github.com/imksoo/routerd/pkg/controlapi"
 	"github.com/imksoo/routerd/pkg/resource"
+	"github.com/imksoo/routerd/pkg/resourcequery"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
 func filterRouterByWhen(router *api.Router, store routerstate.Store) *api.Router {
-	filtered := *router
-	filtered.Spec.Resources = nil
-	for _, res := range router.Spec.Resources {
-		when := resourceWhen(res)
-		if resourceWhenMatches(when, store) {
-			if res.Kind == "EgressRoutePolicy" {
-				res = filterEgressRoutePolicyCandidatesByWhen(res, store)
-			}
-			filtered.Spec.Resources = append(filtered.Spec.Resources, res)
-		}
-	}
-	return api.ExpandClusterNetworkRoutes(&filtered)
-}
-
-func filterEgressRoutePolicyCandidatesByWhen(res api.Resource, store routerstate.Store) api.Resource {
-	spec, err := res.EgressRoutePolicySpec()
-	if err != nil {
-		return res
-	}
-	var candidates []api.EgressRoutePolicyCandidate
-	for _, candidate := range spec.Candidates {
-		if !api.BoolDefault(candidate.Enabled, true) {
-			continue
-		}
-		if resourceWhenMatches(candidate.When, store) {
-			candidates = append(candidates, candidate)
-		}
-	}
-	spec.Candidates = candidates
-	res.Spec = spec
-	return res
+	return resourcequery.FilterRouterByWhen(router, store)
 }
 
 func resourceWhen(res api.Resource) api.ResourceWhenSpec {
-	switch res.Kind {
-	case "ObservabilityPipeline":
-		spec, _ := res.ObservabilityPipelineSpec()
-		return spec.When
-	case "RouterdCluster":
-		spec, _ := res.RouterdClusterSpec()
-		return spec.When
-	case "VirtualAddress":
-		spec, _ := res.VirtualAddressSpec()
-		return spec.When
-	case "BGPRouter":
-		spec, _ := res.BGPRouterSpec()
-		return spec.When
-	case "BGPPeer":
-		spec, _ := res.BGPPeerSpec()
-		return spec.When
-	case "BFD":
-		spec, _ := res.BFDSpec()
-		return spec.When
-	case "ClusterNetworkRoute":
-		spec, _ := res.ClusterNetworkRouteSpec()
-		return spec.When
-	case "DHCPv4Server":
-		spec, _ := res.DHCPv4ServerSpec()
-		return spec.When
-	case "IPv6DelegatedAddress":
-		spec, _ := res.IPv6DelegatedAddressSpec()
-		return spec.When
-	case "DHCPv6Server":
-		spec, _ := res.DHCPv6ServerSpec()
-		return spec.When
-	case "DSLiteTunnel":
-		spec, _ := res.DSLiteTunnelSpec()
-		return spec.When
-	case "DNSForwarder":
-		spec, _ := res.DNSForwarderSpec()
-		return spec.When
-	case "DNSUpstream":
-		spec, _ := res.DNSUpstreamSpec()
-		return spec.When
-	case "HealthCheck":
-		spec, _ := res.HealthCheckSpec()
-		return spec.When
-	case "NAT44Rule":
-		spec, _ := res.NAT44RuleSpec()
-		return spec.When
-	case "PortForward":
-		spec, _ := res.PortForwardSpec()
-		return spec.When
-	case "IngressService":
-		spec, _ := res.IngressServiceSpec()
-		return spec.When
-	case "IPAddressSet":
-		spec, _ := res.IPAddressSetSpec()
-		return spec.When
-	case "LocalServiceRedirect":
-		spec, _ := res.LocalServiceRedirectSpec()
-		return spec.When
-	case "EgressRoutePolicy":
-		spec, _ := res.EgressRoutePolicySpec()
-		return spec.When
-	default:
-		return api.ResourceWhenSpec{}
-	}
+	return resourcequery.ResourceWhen(res)
 }
 
 func resourceWhenMatches(when api.ResourceWhenSpec, store routerstate.Store) bool {
-	if len(when.All) > 0 {
-		for _, child := range when.All {
-			if !resourceWhenMatches(child, store) {
-				return false
-			}
-		}
-		return true
-	}
-	if len(when.Any) > 0 {
-		for _, child := range when.Any {
-			if resourceWhenMatches(child, store) {
-				return true
-			}
-		}
-		return false
-	}
-	if len(when.State) == 0 {
-		return true
-	}
-	for name, match := range when.State {
-		if !stateMatch(store, name, match) {
-			return false
-		}
-	}
-	return true
+	return resourcequery.ResourceWhenMatches(when, store)
 }
 
 func stateMatch(store routerstate.Store, name string, match api.StateMatchSpec) bool {
-	value := store.Get(name)
-	ok := true
-	if match.Status != "" {
-		ok = ok && value.Status == match.Status
-	}
-	if match.Exists != nil {
-		if *match.Exists {
-			ok = ok && value.Status == routerstate.StatusSet
-		} else {
-			ok = ok && value.Status == routerstate.StatusUnset
-		}
-	}
-	if match.Equals != "" {
-		ok = ok && value.Status == routerstate.StatusSet && value.Value == match.Equals
-	}
-	if len(match.In) > 0 {
-		ok = ok && value.Status == routerstate.StatusSet && stringIn(value.Value, match.In)
-	}
-	if match.Contains != "" {
-		ok = ok && value.Status == routerstate.StatusSet && strings.Contains(value.Value, match.Contains)
-	}
-	if !ok {
-		return false
-	}
-	if match.For != "" {
-		duration, err := time.ParseDuration(match.For)
-		if err != nil || store.Age(name) < duration {
-			return false
-		}
-	}
-	return true
+	return resourcequery.StateMatch(store, name, match)
 }
 
 func appendPrefixDelegationStateWarnings(result *apply.Result, router *api.Router, store routerstate.Store) {
@@ -206,15 +59,6 @@ func appendPrefixDelegationStateWarnings(result *apply.Result, router *api.Route
 		msg += ". The OS DHCPv6 client must renew or reacquire PD before the upstream lease expires."
 		result.Warnings = append(result.Warnings, msg)
 	}
-}
-
-func stringIn(value string, values []string) bool {
-	for _, candidate := range values {
-		if value == candidate {
-			return true
-		}
-	}
-	return false
 }
 
 func appendLedgerOwnedOrphans(result *apply.Result, router *api.Router, ledgerPath string, transient bool) error {

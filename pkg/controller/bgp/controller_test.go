@@ -68,6 +68,25 @@ type watchSession struct {
 func (s *fakeServer) Serve() {}
 func (s *fakeServer) Stop()  { s.stops++ }
 
+func TestReconcileStopsServerWhenBGPRemoved(t *testing.T) {
+	server := &fakeServer{}
+	controller := Controller{
+		Router:  &api.Router{},
+		Store:   mapStore{},
+		Server:  server,
+		started: true,
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if server.stops != 1 {
+		t.Fatalf("stops = %d, want 1", server.stops)
+	}
+	if controller.Server != nil || controller.started {
+		t.Fatalf("controller did not clear server state: server=%#v started=%t", controller.Server, controller.started)
+	}
+}
+
 func (s *fakeServer) StopBgp(context.Context, *gobgpapi.StopBgpRequest) error { return nil }
 
 func (s *fakeServer) GetBgp(context.Context, *gobgpapi.GetBgpRequest) (*gobgpapi.GetBgpResponse, error) {

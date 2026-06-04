@@ -306,6 +306,10 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 			if err := c.reconcileLongLivedSystemdHelperUnit(ctx, render.BGPUnitName, "Router/"+c.Router.Metadata.Name+"/BGPRouter", render.BGPSystemdSpec("/run/routerd/bgp/gobgp.sock"), command); err != nil {
 				return err
 			}
+		} else {
+			if err := c.cleanupLongLivedSystemdHelperUnit(ctx, render.BGPUnitName, "Router/"+c.Router.Metadata.Name+"/BGPRouter", command); err != nil {
+				return err
+			}
 		}
 		if err := c.reconcileDNSResolverUnits(ctx, defaults.StateDir, command); err != nil {
 			return err
@@ -845,6 +849,42 @@ func (c SystemdUnitController) reconcileLongLivedSystemdHelperUnit(ctx context.C
 		"updatedAt":          time.Now().UTC().Format(time.RFC3339Nano),
 	}
 	return c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName, status)
+}
+
+func (c SystemdUnitController) cleanupLongLivedSystemdHelperUnit(ctx context.Context, unitName, source string, command outputCommandFunc) error {
+	if c.SystemdSystemDir == "" {
+		defaults, _ := platform.Current()
+		c.SystemdSystemDir = defaults.SystemdSystemDir
+	}
+	path := filepath.Join(c.SystemdSystemDir, unitName)
+	changed, err := c.applySystemdUnit(ctx, unitName, path, unitName, api.SystemdUnitSpec{State: "absent"}, command)
+	if err != nil {
+		if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName, map[string]any{
+			"phase":     "Error",
+			"reason":    "CleanupFailed",
+			"unitName":  unitName,
+			"path":      path,
+			"source":    source,
+			"error":     err.Error(),
+			"dryRun":    c.DryRun,
+			"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
+		}); saveErr != nil {
+			return saveErr
+		}
+		return err
+	}
+	if changed {
+		return c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName, map[string]any{
+			"phase":     "Removed",
+			"unitName":  unitName,
+			"path":      path,
+			"source":    source,
+			"changed":   true,
+			"dryRun":    c.DryRun,
+			"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
+		})
+	}
+	return nil
 }
 
 func interfaceAliases(router *api.Router) map[string]string {

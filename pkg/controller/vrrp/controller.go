@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -56,7 +57,7 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		return err
 	}
 	if !hasVirtualAddress(c.Router) {
-		return nil
+		return c.stopVirtualAddressBackend(ctx)
 	}
 	priorities, tracks := c.effectivePriorities()
 	staticChanged, staticIsolated, err := c.applyStaticAddresses(ctx, aliases)
@@ -79,6 +80,34 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		extra["lastChangeReason"] = result.LastChangeReason
 	}
 	return c.saveStatuses("Applied", result.Path, result.Changed || cleanupChanged || staticChanged, tracks, result.Roles, staticIsolated, extra)
+}
+
+func (c *Controller) stopVirtualAddressBackend(ctx context.Context) error {
+	if c.DryRun {
+		return nil
+	}
+	path := firstNonEmpty(c.ConfigPath, "/etc/keepalived/keepalived.conf")
+	if _, err := os.Stat(path); err != nil {
+		return nil
+	}
+	if c.useOpenRC() {
+		rcService := firstNonEmpty(c.RCService, "rc-service")
+		if _, err := c.run(ctx, rcService, "keepalived", "status"); err != nil {
+			return nil
+		}
+		if out, err := c.run(ctx, rcService, "keepalived", "stop"); err != nil {
+			return fmt.Errorf("%s keepalived stop: %w: %s", rcService, err, strings.TrimSpace(string(out)))
+		}
+		return nil
+	}
+	systemctl := firstNonEmpty(c.Systemctl, "systemctl")
+	if _, err := c.run(ctx, systemctl, "is-active", "--quiet", "keepalived.service"); err != nil {
+		return nil
+	}
+	if out, err := c.run(ctx, systemctl, "stop", "keepalived.service"); err != nil {
+		return fmt.Errorf("%s stop keepalived.service: %w: %s", systemctl, err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 func (c *Controller) saveError(path string, changed bool, tracks map[string]trackSummary, reason string, err error) error {
