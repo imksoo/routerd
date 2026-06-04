@@ -252,6 +252,34 @@ func TestWriteDnsmasqConfigDisablesDNSPort(t *testing.T) {
 	}
 }
 
+func TestWriteDnsmasqConfigUsesDeclaredLeaseFile(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "dnsmasq.conf")
+	pidFile := filepath.Join(dir, "dnsmasq.pid")
+	leaseFile := filepath.Join(dir, "state", "dnsmasq", "dnsmasq.leases")
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"}, Metadata: api.ObjectMeta{Name: "lan-v4"}, Spec: api.DHCPv4ServerSpec{
+			Interface:   "lan",
+			AddressPool: api.DHCPAddressPoolSpec{Start: "192.168.10.100", End: "192.168.10.199", LeaseTime: "8h"},
+			LeaseFile:   leaseFile,
+		}},
+	}}}
+	if _, err := writeDnsmasqConfig(router, mapStore{}, configPath, pidFile, 53, nil); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "dhcp-leasefile="+leaseFile+"\n") {
+		t.Fatalf("declared lease file was not rendered:\n%s", data)
+	}
+	if _, err := os.Stat(filepath.Dir(leaseFile)); err != nil {
+		t.Fatalf("lease directory was not created: %v", err)
+	}
+}
+
 func TestDHCPv4ServerWhenFalseRemovesDnsmasqScope(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "dnsmasq.conf")

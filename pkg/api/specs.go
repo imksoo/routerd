@@ -749,6 +749,7 @@ type DHCPv4ServerSpec struct {
 	DomainFrom    StatusValueSourceSpec   `yaml:"domainFrom,omitempty" json:"domainFrom,omitempty"`
 	Options       []DHCPv4OptionSpec      `yaml:"options,omitempty" json:"options,omitempty"`
 	Authoritative bool                    `yaml:"authoritative,omitempty" json:"authoritative,omitempty"`
+	LeaseFile     string                  `yaml:"leaseFile,omitempty" json:"leaseFile,omitempty"`
 	When          ResourceWhenSpec        `yaml:"when,omitempty" json:"when,omitempty"`
 }
 
@@ -1098,9 +1099,34 @@ type DHCPv6ServerSpec struct {
 	RapidCommit       bool                     `yaml:"rapidCommit,omitempty" json:"rapidCommit,omitempty"`
 	ConfigPath        string                   `yaml:"configPath,omitempty" json:"configPath,omitempty"`
 	PIDFile           string                   `yaml:"pidFile,omitempty" json:"pidFile,omitempty"`
+	LeaseFile         string                   `yaml:"leaseFile,omitempty" json:"leaseFile,omitempty"`
 	DependsOn         []ResourceDependencySpec `yaml:"dependsOn,omitempty" json:"dependsOn,omitempty"`
 	ReadyWhen         []ReadyWhenSpec          `yaml:"ready_when,omitempty" json:"-"`
 	When              ResourceWhenSpec         `yaml:"when,omitempty" json:"when,omitempty"`
+}
+
+type DHCPLeaseSyncSpec struct {
+	LeaseFile string                    `yaml:"leaseFile,omitempty" json:"leaseFile,omitempty"`
+	Command   string                    `yaml:"command,omitempty" json:"command,omitempty"`
+	Interval  string                    `yaml:"interval,omitempty" json:"interval,omitempty"`
+	Sources   []DHCPLeaseSyncSourceSpec `yaml:"sources,omitempty" json:"sources,omitempty"`
+	Targets   []DHCPLeaseSyncTargetSpec `yaml:"targets,omitempty" json:"targets,omitempty"`
+	When      ResourceWhenSpec          `yaml:"when,omitempty" json:"when,omitempty"`
+}
+
+type DHCPLeaseSyncSourceSpec struct {
+	Name     string `yaml:"name,omitempty" json:"name,omitempty"`
+	Path     string `yaml:"path" json:"path"`
+	Required *bool  `yaml:"required,omitempty" json:"required,omitempty"`
+}
+
+type DHCPLeaseSyncTargetSpec struct {
+	Name       string   `yaml:"name,omitempty" json:"name,omitempty"`
+	Host       string   `yaml:"host" json:"host"`
+	User       string   `yaml:"user,omitempty" json:"user,omitempty"`
+	Path       string   `yaml:"path,omitempty" json:"path,omitempty"`
+	SSHOptions []string `yaml:"sshOptions,omitempty" json:"sshOptions,omitempty"`
+	Options    []string `yaml:"options,omitempty" json:"options,omitempty"`
 }
 
 type DHCPv4RelaySpec struct {
@@ -2229,6 +2255,10 @@ func (r Resource) IPv6RouterAdvertisementSpec() (IPv6RouterAdvertisementSpec, er
 
 func (r Resource) DHCPv6ServerSpec() (DHCPv6ServerSpec, error) {
 	return specAs[DHCPv6ServerSpec](r)
+}
+
+func (r Resource) DHCPLeaseSyncSpec() (DHCPLeaseSyncSpec, error) {
+	return specAs[DHCPLeaseSyncSpec](r)
 }
 
 func (r Resource) DHCPv4RelaySpec() (DHCPv4RelaySpec, error) {

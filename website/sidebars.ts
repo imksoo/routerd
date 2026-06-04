@@ -106,6 +106,7 @@ const sidebars: SidebarsConfig = {
       items: [
         'how-to/flets-ipv6-setup',
         'how-to/ipv6-dual-stack',
+        'how-to/dhcp-lease-sync',
         'how-to/guest-mode',
         'how-to/os-bootstrap',
         'how-to/pve-overlay',
