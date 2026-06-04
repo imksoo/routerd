@@ -175,6 +175,21 @@ func TestValidateMobilityPoolPlacement(t *testing.T) {
 	if err := Validate(mobilityPoolRouter(spec)); err != nil {
 		t.Fatalf("Validate placement MobilityPool: %v", err)
 	}
+
+	partial := spec
+	partial.Members = append([]api.MobilityPoolMember(nil), spec.Members...)
+	partial.Members[2].Placement = api.MobilityMemberPlacement{}
+	if err := Validate(mobilityPoolRouter(partial)); err == nil || !strings.Contains(err.Error(), "placement.group is required for provider-secondary-ip member") {
+		t.Fatalf("Validate partial placement err = %v, want missing placement group failure", err)
+	}
+
+	autoPriority := spec
+	autoPriority.Members = append([]api.MobilityPoolMember(nil), spec.Members...)
+	autoPriority.Members[1].Placement.Priority = 0
+	autoPriority.Members[2].Placement.Priority = 0
+	if err := Validate(mobilityPoolRouter(autoPriority)); err != nil {
+		t.Fatalf("Validate auto-priority placement MobilityPool: %v", err)
+	}
 }
 
 func TestValidateMobilityPoolStaticOwnedAndHandover(t *testing.T) {

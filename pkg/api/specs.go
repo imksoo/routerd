@@ -1402,7 +1402,8 @@ type MobilityPoolMember struct {
 	OwnershipDiscovery MobilityOwnershipDiscovery `yaml:"ownershipDiscovery,omitempty" json:"ownershipDiscovery,omitempty"`
 	// Placement optionally places this member in an active/standby capture group.
 	// When set, only the highest-priority non-drained member in the same group
-	// captures provider-side addresses.
+	// captures provider-side addresses. Provider-secondary members that share a
+	// site/providerRef with an existing placement group must declare placement.
 	Placement MobilityMemberPlacement `yaml:"placement,omitempty" json:"placement,omitempty"`
 	// Maintenance carries declarative operator maintenance intent for this member.
 	// Drained placement members are excluded from active capture selection.
@@ -1416,8 +1417,11 @@ type MobilityStaticHandover struct {
 }
 
 type MobilityMemberPlacement struct {
-	Group    string `yaml:"group,omitempty" json:"group,omitempty"`
-	Priority int    `yaml:"priority,omitempty" json:"priority,omitempty"`
+	Group string `yaml:"group,omitempty" json:"group,omitempty"`
+	// Priority orders active/standby candidates. Empty/0 is auto-numbered
+	// deterministically within the group as 10, 20, ... while preserving any
+	// explicitly configured priorities.
+	Priority int `yaml:"priority,omitempty" json:"priority,omitempty" jsonschema:"minimum=0,maximum=1000000"`
 }
 
 type MobilityMemberMaintenance struct {

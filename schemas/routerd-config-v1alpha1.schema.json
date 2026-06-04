@@ -7014,12 +7014,15 @@
                             },
                             "placement": {
                               "additionalProperties": false,
-                              "description": "Placement optionally places this member in an active/standby capture group.\nWhen set, only the highest-priority non-drained member in the same group\ncaptures provider-side addresses.",
+                              "description": "Placement optionally places this member in an active/standby capture group.\nWhen set, only the highest-priority non-drained member in the same group\ncaptures provider-side addresses. Provider-secondary members that share a\nsite/providerRef with an existing placement group must declare placement.",
                               "properties": {
                                 "group": {
                                   "type": "string"
                                 },
                                 "priority": {
+                                  "description": "Priority orders active/standby candidates. Empty/0 is auto-numbered\ndeterministically within the group as 10, 20, ... while preserving any\nexplicitly configured priorities.",
+                                  "maximum": 1000000,
+                                  "minimum": 0,
                                   "type": "integer"
                                 }
                               },

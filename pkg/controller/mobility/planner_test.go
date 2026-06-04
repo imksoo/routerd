@@ -40,6 +40,44 @@ func TestPlacementDecision(t *testing.T) {
 	}
 }
 
+func TestPlacementAutoPriority(t *testing.T) {
+	spec := placementPoolSpec()
+	spec.Members[1].Placement.Priority = 0
+	spec.Members[2].Placement.Priority = 0
+	members := plannerMembers(spec.Members)
+	if got := members["azure-router-a"].PlacementPriority; got != 10 {
+		t.Fatalf("azure-router-a auto priority = %d, want 10", got)
+	}
+	if got := members["azure-router-b"].PlacementPriority; got != 20 {
+		t.Fatalf("azure-router-b auto priority = %d, want 20", got)
+	}
+	if got := evaluatePlacement(members["azure-router-a"], members); !got.Active || got.ActiveNode != "azure-router-a" {
+		t.Fatalf("auto priority placement = %+v, want router-a active", got)
+	}
+
+	spec.Members[1].Placement.Priority = 20
+	spec.Members[2].Placement.Priority = 0
+	members = plannerMembers(spec.Members)
+	if got := members["azure-router-a"].PlacementPriority; got != 20 {
+		t.Fatalf("explicit azure-router-a priority = %d, want 20", got)
+	}
+	if got := members["azure-router-b"].PlacementPriority; got != 10 {
+		t.Fatalf("azure-router-b auto priority = %d, want first free 10", got)
+	}
+	if got := evaluatePlacement(members["azure-router-b"], members); !got.Active || got.ActiveNode != "azure-router-b" {
+		t.Fatalf("mixed priority placement = %+v, want explicit priority respected and router-b active", got)
+	}
+}
+
+func TestPlannerMembersInheritOwnershipDiscoveryProviderRef(t *testing.T) {
+	spec := discoveryPoolSpec()
+	spec.Members[1].OwnershipDiscovery.ProviderRef = ""
+	members := plannerMembers(spec.Members)
+	if got := members["azure-router-a"].OwnershipDiscovery.ProviderRef; got != "azure-provider" {
+		t.Fatalf("ownershipDiscovery providerRef = %q, want capture providerRef", got)
+	}
+}
+
 func TestBGPCapturePlacementSeizesWhenActiveMarkerAbsentWithCanonicalNodeIdentity(t *testing.T) {
 	members := map[string]memberPlanInfo{
 		"aws-router-a": {

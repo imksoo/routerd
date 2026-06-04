@@ -58,6 +58,7 @@ func validateMobilityResource(res api.Resource, _ platform.OS) (bool, error) {
 		memberRoles := map[string]string{}
 		staticOwners := map[string]string{}
 		placementGroups := map[string]mobilityPlacementGroup{}
+		placementCompleteness := map[string]mobilityPlacementCompleteness{}
 		for i, member := range spec.Members {
 			nodeRef := strings.TrimSpace(member.NodeRef)
 			if nodeRef == "" {
@@ -85,9 +86,13 @@ func validateMobilityResource(res api.Resource, _ platform.OS) (bool, error) {
 			if err := validateMobilityMemberPlacement(res, i, member, placementGroups); err != nil {
 				return true, err
 			}
+			trackMobilityPlacementCompleteness(placementCompleteness, i, member)
 			if err := validateMobilityOwnershipDiscovery(res, i, spec, member); err != nil {
 				return true, err
 			}
+		}
+		if err := validateMobilityPlacementCompleteness(res, placementCompleteness); err != nil {
+			return true, err
 		}
 		switch strings.TrimSpace(spec.CapturePolicy.Mode) {
 		case "", "all-non-owner-sites":
@@ -347,6 +352,16 @@ type mobilityPlacementGroup struct {
 	providerRef string
 }
 
+type mobilityPlacementCompleteness struct {
+	site          string
+	providerRef   string
+	hasPlacement  bool
+	missingIndex  int
+	missingNode   string
+	placedGroup   string
+	placedNodeRef string
+}
+
 func validateMobilityMemberPlacement(res api.Resource, index int, member api.MobilityPoolMember, groups map[string]mobilityPlacementGroup) error {
 	group := strings.TrimSpace(member.Placement.Group)
 	if group == "" {
@@ -384,6 +399,44 @@ func validateMobilityMemberPlacement(res api.Resource, index int, member api.Mob
 		}
 	} else {
 		groups[group] = current
+	}
+	return nil
+}
+
+func trackMobilityPlacementCompleteness(groups map[string]mobilityPlacementCompleteness, index int, member api.MobilityPoolMember) {
+	if strings.TrimSpace(member.Role) != "cloud" || strings.TrimSpace(member.Capture.Type) != "provider-secondary-ip" {
+		return
+	}
+	site := strings.TrimSpace(member.Site)
+	providerRef := strings.TrimSpace(member.Capture.ProviderRef)
+	if site == "" || providerRef == "" {
+		return
+	}
+	key := site + "\x00" + providerRef
+	current := groups[key]
+	if current.site == "" {
+		current.site = site
+		current.providerRef = providerRef
+		current.missingIndex = -1
+	}
+	if group := strings.TrimSpace(member.Placement.Group); group != "" {
+		current.hasPlacement = true
+		if current.placedGroup == "" {
+			current.placedGroup = group
+			current.placedNodeRef = strings.TrimSpace(member.NodeRef)
+		}
+	} else if current.missingIndex == -1 {
+		current.missingIndex = index
+		current.missingNode = strings.TrimSpace(member.NodeRef)
+	}
+	groups[key] = current
+}
+
+func validateMobilityPlacementCompleteness(res api.Resource, groups map[string]mobilityPlacementCompleteness) error {
+	for _, group := range groups {
+		if group.hasPlacement && group.missingIndex >= 0 {
+			return fmt.Errorf("%s spec.members[%d].placement.group is required for provider-secondary-ip member %q because site %q/providerRef %q uses placement group %q on member %q", res.ID(), group.missingIndex, group.missingNode, group.site, group.providerRef, group.placedGroup, group.placedNodeRef)
+		}
 	}
 	return nil
 }

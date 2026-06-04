@@ -195,21 +195,67 @@ func (c Controller) savePlannerStatus(poolName string, updates map[string]any) e
 
 func plannerMembers(members []api.MobilityPoolMember) map[string]memberPlanInfo {
 	out := map[string]memberPlanInfo{}
+	priorities := autoPlacementPriorities(members)
 	for _, member := range members {
 		nodeRef := strings.TrimSpace(member.NodeRef)
+		capture := trimCapture(member.Capture)
+		discovery := member.OwnershipDiscovery
+		if strings.TrimSpace(discovery.ProviderRef) == "" {
+			discovery.ProviderRef = strings.TrimSpace(capture.ProviderRef)
+		}
 		out[nodeRef] = memberPlanInfo{
 			NodeRef:            nodeRef,
 			Site:               strings.TrimSpace(member.Site),
 			Role:               strings.TrimSpace(member.Role),
-			Capture:            trimCapture(member.Capture),
+			Capture:            capture,
 			CaptureTarget:      copyStringMap(member.Capture.Target),
 			Delivery:           trimDelivery(member.Delivery),
 			DeliveryTo:         trimDeliveryTargets(member.DeliveryTo),
-			OwnershipDiscovery: member.OwnershipDiscovery,
+			OwnershipDiscovery: discovery,
 			PlacementGroup:     strings.TrimSpace(member.Placement.Group),
-			PlacementPriority:  member.Placement.Priority,
+			PlacementPriority:  priorities[nodeRef],
 			MaintenanceDrain:   member.Maintenance.Drain,
 		}
+	}
+	return out
+}
+
+func autoPlacementPriorities(members []api.MobilityPoolMember) map[string]int {
+	out := map[string]int{}
+	usedByGroup := map[string]map[int]bool{}
+	for _, member := range members {
+		nodeRef := strings.TrimSpace(member.NodeRef)
+		priority := member.Placement.Priority
+		out[nodeRef] = priority
+		group := strings.TrimSpace(member.Placement.Group)
+		if group == "" || priority == 0 {
+			continue
+		}
+		if usedByGroup[group] == nil {
+			usedByGroup[group] = map[int]bool{}
+		}
+		usedByGroup[group][priority] = true
+	}
+	nextByGroup := map[string]int{}
+	for _, member := range members {
+		nodeRef := strings.TrimSpace(member.NodeRef)
+		group := strings.TrimSpace(member.Placement.Group)
+		if group == "" || out[nodeRef] != 0 {
+			continue
+		}
+		if usedByGroup[group] == nil {
+			usedByGroup[group] = map[int]bool{}
+		}
+		next := nextByGroup[group]
+		if next == 0 {
+			next = 10
+		}
+		for usedByGroup[group][next] {
+			next += 10
+		}
+		out[nodeRef] = next
+		usedByGroup[group][next] = true
+		nextByGroup[group] = next + 10
 	}
 	return out
 }
