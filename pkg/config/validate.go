@@ -394,7 +394,7 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 				return err
 			}
 			switch spec.Underlay.Type {
-			case "ipip", "gre":
+			case "ipip", "gre", "fou", "gue":
 				if !idx.TunnelInterfaces[spec.Underlay.Interface] {
 					return fmt.Errorf("%s spec.underlay.interface references missing TunnelInterface %q", res.ID(), spec.Underlay.Interface)
 				}

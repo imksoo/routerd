@@ -41,7 +41,7 @@ spec:
 | `system.routerd.net/v1alpha1` | `Hostname`, `Sysctl`, `SysctlProfile`, `Package`, `NTPClient`, `NTPServer`, `LogSink`, `ObservabilityPipeline`, `RouterdCluster`, `LogRetention`, `WebConsole` |
 | `observability.routerd.net/v1alpha1` | `Telemetry` |
 | `plugin.routerd.net/v1alpha1` | plugin manifests |
-| `hybrid.routerd.net/v1alpha1` | `OverlayPeer`, `HybridRoute`, `AddressMobilityDomain`, `CloudProviderProfile`, `RemoteAddressClaim` |
+| `hybrid.routerd.net/v1alpha1` | `TunnelInterface`, `OverlayPeer`, `HybridRoute`, `AddressMobilityDomain`, `CloudProviderProfile`, `RemoteAddressClaim` |
 | `mobility.routerd.net/v1alpha1` | `MobilityPool` |
 
 ## System Bootstrap
@@ -174,6 +174,7 @@ for DoH or DoT endpoint name resolution.
 | Kind | Role |
 | --- | --- |
 | `DSLiteTunnel` | Creates an `ip6tnl` tunnel to an AFTR. The AFTR can be static IPv6, FQDN, or DHCPv6 information. |
+| `TunnelInterface` | Creates a trusted Linux L3 underlay tunnel device for hybrid overlay delivery. `mode` supports `ipip`, `gre`, and IPIP-over-UDP `fou`/`gue`; `fou`/`gue` require `encapSport` and `encapDport`. |
 | `OverlayPeer` | Describes an on-prem or cloud overlay peer and the local underlay used to reach it. |
 | `HybridRoute` | Lowers non-default remote IPv4 prefixes through an `OverlayPeer` into managed `IPv4Route` resources. |
 | `MobilityPool` | Declares the only operator-authored CloudEdge mobility intent: pool prefix, federation group, node-to-site membership, BGP delivery policy, optional reusable cloud capture profiles, local value expansion, and provider trap placement. routerd derives BGP `/32` advertisements and provider trap action plans from observed facts and BGP best paths. |
@@ -246,8 +247,8 @@ For trusted overlay paths that need a non-TCP IPv4 PMTU black-hole workaround,
 `OverlayPeer.spec.pathMTU.forceFragmentIPv4` or
 `TunnelInterface.spec.pathMTU.forceFragmentIPv4` can enable a default-off Linux
 nftables `routerd_forcefrag` table. It clears DF only for oversized IPv4 packets
-on the derived forwarded path. It is supported only for `wireguard`, `ipip`, and
-`gre` overlay underlays.
+on the derived forwarded path. It is supported only for `wireguard`, `ipip`,
+`gre`, `fou`, and `gue` overlay underlays.
 If an externally managed source interface has a lower MTU, such as `tailscale0`,
 set `Interface.spec.mtu`; routerd uses it only for that source path instead of
 lowering unrelated LAN paths.
@@ -592,6 +593,7 @@ and fields outside the target kind's `provides` set.
 | `NTPServer` | `allowCIDRs` (stringList), `listenAddresses` (stringList), `phase` (string), `servers` (stringList), `source` (string), `updatedAt` (timestamp) |
 | `ObservabilityPipeline` | `phase` (string), `signals` (stringList) |
 | `OverlayPeer` | `nodeID` (string), `phase` (string), `role` (string), `underlayInterface` (string), `underlayType` (string) |
+| `TunnelInterface` | `dryRun` (bool), `encapDport` (int), `encapSport` (int), `ifname` (string), `interface` (string), `local` (string), `mode` (string), `mtu` (int), `phase` (string), `remote` (string), `ttl` (int) |
 | `PPPoESession` | `connectedAt` (timestamp), `currentAddress` (string), `device` (string), `dnsServers` (stringList), `dryRun` (bool), `gateway` (string), `interface` (string), `peerAddress` (string), `phase` (string) |
 | `Package` | `dryRun` (bool), `packages` (stringList), `phase` (string) |
 | `PortForward` | `dryRun` (bool), `listenAddress` (string), `phase` (string), `target` (object) |

@@ -1,8 +1,8 @@
 # Path MTU と TCP MSS
 
 routerd は、トンネル経路を作るリソースから、Path MTU の扱いを自動で導出します。
-DS-Lite、PPPoE、WireGuard の各インターフェースが有効 MTU を提供し、firewall zone が
-LAN から WAN へ転送する向きを表します。
+DS-Lite、PPPoE、WireGuard、`TunnelInterface` underlay（`ipip`、`gre`、`fou`、`gue`）
+が有効 MTU を提供し、firewall zone が LAN から WAN へ転送する向きを表します。
 
 trusted インターフェースから untrusted トンネルへ転送する場合、routerd は TCP MSS の
 clamp を自動で生成します。MSS は、IPv4 TCP では `MTU - 40`、IPv6 TCP では

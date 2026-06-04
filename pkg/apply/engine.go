@@ -745,6 +745,12 @@ func (e *Engine) observeTunnelInterface(res api.Resource, includePlan bool, rr *
 	if spec.Key != 0 {
 		rr.Observed["key"] = fmt.Sprintf("%d", spec.Key)
 	}
+	if spec.EncapSport != 0 {
+		rr.Observed["encapSport"] = fmt.Sprintf("%d", spec.EncapSport)
+	}
+	if spec.EncapDport != 0 {
+		rr.Observed["encapDport"] = fmt.Sprintf("%d", spec.EncapDport)
+	}
 	if includePlan {
 		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure %s tunnel interface %s exists", spec.Mode, res.Metadata.Name))
 	}

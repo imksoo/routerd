@@ -525,6 +525,12 @@ func pathMTUResourceMTU(res api.Resource, value reflect.Value) int {
 		if mode == "gre" {
 			return 1476
 		}
+		if mode == "fou" {
+			return 1472
+		}
+		if mode == "gue" {
+			return 1468
+		}
 		return 0
 	default:
 		return 0

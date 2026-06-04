@@ -5794,6 +5794,16 @@
                       "address": {
                         "type": "string"
                       },
+                      "encapDport": {
+                        "maximum": 65535,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "encapSport": {
+                        "maximum": 65535,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
                       "key": {
                         "maximum": 4294967295,
                         "minimum": 0,
@@ -5805,7 +5815,9 @@
                       "mode": {
                         "enum": [
                           "ipip",
-                          "gre"
+                          "gre",
+                          "fou",
+                          "gue"
                         ],
                         "type": "string"
                       },
@@ -5930,7 +5942,9 @@
                               "ipsec",
                               "route",
                               "ipip",
-                              "gre"
+                              "gre",
+                              "fou",
+                              "gue"
                             ],
                             "type": "string"
                           }

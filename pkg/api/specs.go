@@ -436,13 +436,15 @@ type WireGuardInterfaceSpec struct {
 }
 
 type TunnelInterfaceSpec struct {
-	Mode            string         `yaml:"mode" json:"mode" jsonschema:"enum=ipip,enum=gre"`
+	Mode            string         `yaml:"mode" json:"mode" jsonschema:"enum=ipip,enum=gre,enum=fou,enum=gue"`
 	Local           string         `yaml:"local" json:"local"`
 	Remote          string         `yaml:"remote" json:"remote"`
 	Address         string         `yaml:"address,omitempty" json:"address,omitempty"`
 	MTU             int            `yaml:"mtu,omitempty" json:"mtu,omitempty" jsonschema:"minimum=576,maximum=9216"`
 	TTL             int            `yaml:"ttl,omitempty" json:"ttl,omitempty" jsonschema:"minimum=1,maximum=255"`
 	Key             int            `yaml:"key,omitempty" json:"key,omitempty" jsonschema:"minimum=0,maximum=4294967295"`
+	EncapSport      int            `yaml:"encapSport,omitempty" json:"encapSport,omitempty" jsonschema:"minimum=1,maximum=65535"`
+	EncapDport      int            `yaml:"encapDport,omitempty" json:"encapDport,omitempty" jsonschema:"minimum=1,maximum=65535"`
 	TrustedUnderlay bool           `yaml:"trustedUnderlay" json:"trustedUnderlay"`
 	PathMTU         PathMTUOptions `yaml:"pathMTU,omitempty" json:"pathMTU,omitempty"`
 }
@@ -1202,7 +1204,7 @@ type OverlayPeerSpec struct {
 }
 
 type OverlayUnderlay struct {
-	Type      string `yaml:"type" json:"type" jsonschema:"enum=wireguard,enum=tailscale,enum=ipsec,enum=route,enum=ipip,enum=gre"`
+	Type      string `yaml:"type" json:"type" jsonschema:"enum=wireguard,enum=tailscale,enum=ipsec,enum=route,enum=ipip,enum=gre,enum=fou,enum=gue"`
 	Interface string `yaml:"interface,omitempty" json:"interface,omitempty"`
 	Address   string `yaml:"address,omitempty" json:"address,omitempty"`
 }

@@ -31,6 +31,7 @@ routerd associates host-side artefacts with the resource that produced them. Rec
 | `DNSForwarder` | `routerd-dns-resolver` runtime forwarding rule derived into the resolver config |
 | `DNSUpstream` | `routerd-dns-resolver` runtime upstream endpoint derived into forwarder rules |
 | `DSLiteTunnel` | Linux `ip6tnl` interface |
+| `TunnelInterface` | Linux `ipip`/`gre` tunnel device; FOU/GUE modes also ensure the matching `ip fou` listener port |
 | `IPAddressSet` | nftables IPv4/IPv6 named sets when referenced by a Linux renderer |
 | `IPv4Route` | Kernel route |
 | `ClusterNetworkRoute` | Generated `IPv4StaticRoute` intents for Pod / Service CIDRs through configured next hops |

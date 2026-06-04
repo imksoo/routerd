@@ -159,7 +159,7 @@ func Warnings(router *api.Router) []string {
 			if err == nil && spec.Underlay.Type == "wireguard" && spec.Underlay.Interface != "" && !wireGuardInterfaces[spec.Underlay.Interface] {
 				warnings = append(warnings, fmt.Sprintf("%s spec.underlay.interface references WireGuardInterface %q which is not declared; assuming the interface is managed externally", res.ID(), spec.Underlay.Interface))
 			}
-			if err == nil && (spec.Underlay.Type == "ipip" || spec.Underlay.Type == "gre") && spec.Underlay.Interface != "" && !tunnelInterfaces[spec.Underlay.Interface] {
+			if err == nil && (spec.Underlay.Type == "ipip" || spec.Underlay.Type == "gre" || spec.Underlay.Type == "fou" || spec.Underlay.Type == "gue") && spec.Underlay.Interface != "" && !tunnelInterfaces[spec.Underlay.Interface] {
 				warnings = append(warnings, fmt.Sprintf("%s spec.underlay.interface references TunnelInterface %q which is not declared", res.ID(), spec.Underlay.Interface))
 			}
 		case "RemoteAddressClaim":

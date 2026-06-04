@@ -1,8 +1,9 @@
 # Path MTU and TCP MSS
 
 routerd derives path MTU behavior from the resources that create tunnel paths.
-DS-Lite, PPPoE, and WireGuard interfaces provide the effective tunnel MTU, and
-firewall zones identify the LAN-to-WAN forwarding direction.
+DS-Lite, PPPoE, WireGuard, and `TunnelInterface` underlays (`ipip`, `gre`,
+`fou`, `gue`) provide the effective tunnel MTU, and firewall zones identify the
+LAN-to-WAN forwarding direction.
 
 When a trusted interface forwards through an untrusted tunnel, routerd renders
 TCP MSS clamping automatically. For IPv4 TCP, MSS is `MTU - 40`. For IPv6 TCP,

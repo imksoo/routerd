@@ -80,6 +80,30 @@ func TestExplicitSysctlSuppressesDerivedDuplicate(t *testing.T) {
 	}
 }
 
+func TestKernelModulesForTunnelInterfaceModes(t *testing.T) {
+	tests := []struct {
+		mode string
+		want []string
+	}{
+		{mode: "ipip", want: []string{"ipip"}},
+		{mode: "gre", want: []string{"ip_gre"}},
+		{mode: "fou", want: []string{"fou", "ipip"}},
+		{mode: "gue", want: []string{"fou", "ipip"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.mode, func(t *testing.T) {
+			router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
+				TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
+				Metadata: api.ObjectMeta{Name: "tun0"},
+				Spec:     api.TunnelInterfaceSpec{Mode: tt.mode},
+			}}}}
+			if got := KernelModules(router); !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("KernelModules(%s) = %#v, want %#v", tt.mode, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestDerivedSysctlResourcesForSAMAreStrictlyGated(t *testing.T) {
 	empty := &api.Router{}
 	if keys := derivedSysctlKeys(t, empty); len(keys) != 0 {

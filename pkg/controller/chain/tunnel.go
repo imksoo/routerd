@@ -30,25 +30,29 @@ type TunnelInterfaceController struct {
 }
 
 type tunnelDesired struct {
-	Name    string
-	Mode    string
-	Local   string
-	Remote  string
-	MTU     int
-	TTL     int
-	Key     int
-	Address string
+	Name       string
+	Mode       string
+	Local      string
+	Remote     string
+	MTU        int
+	TTL        int
+	Key        int
+	EncapSport int
+	EncapDport int
+	Address    string
 }
 
 type tunnelObserved struct {
-	Exists bool
-	Mode   string
-	Local  string
-	Remote string
-	MTU    int
-	TTL    int
-	Key    int
-	Up     bool
+	Exists     bool
+	Mode       string
+	Local      string
+	Remote     string
+	MTU        int
+	TTL        int
+	Key        int
+	EncapSport int
+	EncapDport int
+	Up         bool
 }
 
 func (c TunnelInterfaceController) Reconcile(ctx context.Context) error {
@@ -151,6 +155,9 @@ func (c TunnelInterfaceController) reconcileInterface(ctx context.Context, resou
 		status["error"] = err.Error()
 		return c.Store.SaveObjectStatus(api.HybridAPIVersion, "TunnelInterface", resource.Metadata.Name, status)
 	}
+	if err := c.ensureFOUListener(ctx, desired); err != nil {
+		return c.saveApplyError(resource, desired, err)
+	}
 	applied := false
 	created := false
 	if !observed.Exists {
@@ -222,6 +229,10 @@ func tunnelDesiredFromSpec(name string, spec api.TunnelInterfaceSpec) tunnelDesi
 			mtu = 1480
 		case "gre":
 			mtu = 1476
+		case "fou":
+			mtu = 1472
+		case "gue":
+			mtu = 1468
 		}
 	}
 	ttl := spec.TTL
@@ -229,14 +240,16 @@ func tunnelDesiredFromSpec(name string, spec api.TunnelInterfaceSpec) tunnelDesi
 		ttl = 64
 	}
 	return tunnelDesired{
-		Name:    strings.TrimSpace(name),
-		Mode:    strings.TrimSpace(spec.Mode),
-		Local:   strings.TrimSpace(spec.Local),
-		Remote:  strings.TrimSpace(spec.Remote),
-		MTU:     mtu,
-		TTL:     ttl,
-		Key:     spec.Key,
-		Address: strings.TrimSpace(spec.Address),
+		Name:       strings.TrimSpace(name),
+		Mode:       strings.TrimSpace(spec.Mode),
+		Local:      strings.TrimSpace(spec.Local),
+		Remote:     strings.TrimSpace(spec.Remote),
+		MTU:        mtu,
+		TTL:        ttl,
+		Key:        spec.Key,
+		EncapSport: spec.EncapSport,
+		EncapDport: spec.EncapDport,
+		Address:    strings.TrimSpace(spec.Address),
 	}
 }
 
@@ -253,6 +266,12 @@ func tunnelStatus(desired tunnelDesired, dryRun bool, extra map[string]any) map[
 	}
 	if desired.Key != 0 {
 		status["key"] = desired.Key
+	}
+	if desired.EncapSport != 0 {
+		status["encapSport"] = desired.EncapSport
+	}
+	if desired.EncapDport != 0 {
+		status["encapDport"] = desired.EncapDport
 	}
 	if desired.Address != "" {
 		status["address"] = desired.Address
@@ -280,6 +299,12 @@ func tunnelLinkMatches(observed tunnelObserved, desired tunnelDesired) bool {
 		return false
 	}
 	if desired.Key != 0 && observed.Key != desired.Key {
+		return false
+	}
+	if (desired.Mode == "fou" || desired.Mode == "gue") && observed.EncapSport != desired.EncapSport {
+		return false
+	}
+	if (desired.Mode == "fou" || desired.Mode == "gue") && observed.EncapDport != desired.EncapDport {
 		return false
 	}
 	return true
@@ -313,12 +338,25 @@ func parseTunnelLinkStatus(out []byte) tunnelObserved {
 			observed.TTL, _ = strconv.Atoi(fields[i+1])
 		case field == "key" && i+1 < len(fields):
 			observed.Key, _ = strconv.Atoi(fields[i+1])
+		case field == "encap-sport" && i+1 < len(fields):
+			observed.EncapSport, _ = strconv.Atoi(fields[i+1])
+		case field == "encap-dport" && i+1 < len(fields):
+			observed.EncapDport, _ = strconv.Atoi(fields[i+1])
+		case field == "encap" && i+1 < len(fields):
+			switch strings.Trim(fields[i+1], ",") {
+			case "fou":
+				observed.Mode = "fou"
+			case "gue":
+				observed.Mode = "gue"
+			}
 		case field == "local" && i+1 < len(fields):
 			observed.Local = strings.Trim(fields[i+1], ",")
 		case (field == "remote" || field == "peer") && i+1 < len(fields):
 			observed.Remote = strings.Trim(fields[i+1], ",")
 		case field == "link/ipip" || strings.HasPrefix(field, "ipip/"):
-			observed.Mode = "ipip"
+			if observed.Mode == "" {
+				observed.Mode = "ipip"
+			}
 		case field == "link/gre" || strings.HasPrefix(field, "gre/"):
 			observed.Mode = "gre"
 		}
@@ -359,18 +397,49 @@ func (c TunnelInterfaceController) setTunnelLinkUp(ctx context.Context, ifname s
 	return commandError("bring tunnel interface "+ifname+" up", err)
 }
 
+func (c TunnelInterfaceController) ensureFOUListener(ctx context.Context, desired tunnelDesired) error {
+	if desired.Mode != "fou" && desired.Mode != "gue" {
+		return nil
+	}
+	args := []string{"fou", "add", "port", strconv.Itoa(desired.EncapSport)}
+	if desired.Mode == "gue" {
+		args = append(args, "gue")
+	} else {
+		args = append(args, "ipproto", "4")
+	}
+	out, err := c.run(ctx, "ip", args...)
+	if err == nil || tunnelFOUAlreadyExists(out, err) {
+		return nil
+	}
+	return fmt.Errorf("ensure %s listener port %d: %w: %s", desired.Mode, desired.EncapSport, err, strings.TrimSpace(string(out)))
+}
+
 func tunnelAddArgs(desired tunnelDesired) []string {
-	args := []string{"link", "add", "dev", desired.Name, "type", desired.Mode, "local", desired.Local, "remote", desired.Remote, "ttl", strconv.Itoa(desired.TTL)}
+	linkType := desired.Mode
+	if desired.Mode == "fou" || desired.Mode == "gue" {
+		linkType = "ipip"
+	}
+	args := []string{"link", "add", "dev", desired.Name, "type", linkType, "local", desired.Local, "remote", desired.Remote, "ttl", strconv.Itoa(desired.TTL)}
 	if desired.Mode == "gre" && desired.Key != 0 {
 		args = append(args, "key", strconv.Itoa(desired.Key))
+	}
+	if desired.Mode == "fou" || desired.Mode == "gue" {
+		args = append(args, "encap", desired.Mode, "encap-sport", strconv.Itoa(desired.EncapSport), "encap-dport", strconv.Itoa(desired.EncapDport))
 	}
 	return args
 }
 
 func tunnelChangeArgs(desired tunnelDesired) []string {
-	args := []string{"tunnel", "change", desired.Name, "mode", desired.Mode, "local", desired.Local, "remote", desired.Remote, "ttl", strconv.Itoa(desired.TTL)}
+	linkMode := desired.Mode
+	if desired.Mode == "fou" || desired.Mode == "gue" {
+		linkMode = "ipip"
+	}
+	args := []string{"tunnel", "change", desired.Name, "mode", linkMode, "local", desired.Local, "remote", desired.Remote, "ttl", strconv.Itoa(desired.TTL)}
 	if desired.Mode == "gre" && desired.Key != 0 {
 		args = append(args, "key", strconv.Itoa(desired.Key))
+	}
+	if desired.Mode == "fou" || desired.Mode == "gue" {
+		args = append(args, "encap", desired.Mode, "encap-sport", strconv.Itoa(desired.EncapSport), "encap-dport", strconv.Itoa(desired.EncapDport))
 	}
 	return args
 }
@@ -406,4 +475,12 @@ func tunnelMissingLink(out []byte, err error) bool {
 		}
 	}
 	return false
+}
+
+func tunnelFOUAlreadyExists(out []byte, err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(strings.TrimSpace(string(out)) + " " + err.Error())
+	return strings.Contains(msg, "file exists") || strings.Contains(msg, "object already exists") || strings.Contains(msg, "already exists")
 }

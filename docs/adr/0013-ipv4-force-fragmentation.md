@@ -27,9 +27,9 @@ Add an explicit IPv4 force-fragment option to overlay path MTU intent:
 - `TunnelInterface.spec.pathMTU.forceFragmentIPv4`
 
 The feature is supported only for trusted routerd overlay devices where routerd
-can derive the forwarded path and effective MTU: `wireguard`, `ipip`, and `gre`.
-Validation rejects `route`, `tailscale`, `ipsec`, or other underlay types when
-force fragmentation is enabled.
+can derive the forwarded path and effective MTU: `wireguard`, `ipip`, `gre`,
+`fou`, and `gue`. Validation rejects `route`, `tailscale`, `ipsec`, or other
+underlay types when force fragmentation is enabled.
 
 On Linux, routerd renders a dedicated nftables table:
 
