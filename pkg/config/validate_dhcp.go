@@ -351,6 +351,9 @@ func validateDHCPResource(res api.Resource, targetOS platform.OS) (bool, error) 
 			if strings.ContainsAny(target.Host, "\n\r") {
 				return true, fmt.Errorf("%s spec.targets[%d].host must not contain newline", res.ID(), i)
 			}
+			if strings.ContainsAny(target.User, "\n\r") {
+				return true, fmt.Errorf("%s spec.targets[%d].user must not contain newline", res.ID(), i)
+			}
 			if strings.TrimSpace(target.Path) != "" && (!filepath.IsAbs(strings.TrimSpace(target.Path)) || strings.ContainsAny(target.Path, "\n\r")) {
 				return true, fmt.Errorf("%s spec.targets[%d].path must be an absolute path", res.ID(), i)
 			}

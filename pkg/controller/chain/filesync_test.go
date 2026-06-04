@@ -22,6 +22,7 @@ func TestDHCPLeaseSyncRunsRsync(t *testing.T) {
 	}
 	var gotName string
 	var gotArgs []string
+	var gotDeadline bool
 	controller := FileSyncController{
 		Router: &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPLeaseSync"}, Metadata: api.ObjectMeta{Name: "lan-leases"}, Spec: api.DHCPLeaseSyncSpec{
@@ -30,13 +31,14 @@ func TestDHCPLeaseSyncRunsRsync(t *testing.T) {
 					Host:       "homert03.lain.local",
 					User:       "routerd",
 					Path:       "/var/lib/routerd/dnsmasq/dnsmasq.leases",
-					SSHOptions: []string{"-o", "BatchMode=yes"},
+					SSHOptions: []string{"-o", "ConnectTimeout=3"},
 				}},
 			}},
 		}}},
 		Store: mapStore{},
 		Now:   func() time.Time { return time.Date(2026, 6, 4, 22, 0, 0, 0, time.UTC) },
-		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			_, gotDeadline = ctx.Deadline()
 			gotName = name
 			gotArgs = append([]string(nil), args...)
 			return nil, nil
@@ -51,8 +53,9 @@ func TestDHCPLeaseSyncRunsRsync(t *testing.T) {
 	wantArgs := []string{
 		"-a",
 		"--delay-updates",
+		"--timeout=60",
 		"-e",
-		"ssh -o BatchMode=yes",
+		"ssh -o BatchMode=yes -o ConnectTimeout=3",
 		"--rsync-path=mkdir -p '/var/lib/routerd/dnsmasq' && rsync",
 		leaseFile,
 		"routerd@homert03.lain.local:/var/lib/routerd/dnsmasq/dnsmasq.leases",
@@ -60,10 +63,36 @@ func TestDHCPLeaseSyncRunsRsync(t *testing.T) {
 	if !reflect.DeepEqual(gotArgs, wantArgs) {
 		t.Fatalf("args = %#v, want %#v", gotArgs, wantArgs)
 	}
+	if !gotDeadline {
+		t.Fatal("sync command context has no deadline")
+	}
 	status := controller.Store.ObjectStatus(api.NetAPIVersion, "DHCPLeaseSync", "lan-leases")
 	if status["phase"] != "Synced" || status["sourceCount"] != 1 || status["targetCount"] != 1 {
 		t.Fatalf("status = %#v", status)
 	}
+}
+
+func TestDHCPLeaseSyncRsyncArgsHonorUserTimeoutOverrides(t *testing.T) {
+	args := fileSyncRsyncArgs(
+		fileSyncSource{Path: "/var/lib/routerd/dnsmasq/dnsmasq.leases"},
+		fileSyncTarget{
+			Host:       "homert03.lain.local",
+			SSHOptions: []string{"-o", "BatchMode=no", "-o", "ConnectTimeout=3"},
+			Options:    []string{"--timeout=5"},
+		},
+		1,
+	)
+	joined := strings.Join(args, "\x00")
+	if strings.Contains(joined, "--timeout=60") {
+		t.Fatalf("args = %#v, want user rsync timeout to suppress default timeout", args)
+	}
+	wantSSH := "ssh -o BatchMode=no -o ConnectTimeout=3"
+	for i, arg := range args {
+		if arg == "-e" && i+1 < len(args) && args[i+1] == wantSSH {
+			return
+		}
+	}
+	t.Fatalf("args = %#v, want ssh command %q", args, wantSSH)
 }
 
 func TestDHCPLeaseSyncMissingLeaseFileIsPending(t *testing.T) {

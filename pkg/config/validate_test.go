@@ -833,6 +833,31 @@ func TestValidatePhase15LANServiceKinds(t *testing.T) {
 	}
 }
 
+func TestValidateDHCPLeaseSyncRejectsTargetUserNewline(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPLeaseSync"},
+				Metadata: api.ObjectMeta{Name: "lan-leases"},
+				Spec: api.DHCPLeaseSyncSpec{
+					LeaseFile: "/var/lib/routerd/dnsmasq/dnsmasq.leases",
+					Targets: []api.DHCPLeaseSyncTargetSpec{{
+						Host: "router-b",
+						User: "routerd\nroot",
+					}},
+				},
+			},
+		}},
+	}
+
+	err := Validate(router)
+	if err == nil || !strings.Contains(err.Error(), "spec.targets[0].user must not contain newline") {
+		t.Fatalf("Validate err = %v, want target user newline error", err)
+	}
+}
+
 func TestValidateEgressRoutePolicyStaticRequiresGateway(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},

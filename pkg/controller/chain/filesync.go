@@ -14,6 +14,11 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 )
 
+const (
+	defaultFileSyncCommandTimeout      = 2 * time.Minute
+	defaultFileSyncRsyncTimeoutSeconds = "60"
+)
+
 type fileSyncCommandFunc func(ctx context.Context, name string, args ...string) ([]byte, error)
 
 type fileSyncJob struct {
@@ -118,7 +123,10 @@ func (c FileSyncController) reconcileJob(ctx context.Context, job fileSyncJob) e
 		}
 		for _, target := range job.Targets {
 			args := fileSyncRsyncArgs(source, target, len(job.Sources))
-			if out, err := run(ctx, command, args...); err != nil {
+			runCtx, cancel := fileSyncCommandContext(ctx)
+			out, err := run(runCtx, command, args...)
+			cancel()
+			if err != nil {
 				return c.save(job.APIVersion, job.Kind, job.Name, map[string]any{
 					"phase":   "Error",
 					"reason":  "SyncFailed",
@@ -260,9 +268,13 @@ func fileSyncTargetStatuses(targets []fileSyncTarget) []map[string]any {
 
 func fileSyncRsyncArgs(source fileSyncSource, target fileSyncTarget, sourceCount int) []string {
 	args := []string{"-a", "--delay-updates"}
+	if !fileSyncHasRsyncOption(target.Options, "--timeout") {
+		args = append(args, "--timeout="+defaultFileSyncRsyncTimeoutSeconds)
+	}
 	args = append(args, target.Options...)
-	if len(target.SSHOptions) > 0 {
-		args = append(args, "-e", "ssh "+strings.Join(target.SSHOptions, " "))
+	sshOptions := fileSyncEffectiveSSHOptions(target.SSHOptions)
+	if len(sshOptions) > 0 {
+		args = append(args, "-e", "ssh "+strings.Join(sshOptions, " "))
 	}
 	remotePath := fileSyncTargetPath(source, target, sourceCount)
 	if dir := path.Dir(remotePath); dir != "." && dir != "/" {
@@ -270,6 +282,83 @@ func fileSyncRsyncArgs(source fileSyncSource, target fileSyncTarget, sourceCount
 	}
 	args = append(args, source.Path, fileSyncDestination(target, remotePath))
 	return args
+}
+
+func fileSyncCommandContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if defaultFileSyncCommandTimeout <= 0 {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, defaultFileSyncCommandTimeout)
+}
+
+func fileSyncHasRsyncOption(options []string, name string) bool {
+	for _, option := range options {
+		option = strings.TrimSpace(option)
+		if option == name || strings.HasPrefix(option, name+"=") {
+			return true
+		}
+	}
+	return false
+}
+
+func fileSyncEffectiveSSHOptions(options []string) []string {
+	userKeys := fileSyncSSHOptionKeys(options)
+	defaults := []struct {
+		key  string
+		args []string
+	}{
+		{key: "batchmode", args: []string{"-o", "BatchMode=yes"}},
+		{key: "connecttimeout", args: []string{"-o", "ConnectTimeout=10"}},
+	}
+	var out []string
+	for _, def := range defaults {
+		if !userKeys[def.key] {
+			out = append(out, def.args...)
+		}
+	}
+	for _, option := range options {
+		if strings.TrimSpace(option) != "" {
+			out = append(out, option)
+		}
+	}
+	return out
+}
+
+func fileSyncSSHOptionKeys(options []string) map[string]bool {
+	keys := map[string]bool{}
+	for i := 0; i < len(options); i++ {
+		option := strings.TrimSpace(options[i])
+		var spec string
+		switch {
+		case option == "-o" && i+1 < len(options):
+			spec = options[i+1]
+			i++
+		case strings.HasPrefix(option, "-o "):
+			spec = strings.TrimSpace(strings.TrimPrefix(option, "-o "))
+		case strings.HasPrefix(option, "-o") && len(option) > len("-o"):
+			spec = strings.TrimSpace(strings.TrimPrefix(option, "-o"))
+		default:
+			continue
+		}
+		if key := fileSyncSSHOptionKey(spec); key != "" {
+			keys[key] = true
+		}
+	}
+	return keys
+}
+
+func fileSyncSSHOptionKey(spec string) string {
+	spec = strings.TrimSpace(spec)
+	if spec == "" {
+		return ""
+	}
+	cut := len(spec)
+	for _, sep := range []string{"=", " ", "\t"} {
+		if idx := strings.Index(spec, sep); idx >= 0 && idx < cut {
+			cut = idx
+		}
+	}
+	return strings.ToLower(strings.TrimSpace(spec[:cut]))
 }
 
 func fileSyncTargetPath(source fileSyncSource, target fileSyncTarget, sourceCount int) string {
