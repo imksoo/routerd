@@ -192,6 +192,38 @@ func TestValidateMobilityPoolPlacement(t *testing.T) {
 	}
 }
 
+func TestValidateMobilityPoolAllowsIdentityOnlyPlacementMember(t *testing.T) {
+	spec := api.MobilityPoolSpec{
+		Prefix:   "10.88.60.0/24",
+		GroupRef: "cloudedge",
+		Members: []api.MobilityPoolMember{
+			{NodeRef: "onprem-router", Site: "onprem", Role: "onprem"},
+			{
+				NodeRef: "aws-router-a",
+				Site:    "aws",
+				Role:    "cloud",
+				Capture: api.MobilityMemberCapture{
+					Type:         "provider-secondary-ip",
+					ProviderRef:  "aws-provider",
+					ProviderMode: "eni-secondary-ip",
+				},
+				OwnershipDiscovery: api.MobilityOwnershipDiscovery{Mode: "provider-private-ip"},
+				Placement:          api.MobilityMemberPlacement{Group: "aws-edge", Priority: 10},
+			},
+			{
+				NodeRef:     "aws-router-b",
+				Site:        "aws",
+				Role:        "cloud",
+				Placement:   api.MobilityMemberPlacement{Group: "aws-edge", Priority: 20},
+				Maintenance: api.MobilityMemberMaintenance{Drain: true},
+			},
+		},
+	}
+	if err := Validate(mobilityPoolRouter(spec)); err != nil {
+		t.Fatalf("Validate identity-only placement member: %v", err)
+	}
+}
+
 func TestValidateMobilityPoolCloudCaptureProfile(t *testing.T) {
 	spec := api.MobilityPoolSpec{
 		Prefix:   "10.88.60.0/24",

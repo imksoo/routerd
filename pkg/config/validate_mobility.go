@@ -386,7 +386,8 @@ func validateMobilityMemberPlacement(res api.Resource, index int, member api.Mob
 	if strings.TrimSpace(member.Role) != "cloud" {
 		return fmt.Errorf("%s spec.members[%d].placement.group is supported only for role cloud", res.ID(), index)
 	}
-	if strings.TrimSpace(member.Capture.Type) != "provider-secondary-ip" {
+	captureType := strings.TrimSpace(member.Capture.Type)
+	if captureType != "" && captureType != "provider-secondary-ip" {
 		return fmt.Errorf("%s spec.members[%d].placement.group requires provider-secondary-ip capture", res.ID(), index)
 	}
 	current := mobilityPlacementGroup{
@@ -401,8 +402,12 @@ func validateMobilityMemberPlacement(res api.Resource, index int, member api.Mob
 		if existing.role != current.role {
 			return fmt.Errorf("%s spec.members[%d].placement.group %q must use one role; got %q and %q", res.ID(), index, group, existing.role, current.role)
 		}
-		if existing.providerRef != current.providerRef {
+		if existing.providerRef != "" && current.providerRef != "" && existing.providerRef != current.providerRef {
 			return fmt.Errorf("%s spec.members[%d].placement.group %q must use one providerRef; got %q and %q", res.ID(), index, group, existing.providerRef, current.providerRef)
+		}
+		if existing.providerRef == "" && current.providerRef != "" {
+			existing.providerRef = current.providerRef
+			groups[group] = existing
 		}
 	} else {
 		groups[group] = current

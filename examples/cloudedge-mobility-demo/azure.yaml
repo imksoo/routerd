@@ -189,54 +189,58 @@ spec:
       spec:
         prefix: 10.77.60.0/24
         groupRef: cloudedge
+        values:
+          self.region: "${AZURE_REGION}"
+          self.resourceGroup: "${AZURE_RESOURCE_GROUP}"
+          self.subnetRef: "${AZURE_SUBNET_REF}"
+        profiles:
+          cloudCaptures:
+            azure-self:
+              capture:
+                type: provider-secondary-ip
+                interface: eth0
+                providerRef: azure-lab
+                providerMode: nic-secondary-ip
+                configureOSAddress: false
+                targetFrom:
+                  region: self.region
+                  resourceGroup: self.resourceGroup
+              ownershipDiscovery:
+                mode: provider-private-ip
+                scope: { includePrimary: false }
+                subnetRefFrom: self.subnetRef
+                scanInterval: 60s
+                leaseTTL: 10m
         deliveryPolicy: { mode: bgp }
         members:
           - nodeRef: onprem-router
             site: onprem
             role: onprem
-            staticOwnedAddresses:
-              - 10.77.60.10/32
-            capture:
-              type: proxy-arp
-              interface: ens21
-              gratuitousARP: true
-              activeWhen: { type: vrrp-master, virtualAddressRef: onprem-gate-vip }
           - nodeRef: aws-router-a
             site: aws
             role: cloud
-            capture: { type: provider-secondary-ip, interface: ens5, providerRef: aws-lab, providerMode: eni-secondary-ip, configureOSAddress: false, target: { region: "${AWS_REGION}" } }
             placement: { group: aws-edge, priority: 10 }
-            ownershipDiscovery: { mode: provider-private-ip, providerRef: aws-lab, scope: { includePrimary: false }, subnetRef: "${AWS_SUBNET_REF}", scanInterval: 60s, leaseTTL: 10m }
           - nodeRef: aws-router-b
             site: aws
             role: cloud
-            capture: { type: provider-secondary-ip, interface: ens5, providerRef: aws-lab, providerMode: eni-secondary-ip, configureOSAddress: false, target: { region: "${AWS_REGION}" } }
             placement: { group: aws-edge, priority: 20 }
-            ownershipDiscovery: { mode: provider-private-ip, providerRef: aws-lab, scope: { includePrimary: false }, subnetRef: "${AWS_SUBNET_REF}", scanInterval: 60s, leaseTTL: 10m }
-          - nodeRef: azure-router
+          - nodeRef: "${DEMO_SELF_NODE}"
             site: azure
             role: cloud
-            capture: { type: provider-secondary-ip, interface: eth0, providerRef: azure-lab, providerMode: nic-secondary-ip, configureOSAddress: false, target: { region: "${AZURE_REGION}", resourceGroup: "${AZURE_RESOURCE_GROUP}" } }
-            placement: { group: azure-edge, priority: 10 }
-            ownershipDiscovery: { mode: provider-private-ip, providerRef: azure-lab, scope: { includePrimary: false }, subnetRef: "${AZURE_SUBNET_REF}", scanInterval: 60s, leaseTTL: 10m }
-          - nodeRef: azure-router-b
+            profileRef: azure-self
+            placement: { group: azure-edge, priority: ${DEMO_SELF_PRIORITY} }
+          - nodeRef: "${DEMO_SAMESITE_PEER_NODE}"
             site: azure
             role: cloud
-            capture: { type: provider-secondary-ip, interface: eth0, providerRef: azure-lab, providerMode: nic-secondary-ip, configureOSAddress: false, target: { region: "${AZURE_REGION}", resourceGroup: "${AZURE_RESOURCE_GROUP}" } }
-            placement: { group: azure-edge, priority: 20 }
-            ownershipDiscovery: { mode: provider-private-ip, providerRef: azure-lab, scope: { includePrimary: false }, subnetRef: "${AZURE_SUBNET_REF}", scanInterval: 60s, leaseTTL: 10m }
+            placement: { group: azure-edge, priority: ${DEMO_SAMESITE_PEER_PRIORITY} }
           - nodeRef: oci-router
             site: oci
             role: cloud
-            capture: { type: provider-secondary-ip, interface: ens3, providerRef: oci-lab, providerMode: vnic-secondary-ip, configureOSAddress: false, target: { region: "${OCI_REGION}", compartmentId: "${OCI_COMPARTMENT_REF}" } }
             placement: { group: oci-edge, priority: 10 }
-            ownershipDiscovery: { mode: provider-private-ip, providerRef: oci-lab, scope: { includePrimary: false }, subnetRef: "${OCI_SUBNET_REF}", scanInterval: 60s, leaseTTL: 10m }
           - nodeRef: oci-router-b
             site: oci
             role: cloud
-            capture: { type: provider-secondary-ip, interface: ens3, providerRef: oci-lab, providerMode: vnic-secondary-ip, configureOSAddress: false, target: { region: "${OCI_REGION}", compartmentId: "${OCI_COMPARTMENT_REF}" } }
             placement: { group: oci-edge, priority: 20 }
-            ownershipDiscovery: { mode: provider-private-ip, providerRef: oci-lab, scope: { includePrimary: false }, subnetRef: "${OCI_SUBNET_REF}", scanInterval: 60s, leaseTTL: 10m }
         capturePolicy: { mode: all-non-owner-sites }
         ipOwnershipPolicy: { type: centralized, autoFailover: true }
 
