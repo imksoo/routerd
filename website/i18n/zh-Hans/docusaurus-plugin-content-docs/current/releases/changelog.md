@@ -11,6 +11,41 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 新增
+
+- 新增 CloudEdge Selective Address Mobility Phase G：跨 AWS、Azure、
+  OCI 与 on-prem 站点的自主 BGP /32 address mobility。该机制运行在
+  WireGuard overlay 与 iBGP（on-prem route-reflector）之上；ownership
+  由 BGP best path 决定，liveness 使用带 identity community 的 per-node
+  marker /32，cloud trap 由 RIB 驱动，同站点 standby seize 由 liveness
+  驱动。数据平面保持无 NAT、保留 source IP、client default gateway
+  不变。cloud capture 使用 AWS ENI、Azure NIC `ipConfig`、OCI VNIC
+  secondary IP；on-prem capture 使用 VRRP-gated proxy ARP + GARP，
+  backup fail-closed，doctor 对 split-brain 进行确定性 FAIL。
+- 新增基于 `TunnelInterface` 的 pluggable overlay underlay，支持 IPIP、
+  GRE、FOU 与 GUE UDP encapsulation。默认 overlay transport 仍为
+  WireGuard。见 ADR 0009。
+- 新增 `OverlayPeer.pathMTU.forceFragmentIPv4` 与
+  `TunnelInterface.pathMTU.forceFragmentIPv4` IPv4 force-fragment 控制。
+  默认关闭，用于显式启用 PMTU blackhole mitigation。见 ADR 0013。
+- 扩展 `MobilityPool` 的声明式 authoring model，支持
+  `profiles.cloudCaptures`、`spec.values`、`capture.targetFrom`、
+  `ownershipDiscovery.subnetRefFrom`、`members[].profileRef`、
+  self-complete local member 与 identity-only remote peer。
+- 在 `examples/cloudedge-mobility-demo/iam/` 下新增 AWS、Azure、OCI 的
+  scoped provider access least-privilege IAM template。
+
+### 变更
+
+- Mobility delivery 现在以 BGP best path 作为唯一 ownership plane。
+  ADR 0012 记录 clean Option B architecture，并取代 ADR 0006 早期的
+  overlay-reachability source-of-truth model。
+
+### 移除
+
+- 作为 clean Option B migration 的一部分，移除了基于 AddressLease、
+  ownershipEpoch 与 heartbeat-event 的 mobility control plane。
+
 ## v20260528.2308
 
 ### 新增

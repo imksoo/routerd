@@ -11,6 +11,44 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 追加
+
+- CloudEdge Selective Address Mobility Phase G を追加しました。AWS、
+  Azure、OCI、on-prem をまたぐ自律 BGP /32 address mobility です。
+  WireGuard overlay と iBGP（on-prem route-reflector）上で動作し、
+  ownership は BGP best path、liveness は identity community 付きの
+  per-node marker /32、cloud trap は RIB 駆動、同一 site standby の
+  seize は liveness 駆動になりました。データプレーンは NAT なし、
+  source IP 保持、client default gateway 不変を維持します。cloud
+  capture は AWS ENI、Azure NIC `ipConfig`、OCI VNIC secondary IP、
+  on-prem capture は VRRP-gated proxy ARP + GARP を使い、backup は
+  fail-closed、doctor は split-brain を決定的に FAIL します。
+- `TunnelInterface` による pluggable overlay underlay を追加しました。
+  IPIP、GRE、FOU、GUE UDP encapsulation に対応し、既定の overlay
+  transport は引き続き WireGuard です。ADR 0009 を参照してください。
+- `OverlayPeer.pathMTU.forceFragmentIPv4` と
+  `TunnelInterface.pathMTU.forceFragmentIPv4` に IPv4 force-fragment
+  制御を追加しました。既定は off で、PMTU blackhole mitigation を
+  明示的に有効化できます。ADR 0013 を参照してください。
+- `MobilityPool` の宣言型 authoring model を拡張しました。
+  `profiles.cloudCaptures`、`spec.values`、`capture.targetFrom`、
+  `ownershipDiscovery.subnetRefFrom`、`members[].profileRef`、
+  self-complete local member、identity-only remote peer に対応します。
+- `examples/cloudedge-mobility-demo/iam/` に、AWS、Azure、OCI 向けの
+  scoped provider access 用 least-privilege IAM template を追加しました。
+
+### 変更
+
+- Mobility delivery は BGP best path を唯一の ownership plane として
+  使うようになりました。ADR 0012 は clean Option B architecture を
+  記録し、ADR 0006 の以前の overlay-reachability source-of-truth
+  model を supersede します。
+
+### 削除
+
+- clean Option B migration の一環として、AddressLease、ownershipEpoch、
+  heartbeat-event ベースの mobility control plane を削除しました。
+
 ## v20260528.2308
 
 ### 追加

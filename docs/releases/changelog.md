@@ -12,6 +12,45 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Added
+
+- CloudEdge Selective Address Mobility Phase G: autonomous BGP /32
+  address mobility across AWS, Azure, OCI, and on-prem sites. Mobility
+  now runs over a WireGuard overlay with iBGP and an on-prem
+  route-reflector; ownership is the BGP best path, liveness uses
+  per-node marker /32s with identity communities, cloud traps are
+  RIB-driven, and same-site standby seizure is liveness-driven. The
+  data plane keeps NAT disabled, preserves source addresses, and leaves
+  client default gateways unchanged. Cloud capture uses AWS ENI,
+  Azure NIC `ipConfig`, and OCI VNIC secondary IPs; on-prem capture uses
+  VRRP-gated proxy ARP plus GARP, with backups fail-closed and doctor
+  split-brain checks failing deterministically.
+- Pluggable overlay underlays through `TunnelInterface`, including
+  IPIP, GRE, FOU, and GUE UDP encapsulation. WireGuard remains the
+  default overlay transport. See ADR 0009.
+- IPv4 force-fragment controls through
+  `OverlayPeer.pathMTU.forceFragmentIPv4` and
+  `TunnelInterface.pathMTU.forceFragmentIPv4`, defaulting off, for
+  controlled PMTU blackhole mitigation. See ADR 0013.
+- A more declarative `MobilityPool` authoring model with
+  `profiles.cloudCaptures`, `spec.values`, `capture.targetFrom`,
+  `ownershipDiscovery.subnetRefFrom`, `members[].profileRef`,
+  self-complete local members, and identity-only remote peers.
+- Least-privilege CloudEdge IAM templates under
+  `examples/cloudedge-mobility-demo/iam/` for scoped AWS, Azure, and
+  OCI provider access.
+
+### Changed
+
+- Mobility delivery now uses BGP best path as the single ownership
+  plane. ADR 0012 records the clean Option B architecture and supersedes
+  ADR 0006's earlier overlay-reachability source-of-truth model.
+
+### Removed
+
+- The AddressLease, ownershipEpoch, and heartbeat-event based mobility
+  control plane was removed as part of the clean Option B migration.
+
 ## v20260528.2308
 
 ### Added
