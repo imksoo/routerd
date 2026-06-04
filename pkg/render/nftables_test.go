@@ -730,6 +730,151 @@ func TestNftablesTCPMSSClampForSAMOverlay(t *testing.T) {
 	}
 }
 
+func TestNftablesIPv4ForceFragmentDefaultOff(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardInterface"},
+			Metadata: api.ObjectMeta{Name: "wg-hybrid"},
+			Spec:     api.WireGuardInterfaceSpec{MTU: 1420},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "OverlayPeer"},
+			Metadata: api.ObjectMeta{Name: "onprem-main"},
+			Spec: api.OverlayPeerSpec{
+				Role:     "onprem",
+				NodeID:   "onprem-router",
+				Underlay: api.OverlayUnderlay{Type: "wireguard", Interface: "wg-hybrid"},
+			},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "AddressMobilityDomain"},
+			Metadata: api.ObjectMeta{Name: "same-subnet"},
+			Spec:     api.AddressMobilityDomainSpec{Prefix: "10.77.60.0/24", Mode: "selective-address", PeerRef: "onprem-main"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "RemoteAddressClaim"},
+			Metadata: api.ObjectMeta{Name: "onprem-client"},
+			Spec: api.RemoteAddressClaimSpec{
+				DomainRef: "same-subnet",
+				Address:   "10.77.60.9/32",
+				OwnerSide: "onprem",
+				Capture:   api.AddressCapture{Type: "provider-secondary-ip", ProviderRef: "oci-lab", ProviderMode: "vnic-secondary-ip", NICRef: "ocid1.vnic.example", Interface: "ens3"},
+				Delivery:  api.AddressDelivery{PeerRef: "onprem-main", Mode: "route", TunnelInterface: "wg-hybrid"},
+			},
+		},
+	}}}
+	data, err := NftablesIPv4ForceFragment(router)
+	if err != nil {
+		t.Fatalf("render forcefrag: %v", err)
+	}
+	if len(data) != 0 {
+		t.Fatalf("forcefrag default off should render nothing:\n%s", string(data))
+	}
+}
+
+func TestNftablesIPv4ForceFragmentForSAMOverlay(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardInterface"},
+			Metadata: api.ObjectMeta{Name: "wg-hybrid"},
+			Spec:     api.WireGuardInterfaceSpec{MTU: 1420},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "OverlayPeer"},
+			Metadata: api.ObjectMeta{Name: "onprem-main"},
+			Spec: api.OverlayPeerSpec{
+				Role:     "onprem",
+				NodeID:   "onprem-router",
+				Underlay: api.OverlayUnderlay{Type: "wireguard", Interface: "wg-hybrid"},
+				PathMTU:  api.PathMTUOptions{ForceFragmentIPv4: true},
+			},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "AddressMobilityDomain"},
+			Metadata: api.ObjectMeta{Name: "same-subnet"},
+			Spec:     api.AddressMobilityDomainSpec{Prefix: "10.77.60.0/24", Mode: "selective-address", PeerRef: "onprem-main"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "RemoteAddressClaim"},
+			Metadata: api.ObjectMeta{Name: "onprem-client"},
+			Spec: api.RemoteAddressClaimSpec{
+				DomainRef: "same-subnet",
+				Address:   "10.77.60.9/32",
+				OwnerSide: "onprem",
+				Capture:   api.AddressCapture{Type: "provider-secondary-ip", ProviderRef: "oci-lab", ProviderMode: "vnic-secondary-ip", NICRef: "ocid1.vnic.example", Interface: "ens3"},
+				Delivery:  api.AddressDelivery{PeerRef: "onprem-main", Mode: "route", TunnelInterface: "wg-hybrid"},
+			},
+		},
+	}}}
+	data, err := NftablesIPv4ForceFragment(router)
+	if err != nil {
+		t.Fatalf("render forcefrag: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		"add table ip routerd_forcefrag",
+		"flush table ip routerd_forcefrag",
+		"table ip routerd_forcefrag",
+		`iifname "ens3" oifname "wg-hybrid" ip length > 1340 ip frag-off 0x4000 ip frag-off set 0`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("forcefrag output missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "meta nfproto ipv6") {
+		t.Fatalf("forcefrag must be IPv4-only:\n%s", got)
+	}
+}
+
+func TestNftablesIPv4ForceFragmentCanFollowTunnelInterfaceOption(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
+			Metadata: api.ObjectMeta{Name: "tun-gre"},
+			Spec: api.TunnelInterfaceSpec{
+				Mode:            "gre",
+				Local:           "192.0.2.10",
+				Remote:          "192.0.2.20",
+				TrustedUnderlay: true,
+				PathMTU:         api.PathMTUOptions{ForceFragmentIPv4: true},
+			},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "OverlayPeer"},
+			Metadata: api.ObjectMeta{Name: "onprem-main"},
+			Spec: api.OverlayPeerSpec{
+				Role:     "onprem",
+				NodeID:   "onprem-router",
+				Underlay: api.OverlayUnderlay{Type: "gre", Interface: "tun-gre"},
+			},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "AddressMobilityDomain"},
+			Metadata: api.ObjectMeta{Name: "same-subnet"},
+			Spec:     api.AddressMobilityDomainSpec{Prefix: "10.77.60.0/24", Mode: "selective-address", PeerRef: "onprem-main"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "RemoteAddressClaim"},
+			Metadata: api.ObjectMeta{Name: "onprem-client"},
+			Spec: api.RemoteAddressClaimSpec{
+				DomainRef: "same-subnet",
+				Address:   "10.77.60.9/32",
+				OwnerSide: "onprem",
+				Capture:   api.AddressCapture{Type: "provider-secondary-ip", ProviderRef: "oci-lab", ProviderMode: "vnic-secondary-ip", NICRef: "ocid1.vnic.example", Interface: "ens3"},
+				Delivery:  api.AddressDelivery{PeerRef: "onprem-main", Mode: "route", TunnelInterface: "tun-gre"},
+			},
+		},
+	}}}
+	data, err := NftablesIPv4ForceFragment(router)
+	if err != nil {
+		t.Fatalf("render forcefrag: %v", err)
+	}
+	want := `iifname "ens3" oifname "tun-gre" ip length > 1452 ip frag-off 0x4000 ip frag-off set 0`
+	if !strings.Contains(string(data), want) {
+		t.Fatalf("forcefrag output missing tunnel option rule %q:\n%s", want, string(data))
+	}
+}
+
 func TestNftablesTCPMSSClampForBGPMobilityOverlay(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{Resources: []api.Resource{

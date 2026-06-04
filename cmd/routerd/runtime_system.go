@@ -391,6 +391,7 @@ func applyNftablesConfig(path string, data []byte) ([]string, error) {
 	}{
 		{family: "inet", name: "routerd_filter", header: "table inet routerd_filter"},
 		{family: "inet", name: "routerd_mss", header: "table inet routerd_mss"},
+		{family: "ip", name: "routerd_forcefrag", header: "table ip routerd_forcefrag"},
 		{family: "bridge", name: "routerd_l2_filter", header: "table bridge routerd_l2_filter"},
 		{family: "ip", name: "routerd_dnat", header: "table ip routerd_dnat"},
 		{family: "ip", name: "routerd_nat", header: "table ip routerd_nat"},

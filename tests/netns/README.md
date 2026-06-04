@@ -20,6 +20,7 @@ To run one scenario:
 sudo ./keepalived-vip-failover.sh
 sudo ./keepalived-no-spurious-restart.sh
 sudo ./ingress-conntrack-survive.sh
+sudo ./forcefrag-df-forward.sh
 ./render-compatibility.sh
 ```
 
@@ -32,6 +33,7 @@ The scripts cover:
 | `keepalived-vip-failover.sh` | Two keepalived instances move a VIP to standby within advert/preempt timing. |
 | `keepalived-no-spurious-restart.sh` | Repeated routerd VRRP reconciles do not restart an unchanged keepalived instance for 60 seconds. |
 | `ingress-conntrack-survive.sh` | Existing DNAT conntrack flows stay on the old backend while new flows use the new backend. |
+| `forcefrag-df-forward.sh` | Linux nftables `routerd_forcefrag` clears IPv4 DF on an oversized forwarded packet before a low-MTU egress link. |
 | `render-compatibility.sh` | Non-root render golden compatibility check for Linux, Alpine/OpenRC, FreeBSD/rc.d, and NixOS output snapshots. |
 
 Do not add tests here that mutate the default host namespace. New scenarios must

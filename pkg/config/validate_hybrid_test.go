@@ -84,6 +84,17 @@ func TestValidateHybridFailures(t *testing.T) {
 			want: "spec.peerRef is required",
 		},
 		{
+			name: "force fragment unsupported underlay rejected",
+			mutate: func(router *api.Router) {
+				spec := router.Spec.Resources[1].Spec.(api.OverlayPeerSpec)
+				spec.Underlay.Type = "route"
+				spec.Underlay.Interface = ""
+				spec.PathMTU.ForceFragmentIPv4 = true
+				router.Spec.Resources[1].Spec = spec
+			},
+			want: "spec.pathMTU.forceFragmentIPv4 is supported only for underlay.type wireguard, ipip, or gre",
+		},
+		{
 			name: "unresolved peerRef",
 			mutate: func(router *api.Router) {
 				spec := router.Spec.Resources[3].Spec.(api.HybridRouteSpec)

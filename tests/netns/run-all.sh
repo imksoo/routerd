@@ -12,6 +12,7 @@ scripts=(
   keepalived-vip-failover.sh
   keepalived-no-spurious-restart.sh
   ingress-conntrack-survive.sh
+  forcefrag-df-forward.sh
 )
 
 for script in "${scripts[@]}"; do

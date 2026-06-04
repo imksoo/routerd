@@ -44,6 +44,46 @@ func TestPathMTUControllerRendersMSSClamp(t *testing.T) {
 	}
 }
 
+func TestPathMTUControllerRendersForceFragment(t *testing.T) {
+	dir := t.TempDir()
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardInterface"}, Metadata: api.ObjectMeta{Name: "wg-hybrid"}, Spec: api.WireGuardInterfaceSpec{MTU: 1420}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "OverlayPeer"}, Metadata: api.ObjectMeta{Name: "onprem-main"}, Spec: api.OverlayPeerSpec{
+			Role:     "onprem",
+			NodeID:   "onprem-router",
+			Underlay: api.OverlayUnderlay{Type: "wireguard", Interface: "wg-hybrid"},
+			PathMTU:  api.PathMTUOptions{ForceFragmentIPv4: true},
+		}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "AddressMobilityDomain"}, Metadata: api.ObjectMeta{Name: "same-subnet"}, Spec: api.AddressMobilityDomainSpec{Prefix: "10.77.60.0/24", Mode: "selective-address", PeerRef: "onprem-main"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "RemoteAddressClaim"}, Metadata: api.ObjectMeta{Name: "onprem-client"}, Spec: api.RemoteAddressClaimSpec{
+			DomainRef: "same-subnet",
+			Address:   "10.77.60.9/32",
+			OwnerSide: "onprem",
+			Capture:   api.AddressCapture{Type: "provider-secondary-ip", ProviderRef: "oci-lab", ProviderMode: "vnic-secondary-ip", NICRef: "ocid1.vnic.example", Interface: "ens3"},
+			Delivery:  api.AddressDelivery{PeerRef: "onprem-main", Mode: "route", TunnelInterface: "wg-hybrid"},
+		}},
+	}}}
+	store := mapStore{}
+	controller := PathMTUController{Router: router, Store: store, DryRun: true, Path: filepath.Join(dir, "mss.nft"), ForceFragmentPath: filepath.Join(dir, "forcefrag.nft")}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(controller.ForceFragmentPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(data)
+	for _, want := range []string{`table ip routerd_forcefrag`, `iifname "ens3" oifname "wg-hybrid" ip length > 1340 ip frag-off 0x4000 ip frag-off set 0`} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("forcefrag rules missing %q:\n%s", want, got)
+		}
+	}
+	status := store.ObjectStatus(api.RouterAPIVersion, "Router", "derived-path-mtu")
+	if status["phase"] != "Applied" || status["forceFragmentIPv4Active"] != true {
+		t.Fatalf("status = %#v", status)
+	}
+}
+
 func TestPathMTUControllerSkipsUnchangedLiveReload(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "nft.log")

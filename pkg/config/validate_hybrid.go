@@ -41,6 +41,13 @@ func validateHybridResource(res api.Resource, _ platform.OS) (bool, error) {
 				return true, fmt.Errorf("%s spec.underlay.interface is required when spec.underlay.type is %s", res.ID(), spec.Underlay.Type)
 			}
 		}
+		if spec.PathMTU.ForceFragmentIPv4 {
+			switch strings.TrimSpace(spec.Underlay.Type) {
+			case "wireguard", "ipip", "gre":
+			default:
+				return true, fmt.Errorf("%s spec.pathMTU.forceFragmentIPv4 is supported only for underlay.type wireguard, ipip, or gre", res.ID())
+			}
+		}
 		if address := strings.TrimSpace(spec.Underlay.Address); address != "" {
 			if _, err := netip.ParseAddr(address); err != nil {
 				return true, fmt.Errorf("%s spec.underlay.address must be an IP address", res.ID())

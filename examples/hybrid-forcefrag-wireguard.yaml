@@ -1,0 +1,70 @@
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: forcefrag-wireguard-example
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata: { name: lan }
+      spec: { ifname: ens19, managed: false, owner: external }
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardInterface
+      metadata: { name: wg-hybrid }
+      spec:
+        privateKeyFile: /usr/local/etc/routerd/secrets/wg-hybrid.key
+        listenPort: 51820
+        mtu: 1420
+
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: OverlayPeer
+      metadata: { name: edge-main }
+      spec:
+        role: cloud
+        nodeID: edge-router
+        underlay:
+          type: wireguard
+          interface: wg-hybrid
+        pathMTU:
+          # Last-resort IPv4 PMTU black-hole workaround for trusted overlays.
+          # TCP still uses the derived routerd_mss clamp first.
+          forceFragmentIPv4: true
+
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: AddressMobilityDomain
+      metadata: { name: same-subnet }
+      spec:
+        prefix: 10.77.60.0/24
+        mode: selective-address
+        peerRef: edge-main
+
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: CloudProviderProfile
+      metadata: { name: lab-cloud }
+      spec:
+        provider: aws
+        capabilities:
+          - nic-secondary-ip
+          - ip-forwarding
+        auth:
+          mode: external-command
+          command: /usr/local/libexec/routerd/plugins/lab-cloud-auth
+
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: RemoteAddressClaim
+      metadata: { name: remote-client }
+      spec:
+        domainRef: same-subnet
+        address: 10.77.60.9/32
+        ownerSide: onprem
+        capture:
+          type: provider-secondary-ip
+          providerRef: lab-cloud
+          providerMode: secondary-ip
+          nicRef: nic-router
+          interface: lan
+        delivery:
+          mode: route
+          peerRef: edge-main
+          tunnelInterface: wg-hybrid

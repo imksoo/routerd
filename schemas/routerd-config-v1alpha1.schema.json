@@ -5814,6 +5814,15 @@
                         "minimum": 576,
                         "type": "integer"
                       },
+                      "pathMTU": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "forceFragmentIPv4": {
+                            "type": "boolean"
+                          }
+                        },
+                        "type": "object"
+                      },
                       "remote": {
                         "type": "string"
                       },
@@ -5876,6 +5885,15 @@
                     "properties": {
                       "nodeID": {
                         "type": "string"
+                      },
+                      "pathMTU": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "forceFragmentIPv4": {
+                            "type": "boolean"
+                          }
+                        },
+                        "type": "object"
                       },
                       "remote": {
                         "additionalProperties": false,

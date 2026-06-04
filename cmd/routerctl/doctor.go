@@ -319,6 +319,7 @@ func (r doctorRunner) doctorSAMLiveChecks(name string, spec api.RemoteAddressCla
 		doctorSAMDeliveryRouteCheck(ctx, name, routeName, address, tunnel),
 		doctorSAMRouteGetCheck(ctx, name, address),
 		doctorSAMMSSClampCheck(ctx, name, captureInterface, tunnel),
+		doctorSAMForceFragmentCheck(ctx, name, captureInterface, tunnel),
 		doctorSAMHostFirewallCheck(ctx, name, captureInterface, tunnel, r.doctorWireGuardListenPort(tunnel)),
 	)
 	if strings.TrimSpace(spec.Capture.Type) == "proxy-arp" {
@@ -667,6 +668,40 @@ func doctorSAMMSSClampUnavailableDetail(command diagnoseCommandCheck) string {
 	}
 }
 
+func doctorSAMForceFragmentCheck(ctx context.Context, name, captureIface, tunnel string) doctorCheck {
+	label := "RemoteAddressClaim/" + name + " force-fragment"
+	tunnel = strings.TrimSpace(tunnel)
+	captureIface = strings.TrimSpace(captureIface)
+	if tunnel == "" || strings.HasPrefix(tunnel, "delivery tunnel interface unresolved") {
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorSkip, Detail: "delivery tunnel interface unavailable"}
+	}
+	if captureIface == "" {
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorSkip, Detail: "capture interface unavailable"}
+	}
+	table := doctorRunDiagnosticCommand(ctx, "nft list table ip routerd_forcefrag", "nft", "list", "table", "ip", "routerd_forcefrag")
+	if !table.OK {
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorSkip, Detail: appendDoctorDetail("optional IPv4 force-fragment not active", doctorForceFragmentUnavailableDetail(table))}
+	}
+	if nftForceFragmentHasPath(table.Stdout, captureIface, tunnel) {
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: "routerd_forcefrag covers " + captureIface + " -> " + tunnel}
+	}
+	return doctorCheck{Area: "hybrid", Name: label, Status: doctorSkip, Detail: "routerd_forcefrag does not cover " + captureIface + " -> " + tunnel}
+}
+
+func doctorForceFragmentUnavailableDetail(command diagnoseCommandCheck) string {
+	combined := strings.ToLower(strings.Join([]string{command.Error, command.Stderr, command.Stdout, command.Output}, " "))
+	switch {
+	case strings.Contains(combined, "executable file not found") || strings.Contains(combined, "no such file or directory") && strings.Contains(strings.ToLower(command.Error), "exec"):
+		return "nft unavailable"
+	case strings.Contains(combined, "permission denied") || strings.Contains(combined, "operation not permitted"):
+		return "permission denied running nft"
+	case strings.Contains(combined, "no such file or directory") || strings.Contains(combined, "no such table") || strings.Contains(combined, "table does not exist"):
+		return "routerd_forcefrag table absent"
+	default:
+		return firstNonEmpty(command.Error, oneLine(command.Output), "exit "+strconv.Itoa(command.ExitCode))
+	}
+}
+
 func doctorExtractLinkMTU(output string) string {
 	fields := strings.Fields(output)
 	for i, field := range fields {
@@ -680,6 +715,15 @@ func doctorExtractLinkMTU(output string) string {
 func nftMSSClampHasPath(output, from, to string) bool {
 	for _, line := range strings.Split(output, "\n") {
 		if strings.Contains(line, `iifname "`+from+`"`) && strings.Contains(line, `oifname "`+to+`"`) && strings.Contains(line, "maxseg") {
+			return true
+		}
+	}
+	return false
+}
+
+func nftForceFragmentHasPath(output, from, to string) bool {
+	for _, line := range strings.Split(output, "\n") {
+		if strings.Contains(line, `iifname "`+from+`"`) && strings.Contains(line, `oifname "`+to+`"`) && strings.Contains(line, "frag-off set 0") {
 			return true
 		}
 	}

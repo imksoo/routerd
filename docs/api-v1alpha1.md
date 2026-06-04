@@ -242,6 +242,12 @@ routerd derives reverse path filter sysctls, tunnel MTU, RA MTU, and TCP MSS
 clamping from router role, tunnel, firewall zone, and RA/DHCPv6 resources.
 Configs should declare the tunnel and LAN/WAN intent rather than separate
 `IPv4ReversePathFilter` or `PathMTUPolicy` resources.
+For trusted overlay paths that need a non-TCP IPv4 PMTU black-hole workaround,
+`OverlayPeer.spec.pathMTU.forceFragmentIPv4` or
+`TunnelInterface.spec.pathMTU.forceFragmentIPv4` can enable a default-off Linux
+nftables `routerd_forcefrag` table. It clears DF only for oversized IPv4 packets
+on the derived forwarded path. It is supported only for `wireguard`, `ipip`, and
+`gre` overlay underlays.
 If an externally managed source interface has a lower MTU, such as `tailscale0`,
 set `Interface.spec.mtu`; routerd uses it only for that source path instead of
 lowering unrelated LAN paths.
