@@ -1,0 +1,35 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadOwnMobilityNetworkInterface",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeNetworkInterfaces"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "<aws-region>"
+        }
+      }
+    },
+    {
+      "Sid": "MutateOwnMobilityNetworkInterface",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:AssignPrivateIpAddresses",
+        "ec2:UnassignPrivateIpAddresses",
+        "ec2:ModifyNetworkInterfaceAttribute"
+      ],
+      "Resource": [
+        "arn:aws:ec2:<aws-region>:<aws-account-id>:network-interface/<eni-id>"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "<aws-region>"
+        }
+      }
+    }
+  ]
+}

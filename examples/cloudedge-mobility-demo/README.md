@@ -43,6 +43,8 @@ assigned to ENI-B, and confirms traffic recovers via `aws-router-b`.
   migration.
 - `phase-f/`: declarative diff snippets for static-owned release, handover to
   AWS, and rollback. These snippets are not standalone router configs.
+- `iam/`: least-privilege provider policy templates for the router instance
+  identities. These replace broad admin-style demo roles after review.
 - `collect-evidence.sh`: collects provider state, routerd journals, dynamic
   state, doctor output, and connectivity evidence.
 - `reset-lab.sh`: best-effort cleanup to remove secondary captures, restore
@@ -71,7 +73,8 @@ mechanism remains documented in
 3. Create one shared HMAC secret for federation and install it on every router.
 4. Prepare SSH access from the operator host to each router and client.
 5. Grant each cloud router only the provider mutation permissions needed for its
-   own NIC/VNIC.
+   own NIC/VNIC. See `iam/` for least-privilege templates; harness permissions
+   for VM lifecycle and deployment are separate.
 6. Fill `env` from `env.example`.
 
 ## Usage
