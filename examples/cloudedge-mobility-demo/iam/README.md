@@ -92,13 +92,20 @@ resources:
 - `Microsoft.Network/publicIPAddresses/join/action`
 - `Microsoft.Network/networkInterfaces/ipConfigurations/join/action`
 
-The template includes these actions. In some Azure tenants, strict custom-role
-authorization still fails linked-resource checks for fixed subnet/NSG/PIP
-resources. In that case, keep the custom role for the NIC operations and add a
-fallback assignment of the built-in **Network Contributor** role scoped only to
-the specific linked subnet, NSG, and public IP resources, or to the smallest
-resource group containing only those linked resources. That is still much
-narrower than subscription Admin or broad subscription-wide Network Contributor.
+The template includes these actions. **Validated**: with these linked
+`join/action` permissions present, the custom role **alone** was sufficient —
+a scoped onprem+Azure acceptance (evidence
+`20260604T064051Z-azure-scoped-attach-636ff6b2`, build 636ff6b2) ran the
+secondary-IP attach (`assign-secondary-ip`) and detach (`unassign-secondary-ip`)
+under the custom role only, with **no Network Contributor** assignment.
+
+Some Azure tenants may still fail strict custom-role linked-resource checks for
+fixed subnet/NSG/PIP resources. Only in that case, keep the custom role for the
+NIC operations and add a fallback assignment of the built-in **Network
+Contributor** role scoped only to the specific linked subnet, NSG, and public IP
+resources, or to the smallest resource group containing only those linked
+resources. That is still much narrower than subscription Admin or broad
+subscription-wide Network Contributor.
 
 For tighter deployments, scope `AssignableScopes` to a dedicated resource group
 or to the specific NIC resource ID if your Azure role assignment workflow allows
