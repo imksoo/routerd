@@ -294,6 +294,9 @@ func ProxyARPInterfaces(router *api.Router) []string {
 		if err != nil || strings.TrimSpace(spec.Capture.Type) != "proxy-arp" {
 			continue
 		}
+		if strings.TrimSpace(spec.Capture.ActiveWhen.Type) != "" || strings.TrimSpace(spec.Capture.ActiveWhen.VirtualAddressRef) != "" {
+			continue
+		}
 		if iface := strings.TrimSpace(spec.Capture.Interface); iface != "" {
 			interfaces[iface] = true
 		}

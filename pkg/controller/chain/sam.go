@@ -17,6 +17,7 @@ import (
 )
 
 type samProxyNeighborApplier interface {
+	SetProxyARP(ctx context.Context, ifname string, enabled bool) error
 	EnsureProxyNeighbor(ctx context.Context, address, ifname string) error
 	DeleteProxyNeighbor(ctx context.Context, address, ifname string) error
 	EnsureOSAddressAbsent(ctx context.Context, address string) (samOSAddressDeassignResult, error)
@@ -85,6 +86,9 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 	if err := c.cleanupChangedCaptures(ctx, statuses, actions); err != nil {
 		return err
 	}
+	if err := c.reconcileProxyARPInterfaces(ctx, actions); err != nil {
+		return err
+	}
 	var failures []string
 	deassignResults := map[string]samOSAddressDeassignResult{}
 	garpSent := map[string]bool{}
@@ -142,6 +146,44 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 	}
 	if len(failures) > 0 {
 		return fmt.Errorf("SAM capture failed: %s", strings.Join(failures, "; "))
+	}
+	return nil
+}
+
+func (c SAMController) reconcileProxyARPInterfaces(ctx context.Context, actions []sam.CaptureAction) error {
+	if c.DryRun {
+		return nil
+	}
+	all := map[string]bool{}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion != api.HybridAPIVersion || resource.Kind != "RemoteAddressClaim" {
+			continue
+		}
+		spec, err := resource.RemoteAddressClaimSpec()
+		if err != nil || strings.TrimSpace(spec.Capture.Type) != "proxy-arp" {
+			continue
+		}
+		if iface := strings.TrimSpace(spec.Capture.Interface); iface != "" {
+			all[iface] = true
+		}
+	}
+	if len(all) == 0 {
+		return nil
+	}
+	active := map[string]bool{}
+	for _, action := range actions {
+		if action.Kind == "sysctl" && strings.HasSuffix(action.Key, ".proxy_arp") && action.Value == "1" && strings.TrimSpace(action.Interface) != "" {
+			active[strings.TrimSpace(action.Interface)] = true
+		}
+	}
+	applier := c.Applier
+	if applier == nil {
+		applier = defaultSAMProxyNeighborApplier()
+	}
+	for iface := range all {
+		if err := applier.SetProxyARP(ctx, iface, active[iface]); err != nil {
+			return fmt.Errorf("set SAM proxy_arp %s=%t: %w", iface, active[iface], err)
+		}
 	}
 	return nil
 }

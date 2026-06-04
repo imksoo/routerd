@@ -326,7 +326,7 @@ func (r doctorRunner) doctorSAMLiveChecks(name string, spec api.RemoteAddressCla
 		checks = append(checks, doctorSAMProxyARPEnabledCheck(ctx, name, captureInterface))
 		checks = append(checks, doctorSAMProxyNeighborCheck(ctx, name, address, captureInterface))
 		if gate.Type == "vrrp-master" || gate.VirtualAddressRef != "" {
-			checks = append(checks, doctorSAMProxyARPDuplicateResponderCheck(ctx, name, address, captureInterface))
+			checks = append(checks, doctorSAMProxyARPDuplicateResponderCheck(ctx, name, address, captureInterface, gate.Active))
 		}
 		checks = append(checks, doctorSAMRPFilterCheck(ctx, name, captureInterface))
 		checks = append(checks, doctorSAMForwardPolicyCheck(ctx, name, captureInterface, tunnel, address))
@@ -368,7 +368,8 @@ func doctorSAMInactiveCaptureChecks(name string, spec api.RemoteAddressClaimSpec
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	proxy := doctorSAMProxyNeighborAbsentCheck(ctx, name, strings.TrimSpace(spec.Address), iface, gate)
-	return []doctorCheck{base, proxy}
+	proxyARP := doctorSAMProxyARPDisabledCheck(ctx, name, iface, gate)
+	return []doctorCheck{base, proxy, proxyARP}
 }
 
 func (r doctorRunner) doctorWireGuardListenPort(iface string) int {
@@ -476,7 +477,26 @@ func doctorSAMProxyNeighborAbsentCheck(ctx context.Context, name, address, iface
 	return doctorCheck{Area: "hybrid", Name: label, Status: doctorSkip, Detail: "capture gated inactive and proxy neighbor absent"}
 }
 
-func doctorSAMProxyARPDuplicateResponderCheck(ctx context.Context, name, address, iface string) doctorCheck {
+func doctorSAMProxyARPDisabledCheck(ctx context.Context, name, iface string, gate sam.CaptureGateStatus) doctorCheck {
+	label := "RemoteAddressClaim/" + name + " proxy_arp disabled"
+	if strings.TrimSpace(iface) == "" {
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorSkip, Detail: "interface unavailable"}
+	}
+	key := "net.ipv4.conf." + iface + ".proxy_arp"
+	command := doctorRunDiagnosticCommand(ctx, "sysctl "+key, "sysctl", "-n", key)
+	if command.OK && strings.TrimSpace(command.Stdout) == "0" {
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: key + "=0"}
+	}
+	return doctorCheck{
+		Area:   "hybrid",
+		Name:   label,
+		Status: doctorFail,
+		Detail: "capture gated inactive but route-based proxy_arp is enabled: " + firstNonEmpty(command.Error, oneLine(command.Output), key+" is not 0"),
+		Remedy: "wait for routerd SAM cleanup; if it persists, inspect VirtualAddress/" + gate.VirtualAddressRef + " role and set " + key + "=0",
+	}
+}
+
+func doctorSAMProxyARPDuplicateResponderCheck(ctx context.Context, name, address, iface string, localMaster bool) doctorCheck {
 	label := "RemoteAddressClaim/" + name + " proxy-arp duplicate responders"
 	if strings.TrimSpace(iface) == "" {
 		return doctorCheck{Area: "hybrid", Name: label, Status: doctorSkip, Detail: "interface unavailable"}
@@ -497,6 +517,18 @@ func doctorSAMProxyARPDuplicateResponderCheck(ctx context.Context, name, address
 			Remedy: "split-brain proxy-ARP capture detected; verify only the VRRP master captures this /32 and inspect L2 loop/storm stability evidence",
 		}
 	case len(macs) == 1:
+		if localMaster {
+			localMAC := doctorLocalInterfaceMAC(ctx, iface)
+			if localMAC != "" && !strings.EqualFold(macs[0], localMAC) {
+				return doctorCheck{
+					Area:   "hybrid",
+					Name:   label,
+					Status: doctorFail,
+					Detail: fmt.Sprintf("local VRRP master plus peer ARP responder for %s on %s: peer %s, local %s", ip, iface, macs[0], localMAC),
+					Remedy: "split-brain proxy-ARP capture detected; backup nodes must be fail-closed and only the VRRP master may answer this /32",
+				}
+			}
+		}
 		return doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: fmt.Sprintf("single ARP responder for %s on %s: %s", ip, iface, macs[0])}
 	case command.OK:
 		return doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: fmt.Sprintf("no duplicate ARP responders observed for %s on %s", ip, iface)}
@@ -509,6 +541,17 @@ func doctorSAMProxyARPDuplicateResponderCheck(ctx context.Context, name, address
 			Remedy: "install arping or run doctor with privileges that can send ARP probes to verify split-brain proxy-ARP capture",
 		}
 	}
+}
+
+func doctorLocalInterfaceMAC(ctx context.Context, iface string) string {
+	if strings.TrimSpace(iface) == "" {
+		return ""
+	}
+	command := doctorRunDiagnosticCommand(ctx, "cat /sys/class/net/"+iface+"/address", "cat", "/sys/class/net/"+iface+"/address")
+	if !command.OK {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(command.Stdout))
 }
 
 func doctorProbeIPv4(address string) (string, bool) {

@@ -166,6 +166,7 @@ func TestDynamicRouteSAMViewDerivesBGPProxyARPClaimsWithoutRouteLowering(t *test
 		t.Fatalf("SAM reconcile: %v", err)
 	}
 	assertSAMCalls(t, applier.calls, []string{
+		"proxyarp:lan0=1",
 		"ensure:10.0.1.11/32@lan0",
 		"ensure:10.0.1.12/32@lan0",
 	})
@@ -336,7 +337,7 @@ func TestDynamicRouteSAMViewGatesRouteAndSAMCleanupOnVRRPBackup(t *testing.T) {
 	if err := samController.Reconcile(context.Background()); err != nil {
 		t.Fatalf("SAM reconcile: %v", err)
 	}
-	assertSAMCalls(t, applier.calls, []string{"delete:10.0.1.123/32@lan0"})
+	assertSAMCalls(t, applier.calls, []string{"delete:10.0.1.123/32@lan0", "proxyarp:lan0=0"})
 	status := backupStore.ObjectStatus(api.HybridAPIVersion, "RemoteAddressClaim", "app")
 	if status["phase"] != "Gated" {
 		t.Fatalf("backup claim status = %#v", status)

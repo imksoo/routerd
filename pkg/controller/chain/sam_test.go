@@ -135,6 +135,7 @@ func TestSAMControllerCleansChangedProxyNeighborInterface(t *testing.T) {
 	}
 	assertSAMCalls(t, applier.calls, []string{
 		"delete:10.0.1.123/32@br-old",
+		"proxyarp:br-new=1",
 		"ensure:10.0.1.123/32@br-new",
 	})
 }
@@ -151,6 +152,7 @@ func TestSAMControllerCleansChangedProxyNeighborAddress(t *testing.T) {
 	}
 	assertSAMCalls(t, applier.calls, []string{
 		"delete:10.0.1.123/32@lan0",
+		"proxyarp:lan0=1",
 		"ensure:10.0.1.124/32@lan0",
 	})
 }
@@ -184,7 +186,7 @@ func TestSAMControllerLeavesUnchangedProxyNeighbor(t *testing.T) {
 	if len(applier.delete) != 0 {
 		t.Fatalf("delete = %#v, want none", applier.delete)
 	}
-	assertSAMCalls(t, applier.calls, []string{"ensure:10.0.1.123/32@lan0"})
+	assertSAMCalls(t, applier.calls, []string{"proxyarp:lan0=1", "ensure:10.0.1.123/32@lan0"})
 }
 
 func TestSAMControllerGatedProxyNeighborSendsGARPOnlyOnInactiveToActive(t *testing.T) {
@@ -207,7 +209,7 @@ func TestSAMControllerGatedProxyNeighborSendsGARPOnlyOnInactiveToActive(t *testi
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("first Reconcile: %v", err)
 	}
-	assertSAMCalls(t, applier.calls, []string{"ensure:10.0.1.123/32@lan0"})
+	assertSAMCalls(t, applier.calls, []string{"proxyarp:lan0=1", "ensure:10.0.1.123/32@lan0"})
 	if len(garp.calls) != 1 || garp.calls[0] != "10.0.1.123/32@lan0" {
 		t.Fatalf("first GARP calls = %#v", garp.calls)
 	}
@@ -223,7 +225,7 @@ func TestSAMControllerGatedProxyNeighborSendsGARPOnlyOnInactiveToActive(t *testi
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("steady Reconcile: %v", err)
 	}
-	assertSAMCalls(t, applier.calls, []string{"ensure:10.0.1.123/32@lan0"})
+	assertSAMCalls(t, applier.calls, []string{"proxyarp:lan0=1", "ensure:10.0.1.123/32@lan0"})
 	if len(garp.calls) != 0 {
 		t.Fatalf("steady-state GARP calls = %#v, want none", garp.calls)
 	}
@@ -251,7 +253,7 @@ func TestSAMControllerGatedProxyNeighborCleansOnMasterToBackupWithoutGARP(t *tes
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
-	assertSAMCalls(t, applier.calls, []string{"delete:10.0.1.123/32@lan0"})
+	assertSAMCalls(t, applier.calls, []string{"delete:10.0.1.123/32@lan0", "proxyarp:lan0=0"})
 	if len(garp.calls) != 0 {
 		t.Fatalf("backup transition GARP calls = %#v, want none", garp.calls)
 	}
@@ -279,7 +281,7 @@ func TestSAMControllerGatedProxyNeighborUnknownStatusIsBlockedFailClosed(t *test
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
-	assertSAMCalls(t, applier.calls, []string{"delete:10.0.1.123/32@lan0"})
+	assertSAMCalls(t, applier.calls, []string{"delete:10.0.1.123/32@lan0", "proxyarp:lan0=0"})
 	status := store.ObjectStatus(api.HybridAPIVersion, "RemoteAddressClaim", "app")
 	if status["phase"] != "Gated" || status["captureStatus"] != sam.CaptureStatusBlocked {
 		t.Fatalf("unknown gate status = %#v", status)
@@ -321,6 +323,7 @@ type fakeSAMApplier struct {
 	ensure         []string
 	delete         []string
 	deassign       []string
+	proxyARP       []string
 	calls          []string
 	deassignResult samOSAddressDeassignResult
 }
@@ -331,6 +334,16 @@ type fakeSAMGARP struct {
 
 func (g *fakeSAMGARP) SendGratuitousARP(_ context.Context, address, ifname string) error {
 	g.calls = append(g.calls, address+"@"+ifname)
+	return nil
+}
+
+func (a *fakeSAMApplier) SetProxyARP(_ context.Context, ifname string, enabled bool) error {
+	value := "0"
+	if enabled {
+		value = "1"
+	}
+	a.proxyARP = append(a.proxyARP, ifname+"="+value)
+	a.calls = append(a.calls, "proxyarp:"+ifname+"="+value)
 	return nil
 }
 

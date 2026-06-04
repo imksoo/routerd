@@ -19,6 +19,10 @@ func defaultSAMGratuitousARPAnnouncer() samGratuitousARPAnnouncer {
 	return unsupportedSAMGratuitousARPAnnouncer{}
 }
 
+func (unsupportedSAMProxyNeighborApplier) SetProxyARP(context.Context, string, bool) error {
+	return nil
+}
+
 func (unsupportedSAMProxyNeighborApplier) EnsureProxyNeighbor(context.Context, string, string) error {
 	return fmt.Errorf("SAM capture not implemented on this OS")
 }

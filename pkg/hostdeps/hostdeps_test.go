@@ -105,6 +105,17 @@ func TestDerivedSysctlResourcesForSAMAreStrictlyGated(t *testing.T) {
 			t.Fatalf("SAM must not derive rp_filter sysctl %s: %#v", unwanted, sortedKeys(keys))
 		}
 	}
+
+	spec := router.Spec.Resources[0].Spec.(api.RemoteAddressClaimSpec)
+	spec.Capture.ActiveWhen = api.CaptureActiveWhen{Type: "vrrp-master", VirtualAddressRef: "onprem-vip"}
+	router.Spec.Resources[0].Spec = spec
+	keys = derivedSysctlKeys(t, router)
+	if keys["net.ipv4.conf.lan0.proxy_arp"] {
+		t.Fatalf("VRRP-gated SAM must not derive unconditional proxy_arp sysctl: %#v", sortedKeys(keys))
+	}
+	if !keys["net.ipv4.ip_forward"] {
+		t.Fatalf("VRRP-gated SAM still needs ip_forward sysctl: %#v", sortedKeys(keys))
+	}
 }
 
 func TestPackageFeaturesIncludeArpingForVRRPGatedSAMCapture(t *testing.T) {

@@ -657,20 +657,27 @@ func TestDoctorHybridSAMVRRPGatedProxyARPDetectsInactiveArtifacts(t *testing.T) 
 	doctorCurrentOS = func() platform.OS { return platform.OSLinux }
 
 	for _, tc := range []struct {
-		name        string
-		proxyExists bool
-		wantStatus  string
+		name               string
+		proxyExists        bool
+		proxyARPValue      string
+		wantErr            bool
+		wantProxyStatus    string
+		wantProxyARPStatus string
 	}{
-		{name: "standby-clean", wantStatus: doctorSkip},
-		{name: "standby-stale-proxy", proxyExists: true, wantStatus: doctorFail},
+		{name: "standby-clean", proxyARPValue: "0", wantProxyStatus: doctorSkip, wantProxyARPStatus: doctorPass},
+		{name: "standby-stale-proxy", proxyExists: true, proxyARPValue: "0", wantErr: true, wantProxyStatus: doctorFail, wantProxyARPStatus: doctorPass},
+		{name: "standby-route-based-proxy-arp", proxyARPValue: "1", wantErr: true, wantProxyStatus: doctorSkip, wantProxyARPStatus: doctorFail},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			doctorRunDiagnosticCommand = func(_ context.Context, label, name string, args ...string) diagnoseCommandCheck {
-				if strings.HasPrefix(label, "ip neigh show proxy") {
+				switch {
+				case strings.HasPrefix(label, "ip neigh show proxy"):
 					if tc.proxyExists {
 						return diagnoseCommandCheck{Name: label, OK: true, Stdout: "10.0.0.7 dev br-lan proxy", Output: "10.0.0.7 dev br-lan proxy"}
 					}
 					return diagnoseCommandCheck{Name: label, OK: true}
+				case label == "sysctl net.ipv4.conf.br-lan.proxy_arp":
+					return diagnoseCommandCheck{Name: label, OK: true, Stdout: tc.proxyARPValue, Output: tc.proxyARPValue}
 				}
 				return diagnoseCommandCheck{Name: label, OK: false, Error: "unexpected command"}
 			}
@@ -683,10 +690,10 @@ func TestDoctorHybridSAMVRRPGatedProxyARPDetectsInactiveArtifacts(t *testing.T) 
 
 			var out bytes.Buffer
 			err := run([]string{"doctor", "hybrid", "--config", configPath, "--state-file", statePath, "-o", "json"}, &out, &bytes.Buffer{})
-			if tc.wantStatus == doctorFail && err == nil {
-				t.Fatalf("doctor hybrid succeeded with stale proxy neighbor:\n%s", out.String())
+			if tc.wantErr && err == nil {
+				t.Fatalf("doctor hybrid succeeded with inactive proxy-ARP artifact:\n%s", out.String())
 			}
-			if tc.wantStatus != doctorFail && err != nil {
+			if !tc.wantErr && err != nil {
 				t.Fatalf("doctor hybrid: %v\n%s", err, out.String())
 			}
 			var report doctorReport
@@ -697,8 +704,12 @@ func TestDoctorHybridSAMVRRPGatedProxyARPDetectsInactiveArtifacts(t *testing.T) 
 				t.Fatalf("activeWhen check = %#v", check)
 			}
 			check := findDoctorCheck(t, report, "RemoteAddressClaim/cloud-vm proxy neighbor absent")
-			if check.Status != tc.wantStatus {
+			if check.Status != tc.wantProxyStatus {
 				t.Fatalf("proxy absent check = %#v", check)
+			}
+			disabled := findDoctorCheck(t, report, "RemoteAddressClaim/cloud-vm proxy_arp disabled")
+			if disabled.Status != tc.wantProxyARPStatus {
+				t.Fatalf("proxy_arp disabled check = %#v", disabled)
 			}
 		})
 	}
@@ -718,6 +729,7 @@ func TestDoctorHybridSAMVRRPGatedProxyARPDetectsDuplicateResponders(t *testing.T
 		arpingOut  string
 		wantErr    bool
 		wantStatus string
+		localMAC   string
 	}{
 		{
 			name:       "no-responder-output",
@@ -727,6 +739,13 @@ func TestDoctorHybridSAMVRRPGatedProxyARPDetectsDuplicateResponders(t *testing.T
 			name:       "single-responder",
 			arpingOut:  "Unicast reply from 10.0.0.7 [aa:bb:cc:dd:ee:01]  0.812ms",
 			wantStatus: doctorPass,
+		},
+		{
+			name:       "local-master-peer-responder",
+			arpingOut:  "Unicast reply from 10.0.0.7 [aa:bb:cc:dd:ee:02]  0.812ms",
+			wantErr:    true,
+			wantStatus: doctorFail,
+			localMAC:   "aa:bb:cc:dd:ee:01",
 		},
 		{
 			name: "duplicate-responders",
@@ -766,6 +785,11 @@ func TestDoctorHybridSAMVRRPGatedProxyARPDetectsDuplicateResponders(t *testing.T
 						t.Fatalf("unexpected arping command: %s %v", cmdName, args)
 					}
 					return diagnoseCommandCheck{Name: label, OK: true, Stdout: tc.arpingOut, Output: tc.arpingOut}
+				case label == "cat /sys/class/net/br-lan/address":
+					if tc.localMAC != "" {
+						return diagnoseCommandCheck{Name: label, OK: true, Stdout: tc.localMAC + "\n", Output: tc.localMAC + "\n"}
+					}
+					return diagnoseCommandCheck{Name: label, OK: false, Error: "not checked"}
 				case label == "nft list table inet routerd_filter":
 					return diagnoseCommandCheck{Name: label, OK: true, Stdout: "table inet routerd_filter {\n chain forward { type filter hook forward priority 0; policy accept; }\n}", Output: "table inet routerd_filter"}
 				case label == "iptables -S INPUT":
@@ -804,7 +828,7 @@ func TestDoctorHybridSAMVRRPGatedProxyARPDetectsDuplicateResponders(t *testing.T
 			if check.Status != tc.wantStatus {
 				t.Fatalf("duplicate responder check = %#v", check)
 			}
-			if tc.wantStatus == doctorFail && (!strings.Contains(check.Detail, "aa:bb:cc:dd:ee:01") || !strings.Contains(check.Detail, "aa:bb:cc:dd:ee:02") || !strings.Contains(check.Remedy, "split-brain") || !strings.Contains(check.Remedy, "L2 loop")) {
+			if tc.wantStatus == doctorFail && (!strings.Contains(check.Remedy, "split-brain") || (!strings.Contains(check.Detail, "aa:bb:cc:dd:ee:02") && !strings.Contains(check.Detail, "aa:bb:cc:dd:ee:01"))) {
 				t.Fatalf("duplicate responder detail/remedy = %#v", check)
 			}
 		})
