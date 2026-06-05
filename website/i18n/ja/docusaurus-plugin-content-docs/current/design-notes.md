@@ -82,7 +82,7 @@ OpenRC 対応は、まず applier ではなく renderer として始めます。
 - `routerd-healthcheck` script の自動生成
 - DHCP または RA resource が dnsmasq を必要とする場合の、managed dnsmasq script の自動生成
 - DHCPv4 / DHCPv6 client、firewall logger、PPPoE、Tailscale の script の自動生成
-- DNS resolver script。ただし resolver の runtime config を controller loop の外で materialize できるまでは enable / start しません
+- DNS リゾルバ script。ただし resolver の runtime config を controller loop の外で materialize できるまでは enable / start しません
 
 これは互換性の袋小路を避けるためです。
 API の形は当面 `generated service artifacts` のままですが、OpenRC に写すのは init script の意味を明確に持つ field に限ります。具体的には `ExecStart`、`ExecStartPre`、environment、working directory、user/group、runtime/state/log directory です。

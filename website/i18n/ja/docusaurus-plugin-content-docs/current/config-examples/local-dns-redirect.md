@@ -17,7 +17,7 @@ DoH や DoT の port には手を加えません。
 flowchart LR
   client["[1] LAN client"]
   lan["[2] lan"]
-  router["[3] routerd DNS resolver<br/>192.168.50.1:53"]
+  router["[3] routerd DNS リゾルバ<br/>192.168.50.1:53"]
   public["[4] public DNS names<br/>dns.google / one.one.one.one"]
   upstream["[5] actual upstream DNS"]
 

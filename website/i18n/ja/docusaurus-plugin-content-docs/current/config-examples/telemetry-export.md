@@ -26,7 +26,7 @@ flowchart LR
 | 番号 | 意味 | 主な resource |
 | --- | --- | --- |
 | [1] | logs、metrics、traces を出す routerd プロセス。 | `Telemetry/otlp` |
-| [2] | OTLP コレクターの endpoint。 | `Telemetry.spec.otlp.endpoint` |
+| [2] | OTLP コレクターのエンドポイント。 | `Telemetry.spec.otlp.endpoint` |
 | [3] | コレクターが転送する先のバックエンド。 | routerd 管理外 |
 
 ## 要点
@@ -60,4 +60,4 @@ routerctl describe Telemetry/otlp
 ```
 
 コレクターやバックエンド側でデータが届いていることを確認します。
-endpoint は信頼できる管理網または観測用ネットワークに置いてください。
+エンドポイントは信頼できる管理網または観測用ネットワークに置いてください。

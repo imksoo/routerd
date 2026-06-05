@@ -25,13 +25,13 @@ routerd は nftables の `inet routerd_filter` テーブルを管理します。
 
 NAT44 は別の `ip routerd_nat` テーブルを使います。
 
-## Rule expression
+## ルール式
 
-`FirewallRule` は、CIDR による送信元 / 宛先の match、再利用できる `IPAddressSet`
+`FirewallRule` は、CIDR による送信元 / 宛先の照合、再利用できる `IPAddressSet`
 への宛先参照、TCP/UDP の `sourcePorts` / `destinationPorts`、ICMP / ICMPv6
 の type 名、nftables の `rateLimit`、送信元ごとの `connLimit` を扱えます。
-`rateLimit` と `connLimit` は閾値を超えた通信に一致するため、scan や
-brute-force を緩和する `drop` / `reject` ルールと組み合わせるのが基本です。
+`rateLimit` と `connLimit` は閾値を超えた通信に一致するため、スキャンや
+ブルートフォースを緩和する `drop` / `reject` ルールと組み合わせるのが基本です。
 
 ## ゲスト端末の隔離
 
@@ -64,8 +64,8 @@ Linux では、`routerd-firewall-logger` が nfnetlink から直接その group 
 NFLOG の prefix、インターフェース、パケットファミリー、プロトコル、
 アドレス、ポートをそのまま保存できます。
 
-Web 管理画面の Firewall タブと `routerctl firewall-logs` は、このデータベースを読みます。
-logger は管理対象の `generated service artifacts` として有効にしてください。
+Web 管理画面のファイアウォールタブと `routerctl firewall-logs` は、このデータベースを読みます。
+logger は管理対象の生成済みサービス artifact として有効にしてください。
 たとえば `routerd-firewall-logger daemon --path /var/lib/routerd/firewall-logs.db --nflog-group 1` を使います。
 
 accept した通信フローを DPI の観測に使う場合は、`FirewallEventLog.spec.log.copyRange`

@@ -96,8 +96,8 @@ AFTR FQDN、DNS サーバー、DHCPv6 クライアントの profile を置き換
     mtu: 1454
 ```
 
-この DS-Lite tunnel は、委任された IPv6 アドレスを local endpoint として使います。
-回線側が WAN RA アドレスを endpoint として期待する場合は、`localAddressSource` を
+この DS-Lite tunnel は、委任された IPv6 アドレスを local エンドポイントとして使います。
+回線側が WAN RA アドレスをエンドポイントとして期待する場合は、`localAddressSource` を
 `interface` に変えてください。
 
 ## LAN 側サービス

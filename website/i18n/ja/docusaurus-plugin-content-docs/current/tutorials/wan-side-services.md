@@ -169,7 +169,7 @@ routerctl describe DSLiteTunnel/ds-lite-primary       # phase: Up, aftr: 2001:db
 routerctl describe EgressRoutePolicy/ipv4-default     # selectedCandidate: ds-lite-primary
 ```
 
-Web 管理画面の「Overview」「Resources」タブからも同じ情報を確認できます。「Connections」タブでは、WAN 経路ごとの実際の conntrack/pf state を表示します。
+Web 管理画面の「概要」「リソース」タブからも同じ情報を確認できます。「コネクション」タブでは、WAN 経路ごとの実際の conntrack/pf state を表示します。
 
 ## 関連項目
 

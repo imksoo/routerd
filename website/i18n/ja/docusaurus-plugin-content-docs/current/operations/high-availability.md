@@ -1,4 +1,4 @@
-# High availability
+# 高可用性
 
 `RouterdCluster` は、軽量なファイルベースのリースで、レンダラーと適用処理の動作を制御します。VIP の所有権とは分離しています。VIP をどのルーターが持つかは keepalived または CARP が決め、routerd はリースによって、ホスト設定を変更してよいノードを決めます。
 

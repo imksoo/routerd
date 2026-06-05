@@ -6,7 +6,7 @@ sidebar_position: 100
 # WireGuard ハブ＆スポークのテンプレート
 
 2 つの spoke を持つ routed WireGuard hub のテンプレートです。
-実際に使う前に、鍵、endpoint、広告するプレフィックスを置き換えてください。
+実際に使う前に、鍵、エンドポイント、広告するプレフィックスを置き換えてください。
 
 完全な YAML は `examples/wireguard-hub-spoke.yaml` にあります。
 

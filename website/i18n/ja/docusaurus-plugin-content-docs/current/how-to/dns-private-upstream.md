@@ -12,12 +12,12 @@ slug: /how-to/dns-private-upstream
 - アクセス網の内部ゾーン（例: ISP の AFTR FQDN、社内ドメイン）を、動的に学習した DNS サーバーへ転送する。
 - ふだんは暗号化 DNS プロバイダー（DoH / DoT）を既定の上流として使う。
 - 暗号化上流が不調になったら、平文 DNS にフォールバックする。
-- プロバイダーのアカウント ID やプライベートな endpoint を、共有する example に書かない。
+- プロバイダーのアカウント ID やプライベートなエンドポイントを、共有する example に書かない。
 
 ## routerd での解決方法
 
 `DNSResolver` は `routerd-dns-resolver` を起動します。
-デーモンは UDP/TCP で待ち受けます。リゾルバに属する `DNSForwarder` が match ルールを表し、`DNSUpstream` が再利用できる上流 endpoint を表します。
+デーモンは UDP/TCP で待ち受けます。リゾルバに属する `DNSForwarder` が match ルールを表し、`DNSUpstream` が再利用できる上流エンドポイントを表します。
 
 | Scheme | 種別 | 既定ポート |
 | --- | --- | --- |
@@ -139,13 +139,13 @@ DHCPv6 information-request で得た DNS サーバーを使うときの仕組み
 
 ## プロバイダーの bootstrap
 
-一部のプライベート DNS プロバイダーは、リゾルバの endpoint を、そのプロバイダー自身のドメインで配布します。
+一部のプライベート DNS プロバイダーは、リゾルバのエンドポイントを、そのプロバイダー自身のドメインで配布します。
 ホストがそのプロバイダー名を「プロバイダー本体を経由して」解決しようとすると、リゾルバが健全になる前にループするか、失敗します。
 
 そのプロバイダーのドメインに対する条件付き source を作り、公衆リゾルバか access-network の DNS へ向けます。
 プロバイダーのアカウント ID（例: profile ID）は、共有する example には書かず、ホストローカルの secrets ファイルやホストごとの YAML overlay にだけ置いてください。
 
-`DNSUpstream.spec.bootstrap` は、同じ保護をより細かく行います。暗号化 transport を確立する前に、その上流 endpoint 名を解決するためのリゾルバを指定します。
+`DNSUpstream.spec.bootstrap` は、同じ保護をより細かく行います。暗号化 transport を確立する前に、その上流エンドポイント名を解決するためのリゾルバを指定します。
 
 ## インターフェース束縛
 

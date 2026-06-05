@@ -1,5 +1,5 @@
 ---
-title: OpenTelemetry dashboards
+title: OpenTelemetry ダッシュボード
 ---
 
 # OpenTelemetry ダッシュボード

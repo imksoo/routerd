@@ -1,14 +1,14 @@
 {
   "title": {
-    "message": "routerd field notes",
+    "message": "routerd フィールドノート",
     "description": "The title for the blog used in SEO"
   },
   "description": {
-    "message": "Practical routerd walkthroughs and design notes.",
+    "message": "routerd の実践的な手順と設計メモ。",
     "description": "The description for the blog used in SEO"
   },
   "sidebar.title": {
-    "message": "Recent posts",
+    "message": "最近の投稿",
     "description": "The label for the left sidebar"
   }
 }

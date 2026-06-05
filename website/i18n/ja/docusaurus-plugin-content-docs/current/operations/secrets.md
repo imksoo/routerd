@@ -1,5 +1,5 @@
 ---
-title: Secret sources
+title: シークレットソース
 ---
 
 # シークレットソース
