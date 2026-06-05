@@ -225,6 +225,41 @@ func TestLoadTransientStateStoreOpensExistingSQLiteReadOnly(t *testing.T) {
 	}
 }
 
+func TestConfigCommandPlanObserveAcceptJSONState(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "router.yaml")
+	statePath := filepath.Join(dir, "state.json")
+	if err := os.WriteFile(configPath, []byte(testRouterYAML("json-state-router")), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	store := routerstate.New()
+	store.Set("manual.mode", "keep", "seed")
+	if err := store.Save(statePath); err != nil {
+		t.Fatalf("save json state: %v", err)
+	}
+
+	for _, name := range []string{"plan", "observe"} {
+		t.Run(name, func(t *testing.T) {
+			var stdout strings.Builder
+			statusPath := filepath.Join(dir, name+"-status.json")
+			err := configCommand([]string{
+				"--config", configPath,
+				"--state-file", statePath,
+				"--status-file", statusPath,
+			}, &stdout, name)
+			if err != nil {
+				t.Fatalf("%s with json state: %v", name, err)
+			}
+			if stdout.String() == "" {
+				t.Fatalf("%s produced empty output", name)
+			}
+			if _, err := os.Stat(statusPath); err != nil {
+				t.Fatalf("%s status file: %v", name, err)
+			}
+		})
+	}
+}
+
 func TestLoadApplyStateStoreKeepsNonDryRunSQLiteWriter(t *testing.T) {
 	statePath := filepath.Join(t.TempDir(), "routerd.db")
 	store, err := loadApplyStateStore(statePath, false)
