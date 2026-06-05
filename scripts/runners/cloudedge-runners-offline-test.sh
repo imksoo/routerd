@@ -12,7 +12,8 @@ for script in \
   cloudedge-matrix-runner.sh \
   cloudedge-failover-runner.sh \
   cloudedge-protocol-runner.sh \
-  cloudedge-l2-runner.sh; do
+  cloudedge-l2-runner.sh \
+  cloudedge-capture-runner.sh; do
   "$SCRIPT_DIR/$script" --help >/dev/null
 done
 
@@ -56,6 +57,118 @@ CE_AWS_RECOVERY_COMMAND='printf "recovered=1\n"' \
 
 CE_L2_METRICS_COMMAND='printf "broadcast_pps=1\nstp_tcn_delta=0\nmac_flap_count=0\nping_loss_percent=0\nblocked_ports=1\nbpdu_seen=true\nmechanism=offline\n"' \
   "$SCRIPT_DIR/cloudedge-l2-runner.sh" observe before onprem >/dev/null
+
+capture_bundle="$tmp/capture-bundle"
+capture_id="20260605-0236-CAP-01"
+# Keep these single-quoted so the capture runner expands its own CE_CAPTURE_* env.
+# shellcheck disable=SC2016
+fake_capture_copy='printf "fake pcap role=%s iface=%s\n" "$CE_CAPTURE_ROLE" "$CE_CAPTURE_IFACE" > "$CE_CAPTURE_PATH"'
+# shellcheck disable=SC2016
+fake_capture_partial_start='if [ "$CE_CAPTURE_ROLE" = "remote" ]; then exit 42; fi'
+CE_CAPTURE_SOURCE_IFACE=eth0 \
+CE_CAPTURE_ROUTER_INSIDE_IFACE=br0 \
+CE_CAPTURE_ROUTER_OUTSIDE_TUNNEL_IFACE=wg-hybrid \
+CE_CAPTURE_REMOTE_IFACE=eth0 \
+CE_CAPTURE_START_COMMAND=':' \
+CE_CAPTURE_STOP_COMMAND=':' \
+CE_CAPTURE_COPY_COMMAND="$fake_capture_copy" \
+  "$SCRIPT_DIR/cloudedge-capture-runner.sh" start \
+    --test-id "$capture_id" \
+    --out "$capture_bundle" \
+    --source-site aws \
+    --remote-site azure \
+    --router-provider onprem \
+    --target-ip 10.77.60.9 \
+    --ports 22,2049 >/dev/null
+CE_CAPTURE_SOURCE_IFACE=eth0 \
+CE_CAPTURE_ROUTER_INSIDE_IFACE=br0 \
+CE_CAPTURE_ROUTER_OUTSIDE_TUNNEL_IFACE=wg-hybrid \
+CE_CAPTURE_REMOTE_IFACE=eth0 \
+CE_CAPTURE_START_COMMAND=':' \
+CE_CAPTURE_STOP_COMMAND=':' \
+CE_CAPTURE_COPY_COMMAND="$fake_capture_copy" \
+  "$SCRIPT_DIR/cloudedge-capture-runner.sh" stop \
+    --test-id "$capture_id" \
+    --out "$capture_bundle" \
+    --source-site aws \
+    --remote-site azure \
+    --router-provider onprem \
+    --target-ip 10.77.60.9 \
+    --ports 22,2049 >/dev/null
+
+partial_id="20260605-0236-CAP-02"
+CE_CAPTURE_SOURCE_IFACE=eth0 \
+CE_CAPTURE_ROUTER_INSIDE_IFACE=br0 \
+CE_CAPTURE_ROUTER_OUTSIDE_TUNNEL_IFACE=wg-hybrid \
+CE_CAPTURE_REMOTE_IFACE=eth0 \
+CE_CAPTURE_START_COMMAND="$fake_capture_partial_start" \
+CE_CAPTURE_STOP_COMMAND=':' \
+CE_CAPTURE_COPY_COMMAND="$fake_capture_copy" \
+  "$SCRIPT_DIR/cloudedge-capture-runner.sh" start \
+    --test-id "$partial_id" \
+    --out "$capture_bundle" \
+    --source-site aws \
+    --remote-site azure \
+    --router-provider onprem \
+    --target-ip 10.77.60.9 >/dev/null
+CE_CAPTURE_SOURCE_IFACE=eth0 \
+CE_CAPTURE_ROUTER_INSIDE_IFACE=br0 \
+CE_CAPTURE_ROUTER_OUTSIDE_TUNNEL_IFACE=wg-hybrid \
+CE_CAPTURE_REMOTE_IFACE=eth0 \
+CE_CAPTURE_START_COMMAND="$fake_capture_partial_start" \
+CE_CAPTURE_STOP_COMMAND=':' \
+CE_CAPTURE_COPY_COMMAND="$fake_capture_copy" \
+  "$SCRIPT_DIR/cloudedge-capture-runner.sh" stop \
+    --test-id "$partial_id" \
+    --out "$capture_bundle" \
+    --source-site aws \
+    --remote-site azure \
+    --router-provider onprem \
+    --target-ip 10.77.60.9 >/dev/null
+
+python3 - "$capture_bundle/05-capture" "$capture_id" "$partial_id" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+cap_dir = Path(sys.argv[1])
+capture_id = sys.argv[2]
+partial_id = sys.argv[3]
+manifest = json.loads((cap_dir / "capture-manifest.json").read_text())
+runs = {run["testId"]: run for run in manifest["runs"]}
+run = runs[capture_id]
+if run["result"] != "PASS":
+    raise SystemExit(f"capture run result={run['result']}, want PASS")
+if run.get("evidencePhases") != ["CAP", "DP"]:
+    raise SystemExit("capture evidence phases missing")
+if len(run["points"]) != 4:
+    raise SystemExit("capture run did not record four points")
+roles = {point["role"] for point in run["points"]}
+if roles != {"source", "router-inside", "router-outside-tunnel", "remote"}:
+    raise SystemExit(f"bad capture roles: {roles}")
+for point in run["points"]:
+    filename = point["filename"]
+    for token in (capture_id, point["node"], point["role"], point["interface"].replace("/", "_")):
+        if token not in filename:
+            raise SystemExit(f"{filename} missing token {token}")
+    if "10.77.60.9" not in point["filter"] or "arp" not in point["filter"] or "icmp" not in point["filter"] or "port 2049" not in point["filter"]:
+        raise SystemExit("capture filter missing target/ARP/ICMP/port evidence")
+    if point.get("startExit") != 0 or point.get("stopExit") != 0 or point.get("copyExit") != 0:
+        raise SystemExit(f"capture point did not complete cleanly: {point}")
+    if not (cap_dir / filename).is_file():
+        raise SystemExit(f"missing pcap file {filename}")
+
+partial = runs[partial_id]
+if partial["result"] != "PARTIAL":
+    raise SystemExit(f"partial run result={partial['result']}, want PARTIAL")
+if "remote" not in partial.get("reason", ""):
+    raise SystemExit("partial run reason does not identify remote failure")
+remote = [point for point in partial["points"] if point["role"] == "remote"][0]
+if remote.get("startExit") != 42 or remote.get("copyExit") != 99:
+    raise SystemExit(f"partial remote exits not preserved: {remote}")
+if (cap_dir / remote["filename"]).exists():
+    raise SystemExit("failed remote capture unexpectedly produced a pcap")
+PY
 
 # Keep this single-quoted so the child runner expands its own CE_PROTOCOL_* env.
 # shellcheck disable=SC2016

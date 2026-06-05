@@ -6,6 +6,8 @@ These scripts are live runner implementations for the acceptance probe wrappers:
 - `cloudedge-failover-runner.sh` implements `FAILOVER_TIMING_RUNNER`.
 - `cloudedge-protocol-runner.sh` implements `PROTOCOL_PROBE_RUNNER`.
 - `cloudedge-l2-runner.sh` implements `L2_LOOP_RUNNER`.
+- `cloudedge-capture-runner.sh` implements the four-point pcap harness for the
+  `05-capture` evidence slot.
 
 They are parameterized by environment variables. They do not contain account IDs,
 OCIDs, subscription IDs, instance IDs, interface IDs, or secrets. Lab-specific
@@ -67,6 +69,36 @@ PROTOCOL_PROBE_RUNNER=scripts/runners/cloudedge-protocol-runner.sh \
 
 Use `CE_PROTOCOL_<OP>_COMMAND` overrides for lab-specific FTP/NFS/RPC setup
 without editing the shared runner.
+
+Four-point packet capture runs use one `TEST_ID` for source endpoint,
+router-inside, router-outside-tunnel, and remote endpoint captures. The runner
+writes `TEST_ID-node-role-iface.pcap`, per-test JSON, and an aggregate manifest
+under `poc-evidence-*/05-capture`:
+
+```sh
+scripts/runners/cloudedge-capture-runner.sh start \
+  --test-id 20260605-0236-CAP-01 \
+  --out poc-evidence-20260605 \
+  --source-site aws \
+  --remote-site azure \
+  --router-provider onprem \
+  --target-ip 10.77.60.9 \
+  --ports 22,2049
+
+scripts/runners/cloudedge-capture-runner.sh stop \
+  --test-id 20260605-0236-CAP-01 \
+  --out poc-evidence-20260605 \
+  --source-site aws \
+  --remote-site azure \
+  --router-provider onprem \
+  --target-ip 10.77.60.9 \
+  --ports 22,2049
+```
+
+Use `CE_CAPTURE_<ROLE>_<START|STOP|COPY>_COMMAND` or the generic
+`CE_CAPTURE_START_COMMAND`, `CE_CAPTURE_STOP_COMMAND`, and
+`CE_CAPTURE_COPY_COMMAND` overrides to fake captures in offline tests or adapt a
+lab without editing the shared runner.
 
 The scripts support `--help` without credentials. `cloudedge-runners-offline-test.sh`
 exercises the contracts with local fake commands and no cloud access.

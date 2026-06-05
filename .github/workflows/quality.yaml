@@ -127,6 +127,9 @@ jobs:
       - name: Run CloudEdge acceptance offline smoke
         run: make cloudedge-acceptance-offline-test
 
+      - name: Run CloudEdge runners offline smoke
+        run: make cloudedge-runners-offline-test
+
       - name: Run CloudEdge PoC evidence offline smoke
         run: make cloudedge-poc-evidence-offline-test
 
