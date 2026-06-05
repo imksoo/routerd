@@ -35,8 +35,10 @@ ENV:
 
 The runner is responsible for package install/service setup on lab VMs
 (vsftpd, nfs-kernel-server, rpcbind, iperf3/dd/ssh as appropriate). It may print
-key=value lines such as bytes=104857600, overlay_mtu=1380, mss_clamp=1340,
-dynamic_port=32768, detail=...; this script records them in the JSON result.
+key=value lines such as bytes=104857600, overlay_mtu=1380, route_mtu=1380,
+route_advmss=1340, effective_mss_clamp=1340, dynamic_port=32768, detail=...;
+this script records them in the JSON result. If an MTU/MSS value is unknown,
+the runner must emit a matching <field>_reason key.
 The result shape is documented in scripts/cloudedge-protocol-result-schema.json.
 EOF
 }
@@ -150,6 +152,39 @@ def obj(s):
         return json.loads(s)
     except Exception:
         return {}
+def is_int(value):
+    return isinstance(value, int) and not isinstance(value, bool)
+def normalize_unknown_reason(details, field, reason):
+    if not details.get(f"{field}_reason"):
+        details[f"{field}_reason"] = reason
+def normalize_pmtu(details):
+    details = dict(details or {})
+    if "effective_mss_clamp" not in details and "mss_clamp" in details:
+        details["effective_mss_clamp"] = details["mss_clamp"]
+        if details.get("mss_clamp_source") and not details.get("effective_mss_clamp_source"):
+            details["effective_mss_clamp_source"] = details["mss_clamp_source"]
+    for field in ("overlay_mtu", "route_mtu", "route_advmss", "mss_clamp", "effective_mss_clamp"):
+        value = details.get(field)
+        if value in (None, ""):
+            details[field] = "unknown"
+            normalize_unknown_reason(details, field, f"runner_did_not_report_{field}")
+        elif value == "unknown":
+            normalize_unknown_reason(details, field, f"runner_reported_unknown_{field}_without_reason")
+    if details.get("route_mtu") == "unknown" and is_int(details.get("overlay_mtu")):
+        details["route_mtu"] = details["overlay_mtu"]
+        details.setdefault("route_mtu_source", "overlay_mtu_fallback")
+        details.setdefault("route_mtu_reason", "runner_did_not_report_route_mtu")
+    if details.get("route_advmss") == "unknown" and is_int(details.get("route_mtu")) and details["route_mtu"] > 40:
+        details["route_advmss"] = details["route_mtu"] - 40
+        details.setdefault("route_advmss_source", "derived_ipv4_tcp_overhead")
+        details.setdefault("route_advmss_reason", "runner_did_not_report_route_advmss")
+    if details.get("effective_mss_clamp") == "unknown" and is_int(details.get("mss_clamp")):
+        details["effective_mss_clamp"] = details["mss_clamp"]
+        details.setdefault("effective_mss_clamp_source", details.get("mss_clamp_source", "mss_clamp"))
+    for field in ("overlay_mtu", "route_mtu", "route_advmss", "mss_clamp", "effective_mss_clamp"):
+        if details.get(field) == "unknown":
+            normalize_unknown_reason(details, field, f"{field}_unavailable")
+    return details
 checks = {
     "setup": setup_result,
     "ftpActive": ftp_active,
@@ -168,7 +203,7 @@ details = {
     "nfs": obj(nfs_detail),
     "rpc": obj(rpc_detail),
     "bulkTransfer": obj(bulk_detail),
-    "pmtu": obj(pmtu_detail),
+    "pmtu": normalize_pmtu(obj(pmtu_detail)),
     "sourceIpPreserved": obj(source_preserved_detail),
     "noNat": obj(no_nat_detail),
 }

@@ -26,6 +26,8 @@ ENV:
   CE_PROTOCOL_BULK_BYTES             Default bytes for bulk tests.
   CE_PROTOCOL_PMTU_SIZE              DF ping payload size (default 1300).
   CE_PROTOCOL_OVERLAY_IFACE          Overlay interface for MTU evidence (default wg-hybrid).
+  CE_PROTOCOL_<CLIENT>_<SERVER>_OVERLAY_IFACE
+                                      Pair-specific overlay interface override.
   CE_PROTOCOL_MSS_CLAMP              Expected/known MSS clamp value if packet capture is unavailable.
   CE_PROTOCOL_<OP>_COMMAND           Optional local override for one operation.
 EOF
@@ -178,20 +180,70 @@ PY")
   printf 'detail=bulk_ok\n'
 }
 
+protocol_overlay_iface() {
+  local client=$1 server=$2 client_upper server_upper
+  client_upper=$(ce_upper "$client")
+  server_upper=$(ce_upper "$server")
+  ce_env_first "CE_PROTOCOL_${client_upper}_${server_upper}_OVERLAY_IFACE" \
+    "CE_PROTOCOL_${client_upper}_OVERLAY_IFACE" \
+    "CE_PROTOCOL_OVERLAY_IFACE" 2>/dev/null || printf 'wg-hybrid'
+}
+
 cmd_pmtu() {
-  local client=$1 server=$2 ip size overlay_mtu route_mtu advmss mss
+  local client=$1 server=$2 ip size overlay_iface route_line overlay_mtu route_mtu advmss nft_mss iptables_mss mss mss_source
   if run_override pmtu "$client" "$server" ""; then return 0; fi
   ip=$(server_ip "$server")
   size=${CE_PROTOCOL_PMTU_SIZE:-1300}
   ce_client_ssh "$client" "ping -M do -s $(printf '%q' "$size") -c3 -W2 $(printf '%q' "$ip") >/dev/null"
-  overlay_mtu=$(ce_client_ssh "$client" "ip -o link show ${CE_PROTOCOL_OVERLAY_IFACE:-wg-hybrid} 2>/dev/null | sed -n 's/.*mtu \\([0-9][0-9]*\\).*/\\1/p' | head -n1" || true)
-  route_mtu=$(ce_client_ssh "$client" "ip route get $(printf '%q' "$ip") 2>/dev/null | sed -n 's/.* mtu \\([0-9][0-9]*\\).*/\\1/p' | head -n1" || true)
-  advmss=$(ce_client_ssh "$client" "ip route get $(printf '%q' "$ip") 2>/dev/null | sed -n 's/.* advmss \\([0-9][0-9]*\\).*/\\1/p' | head -n1" || true)
-  mss=${CE_PROTOCOL_MSS_CLAMP:-}
+  overlay_iface=$(protocol_overlay_iface "$client" "$server")
+  route_line=$(ce_client_ssh "$client" "ip route get $(printf '%q' "$ip") 2>/dev/null | head -n1" || true)
+  overlay_mtu=$(ce_client_ssh "$client" "ip -o link show $(printf '%q' "$overlay_iface") 2>/dev/null | sed -n 's/.*mtu \\([0-9][0-9]*\\).*/\\1/p' | head -n1" || true)
+  route_mtu=$(printf '%s\n' "$route_line" | sed -n 's/.* mtu \([0-9][0-9]*\).*/\1/p' | head -n1)
+  advmss=$(printf '%s\n' "$route_line" | sed -n 's/.* advmss \([0-9][0-9]*\).*/\1/p' | head -n1)
+  if [[ -z "$route_mtu" && "$overlay_mtu" =~ ^[0-9]+$ ]]; then
+    route_mtu=$overlay_mtu
+    printf 'route_mtu_source=overlay_mtu_fallback\n'
+    printf 'route_mtu_reason=ip_route_get_did_not_report_mtu\n'
+  fi
+  if [[ -z "$advmss" && "$route_mtu" =~ ^[0-9]+$ && "$route_mtu" -gt 40 ]]; then
+    advmss=$((route_mtu - 40))
+    printf 'route_advmss_source=derived_ipv4_tcp_overhead\n'
+    printf 'route_advmss_reason=ip_route_get_did_not_report_advmss\n'
+  fi
+  nft_mss=$(ce_client_ssh "$client" "{ sudo nft -a list ruleset 2>/dev/null || nft -a list ruleset 2>/dev/null || true; } | sed -n 's/.*tcp option maxseg size set \\([0-9][0-9]*\\).*/\\1/p' | head -n1" || true)
+  iptables_mss=$(ce_client_ssh "$client" "{ sudo iptables-save 2>/dev/null || iptables-save 2>/dev/null || true; } | sed -n 's/.*--set-mss \\([0-9][0-9]*\\).*/\\1/p' | head -n1" || true)
+  if [[ "$nft_mss" =~ ^[0-9]+$ ]]; then
+    mss=$nft_mss
+    mss_source=nft
+  elif [[ "$iptables_mss" =~ ^[0-9]+$ ]]; then
+    mss=$iptables_mss
+    mss_source=iptables
+  else
+    mss=${CE_PROTOCOL_MSS_CLAMP:-}
+    mss_source="env"
+  fi
+  printf 'overlay_iface=%s\n' "$overlay_iface"
   printf 'overlay_mtu=%s\n' "${overlay_mtu:-unknown}"
+  if [[ -z "$overlay_mtu" ]]; then
+    printf 'overlay_mtu_reason=ip_link_show_failed_or_iface_missing:%s\n' "$overlay_iface"
+  fi
   printf 'route_mtu=%s\n' "${route_mtu:-unknown}"
+  if [[ -z "$route_mtu" ]]; then
+    printf 'route_mtu_reason=ip_route_get_missing_mtu_and_no_overlay_mtu_fallback\n'
+  fi
   printf 'route_advmss=%s\n' "${advmss:-unknown}"
+  if [[ -z "$advmss" ]]; then
+    printf 'route_advmss_reason=ip_route_get_missing_advmss_and_no_numeric_mtu_fallback\n'
+  fi
   printf 'mss_clamp=%s\n' "${mss:-unknown}"
+  printf 'effective_mss_clamp=%s\n' "${mss:-unknown}"
+  if [[ -n "$mss" ]]; then
+    printf 'mss_clamp_source=%s\n' "$mss_source"
+    printf 'effective_mss_clamp_source=%s\n' "$mss_source"
+  else
+    printf 'mss_clamp_reason=nft_iptables_rules_missing_numeric_clamp_and_CE_PROTOCOL_MSS_CLAMP_unset\n'
+    printf 'effective_mss_clamp_reason=nft_iptables_rules_missing_numeric_clamp_and_CE_PROTOCOL_MSS_CLAMP_unset\n'
+  fi
   printf 'df_payload_bytes=%s\n' "$size"
   printf 'detail=pmtu_df_ok\n'
 }

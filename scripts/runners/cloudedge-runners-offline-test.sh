@@ -66,7 +66,7 @@ CE_PROTOCOL_FTP_PASSIVE_COMMAND="$protocol_ok" \
 CE_PROTOCOL_NFS_COMMAND="$protocol_ok" \
 CE_PROTOCOL_RPC_COMMAND='printf "dynamic_port=32768\ndetail=rpc_ok\n"' \
 CE_PROTOCOL_BULK_COMMAND="$protocol_ok" \
-CE_PROTOCOL_PMTU_COMMAND='printf "overlay_mtu=1380\nmss_clamp=1340\ndetail=pmtu_ok\n"' \
+CE_PROTOCOL_PMTU_COMMAND='printf "overlay_mtu=1380\nroute_mtu=1380\nroute_advmss=1340\nmss_clamp=1340\ndetail=pmtu_ok\n"' \
 CE_PROTOCOL_SOURCE_PRESERVED_COMMAND='printf "peer_ip=10.77.60.11\ndetail=source_ok\n"' \
 CE_PROTOCOL_NO_NAT_COMMAND='printf "detail=no_nat_ok\n"' \
   "$SCRIPT_DIR/cloudedge-protocol-runner.sh" setup aws azure 1024 >/dev/null
@@ -78,13 +78,15 @@ for op in ftp-active ftp-passive nfs rpc bulk pmtu source-preserved no-nat; do
     CE_PROTOCOL_NFS_COMMAND="$protocol_ok" \
     CE_PROTOCOL_RPC_COMMAND='printf "dynamic_port=32768\ndetail=rpc_ok\n"' \
     CE_PROTOCOL_BULK_COMMAND="$protocol_ok" \
-    CE_PROTOCOL_PMTU_COMMAND='printf "overlay_mtu=1380\nmss_clamp=1340\ndetail=pmtu_ok\n"' \
+    CE_PROTOCOL_PMTU_COMMAND='printf "overlay_mtu=1380\nroute_mtu=1380\nroute_advmss=1340\nmss_clamp=1340\ndetail=pmtu_ok\n"' \
     CE_PROTOCOL_SOURCE_PRESERVED_COMMAND='printf "peer_ip=10.77.60.11\ndetail=source_ok\n"' \
     CE_PROTOCOL_NO_NAT_COMMAND='printf "detail=no_nat_ok\n"' \
     "$SCRIPT_DIR/cloudedge-protocol-runner.sh" "$op" aws azure 1024 >/dev/null
 done
 
 protocol_json="$tmp/protocol-probe.json"
+# Keep this single-quoted so the child runner expands its own CE_PROTOCOL_* env.
+# shellcheck disable=SC2016
 PROTOCOL_PROBE_RUNNER="$SCRIPT_DIR/cloudedge-protocol-runner.sh" \
 CE_PROTOCOL_SETUP_COMMAND='printf "detail=setup_ok\nftp_passive_min=40000\nftp_passive_max=40100\n"' \
 CE_PROTOCOL_FTP_ACTIVE_COMMAND="$protocol_ok" \
@@ -119,6 +121,44 @@ if pair["details"]["bulkTransfer"].get("retransmits") != 0:
     raise SystemExit("bulk retransmit evidence missing")
 if pair["details"]["pmtu"].get("route_advmss") != 1340:
     raise SystemExit("PMTU/advmss evidence missing")
+if pair["details"]["pmtu"].get("effective_mss_clamp") != 1340:
+    raise SystemExit("effective MSS clamp evidence missing")
+if pair["details"]["pmtu"].get("overlay_mtu") != 1380 or pair["details"]["pmtu"].get("route_mtu") != 1380:
+    raise SystemExit("MTU evidence missing")
+PY
+
+protocol_unknown_json="$tmp/protocol-probe-unknown.json"
+PROTOCOL_PROBE_RUNNER="$SCRIPT_DIR/cloudedge-protocol-runner.sh" \
+CE_PROTOCOL_SETUP_COMMAND='printf "detail=setup_ok\n"' \
+CE_PROTOCOL_FTP_ACTIVE_COMMAND="$protocol_ok" \
+CE_PROTOCOL_FTP_PASSIVE_COMMAND="$protocol_ok" \
+CE_PROTOCOL_NFS_COMMAND="$protocol_ok" \
+CE_PROTOCOL_RPC_COMMAND='printf "dynamic_port=32768\ndetail=rpc_ok\n"' \
+CE_PROTOCOL_BULK_COMMAND="$protocol_ok" \
+CE_PROTOCOL_PMTU_COMMAND='printf "overlay_mtu=unknown\noverlay_mtu_reason=offline_iface_missing\nroute_mtu=unknown\nroute_mtu_reason=offline_route_no_mtu\nroute_advmss=unknown\nroute_advmss_reason=offline_route_no_advmss\nmss_clamp=unknown\nmss_clamp_reason=offline_no_mss_rule\neffective_mss_clamp=unknown\neffective_mss_clamp_reason=offline_no_mss_rule\ndetail=pmtu_unknown_ok\n"' \
+CE_PROTOCOL_SOURCE_PRESERVED_COMMAND='printf "peer_ip=10.77.60.11\ndetail=source_ok\n"' \
+CE_PROTOCOL_NO_NAT_COMMAND='printf "detail=no_nat_ok\n"' \
+  "$SCRIPT_DIR/../cloudedge-protocol-probe.sh" \
+    --pairs aws:azure \
+    --bytes 1024 \
+    --out "$protocol_unknown_json" >/dev/null
+
+python3 - "$protocol_unknown_json" "$SCRIPT_DIR/../cloudedge-protocol-result-schema.json" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1]))
+schema = json.load(open(sys.argv[2]))
+try:
+    import jsonschema
+except Exception:
+    jsonschema = None
+if jsonschema is not None:
+    jsonschema.validate(instance=data, schema=schema)
+pmtu = data["pairs"][0]["details"]["pmtu"]
+for field in ("overlay_mtu", "route_mtu", "route_advmss", "mss_clamp", "effective_mss_clamp"):
+    if pmtu.get(field) != "unknown":
+        raise SystemExit(f"{field}={pmtu.get(field)!r}, want unknown")
+    if not pmtu.get(f"{field}_reason"):
+        raise SystemExit(f"{field} unknown without reason")
 PY
 
 printf 'cloudedge runners offline OK\n'

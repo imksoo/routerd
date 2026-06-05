@@ -82,12 +82,58 @@
             "nfs": { "$ref": "#/definitions/details" },
             "rpc": { "$ref": "#/definitions/details" },
             "bulkTransfer": { "$ref": "#/definitions/details" },
-            "pmtu": { "$ref": "#/definitions/details" },
+            "pmtu": { "$ref": "#/definitions/pmtuDetails" },
             "sourceIpPreserved": { "$ref": "#/definitions/details" },
             "noNat": { "$ref": "#/definitions/details" }
           }
         }
       }
+    },
+    "mtuEvidenceValue": {
+      "anyOf": [
+        { "type": "integer", "minimum": 1 },
+        { "type": "string", "const": "unknown" }
+      ]
+    },
+    "pmtuDetails": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["overlay_mtu", "route_mtu", "route_advmss", "mss_clamp", "effective_mss_clamp"],
+      "properties": {
+        "overlay_iface": { "type": "string" },
+        "overlay_mtu": { "$ref": "#/definitions/mtuEvidenceValue" },
+        "overlay_mtu_reason": { "type": "string", "minLength": 1 },
+        "route_mtu": { "$ref": "#/definitions/mtuEvidenceValue" },
+        "route_mtu_reason": { "type": "string", "minLength": 1 },
+        "route_advmss": { "$ref": "#/definitions/mtuEvidenceValue" },
+        "route_advmss_reason": { "type": "string", "minLength": 1 },
+        "mss_clamp": { "$ref": "#/definitions/mtuEvidenceValue" },
+        "mss_clamp_reason": { "type": "string", "minLength": 1 },
+        "effective_mss_clamp": { "$ref": "#/definitions/mtuEvidenceValue" },
+        "effective_mss_clamp_reason": { "type": "string", "minLength": 1 }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "overlay_mtu": { "const": "unknown" } }, "required": ["overlay_mtu"] },
+          "then": { "required": ["overlay_mtu_reason"] }
+        },
+        {
+          "if": { "properties": { "route_mtu": { "const": "unknown" } }, "required": ["route_mtu"] },
+          "then": { "required": ["route_mtu_reason"] }
+        },
+        {
+          "if": { "properties": { "route_advmss": { "const": "unknown" } }, "required": ["route_advmss"] },
+          "then": { "required": ["route_advmss_reason"] }
+        },
+        {
+          "if": { "properties": { "mss_clamp": { "const": "unknown" } }, "required": ["mss_clamp"] },
+          "then": { "required": ["mss_clamp_reason"] }
+        },
+        {
+          "if": { "properties": { "effective_mss_clamp": { "const": "unknown" } }, "required": ["effective_mss_clamp"] },
+          "then": { "required": ["effective_mss_clamp_reason"] }
+        }
+      ]
     }
   }
 }
