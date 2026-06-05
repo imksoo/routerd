@@ -130,6 +130,7 @@ func copyCapture(c api.MobilityMemberCapture) api.MobilityMemberCapture {
 
 func copyDiscovery(d api.MobilityOwnershipDiscovery) api.MobilityOwnershipDiscovery {
 	out := d
+	out.Sources = append([]api.MobilityOwnershipDiscoverySource(nil), d.Sources...)
 	out.Scope.IncludeAddresses = append([]string(nil), d.Scope.IncludeAddresses...)
 	out.Scope.ExcludeAddresses = append([]string(nil), d.Scope.ExcludeAddresses...)
 	out.Selector.Tags = copyStringMap(d.Selector.Tags)
@@ -198,6 +199,9 @@ func mergeOwnershipDiscovery(base, override api.MobilityOwnershipDiscovery) api.
 	}
 	if strings.TrimSpace(override.LeaseTTL) != "" {
 		out.LeaseTTL = override.LeaseTTL
+	}
+	if len(override.Sources) > 0 {
+		out.Sources = append([]api.MobilityOwnershipDiscoverySource(nil), override.Sources...)
 	}
 	if override.Scope.IncludePrimary != nil {
 		out.Scope.IncludePrimary = override.Scope.IncludePrimary

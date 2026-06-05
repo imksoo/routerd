@@ -73,6 +73,50 @@ func TestValidateMobilityPoolAllowsExplicitSingleOnpremProxyARPWithoutVRRP(t *te
 	}
 }
 
+func TestValidateMobilityPoolAllowsOnPremL2OwnershipDiscoverySources(t *testing.T) {
+	router := mobilityPoolRouter(api.MobilityPoolSpec{
+		Prefix:         "192.168.123.0/24",
+		GroupRef:       "svnet1",
+		DeliveryPolicy: api.MobilityDeliveryPolicy{Mode: "bgp"},
+		Members: []api.MobilityPoolMember{
+			{
+				NodeRef: "pve-rt01",
+				Site:    "pve01",
+				Role:    "onprem",
+				Capture: api.MobilityMemberCapture{
+					Type:       "proxy-arp",
+					Interface:  "eth1",
+					ActiveWhen: api.CaptureActiveWhen{Type: "single-router"},
+				},
+				OwnershipDiscovery: api.MobilityOwnershipDiscovery{
+					Mode:     "onprem-l2",
+					LeaseTTL: "2m",
+					Sources: []api.MobilityOwnershipDiscoverySource{
+						{Type: "dhcpv4-lease", Resource: "DHCPv4Server/pve-ipam"},
+						{Type: "arp-observer", Interface: "eth1"},
+						{Type: "on-demand-arp", Interface: "eth1", ProbeTimeout: "500ms", ProbeRetries: 2},
+						{Type: "pve-svnet", Network: "svnet1", Bridge: "vmbr123"},
+					},
+				},
+			},
+			{
+				NodeRef: "k8s-rt01",
+				Site:    "core",
+				Role:    "cloud",
+				Capture: api.MobilityMemberCapture{
+					Type:         "provider-secondary-ip",
+					ProviderRef:  "aws-provider",
+					ProviderMode: "nic-secondary-ip",
+					NICRef:       "eni-router",
+				},
+			},
+		},
+	}, testInterfaceResource("eth1"))
+	if err := Validate(router); err != nil {
+		t.Fatalf("Validate onprem-l2 ownership discovery sources: %v", err)
+	}
+}
+
 func TestValidateMobilityPoolAllowsDiscoveredCloudNICOnlyInBGPDiscoveryMode(t *testing.T) {
 	spec := api.MobilityPoolSpec{
 		Prefix:         "10.88.60.0/24",
@@ -430,6 +474,33 @@ func TestValidateMobilityPoolRejectsInvalidFields(t *testing.T) {
 				spec.Members[0].OwnershipDiscovery = api.MobilityOwnershipDiscovery{Mode: "provider-private-ip"}
 			},
 			want: "ownershipDiscovery is supported only for role cloud",
+		},
+		{
+			name: "onprem l2 discovery requires onprem",
+			mut: func(spec *api.MobilityPoolSpec) {
+				spec.DeliveryPolicy.Mode = "bgp"
+				spec.Members[1].Capture = api.MobilityMemberCapture{Type: "provider-secondary-ip", ProviderRef: "azure-provider", ProviderMode: "nic-secondary-ip", NICRef: "nic-1"}
+				spec.Members[1].OwnershipDiscovery = api.MobilityOwnershipDiscovery{Mode: "onprem-l2", Sources: []api.MobilityOwnershipDiscoverySource{{Type: "arp-observer"}}}
+			},
+			want: "mode onprem-l2 is supported only for role onprem",
+		},
+		{
+			name: "onprem l2 discovery requires sources",
+			mut: func(spec *api.MobilityPoolSpec) {
+				spec.DeliveryPolicy.Mode = "bgp"
+				spec.Members[0].Capture = api.MobilityMemberCapture{Type: "proxy-arp", Interface: "lan", ActiveWhen: api.CaptureActiveWhen{Type: "single-router"}}
+				spec.Members[0].OwnershipDiscovery = api.MobilityOwnershipDiscovery{Mode: "onprem-l2"}
+			},
+			want: "ownershipDiscovery.sources requires at least one source",
+		},
+		{
+			name: "onprem l2 discovery rejects unknown source",
+			mut: func(spec *api.MobilityPoolSpec) {
+				spec.DeliveryPolicy.Mode = "bgp"
+				spec.Members[0].Capture = api.MobilityMemberCapture{Type: "proxy-arp", Interface: "lan", ActiveWhen: api.CaptureActiveWhen{Type: "single-router"}}
+				spec.Members[0].OwnershipDiscovery = api.MobilityOwnershipDiscovery{Mode: "onprem-l2", Sources: []api.MobilityOwnershipDiscoverySource{{Type: "neighbor-cache"}}}
+			},
+			want: "ownershipDiscovery.sources[0].type",
 		},
 		{
 			name: "ownership discovery scan interval minimum",

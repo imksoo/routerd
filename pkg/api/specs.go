@@ -1537,7 +1537,7 @@ type MobilityMemberMaintenance struct {
 
 type MobilityOwnershipDiscovery struct {
 	// Mode selects the discovery backend. Empty/disabled does nothing.
-	Mode string `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=,enum=disabled,enum=provider-private-ip"`
+	Mode string `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=,enum=disabled,enum=provider-private-ip,enum=onprem-l2"`
 	// ProviderRef defaults to the member capture.providerRef.
 	ProviderRef string `yaml:"providerRef,omitempty" json:"providerRef,omitempty"`
 	// PluginRef optionally pins the inventory plugin. Empty resolves by
@@ -1554,6 +1554,10 @@ type MobilityOwnershipDiscovery struct {
 	// LeaseTTL controls the emitted observed event expiry. Empty defaults to the
 	// controller default.
 	LeaseTTL string `yaml:"leaseTTL,omitempty" json:"leaseTTL,omitempty"`
+	// Sources enables one or more on-prem L2 ownership signals. The controller
+	// normalizes DHCP lease hooks, ARP observers, on-demand ARP probes, and
+	// PVE svnet observations into the same observed-client federation fact.
+	Sources []MobilityOwnershipDiscoverySource `yaml:"sources,omitempty" json:"sources,omitempty"`
 	// Scope narrows which provider private IPs become mobility ownership facts.
 	// Empty keeps the historical broad scan behavior.
 	Scope MobilityOwnershipDiscoveryScope `yaml:"scope,omitempty" json:"scope,omitempty"`
@@ -1575,6 +1579,31 @@ type MobilityOwnershipDiscoveryScope struct {
 
 type MobilityOwnershipDiscoverySelector struct {
 	Tags map[string]string `yaml:"tags,omitempty" json:"tags,omitempty"`
+}
+
+type MobilityOwnershipDiscoverySource struct {
+	// Type selects the on-prem observation source.
+	Type string `yaml:"type" json:"type" jsonschema:"enum=dhcpv4-lease,enum=arp-observer,enum=on-demand-arp,enum=pve-svnet"`
+	// Resource optionally identifies the daemon/resource that emits the signal.
+	Resource string `yaml:"resource,omitempty" json:"resource,omitempty"`
+	// Interface narrows L2 observations to one capture interface. Empty defaults
+	// to the member capture.interface when applicable.
+	Interface string `yaml:"interface,omitempty" json:"interface,omitempty"`
+	// Bridge optionally carries the local bridge name for PVE/svnet observers.
+	Bridge string `yaml:"bridge,omitempty" json:"bridge,omitempty"`
+	// Network optionally carries the logical svnet/network name, for example svnet1.
+	Network string `yaml:"network,omitempty" json:"network,omitempty"`
+	// SourceAddressFrom resolves the sender address used by active probing
+	// sources when the capture source address is DHCP-managed.
+	SourceAddressFrom StatusValueSourceSpec `yaml:"sourceAddressFrom,omitempty" json:"sourceAddressFrom,omitempty"`
+	// ScanInterval bounds polling sources. Event-driven sources may ignore it.
+	ScanInterval string `yaml:"scanInterval,omitempty" json:"scanInterval,omitempty"`
+	// ProbeTimeout bounds one active ARP probe attempt for on-demand-arp.
+	ProbeTimeout string `yaml:"probeTimeout,omitempty" json:"probeTimeout,omitempty"`
+	// ProbeRetries controls retry count for active ARP probes.
+	ProbeRetries int `yaml:"probeRetries,omitempty" json:"probeRetries,omitempty" jsonschema:"minimum=0,maximum=20"`
+	// LeaseTTL overrides ownership event expiry for this source.
+	LeaseTTL string `yaml:"leaseTTL,omitempty" json:"leaseTTL,omitempty"`
 }
 
 type MobilityIPOwnershipPolicy struct {

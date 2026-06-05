@@ -12,6 +12,7 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	bgpstate "github.com/imksoo/routerd/pkg/bgp"
+	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	"github.com/imksoo/routerd/pkg/providerinventory"
 	routerstate "github.com/imksoo/routerd/pkg/state"
@@ -95,6 +96,72 @@ func TestDiscoveryControllerEmitsObservedEventsForActiveCloudMember(t *testing.T
 	}
 	if got := statusStringSlice(status["discoveryOwnedAddresses"]); len(got) != 1 || got[0] != "10.88.60.11/32" {
 		t.Fatalf("owned address status = %#v, want fresh observed owner", status)
+	}
+}
+
+func TestDiscoveryControllerOnPremL2DHCPLeaseEventFeedsBGPAdvertisement(t *testing.T) {
+	now := time.Date(2026, 6, 5, 12, 0, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := api.MobilityPoolSpec{
+		Prefix:         "192.168.123.0/24",
+		GroupRef:       "cloudedge",
+		DeliveryPolicy: api.MobilityDeliveryPolicy{Mode: "bgp"},
+		Members: []api.MobilityPoolMember{
+			{
+				NodeRef: "pve-rt01",
+				Site:    "pve01",
+				Role:    "onprem",
+				Capture: api.MobilityMemberCapture{
+					Type:       "proxy-arp",
+					Interface:  "eth1",
+					ActiveWhen: api.CaptureActiveWhen{Type: "single-router"},
+				},
+				OwnershipDiscovery: api.MobilityOwnershipDiscovery{
+					Mode: "onprem-l2",
+					Sources: []api.MobilityOwnershipDiscoverySource{
+						{Type: OnPremSourceDHCPv4Lease, Interface: "eth1", LeaseTTL: "2m"},
+						{Type: OnPremSourceARPObserver, Interface: "eth1"},
+						{Type: OnPremSourceOnDemandARP, Interface: "eth1", ProbeTimeout: "500ms"},
+						{Type: OnPremSourcePVESVNet, Network: "svnet1", Bridge: "vmbr123"},
+					},
+				},
+			},
+			{NodeRef: "k8s-rt01", Site: "core", Role: "cloud"},
+		},
+	}
+	router := staticRouter("pve-rt01", spec)
+	discovery := DiscoveryController{Router: router, Store: store, Now: func() time.Time { return now }}
+	event := daemonapi.DaemonEvent{
+		Type:     "routerd.dhcp.lease.add",
+		Severity: daemonapi.SeverityInfo,
+		Time:     now,
+		Attributes: map[string]string{
+			"ip":        "192.168.123.201",
+			"mac":       "02:00:c0:a8:7b:c9",
+			"interface": "eth1",
+		},
+	}
+	if err := discovery.HandleEvent(context.Background(), event); err != nil {
+		t.Fatalf("Discovery HandleEvent: %v", err)
+	}
+	events, err := store.ListFederationEvents("cloudedge", false, now.Unix())
+	if err != nil {
+		t.Fatalf("ListFederationEvents: %v", err)
+	}
+	if len(events) != 1 || events[0].Type != ObservedEventType || events[0].Subject != "192.168.123.201/32" {
+		t.Fatalf("events = %#v, want one observed ownership fact", events)
+	}
+	if events[0].Payload["source"] != onPremDiscoverySource || events[0].Payload["sourceType"] != OnPremSourceDHCPv4Lease {
+		t.Fatalf("payload = %#v, want onprem dhcpv4 source", events[0].Payload)
+	}
+
+	bgp := &fakeBGPPaths{}
+	controller := Controller{Router: router, Store: store, BGPPaths: bgp, Now: func() time.Time { return now.Add(time.Second) }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Mobility Reconcile: %v", err)
+	}
+	if _, ok := maybePathBySourcePrefix(bgp, DynamicSource("cloudedge", "pve-rt01"), "192.168.123.201/32"); !ok {
+		t.Fatalf("paths = %#v, want DHCP observed owner advertised", bgp.paths)
 	}
 }
 

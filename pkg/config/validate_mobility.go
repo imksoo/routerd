@@ -134,6 +134,7 @@ func validateMobilityOwnershipDiscovery(res api.Resource, index int, spec api.Mo
 		strings.TrimSpace(discovery.SubnetRefFrom) != "" ||
 		strings.TrimSpace(discovery.ScanInterval) != "" ||
 		strings.TrimSpace(discovery.LeaseTTL) != "" ||
+		len(discovery.Sources) > 0 ||
 		discovery.Scope.IncludePrimary != nil ||
 		len(discovery.Scope.IncludeAddresses) > 0 ||
 		len(discovery.Scope.ExcludeAddresses) > 0 ||
@@ -145,8 +146,18 @@ func validateMobilityOwnershipDiscovery(res api.Resource, index int, spec api.Mo
 	case "", "disabled":
 		return nil
 	case "provider-private-ip":
+		return validateMobilityProviderOwnershipDiscovery(res, index, spec, member)
+	case "onprem-l2":
+		return validateMobilityOnPremOwnershipDiscovery(res, index, spec, member)
 	default:
-		return fmt.Errorf("%s spec.members[%d].ownershipDiscovery.mode %q is not supported; only provider-private-ip", res.ID(), index, discovery.Mode)
+		return fmt.Errorf("%s spec.members[%d].ownershipDiscovery.mode %q is not supported; use provider-private-ip or onprem-l2", res.ID(), index, discovery.Mode)
+	}
+}
+
+func validateMobilityProviderOwnershipDiscovery(res api.Resource, index int, spec api.MobilityPoolSpec, member api.MobilityPoolMember) error {
+	discovery := member.OwnershipDiscovery
+	if len(discovery.Sources) > 0 {
+		return fmt.Errorf("%s spec.members[%d].ownershipDiscovery.sources is supported only when mode is onprem-l2", res.ID(), index)
 	}
 	if strings.TrimSpace(member.Role) != "cloud" {
 		return fmt.Errorf("%s spec.members[%d].ownershipDiscovery is supported only for role cloud", res.ID(), index)
@@ -191,6 +202,106 @@ func validateMobilityOwnershipDiscovery(res api.Resource, index int, spec api.Mo
 		}
 	}
 	return nil
+}
+
+func validateMobilityOnPremOwnershipDiscovery(res api.Resource, index int, spec api.MobilityPoolSpec, member api.MobilityPoolMember) error {
+	discovery := member.OwnershipDiscovery
+	if strings.TrimSpace(member.Role) != "onprem" {
+		return fmt.Errorf("%s spec.members[%d].ownershipDiscovery mode onprem-l2 is supported only for role onprem", res.ID(), index)
+	}
+	if effectiveMobilityDeliveryMode(spec) != "bgp" {
+		return fmt.Errorf("%s spec.members[%d].ownershipDiscovery mode onprem-l2 requires spec.deliveryPolicy.mode=bgp", res.ID(), index)
+	}
+	if strings.TrimSpace(member.Capture.Type) != "proxy-arp" {
+		return fmt.Errorf("%s spec.members[%d].ownershipDiscovery mode onprem-l2 requires capture.type proxy-arp", res.ID(), index)
+	}
+	if strings.TrimSpace(member.Capture.Interface) == "" {
+		return fmt.Errorf("%s spec.members[%d].ownershipDiscovery mode onprem-l2 requires capture.interface", res.ID(), index)
+	}
+	if len(discovery.Sources) == 0 {
+		return fmt.Errorf("%s spec.members[%d].ownershipDiscovery.sources requires at least one source when mode is onprem-l2", res.ID(), index)
+	}
+	if err := validateMobilityDiscoveryDuration(res, index, "ownershipDiscovery.scanInterval", discovery.ScanInterval, 30*time.Second, false); err != nil {
+		return err
+	}
+	if err := validateMobilityDiscoveryDuration(res, index, "ownershipDiscovery.leaseTTL", discovery.LeaseTTL, 0, true); err != nil {
+		return err
+	}
+	if err := validateMobilityOwnershipDiscoveryScope(res, index, discovery.Scope, mustParsePrefixForValidation(spec.Prefix)); err != nil {
+		return err
+	}
+	for key := range discovery.Selector.Tags {
+		if strings.TrimSpace(key) == "" {
+			return fmt.Errorf("%s spec.members[%d].ownershipDiscovery.selector.tags must not contain empty keys", res.ID(), index)
+		}
+	}
+	seen := map[string]bool{}
+	for j, source := range discovery.Sources {
+		sourceType := strings.TrimSpace(source.Type)
+		switch sourceType {
+		case "dhcpv4-lease", "arp-observer", "on-demand-arp", "pve-svnet":
+		case "":
+			return fmt.Errorf("%s spec.members[%d].ownershipDiscovery.sources[%d].type is required", res.ID(), index, j)
+		default:
+			return fmt.Errorf("%s spec.members[%d].ownershipDiscovery.sources[%d].type %q is not supported", res.ID(), index, j, source.Type)
+		}
+		key := strings.Join([]string{
+			sourceType,
+			strings.TrimSpace(source.Resource),
+			strings.TrimSpace(mobilityFirstNonEmpty(source.Interface, member.Capture.Interface)),
+			strings.TrimSpace(source.Network),
+			strings.TrimSpace(source.Bridge),
+		}, "\x00")
+		if seen[key] {
+			return fmt.Errorf("%s spec.members[%d].ownershipDiscovery.sources[%d] duplicates another source", res.ID(), index, j)
+		}
+		seen[key] = true
+		if err := validateMobilityDiscoveryDuration(res, index, fmt.Sprintf("ownershipDiscovery.sources[%d].scanInterval", j), source.ScanInterval, time.Second, false); err != nil {
+			return err
+		}
+		if err := validateMobilityDiscoveryDuration(res, index, fmt.Sprintf("ownershipDiscovery.sources[%d].probeTimeout", j), source.ProbeTimeout, 0, true); err != nil {
+			return err
+		}
+		if err := validateMobilityDiscoveryDuration(res, index, fmt.Sprintf("ownershipDiscovery.sources[%d].leaseTTL", j), source.LeaseTTL, 0, true); err != nil {
+			return err
+		}
+		if source.ProbeRetries < 0 || source.ProbeRetries > 20 {
+			return fmt.Errorf("%s spec.members[%d].ownershipDiscovery.sources[%d].probeRetries must be between 0 and 20", res.ID(), index, j)
+		}
+		if strings.TrimSpace(sourceType) == "on-demand-arp" {
+			if strings.TrimSpace(mobilityFirstNonEmpty(source.Interface, member.Capture.Interface)) == "" {
+				return fmt.Errorf("%s spec.members[%d].ownershipDiscovery.sources[%d].interface or capture.interface is required for on-demand-arp", res.ID(), index, j)
+			}
+		}
+	}
+	return nil
+}
+
+func validateMobilityDiscoveryDuration(res api.Resource, index int, path, value string, min time.Duration, positive bool) error {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	parsed, err := time.ParseDuration(value)
+	if err != nil {
+		return fmt.Errorf("%s spec.members[%d].%s must be a Go duration: %w", res.ID(), index, path, err)
+	}
+	if positive && parsed <= 0 {
+		return fmt.Errorf("%s spec.members[%d].%s must be > 0", res.ID(), index, path)
+	}
+	if min > 0 && parsed < min {
+		return fmt.Errorf("%s spec.members[%d].%s must be >= %s", res.ID(), index, path, min)
+	}
+	return nil
+}
+
+func mobilityFirstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func validateMobilityOwnershipDiscoveryScope(res api.Resource, index int, scope api.MobilityOwnershipDiscoveryScope, pool netip.Prefix) error {

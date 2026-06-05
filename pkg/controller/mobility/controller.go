@@ -444,6 +444,7 @@ func bgpLocalOwnedAddresses(paths []bgpdaemon.AppliedPath) map[string]bool {
 func bgpLocalOwnedAddressesFromConfigAndEvents(poolName, selfNode string, spec api.MobilityPoolSpec, events []routerstate.EventRecord, discoveryOwnedAddresses map[string]bool, discoveryOwnedObserved bool, discoverySelfIPs map[string]bool, discoverySelfIPsObserved bool, poolPrefix netip.Prefix, now time.Time) []bgpOwnedAddress {
 	owned := map[string]bgpOwnedAddress{}
 	latest := map[string]routerstate.EventRecord{}
+	latestByAddressSource := map[string]map[string]routerstate.EventRecord{}
 	staticHandovers := staticHandoversByFrom(spec.StaticHandovers, poolPrefix)
 	members := plannerMembers(spec.Members)
 	self := members[strings.TrimSpace(selfNode)]
@@ -479,23 +480,37 @@ func bgpLocalOwnedAddressesFromConfigAndEvents(poolName, selfNode string, spec a
 		if !found || eventRecordGreater(candidate, current) {
 			latest[address] = candidate
 		}
+		sourceKey := bgpOwnershipEventSourceKey(candidate)
+		if latestByAddressSource[address] == nil {
+			latestByAddressSource[address] = map[string]routerstate.EventRecord{}
+		}
+		currentBySource, foundBySource := latestByAddressSource[address][sourceKey]
+		if !foundBySource || eventRecordGreater(candidate, currentBySource) {
+			latestByAddressSource[address][sourceKey] = candidate
+		}
 	}
-	for address, ev := range latest {
-		if ev.Type == ExpiredEventType || (!ev.ExpiresAt.IsZero() && !now.Before(ev.ExpiresAt)) {
-			delete(owned, address)
-			continue
-		}
-		sourceType := strings.TrimSpace(ev.Payload["sourceType"])
-		if sourceType == "" {
-			sourceType = bgpMobilitySourceFromEvent(ev)
-		}
-		if sourceType == providerDiscoverySource && strings.TrimSpace(ev.SourceNode) == strings.TrimSpace(selfNode) {
-			if !selfProviderDiscoveryEventBackedByFreshInventory(address, ev, self, discoveryOwnedAddresses, discoveryOwnedObserved, discoverySelfIPs, discoverySelfIPsObserved) {
-				continue
+	for address, bySource := range latestByAddressSource {
+		for _, ev := range bySource {
+			sourceType := bgpOwnershipEventSourceType(ev)
+			if sourceType == staticHandoverType && (ev.Type == ExpiredEventType || (!ev.ExpiresAt.IsZero() && !now.Before(ev.ExpiresAt))) {
+				delete(owned, address)
 			}
 		}
-		if bgpMemberAdvertisesOwnedAddress(self, members[strings.TrimSpace(ev.SourceNode)]) {
-			owned[address] = bgpOwnedAddress{Address: address, SourceType: sourceType}
+	}
+	for address, bySource := range latestByAddressSource {
+		for _, ev := range bySource {
+			if ev.Type == ExpiredEventType || (!ev.ExpiresAt.IsZero() && !now.Before(ev.ExpiresAt)) {
+				continue
+			}
+			sourceType := bgpOwnershipEventSourceType(ev)
+			if sourceType == providerDiscoverySource && strings.TrimSpace(ev.SourceNode) == strings.TrimSpace(selfNode) {
+				if !selfProviderDiscoveryEventBackedByFreshInventory(address, ev, self, discoveryOwnedAddresses, discoveryOwnedObserved, discoverySelfIPs, discoverySelfIPsObserved) {
+					continue
+				}
+			}
+			if bgpMemberAdvertisesOwnedAddress(self, members[strings.TrimSpace(ev.SourceNode)]) {
+				owned[address] = bgpOwnedAddress{Address: address, SourceType: sourceType}
+			}
 		}
 	}
 	for _, handover := range spec.StaticHandovers {
@@ -519,6 +534,26 @@ func bgpLocalOwnedAddressesFromConfigAndEvents(poolName, selfNode string, spec a
 		return out[i].Address < out[j].Address
 	})
 	return out
+}
+
+func bgpOwnershipEventSourceType(ev routerstate.EventRecord) string {
+	sourceType := strings.TrimSpace(ev.Payload["sourceType"])
+	if sourceType == "" {
+		sourceType = bgpMobilitySourceFromEvent(ev)
+	}
+	return sourceType
+}
+
+func bgpOwnershipEventSourceKey(ev routerstate.EventRecord) string {
+	sourceType := bgpOwnershipEventSourceType(ev)
+	if sourceType == "" {
+		sourceType = "observed"
+	}
+	source := strings.TrimSpace(ev.Payload["source"])
+	if source == "" {
+		source = "event"
+	}
+	return strings.Join([]string{source, sourceType, strings.TrimSpace(ev.SourceNode)}, "\x00")
 }
 
 func selfProviderDiscoveryEventBackedByFreshInventory(address string, ev routerstate.EventRecord, self memberPlanInfo, discoveryOwnedAddresses map[string]bool, discoveryOwnedObserved bool, discoverySelfIPs map[string]bool, discoverySelfIPsObserved bool) bool {
