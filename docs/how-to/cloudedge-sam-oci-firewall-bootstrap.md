@@ -49,7 +49,7 @@ VNIC source-dest-check.
 
 ## Related
 
-- [Selective Address Mobility](../reference/selective-address-mobility.md)
+- [Selective Address Mobility](../reference/selective-address-mobility)
 - OCI Ubuntu images differ from AWS/Azure images in their default `iptables-nft`
   posture; AWS/Azure SAM smokes did not hit this because their images do not
   reject-all `FORWARD` by default.

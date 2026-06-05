@@ -5,7 +5,7 @@
 Proposed; Accepted for experimental implementation — 2026-05-30.
 
 This ADR builds directly on [ADR 0006: CloudEdge Event Federation](../adr/0006-event-federation.md)
-and the [Selective Address Mobility](../reference/selective-address-mobility.md)
+and the [Selective Address Mobility](../reference/selective-address-mobility)
 dataplane. It is **experimental**.
 
 Phase 5.0 (this chunk) lands the **design, the `ProviderActionPolicy` Kind, and

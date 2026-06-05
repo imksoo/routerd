@@ -159,4 +159,4 @@ spec:
 
 routerd 内部のイベントストリームも stdout / syslog / Loki へ転送したい場合は、
 `ObservabilityPipeline` を使います。詳しくは
-[Observability pipeline](../operations/observability.md) を参照してください。
+[Observability pipeline の運用](../operations/observability.md) を参照してください。

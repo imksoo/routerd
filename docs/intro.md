@@ -23,7 +23,7 @@ For a new deployment, start from the recommended stable milestone **v20260528.23
 | Stand up a router for the first time | [Tutorials → Getting started](./tutorials/getting-started.md) |
 | Try a diskless mini PC router | [Tutorials → Diskless mini PC walkthrough](./tutorials/diskless-minipc-walkthrough.md) |
 | Solve a specific deployment problem | [How-to guides](./how-to/multi-wan.md) |
-| Look up a resource kind or field | [Reference → Resource API](/docs/reference/api-v1alpha1) |
+| Look up a resource kind or field | [Reference → Resource API](./api-v1alpha1.md) |
 | Operate a running router | [Operations → Reconcile](/docs/operations/reconcile) |
 | Read background notes on hard cases | [Knowledge base](./knowledge-base/dhcpv6-pd-clients.md) |
 | Catch up on what changed | [Releases → Changelog](./releases/changelog.md) |

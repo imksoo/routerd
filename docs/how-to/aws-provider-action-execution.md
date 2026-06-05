@@ -4,7 +4,7 @@
 This is the **gated live-mutation** path for CloudEdge provider action execution.
 It is **experimental** and AWS-only. It builds on
 [ADR 0007: Provider Action Execution](../adr/0007-provider-action-execution.md)
-and the [Selective Address Mobility](../reference/selective-address-mobility.md)
+and the [Selective Address Mobility](../reference/selective-address-mobility)
 dataplane. Do **not** run the live execute step in production or against shared
 resources. Live execute happens **only after explicit owner go** following review
 of this runbook and the read-only preflight evidence.

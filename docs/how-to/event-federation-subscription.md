@@ -48,13 +48,13 @@ observe LAN client
 
 ## Example resources
 
-- Receiver (cloud) wiring: [`examples/event-federation/receiver-cloud.yaml`](../../examples/event-federation/receiver-cloud.yaml)
+- Receiver (cloud) wiring: [`examples/event-federation/receiver-cloud.yaml`](https://github.com/imksoo/routerd/blob/main/examples/event-federation/receiver-cloud.yaml)
   — `EventGroup`, `EventSubscription`, `Plugin`, plus the hybrid context
   (`OverlayPeer`, `AddressMobilityDomain`, `CloudProviderProfile`) that the
   resulting `RemoteAddressClaim` resolves against.
-- Sender (on-prem) wiring: [`examples/event-federation/sender-onprem.yaml`](../../examples/event-federation/sender-onprem.yaml)
+- Sender (on-prem) wiring: [`examples/event-federation/sender-onprem.yaml`](https://github.com/imksoo/routerd/blob/main/examples/event-federation/sender-onprem.yaml)
   — `EventGroup` + `EventPeer` push target.
-- Example plugin: [`examples/plugins/event-to-remote-claim/`](../../examples/plugins/event-to-remote-claim/).
+- Example plugin: [`examples/plugins/event-to-remote-claim/`](https://github.com/imksoo/routerd/tree/main/examples/plugins/event-to-remote-claim).
 
 ## Try it
 

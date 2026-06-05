@@ -7,7 +7,7 @@ title: Azure and PVE same-subnet SAM smoke
 This guide captures the validated operational shape for an Azure routerd node
 and an on-prem Proxmox VE routerd node that exchange selected `/32` addresses
 with Selective Address Mobility (SAM). See the
-[Selective Address Mobility reference](../reference/selective-address-mobility.md)
+[Selective Address Mobility reference](../reference/selective-address-mobility)
 for resource semantics.
 
 ## Azure side

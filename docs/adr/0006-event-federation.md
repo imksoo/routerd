@@ -21,7 +21,7 @@ Phase 5 (provider action execution) is **out of MVP**.
 
 ## Context
 
-SAM ([reference](../reference/selective-address-mobility.md),
+SAM ([reference](../reference/selective-address-mobility),
 [milestone](../releases/cloudedge-sam-mvp-milestone.md)) is clean-validated
 on Azure×PVE, AWS×PVE, and OCI×PVE (3-cloud parity). It proves the
 **capture (provider-specific) / delivery+claim (routerd-common)** split. But the

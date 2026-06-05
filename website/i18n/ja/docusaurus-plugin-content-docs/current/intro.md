@@ -27,7 +27,7 @@ routerd は、型付きの YAML で書いた望ましい状態から、Linux / N
 | 宣言型モデル（リソース・適用・調整）を理解する | [機能解説 → リソースモデル](./concepts/resource-model.md) |
 | 検証済みの構成例から設定を組む | [設定例集](./config-examples/index.md) |
 | 特定の配置課題を解く | [How-to ガイド](./how-to/multi-wan.md) |
-| リソースの種別やフィールドを引く | [リファレンス → リソース API](/docs/reference/api-v1alpha1) |
+| リソースの種別やフィールドを引く | [リファレンス → リソース API](./api-v1alpha1.md) |
 | 稼働中のルーターを運用する | [機能解説 → 調整（リコンサイル）](/docs/operations/reconcile) |
 | 何が変わったかを追う | [リリースと安定版 → 変更履歴](./releases/changelog.md) |
 | 難しい事例の背景を知る | [ナレッジベース](./knowledge-base/dhcpv6-pd-clients.md) |

@@ -269,5 +269,5 @@ SDK path sends logs, metrics, and traces to that endpoint.
 - [Reconcile loop](./operations/reconcile)
 - [State database operations](./operations/state-database.md)
 - [API reference v1alpha1](./api-v1alpha1.md)
-- [Plugin protocol](./reference/plugin-protocol)
+- [Plugin protocol](./plugin-protocol.md)
 - [Supported platforms](./platforms.md)

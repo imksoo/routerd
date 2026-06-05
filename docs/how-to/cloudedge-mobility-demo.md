@@ -36,7 +36,7 @@ All four sites share one logical subnet; each site owns exactly one `/32` within
 Logical subnet: **`10.77.60.0/24`**. The overlay between routers is a *separate*
 RFC1918 WireGuard network (kept clear of link-local `169.254/16` and CGNAT
 `100.64/10`); see
-[Selective Address Mobility](../reference/selective-address-mobility.md) for the
+[Selective Address Mobility](../reference/selective-address-mobility) for the
 addressing constraints.
 
 ## Data plane
