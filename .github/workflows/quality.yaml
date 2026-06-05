@@ -13,6 +13,16 @@ on:
         required: false
         type: boolean
         default: false
+      base-ref:
+        description: "Base ref for change detection when called from pull_request."
+        required: false
+        type: string
+        default: ""
+      head-ref:
+        description: "Head ref for change detection when called from pull_request."
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -26,22 +36,27 @@ jobs:
     name: Detect website changes
     runs-on: ubuntu-latest
     outputs:
-      website: ${{ steps.filter.outputs.website }}
+      website: ${{ steps.filter.outputs.docs == 'true' || steps.filter.outputs.website == 'true' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.checkout-ref || github.ref }}
+          ref: ${{ inputs.head-ref || inputs.checkout-ref || github.ref }}
+          fetch-depth: 20
 
       - name: Detect docs and website changes
         id: filter
         uses: dorny/paths-filter@v3
         with:
+          base: ${{ inputs.base-ref }}
+          ref: ${{ inputs.head-ref || inputs.checkout-ref || github.ref }}
+          predicate-quantifier: every
           filters: |
-            website:
+            docs:
               - 'docs/**'
-              - 'website/**'
               - '!docs/releases/changelog.md'
+            website:
+              - 'website/**'
               - '!website/i18n/**/releases/changelog.md'
 
   go-test:
