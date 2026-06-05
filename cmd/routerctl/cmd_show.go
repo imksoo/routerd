@@ -13,12 +13,16 @@ import (
 	"sort"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/apply"
 	"github.com/imksoo/routerd/pkg/config"
+	"github.com/imksoo/routerd/pkg/controller/chain"
+	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/render"
 	"github.com/imksoo/routerd/pkg/resource"
+	"github.com/imksoo/routerd/pkg/resourcequery"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -268,12 +272,11 @@ func writeDedicatedShow(stdout io.Writer, router *api.Router, store routerstate.
 }
 
 func buildDerivedShowResources(router *api.Router, store routerstate.Store, includeStale bool) ([]showResource, error) {
-	explicit := map[string]bool{}
-	if router != nil {
-		for _, res := range router.Spec.Resources {
-			explicit[res.APIVersion+"/"+res.Kind+"/"+res.Metadata.Name] = true
-		}
+	currentRouter, err := derivedResourcesCurrentRouter(router, store)
+	if err != nil {
+		return nil, err
 	}
+	explicit := resourceIDSet(router)
 	byID := map[string]showResource{}
 	add := func(row showResource) {
 		id := row.APIVersion + "/" + row.Kind + "/" + row.Name
@@ -290,7 +293,10 @@ func buildDerivedShowResources(router *api.Router, store routerstate.Store, incl
 		}
 		byID[id] = row
 	}
-	for _, row := range plannedDerivedShowResources(router) {
+	for _, row := range plannedDerivedShowResources(currentRouter) {
+		add(row)
+	}
+	for _, row := range plannedEffectiveDerivedResources(router, currentRouter) {
 		add(row)
 	}
 	statuses, err := listObjectStatuses(store)
@@ -335,6 +341,61 @@ func buildDerivedShowResources(router *api.Router, store routerstate.Store, incl
 		return rows[i].Name < rows[j].Name
 	})
 	return rows, nil
+}
+
+func derivedResourcesCurrentRouter(router *api.Router, store routerstate.Store) (*api.Router, error) {
+	if router == nil {
+		return nil, nil
+	}
+	effective := resourcequery.FilterRouterByWhen(router, store)
+	current, err := chain.BuildDynamicRouteSAMEffectiveRouter(effective, store, time.Now().UTC(), platform.CurrentOS())
+	if err != nil {
+		return nil, err
+	}
+	return current, nil
+}
+
+func resourceIDSet(router *api.Router) map[string]bool {
+	out := map[string]bool{}
+	if router == nil {
+		return out
+	}
+	for _, res := range router.Spec.Resources {
+		out[res.ID()] = true
+	}
+	return out
+}
+
+func plannedEffectiveDerivedResources(startup, current *api.Router) []showResource {
+	if current == nil {
+		return nil
+	}
+	explicit := resourceIDSet(startup)
+	var rows []showResource
+	for _, res := range current.Spec.Resources {
+		if res.APIVersion == "" || res.Kind == "" || res.Metadata.Name == "" || explicit[res.ID()] {
+			continue
+		}
+		source := derivedResourceSource(res)
+		rows = append(rows, showResource{
+			APIVersion: res.APIVersion,
+			Kind:       res.Kind,
+			Name:       res.Metadata.Name,
+			Source:     source,
+			State:      map[string]any{"phase": "Planned", "source": source},
+		})
+	}
+	return rows
+}
+
+func derivedResourceSource(res api.Resource) string {
+	if source := strings.TrimSpace(res.Metadata.Annotations["mobility.routerd.net/source"]); source != "" {
+		if pool := strings.TrimSpace(res.Metadata.Annotations["mobility.routerd.net/pool"]); pool != "" {
+			return "MobilityPool/" + pool + "/" + source
+		}
+		return source
+	}
+	return "dynamic-effective"
 }
 
 func staleObjectStatus(status routerstate.ObjectStatus) map[string]any {
