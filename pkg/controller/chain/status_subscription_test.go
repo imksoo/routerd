@@ -37,6 +37,36 @@ func TestSAMRouteControllersSubscribeToVirtualAddressStatus(t *testing.T) {
 	}
 }
 
+func TestSAMControllerSubscribesToBGPRouterStatus(t *testing.T) {
+	event := daemonapi.DaemonEvent{
+		Type: "routerd.resource.status.changed",
+		Resource: &daemonapi.ResourceRef{
+			APIVersion: api.NetAPIVersion,
+			Kind:       "BGPRouter",
+			Name:       "lan",
+		},
+		Attributes: map[string]string{"changedFields": "installedNextHops,peers,phase"},
+	}
+	if !subscriptionSetAccepts(samStatusSubscriptions(), event) {
+		t.Fatal("sam subscriptions did not accept BGPRouter status change")
+	}
+}
+
+func TestSAMControllerIgnoresBGPRouterPeerOnlyStatus(t *testing.T) {
+	event := daemonapi.DaemonEvent{
+		Type: "routerd.resource.status.changed",
+		Resource: &daemonapi.ResourceRef{
+			APIVersion: api.NetAPIVersion,
+			Kind:       "BGPRouter",
+			Name:       "lan",
+		},
+		Attributes: map[string]string{"changedFields": "peers,observedAt"},
+	}
+	if subscriptionSetAccepts(samStatusSubscriptions(), event) {
+		t.Fatal("sam subscriptions accepted BGPRouter peer-only status change")
+	}
+}
+
 func subscriptionSetAccepts(subs []bus.Subscription, event daemonapi.DaemonEvent) bool {
 	for _, sub := range subs {
 		if sub.Filter == nil || sub.Filter(event) {

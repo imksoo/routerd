@@ -642,7 +642,30 @@ func hybridRouteStatusSubscriptions() []bus.Subscription {
 }
 
 func samStatusSubscriptions() []bus.Subscription {
-	return statusSubscriptions("IPv4Route", "Sysctl", "WireGuardInterface", "TunnelInterface", "Interface", "VirtualAddress")
+	subs := statusSubscriptions("IPv4Route", "Sysctl", "WireGuardInterface", "TunnelInterface", "Interface", "VirtualAddress")
+	subs = append(subs, bus.Subscription{
+		Topics: []string{"routerd.resource.status.changed"},
+		Filter: func(event daemonapi.DaemonEvent) bool {
+			if event.Resource == nil || event.Resource.Kind != "BGPRouter" {
+				return false
+			}
+			return eventChangedField(event, "installedNextHops") ||
+				eventChangedField(event, "prefixes") ||
+				eventChangedField(event, "phase") ||
+				eventChangedField(event, "fibRoutes") ||
+				eventChangedField(event, "fibUnsupportedRoutes")
+		},
+	})
+	return subs
+}
+
+func eventChangedField(event daemonapi.DaemonEvent, field string) bool {
+	for _, changed := range strings.Split(event.Attributes["changedFields"], ",") {
+		if strings.TrimSpace(changed) == field {
+			return true
+		}
+	}
+	return false
 }
 
 func becamePhase(event daemonapi.DaemonEvent, phase string) bool {
