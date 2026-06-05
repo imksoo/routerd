@@ -12,6 +12,7 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
+	"github.com/imksoo/routerd/pkg/resourcequery"
 )
 
 func TestNetworkAdoptionControllerWritesNetworkdAndResolvedDropins(t *testing.T) {
@@ -630,6 +631,101 @@ func TestSystemdUnitControllerSynthesizesTailscaleUnits(t *testing.T) {
 	status := store.ObjectStatus(api.NetAPIVersion, "TailscaleNode", "home")
 	if status["phase"] != "Running" || status["advertiseExitNode"] != true || status["tailnetName"] != "example@example.com" || status["peerCount"] != 1 {
 		t.Fatalf("status = %#v", status)
+	}
+}
+
+func TestSystemdUnitControllerRemovesWhenFalseTailscaleUnitAndRecreatesWhenTrue(t *testing.T) {
+	dir := t.TempDir()
+	unitPath := filepath.Join(dir, "routerd-tailscale-home.service")
+	if err := os.WriteFile(unitPath, []byte("[Unit]\nDescription=old tailscale\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "TailscaleNode"}, Metadata: api.ObjectMeta{Name: "home"}, Spec: api.TailscaleNodeSpec{
+			Hostname:          "homert02",
+			AdvertiseExitNode: true,
+			AdvertiseRoutes:   []string{"172.18.0.0/16"},
+			When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{
+				"VirtualAddress/lan-vip.role": {Equals: "master"},
+			}},
+		}},
+	}}}
+	store := statefulDHCPMapStore{mapStore: mapStore{
+		api.NetAPIVersion + "/VirtualAddress/lan-vip": {"role": "backup"},
+	}}
+	var commands []string
+	controller := SystemdUnitController{
+		Router:           resourcequery.FilterRouterByWhen(router, store),
+		DeclaredRouter:   router,
+		Store:            store,
+		SystemdSystemDir: dir,
+		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			_ = ctx
+			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
+			if name == "systemctl" && len(args) >= 2 && args[0] == "is-active" && args[1] == "--quiet" {
+				return nil, errors.New("inactive")
+			}
+			return []byte("ok"), nil
+		},
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(unitPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("when-false tailscale unit still exists: %v", err)
+	}
+	gotCommands := strings.Join(commands, "\n")
+	for _, want := range []string{
+		"systemctl daemon-reload",
+		"systemctl disable --now routerd-tailscale-home.service",
+	} {
+		if !strings.Contains(gotCommands, want) {
+			t.Fatalf("commands missing %q:\n%s", want, gotCommands)
+		}
+	}
+	unitStatus := store.ObjectStatus(api.SystemAPIVersion, "ServiceUnit", "routerd-tailscale-home.service")
+	if unitStatus["phase"] != "Removed" || unitStatus["reason"] != "WhenFalse" {
+		t.Fatalf("unit status = %#v", unitStatus)
+	}
+	nodeStatus := store.ObjectStatus(api.NetAPIVersion, "TailscaleNode", "home")
+	if nodeStatus["phase"] != "Pending" || nodeStatus["reason"] != "WhenFalse" {
+		t.Fatalf("node status = %#v", nodeStatus)
+	}
+
+	store.mapStore[api.NetAPIVersion+"/VirtualAddress/lan-vip"]["role"] = "master"
+	commands = nil
+	controller.Router = resourcequery.FilterRouterByWhen(router, store)
+	controller.Command = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		_ = ctx
+		commands = append(commands, strings.Join(append([]string{name}, args...), " "))
+		if strings.HasSuffix(name, "tailscale") && strings.Join(args, " ") == "status --json" {
+			return []byte(`{"BackendState":"Running","Self":{"Online":true}}`), nil
+		}
+		if name == "systemctl" && len(args) >= 2 && args[0] == "is-active" && args[1] == "--quiet" {
+			return nil, errors.New("inactive")
+		}
+		if name == "systemctl" && len(args) >= 2 && args[0] == "is-enabled" && args[1] == "--quiet" {
+			return nil, errors.New("disabled")
+		}
+		return []byte("ok"), nil
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(unitPath)
+	if err != nil {
+		t.Fatalf("tailscale unit was not recreated: %v", err)
+	}
+	if !strings.Contains(string(data), "--advertise-routes=172.18.0.0/16") {
+		t.Fatalf("recreated unit missing route advertisement:\n%s", data)
+	}
+	gotCommands = strings.Join(commands, "\n")
+	if !strings.Contains(gotCommands, "systemctl restart routerd-tailscale-home.service") {
+		t.Fatalf("commands missing Tailscale restart:\n%s", gotCommands)
+	}
+	nodeStatus = store.ObjectStatus(api.NetAPIVersion, "TailscaleNode", "home")
+	if nodeStatus["phase"] != "Running" || nodeStatus["advertiseExitNode"] != true {
+		t.Fatalf("node status after master = %#v", nodeStatus)
 	}
 }
 

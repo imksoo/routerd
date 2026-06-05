@@ -62,6 +62,12 @@ func ResourceWhen(res api.Resource) api.ResourceWhenSpec {
 	case "BFD":
 		spec, _ := res.BFDSpec()
 		return spec.When
+	case "TailscaleNode":
+		spec, _ := res.TailscaleNodeSpec()
+		return spec.When
+	case "DHCPv4Client":
+		spec, _ := res.DHCPv4ClientSpec()
+		return spec.When
 	case "ClusterNetworkRoute":
 		spec, _ := res.ClusterNetworkRouteSpec()
 		return spec.When
@@ -73,6 +79,12 @@ func ResourceWhen(res api.Resource) api.ResourceWhenSpec {
 		return spec.When
 	case "DHCPv6Server":
 		spec, _ := res.DHCPv6ServerSpec()
+		return spec.When
+	case "DHCPv6PrefixDelegation":
+		spec, _ := res.DHCPv6PrefixDelegationSpec()
+		return spec.When
+	case "IPv6RouterAdvertisement":
+		spec, _ := res.IPv6RouterAdvertisementSpec()
 		return spec.When
 	case "DHCPv4ServerLeaseSync":
 		spec, _ := res.DHCPv4ServerLeaseSyncSpec()
@@ -92,8 +104,14 @@ func ResourceWhen(res api.Resource) api.ResourceWhenSpec {
 	case "DNSForwarder":
 		spec, _ := res.DNSForwarderSpec()
 		return spec.When
+	case "DNSResolver":
+		spec, _ := res.DNSResolverSpec()
+		return spec.When
 	case "DNSUpstream":
 		spec, _ := res.DNSUpstreamSpec()
+		return spec.When
+	case "EventGroup":
+		spec, _ := res.EventGroupSpec()
 		return spec.When
 	case "HealthCheck":
 		spec, _ := res.HealthCheckSpec()
