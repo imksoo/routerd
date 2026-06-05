@@ -720,11 +720,14 @@ func TestReconcileRefreshesImportPolicyAfterReconnectDrift(t *testing.T) {
 	server := &fakeServer{thirdPartyNextHop: "192.168.1.57"}
 	fib := &fakeFIB{}
 	controller := Controller{
-		Router:          router,
-		Store:           mapStore{},
-		Server:          server,
-		FIB:             fib,
-		importPolicyKey: bgpPoliciesKey(api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.250.0.0/24"}}, nil),
+		Router: router,
+		Store:  mapStore{},
+		Server: server,
+		FIB:    fib,
+		importPolicyKey: bgpPoliciesKey(api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.250.0.0/24"}}, map[string]desiredPeer{
+			"192.168.1.38": {Address: "192.168.1.38", ExportPolicy: api.BGPExportPolicySpec{AllowedPrefixes: []string{"10.0.0.0/16"}}},
+			"192.168.1.53": {Address: "192.168.1.53", ExportPolicy: api.BGPExportPolicySpec{AllowedPrefixes: []string{"10.0.0.0/16"}}},
+		}),
 	}
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
@@ -1311,6 +1314,9 @@ func TestReconcilePreservesMobilityPathsWhenStaticAdvertisementsChange(t *testin
 	}
 	if len(server.applied.Advertisements) != 1 || server.applied.Advertisements[0] != "10.0.0.0/16" {
 		t.Fatalf("legacy static advertisements = %#v", server.applied.Advertisements)
+	}
+	if got := server.applied.Peers["10.0.0.21"].ExportPolicy.AllowedPrefixes; !sameStringSet(got, []string{"10.0.0.0/16", "10.77.60.11/32"}) {
+		t.Fatalf("export policy prefixes = %#v, want static and dynamic mobility prefixes", got)
 	}
 }
 

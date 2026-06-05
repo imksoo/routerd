@@ -178,12 +178,15 @@ func (c *Controller) reconcileLocked(ctx context.Context) error {
 		return c.savePendingAll("GoBGPPeerConfigInvalid", err)
 	}
 	c.observeBFDPeerStates(desired)
+	staticExportPrefixes := mapKeys(advertisedPrefixes(routerSpec))
+	dynamicExportPrefixes := dynamicPathExportPrefixes(applied.Paths)
 	for address, peer := range desired {
 		peer.GracefulRestart = routerSpec.GracefulRestart
 		peer.ConvergenceProfile = routerSpec.ConvergenceProfile
 		peer.ImportPolicy = routerSpec.ImportPolicy
 		peer.ImportPolicyName = bgpPolicyName(routerResource.Metadata.Name, "import")
 		peer.ExportPolicyName = peerExportPolicyName(routerResource.Metadata.Name, address)
+		peer.ExportPolicy.AllowedPrefixes = mergeAllowedPrefixes(peer.ExportPolicy.AllowedPrefixes, staticExportPrefixes, dynamicExportPrefixes)
 		desired[address] = peer
 	}
 	importPolicyName, err := c.reconcilePolicies(ctx, routerResource.Metadata.Name, routerSpec.ImportPolicy, desired)
@@ -805,6 +808,39 @@ func appliedPeer(peer desiredPeer) bgpdaemon.AppliedPeer {
 	}
 	if gr := gobgpPeerGracefulRestart(peer); gr != nil {
 		out.GracefulRestart = &bgpdaemon.AppliedGracefulRestart{Enabled: true, RestartTime: gr.GetRestartTime(), StaleRoutesTime: gr.GetStaleRoutesTime()}
+	}
+	return out
+}
+
+func dynamicPathExportPrefixes(paths []bgpdaemon.AppliedPath) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, path := range paths {
+		if strings.TrimSpace(path.Source) == "" || strings.TrimSpace(path.Source) == bgpdaemon.AppliedPathSourceStatic {
+			continue
+		}
+		prefix := strings.TrimSpace(path.Prefix)
+		if prefix == "" || seen[prefix] {
+			continue
+		}
+		seen[prefix] = true
+		out = append(out, prefix)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func mergeAllowedPrefixes(groups ...[]string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, group := range groups {
+		for _, prefix := range cleanStrings(group) {
+			if seen[prefix] {
+				continue
+			}
+			seen[prefix] = true
+			out = append(out, prefix)
+		}
 	}
 	return out
 }
