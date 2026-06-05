@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -184,6 +185,22 @@ func NewJSON() *JSONStore {
 
 func Load(path string) (Store, error) {
 	return Open(path)
+}
+
+func LoadReadOnly(path string) (Store, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return NewJSON(), nil
+	}
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		return NewJSON(), nil
+	} else if err != nil {
+		return nil, err
+	}
+	if filepath.Ext(path) == ".json" {
+		return LoadJSON(path)
+	}
+	return OpenSQLiteReadOnlyImmutable(path)
 }
 
 func LoadJSON(path string) (*JSONStore, error) {

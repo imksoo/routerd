@@ -638,6 +638,74 @@ func TestShowKindNameYAML(t *testing.T) {
 	}
 }
 
+func TestShowOpensSQLiteStateReadOnly(t *testing.T) {
+	dir := t.TempDir()
+	configPath := writeShowConfig(t, dir)
+	stateDir := filepath.Join(dir, "state")
+	if err := os.Mkdir(stateDir, 0755); err != nil {
+		t.Fatalf("mkdir state dir: %v", err)
+	}
+	statePath := filepath.Join(stateDir, "routerd.db")
+	store, err := routerstate.OpenSQLite(statePath)
+	if err != nil {
+		t.Fatalf("open sqlite state: %v", err)
+	}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "Interface", "wan", map[string]any{
+		"phase":  "Ready",
+		"ifname": "ens18",
+	}); err != nil {
+		t.Fatalf("save interface status: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close sqlite state: %v", err)
+	}
+
+	t.Cleanup(func() {
+		_ = os.Chmod(stateDir, 0755)
+		_ = os.Chmod(statePath, 0644)
+	})
+	if err := os.Chmod(statePath, 0444); err != nil {
+		t.Fatalf("chmod state: %v", err)
+	}
+	if err := os.Chmod(stateDir, 0555); err != nil {
+		t.Fatalf("chmod state dir: %v", err)
+	}
+
+	var out bytes.Buffer
+	err = run([]string{"show", "interface/wan", "--config", configPath, "--state-file", statePath, "--ledger-file", filepath.Join(dir, "artifacts.json"), "-o", "json"}, &out, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("show interface with read-only sqlite state: %v", err)
+	}
+	var rows []showResource
+	if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
+		t.Fatalf("unmarshal show output: %v\n%s", err, out.String())
+	}
+	if len(rows) != 1 || rows[0].Kind != "Interface" || rows[0].Name != "wan" || rows[0].State["phase"] != "Ready" {
+		t.Fatalf("show output = %#v", rows)
+	}
+}
+
+func TestShowStillAcceptsJSONState(t *testing.T) {
+	dir := t.TempDir()
+	configPath := writeShowConfig(t, dir)
+	statePath := filepath.Join(dir, "state.json")
+	store := routerstate.New()
+	store.Set("interface.wan.phase", "Ready", "test")
+	if err := store.Save(statePath); err != nil {
+		t.Fatalf("save json state: %v", err)
+	}
+
+	var out bytes.Buffer
+	err := run([]string{"show", "interface/wan", "--config", configPath, "--state-file", statePath, "--ledger-file", filepath.Join(dir, "artifacts.json"), "-o", "json"}, &out, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("show interface with json state: %v", err)
+	}
+	got := out.String()
+	if !strings.Contains(got, `"kind": "Interface"`) || !strings.Contains(got, `"name": "wan"`) || !strings.Contains(got, `"value": "Ready"`) {
+		t.Fatalf("show json state output = %s", got)
+	}
+}
+
 func TestShowDiffAndLedgerModes(t *testing.T) {
 	dir := t.TempDir()
 	configPath := writeShowConfig(t, dir)
