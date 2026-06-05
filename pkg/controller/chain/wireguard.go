@@ -432,6 +432,9 @@ func (c WireGuardController) endpointMatches(ctx context.Context, desired, curre
 	if desired == current {
 		return true
 	}
+	if current == "" {
+		return true
+	}
 	desiredHost, desiredPort, err := net.SplitHostPort(desired)
 	if err != nil {
 		return false

@@ -251,6 +251,9 @@ func TestWireGuardControllerSkipsApplyWhenInterfaceMatches(t *testing.T) {
 			return []string{"198.51.100.2"}, nil
 		})
 	})
+	t.Run("configured endpoint without latest handshake endpoint", func(t *testing.T) {
+		testWireGuardControllerSkipsApplyWhenInterfaceMatches(t, "198.51.100.2:51820", "", nil)
+	})
 }
 
 func testWireGuardControllerSkipsApplyWhenInterfaceMatches(t *testing.T, desiredEndpoint, observedEndpoint string, lookup func(context.Context, string) ([]string, error)) {
