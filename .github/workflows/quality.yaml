@@ -8,14 +8,40 @@ on:
         required: false
         type: string
         default: ""
+      force-website-build:
+        description: "Build the website even when docs/website files did not change."
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
+  pull-requests: read
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
+  detect-website-changes:
+    name: Detect website changes
+    runs-on: ubuntu-latest
+    outputs:
+      website: ${{ steps.filter.outputs.website }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.checkout-ref || github.ref }}
+
+      - name: Detect docs and website changes
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            website:
+              - 'docs/**'
+              - 'website/**'
+
   go-test:
     name: Go tests
     runs-on: ubuntu-latest
@@ -154,6 +180,8 @@ jobs:
   website:
     name: Website build
     runs-on: ubuntu-latest
+    needs: detect-website-changes
+    if: ${{ inputs.force-website-build || needs.detect-website-changes.outputs.website == 'true' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
