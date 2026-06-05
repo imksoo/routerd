@@ -981,13 +981,11 @@ func loadTransientStateStore(path string) (routerstate.Store, error) {
 	} else if err != nil {
 		return nil, err
 	}
-	store, err := routerstate.Load(path)
+	store, err := routerstate.OpenSQLiteReadOnly(path)
 	if err != nil {
 		return nil, err
 	}
-	if closer, ok := store.(interface{ Close() error }); ok {
-		defer func() { _ = closer.Close() }()
-	}
+	defer func() { _ = store.Close() }()
 	snapshot := routerstate.NewJSON()
 	snapshot.Values = store.Variables()
 	return snapshot, nil

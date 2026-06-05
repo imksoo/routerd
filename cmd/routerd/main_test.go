@@ -190,6 +190,60 @@ func TestRunApplyOnceDryRunDoesNotMutateExistingStateDB(t *testing.T) {
 	}
 }
 
+func TestLoadTransientStateStoreOpensExistingSQLiteReadOnly(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "routerd.db")
+	store, err := routerstate.OpenSQLite(statePath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	store.Set("manual.mode", "keep", "seed")
+	if err := store.Close(); err != nil {
+		t.Fatalf("close sqlite: %v", err)
+	}
+
+	t.Cleanup(func() {
+		_ = os.Chmod(dir, 0755)
+		_ = os.Chmod(statePath, 0644)
+	})
+	if err := os.Chmod(statePath, 0444); err != nil {
+		t.Fatalf("chmod state: %v", err)
+	}
+	if err := os.Chmod(dir, 0555); err != nil {
+		t.Fatalf("chmod state dir: %v", err)
+	}
+
+	transient, err := loadTransientStateStore(statePath)
+	if err != nil {
+		t.Fatalf("load transient read-only sqlite: %v", err)
+	}
+	if _, ok := transient.(*routerstate.JSONStore); !ok {
+		t.Fatalf("transient store type = %T, want JSON snapshot", transient)
+	}
+	if got := transient.Get("manual.mode"); got.Status != routerstate.StatusSet || got.Value != "keep" {
+		t.Fatalf("snapshot manual.mode = %+v, want keep", got)
+	}
+}
+
+func TestLoadApplyStateStoreKeepsNonDryRunSQLiteWriter(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "routerd.db")
+	store, err := loadApplyStateStore(statePath, false)
+	if err != nil {
+		t.Fatalf("load apply writer: %v", err)
+	}
+	defer func() {
+		if closer, ok := store.(interface{ Close() error }); ok {
+			_ = closer.Close()
+		}
+	}()
+	if _, ok := store.(*routerstate.SQLiteStore); !ok {
+		t.Fatalf("apply store type = %T, want SQLite writer", store)
+	}
+	if got := store.Set("manual.mode", "writer", "test"); got.Status != routerstate.StatusSet || got.Value != "writer" {
+		t.Fatalf("writer set = %+v", got)
+	}
+}
+
 func TestRollbackListShowsStoredGenerations(t *testing.T) {
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, "routerd.db")

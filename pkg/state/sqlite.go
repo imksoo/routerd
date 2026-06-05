@@ -73,6 +73,7 @@ func OpenSQLiteReadOnly(path string) (*SQLiteStore, error) {
 	u := url.URL{Scheme: "file", Path: path}
 	q := u.Query()
 	q.Set("mode", "ro")
+	q.Set("immutable", "1")
 	u.RawQuery = q.Encode()
 	db, err := sql.Open("sqlite", u.String())
 	if err != nil {

@@ -325,6 +325,45 @@ func TestSQLiteStoreMaintenance(t *testing.T) {
 	}
 }
 
+func TestOpenSQLiteReadOnlyReadsReadonlyDirectoryState(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "routerd.db")
+	store, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatalf("open sqlite store: %v", err)
+	}
+	if got := store.Set("manual.mode", "keep", "seed"); got.Status != StatusSet || got.Value != "keep" {
+		t.Fatalf("seed state = %+v, want keep", got)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close sqlite store: %v", err)
+	}
+
+	t.Cleanup(func() {
+		_ = os.Chmod(dir, 0755)
+		_ = os.Chmod(path, 0644)
+	})
+	if err := os.Chmod(path, 0444); err != nil {
+		t.Fatalf("chmod state: %v", err)
+	}
+	if err := os.Chmod(dir, 0555); err != nil {
+		t.Fatalf("chmod state dir: %v", err)
+	}
+
+	readonly, err := OpenSQLiteReadOnly(path)
+	if err != nil {
+		t.Fatalf("open read-only sqlite: %v", err)
+	}
+	defer func() { _ = readonly.Close() }()
+	if got := readonly.Get("manual.mode"); got.Status != StatusSet || got.Value != "keep" {
+		t.Fatalf("read-only state = %+v, want keep", got)
+	}
+	vars := readonly.Variables()
+	if got := vars["manual.mode"]; got.Status != StatusSet || got.Value != "keep" {
+		t.Fatalf("read-only variables manual.mode = %+v, want keep", got)
+	}
+}
+
 func TestSQLiteStoreDynamicConfigParts(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "routerd.db")
 	store, err := OpenSQLite(path)
