@@ -158,3 +158,45 @@ func TestLiveISOSSHOptIn(t *testing.T) {
 		t.Fatal("live SSH must not use PermitRootLogin yes; use prohibit-password")
 	}
 }
+
+func TestLiveISOStartsQEMUGuestAgent(t *testing.T) {
+	data, err := os.ReadFile("../../scripts/build-live-iso.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(data)
+	required := []string{
+		"start_qemu_guest_agent()",
+		"is_virtual_environment",
+		"for service in qemu-ga qemu-guest-agent; do",
+		"rc-update add \"${service}\" default",
+		"rc-service \"${service}\" restart",
+		"command -v qemu-ga",
+		"qemu-ga --daemonize",
+		"start_qemu_guest_agent",
+	}
+	for _, needle := range required {
+		if !strings.Contains(script, needle) {
+			t.Fatalf("live ISO QEMU guest agent autostart missing %q", needle)
+		}
+	}
+
+	depsIdx := strings.Index(script, "install.sh --deps-only")
+	if depsIdx < 0 {
+		t.Fatal("install.sh --deps-only not found in script")
+	}
+	if !strings.Contains(script[depsIdx:], "\nstart_qemu_guest_agent\n") {
+		t.Fatal("QEMU guest agent must start after dependency installation")
+	}
+}
+
+func TestInstallerAlpineDepsIncludeQEMUGuestAgent(t *testing.T) {
+	data, err := os.ReadFile("../../packaging/install.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(data)
+	if !strings.Contains(script, "qemu-guest-agent") {
+		t.Fatal("Alpine dependency packages must include qemu-guest-agent")
+	}
+}
