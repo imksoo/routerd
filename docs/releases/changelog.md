@@ -10,8 +10,6 @@ Versions, however, do not follow Semantic Versioning; routerd uses date-and-time
 release versions in `vYYYYMMDD.HHmm` format.
 The software is at the v1alpha1 stage; releases may contain breaking changes.
 
-<!-- codex website-skip changelog-only probe -->
-
 ## Unreleased
 
 ### Added
