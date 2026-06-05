@@ -891,6 +891,9 @@ func resourceWhens(res api.Resource) []resourceWhenRef {
 	case "NAT44Rule":
 		spec, _ := res.NAT44RuleSpec()
 		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
+	case "NAT44SessionSync":
+		spec, _ := res.NAT44SessionSyncSpec()
+		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
 	case "PortForward":
 		spec, _ := res.PortForwardSpec()
 		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}

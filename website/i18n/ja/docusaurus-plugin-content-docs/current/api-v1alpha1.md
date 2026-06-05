@@ -163,6 +163,7 @@ DNSSEC validation は `DNSForwarder.spec.dnssecValidate` に書きます。
 | `BGPPeer` | `BGPRouter` にぶら下がる、GoBGP 管理の BGP peer を宣言します。Kubernetes BGP speaker などに使います。 |
 | `BFD` | BFD session の intent を宣言します。Linux では routerd が FRR `bfdd` 設定を render し、観測した BFD 状態を記録します。参照先 GoBGP peer は BFD false-down では deconfigure しません。 |
 | `NAT44Rule` | nftables の `routerd_nat` テーブルで IPv4 NAPT を行います。 |
+| `NAT44SessionSync` | active node から standby node へ、選択した NAT44 conntrack session を SSH 越しに同期します。 |
 | `PortForward` | WAN 側の IPv4 TCP/UDP ポートを、1 つの内部 IPv4 宛先へ DNAT します。 |
 | `IngressService` | WAN 側の IPv4 TCP/UDP サービスを公開します。複数 backend、TCP/HTTP health check、`failover` / `sourceHash` / `random` selection を受け付けます。 |
 | `LocalServiceRedirect` | LAN 側 client から `IPAddressSet` 宛てに出る IPv4/IPv6 通信を、router の local port へ redirect します。平文 DNS/NTP の集約を想定し、DoH や DoT の port には触れません。 |
@@ -230,6 +231,11 @@ source NAT と、`type`、`egressInterface` または `egressPolicyRef`、`sourc
 `excludeDestinationCIDRs`、`excludeDestinationSetRefs` を持ちます。これにより、
 インターネット向け通信だけをマスカレードし、静的経路を持つプライベート宛先や
 再利用可能な address set は NAT しない構成にできます。
+
+`NAT44SessionSync` は、選択した SNAT address に対して
+`conntrack --dump -o extended` を実行し、tuple と conntrack mark を standby target
+へ復元します。active-to-standby の HA 同期を想定しており、通常は `spec.when` で
+active node に限定します。
 
 `PortForward` と `IngressService` は、Linux nftables と FreeBSD pf に DNAT を生成します。
 `spec.hairpin.enabled: true` と `spec.hairpin.interfaces` を指定すると、LAN
@@ -536,6 +542,7 @@ validator がエラーにします。
 | `ManagementAccess` | `interfaces` (stringList), `phase` (string) |
 | `MobilityPool` | `dynamicSource` (string), `generatedActions` (int), `generatedBGPPaths` (int), `generatedBGPTraps` (int), `groupRef` (string), `placementActive` (bool), `placementActiveNode` (string), `placementGroup` (string), `plannerPhase` (string), `plannerReason` (string), `prefix` (string), `deliveryMode` (string), `discoverySelfPrivateIPs` (stringList) |
 | `NAT44Rule` | `dryRun` (bool), `egressInterface` (string), `phase` (string), `snatAddress` (string) |
+| `NAT44SessionSync` | `deleteFailed` (int), `deleteOK` (int), `dryRun` (bool), `insertFailed` (int), `insertOK` (int), `mode` (string), `phase` (string), `sessionCount` (int), `snatAddresses` (stringList), `syncedAt` (timestamp), `targetCount` (int), `targets` (objectList) |
 | `NTPClient` | `phase` (string), `servers` (stringList), `source` (string), `updatedAt` (timestamp) |
 | `NTPServer` | `allowCIDRs` (stringList), `listenAddresses` (stringList), `phase` (string), `servers` (stringList), `source` (string), `updatedAt` (timestamp) |
 | `ObservabilityPipeline` | `phase` (string), `signals` (stringList) |

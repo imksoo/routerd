@@ -192,6 +192,7 @@ for DoH or DoT endpoint name resolution.
 | `BGPPeer` | Declares GoBGP-managed BGP peers for a `BGPRouter`, for example Kubernetes BGP speakers. |
 | `BFD` | Declares one BFD session intent. On Linux, routerd renders FRR `bfdd` configuration and records observed BFD state without deconfiguring referenced GoBGP peers. |
 | `NAT44Rule` | Performs IPv4 NAPT in the nftables `routerd_nat` table. |
+| `NAT44SessionSync` | Mirrors selected NAT44 conntrack sessions from an active node to standby nodes over SSH. |
 | `PortForward` | Publishes one WAN-side IPv4 TCP/UDP port to one internal IPv4 target with DNAT. |
 | `IngressService` | Publishes one WAN-side IPv4 TCP/UDP service. Multiple backends, TCP/HTTP health checks, and `failover`, `sourceHash`, or `random` backend selection are accepted. |
 | `LocalServiceRedirect` | Redirects LAN-origin IPv4/IPv6 traffic for `IPAddressSet` destinations to a local router port. This is intended for plaintext DNS/NTP interception without touching DoH or DoT ports. |
@@ -281,6 +282,11 @@ prefer `destinationPorts`.
 `destinationCIDRs`, `destinationSetRefs`, `excludeDestinationCIDRs`, and
 `excludeDestinationSetRefs`. This allows internet traffic to be masqueraded
 while private routed destinations or reusable address sets stay un-NATed.
+
+`NAT44SessionSync` uses `conntrack --dump -o extended` for selected SNAT
+addresses and restores the parsed tuple and conntrack mark on standby targets.
+It is intended for active-to-standby HA sync and is usually gated with
+`spec.when`.
 
 `BGPRouter` and `BGPPeer` currently use the long-lived `routerd-bgp` daemon.
 routerd maps the resource specs directly to typed GoBGP API objects over a
@@ -596,6 +602,7 @@ and fields outside the target kind's `provides` set.
 | `ManagementAccess` | `interfaces` (stringList), `phase` (string) |
 | `MobilityPool` | `dynamicSource` (string), `generatedActions` (int), `generatedBGPPaths` (int), `generatedBGPTraps` (int), `groupRef` (string), `placementActive` (bool), `placementActiveNode` (string), `placementGroup` (string), `plannerPhase` (string), `plannerReason` (string), `prefix` (string), `deliveryMode` (string), `discoverySelfPrivateIPs` (stringList) |
 | `NAT44Rule` | `dryRun` (bool), `egressInterface` (string), `phase` (string), `snatAddress` (string) |
+| `NAT44SessionSync` | `deleteFailed` (int), `deleteOK` (int), `dryRun` (bool), `insertFailed` (int), `insertOK` (int), `mode` (string), `phase` (string), `sessionCount` (int), `snatAddresses` (stringList), `syncedAt` (timestamp), `targetCount` (int), `targets` (objectList) |
 | `NTPClient` | `phase` (string), `servers` (stringList), `source` (string), `updatedAt` (timestamp) |
 | `NTPServer` | `allowCIDRs` (stringList), `listenAddresses` (stringList), `phase` (string), `servers` (stringList), `source` (string), `updatedAt` (timestamp) |
 | `ObservabilityPipeline` | `phase` (string), `signals` (stringList) |

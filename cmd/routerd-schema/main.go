@@ -344,6 +344,7 @@ func resourceUnionSchema() map[string]any {
 			resourceSchema(api.NetAPIVersion, "EventRule", api.EventRuleSpec{}),
 			resourceSchema(api.NetAPIVersion, "DerivedEvent", api.DerivedEventSpec{}),
 			resourceSchema(api.NetAPIVersion, "NAT44Rule", api.NAT44RuleSpec{}),
+			resourceSchema(api.NetAPIVersion, "NAT44SessionSync", api.NAT44SessionSyncSpec{}),
 			resourceSchema(api.NetAPIVersion, "ManagementAccess", api.ManagementAccessSpec{}),
 			resourceSchema(api.FirewallAPIVersion, "PortForward", api.PortForwardSpec{}),
 			resourceSchema(api.FirewallAPIVersion, "IngressService", api.IngressServiceSpec{}),

@@ -126,6 +126,71 @@ func validateFirewallResource(res api.Resource, targetOS platform.OS) (bool, err
 		if spec.Type == "masquerade" && (spec.SNATAddress != "" || spec.SNATAddressFrom.Resource != "") {
 			return true, fmt.Errorf("%s spec.snatAddress and spec.snatAddressFrom are only valid when type is snat", res.ID())
 		}
+	case "NAT44SessionSync":
+		if res.APIVersion != api.NetAPIVersion {
+			return true, fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
+		}
+		spec, err := res.NAT44SessionSyncSpec()
+		if err != nil {
+			return true, err
+		}
+		if spec.Mode != "" && spec.Mode != "snapshot" {
+			return true, fmt.Errorf("%s spec.mode must be snapshot", res.ID())
+		}
+		if strings.TrimSpace(spec.Interval) != "" {
+			if _, err := time.ParseDuration(strings.TrimSpace(spec.Interval)); err != nil {
+				return true, fmt.Errorf("%s spec.interval must be a duration: %w", res.ID(), err)
+			}
+		}
+		if strings.ContainsAny(spec.ConntrackCommand, "\n\r") {
+			return true, fmt.Errorf("%s spec.conntrackCommand must not contain newline", res.ID())
+		}
+		if len(spec.SNATAddresses) == 0 && len(spec.NATRules) == 0 {
+			return true, fmt.Errorf("%s spec.snatAddresses or spec.natRules is required", res.ID())
+		}
+		for i, address := range spec.SNATAddresses {
+			addr, err := netip.ParseAddr(strings.TrimSpace(address))
+			if err != nil || !addr.Is4() {
+				return true, fmt.Errorf("%s spec.snatAddresses[%d] must be an IPv4 address", res.ID(), i)
+			}
+		}
+		for i, ref := range spec.NATRules {
+			if err := validateNAT44SessionSyncNATRuleRef(ref); err != nil {
+				return true, fmt.Errorf("%s spec.natRules[%d]: %w", res.ID(), i, err)
+			}
+		}
+		for i, ref := range spec.ExcludeNATRules {
+			if err := validateNAT44SessionSyncNATRuleRef(ref); err != nil {
+				return true, fmt.Errorf("%s spec.excludeNatRules[%d]: %w", res.ID(), i, err)
+			}
+		}
+		if len(spec.Targets) == 0 {
+			return true, fmt.Errorf("%s spec.targets is required", res.ID())
+		}
+		for i, target := range spec.Targets {
+			if strings.TrimSpace(target.Host) == "" {
+				return true, fmt.Errorf("%s spec.targets[%d].host is required", res.ID(), i)
+			}
+			if strings.ContainsAny(target.Host, "\n\r") {
+				return true, fmt.Errorf("%s spec.targets[%d].host must not contain newline", res.ID(), i)
+			}
+			if strings.ContainsAny(target.User, "\n\r") {
+				return true, fmt.Errorf("%s spec.targets[%d].user must not contain newline", res.ID(), i)
+			}
+			for j, opt := range target.SSHOptions {
+				if strings.ContainsAny(opt, "\n\r") {
+					return true, fmt.Errorf("%s spec.targets[%d].sshOptions[%d] must not contain newline", res.ID(), i, j)
+				}
+			}
+			for j, part := range target.RestoreCommand {
+				if strings.TrimSpace(part) == "" {
+					return true, fmt.Errorf("%s spec.targets[%d].restoreCommand[%d] must not be empty", res.ID(), i, j)
+				}
+				if strings.ContainsAny(part, "\n\r") {
+					return true, fmt.Errorf("%s spec.targets[%d].restoreCommand[%d] must not contain newline", res.ID(), i, j)
+				}
+			}
+		}
 	case "PortForward":
 		if res.APIVersion != api.FirewallAPIVersion {
 			return true, fmt.Errorf("%s must use apiVersion %s", res.ID(), api.FirewallAPIVersion)
@@ -530,4 +595,20 @@ func validateFirewallResource(res api.Resource, targetOS platform.OS) (bool, err
 		return false, nil
 	}
 	return true, nil
+}
+
+func validateNAT44SessionSyncNATRuleRef(ref string) error {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return fmt.Errorf("must not be empty")
+	}
+	if strings.ContainsAny(ref, "\n\r") {
+		return fmt.Errorf("must not contain newline")
+	}
+	if kind, name, ok := strings.Cut(ref, "/"); ok {
+		if kind != "NAT44Rule" || strings.TrimSpace(name) == "" || strings.Contains(name, "/") {
+			return fmt.Errorf("must be NAT44Rule/name or name")
+		}
+	}
+	return nil
 }

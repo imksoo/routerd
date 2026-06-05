@@ -586,6 +586,12 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
 		r.Spec = spec
+	case "NAT44SessionSync":
+		var spec NAT44SessionSyncSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
 	case "PortForward":
 		var spec PortForwardSpec
 		if err := raw.Spec.Decode(&spec); err != nil {

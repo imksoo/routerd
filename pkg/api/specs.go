@@ -1150,6 +1150,25 @@ type DHCPv6PrefixDelegationLeaseSyncSourceSpec struct {
 	Resource string `yaml:"resource" json:"resource"`
 }
 
+type NAT44SessionSyncSpec struct {
+	Mode             string                       `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=snapshot"`
+	Interval         string                       `yaml:"interval,omitempty" json:"interval,omitempty"`
+	ConntrackCommand string                       `yaml:"conntrackCommand,omitempty" json:"conntrackCommand,omitempty"`
+	SNATAddresses    []string                     `yaml:"snatAddresses,omitempty" json:"snatAddresses,omitempty"`
+	NATRules         []string                     `yaml:"natRules,omitempty" json:"natRules,omitempty"`
+	ExcludeNATRules  []string                     `yaml:"excludeNatRules,omitempty" json:"excludeNatRules,omitempty"`
+	Targets          []NAT44SessionSyncTargetSpec `yaml:"targets,omitempty" json:"targets,omitempty"`
+	When             ResourceWhenSpec             `yaml:"when,omitempty" json:"when,omitempty"`
+}
+
+type NAT44SessionSyncTargetSpec struct {
+	Name           string   `yaml:"name,omitempty" json:"name,omitempty"`
+	Host           string   `yaml:"host" json:"host"`
+	User           string   `yaml:"user,omitempty" json:"user,omitempty"`
+	SSHOptions     []string `yaml:"sshOptions,omitempty" json:"sshOptions,omitempty"`
+	RestoreCommand []string `yaml:"restoreCommand,omitempty" json:"restoreCommand,omitempty"`
+}
+
 type DHCPv4RelaySpec struct {
 	Interfaces []string `yaml:"interfaces" json:"interfaces"`
 	Upstream   string   `yaml:"upstream" json:"upstream"`
@@ -2288,6 +2307,10 @@ func (r Resource) DHCPv6ServerLeaseSyncSpec() (DHCPv6ServerLeaseSyncSpec, error)
 
 func (r Resource) DHCPv6PrefixDelegationLeaseSyncSpec() (DHCPv6PrefixDelegationLeaseSyncSpec, error) {
 	return specAs[DHCPv6PrefixDelegationLeaseSyncSpec](r)
+}
+
+func (r Resource) NAT44SessionSyncSpec() (NAT44SessionSyncSpec, error) {
+	return specAs[NAT44SessionSyncSpec](r)
 }
 
 func (r Resource) DHCPv4RelaySpec() (DHCPv4RelaySpec, error) {
