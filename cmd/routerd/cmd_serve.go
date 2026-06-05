@@ -823,11 +823,8 @@ func configuredDHCPLeasePaths(controllerDnsmasqConfig string) []string {
 	if leaseFile := dnsmasqLeaseFileForConfig(controllerDnsmasqConfig); strings.TrimSpace(leaseFile) != "" {
 		paths = append(paths, leaseFile)
 	}
-	paths = append(paths,
-		strings.TrimRight(platformDefaults.RuntimeDir, "/")+"/dnsmasq.leases",
-		"/run/routerd/dnsmasq.leases",
-		"/var/lib/misc/dnsmasq.leases",
-	)
+	paths = append(paths, platform.DnsmasqLeaseCandidates(platformDefaults, platformFeatures)...)
+	paths = append(paths, "/run/routerd/dnsmasq.leases", "/var/lib/misc/dnsmasq.leases")
 	return dedupeStrings(paths)
 }
 
@@ -858,7 +855,7 @@ func dedupeStrings(values []string) []string {
 }
 
 func configuredFirewallLogPath(router *api.Router) string {
-	fallback := platformDefaults.StateDir + "/firewall-logs.db"
+	fallback := platformDefaults.FirewallLogFile()
 	if router == nil {
 		return fallback
 	}
@@ -1028,7 +1025,7 @@ func startWebConsole(ctx context.Context, spec api.WebConsoleSpec, router *api.R
 		BasePath:               spec.BasePath,
 		DNSQueryLogPath:        platformDefaults.StateDir + "/dns-queries.db",
 		TrafficFlowLogPath:     platformDefaults.StateDir + "/traffic-flows.db",
-		FirewallLogPath:        platformDefaults.StateDir + "/firewall-logs.db",
+		FirewallLogPath:        platformDefaults.FirewallLogFile(),
 		DHCPFingerprintLogPath: platformDefaults.StateDir + "/dhcp-fingerprints.db",
 		DHCPStickyLogPath:      dhcpStickyLogPath(),
 		DHCPLeasePaths:         dhcpLeasePaths,

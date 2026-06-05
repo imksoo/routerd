@@ -23,6 +23,7 @@ import (
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/logstore"
 	"github.com/imksoo/routerd/pkg/observe"
+	"github.com/imksoo/routerd/pkg/platform"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -1350,6 +1351,15 @@ func TestHandlerIncludesDHCPLeases(t *testing.T) {
 		if !strings.Contains(rec.Body.String(), want) {
 			t.Fatalf("summary missing %q:\n%s", want, rec.Body.String())
 		}
+	}
+}
+
+func TestHandlerDefaultDHCPLeasePathsUsePlatformDefaults(t *testing.T) {
+	defaults, features := platform.Current()
+	handler := New(Options{})
+	want := platform.DnsmasqLeaseCandidates(defaults, features)
+	if got := handler.opts.DHCPLeasePaths; strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("default DHCP lease paths = %#v, want %#v", got, want)
 	}
 }
 

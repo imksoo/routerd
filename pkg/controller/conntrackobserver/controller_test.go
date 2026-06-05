@@ -14,10 +14,34 @@ import (
 	"github.com/imksoo/routerd/pkg/conntrack"
 	"github.com/imksoo/routerd/pkg/logstore"
 	"github.com/imksoo/routerd/pkg/observe"
+	"github.com/imksoo/routerd/pkg/platform"
 )
 
 type testStore struct {
 	status map[string]map[string]any
+}
+
+func TestFirewallLogPathUsesPlatformDefault(t *testing.T) {
+	defaults, _ := platform.Current()
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
+		TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallEventLog"},
+		Metadata: api.ObjectMeta{Name: "default"},
+		Spec:     api.FirewallLogSpec{Enabled: true},
+	}}}}
+	if got, want := firewallLogPath(router), defaults.FirewallLogFile(); got != want {
+		t.Fatalf("firewallLogPath = %q, want %q", got, want)
+	}
+}
+
+func TestFirewallLogPathKeepsExplicitPath(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
+		TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallEventLog"},
+		Metadata: api.ObjectMeta{Name: "default"},
+		Spec:     api.FirewallLogSpec{Enabled: true, Path: "/custom/firewall-logs.db"},
+	}}}}
+	if got, want := firewallLogPath(router), "/custom/firewall-logs.db"; got != want {
+		t.Fatalf("firewallLogPath = %q, want %q", got, want)
+	}
 }
 
 func TestControllerRecordsTrafficFlowLog(t *testing.T) {

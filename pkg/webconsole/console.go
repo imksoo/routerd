@@ -316,7 +316,8 @@ func New(opts Options) Handler {
 		opts.Connections = observe.Connections
 	}
 	if len(opts.DHCPLeasePaths) == 0 {
-		opts.DHCPLeasePaths = []string{"/run/routerd/dnsmasq.leases", "/var/lib/misc/dnsmasq.leases"}
+		defaults, features := platform.Current()
+		opts.DHCPLeasePaths = platform.DnsmasqLeaseCandidates(defaults, features)
 	}
 	if opts.DHCPFingerprintLogPath == "" {
 		defaults, _ := platform.Current()

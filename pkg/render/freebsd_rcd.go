@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/platform"
 )
 
 func freeBSDRCDScripts(router *api.Router) (map[string][]byte, error) {
@@ -566,7 +567,7 @@ func freeBSDDHCPv4ClientSystemdSpec(resource, ifname string, spec api.DHCPv4Clie
 func freeBSDFirewallLoggerSystemdSpec(spec api.FirewallLogSpec, dpiSocket string) api.SystemdUnitSpec {
 	path := spec.Path
 	if path == "" {
-		path = "/var/db/routerd/firewall-logs.db"
+		path = (platform.Defaults{StateDir: "/var/db/routerd"}).FirewallLogFile()
 	}
 	exec := []string{"/usr/local/sbin/routerd-firewall-logger", "daemon", "--path", path, "--pflog-interface", "pflog0"}
 	wants := []string{"NETWORKING"}

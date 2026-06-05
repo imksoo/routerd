@@ -15,6 +15,7 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/config"
 	"github.com/imksoo/routerd/pkg/netconfigbackend"
+	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/render"
 )
 
@@ -116,7 +117,7 @@ func renderLinuxSnapshot(router *api.Router) ([]byte, error) {
 	files := map[string][]byte{}
 	dnsmasqConfig, warnings, err := render.DnsmasqConfig(router, render.DnsmasqRuntime{
 		RuntimeDir: "/run/routerd",
-		LeaseFile:  "/var/lib/routerd/dnsmasq/dnsmasq.leases",
+		LeaseFile:  (platform.Defaults{StateDir: "/var/lib/routerd"}).DnsmasqLeaseFile(),
 	})
 	if err != nil {
 		return nil, err
@@ -161,7 +162,7 @@ func renderAlpineSnapshot(router *api.Router) ([]byte, error) {
 	}
 	dnsmasqConfig, warnings, err := render.DnsmasqConfig(router, render.DnsmasqRuntime{
 		RuntimeDir: "/run/routerd",
-		LeaseFile:  "/var/lib/routerd/dnsmasq/dnsmasq.leases",
+		LeaseFile:  (platform.Defaults{StateDir: "/var/lib/routerd"}).DnsmasqLeaseFile(),
 	})
 	if err != nil {
 		return nil, err
@@ -203,7 +204,7 @@ func renderFreeBSDSnapshot(router *api.Router) ([]byte, error) {
 	addFirewallHoles(files, router)
 	dnsmasqConfig, warnings, err := render.DnsmasqConfig(router, render.DnsmasqRuntime{
 		RuntimeDir: "/var/run/routerd",
-		LeaseFile:  "/var/db/routerd/dnsmasq/dnsmasq.leases",
+		LeaseFile:  (platform.Defaults{StateDir: "/var/db/routerd"}).DnsmasqLeaseFile(),
 	})
 	if err != nil {
 		return nil, err

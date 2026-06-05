@@ -184,6 +184,29 @@ func (d Defaults) DBFile() string {
 	return d.StateDir + "/routerd.db"
 }
 
+// FirewallLogFile returns the default firewall event log database path.
+func (d Defaults) FirewallLogFile() string {
+	return strings.TrimRight(d.StateDir, "/") + "/firewall-logs.db"
+}
+
+// DnsmasqLeaseFile returns the default managed dnsmasq lease file path.
+func (d Defaults) DnsmasqLeaseFile() string {
+	return strings.TrimRight(d.StateDir, "/") + "/dnsmasq/dnsmasq.leases"
+}
+
+// RuntimeDnsmasqLeaseFile returns the legacy runtime dnsmasq lease file path.
+func (d Defaults) RuntimeDnsmasqLeaseFile() string {
+	return strings.TrimRight(d.RuntimeDir, "/") + "/dnsmasq.leases"
+}
+
+// DnsmasqLeaseCandidates returns the dnsmasq lease paths readers should try.
+func DnsmasqLeaseCandidates(d Defaults, f Features) []string {
+	if f.HasRCD || f.HasOpenRC {
+		return []string{d.DnsmasqLeaseFile(), d.RuntimeDnsmasqLeaseFile(), "/var/lib/misc/dnsmasq.leases"}
+	}
+	return []string{d.RuntimeDnsmasqLeaseFile(), d.DnsmasqLeaseFile(), "/var/lib/misc/dnsmasq.leases"}
+}
+
 // ConfigFile returns the default router.yaml path.
 func (d Defaults) ConfigFile() string {
 	return d.SysconfDir + "/router.yaml"

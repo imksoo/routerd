@@ -21,6 +21,7 @@ import (
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/logstore"
 	"github.com/imksoo/routerd/pkg/observe"
+	"github.com/imksoo/routerd/pkg/platform"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -330,7 +331,8 @@ func firewallLogPath(router *api.Router) string {
 		if strings.TrimSpace(spec.Path) != "" {
 			return spec.Path
 		}
-		return "/var/lib/routerd/firewall-logs.db"
+		defaults, _ := platform.Current()
+		return defaults.FirewallLogFile()
 	}
 	return ""
 }
