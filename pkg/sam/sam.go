@@ -4,7 +4,6 @@ package sam
 
 import (
 	"fmt"
-	"math/bits"
 	"net/netip"
 	"regexp"
 	"sort"
@@ -214,16 +213,12 @@ func PlanCaptureWithOptions(router *api.Router, targetOS platform.OS, opts PlanO
 		if err != nil {
 			return nil, err
 		}
-		captureType := strings.TrimSpace(spec.Capture.Type)
-		if captureType == "proxy-arp" && CaptureExcludesAddress(spec.Capture, address) {
-			continue
-		}
 		if gate := EvaluateCaptureGate(spec.Capture, opts.StatusReader); !gate.Active {
 			continue
 		}
 		addForwarding()
-		if captureType != "proxy-arp" {
-			if captureType == "provider-secondary-ip" && !spec.Capture.ConfigureOSAddress {
+		if strings.TrimSpace(spec.Capture.Type) != "proxy-arp" {
+			if strings.TrimSpace(spec.Capture.Type) == "provider-secondary-ip" && !spec.Capture.ConfigureOSAddress {
 				actions = append(actions, CaptureAction{Kind: "deassign-os-address", ClaimName: resource.Metadata.Name, Address: address})
 			}
 			continue
@@ -239,138 +234,6 @@ func PlanCaptureWithOptions(router *api.Router, targetOS platform.OS, opts PlanO
 		actions = append(actions, CaptureAction{Kind: "proxy-neighbor", ClaimName: resource.Metadata.Name, Address: address, Interface: iface, GratuitousARP: wantsGratuitousARP(spec.Capture)})
 	}
 	return actions, nil
-}
-
-func CaptureExcludesAddress(capture api.AddressCapture, address string) bool {
-	addr, ok := normalizeIPv4Addr(address)
-	if !ok {
-		return false
-	}
-	for _, raw := range capture.ExcludeAddresses {
-		prefix, ok := normalizeIPv4ExcludePrefix(raw)
-		if ok && prefix.Contains(addr) {
-			return true
-		}
-	}
-	return false
-}
-
-func IPv4PrefixesExcluding(pool netip.Prefix, excludes []string) []netip.Prefix {
-	pool = pool.Masked()
-	if !pool.Addr().Is4() {
-		return nil
-	}
-	start, end := ipv4PrefixRange(pool)
-	ranges := []ipv4Range{{start: start, end: end}}
-	for _, raw := range excludes {
-		exclude, ok := normalizeIPv4ExcludePrefix(raw)
-		if !ok {
-			continue
-		}
-		exclude = exclude.Masked()
-		if !pool.Overlaps(exclude) {
-			continue
-		}
-		excludeStart, excludeEnd := ipv4PrefixRange(exclude)
-		var next []ipv4Range
-		for _, current := range ranges {
-			if excludeEnd < current.start || excludeStart > current.end {
-				next = append(next, current)
-				continue
-			}
-			if excludeStart > current.start {
-				next = append(next, ipv4Range{start: current.start, end: excludeStart - 1})
-			}
-			if excludeEnd < current.end {
-				next = append(next, ipv4Range{start: excludeEnd + 1, end: current.end})
-			}
-		}
-		ranges = next
-	}
-	var out []netip.Prefix
-	for _, r := range ranges {
-		out = append(out, ipv4RangePrefixes(r.start, r.end)...)
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Addr() == out[j].Addr() {
-			return out[i].Bits() < out[j].Bits()
-		}
-		return out[i].Addr().Compare(out[j].Addr()) < 0
-	})
-	return out
-}
-
-type ipv4Range struct {
-	start uint32
-	end   uint32
-}
-
-func normalizeIPv4Addr(value string) (netip.Addr, bool) {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return netip.Addr{}, false
-	}
-	if prefix, err := netip.ParsePrefix(value); err == nil && prefix.Addr().Is4() {
-		return prefix.Masked().Addr(), true
-	}
-	addr, err := netip.ParseAddr(value)
-	if err != nil || !addr.Is4() {
-		return netip.Addr{}, false
-	}
-	return addr, true
-}
-
-func normalizeIPv4ExcludePrefix(value string) (netip.Prefix, bool) {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return netip.Prefix{}, false
-	}
-	if prefix, err := netip.ParsePrefix(value); err == nil && prefix.Addr().Is4() {
-		return prefix.Masked(), true
-	}
-	addr, err := netip.ParseAddr(value)
-	if err != nil || !addr.Is4() {
-		return netip.Prefix{}, false
-	}
-	return netip.PrefixFrom(addr, 32), true
-}
-
-func ipv4PrefixRange(prefix netip.Prefix) (uint32, uint32) {
-	addr := ipv4ToUint32(prefix.Masked().Addr())
-	size := uint64(1) << uint(32-prefix.Bits())
-	return addr, addr + uint32(size-1)
-}
-
-func ipv4RangePrefixes(start, end uint32) []netip.Prefix {
-	var out []netip.Prefix
-	for uint64(start) <= uint64(end) {
-		zeroBits := bits.TrailingZeros32(start)
-		if start == 0 {
-			zeroBits = 32
-		}
-		blockSize := uint64(1) << uint(zeroBits)
-		remaining := uint64(end) - uint64(start) + 1
-		for blockSize > remaining {
-			zeroBits--
-			blockSize >>= 1
-		}
-		bitsLen := 32 - zeroBits
-		out = append(out, netip.PrefixFrom(uint32ToIPv4(start), bitsLen))
-		if blockSize > uint64(^uint32(0))-uint64(start) {
-			break
-		}
-		start += uint32(blockSize)
-	}
-	return out
-}
-
-func ipv4ToUint32(addr netip.Addr) uint32 {
-	raw := addr.As4()
-	return uint32(raw[0])<<24 | uint32(raw[1])<<16 | uint32(raw[2])<<8 | uint32(raw[3])
-}
-
-func uint32ToIPv4(value uint32) netip.Addr {
-	return netip.AddrFrom4([4]byte{byte(value >> 24), byte(value >> 16), byte(value >> 8), byte(value)})
 }
 
 // CaptureInterfaceAliases maps Interface resource names to their Linux ifname.
@@ -507,14 +370,6 @@ func StatusForRemoteAddressClaim(resource api.Resource, lowerings []DeliveryLowe
 		status["reason"] = "CaptureUnsupported"
 		status["message"] = "SAM capture not implemented on this OS"
 		status["captureStatus"] = CaptureStatusBlocked
-		return status
-	}
-	if strings.TrimSpace(spec.Capture.Type) == "proxy-arp" && CaptureExcludesAddress(spec.Capture, spec.Address) {
-		status["phase"] = "Gated"
-		status["reason"] = "CaptureExcluded"
-		status["message"] = "proxy-ARP capture is excluded by capture.excludeAddresses"
-		status["captureActive"] = false
-		status["captureStatus"] = CaptureStatusStandby
 		return status
 	}
 	if gate := EvaluateCaptureGate(spec.Capture, store); !gate.Active {

@@ -123,7 +123,6 @@ func copyMember(member api.MobilityPoolMember) api.MobilityPoolMember {
 
 func copyCapture(c api.MobilityMemberCapture) api.MobilityMemberCapture {
 	out := c
-	out.ExcludeAddresses = append([]string(nil), c.ExcludeAddresses...)
 	out.Target = copyStringMap(c.Target)
 	out.TargetFrom = copyStringMap(c.TargetFrom)
 	return out
@@ -163,9 +162,6 @@ func mergeCapture(base, override api.MobilityMemberCapture) api.MobilityMemberCa
 	}
 	if strings.TrimSpace(override.SourceAddressFrom.Resource) != "" {
 		out.SourceAddressFrom = override.SourceAddressFrom
-	}
-	if len(override.ExcludeAddresses) > 0 {
-		out.ExcludeAddresses = append([]string(nil), override.ExcludeAddresses...)
 	}
 	if override.GratuitousARP {
 		out.GratuitousARP = true
@@ -310,7 +306,6 @@ func captureSet(c api.MobilityMemberCapture) bool {
 		c.ConfigureOSAddress ||
 		strings.TrimSpace(c.Interface) != "" ||
 		strings.TrimSpace(c.SourceAddress) != "" ||
-		len(c.ExcludeAddresses) > 0 ||
 		c.GratuitousARP ||
 		strings.TrimSpace(c.ActiveWhen.Type) != "" ||
 		strings.TrimSpace(c.ActiveWhen.VirtualAddressRef) != "" ||

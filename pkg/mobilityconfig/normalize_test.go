@@ -93,35 +93,6 @@ func TestNormalizeMobilityPoolWarnsOnRemoteDetails(t *testing.T) {
 	}
 }
 
-func TestNormalizeMobilityPoolCopiesAndOverridesCaptureExcludes(t *testing.T) {
-	spec := api.MobilityPoolSpec{
-		Prefix:   "10.77.60.0/24",
-		GroupRef: "cloudedge",
-		Profiles: api.MobilityPoolProfiles{CloudCaptures: map[string]api.MobilityCloudCaptureProfile{
-			"onprem": {Capture: api.MobilityMemberCapture{Type: "proxy-arp", ExcludeAddresses: []string{"10.77.60.1/32"}}},
-		}},
-		Members: []api.MobilityPoolMember{{
-			NodeRef:    "onprem-a",
-			Site:       "aws",
-			Role:       "cloud",
-			ProfileRef: "onprem",
-			Capture:    api.MobilityMemberCapture{ExcludeAddresses: []string{"10.77.60.254/32"}},
-		}},
-	}
-	got, _, err := NormalizeMobilityPool(spec, "onprem-a")
-	if err != nil {
-		t.Fatalf("NormalizeMobilityPool: %v", err)
-	}
-	want := []string{"10.77.60.254/32"}
-	if len(got.Members) != 1 || len(got.Members[0].Capture.ExcludeAddresses) != 1 || got.Members[0].Capture.ExcludeAddresses[0] != want[0] {
-		t.Fatalf("capture excludeAddresses = %#v, want %#v", got.Members[0].Capture.ExcludeAddresses, want)
-	}
-	got.Members[0].Capture.ExcludeAddresses[0] = "mutated"
-	if spec.Members[0].Capture.ExcludeAddresses[0] != "10.77.60.254/32" {
-		t.Fatalf("NormalizeMobilityPool returned aliases into input: %#v", spec.Members[0].Capture.ExcludeAddresses)
-	}
-}
-
 func TestNormalizeMobilityPoolRejectsMissingProfileValue(t *testing.T) {
 	spec := api.MobilityPoolSpec{
 		Prefix:   "10.77.60.0/24",

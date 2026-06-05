@@ -1630,13 +1630,8 @@ type MobilityMemberCapture struct {
 	// sourceAddress, routerd does not lower this to an IPv4StaticAddress because
 	// the referenced resource owns the address lifecycle.
 	SourceAddressFrom StatusValueSourceSpec `yaml:"sourceAddressFrom,omitempty" json:"sourceAddressFrom,omitempty"`
-	// ExcludeAddresses prevents proxy-ARP capture for selected IPv4 addresses or
-	// CIDRs inside the mobility prefix. Use this for local-only infrastructure
-	// addresses such as a PVE Simple SDN gateway address that must not be
-	// answered across the extended segment.
-	ExcludeAddresses []string          `yaml:"excludeAddresses,omitempty" json:"excludeAddresses,omitempty"`
-	GratuitousARP    bool              `yaml:"gratuitousARP,omitempty" json:"gratuitousARP,omitempty"`
-	ActiveWhen       CaptureActiveWhen `yaml:"activeWhen,omitempty" json:"activeWhen,omitempty"`
+	GratuitousARP     bool                  `yaml:"gratuitousARP,omitempty" json:"gratuitousARP,omitempty"`
+	ActiveWhen        CaptureActiveWhen     `yaml:"activeWhen,omitempty" json:"activeWhen,omitempty"`
 	// Target carries non-secret provider target hints such as region,
 	// compartmentId, resourceGroup, nicName, or ipConfigName. It is copied to
 	// provider ActionPlan.target; credentials and tokens do not belong here.
@@ -1712,17 +1707,14 @@ type RemoteAddressClaimSpec struct {
 }
 
 type AddressCapture struct {
-	Type               string `yaml:"type" json:"type" jsonschema:"enum=provider-secondary-ip,enum=proxy-arp"`
-	ProviderRef        string `yaml:"providerRef,omitempty" json:"providerRef,omitempty"`
-	ProviderMode       string `yaml:"providerMode,omitempty" json:"providerMode,omitempty"`
-	NICRef             string `yaml:"nicRef,omitempty" json:"nicRef,omitempty"`
-	ConfigureOSAddress bool   `yaml:"configureOSAddress,omitempty" json:"configureOSAddress,omitempty"`
-	Interface          string `yaml:"interface,omitempty" json:"interface,omitempty"`
-	// ExcludeAddresses prevents proxy-ARP capture for selected IPv4 addresses
-	// or CIDRs inside the mobility prefix.
-	ExcludeAddresses []string          `yaml:"excludeAddresses,omitempty" json:"excludeAddresses,omitempty"`
-	GratuitousARP    bool              `yaml:"gratuitousARP,omitempty" json:"gratuitousARP,omitempty"`
-	ActiveWhen       CaptureActiveWhen `yaml:"activeWhen,omitempty" json:"activeWhen,omitempty"`
+	Type               string            `yaml:"type" json:"type" jsonschema:"enum=provider-secondary-ip,enum=proxy-arp"`
+	ProviderRef        string            `yaml:"providerRef,omitempty" json:"providerRef,omitempty"`
+	ProviderMode       string            `yaml:"providerMode,omitempty" json:"providerMode,omitempty"`
+	NICRef             string            `yaml:"nicRef,omitempty" json:"nicRef,omitempty"`
+	ConfigureOSAddress bool              `yaml:"configureOSAddress,omitempty" json:"configureOSAddress,omitempty"`
+	Interface          string            `yaml:"interface,omitempty" json:"interface,omitempty"`
+	GratuitousARP      bool              `yaml:"gratuitousARP,omitempty" json:"gratuitousARP,omitempty"`
+	ActiveWhen         CaptureActiveWhen `yaml:"activeWhen,omitempty" json:"activeWhen,omitempty"`
 }
 
 type AddressDelivery struct {

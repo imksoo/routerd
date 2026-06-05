@@ -160,9 +160,6 @@ func appendBGPMobilityProxyARPClaims(router api.Router, store any) api.Router {
 			if owned[address] {
 				continue
 			}
-			if sam.CaptureExcludesAddress(addressCaptureFromMobilityCapture(self.Capture), address) {
-				continue
-			}
 			claims = append(claims, bgpMobilityProxyARPClaim(resource.Metadata.Name, self, address))
 		}
 	}
@@ -223,11 +220,7 @@ func appendBGPMobilityCapturePrefixRoutes(effective, routeRouter api.Router, sto
 		} else {
 			preferredSource = capturePrefixPreferredSource(effective, reader, captureInterface, device, prefix.Masked())
 		}
-		routePrefixes := sam.IPv4PrefixesExcluding(prefix.Masked(), self.Capture.ExcludeAddresses)
-		splitRoutes := len(routePrefixes) != 1 || routePrefixes[0] != prefix.Masked()
-		for _, routePrefix := range routePrefixes {
-			resources = append(resources, bgpMobilityCapturePrefixRoute(resource.Metadata.Name, routePrefix.String(), device, preferredSource, splitRoutes))
-		}
+		resources = append(resources, bgpMobilityCapturePrefixRoute(resource.Metadata.Name, prefix.Masked().String(), device, preferredSource))
 	}
 	if len(resources) == 0 {
 		return routeRouter
@@ -293,15 +286,11 @@ func bgpMobilityCaptureSourceAddressFrom(reader sam.StatusReader, source api.Sta
 	return "", false
 }
 
-func bgpMobilityCapturePrefixRoute(poolName, prefix, device, preferredSource string, split bool) api.Resource {
-	name := "sam-" + safeResourceName(poolName) + "-capture-prefix"
-	if split {
-		name = "sam-" + safeResourceName(poolName) + "-capture-" + safeResourceName(prefix)
-	}
+func bgpMobilityCapturePrefixRoute(poolName, prefix, device, preferredSource string) api.Resource {
 	return api.Resource{
 		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4Route"},
 		Metadata: api.ObjectMeta{
-			Name: name,
+			Name: "sam-" + safeResourceName(poolName) + "-capture-prefix",
 			Annotations: map[string]string{
 				"mobility.routerd.net/pool":   poolName,
 				"mobility.routerd.net/source": "bgp-capture-prefix",
@@ -324,7 +313,6 @@ func addressCaptureFromMobilityCapture(capture api.MobilityMemberCapture) api.Ad
 		NICRef:             capture.NICRef,
 		ConfigureOSAddress: capture.ConfigureOSAddress,
 		Interface:          capture.Interface,
-		ExcludeAddresses:   append([]string(nil), capture.ExcludeAddresses...),
 		GratuitousARP:      capture.GratuitousARP,
 		ActiveWhen:         capture.ActiveWhen,
 	}
@@ -516,11 +504,10 @@ func bgpMobilityProxyARPClaim(poolName string, member api.MobilityPoolMember, ad
 			Address:   address,
 			OwnerSide: "remote",
 			Capture: api.AddressCapture{
-				Type:             member.Capture.Type,
-				Interface:        member.Capture.Interface,
-				ExcludeAddresses: append([]string(nil), member.Capture.ExcludeAddresses...),
-				GratuitousARP:    member.Capture.GratuitousARP,
-				ActiveWhen:       member.Capture.ActiveWhen,
+				Type:          member.Capture.Type,
+				Interface:     member.Capture.Interface,
+				GratuitousARP: member.Capture.GratuitousARP,
+				ActiveWhen:    member.Capture.ActiveWhen,
 			},
 			Delivery: api.AddressDelivery{Mode: "bgp"},
 		},
