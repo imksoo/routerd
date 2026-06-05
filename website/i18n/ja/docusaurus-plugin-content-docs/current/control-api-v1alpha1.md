@@ -32,7 +32,7 @@ endpoint も公開します。読み取り専用 status socket は status 系 en
 | `GET /api/control.routerd.net/v1alpha1/traffic-flows` | 通信フロー履歴 |
 | `GET /api/control.routerd.net/v1alpha1/firewall-logs` | ファイアウォールログ |
 
-## Controller status
+## Controller の状態
 
 `Status.status.controllers` と `Controllers` endpoint は、controller の設定上の
 mode と、実行時の reconcile 状態を返します。runtime field には `interval`、

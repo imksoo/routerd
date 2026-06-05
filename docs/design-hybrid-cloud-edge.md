@@ -193,5 +193,5 @@ explicit per-address mobility before bridging remote fault domains. Any full L2
 design needs a separate safety discussion covering loop avoidance, failure
 isolation, MTU, broadcast containment, and operational rollback.
 
-See also [Dynamic config reference](./reference/dynamic-config) and
-[Plugin protocol](./reference/plugin-protocol).
+See also [Dynamic config reference](./reference/dynamic-config.md) and
+[Plugin protocol](/docs/reference/plugin-protocol).

@@ -5,7 +5,7 @@
 Proposed; Accepted for experimental implementation — 2026-06-01.
 
 Builds on [ADR 0008: Capture Coordination via Fencing Tokens](../adr/0008-capture-coordination-fencing.md)
-and the [Selective Address Mobility](../reference/selective-address-mobility.md)
+and the [Selective Address Mobility](../reference/selective-address-mobility)
 dataplane. Addresses issue #76. Its consumer is
 [ADR 0011: Generalized Failover](../adr/0011-generalized-failover.md) (#74).
 Experimental.

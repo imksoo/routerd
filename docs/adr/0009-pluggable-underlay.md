@@ -5,7 +5,7 @@
 Proposed; Accepted for experimental implementation — 2026-06-01.
 
 Builds on the CloudEdge overlay/SAM dataplane ([ADR 0006](../adr/0006-event-federation.md),
-[Selective Address Mobility](../reference/selective-address-mobility.md)) and the
+[Selective Address Mobility](../reference/selective-address-mobility)) and the
 zone-independent PMTU/MSS clamp (#53/#68). Experimental.
 
 ## Context

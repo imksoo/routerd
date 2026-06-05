@@ -5,7 +5,7 @@
 > design and safety rationale.
 
 routerd can drive an approved cloud provider mutation (for example, attaching a
-secondary IP for [Selective Address Mobility](./selective-address-mobility.md))
+secondary IP for [Selective Address Mobility](./selective-address-mobility))
 through an **executor plugin** — without ever holding cloud credentials.
 
 ## Credential model

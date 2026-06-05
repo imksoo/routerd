@@ -6,7 +6,7 @@ Proposed; Accepted for experimental implementation — 2026-05-31.
 
 This ADR builds on [ADR 0006: CloudEdge Event Federation](../adr/0006-event-federation.md),
 [ADR 0007: Provider Action Execution](../adr/0007-provider-action-execution.md), and the
-[Selective Address Mobility](../reference/selective-address-mobility.md) dataplane.
+[Selective Address Mobility](../reference/selective-address-mobility) dataplane.
 It is **experimental**.
 
 It supersedes the de-provision mechanism introduced as the "durable de-provision

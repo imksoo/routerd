@@ -27,7 +27,7 @@ routerd 是一個宣告式路由器，透過以型別化 YAML 描述的期望狀
 | 理解宣告式模型（資源、套用、調和） | [功能說明 → 資源模型](./concepts/resource-model.md) |
 | 從已驗證的設定範例組建設定 | [設定範例集](./config-examples/index.md) |
 | 解決特定部署問題 | [How-to 指南](./how-to/multi-wan.md) |
-| 查詢資源種類或欄位 | [參考文件 → 資源 API](/docs/reference/api-v1alpha1) |
+| 查詢資源種類或欄位 | [參考文件 → 資源 API](./api-v1alpha1.md) |
 | 運維運行中的路由器 | [功能說明 → 調和（reconcile）](/docs/operations/reconcile) |
 | 追蹤變更內容 | [發行版與穩定版 → 變更記錄](./releases/changelog.md) |
 | 了解複雜案例的背景 | [知識庫](./knowledge-base/dhcpv6-pd-clients.md) |

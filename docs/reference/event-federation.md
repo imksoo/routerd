@@ -9,7 +9,7 @@ Event Federation lets routerd nodes exchange **typed, observed facts** (e.g. "th
 client IPv4 was observed", "this address expired") over the overlay, and lets a
 subscriber turn matched events into derived configuration via a plugin. It is the
 control-plane substrate beneath
-[Selective Address Mobility](./selective-address-mobility.md): an observed address
+[Selective Address Mobility](./selective-address-mobility): an observed address
 on one node becomes a `RemoteAddressClaim` (capture) on another.
 
 The model is **at-least-once delivery with idempotent, observed-fact events**.
