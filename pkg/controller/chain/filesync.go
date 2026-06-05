@@ -383,7 +383,13 @@ func defaultDHCPv4LeaseFile() string {
 }
 
 func defaultDNSMasqLeaseFile() string {
-	defaults, _ := platform.Current()
+	defaults, features := platform.Current()
+	if features.HasRCD {
+		return filepath.Join(defaults.StateDir, "dnsmasq", "dnsmasq.leases")
+	}
+	if strings.TrimSpace(defaults.RuntimeDir) != "" {
+		return filepath.Join(defaults.RuntimeDir, "dnsmasq.leases")
+	}
 	return filepath.Join(defaults.StateDir, "dnsmasq", "dnsmasq.leases")
 }
 

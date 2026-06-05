@@ -126,6 +126,13 @@ func TestDHCPv4ServerLeaseSyncMissingLeaseFileIsPending(t *testing.T) {
 	}
 }
 
+func TestDHCPv4ServerLeaseSyncDefaultLeaseFileMatchesRuntimeDnsmasq(t *testing.T) {
+	got := defaultDHCPv4LeaseFile()
+	if !strings.HasSuffix(got, "/run/routerd/dnsmasq.leases") {
+		t.Fatalf("default DHCPv4 lease file = %q, want runtime dnsmasq lease path", got)
+	}
+}
+
 func TestDHCPv6ServerLeaseSyncDerivesDnsmasqLeaseFile(t *testing.T) {
 	dir := t.TempDir()
 	leaseFile := filepath.Join(dir, "dnsmasq.leases")
