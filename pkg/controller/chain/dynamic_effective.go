@@ -15,6 +15,7 @@ import (
 	"github.com/imksoo/routerd/pkg/hybrid"
 	"github.com/imksoo/routerd/pkg/mobilityconfig"
 	"github.com/imksoo/routerd/pkg/platform"
+	"github.com/imksoo/routerd/pkg/resourcequery"
 	"github.com/imksoo/routerd/pkg/sam"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
@@ -204,6 +205,8 @@ func appendBGPMobilityCapturePrefixRoutes(effective, routeRouter api.Router, sto
 		if cidr, source, ok := bgpMobilityCaptureSourceAddress(resource.Metadata.Name, captureInterface, preferredSource, prefix.Masked()); ok {
 			resources = append(resources, cidr)
 			preferredSource = source
+		} else if source, ok := bgpMobilityCaptureSourceAddressFrom(reader, self.Capture.SourceAddressFrom, prefix.Masked()); ok {
+			preferredSource = source
 		} else {
 			preferredSource = capturePrefixPreferredSource(effective, reader, captureInterface, device, prefix.Masked())
 		}
@@ -261,6 +264,16 @@ func normalizeBGPMobilityCaptureSourceAddress(sourceAddress string, pool netip.P
 		return "", "", false
 	}
 	return netip.PrefixFrom(addr, 32).String(), addr.String(), true
+}
+
+func bgpMobilityCaptureSourceAddressFrom(reader sam.StatusReader, source api.StatusValueSourceSpec, pool netip.Prefix) (string, bool) {
+	for _, value := range resourcequery.Values(reader, source) {
+		_, addr, ok := normalizeBGPMobilityCaptureSourceAddress(value, pool)
+		if ok {
+			return addr, true
+		}
+	}
+	return "", false
 }
 
 func bgpMobilityCapturePrefixRoute(poolName, prefix, device, preferredSource string) api.Resource {

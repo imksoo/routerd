@@ -250,6 +250,13 @@ interface otherwise has no IPv4 address: Linux ARP for local same-subnet
 clients then uses an address inside the mobility prefix instead of falling back
 to an unrelated management address.
 
+If that sender address is owned by another lifecycle manager such as DHCP/IPAM,
+use `members[].capture.sourceAddressFrom` instead. For example,
+`resource: DHCPv4Client/svnet1-source` with `field: currentAddress` uses the
+leased address as the capture-prefix route preferred source without lowering it
+to an `IPv4StaticAddress`, so routerd does not duplicate ownership of the same
+address.
+
 For `proxy-arp` capture on Linux, routerd:
 
 - enables `net.ipv4.conf.<capture-interface>.proxy_arp=1` through the normal

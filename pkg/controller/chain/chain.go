@@ -634,7 +634,7 @@ func bootstrapSubscriptions() []bus.Subscription {
 }
 
 func ipv4RouteStatusSubscriptions() []bus.Subscription {
-	return statusSubscriptions("DSLiteTunnel", "TunnelInterface", "EgressRoutePolicy", "VirtualAddress")
+	return statusSubscriptions("DSLiteTunnel", "TunnelInterface", "EgressRoutePolicy", "VirtualAddress", "DHCPv4Client")
 }
 
 func hybridRouteStatusSubscriptions() []bus.Subscription {
@@ -642,7 +642,7 @@ func hybridRouteStatusSubscriptions() []bus.Subscription {
 }
 
 func samStatusSubscriptions() []bus.Subscription {
-	subs := statusSubscriptions("IPv4Route", "Sysctl", "WireGuardInterface", "TunnelInterface", "Interface", "VirtualAddress")
+	subs := statusSubscriptions("IPv4Route", "Sysctl", "WireGuardInterface", "TunnelInterface", "Interface", "VirtualAddress", "DHCPv4Client")
 	subs = append(subs, bus.Subscription{
 		Topics: []string{"routerd.resource.status.changed"},
 		Filter: func(event daemonapi.DaemonEvent) bool {

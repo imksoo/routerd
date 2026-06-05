@@ -39,6 +39,10 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 - `MobilityPool` on-prem `proxy-arp` capture members can declare
   `capture.sourceAddress`; BGP-mode lowering installs it as a capture-interface
   `/32` and uses it as the capture-prefix route preferred source.
+- `MobilityPool` on-prem `proxy-arp` capture members can declare
+  `capture.sourceAddressFrom` to use a status-provided sender address, such as
+  a `DHCPv4Client` lease, as the capture-prefix route preferred source without
+  lowering it to an `IPv4StaticAddress`.
 - Least-privilege CloudEdge IAM templates under
   `examples/cloudedge-mobility-demo/iam/` for scoped AWS, Azure, and
   OCI provider access.

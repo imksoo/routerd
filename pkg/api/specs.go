@@ -1595,9 +1595,14 @@ type MobilityMemberCapture struct {
 	// routerd lowers it to a /32 IPv4StaticAddress and uses it as the capture
 	// prefix route preferred source so Linux ARP for local same-subnet clients
 	// stays inside the mobility prefix.
-	SourceAddress string            `yaml:"sourceAddress,omitempty" json:"sourceAddress,omitempty"`
-	GratuitousARP bool              `yaml:"gratuitousARP,omitempty" json:"gratuitousARP,omitempty"`
-	ActiveWhen    CaptureActiveWhen `yaml:"activeWhen,omitempty" json:"activeWhen,omitempty"`
+	SourceAddress string `yaml:"sourceAddress,omitempty" json:"sourceAddress,omitempty"`
+	// SourceAddressFrom resolves the capture-interface sender address from a
+	// resource status field, for example DHCPv4Client/currentAddress. Unlike
+	// sourceAddress, routerd does not lower this to an IPv4StaticAddress because
+	// the referenced resource owns the address lifecycle.
+	SourceAddressFrom StatusValueSourceSpec `yaml:"sourceAddressFrom,omitempty" json:"sourceAddressFrom,omitempty"`
+	GratuitousARP     bool                  `yaml:"gratuitousARP,omitempty" json:"gratuitousARP,omitempty"`
+	ActiveWhen        CaptureActiveWhen     `yaml:"activeWhen,omitempty" json:"activeWhen,omitempty"`
 	// Target carries non-secret provider target hints such as region,
 	// compartmentId, resourceGroup, nicName, or ipConfigName. It is copied to
 	// provider ActionPlan.target; credentials and tokens do not belong here.

@@ -273,6 +273,49 @@ func TestDynamicRouteSAMViewBGPProxyARPCaptureSourceAddressLowersStaticAddress(t
 	}
 }
 
+func TestDynamicRouteSAMViewBGPProxyARPCaptureSourceAddressFromDHCPDoesNotLowerStaticAddress(t *testing.T) {
+	startup := bgpProxyARPStartup(false)
+	startup.Spec.Resources = append(startup.Spec.Resources,
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+			Metadata: api.ObjectMeta{Name: "svnet1"},
+			Spec:     api.InterfaceSpec{IfName: "eth1", Managed: true},
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Client"},
+			Metadata: api.ObjectMeta{Name: "svnet1-source"},
+			Spec:     api.DHCPv4ClientSpec{Interface: "svnet1"},
+		},
+	)
+	for i, resource := range startup.Spec.Resources {
+		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "MobilityPool" {
+			continue
+		}
+		spec := resource.Spec.(api.MobilityPoolSpec)
+		spec.Members[0].Capture.Interface = "svnet1"
+		spec.Members[0].Capture.SourceAddressFrom = api.StatusValueSourceSpec{Resource: "DHCPv4Client/svnet1-source", Field: "currentAddress"}
+		startup.Spec.Resources[i].Spec = spec
+	}
+	store := mapStore{
+		api.NetAPIVersion + "/BGPRouter/mobility-bgp": {
+			"installedNextHops": map[string]any{"10.0.1.11/32": []any{"10.99.0.2"}},
+		},
+		api.NetAPIVersion + "/DHCPv4Client/svnet1-source": {"currentAddress": "10.0.1.240/24"},
+		api.NetAPIVersion + "/VirtualAddress/onprem-vip":  {"role": "master"},
+	}
+	view, err := buildDynamicRouteSAMView(startup, store, time.Now().UTC(), platform.OSLinux)
+	if err != nil {
+		t.Fatalf("buildDynamicRouteSAMView: %v", err)
+	}
+	if got := countResources(view.RouteRouter, api.NetAPIVersion, "IPv4StaticAddress"); got != 0 {
+		t.Fatalf("IPv4StaticAddress resources = %d, want none for DHCP-owned source address", got)
+	}
+	route := ipv4RouteSpecByName(t, view.RouteRouter, "sam-cloudedge-capture-prefix")
+	if route.Destination != "10.0.1.0/24" || route.Device != "eth1" || route.PreferredSource != "10.0.1.240" || route.Metric != 90 {
+		t.Fatalf("capture prefix route = %#v", route)
+	}
+}
+
 func TestDynamicRouteSAMViewBGPProxyARPCapturePrefixRouteHonorsGate(t *testing.T) {
 	store := mapStore{
 		api.NetAPIVersion + "/BGPRouter/mobility-bgp": {

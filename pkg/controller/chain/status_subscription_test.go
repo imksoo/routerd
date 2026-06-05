@@ -52,6 +52,32 @@ func TestSAMControllerSubscribesToBGPRouterStatus(t *testing.T) {
 	}
 }
 
+func TestSAMRouteControllersSubscribeToDHCPv4ClientStatus(t *testing.T) {
+	event := daemonapi.DaemonEvent{
+		Type: "routerd.resource.status.changed",
+		Resource: &daemonapi.ResourceRef{
+			APIVersion: api.NetAPIVersion,
+			Kind:       "DHCPv4Client",
+			Name:       "svnet1-source",
+		},
+		Attributes: map[string]string{"changedFields": "currentAddress,phase"},
+	}
+	tests := []struct {
+		name string
+		subs []bus.Subscription
+	}{
+		{name: "ipv4-route", subs: ipv4RouteStatusSubscriptions()},
+		{name: "sam", subs: samStatusSubscriptions()},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if !subscriptionSetAccepts(tt.subs, event) {
+				t.Fatalf("%s subscriptions did not accept DHCPv4Client status change", tt.name)
+			}
+		})
+	}
+}
+
 func TestSAMControllerIgnoresBGPRouterPeerOnlyStatus(t *testing.T) {
 	event := daemonapi.DaemonEvent{
 		Type: "routerd.resource.status.changed",
