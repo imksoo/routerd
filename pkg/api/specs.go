@@ -324,6 +324,7 @@ type NTPServerSpec struct {
 	Servers           []string                `yaml:"servers,omitempty" json:"servers,omitempty"`
 	ServerFrom        []StatusValueSourceSpec `yaml:"serverFrom,omitempty" json:"serverFrom,omitempty"`
 	FallbackServers   []string                `yaml:"fallbackServers,omitempty" json:"fallbackServers,omitempty"`
+	When              ResourceWhenSpec        `yaml:"when,omitempty" json:"when,omitempty"`
 }
 
 type WebConsoleSpec struct {
@@ -783,6 +784,7 @@ type DHCPv4ReservationSpec struct {
 	IPAddress  string             `yaml:"ipAddress" json:"ipAddress"`
 	LeaseTime  string             `yaml:"leaseTime,omitempty" json:"leaseTime,omitempty"`
 	Options    []DHCPv4OptionSpec `yaml:"options,omitempty" json:"options,omitempty"`
+	When       ResourceWhenSpec   `yaml:"when,omitempty" json:"when,omitempty"`
 }
 
 type DHCPv6AddressSpec struct {

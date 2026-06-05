@@ -65,6 +65,9 @@ func ResourceWhen(res api.Resource) api.ResourceWhenSpec {
 	case "TailscaleNode":
 		spec, _ := res.TailscaleNodeSpec()
 		return spec.When
+	case "NTPServer":
+		spec, _ := res.NTPServerSpec()
+		return spec.When
 	case "DHCPv4Client":
 		spec, _ := res.DHCPv4ClientSpec()
 		return spec.When
@@ -73,6 +76,9 @@ func ResourceWhen(res api.Resource) api.ResourceWhenSpec {
 		return spec.When
 	case "DHCPv4Server":
 		spec, _ := res.DHCPv4ServerSpec()
+		return spec.When
+	case "DHCPv4Reservation":
+		spec, _ := res.DHCPv4ReservationSpec()
 		return spec.When
 	case "IPv6DelegatedAddress":
 		spec, _ := res.IPv6DelegatedAddressSpec()
