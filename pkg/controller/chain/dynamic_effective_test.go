@@ -154,11 +154,15 @@ func TestDynamicRouteSAMViewDerivesBGPProxyARPClaimsWithoutRouteLowering(t *test
 	if got := countResources(view.EffectiveRouter, api.HybridAPIVersion, "RemoteAddressClaim"); got != 2 {
 		t.Fatalf("effective BGP proxy claims = %d, want 2", got)
 	}
-	if got := countResources(view.RouteRouter, api.NetAPIVersion, "IPv4Route"); got != 0 {
-		t.Fatalf("BGP proxy claims must not lower IPv4Routes, got %d", got)
+	if got := countResources(view.RouteRouter, api.NetAPIVersion, "IPv4Route"); got != 1 {
+		t.Fatalf("BGP proxy claims route IPv4Routes = %d, want capture prefix route only", got)
 	}
 	if len(view.SAMLowerings) != 0 {
 		t.Fatalf("BGP proxy claims produced SAM lowerings: %#v", view.SAMLowerings)
+	}
+	route := ipv4RouteSpecByName(t, view.RouteRouter, "sam-cloudedge-capture-prefix")
+	if route.Destination != "10.0.1.0/24" || route.Device != "lan0" || route.Metric != 90 {
+		t.Fatalf("capture prefix route = %#v", route)
 	}
 	applier := &fakeSAMApplier{}
 	garp := &fakeSAMGARP{}
@@ -198,6 +202,54 @@ func TestDynamicRouteSAMViewBGPProxyARPIdentityOnlyRemoteMatchesInline(t *testin
 	}
 	if len(identityView.SAMLowerings) != 0 {
 		t.Fatalf("identity-only BGP proxy claims produced SAM lowerings: %#v", identityView.SAMLowerings)
+	}
+}
+
+func TestDynamicRouteSAMViewBGPProxyARPCapturePrefixRouteUsesInterfaceIfName(t *testing.T) {
+	startup := bgpProxyARPStartup(false)
+	startup.Spec.Resources = append(startup.Spec.Resources, api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+		Metadata: api.ObjectMeta{Name: "svnet1"},
+		Spec:     api.InterfaceSpec{IfName: "eth1", Managed: true},
+	})
+	for i, resource := range startup.Spec.Resources {
+		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "MobilityPool" {
+			continue
+		}
+		spec := resource.Spec.(api.MobilityPoolSpec)
+		spec.Members[0].Capture.Interface = "svnet1"
+		startup.Spec.Resources[i].Spec = spec
+	}
+	store := mapStore{
+		api.NetAPIVersion + "/BGPRouter/mobility-bgp": {
+			"installedNextHops": map[string]any{"10.0.1.11/32": []any{"10.99.0.2"}},
+		},
+		api.NetAPIVersion + "/Interface/svnet1":          {"ipv4Addresses": []any{"192.0.2.10/32", "10.0.1.254/32"}},
+		api.NetAPIVersion + "/VirtualAddress/onprem-vip": {"role": "master"},
+	}
+	view, err := buildDynamicRouteSAMView(startup, store, time.Now().UTC(), platform.OSLinux)
+	if err != nil {
+		t.Fatalf("buildDynamicRouteSAMView: %v", err)
+	}
+	route := ipv4RouteSpecByName(t, view.RouteRouter, "sam-cloudedge-capture-prefix")
+	if route.Destination != "10.0.1.0/24" || route.Device != "eth1" || route.PreferredSource != "10.0.1.254" || route.Metric != 90 {
+		t.Fatalf("capture prefix route = %#v", route)
+	}
+}
+
+func TestDynamicRouteSAMViewBGPProxyARPCapturePrefixRouteHonorsGate(t *testing.T) {
+	store := mapStore{
+		api.NetAPIVersion + "/BGPRouter/mobility-bgp": {
+			"installedNextHops": map[string]any{"10.0.1.11/32": []any{"10.99.0.2"}},
+		},
+		api.NetAPIVersion + "/VirtualAddress/onprem-vip": {"role": "backup"},
+	}
+	view, err := buildDynamicRouteSAMView(bgpProxyARPStartup(false), store, time.Now().UTC(), platform.OSLinux)
+	if err != nil {
+		t.Fatalf("buildDynamicRouteSAMView: %v", err)
+	}
+	if got := countResources(view.RouteRouter, api.NetAPIVersion, "IPv4Route"); got != 0 {
+		t.Fatalf("backup route IPv4Routes = %d, want none", got)
 	}
 }
 
@@ -558,4 +610,22 @@ func countResources(router *api.Router, apiVersion, kind string) int {
 		}
 	}
 	return count
+}
+
+func ipv4RouteSpecByName(t *testing.T, router *api.Router, name string) api.IPv4RouteSpec {
+	t.Helper()
+	if router == nil {
+		t.Fatalf("router is nil")
+	}
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion == api.NetAPIVersion && resource.Kind == "IPv4Route" && resource.Metadata.Name == name {
+			spec, err := resource.IPv4RouteSpec()
+			if err != nil {
+				t.Fatalf("%s IPv4RouteSpec: %v", name, err)
+			}
+			return spec
+		}
+	}
+	t.Fatalf("IPv4Route/%s not found", name)
+	return api.IPv4RouteSpec{}
 }

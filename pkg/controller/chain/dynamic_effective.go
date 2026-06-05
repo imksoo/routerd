@@ -60,6 +60,7 @@ func buildDynamicRouteSAMView(startup *api.Router, store any, now time.Time, tar
 	effective = appendBGPMobilityProxyARPClaims(effective, store)
 
 	routeRouter := effective
+	routeRouter = appendBGPMobilityCapturePrefixRoutes(effective, routeRouter, store)
 	hybridLowerings := []hybrid.HybridLowering(nil)
 	if hybrid.HasHybridRoutes(&effective) {
 		expanded, lowerings, err := hybrid.ExpandHybridRoutes(routeRouter)
@@ -157,6 +158,173 @@ func appendBGPMobilityProxyARPClaims(router api.Router, store any) api.Router {
 	out := router
 	out.Spec.Resources = append(append([]api.Resource(nil), router.Spec.Resources...), claims...)
 	return out
+}
+
+func appendBGPMobilityCapturePrefixRoutes(effective, routeRouter api.Router, store any) api.Router {
+	selfByGroup := eventGroupSelfNodes(effective)
+	if len(selfByGroup) == 0 {
+		return routeRouter
+	}
+	aliases := interfaceIfNames(effective)
+	reader := statusReaderFromStore(store)
+	var routes []api.Resource
+	for _, resource := range effective.Spec.Resources {
+		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "MobilityPool" {
+			continue
+		}
+		spec, err := resource.MobilityPoolSpec()
+		if err != nil || mobilityDeliveryMode(spec) != "bgp" {
+			continue
+		}
+		selfNode := strings.TrimSpace(selfByGroup[strings.TrimSpace(spec.GroupRef)])
+		if selfNode == "" {
+			continue
+		}
+		spec, _, err = mobilityconfig.NormalizeMobilityPool(spec, selfNode)
+		if err != nil {
+			continue
+		}
+		self, ok := mobilityPoolMemberByNode(spec.Members, selfNode)
+		if !ok || strings.TrimSpace(self.Capture.Type) != "proxy-arp" {
+			continue
+		}
+		if !sam.EvaluateCaptureGate(addressCaptureFromMobilityCapture(self.Capture), reader).Active {
+			continue
+		}
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(spec.Prefix))
+		if err != nil || !prefix.Addr().Is4() {
+			continue
+		}
+		device := resolveInterfaceIfName(strings.TrimSpace(self.Capture.Interface), aliases)
+		if device == "" {
+			continue
+		}
+		preferredSource := capturePrefixPreferredSource(effective, reader, strings.TrimSpace(self.Capture.Interface), device, prefix.Masked())
+		routes = append(routes, bgpMobilityCapturePrefixRoute(resource.Metadata.Name, prefix.Masked().String(), device, preferredSource))
+	}
+	if len(routes) == 0 {
+		return routeRouter
+	}
+	out := routeRouter
+	out.Spec.Resources = append(append([]api.Resource(nil), routeRouter.Spec.Resources...), routes...)
+	return out
+}
+
+func bgpMobilityCapturePrefixRoute(poolName, prefix, device, preferredSource string) api.Resource {
+	return api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4Route"},
+		Metadata: api.ObjectMeta{
+			Name: "sam-" + safeResourceName(poolName) + "-capture-prefix",
+			Annotations: map[string]string{
+				"mobility.routerd.net/pool":   poolName,
+				"mobility.routerd.net/source": "bgp-capture-prefix",
+			},
+		},
+		Spec: api.IPv4RouteSpec{
+			Destination:     prefix,
+			Device:          device,
+			PreferredSource: preferredSource,
+			Metric:          90,
+		},
+	}
+}
+
+func addressCaptureFromMobilityCapture(capture api.MobilityMemberCapture) api.AddressCapture {
+	return api.AddressCapture{
+		Type:               capture.Type,
+		ProviderRef:        capture.ProviderRef,
+		ProviderMode:       capture.ProviderMode,
+		NICRef:             capture.NICRef,
+		ConfigureOSAddress: capture.ConfigureOSAddress,
+		Interface:          capture.Interface,
+		GratuitousARP:      capture.GratuitousARP,
+		ActiveWhen:         capture.ActiveWhen,
+	}
+}
+
+func interfaceIfNames(router api.Router) map[string]string {
+	out := map[string]string{}
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "Interface" {
+			continue
+		}
+		spec, err := resource.InterfaceSpec()
+		if err != nil {
+			continue
+		}
+		name := strings.TrimSpace(resource.Metadata.Name)
+		ifname := strings.TrimSpace(spec.IfName)
+		if name != "" && ifname != "" {
+			out[name] = ifname
+		}
+	}
+	return out
+}
+
+func resolveInterfaceIfName(value string, aliases map[string]string) string {
+	value = strings.TrimSpace(value)
+	if aliases == nil {
+		return value
+	}
+	if ifname := strings.TrimSpace(aliases[value]); ifname != "" {
+		return ifname
+	}
+	return value
+}
+
+func capturePrefixPreferredSource(router api.Router, reader sam.StatusReader, captureInterface, device string, pool netip.Prefix) string {
+	if reader == nil || !pool.Addr().Is4() {
+		return ""
+	}
+	for _, name := range captureInterfaceStatusNames(router, captureInterface, device) {
+		status := reader.ObjectStatus(api.NetAPIVersion, "Interface", name)
+		for _, raw := range append(statusStringSlice(status["ipv4Addresses"]), statusStringSlice(status["addresses"])...) {
+			address := strings.TrimSpace(raw)
+			if address == "" {
+				continue
+			}
+			prefix, err := netip.ParsePrefix(address)
+			if err != nil {
+				addr, err := netip.ParseAddr(address)
+				if err != nil {
+					continue
+				}
+				prefix = netip.PrefixFrom(addr, addr.BitLen())
+			}
+			prefix = prefix.Masked()
+			if prefix.Addr().Is4() && pool.Contains(prefix.Addr()) {
+				return prefix.Addr().String()
+			}
+		}
+	}
+	return ""
+}
+
+func captureInterfaceStatusNames(router api.Router, captureInterface, device string) []string {
+	seen := map[string]bool{}
+	var names []string
+	add := func(name string) {
+		name = strings.TrimSpace(name)
+		if name == "" || seen[name] {
+			return
+		}
+		seen[name] = true
+		names = append(names, name)
+	}
+	add(captureInterface)
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "Interface" {
+			continue
+		}
+		spec, err := resource.InterfaceSpec()
+		if err != nil {
+			continue
+		}
+		if strings.TrimSpace(resource.Metadata.Name) == captureInterface || strings.TrimSpace(spec.IfName) == device {
+			add(resource.Metadata.Name)
+		}
+	}
+	return names
 }
 
 func bgpInstalledNextHopsFromRouterStatus(router api.Router, reader sam.StatusReader) map[string][]string {
