@@ -1,9 +1,9 @@
 ---
-title: Tailscale subnet / exit node
+title: Tailscale の subnet router / exit node
 sidebar_position: 90
 ---
 
-# Tailscale subnet / exit node
+# Tailscale の subnet router / exit node
 
 ルーターを Tailscale の subnet router 兼 exit node として広告する例です。
 

@@ -27,7 +27,7 @@ make website-build
 shell script を変更した場合は、変更した script に対して `shellcheck` も
 実行します。
 
-## pre-commit hook
+## pre-commit フック
 
 routerd には任意で使える pre-commit hook があります。
 

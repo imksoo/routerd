@@ -146,7 +146,7 @@ NixOS は Ubuntu と同じ routerd リソースモデルを使います。
 - DHCPv6-PD が `Bound` まで到達
 - DHCP または RA リソースが dnsmasq を必要とする場合の `routerd-dnsmasq` サービス生成
 - `routerd-dnsmasq` サービスでは、NixOS のシステムプロファイル内の絶対パスを使います。root のまま実行する指定も入れるため、systemd の保護設定下でも `PATH` 探索や権限降格に依存しません
-- DNS resolver、HealthCheck、firewall logger、Tailscale、DHCPv4 クライアント、DHCPv6 クライアント、PPPoE クライアントのサービス生成
+- DNS リゾルバ、HealthCheck、firewall logger、Tailscale、DHCPv4 クライアント、DHCPv6 クライアント、PPPoE クライアントのサービス生成
 - NAT、firewall、policy routing、Path MTU リソースが nftables を必要とする場合の `networking.nftables.enable = true` の生成
 - WireGuard、Tailscale、VXLAN、systemd-networkd による VRF の生成
 - NixOS の native な network 宣言では表せない Linux 実行時リソースは、NixOS の有効化後に `routerd.service` が調整
@@ -162,7 +162,7 @@ NixOS の有効化後の inventory は次の通りです。
 | 領域 | 現在の所有者 | メモ |
 | --- | --- | --- |
 | package と routerd service path | 生成された NixOS module | `Package` resource は `environment.systemPackages` になります。routerd は `nix-env` を呼びません。 |
-| helper daemon service 定義 | 生成された NixOS module | DHCPv4、DHCPv6、PPPoE、HealthCheck、firewall logger、Tailscale、dnsmasq は Nix の systemd service として表現します。 |
+| helper デーモンサービス定義 | 生成された NixOS module | DHCPv4、DHCPv6、PPPoE、HealthCheck、firewall logger、Tailscale、dnsmasq は Nix の systemd service として表現します。 |
 | nftables の有効化 | 生成された NixOS module | NAT、firewall、policy routing、Path MTU resource が必要とする場合に `networking.nftables.enable = true` を出します。 |
 | runtime のみの network 変更 | 有効化後の `routerd.service` | 動的な DS-Lite、一時的な経路判断、status 由来の変更には runtime の reconciliation が必要です。 |
 | 旧 runtime dnsmasq unit の cleanup | 有効化後の `routerd.service` | 古い `/run/systemd/system/routerd-dnsmasq.service` artifact を移行時に消すため、一時的に残します。導入済み host が 1 release cycle を経たら削除します。 |

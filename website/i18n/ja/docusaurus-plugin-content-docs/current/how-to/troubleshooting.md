@@ -54,7 +54,7 @@ DNS の応答と転送は、`routerd-dns-resolver` が担当します。
 - `dhcp-script=/usr/local/libexec/routerd/dhcp-event-relay` がある (リースの変化を routerd へ通知する経路)
 - 必要な構成で `enable-ra` が入っている
 
-## DNS resolver
+## DNS リゾルバ
 
 ```bash
 sudo curl --unix-socket /run/routerd/dns-resolver/<resource>.sock http://unix/v1/healthz

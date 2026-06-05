@@ -5,15 +5,15 @@ slug: /concepts/dns-resolver
 
 # DNS リゾルバ
 
-routerd の DNS は、権威データ、リゾルバプロセス、転送ルール、上流 endpoint を、それぞれ小さなリソースに分けて表します。
+routerd の DNS は、権威データ、リゾルバプロセス、転送ルール、上流エンドポイントを、それぞれ小さなリソースに分けて表します。
 
 `DNSZone` はローカルの権威データを持ちます。手で書いたレコードと、DHCP リースから派生したレコードを保存します。
 
-`DNSResolver` はデーモンインスタンスを管理します。待ち受けアドレス、キャッシュ、metrics、query log を定義します。1 つの `DNSResolver` リソースが、1 つの `routerd-dns-resolver` プロセスを起動します。
+`DNSResolver` はデーモンインスタンスを管理します。待ち受けアドレス、キャッシュ、メトリクス、query log を定義します。1 つの `DNSResolver` リソースが、1 つの `routerd-dns-resolver` プロセスを起動します。
 
 `DNSForwarder` はリゾルバに属する 1 つの match ルールです。`DNSZone` から応答するか、一致した問い合わせを `DNSUpstream` へ転送します。
 
-`DNSUpstream` は 1 つの上流 endpoint です。平文の UDP/TCP DNS、DoT、DoH を表します。
+`DNSUpstream` は 1 つの上流エンドポイントです。平文の UDP/TCP DNS、DoT、DoH を表します。
 
 ## 起動と部分的な立ち上げ
 

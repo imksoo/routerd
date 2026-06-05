@@ -1,5 +1,5 @@
 ---
-title: Ingress maintenance
+title: Ingress のメンテナンス
 ---
 
 # Ingress のメンテナンス
