@@ -12,6 +12,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -50,6 +51,7 @@ jobs:
     uses: ./.github/workflows/quality.yaml
     with:
       checkout-ref: ${{ needs.resolve-release.outputs.checkout-ref }}
+      force-website-build: true
 
   build-archives:
     name: Build ${{ matrix.routerd_os }}-${{ matrix.goarch }}
