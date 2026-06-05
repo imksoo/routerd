@@ -3,6 +3,7 @@
 package config
 
 import (
+	"encoding/hex"
 	"fmt"
 	"net/netip"
 	"strings"
@@ -152,8 +153,16 @@ func validateWANResource(res api.Resource, targetOS platform.OS) (bool, error) {
 		if spec.PrefixLength != 0 && (spec.PrefixLength < 1 || spec.PrefixLength > 128) {
 			return true, fmt.Errorf("%s spec.prefixLength must be within 1-128", res.ID())
 		}
+		if spec.ClientDUID != "" {
+			if strings.ContainsAny(spec.ClientDUID, " \t\n\r:") {
+				return true, fmt.Errorf("%s spec.clientDUID must be plain hex without separators", res.ID())
+			}
+			if _, err := hex.DecodeString(spec.ClientDUID); err != nil {
+				return true, fmt.Errorf("%s spec.clientDUID must be valid hex: %w", res.ID(), err)
+			}
+		}
 		if spec.IAID != "" || spec.DUIDType != "" {
-			return true, fmt.Errorf("%s spec.iaid and spec.duidType are not supported; use spec.profile and let routerd derive DHCPv6 client identity details", res.ID())
+			return true, fmt.Errorf("%s spec.iaid and spec.duidType are not supported; use spec.profile and spec.clientDUID for DHCPv6 client identity details", res.ID())
 		}
 	case "IPv6DelegatedAddress":
 		if res.APIVersion != api.NetAPIVersion {

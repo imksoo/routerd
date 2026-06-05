@@ -1206,6 +1206,16 @@ func TestValidateDHCPv6PrefixDelegationIdentity(t *testing.T) {
 		t.Fatalf("validate prefix delegation identity: %v", err)
 	}
 
+	router.Spec.Resources[1].Spec = api.DHCPv6PrefixDelegationSpec{Interface: "wan", ClientDUID: "00030001020000000103"}
+	if err := Validate(router); err != nil {
+		t.Fatalf("expected fixed clientDUID to validate, got %v", err)
+	}
+
+	router.Spec.Resources[1].Spec = api.DHCPv6PrefixDelegationSpec{Interface: "wan", ClientDUID: "00:03"}
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "spec.clientDUID must be plain hex") {
+		t.Fatalf("expected clientDUID to be rejected, got %v", err)
+	}
+
 	router.Spec.Resources[1].Spec = api.DHCPv6PrefixDelegationSpec{Interface: "wan", IAID: "not-an-iaid"}
 	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "not supported") {
 		t.Fatalf("expected IAID to be rejected, got %v", err)

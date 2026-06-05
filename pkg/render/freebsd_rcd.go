@@ -492,6 +492,9 @@ func freeBSDDHCPv6ClientSystemdSpec(resource, ifname string, spec api.DHCPv6Pref
 	if spec.IAID != "" {
 		args = append(args, "--iaid", spec.IAID)
 	}
+	if spec.ClientDUID != "" {
+		args = append(args, "--client-duid", spec.ClientDUID)
+	}
 	noNewPrivileges := true
 	privateTmp := true
 	return api.SystemdUnitSpec{

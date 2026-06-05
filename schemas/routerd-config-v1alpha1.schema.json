@@ -4012,6 +4012,9 @@
                       "client": {
                         "type": "string"
                       },
+                      "clientDUID": {
+                        "type": "string"
+                      },
                       "interface": {
                         "type": "string"
                       },

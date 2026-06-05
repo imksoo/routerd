@@ -109,7 +109,8 @@ Kernel module と、systemd-networkd/resolved の adoption drop-in は、router 
 | `IPv6RAAddress` | RA/SLAAC で得る IPv6 アドレスを表します。 |
 
 `DHCPv6PrefixDelegation` は、旧来の OS クライアント選択フィールドを持ちません。
-DHCPv6-PD は `routerd-dhcpv6-client` が担当します。
+DHCPv6-PD は `routerd-dhcpv6-client` が担当します。HA node 間で DHCPv6 client
+identity を固定する必要がある場合は、`spec.clientDUID` に plain hex の DUID を設定します。
 
 ## LAN 側サービス
 

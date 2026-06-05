@@ -71,9 +71,10 @@ type nixOSVRF struct {
 }
 
 type nixOSDHCPv6Client struct {
-	Name      string
-	IFName    string
-	Interface string
+	Name       string
+	IFName     string
+	Interface  string
+	ClientDUID string
 }
 
 type nixOSSystemdUnit struct {
@@ -297,7 +298,7 @@ func nixOSDHCPv6Clients(router *api.Router, interfaces []nixOSInterface) ([]nixO
 		if ifname == "" {
 			return nil, fmt.Errorf("%s needs spec.interface", res.ID())
 		}
-		out = append(out, nixOSDHCPv6Client{Name: res.Metadata.Name, Interface: spec.Interface, IFName: ifname})
+		out = append(out, nixOSDHCPv6Client{Name: res.Metadata.Name, Interface: spec.Interface, IFName: ifname, ClientDUID: spec.ClientDUID})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
@@ -986,6 +987,9 @@ func writeNixOSDHCPv6ClientService(buf *bytes.Buffer, client nixOSDHCPv6Client) 
 		"--socket", socket,
 		"--lease-file", lease,
 		"--event-file", events,
+	}
+	if client.ClientDUID != "" {
+		args = append(args, "--client-duid", client.ClientDUID)
 	}
 	buf.WriteString("  systemd.services." + nixString(unit) + " = {\n")
 	buf.WriteString("    description = " + nixString("routerd DHCPv6 client "+client.Name) + ";\n")

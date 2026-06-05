@@ -802,6 +802,7 @@ type DHCPv6PrefixDelegationSpec struct {
 	Profile      string `yaml:"profile,omitempty" json:"profile,omitempty" jsonschema:"enum=default,enum=ntt-ngn-direct-hikari-denwa,enum=ntt-hgw-lan-pd"`
 	PrefixLength int    `yaml:"prefixLength,omitempty" json:"prefixLength,omitempty" jsonschema:"minimum=1,maximum=128"`
 	IAID         string `yaml:"-" json:"-"`
+	ClientDUID   string `yaml:"clientDUID,omitempty" json:"clientDUID,omitempty"`
 	DUIDType     string `yaml:"-" json:"-"`
 	Required     bool   `yaml:"required,omitempty" json:"required,omitempty"`
 }

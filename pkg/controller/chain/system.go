@@ -952,6 +952,9 @@ func dhcpv6ClientUnitSpec(resource, ifname string, spec api.DHCPv6PrefixDelegati
 	if spec.IAID != "" {
 		exec = append(exec, "--iaid", spec.IAID)
 	}
+	if spec.ClientDUID != "" {
+		exec = append(exec, "--client-duid", spec.ClientDUID)
+	}
 	return api.SystemdUnitSpec{
 		Description:              "routerd DHCPv6 client " + resource,
 		ExecStart:                exec,
