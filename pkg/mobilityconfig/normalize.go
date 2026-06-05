@@ -159,6 +159,9 @@ func mergeCapture(base, override api.MobilityMemberCapture) api.MobilityMemberCa
 	if strings.TrimSpace(override.SourceAddress) != "" {
 		out.SourceAddress = override.SourceAddress
 	}
+	if strings.TrimSpace(override.SourceAddressFrom.Resource) != "" {
+		out.SourceAddressFrom = override.SourceAddressFrom
+	}
 	if override.GratuitousARP {
 		out.GratuitousARP = true
 	}

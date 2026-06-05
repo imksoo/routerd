@@ -7638,6 +7638,27 @@
                                   "description": "SourceAddress is an optional local IPv4 address used by proxy-ARP capture\nmembers as the capture-interface sender address. In BGP delivery mode,\nrouterd lowers it to a /32 IPv4StaticAddress and uses it as the capture\nprefix route preferred source so Linux ARP for local same-subnet clients\nstays inside the mobility prefix.",
                                   "type": "string"
                                 },
+                                "sourceAddressFrom": {
+                                  "additionalProperties": false,
+                                  "description": "SourceAddressFrom resolves the capture-interface sender address from a\nresource status field, for example DHCPv4Client/currentAddress. Unlike\nsourceAddress, routerd does not lower this to an IPv4StaticAddress because\nthe referenced resource owns the address lifecycle.",
+                                  "properties": {
+                                    "field": {
+                                      "description": "Field defaults to phase when omitted.",
+                                      "type": "string"
+                                    },
+                                    "optional": {
+                                      "type": "boolean"
+                                    },
+                                    "resource": {
+                                      "description": "Resource names the source resource as Kind/name and reads its status, or a router config field for supported resources.",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "resource"
+                                  ],
+                                  "type": "object"
+                                },
                                 "target": {
                                   "additionalProperties": {
                                     "type": "string"
@@ -7925,6 +7946,27 @@
                                     "sourceAddress": {
                                       "description": "SourceAddress is an optional local IPv4 address used by proxy-ARP capture\nmembers as the capture-interface sender address. In BGP delivery mode,\nrouterd lowers it to a /32 IPv4StaticAddress and uses it as the capture\nprefix route preferred source so Linux ARP for local same-subnet clients\nstays inside the mobility prefix.",
                                       "type": "string"
+                                    },
+                                    "sourceAddressFrom": {
+                                      "additionalProperties": false,
+                                      "description": "SourceAddressFrom resolves the capture-interface sender address from a\nresource status field, for example DHCPv4Client/currentAddress. Unlike\nsourceAddress, routerd does not lower this to an IPv4StaticAddress because\nthe referenced resource owns the address lifecycle.",
+                                      "properties": {
+                                        "field": {
+                                          "description": "Field defaults to phase when omitted.",
+                                          "type": "string"
+                                        },
+                                        "optional": {
+                                          "type": "boolean"
+                                        },
+                                        "resource": {
+                                          "description": "Resource names the source resource as Kind/name and reads its status, or a router config field for supported resources.",
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "resource"
+                                      ],
+                                      "type": "object"
                                     },
                                     "target": {
                                       "additionalProperties": {
