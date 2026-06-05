@@ -16,6 +16,3 @@ jobs:
   quality:
     name: Quality checks
     uses: ./.github/workflows/quality.yaml
-    with:
-      base-ref: ${{ github.base_ref || '' }}
-      head-ref: ${{ github.head_ref || '' }}
