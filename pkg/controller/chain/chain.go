@@ -670,6 +670,7 @@ type Options struct {
 	DryRunEventFederation   bool
 	DryRunEventSubscription bool
 	DryRunLeaseSync         bool
+	DryRunNAT44SessionSync  bool
 	DryRunProviderAction    bool
 	DryRunNAT               bool
 	DryRunIngress           bool
@@ -868,6 +869,7 @@ func (r *Runner) Start(ctx context.Context) error {
 		opts.DryRunEventFederation = true
 		opts.DryRunEventSubscription = true
 		opts.DryRunLeaseSync = true
+		opts.DryRunNAT44SessionSync = true
 		opts.DryRunProviderAction = true
 		opts.DryRunNAT = true
 		opts.DryRunIngress = true
@@ -909,6 +911,7 @@ func (r *Runner) Start(ctx context.Context) error {
 	dnsResolver := dnsresolvercontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunDNSResolver, RuntimeDir: defaults.RuntimeDir, StateDir: defaults.StateDir}
 	eventFederation := eventfederationcontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunEventFederation, RuntimeDir: defaults.RuntimeDir, StateDir: defaults.StateDir}
 	leaseSync := FileSyncController{Router: r.Router, Store: store, DryRun: r.Opts.DryRunLeaseSync}
+	nat44SessionSync := NAT44SessionSyncController{Router: r.Router, Store: store, DryRun: r.Opts.DryRunNAT44SessionSync}
 	bgpDaemon := bgpcontroller.DefaultDaemonSpec()
 	if strings.TrimSpace(r.Opts.BGPSocketPath) != "" {
 		bgpDaemon.SocketPath = strings.TrimSpace(r.Opts.BGPSocketPath)
@@ -1021,6 +1024,15 @@ func (r *Runner) Start(ctx context.Context) error {
 				return err
 			}
 			current := leaseSync
+			current.Router = effective
+			return current.Reconcile(ctx)
+		}},
+		framework.FuncController{ControllerName: "nat44-session-sync", Every: 30 * time.Second, Subs: statusSubscriptions("NAT44SessionSync", "NAT44Rule", "VirtualAddress", "RouterdCluster"), PeriodicFunc: func(ctx context.Context) error {
+			effective, err := effectiveForReconcile()
+			if err != nil {
+				return err
+			}
+			current := nat44SessionSync
 			current.Router = effective
 			return current.Reconcile(ctx)
 		}},

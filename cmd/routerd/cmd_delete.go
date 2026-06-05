@@ -260,6 +260,9 @@ func canonicalResourceKind(kind string) string {
 		"snat":                            "NAT44Rule",
 		"nat44":                           "NAT44Rule",
 		"nat44rule":                       "NAT44Rule",
+		"nat44sessionsync":                "NAT44SessionSync",
+		"nat44-session-sync":              "NAT44SessionSync",
+		"natsessionsync":                  "NAT44SessionSync",
 		"portforward":                     "PortForward",
 		"portforwards":                    "PortForward",
 		"portnat":                         "PortForward",
@@ -325,7 +328,7 @@ func apiVersionForKind(kind string) string {
 		return api.ObservabilityAPIVersion
 	case "Inventory":
 		return api.RouterAPIVersion
-	case "Interface", "Bridge", "VXLANSegment", "WireGuardInterface", "WireGuardPeer", "TailscaleNode", "IPsecConnection", "VRF", "VXLANTunnel", "PPPoESession", "IPv4StaticAddress", "VirtualAddress", "DHCPv4Client", "IPv4StaticRoute", "IPv6StaticRoute", "ClusterNetworkRoute", "DHCPv4Server", "DHCPv4ServerLeaseSync", "DHCPv4Reservation", "DHCPv6Address", "IPv6RAAddress", "DHCPv6PrefixDelegation", "IPv6DelegatedAddress", "DHCPv6Information", "IPv6RouterAdvertisement", "DHCPv6Server", "DHCPv6ServerLeaseSync", "DHCPv6PrefixDelegationLeaseSync", "DHCPv4Relay", "DNSZone", "DNSResolver", "DNSForwarder", "DNSUpstream", "SelfAddressPolicy", "DSLiteTunnel", "IPv4Route", "HealthCheck", "EgressRoutePolicy", "EventRule", "DerivedEvent", "NAT44Rule", "ManagementAccess", "IPAddressSet", "BFD", "TrafficFlowLog":
+	case "Interface", "Bridge", "VXLANSegment", "WireGuardInterface", "WireGuardPeer", "TailscaleNode", "IPsecConnection", "VRF", "VXLANTunnel", "PPPoESession", "IPv4StaticAddress", "VirtualAddress", "DHCPv4Client", "IPv4StaticRoute", "IPv6StaticRoute", "ClusterNetworkRoute", "DHCPv4Server", "DHCPv4ServerLeaseSync", "DHCPv4Reservation", "DHCPv6Address", "IPv6RAAddress", "DHCPv6PrefixDelegation", "IPv6DelegatedAddress", "DHCPv6Information", "IPv6RouterAdvertisement", "DHCPv6Server", "DHCPv6ServerLeaseSync", "DHCPv6PrefixDelegationLeaseSync", "DHCPv4Relay", "DNSZone", "DNSResolver", "DNSForwarder", "DNSUpstream", "SelfAddressPolicy", "DSLiteTunnel", "IPv4Route", "HealthCheck", "EgressRoutePolicy", "EventRule", "DerivedEvent", "NAT44Rule", "NAT44SessionSync", "ManagementAccess", "IPAddressSet", "BFD", "TrafficFlowLog":
 		return api.NetAPIVersion
 	default:
 		return ""
