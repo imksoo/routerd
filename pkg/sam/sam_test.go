@@ -196,6 +196,32 @@ func TestPlanCaptureProxyARP(t *testing.T) {
 	}
 }
 
+func TestPlanCaptureProxyARPResolvesInterfaceResourceName(t *testing.T) {
+	router := testRouter()
+	router.Spec.Resources = append(router.Spec.Resources, api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+		Metadata: api.ObjectMeta{Name: "svnet1"},
+		Spec:     api.InterfaceSpec{IfName: "eth1", Managed: true},
+	})
+	spec := router.Spec.Resources[4].Spec.(api.RemoteAddressClaimSpec)
+	spec.Capture.Interface = "svnet1"
+	router.Spec.Resources[4].Spec = spec
+
+	actions, err := PlanCapture(router, platform.OSLinux)
+	if err != nil {
+		t.Fatalf("PlanCapture: %v", err)
+	}
+	if !hasAction(actions, "sysctl", "net.ipv4.conf.eth1.proxy_arp", "", "eth1") {
+		t.Fatalf("actions missing resolved proxy_arp: %#v", actions)
+	}
+	if !hasAction(actions, "proxy-neighbor", "", "10.0.1.123/32", "eth1") {
+		t.Fatalf("actions missing resolved proxy neighbor: %#v", actions)
+	}
+	if hasAction(actions, "sysctl", "net.ipv4.conf.svnet1.proxy_arp", "", "svnet1") {
+		t.Fatalf("actions used logical interface name instead of ifname: %#v", actions)
+	}
+}
+
 func TestPlanCaptureHonorsVRRPMasterGate(t *testing.T) {
 	router := testRouter()
 	spec := router.Spec.Resources[4].Spec.(api.RemoteAddressClaimSpec)

@@ -191,6 +191,7 @@ func PlanCaptureWithOptions(router *api.Router, targetOS platform.OS, opts PlanO
 		return nil, nil
 	}
 	interfaces := map[string]bool{}
+	interfaceAliases := captureInterfaceAliases(router)
 	forwardingAdded := false
 	var actions []CaptureAction
 	addForwarding := func() {
@@ -222,7 +223,7 @@ func PlanCaptureWithOptions(router *api.Router, targetOS platform.OS, opts PlanO
 			}
 			continue
 		}
-		iface := strings.TrimSpace(spec.Capture.Interface)
+		iface := resolveCaptureInterface(strings.TrimSpace(spec.Capture.Interface), interfaceAliases)
 		if iface == "" {
 			return nil, fmt.Errorf("%s spec.capture.interface is required for proxy-arp", resource.ID())
 		}
@@ -233,6 +234,39 @@ func PlanCaptureWithOptions(router *api.Router, targetOS platform.OS, opts PlanO
 		actions = append(actions, CaptureAction{Kind: "proxy-neighbor", ClaimName: resource.Metadata.Name, Address: address, Interface: iface, GratuitousARP: wantsGratuitousARP(spec.Capture)})
 	}
 	return actions, nil
+}
+
+func captureInterfaceAliases(router *api.Router) map[string]string {
+	out := map[string]string{}
+	if router == nil {
+		return out
+	}
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "Interface" {
+			continue
+		}
+		spec, err := resource.InterfaceSpec()
+		if err != nil {
+			continue
+		}
+		name := strings.TrimSpace(resource.Metadata.Name)
+		ifname := strings.TrimSpace(spec.IfName)
+		if name != "" && ifname != "" {
+			out[name] = ifname
+		}
+	}
+	return out
+}
+
+func resolveCaptureInterface(value string, aliases map[string]string) string {
+	value = strings.TrimSpace(value)
+	if aliases == nil {
+		return value
+	}
+	if ifname := strings.TrimSpace(aliases[value]); ifname != "" {
+		return ifname
+	}
+	return value
 }
 
 func EvaluateCaptureGate(capture api.AddressCapture, store StatusReader) CaptureGateStatus {
