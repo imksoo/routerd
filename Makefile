@@ -51,7 +51,7 @@ PLAYWRIGHT_INSTALL_FLAGS ?= --with-deps
 
 WEBSITE_NODE_MODULES_STAMP := website/node_modules/.package-lock.json
 
-.PHONY: test build build-daemons build-provider-executors build-ndpi-agent build-ndpi-agent-libndpi build-daemons-freebsd check-linux-static check-ndpi-agent-libndpi check-install-deps alpine-vm-smoke cloudedge-acceptance-lint cloudedge-acceptance-offline-test webconsole-build webconsole-browser-install webconsole-screenshot generate-schema check-schema check-examples-line-limits check-render-golden update-render-golden check-bespoke-lifecycle website-deps website-build third-party-licenses check-build-deps dist dist-ndpi-agent-libndpi live-iso validate-example dry-run-example plan-config release clean
+.PHONY: test build build-daemons build-provider-executors build-ndpi-agent build-ndpi-agent-libndpi build-daemons-freebsd check-linux-static check-ndpi-agent-libndpi check-install-deps alpine-vm-smoke cloudedge-acceptance-lint cloudedge-acceptance-offline-test cloudedge-poc-evidence-offline-test webconsole-build webconsole-browser-install webconsole-screenshot generate-schema check-schema check-examples-line-limits check-render-golden update-render-golden check-bespoke-lifecycle website-deps website-build third-party-licenses check-build-deps dist dist-ndpi-agent-libndpi live-iso validate-example dry-run-example plan-config release clean
 
 test:
 	go test ./...
@@ -139,6 +139,9 @@ cloudedge-acceptance-lint:
 
 cloudedge-acceptance-offline-test:
 	./scripts/cloudedge-acceptance-offline-test.sh
+
+cloudedge-poc-evidence-offline-test:
+	./scripts/cloudedge-poc-evidence-offline-test.sh
 
 webconsole-build:
 	cd webconsole && npm ci && npm run build

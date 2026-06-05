@@ -1,0 +1,101 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/imksoo/routerd/scripts/cloudedge-poc-bundle-schema.json",
+  "title": "routerd CloudEdge SAM PoC evidence bundle manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "bundleVersion",
+    "date",
+    "generatedAt",
+    "gold",
+    "layout",
+    "testRecordColumns",
+    "resultEnum",
+    "summary",
+    "records",
+    "collectorSlots"
+  ],
+  "properties": {
+    "bundleVersion": { "type": "integer", "const": 1 },
+    "date": { "type": "string", "pattern": "^[0-9]{8}$" },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "gold": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["directory", "coverageMatrix", "testRecord", "openIssues"],
+      "properties": {
+        "directory": { "type": "string", "minLength": 1 },
+        "coverageMatrix": { "type": "string", "minLength": 1 },
+        "testRecord": { "type": "string", "minLength": 1 },
+        "openIssues": { "type": "string", "minLength": 1 }
+      }
+    },
+    "layout": {
+      "type": "array",
+      "minItems": 8,
+      "maxItems": 8,
+      "items": { "type": "string", "pattern": "^0[0-7]-[a-z0-9-]+$" }
+    },
+    "testRecordColumns": {
+      "type": "array",
+      "items": { "type": "string" },
+      "const": ["TEST_ID", "PHASE", "TARGET", "RESULT", "EVIDENCE", "NOTES"]
+    },
+    "resultEnum": {
+      "type": "array",
+      "items": { "type": "string" },
+      "const": ["PASS", "FAIL", "PARTIAL", "NOT-RUN"]
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pass", "fail", "partial", "notRun", "total"],
+      "properties": {
+        "pass": { "type": "integer", "minimum": 0 },
+        "fail": { "type": "integer", "minimum": 0 },
+        "partial": { "type": "integer", "minimum": 0 },
+        "notRun": { "type": "integer", "minimum": 0 },
+        "total": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "records": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/definitions/record" }
+    },
+    "collectorSlots": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/definitions/collectorSlot" }
+    }
+  },
+  "definitions": {
+    "record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["testId", "phase", "target", "result", "evidence", "notes", "observedAt"],
+      "properties": {
+        "testId": { "type": "string", "pattern": "^[0-9]{8}-[0-9]{4}-[A-Z0-9-]+-[0-9]{2}$" },
+        "phase": { "type": "string", "minLength": 1 },
+        "target": { "type": "string", "minLength": 1 },
+        "result": { "type": "string", "enum": ["PASS", "FAIL", "PARTIAL", "NOT-RUN"] },
+        "evidence": { "type": "string", "minLength": 1 },
+        "notes": { "type": "string" },
+        "observedAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "collectorSlot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["phase", "issue", "path", "status", "contract"],
+      "properties": {
+        "phase": { "type": "string", "minLength": 1 },
+        "issue": { "type": "integer", "minimum": 1 },
+        "path": { "type": "string", "minLength": 1 },
+        "status": { "type": "string", "enum": ["PARTIAL", "NOT-RUN"] },
+        "contract": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}
