@@ -4,6 +4,7 @@ package chain
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/imksoo/routerd/pkg/api"
@@ -189,6 +190,35 @@ func TestSAMControllerLeavesUnchangedProxyNeighbor(t *testing.T) {
 	assertSAMCalls(t, applier.calls, []string{"proxyarp:lan0=1", "ensure:10.0.1.123/32@lan0"})
 }
 
+func TestSAMControllerLeavesUnchangedProxyNeighborWithStoredInterfaceResourceName(t *testing.T) {
+	router := samControllerRouterWithClaim("10.0.1.123/32", "proxy-arp", "svnet1")
+	router.Spec.Resources = append(router.Spec.Resources, api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+		Metadata: api.ObjectMeta{Name: "svnet1"},
+		Spec:     api.InterfaceSpec{IfName: "eth1", Managed: true},
+	})
+	expanded, lowerings, err := sam.ExpandRemoteAddressClaimRoutes(*router)
+	if err != nil {
+		t.Fatalf("ExpandRemoteAddressClaimRoutes: %v", err)
+	}
+	router = &expanded
+	store := &samStore{objects: map[string]map[string]any{}, statuses: []routerstate.ObjectStatus{
+		samRemoteAddressClaimStatus("app", "10.0.1.123/32", "svnet1"),
+	}}
+	store.SaveObjectStatus(api.NetAPIVersion, "IPv4Route", lowerings[0].IPv4RouteName, map[string]any{"phase": "Installed"})
+	applier := &fakeSAMApplier{}
+	controller := SAMController{Router: router, Store: store, Lowerings: lowerings, OS: platform.OSLinux, Applier: applier}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	assertSAMCalls(t, applier.calls, []string{"proxyarp:eth1=1", "ensure:10.0.1.123/32@eth1"})
+	status := store.ObjectStatus(api.HybridAPIVersion, "RemoteAddressClaim", "app")
+	note, ok := status["captureProxyNeighbor"].(map[string]any)
+	if !ok || note["interface"] != "eth1" {
+		t.Fatalf("captureProxyNeighbor = %#v", status["captureProxyNeighbor"])
+	}
+}
+
 func TestSAMControllerGatedProxyNeighborSendsGARPOnlyOnInactiveToActive(t *testing.T) {
 	router := samControllerRouterWithClaim("10.0.1.123/32", "proxy-arp", "lan0")
 	spec := router.Spec.Resources[1].Spec.(api.RemoteAddressClaimSpec)
@@ -235,6 +265,32 @@ func TestSAMControllerGatedProxyNeighborSendsGARPOnlyOnInactiveToActive(t *testi
 	}
 }
 
+func TestSAMControllerGARPFailureDoesNotFailCapture(t *testing.T) {
+	router := samControllerRouterWithClaim("10.0.1.123/32", "proxy-arp", "lan0")
+	spec := router.Spec.Resources[1].Spec.(api.RemoteAddressClaimSpec)
+	spec.Capture.GratuitousARP = true
+	router.Spec.Resources[1].Spec = spec
+
+	expanded, lowerings, err := sam.ExpandRemoteAddressClaimRoutes(*router)
+	if err != nil {
+		t.Fatalf("ExpandRemoteAddressClaimRoutes: %v", err)
+	}
+	router = &expanded
+	store := &samStore{objects: map[string]map[string]any{}}
+	store.SaveObjectStatus(api.NetAPIVersion, "IPv4Route", lowerings[0].IPv4RouteName, map[string]any{"phase": "Installed"})
+	applier := &fakeSAMApplier{}
+	garp := &fakeSAMGARP{err: errors.New("arping failed")}
+	controller := SAMController{Router: router, Store: store, Lowerings: lowerings, OS: platform.OSLinux, Applier: applier, GARP: garp}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	assertSAMCalls(t, applier.calls, []string{"proxyarp:lan0=1", "ensure:10.0.1.123/32@lan0"})
+	status := store.ObjectStatus(api.HybridAPIVersion, "RemoteAddressClaim", "app")
+	if status["phase"] != "Ready" || status["lastGARPError"] != "gratuitous ARP 10.0.1.123/32 dev lan0: arping failed" {
+		t.Fatalf("status = %#v", status)
+	}
+}
+
 func TestSAMControllerGatedProxyNeighborCleansOnMasterToBackupWithoutGARP(t *testing.T) {
 	router := samControllerRouterWithClaim("10.0.1.123/32", "proxy-arp", "lan0")
 	spec := router.Spec.Resources[1].Spec.(api.RemoteAddressClaimSpec)
@@ -264,6 +320,31 @@ func TestSAMControllerGatedProxyNeighborCleansOnMasterToBackupWithoutGARP(t *tes
 	if _, ok := status["captureProxyNeighbor"]; ok {
 		t.Fatalf("standby status must not retain captureProxyNeighbor: %#v", status)
 	}
+}
+
+func TestSAMControllerGatedProxyARPDisableResolvesInterfaceResourceName(t *testing.T) {
+	router := samControllerRouterWithClaim("10.0.1.123/32", "proxy-arp", "svnet1")
+	router.Spec.Resources = append(router.Spec.Resources, api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+		Metadata: api.ObjectMeta{Name: "svnet1"},
+		Spec:     api.InterfaceSpec{IfName: "eth1", Managed: true},
+	})
+	spec := router.Spec.Resources[1].Spec.(api.RemoteAddressClaimSpec)
+	spec.Capture.ActiveWhen = api.CaptureActiveWhen{Type: "vrrp-master", VirtualAddressRef: "onprem-vip"}
+	router.Spec.Resources[1].Spec = spec
+
+	store := &samStore{
+		objects: map[string]map[string]any{
+			api.NetAPIVersion + "/VirtualAddress/onprem-vip": {"role": "backup"},
+		},
+		statuses: []routerstate.ObjectStatus{samRemoteAddressClaimStatus("app", "10.0.1.123/32", "eth1")},
+	}
+	applier := &fakeSAMApplier{}
+	controller := SAMController{Router: router, Store: store, OS: platform.OSLinux, Applier: applier}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	assertSAMCalls(t, applier.calls, []string{"delete:10.0.1.123/32@eth1", "proxyarp:eth1=0"})
 }
 
 func TestSAMControllerGatedProxyNeighborUnknownStatusIsBlockedFailClosed(t *testing.T) {
@@ -330,11 +411,12 @@ type fakeSAMApplier struct {
 
 type fakeSAMGARP struct {
 	calls []string
+	err   error
 }
 
 func (g *fakeSAMGARP) SendGratuitousARP(_ context.Context, address, ifname string) error {
 	g.calls = append(g.calls, address+"@"+ifname)
-	return nil
+	return g.err
 }
 
 func (a *fakeSAMApplier) SetProxyARP(_ context.Context, ifname string, enabled bool) error {

@@ -70,7 +70,7 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 		targetOS = platform.CurrentOS()
 	}
 	if targetOS != platform.OSLinux {
-		return c.reconcileStatuses(targetOS, nil, nil)
+		return c.reconcileStatuses(targetOS, nil, nil, nil)
 	}
 	statuses, err := c.listObjectStatuses()
 	if err != nil {
@@ -92,6 +92,7 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 	var failures []string
 	deassignResults := map[string]samOSAddressDeassignResult{}
 	garpSent := map[string]bool{}
+	garpErrors := map[string]string{}
 	priorNeighbors := samStoredProxyNeighbors(statuses)
 	for _, action := range actions {
 		switch action.Kind {
@@ -114,7 +115,7 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 					announcer = defaultSAMGratuitousARPAnnouncer()
 				}
 				if err := announcer.SendGratuitousARP(ctx, action.Address, action.Interface); err != nil {
-					failures = append(failures, fmt.Sprintf("%s gratuitous ARP %s dev %s: %v", action.ClaimName, action.Address, action.Interface, err))
+					garpErrors[action.ClaimName] = fmt.Sprintf("gratuitous ARP %s dev %s: %v", action.Address, action.Interface, err)
 				} else {
 					garpSent[action.ClaimName] = true
 				}
@@ -141,7 +142,7 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 			continue
 		}
 	}
-	if err := c.reconcileStatuses(targetOS, deassignResults, garpSent); err != nil {
+	if err := c.reconcileStatuses(targetOS, deassignResults, garpSent, garpErrors); err != nil {
 		return err
 	}
 	if len(failures) > 0 {
@@ -155,6 +156,7 @@ func (c SAMController) reconcileProxyARPInterfaces(ctx context.Context, actions 
 		return nil
 	}
 	all := map[string]bool{}
+	aliases := sam.CaptureInterfaceAliases(c.Router)
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.APIVersion != api.HybridAPIVersion || resource.Kind != "RemoteAddressClaim" {
 			continue
@@ -163,7 +165,7 @@ func (c SAMController) reconcileProxyARPInterfaces(ctx context.Context, actions 
 		if err != nil || strings.TrimSpace(spec.Capture.Type) != "proxy-arp" {
 			continue
 		}
-		if iface := strings.TrimSpace(spec.Capture.Interface); iface != "" {
+		if iface := sam.ResolveCaptureInterface(strings.TrimSpace(spec.Capture.Interface), aliases); iface != "" {
 			all[iface] = true
 		}
 	}
@@ -188,7 +190,7 @@ func (c SAMController) reconcileProxyARPInterfaces(ctx context.Context, actions 
 	return nil
 }
 
-func (c SAMController) reconcileStatuses(targetOS platform.OS, deassignResults map[string]samOSAddressDeassignResult, garpSent map[string]bool) error {
+func (c SAMController) reconcileStatuses(targetOS platform.OS, deassignResults map[string]samOSAddressDeassignResult, garpSent map[string]bool, garpErrors map[string]string) error {
 	claims := samSelectResources(c.Router.Spec.Resources, "RemoteAddressClaim")
 	for _, claim := range claims {
 		status := sam.StatusForRemoteAddressClaim(claim, c.Lowerings, c.Store, targetOS)
@@ -196,12 +198,16 @@ func (c SAMController) reconcileStatuses(targetOS platform.OS, deassignResults m
 		if targetOS == platform.OSLinux {
 			if spec, err := claim.RemoteAddressClaimSpec(); err == nil && strings.TrimSpace(spec.Capture.Type) == "proxy-arp" {
 				if status["captureStatus"] == sam.CaptureStatusCaptured {
+					aliases := sam.CaptureInterfaceAliases(c.Router)
 					status["captureProxyNeighbor"] = map[string]any{
 						"address":   strings.TrimSpace(spec.Address),
-						"interface": strings.TrimSpace(spec.Capture.Interface),
+						"interface": sam.ResolveCaptureInterface(strings.TrimSpace(spec.Capture.Interface), aliases),
 					}
 					if garpSent[claim.Metadata.Name] {
 						status["lastGARPSent"] = true
+					}
+					if garpErrors[claim.Metadata.Name] != "" {
+						status["lastGARPError"] = garpErrors[claim.Metadata.Name]
 					}
 				}
 			} else if err == nil && strings.TrimSpace(spec.Capture.Type) == "provider-secondary-ip" && !spec.Capture.ConfigureOSAddress {
@@ -260,6 +266,7 @@ func (c SAMController) cleanupRemovedCaptures(ctx context.Context, statuses []ro
 		}
 		if !c.DryRun {
 			if capture, ok := samStoredProxyNeighborFromStatus(status); ok {
+				capture.ifname = sam.ResolveCaptureInterface(capture.ifname, sam.CaptureInterfaceAliases(c.Router))
 				if err := applier.DeleteProxyNeighbor(ctx, capture.address, capture.ifname); err != nil {
 					return fmt.Errorf("delete removed SAM proxy neighbor %s dev %s: %w", capture.address, capture.ifname, err)
 				}
@@ -304,10 +311,12 @@ func (c SAMController) cleanupChangedCaptures(ctx context.Context, statuses []ro
 	if applier == nil {
 		applier = defaultSAMProxyNeighborApplier()
 	}
+	aliases := sam.CaptureInterfaceAliases(c.Router)
 	for name, old := range prior {
 		if !desiredClaims[name] {
 			continue
 		}
+		old.ifname = sam.ResolveCaptureInterface(old.ifname, aliases)
 		next, ok := desiredNeighbors[name]
 		if ok && next == old {
 			continue
