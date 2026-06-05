@@ -464,21 +464,22 @@ type WireGuardPeerSpec struct {
 }
 
 type TailscaleNodeSpec struct {
-	State             string   `yaml:"state,omitempty" json:"state,omitempty" jsonschema:"enum=,enum=present,enum=absent"`
-	Hostname          string   `yaml:"hostname,omitempty" json:"hostname,omitempty"`
-	LoginServer       string   `yaml:"loginServer,omitempty" json:"loginServer,omitempty"`
-	AuthKey           string   `yaml:"authKey,omitempty" json:"authKey,omitempty"`
-	AuthKeyEnv        string   `yaml:"authKeyEnv,omitempty" json:"authKeyEnv,omitempty"`
-	AuthKeyFile       string   `yaml:"authKeyFile,omitempty" json:"authKeyFile,omitempty"`
-	AdvertiseExitNode bool     `yaml:"advertiseExitNode,omitempty" json:"advertiseExitNode,omitempty"`
-	AdvertiseRoutes   []string `yaml:"advertiseRoutes,omitempty" json:"advertiseRoutes,omitempty"`
-	AdvertiseTags     []string `yaml:"advertiseTags,omitempty" json:"advertiseTags,omitempty"`
-	AcceptRoutes      *bool    `yaml:"acceptRoutes,omitempty" json:"acceptRoutes,omitempty"`
-	AcceptDNS         *bool    `yaml:"acceptDNS,omitempty" json:"acceptDNS,omitempty"`
-	SSH               bool     `yaml:"ssh,omitempty" json:"ssh,omitempty"`
-	Operator          string   `yaml:"-" json:"-"`
-	ShieldsUp         *bool    `yaml:"shieldsUp,omitempty" json:"shieldsUp,omitempty"`
-	BinaryPath        string   `yaml:"-" json:"-"`
+	State             string           `yaml:"state,omitempty" json:"state,omitempty" jsonschema:"enum=,enum=present,enum=absent"`
+	Hostname          string           `yaml:"hostname,omitempty" json:"hostname,omitempty"`
+	LoginServer       string           `yaml:"loginServer,omitempty" json:"loginServer,omitempty"`
+	AuthKey           string           `yaml:"authKey,omitempty" json:"authKey,omitempty"`
+	AuthKeyEnv        string           `yaml:"authKeyEnv,omitempty" json:"authKeyEnv,omitempty"`
+	AuthKeyFile       string           `yaml:"authKeyFile,omitempty" json:"authKeyFile,omitempty"`
+	AdvertiseExitNode bool             `yaml:"advertiseExitNode,omitempty" json:"advertiseExitNode,omitempty"`
+	AdvertiseRoutes   []string         `yaml:"advertiseRoutes,omitempty" json:"advertiseRoutes,omitempty"`
+	AdvertiseTags     []string         `yaml:"advertiseTags,omitempty" json:"advertiseTags,omitempty"`
+	AcceptRoutes      *bool            `yaml:"acceptRoutes,omitempty" json:"acceptRoutes,omitempty"`
+	AcceptDNS         *bool            `yaml:"acceptDNS,omitempty" json:"acceptDNS,omitempty"`
+	SSH               bool             `yaml:"ssh,omitempty" json:"ssh,omitempty"`
+	Operator          string           `yaml:"-" json:"-"`
+	ShieldsUp         *bool            `yaml:"shieldsUp,omitempty" json:"shieldsUp,omitempty"`
+	BinaryPath        string           `yaml:"-" json:"-"`
+	When              ResourceWhenSpec `yaml:"when,omitempty" json:"when,omitempty"`
 }
 
 type IPsecConnectionSpec struct {
@@ -679,14 +680,15 @@ type SecretValueSourceSpec struct {
 }
 
 type DHCPv4ClientSpec struct {
-	Interface        string `yaml:"interface" json:"interface"`
-	Hostname         string `yaml:"hostname,omitempty" json:"hostname,omitempty"`
-	RequestedAddress string `yaml:"requestedAddress,omitempty" json:"requestedAddress,omitempty"`
-	ClassID          string `yaml:"classID,omitempty" json:"classID,omitempty"`
-	ClientID         string `yaml:"clientID,omitempty" json:"clientID,omitempty"`
-	UseRoutes        *bool  `yaml:"useRoutes,omitempty" json:"useRoutes,omitempty"`
-	UseDNS           *bool  `yaml:"useDNS,omitempty" json:"useDNS,omitempty"`
-	RouteMetric      int    `yaml:"routeMetric,omitempty" json:"routeMetric,omitempty" jsonschema:"minimum=0"`
+	Interface        string           `yaml:"interface" json:"interface"`
+	Hostname         string           `yaml:"hostname,omitempty" json:"hostname,omitempty"`
+	RequestedAddress string           `yaml:"requestedAddress,omitempty" json:"requestedAddress,omitempty"`
+	ClassID          string           `yaml:"classID,omitempty" json:"classID,omitempty"`
+	ClientID         string           `yaml:"clientID,omitempty" json:"clientID,omitempty"`
+	UseRoutes        *bool            `yaml:"useRoutes,omitempty" json:"useRoutes,omitempty"`
+	UseDNS           *bool            `yaml:"useDNS,omitempty" json:"useDNS,omitempty"`
+	RouteMetric      int              `yaml:"routeMetric,omitempty" json:"routeMetric,omitempty" jsonschema:"minimum=0"`
+	When             ResourceWhenSpec `yaml:"when,omitempty" json:"when,omitempty"`
 }
 
 type IPv4StaticRouteSpec struct {
@@ -799,12 +801,13 @@ type DHCPv6PrefixDelegationSpec struct {
 	Interface string `yaml:"interface" json:"interface"`
 	Client    string `yaml:"client,omitempty" json:"client,omitempty"`
 	// Profile applies provider-specific defaults; NTT profiles default prefixLength to 60 and DUID type to link-layer.
-	Profile      string `yaml:"profile,omitempty" json:"profile,omitempty" jsonschema:"enum=default,enum=ntt-ngn-direct-hikari-denwa,enum=ntt-hgw-lan-pd"`
-	PrefixLength int    `yaml:"prefixLength,omitempty" json:"prefixLength,omitempty" jsonschema:"minimum=1,maximum=128"`
-	IAID         string `yaml:"-" json:"-"`
-	ClientDUID   string `yaml:"clientDUID,omitempty" json:"clientDUID,omitempty"`
-	DUIDType     string `yaml:"-" json:"-"`
-	Required     bool   `yaml:"required,omitempty" json:"required,omitempty"`
+	Profile      string           `yaml:"profile,omitempty" json:"profile,omitempty" jsonschema:"enum=default,enum=ntt-ngn-direct-hikari-denwa,enum=ntt-hgw-lan-pd"`
+	PrefixLength int              `yaml:"prefixLength,omitempty" json:"prefixLength,omitempty" jsonschema:"minimum=1,maximum=128"`
+	IAID         string           `yaml:"-" json:"-"`
+	ClientDUID   string           `yaml:"clientDUID,omitempty" json:"clientDUID,omitempty"`
+	DUIDType     string           `yaml:"-" json:"-"`
+	Required     bool             `yaml:"required,omitempty" json:"required,omitempty"`
+	When         ResourceWhenSpec `yaml:"when,omitempty" json:"when,omitempty"`
 }
 
 type StatusValueSourceSpec struct {
@@ -933,6 +936,7 @@ type DNSResolverSpec struct {
 	Cache    DNSResolverCacheSpec    `yaml:"cache,omitempty" json:"cache,omitempty"`
 	Metrics  DNSResolverMetricsSpec  `yaml:"metrics,omitempty" json:"metrics,omitempty"`
 	QueryLog DNSResolverQueryLogSpec `yaml:"queryLog,omitempty" json:"queryLog,omitempty"`
+	When     ResourceWhenSpec        `yaml:"when,omitempty" json:"when,omitempty"`
 }
 
 type DNSResolverListenSpec struct {
@@ -1068,6 +1072,7 @@ type IPv6RouterAdvertisementSpec struct {
 	ValidLifetime     string                   `yaml:"validLifetime,omitempty" json:"validLifetime,omitempty"`
 	ConfigPath        string                   `yaml:"configPath,omitempty" json:"configPath,omitempty"`
 	PIDFile           string                   `yaml:"pidFile,omitempty" json:"pidFile,omitempty"`
+	When              ResourceWhenSpec         `yaml:"when,omitempty" json:"when,omitempty"`
 	DependsOn         []ResourceDependencySpec `yaml:"dependsOn,omitempty" json:"dependsOn,omitempty"`
 	ReadyWhen         []ReadyWhenSpec          `yaml:"ready_when,omitempty" json:"-"`
 }
@@ -1319,7 +1324,8 @@ type EventGroupSpec struct {
 	Listen EventGroupListen `yaml:"listen,omitempty" json:"listen,omitempty"`
 	// ReplayWindow is a Go duration bounding the accepted message timestamp skew
 	// for replay protection; empty is treated as "5m" downstream.
-	ReplayWindow string `yaml:"replayWindow,omitempty" json:"replayWindow,omitempty"`
+	ReplayWindow string           `yaml:"replayWindow,omitempty" json:"replayWindow,omitempty"`
+	When         ResourceWhenSpec `yaml:"when,omitempty" json:"when,omitempty"`
 }
 
 // EventGroupListen is the receiver bind for inbound peer pushes. Empty Address

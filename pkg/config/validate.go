@@ -855,6 +855,12 @@ func resourceWhens(res api.Resource) []resourceWhenRef {
 	case "BFD":
 		spec, _ := res.BFDSpec()
 		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
+	case "TailscaleNode":
+		spec, _ := res.TailscaleNodeSpec()
+		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
+	case "DHCPv4Client":
+		spec, _ := res.DHCPv4ClientSpec()
+		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
 	case "ClusterNetworkRoute":
 		spec, _ := res.ClusterNetworkRouteSpec()
 		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
@@ -876,14 +882,26 @@ func resourceWhens(res api.Resource) []resourceWhenRef {
 	case "DHCPv6PrefixDelegationLeaseSync":
 		spec, _ := res.DHCPv6PrefixDelegationLeaseSyncSpec()
 		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
+	case "DHCPv6PrefixDelegation":
+		spec, _ := res.DHCPv6PrefixDelegationSpec()
+		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
+	case "IPv6RouterAdvertisement":
+		spec, _ := res.IPv6RouterAdvertisementSpec()
+		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
 	case "DSLiteTunnel":
 		spec, _ := res.DSLiteTunnelSpec()
 		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
 	case "DNSForwarder":
 		spec, _ := res.DNSForwarderSpec()
 		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
+	case "DNSResolver":
+		spec, _ := res.DNSResolverSpec()
+		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
 	case "DNSUpstream":
 		spec, _ := res.DNSUpstreamSpec()
+		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
+	case "EventGroup":
+		spec, _ := res.EventGroupSpec()
 		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
 	case "HealthCheck":
 		spec, _ := res.HealthCheckSpec()
