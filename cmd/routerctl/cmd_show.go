@@ -53,9 +53,12 @@ func showCommand(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	store, err := routerstate.Load(opts.StatePath)
+	store, err := routerstate.LoadReadOnly(opts.StatePath)
 	if err != nil {
 		return err
+	}
+	if closer, ok := store.(interface{ Close() error }); ok {
+		defer func() { _ = closer.Close() }()
 	}
 	if kind := dedicatedShowKind(opts.Target); kind != "" {
 		return writeDedicatedShow(stdout, router, store, opts, kind)

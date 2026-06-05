@@ -972,32 +972,15 @@ func loadApplyStateStore(path string, dryRun bool) (routerstate.Store, error) {
 }
 
 func loadTransientStateStore(path string) (routerstate.Store, error) {
-	path = strings.TrimSpace(path)
-	if path == "" {
-		return routerstate.New(), nil
-	}
-	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
-		return routerstate.New(), nil
-	} else if err != nil {
+	store, err := routerstate.LoadReadOnly(path)
+	if err != nil {
 		return nil, err
 	}
-	var variables map[string]routerstate.Value
-	if filepath.Ext(path) == ".json" {
-		store, err := routerstate.LoadJSON(path)
-		if err != nil {
-			return nil, err
-		}
-		variables = store.Variables()
-	} else {
-		store, err := routerstate.OpenSQLiteReadOnlyImmutable(path)
-		if err != nil {
-			return nil, err
-		}
-		defer func() { _ = store.Close() }()
-		variables = store.Variables()
+	if closer, ok := store.(interface{ Close() error }); ok {
+		defer func() { _ = closer.Close() }()
 	}
 	snapshot := routerstate.NewJSON()
-	snapshot.Values = variables
+	snapshot.Values = store.Variables()
 	return snapshot, nil
 }
 
