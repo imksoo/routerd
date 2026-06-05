@@ -49,6 +49,7 @@ import (
 	"github.com/imksoo/routerd/pkg/ha"
 	"github.com/imksoo/routerd/pkg/healthcheck"
 	"github.com/imksoo/routerd/pkg/logstore"
+	"github.com/imksoo/routerd/pkg/mobilityconfig"
 	"github.com/imksoo/routerd/pkg/observabilitypipeline"
 	"github.com/imksoo/routerd/pkg/platform"
 	provideraction "github.com/imksoo/routerd/pkg/provideraction"
@@ -867,6 +868,18 @@ func (r *Runner) Start(ctx context.Context) error {
 			}
 		}()
 	}
+	for _, spec := range r.mobilityARPObserverDaemonSpecs() {
+		source := daemonsource.DaemonSource{
+			Daemon:    daemonapi.DaemonRef{Name: "routerd-arp-observer-" + spec.ResourceName, Kind: "routerd-arp-observer", Instance: spec.ResourceName},
+			Socket:    spec.Socket,
+			Publisher: r.Bus,
+		}
+		go func(spec mobilityARPObserverDaemonSpec, source daemonsource.DaemonSource) {
+			if err := source.Run(ctx); err != nil && ctx.Err() == nil {
+				logger.Warn("arp observer daemon source stopped", "resource", spec.ResourceName, "error", err)
+			}
+		}(spec, source)
+	}
 
 	store := eventedStore{Store: r.Store, Bus: r.Bus}
 	haDecision, err := acquireClusterLease(ctx, r.Router, store)
@@ -1040,7 +1053,7 @@ func (r *Runner) Start(ctx context.Context) error {
 			observabilityPipeline.Router = effective
 			return observabilityPipeline.Reconcile(ctx)
 		}},
-		framework.FuncController{ControllerName: "daemon-status", Every: 5 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.dhcpv6.client.**", "routerd.dhcpv4.client.**", "routerd.healthcheck.**", "routerd.pppoe.client.**"}}}, PeriodicFunc: daemonStatusSync.Reconcile},
+		framework.FuncController{ControllerName: "daemon-status", Every: 5 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.dhcpv6.client.**", "routerd.dhcpv4.client.**", "routerd.healthcheck.**", "routerd.pppoe.client.**", "routerd.mobility.arp.**", "routerd.mobility.pve-svnet.**"}}}, PeriodicFunc: daemonStatusSync.Reconcile},
 		framework.FuncController{ControllerName: "dhcp-lease-sync", Every: 30 * time.Second, Subs: statusSubscriptions("DHCPv4ServerLeaseSync", "DHCPv6ServerLeaseSync", "DHCPv6PrefixDelegationLeaseSync", "VirtualAddress", "RouterdCluster"), PeriodicFunc: func(ctx context.Context) error {
 			effective, err := effectiveForReconcile()
 			if err != nil {
@@ -1579,6 +1592,194 @@ func (r *Runner) superviseClientDaemons(ctx context.Context, logger *slog.Logger
 			r.startSupervisedDaemon(ctx, logger, resource.Metadata.Name, "routerd-pppoe-client", args)
 		}
 	}
+	for _, spec := range r.mobilityARPObserverDaemonSpecs() {
+		args := []string{
+			"daemon",
+			"--resource", spec.ResourceName,
+			"--interface", spec.IfName,
+			"--event-interface", spec.EventInterface,
+			"--socket", spec.Socket,
+			"--event-file", spec.EventFile,
+			"--pool", spec.PoolName,
+			"--prefix", spec.Prefix,
+			"--source-type", spec.SourceType,
+		}
+		if spec.Network != "" {
+			args = append(args, "--network", spec.Network)
+		}
+		if spec.Bridge != "" {
+			args = append(args, "--bridge", spec.Bridge)
+		}
+		if spec.SourceAddress != "" {
+			args = append(args, "--source-address", spec.SourceAddress)
+		}
+		if spec.OnDemand {
+			args = append(args, "--on-demand")
+		}
+		if spec.Observe {
+			args = append(args, "--observe")
+		}
+		if spec.ProbeTimeout != "" {
+			args = append(args, "--probe-timeout", spec.ProbeTimeout)
+		}
+		if spec.ProbeRetries != 0 {
+			args = append(args, "--probe-retries", fmt.Sprintf("%d", spec.ProbeRetries))
+		}
+		if spec.ScanInterval != "" {
+			args = append(args, "--scan-interval", spec.ScanInterval)
+		}
+		r.startSupervisedDaemon(ctx, logger, spec.ResourceName, "routerd-arp-observer", args)
+	}
+}
+
+type mobilityARPObserverDaemonSpec struct {
+	ResourceName   string
+	PoolName       string
+	Prefix         string
+	SourceType     string
+	IfName         string
+	EventInterface string
+	Network        string
+	Bridge         string
+	Socket         string
+	EventFile      string
+	SourceAddress  string
+	Observe        bool
+	OnDemand       bool
+	ProbeTimeout   string
+	ProbeRetries   int
+	ScanInterval   string
+}
+
+func (r *Runner) mobilityARPObserverDaemonSpecs() []mobilityARPObserverDaemonSpec {
+	if r == nil || r.Router == nil {
+		return nil
+	}
+	defaults, _ := platform.Current()
+	seen := map[string]bool{}
+	var out []mobilityARPObserverDaemonSpec
+	for _, res := range r.Router.Spec.Resources {
+		if res.APIVersion != api.MobilityAPIVersion || res.Kind != "MobilityPool" {
+			continue
+		}
+		spec, err := res.MobilityPoolSpec()
+		if err != nil || mobilityDeliveryMode(spec) != "bgp" {
+			continue
+		}
+		selfNode, err := chainRouterSelfNode(r.Router, spec.GroupRef)
+		if err != nil {
+			continue
+		}
+		spec, _, err = mobilityconfig.NormalizeMobilityPool(spec, selfNode)
+		if err != nil {
+			continue
+		}
+		self, ok := mobilityPoolMemberByNodeRef(spec.Members, selfNode)
+		if !ok || strings.TrimSpace(self.OwnershipDiscovery.Mode) != "onprem-l2" {
+			continue
+		}
+		for _, source := range self.OwnershipDiscovery.Sources {
+			sourceType := strings.TrimSpace(source.Type)
+			if sourceType != mobilitycontroller.OnPremSourceARPObserver && sourceType != mobilitycontroller.OnPremSourceOnDemandARP && sourceType != mobilitycontroller.OnPremSourcePVESVNet {
+				continue
+			}
+			eventInterface := firstNonEmpty(source.Interface, self.Capture.Interface, source.Bridge, source.Network)
+			if strings.TrimSpace(eventInterface) == "" {
+				continue
+			}
+			ifname := interfaceIfName(r.Router, eventInterface)
+			if ifname == "" {
+				ifname = eventInterface
+			}
+			resourceName := strings.TrimSpace(source.Resource)
+			if resourceName == "" {
+				resourceName = safeDaemonResourceName("mobility-" + res.Metadata.Name + "-" + selfNode + "-" + sourceType + "-" + eventInterface)
+			}
+			if seen[resourceName] {
+				continue
+			}
+			seen[resourceName] = true
+			socket := filepath.Join(defaults.RuntimeDir, "arp-observer", resourceName+".sock")
+			if override := strings.TrimSpace(r.Opts.DaemonSockets[resourceName]); override != "" {
+				socket = override
+			}
+			out = append(out, mobilityARPObserverDaemonSpec{
+				ResourceName:   resourceName,
+				PoolName:       strings.TrimSpace(res.Metadata.Name),
+				Prefix:         strings.TrimSpace(spec.Prefix),
+				SourceType:     sourceType,
+				IfName:         ifname,
+				EventInterface: eventInterface,
+				Network:        strings.TrimSpace(source.Network),
+				Bridge:         strings.TrimSpace(source.Bridge),
+				Socket:         socket,
+				EventFile:      filepath.Join(defaults.StateDir, "arp-observer", resourceName, "events.jsonl"),
+				SourceAddress:  statusAddressValue(resourcequery.Value(r.Store, source.SourceAddressFrom)),
+				Observe:        sourceType == mobilitycontroller.OnPremSourceARPObserver || sourceType == mobilitycontroller.OnPremSourcePVESVNet,
+				OnDemand:       sourceType == mobilitycontroller.OnPremSourceOnDemandARP,
+				ProbeTimeout:   strings.TrimSpace(source.ProbeTimeout),
+				ProbeRetries:   source.ProbeRetries,
+				ScanInterval:   strings.TrimSpace(source.ScanInterval),
+			})
+		}
+	}
+	return out
+}
+
+func chainRouterSelfNode(router *api.Router, groupRef string) (string, error) {
+	groupRef = strings.TrimSpace(groupRef)
+	if groupRef == "" {
+		return "", fmt.Errorf("groupRef is required")
+	}
+	if router == nil {
+		return "", fmt.Errorf("EventGroup/%s not found", groupRef)
+	}
+	for _, res := range router.Spec.Resources {
+		if res.APIVersion != api.FederationAPIVersion || res.Kind != "EventGroup" || res.Metadata.Name != groupRef {
+			continue
+		}
+		spec, err := res.EventGroupSpec()
+		if err != nil {
+			return "", err
+		}
+		if strings.TrimSpace(spec.NodeName) == "" {
+			return "", fmt.Errorf("EventGroup/%s spec.nodeName is required", groupRef)
+		}
+		return strings.TrimSpace(spec.NodeName), nil
+	}
+	return "", fmt.Errorf("EventGroup/%s not found", groupRef)
+}
+
+func mobilityPoolMemberByNodeRef(members []api.MobilityPoolMember, nodeRef string) (api.MobilityPoolMember, bool) {
+	for _, member := range members {
+		if strings.TrimSpace(member.NodeRef) == strings.TrimSpace(nodeRef) {
+			return member, true
+		}
+	}
+	return api.MobilityPoolMember{}, false
+}
+
+func safeDaemonResourceName(value string) string {
+	value = strings.TrimSpace(value)
+	var b strings.Builder
+	lastDash := false
+	for _, r := range value {
+		ok := r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9'
+		if ok {
+			b.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	if out == "" {
+		return "arp-observer"
+	}
+	return out
 }
 
 func (r *Runner) startSupervisedDaemon(ctx context.Context, logger *slog.Logger, resourceName, binary string, args []string) {
@@ -1637,6 +1838,8 @@ func defaultClientSocket(binary, resource string) string {
 		return filepath.Join(defaults.RuntimeDir, "dhcpv4-client", resource+".sock")
 	case "routerd-pppoe-client":
 		return filepath.Join(defaults.RuntimeDir, "pppoe-client", resource+".sock")
+	case "routerd-arp-observer":
+		return filepath.Join(defaults.RuntimeDir, "arp-observer", resource+".sock")
 	default:
 		return ""
 	}
@@ -1926,6 +2129,10 @@ func (c DaemonStatusController) daemonSockets() []string {
 			}
 			add(socket)
 		}
+	}
+	runner := Runner{Router: c.Router, Store: c.Store, Opts: Options{DaemonSockets: c.DaemonSockets}}
+	for _, spec := range runner.mobilityARPObserverDaemonSpecs() {
+		add(spec.Socket)
 	}
 	return out
 }
