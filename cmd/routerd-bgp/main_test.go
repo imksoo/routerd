@@ -72,6 +72,34 @@ func TestAppliedPoliciesRestorePeerImportPolicyWithoutGlobalPolicy(t *testing.T)
 	}
 }
 
+func TestAppliedPoliciesRestoreMultipleImportPoliciesWithUniqueStatements(t *testing.T) {
+	req, _ := appliedPolicies(bgpdaemon.AppliedConfig{
+		Peers: map[string]bgpdaemon.AppliedPeer{
+			"192.168.1.38": {
+				Address:          "192.168.1.38",
+				ImportPolicyName: "routerd-lan-import-a",
+				ImportPolicy: bgpdaemon.AppliedImportPolicy{
+					AllowedPrefixes: []string{"10.250.0.0/24"},
+				},
+			},
+			"192.168.1.53": {
+				Address:          "192.168.1.53",
+				ImportPolicyName: "routerd-lan-import-b",
+				ImportPolicy: bgpdaemon.AppliedImportPolicy{
+					AllowedPrefixes: []string{"10.250.0.0/24"},
+				},
+			},
+		},
+	})
+	assertAppliedPolicyStatementNamesUnique(t, req)
+	if !appliedPolicyRequestHasStatement(req, "routerd-lan-import-a", "routerd-lan-import-a-allow-import") {
+		t.Fatalf("restore policies = %#v, want statement scoped to routerd-lan-import-a", req)
+	}
+	if !appliedPolicyRequestHasStatement(req, "routerd-lan-import-b", "routerd-lan-import-b-allow-import") {
+		t.Fatalf("restore policies = %#v, want statement scoped to routerd-lan-import-b", req)
+	}
+}
+
 func TestAppliedPeerEbgpMultihop(t *testing.T) {
 	direct := appliedPeer(bgpdaemon.AppliedPeer{Address: "192.0.2.2", ASN: 64513}, bgpdaemon.AppliedGlobal{ASN: 64512})
 	if direct.GetEbgpMultihop() != nil {
@@ -119,6 +147,34 @@ func appliedPrefixSetAllows(prefixes []*gobgpapi.Prefix, candidate string) bool 
 		}
 	}
 	return false
+}
+
+func appliedPolicyRequestHasStatement(req *gobgpapi.SetPoliciesRequest, policyName, statementName string) bool {
+	for _, policy := range req.GetPolicies() {
+		if policy.GetName() != policyName {
+			continue
+		}
+		for _, statement := range policy.GetStatements() {
+			if statement.GetName() == statementName {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func assertAppliedPolicyStatementNamesUnique(t *testing.T, req *gobgpapi.SetPoliciesRequest) {
+	t.Helper()
+	seen := map[string]string{}
+	for _, policy := range req.GetPolicies() {
+		for _, statement := range policy.GetStatements() {
+			name := statement.GetName()
+			if previous := seen[name]; previous != "" {
+				t.Fatalf("statement name %q reused by policies %q and %q", name, previous, policy.GetName())
+			}
+			seen[name] = policy.GetName()
+		}
+	}
 }
 
 func TestAppliedPeerRestoresInternalRouteReflectorClient(t *testing.T) {

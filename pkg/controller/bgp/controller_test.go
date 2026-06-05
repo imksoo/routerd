@@ -218,6 +218,34 @@ func policyRequestHasPolicy(req *gobgpapi.SetPoliciesRequest, name string) bool 
 	return false
 }
 
+func policyRequestHasStatement(req *gobgpapi.SetPoliciesRequest, policyName, statementName string) bool {
+	for _, policy := range req.GetPolicies() {
+		if policy.GetName() != policyName {
+			continue
+		}
+		for _, statement := range policy.GetStatements() {
+			if statement.GetName() == statementName {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func assertUniqueStatementNames(t *testing.T, req *gobgpapi.SetPoliciesRequest) {
+	t.Helper()
+	seen := map[string]string{}
+	for _, policy := range req.GetPolicies() {
+		for _, statement := range policy.GetStatements() {
+			name := statement.GetName()
+			if previous := seen[name]; previous != "" {
+				t.Fatalf("statement name %q reused by policies %q and %q", name, previous, policy.GetName())
+			}
+			seen[name] = policy.GetName()
+		}
+	}
+}
+
 func (s *fakeServer) AddPath(_ context.Context, req *gobgpapi.AddPathRequest) (*gobgpapi.AddPathResponse, error) {
 	s.paths++
 	uuid := []byte{byte(s.paths)}
@@ -483,6 +511,37 @@ func TestReconcileAppliesPeerExportPolicy(t *testing.T) {
 	}
 	if !policyRequestHasPolicy(server.policyRequest, policyName) {
 		t.Fatalf("SetPolicies request = %#v, want export policy %q", server.policyRequest, policyName)
+	}
+}
+
+func TestReconcileAppliesPeerExportPoliciesWithUniqueStatements(t *testing.T) {
+	router := bgpRouter()
+	peerResource := router.Spec.Resources[1]
+	peerSpec := peerResource.Spec.(api.BGPPeerSpec)
+	peerSpec.ExportPolicy = api.BGPExportPolicySpec{AllowedPrefixes: []string{"10.250.0.0/24"}}
+	peerResource.Spec = peerSpec
+	router.Spec.Resources[1] = peerResource
+
+	extraResource := peerResource
+	extraResource.Metadata.Name = "k8s-extra"
+	extraSpec := extraResource.Spec.(api.BGPPeerSpec)
+	extraSpec.Peers = []string{"10.0.0.22"}
+	extraSpec.ExportPolicy = api.BGPExportPolicySpec{AllowedPrefixes: []string{"10.250.0.0/24"}}
+	extraResource.Spec = extraSpec
+	router.Spec.Resources = append(router.Spec.Resources, extraResource)
+
+	server := &fakeServer{}
+	controller := Controller{Router: router, Store: mapStore{}, Server: server, FIB: &fakeFIB{}}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	assertUniqueStatementNames(t, server.policyRequest)
+	if !policyRequestHasStatement(server.policyRequest, "routerd-lan-export-10-0-0-21", "routerd-lan-export-10-0-0-21-allow-export") {
+		t.Fatalf("SetPolicies request = %#v, want peer-specific export statement for 10.0.0.21", server.policyRequest)
+	}
+	if !policyRequestHasStatement(server.policyRequest, "routerd-lan-export-10-0-0-22", "routerd-lan-export-10-0-0-22-allow-export") {
+		t.Fatalf("SetPolicies request = %#v, want peer-specific export statement for 10.0.0.22", server.policyRequest)
 	}
 }
 
