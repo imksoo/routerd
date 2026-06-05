@@ -1070,7 +1070,7 @@ func (r *Runner) Start(ctx context.Context) error {
 		}},
 		framework.FuncController{ControllerName: "link", Every: 30 * time.Second, PeriodicFunc: link.Reconcile},
 		framework.FuncController{ControllerName: "tunnel", Every: 30 * time.Second, Subs: statusSubscriptions("TunnelInterface"), PeriodicFunc: tunnel.Reconcile},
-		framework.FuncController{ControllerName: "wireguard", Every: 30 * time.Second, Subs: statusSubscriptions("WireGuardInterface", "WireGuardPeer", "BGPRouter"), PeriodicFunc: wireGuard.Reconcile},
+		framework.FuncController{ControllerName: "wireguard", Every: 30 * time.Second, Subs: statusSubscriptions("WireGuardInterface", "BGPRouter"), PeriodicFunc: wireGuard.Reconcile},
 		framework.FuncController{ControllerName: "ipv4-static-address", Subs: statusSubscriptions("WireGuardInterface", "TunnelInterface"), PeriodicFunc: ipv4Static.Reconcile},
 		framework.FuncController{ControllerName: "dhcpv6-information", Every: 30 * time.Second, Subs: statusSubscriptions("DHCPv6PrefixDelegation"), ReconcileFunc: func(ctx context.Context, event daemonapi.DaemonEvent) error {
 			request := event.Type == "routerd.controller.bootstrap" || becamePhase(event, daemonapi.ResourcePhaseBound)

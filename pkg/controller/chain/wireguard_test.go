@@ -240,6 +240,24 @@ spec:
 }
 
 func TestWireGuardControllerSkipsApplyWhenInterfaceMatches(t *testing.T) {
+	t.Run("literal endpoint", func(t *testing.T) {
+		testWireGuardControllerSkipsApplyWhenInterfaceMatches(t, "198.51.100.2:51820", "198.51.100.2:51820", nil)
+	})
+	t.Run("dns endpoint resolved to latest endpoint", func(t *testing.T) {
+		testWireGuardControllerSkipsApplyWhenInterfaceMatches(t, "peer-a.example.test:51820", "198.51.100.2:51820", func(_ context.Context, host string) ([]string, error) {
+			if host != "peer-a.example.test" {
+				t.Fatalf("lookup host = %q, want peer-a.example.test", host)
+			}
+			return []string{"198.51.100.2"}, nil
+		})
+	})
+	t.Run("configured endpoint without latest handshake endpoint", func(t *testing.T) {
+		testWireGuardControllerSkipsApplyWhenInterfaceMatches(t, "198.51.100.2:51820", "", nil)
+	})
+}
+
+func testWireGuardControllerSkipsApplyWhenInterfaceMatches(t *testing.T, desiredEndpoint, observedEndpoint string, lookup func(context.Context, string) ([]string, error)) {
+	t.Helper()
 	router := mustWireGuardRouter(t, `
 apiVersion: routerd.net/v1alpha1
 kind: Router
@@ -260,7 +278,7 @@ spec:
         interface: wg0
         publicKey: peerpub
         allowedIPs: [10.99.0.2/32]
-        endpoint: 198.51.100.2:51820
+        endpoint: `+desiredEndpoint+`
         persistentKeepalive: 25
 `)
 	store := mapStore{}
@@ -273,7 +291,7 @@ spec:
 				Name:                "peer-a",
 				PublicKey:           "peerpub",
 				AllowedIPs:          []string{"10.99.0.2/32"},
-				Endpoint:            "198.51.100.2:51820",
+				Endpoint:            desiredEndpoint,
 				PersistentKeepalive: 25,
 			}},
 		}, false),
@@ -287,13 +305,14 @@ spec:
 			calls = append(calls, call)
 			switch call {
 			case "wg show wg0 dump":
-				return []byte("priv\tifacepub\t51820\toff\npeerpub\tpsk\t198.51.100.2:51820\t10.99.0.2/32\t1710000000\t100\t200\t25\n"), nil
+				return []byte("priv\tifacepub\t51820\toff\npeerpub\tpsk\t" + observedEndpoint + "\t10.99.0.2/32\t1710000000\t100\t200\t25\n"), nil
 			case "ip -o link show dev wg0":
 				return []byte("7: wg0: <POINTOPOINT,NOARP,UP,LOWER_UP> mtu 1420 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000\n"), nil
 			default:
 				return nil, nil
 			}
 		},
+		LookupHost: lookup,
 	}
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatal(err)
