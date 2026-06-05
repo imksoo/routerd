@@ -74,6 +74,25 @@ func TestParseConntrackExtendedLineSkipsSummary(t *testing.T) {
 	}
 }
 
+func TestParseNAT44SessionSyncRestoreOutput(t *testing.T) {
+	result, err := parseNAT44SessionSyncRestoreOutput([]byte("noise\nok_del=1 ng_del=2 ok_ins=3 ng_ins=4\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != (nat44SessionSyncRestoreResult{OKDel: 1, NGDel: 2, OKIns: 3, NGIns: 4}) {
+		t.Fatalf("result = %#v", result)
+	}
+	if _, err := parseNAT44SessionSyncRestoreOutput([]byte("ok_del=1 ng_del=2 ok_ins=3\n")); err == nil {
+		t.Fatal("expected missing ng_ins to fail")
+	}
+	if phase, reason := nat44SessionSyncRestorePhase(2, nat44SessionSyncRestoreResult{OKIns: 0, NGIns: 2}); phase != "Error" || reason != "RestoreFailed" {
+		t.Fatalf("all-failed phase = %s/%s", phase, reason)
+	}
+	if phase, reason := nat44SessionSyncRestorePhase(2, nat44SessionSyncRestoreResult{OKIns: 1, NGIns: 1}); phase != "Degraded" || reason != "RestorePartialFailed" {
+		t.Fatalf("partial phase = %s/%s", phase, reason)
+	}
+}
+
 func TestNAT44SessionSyncRunsSnapshotOverSSH(t *testing.T) {
 	store := mapStore{
 		api.NetAPIVersion + "/NAT44Rule/lan-to-dslite-b": {"snatAddress": "192.0.0.3"},
@@ -132,11 +151,58 @@ func TestNAT44SessionSyncRunsSnapshotOverSSH(t *testing.T) {
 		}
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "NAT44SessionSync", "dslite-abc")
-	if status["phase"] != "Synced" || status["sessionCount"] != 2 || status["targetCount"] != 1 {
+	if status["phase"] != "Synced" || status["sessionCount"] != 2 || status["targetCount"] != 1 || status["insertOK"] != 2 || status["insertFailed"] != 0 {
 		t.Fatalf("status = %#v", status)
 	}
 	if !reflect.DeepEqual(status["snatAddresses"], []string{"192.0.0.2", "192.0.0.3"}) {
 		t.Fatalf("snatAddresses = %#v", status["snatAddresses"])
+	}
+	targets, ok := status["targets"].([]map[string]any)
+	if !ok || len(targets) != 1 || targets[0]["phase"] != "Synced" || targets[0]["insertOK"] != 2 || targets[0]["insertFailed"] != 0 {
+		t.Fatalf("targets = %#v", status["targets"])
+	}
+}
+
+func TestNAT44SessionSyncReportsRestoreInsertFailures(t *testing.T) {
+	store := mapStore{}
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44SessionSync"}, Metadata: api.ObjectMeta{Name: "dslite-abc"}, Spec: api.NAT44SessionSyncSpec{
+			SNATAddresses: []string{"192.0.0.2"},
+			Targets:       []api.NAT44SessionSyncTargetSpec{{Name: "standby", Host: "homert03.lain.local"}},
+		}},
+	}}}
+	controller := NAT44SessionSyncController{
+		Router: router,
+		Store:  store,
+		Now:    func() time.Time { return time.Date(2026, 6, 4, 23, 10, 0, 0, time.UTC) },
+		Command: func(_ context.Context, name string, args []string, stdin []byte) ([]byte, error) {
+			switch name {
+			case "conntrack":
+				return []byte("ipv4 2 tcp 6 86400 ESTABLISHED src=172.18.1.73 dst=142.251.23.95 sport=52654 dport=443 src=142.251.23.95 dst=192.0.0.2 sport=443 dport=52654 [ASSURED] mark=272 use=1\n"), nil
+			case "ssh":
+				if !strings.Contains(string(stdin), "ok_ins") {
+					t.Fatalf("restore script missing counters:\n%s", stdin)
+				}
+				return []byte("ok_del=0 ng_del=1 ok_ins=0 ng_ins=1\n"), nil
+			default:
+				t.Fatalf("unexpected command %q", name)
+			}
+			return nil, nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "NAT44SessionSync", "dslite-abc")
+	if status["phase"] != "Error" || status["reason"] != "RestoreFailed" || status["insertOK"] != 0 || status["insertFailed"] != 1 {
+		t.Fatalf("status = %#v", status)
+	}
+	targets, ok := status["targets"].([]map[string]any)
+	if !ok || len(targets) != 1 {
+		t.Fatalf("targets = %#v", status["targets"])
+	}
+	if targets[0]["phase"] != "Error" || targets[0]["reason"] != "RestoreFailed" || targets[0]["insertOK"] != 0 || targets[0]["insertFailed"] != 1 {
+		t.Fatalf("target status = %#v", targets[0])
 	}
 }
 

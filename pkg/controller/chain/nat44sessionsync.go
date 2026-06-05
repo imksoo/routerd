@@ -47,6 +47,13 @@ type nat44SessionSyncTarget struct {
 	RestoreCommand []string
 }
 
+type nat44SessionSyncRestoreResult struct {
+	OKDel int
+	NGDel int
+	OKIns int
+	NGIns int
+}
+
 type conntrackRestoreEntry struct {
 	Insert []string
 	Delete []string
@@ -209,39 +216,77 @@ func (c NAT44SessionSyncController) reconcileJob(ctx context.Context, job nat44S
 	if err != nil {
 		return c.save(job.APIVersion, job.Kind, job.Name, map[string]any{"phase": "Error", "reason": "DumpFailed", "error": err.Error(), "dryRun": c.DryRun})
 	}
-	targetStatuses := nat44SessionSyncTargetStatuses(job.Targets)
 	status := map[string]any{
 		"mode":             job.Mode,
 		"snatAddresses":    job.SNATAddresses,
 		"snatAddressCount": len(job.SNATAddresses),
 		"sessionCount":     len(entries),
 		"targetCount":      len(job.Targets),
-		"targets":          targetStatuses,
 		"syncedAt":         now.Format(time.RFC3339Nano),
 		"dryRun":           c.DryRun,
 	}
 	if c.DryRun {
+		status["targets"] = nat44SessionSyncTargetStatuses(job.Targets)
 		status["phase"] = "Rendered"
 		status["reason"] = "DryRun"
 		return c.save(job.APIVersion, job.Kind, job.Name, status)
 	}
-	script := nat44SessionSyncRestoreScript(entries, nil)
+	targetStatuses := make([]map[string]any, 0, len(job.Targets))
+	total := nat44SessionSyncRestoreResult{}
+	overallPhase := "Synced"
+	overallReason := ""
 	for _, target := range job.Targets {
+		targetStatus := nat44SessionSyncTargetStatus(target)
 		targetScript := nat44SessionSyncRestoreScript(entries, target.RestoreCommand)
 		out, err := c.runSSH(ctx, target, targetScript)
 		if err != nil {
-			return c.save(job.APIVersion, job.Kind, job.Name, map[string]any{
-				"phase":  "Error",
-				"reason": "SyncFailed",
-				"target": target.Host,
-				"output": strings.TrimSpace(string(out)),
-				"error":  err.Error(),
-				"dryRun": false,
-			})
+			targetStatus["phase"] = "Error"
+			targetStatus["reason"] = "SyncFailed"
+			targetStatus["output"] = strings.TrimSpace(string(out))
+			targetStatus["error"] = err.Error()
+			targetStatuses = append(targetStatuses, targetStatus)
+			overallPhase = "Error"
+			overallReason = "SyncFailed"
+			continue
+		}
+		result, err := parseNAT44SessionSyncRestoreOutput(out)
+		if err != nil {
+			targetStatus["phase"] = "Error"
+			targetStatus["reason"] = "RestoreOutputInvalid"
+			targetStatus["output"] = strings.TrimSpace(string(out))
+			targetStatus["error"] = err.Error()
+			targetStatuses = append(targetStatuses, targetStatus)
+			overallPhase = "Error"
+			overallReason = "RestoreOutputInvalid"
+			continue
+		}
+		addNAT44SessionSyncRestoreStatus(targetStatus, result)
+		total.OKDel += result.OKDel
+		total.NGDel += result.NGDel
+		total.OKIns += result.OKIns
+		total.NGIns += result.NGIns
+		phase, reason := nat44SessionSyncRestorePhase(len(entries), result)
+		targetStatus["phase"] = phase
+		if reason != "" {
+			targetStatus["reason"] = reason
+		}
+		targetStatuses = append(targetStatuses, targetStatus)
+		switch {
+		case phase == "Error":
+			overallPhase = "Error"
+			overallReason = reason
+		case phase == "Degraded" && overallPhase == "Synced":
+			overallPhase = "Degraded"
+			overallReason = reason
 		}
 	}
-	status["phase"] = "Synced"
-	status["scriptBytes"] = len(script)
+	status["targets"] = targetStatuses
+	addNAT44SessionSyncRestoreStatus(status, total)
+	status["phase"] = overallPhase
+	if overallReason != "" {
+		status["reason"] = overallReason
+	}
+	status["scriptBytes"] = len(nat44SessionSyncRestoreScript(entries, nil))
 	return c.save(job.APIVersion, job.Kind, job.Name, status)
 }
 
@@ -477,6 +522,63 @@ func nat44SessionSyncRestoreScript(entries []conntrackRestoreEntry, command []st
 	return buf.Bytes()
 }
 
+func parseNAT44SessionSyncRestoreOutput(output []byte) (nat44SessionSyncRestoreResult, error) {
+	for _, line := range strings.Split(string(output), "\n") {
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) == 0 {
+			continue
+		}
+		values := map[string]int{}
+		for _, field := range fields {
+			key, raw, ok := strings.Cut(field, "=")
+			if !ok {
+				continue
+			}
+			switch key {
+			case "ok_del", "ng_del", "ok_ins", "ng_ins":
+				value, err := strconv.Atoi(raw)
+				if err != nil {
+					return nat44SessionSyncRestoreResult{}, fmt.Errorf("%s must be an integer: %w", key, err)
+				}
+				values[key] = value
+			}
+		}
+		if len(values) == 0 {
+			continue
+		}
+		for _, key := range []string{"ok_del", "ng_del", "ok_ins", "ng_ins"} {
+			if _, ok := values[key]; !ok {
+				return nat44SessionSyncRestoreResult{}, fmt.Errorf("restore output missing %s", key)
+			}
+		}
+		return nat44SessionSyncRestoreResult{
+			OKDel: values["ok_del"],
+			NGDel: values["ng_del"],
+			OKIns: values["ok_ins"],
+			NGIns: values["ng_ins"],
+		}, nil
+	}
+	return nat44SessionSyncRestoreResult{}, fmt.Errorf("restore output missing summary")
+}
+
+func nat44SessionSyncRestorePhase(entries int, result nat44SessionSyncRestoreResult) (string, string) {
+	switch {
+	case entries > 0 && result.OKIns == 0:
+		return "Error", "RestoreFailed"
+	case result.NGIns > 0:
+		return "Degraded", "RestorePartialFailed"
+	default:
+		return "Synced", ""
+	}
+}
+
+func addNAT44SessionSyncRestoreStatus(status map[string]any, result nat44SessionSyncRestoreResult) {
+	status["deleteOK"] = result.OKDel
+	status["deleteFailed"] = result.NGDel
+	status["insertOK"] = result.OKIns
+	status["insertFailed"] = result.NGIns
+}
+
 func shellCommand(command, args []string) string {
 	parts := make([]string, 0, len(command)+len(args))
 	for _, part := range append(append([]string{}, command...), args...) {
@@ -488,9 +590,13 @@ func shellCommand(command, args []string) string {
 func nat44SessionSyncTargetStatuses(targets []nat44SessionSyncTarget) []map[string]any {
 	out := make([]map[string]any, 0, len(targets))
 	for _, target := range targets {
-		out = append(out, map[string]any{"name": target.Name, "host": target.Host, "user": target.User})
+		out = append(out, nat44SessionSyncTargetStatus(target))
 	}
 	return out
+}
+
+func nat44SessionSyncTargetStatus(target nat44SessionSyncTarget) map[string]any {
+	return map[string]any{"name": target.Name, "host": target.Host, "user": target.User}
 }
 
 func nat44SessionSyncDestination(target nat44SessionSyncTarget) string {

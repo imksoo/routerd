@@ -542,7 +542,7 @@ validator がエラーにします。
 | `ManagementAccess` | `interfaces` (stringList), `phase` (string) |
 | `MobilityPool` | `dynamicSource` (string), `generatedActions` (int), `generatedBGPPaths` (int), `generatedBGPTraps` (int), `groupRef` (string), `placementActive` (bool), `placementActiveNode` (string), `placementGroup` (string), `plannerPhase` (string), `plannerReason` (string), `prefix` (string), `deliveryMode` (string), `discoverySelfPrivateIPs` (stringList) |
 | `NAT44Rule` | `dryRun` (bool), `egressInterface` (string), `phase` (string), `snatAddress` (string) |
-| `NAT44SessionSync` | `dryRun` (bool), `mode` (string), `phase` (string), `sessionCount` (int), `snatAddresses` (stringList), `syncedAt` (timestamp), `targetCount` (int), `targets` (objectList) |
+| `NAT44SessionSync` | `deleteFailed` (int), `deleteOK` (int), `dryRun` (bool), `insertFailed` (int), `insertOK` (int), `mode` (string), `phase` (string), `sessionCount` (int), `snatAddresses` (stringList), `syncedAt` (timestamp), `targetCount` (int), `targets` (objectList) |
 | `NTPClient` | `phase` (string), `servers` (stringList), `source` (string), `updatedAt` (timestamp) |
 | `NTPServer` | `allowCIDRs` (stringList), `listenAddresses` (stringList), `phase` (string), `servers` (stringList), `source` (string), `updatedAt` (timestamp) |
 | `ObservabilityPipeline` | `phase` (string), `signals` (stringList) |
