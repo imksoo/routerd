@@ -19,6 +19,7 @@ import (
 	"github.com/imksoo/routerd/pkg/hostdeps"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/render"
+	"github.com/imksoo/routerd/pkg/resourcequery"
 	"github.com/imksoo/routerd/pkg/tailscale"
 )
 
@@ -270,8 +271,9 @@ func resolvedAdoptionDropin(spec api.NetworkAdoptionResolvedSpec) []byte {
 }
 
 type SystemdUnitController struct {
-	Router *api.Router
-	Bus    interface {
+	Router         *api.Router
+	DeclaredRouter *api.Router
+	Bus            interface {
 		Publish(context.Context, daemonapi.DaemonEvent) error
 	}
 	Store                       Store
@@ -417,6 +419,9 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 					return err
 				}
 			}
+		}
+		if err := c.cleanupWhenFalseSystemdUnits(ctx, command); err != nil {
+			return err
 		}
 		for _, resource := range c.Router.Spec.Resources {
 			if resource.Kind != "HealthCheck" {
@@ -883,6 +888,130 @@ func (c SystemdUnitController) cleanupLongLivedSystemdHelperUnit(ctx context.Con
 			"dryRun":    c.DryRun,
 			"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
 		})
+	}
+	return nil
+}
+
+type synthesizedUnitRef struct {
+	APIVersion string
+	Kind       string
+	Name       string
+	UnitName   string
+	Source     string
+}
+
+func (c SystemdUnitController) cleanupWhenFalseSystemdUnits(ctx context.Context, command outputCommandFunc) error {
+	if c.DeclaredRouter == nil {
+		return nil
+	}
+	stateStore, ok := c.Store.(resourcequery.StateStore)
+	if !ok {
+		return nil
+	}
+	for _, resource := range c.DeclaredRouter.Spec.Resources {
+		when := resourcequery.ResourceWhen(resource)
+		if !resourcequery.ResourceWhenPresent(when) || resourcequery.ResourceWhenMatches(when, stateStore) {
+			continue
+		}
+		ref, ok := synthesizedUnitForResource(resource)
+		if !ok {
+			continue
+		}
+		if err := c.cleanupWhenFalseSystemdUnit(ctx, ref, command); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func synthesizedUnitForResource(resource api.Resource) (synthesizedUnitRef, bool) {
+	name := strings.TrimSpace(resource.Metadata.Name)
+	if name == "" {
+		return synthesizedUnitRef{}, false
+	}
+	apiVersion := resource.APIVersion
+	if apiVersion == "" {
+		apiVersion = resourcequery.APIVersionForKind(resource.Kind)
+	}
+	ref := synthesizedUnitRef{
+		APIVersion: apiVersion,
+		Kind:       resource.Kind,
+		Name:       name,
+		Source:     resource.Kind + "/" + name,
+	}
+	switch resource.Kind {
+	case "TailscaleNode":
+		ref.UnitName = render.TailscaleUnitName(name)
+	case "DHCPv4Client":
+		ref.UnitName = "routerd-dhcpv4-client@" + name + ".service"
+	case "DHCPv6PrefixDelegation":
+		ref.UnitName = "routerd-dhcpv6-client@" + name + ".service"
+	case "IPv6RouterAdvertisement":
+		ref.UnitName = "routerd-ra-observer@" + name + ".service"
+	case "DNSResolver":
+		ref.UnitName = dnsResolverUnitName(name)
+	case "EventGroup":
+		ref.UnitName = eventFederationUnitName(name)
+	default:
+		return synthesizedUnitRef{}, false
+	}
+	return ref, true
+}
+
+func (c SystemdUnitController) cleanupWhenFalseSystemdUnit(ctx context.Context, ref synthesizedUnitRef, command outputCommandFunc) error {
+	path := filepath.Join(c.SystemdSystemDir, ref.UnitName)
+	changed, err := c.applySystemdUnit(ctx, ref.Name, path, ref.UnitName, api.SystemdUnitSpec{State: "absent"}, command)
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if err != nil {
+		status := map[string]any{
+			"phase":     "Error",
+			"reason":    "WhenFalseCleanupFailed",
+			"unitName":  ref.UnitName,
+			"path":      path,
+			"source":    ref.Source,
+			"error":     err.Error(),
+			"dryRun":    c.DryRun,
+			"updatedAt": now,
+		}
+		if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", ref.UnitName, status); saveErr != nil {
+			return saveErr
+		}
+		return fmt.Errorf("cleanup when-false unit %s: %w", ref.UnitName, err)
+	}
+	unitPhase := "Removed"
+	if c.DryRun && changed {
+		unitPhase = "Rendered"
+	}
+	if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", ref.UnitName, map[string]any{
+		"phase":     unitPhase,
+		"reason":    "WhenFalse",
+		"unitName":  ref.UnitName,
+		"path":      path,
+		"source":    ref.Source,
+		"changed":   changed,
+		"dryRun":    c.DryRun,
+		"updatedAt": now,
+	}); err != nil {
+		return err
+	}
+	if ref.APIVersion != "" && ref.Kind != "" && ref.Name != "" {
+		if err := c.Store.SaveObjectStatus(ref.APIVersion, ref.Kind, ref.Name, map[string]any{
+			"phase":     "Pending",
+			"reason":    "WhenFalse",
+			"unitName":  ref.UnitName,
+			"managedBy": "systemd",
+			"dryRun":    c.DryRun,
+			"updatedAt": now,
+		}); err != nil {
+			return err
+		}
+	}
+	if changed && !c.DryRun && c.Bus != nil {
+		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.system.service_unit.removed", daemonapi.SeverityInfo)
+		event.Resource = &daemonapi.ResourceRef{APIVersion: api.SystemAPIVersion, Kind: "ServiceUnit", Name: ref.UnitName}
+		event.Reason = "WhenFalse"
+		event.Attributes = map[string]string{"unitName": ref.UnitName, "path": path, "source": ref.Source}
+		return c.Bus.Publish(ctx, event)
 	}
 	return nil
 }
