@@ -115,6 +115,21 @@ jobs:
       - name: Validate examples
         run: make validate-example
 
+  cloudedge-offline:
+    name: CloudEdge offline smoke
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.checkout-ref || github.ref }}
+
+      - name: Run CloudEdge acceptance offline smoke
+        run: make cloudedge-acceptance-offline-test
+
+      - name: Run CloudEdge PoC evidence offline smoke
+        run: make cloudedge-poc-evidence-offline-test
+
   shellcheck:
     name: Shell scripts
     runs-on: ubuntu-latest
