@@ -37,7 +37,6 @@ spec:
         name: lan-dhcpv4
       spec:
         interface: lan
-        leaseFile: /var/lib/routerd/dnsmasq/dnsmasq.leases
         addressPool:
           start: 192.168.30.100
           end: 192.168.30.199
@@ -53,7 +52,6 @@ spec:
       spec:
         interface: lan
         mode: stateful
-        leaseFile: /var/lib/routerd/dnsmasq/dnsmasq.leases
         addressPool:
           start: fd00:30::100
           end: fd00:30::1ff
@@ -61,17 +59,17 @@ spec:
         dnsSource: none
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: DHCPLeaseSync
+      kind: DHCPv4ServerLeaseSync
       metadata:
-        name: lan-leases
+        name: lan-v4-leases
       spec:
-        leaseFile: /var/lib/routerd/dnsmasq/dnsmasq.leases
+        source:
+          resource: DHCPv4Server/lan-dhcpv4
         interval: 30s
         targets:
           - name: standby
             host: routerd-standby.lan.example
             user: routerd
-            path: /var/lib/routerd/dnsmasq/dnsmasq.leases
         when:
           state:
             VirtualAddress/lan-vip.role:

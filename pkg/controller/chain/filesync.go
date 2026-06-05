@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/platform"
 )
 
 const (
@@ -55,8 +56,8 @@ type FileSyncController struct {
 }
 
 func (c FileSyncController) Reconcile(ctx context.Context) error {
-	for _, resource := range c.dhcpLeaseSyncResources() {
-		job, err := fileSyncJobFromDHCPLeaseSync(resource)
+	for _, resource := range c.fileSyncResources() {
+		job, err := c.fileSyncJobFromResource(resource)
 		if err != nil {
 			if saveErr := c.save(resource.APIVersion, resource.Kind, resource.Metadata.Name, map[string]any{"phase": "Error", "reason": "InvalidSpec", "error": err.Error(), "dryRun": c.DryRun}); saveErr != nil {
 				return saveErr
@@ -70,13 +71,13 @@ func (c FileSyncController) Reconcile(ctx context.Context) error {
 	return nil
 }
 
-func (c FileSyncController) dhcpLeaseSyncResources() []api.Resource {
+func (c FileSyncController) fileSyncResources() []api.Resource {
 	if c.Router == nil {
 		return nil
 	}
 	var out []api.Resource
 	for _, resource := range c.Router.Spec.Resources {
-		if resource.Kind == "DHCPLeaseSync" {
+		if resource.Kind == "DHCPv4ServerLeaseSync" || resource.Kind == "DHCPv6ServerLeaseSync" || resource.Kind == "DHCPv6PrefixDelegationLeaseSync" {
 			out = append(out, resource)
 		}
 	}
@@ -175,8 +176,21 @@ func (c FileSyncController) save(apiVersion, kind, name string, status map[strin
 	return c.Store.SaveObjectStatus(apiVersion, kind, name, status)
 }
 
-func fileSyncJobFromDHCPLeaseSync(resource api.Resource) (fileSyncJob, error) {
-	spec, err := resource.DHCPLeaseSyncSpec()
+func (c FileSyncController) fileSyncJobFromResource(resource api.Resource) (fileSyncJob, error) {
+	switch resource.Kind {
+	case "DHCPv4ServerLeaseSync":
+		return c.fileSyncJobFromDHCPv4ServerLeaseSync(resource)
+	case "DHCPv6ServerLeaseSync":
+		return c.fileSyncJobFromDHCPv6ServerLeaseSync(resource)
+	case "DHCPv6PrefixDelegationLeaseSync":
+		return fileSyncJobFromDHCPv6PrefixDelegationLeaseSync(resource)
+	default:
+		return fileSyncJob{}, fmt.Errorf("unsupported file sync resource kind %s", resource.Kind)
+	}
+}
+
+func (c FileSyncController) fileSyncJobFromDHCPv4ServerLeaseSync(resource api.Resource) (fileSyncJob, error) {
+	spec, err := resource.DHCPv4ServerLeaseSyncSpec()
 	if err != nil {
 		return fileSyncJob{}, err
 	}
@@ -195,27 +209,187 @@ func fileSyncJobFromDHCPLeaseSync(resource api.Resource) (fileSyncJob, error) {
 		Command:    strings.TrimSpace(spec.Command),
 		Interval:   interval,
 	}
-	if strings.TrimSpace(spec.LeaseFile) != "" {
-		job.Sources = append(job.Sources, fileSyncSource{Name: "leaseFile", Path: strings.TrimSpace(spec.LeaseFile), Required: true})
-	}
-	for _, source := range spec.Sources {
-		required := true
-		if source.Required != nil {
-			required = *source.Required
-		}
-		job.Sources = append(job.Sources, fileSyncSource{Name: strings.TrimSpace(source.Name), Path: strings.TrimSpace(source.Path), Required: required})
+	sourceName := dhcpv4ServerLeaseSyncResourceName(spec.Source.Resource)
+	if sourceName != "" {
+		job.Sources = append(job.Sources, fileSyncSource{Name: "leaseFile", Path: c.dhcpv4LeaseFile(sourceName), Required: true})
 	}
 	for _, target := range spec.Targets {
 		job.Targets = append(job.Targets, fileSyncTarget{
 			Name:       strings.TrimSpace(target.Name),
 			Host:       strings.TrimSpace(target.Host),
 			User:       strings.TrimSpace(target.User),
-			Path:       strings.TrimSpace(target.Path),
 			SSHOptions: append([]string(nil), target.SSHOptions...),
 			Options:    append([]string(nil), target.Options...),
 		})
 	}
 	return job, nil
+}
+
+func (c FileSyncController) dhcpv4LeaseFile(resourceName string) string {
+	if c.Router != nil {
+		for _, resource := range c.Router.Spec.Resources {
+			if resource.Kind != "DHCPv4Server" || resource.Metadata.Name != resourceName {
+				continue
+			}
+			spec, err := resource.DHCPv4ServerSpec()
+			if err == nil && strings.TrimSpace(spec.LeaseFile) != "" {
+				return strings.TrimSpace(spec.LeaseFile)
+			}
+			break
+		}
+	}
+	return defaultDHCPv4LeaseFile()
+}
+
+func (c FileSyncController) fileSyncJobFromDHCPv6ServerLeaseSync(resource api.Resource) (fileSyncJob, error) {
+	spec, err := resource.DHCPv6ServerLeaseSyncSpec()
+	if err != nil {
+		return fileSyncJob{}, err
+	}
+	interval := 30 * time.Second
+	if strings.TrimSpace(spec.Interval) != "" {
+		parsed, err := time.ParseDuration(strings.TrimSpace(spec.Interval))
+		if err != nil {
+			return fileSyncJob{}, err
+		}
+		interval = parsed
+	}
+	job := fileSyncJob{
+		APIVersion: firstNonEmpty(resource.APIVersion, api.NetAPIVersion),
+		Kind:       resource.Kind,
+		Name:       resource.Metadata.Name,
+		Command:    strings.TrimSpace(spec.Command),
+		Interval:   interval,
+	}
+	sourceName := dhcpv6ServerLeaseSyncResourceName(spec.Source.Resource)
+	if sourceName != "" {
+		job.Sources = append(job.Sources, fileSyncSource{Name: "leaseFile", Path: c.dhcpv6LeaseFile(sourceName), Required: true})
+	}
+	for _, target := range spec.Targets {
+		job.Targets = append(job.Targets, fileSyncTarget{
+			Name:       strings.TrimSpace(target.Name),
+			Host:       strings.TrimSpace(target.Host),
+			User:       strings.TrimSpace(target.User),
+			SSHOptions: append([]string(nil), target.SSHOptions...),
+			Options:    append([]string(nil), target.Options...),
+		})
+	}
+	return job, nil
+}
+
+func (c FileSyncController) dhcpv6LeaseFile(resourceName string) string {
+	if c.Router != nil {
+		for _, resource := range c.Router.Spec.Resources {
+			if resource.Kind != "DHCPv6Server" || resource.Metadata.Name != resourceName {
+				continue
+			}
+			spec, err := resource.DHCPv6ServerSpec()
+			if err == nil && strings.TrimSpace(spec.LeaseFile) != "" {
+				return strings.TrimSpace(spec.LeaseFile)
+			}
+			break
+		}
+	}
+	return defaultDNSMasqLeaseFile()
+}
+
+func fileSyncJobFromDHCPv6PrefixDelegationLeaseSync(resource api.Resource) (fileSyncJob, error) {
+	spec, err := resource.DHCPv6PrefixDelegationLeaseSyncSpec()
+	if err != nil {
+		return fileSyncJob{}, err
+	}
+	interval := 30 * time.Second
+	if strings.TrimSpace(spec.Interval) != "" {
+		parsed, err := time.ParseDuration(strings.TrimSpace(spec.Interval))
+		if err != nil {
+			return fileSyncJob{}, err
+		}
+		interval = parsed
+	}
+	pdName := dhcpv6PrefixDelegationLeaseSyncResourceName(spec.Source.Resource)
+	leaseFile := ""
+	if pdName != "" {
+		leaseFile = defaultDHCPv6PDLeaseFile(pdName)
+	}
+	job := fileSyncJob{
+		APIVersion: firstNonEmpty(resource.APIVersion, api.NetAPIVersion),
+		Kind:       resource.Kind,
+		Name:       resource.Metadata.Name,
+		Command:    strings.TrimSpace(spec.Command),
+		Interval:   interval,
+	}
+	if leaseFile != "" {
+		job.Sources = append(job.Sources, fileSyncSource{Name: "leaseFile", Path: leaseFile, Required: true})
+	}
+	for _, target := range spec.Targets {
+		job.Targets = append(job.Targets, fileSyncTarget{
+			Name:       strings.TrimSpace(target.Name),
+			Host:       strings.TrimSpace(target.Host),
+			User:       strings.TrimSpace(target.User),
+			SSHOptions: append([]string(nil), target.SSHOptions...),
+			Options:    append([]string(nil), target.Options...),
+		})
+	}
+	return job, nil
+}
+
+func dhcpv6PrefixDelegationLeaseSyncResourceName(ref string) string {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return ""
+	}
+	kind, name, ok := strings.Cut(ref, "/")
+	if !ok {
+		return ref
+	}
+	if kind != "DHCPv6PrefixDelegation" {
+		return ""
+	}
+	return strings.TrimSpace(name)
+}
+
+func dhcpv4ServerLeaseSyncResourceName(ref string) string {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return ""
+	}
+	kind, name, ok := strings.Cut(ref, "/")
+	if !ok {
+		return ref
+	}
+	if kind != "DHCPv4Server" {
+		return ""
+	}
+	return strings.TrimSpace(name)
+}
+
+func dhcpv6ServerLeaseSyncResourceName(ref string) string {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return ""
+	}
+	kind, name, ok := strings.Cut(ref, "/")
+	if !ok {
+		return ref
+	}
+	if kind != "DHCPv6Server" {
+		return ""
+	}
+	return strings.TrimSpace(name)
+}
+
+func defaultDHCPv4LeaseFile() string {
+	return defaultDNSMasqLeaseFile()
+}
+
+func defaultDNSMasqLeaseFile() string {
+	defaults, _ := platform.Current()
+	return filepath.Join(defaults.StateDir, "dnsmasq", "dnsmasq.leases")
+}
+
+func defaultDHCPv6PDLeaseFile(resource string) string {
+	defaults, _ := platform.Current()
+	return filepath.Join(defaults.StateDir, "dhcpv6-client", resource, "lease.json")
 }
 
 func fileSyncSourceStatuses(sources []fileSyncSource) ([]map[string]any, string, error) {

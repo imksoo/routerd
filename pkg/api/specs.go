@@ -1105,28 +1105,48 @@ type DHCPv6ServerSpec struct {
 	When              ResourceWhenSpec         `yaml:"when,omitempty" json:"when,omitempty"`
 }
 
-type DHCPLeaseSyncSpec struct {
-	LeaseFile string                    `yaml:"leaseFile,omitempty" json:"leaseFile,omitempty"`
-	Command   string                    `yaml:"command,omitempty" json:"command,omitempty"`
-	Interval  string                    `yaml:"interval,omitempty" json:"interval,omitempty"`
-	Sources   []DHCPLeaseSyncSourceSpec `yaml:"sources,omitempty" json:"sources,omitempty"`
-	Targets   []DHCPLeaseSyncTargetSpec `yaml:"targets,omitempty" json:"targets,omitempty"`
-	When      ResourceWhenSpec          `yaml:"when,omitempty" json:"when,omitempty"`
-}
-
-type DHCPLeaseSyncSourceSpec struct {
-	Name     string `yaml:"name,omitempty" json:"name,omitempty"`
-	Path     string `yaml:"path" json:"path"`
-	Required *bool  `yaml:"required,omitempty" json:"required,omitempty"`
-}
-
-type DHCPLeaseSyncTargetSpec struct {
+type LeaseSyncTargetSpec struct {
 	Name       string   `yaml:"name,omitempty" json:"name,omitempty"`
 	Host       string   `yaml:"host" json:"host"`
 	User       string   `yaml:"user,omitempty" json:"user,omitempty"`
-	Path       string   `yaml:"path,omitempty" json:"path,omitempty"`
 	SSHOptions []string `yaml:"sshOptions,omitempty" json:"sshOptions,omitempty"`
 	Options    []string `yaml:"options,omitempty" json:"options,omitempty"`
+}
+
+type DHCPv4ServerLeaseSyncSpec struct {
+	Source   DHCPv4ServerLeaseSyncSourceSpec `yaml:"source,omitempty" json:"source,omitempty"`
+	Command  string                          `yaml:"command,omitempty" json:"command,omitempty"`
+	Interval string                          `yaml:"interval,omitempty" json:"interval,omitempty"`
+	Targets  []LeaseSyncTargetSpec           `yaml:"targets,omitempty" json:"targets,omitempty"`
+	When     ResourceWhenSpec                `yaml:"when,omitempty" json:"when,omitempty"`
+}
+
+type DHCPv4ServerLeaseSyncSourceSpec struct {
+	Resource string `yaml:"resource" json:"resource"`
+}
+
+type DHCPv6ServerLeaseSyncSpec struct {
+	Source   DHCPv6ServerLeaseSyncSourceSpec `yaml:"source,omitempty" json:"source,omitempty"`
+	Command  string                          `yaml:"command,omitempty" json:"command,omitempty"`
+	Interval string                          `yaml:"interval,omitempty" json:"interval,omitempty"`
+	Targets  []LeaseSyncTargetSpec           `yaml:"targets,omitempty" json:"targets,omitempty"`
+	When     ResourceWhenSpec                `yaml:"when,omitempty" json:"when,omitempty"`
+}
+
+type DHCPv6ServerLeaseSyncSourceSpec struct {
+	Resource string `yaml:"resource" json:"resource"`
+}
+
+type DHCPv6PrefixDelegationLeaseSyncSpec struct {
+	Source   DHCPv6PrefixDelegationLeaseSyncSourceSpec `yaml:"source,omitempty" json:"source,omitempty"`
+	Command  string                                    `yaml:"command,omitempty" json:"command,omitempty"`
+	Interval string                                    `yaml:"interval,omitempty" json:"interval,omitempty"`
+	Targets  []LeaseSyncTargetSpec                     `yaml:"targets,omitempty" json:"targets,omitempty"`
+	When     ResourceWhenSpec                          `yaml:"when,omitempty" json:"when,omitempty"`
+}
+
+type DHCPv6PrefixDelegationLeaseSyncSourceSpec struct {
+	Resource string `yaml:"resource" json:"resource"`
 }
 
 type DHCPv4RelaySpec struct {
@@ -2257,8 +2277,16 @@ func (r Resource) DHCPv6ServerSpec() (DHCPv6ServerSpec, error) {
 	return specAs[DHCPv6ServerSpec](r)
 }
 
-func (r Resource) DHCPLeaseSyncSpec() (DHCPLeaseSyncSpec, error) {
-	return specAs[DHCPLeaseSyncSpec](r)
+func (r Resource) DHCPv4ServerLeaseSyncSpec() (DHCPv4ServerLeaseSyncSpec, error) {
+	return specAs[DHCPv4ServerLeaseSyncSpec](r)
+}
+
+func (r Resource) DHCPv6ServerLeaseSyncSpec() (DHCPv6ServerLeaseSyncSpec, error) {
+	return specAs[DHCPv6ServerLeaseSyncSpec](r)
+}
+
+func (r Resource) DHCPv6PrefixDelegationLeaseSyncSpec() (DHCPv6PrefixDelegationLeaseSyncSpec, error) {
+	return specAs[DHCPv6PrefixDelegationLeaseSyncSpec](r)
 }
 
 func (r Resource) DHCPv4RelaySpec() (DHCPv4RelaySpec, error) {

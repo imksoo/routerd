@@ -5,17 +5,19 @@ slug: /how-to/dhcp-lease-sync
 
 # DHCP lease sync for HA routers
 
-Use `DHCPLeaseSync` when two routerd nodes share a LAN service role and the
-active node must keep the standby node's dnsmasq lease file warm. The resource
-is intended for active-to-standby sync; it should normally be gated by a
+Use `DHCPv4ServerLeaseSync`, `DHCPv6ServerLeaseSync`, or
+`DHCPv6PrefixDelegationLeaseSync` when two routerd nodes share a DHCP role and
+the active node must keep the standby node's lease state warm. These resources
+are intended for active-to-standby sync; they should normally be gated by a
 `VirtualAddress` role so the backup does not copy stale leases back to the
 active node.
 
 The complete example is in `examples/dhcp-lease-sync-ha.yaml`.
 
-## Configure a persistent lease file
+## Use persistent defaults
 
-Point both DHCP server resources at the same persistent dnsmasq lease file:
+routerd stores dnsmasq server leases under its platform state directory by
+default. Keep the DHCP resources free of runtime-only lease paths:
 
 ```yaml
 - apiVersion: net.routerd.net/v1alpha1
@@ -24,7 +26,6 @@ Point both DHCP server resources at the same persistent dnsmasq lease file:
     name: lan-dhcpv4
   spec:
     interface: lan
-    leaseFile: /var/lib/routerd/dnsmasq/dnsmasq.leases
     addressPool:
       start: 192.168.30.100
       end: 192.168.30.199
@@ -36,55 +37,76 @@ Point both DHCP server resources at the same persistent dnsmasq lease file:
   spec:
     interface: lan
     mode: stateful
-    leaseFile: /var/lib/routerd/dnsmasq/dnsmasq.leases
     addressPool:
       start: fd00:30::100
       end: fd00:30::1ff
 ```
 
-`/var/lib/routerd` survives service restarts and standby promotion. Avoid
-placing the authoritative DHCP server lease file under `/run` when the node may
-reboot or fail over.
+The sync resource derives the actual file path from the source kind, so the
+configuration does not need to repeat implementation paths.
 
 ## Sync only from the active node
 
-Gate `DHCPLeaseSync` on the local `VirtualAddress` status. The sync runs only
+Gate the lease sync on the local `VirtualAddress` status. The sync runs only
 while the VIP role is `master`:
 
 ```yaml
 - apiVersion: net.routerd.net/v1alpha1
-  kind: DHCPLeaseSync
+  kind: DHCPv4ServerLeaseSync
   metadata:
-    name: lan-leases
+    name: lan-v4-leases
   spec:
-    leaseFile: /var/lib/routerd/dnsmasq/dnsmasq.leases
+    source:
+      resource: DHCPv4Server/lan-dhcpv4
     interval: 30s
     targets:
       - name: standby
         host: routerd-standby.lan.example
         user: routerd
-        path: /var/lib/routerd/dnsmasq/dnsmasq.leases
     when:
       state:
         VirtualAddress/lan-vip.role:
           equals: master
 ```
 
-On promotion, the standby starts from its last synced lease file instead of an
-empty lease database.
+For a stateful DHCPv6 server, use `DHCPv6ServerLeaseSync` with
+`source.resource: DHCPv6Server/<name>`. For WAN-side prefix delegation, use
+`DHCPv6PrefixDelegationLeaseSync` with
+`source.resource: DHCPv6PrefixDelegation/<name>`.
+
+```yaml
+- apiVersion: net.routerd.net/v1alpha1
+  kind: DHCPv6PrefixDelegationLeaseSync
+  metadata:
+    name: wan-pd-lease
+  spec:
+    source:
+      resource: DHCPv6PrefixDelegation/wan-pd
+    targets:
+      - name: standby
+        host: routerd-standby.lan.example
+        user: routerd
+    when:
+      state:
+        VirtualAddress/lan-vip.role:
+          equals: master
+```
+
+On promotion, the standby starts from its last synced lease state instead of an
+empty database.
 
 ## SSH requirements
 
-`DHCPLeaseSync` uses `rsync` over SSH. Prepare non-interactive SSH before
-enabling the resource:
+Lease sync uses `rsync` over SSH. Prepare non-interactive SSH before enabling
+the resource:
 
 - Create or install an SSH key for the routerd process user on the active node.
 - Install the public key in `authorized_keys` for `target.user` on the standby
   node.
 - Preload or manage `known_hosts` for `target.host`; `BatchMode=yes` prevents
   interactive host-key prompts.
-- Ensure the target user can create the destination directory and write the
-  lease file.
+- Ensure the target user can create the derived destination directory and write
+  the lease file.
 
 routerd adds these SSH defaults when `target.sshOptions` does not override the
 same key:
@@ -101,7 +123,6 @@ context deadline. Operators can override the SSH options with
 targets:
   - host: routerd-standby.lan.example
     user: routerd
-    path: /var/lib/routerd/dnsmasq/dnsmasq.leases
     sshOptions:
       - -o
       - ConnectTimeout=5
@@ -115,7 +136,7 @@ targets:
 routerd validate --config examples/dhcp-lease-sync-ha.yaml
 routerd apply --config examples/dhcp-lease-sync-ha.yaml --once --dry-run
 routerctl describe VirtualAddress/lan-vip
-routerctl describe DHCPLeaseSync/lan-leases
+routerctl describe DHCPv4ServerLeaseSync/lan-v4-leases
 ```
 
 When the node is not master, `routerd serve` filters the resource through
