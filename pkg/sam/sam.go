@@ -242,10 +242,17 @@ func EvaluateCaptureGate(capture api.AddressCapture, store StatusReader) Capture
 	if gateType == "" && ref == "" {
 		return CaptureGateStatus{Active: true, Reason: "AlwaysActive"}
 	}
+	if gateType == "single-router" && ref == "" {
+		return CaptureGateStatus{Active: true, Type: gateType, Reason: "SingleRouter"}
+	}
 	status := CaptureGateStatus{
 		Type:              gateType,
 		VirtualAddressRef: ref,
 		Reason:            "CaptureGateInactive",
+	}
+	if gateType == "single-router" {
+		status.Message = "capture activeWhen virtualAddressRef must be empty when type is single-router"
+		return status
 	}
 	if gateType != "vrrp-master" {
 		status.Message = fmt.Sprintf("unsupported capture activeWhen type %q", gateType)

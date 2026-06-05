@@ -97,9 +97,11 @@ spec:
 
 On the on-prem node, the on-prem member is the complete self declaration
 instead: it normally carries `staticOwnedAddresses` and a `proxy-arp` capture
-that is gated with `activeWhen.type: vrrp-master`. The cloud members remain
-identity-only. The same rule applies in every direction: the local router owns
-its local implementation details; remote members are peer identities.
+with an explicit `activeWhen.type`. Use `single-router` when one local router
+owns capture for the site, or `vrrp-master` when an HA pair gates capture by
+VRRP master state. The cloud members remain identity-only. The same rule
+applies in every direction: the local router owns its local implementation
+details; remote members are peer identities.
 
 routerd uses observed facts from federation or provider discovery to advertise
 owned `/32` paths through BGP. Operators keep the control plane declarative by

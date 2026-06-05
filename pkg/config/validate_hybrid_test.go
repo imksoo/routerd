@@ -230,6 +230,15 @@ func TestValidateHybridFailures(t *testing.T) {
 			want: "spec.capture.activeWhen.virtualAddressRef is required",
 		},
 		{
+			name: "remote claim single-router activeWhen rejects ref",
+			mutate: func(router *api.Router) {
+				spec := router.Spec.Resources[6].Spec.(api.RemoteAddressClaimSpec)
+				spec.Capture.ActiveWhen = api.CaptureActiveWhen{Type: "single-router", VirtualAddressRef: "onprem-vip"}
+				router.Spec.Resources[6].Spec = spec
+			},
+			want: "spec.capture.activeWhen.virtualAddressRef must be empty",
+		},
+		{
 			name: "remote claim unresolved activeWhen virtual address",
 			mutate: func(router *api.Router) {
 				spec := router.Spec.Resources[6].Spec.(api.RemoteAddressClaimSpec)
@@ -436,7 +445,7 @@ func TestValidateHybridWarnsForProviderModeNotDeclared(t *testing.T) {
 func TestValidateHybridWarnsForExternalProxyARPInterface(t *testing.T) {
 	router := validHybridRouter()
 	spec := router.Spec.Resources[6].Spec.(api.RemoteAddressClaimSpec)
-	spec.Capture = api.AddressCapture{Type: "proxy-arp", Interface: "br-lan"}
+	spec.Capture = api.AddressCapture{Type: "proxy-arp", Interface: "br-lan", ActiveWhen: api.CaptureActiveWhen{Type: "single-router"}}
 	router.Spec.Resources[6].Spec = spec
 	if err := Validate(router); err != nil {
 		t.Fatalf("Validate: %v", err)

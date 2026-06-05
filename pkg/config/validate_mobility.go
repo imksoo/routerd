@@ -511,11 +511,14 @@ func validateMobilityMemberCapture(res api.Resource, index int, spec api.Mobilit
 		if captureType != "proxy-arp" {
 			return fmt.Errorf("%s spec.members[%d].capture.type must be proxy-arp for role onprem", res.ID(), index)
 		}
-		if strings.TrimSpace(member.Capture.ActiveWhen.Type) != "vrrp-master" {
-			return fmt.Errorf("%s spec.members[%d].capture.activeWhen.type must be vrrp-master for role onprem proxy-arp capture", res.ID(), index)
-		}
-		if strings.TrimSpace(member.Capture.ActiveWhen.VirtualAddressRef) == "" {
-			return fmt.Errorf("%s spec.members[%d].capture.activeWhen.virtualAddressRef is required for role onprem proxy-arp capture", res.ID(), index)
+		switch strings.TrimSpace(member.Capture.ActiveWhen.Type) {
+		case "single-router":
+		case "vrrp-master":
+			if strings.TrimSpace(member.Capture.ActiveWhen.VirtualAddressRef) == "" {
+				return fmt.Errorf("%s spec.members[%d].capture.activeWhen.virtualAddressRef is required for role onprem proxy-arp capture", res.ID(), index)
+			}
+		default:
+			return fmt.Errorf("%s spec.members[%d].capture.activeWhen.type is required for role onprem proxy-arp capture; use single-router or vrrp-master", res.ID(), index)
 		}
 	}
 	switch captureType {

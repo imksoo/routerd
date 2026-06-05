@@ -1555,7 +1555,7 @@ type MobilityMemberCapture struct {
 }
 
 type CaptureActiveWhen struct {
-	Type              string `yaml:"type,omitempty" json:"type,omitempty" jsonschema:"enum=,enum=vrrp-master"`
+	Type              string `yaml:"type,omitempty" json:"type,omitempty" jsonschema:"enum=,enum=single-router,enum=vrrp-master"`
 	VirtualAddressRef string `yaml:"virtualAddressRef,omitempty" json:"virtualAddressRef,omitempty"`
 }
 

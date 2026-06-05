@@ -286,11 +286,17 @@ func validateCaptureActiveWhen(path string, activeWhen api.CaptureActiveWhen) er
 	if gateType == "" && ref == "" {
 		return nil
 	}
-	if gateType != "vrrp-master" {
-		return fmt.Errorf("%s.type must be vrrp-master", path)
-	}
-	if ref == "" {
-		return fmt.Errorf("%s.virtualAddressRef is required when type is vrrp-master", path)
+	switch gateType {
+	case "single-router":
+		if ref != "" {
+			return fmt.Errorf("%s.virtualAddressRef must be empty when type is single-router", path)
+		}
+	case "vrrp-master":
+		if ref == "" {
+			return fmt.Errorf("%s.virtualAddressRef is required when type is vrrp-master", path)
+		}
+	default:
+		return fmt.Errorf("%s.type must be single-router or vrrp-master", path)
 	}
 	return nil
 }

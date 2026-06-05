@@ -6242,6 +6242,7 @@
                               "type": {
                                 "enum": [
                                   "",
+                                  "single-router",
                                   "vrrp-master"
                                 ],
                                 "type": "string"
@@ -6857,6 +6858,7 @@
                                     "type": {
                                       "enum": [
                                         "",
+                                        "single-router",
                                         "vrrp-master"
                                       ],
                                       "type": "string"
@@ -7140,6 +7142,7 @@
                                         "type": {
                                           "enum": [
                                             "",
+                                            "single-router",
                                             "vrrp-master"
                                           ],
                                           "type": "string"
