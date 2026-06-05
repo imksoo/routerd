@@ -149,7 +149,7 @@ physically or locally reachable at the correct edge.
 | AWS | ENI secondary private IP | `assign-private-ip-addresses` with allow-reassignment behavior | Standby seizes the secondary IP when active marker/path disappears. | Keep ENI permissions and source/dest check behavior consistent. |
 | Azure | NIC secondary IP via ipConfig | delete old holder ipConfig, create new holder ipConfig | Two-step remove/add; retry must handle partial failure. | There is a short window where no NIC owns the IP. Make executor idempotent. |
 | OCI | VNIC secondary private IP | `assign-private-ip --unassign-if-already-assigned` | Standby reassigns the private IP to its VNIC. | Validate VNIC/private-IP state, forwarding, and local firewall. |
-| On-prem | proxy ARP + GARP | OS networking gated by VRRP/CARP-like mastership | VRRP master enables capture and emits GARP; backup fail-closed. | Prevent duplicate ARP response; split-brain doctor must fail loudly. |
+| On-prem | proxy ARP + GARP | OS networking gated by VRRP/CARP-like mastership, or `capture.activeWhen.type: single-router` for one-site/one-router/one-owner labs | HA pairs use the VRRP master gate; a single-router site can choose always-active capture without VRRP. | Prevent duplicate ARP response; split-brain doctor must fail loudly. |
 
 Provider secondary IP reconciliation is a background fabric-ingress realization. It
 is important for cloud-native entry paths, but it must not become the source of
@@ -229,6 +229,7 @@ Rules:
 - only master answers proxy ARP for captured `/32` addresses;
 - backup stays fail-closed even if it has the same declarative intent;
 - GARP is emitted on master transition to refresh LAN caches;
+- in a one-site/one-router/one-owner deployment, `capture.activeWhen.type: single-router` is an explicit always-active proxy-ARP capture mode with no VRRP gate;
 - duplicate proxy ARP holders are a hard diagnostic failure.
 
 ## 9. Endpoint add/remove and route propagation

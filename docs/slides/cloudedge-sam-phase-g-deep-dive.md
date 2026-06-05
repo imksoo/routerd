@@ -120,6 +120,7 @@ outer packet:
 | on-prem | proxy ARP / GARP | OS networking + VRRP gate | master only, backup fail-closed |
 
 BGP best-path が owner を決める。secondary IP / ARP は ingress realization。
+単一 on-prem ルータ構成では `capture.activeWhen.type: single-router` で VRRP 無しの常時 capture を選べる。
 
 ---
 
@@ -178,6 +179,7 @@ flowchart LR
 - BGP does not replace local L2/ARP authority
 - only master realizes proxy ARP / GARP
 - backup remains fail-closed
+- single-router capture is explicit for 1 site / 1 router / 1 owner
 - duplicate proxy-ARP holders are diagnostic failures
 
 ---
