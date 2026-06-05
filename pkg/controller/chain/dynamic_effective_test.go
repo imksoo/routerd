@@ -224,6 +224,7 @@ func TestDynamicRouteSAMViewBGPProxyARPCapturePrefixRouteUsesInterfaceIfName(t *
 		api.NetAPIVersion + "/BGPRouter/mobility-bgp": {
 			"installedNextHops": map[string]any{"10.0.1.11/32": []any{"10.99.0.2"}},
 		},
+		api.NetAPIVersion + "/Interface/svnet1":          {"ipv4Addresses": []any{"192.0.2.10/32", "10.0.1.254/32"}},
 		api.NetAPIVersion + "/VirtualAddress/onprem-vip": {"role": "master"},
 	}
 	view, err := buildDynamicRouteSAMView(startup, store, time.Now().UTC(), platform.OSLinux)
@@ -231,7 +232,7 @@ func TestDynamicRouteSAMViewBGPProxyARPCapturePrefixRouteUsesInterfaceIfName(t *
 		t.Fatalf("buildDynamicRouteSAMView: %v", err)
 	}
 	route := ipv4RouteSpecByName(t, view.RouteRouter, "sam-cloudedge-capture-prefix")
-	if route.Destination != "10.0.1.0/24" || route.Device != "eth1" || route.Metric != 90 {
+	if route.Destination != "10.0.1.0/24" || route.Device != "eth1" || route.PreferredSource != "10.0.1.254" || route.Metric != 90 {
 		t.Fatalf("capture prefix route = %#v", route)
 	}
 }
