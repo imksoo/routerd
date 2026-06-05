@@ -93,7 +93,10 @@ case "$op" in
     ;;
   pmtu)
     printf 'overlay_mtu=1380\n'
+    printf 'route_mtu=1380\n'
+    printf 'route_advmss=1340\n'
     printf 'mss_clamp=1340\n'
+    printf 'effective_mss_clamp=1340\n'
     printf 'detail=df-and-clamp-ok\n'
     ;;
   source-preserved|no-nat)
