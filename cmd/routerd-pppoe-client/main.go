@@ -203,7 +203,7 @@ func daemonCommand(args []string) error {
 	if err != nil {
 		return err
 	}
-	defer telemetry.Shutdown(context.Background())
+	defer telemetry.ShutdownGracefully()
 	d := newDaemon(opts, telemetry)
 	return d.Run(ctx)
 }

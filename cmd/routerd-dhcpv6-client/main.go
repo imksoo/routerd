@@ -132,7 +132,7 @@ func daemonCommand(args []string, _ io.Writer) error {
 	if err != nil {
 		return err
 	}
-	defer telemetry.Shutdown(context.Background())
+	defer telemetry.ShutdownGracefully()
 	daemon, err := newDHCPv6Daemon(opts)
 	if err != nil {
 		return err

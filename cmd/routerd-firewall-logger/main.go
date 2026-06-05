@@ -142,7 +142,7 @@ func daemon(args []string, stdin io.Reader) error {
 	if err != nil {
 		return err
 	}
-	defer telemetry.Shutdown(context.Background())
+	defer telemetry.ShutdownGracefully()
 	startExpiredFlowWatchers(ctx, opts, log)
 	if opts.group > 0 && opts.inputFile == "" && opts.pflogInterface == "" {
 		return runNFLogDaemon(ctx, opts, log, telemetry)
