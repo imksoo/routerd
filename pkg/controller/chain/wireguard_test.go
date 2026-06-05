@@ -477,6 +477,90 @@ spec:
 	}
 }
 
+func TestWireGuardControllerUpdatesBGPMobilityAllowedIPsWithoutSetconf(t *testing.T) {
+	router := mustWireGuardRouter(t, `
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata: {name: test}
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: BGPRouter
+      metadata: {name: mobility-bgp}
+      spec:
+        asn: 64577
+        routerID: 10.99.0.1
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardInterface
+      metadata: {name: wg0}
+      spec:
+        privateKey: priv
+        listenPort: 51820
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardPeer
+      metadata: {name: peer-a}
+      spec:
+        interface: wg0
+        publicKey: peerpub-a
+        allowedIPs: [10.99.0.2/32]
+        persistentKeepalive: 25
+`)
+	store := mapStore{}
+	store.SaveObjectStatus(api.NetAPIVersion, "BGPRouter", "mobility-bgp", map[string]any{
+		"installedNextHops": map[string]any{"10.77.60.11/32": []any{"10.99.0.2"}},
+	})
+	baseCfg, err := wireguard.BuildInterface(router.Spec.Resources[1], router.Spec.Resources)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.SaveObjectStatus(api.NetAPIVersion, "WireGuardInterface", "wg0", map[string]any{
+		"baseConfigHash": wireGuardConfigHash(baseCfg, false),
+		"configHash":     wireGuardConfigHash(baseCfg, false),
+	})
+	allowedIPs := "10.99.0.2/32"
+	var calls []string
+	controller := WireGuardController{
+		Router: router,
+		Store:  store,
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			call := name + " " + strings.Join(args, " ")
+			calls = append(calls, call)
+			switch {
+			case call == "wg show wg0 dump":
+				return []byte("priv\tifacepub\t51820\toff\npeerpub-a\tpsk\t192.0.2.10:51820\t" + allowedIPs + "\t1710000000\t100\t200\t25\n"), nil
+			case call == "wg set wg0 peer peerpub-a allowed-ips 10.77.60.11/32,10.99.0.2/32":
+				allowedIPs = "10.77.60.11/32,10.99.0.2/32"
+				return nil, nil
+			default:
+				return nil, nil
+			}
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, call := range calls {
+		if strings.HasPrefix(call, "wg setconf wg0") {
+			t.Fatalf("allowedIPs-only BGP update must not reset interface with setconf: %#v", calls)
+		}
+	}
+	assertWireGuardControllerCall(t, calls, "wg set wg0 peer peerpub-a allowed-ips 10.77.60.11/32,10.99.0.2/32")
+	status := store.ObjectStatus(api.NetAPIVersion, "WireGuardInterface", "wg0")
+	if status["configHash"] == wireGuardConfigHash(baseCfg, false) {
+		t.Fatalf("configHash was not updated after allowedIPs update: %+v", status)
+	}
+}
+
+func assertWireGuardControllerCall(t *testing.T, calls []string, want string) {
+	t.Helper()
+	for _, call := range calls {
+		if call == want {
+			return
+		}
+	}
+	t.Fatalf("missing call %q in %#v", want, calls)
+}
+
 func TestWireGuardControllerMarksMissingKeyPending(t *testing.T) {
 	router := mustWireGuardRouter(t, `
 apiVersion: routerd.net/v1alpha1
