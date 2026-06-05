@@ -60,7 +60,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	defer telemetry.Shutdown(context.Background())
+	defer telemetry.ShutdownGracefully()
 	if len(args) == 0 {
 		usage(stderr)
 		return errors.New("missing command")

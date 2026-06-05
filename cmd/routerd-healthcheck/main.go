@@ -154,7 +154,7 @@ func daemonCommand(args []string) error {
 	if err != nil {
 		return err
 	}
-	defer telemetry.Shutdown(context.Background())
+	defer telemetry.ShutdownGracefully()
 	d := newDaemon(opts, telemetry)
 	d.cancel = cancel
 	return d.Run(ctx)

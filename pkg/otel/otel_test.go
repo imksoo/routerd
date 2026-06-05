@@ -3,8 +3,10 @@
 package otel
 
 import (
+	"context"
 	"runtime"
 	"testing"
+	"time"
 
 	"go.opentelemetry.io/otel/attribute"
 
@@ -62,5 +64,23 @@ func TestRuntimeCachesMetricInstruments(t *testing.T) {
 	}
 	if r.Float64Gauge("ratio") != r.Float64Gauge("ratio") {
 		t.Fatal("float64 gauge was not cached")
+	}
+}
+
+func TestRuntimeShutdownGracefullyUsesDeadline(t *testing.T) {
+	r := &Runtime{shutdown: []func(context.Context) error{
+		func(ctx context.Context) error {
+			deadline, ok := ctx.Deadline()
+			if !ok {
+				t.Fatal("shutdown context has no deadline")
+			}
+			if until := time.Until(deadline); until <= 0 || until > defaultShutdownTimeout {
+				t.Fatalf("deadline is not bounded by default timeout: %s", until)
+			}
+			return ctx.Err()
+		},
+	}}
+	if err := r.ShutdownGracefully(); err != nil {
+		t.Fatalf("shutdown returned error: %v", err)
 	}
 }

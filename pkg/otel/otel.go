@@ -43,6 +43,8 @@ type Runtime struct {
 	shutdown      []func(context.Context) error
 }
 
+const defaultShutdownTimeout = 5 * time.Second
+
 func Setup(ctx context.Context, serviceName string, attrs ...attribute.KeyValue) (*Runtime, error) {
 	runtime := &Runtime{
 		ServiceName: serviceName,
@@ -76,7 +78,7 @@ func Setup(ctx context.Context, serviceName string, attrs ...attribute.KeyValue)
 	if signalEnabled("metrics") {
 		metricExporter, err := otlpmetricgrpc.New(ctx)
 		if err != nil {
-			_ = runtime.Shutdown(context.Background())
+			_ = runtime.ShutdownGracefully()
 			return nil, err
 		}
 		meterProvider := sdkmetric.NewMeterProvider(
@@ -91,7 +93,7 @@ func Setup(ctx context.Context, serviceName string, attrs ...attribute.KeyValue)
 	if signalEnabled("traces") {
 		traceExporter, err := otlptracegrpc.New(ctx)
 		if err != nil {
-			_ = runtime.Shutdown(context.Background())
+			_ = runtime.ShutdownGracefully()
 			return nil, err
 		}
 		traceProvider := sdktrace.NewTracerProvider(
@@ -176,6 +178,12 @@ func (r *Runtime) Shutdown(ctx context.Context) error {
 		}
 	}
 	return lastErr
+}
+
+func (r *Runtime) ShutdownGracefully() error {
+	ctx, cancel := context.WithTimeout(context.Background(), defaultShutdownTimeout)
+	defer cancel()
+	return r.Shutdown(ctx)
 }
 
 func (r *Runtime) Counter(name string) otelmetric.Int64Counter {
