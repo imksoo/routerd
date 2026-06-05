@@ -191,7 +191,7 @@ func PlanCaptureWithOptions(router *api.Router, targetOS platform.OS, opts PlanO
 		return nil, nil
 	}
 	interfaces := map[string]bool{}
-	interfaceAliases := captureInterfaceAliases(router)
+	interfaceAliases := CaptureInterfaceAliases(router)
 	forwardingAdded := false
 	var actions []CaptureAction
 	addForwarding := func() {
@@ -223,7 +223,7 @@ func PlanCaptureWithOptions(router *api.Router, targetOS platform.OS, opts PlanO
 			}
 			continue
 		}
-		iface := resolveCaptureInterface(strings.TrimSpace(spec.Capture.Interface), interfaceAliases)
+		iface := ResolveCaptureInterface(strings.TrimSpace(spec.Capture.Interface), interfaceAliases)
 		if iface == "" {
 			return nil, fmt.Errorf("%s spec.capture.interface is required for proxy-arp", resource.ID())
 		}
@@ -236,7 +236,8 @@ func PlanCaptureWithOptions(router *api.Router, targetOS platform.OS, opts PlanO
 	return actions, nil
 }
 
-func captureInterfaceAliases(router *api.Router) map[string]string {
+// CaptureInterfaceAliases maps Interface resource names to their Linux ifname.
+func CaptureInterfaceAliases(router *api.Router) map[string]string {
 	out := map[string]string{}
 	if router == nil {
 		return out
@@ -258,7 +259,8 @@ func captureInterfaceAliases(router *api.Router) map[string]string {
 	return out
 }
 
-func resolveCaptureInterface(value string, aliases map[string]string) string {
+// ResolveCaptureInterface resolves a capture interface resource name to ifname.
+func ResolveCaptureInterface(value string, aliases map[string]string) string {
 	value = strings.TrimSpace(value)
 	if aliases == nil {
 		return value
