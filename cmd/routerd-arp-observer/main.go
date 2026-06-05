@@ -58,6 +58,8 @@ type options struct {
 	probeTimeout   time.Duration
 	probeRetries   int
 	probeCooldown  time.Duration
+	scanInterval   time.Duration
+	arpTablePath   string
 	selfMAC        net.HardwareAddr
 }
 
@@ -75,8 +77,10 @@ type daemon struct {
 	observedCount  uint64
 	probeCount     uint64
 	probeHitCount  uint64
+	scanCount      uint64
 	lastPacketAt   time.Time
 	lastEventAt    time.Time
+	lastScanAt     time.Time
 	lastProbeAt    map[string]time.Time
 	pendingProbe   map[string]time.Time
 	lastEventByKey map[string]time.Time
@@ -144,7 +148,7 @@ func run(args []string, stdout io.Writer) error {
 func parseOptions(name string, args []string) (options, error) {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	opts := options{sourceType: sourceARPObserver, probeTimeout: time.Second, probeCooldown: 5 * time.Second}
+	opts := options{sourceType: sourceARPObserver, probeTimeout: time.Second, probeCooldown: 5 * time.Second, scanInterval: 10 * time.Second, arpTablePath: "/proc/net/arp"}
 	prefix := ""
 	sourceAddress := ""
 	selfMAC := ""
@@ -164,6 +168,8 @@ func parseOptions(name string, args []string) (options, error) {
 	fs.DurationVar(&opts.probeTimeout, "probe-timeout", opts.probeTimeout, "delay between probe retries")
 	fs.IntVar(&opts.probeRetries, "probe-retries", 0, "additional ARP probe retries")
 	fs.DurationVar(&opts.probeCooldown, "probe-cooldown", opts.probeCooldown, "minimum interval between probes for the same target")
+	fs.DurationVar(&opts.scanInterval, "scan-interval", opts.scanInterval, "interval for polling the local ARP table")
+	fs.StringVar(&opts.arpTablePath, "arp-table", opts.arpTablePath, "Linux /proc/net/arp path")
 	fs.StringVar(&selfMAC, "self-mac", "", "local sender MAC for active probes")
 	if err := fs.Parse(args); err != nil {
 		return opts, err
@@ -230,6 +236,9 @@ func parseOptions(name string, args []string) (options, error) {
 	if opts.probeTimeout <= 0 {
 		opts.probeTimeout = time.Second
 	}
+	if opts.scanInterval <= 0 {
+		opts.scanInterval = 10 * time.Second
+	}
 	return opts, nil
 }
 
@@ -250,6 +259,9 @@ func daemonCommand(args []string) error {
 	}
 	d.cond = sync.NewCond(&d.mu)
 	go d.observe(ctx)
+	if opts.sourceType == sourcePVESVNet {
+		go d.pollARPTable(ctx)
+	}
 	return d.serve(ctx)
 }
 
@@ -319,6 +331,44 @@ func (d *daemon) recordPacket(ctx context.Context, socket *packetSocket, packet 
 		if d.shouldProbe(packet.TargetIP, now) {
 			go d.probeTarget(ctx, socket, packet.TargetIP)
 		}
+	}
+}
+
+func (d *daemon) pollARPTable(ctx context.Context) {
+	ticker := time.NewTicker(d.opts.scanInterval)
+	defer ticker.Stop()
+	for {
+		d.scanARPTable()
+		select {
+		case <-ticker.C:
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+func (d *daemon) scanARPTable() {
+	entries, err := readARPTable(d.opts.arpTablePath)
+	now := time.Now().UTC()
+	d.mu.Lock()
+	d.scanCount++
+	d.lastScanAt = now
+	d.mu.Unlock()
+	if err != nil {
+		d.setObserverError(err)
+		return
+	}
+	for _, entry := range entries {
+		if !arpTableDeviceMatches(entry.Device, d.opts.ifname, d.opts.eventInterface, d.opts.bridge) {
+			continue
+		}
+		if !entry.IP.IsValid() || !entry.IP.Is4() || entry.IP.IsUnspecified() || !d.opts.prefix.Contains(entry.IP) {
+			continue
+		}
+		if len(entry.MAC) != 6 {
+			continue
+		}
+		d.publishObservation(entry.IP, entry.MAC, eventPVESVNetObserved, sourcePVESVNet, "PVESVNetObserved", "observed local PVE svnet ARP table entry")
 	}
 }
 
@@ -493,6 +543,8 @@ func (d *daemon) status() daemonapi.DaemonStatus {
 		"observedCount":   strconv.FormatUint(d.observedCount, 10),
 		"probeCount":      strconv.FormatUint(d.probeCount, 10),
 		"probeHitCount":   strconv.FormatUint(d.probeHitCount, 10),
+		"scanCount":       strconv.FormatUint(d.scanCount, 10),
+		"scanInterval":    d.opts.scanInterval.String(),
 		"observedClients": string(clients),
 	}
 	if !d.lastPacketAt.IsZero() {
@@ -500,6 +552,9 @@ func (d *daemon) status() daemonapi.DaemonStatus {
 	}
 	if !d.lastEventAt.IsZero() {
 		observed["lastEventAt"] = d.lastEventAt.Format(time.RFC3339Nano)
+	}
+	if !d.lastScanAt.IsZero() {
+		observed["lastScanAt"] = d.lastScanAt.Format(time.RFC3339Nano)
 	}
 	if d.observerError != "" {
 		observed["error"] = d.observerError
@@ -667,6 +722,66 @@ func buildARPRequest(senderMAC net.HardwareAddr, source, target netip.Addr) []by
 	tgt := target.As4()
 	copy(frame[38:42], tgt[:])
 	return frame
+}
+
+type arpTableEntry struct {
+	IP     netip.Addr
+	MAC    net.HardwareAddr
+	Device string
+}
+
+func readARPTable(path string) ([]arpTableEntry, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	return parseARPTable(file), nil
+}
+
+func parseARPTable(r io.Reader) []arpTableEntry {
+	data, err := io.ReadAll(io.LimitReader(r, 4<<20))
+	if err != nil {
+		return nil
+	}
+	var out []arpTableEntry
+	for i, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || i == 0 {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 6 {
+			continue
+		}
+		flags, err := strconv.ParseInt(strings.TrimPrefix(fields[2], "0x"), 16, 64)
+		if err != nil || flags&0x2 == 0 {
+			continue
+		}
+		ip, err := netip.ParseAddr(fields[0])
+		if err != nil || !ip.Is4() {
+			continue
+		}
+		mac, err := net.ParseMAC(fields[3])
+		if err != nil || len(mac) != 6 || strings.EqualFold(mac.String(), "00:00:00:00:00:00") {
+			continue
+		}
+		out = append(out, arpTableEntry{IP: ip, MAC: mac, Device: fields[5]})
+	}
+	return out
+}
+
+func arpTableDeviceMatches(device string, candidates ...string) bool {
+	device = strings.TrimSpace(device)
+	if device == "" {
+		return false
+	}
+	for _, candidate := range candidates {
+		if strings.TrimSpace(candidate) == device {
+			return true
+		}
+	}
+	return false
 }
 
 func passiveTopic(sourceType string) string {

@@ -1625,6 +1625,9 @@ func (r *Runner) superviseClientDaemons(ctx context.Context, logger *slog.Logger
 		if spec.ProbeRetries != 0 {
 			args = append(args, "--probe-retries", fmt.Sprintf("%d", spec.ProbeRetries))
 		}
+		if spec.ScanInterval != "" {
+			args = append(args, "--scan-interval", spec.ScanInterval)
+		}
 		r.startSupervisedDaemon(ctx, logger, spec.ResourceName, "routerd-arp-observer", args)
 	}
 }
@@ -1645,6 +1648,7 @@ type mobilityARPObserverDaemonSpec struct {
 	OnDemand       bool
 	ProbeTimeout   string
 	ProbeRetries   int
+	ScanInterval   string
 }
 
 func (r *Runner) mobilityARPObserverDaemonSpecs() []mobilityARPObserverDaemonSpec {
@@ -1715,6 +1719,7 @@ func (r *Runner) mobilityARPObserverDaemonSpecs() []mobilityARPObserverDaemonSpe
 				OnDemand:       sourceType == mobilitycontroller.OnPremSourceOnDemandARP,
 				ProbeTimeout:   strings.TrimSpace(source.ProbeTimeout),
 				ProbeRetries:   source.ProbeRetries,
+				ScanInterval:   strings.TrimSpace(source.ScanInterval),
 			})
 		}
 	}

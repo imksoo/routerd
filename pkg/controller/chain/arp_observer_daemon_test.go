@@ -27,7 +27,7 @@ func TestRunnerMobilityARPObserverDaemonSpecsFromOnPremL2Sources(t *testing.T) {
 						Sources: []api.MobilityOwnershipDiscoverySource{
 							{Type: "arp-observer", Interface: "svnet1"},
 							{Type: "on-demand-arp", Interface: "svnet1", ProbeTimeout: "500ms", ProbeRetries: 2, SourceAddressFrom: api.StatusValueSourceSpec{Resource: "DHCPv4Client/svnet1-source", Field: "currentAddress"}},
-							{Type: "pve-svnet", Interface: "svnet1", Network: "svnet1", Bridge: "vmbr123"},
+							{Type: "pve-svnet", Interface: "svnet1", Network: "svnet1", Bridge: "vmbr123", ScanInterval: "3s"},
 						},
 					},
 				},
@@ -62,7 +62,7 @@ func TestRunnerMobilityARPObserverDaemonSpecsFromOnPremL2Sources(t *testing.T) {
 	if byType["on-demand-arp"].ProbeTimeout != "500ms" || byType["on-demand-arp"].ProbeRetries != 2 {
 		t.Fatalf("on-demand probe settings = %#v", byType["on-demand-arp"])
 	}
-	if byType["pve-svnet"].Network != "svnet1" || byType["pve-svnet"].Bridge != "vmbr123" {
+	if byType["pve-svnet"].Network != "svnet1" || byType["pve-svnet"].Bridge != "vmbr123" || byType["pve-svnet"].ScanInterval != "3s" {
 		t.Fatalf("pve-svnet metadata = %#v", byType["pve-svnet"])
 	}
 }

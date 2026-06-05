@@ -5,6 +5,7 @@ package main
 import (
 	"net"
 	"net/netip"
+	"strings"
 	"testing"
 )
 
@@ -67,6 +68,24 @@ func TestParseOptionsDefaultsSourceModes(t *testing.T) {
 	}
 	if !opts.observe || opts.onDemand {
 		t.Fatalf("pve-svnet defaults = observe:%v onDemand:%v, want observe:true onDemand:false", opts.observe, opts.onDemand)
+	}
+}
+
+func TestParseARPTableKeepsCompleteIPv4Entries(t *testing.T) {
+	entries := parseARPTable(strings.NewReader(`IP address       HW type     Flags       HW address            Mask     Device
+192.168.123.129  0x1         0x2         02:00:00:00:00:11     *        vmbr123
+192.168.123.130  0x1         0x0         02:00:00:00:00:12     *        vmbr123
+192.168.123.131  0x1         0x2         00:00:00:00:00:00     *        vmbr123
+fe80::1          0x1         0x2         02:00:00:00:00:13     *        vmbr123
+`))
+	if len(entries) != 1 {
+		t.Fatalf("entries = %#v, want one complete IPv4 entry", entries)
+	}
+	if entries[0].IP.String() != "192.168.123.129" || entries[0].MAC.String() != "02:00:00:00:00:11" || entries[0].Device != "vmbr123" {
+		t.Fatalf("entry = %#v", entries[0])
+	}
+	if !arpTableDeviceMatches("vmbr123", "eth1", "svnet1", "vmbr123") {
+		t.Fatal("arpTableDeviceMatches did not match bridge")
 	}
 }
 
