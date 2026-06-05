@@ -323,6 +323,18 @@ func appliedPeer(peer bgpdaemon.AppliedPeer, global bgpdaemon.AppliedGlobal) *go
 			RouteReflectorClusterId: strings.TrimSpace(peer.RouteReflectorClusterID),
 		}
 	}
+	if len(appliedExportPolicyPrefixes(peer.ExportPolicy)) > 0 && strings.TrimSpace(peer.ExportPolicyName) != "" {
+		out.ApplyPolicy = &gobgpapi.ApplyPolicy{
+			ExportPolicy: &gobgpapi.PolicyAssignment{
+				Name:          strings.TrimSpace(peer.Address),
+				Direction:     gobgpapi.PolicyDirection_EXPORT,
+				DefaultAction: gobgpapi.RouteAction_REJECT,
+				Policies: []*gobgpapi.Policy{{
+					Name: strings.TrimSpace(peer.ExportPolicyName),
+				}},
+			},
+		}
+	}
 	return out
 }
 
@@ -354,11 +366,13 @@ func appliedPolicies(config bgpdaemon.AppliedConfig) (*gobgpapi.SetPoliciesReque
 		Direction:     gobgpapi.PolicyDirection_IMPORT,
 		DefaultAction: gobgpapi.RouteAction_REJECT,
 	}
+	importPolicyNames := map[string]bool{}
 	for _, policy := range appliedImportPolicies(config) {
 		prefixes := appliedPolicyPrefixes(policy.Spec)
 		if len(prefixes) == 0 {
 			continue
 		}
+		importPolicyNames[policy.Name] = true
 		prefixSetName := policy.Name + "-prefixes"
 		req.DefinedSets = append(req.DefinedSets, &gobgpapi.DefinedSet{
 			DefinedType: gobgpapi.DefinedType_PREFIX,
@@ -380,8 +394,34 @@ func appliedPolicies(config bgpdaemon.AppliedConfig) (*gobgpapi.SetPoliciesReque
 			}},
 		})
 	}
+	for _, policy := range appliedExportPolicies(config) {
+		prefixes := appliedExportPolicyPrefixes(policy.Spec)
+		if len(prefixes) == 0 {
+			continue
+		}
+		prefixSetName := policy.Name + "-prefixes"
+		req.DefinedSets = append(req.DefinedSets, &gobgpapi.DefinedSet{
+			DefinedType: gobgpapi.DefinedType_PREFIX,
+			Name:        prefixSetName,
+			Prefixes:    prefixes,
+		})
+		req.Policies = append(req.Policies, &gobgpapi.Policy{
+			Name: policy.Name,
+			Statements: []*gobgpapi.Statement{{
+				Name: appliedPolicyStatementName(policy.Name, "allow-export"),
+				Conditions: &gobgpapi.Conditions{PrefixSet: &gobgpapi.MatchSet{
+					Type: gobgpapi.MatchSet_ANY,
+					Name: prefixSetName,
+				}},
+				Actions: &gobgpapi.Actions{RouteAction: gobgpapi.RouteAction_ACCEPT},
+			}},
+		})
+	}
 	if len(req.GetPolicies()) > 0 {
 		for _, policy := range req.GetPolicies() {
+			if !importPolicyNames[policy.GetName()] {
+				continue
+			}
 			assignment.Policies = append(assignment.Policies, &gobgpapi.Policy{Name: policy.GetName()})
 		}
 	}
@@ -423,6 +463,32 @@ func appliedImportPolicies(config bgpdaemon.AppliedConfig) []appliedImportPolicy
 	return policies
 }
 
+type appliedExportPolicy struct {
+	Name string
+	Spec bgpdaemon.AppliedExportPolicy
+}
+
+func appliedExportPolicies(config bgpdaemon.AppliedConfig) []appliedExportPolicy {
+	byName := map[string]bgpdaemon.AppliedExportPolicy{}
+	for _, peer := range config.Peers {
+		name := strings.TrimSpace(peer.ExportPolicyName)
+		if name == "" || len(appliedExportPolicyPrefixes(peer.ExportPolicy)) == 0 {
+			continue
+		}
+		byName[name] = peer.ExportPolicy
+	}
+	var names []string
+	for name := range byName {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	policies := make([]appliedExportPolicy, 0, len(names))
+	for _, name := range names {
+		policies = append(policies, appliedExportPolicy{Name: name, Spec: byName[name]})
+	}
+	return policies
+}
+
 func appliedPolicyStatementName(policyName, suffix string) string {
 	return strings.TrimSpace(policyName) + "-" + suffix
 }
@@ -439,6 +505,10 @@ func appliedPolicyPrefixes(spec bgpdaemon.AppliedImportPolicy) []*gobgpapi.Prefi
 		out = append(out, &gobgpapi.Prefix{IpPrefix: prefix.String(), MaskLengthMin: bits, MaskLengthMax: appliedPrefixMaxLength(prefix)})
 	}
 	return out
+}
+
+func appliedExportPolicyPrefixes(spec bgpdaemon.AppliedExportPolicy) []*gobgpapi.Prefix {
+	return appliedPolicyPrefixes(bgpdaemon.AppliedImportPolicy{AllowedPrefixes: spec.AllowedPrefixes})
 }
 
 func appliedPrefixMaxLength(prefix netip.Prefix) uint32 {

@@ -72,6 +72,43 @@ func TestAppliedPoliciesRestorePeerImportPolicyWithoutGlobalPolicy(t *testing.T)
 	}
 }
 
+func TestAppliedPoliciesRestorePeerExportPolicy(t *testing.T) {
+	peer := bgpdaemon.AppliedPeer{
+		Address:          "10.252.0.18",
+		ASN:              64512,
+		ImportPolicyName: "routerd-lan-import",
+		ImportPolicy: bgpdaemon.AppliedImportPolicy{
+			AllowedPrefixes: []string{"10.252.0.0/24"},
+		},
+		ExportPolicyName: "routerd-lan-export-10-252-0-2",
+		ExportPolicy: bgpdaemon.AppliedExportPolicy{
+			AllowedPrefixes: []string{"192.168.123.129/32", "192.168.123.132/32"},
+		},
+	}
+	req, assignment := appliedPolicies(bgpdaemon.AppliedConfig{
+		Peers: map[string]bgpdaemon.AppliedPeer{
+			"10.252.0.18": peer,
+		},
+	})
+	if !appliedPolicyRequestHasStatement(req, "routerd-lan-import", "routerd-lan-import-allow-import") {
+		t.Fatalf("restore policies = %#v, want import policy", req)
+	}
+	if !appliedPolicyRequestHasStatement(req, "routerd-lan-export-10-252-0-2", "routerd-lan-export-10-252-0-2-allow-export") {
+		t.Fatalf("restore policies = %#v, want peer export policy", req)
+	}
+	if len(assignment.GetPolicies()) != 1 || assignment.GetPolicies()[0].GetName() != "routerd-lan-import" {
+		t.Fatalf("global import assignment = %#v, want only import policy", assignment)
+	}
+	restoredPeer := appliedPeer(peer, bgpdaemon.AppliedGlobal{ASN: 64512})
+	exportAssignment := restoredPeer.GetApplyPolicy().GetExportPolicy()
+	if exportAssignment.GetDirection() != gobgpapi.PolicyDirection_EXPORT ||
+		exportAssignment.GetDefaultAction() != gobgpapi.RouteAction_REJECT ||
+		len(exportAssignment.GetPolicies()) != 1 ||
+		exportAssignment.GetPolicies()[0].GetName() != "routerd-lan-export-10-252-0-2" {
+		t.Fatalf("restored peer export policy = %#v, want export assignment", exportAssignment)
+	}
+}
+
 func TestAppliedPoliciesRestoreMultipleImportPoliciesWithUniqueStatements(t *testing.T) {
 	req, _ := appliedPolicies(bgpdaemon.AppliedConfig{
 		Peers: map[string]bgpdaemon.AppliedPeer{
