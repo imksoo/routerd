@@ -252,3 +252,5 @@ NixOS, FreeBSD, and Alpine:
 ## Implementation guideline for OS abstraction
 
 When you add a new OS-specific behaviour, do not branch on `runtime.GOOS` in business logic. Use the `pkg/platform` layer (`platform.Features`) or Go build tags to keep the boundaries explicit. Failing fast at validation or planning is preferred over surprising the operator at runtime on an unsupported OS.
+
+<!-- temporary CI website-build probe: remove in next commit -->
