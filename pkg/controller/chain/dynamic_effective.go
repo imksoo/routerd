@@ -31,6 +31,16 @@ type dynamicRouteSAMView struct {
 	SAMLowerings    []sam.DeliveryLowering
 }
 
+// BuildDynamicRouteSAMEffectiveRouter returns the route-facing effective router
+// used by route and SAM controllers after dynamic config and SAM lowerings.
+func BuildDynamicRouteSAMEffectiveRouter(startup *api.Router, store any, now time.Time, targetOS platform.OS) (*api.Router, error) {
+	view, err := buildDynamicRouteSAMView(startup, store, now, targetOS)
+	if err != nil {
+		return nil, err
+	}
+	return view.RouteRouter, nil
+}
+
 func buildDynamicRouteSAMView(startup *api.Router, store any, now time.Time, targetOS platform.OS) (dynamicRouteSAMView, error) {
 	if startup == nil {
 		return dynamicRouteSAMView{}, fmt.Errorf("startup router is required")

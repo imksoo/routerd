@@ -1471,6 +1471,145 @@ spec:
 	}
 }
 
+func TestShowDerivedResourcesUsesDynamicSAMViewForStaleState(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "router.yaml")
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.FederationAPIVersion, Kind: "EventGroup"},
+				Metadata: api.ObjectMeta{Name: "cloudedge"},
+				Spec:     api.EventGroupSpec{NodeName: "onprem-router"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "svnet1"},
+				Spec:     api.InterfaceSpec{IfName: "eth1", Managed: true},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"},
+				Metadata: api.ObjectMeta{Name: "mobility-bgp"},
+				Spec:     api.BGPRouterSpec{ASN: 64577, RouterID: "10.99.0.1"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"},
+				Metadata: api.ObjectMeta{Name: "onprem-vip"},
+				Spec: api.VirtualAddressSpec{
+					Family:    "ipv4",
+					Interface: "svnet1",
+					Address:   "10.0.1.1/32",
+					Mode:      "vrrp",
+					VRRP:      api.VirtualAddressVRRPSpec{VirtualRouterID: 40, Peers: []string{"10.0.1.2"}},
+				},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"},
+				Metadata: api.ObjectMeta{Name: "cloudedge"},
+				Spec: api.MobilityPoolSpec{
+					Prefix:         "10.0.1.0/24",
+					GroupRef:       "cloudedge",
+					DeliveryPolicy: api.MobilityDeliveryPolicy{Mode: "bgp"},
+					Members: []api.MobilityPoolMember{
+						{
+							NodeRef:              "onprem-router",
+							Site:                 "onprem",
+							Role:                 "onprem",
+							StaticOwnedAddresses: []string{"10.0.1.10/32"},
+							Capture: api.MobilityMemberCapture{
+								Type:          "proxy-arp",
+								Interface:     "svnet1",
+								SourceAddress: "10.0.1.254",
+								ActiveWhen:    api.CaptureActiveWhen{Type: "vrrp-master", VirtualAddressRef: "onprem-vip"},
+							},
+						},
+						{
+							NodeRef: "aws-router",
+							Site:    "aws",
+							Role:    "cloud",
+							Capture: api.MobilityMemberCapture{Type: "provider-secondary-ip", Interface: "ens5"},
+						},
+					},
+				},
+			},
+		}},
+	}
+	data, err := yaml.Marshal(router)
+	if err != nil {
+		t.Fatalf("marshal config: %v", err)
+	}
+	if err := os.WriteFile(configPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	dbPath := filepath.Join(dir, "routerd.db")
+	store, err := routerstate.OpenSQLite(dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite state: %v", err)
+	}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "BGPRouter", "mobility-bgp", map[string]any{
+		"installedNextHops": map[string]any{"10.0.1.11/32": []any{"10.99.0.2"}},
+	}); err != nil {
+		t.Fatalf("save bgp status: %v", err)
+	}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "VirtualAddress", "onprem-vip", map[string]any{"role": "master"}); err != nil {
+		t.Fatalf("save virtual address status: %v", err)
+	}
+	for _, item := range []struct {
+		kind string
+		name string
+	}{
+		{kind: "IPv4Route", name: "sam-cloudedge-capture-prefix"},
+		{kind: "IPv4StaticAddress", name: "sam-cloudedge-capture-source"},
+	} {
+		if err := store.SaveObjectStatus(api.NetAPIVersion, item.kind, item.name, map[string]any{
+			"phase":  "Applied",
+			"source": "sam",
+		}); err != nil {
+			t.Fatalf("save %s/%s status: %v", item.kind, item.name, err)
+		}
+	}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "IPv4Route", "old-capture-prefix", map[string]any{"phase": "Applied"}); err != nil {
+		t.Fatalf("save stale route status: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close sqlite state: %v", err)
+	}
+
+	var out bytes.Buffer
+	err = run([]string{"show", "derived-resources", "--config", configPath, "--state-file", dbPath, "--include-stale", "-o", "json"}, &out, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("show derived-resources --include-stale: %v", err)
+	}
+	var rows []showResource
+	if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
+		t.Fatalf("unmarshal output: %v\n%s", err, out.String())
+	}
+	byName := map[string]showResource{}
+	for _, row := range rows {
+		byName[row.Name] = row
+	}
+	for _, name := range []string{"sam-cloudedge-capture-prefix", "sam-cloudedge-capture-source"} {
+		row, ok := byName[name]
+		if !ok {
+			t.Fatalf("derived resources output missing %s:\n%s", name, out.String())
+		}
+		if row.Stale || statusString(row.Observed["reason"]) == "StaleStateNotInCurrentConfig" {
+			t.Fatalf("%s marked stale: %#v", name, row)
+		}
+		if phase := statusString(row.Observed["phase"]); phase != "Applied" {
+			t.Fatalf("%s phase = %q, want Applied", name, phase)
+		}
+	}
+	stale, ok := byName["old-capture-prefix"]
+	if !ok {
+		t.Fatalf("derived resources output missing real stale route:\n%s", out.String())
+	}
+	if !stale.Stale || statusString(stale.Observed["reason"]) != "StaleStateNotInCurrentConfig" {
+		t.Fatalf("real stale route not marked stale: %#v", stale)
+	}
+}
+
 func TestDiagnoseEgressShowsPolicyHealthAndNAT(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "router.yaml")
