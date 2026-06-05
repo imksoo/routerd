@@ -4,8 +4,6 @@ title: Supported platforms
 
 # Supported platforms
 
-<!-- codex website-skip non-changelog docs probe -->
-
 routerd is designed to be cross-OS, but each platform uses a different host integration model. This page lists the concrete OS surfaces routerd uses on each platform, so you can review generated files and runtime ownership before applying a router configuration.
 
 ## Linux (Ubuntu / Debian)
