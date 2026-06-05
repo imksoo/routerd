@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/platform"
 )
 
 func TestDHCPv4ServerLeaseSyncRunsRsync(t *testing.T) {
@@ -128,8 +129,48 @@ func TestDHCPv4ServerLeaseSyncMissingLeaseFileIsPending(t *testing.T) {
 
 func TestDHCPv4ServerLeaseSyncDefaultLeaseFileMatchesRuntimeDnsmasq(t *testing.T) {
 	got := defaultDHCPv4LeaseFile()
-	if !strings.HasSuffix(got, "/run/routerd/dnsmasq.leases") {
-		t.Fatalf("default DHCPv4 lease file = %q, want runtime dnsmasq lease path", got)
+	defaults, features := platform.Current()
+	if want := defaultDNSMasqLeaseFileFor(defaults, features); got != want {
+		t.Fatalf("default DHCPv4 lease file = %q, want %q", got, want)
+	}
+}
+
+func TestDefaultDNSMasqLeaseFileUsesPlatformHelpers(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		defaults platform.Defaults
+		features platform.Features
+		want     string
+	}{
+		{
+			name:     "linux",
+			defaults: platform.Defaults{RuntimeDir: "/run/routerd", StateDir: "/var/lib/routerd"},
+			features: platform.Features{},
+			want:     "/run/routerd/dnsmasq.leases",
+		},
+		{
+			name:     "freebsd-rcd",
+			defaults: platform.Defaults{RuntimeDir: "/var/run/routerd", StateDir: "/var/db/routerd"},
+			features: platform.Features{HasRCD: true},
+			want:     "/var/db/routerd/dnsmasq/dnsmasq.leases",
+		},
+		{
+			name:     "openrc",
+			defaults: platform.Defaults{RuntimeDir: "/run/routerd", StateDir: "/var/lib/routerd"},
+			features: platform.Features{HasOpenRC: true},
+			want:     "/var/lib/routerd/dnsmasq/dnsmasq.leases",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got := defaultDNSMasqLeaseFileFor(tt.defaults, tt.features)
+			if got != tt.want {
+				t.Fatalf("defaultDNSMasqLeaseFileFor = %q, want %q", got, tt.want)
+			}
+			candidates := platform.DnsmasqLeaseCandidates(tt.defaults, tt.features)
+			if len(candidates) == 0 || got != candidates[0] {
+				t.Fatalf("defaultDNSMasqLeaseFileFor = %q, want first candidate from %#v", got, candidates)
+			}
+		})
 	}
 }
 
