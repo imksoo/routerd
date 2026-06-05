@@ -242,6 +242,14 @@ generated provider `ActionPlan.target` values. Put identifiers such as region,
 compartment ID, resource group, NIC name, or IP config name there; credentials,
 tokens, and private keys must stay in provider auth mechanisms.
 
+For BGP-mode on-prem `proxy-arp` capture, `members[].capture.sourceAddress`
+optionally declares the router's local sender address on the capture
+interface. routerd lowers this to an `IPv4StaticAddress` `/32` and uses it as
+the capture-prefix route preferred source. This is useful when the capture
+interface otherwise has no IPv4 address: Linux ARP for local same-subnet
+clients then uses an address inside the mobility prefix instead of falling back
+to an unrelated management address.
+
 For `proxy-arp` capture on Linux, routerd:
 
 - enables `net.ipv4.conf.<capture-interface>.proxy_arp=1` through the normal

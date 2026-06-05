@@ -156,6 +156,9 @@ func mergeCapture(base, override api.MobilityMemberCapture) api.MobilityMemberCa
 	if strings.TrimSpace(override.Interface) != "" {
 		out.Interface = override.Interface
 	}
+	if strings.TrimSpace(override.SourceAddress) != "" {
+		out.SourceAddress = override.SourceAddress
+	}
 	if override.GratuitousARP {
 		out.GratuitousARP = true
 	}
@@ -295,6 +298,7 @@ func captureSet(c api.MobilityMemberCapture) bool {
 		strings.TrimSpace(c.NICRef) != "" ||
 		c.ConfigureOSAddress ||
 		strings.TrimSpace(c.Interface) != "" ||
+		strings.TrimSpace(c.SourceAddress) != "" ||
 		c.GratuitousARP ||
 		strings.TrimSpace(c.ActiveWhen.Type) != "" ||
 		strings.TrimSpace(c.ActiveWhen.VirtualAddressRef) != "" ||

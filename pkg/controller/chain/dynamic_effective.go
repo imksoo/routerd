@@ -167,7 +167,7 @@ func appendBGPMobilityCapturePrefixRoutes(effective, routeRouter api.Router, sto
 	}
 	aliases := interfaceIfNames(effective)
 	reader := statusReaderFromStore(store)
-	var routes []api.Resource
+	var resources []api.Resource
 	for _, resource := range effective.Spec.Resources {
 		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "MobilityPool" {
 			continue
@@ -199,15 +199,68 @@ func appendBGPMobilityCapturePrefixRoutes(effective, routeRouter api.Router, sto
 		if device == "" {
 			continue
 		}
-		preferredSource := capturePrefixPreferredSource(effective, reader, strings.TrimSpace(self.Capture.Interface), device, prefix.Masked())
-		routes = append(routes, bgpMobilityCapturePrefixRoute(resource.Metadata.Name, prefix.Masked().String(), device, preferredSource))
+		captureInterface := strings.TrimSpace(self.Capture.Interface)
+		preferredSource := strings.TrimSpace(self.Capture.SourceAddress)
+		if cidr, source, ok := bgpMobilityCaptureSourceAddress(resource.Metadata.Name, captureInterface, preferredSource, prefix.Masked()); ok {
+			resources = append(resources, cidr)
+			preferredSource = source
+		} else {
+			preferredSource = capturePrefixPreferredSource(effective, reader, captureInterface, device, prefix.Masked())
+		}
+		resources = append(resources, bgpMobilityCapturePrefixRoute(resource.Metadata.Name, prefix.Masked().String(), device, preferredSource))
 	}
-	if len(routes) == 0 {
+	if len(resources) == 0 {
 		return routeRouter
 	}
 	out := routeRouter
-	out.Spec.Resources = append(append([]api.Resource(nil), routeRouter.Spec.Resources...), routes...)
+	out.Spec.Resources = append(append([]api.Resource(nil), routeRouter.Spec.Resources...), resources...)
 	return out
+}
+
+func bgpMobilityCaptureSourceAddress(poolName, captureInterface, sourceAddress string, pool netip.Prefix) (api.Resource, string, bool) {
+	cidr, source, ok := normalizeBGPMobilityCaptureSourceAddress(sourceAddress, pool)
+	if !ok || strings.TrimSpace(captureInterface) == "" {
+		return api.Resource{}, "", false
+	}
+	return api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},
+		Metadata: api.ObjectMeta{
+			Name: "sam-" + safeResourceName(poolName) + "-capture-source",
+			Annotations: map[string]string{
+				"mobility.routerd.net/pool":   poolName,
+				"mobility.routerd.net/source": "bgp-capture-source",
+			},
+		},
+		Spec: api.IPv4StaticAddressSpec{
+			Interface: strings.TrimSpace(captureInterface),
+			Address:   cidr,
+		},
+	}, source, true
+}
+
+func normalizeBGPMobilityCaptureSourceAddress(sourceAddress string, pool netip.Prefix) (string, string, bool) {
+	sourceAddress = strings.TrimSpace(sourceAddress)
+	if sourceAddress == "" || !pool.Addr().Is4() {
+		return "", "", false
+	}
+	var addr netip.Addr
+	if strings.Contains(sourceAddress, "/") {
+		prefix, err := netip.ParsePrefix(sourceAddress)
+		if err != nil || !prefix.Addr().Is4() {
+			return "", "", false
+		}
+		addr = prefix.Addr()
+	} else {
+		parsed, err := netip.ParseAddr(sourceAddress)
+		if err != nil || !parsed.Is4() {
+			return "", "", false
+		}
+		addr = parsed
+	}
+	if !pool.Contains(addr) {
+		return "", "", false
+	}
+	return netip.PrefixFrom(addr, 32).String(), addr.String(), true
 }
 
 func bgpMobilityCapturePrefixRoute(poolName, prefix, device, preferredSource string) api.Resource {

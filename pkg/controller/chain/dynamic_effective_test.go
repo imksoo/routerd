@@ -237,6 +237,42 @@ func TestDynamicRouteSAMViewBGPProxyARPCapturePrefixRouteUsesInterfaceIfName(t *
 	}
 }
 
+func TestDynamicRouteSAMViewBGPProxyARPCaptureSourceAddressLowersStaticAddress(t *testing.T) {
+	startup := bgpProxyARPStartup(false)
+	startup.Spec.Resources = append(startup.Spec.Resources, api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+		Metadata: api.ObjectMeta{Name: "svnet1"},
+		Spec:     api.InterfaceSpec{IfName: "eth1", Managed: true},
+	})
+	for i, resource := range startup.Spec.Resources {
+		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "MobilityPool" {
+			continue
+		}
+		spec := resource.Spec.(api.MobilityPoolSpec)
+		spec.Members[0].Capture.Interface = "svnet1"
+		spec.Members[0].Capture.SourceAddress = "10.0.1.254"
+		startup.Spec.Resources[i].Spec = spec
+	}
+	store := mapStore{
+		api.NetAPIVersion + "/BGPRouter/mobility-bgp": {
+			"installedNextHops": map[string]any{"10.0.1.11/32": []any{"10.99.0.2"}},
+		},
+		api.NetAPIVersion + "/VirtualAddress/onprem-vip": {"role": "master"},
+	}
+	view, err := buildDynamicRouteSAMView(startup, store, time.Now().UTC(), platform.OSLinux)
+	if err != nil {
+		t.Fatalf("buildDynamicRouteSAMView: %v", err)
+	}
+	address := ipv4StaticAddressSpecByName(t, view.RouteRouter, "sam-cloudedge-capture-source")
+	if address.Interface != "svnet1" || address.Address != "10.0.1.254/32" {
+		t.Fatalf("capture source address = %#v", address)
+	}
+	route := ipv4RouteSpecByName(t, view.RouteRouter, "sam-cloudedge-capture-prefix")
+	if route.Destination != "10.0.1.0/24" || route.Device != "eth1" || route.PreferredSource != "10.0.1.254" || route.Metric != 90 {
+		t.Fatalf("capture prefix route = %#v", route)
+	}
+}
+
 func TestDynamicRouteSAMViewBGPProxyARPCapturePrefixRouteHonorsGate(t *testing.T) {
 	store := mapStore{
 		api.NetAPIVersion + "/BGPRouter/mobility-bgp": {
@@ -628,4 +664,22 @@ func ipv4RouteSpecByName(t *testing.T, router *api.Router, name string) api.IPv4
 	}
 	t.Fatalf("IPv4Route/%s not found", name)
 	return api.IPv4RouteSpec{}
+}
+
+func ipv4StaticAddressSpecByName(t *testing.T, router *api.Router, name string) api.IPv4StaticAddressSpec {
+	t.Helper()
+	if router == nil {
+		t.Fatalf("router is nil")
+	}
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion == api.NetAPIVersion && resource.Kind == "IPv4StaticAddress" && resource.Metadata.Name == name {
+			spec, err := resource.IPv4StaticAddressSpec()
+			if err != nil {
+				t.Fatalf("%s IPv4StaticAddressSpec: %v", name, err)
+			}
+			return spec
+		}
+	}
+	t.Fatalf("IPv4StaticAddress/%s not found", name)
+	return api.IPv4StaticAddressSpec{}
 }

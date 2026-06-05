@@ -7634,6 +7634,10 @@
                                 "providerRef": {
                                   "type": "string"
                                 },
+                                "sourceAddress": {
+                                  "description": "SourceAddress is an optional local IPv4 address used by proxy-ARP capture\nmembers as the capture-interface sender address. In BGP delivery mode,\nrouterd lowers it to a /32 IPv4StaticAddress and uses it as the capture\nprefix route preferred source so Linux ARP for local same-subnet clients\nstays inside the mobility prefix.",
+                                  "type": "string"
+                                },
                                 "target": {
                                   "additionalProperties": {
                                     "type": "string"
@@ -7916,6 +7920,10 @@
                                       "type": "string"
                                     },
                                     "providerRef": {
+                                      "type": "string"
+                                    },
+                                    "sourceAddress": {
+                                      "description": "SourceAddress is an optional local IPv4 address used by proxy-ARP capture\nmembers as the capture-interface sender address. In BGP delivery mode,\nrouterd lowers it to a /32 IPv4StaticAddress and uses it as the capture\nprefix route preferred source so Linux ARP for local same-subnet clients\nstays inside the mobility prefix.",
                                       "type": "string"
                                     },
                                     "target": {

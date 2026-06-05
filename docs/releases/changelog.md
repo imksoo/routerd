@@ -36,6 +36,9 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
   `profiles.cloudCaptures`, `spec.values`, `capture.targetFrom`,
   `ownershipDiscovery.subnetRefFrom`, `members[].profileRef`,
   self-complete local members, and identity-only remote peers.
+- `MobilityPool` on-prem `proxy-arp` capture members can declare
+  `capture.sourceAddress`; BGP-mode lowering installs it as a capture-interface
+  `/32` and uses it as the capture-prefix route preferred source.
 - Least-privilege CloudEdge IAM templates under
   `examples/cloudedge-mobility-demo/iam/` for scoped AWS, Azure, and
   OCI provider access.
@@ -63,6 +66,10 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 - `MobilityPool` on-prem `proxy-arp` capture now supports
   `capture.activeWhen.type: single-router` as an explicit always-active
   single-router mode, while keeping `vrrp-master` for HA pairs.
+- BGP-mode `proxy-arp` capture can now keep Linux ARP sender addresses inside
+  the mobility prefix on capture interfaces that otherwise have no IPv4
+  address, avoiding local same-subnet delivery failures caused by fallback to a
+  management-interface address.
 
 ## v20260528.2308
 
