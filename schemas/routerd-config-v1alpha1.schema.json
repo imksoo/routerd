@@ -6961,6 +6961,13 @@
                           "configureOSAddress": {
                             "type": "boolean"
                           },
+                          "excludeAddresses": {
+                            "description": "ExcludeAddresses prevents proxy-ARP capture for selected IPv4 addresses\nor CIDRs inside the mobility prefix.",
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
                           "gratuitousARP": {
                             "type": "boolean"
                           },
@@ -7619,6 +7626,13 @@
                                 "configureOSAddress": {
                                   "type": "boolean"
                                 },
+                                "excludeAddresses": {
+                                  "description": "ExcludeAddresses prevents proxy-ARP capture for selected IPv4 addresses or\nCIDRs inside the mobility prefix. Use this for local-only infrastructure\naddresses such as a PVE Simple SDN gateway address that must not be\nanswered across the extended segment.",
+                                  "items": {
+                                    "type": "string"
+                                  },
+                                  "type": "array"
+                                },
                                 "gratuitousARP": {
                                   "type": "boolean"
                                 },
@@ -8006,6 +8020,13 @@
                                     },
                                     "configureOSAddress": {
                                       "type": "boolean"
+                                    },
+                                    "excludeAddresses": {
+                                      "description": "ExcludeAddresses prevents proxy-ARP capture for selected IPv4 addresses or\nCIDRs inside the mobility prefix. Use this for local-only infrastructure\naddresses such as a PVE Simple SDN gateway address that must not be\nanswered across the extended segment.",
+                                      "items": {
+                                        "type": "string"
+                                      },
+                                      "type": "array"
                                     },
                                     "gratuitousARP": {
                                       "type": "boolean"
