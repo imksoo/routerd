@@ -3,6 +3,7 @@
 package sam
 
 import (
+	"net/netip"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -193,6 +194,67 @@ func TestPlanCaptureProxyARP(t *testing.T) {
 	}
 	if !hasAction(actions, "proxy-neighbor", "", "10.0.1.123/32", "lan0") {
 		t.Fatalf("actions missing proxy neighbor: %#v", actions)
+	}
+}
+
+func TestCaptureExcludesAddress(t *testing.T) {
+	capture := api.AddressCapture{Type: "proxy-arp", ExcludeAddresses: []string{"10.0.1.1", "10.0.1.240/29"}}
+	if !CaptureExcludesAddress(capture, "10.0.1.1/32") {
+		t.Fatalf("10.0.1.1/32 should be excluded")
+	}
+	if !CaptureExcludesAddress(capture, "10.0.1.242") {
+		t.Fatalf("10.0.1.242 should be excluded")
+	}
+	if CaptureExcludesAddress(capture, "10.0.1.123/32") {
+		t.Fatalf("10.0.1.123/32 should not be excluded")
+	}
+}
+
+func TestIPv4PrefixesExcludingSingleAddress(t *testing.T) {
+	prefixes := IPv4PrefixesExcluding(netip.MustParsePrefix("192.168.123.0/24"), []string{"192.168.123.1/32"})
+	var got []string
+	for _, prefix := range prefixes {
+		got = append(got, prefix.String())
+	}
+	want := []string{
+		"192.168.123.0/32",
+		"192.168.123.2/31",
+		"192.168.123.4/30",
+		"192.168.123.8/29",
+		"192.168.123.16/28",
+		"192.168.123.32/27",
+		"192.168.123.64/26",
+		"192.168.123.128/25",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("prefixes = %#v, want %#v", got, want)
+	}
+}
+
+func TestPlanCaptureProxyARPExcludeSkipsNeighbor(t *testing.T) {
+	router := testRouter()
+	spec := router.Spec.Resources[4].Spec.(api.RemoteAddressClaimSpec)
+	spec.Capture.ExcludeAddresses = []string{"10.0.1.123/32"}
+	router.Spec.Resources[4].Spec = spec
+
+	actions, err := PlanCapture(router, platform.OSLinux)
+	if err != nil {
+		t.Fatalf("PlanCapture: %v", err)
+	}
+	if hasAction(actions, "proxy-neighbor", "", "10.0.1.123/32", "lan0") {
+		t.Fatalf("excluded proxy neighbor was planned: %#v", actions)
+	}
+}
+
+func TestStatusForRemoteAddressClaimReportsCaptureExcluded(t *testing.T) {
+	router := testRouter()
+	spec := router.Spec.Resources[4].Spec.(api.RemoteAddressClaimSpec)
+	spec.Capture.ExcludeAddresses = []string{"10.0.1.123/32"}
+	router.Spec.Resources[4].Spec = spec
+
+	status := StatusForRemoteAddressClaim(router.Spec.Resources[4], nil, nil, platform.OSLinux)
+	if status["phase"] != "Gated" || status["reason"] != "CaptureExcluded" || status["captureStatus"] != CaptureStatusStandby {
+		t.Fatalf("excluded status = %#v", status)
 	}
 }
 

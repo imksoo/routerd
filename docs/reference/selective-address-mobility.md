@@ -257,6 +257,21 @@ leased address as the capture-prefix route preferred source without lowering it
 to an `IPv4StaticAddress`, so routerd does not duplicate ownership of the same
 address.
 
+Use `members[].capture.excludeAddresses` for local-only addresses inside the
+mobility prefix that must never be proxy-ARP captured across the extended
+segment. On PVE Simple SDN, for example, each host may own the same local
+gateway address such as `192.168.123.1/32`; excluding it prevents generated BGP
+proxy-ARP claims for that address and splits the capture-prefix route so Linux
+does not send local gateway ARP across the SAM capture path.
+
+SAM does not provide transparent DHCP broadcast extension. Keep DHCP ownership
+with the local fabric, VPC/VNet/VCN, or PVE IPAM. A `DHCPv4Client` used by
+`sourceAddressFrom` should usually set `useRoutes: false` and `useDNS: false`
+when it exists only to learn the capture-interface source address. DHCP lease
+observations can participate in ownership discovery, but they should be combined
+with `arp-observer`, `on-demand-arp`, or PVE svnet observations when the IPAM
+source is outside routerd.
+
 For `proxy-arp` capture on Linux, routerd:
 
 - enables `net.ipv4.conf.<capture-interface>.proxy_arp=1` through the normal
