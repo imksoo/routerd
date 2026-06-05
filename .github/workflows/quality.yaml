@@ -41,6 +41,8 @@ jobs:
             website:
               - 'docs/**'
               - 'website/**'
+              - '!docs/releases/changelog.md'
+              - '!website/i18n/**/releases/changelog.md'
 
   go-test:
     name: Go tests
