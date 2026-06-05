@@ -368,7 +368,7 @@ func appliedPolicies(config bgpdaemon.AppliedConfig) (*gobgpapi.SetPoliciesReque
 		req.Policies = append(req.Policies, &gobgpapi.Policy{
 			Name: policy.Name,
 			Statements: []*gobgpapi.Statement{{
-				Name: "allow-import",
+				Name: appliedPolicyStatementName(policy.Name, "allow-import"),
 				Conditions: &gobgpapi.Conditions{PrefixSet: &gobgpapi.MatchSet{
 					Type: gobgpapi.MatchSet_ANY,
 					Name: prefixSetName,
@@ -421,6 +421,10 @@ func appliedImportPolicies(config bgpdaemon.AppliedConfig) []appliedImportPolicy
 		policies = append(policies, appliedImportPolicy{Name: name, Spec: byName[name]})
 	}
 	return policies
+}
+
+func appliedPolicyStatementName(policyName, suffix string) string {
+	return strings.TrimSpace(policyName) + "-" + suffix
 }
 
 func appliedPolicyPrefixes(spec bgpdaemon.AppliedImportPolicy) []*gobgpapi.Prefix {

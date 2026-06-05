@@ -597,7 +597,7 @@ func (c *Controller) applyBGPPolicies(ctx context.Context, routerName string, sp
 		req.Policies = append(req.Policies, &gobgpapi.Policy{
 			Name: name,
 			Statements: []*gobgpapi.Statement{{
-				Name: "allow-import",
+				Name: bgpPolicyStatementName(name, "allow-import"),
 				Conditions: &gobgpapi.Conditions{PrefixSet: &gobgpapi.MatchSet{
 					Type: gobgpapi.MatchSet_ANY,
 					Name: prefixSetName,
@@ -623,7 +623,7 @@ func (c *Controller) applyBGPPolicies(ctx context.Context, routerName string, sp
 		req.Policies = append(req.Policies, &gobgpapi.Policy{
 			Name: peer.ExportPolicyName,
 			Statements: []*gobgpapi.Statement{{
-				Name: "allow-export",
+				Name: bgpPolicyStatementName(peer.ExportPolicyName, "allow-export"),
 				Conditions: &gobgpapi.Conditions{PrefixSet: &gobgpapi.MatchSet{
 					Type: gobgpapi.MatchSet_ANY,
 					Name: prefixSetName,
@@ -1949,6 +1949,10 @@ func bgpPolicyName(routerName, suffix string) string {
 
 func peerExportPolicyName(routerName, address string) string {
 	return bgpPolicyName(routerName, "export-"+sanitizeBGPPolicyName(address))
+}
+
+func bgpPolicyStatementName(policyName, suffix string) string {
+	return strings.TrimSpace(policyName) + "-" + suffix
 }
 
 func sanitizeBGPPolicyName(value string) string {
