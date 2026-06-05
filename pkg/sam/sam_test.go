@@ -63,6 +63,23 @@ func TestExpandRemoteAddressClaimRoutesNoClaimsUnchanged(t *testing.T) {
 	}
 }
 
+func TestExpandRemoteAddressClaimRoutesAllowsSingleRouterGate(t *testing.T) {
+	router := testRouter()
+	spec := router.Spec.Resources[4].Spec.(api.RemoteAddressClaimSpec)
+	spec.Capture.ActiveWhen = api.CaptureActiveWhen{Type: "single-router"}
+	router.Spec.Resources[4].Spec = spec
+	expanded, lowerings, err := ExpandRemoteAddressClaimRoutesWithOptions(*router, PlanOptions{StatusReader: nil})
+	if err != nil {
+		t.Fatalf("ExpandRemoteAddressClaimRoutesWithOptions: %v", err)
+	}
+	if len(lowerings) != 2 {
+		t.Fatalf("lowerings = %#v", lowerings)
+	}
+	if got := findRoute(t, ipv4Routes(expanded), "sam-app-10-0-1-123-delivery"); got.Kind != "IPv4Route" {
+		t.Fatalf("single-router route missing: %#v", got)
+	}
+}
+
 func TestExpandRemoteAddressClaimRoutesCopiesPreferredSourceAnnotation(t *testing.T) {
 	router := testRouter()
 	claim := router.Spec.Resources[4]

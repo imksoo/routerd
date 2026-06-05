@@ -41,6 +41,38 @@ func TestValidateMobilityPool(t *testing.T) {
 	}
 }
 
+func TestValidateMobilityPoolAllowsExplicitSingleOnpremProxyARPWithoutVRRP(t *testing.T) {
+	router := mobilityPoolRouter(api.MobilityPoolSpec{
+		Prefix:   "10.88.60.0/24",
+		GroupRef: "cloudedge",
+		Members: []api.MobilityPoolMember{
+			{
+				NodeRef:  "onprem-router",
+				Site:     "onprem",
+				Role:     "onprem",
+				Capture:  api.MobilityMemberCapture{Type: "proxy-arp", Interface: "lan", ActiveWhen: api.CaptureActiveWhen{Type: "single-router"}},
+				Delivery: api.MobilityMemberDelivery{PeerRef: "azure", Mode: "route", TunnelInterface: "wg-hybrid"},
+			},
+			{
+				NodeRef: "azure-router",
+				Site:    "azure",
+				Role:    "cloud",
+				Capture: api.MobilityMemberCapture{
+					Type:         "provider-secondary-ip",
+					ProviderRef:  "azure-provider",
+					ProviderMode: "nic-secondary-ip",
+					NICRef:       "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Network/networkInterfaces/router-nic",
+				},
+				Delivery: api.MobilityMemberDelivery{PeerRef: "onprem", Mode: "route", TunnelInterface: "wg-hybrid"},
+			},
+		},
+		Authority: api.MobilityAuthority{Mode: "static"},
+	}, testInterfaceResource("lan"))
+	if err := Validate(router); err != nil {
+		t.Fatalf("Validate single onprem proxy-arp MobilityPool: %v", err)
+	}
+}
+
 func TestValidateMobilityPoolAllowsDiscoveredCloudNICOnlyInBGPDiscoveryMode(t *testing.T) {
 	spec := api.MobilityPoolSpec{
 		Prefix:         "10.88.60.0/24",
@@ -451,11 +483,11 @@ func TestValidateMobilityPoolRejectsInvalidFields(t *testing.T) {
 		{
 			name: "placement role",
 			mut: func(spec *api.MobilityPoolSpec) {
-				spec.Members[0].Capture = api.MobilityMemberCapture{Type: "proxy-arp", Interface: "lan"}
+				spec.Members[0].Capture = api.MobilityMemberCapture{Type: "proxy-arp", Interface: "lan", ActiveWhen: api.CaptureActiveWhen{Type: "single-router"}}
 				spec.Members[0].Delivery = api.MobilityMemberDelivery{PeerRef: "azure"}
 				spec.Members[0].Placement = api.MobilityMemberPlacement{Group: "onprem-edge", Priority: 10}
 			},
-			want: "capture.activeWhen.type must be vrrp-master",
+			want: "placement.group is supported only for role cloud",
 		},
 		{
 			name: "onprem proxy arp missing activeWhen",
@@ -463,7 +495,7 @@ func TestValidateMobilityPoolRejectsInvalidFields(t *testing.T) {
 				spec.Members[0].Capture = api.MobilityMemberCapture{Type: "proxy-arp", Interface: "lan"}
 				spec.Members[0].Delivery = api.MobilityMemberDelivery{PeerRef: "azure"}
 			},
-			want: "capture.activeWhen.type must be vrrp-master",
+			want: "capture.activeWhen.type is required",
 		},
 		{
 			name: "placement group provider mismatch",

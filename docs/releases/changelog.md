@@ -23,7 +23,7 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
   data plane keeps NAT disabled, preserves source addresses, and leaves
   client default gateways unchanged. Cloud capture uses AWS ENI,
   Azure NIC `ipConfig`, and OCI VNIC secondary IPs; on-prem capture uses
-  VRRP-gated proxy ARP plus GARP, with backups fail-closed and doctor
+  proxy ARP plus GARP, optionally gated by VRRP for HA pairs, with doctor
   split-brain checks failing deterministically.
 - Pluggable overlay underlays through `TunnelInterface`, including
   IPIP, GRE, FOU, and GUE UDP encapsulation. WireGuard remains the
@@ -60,6 +60,9 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 - Runtime changes to `BGPPeer.spec.exportPolicy` now trigger GoBGP soft
   reset out for affected peers, so previously advertised routes are withdrawn
   when they no longer match the peer export policy.
+- `MobilityPool` on-prem `proxy-arp` capture now supports
+  `capture.activeWhen.type: single-router` as an explicit always-active
+  single-router mode, while keeping `vrrp-master` for HA pairs.
 
 ## v20260528.2308
 
