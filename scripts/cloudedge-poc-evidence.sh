@@ -304,6 +304,7 @@ write(out / "03-control-plane" / "collector-contract.md", "\n".join([
     "# Control-plane Collector Contract",
     "",
     "- CF collectors for #114 write provider JSON and normalized summaries here.",
+    "- Cloud fabric evidence uses `scripts/cloudedge-cloud-fabric-schema.json` and writes `cloud-fabric-manifest.json`, `cloud-fabric-summary.md`, and `cloud-fabric-test-record.csv`.",
     "- C8K comparison evidence remains NOT-RUN in #111 because #115 is out of scope.",
     "",
 ]))

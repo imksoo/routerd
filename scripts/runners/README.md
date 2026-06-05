@@ -8,6 +8,8 @@ These scripts are live runner implementations for the acceptance probe wrappers:
 - `cloudedge-l2-runner.sh` implements `L2_LOOP_RUNNER`.
 - `cloudedge-capture-runner.sh` implements the four-point pcap harness for the
   `05-capture` evidence slot.
+- `cloudedge-fabric-runner.sh` implements cloud fabric evidence collection for
+  the `03-control-plane` CF slot.
 
 They are parameterized by environment variables. They do not contain account IDs,
 OCIDs, subscription IDs, instance IDs, interface IDs, or secrets. Lab-specific
@@ -99,6 +101,36 @@ Use `CE_CAPTURE_<ROLE>_<START|STOP|COPY>_COMMAND` or the generic
 `CE_CAPTURE_START_COMMAND`, `CE_CAPTURE_STOP_COMMAND`, and
 `CE_CAPTURE_COPY_COMMAND` overrides to fake captures in offline tests or adapt a
 lab without editing the shared runner.
+
+Cloud fabric evidence runs collect provider control-plane state and normalize it
+with `scripts/cloudedge-cloud-fabric-schema.json`. The runner writes provider
+JSON, an aggregate manifest, a Markdown summary, and CF test-record rows under
+`poc-evidence-*/03-control-plane`:
+
+```sh
+scripts/runners/cloudedge-fabric-runner.sh collect \
+  --provider aws \
+  --test-id 20260605-0242-CF-01 \
+  --out poc-evidence-20260605 \
+  --capture-address 10.88.60.9
+
+scripts/runners/cloudedge-fabric-runner.sh collect \
+  --provider azure \
+  --test-id 20260605-0242-CF-01 \
+  --out poc-evidence-20260605 \
+  --capture-address 10.77.60.9
+
+scripts/runners/cloudedge-fabric-runner.sh collect \
+  --provider oci \
+  --test-id 20260605-0242-CF-01 \
+  --out poc-evidence-20260605 \
+  --capture-address 10.99.60.9
+```
+
+Live runs use read-only `aws`, `az`, or `oci` CLI calls. Missing CLI,
+authentication, or required target env is recorded as `NOT-RUN` with a reason.
+Use `CE_FABRIC_<PROVIDER>_JSON_COMMAND` to feed deterministic fake JSON through
+the same normalizer in offline tests.
 
 The scripts support `--help` without credentials. `cloudedge-runners-offline-test.sh`
 exercises the contracts with local fake commands and no cloud access.

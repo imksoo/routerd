@@ -13,7 +13,8 @@ for script in \
   cloudedge-failover-runner.sh \
   cloudedge-protocol-runner.sh \
   cloudedge-l2-runner.sh \
-  cloudedge-capture-runner.sh; do
+  cloudedge-capture-runner.sh \
+  cloudedge-fabric-runner.sh; do
   "$SCRIPT_DIR/$script" --help >/dev/null
 done
 
@@ -168,6 +169,167 @@ if remote.get("startExit") != 42 or remote.get("copyExit") != 99:
     raise SystemExit(f"partial remote exits not preserved: {remote}")
 if (cap_dir / remote["filename"]).exists():
     raise SystemExit("failed remote capture unexpectedly produced a pcap")
+PY
+
+fabric_bundle="$tmp/fabric-bundle"
+fabric_id="20260605-0242-CF-01"
+aws_fixture="$tmp/aws-fabric.json"
+azure_fixture="$tmp/azure-fabric.json"
+oci_fixture="$tmp/oci-fabric.json"
+cat > "$aws_fixture" <<'JSON'
+{
+  "provider": "aws",
+  "networkInterface": {
+    "NetworkInterfaceId": "eni-router",
+    "PrivateIpAddress": "10.88.60.4",
+    "SourceDestCheck": false,
+    "PrivateIpAddresses": [
+      { "PrivateIpAddress": "10.88.60.4", "Primary": true },
+      { "PrivateIpAddress": "10.88.60.9", "Primary": false }
+    ],
+    "Groups": [{ "GroupId": "sg-router", "GroupName": "routerd-sam" }]
+  },
+  "routeTables": [
+    { "RouteTableId": "rtb-main", "Routes": [
+      { "DestinationCidrBlock": "10.88.60.0/24", "GatewayId": "local" },
+      { "DestinationCidrBlock": "10.77.60.9/32", "NetworkInterfaceId": "eni-router" }
+    ] }
+  ],
+  "securityGroups": [{ "GroupId": "sg-router", "GroupName": "routerd-sam" }],
+  "networkAcls": [{ "NetworkAclId": "acl-main" }],
+  "flowLogs": [{ "FlowLogId": "fl-aws-vpc" }]
+}
+JSON
+cat > "$azure_fixture" <<'JSON'
+{
+  "provider": "azure",
+  "nic": {
+    "id": "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Network/networkInterfaces/ce-router-nic",
+    "enableIPForwarding": true,
+    "ipConfigurations": [
+      { "name": "primary", "privateIPAddress": "10.77.60.4", "primary": true },
+      { "name": "ipconfig-onprem-capture", "privateIPAddress": "10.77.60.9", "primary": false }
+    ]
+  },
+  "effectiveRoutes": [
+    { "name": "local", "addressPrefix": ["10.77.60.0/24"], "nextHopType": "VnetLocal" },
+    { "name": "sam", "addressPrefix": ["10.88.60.9/32"], "nextHopType": "VirtualAppliance" }
+  ],
+  "effectiveSecurityRules": { "networkSecurityGroup": { "id": "nsg-router" }, "effectiveSecurityRules": [{ "name": "allow-wg" }] },
+  "routeTables": ["udr-router"],
+  "networkSecurityGroups": ["nsg-router"],
+  "flowLogs": []
+}
+JSON
+cat > "$oci_fixture" <<'JSON'
+{
+  "provider": "oci",
+  "vnic": {
+    "id": "ocid1.vnic.oc1..router",
+    "privateIp": "10.99.60.4",
+    "skipSourceDestCheck": true
+  },
+  "privateIps": [
+    { "id": "ocid1.privateip.oc1..primary", "ipAddress": "10.99.60.4" },
+    { "id": "ocid1.privateip.oc1..samcapture", "ipAddress": "10.99.60.9" }
+  ],
+  "routeRules": [
+    { "destination": "10.77.60.9/32", "networkEntityId": "ocid1.privateip.oc1..samcapture" }
+  ],
+  "networkSecurityGroups": ["ocid1.nsg.oc1..router"],
+  "securityLists": ["ocid1.securitylist.oc1..router"],
+  "flowLogs": [{ "id": "ocid1.flowlog.oc1..vcn" }],
+  "deleteUnassignBlackholeRisk": true
+}
+JSON
+
+CE_FABRIC_AWS_JSON_COMMAND="cat '$aws_fixture'" \
+  "$SCRIPT_DIR/cloudedge-fabric-runner.sh" collect \
+    --provider aws \
+    --test-id "$fabric_id" \
+    --out "$fabric_bundle" \
+    --capture-address 10.88.60.9 >/dev/null
+CE_FABRIC_AZURE_JSON_COMMAND="cat '$azure_fixture'" \
+  "$SCRIPT_DIR/cloudedge-fabric-runner.sh" collect \
+    --provider azure \
+    --test-id "$fabric_id" \
+    --out "$fabric_bundle" \
+    --capture-address 10.77.60.9 >/dev/null
+CE_FABRIC_OCI_JSON_COMMAND="cat '$oci_fixture'" \
+  "$SCRIPT_DIR/cloudedge-fabric-runner.sh" collect \
+    --provider oci \
+    --test-id "$fabric_id" \
+    --out "$fabric_bundle" \
+    --capture-address 10.99.60.9 >/dev/null
+CE_FABRIC_AWS_JSON_COMMAND='printf "{\"provider\":\"aws\",\"notRunReason\":\"aws CLI not authenticated\"}\n"' \
+  "$SCRIPT_DIR/cloudedge-fabric-runner.sh" collect \
+    --provider aws \
+    --test-id "20260605-0242-CF-02" \
+    --out "$fabric_bundle" >/dev/null
+
+python3 - "$fabric_bundle/03-control-plane" "$SCRIPT_DIR/../cloudedge-cloud-fabric-schema.json" "$fabric_id" <<'PY'
+import csv
+import json
+import sys
+from pathlib import Path
+
+control_dir = Path(sys.argv[1])
+schema = json.loads(Path(sys.argv[2]).read_text())
+fabric_id = sys.argv[3]
+try:
+    import jsonschema
+except Exception:
+    jsonschema = None
+
+def load(provider, test_id=fabric_id):
+    path = control_dir / f"{test_id}-{provider}-cloud-fabric.json"
+    data = json.loads(path.read_text())
+    if jsonschema is not None:
+        jsonschema.validate(instance=data, schema=schema)
+    return data
+
+aws = load("aws")
+if aws["result"] != "PASS":
+    raise SystemExit(f"AWS result {aws['result']}, want PASS")
+if aws["normalized"]["forwardingEnabled"] is not True or not aws["normalized"]["secondaryAddresses"]:
+    raise SystemExit("AWS forwarding/secondary evidence missing")
+if not any(r["target"] == "local" for r in aws["normalized"]["routeTargets"]):
+    raise SystemExit("AWS local route evidence missing")
+
+azure = load("azure")
+if azure["result"] != "PARTIAL" or "azure_flow_logs" not in azure.get("reason", ""):
+    raise SystemExit("Azure flow-log PARTIAL reason missing")
+if azure["normalized"]["forwardingEnabled"] is not True or not azure["normalized"]["routeTargets"]:
+    raise SystemExit("Azure route/forwarding evidence missing")
+
+oci = load("oci")
+if oci["result"] != "PASS":
+    raise SystemExit(f"OCI result {oci['result']}, want PASS")
+provider_specific = oci["normalized"]["providerSpecific"]
+if provider_specific.get("privateIpOcidRouteTargetObserved") is not True:
+    raise SystemExit("OCI private IP OCID route target missing")
+if provider_specific.get("deleteUnassignBlackholeRisk") is not True:
+    raise SystemExit("OCI delete/unassign blackhole risk missing")
+
+not_run = load("aws", "20260605-0242-CF-02")
+if not_run["result"] != "NOT-RUN" or "not authenticated" not in not_run.get("reason", ""):
+    raise SystemExit("NOT-RUN auth reason missing")
+
+summary = (control_dir / "cloud-fabric-summary.md").read_text()
+for token in ("aws", "azure", "oci", "PARTIAL", "NOT-RUN"):
+    if token not in summary:
+        raise SystemExit(f"summary missing {token}")
+
+with (control_dir / "cloud-fabric-test-record.csv").open(newline="") as f:
+    rows = list(csv.DictReader(f))
+if len(rows) != 4:
+    raise SystemExit(f"cloud fabric records={len(rows)}, want 4")
+if {row["PHASE"] for row in rows} != {"CF"}:
+    raise SystemExit("cloud fabric records are not CF phase")
+if not any(row["RESULT"] == "PARTIAL" for row in rows):
+    raise SystemExit("PARTIAL CF record missing")
+if not any(row["RESULT"] == "NOT-RUN" for row in rows):
+    raise SystemExit("NOT-RUN CF record missing")
 PY
 
 # Keep this single-quoted so the child runner expands its own CE_PROTOCOL_* env.
