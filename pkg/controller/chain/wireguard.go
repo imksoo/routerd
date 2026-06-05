@@ -168,6 +168,7 @@ func (c WireGuardController) reconcileInterface(ctx context.Context, resource ap
 	if err != nil {
 		return err
 	}
+	baseConfigHash := wireGuardConfigHash(cfg, c.DryRun)
 	cfg = c.withBGPMobilityAllowedIPs(cfg)
 	if err := c.saveUnconfiguredPeerStatuses(resource.Metadata.Name); err != nil {
 		return err
@@ -183,6 +184,9 @@ func (c WireGuardController) reconcileInterface(ctx context.Context, resource ap
 		"dryRun":     c.DryRun,
 	}
 	configHash := wireGuardConfigHash(cfg, c.DryRun)
+	if baseConfigHash != "" {
+		status["baseConfigHash"] = baseConfigHash
+	}
 	if configHash != "" {
 		status["configHash"] = configHash
 	}
@@ -200,6 +204,19 @@ func (c WireGuardController) reconcileInterface(ctx context.Context, resource ap
 	current := c.Store.ObjectStatus(api.NetAPIVersion, "WireGuardInterface", resource.Metadata.Name)
 	if !c.DryRun && statusErr == nil && configHash != "" && fmt.Sprint(current["configHash"]) == configHash && c.interfaceMatchesDesired(ctx, cfg, observed) {
 		status["reason"] = "AlreadyConfigured"
+	} else if !c.DryRun && statusErr == nil && baseConfigHash != "" && fmt.Sprint(current["baseConfigHash"]) == baseConfigHash && c.interfaceMatchesExceptAllowedIPs(ctx, cfg, observed) {
+		if err := c.updatePeerAllowedIPs(ctx, cfg, observed); err != nil {
+			status["phase"] = "Error"
+			status["reason"] = "ApplyFailed"
+			status["error"] = err.Error()
+			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "WireGuardInterface", resource.Metadata.Name, status); err != nil {
+				return err
+			}
+			c.savePeerPendingStatuses(resource.Metadata.Name, cfg.Peers, "InterfaceError")
+			return nil
+		}
+		applied = true
+		observed, statusErr = c.interfaceStatus(ctx, cfg.Name)
 	} else if _, err := controller.Apply(ctx, cfg); err != nil {
 		status["phase"] = "Error"
 		status["reason"] = "ApplyFailed"
@@ -424,6 +441,61 @@ func (c WireGuardController) interfaceMatchesDesired(ctx context.Context, cfg wi
 		}
 	}
 	return true
+}
+
+func (c WireGuardController) interfaceMatchesExceptAllowedIPs(ctx context.Context, cfg wireguard.InterfaceConfig, observed wireguard.InterfaceStatus) bool {
+	if cfg.ListenPort != 0 && observed.ListenPort != cfg.ListenPort {
+		return false
+	}
+	if cfg.FwMark != 0 && !fwmarkMatches(observed.FwMark, cfg.FwMark) {
+		return false
+	}
+	if cfg.MTU != 0 && !c.linkMTUMatches(ctx, cfg.Name, cfg.MTU) {
+		return false
+	}
+	byKey := map[string]wireguard.PeerStatus{}
+	for _, peer := range observed.Peers {
+		byKey[peer.PublicKey] = peer
+	}
+	if len(byKey) != len(cfg.Peers) {
+		return false
+	}
+	for _, desired := range cfg.Peers {
+		current, ok := byKey[desired.PublicKey]
+		if !ok {
+			return false
+		}
+		if strings.TrimSpace(desired.Endpoint) != "" && !c.endpointMatches(ctx, desired.Endpoint, current.LatestEndpoint) {
+			return false
+		}
+		if desired.PersistentKeepalive != current.PersistentKeepalive {
+			return false
+		}
+	}
+	return true
+}
+
+func (c WireGuardController) updatePeerAllowedIPs(ctx context.Context, cfg wireguard.InterfaceConfig, observed wireguard.InterfaceStatus) error {
+	byKey := map[string]wireguard.PeerStatus{}
+	for _, peer := range observed.Peers {
+		byKey[peer.PublicKey] = peer
+	}
+	run := c.Command
+	if run == nil {
+		run = wireguard.DefaultCommandRunner
+	}
+	for _, desired := range cfg.Peers {
+		current := byKey[desired.PublicKey]
+		if stringSetEqual(desired.AllowedIPs, current.AllowedIPs) {
+			continue
+		}
+		allowedIPs := strings.Join(cleanStrings(desired.AllowedIPs), ",")
+		out, err := run(ctx, "wg", "set", cfg.Name, "peer", desired.PublicKey, "allowed-ips", allowedIPs)
+		if err != nil {
+			return fmt.Errorf("update WireGuard peer %s allowedIPs: %w: %s", desired.Name, err, strings.TrimSpace(string(out)))
+		}
+	}
+	return nil
 }
 
 func (c WireGuardController) endpointMatches(ctx context.Context, desired, current string) bool {
