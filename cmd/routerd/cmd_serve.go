@@ -72,7 +72,7 @@ func controllerResourceKinds(name string) []string {
 	case "dhcpv6":
 		return []string{"DHCPv6Server", "IPv6RouterAdvertisement"}
 	case "dhcp-lease-sync":
-		return []string{"DHCPLeaseSync"}
+		return []string{"DHCPv4ServerLeaseSync", "DHCPv6ServerLeaseSync", "DHCPv6PrefixDelegationLeaseSync"}
 	case "dns-resolver":
 		return []string{"DNSResolver", "DNSForwarder", "DNSUpstream", "DNSZone"}
 	case "dslite":

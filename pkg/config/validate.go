@@ -867,8 +867,14 @@ func resourceWhens(res api.Resource) []resourceWhenRef {
 	case "DHCPv6Server":
 		spec, _ := res.DHCPv6ServerSpec()
 		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
-	case "DHCPLeaseSync":
-		spec, _ := res.DHCPLeaseSyncSpec()
+	case "DHCPv4ServerLeaseSync":
+		spec, _ := res.DHCPv4ServerLeaseSyncSpec()
+		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
+	case "DHCPv6ServerLeaseSync":
+		spec, _ := res.DHCPv6ServerLeaseSyncSpec()
+		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
+	case "DHCPv6PrefixDelegationLeaseSync":
+		spec, _ := res.DHCPv6PrefixDelegationLeaseSyncSpec()
 		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
 	case "DSLiteTunnel":
 		spec, _ := res.DSLiteTunnelSpec()

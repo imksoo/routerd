@@ -74,8 +74,14 @@ func ResourceWhen(res api.Resource) api.ResourceWhenSpec {
 	case "DHCPv6Server":
 		spec, _ := res.DHCPv6ServerSpec()
 		return spec.When
-	case "DHCPLeaseSync":
-		spec, _ := res.DHCPLeaseSyncSpec()
+	case "DHCPv4ServerLeaseSync":
+		spec, _ := res.DHCPv4ServerLeaseSyncSpec()
+		return spec.When
+	case "DHCPv6ServerLeaseSync":
+		spec, _ := res.DHCPv6ServerLeaseSyncSpec()
+		return spec.When
+	case "DHCPv6PrefixDelegationLeaseSync":
+		spec, _ := res.DHCPv6PrefixDelegationLeaseSyncSpec()
 		return spec.When
 	case "DSLiteTunnel":
 		spec, _ := res.DSLiteTunnelSpec()
