@@ -70,9 +70,20 @@ func OpenSQLite(path string) (*SQLiteStore, error) {
 }
 
 func OpenSQLiteReadOnly(path string) (*SQLiteStore, error) {
+	return openSQLiteReadOnly(path, false)
+}
+
+func OpenSQLiteReadOnlyImmutable(path string) (*SQLiteStore, error) {
+	return openSQLiteReadOnly(path, true)
+}
+
+func openSQLiteReadOnly(path string, immutable bool) (*SQLiteStore, error) {
 	u := url.URL{Scheme: "file", Path: path}
 	q := u.Query()
 	q.Set("mode", "ro")
+	if immutable {
+		q.Set("immutable", "1")
+	}
 	u.RawQuery = q.Encode()
 	db, err := sql.Open("sqlite", u.String())
 	if err != nil {

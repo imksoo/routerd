@@ -18,6 +18,8 @@ routerd apply    --config router.yaml --once
 
 遠隔のルーターでは、本番の `apply` を実行する前に、管理経路（SSH、コンソール、ハイパーバイザーのコンソール）が変更後も残ることを確認してください。
 
+稼働中のルーターでは、`plan`、`observe`、dry-run apply は状態データベースを一時的な snapshot として読みます。デーモンが SQLite WAL に同時書き込みしている場合、その snapshot はわずかに古い可能性があるため、rollback 記録ではなく事前確認用の参考入力として扱ってください。
+
 ## 常駐モード
 
 ```bash

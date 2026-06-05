@@ -17,6 +17,8 @@ routerd apply    --config router.yaml --once
 
 For a remote router, confirm that the management connection (SSH, console, hypervisor console) will survive the change before running the non-dry-run `apply`.
 
+On a live router, `plan`, `observe`, and dry-run apply read the state database as a transient snapshot; when the daemon is writing SQLite WAL pages concurrently, that snapshot can be slightly stale, so treat it as advisory preflight input rather than a rollback record.
+
 ## Long-running mode
 
 ```bash
