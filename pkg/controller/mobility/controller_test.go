@@ -243,6 +243,54 @@ func TestControllerBGPModeProviderDiscoveryDoesNotAdvertiseRouterNICTrapAsOwner(
 	}
 }
 
+func TestControllerBGPModeKeepsOnPremOwnerWhenOneDiscoverySourceExpires(t *testing.T) {
+	now := time.Date(2026, 6, 5, 13, 0, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := staticPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	spec.Members[0].StaticOwnedAddresses = nil
+	address := "10.88.60.21/32"
+	recordEvent(t, store, routerstate.EventRecord{
+		ID:         "evt-arp-observed",
+		Group:      "cloudedge",
+		SourceNode: "onprem-router",
+		Type:       ObservedEventType,
+		Subject:    address,
+		ObservedAt: now.Add(-2 * time.Minute),
+		ExpiresAt:  now.Add(5 * time.Minute),
+		Payload: map[string]string{
+			"address":    address,
+			"pool":       "cloudedge",
+			"source":     onPremDiscoverySource,
+			"sourceType": OnPremSourceARPObserver,
+		},
+	})
+	recordEvent(t, store, routerstate.EventRecord{
+		ID:         "evt-dhcp-expired",
+		Group:      "cloudedge",
+		SourceNode: "onprem-router",
+		Type:       ExpiredEventType,
+		Subject:    address,
+		ObservedAt: now.Add(-time.Minute),
+		ExpiresAt:  now.Add(5 * time.Minute),
+		Payload: map[string]string{
+			"address":    address,
+			"pool":       "cloudedge",
+			"source":     onPremDiscoverySource,
+			"sourceType": OnPremSourceDHCPv4Lease,
+		},
+	})
+
+	bgp := &fakeBGPPaths{}
+	controller := Controller{Router: staticRouter("onprem-router", spec), Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if _, ok := maybePathBySourcePrefix(bgp, DynamicSource("cloudedge", "onprem-router"), address); !ok {
+		t.Fatalf("paths = %#v, want ARP-observed owner retained despite DHCP expiry", bgp.paths)
+	}
+}
+
 func TestControllerBGPModeDrainWithdrawsLocalPathWithoutOwnershipEpoch(t *testing.T) {
 	now := time.Date(2026, 6, 2, 10, 0, 0, 0, time.UTC)
 	store := testStore(t, now)

@@ -24,6 +24,15 @@ import (
 
 const (
 	providerDiscoverySource      = "provider-discovery"
+	onPremDiscoverySource        = "onprem-l2-discovery"
+	OnPremSourceDHCPv4Lease      = "dhcpv4-lease"
+	OnPremSourceARPObserver      = "arp-observer"
+	OnPremSourceOnDemandARP      = "on-demand-arp"
+	OnPremSourcePVESVNet         = "pve-svnet"
+	OnPremARPObservedEvent       = "routerd.mobility.arp.observed"
+	OnPremARPProbeHitEvent       = "routerd.mobility.arp.probe.hit"
+	OnPremPVESVNetObservedEvent  = "routerd.mobility.pve-svnet.observed"
+	OwnershipChangedEvent        = "routerd.mobility.ownership.changed"
 	defaultDiscoveryScanInterval = 60 * time.Second
 	minDiscoveryScanInterval     = 30 * time.Second
 )
@@ -45,7 +54,10 @@ type DiscoveryController struct {
 	Now    func() time.Time
 }
 
-func (c DiscoveryController) HandleEvent(ctx context.Context, _ daemonapi.DaemonEvent) error {
+func (c DiscoveryController) HandleEvent(ctx context.Context, event daemonapi.DaemonEvent) error {
+	if err := c.handleOnPremDiscoveryEvent(ctx, event); err != nil {
+		return err
+	}
 	return c.Reconcile(ctx)
 }
 
@@ -92,7 +104,13 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 	}
 	selfNode = self.NodeRef
 	discovery := self.OwnershipDiscovery
-	if strings.TrimSpace(discovery.Mode) != "provider-private-ip" {
+	switch strings.TrimSpace(discovery.Mode) {
+	case "", "disabled":
+		return nil
+	case "onprem-l2":
+		return c.reconcileOnPremL2Discovery(poolName, self, discovery, now)
+	case "provider-private-ip":
+	default:
 		return nil
 	}
 	if self.Role != "cloud" || self.Capture.Type != "provider-secondary-ip" {
@@ -258,6 +276,191 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 	})
 	c.saveDiscoveryStatus(poolName, status)
 	return nil
+}
+
+func (c DiscoveryController) reconcileOnPremL2Discovery(poolName string, self memberPlanInfo, discovery api.MobilityOwnershipDiscovery, now time.Time) error {
+	if strings.TrimSpace(self.Role) != "onprem" || strings.TrimSpace(self.Capture.Type) != "proxy-arp" {
+		return fmt.Errorf("ownershipDiscovery mode onprem-l2 requires onprem proxy-arp member %q", self.NodeRef)
+	}
+	sources := onPremDiscoverySources(discovery)
+	statusSources := make([]map[string]string, 0, len(sources))
+	for _, source := range sources {
+		item := map[string]string{"type": strings.TrimSpace(source.Type)}
+		if value := strings.TrimSpace(source.Resource); value != "" {
+			item["resource"] = value
+		}
+		if value := strings.TrimSpace(firstNonEmpty(source.Interface, self.Capture.Interface)); value != "" {
+			item["interface"] = value
+		}
+		if value := strings.TrimSpace(source.Network); value != "" {
+			item["network"] = value
+		}
+		if value := strings.TrimSpace(source.Bridge); value != "" {
+			item["bridge"] = value
+		}
+		statusSources = append(statusSources, item)
+	}
+	c.saveDiscoveryStatus(poolName, map[string]any{
+		"discoveryPhase":       "Ready",
+		"discoveryReason":      "onprem-l2 event sources armed",
+		"discoveryMode":        "onprem-l2",
+		"discoverySources":     statusSources,
+		"discoveryObserved":    0,
+		"discoveryLastScanAt":  now.Format(time.RFC3339Nano),
+		"discoveryNextScanAt":  "",
+		"discoverySourceCount": len(statusSources),
+	})
+	return nil
+}
+
+type onPremObservation struct {
+	Action     string
+	Address    string
+	MAC        string
+	Interface  string
+	Network    string
+	Bridge     string
+	SourceType string
+}
+
+func (c DiscoveryController) handleOnPremDiscoveryEvent(ctx context.Context, event daemonapi.DaemonEvent) error {
+	observation, ok := onPremObservationFromDaemonEvent(event)
+	if !ok || c.Router == nil || c.Store == nil {
+		return nil
+	}
+	now := c.now()
+	selfByGroup := map[string]string{}
+	recorded := false
+	for _, res := range c.Router.Spec.Resources {
+		if res.APIVersion != api.MobilityAPIVersion || res.Kind != "MobilityPool" {
+			continue
+		}
+		spec, err := res.MobilityPoolSpec()
+		if err != nil || !mobilityBGPMode(spec) {
+			continue
+		}
+		selfNode, ok := selfByGroup[strings.TrimSpace(spec.GroupRef)]
+		if !ok {
+			selfNode, err = routerSelfNode(c.Router, spec.GroupRef)
+			if err != nil {
+				continue
+			}
+			selfByGroup[strings.TrimSpace(spec.GroupRef)] = selfNode
+		}
+		spec, _, err = mobilityconfig.NormalizeMobilityPool(spec, selfNode)
+		if err != nil {
+			continue
+		}
+		members := plannerMembers(spec.Members)
+		self, ok := lookupMemberByNodeRef(members, selfNode)
+		if !ok || strings.TrimSpace(self.OwnershipDiscovery.Mode) != "onprem-l2" {
+			continue
+		}
+		poolPrefix, err := netip.ParsePrefix(strings.TrimSpace(spec.Prefix))
+		if err != nil {
+			continue
+		}
+		poolPrefix = poolPrefix.Masked()
+		address, ok := normalizeDiscoveredAddress(observation.Address, poolPrefix)
+		if !ok || !discoveryScopeAllowsAddress(self.OwnershipDiscovery.Scope, address) {
+			continue
+		}
+		if ownerNode := strings.TrimSpace(staticOwnedOwnerNodesByAddress(spec)[address]); ownerNode != "" && ownerNode != self.NodeRef {
+			continue
+		}
+		source, ok := matchingOnPremDiscoverySource(self, observation)
+		if !ok {
+			continue
+		}
+		ttl := onPremDiscoveryLeaseTTL(self.OwnershipDiscovery, source, spec)
+		var ev routerstate.EventRecord
+		if observation.Action == "expired" {
+			ev = onPremDiscoveryExpiredEvent(res.Metadata.Name, spec.GroupRef, self.NodeRef, address, observation, now, ttl)
+		} else {
+			ev = onPremDiscoveryObservedEvent(res.Metadata.Name, spec.GroupRef, self.NodeRef, address, observation, now, ttl)
+		}
+		if err := c.Store.RecordFederationEvent(ev); err != nil {
+			return fmt.Errorf("record onprem ownership event %q: %w", ev.ID, err)
+		}
+		recorded = true
+	}
+	if recorded && c.Bus != nil {
+		changed := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "mobility-discovery", Kind: "mobility-discovery"}, OwnershipChangedEvent, daemonapi.SeverityInfo)
+		changed.Time = now
+		_ = c.Bus.Publish(ctx, changed)
+	}
+	return nil
+}
+
+func onPremObservationFromDaemonEvent(event daemonapi.DaemonEvent) (onPremObservation, bool) {
+	attrs := event.Attributes
+	address := firstNonEmpty(attrs["address"], attrs["ip"], attrs["clientIP"], attrs["clientAddress"], event.Message)
+	out := onPremObservation{
+		Action:     "observed",
+		Address:    address,
+		MAC:        firstNonEmpty(attrs["mac"], attrs["clientMAC"], attrs["lladdr"]),
+		Interface:  firstNonEmpty(attrs["interface"], attrs["ifname"], attrs["device"]),
+		Network:    firstNonEmpty(attrs["network"], attrs["svnet"]),
+		Bridge:     attrs["bridge"],
+		SourceType: firstNonEmpty(attrs["sourceType"], attrs["source"]),
+	}
+	switch strings.TrimSpace(event.Type) {
+	case "routerd.dhcp.lease.add", "routerd.dhcp.lease.old":
+		out.SourceType = firstNonEmpty(out.SourceType, OnPremSourceDHCPv4Lease)
+	case "routerd.dhcp.lease.del":
+		out.Action = "expired"
+		out.SourceType = firstNonEmpty(out.SourceType, OnPremSourceDHCPv4Lease)
+	case OnPremARPObservedEvent, "routerd.arp.observed":
+		out.SourceType = firstNonEmpty(out.SourceType, OnPremSourceARPObserver)
+	case OnPremARPProbeHitEvent, "routerd.arp.probe.hit":
+		out.SourceType = firstNonEmpty(out.SourceType, OnPremSourceOnDemandARP)
+	case OnPremPVESVNetObservedEvent:
+		out.SourceType = firstNonEmpty(out.SourceType, OnPremSourcePVESVNet)
+	default:
+		return onPremObservation{}, false
+	}
+	if strings.TrimSpace(out.Address) == "" || strings.TrimSpace(out.SourceType) == "" {
+		return onPremObservation{}, false
+	}
+	return out, true
+}
+
+func matchingOnPremDiscoverySource(self memberPlanInfo, observation onPremObservation) (api.MobilityOwnershipDiscoverySource, bool) {
+	for _, source := range onPremDiscoverySources(self.OwnershipDiscovery) {
+		if strings.TrimSpace(source.Type) != strings.TrimSpace(observation.SourceType) {
+			continue
+		}
+		sourceIface := strings.TrimSpace(firstNonEmpty(source.Interface, self.Capture.Interface))
+		if sourceIface != "" && strings.TrimSpace(observation.Interface) != "" && sourceIface != strings.TrimSpace(observation.Interface) {
+			continue
+		}
+		if source.Network != "" && observation.Network != "" && strings.TrimSpace(source.Network) != strings.TrimSpace(observation.Network) {
+			continue
+		}
+		if source.Bridge != "" && observation.Bridge != "" && strings.TrimSpace(source.Bridge) != strings.TrimSpace(observation.Bridge) {
+			continue
+		}
+		return source, true
+	}
+	return api.MobilityOwnershipDiscoverySource{}, false
+}
+
+func onPremDiscoverySources(discovery api.MobilityOwnershipDiscovery) []api.MobilityOwnershipDiscoverySource {
+	out := append([]api.MobilityOwnershipDiscoverySource(nil), discovery.Sources...)
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Type == out[j].Type {
+			return out[i].Resource < out[j].Resource
+		}
+		return out[i].Type < out[j].Type
+	})
+	return out
+}
+
+func onPremDiscoveryLeaseTTL(discovery api.MobilityOwnershipDiscovery, source api.MobilityOwnershipDiscoverySource, spec api.MobilityPoolSpec) time.Duration {
+	if ttl := durationDefault(source.LeaseTTL, 0); ttl > 0 {
+		return ttl
+	}
+	return discoveryLeaseTTL(discovery, spec)
 }
 
 func (c DiscoveryController) expireStaleProviderDiscoveryEvents(poolName string, spec api.MobilityPoolSpec, selfNode string, poolPrefix netip.Prefix, retained map[string]bool, now time.Time, ttl time.Duration, missingHold time.Duration) error {
@@ -716,6 +919,73 @@ func providerDiscoveryExpiredEvent(poolName, group, nodeRef, address string, pre
 		ExpiresAt:  observedAt.Add(ttl),
 		RecordedAt: observedAt,
 	}
+}
+
+func onPremDiscoveryObservedEvent(poolName, group, nodeRef, address string, observation onPremObservation, now time.Time, ttl time.Duration) routerstate.EventRecord {
+	observedAt := now.UTC()
+	payload := onPremDiscoveryPayload(poolName, address, observation)
+	return routerstate.EventRecord{
+		ID:         onPremDiscoveryEventID(poolName, nodeRef, address, observation.SourceType, observedAt),
+		Group:      strings.TrimSpace(group),
+		SourceNode: strings.TrimSpace(nodeRef),
+		Type:       ObservedEventType,
+		Subject:    address,
+		DedupeKey:  onPremDiscoveryDedupeKey(poolName, nodeRef, address, observation.SourceType),
+		Payload:    payload,
+		ObservedAt: observedAt,
+		ExpiresAt:  observedAt.Add(ttl),
+		RecordedAt: observedAt,
+	}
+}
+
+func onPremDiscoveryExpiredEvent(poolName, group, nodeRef, address string, observation onPremObservation, now time.Time, ttl time.Duration) routerstate.EventRecord {
+	observedAt := now.UTC()
+	payload := onPremDiscoveryPayload(poolName, address, observation)
+	if ttl <= 0 {
+		ttl = DefaultLeaseTTL
+	}
+	return routerstate.EventRecord{
+		ID:         onPremDiscoveryDedupeKey(poolName, nodeRef, address, observation.SourceType) + ":expired:" + strconv.FormatInt(observedAt.UnixNano(), 10),
+		Group:      strings.TrimSpace(group),
+		SourceNode: strings.TrimSpace(nodeRef),
+		Type:       ExpiredEventType,
+		Subject:    address,
+		DedupeKey:  onPremDiscoveryDedupeKey(poolName, nodeRef, address, observation.SourceType),
+		Payload:    payload,
+		ObservedAt: observedAt,
+		ExpiresAt:  observedAt.Add(ttl),
+		RecordedAt: observedAt,
+	}
+}
+
+func onPremDiscoveryPayload(poolName, address string, observation onPremObservation) map[string]string {
+	payload := map[string]string{
+		"address":    address,
+		"pool":       strings.TrimSpace(poolName),
+		"source":     onPremDiscoverySource,
+		"sourceType": strings.TrimSpace(observation.SourceType),
+	}
+	if value := strings.TrimSpace(observation.MAC); value != "" {
+		payload["mac"] = value
+	}
+	if value := strings.TrimSpace(observation.Interface); value != "" {
+		payload["interface"] = value
+	}
+	if value := strings.TrimSpace(observation.Network); value != "" {
+		payload["network"] = value
+	}
+	if value := strings.TrimSpace(observation.Bridge); value != "" {
+		payload["bridge"] = value
+	}
+	return payload
+}
+
+func onPremDiscoveryEventID(poolName, nodeRef, address, sourceType string, observedAt time.Time) string {
+	return onPremDiscoveryDedupeKey(poolName, nodeRef, address, sourceType) + ":" + strconv.FormatInt(observedAt.UTC().UnixNano(), 10)
+}
+
+func onPremDiscoveryDedupeKey(poolName, nodeRef, address, sourceType string) string {
+	return strings.Join([]string{"mobility", onPremDiscoverySource, strings.TrimSpace(sourceType), strings.TrimSpace(poolName), strings.TrimSpace(nodeRef), strings.ReplaceAll(strings.TrimSpace(address), "/", "_")}, ":")
 }
 
 func providerDiscoveryEventID(poolName, nodeRef, address string, observedAt time.Time) string {

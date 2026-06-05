@@ -7770,7 +7770,8 @@
                                   "enum": [
                                     "",
                                     "disabled",
-                                    "provider-private-ip"
+                                    "provider-private-ip",
+                                    "onprem-l2"
                                   ],
                                   "type": "string"
                                 },
@@ -7823,6 +7824,84 @@
                                     }
                                   },
                                   "type": "object"
+                                },
+                                "sources": {
+                                  "description": "Sources enables one or more on-prem L2 ownership signals. The controller\nnormalizes DHCP lease hooks, ARP observers, on-demand ARP probes, and\nPVE svnet observations into the same observed-client federation fact.",
+                                  "items": {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "bridge": {
+                                        "description": "Bridge optionally carries the local bridge name for PVE/svnet observers.",
+                                        "type": "string"
+                                      },
+                                      "interface": {
+                                        "description": "Interface narrows L2 observations to one capture interface. Empty defaults\nto the member capture.interface when applicable.",
+                                        "type": "string"
+                                      },
+                                      "leaseTTL": {
+                                        "description": "LeaseTTL overrides ownership event expiry for this source.",
+                                        "type": "string"
+                                      },
+                                      "network": {
+                                        "description": "Network optionally carries the logical svnet/network name, for example svnet1.",
+                                        "type": "string"
+                                      },
+                                      "probeRetries": {
+                                        "description": "ProbeRetries controls retry count for active ARP probes.",
+                                        "maximum": 20,
+                                        "minimum": 0,
+                                        "type": "integer"
+                                      },
+                                      "probeTimeout": {
+                                        "description": "ProbeTimeout bounds one active ARP probe attempt for on-demand-arp.",
+                                        "type": "string"
+                                      },
+                                      "resource": {
+                                        "description": "Resource optionally identifies the daemon/resource that emits the signal.",
+                                        "type": "string"
+                                      },
+                                      "scanInterval": {
+                                        "description": "ScanInterval bounds polling sources. Event-driven sources may ignore it.",
+                                        "type": "string"
+                                      },
+                                      "sourceAddressFrom": {
+                                        "additionalProperties": false,
+                                        "description": "SourceAddressFrom resolves the sender address used by active probing\nsources when the capture source address is DHCP-managed.",
+                                        "properties": {
+                                          "field": {
+                                            "description": "Field defaults to phase when omitted.",
+                                            "type": "string"
+                                          },
+                                          "optional": {
+                                            "type": "boolean"
+                                          },
+                                          "resource": {
+                                            "description": "Resource names the source resource as Kind/name and reads its status, or a router config field for supported resources.",
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "resource"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      "type": {
+                                        "description": "Type selects the on-prem observation source.",
+                                        "enum": [
+                                          "dhcpv4-lease",
+                                          "arp-observer",
+                                          "on-demand-arp",
+                                          "pve-svnet"
+                                        ],
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "type"
+                                    ],
+                                    "type": "object"
+                                  },
+                                  "type": "array"
                                 },
                                 "subnetRef": {
                                   "description": "SubnetRef optionally constrains the provider scan. Empty asks the plugin\nto infer it from the self NIC.",
@@ -8005,7 +8084,8 @@
                                       "enum": [
                                         "",
                                         "disabled",
-                                        "provider-private-ip"
+                                        "provider-private-ip",
+                                        "onprem-l2"
                                       ],
                                       "type": "string"
                                     },
@@ -8058,6 +8138,84 @@
                                         }
                                       },
                                       "type": "object"
+                                    },
+                                    "sources": {
+                                      "description": "Sources enables one or more on-prem L2 ownership signals. The controller\nnormalizes DHCP lease hooks, ARP observers, on-demand ARP probes, and\nPVE svnet observations into the same observed-client federation fact.",
+                                      "items": {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "bridge": {
+                                            "description": "Bridge optionally carries the local bridge name for PVE/svnet observers.",
+                                            "type": "string"
+                                          },
+                                          "interface": {
+                                            "description": "Interface narrows L2 observations to one capture interface. Empty defaults\nto the member capture.interface when applicable.",
+                                            "type": "string"
+                                          },
+                                          "leaseTTL": {
+                                            "description": "LeaseTTL overrides ownership event expiry for this source.",
+                                            "type": "string"
+                                          },
+                                          "network": {
+                                            "description": "Network optionally carries the logical svnet/network name, for example svnet1.",
+                                            "type": "string"
+                                          },
+                                          "probeRetries": {
+                                            "description": "ProbeRetries controls retry count for active ARP probes.",
+                                            "maximum": 20,
+                                            "minimum": 0,
+                                            "type": "integer"
+                                          },
+                                          "probeTimeout": {
+                                            "description": "ProbeTimeout bounds one active ARP probe attempt for on-demand-arp.",
+                                            "type": "string"
+                                          },
+                                          "resource": {
+                                            "description": "Resource optionally identifies the daemon/resource that emits the signal.",
+                                            "type": "string"
+                                          },
+                                          "scanInterval": {
+                                            "description": "ScanInterval bounds polling sources. Event-driven sources may ignore it.",
+                                            "type": "string"
+                                          },
+                                          "sourceAddressFrom": {
+                                            "additionalProperties": false,
+                                            "description": "SourceAddressFrom resolves the sender address used by active probing\nsources when the capture source address is DHCP-managed.",
+                                            "properties": {
+                                              "field": {
+                                                "description": "Field defaults to phase when omitted.",
+                                                "type": "string"
+                                              },
+                                              "optional": {
+                                                "type": "boolean"
+                                              },
+                                              "resource": {
+                                                "description": "Resource names the source resource as Kind/name and reads its status, or a router config field for supported resources.",
+                                                "type": "string"
+                                              }
+                                            },
+                                            "required": [
+                                              "resource"
+                                            ],
+                                            "type": "object"
+                                          },
+                                          "type": {
+                                            "description": "Type selects the on-prem observation source.",
+                                            "enum": [
+                                              "dhcpv4-lease",
+                                              "arp-observer",
+                                              "on-demand-arp",
+                                              "pve-svnet"
+                                            ],
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "type"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      "type": "array"
                                     },
                                     "subnetRef": {
                                       "description": "SubnetRef optionally constrains the provider scan. Empty asks the plugin\nto infer it from the self NIC.",
