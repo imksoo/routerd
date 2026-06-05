@@ -279,7 +279,7 @@ func applyOpenRCDnsmasqConfig(configPath, servicePath string, configData []byte,
 	}
 	leaseFile := dnsmasqLeaseFileForPlatform()
 	if leaseFile == "" {
-		leaseFile = strings.TrimRight(platformDefaults.StateDir, "/") + "/dnsmasq/dnsmasq.leases"
+		leaseFile = platformDefaults.DnsmasqLeaseFile()
 	}
 	if err := os.MkdirAll(filepathDir(leaseFile), 0755); err != nil {
 		return nil, fmt.Errorf("create dnsmasq lease directory %s: %w", filepathDir(leaseFile), err)
@@ -508,10 +508,10 @@ func applyFreeBSDDnsmasqConfig(configPath, servicePath string, configData []byte
 
 func dnsmasqLeaseFileForPlatform() string {
 	if platformDefaults.OS == platform.OSFreeBSD {
-		return strings.TrimRight(platformDefaults.StateDir, "/") + "/dnsmasq/dnsmasq.leases"
+		return platformDefaults.DnsmasqLeaseFile()
 	}
 	if platformFeatures.HasOpenRC {
-		return strings.TrimRight(platformDefaults.StateDir, "/") + "/dnsmasq/dnsmasq.leases"
+		return platformDefaults.DnsmasqLeaseFile()
 	}
 	return ""
 }

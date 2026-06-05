@@ -133,7 +133,7 @@ func logRetentionSignalFiles(router *api.Router, signal string) []string {
 				}
 			}
 		}
-		return []string{defaults.StateDir + "/firewall-logs.db"}
+		return []string{defaults.FirewallLogFile()}
 	default:
 		return nil
 	}

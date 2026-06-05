@@ -70,6 +70,9 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
   the mobility prefix on capture interfaces that otherwise have no IPv4
   address, avoiding local same-subnet delivery failures caused by fallback to a
   management-interface address.
+- `FirewallEventLog` readers and logger defaults now derive
+  `firewall-logs.db` from the platform state directory, and Web Console
+  dnsmasq lease candidates now include the platform managed lease path.
 
 ## v20260528.2308
 

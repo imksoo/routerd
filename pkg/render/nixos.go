@@ -11,6 +11,7 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/hostdeps"
+	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/sysctlprofile"
 )
 
@@ -1333,7 +1334,7 @@ func pppoeSessionSystemdSpec(name, ifname string, spec api.PPPoESessionSpec, tel
 func FirewallLoggerSystemdSpec(spec api.FirewallLogSpec, dpiSocket string) api.SystemdUnitSpec {
 	path := spec.Path
 	if path == "" {
-		path = "/var/lib/routerd/firewall-logs.db"
+		path = (platform.Defaults{StateDir: "/var/lib/routerd"}).FirewallLogFile()
 	}
 	group := spec.NFLogGroup
 	if group == 0 {

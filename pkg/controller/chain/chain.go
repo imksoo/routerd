@@ -2394,7 +2394,7 @@ func dnsmasqLeaseFile(router *api.Router, configPath, pidFile string) (string, e
 	leaseFile := filepath.Join(leaseDir, "dnsmasq.leases")
 	defaults, features := platform.Current()
 	if features.HasRCD {
-		leaseFile = filepath.Join(defaults.StateDir, "dnsmasq", "dnsmasq.leases")
+		leaseFile = defaults.DnsmasqLeaseFile()
 	}
 	return leaseFile, nil
 }

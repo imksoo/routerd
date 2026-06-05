@@ -15,7 +15,19 @@ import (
 
 	"github.com/imksoo/routerd/pkg/dpi"
 	"github.com/imksoo/routerd/pkg/logstore"
+	"github.com/imksoo/routerd/pkg/platform"
 )
+
+func TestParseOptionsDefaultPathUsesPlatformStateDir(t *testing.T) {
+	opts, err := parseOptions("daemon", []string{"daemon"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaults, _ := platform.Current()
+	if got, want := opts.path, defaults.FirewallLogFile(); got != want {
+		t.Fatalf("path = %q, want %q", got, want)
+	}
+}
 
 func TestSelftestCreatesDatabase(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "firewall-logs.db")

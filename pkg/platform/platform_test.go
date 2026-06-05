@@ -66,8 +66,72 @@ func TestDerivedPaths(t *testing.T) {
 	if got, want := defaults.DBFile(), defaults.StateDir+"/routerd.db"; got != want {
 		t.Errorf("DBFile = %q, want %q", got, want)
 	}
+	if got, want := defaults.FirewallLogFile(), strings.TrimRight(defaults.StateDir, "/")+"/firewall-logs.db"; got != want {
+		t.Errorf("FirewallLogFile = %q, want %q", got, want)
+	}
+	if got, want := defaults.DnsmasqLeaseFile(), strings.TrimRight(defaults.StateDir, "/")+"/dnsmasq/dnsmasq.leases"; got != want {
+		t.Errorf("DnsmasqLeaseFile = %q, want %q", got, want)
+	}
+	if got, want := defaults.RuntimeDnsmasqLeaseFile(), strings.TrimRight(defaults.RuntimeDir, "/")+"/dnsmasq.leases"; got != want {
+		t.Errorf("RuntimeDnsmasqLeaseFile = %q, want %q", got, want)
+	}
 	if got, want := defaults.ConfigFile(), defaults.SysconfDir+"/router.yaml"; got != want {
 		t.Errorf("ConfigFile = %q, want %q", got, want)
+	}
+}
+
+func TestCanonicalResourcePaths(t *testing.T) {
+	for _, tt := range []struct {
+		name         string
+		defaults     Defaults
+		firewallLogs string
+		dnsmasqLease string
+	}{
+		{
+			name:         "linux",
+			defaults:     Defaults{StateDir: "/var/lib/routerd"},
+			firewallLogs: "/var/lib/routerd/firewall-logs.db",
+			dnsmasqLease: "/var/lib/routerd/dnsmasq/dnsmasq.leases",
+		},
+		{
+			name:         "freebsd",
+			defaults:     Defaults{StateDir: "/var/db/routerd"},
+			firewallLogs: "/var/db/routerd/firewall-logs.db",
+			dnsmasqLease: "/var/db/routerd/dnsmasq/dnsmasq.leases",
+		},
+		{
+			name:         "trim slash",
+			defaults:     Defaults{StateDir: "/tmp/routerd/state/"},
+			firewallLogs: "/tmp/routerd/state/firewall-logs.db",
+			dnsmasqLease: "/tmp/routerd/state/dnsmasq/dnsmasq.leases",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.defaults.FirewallLogFile(); got != tt.firewallLogs {
+				t.Fatalf("FirewallLogFile = %q, want %q", got, tt.firewallLogs)
+			}
+			if got := tt.defaults.DnsmasqLeaseFile(); got != tt.dnsmasqLease {
+				t.Fatalf("DnsmasqLeaseFile = %q, want %q", got, tt.dnsmasqLease)
+			}
+		})
+	}
+}
+
+func TestDnsmasqLeaseCandidatesPreferActualManagedPath(t *testing.T) {
+	defaults := Defaults{RuntimeDir: "/run/routerd", StateDir: "/var/lib/routerd"}
+	if got := DnsmasqLeaseCandidates(defaults, Features{}); got[0] != "/run/routerd/dnsmasq.leases" {
+		t.Fatalf("systemd candidates = %#v, want runtime path first", got)
+	}
+	if got := DnsmasqLeaseCandidates(defaults, Features{HasOpenRC: true}); got[0] != "/var/lib/routerd/dnsmasq/dnsmasq.leases" {
+		t.Fatalf("openrc candidates = %#v, want state path first", got)
+	}
+	freebsd := Defaults{RuntimeDir: "/var/run/routerd", StateDir: "/var/db/routerd"}
+	got := DnsmasqLeaseCandidates(freebsd, Features{HasRCD: true})
+	if got[0] != "/var/db/routerd/dnsmasq/dnsmasq.leases" {
+		t.Fatalf("freebsd candidates = %#v, want state path first", got)
+	}
+	if got[1] != "/var/run/routerd/dnsmasq.leases" {
+		t.Fatalf("freebsd candidates = %#v, want runtime fallback second", got)
 	}
 }
 

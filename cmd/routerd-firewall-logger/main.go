@@ -29,6 +29,7 @@ import (
 	"github.com/imksoo/routerd/pkg/logstore"
 	"github.com/imksoo/routerd/pkg/nflog"
 	routerotel "github.com/imksoo/routerd/pkg/otel"
+	"github.com/imksoo/routerd/pkg/platform"
 )
 
 func main() {
@@ -237,7 +238,8 @@ func parseOptions(name string, args []string) (options, error) {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	opts := options{}
-	fs.StringVar(&opts.path, "path", "/var/lib/routerd/firewall-logs.db", "firewall log database path")
+	defaults, _ := platform.Current()
+	fs.StringVar(&opts.path, "path", defaults.FirewallLogFile(), "firewall log database path")
 	fs.IntVar(&opts.group, "nflog-group", 0, "read Linux NFLOG directly from this group; 0 disables NFLOG input")
 	fs.StringVar(&opts.inputFile, "input-file", "", "read firewall log lines from file")
 	fs.StringVar(&opts.inputFormat, "input-format", "auto", "input format: auto, json, kv, nflog-tcpdump, pflog-tcpdump")
@@ -1488,5 +1490,6 @@ func firstNonZero(values ...int) int {
 }
 
 func usage(w io.Writer) {
-	fmt.Fprintln(w, "usage: routerd-firewall-logger daemon --path /var/lib/routerd/firewall-logs.db [--nflog-group 1 | --pflog-interface pflog0]")
+	defaults, _ := platform.Current()
+	fmt.Fprintf(w, "usage: routerd-firewall-logger daemon --path %s [--nflog-group 1 | --pflog-interface pflog0]\n", defaults.FirewallLogFile())
 }
