@@ -1584,14 +1584,20 @@ type MobilityIPOwnershipPolicy struct {
 }
 
 type MobilityMemberCapture struct {
-	Type               string            `yaml:"type,omitempty" json:"type,omitempty" jsonschema:"enum=provider-secondary-ip,enum=proxy-arp"`
-	ProviderRef        string            `yaml:"providerRef,omitempty" json:"providerRef,omitempty"`
-	ProviderMode       string            `yaml:"providerMode,omitempty" json:"providerMode,omitempty"`
-	NICRef             string            `yaml:"nicRef,omitempty" json:"nicRef,omitempty"`
-	ConfigureOSAddress bool              `yaml:"configureOSAddress,omitempty" json:"configureOSAddress,omitempty"`
-	Interface          string            `yaml:"interface,omitempty" json:"interface,omitempty"`
-	GratuitousARP      bool              `yaml:"gratuitousARP,omitempty" json:"gratuitousARP,omitempty"`
-	ActiveWhen         CaptureActiveWhen `yaml:"activeWhen,omitempty" json:"activeWhen,omitempty"`
+	Type               string `yaml:"type,omitempty" json:"type,omitempty" jsonschema:"enum=provider-secondary-ip,enum=proxy-arp"`
+	ProviderRef        string `yaml:"providerRef,omitempty" json:"providerRef,omitempty"`
+	ProviderMode       string `yaml:"providerMode,omitempty" json:"providerMode,omitempty"`
+	NICRef             string `yaml:"nicRef,omitempty" json:"nicRef,omitempty"`
+	ConfigureOSAddress bool   `yaml:"configureOSAddress,omitempty" json:"configureOSAddress,omitempty"`
+	Interface          string `yaml:"interface,omitempty" json:"interface,omitempty"`
+	// SourceAddress is an optional local IPv4 address used by proxy-ARP capture
+	// members as the capture-interface sender address. In BGP delivery mode,
+	// routerd lowers it to a /32 IPv4StaticAddress and uses it as the capture
+	// prefix route preferred source so Linux ARP for local same-subnet clients
+	// stays inside the mobility prefix.
+	SourceAddress string            `yaml:"sourceAddress,omitempty" json:"sourceAddress,omitempty"`
+	GratuitousARP bool              `yaml:"gratuitousARP,omitempty" json:"gratuitousARP,omitempty"`
+	ActiveWhen    CaptureActiveWhen `yaml:"activeWhen,omitempty" json:"activeWhen,omitempty"`
 	// Target carries non-secret provider target hints such as region,
 	// compartmentId, resourceGroup, nicName, or ipConfigName. It is copied to
 	// provider ActionPlan.target; credentials and tokens do not belong here.
