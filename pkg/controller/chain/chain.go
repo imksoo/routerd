@@ -1461,6 +1461,9 @@ func (r *Runner) superviseClientDaemons(ctx context.Context, logger *slog.Logger
 			if spec.IAID != "" {
 				args = append(args, "--iaid", spec.IAID)
 			}
+			if spec.ClientDUID != "" {
+				args = append(args, "--client-duid", spec.ClientDUID)
+			}
 			r.startSupervisedDaemon(ctx, logger, resource.Metadata.Name, "routerd-dhcpv6-client", args)
 		case "DHCPv4Client":
 			spec, err := resource.DHCPv4ClientSpec()

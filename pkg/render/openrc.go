@@ -430,6 +430,9 @@ func dhcpv6PrefixDelegationOpenRCSystemdSpec(resource, ifname string, spec api.D
 	if spec.IAID != "" {
 		exec = append(exec, "--iaid", spec.IAID)
 	}
+	if spec.ClientDUID != "" {
+		exec = append(exec, "--client-duid", spec.ClientDUID)
+	}
 	return api.SystemdUnitSpec{
 		Description:              "routerd DHCPv6-PD client " + resource,
 		ExecStart:                exec,

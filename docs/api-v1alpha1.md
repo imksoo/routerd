@@ -127,7 +127,8 @@ instead of silently ignoring the input.
 | `IPv6RAAddress` | Represents IPv6 addresses learned from RA/SLAAC. |
 
 `DHCPv6PrefixDelegation` no longer selects an OS DHCPv6 client. DHCPv6-PD is
-owned by `routerd-dhcpv6-client`.
+owned by `routerd-dhcpv6-client`. Set `spec.clientDUID` to a plain hex DUID when
+the DHCPv6 client identity must stay fixed across HA nodes.
 
 ## LAN Services
 
