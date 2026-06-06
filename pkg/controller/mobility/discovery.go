@@ -108,7 +108,7 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 	case "", "disabled":
 		return nil
 	case "onprem-l2":
-		return c.reconcileOnPremL2Discovery(poolName, self, discovery, now)
+		return c.reconcileOnPremL2Discovery(ctx, poolName, spec, self, discovery, now)
 	case "provider-private-ip":
 	default:
 		return nil
@@ -278,9 +278,18 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 	return nil
 }
 
-func (c DiscoveryController) reconcileOnPremL2Discovery(poolName string, self memberPlanInfo, discovery api.MobilityOwnershipDiscovery, now time.Time) error {
+func (c DiscoveryController) reconcileOnPremL2Discovery(ctx context.Context, poolName string, spec api.MobilityPoolSpec, self memberPlanInfo, discovery api.MobilityOwnershipDiscovery, now time.Time) error {
 	if strings.TrimSpace(self.Role) != "onprem" || strings.TrimSpace(self.Capture.Type) != "proxy-arp" {
 		return fmt.Errorf("ownershipDiscovery mode onprem-l2 requires onprem proxy-arp member %q", self.NodeRef)
+	}
+	poolPrefix, err := netip.ParsePrefix(strings.TrimSpace(spec.Prefix))
+	if err != nil {
+		return err
+	}
+	poolPrefix = poolPrefix.Masked()
+	observed, err := c.recordOnPremStatusObservations(ctx, poolName, spec, self, poolPrefix, now)
+	if err != nil {
+		return err
 	}
 	sources := onPremDiscoverySources(discovery)
 	statusSources := make([]map[string]string, 0, len(sources))
@@ -305,12 +314,100 @@ func (c DiscoveryController) reconcileOnPremL2Discovery(poolName string, self me
 		"discoveryReason":      "onprem-l2 event sources armed",
 		"discoveryMode":        "onprem-l2",
 		"discoverySources":     statusSources,
-		"discoveryObserved":    0,
+		"discoveryObserved":    observed,
 		"discoveryLastScanAt":  now.Format(time.RFC3339Nano),
 		"discoveryNextScanAt":  "",
 		"discoverySourceCount": len(statusSources),
 	})
 	return nil
+}
+
+type onPremObservedClientStatus struct {
+	IP         string `json:"ip"`
+	Address    string `json:"address"`
+	MAC        string `json:"mac"`
+	SourceType string `json:"sourceType"`
+	SeenAt     string `json:"seenAt"`
+}
+
+func (c DiscoveryController) recordOnPremStatusObservations(ctx context.Context, poolName string, spec api.MobilityPoolSpec, self memberPlanInfo, poolPrefix netip.Prefix, now time.Time) (int, error) {
+	status := c.Store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", poolName)
+	clients := onPremObservedClientsFromStatus(status["observedClients"])
+	if len(clients) == 0 {
+		return 0, nil
+	}
+	observed := 0
+	recorded := false
+	for _, client := range clients {
+		seenAt := now
+		if parsed, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(client.SeenAt)); err == nil {
+			seenAt = parsed.UTC()
+		}
+		observation := onPremObservation{
+			Action:     "observed",
+			Address:    firstNonEmpty(client.Address, client.IP),
+			MAC:        client.MAC,
+			Interface:  firstNonEmpty(statusValueString(status, "interface"), statusValueString(status, "ifname")),
+			Network:    statusValueString(status, "network"),
+			Bridge:     statusValueString(status, "bridge"),
+			SourceType: firstNonEmpty(client.SourceType, statusValueString(status, "sourceType")),
+			ObservedAt: seenAt,
+		}
+		ok, err := c.recordOnPremObservation(poolName, spec, self, poolPrefix, observation, now)
+		if err != nil {
+			return observed, err
+		}
+		if ok {
+			observed++
+			recorded = true
+		}
+	}
+	if recorded && c.Bus != nil {
+		changed := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "mobility-discovery", Kind: "mobility-discovery"}, OwnershipChangedEvent, daemonapi.SeverityInfo)
+		changed.Time = now
+		_ = c.Bus.Publish(ctx, changed)
+	}
+	return observed, nil
+}
+
+func onPremObservedClientsFromStatus(value any) []onPremObservedClientStatus {
+	switch typed := value.(type) {
+	case string:
+		typed = strings.TrimSpace(typed)
+		if typed == "" {
+			return nil
+		}
+		var clients []onPremObservedClientStatus
+		if err := json.Unmarshal([]byte(typed), &clients); err != nil {
+			return nil
+		}
+		return clients
+	case []onPremObservedClientStatus:
+		return typed
+	case []any:
+		data, err := json.Marshal(typed)
+		if err != nil {
+			return nil
+		}
+		var clients []onPremObservedClientStatus
+		if err := json.Unmarshal(data, &clients); err != nil {
+			return nil
+		}
+		return clients
+	default:
+		return nil
+	}
+}
+
+func statusValueString(status map[string]any, key string) string {
+	if status == nil {
+		return ""
+	}
+	value, ok := status[key]
+	if !ok || value == nil {
+		return ""
+	}
+	return strings.TrimSpace(fmt.Sprint(value))
 }
 
 type onPremObservation struct {
@@ -321,6 +418,7 @@ type onPremObservation struct {
 	Network    string
 	Bridge     string
 	SourceType string
+	ObservedAt time.Time
 }
 
 func (c DiscoveryController) handleOnPremDiscoveryEvent(ctx context.Context, event daemonapi.DaemonEvent) error {
@@ -361,28 +459,11 @@ func (c DiscoveryController) handleOnPremDiscoveryEvent(ctx context.Context, eve
 			continue
 		}
 		poolPrefix = poolPrefix.Masked()
-		address, ok := normalizeDiscoveredAddress(observation.Address, poolPrefix)
-		if !ok || !discoveryScopeAllowsAddress(self.OwnershipDiscovery.Scope, address) {
-			continue
+		ok, recordErr := c.recordOnPremObservation(res.Metadata.Name, spec, self, poolPrefix, observation, now)
+		if recordErr != nil {
+			return recordErr
 		}
-		if ownerNode := strings.TrimSpace(staticOwnedOwnerNodesByAddress(spec)[address]); ownerNode != "" && ownerNode != self.NodeRef {
-			continue
-		}
-		source, ok := matchingOnPremDiscoverySource(self, observation)
-		if !ok {
-			continue
-		}
-		ttl := onPremDiscoveryLeaseTTL(self.OwnershipDiscovery, source, spec)
-		var ev routerstate.EventRecord
-		if observation.Action == "expired" {
-			ev = onPremDiscoveryExpiredEvent(res.Metadata.Name, spec.GroupRef, self.NodeRef, address, observation, now, ttl)
-		} else {
-			ev = onPremDiscoveryObservedEvent(res.Metadata.Name, spec.GroupRef, self.NodeRef, address, observation, now, ttl)
-		}
-		if err := c.Store.RecordFederationEvent(ev); err != nil {
-			return fmt.Errorf("record onprem ownership event %q: %w", ev.ID, err)
-		}
-		recorded = true
+		recorded = recorded || ok
 	}
 	if recorded && c.Bus != nil {
 		changed := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "mobility-discovery", Kind: "mobility-discovery"}, OwnershipChangedEvent, daemonapi.SeverityInfo)
@@ -390,6 +471,35 @@ func (c DiscoveryController) handleOnPremDiscoveryEvent(ctx context.Context, eve
 		_ = c.Bus.Publish(ctx, changed)
 	}
 	return nil
+}
+
+func (c DiscoveryController) recordOnPremObservation(poolName string, spec api.MobilityPoolSpec, self memberPlanInfo, poolPrefix netip.Prefix, observation onPremObservation, now time.Time) (bool, error) {
+	address, ok := normalizeDiscoveredAddress(observation.Address, poolPrefix)
+	if !ok || !discoveryScopeAllowsAddress(self.OwnershipDiscovery.Scope, address) {
+		return false, nil
+	}
+	if ownerNode := strings.TrimSpace(staticOwnedOwnerNodesByAddress(spec)[address]); ownerNode != "" && ownerNode != self.NodeRef {
+		return false, nil
+	}
+	source, ok := matchingOnPremDiscoverySource(self, observation)
+	if !ok {
+		return false, nil
+	}
+	ttl := onPremDiscoveryLeaseTTL(self.OwnershipDiscovery, source, spec)
+	eventTime := now
+	if !observation.ObservedAt.IsZero() {
+		eventTime = observation.ObservedAt.UTC()
+	}
+	var ev routerstate.EventRecord
+	if observation.Action == "expired" {
+		ev = onPremDiscoveryExpiredEvent(poolName, spec.GroupRef, self.NodeRef, address, observation, eventTime, ttl)
+	} else {
+		ev = onPremDiscoveryObservedEvent(poolName, spec.GroupRef, self.NodeRef, address, observation, eventTime, ttl)
+	}
+	if err := c.Store.RecordFederationEvent(ev); err != nil {
+		return false, fmt.Errorf("record onprem ownership event %q: %w", ev.ID, err)
+	}
+	return true, nil
 }
 
 func onPremObservationFromDaemonEvent(event daemonapi.DaemonEvent) (onPremObservation, bool) {

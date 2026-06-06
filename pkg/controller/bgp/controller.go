@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -172,21 +173,27 @@ func (c *Controller) reconcileLocked(ctx context.Context) error {
 	if err != nil {
 		return c.savePendingAll("GoBGPAppliedStateUnavailable", err)
 	}
+	previousApplied := applied
 	c.hydrateAppliedState(applied)
 	desired, err := c.desiredPeers(routerResource.Metadata.Name, routerSpec.ASN)
 	if err != nil {
 		return c.savePendingAll("GoBGPPeerConfigInvalid", err)
 	}
 	c.observeBFDPeerStates(desired)
+	staticExportPrefixes := mapKeys(advertisedPrefixes(routerSpec))
+	dynamicExportPrefixes := dynamicPathExportPrefixes(applied.Paths)
+	effectiveImportPolicy := routerSpec.ImportPolicy
+	effectiveImportPolicy.AllowedPrefixes = mergeAllowedPrefixes(effectiveImportPolicy.AllowedPrefixes, dynamicExportPrefixes)
 	for address, peer := range desired {
 		peer.GracefulRestart = routerSpec.GracefulRestart
 		peer.ConvergenceProfile = routerSpec.ConvergenceProfile
-		peer.ImportPolicy = routerSpec.ImportPolicy
+		peer.ImportPolicy = effectiveImportPolicy
 		peer.ImportPolicyName = bgpPolicyName(routerResource.Metadata.Name, "import")
 		peer.ExportPolicyName = peerExportPolicyName(routerResource.Metadata.Name, address)
+		peer.ExportPolicy.AllowedPrefixes = mergeAllowedPrefixes(peer.ExportPolicy.AllowedPrefixes, staticExportPrefixes, dynamicExportPrefixes)
 		desired[address] = peer
 	}
-	importPolicyName, err := c.reconcilePolicies(ctx, routerResource.Metadata.Name, routerSpec.ImportPolicy, desired)
+	importPolicyName, err := c.reconcilePolicies(ctx, routerResource.Metadata.Name, effectiveImportPolicy, desired)
 	if err != nil {
 		return c.savePendingAll("GoBGPPolicyApplyFailed", err)
 	}
@@ -207,12 +214,24 @@ func (c *Controller) reconcileLocked(ctx context.Context) error {
 	if err := c.reconcileAdvertisements(ctx, routerSpec, applied.Paths); err != nil {
 		return c.savePendingAll("GoBGPPathApplyFailed", err)
 	}
-	applied = c.buildAppliedConfig(routerSpec, desired, advertisedPrefixes(routerSpec), applied.Paths)
+	appliedSpec := routerSpec
+	appliedSpec.ImportPolicy = effectiveImportPolicy
+	applied = c.buildAppliedConfig(appliedSpec, desired, advertisedPrefixes(routerSpec), applied.Paths)
 	if err := c.Server.SaveAppliedConfig(ctx, applied); err != nil {
 		return c.savePendingAll("GoBGPAppliedStatePersistFailed", err)
 	}
+	if dynamicImportPolicyExpanded(previousApplied, applied) {
+		refreshed, err := c.refreshDynamicAdvertisements(ctx, applied)
+		if err != nil {
+			return c.savePendingAll("GoBGPDynamicPathRefreshFailed", err)
+		}
+		applied = refreshed
+		if err := c.Server.SaveAppliedConfig(ctx, applied); err != nil {
+			return c.savePendingAll("GoBGPAppliedStatePersistFailed", err)
+		}
+	}
 	c.appliedConfig = applied
-	allowedImportPrefixes := importAllowedPrefixes(routerSpec)
+	allowedImportPrefixes := importAllowedPrefixes(appliedSpec)
 	state, routes, livenessMarkers, err := c.observeState(ctx, allowedImportPrefixes)
 	if err != nil {
 		return c.savePendingAll("GoBGPObserveFailed", err)
@@ -809,6 +828,39 @@ func appliedPeer(peer desiredPeer) bgpdaemon.AppliedPeer {
 	return out
 }
 
+func dynamicPathExportPrefixes(paths []bgpdaemon.AppliedPath) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, path := range paths {
+		if strings.TrimSpace(path.Source) == "" || strings.TrimSpace(path.Source) == bgpdaemon.AppliedPathSourceStatic {
+			continue
+		}
+		prefix := strings.TrimSpace(path.Prefix)
+		if prefix == "" || seen[prefix] {
+			continue
+		}
+		seen[prefix] = true
+		out = append(out, prefix)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func mergeAllowedPrefixes(groups ...[]string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, group := range groups {
+		for _, prefix := range cleanStrings(group) {
+			if seen[prefix] {
+				continue
+			}
+			seen[prefix] = true
+			out = append(out, prefix)
+		}
+	}
+	return out
+}
+
 func (c *Controller) observeBFDPeerStates(desired map[string]desiredPeer) {
 	if c.Store == nil || len(desired) == 0 {
 		return
@@ -1002,6 +1054,145 @@ func staticPathUUIDs(paths []bgpdaemon.AppliedPath) map[string][]byte {
 		out[path.Prefix] = uuid
 	}
 	return out
+}
+
+func dynamicImportPolicyExpanded(previous, current bgpdaemon.AppliedConfig) bool {
+	previousPrefixes := cleanStrings(previous.Global.ImportPolicy.AllowedPrefixes)
+	currentPrefixes := cleanStrings(current.Global.ImportPolicy.AllowedPrefixes)
+	if sameStringSet(previousPrefixes, currentPrefixes) {
+		return false
+	}
+	for _, prefix := range dynamicPathExportPrefixes(current.Paths) {
+		if !stringSliceContains(previousPrefixes, prefix) && stringSliceContains(currentPrefixes, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *Controller) refreshDynamicAdvertisements(ctx context.Context, applied bgpdaemon.AppliedConfig) (bgpdaemon.AppliedConfig, error) {
+	applied = bgpdaemon.Normalize(applied)
+	for i, path := range applied.Paths {
+		if path.Source == bgpdaemon.AppliedPathSourceStatic {
+			continue
+		}
+		if uuid, err := bgpdaemon.DecodeUUID(path.UUID); err == nil && len(uuid) > 0 {
+			if err := c.Server.DeletePath(ctx, &gobgpapi.DeletePathRequest{TableType: gobgpapi.TableType_GLOBAL, Uuid: uuid}); err != nil && !isMissingGoBGPPath(err) {
+				return bgpdaemon.AppliedConfig{}, err
+			}
+		}
+		reqPath, err := appliedPathToGoBGPPath(path)
+		if err != nil {
+			return bgpdaemon.AppliedConfig{}, err
+		}
+		resp, err := c.Server.AddPath(ctx, &gobgpapi.AddPathRequest{TableType: gobgpapi.TableType_GLOBAL, Path: reqPath})
+		if err != nil {
+			return bgpdaemon.AppliedConfig{}, err
+		}
+		applied.Paths[i].UUID = bgpdaemon.EncodeUUID(resp.GetUuid())
+	}
+	return bgpdaemon.Normalize(applied), nil
+}
+
+func isMissingGoBGPPath(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "can't find a specified path")
+}
+
+func appliedPathToGoBGPPath(appliedPath bgpdaemon.AppliedPath) (*gobgpapi.Path, error) {
+	appliedPath = bgpdaemon.NormalizeAppliedPath(appliedPath)
+	parsed, err := netip.ParsePrefix(appliedPath.Prefix)
+	if err != nil {
+		return nil, err
+	}
+	parsed = parsed.Masked()
+	nlri, err := anypb.New(&gobgpapi.IPAddressPrefix{Prefix: parsed.Addr().String(), PrefixLen: uint32(parsed.Bits())})
+	if err != nil {
+		return nil, err
+	}
+	origin, err := anypb.New(&gobgpapi.OriginAttribute{Origin: 0})
+	if err != nil {
+		return nil, err
+	}
+	nextHop := "0.0.0.0"
+	if parsed.Addr().Is6() {
+		nextHop = "::"
+	}
+	if appliedPath.Attrs.NextHop != "" {
+		nextHop = appliedPath.Attrs.NextHop
+	}
+	nh, err := anypb.New(&gobgpapi.NextHopAttribute{NextHop: nextHop})
+	if err != nil {
+		return nil, err
+	}
+	attrs := []*anypb.Any{origin, nh}
+	if appliedPath.Attrs.LocalPref > 0 {
+		localPref, err := anypb.New(&gobgpapi.LocalPrefAttribute{LocalPref: appliedPath.Attrs.LocalPref})
+		if err != nil {
+			return nil, err
+		}
+		attrs = append(attrs, localPref)
+	}
+	if appliedPath.Attrs.MED > 0 {
+		med, err := anypb.New(&gobgpapi.MultiExitDiscAttribute{Med: appliedPath.Attrs.MED})
+		if err != nil {
+			return nil, err
+		}
+		attrs = append(attrs, med)
+	}
+	communities, err := standardCommunities(appliedPath.Attrs.Communities)
+	if err != nil {
+		return nil, err
+	}
+	if len(communities) > 0 {
+		attr, err := anypb.New(&gobgpapi.CommunitiesAttribute{Communities: communities})
+		if err != nil {
+			return nil, err
+		}
+		attrs = append(attrs, attr)
+	}
+	return &gobgpapi.Path{Family: familyForPrefix(parsed), Nlri: nlri, Pattrs: attrs}, nil
+}
+
+func standardCommunities(values []string) ([]uint32, error) {
+	var out []uint32
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if strings.Contains(value, ":") {
+			parts := strings.Split(value, ":")
+			if len(parts) != 2 {
+				return nil, fmt.Errorf("invalid community %q", value)
+			}
+			high, err := strconv.ParseUint(parts[0], 10, 16)
+			if err != nil {
+				return nil, fmt.Errorf("invalid community %q: %w", value, err)
+			}
+			low, err := strconv.ParseUint(parts[1], 10, 16)
+			if err != nil {
+				return nil, fmt.Errorf("invalid community %q: %w", value, err)
+			}
+			out = append(out, uint32(high)<<16|uint32(low))
+			continue
+		}
+		parsed, err := strconv.ParseUint(value, 10, 32)
+		if err != nil {
+			return nil, fmt.Errorf("invalid community %q: %w", value, err)
+		}
+		out = append(out, uint32(parsed))
+	}
+	return out, nil
+}
+
+func stringSliceContains(values []string, want string) bool {
+	want = strings.TrimSpace(want)
+	for _, value := range values {
+		if strings.TrimSpace(value) == want {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Controller) advertisedPathUUIDs(ctx context.Context) (map[string][]byte, error) {
