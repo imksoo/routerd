@@ -212,3 +212,120 @@ func TestFilterRouterByWhenPreservesImplicitBFDRef(t *testing.T) {
 		t.Fatalf("BGPPeer BFD ref = %q, want implicit ref preserved", spec.BFD)
 	}
 }
+
+func TestFilterRouterByWhenPrunesDNSForwarderForFilteredResolver(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSResolver"},
+			Metadata: api.ObjectMeta{Name: "lan"},
+			Spec: api.DNSResolverSpec{
+				When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{
+					"VirtualAddress/lan-vip.role": {Equals: "master"},
+				}},
+				Listen: []api.DNSResolverListenSpec{{Addresses: []string{"127.0.0.1"}, Port: 53, Sources: []string{"default"}}},
+			},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSUpstream"},
+			Metadata: api.ObjectMeta{Name: "cloudflare"},
+			Spec:     api.DNSUpstreamSpec{Protocol: "udp", Address: "1.1.1.1"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSForwarder"},
+			Metadata: api.ObjectMeta{Name: "default"},
+			Spec:     api.DNSForwarderSpec{Resolver: "DNSResolver/lan", Match: []string{"."}, Upstreams: []string{"DNSUpstream/cloudflare"}},
+		},
+	}}}
+	store := statefulMapStore{mapStore: mapStore{
+		api.NetAPIVersion + "/VirtualAddress/lan-vip": {"role": "backup"},
+	}}
+
+	got := FilterRouterByWhen(router, store)
+	if hasResource(got, "DNSResolver", "lan") {
+		t.Fatal("DNSResolver/lan remained in backup role")
+	}
+	if hasResource(got, "DNSForwarder", "default") {
+		t.Fatal("DNSForwarder/default remained after its resolver was filtered")
+	}
+
+	store.mapStore[api.NetAPIVersion+"/VirtualAddress/lan-vip"]["role"] = "master"
+	got = FilterRouterByWhen(router, store)
+	if !hasResource(got, "DNSResolver", "lan") {
+		t.Fatal("DNSResolver/lan missing in master role")
+	}
+	if !hasResource(got, "DNSForwarder", "default") {
+		t.Fatal("DNSForwarder/default missing in master role")
+	}
+}
+
+func TestFilterRouterByWhenPrunesDNSResolverListenSourcesForFilteredForwarder(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSResolver"},
+			Metadata: api.ObjectMeta{Name: "lan"},
+			Spec: api.DNSResolverSpec{
+				Listen: []api.DNSResolverListenSpec{{Addresses: []string{"127.0.0.1"}, Port: 53, Sources: []string{"local", "default"}}},
+			},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSZone"},
+			Metadata: api.ObjectMeta{Name: "local-zone"},
+			Spec:     api.DNSZoneSpec{Zone: "home.internal"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSForwarder"},
+			Metadata: api.ObjectMeta{Name: "local"},
+			Spec:     api.DNSForwarderSpec{Resolver: "DNSResolver/lan", Match: []string{"home.internal"}, ZoneRefs: []string{"DNSZone/local-zone"}},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSUpstream"},
+			Metadata: api.ObjectMeta{Name: "cloudflare"},
+			Spec:     api.DNSUpstreamSpec{Protocol: "udp", Address: "1.1.1.1"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSForwarder"},
+			Metadata: api.ObjectMeta{Name: "default"},
+			Spec: api.DNSForwarderSpec{
+				Resolver:  "DNSResolver/lan",
+				Match:     []string{"."},
+				Upstreams: []string{"DNSUpstream/cloudflare"},
+				When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{
+					"VirtualAddress/lan-vip.role": {Equals: "master"},
+				}},
+			},
+		},
+	}}}
+	store := statefulMapStore{mapStore: mapStore{
+		api.NetAPIVersion + "/VirtualAddress/lan-vip": {"role": "backup"},
+	}}
+
+	got := FilterRouterByWhen(router, store)
+	res, ok := findResource(got, "DNSResolver", "lan")
+	if !ok {
+		t.Fatal("DNSResolver/lan missing")
+	}
+	spec, err := res.DNSResolverSpec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(spec.Listen) != 1 || len(spec.Listen[0].Sources) != 1 || spec.Listen[0].Sources[0] != "local" {
+		t.Fatalf("listen sources = %#v, want only local", spec.Listen)
+	}
+}
+
+func hasResource(router *api.Router, kind, name string) bool {
+	_, ok := findResource(router, kind, name)
+	return ok
+}
+
+func findResource(router *api.Router, kind, name string) (api.Resource, bool) {
+	if router == nil {
+		return api.Resource{}, false
+	}
+	for _, res := range router.Spec.Resources {
+		if res.Kind == kind && res.Metadata.Name == name {
+			return res, true
+		}
+	}
+	return api.Resource{}, false
+}

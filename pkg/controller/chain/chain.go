@@ -612,10 +612,15 @@ func stableFloat64(value float64) any {
 }
 
 func statusSubscriptions(kinds ...string) []bus.Subscription {
+	return statusSubscriptionsWithWhen(nil, nil, kinds...)
+}
+
+func statusSubscriptionsWithWhen(router *api.Router, controlledKinds []string, kinds ...string) []bus.Subscription {
 	allowed := map[string]bool{}
 	for _, kind := range kinds {
 		allowed[kind] = true
 	}
+	deps := whenStatusDependencyRefs(router, controlledKinds...)
 	return []bus.Subscription{{
 		Topics: []string{"routerd.resource.status.changed", "routerd.controller.bootstrap"},
 		Filter: func(event daemonapi.DaemonEvent) bool {
@@ -625,9 +630,83 @@ func statusSubscriptions(kinds ...string) []bus.Subscription {
 			if event.Resource == nil {
 				return false
 			}
-			return allowed[event.Resource.Kind]
+			if allowed[event.Resource.Kind] {
+				return true
+			}
+			names := deps[event.Resource.Kind]
+			if len(names) == 0 {
+				return false
+			}
+			return names[""] || names[event.Resource.Name]
 		},
 	}}
+}
+
+func whenStatusSubscriptions(router *api.Router, controlledKinds ...string) []bus.Subscription {
+	return statusSubscriptionsWithWhen(router, controlledKinds)
+}
+
+func whenStatusDependencyRefs(router *api.Router, controlledKinds ...string) map[string]map[string]bool {
+	controlled := map[string]bool{}
+	for _, kind := range controlledKinds {
+		controlled[kind] = true
+	}
+	out := map[string]map[string]bool{}
+	if router == nil {
+		return out
+	}
+	for _, resource := range router.Spec.Resources {
+		if !controlled[resource.Kind] {
+			continue
+		}
+		addResourceWhenStatusDependencyRefs(out, resource)
+	}
+	return out
+}
+
+func addResourceWhenStatusDependencyRefs(out map[string]map[string]bool, resource api.Resource) {
+	addWhenStatusDependencyRefs(out, resourcequery.ResourceWhen(resource))
+	if resource.Kind != "EgressRoutePolicy" {
+		return
+	}
+	spec, err := resource.EgressRoutePolicySpec()
+	if err != nil {
+		return
+	}
+	for _, candidate := range spec.Candidates {
+		addWhenStatusDependencyRefs(out, candidate.When)
+	}
+}
+
+func addWhenStatusDependencyRefs(out map[string]map[string]bool, when api.ResourceWhenSpec) {
+	for _, child := range when.All {
+		addWhenStatusDependencyRefs(out, child)
+	}
+	for _, child := range when.Any {
+		addWhenStatusDependencyRefs(out, child)
+	}
+	for ref := range when.State {
+		kind, name, ok := whenStatusDependencyRef(ref)
+		if !ok {
+			continue
+		}
+		if out[kind] == nil {
+			out[kind] = map[string]bool{}
+		}
+		out[kind][name] = true
+	}
+}
+
+func whenStatusDependencyRef(ref string) (string, string, bool) {
+	ref = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(ref, "${"), "}"))
+	left := ref
+	if before, _, ok := strings.Cut(ref, ".status."); ok {
+		left = before
+	} else if before, _, ok := strings.Cut(ref, "."); ok {
+		left = before
+	}
+	kind, name, ok := resourcequery.SplitResource(left)
+	return kind, name, ok
 }
 
 func bootstrapSubscriptions() []bus.Subscription {
@@ -927,7 +1006,7 @@ func (r *Runner) Start(ctx context.Context) error {
 	serviceUnits := SystemdUnitController{Router: r.Router, DeclaredRouter: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunServiceUnit, SynthesizeClientDaemonUnits: !r.Opts.SuperviseClientDaemons}
 	logRetention := LogRetentionController{Router: r.Router, Bus: r.Bus, Store: store}
 	ntpClient := NTPClientController{Router: r.Router, Bus: r.Bus, Store: store}
-	ntpServer := NTPServerController{Router: r.Router, Bus: r.Bus, Store: store}
+	ntpServer := NTPServerController{Router: r.Router, DeclaredRouter: r.Router, Bus: r.Bus, Store: store}
 	info := DHCPv6InformationController{Router: r.Router, Bus: r.Bus, Store: store, DaemonSockets: r.Opts.DaemonSockets, Logger: logger}
 	link := LinkController{Router: r.Router, Store: store, Logger: logger}
 	tunnel := TunnelInterfaceController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunRoute, OS: platform.CurrentOS(), Logger: logger}
@@ -1054,7 +1133,7 @@ func (r *Runner) Start(ctx context.Context) error {
 			return observabilityPipeline.Reconcile(ctx)
 		}},
 		framework.FuncController{ControllerName: "daemon-status", Every: 5 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.dhcpv6.client.**", "routerd.dhcpv4.client.**", "routerd.healthcheck.**", "routerd.pppoe.client.**", "routerd.mobility.arp.**", "routerd.mobility.pve-svnet.**"}}}, PeriodicFunc: daemonStatusSync.Reconcile},
-		framework.FuncController{ControllerName: "dhcp-lease-sync", Every: 30 * time.Second, Subs: statusSubscriptions("DHCPv4ServerLeaseSync", "DHCPv6ServerLeaseSync", "DHCPv6PrefixDelegationLeaseSync", "VirtualAddress", "RouterdCluster"), PeriodicFunc: func(ctx context.Context) error {
+		framework.FuncController{ControllerName: "dhcp-lease-sync", Every: 30 * time.Second, Subs: statusSubscriptionsWithWhen(r.Router, []string{"DHCPv4ServerLeaseSync", "DHCPv6ServerLeaseSync", "DHCPv6PrefixDelegationLeaseSync"}, "DHCPv4ServerLeaseSync", "DHCPv6ServerLeaseSync", "DHCPv6PrefixDelegationLeaseSync", "VirtualAddress", "RouterdCluster"), PeriodicFunc: func(ctx context.Context) error {
 			effective, err := effectiveForReconcile()
 			if err != nil {
 				return err
@@ -1063,7 +1142,7 @@ func (r *Runner) Start(ctx context.Context) error {
 			current.Router = effective
 			return current.Reconcile(ctx)
 		}},
-		framework.FuncController{ControllerName: "nat44-session-sync", Every: 30 * time.Second, Subs: statusSubscriptions("NAT44SessionSync", "NAT44Rule", "VirtualAddress", "RouterdCluster"), PeriodicFunc: func(ctx context.Context) error {
+		framework.FuncController{ControllerName: "nat44-session-sync", Every: 30 * time.Second, Subs: statusSubscriptionsWithWhen(r.Router, []string{"NAT44SessionSync"}, "NAT44SessionSync", "NAT44Rule", "VirtualAddress", "RouterdCluster"), PeriodicFunc: func(ctx context.Context) error {
 			effective, err := effectiveForReconcile()
 			if err != nil {
 				return err
@@ -1076,7 +1155,7 @@ func (r *Runner) Start(ctx context.Context) error {
 		framework.FuncController{ControllerName: "kernel-module", Every: 5 * time.Minute, PeriodicFunc: kernelModules.Reconcile},
 		framework.FuncController{ControllerName: "sysctl", Every: 30 * time.Second, PeriodicFunc: sysctl.Reconcile},
 		framework.FuncController{ControllerName: "network-adoption", Every: 5 * time.Minute, PeriodicFunc: adoption.Reconcile},
-		framework.FuncController{ControllerName: "service-unit", Every: 5 * time.Minute, PeriodicFunc: func(ctx context.Context) error {
+		framework.FuncController{ControllerName: "service-unit", Every: 5 * time.Minute, Subs: whenStatusSubscriptions(r.Router, "ServiceUnit", "TailscaleNode", "DHCPv4Client", "DHCPv6PrefixDelegation", "IPv6RouterAdvertisement", "DNSResolver", "EventGroup", "HealthCheck"), PeriodicFunc: func(ctx context.Context) error {
 			effective, err := effectiveForReconcile()
 			if err != nil {
 				return err
@@ -1095,7 +1174,7 @@ func (r *Runner) Start(ctx context.Context) error {
 			current.Router = effective
 			return current.Reconcile(ctx)
 		}},
-		framework.FuncController{ControllerName: "ntp-server", Every: 5 * time.Minute, Subs: statusSubscriptions("DHCPv4Client", "DHCPv6Information", "IPv4StaticAddress", "IPv6DelegatedAddress"), PeriodicFunc: func(ctx context.Context) error {
+		framework.FuncController{ControllerName: "ntp-server", Every: 5 * time.Minute, Subs: statusSubscriptionsWithWhen(r.Router, []string{"NTPServer"}, "DHCPv4Client", "DHCPv6Information", "IPv4StaticAddress", "IPv6DelegatedAddress"), PeriodicFunc: func(ctx context.Context) error {
 			effective, err := effectiveForReconcile()
 			if err != nil {
 				return err
@@ -1131,7 +1210,7 @@ func (r *Runner) Start(ctx context.Context) error {
 			}
 			return nil
 		}},
-		framework.FuncController{ControllerName: "lan-address", Every: 30 * time.Second, Subs: statusSubscriptions("DHCPv6PrefixDelegation", "Interface"), ReconcileFunc: func(ctx context.Context, _ daemonapi.DaemonEvent) error {
+		framework.FuncController{ControllerName: "lan-address", Every: 30 * time.Second, Subs: statusSubscriptionsWithWhen(r.Router, []string{"DHCPv6PrefixDelegation", "IPv6DelegatedAddress"}, "DHCPv6PrefixDelegation", "Interface"), ReconcileFunc: func(ctx context.Context, _ daemonapi.DaemonEvent) error {
 			effective, err := effectiveForReconcile()
 			if err != nil {
 				return err
@@ -1147,7 +1226,7 @@ func (r *Runner) Start(ctx context.Context) error {
 			}
 			return nil
 		}},
-		framework.FuncController{ControllerName: "dslite", Every: 30 * time.Second, Subs: statusSubscriptions("DHCPv6Information", "IPv6DelegatedAddress", "DNSResolver"), PeriodicFunc: func(ctx context.Context) error {
+		framework.FuncController{ControllerName: "dslite", Every: 30 * time.Second, Subs: statusSubscriptionsWithWhen(r.Router, []string{"DSLiteTunnel"}, "DHCPv6Information", "IPv6DelegatedAddress", "DNSResolver"), PeriodicFunc: func(ctx context.Context) error {
 			effective, err := effectiveForReconcile()
 			if err != nil {
 				return err
@@ -1165,7 +1244,7 @@ func (r *Runner) Start(ctx context.Context) error {
 			current.Router = effective
 			return current.Reconcile(ctx)
 		}},
-		framework.FuncController{ControllerName: "ipv4-route", Every: 30 * time.Second, Subs: ipv4RouteStatusSubscriptions(), PeriodicFunc: func(ctx context.Context) error {
+		framework.FuncController{ControllerName: "ipv4-route", Every: 30 * time.Second, Subs: statusSubscriptionsWithWhen(r.Router, []string{"ClusterNetworkRoute"}, "DSLiteTunnel", "TunnelInterface", "EgressRoutePolicy", "VirtualAddress", "DHCPv4Client"), PeriodicFunc: func(ctx context.Context) error {
 			effective, err := effectiveForReconcile()
 			if err != nil {
 				return err
@@ -1261,7 +1340,7 @@ func (r *Runner) Start(ctx context.Context) error {
 		framework.FuncController{ControllerName: "mobility-discovery", Every: 30 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed", "routerd.dhcp.lease.add", "routerd.dhcp.lease.old", "routerd.dhcp.lease.del", mobilitycontroller.OnPremARPObservedEvent, mobilitycontroller.OnPremARPProbeHitEvent, mobilitycontroller.OnPremPVESVNetObservedEvent}}}, ReconcileFunc: mobilityDiscovery.HandleEvent, PeriodicFunc: mobilityDiscovery.Reconcile},
 		framework.FuncController{ControllerName: "mobility", Every: 5 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed", mobilitycontroller.OwnershipChangedEvent}}}, ReconcileFunc: mobility.HandleEvent, PeriodicFunc: mobility.Reconcile},
 		framework.FuncController{ControllerName: "provider-action-execution", Every: 5 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed"}}}, PeriodicFunc: providerAction.Reconcile},
-		framework.FuncController{ControllerName: "egress-route-policy", Every: 15 * time.Second, Subs: statusSubscriptions("HealthCheck", "DSLiteTunnel", "Interface", "DHCPv4Client", "PPPoESession"), PeriodicFunc: func(ctx context.Context) error {
+		framework.FuncController{ControllerName: "egress-route-policy", Every: 15 * time.Second, Subs: statusSubscriptionsWithWhen(r.Router, []string{"EgressRoutePolicy"}, "HealthCheck", "DSLiteTunnel", "Interface", "DHCPv4Client", "PPPoESession"), PeriodicFunc: func(ctx context.Context) error {
 			effective, err := effectiveForReconcile()
 			if err != nil {
 				return err
@@ -1270,7 +1349,7 @@ func (r *Runner) Start(ctx context.Context) error {
 			current.Router = effective
 			return current.Reconcile(ctx)
 		}},
-		framework.FuncController{ControllerName: "ingress-service", Every: 5 * time.Second, Subs: bootstrapSubscriptions(), PeriodicFunc: func(ctx context.Context) error {
+		framework.FuncController{ControllerName: "ingress-service", Every: 5 * time.Second, Subs: statusSubscriptionsWithWhen(r.Router, []string{"IngressService"}), PeriodicFunc: func(ctx context.Context) error {
 			effective, err := effectiveForReconcile()
 			if err != nil {
 				return err
@@ -1279,7 +1358,7 @@ func (r *Runner) Start(ctx context.Context) error {
 			current.Router = effective
 			return current.Reconcile(ctx)
 		}},
-		framework.FuncController{ControllerName: "nat44", Subs: statusSubscriptions("EgressRoutePolicy", "IngressService"), PeriodicFunc: func(ctx context.Context) error {
+		framework.FuncController{ControllerName: "nat44", Subs: statusSubscriptionsWithWhen(r.Router, []string{"NAT44Rule", "LocalServiceRedirect"}, "EgressRoutePolicy", "IngressService"), PeriodicFunc: func(ctx context.Context) error {
 			effective, err := effectiveForReconcile()
 			if err != nil {
 				return err
@@ -1288,7 +1367,7 @@ func (r *Runner) Start(ctx context.Context) error {
 			current.Router = effective
 			return current.Reconcile(ctx)
 		}},
-		framework.FuncController{ControllerName: "bfd", Every: time.Second, Subs: statusSubscriptions("BGPPeer", "BFD"), PeriodicFunc: func(ctx context.Context) error {
+		framework.FuncController{ControllerName: "bfd", Every: time.Second, Subs: statusSubscriptionsWithWhen(r.Router, []string{"BFD"}, "BGPPeer", "BFD"), PeriodicFunc: func(ctx context.Context) error {
 			effective, err := effectiveForReconcile()
 			if err != nil {
 				return err
@@ -1297,7 +1376,7 @@ func (r *Runner) Start(ctx context.Context) error {
 			current.Router = effective
 			return current.Reconcile(ctx)
 		}},
-		framework.FuncController{ControllerName: "bgp", Every: bgpcontroller.PollInterval(r.Router), Subs: statusSubscriptions("BFD", "BGPRouter", "BGPPeer"), PeriodicFunc: func(ctx context.Context) error {
+		framework.FuncController{ControllerName: "bgp", Every: bgpcontroller.PollInterval(r.Router), Subs: statusSubscriptionsWithWhen(r.Router, []string{"BGPRouter", "BGPPeer"}, "BFD", "BGPRouter", "BGPPeer"), PeriodicFunc: func(ctx context.Context) error {
 			effective, err := effectiveForReconcile()
 			if err != nil {
 				return err
@@ -1305,7 +1384,7 @@ func (r *Runner) Start(ctx context.Context) error {
 			bgp.Router = effective
 			return bgp.Reconcile(ctx)
 		}},
-		framework.FuncController{ControllerName: "vrrp", Every: 15 * time.Second, Subs: statusSubscriptions("BGPRouter", "BGPPeer", "IngressService"), PeriodicFunc: func(ctx context.Context) error {
+		framework.FuncController{ControllerName: "vrrp", Every: 15 * time.Second, Subs: statusSubscriptionsWithWhen(r.Router, []string{"VirtualAddress"}, "BGPRouter", "BGPPeer", "IngressService"), PeriodicFunc: func(ctx context.Context) error {
 			effective, err := effectiveForReconcile()
 			if err != nil {
 				return err
@@ -1313,7 +1392,7 @@ func (r *Runner) Start(ctx context.Context) error {
 			vrrp.Router = effective
 			return vrrp.Reconcile(ctx)
 		}},
-		framework.FuncController{ControllerName: "ip-address-set", Every: 30 * time.Second, Subs: statusSubscriptions("IPAddressSet", "LocalServiceRedirect"), PeriodicFunc: func(ctx context.Context) error {
+		framework.FuncController{ControllerName: "ip-address-set", Every: 30 * time.Second, Subs: statusSubscriptionsWithWhen(r.Router, []string{"IPAddressSet", "LocalServiceRedirect"}, "IPAddressSet", "LocalServiceRedirect"), PeriodicFunc: func(ctx context.Context) error {
 			effective, err := effectiveForReconcile()
 			if err != nil {
 				return err

@@ -403,8 +403,9 @@ func renderChronyClientConfig(servers []string) []byte {
 }
 
 type NTPServerController struct {
-	Router *api.Router
-	Bus    interface {
+	Router         *api.Router
+	DeclaredRouter *api.Router
+	Bus            interface {
 		Publish(context.Context, daemonapi.DaemonEvent) error
 	}
 	Store      Store
@@ -417,6 +418,9 @@ func (c NTPServerController) Reconcile(ctx context.Context) error {
 	command := c.Command
 	if command == nil {
 		command = runOutputCommandContext
+	}
+	if err := c.cleanupWhenFalseNTPServers(ctx, command); err != nil {
+		return err
 	}
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.Kind != "NTPServer" {
@@ -540,6 +544,92 @@ func (c NTPServerController) Reconcile(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func (c NTPServerController) cleanupWhenFalseNTPServers(ctx context.Context, command outputCommandFunc) error {
+	if c.DeclaredRouter == nil {
+		return nil
+	}
+	stateStore, ok := c.Store.(resourcequery.StateStore)
+	if !ok {
+		return nil
+	}
+	for _, resource := range c.DeclaredRouter.Spec.Resources {
+		if resource.Kind != "NTPServer" {
+			continue
+		}
+		when := resourcequery.ResourceWhen(resource)
+		if !resourcequery.ResourceWhenPresent(when) || resourcequery.ResourceWhenMatches(when, stateStore) {
+			continue
+		}
+		spec, err := resource.NTPServerSpec()
+		if err != nil {
+			return err
+		}
+		if !spec.Managed {
+			continue
+		}
+		provider := firstNonEmpty(spec.Provider, defaultNTPServerProvider())
+		if provider != "chrony" && provider != "ntpd" {
+			continue
+		}
+		configPath := c.serverConfigPath(provider)
+		changed, err := writeFileIfChanged(configPath, renderNTPServerConfig(provider, nil, nil, nil), 0o644, c.DryRun)
+		if err != nil {
+			return c.saveWhenFalseNTPServerStatus(resource.Metadata.Name, provider, configPath, changed, "CleanupWriteFailed", err)
+		}
+		if changed && !c.DryRun {
+			if err := c.reloadNTPServerProvider(ctx, provider, command); err != nil {
+				return c.saveWhenFalseNTPServerStatus(resource.Metadata.Name, provider, configPath, changed, "CleanupReloadFailed", err)
+			}
+		}
+		if err := c.saveWhenFalseNTPServerStatus(resource.Metadata.Name, provider, configPath, changed, "", nil); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c NTPServerController) saveWhenFalseNTPServerStatus(name, provider, configPath string, changed bool, reason string, cause error) error {
+	status := map[string]any{
+		"phase":      "Pending",
+		"reason":     "WhenFalse",
+		"provider":   provider,
+		"configPath": configPath,
+		"changed":    changed,
+		"dryRun":     c.DryRun,
+	}
+	if reason != "" {
+		status["phase"] = "Error"
+		status["reason"] = reason
+	}
+	if cause != nil {
+		status["error"] = cause.Error()
+	}
+	if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "NTPServer", name, status); err != nil {
+		return err
+	}
+	if cause != nil {
+		return cause
+	}
+	return nil
+}
+
+func (c NTPServerController) reloadNTPServerProvider(ctx context.Context, provider string, command outputCommandFunc) error {
+	switch provider {
+	case "chrony":
+		unit := "chrony.service"
+		if platform.IsNixOSHost() {
+			unit = "chronyd.service"
+		}
+		_, err := command(ctx, "systemctl", "restart", unit)
+		return err
+	case "ntpd":
+		_, err := command(ctx, "service", "ntpd", "restart")
+		return err
+	default:
+		return nil
+	}
 }
 
 func defaultNTPServerProvider() string {
