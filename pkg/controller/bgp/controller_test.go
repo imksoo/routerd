@@ -1691,10 +1691,36 @@ func TestFIBRoutesFromDestinationChoosesHigherLocalPref(t *testing.T) {
 	routes := fibRoutesFromDestination(testRankedDestination("10.77.60.12/32",
 		rankedPath{nextHop: "10.99.0.11", localPref: 201, med: 20},
 		rankedPath{nextHop: "10.99.0.12", localPref: 202, med: 10},
-	), []netip.Prefix{netip.MustParsePrefix("10.77.60.0/24")})
+	), []netip.Prefix{netip.MustParsePrefix("10.77.60.0/24")}, nil)
 	want := []FIBRoute{{Prefix: "10.77.60.12/32", NextHops: []string{"10.99.0.12"}}}
 	if !reflect.DeepEqual(routes, want) {
 		t.Fatalf("routes = %#v, want %#v", routes, want)
+	}
+}
+
+func TestFIBRoutesFromDestinationUsesPeerAddressRewriteFromNeighbor(t *testing.T) {
+	dst := testDestinationWithNeighbor("192.168.123.112/32", "10.252.0.17", "10.252.0.1")
+	routes := fibRoutesFromDestination(
+		dst,
+		[]netip.Prefix{netip.MustParsePrefix("192.168.123.0/24")},
+		map[string]bool{"10.252.0.1": true},
+	)
+	want := []FIBRoute{{Prefix: "192.168.123.112/32", NextHops: []string{"10.252.0.1"}}}
+	if !reflect.DeepEqual(routes, want) {
+		t.Fatalf("routes = %#v, want peer-address next-hop %#v", routes, want)
+	}
+}
+
+func TestFIBRoutesFromDestinationCanLeaveReflectedNextHopUnchanged(t *testing.T) {
+	dst := testDestinationWithNeighbor("192.168.123.112/32", "10.252.0.17", "10.252.0.1")
+	routes := fibRoutesFromDestination(
+		dst,
+		[]netip.Prefix{netip.MustParsePrefix("192.168.123.0/24")},
+		nil,
+	)
+	want := []FIBRoute{{Prefix: "192.168.123.112/32", NextHops: []string{"10.252.0.17"}}}
+	if !reflect.DeepEqual(routes, want) {
+		t.Fatalf("routes = %#v, want unchanged reflected next-hop %#v", routes, want)
 	}
 }
 
@@ -1843,6 +1869,14 @@ func testDestination(prefix string, nextHops ...string) *gobgpapi.Destination {
 		Prefix: prefix,
 		Paths:  paths,
 	}
+}
+
+func testDestinationWithNeighbor(prefix, nextHop, neighbor string) *gobgpapi.Destination {
+	dst := testDestination(prefix, nextHop)
+	for _, path := range dst.Paths {
+		path.NeighborIp = neighbor
+	}
+	return dst
 }
 
 func testDestinationWithCommunities(prefix, nextHop string, communities ...string) *gobgpapi.Destination {

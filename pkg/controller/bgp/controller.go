@@ -227,7 +227,7 @@ func (c *Controller) reconcileLocked(ctx context.Context) error {
 	}
 	c.appliedConfig = applied
 	allowedImportPrefixes := importAllowedPrefixesFromApplied(applied)
-	state, routes, livenessMarkers, err := c.observeState(ctx, allowedImportPrefixes)
+	state, routes, livenessMarkers, err := c.observeState(ctx, allowedImportPrefixes, desired)
 	if err != nil {
 		return c.savePendingAll("GoBGPObserveFailed", err)
 	}
@@ -239,7 +239,7 @@ func (c *Controller) reconcileLocked(ctx context.Context) error {
 		if err := c.softResetImportPolicy(ctx, desired); err != nil {
 			return c.savePendingAll("GoBGPImportPolicyRefreshFailed", err)
 		}
-		state, routes, livenessMarkers, err = c.observeState(ctx, allowedImportPrefixes)
+		state, routes, livenessMarkers, err = c.observeState(ctx, allowedImportPrefixes, desired)
 		if err != nil {
 			return c.savePendingAll("GoBGPObserveFailed", err)
 		}
@@ -352,7 +352,7 @@ func (c *Controller) observeAndSyncFromWatchLocked(ctx context.Context) error {
 	applied := c.appliedConfig
 	dynamicExportPrefixes := dynamicPathExportPrefixes(applied.Paths)
 	desired = applyRouterBGPDefaults(routerResource.Metadata.Name, routerSpec, desired, mapKeys(advertisedPrefixes(routerSpec)), dynamicExportPrefixes)
-	state, routes, livenessMarkers, err := c.observeState(ctx, importAllowedPrefixes(routerSpec, desired))
+	state, routes, livenessMarkers, err := c.observeState(ctx, importAllowedPrefixes(routerSpec, desired), desired)
 	if err != nil {
 		return c.savePendingAll("GoBGPWatchObserveFailed", err)
 	}
@@ -1300,10 +1300,11 @@ func (c *Controller) advertisedPathUUIDs(ctx context.Context) (map[string][]byte
 	return out, nil
 }
 
-func (c *Controller) observeState(ctx context.Context, allowedImportPrefixes []netip.Prefix) (bgpstate.State, []FIBRoute, map[string]string, error) {
+func (c *Controller) observeState(ctx context.Context, allowedImportPrefixes []netip.Prefix, desired map[string]desiredPeer) (bgpstate.State, []FIBRoute, map[string]string, error) {
 	var state bgpstate.State
 	var routes []FIBRoute
 	livenessMarkers := map[string]string{}
+	fibNextHopRewritePeers := peerAddressFIBRewritePeers(desired)
 	if err := c.Server.ListPeer(ctx, &gobgpapi.ListPeerRequest{EnableAdvertised: true}, func(peer *gobgpapi.Peer) {
 		state.Peers = append(state.Peers, statePeer(peer))
 	}); err != nil {
@@ -1313,7 +1314,7 @@ func (c *Controller) observeState(ctx context.Context, allowedImportPrefixes []n
 		err := c.Server.ListPath(ctx, &gobgpapi.ListPathRequest{TableType: gobgpapi.TableType_GLOBAL, Family: family}, func(dst *gobgpapi.Destination) {
 			state.Prefixes = append(state.Prefixes, statePrefixes(dst)...)
 			mergeStringMap(livenessMarkers, mobilityLivenessMarkersFromDestination(dst))
-			routes = append(routes, fibRoutesFromDestination(dst, allowedImportPrefixes)...)
+			routes = append(routes, fibRoutesFromDestination(dst, allowedImportPrefixes, fibNextHopRewritePeers)...)
 		})
 		if err != nil {
 			return bgpstate.State{}, nil, nil, err
@@ -1738,7 +1739,7 @@ type bgpPathRank struct {
 	MED       uint32
 }
 
-func fibRoutesFromDestination(dst *gobgpapi.Destination, allowed []netip.Prefix) []FIBRoute {
+func fibRoutesFromDestination(dst *gobgpapi.Destination, allowed []netip.Prefix, peerAddressRewrite map[string]bool) []FIBRoute {
 	prefix := normalizeRoutePrefix(dst.GetPrefix())
 	var candidates []struct {
 		nextHop string
@@ -1764,7 +1765,7 @@ func fibRoutesFromDestination(dst *gobgpapi.Destination, allowed []netip.Prefix)
 		if len(allowed) > 0 && !prefixAllowed(parsed, allowed) {
 			continue
 		}
-		nextHop := strings.TrimSpace(pathNextHop(path))
+		nextHop := strings.TrimSpace(pathFIBNextHop(path, peerAddressRewrite))
 		if nextHop == "" || nextHop == "0.0.0.0" || nextHop == "::" {
 			continue
 		}
@@ -1808,6 +1809,40 @@ func fibRoutesFromDestination(dst *gobgpapi.Destination, allowed []netip.Prefix)
 		return nil
 	}
 	return []FIBRoute{{Prefix: prefix, NextHops: nextHops}}
+}
+
+func peerAddressFIBRewritePeers(desired map[string]desiredPeer) map[string]bool {
+	out := map[string]bool{}
+	for address, peer := range desired {
+		if importNextHopRewrite(peer.ImportPolicy) != "peer-address" || len(importPolicyPrefixes(peer.ImportPolicy)) == 0 {
+			continue
+		}
+		if parsed, err := netip.ParseAddr(strings.TrimSpace(address)); err == nil {
+			out[parsed.String()] = true
+		}
+	}
+	return out
+}
+
+func pathFIBNextHop(path *gobgpapi.Path, peerAddressRewrite map[string]bool) string {
+	if len(peerAddressRewrite) > 0 {
+		if neighbor := normalizedPathNeighbor(path); neighbor != "" && peerAddressRewrite[neighbor] {
+			return neighbor
+		}
+	}
+	return pathNextHop(path)
+}
+
+func normalizedPathNeighbor(path *gobgpapi.Path) string {
+	neighbor := strings.TrimSpace(path.GetNeighborIp())
+	if neighbor == "" {
+		return ""
+	}
+	parsed, err := netip.ParseAddr(neighbor)
+	if err != nil {
+		return neighbor
+	}
+	return parsed.String()
 }
 
 func mergeFIBRoutes(routes []FIBRoute) []FIBRoute {
