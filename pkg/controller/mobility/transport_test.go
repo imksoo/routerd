@@ -161,6 +161,37 @@ func TestSAMTransportProfileCopiesRouteReflectorSettings(t *testing.T) {
 	}
 }
 
+func TestSAMTransportProfileEndpointRouteUsesUnderlayDevice(t *testing.T) {
+	now := time.Date(2026, 6, 6, 9, 9, 0, 0, time.UTC)
+	store := testStore(t, now)
+	controller := TransportController{
+		Router: transportRouter("wireguard", "pve-rt06", []api.SAMTransportPeerSpec{{
+			NodeRef:        "k8s-rt01",
+			RemoteEndpoint: "10.252.0.1",
+		}}),
+		Store: store,
+		Now:   func() time.Time { return now },
+	}
+	spec, err := controller.Router.Spec.Resources[0].SAMTransportProfileSpec()
+	if err != nil {
+		t.Fatalf("SAMTransportProfile spec: %v", err)
+	}
+	spec.UnderlayInterface = "wg-svnet1"
+	controller.Router.Spec.Resources[0].Spec = spec
+
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	resources := decodeResources(t, latestPart(t, store, TransportDynamicSource("wireguard", "pve-rt06")).ResourcesJSON)
+	route := findTransportEndpointRoute(t, resources)
+	if route.Device != "wg-svnet1" {
+		t.Fatalf("endpoint route device = %q, want wg-svnet1", route.Device)
+	}
+	if route.DeviceFrom.Resource != "" || route.DeviceFrom.Field != "" {
+		t.Fatalf("endpoint route deviceFrom = %#v, want empty so WireGuardInterface underlay does not require Interface/wg-svnet1", route.DeviceFrom)
+	}
+}
+
 func TestSAMTransportProfileDeletionUpsertsEmptyPart(t *testing.T) {
 	now := time.Date(2026, 6, 6, 9, 10, 0, 0, time.UTC)
 	store := testStore(t, now)
@@ -232,6 +263,22 @@ func findTransportTunnel(t *testing.T, resources []api.Resource) api.TunnelInter
 	}
 	t.Fatalf("TunnelInterface not found in %#v", resources)
 	return api.TunnelInterfaceSpec{}
+}
+
+func findTransportEndpointRoute(t *testing.T, resources []api.Resource) api.IPv4RouteSpec {
+	t.Helper()
+	for _, resource := range resources {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "IPv4Route" {
+			continue
+		}
+		spec, err := resource.IPv4RouteSpec()
+		if err != nil {
+			t.Fatalf("IPv4Route spec: %v", err)
+		}
+		return spec
+	}
+	t.Fatalf("IPv4Route not found in %#v", resources)
+	return api.IPv4RouteSpec{}
 }
 
 func findTransportBGPPeer(t *testing.T, resources []api.Resource) api.BGPPeerSpec {
