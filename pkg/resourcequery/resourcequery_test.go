@@ -421,6 +421,93 @@ func TestFilterRouterByWhenClearsFirewallZoneFilteredInterfaces(t *testing.T) {
 	}
 }
 
+func TestFilterRouterByWhenPreservesBareFirewallZoneInterfaceAliases(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+			Metadata: api.ObjectMeta{Name: "wan0"},
+			Spec:     api.InterfaceSpec{IfName: "ens18"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"},
+			Metadata: api.ObjectMeta{Name: "dslite0"},
+			Spec:     api.DSLiteTunnelSpec{Interface: "wan0", TunnelName: "dslite0"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoESession"},
+			Metadata: api.ObjectMeta{Name: "pppoe0"},
+			Spec:     api.PPPoESessionSpec{Interface: "wan0", IfName: "pppoe0"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
+			Metadata: api.ObjectMeta{Name: "wan"},
+			Spec:     api.FirewallZoneSpec{Role: "untrust", Interfaces: []string{"wan0", "dslite0", "pppoe0"}},
+		},
+	}}}
+
+	got := FilterRouterByWhen(router, statefulMapStore{})
+	res, ok := findResource(got, "FirewallZone", "wan")
+	if !ok {
+		t.Fatal("FirewallZone/wan missing")
+	}
+	spec, err := res.FirewallZoneSpec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"wan0", "dslite0", "pppoe0"}
+	if !stringSlicesEqual(spec.Interfaces, want) {
+		t.Fatalf("interfaces = %#v, want %#v", spec.Interfaces, want)
+	}
+}
+
+func TestFilterRouterByWhenPrunesBareFirewallZoneInterfaceAliasForFilteredResource(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"},
+			Metadata: api.ObjectMeta{Name: "lan-vip"},
+			Spec:     api.VirtualAddressSpec{Address: "172.18.0.1/32"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+			Metadata: api.ObjectMeta{Name: "wan0"},
+			Spec:     api.InterfaceSpec{IfName: "ens18"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"},
+			Metadata: api.ObjectMeta{Name: "dslite0"},
+			Spec: api.DSLiteTunnelSpec{
+				Interface:  "wan0",
+				TunnelName: "dslite0",
+				When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{
+					"VirtualAddress/lan-vip.role": {Equals: "master"},
+				}},
+			},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
+			Metadata: api.ObjectMeta{Name: "wan"},
+			Spec:     api.FirewallZoneSpec{Role: "untrust", Interfaces: []string{"wan0", "dslite0"}},
+		},
+	}}}
+	store := statefulMapStore{mapStore: mapStore{
+		api.NetAPIVersion + "/VirtualAddress/lan-vip": {"role": "backup"},
+	}}
+
+	got := FilterRouterByWhen(router, store)
+	res, ok := findResource(got, "FirewallZone", "wan")
+	if !ok {
+		t.Fatal("FirewallZone/wan missing")
+	}
+	spec, err := res.FirewallZoneSpec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"wan0"}
+	if !stringSlicesEqual(spec.Interfaces, want) {
+		t.Fatalf("interfaces = %#v, want %#v", spec.Interfaces, want)
+	}
+}
+
 func hasResource(router *api.Router, kind, name string) bool {
 	_, ok := findResource(router, kind, name)
 	return ok

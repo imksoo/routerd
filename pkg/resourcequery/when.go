@@ -399,27 +399,55 @@ func clearFilteredFirewallZoneRefs(resources []api.Resource) []api.Resource {
 }
 
 func filterRetainedFirewallInterfaceRefs(refs []string, retained map[string]map[string]bool) []string {
+	aliasNames := retainedFirewallInterfaceAliasNames(retained)
 	out := make([]string, 0, len(refs))
 	for _, ref := range refs {
-		kind, name := firewallInterfaceRefKindName(ref)
-		switch kind {
-		case "Interface", "PPPoESession", "WireGuardInterface", "DSLiteTunnel":
+		kind, name, qualified := firewallInterfaceRefKindName(ref)
+		if qualified {
+			if !firewallInterfaceAliasKind(kind) {
+				out = append(out, ref)
+				continue
+			}
 			if retained[kind][name] {
 				out = append(out, ref)
 			}
-		default:
+			continue
+		}
+		if aliasNames[name] {
 			out = append(out, ref)
 		}
 	}
 	return out
 }
 
-func firewallInterfaceRefKindName(ref string) (string, string) {
+func retainedFirewallInterfaceAliasNames(retained map[string]map[string]bool) map[string]bool {
+	out := map[string]bool{}
+	for kind, names := range retained {
+		if !firewallInterfaceAliasKind(kind) {
+			continue
+		}
+		for name := range names {
+			out[name] = true
+		}
+	}
+	return out
+}
+
+func firewallInterfaceAliasKind(kind string) bool {
+	switch kind {
+	case "Interface", "PPPoESession", "DSLiteTunnel", "Bridge", "VXLANSegment", "WireGuardInterface":
+		return true
+	default:
+		return false
+	}
+}
+
+func firewallInterfaceRefKindName(ref string) (string, string, bool) {
 	ref = strings.TrimSpace(ref)
 	if kind, name, ok := SplitResource(ref); ok {
-		return kind, name
+		return kind, name, true
 	}
-	return "Interface", ref
+	return "", ref, false
 }
 
 func dnsForwarderRefsRetained(spec api.DNSForwarderSpec, resolvers, upstreams, zones map[string]bool) bool {
