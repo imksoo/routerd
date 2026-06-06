@@ -186,6 +186,39 @@
             },
             "resourceCount": {
               "type": "integer"
+            },
+            "resourcePhaseIssues": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "type": "string"
+                  },
+                  "message": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "phase": {
+                    "type": "string"
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "name",
+                  "phase"
+                ],
+                "type": "object"
+              },
+              "type": "array"
             }
           },
           "required": [

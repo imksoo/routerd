@@ -286,6 +286,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		Status: func(r *http.Request) (*controlapi.Status, error) {
 			status := controlapi.NewStatus(resultWithLatestGeneration(cache.Load(), stateStore))
 			status.Status.Phase = overallStatusPhase(status.Status.Phase, stateStore)
+			status.Status.ResourcePhaseIssues = resourcePhaseIssues(stateStore)
 			controllers := controllerRuntime.Snapshot()
 			if stateStore != nil {
 				controllers = augmentControllerStatusesFromState(controllers, stateStore)
@@ -1113,6 +1114,43 @@ func overallStatusPhase(base string, lister routerstate.ObjectStatusLister) stri
 	return phase
 }
 
+func resourcePhaseIssues(lister routerstate.ObjectStatusLister) []controlapi.ResourcePhaseIssue {
+	if lister == nil {
+		return nil
+	}
+	statuses, err := lister.ListObjectStatuses()
+	if err != nil {
+		return nil
+	}
+	var out []controlapi.ResourcePhaseIssue
+	for _, item := range statuses {
+		phase := strings.TrimSpace(fmt.Sprint(item.Status["phase"]))
+		if phase == "" || statusPhaseRank(phase) <= 0 {
+			continue
+		}
+		out = append(out, controlapi.ResourcePhaseIssue{
+			APIVersion: item.APIVersion,
+			Kind:       item.Kind,
+			Name:       item.Name,
+			Phase:      phase,
+			Reason:     statusStringMap(item.Status, "reason"),
+			Message:    statusStringMap(item.Status, "message"),
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		leftRank := statusPhaseRank(out[i].Phase)
+		rightRank := statusPhaseRank(out[j].Phase)
+		if leftRank != rightRank {
+			return leftRank > rightRank
+		}
+		if out[i].Kind != out[j].Kind {
+			return out[i].Kind < out[j].Kind
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out
+}
+
 func worseStatusPhase(current, candidate string) string {
 	if statusPhaseRank(candidate) > statusPhaseRank(current) {
 		return canonicalOverallPhase(candidate)
@@ -1130,7 +1168,7 @@ func statusPhaseRank(phase string) int {
 		return 2
 	case "unknown", "":
 		return 1
-	case "healthy", "applied", "active", "established", "bound", "running", "ready", "up", "installed", "configured":
+	case "healthy", "applied", "active", "established", "bound", "running", "ready", "up", "installed", "configured", "synced", "observed", "removed", "skipped":
 		return 0
 	default:
 		return 1
@@ -1147,7 +1185,7 @@ func canonicalOverallPhase(phase string) string {
 		return "Degraded"
 	case "unknown", "":
 		return "Unknown"
-	case "healthy", "applied", "active", "established", "bound", "running", "ready", "up", "installed", "configured":
+	case "healthy", "applied", "active", "established", "bound", "running", "ready", "up", "installed", "configured", "synced", "observed", "removed", "skipped":
 		return "Healthy"
 	default:
 		return phase

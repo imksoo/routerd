@@ -660,6 +660,33 @@ func TestOverallStatusPhaseUsesResourceStatuses(t *testing.T) {
 	}
 }
 
+func TestResourcePhaseIssuesReportsNonHealthyStatuses(t *testing.T) {
+	store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatalf("open state: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "DHCPv4ServerLeaseSync", "lan", map[string]any{"phase": "Synced"}); err != nil {
+		t.Fatalf("save synced status: %v", err)
+	}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "DHCPv4Reservation", "client", map[string]any{"phase": "Pending", "reason": "WhenFalse"}); err != nil {
+		t.Fatalf("save pending status: %v", err)
+	}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "NAT44SessionSync", "sessions", map[string]any{"phase": "Error", "reason": "SyncFailed", "message": "ssh failed"}); err != nil {
+		t.Fatalf("save error status: %v", err)
+	}
+	issues := resourcePhaseIssues(store)
+	if len(issues) != 2 {
+		t.Fatalf("issues = %+v, want 2 entries", issues)
+	}
+	if issues[0].Kind != "NAT44SessionSync" || issues[0].Name != "sessions" || issues[0].Phase != "Error" || issues[0].Reason != "SyncFailed" {
+		t.Fatalf("first issue = %+v", issues[0])
+	}
+	if issues[1].Kind != "DHCPv4Reservation" || issues[1].Name != "client" || issues[1].Phase != "Pending" || issues[1].Reason != "WhenFalse" {
+		t.Fatalf("second issue = %+v", issues[1])
+	}
+}
+
 func TestListenUnixSocketSetsMode(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "routerd-status.sock")
 	listener, err := listenUnixSocket(path, 0o666)

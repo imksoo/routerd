@@ -67,6 +67,18 @@ func writeStatusTable(stdout io.Writer, status *controlapi.Status, showErrors bo
 	}
 	w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintf(w, "STATUS\t%s\tgeneration=%d resources=%d\n", strings.ToUpper(status.Status.Phase), status.Status.Generation, status.Status.ResourceCount)
+	if len(status.Status.ResourcePhaseIssues) > 0 {
+		fmt.Fprintln(w, "RESOURCE\tPHASE\tREASON\tMESSAGE")
+		for _, item := range status.Status.ResourcePhaseIssues {
+			fmt.Fprintf(w, "%s/%s\t%s\t%s\t%s\n",
+				item.Kind,
+				item.Name,
+				displayCell(item.Phase),
+				displayCell(item.Reason),
+				displayCell(oneLine(item.Message)),
+			)
+		}
+	}
 	if len(status.Status.Controllers) == 0 {
 		return w.Flush()
 	}
