@@ -26,14 +26,13 @@ type CommandRunner func(ctx context.Context, name string, args ...string) ([]byt
 type CommandStdinRunner func(ctx context.Context, stdin []byte, name string, args ...string) ([]byte, error)
 
 type InterfaceConfig struct {
-	Name                       string
-	PrivateKey                 string
-	PrivateKeyFile             string
-	ListenPort                 int
-	MTU                        int
-	FwMark                     int
-	AllowBGPMobilityAllowedIPs bool
-	Peers                      []PeerConfig
+	Name           string
+	PrivateKey     string
+	PrivateKeyFile string
+	ListenPort     int
+	MTU            int
+	FwMark         int
+	Peers          []PeerConfig
 }
 
 type PeerConfig struct {
@@ -84,13 +83,12 @@ func BuildInterface(resource api.Resource, peers []api.Resource) (InterfaceConfi
 		return InterfaceConfig{}, err
 	}
 	cfg := InterfaceConfig{
-		Name:                       resource.Metadata.Name,
-		PrivateKey:                 spec.PrivateKey,
-		PrivateKeyFile:             spec.PrivateKeyFile,
-		ListenPort:                 spec.ListenPort,
-		MTU:                        spec.MTU,
-		FwMark:                     spec.FwMark,
-		AllowBGPMobilityAllowedIPs: spec.AllowBGPMobilityAllowedIPs,
+		Name:           resource.Metadata.Name,
+		PrivateKey:     spec.PrivateKey,
+		PrivateKeyFile: spec.PrivateKeyFile,
+		ListenPort:     spec.ListenPort,
+		MTU:            spec.MTU,
+		FwMark:         spec.FwMark,
 	}
 	for _, peer := range peers {
 		if peer.Kind != "WireGuardPeer" {

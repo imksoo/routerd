@@ -869,7 +869,7 @@ func TestNftablesIPv4ForceFragmentCanFollowTunnelInterfaceOption(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render forcefrag: %v", err)
 	}
-	want := `iifname "ens3" oifname "tun-gre" ip length > 1452 ip frag-off 0x4000 ip frag-off set 0`
+	want := `iifname "ens3" oifname "tun-gre" ip length > 1476 ip frag-off 0x4000 ip frag-off set 0`
 	if !strings.Contains(string(data), want) {
 		t.Fatalf("forcefrag output missing tunnel option rule %q:\n%s", want, string(data))
 	}
@@ -952,13 +952,19 @@ func TestNftablesTCPMSSClampForSAMIPIPOverlay(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{Resources: []api.Resource{
 			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardInterface"},
+				Metadata: api.ObjectMeta{Name: "wg-underlay"},
+				Spec:     api.WireGuardInterfaceSpec{MTU: 1420},
+			},
+			{
 				TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
 				Metadata: api.ObjectMeta{Name: "tun-ipip"},
 				Spec: api.TunnelInterfaceSpec{
-					Mode:            "ipip",
-					Local:           "192.0.2.10",
-					Remote:          "192.0.2.20",
-					TrustedUnderlay: true,
+					Mode:              "ipip",
+					Local:             "10.99.0.1",
+					Remote:            "10.99.0.2",
+					UnderlayInterface: "wg-underlay",
+					TrustedUnderlay:   true,
 				},
 			},
 			{
@@ -994,7 +1000,7 @@ func TestNftablesTCPMSSClampForSAMIPIPOverlay(t *testing.T) {
 		t.Fatalf("render TCP MSS clamp: %v", err)
 	}
 	got := string(data)
-	want := `iifname "ens3" oifname "tun-ipip" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1420 tcp option maxseg size set 1420`
+	want := `iifname "ens3" oifname "tun-ipip" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1360 tcp option maxseg size set 1360`
 	if !strings.Contains(got, want) {
 		t.Fatalf("nftables output missing ipip SAM MSS clamp %q:\n%s", want, got)
 	}

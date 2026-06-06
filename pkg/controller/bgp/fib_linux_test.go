@@ -22,3 +22,22 @@ func TestNetlinkRouteSetsPreferredSource(t *testing.T) {
 		t.Fatalf("route.Src = %v, want 10.77.60.10", route.Src)
 	}
 }
+
+func TestNetlinkRouteBuildsMultipathNextHops(t *testing.T) {
+	route, ok := netlinkRoute(FIBRoute{
+		Prefix:   "10.77.60.11/32",
+		NextHops: []string{"10.255.1.2", "10.255.1.3"},
+	})
+	if !ok {
+		t.Fatal("netlinkRoute returned ok=false")
+	}
+	if route.Gw != nil {
+		t.Fatalf("route.Gw = %v, want nil for multipath route", route.Gw)
+	}
+	if len(route.MultiPath) != 2 {
+		t.Fatalf("route.MultiPath len = %d, want 2: %#v", len(route.MultiPath), route.MultiPath)
+	}
+	if !route.MultiPath[0].Gw.Equal(net.ParseIP("10.255.1.2")) || !route.MultiPath[1].Gw.Equal(net.ParseIP("10.255.1.3")) {
+		t.Fatalf("route.MultiPath = %#v, want 10.255.1.2 and 10.255.1.3", route.MultiPath)
+	}
+}

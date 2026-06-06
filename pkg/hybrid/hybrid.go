@@ -210,6 +210,9 @@ func EstimateMTU(router api.Router, peerName string) (MTUEstimate, bool) {
 	if !ok {
 		return MTUEstimate{}, false
 	}
+	if estimate, ok := tunnelPeerMTUEstimate(router, peer); ok {
+		return estimate, true
+	}
 	underlayMTU := underlayMTU(router, peer)
 	if underlayMTU == 0 {
 		return MTUEstimate{Overhead: overheadForPeer(router, peer)}, true
@@ -220,6 +223,33 @@ func EstimateMTU(router api.Router, peerName string) (MTUEstimate, bool) {
 		estimate.Warning = fmt.Sprintf("estimated MTU %d is below IPv6 minimum %d", estimate.EstimatedMTU, MinimumIPv6MTU)
 	}
 	return estimate, true
+}
+
+func TunnelInterfaceMTUEstimate(router api.Router, spec api.TunnelInterfaceSpec) (MTUEstimate, bool) {
+	overhead := TunnelInterfaceOverhead(spec)
+	if spec.MTU > 0 {
+		return MTUEstimate{UnderlayMTU: tunnelUnderlayMTU(router, spec), Overhead: overhead, EstimatedMTU: spec.MTU}, true
+	}
+	underlayMTU := tunnelUnderlayMTU(router, spec)
+	if underlayMTU == 0 {
+		underlayMTU = 1500
+	}
+	if overhead == 0 {
+		return MTUEstimate{UnderlayMTU: underlayMTU}, true
+	}
+	estimate := MTUEstimate{UnderlayMTU: underlayMTU, Overhead: overhead, EstimatedMTU: underlayMTU - overhead}
+	if estimate.EstimatedMTU > 0 && estimate.EstimatedMTU < MinimumIPv6MTU {
+		estimate.Warning = fmt.Sprintf("estimated MTU %d is below IPv6 minimum %d", estimate.EstimatedMTU, MinimumIPv6MTU)
+	}
+	return estimate, true
+}
+
+func TunnelInterfaceEffectiveMTU(router api.Router, spec api.TunnelInterfaceSpec) int {
+	estimate, ok := TunnelInterfaceMTUEstimate(router, spec)
+	if !ok {
+		return 0
+	}
+	return estimate.EstimatedMTU
 }
 
 func overlayPeers(router api.Router) map[string]api.OverlayPeerSpec {
@@ -342,29 +372,59 @@ func underlayMTU(router api.Router, peer api.OverlayPeerSpec) int {
 		case "TunnelInterface":
 			spec, err := resource.TunnelInterfaceSpec()
 			if err == nil {
-				return tunnelInterfaceMTU(spec)
+				return TunnelInterfaceEffectiveMTU(router, spec)
 			}
 		}
 	}
 	return 0
 }
 
-func tunnelInterfaceMTU(spec api.TunnelInterfaceSpec) int {
-	if spec.MTU > 0 {
-		return spec.MTU
+func tunnelPeerMTUEstimate(router api.Router, peer api.OverlayPeerSpec) (MTUEstimate, bool) {
+	iface := strings.TrimSpace(peer.Underlay.Interface)
+	if iface == "" {
+		return MTUEstimate{}, false
 	}
-	switch strings.TrimSpace(spec.Mode) {
-	case "ipip":
-		return TunnelIPIPDefaultMTU
-	case "gre":
-		return TunnelGREDefaultMTU
-	case "fou":
-		return TunnelFOUDefaultMTU
-	case "gue":
-		return TunnelGUEDefaultMTU
-	default:
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.HybridAPIVersion || resource.Kind != "TunnelInterface" || resource.Metadata.Name != iface {
+			continue
+		}
+		spec, err := resource.TunnelInterfaceSpec()
+		if err != nil {
+			return MTUEstimate{}, false
+		}
+		return TunnelInterfaceMTUEstimate(router, spec)
+	}
+	return MTUEstimate{}, false
+}
+
+func tunnelUnderlayMTU(router api.Router, spec api.TunnelInterfaceSpec) int {
+	iface := strings.TrimSpace(spec.UnderlayInterface)
+	if iface == "" {
 		return 0
 	}
+	for _, resource := range router.Spec.Resources {
+		if resource.Metadata.Name != iface {
+			continue
+		}
+		switch resource.Kind {
+		case "WireGuardInterface":
+			spec, err := resource.WireGuardInterfaceSpec()
+			if err == nil {
+				return firstNonZero(spec.MTU, 1420)
+			}
+		case "Interface":
+			spec, err := resource.InterfaceSpec()
+			if err == nil {
+				return firstNonZero(spec.MTU, 1500)
+			}
+		case "TunnelInterface":
+			spec, err := resource.TunnelInterfaceSpec()
+			if err == nil {
+				return TunnelInterfaceEffectiveMTU(router, spec)
+			}
+		}
+	}
+	return 0
 }
 
 func overheadForPeer(router api.Router, peer api.OverlayPeerSpec) int {
@@ -384,6 +444,14 @@ func overheadForPeer(router api.Router, peer api.OverlayPeerSpec) int {
 		if err == nil && spec.Key != 0 {
 			return overhead + GREKeyOverheadBytes
 		}
+	}
+	return overhead
+}
+
+func TunnelInterfaceOverhead(spec api.TunnelInterfaceSpec) int {
+	overhead := overheadFor(spec.Mode)
+	if strings.TrimSpace(spec.Mode) == "gre" && spec.Key != 0 {
+		overhead += GREKeyOverheadBytes
 	}
 	return overhead
 }
@@ -417,6 +485,15 @@ func normalizeRefName(ref, kind string) string {
 		return strings.TrimPrefix(ref, kind+"/")
 	}
 	return ref
+}
+
+func firstNonZero(values ...int) int {
+	for _, value := range values {
+		if value != 0 {
+			return value
+		}
+	}
+	return 0
 }
 
 var cidrSlugPattern = regexp.MustCompile(`[^A-Za-z0-9]+`)

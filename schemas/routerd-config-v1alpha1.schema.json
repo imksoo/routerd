@@ -1997,10 +1997,6 @@
                   "spec": {
                     "additionalProperties": false,
                     "properties": {
-                      "allowBGPMobilityAllowedIPs": {
-                        "description": "AllowBGPMobilityAllowedIPs is a compatibility escape hatch for older SAM\nlabs that used WireGuard cryptokey routing as the mobility delivery plane.\nNew deployments should keep WireGuard scoped to router endpoint prefixes\nand carry SAM traffic over TunnelInterface devices instead.",
-                        "type": "boolean"
-                      },
                       "listenPort": {
                         "maximum": 65535,
                         "minimum": 1,
@@ -6620,6 +6616,9 @@
                         "maximum": 255,
                         "minimum": 1,
                         "type": "integer"
+                      },
+                      "underlayInterface": {
+                        "type": "string"
                       }
                     },
                     "required": [

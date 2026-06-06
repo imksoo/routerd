@@ -432,29 +432,25 @@ type WireGuardInterfaceSpec struct {
 	PrivateKeyFile string `yaml:"privateKeyFile,omitempty" json:"privateKeyFile,omitempty"`
 	ListenPort     int    `yaml:"listenPort,omitempty" json:"listenPort,omitempty" jsonschema:"minimum=1,maximum=65535"`
 	MTU            int    `yaml:"mtu,omitempty" json:"mtu,omitempty" jsonschema:"minimum=576,maximum=9216"`
-	// AllowBGPMobilityAllowedIPs is a compatibility escape hatch for older SAM
-	// labs that used WireGuard cryptokey routing as the mobility delivery plane.
-	// New deployments should keep WireGuard scoped to router endpoint prefixes
-	// and carry SAM traffic over TunnelInterface devices instead.
-	AllowBGPMobilityAllowedIPs bool `yaml:"allowBGPMobilityAllowedIPs,omitempty" json:"allowBGPMobilityAllowedIPs,omitempty"`
-	FwMark                     int  `yaml:"-" json:"-"`
-	Table                      int  `yaml:"-" json:"-"`
+	FwMark         int    `yaml:"-" json:"-"`
+	Table          int    `yaml:"-" json:"-"`
 }
 
 type TunnelInterfaceSpec struct {
-	Mode            string                `yaml:"mode" json:"mode" jsonschema:"enum=ipip,enum=gre,enum=fou,enum=gue"`
-	Local           string                `yaml:"local,omitempty" json:"local,omitempty"`
-	LocalFrom       StatusValueSourceSpec `yaml:"localFrom,omitempty" json:"localFrom,omitempty"`
-	Remote          string                `yaml:"remote,omitempty" json:"remote,omitempty"`
-	RemoteFrom      StatusValueSourceSpec `yaml:"remoteFrom,omitempty" json:"remoteFrom,omitempty"`
-	Address         string                `yaml:"address,omitempty" json:"address,omitempty"`
-	MTU             int                   `yaml:"mtu,omitempty" json:"mtu,omitempty" jsonschema:"minimum=576,maximum=9216"`
-	TTL             int                   `yaml:"ttl,omitempty" json:"ttl,omitempty" jsonschema:"minimum=1,maximum=255"`
-	Key             int                   `yaml:"key,omitempty" json:"key,omitempty" jsonschema:"minimum=0,maximum=4294967295"`
-	EncapSport      int                   `yaml:"encapSport,omitempty" json:"encapSport,omitempty" jsonschema:"minimum=1,maximum=65535"`
-	EncapDport      int                   `yaml:"encapDport,omitempty" json:"encapDport,omitempty" jsonschema:"minimum=1,maximum=65535"`
-	TrustedUnderlay bool                  `yaml:"trustedUnderlay" json:"trustedUnderlay"`
-	PathMTU         PathMTUOptions        `yaml:"pathMTU,omitempty" json:"pathMTU,omitempty"`
+	Mode              string                `yaml:"mode" json:"mode" jsonschema:"enum=ipip,enum=gre,enum=fou,enum=gue"`
+	Local             string                `yaml:"local,omitempty" json:"local,omitempty"`
+	LocalFrom         StatusValueSourceSpec `yaml:"localFrom,omitempty" json:"localFrom,omitempty"`
+	Remote            string                `yaml:"remote,omitempty" json:"remote,omitempty"`
+	RemoteFrom        StatusValueSourceSpec `yaml:"remoteFrom,omitempty" json:"remoteFrom,omitempty"`
+	Address           string                `yaml:"address,omitempty" json:"address,omitempty"`
+	UnderlayInterface string                `yaml:"underlayInterface,omitempty" json:"underlayInterface,omitempty"`
+	MTU               int                   `yaml:"mtu,omitempty" json:"mtu,omitempty" jsonschema:"minimum=576,maximum=9216"`
+	TTL               int                   `yaml:"ttl,omitempty" json:"ttl,omitempty" jsonschema:"minimum=1,maximum=255"`
+	Key               int                   `yaml:"key,omitempty" json:"key,omitempty" jsonschema:"minimum=0,maximum=4294967295"`
+	EncapSport        int                   `yaml:"encapSport,omitempty" json:"encapSport,omitempty" jsonschema:"minimum=1,maximum=65535"`
+	EncapDport        int                   `yaml:"encapDport,omitempty" json:"encapDport,omitempty" jsonschema:"minimum=1,maximum=65535"`
+	TrustedUnderlay   bool                  `yaml:"trustedUnderlay" json:"trustedUnderlay"`
+	PathMTU           PathMTUOptions        `yaml:"pathMTU,omitempty" json:"pathMTU,omitempty"`
 }
 
 type PathMTUOptions struct {
