@@ -141,7 +141,7 @@ func APIVersionForKind(kind string) string {
 		return api.FirewallAPIVersion
 	case "TunnelInterface", "OverlayPeer", "HybridRoute", "AddressMobilityDomain", "CloudProviderProfile", "RemoteAddressClaim":
 		return api.HybridAPIVersion
-	case "MobilityPool":
+	case "MobilityPool", "SAMTransportProfile":
 		return api.MobilityAPIVersion
 	default:
 		return api.NetAPIVersion

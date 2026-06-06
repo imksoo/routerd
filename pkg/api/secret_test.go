@@ -30,23 +30,19 @@ func TestSpecsSecretFieldsAreReviewedAndRedacted(t *testing.T) {
 	fields := collectSpecsSecretFields(t)
 
 	expected := map[string]specsSecretField{
-		"BGPPeerSpec.Password":                     {Struct: "BGPPeerSpec", Field: "Password", JSON: "password", YAML: "password"},
-		"BGPPeerSpec.PasswordFrom":                 {Struct: "BGPPeerSpec", Field: "PasswordFrom", JSON: "passwordFrom", YAML: "passwordFrom"},
-		"IPsecConnectionSpec.PreSharedKey":         {Struct: "IPsecConnectionSpec", Field: "PreSharedKey", JSON: "preSharedKey", YAML: "preSharedKey"},
-		"NixOSUserSpec.InitialPassword":            {Struct: "NixOSUserSpec", Field: "InitialPassword", JSON: "initialPassword", YAML: "initialPassword"},
-		"PPPoESessionSpec.Password":                {Struct: "PPPoESessionSpec", Field: "Password", JSON: "password", YAML: "password"},
-		"PPPoESessionSpec.PasswordFile":            {Struct: "PPPoESessionSpec", Field: "PasswordFile", JSON: "passwordFile", YAML: "passwordFile"},
-		"SAMTransportPeerWgSpec.PresharedKey":      {Struct: "SAMTransportPeerWgSpec", Field: "PresharedKey", JSON: "presharedKey", YAML: "presharedKey"},
-		"SAMTransportPeerWgSpec.PresharedKeyFile":  {Struct: "SAMTransportPeerWgSpec", Field: "PresharedKeyFile", JSON: "presharedKeyFile", YAML: "presharedKeyFile"},
-		"SAMTransportWireGuardSpec.PrivateKey":     {Struct: "SAMTransportWireGuardSpec", Field: "PrivateKey", JSON: "privateKey", YAML: "privateKey"},
-		"SAMTransportWireGuardSpec.PrivateKeyFile": {Struct: "SAMTransportWireGuardSpec", Field: "PrivateKeyFile", JSON: "privateKeyFile", YAML: "privateKeyFile"},
-		"TailscaleNodeSpec.AuthKey":                {Struct: "TailscaleNodeSpec", Field: "AuthKey", JSON: "authKey", YAML: "authKey"},
-		"TailscaleNodeSpec.AuthKeyEnv":             {Struct: "TailscaleNodeSpec", Field: "AuthKeyEnv", JSON: "authKeyEnv", YAML: "authKeyEnv"},
-		"TailscaleNodeSpec.AuthKeyFile":            {Struct: "TailscaleNodeSpec", Field: "AuthKeyFile", JSON: "authKeyFile", YAML: "authKeyFile"},
-		"WireGuardInterfaceSpec.PrivateKey":        {Struct: "WireGuardInterfaceSpec", Field: "PrivateKey", JSON: "privateKey", YAML: "privateKey"},
-		"WireGuardInterfaceSpec.PrivateKeyFile":    {Struct: "WireGuardInterfaceSpec", Field: "PrivateKeyFile", JSON: "privateKeyFile", YAML: "privateKeyFile"},
-		"WireGuardPeerSpec.PresharedKey":           {Struct: "WireGuardPeerSpec", Field: "PresharedKey", JSON: "presharedKey", YAML: "presharedKey"},
-		"WireGuardPeerSpec.PresharedKeyFile":       {Struct: "WireGuardPeerSpec", Field: "PresharedKeyFile", JSON: "presharedKeyFile", YAML: "presharedKeyFile"},
+		"BGPPeerSpec.Password":                  {Struct: "BGPPeerSpec", Field: "Password", JSON: "password", YAML: "password"},
+		"BGPPeerSpec.PasswordFrom":              {Struct: "BGPPeerSpec", Field: "PasswordFrom", JSON: "passwordFrom", YAML: "passwordFrom"},
+		"IPsecConnectionSpec.PreSharedKey":      {Struct: "IPsecConnectionSpec", Field: "PreSharedKey", JSON: "preSharedKey", YAML: "preSharedKey"},
+		"NixOSUserSpec.InitialPassword":         {Struct: "NixOSUserSpec", Field: "InitialPassword", JSON: "initialPassword", YAML: "initialPassword"},
+		"PPPoESessionSpec.Password":             {Struct: "PPPoESessionSpec", Field: "Password", JSON: "password", YAML: "password"},
+		"PPPoESessionSpec.PasswordFile":         {Struct: "PPPoESessionSpec", Field: "PasswordFile", JSON: "passwordFile", YAML: "passwordFile"},
+		"TailscaleNodeSpec.AuthKey":             {Struct: "TailscaleNodeSpec", Field: "AuthKey", JSON: "authKey", YAML: "authKey"},
+		"TailscaleNodeSpec.AuthKeyEnv":          {Struct: "TailscaleNodeSpec", Field: "AuthKeyEnv", JSON: "authKeyEnv", YAML: "authKeyEnv"},
+		"TailscaleNodeSpec.AuthKeyFile":         {Struct: "TailscaleNodeSpec", Field: "AuthKeyFile", JSON: "authKeyFile", YAML: "authKeyFile"},
+		"WireGuardInterfaceSpec.PrivateKey":     {Struct: "WireGuardInterfaceSpec", Field: "PrivateKey", JSON: "privateKey", YAML: "privateKey"},
+		"WireGuardInterfaceSpec.PrivateKeyFile": {Struct: "WireGuardInterfaceSpec", Field: "PrivateKeyFile", JSON: "privateKeyFile", YAML: "privateKeyFile"},
+		"WireGuardPeerSpec.PresharedKey":        {Struct: "WireGuardPeerSpec", Field: "PresharedKey", JSON: "presharedKey", YAML: "presharedKey"},
+		"WireGuardPeerSpec.PresharedKeyFile":    {Struct: "WireGuardPeerSpec", Field: "PresharedKeyFile", JSON: "presharedKeyFile", YAML: "presharedKeyFile"},
 	}
 
 	got := map[string]specsSecretField{}

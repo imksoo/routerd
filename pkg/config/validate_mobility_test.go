@@ -41,6 +41,131 @@ func TestValidateMobilityPool(t *testing.T) {
 	}
 }
 
+func TestValidateSAMTransportProfile(t *testing.T) {
+	router := samTransportProfileRouter(validSAMTransportProfileSpec())
+	if err := Validate(router); err != nil {
+		t.Fatalf("Validate SAMTransportProfile: %v", err)
+	}
+}
+
+func TestValidateSAMTransportProfileRejectsInvalidFields(t *testing.T) {
+	cases := []struct {
+		name string
+		mut  func(*api.SAMTransportProfileSpec)
+		want string
+	}{
+		{
+			name: "missing self node",
+			mut:  func(spec *api.SAMTransportProfileSpec) { spec.SelfNodeRef = "" },
+			want: "spec.selfNodeRef is required",
+		},
+		{
+			name: "self peer",
+			mut:  func(spec *api.SAMTransportProfileSpec) { spec.Peers[0].NodeRef = "pve-rt" },
+			want: "must not equal spec.selfNodeRef",
+		},
+		{
+			name: "duplicate peer",
+			mut: func(spec *api.SAMTransportProfileSpec) {
+				spec.TopologyNodeRefs = []string{"pve-rt", "k8s-rt"}
+				spec.Peers = append(spec.Peers, api.SAMTransportPeerSpec{NodeRef: "k8s-rt", RemoteEndpoint: "203.0.113.30"})
+			},
+			want: "nodeRef \"k8s-rt\" is duplicated",
+		},
+		{
+			name: "missing topology for multiple peers",
+			mut: func(spec *api.SAMTransportProfileSpec) {
+				spec.Peers = append(spec.Peers, api.SAMTransportPeerSpec{NodeRef: "cloud-rt", RemoteEndpoint: "203.0.113.30"})
+			},
+			want: "spec.topologyNodeRefs is required",
+		},
+		{
+			name: "peer missing from topology",
+			mut: func(spec *api.SAMTransportProfileSpec) {
+				spec.TopologyNodeRefs = []string{"pve-rt", "k8s-rt", "other-rt"}
+				spec.Peers = append(spec.Peers, api.SAMTransportPeerSpec{NodeRef: "cloud-rt", RemoteEndpoint: "203.0.113.30"})
+			},
+			want: "must be listed in spec.topologyNodeRefs",
+		},
+		{
+			name: "override half set",
+			mut:  func(spec *api.SAMTransportProfileSpec) { spec.Peers[0].Override.LocalInner = "10.255.1.0/31" },
+			want: "localInner and remoteInner must be set together",
+		},
+		{
+			name: "override conflict",
+			mut: func(spec *api.SAMTransportProfileSpec) {
+				spec.TopologyNodeRefs = []string{"pve-rt", "k8s-rt", "cloud-rt"}
+				spec.Peers[0].Override = api.SAMTransportPeerOverrideSpec{LocalInner: "10.255.1.0/31", RemoteInner: "10.255.1.1"}
+				spec.Peers = append(spec.Peers, api.SAMTransportPeerSpec{
+					NodeRef:        "cloud-rt",
+					RemoteEndpoint: "203.0.113.30",
+					Override:       api.SAMTransportPeerOverrideSpec{LocalInner: "10.255.1.0/31", RemoteInner: "10.255.1.1"},
+				})
+			},
+			want: "conflicts with spec.peers[0].override",
+		},
+		{
+			name: "missing underlay interface",
+			mut:  func(spec *api.SAMTransportProfileSpec) { spec.UnderlayInterface = "missing" },
+			want: "references missing Interface",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			spec := validSAMTransportProfileSpec()
+			tc.mut(&spec)
+			err := Validate(samTransportProfileRouter(spec))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Validate error = %v, want containing %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func validSAMTransportProfileSpec() api.SAMTransportProfileSpec {
+	return api.SAMTransportProfileSpec{
+		SelfNodeRef:       "pve-rt",
+		Mode:              "ipip",
+		InnerPrefix:       "10.255.1.0/24",
+		UnderlayInterface: "wan",
+		LocalEndpoint:     "198.51.100.10",
+		BGP: api.SAMTransportBGPProfileSpec{
+			RouterRef:    "BGPRouter/mobility",
+			PeerASN:      64512,
+			TimersPreset: "fast",
+		},
+		Peers: []api.SAMTransportPeerSpec{{
+			NodeRef:        "k8s-rt",
+			RemoteEndpoint: "203.0.113.20",
+		}},
+	}
+}
+
+func samTransportProfileRouter(spec api.SAMTransportProfileSpec) *api.Router {
+	return &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "wan"},
+				Spec:     api.InterfaceSpec{IfName: "eth0", Managed: true},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"},
+				Metadata: api.ObjectMeta{Name: "mobility"},
+				Spec:     api.BGPRouterSpec{ASN: 64500, RouterID: "192.0.2.1"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMTransportProfile"},
+				Metadata: api.ObjectMeta{Name: "lab"},
+				Spec:     spec,
+			},
+		}},
+	}
+}
+
 func TestValidateMobilityPoolAllowsExplicitSingleOnpremProxyARPWithoutVRRP(t *testing.T) {
 	router := mobilityPoolRouter(api.MobilityPoolSpec{
 		Prefix:   "10.88.60.0/24",

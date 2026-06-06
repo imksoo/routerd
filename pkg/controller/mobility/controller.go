@@ -56,6 +56,7 @@ type Store interface {
 	RecordFederationEvent(routerstate.EventRecord) error
 	UpsertDynamicConfigPart(routerstate.DynamicConfigPartRecord) error
 	GetDynamicConfigPartsBySource(source string) ([]routerstate.DynamicConfigPartRecord, error)
+	ListDynamicConfigParts() ([]routerstate.DynamicConfigPartRecord, error)
 	ListActions(routerstate.ActionExecutionFilter) ([]routerstate.ActionExecutionRecord, error)
 	SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error
 	ObjectStatus(apiVersion, kind, name string) map[string]any

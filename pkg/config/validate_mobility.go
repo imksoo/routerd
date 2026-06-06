@@ -121,8 +121,178 @@ func validateMobilityResource(res api.Resource, _ platform.OS) (bool, error) {
 			return true, fmt.Errorf("%s spec.authority.mode %q is not supported; only static", res.ID(), spec.Authority.Mode)
 		}
 		return true, nil
+	case "SAMTransportProfile":
+		if res.APIVersion != api.MobilityAPIVersion {
+			return true, fmt.Errorf("%s must use apiVersion %s", res.ID(), api.MobilityAPIVersion)
+		}
+		spec, err := res.SAMTransportProfileSpec()
+		if err != nil {
+			return true, err
+		}
+		if err := validateSAMTransportProfile(res, spec); err != nil {
+			return true, err
+		}
+		return true, nil
 	}
 	return false, nil
+}
+
+func validateSAMTransportProfile(res api.Resource, spec api.SAMTransportProfileSpec) error {
+	if strings.TrimSpace(spec.SelfNodeRef) == "" {
+		return fmt.Errorf("%s spec.selfNodeRef is required", res.ID())
+	}
+	switch strings.TrimSpace(spec.Mode) {
+	case "ipip", "gre":
+	default:
+		return fmt.Errorf("%s spec.mode must be ipip or gre", res.ID())
+	}
+	switch strings.TrimSpace(spec.Encryption) {
+	case "", "none", "wireguard":
+	default:
+		return fmt.Errorf("%s spec.encryption must be none or wireguard", res.ID())
+	}
+	if strings.TrimSpace(spec.UnderlayInterface) == "" {
+		return fmt.Errorf("%s spec.underlayInterface is required", res.ID())
+	}
+	if err := validateTunnelEndpointOrSource(res.ID(), "localEndpoint", spec.LocalEndpoint, spec.LocalEndpointFrom); err != nil {
+		return err
+	}
+	inner, err := netip.ParsePrefix(strings.TrimSpace(spec.InnerPrefix))
+	if err != nil {
+		return fmt.Errorf("%s spec.innerPrefix must be an IPv4 CIDR: %w", res.ID(), err)
+	}
+	inner = inner.Masked()
+	if !inner.Addr().Is4() {
+		return fmt.Errorf("%s spec.innerPrefix must be an IPv4 CIDR", res.ID())
+	}
+	if inner.Bits() > 31 {
+		return fmt.Errorf("%s spec.innerPrefix must leave at least one /31 edge", res.ID())
+	}
+	if spec.BGP.RouterRef == "" {
+		return fmt.Errorf("%s spec.bgp.routerRef is required", res.ID())
+	}
+	if kind, name, ok := strings.Cut(strings.TrimSpace(spec.BGP.RouterRef), "/"); !ok || kind != "BGPRouter" || strings.TrimSpace(name) == "" {
+		return fmt.Errorf("%s spec.bgp.routerRef must reference BGPRouter/<name>", res.ID())
+	}
+	if spec.BGP.PeerASN == 0 {
+		return fmt.Errorf("%s spec.bgp.peerASN is required", res.ID())
+	}
+	switch strings.TrimSpace(spec.BGP.TimersPreset) {
+	case "", "default", "fast", "slow":
+	default:
+		return fmt.Errorf("%s spec.bgp.timersPreset must be default, fast, or slow", res.ID())
+	}
+	if len(spec.Peers) == 0 {
+		return fmt.Errorf("%s spec.peers requires at least one peer", res.ID())
+	}
+	seenPeers := map[string]bool{}
+	usedInner := map[string]string{}
+	for i, peer := range spec.Peers {
+		nodeRef := strings.TrimSpace(peer.NodeRef)
+		if nodeRef == "" {
+			return fmt.Errorf("%s spec.peers[%d].nodeRef is required", res.ID(), i)
+		}
+		if nodeRef == strings.TrimSpace(spec.SelfNodeRef) {
+			return fmt.Errorf("%s spec.peers[%d].nodeRef must not equal spec.selfNodeRef", res.ID(), i)
+		}
+		if seenPeers[nodeRef] {
+			return fmt.Errorf("%s spec.peers nodeRef %q is duplicated", res.ID(), nodeRef)
+		}
+		seenPeers[nodeRef] = true
+		if err := validateTunnelEndpointOrSource(res.ID(), fmt.Sprintf("peers[%d].remoteEndpoint", i), peer.RemoteEndpoint, peer.RemoteEndpointFrom); err != nil {
+			return err
+		}
+		if err := validateSAMTransportPeerOverride(res.ID(), i, inner, peer.Override, usedInner); err != nil {
+			return err
+		}
+	}
+	capacity := 1 << (31 - inner.Bits())
+	if len(spec.Peers) > 1 && len(spec.TopologyNodeRefs) == 0 {
+		return fmt.Errorf("%s spec.topologyNodeRefs is required when spec.peers has more than one peer", res.ID())
+	}
+	topology, err := normalizeSAMTransportTopology(res.ID(), spec)
+	if err != nil {
+		return err
+	}
+	edgeCount := len(topology) * (len(topology) - 1) / 2
+	if edgeCount > capacity {
+		return fmt.Errorf("%s spec.innerPrefix %s has %d /31 edges but topologyNodeRefs requires %d edges", res.ID(), inner, capacity, edgeCount)
+	}
+	for i, peer := range spec.Peers {
+		nodeRef := strings.TrimSpace(peer.NodeRef)
+		if !stringInSlice(nodeRef, topology) {
+			return fmt.Errorf("%s spec.peers[%d].nodeRef %q must be listed in spec.topologyNodeRefs", res.ID(), i, nodeRef)
+		}
+	}
+	return nil
+}
+
+func normalizeSAMTransportTopology(resourceID string, spec api.SAMTransportProfileSpec) ([]string, error) {
+	topology := append([]string(nil), spec.TopologyNodeRefs...)
+	if len(topology) == 0 {
+		topology = []string{spec.SelfNodeRef}
+		for _, peer := range spec.Peers {
+			topology = append(topology, peer.NodeRef)
+		}
+	}
+	seen := map[string]bool{}
+	out := make([]string, 0, len(topology))
+	for i, node := range topology {
+		node = strings.TrimSpace(node)
+		if node == "" {
+			return nil, fmt.Errorf("%s spec.topologyNodeRefs[%d] must not be empty", resourceID, i)
+		}
+		if seen[node] {
+			return nil, fmt.Errorf("%s spec.topologyNodeRefs nodeRef %q is duplicated", resourceID, node)
+		}
+		seen[node] = true
+		out = append(out, node)
+	}
+	if !seen[strings.TrimSpace(spec.SelfNodeRef)] {
+		return nil, fmt.Errorf("%s spec.selfNodeRef %q must be listed in spec.topologyNodeRefs", resourceID, spec.SelfNodeRef)
+	}
+	return out, nil
+}
+
+func validateSAMTransportPeerOverride(resourceID string, index int, inner netip.Prefix, override api.SAMTransportPeerOverrideSpec, used map[string]string) error {
+	localSet := strings.TrimSpace(override.LocalInner) != ""
+	remoteSet := strings.TrimSpace(override.RemoteInner) != ""
+	if localSet != remoteSet {
+		return fmt.Errorf("%s spec.peers[%d].override.localInner and remoteInner must be set together", resourceID, index)
+	}
+	if !localSet {
+		return nil
+	}
+	local, err := netip.ParsePrefix(strings.TrimSpace(override.LocalInner))
+	if err != nil {
+		return fmt.Errorf("%s spec.peers[%d].override.localInner must be an IPv4 /31 prefix: %w", resourceID, index, err)
+	}
+	local = local.Masked()
+	if !local.Addr().Is4() || local.Bits() != 31 || !inner.Contains(local.Addr()) {
+		return fmt.Errorf("%s spec.peers[%d].override.localInner must be an IPv4 /31 inside spec.innerPrefix", resourceID, index)
+	}
+	remoteValue := strings.TrimSpace(override.RemoteInner)
+	if strings.Contains(remoteValue, "/") {
+		remotePrefix, err := netip.ParsePrefix(remoteValue)
+		if err != nil || !remotePrefix.Addr().Is4() || remotePrefix.Bits() != 32 {
+			return fmt.Errorf("%s spec.peers[%d].override.remoteInner must be an IPv4 address or /32", resourceID, index)
+		}
+		remoteValue = remotePrefix.Addr().String()
+	}
+	remote, err := netip.ParseAddr(remoteValue)
+	if err != nil || !remote.Is4() {
+		return fmt.Errorf("%s spec.peers[%d].override.remoteInner must be an IPv4 address", resourceID, index)
+	}
+	if !local.Contains(remote) || remote == local.Addr() {
+		return fmt.Errorf("%s spec.peers[%d].override.remoteInner must be the other address in override.localInner", resourceID, index)
+	}
+	for _, addr := range []string{local.Addr().String(), remote.String()} {
+		if previous := used[addr]; previous != "" {
+			return fmt.Errorf("%s spec.peers[%d].override inner address %s conflicts with %s", resourceID, index, addr, previous)
+		}
+		used[addr] = fmt.Sprintf("spec.peers[%d].override", index)
+	}
+	return nil
 }
 
 func validateMobilityOwnershipDiscovery(res api.Resource, index int, spec api.MobilityPoolSpec, member api.MobilityPoolMember) error {

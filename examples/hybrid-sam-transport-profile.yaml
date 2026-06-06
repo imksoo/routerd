@@ -18,42 +18,30 @@ spec:
           allowedPrefixes:
             - 192.168.123.0/24
 
-    - apiVersion: hybrid.routerd.net/v1alpha1
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: wg-hybrid
+      spec:
+        ifname: wg-hybrid
+        managed: false
+
+    - apiVersion: mobility.routerd.net/v1alpha1
       kind: SAMTransportProfile
       metadata:
         name: pve08-core
       spec:
+        selfNodeRef: pve-rt08
         mode: ipip
-        encryption: wireguard
-        localNodeID: pve-rt08
-        innerCIDR: 10.255.1.0/24
-        peerRole: cloud
-        wireGuard:
-          interface: wg-sam
-          privateKeyFile: /usr/local/etc/routerd/secrets/wg-sam.key
-          listenPort: 51820
-          transportCIDR: 10.99.0.0/24
-          persistentKeepalive: 25
+        innerPrefix: 10.255.1.0/24
+        underlayInterface: wg-hybrid
+        localEndpointFrom:
+          resource: Interface/wg-hybrid
+          field: primaryIPv4
         bgp:
           routerRef: BGPRouter/main
           peerASN: 64512
-          timers:
-            profile: fast
+          timersPreset: fast
         peers:
-          - name: k8s-rt02
-            nodeID: k8s-rt02
-            endpoint: 192.168.1.53:51820
-            wireGuard:
-              publicKey: K8S_RT02_WG_PUBLIC_KEY_REPLACE_ME
-
-    - apiVersion: hybrid.routerd.net/v1alpha1
-      kind: HybridRoute
-      metadata:
-        name: svnet1-to-core
-      spec:
-        peerRef: pve08-core-k8s-rt02-peer
-        destinationCIDRs:
-          - 192.168.123.0/24
-        install:
-          table: main
-          metric: 120
+          - nodeRef: k8s-rt02
+            remoteEndpoint: 10.99.0.2
