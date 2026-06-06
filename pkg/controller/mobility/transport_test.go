@@ -131,6 +131,36 @@ func TestSAMTransportProfilePeerRemovalReplacesDynamicPart(t *testing.T) {
 	}
 }
 
+func TestSAMTransportProfileCopiesRouteReflectorSettings(t *testing.T) {
+	now := time.Date(2026, 6, 6, 9, 8, 0, 0, time.UTC)
+	store := testStore(t, now)
+	router := transportRouter("rr", "k8s-rt01", []api.SAMTransportPeerSpec{{
+		NodeRef:        "pve-rt06",
+		RemoteEndpoint: "203.0.113.26",
+	}})
+	spec, err := router.Spec.Resources[0].SAMTransportProfileSpec()
+	if err != nil {
+		t.Fatalf("SAMTransportProfile spec: %v", err)
+	}
+	spec.BGP.RouteReflectorClient = true
+	spec.BGP.RouteReflectorClusterID = "192.168.1.38"
+	router.Spec.Resources[0].Spec = spec
+
+	controller := TransportController{
+		Router: router,
+		Store:  store,
+		Now:    func() time.Time { return now },
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	resources := decodeResources(t, latestPart(t, store, TransportDynamicSource("rr", "k8s-rt01")).ResourcesJSON)
+	peer := findTransportBGPPeer(t, resources)
+	if !peer.RouteReflectorClient || peer.RouteReflectorClusterID != "192.168.1.38" {
+		t.Fatalf("BGPPeer RR settings = client:%v cluster:%q, want true/192.168.1.38", peer.RouteReflectorClient, peer.RouteReflectorClusterID)
+	}
+}
+
 func TestSAMTransportProfileDeletionUpsertsEmptyPart(t *testing.T) {
 	now := time.Date(2026, 6, 6, 9, 10, 0, 0, time.UTC)
 	store := testStore(t, now)

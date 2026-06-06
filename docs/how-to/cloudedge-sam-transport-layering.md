@@ -114,6 +114,9 @@ spec:
     routerRef: BGPRouter/mobility
     peerASN: 64512
     timersPreset: fast
+    # Set these only on route-reflector core routers.
+    routeReflectorClient: true
+    routeReflectorClusterID: 192.168.1.38
   peers:
     - nodeRef: k8s-rt
       remoteEndpoint: 10.99.0.2

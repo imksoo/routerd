@@ -224,6 +224,10 @@ controller sorts that shared node list and ranks each unordered node pair before
 allocating a `/31` from `spec.innerPrefix`, so hub/spoke routers derive the same
 edge even when their local peer lists differ.
 
+Core routers can set `spec.bgp.routeReflectorClient` and
+`spec.bgp.routeReflectorClusterID`; those fields are copied to each generated
+`BGPPeer`. Edge routers can leave them unset and use ordinary iBGP sessions.
+
 Peer removal replaces the profile's generated `DynamicConfigPart` with the new
 resource set. Profile deletion replaces the old part with an empty active part,
 so effective config drops generated tunnel, BGP peer, and endpoint route

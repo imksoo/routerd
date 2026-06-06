@@ -8443,6 +8443,12 @@
                             "minimum": 1,
                             "type": "integer"
                           },
+                          "routeReflectorClient": {
+                            "type": "boolean"
+                          },
+                          "routeReflectorClusterID": {
+                            "type": "string"
+                          },
                           "routerRef": {
                             "type": "string"
                           },
