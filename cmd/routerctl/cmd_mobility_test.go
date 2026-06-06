@@ -86,3 +86,27 @@ func TestMobilityTrapsCommand(t *testing.T) {
 		t.Fatalf("unexpected output:\n%s", out)
 	}
 }
+
+func TestTopLevelUsageListsCurrentMobilityCommands(t *testing.T) {
+	var stdout bytes.Buffer
+	usage(&stdout)
+
+	out := stdout.String()
+	for _, want := range []string{
+		"mobility paths",
+		"mobility traps",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("usage is missing %q:\n%s", want, out)
+		}
+	}
+	for _, old := range []string{
+		"mobility leases",
+		"mobility ownership",
+		"mobility show",
+	} {
+		if strings.Contains(out, old) {
+			t.Fatalf("usage still lists removed command %q:\n%s", old, out)
+		}
+	}
+}
