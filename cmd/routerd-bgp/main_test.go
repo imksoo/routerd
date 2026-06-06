@@ -20,10 +20,13 @@ import (
 )
 
 type fakePathServer struct {
-	added     []*gobgpapi.AddPathRequest
-	deleted   [][]byte
-	nextID    byte
-	deleteErr error
+	added             []*gobgpapi.AddPathRequest
+	deleted           [][]byte
+	policyRequests    []*gobgpapi.SetPoliciesRequest
+	policyAssignments []*gobgpapi.PolicyAssignment
+	resetRequests     []*gobgpapi.ResetPeerRequest
+	nextID            byte
+	deleteErr         error
 }
 
 func (s *fakePathServer) AddPath(_ context.Context, req *gobgpapi.AddPathRequest) (*gobgpapi.AddPathResponse, error) {
@@ -38,6 +41,21 @@ func (s *fakePathServer) DeletePath(_ context.Context, req *gobgpapi.DeletePathR
 	if s.deleteErr != nil {
 		return s.deleteErr
 	}
+	return nil
+}
+
+func (s *fakePathServer) SetPolicies(_ context.Context, req *gobgpapi.SetPoliciesRequest) error {
+	s.policyRequests = append(s.policyRequests, req)
+	return nil
+}
+
+func (s *fakePathServer) SetPolicyAssignment(_ context.Context, req *gobgpapi.SetPolicyAssignmentRequest) error {
+	s.policyAssignments = append(s.policyAssignments, req.GetAssignment())
+	return nil
+}
+
+func (s *fakePathServer) ResetPeer(_ context.Context, req *gobgpapi.ResetPeerRequest) error {
+	s.resetRequests = append(s.resetRequests, req)
 	return nil
 }
 
@@ -67,13 +85,16 @@ func TestAppliedPoliciesRestorePeerImportPolicyWithoutGlobalPolicy(t *testing.T)
 		t.Fatalf("next-hop action = %#v, want peer-address rewrite", action)
 	}
 	if assignment.GetName() != "global" || assignment.GetDirection() != gobgpapi.PolicyDirection_IMPORT ||
-		assignment.GetDefaultAction() != gobgpapi.RouteAction_REJECT || len(assignment.GetPolicies()) != 1 ||
-		assignment.GetPolicies()[0].GetName() != "routerd-lan-import" {
-		t.Fatalf("global import policy assignment = %#v, want restored policy assigned to global import", assignment)
+		assignment.GetDefaultAction() != gobgpapi.RouteAction_ACCEPT || len(assignment.GetPolicies()) != 0 {
+		t.Fatalf("global import policy assignment = %#v, want default accept without peer policy", assignment)
 	}
 	restoredPeer := appliedPeer(peer, bgpdaemon.AppliedGlobal{ASN: 64512})
-	if applyPolicy := restoredPeer.GetApplyPolicy(); applyPolicy != nil && applyPolicy.GetImportPolicy() != nil {
-		t.Fatalf("restored peer import policy = %#v, want no per-neighbor import policy for normal eBGP", applyPolicy.GetImportPolicy())
+	importAssignment := restoredPeer.GetApplyPolicy().GetImportPolicy()
+	if importAssignment.GetDirection() != gobgpapi.PolicyDirection_IMPORT ||
+		importAssignment.GetDefaultAction() != gobgpapi.RouteAction_REJECT ||
+		len(importAssignment.GetPolicies()) != 1 ||
+		importAssignment.GetPolicies()[0].GetName() != "routerd-lan-import" {
+		t.Fatalf("restored peer import policy = %#v, want per-neighbor import policy", importAssignment)
 	}
 }
 
@@ -87,7 +108,7 @@ func TestAppliedPoliciesRestorePeerExportPolicy(t *testing.T) {
 		},
 		ExportPolicyName: "routerd-lan-export-10-252-0-2",
 		ExportPolicy: bgpdaemon.AppliedExportPolicy{
-			AllowedPrefixes: []string{"192.168.123.129/32", "192.168.123.132/32"},
+			AllowedPrefixes: []string{"192.168.123.129/32"},
 		},
 	}
 	req, assignment := appliedPolicies(bgpdaemon.AppliedConfig{
@@ -105,13 +126,23 @@ func TestAppliedPoliciesRestorePeerExportPolicy(t *testing.T) {
 	if !appliedPolicyRequestHasStatement(req, "routerd-lan-export-10-252-0-2", "routerd-lan-export-10-252-0-2-allow-export") {
 		t.Fatalf("restore policies = %#v, want peer export policy", req)
 	}
-	if len(assignment.GetPolicies()) != 1 || assignment.GetPolicies()[0].GetName() != "routerd-lan-import" {
-		t.Fatalf("global import assignment = %#v, want only import policy", assignment)
+	if len(assignment.GetPolicies()) != 0 {
+		t.Fatalf("global import assignment = %#v, want peer import policy kept off global assignment", assignment)
 	}
 	if !appliedPolicyRequestHasPrefix(req, "routerd-lan-import-prefixes", "192.168.123.132/32") {
 		t.Fatalf("restore policies = %#v, want dynamic mobility prefix in import policy", req)
 	}
+	if !appliedPolicyRequestHasPrefix(req, "routerd-lan-export-10-252-0-2-prefixes", "192.168.123.132/32") {
+		t.Fatalf("restore policies = %#v, want dynamic mobility prefix in export policy", req)
+	}
 	restoredPeer := appliedPeer(peer, bgpdaemon.AppliedGlobal{ASN: 64512})
+	importAssignment := restoredPeer.GetApplyPolicy().GetImportPolicy()
+	if importAssignment.GetDirection() != gobgpapi.PolicyDirection_IMPORT ||
+		importAssignment.GetDefaultAction() != gobgpapi.RouteAction_REJECT ||
+		len(importAssignment.GetPolicies()) != 1 ||
+		importAssignment.GetPolicies()[0].GetName() != "routerd-lan-import" {
+		t.Fatalf("restored peer import policy = %#v, want import assignment", importAssignment)
+	}
 	exportAssignment := restoredPeer.GetApplyPolicy().GetExportPolicy()
 	if exportAssignment.GetDirection() != gobgpapi.PolicyDirection_EXPORT ||
 		exportAssignment.GetDefaultAction() != gobgpapi.RouteAction_REJECT ||
@@ -350,6 +381,67 @@ func TestControlPathAPISourceScopedMobilityUpsertAndDelete(t *testing.T) {
 	}
 	if len(applied.Advertisements) != 1 || applied.Advertisements[0] != "10.20.0.0/24" {
 		t.Fatalf("static advertisements changed: %#v", applied.Advertisements)
+	}
+}
+
+func TestControlPathAPIUpsertRefreshesDynamicExportPolicy(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "applied.json")
+	initial := bgpdaemon.AppliedConfig{
+		Global: bgpdaemon.AppliedGlobal{ASN: 64512, RouterID: "10.0.0.1", ListenPort: 179},
+		Peers: map[string]bgpdaemon.AppliedPeer{
+			"10.252.0.2": {
+				Address:          "10.252.0.2",
+				ASN:              64512,
+				ImportPolicyName: "routerd-lan-import",
+				ImportPolicy: bgpdaemon.AppliedImportPolicy{
+					AllowedPrefixes: []string{"10.252.0.0/24"},
+				},
+				ExportPolicyName: "routerd-lan-export-10-252-0-2",
+				ExportPolicy: bgpdaemon.AppliedExportPolicy{
+					AllowedPrefixes: []string{"192.168.123.208/32"},
+				},
+			},
+		},
+	}
+	if err := bgpdaemon.WriteApplied(statePath, initial); err != nil {
+		t.Fatalf("write initial applied: %v", err)
+	}
+	socketPath := filepath.Join(dir, "control.sock")
+	paths := &fakePathServer{}
+	server, err := serveControlSocket(socketPath, statePath, paths)
+	if err != nil {
+		t.Fatalf("serve control socket: %v", err)
+	}
+	defer server.Shutdown(context.Background())
+	client := unixHTTPClient(socketPath)
+	defer client.CloseIdleConnections()
+
+	body := bgpdaemon.AppliedPath{
+		Source: "MobilityPool/svnet1/node/pve-rt08",
+		Prefix: "192.168.123.132/32",
+		Attrs:  bgpdaemon.AppliedPathAttrs{LocalPref: 200},
+	}
+	resp := doJSON(t, client, http.MethodPost, "/v1/paths", body)
+	if resp.StatusCode != http.StatusOK {
+		data, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("POST /v1/paths status = %d body=%s", resp.StatusCode, bytes.TrimSpace(data))
+	}
+	resp.Body.Close()
+	if len(paths.policyRequests) == 0 {
+		t.Fatalf("SetPolicies calls = 0, want dynamic policy refresh")
+	}
+	lastPolicyRequest := paths.policyRequests[len(paths.policyRequests)-1]
+	if !appliedPolicyRequestHasPrefix(lastPolicyRequest, "routerd-lan-export-10-252-0-2-prefixes", "192.168.123.132/32") {
+		t.Fatalf("refreshed policies = %#v, want dynamic mobility prefix in export policy", lastPolicyRequest)
+	}
+	if len(paths.resetRequests) != 1 {
+		t.Fatalf("ResetPeer calls = %d, want one outbound soft reset", len(paths.resetRequests))
+	}
+	reset := paths.resetRequests[0]
+	if reset.GetAddress() != "10.252.0.2" || !reset.GetSoft() || reset.GetDirection() != gobgpapi.ResetPeerRequest_OUT {
+		t.Fatalf("ResetPeer request = %#v, want soft outbound reset for 10.252.0.2", reset)
 	}
 }
 

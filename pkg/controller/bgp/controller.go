@@ -182,24 +182,10 @@ func (c *Controller) reconcileLocked(ctx context.Context) error {
 	c.observeBFDPeerStates(desired)
 	staticExportPrefixes := mapKeys(advertisedPrefixes(routerSpec))
 	dynamicExportPrefixes := dynamicPathExportPrefixes(applied.Paths)
-	effectiveImportPolicy := routerSpec.ImportPolicy
-	effectiveImportPolicy.AllowedPrefixes = mergeAllowedPrefixes(effectiveImportPolicy.AllowedPrefixes, dynamicExportPrefixes)
-	for address, peer := range desired {
-		peer.GracefulRestart = routerSpec.GracefulRestart
-		peer.ConvergenceProfile = routerSpec.ConvergenceProfile
-		peer.ImportPolicy = effectiveImportPolicy
-		peer.ImportPolicyName = bgpPolicyName(routerResource.Metadata.Name, "import")
-		peer.ExportPolicyName = peerExportPolicyName(routerResource.Metadata.Name, address)
-		peer.ExportPolicy.AllowedPrefixes = mergeAllowedPrefixes(peer.ExportPolicy.AllowedPrefixes, staticExportPrefixes, dynamicExportPrefixes)
-		desired[address] = peer
-	}
-	importPolicyName, err := c.reconcilePolicies(ctx, routerResource.Metadata.Name, effectiveImportPolicy, desired)
-	if err != nil {
+	effectiveImportPolicy := effectiveGlobalImportPolicy(routerSpec.ImportPolicy, dynamicExportPrefixes)
+	desired = applyRouterBGPDefaults(routerResource.Metadata.Name, routerSpec, desired, staticExportPrefixes, dynamicExportPrefixes)
+	if err := c.reconcilePolicies(ctx, routerResource.Metadata.Name, effectiveImportPolicy, desired); err != nil {
 		return c.savePendingAll("GoBGPPolicyApplyFailed", err)
-	}
-	for address, peer := range desired {
-		peer.ImportPolicyName = importPolicyName
-		desired[address] = peer
 	}
 	exportPolicyRefreshPeers := exportPolicyChangedPeers(c.appliedPeerKeys, desired)
 	changed, err := c.reconcilePeers(ctx, desired)
@@ -231,16 +217,16 @@ func (c *Controller) reconcileLocked(ctx context.Context) error {
 		}
 	}
 	c.appliedConfig = applied
-	allowedImportPrefixes := importAllowedPrefixes(appliedSpec)
+	allowedImportPrefixes := importAllowedPrefixesFromApplied(applied)
 	state, routes, livenessMarkers, err := c.observeState(ctx, allowedImportPrefixes)
 	if err != nil {
 		return c.savePendingAll("GoBGPObserveFailed", err)
 	}
-	if importPolicyRefreshNeeded(routerSpec.ImportPolicy, desired, routes) {
-		if err := c.applyBGPPolicies(ctx, routerResource.Metadata.Name, routerSpec.ImportPolicy, desired); err != nil {
+	if importPolicyRefreshNeeded(desired, routes) {
+		if err := c.applyBGPPolicies(ctx, routerResource.Metadata.Name, effectiveImportPolicy, desired); err != nil {
 			return c.savePendingAll("GoBGPPolicyApplyFailed", err)
 		}
-		c.importPolicyKey = bgpPoliciesKey(routerSpec.ImportPolicy, desired)
+		c.importPolicyKey = bgpPoliciesKey(effectiveImportPolicy, desired)
 		if err := c.softResetImportPolicy(ctx, desired); err != nil {
 			return c.savePendingAll("GoBGPImportPolicyRefreshFailed", err)
 		}
@@ -350,7 +336,14 @@ func (c *Controller) observeAndSyncFromWatchLocked(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	state, routes, livenessMarkers, err := c.observeState(ctx, importAllowedPrefixes(routerSpec))
+	desired, err := c.desiredPeers(routerResource.Metadata.Name, routerSpec.ASN)
+	if err != nil {
+		return err
+	}
+	applied := c.appliedConfig
+	dynamicExportPrefixes := dynamicPathExportPrefixes(applied.Paths)
+	desired = applyRouterBGPDefaults(routerResource.Metadata.Name, routerSpec, desired, mapKeys(advertisedPrefixes(routerSpec)), dynamicExportPrefixes)
+	state, routes, livenessMarkers, err := c.observeState(ctx, importAllowedPrefixes(routerSpec, desired))
 	if err != nil {
 		return c.savePendingAll("GoBGPWatchObserveFailed", err)
 	}
@@ -580,6 +573,7 @@ func (c *Controller) desiredPeers(routerName string, localASN uint32) (map[strin
 				EbgpMultihop:            spec.EbgpMultihop,
 				RouteReflectorClient:    spec.RouteReflectorClient,
 				RouteReflectorClusterID: strings.TrimSpace(spec.RouteReflectorClusterID),
+				ImportPolicy:            spec.ImportPolicy,
 				ExportPolicy:            spec.ExportPolicy,
 				Timers:                  spec.Timers,
 			}
@@ -588,17 +582,47 @@ func (c *Controller) desiredPeers(routerName string, localASN uint32) (map[strin
 	return out, nil
 }
 
-func (c *Controller) reconcilePolicies(ctx context.Context, routerName string, spec routerapi.BGPImportPolicySpec, peers map[string]desiredPeer) (string, error) {
-	name := bgpPolicyName(routerName, "import")
+func applyRouterBGPDefaults(routerName string, routerSpec routerapi.BGPRouterSpec, peers map[string]desiredPeer, staticExportPrefixes, dynamicExportPrefixes []string) map[string]desiredPeer {
+	globalImportPolicy := effectiveGlobalImportPolicy(routerSpec.ImportPolicy, dynamicExportPrefixes)
+	for address, peer := range peers {
+		peer.GracefulRestart = routerSpec.GracefulRestart
+		peer.ConvergenceProfile = routerSpec.ConvergenceProfile
+		if peerHasImportPolicy(peer.ImportPolicy) {
+			peer.ImportPolicy.AllowedPrefixes = mergeAllowedPrefixes(peer.ImportPolicy.AllowedPrefixes, dynamicExportPrefixes)
+			peer.ImportPolicyName = peerImportPolicyName(routerName, address)
+		} else {
+			peer.ImportPolicy = globalImportPolicy
+			peer.ImportPolicyName = bgpPolicyName(routerName, "import")
+		}
+		peer.ExportPolicyName = peerExportPolicyName(routerName, address)
+		peer.ExportPolicy.AllowedPrefixes = mergeAllowedPrefixes(peer.ExportPolicy.AllowedPrefixes, staticExportPrefixes, dynamicExportPrefixes)
+		peers[address] = peer
+	}
+	return peers
+}
+
+func effectiveGlobalImportPolicy(spec routerapi.BGPImportPolicySpec, dynamicPrefixes []string) routerapi.BGPImportPolicySpec {
+	if len(cleanStrings(spec.AllowedPrefixes)) == 0 {
+		return spec
+	}
+	spec.AllowedPrefixes = mergeAllowedPrefixes(spec.AllowedPrefixes, dynamicPrefixes)
+	return spec
+}
+
+func peerHasImportPolicy(spec routerapi.BGPImportPolicySpec) bool {
+	return len(cleanStrings(spec.AllowedPrefixes)) > 0 || strings.TrimSpace(spec.NextHopRewrite) != ""
+}
+
+func (c *Controller) reconcilePolicies(ctx context.Context, routerName string, spec routerapi.BGPImportPolicySpec, peers map[string]desiredPeer) error {
 	key := bgpPoliciesKey(spec, peers)
 	if c.importPolicyKey == key {
-		return name, nil
+		return nil
 	}
 	if err := c.applyBGPPolicies(ctx, routerName, spec, peers); err != nil {
-		return "", err
+		return err
 	}
 	c.importPolicyKey = key
-	return name, nil
+	return nil
 }
 
 func (c *Controller) applyBGPPolicies(ctx context.Context, routerName string, spec routerapi.BGPImportPolicySpec, peers map[string]desiredPeer) error {
@@ -607,28 +631,15 @@ func (c *Controller) applyBGPPolicies(ctx context.Context, routerName string, sp
 	prefixes := importPolicyPrefixes(spec)
 	assignment := globalImportPolicyAssignment(name, len(prefixes) > 0)
 	if len(prefixes) > 0 {
-		prefixSetName := bgpPolicyName(routerName, "import-prefixes")
-		req.DefinedSets = append(req.DefinedSets, &gobgpapi.DefinedSet{
-			DefinedType: gobgpapi.DefinedType_PREFIX,
-			Name:        prefixSetName,
-			Prefixes:    prefixes,
-		})
-		req.Policies = append(req.Policies, &gobgpapi.Policy{
-			Name: name,
-			Statements: []*gobgpapi.Statement{{
-				Name: bgpPolicyStatementName(name, "allow-import"),
-				Conditions: &gobgpapi.Conditions{PrefixSet: &gobgpapi.MatchSet{
-					Type: gobgpapi.MatchSet_ANY,
-					Name: prefixSetName,
-				}},
-				Actions: &gobgpapi.Actions{
-					RouteAction: gobgpapi.RouteAction_ACCEPT,
-					Nexthop:     nextHopRewriteAction(spec),
-				},
-			}},
-		})
+		appendImportPolicy(req, name, bgpPolicyName(routerName, "import-prefixes"), spec)
 	}
+	importPolicies := map[string]bool{name: true}
 	for _, peer := range sortedDesiredPeers(peers) {
+		importPolicyName := strings.TrimSpace(peer.ImportPolicyName)
+		if importPolicyName != "" && !importPolicies[importPolicyName] && len(importPolicyPrefixes(peer.ImportPolicy)) > 0 {
+			appendImportPolicy(req, importPolicyName, importPolicyName+"-prefixes", peer.ImportPolicy)
+			importPolicies[importPolicyName] = true
+		}
 		prefixes := exportPolicyPrefixes(peer.ExportPolicy)
 		if len(prefixes) == 0 || strings.TrimSpace(peer.ExportPolicyName) == "" {
 			continue
@@ -655,6 +666,32 @@ func (c *Controller) applyBGPPolicies(ctx context.Context, routerName string, sp
 		return err
 	}
 	return c.Server.SetPolicyAssignment(ctx, &gobgpapi.SetPolicyAssignmentRequest{Assignment: assignment})
+}
+
+func appendImportPolicy(req *gobgpapi.SetPoliciesRequest, policyName, prefixSetName string, spec routerapi.BGPImportPolicySpec) {
+	prefixes := importPolicyPrefixes(spec)
+	if len(prefixes) == 0 || strings.TrimSpace(policyName) == "" || strings.TrimSpace(prefixSetName) == "" {
+		return
+	}
+	req.DefinedSets = append(req.DefinedSets, &gobgpapi.DefinedSet{
+		DefinedType: gobgpapi.DefinedType_PREFIX,
+		Name:        strings.TrimSpace(prefixSetName),
+		Prefixes:    prefixes,
+	})
+	req.Policies = append(req.Policies, &gobgpapi.Policy{
+		Name: strings.TrimSpace(policyName),
+		Statements: []*gobgpapi.Statement{{
+			Name: bgpPolicyStatementName(policyName, "allow-import"),
+			Conditions: &gobgpapi.Conditions{PrefixSet: &gobgpapi.MatchSet{
+				Type: gobgpapi.MatchSet_ANY,
+				Name: strings.TrimSpace(prefixSetName),
+			}},
+			Actions: &gobgpapi.Actions{
+				RouteAction: gobgpapi.RouteAction_ACCEPT,
+				Nexthop:     nextHopRewriteAction(spec),
+			},
+		}},
+	})
 }
 
 func sortedDesiredPeers(peers map[string]desiredPeer) []desiredPeer {
@@ -1057,8 +1094,8 @@ func staticPathUUIDs(paths []bgpdaemon.AppliedPath) map[string][]byte {
 }
 
 func dynamicImportPolicyExpanded(previous, current bgpdaemon.AppliedConfig) bool {
-	previousPrefixes := cleanStrings(previous.Global.ImportPolicy.AllowedPrefixes)
-	currentPrefixes := cleanStrings(current.Global.ImportPolicy.AllowedPrefixes)
+	previousPrefixes := appliedImportPolicyAllowedPrefixes(previous)
+	currentPrefixes := appliedImportPolicyAllowedPrefixes(current)
 	if sameStringSet(previousPrefixes, currentPrefixes) {
 		return false
 	}
@@ -1068,6 +1105,15 @@ func dynamicImportPolicyExpanded(previous, current bgpdaemon.AppliedConfig) bool
 		}
 	}
 	return false
+}
+
+func appliedImportPolicyAllowedPrefixes(applied bgpdaemon.AppliedConfig) []string {
+	var prefixes []string
+	prefixes = append(prefixes, applied.Global.ImportPolicy.AllowedPrefixes...)
+	for _, peer := range applied.Peers {
+		prefixes = append(prefixes, peer.ImportPolicy.AllowedPrefixes...)
+	}
+	return cleanStrings(prefixes)
 }
 
 func (c *Controller) refreshDynamicAdvertisements(ctx context.Context, applied bgpdaemon.AppliedConfig) (bgpdaemon.AppliedConfig, error) {
@@ -1459,10 +1505,15 @@ func goBGPPeer(peer desiredPeer) *gobgpapi.Peer {
 			RouteReflectorClusterId: strings.TrimSpace(peer.RouteReflectorClusterID),
 		}
 	}
+	applyPolicy := &gobgpapi.ApplyPolicy{}
+	if len(importPolicyPrefixes(peer.ImportPolicy)) > 0 && strings.TrimSpace(peer.ImportPolicyName) != "" {
+		applyPolicy.ImportPolicy = peerImportPolicyAssignment(peer.ImportPolicyName)
+	}
 	if len(exportPolicyPrefixes(peer.ExportPolicy)) > 0 && strings.TrimSpace(peer.ExportPolicyName) != "" {
-		out.ApplyPolicy = &gobgpapi.ApplyPolicy{
-			ExportPolicy: peerExportPolicyAssignment(peer.ExportPolicyName),
-		}
+		applyPolicy.ExportPolicy = peerExportPolicyAssignment(peer.ExportPolicyName)
+	}
+	if applyPolicy.ImportPolicy != nil || applyPolicy.ExportPolicy != nil {
+		out.ApplyPolicy = applyPolicy
 	}
 	return out
 }
@@ -1984,9 +2035,27 @@ func fibUnsupportedCount(result FIBSyncResult) int {
 	return len(result.Unsupported)
 }
 
-func importAllowedPrefixes(spec routerapi.BGPRouterSpec) []netip.Prefix {
+func importAllowedPrefixes(spec routerapi.BGPRouterSpec, peers map[string]desiredPeer) []netip.Prefix {
 	var out []netip.Prefix
-	for _, prefix := range spec.ImportPolicy.AllowedPrefixes {
+	values := append([]string{}, spec.ImportPolicy.AllowedPrefixes...)
+	for _, peer := range peers {
+		values = append(values, peer.ImportPolicy.AllowedPrefixes...)
+	}
+	for _, prefix := range cleanStrings(values) {
+		if parsed, err := netip.ParsePrefix(strings.TrimSpace(prefix)); err == nil {
+			out = append(out, parsed.Masked())
+		}
+	}
+	return out
+}
+
+func importAllowedPrefixesFromApplied(applied bgpdaemon.AppliedConfig) []netip.Prefix {
+	var out []netip.Prefix
+	values := append([]string{}, applied.Global.ImportPolicy.AllowedPrefixes...)
+	for _, peer := range applied.Peers {
+		values = append(values, peer.ImportPolicy.AllowedPrefixes...)
+	}
+	for _, prefix := range cleanStrings(values) {
 		if parsed, err := netip.ParsePrefix(strings.TrimSpace(prefix)); err == nil {
 			out = append(out, parsed.Masked())
 		}
@@ -2017,13 +2086,17 @@ func importPolicyKey(spec routerapi.BGPImportPolicySpec) string {
 }
 
 func bgpPoliciesKey(importSpec routerapi.BGPImportPolicySpec, peers map[string]desiredPeer) string {
-	type peerExportPolicyKey struct {
-		Address         string   `json:"address"`
-		AllowedPrefixes []string `json:"allowedPrefixes,omitempty"`
+	type peerPolicyKey struct {
+		Address               string   `json:"address"`
+		ImportPolicyName      string   `json:"importPolicyName,omitempty"`
+		ImportAllowedPrefixes []string `json:"importAllowedPrefixes,omitempty"`
+		ImportNextHopRewrite  string   `json:"importNextHopRewrite,omitempty"`
+		ExportPolicyName      string   `json:"exportPolicyName,omitempty"`
+		ExportAllowedPrefixes []string `json:"exportAllowedPrefixes,omitempty"`
 	}
 	normalized := struct {
 		Import routerapi.BGPImportPolicySpec `json:"import"`
-		Peers  []peerExportPolicyKey         `json:"peers,omitempty"`
+		Peers  []peerPolicyKey               `json:"peers,omitempty"`
 	}{
 		Import: routerapi.BGPImportPolicySpec{
 			AllowedPrefixes: cleanStrings(importSpec.AllowedPrefixes),
@@ -2031,13 +2104,18 @@ func bgpPoliciesKey(importSpec routerapi.BGPImportPolicySpec, peers map[string]d
 		},
 	}
 	for _, peer := range sortedDesiredPeers(peers) {
-		prefixes := cleanStrings(peer.ExportPolicy.AllowedPrefixes)
-		if len(prefixes) == 0 {
+		importPrefixes := cleanStrings(peer.ImportPolicy.AllowedPrefixes)
+		exportPrefixes := cleanStrings(peer.ExportPolicy.AllowedPrefixes)
+		if len(importPrefixes) == 0 && len(exportPrefixes) == 0 {
 			continue
 		}
-		normalized.Peers = append(normalized.Peers, peerExportPolicyKey{
-			Address:         strings.TrimSpace(peer.Address),
-			AllowedPrefixes: prefixes,
+		normalized.Peers = append(normalized.Peers, peerPolicyKey{
+			Address:               strings.TrimSpace(peer.Address),
+			ImportPolicyName:      strings.TrimSpace(peer.ImportPolicyName),
+			ImportAllowedPrefixes: importPrefixes,
+			ImportNextHopRewrite:  importNextHopRewrite(peer.ImportPolicy),
+			ExportPolicyName:      strings.TrimSpace(peer.ExportPolicyName),
+			ExportAllowedPrefixes: exportPrefixes,
 		})
 	}
 	data, err := json.Marshal(normalized)
@@ -2056,12 +2134,19 @@ func nextHopRewriteAction(spec routerapi.BGPImportPolicySpec) *gobgpapi.NexthopA
 }
 
 func globalImportPolicyAssignment(policyName string, includePolicy bool) *gobgpapi.PolicyAssignment {
-	assignment := &gobgpapi.PolicyAssignment{
+	return &gobgpapi.PolicyAssignment{
 		Name:          "global",
+		Direction:     gobgpapi.PolicyDirection_IMPORT,
+		DefaultAction: gobgpapi.RouteAction_ACCEPT,
+	}
+}
+
+func peerImportPolicyAssignment(policyName string) *gobgpapi.PolicyAssignment {
+	assignment := &gobgpapi.PolicyAssignment{
 		Direction:     gobgpapi.PolicyDirection_IMPORT,
 		DefaultAction: gobgpapi.RouteAction_REJECT,
 	}
-	if includePolicy && strings.TrimSpace(policyName) != "" {
+	if strings.TrimSpace(policyName) != "" {
 		assignment.Policies = []*gobgpapi.Policy{{Name: strings.TrimSpace(policyName)}}
 	}
 	return assignment
@@ -2111,15 +2196,19 @@ func bgpPrefixMaxLength(prefix netip.Prefix) uint32 {
 	return 32
 }
 
-func importPolicyRefreshNeeded(spec routerapi.BGPImportPolicySpec, desired map[string]desiredPeer, routes []FIBRoute) bool {
-	if importNextHopRewrite(spec) != "peer-address" || len(importPolicyPrefixes(spec)) == 0 {
-		return false
-	}
+func importPolicyRefreshNeeded(desired map[string]desiredPeer, routes []FIBRoute) bool {
 	peerAddresses := map[string]bool{}
-	for address := range desired {
+	hasRewritePolicy := false
+	for address, peer := range desired {
+		if importNextHopRewrite(peer.ImportPolicy) == "peer-address" && len(importPolicyPrefixes(peer.ImportPolicy)) > 0 {
+			hasRewritePolicy = true
+		}
 		if parsed, err := netip.ParseAddr(strings.TrimSpace(address)); err == nil {
 			peerAddresses[parsed.String()] = true
 		}
+	}
+	if !hasRewritePolicy {
+		return false
 	}
 	if len(peerAddresses) == 0 {
 		return false
@@ -2140,6 +2229,10 @@ func bgpPolicyName(routerName, suffix string) string {
 
 func peerExportPolicyName(routerName, address string) string {
 	return bgpPolicyName(routerName, "export-"+sanitizeBGPPolicyName(address))
+}
+
+func peerImportPolicyName(routerName, address string) string {
+	return bgpPolicyName(routerName, "import-"+sanitizeBGPPolicyName(address))
 }
 
 func bgpPolicyStatementName(policyName, suffix string) string {

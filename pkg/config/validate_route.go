@@ -103,6 +103,14 @@ func validateRouteResource(res api.Resource, targetOS platform.OS) (bool, error)
 		if err := validateBGPCommunities(res.ID(), "spec.communities", spec.Communities); err != nil {
 			return true, err
 		}
+		if _, err := validateBGPPrefixList(res.ID(), "spec.importPolicy.allowedPrefixes", spec.ImportPolicy.AllowedPrefixes); err != nil {
+			return true, err
+		}
+		switch strings.TrimSpace(spec.ImportPolicy.NextHopRewrite) {
+		case "", "peer-address", "unchanged":
+		default:
+			return true, fmt.Errorf("%s spec.importPolicy.nextHopRewrite must be peer-address or unchanged", res.ID())
+		}
 		if _, err := validateBGPPrefixList(res.ID(), "spec.exportPolicy.allowedPrefixes", spec.ExportPolicy.AllowedPrefixes); err != nil {
 			return true, err
 		}
