@@ -432,13 +432,8 @@ type WireGuardInterfaceSpec struct {
 	PrivateKeyFile string `yaml:"privateKeyFile,omitempty" json:"privateKeyFile,omitempty"`
 	ListenPort     int    `yaml:"listenPort,omitempty" json:"listenPort,omitempty" jsonschema:"minimum=1,maximum=65535"`
 	MTU            int    `yaml:"mtu,omitempty" json:"mtu,omitempty" jsonschema:"minimum=576,maximum=9216"`
-	// AllowBGPMobilityAllowedIPs is a compatibility escape hatch for older SAM
-	// labs that used WireGuard cryptokey routing as the mobility delivery plane.
-	// New deployments should keep WireGuard scoped to router endpoint prefixes
-	// and carry SAM traffic over TunnelInterface devices instead.
-	AllowBGPMobilityAllowedIPs bool `yaml:"allowBGPMobilityAllowedIPs,omitempty" json:"allowBGPMobilityAllowedIPs,omitempty"`
-	FwMark                     int  `yaml:"-" json:"-"`
-	Table                      int  `yaml:"-" json:"-"`
+	FwMark         int    `yaml:"-" json:"-"`
+	Table          int    `yaml:"-" json:"-"`
 }
 
 type TunnelInterfaceSpec struct {
