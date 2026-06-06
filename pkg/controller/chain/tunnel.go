@@ -205,6 +205,12 @@ func (c TunnelInterfaceController) reconcileInterface(ctx context.Context, resou
 		}
 		applied = true
 	}
+	if desired.Address != "" {
+		if err := c.setTunnelAddress(ctx, desired); err != nil {
+			return c.saveApplyError(resource, desired, err)
+		}
+		applied = true
+	}
 	status = tunnelStatus(desired, c.DryRun, map[string]any{"phase": "Up"})
 	if !applied {
 		status["reason"] = "AlreadyConfigured"
@@ -506,6 +512,11 @@ func (c TunnelInterfaceController) setTunnelLink(ctx context.Context, desired tu
 func (c TunnelInterfaceController) setTunnelLinkUp(ctx context.Context, ifname string) error {
 	_, err := c.run(ctx, "ip", "link", "set", "dev", ifname, "up")
 	return commandError("bring tunnel interface "+ifname+" up", err)
+}
+
+func (c TunnelInterfaceController) setTunnelAddress(ctx context.Context, desired tunnelDesired) error {
+	_, err := c.run(ctx, "ip", "addr", "replace", desired.Address, "dev", desired.Name)
+	return commandError("set tunnel interface "+desired.Name+" address", err)
 }
 
 func (c TunnelInterfaceController) ensureFOUListener(ctx context.Context, desired tunnelDesired) error {
