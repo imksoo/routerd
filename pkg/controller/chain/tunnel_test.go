@@ -194,6 +194,49 @@ func TestTunnelInterfaceControllerDerivesIPIPMTUFromUnderlay(t *testing.T) {
 	}
 }
 
+func TestTunnelInterfaceControllerAppliesTunnelAddress(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
+		TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
+		Metadata: api.ObjectMeta{Name: "tun-ipip"},
+		Spec: api.TunnelInterfaceSpec{
+			Mode:            "ipip",
+			Local:           "192.0.2.10",
+			Remote:          "192.0.2.20",
+			Address:         "10.255.1.0/31",
+			TrustedUnderlay: true,
+		},
+	}}}}
+	var calls [][]string
+	controller := TunnelInterfaceController{
+		Router: router,
+		Store:  mapStore{},
+		OS:     platform.OSLinux,
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			calls = append(calls, append([]string{name}, args...))
+			if reflect.DeepEqual(append([]string{name}, args...), []string{"ip", "-d", "-o", "link", "show", "dev", "tun-ipip"}) {
+				return []byte("Cannot find device \"tun-ipip\""), errors.New("missing")
+			}
+			return nil, nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	want := [][]string{
+		{"ip", "-d", "-o", "link", "show", "dev", "tun-ipip"},
+		{"ip", "link", "add", "dev", "tun-ipip", "type", "ipip", "local", "192.0.2.10", "remote", "192.0.2.20", "ttl", "64"},
+		{"ip", "link", "set", "dev", "tun-ipip", "mtu", "1480", "up"},
+		{"ip", "addr", "replace", "10.255.1.0/31", "dev", "tun-ipip"},
+	}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("calls = %#v, want %#v", calls, want)
+	}
+	status := controller.Store.ObjectStatus(api.HybridAPIVersion, "TunnelInterface", "tun-ipip")
+	if status["phase"] != "Up" || status["address"] != "10.255.1.0/31" {
+		t.Fatalf("status = %#v", status)
+	}
+}
+
 func TestTunnelInterfaceControllerAddsFOU(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
 		TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},

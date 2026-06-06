@@ -1113,6 +1113,17 @@ func (r *Runner) Start(ctx context.Context) error {
 	effectiveForReconcile := func() (*api.Router, error) {
 		return r.effectiveRouterForReconcile(store)
 	}
+	effectiveDynamicForReconcile := func() (*api.Router, error) {
+		effective, err := effectiveForReconcile()
+		if err != nil {
+			return nil, err
+		}
+		view, err := buildDynamicRouteSAMView(effective, r.Store, time.Now().UTC(), platform.CurrentOS())
+		if err != nil {
+			return nil, err
+		}
+		return view.EffectiveRouter, nil
+	}
 	if r.controllerEnabled("event-rule") {
 		rules.Start(ctx)
 	}
@@ -1201,7 +1212,7 @@ func (r *Runner) Start(ctx context.Context) error {
 		framework.FuncController{ControllerName: "link", Every: 30 * time.Second, PeriodicFunc: link.Reconcile},
 		framework.FuncController{ControllerName: "sam-transport", Every: 30 * time.Second, Subs: statusSubscriptions("SAMTransportProfile", "Interface", "IPv4StaticAddress", "DHCPv4Client", "WireGuardInterface", "WireGuardPeer"), PeriodicFunc: mobilityTransport.Reconcile},
 		framework.FuncController{ControllerName: "tunnel", Every: 30 * time.Second, Subs: statusSubscriptions("TunnelInterface"), PeriodicFunc: func(ctx context.Context) error {
-			effective, err := effectiveForReconcile()
+			effective, err := effectiveDynamicForReconcile()
 			if err != nil {
 				return err
 			}
@@ -1409,7 +1420,7 @@ func (r *Runner) Start(ctx context.Context) error {
 			return current.Reconcile(ctx)
 		}},
 		framework.FuncController{ControllerName: "bgp", Every: bgpcontroller.PollInterval(r.Router), Subs: statusSubscriptionsWithWhen(r.Router, []string{"BGPRouter", "BGPPeer"}, "BFD", "BGPRouter", "BGPPeer"), PeriodicFunc: func(ctx context.Context) error {
-			effective, err := effectiveForReconcile()
+			effective, err := effectiveDynamicForReconcile()
 			if err != nil {
 				return err
 			}

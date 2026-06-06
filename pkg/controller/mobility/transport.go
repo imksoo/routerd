@@ -170,10 +170,7 @@ func (c TransportController) deriveTransportResources(owner api.Resource, spec a
 				Metadata: api.ObjectMeta{Name: routeName, OwnerRefs: ownerRef, Annotations: transportAnnotations(owner.Metadata.Name, self, peerNode)},
 				Spec: api.IPv4RouteSpec{
 					Destination: endpointAddr.String() + "/32",
-					DeviceFrom: api.StatusValueSourceSpec{
-						Resource: "Interface/" + underlay,
-						Field:    "ifname",
-					},
+					Device:      underlay,
 				},
 			})
 			out.EndpointRoutes++
