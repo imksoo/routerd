@@ -133,39 +133,14 @@ spec:
         mtu: 1420
 
     - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata: { name: wg-hybrid }
+      spec: { ifname: wg-hybrid, managed: false, mtu: 1420 }
+
+    - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4StaticAddress
       metadata: { name: wg-hybrid-ipv4 }
       spec: { interface: wg-hybrid, address: 10.99.0.1/32 }
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: IPv4Route
-      metadata: { name: route-aws-a-wg-overlay }
-      spec: { destination: 10.99.0.2/32, device: wg-hybrid, metric: 80 }
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: IPv4Route
-      metadata: { name: route-aws-b-wg-overlay }
-      spec: { destination: 10.99.0.5/32, device: wg-hybrid, metric: 80 }
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: IPv4Route
-      metadata: { name: route-azure-wg-overlay }
-      spec: { destination: 10.99.0.3/32, device: wg-hybrid, metric: 80 }
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: IPv4Route
-      metadata: { name: route-azure-b-wg-overlay }
-      spec: { destination: 10.99.0.6/32, device: wg-hybrid, metric: 80 }
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: IPv4Route
-      metadata: { name: route-oci-wg-overlay }
-      spec: { destination: 10.99.0.4/32, device: wg-hybrid, metric: 80 }
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: IPv4Route
-      metadata: { name: route-oci-b-wg-overlay }
-      spec: { destination: 10.99.0.7/32, device: wg-hybrid, metric: 80 }
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: WireGuardPeer
@@ -227,160 +202,41 @@ spec:
         allowedIPs: [10.99.0.7/32]
         persistentKeepalive: 25
 
-    - apiVersion: hybrid.routerd.net/v1alpha1
-      kind: OverlayPeer
-      metadata: { name: aws-a-main }
-      spec:
-        role: cloud
-        nodeID: aws-router-a
-        underlay: { type: wireguard, interface: wg-hybrid, address: 10.99.0.2 }
-        remote: { nodeID: onprem-router, address: 10.99.0.1 }
-
-    - apiVersion: hybrid.routerd.net/v1alpha1
-      kind: OverlayPeer
-      metadata: { name: aws-b-main }
-      spec:
-        role: cloud
-        nodeID: aws-router-b
-        underlay: { type: wireguard, interface: wg-hybrid, address: 10.99.0.5 }
-        remote: { nodeID: onprem-router, address: 10.99.0.1 }
-
-    - apiVersion: hybrid.routerd.net/v1alpha1
-      kind: OverlayPeer
-      metadata: { name: azure-main }
-      spec:
-        role: cloud
-        nodeID: azure-router
-        underlay: { type: wireguard, interface: wg-hybrid, address: 10.99.0.3 }
-        remote: { nodeID: onprem-router, address: 10.99.0.1 }
-
-    - apiVersion: hybrid.routerd.net/v1alpha1
-      kind: OverlayPeer
-      metadata: { name: azure-b-main }
-      spec:
-        role: cloud
-        nodeID: azure-router-b
-        underlay: { type: wireguard, interface: wg-hybrid, address: 10.99.0.6 }
-        remote: { nodeID: onprem-router, address: 10.99.0.1 }
-
-    - apiVersion: hybrid.routerd.net/v1alpha1
-      kind: OverlayPeer
-      metadata: { name: oci-main }
-      spec:
-        role: cloud
-        nodeID: oci-router
-        underlay: { type: wireguard, interface: wg-hybrid, address: 10.99.0.4 }
-        remote: { nodeID: onprem-router, address: 10.99.0.1 }
-
-    - apiVersion: hybrid.routerd.net/v1alpha1
-      kind: OverlayPeer
-      metadata: { name: oci-b-main }
-      spec:
-        role: cloud
-        nodeID: oci-router-b
-        underlay: { type: wireguard, interface: wg-hybrid, address: 10.99.0.7 }
-        remote: { nodeID: onprem-router, address: 10.99.0.1 }
-
     - apiVersion: net.routerd.net/v1alpha1
       kind: BGPRouter
       metadata: { name: mobility-bgp }
       spec:
         asn: 64577
         routerID: 10.99.0.1
-        listen: { address: 10.99.0.1, port: 179 }
+        listen: { port: 179 }
         importPolicy: { allowedPrefixes: [10.77.60.0/24, 10.99.0.0/24], nextHopRewrite: unchanged }
         timers: { profile: fast }
         convergenceProfile: fast
 
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: BGPPeer
-      metadata: { name: bgp-aws-a-rr-client }
-      spec: { routerRef: BGPRouter/mobility-bgp, peerASN: 64577, peers: [10.99.0.2], routeReflectorClient: true, routeReflectorClusterID: 10.99.0.1, timers: { profile: fast }, bfd: BFD/bgp-aws-a-rr-client }
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: BFD
-      metadata: { name: bgp-aws-a-rr-client }
+    - apiVersion: mobility.routerd.net/v1alpha1
+      kind: SAMTransportProfile
+      metadata: { name: cloudedge-transport }
       spec:
-        peer: BGPPeer/bgp-aws-a-rr-client
-        profile: fast
-        minRx: 1s
-        minTx: 1s
-        detectMultiplier: 5
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: BGPPeer
-      metadata: { name: bgp-aws-b-rr-client }
-      spec: { routerRef: BGPRouter/mobility-bgp, peerASN: 64577, peers: [10.99.0.5], routeReflectorClient: true, routeReflectorClusterID: 10.99.0.1, timers: { profile: fast }, bfd: BFD/bgp-aws-b-rr-client }
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: BFD
-      metadata: { name: bgp-aws-b-rr-client }
-      spec:
-        peer: BGPPeer/bgp-aws-b-rr-client
-        profile: fast
-        minRx: 1s
-        minTx: 1s
-        detectMultiplier: 5
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: BGPPeer
-      metadata: { name: bgp-azure-rr-client }
-      spec: { routerRef: BGPRouter/mobility-bgp, peerASN: 64577, peers: [10.99.0.3], routeReflectorClient: true, routeReflectorClusterID: 10.99.0.1, timers: { profile: fast }, bfd: BFD/bgp-azure-rr-client }
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: BFD
-      metadata: { name: bgp-azure-rr-client }
-      spec:
-        peer: BGPPeer/bgp-azure-rr-client
-        profile: fast
-        minRx: 1s
-        minTx: 1s
-        detectMultiplier: 5
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: BGPPeer
-      metadata: { name: bgp-azure-b-rr-client }
-      spec: { routerRef: BGPRouter/mobility-bgp, peerASN: 64577, peers: [10.99.0.6], routeReflectorClient: true, routeReflectorClusterID: 10.99.0.1, timers: { profile: fast }, bfd: BFD/bgp-azure-b-rr-client }
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: BFD
-      metadata: { name: bgp-azure-b-rr-client }
-      spec:
-        peer: BGPPeer/bgp-azure-b-rr-client
-        profile: fast
-        minRx: 1s
-        minTx: 1s
-        detectMultiplier: 5
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: BGPPeer
-      metadata: { name: bgp-oci-rr-client }
-      spec: { routerRef: BGPRouter/mobility-bgp, peerASN: 64577, peers: [10.99.0.4], routeReflectorClient: true, routeReflectorClusterID: 10.99.0.1, timers: { profile: fast }, bfd: BFD/bgp-oci-rr-client }
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: BFD
-      metadata: { name: bgp-oci-rr-client }
-      spec:
-        peer: BGPPeer/bgp-oci-rr-client
-        profile: fast
-        minRx: 1s
-        minTx: 1s
-        detectMultiplier: 5
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: BGPPeer
-      metadata: { name: bgp-oci-b-rr-client }
-      spec: { routerRef: BGPRouter/mobility-bgp, peerASN: 64577, peers: [10.99.0.7], routeReflectorClient: true, routeReflectorClusterID: 10.99.0.1, timers: { profile: fast }, bfd: BFD/bgp-oci-b-rr-client }
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: BFD
-      metadata: { name: bgp-oci-b-rr-client }
-      spec:
-        peer: BGPPeer/bgp-oci-b-rr-client
-        profile: fast
-        minRx: 1s
-        minTx: 1s
-        detectMultiplier: 5
+        selfNodeRef: onprem-router
+        mode: ipip
+        encryption: wireguard
+        innerPrefix: 10.255.0.0/24
+        topologyNodeRefs: [onprem-router, aws-router-a, aws-router-b, azure-router, azure-router-b, oci-router, oci-router-b]
+        underlayInterface: wg-hybrid
+        localEndpointFrom: { resource: IPv4StaticAddress/wg-hybrid-ipv4, field: address }
+        bgp:
+          routerRef: BGPRouter/mobility-bgp
+          peerASN: 64577
+          timersPreset: fast
+          routeReflectorClient: true
+          routeReflectorClusterID: 10.99.0.1
+        peers:
+          - { nodeRef: aws-router-a, remoteEndpoint: 10.99.0.2 }
+          - { nodeRef: aws-router-b, remoteEndpoint: 10.99.0.5 }
+          - { nodeRef: azure-router, remoteEndpoint: 10.99.0.3 }
+          - { nodeRef: azure-router-b, remoteEndpoint: 10.99.0.6 }
+          - { nodeRef: oci-router, remoteEndpoint: 10.99.0.4 }
+          - { nodeRef: oci-router-b, remoteEndpoint: 10.99.0.7 }
 
     - apiVersion: mobility.routerd.net/v1alpha1
       kind: MobilityPool
