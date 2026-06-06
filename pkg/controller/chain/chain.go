@@ -2141,8 +2141,20 @@ func (c DaemonStatusController) Reconcile(ctx context.Context) error {
 				"conditions": observed.Conditions,
 				"updatedAt":  time.Now().UTC().Format(time.RFC3339Nano),
 			}
+			if observed.Resource.APIVersion == api.MobilityAPIVersion && observed.Resource.Kind == "MobilityPool" {
+				for key, value := range c.Store.ObjectStatus(observed.Resource.APIVersion, observed.Resource.Kind, observed.Resource.Name) {
+					next[key] = value
+				}
+				next["phase"] = observed.Phase
+				next["health"] = observed.Health
+				next["conditions"] = observed.Conditions
+				next["updatedAt"] = time.Now().UTC().Format(time.RFC3339Nano)
+			}
 			for key, value := range observed.Observed {
 				next[key] = value
+			}
+			if observed.Resource.APIVersion == api.MobilityAPIVersion && observed.Resource.Kind == "MobilityPool" {
+				mergeMobilityObservedSourceStatus(next, observed.Observed)
 			}
 			if err := c.Store.SaveObjectStatus(observed.Resource.APIVersion, observed.Resource.Kind, observed.Resource.Name, next); err != nil {
 				return err
@@ -2150,6 +2162,39 @@ func (c DaemonStatusController) Reconcile(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func mergeMobilityObservedSourceStatus(status map[string]any, observed map[string]string) {
+	sourceType := strings.TrimSpace(observed["sourceType"])
+	if sourceType == "" {
+		return
+	}
+	bySource := statusMap(status["observedClientsBySource"])
+	snapshot := map[string]any{}
+	for key, value := range observed {
+		snapshot[key] = value
+	}
+	bySource[sourceType] = snapshot
+	status["observedClientsBySource"] = bySource
+}
+
+func statusMap(value any) map[string]any {
+	out := map[string]any{}
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, item := range typed {
+			out[key] = item
+		}
+	case map[string]string:
+		for key, item := range typed {
+			out[key] = item
+		}
+	case map[string]map[string]any:
+		for key, item := range typed {
+			out[key] = item
+		}
+	}
+	return out
 }
 
 func (c DaemonStatusController) daemonSockets() []string {
