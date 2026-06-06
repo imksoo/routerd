@@ -897,6 +897,10 @@ func (c DHCPv6ServerController) reconcileRouterAdvertisements(ctx context.Contex
 		if err != nil {
 			return err
 		}
+		if !c.resourceWhenMatches(resource) {
+			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6RouterAdvertisement", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "WhenFalse", "interface": spec.Interface, "configPath": configPath, "pidFile": pidFile, "renderer": "dnsmasq", "dryRun": c.DryRun})
+			continue
+		}
 		if !resourcequery.DependenciesReady(c.Store, spec.DependsOn) {
 			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6RouterAdvertisement", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "DependsOnFalse", "dependencies": dependencyStatusSnapshot(c.Store, spec.DependsOn)})
 			continue

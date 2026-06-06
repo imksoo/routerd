@@ -313,6 +313,114 @@ func TestFilterRouterByWhenPrunesDNSResolverListenSourcesForFilteredForwarder(t 
 	}
 }
 
+func TestFilterRouterByWhenClearsDNSZoneRecordSourceForFilteredResource(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"},
+			Metadata: api.ObjectMeta{Name: "lan-vip"},
+			Spec:     api.VirtualAddressSpec{Address: "172.18.0.1/32"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"},
+			Metadata: api.ObjectMeta{Name: "lan-base"},
+			Spec: api.IPv6DelegatedAddressSpec{
+				Interface:        "lan",
+				PrefixDelegation: "wan-pd",
+				AddressSuffix:    "::1",
+				When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{
+					"VirtualAddress/lan-vip.role": {Equals: "master"},
+				}},
+			},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSZone"},
+			Metadata: api.ObjectMeta{Name: "home"},
+			Spec: api.DNSZoneSpec{
+				Zone: "home.internal",
+				Records: []api.DNSZoneRecordSpec{{
+					Hostname: "router",
+					IPv4From: api.StatusValueSourceSpec{Resource: "VirtualAddress/lan-vip", Field: "address"},
+					IPv6From: api.StatusValueSourceSpec{Resource: "IPv6DelegatedAddress/lan-base", Field: "address"},
+				}},
+			},
+		},
+	}}}
+	store := statefulMapStore{mapStore: mapStore{
+		api.NetAPIVersion + "/VirtualAddress/lan-vip": {"role": "backup"},
+	}}
+
+	got := FilterRouterByWhen(router, store)
+	res, ok := findResource(got, "DNSZone", "home")
+	if !ok {
+		t.Fatal("DNSZone/home missing")
+	}
+	spec, err := res.DNSZoneSpec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(spec.Records) != 1 {
+		t.Fatalf("records = %d, want 1", len(spec.Records))
+	}
+	if spec.Records[0].IPv4From.Resource != "VirtualAddress/lan-vip" {
+		t.Fatalf("IPv4From = %#v, want retained VirtualAddress ref", spec.Records[0].IPv4From)
+	}
+	if spec.Records[0].IPv6From.Resource != "" {
+		t.Fatalf("IPv6From = %#v, want cleared filtered IPv6DelegatedAddress ref", spec.Records[0].IPv6From)
+	}
+}
+
+func TestFilterRouterByWhenClearsFirewallZoneFilteredInterfaces(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"},
+			Metadata: api.ObjectMeta{Name: "lan-vip"},
+			Spec:     api.VirtualAddressSpec{Address: "172.18.0.1/32"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+			Metadata: api.ObjectMeta{Name: "wan"},
+			Spec:     api.InterfaceSpec{IfName: "ens18"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"},
+			Metadata: api.ObjectMeta{Name: "ds-lite-a"},
+			Spec: api.DSLiteTunnelSpec{
+				Interface: "wan",
+				When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{
+					"VirtualAddress/lan-vip.role": {Equals: "master"},
+				}},
+			},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"},
+			Metadata: api.ObjectMeta{Name: "ds-lite-ra"},
+			Spec:     api.DSLiteTunnelSpec{Interface: "wan"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
+			Metadata: api.ObjectMeta{Name: "wan"},
+			Spec:     api.FirewallZoneSpec{Role: "untrust", Interfaces: []string{"Interface/wan", "DSLiteTunnel/ds-lite-a", "DSLiteTunnel/ds-lite-ra"}},
+		},
+	}}}
+	store := statefulMapStore{mapStore: mapStore{
+		api.NetAPIVersion + "/VirtualAddress/lan-vip": {"role": "backup"},
+	}}
+
+	got := FilterRouterByWhen(router, store)
+	res, ok := findResource(got, "FirewallZone", "wan")
+	if !ok {
+		t.Fatal("FirewallZone/wan missing")
+	}
+	spec, err := res.FirewallZoneSpec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"Interface/wan", "DSLiteTunnel/ds-lite-ra"}
+	if !stringSlicesEqual(spec.Interfaces, want) {
+		t.Fatalf("interfaces = %#v, want %#v", spec.Interfaces, want)
+	}
+}
+
 func hasResource(router *api.Router, kind, name string) bool {
 	_, ok := findResource(router, kind, name)
 	return ok
@@ -328,4 +436,16 @@ func findResource(router *api.Router, kind, name string) (api.Resource, bool) {
 		}
 	}
 	return api.Resource{}, false
+}
+
+func stringSlicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

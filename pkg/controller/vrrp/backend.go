@@ -20,6 +20,7 @@ type backendResult struct {
 	Path             string
 	Changed          bool
 	Roles            map[string]string
+	ServiceActive    *bool
 	LastReloadAt     string
 	LastRestartAt    string
 	LastChangeReason string
@@ -70,7 +71,8 @@ func (keepalivedBackend) Apply(ctx context.Context, c *Controller, aliases map[s
 			if err != nil {
 				return backendResult{}, err
 			}
-			result := backendResult{Path: path, Changed: changed, Roles: observeKeepalivedRolesAfterChange(ctx, c, aliases), LastChangeReason: reason}
+			serviceActive := c.keepalivedServiceActive(ctx)
+			result := backendResult{Path: path, Changed: changed, Roles: observeKeepalivedRolesAfterChange(ctx, c, aliases), ServiceActive: &serviceActive, LastChangeReason: reason}
 			if action == "reload" {
 				result.LastReloadAt = now
 			} else {
@@ -82,7 +84,8 @@ func (keepalivedBackend) Apply(ctx context.Context, c *Controller, aliases map[s
 			if err != nil {
 				return backendResult{}, err
 			}
-			result := backendResult{Path: path, Changed: changed, Roles: observeKeepalivedRolesAfterChange(ctx, c, aliases), LastChangeReason: reason}
+			serviceActive := c.keepalivedServiceActive(ctx)
+			result := backendResult{Path: path, Changed: changed, Roles: observeKeepalivedRolesAfterChange(ctx, c, aliases), ServiceActive: &serviceActive, LastChangeReason: reason}
 			if action == "reload" {
 				result.LastReloadAt = now
 			} else {
@@ -91,7 +94,8 @@ func (keepalivedBackend) Apply(ctx context.Context, c *Controller, aliases map[s
 			return result, nil
 		}
 	}
-	return backendResult{Path: path, Changed: changed, Roles: observeKeepalivedRoles(ctx, c, aliases)}, nil
+	serviceActive := c.keepalivedServiceActive(ctx)
+	return backendResult{Path: path, Changed: changed, Roles: observeKeepalivedRoles(ctx, c, aliases), ServiceActive: &serviceActive}, nil
 }
 
 func reloadOrRestartOpenRCKeepalived(ctx context.Context, c *Controller, path string) (string, error) {
@@ -142,12 +146,17 @@ func observeKeepalivedRolesWithWait(ctx context.Context, c *Controller, aliases 
 		return roles
 	}
 	roles = map[string]string{}
+	serviceActive := c.keepalivedServiceActive(ctx)
 	for _, resource := range c.Router.Spec.Resources {
 		spec, ok, err := vrrpResourceSpec(resource)
 		if err != nil || !ok {
 			continue
 		}
 		if err != nil || spec.Mode != "vrrp" {
+			continue
+		}
+		if !serviceActive {
+			roles[resource.Metadata.Name] = "inactive"
 			continue
 		}
 		ifname := aliases[spec.Interface]
@@ -188,6 +197,17 @@ func observeKeepalivedRolesWithWait(ctx context.Context, c *Controller, aliases 
 		roles[resource.Metadata.Name] = role
 	}
 	return roles
+}
+
+func (c *Controller) keepalivedServiceActive(ctx context.Context) bool {
+	if c.useOpenRC() {
+		rcService := firstNonEmpty(c.RCService, "rc-service")
+		_, err := c.run(ctx, rcService, "keepalived", "status")
+		return err == nil
+	}
+	systemctl := firstNonEmpty(c.Systemctl, "systemctl")
+	_, err := c.run(ctx, systemctl, "is-active", "--quiet", "keepalived.service")
+	return err == nil
 }
 
 type carpBackend struct{}

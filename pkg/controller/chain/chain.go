@@ -646,6 +646,10 @@ func whenStatusSubscriptions(router *api.Router, controlledKinds ...string) []bu
 	return statusSubscriptionsWithWhen(router, controlledKinds)
 }
 
+func observabilityPipelineStatusSubscriptions(router *api.Router) []bus.Subscription {
+	return whenStatusSubscriptions(router, "ObservabilityPipeline")
+}
+
 func whenStatusDependencyRefs(router *api.Router, controlledKinds ...string) map[string]map[string]bool {
 	controlled := map[string]bool{}
 	for _, kind := range controlledKinds {
@@ -1012,7 +1016,7 @@ func (r *Runner) Start(ctx context.Context) error {
 	tunnel := TunnelInterfaceController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunRoute, OS: platform.CurrentOS(), Logger: logger}
 	wireGuard := WireGuardController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunRoute, Logger: logger}
 	ipv4Static := IPv4StaticAddressController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunAddress, Logger: logger}
-	lan := LANAddressController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunAddress, Logger: logger}
+	lan := LANAddressController{Router: r.Router, DeclaredRouter: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunAddress, Logger: logger}
 	dslite := DSLiteTunnelController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunDSLite, ResolverPort: r.Opts.DnsmasqPort, Logger: logger}
 	route := IPv4RouteController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunRoute, Logger: logger}
 	hybridRoute := HybridRouteController{Router: r.Router, EffectiveRouter: r.Router, Store: store}
@@ -1124,7 +1128,7 @@ func (r *Runner) Start(ctx context.Context) error {
 		bgp.Start(ctx)
 	}
 	controllers := []framework.Controller{
-		framework.FuncController{ControllerName: "observability-pipeline", Every: 30 * time.Second, PeriodicFunc: func(ctx context.Context) error {
+		framework.FuncController{ControllerName: "observability-pipeline", Every: 30 * time.Second, Subs: observabilityPipelineStatusSubscriptions(r.Router), PeriodicFunc: func(ctx context.Context) error {
 			effective, err := effectiveForReconcile()
 			if err != nil {
 				return err
@@ -1384,7 +1388,7 @@ func (r *Runner) Start(ctx context.Context) error {
 			bgp.Router = effective
 			return bgp.Reconcile(ctx)
 		}},
-		framework.FuncController{ControllerName: "vrrp", Every: 15 * time.Second, Subs: statusSubscriptionsWithWhen(r.Router, []string{"VirtualAddress"}, "BGPRouter", "BGPPeer", "IngressService"), PeriodicFunc: func(ctx context.Context) error {
+		framework.FuncController{ControllerName: "vrrp", Every: 5 * time.Second, Subs: statusSubscriptionsWithWhen(r.Router, []string{"VirtualAddress"}, "BGPRouter", "BGPPeer", "IngressService"), PeriodicFunc: func(ctx context.Context) error {
 			effective, err := effectiveForReconcile()
 			if err != nil {
 				return err
@@ -1991,6 +1995,7 @@ func (c PrefixDelegationController) socketFor(resource string) string {
 
 type LANAddressController struct {
 	Router         *api.Router
+	DeclaredRouter *api.Router
 	Bus            *bus.Bus
 	Store          Store
 	DryRun         bool
@@ -2435,9 +2440,24 @@ func ipAddrShowHasIPv6Address(out []byte, address string) bool {
 	if want == "" {
 		return false
 	}
-	fields := strings.Fields(string(out))
-	for i := 0; i+1 < len(fields); i++ {
-		if fields[i] == "inet6" && localIPv6Address(fields[i+1]) == want {
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		for i := 0; i+1 < len(fields); i++ {
+			if fields[i] != "inet6" || localIPv6Address(fields[i+1]) != want {
+				continue
+			}
+			if fieldsContain(fields, "tentative") || fieldsContain(fields, "dadfailed") {
+				return false
+			}
+			return true
+		}
+	}
+	return false
+}
+
+func fieldsContain(fields []string, want string) bool {
+	for _, field := range fields {
+		if field == want {
 			return true
 		}
 	}
@@ -2460,6 +2480,36 @@ func ipv6StaticAddressApplyCommand(osName platform.OS, ifname, address string) (
 	return "ip", []string{"-6", "addr", "replace", address, "dev", ifname}
 }
 
+func ipv6StaticAddressDeleteCommand(osName platform.OS, ifname, address string) (string, []string) {
+	if osName == platform.OSFreeBSD {
+		host := strings.TrimSpace(address)
+		if parsed, err := netip.ParsePrefix(host); err == nil {
+			host = parsed.Addr().String()
+		} else if value, _, ok := strings.Cut(host, "/"); ok {
+			host = value
+		}
+		return "ifconfig", []string{ifname, "inet6", host, "-alias"}
+	}
+	return "ip", []string{"-6", "addr", "del", address, "dev", ifname}
+}
+
+func ipv6StaticAddressDeleteCandidates(address string) []string {
+	address = strings.TrimSpace(address)
+	if address == "" {
+		return nil
+	}
+	out := []string{address}
+	prefix, err := netip.ParsePrefix(address)
+	if err != nil || !prefix.Addr().Is6() || prefix.Bits() == 128 {
+		return out
+	}
+	host128 := prefix.Addr().String() + "/128"
+	if host128 != address {
+		out = append(out, host128)
+	}
+	return out
+}
+
 func runCommandContext(ctx context.Context, name string, args ...string) error {
 	return exec.CommandContext(ctx, name, args...).Run()
 }
@@ -2479,6 +2529,9 @@ func (c LANAddressController) Start(ctx context.Context) {
 }
 
 func (c LANAddressController) reconcile(ctx context.Context, pdName string) error {
+	if err := c.cleanupWhenFalseIPv6DelegatedAddresses(ctx, pdName); err != nil {
+		return err
+	}
 	pdStatus := c.Store.ObjectStatus(api.NetAPIVersion, "DHCPv6PrefixDelegation", pdName)
 	if pdStatus["phase"] != daemonapi.ResourcePhaseBound {
 		return nil
@@ -2536,6 +2589,14 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 			if command == nil {
 				command = runCommandContext
 			}
+			if !addressPresent {
+				for _, stale := range ipv6StaticAddressDeleteCandidates(addr) {
+					deleteName, deleteArgs := ipv6StaticAddressDeleteCommand(platform.CurrentOS(), ifname, stale)
+					if err := command(ctx, deleteName, deleteArgs...); err != nil && c.Logger != nil {
+						c.Logger.Debug("delete stale IPv6 delegated address before apply skipped", "resource", resource.Metadata.Name, "address", stale, "interface", ifname, "error", err)
+					}
+				}
+			}
 			name, args := ipv6StaticAddressApplyCommand(platform.CurrentOS(), ifname, addr)
 			if err := command(ctx, name, args...); err != nil {
 				return err
@@ -2551,6 +2612,76 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 			if err := c.Bus.Publish(ctx, event); err != nil {
 				return err
 			}
+		}
+	}
+	return nil
+}
+
+func (c LANAddressController) cleanupWhenFalseIPv6DelegatedAddresses(ctx context.Context, pdName string) error {
+	declared := c.DeclaredRouter
+	if declared == nil {
+		declared = c.Router
+	}
+	if declared == nil {
+		return nil
+	}
+	stateStore, ok := c.Store.(resourcequery.StateStore)
+	if !ok {
+		return nil
+	}
+	for _, resource := range declared.Spec.Resources {
+		if resource.Kind != "IPv6DelegatedAddress" {
+			continue
+		}
+		spec, err := resource.IPv6DelegatedAddressSpec()
+		if err != nil {
+			return err
+		}
+		if spec.PrefixDelegation != pdName {
+			continue
+		}
+		when := resourcequery.ResourceWhen(resource)
+		if !resourcequery.ResourceWhenPresent(when) || resourcequery.ResourceWhenMatches(when, stateStore) {
+			continue
+		}
+		previous := c.Store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", resource.Metadata.Name)
+		address := strings.TrimSpace(fmt.Sprint(previous["address"]))
+		if address == "" || address == "<nil>" {
+			if pdStatus := c.Store.ObjectStatus(api.NetAPIVersion, "DHCPv6PrefixDelegation", pdName); pdStatus["phase"] == daemonapi.ResourcePhaseBound {
+				if prefix, _ := pdStatus["currentPrefix"].(string); prefix != "" {
+					if derived, err := DeriveIPv6Address(prefix, spec.SubnetID, spec.AddressSuffix); err == nil {
+						address = derived
+					}
+				}
+			}
+		}
+		if address != "" && address != "<nil>" && !c.DryRun {
+			ifname := interfaceIfName(declared, spec.Interface)
+			if ifname == "" {
+				ifname = spec.Interface
+			}
+			command := c.Command
+			if command == nil {
+				command = runCommandContext
+			}
+			for _, stale := range ipv6StaticAddressDeleteCandidates(address) {
+				name, args := ipv6StaticAddressDeleteCommand(platform.CurrentOS(), ifname, stale)
+				if err := command(ctx, name, args...); err != nil {
+					if c.Logger != nil {
+						c.Logger.Debug("delete when-false IPv6 delegated address skipped", "resource", resource.Metadata.Name, "address", stale, "interface", ifname, "error", err)
+					}
+				}
+			}
+		}
+		status := map[string]any{
+			"phase":        "Pending",
+			"reason":       "WhenFalse",
+			"interface":    spec.Interface,
+			"prefixSource": pdName,
+			"dryRun":       c.DryRun,
+		}
+		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", resource.Metadata.Name, status); err != nil {
+			return err
 		}
 	}
 	return nil

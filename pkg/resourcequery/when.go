@@ -40,6 +40,7 @@ func FilterRouterByWhen(router *api.Router, store StateStore) *api.Router {
 	}
 	filtered.Spec.Resources = clearFilteredBFDRefs(filtered.Spec.Resources, declaredBFDs)
 	filtered.Spec.Resources = clearFilteredDNSRefs(filtered.Spec.Resources)
+	filtered.Spec.Resources = clearFilteredFirewallZoneRefs(filtered.Spec.Resources)
 	return api.ExpandClusterNetworkRoutes(&filtered)
 }
 
@@ -280,6 +281,8 @@ func clearFilteredDNSRefs(resources []api.Resource) []api.Resource {
 	resolvers := dnsResourceNames(resources, "DNSResolver")
 	upstreams := dnsResourceNames(resources, "DNSUpstream")
 	zones := dnsResourceNames(resources, "DNSZone")
+	retained := resourceNamesByKind(resources)
+	resources = clearFilteredDNSZoneStatusRefs(resources, retained)
 	forwarders := map[string]bool{}
 	prunedForwarders := make([]api.Resource, 0, len(resources))
 	for _, res := range resources {
@@ -312,6 +315,32 @@ func clearFilteredDNSRefs(resources []api.Resource) []api.Resource {
 	return out
 }
 
+func clearFilteredDNSZoneStatusRefs(resources []api.Resource, retained map[string]map[string]bool) []api.Resource {
+	out := make([]api.Resource, 0, len(resources))
+	for _, res := range resources {
+		if res.APIVersion != api.NetAPIVersion || res.Kind != "DNSZone" {
+			out = append(out, res)
+			continue
+		}
+		spec, err := res.DNSZoneSpec()
+		if err != nil {
+			out = append(out, res)
+			continue
+		}
+		for i := range spec.Records {
+			if !statusValueSourceRetained(spec.Records[i].IPv4From, retained) {
+				spec.Records[i].IPv4From = api.StatusValueSourceSpec{}
+			}
+			if !statusValueSourceRetained(spec.Records[i].IPv6From, retained) {
+				spec.Records[i].IPv6From = api.StatusValueSourceSpec{}
+			}
+		}
+		res.Spec = spec
+		out = append(out, res)
+	}
+	return out
+}
+
 func dnsResourceNames(resources []api.Resource, kind string) map[string]bool {
 	out := map[string]bool{}
 	for _, res := range resources {
@@ -320,6 +349,77 @@ func dnsResourceNames(resources []api.Resource, kind string) map[string]bool {
 		}
 	}
 	return out
+}
+
+func resourceNamesByKind(resources []api.Resource) map[string]map[string]bool {
+	out := map[string]map[string]bool{}
+	for _, res := range resources {
+		name := strings.TrimSpace(res.Metadata.Name)
+		if name == "" {
+			continue
+		}
+		if out[res.Kind] == nil {
+			out[res.Kind] = map[string]bool{}
+		}
+		out[res.Kind][name] = true
+	}
+	return out
+}
+
+func statusValueSourceRetained(source api.StatusValueSourceSpec, retained map[string]map[string]bool) bool {
+	ref := strings.TrimSpace(source.Resource)
+	if ref == "" {
+		return true
+	}
+	kind, name, ok := SplitResource(ref)
+	if !ok {
+		return true
+	}
+	return retained[kind][name]
+}
+
+func clearFilteredFirewallZoneRefs(resources []api.Resource) []api.Resource {
+	retained := resourceNamesByKind(resources)
+	out := make([]api.Resource, 0, len(resources))
+	for _, res := range resources {
+		if res.APIVersion != api.FirewallAPIVersion || res.Kind != "FirewallZone" {
+			out = append(out, res)
+			continue
+		}
+		spec, err := res.FirewallZoneSpec()
+		if err != nil {
+			out = append(out, res)
+			continue
+		}
+		spec.Interfaces = filterRetainedFirewallInterfaceRefs(spec.Interfaces, retained)
+		res.Spec = spec
+		out = append(out, res)
+	}
+	return out
+}
+
+func filterRetainedFirewallInterfaceRefs(refs []string, retained map[string]map[string]bool) []string {
+	out := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		kind, name := firewallInterfaceRefKindName(ref)
+		switch kind {
+		case "Interface", "PPPoESession", "WireGuardInterface", "DSLiteTunnel":
+			if retained[kind][name] {
+				out = append(out, ref)
+			}
+		default:
+			out = append(out, ref)
+		}
+	}
+	return out
+}
+
+func firewallInterfaceRefKindName(ref string) (string, string) {
+	ref = strings.TrimSpace(ref)
+	if kind, name, ok := SplitResource(ref); ok {
+		return kind, name
+	}
+	return "Interface", ref
 }
 
 func dnsForwarderRefsRetained(spec api.DNSForwarderSpec, resolvers, upstreams, zones map[string]bool) bool {
