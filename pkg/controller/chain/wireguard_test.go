@@ -346,6 +346,7 @@ spec:
       metadata: {name: wg0}
       spec:
         privateKey: priv
+        allowBGPMobilityAllowedIPs: true
     - apiVersion: net.routerd.net/v1alpha1
       kind: WireGuardPeer
       metadata: {name: peer-a}
@@ -407,6 +408,49 @@ spec:
 	}
 }
 
+func TestWireGuardControllerDoesNotAddBGPMobilityAllowedIPsByDefault(t *testing.T) {
+	router := mustWireGuardRouter(t, `
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata: {name: test}
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: BGPRouter
+      metadata: {name: mobility-bgp}
+      spec:
+        asn: 64577
+        routerID: 10.99.0.1
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardInterface
+      metadata: {name: wg0}
+      spec:
+        privateKey: priv
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardPeer
+      metadata: {name: peer-a}
+      spec:
+        interface: wg0
+        publicKey: peerpub-a
+        allowedIPs: [10.99.0.2/32]
+`)
+	store := mapStore{}
+	store.SaveObjectStatus(api.NetAPIVersion, "BGPRouter", "mobility-bgp", map[string]any{
+		"installedNextHops": map[string][]string{
+			"10.77.60.11/32": {"10.99.0.2"},
+		},
+	})
+	controller := WireGuardController{Router: router, Store: store}
+	cfg, err := wireguard.BuildInterface(router.Spec.Resources[1], router.Spec.Resources)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg = controller.withBGPMobilityAllowedIPs(cfg)
+	if !stringSetEqual(cfg.Peers[0].AllowedIPs, []string{"10.99.0.2/32"}) {
+		t.Fatalf("default allowedIPs = %#v, want only declared endpoint prefix", cfg.Peers[0].AllowedIPs)
+	}
+}
+
 func TestWireGuardControllerMovesAndWithdrawsBGPMobilityAllowedIPs(t *testing.T) {
 	router := mustWireGuardRouter(t, `
 apiVersion: routerd.net/v1alpha1
@@ -425,6 +469,7 @@ spec:
       metadata: {name: wg0}
       spec:
         privateKey: priv
+        allowBGPMobilityAllowedIPs: true
     - apiVersion: net.routerd.net/v1alpha1
       kind: WireGuardPeer
       metadata: {name: peer-a}
@@ -495,6 +540,7 @@ spec:
       metadata: {name: wg0}
       spec:
         privateKey: priv
+        allowBGPMobilityAllowedIPs: true
         listenPort: 51820
     - apiVersion: net.routerd.net/v1alpha1
       kind: WireGuardPeer
