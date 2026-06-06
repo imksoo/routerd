@@ -128,6 +128,25 @@ func publishControllerModeEvents(ctx context.Context, b *bus.Bus, controllers []
 	}
 }
 
+var cleanupLedgerOwnedOrphansForServe = cleanupLedgerOwnedOrphans
+
+func cleanupServeLedgerOwnedOrphans(router *api.Router, ledgerPath string, logger *eventlog.Logger) ([]string, error) {
+	removed, err := cleanupLedgerOwnedOrphansForServe(router, ledgerPath)
+	if err != nil {
+		if logger != nil {
+			logger.Emit(eventlog.LevelWarning, "serve", "ledger orphan cleanup encountered an error", map[string]string{"error": err.Error()})
+		}
+		return nil, err
+	}
+	if len(removed) > 0 && logger != nil {
+		logger.Emit(eventlog.LevelInfo, "serve", "removed ledger-owned orphaned artifacts", map[string]string{
+			"count":     strconv.Itoa(len(removed)),
+			"artifacts": strings.Join(removed, ","),
+		})
+	}
+	return removed, nil
+}
+
 func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -171,13 +190,6 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		"applyInterval": applyInterval.String(),
 	})
 	cache := &resultCache{}
-	engine := apply.New()
-	if result, observeErr := engine.Observe(router); observeErr == nil {
-		cache.Store(result)
-		_ = statuswriter.Write(*statusFile, result)
-	} else {
-		logger.Emit(eventlog.LevelWarning, "serve", "initial observe failed", map[string]string{"error": observeErr.Error()})
-	}
 
 	signalCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
@@ -206,6 +218,14 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	defer stateStore.Close()
 	if _, cleanupErr := cleanupUnsupportedLegacyObjectStatuses(router, stateStore, *statePath, time.Now().UTC(), logger); cleanupErr != nil {
 		logger.Emit(eventlog.LevelWarning, "serve", "stale state cleanup encountered an error", map[string]string{"error": cleanupErr.Error()})
+	}
+	_, _ = cleanupServeLedgerOwnedOrphans(router, *ledgerPath, logger)
+	engine := apply.New()
+	if result, observeErr := engine.Observe(router); observeErr == nil {
+		cache.Store(result)
+		_ = statuswriter.Write(*statusFile, result)
+	} else {
+		logger.Emit(eventlog.LevelWarning, "serve", "initial observe failed", map[string]string{"error": observeErr.Error()})
 	}
 	controllerBus = bus.NewWithStore(stateStore)
 	controllerBus.SetLogger(slog.Default())

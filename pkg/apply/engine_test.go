@@ -501,6 +501,7 @@ func TestLedgerOwnedOrphansOnlyReportsCleanupEligibleArtifacts(t *testing.T) {
 		{Kind: "linux.ipip6.tunnel", Name: "ds-old", Owner: "net.routerd.net/v1alpha1/DSLiteTunnel/old"},
 		{Kind: "nft.table", Name: "routerd_old", Owner: "net.routerd.net/v1alpha1/NAT44Rule/old", Attributes: map[string]string{"family": "ip", "name": "routerd_old"}},
 		{Kind: "systemd.service", Name: "routerd-old.service", Owner: "net.routerd.net/v1alpha1/PPPoESession/old"},
+		{Kind: "net.ipv6.address", Name: "ens19:2001:db8::1/64", Owner: "net.routerd.net/v1alpha1/VirtualAddress/old-v6"},
 		{Kind: "net.link", Name: "ens19", Owner: "net.routerd.net/v1alpha1/Interface/lan"},
 		{Kind: "file", Name: "/etc/ppp/chap-secrets", Owner: "net.routerd.net/v1alpha1/PPPoESession/old"},
 	})
@@ -520,7 +521,7 @@ func TestLedgerOwnedOrphansOnlyReportsCleanupEligibleArtifacts(t *testing.T) {
 			"hostname":                                  "router\n",
 			"ip -brief link show":                       "ens19 UP aa:bb <BROADCAST>\n",
 			"ip -brief -4 addr show":                    "",
-			"ip -brief -6 addr show":                    "",
+			"ip -brief -6 addr show":                    "ens19 UP 2001:db8::1/64\n",
 			"ip -d link show type ip6tnl":               "8: ds-old@NONE: <POINTOPOINT,NOARP,UP> mtu 1454\n",
 			"sysctl -n net.ipv4.ip_forward":             "1\n",
 			"sysctl -n net.ipv6.conf.all.forwarding":    "1\n",
@@ -534,8 +535,8 @@ func TestLedgerOwnedOrphansOnlyReportsCleanupEligibleArtifacts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ledger owned orphans: %v", err)
 	}
-	if len(orphans) != 3 || len(artifacts) != 3 {
-		t.Fatalf("orphans = %+v artifacts = %+v, want three cleanup eligible", orphans, artifacts)
+	if len(orphans) != 4 || len(artifacts) != 4 {
+		t.Fatalf("orphans = %+v artifacts = %+v, want four cleanup eligible", orphans, artifacts)
 	}
 	kinds := map[string]bool{}
 	for _, orphan := range orphans {
@@ -545,6 +546,7 @@ func TestLedgerOwnedOrphansOnlyReportsCleanupEligibleArtifacts(t *testing.T) {
 		"linux.ipip6.tunnel/ds-old",
 		"nft.table/routerd_old",
 		"systemd.service/routerd-old.service",
+		"net.ipv6.address/ens19:2001:db8::1/64",
 	} {
 		if !kinds[want] {
 			t.Fatalf("missing ledger orphan %s in %+v", want, orphans)

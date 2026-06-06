@@ -21,6 +21,8 @@ import (
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
+var runCleanupCommand = runLogged
+
 func filterRouterByWhen(router *api.Router, store routerstate.Store) *api.Router {
 	return resourcequery.FilterRouterByWhen(router, store)
 }
@@ -190,13 +192,13 @@ func cleanupLedgerOwnedArtifact(artifact resource.Artifact) (string, error) {
 	switch artifact.Kind {
 	case "linux.ipip6.tunnel":
 		if platformFeatures.HasIproute2 {
-			if err := runLogged("ip", "-6", "tunnel", "del", artifact.Name); err != nil {
+			if err := runCleanupCommand("ip", "-6", "tunnel", "del", artifact.Name); err != nil {
 				return "", err
 			}
 			return artifact.Kind + "/" + artifact.Name, nil
 		}
 		if platformFeatures.HasPF {
-			if err := runLogged("ifconfig", artifact.Name, "destroy"); err != nil {
+			if err := runCleanupCommand("ifconfig", artifact.Name, "destroy"); err != nil {
 				return "", err
 			}
 			return artifact.Kind + "/" + artifact.Name, nil
@@ -226,7 +228,7 @@ func cleanupLedgerOwnedArtifact(artifact resource.Artifact) (string, error) {
 		if !strings.HasPrefix(name, "routerd_") {
 			return "", nil
 		}
-		if err := runLogged("nft", "delete", "table", family, name); err != nil {
+		if err := runCleanupCommand("nft", "delete", "table", family, name); err != nil {
 			return "", err
 		}
 		return artifact.Kind + "/" + name, nil
@@ -234,15 +236,15 @@ func cleanupLedgerOwnedArtifact(artifact resource.Artifact) (string, error) {
 		if !strings.HasPrefix(artifact.Name, "routerd-") || !strings.HasSuffix(artifact.Name, ".service") {
 			return "", nil
 		}
-		if err := runLogged("systemctl", "disable", "--now", artifact.Name); err != nil {
+		if err := runCleanupCommand("systemctl", "disable", "--now", artifact.Name); err != nil {
 			return "", err
 		}
-		_ = runLogged("systemctl", "reset-failed", artifact.Name)
+		_ = runCleanupCommand("systemctl", "reset-failed", artifact.Name)
 		unitPath := "/etc/systemd/system/" + artifact.Name
 		if err := os.Remove(unitPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return "", err
 		}
-		if err := runLogged("systemctl", "daemon-reload"); err != nil {
+		if err := runCleanupCommand("systemctl", "daemon-reload"); err != nil {
 			return "", err
 		}
 		return artifact.Kind + "/" + artifact.Name, nil
@@ -279,20 +281,42 @@ func cleanupLedgerOwnedArtifact(artifact resource.Artifact) (string, error) {
 			return "", nil
 		}
 		if platformFeatures.HasIproute2 {
-			if err := runLogged("ip", "-4", "addr", "del", address, "dev", ifname); err != nil {
+			if err := runCleanupCommand("ip", "-4", "addr", "del", address, "dev", ifname); err != nil {
 				return "", err
 			}
 			return artifact.Kind + "/" + artifact.Name, nil
 		}
 		if platformFeatures.HasPF {
 			if strings.HasPrefix(ifname, "gif") && strings.Contains(artifact.Owner, "/IPv4StaticAddress/ds-lite-source") {
-				if err := runLogged("ifconfig", ifname, "destroy"); err != nil {
+				if err := runCleanupCommand("ifconfig", ifname, "destroy"); err != nil {
 					return "", err
 				}
 				return "freebsd.gif.tunnel/" + ifname, nil
 			}
 			addr := strings.SplitN(address, "/", 2)[0]
-			if err := runLogged("ifconfig", ifname, "inet", addr, "-alias"); err != nil {
+			if err := runCleanupCommand("ifconfig", ifname, "inet", addr, "-alias"); err != nil {
+				return "", err
+			}
+			return artifact.Kind + "/" + artifact.Name, nil
+		}
+		return "", nil
+	case "net.ipv6.address":
+		if !isStaticIPv6AddressArtifact(artifact) {
+			return "", nil
+		}
+		ifname, address, ok := strings.Cut(artifact.Name, ":")
+		if !ok || ifname == "" || address == "" {
+			return "", nil
+		}
+		if platformFeatures.HasIproute2 {
+			if err := runCleanupCommand("ip", "-6", "addr", "del", address, "dev", ifname); err != nil {
+				return "", err
+			}
+			return artifact.Kind + "/" + artifact.Name, nil
+		}
+		if platformFeatures.HasPF {
+			addr := strings.SplitN(address, "/", 2)[0]
+			if err := runCleanupCommand("ifconfig", ifname, "inet6", addr, "-alias"); err != nil {
 				return "", err
 			}
 			return artifact.Kind + "/" + artifact.Name, nil
@@ -313,6 +337,12 @@ func isDSLiteIPv4AddressArtifact(artifact resource.Artifact) bool {
 		strings.Contains(artifact.Name, ":172.18.255.250/32") ||
 		strings.Contains(artifact.Name, ":172.18.255.251/32") ||
 		strings.Contains(artifact.Name, ":172.18.255.252/32")
+}
+
+func isStaticIPv6AddressArtifact(artifact resource.Artifact) bool {
+	return strings.Contains(artifact.Owner, "/VirtualAddress/") &&
+		strings.Contains(artifact.Name, ":") &&
+		strings.Contains(artifact.Name, "/")
 }
 
 func cleanupStaleDSLiteTunnels(router *api.Router) ([]string, error) {
