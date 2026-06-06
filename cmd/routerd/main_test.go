@@ -840,7 +840,7 @@ func TestDeleteCommandForceRemovesStaleUnsupportedKindState(t *testing.T) {
 	}
 }
 
-func TestCleanupUnsupportedLegacyObjectStatusesRemovesOnlyLegacyRows(t *testing.T) {
+func TestCleanupUnsupportedLegacyObjectStatusesRemovesLegacyAndDeletedResourceRows(t *testing.T) {
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, "routerd.db")
 	store, err := routerstate.OpenSQLite(statePath)
@@ -854,14 +854,30 @@ func TestCleanupUnsupportedLegacyObjectStatusesRemovesOnlyLegacyRows(t *testing.
 	if err := store.SaveObjectStatus(api.NetAPIVersion, "Interface", "wan", map[string]any{"phase": "Applied"}); err != nil {
 		t.Fatalf("save supported status: %v", err)
 	}
-	router := &api.Router{Metadata: api.ObjectMeta{Name: "test-router"}}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "TailscaleNode", "old", map[string]any{"phase": "Error", "reason": "ApplyFailed"}); err != nil {
+		t.Fatalf("save deleted resource status: %v", err)
+	}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "ConntrackObserver", "default", map[string]any{"phase": "Error"}); err != nil {
+		t.Fatalf("save synthetic controller status: %v", err)
+	}
+	router := &api.Router{
+		Metadata: api.ObjectMeta{Name: "test-router"},
+		Spec: api.RouterSpec{Resources: []api.Resource{{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+			Metadata: api.ObjectMeta{Name: "wan"},
+			Spec:     api.InterfaceSpec{IfName: "ens18"},
+		}}},
+	}
 
 	result, err := cleanupUnsupportedLegacyObjectStatuses(router, store, statePath, time.Date(2026, 5, 21, 7, 45, 0, 0, time.UTC), nil)
 	if err != nil {
 		t.Fatalf("cleanup: %v", err)
 	}
-	if result.Skipped || len(result.Removed) != 1 || result.Removed[0].Kind != "PPPoEInterface" {
-		t.Fatalf("cleanup result = %+v, want one PPPoEInterface removal", result)
+	if result.Skipped || len(result.Removed) != 2 {
+		t.Fatalf("cleanup result = %+v, want two removals", result)
+	}
+	if got := staleObjectStatusIDs(result.Removed); got != "net.routerd.net/v1alpha1/PPPoEInterface/wan,net.routerd.net/v1alpha1/TailscaleNode/old" {
+		t.Fatalf("removed = %s", got)
 	}
 	if _, err := os.Stat(result.BackupPath); err != nil {
 		t.Fatalf("backup stat: %v", err)
@@ -872,22 +888,33 @@ func TestCleanupUnsupportedLegacyObjectStatusesRemovesOnlyLegacyRows(t *testing.
 	if status := store.ObjectStatus(api.NetAPIVersion, "Interface", "wan"); status["phase"] != "Applied" {
 		t.Fatalf("supported status after cleanup = %+v, want preserved", status)
 	}
+	if status := store.ObjectStatus(api.NetAPIVersion, "TailscaleNode", "old"); len(status) != 0 {
+		t.Fatalf("deleted resource status after cleanup = %+v, want none", status)
+	}
+	if status := store.ObjectStatus(api.NetAPIVersion, "ConntrackObserver", "default"); status["phase"] != "Error" {
+		t.Fatalf("synthetic controller status after cleanup = %+v, want preserved", status)
+	}
 	events := store.Events(api.RouterAPIVersion, "Router", "test-router", 10)
 	if len(events) == 0 || events[0].Reason != "StaleStateCleanup" {
 		t.Fatalf("events = %+v, want StaleStateCleanup", events)
 	}
 }
 
-func TestUnsupportedLegacyObjectStatusesKeepsSupportedKinds(t *testing.T) {
+func TestStaleObjectStatusesKeepsConfiguredAndSyntheticKinds(t *testing.T) {
 	statuses := []routerstate.ObjectStatus{
 		{APIVersion: api.NetAPIVersion, Kind: "PPPoEInterface", Name: "wan"},
 		{APIVersion: api.NetAPIVersion, Kind: "Interface", Name: "wan"},
 		{APIVersion: api.NetAPIVersion, Kind: "BGPRouter", Name: "lan"},
 		{APIVersion: api.RouterAPIVersion, Kind: "Inventory", Name: "host"},
+		{APIVersion: api.NetAPIVersion, Kind: "ConntrackObserver", Name: "default"},
 	}
-	got := unsupportedLegacyObjectStatuses(statuses)
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"}, Metadata: api.ObjectMeta{Name: "lan"}},
+	}}}
+	got := staleObjectStatuses(router, statuses)
 	if len(got) != 1 || got[0].Kind != "PPPoEInterface" {
-		t.Fatalf("unsupported legacy statuses = %+v, want only PPPoEInterface", got)
+		t.Fatalf("stale statuses = %+v, want only PPPoEInterface", got)
 	}
 }
 
@@ -899,7 +926,14 @@ func TestCleanupUnsupportedLegacyObjectStatusesSkipsWhenBackupFails(t *testing.T
 		},
 		backupErr: errors.New("disk full"),
 	}
-	router := &api.Router{Metadata: api.ObjectMeta{Name: "test-router"}}
+	router := &api.Router{
+		Metadata: api.ObjectMeta{Name: "test-router"},
+		Spec: api.RouterSpec{Resources: []api.Resource{{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+			Metadata: api.ObjectMeta{Name: "wan"},
+			Spec:     api.InterfaceSpec{IfName: "ens18"},
+		}}},
+	}
 
 	result, err := cleanupUnsupportedLegacyObjectStatuses(router, store, filepath.Join(t.TempDir(), "routerd.db"), time.Now(), nil)
 	if err != nil {
