@@ -145,6 +145,55 @@ func TestTunnelInterfaceControllerWaitsForEndpointSources(t *testing.T) {
 	}
 }
 
+func TestTunnelInterfaceControllerDerivesIPIPMTUFromUnderlay(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardInterface"},
+			Metadata: api.ObjectMeta{Name: "wg-underlay"},
+			Spec:     api.WireGuardInterfaceSpec{MTU: 1420},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
+			Metadata: api.ObjectMeta{Name: "tun-ipip"},
+			Spec: api.TunnelInterfaceSpec{
+				Mode:              "ipip",
+				Local:             "10.99.0.1",
+				Remote:            "10.99.0.2",
+				UnderlayInterface: "wg-underlay",
+				TrustedUnderlay:   true,
+			},
+		},
+	}}}
+	var calls [][]string
+	controller := TunnelInterfaceController{
+		Router: router,
+		Store:  mapStore{},
+		OS:     platform.OSLinux,
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			calls = append(calls, append([]string{name}, args...))
+			if reflect.DeepEqual(append([]string{name}, args...), []string{"ip", "-d", "-o", "link", "show", "dev", "tun-ipip"}) {
+				return []byte("Cannot find device \"tun-ipip\""), errors.New("missing")
+			}
+			return nil, nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	want := [][]string{
+		{"ip", "-d", "-o", "link", "show", "dev", "tun-ipip"},
+		{"ip", "link", "add", "dev", "tun-ipip", "type", "ipip", "local", "10.99.0.1", "remote", "10.99.0.2", "ttl", "64"},
+		{"ip", "link", "set", "dev", "tun-ipip", "mtu", "1400", "up"},
+	}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("calls = %#v, want %#v", calls, want)
+	}
+	status := controller.Store.ObjectStatus(api.HybridAPIVersion, "TunnelInterface", "tun-ipip")
+	if status["phase"] != "Up" || status["mtu"] != 1400 || status["underlayInterface"] != "wg-underlay" || status["underlayMTU"] != 1420 || status["tunnelOverhead"] != 20 {
+		t.Fatalf("status = %#v", status)
+	}
+}
+
 func TestTunnelInterfaceControllerAddsFOU(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
 		TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},

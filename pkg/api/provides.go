@@ -161,7 +161,7 @@ func resourceProvidesTable() map[string][]ProvidedFieldSpec {
 		"SysctlProfile":                   withCommon(s("profile", "Applied profile"), b("dryRun", "Dry-run status")),
 		"TailscaleNode":                   withCommon(s("tailnetName", "Tailnet name"), i("peerCount", "Peer count"), ss("advertiseRoutes", "Advertised routes")),
 		"Telemetry":                       withCommon(ss("signals", "Exported signals")),
-		"TunnelInterface":                 withCommon(s("interface", "Tunnel device name"), s("mode", "Tunnel mode"), s("local", "Local underlay address"), s("remote", "Remote underlay address"), i("mtu", "Tunnel MTU"), i("ttl", "Tunnel TTL"), i("encapSport", "FOU/GUE local UDP source/listen port"), i("encapDport", "FOU/GUE peer UDP destination port"), b("dryRun", "Dry-run status")),
+		"TunnelInterface":                 withCommon(s("interface", "Tunnel device name"), s("mode", "Tunnel mode"), s("local", "Local underlay address"), s("remote", "Remote underlay address"), s("underlayInterface", "Underlay interface used for MTU derivation"), i("underlayMTU", "Underlay MTU"), i("tunnelOverhead", "Tunnel encapsulation overhead"), i("mtu", "Tunnel MTU"), i("ttl", "Tunnel TTL"), i("encapSport", "FOU/GUE local UDP source/listen port"), i("encapDport", "FOU/GUE peer UDP destination port"), b("dryRun", "Dry-run status")),
 		"TrafficFlowLog":                  withCommon(s("path", "Flow log path"), ss("sinks", "Log sink references")),
 		"VRF":                             withCommon(s("ifname", "VRF device"), i("routeTable", "Route table"), ss("members", "Member interfaces")),
 		"VXLANTunnel":                     withCommon(s("ifname", "Tunnel device"), i("vni", "VXLAN VNI")),

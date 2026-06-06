@@ -6616,6 +6616,9 @@
                         "maximum": 255,
                         "minimum": 1,
                         "type": "integer"
+                      },
+                      "underlayInterface": {
+                        "type": "string"
                       }
                     },
                     "required": [

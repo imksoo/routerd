@@ -14,6 +14,7 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/hybrid"
 	"github.com/imksoo/routerd/pkg/platform"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
@@ -31,16 +32,19 @@ type TunnelInterfaceController struct {
 }
 
 type tunnelDesired struct {
-	Name       string
-	Mode       string
-	Local      string
-	Remote     string
-	MTU        int
-	TTL        int
-	Key        int
-	EncapSport int
-	EncapDport int
-	Address    string
+	Name              string
+	Mode              string
+	Local             string
+	Remote            string
+	MTU               int
+	TTL               int
+	Key               int
+	EncapSport        int
+	EncapDport        int
+	Address           string
+	UnderlayInterface string
+	UnderlayMTU       int
+	Overhead          int
 }
 
 type tunnelObserved struct {
@@ -130,7 +134,7 @@ func (c TunnelInterfaceController) saveUnsupportedStatus(resource api.Resource, 
 	if err != nil {
 		return err
 	}
-	desired := tunnelDesiredFromSpec(resource.Metadata.Name, spec)
+	desired := tunnelDesiredFromSpec(*c.Router, resource.Metadata.Name, spec)
 	return c.Store.SaveObjectStatus(api.HybridAPIVersion, "TunnelInterface", resource.Metadata.Name, tunnelStatus(desired, c.DryRun, map[string]any{
 		"phase":  "Unsupported",
 		"reason": "PlatformUnsupported",
@@ -145,7 +149,7 @@ func (c TunnelInterfaceController) reconcileInterface(ctx context.Context, resou
 	}
 	desired, pending, pendingReason, err := c.resolveTunnelDesired(resource.Metadata.Name, spec)
 	if err != nil {
-		return c.saveResolveError(resource, tunnelDesiredFromSpec(resource.Metadata.Name, spec), err)
+		return c.saveResolveError(resource, tunnelDesiredFromSpec(*c.Router, resource.Metadata.Name, spec), err)
 	}
 	status := tunnelStatus(desired, c.DryRun, map[string]any{"phase": "Pending"})
 	if pending {
@@ -239,40 +243,32 @@ func (c TunnelInterfaceController) saveApplyError(resource api.Resource, desired
 	return c.Store.SaveObjectStatus(api.HybridAPIVersion, "TunnelInterface", resource.Metadata.Name, status)
 }
 
-func tunnelDesiredFromSpec(name string, spec api.TunnelInterfaceSpec) tunnelDesired {
-	mtu := spec.MTU
-	if mtu == 0 {
-		switch strings.TrimSpace(spec.Mode) {
-		case "ipip":
-			mtu = 1480
-		case "gre":
-			mtu = 1476
-		case "fou":
-			mtu = 1472
-		case "gue":
-			mtu = 1468
-		}
-	}
+func tunnelDesiredFromSpec(router api.Router, name string, spec api.TunnelInterfaceSpec) tunnelDesired {
+	estimate, _ := hybrid.TunnelInterfaceMTUEstimate(router, spec)
+	mtu := estimate.EstimatedMTU
 	ttl := spec.TTL
 	if ttl == 0 {
 		ttl = 64
 	}
 	return tunnelDesired{
-		Name:       strings.TrimSpace(name),
-		Mode:       strings.TrimSpace(spec.Mode),
-		Local:      strings.TrimSpace(spec.Local),
-		Remote:     strings.TrimSpace(spec.Remote),
-		MTU:        mtu,
-		TTL:        ttl,
-		Key:        spec.Key,
-		EncapSport: spec.EncapSport,
-		EncapDport: spec.EncapDport,
-		Address:    strings.TrimSpace(spec.Address),
+		Name:              strings.TrimSpace(name),
+		Mode:              strings.TrimSpace(spec.Mode),
+		Local:             strings.TrimSpace(spec.Local),
+		Remote:            strings.TrimSpace(spec.Remote),
+		MTU:               mtu,
+		TTL:               ttl,
+		Key:               spec.Key,
+		EncapSport:        spec.EncapSport,
+		EncapDport:        spec.EncapDport,
+		Address:           strings.TrimSpace(spec.Address),
+		UnderlayInterface: strings.TrimSpace(spec.UnderlayInterface),
+		UnderlayMTU:       estimate.UnderlayMTU,
+		Overhead:          estimate.Overhead,
 	}
 }
 
 func (c TunnelInterfaceController) resolveTunnelDesired(name string, spec api.TunnelInterfaceSpec) (tunnelDesired, bool, string, error) {
-	desired := tunnelDesiredFromSpec(name, spec)
+	desired := tunnelDesiredFromSpec(*c.Router, name, spec)
 	if strings.TrimSpace(spec.LocalFrom.Resource) != "" {
 		value, pending, err := c.tunnelEndpointFromSource(spec.LocalFrom)
 		if err != nil {
@@ -381,6 +377,15 @@ func tunnelStatus(desired tunnelDesired, dryRun bool, extra map[string]any) map[
 	}
 	if desired.Address != "" {
 		status["address"] = desired.Address
+	}
+	if desired.UnderlayInterface != "" {
+		status["underlayInterface"] = desired.UnderlayInterface
+	}
+	if desired.UnderlayMTU != 0 {
+		status["underlayMTU"] = desired.UnderlayMTU
+	}
+	if desired.Overhead != 0 {
+		status["tunnelOverhead"] = desired.Overhead
 	}
 	for key, value := range extra {
 		status[key] = value

@@ -441,7 +441,7 @@ func pathMTUResourceInterfaces(router *api.Router) []pathMTUTunnel {
 	}
 	var out []pathMTUTunnel
 	for _, res := range router.Spec.Resources {
-		item, ok := pathMTUResourceInterface(res)
+		item, ok := pathMTUResourceInterface(router, res)
 		if ok {
 			out = append(out, item)
 		}
@@ -450,7 +450,7 @@ func pathMTUResourceInterfaces(router *api.Router) []pathMTUTunnel {
 	return out
 }
 
-func pathMTUResourceInterface(res api.Resource) (pathMTUTunnel, bool) {
+func pathMTUResourceInterface(router *api.Router, res api.Resource) (pathMTUTunnel, bool) {
 	if strings.TrimSpace(res.Metadata.Name) == "" {
 		return pathMTUTunnel{}, false
 	}
@@ -467,7 +467,7 @@ func pathMTUResourceInterface(res api.Resource) (pathMTUTunnel, bool) {
 	if value.Kind() != reflect.Struct || !pathMTUResourceEnabled(value) || !pathMTUResourceLooksLikeInterface(res, value) {
 		return pathMTUTunnel{}, false
 	}
-	mtu := pathMTUResourceMTU(res, value)
+	mtu := pathMTUResourceMTU(router, res, value)
 	if mtu == 0 {
 		return pathMTUTunnel{}, false
 	}
@@ -500,7 +500,7 @@ func pathMTUResourceLooksLikeInterface(res api.Resource, value reflect.Value) bo
 	return strings.HasSuffix(res.Kind, "Interface")
 }
 
-func pathMTUResourceMTU(res api.Resource, value reflect.Value) int {
+func pathMTUResourceMTU(router *api.Router, res api.Resource, value reflect.Value) int {
 	if field := value.FieldByName("MTU"); field.IsValid() && field.Kind() == reflect.Int && field.Int() > 0 {
 		return int(field.Int())
 	}
@@ -515,23 +515,11 @@ func pathMTUResourceMTU(res api.Resource, value reflect.Value) int {
 	case "WireGuardInterface":
 		return 1420
 	case "TunnelInterface":
-		mode := ""
-		if field := value.FieldByName("Mode"); field.IsValid() && field.Kind() == reflect.String {
-			mode = strings.TrimSpace(field.String())
+		spec, err := res.TunnelInterfaceSpec()
+		if err != nil || router == nil {
+			return 0
 		}
-		if mode == "ipip" {
-			return 1480
-		}
-		if mode == "gre" {
-			return 1476
-		}
-		if mode == "fou" {
-			return 1472
-		}
-		if mode == "gue" {
-			return 1468
-		}
-		return 0
+		return hybrid.TunnelInterfaceEffectiveMTU(*router, spec)
 	default:
 		return 0
 	}
