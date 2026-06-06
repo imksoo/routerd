@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -19,9 +20,10 @@ import (
 )
 
 type fakePathServer struct {
-	added   []*gobgpapi.AddPathRequest
-	deleted [][]byte
-	nextID  byte
+	added     []*gobgpapi.AddPathRequest
+	deleted   [][]byte
+	nextID    byte
+	deleteErr error
 }
 
 func (s *fakePathServer) AddPath(_ context.Context, req *gobgpapi.AddPathRequest) (*gobgpapi.AddPathResponse, error) {
@@ -33,6 +35,9 @@ func (s *fakePathServer) AddPath(_ context.Context, req *gobgpapi.AddPathRequest
 
 func (s *fakePathServer) DeletePath(_ context.Context, req *gobgpapi.DeletePathRequest) error {
 	s.deleted = append(s.deleted, append([]byte(nil), req.GetUuid()...))
+	if s.deleteErr != nil {
+		return s.deleteErr
+	}
 	return nil
 }
 
@@ -89,6 +94,10 @@ func TestAppliedPoliciesRestorePeerExportPolicy(t *testing.T) {
 		Peers: map[string]bgpdaemon.AppliedPeer{
 			"10.252.0.18": peer,
 		},
+		Paths: []bgpdaemon.AppliedPath{{
+			Source: "MobilityPool/svnet1/node/pve-rt08",
+			Prefix: "192.168.123.132/32",
+		}},
 	})
 	if !appliedPolicyRequestHasStatement(req, "routerd-lan-import", "routerd-lan-import-allow-import") {
 		t.Fatalf("restore policies = %#v, want import policy", req)
@@ -99,6 +108,9 @@ func TestAppliedPoliciesRestorePeerExportPolicy(t *testing.T) {
 	if len(assignment.GetPolicies()) != 1 || assignment.GetPolicies()[0].GetName() != "routerd-lan-import" {
 		t.Fatalf("global import assignment = %#v, want only import policy", assignment)
 	}
+	if !appliedPolicyRequestHasPrefix(req, "routerd-lan-import-prefixes", "192.168.123.132/32") {
+		t.Fatalf("restore policies = %#v, want dynamic mobility prefix in import policy", req)
+	}
 	restoredPeer := appliedPeer(peer, bgpdaemon.AppliedGlobal{ASN: 64512})
 	exportAssignment := restoredPeer.GetApplyPolicy().GetExportPolicy()
 	if exportAssignment.GetDirection() != gobgpapi.PolicyDirection_EXPORT ||
@@ -107,6 +119,20 @@ func TestAppliedPoliciesRestorePeerExportPolicy(t *testing.T) {
 		exportAssignment.GetPolicies()[0].GetName() != "routerd-lan-export-10-252-0-2" {
 		t.Fatalf("restored peer export policy = %#v, want export assignment", exportAssignment)
 	}
+}
+
+func appliedPolicyRequestHasPrefix(req *gobgpapi.SetPoliciesRequest, setName, prefix string) bool {
+	for _, set := range req.GetDefinedSets() {
+		if set.GetName() != setName {
+			continue
+		}
+		for _, got := range set.GetPrefixes() {
+			if got.GetIpPrefix() == prefix {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func TestAppliedPoliciesRestoreMultipleImportPoliciesWithUniqueStatements(t *testing.T) {
@@ -350,6 +376,40 @@ func TestControlPathAPIRejectsNonMobilityAndNonHostPaths(t *testing.T) {
 		if resp.StatusCode == http.StatusOK {
 			t.Fatalf("POST accepted invalid path %#v", body)
 		}
+	}
+}
+
+func TestUpsertDynamicPathIgnoresStaleGoBGPUUID(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "applied.json")
+	source := "MobilityPool/demo/node/aws-router-a"
+	initial := bgpdaemon.AppliedConfig{
+		Version: bgpdaemon.AppliedVersion,
+		Global:  bgpdaemon.AppliedGlobal{ASN: 64512, RouterID: "10.0.0.1", ListenPort: 179},
+		Paths: []bgpdaemon.AppliedPath{{
+			Source: source,
+			Prefix: "10.77.60.11/32",
+			Family: bgpdaemon.AppliedPathFamilyIPv4Unicast,
+			UUID:   bgpdaemon.EncodeUUID([]byte{9}),
+		}},
+	}
+	if err := bgpdaemon.WriteApplied(statePath, initial); err != nil {
+		t.Fatalf("write initial applied: %v", err)
+	}
+	server := &fakePathServer{deleteErr: errors.New("can't find a specified path")}
+	_, got, err := upsertDynamicPath(context.Background(), server, statePath, bgpdaemon.AppliedPath{
+		Source: source,
+		Prefix: "10.77.60.11/32",
+		Attrs:  bgpdaemon.AppliedPathAttrs{LocalPref: 201},
+	})
+	if err != nil {
+		t.Fatalf("upsert stale UUID path: %v", err)
+	}
+	if got == nil || got.UUID == "" || got.UUID == bgpdaemon.EncodeUUID([]byte{9}) {
+		t.Fatalf("upserted path = %#v, want fresh UUID", got)
+	}
+	if len(server.deleted) != 1 || len(server.added) != 1 {
+		t.Fatalf("delete/add calls = %d/%d, want stale delete and fresh add", len(server.deleted), len(server.added))
 	}
 }
 
