@@ -163,6 +163,9 @@ spec:
           routerRef: BGPRouter/mobility-bgp
           peerASN: 64577
           timersPreset: fast
+          importPolicy:
+            allowedPrefixes: [10.77.60.0/24]
+            nextHopRewrite: peer-address
         peers:
           - { nodeRef: onprem-router, remoteEndpoint: 10.99.0.1 }
 
