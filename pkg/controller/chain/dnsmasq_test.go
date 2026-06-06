@@ -4,6 +4,7 @@ package chain
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -332,6 +333,58 @@ func TestDHCPv4ServerWhenFalseRemovesDnsmasqScope(t *testing.T) {
 	}
 }
 
+func TestIPv6RouterAdvertisementWhenFalseRemovesDnsmasqRA(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "dnsmasq.conf")
+	pidFile := filepath.Join(dir, "dnsmasq.pid")
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6RouterAdvertisement"}, Metadata: api.ObjectMeta{Name: "lan-ra"}, Spec: api.IPv6RouterAdvertisementSpec{
+			Interface: "lan",
+			Prefix:    "2001:db8:1::/64",
+			When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{
+				"VirtualAddress/lan-vip.role": {Equals: "master"},
+			}},
+		}},
+	}}}
+	store := statefulDHCPMapStore{mapStore: mapStore{
+		api.NetAPIVersion + "/VirtualAddress/lan-vip": {"role": "backup"},
+	}}
+	controller := DHCPv6ServerController{Router: router, Store: store, DryRun: true}
+
+	effective := controller.effectiveRouter()
+	if changed, err := writeDnsmasqConfig(effective, store, configPath, pidFile, 53, nil); err != nil || !changed {
+		t.Fatalf("write backup config changed=%t err=%v", changed, err)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "enable-ra") || strings.Contains(string(data), "constructor:ens19") {
+		t.Fatalf("backup config still contains RA lines:\n%s", data)
+	}
+	if err := controller.reconcileRouterAdvertisements(context.Background(), configPath, pidFile, true); err != nil {
+		t.Fatal(err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "IPv6RouterAdvertisement", "lan-ra")
+	if status["phase"] != "Pending" || status["reason"] != "WhenFalse" {
+		t.Fatalf("backup status = %#v", status)
+	}
+
+	store.mapStore[api.NetAPIVersion+"/VirtualAddress/lan-vip"]["role"] = "master"
+	effective = controller.effectiveRouter()
+	if _, err := writeDnsmasqConfig(effective, store, configPath, pidFile, 53, nil); err != nil {
+		t.Fatal(err)
+	}
+	data, err = os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "enable-ra") {
+		t.Fatalf("master config missing RA lines:\n%s", data)
+	}
+}
+
 func TestDnsmasqCmdlineUsesConfig(t *testing.T) {
 	for _, tt := range []struct {
 		name     string
@@ -417,6 +470,14 @@ func TestIPAddrShowHasIPv6AddressIgnoresKernelPrefixLength(t *testing.T) {
 `)
 	if !ipAddrShowHasIPv6Address(out, "2409:10:3d60:1271::11/64") {
 		t.Fatal("ipAddrShowHasIPv6Address = false, want true")
+	}
+}
+
+func TestIPAddrShowHasIPv6AddressRejectsDADFailedTentative(t *testing.T) {
+	out := []byte(`7: ens19    inet6 2409:10:3d60:1271::11/128 scope global dadfailed tentative
+`)
+	if ipAddrShowHasIPv6Address(out, "2409:10:3d60:1271::11/64") {
+		t.Fatal("ipAddrShowHasIPv6Address = true, want false for dadfailed tentative address")
 	}
 }
 
@@ -542,6 +603,47 @@ func TestLANAddressControllerPopulatesInterfaceBeforeDependencyCheck(t *testing.
 	}
 }
 
+func TestLANAddressControllerDeletesStaleIPv6BeforeApply(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "lo", Managed: false}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "lan-base"}, Spec: api.IPv6DelegatedAddressSpec{
+			PrefixDelegation: "wan-pd",
+			Interface:        "lan",
+			SubnetID:         "1",
+			AddressSuffix:    "::1",
+		}},
+	}}}
+	store := mapStore{}
+	store.SaveObjectStatus(api.NetAPIVersion, "DHCPv6PrefixDelegation", "wan-pd", map[string]any{
+		"phase":         daemonapi.ResourcePhaseBound,
+		"currentPrefix": "2409:10:3d60:1270::/60",
+	})
+	var commands []string
+	controller := LANAddressController{
+		Router: router,
+		Store:  store,
+		AddressPresent: func(context.Context, string, string) bool {
+			return false
+		},
+		Command: func(ctx context.Context, name string, args ...string) error {
+			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
+			return nil
+		},
+	}
+	if err := controller.reconcile(t.Context(), "wan-pd"); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"ip -6 addr del 2409:10:3d60:1271::1/64 dev lo",
+		"ip -6 addr del 2409:10:3d60:1271::1/128 dev lo",
+		"ip -6 addr replace 2409:10:3d60:1271::1/64 dev lo",
+	}
+	if !reflect.DeepEqual(commands, want) {
+		t.Fatalf("commands = %#v, want %#v", commands, want)
+	}
+}
+
 func TestLANAddressControllerRestoresMissingAddressWithUnchangedStatus(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "lo"}},
@@ -576,6 +678,89 @@ func TestLANAddressControllerRestoresMissingAddressWithUnchangedStatus(t *testin
 	}
 	if !applied {
 		t.Fatal("expected missing delegated address to be restored")
+	}
+}
+
+func TestLANAddressControllerRemovesWhenFalseDelegatedAddress(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "lo"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "lan-base"}, Spec: api.IPv6DelegatedAddressSpec{
+			When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{
+				"VirtualAddress/lan-gw-v4.role": {Equals: "master"},
+			}},
+			PrefixDelegation: "wan-pd",
+			Interface:        "lan",
+			SubnetID:         "1",
+			AddressSuffix:    "::1",
+		}},
+	}}}
+	store := statefulDHCPMapStore{mapStore: mapStore{}}
+	store.SaveObjectStatus(api.NetAPIVersion, "VirtualAddress", "lan-gw-v4", map[string]any{"role": "backup"})
+	store.SaveObjectStatus(api.NetAPIVersion, "DHCPv6PrefixDelegation", "wan-pd", map[string]any{"phase": daemonapi.ResourcePhaseBound, "currentPrefix": "2409:10:3d60:1270::/60"})
+	store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "lan-base", map[string]any{
+		"phase": "Applied", "address": "2409:10:3d60:1271::1/64", "interface": "lan", "prefixSource": "wan-pd", "dryRun": false,
+	})
+	var commands []string
+	controller := LANAddressController{
+		Router:         &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{router.Spec.Resources[0], router.Spec.Resources[1]}}},
+		DeclaredRouter: router,
+		Store:          store,
+		Command: func(ctx context.Context, name string, args ...string) error {
+			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
+			return nil
+		},
+	}
+	if err := controller.reconcile(t.Context(), "wan-pd"); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"ip -6 addr del 2409:10:3d60:1271::1/64 dev lo",
+		"ip -6 addr del 2409:10:3d60:1271::1/128 dev lo",
+	}
+	if !reflect.DeepEqual(commands, want) {
+		t.Fatalf("commands = %#v, want %#v", commands, want)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "lan-base")
+	if status["phase"] != "Pending" || status["reason"] != "WhenFalse" || status["address"] != nil {
+		t.Fatalf("delegated address status = %#v", status)
+	}
+}
+
+func TestLANAddressControllerKeepsWhenFalseStatusWhenDeleteMissing(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "lo"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "lan-base"}, Spec: api.IPv6DelegatedAddressSpec{
+			When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{
+				"VirtualAddress/lan-gw-v4.role": {Equals: "master"},
+			}},
+			PrefixDelegation: "wan-pd",
+			Interface:        "lan",
+			SubnetID:         "1",
+			AddressSuffix:    "::1",
+		}},
+	}}}
+	store := statefulDHCPMapStore{mapStore: mapStore{}}
+	store.SaveObjectStatus(api.NetAPIVersion, "VirtualAddress", "lan-gw-v4", map[string]any{"role": "backup"})
+	store.SaveObjectStatus(api.NetAPIVersion, "DHCPv6PrefixDelegation", "wan-pd", map[string]any{"phase": daemonapi.ResourcePhaseBound, "currentPrefix": "2409:10:3d60:1270::/60"})
+	store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "lan-base", map[string]any{
+		"phase": "Applied", "address": "2409:10:3d60:1271::1/64", "interface": "lan", "prefixSource": "wan-pd", "dryRun": false,
+	})
+	controller := LANAddressController{
+		Router:         &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{router.Spec.Resources[0], router.Spec.Resources[1]}}},
+		DeclaredRouter: router,
+		Store:          store,
+		Command: func(ctx context.Context, name string, args ...string) error {
+			return fmt.Errorf("address not found")
+		},
+	}
+	if err := controller.reconcile(t.Context(), "wan-pd"); err != nil {
+		t.Fatal(err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "lan-base")
+	if status["phase"] != "Pending" || status["reason"] != "WhenFalse" || status["address"] != nil {
+		t.Fatalf("delegated address status = %#v", status)
 	}
 }
 

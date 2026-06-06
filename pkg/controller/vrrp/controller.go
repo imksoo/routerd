@@ -79,6 +79,9 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	if result.LastChangeReason != "" {
 		extra["lastChangeReason"] = result.LastChangeReason
 	}
+	if result.ServiceActive != nil {
+		extra["serviceActive"] = *result.ServiceActive
+	}
 	return c.saveStatuses("Applied", result.Path, result.Changed || cleanupChanged || staticChanged, tracks, result.Roles, staticIsolated, extra)
 }
 

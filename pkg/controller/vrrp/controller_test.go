@@ -265,6 +265,33 @@ func TestReconcileObservesVRRPRoleFromVIPAddress(t *testing.T) {
 	}
 }
 
+func TestReconcileMarksVRRPInactiveWhenKeepalivedStopped(t *testing.T) {
+	store := mapStore{}
+	controller := Controller{
+		Router:     vrrpRouter("vrrp"),
+		Store:      store,
+		ConfigPath: t.TempDir() + "/keepalived.conf",
+		Systemctl:  "systemctl",
+		IP:         "ip",
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			if name == "systemctl" && strings.Join(args, " ") == "is-active --quiet keepalived.service" {
+				return []byte("inactive"), errors.New("inactive")
+			}
+			if name == "ip" && strings.Join(args, " ") == "-4 addr show dev ens18" {
+				return []byte("2: ens18 inet 10.240.70.10/32 scope global ens18\n"), nil
+			}
+			return []byte("ok"), nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "VirtualAddress", "vip")
+	if status["role"] != "inactive" || status["serviceActive"] != false {
+		t.Fatalf("inactive keepalived status = %#v, want role inactive and serviceActive false", status)
+	}
+}
+
 func TestReconcileRestartsKeepalivedWithOpenRC(t *testing.T) {
 	store := mapStore{}
 	var calls []string
