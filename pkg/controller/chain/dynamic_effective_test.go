@@ -58,6 +58,54 @@ func TestDynamicRouteSAMViewIncludesDynamicRemoteAddressClaim(t *testing.T) {
 	}
 }
 
+func TestDynamicRouteSAMViewExpandsSAMTransportProfileBeforeRouteLowering(t *testing.T) {
+	startup := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test-router"},
+		Spec: api.RouterSpec{Resources: []api.Resource{{
+			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "SAMTransportProfile"},
+			Metadata: api.ObjectMeta{Name: "pve08-core"},
+			Spec: api.SAMTransportProfileSpec{
+				Mode:              "ipip",
+				LocalNodeID:       "pve-rt08",
+				LocalEndpointFrom: api.StatusValueSourceSpec{Resource: "Interface/eth0", Field: "primaryIPv4"},
+				UnderlayInterface: "eth0",
+				InnerCIDR:         "10.255.1.0/24",
+				PeerRole:          "cloud",
+				Peers: []api.SAMTransportProfilePeer{{
+					Name:     "k8s-rt02",
+					NodeID:   "k8s-rt02",
+					Endpoint: "192.168.1.53",
+				}},
+			},
+		}, {
+			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "HybridRoute"},
+			Metadata: api.ObjectMeta{Name: "svnet1-to-core"},
+			Spec: api.HybridRouteSpec{
+				DestinationCIDRs: []string{"192.168.123.0/24"},
+				PeerRef:          "pve08-core-k8s-rt02-peer",
+			},
+		}}},
+	}
+	store := &dynamicRouteSAMStore{objects: map[string]map[string]any{}}
+	view, err := buildDynamicRouteSAMView(startup, store, time.Now().UTC(), platform.OSLinux)
+	if err != nil {
+		t.Fatalf("buildDynamicRouteSAMView: %v", err)
+	}
+	if countResources(view.EffectiveRouter, api.HybridAPIVersion, "TunnelInterface") != 1 {
+		t.Fatalf("effective tunnel count = %d, want 1", countResources(view.EffectiveRouter, api.HybridAPIVersion, "TunnelInterface"))
+	}
+	if countResources(view.EffectiveRouter, api.HybridAPIVersion, "OverlayPeer") != 1 {
+		t.Fatalf("effective overlay peer count = %d, want 1", countResources(view.EffectiveRouter, api.HybridAPIVersion, "OverlayPeer"))
+	}
+	if len(view.SAMTransportLowerings) != 1 {
+		t.Fatalf("transport lowerings = %#v", view.SAMTransportLowerings)
+	}
+	if len(view.HybridLowerings) != 1 || view.HybridLowerings[0].Device != view.SAMTransportLowerings[0].TunnelInterface {
+		t.Fatalf("hybrid lowerings = %#v transport = %#v", view.HybridLowerings, view.SAMTransportLowerings)
+	}
+}
+
 func TestDynamicRouteSAMViewSuppressesMobilityClaimsWhenPoolUsesBGPDelivery(t *testing.T) {
 	startup := startupHybridContextRouter()
 	startup.Spec.Resources = append(startup.Spec.Resources, api.Resource{

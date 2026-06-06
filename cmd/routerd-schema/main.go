@@ -330,6 +330,7 @@ func resourceUnionSchema() map[string]any {
 			resourceSchema(api.HybridAPIVersion, "TunnelInterface", api.TunnelInterfaceSpec{}),
 			resourceSchema(api.HybridAPIVersion, "OverlayPeer", api.OverlayPeerSpec{}),
 			resourceSchema(api.HybridAPIVersion, "HybridRoute", api.HybridRouteSpec{}),
+			resourceSchema(api.HybridAPIVersion, "SAMTransportProfile", api.SAMTransportProfileSpec{}),
 			resourceSchema(api.HybridAPIVersion, "AddressMobilityDomain", api.AddressMobilityDomainSpec{}),
 			resourceSchema(api.HybridAPIVersion, "CloudProviderProfile", api.CloudProviderProfileSpec{}),
 			resourceSchema(api.HybridAPIVersion, "RemoteAddressClaim", api.RemoteAddressClaimSpec{}),

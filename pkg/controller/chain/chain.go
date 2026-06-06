@@ -48,6 +48,7 @@ import (
 	"github.com/imksoo/routerd/pkg/eventrule"
 	"github.com/imksoo/routerd/pkg/ha"
 	"github.com/imksoo/routerd/pkg/healthcheck"
+	"github.com/imksoo/routerd/pkg/hybrid"
 	"github.com/imksoo/routerd/pkg/logstore"
 	"github.com/imksoo/routerd/pkg/mobilityconfig"
 	"github.com/imksoo/routerd/pkg/observabilitypipeline"
@@ -267,7 +268,7 @@ func resourceOwnerController(kind string) string {
 		return "package"
 	case "PPPoESession":
 		return "pppoesession"
-	case "IPv4Route", "IPv4StaticRoute", "IPv6StaticRoute", "EgressRoutePolicy", "HybridRoute", "AddressMobilityDomain", "RemoteAddressClaim":
+	case "IPv4Route", "IPv4StaticRoute", "IPv6StaticRoute", "EgressRoutePolicy", "HybridRoute", "SAMTransportProfile", "AddressMobilityDomain", "RemoteAddressClaim":
 		return "route"
 	case "ServiceUnit", "TailscaleNode", "HealthCheck", "NTPClient", "NTPServer", "SysctlProfile", "Sysctl", "LogRetention", "Hostname", "ConntrackTuning":
 		return "service-unit"
@@ -722,7 +723,7 @@ func ipv4RouteStatusSubscriptions() []bus.Subscription {
 }
 
 func hybridRouteStatusSubscriptions() []bus.Subscription {
-	return statusSubscriptions("IPv4Route", "HealthCheck", "WireGuardInterface", "TunnelInterface", "Interface", "VirtualAddress")
+	return statusSubscriptions("IPv4Route", "IPv4StaticAddress", "BGPPeer", "HealthCheck", "WireGuardInterface", "WireGuardPeer", "TunnelInterface", "Interface", "VirtualAddress")
 }
 
 func samStatusSubscriptions() []bus.Subscription {
@@ -849,7 +850,12 @@ func (r *Runner) effectiveRouterForReconcile(store eventedStore) (*api.Router, e
 	if err := r.saveWhenFalseStatuses(store); err != nil {
 		return nil, err
 	}
-	return r.effectiveRouter(store), nil
+	effective := r.effectiveRouter(store)
+	expanded, _, err := hybrid.ExpandSAMTransportProfiles(*effective)
+	if err != nil {
+		return nil, err
+	}
+	return &expanded, nil
 }
 
 func (r *Runner) Start(ctx context.Context) error {
@@ -1188,8 +1194,24 @@ func (r *Runner) Start(ctx context.Context) error {
 			return current.Reconcile(ctx)
 		}},
 		framework.FuncController{ControllerName: "link", Every: 30 * time.Second, PeriodicFunc: link.Reconcile},
-		framework.FuncController{ControllerName: "tunnel", Every: 30 * time.Second, Subs: statusSubscriptions("TunnelInterface"), PeriodicFunc: tunnel.Reconcile},
-		framework.FuncController{ControllerName: "wireguard", Every: 30 * time.Second, Subs: statusSubscriptions("WireGuardInterface", "BGPRouter"), PeriodicFunc: wireGuard.Reconcile},
+		framework.FuncController{ControllerName: "tunnel", Every: 30 * time.Second, Subs: statusSubscriptions("TunnelInterface"), PeriodicFunc: func(ctx context.Context) error {
+			effective, err := effectiveForReconcile()
+			if err != nil {
+				return err
+			}
+			current := tunnel
+			current.Router = effective
+			return current.Reconcile(ctx)
+		}},
+		framework.FuncController{ControllerName: "wireguard", Every: 30 * time.Second, Subs: statusSubscriptions("WireGuardInterface", "BGPRouter"), PeriodicFunc: func(ctx context.Context) error {
+			effective, err := effectiveForReconcile()
+			if err != nil {
+				return err
+			}
+			current := wireGuard
+			current.Router = effective
+			return current.Reconcile(ctx)
+		}},
 		framework.FuncController{ControllerName: "ipv4-static-address", Subs: statusSubscriptions("WireGuardInterface", "TunnelInterface"), PeriodicFunc: func(ctx context.Context) error {
 			effective, err := effectiveForReconcile()
 			if err != nil {
@@ -1273,6 +1295,7 @@ func (r *Runner) Start(ctx context.Context) error {
 			current := hybridRoute
 			current.Router = view.EffectiveRouter
 			current.EffectiveRouter = view.RouteRouter
+			current.TransportLowerings = view.SAMTransportLowerings
 			current.Lowerings = view.HybridLowerings
 			return current.Reconcile(ctx)
 		}},

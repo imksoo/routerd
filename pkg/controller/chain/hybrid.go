@@ -10,10 +10,11 @@ import (
 )
 
 type HybridRouteController struct {
-	Router          *api.Router
-	EffectiveRouter *api.Router
-	Lowerings       []hybrid.HybridLowering
-	Store           Store
+	Router             *api.Router
+	EffectiveRouter    *api.Router
+	TransportLowerings []hybrid.SAMTransportProfileLowering
+	Lowerings          []hybrid.HybridLowering
+	Store              Store
 }
 
 func (c HybridRouteController) Reconcile(ctx context.Context) error {
@@ -26,12 +27,20 @@ func (c HybridRouteController) Reconcile(ctx context.Context) error {
 		effective = c.EffectiveRouter
 	}
 	for _, resource := range c.Router.Spec.Resources {
-		if resource.APIVersion != api.HybridAPIVersion || resource.Kind != "HybridRoute" {
+		if resource.APIVersion != api.HybridAPIVersion {
 			continue
 		}
-		status := hybrid.StatusForHybridRoute(*effective, resource, c.Lowerings, c.Store)
-		if err := c.Store.SaveObjectStatus(api.HybridAPIVersion, "HybridRoute", resource.Metadata.Name, status); err != nil {
-			return err
+		switch resource.Kind {
+		case "SAMTransportProfile":
+			status := hybrid.StatusForSAMTransportProfile(resource, c.TransportLowerings, c.Store)
+			if err := c.Store.SaveObjectStatus(api.HybridAPIVersion, "SAMTransportProfile", resource.Metadata.Name, status); err != nil {
+				return err
+			}
+		case "HybridRoute":
+			status := hybrid.StatusForHybridRoute(*effective, resource, c.Lowerings, c.Store)
+			if err := c.Store.SaveObjectStatus(api.HybridAPIVersion, "HybridRoute", resource.Metadata.Name, status); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

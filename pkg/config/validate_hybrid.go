@@ -133,6 +133,110 @@ func validateHybridResource(res api.Resource, _ platform.OS) (bool, error) {
 		if spec.Install.Metric < 0 {
 			return true, fmt.Errorf("%s spec.install.metric must be >= 0", res.ID())
 		}
+	case "SAMTransportProfile":
+		if res.APIVersion != api.HybridAPIVersion {
+			return true, fmt.Errorf("%s must use apiVersion %s", res.ID(), api.HybridAPIVersion)
+		}
+		spec, err := res.SAMTransportProfileSpec()
+		if err != nil {
+			return true, err
+		}
+		switch strings.TrimSpace(spec.Mode) {
+		case "ipip", "gre":
+		default:
+			return true, fmt.Errorf("%s spec.mode must be ipip or gre", res.ID())
+		}
+		encryption := strings.TrimSpace(spec.Encryption)
+		if encryption == "" {
+			encryption = "none"
+		}
+		switch encryption {
+		case "none", "wireguard":
+		default:
+			return true, fmt.Errorf("%s spec.encryption must be none or wireguard", res.ID())
+		}
+		if strings.TrimSpace(spec.LocalNodeID) == "" {
+			return true, fmt.Errorf("%s spec.localNodeID is required", res.ID())
+		}
+		if err := validateSAMTransportCIDR(res.ID()+" spec.innerCIDR", spec.InnerCIDR); err != nil {
+			return true, err
+		}
+		switch role := strings.TrimSpace(spec.PeerRole); role {
+		case "", "onprem", "cloud":
+		default:
+			return true, fmt.Errorf("%s spec.peerRole must be onprem or cloud when set", res.ID())
+		}
+		if strings.TrimSpace(spec.BGP.RouterRef) != "" && spec.BGP.PeerASN == 0 {
+			allPeersOverrideASN := true
+			for _, peer := range spec.Peers {
+				if peer.PeerASN == 0 {
+					allPeersOverrideASN = false
+					break
+				}
+			}
+			if !allPeersOverrideASN {
+				return true, fmt.Errorf("%s spec.bgp.peerASN is required unless every peer sets peerASN", res.ID())
+			}
+		}
+		if encryption == "none" {
+			if err := validateTunnelEndpointOrSource(res.ID(), "localEndpoint", spec.LocalEndpoint, spec.LocalEndpointFrom); err != nil {
+				return true, err
+			}
+		} else {
+			if err := validateSAMTransportCIDR(res.ID()+" spec.wireGuard.transportCIDR", spec.WireGuard.TransportCIDR); err != nil {
+				return true, err
+			}
+			if strings.TrimSpace(spec.WireGuard.LocalAddress) != "" {
+				if err := validateSAMTransportAddress(res.ID()+" spec.wireGuard.localAddress", spec.WireGuard.LocalAddress); err != nil {
+					return true, err
+				}
+			}
+		}
+		if len(spec.Peers) == 0 {
+			return true, fmt.Errorf("%s spec.peers is required", res.ID())
+		}
+		peerNames := map[string]bool{}
+		for i, peer := range spec.Peers {
+			label := fmt.Sprintf("%s spec.peers[%d]", res.ID(), i)
+			if strings.TrimSpace(peer.Name) == "" {
+				return true, fmt.Errorf("%s.name is required", label)
+			}
+			if peerNames[peer.Name] {
+				return true, fmt.Errorf("%s.name %q is duplicated", label, peer.Name)
+			}
+			peerNames[peer.Name] = true
+			if strings.TrimSpace(peer.NodeID) == "" {
+				return true, fmt.Errorf("%s.nodeID is required", label)
+			}
+			role := firstNonEmptyString(strings.TrimSpace(peer.Role), strings.TrimSpace(spec.PeerRole))
+			switch role {
+			case "onprem", "cloud":
+			default:
+				return true, fmt.Errorf("%s.role is required unless spec.peerRole is set", label)
+			}
+			if strings.TrimSpace(peer.InnerAddress) != "" {
+				if err := validateSAMTransportAddress(label+".innerAddress", peer.InnerAddress); err != nil {
+					return true, err
+				}
+			}
+			if encryption == "none" {
+				if err := validateTunnelEndpointOrSource(label, "endpoint", peer.Endpoint, peer.EndpointFrom); err != nil {
+					return true, err
+				}
+			} else {
+				if strings.TrimSpace(peer.WireGuard.PublicKey) == "" {
+					return true, fmt.Errorf("%s.wireGuard.publicKey is required when spec.encryption is wireguard", label)
+				}
+				if strings.TrimSpace(peer.WireGuard.Endpoint) == "" && strings.TrimSpace(peer.Endpoint) == "" {
+					return true, fmt.Errorf("%s.wireGuard.endpoint or endpoint is required when spec.encryption is wireguard", label)
+				}
+				if strings.TrimSpace(peer.WireGuard.TransportAddress) != "" {
+					if err := validateSAMTransportAddress(label+".wireGuard.transportAddress", peer.WireGuard.TransportAddress); err != nil {
+						return true, err
+					}
+				}
+			}
+		}
 	case "AddressMobilityDomain":
 		if res.APIVersion != api.HybridAPIVersion {
 			return true, fmt.Errorf("%s must use apiVersion %s", res.ID(), api.HybridAPIVersion)
@@ -405,4 +509,53 @@ func validateHybridDestinationCIDR(value string) error {
 		return fmt.Errorf("must be an IPv4 CIDR; HybridRoute MVP lowers to IPv4Route")
 	}
 	return nil
+}
+
+func validateSAMTransportCIDR(label, value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return fmt.Errorf("%s is required", label)
+	}
+	prefix, err := netip.ParsePrefix(value)
+	if err != nil {
+		return fmt.Errorf("%s must be a valid IPv4 CIDR: %w", label, err)
+	}
+	prefix = prefix.Masked()
+	if !prefix.Addr().Is4() {
+		return fmt.Errorf("%s must be an IPv4 CIDR", label)
+	}
+	if prefix.Bits() > 30 {
+		return fmt.Errorf("%s must contain at least one /31 pair", label)
+	}
+	return nil
+}
+
+func validateSAMTransportAddress(label, value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return fmt.Errorf("%s is required", label)
+	}
+	if prefix, err := netip.ParsePrefix(value); err == nil {
+		if !prefix.Addr().Is4() {
+			return fmt.Errorf("%s must be an IPv4 address or prefix", label)
+		}
+		return nil
+	}
+	addr, err := netip.ParseAddr(value)
+	if err != nil {
+		return fmt.Errorf("%s must be an IPv4 address or prefix: %w", label, err)
+	}
+	if !addr.Is4() {
+		return fmt.Errorf("%s must be an IPv4 address or prefix", label)
+	}
+	return nil
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }

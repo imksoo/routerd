@@ -1,0 +1,59 @@
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: hybrid-sam-transport-profile
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: BGPRouter
+      metadata:
+        name: main
+      spec:
+        asn: 64520
+        routerID: 10.255.1.1
+        importPolicy:
+          allowedPrefixes:
+            - 192.168.123.0/24
+        exportPolicy:
+          allowedPrefixes:
+            - 192.168.123.0/24
+
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: SAMTransportProfile
+      metadata:
+        name: pve08-core
+      spec:
+        mode: ipip
+        encryption: wireguard
+        localNodeID: pve-rt08
+        innerCIDR: 10.255.1.0/24
+        peerRole: cloud
+        wireGuard:
+          interface: wg-sam
+          privateKeyFile: /usr/local/etc/routerd/secrets/wg-sam.key
+          listenPort: 51820
+          transportCIDR: 10.99.0.0/24
+          persistentKeepalive: 25
+        bgp:
+          routerRef: BGPRouter/main
+          peerASN: 64512
+          timers:
+            profile: fast
+        peers:
+          - name: k8s-rt02
+            nodeID: k8s-rt02
+            endpoint: 192.168.1.53:51820
+            wireGuard:
+              publicKey: K8S_RT02_WG_PUBLIC_KEY_REPLACE_ME
+
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: HybridRoute
+      metadata:
+        name: svnet1-to-core
+      spec:
+        peerRef: pve08-core-k8s-rt02-peer
+        destinationCIDRs:
+          - 192.168.123.0/24
+        install:
+          table: main
+          metric: 120
