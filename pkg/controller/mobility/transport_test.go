@@ -52,6 +52,50 @@ func TestSAMTransportProfileDerivesSymmetricSortedEdge31(t *testing.T) {
 	}
 }
 
+func TestSAMTransportProfileDerivesHubSpokeWithSharedTopology(t *testing.T) {
+	now := time.Date(2026, 6, 6, 9, 3, 0, 0, time.UTC)
+	topology := []string{"k8s-rt01", "k8s-rt02", "pve-rt01", "pve-rt06", "pve-rt08"}
+	k8sStore := testStore(t, now)
+	k8sController := TransportController{
+		Router: transportRouterWithTopology("svnet1", "k8s-rt01", topology, []api.SAMTransportPeerSpec{
+			{NodeRef: "pve-rt01", RemoteEndpoint: "203.0.113.21"},
+			{NodeRef: "pve-rt06", RemoteEndpoint: "203.0.113.26"},
+			{NodeRef: "pve-rt08", RemoteEndpoint: "203.0.113.28"},
+		}),
+		Store: k8sStore,
+		Now:   func() time.Time { return now },
+	}
+	if err := k8sController.Reconcile(context.Background()); err != nil {
+		t.Fatalf("k8s Reconcile: %v", err)
+	}
+	k8sResources := decodeResources(t, latestPart(t, k8sStore, TransportDynamicSource("svnet1", "k8s-rt01")).ResourcesJSON)
+	k8sTunnel := findTransportTunnelForPeer(t, k8sResources, "k8s-rt01", "pve-rt06")
+	k8sPeer := findTransportBGPPeerForPeer(t, k8sResources, "k8s-rt01", "pve-rt06")
+
+	pveStore := testStore(t, now)
+	pveController := TransportController{
+		Router: transportRouterWithTopology("svnet1", "pve-rt06", topology, []api.SAMTransportPeerSpec{
+			{NodeRef: "k8s-rt01", RemoteEndpoint: "198.51.100.11"},
+			{NodeRef: "k8s-rt02", RemoteEndpoint: "198.51.100.12"},
+		}),
+		Store: pveStore,
+		Now:   func() time.Time { return now },
+	}
+	if err := pveController.Reconcile(context.Background()); err != nil {
+		t.Fatalf("pve Reconcile: %v", err)
+	}
+	pveResources := decodeResources(t, latestPart(t, pveStore, TransportDynamicSource("svnet1", "pve-rt06")).ResourcesJSON)
+	pveTunnel := findTransportTunnelForPeer(t, pveResources, "pve-rt06", "k8s-rt01")
+	pvePeer := findTransportBGPPeerForPeer(t, pveResources, "pve-rt06", "k8s-rt01")
+
+	if k8sTunnel.Address != pvePeer.Peers[0]+"/31" {
+		t.Fatalf("k8s local / pve remote = %s / %v, want same /31 edge", k8sTunnel.Address, pvePeer.Peers)
+	}
+	if pveTunnel.Address != k8sPeer.Peers[0]+"/31" {
+		t.Fatalf("pve local / k8s remote = %s / %v, want same /31 edge", pveTunnel.Address, k8sPeer.Peers)
+	}
+}
+
 func TestSAMTransportProfilePeerRemovalReplacesDynamicPart(t *testing.T) {
 	now := time.Date(2026, 6, 6, 9, 5, 0, 0, time.UTC)
 	store := testStore(t, now)
@@ -117,6 +161,10 @@ func TestSAMTransportProfileDeletionUpsertsEmptyPart(t *testing.T) {
 }
 
 func transportRouter(profile, self string, peers []api.SAMTransportPeerSpec) *api.Router {
+	return transportRouterWithTopology(profile, self, nil, peers)
+}
+
+func transportRouterWithTopology(profile, self string, topology []string, peers []api.SAMTransportPeerSpec) *api.Router {
 	return &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 		Metadata: api.ObjectMeta{Name: "test"},
@@ -127,6 +175,7 @@ func transportRouter(profile, self string, peers []api.SAMTransportPeerSpec) *ap
 				SelfNodeRef:       self,
 				Mode:              "ipip",
 				InnerPrefix:       "10.255.1.0/24",
+				TopologyNodeRefs:  topology,
 				UnderlayInterface: "wan",
 				LocalEndpoint:     "198.51.100.10",
 				BGP: api.SAMTransportBGPProfileSpec{
@@ -168,5 +217,45 @@ func findTransportBGPPeer(t *testing.T, resources []api.Resource) api.BGPPeerSpe
 		return spec
 	}
 	t.Fatalf("BGPPeer not found in %#v", resources)
+	return api.BGPPeerSpec{}
+}
+
+func findTransportTunnelForPeer(t *testing.T, resources []api.Resource, self, peer string) api.TunnelInterfaceSpec {
+	t.Helper()
+	for _, resource := range resources {
+		if resource.APIVersion != api.HybridAPIVersion || resource.Kind != "TunnelInterface" {
+			continue
+		}
+		if resource.Metadata.Annotations["mobility.routerd.net/self-node"] != self ||
+			resource.Metadata.Annotations["mobility.routerd.net/peer-node"] != peer {
+			continue
+		}
+		spec, err := resource.TunnelInterfaceSpec()
+		if err != nil {
+			t.Fatalf("TunnelInterface spec: %v", err)
+		}
+		return spec
+	}
+	t.Fatalf("TunnelInterface for %s/%s not found in %#v", self, peer, resources)
+	return api.TunnelInterfaceSpec{}
+}
+
+func findTransportBGPPeerForPeer(t *testing.T, resources []api.Resource, self, peer string) api.BGPPeerSpec {
+	t.Helper()
+	for _, resource := range resources {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "BGPPeer" {
+			continue
+		}
+		if resource.Metadata.Annotations["mobility.routerd.net/self-node"] != self ||
+			resource.Metadata.Annotations["mobility.routerd.net/peer-node"] != peer {
+			continue
+		}
+		spec, err := resource.BGPPeerSpec()
+		if err != nil {
+			t.Fatalf("BGPPeer spec: %v", err)
+		}
+		return spec
+	}
+	t.Fatalf("BGPPeer for %s/%s not found in %#v", self, peer, resources)
 	return api.BGPPeerSpec{}
 }

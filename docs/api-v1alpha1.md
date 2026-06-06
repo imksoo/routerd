@@ -182,7 +182,7 @@ for DoH or DoT endpoint name resolution.
 | `OverlayPeer` | Describes an on-prem or cloud overlay peer and the local underlay used to reach it. |
 | `HybridRoute` | Lowers non-default remote IPv4 prefixes through an `OverlayPeer` into managed `IPv4Route` resources. |
 | `MobilityPool` | Declares the only operator-authored CloudEdge mobility intent: pool prefix, federation group, node-to-site membership, BGP delivery policy, optional reusable cloud capture profiles, local value expansion, and provider trap placement. routerd derives BGP `/32` advertisements and provider trap action plans from observed facts and BGP best paths. |
-| `SAMTransportProfile` | Declares this router's stable `selfNodeRef`, inner tunnel prefix, underlay interface, BGP router, and SAM transport peers. routerd derives per-peer `TunnelInterface`, endpoint `/32` `IPv4Route`, and `BGPPeer` resources through a replace-on-reconcile `DynamicConfigPart`. |
+| `SAMTransportProfile` | Declares this router's stable `selfNodeRef`, shared topology node list, inner tunnel prefix, underlay interface, BGP router, and SAM transport peers. routerd derives per-peer `TunnelInterface`, endpoint `/32` `IPv4Route`, and `BGPPeer` resources through a replace-on-reconcile `DynamicConfigPart`. |
 | `AddressMobilityDomain` | Defines an IPv4 prefix for Selective Address Mobility; full L2 extension is not supported. |
 | `CloudProviderProfile` | Describes provider capabilities and external-command auth for declarative address capture planning. |
 | `RemoteAddressClaim` | Declares one mobile IPv4 `/32`, its capture mechanism, and route delivery over an `OverlayPeer`. |

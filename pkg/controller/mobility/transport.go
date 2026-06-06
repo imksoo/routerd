@@ -115,15 +115,9 @@ func (c TransportController) deriveTransportResources(owner api.Resource, spec a
 		return transportDerivation{}, err
 	}
 	inner = inner.Masked()
-	edges := make([]string, 0, len(spec.Peers))
-	for _, peer := range spec.Peers {
-		peerNode := strings.TrimSpace(peer.NodeRef)
-		edges = append(edges, sortedEdgeKey(self, peerNode))
-	}
-	sort.Strings(edges)
-	edgeIndex := map[string]int{}
-	for i, edge := range edges {
-		edgeIndex[edge] = i
+	edgeIndex, err := transportEdgeIndex(spec)
+	if err != nil {
+		return transportDerivation{}, err
 	}
 	var out transportDerivation
 	for _, peer := range spec.Peers {
@@ -131,7 +125,11 @@ func (c TransportController) deriveTransportResources(owner api.Resource, spec a
 		if peerNode == "" || peerNode == self {
 			return transportDerivation{}, fmt.Errorf("invalid peer nodeRef %q", peer.NodeRef)
 		}
-		localPrefix, remoteAddr, err := derivedInnerAddresses(inner, self, peerNode, edgeIndex[sortedEdgeKey(self, peerNode)], peer.Override)
+		index, ok := edgeIndex[sortedEdgeKey(self, peerNode)]
+		if !ok {
+			return transportDerivation{}, fmt.Errorf("peer %s must be listed in topologyNodeRefs", peerNode)
+		}
+		localPrefix, remoteAddr, err := derivedInnerAddresses(inner, self, peerNode, index, peer.Override)
 		if err != nil {
 			return transportDerivation{}, fmt.Errorf("peer %s: %w", peerNode, err)
 		}
@@ -212,6 +210,51 @@ func (c TransportController) deriveTransportResources(owner api.Resource, spec a
 	}
 	sort.Strings(out.PendingSources)
 	return out, nil
+}
+
+func transportEdgeIndex(spec api.SAMTransportProfileSpec) (map[string]int, error) {
+	topology := normalizeTransportTopology(spec)
+	if len(topology) < 2 {
+		return nil, fmt.Errorf("topologyNodeRefs requires at least two nodes")
+	}
+	sort.Strings(topology)
+	seen := map[string]bool{}
+	for _, node := range topology {
+		if node == "" {
+			return nil, fmt.Errorf("topologyNodeRefs must not contain empty nodeRefs")
+		}
+		if seen[node] {
+			return nil, fmt.Errorf("topologyNodeRefs nodeRef %q is duplicated", node)
+		}
+		seen[node] = true
+	}
+	if !seen[strings.TrimSpace(spec.SelfNodeRef)] {
+		return nil, fmt.Errorf("selfNodeRef %q must be listed in topologyNodeRefs", spec.SelfNodeRef)
+	}
+	out := map[string]int{}
+	index := 0
+	for i := 0; i < len(topology); i++ {
+		for j := i + 1; j < len(topology); j++ {
+			out[sortedEdgeKey(topology[i], topology[j])] = index
+			index++
+		}
+	}
+	return out, nil
+}
+
+func normalizeTransportTopology(spec api.SAMTransportProfileSpec) []string {
+	if len(spec.TopologyNodeRefs) > 0 {
+		out := make([]string, 0, len(spec.TopologyNodeRefs))
+		for _, node := range spec.TopologyNodeRefs {
+			out = append(out, strings.TrimSpace(node))
+		}
+		return out
+	}
+	out := []string{strings.TrimSpace(spec.SelfNodeRef)}
+	for _, peer := range spec.Peers {
+		out = append(out, strings.TrimSpace(peer.NodeRef))
+	}
+	return out
 }
 
 func (c TransportController) remoteEndpoint(peer api.SAMTransportPeerSpec) (string, string) {

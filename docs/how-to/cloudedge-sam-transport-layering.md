@@ -88,10 +88,11 @@ these invariants:
 
 `spec.selfNodeRef` is required on every router. It is the stable identity used
 for deterministic `/31` inner address derivation; routerd does not infer it from
-hostname or BGP router ID. Each edge is keyed by the sorted pair of
-`selfNodeRef` and peer `nodeRef`, then allocated from `innerPrefix` in sorted
-edge order, so both ends derive the same `/31` with local and remote addresses
-reversed.
+hostname or BGP router ID. When a profile has more than one peer, set the same
+`spec.topologyNodeRefs` list on every router in the transport domain. routerd
+sorts that shared node list and ranks every unordered node pair, then allocates
+the ranked edge from `innerPrefix`. This keeps hub/spoke profiles deterministic
+even when each router declares a different local peer set.
 
 ```yaml
 apiVersion: mobility.routerd.net/v1alpha1
@@ -102,6 +103,9 @@ spec:
   selfNodeRef: pve-rt
   mode: ipip
   innerPrefix: 10.255.1.0/24
+  topologyNodeRefs:
+    - k8s-rt
+    - pve-rt
   underlayInterface: wg-hybrid
   localEndpointFrom:
     resource: Interface/wg-hybrid

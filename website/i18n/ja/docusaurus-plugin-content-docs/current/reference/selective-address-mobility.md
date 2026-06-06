@@ -201,9 +201,11 @@ mode です。古い route-lowered SAM delivery は、hand-authored
 path を運ぶ peer ごとの `TunnelInterface`、endpoint `/32` `IPv4Route`、
 `BGPPeer` を導出します。各 router は `spec.selfNodeRef` を明示する必要があり、
 routerd は hostname や BGP router ID から local node identity を推測しません。
-controller は self/peer node pair を sort して `spec.innerPrefix` から `/31`
-edge を割り当てるため、両端は同じ edge を local/remote が反転した形で導出しま
-す。
+profile が複数 peer を持つ場合は、同じ transport domain にいる全 router で同じ
+`spec.topologyNodeRefs` を宣言する必要があります。controller はその共有 node list
+を sort し、unordered node pair の順位から `spec.innerPrefix` 内の `/31` を割り
+当てます。これにより、hub/spoke で各 router の local peer list が異なる場合でも
+両端は同じ edge を local/remote が反転した形で導出します。
 
 peer を profile から外すと、その profile の `DynamicConfigPart` は新しい生成
 resource set で置き換えられます。profile 削除時は古い part を空の active part

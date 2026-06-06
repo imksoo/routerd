@@ -676,6 +676,7 @@ type SAMTransportProfileSpec struct {
 	Mode              string                     `yaml:"mode" json:"mode" jsonschema:"enum=ipip,enum=gre"`
 	Encryption        string                     `yaml:"encryption,omitempty" json:"encryption,omitempty" jsonschema:"enum=,enum=none,enum=wireguard"`
 	InnerPrefix       string                     `yaml:"innerPrefix" json:"innerPrefix"`
+	TopologyNodeRefs  []string                   `yaml:"topologyNodeRefs,omitempty" json:"topologyNodeRefs,omitempty"`
 	UnderlayInterface string                     `yaml:"underlayInterface" json:"underlayInterface"`
 	LocalEndpoint     string                     `yaml:"localEndpoint,omitempty" json:"localEndpoint,omitempty"`
 	LocalEndpointFrom StatusValueSourceSpec      `yaml:"localEndpointFrom,omitempty" json:"localEndpointFrom,omitempty"`

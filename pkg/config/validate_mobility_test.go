@@ -67,9 +67,25 @@ func TestValidateSAMTransportProfileRejectsInvalidFields(t *testing.T) {
 		{
 			name: "duplicate peer",
 			mut: func(spec *api.SAMTransportProfileSpec) {
+				spec.TopologyNodeRefs = []string{"pve-rt", "k8s-rt"}
 				spec.Peers = append(spec.Peers, api.SAMTransportPeerSpec{NodeRef: "k8s-rt", RemoteEndpoint: "203.0.113.30"})
 			},
 			want: "nodeRef \"k8s-rt\" is duplicated",
+		},
+		{
+			name: "missing topology for multiple peers",
+			mut: func(spec *api.SAMTransportProfileSpec) {
+				spec.Peers = append(spec.Peers, api.SAMTransportPeerSpec{NodeRef: "cloud-rt", RemoteEndpoint: "203.0.113.30"})
+			},
+			want: "spec.topologyNodeRefs is required",
+		},
+		{
+			name: "peer missing from topology",
+			mut: func(spec *api.SAMTransportProfileSpec) {
+				spec.TopologyNodeRefs = []string{"pve-rt", "k8s-rt", "other-rt"}
+				spec.Peers = append(spec.Peers, api.SAMTransportPeerSpec{NodeRef: "cloud-rt", RemoteEndpoint: "203.0.113.30"})
+			},
+			want: "must be listed in spec.topologyNodeRefs",
 		},
 		{
 			name: "override half set",
@@ -79,6 +95,7 @@ func TestValidateSAMTransportProfileRejectsInvalidFields(t *testing.T) {
 		{
 			name: "override conflict",
 			mut: func(spec *api.SAMTransportProfileSpec) {
+				spec.TopologyNodeRefs = []string{"pve-rt", "k8s-rt", "cloud-rt"}
 				spec.Peers[0].Override = api.SAMTransportPeerOverrideSpec{LocalInner: "10.255.1.0/31", RemoteInner: "10.255.1.1"}
 				spec.Peers = append(spec.Peers, api.SAMTransportPeerSpec{
 					NodeRef:        "cloud-rt",

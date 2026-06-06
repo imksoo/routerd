@@ -156,7 +156,7 @@ DNSSEC validation は `DNSForwarder.spec.dnssecValidate` に書きます。
 | `OverlayPeer` | on-prem または cloud の overlay peer と、それに到達する local underlay を表します。 |
 | `HybridRoute` | default ではない remote IPv4 prefix を、`OverlayPeer` 経由の managed `IPv4Route` に lower します。 |
 | `MobilityPool` | CloudEdge mobility の唯一の operator-authored intent です。pool prefix、federation group、node-to-site membership、BGP delivery policy、再利用可能な cloud capture profile、local value expansion、provider trap placement を宣言し、routerd は observed fact と BGP best path から BGP `/32` advertisement と provider trap action plan を導出します。 |
-| `SAMTransportProfile` | この router の安定した `selfNodeRef`、inner tunnel prefix、underlay interface、BGP router、SAM transport peer を宣言します。routerd は peer ごとの `TunnelInterface`、endpoint `/32` `IPv4Route`、`BGPPeer` を `DynamicConfigPart` として導出します。 |
+| `SAMTransportProfile` | この router の安定した `selfNodeRef`、共有 topology node list、inner tunnel prefix、underlay interface、BGP router、SAM transport peer を宣言します。routerd は peer ごとの `TunnelInterface`、endpoint `/32` `IPv4Route`、`BGPPeer` を `DynamicConfigPart` として導出します。 |
 | `IPAddressSet` | 直接指定したアドレスや FQDN から、再利用可能な IP address set を定義します。Linux nftables renderer はこれを named set として出力し、redirect、NAT、policy routing から参照できます。 |
 | `IPv4Route` | IPv4 経路を追加します。DS-Lite 経由の既定経路や、明示的な破棄経路にも使います。 |
 | `ClusterNetworkRoute` | Kubernetes の Pod / Service CIDR を、worker の next hop 経由の static IPv4 route に展開します。 |

@@ -185,10 +185,6 @@ func validateSAMTransportProfile(res api.Resource, spec api.SAMTransportProfileS
 	if len(spec.Peers) == 0 {
 		return fmt.Errorf("%s spec.peers requires at least one peer", res.ID())
 	}
-	capacity := 1 << (31 - inner.Bits())
-	if len(spec.Peers) > capacity {
-		return fmt.Errorf("%s spec.innerPrefix %s has %d /31 edges but spec.peers has %d peers", res.ID(), inner, capacity, len(spec.Peers))
-	}
 	seenPeers := map[string]bool{}
 	usedInner := map[string]string{}
 	for i, peer := range spec.Peers {
@@ -210,7 +206,52 @@ func validateSAMTransportProfile(res api.Resource, spec api.SAMTransportProfileS
 			return err
 		}
 	}
+	capacity := 1 << (31 - inner.Bits())
+	if len(spec.Peers) > 1 && len(spec.TopologyNodeRefs) == 0 {
+		return fmt.Errorf("%s spec.topologyNodeRefs is required when spec.peers has more than one peer", res.ID())
+	}
+	topology, err := normalizeSAMTransportTopology(res.ID(), spec)
+	if err != nil {
+		return err
+	}
+	edgeCount := len(topology) * (len(topology) - 1) / 2
+	if edgeCount > capacity {
+		return fmt.Errorf("%s spec.innerPrefix %s has %d /31 edges but topologyNodeRefs requires %d edges", res.ID(), inner, capacity, edgeCount)
+	}
+	for i, peer := range spec.Peers {
+		nodeRef := strings.TrimSpace(peer.NodeRef)
+		if !stringInSlice(nodeRef, topology) {
+			return fmt.Errorf("%s spec.peers[%d].nodeRef %q must be listed in spec.topologyNodeRefs", res.ID(), i, nodeRef)
+		}
+	}
 	return nil
+}
+
+func normalizeSAMTransportTopology(resourceID string, spec api.SAMTransportProfileSpec) ([]string, error) {
+	topology := append([]string(nil), spec.TopologyNodeRefs...)
+	if len(topology) == 0 {
+		topology = []string{spec.SelfNodeRef}
+		for _, peer := range spec.Peers {
+			topology = append(topology, peer.NodeRef)
+		}
+	}
+	seen := map[string]bool{}
+	out := make([]string, 0, len(topology))
+	for i, node := range topology {
+		node = strings.TrimSpace(node)
+		if node == "" {
+			return nil, fmt.Errorf("%s spec.topologyNodeRefs[%d] must not be empty", resourceID, i)
+		}
+		if seen[node] {
+			return nil, fmt.Errorf("%s spec.topologyNodeRefs nodeRef %q is duplicated", resourceID, node)
+		}
+		seen[node] = true
+		out = append(out, node)
+	}
+	if !seen[strings.TrimSpace(spec.SelfNodeRef)] {
+		return nil, fmt.Errorf("%s spec.selfNodeRef %q must be listed in spec.topologyNodeRefs", resourceID, spec.SelfNodeRef)
+	}
+	return out, nil
 }
 
 func validateSAMTransportPeerOverride(resourceID string, index int, inner netip.Prefix, override api.SAMTransportPeerOverrideSpec, used map[string]string) error {
