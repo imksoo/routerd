@@ -1882,6 +1882,24 @@ func TestFIBRoutesFromDestinationUsesPeerAddressRewriteFromNeighbor(t *testing.T
 	}
 }
 
+func TestFIBRoutesFromDestinationKeepsPeerAddressRewriteMultipath(t *testing.T) {
+	dst := testRankedDestination("192.168.123.112/32",
+		rankedPath{nextHop: "10.252.0.17", localPref: 100, med: 0},
+		rankedPath{nextHop: "10.252.0.18", localPref: 100, med: 0},
+	)
+	dst.Paths[0].NeighborIp = "10.252.0.1"
+	dst.Paths[1].NeighborIp = "10.252.0.2"
+	routes := fibRoutesFromDestination(
+		dst,
+		[]netip.Prefix{netip.MustParsePrefix("192.168.123.0/24")},
+		map[string]bool{"10.252.0.1": true, "10.252.0.2": true},
+	)
+	want := []FIBRoute{{Prefix: "192.168.123.112/32", NextHops: []string{"10.252.0.1", "10.252.0.2"}}}
+	if !reflect.DeepEqual(routes, want) {
+		t.Fatalf("routes = %#v, want peer-address multipath %#v", routes, want)
+	}
+}
+
 func TestFIBRoutesFromDestinationCanLeaveReflectedNextHopUnchanged(t *testing.T) {
 	dst := testDestinationWithNeighbor("192.168.123.112/32", "10.252.0.17", "10.252.0.1")
 	routes := fibRoutesFromDestination(
