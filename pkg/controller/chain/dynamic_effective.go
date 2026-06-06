@@ -333,15 +333,16 @@ func addressCaptureFromMobilityCapture(capture api.MobilityMemberCapture) api.Ad
 func interfaceIfNames(router api.Router) map[string]string {
 	out := map[string]string{}
 	for _, resource := range router.Spec.Resources {
-		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "Interface" {
+		if resource.APIVersion != api.NetAPIVersion {
 			continue
 		}
-		spec, err := resource.InterfaceSpec()
-		if err != nil {
+		switch resource.Kind {
+		case "Interface", "Bridge", "VXLANSegment", "WireGuardInterface", "PPPoESession", "DSLiteTunnel":
+		default:
 			continue
 		}
 		name := strings.TrimSpace(resource.Metadata.Name)
-		ifname := strings.TrimSpace(spec.IfName)
+		ifname := strings.TrimSpace(interfaceIfName(&router, name))
 		if name != "" && ifname != "" {
 			out[name] = ifname
 		}

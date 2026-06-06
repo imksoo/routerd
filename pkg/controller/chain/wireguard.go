@@ -70,6 +70,9 @@ func (c WireGuardController) cleanupStaleResources(ctx context.Context) error {
 		switch resource.Kind {
 		case "WireGuardInterface":
 			desiredInterfaces[resource.Metadata.Name] = struct{}{}
+			if ifname := interfaceIfName(c.Router, resource.Metadata.Name); ifname != "" {
+				desiredInterfaces[ifname] = struct{}{}
+			}
 		case "WireGuardPeer":
 			desiredPeers[resource.Metadata.Name] = struct{}{}
 		}
@@ -173,7 +176,7 @@ func (c WireGuardController) reconcileInterface(ctx context.Context, resource ap
 	}
 	status := map[string]any{
 		"phase":      "Pending",
-		"interface":  cfg.Name,
+		"interface":  resource.Metadata.Name,
 		"ifname":     cfg.Name,
 		"listenPort": cfg.ListenPort,
 		"mtu":        cfg.MTU,
@@ -266,6 +269,7 @@ func (c WireGuardController) saveUnconfiguredPeerStatuses(iface string) error {
 			"phase":     "NotConfigured",
 			"reason":    "PeerSpecEmpty",
 			"interface": iface,
+			"ifname":    interfaceIfName(c.Router, iface),
 			"dryRun":    c.DryRun,
 		}); err != nil {
 			return err
@@ -431,11 +435,13 @@ func (c WireGuardController) interfaceStatus(ctx context.Context, ifname string)
 }
 
 func (c WireGuardController) savePeerPendingStatuses(iface string, peers []wireguard.PeerConfig, reason string) {
+	ifname := interfaceIfName(c.Router, iface)
 	for _, peer := range peers {
 		_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "WireGuardPeer", peer.Name, map[string]any{
 			"phase":      "Pending",
 			"reason":     reason,
 			"interface":  iface,
+			"ifname":     ifname,
 			"publicKey":  peer.PublicKey,
 			"allowedIPs": append([]string(nil), peer.AllowedIPs...),
 			"endpoint":   peer.Endpoint,
@@ -445,6 +451,7 @@ func (c WireGuardController) savePeerPendingStatuses(iface string, peers []wireg
 }
 
 func (c WireGuardController) savePeerObservedStatuses(iface string, desired []wireguard.PeerConfig, observed []wireguard.PeerStatus) {
+	ifname := interfaceIfName(c.Router, iface)
 	byKey := map[string]wireguard.PeerStatus{}
 	for _, peer := range observed {
 		byKey[peer.PublicKey] = peer
@@ -453,6 +460,7 @@ func (c WireGuardController) savePeerObservedStatuses(iface string, desired []wi
 		status := map[string]any{
 			"phase":               "Configured",
 			"interface":           iface,
+			"ifname":              ifname,
 			"publicKey":           peer.PublicKey,
 			"allowedIPs":          append([]string(nil), peer.AllowedIPs...),
 			"endpoint":            peer.Endpoint,

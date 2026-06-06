@@ -2839,6 +2839,21 @@ func interfaceIfName(router *api.Router, name string) string {
 			if err == nil && spec.IfName != "" {
 				return spec.IfName
 			}
+		case "WireGuardInterface":
+			spec, err := resource.WireGuardInterfaceSpec()
+			if err == nil && spec.IfName != "" {
+				return spec.IfName
+			}
+		case "PPPoESession":
+			spec, err := resource.PPPoESessionSpec()
+			if err == nil {
+				return firstNonEmpty(spec.IfName, "ppp-"+resource.Metadata.Name)
+			}
+		case "DSLiteTunnel":
+			spec, err := resource.DSLiteTunnelSpec()
+			if err == nil {
+				return firstNonEmpty(spec.TunnelName, resource.Metadata.Name)
+			}
 		}
 	}
 	return name
