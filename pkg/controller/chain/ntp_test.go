@@ -12,6 +12,7 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
+	"github.com/imksoo/routerd/pkg/resourcequery"
 )
 
 func TestNTPClientControllerUsesDHCPv6SNTPServers(t *testing.T) {
@@ -284,6 +285,87 @@ func TestNTPServerControllerMarksMissingAllowCIDRFromPending(t *testing.T) {
 	status := store.ObjectStatus(api.SystemAPIVersion, "NTPServer", "lan-time")
 	if status["phase"] != "Pending" || status["reason"] != "AllowCIDRFromPending" {
 		t.Fatalf("unexpected status: %#v", status)
+	}
+}
+
+func TestNTPServerControllerCleansWhenFalseAndRecreatesWhenTrue(t *testing.T) {
+	router := ntpServerRouter(api.NTPServerSpec{
+		When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{
+			"VirtualAddress/lan-vip.role": {Equals: "master"},
+		}},
+		Provider:        "chrony",
+		Managed:         true,
+		Servers:         []string{"ntp.example.net"},
+		AllowCIDRs:      []string{"172.18.0.0/16"},
+		ListenAddresses: []string{"172.18.0.1"},
+	})
+	store := statefulDHCPMapStore{mapStore: mapStore{
+		api.NetAPIVersion + "/VirtualAddress/lan-vip": {"role": "master"},
+	}}
+	configPath := filepath.Join(t.TempDir(), "chrony-server.conf")
+	var commands []string
+	controller := NTPServerController{
+		Router:         resourcequery.FilterRouterByWhen(router, store),
+		DeclaredRouter: router,
+		Store:          store,
+		ConfigPath:     configPath,
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
+			return nil, nil
+		},
+	}
+
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile master: %v", err)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read master config: %v", err)
+	}
+	if got := string(data); !strings.Contains(got, "allow 172.18.0.0/16\n") || !strings.Contains(got, "bindaddress 172.18.0.1\n") {
+		t.Fatalf("master config missing server settings:\n%s", got)
+	}
+	status := store.ObjectStatus(api.SystemAPIVersion, "NTPServer", "lan-time")
+	if status["phase"] != "Applied" {
+		t.Fatalf("master status = %#v", status)
+	}
+
+	store.mapStore[api.NetAPIVersion+"/VirtualAddress/lan-vip"]["role"] = "backup"
+	controller.Router = resourcequery.FilterRouterByWhen(router, store)
+	commands = nil
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile backup: %v", err)
+	}
+	data, err = os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read backup config: %v", err)
+	}
+	if got := string(data); strings.Contains(got, "allow 172.18.0.0/16\n") || strings.Contains(got, "bindaddress 172.18.0.1\n") {
+		t.Fatalf("backup config still exposes server settings:\n%s", got)
+	}
+	if gotCommands := strings.Join(commands, "\n"); !strings.Contains(gotCommands, "systemctl restart chrony.service") {
+		t.Fatalf("backup reconcile did not restart chrony:\n%s", gotCommands)
+	}
+	status = store.ObjectStatus(api.SystemAPIVersion, "NTPServer", "lan-time")
+	if status["phase"] != "Pending" || status["reason"] != "WhenFalse" {
+		t.Fatalf("backup status = %#v", status)
+	}
+
+	store.mapStore[api.NetAPIVersion+"/VirtualAddress/lan-vip"]["role"] = "master"
+	controller.Router = resourcequery.FilterRouterByWhen(router, store)
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile remaster: %v", err)
+	}
+	data, err = os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read remaster config: %v", err)
+	}
+	if got := string(data); !strings.Contains(got, "allow 172.18.0.0/16\n") || !strings.Contains(got, "bindaddress 172.18.0.1\n") {
+		t.Fatalf("remaster config missing server settings:\n%s", got)
+	}
+	status = store.ObjectStatus(api.SystemAPIVersion, "NTPServer", "lan-time")
+	if status["phase"] != "Applied" {
+		t.Fatalf("remaster status = %#v", status)
 	}
 }
 

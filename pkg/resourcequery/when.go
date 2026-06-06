@@ -39,6 +39,7 @@ func FilterRouterByWhen(router *api.Router, store StateStore) *api.Router {
 		}
 	}
 	filtered.Spec.Resources = clearFilteredBFDRefs(filtered.Spec.Resources, declaredBFDs)
+	filtered.Spec.Resources = clearFilteredDNSRefs(filtered.Spec.Resources)
 	return api.ExpandClusterNetworkRoutes(&filtered)
 }
 
@@ -273,6 +274,96 @@ func clearFilteredBFDRefs(resources []api.Resource, declaredBFDs map[string]bool
 		out = append(out, res)
 	}
 	return out
+}
+
+func clearFilteredDNSRefs(resources []api.Resource) []api.Resource {
+	resolvers := dnsResourceNames(resources, "DNSResolver")
+	upstreams := dnsResourceNames(resources, "DNSUpstream")
+	zones := dnsResourceNames(resources, "DNSZone")
+	forwarders := map[string]bool{}
+	prunedForwarders := make([]api.Resource, 0, len(resources))
+	for _, res := range resources {
+		if res.APIVersion != api.NetAPIVersion || res.Kind != "DNSForwarder" {
+			prunedForwarders = append(prunedForwarders, res)
+			continue
+		}
+		spec, err := res.DNSForwarderSpec()
+		if err != nil || !dnsForwarderRefsRetained(spec, resolvers, upstreams, zones) {
+			continue
+		}
+		forwarders[res.Metadata.Name] = true
+		prunedForwarders = append(prunedForwarders, res)
+	}
+	out := make([]api.Resource, 0, len(prunedForwarders))
+	for _, res := range prunedForwarders {
+		if res.APIVersion != api.NetAPIVersion || res.Kind != "DNSResolver" {
+			out = append(out, res)
+			continue
+		}
+		spec, err := res.DNSResolverSpec()
+		if err != nil {
+			out = append(out, res)
+			continue
+		}
+		spec.Listen = filterDNSResolverListenSources(spec.Listen, forwarders)
+		res.Spec = spec
+		out = append(out, res)
+	}
+	return out
+}
+
+func dnsResourceNames(resources []api.Resource, kind string) map[string]bool {
+	out := map[string]bool{}
+	for _, res := range resources {
+		if res.APIVersion == api.NetAPIVersion && res.Kind == kind && strings.TrimSpace(res.Metadata.Name) != "" {
+			out[res.Metadata.Name] = true
+		}
+	}
+	return out
+}
+
+func dnsForwarderRefsRetained(spec api.DNSForwarderSpec, resolvers, upstreams, zones map[string]bool) bool {
+	if strings.TrimSpace(spec.Resolver) != "" && !resolvers[dnsRefName(spec.Resolver)] {
+		return false
+	}
+	for _, ref := range spec.Upstreams {
+		if !upstreams[dnsRefName(ref)] {
+			return false
+		}
+	}
+	for _, ref := range spec.ZoneRefs {
+		if !zones[dnsRefName(ref)] {
+			return false
+		}
+	}
+	return true
+}
+
+func filterDNSResolverListenSources(listens []api.DNSResolverListenSpec, forwarders map[string]bool) []api.DNSResolverListenSpec {
+	out := make([]api.DNSResolverListenSpec, 0, len(listens))
+	for _, listen := range listens {
+		if len(listen.Sources) == 0 {
+			out = append(out, listen)
+			continue
+		}
+		sources := make([]string, 0, len(listen.Sources))
+		for _, source := range listen.Sources {
+			if forwarders[dnsRefName(source)] {
+				sources = append(sources, source)
+			}
+		}
+		listen.Sources = sources
+		out = append(out, listen)
+	}
+	return out
+}
+
+func dnsRefName(ref string) string {
+	ref = strings.TrimSpace(ref)
+	if i := strings.LastIndex(ref, "/"); i >= 0 {
+		return ref[i+1:]
+	}
+	return ref
 }
 
 func stateValue(store StateStore, name string) (routerstate.Value, time.Duration, bool) {

@@ -78,6 +78,92 @@ func TestSAMRouteControllersSubscribeToDHCPv4ClientStatus(t *testing.T) {
 	}
 }
 
+func TestWhenStatusSubscriptionsFollowResourceWhenRefs(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSResolver"},
+			Metadata: api.ObjectMeta{Name: "lan-resolver"},
+			Spec: api.DNSResolverSpec{
+				When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{
+					"VirtualAddress/lan-vip.role": {Equals: "master"},
+				}},
+			},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "NTPServer"},
+			Metadata: api.ObjectMeta{Name: "lan-time"},
+			Spec: api.NTPServerSpec{
+				When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{
+					"${VirtualAddress/lan-vip.status.role}": {Equals: "master"},
+				}},
+			},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"},
+			Metadata: api.ObjectMeta{Name: "wan"},
+			Spec: api.EgressRoutePolicySpec{
+				Candidates: []api.EgressRoutePolicyCandidate{
+					{
+						Name: "dslite",
+						When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{
+							"HealthCheck/internet.phase": {Equals: "Healthy"},
+						}},
+					},
+				},
+			},
+		},
+	}}}
+
+	dnsSubs := whenStatusSubscriptions(router, "DNSResolver")
+	if !subscriptionSetAccepts(dnsSubs, statusChangedEvent("VirtualAddress", "lan-vip")) {
+		t.Fatal("DNSResolver when subscription did not accept referenced VirtualAddress")
+	}
+	if subscriptionSetAccepts(dnsSubs, statusChangedEvent("VirtualAddress", "other-vip")) {
+		t.Fatal("DNSResolver when subscription accepted unrelated VirtualAddress")
+	}
+	if subscriptionSetAccepts(dnsSubs, statusChangedEvent("DHCPv4Client", "wan")) {
+		t.Fatal("DNSResolver when subscription accepted unrelated kind")
+	}
+
+	ntpSubs := whenStatusSubscriptions(router, "NTPServer")
+	if !subscriptionSetAccepts(ntpSubs, statusChangedEvent("VirtualAddress", "lan-vip")) {
+		t.Fatal("NTPServer when subscription did not accept braced status reference")
+	}
+
+	egressSubs := whenStatusSubscriptions(router, "EgressRoutePolicy")
+	if !subscriptionSetAccepts(egressSubs, statusChangedEvent("HealthCheck", "internet")) {
+		t.Fatal("EgressRoutePolicy when subscription did not accept candidate when reference")
+	}
+}
+
+func TestStatusSubscriptionsWithWhenMergesStaticAndWhenRefs(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44SessionSync"},
+			Metadata: api.ObjectMeta{Name: "conntrack"},
+			Spec: api.NAT44SessionSyncSpec{
+				When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{
+					"VirtualAddress/lan-vip.role": {Equals: "master"},
+				}},
+			},
+		},
+	}}}
+
+	subs := statusSubscriptionsWithWhen(router, []string{"NAT44SessionSync"}, "NAT44Rule", "RouterdCluster")
+	if len(subs) != 1 {
+		t.Fatalf("subscriptions = %d, want one merged subscription", len(subs))
+	}
+	if !subscriptionSetAccepts(subs, statusChangedEvent("NAT44Rule", "lan-to-wan")) {
+		t.Fatal("merged subscription did not accept static dependency")
+	}
+	if !subscriptionSetAccepts(subs, statusChangedEvent("VirtualAddress", "lan-vip")) {
+		t.Fatal("merged subscription did not accept when dependency")
+	}
+	if subscriptionSetAccepts(subs, statusChangedEvent("VirtualAddress", "other-vip")) {
+		t.Fatal("merged subscription accepted unrelated when dependency")
+	}
+}
+
 func TestSAMControllerIgnoresBGPRouterPeerOnlyStatus(t *testing.T) {
 	event := daemonapi.DaemonEvent{
 		Type: "routerd.resource.status.changed",
@@ -90,6 +176,17 @@ func TestSAMControllerIgnoresBGPRouterPeerOnlyStatus(t *testing.T) {
 	}
 	if subscriptionSetAccepts(samStatusSubscriptions(), event) {
 		t.Fatal("sam subscriptions accepted BGPRouter peer-only status change")
+	}
+}
+
+func statusChangedEvent(kind, name string) daemonapi.DaemonEvent {
+	return daemonapi.DaemonEvent{
+		Type: "routerd.resource.status.changed",
+		Resource: &daemonapi.ResourceRef{
+			APIVersion: api.NetAPIVersion,
+			Kind:       kind,
+			Name:       name,
+		},
 	}
 }
 
