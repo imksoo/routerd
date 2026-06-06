@@ -857,6 +857,18 @@ func (r *Runner) effectiveRouterForReconcile(store eventedStore) (*api.Router, e
 	return r.effectiveRouter(store), nil
 }
 
+func (r *Runner) effectiveDynamicRouterForReconcile(store eventedStore, now time.Time, targetOS platform.OS) (*api.Router, error) {
+	effective, err := r.effectiveRouterForReconcile(store)
+	if err != nil {
+		return nil, err
+	}
+	view, err := buildDynamicRouteSAMView(effective, r.Store, now, targetOS)
+	if err != nil {
+		return nil, err
+	}
+	return view.EffectiveRouter, nil
+}
+
 func (r *Runner) Start(ctx context.Context) error {
 	if r.Router == nil || r.Bus == nil || r.Store == nil {
 		return fmt.Errorf("router, bus, and store are required")
@@ -1114,15 +1126,7 @@ func (r *Runner) Start(ctx context.Context) error {
 		return r.effectiveRouterForReconcile(store)
 	}
 	effectiveDynamicForReconcile := func() (*api.Router, error) {
-		effective, err := effectiveForReconcile()
-		if err != nil {
-			return nil, err
-		}
-		view, err := buildDynamicRouteSAMView(effective, r.Store, time.Now().UTC(), platform.CurrentOS())
-		if err != nil {
-			return nil, err
-		}
-		return view.EffectiveRouter, nil
+		return r.effectiveDynamicRouterForReconcile(store, time.Now().UTC(), platform.CurrentOS())
 	}
 	if r.controllerEnabled("event-rule") {
 		rules.Start(ctx)
@@ -2834,6 +2838,21 @@ func interfaceIfName(router *api.Router, name string) string {
 			spec, err := resource.VXLANSegmentSpec()
 			if err == nil && spec.IfName != "" {
 				return spec.IfName
+			}
+		case "WireGuardInterface":
+			spec, err := resource.WireGuardInterfaceSpec()
+			if err == nil && spec.IfName != "" {
+				return spec.IfName
+			}
+		case "PPPoESession":
+			spec, err := resource.PPPoESessionSpec()
+			if err == nil {
+				return firstNonEmpty(spec.IfName, "ppp-"+resource.Metadata.Name)
+			}
+		case "DSLiteTunnel":
+			spec, err := resource.DSLiteTunnelSpec()
+			if err == nil {
+				return firstNonEmpty(spec.TunnelName, resource.Metadata.Name)
 			}
 		}
 	}

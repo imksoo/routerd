@@ -127,6 +127,70 @@ spec:
 	}
 }
 
+func TestWireGuardControllerUsesInterfaceIfName(t *testing.T) {
+	router := mustWireGuardRouter(t, `
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata: {name: test}
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardInterface
+      metadata: {name: wg-svnet1}
+      spec:
+        ifname: wg-transport0
+        privateKey: priv
+        listenPort: 51820
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardPeer
+      metadata: {name: peer-a}
+      spec:
+        interface: wg-svnet1
+        publicKey: peerpub
+        allowedIPs: [10.99.0.2/32]
+`)
+	store := mapStore{}
+	var calls []string
+	controller := WireGuardController{
+		Router: router,
+		Store:  store,
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			call := name + " " + strings.Join(args, " ")
+			calls = append(calls, call)
+			if call == "ip link show wg-transport0" {
+				return nil, errors.New("missing")
+			}
+			if call == "wg show wg-transport0 dump" {
+				return []byte("priv\tifacepub\t51820\toff\npeerpub\tpsk\t\t10.99.0.2/32\t0\t0\t0\t0\n"), nil
+			}
+			return nil, nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"ip link add dev wg-transport0 type wireguard", "wg setconf wg-transport0", "ip link set up dev wg-transport0"} {
+		found := false
+		for _, call := range calls {
+			if strings.HasPrefix(call, want) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("missing command prefix %q in %#v", want, calls)
+		}
+	}
+	iface := store.ObjectStatus(api.NetAPIVersion, "WireGuardInterface", "wg-svnet1")
+	if iface["interface"] != "wg-svnet1" || iface["ifname"] != "wg-transport0" {
+		t.Fatalf("interface status = %+v", iface)
+	}
+	peer := store.ObjectStatus(api.NetAPIVersion, "WireGuardPeer", "peer-a")
+	if peer["interface"] != "wg-svnet1" || peer["ifname"] != "wg-transport0" {
+		t.Fatalf("peer status = %+v", peer)
+	}
+}
+
 func TestWireGuardControllerDeletesStaleManagedInterfaceAndPeer(t *testing.T) {
 	router := mustWireGuardRouter(t, `
 apiVersion: routerd.net/v1alpha1

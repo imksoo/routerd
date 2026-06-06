@@ -83,7 +83,7 @@ func BuildInterface(resource api.Resource, peers []api.Resource) (InterfaceConfi
 		return InterfaceConfig{}, err
 	}
 	cfg := InterfaceConfig{
-		Name:           resource.Metadata.Name,
+		Name:           firstNonEmpty(spec.IfName, resource.Metadata.Name),
 		PrivateKey:     spec.PrivateKey,
 		PrivateKeyFile: spec.PrivateKeyFile,
 		ListenPort:     spec.ListenPort,
@@ -116,6 +116,15 @@ func BuildInterface(resource api.Resource, peers []api.Resource) (InterfaceConfi
 	}
 	sort.SliceStable(cfg.Peers, func(i, j int) bool { return cfg.Peers[i].Name < cfg.Peers[j].Name })
 	return cfg, nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func PeerSpecConfigured(spec api.WireGuardPeerSpec) bool {

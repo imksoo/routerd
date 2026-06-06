@@ -5,11 +5,30 @@ package render
 import (
 	"os"
 	"os/exec"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/imksoo/routerd/pkg/api"
 )
+
+func TestNftOutboundAliasesResolveWireGuardIfName(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardInterface"},
+			Metadata: api.ObjectMeta{Name: "wg-svnet1"},
+			Spec:     api.WireGuardInterfaceSpec{IfName: "wg-transport0"},
+		},
+	}}}
+	aliases, err := nftOutboundAliases(router)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"wg-svnet1": "wg-transport0"}
+	if !reflect.DeepEqual(aliases, want) {
+		t.Fatalf("aliases = %#v, want %#v", aliases, want)
+	}
+}
 
 func TestNftablesNAT44RuleSourceNATFields(t *testing.T) {
 	router := &api.Router{

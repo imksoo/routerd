@@ -428,6 +428,7 @@ type VXLANSegmentSpec struct {
 }
 
 type WireGuardInterfaceSpec struct {
+	IfName         string `yaml:"ifname,omitempty" json:"ifname,omitempty"`
 	PrivateKey     string `yaml:"privateKey,omitempty" json:"privateKey,omitempty"`
 	PrivateKeyFile string `yaml:"privateKeyFile,omitempty" json:"privateKeyFile,omitempty"`
 	ListenPort     int    `yaml:"listenPort,omitempty" json:"listenPort,omitempty" jsonschema:"minimum=1,maximum=65535"`

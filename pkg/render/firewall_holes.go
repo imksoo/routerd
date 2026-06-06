@@ -193,7 +193,13 @@ func internalFirewallResourceIfName(resource api.Resource) string {
 			return strings.TrimSpace(spec.IfName)
 		}
 	case "WireGuardInterface":
-		return strings.TrimSpace(resource.Metadata.Name)
+		spec, err := resource.WireGuardInterfaceSpec()
+		if err == nil {
+			if spec.IfName != "" {
+				return strings.TrimSpace(spec.IfName)
+			}
+			return strings.TrimSpace(resource.Metadata.Name)
+		}
 	case "VXLANSegment":
 		spec, err := resource.VXLANSegmentSpec()
 		if err == nil {

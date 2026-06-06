@@ -206,10 +206,11 @@ func (c TunnelInterfaceController) reconcileInterface(ctx context.Context, resou
 		applied = true
 	}
 	if desired.Address != "" {
-		if err := c.setTunnelAddress(ctx, desired); err != nil {
+		addressChanged, err := c.reconcileTunnelAddress(ctx, desired)
+		if err != nil {
 			return c.saveApplyError(resource, desired, err)
 		}
-		applied = true
+		applied = applied || addressChanged
 	}
 	status = tunnelStatus(desired, c.DryRun, map[string]any{"phase": "Up"})
 	if !applied {
@@ -512,6 +513,66 @@ func (c TunnelInterfaceController) setTunnelLink(ctx context.Context, desired tu
 func (c TunnelInterfaceController) setTunnelLinkUp(ctx context.Context, ifname string) error {
 	_, err := c.run(ctx, "ip", "link", "set", "dev", ifname, "up")
 	return commandError("bring tunnel interface "+ifname+" up", err)
+}
+
+func (c TunnelInterfaceController) reconcileTunnelAddress(ctx context.Context, desired tunnelDesired) (bool, error) {
+	current, err := c.tunnelIPv4Addresses(ctx, desired.Name)
+	if err != nil {
+		return false, err
+	}
+	changed := false
+	hasDesired := false
+	for _, address := range current {
+		if address == desired.Address {
+			hasDesired = true
+			continue
+		}
+		if err := c.deleteTunnelAddress(ctx, desired.Name, address); err != nil {
+			return changed, err
+		}
+		changed = true
+	}
+	if hasDesired {
+		return changed, nil
+	}
+	if err := c.setTunnelAddress(ctx, desired); err != nil {
+		return changed, err
+	}
+	return true, nil
+}
+
+func (c TunnelInterfaceController) tunnelIPv4Addresses(ctx context.Context, ifname string) ([]string, error) {
+	out, err := c.run(ctx, "ip", "-o", "-4", "addr", "show", "dev", ifname)
+	if err != nil {
+		return nil, fmt.Errorf("list tunnel interface %s addresses: %w: %s", ifname, err, strings.TrimSpace(string(out)))
+	}
+	return parseIPv4AddressPrefixes(out), nil
+}
+
+func parseIPv4AddressPrefixes(out []byte) []string {
+	seen := map[string]bool{}
+	var addresses []string
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		for i, field := range fields {
+			if field != "inet" || i+1 >= len(fields) {
+				continue
+			}
+			prefix := strings.TrimSpace(fields[i+1])
+			parsed, err := netip.ParsePrefix(prefix)
+			if err != nil || !parsed.Addr().Is4() || seen[prefix] {
+				continue
+			}
+			seen[prefix] = true
+			addresses = append(addresses, prefix)
+		}
+	}
+	return addresses
+}
+
+func (c TunnelInterfaceController) deleteTunnelAddress(ctx context.Context, ifname, address string) error {
+	_, err := c.run(ctx, "ip", "addr", "del", address, "dev", ifname)
+	return commandError("delete tunnel interface "+ifname+" address "+address, err)
 }
 
 func (c TunnelInterfaceController) setTunnelAddress(ctx context.Context, desired tunnelDesired) error {
