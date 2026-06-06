@@ -2253,12 +2253,20 @@ func importPolicyRefreshNeeded(desired map[string]desiredPeer, routes []FIBRoute
 	}
 	for _, route := range routes {
 		for _, nextHop := range normalizeRouteNextHops(route.NextHops) {
+			if isLocalRouteNextHop(nextHop) {
+				continue
+			}
 			if !peerAddresses[nextHop] {
 				return true
 			}
 		}
 	}
 	return false
+}
+
+func isLocalRouteNextHop(value string) bool {
+	addr, err := netip.ParseAddr(strings.TrimSpace(value))
+	return err == nil && addr.IsUnspecified()
 }
 
 func bgpPolicyName(routerName, suffix string) string {
