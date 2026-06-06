@@ -55,6 +55,7 @@ func TestLivePersistenceSupportsLabeledConfigImport(t *testing.T) {
 	required := []string{
 		"config_source_file=/run/routerd/live-config-source",
 		"config_checksum_file=/run/routerd/live-config-sha256",
+		"secrets_dir=/usr/local/etc/routerd/secrets",
 		"blkid -L ROUTERD_CONFIG",
 		"/dev/sr*",
 		"iso9660|udf",
@@ -64,6 +65,11 @@ func TestLivePersistenceSupportsLabeledConfigImport(t *testing.T) {
 		"${mount_dir}/${persist_dir_name}/hosts/${host}.yaml",
 		"${mount_dir}/${persist_dir_name}/hosts/${mac}.yaml",
 		"${mount_dir}/${persist_dir_name}/router.yaml",
+		"restore_secrets",
+		"${src_parent}/secrets",
+		"${mount_dir}/${persist_dir_name}/secrets",
+		"install -m 0600 \"${secret}\" \"${dest}\"",
+		"save_secrets_to_usb",
 		"record_config_source",
 		"sha256sum \"${src}\"",
 	}

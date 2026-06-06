@@ -110,6 +110,7 @@ set -eu
 state_dir=/run/routerd/live
 mount_dir=/media/routerd-usb
 config_file=/usr/local/etc/routerd/router.yaml
+secrets_dir=/usr/local/etc/routerd/secrets
 usb_state_file=/run/routerd/live/usb-device
 config_source_file=/run/routerd/live-config-source
 config_checksum_file=/run/routerd/live-config-sha256
@@ -370,11 +371,33 @@ restore_config()
     if [ -f "${src}" ]; then
         mkdir -p "$(dirname "${config_file}")"
         install -m 0600 "${src}" "${config_file}"
+        restore_secrets "${src}"
         record_config_source "${dev}" "${src}"
         log "restored ${config_file} from ${dev}:${src#${mount_dir}/}"
         return 0
     fi
     return 1
+}
+
+restore_secrets()
+{
+    config_src=$1
+    src_parent=$(dirname "${config_src}")
+    for src_dir in \
+        "${src_parent}/secrets" \
+        "${mount_dir}/${persist_dir_name}/secrets" \
+        "${mount_dir}/routerd/secrets"; do
+        [ -d "${src_dir}" ] || continue
+        mkdir -p "${secrets_dir}"
+        chmod 0700 "${secrets_dir}" 2>/dev/null || true
+        find "${src_dir}" -type f | while IFS= read -r secret; do
+            rel=${secret#${src_dir}/}
+            dest="${secrets_dir}/${rel}"
+            mkdir -p "$(dirname "${dest}")"
+            install -m 0600 "${secret}" "${dest}"
+        done
+        log "restored routerd secrets from ${src_dir#${mount_dir}/}"
+    done
 }
 
 config_hostnames()
@@ -460,6 +483,7 @@ save_config()
     mount_usb "${dev}" || return 1
     mkdir -p "${mount_dir}/${persist_dir_name}/logs" "${mount_dir}/${persist_dir_name}/state"
     install -m 0600 "${src}" "${mount_dir}/${persist_dir_name}/router.yaml"
+    save_secrets_to_usb
     printf '%s\n' "${dev}" > "${usb_state_file}"
     printf '%s\n' "${dev}" > "${mount_dir}/${persist_dir_name}/usb-device"
     printf '%s\n' "${flush_enabled}" > "${mount_dir}/${persist_dir_name}/usb-flush-enabled"
@@ -471,6 +495,18 @@ save_config()
     fi
     sync
     log "saved routerd config to ${dev}"
+}
+
+save_secrets_to_usb()
+{
+    [ -d "${secrets_dir}" ] || return 0
+    mkdir -p "${mount_dir}/${persist_dir_name}/secrets"
+    find "${secrets_dir}" -type f | while IFS= read -r secret; do
+        rel=${secret#${secrets_dir}/}
+        dest="${mount_dir}/${persist_dir_name}/secrets/${rel}"
+        mkdir -p "$(dirname "${dest}")"
+        install -m 0600 "${secret}" "${dest}"
+    done
 }
 
 flush_to_usb()
@@ -486,6 +522,7 @@ flush_to_usb()
     }
     mkdir -p "${mount_dir}/${persist_dir_name}/logs" "${mount_dir}/${persist_dir_name}/state"
     [ -f "${config_file}" ] && install -m 0600 "${config_file}" "${mount_dir}/${persist_dir_name}/router.yaml"
+    save_secrets_to_usb
     if [ -d /var/lib/routerd ]; then
         tar -C /var/lib -czf "${mount_dir}/${persist_dir_name}/state/routerd-varlib.tgz" routerd 2>/dev/null || true
     fi
