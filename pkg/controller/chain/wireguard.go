@@ -269,7 +269,7 @@ func (c WireGuardController) reconcileInterface(ctx context.Context, resource ap
 }
 
 func (c WireGuardController) withBGPMobilityAllowedIPs(cfg wireguard.InterfaceConfig) wireguard.InterfaceConfig {
-	if c.Store == nil || len(cfg.Peers) == 0 {
+	if c.Store == nil || len(cfg.Peers) == 0 || !cfg.AllowBGPMobilityAllowedIPs {
 		return cfg
 	}
 	peerIndexesByNextHop := wireGuardPeerIndexesByAllowedIP(cfg.Peers)
