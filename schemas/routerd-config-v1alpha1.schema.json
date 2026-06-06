@@ -1997,6 +1997,9 @@
                   "spec": {
                     "additionalProperties": false,
                     "properties": {
+                      "ifname": {
+                        "type": "string"
+                      },
                       "listenPort": {
                         "maximum": 65535,
                         "minimum": 1,
