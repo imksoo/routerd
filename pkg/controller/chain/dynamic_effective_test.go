@@ -58,6 +58,74 @@ func TestDynamicRouteSAMViewIncludesDynamicRemoteAddressClaim(t *testing.T) {
 	}
 }
 
+func TestDynamicControllerRouterIncludesDynamicTunnelAndBGPPeer(t *testing.T) {
+	now := time.Now().UTC()
+	startup := startupHybridContextRouter()
+	startup.Spec.Resources = append(startup.Spec.Resources, api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"},
+		Metadata: api.ObjectMeta{Name: "sam"},
+		Spec:     api.BGPRouterSpec{ASN: 64512, RouterID: "10.255.0.1"},
+	})
+	dynamicResources := []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
+			Metadata: api.ObjectMeta{Name: "sam-core-a"},
+			Spec: api.TunnelInterfaceSpec{
+				Mode:              "ipip",
+				Local:             "10.252.0.1",
+				Remote:            "10.252.0.2",
+				Address:           "10.255.1.0/31",
+				UnderlayInterface: "wg-svnet1",
+				TrustedUnderlay:   true,
+			},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPPeer"},
+			Metadata: api.ObjectMeta{Name: "sam-core-a"},
+			Spec: api.BGPPeerSpec{
+				RouterRef: "BGPRouter/sam",
+				PeerASN:   64512,
+				Peers:     []string{"10.255.1.1"},
+			},
+		},
+	}
+	store := &dynamicRouteSAMStore{
+		records: []routerstate.DynamicConfigPartRecord{
+			dynamicPartRecord(t, "SAMTransportProfile/svnet1-core/node/pve-rt01", dynamicResources, now.Add(time.Hour)),
+		},
+		objects: map[string]map[string]any{},
+	}
+	runner := &Runner{Router: startup, Store: store}
+	staticRouter, err := runner.effectiveRouterForReconcile(eventedStore{Store: store})
+	if err != nil {
+		t.Fatalf("effectiveRouterForReconcile: %v", err)
+	}
+	if countResources(staticRouter, api.HybridAPIVersion, "TunnelInterface") != 0 || countResources(staticRouter, api.NetAPIVersion, "BGPPeer") != 0 {
+		t.Fatalf("static effective router unexpectedly contains dynamic resources")
+	}
+
+	dynamicRouter, err := runner.effectiveDynamicRouterForReconcile(eventedStore{Store: store}, now, platform.OSLinux)
+	if err != nil {
+		t.Fatalf("effectiveDynamicRouterForReconcile: %v", err)
+	}
+	tunnel := resourceByName(t, dynamicRouter, api.HybridAPIVersion, "TunnelInterface", "sam-core-a")
+	tunnelSpec, err := tunnel.TunnelInterfaceSpec()
+	if err != nil {
+		t.Fatalf("TunnelInterface spec: %v", err)
+	}
+	if tunnelSpec.Mode != "ipip" || tunnelSpec.Address != "10.255.1.0/31" || tunnelSpec.UnderlayInterface != "wg-svnet1" {
+		t.Fatalf("dynamic TunnelInterface spec = %#v", tunnelSpec)
+	}
+	peer := resourceByName(t, dynamicRouter, api.NetAPIVersion, "BGPPeer", "sam-core-a")
+	peerSpec, err := peer.BGPPeerSpec()
+	if err != nil {
+		t.Fatalf("BGPPeer spec: %v", err)
+	}
+	if peerSpec.RouterRef != "BGPRouter/sam" || !reflect.DeepEqual(peerSpec.Peers, []string{"10.255.1.1"}) {
+		t.Fatalf("dynamic BGPPeer spec = %#v", peerSpec)
+	}
+}
+
 func TestDynamicRouteSAMViewSuppressesMobilityClaimsWhenPoolUsesBGPDelivery(t *testing.T) {
 	startup := startupHybridContextRouter()
 	startup.Spec.Resources = append(startup.Spec.Resources, api.Resource{
@@ -736,6 +804,20 @@ func countResources(router *api.Router, apiVersion, kind string) int {
 		}
 	}
 	return count
+}
+
+func resourceByName(t *testing.T, router *api.Router, apiVersion, kind, name string) api.Resource {
+	t.Helper()
+	if router == nil {
+		t.Fatalf("router is nil")
+	}
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion == apiVersion && resource.Kind == kind && resource.Metadata.Name == name {
+			return resource
+		}
+	}
+	t.Fatalf("resource %s/%s/%s not found", apiVersion, kind, name)
+	return api.Resource{}
 }
 
 func ipv4RouteSpecByName(t *testing.T, router *api.Router, name string) api.IPv4RouteSpec {
