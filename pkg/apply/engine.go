@@ -734,8 +734,16 @@ func (e *Engine) observeTunnelInterface(res api.Resource, includePlan bool, rr *
 	}
 	rr.Observed["ifname"] = res.Metadata.Name
 	rr.Observed["mode"] = spec.Mode
-	rr.Observed["local"] = spec.Local
-	rr.Observed["remote"] = spec.Remote
+	if strings.TrimSpace(spec.LocalFrom.Resource) != "" {
+		rr.Observed["localFrom"] = statusValueSourceLabel(spec.LocalFrom)
+	} else {
+		rr.Observed["local"] = spec.Local
+	}
+	if strings.TrimSpace(spec.RemoteFrom.Resource) != "" {
+		rr.Observed["remoteFrom"] = statusValueSourceLabel(spec.RemoteFrom)
+	} else {
+		rr.Observed["remote"] = spec.Remote
+	}
 	if spec.MTU != 0 {
 		rr.Observed["mtu"] = fmt.Sprintf("%d", spec.MTU)
 	}
@@ -754,6 +762,14 @@ func (e *Engine) observeTunnelInterface(res api.Resource, includePlan bool, rr *
 	if includePlan {
 		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure %s tunnel interface %s exists", spec.Mode, res.Metadata.Name))
 	}
+}
+
+func statusValueSourceLabel(source api.StatusValueSourceSpec) string {
+	field := strings.TrimSpace(source.Field)
+	if field == "" {
+		field = "phase"
+	}
+	return strings.TrimSpace(source.Resource) + "." + field
 }
 
 func (e *Engine) observeWireGuardPeer(res api.Resource, aliases map[string]string, includePlan bool, rr *ResourceResult) {

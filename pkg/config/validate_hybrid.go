@@ -67,17 +67,11 @@ func validateHybridResource(res api.Resource, _ platform.OS) (bool, error) {
 		default:
 			return true, fmt.Errorf("%s spec.mode must be ipip, gre, fou, or gue", res.ID())
 		}
-		if strings.TrimSpace(spec.Local) == "" {
-			return true, fmt.Errorf("%s spec.local is required", res.ID())
+		if err := validateTunnelEndpointOrSource(res.ID(), "local", spec.Local, spec.LocalFrom); err != nil {
+			return true, err
 		}
-		if err := validateTunnelEndpoint(spec.Local); err != nil {
-			return true, fmt.Errorf("%s spec.local: %w", res.ID(), err)
-		}
-		if strings.TrimSpace(spec.Remote) == "" {
-			return true, fmt.Errorf("%s spec.remote is required", res.ID())
-		}
-		if err := validateTunnelEndpoint(spec.Remote); err != nil {
-			return true, fmt.Errorf("%s spec.remote: %w", res.ID(), err)
+		if err := validateTunnelEndpointOrSource(res.ID(), "remote", spec.Remote, spec.RemoteFrom); err != nil {
+			return true, err
 		}
 		if strings.TrimSpace(spec.Address) != "" {
 			if err := validateTunnelAddress(spec.Address); err != nil {
@@ -265,6 +259,26 @@ func validateTunnelEndpoint(value string) error {
 	}
 	if !addr.Is4() {
 		return fmt.Errorf("must be an IPv4 address")
+	}
+	return nil
+}
+
+func validateTunnelEndpointOrSource(resourceID, field, value string, source api.StatusValueSourceSpec) error {
+	hasValue := strings.TrimSpace(value) != ""
+	hasSource := strings.TrimSpace(source.Resource) != ""
+	switch {
+	case hasValue && hasSource:
+		return fmt.Errorf("%s spec.%s and spec.%sFrom are mutually exclusive", resourceID, field, field)
+	case !hasValue && !hasSource:
+		return fmt.Errorf("%s spec.%s or spec.%sFrom is required", resourceID, field, field)
+	case hasValue:
+		if err := validateTunnelEndpoint(value); err != nil {
+			return fmt.Errorf("%s spec.%s: %w", resourceID, field, err)
+		}
+	case hasSource:
+		if strings.TrimSpace(source.Field) == "" {
+			return fmt.Errorf("%s spec.%sFrom.field is required", resourceID, field)
+		}
 	}
 	return nil
 }

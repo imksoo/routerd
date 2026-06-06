@@ -6547,6 +6547,26 @@
                       "local": {
                         "type": "string"
                       },
+                      "localFrom": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "field": {
+                            "description": "Field defaults to phase when omitted.",
+                            "type": "string"
+                          },
+                          "optional": {
+                            "type": "boolean"
+                          },
+                          "resource": {
+                            "description": "Resource names the source resource as Kind/name and reads its status, or a router config field for supported resources.",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "resource"
+                        ],
+                        "type": "object"
+                      },
                       "mode": {
                         "enum": [
                           "ipip",
@@ -6573,6 +6593,26 @@
                       "remote": {
                         "type": "string"
                       },
+                      "remoteFrom": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "field": {
+                            "description": "Field defaults to phase when omitted.",
+                            "type": "string"
+                          },
+                          "optional": {
+                            "type": "boolean"
+                          },
+                          "resource": {
+                            "description": "Resource names the source resource as Kind/name and reads its status, or a router config field for supported resources.",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "resource"
+                        ],
+                        "type": "object"
+                      },
                       "trustedUnderlay": {
                         "type": "boolean"
                       },
@@ -6584,8 +6624,6 @@
                     },
                     "required": [
                       "mode",
-                      "local",
-                      "remote",
                       "trustedUnderlay"
                     ],
                     "type": "object"

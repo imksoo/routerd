@@ -25,6 +25,28 @@ func TestValidateTunnelInterfaceResources(t *testing.T) {
 	}
 }
 
+func TestValidateTunnelInterfaceEndpointSources(t *testing.T) {
+	router := validTunnelHybridRouter()
+	spec := router.Spec.Resources[0].Spec.(api.TunnelInterfaceSpec)
+	spec.Local = ""
+	spec.LocalFrom = api.StatusValueSourceSpec{Resource: "Interface/eth0-status", Field: "primaryIPv4"}
+	spec.Remote = ""
+	spec.RemoteFrom = api.StatusValueSourceSpec{Resource: "IPv4StaticAddress/remote-underlay", Field: "address"}
+	router.Spec.Resources[0].Spec = spec
+	router.Spec.Resources = append(router.Spec.Resources, testResource(api.NetAPIVersion, "IPv4StaticAddress", "remote-underlay", api.IPv4StaticAddressSpec{
+		Interface: "eth0",
+		Address:   "192.0.2.20/24",
+	}), testResource(api.NetAPIVersion, "Interface", "eth0-status", api.InterfaceSpec{
+		IfName:  "eth0",
+		Managed: false,
+	}), testResource(api.NetAPIVersion, "Interface", "eth0", api.InterfaceSpec{
+		IfName: "eth0",
+	}))
+	if err := Validate(router); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+}
+
 func TestValidateHybridFailures(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -336,7 +358,7 @@ func TestValidateTunnelInterfaceFailures(t *testing.T) {
 				spec.Local = ""
 				router.Spec.Resources[0].Spec = spec
 			},
-			want: "spec.local is required",
+			want: "spec.local or spec.localFrom is required",
 		},
 		{
 			name: "remote required",
@@ -345,7 +367,26 @@ func TestValidateTunnelInterfaceFailures(t *testing.T) {
 				spec.Remote = ""
 				router.Spec.Resources[0].Spec = spec
 			},
-			want: "spec.remote is required",
+			want: "spec.remote or spec.remoteFrom is required",
+		},
+		{
+			name: "local and localFrom conflict",
+			mutate: func(router *api.Router) {
+				spec := router.Spec.Resources[0].Spec.(api.TunnelInterfaceSpec)
+				spec.LocalFrom = api.StatusValueSourceSpec{Resource: "IPv4StaticAddress/tun-gre-address", Field: "address"}
+				router.Spec.Resources[0].Spec = spec
+			},
+			want: "spec.local and spec.localFrom are mutually exclusive",
+		},
+		{
+			name: "localFrom requires field",
+			mutate: func(router *api.Router) {
+				spec := router.Spec.Resources[0].Spec.(api.TunnelInterfaceSpec)
+				spec.Local = ""
+				spec.LocalFrom = api.StatusValueSourceSpec{Resource: "IPv4StaticAddress/tun-gre-address"}
+				router.Spec.Resources[0].Spec = spec
+			},
+			want: "spec.localFrom.field is required",
 		},
 		{
 			name: "mode invalid",
