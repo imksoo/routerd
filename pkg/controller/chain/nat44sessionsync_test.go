@@ -3,7 +3,12 @@
 package chain
 
 import (
+	"bytes"
 	"context"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -75,14 +80,14 @@ func TestParseConntrackExtendedLineSkipsSummary(t *testing.T) {
 }
 
 func TestParseNAT44SessionSyncRestoreOutput(t *testing.T) {
-	result, err := parseNAT44SessionSyncRestoreOutput([]byte("noise\nok_del=1 ng_del=2 ok_ins=3 ng_ins=4\n"))
+	result, err := parseNAT44SessionSyncRestoreOutput([]byte("noise\nok_del=1 miss_del=2 ng_del=3 ok_ins=4 dup_ins=5 ng_ins=6\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result != (nat44SessionSyncRestoreResult{OKDel: 1, NGDel: 2, OKIns: 3, NGIns: 4}) {
+	if result != (nat44SessionSyncRestoreResult{OKDel: 1, MissingDel: 2, NGDel: 3, OKIns: 4, DuplicateIns: 5, NGIns: 6}) {
 		t.Fatalf("result = %#v", result)
 	}
-	if _, err := parseNAT44SessionSyncRestoreOutput([]byte("ok_del=1 ng_del=2 ok_ins=3\n")); err == nil {
+	if _, err := parseNAT44SessionSyncRestoreOutput([]byte("ok_del=1 miss_del=2 ng_del=3 ok_ins=4 dup_ins=5\n")); err == nil {
 		t.Fatal("expected missing ng_ins to fail")
 	}
 	if phase, reason := nat44SessionSyncRestorePhase(2, nat44SessionSyncRestoreResult{OKIns: 0, NGIns: 2}); phase != "Error" || reason != "RestoreFailed" {
@@ -90,6 +95,53 @@ func TestParseNAT44SessionSyncRestoreOutput(t *testing.T) {
 	}
 	if phase, reason := nat44SessionSyncRestorePhase(2, nat44SessionSyncRestoreResult{OKIns: 1, NGIns: 1}); phase != "Degraded" || reason != "RestorePartialFailed" {
 		t.Fatalf("partial phase = %s/%s", phase, reason)
+	}
+	if phase, reason := nat44SessionSyncRestorePhase(2, nat44SessionSyncRestoreResult{MissingDel: 2, OKIns: 2}); phase != "Synced" || reason != "" {
+		t.Fatalf("missing-delete phase = %s/%s", phase, reason)
+	}
+	if phase, reason := nat44SessionSyncRestorePhase(2, nat44SessionSyncRestoreResult{MissingDel: 2, DuplicateIns: 2}); phase != "Synced" || reason != "" {
+		t.Fatalf("duplicate-insert phase = %s/%s", phase, reason)
+	}
+	if phase, reason := nat44SessionSyncRestorePhase(2, nat44SessionSyncRestoreResult{OKIns: 2, NGDel: 1}); phase != "Degraded" || reason != "RestorePartialFailed" {
+		t.Fatalf("delete-failed phase = %s/%s", phase, reason)
+	}
+}
+
+func TestNAT44SessionSyncRestoreScriptClassifiesIdempotentResults(t *testing.T) {
+	dir := t.TempDir()
+	fakeConntrack := filepath.Join(dir, "conntrack")
+	if err := os.WriteFile(fakeConntrack, []byte(`#!/bin/sh
+case "$1 $2" in
+  "-D missing") echo "conntrack v1.4.8: 0 flow entries have been deleted.";;
+  "-I existing") echo "conntrack v1.4.8: File exists" >&2; exit 1;;
+  "-D fail") echo "delete denied" >&2; exit 1;;
+  "-I fail") echo "insert denied" >&2; exit 1;;
+  *) echo "ok";;
+esac
+`), 0755); err != nil {
+		t.Fatalf("write fake conntrack: %v", err)
+	}
+	script := nat44SessionSyncRestoreScript([]conntrackRestoreEntry{
+		{Delete: []string{"-D", "missing"}, Insert: []string{"-I", "existing"}},
+		{Delete: []string{"-D", "ok"}, Insert: []string{"-I", "ok"}},
+		{Delete: []string{"-D", "fail"}, Insert: []string{"-I", "fail"}},
+	}, []string{fakeConntrack})
+	cmd := exec.Command("sh")
+	cmd.Stdin = bytes.NewReader(script)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("restore script failed: %v\n%s\nscript:\n%s", err, out, script)
+	}
+	result, err := parseNAT44SessionSyncRestoreOutput(out)
+	if err != nil {
+		t.Fatalf("parse restore output: %v\n%s", err, out)
+	}
+	want := nat44SessionSyncRestoreResult{OKDel: 1, MissingDel: 1, NGDel: 1, OKIns: 1, DuplicateIns: 1, NGIns: 1}
+	if result != want {
+		t.Fatalf("result = %#v, want %#v\n%s", result, want, out)
+	}
+	if !strings.Contains(string(out), "delete failed: delete denied") || !strings.Contains(string(out), "insert failed: insert denied") {
+		t.Fatalf("restore output missing representative errors:\n%s", out)
 	}
 }
 
@@ -132,7 +184,7 @@ func TestNAT44SessionSyncRunsSnapshotOverSSH(t *testing.T) {
 			case "ssh":
 				sshArgs = append([]string(nil), args...)
 				sshScript = string(stdin)
-				return []byte("ok_del=0 ng_del=2 ok_ins=2 ng_ins=0\n"), nil
+				return []byte("ok_del=0 miss_del=2 ng_del=0 ok_ins=2 dup_ins=0 ng_ins=0\n"), nil
 			default:
 				t.Fatalf("unexpected command %q", name)
 			}
@@ -151,14 +203,14 @@ func TestNAT44SessionSyncRunsSnapshotOverSSH(t *testing.T) {
 		}
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "NAT44SessionSync", "dslite-abc")
-	if status["phase"] != "Synced" || status["sessionCount"] != 2 || status["targetCount"] != 1 || status["insertOK"] != 2 || status["insertFailed"] != 0 {
+	if status["phase"] != "Synced" || status["sessionCount"] != 2 || status["targetCount"] != 1 || status["deleteMissing"] != 2 || status["insertOK"] != 2 || status["insertFailed"] != 0 {
 		t.Fatalf("status = %#v", status)
 	}
 	if !reflect.DeepEqual(status["snatAddresses"], []string{"192.0.0.2", "192.0.0.3"}) {
 		t.Fatalf("snatAddresses = %#v", status["snatAddresses"])
 	}
 	targets, ok := status["targets"].([]map[string]any)
-	if !ok || len(targets) != 1 || targets[0]["phase"] != "Synced" || targets[0]["insertOK"] != 2 || targets[0]["insertFailed"] != 0 {
+	if !ok || len(targets) != 1 || targets[0]["phase"] != "Synced" || targets[0]["deleteMissing"] != 2 || targets[0]["insertOK"] != 2 || targets[0]["insertFailed"] != 0 {
 		t.Fatalf("targets = %#v", status["targets"])
 	}
 }
@@ -183,7 +235,7 @@ func TestNAT44SessionSyncReportsRestoreInsertFailures(t *testing.T) {
 				if !strings.Contains(string(stdin), "ok_ins") {
 					t.Fatalf("restore script missing counters:\n%s", stdin)
 				}
-				return []byte("ok_del=0 ng_del=1 ok_ins=0 ng_ins=1\n"), nil
+				return []byte("insert failed: conntrack v1.4.8: Operation failed\nok_del=0 miss_del=0 ng_del=1 ok_ins=0 dup_ins=0 ng_ins=1\n"), nil
 			default:
 				t.Fatalf("unexpected command %q", name)
 			}
@@ -203,6 +255,9 @@ func TestNAT44SessionSyncReportsRestoreInsertFailures(t *testing.T) {
 	}
 	if targets[0]["phase"] != "Error" || targets[0]["reason"] != "RestoreFailed" || targets[0]["insertOK"] != 0 || targets[0]["insertFailed"] != 1 {
 		t.Fatalf("target status = %#v", targets[0])
+	}
+	if !strings.Contains(fmt.Sprint(targets[0]["output"]), "Operation failed") {
+		t.Fatalf("target output = %#v", targets[0]["output"])
 	}
 }
 
