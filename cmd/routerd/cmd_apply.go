@@ -228,7 +228,7 @@ func cleanupUnsupportedLegacyObjectStatuses(router *api.Router, store staleObjec
 		recordStateCleanupEvent(router, store, "StaleStateCleanupSkipped", "stale state cleanup skipped: "+err.Error())
 		return staleObjectStatusCleanupResult{Skipped: true}, err
 	}
-	removed := unsupportedLegacyObjectStatuses(statuses)
+	removed := staleObjectStatuses(router, statuses)
 	if len(removed) == 0 {
 		return staleObjectStatusCleanupResult{}, nil
 	}
@@ -248,10 +248,60 @@ func cleanupUnsupportedLegacyObjectStatuses(router *api.Router, store staleObjec
 		}
 	}
 	pruneStaleStateCleanupBackups(statePath, 5, logger)
-	msg := fmt.Sprintf("removed %d stale unsupported resource status rows after backup %s", len(removed), backupPath)
+	msg := fmt.Sprintf("removed %d stale resource status rows after backup %s", len(removed), backupPath)
 	emitStateCleanupWarning(logger, msg, map[string]string{"backup": backupPath, "count": strconv.Itoa(len(removed)), "resources": staleObjectStatusIDs(removed)})
 	recordStateCleanupEvent(router, store, "StaleStateCleanup", msg)
 	return staleObjectStatusCleanupResult{Removed: removed, BackupPath: backupPath}, nil
+}
+
+func staleObjectStatuses(router *api.Router, statuses []routerstate.ObjectStatus) []routerstate.ObjectStatus {
+	configured := configuredResourceStatusKeys(router)
+	var out []routerstate.ObjectStatus
+	for _, status := range statuses {
+		if api.IsRemovedLegacyKind(status.Kind) {
+			out = append(out, status)
+			continue
+		}
+		if !configResourceObjectStatus(status) {
+			continue
+		}
+		if configured[objectStatusID(status)] {
+			continue
+		}
+		out = append(out, status)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return objectStatusID(out[i]) < objectStatusID(out[j])
+	})
+	return out
+}
+
+func configuredResourceStatusKeys(router *api.Router) map[string]bool {
+	out := map[string]bool{}
+	if router == nil {
+		return out
+	}
+	for _, resource := range router.Spec.Resources {
+		if strings.TrimSpace(resource.APIVersion) == "" || strings.TrimSpace(resource.Kind) == "" || strings.TrimSpace(resource.Metadata.Name) == "" {
+			continue
+		}
+		out[resource.APIVersion+"/"+resource.Kind+"/"+resource.Metadata.Name] = true
+	}
+	return out
+}
+
+func configResourceObjectStatus(status routerstate.ObjectStatus) bool {
+	if strings.TrimSpace(status.Kind) == "" || strings.TrimSpace(status.Name) == "" {
+		return false
+	}
+	if status.APIVersion == api.RouterAPIVersion {
+		return false
+	}
+	canonical := canonicalResourceKind(status.Kind)
+	if canonical != status.Kind {
+		return false
+	}
+	return status.APIVersion == apiVersionForKind(status.Kind)
 }
 
 func unsupportedLegacyObjectStatuses(statuses []routerstate.ObjectStatus) []routerstate.ObjectStatus {
