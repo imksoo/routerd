@@ -28,6 +28,8 @@ RFC1918 WireGuard network and avoids link-local and CGNAT ranges.
 | `azure-router` | `10.99.0.3/32` | `10.77.60.12/32` | Azure NIC secondary ipConfig |
 | `oci-router` | `10.99.0.4/32` | `10.77.60.13/32` | OCI VNIC secondary private IP |
 | `aws-router-b` | `10.99.0.5/32` | standby for D5 | AWS ENI secondary IP |
+| `azure-router-b` | `10.99.0.6/32` | standby | Azure NIC secondary ipConfig |
+| `oci-router-b` | `10.99.0.7/32` | standby | OCI VNIC secondary private IP |
 
 D3 acceptance is twelve directed ping and SSH flows between the four demo
 clients, with source addresses preserved and default gateways unchanged. D5
@@ -56,6 +58,14 @@ advertisements, routes, and provider action plans. The on-prem `.10` owner is
 declared through `staticOwnedAddresses`. Cloud `.11/.12/.13` ownership is
 observed by the router-local `observe.providerPrivateIPs` inventory plugin, so
 `run-demo.sh` no longer injects owner events manually.
+The SAM transport layer is declared through `SAMTransportProfile`. WireGuard
+stays as the endpoint-only underlay for `10.99.0.x/32`; routerd derives IPIP
+tunnels over WireGuard, per-peer inner `/31` addresses from the shared
+`topologyNodeRefs`, endpoint routes, and iBGP sessions. The on-prem router is
+the iBGP route reflector and sets the generated cloud sessions as RR clients.
+BFD is intentionally not declared in these templates until
+`SAMTransportProfile` can attach BFD references to generated `BGPPeer`
+resources.
 Cloud router `capture.nicRef` is intentionally omitted from the demo templates:
 each router resolves its own NIC/VNIC through the inventory plugin from the
 declared provider subnet segment.

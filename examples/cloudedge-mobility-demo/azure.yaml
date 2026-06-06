@@ -92,14 +92,14 @@ spec:
       spec: { privateKeyFile: /usr/local/etc/routerd/secrets/wg-hybrid.key, listenPort: 51820, mtu: 1420 }
 
     - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata: { name: wg-hybrid }
+      spec: { ifname: wg-hybrid, managed: false, owner: external }
+
+    - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4StaticAddress
       metadata: { name: wg-hybrid-ipv4 }
       spec: { interface: wg-hybrid, address: "${DEMO_SELF_IP}/32" }
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: IPv4Route
-      metadata: { name: route-onprem-wg-overlay }
-      spec: { destination: 10.99.0.1/32, device: wg-hybrid, metric: 80 }
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4Route
@@ -143,34 +143,35 @@ spec:
       spec:
         asn: 64577
         routerID: "${DEMO_SELF_IP}"
-        listen: { address: "${DEMO_SELF_IP}", port: 179 }
         importPolicy: { allowedPrefixes: [10.77.60.0/24, 10.99.0.0/24], nextHopRewrite: unchanged }
         timers: { profile: fast }
         convergenceProfile: fast
 
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: BGPPeer
-      metadata: { name: onprem-rr }
-      spec: { routerRef: BGPRouter/mobility-bgp, peerASN: 64577, peers: [10.99.0.1], timers: { profile: fast }, bfd: BFD/onprem-rr }
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: BFD
-      metadata: { name: onprem-rr }
+    - apiVersion: mobility.routerd.net/v1alpha1
+      kind: SAMTransportProfile
+      metadata: { name: cloudedge-transport }
       spec:
-        peer: BGPPeer/onprem-rr
-        profile: fast
-        minRx: 1s
-        minTx: 1s
-        detectMultiplier: 5
-
-    - apiVersion: hybrid.routerd.net/v1alpha1
-      kind: OverlayPeer
-      metadata: { name: onprem-main }
-      spec:
-        role: onprem
-        nodeID: onprem-router
-        underlay: { type: wireguard, interface: wg-hybrid, address: 10.99.0.1 }
-        remote: { nodeID: "${DEMO_SELF_NODE}", address: "${DEMO_SELF_IP}" }
+        selfNodeRef: "${DEMO_SELF_NODE}"
+        mode: ipip
+        innerPrefix: 10.255.1.0/24
+        topologyNodeRefs:
+          - onprem-router
+          - aws-router-a
+          - aws-router-b
+          - azure-router
+          - azure-router-b
+          - oci-router
+          - oci-router-b
+        underlayInterface: wg-hybrid
+        localEndpoint: "${DEMO_SELF_IP}"
+        bgp:
+          routerRef: BGPRouter/mobility-bgp
+          peerASN: 64577
+          timersPreset: fast
+        peers:
+          - nodeRef: onprem-router
+            remoteEndpoint: 10.99.0.1
+            override: { bgpPeer: onprem-rr, endpointRoute: route-onprem-wg-overlay }
 
     - apiVersion: hybrid.routerd.net/v1alpha1
       kind: CloudProviderProfile
