@@ -330,36 +330,46 @@ type onPremObservedClientStatus struct {
 	SeenAt     string `json:"seenAt"`
 }
 
+type onPremObservedClientSnapshot struct {
+	Clients    []onPremObservedClientStatus
+	Interface  string
+	Network    string
+	Bridge     string
+	SourceType string
+}
+
 func (c DiscoveryController) recordOnPremStatusObservations(ctx context.Context, poolName string, spec api.MobilityPoolSpec, self memberPlanInfo, poolPrefix netip.Prefix, now time.Time) (int, error) {
 	status := c.Store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", poolName)
-	clients := onPremObservedClientsFromStatus(status["observedClients"])
-	if len(clients) == 0 {
+	snapshots := onPremObservedClientSnapshotsFromStatus(status)
+	if len(snapshots) == 0 {
 		return 0, nil
 	}
 	observed := 0
 	recorded := false
-	for _, client := range clients {
-		seenAt := now
-		if parsed, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(client.SeenAt)); err == nil {
-			seenAt = parsed.UTC()
-		}
-		observation := onPremObservation{
-			Action:     "observed",
-			Address:    firstNonEmpty(client.Address, client.IP),
-			MAC:        client.MAC,
-			Interface:  firstNonEmpty(statusValueString(status, "interface"), statusValueString(status, "ifname")),
-			Network:    statusValueString(status, "network"),
-			Bridge:     statusValueString(status, "bridge"),
-			SourceType: firstNonEmpty(client.SourceType, statusValueString(status, "sourceType")),
-			ObservedAt: seenAt,
-		}
-		ok, err := c.recordOnPremObservation(poolName, spec, self, poolPrefix, observation, now)
-		if err != nil {
-			return observed, err
-		}
-		if ok {
-			observed++
-			recorded = true
+	for _, snapshot := range snapshots {
+		for _, client := range snapshot.Clients {
+			seenAt := now
+			if parsed, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(client.SeenAt)); err == nil {
+				seenAt = parsed.UTC()
+			}
+			observation := onPremObservation{
+				Action:     "observed",
+				Address:    firstNonEmpty(client.Address, client.IP),
+				MAC:        client.MAC,
+				Interface:  snapshot.Interface,
+				Network:    snapshot.Network,
+				Bridge:     snapshot.Bridge,
+				SourceType: firstNonEmpty(client.SourceType, snapshot.SourceType),
+				ObservedAt: seenAt,
+			}
+			ok, err := c.recordOnPremObservation(poolName, spec, self, poolPrefix, observation, now)
+			if err != nil {
+				return observed, err
+			}
+			if ok {
+				observed++
+				recorded = true
+			}
 		}
 	}
 	if recorded && c.Bus != nil {
@@ -368,6 +378,38 @@ func (c DiscoveryController) recordOnPremStatusObservations(ctx context.Context,
 		_ = c.Bus.Publish(ctx, changed)
 	}
 	return observed, nil
+}
+
+func onPremObservedClientSnapshotsFromStatus(status map[string]any) []onPremObservedClientSnapshot {
+	if status == nil {
+		return nil
+	}
+	var out []onPremObservedClientSnapshot
+	if clients := onPremObservedClientsFromStatus(status["observedClients"]); len(clients) > 0 {
+		out = append(out, onPremObservedClientSnapshot{
+			Clients:    clients,
+			Interface:  firstNonEmpty(statusValueString(status, "interface"), statusValueString(status, "ifname")),
+			Network:    statusValueString(status, "network"),
+			Bridge:     statusValueString(status, "bridge"),
+			SourceType: statusValueString(status, "sourceType"),
+		})
+	}
+	bySource := statusAnyMap(status["observedClientsBySource"])
+	for _, sourceType := range mapStringKeysSorted(bySource) {
+		snapshot := statusAnyMap(bySource[sourceType])
+		clients := onPremObservedClientsFromStatus(snapshot["observedClients"])
+		if len(clients) == 0 {
+			continue
+		}
+		out = append(out, onPremObservedClientSnapshot{
+			Clients:    clients,
+			Interface:  firstNonEmpty(statusValueString(snapshot, "interface"), statusValueString(snapshot, "ifname")),
+			Network:    statusValueString(snapshot, "network"),
+			Bridge:     statusValueString(snapshot, "bridge"),
+			SourceType: firstNonEmpty(statusValueString(snapshot, "sourceType"), sourceType),
+		})
+	}
+	return out
 }
 
 func onPremObservedClientsFromStatus(value any) []onPremObservedClientStatus {
@@ -397,6 +439,25 @@ func onPremObservedClientsFromStatus(value any) []onPremObservedClientStatus {
 	default:
 		return nil
 	}
+}
+
+func statusAnyMap(value any) map[string]any {
+	out := map[string]any{}
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, item := range typed {
+			out[key] = item
+		}
+	case map[string]string:
+		for key, item := range typed {
+			out[key] = item
+		}
+	case map[any]any:
+		for key, item := range typed {
+			out[fmt.Sprint(key)] = item
+		}
+	}
+	return out
 }
 
 func statusValueString(status map[string]any, key string) string {

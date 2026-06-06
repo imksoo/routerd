@@ -622,6 +622,28 @@ func TestDaemonStatusControllerDiscoversDaemonSockets(t *testing.T) {
 	}
 }
 
+func TestMergeMobilityObservedSourceStatusKeepsOtherSources(t *testing.T) {
+	status := map[string]any{
+		"observedClientsBySource": map[string]any{
+			"arp-observer": map[string]any{
+				"sourceType":      "arp-observer",
+				"observedClients": `[{"ip":"192.168.123.132","sourceType":"arp-observer"}]`,
+			},
+		},
+	}
+	mergeMobilityObservedSourceStatus(status, map[string]string{
+		"sourceType":      "on-demand-arp",
+		"observedClients": `[]`,
+	})
+	bySource, ok := status["observedClientsBySource"].(map[string]any)
+	if !ok {
+		t.Fatalf("observedClientsBySource = %#v", status["observedClientsBySource"])
+	}
+	if bySource["arp-observer"] == nil || bySource["on-demand-arp"] == nil {
+		t.Fatalf("bySource = %#v, want both arp-observer and on-demand-arp", bySource)
+	}
+}
+
 func TestDSLiteTunnelResolveRemoteDirectIPv6SkipsDNS(t *testing.T) {
 	controller := DSLiteTunnelController{ResolverPort: 9}
 	name, remote, err := controller.resolveRemote(t.Context(), api.DSLiteTunnelSpec{AFTRIPv6: "2404:8e00::feed:100"})

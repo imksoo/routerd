@@ -246,6 +246,102 @@ func TestDiscoveryControllerOnPremL2StatusObservedClientsFeedBGPAdvertisement(t 
 	}
 }
 
+func TestDiscoveryControllerOnPremL2StatusObservedClientsBySourceSurvivesEmptyOnDemandStatus(t *testing.T) {
+	now := time.Date(2026, 6, 5, 12, 35, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := api.MobilityPoolSpec{
+		Prefix:         "192.168.123.0/24",
+		GroupRef:       "cloudedge",
+		DeliveryPolicy: api.MobilityDeliveryPolicy{Mode: "bgp"},
+		Members: []api.MobilityPoolMember{
+			{
+				NodeRef: "pve-rt06",
+				Site:    "pve06",
+				Role:    "onprem",
+				Capture: api.MobilityMemberCapture{
+					Type:       "proxy-arp",
+					Interface:  "svnet1",
+					ActiveWhen: api.CaptureActiveWhen{Type: "single-router"},
+				},
+				OwnershipDiscovery: api.MobilityOwnershipDiscovery{
+					Mode:     "onprem-l2",
+					LeaseTTL: "2m",
+					Scope: api.MobilityOwnershipDiscoveryScope{
+						IncludeAddresses: []string{"192.168.123.132/32"},
+						ExcludeAddresses: []string{"192.168.123.1/32"},
+					},
+					Sources: []api.MobilityOwnershipDiscoverySource{
+						{Type: OnPremSourceARPObserver, Interface: "svnet1", LeaseTTL: "2m"},
+						{Type: OnPremSourceOnDemandARP, Interface: "svnet1", LeaseTTL: "2m"},
+					},
+				},
+			},
+			{NodeRef: "k8s-rt02", Site: "core", Role: "cloud"},
+		},
+	}
+	router := staticRouter("pve-rt06", spec)
+	arpClients := []onPremObservedClientStatus{{
+		IP:         "192.168.123.132",
+		MAC:        "bc:24:11:c9:33:c2",
+		SourceType: OnPremSourceARPObserver,
+		SeenAt:     now.Add(-10 * time.Second).Format(time.RFC3339Nano),
+	}}
+	encodedARP, err := json.Marshal(arpClients)
+	if err != nil {
+		t.Fatalf("marshal arp clients: %v", err)
+	}
+	encodedEmpty, err := json.Marshal([]onPremObservedClientStatus{})
+	if err != nil {
+		t.Fatalf("marshal empty clients: %v", err)
+	}
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"interface":       "svnet1",
+		"ifname":          "eth1",
+		"sourceType":      OnPremSourceOnDemandARP,
+		"observedClients": string(encodedEmpty),
+		"observedClientsBySource": map[string]any{
+			OnPremSourceARPObserver: map[string]any{
+				"interface":       "svnet1",
+				"ifname":          "eth1",
+				"sourceType":      OnPremSourceARPObserver,
+				"observedClients": string(encodedARP),
+			},
+			OnPremSourceOnDemandARP: map[string]any{
+				"interface":       "svnet1",
+				"ifname":          "eth1",
+				"sourceType":      OnPremSourceOnDemandARP,
+				"observedClients": string(encodedEmpty),
+			},
+		},
+	}); err != nil {
+		t.Fatalf("SaveObjectStatus: %v", err)
+	}
+
+	discovery := DiscoveryController{Router: router, Store: store, Now: func() time.Time { return now }}
+	if err := discovery.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Discovery Reconcile: %v", err)
+	}
+	events, err := store.ListFederationEvents("cloudedge", false, now.Unix())
+	if err != nil {
+		t.Fatalf("ListFederationEvents: %v", err)
+	}
+	if len(events) != 1 || events[0].Subject != "192.168.123.132/32" {
+		t.Fatalf("events = %#v, want source-specific ARP observer ownership fact", events)
+	}
+	if events[0].Payload["sourceType"] != OnPremSourceARPObserver {
+		t.Fatalf("payload = %#v, want arp-observer source", events[0].Payload)
+	}
+
+	bgp := &fakeBGPPaths{}
+	controller := Controller{Router: router, Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Mobility Reconcile: %v", err)
+	}
+	if _, ok := maybePathBySourcePrefix(bgp, DynamicSource("cloudedge", "pve-rt06"), "192.168.123.132/32"); !ok {
+		t.Fatalf("paths = %#v, want source-specific ARP observer owner advertised", bgp.paths)
+	}
+}
+
 func TestDiscoveryControllerProfileSpecMatchesInlineRequest(t *testing.T) {
 	now := time.Date(2026, 6, 4, 11, 0, 0, 0, time.UTC)
 	inlineSpec := discoveryPoolSpec()
