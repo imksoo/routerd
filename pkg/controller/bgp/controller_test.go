@@ -708,6 +708,42 @@ func TestReconcileDoesNotRefreshUnchangedImportPolicy(t *testing.T) {
 	}
 }
 
+func TestImportPolicyRefreshIgnoresLocalNextHop(t *testing.T) {
+	desired := map[string]desiredPeer{
+		"10.252.0.1": {
+			Address: "10.252.0.1",
+			ImportPolicy: api.BGPImportPolicySpec{
+				AllowedPrefixes: []string{"192.168.123.0/24"},
+				NextHopRewrite:  "peer-address",
+			},
+		},
+	}
+	routes := []FIBRoute{
+		{Prefix: "10.252.0.0/24", NextHops: []string{"0.0.0.0"}},
+		{Prefix: "2001:db8::/64", NextHops: []string{"::"}},
+		{Prefix: "192.168.123.113/32", NextHops: []string{"10.252.0.1"}},
+	}
+	if importPolicyRefreshNeeded(desired, routes) {
+		t.Fatal("importPolicyRefreshNeeded returned true for local next-hop routes")
+	}
+}
+
+func TestImportPolicyRefreshStillDetectsUnexpectedNextHop(t *testing.T) {
+	desired := map[string]desiredPeer{
+		"10.252.0.1": {
+			Address: "10.252.0.1",
+			ImportPolicy: api.BGPImportPolicySpec{
+				AllowedPrefixes: []string{"192.168.123.0/24"},
+				NextHopRewrite:  "peer-address",
+			},
+		},
+	}
+	routes := []FIBRoute{{Prefix: "192.168.123.113/32", NextHops: []string{"10.252.0.99"}}}
+	if !importPolicyRefreshNeeded(desired, routes) {
+		t.Fatal("importPolicyRefreshNeeded returned false for unexpected learned next-hop")
+	}
+}
+
 func TestReconcileHydratesAppliedImportPolicyAfterRestart(t *testing.T) {
 	router := bgpRouterWithImportPrefixes("10.250.0.0/24")
 	peerResource := router.Spec.Resources[1]
