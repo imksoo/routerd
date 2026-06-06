@@ -164,6 +164,8 @@ func cleanupEligibleLedgerOrphan(artifact resource.Artifact) bool {
 		return strings.HasPrefix(artifact.Attributes["name"], "routerd_")
 	case "net.ipv4.address":
 		return isDSLiteIPv4AddressArtifact(artifact)
+	case "net.ipv6.address":
+		return isStaticIPv6AddressArtifact(artifact)
 	default:
 		return false
 	}
@@ -192,6 +194,8 @@ func orphanedArtifactFromLedger(artifact resource.Artifact) OrphanedArtifact {
 		orphan.Remediation = "delete directory " + artifact.Name
 	case "net.ipv4.address":
 		orphan.Remediation = "remove IPv4 address " + artifact.Name
+	case "net.ipv6.address":
+		orphan.Remediation = "remove IPv6 address " + artifact.Name
 	case "linux.ipv4.fwmarkRule":
 		orphan.Remediation = "delete ip rule " + artifact.Name
 	case "linux.ipv4.routeTable":
@@ -210,6 +214,12 @@ func isDSLiteIPv4AddressArtifact(artifact resource.Artifact) bool {
 		strings.Contains(artifact.Name, ":172.18.255.250/32") ||
 		strings.Contains(artifact.Name, ":172.18.255.251/32") ||
 		strings.Contains(artifact.Name, ":172.18.255.252/32")
+}
+
+func isStaticIPv6AddressArtifact(artifact resource.Artifact) bool {
+	return strings.Contains(artifact.Owner, "/VirtualAddress/") &&
+		strings.Contains(artifact.Name, ":") &&
+		strings.Contains(artifact.Name, "/")
 }
 
 func isPPPoEPeerFileArtifact(artifact resource.Artifact) bool {

@@ -109,6 +109,76 @@ func TestRunApplyOnceDryRunDoesNotCreateStateDB(t *testing.T) {
 	}
 }
 
+func TestCleanupLedgerOwnedArtifactIPv6AddressLinux(t *testing.T) {
+	oldFeatures := platformFeatures
+	oldRun := runCleanupCommand
+	t.Cleanup(func() {
+		platformFeatures = oldFeatures
+		runCleanupCommand = oldRun
+	})
+	platformFeatures = platform.Features{HasIproute2: true}
+	var gotName string
+	var gotArgs []string
+	runCleanupCommand = func(name string, args ...string) error {
+		gotName = name
+		gotArgs = append([]string(nil), args...)
+		return nil
+	}
+	label, err := cleanupLedgerOwnedArtifact(resource.Artifact{
+		Kind:  "net.ipv6.address",
+		Name:  "ens19:2001:db8::1/64",
+		Owner: api.NetAPIVersion + "/VirtualAddress/old-v6",
+	})
+	if err != nil {
+		t.Fatalf("cleanup IPv6 address: %v", err)
+	}
+	if label != "net.ipv6.address/ens19:2001:db8::1/64" {
+		t.Fatalf("label = %q", label)
+	}
+	if gotName != "ip" || !reflect.DeepEqual(gotArgs, []string{"-6", "addr", "del", "2001:db8::1/64", "dev", "ens19"}) {
+		t.Fatalf("command = %s %#v", gotName, gotArgs)
+	}
+}
+
+func TestCleanupServeLedgerOwnedOrphansUsesConfiguredLedger(t *testing.T) {
+	oldCleanup := cleanupLedgerOwnedOrphansForServe
+	t.Cleanup(func() { cleanupLedgerOwnedOrphansForServe = oldCleanup })
+	router := &api.Router{Metadata: api.ObjectMeta{Name: "test-router"}}
+	var gotRouter *api.Router
+	var gotLedgerPath string
+	cleanupLedgerOwnedOrphansForServe = func(r *api.Router, ledgerPath string) ([]string, error) {
+		gotRouter = r
+		gotLedgerPath = ledgerPath
+		return []string{"systemd.service/routerd-old.service"}, nil
+	}
+	removed, err := cleanupServeLedgerOwnedOrphans(router, "/var/lib/routerd/ledger.db", nil)
+	if err != nil {
+		t.Fatalf("cleanup serve ledger owned orphans: %v", err)
+	}
+	if gotRouter != router || gotLedgerPath != "/var/lib/routerd/ledger.db" {
+		t.Fatalf("cleanup called with router=%p path=%q", gotRouter, gotLedgerPath)
+	}
+	if !reflect.DeepEqual(removed, []string{"systemd.service/routerd-old.service"}) {
+		t.Fatalf("removed = %#v", removed)
+	}
+}
+
+func TestCleanupServeLedgerOwnedOrphansReturnsErrorWithoutFailingCaller(t *testing.T) {
+	oldCleanup := cleanupLedgerOwnedOrphansForServe
+	t.Cleanup(func() { cleanupLedgerOwnedOrphansForServe = oldCleanup })
+	wantErr := errors.New("ledger locked")
+	cleanupLedgerOwnedOrphansForServe = func(*api.Router, string) ([]string, error) {
+		return nil, wantErr
+	}
+	removed, err := cleanupServeLedgerOwnedOrphans(&api.Router{}, "/var/lib/routerd/ledger.db", nil)
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("err = %v, want %v", err, wantErr)
+	}
+	if removed != nil {
+		t.Fatalf("removed = %#v, want nil", removed)
+	}
+}
+
 func TestManagementPlaneBlocksNonDryRunApply(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
