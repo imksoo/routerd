@@ -203,21 +203,25 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		return err
 	}
 	status := map[string]any{
-		"plannerPhase":       "BGPPlanned",
-		"plannerReason":      "deliveryPolicy.mode=bgp",
-		"selfNode":           selfNode,
-		"dynamicSource":      source,
-		"deliveryMode":       "bgp",
-		"bgpPathSource":      source,
-		"generatedBGPPaths":  len(desired),
-		"bgpRIBObserved":     bgpRIBObserved,
-		"bgpCaptureElection": bgpCaptureElectionStatus(capturePlacement),
-		"generatedBGPTraps":  len(desiredTrapAddresses),
-		"generatedClaims":    0,
-		"generatedActions":   len(actionPlans),
-		"plannedAt":          now.Format(time.RFC3339Nano),
-		"operatorIntent":     "MobilityPool",
-		"derivedConfigKinds": []string{"BGPPath"},
+		"plannerPhase":        "BGPPlanned",
+		"plannerReason":       "deliveryPolicy.mode=bgp",
+		"selfNode":            selfNode,
+		"dynamicSource":       source,
+		"deliveryMode":        "bgp",
+		"bgpPathSource":       source,
+		"generatedBGPPaths":   len(desired),
+		"bgpRIBObserved":      bgpRIBObserved,
+		"bgpCaptureElection":  bgpCaptureElectionStatus(capturePlacement),
+		"generatedBGPTraps":   len(desiredTrapAddresses),
+		"generatedClaims":     0,
+		"generatedActions":    len(actionPlans),
+		"selfCaptureResolved": selfCaptureResolved,
+		"plannedAt":           now.Format(time.RFC3339Nano),
+		"operatorIntent":      "MobilityPool",
+		"derivedConfigKinds":  []string{"BGPPath"},
+	}
+	if selfCaptureReason != "" {
+		status["selfCaptureReason"] = selfCaptureReason
 	}
 	if len(desiredTrapAddresses) > 0 && !selfCaptureResolved {
 		status["plannerPhase"] = "Degraded"

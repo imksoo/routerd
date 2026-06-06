@@ -117,7 +117,7 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 		return fmt.Errorf("ownershipDiscovery requires cloud provider-secondary-ip member %q", self.NodeRef)
 	}
 	interval := discoveryScanInterval(discovery)
-	if !c.scanDue(poolName, interval, now, true) {
+	if !c.scanDue(poolName, interval, now, true, self.Capture.Type == "provider-secondary-ip" && strings.TrimSpace(self.Capture.NICRef) == "") {
 		return nil
 	}
 	livenessMarkers, livenessMarkersObserved := bgpLivenessMarkersFromStatus(c.Router, c.Store)
@@ -763,8 +763,14 @@ func mergeAnyMaps(a, b map[string]any) map[string]any {
 	return out
 }
 
-func (c DiscoveryController) scanDue(poolName string, interval time.Duration, now time.Time, requireForwardingState bool) bool {
+func (c DiscoveryController) scanDue(poolName string, interval time.Duration, now time.Time, requireForwardingState, requireSelfNICRef bool) bool {
 	status := c.Store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", poolName)
+	if requireSelfNICRef {
+		nicRef := strings.TrimSpace(fmt.Sprint(status["discoverySelfNICRef"]))
+		if nicRef == "" || nicRef == "<nil>" {
+			return true
+		}
+	}
 	if requireForwardingState {
 		if _, ok := status["discoverySelfForwardingObserved"]; !ok {
 			return true
