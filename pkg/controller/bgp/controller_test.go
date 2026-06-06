@@ -301,12 +301,20 @@ func (s *fakeServer) WatchEvent(ctx context.Context, req *gobgpapi.WatchEventReq
 }
 
 func (s *fakeServer) importPolicyRewritesPeerAddress() bool {
-	if s.policyAssignment.GetName() != "global" || s.policyAssignment.GetDirection() != gobgpapi.PolicyDirection_IMPORT {
-		return false
-	}
 	assigned := map[string]bool{}
-	for _, policy := range s.policyAssignment.GetPolicies() {
-		assigned[policy.GetName()] = true
+	if s.policyAssignment.GetName() == "global" && s.policyAssignment.GetDirection() == gobgpapi.PolicyDirection_IMPORT {
+		for _, policy := range s.policyAssignment.GetPolicies() {
+			assigned[policy.GetName()] = true
+		}
+	}
+	for _, peer := range s.peers {
+		assignment := peer.GetApplyPolicy().GetImportPolicy()
+		if assignment.GetDirection() != gobgpapi.PolicyDirection_IMPORT {
+			continue
+		}
+		for _, policy := range assignment.GetPolicies() {
+			assigned[policy.GetName()] = true
+		}
 	}
 	for _, policy := range s.policyRequest.GetPolicies() {
 		if !assigned[policy.GetName()] {
@@ -415,12 +423,16 @@ func TestReconcileStartsGoBGPAndDoesNotReaddUnchangedPeer(t *testing.T) {
 	if got := peer.GetAfiSafis()[0].GetUseMultiplePaths().GetEbgp().GetConfig().GetMaximumPaths(); got < 4 {
 		t.Fatalf("peer eBGP maximum paths = %d, want >= 4", got)
 	}
-	if applyPolicy := peer.GetApplyPolicy(); applyPolicy != nil && applyPolicy.GetImportPolicy() != nil {
-		t.Fatalf("peer import policy = %#v, want global import policy assignment only", applyPolicy.GetImportPolicy())
+	importAssignment := peer.GetApplyPolicy().GetImportPolicy()
+	if importAssignment.GetDirection() != gobgpapi.PolicyDirection_IMPORT ||
+		importAssignment.GetDefaultAction() != gobgpapi.RouteAction_REJECT ||
+		len(importAssignment.GetPolicies()) != 1 ||
+		importAssignment.GetPolicies()[0].GetName() != "routerd-lan-import" {
+		t.Fatalf("peer import policy = %#v, want default import policy assigned to peer", importAssignment)
 	}
 	if server.policyAssignment.GetName() != "global" || server.policyAssignment.GetDirection() != gobgpapi.PolicyDirection_IMPORT ||
-		server.policyAssignment.GetDefaultAction() != gobgpapi.RouteAction_REJECT || len(server.policyAssignment.GetPolicies()) != 1 {
-		t.Fatalf("global import policy assignment = %#v, want default reject plus routerd policy", server.policyAssignment)
+		server.policyAssignment.GetDefaultAction() != gobgpapi.RouteAction_ACCEPT || len(server.policyAssignment.GetPolicies()) != 0 {
+		t.Fatalf("global import policy assignment = %#v, want default accept without routerd policy", server.policyAssignment)
 	}
 	status := controller.Store.ObjectStatus(api.NetAPIVersion, "BGPRouter", "lan")
 	if status["backend"] != "gobgp" || status["phase"] != "Established" {
@@ -482,6 +494,22 @@ func TestGoBGPPeerExportPolicy(t *testing.T) {
 	}
 }
 
+func TestGoBGPPeerImportPolicy(t *testing.T) {
+	peer := goBGPPeer(desiredPeer{
+		Address:          "10.99.0.2",
+		ASN:              64577,
+		ImportPolicyName: "routerd-lan-import-10-99-0-2",
+		ImportPolicy:     api.BGPImportPolicySpec{AllowedPrefixes: []string{"192.168.123.0/24"}},
+	})
+	assignment := peer.GetApplyPolicy().GetImportPolicy()
+	if assignment.GetDirection() != gobgpapi.PolicyDirection_IMPORT ||
+		assignment.GetDefaultAction() != gobgpapi.RouteAction_REJECT ||
+		len(assignment.GetPolicies()) != 1 ||
+		assignment.GetPolicies()[0].GetName() != "routerd-lan-import-10-99-0-2" {
+		t.Fatalf("peer import policy = %#v, want default reject with named import policy", assignment)
+	}
+}
+
 func TestReconcileAppliesPeerExportPolicy(t *testing.T) {
 	router := bgpRouter()
 	peerResource := router.Spec.Resources[1]
@@ -511,6 +539,38 @@ func TestReconcileAppliesPeerExportPolicy(t *testing.T) {
 	}
 	if !policyRequestHasPolicy(server.policyRequest, policyName) {
 		t.Fatalf("SetPolicies request = %#v, want export policy %q", server.policyRequest, policyName)
+	}
+}
+
+func TestReconcileAppliesPeerImportPolicy(t *testing.T) {
+	router := bgpRouter()
+	peerResource := router.Spec.Resources[1]
+	peerSpec := peerResource.Spec.(api.BGPPeerSpec)
+	peerSpec.ImportPolicy = api.BGPImportPolicySpec{AllowedPrefixes: []string{"192.168.123.0/24"}}
+	peerResource.Spec = peerSpec
+	router.Spec.Resources[1] = peerResource
+
+	server := &fakeServer{}
+	controller := Controller{Router: router, Store: mapStore{}, Server: server, FIB: &fakeFIB{}}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	peer := server.peers["10.0.0.21"]
+	assignment := peer.GetApplyPolicy().GetImportPolicy()
+	if assignment.GetDirection() != gobgpapi.PolicyDirection_IMPORT ||
+		assignment.GetDefaultAction() != gobgpapi.RouteAction_REJECT ||
+		len(assignment.GetPolicies()) != 1 {
+		t.Fatalf("peer import assignment = %#v, want default reject with one policy", assignment)
+	}
+	policyName := assignment.GetPolicies()[0].GetName()
+	if policyName != "routerd-lan-import-10-0-0-21" {
+		t.Fatalf("peer import policy name = %q", policyName)
+	}
+	if !policyRequestHasPrefixSet(server.policyRequest, policyName+"-prefixes", "192.168.123.0/24") {
+		t.Fatalf("SetPolicies request = %#v, want peer import prefix set for 192.168.123.0/24", server.policyRequest)
+	}
+	if !policyRequestHasPrefixSet(server.policyRequest, "routerd-lan-import-prefixes", "10.250.0.0/24") {
+		t.Fatalf("SetPolicies request = %#v, want global import prefix set for 10.250.0.0/24", server.policyRequest)
 	}
 }
 
@@ -717,17 +777,19 @@ func TestReconcileRefreshesImportPolicyAfterReconnectDrift(t *testing.T) {
 	peerSpec.Peers = []string{"192.168.1.38", "192.168.1.53"}
 	peerResource.Spec = peerSpec
 	router.Spec.Resources[1] = peerResource
+	routerSpec := router.Spec.Resources[0].Spec.(api.BGPRouterSpec)
+	staleDesired := applyRouterBGPDefaults("lan", routerSpec, map[string]desiredPeer{
+		"192.168.1.38": {Address: "192.168.1.38", ASN: 64513, LocalASN: 64512},
+		"192.168.1.53": {Address: "192.168.1.53", ASN: 64513, LocalASN: 64512},
+	}, mapKeys(advertisedPrefixes(routerSpec)), nil)
 	server := &fakeServer{thirdPartyNextHop: "192.168.1.57"}
 	fib := &fakeFIB{}
 	controller := Controller{
-		Router: router,
-		Store:  mapStore{},
-		Server: server,
-		FIB:    fib,
-		importPolicyKey: bgpPoliciesKey(api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.250.0.0/24"}}, map[string]desiredPeer{
-			"192.168.1.38": {Address: "192.168.1.38", ExportPolicy: api.BGPExportPolicySpec{AllowedPrefixes: []string{"10.0.0.0/16"}}},
-			"192.168.1.53": {Address: "192.168.1.53", ExportPolicy: api.BGPExportPolicySpec{AllowedPrefixes: []string{"10.0.0.0/16"}}},
-		}),
+		Router:          router,
+		Store:           mapStore{},
+		Server:          server,
+		FIB:             fib,
+		importPolicyKey: bgpPoliciesKey(routerSpec.ImportPolicy, staleDesired),
 	}
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)

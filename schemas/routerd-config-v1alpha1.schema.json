@@ -3106,6 +3106,26 @@
                         },
                         "type": "object"
                       },
+                      "importPolicy": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "allowedPrefixes": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
+                          "nextHopRewrite": {
+                            "enum": [
+                              "",
+                              "peer-address",
+                              "unchanged"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
+                      },
                       "password": {
                         "type": "string"
                       },

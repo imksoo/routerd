@@ -657,6 +657,7 @@ type BGPPeerSpec struct {
 	EbgpMultihop            int                   `yaml:"ebgpMultihop,omitempty" json:"ebgpMultihop,omitempty" jsonschema:"minimum=0,maximum=255"`
 	RouteReflectorClient    bool                  `yaml:"routeReflectorClient,omitempty" json:"routeReflectorClient,omitempty"`
 	RouteReflectorClusterID string                `yaml:"routeReflectorClusterID,omitempty" json:"routeReflectorClusterID,omitempty"`
+	ImportPolicy            BGPImportPolicySpec   `yaml:"importPolicy,omitempty" json:"importPolicy,omitempty"`
 	ExportPolicy            BGPExportPolicySpec   `yaml:"exportPolicy,omitempty" json:"exportPolicy,omitempty"`
 	Timers                  BGPTimersSpec         `yaml:"timers,omitempty" json:"timers,omitempty"`
 	Communities             BGPCommunitiesSpec    `yaml:"communities,omitempty" json:"communities,omitempty"`
