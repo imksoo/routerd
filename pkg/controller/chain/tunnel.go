@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/netip"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -142,8 +143,16 @@ func (c TunnelInterfaceController) reconcileInterface(ctx context.Context, resou
 	if err != nil {
 		return err
 	}
-	desired := tunnelDesiredFromSpec(resource.Metadata.Name, spec)
+	desired, pending, pendingReason, err := c.resolveTunnelDesired(resource.Metadata.Name, spec)
+	if err != nil {
+		return c.saveResolveError(resource, tunnelDesiredFromSpec(resource.Metadata.Name, spec), err)
+	}
 	status := tunnelStatus(desired, c.DryRun, map[string]any{"phase": "Pending"})
+	if pending {
+		status["reason"] = "EndpointSourcePending"
+		status["pendingSource"] = pendingReason
+		return c.Store.SaveObjectStatus(api.HybridAPIVersion, "TunnelInterface", resource.Metadata.Name, status)
+	}
 	if c.DryRun {
 		status["phase"] = "Planned"
 		return c.Store.SaveObjectStatus(api.HybridAPIVersion, "TunnelInterface", resource.Metadata.Name, status)
@@ -212,6 +221,15 @@ func (c TunnelInterfaceController) reconcileInterface(ctx context.Context, resou
 	return nil
 }
 
+func (c TunnelInterfaceController) saveResolveError(resource api.Resource, desired tunnelDesired, err error) error {
+	status := tunnelStatus(desired, c.DryRun, map[string]any{
+		"phase":  "Error",
+		"reason": "EndpointResolveFailed",
+		"error":  err.Error(),
+	})
+	return c.Store.SaveObjectStatus(api.HybridAPIVersion, "TunnelInterface", resource.Metadata.Name, status)
+}
+
 func (c TunnelInterfaceController) saveApplyError(resource api.Resource, desired tunnelDesired, applyErr error) error {
 	status := tunnelStatus(desired, c.DryRun, map[string]any{
 		"phase":  "Error",
@@ -251,6 +269,94 @@ func tunnelDesiredFromSpec(name string, spec api.TunnelInterfaceSpec) tunnelDesi
 		EncapDport: spec.EncapDport,
 		Address:    strings.TrimSpace(spec.Address),
 	}
+}
+
+func (c TunnelInterfaceController) resolveTunnelDesired(name string, spec api.TunnelInterfaceSpec) (tunnelDesired, bool, string, error) {
+	desired := tunnelDesiredFromSpec(name, spec)
+	if strings.TrimSpace(spec.LocalFrom.Resource) != "" {
+		value, pending, err := c.tunnelEndpointFromSource(spec.LocalFrom)
+		if err != nil {
+			return desired, false, "", fmt.Errorf("resolve localFrom: %w", err)
+		}
+		if pending {
+			return desired, true, statusSourceLabel(spec.LocalFrom), nil
+		}
+		desired.Local = value
+	}
+	if strings.TrimSpace(spec.RemoteFrom.Resource) != "" {
+		value, pending, err := c.tunnelEndpointFromSource(spec.RemoteFrom)
+		if err != nil {
+			return desired, false, "", fmt.Errorf("resolve remoteFrom: %w", err)
+		}
+		if pending {
+			return desired, true, statusSourceLabel(spec.RemoteFrom), nil
+		}
+		desired.Remote = value
+	}
+	return desired, false, "", nil
+}
+
+func (c TunnelInterfaceController) tunnelEndpointFromSource(source api.StatusValueSourceSpec) (string, bool, error) {
+	kind, name, ok := strings.Cut(strings.TrimSpace(source.Resource), "/")
+	if !ok || kind == "" || name == "" {
+		return "", false, fmt.Errorf("resource must be Kind/name")
+	}
+	field := strings.TrimSpace(source.Field)
+	if field == "" {
+		return "", false, fmt.Errorf("field is required")
+	}
+	status := c.Store.ObjectStatus(c.statusSourceAPIVersion(kind, name), kind, name)
+	value := statusString(status, field)
+	if value == "" {
+		return "", true, nil
+	}
+	endpoint, err := normalizeTunnelEndpoint(value)
+	if err != nil {
+		return "", false, err
+	}
+	return endpoint, false, nil
+}
+
+func (c TunnelInterfaceController) statusSourceAPIVersion(kind, name string) string {
+	if c.Router != nil {
+		for _, resource := range c.Router.Spec.Resources {
+			if resource.Kind == kind && resource.Metadata.Name == name {
+				return resource.APIVersion
+			}
+		}
+	}
+	switch kind {
+	case "TunnelInterface", "OverlayPeer", "HybridRoute", "AddressMobilityDomain", "RemoteAddressClaim", "CloudProviderProfile":
+		return api.HybridAPIVersion
+	case "RouterdCluster", "ServiceUnit", "NetworkAdoption":
+		return api.SystemAPIVersion
+	default:
+		return api.NetAPIVersion
+	}
+}
+
+func normalizeTunnelEndpoint(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if prefix, err := netip.ParsePrefix(value); err == nil {
+		addr := prefix.Addr()
+		if !addr.Is4() {
+			return "", fmt.Errorf("%q must be an IPv4 address or prefix", value)
+		}
+		return addr.String(), nil
+	}
+	addr, err := netip.ParseAddr(value)
+	if err != nil || !addr.Is4() {
+		return "", fmt.Errorf("%q must be an IPv4 address or prefix", value)
+	}
+	return addr.String(), nil
+}
+
+func statusSourceLabel(source api.StatusValueSourceSpec) string {
+	field := strings.TrimSpace(source.Field)
+	if field == "" {
+		field = "phase"
+	}
+	return strings.TrimSpace(source.Resource) + "." + field
 }
 
 func tunnelStatus(desired tunnelDesired, dryRun bool, extra map[string]any) map[string]any {

@@ -56,6 +56,95 @@ func TestTunnelInterfaceControllerAddsIPIP(t *testing.T) {
 	}
 }
 
+func TestTunnelInterfaceControllerResolvesEndpointSources(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Client"},
+			Metadata: api.ObjectMeta{Name: "underlay"},
+			Spec:     api.DHCPv4ClientSpec{Interface: "eth0"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
+			Metadata: api.ObjectMeta{Name: "tun-ipip"},
+			Spec: api.TunnelInterfaceSpec{
+				Mode:            "ipip",
+				LocalFrom:       api.StatusValueSourceSpec{Resource: "DHCPv4Client/underlay", Field: "currentAddress"},
+				Remote:          "192.0.2.20",
+				TrustedUnderlay: true,
+			},
+		},
+	}}}
+	store := mapStore{}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "DHCPv4Client", "underlay", map[string]any{"currentAddress": "192.0.2.10/24"}); err != nil {
+		t.Fatal(err)
+	}
+	var calls [][]string
+	controller := TunnelInterfaceController{
+		Router: router,
+		Store:  store,
+		OS:     platform.OSLinux,
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			calls = append(calls, append([]string{name}, args...))
+			if reflect.DeepEqual(append([]string{name}, args...), []string{"ip", "-d", "-o", "link", "show", "dev", "tun-ipip"}) {
+				return []byte("Cannot find device \"tun-ipip\""), errors.New("missing")
+			}
+			return nil, nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	want := [][]string{
+		{"ip", "-d", "-o", "link", "show", "dev", "tun-ipip"},
+		{"ip", "link", "add", "dev", "tun-ipip", "type", "ipip", "local", "192.0.2.10", "remote", "192.0.2.20", "ttl", "64"},
+		{"ip", "link", "set", "dev", "tun-ipip", "mtu", "1480", "up"},
+	}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("calls = %#v, want %#v", calls, want)
+	}
+	status := controller.Store.ObjectStatus(api.HybridAPIVersion, "TunnelInterface", "tun-ipip")
+	if status["phase"] != "Up" || status["local"] != "192.0.2.10" {
+		t.Fatalf("status = %#v", status)
+	}
+}
+
+func TestTunnelInterfaceControllerWaitsForEndpointSources(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Client"},
+			Metadata: api.ObjectMeta{Name: "underlay"},
+			Spec:     api.DHCPv4ClientSpec{Interface: "eth0"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
+			Metadata: api.ObjectMeta{Name: "tun-ipip"},
+			Spec: api.TunnelInterfaceSpec{
+				Mode:            "ipip",
+				LocalFrom:       api.StatusValueSourceSpec{Resource: "DHCPv4Client/underlay", Field: "currentAddress"},
+				Remote:          "192.0.2.20",
+				TrustedUnderlay: true,
+			},
+		},
+	}}}
+	store := mapStore{}
+	controller := TunnelInterfaceController{
+		Router: router,
+		Store:  store,
+		OS:     platform.OSLinux,
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			t.Fatalf("pending endpoint source must not run commands, got %s %v", name, args)
+			return nil, nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	status := controller.Store.ObjectStatus(api.HybridAPIVersion, "TunnelInterface", "tun-ipip")
+	if status["phase"] != "Pending" || status["reason"] != "EndpointSourcePending" || status["pendingSource"] != "DHCPv4Client/underlay.currentAddress" {
+		t.Fatalf("status = %#v", status)
+	}
+}
+
 func TestTunnelInterfaceControllerAddsFOU(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
 		TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
