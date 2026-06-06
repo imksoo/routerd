@@ -3,6 +3,7 @@
 package bgp
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -206,7 +207,15 @@ func (c *Controller) reconcileLocked(ctx context.Context) error {
 	if err := c.Server.SaveAppliedConfig(ctx, applied); err != nil {
 		return c.savePendingAll("GoBGPAppliedStatePersistFailed", err)
 	}
-	if dynamicImportPolicyExpanded(previousApplied, applied) {
+	dynamicRefreshNeeded := dynamicImportPolicyExpanded(previousApplied, applied)
+	if !dynamicRefreshNeeded {
+		advertisementsSynced, err := c.dynamicAdvertisementsSynced(ctx, applied)
+		if err != nil {
+			return c.savePendingAll("GoBGPDynamicPathObserveFailed", err)
+		}
+		dynamicRefreshNeeded = !advertisementsSynced
+	}
+	if dynamicRefreshNeeded {
 		refreshed, err := c.refreshDynamicAdvertisements(ctx, applied)
 		if err != nil {
 			return c.savePendingAll("GoBGPDynamicPathRefreshFailed", err)
@@ -1138,6 +1147,35 @@ func (c *Controller) refreshDynamicAdvertisements(ctx context.Context, applied b
 		applied.Paths[i].UUID = bgpdaemon.EncodeUUID(resp.GetUuid())
 	}
 	return bgpdaemon.Normalize(applied), nil
+}
+
+func (c *Controller) dynamicAdvertisementsSynced(ctx context.Context, applied bgpdaemon.AppliedConfig) (bool, error) {
+	applied = bgpdaemon.Normalize(applied)
+	var dynamic []bgpdaemon.AppliedPath
+	for _, path := range applied.Paths {
+		if path.Source == bgpdaemon.AppliedPathSourceStatic {
+			continue
+		}
+		dynamic = append(dynamic, path)
+	}
+	if len(dynamic) == 0 {
+		return true, nil
+	}
+	live, err := c.advertisedPathUUIDs(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, path := range dynamic {
+		uuid, err := bgpdaemon.DecodeUUID(path.UUID)
+		if err != nil || len(uuid) == 0 {
+			return false, nil
+		}
+		liveUUID := live[path.Prefix]
+		if len(liveUUID) == 0 || !bytes.Equal(liveUUID, uuid) {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 func isMissingGoBGPPath(err error) bool {

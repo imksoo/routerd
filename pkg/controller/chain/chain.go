@@ -2313,6 +2313,7 @@ func (c IPv4StaticAddressController) Reconcile(ctx context.Context) error {
 			continue
 		}
 		changed := objectStatusChanged("IPv4StaticAddress", c.Store.ObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", resource.Metadata.Name), status)
+		previous := c.Store.ObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", resource.Metadata.Name)
 		addressPresent := true
 		if !c.DryRun {
 			addressPresentFn := c.AddressPresent
@@ -2325,6 +2326,20 @@ func (c IPv4StaticAddressController) Reconcile(ctx context.Context) error {
 			command := c.Command
 			if command == nil {
 				command = runCommandContext
+			}
+			if err := c.cleanupPreviousIPv4StaticAddress(ctx, command, resource.Metadata.Name, previous, ifname, spec.Address); err != nil {
+				if saveErr := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", resource.Metadata.Name, map[string]any{
+					"phase":     "Error",
+					"reason":    "CleanupFailed",
+					"interface": spec.Interface,
+					"ifname":    ifname,
+					"address":   spec.Address,
+					"error":     err.Error(),
+					"dryRun":    c.DryRun,
+				}); saveErr != nil {
+					return saveErr
+				}
+				return err
 			}
 			name, args := ipv4StaticAddressApplyCommand(platform.CurrentOS(), ifname, spec.Address)
 			if err := command(ctx, name, args...); err != nil {
@@ -2355,6 +2370,51 @@ func (c IPv4StaticAddressController) Reconcile(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func (c IPv4StaticAddressController) cleanupPreviousIPv4StaticAddress(ctx context.Context, command commandFunc, resourceName string, previous map[string]any, desiredIfName, desiredAddress string) error {
+	previousAddress := strings.TrimSpace(fmt.Sprint(previous["address"]))
+	previousIfName := strings.TrimSpace(fmt.Sprint(previous["ifname"]))
+	if previousAddress == "" || previousIfName == "" {
+		return nil
+	}
+	if previousAddress == strings.TrimSpace(desiredAddress) && previousIfName == strings.TrimSpace(desiredIfName) {
+		return nil
+	}
+	if ipv4StaticAddressDesiredByAnother(c.Router, resourceName, previousIfName, previousAddress) {
+		return nil
+	}
+	addressPresentFn := c.AddressPresent
+	if addressPresentFn == nil {
+		addressPresentFn = ipv4AddressPresent
+	}
+	if !addressPresentFn(ctx, previousIfName, previousAddress) {
+		return nil
+	}
+	name, args := ipv4StaticAddressDeleteCommand(platform.CurrentOS(), previousIfName, previousAddress)
+	return command(ctx, name, args...)
+}
+
+func ipv4StaticAddressDesiredByAnother(router *api.Router, resourceName, ifname, address string) bool {
+	if router == nil {
+		return false
+	}
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "IPv4StaticAddress" || resource.Metadata.Name == resourceName {
+			continue
+		}
+		spec, err := resource.IPv4StaticAddressSpec()
+		if err != nil {
+			continue
+		}
+		if strings.TrimSpace(spec.Address) != strings.TrimSpace(address) {
+			continue
+		}
+		if interfaceIfName(router, spec.Interface) == ifname {
+			return true
+		}
+	}
+	return false
 }
 
 func interfaceDevicePresent(ctx context.Context, ifname string) bool {
@@ -2404,6 +2464,13 @@ func ipv4StaticAddressApplyCommand(osName platform.OS, ifname, address string) (
 		return "ifconfig", []string{ifname, "inet", address, "alias"}
 	}
 	return "ip", []string{"-4", "addr", "replace", address, "dev", ifname}
+}
+
+func ipv4StaticAddressDeleteCommand(osName platform.OS, ifname, address string) (string, []string) {
+	if osName == platform.OSFreeBSD {
+		return "ifconfig", []string{ifname, "inet", address, "-alias"}
+	}
+	return "ip", []string{"-4", "addr", "del", address, "dev", ifname}
 }
 
 func ifconfigHasIPv4Address(out []byte, address string) bool {

@@ -554,6 +554,42 @@ func TestIPv4StaticAddressControllerRestoresMissingAddressWithUnchangedStatus(t 
 	}
 }
 
+func TestIPv4StaticAddressControllerDeletesPreviousAddressWhenChanged(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "lan-base"}, Spec: api.IPv4StaticAddressSpec{Interface: "lan", Address: "172.18.0.2/16"}},
+	}}}
+	store := mapStore{}
+	store.SaveObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", "lan-base", map[string]any{
+		"phase": "Applied", "interface": "lan", "ifname": "ens19", "address": "172.18.0.1/16", "dryRun": false,
+	})
+	var commands []string
+	controller := IPv4StaticAddressController{
+		Router: router,
+		Store:  store,
+		AddressPresent: func(_ context.Context, _ string, address string) bool {
+			return address == "172.18.0.1/16"
+		},
+		DevicePresent: func(context.Context, string) bool {
+			return true
+		},
+		Command: func(ctx context.Context, name string, args ...string) error {
+			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
+			return nil
+		},
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"ip -4 addr del 172.18.0.1/16 dev ens19",
+		"ip -4 addr replace 172.18.0.2/16 dev ens19",
+	}
+	if !reflect.DeepEqual(commands, want) {
+		t.Fatalf("commands = %#v, want %#v", commands, want)
+	}
+}
+
 func TestLANAddressControllerPopulatesInterfaceBeforeDependencyCheck(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "lo", Managed: false}},

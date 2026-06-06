@@ -1425,6 +1425,71 @@ func TestReconcileKeepsUnchangedStaticAdvertisementWithoutReadd(t *testing.T) {
 	}
 }
 
+func TestReconcileRefreshesMissingDynamicAdvertisementFromAppliedState(t *testing.T) {
+	router := bgpRouterWithImportPrefixes("10.250.0.0/24", "10.77.60.11/32")
+	staticPath, err := localPath("10.0.0.0/16")
+	if err != nil {
+		t.Fatal(err)
+	}
+	staticPath.Uuid = []byte{9}
+	server := &fakeServer{
+		routes: []*gobgpapi.Destination{{Prefix: "10.0.0.0/16", Paths: []*gobgpapi.Path{staticPath}}},
+		applied: bgpdaemon.AppliedConfig{
+			Version: bgpdaemon.AppliedVersion,
+			Global: bgpdaemon.AppliedGlobal{
+				ASN:             64512,
+				RouterID:        "10.0.0.1",
+				ImportPolicy:    bgpdaemon.AppliedImportPolicy{AllowedPrefixes: []string{"10.250.0.0/24", "10.77.60.11/32"}, NextHopRewrite: "peer-address"},
+				ListenPort:      179,
+				ListenAddresses: nil,
+			},
+			Peers: map[string]bgpdaemon.AppliedPeer{
+				"10.0.0.21": {
+					Address: "10.0.0.21",
+					ASN:     64513,
+					ImportPolicy: bgpdaemon.AppliedImportPolicy{
+						AllowedPrefixes: []string{"10.250.0.0/24", "10.77.60.11/32"},
+						NextHopRewrite:  "peer-address",
+					},
+					ExportPolicy: bgpdaemon.AppliedExportPolicy{AllowedPrefixes: []string{"10.0.0.0/16", "10.77.60.11/32"}},
+				},
+			},
+			Paths: []bgpdaemon.AppliedPath{
+				bgpdaemon.StaticAppliedPath("10.0.0.0/16", []byte{9}),
+				{
+					Source: "MobilityPool/demo/node/aws-router-a",
+					Prefix: "10.77.60.11/32",
+					Family: bgpdaemon.AppliedPathFamilyIPv4Unicast,
+					UUID:   bgpdaemon.EncodeUUID([]byte{7}),
+				},
+			},
+		},
+	}
+	controller := Controller{
+		Router: router,
+		Store:  mapStore{},
+		Server: server,
+		FIB:    &fakeFIB{},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if len(server.deletedPathUUIDs) != 1 || !reflect.DeepEqual(server.deletedPathUUIDs[0], []byte{7}) {
+		t.Fatalf("deleted paths = %#v, want missing dynamic UUID refresh", server.deletedPathUUIDs)
+	}
+	if server.paths != 1 {
+		t.Fatalf("AddPath calls = %d, want missing dynamic path re-added", server.paths)
+	}
+	pathsByKey := map[string]bgpdaemon.AppliedPath{}
+	for _, path := range server.applied.Paths {
+		pathsByKey[bgpdaemon.AppliedPathKey(path)] = path
+	}
+	key := bgpdaemon.AppliedPathKey(bgpdaemon.AppliedPath{Source: "MobilityPool/demo/node/aws-router-a", Prefix: "10.77.60.11/32"})
+	if pathsByKey[key].UUID == "" || pathsByKey[key].UUID == bgpdaemon.EncodeUUID([]byte{7}) {
+		t.Fatalf("dynamic path UUID was not refreshed: %#v", server.applied.Paths)
+	}
+}
+
 func TestReconcileUpdatesPeerWhenLiveConfigDrifts(t *testing.T) {
 	router := bgpRouter()
 	server := &fakeServer{}
