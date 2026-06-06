@@ -186,13 +186,15 @@ func (c TransportController) deriveTransportResources(owner api.Resource, spec a
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPPeer"},
 			Metadata: api.ObjectMeta{Name: bgpPeerName, OwnerRefs: ownerRef, Annotations: transportAnnotations(owner.Metadata.Name, self, peerNode)},
 			Spec: api.BGPPeerSpec{
-				RouterRef:    strings.TrimSpace(spec.BGP.RouterRef),
-				PeerASN:      spec.BGP.PeerASN,
-				Peers:        []string{remoteAddr.String()},
-				EbgpMultihop: spec.BGP.EbgpMultihop,
-				ImportPolicy: spec.BGP.ImportPolicy,
-				ExportPolicy: spec.BGP.ExportPolicy,
-				Timers:       timers,
+				RouterRef:               strings.TrimSpace(spec.BGP.RouterRef),
+				PeerASN:                 spec.BGP.PeerASN,
+				Peers:                   []string{remoteAddr.String()},
+				EbgpMultihop:            spec.BGP.EbgpMultihop,
+				RouteReflectorClient:    spec.BGP.RouteReflectorClient,
+				RouteReflectorClusterID: strings.TrimSpace(spec.BGP.RouteReflectorClusterID),
+				ImportPolicy:            spec.BGP.ImportPolicy,
+				ExportPolicy:            spec.BGP.ExportPolicy,
+				Timers:                  timers,
 			},
 		})
 		out.BGPPeers++

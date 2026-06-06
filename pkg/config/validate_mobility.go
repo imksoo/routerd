@@ -182,6 +182,12 @@ func validateSAMTransportProfile(res api.Resource, spec api.SAMTransportProfileS
 	default:
 		return fmt.Errorf("%s spec.bgp.timersPreset must be default, fast, or slow", res.ID())
 	}
+	if clusterID := strings.TrimSpace(spec.BGP.RouteReflectorClusterID); clusterID != "" {
+		parsed, err := netip.ParseAddr(clusterID)
+		if err != nil || !parsed.Is4() {
+			return fmt.Errorf("%s spec.bgp.routeReflectorClusterID must be an IPv4 address", res.ID())
+		}
+	}
 	if len(spec.Peers) == 0 {
 		return fmt.Errorf("%s spec.peers requires at least one peer", res.ID())
 	}

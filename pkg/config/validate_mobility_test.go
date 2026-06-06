@@ -110,6 +110,11 @@ func TestValidateSAMTransportProfileRejectsInvalidFields(t *testing.T) {
 			mut:  func(spec *api.SAMTransportProfileSpec) { spec.UnderlayInterface = "missing" },
 			want: "references missing Interface",
 		},
+		{
+			name: "invalid route reflector cluster id",
+			mut:  func(spec *api.SAMTransportProfileSpec) { spec.BGP.RouteReflectorClusterID = "not-an-ip" },
+			want: "spec.bgp.routeReflectorClusterID must be an IPv4 address",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

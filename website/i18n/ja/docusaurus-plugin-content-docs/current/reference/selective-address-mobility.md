@@ -207,6 +207,11 @@ profile が複数 peer を持つ場合は、同じ transport domain にいる全
 当てます。これにより、hub/spoke で各 router の local peer list が異なる場合でも
 両端は同じ edge を local/remote が反転した形で導出します。
 
+core router では `spec.bgp.routeReflectorClient` と
+`spec.bgp.routeReflectorClusterID` を設定できます。これらは生成される各
+`BGPPeer` にコピーされます。edge router では未指定のまま通常の iBGP session と
+して使えます。
+
 peer を profile から外すと、その profile の `DynamicConfigPart` は新しい生成
 resource set で置き換えられます。profile 削除時は古い part を空の active part
 で置き換え、effective config から生成済み tunnel、BGP peer、endpoint route を

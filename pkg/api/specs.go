@@ -685,13 +685,15 @@ type SAMTransportProfileSpec struct {
 }
 
 type SAMTransportBGPProfileSpec struct {
-	RouterRef    string              `yaml:"routerRef" json:"routerRef"`
-	PeerASN      uint32              `yaml:"peerASN" json:"peerASN" jsonschema:"minimum=1"`
-	Timers       BGPTimersSpec       `yaml:"timers,omitempty" json:"timers,omitempty"`
-	TimersPreset string              `yaml:"timersPreset,omitempty" json:"timersPreset,omitempty" jsonschema:"enum=,enum=default,enum=fast,enum=slow"`
-	EbgpMultihop int                 `yaml:"ebgpMultihop,omitempty" json:"ebgpMultihop,omitempty" jsonschema:"minimum=0,maximum=255"`
-	ImportPolicy BGPImportPolicySpec `yaml:"importPolicy,omitempty" json:"importPolicy,omitempty"`
-	ExportPolicy BGPExportPolicySpec `yaml:"exportPolicy,omitempty" json:"exportPolicy,omitempty"`
+	RouterRef               string              `yaml:"routerRef" json:"routerRef"`
+	PeerASN                 uint32              `yaml:"peerASN" json:"peerASN" jsonschema:"minimum=1"`
+	Timers                  BGPTimersSpec       `yaml:"timers,omitempty" json:"timers,omitempty"`
+	TimersPreset            string              `yaml:"timersPreset,omitempty" json:"timersPreset,omitempty" jsonschema:"enum=,enum=default,enum=fast,enum=slow"`
+	EbgpMultihop            int                 `yaml:"ebgpMultihop,omitempty" json:"ebgpMultihop,omitempty" jsonschema:"minimum=0,maximum=255"`
+	RouteReflectorClient    bool                `yaml:"routeReflectorClient,omitempty" json:"routeReflectorClient,omitempty"`
+	RouteReflectorClusterID string              `yaml:"routeReflectorClusterID,omitempty" json:"routeReflectorClusterID,omitempty"`
+	ImportPolicy            BGPImportPolicySpec `yaml:"importPolicy,omitempty" json:"importPolicy,omitempty"`
+	ExportPolicy            BGPExportPolicySpec `yaml:"exportPolicy,omitempty" json:"exportPolicy,omitempty"`
 }
 
 type SAMTransportPeerSpec struct {
