@@ -6,6 +6,7 @@ ENV_FILE=${ENV_FILE:-"$ROOT/env"}
 WORKDIR=${WORKDIR:-"$ROOT/.rendered"}
 INVENTORY_PLUGIN_SRC=${INVENTORY_PLUGIN_SRC:-"$ROOT/plugins/provider-private-ip-inventory"}
 DISCOVERY_WAIT_SECONDS=${DISCOVERY_WAIT_SECONDS:-75}
+REMOTE_ROUTERCTL_BIN=${REMOTE_ROUTERCTL_BIN:-/usr/local/sbin/routerctl}
 
 if [[ ! -f "$ENV_FILE" ]]; then
   echo "missing env file: $ENV_FILE (copy env.example to env)" >&2
@@ -29,7 +30,11 @@ require scp
 SSH_OPTS=(-i "$SSH_KEY_FILE" -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10)
 
 oci_cli() {
-  oci --config-file "$OCI_CONFIG_FILE" --profile "$OCI_PROFILE" --region "$OCI_REGION" --auth security_token "$@" --output json
+  local auth_args=()
+  if [[ -n "${OCI_AUTH_MODE:-}" && "${OCI_AUTH_MODE}" != "api_key" ]]; then
+    auth_args=(--auth "$OCI_AUTH_MODE")
+  fi
+  oci --config-file "$OCI_CONFIG_FILE" --profile "$OCI_PROFILE" --region "$OCI_REGION" "${auth_args[@]}" "$@" --output json
 }
 
 router_host() {
@@ -165,9 +170,30 @@ install_secret_and_config() {
     sudo install -m 0600 /tmp/router.yaml /usr/local/etc/routerd/router.yaml
     command -v python3 >/dev/null
     sudo systemctl restart routerd
-    sudo systemctl restart routerd-eventd@cloudedge.service
+    for _ in \$(seq 1 30); do
+      if sudo systemctl is-active --quiet routerd; then
+        break
+      fi
+      sleep 2
+    done
     sudo systemctl is-active routerd
-    sudo systemctl is-active routerd-eventd@cloudedge.service"
+    for _ in \$(seq 1 30); do
+      if [ -s /var/lib/routerd/eventd/cloudedge/config.json ]; then
+        break
+      fi
+      sleep 2
+    done
+    test -s /var/lib/routerd/eventd/cloudedge/config.json
+    sudo systemctl restart routerd-eventd@cloudedge.service
+    for svc in routerd-eventd@cloudedge.service; do
+      for _ in \$(seq 1 30); do
+        if sudo systemctl is-active --quiet \"\$svc\"; then
+          break
+        fi
+        sleep 2
+      done
+      sudo systemctl is-active \"\$svc\"
+    done"
 }
 
 oci_client_vnic_ref() {
@@ -198,7 +224,7 @@ preflight_oci_private_ip() {
 
 preflight_oci_wireguard() {
   router_ssh oci "set -euo pipefail
-    if ! sudo ss -lun | awk '{print \$5}' | grep -Eq '(^|:)51820$'; then
+    if ! sudo ss -lun | awk '{print \$4}' | grep -Eq '(^|:)51820$'; then
       echo 'OCI preflight failed: UDP/51820 listener missing' >&2
       exit 1
     fi
@@ -226,6 +252,10 @@ preflight_oci_forwarding() {
         sudo iptables -I FORWARD 1 -i ens3 -o wg-hybrid -j ACCEPT
       sudo iptables -C FORWARD -i wg-hybrid -o ens3 -j ACCEPT 2>/dev/null ||
         sudo iptables -I FORWARD 1 -i wg-hybrid -o ens3 -j ACCEPT
+      sudo iptables -C FORWARD -i ens3 -o sam+ -j ACCEPT 2>/dev/null ||
+        sudo iptables -I FORWARD 1 -i ens3 -o sam+ -j ACCEPT
+      sudo iptables -C FORWARD -i sam+ -o ens3 -j ACCEPT 2>/dev/null ||
+        sudo iptables -I FORWARD 1 -i sam+ -o ens3 -j ACCEPT
     else
       echo 'OCI preflight failed: iptables command unavailable; cannot assert ens3<->wg-hybrid FORWARD allow' >&2
       exit 1
@@ -242,11 +272,11 @@ preflight_mesh() {
 
 execute_provider_actions() {
   local node=$1
-  router_ssh "$node" "sudo $ROUTERCTL_BIN action import"
+  router_ssh "$node" "sudo $REMOTE_ROUTERCTL_BIN action import"
   local ids
-  ids=$(router_ssh "$node" "sudo $ROUTERCTL_BIN action list --status pending -o json" | jq -r '.[].id')
+  ids=$(router_ssh "$node" "sudo $REMOTE_ROUTERCTL_BIN action list --status pending -o json" | jq -r '(. // [])[].id')
   for id in $ids; do
-    router_ssh "$node" "sudo $ROUTERCTL_BIN action approve $id --by cloudedge-demo && sudo $ROUTERCTL_BIN action execute $id --approved"
+    router_ssh "$node" "sudo $REMOTE_ROUTERCTL_BIN action approve $id --by cloudedge-demo && sudo $REMOTE_ROUTERCTL_BIN action execute $id --approved"
   done
 }
 
@@ -260,25 +290,40 @@ client_jump() {
   esac
 }
 
+client_proxy_command() {
+  local site=$1
+  echo "ssh -i $SSH_KEY_FILE -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 -W %h:%p $(client_jump "$site")"
+}
+
 client_host() {
   case "$1" in
     onprem) echo "$ONPREM_CLIENT_SSH_HOST" ;;
     aws) echo "$AWS_CLIENT_SSH_HOST" ;;
     azure) echo "$AZURE_CLIENT_SSH_HOST" ;;
     oci) echo "$OCI_CLIENT_SSH_HOST" ;;
+    aws-b) echo "$AWS_CLIENT_SSH_HOST" ;;
+  esac
+}
+
+client_user() {
+  case "$1" in
+    onprem) echo "${ONPREM_CLIENT_SSH_USER:-nwadmin}" ;;
+    aws|aws-b) echo "${AWS_CLIENT_SSH_USER:-$CLIENT_SSH_USER}" ;;
+    azure) echo "${AZURE_CLIENT_SSH_USER:-azureuser}" ;;
+    oci) echo "${OCI_CLIENT_SSH_USER:-$CLIENT_SSH_USER}" ;;
   esac
 }
 
 client_exec() {
   local site=$1
   shift
-  ssh "${SSH_OPTS[@]}" -J "$(client_jump "$site")" "$CLIENT_SSH_USER@$(client_host "$site")" "$@"
+  ssh "${SSH_OPTS[@]}" -o "ProxyCommand=$(client_proxy_command "$site")" "$(client_user "$site")@$(client_host "$site")" "$@"
 }
 
 client_mobility_ip() {
   case "$1" in
     onprem) echo "$ONPREM_CLIENT_IP" ;;
-    aws) echo "$AWS_CLIENT_IP" ;;
+    aws|aws-b) echo "$AWS_CLIENT_IP" ;;
     azure) echo "$AZURE_CLIENT_IP" ;;
     oci) echo "$OCI_CLIENT_IP" ;;
     *) echo "unknown client site $1" >&2; return 1 ;;
@@ -288,8 +333,13 @@ client_mobility_ip() {
 preflight_client_mobility_ip() {
   local site=$1 ip
   ip=$(client_mobility_ip "$site")
+  local key_b64
+  key_b64=$(base64 -w0 "$SSH_KEY_FILE")
   echo "Preflight $site client mobility IP $ip"
   client_exec "$site" "set -euo pipefail
+    install -d -m 0700 ~/.ssh
+    printf '%s' '$key_b64' | base64 -d > ~/.ssh/routerd_cloudedge_lab_ed25519
+    chmod 0600 ~/.ssh/routerd_cloudedge_lab_ed25519
     dev=\$(ip -4 route show default | awk '{for (i=1;i<=NF;i++) if (\$i == \"dev\") {print \$(i+1); exit}}')
     if [ -z \"\$dev\" ]; then
       echo '$site client preflight failed: default-route interface not found' >&2
@@ -326,14 +376,43 @@ run_d3_matrix() {
   for i in "${!sites[@]}"; do
     for j in "${!sites[@]}"; do
       [[ "$i" == "$j" ]] && continue
-      local src=${sites[$i]} src_ip dst_ip=${ips[$j]}
+      local src=${sites[$i]} dst=${sites[$j]} src_ip dst_ip=${ips[$j]} dst_user
       src_ip=$(client_mobility_ip "$src")
+      dst_user=$(client_user "$dst")
       echo "D3 $src -> $dst_ip ping"
       client_exec "$src" "ping -I $src_ip -c3 -W2 $dst_ip"
       echo "D3 $src -> $dst_ip ssh source"
-      client_exec "$src" "ssh -b $src_ip -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=8 $CLIENT_SSH_USER@$dst_ip 'printenv SSH_CONNECTION; ip route show default'"
+      client_ssh_probe "$src" "$src_ip" "$dst_user" "$dst_ip"
     done
   done
+}
+
+client_ssh_probe() {
+  local src=$1 src_ip=$2 dst_user=$3 dst_ip=$4 bind_arg=
+  if [[ -n "$src_ip" ]]; then
+    bind_arg="-b $src_ip"
+  fi
+  client_exec "$src" "set -euo pipefail
+    for attempt in 1 2 3; do
+      echo ssh-attempt=\$attempt
+      if timeout 20s ssh -i ~/.ssh/routerd_cloudedge_lab_ed25519 $bind_arg \
+          -o BatchMode=yes \
+          -o StrictHostKeyChecking=no \
+          -o UserKnownHostsFile=/dev/null \
+          -o ConnectTimeout=8 \
+          -o ConnectionAttempts=1 \
+          -o ServerAliveInterval=5 \
+          -o ServerAliveCountMax=2 \
+          -o KexAlgorithms=curve25519-sha256 \
+          -o HostKeyAlgorithms=ssh-ed25519 \
+          -o Ciphers=aes128-ctr \
+          -o MACs=hmac-sha2-256 \
+          $dst_user@$dst_ip 'printenv SSH_CONNECTION; ip route show default'; then
+        exit 0
+      fi
+      sleep 2
+    done
+    exit 1"
 }
 
 probe_stale_gate_on_aws_b() {
@@ -345,8 +424,8 @@ probe_stale_gate_on_aws_b() {
     fi
     now=\$(date -u +%Y-%m-%dT%H:%M:%SZ)
     sudo sqlite3 /var/lib/routerd/routerd.db \"insert into action_executions(idempotency_key,source,provider,provider_ref,action,target_json,parameters_json,undo_json,risk_level,status,created_at,updated_at) values('cloudedge-demo-stale-probe-pathsig1','stale-gate-probe','aws','aws-lab','assign-secondary-ip',json_object('provider','aws','providerRef','aws-lab','region','$AWS_REGION','nicRef','\$aws_b_nic','address','10.77.60.10/32'),json_object('mobilityPathSig','prefix=10.77.60.10/32;nextHops=stale','mobilityCaptureHolder','aws-router-a'),'{}','medium','pending','\$now','\$now') on conflict(idempotency_key) do nothing;\"
-    sudo $ROUTERCTL_BIN action import
-    sudo $ROUTERCTL_BIN action list -o json | jq -r '.[] | select(.idempotencyKey==\"cloudedge-demo-stale-probe-pathsig1\") | [.status,.resultMessage] | @tsv'"
+    sudo $REMOTE_ROUTERCTL_BIN action import
+    sudo $REMOTE_ROUTERCTL_BIN action list -o json | jq -r '.[] | select(.idempotencyKey==\"cloudedge-demo-stale-probe-pathsig1\") | [.status,.resultMessage] | @tsv'"
 }
 
 main() {
@@ -395,8 +474,8 @@ main() {
   probe_stale_gate_on_aws_b
 
   echo "Verify D5 dataplane via aws-router-b"
-  ssh "${SSH_OPTS[@]}" -J "$(client_jump aws-b)" "$CLIENT_SSH_USER@$AWS_CLIENT_SSH_HOST" "ping -c3 -W2 $ONPREM_CLIENT_IP"
-  ssh "${SSH_OPTS[@]}" -J "$(client_jump aws-b),$CLIENT_SSH_USER@$AWS_CLIENT_SSH_HOST" "$CLIENT_SSH_USER@$ONPREM_CLIENT_IP" "printenv SSH_CONNECTION; ip route show default"
+  client_exec aws-b "ping -I $AWS_CLIENT_IP -c3 -W2 $ONPREM_CLIENT_IP"
+  client_ssh_probe aws-b "$AWS_CLIENT_IP" "$(client_user onprem)" "$ONPREM_CLIENT_IP"
 
   echo "CloudEdge Mobility demo PASS"
 }

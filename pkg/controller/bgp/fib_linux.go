@@ -6,6 +6,7 @@ package bgp
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/netip"
 	"reflect"
@@ -69,7 +70,7 @@ func (s *netlinkFIBSyncer) SyncBGP(_ context.Context, routes []FIBRoute) (FIBSyn
 			continue
 		}
 		if err := netlink.RouteReplace(nl); err != nil {
-			return result, err
+			return result, fmt.Errorf("replace BGP route %s via %v: %w", route.Prefix, route.NextHops, err)
 		}
 		s.installed[key] = route
 		result.Installed[key] = true
@@ -112,6 +113,7 @@ func netlinkRoute(route FIBRoute) (*netlink.Route, bool) {
 	case 1:
 		if gw := net.ParseIP(nextHops[0]); gw != nil {
 			nl.Gw = gw
+			nl.LinkIndex = linkIndexForGateway(gw)
 		}
 	default:
 		for _, hop := range nextHops {
@@ -119,10 +121,26 @@ func netlinkRoute(route FIBRoute) (*netlink.Route, bool) {
 			if gw == nil {
 				continue
 			}
-			nl.MultiPath = append(nl.MultiPath, &netlink.NexthopInfo{Gw: gw})
+			nl.MultiPath = append(nl.MultiPath, &netlink.NexthopInfo{Gw: gw, LinkIndex: linkIndexForGateway(gw)})
 		}
 	}
 	return nl, true
+}
+
+func linkIndexForGateway(gw net.IP) int {
+	if gw == nil {
+		return 0
+	}
+	routes, err := netlink.RouteGet(gw)
+	if err != nil {
+		return 0
+	}
+	for _, route := range routes {
+		if route.LinkIndex != 0 {
+			return route.LinkIndex
+		}
+	}
+	return 0
 }
 
 func normalizeFIBRoute(route FIBRoute) FIBRoute {
