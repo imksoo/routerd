@@ -28,11 +28,21 @@ type Status struct {
 }
 
 type StatusStatus struct {
-	Phase         string             `json:"phase" yaml:"phase"`
-	Generation    int64              `json:"generation,omitempty" yaml:"generation,omitempty"`
-	LastApplyTime time.Time          `json:"lastApplyTime,omitempty" yaml:"lastApplyTime,omitempty"`
-	ResourceCount int                `json:"resourceCount,omitempty" yaml:"resourceCount,omitempty"`
-	Controllers   []ControllerStatus `json:"controllers,omitempty" yaml:"controllers,omitempty"`
+	Phase               string               `json:"phase" yaml:"phase"`
+	Generation          int64                `json:"generation,omitempty" yaml:"generation,omitempty"`
+	LastApplyTime       time.Time            `json:"lastApplyTime,omitempty" yaml:"lastApplyTime,omitempty"`
+	ResourceCount       int                  `json:"resourceCount,omitempty" yaml:"resourceCount,omitempty"`
+	ResourcePhaseIssues []ResourcePhaseIssue `json:"resourcePhaseIssues,omitempty" yaml:"resourcePhaseIssues,omitempty"`
+	Controllers         []ControllerStatus   `json:"controllers,omitempty" yaml:"controllers,omitempty"`
+}
+
+type ResourcePhaseIssue struct {
+	APIVersion string `json:"apiVersion" yaml:"apiVersion"`
+	Kind       string `json:"kind" yaml:"kind"`
+	Name       string `json:"name" yaml:"name"`
+	Phase      string `json:"phase" yaml:"phase"`
+	Reason     string `json:"reason,omitempty" yaml:"reason,omitempty"`
+	Message    string `json:"message,omitempty" yaml:"message,omitempty"`
 }
 
 type ControllerStatus struct {
