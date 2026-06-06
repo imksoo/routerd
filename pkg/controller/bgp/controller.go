@@ -2236,11 +2236,13 @@ func bgpPrefixMaxLength(prefix netip.Prefix) uint32 {
 
 func importPolicyRefreshNeeded(desired map[string]desiredPeer, routes []FIBRoute) bool {
 	peerAddresses := map[string]bool{}
+	var allowedNextHopPrefixes []netip.Prefix
 	hasRewritePolicy := false
 	for address, peer := range desired {
 		if importNextHopRewrite(peer.ImportPolicy) == "peer-address" && len(importPolicyPrefixes(peer.ImportPolicy)) > 0 {
 			hasRewritePolicy = true
 		}
+		allowedNextHopPrefixes = append(allowedNextHopPrefixes, parseAllowedNextHopPrefixes(peer.ImportPolicy.AllowedPrefixes)...)
 		if parsed, err := netip.ParseAddr(strings.TrimSpace(address)); err == nil {
 			peerAddresses[parsed.String()] = true
 		}
@@ -2256,6 +2258,9 @@ func importPolicyRefreshNeeded(desired map[string]desiredPeer, routes []FIBRoute
 			if isLocalRouteNextHop(nextHop) {
 				continue
 			}
+			if nextHopAllowedByImportPolicy(nextHop, allowedNextHopPrefixes) {
+				continue
+			}
 			if !peerAddresses[nextHop] {
 				return true
 			}
@@ -2264,9 +2269,34 @@ func importPolicyRefreshNeeded(desired map[string]desiredPeer, routes []FIBRoute
 	return false
 }
 
+func parseAllowedNextHopPrefixes(values []string) []netip.Prefix {
+	var out []netip.Prefix
+	for _, value := range values {
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(value))
+		if err != nil {
+			continue
+		}
+		out = append(out, prefix.Masked())
+	}
+	return out
+}
+
 func isLocalRouteNextHop(value string) bool {
 	addr, err := netip.ParseAddr(strings.TrimSpace(value))
 	return err == nil && addr.IsUnspecified()
+}
+
+func nextHopAllowedByImportPolicy(value string, prefixes []netip.Prefix) bool {
+	addr, err := netip.ParseAddr(strings.TrimSpace(value))
+	if err != nil {
+		return false
+	}
+	for _, prefix := range prefixes {
+		if prefix.Contains(addr) {
+			return true
+		}
+	}
+	return false
 }
 
 func bgpPolicyName(routerName, suffix string) string {
