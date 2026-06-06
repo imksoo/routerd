@@ -189,6 +189,44 @@ func (s *fakeServer) SetPolicies(_ context.Context, req *gobgpapi.SetPoliciesReq
 	return nil
 }
 
+func (s *fakeServer) ListPolicy(_ context.Context, req *gobgpapi.ListPolicyRequest, fn func(*gobgpapi.Policy)) error {
+	for _, policy := range s.policyRequest.GetPolicies() {
+		if strings.TrimSpace(req.GetName()) != "" && strings.TrimSpace(policy.GetName()) != strings.TrimSpace(req.GetName()) {
+			continue
+		}
+		fn(policy)
+	}
+	return nil
+}
+
+func (s *fakeServer) ListDefinedSet(_ context.Context, req *gobgpapi.ListDefinedSetRequest, fn func(*gobgpapi.DefinedSet)) error {
+	for _, set := range s.policyRequest.GetDefinedSets() {
+		if set.GetDefinedType() != req.GetDefinedType() {
+			continue
+		}
+		if strings.TrimSpace(req.GetName()) != "" && strings.TrimSpace(set.GetName()) != strings.TrimSpace(req.GetName()) {
+			continue
+		}
+		fn(set)
+	}
+	return nil
+}
+
+func (s *fakeServer) ListPolicyAssignment(_ context.Context, req *gobgpapi.ListPolicyAssignmentRequest, fn func(*gobgpapi.PolicyAssignment)) error {
+	assignment := s.policyAssignment
+	if assignment == nil {
+		return nil
+	}
+	if strings.TrimSpace(req.GetName()) != "" && strings.TrimSpace(assignment.GetName()) != strings.TrimSpace(req.GetName()) {
+		return nil
+	}
+	if req.GetDirection() != gobgpapi.PolicyDirection_UNKNOWN && assignment.GetDirection() != req.GetDirection() {
+		return nil
+	}
+	fn(assignment)
+	return nil
+}
+
 func (s *fakeServer) SetPolicyAssignment(_ context.Context, req *gobgpapi.SetPolicyAssignmentRequest) error {
 	s.assigns++
 	s.policyAssignment = req.GetAssignment()
@@ -705,58 +743,6 @@ func TestReconcileDoesNotRefreshUnchangedImportPolicy(t *testing.T) {
 	}
 	if server.resets != 0 {
 		t.Fatalf("soft inbound resets = %d, want no reset for unchanged applied policy", server.resets)
-	}
-}
-
-func TestImportPolicyRefreshIgnoresLocalNextHop(t *testing.T) {
-	desired := map[string]desiredPeer{
-		"10.252.0.1": {
-			Address: "10.252.0.1",
-			ImportPolicy: api.BGPImportPolicySpec{
-				AllowedPrefixes: []string{"192.168.123.0/24"},
-				NextHopRewrite:  "peer-address",
-			},
-		},
-	}
-	routes := []FIBRoute{
-		{Prefix: "10.252.0.0/24", NextHops: []string{"0.0.0.0"}},
-		{Prefix: "2001:db8::/64", NextHops: []string{"::"}},
-		{Prefix: "192.168.123.113/32", NextHops: []string{"10.252.0.1"}},
-	}
-	if importPolicyRefreshNeeded(desired, routes) {
-		t.Fatal("importPolicyRefreshNeeded returned true for local next-hop routes")
-	}
-}
-
-func TestImportPolicyRefreshStillDetectsUnexpectedNextHop(t *testing.T) {
-	desired := map[string]desiredPeer{
-		"10.252.0.1": {
-			Address: "10.252.0.1",
-			ImportPolicy: api.BGPImportPolicySpec{
-				AllowedPrefixes: []string{"192.168.123.0/24"},
-				NextHopRewrite:  "peer-address",
-			},
-		},
-	}
-	routes := []FIBRoute{{Prefix: "192.168.123.113/32", NextHops: []string{"10.252.0.99"}}}
-	if !importPolicyRefreshNeeded(desired, routes) {
-		t.Fatal("importPolicyRefreshNeeded returned false for unexpected learned next-hop")
-	}
-}
-
-func TestImportPolicyRefreshAllowsNextHopCoveredByImportPolicy(t *testing.T) {
-	desired := map[string]desiredPeer{
-		"10.252.0.1": {
-			Address: "10.252.0.1",
-			ImportPolicy: api.BGPImportPolicySpec{
-				AllowedPrefixes: []string{"10.252.0.0/24", "192.168.123.0/24"},
-				NextHopRewrite:  "peer-address",
-			},
-		},
-	}
-	routes := []FIBRoute{{Prefix: "192.168.123.113/32", NextHops: []string{"10.252.0.17"}}}
-	if importPolicyRefreshNeeded(desired, routes) {
-		t.Fatal("importPolicyRefreshNeeded returned true for an overlay next-hop covered by import policy")
 	}
 }
 

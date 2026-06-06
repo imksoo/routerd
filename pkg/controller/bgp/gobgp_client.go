@@ -215,6 +215,69 @@ func (s *remoteGoBGPServer) ListPeer(ctx context.Context, req *gobgpapi.ListPeer
 	}
 }
 
+func (s *remoteGoBGPServer) ListPolicy(ctx context.Context, req *gobgpapi.ListPolicyRequest, fn func(*gobgpapi.Policy)) error {
+	client, err := s.api(ctx)
+	if err != nil {
+		return err
+	}
+	stream, err := client.ListPolicy(ctx, req)
+	if err != nil {
+		return err
+	}
+	for {
+		resp, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		fn(resp.GetPolicy())
+	}
+}
+
+func (s *remoteGoBGPServer) ListDefinedSet(ctx context.Context, req *gobgpapi.ListDefinedSetRequest, fn func(*gobgpapi.DefinedSet)) error {
+	client, err := s.api(ctx)
+	if err != nil {
+		return err
+	}
+	stream, err := client.ListDefinedSet(ctx, req)
+	if err != nil {
+		return err
+	}
+	for {
+		resp, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		fn(resp.GetDefinedSet())
+	}
+}
+
+func (s *remoteGoBGPServer) ListPolicyAssignment(ctx context.Context, req *gobgpapi.ListPolicyAssignmentRequest, fn func(*gobgpapi.PolicyAssignment)) error {
+	client, err := s.api(ctx)
+	if err != nil {
+		return err
+	}
+	stream, err := client.ListPolicyAssignment(ctx, req)
+	if err != nil {
+		return err
+	}
+	for {
+		resp, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		fn(resp.GetAssignment())
+	}
+}
+
 func (s *remoteGoBGPServer) SetPolicies(ctx context.Context, req *gobgpapi.SetPoliciesRequest) error {
 	client, err := s.api(ctx)
 	if err != nil {
