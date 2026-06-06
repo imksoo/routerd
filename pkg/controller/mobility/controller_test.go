@@ -461,6 +461,9 @@ func TestControllerBGPModeUsesDiscoveredSelfNICForProviderActions(t *testing.T) 
 	if status["plannerPhase"] != "Degraded" || !strings.Contains(fmt.Sprint(status["plannerReason"]), "self NIC is unresolved") {
 		t.Fatalf("status = %#v, want unresolved self NIC degraded", status)
 	}
+	if status["selfCaptureResolved"] != false || !strings.Contains(fmt.Sprint(status["selfCaptureReason"]), "self NIC is unresolved") {
+		t.Fatalf("status = %#v, want explicit self capture blocker", status)
+	}
 	if len(bgp.upserts) != 0 {
 		t.Fatalf("bgp upserts = %#v, want no self-owned path for remote owner", bgp.upserts)
 	}
@@ -474,6 +477,10 @@ func TestControllerBGPModeUsesDiscoveredSelfNICForProviderActions(t *testing.T) 
 	controller.Now = func() time.Time { return now.Add(time.Second) }
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("resolved Reconcile: %v", err)
+	}
+	status = store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	if status["selfCaptureResolved"] != true {
+		t.Fatalf("status = %#v, want resolved self capture", status)
 	}
 	plans := decodeActionPlans(t, latestPart(t, store, source).ActionPlansJSON)
 	assign := findActionPlanByAddress(plans, "assign-secondary-ip", "10.88.60.10/32")

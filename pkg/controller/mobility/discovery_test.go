@@ -705,6 +705,82 @@ func TestDiscoveryControllerResolvesSelfNICForStandbyPlacementMember(t *testing.
 	}
 }
 
+func TestDiscoveryControllerProfileOnlyActivePeerRunsProviderDiscovery(t *testing.T) {
+	now := time.Date(2026, 6, 6, 15, 40, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := discoveryPoolSpec()
+	spec.Values = map[string]string{
+		"aws.region":    "ap-northeast-1",
+		"aws.subnetRef": "subnet-a",
+	}
+	spec.Profiles = api.MobilityPoolProfiles{CloudCaptures: map[string]api.MobilityCloudCaptureProfile{
+		"aws-self": {
+			Capture: api.MobilityMemberCapture{
+				Type:         "provider-secondary-ip",
+				Interface:    "ens5",
+				ProviderRef:  "aws-provider",
+				ProviderMode: "eni-secondary-ip",
+				TargetFrom:   map[string]string{"region": "aws.region"},
+			},
+			OwnershipDiscovery: api.MobilityOwnershipDiscovery{
+				Mode:          "provider-private-ip",
+				SubnetRefFrom: "aws.subnetRef",
+				ScanInterval:  "60s",
+				LeaseTTL:      "10m",
+				Scope:         api.MobilityOwnershipDiscoveryScope{IncludePrimary: boolPtr(false)},
+			},
+		},
+	}}
+	spec.Members = []api.MobilityPoolMember{
+		spec.Members[0],
+		{
+			NodeRef:    "aws-router-b",
+			Site:       "aws",
+			Role:       "cloud",
+			ProfileRef: "aws-self",
+			Placement:  api.MobilityMemberPlacement{Group: "aws-edge", Priority: 20},
+		},
+		{
+			NodeRef:     "aws-router-a",
+			Site:        "aws",
+			Role:        "cloud",
+			Placement:   api.MobilityMemberPlacement{Group: "aws-edge", Priority: 10},
+			Maintenance: api.MobilityMemberMaintenance{Drain: true},
+		},
+	}
+	runner := &fakeInventoryRunner{result: providerinventory.ObservePrivateIPsResult{
+		TypeMeta: providerinventory.TypeMeta{APIVersion: providerinventory.ProtocolAPIVersion, Kind: providerinventory.KindObservePrivateIPsResult},
+		Status: providerinventory.ObservePrivateIPsResultStatus{
+			Status: providerinventory.ResultSucceeded,
+			Self:   &providerinventory.PrivateIPSelf{NICRef: "eni-b", SubnetRef: "subnet-a", PrivateIPs: []string{"10.88.60.22"}},
+		},
+	}}
+	router := discoveryRouter("aws-router-b", spec)
+	for i := range router.Spec.Resources {
+		if router.Spec.Resources[i].APIVersion != api.HybridAPIVersion || router.Spec.Resources[i].Kind != "CloudProviderProfile" {
+			continue
+		}
+		router.Spec.Resources[i].Metadata.Name = "aws-provider"
+		profile := router.Spec.Resources[i].Spec.(api.CloudProviderProfileSpec)
+		profile.Provider = "aws"
+		router.Spec.Resources[i].Spec = profile
+	}
+	controller := DiscoveryController{Router: router, Store: store, Runner: runner.run, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if runner.calls != 1 {
+		t.Fatalf("runner calls = %d, want profile-only active peer to run discovery", runner.calls)
+	}
+	if runner.last.Spec.ProviderRef != "aws-provider" || runner.last.Spec.SelfNICRef != "" || runner.last.Spec.SubnetRef != "subnet-a" {
+		t.Fatalf("request spec = %#v", runner.last.Spec)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	if status["discoverySelfNICRef"] != "eni-b" || status["discoveryPhase"] != "Observed" {
+		t.Fatalf("status = %#v, want discovered self NIC on active profile-only peer", status)
+	}
+}
+
 func TestDiscoveryControllerLivenessSeizedStandbyAdvertisesOwnedAddress(t *testing.T) {
 	now := time.Date(2026, 6, 3, 12, 5, 0, 0, time.UTC)
 	store := testStore(t, now)
@@ -959,6 +1035,38 @@ func TestDiscoveryControllerRescansWhenForwardingStatusMissing(t *testing.T) {
 	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
 	if status["discoverySelfForwardingObserved"] != true || status["discoverySelfForwardingEnabled"] != false {
 		t.Fatalf("status = %#v, want forwarding observation populated", status)
+	}
+}
+
+func TestDiscoveryControllerRescansWhenImplicitSelfNICMissing(t *testing.T) {
+	now := time.Date(2026, 6, 3, 15, 5, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := discoveryPoolSpec()
+	spec.Members[1].Capture.NICRef = ""
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"discoveryLastScanAt":             now.Add(-10 * time.Second).Format(time.RFC3339Nano),
+		"discoverySelfForwardingObserved": true,
+		"discoverySelfForwardingEnabled":  false,
+	}); err != nil {
+		t.Fatalf("SaveObjectStatus: %v", err)
+	}
+	runner := &fakeInventoryRunner{result: providerinventory.ObservePrivateIPsResult{
+		TypeMeta: providerinventory.TypeMeta{APIVersion: providerinventory.ProtocolAPIVersion, Kind: providerinventory.KindObservePrivateIPsResult},
+		Status: providerinventory.ObservePrivateIPsResultStatus{
+			Status: providerinventory.ResultSucceeded,
+			Self:   &providerinventory.PrivateIPSelf{NICRef: "router-nic", SubnetRef: "subnet-a", ForwardingEnabled: boolPtr(false)},
+		},
+	}}
+	controller := DiscoveryController{Router: discoveryRouter("azure-router-a", spec), Store: store, Runner: runner.run, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if runner.calls != 1 {
+		t.Fatalf("runner calls = %d, want scan despite recent status without self NIC", runner.calls)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	if status["discoverySelfNICRef"] != "router-nic" {
+		t.Fatalf("status = %#v, want self NIC populated", status)
 	}
 }
 
