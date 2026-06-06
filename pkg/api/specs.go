@@ -668,6 +668,47 @@ type BGPPeerSpec struct {
 	When                    ResourceWhenSpec      `yaml:"when,omitempty" json:"when,omitempty"`
 }
 
+// SAMTransportProfile derives the underlay tunnels and BGP peer sessions used
+// by selective-address mobility delivery. Each router declares its stable
+// selfNodeRef explicitly; no hostname or router-id inference is used.
+type SAMTransportProfileSpec struct {
+	SelfNodeRef       string                     `yaml:"selfNodeRef" json:"selfNodeRef"`
+	Mode              string                     `yaml:"mode" json:"mode" jsonschema:"enum=ipip,enum=gre"`
+	Encryption        string                     `yaml:"encryption,omitempty" json:"encryption,omitempty" jsonschema:"enum=,enum=none,enum=wireguard"`
+	InnerPrefix       string                     `yaml:"innerPrefix" json:"innerPrefix"`
+	UnderlayInterface string                     `yaml:"underlayInterface" json:"underlayInterface"`
+	LocalEndpoint     string                     `yaml:"localEndpoint,omitempty" json:"localEndpoint,omitempty"`
+	LocalEndpointFrom StatusValueSourceSpec      `yaml:"localEndpointFrom,omitempty" json:"localEndpointFrom,omitempty"`
+	BGP               SAMTransportBGPProfileSpec `yaml:"bgp" json:"bgp"`
+	Peers             []SAMTransportPeerSpec     `yaml:"peers" json:"peers"`
+}
+
+type SAMTransportBGPProfileSpec struct {
+	RouterRef    string              `yaml:"routerRef" json:"routerRef"`
+	PeerASN      uint32              `yaml:"peerASN" json:"peerASN" jsonschema:"minimum=1"`
+	Timers       BGPTimersSpec       `yaml:"timers,omitempty" json:"timers,omitempty"`
+	TimersPreset string              `yaml:"timersPreset,omitempty" json:"timersPreset,omitempty" jsonschema:"enum=,enum=default,enum=fast,enum=slow"`
+	EbgpMultihop int                 `yaml:"ebgpMultihop,omitempty" json:"ebgpMultihop,omitempty" jsonschema:"minimum=0,maximum=255"`
+	ImportPolicy BGPImportPolicySpec `yaml:"importPolicy,omitempty" json:"importPolicy,omitempty"`
+	ExportPolicy BGPExportPolicySpec `yaml:"exportPolicy,omitempty" json:"exportPolicy,omitempty"`
+}
+
+type SAMTransportPeerSpec struct {
+	NodeRef            string                       `yaml:"nodeRef" json:"nodeRef"`
+	RemoteEndpoint     string                       `yaml:"remoteEndpoint,omitempty" json:"remoteEndpoint,omitempty"`
+	RemoteEndpointFrom StatusValueSourceSpec        `yaml:"remoteEndpointFrom,omitempty" json:"remoteEndpointFrom,omitempty"`
+	Override           SAMTransportPeerOverrideSpec `yaml:"override,omitempty" json:"override,omitempty"`
+}
+
+type SAMTransportPeerOverrideSpec struct {
+	TunnelInterface   string `yaml:"tunnelInterface,omitempty" json:"tunnelInterface,omitempty"`
+	BGPPeer           string `yaml:"bgpPeer,omitempty" json:"bgpPeer,omitempty"`
+	EndpointRoute     string `yaml:"endpointRoute,omitempty" json:"endpointRoute,omitempty"`
+	LocalInner        string `yaml:"localInner,omitempty" json:"localInner,omitempty"`
+	RemoteInner       string `yaml:"remoteInner,omitempty" json:"remoteInner,omitempty"`
+	UnderlayInterface string `yaml:"underlayInterface,omitempty" json:"underlayInterface,omitempty"`
+}
+
 type BFDSpec struct {
 	Peer             string           `yaml:"peer" json:"peer"`
 	Interface        string           `yaml:"interface,omitempty" json:"interface,omitempty"`
@@ -1301,63 +1342,6 @@ type HybridRouteSpec struct {
 type HybridRouteInstall struct {
 	Table  string `yaml:"table,omitempty" json:"table,omitempty" jsonschema:"enum=,enum=main"`
 	Metric int    `yaml:"metric,omitempty" json:"metric,omitempty" jsonschema:"minimum=0"`
-}
-
-type SAMTransportProfileSpec struct {
-	Mode              string                    `yaml:"mode" json:"mode" jsonschema:"enum=ipip,enum=gre"`
-	Encryption        string                    `yaml:"encryption,omitempty" json:"encryption,omitempty" jsonschema:"enum=,enum=none,enum=wireguard"`
-	LocalNodeID       string                    `yaml:"localNodeID" json:"localNodeID"`
-	LocalEndpoint     string                    `yaml:"localEndpoint,omitempty" json:"localEndpoint,omitempty"`
-	LocalEndpointFrom StatusValueSourceSpec     `yaml:"localEndpointFrom,omitempty" json:"localEndpointFrom,omitempty"`
-	UnderlayInterface string                    `yaml:"underlayInterface,omitempty" json:"underlayInterface,omitempty"`
-	InnerCIDR         string                    `yaml:"innerCIDR" json:"innerCIDR"`
-	PeerRole          string                    `yaml:"peerRole,omitempty" json:"peerRole,omitempty" jsonschema:"enum=,enum=onprem,enum=cloud"`
-	BGP               SAMTransportBGPSpec       `yaml:"bgp,omitempty" json:"bgp,omitempty"`
-	WireGuard         SAMTransportWireGuardSpec `yaml:"wireGuard,omitempty" json:"wireGuard,omitempty"`
-	Peers             []SAMTransportProfilePeer `yaml:"peers" json:"peers"`
-}
-
-type SAMTransportBGPSpec struct {
-	RouterRef               string              `yaml:"routerRef,omitempty" json:"routerRef,omitempty"`
-	PeerASN                 uint32              `yaml:"peerASN,omitempty" json:"peerASN,omitempty" jsonschema:"minimum=0"`
-	RouteReflectorClient    bool                `yaml:"routeReflectorClient,omitempty" json:"routeReflectorClient,omitempty"`
-	RouteReflectorClusterID string              `yaml:"routeReflectorClusterID,omitempty" json:"routeReflectorClusterID,omitempty"`
-	Timers                  BGPTimersSpec       `yaml:"timers,omitempty" json:"timers,omitempty"`
-	ImportPolicy            BGPImportPolicySpec `yaml:"importPolicy,omitempty" json:"importPolicy,omitempty"`
-	ExportPolicy            BGPExportPolicySpec `yaml:"exportPolicy,omitempty" json:"exportPolicy,omitempty"`
-}
-
-type SAMTransportWireGuardSpec struct {
-	Interface           string `yaml:"interface,omitempty" json:"interface,omitempty"`
-	PrivateKey          string `yaml:"privateKey,omitempty" json:"privateKey,omitempty"`
-	PrivateKeyFile      string `yaml:"privateKeyFile,omitempty" json:"privateKeyFile,omitempty"`
-	ListenPort          int    `yaml:"listenPort,omitempty" json:"listenPort,omitempty" jsonschema:"minimum=0,maximum=65535"`
-	MTU                 int    `yaml:"mtu,omitempty" json:"mtu,omitempty" jsonschema:"minimum=0,maximum=9216"`
-	TransportCIDR       string `yaml:"transportCIDR,omitempty" json:"transportCIDR,omitempty"`
-	LocalAddress        string `yaml:"localAddress,omitempty" json:"localAddress,omitempty"`
-	PersistentKeepalive int    `yaml:"persistentKeepalive,omitempty" json:"persistentKeepalive,omitempty" jsonschema:"minimum=0,maximum=65535"`
-}
-
-type SAMTransportProfilePeer struct {
-	Name              string                 `yaml:"name" json:"name"`
-	NodeID            string                 `yaml:"nodeID" json:"nodeID"`
-	Role              string                 `yaml:"role,omitempty" json:"role,omitempty" jsonschema:"enum=,enum=onprem,enum=cloud"`
-	Endpoint          string                 `yaml:"endpoint,omitempty" json:"endpoint,omitempty"`
-	EndpointFrom      StatusValueSourceSpec  `yaml:"endpointFrom,omitempty" json:"endpointFrom,omitempty"`
-	UnderlayInterface string                 `yaml:"underlayInterface,omitempty" json:"underlayInterface,omitempty"`
-	TunnelInterface   string                 `yaml:"tunnelInterface,omitempty" json:"tunnelInterface,omitempty"`
-	InnerAddress      string                 `yaml:"innerAddress,omitempty" json:"innerAddress,omitempty"`
-	PeerASN           uint32                 `yaml:"peerASN,omitempty" json:"peerASN,omitempty" jsonschema:"minimum=0"`
-	WireGuard         SAMTransportPeerWgSpec `yaml:"wireGuard,omitempty" json:"wireGuard,omitempty"`
-}
-
-type SAMTransportPeerWgSpec struct {
-	PublicKey           string `yaml:"publicKey,omitempty" json:"publicKey,omitempty"`
-	Endpoint            string `yaml:"endpoint,omitempty" json:"endpoint,omitempty"`
-	TransportAddress    string `yaml:"transportAddress,omitempty" json:"transportAddress,omitempty"`
-	PresharedKey        string `yaml:"presharedKey,omitempty" json:"presharedKey,omitempty"`
-	PresharedKeyFile    string `yaml:"presharedKeyFile,omitempty" json:"presharedKeyFile,omitempty"`
-	PersistentKeepalive int    `yaml:"persistentKeepalive,omitempty" json:"persistentKeepalive,omitempty" jsonschema:"minimum=0,maximum=65535"`
 }
 
 type AddressMobilityDomainSpec struct {
@@ -2354,6 +2338,10 @@ func (r Resource) BGPPeerSpec() (BGPPeerSpec, error) {
 	return specAs[BGPPeerSpec](r)
 }
 
+func (r Resource) SAMTransportProfileSpec() (SAMTransportProfileSpec, error) {
+	return specAs[SAMTransportProfileSpec](r)
+}
+
 func (r Resource) BFDSpec() (BFDSpec, error) {
 	return specAs[BFDSpec](r)
 }
@@ -2472,10 +2460,6 @@ func (r Resource) OverlayPeerSpec() (OverlayPeerSpec, error) {
 
 func (r Resource) HybridRouteSpec() (HybridRouteSpec, error) {
 	return specAs[HybridRouteSpec](r)
-}
-
-func (r Resource) SAMTransportProfileSpec() (SAMTransportProfileSpec, error) {
-	return specAs[SAMTransportProfileSpec](r)
 }
 
 func (r Resource) AddressMobilityDomainSpec() (AddressMobilityDomainSpec, error) {

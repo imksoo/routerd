@@ -3,6 +3,17 @@
 { config, lib, pkgs, ... }:
 
 {
+  networking.useDHCP = false;
+  networking.useNetworkd = true;
+  networking.firewall.checkReversePath = false;
+  systemd.network.enable = true;
+  systemd.network.networks."10-netplan-wg-hybrid" = {
+    matchConfig.Name = "wg-hybrid";
+    networkConfig = {
+      LinkLocalAddressing = "no";
+    };
+    linkConfig.RequiredForOnline = "no";
+  };
   boot.kernel.sysctl = {
     "net.core.netdev_max_backlog" = 5000;
     "net.core.rmem_max" = 16777216;

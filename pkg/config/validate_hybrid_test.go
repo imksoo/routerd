@@ -47,36 +47,6 @@ func TestValidateTunnelInterfaceEndpointSources(t *testing.T) {
 	}
 }
 
-func TestValidateSAMTransportProfileGeneratedOverlayPeerReferences(t *testing.T) {
-	router := &api.Router{
-		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
-		Metadata: api.ObjectMeta{Name: "test"},
-		Spec: api.RouterSpec{Resources: []api.Resource{
-			testResource(api.NetAPIVersion, "Interface", "eth0", api.InterfaceSpec{IfName: "eth0", Managed: false}),
-			testResource(api.HybridAPIVersion, "SAMTransportProfile", "pve08-core", api.SAMTransportProfileSpec{
-				Mode:              "ipip",
-				LocalNodeID:       "pve-rt08",
-				LocalEndpointFrom: api.StatusValueSourceSpec{Resource: "Interface/eth0", Field: "primaryIPv4"},
-				UnderlayInterface: "eth0",
-				InnerCIDR:         "10.255.1.0/24",
-				PeerRole:          "cloud",
-				Peers: []api.SAMTransportProfilePeer{{
-					Name:     "k8s-rt02",
-					NodeID:   "k8s-rt02",
-					Endpoint: "192.168.1.53",
-				}},
-			}),
-			testResource(api.HybridAPIVersion, "HybridRoute", "svnet1", api.HybridRouteSpec{
-				DestinationCIDRs: []string{"192.168.123.0/24"},
-				PeerRef:          "pve08-core-k8s-rt02-peer",
-			}),
-		}},
-	}
-	if err := Validate(router); err != nil {
-		t.Fatalf("Validate: %v", err)
-	}
-}
-
 func TestValidateHybridFailures(t *testing.T) {
 	tests := []struct {
 		name   string

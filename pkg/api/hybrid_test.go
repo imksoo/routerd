@@ -76,26 +76,6 @@ spec:
           peerRef: cloud-main
           mode: route
           tunnelInterface: wg-hybrid
-    - apiVersion: hybrid.routerd.net/v1alpha1
-      kind: SAMTransportProfile
-      metadata:
-        name: pve08-core
-      spec:
-        mode: ipip
-        encryption: wireguard
-        localNodeID: pve-rt08
-        innerCIDR: 10.255.1.0/24
-        peerRole: cloud
-        wireGuard:
-          interface: wg-sam
-          privateKeyFile: /etc/routerd/wg.key
-          transportCIDR: 10.99.0.0/24
-        peers:
-          - name: k8s-rt02
-            nodeID: k8s-rt02
-            endpoint: 192.168.1.53:51820
-            wireGuard:
-              publicKey: peer-public-key
 `)
 	var router Router
 	if err := yaml.Unmarshal(data, &router); err != nil {
@@ -135,12 +115,5 @@ spec:
 	}
 	if claim.DomainRef != "same-subnet" || claim.Capture.ProviderRef != "oci-prod" || claim.Capture.Type != "provider-secondary-ip" || claim.Delivery.Mode != "route" {
 		t.Fatalf("claim = %#v", claim)
-	}
-	transport, err := router.Spec.Resources[5].SAMTransportProfileSpec()
-	if err != nil {
-		t.Fatalf("transport spec: %v", err)
-	}
-	if transport.Mode != "ipip" || transport.Encryption != "wireguard" || transport.WireGuard.TransportCIDR != "10.99.0.0/24" || len(transport.Peers) != 1 {
-		t.Fatalf("transport = %#v", transport)
 	}
 }

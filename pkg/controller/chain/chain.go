@@ -48,7 +48,6 @@ import (
 	"github.com/imksoo/routerd/pkg/eventrule"
 	"github.com/imksoo/routerd/pkg/ha"
 	"github.com/imksoo/routerd/pkg/healthcheck"
-	"github.com/imksoo/routerd/pkg/hybrid"
 	"github.com/imksoo/routerd/pkg/logstore"
 	"github.com/imksoo/routerd/pkg/mobilityconfig"
 	"github.com/imksoo/routerd/pkg/observabilitypipeline"
@@ -87,6 +86,7 @@ type mobilityDataStore interface {
 	RecordFederationEvent(routerstate.EventRecord) error
 	UpsertDynamicConfigPart(routerstate.DynamicConfigPartRecord) error
 	GetDynamicConfigPartsBySource(source string) ([]routerstate.DynamicConfigPartRecord, error)
+	ListDynamicConfigParts() ([]routerstate.DynamicConfigPartRecord, error)
 	ListActions(routerstate.ActionExecutionFilter) ([]routerstate.ActionExecutionRecord, error)
 }
 
@@ -117,6 +117,10 @@ func (s mobilityStore) UpsertDynamicConfigPart(rec routerstate.DynamicConfigPart
 
 func (s mobilityStore) GetDynamicConfigPartsBySource(source string) ([]routerstate.DynamicConfigPartRecord, error) {
 	return s.data.GetDynamicConfigPartsBySource(source)
+}
+
+func (s mobilityStore) ListDynamicConfigParts() ([]routerstate.DynamicConfigPartRecord, error) {
+	return s.data.ListDynamicConfigParts()
 }
 
 func (s mobilityStore) ListActions(filter routerstate.ActionExecutionFilter) ([]routerstate.ActionExecutionRecord, error) {
@@ -850,12 +854,7 @@ func (r *Runner) effectiveRouterForReconcile(store eventedStore) (*api.Router, e
 	if err := r.saveWhenFalseStatuses(store); err != nil {
 		return nil, err
 	}
-	effective := r.effectiveRouter(store)
-	expanded, _, err := hybrid.ExpandSAMTransportProfiles(*effective)
-	if err != nil {
-		return nil, err
-	}
-	return &expanded, nil
+	return r.effectiveRouter(store), nil
 }
 
 func (r *Runner) Start(ctx context.Context) error {
@@ -1067,18 +1066,24 @@ func (r *Runner) Start(ctx context.Context) error {
 	}
 	var mobility mobilitycontroller.Controller
 	var mobilityDiscovery mobilitycontroller.DiscoveryController
+	var mobilityTransport mobilitycontroller.TransportController
 	if rawStore, ok := r.Store.(mobilityDataStore); ok {
+		mobilityData := mobilityStore{evented: store, data: rawStore}
 		mobilityDiscovery = mobilitycontroller.DiscoveryController{
 			Router: r.Router,
 			Bus:    r.Bus,
-			Store:  mobilityStore{evented: store, data: rawStore},
+			Store:  mobilityData,
 			Runner: r.Opts.ProviderInventoryRunner,
 		}
 		mobility = mobilitycontroller.Controller{
 			Router:   r.Router,
 			Bus:      r.Bus,
-			Store:    mobilityStore{evented: store, data: rawStore},
+			Store:    mobilityData,
 			BGPPaths: bgpdaemon.NewControlClient(bgpDaemon.ControlSocketPath),
+		}
+		mobilityTransport = mobilitycontroller.TransportController{
+			Router: r.Router,
+			Store:  mobilityData,
 		}
 	}
 	var providerAction provideractioncontroller.Controller
@@ -1194,6 +1199,7 @@ func (r *Runner) Start(ctx context.Context) error {
 			return current.Reconcile(ctx)
 		}},
 		framework.FuncController{ControllerName: "link", Every: 30 * time.Second, PeriodicFunc: link.Reconcile},
+		framework.FuncController{ControllerName: "sam-transport", Every: 30 * time.Second, Subs: statusSubscriptions("SAMTransportProfile", "Interface", "IPv4StaticAddress", "DHCPv4Client", "WireGuardInterface", "WireGuardPeer"), PeriodicFunc: mobilityTransport.Reconcile},
 		framework.FuncController{ControllerName: "tunnel", Every: 30 * time.Second, Subs: statusSubscriptions("TunnelInterface"), PeriodicFunc: func(ctx context.Context) error {
 			effective, err := effectiveForReconcile()
 			if err != nil {
@@ -1295,7 +1301,6 @@ func (r *Runner) Start(ctx context.Context) error {
 			current := hybridRoute
 			current.Router = view.EffectiveRouter
 			current.EffectiveRouter = view.RouteRouter
-			current.TransportLowerings = view.SAMTransportLowerings
 			current.Lowerings = view.HybridLowerings
 			return current.Reconcile(ctx)
 		}},

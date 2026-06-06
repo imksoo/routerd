@@ -6831,301 +6831,6 @@
                     "type": "string"
                   },
                   "kind": {
-                    "const": "SAMTransportProfile",
-                    "type": "string"
-                  },
-                  "metadata": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "name": {
-                        "minLength": 1,
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "name"
-                    ],
-                    "type": "object"
-                  },
-                  "spec": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "bgp": {
-                        "additionalProperties": false,
-                        "properties": {
-                          "exportPolicy": {
-                            "additionalProperties": false,
-                            "properties": {
-                              "allowedPrefixes": {
-                                "items": {
-                                  "type": "string"
-                                },
-                                "type": "array"
-                              }
-                            },
-                            "type": "object"
-                          },
-                          "importPolicy": {
-                            "additionalProperties": false,
-                            "properties": {
-                              "allowedPrefixes": {
-                                "items": {
-                                  "type": "string"
-                                },
-                                "type": "array"
-                              },
-                              "nextHopRewrite": {
-                                "enum": [
-                                  "",
-                                  "peer-address",
-                                  "unchanged"
-                                ],
-                                "type": "string"
-                              }
-                            },
-                            "type": "object"
-                          },
-                          "peerASN": {
-                            "minimum": 0,
-                            "type": "integer"
-                          },
-                          "routeReflectorClient": {
-                            "type": "boolean"
-                          },
-                          "routeReflectorClusterID": {
-                            "type": "string"
-                          },
-                          "routerRef": {
-                            "type": "string"
-                          },
-                          "timers": {
-                            "additionalProperties": false,
-                            "properties": {
-                              "profile": {
-                                "enum": [
-                                  "",
-                                  "default",
-                                  "fast",
-                                  "slow"
-                                ],
-                                "type": "string"
-                              }
-                            },
-                            "type": "object"
-                          }
-                        },
-                        "type": "object"
-                      },
-                      "encryption": {
-                        "enum": [
-                          "",
-                          "none",
-                          "wireguard"
-                        ],
-                        "type": "string"
-                      },
-                      "innerCIDR": {
-                        "type": "string"
-                      },
-                      "localEndpoint": {
-                        "type": "string"
-                      },
-                      "localEndpointFrom": {
-                        "additionalProperties": false,
-                        "properties": {
-                          "field": {
-                            "description": "Field defaults to phase when omitted.",
-                            "type": "string"
-                          },
-                          "optional": {
-                            "type": "boolean"
-                          },
-                          "resource": {
-                            "description": "Resource names the source resource as Kind/name and reads its status, or a router config field for supported resources.",
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "resource"
-                        ],
-                        "type": "object"
-                      },
-                      "localNodeID": {
-                        "type": "string"
-                      },
-                      "mode": {
-                        "enum": [
-                          "ipip",
-                          "gre"
-                        ],
-                        "type": "string"
-                      },
-                      "peerRole": {
-                        "enum": [
-                          "",
-                          "onprem",
-                          "cloud"
-                        ],
-                        "type": "string"
-                      },
-                      "peers": {
-                        "items": {
-                          "additionalProperties": false,
-                          "properties": {
-                            "endpoint": {
-                              "type": "string"
-                            },
-                            "endpointFrom": {
-                              "additionalProperties": false,
-                              "properties": {
-                                "field": {
-                                  "description": "Field defaults to phase when omitted.",
-                                  "type": "string"
-                                },
-                                "optional": {
-                                  "type": "boolean"
-                                },
-                                "resource": {
-                                  "description": "Resource names the source resource as Kind/name and reads its status, or a router config field for supported resources.",
-                                  "type": "string"
-                                }
-                              },
-                              "required": [
-                                "resource"
-                              ],
-                              "type": "object"
-                            },
-                            "innerAddress": {
-                              "type": "string"
-                            },
-                            "name": {
-                              "type": "string"
-                            },
-                            "nodeID": {
-                              "type": "string"
-                            },
-                            "peerASN": {
-                              "minimum": 0,
-                              "type": "integer"
-                            },
-                            "role": {
-                              "enum": [
-                                "",
-                                "onprem",
-                                "cloud"
-                              ],
-                              "type": "string"
-                            },
-                            "tunnelInterface": {
-                              "type": "string"
-                            },
-                            "underlayInterface": {
-                              "type": "string"
-                            },
-                            "wireGuard": {
-                              "additionalProperties": false,
-                              "properties": {
-                                "endpoint": {
-                                  "type": "string"
-                                },
-                                "persistentKeepalive": {
-                                  "maximum": 65535,
-                                  "minimum": 0,
-                                  "type": "integer"
-                                },
-                                "presharedKey": {
-                                  "type": "string"
-                                },
-                                "presharedKeyFile": {
-                                  "type": "string"
-                                },
-                                "publicKey": {
-                                  "type": "string"
-                                },
-                                "transportAddress": {
-                                  "type": "string"
-                                }
-                              },
-                              "type": "object"
-                            }
-                          },
-                          "required": [
-                            "name",
-                            "nodeID"
-                          ],
-                          "type": "object"
-                        },
-                        "type": "array"
-                      },
-                      "underlayInterface": {
-                        "type": "string"
-                      },
-                      "wireGuard": {
-                        "additionalProperties": false,
-                        "properties": {
-                          "interface": {
-                            "type": "string"
-                          },
-                          "listenPort": {
-                            "maximum": 65535,
-                            "minimum": 0,
-                            "type": "integer"
-                          },
-                          "localAddress": {
-                            "type": "string"
-                          },
-                          "mtu": {
-                            "maximum": 9216,
-                            "minimum": 0,
-                            "type": "integer"
-                          },
-                          "persistentKeepalive": {
-                            "maximum": 65535,
-                            "minimum": 0,
-                            "type": "integer"
-                          },
-                          "privateKey": {
-                            "type": "string"
-                          },
-                          "privateKeyFile": {
-                            "type": "string"
-                          },
-                          "transportCIDR": {
-                            "type": "string"
-                          }
-                        },
-                        "type": "object"
-                      }
-                    },
-                    "required": [
-                      "mode",
-                      "localNodeID",
-                      "innerCIDR",
-                      "peers"
-                    ],
-                    "type": "object"
-                  },
-                  "status": {
-                    "additionalProperties": true,
-                    "type": "object"
-                  }
-                },
-                "required": [
-                  "apiVersion",
-                  "kind",
-                  "metadata",
-                  "spec"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "apiVersion": {
-                    "const": "hybrid.routerd.net/v1alpha1",
-                    "type": "string"
-                  },
-                  "kind": {
                     "const": "AddressMobilityDomain",
                     "type": "string"
                   },
@@ -8650,6 +8355,245 @@
                       "prefix",
                       "groupRef",
                       "members"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "mobility.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "SAMTransportProfile",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "description": "SAMTransportProfile derives the underlay tunnels and BGP peer sessions used by selective-address mobility delivery.",
+                    "properties": {
+                      "bgp": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "ebgpMultihop": {
+                            "maximum": 255,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "exportPolicy": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "allowedPrefixes": {
+                                "items": {
+                                  "type": "string"
+                                },
+                                "type": "array"
+                              }
+                            },
+                            "type": "object"
+                          },
+                          "importPolicy": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "allowedPrefixes": {
+                                "items": {
+                                  "type": "string"
+                                },
+                                "type": "array"
+                              },
+                              "nextHopRewrite": {
+                                "enum": [
+                                  "",
+                                  "peer-address",
+                                  "unchanged"
+                                ],
+                                "type": "string"
+                              }
+                            },
+                            "type": "object"
+                          },
+                          "peerASN": {
+                            "minimum": 1,
+                            "type": "integer"
+                          },
+                          "routerRef": {
+                            "type": "string"
+                          },
+                          "timers": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "profile": {
+                                "enum": [
+                                  "",
+                                  "default",
+                                  "fast",
+                                  "slow"
+                                ],
+                                "type": "string"
+                              }
+                            },
+                            "type": "object"
+                          },
+                          "timersPreset": {
+                            "enum": [
+                              "",
+                              "default",
+                              "fast",
+                              "slow"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "routerRef",
+                          "peerASN"
+                        ],
+                        "type": "object"
+                      },
+                      "encryption": {
+                        "enum": [
+                          "",
+                          "none",
+                          "wireguard"
+                        ],
+                        "type": "string"
+                      },
+                      "innerPrefix": {
+                        "type": "string"
+                      },
+                      "localEndpoint": {
+                        "type": "string"
+                      },
+                      "localEndpointFrom": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "field": {
+                            "description": "Field defaults to phase when omitted.",
+                            "type": "string"
+                          },
+                          "optional": {
+                            "type": "boolean"
+                          },
+                          "resource": {
+                            "description": "Resource names the source resource as Kind/name and reads its status, or a router config field for supported resources.",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "resource"
+                        ],
+                        "type": "object"
+                      },
+                      "mode": {
+                        "enum": [
+                          "ipip",
+                          "gre"
+                        ],
+                        "type": "string"
+                      },
+                      "peers": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "nodeRef": {
+                              "type": "string"
+                            },
+                            "override": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "bgpPeer": {
+                                  "type": "string"
+                                },
+                                "endpointRoute": {
+                                  "type": "string"
+                                },
+                                "localInner": {
+                                  "type": "string"
+                                },
+                                "remoteInner": {
+                                  "type": "string"
+                                },
+                                "tunnelInterface": {
+                                  "type": "string"
+                                },
+                                "underlayInterface": {
+                                  "type": "string"
+                                }
+                              },
+                              "type": "object"
+                            },
+                            "remoteEndpoint": {
+                              "type": "string"
+                            },
+                            "remoteEndpointFrom": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "field": {
+                                  "description": "Field defaults to phase when omitted.",
+                                  "type": "string"
+                                },
+                                "optional": {
+                                  "type": "boolean"
+                                },
+                                "resource": {
+                                  "description": "Resource names the source resource as Kind/name and reads its status, or a router config field for supported resources.",
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "resource"
+                              ],
+                              "type": "object"
+                            }
+                          },
+                          "required": [
+                            "nodeRef"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "selfNodeRef": {
+                        "type": "string"
+                      },
+                      "underlayInterface": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "selfNodeRef",
+                      "mode",
+                      "innerPrefix",
+                      "underlayInterface",
+                      "bgp",
+                      "peers"
                     ],
                     "type": "object"
                   },

@@ -42,7 +42,7 @@ spec:
 | `observability.routerd.net/v1alpha1` | `Telemetry` |
 | `plugin.routerd.net/v1alpha1` | plugin manifests |
 | `hybrid.routerd.net/v1alpha1` | `TunnelInterface`, `OverlayPeer`, `HybridRoute`, `AddressMobilityDomain`, `CloudProviderProfile`, `RemoteAddressClaim` |
-| `mobility.routerd.net/v1alpha1` | `MobilityPool` |
+| `mobility.routerd.net/v1alpha1` | `MobilityPool`, `SAMTransportProfile` |
 
 ## System Bootstrap
 
@@ -182,6 +182,7 @@ for DoH or DoT endpoint name resolution.
 | `OverlayPeer` | Describes an on-prem or cloud overlay peer and the local underlay used to reach it. |
 | `HybridRoute` | Lowers non-default remote IPv4 prefixes through an `OverlayPeer` into managed `IPv4Route` resources. |
 | `MobilityPool` | Declares the only operator-authored CloudEdge mobility intent: pool prefix, federation group, node-to-site membership, BGP delivery policy, optional reusable cloud capture profiles, local value expansion, and provider trap placement. routerd derives BGP `/32` advertisements and provider trap action plans from observed facts and BGP best paths. |
+| `SAMTransportProfile` | Declares this router's stable `selfNodeRef`, inner tunnel prefix, underlay interface, BGP router, and SAM transport peers. routerd derives per-peer `TunnelInterface`, endpoint `/32` `IPv4Route`, and `BGPPeer` resources through a replace-on-reconcile `DynamicConfigPart`. |
 | `AddressMobilityDomain` | Defines an IPv4 prefix for Selective Address Mobility; full L2 extension is not supported. |
 | `CloudProviderProfile` | Describes provider capabilities and external-command auth for declarative address capture planning. |
 | `RemoteAddressClaim` | Declares one mobile IPv4 `/32`, its capture mechanism, and route delivery over an `OverlayPeer`. |
@@ -620,6 +621,7 @@ and fields outside the target kind's `provides` set.
 | `RouterdCluster` | `leader` (string), `leaseExpiresAt` (timestamp), `phase` (string) |
 | `SelfAddressPolicy` | `address` (string), `phase` (string), `source` (string) |
 | `RemoteAddressClaim` | `address` (string), `captureType` (string), `deliveryMode` (string), `domainRef` (string), `ownerSide` (string), `peerRef` (string), `phase` (string) |
+| `SAMTransportProfile` | `dynamicSource` (string), `generatedBGPPeers` (int), `generatedEndpointRoutes` (int), `generatedTunnels` (int), `innerPrefix` (string), `peers` (objectList), `pendingSources` (stringList), `phase` (string), `selfNode` (string) |
 | `Sysctl` | `dryRun` (bool), `key` (string), `phase` (string), `value` (string) |
 | `SysctlProfile` | `dryRun` (bool), `phase` (string), `profile` (string) |
 | `TailscaleNode` | `advertiseRoutes` (stringList), `peerCount` (int), `phase` (string), `tailnetName` (string) |

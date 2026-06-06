@@ -214,6 +214,20 @@ continues to model ordinary L3 remote-prefix routing. Address mobility uses the
 same overlay peer model, but it is a per-address forwarding abstraction rather
 than a remote-prefix route.
 
+`SAMTransportProfile` is the higher-level transport profile for BGP-mode SAM.
+It derives the per-peer `TunnelInterface`, endpoint `/32` `IPv4Route`, and
+`BGPPeer` resources that carry mobility paths. Each router must declare
+`spec.selfNodeRef`; routerd does not infer the local node identity from hostname
+or BGP router ID. The controller allocates `/31` inner edges from
+`spec.innerPrefix` by sorting the self/peer node pair, so both endpoints derive
+the same edge with local and remote addresses reversed.
+
+Peer removal replaces the profile's generated `DynamicConfigPart` with the new
+resource set. Profile deletion replaces the old part with an empty active part,
+so effective config drops generated tunnel, BGP peer, and endpoint route
+resources. The concrete OS cleanup remains in the existing
+`TunnelInterface`, `BGPPeer`, and `IPv4Route` controllers.
+
 ## Capture And Delivery
 
 Supported capture types:

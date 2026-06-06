@@ -153,6 +153,24 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 				bfdRefs[refName]++
 			}
 		}
+		if res.Kind == "SAMTransportProfile" {
+			spec, err := res.SAMTransportProfileSpec()
+			if err != nil {
+				return err
+			}
+			if !idx.Interfaces[spec.UnderlayInterface] {
+				return fmt.Errorf("%s spec.underlayInterface references missing Interface %q", res.ID(), spec.UnderlayInterface)
+			}
+			kind, name, _ := strings.Cut(strings.TrimSpace(spec.BGP.RouterRef), "/")
+			if kind != "BGPRouter" || !idx.BGPRouters[name] {
+				return fmt.Errorf("%s spec.bgp.routerRef references missing BGPRouter %q", res.ID(), spec.BGP.RouterRef)
+			}
+			for i, peer := range spec.Peers {
+				if override := strings.TrimSpace(peer.Override.UnderlayInterface); override != "" && !idx.Interfaces[override] {
+					return fmt.Errorf("%s spec.peers[%d].override.underlayInterface references missing Interface %q", res.ID(), i, override)
+				}
+			}
+		}
 		if res.Kind == "BFD" {
 			spec, err := res.BFDSpec()
 			if err != nil {

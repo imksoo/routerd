@@ -77,14 +77,56 @@ When using an `Interface/...` status source, the link controller must publish th
 interface status into the same state database. Normal `routerd serve` runs this
 controller, but isolated tunnel tests should include both `link` and `tunnel`.
 
-Common SAM topologies should also have a higher-level underlay transport profile
-or equivalent expansion. The profile should generate the low-level
-WireGuard/TunnelInterface/route pieces while preserving these invariants:
+Common SAM topologies can use `SAMTransportProfile` to generate the low-level
+`TunnelInterface`, endpoint `/32` route, and `BGPPeer` resources while preserving
+these invariants:
 
 - WireGuard `AllowedIPs` contains only transport endpoint prefixes.
 - SAM mobility `/32`s are never injected into WireGuard peers.
 - IPIP/GRE endpoint addresses can come from DHCP/IPAM-derived status fields.
 - MTU and MSS behavior is explicit for each transport mode.
+
+`spec.selfNodeRef` is required on every router. It is the stable identity used
+for deterministic `/31` inner address derivation; routerd does not infer it from
+hostname or BGP router ID. Each edge is keyed by the sorted pair of
+`selfNodeRef` and peer `nodeRef`, then allocated from `innerPrefix` in sorted
+edge order, so both ends derive the same `/31` with local and remote addresses
+reversed.
+
+```yaml
+apiVersion: mobility.routerd.net/v1alpha1
+kind: SAMTransportProfile
+metadata:
+  name: lab-sam-transport
+spec:
+  selfNodeRef: pve-rt
+  mode: ipip
+  innerPrefix: 10.255.1.0/24
+  underlayInterface: wg-hybrid
+  localEndpointFrom:
+    resource: Interface/wg-hybrid
+    field: primaryIPv4
+  bgp:
+    routerRef: BGPRouter/mobility
+    peerASN: 64512
+    timersPreset: fast
+  peers:
+    - nodeRef: k8s-rt
+      remoteEndpoint: 10.99.0.2
+```
+
+Explicit peer overrides can pin generated resource names, the per-peer underlay
+interface, or the local/remote inner addresses. If either `localInner` or
+`remoteInner` is overridden, both must be supplied and the pair must be a valid
+`/31` inside `innerPrefix`.
+
+The controller writes one `DynamicConfigPart` per profile and self node. Peer
+removal replaces that part with the new generated resource set. Profile deletion
+replaces the old part with an empty active part, causing the effective config to
+drop generated tunnels, BGP peers, and endpoint routes. The existing
+`TunnelInterface`, `BGPPeer`, and `IPv4Route` controllers then perform their
+normal stale-resource teardown; this is the current GC boundary until the broader
+resource lifecycle work is completed.
 
 Related issues:
 
