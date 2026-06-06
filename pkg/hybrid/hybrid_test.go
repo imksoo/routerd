@@ -216,6 +216,118 @@ func TestTunnelUnderlayMTUEstimate(t *testing.T) {
 	}
 }
 
+func TestExpandSAMTransportProfileDirectIPIP(t *testing.T) {
+	router := api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
+		TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "SAMTransportProfile"},
+		Metadata: api.ObjectMeta{Name: "pve08-core"},
+		Spec: api.SAMTransportProfileSpec{
+			Mode:              "ipip",
+			LocalNodeID:       "pve-rt08",
+			LocalEndpointFrom: api.StatusValueSourceSpec{Resource: "Interface/eth0", Field: "primaryIPv4"},
+			UnderlayInterface: "eth0",
+			InnerCIDR:         "10.255.1.0/24",
+			PeerRole:          "cloud",
+			BGP: api.SAMTransportBGPSpec{
+				RouterRef: "BGPRouter/main",
+				PeerASN:   64512,
+			},
+			Peers: []api.SAMTransportProfilePeer{{
+				Name:         "k8s-rt02",
+				NodeID:       "k8s-rt02",
+				Endpoint:     "192.168.1.53",
+				InnerAddress: "",
+			}},
+		},
+	}}}}
+	expanded, lowerings, err := ExpandSAMTransportProfiles(router)
+	if err != nil {
+		t.Fatalf("ExpandSAMTransportProfiles: %v", err)
+	}
+	if len(lowerings) != 1 {
+		t.Fatalf("lowerings = %#v", lowerings)
+	}
+	tunnel := findHybridTestResource(t, expanded, api.HybridAPIVersion, "TunnelInterface", lowerings[0].TunnelInterface)
+	tunnelSpec, err := tunnel.TunnelInterfaceSpec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tunnelSpec.Mode != "ipip" || tunnelSpec.LocalFrom.Resource != "Interface/eth0" || tunnelSpec.Remote != "192.168.1.53" || tunnelSpec.UnderlayInterface != "eth0" || !tunnelSpec.TrustedUnderlay {
+		t.Fatalf("tunnel spec = %#v", tunnelSpec)
+	}
+	peer := findHybridTestResource(t, expanded, api.NetAPIVersion, "BGPPeer", lowerings[0].BGPPeerName)
+	peerSpec, err := peer.BGPPeerSpec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if peerSpec.RouterRef != "BGPRouter/main" || peerSpec.PeerASN != 64512 || len(peerSpec.Peers) != 1 || peerSpec.Peers[0] != lowerings[0].RemoteInnerAddress {
+		t.Fatalf("bgp peer = %#v lowering = %#v", peerSpec, lowerings[0])
+	}
+	expandedAgain, loweringsAgain, err := ExpandSAMTransportProfiles(expanded)
+	if err != nil {
+		t.Fatalf("ExpandSAMTransportProfiles idempotent: %v", err)
+	}
+	if len(expandedAgain.Spec.Resources) != len(expanded.Spec.Resources) {
+		t.Fatalf("idempotent resource count = %d, want %d", len(expandedAgain.Spec.Resources), len(expanded.Spec.Resources))
+	}
+	if len(loweringsAgain) != 1 || loweringsAgain[0].LocalInnerAddress != lowerings[0].LocalInnerAddress || loweringsAgain[0].RemoteInnerAddress != lowerings[0].RemoteInnerAddress {
+		t.Fatalf("idempotent lowerings = %#v, want %#v", loweringsAgain, lowerings)
+	}
+}
+
+func TestExpandSAMTransportProfileWireGuardCarriesOnlyTransportAllowedIPs(t *testing.T) {
+	router := api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
+		TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "SAMTransportProfile"},
+		Metadata: api.ObjectMeta{Name: "pve07-core"},
+		Spec: api.SAMTransportProfileSpec{
+			Mode:        "ipip",
+			Encryption:  "wireguard",
+			LocalNodeID: "pve-rt07",
+			InnerCIDR:   "10.255.1.0/24",
+			PeerRole:    "cloud",
+			WireGuard: api.SAMTransportWireGuardSpec{
+				Interface:      "wg-sam",
+				PrivateKeyFile: "/etc/routerd/wg.key",
+				ListenPort:     51820,
+				TransportCIDR:  "10.99.0.0/24",
+			},
+			Peers: []api.SAMTransportProfilePeer{{
+				Name:     "k8s-rt02",
+				NodeID:   "k8s-rt02",
+				Endpoint: "192.168.1.53:51820",
+				WireGuard: api.SAMTransportPeerWgSpec{
+					PublicKey: "peer-public-key",
+				},
+			}},
+		},
+	}}}}
+	expanded, lowerings, err := ExpandSAMTransportProfiles(router)
+	if err != nil {
+		t.Fatalf("ExpandSAMTransportProfiles: %v", err)
+	}
+	if len(lowerings) != 1 {
+		t.Fatalf("lowerings = %#v", lowerings)
+	}
+	wgPeer := findResourceByKind(t, expanded, api.NetAPIVersion, "WireGuardPeer")
+	wgPeerSpec, err := wgPeer.WireGuardPeerSpec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(wgPeerSpec.AllowedIPs) != 1 || wgPeerSpec.AllowedIPs[0] != lowerings[0].RemoteWGAddress+"/32" {
+		t.Fatalf("allowedIPs = %#v, remote WG = %q", wgPeerSpec.AllowedIPs, lowerings[0].RemoteWGAddress)
+	}
+	if strings.HasPrefix(wgPeerSpec.AllowedIPs[0], "10.255.1.") {
+		t.Fatalf("SAM inner prefix leaked into WireGuard AllowedIPs: %#v", wgPeerSpec.AllowedIPs)
+	}
+	tunnel := findHybridTestResource(t, expanded, api.HybridAPIVersion, "TunnelInterface", lowerings[0].TunnelInterface)
+	tunnelSpec, err := tunnel.TunnelInterfaceSpec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tunnelSpec.Local != lowerings[0].LocalWGAddress || tunnelSpec.Remote != lowerings[0].RemoteWGAddress || tunnelSpec.UnderlayInterface != "wg-sam" {
+		t.Fatalf("tunnel spec = %#v lowering = %#v", tunnelSpec, lowerings[0])
+	}
+}
+
 type mapStore map[string]map[string]any
 
 func (s mapStore) ObjectStatus(apiVersion, kind, name string) map[string]any {
@@ -243,4 +355,26 @@ func testRouter() *api.Router {
 			}},
 		}},
 	}
+}
+
+func findHybridTestResource(t *testing.T, router api.Router, apiVersion, kind, name string) api.Resource {
+	t.Helper()
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion == apiVersion && resource.Kind == kind && resource.Metadata.Name == name {
+			return resource
+		}
+	}
+	t.Fatalf("resource %s/%s/%s not found in %#v", apiVersion, kind, name, router.Spec.Resources)
+	return api.Resource{}
+}
+
+func findResourceByKind(t *testing.T, router api.Router, apiVersion, kind string) api.Resource {
+	t.Helper()
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion == apiVersion && resource.Kind == kind {
+			return resource
+		}
+	}
+	t.Fatalf("resource %s/%s not found in %#v", apiVersion, kind, router.Spec.Resources)
+	return api.Resource{}
 }

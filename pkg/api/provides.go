@@ -157,6 +157,7 @@ func resourceProvidesTable() map[string][]ProvidedFieldSpec {
 		"RouterdCluster":                  withCommon(s("leader", "Current leader"), t("leaseExpiresAt", "Lease expiry time")),
 		"SelfAddressPolicy":               withCommon(s("address", "Selected address"), s("source", "Selected source")),
 		"RemoteAddressClaim":              withCommon(s("domainRef", "Address mobility domain reference"), s("address", "Claimed /32 address"), s("ownerSide", "Owning side"), s("captureType", "Capture type"), s("captureInterface", "Capture interface"), s("peerRef", "Delivery overlay peer reference"), s("deliveryMode", "Delivery mode"), s("deliveryRouteName", "Lowered IPv4Route name"), s("deliveryDevice", "Delivery tunnel interface"), i("deliveryMetric", "Delivery route metric")),
+		"SAMTransportProfile":             withCommon(os("peers", "Derived per-peer transport resources")),
 		"Sysctl":                          withCommon(s("key", "Sysctl key"), s("value", "Applied value"), b("dryRun", "Dry-run status")),
 		"SysctlProfile":                   withCommon(s("profile", "Applied profile"), b("dryRun", "Dry-run status")),
 		"TailscaleNode":                   withCommon(s("tailnetName", "Tailnet name"), i("peerCount", "Peer count"), ss("advertiseRoutes", "Advertised routes")),

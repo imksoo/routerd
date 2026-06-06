@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/hybrid"
 	"github.com/imksoo/routerd/pkg/platform"
 )
 
@@ -121,7 +122,15 @@ func newRouterIndex(router *api.Router) *RouterIndex {
 }
 
 func (idx *RouterIndex) build(router *api.Router, targetOS platform.OS) error {
-	for _, res := range router.Spec.Resources {
+	effective := router
+	if hybrid.HasSAMTransportProfiles(router) {
+		expanded, _, err := hybrid.ExpandSAMTransportProfiles(*router)
+		if err != nil {
+			return err
+		}
+		effective = &expanded
+	}
+	for _, res := range effective.Spec.Resources {
 		if err := validateResource(res, targetOS); err != nil {
 			return err
 		}

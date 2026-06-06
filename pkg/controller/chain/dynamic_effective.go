@@ -25,10 +25,11 @@ type dynamicConfigPartLister interface {
 }
 
 type dynamicRouteSAMView struct {
-	EffectiveRouter *api.Router
-	RouteRouter     *api.Router
-	HybridLowerings []hybrid.HybridLowering
-	SAMLowerings    []sam.DeliveryLowering
+	EffectiveRouter       *api.Router
+	RouteRouter           *api.Router
+	SAMTransportLowerings []hybrid.SAMTransportProfileLowering
+	HybridLowerings       []hybrid.HybridLowering
+	SAMLowerings          []sam.DeliveryLowering
 }
 
 // BuildDynamicRouteSAMEffectiveRouter returns the route-facing effective router
@@ -68,6 +69,16 @@ func buildDynamicRouteSAMView(startup *api.Router, store any, now time.Time, tar
 		}
 	}
 
+	samTransportLowerings := []hybrid.SAMTransportProfileLowering(nil)
+	if hybrid.HasSAMTransportProfiles(&effective) {
+		expanded, lowerings, err := hybrid.ExpandSAMTransportProfiles(effective)
+		if err != nil {
+			return dynamicRouteSAMView{}, err
+		}
+		effective = expanded
+		samTransportLowerings = lowerings
+	}
+
 	effective = appendBGPMobilityProxyARPClaims(effective, store)
 
 	routeRouter := effective
@@ -94,10 +105,11 @@ func buildDynamicRouteSAMView(startup *api.Router, store any, now time.Time, tar
 	}
 
 	return dynamicRouteSAMView{
-		EffectiveRouter: &effective,
-		RouteRouter:     &routeRouter,
-		HybridLowerings: hybridLowerings,
-		SAMLowerings:    samLowerings,
+		EffectiveRouter:       &effective,
+		RouteRouter:           &routeRouter,
+		SAMTransportLowerings: samTransportLowerings,
+		HybridLowerings:       hybridLowerings,
+		SAMLowerings:          samLowerings,
 	}, nil
 }
 
