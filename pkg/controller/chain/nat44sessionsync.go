@@ -48,10 +48,12 @@ type nat44SessionSyncTarget struct {
 }
 
 type nat44SessionSyncRestoreResult struct {
-	OKDel int
-	NGDel int
-	OKIns int
-	NGIns int
+	OKDel        int
+	MissingDel   int
+	NGDel        int
+	OKIns        int
+	DuplicateIns int
+	NGIns        int
 }
 
 type conntrackRestoreEntry struct {
@@ -262,13 +264,18 @@ func (c NAT44SessionSyncController) reconcileJob(ctx context.Context, job nat44S
 		}
 		addNAT44SessionSyncRestoreStatus(targetStatus, result)
 		total.OKDel += result.OKDel
+		total.MissingDel += result.MissingDel
 		total.NGDel += result.NGDel
 		total.OKIns += result.OKIns
+		total.DuplicateIns += result.DuplicateIns
 		total.NGIns += result.NGIns
 		phase, reason := nat44SessionSyncRestorePhase(len(entries), result)
 		targetStatus["phase"] = phase
 		if reason != "" {
 			targetStatus["reason"] = reason
+		}
+		if phase != "Synced" {
+			targetStatus["output"] = strings.TrimSpace(string(out))
 		}
 		targetStatuses = append(targetStatuses, targetStatus)
 		switch {
@@ -509,16 +516,28 @@ func nat44SessionSyncRestoreScript(entries []conntrackRestoreEntry, command []st
 		command = []string{"conntrack"}
 	}
 	var buf bytes.Buffer
-	buf.WriteString("#!/bin/sh\nset -eu\nok_del=0; ng_del=0; ok_ins=0; ng_ins=0\n")
+	buf.WriteString("#!/bin/sh\nset -eu\nok_del=0; miss_del=0; ng_del=0; ok_ins=0; dup_ins=0; ng_ins=0; err_lines=0\n")
+	buf.WriteString("record_restore_error() {\n")
+	buf.WriteString("  if [ \"$err_lines\" -lt 3 ]; then\n")
+	buf.WriteString("    printf '%s\\n' \"$1\"\n")
+	buf.WriteString("    err_lines=$((err_lines+1))\n")
+	buf.WriteString("  fi\n")
+	buf.WriteString("}\n")
 	for _, entry := range entries {
-		buf.WriteString("if ")
+		buf.WriteString("if out=$(")
 		buf.WriteString(shellCommand(command, entry.Delete))
-		buf.WriteString(" >/dev/null 2>&1; then ok_del=$((ok_del+1)); else ng_del=$((ng_del+1)); fi\n")
-		buf.WriteString("if ")
+		buf.WriteString(" 2>&1); then\n")
+		buf.WriteString("  case \"$out\" in *\"0 flow entries\"*|*\"not found\"*|*\"No such file\"*|*\"does not exist\"*) miss_del=$((miss_del+1));; *) ok_del=$((ok_del+1));; esac\n")
+		buf.WriteString("else\n")
+		buf.WriteString("  case \"$out\" in *\"0 flow entries\"*|*\"not found\"*|*\"No such file\"*|*\"does not exist\"*) miss_del=$((miss_del+1));; *) ng_del=$((ng_del+1)); record_restore_error \"delete failed: $out\";; esac\n")
+		buf.WriteString("fi\n")
+		buf.WriteString("if out=$(")
 		buf.WriteString(shellCommand(command, entry.Insert))
-		buf.WriteString(" >/dev/null 2>&1; then ok_ins=$((ok_ins+1)); else ng_ins=$((ng_ins+1)); fi\n")
+		buf.WriteString(" 2>&1); then ok_ins=$((ok_ins+1)); else\n")
+		buf.WriteString("  case \"$out\" in *\"File exists\"*|*\"already exists\"*) dup_ins=$((dup_ins+1));; *) ng_ins=$((ng_ins+1)); record_restore_error \"insert failed: $out\";; esac\n")
+		buf.WriteString("fi\n")
 	}
-	buf.WriteString("echo ok_del=$ok_del ng_del=$ng_del ok_ins=$ok_ins ng_ins=$ng_ins\n")
+	buf.WriteString("echo ok_del=$ok_del miss_del=$miss_del ng_del=$ng_del ok_ins=$ok_ins dup_ins=$dup_ins ng_ins=$ng_ins\n")
 	return buf.Bytes()
 }
 
@@ -535,7 +554,7 @@ func parseNAT44SessionSyncRestoreOutput(output []byte) (nat44SessionSyncRestoreR
 				continue
 			}
 			switch key {
-			case "ok_del", "ng_del", "ok_ins", "ng_ins":
+			case "ok_del", "miss_del", "ng_del", "ok_ins", "dup_ins", "ng_ins":
 				value, err := strconv.Atoi(raw)
 				if err != nil {
 					return nat44SessionSyncRestoreResult{}, fmt.Errorf("%s must be an integer: %w", key, err)
@@ -546,26 +565,29 @@ func parseNAT44SessionSyncRestoreOutput(output []byte) (nat44SessionSyncRestoreR
 		if len(values) == 0 {
 			continue
 		}
-		for _, key := range []string{"ok_del", "ng_del", "ok_ins", "ng_ins"} {
+		for _, key := range []string{"ok_del", "miss_del", "ng_del", "ok_ins", "dup_ins", "ng_ins"} {
 			if _, ok := values[key]; !ok {
 				return nat44SessionSyncRestoreResult{}, fmt.Errorf("restore output missing %s", key)
 			}
 		}
 		return nat44SessionSyncRestoreResult{
-			OKDel: values["ok_del"],
-			NGDel: values["ng_del"],
-			OKIns: values["ok_ins"],
-			NGIns: values["ng_ins"],
+			OKDel:        values["ok_del"],
+			MissingDel:   values["miss_del"],
+			NGDel:        values["ng_del"],
+			OKIns:        values["ok_ins"],
+			DuplicateIns: values["dup_ins"],
+			NGIns:        values["ng_ins"],
 		}, nil
 	}
 	return nat44SessionSyncRestoreResult{}, fmt.Errorf("restore output missing summary")
 }
 
 func nat44SessionSyncRestorePhase(entries int, result nat44SessionSyncRestoreResult) (string, string) {
+	insertConverged := result.OKIns + result.DuplicateIns
 	switch {
-	case entries > 0 && result.OKIns == 0:
+	case entries > 0 && insertConverged == 0:
 		return "Error", "RestoreFailed"
-	case result.NGIns > 0:
+	case result.NGDel > 0 || result.NGIns > 0:
 		return "Degraded", "RestorePartialFailed"
 	default:
 		return "Synced", ""
@@ -574,8 +596,10 @@ func nat44SessionSyncRestorePhase(entries int, result nat44SessionSyncRestoreRes
 
 func addNAT44SessionSyncRestoreStatus(status map[string]any, result nat44SessionSyncRestoreResult) {
 	status["deleteOK"] = result.OKDel
+	status["deleteMissing"] = result.MissingDel
 	status["deleteFailed"] = result.NGDel
 	status["insertOK"] = result.OKIns
+	status["insertExisting"] = result.DuplicateIns
 	status["insertFailed"] = result.NGIns
 }
 
