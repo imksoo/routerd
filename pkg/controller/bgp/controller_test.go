@@ -36,6 +36,34 @@ func (s mapStore) ObjectStatus(apiVersion, kind, name string) map[string]any {
 	return map[string]any{}
 }
 
+type testGoBGPServer struct {
+	*gobgpserver.BgpServer
+	applied bgpdaemon.AppliedConfig
+}
+
+func (s *testGoBGPServer) AppliedConfig(context.Context) (bgpdaemon.AppliedConfig, error) {
+	return s.applied, nil
+}
+
+func (s *testGoBGPServer) SaveAppliedConfig(_ context.Context, config bgpdaemon.AppliedConfig) error {
+	s.applied = bgpdaemon.Normalize(config)
+	return nil
+}
+
+func (s *testGoBGPServer) WatchEvent(ctx context.Context, req *gobgpapi.WatchEventRequest, fn func(*gobgpapi.WatchEventResponse) error) error {
+	var callbackErr error
+	err := s.BgpServer.WatchEvent(ctx, req, func(resp *gobgpapi.WatchEventResponse) {
+		if callbackErr != nil {
+			return
+		}
+		callbackErr = fn(resp)
+	})
+	if err != nil {
+		return err
+	}
+	return callbackErr
+}
+
 type fakeServer struct {
 	starts    int
 	stops     int
@@ -57,6 +85,9 @@ type fakeServer struct {
 
 	policyRequest     *gobgpapi.SetPoliciesRequest
 	policyAssignment  *gobgpapi.PolicyAssignment
+	definedSets       map[string]*gobgpapi.DefinedSet
+	policiesByName    map[string]*gobgpapi.Policy
+	assignments       map[string]*gobgpapi.PolicyAssignment
 	thirdPartyNextHop string
 	watchSessions     chan watchSession
 	watchRequests     []*gobgpapi.WatchEventRequest
@@ -186,13 +217,87 @@ func (s *fakeServer) ListPeer(_ context.Context, _ *gobgpapi.ListPeerRequest, fn
 func (s *fakeServer) SetPolicies(_ context.Context, req *gobgpapi.SetPoliciesRequest) error {
 	s.policies++
 	s.policyRequest = req
+	if s.definedSets == nil {
+		s.definedSets = map[string]*gobgpapi.DefinedSet{}
+	}
+	if s.policiesByName == nil {
+		s.policiesByName = map[string]*gobgpapi.Policy{}
+	}
+	for _, set := range req.GetDefinedSets() {
+		s.definedSets[definedSetKey(set.GetDefinedType(), set.GetName())] = set
+	}
+	for _, policy := range req.GetPolicies() {
+		s.policiesByName[policy.GetName()] = policy
+	}
 	return nil
 }
 
 func (s *fakeServer) SetPolicyAssignment(_ context.Context, req *gobgpapi.SetPolicyAssignmentRequest) error {
 	s.assigns++
 	s.policyAssignment = req.GetAssignment()
+	if s.assignments == nil {
+		s.assignments = map[string]*gobgpapi.PolicyAssignment{}
+	}
+	s.assignments[policyAssignmentKey(req.GetAssignment().GetName(), req.GetAssignment().GetDirection())] = req.GetAssignment()
 	return nil
+}
+
+func (s *fakeServer) ListDefinedSet(_ context.Context, req *gobgpapi.ListDefinedSetRequest, fn func(*gobgpapi.DefinedSet)) error {
+	if s.definedSets == nil {
+		return nil
+	}
+	if req.GetName() != "" {
+		if set := s.definedSets[definedSetKey(req.GetDefinedType(), req.GetName())]; set != nil {
+			fn(set)
+		}
+		return nil
+	}
+	for _, set := range s.definedSets {
+		if req.GetDefinedType() == 0 || set.GetDefinedType() == req.GetDefinedType() {
+			fn(set)
+		}
+	}
+	return nil
+}
+
+func (s *fakeServer) ListPolicy(_ context.Context, req *gobgpapi.ListPolicyRequest, fn func(*gobgpapi.Policy)) error {
+	if s.policiesByName == nil {
+		return nil
+	}
+	if req.GetName() != "" {
+		if policy := s.policiesByName[req.GetName()]; policy != nil {
+			fn(policy)
+		}
+		return nil
+	}
+	for _, policy := range s.policiesByName {
+		fn(policy)
+	}
+	return nil
+}
+
+func (s *fakeServer) ListPolicyAssignment(_ context.Context, req *gobgpapi.ListPolicyAssignmentRequest, fn func(*gobgpapi.PolicyAssignment)) error {
+	if s.assignments == nil {
+		return nil
+	}
+	if req.GetName() != "" || req.GetDirection() != 0 {
+		if assignment := s.assignments[policyAssignmentKey(req.GetName(), req.GetDirection())]; assignment != nil {
+			fn(assignment)
+		}
+		return nil
+	}
+	for _, assignment := range s.assignments {
+		fn(assignment)
+	}
+	return nil
+}
+
+func definedSetKey(typ gobgpapi.DefinedType, name string) string {
+	return strconv.Itoa(int(typ)) + "/" + strings.TrimSpace(name)
+}
+
+func policyAssignmentKey(name string, direction gobgpapi.PolicyDirection) string {
+	return strconv.Itoa(int(direction)) + "/" + strings.TrimSpace(name)
 }
 
 func policyRequestHasPrefixSet(req *gobgpapi.SetPoliciesRequest, name, prefix string) bool {
@@ -708,58 +813,6 @@ func TestReconcileDoesNotRefreshUnchangedImportPolicy(t *testing.T) {
 	}
 }
 
-func TestImportPolicyRefreshIgnoresLocalNextHop(t *testing.T) {
-	desired := map[string]desiredPeer{
-		"10.252.0.1": {
-			Address: "10.252.0.1",
-			ImportPolicy: api.BGPImportPolicySpec{
-				AllowedPrefixes: []string{"192.168.123.0/24"},
-				NextHopRewrite:  "peer-address",
-			},
-		},
-	}
-	routes := []FIBRoute{
-		{Prefix: "10.252.0.0/24", NextHops: []string{"0.0.0.0"}},
-		{Prefix: "2001:db8::/64", NextHops: []string{"::"}},
-		{Prefix: "192.168.123.113/32", NextHops: []string{"10.252.0.1"}},
-	}
-	if importPolicyRefreshNeeded(desired, routes) {
-		t.Fatal("importPolicyRefreshNeeded returned true for local next-hop routes")
-	}
-}
-
-func TestImportPolicyRefreshStillDetectsUnexpectedNextHop(t *testing.T) {
-	desired := map[string]desiredPeer{
-		"10.252.0.1": {
-			Address: "10.252.0.1",
-			ImportPolicy: api.BGPImportPolicySpec{
-				AllowedPrefixes: []string{"192.168.123.0/24"},
-				NextHopRewrite:  "peer-address",
-			},
-		},
-	}
-	routes := []FIBRoute{{Prefix: "192.168.123.113/32", NextHops: []string{"10.252.0.99"}}}
-	if !importPolicyRefreshNeeded(desired, routes) {
-		t.Fatal("importPolicyRefreshNeeded returned false for unexpected learned next-hop")
-	}
-}
-
-func TestImportPolicyRefreshAllowsNextHopCoveredByImportPolicy(t *testing.T) {
-	desired := map[string]desiredPeer{
-		"10.252.0.1": {
-			Address: "10.252.0.1",
-			ImportPolicy: api.BGPImportPolicySpec{
-				AllowedPrefixes: []string{"10.252.0.0/24", "192.168.123.0/24"},
-				NextHopRewrite:  "peer-address",
-			},
-		},
-	}
-	routes := []FIBRoute{{Prefix: "192.168.123.113/32", NextHops: []string{"10.252.0.17"}}}
-	if importPolicyRefreshNeeded(desired, routes) {
-		t.Fatal("importPolicyRefreshNeeded returned true for an overlay next-hop covered by import policy")
-	}
-}
-
 func TestReconcileHydratesAppliedImportPolicyAfterRestart(t *testing.T) {
 	router := bgpRouterWithImportPrefixes("10.250.0.0/24")
 	peerResource := router.Spec.Resources[1]
@@ -820,41 +873,119 @@ func TestReconcileInstallsPeerAddressECMPForThirdPartyNextHop(t *testing.T) {
 	if !ok || !reflect.DeepEqual(got["10.250.0.0/24"], []string{"192.168.1.38", "192.168.1.53"}) {
 		t.Fatalf("installedNextHops = %#v", status["installedNextHops"])
 	}
+	server.policies = 0
+	server.resets = 0
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("second reconcile: %v", err)
+	}
+	if server.policies != 0 {
+		t.Fatalf("SetPolicies calls = %d, want valid third-party next-hop not to refresh policy", server.policies)
+	}
+	if server.resets != 0 {
+		t.Fatalf("soft inbound resets = %d, want valid third-party next-hop not to reset peers", server.resets)
+	}
 }
 
-func TestReconcileRefreshesImportPolicyAfterReconnectDrift(t *testing.T) {
+func TestReconcileRefreshesMissingActualImportPolicy(t *testing.T) {
 	router := bgpRouterWithImportPrefixes("10.250.0.0/24")
 	peerResource := router.Spec.Resources[1]
 	peerSpec := peerResource.Spec.(api.BGPPeerSpec)
 	peerSpec.Peers = []string{"192.168.1.38", "192.168.1.53"}
 	peerResource.Spec = peerSpec
 	router.Spec.Resources[1] = peerResource
-	routerSpec := router.Spec.Resources[0].Spec.(api.BGPRouterSpec)
-	staleDesired := applyRouterBGPDefaults("lan", routerSpec, map[string]desiredPeer{
-		"192.168.1.38": {Address: "192.168.1.38", ASN: 64513, LocalASN: 64512},
-		"192.168.1.53": {Address: "192.168.1.53", ASN: 64513, LocalASN: 64512},
-	}, mapKeys(advertisedPrefixes(routerSpec)), nil)
-	server := &fakeServer{thirdPartyNextHop: "192.168.1.57"}
+	server := &fakeServer{}
 	fib := &fakeFIB{}
 	controller := Controller{
-		Router:          router,
-		Store:           mapStore{},
-		Server:          server,
-		FIB:             fib,
-		importPolicyKey: bgpPoliciesKey(routerSpec.ImportPolicy, staleDesired),
+		Router: router,
+		Store:  mapStore{},
+		Server: server,
+		FIB:    fib,
 	}
 	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("reconcile: %v", err)
+		t.Fatalf("first reconcile: %v", err)
+	}
+	delete(server.policiesByName, "routerd-lan-import")
+	server.policies = 0
+	server.resets = 0
+
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("second reconcile: %v", err)
 	}
 	if server.policies != 1 {
-		t.Fatalf("SetPolicies calls = %d, want policy reapplied after next-hop drift", server.policies)
+		t.Fatalf("SetPolicies calls = %d, want policy reapplied after actual policy drift", server.policies)
 	}
 	if server.resets != 2 {
 		t.Fatalf("soft inbound resets = %d, want one per peer", server.resets)
 	}
-	want := []FIBRoute{{Prefix: "10.250.0.0/24", NextHops: []string{"192.168.1.38", "192.168.1.53"}}}
-	if !reflect.DeepEqual(fib.routes, want) {
-		t.Fatalf("fib routes = %#v, want peer-address ECMP after refresh %#v", fib.routes, want)
+	server.policies = 0
+	server.resets = 0
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("third reconcile: %v", err)
+	}
+	if server.policies != 0 || server.resets != 0 {
+		t.Fatalf("post-refresh policies/resets = %d/%d, want converged no-op", server.policies, server.resets)
+	}
+}
+
+func TestReconcileRefreshesMissingActualImportDefinedSet(t *testing.T) {
+	router := bgpRouterWithImportPrefixes("10.250.0.0/24")
+	server := &fakeServer{}
+	controller := Controller{Router: router, Store: mapStore{}, Server: server, FIB: &fakeFIB{}}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("first reconcile: %v", err)
+	}
+	delete(server.definedSets, definedSetKey(gobgpapi.DefinedType_PREFIX, "routerd-lan-import-prefixes"))
+	server.policies = 0
+	server.resets = 0
+
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("second reconcile: %v", err)
+	}
+	if server.policies != 1 {
+		t.Fatalf("SetPolicies calls = %d, want policy reapplied after actual defined-set drift", server.policies)
+	}
+	if server.resets != 1 {
+		t.Fatalf("soft inbound resets = %d, want one peer reset", server.resets)
+	}
+}
+
+func TestReconcileRefreshesPeerImportAssignmentDrift(t *testing.T) {
+	router := bgpRouterWithImportPrefixes("10.250.0.0/24")
+	peerResource := router.Spec.Resources[1]
+	peerSpec := peerResource.Spec.(api.BGPPeerSpec)
+	peerSpec.Peers = []string{"192.168.1.38", "192.168.1.53"}
+	peerResource.Spec = peerSpec
+	router.Spec.Resources[1] = peerResource
+	server := &fakeServer{}
+	controller := Controller{Router: router, Store: mapStore{}, Server: server, FIB: &fakeFIB{}}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("first reconcile: %v", err)
+	}
+	server.peers["192.168.1.38"].ApplyPolicy.ImportPolicy = nil
+	server.policies = 0
+	server.updates = 0
+	server.resets = 0
+
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("second reconcile: %v", err)
+	}
+	if server.policies != 1 {
+		t.Fatalf("SetPolicies calls = %d, want policy reapplied after peer import assignment drift", server.policies)
+	}
+	if server.updates != 1 {
+		t.Fatalf("UpdatePeer calls = %d, want one peer assignment refresh", server.updates)
+	}
+	if server.resets != 2 {
+		t.Fatalf("soft inbound resets = %d, want one per peer", server.resets)
+	}
+	server.policies = 0
+	server.updates = 0
+	server.resets = 0
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("third reconcile: %v", err)
+	}
+	if server.policies != 0 || server.updates != 0 || server.resets != 0 {
+		t.Fatalf("post-refresh policies/updates/resets = %d/%d/%d, want converged no-op", server.policies, server.updates, server.resets)
 	}
 }
 
@@ -1157,6 +1288,46 @@ func TestGeneratedImportPolicyIsAcceptedByGoBGP(t *testing.T) {
 	}
 	if err := server.SetPolicies(context.Background(), req); err != nil {
 		t.Fatalf("SetPolicies rejected generated import policy: %v", err)
+	}
+}
+
+func TestAppliedImportPolicyConvergesWithGoBGP(t *testing.T) {
+	ctx := context.Background()
+	server := &testGoBGPServer{BgpServer: gobgpserver.NewBgpServer()}
+	go server.Serve()
+	defer server.Stop()
+	if err := server.StartBgp(ctx, &gobgpapi.StartBgpRequest{Global: &gobgpapi.Global{
+		Asn:              64512,
+		RouterId:         "10.0.0.1",
+		ListenPort:       -1,
+		Families:         []uint32{0},
+		UseMultiplePaths: true,
+	}}); err != nil {
+		t.Fatalf("StartBgp: %v", err)
+	}
+	spec := api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.250.0.0/24"}}
+	peers := map[string]desiredPeer{
+		"10.0.0.21": {
+			Address:          "10.0.0.21",
+			ASN:              64513,
+			LocalASN:         64512,
+			ImportPolicy:     spec,
+			ImportPolicyName: bgpPolicyName("lan", "import"),
+		},
+	}
+	controller := Controller{Server: server}
+	if err := controller.applyBGPPolicies(ctx, "lan", spec, peers); err != nil {
+		t.Fatalf("applyBGPPolicies: %v", err)
+	}
+	if err := server.AddPeer(ctx, &gobgpapi.AddPeerRequest{Peer: goBGPPeer(peers["10.0.0.21"])}); err != nil {
+		t.Fatalf("AddPeer: %v", err)
+	}
+	drift, err := controller.importPolicyDrift(ctx, "lan", spec, peers)
+	if err != nil {
+		t.Fatalf("importPolicyDrift: %v", err)
+	}
+	if drift.RefreshNeeded() {
+		t.Fatalf("importPolicyDrift after apply = %#v, want no drift", drift)
 	}
 }
 
