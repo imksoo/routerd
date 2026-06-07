@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"sort"
 	"strings"
@@ -23,31 +24,106 @@ import (
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
-func applyCommand(args []string, stdout io.Writer) error {
-	fs := flag.NewFlagSet("apply", flag.ContinueOnError)
+func validateCommand(args []string, stdout io.Writer, stdin io.Reader) error {
+	fs := flag.NewFlagSet("validate", flag.ContinueOnError)
 	fs.SetOutput(stdout)
 	fs.Usage = func() {
 		printSubcommandHelp(fs,
-			"現在の config (config.yaml) を routerd に reconcile させる。\n"+
-				"--dry-run を付けると plan だけ生成し host 状態は変更しない。",
-			"routerctl apply --dry-run config.yaml\n"+
-				"routerctl apply\n"+
-				"routerctl apply --socket /run/routerd/control.sock")
+			"routerd の canonical config、または -f の candidate を静的検証する。host 状態は変更しない。",
+			"routerctl validate\n"+
+				"routerctl validate -f candidate.yaml\n"+
+				"routerctl validate -f -")
 	}
-	socketPath := fs.String("socket", defaultSocketPath(), "routerd Unix domain socket path")
+	socketPath := fs.String("socket", defaultStatusSocketPath(), "routerd read-only status Unix domain socket path")
 	timeout := fs.Duration("timeout", 30*time.Second, "request timeout")
-	dryRun := fs.Bool("dry-run", false, "plan without applying changes")
+	filePath := fs.String("f", "", "candidate YAML path; use - for stdin")
+	replace := fs.Bool("replace", false, "validate candidate as full replacement instead of partial upsert")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
-	defer cancel()
-	result, err := controlapi.NewUnixClient(*socketPath).Apply(ctx, controlapi.ApplyRequest{DryRun: *dryRun})
+	candidate, err := readCandidateYAML(*filePath, stdin)
 	if err != nil {
 		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	defer cancel()
+	result, err := controlapi.NewUnixClient(*socketPath).Validate(ctx, controlapi.ValidateRequest{CandidateYAML: candidate, Replace: *replace})
+	if err != nil {
+		return fmt.Errorf("routerd serve is not reachable for validate; start routerd serve or check --socket: %w", err)
+	}
+	return writeJSON(stdout, result)
+}
+
+func planCommand(args []string, stdout io.Writer, stdin io.Reader) error {
+	fs := flag.NewFlagSet("plan", flag.ContinueOnError)
+	fs.SetOutput(stdout)
+	fs.Usage = func() {
+		printSubcommandHelp(fs,
+			"routerd の canonical config、または -f の candidate を plan する。host 状態は変更しない。",
+			"routerctl plan\n"+
+				"routerctl plan -f candidate.yaml\n"+
+				"routerctl plan -f - --replace")
+	}
+	socketPath := fs.String("socket", defaultStatusSocketPath(), "routerd read-only status Unix domain socket path")
+	timeout := fs.Duration("timeout", 30*time.Second, "request timeout")
+	filePath := fs.String("f", "", "candidate YAML path; use - for stdin")
+	replace := fs.Bool("replace", false, "plan candidate as full replacement instead of partial upsert")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	candidate, err := readCandidateYAML(*filePath, stdin)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	defer cancel()
+	result, err := controlapi.NewUnixClient(*socketPath).Plan(ctx, controlapi.PlanRequest{CandidateYAML: candidate, Replace: *replace})
+	if err != nil {
+		return fmt.Errorf("routerd serve is not reachable for plan; start routerd serve or check --socket: %w", err)
+	}
+	return writeJSON(stdout, result)
+}
+
+func applyCommand(args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("apply", flag.ContinueOnError)
+	fs.SetOutput(stdout)
+	fs.Usage = func() {
+		printSubcommandHelp(fs,
+			"-f の candidate を canonical config へ upsert し、既定で即時 reconcile する。\n"+
+				"入力は必須。--replace は全置換、--no-reconcile は canonical 書込のみ。",
+			"routerctl apply -f candidate.yaml\n"+
+				"routerctl apply -f - --replace\n"+
+				"routerctl apply -f candidate.yaml --no-reconcile")
+	}
+	socketPath := fs.String("socket", defaultSocketPath(), "routerd Unix domain socket path")
+	timeout := fs.Duration("timeout", 30*time.Second, "request timeout")
+	filePath := fs.String("f", "", "candidate YAML path; use - for stdin")
+	replace := fs.Bool("replace", false, "replace canonical config instead of partial upsert")
+	noReconcile := fs.Bool("no-reconcile", false, "write canonical config without immediate reconcile")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	if strings.TrimSpace(*filePath) == "" {
+		return errors.New("apply requires -f <file> or -f -")
+	}
+	candidate, err := readCandidateYAML(*filePath, os.Stdin)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	defer cancel()
+	result, err := controlapi.NewUnixClient(*socketPath).Apply(ctx, controlapi.ApplyRequest{CandidateYAML: candidate, Replace: *replace, NoReconcile: *noReconcile})
+	if err != nil {
+		return fmt.Errorf("routerd serve is not reachable for apply; start routerd serve or check --socket: %w", err)
 	}
 	return writeJSON(stdout, result)
 }
@@ -68,6 +144,7 @@ func deleteCommand(args []string, stdout io.Writer) error {
 	dryRun := fs.Bool("dry-run", false, "show what would be deleted without changing host state")
 	force := fs.Bool("force", false, "delete stale state even when the kind is no longer in the current schema")
 	apiVersion := fs.String("api-version", "", "apiVersion to use with --force when a stale kind is ambiguous")
+	noReconcile := fs.Bool("no-reconcile", false, "write canonical config without immediate reconcile")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
@@ -79,11 +156,35 @@ func deleteCommand(args []string, stdout io.Writer) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
-	result, err := controlapi.NewUnixClient(*socketPath).Delete(ctx, controlapi.DeleteRequest{Target: fs.Arg(0), TargetAPIVersion: *apiVersion, DryRun: *dryRun, Force: *force})
+	result, err := controlapi.NewUnixClient(*socketPath).Delete(ctx, controlapi.DeleteRequest{Target: fs.Arg(0), TargetAPIVersion: *apiVersion, DryRun: *dryRun, Force: *force, NoReconcile: *noReconcile})
 	if err != nil {
-		return err
+		return fmt.Errorf("routerd serve is not reachable for delete; start routerd serve or check --socket: %w", err)
 	}
 	return writeJSON(stdout, result)
+}
+
+func readCandidateYAML(path string, stdin io.Reader) (string, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", nil
+	}
+	var data []byte
+	var err error
+	if path == "-" {
+		if stdin == nil {
+			stdin = os.Stdin
+		}
+		data, err = io.ReadAll(stdin)
+	} else {
+		data, err = os.ReadFile(path)
+	}
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(string(data)) == "" {
+		return "", fmt.Errorf("candidate %s is empty", path)
+	}
+	return string(data), nil
 }
 
 func setLogLevelCommand(args []string, stdout io.Writer) error {

@@ -241,6 +241,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	bgpSocketPath := fs.String("bgp-socket", "/run/routerd/bgp/gobgp.sock", "routerd-bgp GoBGP gRPC Unix socket path")
 	bgpControlSocketPath := fs.String("bgp-control-socket", "", "routerd-bgp control Unix socket path")
 	bgpStatePath := fs.String("bgp-state-file", "", "routerd-bgp applied state JSON path")
+	once := fs.Bool("once", false, "converge once and exit without serving control sockets")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -287,6 +288,21 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		"statusSocket":  *statusSocketPath,
 		"applyInterval": applyInterval.String(),
 	})
+	applyOpts := applyOptions{
+		ConfigPath:         *configPath,
+		StatusFile:         *statusFile,
+		NetplanPath:        *netplanPath,
+		DnsmasqConfigPath:  *dnsmasqConfigPath,
+		DnsmasqServicePath: runtimeDnsmasqServicePath(*dnsmasqServicePath),
+		NftablesPath:       *nftablesPath,
+		LedgerPath:         *ledgerPath,
+		StatePath:          *statePath,
+		SkipConfigCommit:   bootFallback.Used,
+	}
+	if *once {
+		_, err := runApplyOnce(router, applyOpts, stdout, logger)
+		return err
+	}
 	cache := &resultCache{}
 
 	signalCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -347,17 +363,6 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	}
 	if err := chainRunner.Start(ctx); err != nil {
 		return err
-	}
-	applyOpts := applyOptions{
-		ConfigPath:         *configPath,
-		StatusFile:         *statusFile,
-		NetplanPath:        *netplanPath,
-		DnsmasqConfigPath:  *dnsmasqConfigPath,
-		DnsmasqServicePath: runtimeDnsmasqServicePath(*dnsmasqServicePath),
-		NftablesPath:       *nftablesPath,
-		LedgerPath:         *ledgerPath,
-		StatePath:          *statePath,
-		SkipConfigCommit:   bootFallback.Used,
 	}
 	mutator := serveConfigMutator{
 		configPath: *configPath,
@@ -585,6 +590,8 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 			Status:      handler.Status,
 			Controllers: handler.Controllers,
 			Runtime:     handler.Runtime,
+			Plan:        handler.Plan,
+			Validate:    handler.Validate,
 		},
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       30 * time.Second,

@@ -51,7 +51,7 @@ func TestSubcommandHelpRendersUsageFlagsExamples(t *testing.T) {
 		{
 			name:        "apply",
 			args:        []string{"apply", "--help"},
-			mustContain: []string{"Usage:", "Flags:", "Examples:", "routerctl apply", "-dry-run"},
+			mustContain: []string{"Usage:", "Flags:", "Examples:", "routerctl apply", "-f", "-replace", "-no-reconcile"},
 		},
 		{
 			name:        "delete",

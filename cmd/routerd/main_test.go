@@ -615,6 +615,42 @@ spec:
 	}
 }
 
+func TestServeOnceConvergesAndExits(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "router.yaml")
+	statePath := filepath.Join(dir, "routerd.db")
+	statusPath := filepath.Join(dir, "status.json")
+	ledgerPath := filepath.Join(dir, "ledger.db")
+	if err := os.WriteFile(configPath, []byte(testRouterYAML("serve-once-router")), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	var stdout strings.Builder
+	err := serveCommand([]string{
+		"--config", configPath,
+		"--state-file", statePath,
+		"--status-file", statusPath,
+		"--ledger-file", ledgerPath,
+		"--once",
+	}, &stdout, io.Discard)
+	if err != nil {
+		t.Fatalf("serve --once: %v", err)
+	}
+	if !strings.Contains(stdout.String(), `"phase": "Healthy"`) {
+		t.Fatalf("serve --once output missing result:\n%s", stdout.String())
+	}
+	store, err := routerstate.OpenSQLite(statePath)
+	if err != nil {
+		t.Fatalf("open state: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+	if got := store.LatestGeneration(); got == 0 {
+		t.Fatal("serve --once did not record a generation")
+	}
+	if _, err := os.Stat(statusPath); err != nil {
+		t.Fatalf("status file: %v", err)
+	}
+}
+
 func TestRollbackListShowsStoredGenerations(t *testing.T) {
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, "routerd.db")
