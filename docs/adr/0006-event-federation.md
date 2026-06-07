@@ -1,5 +1,7 @@
 # ADR 0006: CloudEdge Event Federation (routerd-to-routerd typed events)
 
+![Diagram showing ADR 0006 Event Federation from hand-authored claim problem through EventGroup, EventPeer, and EventSubscription decisions to observed-fact invariants](/img/diagrams/adr-0006-event-federation.png)
+
 ## Status
 
 Accepted; experimental implementation in progress — 2026-05-30.

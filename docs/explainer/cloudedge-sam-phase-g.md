@@ -4,6 +4,8 @@ title: CloudEdge SAM Phase G — 説明図
 
 # CloudEdge Selective Address Mobility (Phase G) — 説明図
 
+![Diagram showing CloudEdge SAM Phase G with SAMTransportProfile IPIP delivery over optional WireGuard underlay, BGP /32 ownership and liveness markers, provider or on-prem capture, and no-NAT source preservation](/img/diagrams/explainer-cloudedge-sam-phase-g.png)
+
 CloudEdge SAM Phase G は、AWS / Azure / OCI / on-prem をまたいで選択した `/32`
 サービス/クライアントアドレスを、**NAT なし・source IP 保持・default gateway 不変**で
 到達可能にし、ルーターノード障害時に同一サイトの standby が自律的に所有権を取得して

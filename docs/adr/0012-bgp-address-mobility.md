@@ -1,5 +1,7 @@
 # ADR 0012: BGP /32 Address Mobility
 
+![Diagram showing ADR 0012 BGP address mobility replacing lease and epoch ownership with BGP best-path /32 advertisements, liveness markers, Route Reflector paths, FIB imports, and background provider capture](/img/diagrams/adr-0012-bgp-address-mobility.png)
+
 ## Status
 
 Accepted. Phase 1 clean Option B implemented through B6/B7 -- 2026-06-03.

@@ -1,5 +1,7 @@
 # ADR 0013: IPv4 force fragmentation for trusted overlay paths
 
+![Diagram showing ADR 0013 IPv4 force fragmentation from normal MTU derivation and MSS clamping through non-TCP DF black-hole risk to explicit trusted-overlay routerd_forcefrag handling](/img/diagrams/adr-0013-ipv4-force-fragmentation.png)
+
 ## Status
 
 Accepted for pre-release implementation.
