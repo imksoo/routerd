@@ -314,6 +314,46 @@ exit 0
 	}
 }
 
+func TestInstallFailsBeforeReplacingWhenRollbackSafeSpaceIsInsufficient(t *testing.T) {
+	dir := t.TempDir()
+	pkg := filepath.Join(dir, "package")
+	prefix := filepath.Join(dir, "prefix")
+	writeExecutable(t, filepath.Join(pkg, "bin", "routerd"), `#!/bin/sh
+if [ "$1" = "--version" ]; then echo routerd-new; exit 0; fi
+echo new-routerd
+`)
+	writeExecutable(t, filepath.Join(pkg, "bin", "routerctl"), `#!/bin/sh
+echo new-routerctl
+`)
+	writeExecutable(t, filepath.Join(prefix, "sbin", "routerd"), `#!/bin/sh
+if [ "$1" = "--version" ]; then echo routerd-old; exit 0; fi
+echo old-routerd
+`)
+	writeExecutable(t, filepath.Join(prefix, "sbin", "routerctl"), `#!/bin/sh
+echo old-routerctl
+`)
+
+	out, err := runInstallWithEnv(t, pkg, prefix, []string{
+		"ROUTERD_INSTALL_AVAILABLE_KB_OVERRIDE=1",
+	}, "--no-install-deps", "--no-config-update", "--no-restart")
+	if err == nil {
+		t.Fatalf("install succeeded unexpectedly:\n%s", out)
+	}
+	if !strings.Contains(out, "insufficient free space for rollback-safe install") {
+		t.Fatalf("missing capacity diagnostic:\n%s", out)
+	}
+	data, err := os.ReadFile(filepath.Join(prefix, "sbin", "routerctl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "old-routerctl") {
+		t.Fatalf("routerctl was replaced despite preflight failure:\n%s", string(data))
+	}
+	if matches, err := filepath.Glob(filepath.Join(prefix, "sbin", "*.backup.*")); err != nil || len(matches) != 0 {
+		t.Fatalf("persistent backup files = %v, err=%v; want none before preflight failure", matches, err)
+	}
+}
+
 func runInstall(t *testing.T, pkg, prefix string, args ...string) (string, error) {
 	t.Helper()
 	return runInstallWithEnv(t, pkg, prefix, nil, args...)
