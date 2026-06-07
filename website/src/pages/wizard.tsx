@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-import React, {useMemo, useState} from 'react';
+import Ajv2020, {type ErrorObject, type ValidateFunction} from 'ajv/dist/2020';
+import yamlParser from 'js-yaml';
+import React, {useEffect, useMemo, useState} from 'react';
 import Layout from '@theme/Layout';
 import Heading from '@theme/Heading';
 import {
@@ -30,6 +32,8 @@ const samSteps = ['Nodes', 'Mobility', 'Output'] as const;
 const k8sSteps = ['BGP', 'Routes', 'Output'] as const;
 type Step = (typeof homeSteps)[number] | (typeof samSteps)[number] | (typeof k8sSteps)[number];
 
+const routerdConfigSchemaPath = '/schemas/routerd-config-v1alpha1.schema.json';
+
 const wanModes: Array<{value: HomeWanMode; label: string}> = [
   {value: 'dhcpv4', label: 'DHCPv4 client'},
   {value: 'pppoe', label: 'PPPoE'},
@@ -51,6 +55,8 @@ export default function WizardPage(): JSX.Element {
   const [k8sState, setK8SState] = useState<K8SWizardState>(() => mergeK8SWizardState());
   const [selectedOutput, setSelectedOutput] = useState('');
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
+  const [schemaValidator, setSchemaValidator] = useState<ValidateFunction | null>(null);
+  const [schemaLoadError, setSchemaLoadError] = useState('');
   const outputs = useMemo(() => {
     if (profile === 'sam') {
       return buildSAMRouterYamls(samState);
@@ -71,6 +77,38 @@ export default function WizardPage(): JSX.Element {
     const matches = yaml.match(/^\s{4}- apiVersion:/gm);
     return matches?.length ?? 0;
   }, [yaml]);
+  const validation = useMemo(
+    () => validateGeneratedOutputs(outputs, schemaValidator, schemaLoadError),
+    [outputs, schemaLoadError, schemaValidator],
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadSchema(): Promise<void> {
+      try {
+        const response = await fetch(routerdConfigSchemaPath);
+        if (!response.ok) {
+          throw new Error(`schema fetch failed: HTTP ${response.status}`);
+        }
+        const schema = await response.json();
+        const ajv = new Ajv2020({allErrors: true, strict: false});
+        const validate = ajv.compile(schema);
+        if (!cancelled) {
+          setSchemaValidator(() => validate);
+          setSchemaLoadError('');
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setSchemaValidator(null);
+          setSchemaLoadError(error instanceof Error ? error.message : String(error));
+        }
+      }
+    }
+    loadSchema();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   function update(next: PartialHomeRouterWizardState): void {
     setState((current) => mergeHomeRouterState({
@@ -241,6 +279,7 @@ export default function WizardPage(): JSX.Element {
                     ['Router', state.routerName],
                     ['WAN mode', state.wan.mode],
                   ]}
+                validation={validation}
                 yaml={yaml}
               />
             )}
@@ -755,6 +794,7 @@ function OutputStep({
   resourceCount,
   setSelectedOutput,
   summary,
+  validation,
   yaml,
 }: {
   activeOutputName: string;
@@ -765,6 +805,7 @@ function OutputStep({
   resourceCount: number;
   setSelectedOutput: (name: string) => void;
   summary: Array<[string, string]>;
+  validation: SchemaValidationResult;
   yaml: string;
 }): JSX.Element {
   return (
@@ -798,6 +839,7 @@ function OutputStep({
             <dt>Schema</dt>
             <dd>routerd-config-v1alpha1</dd>
           </dl>
+          <SchemaValidationPanel validation={validation} />
           {copyState === 'copied' && <div className={styles.notice}>Copied to clipboard.</div>}
           {copyState === 'failed' && <div className={styles.notice}>Clipboard access failed. Select the YAML and copy it manually.</div>}
           <div className={styles.actionGroup} style={{marginTop: '14px'}}>
@@ -807,6 +849,46 @@ function OutputStep({
         </aside>
       </div>
     </>
+  );
+}
+
+function SchemaValidationPanel({validation}: {validation: SchemaValidationResult}): JSX.Element {
+  const statusClass = validation.status === 'valid'
+    ? styles.validationOk
+    : validation.status === 'invalid' || validation.status === 'error'
+      ? styles.validationError
+      : styles.validationLoading;
+  return (
+    <div className={`${styles.validationPanel} ${statusClass}`}>
+      <div className={styles.validationTitle}>
+        <span>Schema validation</span>
+        <strong>{validationStatusLabel(validation.status)}</strong>
+      </div>
+      {validation.status === 'loading' && (
+        <p>Loading routerd-config-v1alpha1 schema.</p>
+      )}
+      {validation.status === 'valid' && (
+        <p>{validation.validatedFiles} file{validation.validatedFiles === 1 ? '' : 's'} / {validation.documentCount} YAML document{validation.documentCount === 1 ? '' : 's'} valid.</p>
+      )}
+      {validation.status === 'error' && (
+        <p>{validation.error}</p>
+      )}
+      {validation.status === 'invalid' && (
+        <>
+          <p>{validation.issueCount} issue{validation.issueCount === 1 ? '' : 's'} found across {validation.validatedFiles} file{validation.validatedFiles === 1 ? '' : 's'}.</p>
+          <ul className={styles.validationList}>
+            {validation.issues.map((issue, index) => (
+              <li key={`${issue.file}-${issue.docIndex}-${issue.path}-${issue.keyword}-${index}`}>
+                <span>{issue.file}{issue.docIndex > 1 ? `#doc${issue.docIndex}` : ''}</span>
+                <code>{issue.path}</code>
+                <em>{issue.keyword}</em>
+                <p>{issue.message}</p>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -922,6 +1004,128 @@ type PartialK8SWizardState = {
   timersProfile?: K8SBGPTimerProfile;
   convergenceProfile?: K8SBGPConvergenceProfile;
 };
+
+type SchemaValidationStatus = 'loading' | 'valid' | 'invalid' | 'error';
+
+type SchemaValidationIssue = {
+  file: string;
+  docIndex: number;
+  path: string;
+  keyword: string;
+  message: string;
+};
+
+type SchemaValidationResult = {
+  status: SchemaValidationStatus;
+  validatedFiles: number;
+  documentCount: number;
+  issueCount: number;
+  issues: SchemaValidationIssue[];
+  error?: string;
+};
+
+function validateGeneratedOutputs(
+  outputs: Record<string, string>,
+  validate: ValidateFunction | null,
+  schemaLoadError: string,
+): SchemaValidationResult {
+  const names = Object.keys(outputs).sort((a, b) => a.localeCompare(b));
+  if (schemaLoadError) {
+    return {
+      status: 'error',
+      validatedFiles: names.length,
+      documentCount: 0,
+      issueCount: 1,
+      issues: [],
+      error: schemaLoadError,
+    };
+  }
+  if (!validate) {
+    return {
+      status: 'loading',
+      validatedFiles: names.length,
+      documentCount: 0,
+      issueCount: 0,
+      issues: [],
+    };
+  }
+
+  const issues: SchemaValidationIssue[] = [];
+  let documentCount = 0;
+  for (const name of names) {
+    const docs = parseYAMLDocuments(name, outputs[name], issues);
+    for (const [index, doc] of docs.entries()) {
+      documentCount += 1;
+      if (!validate(doc)) {
+        for (const error of validate.errors ?? []) {
+          issues.push(formatAJVIssue(name, index + 1, error));
+        }
+      }
+    }
+  }
+
+  return {
+    status: issues.length > 0 ? 'invalid' : 'valid',
+    validatedFiles: names.length,
+    documentCount,
+    issueCount: issues.length,
+    issues,
+  };
+}
+
+function parseYAMLDocuments(file: string, source: string, issues: SchemaValidationIssue[]): unknown[] {
+  const docs: unknown[] = [];
+  try {
+    yamlParser.loadAll(source, (doc) => {
+      if (doc !== undefined && doc !== null) {
+        docs.push(doc);
+      }
+    });
+  } catch (error) {
+    issues.push({
+      file,
+      docIndex: 1,
+      path: '/',
+      keyword: 'yaml',
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return [];
+  }
+  if (docs.length === 0) {
+    issues.push({
+      file,
+      docIndex: 1,
+      path: '/',
+      keyword: 'yaml',
+      message: 'YAML document is empty.',
+    });
+  }
+  return docs;
+}
+
+function formatAJVIssue(file: string, docIndex: number, error: ErrorObject): SchemaValidationIssue {
+  return {
+    file,
+    docIndex,
+    path: error.instancePath || '/',
+    keyword: error.keyword,
+    message: error.message ?? 'schema validation failed',
+  };
+}
+
+function validationStatusLabel(status: SchemaValidationStatus): string {
+  switch (status) {
+    case 'valid':
+      return 'Valid';
+    case 'invalid':
+      return 'Invalid';
+    case 'error':
+      return 'Schema unavailable';
+    case 'loading':
+    default:
+      return 'Loading';
+  }
+}
 
 function splitList(value: string): string[] {
   const items = splitCommaList(value);
