@@ -5,6 +5,8 @@ slug: /how-to/flets-ipv6-setup
 
 # DHCPv6-PD 上の DS-Lite (IPv6 のみアクセス網)
 
+![IPv6-only access で DHCPv6-PD、delegated LAN IPv6、AFTR DNS forwarding、DS-Lite tunnel egress、安全な RA を構成する流れ](/img/diagrams/how-to-flets-ipv6-setup.png)
+
 ## 想定するシーン
 
 ISP が IPv6 のみのアクセス網を提供し、IPv4 接続は AFTR (Address Family Transition Router) への DS-Lite トンネルで実現する構成です。

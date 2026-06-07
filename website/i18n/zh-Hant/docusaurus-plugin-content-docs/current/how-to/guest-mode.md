@@ -4,6 +4,8 @@ title: 以 MAC 位址隔離訪客裝置
 
 # 以 MAC 位址隔離訪客裝置
 
+![ClientPolicy guest mode 分類 MAC address、產生 nftables set，並在 zone matrix 前拒絕 LAN 或 management access 的流程](/img/diagrams/how-to-guest-mode.png)
+
 `ClientPolicy` 是 routerd 的訪客模式。
 它依 MAC 位址對同一 LAN 上的裝置進行分類，並在一般區域間防火牆矩陣之前，優先套用更嚴格的轉送策略。
 

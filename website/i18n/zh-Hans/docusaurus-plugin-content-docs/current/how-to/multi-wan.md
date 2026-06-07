@@ -4,6 +4,8 @@ title: 具备健康检查的多 WAN 切换
 
 # 具备健康检查的多 WAN 切换
 
+![multi-WAN candidate path 由 HealthCheck 与 EgressRoutePolicy 选择，NAT 跟随 selected path，并保留 conntrack 与 hysteresis 的流程](/img/diagrams/how-to-multi-wan.png)
+
 ## 适用场景
 
 路由器有多条对外路径，希望 routerd 能够：

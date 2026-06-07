@@ -4,6 +4,8 @@ title: Multi-WAN egress with health-based selection
 
 # Multi-WAN egress with health-based selection
 
+![Diagram showing multi-WAN candidate paths selected by HealthCheck and EgressRoutePolicy, NAT following the selected path, conntrack preservation, and hysteresis](/img/diagrams/how-to-multi-wan.png)
+
 ## Scenario
 
 You have a router with more than one path to the internet and want routerd to:

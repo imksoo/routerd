@@ -1,5 +1,7 @@
 # CloudEdge Protocol Transparency Acceptance
 
+![Diagram showing CloudEdge protocol transparency probes for FTP, NFS, bulk transfer, PMTU, source preservation, and no-NAT evidence](/img/diagrams/how-to-cloudedge-protocol-transparency.png)
+
 This is the no-cloud harness plan for validating that CloudEdge mobility is
 transparent to connection-oriented protocols that are sensitive to NAT, helper
 ALGs, dynamic ports, and MTU/PMTU behavior. The live run is performed later by a

@@ -4,6 +4,8 @@ title: ハイパーバイザー間のオーバーレイ VPN を置き換える
 
 # ハイパーバイザー間のオーバーレイ VPN を置き換える
 
+![hypervisor overlay VPN を WireGuard underlay、optional VXLAN、health check、MTU verification、routerctl visibility で置き換える流れ](/img/diagrams/how-to-pve-overlay.png)
+
 ## 想定するシーン
 
 ハイパーバイザークラスター (Proxmox VE、KVM など) で、ノード間のブリッジを、すでに何らかの重量級のオーバーレイ VPN (ベンダー製の SoftEther bridge、別の tap ベースのトンネルなど) に乗せている構成です。

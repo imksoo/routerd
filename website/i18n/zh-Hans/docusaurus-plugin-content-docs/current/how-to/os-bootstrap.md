@@ -4,6 +4,8 @@ title: 以声明式方式进行路由器主机的启动配置
 
 # 以声明式方式进行路由器主机的启动配置
 
+![由 derived package、kernel module、sysctl、adoption drop-in 与 minimal installer networking 组成的 declarative host bootstrap](/img/diagrams/how-to-os-bootstrap.png)
+
 routerd 能将初次构建时容易变成手动操作的主机准备工作，整合至 YAML 管理。
 这不是安装程序的替代方案，而是将路由器特有的差异以配置文件保留，而非散落在 shell 历史记录中的功能。
 

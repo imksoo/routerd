@@ -5,6 +5,8 @@ slug: /how-to/dns-private-upstream
 
 # 专用 DNS 上游
 
+![DNSForwarder 与 DNSUpstream 将 local、provider、default DNS query 路由到 UDP、TCP、DoT、DoH 和 addressFrom source 的流程](/img/diagrams/how-to-dns-private-upstream.png)
+
 ## 适用场景
 
 当您希望路由器上的解析器具备以下行为时：

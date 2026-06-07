@@ -5,6 +5,8 @@ slug: /how-to/troubleshooting
 
 # トラブルシューティング
 
+![routerctl status と dry-run intent から OS state、daemon socket、event、DHCP/DNS/conntrack check へ進む routerd troubleshooting order](/img/diagrams/how-to-troubleshooting.png)
+
 routerd の調査では、まず **routerd の意図** と **ホストの実状態** を分けます。
 routerd が何を意図しているかを確認してから、OS の状態と突き合わせてください。
 

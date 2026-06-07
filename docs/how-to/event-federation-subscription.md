@@ -1,5 +1,7 @@
 # How-to: turn a federated event into a RemoteAddressClaim
 
+![Diagram showing a federated client observation event matching an EventSubscription, running a plugin, and producing a DynamicConfigPart with RemoteAddressClaim provenance](/img/diagrams/how-to-event-federation-subscription.png)
+
 CloudEdge Event Federation (ADR 0006) lets one routerd node observe a fact and
 have another node react to it declaratively. Phase 3 closes the loop on the
 receiver side: a received event matches an `EventSubscription`, which runs a

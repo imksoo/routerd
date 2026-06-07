@@ -4,6 +4,8 @@ title: Azure と PVE の same-subnet SAM スモークテスト
 
 # Azure と PVE の same-subnet SAM スモークテスト
 
+![Azure provider-secondary-IP capture、on-prem proxy-ARP capture、SAM /32 delivery route、forwarding check、routerctl doctor verification の流れ](/img/diagrams/how-to-hybrid-azure-pve-same-subnet.png)
+
 このガイドは、Azure の routerd node とオンプレミス Proxmox VE の routerd node
 で、Selective Address Mobility (SAM) により選択した `/32` address を交換する、
 検証済みの運用形をまとめたものです。resource semantics は

@@ -4,6 +4,8 @@ title: ファイアウォールゾーンを定義する
 
 # ファイアウォールゾーンを定義する
 
+![FirewallZone が WAN、LAN、management network の interface role と stateful role-matrix default を定義する流れ](/img/diagrams/how-to-firewall-zone.png)
+
 ## 想定するシーン
 
 「WAN は LAN に届かない、LAN は WAN に届く、管理経路はすべてに届く」というのが、家庭や SOHO のルーターの基本的なポリシーマトリクスです。

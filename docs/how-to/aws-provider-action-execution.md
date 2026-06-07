@@ -1,5 +1,7 @@
 # How-to: execute the AWS SAM provider action via the gated executor
 
+![Diagram showing AWS SAM provider action execution through read-only preflight, gated journal approval, executor IAM identity, and reversible AWS mutations](/img/diagrams/how-to-aws-provider-action-execution.png)
+
 :::warning Experimental — Phase 5.1
 This is the **gated live-mutation** path for CloudEdge provider action execution.
 It is **experimental** and AWS-only. It builds on

@@ -5,6 +5,8 @@ slug: /how-to/opentelemetry
 
 # 將遙測資料送到 OTLP 收集器
 
+![routerd daemon 的 log、metric、trace、resource attribute、OTLP environment variable，以及到 external OpenTelemetry collector 的 export](/img/diagrams/how-to-opentelemetry.png)
+
 ## 情境
 
 當您想把路由器的日誌、指標與追蹤，送到 OpenTelemetry 相容的後端（Grafana Loki/Tempo/Mimir、Datadog、Honeycomb、自架的 `otelcol-contrib` 等），不必每次都執行 `journalctl` 或 `routerctl events`，而是從外部儀表板觀測狀態時，本指南即適用。

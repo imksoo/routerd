@@ -5,6 +5,8 @@ slug: /how-to/dns-private-upstream
 
 # 専用 DNS 上流
 
+![DNSForwarder と DNSUpstream が local、provider、default DNS query を UDP、TCP、DoT、DoH、addressFrom source へ振り分ける流れ](/img/diagrams/how-to-dns-private-upstream.png)
+
 ## 想定するシーン
 
 ルーター上のリゾルバに、次のような振る舞いをさせたい場合です。

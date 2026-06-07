@@ -4,6 +4,8 @@ title: 新增防火牆例外規則
 
 # 新增防火牆例外規則
 
+![FirewallRule exception 處理 management SSH、router service port、scoped destination CIDR，以及 implicit role matrix 前的評估順序](/img/diagrams/how-to-firewall-rule.png)
+
 ## 適用情境
 
 `FirewallZone` 的角色式預設已能滿足大多數需求，但有時仍需要例外處理。

@@ -4,6 +4,8 @@ title: Tailscale の exit node と subnet router
 
 # Tailscale の exit node と subnet router
 
+![TailscaleNode が tailscaled、auth key file、advertised subnet、exit-node intent、tailnet approval flow を扱う流れ](/img/diagrams/how-to-tailscale.png)
+
 ## 想定する構成
 
 `TailscaleNode` は、routerd ホストを tailnet に参加させ、次の経路を広告したい場合に使います。

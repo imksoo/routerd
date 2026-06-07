@@ -4,6 +4,8 @@ title: MAC アドレスでゲスト端末を隔離する
 
 # MAC アドレスでゲスト端末を隔離する
 
+![ClientPolicy guest mode が MAC address を分類し、nftables set を生成し、zone matrix の前に LAN や management access を拒否する流れ](/img/diagrams/how-to-guest-mode.png)
+
 `ClientPolicy` は routerd のゲストモードです。
 同じ LAN 上の端末を MAC アドレスで分類し、通常のゾーン間ファイアウォールマトリクスより先に、より厳しい転送方針を適用します。
 

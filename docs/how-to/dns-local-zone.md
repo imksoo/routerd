@@ -5,6 +5,8 @@ slug: /how-to/dns-local-zone
 
 # Local DNS zones
 
+![Diagram showing DNSZone combining manual records, DHCP-derived lease records, reverse zones, event relay updates, and DNSResolver local answers](/img/diagrams/how-to-dns-local-zone.png)
+
 ## Scenario
 
 You want internal hosts to be reachable by name without hand-maintaining `/etc/hosts` files on every device. Specifically:

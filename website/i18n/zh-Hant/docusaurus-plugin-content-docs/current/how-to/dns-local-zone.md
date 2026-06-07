@@ -5,6 +5,8 @@ slug: /how-to/dns-local-zone
 
 # 本地 DNS 區域
 
+![DNSZone 組合 manual record、DHCP-derived lease record、reverse zone、event relay update 與 DNSResolver local answer 的流程](/img/diagrams/how-to-dns-local-zone.png)
+
 ## 適用情境
 
 當您希望透過名稱解析內部主機，但又不想手動同步各裝置的 `/etc/hosts` 時，具體而言是希望實現以下目標：

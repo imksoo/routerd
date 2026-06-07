@@ -1,5 +1,7 @@
 # IPv6 dual-stack BGP and VIPs
 
+![Diagram showing dual-stack BGPPeer address families, IPv4 and IPv6 VirtualAddress resources, DNS A and AAAA records, and BGP or VRRP firewall openings](/img/diagrams/how-to-ipv6-dual-stack.png)
+
 routerd can run GoBGP IPv4 and IPv6 unicast BGP through `routerd-bgp` for the same `BGPRouter`.
 Keep `spec.importPolicy.allowedPrefixes`, `spec.exportPolicy.allowedPrefixes`,
 and `redistribute.*.allowedPrefixes` as mixed IPv4/IPv6 lists; routerd maps

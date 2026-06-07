@@ -5,6 +5,8 @@ slug: /how-to/nat44-session-sync
 
 # HA ルータ向け NAT44 セッション同期
 
+![NAT44SessionSync が active router の conntrack SNAT entry を dump し、SSH restore し、insert failure を standby status に出す流れ](/img/diagrams/how-to-nat44-session-sync.png)
+
 `NAT44SessionSync` は、LAN 側ゲートウェイの役割を共有する 2 台の
 routerd ノードで、active ノードの NAT44 conntrack セッションを standby
 ノードへ同期するためのリソースです。初期実装は snapshot 方式です。

@@ -5,6 +5,8 @@ slug: /how-to/vscode-yaml-schema
 
 # VS Code YAML schema
 
+![Go API type から公開 routerd JSON Schema、YAML modeline、VS Code workspace mapping、editor diagnostic へつながる流れ](/img/diagrams/how-to-vscode-yaml-schema.png)
+
 routerd は生成済み config schema を次の URL で公開しています。
 
 ```text

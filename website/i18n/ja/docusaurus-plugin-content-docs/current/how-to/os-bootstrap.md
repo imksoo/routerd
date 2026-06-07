@@ -4,6 +4,8 @@ title: ルーターホストを宣言型でブートストラップする
 
 # ルーターホストを宣言型でブートストラップする
 
+![derived package、kernel module、sysctl、adoption drop-in、minimal installer networking による declarative host bootstrap](/img/diagrams/how-to-os-bootstrap.png)
+
 routerd は、初回構築時に手作業になりがちなホスト準備を YAML へ寄せられます。インストーラーの代替ではなく、ルーター固有の差分を shell 履歴ではなく設定として残すための機能です。
 
 ## パッケージ

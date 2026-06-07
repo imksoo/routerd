@@ -4,6 +4,8 @@ title: Define firewall zones
 
 # Define firewall zones
 
+![Diagram showing FirewallZone interface roles for WAN, LAN, and management networks and the resulting stateful role-matrix defaults](/img/diagrams/how-to-firewall-zone.png)
+
 ## Scenario
 
 You want a stateful firewall whose default behaviour is "WAN cannot reach LAN, LAN can reach WAN, management can reach everything." That is the matrix every home or SOHO router needs, and writing it as individual `accept` / `drop` rules is repetitive and error-prone.

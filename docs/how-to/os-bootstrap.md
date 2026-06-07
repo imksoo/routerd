@@ -4,6 +4,8 @@ title: Bootstrap a router host declaratively
 
 # Bootstrap a router host declaratively
 
+![Diagram showing declarative host bootstrap with derived packages, kernel modules, sysctls, adoption drop-ins, and minimal installer networking](/img/diagrams/how-to-os-bootstrap.png)
+
 routerd can describe most first-boot host preparation in the router YAML. The
 goal is not to replace an installer, but to keep the router-specific drift out
 of ad hoc shell history.
