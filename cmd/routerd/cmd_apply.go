@@ -85,6 +85,7 @@ type applyOptions struct {
 	AllowMgmtLockout    bool
 	AnnounceDryRunToCLI bool
 	MgmtLockoutWriter   io.Writer
+	SkipConfigCommit    bool
 }
 
 func effectiveApplyPolicy(router *api.Router) api.ApplyPolicySpec {
@@ -155,12 +156,34 @@ func routerConfigHash(router *api.Router) string {
 
 func routerConfigYAML(router *api.Router, opts applyOptions) string {
 	if path := strings.TrimSpace(opts.ConfigPath); path != "" {
-		if data, err := os.ReadFile(path); err == nil {
+		if data, err := config.CanonicalYAMLFile(path); err == nil {
 			return string(data)
 		}
 	}
 	data, _ := yaml.Marshal(router)
 	return string(data)
+}
+
+func commitConfigAfterSuccessfulApply(opts applyOptions, configYAML string, logger *eventlog.Logger) error {
+	if opts.DryRun || opts.SkipConfigCommit || strings.TrimSpace(opts.ConfigPath) == "" {
+		return nil
+	}
+	if err := config.AtomicWriteFile(opts.ConfigPath, []byte(configYAML)); err != nil {
+		return fmt.Errorf("commit canonical config %s: %w", opts.ConfigPath, err)
+	}
+	if logger != nil {
+		logger.Emit(eventlog.LevelInfo, "apply", "committed canonical router config", map[string]string{"config": opts.ConfigPath})
+	}
+	return nil
+}
+
+func configCommitPhase(phase string) bool {
+	switch strings.TrimSpace(phase) {
+	case "Healthy", "Applied":
+		return true
+	default:
+		return false
+	}
 }
 
 func recordWarningEvents(router *api.Router, store routerstate.Store, warnings []string) {
@@ -484,6 +507,7 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 		return nil, err
 	}
 	optionWarnings = append(optionWarnings, managementWarnings...)
+	configYAML := routerConfigYAML(router, opts)
 	stateStore, err := loadApplyStateStore(defaultString(opts.StatePath, defaultStatePath), opts.DryRun)
 	if err != nil {
 		return nil, err
@@ -497,7 +521,7 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 				return nil, err
 			}
 			if recorder, ok := stateStore.(routerstate.GenerationConfigRecorder); ok {
-				if err := recorder.RecordGenerationConfig(generation, routerConfigYAML(router, opts)); err != nil {
+				if err := recorder.RecordGenerationConfig(generation, configYAML); err != nil {
 					return nil, err
 				}
 			}
@@ -568,6 +592,11 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 		})
 		if platformDefaults.OS == platform.OSFreeBSD {
 			next, err := runFreeBSDApplyOnce(effectiveRouter, opts, stdout, logger, engine, result, generation, stateStore)
+			if err == nil && next != nil && configCommitPhase(next.Phase) {
+				if commitErr := commitConfigAfterSuccessfulApply(opts, configYAML, logger); commitErr != nil {
+					return next, commitErr
+				}
+			}
 			if store, ok := stateStore.(routerstate.GenerationStore); ok && generation != 0 && next != nil {
 				_ = store.FinishGeneration(generation, next.Phase, next.Warnings)
 				generationFinished = true
@@ -921,6 +950,11 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 		}
 		if err := appendLedgerOwnedOrphans(result, effectiveRouter, opts.LedgerPath, false); err != nil {
 			return nil, err
+		}
+		if configCommitPhase(result.Phase) {
+			if err := commitConfigAfterSuccessfulApply(opts, configYAML, logger); err != nil {
+				return nil, err
+			}
 		}
 		if err := writeResult(stdout, opts.StatusFile, result); err != nil {
 			return nil, err

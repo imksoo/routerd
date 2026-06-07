@@ -147,6 +147,82 @@ func cleanupServeLedgerOwnedOrphans(router *api.Router, ledgerPath string, logge
 	return removed, nil
 }
 
+type serveBootFallback struct {
+	Used           bool
+	Generation     int64
+	CanonicalError error
+}
+
+func loadServeRouter(configPath string, store routerstate.GenerationHistoryReader) (*api.Router, serveBootFallback, error) {
+	router, err := config.Load(configPath)
+	if err == nil {
+		if validateErr := config.Validate(router); validateErr == nil {
+			return router, serveBootFallback{}, nil
+		} else {
+			err = fmt.Errorf("validate config %s: %w", configPath, validateErr)
+		}
+	}
+	fallbackRouter, generation, fallbackErr := lastGoodServeRouter(store)
+	if fallbackErr != nil {
+		return nil, serveBootFallback{}, fmt.Errorf("load canonical config failed (%v); last-good fallback failed: %w", err, fallbackErr)
+	}
+	return fallbackRouter, serveBootFallback{Used: true, Generation: generation, CanonicalError: err}, nil
+}
+
+func lastGoodServeRouter(store routerstate.GenerationHistoryReader) (*api.Router, int64, error) {
+	if store == nil {
+		return nil, 0, errors.New("state store is unavailable")
+	}
+	records, err := store.ListGenerations(1000)
+	if err != nil {
+		return nil, 0, err
+	}
+	var skipped []string
+	for _, rec := range records {
+		if !rec.HasYAML || !configCommitPhase(rec.Phase) {
+			continue
+		}
+		configYAML, ok, err := store.GenerationConfig(rec.Generation)
+		if err != nil {
+			return nil, 0, err
+		}
+		if !ok {
+			continue
+		}
+		source := fmt.Sprintf("generation %d", rec.Generation)
+		router, err := config.LoadBytes([]byte(configYAML), source)
+		if err != nil {
+			skipped = append(skipped, fmt.Sprintf("%d: %v", rec.Generation, err))
+			continue
+		}
+		if err := config.Validate(router); err != nil {
+			skipped = append(skipped, fmt.Sprintf("%d: validate config %s: %v", rec.Generation, source, err))
+			continue
+		}
+		return router, rec.Generation, nil
+	}
+	if len(skipped) > 0 {
+		return nil, 0, fmt.Errorf("no valid last-good config generation found; skipped invalid generation(s): %s", strings.Join(skipped, "; "))
+	}
+	return nil, 0, errors.New("no last-good config generation found")
+}
+
+func emitServeBootFallbackWarning(stderr io.Writer, logger *eventlog.Logger, configPath string, fallback serveBootFallback) {
+	if !fallback.Used {
+		return
+	}
+	message := fmt.Sprintf("routerd serve could not load canonical config %s (%v); booting from last-good generation %d. Fix the canonical config and apply a valid candidate.", configPath, fallback.CanonicalError, fallback.Generation)
+	if stderr != nil {
+		fmt.Fprintf(stderr, "WARNING: %s\n", message)
+	}
+	if logger != nil {
+		logger.Emit(eventlog.LevelWarning, "serve", message, map[string]string{
+			"config":     configPath,
+			"generation": strconv.FormatInt(fallback.Generation, 10),
+		})
+	}
+}
+
 func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -174,7 +250,13 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	enabledControllers := parseControllerNames(*controllerNames)
 	controllerStatuses := filterControllerDefaultStatuses(controllerDefaultStatuses(), enabledControllers)
 	controllerRuntime := controlapi.NewControllerRuntimeStore(controllerStatuses)
-	router, err := config.Load(*configPath)
+	var stateStore *routerstate.SQLiteStore
+	stateStore, err = routerstate.OpenSQLite(*statePath)
+	if err != nil {
+		return err
+	}
+	defer stateStore.Close()
+	router, bootFallback, err := loadServeRouter(*configPath, stateStore)
 	if err != nil {
 		return err
 	}
@@ -183,6 +265,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		return err
 	}
 	defer closeLogger(logger, "serve", &err)
+	emitServeBootFallbackWarning(stderr, logger, *configPath, bootFallback)
 	logger.Emit(eventlog.LevelInfo, "serve", "routerd daemon starting", map[string]string{
 		"config":        *configPath,
 		"socket":        *socketPath,
@@ -210,12 +293,6 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		cancelControllers()
 	}()
 	var controllerBus *bus.Bus
-	var stateStore *routerstate.SQLiteStore
-	stateStore, err = routerstate.OpenSQLite(*statePath)
-	if err != nil {
-		return err
-	}
-	defer stateStore.Close()
 	if _, cleanupErr := cleanupUnsupportedLegacyObjectStatuses(router, stateStore, *statePath, time.Now().UTC(), logger); cleanupErr != nil {
 		logger.Emit(eventlog.LevelWarning, "serve", "stale state cleanup encountered an error", map[string]string{"error": cleanupErr.Error()})
 	}
@@ -265,6 +342,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		NftablesPath:       *nftablesPath,
 		LedgerPath:         *ledgerPath,
 		StatePath:          *statePath,
+		SkipConfigCommit:   bootFallback.Used,
 	}
 	applyMu := &sync.Mutex{}
 	if *applyInterval > 0 {
