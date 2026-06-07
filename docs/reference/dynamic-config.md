@@ -17,6 +17,8 @@ not merged into effective config. The separate provider-action engine can import
 them into its journal and execute them only through `ProviderActionPolicy`,
 approval, and executor-plugin gates.
 
+![Dynamic config diagram showing startup config, DynamicOverridePolicy, trusted local plugin output, DynamicConfigPart, effective config, inert actionPlans, action journal, and gated executor plugin path](/img/diagrams/dynamic-config-provider-actions.png)
+
 ## DynamicConfigPart
 
 `DynamicConfigPart` is one validated runtime fragment from a dynamic source.

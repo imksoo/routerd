@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" font-family="Inter, Arial, Helvetica, sans-serif">
+<defs>
+  <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="5.5" orient="auto">
+    <path d="M 0 0 L 11 5.5 L 0 11 z" fill="#2f4f6f"/>
+  </marker>
+  <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
+    <feDropShadow dx="0" dy="5" stdDeviation="5" flood-color="#10233f" flood-opacity="0.14"/>
+  </filter>
+</defs>
+<rect width="1600" height="900" fill="#f7fafc"/>
+<rect x="28" y="28" width="1544" height="844" rx="30" fill="#ffffff" stroke="#e2e8f0" stroke-width="2"/>
+<text x="74" y="92" font-size="42" font-weight="850" fill="#10233f">owner-reference lifecycle GC</text>
+<text x="76" y="130" font-size="23" font-weight="600" fill="#63758d">The GC planner compares the effective desired set with ledger, status, and host inventory before cleanup.</text>
+<g filter="url(#shadow)">
+<g>
+  <rect x="72" y="176" width="430" height="600" rx="24" fill="#f6f8fb" stroke="#d9e2ef" stroke-width="2"/>
+  <text x="100" y="218" font-size="25" font-weight="800" fill="#45556f">Inputs</text>
+</g>
+<g>
+  <rect x="540" y="176" width="470" height="600" rx="24" fill="#f6f8fb" stroke="#d9e2ef" stroke-width="2"/>
+  <text x="568" y="218" font-size="25" font-weight="800" fill="#45556f">Dry-run capable plan</text>
+</g>
+<g>
+  <rect x="1048" y="176" width="480" height="600" rx="24" fill="#f6f8fb" stroke="#d9e2ef" stroke-width="2"/>
+  <text x="1076" y="218" font-size="25" font-weight="800" fill="#45556f">Teardown execution</text>
+</g>
+<g>
+  <rect x="112" y="235" width="340" height="84" rx="18" fill="#e9f8ef" stroke="#2e7d55" stroke-width="3"/>
+  <text x="282" y="271.05" font-size="23" font-weight="700" fill="#13233a" text-anchor="middle" dominant-baseline="middle"><tspan x="282" dy="0">effective config</tspan><tspan x="282" dy="28">when + dynamic + SAM</tspan></text>
+</g>
+<g>
+  <rect x="112" y="355" width="340" height="84" rx="18" fill="#eaf2ff" stroke="#3267b1" stroke-width="3"/>
+  <text x="282" y="391.05" font-size="23" font-weight="700" fill="#13233a" text-anchor="middle" dominant-baseline="middle"><tspan x="282" dy="0">ownership ledger</tspan><tspan x="282" dy="28">artifact owner keys</tspan></text>
+</g>
+<g>
+  <rect x="112" y="475" width="340" height="84" rx="18" fill="#f5f3ff" stroke="#6d5bd0" stroke-width="3"/>
+  <text x="282" y="511.05" font-size="23" font-weight="700" fill="#13233a" text-anchor="middle" dominant-baseline="middle"><tspan x="282" dy="0">object status</tspan><tspan x="282" dy="28">owner + lifecycle class</tspan></text>
+</g>
+<g>
+  <rect x="112" y="595" width="340" height="84" rx="18" fill="#fff4e6" stroke="#c57a1c" stroke-width="3"/>
+  <text x="282" y="631.05" font-size="23" font-weight="700" fill="#13233a" text-anchor="middle" dominant-baseline="middle"><tspan x="282" dy="0">host inventory</tspan><tspan x="282" dy="28">what exists now</tspan></text>
+</g>
+<g>
+  <rect x="580" y="315" width="390" height="112" rx="18" fill="#eef8f9" stroke="#2b8a92" stroke-width="3"/>
+  <text x="775" y="339.35" font-size="21" font-weight="700" fill="#13233a" text-anchor="middle" dominant-baseline="middle"><tspan x="775" dy="0">GC planner</tspan><tspan x="775" dy="26">artifact removal</tspan><tspan x="775" dy="26">resource teardown</tspan><tspan x="775" dy="26">status + ledger cleanup</tspan></text>
+</g>
+<g>
+  <rect x="580" y="505" width="390" height="92" rx="14" fill="#fff8df" stroke="#d7a725" stroke-width="3"/>
+  <text x="775" y="546" font-size="20" font-weight="650" fill="#5b4400" text-anchor="middle" dominant-baseline="middle"><tspan x="775" dy="0">Destructive cleanup records a backup</tspan><tspan x="775" dy="24">first and emits an audit event.</tspan></text>
+</g>
+<g>
+  <rect x="1088" y="245" width="390" height="96" rx="18" fill="#eaf2ff" stroke="#3267b1" stroke-width="3"/>
+  <text x="1283" y="287.05" font-size="23" font-weight="700" fill="#13233a" text-anchor="middle" dominant-baseline="middle"><tspan x="1283" dy="0">artifact teardown registry</tspan><tspan x="1283" dy="28">nft table route tunnel unit</tspan></text>
+</g>
+<g>
+  <rect x="1088" y="405" width="390" height="96" rx="18" fill="#f5f3ff" stroke="#6d5bd0" stroke-width="3"/>
+  <text x="1283" y="447.05" font-size="23" font-weight="700" fill="#13233a" text-anchor="middle" dominant-baseline="middle"><tspan x="1283" dy="0">ResourceLifecycle.Teardown</tspan><tspan x="1283" dy="28">routes WireGuard SAM capture</tspan></text>
+</g>
+<g>
+  <rect x="1088" y="565" width="390" height="96" rx="18" fill="#fff8df" stroke="#d7a725" stroke-width="3"/>
+  <text x="1283" y="607.05" font-size="23" font-weight="700" fill="#13233a" text-anchor="middle" dominant-baseline="middle"><tspan x="1283" dy="0">skip protections</tspan><tspan x="1283" dy="28">adopted external unsupported OS</tspan></text>
+</g>
+<line x1="452" y1="277" x2="580" y2="371" fill="none" stroke="#2f4f6f" stroke-width="4" marker-end="url(#arrow)"/>
+<line x1="452" y1="397" x2="580" y2="371" fill="none" stroke="#2f4f6f" stroke-width="4" marker-end="url(#arrow)"/>
+<line x1="452" y1="517" x2="580" y2="371" fill="none" stroke="#2f4f6f" stroke-width="4" marker-end="url(#arrow)"/>
+<line x1="452" y1="637" x2="580" y2="371" fill="none" stroke="#2f4f6f" stroke-width="4" marker-end="url(#arrow)"/>
+<line x1="970" y1="371" x2="1088" y2="293" fill="none" stroke="#2f4f6f" stroke-width="4" marker-end="url(#arrow)"/>
+<line x1="970" y1="371" x2="1088" y2="453" fill="none" stroke="#2f4f6f" stroke-width="4" marker-end="url(#arrow)"/>
+<line x1="970" y1="552" x2="1088" y2="613" fill="none" stroke="#2f4f6f" stroke-width="4" marker-end="url(#arrow)"/>
+</g>
+</svg>

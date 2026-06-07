@@ -8,6 +8,8 @@ routerd can drive an approved cloud provider mutation (for example, attaching a
 secondary IP for [Selective Address Mobility](./selective-address-mobility))
 through an **executor plugin** — without ever holding cloud credentials.
 
+![Provider action execution diagram showing actionPlans stored as inert proposals, imported into an action journal, approved by policy gates, and executed by a credential-holding executor plugin](/img/diagrams/dynamic-config-provider-actions.png)
+
 ## Credential model
 
 - **The executor plugin holds the credentials, not routerd.** An executor

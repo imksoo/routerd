@@ -14,6 +14,8 @@ Use these examples as starting points, not as drop-in production configs. Always
 replace interface names, address ranges, ISP values, and management access
 before applying them to a real router.
 
+![Configuration example workflow diagram showing topology numbers, diagram map entries, YAML excerpts, local edits, validate-plan-dry-run sequence, apply, and routerctl verification](/img/diagrams/config-example-workflow.png)
+
 :::tip Canonical starting point
 If you are replacing a home router with routerd, start from
 [`examples/home-router-mgmt-protected.yaml`](https://github.com/imksoo/routerd/blob/main/examples/home-router-mgmt-protected.yaml).

@@ -3,6 +3,8 @@
 Cloud Edge SAM should keep address mobility routes out of WireGuard
 `AllowedIPs`.
 
+![CloudEdge SAM transport diagram showing SAMTransportProfile generated IPIP delivery over optional endpoint-only WireGuard underlay, with BGP and the kernel FIB carrying mobile /32 routes](/img/diagrams/cloudedge-sam-ipip.png)
+
 WireGuard treats `AllowedIPs` as cryptokey routing state. Outbound packets use
 the inner destination address to select a peer, and inbound packets are accepted
 only when the decrypted inner source address is allowed for that peer. This is

@@ -54,6 +54,8 @@ resource、directive、provider action plan 与 event。`actionPlans` 在 dynami
 provider-action journal，只有在 `ProviderActionPolicy`、approval、allowlist 与
 dry-run/live mode gate 通过后，才会交给 executor plugin。
 
+![dynamic config 图：trusted local plugin observation 进入 DynamicConfigPart，inert provider action plan 通过 gated action journal 与 executor plugin path 处理](/img/diagrams/dynamic-config-provider-actions.png)
+
 可用 capability 包括 `observe.cloud`、`observe.providerPrivateIPs`、
 `propose.dynamicConfig`、`propose.providerAction`、`execute.providerAction`。
 executor plugin 不会从 routerd core 接收 cloud credential；它在自己的进程中使用

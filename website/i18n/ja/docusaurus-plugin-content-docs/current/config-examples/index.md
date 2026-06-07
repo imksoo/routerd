@@ -13,6 +13,8 @@ sidebar_position: 0
 ここにある設定は出発点です。本番に投入する前に、インターフェース名、アドレス範囲、
 ISP 固有値、管理アクセスの経路を、必ず自分の環境に合わせてください。
 
+![構成図の番号、対応表、YAML 抜粋、ローカル編集、validate-plan-dry-run、apply、routerctl 確認の流れを示す設定事例の読み方図](/img/diagrams/config-example-workflow.png)
+
 :::tip 標準の出発点
 家庭ルーターを routerd で置き換える場合は、
 [`examples/home-router-mgmt-protected.yaml`](https://github.com/imksoo/routerd/blob/main/examples/home-router-mgmt-protected.yaml)

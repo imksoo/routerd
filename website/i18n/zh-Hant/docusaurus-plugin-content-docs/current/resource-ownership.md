@@ -8,6 +8,8 @@ slug: /reference/resource-ownership
 routerd 將主機上的構成物與資源對應管理。
 透過記錄哪個資源建立了哪些構成物，使差異確認、刪除與障礙排查更加便利。
 
+![owner-reference lifecycle GC 圖：desired resource、ledger row、object status、host inventory、teardown contract、skip protection、backup 與 audit event](/img/diagrams/lifecycle-gc.png)
+
 ## 擁有權種類
 
 | 種類 | 意義 |

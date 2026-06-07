@@ -7,6 +7,8 @@ slug: /reference/resource-ownership
 
 routerd associates host-side artefacts with the resource that produced them. Recording who owns what makes diffs, deletions, and incident debugging tractable.
 
+![Owner-reference lifecycle GC diagram showing desired resources, ledger rows, object statuses, host inventory, teardown contracts, skip protections, backups, and audit events](/img/diagrams/lifecycle-gc.png)
+
 ## Ownership categories
 
 | Category | Meaning |

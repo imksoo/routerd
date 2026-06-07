@@ -8,6 +8,8 @@ title: 架构概览
 个别功能的使用方式请参阅[教程](./tutorials/getting-started.md)与 [How-to](./how-to/multi-wan.md)，
 资源定义请参阅 [API 参考文档](./api-v1alpha1.md)。
 
+![routerd 架构图：router YAML 与 routerctl 经过验证、effective config、controller、SQLite state、renderer，最终形成拥有的 host artifact](/img/diagrams/routerd-architecture.png)
+
 ---
 
 ## 1. routerd 的定位

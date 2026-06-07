@@ -10,6 +10,8 @@ routerd は、宣言した意図と観測した状態を分けて扱います。
 YAML は、利用者が管理する意図です。
 SQLite、lease ファイル、events.jsonl は、routerd と専用デーモンが観測した状態です。
 
+![effective config、ownership ledger、object status、host inventory から dry-run 可能な GC planner と teardown registry へ進む lifecycle GC 図](/img/diagrams/lifecycle-gc.png)
+
 ## 状態の置き場所
 
 リリース版のインストールでは、正本の設定を `/usr/local/etc/routerd/router.yaml`

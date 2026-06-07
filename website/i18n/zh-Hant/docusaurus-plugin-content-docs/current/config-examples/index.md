@@ -12,6 +12,8 @@ sidebar_position: 0
 這裡的設定是出發點。投入正式環境之前，請務必依照您的實際環境調整介面名稱、位址範圍、
 ISP 專屬值及管理存取路徑。
 
+![設定範例閱讀流程圖：拓撲編號、圖示對應表、YAML 摘錄、本地編輯、validate-plan-dry-run、apply 與 routerctl 確認](/img/diagrams/config-example-workflow.png)
+
 :::tip 推薦起點
 如需用 routerd 替換家庭路由器，請從
 [`examples/home-router-mgmt-protected.yaml`](https://github.com/imksoo/routerd/blob/main/examples/home-router-mgmt-protected.yaml)
