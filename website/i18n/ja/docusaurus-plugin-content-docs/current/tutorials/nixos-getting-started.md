@@ -4,6 +4,8 @@ title: NixOS から始める
 
 # NixOS から始める
 
+![routerd release binary、generated NixOS module、declarative service、nixos-rebuild test/switch、rollback を示す NixOS getting started flow](/img/diagrams/tutorial-nixos-getting-started.png)
+
 NixOS は routerd の主要な補助プラットフォームです。
 NixOS 上では、一時的な systemd ユニットではなく、宣言型の NixOS 設定を通じて routerd の管理サービスを動かすことを推奨します。
 routerd の実行ファイルはリリースアーカイブから導入します。

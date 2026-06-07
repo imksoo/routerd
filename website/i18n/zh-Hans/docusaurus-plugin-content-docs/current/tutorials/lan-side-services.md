@@ -5,6 +5,8 @@ sidebar_position: 5
 
 # LAN 侧服务
 
+![处理 LAN address、DHCPv4/DHCPv6、router advertisement、local DNS、lease event 与 client option 的 LAN-side routerd services](/img/diagrams/tutorial-lan-side-services.png)
+
 本页介绍处理路由器 LAN 侧的 routerd 资源。
 LAN 侧资源负责内侧接口的地址、DHCPv4 / DHCPv6 分配、IPv6 Router Advertisement，以及本地 DNS 解析器等功能。
 

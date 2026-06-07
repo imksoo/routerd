@@ -4,6 +4,8 @@ title: Getting started
 
 # Getting started
 
+![Diagram showing the safe first routerd loop from interface discovery and a small YAML config to validate, plan, dry-run, serve, and routerctl status](/img/diagrams/tutorial-getting-started.png)
+
 This tutorial shows the safest first loop:
 
 1. write a small router resource file

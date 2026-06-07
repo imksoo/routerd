@@ -5,6 +5,8 @@ sidebar_position: 5
 
 # LAN 側サービス
 
+![LAN address、DHCPv4/DHCPv6、router advertisement、local DNS、lease event、client option を扱う LAN-side routerd services](/img/diagrams/tutorial-lan-side-services.png)
+
 このページでは、ルーターの LAN 側を扱う routerd リソースを紹介します。
 LAN 側のリソースは、内側インターフェースのアドレス、DHCPv4 / DHCPv6 の配布、IPv6 Router Advertisement、ローカル DNS リゾルバといった役割を担います。
 

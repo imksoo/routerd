@@ -5,6 +5,8 @@ sidebar_position: 6
 
 # 基本 NAT 与防火墙策略
 
+![包含 WAN、LAN、可选 management、NAT44Rule、FirewallZone、FirewallPolicy 与 nftables validation 的基本 routerd NAT44 与 firewall tutorial 流程](/img/diagrams/tutorial-basic-firewall.png)
+
 routerd 在 Linux 路由器上应用 IPv4 NAPT（NAT44）与 stateful 防火墙。
 本教程演示在初始配置的主机上同时启用两者的最小步骤。
 

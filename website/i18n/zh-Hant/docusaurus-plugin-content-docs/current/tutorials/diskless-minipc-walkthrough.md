@@ -4,6 +4,8 @@ title: 無碟 mini PC 教學
 
 # 無碟 mini PC 教學
 
+![從 live ISO boot、USB persistence、routerd wizard configuration 到 validation 的 diskless mini PC tutorial flow](/img/diagrams/tutorial-diskless-minipc-walkthrough.png)
+
 本教學說明如何將小型 x86 mini PC 在不安裝 OS 至內建磁碟的情況下設定為路由器。
 從 routerd Live ISO 開機，將設定儲存至 USB。
 日誌暫存於 RAM，每日一次以壓縮封存的形式寫出至 USB。

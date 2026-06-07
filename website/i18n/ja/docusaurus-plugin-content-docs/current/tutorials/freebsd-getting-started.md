@@ -4,6 +4,8 @@ title: FreeBSD から始める
 
 # FreeBSD から始める
 
+![release archive install から rc.d、rc.conf.d、pf、dnsmasq、mpd5 の render と apply validation へ進む FreeBSD getting started flow](/img/diagrams/tutorial-freebsd-getting-started.png)
+
 FreeBSD は、Ubuntu や NixOS と同じ routerd リソースモデルを使います。
 ただし、生成されるホスト成果物は FreeBSD の機構に合わせます。
 routerd は、`rc.conf.d`、`rc.d` スクリプト、`pf.conf`、`dhclient.conf`、

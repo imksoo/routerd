@@ -1020,6 +1020,116 @@ const diagrams = [
     ],
     noteText: 'Use the modeline for arbitrary filenames that do not match the workspace mapping.',
   }),
+  flowDiagram({
+    name: 'tutorial-basic-firewall',
+    title: 'basic NAT and firewall policy',
+    subtitle: 'A fresh Linux router gets outbound IPv4 masquerade, conservative zone defaults, conntrack observation, and validation checks.',
+    lanes: [
+      { title: 'Router shape', boxes: ['WAN interface\nuntrusted uplink', 'LAN interface\nprivate clients', 'optional management\nseparate access path'] },
+      { title: 'routerd resources', boxes: ['NAT44Rule\nLAN masquerade to WAN', 'FirewallZone\nwan lan mgmt roles', 'FirewallPolicy\ndefault stateful matrix'] },
+      { title: 'Verify', boxes: ['routerctl describe NAT44Rule', 'routerctl firewall test', 'nft tables\nrouterd_filter + routerd_nat'] },
+    ],
+    noteText: 'Managed service openings stay derived so DHCP, DNS, and control traffic continue to work with the firewall enabled.',
+  }),
+  flowDiagram({
+    name: 'tutorial-diskless-minipc-walkthrough',
+    title: 'diskless mini PC walkthrough',
+    subtitle: 'Boot the live ISO, configure WAN/LAN in the wizard, persist router.yaml on USB, and keep logs compact on removable media.',
+    lanes: [
+      { title: 'Hardware and media', boxes: ['x86 mini PC\n2+ NICs', 'routerd-live.iso\nconsole or serial', 'USB stick labeled ROUTERD'] },
+      { title: 'Live workflow', boxes: ['boot ISO\nverify checksum first', 'setup wizard\nWAN LAN DHCP DNS RA NAT', 'USB persistence\nrouter.yaml + daily log archive'] },
+      { title: 'Operational loop', boxes: ['validate and dry-run config', 'boot persistent router', 'recover by editing USB\nor console access'] },
+    ],
+    noteText: 'Use an isolated LAN bridge during early DHCP and RA tests so a live network is not surprised.',
+  }),
+  flowDiagram({
+    name: 'tutorial-first-router',
+    title: 'bring up the first router',
+    subtitle: 'The smallest routerd config adopts one DHCPv4 WAN and one static LAN address, then validates before live apply.',
+    lanes: [
+      { title: 'Interfaces', boxes: ['wan\nens18 DHCPv4', 'lan\nens19 static IPv4', 'management path\nconsole SSH or hypervisor'] },
+      { title: 'Minimal resources', boxes: ['Interface/wan + Interface/lan', 'DHCPv4Client/wan\nmanaged daemon', 'IPv4StaticAddress/lan-address'] },
+      { title: 'Safe apply loop', boxes: ['routerd validate', 'routerd plan', 'apply --once --dry-run\nthen live apply'] },
+    ],
+    noteText: 'Confirm the management connection survives before removing dry-run.',
+  }),
+  flowDiagram({
+    name: 'tutorial-freebsd-getting-started',
+    title: 'getting started on FreeBSD',
+    subtitle: 'The same resource model renders FreeBSD-native rc.d, rc.conf.d, pf, dnsmasq, mpd5, and dynamic gif tunnel artifacts.',
+    lanes: [
+      { title: 'Install target', boxes: ['FreeBSD 14.x\n/usr/local layout', 'release archive\nrouterd-freebsd-amd64', 'packages\nmpd5 dnsmasq wireguard jq'] },
+      { title: 'Review before apply', boxes: ['routerd validate', 'routerd render freebsd\n/tmp output', 'inspect pf.conf\ndnsmasq.conf rc.d scripts'] },
+      { title: 'Apply and observe', boxes: ['pfctl -nf before load', 'dnsmasq --test before restart', 'routerctl status\nservice logs'] },
+    ],
+    noteText: 'FreeBSD is supported through native host surfaces, but platform parity still follows docs/platforms.md.',
+  }),
+  flowDiagram({
+    name: 'tutorial-getting-started',
+    title: 'getting started safely',
+    subtitle: 'The first routerd loop writes a small config, validates it, inspects the plan, dry-runs apply, and only then runs serve.',
+    lanes: [
+      { title: 'Prepare', boxes: ['install release archive', 'check interface names\nip link', 'keep management path separate'] },
+      { title: 'First config', boxes: ['Package override\nonly if needed', 'Interface resources\nwan lan mgmt', 'derived host runtime\npackages sysctls services'] },
+      { title: 'Safety loop', boxes: ['validate', 'plan', 'apply --once --dry-run', 'serve + routerctl status/events'] },
+    ],
+    noteText: 'The first pass should not change the host network until the plan is understood.',
+  }),
+  flowDiagram({
+    name: 'tutorial-index',
+    title: 'tutorial path overview',
+    subtitle: 'Pick a first deployment path, then add WAN acquisition, LAN services, firewall policy, and platform-specific startup work.',
+    lanes: [
+      { title: 'Start here', boxes: ['Install release archive', 'Getting started\nsafe first loop', 'Diskless mini PC\nlive ISO + USB'] },
+      { title: 'Build router features', boxes: ['WAN-side services\nDHCP PPPoE DS-Lite PD', 'LAN-side services\nDHCP DNS RA NTP', 'Basic firewall\nNAT44 + zones'] },
+      { title: 'Platform paths', boxes: ['NixOS generated module', 'FreeBSD native artifacts', 'reuse same resource model\nas network grows'] },
+    ],
+    noteText: 'The same YAML resource model spans virtual labs and physical routers.',
+  }),
+  flowDiagram({
+    name: 'tutorial-install',
+    title: 'install routerd',
+    subtitle: 'Install from a release archive, preserve existing config and state, validate the sample config, then dry-run before live apply.',
+    lanes: [
+      { title: 'Release archive', boxes: ['download tar.gz + sha256', 'linux amd64/arm64\nfreebsd amd64/arm64', 'no Go toolchain needed'] },
+      { title: 'Installer work', boxes: ['install dependencies\nor --no-install-deps', 'copy binaries to /usr/local/sbin', 'install service templates\nand router.yaml.sample'] },
+      { title: 'After install', boxes: ['edit /usr/local/etc/routerd/router.yaml', 'validate plan dry-run', 'apply when management access is safe'] },
+    ],
+    noteText: 'Existing router.yaml and state directories are preserved across install and upgrade.',
+  }),
+  flowDiagram({
+    name: 'tutorial-lan-side-services',
+    title: 'LAN-side services',
+    subtitle: 'LAN resources publish inside addresses, DHCPv4/v6, RA, NTP options, local DNS zones, and lease-derived names.',
+    lanes: [
+      { title: 'Inside network', boxes: ['LAN IPv4 address', 'delegated IPv6 prefix\nfrom WAN PD', 'client leases\nreservations and sticky holds'] },
+      { title: 'routerd daemons', boxes: ['dnsmasq\nDHCPv4 DHCPv6 RA relay', 'routerd-dns-resolver\nzones forwarders cache logs', 'dhcp-event-relay\nlease updates to DNS'] },
+      { title: 'Client experience', boxes: ['gateway DNS NTP options', 'SLAAC + RDNSS for IPv6', 'local names and reverse lookups'] },
+    ],
+    noteText: 'DNS resolution is not dnsmasq in current routerd; it is handled by routerd-dns-resolver.',
+  }),
+  flowDiagram({
+    name: 'tutorial-nixos-getting-started',
+    title: 'getting started on NixOS',
+    subtitle: 'routerd keeps NixOS services declarative by generating a module instead of relying on transient systemd units.',
+    lanes: [
+      { title: 'NixOS host', boxes: ['install binaries from archive', 'keep OS packages in NixOS config', 'install.sh warns\ninstead of nix-env'] },
+      { title: 'Generated module', boxes: ['/etc/nixos/routerd-generated.nix', 'systemd units\nRuntimeDirectory StateDirectory caps', 'nftables dnsmasq DHCP PPPoE\nthrough module'] },
+      { title: 'Rebuild loop', boxes: ['nixos-rebuild test', 'nixos-rebuild switch', 'rollback attempted\non failed switch'] },
+    ],
+    noteText: 'NixOS is a secondary target with generated-module coverage; check platforms.md for the current matrix.',
+  }),
+  flowDiagram({
+    name: 'tutorial-wan-side-services',
+    title: 'WAN-side services',
+    subtitle: 'WAN resources acquire upstream addresses and prefixes, terminate PPPoE or DS-Lite, select egress, and feed downstream services.',
+    lanes: [
+      { title: 'Provider patterns', boxes: ['native dual-stack\nDHCPv4 + DHCPv6-PD', 'PPPoE IPv4\nplus native IPv6 PD', 'DS-Lite IPv4 over IPv6\nAFTR via DNS'] },
+      { title: 'routerd resources', boxes: ['DHCPv4Client\nDHCPv6PrefixDelegation', 'PPPoESession\nDSLiteTunnel', 'HealthCheck + EgressRoutePolicy\nNAT44Rule'] },
+      { title: 'Downstream inputs', boxes: ['IPv6DelegatedAddress\nLAN prefix', 'DNS/NTP from DHCP status', 'selected default egress\nfor NAT and routes'] },
+    ],
+    noteText: 'Pick the subset matching your ISP; routerd publishes status so LAN resources can react.',
+  }),
 ];
 
 function chromePath() {

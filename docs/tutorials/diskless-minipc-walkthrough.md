@@ -4,6 +4,8 @@ title: Diskless mini PC walkthrough
 
 # Diskless mini PC walkthrough
 
+![Diagram showing the diskless mini PC tutorial flow from live ISO boot and USB persistence to routerd wizard configuration and validation](/img/diagrams/tutorial-diskless-minipc-walkthrough.png)
+
 This tutorial turns a small x86 mini PC into a router without installing an OS
 to its internal disk. The router boots the routerd live ISO, stores
 configuration on USB, buffers logs in RAM, and flushes a compact archive to USB

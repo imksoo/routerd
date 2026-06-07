@@ -4,6 +4,8 @@ title: 從 FreeBSD 開始
 
 # 從 FreeBSD 開始
 
+![從 release archive install 到 rc.d、rc.conf.d、pf、dnsmasq、mpd5 render 與 apply validation 的 FreeBSD getting started flow](/img/diagrams/tutorial-freebsd-getting-started.png)
+
 FreeBSD 使用與 Ubuntu 和 NixOS 相同的 routerd 資源模型。
 但產生的主機成果物對應 FreeBSD 的機制。
 routerd 負責處理 `rc.conf.d`、`rc.d` script、`pf.conf`、`dhclient.conf`、

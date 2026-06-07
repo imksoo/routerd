@@ -5,6 +5,8 @@ slug: /tutorials
 
 # 教學
 
+![從 install、getting started、diskless live ISO 到 WAN services、LAN services、firewall、NixOS 與 FreeBSD 的 routerd tutorial path](/img/diagrams/tutorial-index.png)
+
 ## 五分鐘做出無磁碟 mini PC 路由器
 
 啟動 routerd Live ISO，依照文字精靈回答設定問題，再將設定儲存到 USB 隨身碟。

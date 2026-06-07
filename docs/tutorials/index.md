@@ -5,6 +5,8 @@ slug: /tutorials
 
 # Tutorials
 
+![Diagram showing the routerd tutorial path from install, getting started, and diskless live ISO to WAN services, LAN services, firewall, NixOS, and FreeBSD](/img/diagrams/tutorial-index.png)
+
 ## Diskless mini PC router in five minutes
 
 Boot the routerd live ISO, answer the text wizard, save the configuration to a

@@ -4,6 +4,8 @@ title: 从 NixOS 开始
 
 # 从 NixOS 开始
 
+![展示 routerd release binary、generated NixOS module、declarative service、nixos-rebuild test/switch 与 rollback 的 NixOS getting started flow](/img/diagrams/tutorial-nixos-getting-started.png)
+
 NixOS 是 routerd 的主要辅助平台。
 在 NixOS 上，建议通过声明式 NixOS 配置来管理 routerd 的管理服务，而非使用临时的 systemd unit。
 routerd 的可执行文件从 release archive 安装。

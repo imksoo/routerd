@@ -5,6 +5,8 @@ sidebar_position: 1
 
 # インストール
 
+![release archive から routerd を install し、dependency と service template を入れ、config/state を preserve して validate-plan-dry-run する流れ](/img/diagrams/tutorial-install.png)
+
 routerd はリリースアーカイブから導入します。
 ルーターホストに Go や Makefile は不要です。
 

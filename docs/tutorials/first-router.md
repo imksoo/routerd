@@ -5,6 +5,8 @@ sidebar_position: 2
 
 # Bring up the first router
 
+![Diagram showing the first router tutorial with DHCPv4 WAN, static LAN address, minimal Interface resources, and validate-plan-dry-run apply loop](/img/diagrams/tutorial-first-router.png)
+
 This tutorial brings up the smallest possible routerd configuration: one WAN interface that gets its IPv4 address from DHCPv4, and one LAN interface with a static IPv4 address.
 
 ```yaml

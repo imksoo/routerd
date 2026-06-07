@@ -5,6 +5,8 @@ sidebar_position: 6
 
 # 基本の NAT とファイアウォールポリシー
 
+![WAN、LAN、任意の management、NAT44Rule、FirewallZone、FirewallPolicy、nftables validation を含む基本 routerd NAT44 と firewall tutorial の流れ](/img/diagrams/tutorial-basic-firewall.png)
+
 routerd は、Linux ルーター上で IPv4 NAPT (NAT44) と stateful firewall を適用します。
 このチュートリアルでは、初期構成のホストに両方を入れる最小手順を示します。
 

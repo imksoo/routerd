@@ -5,6 +5,8 @@ sidebar_position: 2
 
 # 启动第一台路由器
 
+![展示 DHCPv4 WAN、static LAN address、最小 Interface resource 与 validate-plan-dry-run apply loop 的 first router tutorial](/img/diagrams/tutorial-first-router.png)
+
 本教程将启动最小的 routerd 配置。配置为「通过 DHCPv4 获取 IPv4 的 WAN 一条」加上「固定 IPv4 地址的 LAN 一条」。
 
 ```yaml
