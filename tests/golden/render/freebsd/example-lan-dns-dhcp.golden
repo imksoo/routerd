@@ -64,7 +64,6 @@ routerd_prestart() {
   mkdir -p '/var/run/routerd/pppoe-client'
   mkdir -p '/var/db/routerd'
   mkdir -p '/var/log/routerd'
-  '/usr/local/sbin/routerd' 'check'
 }
 
 routerd_read_pidfile() {

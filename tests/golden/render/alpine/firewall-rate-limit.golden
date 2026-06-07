@@ -133,5 +133,4 @@ start_pre() {
 	checkpath -d -m 0755 '/run/routerd/pppoe-client'
 	checkpath -d -m 0755 '/var/lib/routerd'
 	checkpath -d -m 0755 '/var/log/routerd'
-	'/usr/local/sbin/routerd' 'check'
 }

@@ -12,10 +12,6 @@ func RouterdServiceSystemdSpec() api.SystemdUnitSpec {
 	started := true
 	return api.SystemdUnitSpec{
 		Description: "routerd daemon",
-		ExecStartPre: []string{
-			"/usr/local/sbin/routerd",
-			"check",
-		},
 		ExecStart: []string{
 			"/usr/local/sbin/routerd",
 			"serve",
