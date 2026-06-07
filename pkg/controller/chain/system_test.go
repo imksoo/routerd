@@ -189,12 +189,12 @@ func TestSystemdUnitControllerRendersAndEnablesUnit(t *testing.T) {
 		t.Fatalf("read unit: %v", err)
 	}
 	gotUnit := string(data)
-	for _, want := range []string{"ExecStartPre=/usr/local/sbin/routerd check", "ExecStart=/usr/local/sbin/routerd serve", "RuntimeDirectory=routerd routerd/bgp routerd/dhcpv6-client routerd/dhcpv4-client routerd/pppoe-client routerd/dns-resolver", "StateDirectory=routerd", "AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE CAP_SETUID CAP_SETGID CAP_CHOWN", "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK", "NoNewPrivileges=no"} {
+	for _, want := range []string{"ExecStart=/usr/local/sbin/routerd serve", "RuntimeDirectory=routerd routerd/bgp routerd/dhcpv6-client routerd/dhcpv4-client routerd/pppoe-client routerd/dns-resolver", "StateDirectory=routerd", "AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE CAP_SETUID CAP_SETGID CAP_CHOWN", "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK", "NoNewPrivileges=no"} {
 		if !strings.Contains(gotUnit, want) {
 			t.Fatalf("unit missing %q:\n%s", want, gotUnit)
 		}
 	}
-	for _, notWant := range []string{"ReadWritePaths=", "ProtectSystem="} {
+	for _, notWant := range []string{"ReadWritePaths=", "ProtectSystem=", "ExecStartPre=/usr/local/sbin/routerd check"} {
 		if strings.Contains(gotUnit, notWant) {
 			t.Fatalf("routerd.service must not contain %q:\n%s", notWant, gotUnit)
 		}
