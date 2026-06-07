@@ -5,6 +5,8 @@ slug: /reference/control-api-v1alpha1
 
 # 制御 API v1alpha1
 
+![Diagram showing the Control API v1alpha1 local socket model from routerd main sockets and managed daemon sockets to status, events, commands, resource phases, and local-only client contracts](/img/diagrams/control-api-v1alpha1.png)
+
 routerd と管理対象デーモンは、ローカルの Unix domain socket 上に HTTP+JSON API を公開します。
 この API はリモート管理用ではなく、`routerctl`、routerd 本体、運用スクリプトが同じホスト上で状態を読むためのものです。
 

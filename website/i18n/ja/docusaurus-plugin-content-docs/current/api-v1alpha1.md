@@ -5,6 +5,8 @@ slug: /reference/api-v1alpha1
 
 # リソース API v1alpha1
 
+![Diagram showing the Resource API v1alpha1 shape from apiVersion, kind, metadata, spec, and status through API groups and generated schema validation contracts](/img/diagrams/api-v1alpha1.png)
+
 routerd の設定は、最上位の `Router` と、型付きリソースの一覧で構成します。
 このページは、現在の実装に合わせたリソース一覧です。
 フェーズ 1.6 以降は RFC の表記に合わせ、DHCP 関連の Kind は `DHCPv4*` と `DHCPv6*` を使います。

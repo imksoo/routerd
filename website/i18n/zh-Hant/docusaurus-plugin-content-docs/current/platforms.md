@@ -4,6 +4,8 @@ title: 支援的平台
 
 # 支援的平台
 
+![Diagram showing supported platforms with Linux systemd primary integration, Alpine OpenRC live ISO support, NixOS module activation, FreeBSD rc.d and pf groundwork, and pkg/platform feature-gated implementation rules](/img/diagrams/platforms.png)
+
 routerd 以跨 OS 為前提設計。
 各平台所使用的主機端機制因 OS 而異。
 本頁明確列出 routerd 在各平台使用的 OS 功能。

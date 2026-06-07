@@ -4,6 +4,8 @@ title: 法務與再分發
 
 # 法務與再分發
 
+![Diagram showing legal and redistribution checks from third-party license inventory through release archives, live ISO aggregate licensing, SPDX source headers, copyleft review, and release checklist](/img/diagrams/legal-redistribution.png)
+
 routerd 本體以 BSD 3-Clause License 分發。
 完整授權條款文字位於 repository root 的 `LICENSE`。
 

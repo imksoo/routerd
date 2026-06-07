@@ -4,6 +4,8 @@ title: routerd が DHCPv6-PD クライアントを自前で持つ理由
 
 # routerd が DHCPv6-PD クライアントを自前で持つ理由
 
+![Diagram showing why routerd owns DHCPv6-PD from OS client variation and stale prefix risk through routerd-dhcpv6-client lease state, status, delegated LAN address inputs, and HA DUID operation](/img/diagrams/knowledge-base-dhcpv6-pd-clients.png)
+
 routerd の現在の方針では、DHCPv6-PD は専用デーモン `routerd-dhcpv6-client` が担当します。
 過去に評価した OS 付属クライアントを使う方法は、現在の設定例としては採用していません。
 

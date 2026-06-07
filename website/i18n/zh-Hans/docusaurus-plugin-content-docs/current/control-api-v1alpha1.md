@@ -5,6 +5,8 @@ slug: /reference/control-api-v1alpha1
 
 # 控制 API v1alpha1
 
+![Diagram showing the Control API v1alpha1 local socket model from routerd main sockets and managed daemon sockets to status, events, commands, resource phases, and local-only client contracts](/img/diagrams/control-api-v1alpha1.png)
+
 routerd 与受管理的守护进程会在本机的 Unix domain socket 上公开 HTTP+JSON API。
 此 API 并非用于远程管理，而是供 `routerctl`、routerd 本体以及运维脚本在同一主机上读取状态所使用。
 

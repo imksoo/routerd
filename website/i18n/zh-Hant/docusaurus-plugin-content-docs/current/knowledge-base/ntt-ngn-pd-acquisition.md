@@ -4,6 +4,8 @@ title: NTT NGN 系存取網路的 DHCPv6-PD 與 AFTR
 
 # NTT NGN 系存取網路的 DHCPv6-PD 與 AFTR
 
+![Diagram showing DHCPv6-PD and AFTR acquisition on NTT NGN-style access from prefix delegation and information request through carrier DNS AFTR resolution to DS-Lite tunnel, IPv4 route, NAT44, and LAN connectivity checks](/img/diagrams/knowledge-base-ntt-ngn-pd-acquisition.png)
+
 本文是在 NTT NGN（日本 IPv6 光纖線路）等 IPv6 存取網路的 HGW 下使用 routerd 的實地筆記。
 同樣結合 DHCPv6-PD 與網路內 AFTR 進行 DS-Lite 的其他業者，也可套用相同模式。
 

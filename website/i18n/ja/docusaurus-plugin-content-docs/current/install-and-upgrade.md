@@ -4,6 +4,8 @@ title: インストールとアップグレード
 
 # インストールとアップグレード
 
+![Diagram showing routerd install and upgrade from release archive download and install.sh through first router.yaml validation, dry-run apply, serve mode, preserved config and state, and uninstall](/img/diagrams/install-and-upgrade.png)
+
 ルーターホストへはリリースアーカイブから導入します。
 アーカイブには、実行ファイル、サービステンプレート、設定例、インストーラーが
 含まれます。

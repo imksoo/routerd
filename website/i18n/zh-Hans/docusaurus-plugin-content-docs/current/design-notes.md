@@ -4,6 +4,8 @@ title: 设计备忘录
 
 # 设计备忘录
 
+![Diagram showing routerd design notes covering daemon contracts, DHCPv6-PD ownership, honest LAN advertisement, DS-Lite AFTR resolution, event coordination, reusable building blocks, and OpenRC rendering](/img/diagrams/design-notes.png)
+
 本文件记录 routerd 中值得保留的设计决策。
 内容仅保留现行代码所遵循的原则，以及未来变更时应恪守的方针，而非过往试错的时序日志。
 

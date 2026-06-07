@@ -4,6 +4,8 @@ title: Why routerd ships its own DHCPv6-PD client
 
 # Why routerd ships its own DHCPv6-PD client
 
+![Diagram showing why routerd owns DHCPv6-PD from OS client variation and stale prefix risk through routerd-dhcpv6-client lease state, status, delegated LAN address inputs, and HA DUID operation](/img/diagrams/knowledge-base-dhcpv6-pd-clients.png)
+
 routerd's current approach is to handle DHCPv6-PD with the dedicated `routerd-dhcpv6-client` daemon. The OS-bundled clients we evaluated earlier are not part of the supported configuration today.
 
 ## Rationale

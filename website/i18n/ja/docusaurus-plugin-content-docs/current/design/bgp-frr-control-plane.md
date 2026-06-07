@@ -8,6 +8,8 @@ routerd は現在 FRR ではなく GoBGP ベースの `routerd-bgp` デーモン
 
 # BGP / FRR 制御プレーン統合設計
 
+![Diagram showing the BGP FRR control-plane design from TCP VTY readiness problems through FRR service checks, vtysh readiness probes, frr-reload.py reloads, syntax validation, and running-config verification](/img/diagrams/design-bgp-frr-control-plane.png)
+
 この文書では、routerd が BGP と関連ルーティングプロトコルのために FRR の制御プレーン（vtysh、frr-reload.py、デーモンソケット）とやり取りする設計をまとめます。
 
 ## 課題の整理

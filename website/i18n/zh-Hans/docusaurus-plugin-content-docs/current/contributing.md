@@ -4,6 +4,8 @@ title: 贡献
 
 # 贡献
 
+![Diagram showing the routerd contribution flow from host-facing change scope through local checks, schema checks, example validation, website build, shellcheck, and license agreement](/img/diagrams/contributing.png)
+
 routerd 是预发布阶段的路由器控制平面软件。
 我们欢迎各种贡献。
 但涉及网络、防火墙、路由、安装程序或主机服务管理的变更，

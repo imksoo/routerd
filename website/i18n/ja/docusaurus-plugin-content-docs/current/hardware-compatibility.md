@@ -4,6 +4,8 @@ title: ハードウェア互換性
 
 # ハードウェア互換性
 
+![Diagram showing hardware compatibility decisions from platform class selection through CPU, memory, NIC, storage, live ISO persistence, and validation checklist](/img/diagrams/hardware-compatibility.png)
+
 routerd は、必要なカーネル機能とユーザーランド機能を持つ対応 OS の上で動きます。
 実用上の論点は、ルーターとして十分なネットワークインターフェース、CPU、
 メモリー、ストレージ耐久性があるかどうかです。

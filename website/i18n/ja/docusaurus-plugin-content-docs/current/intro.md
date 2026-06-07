@@ -7,6 +7,8 @@ sidebar_label: 概要
 
 # routerd ドキュメント
 
+![Diagram showing the routerd documentation map from install and first router goals through concepts, examples, tutorials, how-to guides, operations, API references, platforms, plugins, and schemas](/img/diagrams/intro.png)
+
 routerd は、型付きの YAML で書いた望ましい状態から、Linux / NixOS / FreeBSD 上で動くルーターを組み立てる宣言型のルーターです。設定を手続きで積み上げるのではなく、欲しい状態を宣言すると、routerd が実機をその状態へ近づけます。
 
 目的に合うところから読んでください。

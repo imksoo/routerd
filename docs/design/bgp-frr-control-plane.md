@@ -4,6 +4,8 @@ title: BGP / FRR Control Plane Integration Design
 
 # BGP / FRR Control Plane Integration Design
 
+![Diagram showing the BGP FRR control-plane design from TCP VTY readiness problems through FRR service checks, vtysh readiness probes, frr-reload.py reloads, syntax validation, and running-config verification](/img/diagrams/design-bgp-frr-control-plane.png)
+
 This document captures the design of routerd's interaction with the FRR
 control plane (vtysh, frr-reload.py, daemon sockets) for BGP and related
 routing protocols.

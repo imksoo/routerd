@@ -4,6 +4,8 @@ title: DHCPv6-PD and AFTR on NTT NGN-style access networks
 
 # DHCPv6-PD and AFTR on NTT NGN-style access networks
 
+![Diagram showing DHCPv6-PD and AFTR acquisition on NTT NGN-style access from prefix delegation and information request through carrier DNS AFTR resolution to DS-Lite tunnel, IPv4 route, NAT44, and LAN connectivity checks](/img/diagrams/knowledge-base-ntt-ngn-pd-acquisition.png)
+
 Field notes for routers placed behind a residential gateway that exposes an NTT NGN-style (Japan IPv6 fibre) IPv6 access network. The same patterns apply to other carriers that combine DHCPv6-PD with a DS-Lite path to an in-network AFTR.
 
 ## DHCPv6-PD

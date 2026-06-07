@@ -4,6 +4,8 @@ title: Hardware compatibility
 
 # Hardware compatibility
 
+![Diagram showing hardware compatibility decisions from platform class selection through CPU, memory, NIC, storage, live ISO persistence, and validation checklist](/img/diagrams/hardware-compatibility.png)
+
 routerd can run on any supported OS that exposes the needed kernel and userland
 features. The practical question is whether the hardware has enough network
 interfaces, CPU, memory, and storage endurance for router duty.

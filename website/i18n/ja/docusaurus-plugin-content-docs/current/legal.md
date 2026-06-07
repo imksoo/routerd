@@ -4,6 +4,8 @@ title: 法務と再配布
 
 # 法務と再配布
 
+![Diagram showing legal and redistribution checks from third-party license inventory through release archives, live ISO aggregate licensing, SPDX source headers, copyleft review, and release checklist](/img/diagrams/legal-redistribution.png)
+
 routerd 本体は BSD 3-Clause License で配布します。
 全文はリポジトリルートの `LICENSE` にあります。
 
