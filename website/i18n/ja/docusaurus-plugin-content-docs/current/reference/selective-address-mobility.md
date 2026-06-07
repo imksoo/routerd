@@ -279,6 +279,13 @@ provider state を変更しません。
 
 ## same-subnet フロー
 
+on-prem `proxy-ARP` capture で `on-demand-arp` source を使う場合、routerd は
+source の `scanInterval` ごとに mobility prefix 内の 1 IP だけを能動 ARP
+probe します。これにより、既に起動済みで静かな L2 client も、owner 側から
+手動で `arping` や ping を打たなくても observed client として収束できます。
+広い prefix では `scanInterval` を保守的にし、`/24` lab では `1s` 程度にすると
+1 秒 1 probe の範囲で素早く確認できます。
+
 `10.0.0.0/24` lab では、`10.0.0.7/32` が cloud VM の address、
 `10.0.0.9/32` が on-prem/PVE VM の address です。目的は、cloud VM
 `10.0.0.7` から on-prem VM `10.0.0.9` へ TCP connection を開始し、両方の VM

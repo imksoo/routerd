@@ -292,6 +292,15 @@ observations can participate in ownership discovery, but they should be combined
 with `arp-observer`, `on-demand-arp`, or PVE svnet observations when the IPAM
 source is outside routerd.
 
+`on-demand-arp` also performs a conservative proactive sweep of the mobility
+prefix: one ARP target is probed per source `scanInterval`, using the same
+`probeTimeout`, `probeRetries`, `probeCooldown`, and `sourceAddressFrom`
+settings as demand-triggered probes. This lets quiet, already-running L2
+clients become observed without a manual `arping` or ping from the owner side.
+Keep `scanInterval` conservative on broad prefixes; for `/24` lab validation a
+short interval such as `1s` gives fast convergence while still limiting traffic
+to one active ARP probe per second.
+
 For `proxy-arp` capture on Linux, routerd:
 
 - enables `net.ipv4.conf.<capture-interface>.proxy_arp=1` through the normal
