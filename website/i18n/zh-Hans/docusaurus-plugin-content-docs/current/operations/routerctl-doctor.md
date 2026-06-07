@@ -5,6 +5,8 @@ sidebar_label: routerctl doctor
 
 # routerctl doctor — 运行时健康诊断
 
+![Diagram showing routerctl doctor read-only diagnostics combining state, status socket, and optional host probes into area checks, stable JSON or YAML output, and fail-only nonzero exit behavior](/img/diagrams/operations-routerctl-doctor.png)
+
 `routerctl doctor` 执行一组只读检查，回报当前 routerd 是否作为家庭网关正常工作。
 不会变更主机状态。面向运维人员、CI、监控代理与下游工具（Prometheus exporter、
 Web Console、LLM 辅助诊断等）。

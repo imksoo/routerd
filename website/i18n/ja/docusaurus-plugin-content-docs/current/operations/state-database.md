@@ -5,6 +5,8 @@ slug: /operations/state-database
 
 # 状態データベース
 
+![Diagram showing routerd state database paths, daemon lease and event files, routerctl event access, and backup philosophy where YAML remains authoritative and event databases provide forensic history](/img/diagrams/operations-state-database.png)
+
 routerd は状態とイベントを SQLite に永続化します。各デーモンはこれに加えて、自身のリースまたは状態ファイルとイベントログを持ちます。
 
 ## 主なパス

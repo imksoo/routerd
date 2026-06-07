@@ -4,6 +4,8 @@ title: nDPI エージェントのネイティブパッケージ
 
 # nDPI エージェントのネイティブパッケージ
 
+![Diagram showing the nDPI native agent package overlaying the static routerd release archive with a libndpi-linked routerd-ndpi-agent, installer self-test, and runtime agent socket status](/img/diagrams/operations-ndpi-agent-libndpi.png)
+
 routerd の通常の Linux リリースアーカイブは `CGO_ENABLED=0` でビルドし、同梱する routerd のバイナリをすべて静的リンクに保ちます。任意の `routerd-ndpi-agent-libndpi` アーカイブは、ネイティブの nDPI 分類が必要なホスト向けの例外パッケージです。
 
 このアーカイブに含まれるのは、次のものだけです。

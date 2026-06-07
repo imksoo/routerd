@@ -4,6 +4,8 @@ title: Secret sources
 
 # 密钥来源
 
+![Diagram showing secret sources referenced from YAML through file or environment providers, root-owned host storage or USB persistence, validation warnings, and render or apply requiring readable secrets](/img/diagrams/operations-secrets.png)
+
 routerd 支持通过文件或环境变量作为密钥来源，用于 BGP peer 密码及 VRRP/CARP 验证。正式环境配置中，请优先使用下列字段，而非直接在 `password` 或 `authentication` 字段内嵌值：
 
 ```yaml

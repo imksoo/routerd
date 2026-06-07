@@ -4,6 +4,8 @@ title: nDPI agent native package
 
 # nDPI 代理程序原生软件包
 
+![Diagram showing the nDPI native agent package overlaying the static routerd release archive with a libndpi-linked routerd-ndpi-agent, installer self-test, and runtime agent socket status](/img/diagrams/operations-ndpi-agent-libndpi.png)
+
 routerd 的一般 Linux 发布归档以 `CGO_ENABLED=0` 构建，确保归档内所有 routerd 二进制文件均为静态链接。可选的 `routerd-ndpi-agent-libndpi` 归档是针对需要原生 nDPI 分类功能的主机所提供的例外软件包。
 
 此归档仅包含下列项目：

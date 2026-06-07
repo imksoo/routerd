@@ -1,5 +1,7 @@
 # Alpine / OpenRC 部署
 
+![Diagram showing Alpine and OpenRC deployment from routerd validation and render preview through OpenRC service management, keepalived config testing, live ISO wizard skipping, DHCP renewal, and VRRP status observation](/img/diagrams/operations-alpine-deployment.png)
+
 在 Alpine Linux 上，routerd 以 OpenRC 作為服務管理器。
 單次套用（one-shot apply）涵蓋 routerd 管理的本地服務，自給自足。
 

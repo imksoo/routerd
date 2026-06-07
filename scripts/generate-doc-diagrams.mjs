@@ -1262,6 +1262,171 @@ const diagrams = [
     ],
     noteText: 'Cloud capture is provider-specific; on-prem capture is VRRP-gated for HA or single-router always-active for one-router labs.',
   }),
+  flowDiagram({
+    name: 'operations-alpine-deployment',
+    title: 'Alpine / OpenRC deployment',
+    subtitle: 'Alpine uses OpenRC services, keepalived validation, and live-ISO startup helpers while keeping the same routerd apply flow.',
+    lanes: [
+      { title: 'Prepare', boxes: ['router.yaml\n/usr/local/etc/routerd', 'validate plan apply --once', 'render alpine\npreview OpenRC output'] },
+      { title: 'OpenRC runtime', boxes: ['managed init scripts\nrc-update enable', 'keepalived config-test\nbefore start', 'reload if running\nrestart when needed'] },
+      { title: 'Live ISO path', boxes: ['skip wizard when\nrouter.yaml exists', 'persistent udhcpc\nhostname/client-id policy', 'routerctl show vrrp\nrole from VIP ownership'] },
+    ],
+    noteText: 'The service manager changes, but routerd still validates, plans, applies, and reports status through the same resource model.',
+  }),
+  flowDiagram({
+    name: 'operations-development',
+    title: 'Development checks',
+    subtitle: 'Local pre-commit checks, CI, and release automation cover different scopes and should stay intentionally separate.',
+    lanes: [
+      { title: 'Local loop', boxes: ['optional pre-commit hook', 'go test ./...\nmake check-schema', 'skip only for\nclear follow-up fix'] },
+      { title: 'CI workflow', boxes: ['push and PR checks', 'go test\nschema examples website', 'no release artifacts\nfrom normal CI'] },
+      { title: 'Release workflow', boxes: ['date-based tag\nstarts release', 'multi OS/arch archives', 'GitHub Release assets\nand sha256 files'] },
+    ],
+    noteText: 'Development checks protect review branches; release jobs package signed distribution artifacts after a tag.',
+  }),
+  flowDiagram({
+    name: 'operations-high-availability',
+    title: 'High availability',
+    subtitle: 'RouterdCluster elects the applier with a file lease while VIP ownership remains external to routerd.',
+    lanes: [
+      { title: 'Cluster intent', boxes: ['RouterdCluster\npeers leaseTTL leasePath', 'identity from config\nor hostname', 'local or shared\nadvisory lock path'] },
+      { title: 'Runtime state', boxes: ['leader refreshes\nexclusive lease', 'standby observes\nbut dry-runs mutation', 'one-shot standby\nrecords status skips apply'] },
+      { title: 'VIP plane', boxes: ['keepalived or CARP\nowns VIP', 'routerd lease does not\nreplace VRRP/CARP', 'status shows\nLeader or Standby'] },
+    ],
+    noteText: 'Use RouterdCluster to gate host mutation; use VRRP/CARP or platform mechanisms for address ownership.',
+  }),
+  flowDiagram({
+    name: 'operations-ingress-maintenance',
+    title: 'Ingress maintenance',
+    subtitle: 'routerctl drain stores temporary backend maintenance state without editing router.yaml or flushing existing connections.',
+    lanes: [
+      { title: 'Operator action', boxes: ['routerctl drain\nbackend + duration', 'routerctl show ingress', 'routerctl undrain\nfor immediate restore'] },
+      { title: 'State DB', boxes: ['drain window stored\nin routerd state', 'expires automatically', 'existing conntrack\nentries are preserved'] },
+      { title: 'Reconcile effect', boxes: ['backend marked drained', 'healthy=false\nreason=Drained', 'new flows use\nremaining healthy backends'] },
+    ],
+    noteText: 'Drain is operational override state, not a YAML change.',
+  }),
+  flowDiagram({
+    name: 'operations-inventory',
+    title: 'Host inventory',
+    subtitle: 'routerd detects OS, service manager, commands, kernel features, and writable paths before rendering or applying.',
+    lanes: [
+      { title: 'Detect', boxes: ['OS and release', 'systemd rc.d OpenRC\nNixOS module path', 'commands and features\nip nft dnsmasq wg pfctl'] },
+      { title: 'Decision input', boxes: ['platform.Current()', 'renderer feature gates', 'runtime and state dirs\navailability'] },
+      { title: 'Operator result', boxes: ['validation and plan\nsurface missing tools', 'OS-specific render\nbefore mutation', 'avoid half-applied\nhost changes'] },
+    ],
+    noteText: 'Inventory turns platform gaps into explicit planning information instead of runtime surprises.',
+  }),
+  flowDiagram({
+    name: 'operations-live-iso-ssh',
+    title: 'Live ISO SSH management',
+    subtitle: 'SSH on the live ISO is closed by default and only starts with an explicit boot flag plus external authorized keys.',
+    lanes: [
+      { title: 'Default posture', boxes: ['local and serial\nconsoles only', 'no credentials baked\ninto ISO', 'sshd disabled\nunless opted in'] },
+      { title: 'Enable', boxes: ['config disk with\nauthorized_keys', 'routerd.ssh=1\nkernel parameter', 'host-specific keys\nmay override generic'] },
+      { title: 'Boot behavior', boxes: ['live-persistence\nmounts config disk', 'live-ssh installs key\nand generates host keys', 'sshd starts\npublic-key only'] },
+    ],
+    noteText: 'If the flag is set but no authorized_keys file exists, sshd does not start.',
+  }),
+  flowDiagram({
+    name: 'operations-ndpi-agent-libndpi',
+    title: 'nDPI native agent package',
+    subtitle: 'The optional libndpi archive overlays only routerd-ndpi-agent while the normal release archive remains static.',
+    lanes: [
+      { title: 'Artifacts', boxes: ['normal routerd archive\nCGO disabled', 'native nDPI archive\nagent only', 'sha256 files\nfor both downloads'] },
+      { title: 'Install transaction', boxes: ['install.sh --with-ndpi', 'validate target marker\nand safe tar paths', 'agent selftest requires\nlibndpiLoaded=true'] },
+      { title: 'Runtime', boxes: ['dpi-classifier\nengine auto or ndpi-agent', 'agent socket\n/v1/status', 'upgrade preserves\nworking native agent'] },
+    ],
+    noteText: 'The native package is an explicit host override; static fallback must not silently satisfy native nDPI intent.',
+  }),
+  flowDiagram({
+    name: 'operations-observability',
+    title: 'Observability pipeline',
+    subtitle: 'Telemetry, LogSink, and ObservabilityPipeline connect routerd events and OTLP signals to operational backends.',
+    lanes: [
+      { title: 'Resources', boxes: ['Telemetry\nOTLP endpoint and attrs', 'LogSink\nstdout syslog loki', 'ObservabilityPipeline\npipeline-style sinks'] },
+      { title: 'routerd runtime', boxes: ['OpenTelemetry SDK\nlogs metrics traces', 'event exporter\nsubscribes routerd.**', 'deterministic sampling\nbefore fan-out'] },
+      { title: 'Backends', boxes: ['OTLP collector', 'Loki push API', 'Kafka metadata only\nnot direct publish yet'] },
+    ],
+    noteText: 'Use LogSink for event forwarding routes and Telemetry for routerd OTLP endpoint configuration.',
+  }),
+  flowDiagram({
+    name: 'operations-otel-dashboards',
+    title: 'OpenTelemetry dashboards',
+    subtitle: 'routerd metrics use stable domain names and resource attributes that can seed Grafana or OpenObserve panels.',
+    lanes: [
+      { title: 'Metric families', boxes: ['controller dry-run\nresource phases', 'DHCP leases\nBGP peers VIP ingress', 'conntrack and\nfirewall denies'] },
+      { title: 'Attributes', boxes: ['service.name\nservice.version', 'host.name\nrouterd.host.role', 'routerd.os\nnetwork labels'] },
+      { title: 'Dashboards', boxes: ['Grafana panels', 'OpenObserve views', 'PromQL-style queries\nrate and grouping'] },
+    ],
+    noteText: 'Keep panels grouped by routerd domain so new resources can add metrics without changing the dashboard shape.',
+  }),
+  flowDiagram({
+    name: 'operations-reconcile',
+    title: 'Reconcile and removal',
+    subtitle: 'routerd compares effective desired resources with state, ledger, and host inventory before applying or garbage-collecting.',
+    lanes: [
+      { title: 'Preflight', boxes: ['validate', 'plan', 'apply --once --dry-run', 'confirm management\npath survives'] },
+      { title: 'Effective view', boxes: ['startup YAML\nplus dynamic parts', 'when filters\nand SAM generated resources', 'state snapshot\nmay be slightly stale'] },
+      { title: 'Cleanup', boxes: ['owner-ref GC planner', 'artifact teardown\nor ResourceLifecycle', 'backup and event\nbefore destructive delete'] },
+    ],
+    noteText: 'routerd removes only attributed routerd-owned artifacts; third-party host state is left alone.',
+  }),
+  flowDiagram({
+    name: 'operations-release-process',
+    title: 'Release process',
+    subtitle: 'A clean-tree helper creates date-based releases, regenerates schemas, tags the commit, and lets GitHub Actions package archives.',
+    lanes: [
+      { title: 'Start clean', boxes: ['working tree clean', 'Unreleased changelog\nhas entries', 'make release\nor dry-run options'] },
+      { title: 'Release commit', boxes: ['vYYYYMMDD.HHmm\nAsia/Tokyo default', 'promote changelog\nrefresh Unreleased', 'generate schemas\ncommit and tag'] },
+      { title: 'Artifacts', boxes: ['linux and freebsd\namd64 arm64 archives', 'optional native\nnDPI agent archive', 'fixed latest URLs\nplus versioned URLs'] },
+    ],
+    noteText: 'Installation behavior stays in install.sh; Makefile targets are for development and packaging automation.',
+  }),
+  flowDiagram({
+    name: 'operations-routerctl-doctor',
+    title: 'routerctl doctor',
+    subtitle: 'doctor runs read-only health checks, combines resource status with host probes, and returns scriptable status output.',
+    lanes: [
+      { title: 'Inputs', boxes: ['state and status socket', 'optional host commands\nip nft dig df', 'area selection\nwan dns nat hybrid'] },
+      { title: 'Checks', boxes: ['resource phase\nand dependencies', 'runtime footprint\nheap goroutines fds', 'reconcile history\nand split-brain guards'] },
+      { title: 'Output', boxes: ['pass warn fail skip', 'JSON/YAML stable\nmachine contract', 'exit nonzero\nonly on fail'] },
+    ],
+    noteText: 'doctor is diagnostic only; it does not mutate host state.',
+  }),
+  flowDiagram({
+    name: 'operations-secrets',
+    title: 'Secret sources',
+    subtitle: 'Secret values come from files or environment variables, stay outside Git YAML, and are restored before render/apply.',
+    lanes: [
+      { title: 'Config reference', boxes: ['passwordFrom.file\nor env', 'authenticationFrom\nfor VRRP/CARP', 'base64 is encoding\nnot encryption'] },
+      { title: 'Host storage', boxes: ['/usr/local/etc/routerd/secrets', 'root-owned\nmode 0600', 'USB persistence\nhost-specific override'] },
+      { title: 'Operational guard', boxes: ['validate warns\nif source missing', 'render/apply require\nreadable secret', 'do not publish\nrendered secrets'] },
+    ],
+    noteText: 'Prefer external secret sources over inline YAML values.',
+  }),
+  flowDiagram({
+    name: 'operations-state-database',
+    title: 'State database',
+    subtitle: 'SQLite stores routerd object state and events while daemons keep their own lease and runtime files.',
+    lanes: [
+      { title: 'State paths', boxes: ['routerd.db\nobject state', 'daemon lease/state files\nDHCP PPPoE healthcheck', 'events and log DBs\nappend-only evidence'] },
+      { title: 'Day-to-day use', boxes: ['routerctl events', 'resource status\nthrough routerctl', 'avoid direct sqlite3\nfor operations'] },
+      { title: 'Backup model', boxes: ['YAML config is\nauthoritative intent', 'reconcile after rebuild', 'snapshot event/log DBs\nfor forensics'] },
+    ],
+    noteText: 'routerd.db is observed state, not a substitute for version-controlled router.yaml.',
+  }),
+  flowDiagram({
+    name: 'operations-usb-persistence',
+    title: 'USB persistence',
+    subtitle: 'The live ISO keeps the OS in RAM while a selected USB partition stores config, secrets, state archives, and log archives.',
+    lanes: [
+      { title: 'Boot discovery', boxes: ['remembered device\nor routerd.usb=', 'labels ROUTERD_CONFIG\nor ROUTERD', 'host-specific router.yaml\nbefore generic'] },
+      { title: 'Runtime', boxes: ['mount at\n/media/routerd-usb', 'restore config\nand secrets before apply', 'logs buffered in\n/run/routerd/logs'] },
+      { title: 'Persistence', boxes: ['daily or manual flush', 'state and logs archived', 'flush then umount\nbefore removing USB'] },
+    ],
+    noteText: 'Read-only ISO media can import config, but cannot provide writable persistence.',
+  }),
 ];
 
 function chromePath() {

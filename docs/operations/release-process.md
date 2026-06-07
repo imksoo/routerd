@@ -4,6 +4,8 @@ title: Release process
 
 # Release process
 
+![Diagram showing release process from clean working tree and changelog through date-based version, schema regeneration, tag creation, GitHub Actions archives, checksums, and latest download URLs](/img/diagrams/operations-release-process.png)
+
 routerd uses date-based release versions.
 The executable version, release tag, and release archive name use
 `vYYYYMMDD.HHmm` format.

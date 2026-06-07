@@ -1,5 +1,7 @@
 # Alpine / OpenRC deployment
 
+![Diagram showing Alpine and OpenRC deployment from routerd validation and render preview through OpenRC service management, keepalived config testing, live ISO wizard skipping, DHCP renewal, and VRRP status observation](/img/diagrams/operations-alpine-deployment.png)
+
 On Alpine Linux, routerd treats OpenRC as the service manager. A one-shot apply
 is self-contained for routerd-managed local services:
 

@@ -4,6 +4,8 @@ title: Release process
 
 # 发布流程
 
+![Diagram showing release process from clean working tree and changelog through date-based version, schema regeneration, tag creation, GitHub Actions archives, checksums, and latest download URLs](/img/diagrams/operations-release-process.png)
+
 routerd 采用以日期为基础的版本号。
 可执行文件版本号、发布标签与发布归档名称均使用 `vYYYYMMDD.HHmm` 格式。
 日期与时间默认以 `Asia/Tokyo` 为基准计算。

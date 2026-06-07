@@ -4,6 +4,8 @@ title: USB 持久化
 
 # USB 持久化
 
+![Diagram showing USB persistence on the live ISO from boot-time config media discovery through mounted router.yaml and secrets restore, tmpfs log buffering, daily or manual flush, and safe unmount](/img/diagrams/operations-usb-persistence.png)
+
 routerd 的 Live ISO 可作为无盘路由器运行。
 在此模式下，运行中的系统放置于 RAM，
 只有选定的路由器状态才会保存至 USB 设备。

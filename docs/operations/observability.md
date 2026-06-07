@@ -1,5 +1,7 @@
 # Observability pipeline
 
+![Diagram showing Telemetry, LogSink, and ObservabilityPipeline resources feeding routerd OpenTelemetry SDK signals and routerd event exporter output to OTLP, syslog, stdout, or Loki sinks](/img/diagrams/operations-observability.png)
+
 `Telemetry` remains the small OTLP-only resource for routerd's own metrics,
 traces, and logs. `LogSink` describes log forwarding routes for operational
 events and observed network logs; an OTLP `LogSink` should reference a

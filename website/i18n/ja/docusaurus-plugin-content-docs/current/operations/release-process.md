@@ -4,6 +4,8 @@ title: リリース手順
 
 # リリース手順
 
+![Diagram showing release process from clean working tree and changelog through date-based version, schema regeneration, tag creation, GitHub Actions archives, checksums, and latest download URLs](/img/diagrams/operations-release-process.png)
+
 routerd は日付ベースのリリース版番号を使います。
 実行ファイルの版番号、リリースタグ、リリースアーカイブ名は、いずれも
 `vYYYYMMDD.HHmm` 形式です。

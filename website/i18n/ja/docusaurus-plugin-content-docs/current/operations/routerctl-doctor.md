@@ -5,6 +5,8 @@ sidebar_label: routerctl doctor
 
 # routerctl doctor — ランタイム健全性診断
 
+![Diagram showing routerctl doctor read-only diagnostics combining state, status socket, and optional host probes into area checks, stable JSON or YAML output, and fail-only nonzero exit behavior](/img/diagrams/operations-routerctl-doctor.png)
+
 `routerctl doctor` は読み取り専用のチェックを一通り実行し、いまこの routerd が
 家庭ゲートウェイとして機能しているかを報告します。ホスト状態は変更しません。
 運用者・CI・監視エージェント・下流ツール（Prometheus exporter、Web Console、

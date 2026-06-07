@@ -4,6 +4,8 @@ title: OpenTelemetry dashboards
 
 # OpenTelemetry 儀表板
 
+![Diagram showing OpenTelemetry dashboard inputs from routerd metric families and resource attributes into Grafana, OpenObserve, and PromQL-style panels](/img/diagrams/operations-otel-dashboards.png)
+
 routerd 以 `routerd.<domain>.<metric>` 命名規則輸出指標。
 您可在 Grafana、OpenObserve 或其他 OTLP 指標後端使用下列面板作為起點。
 

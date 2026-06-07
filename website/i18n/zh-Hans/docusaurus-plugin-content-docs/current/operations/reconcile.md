@@ -4,6 +4,8 @@ title: 调和（reconcile）与删除
 
 # 调和（reconcile）与删除
 
+![Diagram showing reconcile and removal from validate, plan, and dry-run preflight through effective desired view construction to owner-reference GC planner cleanup with backup and event recording](/img/diagrams/operations-reconcile.png)
+
 routerd 会比较 YAML 所声明的意图与主机的当前状态。
 若有差异，则生成计划（plan），必要时可先通过 dry-run 确认后再应用。
 

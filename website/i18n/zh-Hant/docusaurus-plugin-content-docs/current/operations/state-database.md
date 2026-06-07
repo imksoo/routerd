@@ -5,6 +5,8 @@ slug: /operations/state-database
 
 # 狀態資料庫
 
+![Diagram showing routerd state database paths, daemon lease and event files, routerctl event access, and backup philosophy where YAML remains authoritative and event databases provide forensic history](/img/diagrams/operations-state-database.png)
+
 routerd 將狀態與事件持久化至 SQLite。每個常駐程式除此之外還各自擁有自身的租約或狀態檔案與事件日誌。
 
 ## 主要路徑

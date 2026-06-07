@@ -4,6 +4,8 @@ title: Development checks
 
 # Development checks
 
+![Diagram showing development checks split between local pre-commit tests, CI pull request validation, and release workflow archive publishing](/img/diagrams/operations-development.png)
+
 routerd uses two separate automation paths.
 
 - The CI workflow checks normal pushes and pull requests.

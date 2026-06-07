@@ -1,5 +1,7 @@
 # High availability
 
+![Diagram showing high availability with RouterdCluster file lease leader election gating routerd mutation while keepalived or CARP separately owns VIP address movement](/img/diagrams/operations-high-availability.png)
+
 `RouterdCluster` gates renderer and applier work with a lightweight file-based
 lease. It is intentionally separate from VIP ownership: keepalived or CARP still
 decides which router owns a VIP, while routerd uses the lease to decide which

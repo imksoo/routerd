@@ -4,6 +4,8 @@ title: OpenTelemetry dashboards
 
 # OpenTelemetry dashboards
 
+![Diagram showing OpenTelemetry dashboard inputs from routerd metric families and resource attributes into Grafana, OpenObserve, and PromQL-style panels](/img/diagrams/operations-otel-dashboards.png)
+
 routerd exports metrics with the `routerd.<domain>.<metric>` naming pattern.
 Use these starter panels in Grafana, OpenObserve, or any OTLP metrics backend:
 

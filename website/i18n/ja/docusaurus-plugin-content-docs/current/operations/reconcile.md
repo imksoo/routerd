@@ -4,6 +4,8 @@ title: 調整（リコンサイル）と削除
 
 # 調整（リコンサイル）と削除
 
+![Diagram showing reconcile and removal from validate, plan, and dry-run preflight through effective desired view construction to owner-reference GC planner cleanup with backup and event recording](/img/diagrams/operations-reconcile.png)
+
 routerd は、YAML が宣言する意図とホストの現在状態を比べます。
 差があれば計画（plan）を作り、必要なら dry-run で確認してから適用します。
 
