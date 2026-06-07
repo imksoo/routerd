@@ -5,9 +5,14 @@ package version
 import "testing"
 
 func TestStringIncludesCommitWhenInjected(t *testing.T) {
-	old := Commit
-	t.Cleanup(func() { Commit = old })
+	oldVersion := Version
+	oldCommit := Commit
+	t.Cleanup(func() {
+		Version = oldVersion
+		Commit = oldCommit
+	})
 
+	Version = "vtest-version"
 	Commit = ""
 	if got := String(); got != Version {
 		t.Fatalf("String() = %q, want %q", got, Version)
