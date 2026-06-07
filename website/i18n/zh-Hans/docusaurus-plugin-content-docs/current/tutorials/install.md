@@ -5,6 +5,8 @@ sidebar_position: 1
 
 # 安装
 
+![从 release archive install routerd，安装 dependency 与 service template，preserve config/state，并执行 validate-plan-dry-run 的流程](/img/diagrams/tutorial-install.png)
+
 routerd 从 release 归档文件安装。
 路由器主机上不需要 Go 或 Makefile。
 

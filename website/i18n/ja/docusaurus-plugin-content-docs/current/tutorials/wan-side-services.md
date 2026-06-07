@@ -5,6 +5,8 @@ sidebar_position: 4
 
 # WAN 側サービス
 
+![DHCPv4、DHCPv6-PD、PPPoE、DS-Lite、health check、egress selection、NAT44、downstream status input を扱う WAN-side routerd services](/img/diagrams/tutorial-wan-side-services.png)
+
 このページでは、ルーターの WAN 側を扱う routerd リソースを紹介します。
 WAN 側のリソースは、上流リンクの確立、ISP からの IP アドレスとプレフィックスの取得、トンネルの終端、複数の上流経路の controller chain への提供といった役割を担います。
 

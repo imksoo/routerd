@@ -5,6 +5,8 @@ sidebar_position: 6
 
 # Basic NAT and firewall policy
 
+![Diagram showing a basic routerd NAT44 and firewall tutorial with WAN, LAN, optional management, NAT44Rule, FirewallZone, FirewallPolicy, and nftables validation](/img/diagrams/tutorial-basic-firewall.png)
+
 routerd applies IPv4 NAPT (NAT44) and a stateful firewall to a Linux router. This tutorial shows the minimum resources needed to put both in place on a freshly installed host.
 
 ## Scenario

@@ -5,6 +5,8 @@ sidebar_position: 5
 
 # LAN-side services
 
+![Diagram showing LAN-side routerd services for LAN addresses, DHCPv4 and DHCPv6, router advertisements, local DNS, lease events, and client options](/img/diagrams/tutorial-lan-side-services.png)
+
 This page introduces the routerd resources that handle the LAN side of a router: addresses on the inside interface, DHCPv4 / DHCPv6 leases, IPv6 Router Advertisement, and the local DNS resolver.
 
 The companion page on the [WAN side](./wan-side-services.md) covers how the router gets its upstream addresses; this page is what the router publishes to the inside.

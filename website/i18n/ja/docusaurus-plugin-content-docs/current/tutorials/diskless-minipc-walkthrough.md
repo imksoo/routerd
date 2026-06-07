@@ -4,6 +4,8 @@ title: ディスクレス mini PC チュートリアル
 
 # ディスクレス mini PC チュートリアル
 
+![live ISO boot、USB persistence、routerd wizard configuration、validation へ進む diskless mini PC tutorial flow](/img/diagrams/tutorial-diskless-minipc-walkthrough.png)
+
 このチュートリアルでは、小型 x86 mini PC を、内蔵ディスクへ OS を導入せずに
 ルーター化します。
 routerd ライブ ISO から起動し、設定を USB に保存します。

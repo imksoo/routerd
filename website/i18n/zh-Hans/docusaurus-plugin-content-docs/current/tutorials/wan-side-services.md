@@ -5,6 +5,8 @@ sidebar_position: 4
 
 # WAN 侧服务
 
+![处理 DHCPv4、DHCPv6-PD、PPPoE、DS-Lite、health check、egress selection、NAT44 与 downstream status input 的 WAN-side routerd services](/img/diagrams/tutorial-wan-side-services.png)
+
 本页介绍处理路由器 WAN 侧的 routerd 资源。
 WAN 侧资源负责建立上游链路、从 ISP 获取 IP 地址与前缀、终结隧道，以及向控制器链提供多条上游路由等功能。
 

@@ -5,6 +5,8 @@ sidebar_position: 1
 
 # Install
 
+![Diagram showing routerd installation from release archive, dependency and service template installation, preserved config and state, and validate-plan-dry-run after install](/img/diagrams/tutorial-install.png)
+
 Install routerd from a release archive.
 The router host does not need Go or a Makefile.
 

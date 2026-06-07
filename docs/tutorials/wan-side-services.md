@@ -5,6 +5,8 @@ sidebar_position: 4
 
 # WAN-side services
 
+![Diagram showing WAN-side routerd services for DHCPv4, DHCPv6-PD, PPPoE, DS-Lite, health checks, egress selection, NAT44, and downstream status inputs](/img/diagrams/tutorial-wan-side-services.png)
+
 This page introduces the routerd resources that handle the WAN side of a router: getting an upstream link, obtaining IP addresses and prefixes from the ISP, terminating tunnels, and exposing one or more upstream paths to the rest of the controller chain.
 
 The companion page on the [LAN side](./lan-side-services.md) covers what the router serves to its inside.

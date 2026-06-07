@@ -4,6 +4,8 @@ title: Getting started on NixOS
 
 # Getting started on NixOS
 
+![Diagram showing NixOS getting started with routerd release binaries, generated routerd NixOS module, declarative services, nixos-rebuild test and switch, and rollback](/img/diagrams/tutorial-nixos-getting-started.png)
+
 NixOS is a first-class secondary platform for routerd. The recommended path on NixOS is to drive routerd-managed services from declarative NixOS configuration rather than from transient systemd units.
 
 Install the routerd binaries from the release archive, but keep OS packages in

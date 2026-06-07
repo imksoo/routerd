@@ -4,6 +4,8 @@ title: はじめに
 
 # はじめに
 
+![interface discovery と小さな YAML config から validate、plan、dry-run、serve、routerctl status へ進む安全な first routerd loop](/img/diagrams/tutorial-getting-started.png)
+
 このチュートリアルでは、まず安全な進め方を確認します。
 
 1. 小さなルーターリソースファイルを書きます。

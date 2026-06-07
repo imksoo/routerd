@@ -4,6 +4,8 @@ title: 入門指南
 
 # 入門指南
 
+![從 interface discovery 與小型 YAML config 到 validate、plan、dry-run、serve、routerctl status 的安全 first routerd loop](/img/diagrams/tutorial-getting-started.png)
+
 本教學首先確認安全的操作流程。
 
 1. 撰寫小型的路由器資源檔。
