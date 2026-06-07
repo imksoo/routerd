@@ -1,0 +1,48 @@
+# yaml-language-server: $schema=https://routerd.net/schemas/routerd-config-v1alpha1.schema.json
+apiVersion: "routerd.net/v1alpha1"
+kind: "Router"
+metadata:
+  name: "k8s-edge"
+spec:
+  resources:
+    - apiVersion: "net.routerd.net/v1alpha1"
+      kind: "BGPRouter"
+      metadata:
+        name: "k8s-edge"
+      spec:
+        asn: 64500
+        routerID: "192.168.1.249"
+        listen:
+          address: "192.168.1.249"
+          port: 179
+        importPolicy:
+          allowedPrefixes:
+            - "10.250.0.0/24"
+        exportPolicy:
+          allowedPrefixes:
+            - "192.168.1.0/24"
+        redistribute:
+          connected:
+            allowedPrefixes:
+              - "192.168.1.0/24"
+        timers:
+          profile: "fast"
+        convergenceProfile: "fast"
+    - apiVersion: "net.routerd.net/v1alpha1"
+      kind: "BGPPeer"
+      metadata:
+        name: "k8s-rt"
+      spec:
+        routerRef: "BGPRouter/k8s-edge"
+        peerASN: 64512
+        peers:
+          - "192.168.1.38"
+          - "192.168.1.53"
+        importPolicy:
+          allowedPrefixes:
+            - "10.250.0.0/24"
+        exportPolicy:
+          allowedPrefixes:
+            - "192.168.1.0/24"
+        timers:
+          profile: "fast"

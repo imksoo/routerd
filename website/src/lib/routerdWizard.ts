@@ -12,9 +12,12 @@ const HYBRID_API = "hybrid.routerd.net/v1alpha1";
 const MOBILITY_API = "mobility.routerd.net/v1alpha1";
 
 export type HomeWanMode = "dhcpv4" | "pppoe" | "dslite" | "static";
-export type WizardProfile = "home" | "sam";
+export type WizardProfile = "home" | "sam" | "k8s";
 export type SAMNodeRole = "onprem" | "cloud";
 export type SAMProvider = "aws" | "azure" | "oci";
+export type K8SBGPSessionType = "ebgp" | "ibgp";
+export type K8SBGPTimerProfile = "default" | "fast" | "slow";
+export type K8SBGPConvergenceProfile = "default" | "fast" | "stable";
 
 export interface HomeRouterWizardState {
   routerName: string;
@@ -82,6 +85,25 @@ export interface SAMWizardState {
   bgpASN: number;
   routeReflectorNodeRef: string;
   nodes: SAMNode[];
+}
+
+export interface K8SWizardState {
+  routerName: string;
+  bgpRouterName: string;
+  bgpPeerName: string;
+  sessionType: K8SBGPSessionType;
+  localASN: number;
+  peerASN: number;
+  routerID: string;
+  listenAddress?: string;
+  peerAddresses: string[];
+  importPrefixes: string[];
+  exportPrefixes: string[];
+  redistributeConnected: boolean;
+  redistributeStatic: boolean;
+  ebgpMultihop: number;
+  timersProfile: K8SBGPTimerProfile;
+  convergenceProfile: K8SBGPConvergenceProfile;
 }
 
 type RouterResource = {
@@ -186,6 +208,25 @@ export const DEFAULT_SAM_WIZARD_STATE: SAMWizardState = {
       placementPriority: 10,
     },
   ],
+};
+
+export const DEFAULT_K8S_WIZARD_STATE: K8SWizardState = {
+  routerName: "k8s-edge",
+  bgpRouterName: "k8s-edge",
+  bgpPeerName: "k8s-rt",
+  sessionType: "ebgp",
+  localASN: 64500,
+  peerASN: 64512,
+  routerID: "192.168.1.249",
+  listenAddress: "192.168.1.249",
+  peerAddresses: ["192.168.1.38", "192.168.1.53"],
+  importPrefixes: ["10.250.0.0/24"],
+  exportPrefixes: ["192.168.1.0/24"],
+  redistributeConnected: true,
+  redistributeStatic: false,
+  ebgpMultihop: 0,
+  timersProfile: "fast",
+  convergenceProfile: "fast",
 };
 
 export const HOME_ROUTER_FIXTURE_SCENARIOS: WizardFixtureScenario[] = [
@@ -502,6 +543,98 @@ export function buildSAMRouterYamls(state: SAMWizardState): Record<string, strin
   return out;
 }
 
+export function mergeK8SWizardState(overrides: PartialK8SWizardState = {}): K8SWizardState {
+  return {
+    routerName: overrides.routerName ?? DEFAULT_K8S_WIZARD_STATE.routerName,
+    bgpRouterName: overrides.bgpRouterName ?? DEFAULT_K8S_WIZARD_STATE.bgpRouterName,
+    bgpPeerName: overrides.bgpPeerName ?? DEFAULT_K8S_WIZARD_STATE.bgpPeerName,
+    sessionType: overrides.sessionType ?? DEFAULT_K8S_WIZARD_STATE.sessionType,
+    localASN: overrides.localASN ?? DEFAULT_K8S_WIZARD_STATE.localASN,
+    peerASN: overrides.peerASN ?? DEFAULT_K8S_WIZARD_STATE.peerASN,
+    routerID: overrides.routerID ?? DEFAULT_K8S_WIZARD_STATE.routerID,
+    listenAddress: overrides.listenAddress ?? DEFAULT_K8S_WIZARD_STATE.listenAddress,
+    peerAddresses: overrides.peerAddresses ?? [...DEFAULT_K8S_WIZARD_STATE.peerAddresses],
+    importPrefixes: overrides.importPrefixes ?? [...DEFAULT_K8S_WIZARD_STATE.importPrefixes],
+    exportPrefixes: overrides.exportPrefixes ?? [...DEFAULT_K8S_WIZARD_STATE.exportPrefixes],
+    redistributeConnected: overrides.redistributeConnected ?? DEFAULT_K8S_WIZARD_STATE.redistributeConnected,
+    redistributeStatic: overrides.redistributeStatic ?? DEFAULT_K8S_WIZARD_STATE.redistributeStatic,
+    ebgpMultihop: overrides.ebgpMultihop ?? DEFAULT_K8S_WIZARD_STATE.ebgpMultihop,
+    timersProfile: overrides.timersProfile ?? DEFAULT_K8S_WIZARD_STATE.timersProfile,
+    convergenceProfile: overrides.convergenceProfile ?? DEFAULT_K8S_WIZARD_STATE.convergenceProfile,
+  };
+}
+
+type PartialK8SWizardState = {
+  routerName?: string;
+  bgpRouterName?: string;
+  bgpPeerName?: string;
+  sessionType?: K8SBGPSessionType;
+  localASN?: number;
+  peerASN?: number;
+  routerID?: string;
+  listenAddress?: string;
+  peerAddresses?: string[];
+  importPrefixes?: string[];
+  exportPrefixes?: string[];
+  redistributeConnected?: boolean;
+  redistributeStatic?: boolean;
+  ebgpMultihop?: number;
+  timersProfile?: K8SBGPTimerProfile;
+  convergenceProfile?: K8SBGPConvergenceProfile;
+};
+
+export function buildK8SRouterConfig(state: K8SWizardState): RouterConfig {
+  const routerName = sanitizeName(state.bgpRouterName || DEFAULT_K8S_WIZARD_STATE.bgpRouterName);
+  const peerName = sanitizeName(state.bgpPeerName || DEFAULT_K8S_WIZARD_STATE.bgpPeerName);
+  const importPrefixes = nonEmptyList(state.importPrefixes);
+  const exportPrefixes = nonEmptyList(state.exportPrefixes);
+  const resources: RouterResource[] = [
+    resource(NET_API, "BGPRouter", routerName, {
+      asn: state.localASN,
+      routerID: state.routerID || DEFAULT_K8S_WIZARD_STATE.routerID,
+      listen: state.listenAddress ? {address: state.listenAddress, port: 179} : {port: 179},
+      importPolicy: importPrefixes.length > 0 ? {allowedPrefixes: importPrefixes} : undefined,
+      exportPolicy: exportPrefixes.length > 0 ? {allowedPrefixes: exportPrefixes} : undefined,
+      redistribute: {
+        connected: state.redistributeConnected && exportPrefixes.length > 0 ? {allowedPrefixes: exportPrefixes} : undefined,
+        static: state.redistributeStatic && exportPrefixes.length > 0 ? {allowedPrefixes: exportPrefixes} : undefined,
+      },
+      timers: {profile: state.timersProfile},
+      convergenceProfile: state.convergenceProfile,
+    }),
+    resource(NET_API, "BGPPeer", peerName, {
+      routerRef: `BGPRouter/${routerName}`,
+      peerASN: state.sessionType === "ibgp" ? state.localASN : state.peerASN,
+      peers: nonEmptyList(state.peerAddresses),
+      ebgpMultihop: state.sessionType === "ebgp" && state.ebgpMultihop > 0 ? state.ebgpMultihop : undefined,
+      importPolicy: importPrefixes.length > 0 ? {allowedPrefixes: importPrefixes} : undefined,
+      exportPolicy: exportPrefixes.length > 0 ? {allowedPrefixes: exportPrefixes} : undefined,
+      timers: {profile: state.timersProfile},
+    }),
+  ];
+
+  return {
+    apiVersion: ROUTER_API,
+    kind: "Router",
+    metadata: {
+      name: sanitizeName(state.routerName || DEFAULT_K8S_WIZARD_STATE.routerName),
+    },
+    spec: {
+      resources,
+    },
+  };
+}
+
+export function buildK8SRouterYaml(state: K8SWizardState): string {
+  return `${ROUTERD_CONFIG_MODELINE}\n${dumpYaml(buildK8SRouterConfig(state))}\n`;
+}
+
+export function buildK8SRouterFixtureYamls(): Record<string, string> {
+  return {
+    "k8s-edge.yaml": buildK8SRouterYaml(DEFAULT_K8S_WIZARD_STATE),
+  };
+}
+
 export function buildWizardFixtureYamls(): Record<string, string> {
   const home = Object.fromEntries(
     Object.entries(buildHomeRouterFixtureYamls()).map(([name, yaml]) => [`home/${name}`, yaml]),
@@ -509,7 +642,10 @@ export function buildWizardFixtureYamls(): Record<string, string> {
   const sam = Object.fromEntries(
     Object.entries(buildSAMRouterYamls(DEFAULT_SAM_WIZARD_STATE)).map(([name, yaml]) => [`sam/cloudedge-3node/${name}`, yaml]),
   );
-  return {...home, ...sam};
+  const k8s = Object.fromEntries(
+    Object.entries(buildK8SRouterFixtureYamls()).map(([name, yaml]) => [`k8s/${name}`, yaml]),
+  );
+  return {...home, ...sam, ...k8s};
 }
 
 function addWanResources(resources: RouterResource[], state: HomeRouterWizardState, wanEgress: string): void {
@@ -924,6 +1060,10 @@ function wanEgressInterface(mode: HomeWanMode): string {
 
 function extraLanNames(count: number): string[] {
   return Array.from({ length: Math.max(count - 1, 0) }, (_, index) => `lan${index + 2}`);
+}
+
+function nonEmptyList(values: string[]): string[] {
+  return values.map((value) => value.trim()).filter(Boolean);
 }
 
 function sanitizeName(value: string): string {
