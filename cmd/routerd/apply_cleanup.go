@@ -204,31 +204,6 @@ func (routerdArtifactTeardownExecutor) FlushIPv4RouteTable(table int) error {
 	return flushIPv4RouteTable(table)
 }
 
-func cleanupStaleDSLiteTunnels(router *api.Router) ([]string, error) {
-	desired := desiredDSLiteTunnelIfNames(router)
-	if platformFeatures.HasIproute2 {
-		return cleanupStaleLinuxDSLiteTunnels(desired)
-	}
-	if platformFeatures.HasPF {
-		return cleanupStaleFreeBSDDSLiteTunnels(desired)
-	}
-	return nil, nil
-}
-
-func cleanupStaleDSLiteIPv4Aliases(router *api.Router) ([]string, error) {
-	desired := desiredDSLiteTunnelIfNames(router)
-	if len(desired) == 0 {
-		return nil, nil
-	}
-	if platformFeatures.HasIproute2 {
-		return cleanupStaleLinuxDSLiteIPv4Aliases(desired)
-	}
-	if platformFeatures.HasPF {
-		return cleanupStaleFreeBSDDSLiteIPv4Aliases(desired)
-	}
-	return nil, nil
-}
-
 func desiredDSLiteTunnelIfNames(router *api.Router) map[string]bool {
 	desired := map[string]bool{}
 	if router == nil {
@@ -251,71 +226,6 @@ func desiredDSLiteTunnelIfNames(router *api.Router) map[string]bool {
 		}
 	}
 	return desired
-}
-
-func cleanupStaleLinuxDSLiteTunnels(desired map[string]bool) ([]string, error) {
-	out, err := exec.Command("ip", "-d", "link", "show", "type", "ip6tnl").CombinedOutput()
-	if err != nil {
-		return nil, nil
-	}
-	var removed []string
-	for _, name := range parseLinuxIPIP6TunnelNames(string(out)) {
-		if desired[name] || !looksRouterdDSLiteTunnelName(name) {
-			continue
-		}
-		if err := runLogged("ip", "-6", "tunnel", "del", name); err != nil {
-			return removed, err
-		}
-		removed = append(removed, "linux.ipip6.tunnel/"+name)
-	}
-	return removed, nil
-}
-
-func parseLinuxIPIP6TunnelNames(output string) []string {
-	var names []string
-	for _, line := range strings.Split(output, "\n") {
-		fields := strings.Fields(strings.TrimSpace(line))
-		if len(fields) < 2 || !strings.HasSuffix(fields[0], ":") {
-			continue
-		}
-		name := strings.TrimSuffix(fields[1], ":")
-		if i := strings.Index(name, "@"); i >= 0 {
-			name = name[:i]
-		}
-		if name != "" {
-			names = append(names, name)
-		}
-	}
-	return names
-}
-
-func cleanupStaleLinuxDSLiteIPv4Aliases(desired map[string]bool) ([]string, error) {
-	out, err := exec.Command("ip", "-brief", "-4", "addr", "show").CombinedOutput()
-	if err != nil {
-		return nil, nil
-	}
-	var removed []string
-	seen := map[string]bool{}
-	for _, candidate := range parseBriefIPv4AddressCleanupCandidates(string(out)) {
-		if !desired[candidate.ifname] || !staleDSLiteIPv4Address(candidate.address) {
-			continue
-		}
-		id := candidate.ifname + ":" + candidate.address
-		if seen[id] {
-			continue
-		}
-		seen[id] = true
-		args := []string{"-4", "addr", "del", candidate.address}
-		if candidate.peer != "" {
-			args = append(args, "peer", candidate.peer)
-		}
-		args = append(args, "dev", candidate.ifname)
-		if err := runLogged("ip", args...); err != nil {
-			return removed, err
-		}
-		removed = append(removed, "net.ipv4.address/"+id)
-	}
-	return removed, nil
 }
 
 func cleanupStaleFreeBSDDSLiteTunnels(desired map[string]bool) ([]string, error) {
@@ -371,37 +281,6 @@ func staleDSLiteIPv4Address(address string) bool {
 	default:
 		return false
 	}
-}
-
-type ipv4AddressCleanupCandidate struct {
-	ifname  string
-	address string
-	peer    string
-}
-
-func parseBriefIPv4AddressCleanupCandidates(output string) []ipv4AddressCleanupCandidate {
-	var candidates []ipv4AddressCleanupCandidate
-	for _, line := range strings.Split(output, "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 3 {
-			continue
-		}
-		ifname := fields[0]
-		if i := strings.Index(ifname, "@"); i >= 0 {
-			ifname = ifname[:i]
-		}
-		for i := 2; i < len(fields); i++ {
-			field := fields[i]
-			if i+2 < len(fields) && fields[i+1] == "peer" && staleDSLiteIPv4Address(field) {
-				candidates = append(candidates, ipv4AddressCleanupCandidate{ifname: ifname, address: field, peer: fields[i+2]})
-				continue
-			}
-			if strings.Contains(field, "/") && staleDSLiteIPv4Address(field) {
-				candidates = append(candidates, ipv4AddressCleanupCandidate{ifname: ifname, address: field})
-			}
-		}
-	}
-	return candidates
 }
 
 func parseIfconfigIPv4AddressArtifacts(output string) []resource.Artifact {
@@ -494,10 +373,6 @@ func parseIfconfigBlocks(output string) map[string]string {
 	}
 	flush()
 	return blocks
-}
-
-func looksRouterdDSLiteTunnelName(name string) bool {
-	return name == "ds-routerd" || strings.HasPrefix(name, "ds-lite")
 }
 
 func looksFreeBSDDSLiteTunnel(name, block string) bool {

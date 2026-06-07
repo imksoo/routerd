@@ -499,7 +499,7 @@ func TestLedgerOwnedOrphansOnlyReportsCleanupEligibleArtifacts(t *testing.T) {
 	ledger := resource.NewLedger()
 	ledger.Remember([]resource.Artifact{
 		{Kind: "linux.ipip6.tunnel", Name: "ds-old", Owner: "net.routerd.net/v1alpha1/DSLiteTunnel/old"},
-		{Kind: "nft.table", Name: "routerd_old", Owner: "net.routerd.net/v1alpha1/NAT44Rule/old", Attributes: map[string]string{"family": "ip", "name": "routerd_old"}},
+		{Kind: "nft.table", Name: "ip/routerd_old", Owner: "net.routerd.net/v1alpha1/NAT44Rule/old", Attributes: map[string]string{"family": "ip", "name": "routerd_old"}},
 		{Kind: "systemd.service", Name: "routerd-old.service", Owner: "net.routerd.net/v1alpha1/PPPoESession/old"},
 		{Kind: "net.ipv6.address", Name: "ens19:2001:db8::1/64", Owner: "net.routerd.net/v1alpha1/VirtualAddress/old-v6"},
 		{Kind: "net.link", Name: "ens19", Owner: "net.routerd.net/v1alpha1/Interface/lan"},
@@ -544,7 +544,7 @@ func TestLedgerOwnedOrphansOnlyReportsCleanupEligibleArtifacts(t *testing.T) {
 	}
 	for _, want := range []string{
 		"linux.ipip6.tunnel/ds-old",
-		"nft.table/routerd_old",
+		"nft.table/ip/routerd_old",
 		"systemd.service/routerd-old.service",
 		"net.ipv6.address/ens19:2001:db8::1/64",
 	} {

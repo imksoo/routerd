@@ -207,7 +207,7 @@ func TestMSSClampNftTableIsRouterOwnedNotOrphan(t *testing.T) {
 	}
 	aliases := map[string]string{"lan": "br-lan", "wan": "eth0", "ds-lite": "ds-routerd"}
 	desired := desiredArtifactsByKind(router, aliases, "nft.table")
-	if !hasArtifact(desired, "nft.table", "routerd_mss", api.RouterAPIVersion+"/Router/test") {
+	if !hasArtifact(desired, "nft.table", "inet/routerd_mss", api.RouterAPIVersion+"/Router/test") {
 		t.Fatalf("desired nft artifacts = %+v, want router-owned routerd_mss", desired)
 	}
 	engine := &Engine{Command: fakeCommand(map[string]string{
@@ -215,7 +215,7 @@ func TestMSSClampNftTableIsRouterOwnedNotOrphan(t *testing.T) {
 	})}
 	orphans := engine.observeNftTableOrphans(router, aliases)
 	for _, orphan := range orphans {
-		if orphan.Kind == "NftTable" && orphan.Name == "routerd_mss" {
+		if orphan.Kind == "NftTable" && orphan.Name == "inet/routerd_mss" {
 			t.Fatalf("routerd_mss reported as orphan: %+v", orphans)
 		}
 	}
@@ -245,7 +245,7 @@ func TestForceFragmentNftTableIsRouterOwnedNotOrphan(t *testing.T) {
 	}
 	aliases := map[string]string{"ens3": "ens3", "wg-hybrid": "wg-hybrid"}
 	desired := desiredArtifactsByKind(router, aliases, "nft.table")
-	if !hasArtifact(desired, "nft.table", "routerd_forcefrag", api.RouterAPIVersion+"/Router/test") {
+	if !hasArtifact(desired, "nft.table", "ip/routerd_forcefrag", api.RouterAPIVersion+"/Router/test") {
 		t.Fatalf("desired nft artifacts = %+v, want router-owned routerd_forcefrag", desired)
 	}
 	engine := &Engine{Command: fakeCommand(map[string]string{
@@ -253,7 +253,7 @@ func TestForceFragmentNftTableIsRouterOwnedNotOrphan(t *testing.T) {
 	})}
 	orphans := engine.observeNftTableOrphans(router, aliases)
 	for _, orphan := range orphans {
-		if orphan.Kind == "NftTable" && orphan.Name == "routerd_forcefrag" {
+		if orphan.Kind == "NftTable" && orphan.Name == "ip/routerd_forcefrag" {
 			t.Fatalf("routerd_forcefrag reported as orphan: %+v", orphans)
 		}
 	}
@@ -470,7 +470,7 @@ func TestVXLANSegmentClaimsL2FilterTable(t *testing.T) {
 	intents := resourceArtifactIntents(res, nil)
 	var hasL2Filter bool
 	for _, intent := range intents {
-		if intent.Artifact.Kind == "nft.table" && intent.Artifact.Name == "routerd_l2_filter" {
+		if intent.Artifact.Kind == "nft.table" && intent.Artifact.Name == "bridge/routerd_l2_filter" {
 			hasL2Filter = true
 		}
 	}
@@ -481,7 +481,7 @@ func TestVXLANSegmentClaimsL2FilterTable(t *testing.T) {
 	res.Spec = api.VXLANSegmentSpec{IfName: "vxlan100", VNI: 100, LocalAddress: "192.0.2.10", UnderlayInterface: "wan", L2Filter: "none"}
 	intents = resourceArtifactIntents(res, nil)
 	for _, intent := range intents {
-		if intent.Artifact.Kind == "nft.table" && intent.Artifact.Name == "routerd_l2_filter" {
+		if intent.Artifact.Kind == "nft.table" && intent.Artifact.Name == "bridge/routerd_l2_filter" {
 			t.Fatalf("VXLANSegment with l2Filter=none must NOT claim routerd_l2_filter, intents=%+v", intents)
 		}
 	}

@@ -450,7 +450,7 @@ func TestControllerResolvesPPPoEEgressInterface(t *testing.T) {
 	}
 }
 
-func TestControllerClearsNAT44TableWhenRuleHasNoActiveEgress(t *testing.T) {
+func TestControllerDoesNotClearNAT44TableWhenRuleHasNoActiveEgress(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "nft.log")
 	nftPath := filepath.Join(dir, "nft")
@@ -472,18 +472,10 @@ func TestControllerClearsNAT44TableWhenRuleHasNoActiveEgress(t *testing.T) {
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
-	logData, err := os.ReadFile(logPath)
-	if err != nil {
+	if logData, err := os.ReadFile(logPath); err == nil {
+		t.Fatalf("unexpected nft command log; stale table cleanup should be handled by lifecycle GC:\n%s", string(logData))
+	} else if !os.IsNotExist(err) {
 		t.Fatal(err)
-	}
-	got := string(logData)
-	for _, want := range []string{
-		"list table ip routerd_nat",
-		"delete table ip routerd_nat",
-	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("nft command log missing %q:\n%s", want, got)
-		}
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "NAT44Rule", "lan-to-missing")
 	if status["phase"] != "Pending" {

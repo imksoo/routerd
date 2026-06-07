@@ -2702,35 +2702,6 @@ func TestDNSServerAddressAddsDefaultPort(t *testing.T) {
 	}
 }
 
-func TestStaleIPv4ManagedFwmarkRules(t *testing.T) {
-	desired := map[ipv4FwmarkRule]bool{
-		{Priority: 10, Mark: 0x111, Table: 111}: true,
-		{Priority: 20, Mark: 0x112, Table: 112}: true,
-	}
-	current := []ipv4FwmarkRule{
-		{Priority: 10, Mark: 0x111, Table: 111},
-		{Priority: 20, Mark: 0x112, Table: 112},
-		{Priority: 30, Mark: 0x112, Table: 112},
-		{Priority: 10000, Mark: 0x100, Table: 100},
-		{Priority: 10001, Mark: 0x101, Table: 101},
-		{Priority: 500, Mark: 0x900, Table: 900},
-	}
-	got := staleIPv4ManagedFwmarkRules(desired, current)
-	want := []ipv4FwmarkRule{
-		{Priority: 30, Mark: 0x112, Table: 112},
-		{Priority: 10000, Mark: 0x100, Table: 100},
-		{Priority: 10001, Mark: 0x101, Table: 101},
-	}
-	if len(got) != len(want) {
-		t.Fatalf("stale rules = %+v, want %+v", got, want)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("stale rules = %+v, want %+v", got, want)
-		}
-	}
-}
-
 func TestResolveHealthCheckTargetDSLiteRemoteAddress(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{Resources: []api.Resource{

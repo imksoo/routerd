@@ -680,20 +680,38 @@ func parseBriefAddressArtifacts(kind, output string) []resource.Artifact {
 			continue
 		}
 		ifname := fields[0]
+		if i := strings.Index(ifname, "@"); i >= 0 {
+			ifname = ifname[:i]
+		}
 		for _, field := range fields[2:] {
 			if strings.Contains(field, "/") {
+				attrs := map[string]string{
+					"ifname":  ifname,
+					"address": field,
+				}
+				if kind == "net.ipv4.address" {
+					if peer := peerForBriefAddressField(fields, field); peer != "" {
+						attrs["peer"] = peer
+					}
+				}
 				artifacts = append(artifacts, resource.Artifact{
-					Kind: kind,
-					Name: ifname + ":" + field,
-					Attributes: map[string]string{
-						"ifname":  ifname,
-						"address": field,
-					},
+					Kind:       kind,
+					Name:       ifname + ":" + field,
+					Attributes: attrs,
 				})
 			}
 		}
 	}
 	return artifacts
+}
+
+func peerForBriefAddressField(fields []string, address string) string {
+	for i := 2; i+2 < len(fields); i++ {
+		if fields[i] == address && fields[i+1] == "peer" {
+			return fields[i+2]
+		}
+	}
+	return ""
 }
 
 func parseIfconfigAddressArtifacts(output string) []resource.Artifact {
@@ -827,7 +845,7 @@ func newIPv4RouteTableArtifactWithIfName(owner string, table int, ifname string)
 func newNftTableArtifact(owner, family, name string) resource.Artifact {
 	return resource.Artifact{
 		Kind:  "nft.table",
-		Name:  name,
+		Name:  family + "/" + name,
 		Owner: owner,
 		Attributes: map[string]string{
 			"family": family,

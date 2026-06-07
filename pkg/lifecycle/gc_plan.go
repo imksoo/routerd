@@ -71,11 +71,15 @@ func PlanGC(input GCPlanInput) GCPlan {
 func PlanArtifactOrphans(input GCPlanInput) GCPlan {
 	desiredIDs := map[string]bool{}
 	for _, artifact := range input.DesiredArtifacts {
-		desiredIDs[artifact.Identity()] = true
+		for _, id := range gcArtifactIdentityAliases(artifact) {
+			desiredIDs[id] = true
+		}
 	}
 	actualByID := map[string]resource.Artifact{}
 	for _, artifact := range input.HostArtifacts {
-		actualByID[artifact.Identity()] = artifact
+		for _, id := range gcArtifactIdentityAliases(artifact) {
+			actualByID[id] = artifact
+		}
 	}
 	var removals []GCArtifactRemoval
 	var forgets []resource.Artifact
@@ -106,6 +110,19 @@ func PlanArtifactOrphans(input GCPlanInput) GCPlan {
 		return artifactCleanupSortKey(forgets[i]) < artifactCleanupSortKey(forgets[j])
 	})
 	return planFromArtifactRemovals(removals, forgets)
+}
+
+func gcArtifactIdentityAliases(artifact resource.Artifact) []string {
+	ids := []string{artifact.Identity()}
+	if artifact.Kind == "nft.table" {
+		if name := artifact.Attributes["name"]; name != "" {
+			legacyID := artifact.Kind + "/" + name
+			if legacyID != ids[0] {
+				ids = append(ids, legacyID)
+			}
+		}
+	}
+	return ids
 }
 
 func PlanDeleteTargetGC(input GCPlanInput) GCPlan {
