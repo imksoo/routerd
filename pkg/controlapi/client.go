@@ -83,6 +83,75 @@ func (c *Client) Controllers(ctx context.Context) (*Controllers, error) {
 	return &controllers, nil
 }
 
+func (c *Client) Get(ctx context.Context, request GetRequest) (*GetResult, error) {
+	values := url.Values{}
+	values.Set("subject", request.Subject)
+	if request.EventsLimit > 0 {
+		values.Set("events-limit", strconv.Itoa(request.EventsLimit))
+	}
+	if request.Limit > 0 {
+		values.Set("limit", strconv.Itoa(request.Limit))
+	}
+	if request.SinceID > 0 {
+		values.Set("since-id", strconv.FormatInt(request.SinceID, 10))
+	}
+	if request.Topic != "" {
+		values.Set("topic", request.Topic)
+	}
+	if request.Resource != "" {
+		values.Set("resource", request.Resource)
+	}
+	if request.KindFilter != "" {
+		values.Set("kind", request.KindFilter)
+	}
+	if request.NameFilter != "" {
+		values.Set("name", request.NameFilter)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+Prefix+"/get?"+values.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+	var result GetResult
+	if err := c.do(req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+func (c *Client) Describe(ctx context.Context, request DescribeRequest) (*DescribeResult, error) {
+	values := url.Values{}
+	values.Set("target", request.Target)
+	if request.EventsLimit > 0 {
+		values.Set("events-limit", strconv.Itoa(request.EventsLimit))
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+Prefix+"/describe?"+values.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+	var result DescribeResult
+	if err := c.do(req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+func (c *Client) Probe(ctx context.Context, request ProbeRequest) (*ProbeResult, error) {
+	values := url.Values{}
+	values.Set("subject", request.Subject)
+	if request.Target != "" {
+		values.Set("target", request.Target)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+Prefix+"/probe?"+values.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+	var result ProbeResult
+	if err := c.do(req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
 func (c *Client) Apply(ctx context.Context, request ApplyRequest) (*ApplyResult, error) {
 	request.APIVersion = APIVersion
 	request.Kind = "ApplyRequest"

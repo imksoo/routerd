@@ -27,7 +27,13 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+func skipRemovedInspectionCommand(t *testing.T) {
+	t.Helper()
+	t.Skip("ADR0014 Phase 4 removed local legacy inspection commands; covered by get/describe/doctor control API tests")
+}
+
 func TestShowIPv6PDTableIncludesSpecStateLedger(t *testing.T) {
+	skipRemovedInspectionCommand(t)
 	dir := t.TempDir()
 	configPath := writeShowConfig(t, dir)
 	statePath := filepath.Join(dir, "state.json")
@@ -150,6 +156,7 @@ spec:
 }
 
 func TestEventsCommandListsStateDatabaseEvents(t *testing.T) {
+	skipRemovedInspectionCommand(t)
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, "routerd.db")
 	store, err := routerstate.OpenSQLite(statePath)
@@ -459,6 +466,7 @@ func TestLedgerPruneEventsCommandRecordsAuditEvent(t *testing.T) {
 }
 
 func TestDNSQueriesCommandReadsLogDatabase(t *testing.T) {
+	skipRemovedInspectionCommand(t)
 	path := filepath.Join(t.TempDir(), "dns-queries.db")
 	store, err := logstore.OpenDNSQueryLog(path)
 	if err != nil {
@@ -498,9 +506,15 @@ func TestLogCommandsUseControlSocketByDefault(t *testing.T) {
 	}
 	defer listener.Close()
 	server := &http.Server{Handler: controlapi.Handler{
-		Status: func(r *http.Request) (*controlapi.Status, error) {
+		Get: func(r *http.Request, req controlapi.GetRequest) (*controlapi.GetResult, error) {
+			if req.Subject != "status" {
+				t.Fatalf("subject = %q, want status", req.Subject)
+			}
 			result := controlapi.NewStatus(&apply.Result{Phase: "Healthy", Generation: 7})
-			return &result, nil
+			get := controlapi.NewGetResult("status")
+			get.Status = &result.Status
+			get.Raw = result
+			return &get, nil
 		},
 		DNSQueries: func(r *http.Request, req controlapi.DNSQueriesRequest) (*controlapi.DNSQueries, error) {
 			if req.Limit != 3 {
@@ -532,11 +546,11 @@ func TestLogCommandsUseControlSocketByDefault(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"status", "--socket", socketPath, "--json"}, `"phase": "Healthy"`},
-		{[]string{"status", "--socket", socketPath, "-o", "json"}, `"generation": 7`},
-		{[]string{"dns-queries", "--socket", socketPath, "--limit", "3"}, "socket.example"},
-		{[]string{"traffic-flows", "--socket", socketPath}, "1.1.1.1"},
-		{[]string{"firewall-logs", "--socket", socketPath}, "deny-test"},
+		{[]string{"get", "status", "--socket", socketPath, "-o", "json"}, `"phase": "Healthy"`},
+		{[]string{"get", "status", "--socket", socketPath, "-o", "json"}, `"generation": 7`},
+		{[]string{"get", "dns-queries", "--socket", socketPath, "--limit", "3"}, "socket.example"},
+		{[]string{"get", "traffic-flows", "--socket", socketPath}, "1.1.1.1"},
+		{[]string{"get", "firewall-logs", "--socket", socketPath}, "deny-test"},
 		{[]string{"set-log-level", "--socket", socketPath, "debug"}, `"level": "debug"`},
 	} {
 		var out bytes.Buffer
@@ -707,6 +721,7 @@ func TestRollbackCommandListsAndAppliesGeneration(t *testing.T) {
 }
 
 func TestTrafficFlowsCommandReadsLogDatabase(t *testing.T) {
+	skipRemovedInspectionCommand(t)
 	path := filepath.Join(t.TempDir(), "traffic-flows.db")
 	store, err := logstore.OpenTrafficFlowLog(path)
 	if err != nil {
@@ -739,6 +754,7 @@ func TestTrafficFlowsCommandReadsLogDatabase(t *testing.T) {
 }
 
 func TestFirewallLogsCommandReadsLogDatabase(t *testing.T) {
+	skipRemovedInspectionCommand(t)
 	path := filepath.Join(t.TempDir(), "firewall-logs.db")
 	store, err := logstore.OpenFirewallLog(path)
 	if err != nil {
@@ -771,6 +787,7 @@ func TestFirewallLogsCommandReadsLogDatabase(t *testing.T) {
 }
 
 func TestShowKindNameYAML(t *testing.T) {
+	skipRemovedInspectionCommand(t)
 	dir := t.TempDir()
 	configPath := writeShowConfig(t, dir)
 	statePath := filepath.Join(dir, "state.json")
@@ -796,6 +813,7 @@ func TestShowKindNameYAML(t *testing.T) {
 }
 
 func TestShowOpensSQLiteStateReadOnly(t *testing.T) {
+	skipRemovedInspectionCommand(t)
 	dir := t.TempDir()
 	configPath := writeShowConfig(t, dir)
 	stateDir := filepath.Join(dir, "state")
@@ -843,6 +861,7 @@ func TestShowOpensSQLiteStateReadOnly(t *testing.T) {
 }
 
 func TestShowStillAcceptsJSONState(t *testing.T) {
+	skipRemovedInspectionCommand(t)
 	dir := t.TempDir()
 	configPath := writeShowConfig(t, dir)
 	statePath := filepath.Join(dir, "state.json")
@@ -864,6 +883,7 @@ func TestShowStillAcceptsJSONState(t *testing.T) {
 }
 
 func TestShowDiffAndLedgerModes(t *testing.T) {
+	skipRemovedInspectionCommand(t)
 	dir := t.TempDir()
 	configPath := writeShowConfig(t, dir)
 	statePath := filepath.Join(dir, "state.json")
@@ -899,6 +919,7 @@ func TestShowDiffAndLedgerModes(t *testing.T) {
 }
 
 func TestShowBGPVRRPAndIngressTables(t *testing.T) {
+	skipRemovedInspectionCommand(t)
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "router.yaml")
 	data := []byte(`apiVersion: routerd.net/v1alpha1
@@ -1105,6 +1126,7 @@ EOF
 }
 
 func TestShowBGPUsesStoredGoBGPStatus(t *testing.T) {
+	skipRemovedInspectionCommand(t)
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "router.yaml")
 	data := []byte(`apiVersion: routerd.net/v1alpha1
@@ -1234,6 +1256,7 @@ func TestIPOutputHasAddress(t *testing.T) {
 }
 
 func TestDescribeOrphans(t *testing.T) {
+	skipRemovedInspectionCommand(t)
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "router.yaml")
 	if err := os.WriteFile(configPath, []byte(`apiVersion: routerd.net/v1alpha1
@@ -1269,6 +1292,7 @@ spec:
 }
 
 func TestShowPDLegacySubcommandRemoved(t *testing.T) {
+	skipRemovedInspectionCommand(t)
 	configPath := writeShowConfig(t, t.TempDir())
 	dir := t.TempDir()
 	var out bytes.Buffer
@@ -1282,6 +1306,7 @@ func TestShowPDLegacySubcommandRemoved(t *testing.T) {
 }
 
 func TestGetKindAndListKinds(t *testing.T) {
+	skipRemovedInspectionCommand(t)
 	configPath := writeShowConfig(t, t.TempDir())
 	var out bytes.Buffer
 	if err := run([]string{"get", "pd", "--config", configPath}, &out, &bytes.Buffer{}); err != nil {
@@ -1301,6 +1326,7 @@ func TestGetKindAndListKinds(t *testing.T) {
 }
 
 func TestDescribeIPv6PDIncludesStatusLedgerEvents(t *testing.T) {
+	skipRemovedInspectionCommand(t)
 	dir := t.TempDir()
 	configPath := writeShowConfig(t, dir)
 	dbPath := filepath.Join(dir, "routerd.db")
@@ -1373,6 +1399,7 @@ func TestDescribeIPv6PDIncludesStatusLedgerEvents(t *testing.T) {
 }
 
 func TestDescribeResourceSupportsJSONAndYAMLOutput(t *testing.T) {
+	skipRemovedInspectionCommand(t)
 	dir := t.TempDir()
 	configPath := writeShowConfig(t, dir)
 	dbPath := filepath.Join(dir, "routerd.db")
@@ -1415,6 +1442,7 @@ func TestDescribeResourceSupportsJSONAndYAMLOutput(t *testing.T) {
 }
 
 func TestDescribeInventoryHost(t *testing.T) {
+	skipRemovedInspectionCommand(t)
 	dir := t.TempDir()
 	configPath := writeShowConfig(t, dir)
 	dbPath := filepath.Join(dir, "routerd.db")
@@ -1459,6 +1487,7 @@ func TestDescribeInventoryHost(t *testing.T) {
 }
 
 func TestDescribeShowsStatusReasonMessageAndRemediation(t *testing.T) {
+	skipRemovedInspectionCommand(t)
 	dir := t.TempDir()
 	configPath := writeShowConfig(t, dir)
 	dbPath := filepath.Join(dir, "routerd.db")
@@ -1500,6 +1529,7 @@ func TestDescribeShowsStatusReasonMessageAndRemediation(t *testing.T) {
 }
 
 func TestDescribeHealthyStatusOmitsRemediation(t *testing.T) {
+	skipRemovedInspectionCommand(t)
 	dir := t.TempDir()
 	configPath := writeShowConfig(t, dir)
 	dbPath := filepath.Join(dir, "routerd.db")
@@ -1531,6 +1561,7 @@ func TestDescribeHealthyStatusOmitsRemediation(t *testing.T) {
 }
 
 func TestDescribeUsesObjectStatusForControllerManagedResource(t *testing.T) {
+	skipRemovedInspectionCommand(t)
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "router.yaml")
 	data := []byte(`apiVersion: routerd.net/v1alpha1
@@ -1580,6 +1611,7 @@ spec:
 }
 
 func TestShowDerivedResourcesListsGeneratedServiceUnits(t *testing.T) {
+	skipRemovedInspectionCommand(t)
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "router.yaml")
 	data := []byte(`apiVersion: routerd.net/v1alpha1
@@ -1647,6 +1679,7 @@ spec:
 }
 
 func TestShowDerivedResourcesHidesAndMarksStaleState(t *testing.T) {
+	skipRemovedInspectionCommand(t)
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "router.yaml")
 	data := []byte(`apiVersion: routerd.net/v1alpha1
@@ -1697,6 +1730,7 @@ spec:
 }
 
 func TestShowDerivedResourcesUsesDynamicSAMViewForStaleState(t *testing.T) {
+	skipRemovedInspectionCommand(t)
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "router.yaml")
 	router := &api.Router{
@@ -1836,6 +1870,7 @@ func TestShowDerivedResourcesUsesDynamicSAMViewForStaleState(t *testing.T) {
 }
 
 func TestDiagnoseEgressShowsPolicyHealthAndNAT(t *testing.T) {
+	skipRemovedInspectionCommand(t)
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "router.yaml")
 	data := []byte(`apiVersion: routerd.net/v1alpha1

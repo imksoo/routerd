@@ -19,34 +19,9 @@ type helpInvocation struct {
 func TestSubcommandHelpRendersUsageFlagsExamples(t *testing.T) {
 	cases := []helpInvocation{
 		{
-			name:        "dns-queries",
-			args:        []string{"dns-queries", "--help"},
-			mustContain: []string{"Usage:", "Flags:", "Examples:", "routerctl dns-queries", "-since", "-limit"},
-		},
-		{
-			name:        "connections",
-			args:        []string{"connections", "--help"},
-			mustContain: []string{"Usage:", "Flags:", "Examples:", "routerctl connections", "-limit"},
-		},
-		{
-			name:        "traffic-flows",
-			args:        []string{"traffic-flows", "--help"},
-			mustContain: []string{"Usage:", "Flags:", "Examples:", "routerctl traffic-flows", "-since", "-client"},
-		},
-		{
-			name:        "firewall-logs",
-			args:        []string{"firewall-logs", "--help"},
-			mustContain: []string{"Usage:", "Flags:", "Examples:", "routerctl firewall-logs", "-action"},
-		},
-		{
-			name:        "status",
-			args:        []string{"status", "--help"},
-			mustContain: []string{"Usage:", "Flags:", "Examples:", "routerctl status"},
-		},
-		{
-			name:        "events",
-			args:        []string{"events", "--help"},
-			mustContain: []string{"Usage:", "Flags:", "Examples:", "routerctl events", "-limit", "-resource"},
+			name:        "get",
+			args:        []string{"get", "--help"},
+			mustContain: []string{"Usage:", "Flags:", "Examples:", "routerctl get", "status", "events", "connections", "dns-queries", "traffic-flows", "firewall-logs", "--limit", "--resource"},
 		},
 		{
 			name:        "apply",
@@ -104,24 +79,14 @@ func TestSubcommandHelpRendersUsageFlagsExamples(t *testing.T) {
 			mustContain: []string{"Usage:", "Flags:", "Examples:", "wireguard list"},
 		},
 		{
-			name:        "diagnose egress",
-			args:        []string{"diagnose", "egress", "--help"},
-			mustContain: []string{"Usage:", "Flags:", "Examples:", "diagnose egress"},
-		},
-		{
-			name:        "diagnose dns",
-			args:        []string{"diagnose", "dns", "--help"},
-			mustContain: []string{"Usage:", "Flags:", "Examples:", "diagnose dns"},
-		},
-		{
-			name:        "diagnose lan-client",
-			args:        []string{"diagnose", "lan-client", "--help"},
-			mustContain: []string{"Usage:", "Flags:", "Examples:", "diagnose lan-client"},
-		},
-		{
 			name:        "doctor",
 			args:        []string{"doctor", "--help"},
-			mustContain: []string{"Usage:", "Flags:", "Examples:", "doctor"},
+			mustContain: []string{"Usage:", "Flags:", "Examples:", "doctor", "--probe"},
+		},
+		{
+			name:        "describe",
+			args:        []string{"describe", "--help"},
+			mustContain: []string{"Usage:", "Flags:", "Examples:", "routerctl describe", "--events-limit"},
 		},
 	}
 	for _, tc := range cases {
@@ -141,33 +106,15 @@ func TestSubcommandHelpRendersUsageFlagsExamples(t *testing.T) {
 	}
 }
 
-func TestDNSQueriesHelpMentionsRelativeTime(t *testing.T) {
+func TestGetHelpMentionsRuntimeSubjects(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	if err := run([]string{"dns-queries", "--help"}, &stdout, &stderr); err != nil {
+	if err := run([]string{"get", "--help"}, &stdout, &stderr); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	combined := stdout.String() + stderr.String()
-	if !strings.Contains(combined, "duration") {
-		t.Errorf("dns-queries --help should mention duration / 相対時間 form, got:\n%s", combined)
-	}
-	// Issue #36: absolute time (--from / --to) and --agg are now implemented;
-	// the help text should document them.
-	for _, want := range []string{"-from", "-to", "-agg", "-rcode", "-qname-suffix", "-chunk-size"} {
+	for _, want := range []string{"get events", "get connections", "get dns-queries", "get traffic-flows", "get firewall-logs", "--topic", "--resource"} {
 		if !strings.Contains(combined, want) {
-			t.Errorf("dns-queries --help should mention %s flag, got:\n%s", want, combined)
-		}
-	}
-}
-
-func TestTrafficFlowsHelpMentionsAbsoluteTimeAndAgg(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-	if err := run([]string{"traffic-flows", "--help"}, &stdout, &stderr); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	combined := stdout.String() + stderr.String()
-	for _, want := range []string{"-from", "-to", "-agg", "-protocol", "-peer-suffix", "-asymmetric", "-chunk-size"} {
-		if !strings.Contains(combined, want) {
-			t.Errorf("traffic-flows --help should mention %s flag, got:\n%s", want, combined)
+			t.Errorf("get --help should mention %s, got:\n%s", want, combined)
 		}
 	}
 }

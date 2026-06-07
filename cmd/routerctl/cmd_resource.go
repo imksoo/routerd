@@ -3,14 +3,18 @@
 package main
 
 import (
+	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"sort"
 	"strings"
+	"text/tabwriter"
+	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
-	"github.com/imksoo/routerd/pkg/config"
+	"github.com/imksoo/routerd/pkg/controlapi"
 	"github.com/imksoo/routerd/pkg/resource"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
@@ -37,243 +41,373 @@ type showDiff struct {
 }
 
 type getOptions struct {
-	Target     string
-	Output     string
-	ConfigPath string
-	ListKinds  bool
+	Target      string
+	Output      string
+	Socket      string
+	Timeout     time.Duration
+	Limit       int
+	EventsLimit int
+	SinceID     int64
+	Topic       string
+	Resource    string
+	KindFilter  string
+	NameFilter  string
 }
 
 func getCommand(args []string, stdout, stderr io.Writer) error {
 	opts, err := parseGetOptions(args)
 	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			printGetHelp(stdout)
+			return nil
+		}
 		usage(stderr)
 		return err
 	}
-	router, err := config.Load(opts.ConfigPath)
-	if err != nil {
-		return err
-	}
-	if opts.ListKinds {
-		return writeGetKinds(stdout, router.Spec.Resources, opts.Output)
-	}
-	kind, name, err := parseResourceTarget("get", opts.Target)
-	if err != nil {
-		return err
-	}
-	resources := selectResources(router.Spec.Resources, kind, name)
-	if len(resources) == 0 {
-		return resourceSelectionError(router.Spec.Resources, kind, name)
-	}
-	switch opts.Output {
-	case "", "table":
-		return writeGetTable(stdout, resources)
-	case "json":
-		return writeJSON(stdout, resources)
-	case "yaml":
-		return writeYAML(stdout, resources)
-	default:
-		return fmt.Errorf("unsupported output %q", opts.Output)
-	}
+	ctx, cancel := context.WithTimeout(context.Background(), opts.Timeout)
+	defer cancel()
+	return getViaControlAPI(ctx, controlapi.NewUnixClient(opts.Socket), opts, stdout)
+}
+
+func printGetHelp(w io.Writer) {
+	fmt.Fprintln(w, "Usage:")
+	fmt.Fprintln(w, "  routerctl get <subject|kind[/name]> [--socket <path>] [--limit <n>] [-o table|json|yaml]")
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "Flags:")
+	fmt.Fprintln(w, "  -o, --output <format>       output format: table, json, yaml")
+	fmt.Fprintln(w, "      --socket <path>         routerd read-only status Unix domain socket path")
+	fmt.Fprintln(w, "      --timeout <duration>    request timeout")
+	fmt.Fprintln(w, "      --limit <n>             maximum rows for runtime subjects")
+	fmt.Fprintln(w, "      --events-limit <n>      recent per-resource events in resource views")
+	fmt.Fprintln(w, "      --since <id>            events with id greater than this value")
+	fmt.Fprintln(w, "      --topic <topic>         event topic filter")
+	fmt.Fprintln(w, "      --resource <kind/name>  event resource filter")
+	fmt.Fprintln(w, "      --kind <kind>           event kind filter")
+	fmt.Fprintln(w, "      --name <name>           event name filter")
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "Examples:")
+	fmt.Fprintln(w, "  routerctl get status -o json")
+	fmt.Fprintln(w, "  routerctl get Interface/wan")
+	fmt.Fprintln(w, "  routerctl get events --topic routerd.resource.status.changed --limit 20")
+	fmt.Fprintln(w, "  routerctl get connections")
+	fmt.Fprintln(w, "  routerctl get dns-queries")
+	fmt.Fprintln(w, "  routerctl get traffic-flows")
+	fmt.Fprintln(w, "  routerctl get firewall-logs")
 }
 
 func parseGetOptions(args []string) (getOptions, error) {
-	opts := getOptions{ConfigPath: defaultConfigPath()}
+	opts := getOptions{Socket: defaultStatusSocketPath(), Timeout: 30 * time.Second, Output: "table", Limit: 100, EventsLimit: 10}
+	fs := flag.NewFlagSet("get", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fs.StringVar(&opts.Output, "o", opts.Output, "output format: table, json, yaml")
+	fs.StringVar(&opts.Output, "output", opts.Output, "output format: table, json, yaml")
+	fs.StringVar(&opts.Socket, "socket", opts.Socket, "routerd read-only status Unix domain socket path")
+	fs.DurationVar(&opts.Timeout, "timeout", opts.Timeout, "request timeout")
+	fs.IntVar(&opts.Limit, "limit", opts.Limit, "maximum rows for runtime subjects")
+	fs.IntVar(&opts.EventsLimit, "events-limit", opts.EventsLimit, "recent per-resource events in resource views")
+	fs.Int64Var(&opts.SinceID, "since", 0, "events with id greater than this value")
+	fs.StringVar(&opts.Topic, "topic", "", "event topic filter")
+	fs.StringVar(&opts.Resource, "resource", "", "event resource filter as <kind>/<name>")
+	fs.StringVar(&opts.KindFilter, "kind", "", "event kind filter")
+	fs.StringVar(&opts.NameFilter, "name", "", "event name filter")
+	normalized, err := normalizeInspectionArgs(args, map[string]bool{
+		"-o": true, "--output": true, "--socket": true, "--timeout": true,
+		"--limit": true, "--events-limit": true, "--since": true,
+		"--topic": true, "--resource": true, "--kind": true, "--name": true,
+	})
+	if err != nil {
+		return opts, err
+	}
+	if err := fs.Parse(normalized); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return opts, err
+		}
+		return opts, err
+	}
+	if fs.NArg() != 1 {
+		return opts, errors.New("get requires <subject> or <kind>/<name>")
+	}
+	opts.Target = fs.Arg(0)
+	return opts, nil
+}
+
+func getViaControlAPI(ctx context.Context, client *controlapi.Client, opts getOptions, stdout io.Writer) error {
+	subject := canonicalGetSubject(opts.Target)
+	switch subject {
+	case "connections":
+		result, err := client.Connections(ctx, opts.Limit)
+		if err != nil {
+			return err
+		}
+		return emitGetValue(stdout, opts.Output, result.Status, func() error { return writeConnectionsTable(stdout, result.Status) })
+	case "dns-queries":
+		result, err := client.DNSQueries(ctx, controlapi.DNSQueriesRequest{Limit: opts.Limit})
+		if err != nil {
+			return err
+		}
+		return emitDNSRows(stdout, opts.Output, result.Items)
+	case "traffic-flows":
+		result, err := client.TrafficFlows(ctx, controlapi.TrafficFlowsRequest{Limit: opts.Limit})
+		if err != nil {
+			return err
+		}
+		return emitTrafficRows(stdout, opts.Output, result.Items)
+	case "firewall-logs":
+		result, err := client.FirewallLogs(ctx, controlapi.FirewallLogsRequest{Limit: opts.Limit})
+		if err != nil {
+			return err
+		}
+		return emitFirewallRows(stdout, opts.Output, result.Items)
+	default:
+		target, err := canonicalInspectionTargetForAPI("get", opts.Target)
+		if err != nil {
+			return err
+		}
+		result, err := client.Get(ctx, controlapi.GetRequest{
+			Subject:     target,
+			EventsLimit: opts.EventsLimit,
+			Limit:       opts.Limit,
+			SinceID:     opts.SinceID,
+			Topic:       opts.Topic,
+			Resource:    opts.Resource,
+			KindFilter:  opts.KindFilter,
+			NameFilter:  opts.NameFilter,
+		})
+		if err != nil {
+			return err
+		}
+		return emitGetResult(stdout, opts.Output, result)
+	}
+}
+
+func canonicalGetSubject(subject string) string {
+	key := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(subject), "_", "-"))
+	switch key {
+	case "conn", "connection":
+		return "connections"
+	case "dns", "dns-query", "dns-queries":
+		return "dns-queries"
+	case "flow", "flows", "traffic", "traffic-flow", "traffic-flows":
+		return "traffic-flows"
+	case "firewall", "firewall-log", "firewall-logs":
+		return "firewall-logs"
+	default:
+		return key
+	}
+}
+
+func canonicalInspectionTargetForAPI(verb, target string) (string, error) {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return target, nil
+	}
+	switch canonicalGetSubject(target) {
+	case "resources", "all", "status", "controllers", "runtime", "events", "ledger",
+		"connections", "dns-queries", "traffic-flows", "firewall-logs":
+		return canonicalGetSubject(target), nil
+	}
+	kind, name, err := parseResourceTarget(verb, target)
+	if err != nil {
+		return "", err
+	}
+	if name == "" {
+		return kind, nil
+	}
+	return kind + "/" + name, nil
+}
+
+func normalizeInspectionArgs(args []string, valueFlags map[string]bool) ([]string, error) {
+	var flags []string
+	var positionals []string
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
-		switch arg {
-		case "-o", "--output":
-			i++
-			if i >= len(args) {
-				return opts, errors.New("-o requires a value")
-			}
-			opts.Output = args[i]
-		case "--config":
-			i++
-			if i >= len(args) {
-				return opts, errors.New("--config requires a value")
-			}
-			opts.ConfigPath = args[i]
-		case "--list-kinds":
-			opts.ListKinds = true
-		default:
-			if strings.HasPrefix(arg, "-o=") {
-				opts.Output = strings.TrimPrefix(arg, "-o=")
+		if strings.HasPrefix(arg, "-") {
+			if strings.Contains(arg, "=") {
+				flags = append(flags, arg)
 				continue
 			}
-			if strings.HasPrefix(arg, "--output=") {
-				opts.Output = strings.TrimPrefix(arg, "--output=")
-				continue
+			flags = append(flags, arg)
+			if valueFlags[arg] {
+				i++
+				if i >= len(args) {
+					return nil, fmt.Errorf("%s requires a value", arg)
+				}
+				flags = append(flags, args[i])
 			}
-			if strings.HasPrefix(arg, "--config=") {
-				opts.ConfigPath = strings.TrimPrefix(arg, "--config=")
-				continue
-			}
-			if strings.HasPrefix(arg, "-") {
-				return opts, fmt.Errorf("unknown get option %q", arg)
-			}
-			if opts.Target != "" {
-				return opts, fmt.Errorf("unexpected get argument %q", arg)
-			}
-			opts.Target = arg
+			continue
 		}
+		positionals = append(positionals, arg)
 	}
-	if !opts.ListKinds && opts.Target == "" {
-		return opts, errors.New("get requires <kind>, <kind>/<name>, or --list-kinds")
+	return append(flags, positionals...), nil
+}
+
+func emitGetResult(stdout io.Writer, output string, result *controlapi.GetResult) error {
+	switch output {
+	case "", "table":
+		if len(result.Items) > 0 {
+			return writeResourceViewsTable(stdout, result.Items)
+		}
+		if len(result.Events) > 0 {
+			return writeEventsTable(stdout, result.Events)
+		}
+		if result.Ledger != nil {
+			return writeLedgerReportTable(stdout, *result.Ledger)
+		}
+		if result.Status != nil {
+			return writeStatusSummaryTable(stdout, *result.Status)
+		}
+		return emitGetValue(stdout, output, result.Raw, nil)
+	case "json":
+		return writeJSON(stdout, result)
+	case "yaml":
+		return writeYAML(stdout, result)
+	default:
+		return fmt.Errorf("unsupported output %q", output)
 	}
-	return opts, nil
+}
+
+func emitGetValue(stdout io.Writer, output string, value any, table func() error) error {
+	switch output {
+	case "", "table":
+		if table != nil {
+			return table()
+		}
+		return writeJSON(stdout, value)
+	case "json":
+		return writeJSON(stdout, value)
+	case "yaml":
+		return writeYAML(stdout, value)
+	default:
+		return fmt.Errorf("unsupported output %q", output)
+	}
 }
 
 type describeOptions struct {
 	Target      string
 	Output      string
-	ConfigPath  string
-	StatePath   string
-	LedgerPath  string
+	Socket      string
+	Timeout     time.Duration
 	EventsLimit int
 }
 
 func describeCommand(args []string, stdout, stderr io.Writer) error {
 	opts, err := parseDescribeOptions(args)
 	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			printDescribeHelp(stdout)
+			return nil
+		}
 		usage(stderr)
 		return err
 	}
-	router, err := config.Load(opts.ConfigPath)
+	ctx, cancel := context.WithTimeout(context.Background(), opts.Timeout)
+	defer cancel()
+	result, err := controlapi.NewUnixClient(opts.Socket).Describe(ctx, controlapi.DescribeRequest{Target: opts.Target, EventsLimit: opts.EventsLimit})
 	if err != nil {
 		return err
 	}
-	store, err := routerstate.Load(opts.StatePath)
-	if err != nil {
-		return err
-	}
-	ledger, err := resource.LoadLedger(opts.LedgerPath)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = ledger.Close() }()
-	kind, name, err := parseResourceTarget("describe", opts.Target)
-	if err != nil {
-		return err
-	}
-	if kind == "FirewallPolicy" && (name == "" || name == "firewall") {
-		if opts.Output != "" && opts.Output != "table" {
-			return fmt.Errorf("unsupported output %q", opts.Output)
-		}
-		return describeFirewall(stdout, router)
-	}
-	if kind == "Orphan" {
-		if opts.Output != "" && opts.Output != "table" {
-			return fmt.Errorf("unsupported output %q", opts.Output)
-		}
-		return writeOrphans(stdout, router, ledger)
-	}
-	if name == "" {
-		return errors.New("describe requires <kind>/<name>")
-	}
-	if kind == "Inventory" {
-		row, err := inventoryShowResource(store, name, opts.EventsLimit)
-		if err != nil {
-			return err
-		}
-		return writeDescribeOutput(stdout, row, store, opts.Output)
-	}
-	resources := selectResources(router.Spec.Resources, kind, name)
-	if len(resources) == 0 {
-		return resourceSelectionError(router.Spec.Resources, kind, name)
-	}
-	rows, err := buildShowResources(router, resources, store, ledger, showOptions{Events: true, ConnectionsLimit: 20})
-	if err != nil {
-		return err
-	}
-	if len(rows) != 1 {
-		return fmt.Errorf("describe expected one resource, got %d", len(rows))
-	}
-	rows[0].Events = eventsForResourceLimit(store, resources[0], opts.EventsLimit)
-	return writeDescribeOutput(stdout, rows[0], store, opts.Output)
+	return emitDescribeResult(stdout, opts.Output, result)
+}
+
+func printDescribeHelp(w io.Writer) {
+	fmt.Fprintln(w, "Usage:")
+	fmt.Fprintln(w, "  routerctl describe <kind>/<name> [--socket <path>] [--events-limit <n>] [-o table|json|yaml]")
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "Flags:")
+	fmt.Fprintln(w, "  -o, --output <format>    output format: table, json, yaml")
+	fmt.Fprintln(w, "      --socket <path>      routerd read-only status Unix domain socket path")
+	fmt.Fprintln(w, "      --timeout <duration> request timeout")
+	fmt.Fprintln(w, "      --events-limit <n>   recent events to include")
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "Examples:")
+	fmt.Fprintln(w, "  routerctl describe Interface/wan")
+	fmt.Fprintln(w, "  routerctl describe pd/wan-pd -o yaml")
 }
 
 func parseDescribeOptions(args []string) (describeOptions, error) {
 	opts := describeOptions{
-		ConfigPath:  defaultConfigPath(),
-		StatePath:   defaultStatePath(),
-		LedgerPath:  defaultLedgerPath(),
+		Socket:      defaultStatusSocketPath(),
+		Timeout:     30 * time.Second,
 		EventsLimit: 10,
 	}
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		switch arg {
-		case "-o", "--output":
-			i++
-			if i >= len(args) {
-				return opts, errors.New("-o requires a value")
-			}
-			opts.Output = args[i]
-		case "--config":
-			i++
-			if i >= len(args) {
-				return opts, errors.New("--config requires a value")
-			}
-			opts.ConfigPath = args[i]
-		case "--state-file":
-			i++
-			if i >= len(args) {
-				return opts, errors.New("--state-file requires a value")
-			}
-			opts.StatePath = args[i]
-		case "--ledger-file":
-			i++
-			if i >= len(args) {
-				return opts, errors.New("--ledger-file requires a value")
-			}
-			opts.LedgerPath = args[i]
-		case "--events-limit":
-			i++
-			if i >= len(args) {
-				return opts, errors.New("--events-limit requires a value")
-			}
-			if _, err := fmt.Sscanf(args[i], "%d", &opts.EventsLimit); err != nil || opts.EventsLimit < 0 {
-				return opts, errors.New("--events-limit must be a non-negative integer")
-			}
-		default:
-			if strings.HasPrefix(arg, "-o=") {
-				opts.Output = strings.TrimPrefix(arg, "-o=")
-				continue
-			}
-			if strings.HasPrefix(arg, "--output=") {
-				opts.Output = strings.TrimPrefix(arg, "--output=")
-				continue
-			}
-			if strings.HasPrefix(arg, "--config=") {
-				opts.ConfigPath = strings.TrimPrefix(arg, "--config=")
-				continue
-			}
-			if strings.HasPrefix(arg, "--state-file=") {
-				opts.StatePath = strings.TrimPrefix(arg, "--state-file=")
-				continue
-			}
-			if strings.HasPrefix(arg, "--ledger-file=") {
-				opts.LedgerPath = strings.TrimPrefix(arg, "--ledger-file=")
-				continue
-			}
-			if strings.HasPrefix(arg, "--events-limit=") {
-				if _, err := fmt.Sscanf(strings.TrimPrefix(arg, "--events-limit="), "%d", &opts.EventsLimit); err != nil || opts.EventsLimit < 0 {
-					return opts, errors.New("--events-limit must be a non-negative integer")
-				}
-				continue
-			}
-			if strings.HasPrefix(arg, "-") {
-				return opts, fmt.Errorf("unknown describe option %q", arg)
-			}
-			if opts.Target != "" {
-				return opts, fmt.Errorf("unexpected describe argument %q", arg)
-			}
-			opts.Target = arg
-		}
+	fs := flag.NewFlagSet("describe", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fs.StringVar(&opts.Output, "o", "table", "output format: table, json, yaml")
+	fs.StringVar(&opts.Output, "output", "table", "output format: table, json, yaml")
+	fs.StringVar(&opts.Socket, "socket", opts.Socket, "routerd read-only status Unix domain socket path")
+	fs.DurationVar(&opts.Timeout, "timeout", opts.Timeout, "request timeout")
+	fs.IntVar(&opts.EventsLimit, "events-limit", opts.EventsLimit, "recent events to include")
+	normalized, err := normalizeInspectionArgs(args, map[string]bool{
+		"-o": true, "--output": true, "--socket": true, "--timeout": true, "--events-limit": true,
+	})
+	if err != nil {
+		return opts, err
 	}
-	if opts.Target == "" {
+	if err := fs.Parse(normalized); err != nil {
+		return opts, err
+	}
+	if fs.NArg() != 1 {
 		return opts, errors.New("describe requires <kind>/<name>")
 	}
+	target, err := canonicalInspectionTargetForAPI("describe", fs.Arg(0))
+	if err != nil {
+		return opts, err
+	}
+	opts.Target = target
 	return opts, nil
+}
+
+func emitDescribeResult(stdout io.Writer, output string, result *controlapi.DescribeResult) error {
+	switch output {
+	case "", "table":
+		return writeResourceViewDescribe(stdout, result.Resource)
+	case "json":
+		return writeJSON(stdout, result)
+	case "yaml":
+		return writeYAML(stdout, result)
+	default:
+		return fmt.Errorf("unsupported output %q", output)
+	}
+}
+
+func writeResourceViewsTable(stdout io.Writer, rows []controlapi.ResourceView) error {
+	w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "KIND\tNAME\tSPEC\tSTATUS\tEVENTS")
+	for _, row := range rows {
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\n", row.Kind, row.Name, specSummary(row.Spec), stateSummary(row.Status), len(row.Events))
+	}
+	return w.Flush()
+}
+
+func writeResourceViewDescribe(stdout io.Writer, row controlapi.ResourceView) error {
+	show := showResource{
+		APIVersion: row.APIVersion,
+		Kind:       row.Kind,
+		Name:       row.Name,
+		Spec:       row.Spec,
+		Observed:   row.Status,
+		State:      row.Status,
+		Events:     row.Events,
+	}
+	return writeDescribe(stdout, show, nil)
+}
+
+func writeLedgerReportTable(stdout io.Writer, report controlapi.LedgerReport) error {
+	w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintf(w, "INTEGRITY\t%s\n", displayCell(report.Integrity))
+	if len(report.Generations) > 0 {
+		fmt.Fprintln(w, "GENERATION\tPHASE\tSTARTED\tHAS_YAML")
+		for _, rec := range report.Generations {
+			fmt.Fprintf(w, "%d\t%s\t%s\t%t\n", rec.Generation, displayCell(rec.Phase), rec.StartedAt.Format(time.RFC3339), rec.HasYAML)
+		}
+	}
+	return w.Flush()
+}
+
+func writeStatusSummaryTable(stdout io.Writer, status controlapi.StatusStatus) error {
+	w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintf(w, "STATUS\t%s\tgeneration=%d\tresources=%d\n", strings.ToUpper(status.Phase), status.Generation, status.ResourceCount)
+	return w.Flush()
 }
 
 func parseShowTarget(target string) (string, string, error) {
