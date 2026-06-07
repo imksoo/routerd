@@ -27,7 +27,9 @@ type Handler struct {
 	TrafficFlowsAggregate func(*http.Request, TrafficFlowsRequest) (*TrafficFlowsAggregate, error)
 	FirewallLogs          func(*http.Request, FirewallLogsRequest) (*FirewallLogs, error)
 	Apply                 func(*http.Request, ApplyRequest) (*ApplyResult, error)
+	Plan                  func(*http.Request, PlanRequest) (*PlanResult, error)
 	Delete                func(*http.Request, DeleteRequest) (*DeleteResult, error)
+	Validate              func(*http.Request, ValidateRequest) (*ValidateResult, error)
 	SetLogLevel           func(*http.Request, LogLevelRequest) (*LogLevelResult, error)
 	DHCPv6Event           func(*http.Request, DHCPv6EventRequest) (*DHCPv6EventResult, error)
 	DHCPLeaseEvent        func(*http.Request, DHCPLeaseEventRequest) (*DHCPLeaseEventResult, error)
@@ -59,8 +61,12 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleFirewallLogs(w, r)
 	case r.Method == http.MethodPost && r.URL.Path == Prefix+"/apply":
 		h.handleApply(w, r)
+	case r.Method == http.MethodPost && r.URL.Path == Prefix+"/plan":
+		h.handlePlan(w, r)
 	case r.Method == http.MethodPost && r.URL.Path == Prefix+"/delete":
 		h.handleDelete(w, r)
+	case r.Method == http.MethodPost && r.URL.Path == Prefix+"/validate":
+		h.handleValidate(w, r)
 	case r.Method == http.MethodPost && r.URL.Path == Prefix+"/log-level":
 		h.handleSetLogLevel(w, r)
 	case r.Method == http.MethodPost && r.URL.Path == Prefix+"/dhcpv6-event":
@@ -377,6 +383,37 @@ func (h Handler) handleApply(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
+func (h Handler) handlePlan(w http.ResponseWriter, r *http.Request) {
+	if h.Plan == nil {
+		writeError(w, http.StatusNotImplemented, "plan handler is not configured")
+		return
+	}
+	defer r.Body.Close()
+	var req PlanRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if req.APIVersion != "" && req.APIVersion != APIVersion {
+		writeError(w, http.StatusBadRequest, "unsupported apiVersion")
+		return
+	}
+	if req.Kind != "" && req.Kind != "PlanRequest" {
+		writeError(w, http.StatusBadRequest, "unsupported kind")
+		return
+	}
+	result, err := h.Plan(r, req)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, ErrBadRequest) {
+			status = http.StatusBadRequest
+		}
+		writeError(w, status, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
 func (h Handler) handleDelete(w http.ResponseWriter, r *http.Request) {
 	if h.Delete == nil {
 		writeError(w, http.StatusNotImplemented, "delete handler is not configured")
@@ -397,6 +434,37 @@ func (h Handler) handleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := h.Delete(r, req)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, ErrBadRequest) {
+			status = http.StatusBadRequest
+		}
+		writeError(w, status, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (h Handler) handleValidate(w http.ResponseWriter, r *http.Request) {
+	if h.Validate == nil {
+		writeError(w, http.StatusNotImplemented, "validate handler is not configured")
+		return
+	}
+	defer r.Body.Close()
+	var req ValidateRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if req.APIVersion != "" && req.APIVersion != APIVersion {
+		writeError(w, http.StatusBadRequest, "unsupported apiVersion")
+		return
+	}
+	if req.Kind != "" && req.Kind != "ValidateRequest" {
+		writeError(w, http.StatusBadRequest, "unsupported kind")
+		return
+	}
+	result, err := h.Validate(r, req)
 	if err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, ErrBadRequest) {

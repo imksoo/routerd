@@ -102,6 +102,25 @@ func (c *Client) Apply(ctx context.Context, request ApplyRequest) (*ApplyResult,
 	return &result, nil
 }
 
+func (c *Client) Plan(ctx context.Context, request PlanRequest) (*PlanResult, error) {
+	request.APIVersion = APIVersion
+	request.Kind = "PlanRequest"
+	data, err := json.Marshal(request)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+Prefix+"/plan", bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	var result PlanResult
+	if err := c.do(req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
 func (c *Client) Delete(ctx context.Context, request DeleteRequest) (*DeleteResult, error) {
 	request.APIVersion = APIVersion
 	request.Kind = "DeleteRequest"
@@ -115,6 +134,25 @@ func (c *Client) Delete(ctx context.Context, request DeleteRequest) (*DeleteResu
 	}
 	req.Header.Set("Content-Type", "application/json")
 	var result DeleteResult
+	if err := c.do(req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+func (c *Client) Validate(ctx context.Context, request ValidateRequest) (*ValidateResult, error) {
+	request.APIVersion = APIVersion
+	request.Kind = "ValidateRequest"
+	data, err := json.Marshal(request)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+Prefix+"/validate", bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	var result ValidateResult
 	if err := c.do(req, &result); err != nil {
 		return nil, err
 	}

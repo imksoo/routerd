@@ -86,6 +86,7 @@ type applyOptions struct {
 	AnnounceDryRunToCLI bool
 	MgmtLockoutWriter   io.Writer
 	SkipConfigCommit    bool
+	ConfigYAMLOverride  string
 }
 
 func effectiveApplyPolicy(router *api.Router) api.ApplyPolicySpec {
@@ -155,6 +156,9 @@ func routerConfigHash(router *api.Router) string {
 }
 
 func routerConfigYAML(router *api.Router, opts applyOptions) string {
+	if strings.TrimSpace(opts.ConfigYAMLOverride) != "" {
+		return opts.ConfigYAMLOverride
+	}
 	if path := strings.TrimSpace(opts.ConfigPath); path != "" {
 		if data, err := config.CanonicalYAMLFile(path); err == nil {
 			return string(data)

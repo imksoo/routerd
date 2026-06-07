@@ -457,6 +457,164 @@ spec:
 	}
 }
 
+func TestServeConfigMutatorApplyReplaceCommitsCanonicalAndGeneration(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "router.yaml")
+	statePath := filepath.Join(dir, "routerd.db")
+	statusPath := filepath.Join(dir, "status.json")
+	ledgerPath := filepath.Join(dir, "ledger.db")
+	if err := os.WriteFile(configPath, []byte(testRouterYAML("old-router")), 0644); err != nil {
+		t.Fatalf("write canonical config: %v", err)
+	}
+	router, err := config.Load(configPath)
+	if err != nil {
+		t.Fatalf("load router: %v", err)
+	}
+	mutator := serveConfigMutator{
+		configPath: configPath,
+		statePath:  statePath,
+		baseOpts: applyOptions{
+			ConfigPath:         configPath,
+			StatePath:          statePath,
+			StatusFile:         statusPath,
+			LedgerPath:         ledgerPath,
+			SkipServiceManager: true,
+		},
+		cache:     &resultCache{},
+		logger:    &eventlog.Logger{},
+		getRouter: func() *api.Router { return router },
+		setRouter: func(next *api.Router) { router = next },
+	}
+	candidate := `# replacement comment
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: new-router
+spec:
+  resources: []
+`
+	result, err := mutator.apply(nil, controlapi.ApplyRequest{CandidateYAML: candidate, Replace: true})
+	if err != nil {
+		t.Fatalf("mutating apply: %v", err)
+	}
+	if result.Result.Phase != "Healthy" || result.Result.Generation == 0 {
+		t.Fatalf("result = %+v", result.Result)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read canonical config: %v", err)
+	}
+	if !strings.Contains(string(data), "name: new-router") || !strings.Contains(string(data), "# replacement comment") {
+		t.Fatalf("canonical config was not replaced with candidate:\n%s", data)
+	}
+	if router.Metadata.Name != "new-router" {
+		t.Fatalf("in-memory router = %q, want new-router", router.Metadata.Name)
+	}
+	store, err := routerstate.OpenSQLite(statePath)
+	if err != nil {
+		t.Fatalf("open state: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+	configYAML, ok, err := store.GenerationConfig(result.Result.Generation)
+	if err != nil {
+		t.Fatalf("generation config: %v", err)
+	}
+	if !ok || !strings.Contains(configYAML, "name: new-router") {
+		t.Fatalf("generation config = ok %t:\n%s", ok, configYAML)
+	}
+}
+
+func TestServeConfigMutatorRejectsInvalidCandidateWithoutChangingCanonical(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "router.yaml")
+	original := testRouterYAML("stable-router")
+	if err := os.WriteFile(configPath, []byte(original), 0644); err != nil {
+		t.Fatalf("write canonical config: %v", err)
+	}
+	router, err := config.Load(configPath)
+	if err != nil {
+		t.Fatalf("load router: %v", err)
+	}
+	mutator := serveConfigMutator{
+		configPath: configPath,
+		statePath:  filepath.Join(dir, "routerd.db"),
+		baseOpts:   applyOptions{ConfigPath: configPath, StatePath: filepath.Join(dir, "routerd.db"), LedgerPath: filepath.Join(dir, "ledger.db"), SkipServiceManager: true},
+		cache:      &resultCache{},
+		logger:     &eventlog.Logger{},
+		getRouter:  func() *api.Router { return router },
+		setRouter:  func(next *api.Router) { router = next },
+	}
+	_, err = mutator.apply(nil, controlapi.ApplyRequest{CandidateYAML: `apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata: {}
+spec:
+  resources: []
+`, Replace: true})
+	if err == nil {
+		t.Fatal("mutating apply succeeded, want validation error")
+	}
+	data, readErr := os.ReadFile(configPath)
+	if readErr != nil {
+		t.Fatalf("read canonical config: %v", readErr)
+	}
+	if string(data) != original {
+		t.Fatalf("canonical changed after invalid candidate:\n%s", data)
+	}
+}
+
+func TestServeConfigMutatorDeleteNoReconcileUpdatesCanonical(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "router.yaml")
+	statePath := filepath.Join(dir, "routerd.db")
+	input := `apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: delete-router
+spec:
+  resources:
+    # resource to remove
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Hostname
+      metadata:
+        name: appliance
+      spec:
+        hostname: appliance.example
+`
+	if err := os.WriteFile(configPath, []byte(input), 0644); err != nil {
+		t.Fatalf("write canonical config: %v", err)
+	}
+	router, err := config.Load(configPath)
+	if err != nil {
+		t.Fatalf("load router: %v", err)
+	}
+	mutator := serveConfigMutator{
+		configPath: configPath,
+		statePath:  statePath,
+		baseOpts:   applyOptions{ConfigPath: configPath, StatePath: statePath, LedgerPath: filepath.Join(dir, "ledger.db"), SkipServiceManager: true},
+		cache:      &resultCache{},
+		logger:     &eventlog.Logger{},
+		getRouter:  func() *api.Router { return router },
+		setRouter:  func(next *api.Router) { router = next },
+	}
+	result, err := mutator.delete(nil, controlapi.DeleteRequest{Target: "Hostname/appliance", NoReconcile: true})
+	if err != nil {
+		t.Fatalf("delete mutation: %v", err)
+	}
+	if result.Result == nil || result.Result.Phase != "Committed" || result.Result.Generation == 0 {
+		t.Fatalf("delete result = %+v", result)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read canonical config: %v", err)
+	}
+	if strings.Contains(string(data), "appliance") || strings.Contains(string(data), "resource to remove") {
+		t.Fatalf("canonical still contains deleted resource:\n%s", data)
+	}
+	if len(router.Spec.Resources) != 0 {
+		t.Fatalf("in-memory resources = %d, want 0", len(router.Spec.Resources))
+	}
+}
+
 func TestRollbackListShowsStoredGenerations(t *testing.T) {
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, "routerd.db")
@@ -879,6 +1037,25 @@ func TestListenUnixSocketSetsMode(t *testing.T) {
 	}
 	if got, want := info.Mode().Perm(), os.FileMode(0o666); got != want {
 		t.Fatalf("socket mode = %v, want %v", got, want)
+	}
+}
+
+func TestGroupOwnMutationSocketKeepsPrivilegedMode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "routerd-control.sock")
+	listener, err := listenUnixSocket(path, 0o666)
+	if err != nil {
+		t.Fatalf("listen unix socket: %v", err)
+	}
+	defer listener.Close()
+
+	groupOwnMutationSocket(path)
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat socket: %v", err)
+	}
+	if got, want := info.Mode().Perm(), os.FileMode(0o660); got != want {
+		t.Fatalf("mutation socket mode = %v, want %v", got, want)
 	}
 }
 
