@@ -11,10 +11,14 @@ if (!builderPath || !outDir) {
 }
 
 const builder = require(path.resolve(builderPath));
-const fixtures = builder.buildHomeRouterFixtureYamls();
+const fixtures = builder.buildWizardFixtureYamls
+  ? builder.buildWizardFixtureYamls()
+  : builder.buildHomeRouterFixtureYamls();
 
 fs.rmSync(outDir, { recursive: true, force: true });
 fs.mkdirSync(outDir, { recursive: true });
 for (const [name, yaml] of Object.entries(fixtures).sort(([a], [b]) => a.localeCompare(b))) {
-  fs.writeFileSync(path.join(outDir, name), yaml, "utf8");
+  const outPath = path.join(outDir, name);
+  fs.mkdirSync(path.dirname(outPath), { recursive: true });
+  fs.writeFileSync(outPath, yaml, "utf8");
 }

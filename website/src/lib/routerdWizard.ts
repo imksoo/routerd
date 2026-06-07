@@ -7,8 +7,14 @@ export const ROUTERD_CONFIG_MODELINE = `# yaml-language-server: $schema=${ROUTER
 const ROUTER_API = "routerd.net/v1alpha1";
 const NET_API = "net.routerd.net/v1alpha1";
 const FIREWALL_API = "firewall.routerd.net/v1alpha1";
+const FEDERATION_API = "federation.routerd.net/v1alpha1";
+const HYBRID_API = "hybrid.routerd.net/v1alpha1";
+const MOBILITY_API = "mobility.routerd.net/v1alpha1";
 
 export type HomeWanMode = "dhcpv4" | "pppoe" | "dslite" | "static";
+export type WizardProfile = "home" | "sam";
+export type SAMNodeRole = "onprem" | "cloud";
+export type SAMProvider = "aws" | "azure" | "oci";
 
 export interface HomeRouterWizardState {
   routerName: string;
@@ -50,6 +56,32 @@ export interface WizardFixtureScenario {
   name: string;
   description: string;
   state: HomeRouterWizardState;
+}
+
+export interface SAMNode {
+  nodeRef: string;
+  site: string;
+  role: SAMNodeRole;
+  underlayIPv4: string;
+  wgEndpoint: string;
+  wgPublicKey: string;
+  routerID: string;
+  provider?: SAMProvider;
+  providerRef?: string;
+  captureInterface?: string;
+  staticOwnedAddresses?: string[];
+  vrrpGateRef?: string;
+  placementGroup?: string;
+  placementPriority?: number;
+}
+
+export interface SAMWizardState {
+  name: string;
+  mobilityPrefix: string;
+  innerCIDR: string;
+  bgpASN: number;
+  routeReflectorNodeRef: string;
+  nodes: SAMNode[];
 }
 
 type RouterResource = {
@@ -105,6 +137,55 @@ export const DEFAULT_HOME_ROUTER_STATE: HomeRouterWizardState = {
     priority: 150,
     peer: "192.168.10.2",
   },
+};
+
+export const DEFAULT_SAM_WIZARD_STATE: SAMWizardState = {
+  name: "cloudedge",
+  mobilityPrefix: "10.77.60.0/24",
+  innerCIDR: "10.255.0.0/24",
+  bgpASN: 64577,
+  routeReflectorNodeRef: "onprem-router",
+  nodes: [
+    {
+      nodeRef: "onprem-router",
+      site: "onprem",
+      role: "onprem",
+      underlayIPv4: "10.99.0.1",
+      wgEndpoint: "onprem.example.net:51820",
+      wgPublicKey: "${ONPREM_WG_PUBLIC_KEY}",
+      routerID: "10.99.0.1",
+      captureInterface: "ens21",
+      staticOwnedAddresses: ["10.77.60.10/32"],
+    },
+    {
+      nodeRef: "aws-router-a",
+      site: "aws",
+      role: "cloud",
+      underlayIPv4: "10.99.0.2",
+      wgEndpoint: "aws-a.example.net:51820",
+      wgPublicKey: "${AWS_ROUTER_A_WG_PUBLIC_KEY}",
+      routerID: "10.99.0.2",
+      provider: "aws",
+      providerRef: "aws-lab",
+      captureInterface: "ens5",
+      placementGroup: "aws-edge",
+      placementPriority: 10,
+    },
+    {
+      nodeRef: "azure-router",
+      site: "azure",
+      role: "cloud",
+      underlayIPv4: "10.99.0.3",
+      wgEndpoint: "azure.example.net:51820",
+      wgPublicKey: "${AZURE_WG_PUBLIC_KEY}",
+      routerID: "10.99.0.3",
+      provider: "azure",
+      providerRef: "azure-lab",
+      captureInterface: "eth0",
+      placementGroup: "azure-edge",
+      placementPriority: 10,
+    },
+  ],
 };
 
 export const HOME_ROUTER_FIXTURE_SCENARIOS: WizardFixtureScenario[] = [
@@ -270,6 +351,165 @@ export function buildHomeRouterFixtureYamls(): Record<string, string> {
       buildHomeRouterYaml(scenario.state),
     ]),
   );
+}
+
+export function mergeSAMWizardState(overrides: PartialSAMWizardState = {}): SAMWizardState {
+  return {
+    name: overrides.name ?? DEFAULT_SAM_WIZARD_STATE.name,
+    mobilityPrefix: overrides.mobilityPrefix ?? DEFAULT_SAM_WIZARD_STATE.mobilityPrefix,
+    innerCIDR: overrides.innerCIDR ?? DEFAULT_SAM_WIZARD_STATE.innerCIDR,
+    bgpASN: overrides.bgpASN ?? DEFAULT_SAM_WIZARD_STATE.bgpASN,
+    routeReflectorNodeRef: overrides.routeReflectorNodeRef ?? DEFAULT_SAM_WIZARD_STATE.routeReflectorNodeRef,
+    nodes: overrides.nodes ?? DEFAULT_SAM_WIZARD_STATE.nodes.map((node) => ({...node})),
+  };
+}
+
+type PartialSAMWizardState = {
+  name?: string;
+  mobilityPrefix?: string;
+  innerCIDR?: string;
+  bgpASN?: number;
+  routeReflectorNodeRef?: string;
+  nodes?: SAMNode[];
+};
+
+export function buildSAMRouterConfig(state: SAMWizardState, selfNodeRef: string): RouterConfig {
+  const nodes = stableSAMNodes(state.nodes);
+  const self = nodes.find((node) => node.nodeRef === selfNodeRef) ?? nodes[0];
+  const topologyNodeRefs = nodes.map((node) => node.nodeRef).sort();
+  const routeReflector = nodes.find((node) => node.nodeRef === state.routeReflectorNodeRef) ?? nodes[0];
+  const resources: RouterResource[] = [];
+
+  resources.push(resource(FEDERATION_API, "EventGroup", "cloudedge", {
+    nodeName: self.nodeRef,
+    retention: {
+      maxEvents: 1000,
+      maxAge: "24h",
+    },
+    listen: {
+      address: self.underlayIPv4,
+      port: 9443,
+    },
+    replayWindow: "5m",
+  }));
+
+  for (const peer of nodes.filter((node) => node.nodeRef !== self.nodeRef)) {
+    resources.push(resource(FEDERATION_API, "EventPeer", peer.nodeRef, {
+      groupRef: "cloudedge",
+      nodeName: peer.nodeRef,
+      endpoint: `http://${peer.underlayIPv4}:9443`,
+      direction: "push",
+      types: ["routerd.client.ipv4.observed", "routerd.client.ipv4.expired"],
+      subjectPrefixes: [mobilitySubjectPrefix(state.mobilityPrefix)],
+    }));
+  }
+
+  resources.push(resource(NET_API, "WireGuardInterface", "wg-hybrid", {
+    privateKeyFile: "/usr/local/etc/routerd/secrets/wg-hybrid.key",
+    listenPort: 51820,
+    mtu: 1420,
+  }));
+  resources.push(resource(NET_API, "Interface", "wg-hybrid", {
+    ifname: "wg-hybrid",
+    managed: false,
+    mtu: 1420,
+  }));
+  resources.push(resource(NET_API, "IPv4StaticAddress", "wg-hybrid-ipv4", {
+    interface: "wg-hybrid",
+    address: `${self.underlayIPv4}/32`,
+  }));
+
+  for (const peer of nodes.filter((node) => node.nodeRef !== self.nodeRef)) {
+    resources.push(resource(NET_API, "WireGuardPeer", `wg-${peer.nodeRef}`, {
+      interface: "wg-hybrid",
+      publicKey: peer.wgPublicKey,
+      endpoint: peer.wgEndpoint,
+      allowedIPs: [`${peer.underlayIPv4}/32`],
+      persistentKeepalive: 25,
+    }));
+  }
+
+  resources.push(resource(NET_API, "BGPRouter", "mobility-bgp", {
+    asn: state.bgpASN,
+    routerID: self.routerID || self.underlayIPv4,
+    listen: {port: 179},
+    importPolicy: {
+      allowedPrefixes: [state.mobilityPrefix],
+      nextHopRewrite: self.nodeRef === routeReflector.nodeRef ? "unchanged" : "peer-address",
+    },
+    exportPolicy: {
+      allowedPrefixes: [state.mobilityPrefix],
+    },
+    timers: {profile: "fast"},
+    convergenceProfile: "fast",
+  }));
+
+  resources.push(resource(MOBILITY_API, "SAMTransportProfile", "cloudedge-transport", {
+    selfNodeRef: self.nodeRef,
+    mode: "ipip",
+    encryption: "wireguard",
+    innerPrefix: state.innerCIDR,
+    topologyNodeRefs,
+    underlayInterface: "wg-hybrid",
+    localEndpointFrom: ref("IPv4StaticAddress/wg-hybrid-ipv4", "address"),
+    bgp: {
+      routerRef: "BGPRouter/mobility-bgp",
+      peerASN: state.bgpASN,
+      timersPreset: "fast",
+      routeReflectorClient: self.nodeRef !== routeReflector.nodeRef,
+      routeReflectorClusterID: self.nodeRef !== routeReflector.nodeRef ? routeReflector.routerID : undefined,
+      importPolicy: {
+        allowedPrefixes: [state.mobilityPrefix],
+        nextHopRewrite: self.nodeRef === routeReflector.nodeRef ? "unchanged" : "peer-address",
+      },
+      exportPolicy: {
+        allowedPrefixes: [state.mobilityPrefix],
+      },
+    },
+    peers: nodes
+      .filter((node) => node.nodeRef !== self.nodeRef)
+      .map((node) => ({
+        nodeRef: node.nodeRef,
+        remoteEndpoint: node.underlayIPv4,
+      })),
+  }));
+
+  addSAMProviderProfiles(resources, nodes);
+  resources.push(resource(MOBILITY_API, "MobilityPool", state.name || "cloudedge", {
+    prefix: state.mobilityPrefix,
+    groupRef: "cloudedge",
+    deliveryPolicy: {mode: "bgp"},
+    members: nodes.map((node) => mobilityMember(node)),
+  }));
+
+  return {
+    apiVersion: ROUTER_API,
+    kind: "Router",
+    metadata: {
+      name: `${sanitizeName(state.name || "cloudedge")}-${sanitizeName(self.nodeRef)}`,
+    },
+    spec: {
+      resources,
+    },
+  };
+}
+
+export function buildSAMRouterYamls(state: SAMWizardState): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const node of stableSAMNodes(state.nodes)) {
+    out[`${node.nodeRef}.yaml`] = `${ROUTERD_CONFIG_MODELINE}\n${dumpYaml(buildSAMRouterConfig(state, node.nodeRef))}\n`;
+  }
+  return out;
+}
+
+export function buildWizardFixtureYamls(): Record<string, string> {
+  const home = Object.fromEntries(
+    Object.entries(buildHomeRouterFixtureYamls()).map(([name, yaml]) => [`home/${name}`, yaml]),
+  );
+  const sam = Object.fromEntries(
+    Object.entries(buildSAMRouterYamls(DEFAULT_SAM_WIZARD_STATE)).map(([name, yaml]) => [`sam/cloudedge-3node/${name}`, yaml]),
+  );
+  return {...home, ...sam};
 }
 
 function addWanResources(resources: RouterResource[], state: HomeRouterWizardState, wanEgress: string): void {
@@ -521,6 +761,139 @@ function addVRRPResources(resources: RouterResource[], state: HomeRouterWizardSt
       peers: state.ha.peer ? [state.ha.peer] : [],
     },
   }));
+}
+
+function stableSAMNodes(nodes: SAMNode[]): SAMNode[] {
+  const candidates = nodes.length > 0 ? nodes : DEFAULT_SAM_WIZARD_STATE.nodes;
+  const seen = new Set<string>();
+  const out: SAMNode[] = [];
+  for (const node of candidates) {
+    const nodeRef = sanitizeSAMName(node.nodeRef || node.site || "node");
+    if (seen.has(nodeRef)) {
+      continue;
+    }
+    seen.add(nodeRef);
+    const role: SAMNodeRole = node.role === "cloud" ? "cloud" : "onprem";
+    const provider = role === "cloud" ? (node.provider ?? "aws") : undefined;
+    out.push({
+      ...node,
+      nodeRef,
+      site: sanitizeSAMName(node.site || nodeRef),
+      role,
+      underlayIPv4: node.underlayIPv4 || "10.99.0.1",
+      wgEndpoint: node.wgEndpoint || `${nodeRef}.example.net:51820`,
+      wgPublicKey: node.wgPublicKey || `\${${nodeRef.toUpperCase().replace(/-/g, "_")}_WG_PUBLIC_KEY}`,
+      routerID: node.routerID || node.underlayIPv4 || "10.99.0.1",
+      provider,
+      providerRef: role === "cloud" ? (node.providerRef || `${provider}-lab`) : undefined,
+      captureInterface: node.captureInterface || (role === "cloud" ? defaultCloudInterface(provider) : "ens21"),
+      staticOwnedAddresses: role === "onprem" ? node.staticOwnedAddresses : undefined,
+      placementGroup: role === "cloud" ? (node.placementGroup || `${node.site || provider}-edge`) : undefined,
+      placementPriority: role === "cloud" ? (node.placementPriority || 10) : undefined,
+    });
+  }
+  return out.sort((a, b) => a.nodeRef.localeCompare(b.nodeRef));
+}
+
+function sanitizeSAMName(value: string): string {
+  return sanitizeName(value).replace(/^home-router$/, "node");
+}
+
+function mobilitySubjectPrefix(prefix: string): string {
+  const address = addressHost(prefix);
+  const parts = address.split(".");
+  if (parts.length === 4 && parts.every((part) => /^\d+$/.test(part))) {
+    return `${parts[0]}.${parts[1]}.${parts[2]}.`;
+  }
+  return address;
+}
+
+function addSAMProviderProfiles(resources: RouterResource[], nodes: SAMNode[]): void {
+  const emitted = new Set<string>();
+  for (const node of nodes) {
+    if (node.role !== "cloud" || !node.provider || !node.providerRef || emitted.has(node.providerRef)) {
+      continue;
+    }
+    emitted.add(node.providerRef);
+    resources.push(resource(HYBRID_API, "CloudProviderProfile", node.providerRef, {
+      provider: node.provider,
+      capabilities: providerCapabilities(node.provider),
+      auth: {
+        mode: "external-command",
+        command: `/usr/local/libexec/routerd/plugins/${node.provider}-auth`,
+      },
+    }));
+  }
+}
+
+function providerCapabilities(provider: SAMProvider): string[] {
+  switch (provider) {
+    case "azure":
+      return ["nic-secondary-ip", "ip-forwarding"];
+    case "oci":
+      return ["vnic-secondary-ip", "skip-source-dest-check"];
+    case "aws":
+    default:
+      return ["eni-secondary-ip", "source-dest-check-disable"];
+  }
+}
+
+function providerMode(provider: SAMProvider): string {
+  switch (provider) {
+    case "azure":
+      return "nic-secondary-ip";
+    case "oci":
+      return "vnic-secondary-ip";
+    case "aws":
+    default:
+      return "eni-secondary-ip";
+  }
+}
+
+function defaultCloudInterface(provider?: SAMProvider): string {
+  return provider === "azure" ? "eth0" : "ens5";
+}
+
+function mobilityMember(node: SAMNode): Record<string, unknown> {
+  if (node.role === "cloud") {
+    return {
+      nodeRef: node.nodeRef,
+      site: node.site,
+      role: "cloud",
+      capture: {
+        type: "provider-secondary-ip",
+        interface: node.captureInterface || defaultCloudInterface(node.provider),
+        providerRef: node.providerRef,
+        providerMode: providerMode(node.provider ?? "aws"),
+        configureOSAddress: false,
+      },
+      ownershipDiscovery: {
+        mode: "provider-private-ip",
+        providerRef: node.providerRef,
+        scope: {includePrimary: false},
+        scanInterval: "60s",
+        leaseTTL: "10m",
+      },
+      placement: {
+        group: node.placementGroup,
+        priority: node.placementPriority,
+      },
+    };
+  }
+  return {
+    nodeRef: node.nodeRef,
+    site: node.site,
+    role: "onprem",
+    staticOwnedAddresses: node.staticOwnedAddresses,
+    capture: {
+      type: "proxy-arp",
+      interface: node.captureInterface || "ens21",
+      gratuitousARP: true,
+      activeWhen: node.vrrpGateRef
+        ? {type: "vrrp-master", virtualAddressRef: node.vrrpGateRef}
+        : {type: "single-router"},
+    },
+  };
 }
 
 function resource(apiVersion: string, kind: string, name: string, spec: Record<string, unknown>): RouterResource {
