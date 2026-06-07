@@ -183,9 +183,9 @@ for DoH or DoT endpoint name resolution.
 | `HybridRoute` | Lowers non-default remote IPv4 prefixes through an `OverlayPeer` into managed `IPv4Route` resources. |
 | `MobilityPool` | Declares the only operator-authored CloudEdge mobility intent: pool prefix, federation group, node-to-site membership, BGP delivery policy, optional reusable cloud capture profiles, local value expansion, and provider trap placement. routerd derives BGP `/32` advertisements and provider trap action plans from observed facts and BGP best paths. |
 | `SAMTransportProfile` | Declares this router's stable `selfNodeRef`, shared topology node list, inner tunnel prefix, underlay interface, BGP router, and SAM transport peers. routerd derives per-peer `TunnelInterface`, endpoint `/32` `IPv4Route`, and `BGPPeer` resources through a replace-on-reconcile `DynamicConfigPart`. |
-| `AddressMobilityDomain` | Defines an IPv4 prefix for Selective Address Mobility; full L2 extension is not supported. |
+| `AddressMobilityDomain` | Low-level compatibility SAM resource that defines an IPv4 prefix for hand-authored selective-address configs; full L2 extension is not supported. |
 | `CloudProviderProfile` | Describes provider capabilities and external-command auth for declarative address capture planning. |
-| `RemoteAddressClaim` | Declares one mobile IPv4 `/32`, its capture mechanism, and route delivery over an `OverlayPeer`. |
+| `RemoteAddressClaim` | Low-level compatibility SAM resource that declares one mobile IPv4 `/32`, its capture mechanism, and legacy route delivery over an `OverlayPeer`. |
 | `IPAddressSet` | Defines reusable IP address sets from literal addresses and FQDNs. Linux nftables renderers materialize these as named sets for firewall, redirect, NAT, and policy-routing consumers. |
 | `IPv4Route` | Adds IPv4 routes, including DS-Lite defaults and explicit drop routes. |
 | `ClusterNetworkRoute` | Expands Kubernetes Pod and Service CIDRs into static IPv4 routes through worker next hops. |
@@ -211,11 +211,12 @@ routes, accepts only the main table, and lowers IPv4 destinations into the
 existing `IPv4Route` controller path instead of installing routes directly.
 
 CloudEdge Mobility keeps the operator-authored surface declarative:
-`MobilityPool` is the high-level intent, federation events are observed facts,
-and BGP best paths are the mobility ownership/delivery view. The mobility
-planner derives BGP `/32` advertisements and provider trap action plans;
-operators should not hand-author per-address paths or capture procedures for
-the mobility control plane. `AddressMobilityDomain` and `RemoteAddressClaim`
+`MobilityPool` is the high-level address/capture intent,
+`SAMTransportProfile` is the high-level transport/BGP intent, federation events
+are observed facts, and BGP best paths are the mobility ownership/delivery view.
+The mobility planner derives BGP `/32` advertisements and provider trap action
+plans; operators should not hand-author per-address paths or capture procedures
+for the mobility control plane. `AddressMobilityDomain` and `RemoteAddressClaim`
 remain supported as lower-level SAM compatibility Kinds outside the MobilityPool
 BGP path.
 
@@ -249,9 +250,11 @@ compatibility, but `routerd validate`, plan, and apply warn when a remote member
 contains local capture or discovery details. Future pre-release configs may
 require identity-only remote members.
 
-Selective Address Mobility is declarative in this MVP. `RemoteAddressClaim`
-does not configure firewall or NAT policy. Operators compose firewall/NAT by
-referencing literal addresses in the existing firewall and NAT resources.
+Selective Address Mobility does not configure firewall or NAT policy. Operators
+compose firewall/NAT by referencing literal addresses in the existing firewall
+and NAT resources. Provider action plans are review artifacts until they are
+imported into the action journal and allowed by `ProviderActionPolicy`, approval,
+allowlists, and an executor plugin.
 
 routerd derives reverse path filter sysctls, tunnel MTU, RA MTU, and TCP MSS
 clamping from router role, tunnel, firewall zone, and RA/DHCPv6 resources.

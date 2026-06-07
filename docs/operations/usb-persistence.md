@@ -23,6 +23,7 @@ routerd/
   usb-device
   usb-flush-enabled
   log-limit
+  secrets/
   logs/
   state/
 ```
@@ -45,6 +46,14 @@ If a config is found, it is copied to `/usr/local/etc/routerd/router.yaml` and
 applied by the live ISO startup path. The source and SHA256 are recorded in
 `/run/routerd/live-config-source` and `/run/routerd/live-config-sha256` for
 acceptance tests and troubleshooting.
+Secrets are restored before apply. The helper accepts these layouts, in order:
+
+- `routerd/hosts/<hostname>/secrets/`
+- `routerd/hosts/<mac>/secrets/` with either colon-separated or compact lowercase
+  MAC address
+- `routerd/secrets/`
+
+Files are installed under `/usr/local/etc/routerd/secrets` with mode `0600`.
 If no saved config is found and `/usr/local/etc/routerd/router.yaml` is still
 missing, the ISO starts the configure wizard.
 
@@ -88,6 +97,7 @@ If the daily flush job is enabled, `/etc/periodic/daily/routerd-usb-flush`
 copies these artifacts to USB:
 
 - current `router.yaml`
+- files under `/usr/local/etc/routerd/secrets`
 - state archive from `/var/lib/routerd`
 - state archive from `/var/db/routerd`
 - compressed log archive from `/run/routerd/logs`
@@ -146,6 +156,11 @@ Save a config to USB:
 ```sh
 /usr/share/routerd/live-persistence.sh save-config /dev/sdb1 /usr/local/etc/routerd/router.yaml yes 100M
 ```
+
+`save-config` also copies `/usr/local/etc/routerd/secrets` to
+`routerd/secrets/` on the persistence device when that directory exists. Use
+root-owned secret files and avoid vfat/exfat for long-lived secret storage when
+you need Unix permissions on the removable device itself.
 
 Restore happens automatically at boot. To force the boot-time logic from a
 shell:

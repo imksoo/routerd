@@ -6,7 +6,7 @@
 > client's default gateway. The runnable package is
 > [`examples/cloudedge-mobility-demo/`](https://github.com/imksoo/routerd/tree/main/examples/cloudedge-mobility-demo).
 
-![CloudEdge Mobility demo: four sites sharing 10.77.60.0/24, each owner address captured at every non-owner site over a WireGuard/Hybrid overlay, with no NAT and source IPs preserved](../images/cloudedge-mobility-demo.png)
+![CloudEdge Mobility demo: four sites sharing 10.77.60.0/24, each owner address captured at every non-owner site over generated SAM transport, with no NAT and source IPs preserved](../images/cloudedge-mobility-demo.png)
 
 ## What this demo shows
 
@@ -33,9 +33,9 @@ All four sites share one logical subnet; each site owns exactly one `/32` within
 | Azure | `azure-router` | `10.77.60.12/32` | NIC secondary ipConfig |
 | OCI | `oci-router` | `10.77.60.13/32` | VNIC secondary private IP |
 
-Logical subnet: **`10.77.60.0/24`**. The overlay between routers is a *separate*
-RFC1918 WireGuard network (kept clear of link-local `169.254/16` and CGNAT
-`100.64/10`); see
+Logical subnet: **`10.77.60.0/24`**. The router-to-router transport uses a
+separate RFC1918 endpoint/inner addressing plan (kept clear of link-local
+`169.254/16` and CGNAT `100.64/10`); see
 [Selective Address Mobility](../reference/selective-address-mobility) for the
 addressing constraints.
 
@@ -48,8 +48,10 @@ addressing constraints.
   owner addresses on the LAN.
 - **BGP /32 delivery** — each owner advertises its owned `/32`; other routers
   import the best path and forward over the overlay to the owning site's router.
-- **WireGuard / Hybrid overlay** — routers interconnect over WireGuard (the Hybrid
-  overlay), independent of the shared `/24`.
+- **Generated SAM transport** — routers interconnect through
+  `SAMTransportProfile`-derived IPIP tunnels and BGP peers. WireGuard, when
+  enabled, is endpoint-only encryption underlay; its `AllowedIPs` contain
+  transport endpoint prefixes, not mobile `/32`s.
 
 Because delivery is routed (not NAT'd), the **source IP is preserved** and the
 client's **default gateway is unchanged**.
@@ -64,8 +66,11 @@ The operator declares only intent; everything else is derived.
   completely with `profiles.cloudCaptures`, `spec.values`, `targetFrom`, and
   `subnetRefFrom`; remote sites are identity-only peer entries. Like BGP, a node
   needs to know the peers, not their provider NIC/subnet implementation details.
+- **SAMTransportProfile** — derives the per-peer `TunnelInterface`, endpoint
+  `/32` `IPv4Route`, and `BGPPeer` resources from a shared topology and inner
+  prefix.
 - **BGP /32 mobility paths** — each owner advertises its owned host route; other
-  sites learn the current best path over the overlay.
+  sites learn the current best path over the generated SAM transport.
 - **Provider trap actions** — cloud routers eventually assign/unassign remote
   owned /32s as secondary IPs for local trapping; these actions are no longer on
   the critical forwarding path.
@@ -89,8 +94,9 @@ remote members.
 ## How to run it
 
 Use the package under `examples/cloudedge-mobility-demo/`. It assumes the lab
-instances, NICs/VNICs, identity permissions, SSH, WireGuard keys, and provider
-CLIs are already prepared — the scripts do **not** provision cloud resources.
+instances, NICs/VNICs, identity permissions, SSH, optional WireGuard endpoint
+keys, and provider CLIs are already prepared — the scripts do **not** provision
+cloud resources.
 
 ```sh
 cd examples/cloudedge-mobility-demo

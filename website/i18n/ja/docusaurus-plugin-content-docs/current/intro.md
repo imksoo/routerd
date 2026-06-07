@@ -23,6 +23,8 @@ routerd は、型付きの YAML で書いた望ましい状態から、Linux / N
 | routerd とは何か、なぜあるのかを知る | [はじめに → routerd とは](./concepts/what-is-routerd.md) |
 | 他製品・他方式に対する位置づけを知る | [はじめに → 位置づけ](./concepts/positioning.md) |
 | 初めてルーターを立てる | [導入 → クイックスタート](./tutorials/getting-started.md) |
+| browser で初期設定を生成する | [routerd config wizard](https://routerd.net/wizard) |
+| editor 補完と検証を有効にする | [How-to → VS Code YAML schema](./how-to/vscode-yaml-schema.md) |
 | ディスクレス mini PC をルーターにする | [導入 → ディスクレス mini PC](./tutorials/diskless-minipc-walkthrough.md) |
 | 宣言型モデル（リソース・適用・調整）を理解する | [機能解説 → リソースモデル](./concepts/resource-model.md) |
 | 検証済みの構成例から設定を組む | [設定例集](./config-examples/index.md) |
@@ -39,7 +41,7 @@ routerd は、型付きの YAML で書いた望ましい状態から、Linux / N
 - **機能解説（宣言型モデル）** — 用語集、リソースモデル、適用と生成、状態と所有、調整（リコンサイル）、Web 管理画面
 - **設定リファレンス（機能別）** — DNS リゾルバ、ファイアウォール、Egress・マルチ WAN、BGP、Tailscale、OpenTelemetry など、機能ごとの設定方法
 - **設定例集（シナリオ別）** — NAT、LAN の DHCP/DNS、DS-Lite、PPPoE、ポート転送、ゲスト分離、マルチ WAN フェイルオーバーなどの検証済み構成例
-- **How-to ガイド** — フレッツ初期設定、IPv6 デュアルスタック、ゲストモード、OS ブートストラップ、PVE オーバーレイ、トラブルシューティング
+- **How-to ガイド** — フレッツ初期設定、IPv6 デュアルスタック、ゲストモード、OS ブートストラップ、VS Code YAML schema、PVE オーバーレイ、トラブルシューティング
 - **ナレッジベース（実環境知見）** — 実環境で得た現場メモ（DHCPv6-PD クライアント、NTT NGN の PD 取得）
 - **運用** — 状態データベース、インベントリ、USB 永続化、Alpine 配備、シークレット、観測、冗長化 など
 - **リファレンス（API・プロトコル・対応環境）** — リソース API、制御 API、プラグインプロトコル、対応プラットフォーム、ハードウェア

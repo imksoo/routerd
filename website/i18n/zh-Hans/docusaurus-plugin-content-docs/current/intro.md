@@ -23,6 +23,8 @@ routerd 是一个声明式路由器，通过以类型化 YAML 描述的期望状
 | 了解 routerd 是什么、为何存在 | [入门 → routerd 是什么](./concepts/what-is-routerd.md) |
 | 了解与其他产品和方式的定位差异 | [入门 → 定位](./concepts/positioning.md) |
 | 第一次构建路由器 | [导入 → 快速入门](./tutorials/getting-started.md) |
+| 在浏览器中生成初始配置 | [routerd config wizard](https://routerd.net/wizard) |
+| 启用 editor 补全与验证 | [How-to → VS Code YAML schema](./how-to/vscode-yaml-schema.md) |
 | 将无磁盘 mini PC 作为路由器 | [导入 → 无磁盘 mini PC](./tutorials/diskless-minipc-walkthrough.md) |
 | 理解声明式模型（资源、应用、调和） | [功能说明 → 资源模型](./concepts/resource-model.md) |
 | 从已验证的配置示例组建配置 | [配置示例集](./config-examples/index.md) |
@@ -39,7 +41,7 @@ routerd 是一个声明式路由器，通过以类型化 YAML 描述的期望状
 - **功能说明（声明式模型）** — 词汇表、资源模型、应用与生成、状态与拥有权、调和（reconcile）、Web 管理界面
 - **配置参考文档（依功能）** — DNS 解析器、防火墙、Egress・多 WAN、BGP、Tailscale、OpenTelemetry 等各功能的配置方式
 - **配置示例集（依场景）** — NAT、LAN 的 DHCP/DNS、DS-Lite、PPPoE、端口转发、访客隔离、多 WAN 故障切换等已验证的配置示例
-- **How-to 指南** — Flets 初始配置、IPv6 双协议栈、访客模式、OS 启动配置（bootstrap）、PVE overlay、故障排查
+- **How-to 指南** — Flets 初始配置、IPv6 双协议栈、访客模式、OS 启动配置（bootstrap）、VS Code YAML schema、PVE overlay、故障排查
 - **知识库（实际环境知识）** — 从实际环境获得的现场笔记（DHCPv6-PD 客户端、NTT NGN 的前缀委派获取）
 - **运维** — 状态数据库、设备清单、USB 持久化、Alpine 部署、密钥、可观测性、备援等
 - **参考文档（API・协议・支持环境）** — 资源 API、控制 API、插件协议、支持平台、硬件

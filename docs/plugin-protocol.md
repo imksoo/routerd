@@ -38,13 +38,14 @@ Operations that mutate network state should be split into testable units. As wit
 ## MVP policy
 
 For the CloudEdge MVP, plugins are trusted local executables only. routerd does
-not fetch plugins from a remote registry, install plugins remotely, or execute
-cloud/provider actions on behalf of a plugin.
+not fetch plugins from a remote registry or install plugins remotely.
 
 Plugin output is always validated before it is stored as dynamic-config or used
 to derive effective-config. A plugin can propose resources, directives,
-display-only action plans, and events. `actionPlans` are dry-run / display only
-in the MVP and are never executed by routerd.
+provider action plans, and events. `actionPlans` are inert inside dynamic-config
+and are never executed by the plugin runner or merge path. They can be imported
+into the provider-action journal and handed to an executor plugin only after
+`ProviderActionPolicy`, approval, allowlist, and dry-run/live mode gates pass.
 
 ## Resource shapes
 
@@ -80,9 +81,10 @@ spec:
     conflict: reject
 ```
 
-The MVP runner requires `spec.executable` to be an absolute executable file.
-Plugin capabilities are currently `observe.cloud` and
-`propose.dynamicConfig`. Interval triggers use `every`; event triggers use
+The runner requires `spec.executable` to be an absolute executable file. Plugin
+capabilities are currently `observe.cloud`, `observe.providerPrivateIPs`,
+`propose.dynamicConfig`, `propose.providerAction`, and
+`execute.providerAction`. Interval triggers use `every`; event triggers use
 `topic`.
 
 ## Triggers
@@ -189,13 +191,13 @@ environment.
       {
         "name": "assign-cloud-secondary-ip",
         "provider": "oci",
-        "action": "assignSecondaryPrivateIP",
+        "action": "assign-secondary-ip",
         "target": {
-          "vnicID": "ocid1.vnic.oc1..example",
+          "nicRef": "ocid1.vnic.oc1..example",
           "address": "10.0.1.123"
         },
         "undo": {
-          "action": "unassignSecondaryPrivateIP"
+          "action": "unassign-secondary-ip"
         }
       }
     ],
@@ -220,9 +222,11 @@ plugin result shape, stores accepted output as a `DynamicConfigPart`, and derive
 dynamic override policy evaluation, happens when dynamic parts are merged with
 startup config.
 
-`actionPlans` describe provider operations an operator may choose to perform
-outside routerd. They are display-only in the MVP; routerd does not execute
-cloud API mutations or secondary-private-IP assignment.
+`actionPlans` describe provider operations an operator may choose to import into
+the provider-action journal. The plugin result itself must stay a dry-run plan;
+`mode: execute` is rejected. Live provider mutation, when used, happens only via
+`routerctl action execute --approved` or the daemon auto-execution gate, and the
+executor plugin receives no routerd-held secrets.
 
 ## CLI
 
@@ -231,6 +235,7 @@ The MVP operator commands are:
 ```text
 routerctl plugin list [--config <startup>] [-o table|json|yaml]
 routerctl plugin run <name> [--dry-run] [--config <startup>] [--state-file <db>] [-o table|json|yaml]
+routerctl action import|list|show|approve|execute|journal|rollback ...
 ```
 
 `plugin run --dry-run` executes the plugin and prints the candidate
@@ -242,5 +247,5 @@ database.
 
 The main router features are advanced inside the routerd binary and its managed daemons. The plugin protocol is the safe foundation for site-local extensions; the manifest format and the I/O contract may still change before the protocol is frozen as a stable public surface.
 
-See also [Hybrid cloud edge design](./design-hybrid-cloud-edge.md) and
+See also [Hybrid cloud edge design](/docs/design-hybrid-cloud-edge) and
 [Dynamic config reference](./reference/dynamic-config.md).

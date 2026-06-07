@@ -84,7 +84,8 @@ second row, so an action that already succeeded is never executed twice.
 
 ## `routerctl action` commands
 
-> Shipped in a later Phase 5 chunk; documented here so the surface is stable.
+The current operator surface is intentionally journal-oriented: import or
+approve actions first, then execute only the approved entries that pass policy.
 
 | Command | Purpose |
 | --- | --- |

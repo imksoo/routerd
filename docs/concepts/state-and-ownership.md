@@ -44,6 +44,28 @@ Knowing the owner answers three questions:
 - When the resource is removed from YAML, should routerd remove the host-side artifact too?
 - Does routerd adopt an existing object, or create a new one from scratch?
 
+The owner key is `apiVersion/kind/name`; apply generation is not part of that
+identity. Resource status includes owner and lifecycle metadata so the stale
+status path can distinguish routerd-managed resources from adopted or external
+objects.
+
+## Lifecycle GC
+
+routerd keeps an ownership ledger for concrete host artifacts and stores object
+status for resources that need resource-specific teardown. During apply, serve
+startup, and delete flows, the generic GC planner compares those records with the
+same effective config that apply uses: startup YAML after `when` filtering,
+active dynamic config, and generated SAM resources.
+
+The resulting plan can remove owned artifacts, run resource teardown, forget
+ledger rows, delete stale status rows, record events, and create the state backup
+required before destructive cleanup. Unsupported OS integrations are skipped
+instead of being forced, and adopted or externally managed statuses are left
+alone.
+
+For the concrete resource-to-artifact map and teardown contracts, see
+[Resource ownership](../resource-ownership.md).
+
 ## Don't act on stale state
 
 Leases and observed values are useful, but acting on stale data is dangerous.

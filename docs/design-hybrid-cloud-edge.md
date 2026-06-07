@@ -6,10 +6,9 @@ title: Hybrid cloud edge design
 
 routerd's CloudEdge direction is to let one declarative router model cover the
 local edge and selected cloud-side facts without letting cloud automation edit
-the human-managed router file. The first implementation wave is intentionally
-only design documentation and Go type definitions. It introduces the API shapes
-for dynamic configuration, plugin I/O, and future hybrid resources; it does not
-wire controllers, the CLI, or dataplane renderers.
+the human-managed router file. The current implementation includes dynamic
+configuration, plugin I/O, BGP-mode selective address mobility, generated SAM
+transport resources, and gated provider-action execution.
 
 CloudEdge has two declarative pillars in this MVP:
 
@@ -33,13 +32,15 @@ runtime intent from a trusted local source:
 - cloud inventory that changes faster than the startup YAML should change
 - selective address claims, route hints, or VPN attachment observations
 - provider actions that should be visible during plan/dry-run before operators
-  decide whether to apply provider-side changes outside routerd
+  decide whether to import and execute provider-side changes through the gated
+  executor path
 - selective suppression of static fallback resources while a dynamic cloud
   resource is healthy
 
-The MVP is conservative. Dynamic input can contribute resources and `mask`
+The posture is conservative. Dynamic input can contribute resources and `mask`
 directives to the effective configuration, but it cannot mutate the startup
-file and routerd will not execute provider action plans.
+file. Provider action execution is a separate, default-off journaled path with
+explicit policy gates.
 
 ## Config layers
 
@@ -100,30 +101,37 @@ reconcile set and reported as suppressed with enough metadata to explain why.
 - Every dynamic change must be explainable by source, generation, digest,
   observed time, expiry time, and directive reason.
 - Plugin output is always validated before it becomes dynamic-config.
-- Provider action plans are dry-run and display only in the MVP.
+- Provider action plans are inert inside dynamic-config. They can be imported
+  into the action journal and executed only through explicit
+  `ProviderActionPolicy`, approval, allowlist, and executor-plugin gates.
 
-## MVP scope
+## Current scope
 
-In scope for the CloudEdge MVP foundation:
+The CloudEdge foundation now includes:
 
-- `config.routerd.net/v1alpha1` type definitions for `DynamicConfigPart` and
-  `DynamicOverridePolicy`
-- `hybrid.routerd.net/v1alpha1` `OverlayPeer`, `HybridRoute`,
-  `AddressMobilityDomain`, `CloudProviderProfile`, and `RemoteAddressClaim`
-  resource shapes
-- `plugin.routerd.net/v1alpha1` request/result contract types
-- documentation for layering, merge behavior, plugin I/O, policy, and future
-  operator commands
+- `DynamicConfigPart` / `DynamicOverridePolicy` for runtime intent and masks.
+- Trusted local plugin execution for observation, dynamic resources, provider
+  action proposals, and executor plugins.
+- `MobilityPool` as the primary selective-address mobility intent.
+- `SAMTransportProfile` as the primary transport authoring surface. It generates
+  IPIP/GRE `TunnelInterface`, endpoint `/32` `IPv4Route`, and `BGPPeer`
+  resources through dynamic config.
+- BGP-mode SAM delivery: owners advertise selected IPv4 `/32` paths, non-owners
+  import best paths into the local FIB, and multipath is preserved where BGP
+  supplies multiple next hops.
+- Linux SAM capture for provider-secondary-IP and proxy-ARP cases, including
+  on-prem VRRP/single-router gating, GARP on active transition, and conservative
+  on-demand ARP discovery.
+- Provider action execution as an experimental, default-off path. Action plans
+  remain review artifacts until imported and gated by policy, approval, and an
+  executor plugin that holds provider credentials outside routerd core.
 
-Out of scope for this PR:
+Still out of scope:
 
-- live address capture or forwarding dataplane behavior
-- controllers or reconcile-loop integration
-- CLI commands
-- plugin process execution
-- state database persistence
-- schema generation changes
-- remote plugin install, remote plugin registry, or remote provider execution
+- remote plugin install or a public plugin registry
+- consensus-based global ownership or split-brain prevention
+- treating CloudEdge SAM as full L2 extension
+- automatic rollback of arbitrary provider or OS mutations
 
 ## L3 hybrid routing
 
@@ -138,19 +146,23 @@ and dry-run flow.
 Selective Address Mobility is the second CloudEdge pillar. It is not full L2
 extension. Public cloud fabrics do not expose an operator-controlled Ethernet
 segment, and provider address ownership models differ. routerd therefore models
-only selected mobile `/32` IPv4 addresses:
+only selected mobile `/32` IPv4 addresses.
 
-- `AddressMobilityDomain` defines the IPv4 prefix and requires
-  `mode: selective-address`.
-- `CloudProviderProfile` describes a provider and its declared capabilities; it
-  does not call provider APIs.
-- `RemoteAddressClaim` declares one `/32`, its owner side, a capture mechanism,
-  and route delivery over an `OverlayPeer`.
+The current primary authoring model is:
 
-The MVP layer is declarative only. No controller assigns secondary cloud IPs,
-enables proxy ARP, installs `/32` forwarding routes, toggles `ip_forward`, or
-programs netlink for these resources. Live capture and forwarding are a later
-dataplane step.
+- `MobilityPool` declares the mobility prefix, federation group, member
+  identities, site roles, capture policy, provider trap placement, and BGP
+  delivery policy.
+- `SAMTransportProfile` declares the router-to-router transport: self node,
+  shared topology node list, inner prefix, IPIP/GRE mode, optional WireGuard
+  encryption underlay, BGP router, and peers.
+- `CloudProviderProfile` describes provider capabilities and external auth shape.
+- `ProviderActionPolicy` controls whether imported provider action plans may be
+  handed to an executor plugin.
+
+The lower-level `AddressMobilityDomain` and `RemoteAddressClaim` resources remain
+available for compatibility and experiments, but they are no longer the primary
+CloudEdge SAM authoring surface.
 
 Selective Address Mobility lives in the ordinary switching/forwarding plane and
 contains no firewall or NAT concept. Source and destination transparency is
@@ -161,31 +173,33 @@ separately by referencing literal addresses in existing `FirewallZone`,
 See [Selective Address Mobility](./reference/selective-address-mobility) for
 the resource model and provider capability framing.
 
-## Observe-only cloud inventory
+## Cloud inventory and provider actions
 
 Cloud inventory plugins can observe provider state and return dynamic resources
-without mutating the provider. The example `oci-inventory` plugin emits a static
-`RemoteAddressClaim` candidate plus an OCI-style `actionPlan` that describes
-how a secondary private IP could be assigned outside routerd.
+without mutating the provider. Provider capture planners can also emit
+`actionPlans` such as `assign-secondary-ip`,
+`unassign-secondary-ip`, `ensure-forwarding-enabled`, or
+`ensure-forwarding-disabled`.
 
-`RemoteAddressClaim` is declarative and dry-run/plan only in this MVP. It
-records the mobility domain, `/32` address, owner side, capture metadata such as
-a provider secondary IP or proxy-ARP interface, and the route delivery hint for
-an overlay peer. routerd validates and displays the resource as dynamic-config,
-but no controller calls a cloud API, assigns a secondary IP, or mutates host
-networking for this kind.
+An `actionPlan` is not merged into effective-config and is not executed by the
+dynamic-config controller. It is persisted as reviewable state. Operators may
+import it into the provider-action journal and then run `routerctl action`
+commands. Live mutation is still default-off and requires all hard gates:
+`ProviderActionPolicy.enabled`, not `dryRunOnly`, approval or explicit
+auto-approval policy, provider/action/CIDR allowlists, a positive
+`maxActionsPerRun`, and an executor plugin with `execute.providerAction`.
 
-Provider `actionPlans` stay display-only. They are useful for dry-run review and
-operator handoff, but they are not an imperative queue and routerd never
-executes them.
+routerd core never holds cloud credentials. The executor plugin runs as its own
+process and authenticates with cloud-native identity or its own environment.
 
 ## Roadmap
 
-Future PRs can add live capture and forwarding for Selective Address Mobility,
-route advertisements, VPN attachment observations, and provider inventory
-snapshots. These resources should remain normal effective-config resources
-after validation, so existing route, firewall, NAT, and observability flows can
-consume them without a separate cloud control path.
+Further CloudEdge work should keep using normal effective-config resources after
+validation, so existing route, firewall, NAT, ownership, GC, and observability
+flows can consume them without a separate cloud control path. Remaining design
+areas include broader provider parity, operational evidence automation, more
+transport derivation ergonomics, and production hardening around split-brain
+observability.
 
 Full L2 extension remains out of scope. VXLAN, EVPN, VRF, WireGuard, and IPsec
 groundwork already exists, but CloudEdge should prefer L3 reachability and

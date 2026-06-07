@@ -15,6 +15,12 @@ routerd associates host-side artefacts with the resource that produced them. Rec
 | Adopted | routerd took over an existing artefact and now manages it. |
 | Observed | routerd only reads the state; it does not change it. |
 
+The stable owner identity is `apiVersion/kind/name`. Apply generations are not
+part of the owner key: a new generation can replace or remove artifacts owned by
+the same resource without changing the ownership identity. Object status records
+also carry owner metadata and a lifecycle class so stale-state cleanup can make
+the same distinction as the apply path.
+
 ## Resource → host artefact map
 
 | Resource | Host artefact |
@@ -32,6 +38,9 @@ routerd associates host-side artefacts with the resource that produced them. Rec
 | `DNSUpstream` | `routerd-dns-resolver` runtime upstream endpoint derived into forwarder rules |
 | `DSLiteTunnel` | Linux `ip6tnl` interface |
 | `TunnelInterface` | Linux `ipip`/`gre` tunnel device; FOU/GUE modes also ensure the matching `ip fou` listener port |
+| `SAMTransportProfile` | A `DynamicConfigPart` containing generated `TunnelInterface`, endpoint `/32` `IPv4Route`, and `BGPPeer` resources |
+| `MobilityPool` | Dynamic SAM capture/control-plane resources, BGP `/32` advertisements, provider action plans, and ownership observations |
+| `RemoteAddressClaim` | Low-level SAM capture state, proxy-ARP sysctl/neighbor state, provider-secondary capture status, and resource-specific teardown |
 | `IPAddressSet` | nftables IPv4/IPv6 named sets when referenced by a Linux renderer |
 | `IPv4Route` | Kernel route |
 | `ClusterNetworkRoute` | Generated `IPv4StaticRoute` intents for Pod / Service CIDRs through configured next hops |
@@ -57,9 +66,46 @@ Linux nftables tables rendered by routerd carry a table comment marker
 name-prefix heuristic alone, when deciding whether a present `routerd_*` table
 is stale relative to the current rendered config.
 
+## Lifecycle contracts
+
+Every config resource kind is declared in the lifecycle registry. The
+declaration records the resource class and one teardown contract:
+
+- `ArtifactKinds`: the resource records concrete host artifacts in the ownership
+  ledger, and the generic artifact teardown registry knows how to remove those
+  artifact kinds.
+- `TeardownLifecycle: resource`: the resource has resource-specific teardown
+  that runs from object status, for example kernel route removal, WireGuard
+  adopted/external checks, or SAM proxy-ARP cleanup.
+- `NoHostTeardownReason`: the resource is renderer input, external policy, or a
+  dynamic source that does not own standalone host artifacts.
+
+CI checks that every config kind has exactly one explicit contract and that each
+declared artifact kind exists in the teardown registry. This is meant to prevent
+new resources from silently bypassing cleanup.
+
 ## How removal works
 
-routerd does **not** silently delete artefacts it does not own. When a resource is removed from the YAML, only artefacts that routerd previously created (or explicitly adopted) are eligible for deletion.
+routerd does **not** silently delete artefacts it does not own. When a resource
+is removed from YAML, the GC planner compares the current effective resource set
+with the ownership ledger, object status rows, and host inventory. It then builds
+a dry-run-capable plan containing artifact removals, resource-specific teardown,
+ledger forgets, stale status deletion, state backup, and audit events.
+
+The desired set is the same effective view used by apply and serve:
+`FilterRouterByWhen`, dynamic SAM resources, and `DynamicConfigPart` merges are
+included. This prevents `when: false` resources from being treated as active
+cleanup targets and prevents generated SAM tunnel/BGP/route resources from being
+mistaken for orphans while their profile is still present.
+
+Profile-derived resources clean up by normal ownership flow. For example,
+deleting a `SAMTransportProfile` leaves an empty active dynamic part, generated
+`TunnelInterface` / `BGPPeer` / endpoint-route resources disappear from the
+effective config, and the generated resources' owners drive artifact teardown.
+
+Destructive cleanup requires a state backup and records an event. Unsupported OS
+integrations are non-destructive. Adopted or externally managed object statuses
+are not torn down by resource lifecycle GC.
 
 Full configuration rollback is not a current goal. For changes that affect production traffic, follow this order:
 

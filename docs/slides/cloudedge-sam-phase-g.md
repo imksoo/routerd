@@ -51,7 +51,7 @@ routerd Cloud Edge Router
 
 ---
 
-## トポロジ — overlay + iBGP hub-spoke
+## トポロジ — SAM transport + iBGP hub-spoke
 
 ```mermaid
 graph TB
@@ -61,12 +61,12 @@ graph TB
   AWS["routerd-aws A/B<br/>ENI secondary IP"]
   AZ["routerd-azure A/B<br/>NIC ipConfig"]
   OCI["routerd-oci A/B<br/>VNIC secondary IP"]
-  AWS ===|"WG overlay + iBGP"| RR
-  AZ  ===|"WG overlay + iBGP"| RR
-  OCI ===|"WG overlay + iBGP"| RR
+  AWS ===|"IPIP SAM transport + iBGP"| RR
+  AZ  ===|"IPIP SAM transport + iBGP"| RR
+  OCI ===|"IPIP SAM transport + iBGP"| RR
 ```
 
-logical `/24` = `10.77.60.0/24` / underlay は default WireGuard（ipip/gre/fou/gue 選択可）
+logical `/24` = `10.77.60.0/24` / default delivery は IPIP、暗号化が必要なら endpoint-only WireGuard underlay
 
 ---
 
@@ -120,11 +120,11 @@ flowchart LR
 
 ---
 
-## underlay と PMTU（Phase G 追加）
+## transport と PMTU
 
-- **P2-a — pluggable underlay**（ADR 0009）
-  - `TunnelInterface`: ipip / gre / fou / gue（UDP encap）
-  - default は WireGuard、trusted private 接続で軽量 L3 を選択可
+- **SAMTransportProfile**
+  - default delivery は IPIP `TunnelInterface`
+  - WireGuard は endpoint `/32` 専用 underlay。mobile `/32` は `AllowedIPs` に入れない
 - **P2-b — IPv4 force-fragment**（ADR 0013）
   - `OverlayPeer / TunnelInterface.pathMTU.forceFragmentIPv4`、default off
   - 低 PMTU underlay の DF blackhole を緩和（IPv4 限定）

@@ -156,10 +156,65 @@ compatibility. It is deprecated. `routerd validate`, plan, and apply surface a
 warning when a remote member declares local capture or discovery details; a
 future pre-release may make identity-only remote members mandatory.
 
+## Transport Profile
+
+`SAMTransportProfile` is the higher-level transport profile for BGP-mode SAM.
+It derives the per-peer `TunnelInterface`, endpoint `/32` `IPv4Route`, and
+`BGPPeer` resources that carry mobility paths. Current CloudEdge examples use
+IPIP as the default SAM delivery plane. WireGuard, when present, is an
+encryption underlay only: generated or hand-authored WireGuard peers should keep
+`AllowedIPs` to transport endpoint prefixes, not mobility `/32`s.
+
+Each router must declare `spec.selfNodeRef`; routerd does not infer the local
+node identity from hostname or BGP router ID. Profiles with more than one peer
+must also declare the same `spec.topologyNodeRefs` list on every router in the
+transport domain. The controller sorts that shared node list and ranks each
+unordered node pair before allocating a `/31` from `spec.innerPrefix`, so
+hub/spoke routers derive the same edge even when their local peer lists differ.
+
+```yaml
+apiVersion: mobility.routerd.net/v1alpha1
+kind: SAMTransportProfile
+metadata: { name: cloudedge-transport }
+spec:
+  selfNodeRef: aws-router-a
+  mode: ipip
+  encryption: wireguard
+  innerPrefix: 10.255.0.0/24
+  topologyNodeRefs:
+    - onprem-router
+    - aws-router-a
+    - azure-router
+  underlayInterface: wg-hybrid
+  localEndpointFrom:
+    resource: Interface/wg-hybrid
+    field: primaryIPv4
+  bgp:
+    routerRef: BGPRouter/mobility
+    peerASN: 64512
+    timersPreset: fast
+  peers:
+    - nodeRef: onprem-router
+      remoteEndpoint: 10.252.0.1
+```
+
+Core routers can set `spec.bgp.routeReflectorClient` and
+`spec.bgp.routeReflectorClusterID`; those fields are copied to each generated
+`BGPPeer`. Edge routers can leave them unset and use ordinary iBGP sessions.
+
+Peer removal replaces the profile's generated `DynamicConfigPart` with the new
+resource set. Profile deletion replaces the old part with an empty active part,
+so effective config drops generated tunnel, BGP peer, and endpoint route
+resources. The generated resources then clean up through normal owner-reference
+GC and resource-specific teardown.
+
+## Low-Level Compatibility Resources
+
 `AddressMobilityDomain` and `RemoteAddressClaim` are the lower-level SAM
-representation. Existing hand-authored SAM configs remain supported for
-compatibility, but the CloudEdge MobilityPool path now uses BGP `/32`
-advertisements rather than generated SAM claims.
+representation. Existing hand-authored SAM configs remain supported during the
+pre-release period for compatibility, but they are not the primary authoring
+surface for CloudEdge Mobility. Prefer `MobilityPool` for address ownership and
+capture intent, and `SAMTransportProfile` for transport/BGP generation.
 
 `AddressMobilityDomain` defines the IPv4 prefix where selected addresses may
 move:
@@ -209,30 +264,11 @@ directly. For cloud capture it emits dry-run `ActionPlan` records such as
 provider-action executor path may import and execute those only when explicitly
 allowed by `ProviderActionPolicy`.
 
-`OverlayPeer` identifies the remote routerd peer and underlay. `HybridRoute`
-continues to model ordinary L3 remote-prefix routing. Address mobility uses the
-same overlay peer model, but it is a per-address forwarding abstraction rather
-than a remote-prefix route.
-
-`SAMTransportProfile` is the higher-level transport profile for BGP-mode SAM.
-It derives the per-peer `TunnelInterface`, endpoint `/32` `IPv4Route`, and
-`BGPPeer` resources that carry mobility paths. Each router must declare
-`spec.selfNodeRef`; routerd does not infer the local node identity from hostname
-or BGP router ID. Profiles with more than one peer must also declare the same
-`spec.topologyNodeRefs` list on every router in the transport domain. The
-controller sorts that shared node list and ranks each unordered node pair before
-allocating a `/31` from `spec.innerPrefix`, so hub/spoke routers derive the same
-edge even when their local peer lists differ.
-
-Core routers can set `spec.bgp.routeReflectorClient` and
-`spec.bgp.routeReflectorClusterID`; those fields are copied to each generated
-`BGPPeer`. Edge routers can leave them unset and use ordinary iBGP sessions.
-
-Peer removal replaces the profile's generated `DynamicConfigPart` with the new
-resource set. Profile deletion replaces the old part with an empty active part,
-so effective config drops generated tunnel, BGP peer, and endpoint route
-resources. The concrete OS cleanup remains in the existing
-`TunnelInterface`, `BGPPeer`, and `IPv4Route` controllers.
+`OverlayPeer` identifies the remote routerd peer and underlay for legacy
+route-lowered configs. `HybridRoute` continues to model ordinary L3
+remote-prefix routing. New CloudEdge Mobility configs should not use
+`OverlayPeer` to carry mobility `/32`s; use BGP delivery through
+`SAMTransportProfile`.
 
 ## Capture And Delivery
 
@@ -366,14 +402,16 @@ VMs keep local default gateways and no NAT is introduced.
 1. The cloud VM sends to `10.0.0.9`.
 2. Azure NIC secondary IP capture directs packets for `10.0.0.9/32` to the
    cloud routerd node.
-3. The cloud routerd node delivers the packet over `wg-hybrid` to the on-prem
-   routerd peer.
+3. The cloud routerd node delivers the packet over the generated IPIP SAM
+   transport; if encryption is enabled, that IPIP packet rides over the
+   endpoint-only `wg-hybrid` underlay.
 4. The on-prem side forwards it to the owner of `10.0.0.9`.
 5. Source and destination IPs remain the original endpoint addresses.
 
 The reverse path for `10.0.0.7/32` is captured on the on-prem side with
 proxy-ARP. PVE LAN hosts reach `.7` through the on-prem routerd node, which
-delivers the packet over the overlay to the cloud routerd node.
+delivers the packet over the same generated SAM transport to the cloud routerd
+node.
 
 The split example configs are:
 
@@ -390,10 +428,10 @@ does not contain `nat`, `preserveSource`, firewall, or zone fields. Address
 transparency is intrinsic: the source and destination addresses are preserved.
 
 To firewall or NAT a mobile address, reference its literal `/32` in the
-existing `FirewallZone`, `FirewallRule`, or `NAT44Rule` resources. The MVP has
-no cross-kind reference from firewall or NAT kinds to `RemoteAddressClaim`; the
-coupling is intentionally loose by literal address. A named reference can be
-added later if it proves useful.
+existing `FirewallZone`, `FirewallRule`, or `NAT44Rule` resources. The current
+model has no cross-kind reference from firewall or NAT kinds to `MobilityPool`
+or low-level `RemoteAddressClaim`; the coupling is intentionally loose by
+literal address. A named reference can be added later if it proves useful.
 
 SAM-forwarded traffic still traverses the existing firewall and conntrack path
 like any other forwarded traffic. Independence means the mobility resources do
@@ -407,9 +445,11 @@ default-drop forwarding policy. SAM does not add firewall rules by itself.
 ## Overlay And Federation Addressing On Cloud Nodes
 
 The Event Federation transport (the `routerd-eventd` listen address and each
-`EventPeer.endpoint`), BGP/BFD peer addresses, and the WireGuard overlay they
-ride on (`OverlayPeer`, `WireGuardInterface`/`WireGuardPeer`) must use an
-address range you control end to end on every node. On cloud instances, do
+`EventPeer.endpoint`), BGP/BFD peer addresses, and the SAM transport endpoint /
+inner addresses generated by `SAMTransportProfile` must use address ranges you
+control end to end on every node. If you place WireGuard underneath the SAM
+transport, its interface/peer endpoint addresses have the same requirement. On
+cloud instances, do
 **not** draw overlay, BGP/BFD, or federation addresses from ranges the provider
 reserves for its own internal use:
 
@@ -425,12 +465,13 @@ reserves for its own internal use:
   underlays and by Tailscale (`100.x` tailnet addresses, MagicDNS). An overlay
   in this range collides with any Tailscale membership and with carrier NAT.
 
-Use an RFC 1918 range you reserve for the overlay (for example a `10.x.y.0/24`)
-for the WireGuard interface/peer addresses, the `OverlayPeer` endpoints, and the
-`routerd-eventd` listen / `EventPeer` endpoints and BGP/BFD peering addresses.
-Keep it distinct from the mobility pool `/24` (the captured addresses) and from
-every cloud-reserved range above. This applies to all providers (AWS/Azure/OCI);
-OCI is simply the strictest at enforcing the link-local reservation.
+Use RFC 1918 ranges you reserve for SAM transport endpoints, the
+`SAMTransportProfile.innerPrefix`, any optional WireGuard endpoint addresses,
+and the `routerd-eventd` listen / `EventPeer` endpoints and BGP/BFD peering
+addresses. Keep them distinct from the mobility pool `/24` (the captured
+addresses) and from every cloud-reserved range above. This applies to all
+providers (AWS/Azure/OCI); OCI is simply the strictest at enforcing the
+link-local reservation.
 
 ## Client Endpoint Addressing vs Router-Overlay Reachability
 

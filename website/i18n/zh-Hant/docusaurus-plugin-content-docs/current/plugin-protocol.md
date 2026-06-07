@@ -42,3 +42,27 @@ bin/<plugin>
 routerd 的主要路由器功能正持續透過核心資源與專用常駐程式實作。
 外掛程式是用於安全整合各使用者本地擴充功能的基礎架構。
 在正式固定為公開相容 API 之前，manifest 與輸入輸出格式可能會有所變更。
+
+## CloudEdge MVP
+
+CloudEdge MVP 的外掛程式僅限受信任的本機執行檔。routerd 不會從遠端登錄檔取得外掛程式，
+也不會遠端安裝外掛程式。
+
+外掛程式輸出在寫入 dynamic-config 或用於建立 effective-config 之前總會被驗證。外掛程式可提出
+resource、directive、provider action plan 與 event。`actionPlans` 在 dynamic-config
+內部是 inert 的；plugin runner 與 merge path 不會執行它們。operator 可將其匯入
+provider-action journal，只有在 `ProviderActionPolicy`、approval、allowlist 與
+dry-run/live mode gate 通過後，才會交給 executor plugin。
+
+可用 capability 包括 `observe.cloud`、`observe.providerPrivateIPs`、
+`propose.dynamicConfig`、`propose.providerAction`、`execute.providerAction`。
+executor plugin 不會從 routerd core 接收 cloud credential；它在自己的程序中使用
+cloud-native identity 或自身環境認證。
+
+常用 CLI：
+
+```text
+routerctl plugin list [--config <startup>] [-o table|json|yaml]
+routerctl plugin run <name> [--dry-run] [--config <startup>] [--state-file <db>] [-o table|json|yaml]
+routerctl action import|list|show|approve|execute|journal|rollback ...
+```

@@ -21,6 +21,7 @@ routerd/
   usb-device
   usb-flush-enabled
   log-limit
+  secrets/
   logs/
   state/
 ```
@@ -40,6 +41,13 @@ routerd/
 
 設定が見つかれば、`/usr/local/etc/routerd/router.yaml` へコピーします。
 その後、ライブ ISO の起動処理が設定を反映します。受け入れテストや障害調査のために、取得元と SHA256 を `/run/routerd/live-config-source` と `/run/routerd/live-config-sha256` に保存します。
+secrets は apply の前に復元します。helper は次の配置をこの順に探します。
+
+- `routerd/hosts/<hostname>/secrets/`
+- `routerd/hosts/<mac>/secrets/`。MAC はコロン区切り、または小文字の詰めた表記を使えます。
+- `routerd/secrets/`
+
+各 file は `/usr/local/etc/routerd/secrets` に mode `0600` で配置します。
 保存済みの設定がなく、`/usr/local/etc/routerd/router.yaml` もなければ、設定ウィザードを起動します。
 
 ## ファイルシステム
@@ -82,6 +90,7 @@ routerd.usb_mount=sync
 日次の書き出しジョブを有効にすると、`/etc/periodic/daily/routerd-usb-flush` が次を USB へコピーします。
 
 - 現在の `router.yaml`
+- `/usr/local/etc/routerd/secrets` の file
 - `/var/lib/routerd` の状態アーカイブ
 - `/var/db/routerd` の状態アーカイブ
 - `/run/routerd/logs` の圧縮ログアーカイブ
@@ -91,6 +100,10 @@ routerd.usb_mount=sync
 ```sh
 /usr/share/routerd/live-persistence.sh flush
 ```
+
+`save-config` も、`/usr/local/etc/routerd/secrets` が存在する場合は
+`routerd/secrets/` へコピーします。長期運用で removable media 側の Unix permission
+も必要な場合は、vfat/exfat より ext4 を使ってください。
 
 ## 安全な取り外し
 
