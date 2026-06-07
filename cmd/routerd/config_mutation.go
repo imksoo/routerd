@@ -204,6 +204,18 @@ func (m serveConfigMutator) planRouter(router *api.Router, configYAML string) (*
 }
 
 func (m serveConfigMutator) reconcile(router *api.Router, configYAML string) (*apply.Result, error) {
+	if m.baseOpts.Sandbox {
+		committed, err := m.commitOnly(router, configYAML)
+		if err != nil {
+			return nil, err
+		}
+		result, err := m.planRouter(router, configYAML)
+		if err != nil {
+			return nil, err
+		}
+		result.Generation = committed.Generation
+		return result, nil
+	}
 	opts := m.baseOpts
 	opts.DryRun = false
 	opts.SkipConfigCommit = false

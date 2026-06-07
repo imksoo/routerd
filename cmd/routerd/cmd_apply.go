@@ -87,6 +87,7 @@ type applyOptions struct {
 	MgmtLockoutWriter   io.Writer
 	SkipConfigCommit    bool
 	ConfigYAMLOverride  string
+	Sandbox             bool
 }
 
 func effectiveApplyPolicy(router *api.Router) api.ApplyPolicySpec {

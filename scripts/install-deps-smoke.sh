@@ -60,8 +60,11 @@ spec:
               - conntrack-tools
 EOF
 
-go run ./cmd/routerd validate --config "${config}" >/dev/null
-go run ./cmd/routerd apply --config "${config}" --once --dry-run --status-file "${tmpdir}/status.json" >/dev/null
+# shellcheck disable=SC2016
+scripts/routerd-sandbox-run.sh sh -c '
+    go run ./cmd/routerctl validate --socket "${ROUTERD_SANDBOX_STATUS_SOCKET}" -f "$1" --replace >/dev/null
+    go run ./cmd/routerctl apply --socket "${ROUTERD_SANDBOX_SOCKET}" -f "$1" --replace > "$2"
+' sh "${config}" "${tmpdir}/status.json"
 
 render_config="${tmpdir}/alpine-render.yaml"
 cat > "${render_config}" <<'EOF'
@@ -172,7 +175,7 @@ spec:
 EOF
 
 render_dir="${tmpdir}/alpine-render"
-go run ./cmd/routerd render alpine --config "${render_config}" --out-dir "${render_dir}" >/dev/null
+go run ./cmd/routerctl render alpine --config "${render_config}" --out-dir "${render_dir}" >/dev/null
 test -x "${render_dir}/openrc-routerd_healthcheck_internet"
 test -x "${render_dir}/openrc-routerd_dnsmasq"
 test -x "${render_dir}/openrc-routerd_dns_resolver_lan"

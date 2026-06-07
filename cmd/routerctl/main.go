@@ -56,6 +56,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return firewallCommand(args[1:], stdout, stderr)
 	case "dynamic":
 		return dynamicCommand(args[1:], stdout, stderr)
+	case "render":
+		return renderCommand(args[1:], stdout)
 	case "mobility":
 		return mobilityCommand(args[1:], stdout, stderr)
 	case "plugin":
@@ -76,16 +78,22 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return ingressDrainCommand(args[1:], stdout, true)
 	case "undrain":
 		return ingressDrainCommand(args[1:], stdout, false)
+	case "validate":
+		return validateCommand(args[1:], stdout, os.Stdin)
+	case "plan":
+		return planCommand(args[1:], stdout, os.Stdin)
 	case "apply":
 		return applyCommand(args[1:], stdout)
 	case "delete":
 		return deleteCommand(args[1:], stdout)
+	case "rollback":
+		return rollbackCommand(args[1:], stdout)
+	case "adopt":
+		return adoptCommand(args[1:], stdout)
 	case "set-log-level":
 		return setLogLevelCommand(args[1:], stdout)
 	case "restart-dns-resolver":
 		return restartDNSResolverCommand(args[1:], stdout)
-	case "plan":
-		return applyCommand(append([]string{"--dry-run"}, args[1:]...), stdout)
 	case "help", "-h", "--help":
 		usage(stdout)
 		return nil
@@ -119,6 +127,7 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  dynamic describe <source> [--state-file <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  dynamic render [--config <path>] [--state-file <path>] [-o yaml|json]")
 	fmt.Fprintln(w, "  dynamic diff [--config <path>] [--state-file <path>] [-o text|json]")
+	fmt.Fprintln(w, "  render alpine [--config <path>] [--out-dir <path>]")
 	fmt.Fprintln(w, "  mobility paths [--prefix <prefix>] [--state-file <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  mobility traps [--address <ipv4/32>] [--state-file <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  plugin list [--config <path>] [-o table|json|yaml]")
@@ -142,9 +151,12 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  show <kind>/<name> [--diff|--ledger|--adopt|--events|--spec|--status] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  drain ingress/<service> backend=<name> [--duration 10m] [--state-file <path>]")
 	fmt.Fprintln(w, "  undrain ingress/<service> backend=<name> [--state-file <path>]")
-	fmt.Fprintln(w, "  plan [--socket <path>]")
-	fmt.Fprintln(w, "  apply [--socket <path>] [--dry-run]")
-	fmt.Fprintln(w, "  delete <kind>/<name> [--socket <path>] [--dry-run] [--force] [--api-version <version>]")
+	fmt.Fprintln(w, "  validate [-f <file|-] [--socket <path>] [--replace]")
+	fmt.Fprintln(w, "  plan [-f <file|-] [--socket <path>] [--replace]")
+	fmt.Fprintln(w, "  apply -f <file|-> [--socket <path>] [--replace] [--no-reconcile]")
+	fmt.Fprintln(w, "  delete <kind>/<name> [--socket <path>] [--dry-run] [--force] [--api-version <version>] [--no-reconcile]")
+	fmt.Fprintln(w, "  rollback [--list] [--to <generation>] [--socket <path>] [--state-file <path>] [--no-reconcile]")
+	fmt.Fprintln(w, "  adopt --candidates|--apply [--config <path>] [--ledger-file <path>]")
 	fmt.Fprintln(w, "  set-log-level <debug|info|warning|error|default> [--socket <path>]")
 	fmt.Fprintln(w, "  restart-dns-resolver [name] [--config <path>]")
 }

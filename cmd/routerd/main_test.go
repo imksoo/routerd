@@ -615,6 +615,90 @@ spec:
 	}
 }
 
+func TestServeConfigMutatorSandboxApplyCommitsCanonicalAndDryRuns(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "router.yaml")
+	statePath := filepath.Join(dir, "routerd.db")
+	if err := os.WriteFile(configPath, []byte(testRouterYAML("stable-router")), 0644); err != nil {
+		t.Fatalf("write canonical config: %v", err)
+	}
+	router, err := config.Load(configPath)
+	if err != nil {
+		t.Fatalf("load router: %v", err)
+	}
+	mutator := serveConfigMutator{
+		configPath: configPath,
+		statePath:  statePath,
+		baseOpts: applyOptions{
+			ConfigPath:         configPath,
+			StatePath:          statePath,
+			LedgerPath:         filepath.Join(dir, "ledger.db"),
+			SkipServiceManager: true,
+			Sandbox:            true,
+		},
+		cache:     &resultCache{},
+		logger:    &eventlog.Logger{},
+		getRouter: func() *api.Router { return router },
+		setRouter: func(next *api.Router) { router = next },
+	}
+	result, err := mutator.apply(nil, controlapi.ApplyRequest{
+		CandidateYAML: testRouterYAML("sandbox-router"),
+		Replace:       true,
+	})
+	if err != nil {
+		t.Fatalf("sandbox apply: %v", err)
+	}
+	if result.Result.Generation == 0 || result.Result.Phase != "Healthy" {
+		t.Fatalf("sandbox apply result = %+v", result.Result)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read canonical config: %v", err)
+	}
+	if !strings.Contains(string(data), "name: sandbox-router") {
+		t.Fatalf("sandbox canonical was not updated:\n%s", data)
+	}
+	if router.Metadata.Name != "sandbox-router" {
+		t.Fatalf("in-memory router name = %q, want sandbox-router", router.Metadata.Name)
+	}
+}
+
+func TestServeOnceConvergesAndExits(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "router.yaml")
+	statePath := filepath.Join(dir, "routerd.db")
+	statusPath := filepath.Join(dir, "status.json")
+	ledgerPath := filepath.Join(dir, "ledger.db")
+	if err := os.WriteFile(configPath, []byte(testRouterYAML("serve-once-router")), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	var stdout strings.Builder
+	err := serveCommand([]string{
+		"--config", configPath,
+		"--state-file", statePath,
+		"--status-file", statusPath,
+		"--ledger-file", ledgerPath,
+		"--once",
+	}, &stdout, io.Discard)
+	if err != nil {
+		t.Fatalf("serve --once: %v", err)
+	}
+	if !strings.Contains(stdout.String(), `"phase": "Healthy"`) {
+		t.Fatalf("serve --once output missing result:\n%s", stdout.String())
+	}
+	store, err := routerstate.OpenSQLite(statePath)
+	if err != nil {
+		t.Fatalf("open state: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+	if got := store.LatestGeneration(); got == 0 {
+		t.Fatal("serve --once did not record a generation")
+	}
+	if _, err := os.Stat(statusPath); err != nil {
+		t.Fatalf("status file: %v", err)
+	}
+}
+
 func TestRollbackListShowsStoredGenerations(t *testing.T) {
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, "routerd.db")

@@ -549,6 +549,163 @@ func TestLogCommandsUseControlSocketByDefault(t *testing.T) {
 	}
 }
 
+func TestConfigLifecycleCommandsUseControlAPI(t *testing.T) {
+	socketPath := filepath.Join(t.TempDir(), "routerd.sock")
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatalf("listen unix: %v", err)
+	}
+	defer listener.Close()
+	var applied controlapi.ApplyRequest
+	var planned controlapi.PlanRequest
+	var validated controlapi.ValidateRequest
+	var deleted controlapi.DeleteRequest
+	server := &http.Server{Handler: controlapi.Handler{
+		Validate: func(r *http.Request, req controlapi.ValidateRequest) (*controlapi.ValidateResult, error) {
+			validated = req
+			result := controlapi.NewValidateResult(true, nil, "")
+			return &result, nil
+		},
+		Plan: func(r *http.Request, req controlapi.PlanRequest) (*controlapi.PlanResult, error) {
+			planned = req
+			result := controlapi.NewPlanResult(&apply.Result{Phase: "Healthy"})
+			return &result, nil
+		},
+		Apply: func(r *http.Request, req controlapi.ApplyRequest) (*controlapi.ApplyResult, error) {
+			applied = req
+			result := controlapi.NewApplyResult(&apply.Result{Phase: "Healthy", Generation: 10})
+			return &result, nil
+		},
+		Delete: func(r *http.Request, req controlapi.DeleteRequest) (*controlapi.DeleteResult, error) {
+			deleted = req
+			return &controlapi.DeleteResult{
+				TypeMeta: controlapi.TypeMeta{APIVersion: controlapi.APIVersion, Kind: "DeleteResult"},
+				Deleted:  []string{"net.routerd.net/v1alpha1/Hostname/appliance"},
+			}, nil
+		},
+	}}
+	go func() { _ = server.Serve(listener) }()
+	defer server.Close()
+
+	candidatePath := filepath.Join(t.TempDir(), "candidate.yaml")
+	candidateYAML := testRouterYAML("candidate-router")
+	if err := os.WriteFile(candidatePath, []byte(candidateYAML), 0644); err != nil {
+		t.Fatalf("write candidate: %v", err)
+	}
+	for _, tt := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"validate", "--socket", socketPath, "-f", candidatePath}, `"valid": true`},
+		{[]string{"plan", "--socket", socketPath, "-f", candidatePath, "--replace"}, `"kind": "PlanResult"`},
+		{[]string{"apply", "--socket", socketPath, "-f", candidatePath, "--replace", "--no-reconcile"}, `"generation": 10`},
+		{[]string{"delete", "--socket", socketPath, "--no-reconcile", "Hostname/appliance"}, "Hostname/appliance"},
+	} {
+		var out bytes.Buffer
+		if err := run(tt.args, &out, &bytes.Buffer{}); err != nil {
+			t.Fatalf("%v: %v", tt.args, err)
+		}
+		if !strings.Contains(out.String(), tt.want) {
+			t.Fatalf("%v output missing %q:\n%s", tt.args, tt.want, out.String())
+		}
+	}
+	if validated.CandidateYAML != candidateYAML {
+		t.Fatalf("validate candidate = %q, want file data", validated.CandidateYAML)
+	}
+	if !planned.Replace || planned.CandidateYAML != candidateYAML {
+		t.Fatalf("plan request = %+v", planned)
+	}
+	if !applied.Replace || !applied.NoReconcile || applied.CandidateYAML != candidateYAML {
+		t.Fatalf("apply request = %+v", applied)
+	}
+	if !deleted.NoReconcile || deleted.Target != "Hostname/appliance" {
+		t.Fatalf("delete request = %+v", deleted)
+	}
+}
+
+func TestApplyRequiresInputAndExplainsMissingDaemon(t *testing.T) {
+	var out bytes.Buffer
+	err := run([]string{"apply"}, &out, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "requires -f") {
+		t.Fatalf("apply without input error = %v", err)
+	}
+
+	candidatePath := filepath.Join(t.TempDir(), "candidate.yaml")
+	if err := os.WriteFile(candidatePath, []byte(testRouterYAML("candidate-router")), 0644); err != nil {
+		t.Fatalf("write candidate: %v", err)
+	}
+	err = run([]string{"apply", "--socket", filepath.Join(t.TempDir(), "missing.sock"), "-f", candidatePath, "--timeout", "10ms"}, &out, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "start routerd serve") {
+		t.Fatalf("missing daemon error = %v", err)
+	}
+}
+
+func TestReadCandidateYAMLFromStdin(t *testing.T) {
+	got, err := readCandidateYAML("-", strings.NewReader("kind: Router\n"))
+	if err != nil {
+		t.Fatalf("read candidate stdin: %v", err)
+	}
+	if got != "kind: Router\n" {
+		t.Fatalf("candidate = %q", got)
+	}
+}
+
+func TestRollbackCommandListsAndAppliesGeneration(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "routerd.db")
+	store, err := routerstate.OpenSQLite(statePath)
+	if err != nil {
+		t.Fatalf("open state: %v", err)
+	}
+	generation, err := store.BeginGeneration("hash")
+	if err != nil {
+		t.Fatalf("begin generation: %v", err)
+	}
+	configYAML := testRouterYAML("rollback-router")
+	if err := store.RecordGenerationConfig(generation, configYAML); err != nil {
+		t.Fatalf("record generation config: %v", err)
+	}
+	if err := store.FinishGeneration(generation, "Healthy", nil); err != nil {
+		t.Fatalf("finish generation: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close state: %v", err)
+	}
+
+	var listOut bytes.Buffer
+	if err := run([]string{"rollback", "--list", "--state-file", statePath}, &listOut, &bytes.Buffer{}); err != nil {
+		t.Fatalf("rollback --list: %v", err)
+	}
+	if !strings.Contains(listOut.String(), fmt.Sprintf("%d", generation)) || !strings.Contains(listOut.String(), "yes") {
+		t.Fatalf("rollback list output:\n%s", listOut.String())
+	}
+
+	socketPath := filepath.Join(dir, "routerd.sock")
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatalf("listen unix: %v", err)
+	}
+	defer listener.Close()
+	var applied controlapi.ApplyRequest
+	server := &http.Server{Handler: controlapi.Handler{
+		Apply: func(r *http.Request, req controlapi.ApplyRequest) (*controlapi.ApplyResult, error) {
+			applied = req
+			result := controlapi.NewApplyResult(&apply.Result{Phase: "Healthy", Generation: generation + 1})
+			return &result, nil
+		},
+	}}
+	go func() { _ = server.Serve(listener) }()
+	defer server.Close()
+
+	var applyOut bytes.Buffer
+	if err := run([]string{"rollback", "--to", fmt.Sprintf("%d", generation), "--state-file", statePath, "--socket", socketPath, "--no-reconcile"}, &applyOut, &bytes.Buffer{}); err != nil {
+		t.Fatalf("rollback --to: %v", err)
+	}
+	if !applied.Replace || !applied.NoReconcile || applied.CandidateYAML != configYAML {
+		t.Fatalf("rollback apply request = %+v", applied)
+	}
+}
+
 func TestTrafficFlowsCommandReadsLogDatabase(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "traffic-flows.db")
 	store, err := logstore.OpenTrafficFlowLog(path)
@@ -1789,4 +1946,14 @@ spec:
 		t.Fatalf("write config: %v", err)
 	}
 	return path
+}
+
+func testRouterYAML(name string) string {
+	return fmt.Sprintf(`apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: %s
+spec:
+  resources: []
+`, name)
 }
