@@ -1,0 +1,298 @@
+.wizardPage {
+  background: #f6f8fb;
+  min-height: calc(100vh - 60px);
+}
+
+.shell {
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  gap: 24px;
+  padding-bottom: 48px;
+  padding-top: 32px;
+}
+
+.sidebar {
+  align-self: start;
+  background: #ffffff;
+  border: 1px solid #d8dee8;
+  border-radius: 8px;
+  padding: 16px;
+  position: sticky;
+  top: 84px;
+}
+
+.stepList {
+  display: grid;
+  gap: 8px;
+}
+
+.stepButton {
+  align-items: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: #283548;
+  cursor: pointer;
+  display: grid;
+  font: inherit;
+  gap: 2px;
+  grid-template-columns: 28px 1fr;
+  padding: 9px 10px;
+  text-align: left;
+  width: 100%;
+}
+
+.stepButton:hover {
+  background: #f0f4fa;
+}
+
+.stepButtonActive {
+  background: #e7f0ff;
+  border-color: #9bbef5;
+  color: #123a70;
+}
+
+.stepNumber {
+  align-items: center;
+  background: #dfe7f3;
+  border-radius: 50%;
+  display: inline-flex;
+  font-size: 0.85rem;
+  font-weight: 700;
+  height: 24px;
+  justify-content: center;
+  width: 24px;
+}
+
+.stepButtonActive .stepNumber {
+  background: #1f6feb;
+  color: #ffffff;
+}
+
+.stepText {
+  font-weight: 700;
+}
+
+.summary {
+  border-top: 1px solid #e3e8f0;
+  color: #5a677a;
+  font-size: 0.9rem;
+  margin-top: 14px;
+  padding-top: 14px;
+}
+
+.panel {
+  background: #ffffff;
+  border: 1px solid #d8dee8;
+  border-radius: 8px;
+  padding: 22px;
+}
+
+.header {
+  margin-bottom: 20px;
+}
+
+.header h1 {
+  font-size: 1.9rem;
+  margin-bottom: 6px;
+}
+
+.header p {
+  color: #556274;
+  margin: 0;
+  max-width: 760px;
+}
+
+.sectionTitle {
+  font-size: 1.25rem;
+  margin-bottom: 6px;
+}
+
+.sectionLead {
+  color: #5b6778;
+  margin-bottom: 18px;
+}
+
+.grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.wide {
+  grid-column: 1 / -1;
+}
+
+.field {
+  display: grid;
+  gap: 7px;
+}
+
+.label {
+  color: #243145;
+  font-size: 0.92rem;
+  font-weight: 700;
+}
+
+.input,
+.select {
+  background: #ffffff;
+  border: 1px solid #c6d0dd;
+  border-radius: 6px;
+  color: #132033;
+  font: inherit;
+  min-height: 40px;
+  padding: 8px 10px;
+  width: 100%;
+}
+
+.input:focus,
+.select:focus {
+  border-color: #1f6feb;
+  box-shadow: 0 0 0 3px rgba(31, 111, 235, 0.14);
+  outline: none;
+}
+
+.hint {
+  color: #667387;
+  font-size: 0.86rem;
+}
+
+.checks {
+  display: grid;
+  gap: 10px;
+}
+
+.check {
+  align-items: flex-start;
+  background: #f8fafc;
+  border: 1px solid #dce3ec;
+  border-radius: 6px;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 18px 1fr;
+  padding: 10px;
+}
+
+.check input {
+  margin-top: 3px;
+}
+
+.check strong {
+  display: block;
+}
+
+.check span {
+  color: #607086;
+  display: block;
+  font-size: 0.86rem;
+  margin-top: 2px;
+}
+
+.actions {
+  align-items: center;
+  border-top: 1px solid #e3e8f0;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  margin-top: 22px;
+  padding-top: 18px;
+}
+
+.actionGroup {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.button {
+  border: 1px solid #b8c4d4;
+  border-radius: 6px;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  min-height: 38px;
+  padding: 8px 13px;
+}
+
+.buttonPrimary {
+  background: #1f6feb;
+  border-color: #1f6feb;
+  color: #ffffff;
+}
+
+.buttonSecondary {
+  background: #ffffff;
+  color: #1d2b3f;
+}
+
+.button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.outputGrid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(0, 1fr) 280px;
+}
+
+.outputMeta {
+  background: #f8fafc;
+  border: 1px solid #dce3ec;
+  border-radius: 8px;
+  padding: 14px;
+}
+
+.outputMeta dl {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.outputMeta dt {
+  color: #667387;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.outputMeta dd {
+  margin: 0;
+}
+
+.code {
+  background: #101826;
+  border-radius: 8px;
+  color: #e9eef7;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  max-height: 620px;
+  overflow: auto;
+  padding: 16px;
+  white-space: pre;
+}
+
+.notice {
+  background: #fff8e6;
+  border: 1px solid #f3d58c;
+  border-radius: 6px;
+  color: #5d470f;
+  margin-top: 12px;
+  padding: 10px;
+}
+
+@media (max-width: 996px) {
+  .shell {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    position: static;
+  }
+
+  .outputGrid,
+  .grid {
+    grid-template-columns: 1fr;
+  }
+}

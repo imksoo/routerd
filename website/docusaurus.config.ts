@@ -109,6 +109,7 @@ const config: Config = {
           items: [
             {to: '/docs/', label: 'Introduction'},
             {to: '/docs/install-and-upgrade', label: 'Get started'},
+            {to: '/wizard', label: 'Config wizard'},
             {to: '/docs/concepts/resource-model', label: 'Concepts (declarative model)'},
             {to: '/docs/concepts/glossary', label: 'Glossary'},
             {to: '/docs/concepts/firewall', label: 'Configuration reference'},

@@ -108,6 +108,7 @@ const sidebars: SidebarsConfig = {
         'how-to/ipv6-dual-stack',
         'how-to/dhcp-lease-sync',
         'how-to/nat44-session-sync',
+        'how-to/vscode-yaml-schema',
         'how-to/guest-mode',
         'how-to/os-bootstrap',
         'how-to/pve-overlay',
