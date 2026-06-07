@@ -1,5 +1,7 @@
 # 觀測管線
 
+![Diagram showing Telemetry, LogSink, and ObservabilityPipeline resources feeding routerd OpenTelemetry SDK signals and routerd event exporter output to OTLP, syslog, stdout, or Loki sinks](/img/diagrams/operations-observability.png)
+
 `Telemetry` 是一個小型資源，用於將 routerd 自身的指標、追蹤與日誌輸出至 OTLP。`LogSink` 代表運維事件與觀測日誌的轉發路徑。OTLP 類型的 `LogSink` 透過參照 `Telemetry` 資源來避免重複填寫收集器端點。若需將 routerd 的事件日誌傳送至 Loki 等管線型遠端 sink，請使用 `ObservabilityPipeline`。
 
 `ObservabilityPipeline` 是 routerd 內建的管線，而非隨附的 `otelcol` 程序。OTLP 的日誌、指標與追蹤使用標準 OpenTelemetry SDK 送出，設定的日誌 sink 則由輕量事件匯出器負責傳送。

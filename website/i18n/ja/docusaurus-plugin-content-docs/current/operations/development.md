@@ -4,6 +4,8 @@ title: 開発時の確認
 
 # 開発時の確認
 
+![Diagram showing development checks split between local pre-commit tests, CI pull request validation, and release workflow archive publishing](/img/diagrams/operations-development.png)
+
 routerd は 2 つの自動化経路を分けています。
 
 - CI ワークフローは通常の push と pull request を検証します。

@@ -4,6 +4,8 @@ title: Ingress maintenance
 
 # Ingress maintenance
 
+![Diagram showing ingress maintenance with routerctl drain writing temporary state, reconcile marking a backend drained and unhealthy, existing conntrack preserved, and undrain or expiry restoring service](/img/diagrams/operations-ingress-maintenance.png)
+
 Use `routerctl drain` when an `IngressService` backend needs temporary
 maintenance without editing the router YAML:
 

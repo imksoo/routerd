@@ -4,6 +4,8 @@ title: 開發時確認
 
 # 開發時確認
 
+![Diagram showing development checks split between local pre-commit tests, CI pull request validation, and release workflow archive publishing](/img/diagrams/operations-development.png)
+
 routerd 將兩條自動化流程分開管理。
 
 - CI workflow 負責確認一般的 push 與 pull request。

@@ -4,6 +4,8 @@ title: nDPI agent native package
 
 # nDPI agent native package
 
+![Diagram showing the nDPI native agent package overlaying the static routerd release archive with a libndpi-linked routerd-ndpi-agent, installer self-test, and runtime agent socket status](/img/diagrams/operations-ndpi-agent-libndpi.png)
+
 routerd's normal Linux release archives are built with `CGO_ENABLED=0` and keep
 all included routerd binaries statically linked. The optional
 `routerd-ndpi-agent-libndpi` archive is the exception package for hosts that

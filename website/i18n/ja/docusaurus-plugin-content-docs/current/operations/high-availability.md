@@ -1,5 +1,7 @@
 # 高可用性
 
+![Diagram showing high availability with RouterdCluster file lease leader election gating routerd mutation while keepalived or CARP separately owns VIP address movement](/img/diagrams/operations-high-availability.png)
+
 `RouterdCluster` は、軽量なファイルベースのリースで、レンダラーと適用処理の動作を制御します。VIP の所有権とは分離しています。VIP をどのルーターが持つかは keepalived または CARP が決め、routerd はリースによって、ホスト設定を変更してよいノードを決めます。
 
 リーダーは `spec.leasePath` の排他ロックを保持し、`spec.leaseTTL` が切れる前にリースを更新します。スタンバイのノードは、観測のためにコントローラーチェーンを動かし続けますが、状態を変更するコントローラーは dry-run モードに強制されます。one-shot apply モードでは、通常どおり計画を作成し、クラスターの状態を記録したうえで apply を skip します。

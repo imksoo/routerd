@@ -4,6 +4,8 @@ title: Ingress のメンテナンス
 
 # Ingress のメンテナンス
 
+![Diagram showing ingress maintenance with routerctl drain writing temporary state, reconcile marking a backend drained and unhealthy, existing conntrack preserved, and undrain or expiry restoring service](/img/diagrams/operations-ingress-maintenance.png)
+
 router の YAML を編集せずに `IngressService` のバックエンドを一時的に外したい場合は、`routerctl drain` を使います。
 
 ```sh

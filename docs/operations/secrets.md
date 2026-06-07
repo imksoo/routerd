@@ -4,6 +4,8 @@ title: Secret sources
 
 # Secret sources
 
+![Diagram showing secret sources referenced from YAML through file or environment providers, root-owned host storage or USB persistence, validation warnings, and render or apply requiring readable secrets](/img/diagrams/operations-secrets.png)
+
 routerd supports file and environment secret sources for BGP peer passwords and
 VRRP/CARP authentication. Prefer these fields over inline `password` or
 `authentication` values:

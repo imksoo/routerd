@@ -4,6 +4,8 @@ title: シークレットソース
 
 # シークレットソース
 
+![Diagram showing secret sources referenced from YAML through file or environment providers, root-owned host storage or USB persistence, validation warnings, and render or apply requiring readable secrets](/img/diagrams/operations-secrets.png)
+
 routerd は、BGP ピアのパスワードと、VRRP/CARP の認証に、ファイルまたは環境変数のシークレットソースを使えます。本番設定では、inline の `password` や `authentication` よりも、次のフィールドを優先してください。
 
 ```yaml

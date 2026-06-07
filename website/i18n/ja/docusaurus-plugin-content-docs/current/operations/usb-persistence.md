@@ -4,6 +4,8 @@ title: USB 永続化
 
 # USB 永続化
 
+![Diagram showing USB persistence on the live ISO from boot-time config media discovery through mounted router.yaml and secrets restore, tmpfs log buffering, daily or manual flush, and safe unmount](/img/diagrams/operations-usb-persistence.png)
+
 routerd のライブ ISO は、ディスクレスルーターとして動作できます。
 このモードでは、実行中のシステムを RAM に置きます。
 選択したルーター状態だけを USB デバイスへ保存します。

@@ -5,6 +5,8 @@ slug: /operations/inventory
 
 # 主机清单
 
+![Diagram showing host inventory detection of OS, service manager, commands, kernel features, and paths feeding platform decisions and validation or planning output](/img/diagrams/operations-inventory.png)
+
 routerd 会调查主机的 OS、可用命令及网络功能。
 此清单供生成器与应用处理在验证或计划阶段，明确标示各 OS 特定的判断。
 

@@ -1,5 +1,7 @@
 # Alpine / OpenRC デプロイ
 
+![Diagram showing Alpine and OpenRC deployment from routerd validation and render preview through OpenRC service management, keepalived config testing, live ISO wizard skipping, DHCP renewal, and VRRP status observation](/img/diagrams/operations-alpine-deployment.png)
+
 Alpine Linux では、routerd は OpenRC をサービスマネージャーとして扱います。
 one-shot apply は、routerd が管理するローカルサービスまで含めて自己完結します。
 

@@ -5,6 +5,8 @@ slug: /operations/inventory
 
 # 主機清單
 
+![Diagram showing host inventory detection of OS, service manager, commands, kernel features, and paths feeding platform decisions and validation or planning output](/img/diagrams/operations-inventory.png)
+
 routerd 會調查主機的 OS、可用指令及網路功能。
 此清單供產生器與套用處理在驗證或計畫階段，明確標示各 OS 特定的判斷。
 

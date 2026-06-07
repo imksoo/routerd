@@ -4,6 +4,8 @@ title: Ingress maintenance
 
 # Ingress 维护
 
+![Diagram showing ingress maintenance with routerctl drain writing temporary state, reconcile marking a backend drained and unhealthy, existing conntrack preserved, and undrain or expiry restoring service](/img/diagrams/operations-ingress-maintenance.png)
+
 若想在不编辑路由器 YAML 的情况下，临时将 `IngressService` 的后端移除，
 请使用 `routerctl drain`。
 

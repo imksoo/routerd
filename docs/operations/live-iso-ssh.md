@@ -4,6 +4,8 @@ title: SSH remote management on the live ISO
 
 # SSH remote management on the live ISO
 
+![Diagram showing live ISO SSH management closed by default, enabled only by routerd.ssh boot flag and external authorized_keys on config media, then started as public-key-only sshd](/img/diagrams/operations-live-iso-ssh.png)
+
 The routerd live ISO does not run an SSH daemon by default. The default posture
 is closed: only the local and serial consoles are available (`tty1`, `tty2`,
 `ttyS0`). This keeps passwordless-root access off the network.

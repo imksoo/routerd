@@ -4,6 +4,8 @@ title: Reconcile and removal
 
 # Reconcile and removal
 
+![Diagram showing reconcile and removal from validate, plan, and dry-run preflight through effective desired view construction to owner-reference GC planner cleanup with backup and event recording](/img/diagrams/operations-reconcile.png)
+
 routerd compares the intent declared in YAML with the host's current state. When they differ, routerd computes a plan, optionally previews it as a dry-run, and then applies it.
 
 ## Standard sequence

@@ -4,6 +4,8 @@ title: OpenTelemetry ダッシュボード
 
 # OpenTelemetry ダッシュボード
 
+![Diagram showing OpenTelemetry dashboard inputs from routerd metric families and resource attributes into Grafana, OpenObserve, and PromQL-style panels](/img/diagrams/operations-otel-dashboards.png)
+
 routerd は、`routerd.<domain>.<metric>` という命名規則でメトリクスを出力します。
 Grafana、OpenObserve、その他の OTLP メトリクスバックエンドで、次のパネルを出発点として使えます。
 

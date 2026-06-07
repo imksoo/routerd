@@ -4,6 +4,8 @@ title: USB persistence
 
 # USB persistence
 
+![Diagram showing USB persistence on the live ISO from boot-time config media discovery through mounted router.yaml and secrets restore, tmpfs log buffering, daily or manual flush, and safe unmount](/img/diagrams/operations-usb-persistence.png)
+
 The routerd live ISO can run as a diskless router. In that mode, the ISO keeps
 the active system in RAM and stores only the selected router state on a USB
 device.
