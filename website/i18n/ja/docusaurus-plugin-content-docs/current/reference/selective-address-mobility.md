@@ -147,7 +147,7 @@ active 選出から外れ、planner が生成済み capture claim と provider a
 古い "remote-full inline" style、つまり各 node が remote member の provider
 詳細まで繰り返し書く形は、pre-release 期間の互換として引き続き受け付けます。
 ただし deprecated です。remote member が local capture/discovery detail を持つ
-場合、`routerd validate`、plan、apply は warning を表示します。将来の
+場合、`routerctl validate`、plan、apply は warning を表示します。将来の
 pre-release では remote member を identity-only にすることを必須化する可能性が
 あります。
 

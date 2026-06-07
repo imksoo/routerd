@@ -73,8 +73,8 @@ flowchart LR
 ## 確認
 
 ```bash
-routerd validate --config examples/example-local-dns-redirect.yaml
-routerd apply --config examples/example-local-dns-redirect.yaml --once --dry-run
+routerctl validate --config examples/example-local-dns-redirect.yaml
+routerctl apply --config examples/example-local-dns-redirect.yaml --dry-run
 routerctl describe IPAddressSet/public-dns
 nft list table ip routerd_nat
 ```

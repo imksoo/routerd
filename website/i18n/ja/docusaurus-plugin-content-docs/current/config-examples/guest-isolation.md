@@ -62,8 +62,8 @@ flowchart LR
 ## 確認
 
 ```bash
-routerd validate --config examples/guest-mode.yaml
-routerd apply --config examples/guest-mode.yaml --once --dry-run
+routerctl validate --config examples/guest-mode.yaml
+routerctl apply --config examples/guest-mode.yaml --dry-run
 routerctl describe ClientPolicy/guest-devices
 nft list table inet routerd_filter
 ```

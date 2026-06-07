@@ -20,7 +20,7 @@ intent.
 
 `runtime: true` writes immediately to the running kernel when the controller
 chain is serving. `persistent: true` writes a persistent file under
-`/etc/sysctl.d/`. `routerd apply --once` mutates only explicit `Sysctl` and
+`/etc/sysctl.d/`. `routerctl apply` mutates only explicit `Sysctl` and
 `SysctlProfile` resources; derived sysctls are rendered and planned there, then
 applied by `routerd serve`.
 

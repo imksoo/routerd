@@ -6,24 +6,24 @@ sidebar_position: 4
 
 # Apply and render
 
-![Diagram showing how routerd validate, plan, dry-run, apply, and render use the same effective resource graph](/img/diagrams/concept-apply-and-render.png)
+![Diagram showing how routerctl validate, plan, dry-run, apply, and render use the same effective resource graph](/img/diagrams/concept-apply-and-render.png)
 
 There are a few common operations you will use day to day. This page settles the vocabulary used elsewhere in the documentation.
 
 ## Validate
 
-`routerd validate` checks the YAML's shape: kind names, required fields, value ranges, obvious dependency errors.
+`routerctl validate` checks the YAML's shape: kind names, required fields, value ranges, obvious dependency errors.
 
 ```bash
-routerd validate --config /usr/local/etc/routerd/router.yaml
+routerctl validate --config /usr/local/etc/routerd/router.yaml
 ```
 
 ## Plan
 
-`routerd plan` shows what routerd is about to do to the host. Before pointing it at a production router, check the plan for anything that would cut the management connection or change a route unexpectedly.
+`routerctl plan` shows what routerd is about to do to the host. Before pointing it at a production router, check the plan for anything that would cut the management connection or change a route unexpectedly.
 
 ```bash
-routerd plan --config /usr/local/etc/routerd/router.yaml
+routerctl plan --config /usr/local/etc/routerd/router.yaml
 ```
 
 ## Dry-run
@@ -31,15 +31,15 @@ routerd plan --config /usr/local/etc/routerd/router.yaml
 `--dry-run` runs through apply without changing the host, so you only see what would happen before a live change.
 
 ```bash
-routerd apply --config /usr/local/etc/routerd/router.yaml --once --dry-run
+routerctl apply --config /usr/local/etc/routerd/router.yaml --dry-run
 ```
 
 ## Apply
 
-`routerd apply --once` is a bounded host pass: it validates intent, observes the current host where needed, writes rendered artifacts, records state, and exits. It does not own long-running daemon lifecycle. Starting, enabling, restarting, or reloading managed daemons is the responsibility of `routerd serve`.
+`routerctl apply` is a bounded host pass: it validates intent, observes the current host where needed, writes rendered artifacts, records state, and exits. It does not own long-running daemon lifecycle. Starting, enabling, restarting, or reloading managed daemons is the responsibility of `routerd serve`.
 
 ```bash
-sudo routerd apply --config /usr/local/etc/routerd/router.yaml --once
+sudo routerctl apply --config /usr/local/etc/routerd/router.yaml
 sudo routerd serve --config /usr/local/etc/routerd/router.yaml
 ```
 

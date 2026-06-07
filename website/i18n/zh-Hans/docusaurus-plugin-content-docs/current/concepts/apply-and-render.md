@@ -6,27 +6,27 @@ sidebar_position: 4
 
 # 应用与生成
 
-![routerd validate、plan、dry-run、apply 和 render 使用同一个有效资源图的流程](/img/diagrams/concept-apply-and-render.png)
+![routerctl validate、plan、dry-run、apply 和 render 使用同一个有效资源图的流程](/img/diagrams/concept-apply-and-render.png)
 
 routerd 有几个日常运行中常用的操作。
 本页统一说明文档中使用的术语。
 
 ## 验证
 
-`routerd validate` 确认 YAML 的格式。
+`routerctl validate` 确认 YAML 的格式。
 可检测 Kind 名称、必填字段、值范围，以及明显的依赖性错误。
 
 ```bash
-routerd validate --config /usr/local/etc/routerd/router.yaml
+routerctl validate --config /usr/local/etc/routerd/router.yaml
 ```
 
 ## 查看计划
 
-`routerd plan` 显示准备对主机执行的操作内容。
+`routerctl plan` 显示准备对主机执行的操作内容。
 在应用至正式路由器之前，可确认管理连接是否会中断、是否有意外的路由变更。
 
 ```bash
-routerd plan --config /usr/local/etc/routerd/router.yaml
+routerctl plan --config /usr/local/etc/routerd/router.yaml
 ```
 
 ## 模拟执行
@@ -35,17 +35,17 @@ routerd plan --config /usr/local/etc/routerd/router.yaml
 routerd 在新控制器开发与实机验证初期，以模拟执行作为默认模式。
 
 ```bash
-routerd apply --config /usr/local/etc/routerd/router.yaml --once --dry-run
+routerctl apply --config /usr/local/etc/routerd/router.yaml --dry-run
 ```
 
 ## 应用
 
-`routerd apply` 依照 YAML 的意图变更主机。
-只执行一次时加上 `--once`。
+`routerctl apply` 依照 YAML 的意图变更主机。
+一次性执行时直接使用 `routerctl apply`。
 若要持续运行，请使用 `routerd serve`。
 
 ```bash
-sudo routerd apply --config /usr/local/etc/routerd/router.yaml --once
+sudo routerctl apply --config /usr/local/etc/routerd/router.yaml
 sudo routerd serve --config /usr/local/etc/routerd/router.yaml
 ```
 

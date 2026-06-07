@@ -79,8 +79,8 @@ flowchart LR
 ## Checks
 
 ```bash
-routerd validate --config examples/example-pppoe-ipv4-nat.yaml
-routerd apply --config examples/example-pppoe-ipv4-nat.yaml --once --dry-run
+routerctl validate --config examples/example-pppoe-ipv4-nat.yaml
+routerctl apply --config examples/example-pppoe-ipv4-nat.yaml --dry-run
 routerctl describe PPPoESession/pppoe-home
 ip link show ppp-home
 ip route show default

@@ -1010,7 +1010,7 @@ start_qemu_guest_agent
 if [ -x /etc/init.d/routerd-bgp ] && grep -qE '^[[:space:]]*kind:[[:space:]]*BGPRouter([[:space:]]|$)' "${config}" 2>/dev/null; then
     rc-service routerd-bgp restart >> "${log_dir}/routerd-live.log" 2>&1 || true
 fi
-"${routerd}" apply --config "${config}" --once
+"${routerd}" apply --config "${config}"
 if routerd_serve_running; then
     if [ -x /etc/init.d/routerd ]; then
         echo "routerd-live: routerd serve was already running before config handoff; restarting after restore reason=LiveISOStaleServeRestarted" >> "${log_dir}/routerd-live.log"

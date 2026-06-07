@@ -108,16 +108,16 @@ zone.
 
 ```bash
 cp examples/example-basic-ipv4-nat.yaml router.yaml
-routerd validate --config router.yaml
-routerd plan --config router.yaml
-routerd apply --config router.yaml --once --dry-run
+routerctl validate --config router.yaml
+routerctl plan --config router.yaml
+routerctl apply --config router.yaml --dry-run
 ```
 
 Only apply for real after confirming that management access is not on the LAN
 interface being readdressed, or that you have console access.
 
 ```bash
-routerd apply --config router.yaml --once
+routerctl apply --config router.yaml
 ```
 
 ## Checks

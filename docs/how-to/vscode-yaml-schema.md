@@ -61,4 +61,4 @@ Use the modeline for arbitrary YAML filenames that do not match those patterns.
 
 ## Checks
 
-The schema is generated from the Go API types. CI checks that the repository schema and the published website copy stay in sync, so editor feedback tracks the same contract used by `routerd validate`.
+The schema is generated from the Go API types. CI checks that the repository schema and the published website copy stay in sync, so editor feedback tracks the same contract used by `routerctl validate`.

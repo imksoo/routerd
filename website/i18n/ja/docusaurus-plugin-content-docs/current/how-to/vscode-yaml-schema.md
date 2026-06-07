@@ -65,4 +65,4 @@ enum 検証、型診断を有効にします。
 
 schema は Go API type から生成されます。CI は repository 内の schema と website
 で公開する copy が同期していることを確認します。そのため editor feedback は
-`routerd validate` が使う契約と同じものに追従します。
+`routerctl validate` が使う契約と同じものに追従します。

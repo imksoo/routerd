@@ -143,7 +143,7 @@ See `examples/dslite-lan-range-snat.yaml` for the optional form.
 ## Verification
 
 ```bash
-routerd apply --config router.yaml --once --dry-run
+routerctl apply --config router.yaml --dry-run
 routerctl status
 
 ip -6 tunnel show

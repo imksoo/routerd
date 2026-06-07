@@ -148,7 +148,7 @@ LAN 範囲から切り出したアドレスを使いたい場合は、`IPv4Stati
 ## 動作確認
 
 ```bash
-routerd apply --config router.yaml --once --dry-run
+routerctl apply --config router.yaml --dry-run
 routerctl status
 
 ip -6 tunnel show

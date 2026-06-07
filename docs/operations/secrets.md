@@ -32,7 +32,7 @@ Operational guidance:
   hosts; rendered files contain the resolved secret value.
 - `base64: true` is only an encoding convenience for file/env transport. It is
   not encryption.
-- `routerd validate` warns when a referenced secret file does not exist yet.
+- `routerctl validate` warns when a referenced secret file does not exist yet.
   Render and apply require the source to be readable.
 
 On the live ISO with USB persistence, files under

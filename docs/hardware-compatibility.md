@@ -100,7 +100,7 @@ Before putting hardware into service:
 
 1. Boot the target OS or live ISO.
 2. Confirm all NICs have stable names.
-3. Run `routerd validate` and `routerd plan`.
+3. Run `routerctl validate` and `routerctl plan`.
 4. Apply with management access on a separate path when possible.
 5. Check DHCP, DNS, NAT, firewall, and route policy.
 6. Run a throughput test.

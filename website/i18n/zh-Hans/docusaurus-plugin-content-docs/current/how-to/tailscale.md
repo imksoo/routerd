@@ -163,7 +163,7 @@ spec:
 确认配置后重启 routerd。
 
 ```sh
-routerd validate --config /usr/local/etc/routerd/router.yaml
+routerctl validate --config /usr/local/etc/routerd/router.yaml
 systemctl restart routerd.service
 ```
 

@@ -15,7 +15,7 @@ routerd treats the on-disk `router.yaml` as both the operator input and the
 state reconciled on boot. This conflation produced a concrete defect: removing a
 resource at runtime does not survive a restart.
 
-- `routerd delete` removes host artifacts, the ownership ledger entry, and the
+- `routerctl delete` removes host artifacts, the ownership ledger entry, and the
   object status, but it does **not** edit `router.yaml`.
 - `routerd serve` loads `router.yaml` on startup and reconciles it as the
   desired state.
@@ -74,7 +74,7 @@ routerd does not move the truth into an opaque database.
 ### 2. Binary split
 
 - **`routerd` is the daemon/engine.** The systemd unit runs `routerd serve` and
-  nothing else. `serve --once` performs a single converge-and-exit (boot tests,
+  nothing else. `serve` performs a single converge-and-exit (boot tests,
   CI, drift repair). Bootstrap and recovery seed the canonical via
   `routerd serve --config <initial.yaml>`.
 - **`routerctl` is the operator CLI** (kubectl-equivalent). It owns the config
@@ -162,7 +162,7 @@ verbs are gated by socket membership, performed by the privileged daemon.
 - **Phase 2 -- Control API mutations.** Add apply/plan/delete/validate to the
   control socket API with the socket permission model.
 - **Phase 3 -- Verb move.** `routerctl` gains validate/plan/apply/delete (via the
-  daemon) with upsert-default/`--replace`/input-required; `serve --once`; trim
+  daemon) with upsert-default/`--replace`/input-required; `serve`; trim
   `routerd` to serve-only (remove/relocate check/observe/render/adopt/run, drop
   mandatory `--once`, move rollback to routerctl).
 - **Phase 4 -- Inspection consolidation.** Merge get/status/show/describe into

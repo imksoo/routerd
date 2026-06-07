@@ -95,7 +95,7 @@ NixOS 与 FreeBSD 通过平台专属的生成器（renderer）与服务整合提
 
 1. 启动目标 OS 或 live ISO。
 2. 确认所有 NIC 名称稳定不变。
-3. 执行 `routerd validate` 与 `routerd plan`。
+3. 执行 `routerctl validate` 与 `routerctl plan`。
 4. 若可行，请在管理路径分离后再应用。
 5. 确认 DHCP、DNS、NAT、防火墙及路由策略正常运作。
 6. 执行吞吐量测试。

@@ -75,7 +75,7 @@ package or kernel setting is not yet derivable.
 ## 3. Validate
 
 ```bash
-routerd validate --config first-router.yaml
+routerctl validate --config first-router.yaml
 ```
 
 Validation checks the resource shape before routerd touches the host.
@@ -83,7 +83,7 @@ Validation checks the resource shape before routerd touches the host.
 ## 4. Inspect the plan
 
 ```bash
-routerd plan --config first-router.yaml
+routerctl plan --config first-router.yaml
 ```
 
 Use the plan to catch accidental interface names, missing dependencies, and
@@ -92,7 +92,7 @@ host artifacts that routerd would create.
 ## 5. Dry apply
 
 ```bash
-routerd apply --config first-router.yaml --once --dry-run
+routerctl apply --config first-router.yaml --dry-run
 ```
 
 Dry application exercises resource loading, dependency ordering, and generated

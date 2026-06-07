@@ -353,7 +353,7 @@ sudo tcpdump -eni ens19
 
 - 方針が正しい `Interface` を参照している。
 - パケットがそのインターフェースから入っている。
-- `routerd apply` で最新の nftables テーブルが反映されている。
+- `routerctl apply` で最新の nftables テーブルが反映されている。
 - `guestEgressAllow` に広いプライベートプレフィックスが入っていない。
 - 端末側の VPN クライアントなど、ルーターを迂回する経路がない。
 

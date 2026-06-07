@@ -13,20 +13,20 @@ routerd には、日常の運用でよく使う操作がいくつかあります
 
 ## 検証する
 
-`routerd validate` は YAML の形を確認します。
+`routerctl validate` は YAML の形を確認します。
 Kind 名、必須フィールド、値の範囲、明らかな依存関係の誤りを検出します。
 
 ```bash
-routerd validate --config /usr/local/etc/routerd/router.yaml
+routerctl validate --config /usr/local/etc/routerd/router.yaml
 ```
 
 ## 計画を見る
 
-`routerd plan` は、ホストに対して何をしようとしているかを表示します。
+`routerctl plan` は、ホストに対して何をしようとしているかを表示します。
 本番ルーターへ適用する前に、管理用の接続が切れないか、予期しない経路変更がないかを確認できます。
 
 ```bash
-routerd plan --config /usr/local/etc/routerd/router.yaml
+routerctl plan --config /usr/local/etc/routerd/router.yaml
 ```
 
 ## 予行実行する
@@ -35,17 +35,17 @@ routerd plan --config /usr/local/etc/routerd/router.yaml
 routerd では、新しいコントローラーや実機検証の初期段階で、予行実行を既定とします。
 
 ```bash
-routerd apply --config /usr/local/etc/routerd/router.yaml --once --dry-run
+routerctl apply --config /usr/local/etc/routerd/router.yaml --dry-run
 ```
 
 ## 適用する
 
-`routerd apply` は、YAML の意図に合わせてホストを変更します。
+`routerctl apply` は、YAML の意図に合わせてホストを変更します。
 一度だけ実行するなら `--once` を付けます。
 常駐させるなら `routerd serve` を使います。
 
 ```bash
-sudo routerd apply --config /usr/local/etc/routerd/router.yaml --once
+sudo routerctl apply --config /usr/local/etc/routerd/router.yaml
 sudo routerd serve --config /usr/local/etc/routerd/router.yaml
 ```
 

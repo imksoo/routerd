@@ -78,11 +78,11 @@ if [ "${ROUTERD_ALPINE_VM_APPLY:-}" != "1" ]; then
     exit 0
 fi
 
-routerd serve --config "$config" --once --status-file "${tmpdir}/status.json" >/dev/null
+routerd serve --config "$config" --status-file "${tmpdir}/status.json" >/dev/null
 rc-update show default | awk '{ print $1 }' | grep -qx routerd_smoke
 rc-service routerd_smoke status >/dev/null
 
-routerd serve --config "$config" --once --status-file "${tmpdir}/status-2.json" >/dev/null
+routerd serve --config "$config" --status-file "${tmpdir}/status-2.json" >/dev/null
 rc-service routerd_smoke status >/dev/null
 
 echo "Alpine VM OpenRC smoke passed"

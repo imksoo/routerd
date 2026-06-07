@@ -18,7 +18,7 @@ routerd 会从 NAT、DS-Lite、BGP、IPv6 前缀委派（PD）、RA、LAN 服务
 
 `runtime: true` 会在控制器链 serve 执行期间，立即将配置反映至运行中的内核。
 `persistent: true` 会将持久配置写入 `/etc/sysctl.d/`。
-`routerd apply --once` 只会将明确指定的 `Sysctl` / `SysctlProfile` 应用至主机。
+`routerctl apply` 只会将明确指定的 `Sysctl` / `SysctlProfile` 应用至主机。
 推导生成的 sysctl 属于 plan / render 的对象，实际应用由 `routerd serve` 负责。
 
 仅在需要使用明确配置文件作为逃生出口时，才通过 `overrides` 覆盖差异。

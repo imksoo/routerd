@@ -85,8 +85,8 @@ flowchart LR
 ## Checks
 
 ```bash
-routerd validate --config examples/multi-wan-home.yaml
-routerd apply --config examples/multi-wan-home.yaml --once --dry-run
+routerctl validate --config examples/multi-wan-home.yaml
+routerctl apply --config examples/multi-wan-home.yaml --dry-run
 routerctl describe EgressRoutePolicy/ipv4-default
 routerctl describe IPv4Route/default
 ip route show default

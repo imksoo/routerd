@@ -138,9 +138,9 @@ resolver.
 
 ```bash
 cp examples/example-dslite-home.yaml router.yaml
-routerd validate --config router.yaml
-routerd plan --config router.yaml
-routerd apply --config router.yaml --once --dry-run
+routerctl validate --config router.yaml
+routerctl plan --config router.yaml
+routerctl apply --config router.yaml --dry-run
 ```
 
 Check the plan for:
@@ -153,7 +153,7 @@ Check the plan for:
 Then apply:
 
 ```bash
-routerd apply --config router.yaml --once
+routerctl apply --config router.yaml
 ```
 
 ## Checks

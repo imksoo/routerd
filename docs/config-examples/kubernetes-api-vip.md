@@ -15,9 +15,9 @@ prefixes.
 Use it as an end-to-end starting point:
 
 ```bash
-routerd validate --config examples/kubernetes-api-vip.yaml
-routerd plan --config examples/kubernetes-api-vip.yaml
-routerd apply --config examples/kubernetes-api-vip.yaml --once --dry-run
+routerctl validate --config examples/kubernetes-api-vip.yaml
+routerctl plan --config examples/kubernetes-api-vip.yaml
+routerctl apply --config examples/kubernetes-api-vip.yaml --dry-run
 ```
 
 Topology:

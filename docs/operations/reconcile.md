@@ -11,10 +11,10 @@ routerd compares the intent declared in YAML with the host's current state. When
 ## Standard sequence
 
 ```bash
-routerd validate --config router.yaml
-routerd plan     --config router.yaml
-routerd apply    --config router.yaml --once --dry-run
-routerd apply    --config router.yaml --once
+routerctl validate --config router.yaml
+routerctl plan     --config router.yaml
+routerctl apply    --config router.yaml --dry-run
+routerctl apply    --config router.yaml
 ```
 
 For a remote router, confirm that the management connection (SSH, console, hypervisor console) will survive the change before running the non-dry-run `apply`.
@@ -36,7 +36,7 @@ remains a pre-apply check rather than a persistent operating mode.
 
 When the config contains resources that forward traffic, such as
 `IngressService`, `PortForward`, NAT, BGP, or static/policy routes, routerd
-derives the required runtime sysctls. `routerd apply --once` observes, plans,
+derives the required runtime sysctls. `routerctl apply` observes, plans,
 and renders those derived settings without mutating them; `routerd serve`
 converges them during controller reconcile. This keeps one-shot apply bounded to
 config validation and artifact rendering while the long-running controller owns
@@ -98,7 +98,7 @@ filter table during normal apply.
 
 routerd only deletes objects whose ownership it can attribute (i.e. that routerd previously created or adopted). It does not remove third-party configuration or manual changes.
 
-Generation-based rollback is supported. `routerctl rollback --list` shows the stored generations recorded by past applies, and `routerctl rollback --to <generation>` re-applies a stored Router YAML through the normal apply path. Rollback re-applies the declared config and the artifacts routerd manages; it does **not** restore live conntrack, kernel transient state, daemon runtime state, or any host change made outside routerd's ledger. For changes that include deletions, always run `routerd plan` and `routerd apply --dry-run` first and confirm the deletion list before applying.
+Generation-based rollback is supported. `routerctl rollback --list` shows the stored generations recorded by past applies, and `routerctl rollback --to <generation>` re-applies a stored Router YAML through the normal apply path. Rollback re-applies the declared config and the artifacts routerd manages; it does **not** restore live conntrack, kernel transient state, daemon runtime state, or any host change made outside routerd's ledger. For changes that include deletions, always run `routerctl plan` and `routerctl apply --dry-run` first and confirm the deletion list before applying.
 
 ## See also
 

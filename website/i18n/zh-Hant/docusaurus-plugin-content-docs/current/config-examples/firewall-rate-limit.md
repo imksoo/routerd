@@ -17,9 +17,9 @@ title: 防火牆速率限制與 ICMP 規則
 ## 套用步驟
 
 ```bash
-routerd validate --config examples/firewall-rate-limit.yaml
-routerd plan --config examples/firewall-rate-limit.yaml
-routerd apply --config examples/firewall-rate-limit.yaml --once --dry-run
+routerctl validate --config examples/firewall-rate-limit.yaml
+routerctl plan --config examples/firewall-rate-limit.yaml
+routerctl apply --config examples/firewall-rate-limit.yaml --dry-run
 ```
 
 ## 規則摘錄

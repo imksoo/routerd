@@ -248,7 +248,7 @@ FQDN 的 `A`/`AAAA` 記錄由 runtime 控制器解析，並在不重新載入整
 routerd 透過本地 gRPC Unix socket 將資源 spec 直接映射為型別化的 GoBGP API 物件，
 並以 `ListPeer` 與 `ListPath` 觀測狀態。不使用 FRR 的文字設定、
 `frr-reload.py`、`vtysh` 解析、GoBGP 的檔案設定。
-`apply --once` 僅產生主機 artifact，
+`apply` 僅產生主機 artifact，
 BGP 作為 `routerd serve` 的管理對象顯示於 status。`routerctl show bgp` 顯示從儲存的
 GoBGP 觀測資料中，路由器、peer、訊息計數器、路由選擇狀態及最近的錯誤。
 前綴 status 包含 `best`、`valid`、`installed`、`stale`、`nextHop`、
@@ -298,7 +298,7 @@ runtime 控制器解析 backend 的 FQDN，DNS 失敗時以上次解析的 IPv4 
 `routerctl show ingress` 顯示 active backend 及各 backend 的健康狀態。
 `routerctl show ingress --verbose` 亦顯示 live dataplane 的 `ip_forward`、nftables 的
 DNAT/SNAT 規則數、對應的 conntrack 流量數。`DETAIL` 欄顯示
-`hairpinMode`、是否需要 hairpin，以及預期的 nftables SNAT 規則是 present 還是 missing。從 Ingress、NAT 系、DS-Lite、IPv6 PD/RA、路由資源導出轉發、redirect 抑制、reverse path filter 例外、各介面的 RA 接收等所需的 runtime sysctl。`routerd apply --once` 會 plan / render 衍生設定，但主機變更僅限於明確的 `Sysctl` / `SysctlProfile` escape hatch。
+`hairpinMode`、是否需要 hairpin，以及預期的 nftables SNAT 規則是 present 還是 missing。從 Ingress、NAT 系、DS-Lite、IPv6 PD/RA、路由資源導出轉發、redirect 抑制、reverse path filter 例外、各介面的 RA 接收等所需的 runtime sysctl。`routerctl apply` 會 plan / render 衍生設定，但主機變更僅限於明確的 `Sysctl` / `SysctlProfile` escape hatch。
 衍生 runtime 設定的套用由 `routerd serve` 的控制器調和（reconcile）負責。
 維護期間可用 `routerctl drain
 ingress/<service> backend=<name> --duration 10m` 將 backend 設為 drain 狀態。控制器在 duration 結束或執行 `routerctl undrain

@@ -165,7 +165,7 @@ tailnet 全体を管理ネットワークとして扱いたい場合だけ、`ta
 設定を確認してから routerd を再起動します。
 
 ```sh
-routerd validate --config /usr/local/etc/routerd/router.yaml
+routerctl validate --config /usr/local/etc/routerd/router.yaml
 systemctl restart routerd.service
 ```
 
