@@ -13,7 +13,7 @@ When investigating routerd, first separate **what routerd intends** from **what 
 
 1. `routerctl status` — overall view.
 2. `routerctl describe <kind>/<name>` — focus on a specific resource.
-3. `routerd apply --once --dry-run` — what would change next.
+3. `routerctl apply --dry-run` — what would change next.
 4. OS commands (`ip`, `nft`, `ss`, `journalctl`) — actual host state.
 5. The relevant daemon's `/v1/status` and event log.
 

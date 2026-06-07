@@ -291,7 +291,7 @@ LAN 服務、管理路徑的放置位置，以及選用的 USB 持久化。
 產生的候選設定儲存於 `/usr/local/etc/routerd/router.yaml.configure`，
 若已有現有設定，則顯示差異。
 確認後，安裝至 `/usr/local/etc/routerd/router.yaml`，
-接著依序執行 `routerd validate`、`routerd plan`、`routerd apply --once`。
+接著依序執行 `routerctl validate`、`routerctl plan`、`routerctl apply`。
 
 自動化時，可透過環境變數傳遞值以略過提問：
 
@@ -333,15 +333,15 @@ sudo vi /usr/local/etc/routerd/router.yaml
 驗證並確認計畫：
 
 ```sh
-routerd validate --config /usr/local/etc/routerd/router.yaml
-routerd plan --config /usr/local/etc/routerd/router.yaml
-routerd apply --config /usr/local/etc/routerd/router.yaml --once --dry-run
+routerctl validate --config /usr/local/etc/routerd/router.yaml
+routerctl plan --config /usr/local/etc/routerd/router.yaml
+routerctl apply --config /usr/local/etc/routerd/router.yaml --dry-run
 ```
 
 確認管理路徑安全後再套用：
 
 ```sh
-sudo routerd apply --config /usr/local/etc/routerd/router.yaml --once
+sudo routerctl apply --config /usr/local/etc/routerd/router.yaml
 ```
 
 單次套用正常完成後，啟動服務：

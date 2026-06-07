@@ -152,7 +152,7 @@ judgment, surfaced via the explicit reason codes above.
 keeps autostart idempotent, but the first autostart pass of a boot is also
 the config handoff boundary. If a persisted OpenRC runlevel starts
 `routerd serve` before USB config restore, `live-autostart.sh` must restart
-that service after `apply --once` instead of treating the existing process as
+that service after `apply` instead of treating the existing process as
 success. That restart is logged with `reason=LiveISOStaleServeRestarted`.
 The boot marker lives under `/run/routerd` so each boot re-evaluates this
 handoff. Without the duplicate guard, two routerd controllers compete for the
@@ -225,7 +225,7 @@ must never collapse to `Healthy` while FRR is down. The v2007 regression
 12. Live ISO with a persisted `routerd` OpenRC default-runlevel entry:
     `routerd serve` may be started before USB config restore, but
     `live-autostart.sh` removes the default-runlevel entry and restarts the
-    service after config restore + `apply --once`, logging
+    service after config restore + `apply`, logging
     `reason=LiveISOStaleServeRestarted`, so BGP reload still converges without
     manual `frr-reload.py`.
 13. FRR service starting in FAILED state at boot: routerd must invoke

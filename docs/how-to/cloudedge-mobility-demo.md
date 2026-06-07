@@ -88,7 +88,7 @@ The operator declares only intent; everything else is derived.
   has reconverged elsewhere.
 
 The example configs intentionally avoid the older remote-full inline style. That
-style is still accepted during the pre-release period, but `routerd validate`,
+style is still accepted during the pre-release period, but `routerctl validate`,
 plan, and apply warn when a remote `MobilityPool` member contains local provider
 capture or discovery details. Future pre-release configs may require identity-only
 remote members.

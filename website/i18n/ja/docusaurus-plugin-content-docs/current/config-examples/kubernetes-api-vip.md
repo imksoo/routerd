@@ -15,9 +15,9 @@ prefix を受け取ります。
 出発点として、次の順で確認します。
 
 ```bash
-routerd validate --config examples/kubernetes-api-vip.yaml
-routerd plan --config examples/kubernetes-api-vip.yaml
-routerd apply --config examples/kubernetes-api-vip.yaml --once --dry-run
+routerctl validate --config examples/kubernetes-api-vip.yaml
+routerctl plan --config examples/kubernetes-api-vip.yaml
+routerctl apply --config examples/kubernetes-api-vip.yaml --dry-run
 ```
 
 構成:

@@ -137,8 +137,8 @@ Implemented:
 - systemd unit generation for `routerd-dhcpv4-client`
 - systemd unit generation for `routerd-pppoe-client`
 - NixOS module generation for `Package` overrides, `SysctlProfile`, derived host runtime artifacts, and generated service artifacts
-- automatic `nixos-rebuild test` from `routerd apply --dry-run`
-- automatic `nixos-rebuild switch` from `routerd apply`
+- automatic `nixos-rebuild test` from `routerctl apply --dry-run`
+- automatic `nixos-rebuild switch` from `routerctl apply`
 - rollback attempt with `nixos-rebuild switch --rollback` when a NixOS switch fails
 - generation tracking before and after `nixos-rebuild`
 - DHCPv6-PD reaches `Bound`
@@ -236,7 +236,7 @@ DHCP/RA service, and ports packages for WireGuard, Tailscale, and strongSwan.
 - `dnsmasq.conf`
 - `rc.d-*`
 
-`routerd apply` installs the generated `pf.conf`, validates it with `pfctl -nf`, applies it with `pfctl -f`, validates dnsmasq with `dnsmasq --test`, starts generated rc.d scripts with `service <name> onestart`, and applies dynamic DS-Lite tunnels with `ifconfig gif` when static `rc.conf` rendering is not enough. Use `routerd render freebsd` for review and offline validation before pointing real traffic at a FreeBSD host.
+`routerctl apply` installs the generated `pf.conf`, validates it with `pfctl -nf`, applies it with `pfctl -f`, validates dnsmasq with `dnsmasq --test`, starts generated rc.d scripts with `service <name> onestart`, and applies dynamic DS-Lite tunnels with `ifconfig gif` when static `rc.conf` rendering is not enough. Use `routerd render freebsd` for review and offline validation before pointing real traffic at a FreeBSD host.
 
 ## Platform parity backlog
 

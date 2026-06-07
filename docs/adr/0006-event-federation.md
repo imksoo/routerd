@@ -30,7 +30,7 @@ on Azure×PVE, AWS×PVE, and OCI×PVE (3-cloud parity). It proves the
 `RemoteAddressClaim` that drives it is **hand-authored** today. The next step is to
 discover, propagate, and materialize claims **event-driven**:
 
-> on-prem routerd observes a client IPv4 (ARP/Clients/DHCP) → emits a typed event →
+> on-prem routerctl plans a client IPv4 (ARP/Clients/DHCP) → emits a typed event →
 > federation bus delivers it to the cloud routerd → a subscription triggers a
 > provider plugin → plugin returns a `RemoteAddressClaim` as a `DynamicConfigPart`
 > (+ a provider secondary-IP `actionPlan`) → cloud is ready for `provider-secondary-ip`

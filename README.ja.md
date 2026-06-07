@@ -238,15 +238,15 @@ sudo install -d -m 0755 /usr/local/etc/routerd
 sudo install -m 0600 /usr/local/etc/routerd/router.yaml.sample /usr/local/etc/routerd/router.yaml
 sudo vi /usr/local/etc/routerd/router.yaml
 
-routerd validate --config /usr/local/etc/routerd/router.yaml
-routerd plan --config /usr/local/etc/routerd/router.yaml
-routerd apply --config /usr/local/etc/routerd/router.yaml --once --dry-run
+routerctl validate --config /usr/local/etc/routerd/router.yaml
+routerctl plan --config /usr/local/etc/routerd/router.yaml
+routerctl apply --config /usr/local/etc/routerd/router.yaml --dry-run
 ```
 
 管理経路が残ることを確認してから反映します。
 
 ```sh
-sudo routerd apply --config /usr/local/etc/routerd/router.yaml --once
+sudo routerctl apply --config /usr/local/etc/routerd/router.yaml
 ```
 
 ## 開発者向けビルド
@@ -279,9 +279,9 @@ Makefile は開発用です。
 よく使う確認:
 
 ```sh
-routerd validate --config examples/home-router.yaml
-routerd plan --config examples/home-router.yaml
-routerd apply --config examples/home-router.yaml --once --dry-run
+routerctl validate --config examples/home-router.yaml
+routerctl plan --config examples/home-router.yaml
+routerctl apply --config examples/home-router.yaml --dry-run
 routerctl status
 routerctl events --limit 20
 routerctl connections --limit 50

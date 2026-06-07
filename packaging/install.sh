@@ -620,7 +620,7 @@ restart_stale_routerd_helper_systemd_units_after_upgrade()
         if ! wait_for_routerd_status_socket /run/routerd/routerd-status.sock; then
             echo "warning: routerd status socket did not appear; checking helper units anyway" >&2
         elif ! wait_for_routerd_status_apply /run/routerd/routerd-status.sock; then
-            echo "warning: routerd apply status was not observed; checking helper units anyway" >&2
+            echo "warning: routerctl apply status was not observed; checking helper units anyway" >&2
         fi
         wait_for_routerd_helper_unit_files_to_settle
     fi
@@ -1668,7 +1668,7 @@ run_configure()
     "${routerd_bin}" validate --config "${final_config}"
     "${routerd_bin}" plan --config "${final_config}" || true
     if [ "${configure_apply}" -eq 1 ]; then
-        "${routerd_bin}" apply --config "${final_config}" --once
+        "${routerd_bin}" apply --config "${final_config}"
         maybe_start_live_routerd "${routerd_bin}" "${final_config}"
         if [ -x "${routerctl_bin}" ]; then
             "${routerctl_bin}" status || true

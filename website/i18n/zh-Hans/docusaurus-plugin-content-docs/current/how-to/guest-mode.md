@@ -348,7 +348,7 @@ sudo tcpdump -eni ens19
 
 - 策略是否参照了正确的 `Interface`。
 - 数据包是否确实从该接口进入。
-- `routerd apply` 是否已应用最新的 nftables 数据表。
+- `routerctl apply` 是否已应用最新的 nftables 数据表。
 - `guestEgressAllow` 中是否包含了宽范围的私有前缀。
 - 设备侧是否有 VPN 客户端等绕过路由器的路径。
 

@@ -64,4 +64,4 @@ enum 校验和类型诊断。
 ## 检查
 
 schema 从 Go API types 生成。CI 会检查仓库中的 schema 与 website 发布副本保持同步，
-因此 editor feedback 会跟随 `routerd validate` 使用的同一份契约。
+因此 editor feedback 会跟随 `routerctl validate` 使用的同一份契约。

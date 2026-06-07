@@ -55,9 +55,9 @@ spec:
 Before applying for real, validate the configuration and preview the plan:
 
 ```bash
-routerd validate --config first-router.yaml
-routerd plan     --config first-router.yaml
-routerd apply    --config first-router.yaml --once --dry-run
+routerctl validate --config first-router.yaml
+routerctl plan     --config first-router.yaml
+routerctl apply    --config first-router.yaml --dry-run
 ```
 
 Confirm that your management connection (SSH on the LAN, console, or hypervisor console) will survive the change, then apply without `--dry-run`.

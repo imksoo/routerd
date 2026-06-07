@@ -41,7 +41,7 @@ observe LAN client
    (and optionally subject prefix / source node).
 4. **Plugin** — the subscription's `trigger.pluginRef` Plugin runs with the
    matched events on stdin and returns a `PluginResult`.
-5. **DynamicConfigPart** — routerd validates the result and stores it as a
+5. **DynamicConfigPart** — routerctl validates the result and stores it as a
    dynamic config part, stamped with provenance annotations
    (`routerd.net/event-id`, `routerd.net/event-group`,
    `routerd.net/dynamic-source`).

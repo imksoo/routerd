@@ -12,10 +12,10 @@ routerd 会比较 YAML 所声明的意图与主机的当前状态。
 ## 标准流程
 
 ```bash
-routerd validate --config router.yaml
-routerd plan     --config router.yaml
-routerd apply    --config router.yaml --once --dry-run
-routerd apply    --config router.yaml --once
+routerctl validate --config router.yaml
+routerctl plan     --config router.yaml
+routerctl apply    --config router.yaml --dry-run
+routerctl apply    --config router.yaml
 ```
 
 对远程路由器执行正式 `apply` 前，请先确认管理路径（SSH、控制台、hypervisor 控制台）在变更后仍能保持连接。
@@ -37,7 +37,7 @@ routerd serve --config router.yaml
 
 当配置中存在 `IngressService`、`PortForward`、NAT、BGP、静态路由或策略路由等需要转发的资源时，
 routerd 会自动推导所需的运行时 sysctl。
-`routerd apply --once` 会观测、计划并生成（render）衍生配置，但不会反映到主机。
+`routerctl apply` 会观测、计划并生成（render）衍生配置，但不会反映到主机。
 反映动作由 `routerd serve` 在控制器调和（reconcile）过程中逐步收敛完成。
 因此，一次性的 apply 仅用于配置验证与产物生成，
 守护进程与运行时内核的生命周期则由长时间运行的控制器所拥有。
@@ -98,7 +98,7 @@ routerd 只删除可确认拥有权的产物（即 routerd 先前创建或明确
 `routerctl rollback --to <generation>` 通过正常的 apply 流程重新应用已保存的 Router YAML。
 回滚会重新应用声明的配置与 routerd 管理的产物；但**不会**还原 conntrack、内核瞬时状态、
 守护进程运行时状态，或在 routerd 账本之外对主机所做的任何变更。包含删除的变更，
-请务必先执行 `routerd plan` 与 `routerd apply --dry-run` 确认删除清单后再应用。
+请务必先执行 `routerctl plan` 与 `routerctl apply --dry-run` 确认删除清单后再应用。
 
 ## 相关项目
 

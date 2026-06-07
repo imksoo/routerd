@@ -69,8 +69,8 @@ flowchart LR
 ## Checks
 
 ```bash
-routerd validate --config examples/tailscale-exit-subnet.yaml
-routerd apply --config examples/tailscale-exit-subnet.yaml --once --dry-run
+routerctl validate --config examples/tailscale-exit-subnet.yaml
+routerctl apply --config examples/tailscale-exit-subnet.yaml --dry-run
 routerctl describe TailscaleNode/home
 tailscale status
 ```

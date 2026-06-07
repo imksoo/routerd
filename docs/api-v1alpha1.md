@@ -248,7 +248,7 @@ active/standby capture placement; `members[].maintenance.drain` removes that
 member from active selection. All nodes in a mobility demo should receive the
 same `MobilityPool` identity and placement set so they project the same placement
 decision. The old remote-full inline style is still accepted for pre-release
-compatibility, but `routerd validate`, plan, and apply warn when a remote member
+compatibility, but `routerctl validate`, plan, and apply warn when a remote member
 contains local capture or discovery details. Future pre-release configs may
 require identity-only remote members.
 
@@ -306,7 +306,7 @@ It is intended for active-to-standby HA sync and is usually gated with
 routerd maps the resource specs directly to typed GoBGP API objects over a
 local gRPC Unix socket and observes status through `ListPeer` and `ListPath`;
 it does not render FRR text config, run `frr-reload.py`, parse `vtysh`, or use
-GoBGP's file configuration format. `apply --once` renders host artifacts only
+GoBGP's file configuration format. `apply` renders host artifacts only
 and reports BGP as serve-managed. `routerctl show bgp` summarizes routers,
 peers, message counters, route selection state, and last errors from stored
 GoBGP observation.
@@ -439,7 +439,7 @@ whether the expected nftables SNAT rule is present or missing.
 Ingress, NAT-like resources, DS-Lite, IPv6 PD/RA, and routing resources derive
 the runtime sysctls they need, including forwarding, redirect suppression,
 reverse-path-filter exceptions, and per-interface RA acceptance. `routerd
-apply --once` plans and renders those derived settings but mutates the host only
+apply` plans and renders those derived settings but mutates the host only
 for explicit `Sysctl` / `SysctlProfile` escape hatches; `routerd serve` applies
 the derived runtime settings during controller reconcile. During
 maintenance, `routerctl drain ingress/<service> backend=<name>

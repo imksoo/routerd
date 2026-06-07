@@ -132,8 +132,8 @@ targets:
 ## 確認
 
 ```bash
-routerd validate --config examples/dhcp-lease-sync-ha.yaml
-routerd apply --config examples/dhcp-lease-sync-ha.yaml --once --dry-run
+routerctl validate --config examples/dhcp-lease-sync-ha.yaml
+routerctl apply --config examples/dhcp-lease-sync-ha.yaml --dry-run
 routerctl describe VirtualAddress/lan-vip
 routerctl describe DHCPv4ServerLeaseSync/lan-v4-leases
 ```

@@ -9,7 +9,7 @@ slug: /operations/inventory
 
 routerd inspects the host's operating system, available commands, and network features. This inventory is used by the renderers and the apply path to make OS-specific decisions explicit instead of failing at runtime.
 
-## What routerd checks
+## What routerctl plans
 
 - Operating system and release
 - Service-management scheme (systemd, rc.d, NixOS modules)

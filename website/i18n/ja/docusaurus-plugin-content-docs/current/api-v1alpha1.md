@@ -199,7 +199,7 @@ true にすると、その member は active 選出から外れます。placemen
 揃えるため、mobility demo の全 node に同じ `MobilityPool` の identity と
 placement set を配ります。古い remote-full inline style は pre-release 互換として
 まだ受け付けますが、remote member が local capture/discovery detail を持つ場合は
-`routerd validate`、plan、apply が warning を表示します。将来の pre-release では
+`routerctl validate`、plan、apply が warning を表示します。将来の pre-release では
 remote member の identity-only 化を必須にする可能性があります。
 
 `MobilityPool.spec.deliveryPolicy.mode` の既定は `bgp` です。Provider action plan は
@@ -303,7 +303,7 @@ DNS query の観測や provider エンドポイント feed を扱う、別のリ
 routerd は resource spec を local gRPC Unix socket 経由で型付きの GoBGP API object に
 直接 map し、`ListPeer` と `ListPath` で status を観測します。FRR の text config、
 `frr-reload.py`、`vtysh` の parse、GoBGP の file config は使いません。
-`apply --once` は host artifact の render だけを行い、
+`apply` は host artifact の render だけを行い、
 BGP は `routerd serve` の管理として status に出します。`routerctl show bgp` は、保存された
 GoBGP の観測から router、peer、message counter、route selection state、直近の error を
 表示します。prefix status には、`best`、`valid`、`installed`、`stale`、`nextHop`、
@@ -386,7 +386,7 @@ DNAT/SNAT rule 数、該当する conntrack flow 数も表示します。`DETAIL
 `hairpinMode`、hairpin が必要か、期待される nftables SNAT rule が present/missing
 のどちらか、も出します。Ingress、NAT 系、DS-Lite、IPv6 PD/RA、routing resource から、
 forwarding、redirect suppression、reverse path filter exception、interface ごとの RA 受信など、
-必要なランタイムの sysctl を導出します。`routerd apply --once` は派生設定をプランしレンダリングしますが、
+必要なランタイムの sysctl を導出します。`routerctl apply` は派生設定をプランしレンダリングしますが、
 ホスト側への変更は明示的な `Sysctl` / `SysctlProfile` のエスケープハッチだけに限定します。
 派生したランタイム設定の適用は、`routerd serve` のコントローラー調整ループが担当します。
 保守中は `routerctl drain

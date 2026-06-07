@@ -348,7 +348,7 @@ sudo tcpdump -eni ens19
 
 - 策略是否參照了正確的 `Interface`。
 - 封包是否確實從該介面進入。
-- `routerd apply` 是否已套用最新的 nftables 資料表。
+- `routerctl apply` 是否已套用最新的 nftables 資料表。
 - `guestEgressAllow` 中是否包含了寬範圍的私有前綴。
 - 裝置側是否有 VPN 用戶端等繞過路由器的路徑。
 

@@ -218,7 +218,7 @@ LAN 的 DHCP/RA 使用 dnsmasq，WireGuard、Tailscale、strongSwan 使用 ports
 - `dnsmasq.conf`
 - `rc.d-*`
 
-`routerd apply` 会安装生成的 `pf.conf`，
+`routerctl apply` 会安装生成的 `pf.conf`，
 并在应用前以 `pfctl -nf` 确认语法。
 dnsmasq 也会以 `dnsmasq --test` 确认配置后重新启动。
 应用后以 `pfctl -f` 反映，并以 `service <name> onestart` 启动生成的 rc.d script。

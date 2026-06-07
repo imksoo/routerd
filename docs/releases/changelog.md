@@ -692,7 +692,7 @@ binary or runtime behavior changes.
 
 - Replaced the BGP controller backend with a long-lived `routerd-bgp` daemon
   built on GoBGP. `BGPRouter` and `BGPPeer` now map directly to typed GoBGP API
-  objects over a local gRPC Unix socket, `apply --once` no longer renders FRR
+  objects over a local gRPC Unix socket, `apply` no longer renders FRR
   artifacts, and `routerd` restarts no longer restart the BGP process or drop
   established sessions. Observed peer/path status comes from
   `ListPeer`/`ListPath` instead of `vtysh` text parsing. Learned IPv4 best paths
@@ -835,7 +835,7 @@ binary or runtime behavior changes.
 - Prevent a persisted OpenRC `routerd` default-runlevel entry from starting
   `routerd serve` before Live ISO USB config restore. The live autostart helper
   now removes that runlevel entry and restarts an already-running `serve`
-  process after `apply --once`, so restored BGP config can be reloaded into FRR.
+  process after `apply`, so restored BGP config can be reloaded into FRR.
 
 ## v20260520.2307
 
@@ -960,7 +960,7 @@ binary or runtime behavior changes.
 - Added `ObservabilityPipeline` for OTLP environment rendering and built-in
   routerd event forwarding to stdout, syslog, or Loki, plus `RouterdCluster`
   file-lease high availability gating for apply/controller mutation.
-- Added Alpine/OpenRC VRRP render support: `routerd apply --once` writes the
+- Added Alpine/OpenRC VRRP render support: `routerd apply` writes the
   keepalived config artifact, while controller runtime manages the OpenRC
   `keepalived` service and observes live VRRP roles.
 - Polished the Alpine live ISO path with live VRRP controller defaults, live
@@ -968,7 +968,7 @@ binary or runtime behavior changes.
   reload tooling dependencies, and non-blocking setup wizard behavior.
 - Avoided no-op keepalived reloads during live VRRP reconcile and exposed the
   last keepalived reload/restart time and reason in controller status.
-- Kept VRRP daemon lifecycle in controller runtime. `routerd apply --once`
+- Kept VRRP daemon lifecycle in controller runtime. `routerd apply`
   renders keepalived artifacts and records controller handoff status without
   reload/restart.
 - Decoupled IngressService live nftables apply from independent NAT44 dry-run
@@ -1017,14 +1017,14 @@ binary or runtime behavior changes.
 ### Fixed
 
 - Separated BGP apply-once rendering from daemon lifecycle. `routerd apply
-  --once` now writes the FRR config and daemon artifact only; `routerd serve
+ ` now writes the FRR config and daemon artifact only; `routerd serve
   --controller runtime` owns bgpd enable/restart, `vtysh` validation, live reload,
   and peer observation.
 - Fixed BGP observation for FRR JSON fields emitted as strings and made
   `routerctl show bgp` refresh stale stored status from live `vtysh` output.
 - Kept FRR readiness and reload status in the BGP controller path so
   controller runtime can report pending/error state without making
-  `apply --once` wait on bgpd or `frr-reload.py`.
+  `apply` wait on bgpd or `frr-reload.py`.
 - Added a Web Console Routes view and `/api/v1/routes` endpoint that combines
   kernel, BGP, static, DHCP, and policy route information with BGP peer state.
 - Added `pkg/api/provides.go` declarative status output contract and reference

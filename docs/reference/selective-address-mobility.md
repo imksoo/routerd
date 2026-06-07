@@ -154,7 +154,7 @@ every node in the pool to keep placement projection deterministic.
 
 The older "remote-full inline" style, where each node repeats every remote
 member's provider details, remains accepted during the pre-release period for
-compatibility. It is deprecated. `routerd validate`, plan, and apply surface a
+compatibility. It is deprecated. `routerctl validate`, plan, and apply surface a
 warning when a remote member declares local capture or discovery details; a
 future pre-release may make identity-only remote members mandatory.
 

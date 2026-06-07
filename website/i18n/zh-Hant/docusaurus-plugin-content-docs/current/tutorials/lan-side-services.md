@@ -86,7 +86,7 @@ routerd 將 LAN 側服務明確劃分給兩個常駐程式：
 FreeBSD 上，dnsmasq 的租約檔案存放於 `/var/db/routerd/dnsmasq` 目錄下。
 若僅存放於 `/var/run`，重新啟動後租約將遺失。
 rc.d 腳本會在啟動前建立執行時期目錄與租約目錄。
-`routerd apply` 會在重新啟動 dnsmasq 前先執行 `dnsmasq --test`。
+`routerctl apply` 會在重新啟動 dnsmasq 前先執行 `dnsmasq --test`。
 同時也會自動產生 DHCP、DHCPv6、RA、DNS 所需的 pf 通道。
 
 ## IPv6 RA 與 DHCPv6

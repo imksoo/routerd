@@ -288,7 +288,7 @@ client inventory and DNS records less ambiguous.
 
 ## DHCPv4Reservation integration
 
-`classification[].ipv4Reservation` is a reference check. routerd validates that
+`classification[].ipv4Reservation` is a reference check. routerctl validates that
 the named `DHCPv4Reservation` exists. The firewall match is still based on MAC
 address, not on the leased IP address.
 
@@ -369,7 +369,7 @@ Check these points:
 
 - The policy references the correct `Interface`.
 - The packet enters through that interface.
-- `routerd apply` installed the current nftables table.
+- `routerctl apply` installed the current nftables table.
 - `guestEgressAllow` does not contain a broad private prefix.
 - Another path, such as a VPN client on the endpoint itself, is not bypassing
   the router.

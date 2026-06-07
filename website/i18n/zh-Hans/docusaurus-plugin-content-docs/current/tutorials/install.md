@@ -56,15 +56,15 @@ sudo install -d -m 0755 /usr/local/etc/routerd
 sudo install -m 0600 /usr/local/etc/routerd/router.yaml.sample /usr/local/etc/routerd/router.yaml
 sudo vi /usr/local/etc/routerd/router.yaml
 
-routerd validate --config /usr/local/etc/routerd/router.yaml
-routerd plan --config /usr/local/etc/routerd/router.yaml
-routerd apply --config /usr/local/etc/routerd/router.yaml --once --dry-run
+routerctl validate --config /usr/local/etc/routerd/router.yaml
+routerctl plan --config /usr/local/etc/routerd/router.yaml
+routerctl apply --config /usr/local/etc/routerd/router.yaml --dry-run
 ```
 
 确认管理路径仍可访问后再正式应用。
 
 ```sh
-sudo routerd apply --config /usr/local/etc/routerd/router.yaml --once
+sudo routerctl apply --config /usr/local/etc/routerd/router.yaml
 ```
 
 各 OS 的软件包列表、升级、卸载，以及开发者适用的

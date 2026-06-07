@@ -104,15 +104,15 @@ flowchart LR
 
 ```bash
 cp examples/example-basic-ipv4-nat.yaml router.yaml
-routerd validate --config router.yaml
-routerd plan --config router.yaml
-routerd apply --config router.yaml --once --dry-run
+routerctl validate --config router.yaml
+routerctl plan --config router.yaml
+routerctl apply --config router.yaml --dry-run
 ```
 
 确认管理访问并非依赖即将变更地址的 LAN 接口，或已具备控制台访问权限后再执行应用。
 
 ```bash
-routerd apply --config router.yaml --once
+routerctl apply --config router.yaml
 ```
 
 ## 确认

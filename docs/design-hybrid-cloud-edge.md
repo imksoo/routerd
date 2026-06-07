@@ -140,7 +140,7 @@ Still out of scope:
 `HybridRoute` is the conservative L3 pillar. It represents non-default remote
 IPv4 prefixes that should be lowered through an `OverlayPeer`. The lowering and
 status path is intentionally explicit: default routes are rejected, and
-operators can review the generated route intent through the normal routerd plan
+operators can review the generated route intent through the normal routerctl plan
 and dry-run flow.
 
 ## Selective Address Mobility

@@ -173,9 +173,9 @@ USB 持久化为减少对 USB 的写入，默认以 `async,noatime` 挂载。
 之后执行以下命令。
 
 ```sh
-routerd validate --config /usr/local/etc/routerd/router.yaml
-routerd plan --config /usr/local/etc/routerd/router.yaml
-routerd apply --config /usr/local/etc/routerd/router.yaml --once
+routerctl validate --config /usr/local/etc/routerd/router.yaml
+routerctl plan --config /usr/local/etc/routerd/router.yaml
+routerctl apply --config /usr/local/etc/routerd/router.yaml
 ```
 
 ![Wizard summary and first apply](/img/iso-boot/iso-boot-06-wizard-summary.png)

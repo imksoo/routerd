@@ -377,7 +377,7 @@ management placement, and optional USB persistence. It writes a candidate file t
 `/usr/local/etc/routerd/router.yaml.configure`, shows a diff when an existing
 configuration is present, and installs it as
 `/usr/local/etc/routerd/router.yaml` only after confirmation.
-It then runs `routerd validate`, `routerd plan`, and `routerd apply --once`.
+It then runs `routerctl validate`, `routerctl plan`, and `routerctl apply`.
 
 Automation can use environment variables and skip prompts:
 
@@ -419,15 +419,15 @@ sudo vi /usr/local/etc/routerd/router.yaml
 Then validate and review the plan:
 
 ```sh
-routerd validate --config /usr/local/etc/routerd/router.yaml
-routerd plan --config /usr/local/etc/routerd/router.yaml
-routerd apply --config /usr/local/etc/routerd/router.yaml --once --dry-run
+routerctl validate --config /usr/local/etc/routerd/router.yaml
+routerctl plan --config /usr/local/etc/routerd/router.yaml
+routerctl apply --config /usr/local/etc/routerd/router.yaml --dry-run
 ```
 
 Apply only after the management path is safe:
 
 ```sh
-sudo routerd apply --config /usr/local/etc/routerd/router.yaml --once
+sudo routerctl apply --config /usr/local/etc/routerd/router.yaml
 ```
 
 Start the service when the one-shot apply is healthy:

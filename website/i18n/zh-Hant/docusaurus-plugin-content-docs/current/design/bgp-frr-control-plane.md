@@ -108,7 +108,7 @@ BGPRouter / BGPPeer 的 status 物件公開以下欄位：
 
 ### `routerd serve` 重複啟動防護
 
-`scripts/build-live-iso.sh` 與 `live-autostart.sh` 在已有 `routerd serve` 持有 `/run/routerd/routerd.sock` 的情況下，不得啟動第二個實例。此防護使自動啟動具有冪等性。然而，啟動時的首次自動啟動路徑同時也是設定交接的邊界。若持久化的 OpenRC runlevel 在 USB 設定還原之前啟動了 `routerd serve`，`live-autostart.sh` 不應將既有程序視為成功，而必須在 `apply --once` 之後重啟該服務。此重啟以 `reason=LiveISOStaleServeRestarted` 記錄日誌。啟動標記置於 `/run/routerd` 下，每次啟動時重新評估此交接邏輯。若缺少重複啟動防護，兩個 routerd 控制器將爭奪 FRR 的服務鎖（rc-service / systemctl 的 `flock`），產生 Phase 0 記錄中可見的 `ERROR: frr stopped by something else` 症狀。若還原後未重啟，早期的 `serve` 程序將遺漏已還原的設定，使 BGP 停留在 apply-once 的 `Rendered` 交接狀態。
+`scripts/build-live-iso.sh` 與 `live-autostart.sh` 在已有 `routerd serve` 持有 `/run/routerd/routerd.sock` 的情況下，不得啟動第二個實例。此防護使自動啟動具有冪等性。然而，啟動時的首次自動啟動路徑同時也是設定交接的邊界。若持久化的 OpenRC runlevel 在 USB 設定還原之前啟動了 `routerd serve`，`live-autostart.sh` 不應將既有程序視為成功，而必須在 `apply` 之後重啟該服務。此重啟以 `reason=LiveISOStaleServeRestarted` 記錄日誌。啟動標記置於 `/run/routerd` 下，每次啟動時重新評估此交接邏輯。若缺少重複啟動防護，兩個 routerd 控制器將爭奪 FRR 的服務鎖（rc-service / systemctl 的 `flock`），產生 Phase 0 記錄中可見的 `ERROR: frr stopped by something else` 症狀。若還原後未重啟，早期的 `serve` 程序將遺漏已還原的設定，使 BGP 停留在 apply-once 的 `Rendered` 交接狀態。
 
 此項與 BGP 判斷變更屬於同一熱修補，但可獨立還原，且為使變更歷程清晰，以獨立 commit 的形式提供。
 
@@ -146,7 +146,7 @@ BGPRouter 必須滿足以下所有條件，才會進入 `Healthy` 狀態：
 9. 暫時發生 configure-lock → 現有的 transient-lock 重試路徑成功完成。
 10. `live-autostart.sh` 在 serve 程序持有 socket 期間再次呼叫 → 不啟動第二個程序，以結束碼 0 退出。
 11. Alpine Live ISO 煙霧測試（發布閘門）：啟動新 ISO，確認 BGP 自律收斂。
-12. 具有持久化 `routerd` OpenRC default-runlevel 條目的 Live ISO：`routerd serve` 可能在 USB 設定還原前啟動，但 `live-autostart.sh` 會刪除 default-runlevel 條目，並在設定還原 + `apply --once` 後重啟服務，以 `reason=LiveISOStaleServeRestarted` 記錄日誌，因此無需手動執行 `frr-reload.py` 即可使 BGP 重新載入收斂。
+12. 具有持久化 `routerd` OpenRC default-runlevel 條目的 Live ISO：`routerd serve` 可能在 USB 設定還原前啟動，但 `live-autostart.sh` 會刪除 default-runlevel 條目，並在設定還原 + `apply` 後重啟服務，以 `reason=LiveISOStaleServeRestarted` 記錄日誌，因此無需手動執行 `frr-reload.py` 即可使 BGP 重新載入收斂。
 13. 啟動時 FRR 服務處於 FAILED 狀態：routerd 必須執行 `rc-service frr start`（或重啟），無需手動介入即可恢復常駐程式。常駐程式啟動前，status 應反映 FAILED 狀態。
 14. status 正確性：在曾達到 Healthy 狀態後強制停止 FRR（`rc-service frr stop`），下次調和必須呈現 `FRRControlUnavailable` 或 `FRRServiceDown`，而非 `Healthy`。失敗期間，BGPRouter status 的 `lastSuccessTime` 不得推進。
 

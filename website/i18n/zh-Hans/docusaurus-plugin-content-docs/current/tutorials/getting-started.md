@@ -73,7 +73,7 @@ spec:
 ## 3. 验证
 
 ```bash
-routerd validate --config first-router.yaml
+routerctl validate --config first-router.yaml
 ```
 
 验证步骤在 routerd 接触主机之前，先确认资源的格式是否正确。
@@ -81,7 +81,7 @@ routerd validate --config first-router.yaml
 ## 4. 确认计划
 
 ```bash
-routerd plan --config first-router.yaml
+routerctl plan --config first-router.yaml
 ```
 
 计划步骤可确认接口名称错误、缺少依赖关系，以及将生成的主机产物。
@@ -89,7 +89,7 @@ routerd plan --config first-router.yaml
 ## 5. 预演执行
 
 ```bash
-routerd apply --config first-router.yaml --once --dry-run
+routerctl apply --config first-router.yaml --dry-run
 ```
 
 预演执行可确认资源加载、依赖顺序及生成内容。

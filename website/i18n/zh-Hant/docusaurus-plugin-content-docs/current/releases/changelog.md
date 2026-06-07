@@ -581,7 +581,7 @@ v20260526.2241 的文件 / CI 一致性 follow-up 發布。二進位與執行時
 
 - 將 BGP controller backend 替換為以 GoBGP 建構的長生命週期 `routerd-bgp`
   daemon。`BGPRouter` 與 `BGPPeer` 會透過本機 gRPC Unix socket 直接映射到
-  型別化的 GoBGP API object，`apply --once` 不再 render FRR artifact，
+  型別化的 GoBGP API object，`apply` 不再 render FRR artifact，
   `routerd` restart 也不會 restart BGP process 或中斷已建立的 session。
   peer/path status 現在來自 `ListPeer` / `ListPath`，不再解析 `vtysh` 文字。
   符合 import policy 的已學習 IPv4 best path 會寫入 kernel FIB，equal best path
@@ -821,7 +821,7 @@ v20260526.2241 的文件 / CI 一致性 follow-up 發布。二進位與執行時
   commit，並補上 FRR reload tooling dependency 與非阻塞 setup wizard 行為。
 - live VRRP reconcile 會避免 keepalived 的 no-op reload/restart，並在
   controller status 中暴露最近一次 keepalived reload/restart 的時間與原因。
-- `routerd apply --once` 的 VRRP 處理現在復用與 daemon mode 相同的
+- `routerd apply` 的 VRRP 處理現在復用與 daemon mode 相同的
   controller reconcile 路徑，因此 keepalived reload/restart status fields
   會被一致寫入。
 - 將 IngressService 的 live nftables apply 與獨立 NAT44 dry-run mode 解耦；
