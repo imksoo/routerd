@@ -1,0 +1,176 @@
+# yaml-language-server: $schema=https://routerd.net/schemas/routerd-config-v1alpha1.schema.json
+apiVersion: "routerd.net/v1alpha1"
+kind: "Router"
+metadata:
+  name: "wizard-home-dhcpv4"
+spec:
+  resources:
+    - apiVersion: "net.routerd.net/v1alpha1"
+      kind: "Interface"
+      metadata:
+        name: "wan"
+      spec:
+        ifname: "ens18"
+        adminUp: true
+        managed: false
+        owner: "external"
+    - apiVersion: "net.routerd.net/v1alpha1"
+      kind: "Interface"
+      metadata:
+        name: "lan"
+      spec:
+        ifname: "ens19"
+        adminUp: true
+        managed: true
+        owner: "routerd"
+    - apiVersion: "net.routerd.net/v1alpha1"
+      kind: "IPv4StaticAddress"
+      metadata:
+        name: "lan-base"
+      spec:
+        interface: "lan"
+        address: "192.168.10.1/24"
+        exclusive: false
+    - apiVersion: "net.routerd.net/v1alpha1"
+      kind: "DHCPv4Client"
+      metadata:
+        name: "wan-dhcpv4"
+      spec:
+        interface: "wan"
+    - apiVersion: "net.routerd.net/v1alpha1"
+      kind: "HealthCheck"
+      metadata:
+        name: "internet-v4"
+      spec:
+        role: "internet"
+        addressFamily: "ipv4"
+        target: "1.1.1.1"
+        protocol: "tcp"
+        port: 443
+        interval: "30s"
+    - apiVersion: "net.routerd.net/v1alpha1"
+      kind: "DNSZone"
+      metadata:
+        name: "home"
+      spec:
+        zone: "home.example"
+        ttl: 300
+        records:
+          - hostname: "router"
+            ipv4From:
+              resource: "IPv4StaticAddress/lan-base"
+              field: "address"
+        dhcpDerived:
+          sources:
+            - "DHCPv4Server/lan-dhcpv4"
+          ddns: true
+          ttl: 60
+    - apiVersion: "net.routerd.net/v1alpha1"
+      kind: "DNSResolver"
+      metadata:
+        name: "lan-resolver"
+      spec:
+        listen:
+          - name: "lan"
+            addressFrom:
+              - resource: "IPv4StaticAddress/lan-base"
+                field: "address"
+            port: 53
+            sources:
+              - "home"
+              - "default"
+        cache:
+          enabled: true
+          maxEntries: 10000
+    - apiVersion: "net.routerd.net/v1alpha1"
+      kind: "DNSForwarder"
+      metadata:
+        name: "home"
+      spec:
+        resolver: "DNSResolver/lan-resolver"
+        match:
+          - "home.example"
+        zoneRefs:
+          - "DNSZone/home"
+    - apiVersion: "net.routerd.net/v1alpha1"
+      kind: "DNSForwarder"
+      metadata:
+        name: "default"
+      spec:
+        resolver: "DNSResolver/lan-resolver"
+        match:
+          - "."
+        upstreams:
+          - "DNSUpstream/cloudflare-udp"
+          - "DNSUpstream/google-udp"
+    - apiVersion: "net.routerd.net/v1alpha1"
+      kind: "DNSUpstream"
+      metadata:
+        name: "cloudflare-udp"
+      spec:
+        protocol: "udp"
+        address: "1.1.1.1"
+    - apiVersion: "net.routerd.net/v1alpha1"
+      kind: "DNSUpstream"
+      metadata:
+        name: "google-udp"
+      spec:
+        protocol: "udp"
+        address: "8.8.8.8"
+    - apiVersion: "net.routerd.net/v1alpha1"
+      kind: "DHCPv4Server"
+      metadata:
+        name: "lan-dhcpv4"
+      spec:
+        interface: "lan"
+        addressPool:
+          start: "192.168.10.100"
+          end: "192.168.10.199"
+          leaseTime: "12h"
+        gatewayFrom:
+          resource: "IPv4StaticAddress/lan-base"
+          field: "address"
+        dnsServerFrom:
+          - resource: "IPv4StaticAddress/lan-base"
+            field: "address"
+        domainFrom:
+          resource: "DNSZone/home"
+          field: "zone"
+        ntpServers:
+          - "192.168.10.1"
+    - apiVersion: "net.routerd.net/v1alpha1"
+      kind: "NAT44Rule"
+      metadata:
+        name: "lan-to-wan"
+      spec:
+        type: "masquerade"
+        egressInterface: "wan"
+        sourceRanges:
+          - "192.168.10.0/24"
+        excludeDestinationCIDRs:
+          - "10.0.0.0/8"
+          - "172.16.0.0/12"
+          - "192.168.0.0/16"
+    - apiVersion: "firewall.routerd.net/v1alpha1"
+      kind: "FirewallZone"
+      metadata:
+        name: "wan"
+      spec:
+        role: "untrust"
+        interfaces:
+          - "wan"
+    - apiVersion: "firewall.routerd.net/v1alpha1"
+      kind: "FirewallZone"
+      metadata:
+        name: "lan"
+      spec:
+        role: "trust"
+        interfaces:
+          - "lan"
+    - apiVersion: "firewall.routerd.net/v1alpha1"
+      kind: "FirewallPolicy"
+      metadata:
+        name: "home"
+      spec:
+        logDeny: true
+        sameRoleAccept: true
