@@ -148,17 +148,37 @@ DNSSEC 驗證寫在 `DNSForwarder.spec.dnssecValidate`。
 | Kind | 用途 |
 | --- | --- |
 | `DSLiteTunnel` | 向 AFTR 建立 `ip6tnl` 隧道。AFTR 可直接指定 IPv6、FQDN 或從 DHCPv6 資訊取得。 |
+| `TunnelInterface` | 為 hybrid overlay delivery 建立受信任的 Linux L3 underlay tunnel device。`mode` 支援 `ipip`、`gre` 以及 IPIP-over-UDP `fou`/`gue`。 |
+| `OverlayPeer` | 描述 on-prem 或 cloud overlay peer 以及用於到達它的本地 underlay。新 CloudEdge SAM transport 優先使用 `SAMTransportProfile`。 |
+| `HybridRoute` | 將非預設遠端 IPv4 prefix 經由 `OverlayPeer` 降低為受管理的 `IPv4Route` resource。 |
+| `MobilityPool` | CloudEdge mobility 的高層 intent。宣告 pool prefix、federation group、node membership、BGP delivery policy、cloud capture profile、local value expansion 與 provider trap placement。 |
+| `SAMTransportProfile` | 宣告本 router 的 `selfNodeRef`、共享 topology node list、inner tunnel prefix、underlay interface、BGP router 與 SAM transport peer。routerd 透過 `DynamicConfigPart` 產生 per-peer `TunnelInterface`、endpoint `/32` `IPv4Route` 與 `BGPPeer`。 |
+| `AddressMobilityDomain` | 低層相容 SAM resource，用於 hand-authored selective-address config 中的 IPv4 prefix。不是目前 CloudEdge Mobility 的主要 authoring surface。 |
+| `CloudProviderProfile` | 描述 provider capabilities 與 external-command auth，用於 declarative address capture planning。 |
+| `RemoteAddressClaim` | 低層相容 SAM resource，宣告單個 mobile IPv4 `/32`、capture mechanism 與 legacy `OverlayPeer` route delivery。 |
 | `IPAddressSet` | 從直接指定的位址或 FQDN 定義可重複使用的 IP 位址集。Linux nftables 的產生器將其輸出為 named set，可從 redirect、NAT、policy routing 參照。 |
 | `IPv4Route` | 新增 IPv4 路由。也可用於 DS-Lite 的預設路由或明確的捨棄路由。 |
 | `ClusterNetworkRoute` | 將 Kubernetes 的 Pod / Service CIDR 展開為經由 worker next hop 的靜態 IPv4 路由。 |
 | `BGPRouter` | 宣告本地 BGP 路由器。目前的後端是長壽命的 `routerd-bgp` GoBGP 常駐程式，匯入策略預設為 deny。 |
 | `BGPPeer` | 宣告隸屬於 `BGPRouter` 的 GoBGP 管理 BGP peer。適用於 Kubernetes BGP speaker 等情境。 |
-| `BFD` | 宣告 BFD session 的意圖。GoBGP 後端在尚未實作不依賴 FRR 的 BFD 之前，回報為 unsupported。 |
+| `BFD` | 宣告 BFD session intent。在 Linux 上，routerd render FRR `bfdd` 設定並記錄觀測到的 BFD 狀態；被參照的 GoBGP peer 不會因 BFD false-down 而被 deconfigure。 |
 | `NAT44Rule` | 在 nftables 的 `routerd_nat` 表中執行 IPv4 NAPT。 |
 | `PortForward` | 將 WAN 側的 IPv4 TCP/UDP 連接埠 DNAT 至單一內部 IPv4 目的地。 |
 | `IngressService` | 公開 WAN 側的 IPv4 TCP/UDP 服務。支援多個 backend、TCP/HTTP 健康檢查，以及 `failover` / `sourceHash` / `random` 選擇策略。 |
 | `LocalServiceRedirect` | 將 LAN 側用戶端向 `IPAddressSet` 發出的 IPv4/IPv6 通訊 redirect 至路由器本地連接埠。適用於集中純文字 DNS/NTP，不影響 DoH 或 DoT 連接埠。 |
 | `EgressRoutePolicy` | 表示預設路由選擇、基於 mark 的 IPv4 policy routing，以及向多個 target 的 hash 分散。 |
+
+CloudEdge Mobility 的 operator-authored surface 是 `MobilityPool` 與
+`SAMTransportProfile`。`MobilityPool` 負責位址 ownership/capture intent，
+`SAMTransportProfile` 負責 transport/BGP intent；federation event 是 observed fact，
+BGP best path 是 mobility ownership/delivery view。mobility planner 產生 BGP `/32`
+advertisement 與 provider trap action plan。operator 不應手寫 per-address path 或
+capture procedure。`AddressMobilityDomain` 與 `RemoteAddressClaim` 仍作為低層相容 Kind
+保留在 MobilityPool BGP path 之外。
+
+`MobilityPool.spec.deliveryPolicy.mode` 預設為 `bgp`。Provider action plan 是 review
+artifact，只有在匯入 action journal 並通過 `ProviderActionPolicy`、approval、allowlist
+與 executor plugin gate 後才可能執行。
 
 `EgressRoutePolicy` 除 CIDR 指定外，還具有 `destinationSetRefs` 與
 `excludeDestinationSetRefs`。這讓以 FQDN 為後端的目的地集合無需在 policy

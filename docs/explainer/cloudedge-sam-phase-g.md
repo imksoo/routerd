@@ -20,10 +20,11 @@ L3 到達性を復旧する仕組みです。
 
 ---
 
-## 1. トポロジ — overlay + iBGP hub-spoke
+## 1. トポロジ — SAM transport + iBGP hub-spoke
 
-各サイトの routerd は WireGuard overlay 上で iBGP を張り、on-prem の
-Route-Reflector(RR) をハブにする hub-spoke 構成。
+各サイトの routerd は `SAMTransportProfile` が生成する IPIP transport 上で iBGP を張り、
+on-prem の Route-Reflector(RR) をハブにする hub-spoke 構成。暗号化が必要な環境では
+WireGuard を endpoint 専用 underlay として下に敷く。
 
 ```mermaid
 graph TB
@@ -39,15 +40,15 @@ graph TB
   subgraph oci["OCI"]
     OCIR["routerd-oci A / B<br/>VNIC secondary IP"]
   end
-  AWSR ===|"WireGuard overlay + iBGP"| RR
-  AZR  ===|"WireGuard overlay + iBGP"| RR
-  OCIR ===|"WireGuard overlay + iBGP"| RR
+  AWSR ===|"IPIP SAM transport + iBGP"| RR
+  AZR  ===|"IPIP SAM transport + iBGP"| RR
+  OCIR ===|"IPIP SAM transport + iBGP"| RR
 ```
 
 - logical `/24` = `10.77.60.0/24`。各 site の owner `/32`（例 on-prem `.10` / AWS `.11`
   / Azure `.12` / OCI `.13`）を全 site から到達可能にする。
-- underlay は default WireGuard。trusted private 接続では ipip / gre / fou / gue も選択可
-  （Phase G P2-a, ADR 0009）。
+- default delivery は IPIP。WireGuard を使う場合も `AllowedIPs` は transport endpoint
+  prefix だけにし、mobile `/32` は BGP と FIB が扱う。
 
 ---
 
@@ -104,7 +105,7 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-  C["client<br/>(任意 site)"] -->|"src = 自 /32 owner<br/>dst = 相手 /32"| OVL["WireGuard overlay<br/>+ iBGP best-path route"]
+  C["client<br/>(任意 site)"] -->|"src = 自 /32 owner<br/>dst = 相手 /32"| OVL["IPIP SAM transport<br/>+ iBGP best-path route"]
   OVL --> SVR["server<br/>(owner site / seize 先)"]
   SVR -. "応答も同 /32、NAT translation なし" .-> C
 ```

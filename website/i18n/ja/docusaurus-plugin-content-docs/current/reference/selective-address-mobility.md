@@ -330,11 +330,12 @@ default-drop の router では、その captured address の forwarding path を
 ## クラウドノードでの overlay / federation アドレッシング
 
 Event Federation の transport（`routerd-eventd` の listen address と各
-`EventPeer.endpoint`）、BGP/BFD peer address、それらが乗る WireGuard overlay
-(`OverlayPeer`、`WireGuardInterface`/`WireGuardPeer`)は、全ノードで自分が
-end-to-end に制御できるアドレス範囲を使ってください。クラウドインスタンスでは、
-provider が内部利用のために予約している範囲から overlay / BGP/BFD / federation
-アドレスを取っては **いけません**。
+`EventPeer.endpoint`）、BGP/BFD peer address、`SAMTransportProfile` が生成する
+SAM transport endpoint / inner address は、全ノードで自分が end-to-end に制御できる
+アドレス範囲を使ってください。WireGuard を SAM transport の下に置く場合、その
+interface / peer endpoint address も同じ条件です。クラウドインスタンスでは、provider
+が内部利用のために予約している範囲から overlay / BGP/BFD / federation アドレスを取っては
+**いけません**。
 
 - `169.254.0.0/16`(RFC 3927 link-local)。クラウドのインスタンスメタデータ
   (IMDS)は `169.254.169.254` にあり、イメージによってはブロック全体を予約
@@ -348,12 +349,11 @@ provider が内部利用のために予約している範囲から overlay / BGP
   (`100.x` の tailnet アドレス、MagicDNS)が使います。この範囲の overlay は
   Tailscale 参加や carrier NAT と衝突します。
 
-overlay 専用に予約した RFC 1918 の範囲（例: `10.x.y.0/24`）を、WireGuard
-interface/peer アドレス・`OverlayPeer` エンドポイント・`routerd-eventd` の listen /
-`EventPeer` エンドポイント・BGP/BFD peering address に使ってください。mobility pool
-の `/24`（captured address）とも、上記のクラウド予約範囲とも分離します。これは全
-provider（AWS/Azure/OCI）に当てはまり、OCI が link-local 予約を最も厳格に強制する
-だけです。
+SAM transport endpoint、`SAMTransportProfile.innerPrefix`、任意の WireGuard endpoint、
+`routerd-eventd` の listen / `EventPeer` エンドポイント、BGP/BFD peering address には、
+自分で予約した RFC 1918 の範囲を使ってください。mobility pool の `/24`（captured
+address）とも、上記のクラウド予約範囲とも分離します。これは全 provider
+（AWS/Azure/OCI）に当てはまり、OCI が link-local 予約を最も厳格に強制するだけです。
 
 ## 対象外
 

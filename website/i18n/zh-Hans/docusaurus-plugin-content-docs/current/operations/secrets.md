@@ -20,7 +20,14 @@ authenticationFrom:
 运维注意事项如下：
 
 - 密钥文件请置于以 git 管理的配置目录之外。
+- host-local 密钥文件的默认位置是 `/usr/local/etc/routerd/secrets/`。
 - 请配置为 root 拥有、权限模式 `0600` 的文件，或使用服务管理器的凭证机制，确保只有 routerd 能读取该文件。
 - 请勿公开在正式主机上生成的 keepalived 或 CARP 配置，因为生成的文件包含已解析的密钥值。
 - `base64: true` 是为了通过文件或环境变量传递而使用的编码方式，并非加密。
 - `routerd validate` 在引用的密钥文件尚不存在时会显示警告。生成（render）与应用（apply）时，来源必须是可读取的状态。
+
+在 Live ISO 使用 USB 持久化时，`/usr/local/etc/routerd/secrets` 下的文件会由
+`live-persistence.sh save-config` 与 `flush` 复制到持久化设备的 `routerd/secrets/`。
+启动时会在应用 `router.yaml` 前恢复这些文件。host-specific 的
+`routerd/hosts/<hostname>/secrets/` 与 `routerd/hosts/<mac>/secrets/` 优先于通用的
+`routerd/secrets/`。

@@ -43,6 +43,25 @@ routerd が作るホスト側の構成物には、それぞれ所有元のリソ
 - YAML からリソースを消したとき、ホスト側も消してよいか。
 - 既存の設定を取り込むだけか、それとも routerd が新しく作るのか。
 
+owner key は `apiVersion/kind/name` です。apply generation は identity に含めません。
+resource status には owner と lifecycle metadata を含め、routerd-managed resource と
+adopted/external object を stale cleanup path でも区別します。
+
+## lifecycle GC
+
+routerd は具体的な host artifact の ownership ledger と、resource-specific teardown
+に必要な object status を保存します。apply、serve startup、delete flow では、generic
+GC planner がこれらを apply と同じ effective config と比較します。effective config には
+`when` filtering 後の startup YAML、active dynamic config、生成済み SAM resource が
+含まれます。
+
+GC plan は、owned artifact の削除、resource teardown、ledger row の忘却、stale status
+row の削除、event 記録、破壊的 cleanup 前の state backup を表せます。未対応 OS の
+integration は skip し、adopted または externally managed の status は残します。
+
+resource ごとの artifact map と teardown contract は
+[リソース所有](../resource-ownership.md) を参照してください。
+
 ## 古くなった状態を使わない
 
 リースや観測値は便利ですが、古くなった値を使い続けるのは危険です。

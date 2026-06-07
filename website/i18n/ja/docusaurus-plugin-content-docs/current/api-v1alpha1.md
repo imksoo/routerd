@@ -157,6 +157,9 @@ DNSSEC validation は `DNSForwarder.spec.dnssecValidate` に書きます。
 | `HybridRoute` | default ではない remote IPv4 prefix を、`OverlayPeer` 経由の managed `IPv4Route` に lower します。 |
 | `MobilityPool` | CloudEdge mobility の唯一の operator-authored intent です。pool prefix、federation group、node-to-site membership、BGP delivery policy、再利用可能な cloud capture profile、local value expansion、provider trap placement を宣言し、routerd は observed fact と BGP best path から BGP `/32` advertisement と provider trap action plan を導出します。 |
 | `SAMTransportProfile` | この router の安定した `selfNodeRef`、共有 topology node list、inner tunnel prefix、underlay interface、BGP router、SAM transport peer を宣言します。routerd は peer ごとの `TunnelInterface`、endpoint `/32` `IPv4Route`、`BGPPeer` を `DynamicConfigPart` として導出します。 |
+| `AddressMobilityDomain` | hand-authored selective-address config の IPv4 prefix を定義する低レベル互換 SAM resource です。現在の CloudEdge Mobility の主な authoring surface ではありません。 |
+| `CloudProviderProfile` | declarative address capture planning 用の provider capability と external-command auth を記述します。 |
+| `RemoteAddressClaim` | 1 つの mobile IPv4 `/32`、capture mechanism、legacy `OverlayPeer` route delivery を宣言する低レベル互換 SAM resource です。 |
 | `IPAddressSet` | 直接指定したアドレスや FQDN から、再利用可能な IP address set を定義します。Linux nftables renderer はこれを named set として出力し、redirect、NAT、policy routing から参照できます。 |
 | `IPv4Route` | IPv4 経路を追加します。DS-Lite 経由の既定経路や、明示的な破棄経路にも使います。 |
 | `ClusterNetworkRoute` | Kubernetes の Pod / Service CIDR を、worker の next hop 経由の static IPv4 route に展開します。 |
@@ -169,6 +172,15 @@ DNSSEC validation は `DNSForwarder.spec.dnssecValidate` に書きます。
 | `IngressService` | WAN 側の IPv4 TCP/UDP サービスを公開します。複数 backend、TCP/HTTP health check、`failover` / `sourceHash` / `random` selection を受け付けます。 |
 | `LocalServiceRedirect` | LAN 側 client から `IPAddressSet` 宛てに出る IPv4/IPv6 通信を、router の local port へ redirect します。平文 DNS/NTP の集約を想定し、DoH や DoT の port には触れません。 |
 | `EgressRoutePolicy` | 既定経路の選択、mark ベースの IPv4 policy routing、複数 target への hash 分散を表します。 |
+
+CloudEdge Mobility の operator-authored surface は `MobilityPool` と
+`SAMTransportProfile` です。`MobilityPool` は address ownership/capture intent、
+`SAMTransportProfile` は transport/BGP intent を担当します。federation event は
+observed fact、BGP best path は mobility ownership/delivery view です。mobility
+planner は BGP `/32` advertisement と provider trap action plan を導出します。
+operator は per-address path や capture procedure を手書きしません。
+`AddressMobilityDomain` と `RemoteAddressClaim` は MobilityPool BGP path 外の
+低レベル互換 Kind として残っています。
 
 CloudEdge Mobility では、自 site は完全に宣言し、remote site は identity-only に
 保ちます。remote member は通常 `nodeRef`、`site`、`role`、必要なら `placement` /
@@ -187,6 +199,10 @@ placement set を配ります。古い remote-full inline style は pre-release 
 まだ受け付けますが、remote member が local capture/discovery detail を持つ場合は
 `routerd validate`、plan、apply が warning を表示します。将来の pre-release では
 remote member の identity-only 化を必須にする可能性があります。
+
+`MobilityPool.spec.deliveryPolicy.mode` の既定は `bgp` です。Provider action plan は
+review artifact であり、action journal に import され、`ProviderActionPolicy`、
+approval、allowlist、executor plugin gate を通った場合だけ実行できます。
 
 `EgressRoutePolicy` は、CIDR 指定に加えて `destinationSetRefs` と
 `excludeDestinationSetRefs` を持ちます。これにより、FQDN-backed な宛先 set を policy

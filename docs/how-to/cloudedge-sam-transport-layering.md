@@ -35,9 +35,12 @@ prefixes such as `10.252.0.2/32`. SAM prefixes such as
 
 ## Protocol choice
 
-Use IPIP first when SAM carries IPv4 mobility prefixes and the underlay is
-trusted or already encrypted. It adds the least tunnel overhead while preserving
-the separation between WireGuard cryptokey routing and SAM route mobility.
+Use IPIP first when SAM carries IPv4 mobility prefixes. It is the default
+delivery plane for current `SAMTransportProfile` examples because it adds the
+least tunnel overhead while preserving the separation between WireGuard
+cryptokey routing and SAM route mobility. When encryption is required, run IPIP
+over a WireGuard interface whose `AllowedIPs` contain only transport endpoint
+addresses.
 
 Use GRE when the deployment needs protocol identification beyond IPv4, a GRE
 key, or stronger FreeBSD interoperability.
@@ -130,10 +133,14 @@ interface, or the local/remote inner addresses. If either `localInner` or
 The controller writes one `DynamicConfigPart` per profile and self node. Peer
 removal replaces that part with the new generated resource set. Profile deletion
 replaces the old part with an empty active part, causing the effective config to
-drop generated tunnels, BGP peers, and endpoint routes. The existing
-`TunnelInterface`, `BGPPeer`, and `IPv4Route` controllers then perform their
-normal stale-resource teardown; this is the current GC boundary until the broader
-resource lifecycle work is completed.
+drop generated tunnels, BGP peers, and endpoint routes.
+
+Cleanup then uses the normal lifecycle GC path. The desired set is the effective
+view after dynamic SAM generation, so generated transport resources are retained
+while the profile exists and become GC candidates only after the profile output
+removes them. The generated `TunnelInterface`, `BGPPeer`, and `IPv4Route`
+resources keep their own owner/status records and teardown through the generic
+GC planner plus resource-specific teardown contracts.
 
 Related issues:
 

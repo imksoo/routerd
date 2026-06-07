@@ -21,6 +21,7 @@ routerd/
   usb-device
   usb-flush-enabled
   log-limit
+  secrets/
   logs/
   state/
 ```
@@ -42,6 +43,13 @@ routerd/
 找到設定後，複製至 `/usr/local/etc/routerd/router.yaml`，
 接著由 Live ISO 的開機程序套用設定。為方便驗收測試與障礙排查，
 來源路徑與 SHA256 會分別儲存於 `/run/routerd/live-config-source` 與 `/run/routerd/live-config-sha256`。
+密鑰會在 apply 前還原。輔助程式按以下順序查找：
+
+- `routerd/hosts/<hostname>/secrets/`
+- `routerd/hosts/<mac>/secrets/`（MAC 可使用冒號分隔或小寫無分隔格式）
+- `routerd/secrets/`
+
+檔案會以 mode `0600` 安裝到 `/usr/local/etc/routerd/secrets`。
 若無已儲存的設定，且 `/usr/local/etc/routerd/router.yaml` 也不存在，則啟動設定精靈。
 
 ## 檔案系統
@@ -83,6 +91,7 @@ routerd.usb_mount=sync
 啟用每日寫出工作後，`/etc/periodic/daily/routerd-usb-flush` 會將以下內容複製至 USB。
 
 - 目前的 `router.yaml`
+- `/usr/local/etc/routerd/secrets` 下的檔案
 - `/var/lib/routerd` 的狀態封存
 - `/var/db/routerd` 的狀態封存
 - `/run/routerd/logs` 的壓縮日誌封存
@@ -92,6 +101,10 @@ routerd.usb_mount=sync
 ```sh
 /usr/share/routerd/live-persistence.sh flush
 ```
+
+`save-config` 也會在 `/usr/local/etc/routerd/secrets` 存在時，將其複製到持久化裝置的
+`routerd/secrets/`。若長期運作時需要 removable media 本身保留 Unix 權限，請優先使用
+ext4，而不是 vfat/exfat。
 
 ## 安全移除
 

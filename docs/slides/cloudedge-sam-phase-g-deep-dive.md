@@ -1,7 +1,7 @@
 ---
 marp: true
 title: CloudEdge SAM Phase G Deep Dive
-description: Underlay/transport, BGP peers, WireGuard encapsulation, provider capture, and packet flows
+description: Underlay/transport, BGP peers, IPIP over optional WireGuard, provider capture, and packet flows
 theme: default
 paginate: true
 ---
@@ -20,7 +20,7 @@ AWS / Azure / OCI / on-prem をまたぐ BGP best-path driven `/32` mobility
 | レイヤー | 役割 | 例 |
 |---|---|---|
 | physical/provider network | outer packet を実際に運ぶ | AWS VPC / Azure VNet / OCI VCN / WAN / Internet |
-| transport / underlay | SAM/BGP overlay の下で運ぶ | WireGuard / ipip / gre / fou / gue |
+| transport / underlay | SAM/BGP overlay の下で運ぶ | IPIP/GRE tunnel、必要なら endpoint-only WireGuard underlay |
 | SAM/BGP mobility overlay | `/32` owner と delivery を決める | BGP best-path / marker / RIB trap |
 | workload packet | 端末・サービスの実通信 | src/dst は `/32` のまま |
 
@@ -37,9 +37,9 @@ flowchart TB
   AZ[Azure CER A/B\nNIC ipConfig]
   OCI[OCI CER A/B\nVNIC secondary IP]
 
-  AWS <-->|WireGuard or TunnelInterface\niBGP + workload packets| RR
-  AZ <-->|WireGuard or TunnelInterface\niBGP + workload packets| RR
-  OCI <-->|WireGuard or TunnelInterface\niBGP + workload packets| RR
+  AWS <-->|IPIP SAM transport\niBGP + workload packets| RR
+  AZ <-->|IPIP SAM transport\niBGP + workload packets| RR
+  OCI <-->|IPIP SAM transport\niBGP + workload packets| RR
 ```
 
 - logical pool: `10.77.60.0/24`
@@ -95,7 +95,8 @@ inner workload packet:
   dst = 10.77.60.12
 
 transport:
-  WireGuard / GRE / IPIP / FOU / GUE
+  IPIP / GRE TunnelInterface
+  optional WireGuard underlay for endpoint encryption
 
 outer packet:
   src = source CER transport IP

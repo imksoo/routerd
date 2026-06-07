@@ -67,6 +67,11 @@ The project focuses on a few independent strengths:
   route policy without flushing conntrack.
 - **Client-aware LAN policy** through DHCP reservations, neighbor inventory,
   and MAC-based guest isolation on supported platforms.
+- **CloudEdge SAM** for selected `/32` IPv4 mobility over BGP, with IPIP/GRE
+  transport profiles and optional WireGuard encryption as endpoint-only
+  underlay.
+- **Authoring tools** through generated JSON Schema, VS Code/YAML Language
+  Server modelines, and the browser config wizard at `https://routerd.net/wizard`.
 
 That makes routerd useful when a network grows sideways: from a Proxmox lab, to
 a home DS-Lite router, to WireGuard/Tailscale overlays, to a diskless mini PC
@@ -104,6 +109,11 @@ Implemented resource areas include:
   firewall logs, and the active configuration
 - OpenTelemetry SDK hooks and built-in event log forwarding to stdout, syslog,
   or Loki when exporters are configured
+- CloudEdge Mobility (`MobilityPool` + `SAMTransportProfile`) for selective
+  address mobility, provider action planning/execution gates, and BGP-mode
+  `/32` delivery over generated tunnel/BGP peer resources
+- owner-reference based lifecycle GC for routerd-managed artifacts and stale
+  object status, with explicit teardown contracts for every config resource kind
 
 Stateful firewall filtering is intentionally scoped. routerd renders NAT44,
 zone policy, service holes, denial logging, and traffic inspection, but it is
@@ -124,8 +134,20 @@ The production-style examples show how the pieces fit together:
   advertisement through a managed systemd unit.
 - `examples/guest-mode.yaml`: MAC-based guest-device isolation on a shared
   LAN.
+- `examples/cloudedge-mobility-demo/`: on-prem/AWS/Azure/OCI CloudEdge SAM
+  configs using `SAMTransportProfile`.
 - `examples/README.md`: an index of focused templates, including minimal
   Tailscale, WireGuard hub-spoke, VRF lab, and multi-WAN home patterns.
+
+You can also start from the browser wizard:
+
+```text
+https://routerd.net/wizard
+```
+
+The wizard generates Home Router, CloudEdge SAM, and Kubernetes BGP profiles
+from the same builder used by CI fixtures. Output is checked against the
+published config schema in the browser.
 
 Static DHCPv4 reservations are declared as resources:
 

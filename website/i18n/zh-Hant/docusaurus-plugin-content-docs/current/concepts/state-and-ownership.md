@@ -42,6 +42,24 @@ routerd 在主機端建立的設定物件，各自有其擁有來源資源。
 - 從 YAML 中刪除資源時，是否也可以刪除主機端的對應設定。
 - 只是納管既有設定，還是由 routerd 全新建立。
 
+owner key 是 `apiVersion/kind/name`；apply generation 不屬於該 identity。
+resource status 包含 owner 與 lifecycle metadata，使 stale cleanup path 也能區分
+routerd-managed resource 與 adopted/external object。
+
+## lifecycle GC
+
+routerd 儲存具體 host artifact 的 ownership ledger，以及 resource-specific teardown
+所需的 object status。在 apply、serve startup 與 delete flow 中，generic GC planner
+會將這些記錄與 apply 使用的同一份 effective config 比較。effective config 包含
+`when` filtering 之後的 startup YAML、active dynamic config 與產生的 SAM resource。
+
+GC plan 可以表示 owned artifact 刪除、resource teardown、ledger row forget、stale status
+row 刪除、event 記錄，以及破壞性 cleanup 前所需的 state backup。不支援的 OS integration
+會被跳過，adopted 或 externally managed status 會被保留。
+
+resource 對應的 artifact map 與 teardown contract 請參閱
+[資源擁有權](../resource-ownership.md)。
+
 ## 不使用過時狀態
 
 租約和觀測值雖然方便，但持續使用過時的值是危險的。

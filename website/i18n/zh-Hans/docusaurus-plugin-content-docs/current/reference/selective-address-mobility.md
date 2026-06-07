@@ -1,0 +1,67 @@
+---
+title: Selective Address Mobility
+---
+
+# Selective Address Mobility
+
+Selective Address Mobility (SAM) 不是 full L2 extension。routerd CloudEdge 不把
+Ethernet segment 延伸到 public cloud，而是只移动选定的 IPv4 `/32`。source/destination
+address 会保留；firewall 与 NAT 是单独的 routerd layer。
+
+## primary resource model
+
+当前 CloudEdge Mobility 的 operator-authored surface 是：
+
+- `MobilityPool`: 声明 mobility prefix、EventGroup、member node/site、BGP delivery
+  policy、capture policy、provider trap placement，以及本 node 的 capture/discovery 细节。
+- `SAMTransportProfile`: 声明 router-to-router transport、`selfNodeRef`、共享
+  `topologyNodeRefs`、`innerPrefix`、underlay interface、BGP router 与 peers。
+
+`MobilityPool` 中 self site 应完整声明；remote site 通常保持 identity-only，仅包含
+`nodeRef`、`site`、`role`，以及可选的 `placement` / `maintenance`。所有 node 应获得相同的
+pool identity 与 placement set，以便 deterministic projection。
+
+`AddressMobilityDomain` 与 `RemoteAddressClaim` 是低层兼容 resource。pre-release 期间仍支持
+hand-authored config，但新 CloudEdge Mobility config 应优先使用 `MobilityPool` 与
+`SAMTransportProfile`。
+
+## transport
+
+当前 SAM transport 默认使用 IPIP delivery plane。WireGuard 如存在，只作为加密 underlay；
+WireGuard peer 的 `AllowedIPs` 应只包含 transport endpoint prefix，不应包含 mobile `/32`。
+
+`SAMTransportProfile` 会生成 per-peer `TunnelInterface`、endpoint `/32` `IPv4Route`
+与 `BGPPeer`。多个 peer 的 profile 必须在所有 router 上使用相同的 `topologyNodeRefs` 与
+`innerPrefix`，这样每条 node pair edge 才能导出相同的 `/31`。
+
+## capture and delivery
+
+`MobilityPool.spec.deliveryPolicy.mode` 默认为 `bgp`。owner advertise selected `/32`，
+non-owner 将 BGP best path import 到 local FIB。旧的 route-lowered delivery 仅用于
+`RemoteAddressClaim` 兼容 config。
+
+支持的 capture type：
+
+| Type | Meaning |
+| --- | --- |
+| `provider-secondary-ip` | cloud fabric 通过 provider secondary address object 或等价机制 capture `/32`。 |
+| `proxy-arp` | site router 在本地对 selected address 回答 ARP。 |
+
+on-prem `proxy-arp` capture 可使用 `activeWhen.type: single-router` 作为单 router
+always-active capture，也可使用 `vrrp-master` 由 HA pair 的 VRRP master gate 控制。
+
+`on-demand-arp` source 会以低速 proactive sweep 探测 mobility prefix：每个
+`scanInterval` 探测一个 target，使已启动但安静的 L2 client 也能被观测到。
+
+## provider actions
+
+provider capture planner 可输出 `assign-secondary-ip`、`ensure-forwarding-enabled` 等
+provider `ActionPlan`。planner 本身不调用 provider API。action plan 只有在导入
+provider-action journal 并通过 `ProviderActionPolicy`、approval、allowlist 与 executor
+plugin gate 后才可能执行。
+
+## firewall and NAT
+
+SAM 不包含 `nat`、`preserveSource`、firewall 或 zone 字段。若要 firewall/NAT mobile
+address，请在现有 `FirewallZone`、`FirewallRule`、`NAT44Rule` 中引用 literal `/32`。
+SAM forwarded traffic 仍会经过普通 forwarding/firewall/conntrack path。

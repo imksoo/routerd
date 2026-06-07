@@ -67,6 +67,10 @@ routerd は、次の独立した特徴を大切にします。
   conntrack を消さずに切り替えます。
 - **クライアントを意識した LAN policy**: DHCP 固定割り当て、neighbor inventory、
   対応 platform での MAC ベース guest isolation を扱います。
+- **CloudEdge SAM**: 選択した IPv4 `/32` を BGP で移動し、IPIP/GRE transport
+  profile と endpoint 専用 underlay としての WireGuard 暗号化を組み合わせます。
+- **作成支援**: 生成済み JSON Schema、VS Code/YAML Language Server の
+  modeline、`https://routerd.net/wizard` の browser config wizard を提供します。
 
 そのため routerd は、Proxmox ラボから家庭用 DS-Lite ルーター、
 WireGuard/Tailscale overlay、USB 状態から復元できるディスクレス mini PC へと、
@@ -102,6 +106,12 @@ WireGuard/Tailscale overlay、USB 状態から復元できるディスクレス 
   ログ、現在の設定を表示する読み取り専用 Web Console
 - OpenTelemetry exporter を設定した場合のログ、メトリクス、トレース送信と、
   stdout / syslog / Loki への内蔵 event log forwarding
+- `MobilityPool` と `SAMTransportProfile` による CloudEdge Mobility。
+  provider action の計画/実行 gate と、生成された tunnel/BGP peer resource による
+  BGP mode `/32` delivery を含みます。
+- owner-reference に基づく lifecycle GC。routerd が管理する host artifact と
+  stale object status を、全 config resource kind の teardown contract に従って
+  片付けます。
 
 状態を持つファイアウォールフィルターは、意図して範囲を絞っています。
 routerd は NAT44、ゾーンポリシー、管理対象サービス用の許可、拒否ログ、
@@ -123,8 +133,20 @@ routerd は NAT44、ゾーンポリシー、管理対象サービス用の許可
   の広告を管理対象 systemd ユニットで行う例です。
 - `examples/guest-mode.yaml`: 同一 LAN 上の端末を MAC アドレスで分類し、
   ゲスト端末を隔離する例です。
+- `examples/cloudedge-mobility-demo/`: `SAMTransportProfile` を使う
+  on-prem/AWS/Azure/OCI CloudEdge SAM の設定例です。
 - `examples/README.md`: 用途別の設定例一覧です。最小 Tailscale、
   WireGuard hub-spoke、VRF lab、multi-WAN home のテンプレートを含みます。
+
+browser wizard から始めることもできます。
+
+```text
+https://routerd.net/wizard
+```
+
+wizard は Home Router、CloudEdge SAM、Kubernetes BGP profile を生成します。
+UI と CI fixture は同じ builder を使い、出力は browser 内で公開 config schema
+に照合されます。
 
 DHCPv4 の固定割り当ては、リソースとして宣言します。
 
