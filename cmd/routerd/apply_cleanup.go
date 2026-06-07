@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -139,16 +138,17 @@ func cleanupLedgerOwnedOrphansMatching(router *api.Router, ledgerPath string, ma
 	}
 	defer func() { _ = ledger.Close() }()
 	engine := apply.New()
-	_, artifacts, err := engine.LedgerOwnedOrphans(router, ledger)
+	plan, err := engine.LedgerOwnedOrphanPlan(router, ledger)
 	if err != nil {
 		return nil, err
 	}
 	var removed []string
 	var removedArtifacts []resource.Artifact
-	sort.SliceStable(artifacts, func(i, j int) bool {
-		return cleanupArtifactPriority(artifacts[i]) < cleanupArtifactPriority(artifacts[j])
-	})
-	for _, artifact := range artifacts {
+	for _, action := range plan.Actions {
+		if action.Type != lifecycle.GCActionRemoveArtifact {
+			continue
+		}
+		artifact := action.Artifact
 		if match != nil && !match(artifact) {
 			continue
 		}
@@ -169,10 +169,6 @@ func cleanupLedgerOwnedOrphansMatching(router *api.Router, ledgerPath string, ma
 		}
 	}
 	return removed, nil
-}
-
-func cleanupArtifactPriority(artifact resource.Artifact) int {
-	return lifecycle.ArtifactCleanupPriority(artifact)
 }
 
 func cleanupLedgerOwnedArtifact(artifact resource.Artifact) (string, error) {

@@ -111,59 +111,44 @@ func (e *Engine) AppliedOwnedArtifacts(router *api.Router) ([]resource.Artifact,
 }
 
 func (e *Engine) LedgerOwnedOrphans(router *api.Router, ledger resource.Ledger) ([]OrphanedArtifact, []resource.Artifact, error) {
-	if err := e.Validate(router); err != nil {
+	plan, err := e.LedgerOwnedOrphanPlan(router, ledger)
+	if err != nil {
 		return nil, nil, err
-	}
-	if ledger == nil {
-		return nil, nil, nil
-	}
-	aliases := interfaceAliases(router)
-	desired := DesiredOwnedArtifacts(router, aliases)
-	desiredIDs := map[string]bool{}
-	for _, artifact := range desired {
-		desiredIDs[artifact.Identity()] = true
-	}
-	actualByID := map[string]resource.Artifact{}
-	for _, artifact := range e.actualInventoryBackedArtifacts() {
-		actualByID[artifact.Identity()] = artifact
 	}
 	var result []OrphanedArtifact
 	var artifacts []resource.Artifact
-	seen := map[string]bool{}
-	for _, owned := range ledger.All() {
-		id := owned.Identity()
-		if seen[id] || desiredIDs[id] {
-			continue
-		}
-		seen[id] = true
-		actual, ok := actualByID[id]
-		if !ok {
-			continue
-		}
-		artifact := mergeArtifactAttributes(owned, actual)
-		if !cleanupEligibleLedgerOrphan(artifact) {
-			continue
-		}
-		result = append(result, orphanedArtifactFromLedger(artifact))
-		artifacts = append(artifacts, artifact)
+	for _, removal := range plan.ArtifactRemovals {
+		result = append(result, orphanedArtifactFromLifecycle(removal))
+		artifacts = append(artifacts, removal.Artifact)
 	}
 	return result, artifacts, nil
 }
 
-func cleanupEligibleLedgerOrphan(artifact resource.Artifact) bool {
-	return lifecycle.ArtifactCleanupEligible(artifact)
+func (e *Engine) LedgerOwnedOrphanPlan(router *api.Router, ledger resource.Ledger) (lifecycle.GCPlan, error) {
+	if err := e.Validate(router); err != nil {
+		return lifecycle.GCPlan{}, err
+	}
+	if ledger == nil {
+		return lifecycle.GCPlan{}, nil
+	}
+	aliases := interfaceAliases(router)
+	desired := DesiredOwnedArtifacts(router, aliases)
+	return lifecycle.PlanArtifactOrphans(lifecycle.GCPlanInput{
+		DesiredArtifacts: desired,
+		LedgerArtifacts:  ledger.All(),
+		HostArtifacts:    e.actualInventoryBackedArtifacts(),
+	}), nil
 }
 
-func orphanedArtifactFromLedger(artifact resource.Artifact) OrphanedArtifact {
-	orphan := OrphanedArtifact{
-		Kind:     artifact.Kind,
-		Name:     artifact.Name,
-		Owner:    artifact.Owner,
-		Reason:   "local ownership ledger records this artifact but no current resource owns it",
-		Observed: artifact.Attributes,
+func orphanedArtifactFromLifecycle(removal lifecycle.GCArtifactRemoval) OrphanedArtifact {
+	return OrphanedArtifact{
+		Kind:        removal.Artifact.Kind,
+		Name:        removal.Artifact.Name,
+		Owner:       removal.Artifact.Owner,
+		Reason:      removal.Reason,
+		Remediation: removal.Remediation,
+		Observed:    removal.Artifact.Attributes,
 	}
-	orphan.Remediation = lifecycle.ArtifactCleanupRemediation(artifact)
-	return orphan
 }
 
 func desiredAttributesDrift(desired, actual map[string]string) bool {

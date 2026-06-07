@@ -238,7 +238,8 @@ func cleanupUnsupportedLegacyObjectStatuses(router *api.Router, store staleObjec
 		recordStateCleanupEvent(router, store, "StaleStateCleanupSkipped", "stale state cleanup skipped: "+err.Error())
 		return staleObjectStatusCleanupResult{Skipped: true}, err
 	}
-	removed := staleObjectStatusesForDesired(desired, statuses)
+	plan := lifecycle.PlanStatusGC(desired, statuses)
+	removed := plan.StatusDeletes
 	if len(removed) == 0 {
 		return staleObjectStatusCleanupResult{}, nil
 	}
@@ -269,39 +270,11 @@ func staleObjectStatuses(router *api.Router, statuses []routerstate.ObjectStatus
 }
 
 func staleObjectStatusesForDesired(desired map[string]bool, statuses []routerstate.ObjectStatus) []routerstate.ObjectStatus {
-	var out []routerstate.ObjectStatus
-	for _, status := range statuses {
-		if api.IsRemovedLegacyKind(status.Kind) {
-			out = append(out, status)
-			continue
-		}
-		if syntheticObjectStatus(status) {
-			continue
-		}
-		if !configResourceObjectStatus(status) {
-			continue
-		}
-		if desired[objectStatusID(status)] {
-			continue
-		}
-		out = append(out, status)
-	}
-	sort.Slice(out, func(i, j int) bool {
-		return objectStatusID(out[i]) < objectStatusID(out[j])
-	})
-	return out
+	return lifecycle.PlanStatusGC(desired, statuses).StatusDeletes
 }
 
 func syntheticObjectStatus(status routerstate.ObjectStatus) bool {
-	if status.APIVersion == api.RouterAPIVersion {
-		return true
-	}
-	switch status.Kind {
-	case "ConntrackObserver", "ConntrackTuning":
-		return true
-	default:
-		return false
-	}
+	return lifecycle.SyntheticObjectStatus(status)
 }
 
 func desiredObjectStatusKeys(router *api.Router, store resourcequery.StateStore, now time.Time) (map[string]bool, error) {
@@ -361,17 +334,7 @@ func configuredResourceStatusKeys(router *api.Router) map[string]bool {
 }
 
 func configResourceObjectStatus(status routerstate.ObjectStatus) bool {
-	if strings.TrimSpace(status.Kind) == "" || strings.TrimSpace(status.Name) == "" {
-		return false
-	}
-	if status.APIVersion == api.RouterAPIVersion {
-		return false
-	}
-	canonical := canonicalResourceKind(status.Kind)
-	if canonical != status.Kind {
-		return false
-	}
-	return status.APIVersion == lifecycle.APIVersionForKind(status.Kind)
+	return lifecycle.ConfigResourceObjectStatus(status)
 }
 
 func unsupportedLegacyObjectStatuses(statuses []routerstate.ObjectStatus) []routerstate.ObjectStatus {

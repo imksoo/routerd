@@ -13,6 +13,7 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/config"
 	"github.com/imksoo/routerd/pkg/controlapi"
+	"github.com/imksoo/routerd/pkg/lifecycle"
 	"github.com/imksoo/routerd/pkg/resource"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
@@ -66,8 +67,12 @@ func performDeleteTargets(targets []deleteTarget, statePath, ledgerPath string, 
 	result := controlapi.DeleteResult{TypeMeta: controlapi.TypeMeta{APIVersion: controlapi.APIVersion, Kind: "DeleteResult"}, DryRun: dryRun}
 	for _, target := range targets {
 		owner := target.APIVersion + "/" + target.Kind + "/" + target.Name
-		artifacts := artifactsForOwner(ledger, owner)
-		for _, artifact := range artifacts {
+		plan := lifecycle.PlanDeleteTargetGC(lifecycle.GCPlanInput{
+			LedgerArtifacts: ledger.All(),
+			TargetOwnerIDs:  map[string]bool{owner: true},
+		})
+		for _, removal := range plan.ArtifactRemovals {
+			artifact := removal.Artifact
 			label := artifact.Kind + "/" + artifact.Name
 			if !dryRun {
 				cleaned, err := cleanupLedgerOwnedArtifact(artifact)
@@ -81,7 +86,7 @@ func performDeleteTargets(targets []deleteTarget, statePath, ledgerPath string, 
 			result.Artifacts = append(result.Artifacts, label)
 		}
 		if !dryRun {
-			ledger.Forget(artifacts)
+			ledger.Forget(plan.LedgerForgets)
 			if deleter, ok := stateStore.(routerstate.ObjectDeleteStore); ok {
 				if err := deleter.DeleteObject(target.APIVersion, target.Kind, target.Name); err != nil {
 					return result, err
@@ -195,17 +200,6 @@ func forceDeleteTargetFromArg(arg, statePath, apiVersion string) (deleteTarget, 
 		return deleteTarget{}, fmt.Errorf("delete --force target %s/%s is ambiguous; found apiVersions %s; rerun with --api-version <value>", kind, name, strings.Join(versions, ", "))
 	}
 	return deleteTarget{APIVersion: matches[0].APIVersion, Kind: kind, Name: name}, nil
-}
-
-func artifactsForOwner(ledger resource.Ledger, owner string) []resource.Artifact {
-	var out []resource.Artifact
-	for _, artifact := range ledger.All() {
-		if artifact.Owner == owner {
-			out = append(out, artifact)
-		}
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Identity() < out[j].Identity() })
-	return out
 }
 
 func canonicalResourceKind(kind string) string {
