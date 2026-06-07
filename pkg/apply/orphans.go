@@ -4,12 +4,12 @@ package apply
 
 import (
 	"fmt"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/lifecycle"
 	"github.com/imksoo/routerd/pkg/resource"
 )
 
@@ -151,24 +151,7 @@ func (e *Engine) LedgerOwnedOrphans(router *api.Router, ledger resource.Ledger) 
 }
 
 func cleanupEligibleLedgerOrphan(artifact resource.Artifact) bool {
-	switch artifact.Kind {
-	case "linux.ipip6.tunnel", "linux.ipv4.fwmarkRule", "linux.ipv4.routeTable", "systemd.service":
-		return true
-	case "file":
-		return isPPPoEPeerFileArtifact(artifact)
-	case "unix.socket":
-		return isPPPoERuntimeSocketArtifact(artifact)
-	case "directory":
-		return isPPPoERuntimeDirectoryArtifact(artifact)
-	case "nft.table":
-		return strings.HasPrefix(artifact.Attributes["name"], "routerd_")
-	case "net.ipv4.address":
-		return isDSLiteIPv4AddressArtifact(artifact)
-	case "net.ipv6.address":
-		return isStaticIPv6AddressArtifact(artifact)
-	default:
-		return false
-	}
+	return lifecycle.ArtifactCleanupEligible(artifact)
 }
 
 func orphanedArtifactFromLedger(artifact resource.Artifact) OrphanedArtifact {
@@ -179,84 +162,8 @@ func orphanedArtifactFromLedger(artifact resource.Artifact) OrphanedArtifact {
 		Reason:   "local ownership ledger records this artifact but no current resource owns it",
 		Observed: artifact.Attributes,
 	}
-	switch artifact.Kind {
-	case "linux.ipip6.tunnel":
-		orphan.Remediation = "delete ipip6 tunnel " + artifact.Name
-	case "nft.table":
-		orphan.Remediation = "delete nft table " + artifact.Attributes["family"] + " " + artifact.Attributes["name"]
-	case "systemd.service":
-		orphan.Remediation = "disable and stop systemd service " + artifact.Name
-	case "file":
-		orphan.Remediation = "delete file " + artifact.Name
-	case "unix.socket":
-		orphan.Remediation = "delete Unix socket " + artifact.Name
-	case "directory":
-		orphan.Remediation = "delete directory " + artifact.Name
-	case "net.ipv4.address":
-		orphan.Remediation = "remove IPv4 address " + artifact.Name
-	case "net.ipv6.address":
-		orphan.Remediation = "remove IPv6 address " + artifact.Name
-	case "linux.ipv4.fwmarkRule":
-		orphan.Remediation = "delete ip rule " + artifact.Name
-	case "linux.ipv4.routeTable":
-		orphan.Remediation = "flush ip route table " + artifact.Attributes["table"]
-	}
+	orphan.Remediation = lifecycle.ArtifactCleanupRemediation(artifact)
 	return orphan
-}
-
-func isDSLiteIPv4AddressArtifact(artifact resource.Artifact) bool {
-	return strings.Contains(artifact.Owner, "/IPv4StaticAddress/ds-lite") ||
-		strings.Contains(artifact.Name, ":192.168.160.249/32") ||
-		strings.Contains(artifact.Name, ":192.168.160.250/32") ||
-		strings.Contains(artifact.Name, ":192.168.160.251/32") ||
-		strings.Contains(artifact.Name, ":192.168.160.252/32") ||
-		strings.Contains(artifact.Name, ":172.18.255.249/32") ||
-		strings.Contains(artifact.Name, ":172.18.255.250/32") ||
-		strings.Contains(artifact.Name, ":172.18.255.251/32") ||
-		strings.Contains(artifact.Name, ":172.18.255.252/32")
-}
-
-func isStaticIPv6AddressArtifact(artifact resource.Artifact) bool {
-	return strings.Contains(artifact.Owner, "/VirtualAddress/") &&
-		strings.Contains(artifact.Name, ":") &&
-		strings.Contains(artifact.Name, "/")
-}
-
-func isPPPoEPeerFileArtifact(artifact resource.Artifact) bool {
-	if !strings.Contains(artifact.Owner, "/PPPoESession/") {
-		return false
-	}
-	name := filepath.Clean(artifact.Name)
-	return strings.HasPrefix(name, "/etc/ppp/peers/routerd-")
-}
-
-func isPPPoERuntimeSocketArtifact(artifact resource.Artifact) bool {
-	if !strings.Contains(artifact.Owner, "/PPPoESession/") {
-		return false
-	}
-	name := filepath.Clean(artifact.Name)
-	return strings.HasPrefix(name, "/run/routerd/pppoe-client/") && strings.HasSuffix(name, ".sock")
-}
-
-func isPPPoERuntimeDirectoryArtifact(artifact resource.Artifact) bool {
-	if !strings.Contains(artifact.Owner, "/PPPoESession/") {
-		return false
-	}
-	name := filepath.Clean(artifact.Name)
-	return strings.HasPrefix(name, "/run/routerd/pppoe-client/") ||
-		strings.HasPrefix(name, "/var/lib/routerd/pppoe-client/")
-}
-
-func IsPPPoEPeerFileArtifactForCleanup(artifact resource.Artifact) bool {
-	return isPPPoEPeerFileArtifact(artifact)
-}
-
-func IsPPPoERuntimeSocketArtifactForCleanup(artifact resource.Artifact) bool {
-	return isPPPoERuntimeSocketArtifact(artifact)
-}
-
-func IsPPPoERuntimeDirectoryArtifactForCleanup(artifact resource.Artifact) bool {
-	return isPPPoERuntimeDirectoryArtifact(artifact)
 }
 
 func desiredAttributesDrift(desired, actual map[string]string) bool {

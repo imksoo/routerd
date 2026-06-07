@@ -16,6 +16,8 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/apply"
 	"github.com/imksoo/routerd/pkg/controlapi"
+	"github.com/imksoo/routerd/pkg/lifecycle"
+	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/resource"
 	"github.com/imksoo/routerd/pkg/resourcequery"
 	routerstate "github.com/imksoo/routerd/pkg/state"
@@ -170,179 +172,40 @@ func cleanupLedgerOwnedOrphansMatching(router *api.Router, ledgerPath string, ma
 }
 
 func cleanupArtifactPriority(artifact resource.Artifact) int {
-	switch artifact.Kind {
-	case "linux.ipv4.fwmarkRule":
-		return 0
-	case "linux.ipv4.routeTable":
-		return 5
-	case "systemd.service":
-		return 10
-	case "file":
-		return 20
-	case "unix.socket":
-		return 30
-	case "directory":
-		return 40
-	default:
-		return 50
-	}
+	return lifecycle.ArtifactCleanupPriority(artifact)
 }
 
 func cleanupLedgerOwnedArtifact(artifact resource.Artifact) (string, error) {
-	switch artifact.Kind {
-	case "linux.ipip6.tunnel":
-		if platformFeatures.HasIproute2 {
-			if err := runCleanupCommand("ip", "-6", "tunnel", "del", artifact.Name); err != nil {
-				return "", err
-			}
-			return artifact.Kind + "/" + artifact.Name, nil
-		}
-		if platformFeatures.HasPF {
-			if err := runCleanupCommand("ifconfig", artifact.Name, "destroy"); err != nil {
-				return "", err
-			}
-			return artifact.Kind + "/" + artifact.Name, nil
-		}
-		return "", nil
-	case "linux.ipv4.fwmarkRule":
-		rule, ok := ipv4FwmarkRuleFromArtifact(artifact)
-		if !ok {
-			return "", nil
-		}
-		if err := deleteIPv4FwmarkRule(rule); err != nil {
-			return "", err
-		}
-		return artifact.Kind + "/" + artifact.Name, nil
-	case "linux.ipv4.routeTable":
-		table, err := strconv.Atoi(artifact.Attributes["table"])
-		if err != nil || table == 0 {
-			return "", nil
-		}
-		if err := flushIPv4RouteTable(table); err != nil {
-			return "", err
-		}
-		return artifact.Kind + "/" + artifact.Name, nil
-	case "nft.table":
-		family := artifact.Attributes["family"]
-		name := artifact.Attributes["name"]
-		if !strings.HasPrefix(name, "routerd_") {
-			return "", nil
-		}
-		if err := runCleanupCommand("nft", "delete", "table", family, name); err != nil {
-			return "", err
-		}
-		return artifact.Kind + "/" + name, nil
-	case "systemd.service":
-		if !strings.HasPrefix(artifact.Name, "routerd-") || !strings.HasSuffix(artifact.Name, ".service") {
-			return "", nil
-		}
-		if err := runCleanupCommand("systemctl", "disable", "--now", artifact.Name); err != nil {
-			return "", err
-		}
-		_ = runCleanupCommand("systemctl", "reset-failed", artifact.Name)
-		unitPath := "/etc/systemd/system/" + artifact.Name
-		if err := os.Remove(unitPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return "", err
-		}
-		if err := runCleanupCommand("systemctl", "daemon-reload"); err != nil {
-			return "", err
-		}
-		return artifact.Kind + "/" + artifact.Name, nil
-	case "file":
-		if !apply.IsPPPoEPeerFileArtifactForCleanup(artifact) {
-			return "", nil
-		}
-		if err := os.Remove(artifact.Name); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return "", err
-		}
-		return artifact.Kind + "/" + artifact.Name, nil
-	case "unix.socket":
-		if !apply.IsPPPoERuntimeSocketArtifactForCleanup(artifact) {
-			return "", nil
-		}
-		if err := os.Remove(artifact.Name); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return "", err
-		}
-		return artifact.Kind + "/" + artifact.Name, nil
-	case "directory":
-		if !apply.IsPPPoERuntimeDirectoryArtifactForCleanup(artifact) {
-			return "", nil
-		}
-		if err := os.RemoveAll(artifact.Name); err != nil {
-			return "", err
-		}
-		return artifact.Kind + "/" + artifact.Name, nil
-	case "net.ipv4.address":
-		if !isDSLiteIPv4AddressArtifact(artifact) {
-			return "", nil
-		}
-		ifname, address, ok := strings.Cut(artifact.Name, ":")
-		if !ok || ifname == "" || address == "" {
-			return "", nil
-		}
-		if platformFeatures.HasIproute2 {
-			if err := runCleanupCommand("ip", "-4", "addr", "del", address, "dev", ifname); err != nil {
-				return "", err
-			}
-			return artifact.Kind + "/" + artifact.Name, nil
-		}
-		if platformFeatures.HasPF {
-			if strings.HasPrefix(ifname, "gif") && strings.Contains(artifact.Owner, "/IPv4StaticAddress/ds-lite-source") {
-				if err := runCleanupCommand("ifconfig", ifname, "destroy"); err != nil {
-					return "", err
-				}
-				return "freebsd.gif.tunnel/" + ifname, nil
-			}
-			addr := strings.SplitN(address, "/", 2)[0]
-			if err := runCleanupCommand("ifconfig", ifname, "inet", addr, "-alias"); err != nil {
-				return "", err
-			}
-			return artifact.Kind + "/" + artifact.Name, nil
-		}
-		return "", nil
-	case "net.ipv6.address":
-		if !isStaticIPv6AddressArtifact(artifact) {
-			return "", nil
-		}
-		ifname, address, ok := strings.Cut(artifact.Name, ":")
-		if !ok || ifname == "" || address == "" {
-			return "", nil
-		}
-		if platformFeatures.HasIproute2 {
-			if err := runCleanupCommand("ip", "-6", "addr", "del", address, "dev", ifname); err != nil {
-				return "", err
-			}
-			return artifact.Kind + "/" + artifact.Name, nil
-		}
-		if platformFeatures.HasPF {
-			addr := strings.SplitN(address, "/", 2)[0]
-			if err := runCleanupCommand("ifconfig", ifname, "inet6", addr, "-alias"); err != nil {
-				return "", err
-			}
-			return artifact.Kind + "/" + artifact.Name, nil
-		}
-		return "", nil
-	default:
-		return "", nil
+	return lifecycle.CleanupArtifact(routerdArtifactTeardownExecutor{}, artifact)
+}
+
+type routerdArtifactTeardownExecutor struct{}
+
+func (routerdArtifactTeardownExecutor) Features() platform.Features {
+	return platformFeatures
+}
+
+func (routerdArtifactTeardownExecutor) Run(name string, args ...string) error {
+	return runCleanupCommand(name, args...)
+}
+
+func (routerdArtifactTeardownExecutor) Remove(path string) error {
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
 	}
+	return nil
 }
 
-func isDSLiteIPv4AddressArtifact(artifact resource.Artifact) bool {
-	return strings.Contains(artifact.Owner, "/IPv4StaticAddress/ds-lite") ||
-		strings.Contains(artifact.Name, ":192.168.160.249/32") ||
-		strings.Contains(artifact.Name, ":192.168.160.250/32") ||
-		strings.Contains(artifact.Name, ":192.168.160.251/32") ||
-		strings.Contains(artifact.Name, ":192.168.160.252/32") ||
-		strings.Contains(artifact.Name, ":172.18.255.249/32") ||
-		strings.Contains(artifact.Name, ":172.18.255.250/32") ||
-		strings.Contains(artifact.Name, ":172.18.255.251/32") ||
-		strings.Contains(artifact.Name, ":172.18.255.252/32")
+func (routerdArtifactTeardownExecutor) RemoveAll(path string) error {
+	return os.RemoveAll(path)
 }
 
-func isStaticIPv6AddressArtifact(artifact resource.Artifact) bool {
-	return strings.Contains(artifact.Owner, "/VirtualAddress/") &&
-		strings.Contains(artifact.Name, ":") &&
-		strings.Contains(artifact.Name, "/")
+func (routerdArtifactTeardownExecutor) DeleteIPv4FwmarkRule(priority, mark, table int) error {
+	return deleteIPv4FwmarkRule(ipv4FwmarkRule{Priority: priority, Mark: mark, Table: table})
+}
+
+func (routerdArtifactTeardownExecutor) FlushIPv4RouteTable(table int) error {
+	return flushIPv4RouteTable(table)
 }
 
 func cleanupStaleDSLiteTunnels(router *api.Router) ([]string, error) {
