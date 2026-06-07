@@ -41,6 +41,18 @@ func BuildDynamicRouteSAMEffectiveRouter(startup *api.Router, store any, now tim
 	return view.RouteRouter, nil
 }
 
+// BuildDynamicRouteSAMObjectStatusRouters returns the effective resource views
+// whose objects can legitimately own status rows. EffectiveRouter keeps
+// dynamic config resources visible to their controllers; RouteRouter includes
+// route-facing lowerings such as SAM/Hybrid IPv4Route resources.
+func BuildDynamicRouteSAMObjectStatusRouters(startup *api.Router, store any, now time.Time, targetOS platform.OS) ([]*api.Router, error) {
+	view, err := buildDynamicRouteSAMView(startup, store, now, targetOS)
+	if err != nil {
+		return nil, err
+	}
+	return []*api.Router{view.EffectiveRouter, view.RouteRouter}, nil
+}
+
 func buildDynamicRouteSAMView(startup *api.Router, store any, now time.Time, targetOS platform.OS) (dynamicRouteSAMView, error) {
 	if startup == nil {
 		return dynamicRouteSAMView{}, fmt.Errorf("startup router is required")

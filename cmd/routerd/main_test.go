@@ -3,6 +3,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -931,6 +932,7 @@ func TestCleanupUnsupportedLegacyObjectStatusesRemovesLegacyAndDeletedResourceRo
 		t.Fatalf("save synthetic controller status: %v", err)
 	}
 	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 		Metadata: api.ObjectMeta{Name: "test-router"},
 		Spec: api.RouterSpec{Resources: []api.Resource{{
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
@@ -985,6 +987,128 @@ func TestStaleObjectStatusesKeepsConfiguredAndSyntheticKinds(t *testing.T) {
 	got := staleObjectStatuses(router, statuses)
 	if len(got) != 1 || got[0].Kind != "PPPoEInterface" {
 		t.Fatalf("stale statuses = %+v, want only PPPoEInterface", got)
+	}
+}
+
+func TestCleanupUnsupportedLegacyObjectStatusesKeepsWhenFalseStatus(t *testing.T) {
+	now := time.Date(2026, 6, 7, 0, 0, 0, 0, time.UTC)
+	store := &fakeStaleCleanupStore{
+		now: now,
+		values: map[string]routerstate.Value{
+			"gate": {Status: routerstate.StatusSet, Value: "no", Since: now, UpdatedAt: now},
+		},
+		statuses: []routerstate.ObjectStatus{
+			{APIVersion: api.NetAPIVersion, Kind: "BGPPeer", Name: "fabric", Status: map[string]any{"phase": "Pending", "reason": "WhenFalse"}},
+			{APIVersion: api.NetAPIVersion, Kind: "TailscaleNode", Name: "old", Status: map[string]any{"phase": "Error"}},
+		},
+	}
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test-router"},
+		Spec: api.RouterSpec{Resources: []api.Resource{{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPPeer"},
+			Metadata: api.ObjectMeta{Name: "fabric"},
+			Spec: api.BGPPeerSpec{
+				RouterRef: "core",
+				PeerASN:   64512,
+				Peers:     []string{"192.0.2.1"},
+				When:      api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{"gate": {Equals: "yes"}}},
+			},
+		}}},
+	}
+
+	result, err := cleanupUnsupportedLegacyObjectStatuses(router, store, filepath.Join(t.TempDir(), "routerd.db"), now, nil)
+	if err != nil {
+		t.Fatalf("cleanup: %v", err)
+	}
+	if result.Skipped || len(result.Removed) != 1 || result.Removed[0].Kind != "TailscaleNode" {
+		t.Fatalf("cleanup result = %+v, want only stale TailscaleNode removed", result)
+	}
+	if got := strings.Join(store.deleted, ","); got != api.NetAPIVersion+"/TailscaleNode/old" {
+		t.Fatalf("deleted = %s, want only stale TailscaleNode", got)
+	}
+}
+
+func TestCleanupUnsupportedLegacyObjectStatusesUsesDynamicEffectiveView(t *testing.T) {
+	now := time.Date(2026, 6, 7, 0, 0, 0, 0, time.UTC)
+	owner := []api.OwnerRef{{APIVersion: api.MobilityAPIVersion, Kind: "SAMTransportProfile", Name: "fabric"}}
+	dynamicTunnel := api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
+		Metadata: api.ObjectMeta{Name: "sam-core-a", OwnerRefs: owner},
+		Spec: api.TunnelInterfaceSpec{
+			Mode:            "ipip",
+			Local:           "10.99.0.1",
+			Remote:          "10.99.0.2",
+			Address:         "10.255.0.0/31",
+			TrustedUnderlay: true,
+		},
+	}
+	store := &fakeStaleCleanupStore{
+		now:   now,
+		parts: []routerstate.DynamicConfigPartRecord{dynamicConfigPartRecordForCleanupTest(t, "SAMTransportProfile/fabric/node/core-a", []api.Resource{dynamicTunnel}, now.Add(time.Hour))},
+		statuses: []routerstate.ObjectStatus{
+			{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface", Name: "sam-core-a", Status: map[string]any{"phase": "Applied"}},
+			{APIVersion: api.NetAPIVersion, Kind: "TailscaleNode", Name: "old", Status: map[string]any{"phase": "Error"}},
+		},
+	}
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test-router"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"},
+				Metadata: api.ObjectMeta{Name: "core"},
+				Spec:     api.BGPRouterSpec{ASN: 64512, RouterID: "10.255.0.1"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "wg-hybrid"},
+				Spec:     api.InterfaceSpec{IfName: "wg-hybrid"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMTransportProfile"},
+				Metadata: api.ObjectMeta{Name: "fabric"},
+				Spec: api.SAMTransportProfileSpec{
+					SelfNodeRef:       "core-a",
+					Mode:              "ipip",
+					Encryption:        "wireguard",
+					InnerPrefix:       "10.255.0.0/24",
+					TopologyNodeRefs:  []string{"core-a", "core-b"},
+					UnderlayInterface: "wg-hybrid",
+					LocalEndpoint:     "10.99.0.1",
+					BGP:               api.SAMTransportBGPProfileSpec{RouterRef: "BGPRouter/core", PeerASN: 64512},
+					Peers:             []api.SAMTransportPeerSpec{{NodeRef: "core-b", RemoteEndpoint: "10.99.0.2"}},
+				},
+			},
+		}},
+	}
+
+	result, err := cleanupUnsupportedLegacyObjectStatuses(router, store, filepath.Join(t.TempDir(), "routerd.db"), now, nil)
+	if err != nil {
+		t.Fatalf("cleanup: %v", err)
+	}
+	if result.Skipped || len(result.Removed) != 1 || result.Removed[0].Kind != "TailscaleNode" {
+		t.Fatalf("cleanup result = %+v, want dynamic TunnelInterface preserved and stale TailscaleNode removed", result)
+	}
+	if got := strings.Join(store.deleted, ","); got != api.NetAPIVersion+"/TailscaleNode/old" {
+		t.Fatalf("deleted = %s, want only stale TailscaleNode", got)
+	}
+}
+
+func dynamicConfigPartRecordForCleanupTest(t *testing.T, source string, resources []api.Resource, expiresAt time.Time) routerstate.DynamicConfigPartRecord {
+	t.Helper()
+	raw, err := json.Marshal(resources)
+	if err != nil {
+		t.Fatalf("marshal resources: %v", err)
+	}
+	return routerstate.DynamicConfigPartRecord{
+		Source:        source,
+		Generation:    1,
+		ObservedAt:    time.Now().UTC(),
+		ExpiresAt:     expiresAt,
+		Digest:        source + "-digest",
+		ResourcesJSON: string(raw),
+		Status:        "active",
 	}
 }
 
@@ -1052,6 +1176,9 @@ type fakeStaleCleanupStore struct {
 	deleted   []string
 	events    []routerstate.Event
 	backupErr error
+	values    map[string]routerstate.Value
+	now       time.Time
+	parts     []routerstate.DynamicConfigPartRecord
 }
 
 func (s *fakeStaleCleanupStore) ListObjectStatuses() ([]routerstate.ObjectStatus, error) {
@@ -1090,6 +1217,31 @@ func (s *fakeStaleCleanupStore) Events(apiVersion, kind, name string, limit int)
 		out = out[:limit]
 	}
 	return out
+}
+
+func (s *fakeStaleCleanupStore) Get(name string) routerstate.Value {
+	if s.values != nil {
+		if value, ok := s.values[name]; ok {
+			return value
+		}
+	}
+	now := s.Now()
+	return routerstate.Value{Status: routerstate.StatusUnknown, Since: now, UpdatedAt: now}
+}
+
+func (s *fakeStaleCleanupStore) Age(string) time.Duration {
+	return 0
+}
+
+func (s *fakeStaleCleanupStore) Now() time.Time {
+	if !s.now.IsZero() {
+		return s.now
+	}
+	return time.Now().UTC()
+}
+
+func (s *fakeStaleCleanupStore) ListDynamicConfigParts() ([]routerstate.DynamicConfigPartRecord, error) {
+	return append([]routerstate.DynamicConfigPartRecord(nil), s.parts...), nil
 }
 
 func TestWriteFileIfChanged(t *testing.T) {

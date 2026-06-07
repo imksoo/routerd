@@ -41,3 +41,10 @@ func TestRegistryDeclarationsAreUnique(t *testing.T) {
 		}
 	}
 }
+
+func TestOwnerKeyUsesStableObjectIdentity(t *testing.T) {
+	got := OwnerKey(" net.routerd.net/v1alpha1 ", " BGPPeer ", " fabric ")
+	if got != "net.routerd.net/v1alpha1/BGPPeer/fabric" {
+		t.Fatalf("owner key = %q, want stable apiVersion/kind/name", got)
+	}
+}

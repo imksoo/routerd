@@ -25,12 +25,15 @@ import (
 	"github.com/imksoo/routerd/pkg/apply"
 	nixosapply "github.com/imksoo/routerd/pkg/apply/nixos"
 	"github.com/imksoo/routerd/pkg/config"
+	controllerchain "github.com/imksoo/routerd/pkg/controller/chain"
 	"github.com/imksoo/routerd/pkg/eventlog"
 	"github.com/imksoo/routerd/pkg/ha"
 	"github.com/imksoo/routerd/pkg/inventory"
+	"github.com/imksoo/routerd/pkg/lifecycle"
 	"github.com/imksoo/routerd/pkg/netconfigbackend"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/render"
+	"github.com/imksoo/routerd/pkg/resourcequery"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -209,6 +212,7 @@ type staleObjectStatusCleanupStore interface {
 	routerstate.ObjectStatusLister
 	routerstate.ObjectDeleteStore
 	routerstate.EventRecorder
+	resourcequery.StateStore
 	Backup(path string) error
 }
 
@@ -228,7 +232,13 @@ func cleanupUnsupportedLegacyObjectStatuses(router *api.Router, store staleObjec
 		recordStateCleanupEvent(router, store, "StaleStateCleanupSkipped", "stale state cleanup skipped: "+err.Error())
 		return staleObjectStatusCleanupResult{Skipped: true}, err
 	}
-	removed := staleObjectStatuses(router, statuses)
+	desired, err := desiredObjectStatusKeys(router, store, now)
+	if err != nil {
+		emitStateCleanupWarning(logger, "stale state cleanup skipped: build effective resource view failed", map[string]string{"error": err.Error()})
+		recordStateCleanupEvent(router, store, "StaleStateCleanupSkipped", "stale state cleanup skipped: "+err.Error())
+		return staleObjectStatusCleanupResult{Skipped: true}, err
+	}
+	removed := staleObjectStatusesForDesired(desired, statuses)
 	if len(removed) == 0 {
 		return staleObjectStatusCleanupResult{}, nil
 	}
@@ -255,17 +265,23 @@ func cleanupUnsupportedLegacyObjectStatuses(router *api.Router, store staleObjec
 }
 
 func staleObjectStatuses(router *api.Router, statuses []routerstate.ObjectStatus) []routerstate.ObjectStatus {
-	configured := configuredResourceStatusKeys(router)
+	return staleObjectStatusesForDesired(configuredResourceStatusKeys(router), statuses)
+}
+
+func staleObjectStatusesForDesired(desired map[string]bool, statuses []routerstate.ObjectStatus) []routerstate.ObjectStatus {
 	var out []routerstate.ObjectStatus
 	for _, status := range statuses {
 		if api.IsRemovedLegacyKind(status.Kind) {
 			out = append(out, status)
 			continue
 		}
+		if syntheticObjectStatus(status) {
+			continue
+		}
 		if !configResourceObjectStatus(status) {
 			continue
 		}
-		if configured[objectStatusID(status)] {
+		if desired[objectStatusID(status)] {
 			continue
 		}
 		out = append(out, status)
@@ -276,16 +292,70 @@ func staleObjectStatuses(router *api.Router, statuses []routerstate.ObjectStatus
 	return out
 }
 
+func syntheticObjectStatus(status routerstate.ObjectStatus) bool {
+	if status.APIVersion == api.RouterAPIVersion {
+		return true
+	}
+	switch status.Kind {
+	case "ConntrackObserver", "ConntrackTuning":
+		return true
+	default:
+		return false
+	}
+}
+
+func desiredObjectStatusKeys(router *api.Router, store resourcequery.StateStore, now time.Time) (map[string]bool, error) {
+	out := map[string]bool{}
+	if router == nil {
+		return out, nil
+	}
+	effective := resourcequery.FilterRouterByWhen(router, store)
+	routers, err := controllerchain.BuildDynamicRouteSAMObjectStatusRouters(effective, store, now.UTC(), platform.CurrentOS())
+	if err != nil {
+		return nil, err
+	}
+	for _, candidate := range routers {
+		for key := range configuredResourceStatusKeys(candidate) {
+			out[key] = true
+		}
+	}
+	for _, resource := range router.Spec.Resources {
+		when := resourcequery.ResourceWhen(resource)
+		if !resourcequery.ResourceWhenPresent(when) || resourcequery.ResourceWhenMatches(when, store) {
+			continue
+		}
+		if strings.TrimSpace(resource.Kind) == "" || strings.TrimSpace(resource.Metadata.Name) == "" {
+			continue
+		}
+		apiVersion := resource.APIVersion
+		if apiVersion == "" {
+			apiVersion = lifecycle.APIVersionForKind(resource.Kind)
+		}
+		if strings.TrimSpace(apiVersion) == "" {
+			continue
+		}
+		out[apiVersion+"/"+resource.Kind+"/"+resource.Metadata.Name] = true
+	}
+	return out, nil
+}
+
 func configuredResourceStatusKeys(router *api.Router) map[string]bool {
 	out := map[string]bool{}
 	if router == nil {
 		return out
 	}
 	for _, resource := range router.Spec.Resources {
-		if strings.TrimSpace(resource.APIVersion) == "" || strings.TrimSpace(resource.Kind) == "" || strings.TrimSpace(resource.Metadata.Name) == "" {
+		if strings.TrimSpace(resource.Kind) == "" || strings.TrimSpace(resource.Metadata.Name) == "" {
 			continue
 		}
-		out[resource.APIVersion+"/"+resource.Kind+"/"+resource.Metadata.Name] = true
+		apiVersion := resource.APIVersion
+		if apiVersion == "" {
+			apiVersion = lifecycle.APIVersionForKind(resource.Kind)
+		}
+		if strings.TrimSpace(apiVersion) == "" {
+			continue
+		}
+		out[apiVersion+"/"+resource.Kind+"/"+resource.Metadata.Name] = true
 	}
 	return out
 }
@@ -301,7 +371,7 @@ func configResourceObjectStatus(status routerstate.ObjectStatus) bool {
 	if canonical != status.Kind {
 		return false
 	}
-	return status.APIVersion == apiVersionForKind(status.Kind)
+	return status.APIVersion == lifecycle.APIVersionForKind(status.Kind)
 }
 
 func unsupportedLegacyObjectStatuses(statuses []routerstate.ObjectStatus) []routerstate.ObjectStatus {

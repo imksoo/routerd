@@ -48,6 +48,7 @@ import (
 	"github.com/imksoo/routerd/pkg/eventrule"
 	"github.com/imksoo/routerd/pkg/ha"
 	"github.com/imksoo/routerd/pkg/healthcheck"
+	"github.com/imksoo/routerd/pkg/lifecycle"
 	"github.com/imksoo/routerd/pkg/logstore"
 	"github.com/imksoo/routerd/pkg/mobilityconfig"
 	"github.com/imksoo/routerd/pkg/observabilitypipeline"
@@ -68,8 +69,9 @@ type Store interface {
 }
 
 type eventedStore struct {
-	Store Store
-	Bus   *bus.Bus
+	Store  Store
+	Bus    *bus.Bus
+	Router *api.Router
 }
 
 // eventSubscriptionStore composes the evented status store (ownership + bus
@@ -167,7 +169,7 @@ func (s eventedStore) SaveObjectStatus(apiVersion, kind, name string, status map
 	if s.Store == nil {
 		return nil
 	}
-	status = statusWithOwnership(apiVersion, kind, status)
+	status = s.statusWithLifecycle(apiVersion, kind, name, status)
 	current := s.Store.ObjectStatus(apiVersion, kind, name)
 	if newerStatus(current, status) {
 		return nil
@@ -189,8 +191,22 @@ func (s eventedStore) SaveObjectStatus(apiVersion, kind, name string, status map
 	return nil
 }
 
-func statusWithOwnership(_ string, kind string, status map[string]any) map[string]any {
-	out := make(map[string]any, len(status)+3)
+func (s eventedStore) withRouter(router *api.Router) eventedStore {
+	s.Router = router
+	return s
+}
+
+func (s eventedStore) statusWithLifecycle(apiVersion, kind, name string, status map[string]any) map[string]any {
+	resource, found := s.resourceForStatus(apiVersion, kind, name)
+	return statusWithLifecycle(apiVersion, kind, name, resource, found, status)
+}
+
+func statusWithOwnership(apiVersion, kind string, status map[string]any) map[string]any {
+	return statusWithLifecycle(apiVersion, kind, "", api.Resource{}, false, status)
+}
+
+func statusWithLifecycle(apiVersion, kind, name string, resource api.Resource, found bool, status map[string]any) map[string]any {
+	out := make(map[string]any, len(status)+8)
 	for key, value := range status {
 		out[key] = value
 	}
@@ -220,7 +236,59 @@ func statusWithOwnership(_ string, kind string, status map[string]any) map[strin
 			}
 		}
 	}
+	if !syntheticLifecycleStatus(apiVersion, kind, name) {
+		if _, ok := out["ownerRef"]; !ok && strings.TrimSpace(name) != "" {
+			out["ownerRef"] = lifecycle.OwnerRefStatusMap(lifecycle.SelfOwnerRef(apiVersion, kind, name))
+		}
+		if _, ok := out["ownerKey"]; !ok && strings.TrimSpace(name) != "" {
+			out["ownerKey"] = lifecycle.OwnerKey(apiVersion, kind, name)
+		}
+		if found {
+			if refs := lifecycle.OwnerRefsStatusList(resource.Metadata.OwnerRefs); len(refs) > 0 {
+				if _, ok := out["ownerRefs"]; !ok {
+					out["ownerRefs"] = refs
+				}
+			}
+			if declaration, ok := lifecycle.DeclarationForResource(resource); ok {
+				if _, ok := out["lifecycleClass"]; !ok {
+					out["lifecycleClass"] = string(declaration.Class)
+				}
+			}
+		} else if declaration, ok := lifecycle.Lookup(apiVersion, kind); ok {
+			if _, ok := out["lifecycleClass"]; !ok {
+				out["lifecycleClass"] = string(declaration.Class)
+			}
+		}
+	}
 	return out
+}
+
+func (s eventedStore) resourceForStatus(apiVersion, kind, name string) (api.Resource, bool) {
+	if s.Router == nil || strings.TrimSpace(kind) == "" || strings.TrimSpace(name) == "" {
+		return api.Resource{}, false
+	}
+	for _, resource := range s.Router.Spec.Resources {
+		resourceAPIVersion := resource.APIVersion
+		if resourceAPIVersion == "" {
+			resourceAPIVersion = lifecycle.APIVersionForKind(resource.Kind)
+		}
+		if resourceAPIVersion == apiVersion && resource.Kind == kind && resource.Metadata.Name == name {
+			return resource, true
+		}
+	}
+	return api.Resource{}, false
+}
+
+func syntheticLifecycleStatus(apiVersion, kind, _ string) bool {
+	if apiVersion == api.RouterAPIVersion {
+		return true
+	}
+	switch kind {
+	case "ConntrackObserver", "ConntrackTuning", "Router":
+		return true
+	default:
+		return false
+	}
 }
 
 func statusBool(value any) (bool, bool) {
@@ -505,6 +573,8 @@ func stableStatus(status map[string]any) map[string]any {
 	for key, value := range status {
 		switch key {
 		case "updatedAt", "observedAt", "installedAt", "lastCheckedAt", "lastTransitionAt", "consecutivePassed", "consecutiveFailed", "createdHint", "packetRing", "conditions", "mtuObservedAt":
+			continue
+		case "ownerKey", "ownerRef", "ownerRefs", "lifecycleClass":
 			continue
 		case "handshakeAgeSeconds", "latestHandshake", "transferRxBytes", "transferTxBytes", "peers", "internalHoles":
 			continue
@@ -981,7 +1051,7 @@ func (r *Runner) Start(ctx context.Context) error {
 		}(spec, source)
 	}
 
-	store := eventedStore{Store: r.Store, Bus: r.Bus}
+	store := eventedStore{Store: r.Store, Bus: r.Bus, Router: r.Router}
 	haDecision, err := acquireClusterLease(ctx, r.Router, store)
 	if err != nil {
 		return err
@@ -1222,6 +1292,7 @@ func (r *Runner) Start(ctx context.Context) error {
 			}
 			current := tunnel
 			current.Router = effective
+			current.Store = store.withRouter(effective)
 			return current.Reconcile(ctx)
 		}},
 		framework.FuncController{ControllerName: "wireguard", Every: 30 * time.Second, Subs: statusSubscriptions("WireGuardInterface", "BGPRouter"), PeriodicFunc: func(ctx context.Context) error {
@@ -1244,6 +1315,7 @@ func (r *Runner) Start(ctx context.Context) error {
 			}
 			current := ipv4Static
 			current.Router = view.RouteRouter
+			current.Store = store.withRouter(view.RouteRouter)
 			return current.Reconcile(ctx)
 		}},
 		framework.FuncController{ControllerName: "dhcpv6-information", Every: 30 * time.Second, Subs: statusSubscriptions("DHCPv6PrefixDelegation"), ReconcileFunc: func(ctx context.Context, event daemonapi.DaemonEvent) error {
@@ -1302,6 +1374,7 @@ func (r *Runner) Start(ctx context.Context) error {
 			}
 			current := route
 			current.Router = view.RouteRouter
+			current.Store = store.withRouter(view.RouteRouter)
 			return current.reconcile(ctx)
 		}},
 		framework.FuncController{ControllerName: "hybrid-route", Subs: hybridRouteStatusSubscriptions(), PeriodicFunc: func(ctx context.Context) error {
@@ -1316,6 +1389,7 @@ func (r *Runner) Start(ctx context.Context) error {
 			current := hybridRoute
 			current.Router = view.EffectiveRouter
 			current.EffectiveRouter = view.RouteRouter
+			current.Store = store.withRouter(view.RouteRouter)
 			current.Lowerings = view.HybridLowerings
 			return current.Reconcile(ctx)
 		}},
@@ -1330,6 +1404,7 @@ func (r *Runner) Start(ctx context.Context) error {
 			}
 			current := samController
 			current.Router = view.EffectiveRouter
+			current.Store = store.withRouter(view.EffectiveRouter)
 			current.Lowerings = view.SAMLowerings
 			return current.Reconcile(ctx)
 		}},
@@ -1344,6 +1419,7 @@ func (r *Runner) Start(ctx context.Context) error {
 			}
 			current := pathMTU
 			current.Router = view.EffectiveRouter
+			current.Store = store.withRouter(view.EffectiveRouter)
 			return current.Reconcile(ctx)
 		}},
 		framework.FuncController{ControllerName: "dhcpv6-server", Every: 30 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed", "routerd.dhcp.lease.**"}}}, PeriodicFunc: func(ctx context.Context) error {
