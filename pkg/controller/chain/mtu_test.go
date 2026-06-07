@@ -313,6 +313,144 @@ func TestPathMTUControllerRendersBGPMobilityMSSClampWithoutMemberDelivery(t *tes
 	}
 }
 
+func TestPathMTUControllerRendersSAMTransportMSSClamp(t *testing.T) {
+	dir := t.TempDir()
+	owner := []api.OwnerRef{{APIVersion: api.MobilityAPIVersion, Kind: "SAMTransportProfile", Name: "cloudedge-transport"}}
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.FederationAPIVersion, Kind: "EventGroup"},
+			Metadata: api.ObjectMeta{Name: "cloudedge"},
+			Spec:     api.EventGroupSpec{NodeName: "aws-router-a"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+			Metadata: api.ObjectMeta{Name: "ens5"},
+			Spec:     api.InterfaceSpec{IfName: "ens5", MTU: 1500},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardInterface"},
+			Metadata: api.ObjectMeta{Name: "wg-hybrid"},
+			Spec:     api.WireGuardInterfaceSpec{MTU: 1420},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
+			Metadata: api.ObjectMeta{Name: "samt-aws-onprem", OwnerRefs: owner},
+			Spec: api.TunnelInterfaceSpec{
+				Mode:              "ipip",
+				Local:             "10.99.0.2",
+				Remote:            "10.99.0.1",
+				Address:           "10.255.0.10/31",
+				UnderlayInterface: "wg-hybrid",
+			},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"},
+			Metadata: api.ObjectMeta{Name: "cloudedge"},
+			Spec: api.MobilityPoolSpec{
+				Prefix:         "10.77.60.0/24",
+				GroupRef:       "cloudedge",
+				DeliveryPolicy: api.MobilityDeliveryPolicy{Mode: "bgp"},
+				Members: []api.MobilityPoolMember{
+					{NodeRef: "onprem-router", Site: "onprem", Role: "onprem"},
+					{NodeRef: "aws-router-a", Site: "aws", Role: "cloud", Capture: api.MobilityMemberCapture{Type: "provider-secondary-ip", Interface: "ens5"}},
+				},
+			},
+		},
+	}}}
+	store := mapStore{}
+	controller := PathMTUController{Router: router, Store: store, DryRun: true, Path: filepath.Join(dir, "mss.nft")}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(controller.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(data)
+	want := `iifname "ens5" oifname "samt-aws-onprem" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1280 tcp option maxseg size set 1280`
+	if !strings.Contains(got, want) {
+		t.Fatalf("SAM transport MSS clamp missing %q:\n%s", want, got)
+	}
+}
+
+func TestPathMTUControllerRendersSAMTransportHubRelayMSSClamp(t *testing.T) {
+	dir := t.TempDir()
+	owner := []api.OwnerRef{{APIVersion: api.MobilityAPIVersion, Kind: "SAMTransportProfile", Name: "cloudedge-transport"}}
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.FederationAPIVersion, Kind: "EventGroup"},
+			Metadata: api.ObjectMeta{Name: "cloudedge"},
+			Spec:     api.EventGroupSpec{NodeName: "onprem-router"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+			Metadata: api.ObjectMeta{Name: "ens20"},
+			Spec:     api.InterfaceSpec{IfName: "ens20", MTU: 1500},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardInterface"},
+			Metadata: api.ObjectMeta{Name: "wg-hybrid"},
+			Spec:     api.WireGuardInterfaceSpec{MTU: 1420},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
+			Metadata: api.ObjectMeta{Name: "samt-aws", OwnerRefs: owner},
+			Spec: api.TunnelInterfaceSpec{
+				Mode:              "ipip",
+				Local:             "10.99.0.1",
+				Remote:            "10.99.0.2",
+				Address:           "10.255.0.11/31",
+				UnderlayInterface: "wg-hybrid",
+			},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
+			Metadata: api.ObjectMeta{Name: "samt-oci", OwnerRefs: owner},
+			Spec: api.TunnelInterfaceSpec{
+				Mode:              "ipip",
+				Local:             "10.99.0.1",
+				Remote:            "10.99.0.4",
+				Address:           "10.255.0.39/31",
+				UnderlayInterface: "wg-hybrid",
+			},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"},
+			Metadata: api.ObjectMeta{Name: "cloudedge"},
+			Spec: api.MobilityPoolSpec{
+				Prefix:         "10.77.60.0/24",
+				GroupRef:       "cloudedge",
+				DeliveryPolicy: api.MobilityDeliveryPolicy{Mode: "bgp"},
+				Members: []api.MobilityPoolMember{
+					{NodeRef: "onprem-router", Site: "onprem", Role: "onprem", Capture: api.MobilityMemberCapture{Type: "proxy-arp", Interface: "ens20"}},
+					{NodeRef: "aws-router-a", Site: "aws", Role: "cloud"},
+					{NodeRef: "oci-router", Site: "oci", Role: "cloud"},
+				},
+			},
+		},
+	}}}
+	store := mapStore{}
+	controller := PathMTUController{Router: router, Store: store, DryRun: true, Path: filepath.Join(dir, "mss.nft")}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(controller.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		`iifname "ens20" oifname "samt-aws" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1280 tcp option maxseg size set 1280`,
+		`iifname "ens20" oifname "samt-oci" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1280 tcp option maxseg size set 1280`,
+		`iifname "samt-aws" oifname "samt-oci" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1280 tcp option maxseg size set 1280`,
+		`iifname "samt-oci" oifname "samt-aws" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1280 tcp option maxseg size set 1280`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("SAM transport hub relay MSS clamp missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestPathMTUEffectiveViewEmptyPartsMatchesRawRouter(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},

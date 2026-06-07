@@ -52,6 +52,12 @@ type pathMTUForwardedPath struct {
 	ForceFragmentIPv4 bool
 }
 
+type pathMTUSAMTransportTunnel struct {
+	Name              string
+	MTU               int
+	ForceFragmentIPv4 bool
+}
+
 func pathMTUPolicies(router *api.Router) ([]pathMTUPolicy, error) {
 	mtus, err := resourceMTUs(router)
 	if err != nil {
@@ -228,6 +234,11 @@ func pathMTUBGPMobilityForwardedPaths(router *api.Router, peers map[string]api.O
 	if router == nil {
 		return nil
 	}
+	samTunnels := pathMTUSAMTransportTunnels(router)
+	samTunnelByName := map[string]pathMTUSAMTransportTunnel{}
+	for _, tunnel := range samTunnels {
+		samTunnelByName[tunnel.Name] = tunnel
+	}
 	var paths []pathMTUForwardedPath
 	for _, res := range router.Spec.Resources {
 		if res.APIVersion != api.MobilityAPIVersion || res.Kind != "MobilityPool" {
@@ -267,6 +278,17 @@ func pathMTUBGPMobilityForwardedPaths(router *api.Router, peers map[string]api.O
 						ForceFragmentIPv4: pathMTUOverlayPeerForceFragmentIPv4(router, peerName, peer),
 					})
 				}
+				for _, tunnel := range samTunnels {
+					if tunnel.Name == "" || tunnel.Name == source {
+						continue
+					}
+					paths = append(paths, pathMTUForwardedPath{
+						FromInterface:     source,
+						ToInterface:       tunnel.Name,
+						MTU:               tunnel.MTU,
+						ForceFragmentIPv4: tunnel.ForceFragmentIPv4,
+					})
+				}
 				break
 			}
 			for _, delivery := range deliveries {
@@ -278,6 +300,9 @@ func pathMTUBGPMobilityForwardedPaths(router *api.Router, peers map[string]api.O
 				if strings.TrimSpace(delivery.PeerRef) != "" {
 					tunnelMTU = pathMTUOverlayPeerEffectiveMTU(router, refName(delivery.PeerRef))
 				}
+				if samTunnel, ok := samTunnelByName[tunnel]; ok && samTunnel.MTU > 0 {
+					tunnelMTU = samTunnel.MTU
+				}
 				paths = append(paths, pathMTUForwardedPath{
 					FromInterface:     source,
 					ToInterface:       tunnel,
@@ -287,8 +312,108 @@ func pathMTUBGPMobilityForwardedPaths(router *api.Router, peers map[string]api.O
 			}
 			break
 		}
+		for _, from := range samTunnels {
+			for _, to := range samTunnels {
+				if from.Name == "" || to.Name == "" || from.Name == to.Name {
+					continue
+				}
+				mtu := to.MTU
+				if from.MTU > 0 && (mtu == 0 || from.MTU < mtu) {
+					mtu = from.MTU
+				}
+				paths = append(paths, pathMTUForwardedPath{
+					FromInterface:     from.Name,
+					ToInterface:       to.Name,
+					MTU:               mtu,
+					ForceFragmentIPv4: from.ForceFragmentIPv4 || to.ForceFragmentIPv4,
+				})
+			}
+		}
 	}
 	return compactForwardedPaths(paths)
+}
+
+func pathMTUSAMTransportTunnels(router *api.Router) []pathMTUSAMTransportTunnel {
+	if router == nil {
+		return nil
+	}
+	var out []pathMTUSAMTransportTunnel
+	for _, res := range router.Spec.Resources {
+		if !pathMTUIsSAMTransportTunnel(res) {
+			continue
+		}
+		spec, err := res.TunnelInterfaceSpec()
+		if err != nil {
+			continue
+		}
+		mtu := pathMTUSAMTransportTunnelMTU(router, spec)
+		if mtu == 0 {
+			continue
+		}
+		out = append(out, pathMTUSAMTransportTunnel{
+			Name:              strings.TrimSpace(res.Metadata.Name),
+			MTU:               mtu,
+			ForceFragmentIPv4: spec.PathMTU.ForceFragmentIPv4,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+func pathMTUIsSAMTransportTunnel(res api.Resource) bool {
+	if res.APIVersion != api.HybridAPIVersion || res.Kind != "TunnelInterface" || strings.TrimSpace(res.Metadata.Name) == "" {
+		return false
+	}
+	for _, owner := range res.Metadata.OwnerRefs {
+		if owner.APIVersion == api.MobilityAPIVersion && owner.Kind == "SAMTransportProfile" && strings.TrimSpace(owner.Name) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func pathMTUSAMTransportTunnelMTU(router *api.Router, spec api.TunnelInterfaceSpec) int {
+	if router == nil {
+		return 0
+	}
+	mtu := hybrid.TunnelInterfaceEffectiveMTU(*router, spec)
+	if mtu == 0 {
+		return 0
+	}
+	mtu -= pathMTUUnderlayOverlayOverhead(router, spec.UnderlayInterface)
+	if mtu <= 0 {
+		return 0
+	}
+	return mtu
+}
+
+func pathMTUUnderlayOverlayOverhead(router *api.Router, interfaceName string) int {
+	return pathMTUUnderlayOverlayOverheadSeen(router, strings.TrimSpace(interfaceName), map[string]bool{})
+}
+
+func pathMTUUnderlayOverlayOverheadSeen(router *api.Router, interfaceName string, seen map[string]bool) int {
+	if router == nil || interfaceName == "" || seen[interfaceName] {
+		return 0
+	}
+	seen[interfaceName] = true
+	for _, res := range router.Spec.Resources {
+		if strings.TrimSpace(res.Metadata.Name) != interfaceName {
+			continue
+		}
+		switch res.Kind {
+		case "WireGuardInterface":
+			return hybrid.WireGuardOverheadBytes
+		case "TunnelInterface":
+			spec, err := res.TunnelInterfaceSpec()
+			if err != nil {
+				return 0
+			}
+			return hybrid.TunnelInterfaceOverhead(spec) + pathMTUUnderlayOverlayOverheadSeen(router, spec.UnderlayInterface, seen)
+		default:
+			return 0
+		}
+	}
+	return 0
 }
 
 func pathMTUSelfNode(router *api.Router, groupRef string) string {
