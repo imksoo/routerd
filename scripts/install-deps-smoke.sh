@@ -60,6 +60,7 @@ spec:
               - conntrack-tools
 EOF
 
+# shellcheck disable=SC2016
 scripts/routerd-sandbox-run.sh sh -c '
     go run ./cmd/routerctl validate --socket "${ROUTERD_SANDBOX_STATUS_SOCKET}" -f "$1" --replace >/dev/null
     go run ./cmd/routerctl apply --socket "${ROUTERD_SANDBOX_SOCKET}" -f "$1" --replace > "$2"
