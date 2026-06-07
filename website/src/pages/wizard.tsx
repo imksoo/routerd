@@ -5,15 +5,23 @@ import Layout from '@theme/Layout';
 import Heading from '@theme/Heading';
 import {
   DEFAULT_HOME_ROUTER_STATE,
+  buildSAMRouterYamls,
   buildHomeRouterYaml,
   mergeHomeRouterState,
+  mergeSAMWizardState,
   type HomeRouterWizardState,
   type HomeWanMode,
+  type SAMNode,
+  type SAMNodeRole,
+  type SAMProvider,
+  type SAMWizardState,
+  type WizardProfile,
 } from '../lib/routerdWizard';
 import styles from './wizard.module.css';
 
-const steps = ['Interfaces', 'WAN', 'LAN', 'HA', 'Output'] as const;
-type Step = (typeof steps)[number];
+const homeSteps = ['Interfaces', 'WAN', 'LAN', 'HA', 'Output'] as const;
+const samSteps = ['Nodes', 'Mobility', 'Output'] as const;
+type Step = (typeof homeSteps)[number] | (typeof samSteps)[number];
 
 const wanModes: Array<{value: HomeWanMode; label: string}> = [
   {value: 'dhcpv4', label: 'DHCPv4 client'},
@@ -22,12 +30,31 @@ const wanModes: Array<{value: HomeWanMode; label: string}> = [
   {value: 'static', label: 'Static IPv4'},
 ];
 
+const providers: Array<{value: SAMProvider; label: string}> = [
+  {value: 'aws', label: 'AWS'},
+  {value: 'azure', label: 'Azure'},
+  {value: 'oci', label: 'OCI'},
+];
+
 export default function WizardPage(): JSX.Element {
   const [step, setStep] = useState<Step>('Interfaces');
+  const [profile, setProfile] = useState<WizardProfile>('home');
   const [state, setState] = useState<HomeRouterWizardState>(() => mergeHomeRouterState());
+  const [samState, setSAMState] = useState<SAMWizardState>(() => mergeSAMWizardState());
+  const [selectedOutput, setSelectedOutput] = useState('');
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
-  const yaml = useMemo(() => buildHomeRouterYaml(state), [state]);
-  const stepIndex = steps.indexOf(step);
+  const outputs = useMemo(() => {
+    if (profile === 'sam') {
+      return buildSAMRouterYamls(samState);
+    }
+    const name = `${state.routerName || DEFAULT_HOME_ROUTER_STATE.routerName}.yaml`;
+    return {[name]: buildHomeRouterYaml(state)};
+  }, [profile, samState, state]);
+  const outputNames = useMemo(() => Object.keys(outputs).sort((a, b) => a.localeCompare(b)), [outputs]);
+  const activeOutputName = outputs[selectedOutput] ? selectedOutput : outputNames[0] ?? 'router.yaml';
+  const yaml = outputs[activeOutputName] ?? '';
+  const activeSteps = profile === 'sam' ? samSteps : homeSteps;
+  const stepIndex = Math.max((activeSteps as readonly Step[]).indexOf(step), 0);
   const resourceCount = useMemo(() => {
     const matches = yaml.match(/^\s{4}- apiVersion:/gm);
     return matches?.length ?? 0;
@@ -41,6 +68,31 @@ export default function WizardPage(): JSX.Element {
       lan: {...current.lan, ...(next.lan ?? {})},
       ha: {...current.ha, ...(next.ha ?? {})},
     }));
+    setCopyState('idle');
+  }
+
+  function updateSAM(next: PartialSAMWizardState): void {
+    setSAMState((current) => mergeSAMWizardState({
+      name: next.name ?? current.name,
+      mobilityPrefix: next.mobilityPrefix ?? current.mobilityPrefix,
+      innerCIDR: next.innerCIDR ?? current.innerCIDR,
+      bgpASN: next.bgpASN ?? current.bgpASN,
+      routeReflectorNodeRef: next.routeReflectorNodeRef ?? current.routeReflectorNodeRef,
+      nodes: next.nodes ?? current.nodes,
+    }));
+    setCopyState('idle');
+  }
+
+  function updateSAMNode(index: number, next: Partial<SAMNode>): void {
+    updateSAM({
+      nodes: samState.nodes.map((node, itemIndex) => itemIndex === index ? {...node, ...next} : node),
+    });
+  }
+
+  function selectProfile(next: WizardProfile): void {
+    setProfile(next);
+    setStep(next === 'sam' ? 'Nodes' : 'Interfaces');
+    setSelectedOutput('');
     setCopyState('idle');
   }
 
@@ -58,7 +110,7 @@ export default function WizardPage(): JSX.Element {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `${state.routerName || DEFAULT_HOME_ROUTER_STATE.routerName}.yaml`;
+    link.download = activeOutputName;
     link.click();
     URL.revokeObjectURL(url);
   }
@@ -69,7 +121,7 @@ export default function WizardPage(): JSX.Element {
         <div className={`container ${styles.shell}`}>
           <aside className={styles.sidebar}>
             <nav className={styles.stepList} aria-label="Wizard steps">
-              {steps.map((item, index) => (
+              {activeSteps.map((item, index) => (
                 <button
                   className={`${styles.stepButton} ${item === step ? styles.stepButtonActive : ''}`}
                   key={item}
@@ -81,8 +133,18 @@ export default function WizardPage(): JSX.Element {
               ))}
             </nav>
             <div className={styles.summary}>
-              <div><b>{state.wan.mode}</b> WAN</div>
-              <div>{state.interfaces.lans.length} LAN interface{state.interfaces.lans.length === 1 ? '' : 's'}</div>
+              {profile === 'home' && (
+                <>
+                  <div><b>{state.wan.mode}</b> WAN</div>
+                  <div>{state.interfaces.lans.length} LAN interface{state.interfaces.lans.length === 1 ? '' : 's'}</div>
+                </>
+              )}
+              {profile === 'sam' && (
+                <>
+                  <div><b>{samState.nodes.length}</b> SAM nodes</div>
+                  <div>{samState.innerCIDR} inner CIDR</div>
+                </>
+              )}
               <div>{resourceCount} generated resources</div>
             </div>
           </aside>
@@ -90,20 +152,47 @@ export default function WizardPage(): JSX.Element {
           <section className={styles.panel}>
             <div className={styles.header}>
               <Heading as="h1">routerd config wizard</Heading>
-              <p>Build a Home Router `router.yaml` from the same typed builder that generates the CI fixtures.</p>
+              <p>Build routerd YAML from the same typed builder that generates the CI fixtures.</p>
             </div>
 
-            {step === 'Interfaces' && <InterfacesStep state={state} update={update} />}
-            {step === 'WAN' && <WanStep state={state} update={update} />}
-            {step === 'LAN' && <LanStep state={state} update={update} />}
-            {step === 'HA' && <HaStep state={state} update={update} />}
+            <ProfileSelector profile={profile} setProfile={selectProfile} />
+
+            {profile === 'home' && step === 'Interfaces' && <InterfacesStep state={state} update={update} />}
+            {profile === 'home' && step === 'WAN' && <WanStep state={state} update={update} />}
+            {profile === 'home' && step === 'LAN' && <LanStep state={state} update={update} />}
+            {profile === 'home' && step === 'HA' && <HaStep state={state} update={update} />}
+            {profile === 'sam' && step === 'Nodes' && (
+              <SAMNodesStep
+                addNode={() => updateSAM({nodes: [...samState.nodes, newSAMNode(samState.nodes.length + 1)]})}
+                removeNode={(index) => updateSAM({nodes: samState.nodes.filter((_, itemIndex) => itemIndex !== index)})}
+                state={samState}
+                update={updateSAM}
+                updateNode={updateSAMNode}
+              />
+            )}
+            {profile === 'sam' && step === 'Mobility' && (
+              <SAMMobilityStep state={samState} update={updateSAM} updateNode={updateSAMNode} />
+            )}
             {step === 'Output' && (
               <OutputStep
+                activeOutputName={activeOutputName}
                 copyState={copyState}
                 downloadYaml={downloadYaml}
+                outputNames={outputNames}
                 resourceCount={resourceCount}
                 copyYaml={copyYaml}
-                state={state}
+                setSelectedOutput={setSelectedOutput}
+                summary={profile === 'sam'
+                  ? [
+                    ['Profile', 'Cloud Edge SAM'],
+                    ['Nodes', String(samState.nodes.length)],
+                    ['Inner CIDR', samState.innerCIDR],
+                  ]
+                  : [
+                    ['Profile', 'Home Router'],
+                    ['Router', state.routerName],
+                    ['WAN mode', state.wan.mode],
+                  ]}
                 yaml={yaml}
               />
             )}
@@ -112,7 +201,7 @@ export default function WizardPage(): JSX.Element {
               <button
                 className={`${styles.button} ${styles.buttonSecondary}`}
                 disabled={stepIndex === 0}
-                onClick={() => setStep(steps[Math.max(stepIndex - 1, 0)])}
+                onClick={() => setStep(activeSteps[Math.max(stepIndex - 1, 0)])}
                 type="button">
                 Back
               </button>
@@ -120,7 +209,7 @@ export default function WizardPage(): JSX.Element {
                 {step !== 'Output' && (
                   <button
                     className={`${styles.button} ${styles.buttonPrimary}`}
-                    onClick={() => setStep(steps[Math.min(stepIndex + 1, steps.length - 1)])}
+                    onClick={() => setStep(activeSteps[Math.min(stepIndex + 1, activeSteps.length - 1)])}
                     type="button">
                     Next
                   </button>
@@ -141,6 +230,206 @@ export default function WizardPage(): JSX.Element {
         </div>
       </main>
     </Layout>
+  );
+}
+
+function ProfileSelector({
+  profile,
+  setProfile,
+}: {
+  profile: WizardProfile;
+  setProfile: (profile: WizardProfile) => void;
+}): JSX.Element {
+  return (
+    <div className={styles.profileSelector} role="tablist" aria-label="Wizard profile">
+      <button
+        className={`${styles.profileButton} ${profile === 'home' ? styles.profileButtonActive : ''}`}
+        onClick={() => setProfile('home')}
+        type="button">
+        Home Router
+      </button>
+      <button
+        className={`${styles.profileButton} ${profile === 'sam' ? styles.profileButtonActive : ''}`}
+        onClick={() => setProfile('sam')}
+        type="button">
+        Cloud Edge SAM
+      </button>
+      <button className={styles.profileButton} disabled title="Planned for the next wizard phase." type="button">
+        Kubernetes
+      </button>
+    </div>
+  );
+}
+
+function SAMNodesStep({
+  addNode,
+  removeNode,
+  state,
+  update,
+  updateNode,
+}: {
+  addNode: () => void;
+  removeNode: (index: number) => void;
+  state: SAMWizardState;
+  update: (next: PartialSAMWizardState) => void;
+  updateNode: (index: number, next: Partial<SAMNode>) => void;
+}): JSX.Element {
+  return (
+    <>
+      <Heading as="h2" className={styles.sectionTitle}>SAM nodes</Heading>
+      <p className={styles.sectionLead}>Define the per-node bundle. Every generated node uses the same topology node set and inner CIDR.</p>
+      <div className={styles.grid}>
+        <TextField label="Bundle name" value={state.name} onChange={(name) => update({name})} />
+        <NumberField label="BGP ASN" value={state.bgpASN} min={1} max={4294967295} onChange={(bgpASN) => update({bgpASN})} />
+        <label className={styles.field}>
+          <span className={styles.label}>Route reflector node</span>
+          <select className={styles.select} value={state.routeReflectorNodeRef} onChange={(event) => update({routeReflectorNodeRef: event.target.value})}>
+            {state.nodes.map((node) => (
+              <option key={node.nodeRef} value={node.nodeRef}>{node.nodeRef}</option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <div className={styles.tableWrap}>
+        <table className={styles.nodeTable}>
+          <thead>
+            <tr>
+              <th>Node</th>
+              <th>Role</th>
+              <th>Site</th>
+              <th>Underlay IPv4</th>
+              <th>WireGuard endpoint</th>
+              <th>Router ID</th>
+              <th>Provider</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {state.nodes.map((node, index) => (
+              <tr key={`${node.nodeRef}-${index}`}>
+                <td><input className={styles.input} value={node.nodeRef} onChange={(event) => updateNode(index, {nodeRef: event.target.value})} /></td>
+                <td>
+                  <select
+                    className={styles.select}
+                    value={node.role}
+                    onChange={(event) => {
+                      const role = event.target.value as SAMNodeRole;
+                      updateNode(index, role === 'cloud'
+                        ? {role, provider: node.provider ?? 'aws', providerRef: node.providerRef || 'aws-lab'}
+                        : {role, provider: undefined, providerRef: undefined});
+                    }}>
+                    <option value="onprem">on-prem</option>
+                    <option value="cloud">cloud</option>
+                  </select>
+                </td>
+                <td><input className={styles.input} value={node.site} onChange={(event) => updateNode(index, {site: event.target.value})} /></td>
+                <td><input className={styles.input} value={node.underlayIPv4} onChange={(event) => updateNode(index, {underlayIPv4: event.target.value, routerID: event.target.value})} /></td>
+                <td><input className={styles.input} value={node.wgEndpoint} onChange={(event) => updateNode(index, {wgEndpoint: event.target.value})} /></td>
+                <td><input className={styles.input} value={node.routerID} onChange={(event) => updateNode(index, {routerID: event.target.value})} /></td>
+                <td>
+                  {node.role === 'cloud' ? (
+                    <select className={styles.select} value={node.provider ?? 'aws'} onChange={(event) => updateNode(index, {provider: event.target.value as SAMProvider})}>
+                      {providers.map((provider) => (
+                        <option key={provider.value} value={provider.value}>{provider.label}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <span className={styles.muted}>proxy-ARP</span>
+                  )}
+                </td>
+                <td>
+                  <button className={`${styles.button} ${styles.buttonSecondary}`} disabled={state.nodes.length <= 1} onClick={() => removeNode(index)} type="button">Remove</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <button className={`${styles.button} ${styles.buttonSecondary}`} onClick={addNode} type="button">Add node</button>
+    </>
+  );
+}
+
+function SAMMobilityStep({
+  state,
+  update,
+  updateNode,
+}: {
+  state: SAMWizardState;
+  update: (next: PartialSAMWizardState) => void;
+  updateNode: (index: number, next: Partial<SAMNode>) => void;
+}): JSX.Element {
+  return (
+    <>
+      <Heading as="h2" className={styles.sectionTitle}>Mobility</Heading>
+      <p className={styles.sectionLead}>Set the mobility /24, deterministic SAM inner CIDR, and per-node capture metadata.</p>
+      <div className={styles.grid}>
+        <TextField label="Mobility prefix" value={state.mobilityPrefix} onChange={(mobilityPrefix) => update({mobilityPrefix})} />
+        <TextField label="SAM inner CIDR" value={state.innerCIDR} onChange={(innerCIDR) => update({innerCIDR})} />
+      </div>
+      <div className={styles.tableWrap}>
+        <table className={styles.nodeTable}>
+          <thead>
+            <tr>
+              <th>Node</th>
+              <th>Capture interface</th>
+              <th>Static owned /32s</th>
+              <th>Provider ref</th>
+              <th>Placement group</th>
+              <th>Priority</th>
+              <th>WG public key</th>
+            </tr>
+          </thead>
+          <tbody>
+            {state.nodes.map((node, index) => (
+              <tr key={`${node.nodeRef}-${index}`}>
+                <td>{node.nodeRef || `node-${index + 1}`}</td>
+                <td><input className={styles.input} value={node.captureInterface ?? ''} onChange={(event) => updateNode(index, {captureInterface: event.target.value})} /></td>
+                <td>
+                  {node.role === 'onprem' ? (
+                    <input
+                      className={styles.input}
+                      value={(node.staticOwnedAddresses ?? []).join(', ')}
+                      onChange={(event) => updateNode(index, {staticOwnedAddresses: splitCommaList(event.target.value)})}
+                    />
+                  ) : (
+                    <span className={styles.muted}>provider observed</span>
+                  )}
+                </td>
+                <td>
+                  {node.role === 'cloud' ? (
+                    <input className={styles.input} value={node.providerRef ?? ''} onChange={(event) => updateNode(index, {providerRef: event.target.value})} />
+                  ) : (
+                    <span className={styles.muted}>none</span>
+                  )}
+                </td>
+                <td>
+                  {node.role === 'cloud' ? (
+                    <input className={styles.input} value={node.placementGroup ?? ''} onChange={(event) => updateNode(index, {placementGroup: event.target.value})} />
+                  ) : (
+                    <span className={styles.muted}>none</span>
+                  )}
+                </td>
+                <td>
+                  {node.role === 'cloud' ? (
+                    <input
+                      className={styles.input}
+                      min={0}
+                      type="number"
+                      value={node.placementPriority ?? 10}
+                      onChange={(event) => updateNode(index, {placementPriority: Number(event.target.value)})}
+                    />
+                  ) : (
+                    <span className={styles.muted}>none</span>
+                  )}
+                </td>
+                <td><input className={styles.input} value={node.wgPublicKey} onChange={(event) => updateNode(index, {wgPublicKey: event.target.value})} /></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </>
   );
 }
 
@@ -301,18 +590,24 @@ function HaStep({
 }
 
 function OutputStep({
+  activeOutputName,
   copyState,
   copyYaml,
   downloadYaml,
+  outputNames,
   resourceCount,
-  state,
+  setSelectedOutput,
+  summary,
   yaml,
 }: {
+  activeOutputName: string;
   copyState: 'idle' | 'copied' | 'failed';
   copyYaml: () => void;
   downloadYaml: () => void;
+  outputNames: string[];
   resourceCount: number;
-  state: HomeRouterWizardState;
+  setSelectedOutput: (name: string) => void;
+  summary: Array<[string, string]>;
   yaml: string;
 }): JSX.Element {
   return (
@@ -322,11 +617,25 @@ function OutputStep({
       <div className={styles.outputGrid}>
         <pre className={styles.code}><code>{yaml}</code></pre>
         <aside className={styles.outputMeta}>
+          {outputNames.length > 1 && (
+            <label className={styles.field}>
+              <span className={styles.label}>Node YAML</span>
+              <select className={styles.select} value={activeOutputName} onChange={(event) => setSelectedOutput(event.target.value)}>
+                {outputNames.map((name) => (
+                  <option key={name} value={name}>{name}</option>
+                ))}
+              </select>
+            </label>
+          )}
           <dl>
-            <dt>Router</dt>
-            <dd>{state.routerName}</dd>
-            <dt>WAN mode</dt>
-            <dd>{state.wan.mode}</dd>
+            {summary.map(([label, value]) => (
+              <React.Fragment key={label}>
+                <dt>{label}</dt>
+                <dd>{value}</dd>
+              </React.Fragment>
+            ))}
+            <dt>File</dt>
+            <dd>{activeOutputName}</dd>
             <dt>Resources</dt>
             <dd>{resourceCount}</dd>
             <dt>Schema</dt>
@@ -429,7 +738,38 @@ type PartialHomeRouterWizardState = {
   ha?: Partial<HomeRouterWizardState['ha']>;
 };
 
+type PartialSAMWizardState = {
+  name?: string;
+  mobilityPrefix?: string;
+  innerCIDR?: string;
+  bgpASN?: number;
+  routeReflectorNodeRef?: string;
+  nodes?: SAMNode[];
+};
+
 function splitList(value: string): string[] {
-  const items = value.split(',').map((item) => item.trim()).filter(Boolean);
+  const items = splitCommaList(value);
   return items.length > 0 ? items : DEFAULT_HOME_ROUTER_STATE.interfaces.lans;
+}
+
+function splitCommaList(value: string): string[] {
+  return value.split(',').map((item) => item.trim()).filter(Boolean);
+}
+
+function newSAMNode(index: number): SAMNode {
+  const underlay = `10.99.0.${index}`;
+  return {
+    nodeRef: `edge-${index}`,
+    site: `site-${index}`,
+    role: 'cloud',
+    underlayIPv4: underlay,
+    wgEndpoint: `edge-${index}.example.net:51820`,
+    wgPublicKey: `\${EDGE_${index}_WG_PUBLIC_KEY}`,
+    routerID: underlay,
+    provider: 'aws',
+    providerRef: 'aws-lab',
+    captureInterface: 'ens5',
+    placementGroup: 'aws-edge',
+    placementPriority: index * 10,
+  };
 }

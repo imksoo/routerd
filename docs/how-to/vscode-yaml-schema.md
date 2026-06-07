@@ -30,7 +30,7 @@ This repository includes `.vscode/settings.json` with a `yaml.schemas` mapping f
 - `examples/*.yaml`
 - `examples/cloudedge-mobility-demo/*.yaml`
 - `examples/event-federation/*.yaml`
-- `website/fixtures/wizard/*.yaml`
+- `website/fixtures/wizard/**/*.yaml`
 - `routerd/**/*.yaml`
 - `*.routerd.yaml`
 - `**/routerd.yaml`
@@ -45,7 +45,7 @@ For another workspace, copy the same mapping into that workspace settings file:
       "examples/*.yaml",
       "examples/cloudedge-mobility-demo/*.yaml",
       "examples/event-federation/*.yaml",
-      "website/fixtures/wizard/*.yaml",
+      "website/fixtures/wizard/**/*.yaml",
       "routerd/**/*.yaml",
       "*.routerd.yaml",
       "**/routerd.yaml",

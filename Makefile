@@ -203,7 +203,7 @@ check-wizard-fixtures: website-deps
 
 validate-wizard-fixtures: website-deps
 	node scripts/validate-wizard-fixtures.cjs schemas/$(CONFIG_SCHEMA) $(WIZARD_FIXTURE_DIR)
-	@for config in $(WIZARD_FIXTURE_DIR)/*.yaml; do \
+	@find $(WIZARD_FIXTURE_DIR) -type f -name '*.yaml' -print | sort | while read -r config; do \
 		echo "validating $$config"; \
 		go run ./cmd/routerd validate --config "$$config"; \
 	done

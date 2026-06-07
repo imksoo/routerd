@@ -103,6 +103,36 @@
   max-width: 760px;
 }
 
+.profileSelector {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.profileButton {
+  background: #ffffff;
+  border: 1px solid #b8c4d4;
+  border-radius: 6px;
+  color: #1d2b3f;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  min-height: 38px;
+  padding: 8px 13px;
+}
+
+.profileButtonActive {
+  background: #123a70;
+  border-color: #123a70;
+  color: #ffffff;
+}
+
+.profileButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .sectionTitle {
   font-size: 1.25rem;
   margin-bottom: 6px;
@@ -231,6 +261,42 @@
   opacity: 0.5;
 }
 
+.tableWrap {
+  margin: 18px 0;
+  overflow-x: auto;
+}
+
+.nodeTable {
+  border-collapse: collapse;
+  min-width: 1100px;
+  width: 100%;
+}
+
+.nodeTable th,
+.nodeTable td {
+  border-bottom: 1px solid #e3e8f0;
+  padding: 8px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.nodeTable th {
+  color: #445166;
+  font-size: 0.82rem;
+  text-transform: uppercase;
+}
+
+.nodeTable .input,
+.nodeTable .select {
+  min-width: 130px;
+}
+
+.muted {
+  color: #667387;
+  display: inline-block;
+  padding-top: 9px;
+}
+
 .outputGrid {
   display: grid;
   gap: 16px;
@@ -247,7 +313,7 @@
 .outputMeta dl {
   display: grid;
   gap: 8px;
-  margin: 0;
+  margin: 14px 0 0;
 }
 
 .outputMeta dt {

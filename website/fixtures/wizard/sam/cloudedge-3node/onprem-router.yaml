@@ -1,0 +1,229 @@
+# yaml-language-server: $schema=https://routerd.net/schemas/routerd-config-v1alpha1.schema.json
+apiVersion: "routerd.net/v1alpha1"
+kind: "Router"
+metadata:
+  name: "cloudedge-onprem-router"
+spec:
+  resources:
+    - apiVersion: "federation.routerd.net/v1alpha1"
+      kind: "EventGroup"
+      metadata:
+        name: "cloudedge"
+      spec:
+        nodeName: "onprem-router"
+        retention:
+          maxEvents: 1000
+          maxAge: "24h"
+        listen:
+          address: "10.99.0.1"
+          port: 9443
+        replayWindow: "5m"
+    - apiVersion: "federation.routerd.net/v1alpha1"
+      kind: "EventPeer"
+      metadata:
+        name: "aws-router-a"
+      spec:
+        groupRef: "cloudedge"
+        nodeName: "aws-router-a"
+        endpoint: "http://10.99.0.2:9443"
+        direction: "push"
+        types:
+          - "routerd.client.ipv4.observed"
+          - "routerd.client.ipv4.expired"
+        subjectPrefixes:
+          - "10.77.60."
+    - apiVersion: "federation.routerd.net/v1alpha1"
+      kind: "EventPeer"
+      metadata:
+        name: "azure-router"
+      spec:
+        groupRef: "cloudedge"
+        nodeName: "azure-router"
+        endpoint: "http://10.99.0.3:9443"
+        direction: "push"
+        types:
+          - "routerd.client.ipv4.observed"
+          - "routerd.client.ipv4.expired"
+        subjectPrefixes:
+          - "10.77.60."
+    - apiVersion: "net.routerd.net/v1alpha1"
+      kind: "WireGuardInterface"
+      metadata:
+        name: "wg-hybrid"
+      spec:
+        privateKeyFile: "/usr/local/etc/routerd/secrets/wg-hybrid.key"
+        listenPort: 51820
+        mtu: 1420
+    - apiVersion: "net.routerd.net/v1alpha1"
+      kind: "Interface"
+      metadata:
+        name: "wg-hybrid"
+      spec:
+        ifname: "wg-hybrid"
+        managed: false
+        mtu: 1420
+    - apiVersion: "net.routerd.net/v1alpha1"
+      kind: "IPv4StaticAddress"
+      metadata:
+        name: "wg-hybrid-ipv4"
+      spec:
+        interface: "wg-hybrid"
+        address: "10.99.0.1/32"
+    - apiVersion: "net.routerd.net/v1alpha1"
+      kind: "WireGuardPeer"
+      metadata:
+        name: "wg-aws-router-a"
+      spec:
+        interface: "wg-hybrid"
+        publicKey: "${AWS_ROUTER_A_WG_PUBLIC_KEY}"
+        endpoint: "aws-a.example.net:51820"
+        allowedIPs:
+          - "10.99.0.2/32"
+        persistentKeepalive: 25
+    - apiVersion: "net.routerd.net/v1alpha1"
+      kind: "WireGuardPeer"
+      metadata:
+        name: "wg-azure-router"
+      spec:
+        interface: "wg-hybrid"
+        publicKey: "${AZURE_WG_PUBLIC_KEY}"
+        endpoint: "azure.example.net:51820"
+        allowedIPs:
+          - "10.99.0.3/32"
+        persistentKeepalive: 25
+    - apiVersion: "net.routerd.net/v1alpha1"
+      kind: "BGPRouter"
+      metadata:
+        name: "mobility-bgp"
+      spec:
+        asn: 64577
+        routerID: "10.99.0.1"
+        listen:
+          port: 179
+        importPolicy:
+          allowedPrefixes:
+            - "10.77.60.0/24"
+          nextHopRewrite: "unchanged"
+        exportPolicy:
+          allowedPrefixes:
+            - "10.77.60.0/24"
+        timers:
+          profile: "fast"
+        convergenceProfile: "fast"
+    - apiVersion: "mobility.routerd.net/v1alpha1"
+      kind: "SAMTransportProfile"
+      metadata:
+        name: "cloudedge-transport"
+      spec:
+        selfNodeRef: "onprem-router"
+        mode: "ipip"
+        encryption: "wireguard"
+        innerPrefix: "10.255.0.0/24"
+        topologyNodeRefs:
+          - "aws-router-a"
+          - "azure-router"
+          - "onprem-router"
+        underlayInterface: "wg-hybrid"
+        localEndpointFrom:
+          resource: "IPv4StaticAddress/wg-hybrid-ipv4"
+          field: "address"
+        bgp:
+          routerRef: "BGPRouter/mobility-bgp"
+          peerASN: 64577
+          timersPreset: "fast"
+          routeReflectorClient: false
+          importPolicy:
+            allowedPrefixes:
+              - "10.77.60.0/24"
+            nextHopRewrite: "unchanged"
+          exportPolicy:
+            allowedPrefixes:
+              - "10.77.60.0/24"
+        peers:
+          - nodeRef: "aws-router-a"
+            remoteEndpoint: "10.99.0.2"
+          - nodeRef: "azure-router"
+            remoteEndpoint: "10.99.0.3"
+    - apiVersion: "hybrid.routerd.net/v1alpha1"
+      kind: "CloudProviderProfile"
+      metadata:
+        name: "aws-lab"
+      spec:
+        provider: "aws"
+        capabilities:
+          - "eni-secondary-ip"
+          - "source-dest-check-disable"
+        auth:
+          mode: "external-command"
+          command: "/usr/local/libexec/routerd/plugins/aws-auth"
+    - apiVersion: "hybrid.routerd.net/v1alpha1"
+      kind: "CloudProviderProfile"
+      metadata:
+        name: "azure-lab"
+      spec:
+        provider: "azure"
+        capabilities:
+          - "nic-secondary-ip"
+          - "ip-forwarding"
+        auth:
+          mode: "external-command"
+          command: "/usr/local/libexec/routerd/plugins/azure-auth"
+    - apiVersion: "mobility.routerd.net/v1alpha1"
+      kind: "MobilityPool"
+      metadata:
+        name: "cloudedge"
+      spec:
+        prefix: "10.77.60.0/24"
+        groupRef: "cloudedge"
+        deliveryPolicy:
+          mode: "bgp"
+        members:
+          - nodeRef: "aws-router-a"
+            site: "aws"
+            role: "cloud"
+            capture:
+              type: "provider-secondary-ip"
+              interface: "ens5"
+              providerRef: "aws-lab"
+              providerMode: "eni-secondary-ip"
+              configureOSAddress: false
+            ownershipDiscovery:
+              mode: "provider-private-ip"
+              providerRef: "aws-lab"
+              scope:
+                includePrimary: false
+              scanInterval: "60s"
+              leaseTTL: "10m"
+            placement:
+              group: "aws-edge"
+              priority: 10
+          - nodeRef: "azure-router"
+            site: "azure"
+            role: "cloud"
+            capture:
+              type: "provider-secondary-ip"
+              interface: "eth0"
+              providerRef: "azure-lab"
+              providerMode: "nic-secondary-ip"
+              configureOSAddress: false
+            ownershipDiscovery:
+              mode: "provider-private-ip"
+              providerRef: "azure-lab"
+              scope:
+                includePrimary: false
+              scanInterval: "60s"
+              leaseTTL: "10m"
+            placement:
+              group: "azure-edge"
+              priority: 10
+          - nodeRef: "onprem-router"
+            site: "onprem"
+            role: "onprem"
+            staticOwnedAddresses:
+              - "10.77.60.10/32"
+            capture:
+              type: "proxy-arp"
+              interface: "ens21"
+              gratuitousARP: true
+              activeWhen:
+                type: "single-router"
