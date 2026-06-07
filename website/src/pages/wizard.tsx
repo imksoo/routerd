@@ -5,12 +5,18 @@ import Layout from '@theme/Layout';
 import Heading from '@theme/Heading';
 import {
   DEFAULT_HOME_ROUTER_STATE,
+  buildK8SRouterYaml,
   buildSAMRouterYamls,
   buildHomeRouterYaml,
+  mergeK8SWizardState,
   mergeHomeRouterState,
   mergeSAMWizardState,
   type HomeRouterWizardState,
   type HomeWanMode,
+  type K8SBGPConvergenceProfile,
+  type K8SBGPSessionType,
+  type K8SBGPTimerProfile,
+  type K8SWizardState,
   type SAMNode,
   type SAMNodeRole,
   type SAMProvider,
@@ -21,7 +27,8 @@ import styles from './wizard.module.css';
 
 const homeSteps = ['Interfaces', 'WAN', 'LAN', 'HA', 'Output'] as const;
 const samSteps = ['Nodes', 'Mobility', 'Output'] as const;
-type Step = (typeof homeSteps)[number] | (typeof samSteps)[number];
+const k8sSteps = ['BGP', 'Routes', 'Output'] as const;
+type Step = (typeof homeSteps)[number] | (typeof samSteps)[number] | (typeof k8sSteps)[number];
 
 const wanModes: Array<{value: HomeWanMode; label: string}> = [
   {value: 'dhcpv4', label: 'DHCPv4 client'},
@@ -41,19 +48,24 @@ export default function WizardPage(): JSX.Element {
   const [profile, setProfile] = useState<WizardProfile>('home');
   const [state, setState] = useState<HomeRouterWizardState>(() => mergeHomeRouterState());
   const [samState, setSAMState] = useState<SAMWizardState>(() => mergeSAMWizardState());
+  const [k8sState, setK8SState] = useState<K8SWizardState>(() => mergeK8SWizardState());
   const [selectedOutput, setSelectedOutput] = useState('');
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
   const outputs = useMemo(() => {
     if (profile === 'sam') {
       return buildSAMRouterYamls(samState);
     }
+    if (profile === 'k8s') {
+      const name = `${k8sState.routerName || 'k8s-edge'}.yaml`;
+      return {[name]: buildK8SRouterYaml(k8sState)};
+    }
     const name = `${state.routerName || DEFAULT_HOME_ROUTER_STATE.routerName}.yaml`;
     return {[name]: buildHomeRouterYaml(state)};
-  }, [profile, samState, state]);
+  }, [k8sState, profile, samState, state]);
   const outputNames = useMemo(() => Object.keys(outputs).sort((a, b) => a.localeCompare(b)), [outputs]);
   const activeOutputName = outputs[selectedOutput] ? selectedOutput : outputNames[0] ?? 'router.yaml';
   const yaml = outputs[activeOutputName] ?? '';
-  const activeSteps = profile === 'sam' ? samSteps : homeSteps;
+  const activeSteps = profile === 'sam' ? samSteps : profile === 'k8s' ? k8sSteps : homeSteps;
   const stepIndex = Math.max((activeSteps as readonly Step[]).indexOf(step), 0);
   const resourceCount = useMemo(() => {
     const matches = yaml.match(/^\s{4}- apiVersion:/gm);
@@ -89,9 +101,31 @@ export default function WizardPage(): JSX.Element {
     });
   }
 
+  function updateK8S(next: PartialK8SWizardState): void {
+    setK8SState((current) => mergeK8SWizardState({
+      routerName: next.routerName ?? current.routerName,
+      bgpRouterName: next.bgpRouterName ?? current.bgpRouterName,
+      bgpPeerName: next.bgpPeerName ?? current.bgpPeerName,
+      sessionType: next.sessionType ?? current.sessionType,
+      localASN: next.localASN ?? current.localASN,
+      peerASN: next.peerASN ?? current.peerASN,
+      routerID: next.routerID ?? current.routerID,
+      listenAddress: next.listenAddress ?? current.listenAddress,
+      peerAddresses: next.peerAddresses ?? current.peerAddresses,
+      importPrefixes: next.importPrefixes ?? current.importPrefixes,
+      exportPrefixes: next.exportPrefixes ?? current.exportPrefixes,
+      redistributeConnected: next.redistributeConnected ?? current.redistributeConnected,
+      redistributeStatic: next.redistributeStatic ?? current.redistributeStatic,
+      ebgpMultihop: next.ebgpMultihop ?? current.ebgpMultihop,
+      timersProfile: next.timersProfile ?? current.timersProfile,
+      convergenceProfile: next.convergenceProfile ?? current.convergenceProfile,
+    }));
+    setCopyState('idle');
+  }
+
   function selectProfile(next: WizardProfile): void {
     setProfile(next);
-    setStep(next === 'sam' ? 'Nodes' : 'Interfaces');
+    setStep(next === 'sam' ? 'Nodes' : next === 'k8s' ? 'BGP' : 'Interfaces');
     setSelectedOutput('');
     setCopyState('idle');
   }
@@ -145,6 +179,12 @@ export default function WizardPage(): JSX.Element {
                   <div>{samState.innerCIDR} inner CIDR</div>
                 </>
               )}
+              {profile === 'k8s' && (
+                <>
+                  <div><b>{k8sState.sessionType}</b> peering</div>
+                  <div>{k8sState.peerAddresses.length} peer address{k8sState.peerAddresses.length === 1 ? '' : 'es'}</div>
+                </>
+              )}
               <div>{resourceCount} generated resources</div>
             </div>
           </aside>
@@ -173,6 +213,8 @@ export default function WizardPage(): JSX.Element {
             {profile === 'sam' && step === 'Mobility' && (
               <SAMMobilityStep state={samState} update={updateSAM} updateNode={updateSAMNode} />
             )}
+            {profile === 'k8s' && step === 'BGP' && <K8SBGPStep state={k8sState} update={updateK8S} />}
+            {profile === 'k8s' && step === 'Routes' && <K8SRoutesStep state={k8sState} update={updateK8S} />}
             {step === 'Output' && (
               <OutputStep
                 activeOutputName={activeOutputName}
@@ -188,6 +230,12 @@ export default function WizardPage(): JSX.Element {
                     ['Nodes', String(samState.nodes.length)],
                     ['Inner CIDR', samState.innerCIDR],
                   ]
+                  : profile === 'k8s'
+                    ? [
+                      ['Profile', 'Kubernetes BGP'],
+                      ['Session', k8sState.sessionType],
+                      ['Peers', String(k8sState.peerAddresses.length)],
+                    ]
                   : [
                     ['Profile', 'Home Router'],
                     ['Router', state.routerName],
@@ -254,7 +302,10 @@ function ProfileSelector({
         type="button">
         Cloud Edge SAM
       </button>
-      <button className={styles.profileButton} disabled title="Planned for the next wizard phase." type="button">
+      <button
+        className={`${styles.profileButton} ${profile === 'k8s' ? styles.profileButtonActive : ''}`}
+        onClick={() => setProfile('k8s')}
+        type="button">
         Kubernetes
       </button>
     </div>
@@ -428,6 +479,112 @@ function SAMMobilityStep({
             ))}
           </tbody>
         </table>
+      </div>
+    </>
+  );
+}
+
+function K8SBGPStep({
+  state,
+  update,
+}: {
+  state: K8SWizardState;
+  update: (next: PartialK8SWizardState) => void;
+}): JSX.Element {
+  return (
+    <>
+      <Heading as="h2" className={styles.sectionTitle}>Kubernetes BGP</Heading>
+      <p className={styles.sectionLead}>Peer routerd with a Kubernetes route speaker or route server.</p>
+      <div className={styles.grid}>
+        <TextField label="Router name" value={state.routerName} onChange={(routerName) => update({routerName})} />
+        <TextField label="BGP router resource" value={state.bgpRouterName} onChange={(bgpRouterName) => update({bgpRouterName})} />
+        <TextField label="BGP peer resource" value={state.bgpPeerName} onChange={(bgpPeerName) => update({bgpPeerName})} />
+        <label className={styles.field}>
+          <span className={styles.label}>Session type</span>
+          <select
+            className={styles.select}
+            value={state.sessionType}
+            onChange={(event) => {
+              const sessionType = event.target.value as K8SBGPSessionType;
+              update({
+                sessionType,
+                peerASN: sessionType === 'ibgp' ? state.localASN : state.peerASN,
+              });
+            }}>
+            <option value="ebgp">eBGP</option>
+            <option value="ibgp">iBGP</option>
+          </select>
+        </label>
+        <NumberField label="Local ASN" value={state.localASN} min={1} max={4294967295} onChange={(localASN) => update({localASN, peerASN: state.sessionType === 'ibgp' ? localASN : state.peerASN})} />
+        <NumberField label="Peer ASN" value={state.peerASN} min={1} max={4294967295} onChange={(peerASN) => update({peerASN})} />
+        <TextField label="Router ID" value={state.routerID} onChange={(routerID) => update({routerID})} />
+        <TextField label="Listen address" value={state.listenAddress ?? ''} onChange={(listenAddress) => update({listenAddress})} />
+        <TextField
+          label="Peer addresses"
+          hint="Comma-separated Kubernetes speaker or route-server addresses."
+          value={state.peerAddresses.join(', ')}
+          onChange={(value) => update({peerAddresses: splitCommaList(value)})}
+        />
+        <NumberField label="eBGP multihop" value={state.ebgpMultihop} min={0} max={255} onChange={(ebgpMultihop) => update({ebgpMultihop})} />
+      </div>
+    </>
+  );
+}
+
+function K8SRoutesStep({
+  state,
+  update,
+}: {
+  state: K8SWizardState;
+  update: (next: PartialK8SWizardState) => void;
+}): JSX.Element {
+  return (
+    <>
+      <Heading as="h2" className={styles.sectionTitle}>Routes</Heading>
+      <p className={styles.sectionLead}>Constrain what routerd accepts from Kubernetes and what it advertises back.</p>
+      <div className={styles.grid}>
+        <TextField
+          label="Import prefixes"
+          hint="Pod, Service, or VIP prefixes accepted from Kubernetes."
+          value={state.importPrefixes.join(', ')}
+          onChange={(value) => update({importPrefixes: splitCommaList(value)})}
+        />
+        <TextField
+          label="Export prefixes"
+          hint="Local LAN or VIP prefixes advertised to Kubernetes."
+          value={state.exportPrefixes.join(', ')}
+          onChange={(value) => update({exportPrefixes: splitCommaList(value)})}
+        />
+        <label className={styles.field}>
+          <span className={styles.label}>Timer profile</span>
+          <select className={styles.select} value={state.timersProfile} onChange={(event) => update({timersProfile: event.target.value as K8SBGPTimerProfile})}>
+            <option value="default">default</option>
+            <option value="fast">fast</option>
+            <option value="slow">slow</option>
+          </select>
+        </label>
+        <label className={styles.field}>
+          <span className={styles.label}>Convergence profile</span>
+          <select className={styles.select} value={state.convergenceProfile} onChange={(event) => update({convergenceProfile: event.target.value as K8SBGPConvergenceProfile})}>
+            <option value="default">default</option>
+            <option value="fast">fast</option>
+            <option value="stable">stable</option>
+          </select>
+        </label>
+        <div className={`${styles.checks} ${styles.wide}`}>
+          <CheckField
+            checked={state.redistributeConnected}
+            label="Redistribute connected"
+            description="Allows connected routes that match the export prefixes to be advertised."
+            onChange={(redistributeConnected) => update({redistributeConnected})}
+          />
+          <CheckField
+            checked={state.redistributeStatic}
+            label="Redistribute static"
+            description="Allows static routes that match the export prefixes to be advertised."
+            onChange={(redistributeStatic) => update({redistributeStatic})}
+          />
+        </div>
       </div>
     </>
   );
@@ -745,6 +902,25 @@ type PartialSAMWizardState = {
   bgpASN?: number;
   routeReflectorNodeRef?: string;
   nodes?: SAMNode[];
+};
+
+type PartialK8SWizardState = {
+  routerName?: string;
+  bgpRouterName?: string;
+  bgpPeerName?: string;
+  sessionType?: K8SBGPSessionType;
+  localASN?: number;
+  peerASN?: number;
+  routerID?: string;
+  listenAddress?: string;
+  peerAddresses?: string[];
+  importPrefixes?: string[];
+  exportPrefixes?: string[];
+  redistributeConnected?: boolean;
+  redistributeStatic?: boolean;
+  ebgpMultihop?: number;
+  timersProfile?: K8SBGPTimerProfile;
+  convergenceProfile?: K8SBGPConvergenceProfile;
 };
 
 function splitList(value: string): string[] {
