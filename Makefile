@@ -206,10 +206,11 @@ check-wizard-fixtures: website-deps
 
 validate-wizard-fixtures: website-deps
 	node scripts/validate-wizard-fixtures.cjs schemas/$(CONFIG_SCHEMA) $(WIZARD_FIXTURE_DIR)
-	@find $(WIZARD_FIXTURE_DIR) -type f -name '*.yaml' -print | sort | while read -r config; do \
+	@configs=$$(find $(WIZARD_FIXTURE_DIR) -type f -name '*.yaml' -print | sort); \
+	scripts/routerd-sandbox-run.sh sh -c 'for config do \
 		echo "validating $$config"; \
-		go run ./cmd/routerd validate --config "$$config"; \
-	done
+		go run ./cmd/routerctl validate --socket "$$ROUTERD_SANDBOX_STATUS_SOCKET" -f "$$config" --replace >/dev/null; \
+	done' sh $$configs
 
 check-examples-line-limits:
 	./scripts/check-examples-line-limits.sh
@@ -317,17 +318,17 @@ live-iso:
 	VERSION=$(VERSION) DISTBASE=$(DISTBASE) scripts/build-live-iso.sh
 
 validate-example:
-	@for config in $(EXAMPLE_CONFIGS); do \
+	@scripts/routerd-sandbox-run.sh sh -c 'for config do \
 		echo "validating $$config"; \
-		go run ./cmd/routerd validate --config "$$config"; \
-	done
+		go run ./cmd/routerctl validate --socket "$$ROUTERD_SANDBOX_STATUS_SOCKET" -f "$$config" --replace >/dev/null; \
+	done' sh $(EXAMPLE_CONFIGS)
 
 dry-run-example:
-	go run ./cmd/routerd apply --config examples/basic-static.yaml --once --dry-run --status-file /tmp/routerd-status.json --state-file /tmp/routerd-dry-run-example.db --ledger-file /tmp/routerd-dry-run-ledger.db
+	scripts/routerd-sandbox-run.sh sh -c 'go run ./cmd/routerctl apply --socket "$$ROUTERD_SANDBOX_SOCKET" -f examples/basic-static.yaml --replace > /tmp/routerd-status.json'
 
 plan-config:
 	test -n "$(CONFIG)" || (echo "CONFIG is required, for example: make plan-config CONFIG=path/to/router.yaml" >&2; exit 2)
-	go run ./cmd/routerd plan --config $(CONFIG) --status-file /tmp/routerd-plan-status.json
+	scripts/routerd-sandbox-run.sh sh -c 'go run ./cmd/routerctl plan --socket "$$ROUTERD_SANDBOX_STATUS_SOCKET" -f "$$1" --replace > /tmp/routerd-plan-status.json' sh "$(CONFIG)"
 
 release:
 	scripts/release.sh

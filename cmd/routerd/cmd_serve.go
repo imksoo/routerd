@@ -242,8 +242,35 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	bgpControlSocketPath := fs.String("bgp-control-socket", "", "routerd-bgp control Unix socket path")
 	bgpStatePath := fs.String("bgp-state-file", "", "routerd-bgp applied state JSON path")
 	once := fs.Bool("once", false, "converge once and exit without serving control sockets")
+	sandbox := fs.Bool("sandbox", false, "serve control API in a dry-run sandbox with no host mutation")
+	sandboxRoot := fs.String("root", "", "sandbox root directory used with --sandbox")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	setFlags := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) {
+		setFlags[f.Name] = true
+	})
+	if *sandbox {
+		if err := configureServeSandbox(
+			*sandboxRoot,
+			setFlags,
+			configPath,
+			statusFile,
+			socketPath,
+			statusSocketPath,
+			statePath,
+			netplanPath,
+			dnsmasqConfigPath,
+			dnsmasqServicePath,
+			nftablesPath,
+			ledgerPath,
+			bgpSocketPath,
+			bgpControlSocketPath,
+			bgpStatePath,
+		); err != nil {
+			return err
+		}
 	}
 	if *statusSocketPath == *socketPath {
 		return errors.New("--status-socket must differ from --socket")
@@ -298,6 +325,9 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		LedgerPath:         *ledgerPath,
 		StatePath:          *statePath,
 		SkipConfigCommit:   bootFallback.Used,
+		DryRun:             *sandbox,
+		SkipServiceManager: *sandbox,
+		Sandbox:            *sandbox,
 	}
 	if *once {
 		_, err := runApplyOnce(router, applyOpts, stdout, logger)
@@ -338,28 +368,32 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	controllerBus = bus.NewWithStore(stateStore)
 	controllerBus.SetLogger(slog.Default())
 	publishControllerModeEvents(ctx, controllerBus, controllerStatuses)
+	controllerOpts := controllerchain.Options{
+		SuperviseClientDaemons: true,
+		DnsmasqCommand:         "dnsmasq",
+		DnsmasqConfig:          "/run/routerd/dnsmasq.conf",
+		DnsmasqPID:             "/run/routerd/dnsmasq.pid",
+		DnsmasqPort:            53,
+		DnsmasqListen:          []string{"127.0.0.1"},
+		NftablesPath:           "/run/routerd/nat44.nft",
+		FirewallPath:           "/run/routerd/firewall.nft",
+		LedgerPath:             *ledgerPath,
+		NftCommand:             "nft",
+		BGPSocketPath:          *bgpSocketPath,
+		BGPControlSocketPath:   *bgpControlSocketPath,
+		BGPStatePath:           *bgpStatePath,
+		ConntrackInterval:      30 * time.Second,
+		ControllerObserver:     controllerRuntime,
+		EnabledControllers:     enabledControllers,
+	}
+	if *sandbox {
+		applySandboxControllerOptions(&controllerOpts, *dnsmasqConfigPath, *nftablesPath)
+	}
 	chainRunner = &controllerchain.Runner{
 		Router: router,
 		Bus:    controllerBus,
 		Store:  stateStore,
-		Opts: controllerchain.Options{
-			SuperviseClientDaemons: true,
-			DnsmasqCommand:         "dnsmasq",
-			DnsmasqConfig:          "/run/routerd/dnsmasq.conf",
-			DnsmasqPID:             "/run/routerd/dnsmasq.pid",
-			DnsmasqPort:            53,
-			DnsmasqListen:          []string{"127.0.0.1"},
-			NftablesPath:           "/run/routerd/nat44.nft",
-			FirewallPath:           "/run/routerd/firewall.nft",
-			LedgerPath:             *ledgerPath,
-			NftCommand:             "nft",
-			BGPSocketPath:          *bgpSocketPath,
-			BGPControlSocketPath:   *bgpControlSocketPath,
-			BGPStatePath:           *bgpStatePath,
-			ConntrackInterval:      30 * time.Second,
-			ControllerObserver:     controllerRuntime,
-			EnabledControllers:     enabledControllers,
-		},
+		Opts:   controllerOpts,
 	}
 	if err := chainRunner.Start(ctx); err != nil {
 		return err
@@ -626,6 +660,158 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		return err
 	}
 	return nil
+}
+
+const sandboxDefaultRouterYAML = `apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: sandbox
+spec:
+  resources: []
+`
+
+func configureServeSandbox(root string, setFlags map[string]bool, configPath, statusFile, socketPath, statusSocketPath, statePath, netplanPath, dnsmasqConfigPath, dnsmasqServicePath, nftablesPath, ledgerPath, bgpSocketPath, bgpControlSocketPath, bgpStatePath *string) error {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return errors.New("--sandbox requires --root <dir>")
+	}
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return err
+	}
+	root = filepath.Clean(absRoot)
+	sandboxDefaults := platformDefaults
+	sandboxDefaults.SysconfDir = filepath.Join(root, "etc", "routerd")
+	sandboxDefaults.PluginDir = filepath.Join(root, "usr", "local", "libexec", "routerd", "plugins")
+	sandboxDefaults.RuntimeDir = filepath.Join(root, "run", "routerd")
+	sandboxDefaults.StateDir = filepath.Join(root, "var", "lib", "routerd")
+	sandboxDefaults.NetplanFile = filepath.Join(root, "etc", "netplan", "99-routerd.yaml")
+	sandboxDefaults.NetworkdDropinDir = filepath.Join(root, "etc", "systemd", "network")
+	sandboxDefaults.SystemdSystemDir = filepath.Join(root, "etc", "systemd", "system")
+	sandboxDefaults.DnsmasqConfigFile = filepath.Join(root, "etc", "routerd", "dnsmasq.conf")
+	sandboxDefaults.DnsmasqServiceFile = filepath.Join(root, "run", "routerd", "routerd-dnsmasq.service")
+	sandboxDefaults.NftablesFile = filepath.Join(root, "run", "routerd", "nftables.conf")
+	sandboxDefaults.DefaultRouteNftablesFile = filepath.Join(root, "run", "routerd", "default-route.nft")
+	sandboxDefaults.TimesyncdDropinFile = filepath.Join(root, "etc", "systemd", "timesyncd.conf.d", "routerd.conf")
+	sandboxDefaults.PPPoEChapSecretsFile = filepath.Join(root, "etc", "ppp", "chap-secrets")
+	sandboxDefaults.PPPoEPapSecretsFile = filepath.Join(root, "etc", "ppp", "pap-secrets")
+	platformDefaults = sandboxDefaults
+	defaultNetplanPath = sandboxDefaults.NetplanFile
+	defaultDnsmasqConfigPath = sandboxDefaults.DnsmasqConfigFile
+	defaultDnsmasqServicePath = sandboxDefaults.DnsmasqServiceFile
+	defaultNftablesPath = sandboxDefaults.NftablesFile
+	defaultRouteNftablesPath = sandboxDefaults.DefaultRouteNftablesFile
+	defaultTimesyncdPath = sandboxDefaults.TimesyncdDropinFile
+	defaultLedgerPath = sandboxDefaults.DBFile()
+	defaultStatePath = sandboxDefaults.DBFile()
+	runtimeKeepalivedConfigPath = filepath.Join(root, "etc", "keepalived", "keepalived.conf")
+	pppoeCHAPSecretsPath = sandboxDefaults.PPPoEChapSecretsFile
+	pppoePAPSecretsPath = sandboxDefaults.PPPoEPapSecretsFile
+	pdClientLeaseDir = filepath.Join(sandboxDefaults.StateDir, "dhcpv6-client")
+
+	if !setFlags["config"] {
+		*configPath = sandboxDefaults.ConfigFile()
+	}
+	if !setFlags["status-file"] {
+		*statusFile = sandboxDefaults.StatusFile()
+	}
+	if !setFlags["socket"] {
+		*socketPath = sandboxDefaults.SocketFile()
+	}
+	if !setFlags["status-socket"] {
+		*statusSocketPath = sandboxDefaults.StatusSocketFile()
+	}
+	if !setFlags["state-file"] {
+		*statePath = sandboxDefaults.DBFile()
+	}
+	if !setFlags["netplan-file"] {
+		*netplanPath = sandboxDefaults.NetplanFile
+	}
+	if !setFlags["dnsmasq-file"] {
+		*dnsmasqConfigPath = sandboxDefaults.DnsmasqConfigFile
+	}
+	if !setFlags["dnsmasq-service-file"] {
+		*dnsmasqServicePath = sandboxDefaults.DnsmasqServiceFile
+	}
+	if !setFlags["nftables-file"] {
+		*nftablesPath = sandboxDefaults.NftablesFile
+	}
+	if !setFlags["ledger-file"] {
+		*ledgerPath = filepath.Join(sandboxDefaults.StateDir, "artifacts.json")
+	}
+	if !setFlags["bgp-socket"] {
+		*bgpSocketPath = filepath.Join(sandboxDefaults.RuntimeDir, "bgp", "gobgp.sock")
+	}
+	if !setFlags["bgp-control-socket"] {
+		*bgpControlSocketPath = filepath.Join(sandboxDefaults.RuntimeDir, "bgp", "control.sock")
+	}
+	if !setFlags["bgp-state-file"] {
+		*bgpStatePath = filepath.Join(sandboxDefaults.StateDir, "bgp", "applied.json")
+	}
+	for _, dir := range []string{
+		sandboxDefaults.SysconfDir,
+		sandboxDefaults.RuntimeDir,
+		sandboxDefaults.StateDir,
+		filepathDir(*configPath),
+		filepathDir(*statusFile),
+		filepathDir(*socketPath),
+		filepathDir(*statusSocketPath),
+		filepathDir(*statePath),
+		filepathDir(*netplanPath),
+		filepathDir(*dnsmasqConfigPath),
+		filepathDir(*dnsmasqServicePath),
+		filepathDir(*nftablesPath),
+		filepathDir(*ledgerPath),
+		filepathDir(*bgpSocketPath),
+		filepathDir(*bgpControlSocketPath),
+		filepathDir(*bgpStatePath),
+	} {
+		if dir == "" || dir == "." {
+			continue
+		}
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+	}
+	if _, err := os.Stat(*configPath); errors.Is(err, os.ErrNotExist) {
+		if err := os.WriteFile(*configPath, []byte(sandboxDefaultRouterYAML), 0o644); err != nil {
+			return err
+		}
+	} else if err != nil {
+		return err
+	}
+	return nil
+}
+
+func applySandboxControllerOptions(opts *controllerchain.Options, dnsmasqConfigPath, nftablesPath string) {
+	opts.SuperviseClientDaemons = false
+	opts.DryRunAddress = true
+	opts.DryRunDSLite = true
+	opts.DryRunRoute = true
+	opts.DryRunDHCPv6 = true
+	opts.DryRunDHCPv4Client = true
+	opts.DryRunPPPoESession = true
+	opts.DryRunDNSResolver = true
+	opts.DryRunEventFederation = true
+	opts.DryRunEventSubscription = true
+	opts.DryRunLeaseSync = true
+	opts.DryRunNAT44SessionSync = true
+	opts.DryRunProviderAction = true
+	opts.DryRunNAT = true
+	opts.DryRunIngress = true
+	opts.DryRunFirewall = true
+	opts.DryRunBGP = true
+	opts.DryRunVRRP = true
+	opts.DryRunPackage = true
+	opts.DryRunNetworkAdoption = true
+	opts.DryRunServiceUnit = true
+	opts.DnsmasqConfig = dnsmasqConfigPath
+	opts.DnsmasqPID = filepath.Join(platformDefaults.RuntimeDir, "dnsmasq.pid")
+	opts.NftablesPath = filepath.Join(platformDefaults.RuntimeDir, "nat44.nft")
+	if strings.TrimSpace(nftablesPath) != "" {
+		opts.NftablesPath = nftablesPath
+	}
+	opts.FirewallPath = filepath.Join(platformDefaults.RuntimeDir, "firewall.nft")
 }
 
 // groupOwnStatusSocket makes the read-only status socket reachable by members

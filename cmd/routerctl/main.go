@@ -56,6 +56,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return firewallCommand(args[1:], stdout, stderr)
 	case "dynamic":
 		return dynamicCommand(args[1:], stdout, stderr)
+	case "render":
+		return renderCommand(args[1:], stdout)
 	case "mobility":
 		return mobilityCommand(args[1:], stdout, stderr)
 	case "plugin":
@@ -125,6 +127,7 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  dynamic describe <source> [--state-file <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  dynamic render [--config <path>] [--state-file <path>] [-o yaml|json]")
 	fmt.Fprintln(w, "  dynamic diff [--config <path>] [--state-file <path>] [-o text|json]")
+	fmt.Fprintln(w, "  render alpine [--config <path>] [--out-dir <path>]")
 	fmt.Fprintln(w, "  mobility paths [--prefix <prefix>] [--state-file <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  mobility traps [--address <ipv4/32>] [--state-file <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  plugin list [--config <path>] [-o table|json|yaml]")

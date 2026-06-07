@@ -615,6 +615,54 @@ spec:
 	}
 }
 
+func TestServeConfigMutatorSandboxApplyCommitsCanonicalAndDryRuns(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "router.yaml")
+	statePath := filepath.Join(dir, "routerd.db")
+	if err := os.WriteFile(configPath, []byte(testRouterYAML("stable-router")), 0644); err != nil {
+		t.Fatalf("write canonical config: %v", err)
+	}
+	router, err := config.Load(configPath)
+	if err != nil {
+		t.Fatalf("load router: %v", err)
+	}
+	mutator := serveConfigMutator{
+		configPath: configPath,
+		statePath:  statePath,
+		baseOpts: applyOptions{
+			ConfigPath:         configPath,
+			StatePath:          statePath,
+			LedgerPath:         filepath.Join(dir, "ledger.db"),
+			SkipServiceManager: true,
+			Sandbox:            true,
+		},
+		cache:     &resultCache{},
+		logger:    &eventlog.Logger{},
+		getRouter: func() *api.Router { return router },
+		setRouter: func(next *api.Router) { router = next },
+	}
+	result, err := mutator.apply(nil, controlapi.ApplyRequest{
+		CandidateYAML: testRouterYAML("sandbox-router"),
+		Replace:       true,
+	})
+	if err != nil {
+		t.Fatalf("sandbox apply: %v", err)
+	}
+	if result.Result.Generation == 0 || result.Result.Phase != "Healthy" {
+		t.Fatalf("sandbox apply result = %+v", result.Result)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read canonical config: %v", err)
+	}
+	if !strings.Contains(string(data), "name: sandbox-router") {
+		t.Fatalf("sandbox canonical was not updated:\n%s", data)
+	}
+	if router.Metadata.Name != "sandbox-router" {
+		t.Fatalf("in-memory router name = %q, want sandbox-router", router.Metadata.Name)
+	}
+}
+
 func TestServeOnceConvergesAndExits(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "router.yaml")
