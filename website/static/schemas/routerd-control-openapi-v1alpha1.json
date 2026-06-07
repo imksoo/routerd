@@ -910,6 +910,108 @@
         ],
         "type": "object"
       },
+      "DescribeResult": {
+        "additionalProperties": false,
+        "properties": {
+          "apiVersion": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "metadata": {
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name"
+            ],
+            "type": "object"
+          },
+          "resource": {
+            "additionalProperties": false,
+            "properties": {
+              "apiVersion": {
+                "type": "string"
+              },
+              "events": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "apiVersion": {
+                      "type": "string"
+                    },
+                    "createdAt": {
+                      "format": "date-time",
+                      "type": "string"
+                    },
+                    "generation": {
+                      "type": "integer"
+                    },
+                    "id": {
+                      "type": "integer"
+                    },
+                    "kind": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "apiVersion",
+                    "kind",
+                    "name",
+                    "type",
+                    "reason",
+                    "message",
+                    "generation",
+                    "createdAt"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "spec": true,
+              "status": {
+                "type": "object"
+              }
+            },
+            "required": [
+              "apiVersion",
+              "kind",
+              "name"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "apiVersion",
+          "kind",
+          "metadata",
+          "resource"
+        ],
+        "type": "object"
+      },
       "Error": {
         "additionalProperties": false,
         "properties": {
@@ -1098,6 +1200,481 @@
           "kind",
           "metadata",
           "items"
+        ],
+        "type": "object"
+      },
+      "GetResult": {
+        "additionalProperties": false,
+        "properties": {
+          "apiVersion": {
+            "type": "string"
+          },
+          "events": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "apiVersion": {
+                  "type": "string"
+                },
+                "attributes": {
+                  "type": "object"
+                },
+                "createdAt": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "generation": {
+                  "type": "integer"
+                },
+                "id": {
+                  "type": "integer"
+                },
+                "kind": {
+                  "type": "string"
+                },
+                "message": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": "string"
+                },
+                "resourceApiVersion": {
+                  "type": "string"
+                },
+                "resourceKind": {
+                  "type": "string"
+                },
+                "resourceName": {
+                  "type": "string"
+                },
+                "severity": {
+                  "type": "string"
+                },
+                "sourceInstance": {
+                  "type": "string"
+                },
+                "sourceKind": {
+                  "type": "string"
+                },
+                "topic": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "type",
+                "createdAt"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "apiVersion": {
+                  "type": "string"
+                },
+                "events": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "apiVersion": {
+                        "type": "string"
+                      },
+                      "createdAt": {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      "generation": {
+                        "type": "integer"
+                      },
+                      "id": {
+                        "type": "integer"
+                      },
+                      "kind": {
+                        "type": "string"
+                      },
+                      "message": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "reason": {
+                        "type": "string"
+                      },
+                      "type": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "apiVersion",
+                      "kind",
+                      "name",
+                      "type",
+                      "reason",
+                      "message",
+                      "generation",
+                      "createdAt"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "kind": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "spec": true,
+                "status": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "apiVersion",
+                "kind",
+                "name"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "ledger": {
+            "additionalProperties": false,
+            "properties": {
+              "generations": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "configHash": {
+                      "type": "string"
+                    },
+                    "finishedAt": {
+                      "format": "date-time",
+                      "type": "string"
+                    },
+                    "generation": {
+                      "type": "integer"
+                    },
+                    "hasYaml": {
+                      "type": "boolean"
+                    },
+                    "phase": {
+                      "type": "string"
+                    },
+                    "startedAt": {
+                      "format": "date-time",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "generation",
+                    "startedAt",
+                    "hasYaml"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "integrity": {
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "metadata": {
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name"
+            ],
+            "type": "object"
+          },
+          "raw": true,
+          "status": {
+            "additionalProperties": false,
+            "properties": {
+              "controllers": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "averageDuration": {
+                      "type": "string"
+                    },
+                    "averageDurationMillis": {
+                      "type": "number"
+                    },
+                    "consecutiveErrorCount": {
+                      "type": "integer"
+                    },
+                    "currentError": {
+                      "type": "boolean"
+                    },
+                    "interval": {
+                      "type": "string"
+                    },
+                    "lastChangeReason": {
+                      "type": "string"
+                    },
+                    "lastDuration": {
+                      "type": "string"
+                    },
+                    "lastDurationMillis": {
+                      "type": "number"
+                    },
+                    "lastError": {
+                      "type": "string"
+                    },
+                    "lastErrorClearedAt": {
+                      "format": "date-time",
+                      "type": "string"
+                    },
+                    "lastErrorTime": {
+                      "format": "date-time",
+                      "type": "string"
+                    },
+                    "lastReconcileTime": {
+                      "format": "date-time",
+                      "type": "string"
+                    },
+                    "lastReloadAt": {
+                      "format": "date-time",
+                      "type": "string"
+                    },
+                    "lastRestartAt": {
+                      "format": "date-time",
+                      "type": "string"
+                    },
+                    "lastSuccessTime": {
+                      "format": "date-time",
+                      "type": "string"
+                    },
+                    "lastTrigger": {
+                      "type": "string"
+                    },
+                    "maxDuration": {
+                      "type": "string"
+                    },
+                    "maxDurationAt": {
+                      "format": "date-time",
+                      "type": "string"
+                    },
+                    "maxDurationMillis": {
+                      "type": "number"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "mode": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "nextReconcileTime": {
+                      "format": "date-time",
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "reconcileCount": {
+                      "type": "integer"
+                    },
+                    "reconcileErrorCount": {
+                      "type": "integer"
+                    },
+                    "reconcileErrorHistory": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "completedAt": {
+                            "format": "date-time",
+                            "type": "string"
+                          },
+                          "duration": {
+                            "type": "string"
+                          },
+                          "durationMs": {
+                            "type": "number"
+                          },
+                          "error": {
+                            "type": "string"
+                          },
+                          "resourceKind": {
+                            "type": "string"
+                          },
+                          "resourceName": {
+                            "type": "string"
+                          },
+                          "startedAt": {
+                            "format": "date-time",
+                            "type": "string"
+                          },
+                          "trigger": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "startedAt",
+                          "completedAt",
+                          "duration",
+                          "durationMs",
+                          "error"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "resourceKinds": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "mode",
+                    "currentError"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "generation": {
+                "type": "integer"
+              },
+              "lastApplyTime": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "phase": {
+                "type": "string"
+              },
+              "resourceCount": {
+                "type": "integer"
+              },
+              "resourcePhaseIssues": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "apiVersion": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "phase": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "apiVersion",
+                    "kind",
+                    "name",
+                    "phase"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "phase"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "apiVersion",
+          "kind",
+          "metadata"
+        ],
+        "type": "object"
+      },
+      "ProbeResult": {
+        "additionalProperties": false,
+        "properties": {
+          "apiVersion": {
+            "type": "string"
+          },
+          "checks": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "detail": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name",
+                "status"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "metadata": {
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name"
+            ],
+            "type": "object"
+          },
+          "subject": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "apiVersion",
+          "kind",
+          "metadata",
+          "subject"
         ],
         "type": "object"
       },
@@ -1598,6 +2175,55 @@
         }
       }
     },
+    "/api/control.routerd.net/v1alpha1/describe": {
+      "get": {
+        "operationId": "describeResource",
+        "parameters": [
+          {
+            "description": "Resource target as kind/name.",
+            "in": "query",
+            "name": "target",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Recent events to attach.",
+            "in": "query",
+            "name": "events-limit",
+            "required": false,
+            "schema": {
+              "default": 10,
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DescribeResult"
+                }
+              }
+            },
+            "description": "DescribeResult"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        }
+      }
+    },
     "/api/control.routerd.net/v1alpha1/dhcpv6-event": {
       "post": {
         "operationId": "recordDHCPv6Event",
@@ -1757,6 +2383,161 @@
               }
             },
             "description": "FirewallLogs"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        }
+      }
+    },
+    "/api/control.routerd.net/v1alpha1/get": {
+      "get": {
+        "operationId": "getSubject",
+        "parameters": [
+          {
+            "description": "Inspection subject or resource target.",
+            "in": "query",
+            "name": "subject",
+            "required": false,
+            "schema": {
+              "default": "resources",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Maximum number of runtime rows.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Recent events to attach per resource.",
+            "in": "query",
+            "name": "events-limit",
+            "required": false,
+            "schema": {
+              "default": 10,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Only events with an ID greater than this value.",
+            "in": "query",
+            "name": "since-id",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Event topic filter.",
+            "in": "query",
+            "name": "topic",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Event resource filter as kind/name.",
+            "in": "query",
+            "name": "resource",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Event kind filter.",
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Event name filter.",
+            "in": "query",
+            "name": "name",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetResult"
+                }
+              }
+            },
+            "description": "GetResult"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        }
+      }
+    },
+    "/api/control.routerd.net/v1alpha1/probe": {
+      "get": {
+        "operationId": "probeSubject",
+        "parameters": [
+          {
+            "description": "Probe subject.",
+            "in": "query",
+            "name": "subject",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Optional probe target.",
+            "in": "query",
+            "name": "target",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProbeResult"
+                }
+              }
+            },
+            "description": "ProbeResult"
           },
           "default": {
             "content": {

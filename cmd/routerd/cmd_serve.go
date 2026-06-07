@@ -444,30 +444,36 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	groupOwnMutationSocket(*socketPath)
 	defer listener.Close()
 
+	statusHandler := func(r *http.Request) (*controlapi.Status, error) {
+		status := controlapi.NewStatus(resultWithLatestGeneration(cache.Load(), stateStore))
+		status.Status.Phase = overallStatusPhase(status.Status.Phase, stateStore)
+		status.Status.ResourcePhaseIssues = resourcePhaseIssues(stateStore)
+		controllers := controllerRuntime.Snapshot()
+		if stateStore != nil {
+			controllers = augmentControllerStatusesFromState(controllers, stateStore)
+		}
+		status.Status.Controllers = controllers
+		return &status, nil
+	}
+	controllersHandler := func(r *http.Request) (*controlapi.Controllers, error) {
+		statuses := controllerRuntime.Snapshot()
+		if stateStore != nil {
+			statuses = augmentControllerStatusesFromState(statuses, stateStore)
+		}
+		controllers := controlapi.NewControllers(statuses)
+		return &controllers, nil
+	}
+	runtimeHandler := func(r *http.Request) (*controlapi.RuntimeStats, error) {
+		stats := collectRuntimeStats()
+		return &stats, nil
+	}
 	handler := controlapi.Handler{
-		Status: func(r *http.Request) (*controlapi.Status, error) {
-			status := controlapi.NewStatus(resultWithLatestGeneration(cache.Load(), stateStore))
-			status.Status.Phase = overallStatusPhase(status.Status.Phase, stateStore)
-			status.Status.ResourcePhaseIssues = resourcePhaseIssues(stateStore)
-			controllers := controllerRuntime.Snapshot()
-			if stateStore != nil {
-				controllers = augmentControllerStatusesFromState(controllers, stateStore)
-			}
-			status.Status.Controllers = controllers
-			return &status, nil
-		},
-		Controllers: func(r *http.Request) (*controlapi.Controllers, error) {
-			statuses := controllerRuntime.Snapshot()
-			if stateStore != nil {
-				statuses = augmentControllerStatusesFromState(statuses, stateStore)
-			}
-			controllers := controlapi.NewControllers(statuses)
-			return &controllers, nil
-		},
-		Runtime: func(r *http.Request) (*controlapi.RuntimeStats, error) {
-			stats := collectRuntimeStats()
-			return &stats, nil
-		},
+		Status:      statusHandler,
+		Controllers: controllersHandler,
+		Runtime:     runtimeHandler,
+		Get:         serveGetHandler(currentRouter, stateStore, statusHandler, controllersHandler, runtimeHandler),
+		Describe:    serveDescribeHandler(currentRouter, stateStore),
+		Probe:       serveProbeHandler(currentRouter, stateStore),
 		Connections: func(r *http.Request, req controlapi.ConnectionsRequest) (*controlapi.ConnectionTable, error) {
 			table, err := observe.Connections(req.Limit)
 			if err != nil {
@@ -621,11 +627,18 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	// kept as belt-and-suspenders for malformed peers.
 	statusServer := &http.Server{
 		Handler: controlapi.Handler{
-			Status:      handler.Status,
-			Controllers: handler.Controllers,
-			Runtime:     handler.Runtime,
-			Plan:        handler.Plan,
-			Validate:    handler.Validate,
+			Status:       handler.Status,
+			Controllers:  handler.Controllers,
+			Runtime:      handler.Runtime,
+			Get:          handler.Get,
+			Describe:     handler.Describe,
+			Probe:        handler.Probe,
+			Connections:  handler.Connections,
+			DNSQueries:   handler.DNSQueries,
+			TrafficFlows: handler.TrafficFlows,
+			FirewallLogs: handler.FirewallLogs,
+			Plan:         handler.Plan,
+			Validate:     handler.Validate,
 		},
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       30 * time.Second,

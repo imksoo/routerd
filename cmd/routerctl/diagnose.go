@@ -31,6 +31,7 @@ type diagnoseOptions struct {
 	Timeout    time.Duration
 	Since      time.Duration
 	Socket     string
+	Probe      string
 }
 
 type diagnoseReport struct {
@@ -246,10 +247,11 @@ func parseDiagnoseOptions(name string, args []string, helpOutput io.Writer) (dia
 		case "doctor":
 			summary = "routerd の各 area (wan/dns/dslite/dhcpv6-pd/nat/firewall/rollback/disk/mgmt/reconcile/runtime/dynamic/plugin/hybrid) の\n" +
 				"健全性チェックをまとめて実行する。\n" +
-				"位置引数: [area] (省略時は全 area)"
+				"位置引数: [area] (省略時は全 area)。--probe は control API 経由の対象別 probe を実行する。"
 			examples = "routerctl doctor\n" +
 				"routerctl doctor wan\n" +
-				"routerctl doctor --no-host -o json"
+				"routerctl doctor --probe egress ipv4-default\n" +
+				"routerctl doctor --probe dns -o json"
 		default:
 			summary = "routerd の resource 状態と host 実情を突き合わせて診断する。"
 			examples = "routerctl " + name + " --help"
@@ -267,6 +269,8 @@ func parseDiagnoseOptions(name string, args []string, helpOutput io.Writer) (dia
 	fs.DurationVar(&opts.Timeout, "timeout", opts.Timeout, "host command timeout")
 	fs.DurationVar(&opts.Since, "since", 0, "doctor reconcile area: only count errors newer than this duration (e.g. 1h, 24h)")
 	fs.StringVar(&opts.Socket, "status-socket", defaultStatusSocketPath(), "doctor reconcile area: routerd read-only status Unix domain socket path")
+	fs.StringVar(&opts.Socket, "socket", defaultStatusSocketPath(), "routerd read-only status Unix domain socket path")
+	fs.StringVar(&opts.Probe, "probe", "", "doctor probe subject (egress, dns, lan-client)")
 	normalized, err := normalizeDiagnoseArgs(args)
 	if err != nil {
 		return opts, err
@@ -293,7 +297,7 @@ func normalizeDiagnoseArgs(args []string) ([]string, error) {
 	valueFlags := map[string]bool{
 		"-o": true, "--output": true, "--config": true, "--state-file": true,
 		"--server": true, "--name": true, "--timeout": true,
-		"--since": true, "--status-socket": true,
+		"--since": true, "--status-socket": true, "--socket": true, "--probe": true,
 	}
 	var flags []string
 	var positionals []string

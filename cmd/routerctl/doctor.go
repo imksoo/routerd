@@ -104,6 +104,9 @@ func doctorCommand(args []string, stdout, stderr io.Writer) error {
 		usage(stderr)
 		return err
 	}
+	if opts.Probe != "" {
+		return doctorProbeCommand(opts, stdout)
+	}
 	if opts.Target != "" && !validDoctorArea(opts.Target) {
 		return fmt.Errorf("unknown doctor area %q", opts.Target)
 	}
@@ -133,6 +136,31 @@ func doctorCommand(args []string, stdout, stderr io.Writer) error {
 		return errors.New("doctor found failing checks")
 	}
 	return nil
+}
+
+func doctorProbeCommand(opts diagnoseOptions, stdout io.Writer) error {
+	ctx, cancel := context.WithTimeout(context.Background(), opts.Timeout)
+	defer cancel()
+	result, err := controlapi.NewUnixClient(opts.Socket).Probe(ctx, controlapi.ProbeRequest{Subject: opts.Probe, Target: opts.Target})
+	if err != nil {
+		return err
+	}
+	switch opts.Output {
+	case "", "table":
+		w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
+		fmt.Fprintf(w, "PROBE\t%s\t%s\n", result.Subject, displayCell(result.Target))
+		fmt.Fprintln(w, "NAME\tSTATUS\tDETAIL")
+		for _, check := range result.Checks {
+			fmt.Fprintf(w, "%s\t%s\t%s\n", check.Name, check.Status, displayCell(check.Detail))
+		}
+		return w.Flush()
+	case "json":
+		return writeJSON(stdout, result)
+	case "yaml":
+		return writeYAML(stdout, result)
+	default:
+		return fmt.Errorf("unsupported output %q", opts.Output)
+	}
 }
 
 func validDoctorArea(area string) bool {

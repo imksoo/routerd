@@ -25,9 +25,14 @@ func startStatusTestServer(t *testing.T, status controlapi.Status) string {
 	}
 	t.Cleanup(func() { _ = listener.Close() })
 	server := &http.Server{Handler: controlapi.Handler{
-		Status: func(r *http.Request) (*controlapi.Status, error) {
-			out := status
-			return &out, nil
+		Get: func(r *http.Request, req controlapi.GetRequest) (*controlapi.GetResult, error) {
+			if req.Subject != "status" {
+				t.Fatalf("subject = %q, want status", req.Subject)
+			}
+			result := controlapi.NewGetResult("status")
+			result.Status = &status.Status
+			result.Raw = status
+			return &result, nil
 		},
 	}}
 	t.Cleanup(func() { _ = server.Close() })
@@ -73,21 +78,21 @@ func sampleControllerStatus() controlapi.ControllerStatus {
 	}
 }
 
-func TestStatusCommandJSONIncludesReconcileErrorHistory(t *testing.T) {
+func TestGetStatusJSONIncludesReconcileErrorHistory(t *testing.T) {
 	status := controlapi.NewStatus(&apply.Result{Phase: "Healthy", Generation: 11})
 	status.Status.Controllers = []controlapi.ControllerStatus{sampleControllerStatus()}
 	socketPath := startStatusTestServer(t, status)
 
 	var out bytes.Buffer
-	if err := run([]string{"status", "--socket", socketPath, "-o", "json"}, &out, &bytes.Buffer{}); err != nil {
-		t.Fatalf("status: %v", err)
+	if err := run([]string{"get", "status", "--socket", socketPath, "-o", "json"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("get status: %v", err)
 	}
-	var decoded controlapi.Status
+	var decoded controlapi.GetResult
 	if err := json.Unmarshal(out.Bytes(), &decoded); err != nil {
 		t.Fatalf("decode: %v\n%s", err, out.String())
 	}
-	if len(decoded.Status.Controllers) != 1 {
-		t.Fatalf("controllers = %d", len(decoded.Status.Controllers))
+	if decoded.Status == nil || len(decoded.Status.Controllers) != 1 {
+		t.Fatalf("status controllers = %#v", decoded.Status)
 	}
 	ctl := decoded.Status.Controllers[0]
 	if len(ctl.ReconcileErrorHistory) != 2 {
@@ -101,26 +106,23 @@ func TestStatusCommandJSONIncludesReconcileErrorHistory(t *testing.T) {
 	}
 }
 
-func TestStatusCommandTableShowErrors(t *testing.T) {
+func TestGetStatusTableSummary(t *testing.T) {
 	status := controlapi.NewStatus(&apply.Result{Phase: "Healthy", Generation: 11})
 	status.Status.Controllers = []controlapi.ControllerStatus{sampleControllerStatus()}
 	socketPath := startStatusTestServer(t, status)
 
 	var out bytes.Buffer
-	if err := run([]string{"status", "--socket", socketPath, "-o", "table", "--show-errors"}, &out, &bytes.Buffer{}); err != nil {
-		t.Fatalf("status table: %v", err)
+	if err := run([]string{"get", "status", "--socket", socketPath, "-o", "table"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("get status table: %v", err)
 	}
 	output := out.String()
 	for _, want := range []string{
-		"CONTROLLER",
-		"dns-resolver",
-		"ERRORS controller=dns-resolver",
-		"upstream timeout",
-		"nxdomain",
-		"DNSResolver/lan",
+		"STATUS",
+		"HEALTHY",
+		"generation=11",
 	} {
 		if !strings.Contains(output, want) {
-			t.Fatalf("status table missing %q:\n%s", want, output)
+			t.Fatalf("get status table missing %q:\n%s", want, output)
 		}
 	}
 }

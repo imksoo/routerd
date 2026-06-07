@@ -35,6 +35,44 @@ func TestStatusHandler(t *testing.T) {
 	}
 }
 
+func TestInspectionReadHandlers(t *testing.T) {
+	handler := Handler{
+		Get: func(r *http.Request, req GetRequest) (*GetResult, error) {
+			if req.Subject != "events" || req.Limit != 7 || req.SinceID != 12 || req.Topic != "routerd.test" || req.Resource != "Interface/wan" || req.KindFilter != "Interface" || req.NameFilter != "wan" {
+				t.Fatalf("get request = %+v", req)
+			}
+			result := NewGetResult(req.Subject)
+			return &result, nil
+		},
+		Describe: func(r *http.Request, req DescribeRequest) (*DescribeResult, error) {
+			if req.Target != "Interface/wan" || req.EventsLimit != 3 {
+				t.Fatalf("describe request = %+v", req)
+			}
+			result := NewDescribeResult(req.Target, ResourceView{APIVersion: "net.routerd.net/v1alpha1", Kind: "Interface", Name: "wan"})
+			return &result, nil
+		},
+		Probe: func(r *http.Request, req ProbeRequest) (*ProbeResult, error) {
+			if req.Subject != "egress" || req.Target != "ipv4-default" {
+				t.Fatalf("probe request = %+v", req)
+			}
+			result := NewProbeResult(req.Subject, req.Target, []ProbeCheck{{Name: "EgressRoutePolicy/ipv4-default", Status: "pass"}})
+			return &result, nil
+		},
+	}
+	for _, path := range []string{
+		Prefix + "/get?subject=events&limit=7&since-id=12&topic=routerd.test&resource=Interface/wan&kind=Interface&name=wan",
+		Prefix + "/describe?target=Interface/wan&events-limit=3",
+		Prefix + "/probe?subject=egress&target=ipv4-default",
+	} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: status code = %d, body = %s", path, rec.Code, rec.Body.String())
+		}
+	}
+}
+
 func TestApplyHandler(t *testing.T) {
 	handler := Handler{
 		Apply: func(r *http.Request, req ApplyRequest) (*ApplyResult, error) {

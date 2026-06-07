@@ -735,6 +735,19 @@ func writeFirewallLogsTable(stdout io.Writer, rows []logstore.FirewallLogEntry) 
 	return w.Flush()
 }
 
+func emitFirewallRows(stdout io.Writer, output string, rows []logstore.FirewallLogEntry) error {
+	switch output {
+	case "", "table":
+		return writeFirewallLogsTable(stdout, rows)
+	case "json":
+		return writeJSON(stdout, rows)
+	case "yaml":
+		return writeYAML(stdout, rows)
+	default:
+		return fmt.Errorf("unsupported output %q", output)
+	}
+}
+
 func cutoffTime(value string) (time.Time, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {

@@ -5,9 +5,11 @@ package controlapi
 import (
 	"time"
 
+	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/apply"
 	"github.com/imksoo/routerd/pkg/logstore"
 	"github.com/imksoo/routerd/pkg/observe"
+	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
 const APIVersion = "control.routerd.net/v1alpha1"
@@ -275,6 +277,72 @@ type FirewallLogs struct {
 	Items    []logstore.FirewallLogEntry `json:"items" yaml:"items"`
 }
 
+type GetRequest struct {
+	Subject     string `json:"subject,omitempty" yaml:"subject,omitempty"`
+	Output      string `json:"output,omitempty" yaml:"output,omitempty"`
+	EventsLimit int    `json:"eventsLimit,omitempty" yaml:"eventsLimit,omitempty"`
+	Limit       int    `json:"limit,omitempty" yaml:"limit,omitempty"`
+	SinceID     int64  `json:"sinceId,omitempty" yaml:"sinceId,omitempty"`
+	Topic       string `json:"topic,omitempty" yaml:"topic,omitempty"`
+	Resource    string `json:"resource,omitempty" yaml:"resource,omitempty"`
+	KindFilter  string `json:"kindFilter,omitempty" yaml:"kindFilter,omitempty"`
+	NameFilter  string `json:"nameFilter,omitempty" yaml:"nameFilter,omitempty"`
+}
+
+type ResourceView struct {
+	APIVersion string              `json:"apiVersion" yaml:"apiVersion"`
+	Kind       string              `json:"kind" yaml:"kind"`
+	Name       string              `json:"name" yaml:"name"`
+	Spec       any                 `json:"spec,omitempty" yaml:"spec,omitempty"`
+	Status     map[string]any      `json:"status,omitempty" yaml:"status,omitempty"`
+	Events     []routerstate.Event `json:"events,omitempty" yaml:"events,omitempty"`
+}
+
+type GetResult struct {
+	TypeMeta `json:",inline" yaml:",inline"`
+	Metadata ObjectMeta                `json:"metadata" yaml:"metadata"`
+	Items    []ResourceView            `json:"items,omitempty" yaml:"items,omitempty"`
+	Status   *StatusStatus             `json:"status,omitempty" yaml:"status,omitempty"`
+	Events   []routerstate.StoredEvent `json:"events,omitempty" yaml:"events,omitempty"`
+	Ledger   *LedgerReport             `json:"ledger,omitempty" yaml:"ledger,omitempty"`
+	Raw      any                       `json:"raw,omitempty" yaml:"raw,omitempty"`
+}
+
+type DescribeRequest struct {
+	Target      string `json:"target" yaml:"target"`
+	EventsLimit int    `json:"eventsLimit,omitempty" yaml:"eventsLimit,omitempty"`
+}
+
+type DescribeResult struct {
+	TypeMeta `json:",inline" yaml:",inline"`
+	Metadata ObjectMeta   `json:"metadata" yaml:"metadata"`
+	Resource ResourceView `json:"resource" yaml:"resource"`
+}
+
+type LedgerReport struct {
+	Integrity   string                         `json:"integrity,omitempty" yaml:"integrity,omitempty"`
+	Generations []routerstate.GenerationRecord `json:"generations,omitempty" yaml:"generations,omitempty"`
+}
+
+type ProbeRequest struct {
+	Subject string `json:"subject" yaml:"subject"`
+	Target  string `json:"target,omitempty" yaml:"target,omitempty"`
+}
+
+type ProbeCheck struct {
+	Name   string `json:"name" yaml:"name"`
+	Status string `json:"status" yaml:"status"`
+	Detail string `json:"detail,omitempty" yaml:"detail,omitempty"`
+}
+
+type ProbeResult struct {
+	TypeMeta `json:",inline" yaml:",inline"`
+	Metadata ObjectMeta   `json:"metadata" yaml:"metadata"`
+	Subject  string       `json:"subject" yaml:"subject"`
+	Target   string       `json:"target,omitempty" yaml:"target,omitempty"`
+	Checks   []ProbeCheck `json:"checks,omitempty" yaml:"checks,omitempty"`
+}
+
 // RuntimeStats reports routerd's own process-level runtime footprint (heap,
 // goroutines, GC, and file descriptors). It is collected inside the running
 // `routerd serve` process so external tooling (e.g. `routerctl doctor runtime`)
@@ -365,6 +433,51 @@ func NewFirewallLogs(rows []logstore.FirewallLogEntry) FirewallLogs {
 		TypeMeta: TypeMeta{APIVersion: APIVersion, Kind: "FirewallLogs"},
 		Metadata: ObjectMeta{Name: "firewall-logs"},
 		Items:    rows,
+	}
+}
+
+func NewGetResult(subject string) GetResult {
+	return GetResult{
+		TypeMeta: TypeMeta{APIVersion: APIVersion, Kind: "GetResult"},
+		Metadata: ObjectMeta{Name: subject},
+	}
+}
+
+func NewDescribeResult(target string, view ResourceView) DescribeResult {
+	return DescribeResult{
+		TypeMeta: TypeMeta{APIVersion: APIVersion, Kind: "DescribeResult"},
+		Metadata: ObjectMeta{Name: target},
+		Resource: view,
+	}
+}
+
+func NewProbeResult(subject, target string, checks []ProbeCheck) ProbeResult {
+	if checks == nil {
+		checks = []ProbeCheck{}
+	}
+	return ProbeResult{
+		TypeMeta: TypeMeta{APIVersion: APIVersion, Kind: "ProbeResult"},
+		Metadata: ObjectMeta{Name: subject},
+		Subject:  subject,
+		Target:   target,
+		Checks:   checks,
+	}
+}
+
+func ResourceViewFromResource(res api.Resource, status map[string]any, events []routerstate.Event) ResourceView {
+	if status == nil {
+		status = map[string]any{}
+	}
+	if events == nil {
+		events = []routerstate.Event{}
+	}
+	return ResourceView{
+		APIVersion: res.APIVersion,
+		Kind:       res.Kind,
+		Name:       res.Metadata.Name,
+		Spec:       res.Spec,
+		Status:     status,
+		Events:     events,
 	}
 }
 

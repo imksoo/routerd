@@ -26,6 +26,9 @@ type Handler struct {
 	TrafficFlows          func(*http.Request, TrafficFlowsRequest) (*TrafficFlows, error)
 	TrafficFlowsAggregate func(*http.Request, TrafficFlowsRequest) (*TrafficFlowsAggregate, error)
 	FirewallLogs          func(*http.Request, FirewallLogsRequest) (*FirewallLogs, error)
+	Get                   func(*http.Request, GetRequest) (*GetResult, error)
+	Describe              func(*http.Request, DescribeRequest) (*DescribeResult, error)
+	Probe                 func(*http.Request, ProbeRequest) (*ProbeResult, error)
 	Apply                 func(*http.Request, ApplyRequest) (*ApplyResult, error)
 	Plan                  func(*http.Request, PlanRequest) (*PlanResult, error)
 	Delete                func(*http.Request, DeleteRequest) (*DeleteResult, error)
@@ -59,6 +62,12 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleTrafficFlowsAggregate(w, r)
 	case r.Method == http.MethodGet && r.URL.Path == Prefix+"/firewall-logs":
 		h.handleFirewallLogs(w, r)
+	case r.Method == http.MethodGet && r.URL.Path == Prefix+"/get":
+		h.handleGet(w, r)
+	case r.Method == http.MethodGet && r.URL.Path == Prefix+"/describe":
+		h.handleDescribe(w, r)
+	case r.Method == http.MethodGet && r.URL.Path == Prefix+"/probe":
+		h.handleProbe(w, r)
 	case r.Method == http.MethodPost && r.URL.Path == Prefix+"/apply":
 		h.handleApply(w, r)
 	case r.Method == http.MethodPost && r.URL.Path == Prefix+"/plan":
@@ -76,6 +85,103 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeError(w, http.StatusNotFound, "not found")
 	}
+}
+
+func (h Handler) handleGet(w http.ResponseWriter, r *http.Request) {
+	if h.Get == nil {
+		writeError(w, http.StatusNotImplemented, "get handler is not configured")
+		return
+	}
+	q := r.URL.Query()
+	limit := 100
+	if raw := q.Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 0 {
+			writeError(w, http.StatusBadRequest, "limit must be a non-negative integer")
+			return
+		}
+		limit = parsed
+	}
+	eventsLimit := 10
+	if raw := q.Get("events-limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 0 {
+			writeError(w, http.StatusBadRequest, "events-limit must be a non-negative integer")
+			return
+		}
+		eventsLimit = parsed
+	}
+	var sinceID int64
+	if raw := q.Get("since-id"); raw != "" {
+		parsed, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || parsed < 0 {
+			writeError(w, http.StatusBadRequest, "since-id must be a non-negative integer")
+			return
+		}
+		sinceID = parsed
+	}
+	result, err := h.Get(r, GetRequest{
+		Subject:     q.Get("subject"),
+		EventsLimit: eventsLimit,
+		Limit:       limit,
+		SinceID:     sinceID,
+		Topic:       q.Get("topic"),
+		Resource:    q.Get("resource"),
+		KindFilter:  q.Get("kind"),
+		NameFilter:  q.Get("name"),
+	})
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, ErrBadRequest) {
+			status = http.StatusBadRequest
+		}
+		writeError(w, status, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (h Handler) handleDescribe(w http.ResponseWriter, r *http.Request) {
+	if h.Describe == nil {
+		writeError(w, http.StatusNotImplemented, "describe handler is not configured")
+		return
+	}
+	eventsLimit := 10
+	if raw := r.URL.Query().Get("events-limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 0 {
+			writeError(w, http.StatusBadRequest, "events-limit must be a non-negative integer")
+			return
+		}
+		eventsLimit = parsed
+	}
+	result, err := h.Describe(r, DescribeRequest{Target: r.URL.Query().Get("target"), EventsLimit: eventsLimit})
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, ErrBadRequest) {
+			status = http.StatusBadRequest
+		}
+		writeError(w, status, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (h Handler) handleProbe(w http.ResponseWriter, r *http.Request) {
+	if h.Probe == nil {
+		writeError(w, http.StatusNotImplemented, "probe handler is not configured")
+		return
+	}
+	result, err := h.Probe(r, ProbeRequest{Subject: r.URL.Query().Get("subject"), Target: r.URL.Query().Get("target")})
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, ErrBadRequest) {
+			status = http.StatusBadRequest
+		}
+		writeError(w, status, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (h Handler) handleDHCPLeaseEvent(w http.ResponseWriter, r *http.Request) {
