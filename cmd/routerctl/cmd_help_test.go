@@ -34,14 +34,29 @@ func TestSubcommandHelpRendersUsageFlagsExamples(t *testing.T) {
 			mustContain: []string{"Usage:", "Flags:", "Examples:", "routerctl delete", "<kind>/<name>"},
 		},
 		{
-			name:        "set-log-level",
-			args:        []string{"set-log-level", "--help"},
-			mustContain: []string{"Usage:", "Flags:", "Examples:", "routerctl set-log-level", "debug"},
+			name:        "log-level",
+			args:        []string{"log-level", "--help"},
+			mustContain: []string{"Usage:", "Flags:", "Examples:", "routerctl log-level", "debug"},
 		},
 		{
-			name:        "restart-dns-resolver",
-			args:        []string{"restart-dns-resolver", "--help"},
-			mustContain: []string{"Usage:", "Flags:", "Examples:", "routerctl restart-dns-resolver"},
+			name:        "restart dns-resolver",
+			args:        []string{"restart", "dns-resolver", "--help"},
+			mustContain: []string{"Usage:", "Flags:", "Examples:", "routerctl restart dns-resolver"},
+		},
+		{
+			name:        "ingress",
+			args:        []string{"ingress", "--help"},
+			mustContain: []string{"Usage:", "Examples:", "routerctl ingress drain", "routerctl ingress undrain"},
+		},
+		{
+			name:        "ingress drain",
+			args:        []string{"ingress", "drain", "--help"},
+			mustContain: []string{"Usage:", "Examples:", "routerctl ingress drain", "routerctl ingress undrain"},
+		},
+		{
+			name:        "vpn",
+			args:        []string{"vpn", "--help"},
+			mustContain: []string{"Usage:", "Examples:", "routerctl vpn wireguard", "routerctl vpn tailscale"},
 		},
 		{
 			name:        "ledger integrity-check",
@@ -70,13 +85,13 @@ func TestSubcommandHelpRendersUsageFlagsExamples(t *testing.T) {
 		},
 		{
 			name:        "tailscale peers",
-			args:        []string{"tailscale", "peers", "--help"},
-			mustContain: []string{"Usage:", "Flags:", "Examples:", "tailscale peers"},
+			args:        []string{"vpn", "tailscale", "peers", "--help"},
+			mustContain: []string{"Usage:", "Flags:", "Examples:", "vpn tailscale peers"},
 		},
 		{
 			name:        "wireguard list",
-			args:        []string{"wireguard", "list", "--help"},
-			mustContain: []string{"Usage:", "Flags:", "Examples:", "wireguard list"},
+			args:        []string{"vpn", "wireguard", "list", "--help"},
+			mustContain: []string{"Usage:", "Flags:", "Examples:", "vpn wireguard list"},
 		},
 		{
 			name:        "doctor",
@@ -115,6 +130,36 @@ func TestGetHelpMentionsRuntimeSubjects(t *testing.T) {
 	for _, want := range []string{"get events", "get connections", "get dns-queries", "get traffic-flows", "get firewall-logs", "--topic", "--resource"} {
 		if !strings.Contains(combined, want) {
 			t.Errorf("get --help should mention %s, got:\n%s", want, combined)
+		}
+	}
+}
+
+func TestTopLevelUsageListsDomainControlCommands(t *testing.T) {
+	var stdout bytes.Buffer
+	usage(&stdout)
+	out := stdout.String()
+	for _, want := range []string{
+		"vpn wireguard list",
+		"vpn tailscale peers",
+		"ingress drain",
+		"ingress undrain",
+		"log-level",
+		"restart dns-resolver",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("usage is missing %q:\n%s", want, out)
+		}
+	}
+	for _, old := range []string{
+		"\n  wireguard list",
+		"\n  tailscale peers",
+		"set-log-level",
+		"restart-dns-resolver",
+		"\n  drain ",
+		"\n  undrain ",
+	} {
+		if strings.Contains(out, old) {
+			t.Fatalf("usage still lists removed command %q:\n%s", old, out)
 		}
 	}
 }

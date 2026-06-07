@@ -29,11 +29,9 @@ func dnsQueriesCommand(args []string, stdout io.Writer) error {
 				"または 2026-05-27T20:00:00 / 2026-05-27 のような短縮形。短縮形は UTC 解釈)。\n"+
 				"--agg を付けると集計のみ出力する。\n"+
 				"--chunk-size を指定すると分割取得 (deadline 単位を縮める) になる。",
-			"routerctl dns-queries --since 1h --limit 500 -o json\n"+
-				"routerctl dns-queries --from 2026-05-27T00:00:00+09:00 --to 2026-05-27T06:00:00+09:00\n"+
-				"routerctl dns-queries --rcode NXDOMAIN --upstream 9.9.9.9 --duration-min 100ms\n"+
-				"routerctl dns-queries --qname-suffix example.com --agg\n"+
-				"routerctl dns-queries --db /var/log/routerd/dns-queries.db --since 24h --chunk-size 1000")
+			"routerctl get dns-queries --limit 500 -o json\n"+
+				"routerctl get dns-queries --limit 100\n"+
+				"routerctl get dns-queries -o yaml")
 	}
 	dbPath := fs.String("db", "", "read a DNS query log database file directly instead of using routerd")
 	socketPath := fs.String("socket", defaultSocketPath(), "routerd Unix domain socket path")
@@ -331,8 +329,8 @@ func connectionsCommand(args []string, stdout io.Writer) error {
 	fs.Usage = func() {
 		printSubcommandHelp(fs,
 			"アクティブな conntrack エントリ一覧を表示する。",
-			"routerctl connections --limit 200\n"+
-				"routerctl connections -o json")
+			"routerctl get connections --limit 200\n"+
+				"routerctl get connections -o json")
 	}
 	socketPath := fs.String("socket", defaultSocketPath(), "routerd Unix domain socket path")
 	timeout := fs.Duration("timeout", 5*time.Second, "request timeout")
@@ -435,10 +433,9 @@ func trafficFlowsCommand(args []string, stdout io.Writer) error {
 				"または 2026-05-27T20:00:00 / 2026-05-27 のような短縮形。短縮形は UTC 解釈)。\n"+
 				"--agg を付けると集計のみ出力する。\n"+
 				"--asymmetric は片方向通信のみ (rx==0 OR tx==0) を抽出する。",
-			"routerctl traffic-flows --since 1h --client 192.168.1.10 -o json\n"+
-				"routerctl traffic-flows --from 2026-05-27T00:00:00+09:00 --to 2026-05-27T06:00:00+09:00\n"+
-				"routerctl traffic-flows --protocol tcp --peer-suffix amazonaws.com --agg\n"+
-				"routerctl traffic-flows --db /var/log/routerd/traffic-flows.db --since 24h --chunk-size 1000")
+			"routerctl get traffic-flows --limit 500 -o json\n"+
+				"routerctl get traffic-flows --limit 100\n"+
+				"routerctl get traffic-flows -o yaml")
 	}
 	dbPath := fs.String("db", "", "read a traffic flow log database file directly instead of using routerd")
 	socketPath := fs.String("socket", defaultSocketPath(), "routerd Unix domain socket path")
@@ -654,9 +651,9 @@ func firewallLogsCommand(args []string, stdout io.Writer) error {
 			"firewall (nftables / pf) のログを表示する。\n"+
 				"--since は Go の duration 形式 (例: 1h, 30m, 24h)。\n"+
 				"絶対時刻 (--from / --to) の指定は別途 issue #36 で対応予定。",
-			"routerctl firewall-logs --since 24h --action drop\n"+
-				"routerctl firewall-logs --src 192.168.1.10 -o json\n"+
-				"routerctl firewall-logs --db /var/log/routerd/firewall-logs.db --since 7d")
+			"routerctl get firewall-logs --limit 500 -o json\n"+
+				"routerctl get firewall-logs --limit 100\n"+
+				"routerctl get firewall-logs -o yaml")
 	}
 	dbPath := fs.String("db", "", "read a firewall log database file directly instead of using routerd")
 	socketPath := fs.String("socket", defaultSocketPath(), "routerd Unix domain socket path")

@@ -18,6 +18,31 @@ import (
 	"github.com/imksoo/routerd/pkg/wireguard"
 )
 
+func vpnCommand(args []string, stdout, stderr io.Writer) error {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "usage: routerctl vpn <wireguard|tailscale> ...")
+		return errors.New("vpn requires <wireguard|tailscale>")
+	}
+	switch args[0] {
+	case "wireguard", "wg":
+		return wireGuardCommand(args[1:], stdout, stderr)
+	case "tailscale", "ts":
+		return tailscaleCommand(args[1:], stdout, stderr)
+	case "help", "-h", "--help":
+		fmt.Fprintln(stdout, "Usage:")
+		fmt.Fprintln(stdout, "  routerctl vpn wireguard list [-o table|json|yaml]")
+		fmt.Fprintln(stdout, "  routerctl vpn wireguard show <interface> [-o table|json|yaml]")
+		fmt.Fprintln(stdout, "  routerctl vpn tailscale peers [-o table|json|yaml] [--binary tailscale]")
+		fmt.Fprintln(stdout, "")
+		fmt.Fprintln(stdout, "Examples:")
+		fmt.Fprintln(stdout, "  routerctl vpn wireguard list")
+		fmt.Fprintln(stdout, "  routerctl vpn tailscale peers -o json")
+		return nil
+	default:
+		return fmt.Errorf("unknown vpn command %q", args[0])
+	}
+}
+
 func tailscaleCommand(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
 		args = []string{"peers"}
@@ -26,7 +51,7 @@ func tailscaleCommand(args []string, stdout, stderr io.Writer) error {
 	case "peers", "peer", "status":
 		return tailscalePeersCommand(args[1:], stdout)
 	case "help", "-h", "--help":
-		fmt.Fprintln(stderr, "usage: routerctl tailscale peers [-o table|json|yaml] [--binary tailscale]")
+		fmt.Fprintln(stderr, "usage: routerctl vpn tailscale peers [-o table|json|yaml] [--binary tailscale]")
 		return nil
 	default:
 		return fmt.Errorf("unknown tailscale command %q", args[0])
@@ -34,14 +59,14 @@ func tailscaleCommand(args []string, stdout, stderr io.Writer) error {
 }
 
 func tailscalePeersCommand(args []string, stdout io.Writer) error {
-	fs := flag.NewFlagSet("tailscale peers", flag.ContinueOnError)
+	fs := flag.NewFlagSet("vpn tailscale peers", flag.ContinueOnError)
 	fs.SetOutput(stdout)
 	fs.Usage = func() {
 		printSubcommandHelp(fs,
 			"tailscale peers の status を 'tailscale status --json' から取得して整形表示する。",
-			"routerctl tailscale peers\n"+
-				"routerctl tailscale peers -o json\n"+
-				"routerctl tailscale peers --binary /usr/local/bin/tailscale")
+			"routerctl vpn tailscale peers\n"+
+				"routerctl vpn tailscale peers -o json\n"+
+				"routerctl vpn tailscale peers --binary /usr/local/bin/tailscale")
 	}
 	timeout := fs.Duration("timeout", 5*time.Second, "request timeout")
 	binary := fs.String("binary", "tailscale", "tailscale binary path")
@@ -113,8 +138,8 @@ func wireGuardCommand(args []string, stdout, stderr io.Writer) error {
 	case "show":
 		return wireGuardShowCommand(args[1:], stdout)
 	case "help", "-h", "--help":
-		fmt.Fprintln(stderr, "usage: routerctl wireguard list [-o table|json|yaml]")
-		fmt.Fprintln(stderr, "       routerctl wireguard show <interface> [-o table|json|yaml]")
+		fmt.Fprintln(stderr, "usage: routerctl vpn wireguard list [-o table|json|yaml]")
+		fmt.Fprintln(stderr, "       routerctl vpn wireguard show <interface> [-o table|json|yaml]")
 		return nil
 	default:
 		return fmt.Errorf("unknown wireguard command %q", args[0])
@@ -122,13 +147,13 @@ func wireGuardCommand(args []string, stdout, stderr io.Writer) error {
 }
 
 func wireGuardListCommand(args []string, stdout io.Writer) error {
-	fs := flag.NewFlagSet("wireguard list", flag.ContinueOnError)
+	fs := flag.NewFlagSet("vpn wireguard list", flag.ContinueOnError)
 	fs.SetOutput(stdout)
 	fs.Usage = func() {
 		printSubcommandHelp(fs,
 			"WireGuard 全 interface / peer の状態を 'wg show all dump' から取得して表示する。",
-			"routerctl wireguard list\n"+
-				"routerctl wireguard list -o json")
+			"routerctl vpn wireguard list\n"+
+				"routerctl vpn wireguard list -o json")
 	}
 	timeout := fs.Duration("timeout", 5*time.Second, "request timeout")
 	output := "table"
@@ -196,16 +221,16 @@ func wireGuardShowCommand(args []string, stdout io.Writer) error {
 			}
 			timeout = parsed
 		case strings.HasPrefix(arg, "-"):
-			return fmt.Errorf("unknown wireguard show flag %q", arg)
+			return fmt.Errorf("unknown vpn wireguard show flag %q", arg)
 		default:
 			if iface != "" {
-				return errors.New("wireguard show requires exactly one <interface>")
+				return errors.New("vpn wireguard show requires exactly one <interface>")
 			}
 			iface = arg
 		}
 	}
 	if iface == "" {
-		return errors.New("wireguard show requires <interface>")
+		return errors.New("vpn wireguard show requires <interface>")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()

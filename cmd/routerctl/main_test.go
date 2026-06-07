@@ -75,8 +75,8 @@ func TestShowIPv6PDTableIncludesSpecStateLedger(t *testing.T) {
 func TestDrainAndUndrainIngressBackend(t *testing.T) {
 	statePath := filepath.Join(t.TempDir(), "routerd.db")
 	var out bytes.Buffer
-	if err := run([]string{"drain", "ingress/kubernetes-api", "backend=cp-01", "--duration=10m", "--state-file", statePath}, &out, &bytes.Buffer{}); err != nil {
-		t.Fatalf("drain: %v", err)
+	if err := run([]string{"ingress", "drain", "ingress/kubernetes-api", "backend=cp-01", "--duration=10m", "--state-file", statePath}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("ingress drain: %v", err)
 	}
 	got := out.String()
 	if !strings.Contains(got, `"service": "kubernetes-api"`) || !strings.Contains(got, `"backend": "cp-01"`) || !strings.Contains(got, `"drainedUntil"`) {
@@ -94,8 +94,8 @@ func TestDrainAndUndrainIngressBackend(t *testing.T) {
 	}
 
 	out.Reset()
-	if err := run([]string{"undrain", "ingress/kubernetes-api", "--backend", "cp-01", "--state-file", statePath}, &out, &bytes.Buffer{}); err != nil {
-		t.Fatalf("undrain: %v", err)
+	if err := run([]string{"ingress", "undrain", "ingress/kubernetes-api", "--backend", "cp-01", "--state-file", statePath}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("ingress undrain: %v", err)
 	}
 	store, err = routerstate.OpenSQLite(statePath)
 	if err != nil {
@@ -139,8 +139,8 @@ spec:
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	var out bytes.Buffer
-	if err := run([]string{"restart-dns-resolver", "--config", configPath}, &out, &bytes.Buffer{}); err != nil {
-		t.Fatalf("restart-dns-resolver: %v", err)
+	if err := run([]string{"restart", "dns-resolver", "--config", configPath}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("restart dns-resolver: %v", err)
 	}
 	if !strings.Contains(out.String(), "DNSResolver/lan-resolver") {
 		t.Fatalf("output = %s", out.String())
@@ -551,7 +551,7 @@ func TestLogCommandsUseControlSocketByDefault(t *testing.T) {
 		{[]string{"get", "dns-queries", "--socket", socketPath, "--limit", "3"}, "socket.example"},
 		{[]string{"get", "traffic-flows", "--socket", socketPath}, "1.1.1.1"},
 		{[]string{"get", "firewall-logs", "--socket", socketPath}, "deny-test"},
-		{[]string{"set-log-level", "--socket", socketPath, "debug"}, `"level": "debug"`},
+		{[]string{"log-level", "--socket", socketPath, "debug"}, `"level": "debug"`},
 	} {
 		var out bytes.Buffer
 		if err := run(tt.args, &out, &bytes.Buffer{}); err != nil {

@@ -37,9 +37,9 @@ capture() {
 
 mkdir -p "$LOG_DIR"
 capture routerctl-status "$ROUTERCTL" status -o json
-capture wireguard "$ROUTERCTL" wireguard show "$WG_INTERFACE" -o json
-if "$ROUTERCTL" tailscale peers -o json >/dev/null 2>&1; then
-  capture tailscale "$ROUTERCTL" tailscale peers -o json
+capture wireguard "$ROUTERCTL" vpn wireguard show "$WG_INTERFACE" -o json
+if "$ROUTERCTL" vpn tailscale peers -o json >/dev/null 2>&1; then
+  capture tailscale "$ROUTERCTL" vpn tailscale peers -o json
 elif command -v tailscale >/dev/null 2>&1; then
   if tailscale status --json >/dev/null 2>&1; then
     capture tailscale tailscale status --json
