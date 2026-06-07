@@ -107,11 +107,25 @@ type Controllers struct {
 }
 
 type ApplyRequest struct {
-	TypeMeta `json:",inline" yaml:",inline"`
-	DryRun   bool `json:"dryRun,omitempty" yaml:"dryRun,omitempty"`
+	TypeMeta      `json:",inline" yaml:",inline"`
+	CandidateYAML string `json:"candidateYaml,omitempty" yaml:"candidateYaml,omitempty"`
+	Replace       bool   `json:"replace,omitempty" yaml:"replace,omitempty"`
+	NoReconcile   bool   `json:"noReconcile,omitempty" yaml:"noReconcile,omitempty"`
+	DryRun        bool   `json:"dryRun,omitempty" yaml:"dryRun,omitempty"`
 }
 
 type ApplyResult struct {
+	TypeMeta `json:",inline" yaml:",inline"`
+	Result   apply.Result `json:"result" yaml:"result"`
+}
+
+type PlanRequest struct {
+	TypeMeta      `json:",inline" yaml:",inline"`
+	CandidateYAML string `json:"candidateYaml,omitempty" yaml:"candidateYaml,omitempty"`
+	Replace       bool   `json:"replace,omitempty" yaml:"replace,omitempty"`
+}
+
+type PlanResult struct {
 	TypeMeta `json:",inline" yaml:",inline"`
 	Result   apply.Result `json:"result" yaml:"result"`
 }
@@ -122,13 +136,28 @@ type DeleteRequest struct {
 	TargetAPIVersion string `json:"targetApiVersion,omitempty" yaml:"targetApiVersion,omitempty"`
 	DryRun           bool   `json:"dryRun,omitempty" yaml:"dryRun,omitempty"`
 	Force            bool   `json:"force,omitempty" yaml:"force,omitempty"`
+	NoReconcile      bool   `json:"noReconcile,omitempty" yaml:"noReconcile,omitempty"`
 }
 
 type DeleteResult struct {
 	TypeMeta  `json:",inline" yaml:",inline"`
-	Deleted   []string `json:"deleted,omitempty" yaml:"deleted,omitempty"`
-	Artifacts []string `json:"artifacts,omitempty" yaml:"artifacts,omitempty"`
-	DryRun    bool     `json:"dryRun,omitempty" yaml:"dryRun,omitempty"`
+	Deleted   []string      `json:"deleted,omitempty" yaml:"deleted,omitempty"`
+	Artifacts []string      `json:"artifacts,omitempty" yaml:"artifacts,omitempty"`
+	DryRun    bool          `json:"dryRun,omitempty" yaml:"dryRun,omitempty"`
+	Result    *apply.Result `json:"result,omitempty" yaml:"result,omitempty"`
+}
+
+type ValidateRequest struct {
+	TypeMeta      `json:",inline" yaml:",inline"`
+	CandidateYAML string `json:"candidateYaml,omitempty" yaml:"candidateYaml,omitempty"`
+	Replace       bool   `json:"replace,omitempty" yaml:"replace,omitempty"`
+}
+
+type ValidateResult struct {
+	TypeMeta `json:",inline" yaml:",inline"`
+	Valid    bool     `json:"valid" yaml:"valid"`
+	Warnings []string `json:"warnings,omitempty" yaml:"warnings,omitempty"`
+	Error    string   `json:"error,omitempty" yaml:"error,omitempty"`
 }
 
 type LogLevelRequest struct {
@@ -373,6 +402,28 @@ func NewApplyResult(result *apply.Result) ApplyResult {
 	return ApplyResult{
 		TypeMeta: TypeMeta{APIVersion: APIVersion, Kind: "ApplyResult"},
 		Result:   *result,
+	}
+}
+
+func NewPlanResult(result *apply.Result) PlanResult {
+	if result == nil {
+		result = &apply.Result{}
+	}
+	return PlanResult{
+		TypeMeta: TypeMeta{APIVersion: APIVersion, Kind: "PlanResult"},
+		Result:   *result,
+	}
+}
+
+func NewValidateResult(valid bool, warnings []string, message string) ValidateResult {
+	if warnings == nil {
+		warnings = []string{}
+	}
+	return ValidateResult{
+		TypeMeta: TypeMeta{APIVersion: APIVersion, Kind: "ValidateResult"},
+		Valid:    valid,
+		Warnings: warnings,
+		Error:    message,
 	}
 }
 

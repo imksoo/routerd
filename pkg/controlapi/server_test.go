@@ -38,14 +38,17 @@ func TestStatusHandler(t *testing.T) {
 func TestApplyHandler(t *testing.T) {
 	handler := Handler{
 		Apply: func(r *http.Request, req ApplyRequest) (*ApplyResult, error) {
-			if !req.DryRun {
-				t.Fatal("DryRun = false, want true")
+			if strings.TrimSpace(req.CandidateYAML) == "" {
+				t.Fatal("CandidateYAML is empty")
+			}
+			if !req.Replace || !req.NoReconcile {
+				t.Fatalf("replace/noReconcile = %t/%t, want true/true", req.Replace, req.NoReconcile)
 			}
 			result := NewApplyResult(&apply.Result{Phase: "Healthy", Generation: 7})
 			return &result, nil
 		},
 	}
-	req := httptest.NewRequest(http.MethodPost, Prefix+"/apply", strings.NewReader(`{"apiVersion":"control.routerd.net/v1alpha1","kind":"ApplyRequest","dryRun":true}`))
+	req := httptest.NewRequest(http.MethodPost, Prefix+"/apply", strings.NewReader(`{"apiVersion":"control.routerd.net/v1alpha1","kind":"ApplyRequest","candidateYaml":"kind: Router\n","replace":true,"noReconcile":true}`))
 	rec := httptest.NewRecorder()
 
 	handler.ServeHTTP(rec, req)
@@ -54,6 +57,29 @@ func TestApplyHandler(t *testing.T) {
 		t.Fatalf("status code = %d, body = %s", rec.Code, rec.Body.String())
 	}
 	if !strings.Contains(rec.Body.String(), `"kind": "ApplyResult"`) {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
+func TestPlanHandler(t *testing.T) {
+	handler := Handler{
+		Plan: func(r *http.Request, req PlanRequest) (*PlanResult, error) {
+			if !req.Replace || !strings.Contains(req.CandidateYAML, "Router") {
+				t.Fatalf("request = %+v", req)
+			}
+			result := NewPlanResult(&apply.Result{Phase: "Healthy", Generation: 0})
+			return &result, nil
+		},
+	}
+	req := httptest.NewRequest(http.MethodPost, Prefix+"/plan", strings.NewReader(`{"apiVersion":"control.routerd.net/v1alpha1","kind":"PlanRequest","candidateYaml":"kind: Router\n","replace":true}`))
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status code = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"kind": "PlanResult"`) {
 		t.Fatalf("body = %s", rec.Body.String())
 	}
 }
@@ -83,6 +109,29 @@ func TestDeleteHandler(t *testing.T) {
 		t.Fatalf("status code = %d, body = %s", rec.Code, rec.Body.String())
 	}
 	if !strings.Contains(rec.Body.String(), `"kind": "DeleteResult"`) {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
+func TestValidateHandler(t *testing.T) {
+	handler := Handler{
+		Validate: func(r *http.Request, req ValidateRequest) (*ValidateResult, error) {
+			if !strings.Contains(req.CandidateYAML, "Router") {
+				t.Fatalf("candidateYaml = %q", req.CandidateYAML)
+			}
+			result := NewValidateResult(true, []string{"warn"}, "")
+			return &result, nil
+		},
+	}
+	req := httptest.NewRequest(http.MethodPost, Prefix+"/validate", strings.NewReader(`{"apiVersion":"control.routerd.net/v1alpha1","kind":"ValidateRequest","candidateYaml":"kind: Router\n"}`))
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status code = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"kind": "ValidateResult"`) || !strings.Contains(rec.Body.String(), `"valid": true`) {
 		t.Fatalf("body = %s", rec.Body.String())
 	}
 }

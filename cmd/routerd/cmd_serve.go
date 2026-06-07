@@ -260,6 +260,21 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	if err != nil {
 		return err
 	}
+	routerMu := &sync.RWMutex{}
+	var chainRunner *controllerchain.Runner
+	currentRouter := func() *api.Router {
+		routerMu.RLock()
+		defer routerMu.RUnlock()
+		return router
+	}
+	setCurrentRouter := func(next *api.Router) {
+		routerMu.Lock()
+		defer routerMu.Unlock()
+		router = next
+		if chainRunner != nil {
+			chainRunner.Router = next
+		}
+	}
 	logger, err := eventlog.New(router)
 	if err != nil {
 		return err
@@ -307,7 +322,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	controllerBus = bus.NewWithStore(stateStore)
 	controllerBus.SetLogger(slog.Default())
 	publishControllerModeEvents(ctx, controllerBus, controllerStatuses)
-	chainRunner := controllerchain.Runner{
+	chainRunner = &controllerchain.Runner{
 		Router: router,
 		Bus:    controllerBus,
 		Store:  stateStore,
@@ -344,9 +359,18 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		StatePath:          *statePath,
 		SkipConfigCommit:   bootFallback.Used,
 	}
+	mutator := serveConfigMutator{
+		configPath: *configPath,
+		statePath:  *statePath,
+		baseOpts:   applyOpts,
+		cache:      cache,
+		logger:     logger,
+		getRouter:  currentRouter,
+		setRouter:  setCurrentRouter,
+	}
 	applyMu := &sync.Mutex{}
 	if *applyInterval > 0 {
-		go runApplySchedule(stop, *applyInterval, router, applyOpts, cache, logger, applyMu)
+		go runApplySchedule(stop, *applyInterval, currentRouter, applyOpts, cache, logger, applyMu)
 	}
 	if webConsoleResourcePresent(router) {
 		var webStore routerstate.Store
@@ -378,6 +402,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	if err != nil {
 		return err
 	}
+	groupOwnMutationSocket(*socketPath)
 	defer listener.Close()
 
 	handler := controlapi.Handler{
@@ -417,7 +442,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 			if err != nil {
 				return nil, err
 			}
-			rows, err := listDNSQueriesReadOnly(r.Context(), configuredDNSQueryLogPath(router), filter)
+			rows, err := listDNSQueriesReadOnly(r.Context(), configuredDNSQueryLogPath(currentRouter()), filter)
 			if err != nil {
 				return nil, err
 			}
@@ -429,7 +454,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 			if err != nil {
 				return nil, err
 			}
-			agg, err := aggregateDNSQueriesReadOnly(r.Context(), configuredDNSQueryLogPath(router), filter)
+			agg, err := aggregateDNSQueriesReadOnly(r.Context(), configuredDNSQueryLogPath(currentRouter()), filter)
 			if err != nil {
 				return nil, err
 			}
@@ -441,7 +466,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 			if err != nil {
 				return nil, err
 			}
-			rows, err := listTrafficFlowsReadOnly(r.Context(), configuredTrafficFlowLogPath(router), filter)
+			rows, err := listTrafficFlowsReadOnly(r.Context(), configuredTrafficFlowLogPath(currentRouter()), filter)
 			if err != nil {
 				return nil, err
 			}
@@ -453,7 +478,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 			if err != nil {
 				return nil, err
 			}
-			agg, err := aggregateTrafficFlowsReadOnly(r.Context(), configuredTrafficFlowLogPath(router), filter)
+			agg, err := aggregateTrafficFlowsReadOnly(r.Context(), configuredTrafficFlowLogPath(currentRouter()), filter)
 			if err != nil {
 				return nil, err
 			}
@@ -465,7 +490,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 			if err != nil {
 				return nil, err
 			}
-			rows, err := listFirewallLogsReadOnly(r.Context(), configuredFirewallLogPath(router), logstore.FirewallLogFilter{Since: since, Action: req.Action, Src: req.Src, Limit: req.Limit})
+			rows, err := listFirewallLogsReadOnly(r.Context(), configuredFirewallLogPath(currentRouter()), logstore.FirewallLogFilter{Since: since, Action: req.Action, Src: req.Src, Limit: req.Limit})
 			if err != nil {
 				return nil, err
 			}
@@ -473,37 +498,24 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 			return &result, nil
 		},
 		Apply: func(r *http.Request, req controlapi.ApplyRequest) (*controlapi.ApplyResult, error) {
-			opts := applyOpts
-			opts.DryRun = req.DryRun
 			applyMu.Lock()
 			defer applyMu.Unlock()
-			result, err := runApplyOnce(router, opts, io.Discard, logger)
-			if err != nil {
-				return nil, err
-			}
-			cache.Store(result)
-			apiResult := controlapi.NewApplyResult(result)
-			return &apiResult, nil
+			return mutator.apply(r, req)
+		},
+		Plan: func(r *http.Request, req controlapi.PlanRequest) (*controlapi.PlanResult, error) {
+			applyMu.Lock()
+			defer applyMu.Unlock()
+			return mutator.plan(r, req)
 		},
 		Delete: func(r *http.Request, req controlapi.DeleteRequest) (*controlapi.DeleteResult, error) {
-			if req.Target == "" {
-				return nil, controlapi.ErrBadRequest
-			}
-			target, err := deleteTargetFromArg(req.Target)
-			if err != nil {
-				if !req.Force {
-					return nil, err
-				}
-				target, err = forceDeleteTargetFromArg(req.Target, defaultStatePath, req.TargetAPIVersion)
-				if err != nil {
-					return nil, err
-				}
-			}
-			result, err := performDeleteTargets([]deleteTarget{target}, defaultStatePath, *ledgerPath, req.DryRun)
-			if err != nil {
-				return nil, err
-			}
-			return &result, nil
+			applyMu.Lock()
+			defer applyMu.Unlock()
+			return mutator.delete(r, req)
+		},
+		Validate: func(r *http.Request, req controlapi.ValidateRequest) (*controlapi.ValidateResult, error) {
+			applyMu.Lock()
+			defer applyMu.Unlock()
+			return mutator.validate(r, req)
 		},
 		SetLogLevel: func(r *http.Request, req controlapi.LogLevelRequest) (*controlapi.LogLevelResult, error) {
 			level := strings.TrimSpace(req.Level)
@@ -526,7 +538,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 			if req.Action == "" || req.IP == "" {
 				return nil, controlapi.ErrBadRequest
 			}
-			if holdDays := dhcpStickyHoldDays(router, req.IP); holdDays > 0 {
+			if holdDays := dhcpStickyHoldDays(currentRouter(), req.IP); holdDays > 0 {
 				stickyLog, err := logstore.OpenDHCPStickyLog(dhcpStickyLogPath())
 				if err != nil {
 					return nil, err
@@ -625,6 +637,19 @@ func groupOwnStatusSocket(path string) {
 		}
 	}
 	_ = os.Chmod(path, 0o666)
+}
+
+// groupOwnMutationSocket keeps the privileged mutation/control socket gated by
+// filesystem permissions. If the routerd group exists, grant that group access;
+// otherwise keep the socket 0660 with the process group instead of falling back
+// to world-writable access.
+func groupOwnMutationSocket(path string) {
+	if grp, err := user.LookupGroup("routerd"); err == nil {
+		if gid, convErr := strconv.Atoi(grp.Gid); convErr == nil {
+			_ = os.Chown(path, -1, gid)
+		}
+	}
+	_ = os.Chmod(path, 0o660)
 }
 
 // collectRuntimeStats samples the current process's heap, goroutine, GC, and
@@ -1378,7 +1403,7 @@ func containsString(values []string, needle string) bool {
 	return false
 }
 
-func runApplySchedule(stop <-chan struct{}, interval time.Duration, router *api.Router, opts applyOptions, cache *resultCache, logger *eventlog.Logger, applyMu *sync.Mutex) {
+func runApplySchedule(stop <-chan struct{}, interval time.Duration, router func() *api.Router, opts applyOptions, cache *resultCache, logger *eventlog.Logger, applyMu *sync.Mutex) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -1387,7 +1412,7 @@ func runApplySchedule(stop <-chan struct{}, interval time.Duration, router *api.
 			return
 		case <-ticker.C:
 			applyMu.Lock()
-			result, err := runApplyOnce(router, opts, io.Discard, logger)
+			result, err := runApplyOnce(router(), opts, io.Discard, logger)
 			applyMu.Unlock()
 			if err != nil {
 				logger.Emit(eventlog.LevelError, "serve", "scheduled apply failed", map[string]string{"error": err.Error()})
