@@ -5,6 +5,8 @@ slug: /reference/api-v1alpha1
 
 # 資源 API v1alpha1
 
+![Diagram showing the Resource API v1alpha1 shape from apiVersion, kind, metadata, spec, and status through API groups and generated schema validation contracts](/img/diagrams/api-v1alpha1.png)
+
 routerd 的設定由最頂層的 `Router` 以及型別化資源清單組成。
 本頁依照目前實作列出各資源。
 Phase 1.6 起，DHCP 相關的 Kind 依 RFC 表記改為 `DHCPv4*` 與 `DHCPv6*`。

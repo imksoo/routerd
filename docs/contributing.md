@@ -4,6 +4,8 @@ title: Contributing
 
 # Contributing
 
+![Diagram showing the routerd contribution flow from host-facing change scope through local checks, schema checks, example validation, website build, shellcheck, and license agreement](/img/diagrams/contributing.png)
+
 routerd is pre-release router control-plane software. Contributions are
 welcome, but changes that touch networking, firewalling, routing, installers,
 or host service management need careful review.

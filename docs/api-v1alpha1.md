@@ -5,6 +5,8 @@ slug: /reference/api-v1alpha1
 
 # Resource API v1alpha1
 
+![Diagram showing the Resource API v1alpha1 shape from apiVersion, kind, metadata, spec, and status through API groups and generated schema validation contracts](/img/diagrams/api-v1alpha1.png)
+
 routerd configuration is a top-level `Router` resource with a list of typed
 resources. This page summarizes the current implemented API surface.
 

@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" font-family="Inter, Arial, Helvetica, sans-serif">
+<defs>
+  <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="5.5" orient="auto">
+    <path d="M 0 0 L 11 5.5 L 0 11 z" fill="#2f4f6f"/>
+  </marker>
+  <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
+    <feDropShadow dx="0" dy="5" stdDeviation="5" flood-color="#10233f" flood-opacity="0.14"/>
+  </filter>
+</defs>
+<rect width="1600" height="900" fill="#f7fafc"/>
+<rect x="28" y="28" width="1544" height="844" rx="30" fill="#ffffff" stroke="#e2e8f0" stroke-width="2"/>
+<text x="74" y="92" font-size="42" font-weight="850" fill="#10233f">Why routerd owns DHCPv6-PD</text>
+<text x="76" y="130" font-size="23" font-weight="600" fill="#63758d">routerd-dhcpv6-client keeps prefix delegation observable, restart-safe, and consistent across Linux, FreeBSD, OpenRC, and NixOS paths.</text>
+<g filter="url(#shadow)">
+<g>
+  <rect x="72" y="176" width="430" height="600" rx="24" fill="#f6f8fb" stroke="#d9e2ef" stroke-width="2"/>
+  <text x="100" y="218" font-size="25" font-weight="800" fill="#45556f">Problem</text>
+</g>
+<g>
+  <rect x="112" y="245" width="340" height="92" rx="18" fill="#e9f8ef" stroke="#2e7d55" stroke-width="3"/>
+  <text x="282" y="285.05" font-size="23" font-weight="700" fill="#13233a" text-anchor="middle" dominant-baseline="middle"><tspan x="282" dy="0">OS clients differ</tspan><tspan x="282" dy="28">by platform</tspan></text>
+</g>
+<g>
+  <rect x="112" y="410" width="340" height="92" rx="18" fill="#eaf2ff" stroke="#3267b1" stroke-width="3"/>
+  <text x="282" y="450.05" font-size="23" font-weight="700" fill="#13233a" text-anchor="middle" dominant-baseline="middle"><tspan x="282" dy="0">PD state needed</tspan><tspan x="282" dy="28">by downstream LAN resources</tspan></text>
+</g>
+<g>
+  <rect x="112" y="575" width="340" height="92" rx="18" fill="#f5f3ff" stroke="#6d5bd0" stroke-width="3"/>
+  <text x="282" y="615.05" font-size="23" font-weight="700" fill="#13233a" text-anchor="middle" dominant-baseline="middle"><tspan x="282" dy="0">stale prefix</tspan><tspan x="282" dy="28">must not be advertised</tspan></text>
+</g>
+<g>
+  <rect x="540" y="176" width="470" height="600" rx="24" fill="#f6f8fb" stroke="#d9e2ef" stroke-width="2"/>
+  <text x="568" y="218" font-size="25" font-weight="800" fill="#45556f">routerd client</text>
+</g>
+<g>
+  <rect x="580" y="245" width="390" height="92" rx="18" fill="#e9f8ef" stroke="#2e7d55" stroke-width="3"/>
+  <text x="775" y="285.05" font-size="23" font-weight="700" fill="#13233a" text-anchor="middle" dominant-baseline="middle"><tspan x="775" dy="0">solicit advertise</tspan><tspan x="775" dy="28">request renew</tspan></text>
+</g>
+<g>
+  <rect x="580" y="410" width="390" height="92" rx="18" fill="#eaf2ff" stroke="#3267b1" stroke-width="3"/>
+  <text x="775" y="450.05" font-size="23" font-weight="700" fill="#13233a" text-anchor="middle" dominant-baseline="middle"><tspan x="775" dy="0">lease.json survives</tspan><tspan x="775" dy="28">restart</tspan></text>
+</g>
+<g>
+  <rect x="580" y="575" width="390" height="92" rx="18" fill="#f5f3ff" stroke="#6d5bd0" stroke-width="3"/>
+  <text x="775" y="615.05" font-size="23" font-weight="700" fill="#13233a" text-anchor="middle" dominant-baseline="middle"><tspan x="775" dy="0">status feeds</tspan><tspan x="775" dy="28">IPv6DelegatedAddress</tspan></text>
+</g>
+<g>
+  <rect x="1048" y="176" width="480" height="600" rx="24" fill="#f6f8fb" stroke="#d9e2ef" stroke-width="2"/>
+  <text x="1076" y="218" font-size="25" font-weight="800" fill="#45556f">Operational result</text>
+</g>
+<g>
+  <rect x="1088" y="245" width="390" height="92" rx="18" fill="#e9f8ef" stroke="#2e7d55" stroke-width="3"/>
+  <text x="1283" y="285.05" font-size="23" font-weight="700" fill="#13233a" text-anchor="middle" dominant-baseline="middle"><tspan x="1283" dy="0">LAN waits for</tspan><tspan x="1283" dy="28">Bound prefix</tspan></text>
+</g>
+<g>
+  <rect x="1088" y="410" width="390" height="92" rx="18" fill="#eaf2ff" stroke="#3267b1" stroke-width="3"/>
+  <text x="1283" y="450.05" font-size="23" font-weight="700" fill="#13233a" text-anchor="middle" dominant-baseline="middle"><tspan x="1283" dy="0">fixed DUID</tspan><tspan x="1283" dy="28">for HA when needed</tspan></text>
+</g>
+<g>
+  <rect x="1088" y="575" width="390" height="92" rx="18" fill="#f5f3ff" stroke="#6d5bd0" stroke-width="3"/>
+  <text x="1283" y="615.05" font-size="23" font-weight="700" fill="#13233a" text-anchor="middle" dominant-baseline="middle"><tspan x="1283" dy="0">one daemon contract</tspan><tspan x="1283" dy="28">across platforms</tspan></text>
+</g>
+<line x1="452" y1="476" x2="580" y2="476" fill="none" stroke="#2f4f6f" stroke-width="4" marker-end="url(#arrow)"/><text x="516" y="464" font-size="22" font-weight="700" fill="#2f4f6f" text-anchor="middle">intent</text>
+<line x1="970" y1="476" x2="1088" y2="476" fill="none" stroke="#2f4f6f" stroke-width="4" marker-end="url(#arrow)"/><text x="1029" y="464" font-size="22" font-weight="700" fill="#2f4f6f" text-anchor="middle">runtime</text>
+<g>
+  <rect x="310" y="705" width="980" height="55" rx="14" fill="#fff8df" stroke="#d7a725" stroke-width="3"/>
+  <text x="800" y="727.5" font-size="20" font-weight="650" fill="#5b4400" text-anchor="middle" dominant-baseline="middle"><tspan x="800" dy="0">Prefix delegation is a routing input, so routerd keeps it in the same observable</tspan><tspan x="800" dy="24">resource lifecycle as the rest of the router.</tspan></text>
+</g>
+</g>
+</svg>

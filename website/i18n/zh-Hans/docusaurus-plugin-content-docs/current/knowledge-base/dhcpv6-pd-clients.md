@@ -4,6 +4,8 @@ title: routerd 自行实现 DHCPv6-PD 客户端的原因
 
 # routerd 自行实现 DHCPv6-PD 客户端的原因
 
+![Diagram showing why routerd owns DHCPv6-PD from OS client variation and stale prefix risk through routerd-dhcpv6-client lease state, status, delegated LAN address inputs, and HA DUID operation](/img/diagrams/knowledge-base-dhcpv6-pd-clients.png)
+
 routerd 当前的方针是由专属守护进程 `routerd-dhcpv6-client` 负责 DHCPv6-PD。
 过去评估过的 OS 内置客户端方案，并未纳入现行配置示例。
 

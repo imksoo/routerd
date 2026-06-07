@@ -1427,6 +1427,138 @@ const diagrams = [
     ],
     noteText: 'Read-only ISO media can import config, but cannot provide writable persistence.',
   }),
+  flowDiagram({
+    name: 'api-v1alpha1',
+    title: 'Resource API v1alpha1',
+    subtitle: 'router.yaml is one Router resource containing typed network, firewall, system, hybrid, and mobility resources.',
+    lanes: [
+      { title: 'Common shape', boxes: ['apiVersion\nkind metadata.name', 'spec is desired intent', 'status is observed\nruntime state'] },
+      { title: 'API groups', boxes: ['routerd.net\nRouter', 'net/firewall/system\nhost resources', 'hybrid/mobility\nCloudEdge SAM resources'] },
+      { title: 'Contract', boxes: ['generated JSON Schema', 'validate before apply', 'removed kinds\nfail loading explicitly'] },
+    ],
+    noteText: 'The API is pre-release v1alpha1, but generated schemas keep authoring and CI aligned with Go types.',
+  }),
+  flowDiagram({
+    name: 'contributing',
+    title: 'Contributing to routerd',
+    subtitle: 'Networking, firewall, routing, installer, and service-manager changes need focused tests and schema-aware review.',
+    lanes: [
+      { title: 'Change scope', boxes: ['networking and routing', 'firewall and NAT', 'installers and\nhost services'] },
+      { title: 'Local checks', boxes: ['make test', 'make check-schema', 'make validate-example\nmake website-build'] },
+      { title: 'Review contract', boxes: ['shellcheck for\nscript changes', 'generated schema\nwhen API changes', 'BSD-3-Clause\ncontribution license'] },
+    ],
+    noteText: 'Keep changes explicit, test host-facing behavior, and update docs when contracts move.',
+  }),
+  flowDiagram({
+    name: 'control-api-v1alpha1',
+    title: 'Control API v1alpha1',
+    subtitle: 'Local HTTP+JSON sockets let routerctl, controllers, daemons, and scripts read status and invoke local commands.',
+    lanes: [
+      { title: 'Main routerd', boxes: ['/run/routerd/routerd.sock\nprivileged local API', 'routerd-status.sock\nread-only status', 'status events\nconnections logs'] },
+      { title: 'Managed daemons', boxes: ['per-daemon Unix sockets', '/v1/status\n/v1/events', 'reload renew stop\ncommands'] },
+      { title: 'Client contract', boxes: ['ResourceStatus phase\nand conditions', 'stable JSON fields\nfor doctor/status', 'local only\nnot remote management'] },
+    ],
+    noteText: 'Client decisions should use phases, conditions, and documented fields rather than parsing log text.',
+  }),
+  flowDiagram({
+    name: 'design-bgp-frr-control-plane',
+    title: 'BGP / FRR control plane',
+    subtitle: 'The FRR controller treats vtysh round trips and frr-reload.py as the authoritative readiness and convergence path.',
+    lanes: [
+      { title: 'Problem', boxes: ['TCP VTY may be\nintentionally disabled', 'socket existence\nis diagnostic only', 'old readiness gate\ncaused restart loops'] },
+      { title: 'Controller flow', boxes: ['render frr config\nand daemons file', 'ensure FRR service\nactive or restart', 'vtysh show running-config\nreadiness probe'] },
+      { title: 'Converge', boxes: ['vtysh -C syntax check', 'frr-reload.py --reload\nwith lock retry', 'verify BGP stanza\nor surface status reason'] },
+    ],
+    noteText: 'TCP listen checks are avoided; the control-plane round trip is the readiness signal.',
+  }),
+  flowDiagram({
+    name: 'design-notes',
+    title: 'Design notes',
+    subtitle: 'Current design principles emphasize daemon contracts, honest LAN advertisement, DS-Lite behavior, event coordination, and OpenRC rendering.',
+    lanes: [
+      { title: 'Daemon model', boxes: ['HTTP+JSON over\nUnix socket', 'status health events\nreload renew stop', 'state file and\nappend-only events'] },
+      { title: 'Network rules', boxes: ['DHCPv6-PD owned by\nrouterd client', 'do not advertise\nstale delegated IPv6', 'DS-Lite AFTR through\nknown resolver path'] },
+      { title: 'Coordination', boxes: ['events as observed facts', 'Tier S building blocks\nstay reusable', 'OpenRC scripts\nrender before activation'] },
+    ],
+    noteText: 'These notes are current-code principles, not a chronological experiment log.',
+  }),
+  flowDiagram({
+    name: 'hardware-compatibility',
+    title: 'Hardware compatibility',
+    subtitle: 'Router hardware selection centers on NIC quality, CPU headroom, reliable storage, and live-ISO persistence behavior.',
+    lanes: [
+      { title: 'Choose platform', boxes: ['x86 mini PC\n2+ NICs', 'arm64 or VM\nwhere supported', 'avoid opaque\nconsumer routers'] },
+      { title: 'Check resources', boxes: ['CPU AES-NI\nor enough routing headroom', 'memory for daemons\nlogs and website-less ops', 'USB or SSD\npersistence strategy'] },
+      { title: 'Validate', boxes: ['interface names\nand link stability', 'WAN/LAN/management\nseparation', 'live ISO\nboot and config restore'] },
+    ],
+    noteText: 'Treat router hardware as an operational dependency: verify NICs, boot media, and management access before apply.',
+  }),
+  flowDiagram({
+    name: 'install-and-upgrade',
+    title: 'Install and upgrade',
+    subtitle: 'Install from release archives, keep config and state under /usr/local and platform state dirs, then validate before live apply.',
+    lanes: [
+      { title: 'Install', boxes: ['download archive\nand sha256', 'install.sh copies\nbinaries and services', 'runtime packages\nby OS package manager'] },
+      { title: 'First apply', boxes: ['edit router.yaml', 'validate plan dry-run', 'serve or apply --once\nwhen management is safe'] },
+      { title: 'Upgrade', boxes: ['preserve config\nand state dirs', 'BGP upgrade\nsoft-reset aware', 'uninstall removes\ninstalled artifacts by script'] },
+    ],
+    noteText: 'Use the fixed latest URL for quick starts; pin versioned URLs for repeatable runbooks.',
+  }),
+  flowDiagram({
+    name: 'intro',
+    title: 'routerd documentation map',
+    subtitle: 'Start from your goal, then move through concepts, examples, how-to guides, operations, references, and schemas.',
+    lanes: [
+      { title: 'Start by goal', boxes: ['install and first router', 'home router\nWAN/LAN services', 'CloudEdge SAM\nand provider labs'] },
+      { title: 'Learn the model', boxes: ['concepts', 'config examples', 'tutorials and how-to'] },
+      { title: 'Operate and extend', boxes: ['operations runbooks', 'API and control API', 'platforms\nplugins and schemas'] },
+    ],
+    noteText: 'Use the docs by task first, then drop into reference pages when you need exact fields or contracts.',
+  }),
+  flowDiagram({
+    name: 'knowledge-base-dhcpv6-pd-clients',
+    title: 'Why routerd owns DHCPv6-PD',
+    subtitle: 'routerd-dhcpv6-client keeps prefix delegation observable, restart-safe, and consistent across Linux, FreeBSD, OpenRC, and NixOS paths.',
+    lanes: [
+      { title: 'Problem', boxes: ['OS clients differ\nby platform', 'PD state needed\nby downstream LAN resources', 'stale prefix\nmust not be advertised'] },
+      { title: 'routerd client', boxes: ['solicit advertise\nrequest renew', 'lease.json survives\nrestart', 'status feeds\nIPv6DelegatedAddress'] },
+      { title: 'Operational result', boxes: ['LAN waits for\nBound prefix', 'fixed DUID\nfor HA when needed', 'one daemon contract\nacross platforms'] },
+    ],
+    noteText: 'Prefix delegation is a routing input, so routerd keeps it in the same observable resource lifecycle as the rest of the router.',
+  }),
+  flowDiagram({
+    name: 'knowledge-base-ntt-ngn-pd-acquisition',
+    title: 'NTT NGN-style PD and AFTR',
+    subtitle: 'PD, DHCPv6 information, carrier DNS, AFTR resolution, DS-Lite tunnel setup, and NAT44 must line up end to end.',
+    lanes: [
+      { title: 'Acquire inputs', boxes: ['DHCPv6-PD\nfor LAN prefix', 'information-request\nDNS/SNTP/domain search', 'AFTR may be absent\nfrom DHCPv6 info'] },
+      { title: 'Resolve AFTR', boxes: ['pin aftrIPv6\nor aftrFQDN', 'conditional DNS forward\nfor carrier domain', 'routerd-dns-resolver\nnot system stub'] },
+      { title: 'DS-Lite checklist', boxes: ['ip6tnl tunnel exists', 'IPv4 default route\npoints into tunnel', 'NAT44 and outbound IPv4\nfrom LAN succeed'] },
+    ],
+    noteText: 'Carrier AFTR names often resolve only through carrier DNS; model that explicitly in DNSResolver.',
+  }),
+  flowDiagram({
+    name: 'legal-redistribution',
+    title: 'Legal and redistribution',
+    subtitle: 'Release archives and live ISOs carry routerd notices plus third-party license inventories that must be regenerated before tagging.',
+    lanes: [
+      { title: 'Inventory', boxes: ['make third-party-licenses', 'Go module licenses', 'Alpine package\nlicense metadata'] },
+      { title: 'Distribution', boxes: ['release archive\nLICENSE + THIRD_PARTY', 'live ISO aggregate\nwith package licenses', 'SPDX headers\nfor routerd source'] },
+      { title: 'Release check', boxes: ['review copyleft\nmodule findings', 'confirm notices\ninside archives and ISO', 'run normal test\nschema example website checks'] },
+    ],
+    noteText: 'This page is operational guidance, not legal advice; review the generated inventory when dependencies change.',
+  }),
+  flowDiagram({
+    name: 'platforms',
+    title: 'Supported platforms',
+    subtitle: 'Each OS shares the routerd resource model but uses platform-specific service managers, renderers, paths, and feature gates.',
+    lanes: [
+      { title: 'Primary Linux', boxes: ['Ubuntu/Debian\nsystemd', 'nftables dnsmasq\niproute2 GoBGP', '/run/routerd\n/var/lib/routerd'] },
+      { title: 'Secondary targets', boxes: ['Alpine/OpenRC\nlive ISO path', 'NixOS module\nnixos-rebuild', 'FreeBSD rc.d/pf\ngroundwork and gaps'] },
+      { title: 'Implementation rule', boxes: ['use pkg/platform', 'branch on Features\nor build tags', 'do not imply parity\nwhere renderer is pending'] },
+    ],
+    noteText: 'Cross-OS support is explicit: document implemented surfaces and keep pending renderer work scoped as groundwork.',
+  }),
 ];
 
 function chromePath() {

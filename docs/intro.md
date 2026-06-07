@@ -7,6 +7,8 @@ sidebar_label: Overview
 
 # routerd documentation
 
+![Diagram showing the routerd documentation map from install and first router goals through concepts, examples, tutorials, how-to guides, operations, API references, platforms, plugins, and schemas](/img/diagrams/intro.png)
+
 routerd turns typed YAML resources into a working, observable router on a Linux, NixOS, or FreeBSD host. Pick the section that matches what you are trying to do.
 
 :::tip Recommended stable release

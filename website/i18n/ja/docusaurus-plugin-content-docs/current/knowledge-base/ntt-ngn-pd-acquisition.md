@@ -4,6 +4,8 @@ title: NTT NGN 系アクセス網での DHCPv6-PD と AFTR
 
 # NTT NGN 系アクセス網での DHCPv6-PD と AFTR
 
+![Diagram showing DHCPv6-PD and AFTR acquisition on NTT NGN-style access from prefix delegation and information request through carrier DNS AFTR resolution to DS-Lite tunnel, IPv4 route, NAT44, and LAN connectivity checks](/img/diagrams/knowledge-base-ntt-ngn-pd-acquisition.png)
+
 NTT NGN (日本の IPv6 光回線) のような IPv6 アクセス網につながる HGW 配下で routerd を使う場合のフィールドノートです。
 DHCPv6-PD と、網内 AFTR への DS-Lite を組み合わせる他の事業者にも、同じパターンが適用できます。
 

@@ -4,6 +4,8 @@ title: 設計メモ
 
 # 設計メモ
 
+![Diagram showing routerd design notes covering daemon contracts, DHCPv6-PD ownership, honest LAN advertisement, DS-Lite AFTR resolution, event coordination, reusable building blocks, and OpenRC rendering](/img/diagrams/design-notes.png)
+
 このドキュメントは、routerd で残すべき設計判断の記録です。
 過去の試行錯誤の時系列ログではなく、現在のコードが従っている原則と、今後の変更で守るべき指針だけを残します。
 

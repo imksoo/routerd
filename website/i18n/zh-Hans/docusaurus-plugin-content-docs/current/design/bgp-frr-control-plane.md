@@ -8,6 +8,8 @@ routerd 目前使用以 GoBGP 为基础的 `routerd-bgp` 守护进程，而非 F
 
 # BGP / FRR Control Plane Integration Design
 
+![Diagram showing the BGP FRR control-plane design from TCP VTY readiness problems through FRR service checks, vtysh readiness probes, frr-reload.py reloads, syntax validation, and running-config verification](/img/diagrams/design-bgp-frr-control-plane.png)
+
 本文件说明 routerd 为了支持 BGP 及相关路由协议，与 FRR 控制平面（vtysh、frr-reload.py、守护进程 socket）交互的设计。
 
 ## 问题整理

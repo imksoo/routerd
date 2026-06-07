@@ -4,6 +4,8 @@ title: 硬件兼容性
 
 # 硬件兼容性
 
+![Diagram showing hardware compatibility decisions from platform class selection through CPU, memory, NIC, storage, live ISO persistence, and validation checklist](/img/diagrams/hardware-compatibility.png)
+
 routerd 可在具备必要内核功能与用户空间功能的支持 OS 上运行。
 实际上的重点在于，作为路由器使用时，网络接口、CPU、内存与存储装置耐久性是否充足。
 

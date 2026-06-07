@@ -4,6 +4,8 @@ title: Install and upgrade
 
 # Install and upgrade
 
+![Diagram showing routerd install and upgrade from release archive download and install.sh through first router.yaml validation, dry-run apply, serve mode, preserved config and state, and uninstall](/img/diagrams/install-and-upgrade.png)
+
 Use the release archive when you install routerd on a router host.
 The archive contains the binaries, service template, sample configuration, and
 the installer scripts.

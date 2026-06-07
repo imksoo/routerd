@@ -4,6 +4,8 @@ title: routerd 自行實作 DHCPv6-PD 用戶端的原因
 
 # routerd 自行實作 DHCPv6-PD 用戶端的原因
 
+![Diagram showing why routerd owns DHCPv6-PD from OS client variation and stale prefix risk through routerd-dhcpv6-client lease state, status, delegated LAN address inputs, and HA DUID operation](/img/diagrams/knowledge-base-dhcpv6-pd-clients.png)
+
 routerd 目前的方針是由專屬常駐程式 `routerd-dhcpv6-client` 負責 DHCPv6-PD。
 過去評估過的 OS 內建用戶端方案，並未納入現行設定範例。
 

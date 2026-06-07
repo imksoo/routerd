@@ -7,6 +7,8 @@ sidebar_label: 概览
 
 # routerd 文档
 
+![Diagram showing the routerd documentation map from install and first router goals through concepts, examples, tutorials, how-to guides, operations, API references, platforms, plugins, and schemas](/img/diagrams/intro.png)
+
 routerd 是一个声明式路由器，通过以类型化 YAML 描述的期望状态，在 Linux / NixOS / FreeBSD 上构建可运作的路由器。无需以程序步骤堆叠配置，只需声明您想要的状态，routerd 便会将实际系统收敛至该状态。
 
 请从符合您目的的章节开始阅读。

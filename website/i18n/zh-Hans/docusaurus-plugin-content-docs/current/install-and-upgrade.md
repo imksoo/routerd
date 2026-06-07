@@ -4,6 +4,8 @@ title: 安装与升级
 
 # 安装与升级
 
+![Diagram showing routerd install and upgrade from release archive download and install.sh through first router.yaml validation, dry-run apply, serve mode, preserved config and state, and uninstall](/img/diagrams/install-and-upgrade.png)
+
 通过发布归档包将 routerd 安装至路由器主机。
 归档包含可执行文件、服务模板、配置示例及安装程序。
 路由器主机上不需要 Go 或 Makefile。

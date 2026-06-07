@@ -4,6 +4,8 @@ title: 貢献する
 
 # 貢献する
 
+![Diagram showing the routerd contribution flow from host-facing change scope through local checks, schema checks, example validation, website build, shellcheck, and license agreement](/img/diagrams/contributing.png)
+
 routerd はプレリリースのルーター制御プレーンです。
 貢献は歓迎します。
 ただし、ネットワーク、ファイアウォール、経路、インストーラー、

@@ -4,6 +4,8 @@ title: Legal and redistribution
 
 # Legal and Redistribution
 
+![Diagram showing legal and redistribution checks from third-party license inventory through release archives, live ISO aggregate licensing, SPDX source headers, copyleft review, and release checklist](/img/diagrams/legal-redistribution.png)
+
 routerd itself is distributed under the BSD 3-Clause License. The full license
 text is in the repository root as `LICENSE`.
 

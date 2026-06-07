@@ -4,6 +4,8 @@ title: 対応プラットフォーム
 
 # 対応プラットフォーム
 
+![Diagram showing supported platforms with Linux systemd primary integration, Alpine OpenRC live ISO support, NixOS module activation, FreeBSD rc.d and pf groundwork, and pkg/platform feature-gated implementation rules](/img/diagrams/platforms.png)
+
 routerd は cross-OS を前提に設計されています。
 利用するホスト側の機構は OS ごとに異なります。
 このページでは、routerd が各プラットフォームで使う OS 機能を明示します。
