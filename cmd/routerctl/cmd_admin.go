@@ -188,15 +188,15 @@ func readCandidateYAML(path string, stdin io.Reader) (string, error) {
 }
 
 func setLogLevelCommand(args []string, stdout io.Writer) error {
-	fs := flag.NewFlagSet("set-log-level", flag.ContinueOnError)
+	fs := flag.NewFlagSet("log-level", flag.ContinueOnError)
 	fs.SetOutput(stdout)
 	fs.Usage = func() {
 		printSubcommandHelp(fs,
 			"動作中の routerd の slog ログレベルを動的に変更する。\n"+
 				"位置引数: <debug|info|warning|error|default> (default は起動時の値に戻す)",
-			"routerctl set-log-level debug\n"+
-				"routerctl set-log-level info\n"+
-				"routerctl set-log-level default")
+			"routerctl log-level debug\n"+
+				"routerctl log-level info\n"+
+				"routerctl log-level default")
 	}
 	socketPath := fs.String("socket", defaultSocketPath(), "routerd Unix domain socket path")
 	timeout := fs.Duration("timeout", 5*time.Second, "request timeout")
@@ -207,7 +207,7 @@ func setLogLevelCommand(args []string, stdout io.Writer) error {
 		return err
 	}
 	if fs.NArg() != 1 {
-		return errors.New("set-log-level requires <debug|info|warning|error|default>")
+		return errors.New("log-level requires <debug|info|warning|error|default>")
 	}
 	level := fs.Arg(0)
 	switch level {
@@ -224,16 +224,37 @@ func setLogLevelCommand(args []string, stdout io.Writer) error {
 	return writeJSON(stdout, result)
 }
 
+func restartCommand(args []string, stdout, stderr io.Writer) error {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "usage: routerctl restart <daemon> [options]")
+		return errors.New("restart requires <daemon>")
+	}
+	switch args[0] {
+	case "dns-resolver", "dnsresolver", "dns":
+		return restartDNSResolverCommand(args[1:], stdout)
+	case "help", "-h", "--help":
+		fmt.Fprintln(stdout, "Usage:")
+		fmt.Fprintln(stdout, "  routerctl restart dns-resolver [name] [--config <path>]")
+		fmt.Fprintln(stdout, "")
+		fmt.Fprintln(stdout, "Examples:")
+		fmt.Fprintln(stdout, "  routerctl restart dns-resolver")
+		fmt.Fprintln(stdout, "  routerctl restart dns-resolver lan")
+		return nil
+	default:
+		return fmt.Errorf("unknown restart daemon %q", args[0])
+	}
+}
+
 func restartDNSResolverCommand(args []string, stdout io.Writer) error {
-	fs := flag.NewFlagSet("restart-dns-resolver", flag.ContinueOnError)
+	fs := flag.NewFlagSet("restart dns-resolver", flag.ContinueOnError)
 	fs.SetOutput(stdout)
 	fs.Usage = func() {
 		printSubcommandHelp(fs,
 			"DNSResolver resource ごとに紐付く systemd unit (routerd-dns-resolver@<name>) を restart する。\n"+
 				"位置引数: [name] (DNSResolver 名。1 個しかない場合は省略可)",
-			"routerctl restart-dns-resolver\n"+
-				"routerctl restart-dns-resolver lan\n"+
-				"routerctl restart-dns-resolver --config /etc/routerd/config.yaml")
+			"routerctl restart dns-resolver\n"+
+				"routerctl restart dns-resolver lan\n"+
+				"routerctl restart dns-resolver --config /etc/routerd/config.yaml")
 	}
 	configPath := fs.String("config", defaultConfigPath(), "config path")
 	timeout := fs.Duration("timeout", 30*time.Second, "restart timeout")
@@ -244,7 +265,7 @@ func restartDNSResolverCommand(args []string, stdout io.Writer) error {
 		return err
 	}
 	if fs.NArg() > 1 {
-		return errors.New("restart-dns-resolver accepts at most one resolver name")
+		return errors.New("restart dns-resolver accepts at most one resolver name")
 	}
 	router, err := config.Load(*configPath)
 	if err != nil {
@@ -315,6 +336,46 @@ func containsString(values []string, want string) bool {
 	return false
 }
 
+func ingressCommand(args []string, stdout, stderr io.Writer) error {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "usage: routerctl ingress <drain|undrain> ingress/<service> backend=<name>")
+		return errors.New("ingress requires <drain|undrain>")
+	}
+	switch args[0] {
+	case "drain":
+		if len(args) > 1 && isHelpArg(args[1]) {
+			printIngressHelp(stdout)
+			return nil
+		}
+		return ingressDrainCommand(args[1:], stdout, true)
+	case "undrain":
+		if len(args) > 1 && isHelpArg(args[1]) {
+			printIngressHelp(stdout)
+			return nil
+		}
+		return ingressDrainCommand(args[1:], stdout, false)
+	case "help", "-h", "--help":
+		printIngressHelp(stdout)
+		return nil
+	default:
+		return fmt.Errorf("unknown ingress command %q", args[0])
+	}
+}
+
+func printIngressHelp(stdout io.Writer) {
+	fmt.Fprintln(stdout, "Usage:")
+	fmt.Fprintln(stdout, "  routerctl ingress drain ingress/<service> backend=<name> [--duration 10m] [--state-file <path>]")
+	fmt.Fprintln(stdout, "  routerctl ingress undrain ingress/<service> backend=<name> [--state-file <path>]")
+	fmt.Fprintln(stdout, "")
+	fmt.Fprintln(stdout, "Examples:")
+	fmt.Fprintln(stdout, "  routerctl ingress drain ingress/kubernetes-api backend=cp-01 --duration 10m")
+	fmt.Fprintln(stdout, "  routerctl ingress undrain ingress/kubernetes-api --backend cp-01")
+}
+
+func isHelpArg(arg string) bool {
+	return arg == "help" || arg == "-h" || arg == "--help"
+}
+
 func ingressDrainCommand(args []string, stdout io.Writer, drain bool) error {
 	statePath := defaultStatePath()
 	var duration time.Duration
@@ -368,9 +429,9 @@ func ingressDrainCommand(args []string, stdout io.Writer, drain bool) error {
 	}
 	if target == "" {
 		if drain {
-			return errors.New("drain requires ingress/<service> backend=<name>")
+			return errors.New("ingress drain requires ingress/<service> backend=<name>")
 		}
-		return errors.New("undrain requires ingress/<service> backend=<name>")
+		return errors.New("ingress undrain requires ingress/<service> backend=<name>")
 	}
 	kind, service, err := parseResourceTarget("drain", target)
 	if err != nil {

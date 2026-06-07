@@ -52,16 +52,12 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return pluginCommand(args[1:], stdout, stderr)
 	case "action":
 		return actionCommand(args[1:], stdout, stderr)
-	case "wireguard", "wg":
-		return wireGuardCommand(args[1:], stdout, stderr)
-	case "tailscale", "ts":
-		return tailscaleCommand(args[1:], stdout, stderr)
+	case "vpn":
+		return vpnCommand(args[1:], stdout, stderr)
 	case "doctor":
 		return doctorCommand(args[1:], stdout, stderr)
-	case "drain":
-		return ingressDrainCommand(args[1:], stdout, true)
-	case "undrain":
-		return ingressDrainCommand(args[1:], stdout, false)
+	case "ingress":
+		return ingressCommand(args[1:], stdout, stderr)
 	case "validate":
 		return validateCommand(args[1:], stdout, os.Stdin)
 	case "plan":
@@ -74,10 +70,10 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return rollbackCommand(args[1:], stdout)
 	case "adopt":
 		return adoptCommand(args[1:], stdout)
-	case "set-log-level":
+	case "log-level":
 		return setLogLevelCommand(args[1:], stdout)
-	case "restart-dns-resolver":
-		return restartDNSResolverCommand(args[1:], stdout)
+	case "restart":
+		return restartCommand(args[1:], stdout, stderr)
 	case "help", "-h", "--help":
 		usage(stdout)
 		return nil
@@ -118,18 +114,18 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  action execute <id> --dry-run|--approved [--config <path>] [--state-file <path>]")
 	fmt.Fprintln(w, "  action journal [--state-file <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  action rollback <id> --dry-run|--approved [--config <path>] [--state-file <path>]")
-	fmt.Fprintln(w, "  wireguard list [-o table|json|yaml]")
-	fmt.Fprintln(w, "  wireguard show <interface> [-o table|json|yaml]")
-	fmt.Fprintln(w, "  tailscale peers [-o table|json|yaml] [--binary tailscale]")
+	fmt.Fprintln(w, "  vpn wireguard list [-o table|json|yaml]")
+	fmt.Fprintln(w, "  vpn wireguard show <interface> [-o table|json|yaml]")
+	fmt.Fprintln(w, "  vpn tailscale peers [-o table|json|yaml] [--binary tailscale]")
 	fmt.Fprintln(w, "  doctor [area] [--probe <subject>] [--socket <path>] [-o table|json|yaml]")
-	fmt.Fprintln(w, "  drain ingress/<service> backend=<name> [--duration 10m] [--state-file <path>]")
-	fmt.Fprintln(w, "  undrain ingress/<service> backend=<name> [--state-file <path>]")
+	fmt.Fprintln(w, "  ingress drain ingress/<service> backend=<name> [--duration 10m] [--state-file <path>]")
+	fmt.Fprintln(w, "  ingress undrain ingress/<service> backend=<name> [--state-file <path>]")
 	fmt.Fprintln(w, "  validate [-f <file|-] [--socket <path>] [--replace]")
 	fmt.Fprintln(w, "  plan [-f <file|-] [--socket <path>] [--replace]")
 	fmt.Fprintln(w, "  apply -f <file|-> [--socket <path>] [--replace] [--no-reconcile]")
 	fmt.Fprintln(w, "  delete <kind>/<name> [--socket <path>] [--dry-run] [--force] [--api-version <version>] [--no-reconcile]")
 	fmt.Fprintln(w, "  rollback [--list] [--to <generation>] [--socket <path>] [--state-file <path>] [--no-reconcile]")
 	fmt.Fprintln(w, "  adopt --candidates|--apply [--config <path>] [--ledger-file <path>]")
-	fmt.Fprintln(w, "  set-log-level <debug|info|warning|error|default> [--socket <path>]")
-	fmt.Fprintln(w, "  restart-dns-resolver [name] [--config <path>]")
+	fmt.Fprintln(w, "  log-level <debug|info|warning|error|default> [--socket <path>]")
+	fmt.Fprintln(w, "  restart dns-resolver [name] [--config <path>]")
 }
