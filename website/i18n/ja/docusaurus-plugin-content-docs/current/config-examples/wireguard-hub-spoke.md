@@ -5,6 +5,8 @@ sidebar_position: 100
 
 # WireGuard ハブ＆スポークのテンプレート
 
+![WireGuard hub interface、hub tunnel address、spoke peer、tunnel /32、routed LAN prefix の構成](/img/diagrams/config-example-wireguard-hub-spoke.png)
+
 2 つの spoke を持つ routed WireGuard hub のテンプレートです。
 実際に使う前に、鍵、エンドポイント、広告するプレフィックスを置き換えてください。
 

@@ -5,6 +5,8 @@ sidebar_position: 30
 
 # DS-Lite home gateway
 
+![Diagram showing IPv6 WAN prefix delegation, DS-Lite tunnel egress, derived NAT44, and LAN IPv4 plus delegated IPv6 services](/img/diagrams/config-example-dslite-home.png)
+
 This example models a common IPv6-first access line: the router receives IPv6
 through Router Advertisement and DHCPv6-PD, derives a LAN prefix, and sends IPv4
 traffic through a DS-Lite tunnel.

@@ -4,6 +4,8 @@ title: Firewall rate limits and ICMP rules
 
 # Firewall rate limits and ICMP rules
 
+![Diagram showing WAN traffic classes, FirewallRule rate and connection limits, and generated stateful nftables filtering](/img/diagrams/config-example-firewall-rate-limit.png)
+
 This example shows stateful `FirewallRule` expressions for a small router:
 
 - allow HTTP and HTTPS on the router with one multi-port rule

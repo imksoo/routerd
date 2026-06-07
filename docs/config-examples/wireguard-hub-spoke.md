@@ -5,6 +5,8 @@ sidebar_position: 100
 
 # WireGuard hub and spoke template
 
+![Diagram showing a WireGuard hub interface, hub tunnel address, spoke peers, tunnel /32s, and routed LAN prefixes](/img/diagrams/config-example-wireguard-hub-spoke.png)
+
 This template describes a routed WireGuard hub with two spokes. Treat it as a
 starting point: replace keys, endpoint names, and routed prefixes before use.
 

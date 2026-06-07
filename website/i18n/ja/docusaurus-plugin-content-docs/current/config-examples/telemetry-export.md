@@ -5,6 +5,8 @@ sidebar_position: 110
 
 # OTLP コレクターへのテレメトリ送出
 
+![routerd の log、metric、trace、service attribute を Telemetry resource から OTLP collector へ export する構成](/img/diagrams/config-example-telemetry-export.png)
+
 routerd のテレメトリを OpenTelemetry コレクターへ送る例です。
 長時間運転、health check、DPI、apply のレイテンシーの観測に使えます。
 

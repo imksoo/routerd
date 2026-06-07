@@ -4,6 +4,8 @@ title: 防火牆速率限制與 ICMP 規則
 
 # 防火牆速率限制與 ICMP 規則
 
+![WAN traffic class、FirewallRule rate 與 connection limit，以及產生的 stateful nftables filtering](/img/diagrams/config-example-firewall-rate-limit.png)
+
 此範例示範小型路由器的有狀態 `FirewallRule` 撰寫方式。
 
 - 以單一多連接埠規則允許 HTTP 和 HTTPS

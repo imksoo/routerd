@@ -5,6 +5,8 @@ sidebar_position: 80
 
 # パブリック DNS をローカルリゾルバへリダイレクト
 
+![LAN の plaintext DNS が IPAddressSet で一致し local DNSResolver へ redirect される構成](/img/diagrams/config-example-local-dns-redirect.png)
+
 LAN クライアントが有名なパブリックリゾルバへ平文 DNS を直接送ろうとしたときに、
 TCP/UDP の port 53 だけをルーターのローカルリゾルバへリダイレクトする例です。
 DoH や DoT の port には手を加えません。

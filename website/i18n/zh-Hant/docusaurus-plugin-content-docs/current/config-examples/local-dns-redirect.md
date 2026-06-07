@@ -5,6 +5,8 @@ sidebar_position: 80
 
 # 將公共 DNS 重新導向至本地解析器
 
+![LAN plaintext DNS 由 IPAddressSet 符合並 redirect 到 local DNSResolver 的構成](/img/diagrams/config-example-local-dns-redirect.png)
+
 當 LAN 用戶端試圖直接將明文 DNS 查詢送往知名公共解析器時，
 僅將 TCP/UDP port 53 重新導向至路由器本地解析器的範例。
 DoH 及 DoT 的連接埠不受影響。

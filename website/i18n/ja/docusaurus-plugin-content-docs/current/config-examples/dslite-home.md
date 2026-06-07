@@ -5,6 +5,8 @@ sidebar_position: 30
 
 # DS-Lite ホームルーター
 
+![IPv6 WAN prefix delegation、DS-Lite tunnel egress、derived NAT44、LAN IPv4 と delegated IPv6 service の構成](/img/diagrams/config-example-dslite-home.png)
+
 IPv6 を主回線として使う回線の例です。ルーターは Router Advertisement と DHCPv6-PD で
 IPv6 を受け取り、LAN prefix を派生させ、IPv4 のトラフィックは DS-Lite tunnel に通します。
 

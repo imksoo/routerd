@@ -5,6 +5,8 @@ sidebar_position: 20
 
 # LAN DHCP and local DNS
 
+![Diagram showing routerd serving a LAN gateway address, DHCPv4 pool and reservation, local DNS zone, and lease-derived names](/img/diagrams/config-example-lan-dns-dhcp.png)
+
 This example turns one LAN interface into a small home or lab service segment:
 routerd owns the LAN address, serves DHCPv4, answers a local DNS zone, and
 derives client names from DHCP leases.

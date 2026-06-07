@@ -5,6 +5,8 @@ sidebar_position: 110
 
 # Telemetry export to an OTLP collector
 
+![Diagram showing routerd logs, metrics, traces, and service attributes exported through a Telemetry resource to an OTLP collector](/img/diagrams/config-example-telemetry-export.png)
+
 This example sends routerd telemetry to an OpenTelemetry collector. It is useful
 when testing long-running behavior, health checks, DPI, or apply latency.
 

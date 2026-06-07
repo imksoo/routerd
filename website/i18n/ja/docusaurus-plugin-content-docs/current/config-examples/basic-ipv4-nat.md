@@ -5,6 +5,8 @@ sidebar_position: 10
 
 # 基本的な IPv4 NAT ルーター
 
+![DHCP WAN、routerd 管理の LAN address、DHCPv4 server、NAT44、firewall zone で構成する基本 IPv4 gateway](/img/diagrams/config-example-basic-ipv4-nat.png)
+
 LAN クライアントが、DHCP で取得した WAN 側 IPv4 アドレスを使ってインターネットに出るための、
 最小構成に近いホームルーターの例です。
 

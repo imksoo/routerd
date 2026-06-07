@@ -5,6 +5,8 @@ sidebar_position: 90
 
 # Tailscale 子网 / 出口节点
 
+![routerd 让 Tailscale node advertise LAN 与 management prefix 以及 exit-node intent 的构成](/img/diagrams/config-example-tailscale-subnet-exit.png)
+
 此示例演示如何将路由器同时作为 Tailscale 的 subnet router 和 exit node 进行广播。
 
 完整的 YAML 位于 `examples/tailscale-exit-subnet.yaml`。

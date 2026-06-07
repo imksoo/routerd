@@ -5,6 +5,8 @@ sidebar_position: 100
 
 # WireGuard Hub & Spoke 範本
 
+![WireGuard hub interface、hub tunnel address、spoke peer、tunnel /32 與 routed LAN prefix 的構成](/img/diagrams/config-example-wireguard-hub-spoke.png)
+
 此為具備兩個 spoke 的 routed WireGuard hub 範本。
 實際使用前，請替換金鑰、endpoint 及要廣告的前綴。
 

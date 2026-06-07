@@ -5,6 +5,8 @@ sidebar_position: 60
 
 # 訪客 / IoT 端點隔離
 
+![ClientPolicy 在 shared LAN 上分類 guest 與 IoT MAC address，並拒絕 LAN 或 management access 的構成](/img/diagrams/config-example-guest-isolation.png)
+
 將連接至同一 LAN 的特定 MAC 位址視為訪客 / IoT 端點，
 允許其存取網際網路，但阻止其到達受信任的 LAN 及管理網路的範例。
 

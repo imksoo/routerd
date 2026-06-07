@@ -5,6 +5,8 @@ sidebar_position: 10
 
 # Basic IPv4 NAT gateway
 
+![Diagram showing a DHCP WAN, routerd-managed LAN address, DHCPv4 server, NAT44, and firewall zones for a basic IPv4 gateway](/img/diagrams/config-example-basic-ipv4-nat.png)
+
 This is the smallest home-router shape that gives LAN clients IPv4 internet
 access through a DHCP-acquired WAN address.
 

@@ -5,6 +5,8 @@ sidebar_position: 40
 
 # PPPoE IPv4 NAT ルーター
 
+![Ethernet access line 上の PPPoE、routerd PPPoESession、LAN DHCP、PPP interface 向け NAT44 の構成](/img/diagrams/config-example-pppoe-ipv4-nat.png)
+
 物理 WAN は Ethernet で、IPv4 internet への出口を PPPoE セッションで作る例です。
 
 完全な YAML は `examples/example-pppoe-ipv4-nat.yaml` にあります。

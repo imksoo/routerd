@@ -5,6 +5,8 @@ sidebar_position: 40
 
 # PPPoE IPv4 NAT 路由器
 
+![Ethernet access line 上的 PPPoE、routerd PPPoESession、LAN DHCP，以及面向 PPP interface 的 NAT44 构成](/img/diagrams/config-example-pppoe-ipv4-nat.png)
+
 物理 WAN 使用 Ethernet，通过 PPPoE 连接建立 IPv4 互联网出口的示例。
 
 完整 YAML 位于 `examples/example-pppoe-ipv4-nat.yaml`。

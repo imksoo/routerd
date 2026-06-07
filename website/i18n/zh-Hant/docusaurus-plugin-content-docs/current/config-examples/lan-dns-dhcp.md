@@ -5,6 +5,8 @@ sidebar_position: 20
 
 # LAN DHCP 與本地 DNS
 
+![routerd 提供 LAN gateway address、DHCPv4 pool 與 reservation、local DNS zone、lease-derived name 的構成](/img/diagrams/config-example-lan-dns-dhcp.png)
+
 將單一 LAN 介面作為小型家用 LAN 或驗證用 LAN 服務區段的範例。
 routerd 管理 LAN 位址、DHCPv4、本地 DNS 區域，以及 DHCP 租約衍生的名稱。
 
