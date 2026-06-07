@@ -101,7 +101,7 @@ jobs:
           cache: true
 
       - name: Check generated schemas
-        run: make check-schema
+        run: make check-schema check-website-schemas
 
   install-deps-smoke:
     name: Installer dependency plans

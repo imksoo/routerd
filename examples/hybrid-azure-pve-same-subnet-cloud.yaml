@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://routerd.net/schemas/routerd-config-v1alpha1.schema.json
 # Selective Address Mobility — cloud side of the Azure↔PVE same-subnet lab.
 # Capture on the cloud side is manual/pre-provisioned (Azure NIC secondary IP).
 # On Linux, routerd installs the local forwarding route (and, for proxy-arp claims,

@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://routerd.net/schemas/routerd-config-v1alpha1.schema.json
 # CloudEdge Event Federation — receiver (cloud) side (ADR 0006, Phase 3).
 #
 # Flow: an on-prem routerd observes a LAN client and emits a

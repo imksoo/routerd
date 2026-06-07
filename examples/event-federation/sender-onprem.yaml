@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://routerd.net/schemas/routerd-config-v1alpha1.schema.json
 # CloudEdge Event Federation — sender (on-prem) side (ADR 0006, Phase 1+2).
 #
 # This node observes LAN clients and emits routerd.client.ipv4.observed events
