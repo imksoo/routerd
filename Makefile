@@ -49,10 +49,14 @@ GO_LDFLAGS ?= -s -w $(if $(GIT_COMMIT),-X github.com/imksoo/routerd/pkg/version.
 GO_BUILD_FLAGS ?= -buildvcs=false -trimpath -ldflags="$(GO_LDFLAGS)"
 EXAMPLE_CONFIGS ?= $(wildcard examples/*.yaml)
 PLAYWRIGHT_INSTALL_FLAGS ?= --with-deps
+WEBSITE_SCHEMA_DIR := website/static/schemas
+CONFIG_SCHEMA := routerd-config-v1alpha1.schema.json
+CONTROL_SCHEMA := routerd-control-v1alpha1.schema.json
+CONTROL_OPENAPI_SCHEMA := routerd-control-openapi-v1alpha1.json
 
 WEBSITE_NODE_MODULES_STAMP := website/node_modules/.package-lock.json
 
-.PHONY: test build build-daemons build-provider-executors build-ndpi-agent build-ndpi-agent-libndpi build-daemons-freebsd check-linux-static check-ndpi-agent-libndpi check-install-deps alpine-vm-smoke cloudedge-acceptance-lint cloudedge-acceptance-offline-test cloudedge-runners-offline-test cloudedge-poc-evidence-offline-test webconsole-build webconsole-browser-install webconsole-screenshot generate-schema check-schema check-examples-line-limits check-render-golden update-render-golden check-bespoke-lifecycle website-deps website-build third-party-licenses check-build-deps dist dist-ndpi-agent-libndpi live-iso validate-example dry-run-example plan-config release clean
+.PHONY: test build build-daemons build-provider-executors build-ndpi-agent build-ndpi-agent-libndpi build-daemons-freebsd check-linux-static check-ndpi-agent-libndpi check-install-deps alpine-vm-smoke cloudedge-acceptance-lint cloudedge-acceptance-offline-test cloudedge-runners-offline-test cloudedge-poc-evidence-offline-test webconsole-build webconsole-browser-install webconsole-screenshot generate-schema sync-website-schemas check-schema check-website-schemas check-examples-line-limits check-render-golden update-render-golden check-bespoke-lifecycle website-deps website-build third-party-licenses check-build-deps dist dist-ndpi-agent-libndpi live-iso validate-example dry-run-example plan-config release clean
 
 test:
 	go test ./...
@@ -159,17 +163,31 @@ webconsole-screenshot: webconsole-build webconsole-browser-install
 
 generate-schema:
 	install -d schemas
-	go run ./cmd/routerd-schema > schemas/routerd-config-v1alpha1.schema.json
-	go run ./cmd/routerd-schema --schema control > schemas/routerd-control-v1alpha1.schema.json
-	go run ./cmd/routerd-schema --schema control-openapi > schemas/routerd-control-openapi-v1alpha1.json
+	go run ./cmd/routerd-schema > schemas/$(CONFIG_SCHEMA)
+	go run ./cmd/routerd-schema --schema control > schemas/$(CONTROL_SCHEMA)
+	go run ./cmd/routerd-schema --schema control-openapi > schemas/$(CONTROL_OPENAPI_SCHEMA)
+
+sync-website-schemas: generate-schema
+	install -d $(WEBSITE_SCHEMA_DIR)
+	cp schemas/$(CONFIG_SCHEMA) $(WEBSITE_SCHEMA_DIR)/$(CONFIG_SCHEMA)
+	cp schemas/$(CONTROL_SCHEMA) $(WEBSITE_SCHEMA_DIR)/$(CONTROL_SCHEMA)
+	cp schemas/$(CONTROL_OPENAPI_SCHEMA) $(WEBSITE_SCHEMA_DIR)/$(CONTROL_OPENAPI_SCHEMA)
 
 check-schema:
-	go run ./cmd/routerd-schema > /tmp/routerd-config-v1alpha1.schema.json
-	diff -u schemas/routerd-config-v1alpha1.schema.json /tmp/routerd-config-v1alpha1.schema.json
-	go run ./cmd/routerd-schema --schema control > /tmp/routerd-control-v1alpha1.schema.json
-	diff -u schemas/routerd-control-v1alpha1.schema.json /tmp/routerd-control-v1alpha1.schema.json
-	go run ./cmd/routerd-schema --schema control-openapi > /tmp/routerd-control-openapi-v1alpha1.json
-	diff -u schemas/routerd-control-openapi-v1alpha1.json /tmp/routerd-control-openapi-v1alpha1.json
+	go run ./cmd/routerd-schema > /tmp/$(CONFIG_SCHEMA)
+	diff -u schemas/$(CONFIG_SCHEMA) /tmp/$(CONFIG_SCHEMA)
+	go run ./cmd/routerd-schema --schema control > /tmp/$(CONTROL_SCHEMA)
+	diff -u schemas/$(CONTROL_SCHEMA) /tmp/$(CONTROL_SCHEMA)
+	go run ./cmd/routerd-schema --schema control-openapi > /tmp/$(CONTROL_OPENAPI_SCHEMA)
+	diff -u schemas/$(CONTROL_OPENAPI_SCHEMA) /tmp/$(CONTROL_OPENAPI_SCHEMA)
+
+check-website-schemas:
+	cmp schemas/$(CONFIG_SCHEMA) $(WEBSITE_SCHEMA_DIR)/$(CONFIG_SCHEMA)
+	cmp schemas/$(CONTROL_SCHEMA) $(WEBSITE_SCHEMA_DIR)/$(CONTROL_SCHEMA)
+	cmp schemas/$(CONTROL_OPENAPI_SCHEMA) $(WEBSITE_SCHEMA_DIR)/$(CONTROL_OPENAPI_SCHEMA)
+	jq -e '."$$id" == "https://routerd.net/schemas/$(CONFIG_SCHEMA)"' $(WEBSITE_SCHEMA_DIR)/$(CONFIG_SCHEMA)
+	jq -e '."$$id" == "https://routerd.net/schemas/$(CONTROL_SCHEMA)"' $(WEBSITE_SCHEMA_DIR)/$(CONTROL_SCHEMA)
+	jq -e '."$$id" == "https://routerd.net/schemas/$(CONTROL_OPENAPI_SCHEMA)"' $(WEBSITE_SCHEMA_DIR)/$(CONTROL_OPENAPI_SCHEMA)
 
 check-examples-line-limits:
 	./scripts/check-examples-line-limits.sh

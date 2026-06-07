@@ -105,6 +105,7 @@ func controlSchema() map[string]any {
 
 func controlOpenAPISchema() map[string]any {
 	return map[string]any{
+		"$id":     "https://routerd.net/schemas/routerd-control-openapi-v1alpha1.json",
 		"openapi": "3.1.0",
 		"info": map[string]any{
 			"title":   "routerd control API",
