@@ -76,11 +76,15 @@ def local_ipv4s():
     return sorted(set(out))
 
 
-def aws_imds_ipv4():
+def aws_imds_base():
+    return os.environ.get("ROUTERD_PROVIDER_INVENTORY_AWS_IMDS_BASE", "http://169.254.169.254").rstrip("/")
+
+
+def aws_imds_headers():
     headers = {}
     try:
         token = http_text(
-            "http://169.254.169.254/latest/api/token",
+            aws_imds_base() + "/latest/api/token",
             headers={"X-aws-ec2-metadata-token-ttl-seconds": "60"},
             method="PUT",
             timeout=1.0,
@@ -89,10 +93,47 @@ def aws_imds_ipv4():
             headers["X-aws-ec2-metadata-token"] = token
     except Exception:
         pass
+    return headers
+
+
+def aws_imds_get(path, headers=None):
+    return http_text(aws_imds_base() + path, headers=headers or aws_imds_headers(), timeout=1.0).strip()
+
+
+def aws_imds_ipv4():
     try:
-        return http_text("http://169.254.169.254/latest/meta-data/local-ipv4", headers=headers, timeout=1.0).strip()
+        return aws_imds_get("/latest/meta-data/local-ipv4")
     except Exception:
         return ""
+
+
+def aws_imds_self_interface(local_ips):
+    try:
+        headers = aws_imds_headers()
+        macs = [line.strip() for line in aws_imds_get("/latest/meta-data/network/interfaces/macs/", headers).splitlines() if line.strip()]
+    except Exception:
+        return {}
+    candidates = []
+    local_set = set(local_ips or [])
+    for mac in macs:
+        prefix = "/latest/meta-data/network/interfaces/macs/" + mac
+        try:
+            interface_id = aws_imds_get(prefix + "interface-id", headers)
+            subnet_id = aws_imds_get(prefix + "subnet-id", headers)
+            ipv4s = [line.strip() for line in aws_imds_get(prefix + "local-ipv4s", headers).splitlines() if line.strip()]
+        except Exception:
+            continue
+        if not interface_id:
+            continue
+        candidates.append({"nicRef": interface_id, "subnetRef": subnet_id, "privateIPs": ipv4s})
+    if not candidates:
+        return {}
+    if local_set:
+        matched = [item for item in candidates if local_set.intersection(set(item.get("privateIPs") or []))]
+        if matched:
+            candidates = matched
+    candidates.sort(key=lambda item: item.get("nicRef", ""))
+    return candidates[0]
 
 
 def azure_imds_ipv4s():
@@ -163,14 +204,23 @@ def oci_cli(region, args):
 def aws_inventory(spec):
     target = spec.get("target") or {}
     region = target.get("region") or os.environ.get("AWS_DEFAULT_REGION", "")
-    self_nic = spec.get("selfNicRef", "").strip()
+    self_nic = (spec.get("selfNicRef", "").strip()
+                or os.environ.get("ROUTERD_PROVIDER_INVENTORY_SELF_NIC_REF", "").strip()
+                or os.environ.get("AWS_SELF_ENI_REF", "").strip())
     subnet = (spec.get("subnetRef") or "").strip()
     self_private_ips = []
     self_forwarding_enabled = None
     if not self_nic:
         local_ips = local_ipv4s() or [ip for ip in [aws_imds_ipv4()] if ip]
+        imds_self = aws_imds_self_interface(local_ips)
+        if imds_self:
+            self_nic = imds_self.get("nicRef", "")
+            subnet = subnet or imds_self.get("subnetRef", "")
+            self_private_ips = imds_self.get("privateIPs") or []
         if not local_ips:
             raise ValueError("AWS selfNicRef is empty and no local private IP could be discovered")
+    if not self_nic:
+        local_ips = local_ipv4s() or [ip for ip in [aws_imds_ipv4()] if ip]
         self_doc = aws_cli(region, ["ec2", "describe-network-interfaces", "--filters", "Name=addresses.private-ip-address,Values=" + ",".join(local_ips)])
         interfaces = self_doc.get("NetworkInterfaces") or []
         if subnet:

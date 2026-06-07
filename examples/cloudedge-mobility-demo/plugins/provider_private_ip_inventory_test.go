@@ -5,6 +5,8 @@ package plugins_test
 import (
 	"bytes"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -88,6 +90,56 @@ esac
 	}
 	if res.Status.Self.ForwardingEnabled == nil || *res.Status.Self.ForwardingEnabled {
 		t.Fatalf("self.forwardingEnabled = %#v, want false", res.Status.Self.ForwardingEnabled)
+	}
+	assertIP(t, res, "10.77.60.11", "eni-client", "subnet-a")
+}
+
+func TestProviderPrivateIPInventoryPluginAWSResolvesSelfFromIMDS(t *testing.T) {
+	requirePython(t)
+	imds := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/latest/api/token":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("token"))
+		case "/latest/meta-data/network/interfaces/macs/":
+			_, _ = w.Write([]byte("02:00:00:00:00:05/\n"))
+		case "/latest/meta-data/network/interfaces/macs/02:00:00:00:00:05/interface-id":
+			_, _ = w.Write([]byte("eni-router-b"))
+		case "/latest/meta-data/network/interfaces/macs/02:00:00:00:00:05/subnet-id":
+			_, _ = w.Write([]byte("subnet-a"))
+		case "/latest/meta-data/network/interfaces/macs/02:00:00:00:00:05/local-ipv4s":
+			_, _ = w.Write([]byte("10.77.60.5\n"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer imds.Close()
+	bin := fakeBinDir(t)
+	writeExecutable(t, filepath.Join(bin, "aws"), `#!/bin/sh
+case "$*" in
+  *"--network-interface-ids eni-router-b"*)
+    printf '%s\n' '{"NetworkInterfaces":[{"NetworkInterfaceId":"eni-router-b","SubnetId":"subnet-a","SourceDestCheck":false,"PrivateIpAddresses":[{"PrivateIpAddress":"10.77.60.5","Primary":true}]}]}'
+    ;;
+  *"Name=subnet-id,Values=subnet-a"*)
+    printf '%s\n' '{"NetworkInterfaces":[{"NetworkInterfaceId":"eni-router-b","SubnetId":"subnet-a","PrivateIpAddresses":[{"PrivateIpAddress":"10.77.60.5","Primary":true}]},{"NetworkInterfaceId":"eni-client","SubnetId":"subnet-a","PrivateIpAddresses":[{"PrivateIpAddress":"10.77.60.11","Primary":false}]}]}'
+    ;;
+  *)
+    echo "unexpected aws args: $*" >&2
+    exit 2
+    ;;
+esac
+`)
+	res := runInventoryPluginWithEnv(t, bin, `{"spec":{"provider":"aws","target":{"region":"us-east-1"}}}`, []string{
+		"ROUTERD_PROVIDER_INVENTORY_AWS_IMDS_BASE=" + imds.URL,
+	})
+	if res.Status.Status != "succeeded" {
+		t.Fatalf("status = %q error=%q", res.Status.Status, res.Status.Error)
+	}
+	if res.Status.Self.NICRef != "eni-router-b" || res.Status.Self.SubnetRef != "subnet-a" {
+		t.Fatalf("self = %+v, want IMDS-resolved eni-router-b/subnet-a", res.Status.Self)
+	}
+	if res.Status.Self.ForwardingEnabled == nil || !*res.Status.Self.ForwardingEnabled {
+		t.Fatalf("self.forwardingEnabled = %#v, want true", res.Status.Self.ForwardingEnabled)
 	}
 	assertIP(t, res, "10.77.60.11", "eni-client", "subnet-a")
 }
