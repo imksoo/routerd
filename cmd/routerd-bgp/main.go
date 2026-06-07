@@ -236,6 +236,9 @@ func restoreApplied(ctx context.Context, server *gobgpserver.BgpServer, statePat
 	if err := restoreAppliedPaths(ctx, server, &applied); err != nil {
 		return err
 	}
+	if err := refreshDynamicPathPolicies(ctx, server, applied); err != nil {
+		return fmt.Errorf("restore BGP dynamic policy refresh: %w", err)
+	}
 	if err := bgpdaemon.WriteApplied(statePath, applied); err != nil {
 		return fmt.Errorf("persist restored BGP path UUIDs: %w", err)
 	}

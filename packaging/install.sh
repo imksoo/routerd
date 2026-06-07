@@ -119,27 +119,46 @@ backup_target()
     name=$(safe_name "${target}")
     if [ -e "${target}" ]; then
         backup="${backup_dir}/${name}"
-        cp -p "${target}" "${backup}"
-        persistent_backup="${target}.backup.${timestamp}"
-        cp -p "${target}" "${persistent_backup}"
-        echo "backup: ${persistent_backup}"
+        if ! ln "${target}" "${backup}" 2>/dev/null; then
+            cp -p "${target}" "${backup}"
+        fi
+        echo "backup: ${backup}"
         printf '%s\t%s\n' "${backup}" "${target}" >> "${backup_dir}/restore.list"
     else
         printf '%s\n' "${target}" >> "${backup_dir}/remove.list"
     fi
 }
 
+restore_backup_target()
+{
+    backup=$1
+    target=$2
+    tmp="${target}.restore.$$"
+    rm -f "${tmp}"
+    install -d -m 0755 "$(dirname "${target}")"
+    if ln "${backup}" "${tmp}" 2>/dev/null || cp -p "${backup}" "${tmp}"; then
+        mv -f "${tmp}" "${target}"
+        return 0
+    fi
+    rm -f "${tmp}"
+    echo "warning: failed to restore ${target} from ${backup}" >&2
+    return 1
+}
+
 rollback()
 {
     [ -n "${backup_dir}" ] || return 0
     [ -d "${backup_dir}" ] || return 0
+    if [ ! -s "${backup_dir}/restore.list" ] && [ ! -s "${backup_dir}/remove.list" ]; then
+        return 0
+    fi
 
     echo "install failed; restoring previous files" >&2
+    failed=0
     if [ -f "${backup_dir}/restore.list" ]; then
         while IFS='	' read -r backup target; do
             [ -n "${backup}" ] || continue
-            install -d -m 0755 "$(dirname "${target}")"
-            cp -p "${backup}" "${target}"
+            restore_backup_target "${backup}" "${target}" || failed=1
         done < "${backup_dir}/restore.list"
     fi
     if [ -f "${backup_dir}/remove.list" ]; then
@@ -148,6 +167,7 @@ rollback()
             rm -f "${target}"
         done < "${backup_dir}/remove.list"
     fi
+    return "${failed}"
 }
 
 cleanup()
@@ -177,6 +197,55 @@ atomic_install()
     rm -f "${tmp}"
     install -m "${file_mode}" "${source}" "${tmp}"
     mv -f "${tmp}" "${target}"
+}
+
+disk_available_kb()
+{
+    path=$1
+    if [ -n "${ROUTERD_INSTALL_AVAILABLE_KB_OVERRIDE:-}" ]; then
+        printf '%s\n' "${ROUTERD_INSTALL_AVAILABLE_KB_OVERRIDE}"
+        return 0
+    fi
+    probe=${path}
+    while [ ! -e "${probe}" ] && [ "${probe}" != "/" ]; do
+        probe=$(dirname "${probe}")
+    done
+    df -Pk "${probe}" 2>/dev/null | awk 'NR == 2 { print $4 }'
+}
+
+payload_install_kb()
+{
+    set -- bin
+    [ -d libexec ] && set -- "$@" libexec
+    [ -d etc ] && set -- "$@" etc
+    [ -d systemd ] && set -- "$@" systemd
+    [ -d rc.d ] && set -- "$@" rc.d
+    du -sk "$@" 2>/dev/null | awk '{ total += $1 } END { print total + 0 }'
+}
+
+ensure_install_capacity()
+{
+    [ "${dry_run}" -eq 0 ] || return 0
+    [ "${ROUTERD_INSTALL_SKIP_SPACE_CHECK:-0}" = "1" ] && return 0
+    required=$(payload_install_kb)
+    margin=${ROUTERD_INSTALL_SPACE_MARGIN_KB:-32768}
+    required=$((required + margin))
+    available=$(disk_available_kb "${prefix}")
+    if [ -z "${available}" ]; then
+        echo "warning: could not determine free space under ${prefix}; continuing install" >&2
+        return 0
+    fi
+    case "${available}" in
+        *[!0-9]*)
+            echo "warning: could not parse free space under ${prefix}: ${available}; continuing install" >&2
+            return 0
+            ;;
+    esac
+    if [ "${available}" -lt "${required}" ]; then
+        echo "insufficient free space for rollback-safe install under ${prefix}: available=${available}KiB required=${required}KiB" >&2
+        echo "free space or rerun with ROUTERD_INSTALL_SKIP_SPACE_CHECK=1 if you accept manual recovery risk" >&2
+        return 1
+    fi
 }
 
 routerd_group_exists()
@@ -1849,6 +1918,8 @@ fi
 if [ -n "${new_version}" ]; then
     echo "installing: ${new_version}"
 fi
+
+ensure_install_capacity
 
 case "${os}" in
     Linux)

@@ -319,6 +319,47 @@ func TestRestoreAppliedRestoresStaticAndMobilityPathsWithFreshUUIDs(t *testing.T
 	}
 }
 
+func TestRestoreAppliedRefreshesDynamicExportPolicy(t *testing.T) {
+	server := &fakePathServer{}
+	applied := bgpdaemon.AppliedConfig{
+		Global: bgpdaemon.AppliedGlobal{ASN: 64512, RouterID: "10.0.0.1", ListenPort: 179},
+		Peers: map[string]bgpdaemon.AppliedPeer{
+			"10.252.0.2": {
+				Address:          "10.252.0.2",
+				ASN:              64512,
+				ExportPolicyName: "routerd-lan-export-10-252-0-2",
+				ExportPolicy: bgpdaemon.AppliedExportPolicy{
+					AllowedPrefixes: []string{"192.168.123.208/32"},
+				},
+			},
+		},
+		Paths: []bgpdaemon.AppliedPath{{
+			Source: "MobilityPool/svnet1/node/pve-rt08",
+			Prefix: "192.168.123.132/32",
+			Attrs:  bgpdaemon.AppliedPathAttrs{LocalPref: 200},
+		}},
+	}
+	if err := restoreAppliedPaths(context.Background(), server, &applied); err != nil {
+		t.Fatalf("restore paths: %v", err)
+	}
+	if err := refreshDynamicPathPolicies(context.Background(), server, applied); err != nil {
+		t.Fatalf("refresh dynamic policies: %v", err)
+	}
+	if len(server.policyRequests) != 1 {
+		t.Fatalf("SetPolicies calls = %d, want restore policy refresh", len(server.policyRequests))
+	}
+	if !appliedPolicyRequestHasPrefix(server.policyRequests[0], "routerd-lan-export-10-252-0-2-prefixes", "192.168.123.132/32") {
+		t.Fatalf("restored policies = %#v, want dynamic mobility prefix in export policy", server.policyRequests[0])
+	}
+	if len(server.resetRequests) != 1 {
+		t.Fatalf("ResetPeer calls = %d, want outbound soft reset for restored dynamic export policy", len(server.resetRequests))
+	}
+	reset := server.resetRequests[0]
+	if reset.GetAddress() != "10.252.0.2" || !reset.GetSoft() || reset.GetDirection() != gobgpapi.ResetPeerRequest_OUT {
+		t.Fatalf("ResetPeer request = %#v, want soft outbound reset for 10.252.0.2", reset)
+	}
+}
+
 func TestControlPathAPISourceScopedMobilityUpsertAndDelete(t *testing.T) {
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, "applied.json")
