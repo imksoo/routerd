@@ -37,6 +37,73 @@ func TestStatusWithOwnershipPreservesAdoptedManagedBy(t *testing.T) {
 	}
 }
 
+func TestEventedStoreAddsLifecycleOwnerMetadata(t *testing.T) {
+	base := mapStore{}
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPPeer"},
+		Metadata: api.ObjectMeta{Name: "fabric"},
+		Spec:     api.BGPPeerSpec{RouterRef: "core", PeerASN: 64512, Peers: []string{"192.0.2.1"}},
+	}}}}
+	store := eventedStore{Store: base, Router: router}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "BGPPeer", "fabric", map[string]any{"phase": "Established"}); err != nil {
+		t.Fatalf("save status: %v", err)
+	}
+	status := base.ObjectStatus(api.NetAPIVersion, "BGPPeer", "fabric")
+	if status["ownerKey"] != api.NetAPIVersion+"/BGPPeer/fabric" {
+		t.Fatalf("ownerKey = %v", status["ownerKey"])
+	}
+	ownerRef, ok := status["ownerRef"].(map[string]any)
+	if !ok || ownerRef["apiVersion"] != api.NetAPIVersion || ownerRef["kind"] != "BGPPeer" || ownerRef["name"] != "fabric" {
+		t.Fatalf("ownerRef = %#v", status["ownerRef"])
+	}
+	if status["lifecycleClass"] != "controller" {
+		t.Fatalf("lifecycleClass = %v, want controller", status["lifecycleClass"])
+	}
+}
+
+func TestEventedStoreAddsDerivedOwnerRefs(t *testing.T) {
+	base := mapStore{}
+	root := api.OwnerRef{APIVersion: api.MobilityAPIVersion, Kind: "SAMTransportProfile", Name: "fabric"}
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
+		TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
+		Metadata: api.ObjectMeta{Name: "sam-core-a", OwnerRefs: []api.OwnerRef{root}},
+		Spec:     api.TunnelInterfaceSpec{Mode: "ipip", Local: "10.99.0.1", Remote: "10.99.0.2"},
+	}}}}
+	store := eventedStore{Store: base, Router: router}
+	if err := store.SaveObjectStatus(api.HybridAPIVersion, "TunnelInterface", "sam-core-a", map[string]any{"phase": "Applied"}); err != nil {
+		t.Fatalf("save status: %v", err)
+	}
+	status := base.ObjectStatus(api.HybridAPIVersion, "TunnelInterface", "sam-core-a")
+	if status["ownerKey"] != api.HybridAPIVersion+"/TunnelInterface/sam-core-a" {
+		t.Fatalf("ownerKey = %v", status["ownerKey"])
+	}
+	refs, ok := status["ownerRefs"].([]any)
+	if !ok || len(refs) != 1 {
+		t.Fatalf("ownerRefs = %#v", status["ownerRefs"])
+	}
+	ref, ok := refs[0].(map[string]any)
+	if !ok || ref["apiVersion"] != api.MobilityAPIVersion || ref["kind"] != "SAMTransportProfile" || ref["name"] != "fabric" {
+		t.Fatalf("ownerRefs[0] = %#v", refs[0])
+	}
+	if status["lifecycleClass"] != "managed-host" {
+		t.Fatalf("lifecycleClass = %v, want managed-host", status["lifecycleClass"])
+	}
+}
+
+func TestEventedStoreSkipsLifecycleMetadataForSyntheticStatus(t *testing.T) {
+	base := mapStore{}
+	store := eventedStore{Store: base}
+	if err := store.SaveObjectStatus(api.RouterAPIVersion, "Inventory", "host", map[string]any{"phase": "Observed"}); err != nil {
+		t.Fatalf("save status: %v", err)
+	}
+	status := base.ObjectStatus(api.RouterAPIVersion, "Inventory", "host")
+	for _, key := range []string{"ownerKey", "ownerRef", "ownerRefs", "lifecycleClass"} {
+		if _, ok := status[key]; ok {
+			t.Fatalf("synthetic status has %s: %#v", key, status)
+		}
+	}
+}
+
 func TestStatusChangedIgnoresObservedTrafficCounters(t *testing.T) {
 	current := map[string]any{
 		"phase":       "Observed",
