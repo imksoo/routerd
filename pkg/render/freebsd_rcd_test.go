@@ -81,12 +81,14 @@ func TestFreeBSDRenderRoutesDHCPv6ClientThroughRouterd(t *testing.T) {
 	for _, want := range []string{
 		`PROVIDE: routerd`,
 		`daemon_command="/usr/sbin/daemon"`,
-		`'/usr/local/sbin/routerd' 'check'`,
 		`'/usr/local/sbin/routerd' 'serve'`,
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("rc.d script missing %q:\n%s", want, script)
 		}
+	}
+	if strings.Contains(script, `'/usr/local/sbin/routerd' 'check'`) {
+		t.Fatalf("routerd rc.d script must not call removed routerd check verb:\n%s", script)
 	}
 	if strings.Contains(script, "controller"+"-chain") {
 		t.Fatalf("routerd rc.d script must not expose legacy controller flags:\n%s", script)
@@ -131,12 +133,14 @@ func TestFreeBSDRenderRoutesDHCPv4ClientThroughRouterd(t *testing.T) {
 	for _, want := range []string{
 		`PROVIDE: routerd`,
 		`daemon_command="/usr/sbin/daemon"`,
-		`'/usr/local/sbin/routerd' 'check'`,
 		`'/usr/local/sbin/routerd' 'serve'`,
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("rc.d script missing %q:\n%s", want, script)
 		}
+	}
+	if strings.Contains(script, `'/usr/local/sbin/routerd' 'check'`) {
+		t.Fatalf("routerd rc.d script must not call removed routerd check verb:\n%s", script)
 	}
 	if strings.Contains(script, "controller"+"-chain") {
 		t.Fatalf("routerd rc.d script must not expose legacy controller flags:\n%s", script)
@@ -178,8 +182,11 @@ func TestFreeBSDRenderSkipsDHCPClientRCDWhenRouterdSupervisesClients(t *testing.
 	if strings.Contains(routerdScript, "controller"+"-chain") {
 		t.Fatalf("routerd rc.d script must not expose legacy controller flags:\n%s", routerdScript)
 	}
-	if !strings.Contains(routerdScript, "'check'") || !strings.Contains(routerdScript, "'serve'") || strings.Contains(routerdScript, "--skip-service-manager") {
-		t.Fatalf("routerd rc.d script must run check then serve without skip-service-manager:\n%s", routerdScript)
+	if !strings.Contains(routerdScript, "'serve'") || strings.Contains(routerdScript, "--skip-service-manager") {
+		t.Fatalf("routerd rc.d script must run serve without skip-service-manager:\n%s", routerdScript)
+	}
+	if strings.Contains(routerdScript, `'/usr/local/sbin/routerd' 'check'`) {
+		t.Fatalf("routerd rc.d script must not call removed routerd check verb:\n%s", routerdScript)
 	}
 	if strings.Contains(routerdScript, `$("`) {
 		t.Fatalf("routerd rc.d script contains quoted command substitution:\n%s", routerdScript)

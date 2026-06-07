@@ -9,13 +9,12 @@ import (
 
 func TestRouterdServiceSystemdSpecDoesNotConstrainWritePaths(t *testing.T) {
 	unit := string(SystemdUnit(RouterdUnitName, RouterdServiceSystemdSpec()))
-	for _, notWant := range []string{"ProtectSystem=", "ReadWritePaths="} {
+	for _, notWant := range []string{"ExecStartPre=/usr/local/sbin/routerd check", "ProtectSystem=", "ReadWritePaths="} {
 		if strings.Contains(unit, notWant) {
 			t.Fatalf("routerd.service must not contain %q:\n%s", notWant, unit)
 		}
 	}
 	for _, want := range []string{
-		"ExecStartPre=/usr/local/sbin/routerd check",
 		"ExecStart=/usr/local/sbin/routerd serve",
 		"RuntimeDirectory=routerd routerd/bgp routerd/dhcpv6-client routerd/dhcpv4-client routerd/pppoe-client routerd/dns-resolver",
 		"StateDirectory=routerd",
