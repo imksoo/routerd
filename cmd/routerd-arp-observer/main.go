@@ -68,23 +68,25 @@ type daemon struct {
 	startedAt time.Time
 	cancel    context.CancelFunc
 
-	mu             sync.Mutex
-	cond           *sync.Cond
-	events         []daemonapi.DaemonEvent
-	nextCursor     uint64
-	observerError  string
-	packetsSeen    uint64
-	observedCount  uint64
-	probeCount     uint64
-	probeHitCount  uint64
-	scanCount      uint64
-	lastPacketAt   time.Time
-	lastEventAt    time.Time
-	lastScanAt     time.Time
-	lastProbeAt    map[string]time.Time
-	pendingProbe   map[string]time.Time
-	lastEventByKey map[string]time.Time
-	clients        map[string]arpClient
+	mu              sync.Mutex
+	cond            *sync.Cond
+	events          []daemonapi.DaemonEvent
+	nextCursor      uint64
+	observerError   string
+	packetsSeen     uint64
+	observedCount   uint64
+	probeCount      uint64
+	probeHitCount   uint64
+	scanCount       uint64
+	proactiveCount  uint64
+	lastPacketAt    time.Time
+	lastEventAt     time.Time
+	lastScanAt      time.Time
+	lastProbeAt     map[string]time.Time
+	pendingProbe    map[string]time.Time
+	lastEventByKey  map[string]time.Time
+	clients         map[string]arpClient
+	proactiveCursor uint32
 
 	socketMu sync.Mutex
 }
@@ -288,10 +290,15 @@ func (d *daemon) observe(ctx context.Context) {
 }
 
 func (d *daemon) observeSocket(ctx context.Context, socket *packetSocket) error {
+	socketCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	go func() {
 		<-ctx.Done()
 		_ = socket.close()
 	}()
+	if d.opts.sourceType == sourceOnDemandARP && d.opts.onDemand {
+		go d.proactiveProbeLoop(socketCtx, socket)
+	}
 	frame := make([]byte, 65535)
 	for {
 		n, err := socket.read(frame)
@@ -304,6 +311,43 @@ func (d *daemon) observeSocket(ctx context.Context, socket *packetSocket) error 
 		}
 		d.recordPacket(ctx, socket, packet)
 	}
+}
+
+func (d *daemon) proactiveProbeLoop(ctx context.Context, socket *packetSocket) {
+	for {
+		d.probeNextPrefixTarget(ctx, socket)
+		select {
+		case <-time.After(d.opts.scanInterval):
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+func (d *daemon) probeNextPrefixTarget(ctx context.Context, socket *packetSocket) {
+	now := time.Now().UTC()
+	target, ok := d.nextProactiveTarget()
+	if !ok {
+		return
+	}
+	if !d.shouldProbe(target, now) {
+		return
+	}
+	d.mu.Lock()
+	d.proactiveCount++
+	d.mu.Unlock()
+	d.probeTarget(ctx, socket, target)
+}
+
+func (d *daemon) nextProactiveTarget() (netip.Addr, bool) {
+	d.mu.Lock()
+	cursor := d.proactiveCursor
+	target, next, ok := nextIPv4PrefixProbeTarget(d.opts.prefix, cursor, d.opts.sourceAddress)
+	if ok {
+		d.proactiveCursor = next
+	}
+	d.mu.Unlock()
+	return target, ok
 }
 
 func (d *daemon) recordPacket(ctx context.Context, socket *packetSocket, packet arpPacket) {
@@ -543,6 +587,7 @@ func (d *daemon) status() daemonapi.DaemonStatus {
 		"observedCount":   strconv.FormatUint(d.observedCount, 10),
 		"probeCount":      strconv.FormatUint(d.probeCount, 10),
 		"probeHitCount":   strconv.FormatUint(d.probeHitCount, 10),
+		"proactiveCount":  strconv.FormatUint(d.proactiveCount, 10),
 		"scanCount":       strconv.FormatUint(d.scanCount, 10),
 		"scanInterval":    d.opts.scanInterval.String(),
 		"observedClients": string(clients),
@@ -722,6 +767,48 @@ func buildARPRequest(senderMAC net.HardwareAddr, source, target netip.Addr) []by
 	tgt := target.As4()
 	copy(frame[38:42], tgt[:])
 	return frame
+}
+
+func nextIPv4PrefixProbeTarget(prefix netip.Prefix, cursor uint32, source netip.Addr) (netip.Addr, uint32, bool) {
+	if !prefix.IsValid() || !prefix.Addr().Is4() {
+		return netip.Addr{}, cursor, false
+	}
+	prefix = prefix.Masked()
+	bits := prefix.Bits()
+	if bits < 0 || bits > 32 {
+		return netip.Addr{}, cursor, false
+	}
+	total := uint64(1) << uint(32-bits)
+	baseBytes := prefix.Addr().As4()
+	base := binary.BigEndian.Uint32(baseBytes[:])
+	start := uint64(cursor) % total
+	for i := uint64(0); i < total; i++ {
+		offset := (start + i) % total
+		next := uint32((offset + 1) % total)
+		if !probeUsableOffset(bits, total, offset) {
+			continue
+		}
+		addr := netip.AddrFrom4(uint32ToIPv4(base + uint32(offset)))
+		if source.IsValid() && source.Is4() && addr == source {
+			continue
+		}
+		return addr, next, true
+	}
+	return netip.Addr{}, cursor, false
+}
+
+func probeUsableOffset(bits int, total, offset uint64) bool {
+	if total == 0 {
+		return false
+	}
+	if bits <= 30 && (offset == 0 || offset+1 == total) {
+		return false
+	}
+	return true
+}
+
+func uint32ToIPv4(value uint32) [4]byte {
+	return [4]byte{byte(value >> 24), byte(value >> 16), byte(value >> 8), byte(value)}
 }
 
 type arpTableEntry struct {

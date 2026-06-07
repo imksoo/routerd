@@ -89,6 +89,41 @@ fe80::1          0x1         0x2         02:00:00:00:00:13     *        vmbr123
 	}
 }
 
+func TestNextIPv4PrefixProbeTargetWalksUsableHosts(t *testing.T) {
+	prefix := netip.MustParsePrefix("192.168.123.0/30")
+	source := netip.MustParseAddr("192.168.123.1")
+	target, next, ok := nextIPv4PrefixProbeTarget(prefix, 0, source)
+	if !ok {
+		t.Fatal("nextIPv4PrefixProbeTarget ok=false")
+	}
+	if got := target.String(); got != "192.168.123.2" {
+		t.Fatalf("target = %s, want first non-source usable host", got)
+	}
+	if next != 3 {
+		t.Fatalf("next cursor = %d, want 3", next)
+	}
+
+	target, _, ok = nextIPv4PrefixProbeTarget(prefix, next, source)
+	if !ok {
+		t.Fatal("nextIPv4PrefixProbeTarget wrap ok=false")
+	}
+	if got := target.String(); got != "192.168.123.2" {
+		t.Fatalf("wrapped target = %s, want only non-source usable host", got)
+	}
+}
+
+func TestNextIPv4PrefixProbeTargetAllowsPointToPointHosts(t *testing.T) {
+	prefix := netip.MustParsePrefix("10.255.0.20/31")
+	target, next, ok := nextIPv4PrefixProbeTarget(prefix, 0, netip.Addr{})
+	if !ok || target.String() != "10.255.0.20" {
+		t.Fatalf("first target = %s ok=%v, want 10.255.0.20", target, ok)
+	}
+	target, _, ok = nextIPv4PrefixProbeTarget(prefix, next, netip.Addr{})
+	if !ok || target.String() != "10.255.0.21" {
+		t.Fatalf("second target = %s ok=%v, want 10.255.0.21", target, ok)
+	}
+}
+
 func buildARPReplyForTest(senderMAC, senderIP, targetMAC, targetIP string) []byte {
 	srcMAC := mustMACForTest(senderMAC)
 	dstMAC := mustMACForTest(targetMAC)

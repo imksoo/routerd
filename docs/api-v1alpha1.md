@@ -237,7 +237,9 @@ onprem-l2` with multiple `sources` such as `dhcpv4-lease`, `arp-observer`,
 `on-demand-arp`, and `pve-svnet`. These event sources are merged into the same
 `routerd.client.ipv4.observed` ownership facts consumed by the BGP mobility
 planner, so PVE IPAM environments do not have to rely on DHCP lease visibility
-alone.
+alone. `on-demand-arp` uses source `scanInterval` for a low-rate proactive
+prefix sweep, probing one target per interval so quiet existing clients can be
+discovered without manual owner-side ARP traffic.
 `members[].placement` can group same-provider cloud routers into deterministic
 active/standby capture placement; `members[].maintenance.drain` removes that
 member from active selection. All nodes in a mobility demo should receive the
