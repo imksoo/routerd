@@ -409,11 +409,14 @@ func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]str
 		if _, features := platform.Current(); features.HasPF {
 			return []resource.Intent{artifact("pf.anchor", "routerd_nat", resource.ActionEnsure, "pfctl", nil)}
 		}
-		return []resource.Intent{artifact("nft.table", "routerd_nat", resource.ActionEnsure, "nft", nil)}
+		return []resource.Intent{
+			{Artifact: newNftTableArtifact(owner, "ip", "routerd_nat"), Action: resource.ActionEnsure, ApplyWith: "nft"},
+			{Artifact: newNftTableArtifact(owner, "ip6", "routerd_nat"), Action: resource.ActionEnsure, ApplyWith: "nft"},
+		}
 	case "FirewallZone":
 		return []resource.Intent{artifact("routerd.firewall.zone", res.Metadata.Name, resource.ActionEnsure, "nft", nil)}
 	case "FirewallPolicy", "FirewallRule":
-		return []resource.Intent{artifact("nft.table", "routerd_filter", resource.ActionEnsure, "nft", nil)}
+		return []resource.Intent{{Artifact: newNftTableArtifact(owner, "inet", "routerd_filter"), Action: resource.ActionEnsure, ApplyWith: "nft"}}
 	case "VXLANSegment":
 		spec, err := res.VXLANSegmentSpec()
 		if err != nil {
@@ -422,7 +425,7 @@ func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]str
 		ifname := defaultString(spec.IfName, res.Metadata.Name)
 		intents := []resource.Intent{artifact("net.link", ifname, resource.ActionEnsure, "platform-network", nil)}
 		if defaultString(spec.L2Filter, "default") != "none" {
-			intents = append(intents, artifact("nft.table", "routerd_l2_filter", resource.ActionEnsure, "nft", nil))
+			intents = append(intents, resource.Intent{Artifact: newNftTableArtifact(owner, "bridge", "routerd_l2_filter"), Action: resource.ActionEnsure, ApplyWith: "nft"})
 		}
 		return intents
 	case "Bridge":
@@ -536,14 +539,14 @@ func egressRoutePolicyArtifacts(res api.Resource, aliases map[string]string) []r
 	mode := defaultString(spec.Mode, "")
 	if mode == "priority" {
 		intents = append(intents, resource.Intent{
-			Artifact:  resource.Artifact{Kind: "nft.table", Name: "routerd_default_route", Owner: res.ID()},
+			Artifact:  newNftTableArtifact(res.ID(), "ip", "routerd_default_route"),
 			Action:    resource.ActionEnsure,
 			ApplyWith: "nft",
 		})
 	}
 	if mode == "mark" || mode == "hash" || egressRoutePolicyHasTargetCandidates(spec) {
 		intents = append(intents, resource.Intent{
-			Artifact:  resource.Artifact{Kind: "nft.table", Name: "routerd_policy", Owner: res.ID()},
+			Artifact:  newNftTableArtifact(res.ID(), "ip", "routerd_policy"),
 			Action:    resource.ActionEnsure,
 			ApplyWith: "nft",
 		})

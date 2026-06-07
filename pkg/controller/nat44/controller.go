@@ -151,10 +151,7 @@ func (c Controller) Reconcile(ctx context.Context) error {
 		return err
 	}
 	if len(data) == 0 {
-		if !applyLive {
-			return nil
-		}
-		return c.clearNftables(ctx)
+		return nil
 	}
 	path := firstNonEmpty(c.NftablesPath, "/run/routerd/nat44.nft")
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
@@ -189,20 +186,6 @@ func (c Controller) Reconcile(ctx context.Context) error {
 		return fmt.Errorf("nft -f %s: %w: %s", path, err, strings.TrimSpace(string(out)))
 	}
 	return c.saveRuleStatuses(ctx, rules, path, changed, missing)
-}
-
-func (c Controller) clearNftables(ctx context.Context) error {
-	nft := firstNonEmpty(c.NftCommand, "nft")
-	for _, family := range []string{"ip", "ip6"} {
-		if !nftTableExists(ctx, nft, family, "routerd_nat") {
-			continue
-		}
-		out, err := exec.CommandContext(ctx, nft, "delete", "table", family, "routerd_nat").CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("nft delete table %s routerd_nat: %w: %s", family, err, strings.TrimSpace(string(out)))
-		}
-	}
-	return nil
 }
 
 func (c Controller) reconcilePF(ctx context.Context, rules []render.NAT44RenderRule) error {

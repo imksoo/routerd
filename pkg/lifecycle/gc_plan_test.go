@@ -86,6 +86,53 @@ func TestPlanDeleteTargetGCKeepsLedgerForgetDryRunnable(t *testing.T) {
 	}
 }
 
+func TestPlanArtifactOrphansTreatsLegacyNftTableIdentityAsDesired(t *testing.T) {
+	owner := api.NetAPIVersion + "/NAT44Rule/lan"
+	desired := []resource.Artifact{{
+		Kind:       "nft.table",
+		Name:       "ip/routerd_nat",
+		Owner:      owner,
+		Attributes: map[string]string{"family": "ip", "name": "routerd_nat"},
+	}}
+	ledger := []resource.Artifact{{
+		Kind:       "nft.table",
+		Name:       "routerd_nat",
+		Owner:      owner,
+		Attributes: map[string]string{"family": "ip", "name": "routerd_nat"},
+	}}
+	host := []resource.Artifact{{
+		Kind:       "nft.table",
+		Name:       "ip/routerd_nat",
+		Attributes: map[string]string{"family": "ip", "name": "routerd_nat"},
+	}}
+	plan := PlanArtifactOrphans(GCPlanInput{DesiredArtifacts: desired, LedgerArtifacts: ledger, HostArtifacts: host})
+	if len(plan.Actions) != 0 {
+		t.Fatalf("legacy nft table ledger entry was planned for cleanup while desired: %+v", plan.Actions)
+	}
+}
+
+func TestPlanArtifactOrphansCanCleanLegacyNftTableIdentity(t *testing.T) {
+	owner := api.NetAPIVersion + "/NAT44Rule/lan"
+	ledger := []resource.Artifact{{
+		Kind:       "nft.table",
+		Name:       "routerd_nat",
+		Owner:      owner,
+		Attributes: map[string]string{"family": "ip", "name": "routerd_nat"},
+	}}
+	host := []resource.Artifact{{
+		Kind:       "nft.table",
+		Name:       "ip/routerd_nat",
+		Attributes: map[string]string{"family": "ip", "name": "routerd_nat"},
+	}}
+	plan := PlanArtifactOrphans(GCPlanInput{LedgerArtifacts: ledger, HostArtifacts: host})
+	if len(plan.ArtifactRemovals) != 1 {
+		t.Fatalf("artifact removals = %+v, want legacy nft table cleanup", plan.ArtifactRemovals)
+	}
+	if plan.ArtifactRemovals[0].Artifact.Name != "routerd_nat" {
+		t.Fatalf("cleanup artifact = %+v, want legacy ledger name retained", plan.ArtifactRemovals[0].Artifact)
+	}
+}
+
 func TestPlanStatusGCUsesDesiredSetAndSyntheticAllowlist(t *testing.T) {
 	statuses := []routerstate.ObjectStatus{
 		{APIVersion: api.NetAPIVersion, Kind: "Interface", Name: "wan"},

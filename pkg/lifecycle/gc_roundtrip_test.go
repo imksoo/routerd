@@ -260,6 +260,29 @@ func gcRoundTripCases() []gcRoundTripCase {
 			},
 		},
 		{
+			name:     "EgressRoutePolicy policy route artifacts",
+			features: platform.Features{HasIproute2: true, HasNftables: true},
+			artifacts: []resource.Artifact{
+				{Kind: "linux.ipv4.fwmarkRule", Name: "priority=101,mark=0x101,table=101", Owner: api.NetAPIVersion + "/EgressRoutePolicy/wan", Attributes: map[string]string{"priority": "101", "mark": "0x101", "table": "101"}},
+				{Kind: "linux.ipv4.routeTable", Name: "table=101", Owner: api.NetAPIVersion + "/EgressRoutePolicy/wan", Attributes: map[string]string{"table": "101"}},
+				{Kind: "nft.table", Name: "ip/routerd_policy", Owner: api.NetAPIVersion + "/EgressRoutePolicy/wan", Attributes: map[string]string{"family": "ip", "name": "routerd_policy"}},
+			},
+			statuses: []routerstate.ObjectStatus{
+				{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy", Name: "wan", Status: map[string]any{"phase": "Applied"}},
+			},
+		},
+		{
+			name:     "NAT44 nft table artifacts",
+			features: platform.Features{HasNftables: true},
+			artifacts: []resource.Artifact{
+				{Kind: "nft.table", Name: "ip/routerd_nat", Owner: api.NetAPIVersion + "/NAT44Rule/lan", Attributes: map[string]string{"family": "ip", "name": "routerd_nat"}},
+				{Kind: "nft.table", Name: "ip6/routerd_nat", Owner: api.NetAPIVersion + "/NAT44Rule/lan", Attributes: map[string]string{"family": "ip6", "name": "routerd_nat"}},
+			},
+			statuses: []routerstate.ObjectStatus{
+				{APIVersion: api.NetAPIVersion, Kind: "NAT44Rule", Name: "lan", Status: map[string]any{"phase": "Active"}},
+			},
+		},
+		{
 			name:     "SystemdService routerd unit artifact",
 			features: platform.Features{HasSystemd: true},
 			artifacts: []resource.Artifact{
@@ -288,7 +311,7 @@ func gcRoundTripCases() []gcRoundTripCase {
 			features: platform.Features{HasIproute2: true},
 			artifacts: []resource.Artifact{
 				{Kind: "linux.ipip6.tunnel", Name: "ds-routerd", Owner: api.NetAPIVersion + "/DSLiteTunnel/ds-lite"},
-				{Kind: "net.ipv4.address", Name: "ds-routerd:192.168.160.250/32", Owner: api.NetAPIVersion + "/DSLiteTunnel/ds-lite"},
+				{Kind: "net.ipv4.address", Name: "ds-routerd:192.168.160.250/32", Owner: api.NetAPIVersion + "/DSLiteTunnel/ds-lite", Attributes: map[string]string{"peer": "192.0.0.1/32"}},
 			},
 			statuses: []routerstate.ObjectStatus{
 				{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel", Name: "ds-lite", Status: map[string]any{"phase": "Applied"}},

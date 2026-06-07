@@ -116,9 +116,14 @@ func runFreeBSDApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer
 	}
 	var cleanedPreDSLiteOrphans []string
 	if err := recordStageError("ds-lite-cleanup", func() error {
+		desiredDSLiteTunnels := desiredDSLiteTunnelIfNames(router)
 		var err error
-		cleanedPreDSLiteOrphans, err = cleanupStaleDSLiteTunnels(router)
-		cleanedAliases, aliasErr := cleanupStaleDSLiteIPv4Aliases(router)
+		cleanedPreDSLiteOrphans, err = cleanupStaleFreeBSDDSLiteTunnels(desiredDSLiteTunnels)
+		var cleanedAliases []string
+		var aliasErr error
+		if len(desiredDSLiteTunnels) > 0 {
+			cleanedAliases, aliasErr = cleanupStaleFreeBSDDSLiteIPv4Aliases(desiredDSLiteTunnels)
+		}
 		cleanedPreDSLiteOrphans = append(cleanedPreDSLiteOrphans, cleanedAliases...)
 		if err != nil {
 			return err

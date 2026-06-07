@@ -754,25 +754,11 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 			return nil, err
 		}
 
-		var cleanedPreDSLiteOrphans []string
-
 		var appliedTunnels []string
 		if err := recordStageError("ds-lite", func() error {
 			var err error
 			appliedTunnels, err = applyDSLiteTunnelsWithState(effectiveRouter, stateStore)
 			return err
-		}()); err != nil {
-			return nil, err
-		}
-		if err := recordStageError("ds-lite-cleanup", func() error {
-			var err error
-			cleanedPreDSLiteOrphans, err = cleanupStaleDSLiteTunnels(effectiveRouter)
-			cleanedAliases, aliasErr := cleanupStaleDSLiteIPv4Aliases(effectiveRouter)
-			cleanedPreDSLiteOrphans = append(cleanedPreDSLiteOrphans, cleanedAliases...)
-			if err != nil {
-				return err
-			}
-			return aliasErr
 		}()); err != nil {
 			return nil, err
 		}
@@ -795,17 +781,6 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 			return err
 		}()); err != nil {
 			return nil, err
-		}
-
-		var cleanedPolicyRules []string
-		if platformFeatures.HasIproute2 {
-			if err := recordStageError("ipv4-policy-route-cleanup", func() error {
-				var err error
-				cleanedPolicyRules, err = cleanupIPv4ManagedFwmarkRules(effectiveRouter)
-				return err
-			}()); err != nil {
-				return nil, err
-			}
 		}
 
 		var appliedRuntime []string
@@ -912,12 +887,6 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 		for _, route := range appliedPolicyRoutes {
 			fmt.Fprintf(stdout, "applied IPv4 policy route %s\n", route)
 		}
-		for _, rule := range cleanedPolicyRules {
-			fmt.Fprintf(stdout, "removed stale IPv4 policy rule %s\n", rule)
-		}
-		for _, artifact := range cleanedPreDSLiteOrphans {
-			fmt.Fprintf(stdout, "removed orphaned owned artifact %s\n", artifact)
-		}
 		for _, artifact := range cleanedLedgerOrphans {
 			fmt.Fprintf(stdout, "removed orphaned owned artifact %s\n", artifact)
 		}
@@ -934,9 +903,8 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 			"dsliteTunnels":       fmt.Sprintf("%d", len(appliedTunnels)),
 			"ipv4DefaultRoutes":   fmt.Sprintf("%d", len(appliedDefaultRoutes)),
 			"egressPolicyRoutes":  fmt.Sprintf("%d", len(appliedPolicyRoutes)),
-			"ipv4PolicyRulesGone": fmt.Sprintf("%d", len(cleanedPolicyRules)),
 			"bgpFiles":            fmt.Sprintf("%d", len(bgpChangedFiles)),
-			"ownedOrphansGone":    fmt.Sprintf("%d", len(cleanedPreDSLiteOrphans)+len(cleanedLedgerOrphans)),
+			"ownedOrphansGone":    fmt.Sprintf("%d", len(cleanedLedgerOrphans)),
 			"rememberedArtifacts": fmt.Sprintf("%d", rememberedArtifacts),
 		})
 		applyWarnings := append([]string{}, result.Warnings...)

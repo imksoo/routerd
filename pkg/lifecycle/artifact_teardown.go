@@ -102,10 +102,12 @@ var artifactTeardowns = []ArtifactTeardown{
 		Kind:     "nft.table",
 		Priority: 50,
 		Eligible: func(artifact resource.Artifact) bool {
-			return strings.HasPrefix(artifact.Attributes["name"], "routerd_")
+			_, name := nftTableArtifactParts(artifact)
+			return strings.HasPrefix(name, "routerd_")
 		},
 		Remediation: func(artifact resource.Artifact) string {
-			return "delete nft table " + artifact.Attributes["family"] + " " + artifact.Attributes["name"]
+			family, name := nftTableArtifactParts(artifact)
+			return "delete nft table " + family + " " + name
 		},
 		Teardown: cleanupNftTableArtifact,
 	},
@@ -225,12 +227,14 @@ func cleanupNftTableArtifact(exec ArtifactTeardownExecutor, artifact resource.Ar
 	if !exec.Features().HasNftables {
 		return "", nil
 	}
-	family := artifact.Attributes["family"]
-	name := artifact.Attributes["name"]
+	family, name := nftTableArtifactParts(artifact)
+	if family == "" || name == "" {
+		return "", nil
+	}
 	if err := exec.Run("nft", "delete", "table", family, name); err != nil {
 		return "", err
 	}
-	return artifact.Kind + "/" + name, nil
+	return artifact.Kind + "/" + artifact.Name, nil
 }
 
 func cleanupSystemdServiceArtifact(exec ArtifactTeardownExecutor, artifact resource.Artifact) (string, error) {
@@ -296,7 +300,12 @@ func cleanupIPv4AddressArtifact(exec ArtifactTeardownExecutor, artifact resource
 	}
 	features := exec.Features()
 	if features.HasIproute2 {
-		if err := exec.Run("ip", "-4", "addr", "del", address, "dev", ifname); err != nil {
+		args := []string{"-4", "addr", "del", address}
+		if peer := artifact.Attributes["peer"]; peer != "" {
+			args = append(args, "peer", peer)
+		}
+		args = append(args, "dev", ifname)
+		if err := exec.Run("ip", args...); err != nil {
 			return "", err
 		}
 		return artifact.Kind + "/" + artifact.Name, nil
@@ -412,11 +421,29 @@ func LabelForArtifact(artifact resource.Artifact) string {
 		return ""
 	}
 	name := artifact.Name
-	if artifact.Kind == "nft.table" && artifact.Attributes["name"] != "" {
-		name = artifact.Attributes["name"]
-	}
 	if name == "" {
 		return artifact.Kind
 	}
 	return artifact.Kind + "/" + name
+}
+
+func nftTableArtifactParts(artifact resource.Artifact) (string, string) {
+	family := artifact.Attributes["family"]
+	name := artifact.Attributes["name"]
+	if family != "" && name != "" {
+		return family, name
+	}
+	if family, name, ok := strings.Cut(artifact.Name, "/"); ok {
+		return family, name
+	}
+	return family, firstNonEmpty(name, artifact.Name)
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
