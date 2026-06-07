@@ -17,6 +17,7 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/apply"
+	"github.com/imksoo/routerd/pkg/config"
 	"github.com/imksoo/routerd/pkg/controlapi"
 	"github.com/imksoo/routerd/pkg/eventlog"
 	"github.com/imksoo/routerd/pkg/platform"
@@ -347,6 +348,112 @@ func TestLoadApplyStateStoreKeepsNonDryRunSQLiteWriter(t *testing.T) {
 	}
 	if got := store.Set("manual.mode", "writer", "test"); got.Status != routerstate.StatusSet || got.Value != "writer" {
 		t.Fatalf("writer set = %+v", got)
+	}
+}
+
+func TestRunApplyOnceCommitsCanonicalConfigAndGenerationYAML(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "router.yaml")
+	statePath := filepath.Join(dir, "routerd.db")
+	statusPath := filepath.Join(dir, "status.json")
+	ledgerPath := filepath.Join(dir, "ledger.db")
+	input := `# keep operator comment
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  # keep name comment
+  name: canonical-apply
+spec:
+  resources: []
+`
+	if err := os.WriteFile(configPath, []byte(input), 0640); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	router, err := config.Load(configPath)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	_, err = runApplyOnce(router, applyOptions{
+		ConfigPath:         configPath,
+		StatePath:          statePath,
+		StatusFile:         statusPath,
+		LedgerPath:         ledgerPath,
+		SkipServiceManager: true,
+	}, io.Discard, &eventlog.Logger{})
+	if err != nil {
+		t.Fatalf("apply once: %v", err)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read committed config: %v", err)
+	}
+	for _, want := range []string{"# keep operator comment", "# keep name comment"} {
+		if !strings.Contains(string(data), want) {
+			t.Fatalf("committed config lost %q:\n%s", want, data)
+		}
+	}
+	info, err := os.Stat(configPath)
+	if err != nil {
+		t.Fatalf("stat committed config: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0640 {
+		t.Fatalf("committed config mode = %v, want 0640", got)
+	}
+
+	store, err := routerstate.OpenSQLite(statePath)
+	if err != nil {
+		t.Fatalf("open state: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+	generation := store.LatestGeneration()
+	configYAML, ok, err := store.GenerationConfig(generation)
+	if err != nil {
+		t.Fatalf("generation config: %v", err)
+	}
+	if !ok {
+		t.Fatalf("generation %d has no config yaml", generation)
+	}
+	if !strings.Contains(configYAML, "# keep operator comment") || !strings.Contains(configYAML, "# keep name comment") {
+		t.Fatalf("generation config lost comments:\n%s", configYAML)
+	}
+}
+
+func TestLoadServeRouterFallsBackToLastGoodGeneration(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "router.yaml")
+	statePath := filepath.Join(dir, "routerd.db")
+	if err := os.WriteFile(configPath, []byte(`apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata: {}
+spec:
+  resources: []
+`), 0644); err != nil {
+		t.Fatalf("write invalid canonical config: %v", err)
+	}
+	store, err := routerstate.OpenSQLite(statePath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	good := seedGeneration(t, store, "hash-good", testRouterYAML("last-good-router"), true, "Healthy")
+	_ = seedGeneration(t, store, "hash-bad", testRouterYAML("newer-errored-router"), true, "Errored")
+
+	router, fallback, err := loadServeRouter(configPath, store)
+	if err != nil {
+		t.Fatalf("load serve router: %v", err)
+	}
+	if !fallback.Used || fallback.Generation != good {
+		t.Fatalf("fallback = %+v, want generation %d", fallback, good)
+	}
+	if router.Metadata.Name != "last-good-router" {
+		t.Fatalf("router name = %q, want last-good-router", router.Metadata.Name)
+	}
+	var stderr strings.Builder
+	emitServeBootFallbackWarning(&stderr, nil, configPath, fallback)
+	if got := stderr.String(); !strings.Contains(got, "WARNING:") || !strings.Contains(got, fmt.Sprintf("generation %d", good)) {
+		t.Fatalf("fallback warning missing details:\n%s", got)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close sqlite: %v", err)
 	}
 }
 
