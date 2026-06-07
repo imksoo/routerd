@@ -3,6 +3,7 @@
 package lifecycle
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 
@@ -14,11 +15,12 @@ import (
 type GCActionType string
 
 const (
-	GCActionBackupState    GCActionType = "backupState"
-	GCActionRemoveArtifact GCActionType = "removeArtifact"
-	GCActionForgetLedger   GCActionType = "forgetLedger"
-	GCActionDeleteStatus   GCActionType = "deleteStatus"
-	GCActionRecordEvent    GCActionType = "recordEvent"
+	GCActionBackupState      GCActionType = "backupState"
+	GCActionRemoveArtifact   GCActionType = "removeArtifact"
+	GCActionForgetLedger     GCActionType = "forgetLedger"
+	GCActionTeardownResource GCActionType = "teardownResource"
+	GCActionDeleteStatus     GCActionType = "deleteStatus"
+	GCActionRecordEvent      GCActionType = "recordEvent"
 )
 
 type GCPlanInput struct {
@@ -31,11 +33,12 @@ type GCPlanInput struct {
 }
 
 type GCPlan struct {
-	ArtifactRemovals []GCArtifactRemoval
-	LedgerForgets    []resource.Artifact
-	StatusDeletes    []routerstate.ObjectStatus
-	Actions          []GCAction
-	BackupRequired   bool
+	ArtifactRemovals  []GCArtifactRemoval
+	LedgerForgets     []resource.Artifact
+	ResourceTeardowns []routerstate.ObjectStatus
+	StatusDeletes     []routerstate.ObjectStatus
+	Actions           []GCAction
+	BackupRequired    bool
 }
 
 type GCArtifactRemoval struct {
@@ -55,6 +58,12 @@ type GCAction struct {
 
 func PlanGC(input GCPlanInput) GCPlan {
 	plan := PlanArtifactOrphans(input)
+	resourcePlan := PlanResourceTeardownGC(input.DesiredObjectStatusIDs, input.ObjectStatuses)
+	plan.ResourceTeardowns = append(plan.ResourceTeardowns, resourcePlan.ResourceTeardowns...)
+	plan.Actions = append(plan.Actions, resourcePlan.Actions...)
+	if resourcePlan.BackupRequired {
+		plan.BackupRequired = true
+	}
 	statusPlan := PlanStatusGC(input.DesiredObjectStatusIDs, input.ObjectStatuses)
 	plan.StatusDeletes = append(plan.StatusDeletes, statusPlan.StatusDeletes...)
 	if len(statusPlan.StatusDeletes) > 0 {
@@ -64,6 +73,37 @@ func PlanGC(input GCPlanInput) GCPlan {
 			plan.Actions = append(plan.Actions, GCAction{Type: GCActionDeleteStatus, Status: status, Label: ObjectStatusID(status)})
 		}
 		plan.Actions = append(plan.Actions, GCAction{Type: GCActionRecordEvent, Reason: "StaleStateCleanup"})
+	}
+	return plan
+}
+
+func PlanResourceTeardownGC(desired map[string]bool, statuses []routerstate.ObjectStatus) GCPlan {
+	var teardowns []routerstate.ObjectStatus
+	for _, status := range statuses {
+		if !resourceLifecycleObjectStatus(status) {
+			continue
+		}
+		if desired[ObjectStatusID(status)] {
+			continue
+		}
+		teardowns = append(teardowns, status)
+	}
+	sort.Slice(teardowns, func(i, j int) bool {
+		return ObjectStatusID(teardowns[i]) < ObjectStatusID(teardowns[j])
+	})
+	plan := GCPlan{ResourceTeardowns: teardowns}
+	if len(teardowns) > 0 {
+		plan.BackupRequired = true
+		plan.Actions = append(plan.Actions, GCAction{Type: GCActionBackupState, Reason: "resource teardown cleanup requires a state backup before deletion"})
+		for _, status := range teardowns {
+			plan.Actions = append(plan.Actions, GCAction{
+				Type:   GCActionTeardownResource,
+				Status: status,
+				Label:  ObjectStatusID(status),
+				Reason: "resource status is no longer desired and requires resource-specific teardown",
+			})
+		}
+		plan.Actions = append(plan.Actions, GCAction{Type: GCActionRecordEvent, Reason: "ResourceTeardownCleanup"})
 	}
 	return plan
 }
@@ -162,6 +202,12 @@ func PlanStatusGC(desired map[string]bool, statuses []routerstate.ObjectStatus) 
 		if !ConfigResourceObjectStatus(status) {
 			continue
 		}
+		if !routerdManagedStatus(status) {
+			continue
+		}
+		if resourceLifecycleObjectStatus(status) {
+			continue
+		}
 		if desired[ObjectStatusID(status)] {
 			continue
 		}
@@ -206,6 +252,73 @@ func ConfigResourceObjectStatus(status routerstate.ObjectStatus) bool {
 		apiVersion = legacyStatusAPIVersionForKind(status.Kind)
 	}
 	return status.APIVersion == apiVersion
+}
+
+func resourceLifecycleObjectStatus(status routerstate.ObjectStatus) bool {
+	if !routerdManagedStatus(status) {
+		return false
+	}
+	declaration, ok := Lookup(status.APIVersion, status.Kind)
+	if !ok || declaration.TeardownLifecycle != TeardownLifecycleResource {
+		return false
+	}
+	switch {
+	case status.APIVersion == api.NetAPIVersion && (status.Kind == "IPv4Route" || status.Kind == "WireGuardInterface" || status.Kind == "WireGuardPeer"):
+		return true
+	case status.APIVersion == api.HybridAPIVersion && status.Kind == "RemoteAddressClaim":
+		return true
+	case status.APIVersion == api.SystemAPIVersion && status.Kind == "Sysctl" && strings.HasPrefix(status.Name, "sam-proxy-arp-"):
+		return true
+	default:
+		return false
+	}
+}
+
+func routerdManagedStatus(status routerstate.ObjectStatus) bool {
+	if managed, ok := statusBool(status.Status["managed"]); ok && !managed {
+		return false
+	}
+	managedBy := firstNonEmptyString(status.ManagedBy, statusMapString(status.Status, "managedBy"))
+	if strings.EqualFold(managedBy, "external") {
+		return false
+	}
+	management := firstNonEmptyString(status.Management, statusMapString(status.Status, "management"))
+	return !strings.EqualFold(management, "adopted")
+}
+
+func statusBool(value any) (bool, bool) {
+	switch v := value.(type) {
+	case bool:
+		return v, true
+	case string:
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "true", "yes", "1":
+			return true, true
+		case "false", "no", "0":
+			return false, true
+		}
+	}
+	return false, false
+}
+
+func statusMapString(status map[string]any, key string) string {
+	if status == nil {
+		return ""
+	}
+	value, ok := status[key]
+	if !ok || value == nil {
+		return ""
+	}
+	return strings.TrimSpace(fmt.Sprint(value))
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 func ObjectStatusID(status routerstate.ObjectStatus) string {

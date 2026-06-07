@@ -170,7 +170,7 @@ var declarations = []Declaration{
 	declare(api.NetAPIVersion, "Interface", ClassManagedHost, "network interface alias/adoption intent", resourceLifecycle()),
 	declare(api.NetAPIVersion, "PPPoESession", ClassManagedHost, "PPPoE daemon, socket, and interface artifacts", artifacts("systemd.service", "file", "unix.socket", "directory")),
 	declare(api.NetAPIVersion, "WireGuardInterface", ClassManagedHost, "WireGuard interface and configuration", resourceLifecycle()),
-	declare(api.NetAPIVersion, "WireGuardPeer", ClassRendererInput, "peer entry rendered into a WireGuard interface", noHostTeardown("peer entry is rendered into its owning WireGuardInterface")),
+	declare(api.NetAPIVersion, "WireGuardPeer", ClassRendererInput, "peer entry rendered into a WireGuard interface", resourceLifecycle()),
 	declare(api.NetAPIVersion, "TailscaleNode", ClassManagedHost, "tailscale node configuration", resourceLifecycle()),
 	declare(api.NetAPIVersion, "IPsecConnection", ClassManagedHost, "IPsec connection configuration", resourceLifecycle()),
 	declare(api.NetAPIVersion, "VRF", ClassManagedHost, "VRF link and routing table intent", resourceLifecycle()),

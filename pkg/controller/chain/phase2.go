@@ -24,6 +24,7 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/lifecycle"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/resourcequery"
 	routerstate "github.com/imksoo/routerd/pkg/state"
@@ -567,36 +568,48 @@ func (c IPv4RouteController) cleanupRemovedRoutes(ctx context.Context) error {
 	desired := map[string]bool{}
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.APIVersion == api.NetAPIVersion && resource.Kind == "IPv4Route" {
-			desired[resource.Metadata.Name] = true
+			desired[lifecycle.OwnerKey(resource.APIVersion, resource.Kind, resource.Metadata.Name)] = true
 		}
 	}
-	for _, status := range statuses {
-		if status.APIVersion != api.NetAPIVersion || status.Kind != "IPv4Route" || desired[status.Name] {
+	plan := lifecycle.PlanResourceTeardownGC(desired, statuses)
+	for _, action := range plan.Actions {
+		if action.Type != lifecycle.GCActionTeardownResource {
 			continue
 		}
-		if !c.DryRun {
-			args := ipv4RouteDeleteArgs(status.Status)
-			if len(args) > 0 {
-				name := "ip"
-				if platform.CurrentOS() == platform.OSFreeBSD {
-					name, args = freeBSDIPv4RouteDeleteCommand(status.Status)
-				}
-				out, err := c.run(ctx, name, args...)
-				if err != nil && !missingIPv4RouteDelete(err, out) {
-					return fmt.Errorf("delete removed IPv4Route %s: %s %s: %w: %s", status.Name, name, strings.Join(args, " "), err, strings.TrimSpace(string(out)))
-				}
-			}
+		status := action.Status
+		if status.APIVersion != api.NetAPIVersion || status.Kind != "IPv4Route" {
+			continue
 		}
-		if err := deleter.DeleteObject(api.NetAPIVersion, "IPv4Route", status.Name); err != nil {
+		if err := c.teardownRemovedRoute(ctx, status, deleter); err != nil {
 			return err
 		}
-		if c.Bus != nil {
-			event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.ipv4.route.removed", daemonapi.SeverityInfo)
-			event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "IPv4Route", Name: status.Name}
-			event.Attributes = map[string]string{"destination": fmt.Sprint(status.Status["destination"]), "device": fmt.Sprint(status.Status["device"])}
-			if err := c.Bus.Publish(ctx, event); err != nil {
-				return err
+	}
+	return nil
+}
+
+func (c IPv4RouteController) teardownRemovedRoute(ctx context.Context, status routerstate.ObjectStatus, deleter routerstate.ObjectDeleteStore) error {
+	if !c.DryRun {
+		args := ipv4RouteDeleteArgs(status.Status)
+		if len(args) > 0 {
+			name := "ip"
+			if platform.CurrentOS() == platform.OSFreeBSD {
+				name, args = freeBSDIPv4RouteDeleteCommand(status.Status)
 			}
+			out, err := c.run(ctx, name, args...)
+			if err != nil && !missingIPv4RouteDelete(err, out) {
+				return fmt.Errorf("delete removed IPv4Route %s: %s %s: %w: %s", status.Name, name, strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+			}
+		}
+	}
+	if err := deleter.DeleteObject(api.NetAPIVersion, "IPv4Route", status.Name); err != nil {
+		return err
+	}
+	if c.Bus != nil {
+		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.ipv4.route.removed", daemonapi.SeverityInfo)
+		event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "IPv4Route", Name: status.Name}
+		event.Attributes = map[string]string{"destination": fmt.Sprint(status.Status["destination"]), "device": fmt.Sprint(status.Status["device"])}
+		if err := c.Bus.Publish(ctx, event); err != nil {
+			return err
 		}
 	}
 	return nil

@@ -18,6 +18,7 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/lifecycle"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 	"github.com/imksoo/routerd/pkg/wireguard"
 )
@@ -66,33 +67,47 @@ func (c WireGuardController) cleanupStaleResources(ctx context.Context) error {
 	}
 	desiredInterfaces := map[string]struct{}{}
 	desiredPeers := map[string]struct{}{}
+	desired := map[string]bool{}
 	for _, resource := range c.Router.Spec.Resources {
 		switch resource.Kind {
 		case "WireGuardInterface":
 			desiredInterfaces[resource.Metadata.Name] = struct{}{}
+			desired[lifecycle.OwnerKey(api.NetAPIVersion, "WireGuardInterface", resource.Metadata.Name)] = true
 			if ifname := interfaceIfName(c.Router, resource.Metadata.Name); ifname != "" {
 				desiredInterfaces[ifname] = struct{}{}
+				desired[lifecycle.OwnerKey(api.NetAPIVersion, "WireGuardInterface", ifname)] = true
 			}
 		case "WireGuardPeer":
 			desiredPeers[resource.Metadata.Name] = struct{}{}
+			desired[lifecycle.OwnerKey(api.NetAPIVersion, "WireGuardPeer", resource.Metadata.Name)] = true
 		}
 	}
 	staleInterfaces := map[string]struct{}{}
-	for _, item := range statuses {
-		if item.APIVersion != api.NetAPIVersion || item.Kind != "WireGuardInterface" {
+	plan := lifecycle.PlanResourceTeardownGC(desired, statuses)
+	for _, action := range plan.Actions {
+		if action.Type != lifecycle.GCActionTeardownResource {
 			continue
 		}
-		if _, ok := desiredInterfaces[item.Name]; ok || !routerdManagedObjectStatus(item) {
+		item := action.Status
+		if item.APIVersion != api.NetAPIVersion || item.Kind != "WireGuardInterface" || !routerdManagedObjectStatus(item) {
 			continue
 		}
 		ifname := firstNonEmpty(statusString(item.Status, "ifname"), statusString(item.Status, "interface"), item.Name)
-		if ifname != "" && !c.DryRun {
-			if err := c.deleteWireGuardInterface(ctx, ifname); err != nil {
-				return err
-			}
+		if err := c.teardownWireGuardInterface(ctx, item, ifname, deleter); err != nil {
+			return err
 		}
 		staleInterfaces[item.Name] = struct{}{}
-		if err := deleter.DeleteObject(item.APIVersion, item.Kind, item.Name); err != nil {
+		staleInterfaces[ifname] = struct{}{}
+	}
+	for _, action := range plan.Actions {
+		if action.Type != lifecycle.GCActionTeardownResource {
+			continue
+		}
+		item := action.Status
+		if item.APIVersion != api.NetAPIVersion || item.Kind != "WireGuardPeer" || !routerdManagedObjectStatus(item) {
+			continue
+		}
+		if err := c.teardownWireGuardPeer(ctx, item, deleter); err != nil {
 			return err
 		}
 	}
@@ -100,16 +115,46 @@ func (c WireGuardController) cleanupStaleResources(ctx context.Context) error {
 		if item.APIVersion != api.NetAPIVersion || item.Kind != "WireGuardPeer" || !routerdManagedObjectStatus(item) {
 			continue
 		}
-		_, peerStillDesired := desiredPeers[item.Name]
-		_, interfaceRemoved := staleInterfaces[statusString(item.Status, "interface")]
-		if peerStillDesired && !interfaceRemoved {
+		if _, peerStillDesired := desiredPeers[item.Name]; !peerStillDesired {
 			continue
 		}
-		if err := deleter.DeleteObject(item.APIVersion, item.Kind, item.Name); err != nil {
+		if _, interfaceRemoved := staleInterfaces[statusString(item.Status, "interface")]; !interfaceRemoved {
+			continue
+		}
+		if err := c.teardownWireGuardPeer(ctx, item, deleter); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func (c WireGuardController) teardownWireGuardInterface(ctx context.Context, item routerstate.ObjectStatus, ifname string, deleter routerstate.ObjectDeleteStore) error {
+	if ifname != "" && !c.DryRun {
+		if err := c.deleteWireGuardInterface(ctx, ifname); err != nil {
+			return err
+		}
+	}
+	if err := deleter.DeleteObject(item.APIVersion, item.Kind, item.Name); err != nil {
+		return err
+	}
+	return c.publishWireGuardRemoved(ctx, item, map[string]string{"interface": ifname})
+}
+
+func (c WireGuardController) teardownWireGuardPeer(ctx context.Context, item routerstate.ObjectStatus, deleter routerstate.ObjectDeleteStore) error {
+	if err := deleter.DeleteObject(item.APIVersion, item.Kind, item.Name); err != nil {
+		return err
+	}
+	return c.publishWireGuardRemoved(ctx, item, map[string]string{"interface": statusString(item.Status, "interface")})
+}
+
+func (c WireGuardController) publishWireGuardRemoved(ctx context.Context, item routerstate.ObjectStatus, attrs map[string]string) error {
+	if c.Bus == nil {
+		return nil
+	}
+	event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.wireguard.resource.removed", daemonapi.SeverityInfo)
+	event.Resource = &daemonapi.ResourceRef{APIVersion: item.APIVersion, Kind: item.Kind, Name: item.Name}
+	event.Attributes = attrs
+	return c.Bus.Publish(ctx, event)
 }
 
 func (c WireGuardController) deleteWireGuardInterface(ctx context.Context, ifname string) error {
