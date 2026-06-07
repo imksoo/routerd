@@ -1130,6 +1130,138 @@ const diagrams = [
     ],
     noteText: 'Pick the subset matching your ISP; routerd publishes status so LAN resources can react.',
   }),
+  flowDiagram({
+    name: 'reference-event-federation',
+    title: 'Event Federation reference',
+    subtitle: 'EventGroup, EventPeer, and EventSubscription move typed observed facts into local DynamicConfigPart output.',
+    lanes: [
+      { title: 'Local fact', boxes: ['observed event\nimmutable typed fact', 'EventGroup\nnode identity retention HMAC', 'routerctl emit/list\nor future observer'] },
+      { title: 'Federation daemon', boxes: ['routerd-eventd\npush over overlay', 'EventPeer\nendpoint filters delivery state', 'at-least-once retry\nHMAC replay guard'] },
+      { title: 'Subscriber output', boxes: ['EventSubscription\nmatch + debounce', 'trusted plugin\nbatch to DynamicConfigPart', 'derived resources\nRemoteAddressClaim capture'] },
+    ],
+    noteText: 'Events are facts, not commands; duplicate delivery must be idempotent and feedback loops are guarded.',
+  }),
+  flowDiagram({
+    name: 'adr-0006-event-federation',
+    title: 'ADR 0006: Event Federation',
+    subtitle: 'CloudEdge mobility discovery uses routerd-to-routerd typed facts instead of shipping executable commands.',
+    lanes: [
+      { title: 'Problem', boxes: ['RemoteAddressClaim\nwas hand-authored', 'on-prem observes\nclient /32 facts', 'cloud needs derived\nclaim + action plan'] },
+      { title: 'Decision', boxes: ['EventGroup bus\nidentity auth retention', 'EventPeer push\nbounded at-least-once delivery', 'EventSubscription\ntrusted local plugin trigger'] },
+      { title: 'Invariants', boxes: ['observed facts only\nnever remote commands', 'no self-capture\nfeedback loop', 'provider mutation\nstays dry-run in MVP'] },
+    ],
+    noteText: 'The receiver decides locally how an event becomes configuration; the wire carries facts.',
+  }),
+  flowDiagram({
+    name: 'adr-0007-provider-action-execution',
+    title: 'ADR 0007: Provider Action Execution',
+    subtitle: 'Provider mutations are imported, gated, approved, executed by isolated plugins, and journaled.',
+    lanes: [
+      { title: 'Planner side', boxes: ['DynamicConfigPart\nactionPlan is inert', 'planner plugin\nno provider credentials', 'idempotency key\nfor import'] },
+      { title: 'routerd gate', boxes: ['action_executions\npending journal', 'ProviderActionPolicy\ndefault deny', 'approval or policy\nallowlist + dryRunOnly=false'] },
+      { title: 'Executor side', boxes: ['executor plugin\nseparate process', 'cloud-native identity\nnever in routerd core', 'succeeded failed skipped\njournal outcome'] },
+    ],
+    noteText: 'routerd core never reads, stores, or passes provider credentials.',
+  }),
+  flowDiagram({
+    name: 'adr-0008-capture-coordination-fencing',
+    title: 'ADR 0008: Capture Coordination Fencing',
+    subtitle: 'Provider capture work is level-projected and fenced so stale actions cannot move a mobile address.',
+    lanes: [
+      { title: 'Hazard', boxes: ['provider APIs are slow\nand retried', 'owner can change\nwhile action is pending', 'unassign old holder\ncan race new holder'] },
+      { title: 'Fence', boxes: ['captureEpoch\nper pool/address/domain', 'action stamped with\ncaptureKey holder epoch', 'import/executor gate\nchecks current fence'] },
+      { title: 'Outcome', boxes: ['stale action rejected', 'desired level projection\nnot work queue', 'idempotent provider action\nalready-correct is success'] },
+    ],
+    noteText: 'Fencing narrows split-brain risk, but does not claim consensus or provider-global serialization.',
+  }),
+  flowDiagram({
+    name: 'adr-0009-pluggable-underlay',
+    title: 'ADR 0009: Pluggable Overlay Underlay',
+    subtitle: 'TunnelInterface separates SAM delivery from the physical network and keeps MTU behavior explicit.',
+    lanes: [
+      { title: 'Need', boxes: ['SAM traffic needs\nportable delivery', 'WireGuard may be\nendpoint encryption only', 'operators need\ntrusted-underlay choices'] },
+      { title: 'Decision', boxes: ['TunnelInterface kind\nipip gre fou gue', 'delivery = tunnel mode\nunderlayInterface optional', 'MTU = underlay MTU\nminus protocol overhead'] },
+      { title: 'Safety', boxes: ['Linux-first renderers', 'MSS clamp follows\neffective overlay MTU', 'invalid pairings\nfail validation'] },
+    ],
+    noteText: 'Current SAM defaults to IPIP delivery; WireGuard is the optional encrypted underlay, not the mobility route owner.',
+  }),
+  flowDiagram({
+    name: 'adr-0010-capture-ownership-arbitration',
+    title: 'ADR 0010: Capture Ownership Arbitration',
+    subtitle: 'Capture ownership uses deterministic owner views and epochs to avoid duplicate provider or proxy-ARP holders.',
+    lanes: [
+      { title: 'Problem', boxes: ['multiple routerd instances\ncan see same address', 'provider secondary IP\nmust have one holder', 'on-prem proxy ARP\nmust not split brain'] },
+      { title: 'Decision', boxes: ['ownershipEpoch\nper pool/address', 'ownership map\nleader-less convergence', 'ipOwnershipPolicy\nscope and eligibility'] },
+      { title: 'Guardrails', boxes: ['idempotency key\nincludes owner epoch', 'VRRP gate for HA pair\nsingle-router mode for labs', 'doctor detects\nconflicting capture'] },
+    ],
+    noteText: 'The contract prevents duplicate capture; it intentionally avoids adding consensus infrastructure.',
+  }),
+  flowDiagram({
+    name: 'adr-0011-generalized-failover',
+    title: 'ADR 0011: Generalized Failover',
+    subtitle: 'Liveness-driven seize lets eligible standby routers restore capture across providers without manual action.',
+    lanes: [
+      { title: 'Inputs', boxes: ['active marker\nor local liveness signal', 'same-site standby\neligible by policy', 'provider semantics\nAWS Azure OCI differ'] },
+      { title: 'routerd model', boxes: ['unified eligibility\nand liveness view', 'seize decision\nprovider agnostic', 'action layer\nidempotent reassignment'] },
+      { title: 'Result', boxes: ['secondary IP moves\nto standby', 'on-prem capture follows\nVRRP or single-router gate', 'events and status\nshow failover path'] },
+    ],
+    noteText: 'Provider differences stay in executors; failover intent stays in the shared routerd model.',
+  }),
+  flowDiagram({
+    name: 'adr-0012-bgp-address-mobility',
+    title: 'ADR 0012: BGP /32 Address Mobility',
+    subtitle: 'BGP best-path becomes the source of truth for mobile address ownership and overlay reachability.',
+    lanes: [
+      { title: 'Superseded path', boxes: ['Address lease\ncustom owner state', 'ownership/capture epochs\nmultiple truths', 'hand-built address claim\nroute projection'] },
+      { title: 'BGP mobility', boxes: ['owner advertises\nservice /32', 'liveness marker\nwithdraw drives seize', 'iBGP RR reflects\nbest paths'] },
+      { title: 'routerd effects', boxes: ['FIB imports /32\nwith multipath preserved', 'provider capture\nbackground reconciliation', 'SAMTransportProfile\nbuilds IPIP over WG'] },
+    ],
+    noteText: 'Cloud fabric ingress may lag, but overlay reachability is driven by BGP RIB/FIB state.',
+  }),
+  flowDiagram({
+    name: 'adr-0013-ipv4-force-fragmentation',
+    title: 'ADR 0013: IPv4 Force Fragmentation',
+    subtitle: 'Explicit path-scoped DF clearing handles trusted overlay PMTU black holes when MSS clamp is not enough.',
+    lanes: [
+      { title: 'Normal path', boxes: ['derive effective\npath MTU', 'TCP MSS clamp\nrouterd_mss table', 'PMTUD preferred\nwhen feedback works'] },
+      { title: 'Problem traffic', boxes: ['non-TCP oversized\nUDP QUIC ICMP', 'DF set and PMTUD\nblocked or ignored', 'overlay underlay MTU\nlower than sender expects'] },
+      { title: 'Decision', boxes: ['forceFragmentIPv4\nexplicit default off', 'trusted overlay only\nwireguard ipip gre fou gue', 'routerd_forcefrag\nclear DF on matched path'] },
+    ],
+    noteText: 'This is a last-resort Linux path-MTU workaround, not a general Internet default.',
+  }),
+  flowDiagram({
+    name: 'explainer-overview',
+    title: 'CloudEdge explainer map',
+    subtitle: 'The explainer set connects the Phase G overview, deep dive, ADRs, and implementation references.',
+    lanes: [
+      { title: 'Start', boxes: ['Phase G overview\nwhat SAM solves', 'topology diagrams\nsite and BGP shape', 'invariants\nno NAT source preserved'] },
+      { title: 'Deepen', boxes: ['deep dive\nlayers packets capture', 'ADR trail\nwhy choices changed', 'reference docs\nresource contracts'] },
+      { title: 'Operate', boxes: ['SAMTransportProfile\nIPIP over WG', 'provider capture\nsecondary IP or proxy ARP', 'evidence and how-to\nvalidate the dataplane'] },
+    ],
+    noteText: 'Read overview first, deep dive second, then ADRs when you need the tradeoffs behind the current design.',
+  }),
+  flowDiagram({
+    name: 'explainer-cloudedge-sam-phase-g',
+    title: 'CloudEdge SAM Phase G overview',
+    subtitle: 'Selected /32 addresses move across on-prem, AWS, Azure, and OCI with BGP ownership and provider/on-prem capture.',
+    lanes: [
+      { title: 'Transport', boxes: ['SAMTransportProfile\nsame topologyNodeRefs', 'IPIP delivery plane\ninner /31 links', 'WireGuard optional\nendpoint-only encryption'] },
+      { title: 'Ownership', boxes: ['BGP best-path\nowns each /32', 'liveness marker\nwithdraw triggers seize', 'on-prem RR\nreflects hub-spoke paths'] },
+      { title: 'Capture and flow', boxes: ['cloud secondary IP\nAWS Azure OCI', 'on-prem proxy ARP\nVRRP or single-router gate', 'no NAT\nsource IP preserved'] },
+    ],
+    noteText: 'The current design is clean Option B: BGP is the ownership plane, not lease or epoch state.',
+  }),
+  flowDiagram({
+    name: 'explainer-cloudedge-sam-phase-g-deep-dive',
+    title: 'CloudEdge SAM Phase G deep dive',
+    subtitle: 'The detailed guide follows packet layers, BGP /32 ownership, capture realization, failover, and validation evidence.',
+    lanes: [
+      { title: 'Layer view', boxes: ['provider network\nVPC VNet VCN WAN', 'transport underlay\nWG or trusted tunnel', 'SAM/BGP mobility\nlogical /32 overlay'] },
+      { title: 'Control plane', boxes: ['owner advertises /32\nand liveness marker', 'RR reflects\nbest path to peers', 'RIB trap drives\ncapture realization'] },
+      { title: 'Proof points', boxes: ['four-point captures\ninner packet no NAT', 'failover\nstandby seizes holder', 'MSS clamp and forcefrag\nPMTU defenses'] },
+    ],
+    noteText: 'Cloud capture is provider-specific; on-prem capture is VRRP-gated for HA or single-router always-active for one-router labs.',
+  }),
 ];
 
 function chromePath() {

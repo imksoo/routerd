@@ -1,5 +1,7 @@
 # ADR 0008: Capture Coordination via Fencing Tokens (epoch-fenced level projection)
 
+![Diagram showing ADR 0008 capture coordination hazards, captureEpoch fencing, stamped provider actions, stale-action rejection, and idempotent level projection](/img/diagrams/adr-0008-capture-coordination-fencing.png)
+
 ## Status
 
 Proposed; Accepted for experimental implementation — 2026-05-31.

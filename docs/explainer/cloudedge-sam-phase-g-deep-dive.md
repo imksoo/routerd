@@ -4,6 +4,8 @@ title: CloudEdge SAM Phase G — detailed implementation guide
 
 # CloudEdge Selective Address Mobility Phase G — detailed implementation guide
 
+![Diagram showing the CloudEdge SAM Phase G deep dive layers from provider networks through transport underlay and SAM BGP mobility to Route Reflector control, capture realization, packet capture evidence, failover, and PMTU defenses](/img/diagrams/explainer-cloudedge-sam-phase-g-deep-dive.png)
+
 This guide complements the short Phase G overview with the lower-level pieces that
 operators usually need when explaining or troubleshooting CloudEdge SAM:
 

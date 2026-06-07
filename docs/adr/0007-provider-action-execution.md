@@ -1,5 +1,7 @@
 # ADR 0007: Provider Action Execution (gated, executor-isolated)
 
+![Diagram showing ADR 0007 provider action execution from inert planner actionPlan through ProviderActionPolicy gating and approval to isolated executor plugin journaling](/img/diagrams/adr-0007-provider-action-execution.png)
+
 ## Status
 
 Proposed; Accepted for experimental implementation — 2026-05-30.

@@ -1,5 +1,7 @@
 # ADR 0010: Capture Ownership Arbitration (multi-instance ownership map + ownershipEpoch fencing)
 
+![Diagram showing ADR 0010 capture ownership arbitration from duplicate-holder hazards through ownershipEpoch and ownership map decisions to VRRP or single-router capture guardrails](/img/diagrams/adr-0010-capture-ownership-arbitration.png)
+
 ## Status
 
 Proposed; Accepted for experimental implementation — 2026-06-01.

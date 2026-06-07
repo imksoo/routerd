@@ -1,5 +1,7 @@
 # ADR 0009: Pluggable Overlay Underlay (ipip / gre, then fou / gue)
 
+![Diagram showing ADR 0009 pluggable underlay with TunnelInterface, IPIP or GRE delivery, optional WireGuard encrypted underlay, MTU overhead derivation, and MSS clamp safety](/img/diagrams/adr-0009-pluggable-underlay.png)
+
 ## Status
 
 Proposed; Accepted for experimental implementation — 2026-06-01.

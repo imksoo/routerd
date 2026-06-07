@@ -1,5 +1,7 @@
 # Event Federation reference
 
+![Diagram showing Event Federation from observed local facts through EventGroup, routerd-eventd push delivery, EventSubscription matching, and plugin-derived DynamicConfigPart output](/img/diagrams/reference-event-federation.png)
+
 > Experimental (CloudEdge). See [ADR 0006: CloudEdge Event Federation](../adr/0006-event-federation.md)
 > for the design and invariants, and the how-to
 > [Event Federation subscription](../how-to/event-federation-subscription.md) for a

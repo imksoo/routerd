@@ -1,5 +1,7 @@
 # ADR 0011: Generalized Failover (liveness-driven seize, cross-provider action parity)
 
+![Diagram showing ADR 0011 generalized failover from active marker and standby eligibility inputs through routerd seize decisions to provider or on-prem capture recovery](/img/diagrams/adr-0011-generalized-failover.png)
+
 ## Status
 
 Proposed; Accepted for experimental implementation — 2026-06-01.
