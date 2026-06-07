@@ -6,6 +6,8 @@ sidebar_position: 3
 
 # リソースモデル
 
+![Router YAML から reference、dependency ordering、owner key、status、event、ledger artifact へつながる routerd resource model](/img/diagrams/concept-resource-model.png)
+
 routerd の設定は、最上位の `Router` と、その下に並ぶ複数のリソースで構成します。
 各リソースは Kubernetes に近い形をとります。
 

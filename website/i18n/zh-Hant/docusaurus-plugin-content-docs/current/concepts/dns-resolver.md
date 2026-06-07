@@ -5,6 +5,8 @@ slug: /concepts/dns-resolver
 
 # DNS 解析器
 
+![DNSZone、DNSForwarder、DNSUpstream 與 DNSResolver 收斂為 resolver daemon 行為的流程](/img/diagrams/concept-dns-resolver.png)
+
 routerd 的 DNS 將權威資料、解析器程序、轉發規則與上游端點，分別以小型資源表達。
 
 `DNSZone` 保存本地的權威資料，包含手動輸入的記錄，以及從 DHCP 租約衍生的記錄。

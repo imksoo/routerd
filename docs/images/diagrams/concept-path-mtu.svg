@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" font-family="Inter, Arial, Helvetica, sans-serif">
+<defs>
+  <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="5.5" orient="auto">
+    <path d="M 0 0 L 11 5.5 L 0 11 z" fill="#2f4f6f"/>
+  </marker>
+  <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
+    <feDropShadow dx="0" dy="5" stdDeviation="5" flood-color="#10233f" flood-opacity="0.14"/>
+  </filter>
+</defs>
+<rect width="1600" height="900" fill="#f7fafc"/>
+<rect x="28" y="28" width="1544" height="844" rx="30" fill="#ffffff" stroke="#e2e8f0" stroke-width="2"/>
+<text x="74" y="92" font-size="42" font-weight="850" fill="#10233f">path MTU and TCP MSS</text>
+<text x="76" y="130" font-size="23" font-weight="600" fill="#63758d">routerd derives tunnel MTU, RA MTU, TCP MSS clamp, and optional IPv4 force-fragmentation from forwarding paths.</text>
+<g filter="url(#shadow)">
+<g>
+  <rect x="72" y="176" width="430" height="600" rx="24" fill="#f6f8fb" stroke="#d9e2ef" stroke-width="2"/>
+  <text x="100" y="218" font-size="25" font-weight="800" fill="#45556f">Path inputs</text>
+</g>
+<g>
+  <rect x="540" y="176" width="470" height="600" rx="24" fill="#f6f8fb" stroke="#d9e2ef" stroke-width="2"/>
+  <text x="568" y="218" font-size="25" font-weight="800" fill="#45556f">Derived values</text>
+</g>
+<g>
+  <rect x="1048" y="176" width="480" height="600" rx="24" fill="#f6f8fb" stroke="#d9e2ef" stroke-width="2"/>
+  <text x="1076" y="218" font-size="25" font-weight="800" fill="#45556f">Rendered behavior</text>
+</g>
+<g>
+  <rect x="112" y="225" width="340" height="82" rx="18" fill="#e9f8ef" stroke="#2e7d55" stroke-width="3"/>
+  <text x="282" y="260.05" font-size="23" font-weight="700" fill="#13233a" text-anchor="middle" dominant-baseline="middle"><tspan x="282" dy="0">PPPoE DS-Lite</tspan><tspan x="282" dy="28">WireGuard TunnelInterface</tspan></text>
+</g>
+<g>
+  <rect x="112" y="345" width="340" height="82" rx="18" fill="#eaf2ff" stroke="#3267b1" stroke-width="3"/>
+  <text x="282" y="380.05" font-size="23" font-weight="700" fill="#13233a" text-anchor="middle" dominant-baseline="middle"><tspan x="282" dy="0">underlay interface MTU</tspan><tspan x="282" dy="28">minus tunnel overhead</tspan></text>
+</g>
+<g>
+  <rect x="112" y="465" width="340" height="82" rx="18" fill="#f5f3ff" stroke="#6d5bd0" stroke-width="3"/>
+  <text x="282" y="500.05" font-size="23" font-weight="700" fill="#13233a" text-anchor="middle" dominant-baseline="middle"><tspan x="282" dy="0">FirewallZone roles</tspan><tspan x="282" dy="28">trusted -&gt; untrusted path</tspan></text>
+</g>
+<g>
+  <rect x="112" y="585" width="340" height="82" rx="18" fill="#fff4e6" stroke="#c57a1c" stroke-width="3"/>
+  <text x="282" y="634.05" font-size="23" font-weight="700" fill="#13233a" text-anchor="middle" dominant-baseline="middle"><tspan x="282" dy="0">RA / DHCPv6 LAN intent</tspan></text>
+</g>
+<g>
+  <rect x="580" y="255" width="390" height="92" rx="18" fill="#eef8f9" stroke="#2b8a92" stroke-width="3"/>
+  <text x="775" y="295.05" font-size="23" font-weight="700" fill="#13233a" text-anchor="middle" dominant-baseline="middle"><tspan x="775" dy="0">effective path MTU</tspan><tspan x="775" dy="28">min(source MTU, tunnel MTU)</tspan></text>
+</g>
+<g>
+  <rect x="580" y="445" width="390" height="92" rx="18" fill="#fff8df" stroke="#d7a725" stroke-width="3"/>
+  <text x="775" y="485.05" font-size="23" font-weight="700" fill="#13233a" text-anchor="middle" dominant-baseline="middle"><tspan x="775" dy="0">TCP MSS</tspan><tspan x="775" dy="28">IPv4 MTU-40, IPv6 MTU-60</tspan></text>
+</g>
+<g>
+  <rect x="1088" y="235" width="390" height="86" rx="18" fill="#e9f8ef" stroke="#2e7d55" stroke-width="3"/>
+  <text x="1283" y="272.05" font-size="23" font-weight="700" fill="#13233a" text-anchor="middle" dominant-baseline="middle"><tspan x="1283" dy="0">nft MSS clamp</tspan><tspan x="1283" dy="28">only lowers high SYN MSS</tspan></text>
+</g>
+<g>
+  <rect x="1088" y="380" width="390" height="86" rx="18" fill="#eaf2ff" stroke="#3267b1" stroke-width="3"/>
+  <text x="1283" y="417.05" font-size="23" font-weight="700" fill="#13233a" text-anchor="middle" dominant-baseline="middle"><tspan x="1283" dy="0">derived RA MTU</tspan><tspan x="1283" dy="28">for smaller downstream path</tspan></text>
+</g>
+<g>
+  <rect x="1088" y="525" width="390" height="86" rx="18" fill="#f5f3ff" stroke="#6d5bd0" stroke-width="3"/>
+  <text x="1283" y="562.05" font-size="23" font-weight="700" fill="#13233a" text-anchor="middle" dominant-baseline="middle"><tspan x="1283" dy="0">optional IPv4 forcefrag</tspan><tspan x="1283" dy="28">trusted overlay fallback</tspan></text>
+</g>
+<line x1="452" y1="266" x2="580" y2="301" fill="none" stroke="#2f4f6f" stroke-width="4" marker-end="url(#arrow)"/>
+<line x1="452" y1="386" x2="580" y2="301" fill="none" stroke="#2f4f6f" stroke-width="4" marker-end="url(#arrow)"/>
+<line x1="452" y1="506" x2="580" y2="491" fill="none" stroke="#2f4f6f" stroke-width="4" marker-end="url(#arrow)"/>
+<line x1="452" y1="626" x2="580" y2="301" fill="none" stroke="#2f4f6f" stroke-width="4" marker-end="url(#arrow)"/>
+<line x1="970" y1="491" x2="1088" y2="278" fill="none" stroke="#2f4f6f" stroke-width="4" marker-end="url(#arrow)"/>
+<line x1="970" y1="301" x2="1088" y2="423" fill="none" stroke="#2f4f6f" stroke-width="4" marker-end="url(#arrow)"/>
+<line x1="970" y1="301" x2="1088" y2="568" fill="none" stroke="#2f4f6f" stroke-width="4" marker-end="url(#arrow)"/>
+</g>
+</svg>

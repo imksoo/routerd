@@ -1,5 +1,7 @@
 # 日誌儲存
 
+![routerd log writer、平台派生 SQLite store、retention 與唯讀運維 view 的關係圖](/img/diagrams/concept-log-storage.png)
+
 routerd 將長期狀態與運作日誌分開儲存。
 
 Linux 的預設配置如下：

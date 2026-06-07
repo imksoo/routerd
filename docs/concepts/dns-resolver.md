@@ -5,6 +5,8 @@ slug: /concepts/dns-resolver
 
 # DNS resolver
 
+![Diagram showing DNSZone, DNSForwarder, DNSUpstream, and DNSResolver resources converging into resolver daemon behavior](/img/diagrams/concept-dns-resolver.png)
+
 routerd splits DNS into small resources with a clear boundary between authoritative data, the resolver process, forwarding rules, and upstream endpoints.
 
 `DNSZone` owns local authoritative data. It stores manual records and records derived from DHCP leases.

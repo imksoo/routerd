@@ -6,6 +6,8 @@ sidebar_position: 1
 
 # What is routerd?
 
+![Diagram showing routerd turning YAML resources into local host networking, daemons, state, status, and owned cleanup](/img/diagrams/concept-what-is-routerd.png)
+
 routerd is a declarative router control plane for Linux hosts, NixOS, and
 FreeBSD. You write the router intent as YAML resources. routerd turns that
 intent into interfaces, addresses, DHCP service, DNS service, NAT, routes,

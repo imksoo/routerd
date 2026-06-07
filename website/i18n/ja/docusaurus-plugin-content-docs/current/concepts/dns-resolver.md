@@ -5,6 +5,8 @@ slug: /concepts/dns-resolver
 
 # DNS リゾルバ
 
+![DNSZone、DNSForwarder、DNSUpstream、DNSResolver が resolver daemon の動作へ収束する流れ](/img/diagrams/concept-dns-resolver.png)
+
 routerd の DNS は、権威データ、リゾルバプロセス、転送ルール、上流エンドポイントを、それぞれ小さなリソースに分けて表します。
 
 `DNSZone` はローカルの権威データを持ちます。手で書いたレコードと、DHCP リースから派生したレコードを保存します。

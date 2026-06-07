@@ -6,6 +6,8 @@ sidebar_position: 2
 
 # Design philosophy
 
+![Diagram showing routerd design principles from YAML intent through daemons, events, platform renderers, and safety boundaries](/img/diagrams/concept-design-philosophy.png)
+
 routerd treats a router as a set of stateful resources, not a pile of configuration files. This page explains the principles behind the implementation choices.
 
 ## YAML is the centre of intent

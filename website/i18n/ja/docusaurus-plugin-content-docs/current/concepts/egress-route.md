@@ -1,5 +1,7 @@
 # EgressRoutePolicy
 
+![EgressRoutePolicy が health status から outbound candidate を選択し advisory または適用済み routing state を公開する流れ](/img/diagrams/concept-egress-route.png)
+
 `EgressRoutePolicy` は、外向き通信で使う経路を選びます。
 以前の WAN 経路ポリシーを置き換えます。
 旧 Kind 名は受け付けません。

@@ -1,5 +1,7 @@
 # Web Console
 
+![Diagram showing the Web Console as a read-only browser path to routerd local API status, events, logs, and diagnostics](/img/diagrams/concept-web-console.png)
+
 `WebConsole` enables a read-only HTTP view for routerd. It is intended for
 local operations on a management network. It does not change configuration,
 restart services, apply resources, or edit the state database.

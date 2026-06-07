@@ -1,5 +1,7 @@
 # DNS 解析器
 
+![DNSZone、DNSForwarder、DNSUpstream 和 DNSResolver 收敛为 resolver daemon 行为的流程](/img/diagrams/concept-dns-resolver.png)
+
 routerd 的 DNS 将权威数据、解析器程序、转发规则与上游端点，分别以小型资源表达。
 
 `DNSZone` 保存本地的权威数据，包含手动录入的记录，以及从 DHCP 租约衍生的记录。

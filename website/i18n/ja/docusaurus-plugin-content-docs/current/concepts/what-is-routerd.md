@@ -6,6 +6,8 @@ sidebar_position: 1
 
 # routerd とは
 
+![routerd が YAML resource を local host networking、daemon、state、status、owned cleanup に変換する流れ](/img/diagrams/concept-what-is-routerd.png)
+
 routerd は、Linux ホスト・NixOS・FreeBSD をルーターとして動かすための宣言型の制御プレーンです。ルーターの構成を YAML リソースとして書くと、routerd がその意図を、インターフェース、アドレス、DHCP、DNS、NAT、経路、トンネル、ヘルスチェック、パッケージ、sysctl、サービスユニット、ログといった実際の状態へ反映します。
 
 routerd はディストリビューションでも、集中管理サービスでもありません。各ルーターのホスト上でローカルに動き、systemd-networkd、dnsmasq、nftables、pppd、WireGuard、systemd といったホスト側の部品を、必要な範囲で使います。

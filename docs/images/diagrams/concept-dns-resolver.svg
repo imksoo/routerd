@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" font-family="Inter, Arial, Helvetica, sans-serif">
+<defs>
+  <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="5.5" orient="auto">
+    <path d="M 0 0 L 11 5.5 L 0 11 z" fill="#2f4f6f"/>
+  </marker>
+  <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
+    <feDropShadow dx="0" dy="5" stdDeviation="5" flood-color="#10233f" flood-opacity="0.14"/>
+  </filter>
+</defs>
+<rect width="1600" height="900" fill="#f7fafc"/>
+<rect x="28" y="28" width="1544" height="844" rx="30" fill="#ffffff" stroke="#e2e8f0" stroke-width="2"/>
+<text x="74" y="92" font-size="42" font-weight="850" fill="#10233f">DNS resolver resource flow</text>
+<text x="76" y="130" font-size="23" font-weight="600" fill="#63758d">Zones, forwarders, upstreams, DHCP-derived records, and resolver daemon status converge independently.</text>
+<g filter="url(#shadow)">
+<g>
+  <rect x="72" y="176" width="430" height="600" rx="24" fill="#f6f8fb" stroke="#d9e2ef" stroke-width="2"/>
+  <text x="100" y="218" font-size="25" font-weight="800" fill="#45556f">DNS resources</text>
+</g>
+<g>
+  <rect x="540" y="176" width="470" height="600" rx="24" fill="#f6f8fb" stroke="#d9e2ef" stroke-width="2"/>
+  <text x="568" y="218" font-size="25" font-weight="800" fill="#45556f">Resolver daemon</text>
+</g>
+<g>
+  <rect x="1048" y="176" width="480" height="600" rx="24" fill="#f6f8fb" stroke="#d9e2ef" stroke-width="2"/>
+  <text x="1076" y="218" font-size="25" font-weight="800" fill="#45556f">Runtime behavior</text>
+</g>
+<g>
+  <rect x="112" y="225" width="340" height="82" rx="18" fill="#e9f8ef" stroke="#2e7d55" stroke-width="3"/>
+  <text x="282" y="260.05" font-size="23" font-weight="700" fill="#13233a" text-anchor="middle" dominant-baseline="middle"><tspan x="282" dy="0">DNSZone</tspan><tspan x="282" dy="28">manual + DHCP records</tspan></text>
+</g>
+<g>
+  <rect x="112" y="345" width="340" height="82" rx="18" fill="#eaf2ff" stroke="#3267b1" stroke-width="3"/>
+  <text x="282" y="380.05" font-size="23" font-weight="700" fill="#13233a" text-anchor="middle" dominant-baseline="middle"><tspan x="282" dy="0">DNSForwarder</tspan><tspan x="282" dy="28">match rule per domain</tspan></text>
+</g>
+<g>
+  <rect x="112" y="465" width="340" height="82" rx="18" fill="#f5f3ff" stroke="#6d5bd0" stroke-width="3"/>
+  <text x="282" y="500.05" font-size="23" font-weight="700" fill="#13233a" text-anchor="middle" dominant-baseline="middle"><tspan x="282" dy="0">DNSUpstream</tspan><tspan x="282" dy="28">UDP TCP DoT DoH endpoint</tspan></text>
+</g>
+<g>
+  <rect x="112" y="585" width="340" height="82" rx="18" fill="#fff4e6" stroke="#c57a1c" stroke-width="3"/>
+  <text x="282" y="620.05" font-size="23" font-weight="700" fill="#13233a" text-anchor="middle" dominant-baseline="middle"><tspan x="282" dy="0">DNSResolver</tspan><tspan x="282" dy="28">listen cache metrics logs</tspan></text>
+</g>
+<g>
+  <rect x="580" y="270" width="390" height="95" rx="18" fill="#eef8f9" stroke="#2b8a92" stroke-width="3"/>
+  <text x="775" y="311.55" font-size="23" font-weight="700" fill="#13233a" text-anchor="middle" dominant-baseline="middle"><tspan x="775" dy="0">routerd-dns-resolver</tspan><tspan x="775" dy="28">one process per resource</tspan></text>
+</g>
+<g>
+  <rect x="580" y="505" width="390" height="95" rx="18" fill="#fff8df" stroke="#d7a725" stroke-width="3"/>
+  <text x="775" y="546.55" font-size="23" font-weight="700" fill="#13233a" text-anchor="middle" dominant-baseline="middle"><tspan x="775" dy="0">partial startup</tspan><tspan x="775" dy="28">wait list in Degraded status</tspan></text>
+</g>
+<g>
+  <rect x="1088" y="235" width="390" height="90" rx="18" fill="#e9f8ef" stroke="#2e7d55" stroke-width="3"/>
+  <text x="1283" y="288.05" font-size="23" font-weight="700" fill="#13233a" text-anchor="middle" dominant-baseline="middle"><tspan x="1283" dy="0">authoritative local answers</tspan></text>
+</g>
+<g>
+  <rect x="1088" y="385" width="390" height="90" rx="18" fill="#eaf2ff" stroke="#3267b1" stroke-width="3"/>
+  <text x="1283" y="438.05" font-size="23" font-weight="700" fill="#13233a" text-anchor="middle" dominant-baseline="middle"><tspan x="1283" dy="0">conditional forwarding</tspan></text>
+</g>
+<g>
+  <rect x="1088" y="535" width="390" height="90" rx="18" fill="#f5f3ff" stroke="#6d5bd0" stroke-width="3"/>
+  <text x="1283" y="574.05" font-size="23" font-weight="700" fill="#13233a" text-anchor="middle" dominant-baseline="middle"><tspan x="1283" dy="0">query logs + status</tspan><tspan x="1283" dy="28">state database</tspan></text>
+</g>
+<line x1="452" y1="266" x2="580" y2="318" fill="none" stroke="#2f4f6f" stroke-width="4" marker-end="url(#arrow)"/>
+<line x1="452" y1="386" x2="580" y2="318" fill="none" stroke="#2f4f6f" stroke-width="4" marker-end="url(#arrow)"/>
+<line x1="452" y1="506" x2="580" y2="318" fill="none" stroke="#2f4f6f" stroke-width="4" marker-end="url(#arrow)"/>
+<line x1="452" y1="626" x2="580" y2="552" fill="none" stroke="#2f4f6f" stroke-width="4" marker-end="url(#arrow)"/>
+<line x1="970" y1="318" x2="1088" y2="280" fill="none" stroke="#2f4f6f" stroke-width="4" marker-end="url(#arrow)"/>
+<line x1="970" y1="318" x2="1088" y2="430" fill="none" stroke="#2f4f6f" stroke-width="4" marker-end="url(#arrow)"/>
+<line x1="970" y1="552" x2="1088" y2="580" fill="none" stroke="#2f4f6f" stroke-width="4" marker-end="url(#arrow)"/>
+</g>
+</svg>

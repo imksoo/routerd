@@ -5,6 +5,8 @@ slug: /concepts/sysctl-profile
 
 # Sysctl profile
 
+![Diagram showing derived router sysctls, explicit Sysctl and SysctlProfile overrides, platform gates, and runtime or persistent writes](/img/diagrams/concept-sysctl-profile.png)
+
 routerd derives the Linux router sysctl set from router resources.
 Normal home-router configs should not list `SysctlProfile` or many individual
 `Sysctl` entries. NAT, DS-Lite, BGP, IPv6 prefix delegation, RA, and LAN service

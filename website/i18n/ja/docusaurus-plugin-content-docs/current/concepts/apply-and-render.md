@@ -6,6 +6,8 @@ sidebar_position: 4
 
 # 適用と生成
 
+![routerd の validate、plan、dry-run、apply、render が同じ有効リソースグラフを使う流れ](/img/diagrams/concept-apply-and-render.png)
+
 routerd には、日常の運用でよく使う操作がいくつかあります。
 このページでは、ドキュメント内で使う言葉をそろえて説明します。
 

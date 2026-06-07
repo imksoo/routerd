@@ -1,5 +1,7 @@
 # ログストレージ
 
+![routerd の log writer、platform 由来の SQLite store、retention、読み取り専用の運用 view](/img/diagrams/concept-log-storage.png)
+
 routerd は、長期的な状態と運用ログを分けて保存します。
 
 Linux の既定の配置は次のとおりです。

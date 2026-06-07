@@ -1,5 +1,7 @@
 # 日志存储
 
+![routerd log writer、平台派生 SQLite store、retention 和只读运维 view 的关系图](/img/diagrams/concept-log-storage.png)
+
 routerd 将长期状态与运行日志分开存储。
 
 Linux 的默认配置如下：

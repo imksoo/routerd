@@ -5,6 +5,8 @@ slug: /concepts/positioning
 
 # 位置づけ
 
+![routerd が local declarative router control plane として適する範囲と、対象外の境界](/img/diagrams/concept-positioning.png)
+
 routerd は、設定から理解でき、実行時の状態から説明できるルーターを作るためのローカル制御プレーンです。
 
 routerd は、ネットワーク OS 全体の置き換えではありません。多数のルーターを外側から所有するクラウドコントローラーでもありません。各ルーターのホスト上で動き、型付きの YAML リソースを、ホストのネットワーク、サービス、経路、トンネル、ファイアウォール、ログ、状態へ変換します。

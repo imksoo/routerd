@@ -6,6 +6,8 @@ sidebar_position: 4
 
 # Apply and render
 
+![Diagram showing how routerd validate, plan, dry-run, apply, and render use the same effective resource graph](/img/diagrams/concept-apply-and-render.png)
+
 There are a few common operations you will use day to day. This page settles the vocabulary used elsewhere in the documentation.
 
 ## Validate

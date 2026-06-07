@@ -6,6 +6,8 @@ sidebar_position: 1
 
 # routerd 是什麼
 
+![routerd 將 YAML resource 轉換為 local host networking、daemon、state、status 與 owned cleanup 的流程](/img/diagrams/concept-what-is-routerd.png)
+
 routerd 是用來將 Linux 主機、NixOS、FreeBSD 作為路由器運行的宣告式控制平面。將路由器的設定以 YAML 資源的形式撰寫後，routerd 會將該意圖反映至介面、位址、DHCP、DNS、NAT、路由、通道、健康檢查、套件、sysctl、服務單元、記錄等實際狀態。
 
 routerd 既不是發行版，也不是集中管理服務。它在各路由器主機上本地運行，並在必要範圍內使用 systemd-networkd、dnsmasq、nftables、pppd、WireGuard、systemd 等主機端元件。

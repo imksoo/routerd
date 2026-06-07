@@ -1,5 +1,7 @@
 # EgressRoutePolicy
 
+![Diagram showing EgressRoutePolicy selecting outbound candidates from health status and publishing advisory or applied routing state](/img/diagrams/concept-egress-route.png)
+
 `EgressRoutePolicy` selects the route used for outbound traffic. It replaces
 an earlier WAN route policy Kind. This is a clean break. The old Kind name is
 not accepted.

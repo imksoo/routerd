@@ -6,6 +6,8 @@ sidebar_position: 4
 
 # 应用与生成
 
+![routerd validate、plan、dry-run、apply 和 render 使用同一个有效资源图的流程](/img/diagrams/concept-apply-and-render.png)
+
 routerd 有几个日常运行中常用的操作。
 本页统一说明文档中使用的术语。
 

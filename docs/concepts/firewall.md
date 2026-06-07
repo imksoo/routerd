@@ -1,5 +1,7 @@
 # Stateful firewall
 
+![Diagram showing routerd firewall zones, policy matrix, explicit rules, client policy, and generated nftables filter output](/img/diagrams/concept-firewall.png)
+
 routerd manages a stateful nftables filter table named `inet routerd_filter`.
 The firewall model has four resource kinds:
 

@@ -5,6 +5,8 @@ slug: /concepts/sysctl-profile
 
 # sysctl プロファイル
 
+![routerd が導出する router sysctl、明示 Sysctl と SysctlProfile override、platform gate、runtime または persistent write](/img/diagrams/concept-sysctl-profile.png)
+
 routerd は、Linux ルーター向けの sysctl をルーターのリソースから自動導出します。
 通常の家庭用ルーターの設定では、`SysctlProfile` や大量の `Sysctl` を並べません。
 NAT、DS-Lite、BGP、IPv6 のプレフィックス委任（PD）、RA、LAN サービスなどのリソースから、

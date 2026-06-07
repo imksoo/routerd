@@ -6,6 +6,8 @@ sidebar_position: 2
 
 # 設計思想
 
+![YAML の意図、専用 daemon、イベント、OS 別 renderer、安全境界で構成される routerd の設計原則](/img/diagrams/concept-design-philosophy.png)
+
 routerd は、ルーターを「設定ファイルの集まり」ではなく「状態を持つリソースの集合」として扱います。このページでは、実装上の判断基準を説明します。
 
 ## YAML を意図の中心に置く

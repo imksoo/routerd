@@ -5,6 +5,8 @@ slug: /concepts/positioning
 
 # 定位
 
+![routerd 作为 local declarative router control plane 的适用范围及其边界](/img/diagrams/concept-positioning.png)
+
 routerd 是一个本地控制平面，用来构建可以从配置理解、也可以从运行状态说明的路由器。
 
 routerd 不是完整网络操作系统的替代品，也不是从外部统一管理大量路由器的云端控制器。routerd 在每台路由器主机本地运行，将类型化的 YAML 资源转换为主机的网络、服务、路由、隧道、防火墙、日志与状态。

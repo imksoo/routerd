@@ -6,6 +6,8 @@ sidebar_position: 1
 
 # 词汇表
 
+![将 routerd 术语按声明式资源、runtime evidence、host artifact 和 networking behavior 组织的关系图](/img/diagrams/concept-glossary.png)
+
 routerd 文档中使用的主要术语与译词。
 
 ## 网络术语
