@@ -1,5 +1,7 @@
 # Path MTU と TCP MSS
 
+![routerd が tunnel MTU、TCP MSS clamp、router advertisement MTU、任意の IPv4 force fragmentation を導出する流れ](/img/diagrams/concept-path-mtu.png)
+
 routerd は、トンネル経路を作るリソースから、Path MTU の扱いを自動で導出します。
 DS-Lite、PPPoE、WireGuard、`TunnelInterface` underlay（`ipip`、`gre`、`fou`、`gue`）
 が有効 MTU を提供し、firewall zone が LAN から WAN へ転送する向きを表します。

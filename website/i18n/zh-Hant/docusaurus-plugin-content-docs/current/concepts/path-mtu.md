@@ -1,5 +1,7 @@
 # Path MTU 與 TCP MSS
 
+![routerd 推導 tunnel MTU、TCP MSS clamp、router advertisement MTU 與可選 IPv4 force fragmentation 的流程](/img/diagrams/concept-path-mtu.png)
+
 routerd 從建立隧道路徑的資源中，自動導出 Path MTU 的處理方式。
 DS-Lite、PPPoE、WireGuard 各介面提供有效 MTU，防火牆區域則表示從 LAN 往 WAN 的轉發方向。
 

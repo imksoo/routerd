@@ -6,6 +6,8 @@ sidebar_position: 3
 
 # Resource model
 
+![Diagram showing the routerd resource model from Router YAML through references, dependency ordering, owner keys, status, events, and ledger artifacts](/img/diagrams/concept-resource-model.png)
+
 routerd configuration is a top-level `Router` resource with a list of typed
 resources. The shape is intentionally close to Kubernetes resources, but
 routerd applies them to one local router host.

@@ -1,5 +1,7 @@
 # Log Storage
 
+![Diagram showing routerd log writers, platform-derived SQLite stores, retention, and read-only operational views](/img/diagrams/concept-log-storage.png)
+
 routerd keeps long-lived state separate from operational logs.
 
 The Linux default layout is:

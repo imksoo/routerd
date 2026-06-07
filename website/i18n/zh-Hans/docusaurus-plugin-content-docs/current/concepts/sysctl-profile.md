@@ -5,6 +5,8 @@ slug: /concepts/sysctl-profile
 
 # sysctl 配置文件
 
+![routerd 派生的 router sysctl、显式 Sysctl 与 SysctlProfile override、platform gate，以及 runtime 或 persistent write](/img/diagrams/concept-sysctl-profile.png)
+
 routerd 会从路由器的资源中自动推导出适用于 Linux 路由器的 sysctl 配置。
 在一般的家用路由器配置中，不需要列举大量的 `SysctlProfile` 或 `Sysctl`。
 routerd 会从 NAT、DS-Lite、BGP、IPv6 前缀委派（PD）、RA、LAN 服务等资源，

@@ -6,6 +6,8 @@ sidebar_position: 1
 
 # Glossary
 
+![Diagram mapping routerd glossary terms across declarative resources, runtime evidence, host artifacts, and networking behavior](/img/diagrams/concept-glossary.png)
+
 Key terms used throughout the routerd documentation.
 
 ## Networking terms

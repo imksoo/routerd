@@ -1,5 +1,7 @@
 # EgressRoutePolicy
 
+![EgressRoutePolicy 从 health status 选择 outbound candidate 并发布 advisory 或已应用 routing state 的流程](/img/diagrams/concept-egress-route.png)
+
 `EgressRoutePolicy` 选择对外通信所使用的路由，
 取代此前的 WAN 路由策略。
 不接受旧 Kind 名称。

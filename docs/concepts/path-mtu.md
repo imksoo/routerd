@@ -1,5 +1,7 @@
 # Path MTU and TCP MSS
 
+![Diagram showing how routerd derives tunnel MTU, TCP MSS clamp, router advertisement MTU, and optional IPv4 force fragmentation](/img/diagrams/concept-path-mtu.png)
+
 routerd derives path MTU behavior from the resources that create tunnel paths.
 DS-Lite, PPPoE, WireGuard, and `TunnelInterface` underlays (`ipip`, `gre`,
 `fou`, `gue`) provide the effective tunnel MTU, and firewall zones identify the

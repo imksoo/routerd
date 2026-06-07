@@ -6,6 +6,8 @@ sidebar_position: 2
 
 # 設計理念
 
+![routerd 從 YAML 意圖到專用 daemon、事件、平台 renderer 與安全邊界的設計原則](/img/diagrams/concept-design-philosophy.png)
+
 routerd 將路由器視為「資源的集合體」，而非「設定檔的堆積」。本頁說明實作上的判斷依據。
 
 ## 以 YAML 作為意圖的核心

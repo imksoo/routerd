@@ -6,6 +6,8 @@ sidebar_position: 3
 
 # 資源模型
 
+![從 Router YAML 到 reference、dependency ordering、owner key、status、event 與 ledger artifact 的 routerd resource model](/img/diagrams/concept-resource-model.png)
+
 routerd 的設定由最上層的 `Router` 以及其下並列的多個資源所構成。
 每個資源的格式與 Kubernetes 相近。
 

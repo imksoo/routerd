@@ -1,5 +1,7 @@
 # Web 管理画面
 
+![Web Console が routerd local API の status、event、log、diagnostic を読み取る read-only browser path](/img/diagrams/concept-web-console.png)
+
 `WebConsole` は、routerd の状態を読むための HTTP 画面です。
 管理ネットワークでのローカル運用を想定しています。
 設定の変更、サービスの再起動、リソースの適用、状態データベースの編集は行いません。

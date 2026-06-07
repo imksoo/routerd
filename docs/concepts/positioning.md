@@ -5,6 +5,8 @@ slug: /concepts/positioning
 
 # Positioning
 
+![Diagram showing routerd's fit as a local declarative router control plane and the boundaries of what it is not](/img/diagrams/concept-positioning.png)
+
 routerd is for people who want a router that is understandable from its
 configuration and observable from its runtime state.
 

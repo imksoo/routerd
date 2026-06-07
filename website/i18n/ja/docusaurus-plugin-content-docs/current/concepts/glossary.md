@@ -6,6 +6,8 @@ sidebar_position: 1
 
 # 用語集
 
+![routerd の用語を宣言リソース、runtime evidence、host artifact、networking behavior に整理した対応図](/img/diagrams/concept-glossary.png)
+
 routerd のドキュメントで使う主な用語と、その日本語訳をまとめます。訳語は次の方針で選んでいます。
 
 - **ネットワーク用語**は、国内の商用ルーター（NEC IX / ヤマハ RTX）のマニュアル表記に合わせています。日本のネットワーク技術者が読み慣れた言葉を優先します。

@@ -1,5 +1,7 @@
 # Web 管理介面
 
+![Web Console 作為讀取 routerd local API status、event、log 與 diagnostic 的唯讀 browser path](/img/diagrams/concept-web-console.png)
+
 `WebConsole` 是用來讀取 routerd 狀態的 HTTP 畫面。
 設計上以管理網路的本地運用為前提。
 不執行設定變更、服務重新啟動、資源套用或狀態資料庫的編輯。

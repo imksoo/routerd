@@ -1,5 +1,7 @@
 # 有狀態防火牆
 
+![routerd firewall zone、policy matrix、明確 rule、client policy 與產生的 nftables filter 輸出](/img/diagrams/concept-firewall.png)
+
 routerd 管理 nftables 的 `inet routerd_filter` 表。
 防火牆以 4 種資源表達。
 

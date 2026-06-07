@@ -1,5 +1,7 @@
 # 状態を持つファイアウォール
 
+![routerd の firewall zone、policy matrix、明示 rule、client policy、生成される nftables filter 出力](/img/diagrams/concept-firewall.png)
+
 routerd は nftables の `inet routerd_filter` テーブルを管理します。
 ファイアウォールは 4 種類のリソースで表します。
 
