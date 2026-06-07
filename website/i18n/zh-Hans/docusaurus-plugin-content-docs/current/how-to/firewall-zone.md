@@ -4,6 +4,8 @@ title: 定义防火墙区域
 
 # 定义防火墙区域
 
+![FirewallZone 定义 WAN、LAN、management network 的 interface role 与 stateful role-matrix default 的流程](/img/diagrams/how-to-firewall-zone.png)
+
 ## 适用场景
 
 「WAN 无法到达 LAN、LAN 可以到达 WAN、管理路径可以到达所有地方」，这是家庭与 SOHO 路由器的基本策略矩阵。

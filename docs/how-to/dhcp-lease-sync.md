@@ -5,6 +5,8 @@ slug: /how-to/dhcp-lease-sync
 
 # DHCP lease sync for HA routers
 
+![Diagram showing active DHCP lease sync using platform-derived lease files, VirtualAddress role gating, rsync over hardened SSH, and standby warm leases](/img/diagrams/how-to-dhcp-lease-sync.png)
+
 Use `DHCPv4ServerLeaseSync`, `DHCPv6ServerLeaseSync`, or
 `DHCPv6PrefixDelegationLeaseSync` when two routerd nodes share a DHCP role and
 the active node must keep the standby node's lease state warm. These resources

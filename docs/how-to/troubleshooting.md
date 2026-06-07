@@ -5,6 +5,8 @@ slug: /how-to/troubleshooting
 
 # Troubleshooting
 
+![Diagram showing routerd troubleshooting order from routerctl status and dry-run intent to OS state, daemon sockets, events, and common DHCP, DNS, and conntrack checks](/img/diagrams/how-to-troubleshooting.png)
+
 When investigating routerd, first separate **what routerd intends** from **what the host actually has**. Verify routerd's view, then compare against the OS state.
 
 ## Triage order

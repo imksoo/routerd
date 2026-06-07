@@ -4,6 +4,8 @@ title: ヘルスチェック付きマルチ WAN 切替
 
 # ヘルスチェック付きマルチ WAN 切替
 
+![multi-WAN candidate path を HealthCheck と EgressRoutePolicy で選び、NAT が selected path に追従し conntrack と hysteresis を保つ流れ](/img/diagrams/how-to-multi-wan.png)
+
 ## 想定するシーン
 
 ルーターから外向きの経路が複数あり、routerd に次のように振る舞ってほしい場合です。

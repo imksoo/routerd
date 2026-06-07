@@ -4,6 +4,8 @@ title: Tailscale 的 exit node 与 subnet router
 
 # Tailscale 的 exit node 与 subnet router
 
+![TailscaleNode 处理 tailscaled、auth key file、advertised subnet、exit-node intent 与 tailnet approval flow 的流程](/img/diagrams/how-to-tailscale.png)
+
 ## 适用场景
 
 当 routerd 主机需要加入 tailnet，并广告以下路由时，请使用 `TailscaleNode`。

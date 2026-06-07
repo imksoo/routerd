@@ -5,6 +5,8 @@ slug: /how-to/dns-private-upstream
 
 # Private DNS upstreams
 
+![Diagram showing DNSForwarder and DNSUpstream routing local, provider, and default DNS queries through UDP, TCP, DoT, DoH, and addressFrom sources](/img/diagrams/how-to-dns-private-upstream.png)
+
 ## Scenario
 
 You want the resolver on the router to:

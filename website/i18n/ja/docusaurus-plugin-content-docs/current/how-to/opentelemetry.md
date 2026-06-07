@@ -5,6 +5,8 @@ slug: /how-to/opentelemetry
 
 # OTLP コレクターへテレメトリを送る
 
+![routerd daemon の log、metric、trace、resource attribute、OTLP environment variable、external OpenTelemetry collector への export](/img/diagrams/how-to-opentelemetry.png)
+
 ## シナリオ
 
 ルーターのログ・メトリクス・トレースを、OpenTelemetry 互換のバックエンド（Grafana Loki/Tempo/Mimir、Datadog、Honeycomb、自前の `otelcol-contrib` など）へ送りたい場合です。`journalctl` や `routerctl events` を毎回叩かずに、外部のダッシュボードで観測したい状態を想定します。

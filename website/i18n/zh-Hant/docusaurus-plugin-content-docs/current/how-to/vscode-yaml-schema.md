@@ -5,6 +5,8 @@ slug: /how-to/vscode-yaml-schema
 
 # VS Code YAML schema
 
+![從 Go API type 到公開 routerd JSON Schema、YAML modeline、VS Code workspace mapping 與 editor diagnostic 的流程](/img/diagrams/how-to-vscode-yaml-schema.png)
+
 routerd 在以下 URL 發布產生的 config schema：
 
 ```text

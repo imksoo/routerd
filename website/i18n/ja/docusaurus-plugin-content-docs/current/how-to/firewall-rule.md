@@ -4,6 +4,8 @@ title: ファイアウォール例外を追加する
 
 # ファイアウォール例外を追加する
 
+![FirewallRule exception が management SSH、router service port、scoped destination CIDR、implicit role matrix 前の評価順を扱う流れ](/img/diagrams/how-to-firewall-rule.png)
+
 ## 想定するシーン
 
 `FirewallZone` のロールベースの既定で大半はまかなえますが、例外が必要になる場面もあります。

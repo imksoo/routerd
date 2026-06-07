@@ -5,6 +5,8 @@ slug: /how-to/dns-local-zone
 
 # ローカル DNS ゾーン
 
+![DNSZone が manual record、DHCP-derived lease record、reverse zone、event relay update、DNSResolver local answer を組み合わせる流れ](/img/diagrams/how-to-dns-local-zone.png)
+
 ## 想定するシーン
 
 社内ホストを名前で解決したいが、各端末の `/etc/hosts` を手作業でそろえたくない場合です。具体的には次を実現したいときです。

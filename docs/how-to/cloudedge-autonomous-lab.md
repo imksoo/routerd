@@ -1,5 +1,7 @@
 # CloudEdge Autonomous Lab (`cloudedge-labctl`)
 
+![Diagram showing cloudedge-labctl lab lifecycle, smoke and failover actions, evidence collection, dry-run defaults, TTL tags, and teardown guards](/img/diagrams/how-to-cloudedge-autonomous-lab.png)
+
 > Experimental (CloudEdge). A single-command harness that lets an agent run
 > cloud-edge **Selective Address Mobility (SAM)** failover labs **without a human
 > reading runbooks**. It fixes the interface and implements all non-cloud logic

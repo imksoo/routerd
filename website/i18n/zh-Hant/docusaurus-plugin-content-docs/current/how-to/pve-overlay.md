@@ -4,6 +4,8 @@ title: 取代 Hypervisor 間的 Overlay VPN
 
 # 取代 Hypervisor 間的 Overlay VPN
 
+![以 WireGuard underlay、optional VXLAN、health check、MTU verification 與 routerctl visibility 取代 hypervisor overlay VPN 的流程](/img/diagrams/how-to-pve-overlay.png)
+
 ## 適用情境
 
 在 Hypervisor 叢集（Proxmox VE、KVM 等）中，節點間的 bridge 已架設於某種重量級的 overlay VPN 之上（廠商製 SoftEther bridge、其他 tap 式隧道等）。

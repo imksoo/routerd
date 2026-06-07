@@ -4,6 +4,8 @@ title: 以宣告式方式進行路由器主機的啟動設定
 
 # 以宣告式方式進行路由器主機的啟動設定
 
+![由 derived package、kernel module、sysctl、adoption drop-in 與 minimal installer networking 組成的 declarative host bootstrap](/img/diagrams/how-to-os-bootstrap.png)
+
 routerd 能將初次建置時容易變成手動作業的主機準備工作，整合至 YAML 管理。
 這不是安裝程式的替代方案，而是將路由器特有的差異以設定檔保留，而非散落在 shell 歷史記錄中的功能。
 

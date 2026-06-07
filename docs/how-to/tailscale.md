@@ -4,6 +4,8 @@ title: Tailscale exit node and subnet router
 
 # Tailscale exit node and subnet router
 
+![Diagram showing TailscaleNode installing or using tailscaled, declaring auth key files, advertised subnets, exit-node intent, and tailnet approval flow](/img/diagrams/how-to-tailscale.png)
+
 ## Scenario
 
 Use `TailscaleNode` when a routerd host should join a tailnet and advertise:

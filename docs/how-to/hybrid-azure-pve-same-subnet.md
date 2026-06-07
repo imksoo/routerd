@@ -4,6 +4,8 @@ title: Azure and PVE same-subnet SAM smoke
 
 # Azure and PVE same-subnet SAM smoke
 
+![Diagram showing Azure provider-secondary-IP capture, on-prem proxy-ARP capture, SAM /32 delivery routes, forwarding checks, and routerctl doctor verification](/img/diagrams/how-to-hybrid-azure-pve-same-subnet.png)
+
 This guide captures the validated operational shape for an Azure routerd node
 and an on-prem Proxmox VE routerd node that exchange selected `/32` addresses
 with Selective Address Mobility (SAM). See the

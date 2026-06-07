@@ -1,5 +1,7 @@
 # CloudEdge SAM: OCI Ubuntu image firewall bootstrap
 
+![Diagram showing OCI Ubuntu guest firewall defaults blocking WireGuard and SAM forwarding, required bootstrap allowances, and routerctl doctor checks](/img/diagrams/how-to-cloudedge-sam-oci-firewall-bootstrap.png)
+
 > Experimental (CloudEdge SAM). This is **host bootstrap / provider-image
 > behavior**, not a routerd dataplane concern. It applies to OCI Canonical Ubuntu
 > images used as SAM routers.

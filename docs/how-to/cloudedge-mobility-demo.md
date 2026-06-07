@@ -1,5 +1,7 @@
 # CloudEdge Mobility Demo
 
+![Diagram showing the four-site CloudEdge SAM mobility demo with shared /24 owners, MobilityPool, SAMTransportProfile IPIP transport, BGP /32 delivery, and provider or proxy-ARP capture](/img/diagrams/how-to-cloudedge-mobility-demo.png)
+
 > Experimental (CloudEdge). A lab demo of **Selective Address Mobility (SAM)**:
 > on-prem, AWS, Azure, and OCI share one logical `/24`, and each site can serve an
 > address that is *owned* by another site — without NAT and without changing the

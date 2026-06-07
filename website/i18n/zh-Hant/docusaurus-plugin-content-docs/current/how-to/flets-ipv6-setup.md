@@ -5,6 +5,8 @@ slug: /how-to/flets-ipv6-setup
 
 # DHCPv6-PD 上的 DS-Lite（僅 IPv6 接入網路）
 
+![IPv6-only access 中 DHCPv6-PD、delegated LAN IPv6、AFTR DNS forwarding、DS-Lite tunnel egress 與安全 RA 的構成流程](/img/diagrams/how-to-flets-ipv6-setup.png)
+
 ## 適用情境
 
 ISP 提供僅 IPv6 的接入網路，IPv4 連線透過 AFTR（Address Family Transition Router）的 DS-Lite 隧道實現。在這種配置中，路由器負責以下工作：

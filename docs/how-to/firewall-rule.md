@@ -4,6 +4,8 @@ title: Add firewall exceptions
 
 # Add firewall exceptions
 
+![Diagram showing FirewallRule exceptions for management SSH, router service ports, scoped destination CIDRs, and the evaluation order before the implicit role matrix](/img/diagrams/how-to-firewall-rule.png)
+
 ## Scenario
 
 The role-based defaults from `FirewallZone` cover the common case, but you need an exception:

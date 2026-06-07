@@ -5,6 +5,8 @@ slug: /how-to/vscode-yaml-schema
 
 # VS Code YAML schema
 
+![Diagram showing generated routerd JSON Schema flowing from Go API types to the published schema URL, YAML modelines, VS Code workspace mappings, and editor diagnostics](/img/diagrams/how-to-vscode-yaml-schema.png)
+
 routerd publishes its generated config schema at:
 
 ```text

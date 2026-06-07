@@ -1,5 +1,7 @@
 # IPv6 雙協定堆疊 BGP 與 VIP
 
+![dual-stack BGPPeer address family、IPv4 與 IPv6 VirtualAddress、DNS A/AAAA record、BGP/VRRP firewall opening 的流程](/img/diagrams/how-to-ipv6-dual-stack.png)
+
 routerd 可從單一 `BGPRouter` 同時處理 `routerd-bgp` GoBGP 的 IPv4 unicast 與 IPv6 unicast。
 `spec.importPolicy.allowedPrefixes`、`spec.exportPolicy.allowedPrefixes` 及
 `redistribute.*.allowedPrefixes` 中 IPv4/IPv6 混合指定皆可，

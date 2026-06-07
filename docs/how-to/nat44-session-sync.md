@@ -5,6 +5,8 @@ slug: /how-to/nat44-session-sync
 
 # NAT44 session sync for HA routers
 
+![Diagram showing NAT44SessionSync dumping selected conntrack SNAT entries from the active router, restoring them over SSH, and surfacing insert failures in standby status](/img/diagrams/how-to-nat44-session-sync.png)
+
 Use `NAT44SessionSync` when two routerd nodes share a LAN gateway role and the
 active node should keep selected NAT44 conntrack sessions warm on a standby
 node. The first implementation is snapshot-based: routerd periodically dumps

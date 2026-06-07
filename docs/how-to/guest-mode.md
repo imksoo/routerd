@@ -4,6 +4,8 @@ title: Isolate guest devices by MAC address
 
 # Isolate guest devices by MAC address
 
+![Diagram showing ClientPolicy guest mode classifying MAC addresses, rendering nftables sets, and denying LAN or management access before the zone matrix](/img/diagrams/how-to-guest-mode.png)
+
 `ClientPolicy` is routerd's guest mode. It classifies clients by MAC address on
 a shared LAN and applies a stricter forwarding policy before the normal
 zone-to-zone firewall matrix is evaluated.

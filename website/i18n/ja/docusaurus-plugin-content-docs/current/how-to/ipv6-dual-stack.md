@@ -1,5 +1,7 @@
 # IPv6 デュアルスタック BGP と VIP
 
+![dual-stack BGPPeer address family、IPv4 と IPv6 VirtualAddress、DNS A/AAAA record、BGP/VRRP firewall opening の流れ](/img/diagrams/how-to-ipv6-dual-stack.png)
+
 routerd は、1 つの `BGPRouter` から `routerd-bgp` GoBGP の IPv4 unicast と IPv6 unicast を
 同時に扱えます。`spec.importPolicy.allowedPrefixes`、
 `spec.exportPolicy.allowedPrefixes`、`redistribute.*.allowedPrefixes` は

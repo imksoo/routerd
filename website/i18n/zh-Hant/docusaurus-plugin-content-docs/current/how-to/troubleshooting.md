@@ -5,6 +5,8 @@ slug: /how-to/troubleshooting
 
 # 疑難排解
 
+![從 routerctl status 和 dry-run intent 到 OS state、daemon socket、event、DHCP/DNS/conntrack check 的 routerd troubleshooting order](/img/diagrams/how-to-troubleshooting.png)
+
 排查 routerd 問題時，請先區分 **routerd 的意圖** 與 **主機的實際狀態**。
 確認 routerd 意圖達成什麼之後，再與 OS 的實際狀態進行比對。
 

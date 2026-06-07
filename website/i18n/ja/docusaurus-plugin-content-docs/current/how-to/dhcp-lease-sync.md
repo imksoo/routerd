@@ -5,6 +5,8 @@ slug: /how-to/dhcp-lease-sync
 
 # HA ルーターの DHCP リース同期
 
+![active DHCP lease sync が platform-derived lease file、VirtualAddress role gate、hardened SSH over rsync、standby warm lease を使う流れ](/img/diagrams/how-to-dhcp-lease-sync.png)
+
 2 台の routerd ノードで DHCP の役割を共有し、active node の lease state を
 standby node に温存したい場合は `DHCPv4ServerLeaseSync`、
 `DHCPv6ServerLeaseSync`、または `DHCPv6PrefixDelegationLeaseSync` を使います。
