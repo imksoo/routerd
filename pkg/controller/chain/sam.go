@@ -11,6 +11,7 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/lifecycle"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/sam"
 	routerstate "github.com/imksoo/routerd/pkg/state"
@@ -253,35 +254,47 @@ func (c SAMController) cleanupRemovedCaptures(ctx context.Context, statuses []ro
 	desired := map[string]bool{}
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.APIVersion == api.HybridAPIVersion && resource.Kind == "RemoteAddressClaim" {
-			desired[resource.Metadata.Name] = true
+			desired[lifecycle.OwnerKey(resource.APIVersion, resource.Kind, resource.Metadata.Name)] = true
 		}
 	}
 	applier := c.Applier
 	if applier == nil {
 		applier = defaultSAMProxyNeighborApplier()
 	}
-	for _, status := range statuses {
-		if status.APIVersion != api.HybridAPIVersion || status.Kind != "RemoteAddressClaim" || desired[status.Name] {
+	plan := lifecycle.PlanResourceTeardownGC(desired, statuses)
+	for _, action := range plan.Actions {
+		if action.Type != lifecycle.GCActionTeardownResource {
 			continue
 		}
-		if !c.DryRun {
-			if capture, ok := samStoredProxyNeighborFromStatus(status); ok {
-				capture.ifname = sam.ResolveCaptureInterface(capture.ifname, sam.CaptureInterfaceAliases(c.Router))
-				if err := applier.DeleteProxyNeighbor(ctx, capture.address, capture.ifname); err != nil {
-					return fmt.Errorf("delete removed SAM proxy neighbor %s dev %s: %w", capture.address, capture.ifname, err)
-				}
-			}
+		status := action.Status
+		if status.APIVersion != api.HybridAPIVersion || status.Kind != "RemoteAddressClaim" {
+			continue
 		}
-		if err := deleter.DeleteObject(api.HybridAPIVersion, "RemoteAddressClaim", status.Name); err != nil {
+		if err := c.teardownRemovedCapture(ctx, status, applier, deleter); err != nil {
 			return err
 		}
-		if c.Bus != nil {
-			event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.sam.capture.removed", daemonapi.SeverityInfo)
-			event.Resource = &daemonapi.ResourceRef{APIVersion: api.HybridAPIVersion, Kind: "RemoteAddressClaim", Name: status.Name}
-			event.Attributes = map[string]string{"removedAt": time.Now().UTC().Format(time.RFC3339Nano)}
-			if err := c.Bus.Publish(ctx, event); err != nil {
-				return err
+	}
+	return nil
+}
+
+func (c SAMController) teardownRemovedCapture(ctx context.Context, status routerstate.ObjectStatus, applier samProxyNeighborApplier, deleter routerstate.ObjectDeleteStore) error {
+	if !c.DryRun {
+		if capture, ok := samStoredProxyNeighborFromStatus(status); ok {
+			capture.ifname = sam.ResolveCaptureInterface(capture.ifname, sam.CaptureInterfaceAliases(c.Router))
+			if err := applier.DeleteProxyNeighbor(ctx, capture.address, capture.ifname); err != nil {
+				return fmt.Errorf("delete removed SAM proxy neighbor %s dev %s: %w", capture.address, capture.ifname, err)
 			}
+		}
+	}
+	if err := deleter.DeleteObject(api.HybridAPIVersion, "RemoteAddressClaim", status.Name); err != nil {
+		return err
+	}
+	if c.Bus != nil {
+		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.sam.capture.removed", daemonapi.SeverityInfo)
+		event.Resource = &daemonapi.ResourceRef{APIVersion: api.HybridAPIVersion, Kind: "RemoteAddressClaim", Name: status.Name}
+		event.Attributes = map[string]string{"removedAt": time.Now().UTC().Format(time.RFC3339Nano)}
+		if err := c.Bus.Publish(ctx, event); err != nil {
+			return err
 		}
 	}
 	return nil

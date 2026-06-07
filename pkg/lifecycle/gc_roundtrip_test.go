@@ -82,6 +82,11 @@ func (s *fakeGCRoundTripStore) execute(plan GCPlan, exec ArtifactTeardownExecuto
 			if !dryRun {
 				delete(s.ledger, action.Artifact.Identity())
 			}
+		case GCActionTeardownResource:
+			s.ops = append(s.ops, "teardown-resource:"+ObjectStatusID(action.Status))
+			if !dryRun {
+				delete(s.statuses, ObjectStatusID(action.Status))
+			}
 		case GCActionDeleteStatus:
 			s.ops = append(s.ops, "delete-status:"+ObjectStatusID(action.Status))
 			if !dryRun {
@@ -206,12 +211,24 @@ func TestGCRoundTripIssue189BacksUpBeforeStatusDelete(t *testing.T) {
 	}
 	wantPrefix := []string{
 		"backup",
-		"delete-status:" + api.NetAPIVersion + "/WireGuardInterface/wg-old",
-		"delete-status:" + api.NetAPIVersion + "/WireGuardPeer/peer-old",
-		"event:StaleStateCleanup",
+		"teardown-resource:" + api.NetAPIVersion + "/WireGuardInterface/wg-old",
+		"teardown-resource:" + api.NetAPIVersion + "/WireGuardPeer/peer-old",
+		"event:ResourceTeardownCleanup",
 	}
 	if !reflect.DeepEqual(store.ops, wantPrefix) {
 		t.Fatalf("ops = %#v, want %#v", store.ops, wantPrefix)
+	}
+}
+
+func TestGCRoundTripResourceTeardownSkipsAdoptedExternal(t *testing.T) {
+	store := newFakeGCRoundTripStore()
+	store.apply(nil, []routerstate.ObjectStatus{
+		{APIVersion: api.NetAPIVersion, Kind: "WireGuardInterface", Name: "wg-adopted", Management: "adopted", Status: map[string]any{"managedBy": "routerd"}},
+		{APIVersion: api.NetAPIVersion, Kind: "WireGuardPeer", Name: "peer-external", ManagedBy: "external", Status: map[string]any{"interface": "wg-adopted"}},
+	})
+	plan := store.plan(nil, nil)
+	if len(plan.Actions) != 0 {
+		t.Fatalf("adopted/external statuses planned for teardown: %+v", plan.Actions)
 	}
 }
 
@@ -322,6 +339,18 @@ func gcRoundTripCases() []gcRoundTripCase {
 			statuses: []routerstate.ObjectStatus{
 				{APIVersion: api.NetAPIVersion, Kind: "WireGuardInterface", Name: "wg-old", Status: map[string]any{"phase": "Up", "managedBy": "routerd"}},
 				{APIVersion: api.NetAPIVersion, Kind: "WireGuardPeer", Name: "peer-old", Status: map[string]any{"phase": "Connected", "interface": "wg-old", "managedBy": "routerd"}},
+			},
+		},
+		{
+			name: "RemoteAddressClaim SAM capture status cleanup",
+			statuses: []routerstate.ObjectStatus{
+				{APIVersion: api.HybridAPIVersion, Kind: "RemoteAddressClaim", Name: "client-a", Status: map[string]any{"phase": "Captured", "captureProxyNeighbor": map[string]any{"address": "10.77.60.9/32", "interface": "lan"}}},
+			},
+		},
+		{
+			name: "SAM proxy ARP sysctl status cleanup",
+			statuses: []routerstate.ObjectStatus{
+				{APIVersion: api.SystemAPIVersion, Kind: "Sysctl", Name: "sam-proxy-arp-lan", Status: map[string]any{"key": "net.ipv4.conf.lan.proxy_arp", "previousValue": "0", "changed": true}},
 			},
 		},
 		{

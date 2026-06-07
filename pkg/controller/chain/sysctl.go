@@ -16,6 +16,7 @@ import (
 	"github.com/imksoo/routerd/pkg/conntracktuning"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/hostdeps"
+	"github.com/imksoo/routerd/pkg/lifecycle"
 	"github.com/imksoo/routerd/pkg/logstore"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 	"github.com/imksoo/routerd/pkg/sysctlprofile"
@@ -266,8 +267,20 @@ func (c SysctlController) cleanupRemovedSAMProxyARP(ctx context.Context, desired
 	if command == nil {
 		command = runOutputCommandContext
 	}
-	for _, status := range statuses {
-		if status.APIVersion != api.SystemAPIVersion || status.Kind != "Sysctl" || desired["Sysctl/"+status.Name] {
+	desiredStatusIDs := map[string]bool{}
+	for key := range desired {
+		name := strings.TrimPrefix(key, "Sysctl/")
+		if name != key && name != "" {
+			desiredStatusIDs[lifecycle.OwnerKey(api.SystemAPIVersion, "Sysctl", name)] = true
+		}
+	}
+	plan := lifecycle.PlanResourceTeardownGC(desiredStatusIDs, statuses)
+	for _, action := range plan.Actions {
+		if action.Type != lifecycle.GCActionTeardownResource {
+			continue
+		}
+		status := action.Status
+		if status.APIVersion != api.SystemAPIVersion || status.Kind != "Sysctl" {
 			continue
 		}
 		if !strings.HasPrefix(status.Name, "sam-proxy-arp-") {
@@ -283,6 +296,14 @@ func (c SysctlController) cleanupRemovedSAMProxyARP(ctx context.Context, desired
 		}
 		if err := deleter.DeleteObject(api.SystemAPIVersion, "Sysctl", status.Name); err != nil {
 			return err
+		}
+		if c.Bus != nil {
+			event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.sysctl.removed", daemonapi.SeverityInfo)
+			event.Resource = &daemonapi.ResourceRef{APIVersion: api.SystemAPIVersion, Kind: "Sysctl", Name: status.Name}
+			event.Attributes = map[string]string{"key": key}
+			if err := c.Bus.Publish(ctx, event); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
