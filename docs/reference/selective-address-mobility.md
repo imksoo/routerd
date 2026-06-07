@@ -15,6 +15,8 @@ routerd-to-routerd overlay. TCP/IP source and destination addresses are
 preserved by the abstraction. Firewall and NAT are separate routerd layers, not
 fields on mobility resources.
 
+![Selective Address Mobility transport diagram showing MobilityPool and SAMTransportProfile as the authoring surface, generated IPIP delivery, BGP peers, ECMP next hops, and capture by secondary IP or proxy ARP](/img/diagrams/cloudedge-sam-ipip.png)
+
 ## Resource Model
 
 For the CloudEdge Mobility control plane, `MobilityPool` is the only

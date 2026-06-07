@@ -24,6 +24,8 @@ configuration, resources still use the same `apiVersion`, `kind`,
 `metadata.name`, `spec`, and `status` shape, and the state database remains the
 runtime record for generated state.
 
+![CloudEdge SAM diagram showing MobilityPool and SAMTransportProfile generating DynamicConfigPart resources, IPIP TunnelInterface delivery, BGP peers, ECMP-capable FIB paths, and endpoint-only WireGuard underlay](/img/diagrams/cloudedge-sam-ipip.png)
+
 ## Goals
 
 CloudEdge is aimed at mixed cloud and on-prem deployments where a router needs

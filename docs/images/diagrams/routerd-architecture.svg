@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" font-family="Inter, Arial, Helvetica, sans-serif">
+<defs>
+  <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="5.5" orient="auto">
+    <path d="M 0 0 L 11 5.5 L 0 11 z" fill="#2f4f6f"/>
+  </marker>
+  <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
+    <feDropShadow dx="0" dy="5" stdDeviation="5" flood-color="#10233f" flood-opacity="0.14"/>
+  </filter>
+</defs>
+<rect width="1600" height="900" fill="#f7fafc"/>
+<rect x="28" y="28" width="1544" height="844" rx="30" fill="#ffffff" stroke="#e2e8f0" stroke-width="2"/>
+<text x="74" y="92" font-size="42" font-weight="850" fill="#10233f">routerd architecture</text>
+<text x="76" y="130" font-size="23" font-weight="600" fill="#63758d">One declarative resource model flows through validation, effective config, controllers, state, and host renderers.</text>
+<g filter="url(#shadow)">
+<g>
+  <rect x="72" y="170" width="410" height="610" rx="24" fill="#f6f8fb" stroke="#d9e2ef" stroke-width="2"/>
+  <text x="100" y="212" font-size="25" font-weight="800" fill="#45556f">Operator intent</text>
+</g>
+<g>
+  <rect x="520" y="170" width="500" height="610" rx="24" fill="#f6f8fb" stroke="#d9e2ef" stroke-width="2"/>
+  <text x="548" y="212" font-size="25" font-weight="800" fill="#45556f">routerd core</text>
+</g>
+<g>
+  <rect x="1058" y="170" width="470" height="610" rx="24" fill="#f6f8fb" stroke="#d9e2ef" stroke-width="2"/>
+  <text x="1086" y="212" font-size="25" font-weight="800" fill="#45556f">Host runtime</text>
+</g>
+<g>
+  <rect x="112" y="255" width="315" height="115" rx="18" fill="#e9f8ef" stroke="#2e7d55" stroke-width="3"/>
+  <text x="269.5" y="306.55" font-size="23" font-weight="700" fill="#13233a" text-anchor="middle" dominant-baseline="middle"><tspan x="269.5" dy="0">router.yaml</tspan><tspan x="269.5" dy="28">resources</tspan></text>
+</g>
+<g>
+  <rect x="112" y="448" width="315" height="115" rx="18" fill="#eaf2ff" stroke="#3267b1" stroke-width="3"/>
+  <text x="269.5" y="499.55" font-size="23" font-weight="700" fill="#13233a" text-anchor="middle" dominant-baseline="middle"><tspan x="269.5" dy="0">routerctl</tspan><tspan x="269.5" dy="28">validate plan apply</tspan></text>
+</g>
+<g>
+  <rect x="555" y="235" width="400" height="105" rx="18" fill="#f5f3ff" stroke="#6d5bd0" stroke-width="3"/>
+  <text x="755" y="281.55" font-size="23" font-weight="700" fill="#13233a" text-anchor="middle" dominant-baseline="middle"><tspan x="755" dy="0">load + validate</tspan><tspan x="755" dy="28">schema and references</tspan></text>
+</g>
+<g>
+  <rect x="555" y="395" width="400" height="105" rx="18" fill="#fff4e6" stroke="#c57a1c" stroke-width="3"/>
+  <text x="755" y="441.55" font-size="23" font-weight="700" fill="#13233a" text-anchor="middle" dominant-baseline="middle"><tspan x="755" dy="0">effective config</tspan><tspan x="755" dy="28">startup + dynamic - masks</tspan></text>
+</g>
+<g>
+  <rect x="555" y="575" width="400" height="115" rx="18" fill="#eef8f9" stroke="#2b8a92" stroke-width="3"/>
+  <text x="755" y="626.55" font-size="23" font-weight="700" fill="#13233a" text-anchor="middle" dominant-baseline="middle"><tspan x="755" dy="0">SQLite state DB</tspan><tspan x="755" dy="28">objects events ledger</tspan></text>
+</g>
+<g>
+  <rect x="1096" y="232" width="360" height="115" rx="18" fill="#edf7ed" stroke="#347a35" stroke-width="3"/>
+  <text x="1276" y="269.55" font-size="23" font-weight="700" fill="#13233a" text-anchor="middle" dominant-baseline="middle"><tspan x="1276" dy="0">controllers</tspan><tspan x="1276" dy="28">routes DNS DHCP firewall</tspan><tspan x="1276" dy="28">BGP SAM</tspan></text>
+</g>
+<g>
+  <rect x="1096" y="412" width="360" height="115" rx="18" fill="#fff6e8" stroke="#bd7515" stroke-width="3"/>
+  <text x="1276" y="463.55" font-size="23" font-weight="700" fill="#13233a" text-anchor="middle" dominant-baseline="middle"><tspan x="1276" dy="0">renderers + daemons</tspan><tspan x="1276" dy="28">nft dnsmasq GoBGP services</tspan></text>
+</g>
+<g>
+  <rect x="1096" y="590" width="360" height="115" rx="18" fill="#fcefee" stroke="#b64e4a" stroke-width="3"/>
+  <text x="1276" y="627.55" font-size="23" font-weight="700" fill="#13233a" text-anchor="middle" dominant-baseline="middle"><tspan x="1276" dy="0">owned host artifacts</tspan><tspan x="1276" dy="28">routes addresses tables</tspan><tspan x="1276" dy="28">units</tspan></text>
+</g>
+<line x1="428" y1="312" x2="555" y2="288" fill="none" stroke="#2f4f6f" stroke-width="4" marker-end="url(#arrow)"/>
+<path d="M 428 506 C 498 506, 485 288, 555 288" fill="none" stroke="#2f4f6f" stroke-width="4" marker-end="url(#arrow)"/><text x="491.5" y="385" font-size="22" font-weight="700" fill="#2f4f6f" text-anchor="middle">explicit trigger</text>
+<line x1="755" y1="340" x2="755" y2="395" fill="none" stroke="#2f4f6f" stroke-width="4" marker-end="url(#arrow)"/>
+<line x1="955" y1="448" x2="1096" y2="292" fill="none" stroke="#2f4f6f" stroke-width="4" marker-end="url(#arrow)"/>
+<line x1="1276" y1="347" x2="1276" y2="412" fill="none" stroke="#2f4f6f" stroke-width="4" marker-end="url(#arrow)"/>
+<line x1="1276" y1="527" x2="1276" y2="590" fill="none" stroke="#2f4f6f" stroke-width="4" marker-end="url(#arrow)"/>
+<path d="M 1096 650 C 1151 650, 900 632, 955 632" fill="none" stroke="#2f4f6f" stroke-width="4" marker-end="url(#arrow)"/><text x="1025.5" y="629" font-size="22" font-weight="700" fill="#2f4f6f" text-anchor="middle">status + events</text>
+<line x1="755" y1="500" x2="755" y2="575" fill="none" stroke="#2f4f6f" stroke-width="4" marker-end="url(#arrow)"/>
+</g>
+</svg>

@@ -9,6 +9,8 @@ CloudEdge 的目标是让 cloud automation 不直接编辑 operator 管理的 st
 当前实现包括 dynamic config、plugin I/O、BGP mode selective address mobility、
 生成的 SAM transport resource，以及 gated provider action execution。
 
+![CloudEdge SAM 图：MobilityPool 与 SAMTransportProfile 生成 DynamicConfigPart、IPIP TunnelInterface delivery、BGP peer、ECMP FIB path，以及 endpoint-only WireGuard underlay](/img/diagrams/cloudedge-sam-ipip.png)
+
 ## config layers
 
 CloudEdge 使用三个 layer：

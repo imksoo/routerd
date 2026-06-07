@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" font-family="Inter, Arial, Helvetica, sans-serif">
+<defs>
+  <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="5.5" orient="auto">
+    <path d="M 0 0 L 11 5.5 L 0 11 z" fill="#2f4f6f"/>
+  </marker>
+  <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
+    <feDropShadow dx="0" dy="5" stdDeviation="5" flood-color="#10233f" flood-opacity="0.14"/>
+  </filter>
+</defs>
+<rect width="1600" height="900" fill="#f7fafc"/>
+<rect x="28" y="28" width="1544" height="844" rx="30" fill="#ffffff" stroke="#e2e8f0" stroke-width="2"/>
+<text x="74" y="92" font-size="42" font-weight="850" fill="#10233f">CloudEdge SAM transport</text>
+<text x="76" y="130" font-size="23" font-weight="600" fill="#63758d">SAMTransportProfile generates IPIP delivery and BGP peers; WireGuard is optional endpoint-only encryption underlay.</text>
+<g filter="url(#shadow)">
+<g>
+  <rect x="72" y="170" width="430" height="620" rx="24" fill="#f6f8fb" stroke="#d9e2ef" stroke-width="2"/>
+  <text x="100" y="212" font-size="25" font-weight="800" fill="#45556f">Authoring surface</text>
+</g>
+<g>
+  <rect x="540" y="170" width="480" height="620" rx="24" fill="#f6f8fb" stroke="#d9e2ef" stroke-width="2"/>
+  <text x="568" y="212" font-size="25" font-weight="800" fill="#45556f">Generated transport</text>
+</g>
+<g>
+  <rect x="1058" y="170" width="470" height="620" rx="24" fill="#f6f8fb" stroke="#d9e2ef" stroke-width="2"/>
+  <text x="1086" y="212" font-size="25" font-weight="800" fill="#45556f">Mobility behavior</text>
+</g>
+<g>
+  <rect x="112" y="245" width="340" height="105" rx="18" fill="#e9f8ef" stroke="#2e7d55" stroke-width="3"/>
+  <text x="282" y="291.55" font-size="23" font-weight="700" fill="#13233a" text-anchor="middle" dominant-baseline="middle"><tspan x="282" dy="0">MobilityPool</tspan><tspan x="282" dy="28">address ownership + capture</tspan></text>
+</g>
+<g>
+  <rect x="112" y="425" width="340" height="105" rx="18" fill="#eaf2ff" stroke="#3267b1" stroke-width="3"/>
+  <text x="282" y="457.55" font-size="23" font-weight="700" fill="#13233a" text-anchor="middle" dominant-baseline="middle"><tspan x="282" dy="0">SAMTransportProfile</tspan><tspan x="282" dy="28">selfNodeRef topology</tspan><tspan x="282" dy="28">innerPrefix</tspan></text>
+</g>
+<g>
+  <rect x="575" y="238" width="385" height="96" rx="18" fill="#fff4e6" stroke="#c57a1c" stroke-width="3"/>
+  <text x="767.5" y="280.05" font-size="23" font-weight="700" fill="#13233a" text-anchor="middle" dominant-baseline="middle"><tspan x="767.5" dy="0">DynamicConfigPart</tspan><tspan x="767.5" dy="28">replace-on-reconcile</tspan></text>
+</g>
+<g>
+  <rect x="575" y="385" width="385" height="96" rx="18" fill="#eef8f9" stroke="#2b8a92" stroke-width="3"/>
+  <text x="767.5" y="427.05" font-size="23" font-weight="700" fill="#13233a" text-anchor="middle" dominant-baseline="middle"><tspan x="767.5" dy="0">TunnelInterface</tspan><tspan x="767.5" dy="28">IPIP or GRE delivery plane</tspan></text>
+</g>
+<g>
+  <rect x="575" y="535" width="385" height="96" rx="18" fill="#f5f3ff" stroke="#6d5bd0" stroke-width="3"/>
+  <text x="767.5" y="577.05" font-size="23" font-weight="700" fill="#13233a" text-anchor="middle" dominant-baseline="middle"><tspan x="767.5" dy="0">BGPPeer + endpoint /32 routes</tspan><tspan x="767.5" dy="28">multipath preserved</tspan></text>
+</g>
+<g>
+  <rect x="1098" y="225" width="355" height="82" rx="18" fill="#e9f8ef" stroke="#2e7d55" stroke-width="3"/>
+  <text x="1275.5" y="274.05" font-size="23" font-weight="700" fill="#13233a" text-anchor="middle" dominant-baseline="middle"><tspan x="1275.5" dy="0">Owner advertises mobile /32</tspan></text>
+</g>
+<g>
+  <rect x="1098" y="350" width="355" height="82" rx="18" fill="#eaf2ff" stroke="#3267b1" stroke-width="3"/>
+  <text x="1275.5" y="385.05" font-size="23" font-weight="700" fill="#13233a" text-anchor="middle" dominant-baseline="middle"><tspan x="1275.5" dy="0">Non-owner imports BGP best</tspan><tspan x="1275.5" dy="28">path</tspan></text>
+</g>
+<g>
+  <rect x="1098" y="475" width="355" height="82" rx="18" fill="#f5f3ff" stroke="#6d5bd0" stroke-width="3"/>
+  <text x="1275.5" y="524.05" font-size="23" font-weight="700" fill="#13233a" text-anchor="middle" dominant-baseline="middle"><tspan x="1275.5" dy="0">FIB can hold ECMP next hops</tspan></text>
+</g>
+<g>
+  <rect x="1098" y="600" width="355" height="82" rx="18" fill="#fff4e6" stroke="#c57a1c" stroke-width="3"/>
+  <text x="1275.5" y="634.9" font-size="24" font-weight="700" fill="#13233a" text-anchor="middle" dominant-baseline="middle"><tspan x="1275.5" dy="0">Capture: secondary IP</tspan><tspan x="1275.5" dy="29">or proxy ARP</tspan></text>
+</g>
+<g>
+  <rect x="555" y="685" width="922" height="62" rx="14" fill="#fff8df" stroke="#d7a725" stroke-width="3"/>
+  <text x="1016" y="723" font-size="20" font-weight="650" fill="#5b4400" text-anchor="middle" dominant-baseline="middle"><tspan x="1016" dy="0">WG AllowedIPs: transport endpoints only. Mobile /32s: BGP plus kernel FIB.</tspan></text>
+</g>
+<line x1="452" y1="298" x2="575" y2="286" fill="none" stroke="#2f4f6f" stroke-width="4" marker-end="url(#arrow)"/>
+<line x1="452" y1="478" x2="575" y2="286" fill="none" stroke="#2f4f6f" stroke-width="4" marker-end="url(#arrow)"/>
+<line x1="768" y1="334" x2="768" y2="385" fill="none" stroke="#2f4f6f" stroke-width="4" marker-end="url(#arrow)"/>
+<line x1="768" y1="481" x2="768" y2="535" fill="none" stroke="#2f4f6f" stroke-width="4" marker-end="url(#arrow)"/>
+<line x1="960" y1="433" x2="1098" y2="266" fill="none" stroke="#2f4f6f" stroke-width="4" marker-end="url(#arrow)"/>
+<line x1="960" y1="583" x2="1098" y2="391" fill="none" stroke="#2f4f6f" stroke-width="4" marker-end="url(#arrow)"/>
+<line x1="1275" y1="432" x2="1275" y2="475" fill="none" stroke="#2f4f6f" stroke-width="4" marker-end="url(#arrow)"/>
+<line x1="1275" y1="557" x2="1275" y2="600" fill="none" stroke="#2f4f6f" stroke-width="4" marker-end="url(#arrow)"/>
+</g>
+</svg>

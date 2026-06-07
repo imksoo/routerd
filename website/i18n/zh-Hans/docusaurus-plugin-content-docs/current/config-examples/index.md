@@ -12,6 +12,8 @@ sidebar_position: 0
 这里的配置是出发点。投入正式环境之前，请务必依照您的实际环境调整接口名称、地址范围、
 ISP 专属值及管理访问路径。
 
+![配置示例阅读流程图：拓扑编号、图示对应表、YAML 摘录、本地编辑、validate-plan-dry-run、apply 与 routerctl 确认](/img/diagrams/config-example-workflow.png)
+
 :::tip 推荐起点
 如需用 routerd 替换家庭路由器，请从
 [`examples/home-router-mgmt-protected.yaml`](https://github.com/imksoo/routerd/blob/main/examples/home-router-mgmt-protected.yaml)

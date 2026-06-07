@@ -10,6 +10,8 @@ routerd separates declared intent from observed state.
 YAML is the intent you manage.
 SQLite, lease files, and `events.jsonl` are state that routerd and its dedicated daemons observe.
 
+![Lifecycle GC diagram showing effective config, ownership ledger, object status, and host inventory feeding a dry-run-capable GC planner and teardown registry](/img/diagrams/lifecycle-gc.png)
+
 ## Where state lives
 
 Release installs use `/usr/local/etc/routerd/router.yaml` for the canonical

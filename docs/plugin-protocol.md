@@ -47,6 +47,8 @@ and are never executed by the plugin runner or merge path. They can be imported
 into the provider-action journal and handed to an executor plugin only after
 `ProviderActionPolicy`, approval, allowlist, and dry-run/live mode gates pass.
 
+![Plugin dynamic config diagram showing trusted local plugin observations flowing into DynamicConfigPart and inert provider action plans flowing separately into the gated action journal and executor plugin path](/img/diagrams/dynamic-config-provider-actions.png)
+
 ## Resource shapes
 
 A plugin is declared as a local executable and optional trigger set:

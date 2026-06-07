@@ -10,6 +10,8 @@ routerd 將宣告的意圖與觀測到的狀態分開處理。
 YAML 是使用者管理的意圖。
 SQLite、租約檔案、events.jsonl 則是 routerd 及專屬常駐程式觀測到的狀態。
 
+![lifecycle GC 圖：effective config、ownership ledger、object status 與 host inventory 輸入 GC planner 和 teardown registry](/img/diagrams/lifecycle-gc.png)
+
 ## 狀態的存放位置
 
 正式版安裝時，設定的正本存放在 `/usr/local/etc/routerd/router.yaml`。

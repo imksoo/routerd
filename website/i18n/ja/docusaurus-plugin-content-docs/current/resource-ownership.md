@@ -8,6 +8,8 @@ slug: /reference/resource-ownership
 routerd は、ホスト上の構成物をリソースに対応付けて管理します。
 どのリソースが何を作ったかを記録することで、差分の確認、削除、障害調査をしやすくします。
 
+![desired resource、ledger row、object status、host inventory、teardown contract、skip protection、backup、audit event を示す owner-reference lifecycle GC 図](/img/diagrams/lifecycle-gc.png)
+
 ## 所有の種類
 
 | 種類 | 意味 |

@@ -8,6 +8,8 @@ title: アーキテクチャ概要
 個別機能の使い方は [チュートリアル](./tutorials/getting-started.md) と [How-to](./how-to/multi-wan.md) を、
 リソース定義は [API リファレンス](./api-v1alpha1.md) を参照してください。
 
+![router YAML と routerctl から validation、effective config、controller、SQLite state、renderer、所有 host artifact へ流れる routerd architecture 図](/img/diagrams/routerd-architecture.png)
+
 ---
 
 ## 1. routerd の位置づけ

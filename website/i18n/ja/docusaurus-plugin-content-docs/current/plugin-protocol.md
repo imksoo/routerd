@@ -52,6 +52,8 @@ provider action journal に import し、`ProviderActionPolicy`、approval、all
 dry-run/live mode の gate を通った場合だけ、`execute.providerAction` capability を持つ
 executor plugin に渡せます。
 
+![trusted local plugin の observation が DynamicConfigPart へ入り、inert な provider action plan は別経路で gated action journal と executor plugin path へ進む dynamic config 図](/img/diagrams/dynamic-config-provider-actions.png)
+
 起動設定では `Plugin` と `DynamicConfigSource` を宣言できます。
 
 ```yaml

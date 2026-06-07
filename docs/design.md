@@ -8,6 +8,8 @@ This document is an introduction to routerd for operators and contributors. It c
 For day-to-day usage, start with the [tutorials](./tutorials/getting-started.md) and the [how-to guides](./how-to/multi-wan.md).
 For resource definitions, see the [API reference](./api-v1alpha1.md).
 
+![routerd architecture diagram showing router YAML and routerctl flowing through validation, effective config, controllers, SQLite state, renderers, and owned host artifacts](/img/diagrams/routerd-architecture.png)
+
 ---
 
 ## 1. Where routerd fits
