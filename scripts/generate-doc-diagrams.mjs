@@ -103,6 +103,54 @@ ${body}
 `;
 }
 
+const palette = [
+  ['#e9f8ef', '#2e7d55'],
+  ['#eaf2ff', '#3267b1'],
+  ['#f5f3ff', '#6d5bd0'],
+  ['#fff4e6', '#c57a1c'],
+];
+
+function stackYs(count) {
+  if (count <= 2) return { ys: [280, 520], h: 105 };
+  if (count === 3) return { ys: [245, 410, 575], h: 92 };
+  return { ys: [225, 345, 465, 585], h: 82 };
+}
+
+function flowDiagram({ name, title, subtitle, lanes: flowLanes, noteText, arrowLabels = ['intent', 'runtime'] }) {
+  const laneX = [72, 540, 1048];
+  const laneW = [430, 470, 480];
+  const boxX = [112, 580, 1088];
+  const boxW = [340, 390, 390];
+  const body = flowLanes.flatMap((flowLane, laneIndex) => {
+    const { ys, h } = stackYs(flowLane.boxes.length);
+    return [
+      lane({ x: laneX[laneIndex], y: 176, w: laneW[laneIndex], h: 600, text: flowLane.title }),
+      ...flowLane.boxes.map((item, boxIndex) => {
+        const [fill, stroke] = palette[boxIndex % palette.length];
+        return box({
+          x: boxX[laneIndex],
+          y: ys[boxIndex],
+          w: boxW[laneIndex],
+          h,
+          text: item.text ?? item,
+          fill: item.fill ?? fill,
+          stroke: item.stroke ?? stroke,
+          max: item.max ?? (laneIndex === 0 ? 31 : 33),
+          size: item.size ?? 23,
+        });
+      }),
+    ];
+  });
+  body.push(
+    arrow({ x1: 452, y1: 476, x2: 580, y2: 476, label: arrowLabels[0] }),
+    arrow({ x1: 970, y1: 476, x2: 1088, y2: 476, label: arrowLabels[1] }),
+  );
+  if (noteText) {
+    body.push(note({ x: 310, y: 705, w: 980, h: 55, text: noteText, max: 82 }));
+  }
+  return { name, title, subtitle, body };
+}
+
 const diagrams = [
   {
     name: 'routerd-architecture',
@@ -576,6 +624,149 @@ const diagrams = [
       arrow({ x1: 970, y1: 578, x2: 1088, y2: 593 }),
     ],
   },
+  flowDiagram({
+    name: 'config-example-basic-ipv4-nat',
+    title: 'basic IPv4 NAT gateway',
+    subtitle: 'A DHCP-acquired WAN address, owned LAN address, DHCPv4 service, NAT44, and zone firewall make the smallest router.',
+    lanes: [
+      { title: 'Access side', boxes: ['Internet + ISP router', 'wan interface\nDHCPv4 client', 'default upstream route'] },
+      { title: 'routerd host', boxes: ['Interface + IPv4StaticAddress\nown LAN gateway', 'DHCPv4Server\nLAN pool + options', 'NAT44Rule + FirewallZone\ntrust to untrust'] },
+      { title: 'LAN behavior', boxes: ['clients get 192.168.10.100-199', 'router address becomes gateway and DNS', 'IPv4 traffic masquerades to WAN'] },
+    ],
+    noteText: 'DNS is intentionally simple here; add DNSResolver and DNSZone after basic routing works.',
+  }),
+  flowDiagram({
+    name: 'config-example-dslite-home',
+    title: 'DS-Lite home gateway',
+    subtitle: 'IPv6 RA and DHCPv6-PD build the LAN IPv6 path while IPv4 exits through a DS-Lite tunnel with derived MTU and MSS.',
+    lanes: [
+      { title: 'IPv6-first WAN', boxes: ['WAN IPv6 RA', 'DHCPv6PrefixDelegation\nNTT-style profile', 'AFTR endpoint\nTransix-like placeholder'] },
+      { title: 'routerd host', boxes: ['IPv6DelegatedAddress\nLAN prefix slice', 'DSLiteTunnel\nip6tnl IPv4 egress', 'derived NAT44\nMTU/MSS from tunnel'] },
+      { title: 'LAN behavior', boxes: ['LAN IPv4 + delegated IPv6', 'RA RDNSS DNSSL + DHCPv4', 'IPv4 clients exit via AFTR'] },
+    ],
+    noteText: 'Replace AFTR FQDN, DNS servers, and DHCPv6 profile with values from the access line.',
+  }),
+  flowDiagram({
+    name: 'config-example-firewall-rate-limit',
+    title: 'firewall rate limits and ICMP rules',
+    subtitle: 'Stateful firewall rules combine zone direction, protocol matches, ICMP names, rate limits, and per-source limits.',
+    lanes: [
+      { title: 'Traffic classes', boxes: ['WAN to router self', 'HTTP HTTPS service ports', 'ICMP echo requests', 'SSH brute-force attempts'] },
+      { title: 'FirewallRule set', boxes: ['multi-port allow\n80 and 443', 'ICMP echo allow\nWAN diagnostics', 'SSH over-limit reject\nrate + conn limit'] },
+      { title: 'nftables result', boxes: ['inet routerd_filter table', 'stateful established accept', 'over-limit packets rejected and logged'] },
+    ],
+    noteText: 'RateLimit and ConnLimit match the over-limit traffic; the explicit action decides whether to reject or drop it.',
+  }),
+  flowDiagram({
+    name: 'config-example-guest-isolation',
+    title: 'guest and IoT client isolation',
+    subtitle: 'ClientPolicy classifies selected MAC addresses on the same LAN and applies guest restrictions through the firewall model.',
+    lanes: [
+      { title: 'Shared LAN', boxes: ['trusted clients', 'guest / IoT MAC list', 'management network'] },
+      { title: 'routerd policy', boxes: ['ClientPolicy include mode', 'FirewallZone lan + mgmt', 'FirewallPolicy default matrix'] },
+      { title: 'Allowed paths', boxes: ['guest to internet allowed', 'guest to trusted LAN denied', 'guest to management denied'] },
+    ],
+    noteText: 'The clients stay on the same layer-2 segment; isolation is policy-driven, not a separate VLAN in this example.',
+  }),
+  flowDiagram({
+    name: 'config-example-kubernetes-api-vip',
+    title: 'Kubernetes API VIP with BGP',
+    subtitle: 'A routerd edge pair owns a VRRP VIP, forwards API traffic, health-checks backends, and peers with Kubernetes BGP speakers.',
+    lanes: [
+      { title: 'Cluster edge', boxes: ['routerd-01/02\nVRRP VIP 192.168.70.10', 'control-plane backends\n:6443 /readyz', 'worker BGP speakers\nASN 64513'] },
+      { title: 'routerd resources', boxes: ['VirtualAddress\ntracked VRRP role', 'IngressService\nHTTPS health + hairpin SNAT', 'BGPRouter + BGPPeer\nfast timers import allow-list'] },
+      { title: 'Runtime checks', boxes: ['stable kube API endpoint', 'Service prefixes imported from k8s', 'routerctl show bgp/vrrp/ingress'] },
+    ],
+    noteText: 'The VIP is outside the cluster, so cluster bootstrap can depend on the routers without circular ownership.',
+  }),
+  flowDiagram({
+    name: 'config-example-lan-dns-dhcp',
+    title: 'LAN DHCP and local DNS',
+    subtitle: 'The router owns the LAN address, serves DHCPv4, answers a local DNS zone, and derives client names from leases.',
+    lanes: [
+      { title: 'LAN segment', boxes: ['router 192.168.30.1', 'DHCP clients\n192.168.30.100-199', 'NAS reservation\n192.168.30.10'] },
+      { title: 'routerd services', boxes: ['IPv4StaticAddress\nLAN gateway', 'DHCPv4Server + Reservation', 'DNSZone + DNSResolver\ndhcpDerived names'] },
+      { title: 'Client view', boxes: ['gateway and DNS point to router', 'home.example search domain', 'router and NAS names resolve locally'] },
+    ],
+    noteText: 'The DNS zone can combine static records and lease-derived records from the DHCPv4 server.',
+  }),
+  flowDiagram({
+    name: 'config-example-local-dns-redirect',
+    title: 'redirect public DNS to local resolver',
+    subtitle: 'LAN clients that send plaintext port 53 to known public DNS names are redirected to the local resolver only.',
+    lanes: [
+      { title: 'Client attempt', boxes: ['LAN client sends 8.8.8.8:53', 'public DNS names\nexact FQDN set', 'DoH and DoT ports untouched'] },
+      { title: 'routerd policy', boxes: ['IPAddressSet\nFQDN refresh', 'LocalServiceRedirect\nLAN prerouting only', 'DNSResolver\nlocal port 53'] },
+      { title: 'Result', boxes: ['plaintext DNS lands locally', 'router-origin probes bypass redirect', 'local resolver forwards upstream'] },
+    ],
+    noteText: 'The redirect is scoped to LAN-client TCP/UDP port 53, not all traffic to those providers.',
+  }),
+  flowDiagram({
+    name: 'config-example-multi-wan-failover',
+    title: 'multi-WAN IPv4 failover',
+    subtitle: 'Health checks and weighted candidates choose one IPv4 default path across DS-Lite, PPPoE, and direct IPv4 fallback.',
+    lanes: [
+      { title: 'Candidates', boxes: ['DS-Lite A\nweight 120', 'DS-Lite B\nadditional tunnel', 'PPPoE backup\nweight 60', 'HGW direct IPv4\nweight 40'] },
+      { title: 'routerd selection', boxes: ['HealthCheck\ninternet-via-*', 'EgressRoutePolicy\nhighest-weight-ready', 'IPv4Route default\nselected next hop'] },
+      { title: 'LAN behavior', boxes: ['clients use one active egress', 'NAT44 follows selected path', 'hysteresis avoids route flapping'] },
+    ],
+    noteText: 'weighted-ecmp is still reserved; this example selects one ready default route.',
+  }),
+  flowDiagram({
+    name: 'config-example-port-forward-web',
+    title: 'port forward to an inside web server',
+    subtitle: 'PortForward renders ingress DNAT and optional hairpin rules so external and LAN clients use the same public name.',
+    lanes: [
+      { title: 'Client paths', boxes: ['Internet to 203.0.113.10:443', 'LAN client to public address', 'inside web server\n192.168.10.20:443'] },
+      { title: 'PortForward', boxes: ['listen interface + address\nwan 203.0.113.10', 'target backend\n192.168.10.20:443', 'hairpin enabled\nLAN interfaces'] },
+      { title: 'nftables output', boxes: ['WAN DNAT to backend', 'LAN hairpin DNAT/SNAT', 'FirewallZone policy remains separate'] },
+    ],
+    noteText: 'Hairpin mode needs a concrete listen address or addressFrom so LAN traffic can match before DNAT.',
+  }),
+  flowDiagram({
+    name: 'config-example-pppoe-ipv4-nat',
+    title: 'PPPoE IPv4 NAT gateway',
+    subtitle: 'Ethernet carries a PPPoE session; LAN IPv4 traffic is masqueraded toward the logical PPP interface.',
+    lanes: [
+      { title: 'Access line', boxes: ['ONU / provider Ethernet', 'wan interface\nphysical carrier', 'PPPoE credentials\nsecret file'] },
+      { title: 'routerd host', boxes: ['PPPoESession\nppp-home MTU 1454', 'IPv4StaticAddress + DHCPv4Server', 'NAT44Rule\nLAN to PPPoE'] },
+      { title: 'LAN behavior', boxes: ['clients receive LAN DHCP', 'default internet path is ppp-home', 'firewall zones derive trust/untrust'] },
+    ],
+    noteText: 'Keep PPPoE secrets in restricted files and validate the plan before replacing a live WAN path.',
+  }),
+  flowDiagram({
+    name: 'config-example-tailscale-subnet-exit',
+    title: 'Tailscale subnet and exit node',
+    subtitle: 'routerd installs or expects Tailscale, registers the router node, and advertises subnet and exit-node intent.',
+    lanes: [
+      { title: 'Local networks', boxes: ['LAN 172.18.0.0/16', 'management 192.168.20.0/24', 'internet egress path'] },
+      { title: 'routerd resources', boxes: ['Package\ntailscale-runtime', 'TailscaleNode\nhostname edge-router', 'advertiseRoutes + advertiseExitNode'] },
+      { title: 'Tailnet behavior', boxes: ['routes appear for admin approval', 'router can act as exit node', 'acceptDNS disabled in example'] },
+    ],
+    noteText: 'The Tailscale control plane remains external; route and exit-node approval follow the tailnet policy.',
+  }),
+  flowDiagram({
+    name: 'config-example-telemetry-export',
+    title: 'telemetry export to OTLP',
+    subtitle: 'Telemetry resources attach routerd logs, metrics, and traces to an OpenTelemetry collector endpoint.',
+    lanes: [
+      { title: 'routerd signals', boxes: ['logs', 'metrics', 'traces', 'service attributes'] },
+      { title: 'Telemetry resource', boxes: ['Telemetry/otlp', 'OTLP endpoint\ncollector:4317', 'insecure lab transport\nor TLS in production'] },
+      { title: 'Observability path', boxes: ['OpenTelemetry collector', 'metrics/logs/traces backend', 'health checks and apply latency analysis'] },
+    ],
+    noteText: 'Keep the collector on a trusted management or observability network.',
+  }),
+  flowDiagram({
+    name: 'config-example-wireguard-hub-spoke',
+    title: 'WireGuard hub and spoke template',
+    subtitle: 'A hub WireGuard interface owns the tunnel address, while peers declare tunnel /32s and routed LAN prefixes.',
+    lanes: [
+      { title: 'Topology', boxes: ['spoke A\n172.30.11.0/24', 'hub\n10.44.0.1/24', 'spoke B\n172.30.12.0/24'] },
+      { title: 'routerd resources', boxes: ['WireGuardInterface\nwg-hub listen 51820', 'IPv4StaticAddress\nhub tunnel IP', 'WireGuardPeer\nallowedIPs per spoke'] },
+      { title: 'Routing behavior', boxes: ['spoke tunnel /32s', 'explicit routed LAN prefixes', 'firewall rule for UDP listen port if managed'] },
+    ],
+    noteText: 'This generic WireGuard template is separate from SAM, where mobile /32s are carried by BGP/FIB, not WG AllowedIPs.',
+  }),
 ];
 
 function chromePath() {

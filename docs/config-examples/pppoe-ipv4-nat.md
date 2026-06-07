@@ -5,6 +5,8 @@ sidebar_position: 40
 
 # PPPoE IPv4 NAT gateway
 
+![Diagram showing an Ethernet access line carrying PPPoE, a routerd PPPoESession, LAN DHCP, and NAT44 toward the PPP interface](/img/diagrams/config-example-pppoe-ipv4-nat.png)
+
 This example is for an access line where the physical WAN is Ethernet but the
 IPv4 internet session is PPPoE.
 

@@ -5,6 +5,8 @@ sidebar_position: 90
 
 # Tailscale の subnet router / exit node
 
+![routerd が Tailscale node に LAN と management prefix、exit-node intent を advertise させる構成](/img/diagrams/config-example-tailscale-subnet-exit.png)
+
 ルーターを Tailscale の subnet router 兼 exit node として広告する例です。
 
 完全な YAML は `examples/tailscale-exit-subnet.yaml` にあります。

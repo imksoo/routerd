@@ -5,6 +5,8 @@ sidebar_position: 10
 
 # 基本 IPv4 NAT 路由器
 
+![由 DHCP WAN、routerd 管理的 LAN address、DHCPv4 server、NAT44 和 firewall zone 组成的基本 IPv4 gateway](/img/diagrams/config-example-basic-ipv4-nat.png)
+
 这是一个接近最小配置的家用路由器示例，让 LAN 客户端通过 DHCP 取得的 WAN 端 IPv4 地址连上互联网。
 
 完整的已验证 YAML 位于 `examples/example-basic-ipv4-nat.yaml`。

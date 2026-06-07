@@ -5,6 +5,8 @@ sidebar_position: 30
 
 # DS-Lite 家用路由器
 
+![IPv6 WAN prefix delegation、DS-Lite tunnel egress、derived NAT44、LAN IPv4 与 delegated IPv6 service 的构成](/img/diagrams/config-example-dslite-home.png)
+
 这是以 IPv6 作为主要线路的连接示例。路由器通过 Router Advertisement 和 DHCPv6-PD 取得 IPv6，
 衍生 LAN 前缀，并将 IPv4 流量通过 DS-Lite 隧道传送。
 

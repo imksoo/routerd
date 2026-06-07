@@ -5,6 +5,8 @@ sidebar_position: 70
 
 # マルチ WAN IPv4 フェイルオーバー
 
+![DS-Lite、PPPoE、direct IPv4 candidate を health check と EgressRoutePolicy で選び 1 本の default route にする構成](/img/diagrams/config-example-multi-wan-failover.png)
+
 複数の IPv4 出口から、正常な default route を選ぶ例です。
 DS-Lite トンネル、PPPoE、上流ルーター直結の IPv4 を候補にしています。
 

@@ -5,6 +5,8 @@ sidebar_position: 50
 
 # 内部 Web 服务器的端口转发
 
+![面向内部 HTTPS server 的 PortForward ingress DNAT、LAN hairpin access 与 firewall zone 分离的构成](/img/diagrams/config-example-port-forward-web.png)
+
 通过 WAN 侧 IPv4 地址公开内部 HTTPS 服务器，
 并启用 hairpin 让 LAN 客户端也能以相同公开名称访问的示例。
 

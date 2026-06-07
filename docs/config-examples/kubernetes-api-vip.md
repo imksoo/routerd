@@ -4,6 +4,8 @@ title: Kubernetes API VIP with BGP
 
 # Kubernetes API VIP with BGP
 
+![Diagram showing a routerd edge pair with VRRP VIP, Kubernetes API ingress health checks, and BGP peering to cluster speakers](/img/diagrams/config-example-kubernetes-api-vip.png)
+
 This example shows a routerd edge pair pattern for bootstrapping Kubernetes
 without putting the API endpoint inside the cluster. The router owns a VRRP
 VIP, forwards `k8s-api.cluster.example:6443` to three control-plane backends, checks

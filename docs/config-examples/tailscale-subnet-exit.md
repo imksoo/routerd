@@ -5,6 +5,8 @@ sidebar_position: 90
 
 # Tailscale subnet and exit node
 
+![Diagram showing routerd configuring a Tailscale node to advertise LAN and management prefixes plus exit-node intent](/img/diagrams/config-example-tailscale-subnet-exit.png)
+
 This example installs or expects Tailscale and advertises the router as both a
 subnet router and an exit node.
 

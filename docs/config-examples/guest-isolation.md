@@ -5,6 +5,8 @@ sidebar_position: 60
 
 # Guest and IoT client isolation
 
+![Diagram showing ClientPolicy classifying guest and IoT MAC addresses on a shared LAN and denying LAN or management access](/img/diagrams/config-example-guest-isolation.png)
+
 This example keeps selected MAC addresses on the same LAN but treats them as
 guest or IoT clients: internet access is allowed, while trusted LAN and
 management access are denied.

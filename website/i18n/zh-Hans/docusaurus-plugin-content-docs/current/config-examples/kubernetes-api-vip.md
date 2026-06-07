@@ -4,6 +4,8 @@ title: 带有 BGP 的 Kubernetes API VIP
 
 # 带有 BGP 的 Kubernetes API VIP
 
+![routerd edge pair 管理 VRRP VIP、Kubernetes API ingress health check，以及到 cluster speaker 的 BGP peering 的构成](/img/diagrams/config-example-kubernetes-api-vip.png)
+
 本示例说明如何不将 Kubernetes API 的 endpoint 放在 cluster 内部，
 而是通过 routerd 的 edge pair 进行引导配置（bootstrap）。
 路由器持有 VRRP VIP，将 `k8s-api.cluster.example:6443` 转发至 3 台 control-plane backend，

@@ -5,6 +5,8 @@ sidebar_position: 50
 
 # 內部 Web 伺服器的連接埠轉送
 
+![面向內部 HTTPS server 的 PortForward ingress DNAT、LAN hairpin access 與 firewall zone 分離的構成](/img/diagrams/config-example-port-forward-web.png)
+
 透過 WAN 側 IPv4 位址公開內部 HTTPS 伺服器，
 並啟用 hairpin 讓 LAN 用戶端也能以相同公開名稱存取的範例。
 

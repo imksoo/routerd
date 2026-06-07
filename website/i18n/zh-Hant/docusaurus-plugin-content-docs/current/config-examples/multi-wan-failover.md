@@ -5,6 +5,8 @@ sidebar_position: 70
 
 # Multi-WAN IPv4 Failover
 
+![DS-Lite、PPPoE、direct IPv4 candidate 由 health check 與 EgressRoutePolicy 選擇為一條 default route 的構成](/img/diagrams/config-example-multi-wan-failover.png)
+
 從多個 IPv4 出口中選出正常預設路由的範例。
 以 DS-Lite 通道、PPPoE 及上游路由器直連的 IPv4 作為候選出口。
 

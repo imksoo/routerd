@@ -5,6 +5,8 @@ sidebar_position: 20
 
 # LAN DHCP とローカル DNS
 
+![routerd が LAN gateway address、DHCPv4 pool と reservation、local DNS zone、lease-derived name を提供する構成](/img/diagrams/config-example-lan-dns-dhcp.png)
+
 1 つの LAN インターフェースを、小さな家庭内 LAN や検証用 LAN のサービスセグメントとして使う例です。
 routerd が LAN アドレス、DHCPv4、ローカル DNS ゾーン、DHCP リース由来の名前を管理します。
 

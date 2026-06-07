@@ -5,6 +5,8 @@ sidebar_position: 50
 
 # 内部 Web サーバーへのポートフォワード
 
+![内部 HTTPS server 向けの PortForward ingress DNAT、LAN hairpin access、firewall zone 分離の構成](/img/diagrams/config-example-port-forward-web.png)
+
 内部の HTTPS サーバーを WAN 側の IPv4 アドレスで公開し、LAN クライアントからも同じ公開名で
 到達できるよう hairpin を有効にする例です。
 

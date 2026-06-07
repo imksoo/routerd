@@ -5,6 +5,8 @@ sidebar_position: 60
 
 # ゲスト / IoT 端末の分離
 
+![ClientPolicy が shared LAN 上の guest と IoT MAC address を分類し LAN や management access を拒否する構成](/img/diagrams/config-example-guest-isolation.png)
+
 同じ LAN につながった特定の MAC アドレスをゲスト / IoT 端末として扱い、
 インターネットは許可しつつ、信頼済み LAN や管理網への到達を止める例です。
 

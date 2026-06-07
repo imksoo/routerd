@@ -5,6 +5,8 @@ sidebar_position: 110
 
 # 将遥测数据发送至 OTLP 收集器
 
+![routerd log、metric、trace 与 service attribute 通过 Telemetry resource export 到 OTLP collector 的构成](/img/diagrams/config-example-telemetry-export.png)
+
 此示例演示如何将 routerd 的遥测数据发送至 OpenTelemetry 收集器。
 可用于观测长时间运行状态、健康检查、DPI 以及应用操作的延迟。
 

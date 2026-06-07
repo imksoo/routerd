@@ -5,6 +5,8 @@ sidebar_position: 80
 
 # Redirect public DNS to the local resolver
 
+![Diagram showing LAN plaintext DNS to public resolvers being matched by IPAddressSet and redirected to the local DNSResolver](/img/diagrams/config-example-local-dns-redirect.png)
+
 This example catches LAN clients that send plaintext DNS directly to well-known
 public resolver names and redirects only TCP/UDP port 53 to the router's local
 resolver. DoH and DoT ports are not touched.
