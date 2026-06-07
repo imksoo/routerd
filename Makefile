@@ -53,10 +53,11 @@ WEBSITE_SCHEMA_DIR := website/static/schemas
 CONFIG_SCHEMA := routerd-config-v1alpha1.schema.json
 CONTROL_SCHEMA := routerd-control-v1alpha1.schema.json
 CONTROL_OPENAPI_SCHEMA := routerd-control-openapi-v1alpha1.json
+WIZARD_FIXTURE_DIR := website/fixtures/wizard
 
 WEBSITE_NODE_MODULES_STAMP := website/node_modules/.package-lock.json
 
-.PHONY: test build build-daemons build-provider-executors build-ndpi-agent build-ndpi-agent-libndpi build-daemons-freebsd check-linux-static check-ndpi-agent-libndpi check-install-deps alpine-vm-smoke cloudedge-acceptance-lint cloudedge-acceptance-offline-test cloudedge-runners-offline-test cloudedge-poc-evidence-offline-test webconsole-build webconsole-browser-install webconsole-screenshot generate-schema sync-website-schemas check-schema check-website-schemas check-examples-line-limits check-render-golden update-render-golden check-bespoke-lifecycle website-deps website-build third-party-licenses check-build-deps dist dist-ndpi-agent-libndpi live-iso validate-example dry-run-example plan-config release clean
+.PHONY: test build build-daemons build-provider-executors build-ndpi-agent build-ndpi-agent-libndpi build-daemons-freebsd check-linux-static check-ndpi-agent-libndpi check-install-deps alpine-vm-smoke cloudedge-acceptance-lint cloudedge-acceptance-offline-test cloudedge-runners-offline-test cloudedge-poc-evidence-offline-test webconsole-build webconsole-browser-install webconsole-screenshot generate-schema sync-website-schemas check-schema check-website-schemas generate-wizard-fixtures check-wizard-fixtures validate-wizard-fixtures check-examples-line-limits check-render-golden update-render-golden check-bespoke-lifecycle website-deps website-build third-party-licenses check-build-deps dist dist-ndpi-agent-libndpi live-iso validate-example dry-run-example plan-config release clean
 
 test:
 	go test ./...
@@ -188,6 +189,24 @@ check-website-schemas:
 	jq -e '."$$id" == "https://routerd.net/schemas/$(CONFIG_SCHEMA)"' $(WEBSITE_SCHEMA_DIR)/$(CONFIG_SCHEMA)
 	jq -e '."$$id" == "https://routerd.net/schemas/$(CONTROL_SCHEMA)"' $(WEBSITE_SCHEMA_DIR)/$(CONTROL_SCHEMA)
 	jq -e '."$$id" == "https://routerd.net/schemas/$(CONTROL_OPENAPI_SCHEMA)"' $(WEBSITE_SCHEMA_DIR)/$(CONTROL_OPENAPI_SCHEMA)
+
+generate-wizard-fixtures: website-deps
+	rm -rf /tmp/routerd-wizard-builder
+	website/node_modules/.bin/tsc --target ES2020 --module commonjs --moduleResolution node --esModuleInterop --skipLibCheck --outDir /tmp/routerd-wizard-builder website/src/lib/routerdWizard.ts
+	node scripts/generate-wizard-fixtures.cjs /tmp/routerd-wizard-builder/routerdWizard.js $(WIZARD_FIXTURE_DIR)
+
+check-wizard-fixtures: website-deps
+	rm -rf /tmp/routerd-wizard-builder /tmp/routerd-wizard-fixtures
+	website/node_modules/.bin/tsc --target ES2020 --module commonjs --moduleResolution node --esModuleInterop --skipLibCheck --outDir /tmp/routerd-wizard-builder website/src/lib/routerdWizard.ts
+	node scripts/generate-wizard-fixtures.cjs /tmp/routerd-wizard-builder/routerdWizard.js /tmp/routerd-wizard-fixtures
+	diff -ru $(WIZARD_FIXTURE_DIR) /tmp/routerd-wizard-fixtures
+
+validate-wizard-fixtures: website-deps
+	node scripts/validate-wizard-fixtures.cjs schemas/$(CONFIG_SCHEMA) $(WIZARD_FIXTURE_DIR)
+	@for config in $(WIZARD_FIXTURE_DIR)/*.yaml; do \
+		echo "validating $$config"; \
+		go run ./cmd/routerd validate --config "$$config"; \
+	done
 
 check-examples-line-limits:
 	./scripts/check-examples-line-limits.sh
