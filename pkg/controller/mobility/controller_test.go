@@ -523,6 +523,14 @@ func TestControllerBGPModeProviderStateFollowsBestPathOwnerChange(t *testing.T) 
 	if findActionPlanByAddress(drainedA, "assign-secondary-ip", "10.88.60.10/32") != nil {
 		t.Fatalf("drained router-a plans = %#v, want no assign", drainedA)
 	}
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"discoveryOwnedAddresses":        []string{"10.88.60.10/32"},
+		"discoverySelfPrivateIPs":        []string{"10.88.60.22"},
+		"discoverySelfNICRef":            "router-b-nic",
+		"discoverySelfForwardingEnabled": false,
+	}); err != nil {
+		t.Fatalf("SaveObjectStatus: %v", err)
+	}
 
 	controllerB := Controller{Router: routerWithBGPRouter(planningRouterForNode("azure-router-b", spec)), Store: store, BGPPaths: bgp, Now: func() time.Time { return now.Add(2 * time.Second) }}
 	if err := controllerB.Reconcile(context.Background()); err != nil {
@@ -630,7 +638,7 @@ func TestControllerBGPModeProviderTrapExcludesFreshOwnedAddressAndDeprovisionsSt
 	}
 	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
 		"discoveryOwnedAddresses": []string{"10.88.60.11/32"},
-		"discoverySelfPrivateIPs": []string{"10.88.60.4"},
+		"discoverySelfPrivateIPs": []string{"10.88.60.4", "10.88.60.11/32"},
 		"discoveryLastScanAt":     now.Format(time.RFC3339Nano),
 	}); err != nil {
 		t.Fatalf("SaveObjectStatus(MobilityPool/cloudedge): %v", err)
