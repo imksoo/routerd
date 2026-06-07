@@ -45,7 +45,7 @@ ifneq ($(GOARCH),)
 GO_BUILD_ENV += GOARCH=$(GOARCH)
 endif
 GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || true)
-GO_LDFLAGS ?= -s -w $(if $(GIT_COMMIT),-X github.com/imksoo/routerd/pkg/version.Commit=$(GIT_COMMIT))
+GO_LDFLAGS ?= -s -w -X github.com/imksoo/routerd/pkg/version.Version=$(VERSION) $(if $(GIT_COMMIT),-X github.com/imksoo/routerd/pkg/version.Commit=$(GIT_COMMIT))
 GO_BUILD_FLAGS ?= -buildvcs=false -trimpath -ldflags="$(GO_LDFLAGS)"
 EXAMPLE_CONFIGS ?= $(wildcard examples/*.yaml)
 PLAYWRIGHT_INSTALL_FLAGS ?= --with-deps
@@ -57,10 +57,13 @@ WIZARD_FIXTURE_DIR := website/fixtures/wizard
 
 WEBSITE_NODE_MODULES_STAMP := website/node_modules/.package-lock.json
 
-.PHONY: test build build-daemons build-provider-executors build-ndpi-agent build-ndpi-agent-libndpi build-daemons-freebsd check-linux-static check-ndpi-agent-libndpi check-install-deps alpine-vm-smoke cloudedge-acceptance-lint cloudedge-acceptance-offline-test cloudedge-runners-offline-test cloudedge-poc-evidence-offline-test webconsole-build webconsole-browser-install webconsole-screenshot generate-schema sync-website-schemas check-schema check-website-schemas generate-wizard-fixtures check-wizard-fixtures validate-wizard-fixtures check-examples-line-limits check-render-golden update-render-golden check-bespoke-lifecycle website-deps website-build third-party-licenses check-build-deps dist dist-ndpi-agent-libndpi live-iso validate-example dry-run-example plan-config release clean
+.PHONY: test check-version-ldflags build build-daemons build-provider-executors build-ndpi-agent build-ndpi-agent-libndpi build-daemons-freebsd check-linux-static check-ndpi-agent-libndpi check-install-deps alpine-vm-smoke cloudedge-acceptance-lint cloudedge-acceptance-offline-test cloudedge-runners-offline-test cloudedge-poc-evidence-offline-test webconsole-build webconsole-browser-install webconsole-screenshot generate-schema sync-website-schemas check-schema check-website-schemas generate-wizard-fixtures check-wizard-fixtures validate-wizard-fixtures check-examples-line-limits check-render-golden update-render-golden check-bespoke-lifecycle website-deps website-build third-party-licenses check-build-deps dist dist-ndpi-agent-libndpi live-iso validate-example dry-run-example plan-config release clean
 
-test:
+test: check-version-ldflags
 	go test ./...
+
+check-version-ldflags:
+	scripts/check-version-ldflags.sh
 
 build: webconsole-build
 	$(MAKE) build-daemons

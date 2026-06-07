@@ -165,6 +165,7 @@ make generate-schema
 
 if [ "$skip_checks" -ne 1 ]; then
 	go test ./...
+	make check-version-ldflags
 	make check-schema
 	make validate-example
 	make website-build
