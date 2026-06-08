@@ -1011,7 +1011,6 @@ fi
 /usr/share/routerd/install.sh --deps-only >/run/routerd/logs/deps.log 2>&1 || true
 /usr/share/routerd/live-ssh.sh >> "${log_dir}/routerd-ssh.log" 2>&1 || true
 start_qemu_guest_agent
-"${routerd}" validate --config "${config}"
 # Start the managed GoBGP daemon (routerd-bgp) before routerd serve reconciles BGP.
 # On Alpine/OpenRC the daemon is supervised by /etc/init.d/routerd-bgp; routerd
 # serve only connects to its socket (the systemd unit it renders is inert here).
@@ -1020,7 +1019,7 @@ start_qemu_guest_agent
 if [ -x /etc/init.d/routerd-bgp ] && grep -qE '^[[:space:]]*kind:[[:space:]]*BGPRouter([[:space:]]|$)' "${config}" 2>/dev/null; then
     rc-service routerd-bgp restart >> "${log_dir}/routerd-live.log" 2>&1 || true
 fi
-"${routerd}" apply --config "${config}"
+"${routerd}" serve --config "${config}" --once
 if routerd_serve_running; then
     if [ -x /etc/init.d/routerd ]; then
         echo "routerd-live: routerd serve was already running before config handoff; restarting after restore reason=LiveISOStaleServeRestarted" >> "${log_dir}/routerd-live.log"
