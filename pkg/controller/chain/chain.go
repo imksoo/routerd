@@ -884,6 +884,7 @@ type Options struct {
 	ProviderActionRunner    provideraction.ExecutorRunner
 	ProviderInventoryRunner providerinventory.Runner
 	PeerGroupSyncClient     *mobilitycontroller.PeerGroupSyncClient
+	MemberSetSyncClient     *mobilitycontroller.PeerGroupSyncClient
 }
 
 type Runner struct {
@@ -1157,17 +1158,23 @@ func (r *Runner) Start(ctx context.Context) error {
 		if peerGroupSync == nil {
 			peerGroupSync = mobilitycontroller.NewPeerGroupSyncClient(rawStore)
 		}
+		memberSetSync := r.Opts.MemberSetSyncClient
+		if memberSetSync == nil {
+			memberSetSync = peerGroupSync
+		}
 		mobilityDiscovery = mobilitycontroller.DiscoveryController{
-			Router: r.Router,
-			Bus:    r.Bus,
-			Store:  mobilityData,
-			Runner: r.Opts.ProviderInventoryRunner,
+			Router:        r.Router,
+			Bus:           r.Bus,
+			Store:         mobilityData,
+			Runner:        r.Opts.ProviderInventoryRunner,
+			MemberSetSync: memberSetSync,
 		}
 		mobility = mobilitycontroller.Controller{
-			Router:   r.Router,
-			Bus:      r.Bus,
-			Store:    mobilityData,
-			BGPPaths: bgpdaemon.NewControlClient(bgpDaemon.ControlSocketPath),
+			Router:        r.Router,
+			Bus:           r.Bus,
+			Store:         mobilityData,
+			BGPPaths:      bgpdaemon.NewControlClient(bgpDaemon.ControlSocketPath),
+			MemberSetSync: memberSetSync,
 		}
 		mobilityTransport = mobilitycontroller.TransportController{
 			Router:        r.Router,
@@ -1291,7 +1298,7 @@ func (r *Runner) Start(ctx context.Context) error {
 			return current.Reconcile(ctx)
 		}},
 		framework.FuncController{ControllerName: "link", Every: 30 * time.Second, PeriodicFunc: link.Reconcile},
-		framework.FuncController{ControllerName: "sam-transport", Every: 30 * time.Second, Subs: statusSubscriptions("SAMTransportProfile", "SAMPeerGroup", "Interface", "IPv4StaticAddress", "DHCPv4Client", "WireGuardInterface", "WireGuardPeer"), PeriodicFunc: func(ctx context.Context) error {
+		framework.FuncController{ControllerName: "sam-transport", Every: 30 * time.Second, Subs: statusSubscriptions("SAMTransportProfile", "SAMPeerGroup", "MobilityMemberSet", "Interface", "IPv4StaticAddress", "DHCPv4Client", "WireGuardInterface", "WireGuardPeer"), PeriodicFunc: func(ctx context.Context) error {
 			effective, err := effectiveDynamicForReconcile()
 			if err != nil {
 				return err
@@ -1475,8 +1482,40 @@ func (r *Runner) Start(ctx context.Context) error {
 		}},
 		framework.FuncController{ControllerName: "event-federation", Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed"}}}, ReconcileFunc: eventFederation.HandleEvent, PeriodicFunc: eventFederation.Reconcile},
 		framework.FuncController{ControllerName: "event-subscription", Every: 5 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed"}}}, PeriodicFunc: eventSubscription.Reconcile},
-		framework.FuncController{ControllerName: "mobility-discovery", Every: 30 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed", "routerd.dhcp.lease.add", "routerd.dhcp.lease.old", "routerd.dhcp.lease.del", mobilitycontroller.OnPremARPObservedEvent, mobilitycontroller.OnPremARPProbeHitEvent, mobilitycontroller.OnPremPVESVNetObservedEvent}}}, ReconcileFunc: mobilityDiscovery.HandleEvent, PeriodicFunc: mobilityDiscovery.Reconcile},
-		framework.FuncController{ControllerName: "mobility", Every: 5 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed", mobilitycontroller.OwnershipChangedEvent}}}, ReconcileFunc: mobility.HandleEvent, PeriodicFunc: mobility.Reconcile},
+		framework.FuncController{ControllerName: "mobility-discovery", Every: 30 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed", "routerd.dhcp.lease.add", "routerd.dhcp.lease.old", "routerd.dhcp.lease.del", mobilitycontroller.OnPremARPObservedEvent, mobilitycontroller.OnPremARPProbeHitEvent, mobilitycontroller.OnPremPVESVNetObservedEvent}}}, ReconcileFunc: func(ctx context.Context, event daemonapi.DaemonEvent) error {
+			effective, err := effectiveDynamicForReconcile()
+			if err != nil {
+				return err
+			}
+			current := mobilityDiscovery
+			current.Router = effective
+			return current.HandleEvent(ctx, event)
+		}, PeriodicFunc: func(ctx context.Context) error {
+			effective, err := effectiveDynamicForReconcile()
+			if err != nil {
+				return err
+			}
+			current := mobilityDiscovery
+			current.Router = effective
+			return current.Reconcile(ctx)
+		}},
+		framework.FuncController{ControllerName: "mobility", Every: 5 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed", mobilitycontroller.OwnershipChangedEvent}}}, ReconcileFunc: func(ctx context.Context, event daemonapi.DaemonEvent) error {
+			effective, err := effectiveDynamicForReconcile()
+			if err != nil {
+				return err
+			}
+			current := mobility
+			current.Router = effective
+			return current.HandleEvent(ctx, event)
+		}, PeriodicFunc: func(ctx context.Context) error {
+			effective, err := effectiveDynamicForReconcile()
+			if err != nil {
+				return err
+			}
+			current := mobility
+			current.Router = effective
+			return current.Reconcile(ctx)
+		}},
 		framework.FuncController{ControllerName: "provider-action-execution", Every: 5 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed"}}}, PeriodicFunc: providerAction.Reconcile},
 		framework.FuncController{ControllerName: "egress-route-policy", Every: 15 * time.Second, Subs: statusSubscriptionsWithWhen(r.Router, []string{"EgressRoutePolicy"}, "HealthCheck", "DSLiteTunnel", "Interface", "DHCPv4Client", "PPPoESession"), PeriodicFunc: func(ctx context.Context) error {
 			effective, err := effectiveForReconcile()

@@ -7661,7 +7661,7 @@
                         "type": "object"
                       },
                       "members": {
-                        "description": "Members maps routerd nodes to the site they serve within the pool\n(required, at least one).",
+                        "description": "Members maps routerd nodes to the site they serve within the pool\n(required unless membersFrom is set, at least one after resolution).",
                         "items": {
                           "additionalProperties": false,
                           "description": "MobilityPoolMember binds a routerd node to a site within a MobilityPool.",
@@ -8041,6 +8041,25 @@
                         },
                         "type": "array"
                       },
+                      "membersFrom": {
+                        "description": "MembersFrom imports shared node/site/role membership from MobilityMemberSet\nresources. Imported members are merged before spec.members, so a local\nmember entry can add capture/discovery details or override shared fields.",
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "optional": {
+                              "type": "boolean"
+                            },
+                            "resource": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "resource"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
                       "mode": {
                         "description": "Mode selects the mobility scheme. Only \"selective-address\" is supported in\nthe MVP; empty defaults to it.",
                         "enum": [
@@ -8322,6 +8341,10 @@
                         },
                         "type": "object"
                       },
+                      "publishMemberSet": {
+                        "description": "PublishMemberSet emits a MobilityMemberSet DynamicConfigPart from the\npool's identity fields for distribution to leaf routers.",
+                        "type": "boolean"
+                      },
                       "staticHandovers": {
                         "description": "StaticHandovers declares planned static-owned address movement from an\non-prem member to another member. The controller releases the from member\nfirst and only projects the to member after observing the release event.",
                         "items": {
@@ -8356,7 +8379,103 @@
                     },
                     "required": [
                       "prefix",
-                      "groupRef",
+                      "groupRef"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "mobility.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "MobilityMemberSet",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "members": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "maintenance": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "drain": {
+                                  "type": "boolean"
+                                }
+                              },
+                              "type": "object"
+                            },
+                            "nodeRef": {
+                              "type": "string"
+                            },
+                            "placement": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "group": {
+                                  "type": "string"
+                                },
+                                "priority": {
+                                  "description": "Priority orders active/standby candidates. Empty/0 is auto-numbered\ndeterministically within the group as 10, 20, ... while preserving any\nexplicitly configured priorities.",
+                                  "maximum": 1000000,
+                                  "minimum": 0,
+                                  "type": "integer"
+                                }
+                              },
+                              "type": "object"
+                            },
+                            "role": {
+                              "enum": [
+                                "onprem",
+                                "cloud"
+                              ],
+                              "type": "string"
+                            },
+                            "site": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "nodeRef",
+                            "site",
+                            "role"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      }
+                    },
+                    "required": [
                       "members"
                     ],
                     "type": "object"

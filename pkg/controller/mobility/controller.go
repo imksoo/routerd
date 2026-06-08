@@ -69,11 +69,12 @@ type BGPPathClient interface {
 }
 
 type Controller struct {
-	Router   *api.Router
-	Bus      *bus.Bus
-	Store    Store
-	BGPPaths BGPPathClient
-	Now      func() time.Time
+	Router        *api.Router
+	Bus           *bus.Bus
+	Store         Store
+	BGPPaths      BGPPathClient
+	MemberSetSync *PeerGroupSyncClient
+	Now           func() time.Time
 }
 
 func (c Controller) HandleEvent(ctx context.Context, _ daemonapi.DaemonEvent) error {
@@ -107,10 +108,26 @@ func (c Controller) Reconcile(ctx context.Context) error {
 			})
 			continue
 		}
-		if err := c.reconcileBGPDelivery(ctx, res, spec, now); err != nil {
+		memberSetStatus := map[string]any{"phase": "Disabled"}
+		if spec.PublishMemberSet {
+			source := MobilityMemberSetDynamicSource(res.Metadata.Name)
+			status, err := c.upsertMobilityMemberSetPart(res, spec, source, now)
+			if err != nil {
+				_ = c.savePlannerStatus(res.Metadata.Name, map[string]any{
+					"plannerPhase":  "Degraded",
+					"plannerReason": err.Error(),
+					"memberSet":     status,
+					"plannedAt":     now.Format(time.RFC3339Nano),
+				})
+				continue
+			}
+			memberSetStatus = status
+		}
+		if err := c.reconcileBGPDelivery(ctx, res, spec, memberSetStatus, now); err != nil {
 			_ = c.savePlannerStatus(res.Metadata.Name, map[string]any{
 				"plannerPhase":  "Degraded",
 				"plannerReason": err.Error(),
+				"memberSet":     memberSetStatus,
 				"plannedAt":     now.Format(time.RFC3339Nano),
 			})
 		}
@@ -118,13 +135,31 @@ func (c Controller) Reconcile(ctx context.Context) error {
 	return nil
 }
 
-func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, spec api.MobilityPoolSpec, now time.Time) error {
+func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, spec api.MobilityPoolSpec, memberSetStatus map[string]any, now time.Time) error {
 	if c.BGPPaths == nil {
 		return fmt.Errorf("MobilityPool/%s deliveryPolicy.mode=bgp requires routerd-bgp control client", res.Metadata.Name)
 	}
 	selfNode, err := c.selfNode(spec.GroupRef)
 	if err != nil {
 		return err
+	}
+	resolved, err := (mobilityMemberResolver{Router: c.Router, Sync: c.MemberSetSync}).resolve(ctx, spec)
+	if err != nil {
+		return err
+	}
+	spec = resolved.Spec
+	if len(resolved.PendingSources) > 0 {
+		return c.savePlannerStatus(res.Metadata.Name, map[string]any{
+			"plannerPhase":        "Pending",
+			"plannerReason":       "membersFrom source is not resolved",
+			"selfNode":            selfNode,
+			"deliveryMode":        "bgp",
+			"pendingSources":      resolved.PendingSources,
+			"membersFrom":         mobilityMembersFromStatusMaps(resolved.MembersFrom),
+			"resolvedMemberCount": resolved.ResolvedMemberCount,
+			"memberSet":           memberSetStatus,
+			"plannedAt":           now.Format(time.RFC3339Nano),
+		})
 	}
 	spec, _, err = mobilityconfig.NormalizeMobilityPool(spec, selfNode)
 	if err != nil {
@@ -215,6 +250,10 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		"generatedBGPTraps":   len(desiredTrapAddresses),
 		"generatedClaims":     0,
 		"generatedActions":    len(actionPlans),
+		"membersFrom":         mobilityMembersFromStatusMaps(resolved.MembersFrom),
+		"resolvedMemberCount": len(spec.Members),
+		"pendingSources":      resolved.PendingSources,
+		"memberSet":           memberSetStatus,
 		"selfCaptureResolved": selfCaptureResolved,
 		"plannedAt":           now.Format(time.RFC3339Nano),
 		"operatorIntent":      "MobilityPool",

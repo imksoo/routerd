@@ -41,17 +41,19 @@ type DiscoveryStore interface {
 	RecordFederationEvent(routerstate.EventRecord) error
 	ListFederationEvents(group string, includeExpired bool, now int64) ([]routerstate.EventRecord, error)
 	GetDynamicConfigPartsBySource(source string) ([]routerstate.DynamicConfigPartRecord, error)
+	UpsertDynamicConfigPart(routerstate.DynamicConfigPartRecord) error
 	ListActions(routerstate.ActionExecutionFilter) ([]routerstate.ActionExecutionRecord, error)
 	SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error
 	ObjectStatus(apiVersion, kind, name string) map[string]any
 }
 
 type DiscoveryController struct {
-	Router *api.Router
-	Bus    *bus.Bus
-	Store  DiscoveryStore
-	Runner providerinventory.Runner
-	Now    func() time.Time
+	Router        *api.Router
+	Bus           *bus.Bus
+	Store         DiscoveryStore
+	Runner        providerinventory.Runner
+	MemberSetSync *PeerGroupSyncClient
+	Now           func() time.Time
 }
 
 func (c DiscoveryController) HandleEvent(ctx context.Context, event daemonapi.DaemonEvent) error {
@@ -92,6 +94,21 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 	selfNode, err := routerSelfNode(c.Router, spec.GroupRef)
 	if err != nil {
 		return err
+	}
+	resolved, err := (mobilityMemberResolver{Router: c.Router, Sync: c.MemberSetSync}).resolve(ctx, spec)
+	if err != nil {
+		return err
+	}
+	spec = resolved.Spec
+	if len(resolved.PendingSources) > 0 {
+		c.saveDiscoveryStatus(poolName, map[string]any{
+			"discoveryPhase":      "Pending",
+			"discoveryReason":     "membersFrom source is not resolved",
+			"pendingSources":      resolved.PendingSources,
+			"membersFrom":         mobilityMembersFromStatusMaps(resolved.MembersFrom),
+			"resolvedMemberCount": resolved.ResolvedMemberCount,
+		})
+		return nil
 	}
 	spec, _, err = mobilityconfig.NormalizeMobilityPool(spec, selfNode)
 	if err != nil {

@@ -43,6 +43,32 @@ func TestPeerGroupSyncServerReturnsPublishedGroups(t *testing.T) {
 	}
 }
 
+func TestPeerGroupSyncServerReturnsPublishedMemberSets(t *testing.T) {
+	now := time.Date(2026, 6, 8, 10, 0, 30, 0, time.UTC)
+	store := testStore(t, now)
+	writeMemberSetPart(t, store, MobilityMemberSetDynamicSource("svnet1"), "svnet1", []api.MobilityMemberSetMember{{
+		NodeRef: "pve-rt01",
+		Site:    "pve01",
+		Role:    "onprem",
+	}}, now)
+
+	req := httptest.NewRequest(http.MethodGet, memberSetSyncPath, nil)
+	rr := httptest.NewRecorder()
+	server := &PeerGroupSyncServer{Store: store, Now: func() time.Time { return now }}
+	server.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET %s status = %d body=%s", memberSetSyncPath, rr.Code, rr.Body.String())
+	}
+	var payload MemberSetSyncResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(payload.MemberSets) != 1 || payload.MemberSets[0].Metadata.Name != "svnet1" {
+		t.Fatalf("member sets = %#v, want svnet1", payload.MemberSets)
+	}
+}
+
 func TestPeerGroupSyncClientFetchesAndStoresGroup(t *testing.T) {
 	now := time.Date(2026, 6, 8, 10, 1, 0, 0, time.UTC)
 	store := testStore(t, now)
@@ -78,6 +104,45 @@ func TestPeerGroupSyncClientFetchesAndStoresGroup(t *testing.T) {
 	resources := decodeResources(t, part.ResourcesJSON)
 	if len(resources) != 1 || resources[0].Kind != "SAMPeerGroup" || resources[0].Metadata.Name != "svnet1-rrs" {
 		t.Fatalf("stored resources = %#v, want SAMPeerGroup/svnet1-rrs", resources)
+	}
+}
+
+func TestPeerGroupSyncClientFetchesAndStoresMemberSet(t *testing.T) {
+	now := time.Date(2026, 6, 8, 10, 1, 30, 0, time.UTC)
+	store := testStore(t, now)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != memberSetSyncPath {
+			t.Fatalf("request path = %s, want %s", r.URL.Path, memberSetSyncPath)
+		}
+		_ = json.NewEncoder(w).Encode(MemberSetSyncResponse{MemberSets: []api.Resource{mobilityMemberSetResource("svnet1", []api.MobilityMemberSetMember{{
+			NodeRef: "pve-rt01",
+			Site:    "pve01",
+			Role:    "onprem",
+		}})}})
+	}))
+	defer srv.Close()
+	addr, port := serverAddr(t, srv)
+
+	client := &PeerGroupSyncClient{
+		Store:      store,
+		HTTPClient: srv.Client(),
+		Port:       port,
+		Now:        func() time.Time { return now },
+		Discover: func(context.Context, *api.Router, string) ([]netip.Addr, error) {
+			return []netip.Addr{addr}, nil
+		},
+	}
+	set, ok, err := client.SyncMemberSet(context.Background(), nil, "svnet1")
+	if err != nil {
+		t.Fatalf("SyncMemberSet: %v", err)
+	}
+	if !ok || len(set.Members) != 1 || set.Members[0].NodeRef != "pve-rt01" {
+		t.Fatalf("synced member set = %#v ok=%v, want pve member", set, ok)
+	}
+	part := latestPart(t, store, MemberSetSyncDynamicSource("svnet1"))
+	resources := decodeResources(t, part.ResourcesJSON)
+	if len(resources) != 1 || resources[0].Kind != "MobilityMemberSet" || resources[0].Metadata.Name != "svnet1" {
+		t.Fatalf("stored resources = %#v, want MobilityMemberSet/svnet1", resources)
 	}
 }
 
@@ -158,6 +223,37 @@ func writePeerGroupPart(t *testing.T, store peerGroupSyncStore, source, name str
 	}
 	if err := store.UpsertDynamicConfigPart(record); err != nil {
 		t.Fatalf("UpsertDynamicConfigPart: %v", err)
+	}
+}
+
+func writeMemberSetPart(t *testing.T, store peerGroupSyncStore, source, name string, members []api.MobilityMemberSetMember, now time.Time) {
+	t.Helper()
+	part := dynamicconfig.DynamicConfigPart{
+		TypeMeta: api.TypeMeta{APIVersion: dynamicconfig.ConfigAPIVersion, Kind: "DynamicConfigPart"},
+		Metadata: api.ObjectMeta{Name: name},
+		Spec: dynamicconfig.DynamicConfigPartSpec{
+			Source:     source,
+			Generation: dynamicGeneration,
+			ObservedAt: now,
+			ExpiresAt:  now.Add(DefaultLeaseTTL),
+			Resources:  []api.Resource{mobilityMemberSetResource(name, members)},
+		},
+	}
+	part.Spec.Digest = digestDynamicPart(part)
+	record, err := dynamicPartRecord(part)
+	if err != nil {
+		t.Fatalf("dynamicPartRecord: %v", err)
+	}
+	if err := store.UpsertDynamicConfigPart(record); err != nil {
+		t.Fatalf("UpsertDynamicConfigPart: %v", err)
+	}
+}
+
+func mobilityMemberSetResource(name string, members []api.MobilityMemberSetMember) api.Resource {
+	return api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityMemberSet"},
+		Metadata: api.ObjectMeta{Name: name},
+		Spec:     api.MobilityMemberSetSpec{Members: members},
 	}
 }
 

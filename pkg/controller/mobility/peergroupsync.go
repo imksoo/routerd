@@ -26,6 +26,7 @@ import (
 const (
 	PeerGroupSyncPort = 19652
 	peerGroupSyncPath = "/v1/peer-groups"
+	memberSetSyncPath = "/v1/member-sets"
 )
 
 type peerGroupPartStore interface {
@@ -40,6 +41,10 @@ type PeerGroupSyncResponse struct {
 	PeerGroups []api.Resource `json:"peerGroups"`
 }
 
+type MemberSetSyncResponse struct {
+	MemberSets []api.Resource `json:"memberSets"`
+}
+
 type PeerGroupSyncServer struct {
 	Store peerGroupPartStore
 	Now   func() time.Time
@@ -50,7 +55,9 @@ func NewPeerGroupSyncServer(store peerGroupPartStore) *PeerGroupSyncServer {
 }
 
 func (s *PeerGroupSyncServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != peerGroupSyncPath {
+	switch r.URL.Path {
+	case peerGroupSyncPath, memberSetSyncPath:
+	default:
 		http.NotFound(w, r)
 		return
 	}
@@ -59,13 +66,23 @@ func (s *PeerGroupSyncServer) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	groups, err := s.PeerGroups()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(PeerGroupSyncResponse{PeerGroups: groups})
+	switch r.URL.Path {
+	case peerGroupSyncPath:
+		groups, err := s.PeerGroups()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(PeerGroupSyncResponse{PeerGroups: groups})
+	case memberSetSyncPath:
+		sets, err := s.MemberSets()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(MemberSetSyncResponse{MemberSets: sets})
+	}
 }
 
 func (s *PeerGroupSyncServer) PeerGroups() ([]api.Resource, error) {
@@ -102,6 +119,40 @@ func (s *PeerGroupSyncServer) PeerGroups() ([]api.Resource, error) {
 	return out, nil
 }
 
+func (s *PeerGroupSyncServer) MemberSets() ([]api.Resource, error) {
+	if s == nil || s.Store == nil {
+		return nil, nil
+	}
+	now := time.Now().UTC()
+	if s.Now != nil {
+		now = s.Now().UTC()
+	}
+	records, err := s.Store.ListDynamicConfigParts()
+	if err != nil {
+		return nil, err
+	}
+	var out []api.Resource
+	for _, record := range records {
+		if _, ok := parseMobilityMemberSetSource(record.Source); !ok {
+			continue
+		}
+		if record.EffectiveStatus(now) != "active" {
+			continue
+		}
+		var resources []api.Resource
+		if err := json.Unmarshal([]byte(record.ResourcesJSON), &resources); err != nil {
+			return nil, fmt.Errorf("decode member set dynamic resources from %s: %w", record.Source, err)
+		}
+		for _, resource := range resources {
+			if resource.APIVersion == api.MobilityAPIVersion && resource.Kind == "MobilityMemberSet" {
+				out = append(out, resource)
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Metadata.Name < out[j].Metadata.Name })
+	return out, nil
+}
+
 type PeerGroupEndpointDiscovery func(ctx context.Context, router *api.Router, underlayInterface string) ([]netip.Addr, error)
 
 type PeerGroupSyncClient struct {
@@ -123,6 +174,10 @@ func NewPeerGroupSyncClient(store peerGroupSyncStore) *PeerGroupSyncClient {
 
 func PeerGroupSyncDynamicSource(groupName string) string {
 	return "peer-group-sync/" + strings.TrimSpace(groupName)
+}
+
+func MemberSetSyncDynamicSource(setName string) string {
+	return "member-set-sync/" + strings.TrimSpace(setName)
 }
 
 func (c *PeerGroupSyncClient) SyncPeerGroup(ctx context.Context, router *api.Router, underlayInterface, groupName string) (api.SAMPeerGroupSpec, bool, error) {
@@ -188,6 +243,69 @@ func (c *PeerGroupSyncClient) SyncPeerGroup(ctx context.Context, router *api.Rou
 	return api.SAMPeerGroupSpec{}, false, firstErr
 }
 
+func (c *PeerGroupSyncClient) SyncMemberSet(ctx context.Context, router *api.Router, setName string) (api.MobilityMemberSetSpec, bool, error) {
+	setName = strings.TrimSpace(setName)
+	if c == nil || c.Store == nil || setName == "" {
+		return api.MobilityMemberSetSpec{}, false, nil
+	}
+	discover := c.Discover
+	if discover == nil {
+		discover = DiscoverWireGuardPeerGroupSyncEndpoints
+	}
+	endpoints, err := discover(ctx, router, "")
+	if err != nil {
+		return api.MobilityMemberSetSpec{}, false, err
+	}
+	if len(endpoints) == 0 {
+		return api.MobilityMemberSetSpec{}, false, nil
+	}
+	client := c.HTTPClient
+	if client == nil {
+		client = &http.Client{Timeout: 2 * time.Second}
+	}
+	port := c.Port
+	if port == 0 {
+		port = PeerGroupSyncPort
+	}
+	type result struct {
+		resource api.Resource
+		found    bool
+		err      error
+	}
+	results := make(chan result, len(endpoints))
+	var wg sync.WaitGroup
+	for _, endpoint := range endpoints {
+		endpoint := endpoint
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			resource, found, err := fetchMemberSetFromEndpoint(ctx, client, endpoint, port, setName)
+			results <- result{resource: resource, found: found, err: err}
+		}()
+	}
+	wg.Wait()
+	close(results)
+	var firstErr error
+	for res := range results {
+		if res.err != nil && firstErr == nil {
+			firstErr = res.err
+			continue
+		}
+		if !res.found {
+			continue
+		}
+		spec, err := res.resource.MobilityMemberSetSpec()
+		if err != nil {
+			return api.MobilityMemberSetSpec{}, false, err
+		}
+		if err := c.saveMemberSet(ctx, setName, res.resource); err != nil {
+			return api.MobilityMemberSetSpec{}, false, err
+		}
+		return spec, true, nil
+	}
+	return api.MobilityMemberSetSpec{}, false, firstErr
+}
+
 func fetchPeerGroupFromEndpoint(ctx context.Context, client *http.Client, endpoint netip.Addr, port int, groupName string) (api.Resource, bool, error) {
 	reqCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
@@ -211,6 +329,35 @@ func fetchPeerGroupFromEndpoint(ctx context.Context, client *http.Client, endpoi
 	}
 	for _, resource := range payload.PeerGroups {
 		if resource.APIVersion == api.MobilityAPIVersion && resource.Kind == "SAMPeerGroup" && resource.Metadata.Name == groupName {
+			return resource, true, nil
+		}
+	}
+	return api.Resource{}, false, nil
+}
+
+func fetchMemberSetFromEndpoint(ctx context.Context, client *http.Client, endpoint netip.Addr, port int, setName string) (api.Resource, bool, error) {
+	reqCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	url := "http://" + net.JoinHostPort(endpoint.String(), strconv.Itoa(port)) + memberSetSyncPath
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, url, nil)
+	if err != nil {
+		return api.Resource{}, false, err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return api.Resource{}, false, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<12))
+		return api.Resource{}, false, fmt.Errorf("GET %s: %s", url, resp.Status)
+	}
+	var payload MemberSetSyncResponse
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&payload); err != nil {
+		return api.Resource{}, false, err
+	}
+	for _, resource := range payload.MemberSets {
+		if resource.APIVersion == api.MobilityAPIVersion && resource.Kind == "MobilityMemberSet" && resource.Metadata.Name == setName {
 			return resource, true, nil
 		}
 	}
@@ -247,7 +394,62 @@ func (c *PeerGroupSyncClient) savePeerGroup(_ context.Context, groupName string,
 	return c.Store.UpsertDynamicConfigPart(record)
 }
 
+func (c *PeerGroupSyncClient) saveMemberSet(_ context.Context, setName string, resource api.Resource) error {
+	now := time.Now().UTC()
+	if c.Now != nil {
+		now = c.Now().UTC()
+	}
+	resource.TypeMeta = api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityMemberSet"}
+	resource.Metadata.Name = strings.TrimSpace(setName)
+	part := dynamicconfig.DynamicConfigPart{
+		TypeMeta: api.TypeMeta{APIVersion: dynamicconfig.ConfigAPIVersion, Kind: "DynamicConfigPart"},
+		Metadata: api.ObjectMeta{
+			Name: safeName("member-set-sync-" + setName),
+		},
+		Spec: dynamicconfig.DynamicConfigPartSpec{
+			Source:      MemberSetSyncDynamicSource(setName),
+			Generation:  dynamicGeneration,
+			ObservedAt:  now,
+			ExpiresAt:   now.Add(DefaultLeaseTTL),
+			Resources:   []api.Resource{resource},
+			Directives:  []dynamicconfig.DynamicConfigDirective{},
+			ActionPlans: []dynamicconfig.ActionPlan{},
+		},
+	}
+	part.Spec.Digest = digestDynamicPart(part)
+	record, err := dynamicPartRecord(part)
+	if err != nil {
+		return err
+	}
+	return c.Store.UpsertDynamicConfigPart(record)
+}
+
 func DiscoverWireGuardPeerGroupSyncEndpoints(ctx context.Context, router *api.Router, underlayInterface string) ([]netip.Addr, error) {
+	if strings.TrimSpace(underlayInterface) == "" && router != nil {
+		seen := map[netip.Addr]bool{}
+		var out []netip.Addr
+		for _, resource := range router.Spec.Resources {
+			if resource.APIVersion != api.NetAPIVersion || resource.Kind != "WireGuardInterface" {
+				continue
+			}
+			name := resource.Metadata.Name
+			if spec, err := resource.WireGuardInterfaceSpec(); err == nil {
+				name = firstNonEmpty(strings.TrimSpace(spec.IfName), name)
+			}
+			addrs, err := DiscoverWireGuardPeerGroupSyncEndpoints(ctx, router, name)
+			if err != nil {
+				return nil, err
+			}
+			for _, addr := range addrs {
+				if !seen[addr] {
+					seen[addr] = true
+					out = append(out, addr)
+				}
+			}
+		}
+		sort.Slice(out, func(i, j int) bool { return out[i].String() < out[j].String() })
+		return out, nil
+	}
 	iface := wireGuardInterfaceName(router, underlayInterface)
 	if strings.TrimSpace(iface) == "" {
 		iface = strings.TrimSpace(underlayInterface)
@@ -331,6 +533,22 @@ func HasPublishedPeerGroups(router *api.Router) bool {
 		}
 		spec, err := resource.SAMTransportProfileSpec()
 		if err == nil && spec.PublishPeerGroup {
+			return true
+		}
+	}
+	return false
+}
+
+func HasPublishedMemberSets(router *api.Router) bool {
+	if router == nil {
+		return false
+	}
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "MobilityPool" {
+			continue
+		}
+		spec, err := resource.MobilityPoolSpec()
+		if err == nil && spec.PublishMemberSet {
 			return true
 		}
 	}

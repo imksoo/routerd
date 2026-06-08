@@ -697,6 +697,18 @@ type SAMPeerGroupSpec struct {
 	Peers []SAMTransportPeerSpec `yaml:"peers" json:"peers"`
 }
 
+type MobilityMemberSetSpec struct {
+	Members []MobilityMemberSetMember `yaml:"members" json:"members"`
+}
+
+type MobilityMemberSetMember struct {
+	NodeRef     string                    `yaml:"nodeRef" json:"nodeRef"`
+	Site        string                    `yaml:"site" json:"site"`
+	Role        string                    `yaml:"role" json:"role" jsonschema:"enum=onprem,enum=cloud"`
+	Placement   MobilityMemberPlacement   `yaml:"placement,omitempty" json:"placement,omitempty"`
+	Maintenance MobilityMemberMaintenance `yaml:"maintenance,omitempty" json:"maintenance,omitempty"`
+}
+
 type SAMTransportBGPProfileSpec struct {
 	RouterRef               string              `yaml:"routerRef" json:"routerRef"`
 	PeerASN                 uint32              `yaml:"peerASN" json:"peerASN" jsonschema:"minimum=1"`
@@ -1502,9 +1514,16 @@ type MobilityPoolSpec struct {
 	// Mode selects the mobility scheme. Only "selective-address" is supported in
 	// the MVP; empty defaults to it.
 	Mode string `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=,enum=selective-address"`
+	// MembersFrom imports shared node/site/role membership from MobilityMemberSet
+	// resources. Imported members are merged before spec.members, so a local
+	// member entry can add capture/discovery details or override shared fields.
+	MembersFrom []MobilityMembersSourceSpec `yaml:"membersFrom,omitempty" json:"membersFrom,omitempty"`
+	// PublishMemberSet emits a MobilityMemberSet DynamicConfigPart from the
+	// pool's identity fields for distribution to leaf routers.
+	PublishMemberSet bool `yaml:"publishMemberSet,omitempty" json:"publishMemberSet,omitempty"`
 	// Members maps routerd nodes to the site they serve within the pool
-	// (required, at least one).
-	Members []MobilityPoolMember `yaml:"members" json:"members"`
+	// (required unless membersFrom is set, at least one after resolution).
+	Members []MobilityPoolMember `yaml:"members,omitempty" json:"members,omitempty"`
 	// StaticHandovers declares planned static-owned address movement from an
 	// on-prem member to another member. The controller releases the from member
 	// first and only projects the to member after observing the release event.
@@ -1522,6 +1541,11 @@ type MobilityPoolSpec struct {
 	// arbitration only. Empty means every node deterministically projects the
 	// shared event stream locally.
 	Authority MobilityAuthority `yaml:"authority,omitempty" json:"authority,omitempty"`
+}
+
+type MobilityMembersSourceSpec struct {
+	Resource string `yaml:"resource" json:"resource"`
+	Optional bool   `yaml:"optional,omitempty" json:"optional,omitempty"`
 }
 
 type MobilityPoolProfiles struct {
@@ -2356,6 +2380,10 @@ func (r Resource) BGPPeerSpec() (BGPPeerSpec, error) {
 
 func (r Resource) SAMPeerGroupSpec() (SAMPeerGroupSpec, error) {
 	return specAs[SAMPeerGroupSpec](r)
+}
+
+func (r Resource) MobilityMemberSetSpec() (MobilityMemberSetSpec, error) {
+	return specAs[MobilityMemberSetSpec](r)
 }
 
 func (r Resource) SAMTransportProfileSpec() (SAMTransportProfileSpec, error) {

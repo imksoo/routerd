@@ -30,9 +30,66 @@ north-star の config shape は次の通りです。
 - **自 site** は capture と provider discovery の詳細まで完全に宣言します。
 - **remote site** は identity-only member（`nodeRef`、`site`、`role`、必要なら
   `placement` / `maintenance`)として宣言します。
+- 大きめの fabric では、共有の identity-only member list を `MobilityMemberSet`
+  に置き、`MobilityPool.spec.membersFrom` で import します。
 - local cloud capture の再利用可能な詳細は `profiles.cloudCaptures` に置きます。
 - secret ではない node-local 値は `spec.values` に置き、`capture.targetFrom` と
   `ownershipDiscovery.subnetRefFrom` で参照します。
+
+`MobilityMemberSet` は mobility 側の `SAMPeerGroup` に相当する resource です。
+含めるのは共有される member identity fields（`nodeRef`、`site`、`role`、必要なら
+`placement` / `maintenance`）だけです。`capture`、`ownershipDiscovery`、
+`profileRef`、delivery fields、static owned addresses は含めません。これらは必要な
+node の `MobilityPool` 側に local 設定として残します。
+
+```yaml
+apiVersion: mobility.routerd.net/v1alpha1
+kind: MobilityMemberSet
+metadata: { name: svnet1-members }
+spec:
+  members:
+    - nodeRef: pve-rt01
+      site: pve01
+      role: onprem
+    - nodeRef: pve-rt02
+      site: pve02
+      role: onprem
+    - nodeRef: rr01
+      site: backbone
+      role: cloud
+```
+
+pool は 1 つ以上の member set を import できます。import された member を先に追加
+し、`nodeRef` 単位で local の `spec.members` を後から重ねます。そのため leaf は
+共有 topology を member set から受け取りつつ、自分自身の capture/discovery だけを
+local に書けます。
+
+```yaml
+apiVersion: mobility.routerd.net/v1alpha1
+kind: MobilityPool
+metadata: { name: svnet1 }
+spec:
+  prefix: 10.88.60.0/24
+  groupRef: svnet1
+  membersFrom:
+    - resource: MobilityMemberSet/svnet1-members
+  members:
+    - nodeRef: pve-rt01
+      site: pve01
+      role: onprem
+      capture:
+        type: proxy-arp
+        interface: vmbr0
+      ownershipDiscovery:
+        mode: onprem-l2
+        sources:
+          - type: pve-svnet
+            bridge: vmbr0
+```
+
+必須の `membersFrom` source がまだ届いていない場合、pool は `Pending` になります。
+bootstrap 中に partial な local member list で動かしてよい場合だけ
+`optional: true` を指定します。
 
 例えば AWS router 上の config は次のようになります。
 
@@ -229,6 +286,13 @@ routerd は profile の `selfNodeRef` と concrete local endpoint から `SAMPee
 問い合わせ、名前が一致する group を `peer-group-sync/<group-name>` として local
 store に保存します。この DynamicConfigPart は通常の TTL で期限切れになり、
 publisher が消えた場合は leaf が `Pending` に戻ります。
+
+MobilityPool membership では、RR 側の canonical pool に
+`spec.publishMemberSet: true` を指定できます。routerd は local-only member fields
+を取り除き、source `mobility-member-set/<pool>` の `MobilityMemberSet`
+DynamicConfigPart を publish し、同じ TCP port で `GET /v1/member-sets` として
+返します。leaf 側で必須の `membersFrom` source が見つからない場合、取得した set
+を `member-set-sync/<set-name>` として保存します。
 
 core router では `spec.bgp.routeReflectorClient` と
 `spec.bgp.routeReflectorClusterID` を設定できます。これらは生成される各
