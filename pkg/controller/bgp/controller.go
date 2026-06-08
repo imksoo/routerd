@@ -610,8 +610,8 @@ func (c *Controller) desiredPeers(routerName string, localASN uint32) (map[strin
 func applyRouterBGPDefaults(routerName string, routerSpec routerapi.BGPRouterSpec, peers map[string]desiredPeer, staticExportPrefixes, dynamicExportPrefixes []string) map[string]desiredPeer {
 	globalImportPolicy := effectiveGlobalImportPolicy(routerSpec.ImportPolicy, dynamicExportPrefixes)
 	for address, peer := range peers {
-		peer.GracefulRestart = routerSpec.GracefulRestart
 		peer.ConvergenceProfile = routerSpec.ConvergenceProfile
+		peer.GracefulRestart = canonicalGracefulRestartSpec(routerSpec.GracefulRestart, peer.ConvergenceProfile)
 		if peerHasImportPolicy(peer.ImportPolicy) {
 			peer.ImportPolicy.AllowedPrefixes = mergeAllowedPrefixes(peer.ImportPolicy.AllowedPrefixes, dynamicExportPrefixes)
 			peer.ImportPolicyName = peerImportPolicyName(routerName, address)
@@ -1094,7 +1094,7 @@ func (c *Controller) softResetExportPolicy(ctx context.Context, addresses []stri
 func desiredPeersFromApplied(localASN uint32, peers map[string]bgpdaemon.AppliedPeer) map[string]desiredPeer {
 	out := map[string]desiredPeer{}
 	for address, peer := range peers {
-		gr := routerapi.BGPGracefulRestartSpec{}
+		gr := disabledGracefulRestartSpec()
 		if peer.GracefulRestart != nil {
 			enabled := peer.GracefulRestart.Enabled
 			gr.Enabled = &enabled
@@ -1929,16 +1929,53 @@ func gobgpPeerGracefulRestart(peer desiredPeer) *gobgpapi.GracefulRestart {
 
 func (c *Controller) desiredPeerMatches(address string, _ *gobgpapi.Peer, desired desiredPeer) bool {
 	if cached, ok := c.desiredPeerKeys[address]; ok {
-		return reflect.DeepEqual(cached, desired)
+		return stableDesiredPeerEqual(cached, desired)
 	}
 	if applied, ok := c.appliedPeerKeys[address]; ok {
-		return reflect.DeepEqual(applied, desired)
+		return stableDesiredPeerEqual(applied, desired)
 	}
 	// GoBGP's ListPeer response is not a reliable echo of all configured peer
 	// fields after routerd reconnects to a long-lived routerd-bgp daemon. If the
 	// daemon has no applied-state proof for this peer, do not silently adopt the
 	// address-only live peer; reconcilePeers will UpdatePeer explicitly.
 	return false
+}
+
+func stableDesiredPeerEqual(a, b desiredPeer) bool {
+	return reflect.DeepEqual(stableDesiredPeerKey(a), stableDesiredPeerKey(b))
+}
+
+func stableDesiredPeerKey(peer desiredPeer) desiredPeer {
+	peer.GracefulRestart = canonicalGracefulRestartSpec(peer.GracefulRestart, peer.ConvergenceProfile)
+	peer.ImportPolicy.NextHopRewrite = importNextHopRewrite(peer.ImportPolicy)
+	peer.ImportPolicy.AllowedPrefixes = nil
+	peer.ExportPolicy.AllowedPrefixes = nil
+	return peer
+}
+
+func canonicalGracefulRestartSpec(spec routerapi.BGPGracefulRestartSpec, convergenceProfile string) routerapi.BGPGracefulRestartSpec {
+	enabled := true
+	if convergenceProfile == "fast" {
+		enabled = false
+	}
+	if spec.Enabled != nil {
+		enabled = *spec.Enabled
+	}
+	out := routerapi.BGPGracefulRestartSpec{Enabled: boolValue(enabled)}
+	if !enabled {
+		return out
+	}
+	out.RestartTime = fmt.Sprintf("%ds", durationSeconds(spec.RestartTime, 120))
+	out.StalePathTime = fmt.Sprintf("%ds", durationSeconds(spec.StalePathTime, 360))
+	return out
+}
+
+func disabledGracefulRestartSpec() routerapi.BGPGracefulRestartSpec {
+	return routerapi.BGPGracefulRestartSpec{Enabled: boolValue(false)}
+}
+
+func boolValue(value bool) *bool {
+	return &value
 }
 
 func sameStringSet(a, b []string) bool {
