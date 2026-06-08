@@ -324,6 +324,7 @@ func (c *Controller) watchBestPathEvents(ctx context.Context) error {
 		return nil
 	}
 	req := &gobgpapi.WatchEventRequest{
+		Peer: &gobgpapi.WatchEventRequest_Peer{},
 		Table: &gobgpapi.WatchEventRequest_Table{
 			Filters: []*gobgpapi.WatchEventRequest_Table_Filter{{
 				Type: gobgpapi.WatchEventRequest_Table_Filter_BEST,
@@ -333,7 +334,7 @@ func (c *Controller) watchBestPathEvents(ctx context.Context) error {
 		BatchSize: 1,
 	}
 	return server.WatchEvent(ctx, req, func(resp *gobgpapi.WatchEventResponse) error {
-		if !watchEventHasBestPathChange(resp) {
+		if !watchEventHasBestPathChange(resp) && !watchEventHasPeerStateChange(resp) {
 			return nil
 		}
 		c.mu.Lock()
@@ -415,6 +416,11 @@ func watchEventHasBestPathChange(resp *gobgpapi.WatchEventResponse) bool {
 		return false
 	}
 	return len(table.GetPaths()) > 0
+}
+
+func watchEventHasPeerStateChange(resp *gobgpapi.WatchEventResponse) bool {
+	pe := resp.GetPeer()
+	return pe != nil && pe.GetType() == gobgpapi.WatchEventResponse_PeerEvent_STATE
 }
 
 func (c *Controller) watchReconnectDelay() time.Duration {
