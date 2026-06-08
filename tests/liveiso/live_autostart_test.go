@@ -46,6 +46,46 @@ func TestLiveAutostartGuardsDuplicateServe(t *testing.T) {
 	}
 }
 
+func TestLiveAutostartEnsuresLoopbackBeforeRouterd(t *testing.T) {
+	data, err := os.ReadFile("../../scripts/build-live-iso.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(data)
+	required := []string{
+		"ensure_loopback()",
+		"ip link set lo up",
+		"ip addr show dev lo",
+		"ip addr add 127.0.0.1/8 dev lo",
+		"ifconfig lo up",
+		"ensure_loopback",
+	}
+	for _, needle := range required {
+		if !strings.Contains(script, needle) {
+			t.Fatalf("live autostart loopback setup missing %q", needle)
+		}
+	}
+
+	loopbackIdx := strings.Index(script, "\nensure_loopback\n")
+	if loopbackIdx < 0 {
+		t.Fatal("ensure_loopback call not found")
+	}
+	for _, later := range []string{
+		"/usr/share/routerd/live-persistence.sh init",
+		"\"${routerd}\" validate",
+		"rc-service routerd start",
+		"nohup \"${routerd}\" serve",
+	} {
+		idx := strings.Index(script, later)
+		if idx < 0 {
+			t.Fatalf("%q not found in script", later)
+		}
+		if loopbackIdx > idx {
+			t.Fatalf("ensure_loopback must run before %q", later)
+		}
+	}
+}
+
 func TestLivePersistenceSupportsLabeledConfigImport(t *testing.T) {
 	data, err := os.ReadFile("../../scripts/build-live-iso.sh")
 	if err != nil {
