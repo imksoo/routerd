@@ -102,4 +102,8 @@ tar -C "${workdir}" -xzf "${workdir}/${archive_name}"
 
 log "running installer"
 cd "${workdir}"
-exec sh ./install.sh "$@"
+set +e
+sh ./install.sh "$@"
+status=$?
+set -e
+exit "${status}"
