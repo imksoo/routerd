@@ -12,7 +12,7 @@ require_cmd grep
 
 NS1="${TEST_ID}-r1"
 NS2="${TEST_ID}-r2"
-BR="${TEST_ID}-br"
+BR="${TEST_IF_ID}br"
 VIP="10.88.66.100"
 create_ns "$NS1"
 create_ns "$NS2"
@@ -59,10 +59,14 @@ vrrp_instance VI_API {
 }
 EOF
 
-ip netns exec "$NS1" keepalived -n -l -f "$WORKDIR/r1.conf" >"$WORKDIR/r1.keepalived.log" 2>&1 &
+ip netns exec "$NS1" keepalived -n -l -f "$WORKDIR/r1.conf" \
+  -p "$WORKDIR/r1.keepalived.pid" -r "$WORKDIR/r1.keepalived-vrrp.pid" \
+  >"$WORKDIR/r1.keepalived.log" 2>&1 &
 PID1=$!
 add_cleanup "kill '$PID1'"
-ip netns exec "$NS2" keepalived -n -l -f "$WORKDIR/r2.conf" >"$WORKDIR/r2.keepalived.log" 2>&1 &
+ip netns exec "$NS2" keepalived -n -l -f "$WORKDIR/r2.conf" \
+  -p "$WORKDIR/r2.keepalived.pid" -r "$WORKDIR/r2.keepalived-vrrp.pid" \
+  >"$WORKDIR/r2.keepalived.log" 2>&1 &
 PID2=$!
 add_cleanup "kill '$PID2'"
 
