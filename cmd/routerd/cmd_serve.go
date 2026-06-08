@@ -368,8 +368,10 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	controllerBus = bus.NewWithStore(stateStore)
 	controllerBus.SetLogger(slog.Default())
 	publishControllerModeEvents(ctx, controllerBus, controllerStatuses)
+	_, hostFeatures := platform.Current()
 	controllerOpts := controllerchain.Options{
 		SuperviseClientDaemons: true,
+		SuperviseDNSResolvers:  hostFeatures.HasOpenRC,
 		DnsmasqCommand:         "dnsmasq",
 		DnsmasqConfig:          "/run/routerd/dnsmasq.conf",
 		DnsmasqPID:             "/run/routerd/dnsmasq.pid",
