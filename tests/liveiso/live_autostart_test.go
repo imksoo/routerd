@@ -72,7 +72,7 @@ func TestLiveAutostartEnsuresLoopbackBeforeRouterd(t *testing.T) {
 	}
 	for _, later := range []string{
 		"/usr/share/routerd/live-persistence.sh init",
-		"\"${routerd}\" validate",
+		"\"${routerd}\" serve --config \"${config}\" --once",
 		"rc-service routerd start",
 		"nohup \"${routerd}\" serve",
 	} {
@@ -83,6 +83,34 @@ func TestLiveAutostartEnsuresLoopbackBeforeRouterd(t *testing.T) {
 		if loopbackIdx > idx {
 			t.Fatalf("ensure_loopback must run before %q", later)
 		}
+	}
+}
+
+func TestLiveAutostartUsesCurrentRouterdCLI(t *testing.T) {
+	data, err := os.ReadFile("../../scripts/build-live-iso.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(data)
+	for _, removed := range []string{
+		"\"${routerd}\" validate --config",
+		"\"${routerd}\" apply --config",
+	} {
+		if strings.Contains(script, removed) {
+			t.Fatalf("live autostart still calls removed routerd CLI %q", removed)
+		}
+	}
+	serveOnce := "\"${routerd}\" serve --config \"${config}\" --once"
+	if !strings.Contains(script, serveOnce) {
+		t.Fatalf("live autostart missing one-shot serve apply %q", serveOnce)
+	}
+	bgpIdx := strings.Index(script, "rc-service routerd-bgp restart")
+	serveOnceIdx := strings.Index(script, serveOnce)
+	if bgpIdx < 0 || serveOnceIdx < 0 {
+		t.Fatal("missing BGP restart or serve --once")
+	}
+	if bgpIdx > serveOnceIdx {
+		t.Fatal("routerd-bgp must start before live autostart runs serve --once")
 	}
 }
 
