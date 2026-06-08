@@ -265,8 +265,10 @@ func TestReconcileObservesVRRPRoleFromVIPAddress(t *testing.T) {
 	}
 }
 
-func TestReconcileMarksVRRPInactiveWhenKeepalivedStopped(t *testing.T) {
+func TestReconcileRestartsInactiveSystemdKeepalived(t *testing.T) {
 	store := mapStore{}
+	active := true
+	var calls []string
 	controller := Controller{
 		Router:     vrrpRouter("vrrp"),
 		Store:      store,
@@ -274,8 +276,16 @@ func TestReconcileMarksVRRPInactiveWhenKeepalivedStopped(t *testing.T) {
 		Systemctl:  "systemctl",
 		IP:         "ip",
 		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			calls = append(calls, name+" "+strings.Join(args, " "))
 			if name == "systemctl" && strings.Join(args, " ") == "is-active --quiet keepalived.service" {
+				if active {
+					return []byte("active"), nil
+				}
 				return []byte("inactive"), errors.New("inactive")
+			}
+			if name == "systemctl" && strings.Join(args, " ") == "restart keepalived.service" {
+				active = true
+				return []byte("ok"), nil
 			}
 			if name == "ip" && strings.Join(args, " ") == "-4 addr show dev ens18" {
 				return []byte("2: ens18 inet 10.240.70.10/32 scope global ens18\n"), nil
@@ -286,9 +296,20 @@ func TestReconcileMarksVRRPInactiveWhenKeepalivedStopped(t *testing.T) {
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
+	active = false
+	calls = nil
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("second reconcile: %v", err)
+	}
+	if !containsString(calls, "systemctl restart keepalived.service") {
+		t.Fatalf("missing systemd keepalived restart: %#v", calls)
+	}
 	status := store.ObjectStatus(api.NetAPIVersion, "VirtualAddress", "vip")
-	if status["role"] != "inactive" || status["serviceActive"] != false {
-		t.Fatalf("inactive keepalived status = %#v, want role inactive and serviceActive false", status)
+	if status["role"] != "master" || status["serviceActive"] != true {
+		t.Fatalf("restarted keepalived status = %#v, want role master and serviceActive true", status)
+	}
+	if statusString(status, "lastRestartAt") == "" || statusString(status, "lastChangeReason") != "keepalived.service inactive" {
+		t.Fatalf("restart metadata missing: %#v", status)
 	}
 }
 
