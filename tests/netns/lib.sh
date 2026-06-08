@@ -4,6 +4,8 @@ set -euo pipefail
 
 TEST_NAME="${TEST_NAME:-$(basename "$0" .sh)}"
 TEST_ID="${ROUTERD_NETNS_PREFIX:-rd}-${TEST_NAME//[^a-zA-Z0-9]/-}-$$"
+# shellcheck disable=SC2034 # consumed by netns tests after sourcing this library
+TEST_IF_ID="${ROUTERD_NETNS_IF_PREFIX:-rd}$$"
 WORKDIR="${WORKDIR:-$(mktemp -d "/tmp/${TEST_ID}.XXXXXX")}"
 CLEANUP=()
 VETH_COUNTER=0
