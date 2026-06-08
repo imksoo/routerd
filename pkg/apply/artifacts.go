@@ -107,6 +107,9 @@ var serviceDeclarations = []serviceDeclaration{
 	{
 		kind: "DNSResolver",
 		declare: func(ctx serviceDeclarationContext) []resource.Intent {
+			if ctx.features.HasOpenRC {
+				return nil
+			}
 			return []resource.Intent{serviceIntent(ctx, servicemgr.Service{SystemdName: "routerd-dns-resolver@" + ctx.res.Metadata.Name + ".service"}, resource.ActionEnsure, nil)}
 		},
 	},

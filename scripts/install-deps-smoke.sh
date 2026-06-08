@@ -178,7 +178,7 @@ render_dir="${tmpdir}/alpine-render"
 go run ./cmd/routerctl render alpine --config "${render_config}" --out-dir "${render_dir}" >/dev/null
 test -x "${render_dir}/openrc-routerd_healthcheck_internet"
 test -x "${render_dir}/openrc-routerd_dnsmasq"
-test -x "${render_dir}/openrc-routerd_dns_resolver_lan"
+test ! -e "${render_dir}/openrc-routerd_dns_resolver_lan"
 test -x "${render_dir}/openrc-routerd_firewall_logger"
 test -x "${render_dir}/openrc-routerd_pppoe_client_wan_pppoe"
 test -x "${render_dir}/openrc-routerd_tailscale_edge"

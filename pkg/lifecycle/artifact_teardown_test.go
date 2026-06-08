@@ -163,6 +163,52 @@ func TestArtifactTeardownRegistrySkipsForeignSystemdService(t *testing.T) {
 	}
 }
 
+func TestArtifactTeardownRegistryCleansRouterdOpenRCService(t *testing.T) {
+	exec := &fakeArtifactTeardownExecutor{features: platform.Features{HasOpenRC: true}}
+	artifact := resource.Artifact{
+		Kind: "openrc.service",
+		Name: "routerd_dns_resolver_lan",
+	}
+	label, err := CleanupArtifact(exec, artifact)
+	if err != nil {
+		t.Fatalf("cleanup OpenRC service: %v", err)
+	}
+	if label != "openrc.service/routerd_dns_resolver_lan" {
+		t.Fatalf("label = %q", label)
+	}
+	wantCommands := []fakeTeardownCommand{
+		{Name: "rc-service", Args: []string{"routerd_dns_resolver_lan", "stop"}},
+		{Name: "rc-update", Args: []string{"del", "routerd_dns_resolver_lan", "default"}},
+	}
+	if !reflect.DeepEqual(exec.commands, wantCommands) {
+		t.Fatalf("commands = %#v, want %#v", exec.commands, wantCommands)
+	}
+	if wantRemoves := []string{"/etc/init.d/routerd_dns_resolver_lan"}; !reflect.DeepEqual(exec.removes, wantRemoves) {
+		t.Fatalf("removes = %#v, want %#v", exec.removes, wantRemoves)
+	}
+}
+
+func TestArtifactTeardownRegistrySkipsForeignOpenRCService(t *testing.T) {
+	exec := &fakeArtifactTeardownExecutor{features: platform.Features{HasOpenRC: true}}
+	artifact := resource.Artifact{
+		Kind: "openrc.service",
+		Name: "sshd",
+	}
+	if ArtifactCleanupEligible(artifact) {
+		t.Fatal("foreign OpenRC service should not be cleanup eligible")
+	}
+	label, err := CleanupArtifact(exec, artifact)
+	if err != nil {
+		t.Fatalf("cleanup foreign OpenRC service: %v", err)
+	}
+	if label != "" {
+		t.Fatalf("label = %q, want empty", label)
+	}
+	if len(exec.commands) != 0 || len(exec.removes) != 0 {
+		t.Fatalf("destructive operations on foreign OpenRC service: %#v %#v", exec.commands, exec.removes)
+	}
+}
+
 func TestArtifactTeardownRegistryEligibility(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -182,6 +228,21 @@ func TestArtifactTeardownRegistryEligibility(t *testing.T) {
 			artifact: resource.Artifact{
 				Kind:       "nft.table",
 				Attributes: map[string]string{"family": "inet", "name": "other_nat"},
+			},
+		},
+		{
+			name: "routerd OpenRC service",
+			artifact: resource.Artifact{
+				Kind: "openrc.service",
+				Name: "routerd_dns_resolver_lan",
+			},
+			want: true,
+		},
+		{
+			name: "foreign OpenRC service",
+			artifact: resource.Artifact{
+				Kind: "openrc.service",
+				Name: "sshd",
 			},
 		},
 		{
@@ -226,6 +287,7 @@ func TestArtifactTeardownRegistryCleanupPriority(t *testing.T) {
 		{Kind: "linux.ipv4.fwmarkRule"},
 		{Kind: "directory"},
 		{Kind: "systemd.service"},
+		{Kind: "openrc.service"},
 		{Kind: "unix.socket"},
 		{Kind: "file"},
 	}
@@ -233,7 +295,7 @@ func TestArtifactTeardownRegistryCleanupPriority(t *testing.T) {
 	for _, artifact := range artifacts {
 		got = append(got, ArtifactCleanupPriority(artifact))
 	}
-	want := []int{5, 0, 40, 10, 30, 20}
+	want := []int{5, 0, 40, 10, 10, 30, 20}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("priorities = %#v, want %#v", got, want)
 	}

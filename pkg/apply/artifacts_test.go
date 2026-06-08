@@ -338,6 +338,12 @@ func TestOpenRCServiceArtifactIntentsAvoidSystemd(t *testing.T) {
 	for _, res := range resources {
 		t.Run(res.Kind, func(t *testing.T) {
 			intents := resourceArtifactIntentsForPlatform(res, map[string]string{"lan": "eth0", "wan": "eth1"}, platform.OSLinux, features)
+			if res.Kind == "DNSResolver" {
+				if hasArtifactKind(intents, "openrc.service") {
+					t.Fatalf("DNSResolver should not claim OpenRC service intent when routerd serve supervises DNS helpers: %+v", intents)
+				}
+				return
+			}
 			if !hasArtifactKind(intents, "openrc.service") {
 				t.Fatalf("%s missing OpenRC service intent: %+v", res.Kind, intents)
 			}
@@ -413,6 +419,12 @@ func TestServiceDeclarationsUsePlatformManagerMatrix(t *testing.T) {
 				wantKind := platformCase.kind
 				if res.Kind == "TailscaleNode" && platformCase.name == "systemd" {
 					wantKind = "systemd.unit"
+				}
+				if res.Kind == "DNSResolver" && platformCase.name == "openrc" {
+					if hasArtifactKind(intents, wantKind) {
+						t.Fatalf("DNSResolver should not claim OpenRC service intent when routerd serve supervises DNS helpers: %+v", intents)
+					}
+					return
 				}
 				if !hasArtifactKind(intents, wantKind) {
 					t.Fatalf("missing %s service intent: %+v", wantKind, intents)
