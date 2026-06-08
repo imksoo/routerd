@@ -664,6 +664,14 @@ func TestServeConfigMutatorSandboxApplyCommitsCanonicalAndDryRuns(t *testing.T) 
 }
 
 func TestServeOnceConvergesAndExits(t *testing.T) {
+	loopbackEnsured := false
+	originalEnsureLoopback := ensureLoopbackUpForServe
+	ensureLoopbackUpForServe = func() error {
+		loopbackEnsured = true
+		return nil
+	}
+	t.Cleanup(func() { ensureLoopbackUpForServe = originalEnsureLoopback })
+
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "router.yaml")
 	statePath := filepath.Join(dir, "routerd.db")
@@ -685,6 +693,9 @@ func TestServeOnceConvergesAndExits(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), `"phase": "Healthy"`) {
 		t.Fatalf("serve --once output missing result:\n%s", stdout.String())
+	}
+	if !loopbackEnsured {
+		t.Fatal("serve --once did not ensure loopback is up")
 	}
 	store, err := routerstate.OpenSQLite(statePath)
 	if err != nil {
