@@ -589,7 +589,7 @@ wait_for_routerd_status_apply()
     i=0
     while [ "${i}" -lt 30 ]; do
         if [ -S "${socket}" ]; then
-            status=$("${bindir}/routerctl" status --socket "${socket}" 2>/dev/null || true)
+            status=$("${bindir}/routerctl" get status --socket "${socket}" 2>/dev/null || true)
             if printf '%s\n' "${status}" | grep -q '"lastApplyTime"'; then
                 return 0
             fi
@@ -689,7 +689,7 @@ restart_stale_routerd_helper_systemd_units_after_upgrade()
         if ! wait_for_routerd_status_socket /run/routerd/routerd-status.sock; then
             echo "warning: routerd status socket did not appear; checking helper units anyway" >&2
         elif ! wait_for_routerd_status_apply /run/routerd/routerd-status.sock; then
-            echo "warning: routerctl apply status was not observed; checking helper units anyway" >&2
+            echo "warning: routerctl get status apply state was not observed; checking helper units anyway" >&2
         fi
         wait_for_routerd_helper_unit_files_to_settle
     fi
@@ -1740,7 +1740,7 @@ run_configure()
         "${routerd_bin}" apply --config "${final_config}"
         maybe_start_live_routerd "${routerd_bin}" "${final_config}"
         if [ -x "${routerctl_bin}" ]; then
-            "${routerctl_bin}" status || true
+            "${routerctl_bin}" get status || true
         fi
     else
         echo "apply skipped by --no-apply"
@@ -2078,14 +2078,14 @@ if [ "${dry_run}" -eq 0 ] && [ -x "${bindir}/routerctl" ]; then
         *) status_socket= ;;
     esac
     if [ -n "${status_socket}" ] && [ -S "${status_socket}" ]; then
-        echo "routerctl status:"
-        "${bindir}/routerctl" status --socket "${status_socket}" || {
+        echo "routerctl get status:"
+        "${bindir}/routerctl" get status --socket "${status_socket}" || {
             if [ "${service_touched}" -eq 1 ]; then
-                echo "warning: routerctl status failed after service restart" >&2
+                echo "warning: routerctl get status failed after service restart" >&2
             fi
         }
     else
-        echo "routerctl status skipped: socket not found"
+        echo "routerctl get status skipped: socket not found"
     fi
 fi
 
