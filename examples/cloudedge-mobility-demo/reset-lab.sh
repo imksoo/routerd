@@ -19,11 +19,15 @@ if command -v aws >/dev/null; then
     aws ec2 modify-network-interface-attribute --profile "$AWS_PROFILE" --region "$AWS_REGION" \
       --network-interface-id "$eni" --source-dest-check Value=true || true
   done
-  aws ec2 stop-instances --profile "$AWS_PROFILE" --region "$AWS_REGION" \
-    --instance-ids "$AWS_ROUTER_A_INSTANCE_ID" "$AWS_CLIENT_INSTANCE_ID" || true
+  aws_instances=()
+  [[ -z "${AWS_ROUTER_A_INSTANCE_ID:-}" ]] || aws_instances+=("$AWS_ROUTER_A_INSTANCE_ID")
+  [[ -z "${AWS_CLIENT_INSTANCE_ID:-}" ]] || aws_instances+=("$AWS_CLIENT_INSTANCE_ID")
   if [[ -n "${AWS_ROUTER_B_INSTANCE_ID:-}" ]]; then
+    aws_instances+=("$AWS_ROUTER_B_INSTANCE_ID")
+  fi
+  if ((${#aws_instances[@]})); then
     aws ec2 stop-instances --profile "$AWS_PROFILE" --region "$AWS_REGION" \
-      --instance-ids "$AWS_ROUTER_B_INSTANCE_ID" || true
+      --instance-ids "${aws_instances[@]}" || true
   fi
 fi
 

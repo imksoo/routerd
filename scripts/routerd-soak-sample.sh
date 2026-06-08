@@ -36,7 +36,7 @@ capture() {
 }
 
 mkdir -p "$LOG_DIR"
-capture routerctl-status "$ROUTERCTL" status -o json
+capture routerctl-status "$ROUTERCTL" get status -o json
 capture wireguard "$ROUTERCTL" vpn wireguard show "$WG_INTERFACE" -o json
 if "$ROUTERCTL" vpn tailscale peers -o json >/dev/null 2>&1; then
   capture tailscale "$ROUTERCTL" vpn tailscale peers -o json
@@ -63,4 +63,4 @@ if command -v ss >/dev/null 2>&1; then
   capture routerd-sockets ss -uapn
 fi
 
-append_line soak-sample done "sample complete"
+append_line "soak-sample" "done" "sample complete"

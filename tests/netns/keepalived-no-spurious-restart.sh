@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# shellcheck disable=SC2034
 TEST_NAME="keepalived-no-spurious-restart"
+# shellcheck source=tests/netns/lib.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 
 require_common
@@ -9,7 +11,6 @@ require_cmd keepalived
 require_cmd go
 
 NS="${TEST_ID}-r1"
-VIP="10.88.67.100"
 create_ns "$NS"
 create_veth_pair "$NS" eth0 10.88.67.1/24 "$NS" eth1 10.88.67.2/24
 

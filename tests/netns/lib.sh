@@ -2,8 +2,6 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 TEST_NAME="${TEST_NAME:-$(basename "$0" .sh)}"
 TEST_ID="${ROUTERD_NETNS_PREFIX:-rd}-${TEST_NAME//[^a-zA-Z0-9]/-}-$$"
 WORKDIR="${WORKDIR:-$(mktemp -d "/tmp/${TEST_ID}.XXXXXX")}"
