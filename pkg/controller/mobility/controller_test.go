@@ -1095,7 +1095,7 @@ func TestControllerBGPModeProviderTrapUsesStaticOwnedOwnerWhenOwnershipMissing(t
 	router := routerWithBGPRouter(planningRouterForNode("azure-router", spec))
 	res := mobilityPoolResource(t, router, "cloudedge")
 	controller := Controller{Router: router, Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
-	if err := controller.reconcileBGPDelivery(context.Background(), res, spec, now); err != nil {
+	if err := controller.reconcileBGPDelivery(context.Background(), res, spec, map[string]any{"phase": "Disabled"}, now); err != nil {
 		t.Fatalf("reconcileBGPDelivery: %v", err)
 	}
 

@@ -33,9 +33,66 @@ The north-star config shape is:
   discovery details;
 - declare **remote sites** as identity-only members (`nodeRef`, `site`, `role`,
   and optional `placement`/`maintenance`);
+- for larger fabrics, keep the shared identity-only member list in a
+  `MobilityMemberSet` and import it with `MobilityPool.spec.membersFrom`;
 - keep reusable local cloud capture details in `profiles.cloudCaptures`;
 - keep non-secret node-local values in `spec.values`, then project them with
   `capture.targetFrom` and `ownershipDiscovery.subnetRefFrom`.
+
+`MobilityMemberSet` is the mobility counterpart to `SAMPeerGroup`: it contains
+only the shared member identity fields (`nodeRef`, `site`, `role`, and optional
+`placement`/`maintenance`). It deliberately does not carry `capture`,
+`ownershipDiscovery`, `profileRef`, delivery fields, or static owned addresses;
+those remain local to the `MobilityPool` on the node that needs them.
+
+```yaml
+apiVersion: mobility.routerd.net/v1alpha1
+kind: MobilityMemberSet
+metadata: { name: svnet1-members }
+spec:
+  members:
+    - nodeRef: pve-rt01
+      site: pve01
+      role: onprem
+    - nodeRef: pve-rt02
+      site: pve02
+      role: onprem
+    - nodeRef: rr01
+      site: backbone
+      role: cloud
+```
+
+A pool can import one or more member sets. Imported members are added first and
+local `spec.members` entries are overlaid by `nodeRef`, so a leaf can keep only
+its self member with capture/discovery details while still learning the shared
+topology from the member set.
+
+```yaml
+apiVersion: mobility.routerd.net/v1alpha1
+kind: MobilityPool
+metadata: { name: svnet1 }
+spec:
+  prefix: 10.88.60.0/24
+  groupRef: svnet1
+  membersFrom:
+    - resource: MobilityMemberSet/svnet1-members
+  members:
+    - nodeRef: pve-rt01
+      site: pve01
+      role: onprem
+      capture:
+        type: proxy-arp
+        interface: vmbr0
+      ownershipDiscovery:
+        mode: onprem-l2
+        sources:
+          - type: pve-svnet
+            bridge: vmbr0
+```
+
+If a required `membersFrom` source is not yet present, the pool reports
+`Pending`. Mark the source `optional: true` only when a partial local member list
+is acceptable during bootstrap.
 
 For example, on an AWS router:
 
@@ -206,6 +263,13 @@ to query WireGuard peers reachable through `spec.underlayInterface`; a matching
 group is stored locally as `peer-group-sync/<group-name>` with the normal
 dynamic-config TTL. If the publisher disappears or the group expires, the leaf
 returns to `Pending`.
+
+For MobilityPool membership, an RR can set `spec.publishMemberSet: true` on the
+canonical pool. routerd strips local-only member fields, publishes a
+`MobilityMemberSet` DynamicConfigPart with source `mobility-member-set/<pool>`,
+and serves it on the same TCP port via `GET /v1/member-sets`. Leaves with a
+missing required `membersFrom` source store a fetched set as
+`member-set-sync/<set-name>`.
 
 ```yaml
 apiVersion: mobility.routerd.net/v1alpha1

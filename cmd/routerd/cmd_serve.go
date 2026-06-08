@@ -468,7 +468,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	publishControllerModeEvents(ctx, controllerBus, controllerStatuses)
 	_, hostFeatures := platform.Current()
 	peerGroupSyncClient := mobilitycontroller.NewPeerGroupSyncClient(stateStore)
-	if !*sandbox && mobilitycontroller.HasPublishedPeerGroups(router) {
+	if !*sandbox && (mobilitycontroller.HasPublishedPeerGroups(router) || mobilitycontroller.HasPublishedMemberSets(router)) {
 		if err := startPeerGroupSyncServer(ctx, stateStore, logger); err != nil {
 			return err
 		}
@@ -492,6 +492,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		ControllerObserver:     controllerRuntime,
 		EnabledControllers:     enabledControllers,
 		PeerGroupSyncClient:    peerGroupSyncClient,
+		MemberSetSyncClient:    peerGroupSyncClient,
 	}
 	if *sandbox {
 		applySandboxControllerOptions(&controllerOpts, *dnsmasqConfigPath, *nftablesPath)

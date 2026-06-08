@@ -42,7 +42,7 @@ spec:
 | `system.routerd.net/v1alpha1` | `Hostname`, `Sysctl`, `SysctlProfile`, `Package`, `NTPClient`, `NTPServer`, `LogSink`, `ObservabilityPipeline`, `RouterdCluster`, `LogRetention`, `WebConsole` |
 | `plugin.routerd.net/v1alpha1` | プラグインマニフェスト |
 | `hybrid.routerd.net/v1alpha1` | `TunnelInterface`, `OverlayPeer`, `HybridRoute`, `AddressMobilityDomain`, `CloudProviderProfile`, `RemoteAddressClaim` |
-| `mobility.routerd.net/v1alpha1` | `MobilityPool`, `SAMTransportProfile` |
+| `mobility.routerd.net/v1alpha1` | `MobilityPool`, `MobilityMemberSet`, `SAMTransportProfile` |
 
 ## システム準備
 
@@ -157,7 +157,8 @@ DNSSEC validation は `DNSForwarder.spec.dnssecValidate` に書きます。
 | `TunnelInterface` | hybrid overlay delivery 用の trusted Linux L3 underlay tunnel device を作ります。`mode` は `ipip`、`gre`、IPIP-over-UDP の `fou` / `gue` を受け付けます。`fou` / `gue` では `encapSport` と `encapDport` が必須です。 |
 | `OverlayPeer` | on-prem または cloud の overlay peer と、それに到達する local underlay を表します。 |
 | `HybridRoute` | default ではない remote IPv4 prefix を、`OverlayPeer` 経由の managed `IPv4Route` に lower します。 |
-| `MobilityPool` | CloudEdge mobility の唯一の operator-authored intent です。pool prefix、federation group、node-to-site membership、BGP delivery policy、再利用可能な cloud capture profile、local value expansion、provider trap placement を宣言し、routerd は observed fact と BGP best path から BGP `/32` advertisement と provider trap action plan を導出します。 |
+| `MobilityPool` | CloudEdge mobility intent です。pool prefix、federation group、node-to-site membership または `membersFrom` source、BGP delivery policy、再利用可能な cloud capture profile、local value expansion、provider trap placement を宣言し、routerd は observed fact と BGP best path から BGP `/32` advertisement と provider trap action plan を導出します。 |
+| `MobilityMemberSet` | 共有される identity-only MobilityPool member（`nodeRef`、`site`、`role`、任意の placement/maintenance）をまとめます。leaf は `MobilityPool.spec.membersFrom` で import し、local capture/discovery だけを inline に残せます。 |
 | `SAMTransportProfile` | この router の安定した `selfNodeRef`、共有 topology node list、inner tunnel prefix、underlay interface、BGP router、SAM transport peer を宣言します。routerd は peer ごとの `TunnelInterface`、endpoint `/32` `IPv4Route`、`BGPPeer` を `DynamicConfigPart` として導出します。 |
 | `AddressMobilityDomain` | hand-authored selective-address config の IPv4 prefix を定義する低レベル互換 SAM resource です。現在の CloudEdge Mobility の主な authoring surface ではありません。 |
 | `CloudProviderProfile` | declarative address capture planning 用の provider capability と external-command auth を記述します。 |
@@ -175,8 +176,9 @@ DNSSEC validation は `DNSForwarder.spec.dnssecValidate` に書きます。
 | `LocalServiceRedirect` | LAN 側 client から `IPAddressSet` 宛てに出る IPv4/IPv6 通信を、router の local port へ redirect します。平文 DNS/NTP の集約を想定し、DoH や DoT の port には触れません。 |
 | `EgressRoutePolicy` | 既定経路の選択、mark ベースの IPv4 policy routing、複数 target への hash 分散を表します。 |
 
-CloudEdge Mobility の operator-authored surface は `MobilityPool` と
-`SAMTransportProfile` です。`MobilityPool` は address ownership/capture intent、
+CloudEdge Mobility の operator-authored surface は `MobilityPool`、
+`MobilityMemberSet`、`SAMTransportProfile` です。`MobilityPool` は address ownership/capture intent、
+`MobilityMemberSet` は再利用する共有 member list、
 `SAMTransportProfile` は transport/BGP intent を担当します。federation event は
 observed fact、BGP best path は mobility ownership/delivery view です。mobility
 planner は BGP `/32` advertisement と provider trap action plan を導出します。
@@ -559,7 +561,8 @@ validator がエラーにします。
 | `LogRetention` | `phase` (string), `targets` (objectList), `updatedAt` (timestamp) |
 | `LogSink` | `phase` (string), `type` (string) |
 | `ManagementAccess` | `interfaces` (stringList), `phase` (string) |
-| `MobilityPool` | `dynamicSource` (string), `generatedActions` (int), `generatedBGPPaths` (int), `generatedBGPTraps` (int), `groupRef` (string), `placementActive` (bool), `placementActiveNode` (string), `placementGroup` (string), `plannerPhase` (string), `plannerReason` (string), `prefix` (string), `deliveryMode` (string), `discoverySelfPrivateIPs` (stringList) |
+| `MobilityMemberSet` | `memberCount` (int) |
+| `MobilityPool` | `dynamicSource` (string), `generatedActions` (int), `generatedBGPPaths` (int), `generatedBGPTraps` (int), `groupRef` (string), `memberSet` (object), `membersFrom` (objectList), `pendingSources` (stringList), `placementActive` (bool), `placementActiveNode` (string), `placementGroup` (string), `plannerPhase` (string), `plannerReason` (string), `prefix` (string), `resolvedMemberCount` (int), `deliveryMode` (string), `discoverySelfPrivateIPs` (stringList) |
 | `SAMTransportProfile` | `dynamicSource` (string), `generatedBGPPeers` (int), `generatedEndpointRoutes` (int), `generatedTunnels` (int), `innerPrefix` (string), `peers` (objectList), `pendingSources` (stringList), `phase` (string), `selfNode` (string) |
 | `NAT44Rule` | `dryRun` (bool), `egressInterface` (string), `phase` (string), `snatAddress` (string) |
 | `NAT44SessionSync` | `deleteFailed` (int), `deleteOK` (int), `dryRun` (bool), `insertFailed` (int), `insertOK` (int), `mode` (string), `phase` (string), `sessionCount` (int), `snatAddresses` (stringList), `syncedAt` (timestamp), `targetCount` (int), `targets` (objectList) |

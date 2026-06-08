@@ -164,6 +164,48 @@ func TestValidateSAMTransportProfileRejectsInvalidPeersFrom(t *testing.T) {
 	}
 }
 
+func TestValidateMobilityPoolAllowsMembersFromWithoutMembers(t *testing.T) {
+	spec := api.MobilityPoolSpec{
+		Prefix:      "10.88.60.0/24",
+		GroupRef:    "cloudedge",
+		MembersFrom: []api.MobilityMembersSourceSpec{{Resource: "MobilityMemberSet/svnet1-members"}},
+	}
+	if err := Validate(mobilityPoolRouter(spec)); err != nil {
+		t.Fatalf("Validate membersFrom MobilityPool: %v", err)
+	}
+}
+
+func TestValidateMobilityPoolRejectsInvalidMembersFrom(t *testing.T) {
+	spec := api.MobilityPoolSpec{
+		Prefix:      "10.88.60.0/24",
+		GroupRef:    "cloudedge",
+		MembersFrom: []api.MobilityMembersSourceSpec{{Resource: "SAMPeerGroup/svnet1-rrs"}},
+	}
+	err := Validate(mobilityPoolRouter(spec))
+	if err == nil || !strings.Contains(err.Error(), "spec.membersFrom[0].resource must reference MobilityMemberSet/<name>") {
+		t.Fatalf("Validate membersFrom error = %v, want MobilityMemberSet ref error", err)
+	}
+}
+
+func TestValidateMobilityMemberSet(t *testing.T) {
+	router := mobilityMemberSetRouter(api.MobilityMemberSetSpec{Members: []api.MobilityMemberSetMember{{
+		NodeRef: "pve-rt01",
+		Site:    "pve01",
+		Role:    "onprem",
+	}}})
+	if err := Validate(router); err != nil {
+		t.Fatalf("Validate MobilityMemberSet: %v", err)
+	}
+}
+
+func TestValidateMobilityMemberSetRejectsInvalidMember(t *testing.T) {
+	router := mobilityMemberSetRouter(api.MobilityMemberSetSpec{Members: []api.MobilityMemberSetMember{{Site: "pve01", Role: "onprem"}}})
+	err := Validate(router)
+	if err == nil || !strings.Contains(err.Error(), "spec.members[0].nodeRef is required") {
+		t.Fatalf("Validate MobilityMemberSet error = %v, want nodeRef required", err)
+	}
+}
+
 func TestValidateSAMPeerGroup(t *testing.T) {
 	router := samPeerGroupRouter(api.SAMPeerGroupSpec{Peers: []api.SAMTransportPeerSpec{{
 		NodeRef:        "k8s-rt01",
@@ -264,6 +306,18 @@ func samPeerGroupRouter(spec api.SAMPeerGroupSpec) *api.Router {
 		Spec: api.RouterSpec{Resources: []api.Resource{{
 			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMPeerGroup"},
 			Metadata: api.ObjectMeta{Name: "svnet1-rrs"},
+			Spec:     spec,
+		}}},
+	}
+}
+
+func mobilityMemberSetRouter(spec api.MobilityMemberSetSpec) *api.Router {
+	return &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityMemberSet"},
+			Metadata: api.ObjectMeta{Name: "svnet1-members"},
 			Spec:     spec,
 		}}},
 	}

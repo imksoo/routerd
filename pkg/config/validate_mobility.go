@@ -47,8 +47,13 @@ func validateMobilityResource(res api.Resource, _ platform.OS) (bool, error) {
 		default:
 			return true, fmt.Errorf("%s spec.mode %q is not supported; only selective-address", res.ID(), spec.Mode)
 		}
-		if len(spec.Members) == 0 {
-			return true, fmt.Errorf("%s spec.members requires at least one member", res.ID())
+		if len(spec.Members) == 0 && len(spec.MembersFrom) == 0 {
+			return true, fmt.Errorf("%s spec.members or spec.membersFrom requires at least one member source", res.ID())
+		}
+		for i, source := range spec.MembersFrom {
+			if err := validateMobilityMembersFrom(res.ID(), i, source); err != nil {
+				return true, err
+			}
 		}
 		normalized, _, err := mobilityconfig.NormalizeMobilityPool(spec, "")
 		if err != nil {
@@ -114,11 +119,23 @@ func validateMobilityResource(res api.Resource, _ platform.OS) (bool, error) {
 		switch strings.TrimSpace(spec.Authority.Mode) {
 		case "", "static":
 			authNode := strings.TrimSpace(spec.Authority.NodeRef)
-			if authNode != "" && !nodeRefs[authNode] {
+			if authNode != "" && !nodeRefs[authNode] && len(spec.MembersFrom) == 0 {
 				return true, fmt.Errorf("%s spec.authority.nodeRef %q must be one of the member nodeRefs", res.ID(), authNode)
 			}
 		default:
 			return true, fmt.Errorf("%s spec.authority.mode %q is not supported; only static", res.ID(), spec.Authority.Mode)
+		}
+		return true, nil
+	case "MobilityMemberSet":
+		if res.APIVersion != api.MobilityAPIVersion {
+			return true, fmt.Errorf("%s must use apiVersion %s", res.ID(), api.MobilityAPIVersion)
+		}
+		spec, err := res.MobilityMemberSetSpec()
+		if err != nil {
+			return true, err
+		}
+		if err := validateMobilityMemberSet(res, spec); err != nil {
+			return true, err
 		}
 		return true, nil
 	case "SAMPeerGroup":
@@ -147,6 +164,35 @@ func validateMobilityResource(res api.Resource, _ platform.OS) (bool, error) {
 		return true, nil
 	}
 	return false, nil
+}
+
+func validateMobilityMemberSet(res api.Resource, spec api.MobilityMemberSetSpec) error {
+	if len(spec.Members) == 0 {
+		return fmt.Errorf("%s spec.members requires at least one member", res.ID())
+	}
+	seen := map[string]bool{}
+	for i, member := range spec.Members {
+		nodeRef := strings.TrimSpace(member.NodeRef)
+		if nodeRef == "" {
+			return fmt.Errorf("%s spec.members[%d].nodeRef is required", res.ID(), i)
+		}
+		if strings.TrimSpace(member.Site) == "" {
+			return fmt.Errorf("%s spec.members[%d].site is required", res.ID(), i)
+		}
+		switch strings.TrimSpace(member.Role) {
+		case "onprem", "cloud":
+		default:
+			return fmt.Errorf("%s spec.members[%d].role must be onprem or cloud", res.ID(), i)
+		}
+		if seen[nodeRef] {
+			return fmt.Errorf("%s spec.members nodeRef %q is duplicated", res.ID(), nodeRef)
+		}
+		seen[nodeRef] = true
+		if member.Placement.Priority < 0 {
+			return fmt.Errorf("%s spec.members[%d].placement.priority must be >= 0", res.ID(), i)
+		}
+	}
+	return nil
 }
 
 func validateSAMPeerGroup(res api.Resource, spec api.SAMPeerGroupSpec) error {
@@ -339,6 +385,14 @@ func validateSAMTransportPeersFrom(resourceID string, index int, source api.SAMT
 	kind, name, ok := strings.Cut(strings.TrimSpace(source.Resource), "/")
 	if !ok || kind != "SAMPeerGroup" || strings.TrimSpace(name) == "" {
 		return fmt.Errorf("%s spec.peersFrom[%d].resource must reference SAMPeerGroup/<name>", resourceID, index)
+	}
+	return nil
+}
+
+func validateMobilityMembersFrom(resourceID string, index int, source api.MobilityMembersSourceSpec) error {
+	kind, name, ok := strings.Cut(strings.TrimSpace(source.Resource), "/")
+	if !ok || kind != "MobilityMemberSet" || strings.TrimSpace(name) == "" {
+		return fmt.Errorf("%s spec.membersFrom[%d].resource must reference MobilityMemberSet/<name>", resourceID, index)
 	}
 	return nil
 }
