@@ -31,6 +31,7 @@ import (
 	"github.com/imksoo/routerd/pkg/config"
 	"github.com/imksoo/routerd/pkg/controlapi"
 	controllerchain "github.com/imksoo/routerd/pkg/controller/chain"
+	mobilitycontroller "github.com/imksoo/routerd/pkg/controller/mobility"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/eventlog"
 	"github.com/imksoo/routerd/pkg/logstore"
@@ -231,6 +232,29 @@ func emitServeBootFallbackWarning(stderr io.Writer, logger *eventlog.Logger, con
 	}
 }
 
+func startPeerGroupSyncServer(ctx context.Context, store *routerstate.SQLiteStore, logger *eventlog.Logger) error {
+	listener, err := net.Listen("tcp", net.JoinHostPort("0.0.0.0", strconv.Itoa(mobilitycontroller.PeerGroupSyncPort)))
+	if err != nil {
+		return fmt.Errorf("listen peer-group sync: %w", err)
+	}
+	server := &http.Server{Handler: mobilitycontroller.NewPeerGroupSyncServer(store)}
+	go func() {
+		<-ctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = server.Shutdown(shutdownCtx)
+	}()
+	go func() {
+		if logger != nil {
+			logger.Emit(eventlog.LevelInfo, "serve", "peer-group sync server listening", map[string]string{"listen": listener.Addr().String()})
+		}
+		if err := server.Serve(listener); err != nil && err != http.ErrServerClosed && logger != nil {
+			logger.Emit(eventlog.LevelWarning, "serve", "peer-group sync server stopped", map[string]string{"error": err.Error()})
+		}
+	}()
+	return nil
+}
+
 func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -382,6 +406,12 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	controllerBus.SetLogger(slog.Default())
 	publishControllerModeEvents(ctx, controllerBus, controllerStatuses)
 	_, hostFeatures := platform.Current()
+	peerGroupSyncClient := mobilitycontroller.NewPeerGroupSyncClient(stateStore)
+	if !*sandbox && mobilitycontroller.HasPublishedPeerGroups(router) {
+		if err := startPeerGroupSyncServer(ctx, stateStore, logger); err != nil {
+			return err
+		}
+	}
 	controllerOpts := controllerchain.Options{
 		SuperviseClientDaemons: true,
 		SuperviseDNSResolvers:  hostFeatures.HasOpenRC,
@@ -400,6 +430,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		ConntrackInterval:      30 * time.Second,
 		ControllerObserver:     controllerRuntime,
 		EnabledControllers:     enabledControllers,
+		PeerGroupSyncClient:    peerGroupSyncClient,
 	}
 	if *sandbox {
 		applySandboxControllerOptions(&controllerOpts, *dnsmasqConfigPath, *nftablesPath)

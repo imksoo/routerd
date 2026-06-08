@@ -883,6 +883,7 @@ type Options struct {
 	EnabledControllers      []string
 	ProviderActionRunner    provideraction.ExecutorRunner
 	ProviderInventoryRunner providerinventory.Runner
+	PeerGroupSyncClient     *mobilitycontroller.PeerGroupSyncClient
 }
 
 type Runner struct {
@@ -1152,6 +1153,10 @@ func (r *Runner) Start(ctx context.Context) error {
 	var mobilityTransport mobilitycontroller.TransportController
 	if rawStore, ok := r.Store.(mobilityDataStore); ok {
 		mobilityData := mobilityStore{evented: store, data: rawStore}
+		peerGroupSync := r.Opts.PeerGroupSyncClient
+		if peerGroupSync == nil {
+			peerGroupSync = mobilitycontroller.NewPeerGroupSyncClient(rawStore)
+		}
 		mobilityDiscovery = mobilitycontroller.DiscoveryController{
 			Router: r.Router,
 			Bus:    r.Bus,
@@ -1165,8 +1170,9 @@ func (r *Runner) Start(ctx context.Context) error {
 			BGPPaths: bgpdaemon.NewControlClient(bgpDaemon.ControlSocketPath),
 		}
 		mobilityTransport = mobilitycontroller.TransportController{
-			Router: r.Router,
-			Store:  mobilityData,
+			Router:        r.Router,
+			Store:         mobilityData,
+			PeerGroupSync: peerGroupSync,
 		}
 	}
 	var providerAction provideractioncontroller.Controller
@@ -1285,7 +1291,15 @@ func (r *Runner) Start(ctx context.Context) error {
 			return current.Reconcile(ctx)
 		}},
 		framework.FuncController{ControllerName: "link", Every: 30 * time.Second, PeriodicFunc: link.Reconcile},
-		framework.FuncController{ControllerName: "sam-transport", Every: 30 * time.Second, Subs: statusSubscriptions("SAMTransportProfile", "Interface", "IPv4StaticAddress", "DHCPv4Client", "WireGuardInterface", "WireGuardPeer"), PeriodicFunc: mobilityTransport.Reconcile},
+		framework.FuncController{ControllerName: "sam-transport", Every: 30 * time.Second, Subs: statusSubscriptions("SAMTransportProfile", "SAMPeerGroup", "Interface", "IPv4StaticAddress", "DHCPv4Client", "WireGuardInterface", "WireGuardPeer"), PeriodicFunc: func(ctx context.Context) error {
+			effective, err := effectiveDynamicForReconcile()
+			if err != nil {
+				return err
+			}
+			current := mobilityTransport
+			current.Router = effective
+			return current.Reconcile(ctx)
+		}},
 		framework.FuncController{ControllerName: "tunnel", Every: 30 * time.Second, Subs: statusSubscriptions("TunnelInterface"), PeriodicFunc: func(ctx context.Context) error {
 			effective, err := effectiveDynamicForReconcile()
 			if err != nil {

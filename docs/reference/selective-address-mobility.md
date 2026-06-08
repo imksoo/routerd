@@ -199,12 +199,13 @@ mode routerd publishes a `SAMPeerGroup` DynamicConfigPart with this profile's
 `selfNodeRef` and concrete local endpoint. `localEndpointFrom` is resolved before
 publishing so leaves receive a direct `remoteEndpoint` value.
 
-The published peer group is local to the router that produced the
-DynamicConfigPart. Leaf routers can resolve it only after the `SAMPeerGroup`
-resource is present in their own effective config, for example through explicit
-config or a separate dynamic-config distribution pipeline. `publishPeerGroup`
-does not by itself deliver peer groups from a spine/RR router to leaf routers;
-track automatic distribution in [#334](https://github.com/imksoo/routerd/issues/334).
+When `routerd serve` runs on a node with `publishPeerGroup: true`, it also
+serves published peer groups over the transport network on TCP port `19652`
+(`GET /v1/peer-groups`). A leaf with a missing required `peersFrom` group tries
+to query WireGuard peers reachable through `spec.underlayInterface`; a matching
+group is stored locally as `peer-group-sync/<group-name>` with the normal
+dynamic-config TTL. If the publisher disappears or the group expires, the leaf
+returns to `Pending`.
 
 ```yaml
 apiVersion: mobility.routerd.net/v1alpha1

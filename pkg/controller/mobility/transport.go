@@ -22,9 +22,10 @@ import (
 const samTransportSourceKind = "SAMTransportProfile"
 
 type TransportController struct {
-	Router *api.Router
-	Store  Store
-	Now    func() time.Time
+	Router        *api.Router
+	Store         Store
+	PeerGroupSync *PeerGroupSyncClient
+	Now           func() time.Time
 }
 
 type transportPeerStatus struct {
@@ -57,7 +58,7 @@ type transportPeersFromStatus struct {
 	Reason    string `json:"reason,omitempty"`
 }
 
-func (c TransportController) Reconcile(_ context.Context) error {
+func (c TransportController) Reconcile(ctx context.Context) error {
 	if c.Router == nil || c.Store == nil {
 		return nil
 	}
@@ -103,7 +104,7 @@ func (c TransportController) Reconcile(_ context.Context) error {
 			}
 			peerGroupStatus = status
 		}
-		derived, err := c.deriveTransportResources(res, spec)
+		derived, err := c.deriveTransportResources(ctx, res, spec)
 		if err != nil {
 			if upsertErr := c.upsertTransportPart(res, source, nil, now); upsertErr != nil {
 				return upsertErr
@@ -145,14 +146,14 @@ func (c TransportController) Reconcile(_ context.Context) error {
 	return c.deprovisionStaleTransportSources(desiredSources, now)
 }
 
-func (c TransportController) deriveTransportResources(owner api.Resource, spec api.SAMTransportProfileSpec) (transportDerivation, error) {
+func (c TransportController) deriveTransportResources(ctx context.Context, owner api.Resource, spec api.SAMTransportProfileSpec) (transportDerivation, error) {
 	self := strings.TrimSpace(spec.SelfNodeRef)
 	inner, err := netip.ParsePrefix(strings.TrimSpace(spec.InnerPrefix))
 	if err != nil {
 		return transportDerivation{}, err
 	}
 	inner = inner.Masked()
-	peers, peerSources, pendingSources, err := c.resolveTransportPeers(owner, spec)
+	peers, peerSources, pendingSources, err := c.resolveTransportPeers(ctx, owner, spec)
 	if err != nil {
 		return transportDerivation{}, err
 	}
@@ -259,7 +260,7 @@ func (c TransportController) deriveTransportResources(owner api.Resource, spec a
 	return out, nil
 }
 
-func (c TransportController) resolveTransportPeers(_ api.Resource, spec api.SAMTransportProfileSpec) ([]api.SAMTransportPeerSpec, []transportPeersFromStatus, []string, error) {
+func (c TransportController) resolveTransportPeers(ctx context.Context, _ api.Resource, spec api.SAMTransportProfileSpec) ([]api.SAMTransportPeerSpec, []transportPeersFromStatus, []string, error) {
 	peers := []api.SAMTransportPeerSpec{}
 	indexByNode := map[string]int{}
 	statuses := make([]transportPeersFromStatus, 0, len(spec.PeersFrom))
@@ -290,6 +291,23 @@ func (c TransportController) resolveTransportPeers(_ api.Resource, spec api.SAMT
 		if !found {
 			status.Phase = "Missing"
 			status.Reason = "SAMPeerGroup not found"
+			if !source.Optional && c.PeerGroupSync != nil {
+				groupName := strings.TrimSpace(nameFromPeerGroupRef(ref))
+				synced, ok, syncErr := c.PeerGroupSync.SyncPeerGroup(ctx, c.Router, spec.UnderlayInterface, groupName)
+				if syncErr != nil {
+					status.Reason = "SAMPeerGroup not found; sync failed: " + syncErr.Error()
+				}
+				if ok {
+					status.Phase = "Synced"
+					status.Reason = ""
+					status.PeerCount = len(synced.Peers)
+					for _, peer := range synced.Peers {
+						addPeer(peer)
+					}
+					statuses = append(statuses, status)
+					continue
+				}
+			}
 			statuses = append(statuses, status)
 			if !source.Optional {
 				pending = append(pending, ref)
@@ -307,6 +325,14 @@ func (c TransportController) resolveTransportPeers(_ api.Resource, spec api.SAMT
 	}
 	sort.Strings(pending)
 	return peers, statuses, pending, nil
+}
+
+func nameFromPeerGroupRef(ref string) string {
+	kind, name, ok := strings.Cut(strings.TrimSpace(ref), "/")
+	if !ok || kind != "SAMPeerGroup" {
+		return ""
+	}
+	return strings.TrimSpace(name)
 }
 
 func (c TransportController) samPeerGroup(ref string) (api.SAMPeerGroupSpec, bool, error) {

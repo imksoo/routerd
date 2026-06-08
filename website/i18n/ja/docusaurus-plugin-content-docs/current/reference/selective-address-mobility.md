@@ -222,12 +222,13 @@ routerd は profile の `selfNodeRef` と concrete local endpoint から `SAMPee
 を生成し、DynamicConfigPart として publish します。`localEndpointFrom` は publish
 前に解決されるため、leaf には直接使える `remoteEndpoint` が配布されます。
 
-publish された peer group は、その DynamicConfigPart を生成した router の local
-resource です。leaf router が解決できるのは、自身の effective config に
-`SAMPeerGroup` resource が存在する場合だけです。たとえば明示的な config、または
-別途用意した dynamic-config 配布経路が必要です。`publishPeerGroup` だけでは
-spine/RR から leaf へ peer group は配送されません。自動配送は
-[#334](https://github.com/imksoo/routerd/issues/334) で追跡します。
+`publishPeerGroup: true` を持つ node で `routerd serve` が動いている場合、routerd
+は publish 済み peer group を transport network 上の TCP port `19652`
+（`GET /v1/peer-groups`）でも返します。leaf 側で必須の `peersFrom` group が
+見つからない場合、`spec.underlayInterface` から到達できる WireGuard peer へ
+問い合わせ、名前が一致する group を `peer-group-sync/<group-name>` として local
+store に保存します。この DynamicConfigPart は通常の TTL で期限切れになり、
+publisher が消えた場合は leaf が `Pending` に戻ります。
 
 core router では `spec.bgp.routeReflectorClient` と
 `spec.bgp.routeReflectorClusterID` を設定できます。これらは生成される各
