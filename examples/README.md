@@ -6,8 +6,8 @@ intended as starting points, not as drop-in production files.
 Run validation before adapting an example:
 
 ```sh
-routerd validate --config examples/<name>.yaml
-routerd plan --config examples/<name>.yaml
+routerctl validate --config examples/<name>.yaml
+routerctl plan --config examples/<name>.yaml
 ```
 
 ## Small starting points
