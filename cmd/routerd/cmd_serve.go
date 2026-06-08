@@ -255,6 +255,65 @@ func startPeerGroupSyncServer(ctx context.Context, store *routerstate.SQLiteStor
 	return nil
 }
 
+var legacyServeBoolFlags = []string{
+	"controller-chain",
+	"controller-chain-dry-run-address",
+	"controller-chain-dry-run-dhcpv4lease",
+	"controller-chain-dry-run-dhcpv6",
+	"controller-chain-dry-run-dns-resolver",
+	"controller-chain-dry-run-dslite",
+	"controller-chain-dry-run-firewall",
+	"controller-chain-dry-run-nat",
+	"controller-chain-dry-run-network-adoption",
+	"controller-chain-dry-run-package",
+	"controller-chain-dry-run-ra",
+	"controller-chain-dry-run-route",
+	"controller-chain-dry-run-systemd-unit",
+}
+
+var legacyServeStringFlags = []string{
+	"observe-interval",
+	"controller-chain-daemon-sockets",
+	"controller-chain-dnsmasq-command",
+	"controller-chain-dnsmasq-config",
+	"controller-chain-dnsmasq-listen-addresses",
+	"controller-chain-dnsmasq-pid",
+	"controller-chain-dnsmasq-port",
+}
+
+func registerLegacyServeFlags(fs *flag.FlagSet) {
+	for _, name := range legacyServeBoolFlags {
+		fs.Bool(name, false, "ignored legacy controller-chain compatibility flag")
+	}
+	for _, name := range legacyServeStringFlags {
+		fs.String(name, "", "ignored legacy controller-chain compatibility flag")
+	}
+}
+
+func ignoredLegacyServeFlagNames(setFlags map[string]bool) []string {
+	ignored := make([]string, 0, len(legacyServeBoolFlags)+len(legacyServeStringFlags))
+	for _, name := range legacyServeBoolFlags {
+		if setFlags[name] {
+			ignored = append(ignored, "--"+name)
+		}
+	}
+	for _, name := range legacyServeStringFlags {
+		if setFlags[name] {
+			ignored = append(ignored, "--"+name)
+		}
+	}
+	sort.Strings(ignored)
+	return ignored
+}
+
+func warnIgnoredLegacyServeFlags(stderr io.Writer, setFlags map[string]bool) {
+	ignored := ignoredLegacyServeFlagNames(setFlags)
+	if len(ignored) == 0 || stderr == nil {
+		return
+	}
+	fmt.Fprintf(stderr, "warning: routerd serve ignored legacy flag(s): %s\n", strings.Join(ignored, ", "))
+}
+
 func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -276,6 +335,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	once := fs.Bool("once", false, "converge once and exit without serving control sockets")
 	sandbox := fs.Bool("sandbox", false, "serve control API in a dry-run sandbox with no host mutation")
 	sandboxRoot := fs.String("root", "", "sandbox root directory used with --sandbox")
+	registerLegacyServeFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -283,6 +343,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	fs.Visit(func(f *flag.Flag) {
 		setFlags[f.Name] = true
 	})
+	warnIgnoredLegacyServeFlags(stderr, setFlags)
 	if *sandbox {
 		if err := configureServeSandbox(
 			*sandboxRoot,
