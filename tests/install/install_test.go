@@ -627,6 +627,36 @@ func writeExecutable(t *testing.T, path, content string) {
 	}
 }
 
+func TestBootstrapInstallerPassesShellcheck(t *testing.T) {
+	root := repoRoot(t)
+	bootstrap := filepath.Join(root, "packaging", "bootstrap.sh")
+	if _, err := os.Stat(bootstrap); err != nil {
+		t.Fatalf("bootstrap.sh not found: %v", err)
+	}
+	cmd := exec.Command("shellcheck", bootstrap)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("shellcheck failed:\n%s", out)
+	}
+}
+
+func TestBootstrapInstallerIsPublishedByReleaseWorkflow(t *testing.T) {
+	root := repoRoot(t)
+	workflow, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "release.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(workflow)
+	for _, needle := range []string{
+		"packaging/bootstrap.sh",
+		"release-artifacts/install.sh",
+	} {
+		if !strings.Contains(content, needle) {
+			t.Fatalf("release workflow missing bootstrap installer reference %q", needle)
+		}
+	}
+}
+
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	cmd := exec.Command("git", "rev-parse", "--show-toplevel")

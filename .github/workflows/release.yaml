@@ -255,11 +255,22 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.resolve-release.outputs.checkout-ref }}
+          sparse-checkout: packaging/bootstrap.sh
+          sparse-checkout-cone-mode: false
+
       - name: Download release artifacts
         uses: actions/download-artifact@v8
         with:
           path: release-artifacts
           merge-multiple: true
+
+      - name: Add bootstrap installer to artifacts
+        shell: bash
+        run: cp packaging/bootstrap.sh release-artifacts/install.sh
 
       - name: Publish release
         env:
