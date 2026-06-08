@@ -155,6 +155,13 @@ func TestOpenRCRenderSynthesizesHelperDaemons(t *testing.T) {
 			t.Fatalf("%s script missing %q:\n%s", name, want, script)
 		}
 	}
+	routerdScript := string(got.InitScripts["routerd"])
+	if !strings.Contains(routerdScript, "'serve'") {
+		t.Fatalf("routerd OpenRC script must run serve:\n%s", routerdScript)
+	}
+	if strings.Contains(routerdScript, "'/usr/local/sbin/routerd' 'check'") {
+		t.Fatalf("routerd OpenRC script must not call removed routerd check verb:\n%s", routerdScript)
+	}
 	services := map[string]OpenRCService{}
 	for _, service := range got.Services {
 		services[service.Name] = service
