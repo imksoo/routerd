@@ -707,6 +707,11 @@ func applyOpenRCServiceResources(router *api.Router) ([]string, error) {
 	var changedFiles []string
 	changedServices := map[string]bool{}
 	enabledServices := openRCEnabledServices()
+	staleDNSResolverServices, err := cleanupStaleOpenRCDNSResolverServices(cfg, enabledServices)
+	if err != nil {
+		return nil, err
+	}
+	changedFiles = append(changedFiles, staleDNSResolverServices...)
 	for _, name := range sortedByteMapKeysMain(cfg.InitScripts) {
 		path := filepath.Join(platformDefaults.OpenRCScriptDir, name)
 		changed, err := writeFileIfChanged(path, cfg.InitScripts[name], 0755)
@@ -763,6 +768,65 @@ func applyOpenRCServiceResources(router *api.Router) ([]string, error) {
 		}
 	}
 	return changedFiles, nil
+}
+
+func cleanupStaleOpenRCDNSResolverServices(cfg render.OpenRCConfig, enabledServices map[string]bool) ([]string, error) {
+	const prefix = "routerd_dns_resolver_"
+	desired := map[string]bool{}
+	for _, service := range cfg.Services {
+		desired[service.Name] = true
+	}
+	candidates := map[string]bool{}
+	for name := range enabledServices {
+		if strings.HasPrefix(name, prefix) {
+			candidates[name] = true
+		}
+	}
+	matches, err := filepath.Glob(filepath.Join(platformDefaults.OpenRCScriptDir, prefix+"*"))
+	if err != nil {
+		return nil, err
+	}
+	for _, path := range matches {
+		info, err := os.Stat(path)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return nil, fmt.Errorf("stat stale OpenRC DNSResolver service %s: %w", path, err)
+		}
+		if info.IsDir() {
+			continue
+		}
+		candidates[filepath.Base(path)] = true
+	}
+	var names []string
+	for name := range candidates {
+		if desired[name] {
+			continue
+		}
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	var changed []string
+	for _, name := range names {
+		_ = runLogged("rc-service", name, "stop")
+		if enabledServices[name] {
+			if err := runLogged("rc-update", "del", name, "default"); err != nil {
+				return nil, err
+			}
+			delete(enabledServices, name)
+		}
+		path := filepath.Join(platformDefaults.OpenRCScriptDir, name)
+		if err := os.Remove(path); err != nil {
+			if !errors.Is(err, os.ErrNotExist) {
+				return nil, fmt.Errorf("remove stale OpenRC DNSResolver service %s: %w", path, err)
+			}
+			changed = append(changed, "openrc.service:"+name)
+			continue
+		}
+		changed = append(changed, path)
+	}
+	return changed, nil
 }
 
 func openRCEnabledServices() map[string]bool {
