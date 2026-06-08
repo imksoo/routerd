@@ -199,6 +199,13 @@ mode routerd publishes a `SAMPeerGroup` DynamicConfigPart with this profile's
 `selfNodeRef` and concrete local endpoint. `localEndpointFrom` is resolved before
 publishing so leaves receive a direct `remoteEndpoint` value.
 
+The published peer group is local to the router that produced the
+DynamicConfigPart. Leaf routers can resolve it only after the `SAMPeerGroup`
+resource is present in their own effective config, for example through explicit
+config or a separate dynamic-config distribution pipeline. `publishPeerGroup`
+does not by itself deliver peer groups from a spine/RR router to leaf routers;
+track automatic distribution in [#334](https://github.com/imksoo/routerd/issues/334).
+
 ```yaml
 apiVersion: mobility.routerd.net/v1alpha1
 kind: SAMTransportProfile
