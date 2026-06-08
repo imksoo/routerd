@@ -129,6 +129,14 @@ func publishControllerModeEvents(ctx context.Context, b *bus.Bus, controllers []
 }
 
 var cleanupLedgerOwnedOrphansForServe = cleanupLedgerOwnedOrphans
+var ensureLoopbackUpForServe = ensureLoopbackUp
+
+func ensureLoopbackUp() error {
+	if runtime.GOOS != "linux" {
+		return nil
+	}
+	return exec.Command("ip", "link", "set", "lo", "up").Run()
+}
 
 func cleanupServeLedgerOwnedOrphans(router *api.Router, ledgerPath string, logger *eventlog.Logger) ([]string, error) {
 	removed, err := cleanupLedgerOwnedOrphansForServe(router, ledgerPath)
@@ -315,6 +323,11 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		"statusSocket":  *statusSocketPath,
 		"applyInterval": applyInterval.String(),
 	})
+	if !*sandbox {
+		if loopbackErr := ensureLoopbackUpForServe(); loopbackErr != nil {
+			logger.Emit(eventlog.LevelWarning, "serve", "failed to ensure loopback is up", map[string]string{"error": loopbackErr.Error()})
+		}
+	}
 	applyOpts := applyOptions{
 		ConfigPath:         *configPath,
 		StatusFile:         *statusFile,
