@@ -27,7 +27,7 @@ routerd_flags="${routerd_flags:-}"
 command_args="serve --config ${routerd_config} --socket ${routerd_socket} --status-socket ${routerd_status_socket} --apply-interval ${routerd_apply_interval} ${routerd_flags}"
 
 depend() {
-    need net
+    use net
     use logger
 }
 
