@@ -1879,8 +1879,8 @@ func writeIPv4ForceFragmentTable(buf *bytes.Buffer, aliases map[string]string, p
 	writeNftTablePreamble(buf, "ip", "routerd_forcefrag")
 	buf.WriteString("table ip routerd_forcefrag {\n")
 	writeNftTableOwnerMarker(buf)
-	buf.WriteString("  chain forward {\n")
-	buf.WriteString("    type filter hook forward priority mangle; policy accept;\n")
+	buf.WriteString("  chain prerouting {\n")
+	buf.WriteString("    type filter hook prerouting priority mangle; policy accept;\n")
 	for _, policy := range policies {
 		fromIfname := aliases[policy.Spec.FromInterface]
 		if fromIfname == "" {
@@ -1899,7 +1899,7 @@ func writeIPv4ForceFragmentTable(buf *bytes.Buffer, aliases map[string]string, p
 		if policy.MTU < 576 {
 			return fmt.Errorf("%s computed IPv4 force-fragment MTU %d is too small", policy.ResourceID, policy.MTU)
 		}
-		match := nftIfnameMatch("iifname", []string{fromIfname}) + " " + nftIfnameMatch("oifname", toIfnames)
+		match := nftIfnameMatch("iifname", []string{fromIfname}) + " " + nftIfnameMatch("fib daddr oifname", toIfnames)
 		buf.WriteString("    " + match + " ip length > " + strconv.Itoa(policy.MTU) + " ip frag-off 0x4000 ip frag-off set 0\n")
 	}
 	buf.WriteString("  }\n")

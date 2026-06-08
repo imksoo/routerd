@@ -834,7 +834,8 @@ func TestNftablesIPv4ForceFragmentForSAMOverlay(t *testing.T) {
 		"add table ip routerd_forcefrag",
 		"flush table ip routerd_forcefrag",
 		"table ip routerd_forcefrag",
-		`iifname "ens3" oifname "wg-hybrid" ip length > 1340 ip frag-off 0x4000 ip frag-off set 0`,
+		`type filter hook prerouting priority mangle; policy accept;`,
+		`iifname "ens3" fib daddr oifname "wg-hybrid" ip length > 1340 ip frag-off 0x4000 ip frag-off set 0`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("forcefrag output missing %q:\n%s", want, got)
@@ -888,7 +889,7 @@ func TestNftablesIPv4ForceFragmentCanFollowTunnelInterfaceOption(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render forcefrag: %v", err)
 	}
-	want := `iifname "ens3" oifname "tun-gre" ip length > 1476 ip frag-off 0x4000 ip frag-off set 0`
+	want := `iifname "ens3" fib daddr oifname "tun-gre" ip length > 1476 ip frag-off 0x4000 ip frag-off set 0`
 	if !strings.Contains(string(data), want) {
 		t.Fatalf("forcefrag output missing tunnel option rule %q:\n%s", want, string(data))
 	}
