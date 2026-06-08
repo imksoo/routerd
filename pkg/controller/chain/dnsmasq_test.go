@@ -5,6 +5,7 @@ package chain
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -911,6 +912,69 @@ func TestLinkControllerPublishesInterfaceStatus(t *testing.T) {
 	iface := store.ObjectStatus(api.NetAPIVersion, "Interface", "lo")
 	if iface["ifname"] != "lo" {
 		t.Fatalf("interface status = %#v", iface)
+	}
+}
+
+func TestLinkControllerEnsuresManagedAdminUp(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "svnet1"}, Spec: api.InterfaceSpec{IfName: "eth1", Managed: true, Owner: "routerd", AdminUp: true}},
+	}}}
+	store := mapStore{}
+	var commands []string
+	lookupCount := 0
+	controller := LinkController{
+		Router: router,
+		Store:  store,
+		Command: func(_ context.Context, name string, args ...string) error {
+			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
+			return nil
+		},
+		Lookup: func(name string) (*net.Interface, error) {
+			lookupCount++
+			if name != "eth1" {
+				t.Fatalf("lookup name = %q", name)
+			}
+			flags := net.Flags(0)
+			if lookupCount > 1 {
+				flags = net.FlagUp
+			}
+			return &net.Interface{Name: name, Index: 3, Flags: flags}, nil
+		},
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.Join(commands, "\n"), "ip link set dev eth1 up"; got != want {
+		t.Fatalf("commands = %q, want %q", got, want)
+	}
+	iface := store.ObjectStatus(api.NetAPIVersion, "Interface", "svnet1")
+	if iface["phase"] != "Up" {
+		t.Fatalf("interface status = %#v", iface)
+	}
+}
+
+func TestLinkControllerDoesNotManageExternalAdminUp(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "mgmt"}, Spec: api.InterfaceSpec{IfName: "eth0", Managed: false, Owner: "external", AdminUp: true}},
+	}}}
+	store := mapStore{}
+	var commands []string
+	controller := LinkController{
+		Router: router,
+		Store:  store,
+		Command: func(_ context.Context, name string, args ...string) error {
+			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
+			return nil
+		},
+		Lookup: func(name string) (*net.Interface, error) {
+			return &net.Interface{Name: name, Index: 2}, nil
+		},
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if len(commands) != 0 {
+		t.Fatalf("external interface should not be changed, commands = %#v", commands)
 	}
 }
 

@@ -2140,13 +2140,14 @@ type LANAddressController struct {
 }
 
 type LinkController struct {
-	Router *api.Router
-	Store  Store
-	Logger *slog.Logger
+	Router  *api.Router
+	Store   Store
+	Logger  *slog.Logger
+	Command func(context.Context, string, ...string) error
+	Lookup  func(string) (*net.Interface, error)
 }
 
 func (c LinkController) Reconcile(ctx context.Context) error {
-	_ = ctx
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.Kind != "Interface" {
 			continue
@@ -2163,7 +2164,20 @@ func (c LinkController) Reconcile(ctx context.Context) error {
 		}
 		if ifname == "" {
 			status["reason"] = "IfNameMissing"
-		} else if ifi, err := net.InterfaceByName(ifname); err == nil {
+		} else if ifi, err := c.lookupInterface(ifname); err == nil {
+			if shouldEnsureInterfaceAdminUp(spec, ifi) {
+				if err := c.ensureAdminUp(ctx, ifname); err != nil {
+					status["reason"] = "AdminUpFailed"
+					status["error"] = err.Error()
+					if saveErr := c.Store.SaveObjectStatus(api.NetAPIVersion, "Interface", resource.Metadata.Name, status); saveErr != nil {
+						return saveErr
+					}
+					return fmt.Errorf("Interface/%s adminUp failed for %s: %w", resource.Metadata.Name, ifname, err)
+				}
+				if refreshed, refreshErr := c.lookupInterface(ifname); refreshErr == nil {
+					ifi = refreshed
+				}
+			}
 			status["index"] = ifi.Index
 			status["flags"] = ifi.Flags.String()
 			addresses, ipv4, ipv6 := interfaceStatusAddresses(ifi)
@@ -2190,6 +2204,28 @@ func (c LinkController) Reconcile(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func (c LinkController) lookupInterface(ifname string) (*net.Interface, error) {
+	if c.Lookup != nil {
+		return c.Lookup(ifname)
+	}
+	return net.InterfaceByName(ifname)
+}
+
+func (c LinkController) ensureAdminUp(ctx context.Context, ifname string) error {
+	command := c.Command
+	if command == nil {
+		command = runCommandContext
+	}
+	return command(ctx, "ip", "link", "set", "dev", ifname, "up")
+}
+
+func shouldEnsureInterfaceAdminUp(spec api.InterfaceSpec, ifi *net.Interface) bool {
+	if ifi == nil || ifi.Flags&net.FlagUp != 0 {
+		return false
+	}
+	return spec.Managed && spec.Owner != "external" && spec.AdminUp
 }
 
 func interfaceStatusAddresses(ifi *net.Interface) ([]string, []string, []string) {

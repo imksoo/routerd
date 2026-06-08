@@ -51,8 +51,9 @@ func TestDoctorReconcileAggregatesErrorsWithinSince(t *testing.T) {
 	withReconcileStub(t, controllers, nil)
 
 	var out bytes.Buffer
-	if err := run([]string{"doctor", "reconcile", "--config", configPath, "--state-file", statePath, "--no-host", "--since", "1h", "-o", "json"}, &out, &bytes.Buffer{}); err != nil {
-		t.Fatalf("doctor reconcile: %v\n%s", err, out.String())
+	err := run([]string{"doctor", "reconcile", "--config", configPath, "--state-file", statePath, "--no-host", "--since", "1h", "-o", "json"}, &out, &bytes.Buffer{})
+	if err == nil {
+		t.Fatalf("doctor reconcile should fail while a controller has a current error:\n%s", out.String())
 	}
 	var report doctorReport
 	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
@@ -71,8 +72,8 @@ func TestDoctorReconcileAggregatesErrorsWithinSince(t *testing.T) {
 	if !strings.Contains(check.Detail, "current failures=1") {
 		t.Fatalf("detail missing current failure count: %q", check.Detail)
 	}
-	if check.Status != doctorWarn {
-		t.Fatalf("status = %q, want warn", check.Status)
+	if check.Status != doctorFail {
+		t.Fatalf("status = %q, want fail", check.Status)
 	}
 	if !strings.Contains(check.Detail, "recent timeout") || !strings.Contains(check.Detail, "peer down") {
 		t.Fatalf("sample errors missing: %q", check.Detail)
@@ -125,25 +126,25 @@ func TestDoctorReconcileSkipsOnFetchError(t *testing.T) {
 	}
 }
 
-func TestDoctorReconcileFailsAboveThreshold(t *testing.T) {
+func TestDoctorReconcileHistoricalErrorsWarnAboveThreshold(t *testing.T) {
 	configPath, statePath := writeDoctorFixture(t)
 	now := time.Now().UTC()
-	history := make([]controlapi.ReconcileErrorEntry, 0, doctorReconcileFailThreshold)
-	for i := 0; i < doctorReconcileFailThreshold; i++ {
+	history := make([]controlapi.ReconcileErrorEntry, 0, 10)
+	for i := 0; i < 10; i++ {
 		history = append(history, controlapi.ReconcileErrorEntry{CompletedAt: now.Add(-time.Duration(i) * time.Minute), Error: "boom"})
 	}
 	withReconcileStub(t, []controlapi.ControllerStatus{{Name: "dns", ReconcileErrorHistory: history}}, nil)
 
 	var out, errOut bytes.Buffer
 	err := run([]string{"doctor", "reconcile", "--config", configPath, "--state-file", statePath, "--no-host", "-o", "json"}, &out, &errOut)
-	if err == nil {
-		t.Fatalf("expected doctor to error on fail, got nil; output=%s", out.String())
+	if err != nil {
+		t.Fatalf("historical reconcile errors should warn, not fail: %v\n%s", err, out.String())
 	}
 	var report doctorReport
 	if jsonErr := json.Unmarshal(out.Bytes(), &report); jsonErr != nil {
 		t.Fatalf("decode: %v\n%s", jsonErr, out.String())
 	}
-	if len(report.Checks) != 1 || report.Checks[0].Status != doctorFail {
-		t.Fatalf("expected fail, got %#v", report.Checks)
+	if len(report.Checks) != 1 || report.Checks[0].Status != doctorWarn {
+		t.Fatalf("expected warn, got %#v", report.Checks)
 	}
 }

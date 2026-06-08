@@ -67,11 +67,11 @@ type doctorRunner struct {
 
 var doctorAreas = []string{"wan", "dns", "dslite", "dhcpv6-pd", "nat", "firewall", "rollback", "disk", "mgmt", "reconcile", "runtime", "dynamic", "plugin", "hybrid"}
 
-// doctorReconcileWarnThreshold and doctorReconcileFailThreshold are total error
-// counts (across all controllers) that promote the reconcile area to warn/fail.
+// doctorReconcileWarnThreshold is the total historical error count (across all
+// controllers) that promotes the reconcile area to warn. Current controller
+// failures promote the check to fail.
 const (
 	doctorReconcileWarnThreshold = 1
-	doctorReconcileFailThreshold = 10
 )
 
 // reconcileStatusFetcher allows tests to stub the controllers fetch.
@@ -1272,12 +1272,9 @@ func (r doctorRunner) doctorReconcile() []doctorCheck {
 	}
 	status := doctorPass
 	switch {
-	case totalErrors >= doctorReconcileFailThreshold:
+	case currentlyFailing > 0:
 		status = doctorFail
 	case totalErrors >= doctorReconcileWarnThreshold:
-		status = doctorWarn
-	}
-	if currentlyFailing > 0 && status == doctorPass {
 		status = doctorWarn
 	}
 	detail := fmt.Sprintf("%d reconcile errors in %s across %d controllers (current failures=%d, controllers=%d)", totalErrors, window, affectedControllers, currentlyFailing, len(controllers))
