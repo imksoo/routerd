@@ -12,67 +12,27 @@ routerd は `vYYYYMMDD.HHmm` 形式で頻繁にリリースしますが、その
 
 | 項目 | 内容 |
 | --- | --- |
-| バージョン | **v20260608.0642** |
-| 位置づけ | 推奨安定版（v20260528.2308 を置き換え。ADR 0014 による CLI 体系の再設計 — `routerd` をデーモン専任、`routerctl` を管理 CLI に分離。OpenRC 管理の信頼性向上、DNS リゾルバの VRRP VIP 待ち受け対応、forcefrag の prerouting 移動、BGP peer watch の安定化） |
-| 稼働実績 | lab 環境（router06/router07/k8s-rt-01/k8s-rt-02）と本番ルーター（homert02）で検証済み。Cloud VM テスト（lab + k8s）全 PASS。12 の issue を解消し 12 の PR をマージ |
+| バージョン | **v20260608.1354** |
+| 位置づけ | 推奨安定版（v20260608.0642 を置き換え。pair-stable SAM transport addressing — `addressingMode: pair-stable` によるコンパクトな leaf-spine 設定記述） |
+| 稼働実績 | lab 環境（7 compact config 検証済み）、k8s クラスタ（10 ノード: 2 RR + 8 leaf、全 BGP Established、FIB 正常、connectivity pass）、本番ルーター（homert02、影響なし）で検証済み。不具合 0 件 |
 | バイナリ | 静的リンク（`CGO_ENABLED=0`）、CI と Release ワークフローをすべて通過 |
 
-## v20260608.0642 を推奨する理由
+## v20260608.1354 を推奨する理由
 
-この版は v20260528.2308 のすべての本番安全特性を継承した上で、**CLI 体系の再設計**（ADR 0014）と **OpenRC / init スクリプトの信頼性向上**を中心に 40 コミットの改善を加えています。
+この版は v20260608.0642 のすべての特性を継承した上で、**pair-stable SAM transport addressing** を追加しています。
 
-### ADR 0014 — CLI 体系の再設計
+### Pair-stable addressing（#330, #331）
 
-routerd の CLI を「デーモン」と「管理ツール」に明確に分離しました。
+`SAMTransportProfile` に `spec.addressingMode: pair-stable` が追加されました。inner prefix と canonical peer key の fnv64a ハッシュを用いた決定的な /31 スロット割り当てアルゴリズムです。
 
-- **`routerd`** はデーモン専任。唯一のサブコマンドは `routerd serve`。
-- **`routerctl`** が管理 CLI。`validate` / `plan` / `apply` / `doctor` / `get` / `describe` / `status` / `ledger` / `dns-queries` / `traffic-flows` などのすべての管理操作を担います。
-- 旧来の `routerd apply` / `routerd validate` / `routerd run` などは廃止。`--once` フラグも撤廃しました。
-- ドキュメントとスクリプトのコマンド参照をすべて新しい verb 体系に更新しました（#254–#262）。
+- **コンパクトな設定記述。** leaf ノードで `topologyNodeRefs` が不要になり、ノードごとのトポロジ宣言の繰り返しを排除。svnet1 設定で約 100 行削減。
+- **トポロジ変更に対する安定性。** ノードの追加・削除で既存ピアのアドレスが再割り当てされません（ソート順に依存する `edge-index` との違い）。
+- **後方互換。** 既存の `edge-index`（デフォルト）設定はそのまま動作。
+- **衝突検出。** `routerd validate` / `routerctl validate` で /31 スロットのハッシュ衝突を設定時に検出。
 
-### OpenRC / init スクリプトの信頼性向上
+### v20260608.0642 からの継承事項
 
-FreeBSD および OpenRC 環境での init スクリプト管理に 6 件の修正を適用しました。
-
-- **OpenRC DNS リゾルバの二重管理を解消**（#306）— 以前は `routerd serve` と OpenRC の両方が DNS リゾルバを管理しようとし、二重起動が発生していました。
-- **OpenRC アップグレード時に古い `routerd serve` を停止**（#311, #313）— アップグレード中に旧プロセスが残存する問題を修正。
-- **OpenRC で managed helper を再起動時に掃除**（#315）— orphan helper プロセスの蓄積を防止。
-- **DNS リゾルバの helper supervision**（#283）— OpenRC が DNS リゾルバの helper プロセスを正しく監視・起動するようにしました。
-- **残留 helper の更新**（#280）と **OpenRC 再起動の nodeps 化**（#278）— アップグレード時のサービス依存関係の問題を解消。
-
-### ネットワーク機能の改善
-
-- **DNS リゾルバが VRRP VIP で待ち受け可能に**（#319）— `IP_FREEBIND` / `IPV6_FREEBIND` ソケットオプションにより、まだ割り当てられていない VIP アドレスでもリスナーを開始できます。VRRP backup ノードで DNS サービスを事前に起動できるようになりました。
-- **forcefrag の DF クリアを prerouting フックに移動**（#328）— 従来 forward フックで `oifname` を使っていましたが、prerouting では出力インターフェースが未確定のため `fib daddr oifname` でルーティングテーブルを参照する方式に変更。MSS clamp が正しく動作しない場合がありましたが、これで解消しました。
-- **BGP peer watch の不要更新を抑止**（#329）— `desiredPeerMatches()` が `reflect.DeepEqual` を使っていたため、`dynamicExportPrefixes` の変化や GracefulRestart の書式差異（`"2m"` vs `"120s"`）で毎回 `UpdatePeer` が走っていました。安定比較関数 `stableDesiredPeerEqual` を導入し、semantically 同一の設定では更新を抑止します。
-- **`routerd serve` が起動時に loopback を有効化**（#321）— Live ISO やコンテナ環境で `lo` が down のままの場合に自動で `ip link set lo up` を実行します。
-
-### インストーラーの改善
-
-- **bootstrap installer が一時ディレクトリを確実にクリーンアップ**（#324）— `exec sh ./install.sh` だと EXIT トラップが発火しない問題を修正。
-- **installer の apply state 警告を修正**（#327）— `routerctl get status` の出力形式を `-o json` に変更し、`lastApplyTime` の判定を正確にしました。
-- **BGP peer state の watch による status 即時更新**（#304）— BGP セッション状態の変化を即時に status に反映。
-- **VRRP が inactive の keepalived を再起動**（#299）— VRRP のフェイルオーバーが正しく動作しないケースに対応。
-
-### ドキュメント
-
-- **日本語正本翻訳 37 記事、中国語翻訳 80 記事を追加**（#322）— ADR / explainer / how-to / ops / reference / releases / evidence / slides の全カテゴリで日本語を正本として整備し、zh-Hans / zh-Hant に翻訳しました。
-- **全ドキュメントダイアグラムを gpt-image-2 で再生成**（#261）— 統一的なビジュアルスタイルに更新。
-
-### v20260528.2308 からの継承事項
-
-v20260528.2308 の本番安全特性はすべて継承しています。
-
-- fd 漏洩修正（#39 SQLite ledger、#40 Unix socket / BGP gobgp client）
-- heap 漏洩修正（OTel instrument singleton、bounded reverse DNS cache）
-- `routerctl doctor runtime` によるリソース継続監視
-- BGP セッションの routerd アップグレード跨ぎ
-- `doctor dslite` の selectedSource 整合
-- ゲートウェイ健全性の独立画面
-- `install.sh` の即時失敗（ペイロード欠落検出）
-- シークレット伏字化
-- `ManagementAccess` 適用ガード
-- 機械可読 `routerctl doctor`（`-o json`）
+v20260608.0642 の全特性を継承: ADR 0014 CLI 再設計、OpenRC 信頼性向上、DNS VRRP VIP 対応、forcefrag prerouting 修正、BGP peer watch 安定化、およびそれ以前の全本番安全修正。
 
 ## 既知の観測（リリースを止めない事項）
 

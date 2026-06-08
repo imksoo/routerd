@@ -14,6 +14,16 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 (No unreleased changes.)
 
+## v20260608.1354
+
+### Added
+
+- `SAMTransportProfile` pair-stable addressing mode
+  (`spec.addressingMode: pair-stable`). Uses fnv64a hash of inner
+  prefix and canonical peer key for /31 slot allocation, making
+  addresses stable across node additions. Leaf nodes no longer require
+  `topologyNodeRefs`; existing `edge-index` mode is unchanged (#330, #331).
+
 ## v20260608.0642
 
 ### Added

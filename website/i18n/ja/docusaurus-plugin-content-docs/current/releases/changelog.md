@@ -13,6 +13,16 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 （未リリースの変更はありません。）
 
+## v20260608.1354
+
+### 追加
+
+- `SAMTransportProfile` に pair-stable addressing mode を追加
+  （`spec.addressingMode: pair-stable`）。inner prefix と canonical peer key の
+  fnv64a ハッシュで /31 スロットを決定的に割り当て、ノード追加時にも既存ピアの
+  アドレスが安定します。leaf ノードでは `topologyNodeRefs` が不要になります。
+  既存の `edge-index` モードは変更なし（#330, #331）。
+
 ## v20260608.0642
 
 ### 追加

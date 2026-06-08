@@ -13,6 +13,15 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 （無未發布的變更。）
 
+## v20260608.1354
+
+### 新增
+
+- `SAMTransportProfile` 新增 pair-stable addressing mode
+  （`spec.addressingMode: pair-stable`）。使用 inner prefix 和 canonical peer key
+  的 fnv64a 雜湊確定性分配 /31 slot，節點增減時現有 peer 的位址保持穩定。
+  leaf 節點不再需要 `topologyNodeRefs`。現有 `edge-index` 模式不受影響（#330, #331）。
+
 ## v20260608.0642
 
 ### 新增
