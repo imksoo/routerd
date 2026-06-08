@@ -469,6 +469,93 @@ command_args="serve"
 	}
 }
 
+func TestInstallOpenRCDryRunDetectsStaleRouterdServe(t *testing.T) {
+	dir := t.TempDir()
+	pkg := filepath.Join(dir, "package")
+	prefix := filepath.Join(dir, "prefix")
+	initDir := filepath.Join(dir, "init.d")
+	binDir := filepath.Join(dir, "bin")
+	procDir := filepath.Join(dir, "proc")
+	runDir := filepath.Join(dir, "run", "routerd")
+	commandLog := filepath.Join(dir, "commands.log")
+	writeExecutable(t, filepath.Join(pkg, "bin", "routerd"), `#!/bin/sh
+if [ "$1" = "--version" ]; then echo routerd-new; exit 0; fi
+exit 0
+`)
+	writeExecutable(t, filepath.Join(prefix, "sbin", "routerd"), `#!/bin/sh
+if [ "$1" = "--version" ]; then echo routerd-old; exit 0; fi
+exit 0
+`)
+	writeExecutable(t, filepath.Join(binDir, "rc-service"), fmt.Sprintf(`#!/bin/sh
+echo "rc-service $@" >> %q
+if [ "$1" = "routerd" ] && [ "$2" = "status" ]; then exit 0; fi
+if [ "$1" = "--nodeps" ] && [ "$2" = "routerd" ] && [ "$3" = "restart" ]; then exit 0; fi
+exit 0
+`, commandLog))
+	if err := os.MkdirAll(filepath.Join(pkg, "openrc"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pkg, "openrc", "routerd"), []byte(`#!/sbin/openrc-run
+name="routerd"
+command="/usr/local/sbin/routerd"
+command_args="serve --config /usr/local/etc/routerd/router.yaml"
+`), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runDir, "routerd.pid"), []byte("4567\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for pid, tc := range map[string]struct {
+		exe     string
+		cmdline string
+	}{
+		"2345": {
+			exe:     filepath.Join(prefix, "sbin", "routerd") + " (deleted)",
+			cmdline: filepath.Join(prefix, "sbin", "routerd") + "\x00serve\x00",
+		},
+		"4567": {
+			exe:     filepath.Join(prefix, "sbin", "routerd") + " (deleted)",
+			cmdline: filepath.Join(prefix, "sbin", "routerd") + "\x00serve\x00--config\x00/usr/local/etc/routerd/router.yaml\x00",
+		},
+		"5678": {
+			exe:     filepath.Join(prefix, "sbin", "routerd-bgp") + " (deleted)",
+			cmdline: filepath.Join(prefix, "sbin", "routerd-bgp") + "\x00daemon\x00",
+		},
+	} {
+		pidDir := filepath.Join(procDir, pid)
+		if err := os.MkdirAll(pidDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(tc.exe, filepath.Join(pidDir, "exe")); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(pidDir, "cmdline"), []byte(tc.cmdline), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	out, err := runInstallWithEnv(t, pkg, prefix, []string{
+		"PATH=" + binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+		"ROUTERD_INSTALL_FORCE_SERVICE_MANAGER=1",
+		"ROUTERD_INSTALL_OPENRC_INIT_DIR=" + initDir,
+		"ROUTERD_INSTALL_PROC_DIR=" + procDir,
+		"ROUTERD_INSTALL_RUN_DIR=" + runDir,
+	}, "--no-install-deps", "--no-config-update", "--dry-run")
+	if err != nil {
+		t.Fatalf("install dry-run failed: %v\n%s", err, out)
+	}
+	want := "dry-run: kill stale OpenRC routerd serve pid 2345 (" + filepath.Join(prefix, "sbin", "routerd") + ")"
+	if !strings.Contains(out, want) {
+		t.Fatalf("stale routerd serve was not detected, want %q:\n%s", want, out)
+	}
+	if strings.Contains(out, "pid 4567") {
+		t.Fatalf("current routerd service pid was selected:\n%s", out)
+	}
+}
+
 func TestInstallDryRunCreatesRouterdGroupBeforeSystemdUnit(t *testing.T) {
 	dir := t.TempDir()
 	pkg := filepath.Join(dir, "package")
