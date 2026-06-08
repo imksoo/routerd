@@ -156,6 +156,9 @@ func OpenRCWithOptions(router *api.Router, options OpenRCOptions) (OpenRCConfig,
 		if res.Kind != "DNSResolver" {
 			continue
 		}
+		if openRCRouterdSupervisesClientDaemons(router) {
+			continue
+		}
 		spec, err := res.DNSResolverSpec()
 		if err != nil {
 			return OpenRCConfig{}, err

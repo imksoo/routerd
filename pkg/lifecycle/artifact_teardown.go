@@ -120,6 +120,17 @@ var artifactTeardowns = []ArtifactTeardown{
 		Teardown: cleanupSystemdServiceArtifact,
 	},
 	{
+		Kind:     "openrc.service",
+		Priority: 10,
+		Eligible: func(artifact resource.Artifact) bool {
+			return strings.HasPrefix(artifact.Name, "routerd_")
+		},
+		Remediation: func(artifact resource.Artifact) string {
+			return "disable and stop OpenRC service " + artifact.Name
+		},
+		Teardown: cleanupOpenRCServiceArtifact,
+	},
+	{
 		Kind:     "file",
 		Priority: 20,
 		Eligible: IsPPPoEPeerFileArtifact,
@@ -255,6 +266,24 @@ func cleanupSystemdServiceArtifact(exec ArtifactTeardownExecutor, artifact resou
 		return "", err
 	}
 	if err := exec.Run("systemctl", "daemon-reload"); err != nil {
+		return "", err
+	}
+	return artifact.Kind + "/" + artifact.Name, nil
+}
+
+func cleanupOpenRCServiceArtifact(exec ArtifactTeardownExecutor, artifact resource.Artifact) (string, error) {
+	if exec == nil {
+		return "", nil
+	}
+	if !exec.Features().HasOpenRC {
+		return "", nil
+	}
+	if !strings.HasPrefix(artifact.Name, "routerd_") {
+		return "", nil
+	}
+	_ = exec.Run("rc-service", artifact.Name, "stop")
+	_ = exec.Run("rc-update", "del", artifact.Name, "default")
+	if err := exec.Remove("/etc/init.d/" + artifact.Name); err != nil {
 		return "", err
 	}
 	return artifact.Kind + "/" + artifact.Name, nil

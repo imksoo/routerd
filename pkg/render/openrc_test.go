@@ -145,10 +145,9 @@ func TestOpenRCRenderSynthesizesHelperDaemons(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, want := range map[string]string{
-		"routerd":                  "'/usr/local/sbin/routerd'",
-		"routerd_dns_resolver_lan": "'/usr/local/sbin/routerd-dns-resolver'",
-		"routerd_firewall_logger":  "'/usr/local/sbin/routerd-firewall-logger'",
-		"routerd_tailscale_edge":   "'/usr/bin/tailscale'",
+		"routerd":                 "'/usr/local/sbin/routerd'",
+		"routerd_firewall_logger": "'/usr/local/sbin/routerd-firewall-logger'",
+		"routerd_tailscale_edge":  "'/usr/bin/tailscale'",
 	} {
 		script := string(got.InitScripts[name])
 		if !strings.Contains(script, want) {
@@ -162,12 +161,15 @@ func TestOpenRCRenderSynthesizesHelperDaemons(t *testing.T) {
 	if strings.Contains(routerdScript, "'/usr/local/sbin/routerd' 'check'") {
 		t.Fatalf("routerd OpenRC script must not call removed routerd check verb:\n%s", routerdScript)
 	}
+	if _, ok := got.InitScripts["routerd_dns_resolver_lan"]; ok {
+		t.Fatalf("DNS resolver OpenRC service must not be rendered when routerd serve supervises DNSResolver helpers")
+	}
 	services := map[string]OpenRCService{}
 	for _, service := range got.Services {
 		services[service.Name] = service
 	}
-	if !services["routerd_dns_resolver_lan"].Enabled || !services["routerd_dns_resolver_lan"].Started {
-		t.Fatalf("DNS resolver OpenRC service should be enabled and started")
+	if _, ok := services["routerd_dns_resolver_lan"]; ok {
+		t.Fatalf("DNS resolver OpenRC service must not be enabled when routerd serve supervises DNSResolver helpers")
 	}
 }
 
