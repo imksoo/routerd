@@ -3,46 +3,30 @@
 import type {SidebarsConfig} from '@docusaurus/plugin-content-docs';
 
 // Information architecture (IA):
-// Modeled on commercial routers (NEC IX / Yamaha RTX), VyOS, and declarative
-// languages (Kubernetes/Terraform): Introduction -> Get started -> Concepts
-// (declarative model) -> Configuration reference (by feature) -> Configuration
-// examples -> How-to -> Operations -> Reference -> Releases -> Design.
-// Each document appears exactly once (no duplicates).
+// Goal-oriented labels. Each document appears exactly once (no duplicates).
+// Start / Learn / Build / examples / tutorials / how-to / KB / operate /
+// reference / releases / design / project.
 
 const sidebars: SidebarsConfig = {
   tutorialSidebar: [
     {
       type: 'category',
-      label: 'Introduction',
+      label: 'Start',
       collapsed: false,
       items: [
         'intro',
         'concepts/what-is-routerd',
         'concepts/positioning',
         'concepts/design-philosophy',
-      ],
-    },
-    {
-      type: 'category',
-      label: 'Get started',
-      collapsed: false,
-      items: [
         'install-and-upgrade',
         'tutorials/index',
         'tutorials/getting-started',
-        'tutorials/install',
         'tutorials/first-router',
-        'tutorials/wan-side-services',
-        'tutorials/lan-side-services',
-        'tutorials/basic-firewall',
-        'tutorials/nixos-getting-started',
-        'tutorials/freebsd-getting-started',
-        'tutorials/diskless-minipc-walkthrough',
       ],
     },
     {
       type: 'category',
-      label: 'Concepts (declarative model)',
+      label: 'Learn',
       collapsed: false,
       items: [
         'concepts/glossary',
@@ -57,8 +41,8 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
-      label: 'Configuration reference',
-      collapsed: false,
+      label: 'Build',
+      collapsed: true,
       items: [
         {
           type: 'category',
@@ -101,6 +85,20 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
+      label: 'Tutorials',
+      collapsed: true,
+      items: [
+        'tutorials/wan-side-services',
+        'tutorials/lan-side-services',
+        'tutorials/basic-firewall',
+        'tutorials/nixos-getting-started',
+        'tutorials/freebsd-getting-started',
+        'tutorials/diskless-minipc-walkthrough',
+        'tutorials/install',
+      ],
+    },
+    {
+      type: 'category',
       label: 'How-to guides',
       collapsed: true,
       items: [
@@ -131,7 +129,7 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
-      label: 'Operations',
+      label: 'Operate',
       collapsed: true,
       items: [
         'operations/routerctl-doctor',
@@ -150,7 +148,7 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
-      label: 'Reference (API, protocol, platforms)',
+      label: 'Reference',
       collapsed: true,
       items: [
         'api-v1alpha1',
@@ -164,7 +162,7 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
-      label: 'Releases & stable',
+      label: 'Releases',
       collapsed: false,
       items: [
         'releases/stable',

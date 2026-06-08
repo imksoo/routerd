@@ -43,3 +43,10 @@ For a new deployment, start from the recommended stable milestone **v20260528.23
 - **Operations** — reconcile and removal, state database, host inventory
 - **Design notes** — open architectural questions and design rationales
 - **Releases** — changelog
+
+## Next steps
+
+- [Install routerd](./install-and-upgrade.md) — download the release archive and run `install.sh`
+- [Config wizard](https://routerd.net/wizard) — generate a starter configuration in the browser
+- [Resource model](./concepts/resource-model.md) — understand how routerd organizes router intent
+- [Getting started](./tutorials/getting-started.md) — the safe first loop: validate → plan → dry-run → serve

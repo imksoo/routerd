@@ -89,3 +89,9 @@ ready, the child should not keep publishing stale host state.
 This matters for delegated IPv6 networks. When DHCPv6-PD is lost, LAN IPv6
 addresses, RA, DNS records, and DS-Lite state that depend on that prefix should
 stop or become pending rather than continuing to advertise an old prefix.
+
+## Next steps
+
+- [Apply and render](./apply-and-render.md) — how validate, plan, dry-run, and serve use the resource graph
+- [State and ownership](./state-and-ownership.md) — how routerd tracks what it owns on the host
+- [Resource API reference](../api-v1alpha1.md) — full field reference for every resource kind

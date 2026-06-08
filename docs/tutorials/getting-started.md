@@ -116,3 +116,10 @@ routerctl connections --limit 50
 ```
 
 The next tutorials add LAN DHCP, RA, DNS, route policy, NAT44, and DS-Lite.
+
+## Next steps
+
+- [WAN-side services](./wan-side-services.md) — configure DHCPv6-PD, PPPoE, DS-Lite, or DHCPv4 WAN
+- [LAN-side services](./lan-side-services.md) — add DHCPv4 scopes, RA, DNS, and NTP
+- [Basic firewall](./basic-firewall.md) — enable three-role firewall zones
+- [routerctl doctor](../operations/routerctl-doctor.md) — check router health after applying
