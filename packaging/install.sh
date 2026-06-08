@@ -746,6 +746,68 @@ restart_stale_routerd_helper_systemd_units_after_upgrade()
     done
 }
 
+restart_stale_openrc_routerd_helpers_after_upgrade()
+{
+    [ "${mode}" = "upgrade" ] || return 0
+    [ "${restart_service}" -eq 1 ] || return 0
+    [ "${manage_host_service}" -eq 1 ] || return 0
+    is_openrc_host || return 0
+    proc_dir=${ROUTERD_INSTALL_PROC_DIR:-/proc}
+    [ -d "${proc_dir}" ] || return 0
+
+    found=0
+    for proc in "${proc_dir}"/[0-9]*; do
+        [ -d "${proc}" ] || continue
+        pid=$(basename "${proc}")
+        case "${pid}" in
+            ""|*[!0-9]*)
+                continue
+                ;;
+        esac
+        exe=$(readlink "${proc}/exe" 2>/dev/null || true)
+        case "${exe}" in
+            *" (deleted)")
+                deleted_target=${exe% (deleted)}
+                ;;
+            *)
+                continue
+                ;;
+        esac
+        case "${deleted_target}" in
+            "${bindir}"/routerd-*)
+                ;;
+            *)
+                continue
+                ;;
+        esac
+        found=1
+        if [ "${dry_run}" -eq 1 ]; then
+            echo "dry-run: kill stale OpenRC routerd helper pid ${pid} (${deleted_target})"
+            continue
+        fi
+        echo "restarting stale OpenRC routerd helper pid ${pid}: ${deleted_target}"
+        if kill -TERM "${pid}" 2>/dev/null; then
+            i=0
+            while [ "${i}" -lt 20 ] && [ -d "${proc}" ]; do
+                sleep 0.5
+                i=$((i + 1))
+            done
+            if [ -d "${proc}" ]; then
+                echo "warning: stale OpenRC routerd helper pid ${pid} did not stop after TERM; sending KILL" >&2
+                kill -KILL "${pid}" 2>/dev/null || true
+            fi
+        else
+            echo "warning: failed to signal stale OpenRC routerd helper pid ${pid}" >&2
+        fi
+    done
+    if [ "${found}" -eq 1 ] && [ "${dry_run}" -eq 0 ]; then
+        # routerd owns these helper daemons on OpenRC/Live ISO. Once the stale
+        # process exits, the supervisor loop recreates it from the newly
+        # installed binary when its socket disappears.
+        sleep 2
+    fi
+}
+
 detect_package_manager()
 {
     if [ -n "${ROUTERD_INSTALL_PACKAGE_MANAGER:-}" ]; then
@@ -2088,6 +2150,7 @@ case "${os}" in
                     fi
                 fi
             fi
+            restart_stale_openrc_routerd_helpers_after_upgrade
         fi
         ;;
     FreeBSD)
