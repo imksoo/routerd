@@ -209,6 +209,19 @@ profile が複数 peer を持つ場合は、同じ transport domain にいる全
 当てます。これにより、hub/spoke で各 router の local peer list が異なる場合でも
 両端は同じ edge を local/remote が反転した形で導出します。
 
+`SAMPeerGroup` は再利用する transport peer をまとめる resource です。
+`SAMTransportProfile.spec.peersFrom` には 1 つ以上の `SAMPeerGroup/<name>` 参照を
+指定できます。controller は reconcile 時に group の peer を先に追加し、その後に
+profile 直下の `spec.peers` を重ねます。同じ `nodeRef` が両方にある場合は
+`spec.peers` が優先されるため、leaf 側に静的 bootstrap 用 peer や local override
+を残せます。必須の `peersFrom` が未到着の場合、profile は `Pending` になります。
+`optional: true` の source は到着するまで無視されます。
+
+spine/RR 側の profile では `spec.publishPeerGroup: true` を指定できます。この場合
+routerd は profile の `selfNodeRef` と concrete local endpoint から `SAMPeerGroup`
+を生成し、DynamicConfigPart として publish します。`localEndpointFrom` は publish
+前に解決されるため、leaf には直接使える `remoteEndpoint` が配布されます。
+
 core router では `spec.bgp.routeReflectorClient` と
 `spec.bgp.routeReflectorClusterID` を設定できます。これらは生成される各
 `BGPPeer` にコピーされます。edge router では未指定のまま通常の iBGP session と

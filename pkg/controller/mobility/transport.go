@@ -42,10 +42,19 @@ type transportPeerStatus struct {
 type transportDerivation struct {
 	Resources      []api.Resource
 	Peers          []transportPeerStatus
+	PeersFrom      []transportPeersFromStatus
 	PendingSources []string
 	Tunnels        int
 	BGPPeers       int
 	EndpointRoutes int
+}
+
+type transportPeersFromStatus struct {
+	Resource  string `json:"resource"`
+	Optional  bool   `json:"optional,omitempty"`
+	Phase     string `json:"phase"`
+	PeerCount int    `json:"peerCount,omitempty"`
+	Reason    string `json:"reason,omitempty"`
 }
 
 func (c TransportController) Reconcile(_ context.Context) error {
@@ -72,6 +81,28 @@ func (c TransportController) Reconcile(_ context.Context) error {
 		}
 		source := TransportDynamicSource(res.Metadata.Name, spec.SelfNodeRef)
 		desiredSources[source] = true
+		peerGroupStatus := map[string]any{"phase": "Disabled"}
+		if spec.PublishPeerGroup {
+			peerGroupSource := TransportPeerGroupDynamicSource(res.Metadata.Name)
+			desiredSources[peerGroupSource] = true
+			status, err := c.upsertTransportPeerGroupPart(res, spec, peerGroupSource, now)
+			if err != nil {
+				if upsertErr := c.upsertTransportPart(res, source, nil, now); upsertErr != nil {
+					return upsertErr
+				}
+				_ = c.saveTransportStatus(res.Metadata.Name, map[string]any{
+					"phase":          "Degraded",
+					"reason":         err.Error(),
+					"selfNode":       strings.TrimSpace(spec.SelfNodeRef),
+					"addressingMode": strings.TrimSpace(spec.AddressingMode),
+					"dynamicSource":  source,
+					"peerGroup":      status,
+					"updatedAt":      now.Format(time.RFC3339Nano),
+				})
+				continue
+			}
+			peerGroupStatus = status
+		}
 		derived, err := c.deriveTransportResources(res, spec)
 		if err != nil {
 			if upsertErr := c.upsertTransportPart(res, source, nil, now); upsertErr != nil {
@@ -83,6 +114,7 @@ func (c TransportController) Reconcile(_ context.Context) error {
 				"selfNode":       strings.TrimSpace(spec.SelfNodeRef),
 				"addressingMode": strings.TrimSpace(spec.AddressingMode),
 				"dynamicSource":  source,
+				"peerGroup":      peerGroupStatus,
 				"updatedAt":      now.Format(time.RFC3339Nano),
 			})
 			continue
@@ -105,6 +137,8 @@ func (c TransportController) Reconcile(_ context.Context) error {
 			"generatedEndpointRoutes": derived.EndpointRoutes,
 			"pendingSources":          derived.PendingSources,
 			"peers":                   transportPeerStatusMaps(derived.Peers),
+			"peersFrom":               transportPeersFromStatusMaps(derived.PeersFrom),
+			"peerGroup":               peerGroupStatus,
 			"updatedAt":               now.Format(time.RFC3339Nano),
 		})
 	}
@@ -118,11 +152,22 @@ func (c TransportController) deriveTransportResources(owner api.Resource, spec a
 		return transportDerivation{}, err
 	}
 	inner = inner.Masked()
+	peers, peerSources, pendingSources, err := c.resolveTransportPeers(owner, spec)
+	if err != nil {
+		return transportDerivation{}, err
+	}
+	spec.Peers = peers
+	if len(spec.Peers) == 0 {
+		return transportDerivation{PeersFrom: peerSources, PendingSources: pendingSources}, nil
+	}
 	edgeIndex, err := transportAddressSlots(spec, inner)
 	if err != nil {
 		return transportDerivation{}, err
 	}
-	var out transportDerivation
+	out := transportDerivation{
+		PeersFrom:      peerSources,
+		PendingSources: append([]string(nil), pendingSources...),
+	}
 	for _, peer := range spec.Peers {
 		peerNode := strings.TrimSpace(peer.NodeRef)
 		if peerNode == "" || peerNode == self {
@@ -212,6 +257,77 @@ func (c TransportController) deriveTransportResources(owner api.Resource, spec a
 	}
 	sort.Strings(out.PendingSources)
 	return out, nil
+}
+
+func (c TransportController) resolveTransportPeers(_ api.Resource, spec api.SAMTransportProfileSpec) ([]api.SAMTransportPeerSpec, []transportPeersFromStatus, []string, error) {
+	peers := []api.SAMTransportPeerSpec{}
+	indexByNode := map[string]int{}
+	statuses := make([]transportPeersFromStatus, 0, len(spec.PeersFrom))
+	pending := []string{}
+	addPeer := func(peer api.SAMTransportPeerSpec) {
+		nodeRef := strings.TrimSpace(peer.NodeRef)
+		if existing, ok := indexByNode[nodeRef]; ok {
+			peers[existing] = peer
+			return
+		}
+		indexByNode[nodeRef] = len(peers)
+		peers = append(peers, peer)
+	}
+	for _, source := range spec.PeersFrom {
+		ref := strings.TrimSpace(source.Resource)
+		status := transportPeersFromStatus{
+			Resource: ref,
+			Optional: source.Optional,
+			Phase:    "Resolved",
+		}
+		group, found, err := c.samPeerGroup(ref)
+		if err != nil {
+			status.Phase = "Invalid"
+			status.Reason = err.Error()
+			statuses = append(statuses, status)
+			return nil, statuses, pending, err
+		}
+		if !found {
+			status.Phase = "Missing"
+			status.Reason = "SAMPeerGroup not found"
+			statuses = append(statuses, status)
+			if !source.Optional {
+				pending = append(pending, ref)
+			}
+			continue
+		}
+		status.PeerCount = len(group.Peers)
+		for _, peer := range group.Peers {
+			addPeer(peer)
+		}
+		statuses = append(statuses, status)
+	}
+	for _, peer := range spec.Peers {
+		addPeer(peer)
+	}
+	sort.Strings(pending)
+	return peers, statuses, pending, nil
+}
+
+func (c TransportController) samPeerGroup(ref string) (api.SAMPeerGroupSpec, bool, error) {
+	kind, name, ok := strings.Cut(strings.TrimSpace(ref), "/")
+	if !ok || kind != "SAMPeerGroup" || strings.TrimSpace(name) == "" {
+		return api.SAMPeerGroupSpec{}, false, fmt.Errorf("peersFrom resource must reference SAMPeerGroup/<name>")
+	}
+	if c.Router == nil {
+		return api.SAMPeerGroupSpec{}, false, nil
+	}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "SAMPeerGroup" || resource.Metadata.Name != strings.TrimSpace(name) {
+			continue
+		}
+		spec, err := resource.SAMPeerGroupSpec()
+		if err != nil {
+			return api.SAMPeerGroupSpec{}, true, fmt.Errorf("%s spec: %w", ref, err)
+		}
+		return spec, true, nil
+	}
+	return api.SAMPeerGroupSpec{}, false, nil
 }
 
 func transportAddressSlots(spec api.SAMTransportProfileSpec, inner netip.Prefix) (map[string]int, error) {
@@ -365,6 +481,102 @@ func (c TransportController) upsertTransportPart(owner api.Resource, source stri
 	return c.Store.UpsertDynamicConfigPart(record)
 }
 
+func (c TransportController) upsertTransportPeerGroupPart(owner api.Resource, spec api.SAMTransportProfileSpec, source string, now time.Time) (map[string]any, error) {
+	status := map[string]any{
+		"phase":  "Pending",
+		"source": source,
+	}
+	endpoint, pending, err := c.transportPeerGroupEndpoint(spec)
+	if err != nil {
+		status["phase"] = "Degraded"
+		status["reason"] = err.Error()
+		return status, err
+	}
+	resources := []api.Resource(nil)
+	if pending != "" {
+		status["pendingSource"] = pending
+	} else {
+		groupName := owner.Metadata.Name
+		resources = append(resources, api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMPeerGroup"},
+			Metadata: api.ObjectMeta{
+				Name: groupName,
+				OwnerRefs: []api.OwnerRef{{
+					APIVersion: api.MobilityAPIVersion,
+					Kind:       "SAMTransportProfile",
+					Name:       owner.Metadata.Name,
+				}},
+			},
+			Spec: api.SAMPeerGroupSpec{
+				Peers: []api.SAMTransportPeerSpec{{
+					NodeRef:        strings.TrimSpace(spec.SelfNodeRef),
+					RemoteEndpoint: endpoint,
+				}},
+			},
+		})
+		status["phase"] = "Published"
+		status["resource"] = "SAMPeerGroup/" + groupName
+		status["peerCount"] = 1
+	}
+	if err := c.upsertPeerGroupPart(owner, source, resources, now); err != nil {
+		status["phase"] = "Degraded"
+		status["reason"] = err.Error()
+		return status, err
+	}
+	return status, nil
+}
+
+func (c TransportController) transportPeerGroupEndpoint(spec api.SAMTransportProfileSpec) (string, string, error) {
+	if endpoint := strings.TrimSpace(spec.LocalEndpoint); endpoint != "" {
+		addr, err := endpointAddress(endpoint)
+		if err != nil {
+			return "", "", fmt.Errorf("publishPeerGroup localEndpoint %q: %w", endpoint, err)
+		}
+		return addr.String(), "", nil
+	}
+	if strings.TrimSpace(spec.LocalEndpointFrom.Resource) == "" {
+		return "", "localEndpoint", nil
+	}
+	value := resourcequery.Value(c.Store, spec.LocalEndpointFrom)
+	if strings.TrimSpace(value) == "" {
+		return "", spec.LocalEndpointFrom.Resource + "." + firstNonEmpty(strings.TrimSpace(spec.LocalEndpointFrom.Field), "phase"), nil
+	}
+	addr, err := endpointAddress(value)
+	if err != nil {
+		return "", "", fmt.Errorf("publishPeerGroup localEndpointFrom %s value %q: %w", spec.LocalEndpointFrom.Resource, value, err)
+	}
+	return addr.String(), "", nil
+}
+
+func (c TransportController) upsertPeerGroupPart(owner api.Resource, source string, resources []api.Resource, now time.Time) error {
+	part := dynamicconfig.DynamicConfigPart{
+		TypeMeta: api.TypeMeta{APIVersion: dynamicconfig.ConfigAPIVersion, Kind: "DynamicConfigPart"},
+		Metadata: api.ObjectMeta{
+			Name: safeName("sam-peer-group-" + owner.Metadata.Name),
+			OwnerRefs: []api.OwnerRef{{
+				APIVersion: api.MobilityAPIVersion,
+				Kind:       "SAMTransportProfile",
+				Name:       owner.Metadata.Name,
+			}},
+		},
+		Spec: dynamicconfig.DynamicConfigPartSpec{
+			Source:      source,
+			Generation:  dynamicGeneration,
+			ObservedAt:  now,
+			ExpiresAt:   now.Add(DefaultLeaseTTL),
+			Resources:   append([]api.Resource(nil), resources...),
+			Directives:  []dynamicconfig.DynamicConfigDirective{},
+			ActionPlans: []dynamicconfig.ActionPlan{},
+		},
+	}
+	part.Spec.Digest = digestDynamicPart(part)
+	record, err := dynamicPartRecord(part)
+	if err != nil {
+		return err
+	}
+	return c.Store.UpsertDynamicConfigPart(record)
+}
+
 func (c TransportController) deprovisionStaleTransportSources(desired map[string]bool, now time.Time) error {
 	parts, err := c.Store.ListDynamicConfigParts()
 	if err != nil {
@@ -376,6 +588,15 @@ func (c TransportController) deprovisionStaleTransportSources(desired map[string
 			continue
 		}
 		seen[part.Source] = true
+		if profile, ok := parseTransportPeerGroupSource(part.Source); ok {
+			if err := c.upsertPeerGroupPart(api.Resource{
+				TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMTransportProfile"},
+				Metadata: api.ObjectMeta{Name: firstNonEmpty(profile, "deleted-peer-group")},
+			}, part.Source, nil, now); err != nil {
+				return err
+			}
+			continue
+		}
 		profile, self := parseTransportSource(part.Source)
 		if err := c.upsertTransportPart(api.Resource{
 			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMTransportProfile"},
@@ -402,12 +623,24 @@ func TransportDynamicSource(profileName, selfNode string) string {
 	return samTransportSourceKind + "/" + strings.TrimSpace(profileName) + "/node/" + strings.TrimSpace(selfNode)
 }
 
+func TransportPeerGroupDynamicSource(profileName string) string {
+	return samTransportSourceKind + "/" + strings.TrimSpace(profileName) + "/peer-group"
+}
+
 func parseTransportSource(source string) (string, string) {
 	parts := strings.Split(strings.TrimSpace(source), "/")
 	if len(parts) >= 4 && parts[0] == samTransportSourceKind && parts[2] == "node" {
 		return parts[1], parts[3]
 	}
 	return "", ""
+}
+
+func parseTransportPeerGroupSource(source string) (string, bool) {
+	parts := strings.Split(strings.TrimSpace(source), "/")
+	if len(parts) == 3 && parts[0] == samTransportSourceKind && parts[2] == "peer-group" {
+		return parts[1], true
+	}
+	return "", false
 }
 
 func sortedEdgeKey(a, b string) string {
@@ -570,6 +803,27 @@ func transportPeerStatusMaps(peers []transportPeerStatus) []map[string]any {
 		}
 		if peer.RemoteEndpointFrom != "" {
 			m["remoteEndpointFrom"] = peer.RemoteEndpointFrom
+		}
+		out = append(out, m)
+	}
+	return out
+}
+
+func transportPeersFromStatusMaps(statuses []transportPeersFromStatus) []map[string]any {
+	out := make([]map[string]any, 0, len(statuses))
+	for _, status := range statuses {
+		m := map[string]any{
+			"resource": status.Resource,
+			"phase":    status.Phase,
+		}
+		if status.Optional {
+			m["optional"] = true
+		}
+		if status.PeerCount > 0 {
+			m["peerCount"] = status.PeerCount
+		}
+		if strings.TrimSpace(status.Reason) != "" {
+			m["reason"] = status.Reason
 		}
 		out = append(out, m)
 	}

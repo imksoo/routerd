@@ -145,6 +145,43 @@ func TestValidateSAMTransportProfileAllowsPairStableWithoutSharedTopology(t *tes
 	}
 }
 
+func TestValidateSAMTransportProfileAllowsPeersFromWithoutPeers(t *testing.T) {
+	spec := validSAMTransportProfileSpec()
+	spec.AddressingMode = "pair-stable"
+	spec.Peers = nil
+	spec.PeersFrom = []api.SAMTransportPeersSourceSpec{{Resource: "SAMPeerGroup/svnet1-rrs"}}
+	if err := Validate(samTransportProfileRouter(spec)); err != nil {
+		t.Fatalf("Validate peersFrom SAMTransportProfile: %v", err)
+	}
+}
+
+func TestValidateSAMTransportProfileRejectsInvalidPeersFrom(t *testing.T) {
+	spec := validSAMTransportProfileSpec()
+	spec.PeersFrom = []api.SAMTransportPeersSourceSpec{{Resource: "BGPPeer/rr"}}
+	err := Validate(samTransportProfileRouter(spec))
+	if err == nil || !strings.Contains(err.Error(), "spec.peersFrom[0].resource must reference SAMPeerGroup/<name>") {
+		t.Fatalf("Validate peersFrom error = %v, want SAMPeerGroup ref error", err)
+	}
+}
+
+func TestValidateSAMPeerGroup(t *testing.T) {
+	router := samPeerGroupRouter(api.SAMPeerGroupSpec{Peers: []api.SAMTransportPeerSpec{{
+		NodeRef:        "k8s-rt01",
+		RemoteEndpoint: "203.0.113.11",
+	}}})
+	if err := Validate(router); err != nil {
+		t.Fatalf("Validate SAMPeerGroup: %v", err)
+	}
+}
+
+func TestValidateSAMPeerGroupRejectsInvalidPeer(t *testing.T) {
+	router := samPeerGroupRouter(api.SAMPeerGroupSpec{Peers: []api.SAMTransportPeerSpec{{RemoteEndpoint: "203.0.113.11"}}})
+	err := Validate(router)
+	if err == nil || !strings.Contains(err.Error(), "spec.peers[0].nodeRef is required") {
+		t.Fatalf("Validate SAMPeerGroup error = %v, want nodeRef required", err)
+	}
+}
+
 func TestValidateSAMTransportProfileRejectsPairStableSlotCollision(t *testing.T) {
 	spec := validSAMTransportProfileSpec()
 	spec.AddressingMode = "pair-stable"
@@ -217,6 +254,18 @@ func samTransportProfileRouter(spec api.SAMTransportProfileSpec) *api.Router {
 				Spec:     spec,
 			},
 		}},
+	}
+}
+
+func samPeerGroupRouter(spec api.SAMPeerGroupSpec) *api.Router {
+	return &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMPeerGroup"},
+			Metadata: api.ObjectMeta{Name: "svnet1-rrs"},
+			Spec:     spec,
+		}}},
 	}
 }
 

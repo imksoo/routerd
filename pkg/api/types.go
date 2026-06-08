@@ -495,6 +495,12 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
 		r.Spec = spec
+	case "SAMPeerGroup":
+		var spec SAMPeerGroupSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
 	case "SAMTransportProfile":
 		var spec SAMTransportProfileSpec
 		if err := raw.Spec.Decode(&spec); err != nil {
