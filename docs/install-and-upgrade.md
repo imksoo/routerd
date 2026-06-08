@@ -77,38 +77,24 @@ access. Add an operator with `sudo usermod -aG routerd <user>` to allow
 
 `routerd-bgp` is a long-lived daemon that holds the BGP sessions. Restarting it
 drops those sessions; peers keep the old paths until their hold timers expire,
-so ECMP shrinks during that window. To keep an upgrade non-disruptive,
-`install.sh` does **not** auto-restart `routerd-bgp`, even without
-`--no-restart`. It updates the binaries, restarts `routerd.service`, and prints
-a note that `routerd-bgp` is still running the previous (in-memory) binary:
+so ECMP shrinks during that window. On systemd hosts, `install.sh` now refreshes
+active routerd helper services that still run a deleted pre-upgrade binary,
+including `routerd-bgp` and `routerd-dns-resolver` instances. This keeps the
+post-upgrade host from carrying stale executables under `/proc/*/exe`.
 
-```
-note: not auto-restarting routerd-bgp.service (running deleted binary ...)
-      restart it deliberately when ready: systemctl restart routerd-bgp
-```
+Expect BGP to reconverge after the installer restarts the helper. Do not restart
+`routerd-bgp` again while it is reconverging — a rapid second restart makes
+peers hold stale paths and collapses ECMP. Graceful restart protects a single
+restart only. Wait for reconvergence before judging (allow up to ~3–6 minutes;
+the BGP hold timer and graceful-restart stale-path timer drive this). Pass
+conditions: every peer back to `Established`, full-width ECMP for the affected
+prefixes, and end-to-end reachability (for example an HTTP 200 through the ECMP
+path).
 
-This is the expected steady state right after an upgrade: the control plane runs
-the new code while BGP stays up on the old `routerd-bgp` binary. Acceptance for
-the upgrade itself is that BGP sessions and ECMP are unchanged across it.
-
-To adopt the new `routerd-bgp` binary, restart it deliberately as a separate,
-planned step:
-
-1. Confirm a stable baseline first: all peers `Established` and ECMP at full
-   width (`routerctl show bgp`).
-2. `sudo systemctl restart routerd-bgp` **once**. Do not restart it again while
-   it is reconverging — a rapid second restart makes peers hold stale paths and
-   collapses ECMP. Graceful restart protects a single restart only.
-3. Wait for reconvergence before judging (allow up to ~3–6 minutes; the BGP hold
-   timer and graceful-restart stale-path timer drive this). Pass conditions:
-   every peer back to `Established`, full-width ECMP for the affected prefixes,
-   and end-to-end reachability (for example an HTTP 200 through the ECMP path).
-
-   During this window it is normal for one peer to stay `IDLE` and repeatedly log
-   `Closed accepted connection`: that peer is still holding the previous session
-   and rejecting the new one until its hold timer expires (observed ~60–90s on
-   homert02). Do not restart again — wait it out; the peer establishes and ECMP
-   returns on its own.
+During this window it is normal for one peer to stay `IDLE` and repeatedly log
+`Closed an accepted connection`: that peer is still holding the previous session
+and rejecting the new one until its hold timer expires. Do not restart again —
+wait it out; the peer establishes and ECMP returns on its own.
 
 ## Local control socket access for non-root operators
 
