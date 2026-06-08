@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/controlapi"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/render"
 	routerstate "github.com/imksoo/routerd/pkg/state"
@@ -96,6 +97,60 @@ func TestDoctorJSONOutputIncludesSummaryAndChecks(t *testing.T) {
 	}
 	if len(report.Checks) == 0 || report.Checks[0].Area != "dns" {
 		t.Fatalf("checks = %#v", report.Checks)
+	}
+}
+
+func TestDoctorReconcileHistoricalErrorsWarnButDoNotFail(t *testing.T) {
+	oldFetcher := reconcileStatusFetcher
+	defer func() { reconcileStatusFetcher = oldFetcher }()
+	reconcileStatusFetcher = func(string, time.Duration) ([]controlapi.ControllerStatus, error) {
+		return []controlapi.ControllerStatus{{
+			Name: "dhcpv4-lease",
+			ReconcileErrorHistory: []controlapi.ReconcileErrorEntry{
+				{CompletedAt: time.Now().UTC(), Trigger: "periodic", Error: "socket unavailable"},
+			},
+		}}, nil
+	}
+
+	configPath, statePath := writeDoctorFixture(t)
+	var out bytes.Buffer
+	if err := run([]string{"doctor", "reconcile", "--config", configPath, "--state-file", statePath, "--no-host", "-o", "json"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("historical reconcile errors should warn, not fail: %v\n%s", err, out.String())
+	}
+	var report doctorReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("unmarshal doctor report: %v\n%s", err, out.String())
+	}
+	if report.Summary.Overall != doctorWarn || report.Summary.Fail != 0 {
+		t.Fatalf("summary = %#v", report.Summary)
+	}
+}
+
+func TestDoctorReconcileCurrentErrorsFail(t *testing.T) {
+	oldFetcher := reconcileStatusFetcher
+	defer func() { reconcileStatusFetcher = oldFetcher }()
+	reconcileStatusFetcher = func(string, time.Duration) ([]controlapi.ControllerStatus, error) {
+		return []controlapi.ControllerStatus{{
+			Name:         "dhcpv4-lease",
+			CurrentError: true,
+			ReconcileErrorHistory: []controlapi.ReconcileErrorEntry{
+				{CompletedAt: time.Now().UTC(), Trigger: "periodic", Error: "socket unavailable"},
+			},
+		}}, nil
+	}
+
+	configPath, statePath := writeDoctorFixture(t)
+	var out bytes.Buffer
+	err := run([]string{"doctor", "reconcile", "--config", configPath, "--state-file", statePath, "--no-host", "-o", "json"}, &out, &bytes.Buffer{})
+	if err == nil {
+		t.Fatalf("current reconcile errors should fail:\n%s", out.String())
+	}
+	var report doctorReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("unmarshal doctor report: %v\n%s", err, out.String())
+	}
+	if report.Summary.Overall != doctorFail || report.Summary.Fail != 1 {
+		t.Fatalf("summary = %#v", report.Summary)
 	}
 }
 
