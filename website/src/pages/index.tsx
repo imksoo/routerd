@@ -7,7 +7,7 @@ import Layout from '@theme/Layout';
 import Heading from '@theme/Heading';
 import styles from './index.module.css';
 
-const STABLE_VERSION = 'v20260528.2308';
+const STABLE_VERSION = 'v20260608.0642';
 
 interface ScenarioCard {
   title: string;

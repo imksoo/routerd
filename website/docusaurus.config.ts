@@ -88,9 +88,9 @@ const config: Config = {
   themeConfig: {
     image: 'img/routerd-social-card.svg',
     announcementBar: {
-      id: 'stable-milestone-20260528-2308',
+      id: 'stable-milestone-20260608-0642',
       content:
-        'Stable milestone: <a href="/docs/releases/stable"><b>v20260528.2308</b></a> — bounded goroutines + routerctl doctor runtime, verified by a live homert02 runtime soak',
+        'Stable milestone: <a href="/docs/releases/stable"><b>v20260608.0642</b></a> — ADR 0014 CLI redesign (routerd serve + routerctl), OpenRC hardening, DNS VRRP VIP, BGP peer watch stabilization',
       backgroundColor: '#1f6feb',
       textColor: '#ffffff',
       isCloseable: true,
