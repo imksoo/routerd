@@ -346,7 +346,7 @@ func (d *daemon) startDNS(ctx context.Context) error {
 	d.stateMu.RLock()
 	desired := listenAddressSet(d.config.Spec.Listen)
 	d.stateMu.RUnlock()
-	listeners, err := d.openBoundListeners(desired)
+	listeners, err := d.openBoundListeners(ctx, desired)
 	if err != nil {
 		shutdownBoundListeners(listeners)
 		return err
@@ -363,16 +363,17 @@ func (d *daemon) startDNS(ctx context.Context) error {
 	}
 }
 
-func (d *daemon) openBoundListeners(addrs map[string]struct{}) (map[string]*boundListener, error) {
+func (d *daemon) openBoundListeners(ctx context.Context, addrs map[string]struct{}) (map[string]*boundListener, error) {
 	handler := dns.HandlerFunc(d.handleDNS)
+	listenConfig := dnsListenConfig()
 	listeners := map[string]*boundListener{}
 	for addr := range addrs {
-		packetConn, err := net.ListenPacket("udp", addr)
+		packetConn, err := listenConfig.ListenPacket(ctx, "udp", addr)
 		if err != nil {
 			shutdownBoundListeners(listeners)
 			return nil, fmt.Errorf("listen udp %s: %w", addr, err)
 		}
-		listener, err := net.Listen("tcp", addr)
+		listener, err := listenConfig.Listen(ctx, "tcp", addr)
 		if err != nil {
 			_ = packetConn.Close()
 			shutdownBoundListeners(listeners)
@@ -705,7 +706,7 @@ func (d *daemon) reload(ctx context.Context) (reloadSummary, error) {
 
 	newListeners := map[string]*boundListener{}
 	if !d.opts.dryRun {
-		newListeners, err = d.openBoundListeners(additions)
+		newListeners, err = d.openBoundListeners(ctx, additions)
 		if err != nil {
 			return reloadSummary{}, &reloadError{status: http.StatusInternalServerError, err: err}
 		}
