@@ -28,6 +28,7 @@ depend() {
 }
 
 start_pre() {
+	routerd_stop_client_daemons
 	checkpath -d -m 0755 /run/routerd/openrc
 	checkpath -d -m 0755 '/run/routerd'
 	checkpath -d -m 0755 '/run/routerd/bgp'
@@ -37,6 +38,37 @@ start_pre() {
 	checkpath -d -m 0755 '/run/routerd/pppoe-client'
 	checkpath -d -m 0755 '/var/lib/routerd'
 	checkpath -d -m 0755 '/var/log/routerd'
+}
+
+stop_post() {
+	routerd_stop_client_daemons
+}
+
+routerd_stop_client_daemons() {
+	pids=''
+	for daemon in routerd-dns-resolver routerd-dhcpv4-client routerd-dhcpv6-client routerd-pppoe-client routerd-arp-observer; do
+		for pid in $(pidof "${daemon}" 2>/dev/null || true); do
+			cmdline=$(tr '\000' ' ' < "/proc/${pid}/cmdline" 2>/dev/null || true)
+			case " ${cmdline} " in
+				*' --socket /run/routerd/'*|*' --socket /var/run/routerd/'*) pids="${pids} ${pid}" ;;
+			esac
+		done
+	done
+	[ -n "${pids}" ] || return 0
+	# shellcheck disable=SC2086
+	kill -TERM ${pids} 2>/dev/null || true
+	i=0
+	while [ "${i}" -lt 20 ]; do
+		alive=''
+		for pid in ${pids}; do
+			[ -d "/proc/${pid}" ] && alive="${alive} ${pid}"
+		done
+		[ -z "${alive}" ] && return 0
+		sleep 0.5
+		i=$((i + 1))
+	done
+	# shellcheck disable=SC2086
+	kill -KILL ${alive} 2>/dev/null || true
 }
 ### openrc-routerd_dnsmasq
 #!/sbin/openrc-run
