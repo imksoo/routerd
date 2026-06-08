@@ -2205,6 +2205,7 @@ case "${os}" in
                     rc-update add routerd default
                 fi
             fi
+            restart_stale_openrc_routerd_serve_after_upgrade
             if [ "${start_service}" -eq 1 ] || { [ "${service_active}" -eq 1 ] && [ "${restart_service}" -eq 1 ]; }; then
                 if command -v rc-service >/dev/null 2>&1; then
                     if [ "${service_active}" -eq 1 ]; then

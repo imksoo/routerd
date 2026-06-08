@@ -551,6 +551,10 @@ command_args="serve --config /usr/local/etc/routerd/router.yaml"
 	if !strings.Contains(out, want) {
 		t.Fatalf("stale routerd serve was not detected, want %q:\n%s", want, out)
 	}
+	restart := "dry-run: rc-service --nodeps routerd restart"
+	if strings.Index(out, want) > strings.Index(out, restart) {
+		t.Fatalf("stale routerd serve must be stopped before OpenRC restart:\n%s", out)
+	}
 	if strings.Contains(out, "pid 4567") {
 		t.Fatalf("current routerd service pid was selected:\n%s", out)
 	}

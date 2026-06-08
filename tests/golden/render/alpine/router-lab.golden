@@ -138,9 +138,9 @@ table ip routerd_nat {
 name='routerd'
 description='routerd daemon'
 command='/usr/local/sbin/routerd'
-command_args="'serve'"
+command_args="'serve' '--config' '/usr/local/etc/routerd/router.yaml' '--socket' '/run/routerd/routerd.sock' '--status-socket' '/run/routerd/routerd-status.sock' '--apply-interval' '60s'"
 command_background="yes"
-pidfile="/run/routerd/openrc/${RC_SVCNAME}.pid"
+pidfile="/run/routerd/routerd.pid"
 
 depend() {
 	use net
