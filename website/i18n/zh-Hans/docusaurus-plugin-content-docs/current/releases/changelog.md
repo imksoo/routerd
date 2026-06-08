@@ -11,40 +11,69 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+（无未发布的变更。）
+
+## v20260608.0642
+
 ### 新增
 
+- **ADR 0014 — CLI 体系重新设计。** `routerd` 仅作为守护进程（`routerd serve`），
+  所有管理操作移至 `routerctl`（`validate` / `plan` / `apply` / `doctor` /
+  `get` / `describe` / `status` / `ledger` 等）。旧有 `routerd apply` /
+  `routerd validate` / `routerd run` 及 `--once` 已移除（#254–#262）。
+- DNS 解析器支持 `IP_FREEBIND` / `IPV6_FREEBIND`，允许在 VRRP VIP 尚未
+  分配时即启动监听（#319）。
+- `routerd serve` 启动时自动启用 loopback（`ip link set lo up`），
+  适用于 Live ISO 和容器环境（#321）。
+- 新增 curl 一行安装的 bootstrap installer（`bootstrap.sh`）（#295）。
+- 新增资源生命周期注册表与 GC planner，资源删除时确定性地清理
+  派生 artifact（#222–#229，ADR 0014）。
+- 路由器配置向导：浏览器端的初始配置生成 UI，支持 Home Router / SAM /
+  Kubernetes BGP profile（#233–#240）。
+- 发布用于 YAML 编辑器补全的 JSON Schema（#232）。
 - 新增 CloudEdge Selective Address Mobility Phase G：跨 AWS、Azure、
-  OCI 与 on-prem 站点的自主 BGP /32 address mobility。该机制运行在
-  WireGuard overlay 与 iBGP（on-prem route-reflector）之上；ownership
-  由 BGP best path 决定，liveness 使用带 identity community 的 per-node
-  marker /32，cloud trap 由 RIB 驱动，同站点 standby seize 由 liveness
-  驱动。数据平面保持无 NAT、保留 source IP、client default gateway
-  不变。cloud capture 使用 AWS ENI、Azure NIC `ipConfig`、OCI VNIC
-  secondary IP；on-prem capture 使用 VRRP-gated proxy ARP + GARP，
-  backup fail-closed，doctor 对 split-brain 进行确定性 FAIL。
-- 新增基于 `TunnelInterface` 的 pluggable overlay underlay，支持 IPIP、
-  GRE、FOU 与 GUE UDP encapsulation。默认 overlay transport 仍为
-  WireGuard。见 ADR 0009。
-- 新增 `OverlayPeer.pathMTU.forceFragmentIPv4` 与
-  `TunnelInterface.pathMTU.forceFragmentIPv4` IPv4 force-fragment 控制。
-  默认关闭，用于显式启用 PMTU blackhole mitigation。见 ADR 0013。
-- 扩展 `MobilityPool` 的声明式 authoring model，支持
-  `profiles.cloudCaptures`、`spec.values`、`capture.targetFrom`、
-  `ownershipDiscovery.subnetRefFrom`、`members[].profileRef`、
-  self-complete local member 与 identity-only remote peer。
-- 在 `examples/cloudedge-mobility-demo/iam/` 下新增 AWS、Azure、OCI 的
-  scoped provider access least-privilege IAM template。
+  OCI 与 on-prem 站点的自主 BGP /32 address mobility。WireGuard overlay +
+  iBGP 上运行，ownership = BGP best path，liveness = per-node marker /32，
+  cloud trap = RIB 驱动，standby seize = liveness 驱动。数据平面无 NAT、
+  保留 source IP、client default gateway 不变。
+- 新增 pluggable overlay underlay（IPIP / GRE / FOU / GUE，ADR 0009）。
+- 新增 IPv4 force-fragment 控制（ADR 0013）。
+- 扩展 `MobilityPool` 声明式 authoring model（identity-only remote peer 等）。
+- 新增 least-privilege IAM template（`examples/cloudedge-mobility-demo/iam/`）。
+- DHCP 租约同步（#100, #107）、NAT44 session sync（#106）。
+- 文档：日语正本翻译 37 篇 + 中文翻译 80 篇（#322）。全部图表以
+  gpt-image-2 重新生成（#261）。
 
 ### 变更
 
-- Mobility delivery 现在以 BGP best path 作为唯一 ownership plane。
-  ADR 0012 记录 clean Option B architecture，并取代 ADR 0006 早期的
-  overlay-reachability source-of-truth model。
+- Mobility delivery 以 BGP best path 作为唯一 ownership plane（ADR 0012，Option B）。
+- `SAMTransportProfile` 从共享拓扑声明导出 per-peer 的 tunnel / BGP / route 资源。
 
 ### 移除
 
-- 作为 clean Option B migration 的一部分，移除了基于 AddressLease、
-  ownershipEpoch 与 heartbeat-event 的 mobility control plane。
+- 作为 clean Option B migration 的一部分，移除了 AddressLease、ownershipEpoch、
+  heartbeat-event 的 mobility control plane。
+- 旧有 `routerd apply` / `routerd validate` / `routerd run` CLI 入口点及
+  `--once` 标志（ADR 0014）。
+
+### 修复
+
+- forcefrag DF 清除从 forward hook 移至 prerouting hook，使用
+  `fib daddr oifname` 查询路由表。修复部分转发路径 MSS clamp 失效（#328）。
+- BGP peer watch 不再触发不必要的 `UpdatePeer`。`reflect.DeepEqual` 替换为
+  稳定比较函数，忽略 `dynamicExportPrefixes` 变化和 GracefulRestart
+  格式差异（#329）。
+- OpenRC DNS 解析器双重管理消除（#306）；升级时停止旧 `routerd serve`
+  （#311, #313）；重启时清理 helper（#315）；DNS 解析器 helper 监控
+  （#283）；残留 helper 更新（#280）；nodeps 重启（#278）。
+- bootstrap installer EXIT trap 可靠触发（#324）。
+- installer apply state 检测改用 `routerctl get status -o json`（#327）。
+- BGP peer state 变更通过 watch 即时反映到 status（#304）。
+- 重启不活跃的 keepalived 修复 VRRP 故障转移（#299）。
+- GoBGP 将 `BGPPeer.spec.exportPolicy.allowedPrefixes` 实际应用为 peer export
+  policy（#95），变更时触发 soft reset out（#98）。
+- 删除资源的 stale status 清理（#189）。
+- 生命周期 GC 清理资源删除时的派生 artifact（#222–#229）。
 
 ## v20260528.2308
 

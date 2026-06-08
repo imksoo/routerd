@@ -11,43 +11,80 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## 未リリース
 
+（未リリースの変更はありません。）
+
+## v20260608.0642
+
 ### 追加
 
+- **ADR 0014 — CLI 体系の再設計。** `routerd` はデーモン専任（`routerd serve`）に、
+  すべての管理操作は `routerctl`（`validate` / `plan` / `apply` / `doctor` /
+  `get` / `describe` / `status` / `ledger` 等）に移動しました。旧来の
+  `routerd apply` / `routerd validate` / `routerd run` と `--once` を
+  廃止（#254–#262）。
+- DNS リゾルバに `IP_FREEBIND` / `IPV6_FREEBIND` を追加し、VRRP VIP が
+  まだ割り当てられていない状態でもリスナーを開始できるようにしました（#319）。
+- `routerd serve` が起動時に loopback を自動で有効化（`ip link set lo up`）
+  します。Live ISO やコンテナ環境向け（#321）。
+- curl 一行インストール用 bootstrap installer（`bootstrap.sh`）を追加（#295）。
+- リソースライフサイクルレジストリと GC planner を追加し、リソース削除時の
+  派生 artifact を決定的に teardown できるようにしました（#222–#229、ADR 0014）。
+- ルーター設定ウィザード: ブラウザでスターター設定を生成できる UI。
+  Home Router / SAM / Kubernetes BGP プロファイルに対応（#233–#240）。
+- YAML エディタ補完用の JSON Schema を公開（#232）。
 - CloudEdge Selective Address Mobility フェーズ G を追加しました。AWS、
   Azure、OCI、on-prem をまたぐ自律 BGP /32 address mobility です。
   WireGuard overlay と iBGP（on-prem route-reflector）上で動作し、
   ownership は BGP best path、liveness は identity community 付きの
   per-node marker /32、cloud trap は RIB 駆動、同一 site standby の
   seize は liveness 駆動になりました。データプレーンは NAT なし、
-  source IP 保持、client default gateway 不変を維持します。cloud
-  capture は AWS ENI、Azure NIC `ipConfig`、OCI VNIC secondary IP、
-  on-prem capture は VRRP-gated proxy ARP + GARP を使い、backup は
-  fail-closed、doctor は split-brain を決定的に FAIL します。
+  source IP 保持、client default gateway 不変を維持します。
 - `TunnelInterface` による pluggable overlay underlay を追加しました。
-  IPIP、GRE、FOU、GUE UDP encapsulation に対応し、既定の overlay
-  transport は引き続き WireGuard です。ADR 0009 を参照してください。
-- `OverlayPeer.pathMTU.forceFragmentIPv4` と
-  `TunnelInterface.pathMTU.forceFragmentIPv4` に IPv4 force-fragment
-  制御を追加しました。既定は off で、PMTU blackhole mitigation を
-  明示的に有効化できます。ADR 0013 を参照してください。
-- `MobilityPool` の宣言型 authoring model を拡張しました。
-  `profiles.cloudCaptures`、`spec.values`、`capture.targetFrom`、
-  `ownershipDiscovery.subnetRefFrom`、`members[].profileRef`、
-  self-complete local member、identity-only remote peer に対応します。
-- `examples/cloudedge-mobility-demo/iam/` に、AWS、Azure、OCI 向けの
-  scoped provider access 用 least-privilege IAM template を追加しました。
+  IPIP、GRE、FOU、GUE UDP encapsulation に対応（ADR 0009）。
+- IPv4 force-fragment 制御を追加。PMTU blackhole mitigation を
+  明示的に有効化可能（ADR 0013）。
+- `MobilityPool` の宣言型 authoring model を拡張。
+  `profiles.cloudCaptures`、`spec.values`、identity-only remote peer に対応。
+- least-privilege IAM template を追加（`examples/cloudedge-mobility-demo/iam/`）。
+- DHCP リース同期（#100, #107）、NAT44 session sync（#106）を追加。
+- ドキュメント: 日本語正本翻訳 37 記事 + 中国語翻訳 80 記事を追加（#322）。
+  全ダイアグラムを gpt-image-2 で再生成（#261）。
 
 ### 変更
 
 - Mobility delivery は BGP best path を唯一の ownership plane として
-  使うようになりました。ADR 0012 は clean Option B architecture を
-  記録し、ADR 0006 の以前の overlay-reachability source-of-truth
-  model を supersede します。
+  使うようになりました（ADR 0012、Option B）。
+- `SAMTransportProfile` が共有トポロジ宣言から per-peer の tunnel / BGP /
+  route リソースを導出するようになりました。
 
 ### 削除
 
 - clean Option B migration の一環として、AddressLease、ownershipEpoch、
   heartbeat-event ベースの mobility control plane を削除しました。
+- 旧来の `routerd apply` / `routerd validate` / `routerd run` CLI
+  エントリポイントと `--once` フラグを廃止しました（ADR 0014）。
+
+### 修正
+
+- forcefrag の DF クリアを forward フックから prerouting フックに移動し、
+  `oifname` の代わりに `fib daddr oifname` でルーティングテーブルを参照
+  するようにしました。一部の転送パスで MSS clamp が効かない問題を解消（#328）。
+- BGP peer watch が不要な `UpdatePeer` を呼ばなくなりました。
+  `reflect.DeepEqual` を安定比較関数に置き換え、`dynamicExportPrefixes` や
+  GracefulRestart 書式差異（`"2m"` vs `"120s"`）で毎回更新が走る問題を
+  解消（#329）。
+- OpenRC DNS リゾルバの二重管理を解消（#306）、アップグレード時の旧
+  `routerd serve` 停止（#311, #313）、再起動時の helper 掃除（#315）、
+  DNS リゾルバ helper supervision（#283）、残留 helper 更新（#280）、
+  nodeps 再起動（#278）。
+- bootstrap installer の EXIT trap が確実に発火するよう修正（#324）。
+- installer の apply state 検出を `routerctl get status -o json` に変更（#327）。
+- BGP peer state 変更を watch で status に即時反映（#304）。
+- inactive の keepalived を再起動して VRRP failover を修正（#299）。
+- GoBGP が `BGPPeer.spec.exportPolicy.allowedPrefixes` を peer export
+  policy として実適用するようになりました（#95）。変更時に soft reset out（#98）。
+- 削除済みリソースの stale status クリーンアップ（#189）。
+- ライフサイクル GC によるリソース削除時の派生 artifact teardown（#222–#229）。
 
 ## v20260528.2308
 

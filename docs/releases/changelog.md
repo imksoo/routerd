@@ -12,8 +12,27 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+(No unreleased changes.)
+
+## v20260608.0642
+
 ### Added
 
+- **ADR 0014 — CLI redesign.** `routerd` is now daemon-only (`routerd serve`);
+  all management operations moved to `routerctl` (`validate` / `plan` /
+  `apply` / `doctor` / `get` / `describe` / `status` / `ledger` etc.).
+  Legacy `routerd apply` / `routerd validate` / `routerd run` and `--once`
+  removed (#254–#262).
+- DNS resolver `IP_FREEBIND` / `IPV6_FREEBIND` support so listeners can
+  bind VRRP VIP addresses before they are assigned (#319).
+- `routerd serve` auto-enables loopback (`ip link set lo up`) at startup
+  for Live ISO and container environments (#321).
+- Bootstrap installer (`bootstrap.sh`) for curl-based one-liner installs (#295).
+- Resource lifecycle registry and GC planner for deterministic teardown
+  of derived artifacts on resource deletion (#222–#229, ADR 0014).
+- Router config wizard: browser-based starter config generator with
+  Home Router, SAM, and Kubernetes BGP profiles (#233, #236, #237, #239, #240).
+- Generated JSON Schema published for YAML editor completion (#232).
 - CloudEdge Selective Address Mobility Phase G: autonomous BGP /32
   address mobility across AWS, Azure, OCI, and on-prem sites. Mobility
   now runs over a WireGuard overlay with iBGP and an on-prem
@@ -37,46 +56,62 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
   `ownershipDiscovery.subnetRefFrom`, `members[].profileRef`,
   self-complete local members, and identity-only remote peers.
 - `MobilityPool` on-prem `proxy-arp` capture members can declare
-  `capture.sourceAddress`; BGP-mode lowering installs it as a capture-interface
-  `/32` and uses it as the capture-prefix route preferred source.
-- `MobilityPool` on-prem `proxy-arp` capture members can declare
-  `capture.sourceAddressFrom` to use a status-provided sender address, such as
-  a `DHCPv4Client` lease, as the capture-prefix route preferred source without
-  lowering it to an `IPv4StaticAddress`.
+  `capture.sourceAddress` or `capture.sourceAddressFrom` for
+  BGP-mode capture-prefix route preferred source.
 - Least-privilege CloudEdge IAM templates under
   `examples/cloudedge-mobility-demo/iam/` for scoped AWS, Azure, and
   OCI provider access.
+- DHCP lease sync between DHCPv4Server and DHCPv6Server resources (#100, #107).
+- NAT44 session sync for HA pairs (#106).
+- Documentation: 37 Japanese source-of-truth articles + 80 Chinese
+  (zh-Hans / zh-Hant) translation articles (#322). All documentation
+  diagrams regenerated with gpt-image-2 (#261).
 
 ### Changed
 
 - Mobility delivery now uses BGP best path as the single ownership
   plane. ADR 0012 records the clean Option B architecture and supersedes
   ADR 0006's earlier overlay-reachability source-of-truth model.
+- `SAMTransportProfile` derives per-peer tunnel, BGP, and route
+  resources from a shared topology declaration.
 
 ### Removed
 
 - The AddressLease, ownershipEpoch, and heartbeat-event based mobility
   control plane was removed as part of the clean Option B migration.
+- Legacy `routerd apply` / `routerd validate` / `routerd run` CLI
+  entry points and the `--once` flag (ADR 0014).
 
 ### Fixed
 
+- forcefrag DF clearing moved from forward hook to prerouting hook,
+  using `fib daddr oifname` for routing lookup since `oifname` is
+  unavailable in prerouting. Fixes MSS clamp not being applied in
+  certain forwarding paths (#328).
+- BGP peer watch no longer triggers unnecessary `UpdatePeer` calls.
+  `desiredPeerMatches()` replaced `reflect.DeepEqual` with a stable
+  comparison that ignores `dynamicExportPrefixes` changes and
+  GracefulRestart format differences (`"2m"` vs `"120s"`) (#329).
+- OpenRC DNS resolver dual management eliminated (#306); old
+  `routerd serve` stopped on OpenRC upgrade (#311, #313); managed
+  helpers cleaned on restart (#315); DNS resolver helper supervision
+  added (#283); stale helper updates (#280); nodeps restart (#278).
+- Bootstrap installer EXIT trap now fires reliably (#324).
+- Installer apply state detection uses `routerctl get status -o json`
+  for accurate `lastApplyTime` (#327).
+- BGP peer state changes reflected in status immediately via watch (#304).
+- Inactive keepalived restarted for VRRP failover (#299).
 - The GoBGP backend now applies `BGPPeer.spec.exportPolicy.allowedPrefixes`
   as a peer export policy instead of accepting the field only in API
-  validation. This lets mixed Kubernetes and CloudEdge SAM deployments keep
-  mobility prefixes from leaking to unrelated peers.
-- Runtime changes to `BGPPeer.spec.exportPolicy` now trigger GoBGP soft
-  reset out for affected peers, so previously advertised routes are withdrawn
-  when they no longer match the peer export policy.
+  validation (#95). Runtime changes trigger soft reset out (#98).
 - `MobilityPool` on-prem `proxy-arp` capture now supports
   `capture.activeWhen.type: single-router` as an explicit always-active
   single-router mode, while keeping `vrrp-master` for HA pairs.
-- BGP-mode `proxy-arp` capture can now keep Linux ARP sender addresses inside
-  the mobility prefix on capture interfaces that otherwise have no IPv4
-  address, avoiding local same-subnet delivery failures caused by fallback to a
-  management-interface address.
 - `FirewallEventLog` readers and logger defaults now derive
   `firewall-logs.db` from the platform state directory, and Web Console
   dnsmasq lease candidates now include the platform managed lease path.
+- Deleted resource stale status cleanup (#189).
+- Lifecycle GC for derived artifacts on resource deletion (#222–#229).
 
 ## v20260528.2308
 
