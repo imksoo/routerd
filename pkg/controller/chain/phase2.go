@@ -801,6 +801,9 @@ func (c DHCPv6ServerController) reconcile(ctx context.Context) error {
 	if err := c.saveDHCPv4ServerStatuses(effectiveRouter, configPath, pidFile); err != nil {
 		return err
 	}
+	if err := c.saveDHCPv4ReservationStatuses(effectiveRouter, configPath, pidFile); err != nil {
+		return err
+	}
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.Kind != "DHCPv6Server" {
 			continue
@@ -899,6 +902,81 @@ func (c DHCPv6ServerController) saveDHCPv4ServerStatuses(renderRouter *api.Route
 		}
 	}
 	return nil
+}
+
+func (c DHCPv6ServerController) saveDHCPv4ReservationStatuses(renderRouter *api.Router, configPath, pidFile string) error {
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.Kind != "DHCPv4Reservation" {
+			continue
+		}
+		spec, err := resource.DHCPv4ReservationSpec()
+		if err != nil {
+			return err
+		}
+		status := map[string]any{
+			"server":         spec.Server,
+			"macAddress":     strings.ToLower(spec.MACAddress),
+			"ipAddress":      spec.IPAddress,
+			"hostname":       spec.Hostname,
+			"configPath":     configPath,
+			"pidFile":        pidFile,
+			"renderer":       "dnsmasq",
+			"lifecycleClass": "renderer-input",
+			"dryRun":         c.DryRun,
+		}
+		if !c.resourceWhenMatches(resource) {
+			status["phase"] = "Pending"
+			status["reason"] = "WhenFalse"
+			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "DHCPv4Reservation", resource.Metadata.Name, status); err != nil {
+				return err
+			}
+			continue
+		}
+		rendered, servers := dhcpv4ReservationRenderedByServers(renderRouter, c.Store, spec)
+		if !rendered {
+			status["phase"] = "Pending"
+			status["reason"] = "ServerPending"
+			status["servers"] = servers
+			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "DHCPv4Reservation", resource.Metadata.Name, status); err != nil {
+				return err
+			}
+			continue
+		}
+		phase := "Applied"
+		if c.DryRun {
+			phase = "Rendered"
+		}
+		status["phase"] = phase
+		status["servers"] = servers
+		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "DHCPv4Reservation", resource.Metadata.Name, status); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func dhcpv4ReservationRenderedByServers(router *api.Router, store Store, reservation api.DHCPv4ReservationSpec) (bool, []string) {
+	if router == nil || reservation.Scope != "" {
+		return false, nil
+	}
+	var servers []string
+	for _, resource := range router.Spec.Resources {
+		if resource.Kind != "DHCPv4Server" {
+			continue
+		}
+		if reservation.Server != "" && reservation.Server != resource.Metadata.Name {
+			continue
+		}
+		spec, err := resource.DHCPv4ServerSpec()
+		if err != nil {
+			continue
+		}
+		if dhcpv4ServerPending(router, store, spec) != "" {
+			continue
+		}
+		servers = append(servers, resource.Metadata.Name)
+	}
+	return len(servers) > 0, servers
 }
 
 func (c DHCPv6ServerController) reconcileRouterAdvertisements(ctx context.Context, configPath, pidFile string, changed bool) error {

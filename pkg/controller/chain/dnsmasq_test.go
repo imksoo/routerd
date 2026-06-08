@@ -333,6 +333,86 @@ func TestDHCPv4ServerWhenFalseRemovesDnsmasqScope(t *testing.T) {
 	}
 }
 
+func TestDHCPv4ReservationWhenTrueClearsWhenFalseStatus(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "dnsmasq.conf")
+	pidFile := filepath.Join(dir, "dnsmasq.pid")
+	whenMaster := api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{
+		"VirtualAddress/lan-vip.role": {Equals: "master"},
+	}}
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"}, Metadata: api.ObjectMeta{Name: "lan-v4"}, Spec: api.DHCPv4ServerSpec{
+			Interface:   "lan",
+			AddressPool: api.DHCPAddressPoolSpec{Start: "192.168.10.100", End: "192.168.10.199", LeaseTime: "8h"},
+			When:        whenMaster,
+		}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Reservation"}, Metadata: api.ObjectMeta{Name: "printer"}, Spec: api.DHCPv4ReservationSpec{
+			Server:     "lan-v4",
+			MACAddress: "02:00:00:00:01:50",
+			Hostname:   "printer",
+			IPAddress:  "192.168.10.150",
+			When:       whenMaster,
+		}},
+	}}}
+	store := statefulDHCPMapStore{mapStore: mapStore{
+		api.NetAPIVersion + "/VirtualAddress/lan-vip": {"role": "backup"},
+	}}
+	controller := DHCPv6ServerController{Router: router, Store: store, DryRun: true}
+
+	effective := controller.effectiveRouter()
+	if _, err := writeDnsmasqConfig(effective, store, configPath, pidFile, 53, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := controller.saveDHCPv4ReservationStatuses(effective, configPath, pidFile); err != nil {
+		t.Fatal(err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "DHCPv4Reservation", "printer")
+	if status["phase"] != "Pending" || status["reason"] != "WhenFalse" {
+		t.Fatalf("backup reservation status = %#v", status)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "dhcp-host=02:00:00:00:01:50") {
+		t.Fatalf("backup config still contains reservation:\n%s", data)
+	}
+
+	store.mapStore[api.NetAPIVersion+"/VirtualAddress/lan-vip"]["role"] = "master"
+	effective = controller.effectiveRouter()
+	if _, err := writeDnsmasqConfig(effective, store, configPath, pidFile, 53, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := controller.saveDHCPv4ServerStatuses(effective, configPath, pidFile); err != nil {
+		t.Fatal(err)
+	}
+	if err := controller.saveDHCPv4ReservationStatuses(effective, configPath, pidFile); err != nil {
+		t.Fatal(err)
+	}
+	data, err = os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "dhcp-host=02:00:00:00:01:50,set:printer,printer,192.168.10.150") {
+		t.Fatalf("master config missing reservation:\n%s", data)
+	}
+	status = store.ObjectStatus(api.NetAPIVersion, "DHCPv4Reservation", "printer")
+	if status["phase"] != "Rendered" {
+		t.Fatalf("master reservation phase = %#v", status)
+	}
+	if _, ok := status["reason"]; ok {
+		t.Fatalf("master reservation kept stale reason: %#v", status)
+	}
+	if status["server"] != "lan-v4" || status["macAddress"] != "02:00:00:00:01:50" || status["ipAddress"] != "192.168.10.150" {
+		t.Fatalf("master reservation status missing identity fields: %#v", status)
+	}
+	servers, ok := status["servers"].([]string)
+	if !ok || len(servers) != 1 || servers[0] != "lan-v4" {
+		t.Fatalf("master reservation servers = %#v", status["servers"])
+	}
+}
+
 func TestIPv6RouterAdvertisementWhenFalseRemovesDnsmasqRA(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "dnsmasq.conf")
