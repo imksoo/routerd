@@ -4,6 +4,7 @@ package config
 
 import (
 	"fmt"
+	"hash/fnv"
 	"net/netip"
 	"strings"
 	"time"
@@ -191,6 +192,10 @@ func validateSAMTransportProfile(res api.Resource, spec api.SAMTransportProfileS
 	if len(spec.Peers) == 0 {
 		return fmt.Errorf("%s spec.peers requires at least one peer", res.ID())
 	}
+	addressingMode := normalizeSAMTransportAddressingMode(spec)
+	if strings.TrimSpace(spec.AddressingMode) != "" && addressingMode == "" {
+		return fmt.Errorf("%s spec.addressingMode must be edge-index or pair-stable", res.ID())
+	}
 	seenPeers := map[string]bool{}
 	usedInner := map[string]string{}
 	for i, peer := range spec.Peers {
@@ -213,24 +218,78 @@ func validateSAMTransportProfile(res api.Resource, spec api.SAMTransportProfileS
 		}
 	}
 	capacity := 1 << (31 - inner.Bits())
-	if len(spec.Peers) > 1 && len(spec.TopologyNodeRefs) == 0 {
-		return fmt.Errorf("%s spec.topologyNodeRefs is required when spec.peers has more than one peer", res.ID())
-	}
-	topology, err := normalizeSAMTransportTopology(res.ID(), spec)
-	if err != nil {
-		return err
-	}
-	edgeCount := len(topology) * (len(topology) - 1) / 2
-	if edgeCount > capacity {
-		return fmt.Errorf("%s spec.innerPrefix %s has %d /31 edges but topologyNodeRefs requires %d edges", res.ID(), inner, capacity, edgeCount)
-	}
-	for i, peer := range spec.Peers {
-		nodeRef := strings.TrimSpace(peer.NodeRef)
-		if !stringInSlice(nodeRef, topology) {
-			return fmt.Errorf("%s spec.peers[%d].nodeRef %q must be listed in spec.topologyNodeRefs", res.ID(), i, nodeRef)
+	switch addressingMode {
+	case "pair-stable":
+		if len(spec.Peers) > capacity {
+			return fmt.Errorf("%s spec.innerPrefix %s has %d /31 edges but spec.peers requires %d edges for pair-stable addressing", res.ID(), inner, capacity, len(spec.Peers))
+		}
+		collisions := map[int]string{}
+		self := strings.TrimSpace(spec.SelfNodeRef)
+		for i, peer := range spec.Peers {
+			peerNode := strings.TrimSpace(peer.NodeRef)
+			slot := stableSAMTransportSlot(spec.InnerPrefix, self, peerNode, capacity)
+			if prev, ok := collisions[slot]; ok {
+				return fmt.Errorf("%s spec.peers[%d].nodeRef %q collides with %s in pair-stable slot %s; use override.localInner/remoteInner or expand spec.innerPrefix", res.ID(), i, peerNode, prev, slotPrefix(inner, slot))
+			}
+			collisions[slot] = fmt.Sprintf("spec.peers[%d].nodeRef %q", i, peerNode)
+		}
+	default:
+		if len(spec.Peers) > 1 && len(spec.TopologyNodeRefs) == 0 {
+			return fmt.Errorf("%s spec.topologyNodeRefs is required when spec.peers has more than one peer", res.ID())
+		}
+		topology, err := normalizeSAMTransportTopology(res.ID(), spec)
+		if err != nil {
+			return err
+		}
+		edgeCount := len(topology) * (len(topology) - 1) / 2
+		if edgeCount > capacity {
+			return fmt.Errorf("%s spec.innerPrefix %s has %d /31 edges but topologyNodeRefs requires %d edges", res.ID(), inner, capacity, edgeCount)
+		}
+		for i, peer := range spec.Peers {
+			nodeRef := strings.TrimSpace(peer.NodeRef)
+			if !stringInSlice(nodeRef, topology) {
+				return fmt.Errorf("%s spec.peers[%d].nodeRef %q must be listed in spec.topologyNodeRefs", res.ID(), i, nodeRef)
+			}
 		}
 	}
 	return nil
+}
+
+func normalizeSAMTransportAddressingMode(spec api.SAMTransportProfileSpec) string {
+	switch strings.TrimSpace(spec.AddressingMode) {
+	case "", "edge-index":
+		return "edge-index"
+	case "pair-stable":
+		return "pair-stable"
+	default:
+		return ""
+	}
+}
+
+func stableSAMTransportSlot(innerPrefix, self, peer string, capacity int) int {
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(strings.TrimSpace(innerPrefix) + "\x00" + normalizedSAMTransportEdgeKey(self, peer)))
+	return int(h.Sum64() % uint64(capacity))
+}
+
+func normalizedSAMTransportEdgeKey(a, b string) string {
+	a = strings.TrimSpace(a)
+	b = strings.TrimSpace(b)
+	if a <= b {
+		return a + "\x00" + b
+	}
+	return b + "\x00" + a
+}
+
+func slotPrefix(inner netip.Prefix, slot int) string {
+	base := inner.Masked().Addr().As4()
+	n := uint32(base[0])<<24 | uint32(base[1])<<16 | uint32(base[2])<<8 | uint32(base[3])
+	n += uint32(slot * 2)
+	base[0] = byte(n >> 24)
+	base[1] = byte(n >> 16)
+	base[2] = byte(n >> 8)
+	base[3] = byte(n)
+	return netip.PrefixFrom(netip.AddrFrom4(base), 31).String()
 }
 
 func normalizeSAMTransportTopology(resourceID string, spec api.SAMTransportProfileSpec) ([]string, error) {

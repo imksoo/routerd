@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"hash/fnv"
 	"net/netip"
 	"sort"
 	"strings"
@@ -115,7 +116,7 @@ func (c TransportController) deriveTransportResources(owner api.Resource, spec a
 		return transportDerivation{}, err
 	}
 	inner = inner.Masked()
-	edgeIndex, err := transportEdgeIndex(spec)
+	edgeIndex, err := transportAddressSlots(spec, inner)
 	if err != nil {
 		return transportDerivation{}, err
 	}
@@ -211,6 +212,15 @@ func (c TransportController) deriveTransportResources(owner api.Resource, spec a
 	return out, nil
 }
 
+func transportAddressSlots(spec api.SAMTransportProfileSpec, inner netip.Prefix) (map[string]int, error) {
+	switch transportAddressingMode(spec) {
+	case "pair-stable":
+		return transportPairStableSlots(spec, inner)
+	default:
+		return transportEdgeIndex(spec)
+	}
+}
+
 func transportEdgeIndex(spec api.SAMTransportProfileSpec) (map[string]int, error) {
 	topology := normalizeTransportTopology(spec)
 	if len(topology) < 2 {
@@ -237,6 +247,31 @@ func transportEdgeIndex(spec api.SAMTransportProfileSpec) (map[string]int, error
 			out[sortedEdgeKey(topology[i], topology[j])] = index
 			index++
 		}
+	}
+	return out, nil
+}
+
+func transportPairStableSlots(spec api.SAMTransportProfileSpec, inner netip.Prefix) (map[string]int, error) {
+	capacity := 1 << (31 - inner.Bits())
+	self := strings.TrimSpace(spec.SelfNodeRef)
+	out := map[string]int{}
+	used := map[int]string{}
+	for _, peer := range spec.Peers {
+		peerNode := strings.TrimSpace(peer.NodeRef)
+		if peerNode == "" || peerNode == self {
+			continue
+		}
+		edgeKey := sortedEdgeKey(self, peerNode)
+		if _, exists := out[edgeKey]; exists {
+			continue
+		}
+		slot := stableEdgeSlot(spec, self, peerNode, capacity)
+		if previous, conflict := used[slot]; conflict && previous != edgeKey {
+			return nil, fmt.Errorf("pair-stable inner /31 slot collision: %s and %s both map to %s; use peer override.localInner/remoteInner or expand spec.innerPrefix",
+				describeEdgeKey(previous), describeEdgeKey(edgeKey), innerSlotPrefix(inner, slot))
+		}
+		used[slot] = edgeKey
+		out[edgeKey] = slot
 	}
 	return out, nil
 }
@@ -351,6 +386,38 @@ func sortedEdgeKey(a, b string) string {
 		return a + "\x00" + b
 	}
 	return b + "\x00" + a
+}
+
+func stableEdgeSlot(spec api.SAMTransportProfileSpec, a, b string, capacity int) int {
+	input := strings.TrimSpace(spec.InnerPrefix) + "\x00" + sortedEdgeKey(a, b)
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(input))
+	return int(h.Sum64() % uint64(capacity))
+}
+
+func innerSlotPrefix(inner netip.Prefix, slot int) string {
+	base, err := addIPv4(inner.Addr(), uint32(slot*2))
+	if err != nil {
+		return fmt.Sprintf("slot=%d", slot)
+	}
+	return netip.PrefixFrom(base, 31).String()
+}
+
+func describeEdgeKey(key string) string {
+	parts := strings.SplitN(key, "\x00", 2)
+	if len(parts) != 2 {
+		return key
+	}
+	return parts[0] + "<->" + parts[1]
+}
+
+func transportAddressingMode(spec api.SAMTransportProfileSpec) string {
+	switch strings.TrimSpace(spec.AddressingMode) {
+	case "pair-stable":
+		return "pair-stable"
+	default:
+		return "edge-index"
+	}
 }
 
 func derivedInnerAddresses(inner netip.Prefix, self, peer string, index int, override api.SAMTransportPeerOverrideSpec) (netip.Prefix, netip.Addr, error) {

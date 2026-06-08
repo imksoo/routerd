@@ -96,6 +96,80 @@ func TestSAMTransportProfileDerivesHubSpokeWithSharedTopology(t *testing.T) {
 	}
 }
 
+func TestSAMTransportProfileDerivesPairStableWithoutSharedTopology(t *testing.T) {
+	now := time.Date(2026, 6, 6, 9, 4, 0, 0, time.UTC)
+	k8sStore := testStore(t, now)
+	k8sController := TransportController{
+		Router: transportRouterWithMode("svnet1", "k8s-rt01", "pair-stable", []api.SAMTransportPeerSpec{
+			{NodeRef: "pve-rt01", RemoteEndpoint: "203.0.113.21"},
+			{NodeRef: "pve-rt06", RemoteEndpoint: "203.0.113.26"},
+			{NodeRef: "pve-rt08", RemoteEndpoint: "203.0.113.28"},
+		}),
+		Store: k8sStore,
+		Now:   func() time.Time { return now },
+	}
+	if err := k8sController.Reconcile(context.Background()); err != nil {
+		t.Fatalf("k8s Reconcile: %v", err)
+	}
+	k8sResources := decodeResources(t, latestPart(t, k8sStore, TransportDynamicSource("svnet1", "k8s-rt01")).ResourcesJSON)
+	k8sTunnel := findTransportTunnelForPeer(t, k8sResources, "k8s-rt01", "pve-rt06")
+	k8sPeer := findTransportBGPPeerForPeer(t, k8sResources, "k8s-rt01", "pve-rt06")
+
+	pveStore := testStore(t, now)
+	pveController := TransportController{
+		Router: transportRouterWithMode("svnet1", "pve-rt06", "pair-stable", []api.SAMTransportPeerSpec{
+			{NodeRef: "k8s-rt01", RemoteEndpoint: "198.51.100.11"},
+			{NodeRef: "k8s-rt02", RemoteEndpoint: "198.51.100.12"},
+		}),
+		Store: pveStore,
+		Now:   func() time.Time { return now },
+	}
+	if err := pveController.Reconcile(context.Background()); err != nil {
+		t.Fatalf("pve Reconcile: %v", err)
+	}
+	pveResources := decodeResources(t, latestPart(t, pveStore, TransportDynamicSource("svnet1", "pve-rt06")).ResourcesJSON)
+	pveTunnel := findTransportTunnelForPeer(t, pveResources, "pve-rt06", "k8s-rt01")
+	pvePeer := findTransportBGPPeerForPeer(t, pveResources, "pve-rt06", "k8s-rt01")
+
+	if k8sTunnel.Address != pvePeer.Peers[0]+"/31" {
+		t.Fatalf("k8s local / pve remote = %s / %v, want same /31 edge", k8sTunnel.Address, pvePeer.Peers)
+	}
+	if pveTunnel.Address != k8sPeer.Peers[0]+"/31" {
+		t.Fatalf("pve local / k8s remote = %s / %v, want same /31 edge", pveTunnel.Address, k8sPeer.Peers)
+	}
+}
+
+func TestSAMTransportProfilePairStableKeepsExistingPairAddressWhenPeersGrow(t *testing.T) {
+	now := time.Date(2026, 6, 6, 9, 4, 30, 0, time.UTC)
+	store := testStore(t, now)
+	controller := TransportController{
+		Router: transportRouterWithMode("svnet1", "k8s-rt01", "pair-stable", []api.SAMTransportPeerSpec{
+			{NodeRef: "pve-rt06", RemoteEndpoint: "203.0.113.26"},
+		}),
+		Store: store,
+		Now:   func() time.Time { return now },
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("initial Reconcile: %v", err)
+	}
+	initialResources := decodeResources(t, latestPart(t, store, TransportDynamicSource("svnet1", "k8s-rt01")).ResourcesJSON)
+	initialTunnel := findTransportTunnelForPeer(t, initialResources, "k8s-rt01", "pve-rt06")
+
+	controller.Router = transportRouterWithMode("svnet1", "k8s-rt01", "pair-stable", []api.SAMTransportPeerSpec{
+		{NodeRef: "pve-rt01", RemoteEndpoint: "203.0.113.21"},
+		{NodeRef: "pve-rt06", RemoteEndpoint: "203.0.113.26"},
+	})
+	controller.Now = func() time.Time { return now.Add(time.Minute) }
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("expanded Reconcile: %v", err)
+	}
+	expandedResources := decodeResources(t, latestPart(t, store, TransportDynamicSource("svnet1", "k8s-rt01")).ResourcesJSON)
+	expandedTunnel := findTransportTunnelForPeer(t, expandedResources, "k8s-rt01", "pve-rt06")
+	if initialTunnel.Address != expandedTunnel.Address {
+		t.Fatalf("pair-stable address changed after adding peer: before=%s after=%s", initialTunnel.Address, expandedTunnel.Address)
+	}
+}
+
 func TestSAMTransportProfilePeerRemovalReplacesDynamicPart(t *testing.T) {
 	now := time.Date(2026, 6, 6, 9, 5, 0, 0, time.UTC)
 	store := testStore(t, now)
@@ -223,6 +297,17 @@ func TestSAMTransportProfileDeletionUpsertsEmptyPart(t *testing.T) {
 
 func transportRouter(profile, self string, peers []api.SAMTransportPeerSpec) *api.Router {
 	return transportRouterWithTopology(profile, self, nil, peers)
+}
+
+func transportRouterWithMode(profile, self, mode string, peers []api.SAMTransportPeerSpec) *api.Router {
+	router := transportRouterWithTopology(profile, self, nil, peers)
+	spec, err := router.Spec.Resources[0].SAMTransportProfileSpec()
+	if err != nil {
+		panic(err)
+	}
+	spec.AddressingMode = mode
+	router.Spec.Resources[0].Spec = spec
+	return router
 }
 
 func transportRouterWithTopology(profile, self string, topology []string, peers []api.SAMTransportPeerSpec) *api.Router {
