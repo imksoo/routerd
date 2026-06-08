@@ -613,7 +613,7 @@ wait_for_routerd_status_apply()
     i=0
     while [ "${i}" -lt 30 ]; do
         if [ -S "${socket}" ]; then
-            status=$("${bindir}/routerctl" get status --socket "${socket}" 2>/dev/null || true)
+            status=$("${bindir}/routerctl" get status -o json --socket "${socket}" 2>/dev/null || true)
             if printf '%s\n' "${status}" | grep -q '"lastApplyTime"'; then
                 return 0
             fi
@@ -2285,6 +2285,9 @@ if [ "${dry_run}" -eq 0 ] && [ -x "${bindir}/routerctl" ]; then
         FreeBSD) status_socket=/var/run/routerd/routerd-status.sock ;;
         *) status_socket= ;;
     esac
+    if [ "${service_touched}" -eq 1 ] && [ -n "${status_socket}" ]; then
+        wait_for_routerd_status_socket "${status_socket}" || true
+    fi
     if [ -n "${status_socket}" ] && [ -S "${status_socket}" ]; then
         echo "routerctl get status:"
         "${bindir}/routerctl" get status --socket "${status_socket}" || {

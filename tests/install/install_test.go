@@ -65,6 +65,23 @@ func TestInstallDoesNotExcludeBGPOrDNSResolverHelpersFromStaleRestart(t *testing
 	}
 }
 
+func TestInstallWaitsForJSONApplyStateAfterServiceRestart(t *testing.T) {
+	script, err := os.ReadFile(filepath.Join(repoRoot(t), "packaging", "install.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(script)
+	if !strings.Contains(text, `routerctl" get status -o json --socket`) {
+		t.Fatalf("install.sh should query JSON status before checking lastApplyTime")
+	}
+	if strings.Contains(text, `routerctl" get status --socket "${socket}"`) {
+		t.Fatalf("install.sh still checks human status output for lastApplyTime")
+	}
+	if !strings.Contains(text, `wait_for_routerd_status_socket "${status_socket}" || true`) {
+		t.Fatalf("install.sh should wait for the status socket before final post-upgrade status output")
+	}
+}
+
 func TestInstallWithNDPIRejectsStaticAgent(t *testing.T) {
 	dir := t.TempDir()
 	pkg := filepath.Join(dir, "package")
