@@ -41,7 +41,7 @@ func OpenRCWithOptions(router *api.Router, options OpenRCOptions) (OpenRCConfig,
 	if err != nil {
 		return OpenRCConfig{}, err
 	}
-	routerdSpec := RouterdServiceInitSpec()
+	routerdSpec := RouterdServiceOpenRCSpec()
 	routerdData, err := OpenRCScript("routerd", routerdSpec)
 	if err != nil {
 		return OpenRCConfig{}, err
@@ -311,7 +311,11 @@ func OpenRCScript(name string, spec api.SystemdUnitSpec) ([]byte, error) {
 	}
 	if defaultString(spec.Type, "simple") != "oneshot" {
 		buf.WriteString("command_background=\"yes\"\n")
-		buf.WriteString("pidfile=\"/run/routerd/openrc/${RC_SVCNAME}.pid\"\n")
+		if name == "routerd" {
+			buf.WriteString("pidfile=\"/run/routerd/routerd.pid\"\n")
+		} else {
+			buf.WriteString("pidfile=\"/run/routerd/openrc/${RC_SVCNAME}.pid\"\n")
+		}
 	}
 	if spec.User != "" {
 		user := spec.User
