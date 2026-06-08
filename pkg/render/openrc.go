@@ -41,7 +41,7 @@ func OpenRCWithOptions(router *api.Router, options OpenRCOptions) (OpenRCConfig,
 	if err != nil {
 		return OpenRCConfig{}, err
 	}
-	routerdSpec := RouterdServiceSystemdSpec()
+	routerdSpec := RouterdServiceInitSpec()
 	routerdData, err := OpenRCScript("routerd", routerdSpec)
 	if err != nil {
 		return OpenRCConfig{}, err

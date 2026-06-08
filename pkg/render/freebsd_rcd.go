@@ -20,7 +20,7 @@ func freeBSDRCDScripts(router *api.Router) (map[string][]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	routerdSpec := RouterdServiceSystemdSpec()
+	routerdSpec := RouterdServiceInitSpec()
 	routerdData, err := FreeBSDRCDScript("routerd", routerdSpec)
 	if err != nil {
 		return nil, err

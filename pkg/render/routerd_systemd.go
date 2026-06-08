@@ -28,3 +28,9 @@ func RouterdServiceSystemdSpec() api.SystemdUnitSpec {
 		Started:                  &started,
 	}
 }
+
+func RouterdServiceInitSpec() api.SystemdUnitSpec {
+	spec := RouterdServiceSystemdSpec()
+	spec.ExecStartPre = nil
+	return spec
+}
