@@ -863,6 +863,7 @@ type Options struct {
 	DryRunNetworkAdoption   bool
 	DryRunServiceUnit       bool
 	SuperviseClientDaemons  bool
+	SuperviseDNSResolvers   bool
 	FirewallDisabled        bool
 	DnsmasqCommand          string
 	DnsmasqConfig           string
@@ -1705,6 +1706,19 @@ func (r *Runner) warmDaemonStatuses(ctx context.Context, controller DaemonStatus
 func (r *Runner) superviseClientDaemons(ctx context.Context, logger *slog.Logger) {
 	for _, resource := range r.Router.Spec.Resources {
 		switch resource.Kind {
+		case "DNSResolver":
+			if !r.Opts.SuperviseDNSResolvers {
+				continue
+			}
+			defaults, _ := platform.Current()
+			name := resource.Metadata.Name
+			args := []string{"daemon", "--resource", name,
+				"--config-file", filepath.Join(defaults.StateDir, "dns-resolver", name, "config.json"),
+				"--socket", filepath.Join(defaults.RuntimeDir, "dns-resolver", name+".sock"),
+				"--state-file", filepath.Join(defaults.StateDir, "dns-resolver", name, "state.json"),
+				"--event-file", filepath.Join(defaults.StateDir, "dns-resolver", name, "events.jsonl"),
+			}
+			r.startSupervisedDaemon(ctx, logger, name, "routerd-dns-resolver", args)
 		case "DHCPv6PrefixDelegation":
 			spec, err := resource.DHCPv6PrefixDelegationSpec()
 			if err != nil {
@@ -2042,6 +2056,8 @@ func defaultClientSocket(binary, resource string) string {
 		return filepath.Join(defaults.RuntimeDir, "pppoe-client", resource+".sock")
 	case "routerd-arp-observer":
 		return filepath.Join(defaults.RuntimeDir, "arp-observer", resource+".sock")
+	case "routerd-dns-resolver":
+		return filepath.Join(defaults.RuntimeDir, "dns-resolver", resource+".sock")
 	default:
 		return ""
 	}
