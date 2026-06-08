@@ -331,6 +331,60 @@ start_pre() {
 	}
 }
 
+func TestInstallOpenRCRestartUsesNodeps(t *testing.T) {
+	dir := t.TempDir()
+	pkg := filepath.Join(dir, "package")
+	prefix := filepath.Join(dir, "prefix")
+	initDir := filepath.Join(dir, "init.d")
+	binDir := filepath.Join(dir, "bin")
+	commandLog := filepath.Join(dir, "commands.log")
+	writeExecutable(t, filepath.Join(pkg, "bin", "routerd"), `#!/bin/sh
+if [ "$1" = "--version" ]; then echo routerd-test; exit 0; fi
+exit 0
+`)
+	writeExecutable(t, filepath.Join(binDir, "rc-service"), fmt.Sprintf(`#!/bin/sh
+echo "rc-service $@" >> %q
+if [ "$1" = "routerd" ] && [ "$2" = "status" ]; then exit 0; fi
+if [ "$1" = "--nodeps" ] && [ "$2" = "routerd" ] && [ "$3" = "restart" ]; then exit 0; fi
+echo "unexpected rc-service call: $@" >&2
+exit 1
+`, commandLog))
+	writeExecutable(t, filepath.Join(binDir, "rc-update"), fmt.Sprintf(`#!/bin/sh
+echo "rc-update $@" >> %q
+exit 0
+`, commandLog))
+	if err := os.MkdirAll(filepath.Join(pkg, "openrc"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pkg, "openrc", "routerd"), []byte(`#!/sbin/openrc-run
+name="routerd"
+command="/usr/local/sbin/routerd"
+command_args="serve"
+`), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runInstallWithEnv(t, pkg, prefix, []string{
+		"PATH=" + binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+		"ROUTERD_INSTALL_FORCE_SERVICE_MANAGER=1",
+		"ROUTERD_INSTALL_OPENRC_INIT_DIR=" + initDir,
+	}, "--no-install-deps", "--no-config-update")
+	if err != nil {
+		t.Fatalf("install failed: %v\n%s", err, out)
+	}
+	data, err := os.ReadFile(commandLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	log := string(data)
+	if !strings.Contains(log, "rc-service --nodeps routerd restart") {
+		t.Fatalf("OpenRC restart did not use --nodeps:\n%s", log)
+	}
+	if strings.Contains(log, "rc-service routerd restart") {
+		t.Fatalf("OpenRC restart used dependency-resolving form:\n%s", log)
+	}
+}
+
 func TestInstallDryRunCreatesRouterdGroupBeforeSystemdUnit(t *testing.T) {
 	dir := t.TempDir()
 	pkg := filepath.Join(dir, "package")

@@ -2073,16 +2073,16 @@ case "${os}" in
                 if command -v rc-service >/dev/null 2>&1; then
                     if [ "${service_active}" -eq 1 ]; then
                         if [ "${dry_run}" -eq 1 ]; then
-                            echo "dry-run: rc-service routerd restart"
+                            echo "dry-run: rc-service --nodeps routerd restart"
                         else
-                            rc-service routerd restart
+                            rc-service --nodeps routerd restart
                             service_touched=1
                         fi
                     else
                         if [ "${dry_run}" -eq 1 ]; then
-                            echo "dry-run: rc-service routerd start"
+                            echo "dry-run: rc-service --nodeps routerd start"
                         else
-                            rc-service routerd start
+                            rc-service --nodeps routerd start
                             service_touched=1
                         fi
                     fi
