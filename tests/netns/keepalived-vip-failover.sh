@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# shellcheck disable=SC2034
 TEST_NAME="keepalived-vip-failover"
+# shellcheck source=tests/netns/lib.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 
 require_common

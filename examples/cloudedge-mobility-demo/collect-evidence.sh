@@ -16,6 +16,7 @@ SSH_OPTS=(-i "$SSH_KEY_FILE" -o BatchMode=yes -o StrictHostKeyChecking=no -o Use
 
 ssh_router() {
   local user=${2:-$SSH_USER}
+  # shellcheck disable=SC2029
   ssh "${SSH_OPTS[@]}" "$user@$1" "$3"
 }
 

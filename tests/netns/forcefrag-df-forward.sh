@@ -3,6 +3,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=tests/netns/lib.sh
 source "$SCRIPT_DIR/lib.sh"
 
 require_common
@@ -37,6 +38,6 @@ EOF
 ip netns exec "$RTR_NS" nft -c -f "$WORKDIR/forcefrag.nft"
 ip netns exec "$RTR_NS" nft -f "$WORKDIR/forcefrag.nft"
 
-ip netns exec "$SRC_NS" ping -4 -M do -s 1300 -c 1 -W 2 10.0.2.2 >/dev/null
+ip netns exec "$SRC_NS" ping -4 -M "do" -s 1300 -c 1 -W 2 10.0.2.2 >/dev/null
 
 log "PASS: oversized IPv4 DF packet crossed low-MTU forwarded path after routerd_forcefrag cleared DF"

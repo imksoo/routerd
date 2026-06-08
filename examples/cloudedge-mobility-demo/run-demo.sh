@@ -65,6 +65,7 @@ router_user() {
 router_ssh() {
   local node=$1
   shift
+  # shellcheck disable=SC2029
   ssh "${SSH_OPTS[@]}" "$(router_user "$node")@$(router_host "$node")" "$@"
 }
 

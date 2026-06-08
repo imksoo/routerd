@@ -1,4 +1,5 @@
 #!/bin/sh
+# shellcheck shell=sh disable=SC1091,SC2034
 #
 # routerd rc.d script for FreeBSD.
 #
@@ -32,13 +33,14 @@ desc="declarative router resource applier"
 
 load_rc_config "$name"
 
-: ${routerd_enable:="NO"}
-: ${routerd_config:="/usr/local/etc/routerd/router.yaml"}
-: ${routerd_socket:="/var/run/routerd/routerd.sock"}
-: ${routerd_status_socket:="/var/run/routerd/routerd-status.sock"}
-: ${routerd_apply_interval:="60s"}
-: ${routerd_log:="/var/log/routerd.log"}
-: ${routerd_user:="root"}
+: "${routerd_enable:=NO}"
+: "${routerd_config:=/usr/local/etc/routerd/router.yaml}"
+: "${routerd_socket:=/var/run/routerd/routerd.sock}"
+: "${routerd_status_socket:=/var/run/routerd/routerd-status.sock}"
+: "${routerd_apply_interval:=60s}"
+: "${routerd_log:=/var/log/routerd.log}"
+: "${routerd_user:=root}"
+: "${routerd_flags:=}"
 
 pidfile="/var/run/routerd/routerd.pid"
 supervisor_pidfile="/var/run/routerd/routerd.daemon.pid"
@@ -85,7 +87,7 @@ routerd_read_pidfile()
 {
     _file="$1"
     if [ -r "${_file}" ]; then
-        read _pid < "${_file}"
+        read -r _pid < "${_file}"
         if [ -n "${_pid}" ] && kill -0 "${_pid}" 2>/dev/null; then
             echo "${_pid}"
             return 0
