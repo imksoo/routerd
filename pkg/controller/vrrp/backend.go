@@ -95,6 +95,27 @@ func (keepalivedBackend) Apply(ctx context.Context, c *Controller, aliases map[s
 		}
 	}
 	serviceActive := c.keepalivedServiceActive(ctx)
+	if !serviceActive && !c.DryRun {
+		now := time.Now().UTC().Format(time.RFC3339Nano)
+		reason := "keepalived.service inactive"
+		action := ""
+		if c.useOpenRC() {
+			action, err = reloadOrRestartOpenRCKeepalived(ctx, c, path)
+		} else {
+			action, err = reloadOrRestartSystemdKeepalived(ctx, c, path)
+		}
+		if err != nil {
+			return backendResult{}, err
+		}
+		serviceActive = c.keepalivedServiceActive(ctx)
+		result := backendResult{Path: path, Changed: changed, Roles: observeKeepalivedRolesAfterChange(ctx, c, aliases), ServiceActive: &serviceActive, LastChangeReason: reason}
+		if action == "reload" {
+			result.LastReloadAt = now
+		} else {
+			result.LastRestartAt = now
+		}
+		return result, nil
+	}
 	return backendResult{Path: path, Changed: changed, Roles: observeKeepalivedRoles(ctx, c, aliases), ServiceActive: &serviceActive}, nil
 }
 
