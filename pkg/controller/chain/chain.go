@@ -2016,7 +2016,19 @@ func (r *Runner) startSupervisedDaemon(ctx context.Context, logger *slog.Logger,
 			if logger != nil {
 				logger.Info("starting supervised routerd client daemon", "binary", path, "resource", resourceName)
 			}
-			err := cmd.Run()
+			if err := cmd.Start(); err != nil {
+				if logger != nil {
+					logger.Warn("supervised routerd client daemon start failed", "binary", path, "resource", resourceName, "error", err)
+				}
+				select {
+				case <-time.After(5 * time.Second):
+				case <-ctx.Done():
+					return
+				}
+				continue
+			}
+			writeOpenRCPidfile(binary, resourceName, cmd.Process.Pid)
+			err := cmd.Wait()
 			if ctx.Err() != nil {
 				return
 			}
@@ -2030,6 +2042,24 @@ func (r *Runner) startSupervisedDaemon(ctx context.Context, logger *slog.Logger,
 			}
 		}
 	}()
+}
+
+func writeOpenRCPidfile(binary, resourceName string, pid int) {
+	_, features := platform.Current()
+	if !features.HasOpenRC {
+		return
+	}
+	svcName := openRCServiceNameForDaemon(binary, resourceName)
+	if svcName == "" {
+		return
+	}
+	pidDir := "/run/routerd/openrc"
+	_ = os.MkdirAll(pidDir, 0755)
+	_ = os.WriteFile(filepath.Join(pidDir, svcName+".pid"), []byte(strconv.Itoa(pid)+"\n"), 0644)
+}
+
+func openRCServiceNameForDaemon(binary, resourceName string) string {
+	return render.OpenRCServiceName(binary + "@" + resourceName + ".service")
 }
 
 func routerdClientBinary(name string) string {

@@ -68,6 +68,24 @@ func TestSuperviseClientDaemonsStartsDNSResolverWhenEnabled(t *testing.T) {
 	}
 }
 
+func TestOpenRCServiceNameForDaemon(t *testing.T) {
+	tests := []struct {
+		binary, resource, want string
+	}{
+		{"routerd-dns-resolver", "k8s-apps-forwarder", "routerd_dns_resolver_k8s_apps_forwarder"},
+		{"routerd-dns-resolver", "lan-resolver", "routerd_dns_resolver_lan_resolver"},
+		{"routerd-dhcpv6-client", "wan", "routerd_dhcpv6_client_wan"},
+		{"routerd-dhcpv4-client", "wan-dhcp", "routerd_dhcpv4_client_wan_dhcp"},
+		{"routerd-bgp", "lan", "routerd_bgp_lan"},
+	}
+	for _, tt := range tests {
+		got := openRCServiceNameForDaemon(tt.binary, tt.resource)
+		if got != tt.want {
+			t.Errorf("openRCServiceNameForDaemon(%q, %q) = %q, want %q", tt.binary, tt.resource, got, tt.want)
+		}
+	}
+}
+
 func stringSliceContains(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {
