@@ -168,11 +168,23 @@ encryption underlay only: generated or hand-authored WireGuard peers should keep
 `AllowedIPs` to transport endpoint prefixes, not mobility `/32`s.
 
 Each router must declare `spec.selfNodeRef`; routerd does not infer the local
-node identity from hostname or BGP router ID. Profiles with more than one peer
-must also declare the same `spec.topologyNodeRefs` list on every router in the
-transport domain. The controller sorts that shared node list and ranks each
-unordered node pair before allocating a `/31` from `spec.innerPrefix`, so
-hub/spoke routers derive the same edge even when their local peer lists differ.
+node identity from hostname or BGP router ID.
+
+`spec.addressingMode` controls `/31` slot derivation:
+
+- `edge-index` (default): profiles with more than one peer must declare the same
+  `spec.topologyNodeRefs` list on every router in the transport domain. The
+  controller sorts that shared node list and ranks each unordered node pair
+  before allocating a `/31` from `spec.innerPrefix`.
+- `pair-stable`: each peer edge derives a slot from a stable hash, so
+  leaf/router profiles can omit global `topologyNodeRefs`. Collision detection
+  is currently profile-local (within one profile's `spec.peers` list). When a
+  collision occurs, set both `override.localInner` and `override.remoteInner`
+  for the affected peer to reserve explicit addresses.
+
+For production fabrics, prefer `/20` or larger `innerPrefix` where practical;
+smaller pools such as `/24` (128 `/31` slots) collide more easily under
+hash+mod allocation.
 
 ```yaml
 apiVersion: mobility.routerd.net/v1alpha1

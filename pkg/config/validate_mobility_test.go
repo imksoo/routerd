@@ -80,6 +80,11 @@ func TestValidateSAMTransportProfileRejectsInvalidFields(t *testing.T) {
 			want: "spec.topologyNodeRefs is required",
 		},
 		{
+			name: "invalid addressing mode",
+			mut:  func(spec *api.SAMTransportProfileSpec) { spec.AddressingMode = "invalid-mode" },
+			want: "spec.addressingMode must be edge-index or pair-stable",
+		},
+		{
 			name: "peer missing from topology",
 			mut: func(spec *api.SAMTransportProfileSpec) {
 				spec.TopologyNodeRefs = []string{"pve-rt", "k8s-rt", "other-rt"}
@@ -125,6 +130,50 @@ func TestValidateSAMTransportProfileRejectsInvalidFields(t *testing.T) {
 				t.Fatalf("Validate error = %v, want containing %q", err, tc.want)
 			}
 		})
+	}
+}
+
+func TestValidateSAMTransportProfileAllowsPairStableWithoutSharedTopology(t *testing.T) {
+	spec := validSAMTransportProfileSpec()
+	spec.AddressingMode = "pair-stable"
+	spec.Peers = append(spec.Peers, api.SAMTransportPeerSpec{
+		NodeRef:        "k8s-rr02",
+		RemoteEndpoint: "203.0.113.21",
+	})
+	if err := Validate(samTransportProfileRouter(spec)); err != nil {
+		t.Fatalf("Validate pair-stable SAMTransportProfile: %v", err)
+	}
+}
+
+func TestValidateSAMTransportProfileRejectsPairStableSlotCollision(t *testing.T) {
+	spec := validSAMTransportProfileSpec()
+	spec.AddressingMode = "pair-stable"
+	spec.Peers = []api.SAMTransportPeerSpec{
+		{NodeRef: "node-03", RemoteEndpoint: "203.0.113.20"},
+		{NodeRef: "node-50", RemoteEndpoint: "203.0.113.21"},
+	}
+	err := Validate(samTransportProfileRouter(spec))
+	if err == nil || !strings.Contains(err.Error(), "collides with") {
+		t.Fatalf("Validate collision error = %v, want collides with", err)
+	}
+}
+
+func TestValidateSAMTransportProfileAllowsPairStableCollisionWithOverride(t *testing.T) {
+	spec := validSAMTransportProfileSpec()
+	spec.AddressingMode = "pair-stable"
+	spec.Peers = []api.SAMTransportPeerSpec{
+		{NodeRef: "node-03", RemoteEndpoint: "203.0.113.20"},
+		{
+			NodeRef:        "node-50",
+			RemoteEndpoint: "203.0.113.21",
+			Override: api.SAMTransportPeerOverrideSpec{
+				LocalInner:  "10.255.1.126/31",
+				RemoteInner: "10.255.1.127",
+			},
+		},
+	}
+	if err := Validate(samTransportProfileRouter(spec)); err != nil {
+		t.Fatalf("Validate collision with override: %v", err)
 	}
 }
 

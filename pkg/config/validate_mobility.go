@@ -191,6 +191,10 @@ func validateSAMTransportProfile(res api.Resource, spec api.SAMTransportProfileS
 	if len(spec.Peers) == 0 {
 		return fmt.Errorf("%s spec.peers requires at least one peer", res.ID())
 	}
+	addressingMode := mobilityconfig.NormalizeSAMTransportAddressingMode(spec.AddressingMode)
+	if strings.TrimSpace(spec.AddressingMode) != "" && addressingMode == "" {
+		return fmt.Errorf("%s spec.addressingMode must be edge-index or pair-stable", res.ID())
+	}
 	seenPeers := map[string]bool{}
 	usedInner := map[string]string{}
 	for i, peer := range spec.Peers {
@@ -213,21 +217,51 @@ func validateSAMTransportProfile(res api.Resource, spec api.SAMTransportProfileS
 		}
 	}
 	capacity := 1 << (31 - inner.Bits())
-	if len(spec.Peers) > 1 && len(spec.TopologyNodeRefs) == 0 {
-		return fmt.Errorf("%s spec.topologyNodeRefs is required when spec.peers has more than one peer", res.ID())
-	}
-	topology, err := normalizeSAMTransportTopology(res.ID(), spec)
-	if err != nil {
-		return err
-	}
-	edgeCount := len(topology) * (len(topology) - 1) / 2
-	if edgeCount > capacity {
-		return fmt.Errorf("%s spec.innerPrefix %s has %d /31 edges but topologyNodeRefs requires %d edges", res.ID(), inner, capacity, edgeCount)
-	}
-	for i, peer := range spec.Peers {
-		nodeRef := strings.TrimSpace(peer.NodeRef)
-		if !stringInSlice(nodeRef, topology) {
-			return fmt.Errorf("%s spec.peers[%d].nodeRef %q must be listed in spec.topologyNodeRefs", res.ID(), i, nodeRef)
+	switch addressingMode {
+	case "pair-stable":
+		if len(spec.Peers) > capacity {
+			return fmt.Errorf("%s spec.innerPrefix %s has %d /31 edges but spec.peers requires %d edges for pair-stable addressing", res.ID(), inner, capacity, len(spec.Peers))
+		}
+		seedPrefix := inner.Masked().String()
+		collisions := map[int]string{}
+		self := strings.TrimSpace(spec.SelfNodeRef)
+		for i, peer := range spec.Peers {
+			peerNode := strings.TrimSpace(peer.NodeRef)
+			if strings.TrimSpace(peer.Override.LocalInner) != "" && strings.TrimSpace(peer.Override.RemoteInner) != "" {
+				continue
+			}
+			slot := mobilityconfig.StableSAMTransportSlot(seedPrefix, self, peerNode, capacity)
+			slotPrefix, err := mobilityconfig.SAMTransportSlotPrefix(inner, slot)
+			if err != nil {
+				return fmt.Errorf("%s spec.peers[%d].nodeRef %q slot computation failed: %w", res.ID(), i, peerNode, err)
+			}
+			for _, addr := range []string{slotPrefix.Addr().String(), slotPrefix.Addr().Next().String()} {
+				if previous := usedInner[addr]; previous != "" {
+					return fmt.Errorf("%s spec.peers[%d].nodeRef %q pair-stable slot %s conflicts with %s; change override.localInner/remoteInner or expand spec.innerPrefix", res.ID(), i, peerNode, slotPrefix, previous)
+				}
+			}
+			if prev, ok := collisions[slot]; ok {
+				return fmt.Errorf("%s spec.peers[%d].nodeRef %q collides with %s in pair-stable slot %s; use override.localInner/remoteInner or expand spec.innerPrefix", res.ID(), i, peerNode, prev, slotPrefix)
+			}
+			collisions[slot] = fmt.Sprintf("spec.peers[%d].nodeRef %q", i, peerNode)
+		}
+	default:
+		if len(spec.Peers) > 1 && len(spec.TopologyNodeRefs) == 0 {
+			return fmt.Errorf("%s spec.topologyNodeRefs is required when spec.peers has more than one peer", res.ID())
+		}
+		topology, err := normalizeSAMTransportTopology(res.ID(), spec)
+		if err != nil {
+			return err
+		}
+		edgeCount := len(topology) * (len(topology) - 1) / 2
+		if edgeCount > capacity {
+			return fmt.Errorf("%s spec.innerPrefix %s has %d /31 edges but topologyNodeRefs requires %d edges", res.ID(), inner, capacity, edgeCount)
+		}
+		for i, peer := range spec.Peers {
+			nodeRef := strings.TrimSpace(peer.NodeRef)
+			if !stringInSlice(nodeRef, topology) {
+				return fmt.Errorf("%s spec.peers[%d].nodeRef %q must be listed in spec.topologyNodeRefs", res.ID(), i, nodeRef)
+			}
 		}
 	}
 	return nil

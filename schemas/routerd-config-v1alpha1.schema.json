@@ -8402,6 +8402,14 @@
                     "additionalProperties": false,
                     "description": "SAMTransportProfile derives the underlay tunnels and BGP peer sessions used by selective-address mobility delivery.",
                     "properties": {
+                      "addressingMode": {
+                        "enum": [
+                          "",
+                          "edge-index",
+                          "pair-stable"
+                        ],
+                        "type": "string"
+                      },
                       "bgp": {
                         "additionalProperties": false,
                         "properties": {
