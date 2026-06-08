@@ -48,6 +48,23 @@ echo native-agent
 	}
 }
 
+func TestInstallDoesNotExcludeBGPOrDNSResolverHelpersFromStaleRestart(t *testing.T) {
+	script, err := os.ReadFile(filepath.Join(repoRoot(t), "packaging", "install.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(script)
+	for _, forbidden := range []string{
+		"not auto-restarting",
+		"routerd-bgp.service|routerd-bgp@*.service|routerd-dns-resolver.service|routerd-dns-resolver@*.service",
+		"restart it deliberately when ready",
+	} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("install.sh still excludes stale BGP/DNS resolver helpers from automatic restart via %q", forbidden)
+		}
+	}
+}
+
 func TestInstallWithNDPIRejectsStaticAgent(t *testing.T) {
 	dir := t.TempDir()
 	pkg := filepath.Join(dir, "package")

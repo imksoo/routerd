@@ -722,20 +722,6 @@ restart_stale_routerd_helper_systemd_units_after_upgrade()
     units=$(systemctl list-units --type=service --state=running --plain --no-legend 'routerd*.service' 2>/dev/null | awk '{print $1}' || true)
     for unit in ${units}; do
         [ "${unit}" = "routerd.service" ] && continue
-        case "${unit}" in
-            routerd-bgp.service|routerd-bgp@*.service|routerd-dns-resolver.service|routerd-dns-resolver@*.service)
-                # Restarting routerd-bgp churns BGP sessions and shrinks ECMP
-                # until peers' hold timers expire. Restarting DNS resolver
-                # instances interrupts DNS. Leave these on the old (deleted)
-                # binary and let the operator restart them deliberately when
-                # ready.
-                if reason=$(routerd_helper_unit_restart_reason "${unit}"); then
-                    echo "note: not auto-restarting ${unit} (${reason})" >&2
-                    echo "      restart it deliberately when ready: systemctl restart ${unit}" >&2
-                fi
-                continue
-                ;;
-        esac
         reason=$(routerd_helper_unit_restart_reason "${unit}") || continue
         echo "restarting ${unit}: ${reason}"
         if systemctl restart "${unit}"; then
