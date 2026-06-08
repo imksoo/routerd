@@ -158,6 +158,25 @@ func TestValidateSAMTransportProfileRejectsPairStableSlotCollision(t *testing.T)
 	}
 }
 
+func TestValidateSAMTransportProfileAllowsPairStableCollisionWithOverride(t *testing.T) {
+	spec := validSAMTransportProfileSpec()
+	spec.AddressingMode = "pair-stable"
+	spec.Peers = []api.SAMTransportPeerSpec{
+		{NodeRef: "node-03", RemoteEndpoint: "203.0.113.20"},
+		{
+			NodeRef:        "node-50",
+			RemoteEndpoint: "203.0.113.21",
+			Override: api.SAMTransportPeerOverrideSpec{
+				LocalInner:  "10.255.1.126/31",
+				RemoteInner: "10.255.1.127",
+			},
+		},
+	}
+	if err := Validate(samTransportProfileRouter(spec)); err != nil {
+		t.Fatalf("Validate collision with override: %v", err)
+	}
+}
+
 func validSAMTransportProfileSpec() api.SAMTransportProfileSpec {
 	return api.SAMTransportProfileSpec{
 		SelfNodeRef:       "pve-rt",

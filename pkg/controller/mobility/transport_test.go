@@ -4,6 +4,7 @@ package mobility
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -167,6 +168,128 @@ func TestSAMTransportProfilePairStableKeepsExistingPairAddressWhenPeersGrow(t *t
 	expandedTunnel := findTransportTunnelForPeer(t, expandedResources, "k8s-rt01", "pve-rt06")
 	if initialTunnel.Address != expandedTunnel.Address {
 		t.Fatalf("pair-stable address changed after adding peer: before=%s after=%s", initialTunnel.Address, expandedTunnel.Address)
+	}
+}
+
+func TestSAMTransportProfilePairStableKeepsPairAddressAcrossPeerOrder(t *testing.T) {
+	now := time.Date(2026, 6, 6, 9, 4, 45, 0, time.UTC)
+	store := testStore(t, now)
+	controller := TransportController{
+		Router: transportRouterWithMode("svnet1", "k8s-rt01", "pair-stable", []api.SAMTransportPeerSpec{
+			{NodeRef: "pve-rt01", RemoteEndpoint: "203.0.113.21"},
+			{NodeRef: "pve-rt06", RemoteEndpoint: "203.0.113.26"},
+		}),
+		Store: store,
+		Now:   func() time.Time { return now },
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("initial Reconcile: %v", err)
+	}
+	initialResources := decodeResources(t, latestPart(t, store, TransportDynamicSource("svnet1", "k8s-rt01")).ResourcesJSON)
+	initialTunnel := findTransportTunnelForPeer(t, initialResources, "k8s-rt01", "pve-rt06")
+
+	controller.Router = transportRouterWithMode("svnet1", "k8s-rt01", "pair-stable", []api.SAMTransportPeerSpec{
+		{NodeRef: "pve-rt06", RemoteEndpoint: "203.0.113.26"},
+		{NodeRef: "pve-rt01", RemoteEndpoint: "203.0.113.21"},
+	})
+	controller.Now = func() time.Time { return now.Add(time.Minute) }
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reordered Reconcile: %v", err)
+	}
+	reorderedResources := decodeResources(t, latestPart(t, store, TransportDynamicSource("svnet1", "k8s-rt01")).ResourcesJSON)
+	reorderedTunnel := findTransportTunnelForPeer(t, reorderedResources, "k8s-rt01", "pve-rt06")
+	if initialTunnel.Address != reorderedTunnel.Address {
+		t.Fatalf("pair-stable address changed after reordering peers: before=%s after=%s", initialTunnel.Address, reorderedTunnel.Address)
+	}
+}
+
+func TestSAMTransportProfilePairStableOverrideEscapesHashCollision(t *testing.T) {
+	now := time.Date(2026, 6, 6, 9, 4, 50, 0, time.UTC)
+	store := testStore(t, now)
+	controller := TransportController{
+		Router: transportRouterWithMode("svnet1", "pve-rt", "pair-stable", []api.SAMTransportPeerSpec{
+			{NodeRef: "node-03", RemoteEndpoint: "203.0.113.20"},
+			{
+				NodeRef:        "node-50",
+				RemoteEndpoint: "203.0.113.21",
+				Override: api.SAMTransportPeerOverrideSpec{
+					LocalInner:  "10.255.1.126/31",
+					RemoteInner: "10.255.1.127",
+				},
+			},
+		}),
+		Store: store,
+		Now:   func() time.Time { return now },
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile with collision override: %v", err)
+	}
+	resources := decodeResources(t, latestPart(t, store, TransportDynamicSource("svnet1", "pve-rt")).ResourcesJSON)
+	overrideTunnel := findTransportTunnelForPeer(t, resources, "pve-rt", "node-50")
+	if overrideTunnel.Address != "10.255.1.126/31" {
+		t.Fatalf("override tunnel address = %s, want 10.255.1.126/31", overrideTunnel.Address)
+	}
+}
+
+func TestSAMTransportProfilePairStableCanonicalInnerPrefixSeed(t *testing.T) {
+	now := time.Date(2026, 6, 6, 9, 4, 55, 0, time.UTC)
+	base := transportRouterWithMode("svnet1", "k8s-rt01", "pair-stable", []api.SAMTransportPeerSpec{
+		{NodeRef: "pve-rt06", RemoteEndpoint: "203.0.113.26"},
+	})
+	baseSpec, err := base.Spec.Resources[0].SAMTransportProfileSpec()
+	if err != nil {
+		t.Fatalf("base spec: %v", err)
+	}
+	baseSpec.InnerPrefix = "10.255.1.0/24"
+	base.Spec.Resources[0].Spec = baseSpec
+
+	alias := transportRouterWithMode("svnet1", "k8s-rt01", "pair-stable", []api.SAMTransportPeerSpec{
+		{NodeRef: "pve-rt06", RemoteEndpoint: "203.0.113.26"},
+	})
+	aliasSpec, err := alias.Spec.Resources[0].SAMTransportProfileSpec()
+	if err != nil {
+		t.Fatalf("alias spec: %v", err)
+	}
+	aliasSpec.InnerPrefix = "10.255.1.5/24"
+	alias.Spec.Resources[0].Spec = aliasSpec
+
+	baseStore := testStore(t, now)
+	baseController := TransportController{Router: base, Store: baseStore, Now: func() time.Time { return now }}
+	if err := baseController.Reconcile(context.Background()); err != nil {
+		t.Fatalf("base Reconcile: %v", err)
+	}
+	baseResources := decodeResources(t, latestPart(t, baseStore, TransportDynamicSource("svnet1", "k8s-rt01")).ResourcesJSON)
+	baseTunnel := findTransportTunnelForPeer(t, baseResources, "k8s-rt01", "pve-rt06")
+
+	aliasStore := testStore(t, now)
+	aliasController := TransportController{Router: alias, Store: aliasStore, Now: func() time.Time { return now }}
+	if err := aliasController.Reconcile(context.Background()); err != nil {
+		t.Fatalf("alias Reconcile: %v", err)
+	}
+	aliasResources := decodeResources(t, latestPart(t, aliasStore, TransportDynamicSource("svnet1", "k8s-rt01")).ResourcesJSON)
+	aliasTunnel := findTransportTunnelForPeer(t, aliasResources, "k8s-rt01", "pve-rt06")
+
+	if baseTunnel.Address != aliasTunnel.Address {
+		t.Fatalf("pair-stable address differs for equivalent prefixes: base=%s alias=%s", baseTunnel.Address, aliasTunnel.Address)
+	}
+}
+
+func TestSAMTransportProfileRejectsUnknownAddressingMode(t *testing.T) {
+	now := time.Date(2026, 6, 6, 9, 4, 58, 0, time.UTC)
+	store := testStore(t, now)
+	controller := TransportController{
+		Router: transportRouterWithMode("svnet1", "k8s-rt01", "invalid-mode", []api.SAMTransportPeerSpec{
+			{NodeRef: "pve-rt06", RemoteEndpoint: "203.0.113.26"},
+		}),
+		Store: store,
+		Now:   func() time.Time { return now },
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile unknown mode: %v", err)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "SAMTransportProfile", "svnet1")
+	if reason, _ := status["reason"].(string); !strings.Contains(reason, "unsupported addressingMode") {
+		t.Fatalf("status reason = %#v, want unsupported addressingMode", status["reason"])
 	}
 }
 

@@ -101,6 +101,14 @@ hostname or BGP router ID.
 - `addressingMode: pair-stable` derives `/31` slots from a stable hash of each
   node pair, so leaf nodes can declare only their actual peers (for example RR
   nodes) without enumerating every leaf in `topologyNodeRefs`.
+  - Collision checks are currently profile-local (within one
+    `SAMTransportProfile.spec.peers` list).
+  - `override.localInner` + `override.remoteInner` removes that peer from
+    hash-slot allocation and reserves the explicit `/31` addresses instead.
+
+For production fabrics, size `innerPrefix` with collision probability in mind.
+`/24` has only 128 `/31` slots; with hash+mod allocation this can collide at
+modest edge counts. Use `/20` or larger where feasible.
 
 `MobilityPool.spec.members` remains a mobility ownership/capture/placement intent.
 It is not the SAM transport BGP peer topology.

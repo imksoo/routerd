@@ -8,7 +8,6 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
-	"hash/fnv"
 	"net/netip"
 	"sort"
 	"strings"
@@ -16,6 +15,7 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
+	"github.com/imksoo/routerd/pkg/mobilityconfig"
 	"github.com/imksoo/routerd/pkg/resourcequery"
 )
 
@@ -78,11 +78,12 @@ func (c TransportController) Reconcile(_ context.Context) error {
 				return upsertErr
 			}
 			_ = c.saveTransportStatus(res.Metadata.Name, map[string]any{
-				"phase":         "Degraded",
-				"reason":        err.Error(),
-				"selfNode":      strings.TrimSpace(spec.SelfNodeRef),
-				"dynamicSource": source,
-				"updatedAt":     now.Format(time.RFC3339Nano),
+				"phase":          "Degraded",
+				"reason":         err.Error(),
+				"selfNode":       strings.TrimSpace(spec.SelfNodeRef),
+				"addressingMode": strings.TrimSpace(spec.AddressingMode),
+				"dynamicSource":  source,
+				"updatedAt":      now.Format(time.RFC3339Nano),
 			})
 			continue
 		}
@@ -96,6 +97,7 @@ func (c TransportController) Reconcile(_ context.Context) error {
 		_ = c.saveTransportStatus(res.Metadata.Name, map[string]any{
 			"phase":                   phase,
 			"selfNode":                strings.TrimSpace(spec.SelfNodeRef),
+			"addressingMode":          firstNonEmpty(strings.TrimSpace(spec.AddressingMode), "edge-index"),
 			"dynamicSource":           source,
 			"innerPrefix":             strings.TrimSpace(spec.InnerPrefix),
 			"generatedTunnels":        derived.Tunnels,
@@ -213,7 +215,11 @@ func (c TransportController) deriveTransportResources(owner api.Resource, spec a
 }
 
 func transportAddressSlots(spec api.SAMTransportProfileSpec, inner netip.Prefix) (map[string]int, error) {
-	switch transportAddressingMode(spec) {
+	addressingMode, err := transportAddressingMode(spec)
+	if err != nil {
+		return nil, err
+	}
+	switch addressingMode {
 	case "pair-stable":
 		return transportPairStableSlots(spec, inner)
 	default:
@@ -254,8 +260,22 @@ func transportEdgeIndex(spec api.SAMTransportProfileSpec) (map[string]int, error
 func transportPairStableSlots(spec api.SAMTransportProfileSpec, inner netip.Prefix) (map[string]int, error) {
 	capacity := 1 << (31 - inner.Bits())
 	self := strings.TrimSpace(spec.SelfNodeRef)
+	seedPrefix := inner.Masked().String()
 	out := map[string]int{}
 	used := map[int]string{}
+	reservedAddresses := map[string]string{}
+	for _, peer := range spec.Peers {
+		peerNode := strings.TrimSpace(peer.NodeRef)
+		if peerNode == "" || peerNode == self {
+			continue
+		}
+		edgeKey := sortedEdgeKey(self, peerNode)
+		if _, reserved, err := reserveOverrideAddresses(inner, peer.Override, edgeKey, reservedAddresses); err != nil {
+			return nil, fmt.Errorf("peer %s override: %w", peerNode, err)
+		} else if reserved {
+			out[edgeKey] = -1
+		}
+	}
 	for _, peer := range spec.Peers {
 		peerNode := strings.TrimSpace(peer.NodeRef)
 		if peerNode == "" || peerNode == self {
@@ -265,10 +285,21 @@ func transportPairStableSlots(spec api.SAMTransportProfileSpec, inner netip.Pref
 		if _, exists := out[edgeKey]; exists {
 			continue
 		}
-		slot := stableEdgeSlot(spec, self, peerNode, capacity)
+		slot := mobilityconfig.StableSAMTransportSlot(seedPrefix, self, peerNode, capacity)
+		slotPrefix, err := mobilityconfig.SAMTransportSlotPrefix(inner, slot)
+		if err != nil {
+			return nil, fmt.Errorf("pair-stable slot computation failed for %s: %w", describeEdgeKey(edgeKey), err)
+		}
+		for _, addr := range []string{slotPrefix.Addr().String(), slotPrefix.Addr().Next().String()} {
+			if previous := reservedAddresses[addr]; previous != "" && previous != edgeKey {
+				return nil, fmt.Errorf("pair-stable inner /31 slot conflict: %s maps to %s which is already reserved by %s; use peer override.localInner/remoteInner or expand spec.innerPrefix",
+					describeEdgeKey(edgeKey), slotPrefix, describeEdgeKey(previous))
+			}
+			reservedAddresses[addr] = edgeKey
+		}
 		if previous, conflict := used[slot]; conflict && previous != edgeKey {
 			return nil, fmt.Errorf("pair-stable inner /31 slot collision: %s and %s both map to %s; use peer override.localInner/remoteInner or expand spec.innerPrefix",
-				describeEdgeKey(previous), describeEdgeKey(edgeKey), innerSlotPrefix(inner, slot))
+				describeEdgeKey(previous), describeEdgeKey(edgeKey), slotPrefix)
 		}
 		used[slot] = edgeKey
 		out[edgeKey] = slot
@@ -380,27 +411,7 @@ func parseTransportSource(source string) (string, string) {
 }
 
 func sortedEdgeKey(a, b string) string {
-	a = strings.TrimSpace(a)
-	b = strings.TrimSpace(b)
-	if a <= b {
-		return a + "\x00" + b
-	}
-	return b + "\x00" + a
-}
-
-func stableEdgeSlot(spec api.SAMTransportProfileSpec, a, b string, capacity int) int {
-	input := strings.TrimSpace(spec.InnerPrefix) + "\x00" + sortedEdgeKey(a, b)
-	h := fnv.New64a()
-	_, _ = h.Write([]byte(input))
-	return int(h.Sum64() % uint64(capacity))
-}
-
-func innerSlotPrefix(inner netip.Prefix, slot int) string {
-	base, err := addIPv4(inner.Addr(), uint32(slot*2))
-	if err != nil {
-		return fmt.Sprintf("<slot %d computation failed>", slot)
-	}
-	return netip.PrefixFrom(base, 31).String()
+	return mobilityconfig.SAMTransportPairKey(a, b)
 }
 
 func describeEdgeKey(key string) string {
@@ -411,13 +422,53 @@ func describeEdgeKey(key string) string {
 	return parts[0] + "<->" + parts[1]
 }
 
-func transportAddressingMode(spec api.SAMTransportProfileSpec) string {
-	switch strings.TrimSpace(spec.AddressingMode) {
-	case "pair-stable":
-		return "pair-stable"
-	default:
-		return "edge-index"
+func transportAddressingMode(spec api.SAMTransportProfileSpec) (string, error) {
+	mode := mobilityconfig.NormalizeSAMTransportAddressingMode(spec.AddressingMode)
+	if mode == "" {
+		return "", fmt.Errorf("unsupported addressingMode %q", strings.TrimSpace(spec.AddressingMode))
 	}
+	return mode, nil
+}
+
+func reserveOverrideAddresses(inner netip.Prefix, override api.SAMTransportPeerOverrideSpec, edgeKey string, reserved map[string]string) (netip.Prefix, bool, error) {
+	localSet := strings.TrimSpace(override.LocalInner) != ""
+	remoteSet := strings.TrimSpace(override.RemoteInner) != ""
+	if !localSet && !remoteSet {
+		return netip.Prefix{}, false, nil
+	}
+	if localSet != remoteSet {
+		return netip.Prefix{}, false, fmt.Errorf("override.localInner and override.remoteInner must be set together")
+	}
+	local, err := netip.ParsePrefix(strings.TrimSpace(override.LocalInner))
+	if err != nil {
+		return netip.Prefix{}, false, fmt.Errorf("invalid override.localInner: %w", err)
+	}
+	local = local.Masked()
+	if !local.Addr().Is4() || local.Bits() != 31 || !inner.Contains(local.Addr()) {
+		return netip.Prefix{}, false, fmt.Errorf("override.localInner must be an IPv4 /31 inside spec.innerPrefix")
+	}
+	remoteText := strings.TrimSpace(override.RemoteInner)
+	if strings.Contains(remoteText, "/") {
+		remotePrefix, err := netip.ParsePrefix(remoteText)
+		if err != nil {
+			return netip.Prefix{}, false, fmt.Errorf("invalid override.remoteInner: %w", err)
+		}
+		remoteText = remotePrefix.Addr().String()
+	}
+	remote, err := netip.ParseAddr(remoteText)
+	if err != nil || !remote.Is4() {
+		return netip.Prefix{}, false, fmt.Errorf("override.remoteInner must be an IPv4 address")
+	}
+	if !local.Contains(remote) || remote == local.Addr() {
+		return netip.Prefix{}, false, fmt.Errorf("override.remoteInner must be the other address in override.localInner")
+	}
+	for _, addr := range []string{local.Addr().String(), remote.String()} {
+		if previous := reserved[addr]; previous != "" && previous != edgeKey {
+			return netip.Prefix{}, false, fmt.Errorf("override inner address %s conflicts with %s", addr, describeEdgeKey(previous))
+		}
+		reserved[addr] = edgeKey
+	}
+	return local, true, nil
 }
 
 func derivedInnerAddresses(inner netip.Prefix, self, peer string, index int, override api.SAMTransportPeerOverrideSpec) (netip.Prefix, netip.Addr, error) {
