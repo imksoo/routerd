@@ -8382,6 +8382,114 @@
                     "type": "string"
                   },
                   "kind": {
+                    "const": "SAMPeerGroup",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "peers": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "nodeRef": {
+                              "type": "string"
+                            },
+                            "override": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "bgpPeer": {
+                                  "type": "string"
+                                },
+                                "endpointRoute": {
+                                  "type": "string"
+                                },
+                                "localInner": {
+                                  "type": "string"
+                                },
+                                "remoteInner": {
+                                  "type": "string"
+                                },
+                                "tunnelInterface": {
+                                  "type": "string"
+                                },
+                                "underlayInterface": {
+                                  "type": "string"
+                                }
+                              },
+                              "type": "object"
+                            },
+                            "remoteEndpoint": {
+                              "type": "string"
+                            },
+                            "remoteEndpointFrom": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "field": {
+                                  "description": "Field defaults to phase when omitted.",
+                                  "type": "string"
+                                },
+                                "optional": {
+                                  "type": "boolean"
+                                },
+                                "resource": {
+                                  "description": "Resource names the source resource as Kind/name and reads its status, or a router config field for supported resources.",
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "resource"
+                              ],
+                              "type": "object"
+                            }
+                          },
+                          "required": [
+                            "nodeRef"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      }
+                    },
+                    "required": [
+                      "peers"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "mobility.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
                     "const": "SAMTransportProfile",
                     "type": "string"
                   },
@@ -8597,6 +8705,27 @@
                         },
                         "type": "array"
                       },
+                      "peersFrom": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "optional": {
+                              "type": "boolean"
+                            },
+                            "resource": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "resource"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "publishPeerGroup": {
+                        "type": "boolean"
+                      },
                       "selfNodeRef": {
                         "type": "string"
                       },
@@ -8615,8 +8744,7 @@
                       "mode",
                       "innerPrefix",
                       "underlayInterface",
-                      "bgp",
-                      "peers"
+                      "bgp"
                     ],
                     "type": "object"
                   },

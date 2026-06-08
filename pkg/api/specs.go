@@ -673,17 +673,28 @@ type BGPPeerSpec struct {
 // by selective-address mobility delivery. Each router declares its stable
 // selfNodeRef explicitly; no hostname or router-id inference is used.
 type SAMTransportProfileSpec struct {
-	SelfNodeRef       string                     `yaml:"selfNodeRef" json:"selfNodeRef"`
-	Mode              string                     `yaml:"mode" json:"mode" jsonschema:"enum=ipip,enum=gre"`
-	Encryption        string                     `yaml:"encryption,omitempty" json:"encryption,omitempty" jsonschema:"enum=,enum=none,enum=wireguard"`
-	InnerPrefix       string                     `yaml:"innerPrefix" json:"innerPrefix"`
-	AddressingMode    string                     `yaml:"addressingMode,omitempty" json:"addressingMode,omitempty" jsonschema:"enum=,enum=edge-index,enum=pair-stable"`
-	TopologyNodeRefs  []string                   `yaml:"topologyNodeRefs,omitempty" json:"topologyNodeRefs,omitempty"`
-	UnderlayInterface string                     `yaml:"underlayInterface" json:"underlayInterface"`
-	LocalEndpoint     string                     `yaml:"localEndpoint,omitempty" json:"localEndpoint,omitempty"`
-	LocalEndpointFrom StatusValueSourceSpec      `yaml:"localEndpointFrom,omitempty" json:"localEndpointFrom,omitempty"`
-	BGP               SAMTransportBGPProfileSpec `yaml:"bgp" json:"bgp"`
-	Peers             []SAMTransportPeerSpec     `yaml:"peers" json:"peers"`
+	SelfNodeRef       string                        `yaml:"selfNodeRef" json:"selfNodeRef"`
+	Mode              string                        `yaml:"mode" json:"mode" jsonschema:"enum=ipip,enum=gre"`
+	Encryption        string                        `yaml:"encryption,omitempty" json:"encryption,omitempty" jsonschema:"enum=,enum=none,enum=wireguard"`
+	InnerPrefix       string                        `yaml:"innerPrefix" json:"innerPrefix"`
+	AddressingMode    string                        `yaml:"addressingMode,omitempty" json:"addressingMode,omitempty" jsonschema:"enum=,enum=edge-index,enum=pair-stable"`
+	TopologyNodeRefs  []string                      `yaml:"topologyNodeRefs,omitempty" json:"topologyNodeRefs,omitempty"`
+	UnderlayInterface string                        `yaml:"underlayInterface" json:"underlayInterface"`
+	LocalEndpoint     string                        `yaml:"localEndpoint,omitempty" json:"localEndpoint,omitempty"`
+	LocalEndpointFrom StatusValueSourceSpec         `yaml:"localEndpointFrom,omitempty" json:"localEndpointFrom,omitempty"`
+	BGP               SAMTransportBGPProfileSpec    `yaml:"bgp" json:"bgp"`
+	PeersFrom         []SAMTransportPeersSourceSpec `yaml:"peersFrom,omitempty" json:"peersFrom,omitempty"`
+	PublishPeerGroup  bool                          `yaml:"publishPeerGroup,omitempty" json:"publishPeerGroup,omitempty"`
+	Peers             []SAMTransportPeerSpec        `yaml:"peers,omitempty" json:"peers,omitempty"`
+}
+
+type SAMTransportPeersSourceSpec struct {
+	Resource string `yaml:"resource" json:"resource"`
+	Optional bool   `yaml:"optional,omitempty" json:"optional,omitempty"`
+}
+
+type SAMPeerGroupSpec struct {
+	Peers []SAMTransportPeerSpec `yaml:"peers" json:"peers"`
 }
 
 type SAMTransportBGPProfileSpec struct {
@@ -2341,6 +2352,10 @@ func (r Resource) BGPRouterSpec() (BGPRouterSpec, error) {
 
 func (r Resource) BGPPeerSpec() (BGPPeerSpec, error) {
 	return specAs[BGPPeerSpec](r)
+}
+
+func (r Resource) SAMPeerGroupSpec() (SAMPeerGroupSpec, error) {
+	return specAs[SAMPeerGroupSpec](r)
 }
 
 func (r Resource) SAMTransportProfileSpec() (SAMTransportProfileSpec, error) {

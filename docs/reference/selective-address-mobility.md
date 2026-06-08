@@ -186,6 +186,19 @@ For production fabrics, prefer `/20` or larger `innerPrefix` where practical;
 smaller pools such as `/24` (128 `/31` slots) collide more easily under
 hash+mod allocation.
 
+`SAMPeerGroup` groups reusable transport peers. A profile can set
+`spec.peersFrom` to one or more `SAMPeerGroup/<name>` references; the controller
+resolves those groups at reconcile time, adds their peers first, then overlays
+the profile's local `spec.peers`. When the same `nodeRef` appears in both, the
+local `spec.peers` entry wins so operators can keep static bootstrap or override
+entries on a leaf. If a required `peersFrom` group is not yet present, the
+profile reports `Pending`; optional sources are ignored until they arrive.
+
+Spine or route-reflector profiles can set `spec.publishPeerGroup: true`. In that
+mode routerd publishes a `SAMPeerGroup` DynamicConfigPart with this profile's
+`selfNodeRef` and concrete local endpoint. `localEndpointFrom` is resolved before
+publishing so leaves receive a direct `remoteEndpoint` value.
+
 ```yaml
 apiVersion: mobility.routerd.net/v1alpha1
 kind: SAMTransportProfile

@@ -212,6 +212,7 @@ var declarations = []Declaration{
 	declare(api.FederationAPIVersion, "EventPeer", ClassController, "event federation peer state", noHostTeardown("controller state does not own standalone host artifacts")),
 	declare(api.FederationAPIVersion, "EventSubscription", ClassDynamicSource, "event subscription can emit DynamicConfigPart", noHostTeardown("dynamic output is represented as DynamicConfigPart and then handled by the effective resource view")),
 	declare(api.MobilityAPIVersion, "MobilityPool", ClassDynamicSource, "SAM capture/control-plane dynamic source", noHostTeardown("dynamic source emits capture resources that are handled through the effective view")),
+	declare(api.MobilityAPIVersion, "SAMPeerGroup", ClassRendererInput, "SAM transport peer group input", noHostTeardown("peer group input is resolved by SAMTransportProfile")),
 	declare(api.MobilityAPIVersion, "SAMTransportProfile", ClassDynamicSource, "generates transport TunnelInterface/BGPPeer resources", noHostTeardown("generated transport resources own teardown through the effective view")),
 	declare(api.NetAPIVersion, "IPv4Route", ClassManagedHost, "IPv4 route", resourceLifecycle()),
 	declare(api.NetAPIVersion, "HealthCheck", ClassManagedHost, "health check service/socket artifacts", resourceLifecycle()),
