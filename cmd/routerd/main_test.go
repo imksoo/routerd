@@ -2285,6 +2285,115 @@ exit 0
 	}
 }
 
+func TestApplyOpenRCServiceResourcesRemovesStaleDNSResolverServices(t *testing.T) {
+	dir := t.TempDir()
+	binDir := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatalf("create fake bin dir: %v", err)
+	}
+	commandLog := filepath.Join(dir, "commands.log")
+	enabledFile := filepath.Join(dir, "enabled")
+	activeDir := filepath.Join(dir, "active")
+	if err := os.MkdirAll(activeDir, 0755); err != nil {
+		t.Fatalf("create active dir: %v", err)
+	}
+	staleService := "routerd_dns_resolver_lan"
+	if err := os.WriteFile(enabledFile, []byte(staleService+"\n"), 0644); err != nil {
+		t.Fatalf("seed enabled services: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(activeDir, staleService), nil, 0644); err != nil {
+		t.Fatalf("seed active service: %v", err)
+	}
+	writeExecutable(t, filepath.Join(binDir, "rc-update"), fmt.Sprintf(`#!/bin/sh
+if [ "$1" = "show" ]; then
+  cat %q 2>/dev/null || true
+  exit 0
+fi
+echo "rc-update $@" >> %q
+if [ "$1" = "add" ]; then
+  grep -qx "$2" %q 2>/dev/null || echo "$2" >> %q
+elif [ "$1" = "del" ]; then
+  tmp=%q.tmp
+  grep -vx "$2" %q > "$tmp" 2>/dev/null || true
+  mv "$tmp" %q
+fi
+`, enabledFile, commandLog, enabledFile, enabledFile, enabledFile, enabledFile, enabledFile))
+	writeExecutable(t, filepath.Join(binDir, "rc-service"), fmt.Sprintf(`#!/bin/sh
+echo "rc-service $@" >> %q
+if [ "$2" = "status" ]; then
+  test -f %q/"$1"
+  exit $?
+fi
+if [ "$2" = "start" ] || [ "$2" = "restart" ]; then
+  touch %q/"$1"
+  exit 0
+fi
+if [ "$2" = "stop" ]; then
+  rm -f %q/"$1"
+  exit 0
+fi
+exit 0
+`, commandLog, activeDir, activeDir, activeDir))
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	oldDefaults := platformDefaults
+	oldFeatures := platformFeatures
+	platformDefaults = platform.Defaults{
+		OS:              platform.OSLinux,
+		OpenRCScriptDir: filepath.Join(dir, "etc", "init.d"),
+	}
+	platformFeatures = platform.Features{HasOpenRC: true}
+	t.Cleanup(func() {
+		platformDefaults = oldDefaults
+		platformFeatures = oldFeatures
+	})
+	if err := os.MkdirAll(platformDefaults.OpenRCScriptDir, 0755); err != nil {
+		t.Fatalf("create init.d: %v", err)
+	}
+	stalePath := filepath.Join(platformDefaults.OpenRCScriptDir, staleService)
+	if err := os.WriteFile(stalePath, []byte("# stale\n"), 0755); err != nil {
+		t.Fatalf("seed stale service: %v", err)
+	}
+
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSResolver"},
+			Metadata: api.ObjectMeta{Name: "lan"},
+			Spec: api.DNSResolverSpec{
+				Listen:  []api.DNSResolverListenSpec{{Addresses: []string{"127.0.0.1"}, Port: 5053}},
+				Sources: []api.DNSResolverSourceSpec{{Kind: "upstream", Match: []string{"."}, Upstreams: []string{"udp://1.1.1.1:53"}}},
+			},
+		},
+	}}}
+	changed, err := applyOpenRCServiceResources(router)
+	if err != nil {
+		t.Fatalf("apply OpenRC service resources: %v", err)
+	}
+	if !containsString(changed, stalePath) {
+		t.Fatalf("changed = %v, want stale service removal %s", changed, stalePath)
+	}
+	if _, err := os.Stat(stalePath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stale service still exists, stat err=%v", err)
+	}
+	commands, err := os.ReadFile(commandLog)
+	if err != nil {
+		t.Fatalf("read command log: %v", err)
+	}
+	log := string(commands)
+	for _, want := range []string{"rc-service routerd_dns_resolver_lan stop", "rc-update del routerd_dns_resolver_lan default"} {
+		if !strings.Contains(log, want) {
+			t.Fatalf("command log missing %q:\n%s", want, log)
+		}
+	}
+	enabled, err := os.ReadFile(enabledFile)
+	if err != nil {
+		t.Fatalf("read enabled services: %v", err)
+	}
+	if strings.Contains(string(enabled), staleService) {
+		t.Fatalf("stale service still enabled:\n%s", enabled)
+	}
+}
+
 func TestApplyFreeBSDConfigContinuesAfterPackageFailure(t *testing.T) {
 	dir := t.TempDir()
 	binDir := filepath.Join(dir, "bin")
