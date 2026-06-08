@@ -969,6 +969,15 @@ start_qemu_guest_agent() {
     log "virtual environment detected but qemu guest agent service or binary not present"
 }
 
+ensure_loopback() {
+    if command -v ip >/dev/null 2>&1; then
+        ip link set lo up >/dev/null 2>&1 || true
+        ip addr show dev lo 2>/dev/null | grep -q '127\.0\.0\.1/8' || ip addr add 127.0.0.1/8 dev lo >/dev/null 2>&1 || true
+    else
+        ifconfig lo up >/dev/null 2>&1 || true
+    fi
+}
+
 routerd_serve_running() {
     pids="$(pgrep -x routerd 2>/dev/null || pidof routerd 2>/dev/null || true)"
     for pid in ${pids}; do
@@ -984,6 +993,7 @@ routerd_serve_running() {
 }
 
 mkdir -p /run/routerd "${log_dir}" /var/lib/routerd
+ensure_loopback
 /usr/share/routerd/live-persistence.sh init || true
 if [ -x /etc/init.d/routerd ]; then
     if rc-update show default 2>/dev/null | grep -Eq '(^|[[:space:]])routerd([[:space:]]|$)'; then
