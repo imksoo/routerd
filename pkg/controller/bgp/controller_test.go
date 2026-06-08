@@ -1826,6 +1826,54 @@ func TestReconcileUpdatesPeerWhenConfigChangedAcrossRouterdRestart(t *testing.T)
 	}
 }
 
+func TestReconcileDoesNotUpdatePeerForDynamicPrefixesOrGracefulRestartFormatting(t *testing.T) {
+	router := bgpRouter()
+	routerSpec := router.Spec.Resources[0].Spec.(api.BGPRouterSpec)
+	routerSpec.GracefulRestart.RestartTime = "2m"
+	routerSpec.GracefulRestart.StalePathTime = "6m"
+	router.Spec.Resources[0].Spec = routerSpec
+
+	server := &fakeServer{}
+	first := Controller{
+		Router: router,
+		Store:  mapStore{},
+		FIB:    &fakeFIB{},
+		NewServer: func() GoBGPServer {
+			return server
+		},
+	}
+	if err := first.Reconcile(context.Background()); err != nil {
+		t.Fatalf("first reconcile: %v", err)
+	}
+	if got := server.applied.Peers["10.0.0.21"].GracefulRestart; got == nil || got.RestartTime != 120 || got.StaleRoutesTime != 360 {
+		t.Fatalf("applied graceful restart = %#v, want 120s/360s", got)
+	}
+	server.applied.Paths = append(server.applied.Paths, bgpdaemon.AppliedPath{
+		Source: "MobilityPool/demo/node/aws-router-a",
+		Prefix: "10.77.60.11/32",
+		Family: bgpdaemon.AppliedPathFamilyIPv4Unicast,
+		UUID:   bgpdaemon.EncodeUUID([]byte{7}),
+	})
+	adds, updates, deletes := server.adds, server.updates, server.deletes
+	second := Controller{
+		Router: router,
+		Store:  mapStore{},
+		FIB:    &fakeFIB{},
+		NewServer: func() GoBGPServer {
+			return server
+		},
+	}
+	if err := second.Reconcile(context.Background()); err != nil {
+		t.Fatalf("second reconcile: %v", err)
+	}
+	if server.adds != adds || server.updates != updates || server.deletes != deletes {
+		t.Fatalf("dynamic prefix/GR formatting churned peers: adds %d->%d updates %d->%d deletes %d->%d", adds, server.adds, updates, server.updates, deletes, server.deletes)
+	}
+	if server.outResets == 0 {
+		t.Fatal("dynamic export prefix change should still trigger an outbound soft reset")
+	}
+}
+
 func TestReconcileDoesNotSilentlyAdoptLivePeerWithoutAppliedState(t *testing.T) {
 	router := bgpRouter()
 	server := &fakeServer{peers: map[string]*gobgpapi.Peer{
