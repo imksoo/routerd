@@ -8,7 +8,7 @@ title: CloudEdge Mobility デモ
 
 > 実験的機能（CloudEdge）。**Selective Address Mobility (SAM)** のラボデモです。on-prem、AWS、Azure、OCI が 1 つの論理 `/24` を共有し、各サイトが他のサイトが*所有する*アドレスを — NAT なしでクライアントのデフォルトゲートウェイも変更せずに — 提供できます。実行可能なパッケージは [`examples/cloudedge-mobility-demo/`](https://github.com/imksoo/routerd/tree/main/examples/cloudedge-mobility-demo) にあります。
 
-![CloudEdge Mobility デモ: 4 サイトが 10.77.60.0/24 を共有し、各オーナーアドレスが生成された SAM トランスポートを介してすべての非オーナーサイトでキャプチャされ、NAT なしでソース IP が保持される](../images/cloudedge-mobility-demo.png)
+![CloudEdge Mobility デモ: 4 サイトが 10.77.60.0/24 を共有し、各オーナーアドレスが生成された SAM トランスポートを介してすべての非オーナーサイトでキャプチャされ、NAT なしでソース IP が保持される](/img/diagrams/how-to-cloudedge-mobility-demo.png)
 
 ## このデモで示すこと
 

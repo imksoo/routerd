@@ -8,7 +8,7 @@ title: CloudEdge Mobility 展示
 
 > 實驗性功能（CloudEdge）。**Selective Address Mobility (SAM)** 的實驗室展示。on-prem、AWS、Azure、OCI 共享一個邏輯 `/24`，每個站點都能提供其他站點*擁有的*位址 — 無 NAT 且不變更用戶端的預設閘道。可執行套件位於 [`examples/cloudedge-mobility-demo/`](https://github.com/imksoo/routerd/tree/main/examples/cloudedge-mobility-demo)。
 
-![CloudEdge Mobility 展示：4 個站點共享 10.77.60.0/24，每個擁有者位址透過產生的 SAM 傳輸在所有非擁有者站點被捕獲，無 NAT 保留來源 IP](../images/cloudedge-mobility-demo.png)
+![CloudEdge Mobility 展示：4 個站點共享 10.77.60.0/24，每個擁有者位址透過產生的 SAM 傳輸在所有非擁有者站點被捕獲，無 NAT 保留來源 IP](/img/diagrams/how-to-cloudedge-mobility-demo.png)
 
 ## 本展示呈現的內容
 

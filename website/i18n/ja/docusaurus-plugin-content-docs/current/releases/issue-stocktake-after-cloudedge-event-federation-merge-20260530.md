@@ -58,7 +58,7 @@ PR #54 (`event-federation → main`) は **マージ済み** (マージコミッ
 > `3c540656` により解決 (PR #54 → main `baeaff16`)。SAM 配送パスがスコープ付き TCP MSS clamp を導出するようになり、`doctor hybrid` が PMTU/MSS ポスチャーを表示 (SAM 配送パスに clamp がない場合に警告) — ここで要求された 2 つの動作そのもの。以前 `routerd_mss` が不在だった OCI 再テストが MSS 1300 を出力し、双方向 ping/SSH/scp がパス。クローズ。(ラベル変更ノート: `branch cloudedge-mvp` は古い — ブランチはマージ済みで PR #49 はクローズ。)
 
 ### #52 — ドキュメントフォローアップとしてオープン維持 (またはノート付きクローズ)
-> `3c540656` (PR #54 → main `baeaff16`) により部分的に対処: `doctor hybrid` が wg/オーバーレイ転送をブロックする reject-all FORWARD/INPUT ホストファイアウォールを検出して警告するようになり、自動ミューテーションせずに必要なホスト設定を表示。再テストで確認: ブートストラップ前に doctor が警告、スコープ付きラボ allow ルール後に PASS。**まだオープン**: OCI Ubuntu イメージのファイアウォールブートストラップ前提条件 (UDP/51820 INPUT、FORWARD `<vnic> <-> wg-hybrid`) を CloudEdge SAM how-to に文書化。ドキュメントタスクとしてオープン維持; ラベルを `documentation` のみに変更。
+> `3c540656` (PR #54 → main `baeaff16`) により部分的に対処: `doctor hybrid` が wg/オーバーレイ転送をブロックする reject-all FORWARD/INPUT ホストファイアウォールを検出して警告するようになり、自動ミューテーションせずに必要なホスト設定を表示。再テストで確認: ブートストラップ前に doctor が警告、スコープ付きラボ allow ルール後に PASS。**まだオープン**: OCI Ubuntu イメージのファイアウォールブートストラップ前提条件 (UDP/51820 INPUT、FORWARD `<vnic> ↔ wg-hybrid`) を CloudEdge SAM how-to に文書化。ドキュメントタスクとしてオープン維持; ラベルを `documentation` のみに変更。
 
 ### #51 — オープン維持 (Phase 4.1 候補)
 > PR #54 では対処されていない — cloudedge-sam wizard はラボプロトタイプであり、マージ中にコアへの OCI プロバイダー生成は追加されていない。オープン維持。Phase 4.1 プロバイダー actionPlan plugin 作業 (aws/azure/oci のプロバイダープロファイル生成) に自然に組み込まれる。ラベル変更: `branch cloudedge-mvp` を削除。

@@ -14,7 +14,7 @@ Result: PASS (干净 — 无手动变通; Azure 对等)
 - 本地客户端 (PVE VM): `10.88.60.9/24`
 - 云路由器 (AWS EC2): 主 `10.88.60.4/24`, ENI 辅助捕获 `10.88.60.9`
 - 本地路由器 (PVE, router07): `10.88.60.1/24` (`vmbr470`)
-- Overlay: `wg-hybrid`, `169.254.120.1/32` (云) <-> `169.254.120.2/32` (本地)
+- Overlay: `wg-hybrid`, `169.254.120.1/32` (云) ↔ `169.254.120.2/32` (本地)
 - 区域: ap-northeast-1。WireGuard: 本地 -> AWS 公共端点, persistent keepalive。
 
 ## AWS 捕获前提条件 (供应侧)
