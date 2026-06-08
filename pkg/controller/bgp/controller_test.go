@@ -1253,6 +1253,41 @@ func TestWatchEventSkipsDuplicateFIBApplyAndPollFallbackStillWorks(t *testing.T)
 	}
 }
 
+func TestWatchPeerStateChangeTriggersReObservation(t *testing.T) {
+	server := &fakeServer{
+		routes:        []*gobgpapi.Destination{testDestination("10.77.60.11/32", "10.99.0.11")},
+		watchSessions: make(chan watchSession, 1),
+	}
+	fib := &fakeFIB{}
+	store := mapStore{}
+	controller := Controller{
+		Router:              bgpRouterWithImportPrefixes("10.77.60.0/24"),
+		Store:               store,
+		Server:              server,
+		FIB:                 fib,
+		WatchReconnectDelay: time.Millisecond,
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("initial reconcile: %v", err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "BGPRouter", "lan")
+	firstObserved := statusString(status["observedAt"])
+	if firstObserved == "" {
+		t.Fatal("missing observedAt after initial reconcile")
+	}
+	server.watchSessions <- watchSession{events: []*gobgpapi.WatchEventResponse{
+		watchPeerStateEvent("10.99.0.11", gobgpapi.PeerState_ESTABLISHED),
+	}}
+	if err := controller.watchBestPathEvents(context.Background()); err != nil {
+		t.Fatalf("watch events: %v", err)
+	}
+	status = store.ObjectStatus(api.NetAPIVersion, "BGPRouter", "lan")
+	secondObserved := statusString(status["observedAt"])
+	if secondObserved == "" || secondObserved == firstObserved {
+		t.Fatalf("peer state change did not trigger re-observation: observedAt before=%q after=%q", firstObserved, secondObserved)
+	}
+}
+
 func TestGeneratedImportPolicyIsAcceptedByGoBGP(t *testing.T) {
 	server := gobgpserver.NewBgpServer()
 	go server.Serve()
@@ -1960,6 +1995,22 @@ func watchTableEvent(prefix, nextHop string) *gobgpapi.WatchEventResponse {
 		Event: &gobgpapi.WatchEventResponse_Table{
 			Table: &gobgpapi.WatchEventResponse_TableEvent{
 				Paths: testDestination(prefix, nextHop).GetPaths(),
+			},
+		},
+	}
+}
+
+func watchPeerStateEvent(address string, state gobgpapi.PeerState_SessionState) *gobgpapi.WatchEventResponse {
+	return &gobgpapi.WatchEventResponse{
+		Event: &gobgpapi.WatchEventResponse_Peer{
+			Peer: &gobgpapi.WatchEventResponse_PeerEvent{
+				Type: gobgpapi.WatchEventResponse_PeerEvent_STATE,
+				Peer: &gobgpapi.Peer{
+					State: &gobgpapi.PeerState{
+						NeighborAddress: address,
+						SessionState:    state,
+					},
+				},
 			},
 		},
 	}
