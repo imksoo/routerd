@@ -13,9 +13,9 @@ add table ip routerd_forcefrag
 flush table ip routerd_forcefrag
 table ip routerd_forcefrag {
   comment "routerd.owner=routerd routerd.generation=1"
-  chain forward {
-    type filter hook forward priority mangle; policy accept;
-    iifname "ens19" oifname "wg-hybrid" ip length > 1340 ip frag-off 0x4000 ip frag-off set 0
+  chain prerouting {
+    type filter hook prerouting priority mangle; policy accept;
+    iifname "ens19" fib daddr oifname "wg-hybrid" ip length > 1340 ip frag-off 0x4000 ip frag-off set 0
   }
 }
 ### openrc-routerd

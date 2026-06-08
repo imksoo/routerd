@@ -73,7 +73,7 @@ func TestPathMTUControllerRendersForceFragment(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := string(data)
-	for _, want := range []string{`table ip routerd_forcefrag`, `iifname "ens3" oifname "wg-hybrid" ip length > 1340 ip frag-off 0x4000 ip frag-off set 0`} {
+	for _, want := range []string{`table ip routerd_forcefrag`, `type filter hook prerouting priority mangle; policy accept;`, `iifname "ens3" fib daddr oifname "wg-hybrid" ip length > 1340 ip frag-off 0x4000 ip frag-off set 0`} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("forcefrag rules missing %q:\n%s", want, got)
 		}

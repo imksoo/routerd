@@ -751,7 +751,9 @@ func nftMSSClampHasPath(output, from, to string) bool {
 
 func nftForceFragmentHasPath(output, from, to string) bool {
 	for _, line := range strings.Split(output, "\n") {
-		if strings.Contains(line, `iifname "`+from+`"`) && strings.Contains(line, `oifname "`+to+`"`) && strings.Contains(line, "frag-off set 0") {
+		if strings.Contains(line, `iifname "`+from+`"`) &&
+			(strings.Contains(line, `fib daddr oifname "`+to+`"`) || strings.Contains(line, `oifname "`+to+`"`)) &&
+			strings.Contains(line, "frag-off set 0") {
 			return true
 		}
 	}
