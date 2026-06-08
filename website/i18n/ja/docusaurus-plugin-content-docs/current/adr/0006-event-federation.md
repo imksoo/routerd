@@ -1,0 +1,197 @@
+# ADR 0006: CloudEdge Event Federation（routerd 間の型付きイベント）
+
+![ADR 0006 Event Federation の図。手動記述の claim 問題から、EventGroup・EventPeer・EventSubscription の設計判断、observed-fact の不変条件まで](/img/diagrams/adr-0006-event-federation.png)
+
+## ステータス
+
+承認済み。実験的実装を進行中 — 2026-05-30。
+Phase 1、1.5、2、3 は **`event-federation` ブランチで実装済み**：
+
+- **Phase 1**（イベントエンベロープ + `EventGroup` Kind + SQLite ローカルストア + `routerctl
+  federation event emit/list`）— 完了。
+- **Phase 1.5**（`EventPeer`/`EventSubscription` Kind + バリデーション）— 完了。
+- **Phase 2**（オーバーレイ経由のピア配送、`routerd-eventd`、HMAC、リトライ、
+  リテンション prune）— 完了。**lab-smoke PASS**
+  （[トランスポートエビデンス](../releases/evidence/cloudedge-event-federation-transport-20260530.md)）。
+- **Phase 3**（subscription → plugin → `RemoteAddressClaim` `DynamicConfigPart`）—
+  完了。**lab-smoke PASS**
+  （[subscription エビデンス](../releases/evidence/cloudedge-event-federation-subscription-20260530.md)、
+  [how-to](../how-to/event-federation-subscription.md)）。
+
+Phase 4（プロバイダー `actionPlan` プラグイン、dry-run）は**次のフェーズで未着手**。
+Phase 5（プロバイダーアクション実行）は **MVP スコープ外**。
+
+## 背景
+
+SAM（[リファレンス](../reference/selective-address-mobility)、
+[マイルストーン](../releases/cloudedge-sam-mvp-milestone.md)）は
+Azure×PVE、AWS×PVE、OCI×PVE でクリーン検証済みです（3 クラウドパリティ）。SAM は
+**capture（プロバイダー固有）/ delivery+claim（routerd 共通）** の分離を証明しました。しかし、
+これを駆動する `RemoteAddressClaim` は**現時点では手動記述**です。次のステップは、
+claim を**イベント駆動**で発見・伝搬・実体化することです：
+
+> オンプレミスの routerctl がクライアント IPv4（ARP/Clients/DHCP）を検知 → 型付きイベントを発行 →
+> フェデレーションバスがクラウド側 routerd に配送 → subscription がプロバイダープラグインを起動 →
+> プラグインが `RemoteAddressClaim` を `DynamicConfigPart` として返却
+> （+ プロバイダー secondary-IP `actionPlan`）→ **クラウド設定を人手で編集することなく**、
+> クラウド側が `provider-secondary-ip` capture の準備完了。
+
+### 既存の資産（MVP はグリーンフィールドではない）
+
+設計を現在のコードツリーに基づかせます。ほとんどのビルディングブロックは既に存在しており、
+真に新規の作業は **ノード間フェデレーショントランスポート**と
+**イベント→プラグイン subscription トリガー**です：
+
+- **型付きイベントエンベロープ**: `pkg/daemonapi` の `DaemonEvent{Type,Time,Daemon,Resource,
+  Severity,Reason,Message,Attributes}` + `NewEvent(...)`。現在は daemon→main のフローだが、
+  既に型付きのトピック付きエンベロープになっている。
+- **daemon→routerd トランスポートパターン**: daemon が UNIX ソケット上の
+  HTTP で制御ソケットに POST する（`cmd/routerd-dhcp-event-relay` → `controlapi.Prefix +
+  /dhcp-lease-event` via `unix:/run/routerd/routerd.sock`）。*イベントリレー daemon の前例*もある。
+- **分離された長寿命 daemon の前例**: 13 個の `cmd/routerd-*` daemon
+  （`routerd-bgp`、`routerd-ra-observer`、`routerd-dhcp-event-relay` 等）。
+  gobgp pivot（ADR 0004）が「再起動によるドロップを避けるため in-process より分離プロセス」を確立。
+- **Plugin → DynamicConfigPart パイプライン**: `pkg/plugin/runner.go`、
+  `pkg/plugin/dynamic_config.go`、`pkg/dynamicconfig/{types,merge}.go`、
+  `PluginRequest`/`PluginResult`。effective = startup + active dynamic − masks。
+- **状態**: SQLite（`pkg/state/sqlite.go`）。
+- **プロバイダープロファイル + 外部認証**: `CloudProviderProfile`、
+  `auth.mode=external-command`（specs.go:1193）— プロバイダー固有プラグインのフック。
+  `provider: oci|aws|azure|gcp` はバリデーション済み。
+
+## 決定
+
+**CloudEdge Event Federation** を、マージ済みの実験的 SAM の上に、新ブランチで次の実験的 MVP として構築する。**スコープは削らず、順序付きの独立して受け入れ可能なフェーズに分解し、各フェーズをワークフローとして駆動する。** 各フェーズは動作するデモ可能なスライスを出荷し、次のフェーズのゲートとなる。
+
+### 設計原則
+
+1. **イベントは観測事実であり、設定ではない。** ノードは
+   `routerd.client.ipv4.observed` を送信し、生の `RemoteAddressClaim` は送信しない。受信側の
+   *信頼されたローカルプラグイン*が、それを型付き claim + actionPlan に変換するかどうか・どう変換するかを決定する。ワイヤ上にコマンドは流れない。
+2. **at-least-once + idempotent**、exactly-once ではない。ストアの冪等性はイベント `id` をキーとする
+   （重複 `id` は no-op insert）。`dedupeKey` は subscription 側のグルーピングキーで、同一事実の繰り返し観測を
+   集約するためのものであり、Phase 1 では DB のユニーク制約**ではない**。動的リソース名は決定的
+   （`onprem-10-88-60-9`）。プロバイダーアクションは既に充足されていれば no-op。コンセンサス、ゴシップ、全順序はなし。
+3. **再利用し、再発明しない。** `DaemonEvent` エンベロープ、制御ソケット HTTP トランスポートイディオム、
+   Plugin→DynamicConfigPart パイプライン、SQLite 状態、`CloudProviderProfile`/`Plugin` を再利用する
+   （新規 `CloudProviderPlugin` Kind は不要）。
+4. **新規 Kind を最小限に。** MVP は **3 つ**を導入する：`EventGroup`（バスの識別子 + 認証 + リテンション）、
+   `EventPeer`（配送先 + インラインの push/receive フィルタ）、
+   `EventSubscription`（受信イベント → ローカルプラグイントリガー）。提案されていたスタンドアロンの
+   `EventFilter` は `EventPeer` に統合し、フィルタをピア間で共有する必要が生じた場合にのみ独立 Kind に昇格する。
+5. **分離された daemon。** フェデレーションの送受信は新しい
+   `cmd/routerd-eventd` 長寿命 daemon に置く（ADR 0004 の前例に従う）。reconcile ループ内ではない。
+   オーバーレイ（`wg-hybrid`）にのみバインドする。
+6. **MVP ではプロバイダーの mutation は dry-run のまま。** プラグインは `actionPlan` を発行する。
+   実行は後のフェーズで、明示的な approval/auto-apply ポリシーの背後に置く。
+
+### トランスポートとセキュリティ（MVP）
+
+- 受信側 = **WireGuard オーバーレイインターフェース/アドレスにのみバインドする** HTTP リスナー
+  （例：`169.254.x.y:9443`）。WG トンネルが機密性の境界。整合性・誤配送防止のために
+  **メッセージレベル HMAC**（ファイルからの共有秘密）を追加する。
+  **TLS は延期** — TLS リスナーは証明書プロビジョニングを必要とし、
+  SAM stocktake が指摘したブートストラップの摩擦を再導入してしまう。（将来：mTLS / ピアごとの Ed25519 / クラウド KMS 署名。）
+- MVP では push-only（`onprem→cloud` の観測、`cloud→onprem` の claim/result ack）。
+- バックオフ付きリトライ。(event, peer) ごとの配送状態を SQLite に保持。
+
+### 状態機械レベルでレビューすべき重要な不変条件（差分だけではなく）
+
+プロジェクトの out-of-process ステートフル daemon に関するルールに従い、
+正当性条件を不変条件として記述する：
+
+- **フィードバックループの禁止。** ノードは、自身が *capture* しているアドレス（provider-secondary-ip
+  または proxy-arp）に対して `*.observed` を再発行してはならない。観測は `ownerSide` + `domain` で
+  スコープされ、capture 済み/secondary アドレスはオブザーバーのソースセットから除外される。
+  これがないと、クラウド自身の secondary `.9` が再観測 → 再伝搬 → フラップする。
+- **provision と de-provision の非対称性。** provisioning（claim の出現）は即時でよい。
+  **de-provisioning（TTL 失効 / `*.expired`）はヒステリシスを持たなければならない** —
+  300 秒の observe TTL よりも遥かに長い猶予 + デバウンス。フラッピングするクライアントが
+  クラウド secondary-IP の assign/unassign を繰り返し駆動してはならない（API レート制限 + コスト +
+  データプレーンチャーン）。TTL→teardown ポリシーは明示的かつ保守的。
+- **(domain, address) あたり単一ライター。** 所有側が権威を持つ。受信側は、`ownerSide` が
+  *送信側*であるアドレスに対してのみ claim を提案する。
+- **冪等なプロバイダーアクション。** "already assigned" ⇒ aws/azure/oci 全体で success/no-op。
+
+### プロバイダープラグインフレームワーク
+
+OS CLI を呼び出すローカル実行ファイル。SDK を routerd に静的リンクする方式**ではない**
+（SDK の churn/auth をコアから排除、クラウドネイティブ ID を有効化、デバッグ容易）：
+
+- **AWS**: `aws ec2 assign-private-ip-addresses` — 認証：**IAM インスタンスプロファイル**優先、
+  `AWS_PROFILE`/env フォールバック。
+- **Azure**: `az network nic ip-config …` — 認証：**マネージド ID** 優先、
+  `az login`/SP env フォールバック。
+- **OCI**: `oci network private-ip create` / `vnic` — 認証：**インスタンスプリンシパル**優先、
+  OCI config プロファイルフォールバック。
+
+`Plugin.capabilities` がプラグインの権限をゲートする
+（`observe.events`/`propose.dynamicConfig`/`propose.providerAction`）。
+
+## フェーズ分解（フェーズごとに 1 ワークフロー、順に実行）
+
+各フェーズ = 独立して受け入れ可能なスライス。後のフェーズは先行フェーズの受け入れがゲート。
+実装は codex に委託、claude がオーケストレーション + レビュー。
+
+- **✅ 完了 — Phase 1 — イベントモデル + ローカルストア。** `EventGroup` Kind。`DaemonEvent` を外部
+  `Event` エンベロープとして再利用/拡張（id, group, sourceNode, type, subject, ttl, dedupeKey, payload）。
+  SQLite `federation_events` テーブル。`routerctl federation event emit/list`。
+  *受け入れ条件:* emit→stored（TTL 付き）。重複 id は冪等。期限切れは無視。
+- **✅ 完了（lab-smoke PASS）— Phase 1.5 — `EventPeer`/`EventSubscription` Kind + バリデーション。**
+- **✅ 完了（lab-smoke PASS）— Phase 2 — オーバーレイ経由のピア配送。** `EventPeer` Kind。
+  `routerd-eventd` レシーバーが `wg-hybrid` にバインド。HMAC。push + バックオフ。`event_deliveries`。
+  *受け入れ条件:* オンプレミスが `wg-hybrid` 経由でクラウドに push。重複 push は冪等。不正 HMAC は拒否。
+  `routerctl event deliveries`。`routerd-eventd` が `EventGroup` リテンション（`maxAge`/`maxEvents`）に
+  従って `federation_events` を定期的に prune。`routerctl federation event prune --dry-run` が
+  削除対象を報告。
+- **✅ 完了（lab-smoke PASS）— Phase 3 — subscription トリガーによるプラグイン → DynamicConfigPart。**
+  `EventSubscription` Kind。イベントバッチ → `PluginRequest`。`PluginResult` →
+  `DynamicConfigPart`（`routerd.net/dynamic-source`、`event-id`、`event-group`
+  アノテーション付き）。デバウンス/batchWindow。`event_subscription_runs`。
+  *受け入れ条件:* クラウドが `10.88.60.9/32` の `client.ipv4.observed` を受信 → プラグイン →
+  `RemoteAddressClaim` DynamicConfigPart が `routerctl dynamic render` で確認可能。
+  actionPlan は表示のみ、実行しない。
+- **⏭ 次（未着手）— Phase 4 — プロバイダー actionPlan プラグイン（dry-run）。** `aws/azure/oci-address-claim`
+  サンプルプラグイン。標準化された `actionPlan` フォーマット。インスタンス ID 認証。
+  *受け入れ条件:* プラグインが assign-secondary-IP を提案。mutation なし。プランが
+  `routerctl plugin`/`dynamic` で確認可能。
+- **Phase 5 —（MVP 後）プロバイダーアクション実行。** approval/auto-apply ポリシー、
+  アクションジャーナル、ベストエフォートの undo、ID ドキュメント。MVP スコープ外。
+
+最初のエンドツーエンドスモークは **手動 `routerctl federation event emit` →
+フェデレーション → DynamicConfigPart**（Phase 1-3）。ARP/Clients オブザーバープラグインは
+そのスモークの*後*に導入（`routerd-ra-observer` をモデルにする）し、障害を分離可能にする。
+
+### MVP イベントタイプ
+
+`routerd.client.ipv4.observed`、`…ipv4.expired`、`…dynamic.part.accepted/rejected`、
+`…provider.action.planned/succeeded/failed`。最初のスモークには `observed`+`expired` だけで十分。
+
+## 結論
+
+- **正の影響:** SAM を手動記述からイベント駆動に転換する。小さくデモ可能なフェーズ。
+  既存のエンベロープ/トランスポート/プラグイン/状態を再利用。新規 Kind の増殖なし（3 つ）。
+  プロバイダー mutation はゲート付き。クラウドネイティブ ID を初日からサポート。
+- **負の影響 / リスク:** 新しいネットワークリスナー（オーバーレイバインド + HMAC で緩和）。
+  ループ/フラップと provision/de-provision の非対称性は不変条件として強制する必要がある（上記）。
+  at-least-once は冪等性をプラグインとネーミングに押し出す。TLS/mTLS は延期。
+  de-provisioning の自動化は意図的に*最後に*有効化する。
+- **MVP スコープ外:** コンセンサス、exactly-once、ゴシップメッシュ、任意のリモートコマンド実行、
+  プロバイダー mutation の自動化、完全な IP ライフサイクル自動化、リモートプラグインレジストリ、
+  クロスノード設定書き換え。
+
+## 既知の制限事項（実験的）
+
+- **`routerd-eventd` の supervision は systemd と FreeBSD `rc.d` 向けに生成される。**
+  他のサービスマネージャーでは、eventd を自動的に管理するためにレンダラーの明示的なサポートが必要。
+- **`EventSubscription` の `batchWindow`/`debounce` は受け入れられるが粗い。**
+  フィールドはバリデーションされ、ポール粒度で反映される — コントローラーはイベントを
+  **ポール tick ごと**にバッチし、正確なサブ tick タイマーでは動作しない。短いデバウンスウィンドウは
+  実質的に tick 間隔に切り上げられる。
+
+## スコープ外 / 将来のオープンクエスチョン
+
+- `cloud→onprem` に ack 以上のもの（例：クラウド secondary が存在してからオンプレミスの
+  proxy-arp をトグルする capture-ready シグナル）が必要かどうか。
+- ピア間でフィルタを共有する機能（`EventFilter` を独立 Kind に昇格）。
+- マルチピア / 3 ノード以上のグループ（MVP は検証済みのペアトポロジーを対象とする）。
