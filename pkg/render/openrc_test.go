@@ -158,6 +158,21 @@ func TestOpenRCRenderSynthesizesHelperDaemons(t *testing.T) {
 	if !strings.Contains(routerdScript, "'serve'") {
 		t.Fatalf("routerd OpenRC script must run serve:\n%s", routerdScript)
 	}
+	for _, want := range []string{
+		"start_pre() {\n\trouterd_stop_client_daemons",
+		"stop_post() {\n\trouterd_stop_client_daemons",
+		"routerd_stop_client_daemons()",
+		"routerd-dns-resolver routerd-dhcpv4-client routerd-dhcpv6-client routerd-pppoe-client routerd-arp-observer",
+		"--socket /run/routerd/",
+		"--socket /var/run/routerd/",
+	} {
+		if !strings.Contains(routerdScript, want) {
+			t.Fatalf("routerd OpenRC script missing helper cleanup fragment %q:\n%s", want, routerdScript)
+		}
+	}
+	if strings.Contains(routerdScript, "routerd-bgp") {
+		t.Fatalf("routerd OpenRC helper cleanup must not target routerd-bgp:\n%s", routerdScript)
+	}
 	if strings.Contains(routerdScript, "'/usr/local/sbin/routerd' 'check'") {
 		t.Fatalf("routerd OpenRC script must not call removed routerd check verb:\n%s", routerdScript)
 	}
@@ -170,6 +185,21 @@ func TestOpenRCRenderSynthesizesHelperDaemons(t *testing.T) {
 	}
 	if _, ok := services["routerd_dns_resolver_lan"]; ok {
 		t.Fatalf("DNS resolver OpenRC service must not be enabled when routerd serve supervises DNSResolver helpers")
+	}
+}
+
+func TestOpenRCHelperScriptsDoNotCleanServeSupervisedDaemons(t *testing.T) {
+	data, err := OpenRCScript("routerd-healthcheck@internet.service", api.SystemdUnitSpec{
+		Description: "routerd healthcheck internet",
+		ExecStart:   []string{"/usr/local/sbin/routerd-healthcheck", "daemon", "--resource", "internet"},
+		After:       []string{"routerd.service"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(data)
+	if strings.Contains(got, "routerd_stop_client_daemons") {
+		t.Fatalf("non-routerd OpenRC script must not clean serve-supervised daemons:\n%s", got)
 	}
 }
 

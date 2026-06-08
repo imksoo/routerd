@@ -347,6 +347,9 @@ func OpenRCScript(name string, spec api.SystemdUnitSpec) ([]byte, error) {
 	}
 	buf.WriteString("}\n")
 	buf.WriteString("\nstart_pre() {\n")
+	if name == "routerd" {
+		buf.WriteString("\trouterd_stop_client_daemons\n")
+	}
 	buf.WriteString("\tcheckpath -d -m 0755 /run/routerd/openrc\n")
 	for _, dir := range openRCServiceDirs("/run", spec.RuntimeDirectory) {
 		buf.WriteString("\tcheckpath -d -m 0755 " + shellQuote(dir) + "\n")
@@ -361,6 +364,37 @@ func OpenRCScript(name string, spec api.SystemdUnitSpec) ([]byte, error) {
 		buf.WriteString("\t" + shellJoin(spec.ExecStartPre) + "\n")
 	}
 	buf.WriteString("}\n")
+	if name == "routerd" {
+		buf.WriteString("\nstop_post() {\n")
+		buf.WriteString("\trouterd_stop_client_daemons\n")
+		buf.WriteString("}\n")
+		buf.WriteString("\nrouterd_stop_client_daemons() {\n")
+		buf.WriteString("\tpids=''\n")
+		buf.WriteString("\tfor daemon in routerd-dns-resolver routerd-dhcpv4-client routerd-dhcpv6-client routerd-pppoe-client routerd-arp-observer; do\n")
+		buf.WriteString("\t\tfor pid in $(pidof \"${daemon}\" 2>/dev/null || true); do\n")
+		buf.WriteString("\t\t\tcmdline=$(tr '\\000' ' ' < \"/proc/${pid}/cmdline\" 2>/dev/null || true)\n")
+		buf.WriteString("\t\t\tcase \" ${cmdline} \" in\n")
+		buf.WriteString("\t\t\t\t*' --socket /run/routerd/'*|*' --socket /var/run/routerd/'*) pids=\"${pids} ${pid}\" ;;\n")
+		buf.WriteString("\t\t\tesac\n")
+		buf.WriteString("\t\tdone\n")
+		buf.WriteString("\tdone\n")
+		buf.WriteString("\t[ -n \"${pids}\" ] || return 0\n")
+		buf.WriteString("\t# shellcheck disable=SC2086\n")
+		buf.WriteString("\tkill -TERM ${pids} 2>/dev/null || true\n")
+		buf.WriteString("\ti=0\n")
+		buf.WriteString("\twhile [ \"${i}\" -lt 20 ]; do\n")
+		buf.WriteString("\t\talive=''\n")
+		buf.WriteString("\t\tfor pid in ${pids}; do\n")
+		buf.WriteString("\t\t\t[ -d \"/proc/${pid}\" ] && alive=\"${alive} ${pid}\"\n")
+		buf.WriteString("\t\tdone\n")
+		buf.WriteString("\t\t[ -z \"${alive}\" ] && return 0\n")
+		buf.WriteString("\t\tsleep 0.5\n")
+		buf.WriteString("\t\ti=$((i + 1))\n")
+		buf.WriteString("\tdone\n")
+		buf.WriteString("\t# shellcheck disable=SC2086\n")
+		buf.WriteString("\tkill -KILL ${alive} 2>/dev/null || true\n")
+		buf.WriteString("}\n")
+	}
 	return buf.Bytes(), nil
 }
 
