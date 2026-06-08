@@ -794,6 +794,94 @@ restart_stale_openrc_routerd_helpers_after_upgrade()
     fi
 }
 
+routerd_proc_cmdline()
+{
+    proc=$1
+    [ -r "${proc}/cmdline" ] || return 1
+    tr '\000' ' ' < "${proc}/cmdline" 2>/dev/null || return 1
+}
+
+routerd_current_service_pid()
+{
+    run_dir=${ROUTERD_INSTALL_RUN_DIR:-/run/routerd}
+    pidfile="${run_dir}/routerd.pid"
+    [ -f "${pidfile}" ] || return 0
+    pid=$(sed -n '1p' "${pidfile}" 2>/dev/null || true)
+    case "${pid}" in
+        ""|*[!0-9]*)
+            return 0
+            ;;
+    esac
+    printf '%s\n' "${pid}"
+}
+
+restart_stale_openrc_routerd_serve_after_upgrade()
+{
+    [ "${mode}" = "upgrade" ] || return 0
+    [ "${restart_service}" -eq 1 ] || return 0
+    [ "${manage_host_service}" -eq 1 ] || return 0
+    is_openrc_host || return 0
+    proc_dir=${ROUTERD_INSTALL_PROC_DIR:-/proc}
+    [ -d "${proc_dir}" ] || return 0
+
+    current_pids=" $(routerd_current_service_pid | tr '\n' ' ') "
+    found=0
+    for proc in "${proc_dir}"/[0-9]*; do
+        [ -d "${proc}" ] || continue
+        pid=$(basename "${proc}")
+        case "${pid}" in
+            ""|*[!0-9]*)
+                continue
+                ;;
+        esac
+        case "${current_pids}" in
+            *" ${pid} "*)
+                continue
+                ;;
+        esac
+        exe=$(readlink "${proc}/exe" 2>/dev/null || true)
+        case "${exe}" in
+            *" (deleted)")
+                deleted_target=${exe% (deleted)}
+                ;;
+            *)
+                continue
+                ;;
+        esac
+        [ "${deleted_target}" = "${bindir}/routerd" ] || continue
+        cmdline=$(routerd_proc_cmdline "${proc}" || true)
+        case " ${cmdline} " in
+            *" routerd serve "*|*" ${bindir}/routerd serve "*)
+                ;;
+            *)
+                continue
+                ;;
+        esac
+        found=1
+        if [ "${dry_run}" -eq 1 ]; then
+            echo "dry-run: kill stale OpenRC routerd serve pid ${pid} (${deleted_target})"
+            continue
+        fi
+        echo "restarting stale OpenRC routerd serve pid ${pid}: ${deleted_target}"
+        if kill -TERM "${pid}" 2>/dev/null; then
+            i=0
+            while [ "${i}" -lt 20 ] && [ -d "${proc}" ]; do
+                sleep 0.5
+                i=$((i + 1))
+            done
+            if [ -d "${proc}" ]; then
+                echo "warning: stale OpenRC routerd serve pid ${pid} did not stop after TERM; sending KILL" >&2
+                kill -KILL "${pid}" 2>/dev/null || true
+            fi
+        else
+            echo "warning: failed to signal stale OpenRC routerd serve pid ${pid}" >&2
+        fi
+    done
+    if [ "${found}" -eq 1 ] && [ "${dry_run}" -eq 0 ]; then
+        sleep 2
+    fi
+}
+
 detect_package_manager()
 {
     if [ -n "${ROUTERD_INSTALL_PACKAGE_MANAGER:-}" ]; then
@@ -2136,6 +2224,7 @@ case "${os}" in
                     fi
                 fi
             fi
+            restart_stale_openrc_routerd_serve_after_upgrade
             restart_stale_openrc_routerd_helpers_after_upgrade
         fi
         ;;
