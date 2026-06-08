@@ -13,6 +13,31 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 （未リリースの変更はありません。）
 
+## v20260608.2325
+
+### 追加
+
+- `SAMTransportProfile.spec.peersFrom` と `SAMPeerGroup` Kind を追加。
+  再利用可能な transport peer 参照。union semantics: `peersFrom` を先に読み込み、
+  静的 `peers` が `nodeRef` 単位で上書き (#332, #333)。
+- `SAMTransportProfile.spec.publishPeerGroup` で route-reflector が
+  `SAMPeerGroup` を `DynamicConfigPart` として生成し、leaf に自動配布 (#332)。
+- SAM peer group sync: WireGuard 内部ネットワーク上の port 19652 で動作する
+  軽量 HTTP サービス。publisher が `GET /v1/peer-groups` を提供し、consumer が
+  WireGuard peer を列挙して自動取得。手動配布が不要に (#334, #336)。
+- `MobilityMemberSet` Kind と `MobilityPool.spec.membersFrom` を追加。
+  共有 identity-only pool member の配布。leaf は共有 topology を import し、
+  自身の capture/discovery だけを inline に残す。O(N²) config 重複を削減 (#339, #340)。
+- `MobilityPool.spec.publishMemberSet` で RR が `MobilityMemberSet` を
+  `DynamicConfigPart` として生成。leaf は同じ sync サービスの
+  `GET /v1/member-sets` で取得 (#340)。
+
+### 修正
+
+- FreeBSD/NixOS アップグレード時に `/etc/rc.conf` の旧 `routerd serve` フラグ
+  (`--observe-interval`、`--controller-chain*`) が残っていても失敗しなくなった。
+  旧フラグは受理され、warning 付きで無視される (#337, #338)。
+
 ## v20260608.1354
 
 ### 追加

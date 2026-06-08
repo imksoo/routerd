@@ -12,12 +12,12 @@ routerd は `vYYYYMMDD.HHmm` 形式で頻繁にリリースしますが、その
 
 | 項目 | 内容 |
 | --- | --- |
-| バージョン | **v20260608.1354** |
+| バージョン | **v20260608.2325** |
 | 位置づけ | 推奨安定版（v20260608.0642 を置き換え。pair-stable SAM transport addressing — `addressingMode: pair-stable` によるコンパクトな leaf-spine 設定記述） |
 | 稼働実績 | lab 環境（7 compact config 検証済み）、k8s クラスタ（10 ノード: 2 RR + 8 leaf、全 BGP Established、FIB 正常、connectivity pass）、本番ルーター（homert02、影響なし）で検証済み。不具合 0 件 |
 | バイナリ | 静的リンク（`CGO_ENABLED=0`）、CI と Release ワークフローをすべて通過 |
 
-## v20260608.1354 を推奨する理由
+## v20260608.2325 を推奨する理由
 
 この版は v20260608.0642 のすべての特性を継承した上で、**pair-stable SAM transport addressing** を追加しています。
 

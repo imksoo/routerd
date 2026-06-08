@@ -14,6 +14,35 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 (No unreleased changes.)
 
+## v20260608.2325
+
+### Added
+
+- `SAMTransportProfile.spec.peersFrom` and `SAMPeerGroup` Kind for
+  reusable transport peer references. Union semantics: `peersFrom`
+  members load first, static `peers` override by `nodeRef` (#332, #333).
+- `SAMTransportProfile.spec.publishPeerGroup` generates a `SAMPeerGroup`
+  `DynamicConfigPart` on route-reflector nodes for automatic
+  distribution to leaf routers (#332).
+- SAM peer group sync: lightweight HTTP service on port 19652 over
+  WireGuard inner network. Publisher serves `GET /v1/peer-groups`;
+  consumer discovers WireGuard peers and fetches matching groups
+  automatically. Eliminates manual `SAMPeerGroup` distribution (#334, #336).
+- `MobilityMemberSet` Kind and `MobilityPool.spec.membersFrom` for
+  shared identity-only pool member distribution. Leaves import the
+  shared topology and keep only their own capture/discovery details
+  inline, reducing O(N²) config duplication (#339, #340).
+- `MobilityPool.spec.publishMemberSet` generates a `MobilityMemberSet`
+  `DynamicConfigPart` on RR nodes; leaves fetch via
+  `GET /v1/member-sets` on the same sync service (#340).
+
+### Fixed
+
+- FreeBSD/NixOS upgrade no longer fails when `/etc/rc.conf` contains
+  legacy `routerd serve` flags (`--observe-interval`,
+  `--controller-chain*`). Stale flags are accepted and ignored with a
+  warning (#337, #338).
+
 ## v20260608.1354
 
 ### Added

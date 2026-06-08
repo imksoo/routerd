@@ -12,27 +12,34 @@ routerd ships frequently using the `vYYYYMMDD.HHmm` scheme. From those builds we
 
 | Item | Value |
 | --- | --- |
-| Version | **v20260608.1354** |
-| Status | Recommended stable release (supersedes v20260608.0642; pair-stable SAM transport addressing — `addressingMode: pair-stable` for compact leaf-spine config authoring) |
-| Track record | Validated on lab environments (7 compact configs), k8s cluster (10 nodes: 2 RR + 8 leaf, all BGP Established, FIB correct, connectivity pass), and production router (homert02, unaffected). 0 issues found |
+| Version | **v20260608.2325** |
+| Status | Recommended stable release (supersedes v20260608.1354; peersFrom/membersFrom dynamic distribution for zero-touch leaf config) |
+| Track record | Validated on k8s cluster (10 nodes: 2 RR + 8 leaf, peersFrom + membersFrom + peer-group-sync all green, full verify passed), lab (FreeBSD router01/04 upgrade verified), and production router (homert02, validate pass). 0 open issues |
 | Binary | Statically linked (`CGO_ENABLED=0`), passes CI and the Release workflow |
 
-## Why v20260608.1354 is recommended
+## Why v20260608.2325 is recommended
 
-This release adds **pair-stable SAM transport addressing** on top of v20260608.0642.
+This release adds **peersFrom**, **membersFrom**, and **peer-group-sync** on top of v20260608.1354, enabling zero-touch leaf configuration for SAM fabrics.
 
-### Pair-stable addressing (#330, #331)
+### peersFrom + SAMPeerGroup (#332, #333)
 
-`SAMTransportProfile` gains `spec.addressingMode: pair-stable`, a new /31 slot allocation algorithm that produces deterministic, stable tunnel addresses using fnv64a hashing of inner prefix and canonical peer key.
+`SAMTransportProfile` gains `spec.peersFrom` referencing `SAMPeerGroup` resources. Union semantics: imported peers load first, static `peers` override by `nodeRef`. `publishPeerGroup: true` on RR generates a `SAMPeerGroup` `DynamicConfigPart` automatically.
 
-- **Compact config authoring.** Leaf nodes no longer require `topologyNodeRefs`, eliminating repetitive per-node topology declarations. svnet1 configs reduced by ~100 lines.
-- **Stable across topology changes.** Adding or removing a node does not reassign addresses for existing peers (unlike `edge-index` which depends on sort order).
-- **Backward compatible.** Existing `edge-index` (default) configurations are unchanged.
-- **Collision detection.** `routerd validate` / `routerctl validate` detects /31 slot hash collisions at config time.
+### Peer group sync (#334, #336)
 
-### Inherited from v20260608.0642
+Lightweight HTTP service on port 19652 over WireGuard inner network. RR serves `GET /v1/peer-groups`; leaf discovers WireGuard peers and fetches matching groups automatically. No manual `SAMPeerGroup` distribution needed.
 
-All properties from v20260608.0642 are carried forward: ADR 0014 CLI redesign, OpenRC hardening, DNS VRRP VIP support, forcefrag prerouting fix, BGP peer watch stabilization, and all prior production-safe fixes.
+### MobilityMemberSet + membersFrom (#339, #340)
+
+`MobilityMemberSet` Kind carries shared identity-only pool members (`nodeRef`, `site`, `role`). `MobilityPool.spec.membersFrom` imports them; leaves keep only their own capture/discovery details inline. `publishMemberSet: true` generates and distributes the member set via `GET /v1/member-sets`. Reduces O(N²) config duplication — svnet1 configs reduced by 78 lines (2624 → 2546).
+
+### FreeBSD legacy flag compatibility (#337, #338)
+
+Removed `routerd serve` flags (`--observe-interval`, `--controller-chain*`) are now accepted and ignored with a warning, preventing upgrade failures when `/etc/rc.conf` retains stale entries.
+
+### Inherited from v20260608.1354
+
+All properties from v20260608.1354 are carried forward: pair-stable addressing, ADR 0014 CLI redesign, and all prior production-safe fixes.
 
 ## Known observations (not release blockers)
 

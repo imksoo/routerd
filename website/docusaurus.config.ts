@@ -88,9 +88,9 @@ const config: Config = {
   themeConfig: {
     image: 'img/routerd-social-card.svg',
     announcementBar: {
-      id: 'stable-milestone-20260608-1354',
+      id: 'stable-milestone-20260608-2325',
       content:
-        'Stable milestone: <a href="/docs/releases/stable"><b>v20260608.1354</b></a> — pair-stable SAM transport addressing for compact leaf-spine config authoring',
+        'Stable milestone: <a href="/docs/releases/stable"><b>v20260608.2325</b></a> — peersFrom/membersFrom dynamic distribution for zero-touch leaf config',
       backgroundColor: '#1f6feb',
       textColor: '#ffffff',
       isCloseable: true,

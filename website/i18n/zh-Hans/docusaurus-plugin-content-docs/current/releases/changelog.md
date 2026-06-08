@@ -13,7 +13,7 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 （无未发布的变更。）
 
-## v20260608.1354
+## v20260608.2325
 
 ### 新增
 
