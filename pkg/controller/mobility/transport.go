@@ -398,7 +398,7 @@ func stableEdgeSlot(spec api.SAMTransportProfileSpec, a, b string, capacity int)
 func innerSlotPrefix(inner netip.Prefix, slot int) string {
 	base, err := addIPv4(inner.Addr(), uint32(slot*2))
 	if err != nil {
-		return fmt.Sprintf("slot=%d", slot)
+		return fmt.Sprintf("<slot %d computation failed>", slot)
 	}
 	return netip.PrefixFrom(base, 31).String()
 }
