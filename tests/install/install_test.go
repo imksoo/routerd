@@ -269,6 +269,68 @@ ExecStart=/usr/local/sbin/routerd serve --controller-chain --controller-chain-dr
 	}
 }
 
+func TestInstallReplacesLegacyOpenRCInitScript(t *testing.T) {
+	dir := t.TempDir()
+	pkg := filepath.Join(dir, "package")
+	prefix := filepath.Join(dir, "prefix")
+	initDir := filepath.Join(dir, "init.d")
+	binDir := filepath.Join(dir, "bin")
+	writeExecutable(t, filepath.Join(pkg, "bin", "routerd"), `#!/bin/sh
+if [ "$1" = "--version" ]; then echo routerd-test; exit 0; fi
+exit 0
+`)
+	writeExecutable(t, filepath.Join(binDir, "rc-service"), `#!/bin/sh
+if [ "$1" = "routerd" ] && [ "$2" = "status" ]; then exit 1; fi
+exit 0
+`)
+	if err := os.MkdirAll(filepath.Join(pkg, "openrc"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	newScript := `#!/sbin/openrc-run
+name="routerd"
+command="/usr/local/sbin/routerd"
+command_args="serve --config /usr/local/etc/routerd/router.yaml --socket /run/routerd/routerd.sock --status-socket /run/routerd/routerd-status.sock --apply-interval 60s"
+`
+	if err := os.WriteFile(filepath.Join(pkg, "openrc", "routerd"), []byte(newScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(initDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacyScript := `#!/sbin/openrc-run
+name="routerd"
+start_pre() {
+    /usr/local/sbin/routerd check
+}
+`
+	if err := os.WriteFile(filepath.Join(initDir, "routerd"), []byte(legacyScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runInstallWithEnv(t, pkg, prefix, []string{
+		"PATH=" + binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+		"ROUTERD_INSTALL_FORCE_SERVICE_MANAGER=1",
+		"ROUTERD_INSTALL_OPENRC_INIT_DIR=" + initDir,
+	}, "--no-install-deps", "--no-config-update", "--no-restart")
+	if err != nil {
+		t.Fatalf("install failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "replacing legacy routerd OpenRC init script with removed routerd check") {
+		t.Fatalf("missing legacy OpenRC replacement warning:\n%s", out)
+	}
+	data, err := os.ReadFile(filepath.Join(initDir, "routerd"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(data)
+	if strings.Contains(got, "routerd check") {
+		t.Fatalf("legacy OpenRC check was preserved:\n%s", got)
+	}
+	if !strings.Contains(got, "routerd") || !strings.Contains(got, "serve --config") {
+		t.Fatalf("new OpenRC script was not installed:\n%s", got)
+	}
+}
+
 func TestInstallDryRunCreatesRouterdGroupBeforeSystemdUnit(t *testing.T) {
 	dir := t.TempDir()
 	pkg := filepath.Join(dir, "package")

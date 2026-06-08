@@ -290,6 +290,8 @@ dist:
 	else \
 		install -d $(DISTROOT)/systemd; \
 		install -m 0644 contrib/systemd/routerd.service $(DISTROOT)/systemd/routerd.service; \
+		install -d $(DISTROOT)/openrc; \
+		install -m 0755 contrib/openrc/routerd $(DISTROOT)/openrc/routerd; \
 	fi
 	install -d $(DISTDIR)
 	tar -C $(DISTROOT) -czf $(DISTTAR) .

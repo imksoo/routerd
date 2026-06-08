@@ -108,6 +108,13 @@ is_nixos_host()
     [ -d /nix/store ] && [ -e /run/current-system ]
 }
 
+is_openrc_host()
+{
+    [ "${os}" = "Linux" ] || return 1
+    command -v rc-service >/dev/null 2>&1 && return 0
+    [ -x /sbin/openrc ]
+}
+
 safe_name()
 {
     printf '%s\n' "$1" | sed 's#[^A-Za-z0-9._-]#_#g'
@@ -219,6 +226,7 @@ payload_install_kb()
     [ -d libexec ] && set -- "$@" libexec
     [ -d etc ] && set -- "$@" etc
     [ -d systemd ] && set -- "$@" systemd
+    [ -d openrc ] && set -- "$@" openrc
     [ -d rc.d ] && set -- "$@" rc.d
     du -sk "$@" 2>/dev/null | awk '{ total += $1 } END { print total + 0 }'
 }
@@ -480,6 +488,22 @@ routerd_service_has_legacy_config()
     service_path=$1
     [ -f "${service_path}" ] || return 1
     grep -Eq '(^# Managed by routerd\.|--controller-chain)' "${service_path}"
+}
+
+routerd_script_calls_removed_check()
+{
+    script_path=$1
+    [ -f "${script_path}" ] || return 1
+    if grep -q "routerd check" "${script_path}"; then
+        return 0
+    fi
+    if grep -q "routerd' 'check" "${script_path}"; then
+        return 0
+    fi
+    if grep -q 'routerd" "check' "${script_path}"; then
+        return 0
+    fi
+    return 1
 }
 
 routerd_config_contains_systemd_unit()
@@ -1857,6 +1881,7 @@ fi
 bindir="${prefix}/sbin"
 sysconfdir="${prefix}/etc/routerd"
 systemd_system_dir=${ROUTERD_INSTALL_SYSTEMD_SYSTEM_DIR:-/etc/systemd/system}
+openrc_init_dir=${ROUTERD_INSTALL_OPENRC_INIT_DIR:-/etc/init.d}
 rcd_dir=${ROUTERD_INSTALL_RCD_DIR:-${prefix}/etc/rc.d}
 if [ "${prefix}" != "/usr/local" ]; then
     manage_host_service=0
@@ -1893,7 +1918,7 @@ fi
 
 if [ ! -x bin/routerd ]; then
     echo "install.sh: required payload bin/routerd not found in current directory ($(pwd))" >&2
-    echo "install.sh: extract the routerd release archive and run install.sh from inside the directory containing bin/, etc/, systemd/, ..." >&2
+    echo "install.sh: extract the routerd release archive and run install.sh from inside the directory containing bin/, etc/, systemd/, openrc/, ..." >&2
     echo "install.sh: do NOT run as 'cd <other-dir> && ./<release>/install.sh' — that leaves cwd outside the payload tree and every 'bin/*' glob would be empty." >&2
     exit 2
 fi
@@ -1924,6 +1949,8 @@ ensure_install_capacity
 case "${os}" in
     Linux)
         if [ "${manage_host_service}" -eq 1 ] && command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet routerd.service; then
+            service_active=1
+        elif [ "${manage_host_service}" -eq 1 ] && is_openrc_host && command -v rc-service >/dev/null 2>&1 && rc-service routerd status >/dev/null 2>&1; then
             service_active=1
         fi
         ;;
@@ -2017,6 +2044,48 @@ case "${os}" in
                 fi
                 if [ "${dry_run}" -eq 0 ]; then
                     restart_stale_routerd_helper_systemd_units_after_upgrade
+                fi
+            fi
+        fi
+        if [ "${manage_host_service}" -eq 1 ] && [ -d openrc ] && is_openrc_host; then
+            if [ "${dry_run}" -eq 1 ]; then
+                echo "dry-run: install -d -m 0755 ${openrc_init_dir}"
+            else
+                install -d -m 0755 "${openrc_init_dir}"
+            fi
+            for script in openrc/*; do
+                [ -f "${script}" ] || continue
+                script_name=$(basename "${script}")
+                target_script="${openrc_init_dir}/${script_name}"
+                if [ "${script_name}" = "routerd" ] && routerd_script_calls_removed_check "${target_script}"; then
+                    echo "warning: replacing legacy routerd OpenRC init script with removed routerd check: ${target_script}" >&2
+                fi
+                atomic_install 0755 "${script}" "${target_script}"
+            done
+            if [ "${enable_service}" -eq 1 ] && command -v rc-update >/dev/null 2>&1; then
+                if [ "${dry_run}" -eq 1 ]; then
+                    echo "dry-run: rc-update add routerd default"
+                else
+                    rc-update add routerd default
+                fi
+            fi
+            if [ "${start_service}" -eq 1 ] || { [ "${service_active}" -eq 1 ] && [ "${restart_service}" -eq 1 ]; }; then
+                if command -v rc-service >/dev/null 2>&1; then
+                    if [ "${service_active}" -eq 1 ]; then
+                        if [ "${dry_run}" -eq 1 ]; then
+                            echo "dry-run: rc-service routerd restart"
+                        else
+                            rc-service routerd restart
+                            service_touched=1
+                        fi
+                    else
+                        if [ "${dry_run}" -eq 1 ]; then
+                            echo "dry-run: rc-service routerd start"
+                        else
+                            rc-service routerd start
+                            service_touched=1
+                        fi
+                    fi
                 fi
             fi
         fi
