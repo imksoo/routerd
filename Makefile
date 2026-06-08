@@ -141,6 +141,9 @@ check-ndpi-agent-libndpi:
 check-install-deps:
 	./scripts/install-deps-smoke.sh
 
+check-bootstrap-cleanup:
+	./scripts/bootstrap-cleanup-smoke.sh
+
 alpine-vm-smoke:
 	./scripts/alpine-vm-smoke.sh
 
