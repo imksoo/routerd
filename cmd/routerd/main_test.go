@@ -710,6 +710,65 @@ func TestServeOnceConvergesAndExits(t *testing.T) {
 	}
 }
 
+func TestServeAcceptsLegacyControllerChainFlags(t *testing.T) {
+	loopbackEnsured := false
+	originalEnsureLoopback := ensureLoopbackUpForServe
+	ensureLoopbackUpForServe = func() error {
+		loopbackEnsured = true
+		return nil
+	}
+	t.Cleanup(func() { ensureLoopbackUpForServe = originalEnsureLoopback })
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "router.yaml")
+	statePath := filepath.Join(dir, "routerd.db")
+	statusPath := filepath.Join(dir, "status.json")
+	ledgerPath := filepath.Join(dir, "ledger.db")
+	if err := os.WriteFile(configPath, []byte(testRouterYAML("serve-legacy-flags-router")), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	var stdout, stderr strings.Builder
+	err := serveCommand([]string{
+		"--config", configPath,
+		"--state-file", statePath,
+		"--status-file", statusPath,
+		"--ledger-file", ledgerPath,
+		"--once",
+		"--observe-interval", "30s",
+		"--controller-chain",
+		"--controller-chain-daemon-sockets", "wan-pd=/run/routerd/dhcpv6-client/wan-pd.sock",
+		"--controller-chain-dnsmasq-command", "/usr/local/sbin/dnsmasq",
+		"--controller-chain-dnsmasq-config", "/run/routerd/dnsmasq.conf",
+		"--controller-chain-dnsmasq-listen-addresses", "127.0.0.1",
+		"--controller-chain-dnsmasq-pid", "/run/routerd/dnsmasq.pid",
+		"--controller-chain-dnsmasq-port", "53",
+		"--controller-chain-dry-run-address=false",
+		"--controller-chain-dry-run-dhcpv4lease=false",
+		"--controller-chain-dry-run-dhcpv6=false",
+		"--controller-chain-dry-run-dns-resolver=false",
+		"--controller-chain-dry-run-dslite=false",
+		"--controller-chain-dry-run-firewall=false",
+		"--controller-chain-dry-run-nat=false",
+		"--controller-chain-dry-run-network-adoption=false",
+		"--controller-chain-dry-run-package=false",
+		"--controller-chain-dry-run-ra=false",
+		"--controller-chain-dry-run-route=false",
+		"--controller-chain-dry-run-systemd-unit=false",
+	}, &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("serve --once with legacy flags: %v\nstderr:\n%s", err, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `"phase": "Healthy"`) {
+		t.Fatalf("serve --once output missing result:\n%s", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "ignored legacy flag") || !strings.Contains(stderr.String(), "--observe-interval") || !strings.Contains(stderr.String(), "--controller-chain-dnsmasq-command") {
+		t.Fatalf("missing legacy flag warning:\n%s", stderr.String())
+	}
+	if !loopbackEnsured {
+		t.Fatal("serve --once did not ensure loopback is up")
+	}
+}
+
 func TestRollbackListShowsStoredGenerations(t *testing.T) {
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, "routerd.db")
