@@ -12,221 +12,78 @@ routerd ships frequently using the `vYYYYMMDD.HHmm` scheme. From those builds we
 
 | Item | Value |
 | --- | --- |
-| Version | **v20260528.2308** |
-| Status | Recommended stable release (supersedes v20260528.1805; bounds the reverse-DNS lookup goroutine count and adds `routerctl doctor runtime` for ongoing heap/goroutine/fd visibility, validated by a live runtime soak) |
-| Track record | Production-validated on a home router (homert02). A `routerctl doctor runtime -o json` soak (4 samples, 10-minute intervals) held `numGoroutine` flat at 123 and `openFds` flat at 25 (of 524287) the whole time, with `status=pass` at every sample; heap was a healthy GC sawtooth (heapObjects 28k → 52k → 41k → 83k, numGC 29 → 277, i.e. frequent reclaim, not a monotonic climb). BGP stayed 2/2 Established, `routerctl doctor dslite` and `routerctl doctor reconcile` both PASS, routerd-bgp PID unchanged, NRestarts=0. This builds on v20260528.1805's 2-hour fd+heap soak (all_fd / sockets / SQLite ledger fds flat; RssAnon plateaued). Across the v20260528 series, three fd-leak root causes (#39 SQLite ledger, #40 control/status socket keep-alive, #40 BGP gobgp client), two heap-growth sources (per-request OTel instrument churn, unbounded reverse-DNS cache), and the reverse-DNS lookup goroutine fan-out were each hunted down and fixed |
+| Version | **v20260608.0642** |
+| Status | Recommended stable release (supersedes v20260528.2308; ADR 0014 CLI redesign — `routerd` becomes daemon-only, `routerctl` becomes the admin CLI. OpenRC supervision hardening, DNS resolver VRRP VIP support, forcefrag prerouting fix, BGP peer watch stabilization) |
+| Track record | Validated on lab environments (router06/router07/k8s-rt-01/k8s-rt-02) and production router (homert02). Cloud VM tests (lab + k8s) all PASS. 12 issues resolved, 12 PRs merged |
 | Binary | Statically linked (`CGO_ENABLED=0`), passes CI and the Release workflow |
 
-## Why v20260528.2308 is recommended
+## Why v20260608.0642 is recommended
 
-The recommendation is **operational maturity, not feature scope.**
-v20260528.2308 inherits every production-safe property of v20260528.1805
-(the #39 / #40 fd-leak fixes, the v20260528.1805 heap-leak fixes — OTel
-instrument singleton + bounded reverse-DNS cache, the #36 / #37 / #38
-observability contracts, BGP idempotent reconcile, doctor dslite
-alignment, Gateway Health dedicated screen, install.sh fail-fast, secret
-redaction, ManagementAccess apply guard, machine-readable
-`routerctl doctor`, the recommended-stable display consistency guard) and
-adds the last two pieces of the resource-leak investigation plus a
-small Web Console UX fix:
+This release inherits all production-safe properties of v20260528.2308 and adds **CLI redesign** (ADR 0014) plus **OpenRC / init script reliability hardening** across 40 commits.
 
-- **The reverse-DNS lookup goroutine count is now bounded.**
-  `reverseDNSCache.lookupMany` used to spawn one goroutine per pending
-  address (limiting only the concurrent lookups to 8 via a semaphore); a
-  single `/api/v1/summary` capped at 1000 rows could create ~1000 blocked
-  goroutines. It now uses a fixed-size worker pool
-  (`reverseDNSLookupConcurrency = 8`), and a `reverseDNSPendingMax = 1000`
-  caps the per-call work independent of the caller. The homert02 soak
-  confirmed `numGoroutine` stays flat (123) under summary polling.
+### ADR 0014 — CLI redesign
 
-- **`routerctl doctor runtime` gives ongoing resource visibility.** A new
-  doctor area + read-only control-API `/runtime` endpoint reports
-  routerd's own heap / goroutine / GC / fd footprint, so the kind of
-  leak investigation that produced this whole series is now self-service
-  (no ssh + /proc poking). WARN on >10000 goroutines or fd usage ≥80% of
-  `RLIMIT_NOFILE`; observational, never FAILs.
+The routerd CLI has been cleanly split into "daemon" and "admin tool".
 
-- **Web Console Firewall "Deny activity" is now a labeled bar chart**
-  instead of an ambiguous unlabeled sparkline, with an explicit Y axis
-  (peak / 0, "taller = more denies") and an X axis ("24h ago" → "now").
+- **`routerd`** is daemon-only. The sole subcommand is `routerd serve`.
+- **`routerctl`** is the admin CLI: `validate` / `plan` / `apply` / `doctor` / `get` / `describe` / `status` / `ledger` / `dns-queries` / `traffic-flows` and all other management operations.
+- Legacy `routerd apply` / `routerd validate` / `routerd run` are removed. The `--once` flag is also retired.
+- All documentation and script command references updated to the new verb surface (#254–#262).
 
-The production-safe contracts inherited from v20260528.1805 and
-re-verified on homert02 v20260528.2308:
+### OpenRC / init script reliability
 
-- **`/api/v1/summary` polling no longer grows the heap unbounded.**
-  `recordConsoleMetrics` used to re-create seven OpenTelemetry gauges on
-  every request; they are now built once via a `sync.Once` singleton
-  (`getConsoleMetrics`). The `reverseDNSCache` only used its TTL to
-  decide re-lookup, never pruning expired entries or capping size, so
-  every distinct remote address seen in firewall logs / the connection
-  table / traffic flows became a permanent map entry; it now prunes
-  expired entries and enforces a 4096-entry hard cap on both call entry
-  and call exit. A 2-hour homert02 soak confirmed `RssAnon` plateaus
-  rather than climbing. These complete the v20260528.0402 fd-leak work
-  with the matching heap-side fixes.
+Six fixes applied to init script management on FreeBSD and OpenRC environments.
 
-The two production-critical fd-leak fixes and three observability
-contracts carried forward from v20260528.0402 and re-verified on
-homert02 v20260528.1805:
+- **Eliminated OpenRC DNS resolver dual management** (#306) — previously both `routerd serve` and OpenRC attempted to manage the DNS resolver, causing double starts.
+- **Stop old `routerd serve` on OpenRC upgrade** (#311, #313) — fixed stale processes surviving upgrades.
+- **Clean managed helpers on OpenRC restart** (#315) — prevents orphan helper process accumulation.
+- **DNS resolver helper supervision** (#283) — OpenRC now correctly monitors and starts DNS resolver helper processes.
+- **Stale helper updates** (#280) and **nodeps OpenRC restart** (#278) — resolved service dependency issues during upgrades.
 
-- **routerd serve no longer leaks SQLite ledger fds.** `resource.LoadLedger`
-  used to open a fresh `*sql.DB` against `/var/lib/routerd/routerd.db` on
-  every call, and `Ledger` had no `Close()`. The
-  `IPv4PolicyRouteController.cleanupLedgerOwnedPolicyRoutes` reconcile path
-  ran every ~30 s and added one new `routerd.db` + one new
-  `routerd.db-wal` fd per cycle — homert02 v20260526.2335 had grown to
-  ~300 SQLite fds. The fix adds `Close()` to the `Ledger` interface,
-  defers it at every `LoadLedger` call site, and sets
-  `SetMaxOpenConns(1)` / `SetMaxIdleConns(1)` on `OpenSQLiteLedger` as a
-  belt-and-suspenders cap. Two Linux-only regression tests assert
-  `/proc/self/fd` does not grow across 10 open/close cycles. Validated:
-  homert02 saw `routerd.db` family drop from ~300 to a flat 4 (#39).
+### Networking improvements
 
-- **routerd serve no longer leaks Unix-socket fds either.** Two separate
-  issues, both fixed: (a) the control / status `http.Server` instances
-  now call `SetKeepAlivesEnabled(false)`, and `controlapi.NewUnixClient`
-  sets `Transport.DisableKeepAlives: true` — accepted connections used
-  to stay open indefinitely when polling clients reused the keep-alive
-  channel inside `IdleTimeout`. (b) The BGP controller's gobgp
-  HTTP client (`pkg/controller/bgp/gobgp_client.go`), called twice per
-  ~30 s reconcile against `/run/routerd/bgp/control.sock`, was the only
-  in-tree HTTP client missing the `DisableKeepAlives` / `req.Close` /
-  `defer CloseIdleConnections()` pattern; it accounted for the
-  remaining +4 fd / minute drift. Validated: homert02 v20260528.0402
-  ran 16 minutes with `all_fd=24` and `sockets=16` completely flat at
-  every 5-minute sample, and Unix-stream ESTAB dropped from 71 to 9
-  (#40).
+- **DNS resolver can listen on VRRP VIPs** (#319) — `IP_FREEBIND` / `IPV6_FREEBIND` socket options allow listeners to bind addresses not yet assigned. DNS service can be pre-started on VRRP backup nodes.
+- **forcefrag DF clearing moved to prerouting hook** (#328) — the forward hook used `oifname` which is unavailable in prerouting; replaced with `fib daddr oifname` for routing table lookup. Fixes cases where MSS clamp was not applied correctly.
+- **BGP peer watch spurious updates eliminated** (#329) — `desiredPeerMatches()` used `reflect.DeepEqual`, triggering `UpdatePeer` on every reconcile due to `dynamicExportPrefixes` changes and GracefulRestart format mismatch (`"2m"` vs `"120s"`). A stable comparison function `stableDesiredPeerEqual` now suppresses updates when configurations are semantically identical.
+- **`routerd serve` auto-enables loopback at startup** (#321) — runs `ip link set lo up` on Live ISO and container environments where `lo` may be down.
 
-- **HealthCheck probes now record egress / source / route evidence and
-  keep a rolling per-resource failure history.** Every result carries
-  `FailureKind` (timeout / connection_refused / network_unreachable /
-  host_unreachable / no_route / dns_error / tls_error / ...),
-  `EgressInterface`, `SourceAddress`, `SourceOrigin` (pd / ra / static /
-  dynamic), `NextHop`, `OutInterface`, `RouteSource`, `TunnelLocal`,
-  `TunnelRemote`. `State` exposes `FirstFailureTime`, `LastFailureTime`,
-  `LastSuccessTime`, `FailureCount`, and a configurable 20-entry
-  `History []ProbeRecord`. `cmd/routerd-healthcheck` gains
-  `--source-origin` / `--tunnel-local` / `--tunnel-remote` operator
-  hints so the daemon can label what the probe cannot infer. Event
-  attributes and the existing `StatusMap` carry the new fields so
-  `routerctl show / describe` surface them automatically (#37).
+### Installer improvements
 
-- **Per-controller reconcile error history surfaced via control API.**
-  `ControllerStatus` gains `ReconcileErrorHistory []ReconcileErrorEntry`
-  and `MaxDurationAt *time.Time`. Each entry records `StartedAt` /
-  `CompletedAt` / `Duration` / `DurationMs` / `Trigger` /
-  `ResourceKind` / `ResourceName` / `Error`. The controller framework
-  gains an optional `ResourceObserver` interface to plumb resource
-  kind / name from each reconcile into the history without touching
-  existing in-tree observers. `routerctl status --show-errors` renders
-  the history vertically under each controller row in table mode;
-  JSON / YAML pick up the new fields via the existing StatusMap.
-  New `routerctl doctor reconcile --since <duration>` queries the
-  status socket and reports pass / warn (≥1) / fail (≥10) with up to
-  5 sample entries in detail. Validated on homert02 v20260528.0402:
-  `doctor reconcile` returns `pass=1 warn=0`, machinery live in
-  production (#38).
+- **Bootstrap installer reliably cleans up temp directories** (#324) — `exec sh ./install.sh` prevented the EXIT trap from firing; fixed.
+- **Installer apply state warning fixed** (#327) — changed `routerctl get status` output format to `-o json` for accurate `lastApplyTime` detection.
+- **BGP peer state watch for immediate status updates** (#304) — BGP session state changes are reflected in status immediately.
+- **Restart inactive keepalived for VRRP** (#299) — fixes VRRP failover in certain edge cases.
 
-- **dns-queries / traffic-flows gain absolute-time range, filters, and
-  aggregation.** `--from` / `--to` accept RFC3339 and other common
-  forms (bare layouts treated as UTC). DNS gains `--rcode`,
-  `--upstream`, `--qname-suffix`, `--duration-min`; flows gain
-  `--peer-suffix`, `--protocol`, `--asymmetric`. New `--agg` /
-  `--stats` mode emits `SUMMARY` plus `BY RESPONSE CODE` /
-  `BY CLIENT` / `BY UPSTREAM` / `BY QNAME SUFFIX` (DNS) or
-  `BY CLIENT` / `BY PEER` / `BY PROTOCOL` (flows) with duration p50 /
-  p95 / p99. Direct-DB fetch is chunked (`--chunk-size`) so each chunk
-  gets its own ctx deadline; on `DeadlineExceeded` the error message
-  includes how many rows were fetched so far. Default `--limit`
-  raised from 100 to 500, `--timeout` from 5 s to 30 s, and the
-  underlying `DNSQueryFilter` / `TrafficFlowFilter` hard-cap raised
-  from 1000 to 10000. Web Console gains
-  `/api/v1/dns-queries/aggregate` and
-  `/api/v1/traffic-flows/aggregate` endpoints (#36).
+### Documentation
 
-The doctor-detail, --help, and CI-display contracts carried forward
-from v20260526.2335 and re-verified against homert02 v20260528.0402:
+- **37 Japanese source-of-truth articles + 80 Chinese translation articles added** (#322) — covers all categories: ADR / explainer / how-to / ops / reference / releases / evidence / slides. Japanese as source, zh-Hans / zh-Hant as translations.
+- **All documentation diagrams regenerated with gpt-image-2** (#261) — unified visual style.
 
-- **BGP sessions survive routerd binary upgrades.** The BGP controller now
-  hydrates its in-memory applied-policy state on reconcile, so a routerd
-  restart no longer re-PUTs the unchanged import-policy assignment and resets
-  every BGP session. Validated on homert02 across **two consecutive routerd
-  restarts** (PID 3368318 → 3407972 → 3428160): BGP stayed 2/2 Established
-  the whole way, uptime climbed through every restart instead of resetting,
-  and 2-way ECMP via .38/.53 stayed in the kernel without re-installation.
-- **`routerctl doctor dslite` aligns with reality.** Doctor now treats
-  DSLiteTunnel `phase=Up` as healthy and recognizes EgressRoutePolicy
-  selection through `status.selectedSource = "DSLiteTunnel/<name>"` in
-  addition to the legacy `selectedCandidate` match. Production configurations
-  using aggregate candidate names (`dslite-pd-balanced` on homert02) no
-  longer drive WARNs while `gatewayHealth` reports `ok`. Validated: warn=4
-  → pass=12 warn=0.
-- **Gateway Health UI is a dedicated screen with stable rendering.** The
-  Web Console moves Gateway Health off the Overview into its own screen
-  (mirroring Connections/Clients) with full evidence (`selectedPath`,
-  `preferredPath`, `fallbackReason`, `failedProbes`, `lastTransition`).
-  Overview keeps a compact summary card. A thin-snapshot bug that briefly
-  flashed `Components 0 / Unknown` during partial refreshes is fixed:
-  `reconcileSummary` keeps the previous `gatewayHealth` when the incoming
-  snapshot has no components but the previous one did. Validated:
-  **good=90 / bad=0 over 180s, 26 components seen**.
-- **`install.sh` cannot silently no-op.** Earlier installers would exit 0
-  saying `routerd upgrade completed` even when launched from outside the
-  release tree (`cd /tmp/release && ./pkg/install.sh ...`): the cwd-relative
-  `bin/*` glob ran zero iterations and only `--with-ndpi-archive` payloads
-  landed. The script now refuses to proceed with `exit 2` and a clear
-  diagnostic when cwd has no `bin/routerd` payload, and a CI regression
-  smoke (`scripts/install-sh-cwd-smoke.sh`) reproduces both the
-  missing-payload and correct-cwd cases. Validated on homert02:
-  cwd-mismatch antipattern **fails fast rc=2**; correct cd-into-package-dir
-  pattern returns rc=0.
+### Inherited from v20260528.2308
 
-**Carry-forward (from v20260526.1607 etc.):** Web Console `/api/v1/config`
-and generation endpoints redact WireGuard `privateKey` / `preSharedKey`,
-Tailscale `authKey`, BGP/PPPoE/IPsec `password`, WebConsole
-`initialPassword`, and bearer/token fields before serializing.
-`/api/v1/summary` aggregates DNSResolver, DSLiteTunnel,
-DHCPv6PrefixDelegation, EgressRoutePolicy, NAT44Rule, and HealthCheck into
-`gatewayHealth`. `routerctl doctor` is a v1alpha1 machine-readable
-contract (`-o json`, documented areas / status enum / summary fields,
-non-zero exit on fail). `ManagementAccess` apply preflight blocks lockout
-unless `--allow-mgmt-lockout`. The DNS resolver runs as its own
-long-lived service unit so routerd restart/upgrade does not interrupt
-DNS (0 probe failures during install). `install.sh` does not auto-restart
-`routerd-bgp` on upgrade so eBGP sessions and ECMP survive routerd binary
-updates. `routerctl ledger` maintenance (`integrity-check` / `vacuum` /
-`backup` / `prune-events`, with an audit event on each non-dry-run prune).
+All production-safe properties from v20260528.2308 are carried forward.
+
+- fd leak fixes (#39 SQLite ledger, #40 Unix socket / BGP gobgp client)
+- Heap leak fixes (OTel instrument singleton, bounded reverse DNS cache)
+- `routerctl doctor runtime` for ongoing resource monitoring
+- BGP sessions survive routerd binary upgrades
+- `doctor dslite` selectedSource alignment
+- Gateway Health dedicated screen
+- `install.sh` fail-fast (missing payload detection)
+- Secret redaction
+- `ManagementAccess` apply guard
+- Machine-readable `routerctl doctor` (`-o json`)
 
 ## Known observations (not release blockers)
 
-- **`routerd-bgp` may keep running with the old executable inode after
-  `install.sh`.** This is intentional: `install.sh` does not restart
-  `routerd-bgp` on upgrade so established BGP sessions and ECMP survive
-  the routerd binary update. The running process keeps the old inode until
-  the operator picks a graceful-restart window and runs
-  `systemctl restart routerd-bgp`.
-- **`routerctl doctor mgmt` SKIPs when no `ManagementAccess` is declared.**
-  This is a live-config choice, not a release defect — the guard is
-  opt-in. To activate the apply lockout protection and the doctor mgmt
-  verdict, declare a `ManagementAccess` resource (see
-  [`examples/home-router-mgmt-protected.yaml`](https://github.com/imksoo/routerd/blob/main/examples/home-router-mgmt-protected.yaml)).
+- **`routerd-bgp` may keep running with the old executable inode after `install.sh`.** This is intentional: `install.sh` does not restart `routerd-bgp` on upgrade so established BGP sessions and ECMP survive the routerd binary update.
+- **`routerctl doctor mgmt` SKIPs when no `ManagementAccess` is declared.** This is a live-config choice, not a release defect.
 
 :::warning Upgrading
-- **Always `cd` into the extracted release directory before running
-  `install.sh`.** Running it from a sibling directory (for example
-  `cd /tmp && sudo ./routerd-release-vYYYYMMDD.HHmm/install.sh ...`) will
-  now refuse to proceed with `exit 2`. This is intentional — earlier
-  versions silently no-op'd in that case and only installed
-  `--with-ndpi-archive` payloads.
-- **From v20260523.1542 or earlier:** the `disabled:` field was removed
-  (use `enabled: false`) along with the no-op `--controller-chain*` /
-  `--observe-interval` flags. Re-author affected config and host service
-  units before upgrading.
-- **DNS resolver service unit:** the resolver now runs as
-  `routerd-dns-resolver@<name>.service`. The first upgrade onto this
-  model performs a one-time child-process → unit cutover with a brief
-  DNS blip; afterwards routerd restarts and upgrades no longer interrupt
-  DNS.
+- **From v20260528.2308:** ADR 0014 changed the CLI verb surface. `routerd apply` → `routerctl apply`, `routerd validate` → `routerctl validate`, etc. Rewrite service units or scripts that use old commands. `install.sh` auto-deploys new service units, so systemd-managed units update automatically.
+- **Always `cd` into the extracted release directory before running `install.sh`.**
+- **From v20260523.1542 or earlier:** the `disabled:` field was removed (use `enabled: false`) along with `--controller-chain*` / `--observe-interval` flags.
+- **DNS resolver service unit:** the resolver runs as `routerd-dns-resolver@<name>.service`. The first upgrade performs a one-time cutover with a brief DNS blip.
 :::
 
 ## What "stable" means here
