@@ -220,7 +220,9 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 			decision.HomeNICRef = fact.NICRef
 			decision.Source = providerDiscoverySource
 			decision.Fresh = true
-			if decision.CaptureState == captureStateConfirmed && !providerHomeOwnerBlocksCapture(self, fact) {
+			homeProviderRef := strings.TrimSpace(fact.ProviderRef)
+			selfProviderRef := strings.TrimSpace(self.Capture.ProviderRef)
+			if decision.CaptureState == captureStateConfirmed && (homeProviderRef == "" || selfProviderRef == "" || homeProviderRef == selfProviderRef) {
 				decision.Class = ownershipClassConfirmedCapture
 				decision.AdvertiseOwnerNode = self.NodeRef
 				decision.AdvertiseReason = "confirmed-capture"
