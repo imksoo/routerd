@@ -82,7 +82,7 @@ resource instead of duplicating collector endpoints.
 | `ManagementAccess` | Declares management interfaces and apply-time lockout checks. When present, apply fails if declared interfaces are missing, blocked by firewall zoning, or an enabled WebConsole is bound to all addresses unless `--allow-mgmt-lockout` is set. |
 | `PPPoESession` | Defines PPPoE lower-interface settings. |
 | `PPPoESession` | Represents a `routerd-pppoe-client` session. |
-| `WireGuardInterface` | Represents a WireGuard interface. |
+| `WireGuardInterface` | Represents a WireGuard interface. It can import peer definitions from `SAMNodeSet` with `peersFrom`. |
 | `WireGuardPeer` | Represents a WireGuard peer. |
 | `TailscaleNode` | Configures a local Tailscale node for exit-node and subnet-router advertisement through a managed systemd unit. |
 | `IPsecConnection` | Defines a cloud VPN oriented strongSwan connection. |
@@ -108,6 +108,9 @@ peer PSKs; inline key fields are intended for examples and tests. On FreeBSD,
 routerd renders an rc.d service that creates the
 `wg` interface, loads the key from that file, applies peers, and then assigns
 declared static addresses for the WireGuard interface.
+`WireGuardInterface.spec.peersFrom` references `SAMNodeSet/<name>` and derives
+peers from `SAMNodeSet.spec.nodes[].wireGuard`. Static `WireGuardPeer` resources
+with the same `metadata.name` override generated peers.
 
 Kernel modules and systemd-networkd/resolved adoption drop-ins are derived from
 router resources. If a config still contains the removed `KernelModule`,
@@ -649,7 +652,7 @@ and fields outside the target kind's `provides` set.
 | `VXLANTunnel` | `ifname` (string), `phase` (string), `vni` (int) |
 | `VirtualAddress` | `address` (string), `dryRun` (bool), `hostname` (string), `ifname` (string), `phase` (string), `priority` (int), `role` (string), `virtualRouterID` (int) |
 | `WebConsole` | `listenAddress` (string), `phase` (string), `port` (int) |
-| `WireGuardInterface` | `fwmark` (int), `listenPort` (int), `peerCount` (int), `phase` (string), `publicKey` (string) |
+| `WireGuardInterface` | `fwmark` (int), `listenPort` (int), `peerCount` (int), `peersFrom` (objectList), `pendingSources` (stringList), `phase` (string), `publicKey` (string), `selfNodeRef` (string) |
 | `WireGuardPeer` | `handshakeAgeSeconds` (int), `latestEndpoint` (string), `latestHandshake` (timestamp), `phase` (string), `transferRxBytes` (int), `transferTxBytes` (int) |
 
 ## Firewall

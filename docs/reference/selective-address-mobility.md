@@ -48,10 +48,11 @@ those remain local to the `MobilityPool` on the node that needs them.
 `SAMNodeSet` is the next write-once aggregation point for the same fabric. It
 collects the node identity fields that today are repeated across EventPeer,
 WireGuardPeer, SAMTransportProfile peers/topology, and MobilityPool members. In
-this release it is an API/schema/validation surface; follow-on controllers will
-derive the per-feature resources from it. `SAMTransportProfile` topology
-derivation from a node set is designed around `addressingMode: pair-stable` so
-adding a node does not renumber existing tunnel `/31` assignments.
+this release Event Federation and WireGuard can derive their peer targets from
+it, and follow-on controllers continue moving the remaining per-feature lists to
+the same source. `SAMTransportProfile` topology derivation from a node set is
+designed around `addressingMode: pair-stable` so adding a node does not renumber
+existing tunnel `/31` assignments.
 
 ```yaml
 apiVersion: mobility.routerd.net/v1alpha1
@@ -127,6 +128,31 @@ spec:
 If a required `membersFrom` source is not yet present, the pool reports
 `Pending`. Mark the source `optional: true` only when a partial local member list
 is acceptable during bootstrap.
+
+WireGuard interfaces can import peers from the same node registry:
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: WireGuardInterface
+metadata: { name: wg-svnet1 }
+spec:
+  selfNodeRef: pve-rt01
+  privateKeyFile: /usr/local/etc/routerd/secrets/wg-svnet1.key
+  listenPort: 51820
+  peersFrom:
+    - resource: SAMNodeSet/svnet1-nodes
+```
+
+`WireGuardInterface.spec.peersFrom` reads
+`SAMNodeSet.spec.nodes[].wireGuard` and generates ordinary WireGuard peer
+entries from `publicKey`, `endpoint`, `allowedIPs`, and
+`persistentKeepalive`. The node whose `nodeRef` matches `selfNodeRef` is
+skipped; when `selfNodeRef` is omitted, `Router.metadata.name` is used. Imported
+peers are added first, then static `WireGuardPeer` resources are overlaid by
+`metadata.name`, so a hand-authored peer named like the remote `nodeRef` remains
+a bootstrap or emergency override. If a required source is missing, the
+interface reports `Pending` and routerd leaves the current WireGuard runtime
+config untouched.
 
 For example, on an AWS router:
 

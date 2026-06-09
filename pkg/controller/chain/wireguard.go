@@ -34,22 +34,193 @@ type WireGuardController struct {
 	Logger       *slog.Logger
 }
 
+type wireGuardPeersFromStatus struct {
+	Resource  string `json:"resource"`
+	Optional  bool   `json:"optional,omitempty"`
+	Phase     string `json:"phase"`
+	PeerCount int    `json:"peerCount,omitempty"`
+	Reason    string `json:"reason,omitempty"`
+}
+
+type wireGuardPeerResolution struct {
+	Router         *api.Router
+	PeersFrom      map[string][]wireGuardPeersFromStatus
+	PendingSources map[string][]string
+}
+
 func (c WireGuardController) Reconcile(ctx context.Context) error {
 	if c.Router == nil || c.Store == nil {
 		return nil
 	}
-	if err := c.cleanupStaleResources(ctx); err != nil {
+	resolved, err := c.resolvePeerResources()
+	if err != nil {
 		return err
 	}
-	for _, resource := range c.Router.Spec.Resources {
+	current := c
+	current.Router = resolved.Router
+	if err := current.cleanupStaleResources(ctx); err != nil {
+		return err
+	}
+	for _, resource := range current.Router.Spec.Resources {
 		if resource.Kind != "WireGuardInterface" {
 			continue
 		}
-		if err := c.reconcileInterface(ctx, resource); err != nil {
+		if err := current.reconcileInterface(ctx, resource, resolved.PeersFrom[resource.Metadata.Name], resolved.PendingSources[resource.Metadata.Name]); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func (c WireGuardController) resolvePeerResources() (wireGuardPeerResolution, error) {
+	resolution := wireGuardPeerResolution{
+		Router:         c.Router,
+		PeersFrom:      map[string][]wireGuardPeersFromStatus{},
+		PendingSources: map[string][]string{},
+	}
+	if c.Router == nil {
+		return resolution, nil
+	}
+	generated := []api.Resource{}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.Kind != "WireGuardInterface" {
+			continue
+		}
+		spec, err := resource.WireGuardInterfaceSpec()
+		if err != nil {
+			return resolution, err
+		}
+		peers, statuses, pending, err := c.resolvePeersFrom(resource.Metadata.Name, spec)
+		if err != nil {
+			resolution.PeersFrom[resource.Metadata.Name] = statuses
+			resolution.PendingSources[resource.Metadata.Name] = pending
+			return resolution, err
+		}
+		resolution.PeersFrom[resource.Metadata.Name] = statuses
+		resolution.PendingSources[resource.Metadata.Name] = pending
+		generated = append(generated, peers...)
+	}
+	if len(generated) == 0 {
+		return resolution, nil
+	}
+	merged := make([]api.Resource, 0, len(c.Router.Spec.Resources)+len(generated))
+	peerIndex := map[string]int{}
+	addPeer := func(peer api.Resource) {
+		name := strings.TrimSpace(peer.Metadata.Name)
+		if name == "" {
+			return
+		}
+		peer.Metadata.Name = name
+		if existing, ok := peerIndex[name]; ok {
+			merged[existing] = peer
+			return
+		}
+		peerIndex[name] = len(merged)
+		merged = append(merged, peer)
+	}
+	for _, peer := range generated {
+		addPeer(peer)
+	}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.Kind == "WireGuardPeer" {
+			addPeer(resource)
+			continue
+		}
+		merged = append(merged, resource)
+	}
+	router := *c.Router
+	router.Spec.Resources = merged
+	resolution.Router = &router
+	return resolution, nil
+}
+
+func (c WireGuardController) resolvePeersFrom(iface string, spec api.WireGuardInterfaceSpec) ([]api.Resource, []wireGuardPeersFromStatus, []string, error) {
+	peers := []api.Resource{}
+	statuses := make([]wireGuardPeersFromStatus, 0, len(spec.PeersFrom))
+	pending := []string{}
+	self := strings.TrimSpace(spec.SelfNodeRef)
+	if self == "" && c.Router != nil {
+		self = strings.TrimSpace(c.Router.Metadata.Name)
+	}
+	for _, source := range spec.PeersFrom {
+		ref := strings.TrimSpace(source.Resource)
+		status := wireGuardPeersFromStatus{
+			Resource: ref,
+			Optional: source.Optional,
+			Phase:    "Resolved",
+		}
+		nodeSet, found, err := c.samNodeSet(ref)
+		if err != nil {
+			status.Phase = "Invalid"
+			status.Reason = err.Error()
+			statuses = append(statuses, status)
+			return peers, statuses, pending, err
+		}
+		if !found {
+			status.Phase = "Missing"
+			status.Reason = "SAMNodeSet not found"
+			statuses = append(statuses, status)
+			if !source.Optional {
+				pending = append(pending, ref)
+			}
+			continue
+		}
+		for _, node := range nodeSet.Nodes {
+			nodeRef := strings.TrimSpace(node.NodeRef)
+			wg := node.WireGuard
+			if nodeRef == "" || nodeRef == self || !samNodeWireGuardConfigured(wg) {
+				continue
+			}
+			peers = append(peers, api.Resource{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardPeer"},
+				Metadata: api.ObjectMeta{
+					Name: nodeRef,
+					Annotations: map[string]string{
+						"routerd.net/generated-from": ref,
+					},
+				},
+				Spec: api.WireGuardPeerSpec{
+					Interface:           iface,
+					PublicKey:           strings.TrimSpace(wg.PublicKey),
+					AllowedIPs:          append([]string(nil), wg.AllowedIPs...),
+					Endpoint:            strings.TrimSpace(wg.Endpoint),
+					PersistentKeepalive: wg.PersistentKeepalive,
+				},
+			})
+			status.PeerCount++
+		}
+		statuses = append(statuses, status)
+	}
+	sort.Strings(pending)
+	return peers, statuses, pending, nil
+}
+
+func (c WireGuardController) samNodeSet(ref string) (api.SAMNodeSetSpec, bool, error) {
+	kind, name, ok := strings.Cut(strings.TrimSpace(ref), "/")
+	if !ok || kind != "SAMNodeSet" || strings.TrimSpace(name) == "" {
+		return api.SAMNodeSetSpec{}, false, fmt.Errorf("peersFrom resource must reference SAMNodeSet/<name>")
+	}
+	if c.Router == nil {
+		return api.SAMNodeSetSpec{}, false, nil
+	}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "SAMNodeSet" || resource.Metadata.Name != strings.TrimSpace(name) {
+			continue
+		}
+		spec, err := resource.SAMNodeSetSpec()
+		if err != nil {
+			return api.SAMNodeSetSpec{}, true, fmt.Errorf("%s spec: %w", ref, err)
+		}
+		return spec, true, nil
+	}
+	return api.SAMNodeSetSpec{}, false, nil
+}
+
+func samNodeWireGuardConfigured(spec api.SAMNodeWireGuardSpec) bool {
+	return strings.TrimSpace(spec.PublicKey) != "" ||
+		strings.TrimSpace(spec.Endpoint) != "" ||
+		len(spec.AllowedIPs) > 0 ||
+		spec.PersistentKeepalive != 0
 }
 
 func (c WireGuardController) cleanupStaleResources(ctx context.Context) error {
@@ -211,7 +382,7 @@ func statusString(status map[string]any, key string) string {
 	return strings.TrimSpace(fmt.Sprint(value))
 }
 
-func (c WireGuardController) reconcileInterface(ctx context.Context, resource api.Resource) error {
+func (c WireGuardController) reconcileInterface(ctx context.Context, resource api.Resource, peersFrom []wireGuardPeersFromStatus, pendingSources []string) error {
 	cfg, err := wireguard.BuildInterface(resource, c.Router.Spec.Resources)
 	if err != nil {
 		return err
@@ -228,6 +399,26 @@ func (c WireGuardController) reconcileInterface(ctx context.Context, resource ap
 		"fwmark":     cfg.FwMark,
 		"peerCount":  len(cfg.Peers),
 		"dryRun":     c.DryRun,
+	}
+	spec, err := resource.WireGuardInterfaceSpec()
+	if err != nil {
+		return err
+	}
+	if self := c.selfNodeRef(spec); self != "" {
+		status["selfNodeRef"] = self
+	}
+	if len(peersFrom) > 0 {
+		status["peersFrom"] = wireGuardPeersFromStatusMaps(peersFrom)
+	}
+	if len(pendingSources) > 0 {
+		status["pendingSources"] = append([]string(nil), pendingSources...)
+		status["reason"] = "PeersFromPending"
+		status["message"] = "peersFrom source is not resolved"
+		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "WireGuardInterface", resource.Metadata.Name, status); err != nil {
+			return err
+		}
+		c.savePeerPendingStatuses(resource.Metadata.Name, cfg.Peers, "PeersFromPending")
+		return nil
 	}
 	configHash := wireGuardConfigHash(cfg, c.DryRun)
 	if configHash != "" {
@@ -296,6 +487,37 @@ func (c WireGuardController) reconcileInterface(ctx context.Context, resource ap
 		return c.Bus.Publish(ctx, event)
 	}
 	return nil
+}
+
+func (c WireGuardController) selfNodeRef(spec api.WireGuardInterfaceSpec) string {
+	if self := strings.TrimSpace(spec.SelfNodeRef); self != "" {
+		return self
+	}
+	if c.Router == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.Router.Metadata.Name)
+}
+
+func wireGuardPeersFromStatusMaps(statuses []wireGuardPeersFromStatus) []map[string]any {
+	out := make([]map[string]any, 0, len(statuses))
+	for _, status := range statuses {
+		item := map[string]any{
+			"resource": status.Resource,
+			"phase":    status.Phase,
+		}
+		if status.Optional {
+			item["optional"] = true
+		}
+		if status.PeerCount > 0 {
+			item["peerCount"] = status.PeerCount
+		}
+		if status.Reason != "" {
+			item["reason"] = status.Reason
+		}
+		out = append(out, item)
+	}
+	return out
 }
 
 func (c WireGuardController) saveUnconfiguredPeerStatuses(iface string) error {

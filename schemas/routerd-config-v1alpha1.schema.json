@@ -2010,10 +2010,33 @@
                         "minimum": 576,
                         "type": "integer"
                       },
+                      "peersFrom": {
+                        "description": "PeersFrom imports WireGuardPeer targets from shared SAMNodeSet resources.\nImported peers are added first; static WireGuardPeer resources with the\nsame metadata.name are overlaid after generated peers.",
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "optional": {
+                              "type": "boolean"
+                            },
+                            "resource": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "resource"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
                       "privateKey": {
                         "type": "string"
                       },
                       "privateKeyFile": {
+                        "type": "string"
+                      },
+                      "selfNodeRef": {
+                        "description": "SelfNodeRef is the local SAM node identity used to skip this node when\nimporting peersFrom. It defaults to Router.metadata.name.",
                         "type": "string"
                       }
                     },

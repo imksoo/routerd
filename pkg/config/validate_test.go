@@ -778,6 +778,47 @@ func TestValidateRejectsTailscaleWireGuardListenPortConflict(t *testing.T) {
 	}
 }
 
+func TestValidateWireGuardInterfacePeersFromOK(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardInterface"},
+				Metadata: api.ObjectMeta{Name: "wg-lab"},
+				Spec: api.WireGuardInterfaceSpec{
+					SelfNodeRef: "router-a",
+					ListenPort:  51820,
+					PeersFrom:   []api.WireGuardPeersSourceSpec{{Resource: "SAMNodeSet/fabric"}},
+				},
+			},
+		}},
+	}
+	if err := Validate(router); err != nil {
+		t.Fatalf("validate WireGuardInterface peersFrom: %v", err)
+	}
+}
+
+func TestValidateRejectsInvalidWireGuardInterfacePeersFrom(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardInterface"},
+				Metadata: api.ObjectMeta{Name: "wg-lab"},
+				Spec: api.WireGuardInterfaceSpec{
+					PeersFrom: []api.WireGuardPeersSourceSpec{{Resource: "SAMPeerGroup/rrs"}},
+				},
+			},
+		}},
+	}
+	err := Validate(router)
+	if err == nil || !strings.Contains(err.Error(), "spec.peersFrom[0].resource must reference SAMNodeSet/<name>") {
+		t.Fatalf("Validate WireGuardInterface peersFrom error = %v, want SAMNodeSet ref error", err)
+	}
+}
+
 func TestValidateTailscaleNodeRejectsInvalidRoute(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
