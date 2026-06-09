@@ -45,6 +45,40 @@ only the shared member identity fields (`nodeRef`, `site`, `role`, and optional
 `ownershipDiscovery`, `profileRef`, delivery fields, or static owned addresses;
 those remain local to the `MobilityPool` on the node that needs them.
 
+`SAMNodeSet` is the next write-once aggregation point for the same fabric. It
+collects the node identity fields that today are repeated across EventPeer,
+WireGuardPeer, SAMTransportProfile peers/topology, and MobilityPool members. In
+this release it is an API/schema/validation surface; follow-on controllers will
+derive the per-feature resources from it. `SAMTransportProfile` topology
+derivation from a node set is designed around `addressingMode: pair-stable` so
+adding a node does not renumber existing tunnel `/31` assignments.
+
+```yaml
+apiVersion: mobility.routerd.net/v1alpha1
+kind: SAMNodeSet
+metadata: { name: svnet1-nodes }
+spec:
+  nodes:
+    - nodeRef: pve-rt01
+      site: pve01
+      role: onprem
+      eventEndpoint: http://10.99.0.11:9443
+      samEndpoint: 10.99.0.11
+      wireGuard:
+        publicKey: "${PVE_RT01_WG_PUBLIC_KEY}"
+        allowedIPs: [10.99.0.11/32]
+    - nodeRef: rr01
+      site: backbone
+      role: cloud
+      routeReflector: true
+      eventEndpoint: http://10.99.0.1:9443
+      samEndpoint: 10.99.0.1
+      wireGuard:
+        publicKey: "${RR01_WG_PUBLIC_KEY}"
+        endpoint: rr01.example.net:51820
+        allowedIPs: [10.99.0.1/32]
+```
+
 ```yaml
 apiVersion: mobility.routerd.net/v1alpha1
 kind: MobilityMemberSet

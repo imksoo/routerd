@@ -44,7 +44,7 @@ spec:
 | `observability.routerd.net/v1alpha1` | `Telemetry` |
 | `plugin.routerd.net/v1alpha1` | plugin manifests |
 | `hybrid.routerd.net/v1alpha1` | `TunnelInterface`, `OverlayPeer`, `HybridRoute`, `AddressMobilityDomain`, `CloudProviderProfile`, `RemoteAddressClaim` |
-| `mobility.routerd.net/v1alpha1` | `MobilityPool`, `MobilityMemberSet`, `SAMTransportProfile` |
+| `mobility.routerd.net/v1alpha1` | `MobilityPool`, `MobilityMemberSet`, `SAMNodeSet`, `SAMTransportProfile` |
 
 ## System Bootstrap
 
@@ -185,6 +185,7 @@ for DoH or DoT endpoint name resolution.
 | `HybridRoute` | Lowers non-default remote IPv4 prefixes through an `OverlayPeer` into managed `IPv4Route` resources. |
 | `MobilityPool` | Declares the CloudEdge mobility intent: pool prefix, federation group, node-to-site membership or `membersFrom` sources, BGP delivery policy, optional reusable cloud capture profiles, local value expansion, and provider trap placement. routerd derives BGP `/32` advertisements and provider trap action plans from observed facts and BGP best paths. |
 | `MobilityMemberSet` | Groups shared identity-only MobilityPool members (`nodeRef`, `site`, `role`, optional placement/maintenance) so leaves can import them with `MobilityPool.spec.membersFrom` and keep only local capture/discovery details inline. |
+| `SAMNodeSet` | Defines the shared SAM fabric node identity registry: node identity, optional site/role, Event Federation endpoint, SAM transport endpoint, and non-secret WireGuard peer identity. Follow-on controllers use it as the single source for generated EventPeer, WireGuardPeer, SAM transport peers, and MobilityPool members. |
 | `SAMTransportProfile` | Declares this router's stable `selfNodeRef`, shared topology node list, inner tunnel prefix, underlay interface, BGP router, and SAM transport peers. routerd derives per-peer `TunnelInterface`, endpoint `/32` `IPv4Route`, and `BGPPeer` resources through a replace-on-reconcile `DynamicConfigPart`. |
 | `AddressMobilityDomain` | Low-level compatibility SAM resource that defines an IPv4 prefix for hand-authored selective-address configs; full L2 extension is not supported. |
 | `CloudProviderProfile` | Describes provider capabilities and external-command auth for declarative address capture planning. |
@@ -216,6 +217,7 @@ existing `IPv4Route` controller path instead of installing routes directly.
 CloudEdge Mobility keeps the operator-authored surface declarative:
 `MobilityPool` is the high-level address/capture intent,
 `MobilityMemberSet` is a reusable shared member list,
+`SAMNodeSet` is the write-once node identity registry for generated peers,
 `SAMTransportProfile` is the high-level transport/BGP intent, federation events
 are observed facts, and BGP best paths are the mobility ownership/delivery view.
 The mobility planner derives BGP `/32` advertisements and provider trap action
@@ -618,6 +620,7 @@ and fields outside the target kind's `provides` set.
 | `ManagementAccess` | `interfaces` (stringList), `phase` (string) |
 | `MobilityMemberSet` | `memberCount` (int) |
 | `MobilityPool` | `dynamicSource` (string), `generatedActions` (int), `generatedBGPPaths` (int), `generatedBGPTraps` (int), `groupRef` (string), `memberSet` (object), `membersFrom` (objectList), `pendingSources` (stringList), `placementActive` (bool), `placementActiveNode` (string), `placementGroup` (string), `plannerPhase` (string), `plannerReason` (string), `prefix` (string), `resolvedMemberCount` (int), `deliveryMode` (string), `discoverySelfPrivateIPs` (stringList) |
+| `SAMNodeSet` | `nodeCount` (int) |
 | `NAT44Rule` | `dryRun` (bool), `egressInterface` (string), `phase` (string), `snatAddress` (string) |
 | `NAT44SessionSync` | `deleteFailed` (int), `deleteOK` (int), `dryRun` (bool), `insertFailed` (int), `insertOK` (int), `mode` (string), `phase` (string), `sessionCount` (int), `snatAddresses` (stringList), `syncedAt` (timestamp), `targetCount` (int), `targets` (objectList) |
 | `NTPClient` | `phase` (string), `servers` (stringList), `source` (string), `updatedAt` (timestamp) |

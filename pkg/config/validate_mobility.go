@@ -4,7 +4,10 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"net/netip"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -138,6 +141,18 @@ func validateMobilityResource(res api.Resource, _ platform.OS) (bool, error) {
 			return true, err
 		}
 		return true, nil
+	case "SAMNodeSet":
+		if res.APIVersion != api.MobilityAPIVersion {
+			return true, fmt.Errorf("%s must use apiVersion %s", res.ID(), api.MobilityAPIVersion)
+		}
+		spec, err := res.SAMNodeSetSpec()
+		if err != nil {
+			return true, err
+		}
+		if err := validateSAMNodeSet(res, spec); err != nil {
+			return true, err
+		}
+		return true, nil
 	case "SAMPeerGroup":
 		if res.APIVersion != api.MobilityAPIVersion {
 			return true, fmt.Errorf("%s must use apiVersion %s", res.ID(), api.MobilityAPIVersion)
@@ -164,6 +179,128 @@ func validateMobilityResource(res api.Resource, _ platform.OS) (bool, error) {
 		return true, nil
 	}
 	return false, nil
+}
+
+func validateSAMNodeSet(res api.Resource, spec api.SAMNodeSetSpec) error {
+	if len(spec.Nodes) == 0 {
+		return fmt.Errorf("%s spec.nodes requires at least one node", res.ID())
+	}
+	seen := map[string]bool{}
+	for i, node := range spec.Nodes {
+		nodeRef := strings.TrimSpace(node.NodeRef)
+		if nodeRef == "" {
+			return fmt.Errorf("%s spec.nodes[%d].nodeRef is required", res.ID(), i)
+		}
+		if seen[nodeRef] {
+			return fmt.Errorf("%s spec.nodes nodeRef %q is duplicated", res.ID(), nodeRef)
+		}
+		seen[nodeRef] = true
+		switch strings.TrimSpace(node.Role) {
+		case "", "onprem", "cloud":
+		default:
+			return fmt.Errorf("%s spec.nodes[%d].role must be onprem or cloud", res.ID(), i)
+		}
+		if endpoint := strings.TrimSpace(node.EventEndpoint); endpoint != "" {
+			if err := validateSAMNodeEventEndpoint(endpoint); err != nil {
+				return fmt.Errorf("%s spec.nodes[%d].eventEndpoint: %w", res.ID(), i, err)
+			}
+		}
+		if endpoint := strings.TrimSpace(node.SAMEndpoint); endpoint != "" {
+			if err := validateSAMNodeSAMEndpoint(endpoint); err != nil {
+				return fmt.Errorf("%s spec.nodes[%d].samEndpoint: %w", res.ID(), i, err)
+			}
+		}
+		if err := validateSAMNodeWireGuard(res.ID(), i, node.WireGuard); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateSAMNodeEventEndpoint(endpoint string) error {
+	parsed, err := url.Parse(endpoint)
+	if err != nil {
+		return err
+	}
+	switch parsed.Scheme {
+	case "http", "https":
+	default:
+		return fmt.Errorf("must use http or https")
+	}
+	if strings.TrimSpace(parsed.Host) == "" {
+		return fmt.Errorf("must include a host")
+	}
+	return nil
+}
+
+func validateSAMNodeSAMEndpoint(endpoint string) error {
+	value := strings.TrimSpace(endpoint)
+	if strings.Contains(value, "/") {
+		prefix, err := netip.ParsePrefix(value)
+		if err != nil {
+			return err
+		}
+		if !prefix.Addr().Is4() {
+			return fmt.Errorf("must be IPv4")
+		}
+		return nil
+	}
+	addr, err := netip.ParseAddr(value)
+	if err != nil {
+		return err
+	}
+	if !addr.Is4() {
+		return fmt.Errorf("must be IPv4")
+	}
+	return nil
+}
+
+func validateSAMNodeWireGuard(resourceID string, index int, spec api.SAMNodeWireGuardSpec) error {
+	wireGuardSet := strings.TrimSpace(spec.PublicKey) != "" ||
+		strings.TrimSpace(spec.Endpoint) != "" ||
+		len(spec.AllowedIPs) > 0 ||
+		spec.PersistentKeepalive != 0
+	if !wireGuardSet {
+		return nil
+	}
+	if strings.TrimSpace(spec.PublicKey) == "" {
+		return fmt.Errorf("%s spec.nodes[%d].wireGuard.publicKey is required when wireGuard is set", resourceID, index)
+	}
+	if len(spec.AllowedIPs) == 0 {
+		return fmt.Errorf("%s spec.nodes[%d].wireGuard.allowedIPs is required when wireGuard is set", resourceID, index)
+	}
+	for i, allowed := range spec.AllowedIPs {
+		if _, err := netip.ParsePrefix(strings.TrimSpace(allowed)); err != nil {
+			return fmt.Errorf("%s spec.nodes[%d].wireGuard.allowedIPs[%d] must be an IP prefix", resourceID, index, i)
+		}
+	}
+	if endpoint := strings.TrimSpace(spec.Endpoint); endpoint != "" {
+		if err := validateWireGuardEndpoint(endpoint); err != nil {
+			return fmt.Errorf("%s spec.nodes[%d].wireGuard.endpoint: %w", resourceID, index, err)
+		}
+	}
+	if spec.PersistentKeepalive < 0 || spec.PersistentKeepalive > 65535 {
+		return fmt.Errorf("%s spec.nodes[%d].wireGuard.persistentKeepalive must be within 0-65535", resourceID, index)
+	}
+	return nil
+}
+
+func validateWireGuardEndpoint(endpoint string) error {
+	host, port, err := net.SplitHostPort(endpoint)
+	if err != nil {
+		return fmt.Errorf("must be host:port")
+	}
+	if strings.TrimSpace(host) == "" {
+		return fmt.Errorf("host is required")
+	}
+	if strings.TrimSpace(port) == "" {
+		return fmt.Errorf("port is required")
+	}
+	parsedPort, err := strconv.Atoi(port)
+	if err != nil || parsedPort < 1 || parsedPort > 65535 {
+		return fmt.Errorf("port must be 1..65535")
+	}
+	return nil
 }
 
 func validateMobilityMemberSet(res api.Resource, spec api.MobilityMemberSetSpec) error {

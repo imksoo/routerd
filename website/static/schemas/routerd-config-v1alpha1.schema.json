@@ -8493,6 +8493,135 @@
                     "type": "string"
                   },
                   "kind": {
+                    "const": "SAMNodeSet",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "description": "SAMNodeSetSpec is the shared node identity registry for write-once SAM fabrics.",
+                    "properties": {
+                      "nodes": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "eventEndpoint": {
+                              "type": "string"
+                            },
+                            "maintenance": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "drain": {
+                                  "type": "boolean"
+                                }
+                              },
+                              "type": "object"
+                            },
+                            "nodeRef": {
+                              "type": "string"
+                            },
+                            "placement": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "group": {
+                                  "type": "string"
+                                },
+                                "priority": {
+                                  "description": "Priority orders active/standby candidates. Empty/0 is auto-numbered\ndeterministically within the group as 10, 20, ... while preserving any\nexplicitly configured priorities.",
+                                  "maximum": 1000000,
+                                  "minimum": 0,
+                                  "type": "integer"
+                                }
+                              },
+                              "type": "object"
+                            },
+                            "role": {
+                              "enum": [
+                                "",
+                                "onprem",
+                                "cloud"
+                              ],
+                              "type": "string"
+                            },
+                            "routeReflector": {
+                              "type": "boolean"
+                            },
+                            "samEndpoint": {
+                              "type": "string"
+                            },
+                            "site": {
+                              "type": "string"
+                            },
+                            "wireGuard": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "allowedIPs": {
+                                  "items": {
+                                    "type": "string"
+                                  },
+                                  "type": "array"
+                                },
+                                "endpoint": {
+                                  "type": "string"
+                                },
+                                "persistentKeepalive": {
+                                  "maximum": 65535,
+                                  "minimum": 0,
+                                  "type": "integer"
+                                },
+                                "publicKey": {
+                                  "type": "string"
+                                }
+                              },
+                              "type": "object"
+                            }
+                          },
+                          "required": [
+                            "nodeRef"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      }
+                    },
+                    "required": [
+                      "nodes"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "mobility.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
                     "const": "SAMPeerGroup",
                     "type": "string"
                   },

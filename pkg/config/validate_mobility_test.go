@@ -206,6 +206,82 @@ func TestValidateMobilityMemberSetRejectsInvalidMember(t *testing.T) {
 	}
 }
 
+func TestValidateSAMNodeSet(t *testing.T) {
+	router := samNodeSetRouter(api.SAMNodeSetSpec{Nodes: []api.SAMNodeSpec{{
+		NodeRef:        "pve-rt01",
+		Site:           "pve01",
+		Role:           "onprem",
+		EventEndpoint:  "http://10.99.0.11:9443",
+		SAMEndpoint:    "10.99.0.11",
+		RouteReflector: true,
+		WireGuard: api.SAMNodeWireGuardSpec{
+			PublicKey:           "pubkey",
+			Endpoint:            "pve-rt01.example.net:51820",
+			AllowedIPs:          []string{"10.99.0.11/32"},
+			PersistentKeepalive: 25,
+		},
+	}}})
+	if err := Validate(router); err != nil {
+		t.Fatalf("Validate SAMNodeSet: %v", err)
+	}
+}
+
+func TestValidateSAMNodeSetRejectsInvalidFields(t *testing.T) {
+	tests := []struct {
+		name string
+		mut  func(*api.SAMNodeSetSpec)
+		want string
+	}{
+		{
+			name: "duplicate nodeRef",
+			mut: func(spec *api.SAMNodeSetSpec) {
+				spec.Nodes = append(spec.Nodes, spec.Nodes[0])
+			},
+			want: `spec.nodes nodeRef "pve-rt01" is duplicated`,
+		},
+		{
+			name: "invalid role",
+			mut:  func(spec *api.SAMNodeSetSpec) { spec.Nodes[0].Role = "edge" },
+			want: "spec.nodes[0].role must be onprem or cloud",
+		},
+		{
+			name: "invalid event endpoint",
+			mut:  func(spec *api.SAMNodeSetSpec) { spec.Nodes[0].EventEndpoint = "grpc://10.99.0.11:9443" },
+			want: "spec.nodes[0].eventEndpoint: must use http or https",
+		},
+		{
+			name: "invalid sam endpoint",
+			mut:  func(spec *api.SAMNodeSetSpec) { spec.Nodes[0].SAMEndpoint = "fd00::1" },
+			want: "spec.nodes[0].samEndpoint: must be IPv4",
+		},
+		{
+			name: "wireguard public key required",
+			mut:  func(spec *api.SAMNodeSetSpec) { spec.Nodes[0].WireGuard.PublicKey = "" },
+			want: "spec.nodes[0].wireGuard.publicKey is required when wireGuard is set",
+		},
+		{
+			name: "wireguard allowed IP required",
+			mut:  func(spec *api.SAMNodeSetSpec) { spec.Nodes[0].WireGuard.AllowedIPs = nil },
+			want: "spec.nodes[0].wireGuard.allowedIPs is required when wireGuard is set",
+		},
+		{
+			name: "wireguard endpoint host port",
+			mut:  func(spec *api.SAMNodeSetSpec) { spec.Nodes[0].WireGuard.Endpoint = "missing-port" },
+			want: "spec.nodes[0].wireGuard.endpoint: must be host:port",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spec := validSAMNodeSetSpec()
+			tt.mut(&spec)
+			err := Validate(samNodeSetRouter(spec))
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("Validate SAMNodeSet error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
 func TestValidateSAMPeerGroup(t *testing.T) {
 	router := samPeerGroupRouter(api.SAMPeerGroupSpec{Peers: []api.SAMTransportPeerSpec{{
 		NodeRef:        "k8s-rt01",
@@ -318,6 +394,33 @@ func mobilityMemberSetRouter(spec api.MobilityMemberSetSpec) *api.Router {
 		Spec: api.RouterSpec{Resources: []api.Resource{{
 			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityMemberSet"},
 			Metadata: api.ObjectMeta{Name: "svnet1-members"},
+			Spec:     spec,
+		}}},
+	}
+}
+
+func validSAMNodeSetSpec() api.SAMNodeSetSpec {
+	return api.SAMNodeSetSpec{Nodes: []api.SAMNodeSpec{{
+		NodeRef:       "pve-rt01",
+		Site:          "pve01",
+		Role:          "onprem",
+		EventEndpoint: "http://10.99.0.11:9443",
+		SAMEndpoint:   "10.99.0.11/32",
+		WireGuard: api.SAMNodeWireGuardSpec{
+			PublicKey:  "pubkey",
+			Endpoint:   "pve-rt01.example.net:51820",
+			AllowedIPs: []string{"10.99.0.11/32"},
+		},
+	}}}
+}
+
+func samNodeSetRouter(spec api.SAMNodeSetSpec) *api.Router {
+	return &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMNodeSet"},
+			Metadata: api.ObjectMeta{Name: "svnet1-nodes"},
 			Spec:     spec,
 		}}},
 	}
