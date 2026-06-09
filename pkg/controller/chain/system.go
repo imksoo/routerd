@@ -1394,15 +1394,27 @@ func (c SystemdUnitController) cleanupStaleEventFederationUnits(ctx context.Cont
 	if err != nil {
 		return err
 	}
+	legacyPath := filepath.Join(c.SystemdSystemDir, "routerd-eventd.service")
+	legacyPresent, err := legacyEventdUnitNeedsCleanup(ctx, command, legacyPath)
+	if err != nil {
+		return err
+	}
+	if legacyPresent {
+		matches = append(matches, legacyPath)
+	}
 	var removed bool
 	for _, path := range matches {
 		unitName := filepath.Base(path)
 		if desired[unitName] {
 			continue
 		}
+		reason := "StaleEventFederationUnit"
+		if unitName == "routerd-eventd.service" {
+			reason = "LegacyEventFederationUnit"
+		}
 		status := map[string]any{
 			"phase":     "Removing",
-			"reason":    "StaleEventFederationUnit",
+			"reason":    reason,
 			"unitName":  unitName,
 			"path":      path,
 			"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
@@ -1436,6 +1448,15 @@ func (c SystemdUnitController) cleanupStaleEventFederationUnits(ctx context.Cont
 		}
 	}
 	return nil
+}
+
+func legacyEventdUnitNeedsCleanup(ctx context.Context, command outputCommandFunc, path string) (bool, error) {
+	if _, err := os.Stat(path); err == nil {
+		return true, nil
+	} else if err != nil && !os.IsNotExist(err) {
+		return false, err
+	}
+	return systemdUnitEnabledOrActive(ctx, command, "routerd-eventd.service"), nil
 }
 
 func (c SystemdUnitController) cleanupStaleClientDaemonUnits(ctx context.Context, command outputCommandFunc) error {
