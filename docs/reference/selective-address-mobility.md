@@ -224,9 +224,11 @@ On the on-prem node, the on-prem member is the complete self declaration
 instead: it normally carries `staticOwnedAddresses` and a `proxy-arp` capture
 with an explicit `activeWhen.type`. Use `single-router` when one local router
 owns capture for the site, or `vrrp-master` when an HA pair gates capture by
-VRRP master state. The cloud members remain identity-only. The same rule
-applies in every direction: the local router owns its local implementation
-details; remote members are peer identities.
+VRRP master state. For discovery of dynamic on-prem clients beyond this bootstrap
+owner, add `ownershipDiscovery` with `mode: onprem-l2` and at least one source
+(for example `type: arp-observer` on `ens21`). The cloud members remain
+identity-only. The same rule applies in every direction: the local router owns
+its local implementation details; remote members are peer identities.
 
 routerd uses observed facts from federation or provider discovery to advertise
 owned `/32` paths through BGP. Operators keep the control plane declarative by
@@ -490,6 +492,15 @@ Older route-lowered SAM delivery remains available only for hand-authored
 generated provider `ActionPlan.target` values. Put identifiers such as region,
 compartment ID, resource group, NIC name, or IP config name there; credentials,
 tokens, and private keys must stay in provider auth mechanisms.
+
+Cloud `provider-secondary-ip` capture supports `members[].capture.strategy`.
+The default is `secondary-ip`, which keeps the historical AWS ENI, Azure NIC
+ipConfig, and OCI VNIC secondary-address behavior. AWS and Azure may instead set
+`strategy: route-table`: AWS writes a `/32` route in `capture.target.routeTableRef`
+to `capture.nicRef`; Azure writes a UDR in `capture.target.routeTableRef` and
+requires `capture.target.nextHopIPAddress`. Provider inventory must confirm that
+the route table points at the local router before routerd advertises the captured
+`/32` to BGP.
 
 For BGP-mode on-prem `proxy-arp` capture, `members[].capture.sourceAddress`
 optionally declares the router's local sender address on the capture

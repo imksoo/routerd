@@ -329,6 +329,8 @@ var canonicalProviderActionProviders = map[string]bool{
 var canonicalProviderActionVerbs = map[string]bool{
 	"assign-secondary-ip":        true,
 	"unassign-secondary-ip":      true,
+	"assign-route-table-route":   true,
+	"unassign-route-table-route": true,
 	"ensure-forwarding-enabled":  true,
 	"ensure-forwarding-disabled": true,
 }
@@ -341,7 +343,7 @@ func validateProviderActionPolicy(res api.Resource, spec api.ProviderActionPolic
 	}
 	for i, action := range spec.AllowedActions {
 		if !canonicalProviderActionVerbs[strings.TrimSpace(action)] {
-			return fmt.Errorf("%s spec.allowedActions[%d] %q must be one of assign-secondary-ip, unassign-secondary-ip, ensure-forwarding-enabled, ensure-forwarding-disabled", res.ID(), i, action)
+			return fmt.Errorf("%s spec.allowedActions[%d] %q must be one of assign-secondary-ip, unassign-secondary-ip, assign-route-table-route, unassign-route-table-route, ensure-forwarding-enabled, ensure-forwarding-disabled", res.ID(), i, action)
 		}
 	}
 	for i, cidr := range spec.AllowedCIDRs {

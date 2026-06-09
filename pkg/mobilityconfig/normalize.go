@@ -149,6 +149,9 @@ func mergeCapture(base, override api.MobilityMemberCapture) api.MobilityMemberCa
 	if strings.TrimSpace(override.ProviderMode) != "" {
 		out.ProviderMode = override.ProviderMode
 	}
+	if strings.TrimSpace(override.Strategy) != "" {
+		out.Strategy = override.Strategy
+	}
 	if strings.TrimSpace(override.NICRef) != "" {
 		out.NICRef = override.NICRef
 	}

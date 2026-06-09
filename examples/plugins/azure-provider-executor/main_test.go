@@ -52,6 +52,33 @@ func (f *fakeAz) run(ctx context.Context, argv ...string) ([]byte, error) {
 	return []byte(`{}`), nil
 }
 
+type routeFakeAz struct {
+	calls     [][]string
+	createErr error
+	updateErr error
+	deleteErr error
+}
+
+func (f *routeFakeAz) run(ctx context.Context, argv ...string) ([]byte, error) {
+	f.calls = append(f.calls, append([]string(nil), argv...))
+	toks := strings.Join(leadingTokens(argv), " ")
+	switch toks {
+	case "network route-table route create":
+		if f.createErr != nil {
+			return nil, f.createErr
+		}
+	case "network route-table route update":
+		if f.updateErr != nil {
+			return nil, f.updateErr
+		}
+	case "network route-table route delete":
+		if f.deleteErr != nil {
+			return nil, f.deleteErr
+		}
+	}
+	return []byte(`{}`), nil
+}
+
 type seizeFakeAz struct {
 	calls                    [][]string
 	selfHolds                bool
@@ -194,6 +221,15 @@ func reqSpec(action, mode string) executeActionRequestSpec {
 	}
 }
 
+func routeReqSpec(action, mode string) executeActionRequestSpec {
+	spec := reqSpec(action, mode)
+	spec.Target["routeTableRef"] = "rt-cloudedge"
+	spec.Target["routeTableName"] = "rt-cloudedge"
+	spec.Target["routeName"] = "cloudedge-10-88-60-9-32"
+	spec.Target["nextHopIPAddress"] = "10.88.60.254"
+	return spec
+}
+
 func dispatchWith(spec executeActionRequestSpec, runner azRunner) executeActionResult {
 	return dispatch(context.Background(), executeActionRequest{Spec: spec}, runner)
 }
@@ -281,6 +317,58 @@ func TestAssignExecuteIssuesIPConfigCreate(t *testing.T) {
 	want := "network nic ip-config create --resource-group rg1 --nic-name nic1 --name ipcfg-mobility --private-ip-address 10.88.60.9"
 	if got != want {
 		t.Fatalf("assign argv mismatch:\n got: %s\nwant: %s", got, want)
+	}
+}
+
+func TestAssignRouteTableExecuteCreatesRoute(t *testing.T) {
+	f := &routeFakeAz{}
+	res := dispatchWith(routeReqSpec(actionAssignRouteTableRoute, modeExecute), f.run)
+	if res.Status.Status != statusSucceeded {
+		t.Fatalf("want succeeded, got %q err=%q", res.Status.Status, res.Status.Error)
+	}
+	got := joinedCalls(f.calls)
+	want := "network route-table route create --resource-group rg1 --route-table-name rt-cloudedge --name cloudedge-10-88-60-9-32 --address-prefix 10.88.60.9/32 --next-hop-type VirtualAppliance --next-hop-ip-address 10.88.60.254"
+	if len(got) != 1 || got[0] != want {
+		t.Fatalf("calls = %v, want create route", got)
+	}
+}
+
+func TestAssignRouteTableSeizeUpdatesExistingRoute(t *testing.T) {
+	f := &routeFakeAz{}
+	spec := routeReqSpec(actionAssignRouteTableRoute, modeExecute)
+	spec.Parameters = map[string]string{"allowReassignment": "true"}
+	res := dispatchWith(spec, f.run)
+	if res.Status.Status != statusSucceeded {
+		t.Fatalf("want succeeded, got %q err=%q", res.Status.Status, res.Status.Error)
+	}
+	got := joinedCalls(f.calls)
+	want := "network route-table route update --resource-group rg1 --route-table-name rt-cloudedge --name cloudedge-10-88-60-9-32 --set addressPrefix=10.88.60.9/32 nextHopType=VirtualAppliance nextHopIpAddress=10.88.60.254"
+	if len(got) != 1 || got[0] != want {
+		t.Fatalf("calls = %v, want update route for seize", got)
+	}
+}
+
+func TestAssignRouteTableCreateExistingFallsBackToUpdate(t *testing.T) {
+	f := &routeFakeAz{createErr: fmt.Errorf("route already exists")}
+	res := dispatchWith(routeReqSpec(actionAssignRouteTableRoute, modeExecute), f.run)
+	if res.Status.Status != statusSucceeded {
+		t.Fatalf("want succeeded, got %q err=%q", res.Status.Status, res.Status.Error)
+	}
+	got := joinedCalls(f.calls)
+	if len(got) != 2 || !strings.Contains(got[0], " route create ") || !strings.Contains(got[1], " route update ") {
+		t.Fatalf("calls = %v, want create then update", got)
+	}
+}
+
+func TestUnassignRouteTableMissingRouteSkips(t *testing.T) {
+	f := &routeFakeAz{deleteErr: fmt.Errorf("route not found")}
+	res := dispatchWith(routeReqSpec(actionUnassignRouteTableRoute, modeExecute), f.run)
+	if res.Status.Status != statusSkipped {
+		t.Fatalf("want skipped, got %q err=%q", res.Status.Status, res.Status.Error)
+	}
+	got := joinedCalls(f.calls)
+	if len(got) != 1 || !strings.Contains(got[0], " route delete ") {
+		t.Fatalf("calls = %v, want delete attempt", got)
 	}
 }
 

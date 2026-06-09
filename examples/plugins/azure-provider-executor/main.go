@@ -91,13 +91,15 @@ const (
 	statusFailed    = "failed"
 	statusSkipped   = "skipped"
 
-	actionAssignSecondaryIP   = "assign-secondary-ip"
-	actionUnassignSecondaryIP = "unassign-secondary-ip"
-	actionEnsureFwdEnabled    = "ensure-forwarding-enabled"
-	actionEnsureFwdDisabled   = "ensure-forwarding-disabled"
-	defaultAzCommandTimeoutMs = 25000
-	seizeVerifyAttempts       = 5
-	seizeVerifyDelay          = 500 * time.Millisecond
+	actionAssignSecondaryIP       = "assign-secondary-ip"
+	actionUnassignSecondaryIP     = "unassign-secondary-ip"
+	actionAssignRouteTableRoute   = "assign-route-table-route"
+	actionUnassignRouteTableRoute = "unassign-route-table-route"
+	actionEnsureFwdEnabled        = "ensure-forwarding-enabled"
+	actionEnsureFwdDisabled       = "ensure-forwarding-disabled"
+	defaultAzCommandTimeoutMs     = 25000
+	seizeVerifyAttempts           = 5
+	seizeVerifyDelay              = 500 * time.Millisecond
 )
 
 var sleep = time.Sleep
@@ -166,6 +168,14 @@ type displacedTarget struct {
 	ipConfigName  string
 }
 
+type routeTarget struct {
+	resourceGroup    string
+	routeTableName   string
+	routeName        string
+	address          string
+	nextHopIPAddress string
+}
+
 func (t displacedTarget) complete() bool {
 	return strings.TrimSpace(t.resourceGroup) != "" && strings.TrimSpace(t.nicName) != "" && strings.TrimSpace(t.ipConfigName) != ""
 }
@@ -205,6 +215,15 @@ func bareIP(address string) string {
 	return address
 }
 
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
 // requireIPConfigTarget requires the fields az ip-config create/delete need:
 // resourceGroup + nicName + ipConfigName (and, for create, address).
 func requireIPConfigTarget(spec executeActionRequestSpec, needAddress bool) (nicTarget, error) {
@@ -227,6 +246,32 @@ func requireIPConfigTarget(spec executeActionRequestSpec, needAddress bool) (nic
 	return t, nil
 }
 
+func requireRouteTarget(spec executeActionRequestSpec) (routeTarget, error) {
+	t := routeTarget{
+		resourceGroup:    spec.Target["resourceGroup"],
+		routeTableName:   firstNonEmpty(spec.Target["routeTableName"], spec.Target["routeTableRef"]),
+		routeName:        spec.Target["routeName"],
+		address:          spec.Target["address"],
+		nextHopIPAddress: spec.Target["nextHopIPAddress"],
+	}
+	if t.resourceGroup == "" {
+		return routeTarget{}, fmt.Errorf("target.resourceGroup is required for route-table operations")
+	}
+	if t.routeTableName == "" {
+		return routeTarget{}, fmt.Errorf("target.routeTableName or target.routeTableRef is required")
+	}
+	if t.routeName == "" {
+		return routeTarget{}, fmt.Errorf("target.routeName is required")
+	}
+	if t.address == "" {
+		return routeTarget{}, fmt.Errorf("target.address is required")
+	}
+	if t.nextHopIPAddress == "" {
+		return routeTarget{}, fmt.Errorf("target.nextHopIPAddress is required")
+	}
+	return t, nil
+}
+
 // dispatch routes by (Action, Mode). It NEVER mutates in dry-run mode: dry-run
 // paths use only show/list verbs through the guardedRunner, and the guard rejects
 // any non-read-only verb so a coding mistake cannot mutate during a preview.
@@ -244,15 +289,116 @@ func dispatch(ctx context.Context, req executeActionRequest, runner azRunner) ex
 	switch spec.Action {
 	case actionAssignSecondaryIP:
 		return assignSecondaryIP(ctx, spec, mode, runner)
+	case actionAssignRouteTableRoute:
+		return assignRouteTableRoute(ctx, spec, mode, runner)
 	case actionEnsureFwdEnabled:
 		return ensureForwardingEnabled(ctx, spec, mode, runner)
 	case actionUnassignSecondaryIP:
 		return unassignSecondaryIP(ctx, spec, mode, runner)
+	case actionUnassignRouteTableRoute:
+		return unassignRouteTableRoute(ctx, spec, mode, runner)
 	case actionEnsureFwdDisabled:
 		return ensureForwardingDisabled(ctx, spec, mode, runner)
 	default:
 		return failed(fmt.Sprintf("unsupported action %q", spec.Action), nil)
 	}
+}
+
+func assignRouteTableRoute(ctx context.Context, spec executeActionRequestSpec, mode string, runner azRunner) executeActionResult {
+	t, err := requireRouteTarget(spec)
+	if err != nil {
+		return failed("assign-route-table-route: missing target field", err)
+	}
+	res := newResult()
+	res.Status.UndoAvailable = true
+
+	if mode == modeDryRun {
+		if _, derr := runner(ctx, "network", "route-table", "show", "--resource-group", t.resourceGroup, "--name", t.routeTableName); derr != nil {
+			return failed("assign-route-table-route dry-run: route table show failed", derr)
+		}
+		res.Status.Status = statusSucceeded
+		res.Status.Message = fmt.Sprintf("would route %s to %s in %s", t.address, t.nextHopIPAddress, t.routeTableName)
+		return res
+	}
+
+	allowReassignment := stringBool(spec.Parameters["allowReassignment"])
+	if allowReassignment {
+		if err := updateRouteTableRoute(ctx, runner, t); err != nil {
+			if !isNotFoundError(err) {
+				return failed("assign-route-table-route execute: route update failed", err)
+			}
+			if err := createRouteTableRoute(ctx, runner, t); err != nil {
+				return failed("assign-route-table-route execute: route create after missing update failed", err)
+			}
+		}
+	} else if err := createRouteTableRoute(ctx, runner, t); err != nil {
+		if !isAlreadyExistsError(err) {
+			return failed("assign-route-table-route execute: route create failed", err)
+		}
+		if err := updateRouteTableRoute(ctx, runner, t); err != nil {
+			return failed("assign-route-table-route execute: route update after existing create failed", err)
+		}
+	}
+	res.Status.Status = statusSucceeded
+	res.Status.Message = fmt.Sprintf("routed %s to %s in %s", t.address, t.nextHopIPAddress, t.routeTableName)
+	res.Status.Observed = map[string]string{"assignedRoute": t.address, "routeTableRef": t.routeTableName, "nextHopIPAddress": t.nextHopIPAddress}
+	return res
+}
+
+func createRouteTableRoute(ctx context.Context, runner azRunner, t routeTarget) error {
+	_, err := runner(ctx, "network", "route-table", "route", "create",
+		"--resource-group", t.resourceGroup,
+		"--route-table-name", t.routeTableName,
+		"--name", t.routeName,
+		"--address-prefix", t.address,
+		"--next-hop-type", "VirtualAppliance",
+		"--next-hop-ip-address", t.nextHopIPAddress)
+	return err
+}
+
+func updateRouteTableRoute(ctx context.Context, runner azRunner, t routeTarget) error {
+	_, err := runner(ctx, "network", "route-table", "route", "update",
+		"--resource-group", t.resourceGroup,
+		"--route-table-name", t.routeTableName,
+		"--name", t.routeName,
+		"--set",
+		"addressPrefix="+t.address,
+		"nextHopType=VirtualAppliance",
+		"nextHopIpAddress="+t.nextHopIPAddress)
+	return err
+}
+
+func unassignRouteTableRoute(ctx context.Context, spec executeActionRequestSpec, mode string, runner azRunner) executeActionResult {
+	t, err := requireRouteTarget(spec)
+	if err != nil {
+		return failed("unassign-route-table-route: missing target field", err)
+	}
+	res := newResult()
+
+	if mode == modeDryRun {
+		if _, derr := runner(ctx, "network", "route-table", "show", "--resource-group", t.resourceGroup, "--name", t.routeTableName); derr != nil {
+			return failed("unassign-route-table-route dry-run: route table show failed", derr)
+		}
+		res.Status.Status = statusSucceeded
+		res.Status.Message = fmt.Sprintf("would delete route %s from %s", t.address, t.routeTableName)
+		return res
+	}
+
+	if _, err := runner(ctx, "network", "route-table", "route", "delete",
+		"--resource-group", t.resourceGroup,
+		"--route-table-name", t.routeTableName,
+		"--name", t.routeName,
+		"--yes"); err != nil {
+		if isNotFoundError(err) {
+			res.Status.Status = statusSkipped
+			res.Status.Message = fmt.Sprintf("route %s already absent from %s", t.routeName, t.routeTableName)
+			return res
+		}
+		return failed("unassign-route-table-route execute: route delete failed", err)
+	}
+	res.Status.Status = statusSucceeded
+	res.Status.Message = fmt.Sprintf("deleted route %s from %s", t.address, t.routeTableName)
+	return res
 }
 
 // assignSecondaryIP attaches the captured /32 to the NIC via a new ip-config.

@@ -30,16 +30,18 @@ type ObservePrivateIPsRequest struct {
 }
 
 type ObservePrivateIPsRequestSpec struct {
-	Provider    string               `json:"provider" yaml:"provider"`
-	ProviderRef string               `json:"providerRef,omitempty" yaml:"providerRef,omitempty"`
-	SelfNode    string               `json:"selfNode" yaml:"selfNode"`
-	Pool        string               `json:"pool" yaml:"pool"`
-	Prefix      string               `json:"prefix" yaml:"prefix"`
-	SelfNICRef  string               `json:"selfNicRef" yaml:"selfNicRef"`
-	SubnetRef   string               `json:"subnetRef,omitempty" yaml:"subnetRef,omitempty"`
-	Target      map[string]string    `json:"target,omitempty" yaml:"target,omitempty"`
-	Selector    InventorySelector    `json:"selector,omitempty" yaml:"selector,omitempty"`
-	Context     plugin.PluginContext `json:"context,omitempty" yaml:"context,omitempty"`
+	Provider      string               `json:"provider" yaml:"provider"`
+	ProviderRef   string               `json:"providerRef,omitempty" yaml:"providerRef,omitempty"`
+	Strategy      string               `json:"strategy,omitempty" yaml:"strategy,omitempty"`
+	SelfNode      string               `json:"selfNode" yaml:"selfNode"`
+	Pool          string               `json:"pool" yaml:"pool"`
+	Prefix        string               `json:"prefix" yaml:"prefix"`
+	SelfNICRef    string               `json:"selfNicRef" yaml:"selfNicRef"`
+	SubnetRef     string               `json:"subnetRef,omitempty" yaml:"subnetRef,omitempty"`
+	RouteTableRef string               `json:"routeTableRef,omitempty" yaml:"routeTableRef,omitempty"`
+	Target        map[string]string    `json:"target,omitempty" yaml:"target,omitempty"`
+	Selector      InventorySelector    `json:"selector,omitempty" yaml:"selector,omitempty"`
+	Context       plugin.PluginContext `json:"context,omitempty" yaml:"context,omitempty"`
 }
 
 type InventorySelector struct {
@@ -57,12 +59,14 @@ type ObservePrivateIPsResultStatus struct {
 	Error   string            `json:"error,omitempty" yaml:"error,omitempty"`
 	Self    *PrivateIPSelf    `json:"self,omitempty" yaml:"self,omitempty"`
 	IPs     []PrivateIPRecord `json:"ips,omitempty" yaml:"ips,omitempty"`
+	Routes  []RouteRecord     `json:"routes,omitempty" yaml:"routes,omitempty"`
 }
 
 type PrivateIPSelf struct {
 	NICRef            string   `json:"nicRef,omitempty" yaml:"nicRef,omitempty"`
 	SubnetRef         string   `json:"subnetRef,omitempty" yaml:"subnetRef,omitempty"`
 	PrivateIPs        []string `json:"privateIPs,omitempty" yaml:"privateIPs,omitempty"`
+	CapturedAddresses []string `json:"capturedAddresses,omitempty" yaml:"capturedAddresses,omitempty"`
 	ForwardingEnabled *bool    `json:"forwardingEnabled,omitempty" yaml:"forwardingEnabled,omitempty"`
 }
 
@@ -71,6 +75,15 @@ type PrivateIPRecord struct {
 	NICRef        string            `json:"nicRef,omitempty" yaml:"nicRef,omitempty"`
 	SubnetRef     string            `json:"subnetRef,omitempty" yaml:"subnetRef,omitempty"`
 	Primary       bool              `json:"primary,omitempty" yaml:"primary,omitempty"`
+	Tags          map[string]string `json:"tags,omitempty" yaml:"tags,omitempty"`
+	InstanceState string            `json:"instanceState,omitempty" yaml:"instanceState,omitempty"`
+}
+
+type RouteRecord struct {
+	Address       string            `json:"address" yaml:"address"`
+	RouteTableRef string            `json:"routeTableRef,omitempty" yaml:"routeTableRef,omitempty"`
+	NextHopNICRef string            `json:"nextHopNicRef,omitempty" yaml:"nextHopNicRef,omitempty"`
+	NextHopRef    string            `json:"nextHopRef,omitempty" yaml:"nextHopRef,omitempty"`
 	Tags          map[string]string `json:"tags,omitempty" yaml:"tags,omitempty"`
 	InstanceState string            `json:"instanceState,omitempty" yaml:"instanceState,omitempty"`
 }

@@ -1747,6 +1747,7 @@ type MobilityMemberCapture struct {
 	Type               string `yaml:"type,omitempty" json:"type,omitempty" jsonschema:"enum=provider-secondary-ip,enum=proxy-arp"`
 	ProviderRef        string `yaml:"providerRef,omitempty" json:"providerRef,omitempty"`
 	ProviderMode       string `yaml:"providerMode,omitempty" json:"providerMode,omitempty"`
+	Strategy           string `yaml:"strategy,omitempty" json:"strategy,omitempty" jsonschema:"enum=,enum=secondary-ip,enum=route-table"`
 	NICRef             string `yaml:"nicRef,omitempty" json:"nicRef,omitempty"`
 	ConfigureOSAddress bool   `yaml:"configureOSAddress,omitempty" json:"configureOSAddress,omitempty"`
 	Interface          string `yaml:"interface,omitempty" json:"interface,omitempty"`
@@ -1846,6 +1847,7 @@ type AddressCapture struct {
 	Type               string `yaml:"type" json:"type" jsonschema:"enum=provider-secondary-ip,enum=proxy-arp"`
 	ProviderRef        string `yaml:"providerRef,omitempty" json:"providerRef,omitempty"`
 	ProviderMode       string `yaml:"providerMode,omitempty" json:"providerMode,omitempty"`
+	Strategy           string `yaml:"strategy,omitempty" json:"strategy,omitempty" jsonschema:"enum=,enum=secondary-ip,enum=route-table"`
 	NICRef             string `yaml:"nicRef,omitempty" json:"nicRef,omitempty"`
 	ConfigureOSAddress bool   `yaml:"configureOSAddress,omitempty" json:"configureOSAddress,omitempty"`
 	Interface          string `yaml:"interface,omitempty" json:"interface,omitempty"`

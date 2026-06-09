@@ -35,7 +35,7 @@ required, nothing allowlisted.
 | `requireApproval` | bool (pointer) | `true` when omitted | Operator approval required before execution. |
 | `allowedProviders` | list | empty = none | Providers permitted: `aws`, `azure`, `oci`, `gcp`. |
 | `allowedProviderRefs` | list | empty = no restriction | Restrict to named `CloudProviderProfile` refs. |
-| `allowedActions` | list | empty = none | Canonical verbs: `assign-secondary-ip`, `unassign-secondary-ip`, `ensure-forwarding-enabled`, `ensure-forwarding-disabled`. |
+| `allowedActions` | list | empty = none | Canonical verbs: `assign-secondary-ip`, `unassign-secondary-ip`, `assign-route-table-route`, `unassign-route-table-route`, `ensure-forwarding-enabled`, `ensure-forwarding-disabled`. |
 | `allowedCIDRs` | list | empty = no restriction | Action target address must fall within one CIDR. |
 | `maxActionsPerRun` | int | `0` = no actions | Cap on actions per run; set a positive bound to permit any. |
 | `allowUndo` | bool | `false` | Permit best-effort rollback. |

@@ -34,7 +34,7 @@ routerd は、承認されたクラウドプロバイダー変更（例:
 | `requireApproval` | bool (pointer) | 省略時 `true` | 実行前に運用者の承認が必要。 |
 | `allowedProviders` | list | 空 = なし | 許可するプロバイダー: `aws`、`azure`、`oci`、`gcp`。 |
 | `allowedProviderRefs` | list | 空 = 制限なし | 指定した `CloudProviderProfile` ref に制限。 |
-| `allowedActions` | list | 空 = なし | 正規動詞: `assign-secondary-ip`、`unassign-secondary-ip`、`ensure-forwarding-enabled`、`ensure-forwarding-disabled`。 |
+| `allowedActions` | list | 空 = なし | 正規動詞: `assign-secondary-ip`、`unassign-secondary-ip`、`assign-route-table-route`、`unassign-route-table-route`、`ensure-forwarding-enabled`、`ensure-forwarding-disabled`。 |
 | `allowedCIDRs` | list | 空 = 制限なし | action のターゲットアドレスはいずれかの CIDR 内でなければならない。 |
 | `maxActionsPerRun` | int | `0` = action なし | 1 回の実行あたりの action 上限。正の値を設定して許可する。 |
 | `allowUndo` | bool | `false` | ベストエフォートのロールバックを許可。 |

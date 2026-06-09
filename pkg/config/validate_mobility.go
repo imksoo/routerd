@@ -1096,6 +1096,9 @@ func validateMobilityMemberCapture(res api.Resource, index int, spec api.Mobilit
 		return err
 	}
 	if captureType == "" {
+		if strings.TrimSpace(member.Capture.Strategy) != "" {
+			return fmt.Errorf("%s spec.members[%d].capture.strategy requires capture.type provider-secondary-ip", res.ID(), index)
+		}
 		return nil
 	}
 	role := strings.TrimSpace(member.Role)
@@ -1120,6 +1123,15 @@ func validateMobilityMemberCapture(res api.Resource, index int, spec api.Mobilit
 	}
 	switch captureType {
 	case "provider-secondary-ip":
+		switch strings.TrimSpace(member.Capture.Strategy) {
+		case "", "secondary-ip":
+		case "route-table":
+			if strings.TrimSpace(member.Capture.Target["routeTableRef"]) == "" {
+				return fmt.Errorf("%s spec.members[%d].capture.target.routeTableRef is required when capture.strategy is route-table", res.ID(), index)
+			}
+		default:
+			return fmt.Errorf("%s spec.members[%d].capture.strategy must be secondary-ip or route-table", res.ID(), index)
+		}
 		if strings.TrimSpace(member.Capture.ProviderRef) == "" {
 			return fmt.Errorf("%s spec.members[%d].capture.providerRef is required when capture.type is provider-secondary-ip", res.ID(), index)
 		}
@@ -1133,6 +1145,9 @@ func validateMobilityMemberCapture(res api.Resource, index int, spec api.Mobilit
 			return fmt.Errorf("%s spec.members[%d].capture.configureOSAddress=true is not implemented in the MVP", res.ID(), index)
 		}
 	case "proxy-arp":
+		if strings.TrimSpace(member.Capture.Strategy) != "" {
+			return fmt.Errorf("%s spec.members[%d].capture.strategy is supported only when capture.type is provider-secondary-ip", res.ID(), index)
+		}
 		if strings.TrimSpace(member.Capture.Interface) == "" {
 			return fmt.Errorf("%s spec.members[%d].capture.interface is required when capture.type is proxy-arp", res.ID(), index)
 		}

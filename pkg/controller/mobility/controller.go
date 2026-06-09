@@ -225,7 +225,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		}
 	}
 	providerTransitions := latestProviderCaptureTransitions(previousActionPlans, actionJournal)
-	providerCapturedPaths, seizedPathCount := bgpProviderCapturedOwnedPaths(source, self, desiredTrapAddresses, providerTransitions)
+	providerCapturedPaths, seizedPathCount := bgpProviderCapturedOwnedPaths(source, self, desiredTrapAddresses, providerTransitions, discoverySelfIPs, discoverySelfIPsObserved)
 	desired = appendUniqueBGPPaths(desired, providerCapturedPaths...)
 	current, err := c.BGPPaths.ListPaths(ctx, source)
 	if err != nil {
@@ -465,7 +465,7 @@ func bgpOwnedPaths(poolName, source, selfNode string, spec api.MobilityPoolSpec,
 	return out
 }
 
-func bgpProviderCapturedOwnedPaths(source string, self memberPlanInfo, desiredTrapAddresses map[string]bgpTrapCandidate, providerTransitions map[string]providerCaptureTransition) ([]bgpdaemon.AppliedPath, int) {
+func bgpProviderCapturedOwnedPaths(source string, self memberPlanInfo, desiredTrapAddresses map[string]bgpTrapCandidate, providerTransitions map[string]providerCaptureTransition, observedSelfCaptures map[string]bool, observedSelfCapturesOK bool) ([]bgpdaemon.AppliedPath, int) {
 	if self.MaintenanceDrain || self.Capture.Type != "provider-secondary-ip" {
 		return nil, 0
 	}
@@ -477,12 +477,18 @@ func bgpProviderCapturedOwnedPaths(source string, self memberPlanInfo, desiredTr
 			continue
 		}
 		prefix = prefix.Masked()
-		key := providerCaptureTransitionKey(self.Capture.ProviderRef, self.Capture.NICRef, prefix.String())
-		transition, ok := providerTransitions[key]
-		if !ok || !transition.succeeded || !transition.assign {
-			continue
+		key := providerCaptureTransitionKey(self.Capture.ProviderRef, providerCaptureRefFromCapture(self.Capture, self.CaptureTarget), prefix.String())
+		captured := false
+		if transition, ok := providerTransitions[key]; ok && transition.succeeded && transition.assign {
+			if holder := strings.TrimSpace(transition.plan.Parameters[captureParamHolder]); holder != "" && holder != strings.TrimSpace(self.NodeRef) {
+				continue
+			}
+			captured = true
 		}
-		if holder := strings.TrimSpace(transition.plan.Parameters[captureParamHolder]); holder != "" && holder != strings.TrimSpace(self.NodeRef) {
+		if !captured && observedSelfCapturesOK && observedSelfCaptures[prefix.String()] {
+			captured = true
+		}
+		if !captured {
 			continue
 		}
 		if desiredTrapAddresses[address].Seize {
@@ -765,7 +771,8 @@ func bgpMobilitySourceFromEvent(ev routerstate.EventRecord) string {
 func (c Controller) discoverySelfPrivateIPSet(poolName string, spec api.MobilityPoolSpec) (map[string]bool, bool) {
 	status := c.Store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", poolName)
 	raw, ok := status["discoverySelfPrivateIPs"]
-	if !ok {
+	rawCaptured, capturedOK := status["discoverySelfCapturedAddresses"]
+	if !ok && !capturedOK {
 		return nil, false
 	}
 	prefix, err := netip.ParsePrefix(strings.TrimSpace(spec.Prefix))
@@ -774,7 +781,7 @@ func (c Controller) discoverySelfPrivateIPSet(poolName string, spec api.Mobility
 	}
 	prefix = prefix.Masked()
 	out := map[string]bool{}
-	for _, value := range statusStringSlice(raw) {
+	for _, value := range append(statusStringSlice(raw), statusStringSlice(rawCaptured)...) {
 		address, ok := normalizeDiscoveredAddress(value, prefix)
 		if !ok {
 			continue
@@ -872,14 +879,17 @@ func bgpProviderActionPlans(poolName, selfNode string, spec api.MobilityPoolSpec
 				continue
 			}
 			desiredAddresses[address] = true
-			if key := providerNICKey("", self.Capture.ProviderRef, self.Capture.NICRef); key != "" {
-				desiredProviderNICs[key] = true
-			}
 			candidate := desiredTrapAddresses[address]
 			seize := candidate.Seize || shouldAllowBGPTrapReassignment(self, address, previousPlans, actionJournal, observedSelfIPs, observedSelfIPsOK)
 			generated, err := providerActionPlans(poolName, profile, self.Capture, self.CaptureTarget, address, forwardingSeen, seize)
 			if err != nil {
 				return nil, err
+			}
+			if len(generated) > 0 {
+				strategy := strings.TrimSpace(generated[0].Target["captureStrategy"])
+				if key := providerNICKey("", self.Capture.ProviderRef, providerCaptureTargetRef(strategy, generated[0].Target)); key != "" {
+					desiredProviderNICs[key] = true
+				}
 			}
 			stampBGPPathFenceActionPlans(generated, address, candidate.PathSig, self.NodeRef, candidate.LastSeenAt)
 			stampBGPProviderTransitionFence(generated, self, address, actionJournal, observedSelfIPs, observedSelfIPsOK)
@@ -906,7 +916,7 @@ type bgpTrapCandidate struct {
 func previousBGPTrapCandidateAddresses(previousPlans []dynamicconfig.ActionPlan, poolPrefix netip.Prefix) map[string]bgpTrapCandidate {
 	seen := map[string]bgpTrapCandidate{}
 	for _, plan := range previousPlans {
-		if plan.Action != "assign-secondary-ip" {
+		if !isProviderCaptureAssignAction(plan.Action) {
 			continue
 		}
 		address, ok := normalizeBGPTrapPrefix(plan.Target["address"], poolPrefix)
@@ -1409,7 +1419,7 @@ func shouldAllowBGPTrapReassignment(self memberPlanInfo, address string, previou
 		return false
 	}
 	latest := latestProviderCaptureTransitions(previousPlans, journal)
-	key := providerCaptureTransitionKey(self.Capture.ProviderRef, self.Capture.NICRef, address)
+	key := providerCaptureTransitionKey(self.Capture.ProviderRef, providerCaptureRefFromCapture(self.Capture, self.CaptureTarget), address)
 	tr, ok := latest[key]
 	if !ok && observedSelfIPsOK && !observedSelfIPs[address] {
 		return true
@@ -1457,7 +1467,7 @@ func bgpProviderDeprovisionPlans(poolName string, self memberPlanInfo, previousP
 	latestTransitions := latestProviderCaptureTransitions(previousPlans, actionJournal)
 	seen := map[string]bool{}
 	for _, previous := range sortedActionPlans(append(previousPlans, bgpSyntheticAssignedPlansFromJournal(self, actionJournal)...)) {
-		if previous.Action != "assign-secondary-ip" {
+		if !isProviderCaptureAssignAction(previous.Action) {
 			continue
 		}
 		address := strings.TrimSpace(previous.Target["address"])
@@ -1468,7 +1478,7 @@ func bgpProviderDeprovisionPlans(poolName string, self memberPlanInfo, previousP
 		if capture.Type != "provider-secondary-ip" {
 			continue
 		}
-		transitionKey := providerCaptureTransitionKey(capture.ProviderRef, capture.NICRef, address)
+		transitionKey := providerCaptureTransitionKey(capture.ProviderRef, providerCaptureRefFromCapture(capture, previous.Target), address)
 		if transitionKey == "" || seen[transitionKey] {
 			continue
 		}
@@ -1489,7 +1499,7 @@ func bgpProviderDeprovisionPlans(poolName string, self memberPlanInfo, previousP
 		unassign = stampSingleBGPPathFence(unassign, address, bgpPathSigFromActionPlan(previous, address), self.NodeRef)
 		plans = append(plans, unassign)
 
-		nicKey := providerNICKey("", capture.ProviderRef, capture.NICRef)
+		nicKey := providerNICKey("", capture.ProviderRef, providerCaptureRefFromCapture(capture, captureTarget))
 		if nicKey == "" || desiredProviderNICs[nicKey] || forwardingDisabled[nicKey] {
 			continue
 		}
@@ -1516,7 +1526,7 @@ func stampBGPProviderTransitionFence(plans []dynamicconfig.ActionPlan, self memb
 		return
 	}
 	latest := latestProviderCaptureTransitions(nil, journal)
-	key := providerCaptureTransitionKey(self.Capture.ProviderRef, self.Capture.NICRef, address)
+	key := providerCaptureTransitionKey(self.Capture.ProviderRef, providerCaptureRefFromCapture(self.Capture, self.CaptureTarget), address)
 	tr, ok := latest[key]
 	if !ok {
 		return
@@ -1533,7 +1543,7 @@ func stampBGPProviderTransitionFence(plans []dynamicconfig.ActionPlan, self memb
 	}
 	for i := range plans {
 		plan := &plans[i]
-		if plan.Action != "assign-secondary-ip" || strings.TrimSpace(plan.IdempotencyKey) == "" {
+		if !isProviderCaptureAssignAction(plan.Action) || strings.TrimSpace(plan.IdempotencyKey) == "" {
 			continue
 		}
 		if plan.Parameters == nil {
@@ -1576,11 +1586,11 @@ type providerCaptureTransition struct {
 func latestProviderCaptureTransitions(previousPlans []dynamicconfig.ActionPlan, journal []routerstate.ActionExecutionRecord) map[string]providerCaptureTransition {
 	latest := map[string]providerCaptureTransition{}
 	for _, plan := range previousPlans {
-		if plan.Action != "assign-secondary-ip" {
+		if !isProviderCaptureAssignAction(plan.Action) {
 			continue
 		}
 		address := normalizeAddressString(plan.Target["address"])
-		key := providerCaptureTransitionKey(firstNonEmpty(plan.ProviderRef, plan.Target["providerRef"]), plan.Target["nicRef"], address)
+		key := providerCaptureTransitionKey(firstNonEmpty(plan.ProviderRef, plan.Target["providerRef"]), providerCaptureRefFromTarget(plan.Target), address)
 		if key == "" {
 			continue
 		}
@@ -1591,17 +1601,17 @@ func latestProviderCaptureTransitions(previousPlans []dynamicconfig.ActionPlan, 
 			continue
 		}
 		assign := false
-		switch strings.TrimSpace(row.Action) {
-		case "assign-secondary-ip":
+		switch {
+		case isProviderCaptureAssignAction(row.Action):
 			assign = true
-		case "unassign-secondary-ip":
+		case isProviderCaptureUnassignAction(row.Action):
 			assign = false
 		default:
 			continue
 		}
 		target := decodeActionRecordMap(row.TargetJSON)
 		address := normalizeAddressString(target["address"])
-		key := providerCaptureTransitionKey(firstNonEmpty(row.ProviderRef, target["providerRef"]), target["nicRef"], address)
+		key := providerCaptureTransitionKey(firstNonEmpty(row.ProviderRef, target["providerRef"]), providerCaptureRefFromTarget(target), address)
 		if key == "" {
 			continue
 		}
@@ -1652,20 +1662,23 @@ func bgpSyntheticAssignedPlansFromJournal(self memberPlanInfo, journal []routers
 		if len(parts) != 3 {
 			continue
 		}
-		if strings.TrimSpace(parts[0]) != strings.TrimSpace(self.Capture.ProviderRef) || strings.TrimSpace(parts[1]) != strings.TrimSpace(self.Capture.NICRef) {
+		if strings.TrimSpace(parts[0]) != strings.TrimSpace(self.Capture.ProviderRef) || strings.TrimSpace(parts[1]) != providerCaptureRefFromCapture(self.Capture, self.CaptureTarget) {
 			continue
 		}
 		if holder := strings.TrimSpace(tr.plan.Parameters[captureParamHolder]); holder != "" && holder != strings.TrimSpace(self.NodeRef) {
 			continue
 		}
 		plan := tr.plan
-		plan.Action = "assign-secondary-ip"
+		plan.Action, _ = providerCaptureActions(effectiveCaptureStrategy(plan.Provider, self.Capture.Strategy))
 		if plan.Target == nil {
 			plan.Target = map[string]string{}
 		}
 		plan.Target["address"] = normalizeAddressString(parts[2])
 		plan.Target["providerRef"] = strings.TrimSpace(self.Capture.ProviderRef)
 		plan.Target["nicRef"] = strings.TrimSpace(self.Capture.NICRef)
+		if strategy := strings.TrimSpace(self.Capture.Strategy); strategy != "" {
+			plan.Target["captureStrategy"] = strategy
+		}
 		if plan.ProviderRef == "" {
 			plan.ProviderRef = strings.TrimSpace(self.Capture.ProviderRef)
 		}
@@ -1692,6 +1705,9 @@ func captureFromActionPlan(fallback api.AddressCapture, plan dynamicconfig.Actio
 	}
 	if value := strings.TrimSpace(plan.Target["nicRef"]); value != "" {
 		capture.NICRef = value
+	}
+	if value := strings.TrimSpace(plan.Target["captureStrategy"]); value != "" {
+		capture.Strategy = value
 	}
 	return capture
 }
@@ -1843,7 +1859,7 @@ func firstNonEmpty(values ...string) string {
 func latestFailedProviderActions(actions []routerstate.ActionExecutionRecord) map[string]routerstate.ActionExecutionRecord {
 	latest := map[string]routerstate.ActionExecutionRecord{}
 	for _, a := range actions {
-		if a.Action != "assign-secondary-ip" {
+		if !isProviderCaptureAssignAction(a.Action) {
 			continue
 		}
 		target := decodeActionRecordMap(a.TargetJSON)
