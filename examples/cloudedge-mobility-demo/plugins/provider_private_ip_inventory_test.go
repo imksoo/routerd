@@ -25,10 +25,11 @@ type inventoryResult struct {
 			ForwardingEnabled *bool    `json:"forwardingEnabled"`
 		} `json:"self"`
 		IPs []struct {
-			Address   string            `json:"address"`
-			NICRef    string            `json:"nicRef"`
-			SubnetRef string            `json:"subnetRef"`
-			Tags      map[string]string `json:"tags"`
+			Address       string            `json:"address"`
+			NICRef        string            `json:"nicRef"`
+			SubnetRef     string            `json:"subnetRef"`
+			Tags          map[string]string `json:"tags"`
+			InstanceState string            `json:"instanceState"`
 		} `json:"ips"`
 		Error string `json:"error"`
 	} `json:"status"`
@@ -42,7 +43,7 @@ case "$*" in
   *"--network-interface-ids eni-router"*)
     printf '%s\n' '{"NetworkInterfaces":[{"NetworkInterfaceId":"eni-router","SubnetId":"subnet-a","SourceDestCheck":false}]}'
     ;;
-  *"describe-instances"*"instance-state-name"*)
+  *"describe-instances"*)
     printf '%s\n' '{"Reservations":[{"Instances":[{"InstanceId":"i-router","NetworkInterfaces":[{"NetworkInterfaceId":"eni-router"}]},{"InstanceId":"i-client","NetworkInterfaces":[{"NetworkInterfaceId":"eni-client"}]}]}]}'
     ;;
   *"Name=subnet-id,Values=subnet-a"*)
@@ -75,7 +76,7 @@ case "$*" in
   *"Name=addresses.private-ip-address,Values=10.77.60.21"*)
     printf '%s\n' '{"NetworkInterfaces":[{"NetworkInterfaceId":"eni-router","SubnetId":"subnet-a","SourceDestCheck":true,"PrivateIpAddresses":[{"PrivateIpAddress":"10.77.60.21","Primary":true}]}]}'
     ;;
-  *"describe-instances"*"instance-state-name"*)
+  *"describe-instances"*)
     printf '%s\n' '{"Reservations":[{"Instances":[{"InstanceId":"i-router","NetworkInterfaces":[{"NetworkInterfaceId":"eni-router"}]},{"InstanceId":"i-client","NetworkInterfaces":[{"NetworkInterfaceId":"eni-client"}]}]}]}'
     ;;
   *"Name=subnet-id,Values=subnet-a"*)
@@ -126,7 +127,7 @@ case "$*" in
   *"--network-interface-ids eni-router-b"*)
     printf '%s\n' '{"NetworkInterfaces":[{"NetworkInterfaceId":"eni-router-b","SubnetId":"subnet-a","SourceDestCheck":false,"PrivateIpAddresses":[{"PrivateIpAddress":"10.77.60.5","Primary":true}]}]}'
     ;;
-  *"describe-instances"*"instance-state-name"*)
+  *"describe-instances"*)
     printf '%s\n' '{"Reservations":[{"Instances":[{"InstanceId":"i-router-b","NetworkInterfaces":[{"NetworkInterfaceId":"eni-router-b"}]},{"InstanceId":"i-client","NetworkInterfaces":[{"NetworkInterfaceId":"eni-client"}]}]}]}'
     ;;
   *"Name=subnet-id,Values=subnet-a"*)
@@ -243,7 +244,7 @@ esac
 	assertIP(t, res, "10.77.60.13", "vnic-client", "subnet-oci")
 }
 
-func TestProviderPrivateIPInventoryPluginAWSFiltersStopped(t *testing.T) {
+func TestProviderPrivateIPInventoryPluginAWSReportsInstanceState(t *testing.T) {
 	requirePython(t)
 	bin := fakeBinDir(t)
 	writeExecutable(t, filepath.Join(bin, "aws"), `#!/bin/sh
@@ -251,8 +252,8 @@ case "$*" in
   *"--network-interface-ids eni-router"*)
     printf '%s\n' '{"NetworkInterfaces":[{"NetworkInterfaceId":"eni-router","SubnetId":"subnet-a","SourceDestCheck":false}]}'
     ;;
-  *"describe-instances"*"instance-state-name"*)
-    printf '%s\n' '{"Reservations":[{"Instances":[{"InstanceId":"i-router","NetworkInterfaces":[{"NetworkInterfaceId":"eni-router"}]}]}]}'
+  *"describe-instances"*)
+    printf '%s\n' '{"Reservations":[{"Instances":[{"InstanceId":"i-router","State":{"Name":"running"},"NetworkInterfaces":[{"NetworkInterfaceId":"eni-router"}]},{"InstanceId":"i-stopped","State":{"Name":"stopped"},"NetworkInterfaces":[{"NetworkInterfaceId":"eni-stopped"}]}]}]}'
     ;;
   *"Name=subnet-id,Values=subnet-a"*)
     printf '%s\n' '{"NetworkInterfaces":[{"NetworkInterfaceId":"eni-router","SubnetId":"subnet-a","PrivateIpAddresses":[{"PrivateIpAddress":"10.77.60.21","Primary":true}],"TagSet":[{"Key":"role","Value":"router"}]},{"NetworkInterfaceId":"eni-stopped","SubnetId":"subnet-a","PrivateIpAddresses":[{"PrivateIpAddress":"10.77.60.19","Primary":true}],"TagSet":[{"Key":"role","Value":"client"}]}]}'
@@ -268,14 +269,12 @@ esac
 		t.Fatalf("status = %q error=%q", res.Status.Status, res.Status.Error)
 	}
 	assertIP(t, res, "10.77.60.21", "eni-router", "subnet-a")
-	for _, ip := range res.Status.IPs {
-		if ip.Address == "10.77.60.19" {
-			t.Fatalf("stopped instance IP 10.77.60.19 should be filtered out, but found in results")
-		}
-	}
+	assertIP(t, res, "10.77.60.19", "eni-stopped", "subnet-a")
+	assertInstanceState(t, res, "10.77.60.19", "stopped")
+	assertInstanceState(t, res, "10.77.60.21", "running")
 }
 
-func TestProviderPrivateIPInventoryPluginOCIFiltersStopped(t *testing.T) {
+func TestProviderPrivateIPInventoryPluginOCIReportsInstanceState(t *testing.T) {
 	requirePython(t)
 	bin := fakeBinDir(t)
 	writeExecutable(t, filepath.Join(bin, "oci"), `#!/bin/sh
@@ -303,14 +302,12 @@ esac
 		t.Fatalf("status = %q error=%q", res.Status.Status, res.Status.Error)
 	}
 	assertIP(t, res, "10.77.60.13", "vnic-client", "subnet-oci")
-	for _, ip := range res.Status.IPs {
-		if ip.Address == "10.77.60.19" {
-			t.Fatalf("stopped instance IP 10.77.60.19 should be filtered out, but found in results")
-		}
-	}
+	assertIP(t, res, "10.77.60.19", "vnic-stopped", "subnet-oci")
+	assertInstanceState(t, res, "10.77.60.19", "stopped")
+	assertInstanceState(t, res, "10.77.60.13", "running")
 }
 
-func TestProviderPrivateIPInventoryPluginAzureFiltersStopped(t *testing.T) {
+func TestProviderPrivateIPInventoryPluginAzureReportsInstanceState(t *testing.T) {
 	requirePython(t)
 	bin := fakeBinDir(t)
 	writeExecutable(t, filepath.Join(bin, "az"), `#!/bin/sh
@@ -335,11 +332,9 @@ esac
 		t.Fatalf("status = %q error=%q", res.Status.Status, res.Status.Error)
 	}
 	assertIP(t, res, "10.77.60.12", "/nic/client", "/subnets/demo")
-	for _, ip := range res.Status.IPs {
-		if ip.Address == "10.77.60.19" {
-			t.Fatalf("stopped VM IP 10.77.60.19 should be filtered out, but found in results")
-		}
-	}
+	assertIP(t, res, "10.77.60.19", "/nic/stopped", "/subnets/demo")
+	assertInstanceState(t, res, "10.77.60.19", "stopped")
+	assertInstanceState(t, res, "10.77.60.12", "running")
 }
 
 func runInventoryPlugin(t *testing.T, fakeBin, stdin string) inventoryResult {
@@ -372,6 +367,19 @@ func assertIP(t *testing.T, res inventoryResult, address, nicRef, subnetRef stri
 		if ip.Address == address {
 			if ip.NICRef != nicRef || ip.SubnetRef != subnetRef {
 				t.Fatalf("record for %s = nic %q subnet %q, want nic %q subnet %q", address, ip.NICRef, ip.SubnetRef, nicRef, subnetRef)
+			}
+			return
+		}
+	}
+	t.Fatalf("missing address %s in %+v", address, res.Status.IPs)
+}
+
+func assertInstanceState(t *testing.T, res inventoryResult, address, wantState string) {
+	t.Helper()
+	for _, ip := range res.Status.IPs {
+		if ip.Address == address {
+			if ip.InstanceState != wantState {
+				t.Fatalf("instanceState for %s = %q, want %q", address, ip.InstanceState, wantState)
 			}
 			return
 		}

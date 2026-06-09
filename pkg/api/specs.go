@@ -1737,9 +1737,10 @@ type MobilityOwnershipDiscoverySource struct {
 }
 
 type MobilityIPOwnershipPolicy struct {
-	Type         string   `yaml:"type,omitempty" json:"type,omitempty" jsonschema:"enum=,enum=centralized"`
-	PreferNodes  []string `yaml:"preferNodes,omitempty" json:"preferNodes,omitempty"`
-	AutoFailover bool     `yaml:"autoFailover,omitempty" json:"autoFailover,omitempty"`
+	Type                  string   `yaml:"type,omitempty" json:"type,omitempty" jsonschema:"enum=,enum=centralized"`
+	PreferNodes           []string `yaml:"preferNodes,omitempty" json:"preferNodes,omitempty"`
+	AutoFailover          bool     `yaml:"autoFailover,omitempty" json:"autoFailover,omitempty"`
+	StoppedInstancePolicy string   `yaml:"stoppedInstancePolicy,omitempty" json:"stoppedInstancePolicy,omitempty" jsonschema:"enum=,enum=hold,enum=release"`
 }
 
 type MobilityMemberCapture struct {
