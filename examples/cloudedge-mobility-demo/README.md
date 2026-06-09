@@ -34,6 +34,13 @@ clients, with source addresses preserved and default gateways unchanged. D5
 acceptance drains `aws-router-a`, verifies `.10` is unassigned from ENI-A and
 assigned to ENI-B, and confirms traffic recovers via `aws-router-b`.
 
+The `onprem-router` demo `/32` is router-originated and configured on the
+router loopback. Do not use `10.77.60.10/32` as an independent dataplane
+endpoint for an on-prem router OS reboot HA test: rebooting the router removes
+the endpoint itself. For T9-style on-prem router reboot validation, use a
+separate on-prem client VM/address behind the routers and let
+`ownershipDiscovery.onprem-l2` observe that client from the LAN.
+
 ## Files
 
 - `env.example`: copy to `env` and fill all account-specific values.
