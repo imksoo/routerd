@@ -547,7 +547,8 @@ func (c DiscoveryController) handleOnPremDiscoveryEvent(ctx context.Context, eve
 			continue
 		}
 		poolPrefix = poolPrefix.Masked()
-		ok, recordErr := c.recordOnPremObservation(res.Metadata.Name, spec, self, poolPrefix, observation, now)
+		providerAddrs := c.providerDiscoveredAddresses(strings.TrimSpace(spec.GroupRef), res.Metadata.Name, poolPrefix, now)
+		ok, recordErr := c.recordOnPremObservationFiltered(res.Metadata.Name, spec, self, poolPrefix, observation, now, providerAddrs)
 		if recordErr != nil {
 			return recordErr
 		}
@@ -561,12 +562,49 @@ func (c DiscoveryController) handleOnPremDiscoveryEvent(ctx context.Context, eve
 	return nil
 }
 
+func (c DiscoveryController) providerDiscoveredAddresses(group, poolName string, poolPrefix netip.Prefix, now time.Time) map[string]bool {
+	events, err := c.Store.ListFederationEvents(group, false, now.Unix())
+	if err != nil {
+		return nil
+	}
+	out := map[string]bool{}
+	for _, ev := range events {
+		if ev.Group != group {
+			continue
+		}
+		if ev.Type != ObservedEventType {
+			continue
+		}
+		if strings.TrimSpace(ev.Payload["source"]) != providerDiscoverySource {
+			continue
+		}
+		if strings.TrimSpace(ev.Payload["pool"]) != poolName {
+			continue
+		}
+		address, ok := normalizeDiscoveredAddress(firstNonEmpty(ev.Payload["address"], ev.Subject), poolPrefix)
+		if ok {
+			out[address] = true
+		}
+	}
+	return out
+}
+
 func (c DiscoveryController) recordOnPremObservation(poolName string, spec api.MobilityPoolSpec, self memberPlanInfo, poolPrefix netip.Prefix, observation onPremObservation, now time.Time) (bool, error) {
+	return c.recordOnPremObservationFiltered(poolName, spec, self, poolPrefix, observation, now, nil)
+}
+
+func (c DiscoveryController) recordOnPremObservationFiltered(poolName string, spec api.MobilityPoolSpec, self memberPlanInfo, poolPrefix netip.Prefix, observation onPremObservation, now time.Time, providerAddrs map[string]bool) (bool, error) {
 	address, ok := normalizeDiscoveredAddress(observation.Address, poolPrefix)
 	if !ok || !discoveryScopeAllowsAddress(self.OwnershipDiscovery.Scope, address) {
 		return false, nil
 	}
 	if ownerNode := strings.TrimSpace(staticOwnedOwnerNodesByAddress(spec)[address]); ownerNode != "" && ownerNode != self.NodeRef {
+		return false, nil
+	}
+	if providerAddrs == nil {
+		providerAddrs = c.providerDiscoveredAddresses(strings.TrimSpace(spec.GroupRef), poolName, poolPrefix, now)
+	}
+	if providerAddrs[address] {
 		return false, nil
 	}
 	source, ok := matchingOnPremDiscoverySource(self, observation)
