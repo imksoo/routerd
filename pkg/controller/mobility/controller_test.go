@@ -356,7 +356,7 @@ func TestControllerBGPModeDoesNotUseHeartbeatLivenessForOwnership(t *testing.T) 
 	}
 }
 
-func TestControllerBGPModeProviderActionFailureDoesNotRemoveBGPPath(t *testing.T) {
+func TestControllerBGPModeProviderActionFailureWithdrawsBGPPath(t *testing.T) {
 	now := time.Date(2026, 6, 2, 10, 0, 0, 0, time.UTC)
 	store := testStore(t, now)
 	spec := plannedPoolSpec()
@@ -380,8 +380,8 @@ func TestControllerBGPModeProviderActionFailureDoesNotRemoveBGPPath(t *testing.T
 		ExpiresAt:  now.Add(time.Hour),
 	})
 	saveBGPInstalledNextHops(t, store, map[string][]string{"10.88.60.10/32": {"10.99.0.1"}})
-	bgp := &fakeBGPPaths{}
 	source := DynamicSource("cloudedge", "azure-router")
+	bgp := &fakeBGPPaths{}
 	controller := Controller{Router: routerWithBGPRouter(planningRouterForNode("azure-router", spec)), Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("initial Reconcile: %v", err)
@@ -422,11 +422,66 @@ func TestControllerBGPModeProviderActionFailureDoesNotRemoveBGPPath(t *testing.T
 		t.Fatalf("second Reconcile: %v", err)
 	}
 	if len(bgp.upserts) != 1 || bgp.upserts[0].Prefix != "10.88.60.11/32" {
-		t.Fatalf("BGP upserts after failed provider action = %#v, want route retained", bgp.upserts)
+		t.Fatalf("BGP upserts after failed provider action = %#v, want remote ownership only", bgp.upserts)
 	}
 	part = latestPart(t, store, source)
 	if findActionPlanByAddress(decodeActionPlans(t, part.ActionPlansJSON), "assign-secondary-ip", "10.88.60.10/32") == nil {
-		t.Fatalf("actionPlans after failure = %s, want desired provider assign retained", part.ActionPlansJSON)
+		t.Fatalf("actionPlans after failure = %s, want desired provider assign retained for retry", part.ActionPlansJSON)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	if got := status["providerActionPhase"]; strings.TrimSpace(fmt.Sprint(got)) != "Failed" {
+		t.Fatalf("status providerActionPhase = %#v, want Failed", got)
+	}
+	if got := fmt.Sprint(status["providerActionFailedCount"]); got != "1" {
+		t.Fatalf("status providerActionFailedCount = %q, want 1", got)
+	}
+	if got := strings.TrimSpace(fmt.Sprint(status["providerActionFailedAddress"])); got != "10.88.60.10/32" {
+		t.Fatalf("status providerActionFailedAddress = %q, want 10.88.60.10/32", got)
+	}
+	if got := strings.TrimSpace(fmt.Sprint(status["providerActionError"])); !strings.Contains(got, "provider API unavailable") {
+		t.Fatalf("status providerActionError = %q, want provider API unavailable", got)
+	}
+}
+
+func TestControllerBGPModeProviderActionFailureSuccessDoesNotWithdrawBGPPath(t *testing.T) {
+	now := time.Date(2026, 6, 2, 10, 0, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := plannedPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	recordEvent(t, store, routerstate.EventRecord{
+		ID:         "evt-azure",
+		Group:      "cloudedge",
+		SourceNode: "azure-router",
+		Type:       ObservedEventType,
+		Subject:    "10.88.60.11/32",
+		ObservedAt: now.Add(-time.Second),
+		ExpiresAt:  now.Add(time.Hour),
+	})
+	recordEvent(t, store, routerstate.EventRecord{
+		ID:         "evt-onprem",
+		Group:      "cloudedge",
+		SourceNode: "onprem-router",
+		Type:       ObservedEventType,
+		Subject:    "10.88.60.10/32",
+		ObservedAt: now.Add(-time.Second),
+		ExpiresAt:  now.Add(time.Hour),
+	})
+	saveBGPInstalledNextHops(t, store, map[string][]string{"10.88.60.10/32": {"10.99.0.1"}})
+	seedSucceededBGPCaptureAction(t, store, "azure-provider", "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic", "azure-router", "10.88.60.10/32", "assign-secondary-ip", 1, now.Add(-time.Minute))
+	bgp := &fakeBGPPaths{}
+	controller := Controller{Router: routerWithBGPRouter(planningRouterForNode("azure-router", spec)), Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(bgp.upserts) != 1 {
+		t.Fatalf("BGP upserts = %#v, want remote ownership path only", bgp.upserts)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	if _, ok := status["providerActionPhase"]; ok {
+		t.Fatalf("status providerActionPhase = %#v, want clear", status["providerActionPhase"])
+	}
+	if _, ok := status["providerActionFailedCount"]; ok {
+		t.Fatalf("status providerActionFailedCount = %#v, want clear", status["providerActionFailedCount"])
 	}
 }
 

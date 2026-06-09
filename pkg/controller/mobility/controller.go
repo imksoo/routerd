@@ -151,16 +151,18 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 	discoverySelfIPs, discoverySelfIPsObserved := c.discoverySelfPrivateIPSet(res.Metadata.Name, spec)
 	livenessMarkers, livenessMarkersObserved := c.bgpLivenessMarkers()
 	ownerPlacement := evaluateBGPCapturePlacement(self, members, livenessMarkers, livenessMarkersObserved)
-	ownedPaths := bgpOwnedPaths(res.Metadata.Name, source, selfNode, spec, events, discoveryOwnedAddresses, discoveryOwnedObserved, discoverySelfIPs, discoverySelfIPsObserved, ownerPlacement.Active, now)
+	actionJournal, err := c.Store.ListActions(routerstate.ActionExecutionFilter{})
+	if err != nil {
+		return fmt.Errorf("list action journal: %w", err)
+	}
+	failedCaptureActionByAddress := latestProviderCaptureAssignStatus(strings.TrimSpace(self.Capture.ProviderRef), strings.TrimSpace(self.Capture.NICRef), actionJournal)
+	ownedPaths := bgpOwnedPaths(res.Metadata.Name, source, selfNode, spec, events, failedCaptureActionByAddress, discoveryOwnedAddresses, discoveryOwnedObserved, discoverySelfIPs, discoverySelfIPsObserved, ownerPlacement.Active, now)
 	localOwned := bgpLocalOwnedAddresses(ownedPaths)
 	desired := append([]bgpdaemon.AppliedPath(nil), ownedPaths...)
 	if marker, ok := c.bgpLivenessMarkerPath(res.Metadata.Name, source, selfNode, spec.GroupRef); ok {
 		desired = append(desired, marker)
 	}
-	actionJournal, err := c.Store.ListActions(routerstate.ActionExecutionFilter{})
-	if err != nil {
-		return fmt.Errorf("list action journal: %w", err)
-	}
+
 	previousActionPlans, err := c.previousGeneratedActionPlans(res.Metadata.Name, selfNode)
 	if err != nil {
 		return err
@@ -202,23 +204,36 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 	if err := c.upsertBGPPlan(res.Metadata.Name, spec, selfNode, actionPlans, now); err != nil {
 		return err
 	}
+	providerActionFailedAddress, providerActionFailedCount, providerActionFailedAt, providerActionFailedError := summarizeProviderCaptureAssignFailure(failedCaptureActionByAddress)
 	status := map[string]any{
-		"plannerPhase":        "BGPPlanned",
-		"plannerReason":       "deliveryPolicy.mode=bgp",
-		"selfNode":            selfNode,
-		"dynamicSource":       source,
-		"deliveryMode":        "bgp",
-		"bgpPathSource":       source,
-		"generatedBGPPaths":   len(desired),
-		"bgpRIBObserved":      bgpRIBObserved,
-		"bgpCaptureElection":  bgpCaptureElectionStatus(capturePlacement),
-		"generatedBGPTraps":   len(desiredTrapAddresses),
-		"generatedClaims":     0,
-		"generatedActions":    len(actionPlans),
-		"selfCaptureResolved": selfCaptureResolved,
-		"plannedAt":           now.Format(time.RFC3339Nano),
-		"operatorIntent":      "MobilityPool",
-		"derivedConfigKinds":  []string{"BGPPath"},
+		"plannerPhase":                "BGPPlanned",
+		"plannerReason":               "deliveryPolicy.mode=bgp",
+		"selfNode":                    selfNode,
+		"dynamicSource":               source,
+		"deliveryMode":                "bgp",
+		"bgpPathSource":               source,
+		"generatedBGPPaths":           len(desired),
+		"bgpRIBObserved":              bgpRIBObserved,
+		"bgpCaptureElection":          bgpCaptureElectionStatus(capturePlacement),
+		"generatedBGPTraps":           len(desiredTrapAddresses),
+		"generatedClaims":             0,
+		"generatedActions":            len(actionPlans),
+		"selfCaptureResolved":         selfCaptureResolved,
+		"providerActionPhase":         nil,
+		"providerActionFailedAddress": nil,
+		"providerActionFailedCount":   nil,
+		"providerActionFailedAt":      nil,
+		"providerActionError":         nil,
+		"plannedAt":                   now.Format(time.RFC3339Nano),
+		"operatorIntent":              "MobilityPool",
+		"derivedConfigKinds":          []string{"BGPPath"},
+	}
+	if providerActionFailedCount > 0 {
+		status["providerActionPhase"] = "Failed"
+		status["providerActionFailedAddress"] = providerActionFailedAddress
+		status["providerActionFailedCount"] = providerActionFailedCount
+		status["providerActionFailedAt"] = providerActionFailedAt
+		status["providerActionError"] = providerActionFailedError
 	}
 	if selfCaptureReason != "" {
 		status["selfCaptureReason"] = selfCaptureReason
@@ -363,7 +378,7 @@ type bgpOwnedAddress struct {
 	SourceType string
 }
 
-func bgpOwnedPaths(poolName, source, selfNode string, spec api.MobilityPoolSpec, events []routerstate.EventRecord, discoveryOwnedAddresses map[string]bool, discoveryOwnedObserved bool, discoverySelfIPs map[string]bool, discoverySelfIPsObserved bool, ownerActive bool, now time.Time) []bgpdaemon.AppliedPath {
+func bgpOwnedPaths(poolName, source, selfNode string, spec api.MobilityPoolSpec, events []routerstate.EventRecord, failedProviderCaptureAction map[string]providerCaptureActionStatus, discoveryOwnedAddresses map[string]bool, discoveryOwnedObserved bool, discoverySelfIPs map[string]bool, discoverySelfIPsObserved bool, ownerActive bool, now time.Time) []bgpdaemon.AppliedPath {
 	poolPrefix, err := netip.ParsePrefix(strings.TrimSpace(spec.Prefix))
 	if err != nil {
 		return nil
@@ -374,7 +389,7 @@ func bgpOwnedPaths(poolName, source, selfNode string, spec api.MobilityPoolSpec,
 	if self.MaintenanceDrain {
 		return nil
 	}
-	owned := bgpLocalOwnedAddressesFromConfigAndEvents(poolName, selfNode, spec, events, discoveryOwnedAddresses, discoveryOwnedObserved, discoverySelfIPs, discoverySelfIPsObserved, poolPrefix, now)
+	owned := bgpLocalOwnedAddressesFromConfigAndEvents(poolName, selfNode, spec, events, failedProviderCaptureAction, discoveryOwnedAddresses, discoveryOwnedObserved, discoverySelfIPs, discoverySelfIPsObserved, poolPrefix, now)
 	var out []bgpdaemon.AppliedPath
 	for _, owner := range owned {
 		prefix, err := netip.ParsePrefix(owner.Address)
@@ -446,7 +461,7 @@ func bgpLocalOwnedAddresses(paths []bgpdaemon.AppliedPath) map[string]bool {
 	return out
 }
 
-func bgpLocalOwnedAddressesFromConfigAndEvents(poolName, selfNode string, spec api.MobilityPoolSpec, events []routerstate.EventRecord, discoveryOwnedAddresses map[string]bool, discoveryOwnedObserved bool, discoverySelfIPs map[string]bool, discoverySelfIPsObserved bool, poolPrefix netip.Prefix, now time.Time) []bgpOwnedAddress {
+func bgpLocalOwnedAddressesFromConfigAndEvents(poolName, selfNode string, spec api.MobilityPoolSpec, events []routerstate.EventRecord, failedProviderCaptureAction map[string]providerCaptureActionStatus, discoveryOwnedAddresses map[string]bool, discoveryOwnedObserved bool, discoverySelfIPs map[string]bool, discoverySelfIPsObserved bool, poolPrefix netip.Prefix, now time.Time) []bgpOwnedAddress {
 	owned := map[string]bgpOwnedAddress{}
 	latest := map[string]routerstate.EventRecord{}
 	latestByAddressSource := map[string]map[string]routerstate.EventRecord{}
@@ -513,6 +528,9 @@ func bgpLocalOwnedAddressesFromConfigAndEvents(poolName, selfNode string, spec a
 					continue
 				}
 			}
+			if status, ok := failedProviderCaptureAction[address]; ok && strings.TrimSpace(status.status) == routerstate.ActionFailed {
+				continue
+			}
 			if bgpMemberAdvertisesOwnedAddress(self, members[strings.TrimSpace(ev.SourceNode)]) {
 				owned[address] = bgpOwnedAddress{Address: address, SourceType: sourceType}
 			}
@@ -539,6 +557,91 @@ func bgpLocalOwnedAddressesFromConfigAndEvents(poolName, selfNode string, spec a
 		return out[i].Address < out[j].Address
 	})
 	return out
+}
+
+type providerCaptureActionStatus struct {
+	status string
+	at     time.Time
+	id     int64
+	addr   string
+	err    string
+}
+
+func latestProviderCaptureAssignStatus(providerRef, nicRef string, journal []routerstate.ActionExecutionRecord) map[string]providerCaptureActionStatus {
+	providerRef = strings.TrimSpace(providerRef)
+	nicRef = strings.TrimSpace(nicRef)
+	out := map[string]providerCaptureActionStatus{}
+	for _, row := range journal {
+		if strings.TrimSpace(row.Action) != "assign-secondary-ip" {
+			continue
+		}
+		target := decodeActionRecordMap(row.TargetJSON)
+		address := normalizeAddressString(target["address"])
+		if address == "" {
+			continue
+		}
+		targetProviderRef := firstNonEmpty(row.ProviderRef, target["providerRef"])
+		targetNICRef := strings.TrimSpace(target["nicRef"])
+		if providerRef != "" && strings.TrimSpace(targetProviderRef) != providerRef {
+			continue
+		}
+		if nicRef != "" && targetNICRef != nicRef {
+			continue
+		}
+		key := providerCaptureTransitionKey(targetProviderRef, targetNICRef, address)
+		if key == "" {
+			continue
+		}
+		a := providerCaptureActionStatus{status: strings.TrimSpace(row.Status), at: row.ExecutedAt, id: row.ID, addr: address, err: row.Error}
+		if a.at.IsZero() {
+			a.at = row.UpdatedAt
+		}
+		current, ok := out[key]
+		if ok && !providerCaptureActionStatusGreater(a, current) {
+			continue
+		}
+		out[key] = a
+	}
+	return out
+}
+
+func providerCaptureActionStatusGreater(candidate, current providerCaptureActionStatus) bool {
+	if candidate.at.After(current.at) {
+		return true
+	}
+	if candidate.at.Before(current.at) {
+		return false
+	}
+	return candidate.id > current.id
+}
+
+func summarizeProviderCaptureAssignFailure(latest map[string]providerCaptureActionStatus) (failedAddress string, failedCount int, failedAt string, failedError string) {
+	if len(latest) == 0 {
+		return "", 0, "", ""
+	}
+	var failed []string
+	latestErrorAt := time.Time{}
+	latestError := ""
+	latestErrorAddress := ""
+	for _, value := range latest {
+		if strings.TrimSpace(value.status) != routerstate.ActionFailed {
+			continue
+		}
+		failed = append(failed, value.addr)
+		if value.at.After(latestErrorAt) {
+			latestErrorAt = value.at
+			latestError = value.err
+			latestErrorAddress = value.addr
+		}
+	}
+	if len(failed) == 0 {
+		return "", 0, "", ""
+	}
+	sort.Strings(failed)
+	if !latestErrorAt.IsZero() {
+		failedAt = latestErrorAt.UTC().Format(time.RFC3339Nano)
+	}
+	return strings.Join(failed, ","), len(failed), failedAt, firstNonEmpty(latestError, "provider action failed for "+latestErrorAddress)
 }
 
 func bgpOwnershipEventSourceType(ev routerstate.EventRecord) string {

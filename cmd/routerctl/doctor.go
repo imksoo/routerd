@@ -215,6 +215,7 @@ func (r doctorRunner) doctorHybrid() []doctorCheck {
 	peers := selectResources(r.router.Spec.Resources, "OverlayPeer", "")
 	domains := selectResources(r.router.Spec.Resources, "AddressMobilityDomain", "")
 	claims := selectResources(r.router.Spec.Resources, "RemoteAddressClaim", "")
+	mobilityPools := selectResources(r.router.Spec.Resources, "MobilityPool", "")
 	if len(routes) == 0 && len(peers) == 0 && len(domains) == 0 && len(claims) == 0 {
 		return []doctorCheck{{Area: "hybrid", Name: "HybridRoute", Status: doctorSkip, Detail: "no hybrid resources configured"}}
 	}
@@ -313,7 +314,39 @@ func (r doctorRunner) doctorHybrid() []doctorCheck {
 		checks = append(checks, doctorHybridCaptureTypeCheck(claim.Metadata.Name, spec.Capture.Type))
 		checks = append(checks, r.doctorSAMLiveChecks(claim.Metadata.Name, spec)...)
 	}
+	for _, pool := range mobilityPools {
+		checks = append(checks, r.doctorMobilityProviderActionCheck(pool.Metadata.Name))
+	}
 	return checks
+}
+
+func (r doctorRunner) doctorMobilityProviderActionCheck(pool string) doctorCheck {
+	pool = strings.TrimSpace(pool)
+	status := objectStatus(r.store, api.MobilityAPIVersion, "MobilityPool", pool)
+	phase := strings.TrimSpace(stringStatus(status, "providerActionPhase"))
+	if strings.EqualFold(phase, "Failed") {
+		detail := "provider action failed"
+		if count := strings.TrimSpace(fmt.Sprint(status["providerActionFailedCount"])); count != "" {
+			detail += ", failedCount=" + count
+		}
+		if address := strings.TrimSpace(fmt.Sprint(status["providerActionFailedAddress"])); address != "" {
+			detail += ", address=" + address
+		}
+		if at := strings.TrimSpace(fmt.Sprint(status["providerActionFailedAt"])); at != "" {
+			detail += ", at=" + at
+		}
+		if reason := strings.TrimSpace(fmt.Sprint(status["providerActionError"])); reason != "" {
+			detail += ", error=" + reason
+		}
+		return doctorCheck{Area: "hybrid", Name: "MobilityPool/" + pool + " provider action", Status: doctorWarn, Detail: detail, Remedy: "inspect provider action failures and restore cloud API connectivity/credentials"}
+	}
+	if len(status) == 0 {
+		return doctorCheck{Area: "hybrid", Name: "MobilityPool/" + pool + " provider action", Status: doctorSkip, Detail: "provider action status is unavailable"}
+	}
+	if phase == "" {
+		return doctorCheck{Area: "hybrid", Name: "MobilityPool/" + pool + " provider action", Status: doctorPass, Detail: "no provider action failure observed"}
+	}
+	return doctorCheck{Area: "hybrid", Name: "MobilityPool/" + pool + " provider action", Status: doctorPass, Detail: "provider action " + phase}
 }
 
 func (r doctorRunner) doctorSAMLiveChecks(name string, spec api.RemoteAddressClaimSpec) []doctorCheck {

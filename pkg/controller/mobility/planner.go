@@ -188,6 +188,10 @@ func (c Controller) savePlannerStatus(poolName string, updates map[string]any) e
 		}
 	}
 	for k, v := range updates {
+		if v == nil {
+			delete(status, k)
+			continue
+		}
 		status[k] = v
 	}
 	return c.Store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", poolName, status)

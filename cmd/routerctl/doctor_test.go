@@ -403,6 +403,61 @@ func TestDoctorHybridAddressMobilityNoHost(t *testing.T) {
 	}
 }
 
+func TestDoctorHybridMobilityProviderActionWarnsOnFailure(t *testing.T) {
+	configPath, statePath := writeDoctorMobilityPoolFixture(t)
+	store := openDoctorState(t, statePath)
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"providerActionPhase":         "Failed",
+		"providerActionFailedAddress": "10.0.0.9/32",
+		"providerActionFailedCount":   1,
+		"providerActionFailedAt":      "2026-06-09T00:00:00Z",
+		"providerActionError":         "provider API unavailable",
+	}); err != nil {
+		t.Fatalf("save mobility status: %v", err)
+	}
+	closeDoctorState(t, store)
+
+	var out bytes.Buffer
+	if err := run([]string{"doctor", "hybrid", "--config", configPath, "--state-file", statePath, "--no-host", "-o", "json"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("doctor hybrid: %v\n%s", err, out.String())
+	}
+	var report doctorReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("unmarshal doctor report: %v\n%s", err, out.String())
+	}
+	check := findDoctorCheck(t, report, "MobilityPool/cloudedge provider action")
+	if check.Status != doctorWarn {
+		t.Fatalf("provider action check = %#v", check)
+	}
+	for _, want := range []string{"provider action failed", "failedCount=1", "address=10.0.0.9/32", "provider API unavailable"} {
+		if !strings.Contains(check.Detail, want) {
+			t.Fatalf("provider action detail missing %q: %q", want, check.Detail)
+		}
+	}
+}
+
+func TestDoctorHybridMobilityProviderActionPassesWithoutFailure(t *testing.T) {
+	configPath, statePath := writeDoctorMobilityPoolFixture(t)
+	store := openDoctorState(t, statePath)
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{"providerActionPhase": "Applied"}); err != nil {
+		t.Fatalf("save mobility status: %v", err)
+	}
+	closeDoctorState(t, store)
+
+	var out bytes.Buffer
+	if err := run([]string{"doctor", "hybrid", "--config", configPath, "--state-file", statePath, "--no-host", "-o", "json"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("doctor hybrid: %v\n%s", err, out.String())
+	}
+	var report doctorReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("unmarshal doctor report: %v\n%s", err, out.String())
+	}
+	check := findDoctorCheck(t, report, "MobilityPool/cloudedge provider action")
+	if check.Status != doctorPass {
+		t.Fatalf("provider action check = %#v", check)
+	}
+}
+
 func TestDoctorHybridSAMLiveChecksStubbed(t *testing.T) {
 	oldRun := doctorRunDiagnosticCommand
 	oldOS := doctorCurrentOS
@@ -996,6 +1051,102 @@ spec:
       spec:
         listenPort: 51820
         mtu: 1420
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: OverlayPeer
+      metadata:
+        name: cloud-main
+      spec:
+        role: cloud
+        nodeID: cloud-main
+        underlay:
+          type: wireguard
+          interface: wg-hybrid
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: AddressMobilityDomain
+      metadata:
+        name: same-subnet
+      spec:
+        prefix: 10.0.0.0/24
+        mode: selective-address
+        peerRef: cloud-main
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: CloudProviderProfile
+      metadata:
+        name: azure-lab
+      spec:
+        provider: azure
+        capabilities: [nic-secondary-ip, ip-forwarding]
+        auth:
+          mode: external-command
+          command: /usr/local/libexec/routerd/plugins/azure-auth
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: RemoteAddressClaim
+      metadata:
+        name: azure-vm
+      spec:
+        domainRef: same-subnet
+        address: 10.0.0.9/32
+        ownerSide: cloud
+        capture:
+          type: provider-secondary-ip
+          providerRef: azure-lab
+          providerMode: nic-secondary-ip
+          nicRef: azure-nic
+          interface: eth0
+        delivery:
+          peerRef: cloud-main
+          mode: route
+          tunnelInterface: wg-hybrid
+`)
+	if err := os.WriteFile(configPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	return configPath, filepath.Join(dir, "routerd.db")
+}
+
+func writeDoctorMobilityPoolFixture(t *testing.T) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "router.yaml")
+	data := []byte(`apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: test
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: eth0
+      spec:
+        ifname: eth0
+        managed: false
+        owner: external
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardInterface
+      metadata:
+        name: wg-hybrid
+      spec:
+        listenPort: 51820
+        mtu: 1420
+    - apiVersion: routerd.net/v1alpha1
+      kind: MobilityPool
+      metadata:
+        name: cloudedge
+      spec:
+        prefix: 10.0.0.0/24
+        groupRef: cloudedge
+        members:
+          - nodeRef: onprem-router
+            site: onprem
+            role: onprem
+            capture:
+              type: provider-secondary-ip
+          - nodeRef: azure-router
+            site: azure
+            role: cloud
+            capture:
+              type: provider-secondary-ip
     - apiVersion: hybrid.routerd.net/v1alpha1
       kind: OverlayPeer
       metadata:
