@@ -213,6 +213,7 @@ var declarations = []Declaration{
 	declare(api.FederationAPIVersion, "EventSubscription", ClassDynamicSource, "event subscription can emit DynamicConfigPart", noHostTeardown("dynamic output is represented as DynamicConfigPart and then handled by the effective resource view")),
 	declare(api.MobilityAPIVersion, "MobilityPool", ClassDynamicSource, "SAM capture/control-plane dynamic source", noHostTeardown("dynamic source emits capture resources that are handled through the effective view")),
 	declare(api.MobilityAPIVersion, "MobilityMemberSet", ClassRendererInput, "MobilityPool member set input", noHostTeardown("member set input is resolved by MobilityPool")),
+	declare(api.MobilityAPIVersion, "SAMNodeSet", ClassRendererInput, "SAM fabric node identity input", noHostTeardown("node set input is resolved by SAM fabric controllers")),
 	declare(api.MobilityAPIVersion, "SAMPeerGroup", ClassRendererInput, "SAM transport peer group input", noHostTeardown("peer group input is resolved by SAMTransportProfile")),
 	declare(api.MobilityAPIVersion, "SAMTransportProfile", ClassDynamicSource, "generates transport TunnelInterface/BGPPeer resources", noHostTeardown("generated transport resources own teardown through the effective view")),
 	declare(api.NetAPIVersion, "IPv4Route", ClassManagedHost, "IPv4 route", resourceLifecycle()),

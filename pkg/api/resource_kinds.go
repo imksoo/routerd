@@ -70,6 +70,7 @@ func ConfigResourceKinds() []ResourceKindSchema {
 		{FederationAPIVersion, "EventSubscription", EventSubscriptionSpec{}},
 		{MobilityAPIVersion, "MobilityPool", MobilityPoolSpec{}},
 		{MobilityAPIVersion, "MobilityMemberSet", MobilityMemberSetSpec{}},
+		{MobilityAPIVersion, "SAMNodeSet", SAMNodeSetSpec{}},
 		{MobilityAPIVersion, "SAMPeerGroup", SAMPeerGroupSpec{}},
 		{MobilityAPIVersion, "SAMTransportProfile", SAMTransportProfileSpec{}},
 		{NetAPIVersion, "IPv4Route", IPv4RouteSpec{}},

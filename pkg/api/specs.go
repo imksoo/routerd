@@ -709,6 +709,33 @@ type MobilityMemberSetMember struct {
 	Maintenance MobilityMemberMaintenance `yaml:"maintenance,omitempty" json:"maintenance,omitempty"`
 }
 
+// SAMNodeSetSpec is the shared node identity registry for write-once SAM
+// fabrics. Follow-on controllers derive EventPeer, WireGuardPeer,
+// SAMTransportProfile peers/topology, and MobilityPool members from this common
+// source instead of each Kind carrying its own full node list.
+type SAMNodeSetSpec struct {
+	Nodes []SAMNodeSpec `yaml:"nodes" json:"nodes"`
+}
+
+type SAMNodeSpec struct {
+	NodeRef        string                    `yaml:"nodeRef" json:"nodeRef"`
+	Site           string                    `yaml:"site,omitempty" json:"site,omitempty"`
+	Role           string                    `yaml:"role,omitempty" json:"role,omitempty" jsonschema:"enum=,enum=onprem,enum=cloud"`
+	RouteReflector bool                      `yaml:"routeReflector,omitempty" json:"routeReflector,omitempty"`
+	EventEndpoint  string                    `yaml:"eventEndpoint,omitempty" json:"eventEndpoint,omitempty"`
+	SAMEndpoint    string                    `yaml:"samEndpoint,omitempty" json:"samEndpoint,omitempty"`
+	WireGuard      SAMNodeWireGuardSpec      `yaml:"wireGuard,omitempty" json:"wireGuard,omitempty"`
+	Placement      MobilityMemberPlacement   `yaml:"placement,omitempty" json:"placement,omitempty"`
+	Maintenance    MobilityMemberMaintenance `yaml:"maintenance,omitempty" json:"maintenance,omitempty"`
+}
+
+type SAMNodeWireGuardSpec struct {
+	PublicKey           string   `yaml:"publicKey,omitempty" json:"publicKey,omitempty"`
+	Endpoint            string   `yaml:"endpoint,omitempty" json:"endpoint,omitempty"`
+	AllowedIPs          []string `yaml:"allowedIPs,omitempty" json:"allowedIPs,omitempty"`
+	PersistentKeepalive int      `yaml:"persistentKeepalive,omitempty" json:"persistentKeepalive,omitempty" jsonschema:"minimum=0,maximum=65535"`
+}
+
 type SAMTransportBGPProfileSpec struct {
 	RouterRef               string              `yaml:"routerRef" json:"routerRef"`
 	PeerASN                 uint32              `yaml:"peerASN" json:"peerASN" jsonschema:"minimum=1"`
@@ -2381,6 +2408,10 @@ func (r Resource) SAMPeerGroupSpec() (SAMPeerGroupSpec, error) {
 
 func (r Resource) MobilityMemberSetSpec() (MobilityMemberSetSpec, error) {
 	return specAs[MobilityMemberSetSpec](r)
+}
+
+func (r Resource) SAMNodeSetSpec() (SAMNodeSetSpec, error) {
+	return specAs[SAMNodeSetSpec](r)
 }
 
 func (r Resource) SAMTransportProfileSpec() (SAMTransportProfileSpec, error) {
