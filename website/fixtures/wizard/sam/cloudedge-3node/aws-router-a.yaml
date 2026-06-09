@@ -192,7 +192,7 @@ spec:
               mode: "provider-private-ip"
               providerRef: "aws-lab"
               scope:
-                includePrimary: false
+                includePrimary: true
               scanInterval: "60s"
               leaseTTL: "10m"
             placement:
@@ -211,7 +211,7 @@ spec:
               mode: "provider-private-ip"
               providerRef: "azure-lab"
               scope:
-                includePrimary: false
+                includePrimary: true
               scanInterval: "60s"
               leaseTTL: "10m"
             placement:

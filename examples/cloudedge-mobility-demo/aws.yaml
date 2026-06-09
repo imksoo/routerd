@@ -269,7 +269,7 @@ spec:
                   region: self.region
               ownershipDiscovery:
                 mode: provider-private-ip
-                scope: { includePrimary: false }
+                scope: { includePrimary: true }
                 subnetRefFrom: self.subnetRef
                 scanInterval: 60s
                 leaseTTL: 10m
