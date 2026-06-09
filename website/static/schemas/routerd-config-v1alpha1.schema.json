@@ -7692,6 +7692,14 @@
                             },
                             "type": "array"
                           },
+                          "stoppedInstancePolicy": {
+                            "enum": [
+                              "",
+                              "hold",
+                              "release"
+                            ],
+                            "type": "string"
+                          },
                           "type": {
                             "enum": [
                               "",

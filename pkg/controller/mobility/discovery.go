@@ -226,6 +226,7 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 	}
 	ttl := discoveryLeaseTTL(discovery, spec)
 	observedThisScan := map[string]bool{}
+	heldThisScan := map[string]bool{}
 	retainedThisScan := map[string]bool{}
 	counters := discoveryExclusionCounters{}
 	for _, rec := range sortedPrivateIPs(result.Status.IPs) {
@@ -259,11 +260,19 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 			counters.Selector++
 			continue
 		}
+		instanceStopped := strings.TrimSpace(rec.InstanceState) == "stopped"
+		if instanceStopped && stoppedInstancePolicy(spec) == "release" {
+			counters.Scope++
+			continue
+		}
 		ev := providerDiscoveryObservedEvent(poolName, spec.GroupRef, self.NodeRef, address, profile.Provider, profileRef, rec, now, ttl)
 		if err := c.Store.RecordFederationEvent(ev); err != nil {
 			return err
 		}
 		observedThisScan[address] = true
+		if instanceStopped {
+			heldThisScan[address] = true
+		}
 		counters.Observed++
 	}
 	for address := range observedThisScan {
@@ -280,6 +289,7 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 		"discoveryPlugin":            pluginName,
 		"discoveryObserved":          counters.Observed,
 		"discoveryOwnedAddresses":    mapStringKeysSorted(observedThisScan),
+		"discoveryHeldAddresses":     mapStringKeysSorted(heldThisScan),
 		"discoveryExcluded":          counters.Excluded(),
 		"discoveryExcludedRouterNIC": counters.RouterNIC,
 		"discoveryExcludedSelfIP":    counters.SelfPrivateIP,
@@ -1025,6 +1035,14 @@ func discoveryActionStatusCurrent(status string) bool {
 	}
 }
 
+func stoppedInstancePolicy(spec api.MobilityPoolSpec) string {
+	p := strings.TrimSpace(spec.IPOwnershipPolicy.StoppedInstancePolicy)
+	if p == "release" {
+		return "release"
+	}
+	return "hold"
+}
+
 func discoverySelectorMatches(selector api.MobilityOwnershipDiscoverySelector, tags map[string]string) bool {
 	for key, want := range selector.Tags {
 		if strings.TrimSpace(key) == "" {
@@ -1054,6 +1072,9 @@ func providerDiscoveryObservedEvent(poolName, group, nodeRef, address, provider,
 	}
 	if rec.Primary {
 		payload["primary"] = "true"
+	}
+	if value := strings.TrimSpace(rec.InstanceState); value != "" {
+		payload["instanceState"] = value
 	}
 	return routerstate.EventRecord{
 		ID:         providerDiscoveryEventID(poolName, nodeRef, address, observedAt),

@@ -67,11 +67,12 @@ type PrivateIPSelf struct {
 }
 
 type PrivateIPRecord struct {
-	Address   string            `json:"address" yaml:"address"`
-	NICRef    string            `json:"nicRef,omitempty" yaml:"nicRef,omitempty"`
-	SubnetRef string            `json:"subnetRef,omitempty" yaml:"subnetRef,omitempty"`
-	Primary   bool              `json:"primary,omitempty" yaml:"primary,omitempty"`
-	Tags      map[string]string `json:"tags,omitempty" yaml:"tags,omitempty"`
+	Address       string            `json:"address" yaml:"address"`
+	NICRef        string            `json:"nicRef,omitempty" yaml:"nicRef,omitempty"`
+	SubnetRef     string            `json:"subnetRef,omitempty" yaml:"subnetRef,omitempty"`
+	Primary       bool              `json:"primary,omitempty" yaml:"primary,omitempty"`
+	Tags          map[string]string `json:"tags,omitempty" yaml:"tags,omitempty"`
+	InstanceState string            `json:"instanceState,omitempty" yaml:"instanceState,omitempty"`
 }
 
 func NewObservePrivateIPsRequest(spec ObservePrivateIPsRequestSpec) ObservePrivateIPsRequest {

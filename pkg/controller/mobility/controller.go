@@ -621,6 +621,9 @@ func bgpLocalOwnedAddressesFromConfigAndEvents(poolName, selfNode string, spec a
 				}
 			}
 			if bgpMemberAdvertisesOwnedAddress(self, members[strings.TrimSpace(ev.SourceNode)]) {
+				if strings.TrimSpace(ev.Payload["instanceState"]) == "stopped" && stoppedInstancePolicyFromSpec(spec) == "hold" {
+					continue
+				}
 				owned[address] = bgpOwnedAddress{Address: address, SourceType: sourceType}
 			}
 		}
@@ -684,6 +687,14 @@ func selfProviderDiscoveryEventBackedByFreshInventory(address string, ev routers
 		return false
 	}
 	return true
+}
+
+func stoppedInstancePolicyFromSpec(spec api.MobilityPoolSpec) string {
+	p := strings.TrimSpace(spec.IPOwnershipPolicy.StoppedInstancePolicy)
+	if p == "release" {
+		return "release"
+	}
+	return "hold"
 }
 
 func bgpMemberAdvertisesOwnedAddress(self, owner memberPlanInfo) bool {
