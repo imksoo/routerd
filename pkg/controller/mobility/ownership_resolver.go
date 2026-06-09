@@ -78,8 +78,9 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 	staticOwners := staticOwnedOwnerNodesByAddress(in.Spec)
 	remoteHomeFacts := providerInventoryHomeOwnerFacts(in.PoolName, in.Spec, in.Events, now)
 	localInventory := localInventoryRecordsFromStatus(in.Status, prefix)
-	selfIPs := selfInventoryAddressSetFromStatus(in.Status, prefix)
-	confirmedCaptures, staleCaptures := captureStatesForSelf(self, in.PreviousPlans, in.ActionJournal, selfIPs)
+	selfIPs, selfIPsObserved := selfInventoryAddressSetFromStatus(in.Status, prefix)
+	eventOwned := resolverEventOwnedAddresses(in.PoolName, in.SelfNode, in.Spec, in.Events, in.Status, prefix, now)
+	confirmedCaptures, staleCaptures := captureStatesForSelf(self, in.PreviousPlans, in.ActionJournal, selfIPs, selfIPsObserved)
 	handoverTargets := staticHandoverTargets(in.Spec, prefix)
 	universe := map[string]bool{}
 	for address := range staticOwners {
@@ -89,6 +90,9 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 		universe[address] = true
 	}
 	for address := range localInventory {
+		universe[address] = true
+	}
+	for address := range eventOwned {
 		universe[address] = true
 	}
 	for address := range selfIPs {
@@ -158,12 +162,53 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 			continue
 		}
 		if rec, ok := localInventory[address]; ok && localInventoryRecordIsRouterSelf(rec, self) {
+			if decision.CaptureState != captureStateNone && decision.CaptureStrategy == captureStrategyRouteTable {
+				decision.Class = ownershipClassStaleCapture
+				decision.HomeOwnerNode = self.NodeRef
+				decision.HomeProviderRef = firstNonEmpty(rec.ProviderRef, self.Capture.ProviderRef)
+				decision.HomeSubnetRef = rec.SubnetRef
+				decision.HomeNICRef = rec.NICRef
+				decision.Source = "local-inventory"
+				decision.SuppressionReason = "local-router-self"
+				decision.Fresh = true
+				out = append(out, decision)
+				continue
+			}
 			decision.Class = ownershipClassLocalRouterSelf
 			decision.HomeOwnerNode = self.NodeRef
 			decision.HomeProviderRef = firstNonEmpty(rec.ProviderRef, self.Capture.ProviderRef)
 			decision.HomeSubnetRef = rec.SubnetRef
 			decision.HomeNICRef = rec.NICRef
 			decision.Source = "local-inventory"
+			decision.Fresh = true
+			out = append(out, decision)
+			continue
+		}
+		if fact, ok := remoteHomeFacts[address]; ok && strings.TrimSpace(fact.NodeRef) == self.NodeRef && strings.TrimSpace(fact.ProviderRef) != "" {
+			decision.HomeOwnerNode = self.NodeRef
+			decision.HomeProviderRef = fact.ProviderRef
+			decision.HomeSubnetRef = fact.SubnetRef
+			decision.HomeNICRef = fact.NICRef
+			decision.AdvertiseOwnerNode = self.NodeRef
+			decision.Source = providerDiscoverySource
+			decision.Fresh = true
+			if decision.CaptureState != captureStateNone && decision.CaptureStrategy == captureStrategyRouteTable {
+				decision.Class = ownershipClassLocalHomeOwned
+				decision.AdvertiseReason = "provider-home-owner"
+				out = append(out, decision)
+				continue
+			}
+			decision.Class = ownershipClassLocalHomeOwned
+			decision.AdvertiseReason = "provider-home-owner"
+			out = append(out, decision)
+			continue
+		}
+		if eventOwner, ok := eventOwned[address]; ok && strings.TrimSpace(eventOwner.AdvertiseOwnerNode) == self.NodeRef {
+			decision.Class = ownershipClassLocalHomeOwned
+			decision.HomeOwnerNode = self.NodeRef
+			decision.AdvertiseOwnerNode = self.NodeRef
+			decision.AdvertiseReason = "ownership-event"
+			decision.Source = eventOwner.SourceType
 			decision.Fresh = true
 			out = append(out, decision)
 			continue
@@ -175,6 +220,14 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 			decision.HomeNICRef = fact.NICRef
 			decision.Source = providerDiscoverySource
 			decision.Fresh = true
+			if decision.CaptureState == captureStateConfirmed && !providerHomeOwnerBlocksCapture(self, fact) {
+				decision.Class = ownershipClassConfirmedCapture
+				decision.AdvertiseOwnerNode = self.NodeRef
+				decision.AdvertiseReason = "confirmed-capture"
+				decision.Source = "provider-action"
+				out = append(out, decision)
+				continue
+			}
 			if decision.CaptureState != captureStateNone || selfIPs[address] {
 				decision.Class = ownershipClassStaleCapture
 				decision.SuppressionReason = "fresh-home-owner"
@@ -182,6 +235,15 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 				decision.Class = ownershipClassRemoteHomeOwned
 				decision.SuppressionReason = "remote-home-owner"
 			}
+			out = append(out, decision)
+			continue
+		}
+		if decision.CaptureState == captureStateConfirmed {
+			decision.Class = ownershipClassConfirmedCapture
+			decision.AdvertiseOwnerNode = self.NodeRef
+			decision.AdvertiseReason = "confirmed-capture"
+			decision.Source = "provider-action"
+			decision.Fresh = true
 			out = append(out, decision)
 			continue
 		}
@@ -205,15 +267,6 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 			decision.AdvertiseOwnerNode = self.NodeRef
 			decision.AdvertiseReason = "local-home-inventory"
 			decision.Source = "local-inventory"
-			decision.Fresh = true
-			out = append(out, decision)
-			continue
-		}
-		if decision.CaptureState == captureStateConfirmed {
-			decision.Class = ownershipClassConfirmedCapture
-			decision.AdvertiseOwnerNode = self.NodeRef
-			decision.AdvertiseReason = "confirmed-capture"
-			decision.Source = "provider-action"
 			decision.Fresh = true
 			out = append(out, decision)
 			continue
@@ -267,9 +320,13 @@ func localInventoryRecordsFromStatus(status map[string]any, poolPrefix netip.Pre
 	return out
 }
 
-func selfInventoryAddressSetFromStatus(status map[string]any, poolPrefix netip.Prefix) map[string]bool {
+func selfInventoryAddressSetFromStatus(status map[string]any, poolPrefix netip.Prefix) (map[string]bool, bool) {
 	out := map[string]bool{}
+	observed := false
 	for _, key := range []string{"discoverySelfPrivateIPs", "discoverySelfCapturedAddresses"} {
+		if _, ok := status[key]; ok {
+			observed = true
+		}
 		for _, raw := range statusStringSlice(status[key]) {
 			address, ok := normalizeDiscoveredAddress(raw, poolPrefix)
 			if ok {
@@ -277,7 +334,44 @@ func selfInventoryAddressSetFromStatus(status map[string]any, poolPrefix netip.P
 			}
 		}
 	}
+	return out, observed
+}
+
+type resolverEventOwnedAddress struct {
+	AdvertiseOwnerNode string
+	SourceType         string
+}
+
+func resolverEventOwnedAddresses(poolName, selfNode string, spec api.MobilityPoolSpec, events []routerstate.EventRecord, status map[string]any, poolPrefix netip.Prefix, now time.Time) map[string]resolverEventOwnedAddress {
+	discoveryOwnedAddresses := statusStringSet(status["discoveryOwnedAddresses"], poolPrefix)
+	discoveryOwnedObserved := statusHasAny(status, "discoveryOwnedAddresses")
+	discoverySelfIPs, discoverySelfIPsObserved := selfInventoryAddressSetFromStatus(status, poolPrefix)
+	owned := bgpLocalOwnedAddressesFromConfigAndEvents(poolName, selfNode, spec, events, discoveryOwnedAddresses, discoveryOwnedObserved, discoverySelfIPs, discoverySelfIPsObserved, poolPrefix, now)
+	out := map[string]resolverEventOwnedAddress{}
+	for _, item := range owned {
+		address := normalizeAddressString(item.Address)
+		if address == "" {
+			continue
+		}
+		out[address] = resolverEventOwnedAddress{AdvertiseOwnerNode: strings.TrimSpace(selfNode), SourceType: item.SourceType}
+	}
 	return out
+}
+
+func statusStringSet(value any, poolPrefix netip.Prefix) map[string]bool {
+	out := map[string]bool{}
+	for _, raw := range statusStringSlice(value) {
+		address, ok := normalizeDiscoveredAddress(raw, poolPrefix)
+		if ok {
+			out[address] = true
+		}
+	}
+	return out
+}
+
+func statusHasAny(status map[string]any, key string) bool {
+	_, ok := status[key]
+	return ok
 }
 
 func statusMapSlice(value any) []map[string]string {
@@ -328,7 +422,7 @@ type resolverCaptureState struct {
 	Strategy    string
 }
 
-func captureStatesForSelf(self memberPlanInfo, previousPlans []dynamicconfig.ActionPlan, journal []routerstate.ActionExecutionRecord, selfIPs map[string]bool) (map[string]resolverCaptureState, map[string]resolverCaptureState) {
+func captureStatesForSelf(self memberPlanInfo, previousPlans []dynamicconfig.ActionPlan, journal []routerstate.ActionExecutionRecord, selfIPs map[string]bool, selfIPsObserved bool) (map[string]resolverCaptureState, map[string]resolverCaptureState) {
 	confirmed := map[string]resolverCaptureState{}
 	stale := map[string]resolverCaptureState{}
 	latest := latestProviderCaptureTransitions(previousPlans, journal)
@@ -350,7 +444,7 @@ func captureStatesForSelf(self memberPlanInfo, previousPlans []dynamicconfig.Act
 			TargetRef:   targetRef,
 			Strategy:    effectiveCaptureStrategy(tr.plan.Provider, firstNonEmpty(tr.plan.Target["captureStrategy"], self.Capture.Strategy)),
 		}
-		if tr.assign && (tr.succeeded || selfIPs[address]) {
+		if tr.assign && (selfIPs[address] || tr.succeeded && !selfIPsObserved) {
 			confirmed[address] = state
 			continue
 		}
@@ -454,7 +548,7 @@ func ownershipResolverStatus(decisions []ownershipDecision) map[string]any {
 		countMap[key] = counts[key]
 	}
 	return map[string]any{
-		"ownershipResolverPhase":        "ShadowResolved",
+		"ownershipResolverPhase":        "Resolved",
 		"ownershipResolverAddressCount": len(decisions),
 		"ownershipResolverClassCounts":  countMap,
 		"ownershipResolverDecisions":    items,

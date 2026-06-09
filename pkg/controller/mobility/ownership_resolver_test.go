@@ -53,8 +53,8 @@ func TestOwnershipResolverScenario392SameProviderConfirmedCapture(t *testing.T) 
 		t.Fatalf("resolveAddressOwnership: %v", err)
 	}
 	decision := ownershipDecisionByAddress(t, decisions, "10.88.60.11/32")
-	if decision.Class != ownershipClassLocalRouterSelf {
-		t.Fatalf("decision = %#v, want captured address observed as local router self before planner switch", decision)
+	if decision.Class != ownershipClassConfirmedCapture {
+		t.Fatalf("decision = %#v, want confirmed capture separated from router self", decision)
 	}
 	if decision.CaptureState != captureStateConfirmed || decision.CaptureHolderNode != "aws-router-b" {
 		t.Fatalf("decision = %#v, want confirmed same-provider capture state", decision)
