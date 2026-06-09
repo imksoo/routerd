@@ -570,39 +570,6 @@ func TestDiscoveryControllerExcludesCurrentTrapActionTargets(t *testing.T) {
 	}
 }
 
-func TestDiscoveryControllerScopeExcludesProviderPrimaryAddresses(t *testing.T) {
-	now := time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)
-	store := testStore(t, now)
-	spec := discoveryPoolSpec()
-	spec.Members[1].OwnershipDiscovery.Scope.IncludePrimary = boolPtr(false)
-	runner := &fakeInventoryRunner{result: providerinventory.ObservePrivateIPsResult{
-		TypeMeta: providerinventory.TypeMeta{APIVersion: providerinventory.ProtocolAPIVersion, Kind: providerinventory.KindObservePrivateIPsResult},
-		Status: providerinventory.ObservePrivateIPsResultStatus{
-			Status: providerinventory.ResultSucceeded,
-			Self:   &providerinventory.PrivateIPSelf{NICRef: "router-nic", SubnetRef: "subnet-a"},
-			IPs: []providerinventory.PrivateIPRecord{
-				{Address: "10.88.60.7", NICRef: "client-nic", SubnetRef: "subnet-a", Primary: true, Tags: map[string]string{"cloudedge-mobility": "true"}},
-				{Address: "10.88.60.13", NICRef: "client-nic", SubnetRef: "subnet-a", Primary: false, Tags: map[string]string{"cloudedge-mobility": "true"}},
-			},
-		},
-	}}
-	controller := DiscoveryController{Router: discoveryRouter("azure-router-a", spec), Store: store, Runner: runner.run, Now: func() time.Time { return now }}
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("Reconcile: %v", err)
-	}
-	events, err := store.ListFederationEvents("cloudedge", false, now.Unix())
-	if err != nil {
-		t.Fatalf("ListFederationEvents: %v", err)
-	}
-	if len(events) != 1 || events[0].Subject != "10.88.60.13/32" {
-		t.Fatalf("events = %#v, want only secondary mobility address", events)
-	}
-	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
-	if fmt.Sprint(status["discoveryObserved"]) != "1" || fmt.Sprint(status["discoveryExcludedPrimary"]) != "1" || fmt.Sprint(status["discoveryExcluded"]) != "1" {
-		t.Fatalf("status = %#v", status)
-	}
-}
-
 func TestDiscoveryControllerDefaultScopeAllowsProviderPrimaryAddresses(t *testing.T) {
 	now := time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)
 	store := testStore(t, now)
@@ -727,7 +694,7 @@ func TestDiscoveryControllerProfileOnlyActivePeerRunsProviderDiscovery(t *testin
 				SubnetRefFrom: "aws.subnetRef",
 				ScanInterval:  "60s",
 				LeaseTTL:      "10m",
-				Scope:         api.MobilityOwnershipDiscoveryScope{IncludePrimary: boolPtr(false)},
+				Scope:         api.MobilityOwnershipDiscoveryScope{},
 			},
 		},
 	}}

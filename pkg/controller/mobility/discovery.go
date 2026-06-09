@@ -246,10 +246,6 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 			counters.TrapAction++
 			continue
 		}
-		if !discoveryPrimaryAllowed(discovery.Scope) && rec.Primary {
-			counters.Primary++
-			continue
-		}
 		if !discoveryScopeAllowsAddress(discovery.Scope, address) {
 			counters.Scope++
 			continue
@@ -280,7 +276,6 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 		"discoveryObserved":          counters.Observed,
 		"discoveryOwnedAddresses":    mapStringKeysSorted(observedThisScan),
 		"discoveryExcluded":          counters.Excluded(),
-		"discoveryExcludedPrimary":   counters.Primary,
 		"discoveryExcludedRouterNIC": counters.RouterNIC,
 		"discoveryExcludedSelfIP":    counters.SelfPrivateIP,
 		"discoveryExcludedStatic":    counters.StaticOwned,
@@ -718,7 +713,6 @@ func (c DiscoveryController) latestProviderDiscoveryEvents(poolName, group, self
 
 type discoveryExclusionCounters struct {
 	Observed      int
-	Primary       int
 	RouterNIC     int
 	SelfPrivateIP int
 	StaticOwned   int
@@ -729,7 +723,7 @@ type discoveryExclusionCounters struct {
 }
 
 func (c discoveryExclusionCounters) Excluded() int {
-	return c.Primary + c.RouterNIC + c.SelfPrivateIP + c.StaticOwned + c.RemoteOwner + c.TrapAction + c.Scope + c.Selector
+	return c.RouterNIC + c.SelfPrivateIP + c.StaticOwned + c.RemoteOwner + c.TrapAction + c.Scope + c.Selector
 }
 
 type discoverySelfInventory struct {
@@ -880,13 +874,6 @@ func discoveryScanInterval(discovery api.MobilityOwnershipDiscovery) time.Durati
 
 func discoveryLeaseTTL(discovery api.MobilityOwnershipDiscovery, spec api.MobilityPoolSpec) time.Duration {
 	return durationDefault(discovery.LeaseTTL, DefaultLeaseTTL)
-}
-
-func discoveryPrimaryAllowed(scope api.MobilityOwnershipDiscoveryScope) bool {
-	if scope.IncludePrimary == nil {
-		return true
-	}
-	return *scope.IncludePrimary
 }
 
 func discoveryScopeAllowsAddress(scope api.MobilityOwnershipDiscoveryScope, address string) bool {

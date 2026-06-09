@@ -190,8 +190,6 @@ spec:
             ownershipDiscovery:
               mode: "provider-private-ip"
               providerRef: "aws-lab"
-              scope:
-                includePrimary: true
               scanInterval: "60s"
               leaseTTL: "10m"
             placement:
@@ -209,8 +207,6 @@ spec:
             ownershipDiscovery:
               mode: "provider-private-ip"
               providerRef: "azure-lab"
-              scope:
-                includePrimary: true
               scanInterval: "60s"
               leaseTTL: "10m"
             placement:

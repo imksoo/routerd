@@ -427,7 +427,6 @@ func TestValidateMobilityPoolAllowsDiscoveredCloudNICOnlyInBGPDiscoveryMode(t *t
 					ProviderRef: "azure-provider",
 					SubnetRef:   "/subnets/demo",
 					Scope: api.MobilityOwnershipDiscoveryScope{
-						IncludePrimary:   boolPtr(false),
 						IncludeAddresses: []string{"10.88.60.0/25"},
 						ExcludeAddresses: []string{"10.88.60.7"},
 					},

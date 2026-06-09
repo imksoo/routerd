@@ -480,7 +480,6 @@ func validateMobilityOwnershipDiscovery(res api.Resource, index int, spec api.Mo
 		strings.TrimSpace(discovery.ScanInterval) != "" ||
 		strings.TrimSpace(discovery.LeaseTTL) != "" ||
 		len(discovery.Sources) > 0 ||
-		discovery.Scope.IncludePrimary != nil ||
 		len(discovery.Scope.IncludeAddresses) > 0 ||
 		len(discovery.Scope.ExcludeAddresses) > 0 ||
 		len(discovery.Selector.Tags) > 0

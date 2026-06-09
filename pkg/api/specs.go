@@ -1651,9 +1651,6 @@ type MobilityOwnershipDiscovery struct {
 }
 
 type MobilityOwnershipDiscoveryScope struct {
-	// IncludePrimary controls whether provider-primary private IPs may become
-	// mobility-owned addresses. Nil defaults to true for backward compatibility.
-	IncludePrimary *bool `yaml:"includePrimary,omitempty" json:"includePrimary,omitempty"`
 	// IncludeAddresses optionally allowlists discovered addresses by IPv4 CIDR or
 	// bare IPv4 address. Empty means all pool addresses are candidates.
 	IncludeAddresses []string `yaml:"includeAddresses,omitempty" json:"includeAddresses,omitempty"`
