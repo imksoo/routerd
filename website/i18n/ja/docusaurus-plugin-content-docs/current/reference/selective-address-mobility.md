@@ -223,12 +223,34 @@ routerd はフェデレーションやプロバイダーディスカバリーで
 
 `spec.addressingMode` は `/31` スロットの導出方法を制御します。
 
-- `edge-index`（デフォルト）: ピアが複数あるプロファイルでは、トランスポートドメイン内の全ルーターで同じ `spec.topologyNodeRefs` リストを宣言する必要があります。コントローラーはこの共有ノードリストをソートし、順序なしノードペアの順位から `spec.innerPrefix` 内の `/31` を割り当てます。
+- `edge-index`（デフォルト）: ピアが複数あるプロファイルでは、トランスポートドメイン内の全ルーターで同じ topology node list が必要です。運用者が `spec.topologyNodeRefs` を直接宣言することも、`spec.peersFrom` で `SAMNodeSet` から取り込むこともできます。コントローラーはこの共有ノードリストをソートし、順序なしノードペアの順位から `spec.innerPrefix` 内の `/31` を割り当てます。
 - `pair-stable`: 各ピアエッジが安定ハッシュからスロットを導出するため、リーフ/ルータープロファイルはグローバルな `topologyNodeRefs` を省略できます。衝突検出は現在プロファイルローカル（1 つのプロファイルの `spec.peers` リスト内）です。衝突が発生した場合は、該当ピアの `override.localInner` と `override.remoteInner` の両方を設定して明示的にアドレスを予約してください。
 
 本番ファブリックでは可能な限り `/20` 以上の `innerPrefix` を推奨します。`/24`（128 個の `/31` スロット）のように小さなプールはハッシュ＋剰余割り当てで衝突しやすくなります。
 
-`SAMPeerGroup` は再利用可能なトランスポートピアをまとめるリソースです。プロファイルは `spec.peersFrom` に 1 つ以上の `SAMPeerGroup/<name>` 参照を指定できます。コントローラーはリコンサイル時にグループのピアを先に追加し、その後にプロファイル直下の `spec.peers` を重ねます。同じ `nodeRef` が両方にある場合は `spec.peers` が優先されるため、リーフ側に静的なブートストラップ用ピアやローカルのオーバーライドを残せます。必須の `peersFrom` グループが未到着の場合、プロファイルは `Pending` になります。`optional: true` のソースは到着するまで無視されます。
+`spec.peersFrom` は `SAMNodeSet/<name>` または `SAMPeerGroup/<name>` を参照できます。`SAMNodeSet` source は `spec.nodes[].nodeRef` を解決済み topology に追加し、自ノード以外で `samEndpoint` を持つ node から peer を生成します。生成 peer はその `samEndpoint` を `remoteEndpoint` として使います。`SAMPeerGroup` source は再利用可能な transport peer だけを追加します。
+
+コントローラーはリコンサイル時にすべての source を解決し、取り込んだ peer を先に追加してから、プロファイル直下の `spec.peers` を重ねます。同じ `nodeRef` が両方にある場合は `spec.peers` が優先されるため、リーフ側に静的なブートストラップ用 peer やローカル override を残せます。必須の `peersFrom` source が未到着の場合、プロファイルは `Pending` になります。`optional: true` の source は到着するまで無視されます。
+
+```yaml
+apiVersion: mobility.routerd.net/v1alpha1
+kind: SAMTransportProfile
+metadata: { name: cloudedge-transport }
+spec:
+  selfNodeRef: pve-rt01
+  mode: ipip
+  addressingMode: pair-stable
+  innerPrefix: 10.255.0.0/20
+  underlayInterface: wg-svnet1
+  localEndpointFrom:
+    resource: Interface/wg-svnet1
+    field: primaryIPv4
+  bgp:
+    routerRef: BGPRouter/mobility
+    peerASN: 64512
+  peersFrom:
+    - resource: SAMNodeSet/svnet1-nodes
+```
 
 スパイン/ルートリフレクター側のプロファイルでは `spec.publishPeerGroup: true` を指定できます。この場合、routerd はプロファイルの `selfNodeRef` と具体的なローカルエンドポイントから `SAMPeerGroup` を生成し、DynamicConfigPart として公開します。`localEndpointFrom` は公開前に解決されるため、リーフには直接使える `remoteEndpoint` が配布されます。
 

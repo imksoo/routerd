@@ -189,7 +189,7 @@ for DoH or DoT endpoint name resolution.
 | `MobilityPool` | Declares the CloudEdge mobility intent: pool prefix, federation group, node-to-site membership or `membersFrom` sources, BGP delivery policy, optional reusable cloud capture profiles, local value expansion, and provider trap placement. routerd derives BGP `/32` advertisements and provider trap action plans from observed facts and BGP best paths. |
 | `MobilityMemberSet` | Groups shared identity-only MobilityPool members (`nodeRef`, `site`, `role`, optional placement/maintenance) so leaves can import them with `MobilityPool.spec.membersFrom` and keep only local capture/discovery details inline. |
 | `SAMNodeSet` | Defines the shared SAM fabric node identity registry: node identity, optional site/role, Event Federation endpoint, SAM transport endpoint, and non-secret WireGuard peer identity. Follow-on controllers use it as the single source for generated EventPeer, WireGuardPeer, SAM transport peers, and MobilityPool members. |
-| `SAMTransportProfile` | Declares this router's stable `selfNodeRef`, shared topology node list, inner tunnel prefix, underlay interface, BGP router, and SAM transport peers. routerd derives per-peer `TunnelInterface`, endpoint `/32` `IPv4Route`, and `BGPPeer` resources through a replace-on-reconcile `DynamicConfigPart`. |
+| `SAMTransportProfile` | Declares this router's stable `selfNodeRef`, inner tunnel prefix, underlay interface, BGP router, and SAM transport peers. It can import topology and peer endpoints from `SAMNodeSet` with `peersFrom`. routerd derives per-peer `TunnelInterface`, endpoint `/32` `IPv4Route`, and `BGPPeer` resources through a replace-on-reconcile `DynamicConfigPart`. |
 | `AddressMobilityDomain` | Low-level compatibility SAM resource that defines an IPv4 prefix for hand-authored selective-address configs; full L2 extension is not supported. |
 | `CloudProviderProfile` | Describes provider capabilities and external-command auth for declarative address capture planning. |
 | `RemoteAddressClaim` | Low-level compatibility SAM resource that declares one mobile IPv4 `/32`, its capture mechanism, and legacy route delivery over an `OverlayPeer`. |
@@ -641,7 +641,7 @@ and fields outside the target kind's `provides` set.
 | `RouterdCluster` | `leader` (string), `leaseExpiresAt` (timestamp), `phase` (string) |
 | `SelfAddressPolicy` | `address` (string), `phase` (string), `source` (string) |
 | `RemoteAddressClaim` | `address` (string), `captureType` (string), `deliveryMode` (string), `domainRef` (string), `ownerSide` (string), `peerRef` (string), `phase` (string) |
-| `SAMTransportProfile` | `dynamicSource` (string), `generatedBGPPeers` (int), `generatedEndpointRoutes` (int), `generatedTunnels` (int), `innerPrefix` (string), `peers` (objectList), `pendingSources` (stringList), `phase` (string), `selfNode` (string) |
+| `SAMTransportProfile` | `dynamicSource` (string), `generatedBGPPeers` (int), `generatedEndpointRoutes` (int), `generatedTunnels` (int), `innerPrefix` (string), `peers` (objectList), `peersFrom` (objectList), `pendingSources` (stringList), `phase` (string), `selfNode` (string), `topologyNodeRefs` (stringList) |
 | `Sysctl` | `dryRun` (bool), `key` (string), `phase` (string), `value` (string) |
 | `SysctlProfile` | `dryRun` (bool), `phase` (string), `profile` (string) |
 | `TailscaleNode` | `advertiseRoutes` (stringList), `peerCount` (int), `phase` (string), `tailnetName` (string) |

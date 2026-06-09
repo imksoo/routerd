@@ -520,8 +520,13 @@ func normalizeSAMTransportTopology(resourceID string, spec api.SAMTransportProfi
 
 func validateSAMTransportPeersFrom(resourceID string, index int, source api.SAMTransportPeersSourceSpec) error {
 	kind, name, ok := strings.Cut(strings.TrimSpace(source.Resource), "/")
-	if !ok || kind != "SAMPeerGroup" || strings.TrimSpace(name) == "" {
-		return fmt.Errorf("%s spec.peersFrom[%d].resource must reference SAMPeerGroup/<name>", resourceID, index)
+	if !ok || strings.TrimSpace(name) == "" {
+		return fmt.Errorf("%s spec.peersFrom[%d].resource must reference SAMPeerGroup/<name> or SAMNodeSet/<name>", resourceID, index)
+	}
+	switch kind {
+	case "SAMPeerGroup", "SAMNodeSet":
+	default:
+		return fmt.Errorf("%s spec.peersFrom[%d].resource must reference SAMPeerGroup/<name> or SAMNodeSet/<name>", resourceID, index)
 	}
 	return nil
 }
