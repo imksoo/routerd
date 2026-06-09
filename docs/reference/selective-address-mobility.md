@@ -154,6 +154,14 @@ a bootstrap or emergency override. If a required source is missing, the
 interface reports `Pending` and routerd leaves the current WireGuard runtime
 config untouched.
 
+For hub/spoke deployments, `peersFrom` removes repeated peer authoring after a
+trusted node registry exists, but it does not by itself solve first-contact
+registration. [ADR 0015](../adr/0015-wireguard-peer-enrollment.md) describes a
+proposed WireGuard peer enrollment flow where leaf routers submit their
+WireGuard identity to a fixed RR/spine endpoint over a non-WireGuard bootstrap
+path, and the RR/spine approves the registration before it becomes generated
+peer input.
+
 For example, on an AWS router:
 
 ```yaml
