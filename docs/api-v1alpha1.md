@@ -501,6 +501,9 @@ spec:
 | --- | --- |
 | `HealthCheck` | Measures reachability through `routerd-healthcheck` or the development embedded runner. |
 | `EgressRoutePolicy` | Selects the highest-weight ready egress candidate. Candidates can include gateway fields and health checks. |
+| `EventGroup` | Declares one CloudEdge Event Federation bus identity. It can derive push peers from `SAMNodeSet` with `peersFrom`, while static `EventPeer` resources remain available as overrides. |
+| `EventPeer` | Declares a static Event Federation push peer for bootstrap or explicit override use. |
+| `EventSubscription` | Consumes matched federation events and invokes a plugin that emits a `DynamicConfigPart`. |
 | `EventRule` | Evaluates event streams with all_of, any_of, sequence, window, absence, throttle, debounce, and count. |
 | `DerivedEvent` | Emits virtual events derived from multiple resource states. |
 | `SelfAddressPolicy` | Selects a self address for protocols that need one. |
@@ -593,6 +596,7 @@ and fields outside the target kind's `provides` set.
 | `CloudProviderProfile` | `capabilities` (stringList), `phase` (string), `provider` (string) |
 | `DerivedEvent` | `phase` (string), `topic` (string) |
 | `EgressRoutePolicy` | `advisory` (bool), `candidates` (objectList), `dryRun` (bool), `family` (string), `lastTransitionAt` (timestamp), `phase` (string), `role` (string), `selectedCandidate` (string), `selectedDevice` (string), `selectedGateway` (string), `selectedGatewaySource` (string), `selectedInterface` (string), `selectedMetric` (int), `selectedRouteTable` (int), `selectedSource` (string), `selectedTargets` (int), `selectedWeight` (int), `updatedAt` (timestamp) |
+| `EventGroup` | `group` (string), `listenAddress` (string), `listenPort` (int), `nodeName` (string), `peers` (int), `peersFrom` (objectList), `pendingSources` (stringList), `phase` (string) |
 | `EventRule` | `phase` (string), `topic` (string) |
 | `FirewallEventLog` | `path` (string), `phase` (string), `sinks` (stringList) |
 | `FirewallPolicy` | `phase` (string) |

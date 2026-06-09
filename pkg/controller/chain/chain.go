@@ -1480,7 +1480,23 @@ func (r *Runner) Start(ctx context.Context) error {
 			current.Router = effective
 			return current.Reconcile(ctx)
 		}},
-		framework.FuncController{ControllerName: "event-federation", Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed"}}}, ReconcileFunc: eventFederation.HandleEvent, PeriodicFunc: eventFederation.Reconcile},
+		framework.FuncController{ControllerName: "event-federation", Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed"}}}, ReconcileFunc: func(ctx context.Context, event daemonapi.DaemonEvent) error {
+			effective, err := effectiveDynamicForReconcile()
+			if err != nil {
+				return err
+			}
+			current := eventFederation
+			current.Router = effective
+			return current.HandleEvent(ctx, event)
+		}, PeriodicFunc: func(ctx context.Context) error {
+			effective, err := effectiveDynamicForReconcile()
+			if err != nil {
+				return err
+			}
+			current := eventFederation
+			current.Router = effective
+			return current.Reconcile(ctx)
+		}},
 		framework.FuncController{ControllerName: "event-subscription", Every: 5 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed"}}}, PeriodicFunc: eventSubscription.Reconcile},
 		framework.FuncController{ControllerName: "mobility-discovery", Every: 30 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed", "routerd.dhcp.lease.add", "routerd.dhcp.lease.old", "routerd.dhcp.lease.del", mobilitycontroller.OnPremARPObservedEvent, mobilitycontroller.OnPremARPProbeHitEvent, mobilitycontroller.OnPremPVESVNetObservedEvent}}}, ReconcileFunc: func(ctx context.Context, event daemonapi.DaemonEvent) error {
 			effective, err := effectiveDynamicForReconcile()

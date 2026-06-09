@@ -448,6 +448,9 @@ DS-Lite、IPv4 既定経路、NAT44 は、実際の lab で動作確認済みで
 | --- | --- |
 | `HealthCheck` | target、protocol、cadence、threshold から到達性 probe の intent を宣言します。`EgressRoutePolicy` の candidate/target から参照されると、routerd が health-check デーモン、source binding、socket mark を自動で導出します。 |
 | `EgressRoutePolicy` | 準備完了の候補の中から、重みの高い外向き経路を選びます。`destinationCIDRs` と、candidate の `gatewaySource`、`gateway` を持ちます。 |
+| `EventGroup` | CloudEdge Event Federation の bus identity を宣言します。`peersFrom` で `SAMNodeSet` から push peer を導出でき、静的 `EventPeer` は override として残せます。 |
+| `EventPeer` | bootstrap または明示 override 用の静的 Event Federation push peer を宣言します。 |
+| `EventSubscription` | federation event を match して、`DynamicConfigPart` を発行する plugin を呼び出します。 |
 | `EventRule` | イベント列に対して、all_of、any_of、sequence、window、absence、throttle、debounce、count を評価します。 |
 | `DerivedEvent` | 複数リソースの状態から仮想イベントを発行します。 |
 | `SelfAddressPolicy` | 自ホストアドレスの選択方針を表します。 |
@@ -556,6 +559,7 @@ validator がエラーにします。
 | `CloudProviderProfile` | `capabilities` (stringList), `phase` (string), `provider` (string) |
 | `DerivedEvent` | `phase` (string), `topic` (string) |
 | `EgressRoutePolicy` | `advisory` (bool), `candidates` (objectList), `dryRun` (bool), `family` (string), `lastTransitionAt` (timestamp), `phase` (string), `role` (string), `selectedCandidate` (string), `selectedDevice` (string), `selectedGateway` (string), `selectedGatewaySource` (string), `selectedInterface` (string), `selectedMetric` (int), `selectedRouteTable` (int), `selectedSource` (string), `selectedTargets` (int), `selectedWeight` (int), `updatedAt` (timestamp) |
+| `EventGroup` | `group` (string), `listenAddress` (string), `listenPort` (int), `nodeName` (string), `peers` (int), `peersFrom` (objectList), `pendingSources` (stringList), `phase` (string) |
 | `EventRule` | `phase` (string), `topic` (string) |
 | `FirewallEventLog` | `path` (string), `phase` (string), `sinks` (stringList) |
 | `FirewallPolicy` | `phase` (string) |

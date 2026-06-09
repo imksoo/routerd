@@ -7281,6 +7281,25 @@
                         "description": "NodeName is this node's identity within the group; it is stamped as the\nsourceNode on events emitted into this group.",
                         "type": "string"
                       },
+                      "peersFrom": {
+                        "description": "PeersFrom imports EventPeer delivery targets from a shared SAMNodeSet.\nNodes whose nodeRef equals nodeName are skipped; static EventPeer resources\nare overlaid after generated peers so they can act as bootstrap overrides.",
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "optional": {
+                              "type": "boolean"
+                            },
+                            "resource": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "resource"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
                       "replayWindow": {
                         "description": "ReplayWindow is a Go duration bounding the accepted message timestamp skew\nfor replay protection; empty is treated as \"5m\" downstream.",
                         "type": "string"

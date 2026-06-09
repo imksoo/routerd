@@ -23,6 +23,41 @@ func eventPeerRouter(spec api.EventPeerSpec) *api.Router {
 	}
 }
 
+func eventGroupRouter(spec api.EventGroupSpec) *api.Router {
+	return &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.FederationAPIVersion, Kind: "EventGroup"},
+				Metadata: api.ObjectMeta{Name: "edge"},
+				Spec:     spec,
+			},
+		}},
+	}
+}
+
+func TestValidateEventGroupPeersFromOK(t *testing.T) {
+	router := eventGroupRouter(api.EventGroupSpec{
+		NodeName:  "router-a",
+		PeersFrom: []api.EventPeersSourceSpec{{Resource: "SAMNodeSet/svnet1-nodes"}},
+	})
+	if err := Validate(router); err != nil {
+		t.Fatalf("validate EventGroup peersFrom: %v", err)
+	}
+}
+
+func TestValidateEventGroupRejectsInvalidPeersFrom(t *testing.T) {
+	router := eventGroupRouter(api.EventGroupSpec{
+		NodeName:  "router-a",
+		PeersFrom: []api.EventPeersSourceSpec{{Resource: "SAMPeerGroup/svnet1-rrs"}},
+	})
+	err := Validate(router)
+	if err == nil || !strings.Contains(err.Error(), "spec.peersFrom[0].resource must reference SAMNodeSet/<name>") {
+		t.Fatalf("Validate EventGroup peersFrom error = %v, want SAMNodeSet ref error", err)
+	}
+}
+
 func TestValidateEventPeerOK(t *testing.T) {
 	router := eventPeerRouter(api.EventPeerSpec{
 		GroupRef:        "cloudedge",

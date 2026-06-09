@@ -49,6 +49,13 @@ func peerResource(name, groupRef, node string) api.Resource {
 	return r
 }
 
+func samNodeSetResource(name string, nodes []api.SAMNodeSpec) api.Resource {
+	r := api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMNodeSet"}}
+	r.Metadata.Name = name
+	r.Spec = mustSpec(api.SAMNodeSetSpec{Nodes: nodes})
+	return r
+}
+
 func mustSpec(v any) map[string]any {
 	data, err := json.Marshal(v)
 	if err != nil {
@@ -59,6 +66,109 @@ func mustSpec(v any) map[string]any {
 		panic(err)
 	}
 	return m
+}
+
+func TestReconcileDerivesPeersFromSAMNodeSet(t *testing.T) {
+	dir := t.TempDir()
+	store := mapStore{}
+	group := groupResource()
+	spec, err := group.EventGroupSpec()
+	if err != nil {
+		t.Fatalf("EventGroup spec: %v", err)
+	}
+	spec.NodeName = "router06"
+	spec.PeersFrom = []api.EventPeersSourceSpec{{Resource: "SAMNodeSet/svnet1-nodes"}}
+	group.Spec = mustSpec(spec)
+	router := &api.Router{}
+	router.Spec.Resources = []api.Resource{
+		group,
+		samNodeSetResource("svnet1-nodes", []api.SAMNodeSpec{
+			{NodeRef: "router06", EventEndpoint: "http://router06:8787"},
+			{NodeRef: "cloud01", EventEndpoint: "http://cloud01:8787"},
+			{NodeRef: "cloud02"},
+		}),
+	}
+	c := Controller{Router: router, Store: store, RuntimeDir: filepath.Join(dir, "run"), StateDir: filepath.Join(dir, "state")}
+	if err := c.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	cfg := readEventConfig(t, filepath.Join(dir, "state", "eventd", "edge", "config.json"))
+	if len(cfg.Peers) != 1 {
+		t.Fatalf("peers = %+v, want one generated peer", cfg.Peers)
+	}
+	if cfg.Peers[0].NodeName != "cloud01" || cfg.Peers[0].Endpoint != "http://cloud01:8787" {
+		t.Fatalf("generated peer = %+v", cfg.Peers[0])
+	}
+	status := store.ObjectStatus(api.FederationAPIVersion, "EventGroup", "edge")
+	if status["phase"] != "Applied" || status["peers"] != 1 {
+		t.Fatalf("status = %#v, want Applied with one peer", status)
+	}
+	if peersFrom, ok := status["peersFrom"].([]map[string]any); !ok || len(peersFrom) != 1 {
+		t.Fatalf("peersFrom status = %#v, want one source", status["peersFrom"])
+	}
+}
+
+func TestReconcileStaticEventPeerOverridesPeersFrom(t *testing.T) {
+	dir := t.TempDir()
+	store := mapStore{}
+	group := groupResource()
+	spec, err := group.EventGroupSpec()
+	if err != nil {
+		t.Fatalf("EventGroup spec: %v", err)
+	}
+	spec.PeersFrom = []api.EventPeersSourceSpec{{Resource: "SAMNodeSet/svnet1-nodes"}}
+	group.Spec = mustSpec(spec)
+	override := peerResource("cloud01", "edge", "cloud01")
+	peerSpec, err := override.EventPeerSpec()
+	if err != nil {
+		t.Fatalf("EventPeer spec: %v", err)
+	}
+	peerSpec.Endpoint = "http://override:8787"
+	peerSpec.Types = []string{"override"}
+	override.Spec = mustSpec(peerSpec)
+	router := &api.Router{}
+	router.Spec.Resources = []api.Resource{
+		group,
+		samNodeSetResource("svnet1-nodes", []api.SAMNodeSpec{{NodeRef: "cloud01", EventEndpoint: "http://generated:8787"}}),
+		override,
+	}
+	c := Controller{Router: router, Store: store, RuntimeDir: filepath.Join(dir, "run"), StateDir: filepath.Join(dir, "state")}
+	if err := c.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	cfg := readEventConfig(t, filepath.Join(dir, "state", "eventd", "edge", "config.json"))
+	if len(cfg.Peers) != 1 {
+		t.Fatalf("peers = %+v, want one overridden peer", cfg.Peers)
+	}
+	if cfg.Peers[0].Endpoint != "http://override:8787" || len(cfg.Peers[0].Types) != 1 || cfg.Peers[0].Types[0] != "override" {
+		t.Fatalf("overridden peer = %+v", cfg.Peers[0])
+	}
+}
+
+func TestReconcilePeersFromMissingRequiredIsPending(t *testing.T) {
+	dir := t.TempDir()
+	store := mapStore{}
+	group := groupResource()
+	spec, err := group.EventGroupSpec()
+	if err != nil {
+		t.Fatalf("EventGroup spec: %v", err)
+	}
+	spec.PeersFrom = []api.EventPeersSourceSpec{{Resource: "SAMNodeSet/missing"}}
+	group.Spec = mustSpec(spec)
+	router := &api.Router{}
+	router.Spec.Resources = []api.Resource{group}
+	c := Controller{Router: router, Store: store, RuntimeDir: filepath.Join(dir, "run"), StateDir: filepath.Join(dir, "state")}
+	if err := c.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "state", "eventd", "edge", "config.json")); !os.IsNotExist(err) {
+		t.Fatalf("expected no config file while peersFrom is pending, stat err=%v", err)
+	}
+	status := store.ObjectStatus(api.FederationAPIVersion, "EventGroup", "edge")
+	if status["phase"] != "Pending" {
+		t.Fatalf("status = %#v, want Pending", status)
+	}
 }
 
 func TestReconcileWritesConfigWithMatchingPeerOnly(t *testing.T) {
@@ -80,10 +190,7 @@ func TestReconcileWritesConfigWithMatchingPeerOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read config: %v", err)
 	}
-	cfg, err := eventd.DecodeConfig(func(v any) error { return json.Unmarshal(data, v) })
-	if err != nil {
-		t.Fatalf("decode config: %v", err)
-	}
+	cfg := decodeEventConfig(t, data)
 	if cfg.NodeName != "router06" || cfg.Group != "edge" {
 		t.Fatalf("unexpected identity: %+v", cfg)
 	}
@@ -111,6 +218,24 @@ func TestReconcileWritesConfigWithMatchingPeerOnly(t *testing.T) {
 	if status := store.ObjectStatus(api.FederationAPIVersion, "EventGroup", "edge")["phase"]; status != "Applied" {
 		t.Fatalf("expected Applied phase, got %v", status)
 	}
+}
+
+func readEventConfig(t *testing.T, path string) eventd.Config {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	return decodeEventConfig(t, data)
+}
+
+func decodeEventConfig(t *testing.T, data []byte) eventd.Config {
+	t.Helper()
+	cfg, err := eventd.DecodeConfig(func(v any) error { return json.Unmarshal(data, v) })
+	if err != nil {
+		t.Fatalf("decode config: %v", err)
+	}
+	return cfg
 }
 
 func TestReconcileDryRunWritesNoFile(t *testing.T) {
