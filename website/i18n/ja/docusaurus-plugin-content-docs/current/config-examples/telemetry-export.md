@@ -5,7 +5,7 @@ sidebar_position: 110
 
 # OTLP コレクターへのテレメトリ送出
 
-![routerd の log、metric、trace、service attribute を Telemetry resource から OTLP collector へ export する構成](/img/diagrams/config-example-telemetry-export.png)
+![routerd のログ、メトリクス、トレース、サービス属性を Telemetry リソースから OTLP コレクターへ送出する構成](/img/diagrams/config-example-telemetry-export.png)
 
 routerd のテレメトリを OpenTelemetry コレクターへ送る例です。
 長時間運転、health check、DPI、apply のレイテンシーの観測に使えます。
@@ -25,22 +25,30 @@ flowchart LR
 
 ## 図の対応表
 
-| 番号 | 意味 | 主な resource |
+| 番号 | 意味 | 主なリソース |
 | --- | --- | --- |
 | [1] | logs、metrics、traces を出す routerd プロセス。 | `Telemetry/otlp` |
 | [2] | OTLP コレクターのエンドポイント。 | `Telemetry.spec.otlp.endpoint` |
 | [3] | コレクターが転送する先のバックエンド。 | routerd 管理外 |
 
-## 要点
+## この例で管理するもの
+
+| 領域 | routerd リソース |
+| --- | --- |
+| テレメトリの送出先 | `Telemetry/otlp` |
+| サービスの識別情報 | `serviceNamespace`, `attributes` |
+| シグナル | `logs`, `metrics`, `traces` |
+
+## 設定の要点
 
 ```yaml
-# [1] routerd telemetry export を有効にする。
+# [1] routerd のテレメトリ送出を有効にする。
 - apiVersion: observability.routerd.net/v1alpha1
   kind: Telemetry
   metadata:
     name: otlp
   spec:
-    # [2] OTLP collector のエンドポイント。
+    # [2] OTLP コレクターのエンドポイント。
     otlp:
       endpoint: http://collector.example.internal:4317
       insecure: true

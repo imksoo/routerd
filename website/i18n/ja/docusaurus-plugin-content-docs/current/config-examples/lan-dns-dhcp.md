@@ -5,7 +5,7 @@ sidebar_position: 20
 
 # LAN DHCP とローカル DNS
 
-![routerd が LAN gateway address、DHCPv4 pool と reservation、local DNS zone、lease-derived name を提供する構成](/img/diagrams/config-example-lan-dns-dhcp.png)
+![routerd が LAN ゲートウェイアドレス、DHCPv4 プールと予約、ローカル DNS ゾーン、リース由来の名前を提供する構成](/img/diagrams/config-example-lan-dns-dhcp.png)
 
 1 つの LAN インターフェースを、小さな家庭内 LAN や検証用 LAN のサービスセグメントとして使う例です。
 routerd が LAN アドレス、DHCPv4、ローカル DNS ゾーン、DHCP リース由来の名前を管理します。
@@ -44,21 +44,26 @@ flowchart LR
 | リゾルバ | `DNSResolver/lan-resolver` |
 | DHCPv4 | `DHCPv4Server/lan-dhcpv4`, `DHCPv4Reservation/nas` |
 
-## 要点
+## 設定の要点
 
 ```yaml
-# [2] router.home.example や nas.home.example の local zone。
+# [2] router.home.example や nas.home.example のローカルゾーン。
 - kind: DNSZone
   metadata:
     name: home
   spec:
     zone: home.example
+    records:
+      - hostname: router
+        ipv4From:
+          resource: IPv4StaticAddress/lan-base
+          field: address
     dhcpDerived:
       sources:
         - DHCPv4Server/lan-dhcpv4
       ddns: true
 
-# [3] DHCP で router address を gateway / DNS として配る。
+# [3] DHCP でルーターのアドレスをゲートウェイと DNS として配る。
 - kind: DHCPv4Server
   metadata:
     name: lan-dhcpv4

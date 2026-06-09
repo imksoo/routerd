@@ -13,30 +13,37 @@ routerd は `vYYYYMMDD.HHmm` 形式で頻繁にリリースしますが、その
 | 項目 | 内容 |
 | --- | --- |
 | バージョン | **v20260608.2325** |
-| 位置づけ | 推奨安定版（v20260608.0642 を置き換え。pair-stable SAM transport addressing — `addressingMode: pair-stable` によるコンパクトな leaf-spine 設定記述） |
-| 稼働実績 | lab 環境（7 compact config 検証済み）、k8s クラスタ（10 ノード: 2 RR + 8 leaf、全 BGP Established、FIB 正常、connectivity pass）、本番ルーター（homert02、影響なし）で検証済み。不具合 0 件 |
+| 位置づけ | 推奨安定版（v20260608.1354 を置き換え。peersFrom/membersFrom による動的配布でゼロタッチの leaf 設定を実現） |
+| 稼働実績 | k8s クラスタ（10 ノード: 2 RR + 8 leaf、peersFrom + membersFrom + peer-group-sync すべて緑、フル verify 通過）、lab 環境（FreeBSD router01/04 アップグレード検証済み）、本番ルーター（homert02、validate pass）で検証済み。不具合 0 件 |
 | バイナリ | 静的リンク（`CGO_ENABLED=0`）、CI と Release ワークフローをすべて通過 |
 
 ## v20260608.2325 を推奨する理由
 
-この版は v20260608.0642 のすべての特性を継承した上で、**pair-stable SAM transport addressing** を追加しています。
+この版は v20260608.1354 のすべての特性を継承した上で、**peersFrom**、**membersFrom**、および **peer-group-sync** を追加し、SAM ファブリックのゼロタッチ leaf 設定を実現しています。
 
-### Pair-stable addressing（#330, #331）
+### peersFrom + SAMPeerGroup（#332, #333）
 
-`SAMTransportProfile` に `spec.addressingMode: pair-stable` が追加されました。inner prefix と canonical peer key の fnv64a ハッシュを用いた決定的な /31 スロット割り当てアルゴリズムです。
+`SAMTransportProfile` に `spec.peersFrom` が追加され、`SAMPeerGroup` リソースを参照できるようになりました。union セマンティクス: `peersFrom` のメンバーを先に読み込み、静的な `peers` が `nodeRef` 単位で上書きします。RR ノードで `publishPeerGroup: true` を設定すると、`SAMPeerGroup` の `DynamicConfigPart` を自動生成します。
 
-- **コンパクトな設定記述。** leaf ノードで `topologyNodeRefs` が不要になり、ノードごとのトポロジ宣言の繰り返しを排除。svnet1 設定で約 100 行削減。
-- **トポロジ変更に対する安定性。** ノードの追加・削除で既存ピアのアドレスが再割り当てされません（ソート順に依存する `edge-index` との違い）。
-- **後方互換。** 既存の `edge-index`（デフォルト）設定はそのまま動作。
-- **衝突検出。** `routerd validate` / `routerctl validate` で /31 スロットのハッシュ衝突を設定時に検出。
+### ピアグループ同期（#334, #336）
 
-### v20260608.0642 からの継承事項
+WireGuard 内部ネットワーク上のポート 19652 で動作する軽量 HTTP サービスです。RR が `GET /v1/peer-groups` を提供し、leaf は WireGuard ピアを検出して一致するグループを自動取得します。手動で `SAMPeerGroup` を配布する必要はありません。
 
-v20260608.0642 の全特性を継承: ADR 0014 CLI 再設計、OpenRC 信頼性向上、DNS VRRP VIP 対応、forcefrag prerouting 修正、BGP peer watch 安定化、およびそれ以前の全本番安全修正。
+### MobilityMemberSet + membersFrom（#339, #340）
+
+`MobilityMemberSet` Kind は、共有の識別情報のみのプールメンバー（`nodeRef`、`site`、`role`）を保持します。`MobilityPool.spec.membersFrom` でこれらを取り込むことで、leaf は自身の捕捉/検出の詳細だけをインラインに残し、O(N^2) の設定重複を削減します。`publishMemberSet: true` を設定すると、`GET /v1/member-sets` 経由でメンバーセットを生成・配布します。svnet1 設定で 78 行削減（2624 → 2546）。
+
+### FreeBSD 旧フラグ互換（#337, #338）
+
+廃止された `routerd serve` フラグ（`--observe-interval`、`--controller-chain*`）が `/etc/rc.conf` に残っていても、警告付きで受理・無視されるようになり、アップグレード失敗を防ぎます。
+
+### v20260608.1354 からの継承事項
+
+v20260608.1354 の全特性を継承: pair-stable アドレッシング、ADR 0014 CLI 再設計、およびそれ以前の全本番安全修正。
 
 ## 既知の観測（リリースを止めない事項）
 
-- **`install.sh` 後に `routerd-bgp` が旧 inode のままで動く場合がある。** これは意図どおりです。`install.sh` はアップグレード時に `routerd-bgp` を自動再起動しないので、確立済みの BGP セッションと ECMP が routerd バイナリの更新をまたいで残ります。運用者が Graceful Restart のタイミングで `systemctl restart routerd-bgp` を実行するまで、プロセスは旧 inode のバイナリを掴み続けます。
+- **`install.sh` 後に `routerd-bgp` が旧実行ファイルの inode のままで動く場合がある。** これは意図どおりです。`install.sh` はアップグレード時に `routerd-bgp` を自動再起動しないので、確立済みの BGP セッションと ECMP が routerd バイナリの更新をまたいで残ります。
 - **`ManagementAccess` 未宣言の構成では `routerctl doctor mgmt` が SKIP になる。** これは稼働中の設定側の選択であり、リリースの欠陥ではありません。
 
 :::warning アップグレード時の注意

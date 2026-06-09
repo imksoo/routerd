@@ -1,54 +1,32 @@
 ---
-title: Azure と PVE の same-subnet SAM スモークテスト
+title: Azure と PVE の同一サブネット SAM スモークテスト
 ---
 
-# Azure と PVE の same-subnet SAM スモークテスト
+# Azure と PVE の同一サブネット SAM スモークテスト
 
-![Azure provider-secondary-IP capture、on-prem proxy-ARP capture、SAM /32 delivery route、forwarding check、routerctl doctor verification の流れ](/img/diagrams/how-to-hybrid-azure-pve-same-subnet.png)
+![Azure プロバイダーセカンダリ IP 捕捉、オンプレミス proxy-ARP 捕捉、SAM /32 配送経路、転送の確認、routerctl doctor による検証の流れ](/img/diagrams/how-to-hybrid-azure-pve-same-subnet.png)
 
-このガイドは、Azure の routerd node とオンプレミス Proxmox VE の routerd node
-で、Selective Address Mobility (SAM) により選択した `/32` address を交換する、
-検証済みの運用形をまとめたものです。resource semantics は
-[選択的アドレス移動性のリファレンス](../reference/selective-address-mobility)
-を参照してください。
+このガイドは、Azure の routerd ノードとオンプレミスの Proxmox VE routerd ノードで、Selective Address Mobility (SAM) により選択した `/32` アドレスを交換する、検証済みの運用形をまとめたものです。リソースの意味論は[選択的アドレス移動性のリファレンス](../reference/selective-address-mobility)を参照してください。
 
 ## Azure 側
 
-- Azure NIC secondary IP は Azure 側に残します。この provider-side object が
-  on-prem `/32` 宛の packet を capture します。
-- Ubuntu guest OS には captured `/32` を持たせないでください。cloud-init や
-  netplan が secondary NIC IP を自動付与することがあります。その設定は抑止する
-  か削除します。Claim が `configureOSAddress: false` の場合、routerd は
-  reconcile 時に、その特定 address を local interface から de-assign し、
-  address が存在しない状態を維持します。
-- Azure NIC と Linux の両方で IP forwarding を有効化します
-  (`net.ipv4.ip_forward=1`)。
+- Azure NIC のセカンダリ IP は Azure 側に残します。このプロバイダー側のオブジェクトが、オンプレミスの `/32` 宛てのパケットを捕捉します。
+- Ubuntu ゲスト OS には、捕捉した `/32` を持たせないでください。cloud-init や netplan がセカンダリ NIC の IP を自動付与することがあります。その設定は抑止するか削除します。Claim が `configureOSAddress: false` の場合、routerd はリコンサイル時にそのアドレスをローカルインターフェースから外し、アドレスが存在しない状態を維持します。
+- Azure NIC と Linux の両方で IP 転送を有効化します（`net.ipv4.ip_forward=1`）。
 
 ## オンプレミス PVE 側
 
-- local same-subnet host が見える LAN/bridge interface で `proxy-arp` capture
-  を使います。
-- Linux forwarding を有効化します。SAM では routerd が通常の sysctl path で
-  `ip_forward` と `proxy_arp` を有効化します。
-- capture interface と WireGuard tunnel の間で、captured `/32` の forwarding
-  を firewall policy で許可します。SAM は firewall rule や NAT rule を追加しま
-  せん。
-- cloud guest image では、provider fabric が packet を drop していると判断する
-  前に、host firewall の既定値も確認してください。ルーターは WireGuard の UDP
-  listen port を受け付け、capture interface と `wg-hybrid` の間の forwarding を
-  許可する必要があります。`routerctl doctor hybrid` は terminal iptables
-  drop/reject pattern と、SAM MSS clamp rule の不足を警告します。
+- 同一サブネットのローカルホストが見える LAN やブリッジのインターフェースで、`proxy-arp` 捕捉を使います。
+- Linux の転送を有効化します。SAM では routerd が通常の sysctl パスで `ip_forward` と `proxy_arp` を有効化します。
+- 捕捉インターフェースと WireGuard トンネルの間で、捕捉した `/32` の転送をファイアウォールで許可します。SAM はファイアウォールルールや NAT ルールを追加しません。
+- クラウドのゲストイメージでは、プロバイダーのファブリックがパケットを落としていると判断する前に、ホスト側ファイアウォールの既定値も確認してください。ルーターは WireGuard の UDP 待ち受けポートを受け付け、捕捉インターフェースと `wg-hybrid` の間の転送を許可する必要があります。`routerctl doctor hybrid` は、iptables の終端 drop/reject パターンと、SAM MSS clamp ルールの不足を警告します。
 
-## トンネルと routing
+## トンネルとルーティング
 
-- WireGuard は on-prem から Azure public IP へ dial する形にします。
-- on-prem peer には `persistentKeepalive` を設定し、NAT と cloud edge state を
-  維持します。
-- 最初の smoke は UDR なしで実施します。後で UDR fallback を追加する場合は、
-  Azure が captured `/32` を delivery 元の router へ戻す same-subnet loop に注
-  意してください。
-- SAM delivery は各 claim を tunnel interface への `/32` route に lower しま
-  す。default route は変更しません。
+- WireGuard はオンプレミスから Azure のパブリック IP へ接続する形にします。
+- オンプレミス側のピアには `persistentKeepalive` を設定し、NAT やクラウドエッジの状態を維持します。
+- 最初のスモークテストは UDR なしで実施します。後で UDR フォールバックを追加する場合は、Azure が捕捉した `/32` を配送元のルーターへ戻してしまう、同一サブネットのループに注意してください。
+- SAM の配送は各 Claim をトンネルインターフェースへの `/32` 経路に落とし込みます。デフォルト経路は変更しません。
 
 ## 検証
 
@@ -58,11 +36,6 @@ title: Azure と PVE の same-subnet SAM スモークテスト
 routerctl doctor hybrid
 ```
 
-`provider-secondary-ip` + `configureOSAddress: false` では、captured `/32` が
-local `ip addr` に存在しないこと、delivery route が tunnel を向くこと、
-`ip_forward=1` であることを確認します。`proxy-arp` では、`proxy_arp=1`、
-proxy neighbor、tunnel への delivery route、`ip_forward=1` を確認します。
+`provider-secondary-ip` と `configureOSAddress: false` の組み合わせでは、捕捉した `/32` がローカルの `ip addr` に存在しないこと、配送経路がトンネルを向いていること、`ip_forward=1` であることを確認します。`proxy-arp` では、`proxy_arp=1`、プロキシネイバーの存在、トンネルへの配送経路、`ip_forward=1` を確認します。
 
-低 MTU の overlay では、`doctor hybrid` が SAM MSS clamp を報告し、
-`nft list table inet routerd_mss` に、選択した `/32` path の
-capture-to-tunnel と tunnel-to-capture の両方の rule が含まれていることを確認します。
+低 MTU のオーバーレイでは、`doctor hybrid` が SAM MSS clamp を報告し、`nft list table inet routerd_mss` に、選択した `/32` 経路の捕捉からトンネルへ、およびトンネルから捕捉への両方のルールが含まれていることを確認します。

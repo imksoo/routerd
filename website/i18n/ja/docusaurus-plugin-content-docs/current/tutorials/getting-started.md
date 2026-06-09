@@ -4,7 +4,7 @@ title: はじめに
 
 # はじめに
 
-![interface discovery と小さな YAML config から validate、plan、dry-run、serve、routerctl status へ進む安全な first routerd loop](/img/diagrams/tutorial-getting-started.png)
+![インターフェースの確認と小さな YAML 設定から validate、plan、dry-run、serve、routerctl status へ進む安全な最初の routerd ループ](/img/diagrams/tutorial-getting-started.png)
 
 このチュートリアルでは、まず安全な進め方を確認します。
 
@@ -102,8 +102,8 @@ routerctl apply --config first-router.yaml --dry-run
 sudo routerd serve --config first-router.yaml
 ```
 
-本番では、生成されるサービス成果物のリソースか systemd ユニットファイルを使います。
-こうすると、起動時に `routerd serve` を開始できます。
+本番では、同梱のサービスマネージャー用ファイルを使って routerd を導入してください。
+こうすると、起動時に `routerd serve` が自動的に開始されます。
 
 ## 7. 状態の確認
 
@@ -114,3 +114,10 @@ routerctl connections --limit 50
 ```
 
 次のチュートリアルでは、LAN の DHCP、RA、DNS、経路ポリシー、NAT44、DS-Lite を追加します。
+
+## 次に読むもの
+
+- [WAN 側サービス](./wan-side-services.md) — DHCPv6-PD、PPPoE、DS-Lite、DHCPv4 WAN を設定する
+- [LAN 側サービス](./lan-side-services.md) — DHCPv4 スコープ、RA、DNS、NTP を追加する
+- [基本のファイアウォール](./basic-firewall.md) — 3 ロール構成のファイアウォールゾーンを有効にする
+- [routerctl doctor](../operations/routerctl-doctor.md) — 適用後のルーターの健全性を確認する

@@ -36,7 +36,7 @@ LAN クライアントを観測
 2. **トランスポート（Phase 2）** — イベントはオーバーレイ経由でクラウドノードの `EventGroup` 受信側にプッシュされます。
 3. **マッチ** — クラウドノードの `EventSubscription` が、タイプ（およびオプションで subject プレフィックス / ソースノード）でイベントにマッチします。
 4. **プラグイン** — サブスクリプションの `trigger.pluginRef` Plugin がマッチしたイベントを stdin で受け取って実行され、`PluginResult` を返します。
-5. **DynamicConfigPart** — routerctl が結果を検証し、provenance アノテーション（`routerd.net/event-id`、`routerd.net/event-group`、`routerd.net/dynamic-source`）が付与された動的設定パーツとして保存します。
+5. **DynamicConfigPart** — routerctl が結果を検証し、来歴アノテーション（`routerd.net/event-id`、`routerd.net/event-group`、`routerd.net/dynamic-source`）が付与された動的設定パーツとして保存します。
 6. **レンダー** — `routerctl dynamic render` で、新しい `RemoteAddressClaim` を含む実効設定が表示されます。
 
 ## サンプルリソース
@@ -78,11 +78,11 @@ routerctl dynamic render \
   --state-file /var/lib/routerd/routerd.db
 ```
 
-`10.88.60.9/32` の `RemoteAddressClaim` がイベント provenance アノテーション付きで表示されます。
+`10.88.60.9/32` の `RemoteAddressClaim` がイベントの来歴アノテーション付きで表示されます。
 
 ## スコープと安全性
 
-- サンプルプラグインは**プロバイダー非依存**であり、**クラウドミューテーションを行いません**。`capture` ブロックは dry-run インテントのプレースホルダーです（`configureOSAddress: false`）。
+- サンプルプラグインは**プロバイダー非依存**であり、**クラウドへの変更を行いません**。`capture` ブロックは dry-run 意図のプレースホルダーです（`configureOSAddress: false`）。
 - アドレスを実際にクレームするためのプロバイダーオペレーション（`actionPlan`）の実行は **Phase 4/5** であり、MVP ではアクションプランは実行しません。
-- routerd は設定やシークレットをプラグインに渡しません — 観測されたイベントのみです。
+- routerd は設定や秘密をプラグインに渡しません -- 観測されたイベントのみです。
 - `EventSubscription.match.types` は必須であるため、サブスクリプションがグループ内のすべてのイベントでプラグインを無差別にトリガーすることはできません。ループを防ぐためには `subjectPrefixes` と `sourceNodes` でさらに絞り込んでください。

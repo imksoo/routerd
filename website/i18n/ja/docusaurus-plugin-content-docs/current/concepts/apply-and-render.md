@@ -31,8 +31,7 @@ routerctl plan --config /usr/local/etc/routerd/router.yaml
 
 ## 予行実行する
 
-`--dry-run` は、ホストを変更せずに適用の結果だけを確認します。
-routerd では、新しいコントローラーや実機検証の初期段階で、予行実行を既定とします。
+`--dry-run` は、ホストを変更せずに適用の流れだけを確認します。実際に変わる箇所を事前に把握できます。
 
 ```bash
 routerctl apply --config /usr/local/etc/routerd/router.yaml --dry-run
@@ -40,9 +39,7 @@ routerctl apply --config /usr/local/etc/routerd/router.yaml --dry-run
 
 ## 適用する
 
-`routerctl apply` は、YAML の意図に合わせてホストを変更します。
-一度だけ実行するなら `--once` を付けます。
-常駐させるなら `routerd serve` を使います。
+`routerctl apply` は、一度きりのホスト操作です。意図を検証し、必要に応じてホストの現在状態を観測し、生成した成果物を書き出し、状態を記録して終了します。長時間動くデーモンのライフサイクルは管理しません。管理対象デーモンの起動・有効化・再起動・再読み込みは `routerd serve` が担当します。
 
 ```bash
 sudo routerctl apply --config /usr/local/etc/routerd/router.yaml

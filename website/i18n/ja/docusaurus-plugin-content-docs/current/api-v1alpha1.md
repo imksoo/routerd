@@ -40,6 +40,7 @@ spec:
 | `net.routerd.net/v1alpha1` | インターフェース、`ManagementAccess`、再利用可能な `IPAddressSet`、DHCP、DNS、経路、トンネル、VIP、BGP、イベント、通信フローログ |
 | `firewall.routerd.net/v1alpha1` | `FirewallZone`, `FirewallPolicy`, `FirewallRule`, `FirewallEventLog`, `ClientPolicy`, `PortForward`, `IngressService`, `LocalServiceRedirect` |
 | `system.routerd.net/v1alpha1` | `Hostname`, `Sysctl`, `SysctlProfile`, `Package`, `NTPClient`, `NTPServer`, `LogSink`, `ObservabilityPipeline`, `RouterdCluster`, `LogRetention`, `WebConsole` |
+| `observability.routerd.net/v1alpha1` | `Telemetry` |
 | `plugin.routerd.net/v1alpha1` | プラグインマニフェスト |
 | `hybrid.routerd.net/v1alpha1` | `TunnelInterface`, `OverlayPeer`, `HybridRoute`, `AddressMobilityDomain`, `CloudProviderProfile`, `RemoteAddressClaim` |
 | `mobility.routerd.net/v1alpha1` | `MobilityPool`, `MobilityMemberSet`, `SAMTransportProfile` |
@@ -59,6 +60,14 @@ spec:
 | `RouterdCluster` | file lease により、leader だけが host configuration を変更し、standby は status 観測に回ります。 |
 | `LogRetention` | イベント、DNS、通信フロー、firewall event log の保管期間を管理します。 |
 | `WebConsole` | 読み取り専用の Web 画面を、管理ネットワークで待ち受けます。 |
+
+## 可観測性
+
+| Kind | 役割 |
+| --- | --- |
+| `Telemetry` | 外部の OTLP エンドポイントを宣言し、生成されたサービスユニットに OpenTelemetry の環境変数を注入します。 |
+
+`Telemetry` は、管理対象デーモンが出力する metrics、traces、logs の送信先エンドポイントを記述します。`LogSink` は、運用イベントや観測ログの転送経路を記述します。ログシンクが OTLP を使う場合は、collector のエンドポイントを重複して書かず、`LogSink.spec.otlp.telemetryRef` で `Telemetry` リソースを参照してください。
 
 ## インターフェース
 
@@ -106,6 +115,7 @@ Kernel module と、systemd-networkd/resolved の adoption drop-in は、router 
 | `DHCPv4Client` | `routerd-dhcpv4-client` が DHCPv4 リース、IPv4 アドレス、任意のデフォルト経路を管理します。 |
 | `DHCPv6Address` | DHCPv6 IA_NA の意図を表します。 |
 | `DHCPv6PrefixDelegation` | `routerd-dhcpv6-client` が管理する DHCPv6-PD リースです。 |
+| `DHCPv6PrefixDelegationLeaseSync` | active ノードの `DHCPv6PrefixDelegation` クライアントリースのスナップショットを standby ノードへ同期します。 |
 | `DHCPv6Information` | DHCPv6 情報要求の結果です。DNS、SNTP、ドメイン検索、AFTR 情報を観測します。 |
 | `IPv6DelegatedAddress` | 委任プレフィックスから LAN 側アドレスを導出します。 |
 | `IPv6RAAddress` | RA/SLAAC で得る IPv6 アドレスを表します。 |
@@ -119,11 +129,13 @@ identity を固定する必要がある場合は、`spec.clientDUID` に plain h
 | Kind | 役割 |
 | --- | --- |
 | `DHCPv4Server` | dnsmasq の DHCPv4 service と任意のアドレスプールを提供します。 |
+| `DHCPv4ServerLeaseSync` | `DHCPv4Server` から導出された dnsmasq のリースファイルを同期します。 |
 | `DHCPv4Reservation` | MAC アドレスごとの固定割り当てを表します。 |
 | `DHCPv4Relay` | dnsmasq の DHCPv4 中継を表します。 |
 | `IPv6RouterAdvertisement` | RA、PIO、RDNSS、DNSSL、M/O フラグ、MTU、優先度、寿命を生成します。 |
 | `RogueRADetector` | RA を送出する interface 上で観測された、自身以外の IPv6 Router Advertisement を status として表示する、自動導出の resource です。 |
 | `DHCPv6Server` | dnsmasq の DHCPv6/RA service です。`stateless`、`stateful`、`both`、`ra-only` を扱います。 |
+| `DHCPv6ServerLeaseSync` | `DHCPv6Server` から導出された dnsmasq のリースファイルを同期します。 |
 | `DNSZone` | ローカル権威ゾーンを表します。手動レコードと DHCP リース由来のレコードを扱います。 |
 | `DNSResolver` | `routerd-dns-resolver` のデーモンインスタンス、待ち受け、キャッシュ、メトリクス、query log を表します。 |
 | `DNSForwarder` | 1 つの resolver に対する DNS の match rule です。`DNSZone` を応答するか、名前付きの `DNSUpstream` へ転送します。 |
@@ -526,15 +538,20 @@ validator がエラーにします。
 | `DHCPv4Relay` | `phase` (string) |
 | `DHCPv4Reservation` | `address` (string), `hostname` (string), `phase` (string) |
 | `DHCPv4Server` | `configPath` (string), `dnsServers` (stringList), `domain` (string), `dryRun` (bool), `interface` (string), `ntpServers` (stringList), `phase` (string) |
+| `DHCPv4ServerLeaseSync` | `command` (string), `dryRun` (bool), `phase` (string), `sourceCount` (int), `sources` (objectList), `syncedAt` (timestamp), `targetCount` (int), `targets` (objectList) |
 | `DHCPv6Address` | `address` (string), `interface` (string), `phase` (string) |
 | `DHCPv6Information` | `aftrName` (string), `dnsServers` (stringList), `domainSearch` (stringList), `phase` (string), `sntpServers` (stringList), `source` (string) |
 | `DHCPv6PrefixDelegation` | `aftrName` (string), `currentPrefix` (string), `dnsServers` (stringList), `domainSearch` (stringList), `interface` (string), `phase` (string), `sntpServers` (stringList) |
+| `DHCPv6PrefixDelegationLeaseSync` | `command` (string), `dryRun` (bool), `phase` (string), `sourceCount` (int), `sources` (objectList), `syncedAt` (timestamp), `targetCount` (int), `targets` (objectList) |
 | `DHCPv6Server` | `configPath` (string), `dnsServers` (stringList), `dryRun` (bool), `interface` (string), `phase` (string), `sntpServers` (stringList) |
+| `DHCPv6ServerLeaseSync` | `command` (string), `dryRun` (bool), `phase` (string), `sourceCount` (int), `sources` (objectList), `syncedAt` (timestamp), `targetCount` (int), `targets` (objectList) |
 | `DNSForwarder` | `phase` (string), `resolver` (string), `upstreams` (stringList) |
 | `DNSResolver` | `listenAddresses` (stringList), `listeners` (int), `phase` (string), `sources` (int), `updatedAt` (timestamp) |
 | `DNSUpstream` | `address` (string), `phase` (string), `url` (string) |
 | `DNSZone` | `pendingRecords` (objectList), `phase` (string), `records` (int), `updatedAt` (timestamp), `zone` (string) |
 | `DSLiteTunnel` | `aftrIPv6` (string), `aftrName` (string), `device` (string), `dryRun` (bool), `innerLocalIPv4` (string), `innerRemoteIPv4` (string), `interface` (string), `localIPv6` (string), `localInterface` (string), `mtu` (int), `phase` (string), `tunnelName` (string) |
+| `AddressMobilityDomain` | `mode` (string), `peerRef` (string), `phase` (string), `prefix` (string) |
+| `CloudProviderProfile` | `capabilities` (stringList), `phase` (string), `provider` (string) |
 | `DerivedEvent` | `phase` (string), `topic` (string) |
 | `EgressRoutePolicy` | `advisory` (bool), `candidates` (objectList), `dryRun` (bool), `family` (string), `lastTransitionAt` (timestamp), `phase` (string), `role` (string), `selectedCandidate` (string), `selectedDevice` (string), `selectedGateway` (string), `selectedGatewaySource` (string), `selectedInterface` (string), `selectedMetric` (int), `selectedRouteTable` (int), `selectedSource` (string), `selectedTargets` (int), `selectedWeight` (int), `updatedAt` (timestamp) |
 | `EventRule` | `phase` (string), `topic` (string) |
@@ -544,6 +561,7 @@ validator がエラーにします。
 | `FirewallZone` | `interfaces` (stringList), `phase` (string) |
 | `HealthCheck` | `consecutiveFailed` (int), `lastCheckedAt` (timestamp), `phase` (string), `protocol` (string), `role` (string), `sourceAddress` (string), `sourceInterface` (string), `target` (string) |
 | `Hostname` | `hostname` (string), `phase` (string) |
+| `HybridRoute` | `defaultRouteUntouched` (bool), `estimatedMTU` (int), `peerRef` (string), `phase` (string), `routes` (objectList) |
 | `IPAddressSet` | `addresses` (stringList), `ipv4Addresses` (stringList), `ipv6Addresses` (stringList), `phase` (string), `updatedAt` (timestamp) |
 | `IPsecConnection` | `phase` (string) |
 | `IPv4Route` | `destination` (string), `device` (string), `dryRun` (bool), `gateway` (string), `metric` (int), `phase` (string), `type` (string) |
@@ -569,12 +587,14 @@ validator がエラーにします。
 | `NTPClient` | `phase` (string), `servers` (stringList), `source` (string), `updatedAt` (timestamp) |
 | `NTPServer` | `allowCIDRs` (stringList), `listenAddresses` (stringList), `phase` (string), `servers` (stringList), `source` (string), `updatedAt` (timestamp) |
 | `ObservabilityPipeline` | `phase` (string), `signals` (stringList) |
+| `OverlayPeer` | `nodeID` (string), `phase` (string), `role` (string), `underlayInterface` (string), `underlayType` (string) |
 | `TunnelInterface` | `dryRun` (bool), `encapDport` (int), `encapSport` (int), `ifname` (string), `interface` (string), `local` (string), `mode` (string), `mtu` (int), `phase` (string), `remote` (string), `ttl` (int) |
 | `PPPoESession` | `connectedAt` (timestamp), `currentAddress` (string), `device` (string), `dnsServers` (stringList), `dryRun` (bool), `gateway` (string), `interface` (string), `peerAddress` (string), `phase` (string) |
 | `Package` | `dryRun` (bool), `packages` (stringList), `phase` (string) |
 | `PortForward` | `dryRun` (bool), `listenAddress` (string), `phase` (string), `target` (object) |
 | `RouterdCluster` | `leader` (string), `leaseExpiresAt` (timestamp), `phase` (string) |
 | `SelfAddressPolicy` | `address` (string), `phase` (string), `source` (string) |
+| `RemoteAddressClaim` | `address` (string), `captureType` (string), `deliveryMode` (string), `domainRef` (string), `ownerSide` (string), `peerRef` (string), `phase` (string) |
 | `Sysctl` | `dryRun` (bool), `key` (string), `phase` (string), `value` (string) |
 | `SysctlProfile` | `dryRun` (bool), `phase` (string), `profile` (string) |
 | `TailscaleNode` | `advertiseRoutes` (stringList), `peerCount` (int), `phase` (string), `tailnetName` (string) |

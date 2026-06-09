@@ -5,7 +5,7 @@ sidebar_position: 90
 
 # Tailscale の subnet router / exit node
 
-![routerd が Tailscale node に LAN と management prefix、exit-node intent を advertise させる構成](/img/diagrams/config-example-tailscale-subnet-exit.png)
+![routerd が Tailscale ノードに LAN と管理プレフィックス、exit node の意図を広告させる構成](/img/diagrams/config-example-tailscale-subnet-exit.png)
 
 ルーターを Tailscale の subnet router 兼 exit node として広告する例です。
 
@@ -29,17 +29,26 @@ flowchart LR
 
 ## 図の対応表
 
-| 番号 | 意味 | 主な resource |
+| 番号 | 意味 | 主なリソース |
 | --- | --- | --- |
 | [1] | 経路と exit node の広告を受ける tailnet。 | Tailscale control plane |
 | [2] | Tailscale node として登録されるルーター。 | `TailscaleNode/home` |
 | [3] | tailnet に広告する LAN プレフィックス。 | `advertiseRoutes` |
 | [4] | リモート管理用に広告する管理プレフィックス。 | `advertiseRoutes` |
 
-## 要点
+## この例で管理するもの
+
+| 領域 | routerd リソース |
+| --- | --- |
+| ランタイムパッケージ | `Package/tailscale-runtime` |
+| tailnet ノード | `TailscaleNode/home` |
+| 経路の広告 | `advertiseRoutes` |
+| exit node | `advertiseExitNode` |
+
+## 設定の要点
 
 ```yaml
-# [2] router を名前付き Tailscale node として登録する。
+# [2] ルーターを名前付き Tailscale ノードとして登録する。
 - apiVersion: net.routerd.net/v1alpha1
   kind: TailscaleNode
   metadata:

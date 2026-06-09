@@ -8,7 +8,7 @@ slug: /reference/plugin-protocol
 routerd のプラグインは、信頼済みのローカル実行ファイルです。
 本体に組み込まないリソース固有の処理を、同じホスト上の小さなプログラムとして追加するための仕組みです。
 
-リモートからのプラグイン登録、リモートインストール、公開レジストリは、現在は対象外です。
+リモートからのプラグイン登録、リモートインストール、公開レジストリは、意図的に対象外です。
 
 ## 配置
 
@@ -37,24 +37,23 @@ bin/<plugin>
 ただし、ネットワーク状態を変更する処理は、テストしやすい小さな単位に分けます。
 本体と同じく、ホストネットワークを変更するテストは、`tests/netns` などの隔離環境で行います。
 
-## 現在の位置付け
-
-routerd の主要なルーター機能は、本体のリソースと専用デーモンで実装を進めています。
-プラグインは、利用者ごとのローカル拡張を安全に取り込むための基盤です。
-公開互換 API として固定するまでは、マニフェストと入出力の形が変わる可能性があります。
-
-## CloudEdge MVP
+## MVP のポリシー
 
 CloudEdge MVP のプラグインは、信頼済みのローカル実行ファイルだけを対象にします。
-routerd はリモートレジストリから取得せず、リモートインストールもしません。
-プラグインが返す `actionPlans` は dynamic-config の中では実行されません。
-provider action journal に import し、`ProviderActionPolicy`、approval、allowlist、
-dry-run/live mode の gate を通った場合だけ、`execute.providerAction` capability を持つ
-executor plugin に渡せます。
+routerd はリモートレジストリからの取得もリモートインストールも行いません。
 
-![trusted local plugin の observation が DynamicConfigPart へ入り、inert な provider action plan は別経路で gated action journal と executor plugin path へ進む dynamic config 図](/img/diagrams/dynamic-config-provider-actions.png)
+プラグインの出力は、dynamic-config への保存や effective-config の導出に使う前に、
+必ず検証されます。プラグインはリソース、ディレクティブ、プロバイダー action plan、
+イベントを提案できます。`actionPlans` は dynamic-config の中では不活性であり、
+プラグインランナーやマージパスで実行されることはありません。provider-action journal に
+インポートし、`ProviderActionPolicy`、承認、許可リスト、dry-run/live mode のゲートを
+通過した場合にのみ、エグゼキュータープラグインに渡せます。
 
-起動設定では `Plugin` と `DynamicConfigSource` を宣言できます。
+![信頼済みローカルプラグインの観測が DynamicConfigPart へ入り、不活性なプロバイダー action plan は別経路でゲート付き action journal とエグゼキュータープラグインのパスへ進む dynamic config 図](/img/diagrams/dynamic-config-provider-actions.png)
+
+## リソース形状
+
+プラグインは、ローカル実行ファイルと省略可のトリガーセットとして宣言します。
 
 ```yaml
 apiVersion: plugin.routerd.net/v1alpha1
@@ -64,11 +63,15 @@ metadata:
 spec:
   executable: /usr/local/libexec/routerd/plugins/oci-inventory/bin/oci-inventory
   timeout: 10s
-  capabilities: [observe.cloud, propose.dynamicConfig, propose.providerAction]
+  capabilities: [observe.cloud, propose.dynamicConfig]
   triggers:
     - type: interval
       every: 300s
+    - type: event
+      topic: routerd.cloud.oci.refresh
 ```
+
+dynamic config ソースは、プラグインを dynamic-config 生成ポリシーにバインドします。
 
 ```yaml
 apiVersion: plugin.routerd.net/v1alpha1
@@ -82,16 +85,155 @@ spec:
     conflict: reject
 ```
 
-routerd はプラグインの標準入力へ `PluginRequest` JSON を 1 つ書き込み、
-標準出力から `PluginResult` を 1 つ読み取ります。出力が JSON でも YAML デコーダーで読み取り、
-`status.resources` の spec を routerd の型へ復元します。
-
+ランナーは `spec.executable` が絶対パスの実行可能ファイルであることを要求します。
 利用できる capability は `observe.cloud`、`observe.providerPrivateIPs`、
 `propose.dynamicConfig`、`propose.providerAction`、`execute.providerAction` です。
-executor plugin は routerd core から cloud credential を受け取りません。自身の process
-で cloud-native identity や自身の環境を使って認証します。
+interval トリガーは `every` を、event トリガーは `topic` を使います。
 
-利用できる CLI は次の通りです。
+## トリガー
+
+プラグインは明示的なトリガーで実行されます。
+
+| トリガー | 意味 |
+| --- | --- |
+| `interval` | 定期的な更新。インベントリやリース的な観測に使います。 |
+| `event` | イベントバス駆動の更新。名前付きトピックで発火します。 |
+
+`PluginRequest.spec.trigger` フィールドに、その呼び出しの実際のトリガーが記録されます。
+`trigger.type` は `interval` または `event` で、`trigger.topic` はイベントトリガーの
+場合に設定されます。
+
+## 入出力の契約
+
+routerd はプラグインの実行ファイルを起動し、標準入力に `PluginRequest` の JSON
+オブジェクトを 1 つ書き込み、標準出力から `PluginResult` の JSON オブジェクトを 1 つ
+読み取ります。タイムスタンプは RFC3339 形式です。duration 文字列は `300s` のような
+Go 形式の構文です。
+
+子プロセスが受け取る環境変数は最小限です。routerd 自身の環境からの `PATH`（未設定なら
+固定のシステムフォールバック）と、`Plugin.spec.env` で明示した項目だけです。routerd は
+親プロセスの環境変数を丸ごと引き継ぎません。
+
+### PluginRequest
+
+```json
+{
+  "apiVersion": "plugin.routerd.net/v1alpha1",
+  "kind": "PluginRequest",
+  "metadata": {
+    "name": "oci-inventory"
+  },
+  "spec": {
+    "trigger": {
+      "type": "interval",
+      "topic": ""
+    },
+    "startupConfigHash": "sha256:...",
+    "effectiveGeneration": 44,
+    "previousDynamicGeneration": 12,
+    "now": "2026-05-29T12:00:00Z"
+  }
+}
+```
+
+| フィールド | 意味 |
+| --- | --- |
+| `spec.trigger` | このプラグイン呼び出しが発生した理由。 |
+| `spec.startupConfigHash` | 現在の startup-config のダイジェスト。 |
+| `spec.effectiveGeneration` | この結果の適用前の effective-config の世代番号。 |
+| `spec.previousDynamicGeneration` | このソースで最後に受理された世代番号。 |
+| `spec.now` | routerd が呼び出した時刻。 |
+
+### PluginResult
+
+```json
+{
+  "apiVersion": "plugin.routerd.net/v1alpha1",
+  "kind": "PluginResult",
+  "metadata": {
+    "name": "oci-inventory"
+  },
+  "status": {
+    "observedAt": "2026-05-29T12:00:00Z",
+    "ttl": "300s",
+    "resources": [
+      {
+        "apiVersion": "hybrid.routerd.net/v1alpha1",
+        "kind": "RemoteAddressClaim",
+        "metadata": { "name": "app-10-0-1-123" },
+        "spec": {
+          "domainRef": "cloudedge-same-subnet",
+          "address": "10.0.1.123/32",
+          "ownerSide": "cloud",
+          "capture": {
+            "type": "provider-secondary-ip",
+            "providerRef": "oci-prod",
+            "providerMode": "vnic-private-ip",
+            "nicRef": "ocid1.vnic.oc1..example"
+          },
+          "delivery": {
+            "peerRef": "cloud-main",
+            "mode": "route",
+            "tunnelInterface": "wg-hybrid"
+          }
+        }
+      }
+    ],
+    "directives": [
+      {
+        "op": "mask",
+        "target": {
+          "apiVersion": "net.routerd.net/v1alpha1",
+          "kind": "IPv4Route",
+          "name": "cloud-app-static-fallback"
+        },
+        "reason": "RemoteAddressClaim/app-10-0-1-123 is active"
+      }
+    ],
+    "actionPlans": [
+      {
+        "name": "assign-cloud-secondary-ip",
+        "provider": "oci",
+        "action": "assign-secondary-ip",
+        "target": {
+          "nicRef": "ocid1.vnic.oc1..example",
+          "address": "10.0.1.123"
+        },
+        "undo": {
+          "action": "unassign-secondary-ip"
+        }
+      }
+    ],
+    "events": [
+      {
+        "type": "InventoryObserved",
+        "message": "observed app private address",
+        "attributes": {
+          "provider": "oci",
+          "address": "10.0.1.123"
+        }
+      }
+    ]
+  }
+}
+```
+
+routerd はプラグインの標準出力を YAML デコーダーで読み取ります（プラグインが JSON を
+出力した場合でも同様です）。これにより、リソースの spec が routerd の型付き構造体に
+復元されます。routerd は結果の形状を検証し、受理した出力を `DynamicConfigPart` として
+保存し、`observedAt + ttl` から `expiresAt` を導出します。dynamic override policy の
+評価を含む完全な effective-config の検証は、dynamic part が startup config とマージ
+されるときに行われます。
+
+`actionPlans` は、運用者が provider-action journal にインポートすることを選べる
+プロバイダー操作を記述します。プラグインの結果そのものはドライランの計画に留まる必要が
+あり、`mode: execute` は拒否されます。実際のプロバイダー変更は、使用する場合も
+`routerctl action execute --approved` またはデーモンの自動実行ゲート経由でのみ行われ、
+エグゼキュータープラグインは routerd が保持する秘密を一切受け取りません。
+
+## CLI
+
+MVP の運用者向けコマンドは次の通りです。
 
 ```text
 routerctl plugin list [--config <startup>] [-o table|json|yaml]
@@ -99,4 +241,16 @@ routerctl plugin run <name> [--dry-run] [--config <startup>] [--state-file <db>]
 routerctl action import|list|show|approve|execute|journal|rollback ...
 ```
 
-`--dry-run` は候補の `DynamicConfigPart` を表示するだけで、状態 DB へは書き込みません。
+`plugin run --dry-run` はプラグインを実行し、候補の `DynamicConfigPart` を表示しますが、
+状態 DB には書き込みません。`--dry-run` なしの場合、routerctl はプラグインの実行を
+記録し、検証済みの dynamic part をローカルの状態データベースに保存します。
+
+## 現在の位置付け
+
+routerd の主要なルーター機能は、本体のバイナリと専用デーモンで実装を進めています。
+プラグインプロトコルは、利用者ごとのローカル拡張を安全に取り込むための基盤です。
+マニフェストの形式と入出力の契約は、安定した公開インターフェースとして固定するまでに
+変更される可能性があります。
+
+[ハイブリッドクラウドエッジ設計](/docs/design-hybrid-cloud-edge) および
+[Dynamic config リファレンス](./reference/dynamic-config.md) も参照してください。

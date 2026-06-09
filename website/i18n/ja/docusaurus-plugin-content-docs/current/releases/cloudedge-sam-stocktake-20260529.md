@@ -31,7 +31,7 @@
 
 ## 3. 設定エルゴノミクス (設定記述の粗削りな部分) — アクション可能
 
-- **WireGuardPeer.allowedIPs をキャプチャ対象の `/32` (+ オーバーレイ `/32`) と手動一致させる必要がある** —
+- **WireGuardPeer.allowedIPs を捕捉対象の `/32` (+ オーバーレイ `/32`) と手動一致させる必要がある** —
   `RemoteAddressClaim` との暗黙的結合; 間違えやすい (広い allowedIPs の問題)。
   候補: WG peer の allowedIPs が各配送 `/32` をカバーしているかの validation / `doctor` クロスチェック
   (または自動導出)。**最も価値の高いエルゴノミクス修正。** (フォローアップ。)

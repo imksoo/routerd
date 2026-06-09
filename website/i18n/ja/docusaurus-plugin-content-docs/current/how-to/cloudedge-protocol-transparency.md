@@ -6,7 +6,7 @@ title: CloudEdge プロトコル透過性の受け入れ検証
 
 ![CloudEdge プロトコル透過性プローブの FTP、NFS、バルク転送、PMTU、ソース IP 保持、no-NAT エビデンスの流れ](/img/diagrams/how-to-cloudedge-protocol-transparency.png)
 
-CloudEdge mobility が、NAT、ヘルパー ALG、動的ポート、MTU/PMTU の振る舞いに敏感なコネクション指向プロトコルに対して透過的であることを検証するための、クラウドを使わないハーネス計画です。実際のライブランはラボオペレーターが後日実施します。このドキュメントと `scripts/` 配下のスクリプトは、コントラクトとエビデンスの形式を準備するだけです。
+CloudEdge mobility が、NAT、ヘルパー ALG、動的ポート、MTU/PMTU の振る舞いに敏感なコネクション指向プロトコルに対して透過的であることを検証するための、クラウドを使わないハーネス計画です。実際のライブランはラボ運用者が後日実施します。このドキュメントと `scripts/` 配下のスクリプトは、契約とエビデンスの形式を準備するだけです。
 
 ## 目標
 
@@ -59,7 +59,7 @@ scripts/cloudedge-acceptance.sh run \
 
 ## ランナーコントラクト
 
-`scripts/runners/cloudedge-protocol-runner.sh` は `PROTOCOL_PROBE_RUNNER` を実装します。意図的に環境変数でパラメータ化されており、プロバイダーアカウント ID、リソース ID、シークレットは含まれていません。
+`scripts/runners/cloudedge-protocol-runner.sh` は `PROTOCOL_PROBE_RUNNER` を実装します。意図的に環境変数でパラメータ化されており、プロバイダーアカウント ID、リソース ID、秘密情報は含まれていません。
 
 サイトごとに必要な設定:
 

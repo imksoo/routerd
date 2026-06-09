@@ -103,10 +103,6 @@ routerd.usb_mount=sync
 /usr/share/routerd/live-persistence.sh flush
 ```
 
-`save-config` も、`/usr/local/etc/routerd/secrets` が存在する場合は
-`routerd/secrets/` へコピーします。長期運用で removable media 側の Unix permission
-も必要な場合は、vfat/exfat より ext4 を使ってください。
-
 ## 安全な取り外し
 
 永続化用のマウントが有効なまま、USB デバイスを抜かないでください。
@@ -155,6 +151,8 @@ ISO には Alpine の `lbu` が含まれます。
 ```sh
 /usr/share/routerd/live-persistence.sh save-config /dev/sdb1 /usr/local/etc/routerd/router.yaml yes 100M
 ```
+
+`save-config` は、`/usr/local/etc/routerd/secrets` が存在する場合、永続化デバイスの `routerd/secrets/` へもコピーします。秘密情報ファイルは root 所有にしてください。リムーバブルメディア側で Unix パーミッションも必要な場合は、vfat/exfat ではなく ext4 を使います。
 
 復元は、起動時に自動で行います。
 シェルから起動時の処理を再実行する場合は、次を使います。

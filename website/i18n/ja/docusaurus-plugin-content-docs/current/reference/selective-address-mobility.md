@@ -4,43 +4,25 @@ title: 選択的アドレス移動性
 
 # 選択的アドレス移動性
 
-これは L2 セグメント全体を延伸する仕組みではありません。routerd CloudEdge は public
-cloud に Ethernet segment を延伸しません。public cloud fabric は運用者が
-制御できる broadcast domain を提供せず、経路とアドレス所有権のモデルも
-provider ごとに異なります。
+これは L2 延伸の仕組みではありません。routerd CloudEdge はイーサネットセグメントをパブリッククラウドへ延伸しません。パブリッククラウドのファブリックは運用者が制御できるブロードキャストドメインを提供せず、経路とアドレス所有権のモデルもプロバイダーごとに異なります。
 
-選択的アドレス移動性は、選択した IPv4 `/32` アドレスだけを片側で
-capture し、routerd 間 overlay 経由で所有者側へ届ける抽象です。
-TCP/IP の送信元 / 宛先アドレスは保持されます。ファイアウォールと NAT は
-別の routerd レイヤーであり、mobility resource の field ではありません。
+選択的アドレス移動性は、選択した IPv4 `/32` アドレスだけを片側で捕捉し、routerd 間のオーバーレイ経由で所有者側へパケットを配送する抽象化です。TCP/IP の送信元アドレスと宛先アドレスはそのまま保持されます。ファイアウォールと NAT は routerd の別レイヤーであり、モビリティリソースのフィールドではありません。
 
-![MobilityPool と SAMTransportProfile を authoring surface とし、生成された IPIP delivery、BGP peer、ECMP next hop、secondary IP または proxy ARP capture を示す SAM transport 図](/img/diagrams/cloudedge-sam-ipip.png)
+![MobilityPool と SAMTransportProfile を記述面とし、生成された IPIP 配送、BGP ピア、ECMP ネクストホップ、セカンダリ IP または proxy ARP による捕捉を示す SAM トランスポート図](/img/diagrams/cloudedge-sam-ipip.png)
 
 ## リソースモデル
 
-CloudEdge Mobility control plane では、運用者が書く mobility intent は
-`MobilityPool` だけです。論理 IPv4 pool、読み取る EventGroup、member node と
-site、BGP delivery mode、capture policy、provider trap placement を宣言します。
-member list は BGP peer list に近いものとして扱います。各 node は他 node の
-identity、site、role、placement を知る必要がありますが、remote node の NIC ID、
-provider resource 名、subnet ID などの実装詳細を知る必要はありません。
+CloudEdge モビリティコントロールプレーンにおいて、運用者が記述するモビリティインテントは `MobilityPool` だけです。論理 IPv4 プール、読み取る EventGroup、メンバーノードとサイト、BGP 配送モード、捕捉ポリシー、プロバイダートラップの配置を宣言します。メンバーリストは BGP ピアリストと同様に扱います。各ノードは他のノードの識別情報・サイト・ロール・配置を知る必要がありますが、リモートノードの NIC ID、プロバイダーリソース名、サブネット ID などの実装詳細を知る必要はありません。
 
-north-star の config shape は次の通りです。
+目標とする設定の構造は次のとおりです。
 
-- **自 site** は capture と provider discovery の詳細まで完全に宣言します。
-- **remote site** は identity-only member（`nodeRef`、`site`、`role`、必要なら
-  `placement` / `maintenance`)として宣言します。
-- 大きめの fabric では、共有の identity-only member list を `MobilityMemberSet`
-  に置き、`MobilityPool.spec.membersFrom` で import します。
-- local cloud capture の再利用可能な詳細は `profiles.cloudCaptures` に置きます。
-- secret ではない node-local 値は `spec.values` に置き、`capture.targetFrom` と
-  `ownershipDiscovery.subnetRefFrom` で参照します。
+- **自サイト**は、捕捉とプロバイダーディスカバリーの詳細まで完全に宣言する。
+- **リモートサイト**は、識別情報のみのメンバー（`nodeRef`、`site`、`role`、任意で `placement` / `maintenance`）として宣言する。
+- 規模の大きなファブリックでは、共有する識別情報のみのメンバーリストを `MobilityMemberSet` に置き、`MobilityPool.spec.membersFrom` で取り込む。
+- ローカルのクラウド捕捉に関する再利用可能な詳細は `profiles.cloudCaptures` に置く。
+- 秘密でないノードローカルな値は `spec.values` に置き、`capture.targetFrom` と `ownershipDiscovery.subnetRefFrom` で参照する。
 
-`MobilityMemberSet` は mobility 側の `SAMPeerGroup` に相当する resource です。
-含めるのは共有される member identity fields（`nodeRef`、`site`、`role`、必要なら
-`placement` / `maintenance`）だけです。`capture`、`ownershipDiscovery`、
-`profileRef`、delivery fields、static owned addresses は含めません。これらは必要な
-node の `MobilityPool` 側に local 設定として残します。
+`MobilityMemberSet` はモビリティ側における `SAMPeerGroup` に相当するリソースです。含めるのは共有されるメンバー識別情報フィールド（`nodeRef`、`site`、`role`、任意で `placement` / `maintenance`）だけです。`capture`、`ownershipDiscovery`、`profileRef`、配送関連フィールド、静的所有アドレスは意図的に含めません。これらはそれを必要とするノードの `MobilityPool` 側にローカル設定として残します。
 
 ```yaml
 apiVersion: mobility.routerd.net/v1alpha1
@@ -59,10 +41,7 @@ spec:
       role: cloud
 ```
 
-pool は 1 つ以上の member set を import できます。import された member を先に追加
-し、`nodeRef` 単位で local の `spec.members` を後から重ねます。そのため leaf は
-共有 topology を member set から受け取りつつ、自分自身の capture/discovery だけを
-local に書けます。
+プールは 1 つ以上のメンバーセットを取り込めます。取り込んだメンバーを先に追加し、ローカルの `spec.members` を `nodeRef` 単位で後から上書きします。そのためリーフは、共有トポロジーをメンバーセットから受け取りつつ、自分自身の捕捉/ディスカバリーの詳細だけをローカルに記述できます。
 
 ```yaml
 apiVersion: mobility.routerd.net/v1alpha1
@@ -87,11 +66,9 @@ spec:
             bridge: vmbr0
 ```
 
-必須の `membersFrom` source がまだ届いていない場合、pool は `Pending` になります。
-bootstrap 中に partial な local member list で動かしてよい場合だけ
-`optional: true` を指定します。
+必須の `membersFrom` ソースがまだ届いていない場合、プールは `Pending` になります。ブートストラップ中に部分的なローカルメンバーリストで動作させてよい場合にのみ `optional: true` を指定してください。
 
-例えば AWS router 上の config は次のようになります。
+たとえば AWS ルーター上の設定は次のようになります。
 
 ```yaml
 apiVersion: mobility.routerd.net/v1alpha1
@@ -151,299 +128,240 @@ spec:
     mode: all-non-owner-sites
 ```
 
-オンプレミス node では逆に、on-prem member が完全な自己宣言になります。
-通常は `staticOwnedAddresses` と、`activeWhen.type: vrrp-master` で gate した
-`proxy-arp` capture を持ちます。cloud member は identity-only のままです。
-つまり local router が local implementation detail を持ち、remote member は
-peer identity だけを持つ、という境界です。
+オンプレミスノードでは逆に、オンプレミスメンバーが完全な自己宣言になります。通常は `staticOwnedAddresses` と、`activeWhen.type` でゲートした `proxy-arp` 捕捉を持ちます。サイト内にルーターが 1 台なら `single-router`、HA ペアで VRRP マスター状態で捕捉をゲートする場合は `vrrp-master` を使います。クラウドメンバーは識別情報のみのままです。どの方向でも同じ原則が成り立ちます。ローカルルーターがローカルの実装詳細を保持し、リモートメンバーはピア識別情報だけを持ちます。
 
-routerd は federation や provider discovery の観測事実から、所有中の `/32`
-path を BGP で advertise します。運用者は `MobilityPool` だけを編集し、
-address ごとの advertisement と provider trap action plan は controller が導出します。
+routerd はフェデレーションやプロバイダーディスカバリーで得た観測事実から、所有中の `/32` パスを BGP で広告します。運用者は `MobilityPool` だけを編集してコントロールプレーンを宣言的に保ちます。アドレスごとの広告やプロバイダートラップのアクションプランはコントローラーが導出します。
 
-同一 provider の cloud router maintenance では、`members[].placement.group`
-内の drain されていない member から `priority`、次に `nodeRef` の順で active capture
-member を選びます。`members[].maintenance.drain: true` にすると、その member は
-active 選出から外れ、planner が生成済み capture claim と provider action plan
-を次の候補へ移します。placement projection を deterministic に保つため、pool の
-全 node に同じ `MobilityPool` config を配ります。
+同一プロバイダーのクラウドルーター保守では、`members[].placement.group` 内の `drain` されていないメンバーから `priority` 順、次に `nodeRef` 順でアクティブ捕捉メンバーを選出します。`members[].maintenance.drain: true` にすると、そのメンバーはアクティブ選出から外れます。アクティブメンバーだけがプロバイダートラップアクションを発行し、全メンバーが BGP スタンバイパスを広告できます。配置の導出を決定的に保つため、プール内の全ノードに同じ `MobilityPool` 設定を配布してください。
 
 ### 目標フィールドリファレンス
 
 `spec.values`
-: この node の config normalize 時に使う secret ではない local 値です。region、
-  compartment ID、resource group、subnet ID、NIC name などに使います。credential、
-  token、private key、account secret は置かないでください。
+: このノードの設定を正規化する際に使う、秘密でないローカル値です。リージョン名、コンパートメント ID、リソースグループ名、サブネット ID、NIC 名などの識別子に使います。認証情報、トークン、秘密鍵、アカウントシークレットは置かないでください。
 
 `spec.profiles.cloudCaptures.<name>.capture`
-: local cloud の `provider-secondary-ip` capture に使う再利用可能な default です。
-  member は `members[].profileRef` で参照できます。member 側の明示 field が
-  profile より優先されます。
+: ローカルのクラウド `provider-secondary-ip` 捕捉に使う再利用可能な既定値です。メンバーは `members[].profileRef` で参照できます。メンバー側の明示フィールドがプロファイルより優先されます。
 
 `spec.profiles.cloudCaptures.<name>.ownershipDiscovery`
-: provider private-IP inventory scan の再利用可能な default です。
-  `ownershipDiscovery.providerRef` が空の場合は、有効な `capture.providerRef` を
-  継承します。
+: プロバイダーのプライベート IP 棚卸しスキャン用の再利用可能な既定値です。`ownershipDiscovery.providerRef` が省略された場合、有効な `capture.providerRef` を継承します。
 
 `members[].profileRef`
-: 名前付き cloud capture profile を member に適用します。通常は local self
-  member にだけ使い、remote member では省略します。
+: 名前付きクラウド捕捉プロファイルをメンバーに適用します。通常はローカルの自メンバーにだけ使い、リモートメンバーでは省略します。
 
 `members[].capture.targetFrom`
-: 生成される provider action の target key を `spec.values` の key に対応させます。
-  同じ key が `capture.target` にもある場合は、明示 `capture.target` が勝ちます。
+: 生成されるプロバイダーアクションのターゲットキーを `spec.values` のキーに対応づけます。同じキーが `capture.target` にもある場合は、明示的な `capture.target` が優先されます。
 
 `members[].ownershipDiscovery.subnetRefFrom`
 : `ownershipDiscovery.subnetRef` が空の場合に `spec.values` から値を解決します。
 
 `members[].placement`
-: deterministic な active/standby capture placement を宣言します。identity-only
-  の remote cloud member にも placement は有効です。他 node が同一 site のどの
-  member が active かを同じように判断するためです。
+: 決定的なアクティブ/スタンバイ捕捉の配置を宣言します。識別情報のみのリモートクラウドメンバーにも配置は有効です。他のノードが同一サイト内のどのメンバーがアクティブかを同じように判断するためです。
 
-古い "remote-full inline" style、つまり各 node が remote member の provider
-詳細まで繰り返し書く形は、pre-release 期間の互換として引き続き受け付けます。
-ただし deprecated です。remote member が local capture/discovery detail を持つ
-場合、`routerctl validate`、plan、apply は warning を表示します。将来の
-pre-release では remote member を identity-only にすることを必須化する可能性が
-あります。
+古い「リモート完全インライン」方式、つまり各ノードがリモートメンバーのプロバイダー詳細まで繰り返し記述する形式は、プレリリース期間の互換性のために引き続き受け付けます。ただし非推奨です。リモートメンバーがローカルの捕捉/ディスカバリー詳細を持っている場合、`routerctl validate`・plan・apply は警告を表示します。将来のプレリリースでは、リモートメンバーを識別情報のみにすることを必須とする可能性があります。
 
-`AddressMobilityDomain` と `RemoteAddressClaim` は低位の SAM 表現です。既存の
-hand-authored SAM config は引き続きサポートしますが、CloudEdge MobilityPool の
-本線は generated SAM claim ではなく BGP `/32` advertisement を使います。
+## トランスポートプロファイル
 
-`AddressMobilityDomain` は mobile address が属する IPv4 prefix を定義します。
-`mode` は `selective-address` のみです。
+`SAMTransportProfile` は BGP モード SAM の上位トランスポートプロファイルです。モビリティパスを運ぶピアごとの `TunnelInterface`、エンドポイント `/32` の `IPv4Route`、`BGPPeer` を導出します。現在の CloudEdge 構成例では IPIP を SAM 配送面のデフォルトとしています。WireGuard が存在する場合は暗号化アンダーレイとしてのみ使用します。生成または手書きの WireGuard ピアの `AllowedIPs` はトランスポートエンドポイントプレフィックスに限定し、モビリティ `/32` は含めないでください。
 
-`RemoteAddressClaim` は 1 つの mobile `/32`、owner side、capture mechanism、
-overlay peer への route delivery を宣言します。
+各ルーターは `spec.selfNodeRef` を明示する必要があります。routerd はホスト名や BGP ルーター ID からローカルノードの識別情報を推測しません。
 
-`AddressMobilityDomain.spec.peerRef` は domain-level の default/documentation
-peer で、grouping metadata として扱います。MVP dataplane が実際の delivery
-peer として使うのは `RemoteAddressClaim.spec.delivery.peerRef` であり、claim
-ごとに必須です。
+`spec.addressingMode` は `/31` スロットの導出方法を制御します。
 
-`CloudProviderProfile` は provider capability と external-command auth を
-記述します。Mobility planner は provider API を直接呼びません。Cloud capture
-では `assign-secondary-ip` や `ensure-forwarding-enabled` の dry-run
-`ActionPlan` を生成し、別の provider-action executor 経路が
-`ProviderActionPolicy` で明示的に許可された場合だけ import/execution します。
+- `edge-index`（デフォルト）: ピアが複数あるプロファイルでは、トランスポートドメイン内の全ルーターで同じ `spec.topologyNodeRefs` リストを宣言する必要があります。コントローラーはこの共有ノードリストをソートし、順序なしノードペアの順位から `spec.innerPrefix` 内の `/31` を割り当てます。
+- `pair-stable`: 各ピアエッジが安定ハッシュからスロットを導出するため、リーフ/ルータープロファイルはグローバルな `topologyNodeRefs` を省略できます。衝突検出は現在プロファイルローカル（1 つのプロファイルの `spec.peers` リスト内）です。衝突が発生した場合は、該当ピアの `override.localInner` と `override.remoteInner` の両方を設定して明示的にアドレスを予約してください。
 
-`OverlayPeer` は remote routerd peer と underlay を表します。`HybridRoute` は
-通常の L3 remote-prefix routing のために残り、address mobility は prefix
-route ではなく per-address forwarding の抽象です。
+本番ファブリックでは可能な限り `/20` 以上の `innerPrefix` を推奨します。`/24`（128 個の `/31` スロット）のように小さなプールはハッシュ＋剰余割り当てで衝突しやすくなります。
 
-## capture と delivery
+`SAMPeerGroup` は再利用可能なトランスポートピアをまとめるリソースです。プロファイルは `spec.peersFrom` に 1 つ以上の `SAMPeerGroup/<name>` 参照を指定できます。コントローラーはリコンサイル時にグループのピアを先に追加し、その後にプロファイル直下の `spec.peers` を重ねます。同じ `nodeRef` が両方にある場合は `spec.peers` が優先されるため、リーフ側に静的なブートストラップ用ピアやローカルのオーバーライドを残せます。必須の `peersFrom` グループが未到着の場合、プロファイルは `Pending` になります。`optional: true` のソースは到着するまで無視されます。
 
-サポートする capture type は次の通りです。
+スパイン/ルートリフレクター側のプロファイルでは `spec.publishPeerGroup: true` を指定できます。この場合、routerd はプロファイルの `selfNodeRef` と具体的なローカルエンドポイントから `SAMPeerGroup` を生成し、DynamicConfigPart として公開します。`localEndpointFrom` は公開前に解決されるため、リーフには直接使える `remoteEndpoint` が配布されます。
 
-| Type | 意味 |
+`publishPeerGroup: true` を持つノードで `routerd serve` が動作している場合、routerd は公開済みピアグループをトランスポートネットワーク上の TCP ポート `19652`（`GET /v1/peer-groups`）でも返します。リーフ側で必須の `peersFrom` グループが見つからない場合、`spec.underlayInterface` から到達できる WireGuard ピアへ問い合わせ、名前が一致するグループを `peer-group-sync/<group-name>` としてローカルに保存します。この DynamicConfigPart は通常の TTL で期限切れになり、パブリッシャーが消えた場合はリーフが `Pending` に戻ります。
+
+MobilityPool のメンバーシップについても同様に、ルートリフレクター側の正規プールに `spec.publishMemberSet: true` を指定できます。routerd はローカル専用のメンバーフィールドを取り除き、ソース `mobility-member-set/<pool>` の `MobilityMemberSet` DynamicConfigPart を公開し、同じ TCP ポートの `GET /v1/member-sets` で返します。リーフ側で必須の `membersFrom` ソースが見つからない場合、取得したセットを `member-set-sync/<set-name>` として保存します。
+
+```yaml
+apiVersion: mobility.routerd.net/v1alpha1
+kind: SAMTransportProfile
+metadata: { name: cloudedge-transport }
+spec:
+  selfNodeRef: aws-router-a
+  mode: ipip
+  encryption: wireguard
+  innerPrefix: 10.255.0.0/24
+  topologyNodeRefs:
+    - onprem-router
+    - aws-router-a
+    - azure-router
+  underlayInterface: wg-hybrid
+  localEndpointFrom:
+    resource: Interface/wg-hybrid
+    field: primaryIPv4
+  bgp:
+    routerRef: BGPRouter/mobility
+    peerASN: 64512
+    timersPreset: fast
+  peers:
+    - nodeRef: onprem-router
+      remoteEndpoint: 10.252.0.1
+```
+
+コアルーターでは `spec.bgp.routeReflectorClient` と `spec.bgp.routeReflectorClusterID` を設定できます。これらは生成される各 `BGPPeer` にコピーされます。エッジルーターでは未指定のまま通常の iBGP セッションとして使えます。
+
+ピアをプロファイルから削除すると、そのプロファイルが生成した `DynamicConfigPart` は新しいリソースセットで置き換えられます。プロファイル自体を削除した場合は、古いパートが空のアクティブパートで置き換えられ、実効設定から生成済みのトンネル、BGP ピア、エンドポイント経路が消えます。生成されたリソースの具体的な後片付けは、通常のオーナー参照 GC とリソース固有のティアダウンに委ねます。
+
+## 低レベル互換リソース
+
+`AddressMobilityDomain` と `RemoteAddressClaim` は SAM の低レベル表現です。既存の手書き SAM 設定はプレリリース期間の互換性のために引き続きサポートしますが、CloudEdge モビリティの主要な記述面ではありません。アドレス所有権と捕捉のインテントには `MobilityPool` を、トランスポート/BGP の生成には `SAMTransportProfile` を使ってください。
+
+`AddressMobilityDomain` は選択されたアドレスが移動しうる IPv4 プレフィックスを定義します。
+
+```yaml
+apiVersion: hybrid.routerd.net/v1alpha1
+kind: AddressMobilityDomain
+metadata: { name: lab-same-subnet }
+spec:
+  prefix: 10.0.0.0/24
+  mode: selective-address
+  peerRef: cloud-main
+```
+
+`RemoteAddressClaim` は 1 つのモバイル `/32`、捕捉方法、配送方法を宣言します。
+
+```yaml
+apiVersion: hybrid.routerd.net/v1alpha1
+kind: RemoteAddressClaim
+metadata: { name: onprem-vm-10-0-0-9 }
+spec:
+  domainRef: lab-same-subnet
+  address: 10.0.0.9/32
+  ownerSide: onprem
+  capture:
+    type: provider-secondary-ip
+    providerRef: azure-lab
+    providerMode: nic-secondary-ip
+    nicRef: /subscriptions/.../networkInterfaces/routerd-nic
+    configureOSAddress: false
+  delivery:
+    peerRef: cloud-main
+    mode: route
+    tunnelInterface: wg-hybrid
+```
+
+`AddressMobilityDomain.spec.peerRef` はドメインレベルのデフォルト/ドキュメント用ピアで、グルーピングメタデータとして扱います。MVP のデータプレーンが実際の配送ピアとして使うのは `RemoteAddressClaim.spec.delivery.peerRef` であり、各クレームに必須です。
+
+`CloudProviderProfile` はプロバイダーの機能と外部ツールの認証方法を記述します。モビリティプランナーはプロバイダー API を直接呼びません。クラウド捕捉では `assign-secondary-ip` や `ensure-forwarding-enabled` のドライラン `ActionPlan` レコードを生成し、別のプロバイダーアクション実行パスが `ProviderActionPolicy` で明示的に許可された場合にのみインポート/実行します。
+
+`OverlayPeer` はレガシーの経路低レベル化設定におけるリモート routerd ピアとアンダーレイを表します。`HybridRoute` は通常の L3 リモートプレフィックスルーティング用に残ります。新しい CloudEdge モビリティ設定では `OverlayPeer` でモビリティ `/32` を運ばず、`SAMTransportProfile` による BGP 配送を使ってください。
+
+## 捕捉と配送
+
+サポートする捕捉タイプは次のとおりです。
+
+| タイプ | 意味 |
 | --- | --- |
-| `provider-secondary-ip` | Provider-owned secondary address object などで cloud fabric が `/32` を capture します。 |
-| `proxy-arp` | site router が選択された address に対して local に ARP 応答します。 |
+| `provider-secondary-ip` | プロバイダーが所有するセカンダリアドレスオブジェクト等を通じて、クラウドファブリックが `/32` を捕捉します。 |
+| `proxy-arp` | サイトルーターが選択されたアドレスに対してローカルに ARP 応答します。 |
 
-MVP validation で拒否される予約済み capture type は次の通りです。
+MVP のバリデーションで拒否される予約済み捕捉タイプは次のとおりです。
 
-| Type | 状態 |
+| タイプ | 状態 |
 | --- | --- |
-| `static-host-route` | 将来の dataplane design 用に予約されています。 |
-| `garp` | 将来の dataplane design 用に予約されています。 |
+| `static-host-route` | 将来のデータプレーン設計用に予約されています。 |
+| `garp` | 将来のデータプレーン設計用に予約されています。 |
 
-`MobilityPool` の delivery mode は BGP です。owned address は IPv4 unicast
-`/32` path として advertise され、non-owner は BGP best path を local FIB に
-import し、選ばれた overlay next hop へ届けます。`deliveryPolicy.mode: bgp` が
-default であり、現在の MobilityPool control plane で唯一サポートされる delivery
-mode です。古い route-lowered SAM delivery は、hand-authored
-`RemoteAddressClaim` 互換 config のためだけに残っています。
+`MobilityPool` の配送モードは BGP です。所有アドレスは IPv4 ユニキャスト `/32` パスとして広告され、非所有者は BGP ベストパスをローカル FIB にインポートして、選択されたオーバーレイのネクストホップへ届けます。`deliveryPolicy.mode: bgp` がデフォルトであり、現在の MobilityPool コントロールプレーンで唯一サポートされる配送モードです。古い経路低レベル化 SAM 配送は、手書きの `RemoteAddressClaim` 互換設定のためにのみ残っています。
 
-`SAMTransportProfile` は BGP mode SAM の上位 transport profile です。mobility
-path を運ぶ peer ごとの `TunnelInterface`、endpoint `/32` `IPv4Route`、
-`BGPPeer` を導出します。各 router は `spec.selfNodeRef` を明示する必要があり、
-routerd は hostname や BGP router ID から local node identity を推測しません。
-profile が複数 peer を持つ場合は、同じ transport domain にいる全 router で同じ
-`spec.topologyNodeRefs` を宣言する必要があります。controller はその共有 node list
-を sort し、unordered node pair の順位から `spec.innerPrefix` 内の `/31` を割り
-当てます。これにより、hub/spoke で各 router の local peer list が異なる場合でも
-両端は同じ edge を local/remote が反転した形で導出します。
+`members[].capture.target` は、生成されるプロバイダー `ActionPlan.target` の値にコピーされる、秘密でないプロバイダーターゲットヒントです。リージョン、コンパートメント ID、リソースグループ、NIC 名、IP 設定名などの識別子だけを置き、認証情報、トークン、秘密鍵はプロバイダー認証の仕組み側に置きます。
 
-`SAMPeerGroup` は再利用する transport peer をまとめる resource です。
-`SAMTransportProfile.spec.peersFrom` には 1 つ以上の `SAMPeerGroup/<name>` 参照を
-指定できます。controller は reconcile 時に group の peer を先に追加し、その後に
-profile 直下の `spec.peers` を重ねます。同じ `nodeRef` が両方にある場合は
-`spec.peers` が優先されるため、leaf 側に静的 bootstrap 用 peer や local override
-を残せます。必須の `peersFrom` が未到着の場合、profile は `Pending` になります。
-`optional: true` の source は到着するまで無視されます。
+BGP モードのオンプレミス `proxy-arp` 捕捉では、`members[].capture.sourceAddress` で捕捉インターフェース上のルーターのローカル送信元アドレスを任意に宣言できます。routerd はこれを `IPv4StaticAddress` `/32` に低レベル化し、捕捉プレフィックス経路の優先送信元として使います。捕捉インターフェースに IPv4 アドレスがない場合に便利です。Linux のローカル同一サブネットクライアント向け ARP が、関係のない管理用アドレスにフォールバックする代わりに、モビリティプレフィックス内のアドレスを使うようになります。
 
-spine/RR 側の profile では `spec.publishPeerGroup: true` を指定できます。この場合
-routerd は profile の `selfNodeRef` と concrete local endpoint から `SAMPeerGroup`
-を生成し、DynamicConfigPart として publish します。`localEndpointFrom` は publish
-前に解決されるため、leaf には直接使える `remoteEndpoint` が配布されます。
+その送信元アドレスが DHCP/IPAM など別のライフサイクルマネージャーに所有されている場合は、代わりに `members[].capture.sourceAddressFrom` を使います。たとえば `resource: DHCPv4Client/svnet1-source` と `field: currentAddress` を指定すると、リースされたアドレスを捕捉プレフィックス経路の優先送信元として使いつつ、`IPv4StaticAddress` への低レベル化を行わないため、routerd が同じアドレスの所有権を二重に持つことを避けられます。
 
-`publishPeerGroup: true` を持つ node で `routerd serve` が動いている場合、routerd
-は publish 済み peer group を transport network 上の TCP port `19652`
-（`GET /v1/peer-groups`）でも返します。leaf 側で必須の `peersFrom` group が
-見つからない場合、`spec.underlayInterface` から到達できる WireGuard peer へ
-問い合わせ、名前が一致する group を `peer-group-sync/<group-name>` として local
-store に保存します。この DynamicConfigPart は通常の TTL で期限切れになり、
-publisher が消えた場合は leaf が `Pending` に戻ります。
+`members[].capture.excludeAddresses` は、モビリティプレフィックス内にありながら、拡張セグメントを超えて proxy-ARP 捕捉してはならないローカル専用アドレスに使います。たとえば PVE Simple SDN では各ホストが `192.168.123.1/32` のような同一のローカルゲートウェイアドレスを持つことがあります。これを除外すると、そのアドレスに対する BGP proxy-ARP クレームの生成が抑止され、捕捉プレフィックス経路が分割されて、Linux がローカルゲートウェイの ARP を SAM 捕捉パスに送らなくなります。
 
-MobilityPool membership では、RR 側の canonical pool に
-`spec.publishMemberSet: true` を指定できます。routerd は local-only member fields
-を取り除き、source `mobility-member-set/<pool>` の `MobilityMemberSet`
-DynamicConfigPart を publish し、同じ TCP port で `GET /v1/member-sets` として
-返します。leaf 側で必須の `membersFrom` source が見つからない場合、取得した set
-を `member-set-sync/<set-name>` として保存します。
+SAM は透過的な DHCP ブロードキャスト延伸を提供しません。DHCP の所有権はローカルファブリック、VPC/VNet/VCN、または PVE IPAM に任せてください。`sourceAddressFrom` で使う `DHCPv4Client` は、捕捉インターフェースの送信元アドレスを学習するためだけに存在する場合、通常 `useRoutes: false` と `useDNS: false` を設定します。DHCP リース観測は所有権ディスカバリーに参加できますが、IPAM ソースが routerd 外にある場合は `arp-observer`、`on-demand-arp`、または PVE svnet 観測と組み合わせてください。
 
-core router では `spec.bgp.routeReflectorClient` と
-`spec.bgp.routeReflectorClusterID` を設定できます。これらは生成される各
-`BGPPeer` にコピーされます。edge router では未指定のまま通常の iBGP session と
-して使えます。
+`on-demand-arp` はモビリティプレフィックスの保守的な能動スイープも行います。ソースの `scanInterval` ごとに 1 つの ARP ターゲットを探査し、オンデマンドトリガーの探査と同じ `probeTimeout`、`probeRetries`、`probeCooldown`、`sourceAddressFrom` 設定を使います。これにより、すでに起動済みで通信していない L2 クライアントも、所有者側から手動で `arping` や ping を打たなくても観測済みクライアントとして収束できます。広いプレフィックスでは `scanInterval` を控えめにしてください。`/24` のラボ検証では `1s` 程度にすると、1 秒 1 探査の範囲で素早く確認できます。
 
-peer を profile から外すと、その profile の `DynamicConfigPart` は新しい生成
-resource set で置き換えられます。profile 削除時は古い part を空の active part
-で置き換え、effective config から生成済み tunnel、BGP peer、endpoint route を
-消します。具体的な OS cleanup は既存の `TunnelInterface`、`BGPPeer`、
-`IPv4Route` controller の stale-resource cleanup に委ねます。
+Linux での `proxy-arp` 捕捉では、routerd は以下を行います。
 
-`members[].capture.target` は生成される provider `ActionPlan.target` へコピーする
-secret ではない provider target hint です。region、compartment ID、resource
-group、NIC name、IP config name などの識別子だけを置き、credential、token、
-private key は provider auth mechanism 側に置きます。
+- 通常の sysctl コントローラーで `net.ipv4.conf.<capture-interface>.proxy_arp=1` を有効化する。
+- `ip neigh add proxy <address> dev <capture-interface>` 相当のプロキシネイバーエントリを netlink で追加する。
+- 通常の sysctl コントローラーで `net.ipv4.ip_forward=1` を有効化する。
 
-Linux の `proxy-arp` capture では、routerd は通常の sysctl controller で
-`net.ipv4.conf.<capture-interface>.proxy_arp=1` を有効化し、
-`ip neigh add proxy <address> dev <capture-interface>` 相当の proxy neighbor
-entry を netlink で追加し、通常の sysctl controller で
-`net.ipv4.ip_forward=1` を有効化します。
+`provider-secondary-ip` では、プロバイダーファブリックがアドレス捕捉を担当します。`configureOSAddress: false` の場合、routerd はモバイルアドレスをローカル OS のアドレスとして設定しません。Linux では cloud-init、netplan、ゲストエージェントなどがそのアドレスを戻した場合でも、その特定のアドレスだけをローカルインターフェースから削除します。そのうえで IPv4 フォワーディングを確保し、オーバーレイへの `/32` 配送経路は BGP ベストパスのインポートから得ます。捕捉を削除しても routerd はアドレスを戻しません。ゲスト OS へのアドレス割り当ては routerd が所有していないためです。
 
-`provider-secondary-ip` では provider fabric が address capture を担当します。
-`configureOSAddress: false` の場合、routerd は mobile address を local OS
-address として設定しません。Linux では、cloud-init、netplan、guest agent など
-がその address を戻した場合でも、その特定 address だけを local interface から
-削除します。そのうえで IPv4 forwarding と overlay への `/32` delivery route を
-管理します。overlay への `/32` delivery route は BGP best-path import から
-得られます。capture を削除しても routerd は address を戻しません。Guest OS への
-address assignment は routerd が所有していないためです。
+ステータスではこれを `captureOSAddressAbsence` として報告します。`enforced: true` は、routerd が捕捉されたアドレスをローカル OS インターフェースに存在させないことを継続的に適用していることを示す監査フラグです。`lastReconcileRemoved: true` は、直近のリコンサイルで実際にそのアドレスを削除したことを示します。アドレスがすでに存在しない定常状態では通常 `false` です。
 
-status ではこれを `captureOSAddressAbsence` として報告します。
-`enforced: true` は、routerd が captured address を local OS interface から
-無くすことを継続的に enforcement している、という audit flag です。
-`lastReconcileRemoved: true` は、直近の reconcile が実際にその address を削除した
-ことを示します。address がすでに無い steady state では通常 `false` です。
+FreeBSD など Linux 以外のホストでは、ライブ SAM 捕捉は未対応です。コントローラーはホストを変更せず、`SAM capture not implemented on this OS` と報告します。
 
-FreeBSD など Linux 以外の host では live SAM capture は未対応です。controller は
-host を変更せず、`SAM capture not implemented on this OS` と報告します。
-
-Linux live dataplane は Azure + PVE same-subnet lab で smoke test 済みです。
-ただし pre-release behavior なので、本番利用前に provider と firewall
-policy の実構成で検証してください。
+Linux のライブデータプレーンは Azure + PVE 同一サブネットのラボでスモークテスト済みです。ただしプレリリースの動作であるため、本番利用前にプロバイダーとファイアウォールポリシーの実構成で検証してください。
 
 ## 逆方向パスフィルタリング
 
-strict reverse-path filtering は SAM forwarded traffic を drop する可能性が
-あります。mobile `/32` が直接接続 subnet に属して見える一方で、return path が
-overlay になるためです。routerd は SAM のために `rp_filter` を黙って変更しませ
-ん。これは interface policy として影響が大きいためです。
+厳格な逆方向パスフィルタリングは、SAM で転送されたトラフィックを破棄する可能性があります。モバイル `/32` が直接接続サブネットに属して見える一方で、戻り経路がオーバーレイになるためです。routerd は SAM のために `rp_filter` を黙って変更しません。これはインターフェースポリシーとして影響が大きいためです。
 
-`routerctl doctor hybrid` は host check が有効な場合に
-`net.ipv4.conf.<capture-or-tunnel-interface>.rp_filter` を読みます。値が strict
-(`1`) の場合は warning を出し、対象 interface で loose mode (`2`) を検討する
-remedy を表示します。
+`routerctl doctor hybrid` はホストチェックが有効な場合に `net.ipv4.conf.<capture-or-tunnel-interface>.rp_filter` を読みます。値が厳格（`1`）の場合は警告を出し、対象インターフェースでの緩和モード（`2`）の検討を促す改善策を表示します。
 
-## provider capability
+## プロバイダーの機能
 
-| Provider | MVP capability descriptor |
+| プロバイダー | MVP 機能の説明 |
 | --- | --- |
-| Azure | NIC secondary IP と router NIC の IP forwarding。 |
-| AWS | ENI secondary private IPv4 と source/destination check disabled。 |
-| OCI | VNIC private IP object と source/destination check disabled。 |
-| GCP | Alias IP または route capability。provider profile の capability で gate します。 |
+| Azure | NIC セカンダリ IP とルーター NIC の IP フォワーディング有効化。 |
+| AWS | ENI セカンダリプライベート IPv4 と送信元/宛先チェックの無効化。 |
+| OCI | VNIC プライベート IP オブジェクトと送信元/宛先チェックの無効化。 |
+| GCP | エイリアス IP またはルート機能。宣言されたプロバイダープロファイルの機能でゲートされます。 |
 
-profile は宣言的な descriptor です。Mobility planner は provider `ActionPlan`
-を生成できますが、address assignment や NIC flag 変更は provider-action
-execution policy と executor plugin によって gate されます。planner 自身は
-provider state を変更しません。
+プロファイルは宣言的な記述子です。モビリティプランナーはプロバイダー `ActionPlan` レコードを生成できますが、アドレスの割り当てや NIC フラグの変更はプロバイダーアクション実行ポリシーとエグゼキュータープラグインによってゲートされます。プランナー自身がプロバイダーの状態を変更することはありません。
 
-## same-subnet フロー
+## 同一サブネットのフロー
 
-on-prem `proxy-ARP` capture で `on-demand-arp` source を使う場合、routerd は
-source の `scanInterval` ごとに mobility prefix 内の 1 IP だけを能動 ARP
-probe します。これにより、既に起動済みで静かな L2 client も、owner 側から
-手動で `arping` や ping を打たなくても observed client として収束できます。
-広い prefix では `scanInterval` を保守的にし、`/24` lab では `1s` 程度にすると
-1 秒 1 probe の範囲で素早く確認できます。
+`10.0.0.0/24` のラボで、`10.0.0.7/32` がクラウド VM のアドレス、`10.0.0.9/32` がオンプレミス/PVE VM のアドレスとします。目的は、クラウド VM `10.0.0.7` からオンプレミス VM `10.0.0.9` へ TCP 接続を開始し、両方の VM のデフォルトゲートウェイはローカルのまま、NAT なしで通信させることです。
 
-`10.0.0.0/24` lab では、`10.0.0.7/32` が cloud VM の address、
-`10.0.0.9/32` が on-prem/PVE VM の address です。目的は、cloud VM
-`10.0.0.7` から on-prem VM `10.0.0.9` へ TCP connection を開始し、両方の VM
-の default gateway は local のまま、NAT なしで通信させることです。
+1. クラウド VM が `10.0.0.9` 宛に送信します。
+2. Azure NIC のセカンダリ IP 捕捉が `10.0.0.9/32` 宛のパケットをクラウド側の routerd ノードへ届けます。
+3. クラウド側の routerd ノードは生成された IPIP SAM トランスポート経由でパケットを配送します。暗号化が有効な場合、この IPIP パケットはエンドポイント限定の `wg-hybrid` アンダーレイ上を通ります。
+4. オンプレミス側は `10.0.0.9` の所有者へ転送します。
+5. 送信元 IP と宛先 IP は元のエンドポイントアドレスのままです。
 
-1. Cloud VM が `10.0.0.9` へ送信します。
-2. Azure NIC secondary IP capture が `10.0.0.9/32` 宛の packet を cloud
-   routerd node へ届けます。
-3. cloud routerd node は packet を `wg-hybrid` 経由で on-prem routerd peer
-   へ delivery します。
-4. on-prem 側は `10.0.0.9` の owner へ forwarding します。
-5. source/destination IP は元のエンドポイントアドレスのままです。
+`10.0.0.7/32` の戻り経路はオンプレミス側の proxy-ARP で捕捉します。PVE LAN のホストはオンプレミス側の routerd ノード経由で `.7` に到達し、オンプレミス側の routerd ノードが同じ生成済み SAM トランスポート経由でクラウド側の routerd ノードへ配送します。
 
-reverse path の `10.0.0.7/32` は on-prem 側の proxy-ARP で capture します。
-PVE LAN host は `.7` へ on-prem routerd node 経由で到達し、on-prem routerd
-node が overlay 経由で cloud routerd node へ delivery します。
+分割した設定例は次の 2 つです。
 
-分割した example config は次の 2 つです。
-
-- `examples/hybrid-azure-pve-same-subnet-cloud.yaml`: cloud routerd node に適用し、
-  on-prem VM `10.0.0.9/32` の provider-secondary-IP claim を含みます。
-- `examples/hybrid-azure-pve-same-subnet-onprem.yaml`: on-prem routerd node に適用し、
-  cloud VM `10.0.0.7/32` の proxy-ARP claim を含みます。
+- `examples/hybrid-azure-pve-same-subnet-cloud.yaml`: クラウド側の routerd ノードに適用し、オンプレミス VM `10.0.0.9/32` のプロバイダーセカンダリ IP クレームを含みます。
+- `examples/hybrid-azure-pve-same-subnet-onprem.yaml`: オンプレミス側の routerd ノードに適用し、クラウド VM `10.0.0.7/32` の proxy-ARP クレームを含みます。
 
 ## ファイアウォールと NAT の構成
 
-選択的アドレス移動性は通常の switching/forwarding plane にあります。
-`nat`、`preserveSource`、firewall、zone field は持ちません。Address
-transparency は intrinsic です。
+選択的アドレス移動性は通常のスイッチング/フォワーディングプレーンに位置します。`nat`、`preserveSource`、ファイアウォール、ゾーンのフィールドは持ちません。アドレスの透過性は本質的に備わっており、送信元アドレスと宛先アドレスはそのまま保持されます。
 
-mobile address にファイアウォールや NAT を適用する場合は、既存の `FirewallZone`、
-`FirewallRule`、`NAT44Rule` resource で literal `/32` address を参照します。
-MVP ではこれらの Kind から `RemoteAddressClaim` への cross-kind reference は
-ありません。SAM で転送された traffic は、他の転送 traffic と同じく既存の
-firewall/conntrack path を通ります。
+モバイルアドレスにファイアウォールや NAT を適用する場合は、既存の `FirewallZone`、`FirewallRule`、`NAT44Rule` リソースでリテラルの `/32` アドレスを参照します。現在のモデルではファイアウォールや NAT の Kind から `MobilityPool` や低レベルの `RemoteAddressClaim` へのクロス Kind 参照はありません。結合は意図的にリテラルアドレスによる緩い結合としています。有用と判明すれば、名前付き参照を後日追加できます。
 
-特に、delivery された `/32` traffic は capture interface と tunnel interface
-の間で Linux firewall の `FORWARD` chain を通過します。forwarding policy が
-default-drop の router では、その captured address の forwarding path を明示的
-に許可してください。SAM 自体は firewall rule を追加しません。
+SAM で転送されたトラフィックは、他の転送トラフィックと同様に既存のファイアウォールと conntrack のパスを通ります。独立しているとは、モビリティリソースがファイアウォールや NAT のポリシーを設定しないという意味であり、バイパスするという意味ではありません。
 
-## クラウドノードでの overlay / federation アドレッシング
+特に、配送された `/32` トラフィックは捕捉インターフェースとトンネルインターフェースの間で Linux ファイアウォールの `FORWARD` チェインを通過します。デフォルト拒否のフォワーディングポリシーを持つルーターでは、捕捉されたアドレスのフォワーディングパスを明示的に許可してください。SAM 自体はファイアウォールルールを追加しません。
 
-Event Federation の transport（`routerd-eventd` の listen address と各
-`EventPeer.endpoint`）、BGP/BFD peer address、`SAMTransportProfile` が生成する
-SAM transport endpoint / inner address は、全ノードで自分が end-to-end に制御できる
-アドレス範囲を使ってください。WireGuard を SAM transport の下に置く場合、その
-interface / peer endpoint address も同じ条件です。クラウドインスタンスでは、provider
-が内部利用のために予約している範囲から overlay / BGP/BFD / federation アドレスを取っては
-**いけません**。
+## クラウドノードでのオーバーレイ/フェデレーションアドレッシング
 
-- `169.254.0.0/16`(RFC 3927 link-local)。クラウドのインスタンスメタデータ
-  (IMDS)は `169.254.169.254` にあり、イメージによってはブロック全体を予約
-  します。Oracle Cloud の Linux イメージは `169.254.0.0/16` 全体を
-  `InstanceServices` chain にルーティングするため、`169.254.x` の overlay
-  アドレス宛 federation SYN は loopback に引き込まれて RST されます(同じ
-  アドレスへの ICMP は通るのに、です)。AWS/Azure も IMDS に
-  `169.254.169.254` を使います。症状: local ownership fact はあるのにノード間の
-  `routerd-eventd`、BGP、BFD session が張れない。
-- `100.64.0.0/10`(RFC 6598 CGNAT)。provider underlay の CGNAT や Tailscale
-  (`100.x` の tailnet アドレス、MagicDNS)が使います。この範囲の overlay は
-  Tailscale 参加や carrier NAT と衝突します。
+イベントフェデレーションのトランスポート（`routerd-eventd` の待受アドレスと各 `EventPeer.endpoint`）、BGP/BFD ピアアドレス、`SAMTransportProfile` が生成する SAM トランスポートエンドポイント/内部アドレスは、全ノードで自分がエンドツーエンドに制御できるアドレス範囲を使ってください。WireGuard を SAM トランスポートの下に置く場合、そのインターフェース/ピアエンドポイントアドレスも同じ条件です。クラウドインスタンスでは、プロバイダーが内部利用のために予約している範囲からオーバーレイ、BGP/BFD、フェデレーション用のアドレスを取っては**いけません**。
 
-SAM transport endpoint、`SAMTransportProfile.innerPrefix`、任意の WireGuard endpoint、
-`routerd-eventd` の listen / `EventPeer` エンドポイント、BGP/BFD peering address には、
-自分で予約した RFC 1918 の範囲を使ってください。mobility pool の `/24`（captured
-address）とも、上記のクラウド予約範囲とも分離します。これは全 provider
-（AWS/Azure/OCI）に当てはまり、OCI が link-local 予約を最も厳格に強制するだけです。
+- `169.254.0.0/16`（RFC 3927 リンクローカル）。クラウドのインスタンスメタデータ（IMDS）は `169.254.169.254` にあり、イメージによってはブロック全体を予約します。Oracle Cloud の Linux イメージは `169.254.0.0/16` 全体を `InstanceServices` チェインにルーティングするため、`169.254.x` のオーバーレイアドレス宛のフェデレーション SYN はループバックに引き込まれて RST されます（同じアドレスへの ICMP は通るにもかかわらず、です）。AWS と Azure も IMDS に `169.254.169.254` を使います。症状: ローカルの所有権事実はあるのに、ノード間の `routerd-eventd`、BGP、BFD セッションが確立しない。
+- `100.64.0.0/10`（RFC 6598 キャリアグレード NAT）。プロバイダーアンダーレイの CGNAT や Tailscale（`100.x` の tailnet アドレス、MagicDNS）が使います。この範囲のオーバーレイは Tailscale への参加やキャリア NAT と衝突します。
+
+SAM トランスポートエンドポイント、`SAMTransportProfile.innerPrefix`、任意の WireGuard エンドポイントアドレス、`routerd-eventd` の待受 / `EventPeer` エンドポイント、BGP/BFD ピアリングアドレスには、自分で予約した RFC 1918 の範囲を使ってください。モビリティプール `/24`（捕捉されるアドレス）とも、上記のクラウド予約範囲とも分離します。これは全プロバイダー（AWS/Azure/OCI）に当てはまります。OCI がリンクローカル予約を最も厳格に強制するだけの違いです。
+
+## クライアントエンドポイントのアドレッシングとルーターオーバーレイ到達性
+
+クライアントゲストの `lo`/dummy インターフェースに設定したグローバル一意の `/32` は、ゲスト OS がそのアドレスを持っているだけではクラウドファブリックを越えて到達できません。クラウドファブリック（VPC/VNet/VCN）はプロバイダーサブネット CIDR 内の宛先だけをクライアント ENI/NIC に配送します。VPC CIDR 外の宛先は、ルーター上にオーバーレイ経路があっても、ファブリックがクライアントに届ける前に破棄します。
+
+具体的に、異なるアドレッシングの 4 サイトテストでは、
+
+- **オーバーレイ上のルーターエンドポイント `/32`** はエンドツーエンドで到達可能です（ルーターが WireGuard 上で運びます）。ルーターエンドポイントのディスティンクトメッシュは 12 本の方向付き ping＋SSH を通過します。
+- **VPC CIDR 外のクライアント dummy/lo `/32` は到達できません**。オーバーレイ経路とプロバイダーフォワーディングが有効でも、クラウドファブリックはそれらをクライアント ENI に配送しません。
+
+したがって、ディスティンクトメッシュのショートカットエンドポイントは**ルーターエンドポイント専用**として扱ってください。クライアントにグローバル一意でファブリック越しにルーティング可能なアドレスを与えるには、プロバイダーがルーティング可能なクライアントサブネットか、プロバイダーが割り当てたクライアント IP（ファブリックが実際に配送するセカンダリ IP/捕捉アドレス）が必要です。ゲストローカルの dummy `/32` では足りません。マルチサイトラボを設計する際、ルーターオーバーレイの到達性とクライアントファブリックの到達性を混同しないでください。
 
 ## 対象外
 
-MVP は full L2 extension、EVPN、BUM forwarding、broadcast/multicast
-extension、gate なしの automatic cloud API mutation、dynamic patch/replace、
-自動 `rp_filter` 変更を実装しません。
+MVP は完全な L2 延伸、EVPN、BUM 転送、ブロードキャスト/マルチキャスト延伸、ゲートなしの自動クラウド API 変更、動的パッチ/置換のセマンティクス、`rp_filter` の自動変更を実装しません。

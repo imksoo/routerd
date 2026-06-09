@@ -8,12 +8,13 @@
 
 現在のログ sink は次のとおりです。
 
-- `stdout`: JSON 形式のイベント行。
-- `syslog`: 既存の `LogSink` と同じ syslog 形式。
+- `stdout`: JSON 形式のイベント行。サービスマネージャー配下で管理されるログ出力に適しています。
+- `syslog`: 既存の `LogSink` と同じ syslog 形式。ローカルまたはリモートの syslog を使います。
 - `loki`: `/loki/api/v1/push` への HTTP push。
 
-`kafka` は、意図する外部パイプラインを設定に残すためのメタデータとして受け付けます。
-routerd はまだ Kafka へ直接 publish しません。
+`kafka` は、意図する外部パイプラインを設定に残すためのメタデータとして受け付けます。routerd はまだ Kafka へ直接 publish しません。
+
+設定例:
 
 ```yaml
 apiVersion: system.routerd.net/v1alpha1
@@ -24,6 +25,8 @@ spec:
   otlp:
     endpoint: http://otel-collector.lan:4317
     insecure: true
+    headers:
+      authorization: Bearer example-token
   serviceNamespace: routerd
   attributes:
     site: edge
@@ -41,5 +44,7 @@ spec:
 ```
 
 OTLP のフィールドは、routerd が管理するユニットの標準的な OpenTelemetry 環境変数に展開されます。ログ sink のエクスポーターはプロセス内バスの `routerd.**` イベントを購読するため、`journalctl` を scrape せずに、コントローラーの状態変化やデーモンのイベントを転送できます。
+
+サンプリングはパイプラインごとに決定的で、sink への分配の前に適用されます。運用イベントログでは `1`（全件）のままにしてください。高頻度のソースを意図的にダウンサンプリングする場合にのみ変更します。
 
 完全な例は `examples/observability-loki.yaml` にあります。

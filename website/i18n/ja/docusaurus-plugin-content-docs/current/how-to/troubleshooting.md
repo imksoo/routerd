@@ -97,4 +97,4 @@ AFTR の FQDN が解決できない場合は、`DNSResolver` の `forward` sourc
 ## 関連項目
 
 - [状態と所有権](../concepts/state-and-ownership.md)
-- [Reconcile loop](../operations/reconcile)
+- [リコンサイルループ](../operations/reconcile)

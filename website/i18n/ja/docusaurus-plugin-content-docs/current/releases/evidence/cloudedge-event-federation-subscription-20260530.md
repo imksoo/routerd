@@ -19,26 +19,26 @@ Result: PASS
 - 送信側 EventGroup nodeName: `onprem-event-node`
 - 受信側 EventGroup nodeName: `cloud-event-node`
 - 受信側 listen: `169.254.250.5:9443`
-- 送信側 EventPeer endpoint: `http://169.254.250.5:9443`
+- 送信側 EventPeer エンドポイント: `http://169.254.250.5:9443`
 - AddressMobilityDomain: `cloudedge-same-subnet`
-- Plugin 実行ファイルパス: `/usr/local/libexec/routerd/plugins/event-to-remote-claim/bin/event-to-remote-claim`
+- プラグイン実行ファイルパス: `/usr/local/libexec/routerd/plugins/event-to-remote-claim/bin/event-to-remote-claim`
 
 送信側と受信側の設定は以下から適用:
 
 - `examples/event-federation/sender-onprem.yaml`
 - `examples/event-federation/receiver-cloud.yaml`
 
-受信側の plugin パスに stdin をログ出力した後、ビルド済みのサンプルプラグインバイナリを `event-to-remote-claim.real` として実行するラッパーを設置しました。これにより plugin の出力を変更せずに `PluginRequest.spec.events` のエビデンスを取得できました。
+受信側のプラグインパスに stdin をログ出力した後、ビルド済みのサンプルプラグインバイナリを `event-to-remote-claim.real` として実行するラッパーを設置しました。これによりプラグインの出力を変更せずに `PluginRequest.spec.events` のエビデンスを取得できました。
 
 ## デプロイ
 
 - `515fe7e8` の `make dist` が完了。
 - `routerd`、`routerctl`、`routerd-eventd` を両ノードにデプロイ。
 - サンプルプラグインは `CGO_ENABLED=0 GOOS=linux` で別途ビルドし、router05 にインストール。
-- 生成された両方の設定が `routerd check` をパス。
+- 生成された両方の設定が `routerd check` を通過。
 - 両ノードで `routerd-eventd@cloudedge-event-smoke.service` がアクティブ。
 - 受信側の `ss` で `169.254.250.5:9443` のリスナーを確認。
-- オーバーレイの到達性が双方向でパス:
+- オーバーレイの到達性が双方向で通過:
   - router03 -> `169.254.250.5`: 3/3 ping、0% loss
   - router05 -> `169.254.250.3`: 3/3 ping、0% loss
 
@@ -56,14 +56,14 @@ Result: PASS
 結果:
 
 - 送信側から `cloud-event-node` への配信: `delivered`、attempts `1`
-- 受信側の federation ストアに同一イベント ID が存在
+- 受信側のフェデレーションストアに同一イベント ID が存在
 - EventSubscription 実行:
   - subscription: `EventSubscription/cloud-claims`
   - plugin: `event-to-remote-claim`
   - status: `succeeded`
   - attempts: `1`
   - dynamic source: `EventSubscription/cloud-claims/07634fdff9b3235c`
-- Plugin 実行:
+- プラグイン実行:
   - trigger type: `federation-subscription`
   - trigger topic: `cloud-claims`
   - exit code: `0`
@@ -81,14 +81,14 @@ Result: PASS
   - delivery.peerRef: `onprem-main`
   - delivery.tunnelInterface: `wg-hybrid`
 
-レンダリングされた claim にはプロヴェナンスアノテーションが付与:
+レンダリングされた claim には来歴アノテーションが付与:
 
 - `routerd.net/dynamic-source: EventSubscription/cloud-claims`
 - `routerd.net/event-group: cloudedge-event-smoke`
 - `routerd.net/event-id: evt-phase3-smoke-20260530T112250Z`
 - `routerd.net/event-subject: 10.88.60.9/32`
 
-キャプチャされた PluginRequest には `spec.events` 配下に同一の ID、subject、source node、payload を持つメインイベントが含まれていました。
+取得した PluginRequest には `spec.events` 配下に同一の ID、subject、ソースノード、payload を持つメインイベントが含まれていました。
 
 ## ネガティブチェック
 
@@ -98,7 +98,7 @@ Result: PASS
 - メインイベントの配信は attempts `1` のまま。
 - DynamicConfigPart の数は `1` のまま。
 - レンダリングされた `RemoteAddressClaim/onprem-10-88-60-9` の数は `1` のまま。
-- Plugin リクエストログは成功リクエスト 1 件のまま。
+- プラグインリクエストログは成功リクエスト 1 件のまま。
 
 非マッチイベント: PASS
 
@@ -118,13 +118,13 @@ Result: PASS
 - 受信側は期限切れイベントを受信しなかった。
 - `10.88.60.11/32` の subscription 実行やレンダリングされた claim はなし。
 
-Plugin 失敗リトライ上限: PASS
+プラグイン失敗リトライ上限: PASS
 
 - イベント ID: `evt-phase3-pluginfail-20260530T112250Z`
 - ラボ専用の `EventSubscription/cloud-claims-fail` にマッチ。
-- 失敗 plugin が exit code `42` で終了。
+- 失敗プラグインが exit code `42` で終了。
 - `event_subscription_runs` は `status=failed`、`attempts=3` で終了。
-- 失敗した plugin 実行の行が 3 件記録。
+- 失敗したプラグイン実行の行が 3 件記録。
 - `10.88.60.66/32` の DynamicConfigPart は作成されなかった。
 
 ## スコープチェック
@@ -132,12 +132,12 @@ Plugin 失敗リトライ上限: PASS
 - プロバイダーアクションは実行されていない。
 - クラウドリソースの作成、起動、停止、変更はなし。
 - Phase 4 の actionPlan 実行は試行されていない。
-- SAM データプレーン apply は実行されていない; RemoteAddressClaim は `routerctl dynamic render` 内にのみ存在。
-- ARP observer、プロバイダー固有の plugin、DynamicConfigPart consumer パスは使用されていない。
+- SAM データプレーン apply は実行されていない。RemoteAddressClaim は `routerctl dynamic render` 内にのみ存在。
+- ARP オブザーバー、プロバイダー固有のプラグイン、DynamicConfigPart コンシューマーパスは使用されていない。
 
 ## 判定
 
-Phase 3 コントロールプレーン自動化がパス:
+Phase 3 コントロールプレーン自動化が通過:
 
 manual emit -> transport -> EventSubscription match -> plugin.Run ->
 DynamicConfigPart -> `routerctl dynamic render` RemoteAddressClaim。
@@ -146,12 +146,12 @@ Phase 4 は未着手。
 
 ## Pre-flight ノート
 
-Pre-flight はスモークが実行に入った後に要求されました。メインパスがパスし、生成された PluginResult/DynamicConfigPart により以下が遡及的に確認されました:
+Pre-flight はスモークが実行に入った後に要求されました。メインパスが通過し、生成された PluginResult/DynamicConfigPart により以下が遡及的に確認されました:
 
 - payload domain が `AddressMobilityDomain.metadata.name` (`cloudedge-same-subnet`) と一致
-- plugin 実行ファイルが存在し呼び出された (`event-to-remote-claim`、exit 0)
-- 受信側の hybrid コンテキストが完全 (レンダリングされた `RemoteAddressClaim` が受信側設定に対して
-  `domainRef` / `delivery.peerRef` / `capture.providerRef` を解決し、`dynamic render` バリデーションをパス)
-- プロバイダーミューテーションは試行されていない
+- プラグイン実行ファイルが存在し呼び出された (`event-to-remote-claim`、exit 0)
+- 受信側のハイブリッドコンテキストが完全 (レンダリングされた `RemoteAddressClaim` が受信側設定に対して
+  `domainRef` / `delivery.peerRef` / `capture.providerRef` を解決し、`dynamic render` バリデーションを通過)
+- プロバイダーの変更操作は試行されていない
 
-つまり pre-flight はスキップされていません — メインパス PASS が設定/コンテキストの正しさを証明しました。
+つまり pre-flight はスキップされていません -- メインパス PASS が設定/コンテキストの正しさを証明しました。

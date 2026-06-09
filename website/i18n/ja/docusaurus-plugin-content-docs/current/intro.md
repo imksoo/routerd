@@ -50,3 +50,10 @@ routerd は、型付きの YAML で書いた望ましい状態から、Linux / N
 - **リリースと安定版** — 安定版マイルストーン、変更履歴、リリース手順
 - **設計ノート** — アーキテクチャ上の論点と設計の根拠
 - **プロジェクト** — 貢献方法、ライセンスと法務
+
+## 次のステップ
+
+- [routerd を導入する](./install-and-upgrade.md) — リリースアーカイブを取得し `install.sh` を実行
+- [config wizard](https://routerd.net/wizard) — ブラウザーで初期設定を生成
+- [リソースモデル](./concepts/resource-model.md) — routerd がルーターの意図をどう整理するかを理解する
+- [クイックスタート](./tutorials/getting-started.md) — 安全な最初のループ: validate → plan → dry-run → serve

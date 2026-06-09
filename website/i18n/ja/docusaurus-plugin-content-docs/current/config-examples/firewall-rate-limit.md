@@ -4,7 +4,7 @@ title: ファイアウォールのレート制限と ICMP ルール
 
 # ファイアウォールのレート制限と ICMP ルール
 
-![WAN traffic class、FirewallRule の rate と connection limit、生成される stateful nftables filtering の構成](/img/diagrams/config-example-firewall-rate-limit.png)
+![WAN トラフィッククラス、FirewallRule のレートと接続数制限、生成されるステートフルな nftables フィルタリングの構成](/img/diagrams/config-example-firewall-rate-limit.png)
 
 この例は、小規模なルーター向けのステートフルな `FirewallRule` の書き方を示します。
 

@@ -111,3 +111,14 @@ Alpine / OpenRC では、`routerd render alpine --out-dir <dir>` が、明示的
 自動生成された DNS リゾルバのスクリプトは、コントローラーループの外でランタイム設定を実体化できるようになるまでは、enable や start を行いません。
 systemd 専用の挙動は模倣しません。
 systemd-networkd / resolved 向けの drop-in、systemd のサンドボックス用フィールド、timesyncd の所有は、Alpine ネイティブな意味を持つまで OpenRC では未対応として扱います。
+
+## 適用の順序
+
+リモートのルーターでは、手順を堅実に進めてください。
+
+1. routerd のバイナリと最小限の設定をインストールする。
+2. 完全な設定を検証する。
+3. dry-run で適用を試す。
+4. 管理インターフェースと SSH が保護されていることを確認する。
+5. 適用する。
+6. `routerctl status`、転送、DNS、Web 管理画面を確認する。

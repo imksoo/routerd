@@ -6,26 +6,26 @@
 
 routerd は、承認されたクラウドプロバイダー変更（例:
 [選択的アドレス移動性](./selective-address-mobility)のための secondary IP 付与）を
-**executor plugin** 経由で実行できます。クラウドクレデンシャルを保持することはありません。
+**エグゼキュータープラグイン**経由で実行できます。クラウドの認証情報を保持することはありません。
 
-![actionPlans が不活性提案として保存され、action journal にインポートされ、ポリシーゲートで承認され、クレデンシャル保持の executor plugin で実行されることを示す Provider action execution の図](/img/diagrams/dynamic-config-provider-actions.png)
+![actionPlans が不活性提案として保存され、action journal にインポートされ、ポリシーゲートで承認され、認証情報を保持するエグゼキュータープラグインで実行されることを示す Provider action execution の図](/img/diagrams/dynamic-config-provider-actions.png)
 
-## クレデンシャルモデル
+## 認証情報モデル
 
-- **クレデンシャルを保持するのは executor plugin であり、routerd ではありません。**
-  executor（capability `execute.providerAction`）は自身のプロセスで動作し、
-  クラウドネイティブ identity（AWS instance profile、Azure managed identity、
+- **認証情報を保持するのはエグゼキュータープラグインであり、routerd ではありません。**
+  エグゼキューター（capability `execute.providerAction`）は自身のプロセスで動作し、
+  クラウドネイティブな識別情報（AWS instance profile、Azure managed identity、
   OCI instance principal）または自身の環境で認証します。
-- **routerd コアはプロバイダークレデンシャルを保持、読み取り、受け渡しすることはありません。**
-  routerd は executor に承認済みの action plan（シークレットなし）と許可リスト化・
-  リダクト済みの plugin コンテキストのみを渡します。
-- `action_executions` journal にはプランとその結果のみを記録し、シークレットは
+- **routerd コアはプロバイダーの認証情報を保持、読み取り、受け渡しすることはありません。**
+  routerd はエグゼキューターに承認済みの action plan（秘密なし）と許可リスト化・
+  墨消し済みのプラグインコンテキストのみを渡します。
+- `action_executions` journal にはプランとその結果のみを記録し、秘密は
   一切含まれません。
 
 ## `ProviderActionPolicy`
 
 `apiVersion: hybrid.routerd.net/v1alpha1`、`kind: ProviderActionPolicy`。ゼロ値は
-安全なロックダウン状態です。実行無効、ドライランのみ、承認必須、許可リストなし。
+安全なロックダウン状態です。実行無効、ドライランのみ、承認必須、許可リスト空です。
 
 | フィールド | 型 | デフォルト | 意味 |
 | --- | --- | --- | --- |
@@ -60,7 +60,7 @@ spec:
 
 ## action ライフサイクル
 
-planner plugin が提案した action plan は journal にインポートされ、以下の状態を
+プランナープラグインが提案した action plan は journal にインポートされ、以下の状態を
 遷移します。
 
 ```text
@@ -70,13 +70,13 @@ pending  ->  approved  ->  succeeded
                             (succeeded) -> rolledBack
 ```
 
-- **pending** — `actionPlan` からインポートされ、`idempotencyKey` でキー付けされ、
+- **pending** — `actionPlan` からインポートされ、`idempotencyKey` で一意に識別され、
   承認待ち。
 - **approved** — 運用者が承認、またはポリシーによる自動承認
   （`requireApproval: false` かつ `enabled` かつ `dryRunOnly` でない場合）。
-- **succeeded / failed / skipped** — executor が報告した結果。`skipped` は既に
+- **succeeded / failed / skipped** — エグゼキューターが報告した結果。`skipped` は既に
   succeeded した `idempotencyKey` の重複、またはポリシーが拒否した action を表す。
-- **rolledBack** — 以前に succeeded した action にベストエフォートの undo を適用
+- **rolledBack** — 以前に succeeded した action にベストエフォートの取り消しを適用
   （`allowUndo` が true の場合のみ）。
 
 インポートは冪等です。同じ `idempotencyKey` を再インポートしても 2 行目は作成されない
@@ -102,9 +102,9 @@ pending  ->  approved  ->  succeeded
 - **ドライラン**はデフォルトであり、`dryRunOnly` が true（または `enabled` が false）
   の間に許可される唯一のパスです。プランをバリデートし、ポリシーを確認し、効果を
   プレビューしますが、プロバイダー変更は**一切**行いません。
-- **実行**は executor を通じて実際の変更を行い、すべてのハード安全停止条件が
+- **実行**はエグゼキューターを通じて実際の変更を行い、すべての安全停止条件が
   満たされている場合のみ実行されます: `enabled`、`dryRunOnly` でない、承認済み
   （またはポリシー自動承認）、許可リスト一致、`maxActionsPerRun` 以内。
 
-ハード安全停止条件の完全なリストについては
+安全停止条件の完全なリストについては
 [ADR 0007](../adr/0007-provider-action-execution.md) を参照してください。

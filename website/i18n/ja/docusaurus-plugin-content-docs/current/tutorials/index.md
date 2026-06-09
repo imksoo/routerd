@@ -5,7 +5,7 @@ slug: /tutorials
 
 # チュートリアル
 
-![install、getting started、diskless live ISO から WAN services、LAN services、firewall、NixOS、FreeBSD へ進む routerd tutorial path](/img/diagrams/tutorial-index.png)
+![インストール、はじめに、ディスクレスライブ ISO から WAN サービス、LAN サービス、ファイアウォール、NixOS、FreeBSD へ進む routerd チュートリアルの進め方](/img/diagrams/tutorial-index.png)
 
 ## ディスクレス mini PC で 5 分ルーター
 

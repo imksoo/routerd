@@ -85,8 +85,8 @@ PR #54 (`event-federation → main`) は **マージ済み** (マージコミッ
 3. **EventSubscription batchWindow / debounce 精密タイマー**
    Phase 3 の EventSubscriptionController は poll + dedup; plugin 呼び出し前にバースト的なイベントが決定的に合体するよう精密な debounce/batchWindow タイマーを追加 (ADR 0006 のヒステリシス / アンチフラップ不変条件に関連)。(新規 issue。)
 
-4. **Observer セルフキャプチャ不変条件 (Phase 4 ループ防止)**
-   ルーターが自身でキャプチャしたアドレスのイベントを再 emit しないという ADR 0006 不変条件を強制。プロバイダー plugin がクラウド状態をミューテーションし始める前に observe→federate パスにリグレッションテスト/ガードを追加。(新規 issue; Phase 4 前提条件。)
+4. **Observer セルフ捕捉不変条件 (Phase 4 ループ防止)**
+   ルーターが自身で捕捉したアドレスのイベントを再 emit しないという ADR 0006 不変条件を強制。プロバイダー plugin がクラウド状態をミューテーションし始める前に observe→federate パスにリグレッションテスト/ガードを追加。(新規 issue; Phase 4 前提条件。)
 
 5. **ラボクリーンアップ: router03 / router05 が `515fe7e8` バイナリのまま残置**
    Phase 3 ラボスモークのバイナリが router03/router05 にデプロイされたまま。マージ済み main のアーティファクト (または推奨安定ビルド) へ再デプロイし、ラボルーターが experimental コミットに取り残されないよう追跡。(新規 issue; ラボクリーンアップ。)

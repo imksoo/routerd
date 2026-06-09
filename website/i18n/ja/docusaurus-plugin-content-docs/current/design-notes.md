@@ -103,7 +103,12 @@ systemd 側と同じく、目標状態とファイルが変わっていない場
   今後は基本的な expression の網羅ではなく、rule grouping と上位 policy の
   使いやすさを改善します。
 - LAN 向けの DoH 代理。
-- Tier C に向けた、OSPF などの dynamic routing の統合。
-- 高可用性（leader 選出、耐障害の control plane）。
-- 本番向けの observability（OpenTelemetry collector とリモート log sink）。
+- BGP ピアのサブ秒障害検出のための BFD。
+- YAML を編集せずに `routerctl` 経由で IngressService バックエンドのドレインモードを運用者が制御する機能。
+- VRRP の `advertInterval`、`preempt`、`preemptDelay` チューニングの本番環境向け設定例の充実。
+- `IngressService`、ローカルサービスリダイレクト、routerd 管理デーモン間のリッスンポート衝突の検証。
+- デュアルスタック Kubernetes クラスター向けの IPv6 BGP と VRRPv3。
+- Tier C に向けた、OSPF などの動的ルーティングの統合。
+- 高可用性（リーダー選出、耐障害のコントロールプレーン）。
+- 本番向けの観測性（OpenTelemetry コレクターとリモートログシンク）。
 - 家庭用回線で routerd を唯一の WAN ルーターとして長時間運用する検証。

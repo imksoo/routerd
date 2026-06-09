@@ -37,7 +37,7 @@ routerctl events --resource DNSResolver/lan-resolver -o json
 意図の正本は YAML 設定ファイルなので、git で管理してください。
 ホストを再構築するときは、SQLite を復元するよりも、設定ファイルを当てて routerd に調整（リコンサイル）させる方が確実です。
 
-forensic 用途で操作イベントの履歴を残したい場合は、`events.db`、`dns-queries.db`、`traffic-flows.db`、`firewall-logs.db` のスナップショットを定期的に取ってください。これらは追記専用なので、`routerd.db` のような特定時点のバックアップは不要です。
+事後調査の用途で操作イベントの履歴を残したい場合は、`events.db`、`dns-queries.db`、`traffic-flows.db`、`firewall-logs.db` のスナップショットを定期的に取ってください。これらは追記専用なので、`routerd.db` のような特定時点のバックアップは不要です。
 
 ## 関連項目
 

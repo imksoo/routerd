@@ -70,6 +70,67 @@ sudo ./install.sh --with-ndpi \
 実行ファイルを `/usr/local/sbin` に配置し、サービステンプレートを導入します。
 また、`/usr/local/etc/routerd/router.yaml.sample` を作成します。
 既存の `/usr/local/etc/routerd/router.yaml` は上書きしません。
+systemd ホストでは、インストーラーがローカルソケットアクセス用の `routerd` グループを
+作成します。`sudo usermod -aG routerd <user>` で運用者を追加すれば、
+`routerctl status` などのローカル制御ソケット操作を sudo なしで実行できます。
+
+## BGP を動かしているルーターのアップグレード
+
+`routerd-bgp` は長寿命のデーモンで、BGP セッションを保持します。
+再起動するとセッションが切断され、ピアは保留タイマーが満了するまで古い経路を
+保持するため、その間 ECMP の幅が縮小します。
+systemd ホストでは、`install.sh` がアップグレード前の削除済みバイナリをまだ
+実行中のアクティブな routerd ヘルパーサービス (`routerd-bgp` や
+`routerd-dns-resolver` など) を自動でリフレッシュします。
+これにより、アップグレード後のホストが `/proc/*/exe` の下に古い実行ファイルを
+抱え続けることを防ぎます。
+
+インストーラーがヘルパーを再起動した後は、BGP の再収束が起きます。
+再収束中に `routerd-bgp` を再度再起動しないでください。短時間に 2 回再起動すると、
+ピアが古い経路を保持し続け、ECMP が崩壊します。
+Graceful Restart が保護できるのは 1 回の再起動だけです。
+判断は再収束を待ってから行います (BGP の保留タイマーと Graceful Restart の
+stale-path タイマーにより、最大約 3--6 分かかります)。
+合格条件は、すべてのピアが `Established` に戻ること、影響するプレフィックスで
+ECMP 幅が回復すること、エンドツーエンドの疎通 (例: ECMP 経路を通る HTTP 200) が
+成功することです。
+
+この間、1 つのピアが `IDLE` のまま `Closed an accepted connection` を
+繰り返しログに出すことがあります。これは、前のセッションをまだ保持している
+ピアが保留タイマーの満了を待っている状態です。
+追加の再起動はせず、待ってください。タイマー満了後にピアは自動で接続を確立し、
+ECMP も回復します。
+
+## root 以外の運用者によるローカル制御ソケットアクセス
+
+読み取り専用の状態ソケット (`/run/routerd/routerd-status.sock`) を使えば、
+root 以外の運用者も sudo なしで `routerctl status` を実行できます。
+`routerd` グループが存在する場合、routerd はこのソケットを
+`root:routerd`、モード `0o660` で作成します。
+Unix ソケットへの接続には書き込み権限が必要なので、グループのメンバーは
+読み書き可能です。
+このグループ所有権は、routerd がソケットを作成する際に自身で設定するため、
+サービスユニットの `Group=` 設定には依存**しません**。
+`routerd` グループが存在しない場合は、誰もロックアウトされないよう、
+状態ソケットを全アクセス可 (`0o666`) にフォールバックします。
+
+読み書き用の制御ソケット (`/run/routerd/routerd.sock`、`routerctl apply` /
+`delete` で使用) は、`root` 所有の `0o660` のままです。
+ルーターへの変更操作には、引き続き root / sudo が必要です。
+
+sudo なしで `routerctl status` を使えるようにする手順:
+
+1. `sudo usermod -aG routerd <user>` (インストーラーがグループを作成済み)。
+2. グループメンバーシップは**新しい**ログインセッションにのみ適用されます。
+   反映前に再ログイン (または新しい SSH セッションを開く / `newgrp routerd` を
+   実行) してください。フルの再ログインなしで現在のシェルでグループを使うには、
+   コマンドをラップします: `sg routerd -c 'routerctl status'`。
+
+`ls -l /run/routerd/routerd-status.sock` で確認します (期待値:
+`srw-rw---- root routerd`)。`id <user>` でグループ一覧に `routerd` が含まれる
+ことを確認します。
+グループに入っていないユーザーが拒否されるのは、意図した堅牢化であり、
+後退ではありません。サービスユニットの変更は不要です。
 
 ## ライブ ISO で試す
 
@@ -88,6 +149,9 @@ ISO はデモや短時間の試用に向いています。
 永続的なルーターとして使う場合は、リリースアーカイブからディスクへ導入します。
 
 ライブ ISO は、ビデオコンソールとシリアルコンソールの両方を有効にします。
+仮想マシン (KVM / Proxmox など) では、ライブ起動時に `qemu-guest-agent`
+サービスが利用可能であれば自動起動を試みます。
+`sshd` は仮想化環境での運用者アクセス用に同梱していますが、ライブ ISO ではデフォルトで停止しています。
 Proxmox VE では、シリアルソケットを追加し、`qm terminal` で接続します。
 
 ```sh
@@ -177,7 +241,7 @@ sudo ./install.sh --with-tailscale
 インストーラーは `apt-get` を使い、次を導入します。
 
 ```text
-ca-certificates curl dnsmasq-base nftables wireguard-tools chrony bind9-dnsutils tcpdump cron jq ppp pppoe conntrack iproute2 iputils-ping iputils-tracepath net-tools kmod radvd strongswan-swanctl iptables
+ca-certificates curl dnsmasq-base nftables wireguard-tools chrony bind9-dnsutils tcpdump cron jq ppp pppoe conntrack iproute2 iputils-ping iputils-tracepath net-tools kmod radvd strongswan-swanctl iptables keepalived openssh-server
 ```
 
 ### Fedora 系
@@ -185,7 +249,7 @@ ca-certificates curl dnsmasq-base nftables wireguard-tools chrony bind9-dnsutils
 インストーラーは `dnf` を使い、次を導入します。
 
 ```text
-ca-certificates curl dnsmasq nftables wireguard-tools chrony bind-utils tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute iputils traceroute kmod radvd strongswan iptables
+ca-certificates curl dnsmasq nftables wireguard-tools chrony bind-utils tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute iputils traceroute kmod radvd strongswan iptables keepalived openssh-server
 ```
 
 ### Arch 系
@@ -193,7 +257,7 @@ ca-certificates curl dnsmasq nftables wireguard-tools chrony bind-utils tcpdump 
 インストーラーは `pacman` を使い、次を導入します。
 
 ```text
-ca-certificates curl dnsmasq nftables wireguard-tools chrony bind tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute2 iputils traceroute kmod radvd strongswan iptables
+ca-certificates curl dnsmasq nftables wireguard-tools chrony bind tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute2 iputils traceroute kmod radvd strongswan iptables keepalived openssh
 ```
 
 ### Alpine
@@ -201,7 +265,7 @@ ca-certificates curl dnsmasq nftables wireguard-tools chrony bind tcpdump cronie
 インストーラーは `apk` を使い、次を導入します。
 
 ```text
-alpine-conf ca-certificates curl dnsmasq nftables wireguard-tools chrony bind-tools tcpdump cronie jq ppp ppp-pppoe conntrack-tools iproute2 iputils iputils-tracepath kmod radvd strongswan iptables util-linux e2fsprogs dosfstools exfatprogs
+alpine-conf ca-certificates curl dnsmasq nftables wireguard-tools chrony bind-tools tcpdump cronie jq ppp ppp-pppoe conntrack-tools iproute2 iputils iputils-tracepath kmod radvd strongswan iptables keepalived util-linux e2fsprogs dosfstools exfatprogs qemu-guest-agent openssh
 ```
 
 `alpine-conf` は `lbu` を提供します。

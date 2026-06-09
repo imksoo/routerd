@@ -1,4 +1,4 @@
-# CloudEdge Phase 5.1 AWS Provider Executor スモーク
+# CloudEdge Phase 5.1 AWS プロバイダーエグゼキュータースモーク
 
 Result: PASS
 
@@ -8,17 +8,17 @@ Result: PASS
 
 ## スコープ
 
-- プロバイダーミューテーション対象: AWS のみ。
+- プロバイダー変更操作の対象: AWS のみ。
 - アカウント/リージョン: `350538780953` / `ap-northeast-1`。
 - 再利用した routerd 専用 SAM ラボ: `SourceLab=routerd-cloudedge-sam-aws-pve`。
 - 対象ルーターインスタンス: `routerd-cloud-aws` / `i-05b6cfd2b3e4e0da6`。
 - 対象クライアントインスタンス: `aws-cloud-client` / `i-0ae791389518353d6`。
 - 対象 ENI: `eni-0904ccbed8d383f65`。
-- キャプチャアドレス: `10.88.60.9`。
+- 捕捉アドレス: `10.88.60.9`。
 
-## リベースライン
+## 基準値リセット
 
-ミューテーション前に、既存の SAM ラボをフレッシュなプロバイダーベースラインにリセット:
+変更操作の前に、既存の SAM ラボを初期状態のプロバイダー基準値にリセット:
 
 - `eni-0904ccbed8d383f65` から `10.88.60.9` セカンダリプライベート IP を削除。
 - ENI で `SourceDestCheck=true` を復元。
@@ -26,7 +26,7 @@ Result: PASS
 
 ## IAM ゲート
 
-`routerd-cloud-aws` が executor 用の EC2 インスタンスプロファイルを受領。
+`routerd-cloud-aws` がエグゼキューター用の EC2 インスタンスプロファイルを受領。
 
 インラインポリシーで許可されたのは以下のみ:
 
@@ -35,18 +35,18 @@ Result: PASS
 - `ec2:UnassignPrivateIpAddresses`
 - `ec2:ModifyNetworkInterfaceAttribute`
 
-ミューテーション権限のスコープ:
+変更操作権限のスコープ:
 
 - リージョン: `ap-northeast-1`
 - ENI ARN: `arn:aws:ec2:ap-northeast-1:350538780953:network-interface/eni-0904ccbed8d383f65`
 - リソースタグ: `Project=routerd-cloudedge-phase5`
 
-ルーターからのインスタンスロール preflight がパス:
+ルーターからのインスタンスロール preflight が通過:
 
 - `aws sts get-caller-identity` が `arn:aws:sts::350538780953:assumed-role/routerd-phase5-aws-executor-role/i-05b6cfd2b3e4e0da6` を返却。
 - `aws ec2 describe-network-interfaces` で対象 ENI を読み取り可能。
 
-## Executor 実行
+## エグゼキューター実行
 
 `aws-provider-executor` を `routerd-cloud-aws` にビルドしインストール。
 
@@ -60,7 +60,7 @@ Result: PASS
   - Message: `disabled SourceDestCheck on eni-0904ccbed8d383f65 (prior=true)`
   - 観測されたジャーナルファクト: `priorSourceDestCheck=true`
 
-ミューテーション後の AWS 検証:
+変更操作後の AWS 検証:
 
 - ENI プライマリ: `10.88.60.4`
 - ENI セカンダリ: `10.88.60.9`
@@ -103,7 +103,7 @@ Result: PASS
   - action 2: `rolledBack`、`SourceDestCheck=true` を復元。
   - action 1: `rolledBack`、`10.88.60.9` を割当解除。
 
-最終 teardown はオプション B を使用: 既存の SAM ラボ状態を復元。
+最終後片付けはオプション B を使用: 既存の SAM ラボ状態を復元。
 
 - `10.88.60.9` セカンダリプライベート IP が再び存在。
 - `SourceDestCheck=false`。
@@ -117,5 +117,5 @@ Result: PASS
 
 ## ノート
 
-- 実行中にコードバグを発見しローカルで修正: `PluginSpec` スキーマと executor resolver は `execute.providerAction` をサポートしていたが、`pkg/config/validate_plugin.go` がまだ拒否していた。
+- 実行中にコードバグを発見しローカルで修正: `PluginSpec` スキーマとエグゼキューターリゾルバは `execute.providerAction` をサポートしていたが、`pkg/config/validate_plugin.go` がまだ拒否していた。
 - forwarding アクションにも `target.address=10.88.60.9` が必要だった。これにより `ProviderActionPolicy.allowedCIDRs` がポリシーを弱めずにアクションをゲートできるようになった。

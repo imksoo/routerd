@@ -13,7 +13,7 @@ title: CloudEdge 自律ラボ (cloudedge-labctl)
 - `scripts/cloudedge-connectivity-matrix.sh` — 方向付き ping+ssh マトリクス + アサーション。
 - `scripts/cloudedge-evidence-schema.json` — ランエビデンスの JSON スキーマ。
 
-`--help`、dry パス、`down --expired` には**クラウドクレデンシャルは不要**です。
+`--help`、dry パス、`down --expired` には**クラウド認証情報は不要**です。
 
 ## ライフサイクル
 
@@ -27,7 +27,7 @@ scripts/cloudedge-labctl.sh evidence  collect --out evidence/<run-id> --matrix-j
 scripts/cloudedge-labctl.sh down      --run-id <run-id> --force
 ```
 
-`up` は **run-id** を stdout に出力します。これをキャプチャして後続のコマンドに渡してください。クラウドミューテーションは**デフォルトで DRY**（`CE_DRY_RUN=1`）です。クレデンシャルと予算の承認後に `CE_DRY_RUN=0` を設定して実際に実行します。
+`up` は **run-id** を stdout に出力します。これをキャプチャして後続のコマンドに渡してください。クラウドへの変更操作は**デフォルトで DRY**（`CE_DRY_RUN=1`）です。認証情報と予算の承認後に `CE_DRY_RUN=0` を設定して実際に実行します。
 
 ## プロファイル
 
@@ -67,7 +67,7 @@ routerd.cloudedge.purpose
 | `stop-active` | アクティブルーター VM/インスタンスを停止 | プロバイダー stop CLI（`reset-lab.sh` 参照） |
 | `drain` | アクティブの MobilityPool で `maintenance.drain=true` | `run-demo.sh` の `*-drain.yaml` を再利用 |
 | `routerd-bgp-stop` | `routerd-bgp` を停止（BGP セッション切断） | ssh `systemctl stop routerd-bgp` |
-| `executor-fail` | プロバイダーアクション executor 拒否（ID スコープダウン） | ID ポリシー |
+| `executor-fail` | プロバイダーアクション executor 拒否（識別情報のスコープダウン） | 識別情報ポリシー |
 | `stale-replay` | 古い pathSig アクションをリプレイ。**フェンスされる**必要あり | `probe_stale_gate_on_aws_b` |
 
 障害を注入してから `smoke` と `evidence collect` を再実行し、復旧を証明します。
@@ -100,7 +100,7 @@ routerd.cloudedge.purpose
 }
 ```
 
-データプレーンのチェックと `source_ip_preserved` / `default_gateway_unchanged` は接続マトリクスから自動的に導出されます。seize/fencing アサーション（`ownership_epoch_bumped`、`allow_reassignment_maintained_until_success`、`old_holder_residue_absent`、`stale_action_fenced`）と `providerState` は最初 `na` で、ラボオペレーターがプロバイダーインベントリ、BGP mobility パス、プロバイダー trap アクションプラン、アクションジャーナルから取り込みます（`collect-evidence.sh` 参照）。ランが **PASS** となるのは `result == pass` かつすべての必須アサーションがパスした場合のみです。
+データプレーンのチェックと `source_ip_preserved` / `default_gateway_unchanged` は接続マトリクスから自動的に導出されます。seize/fencing アサーション（`ownership_epoch_bumped`、`allow_reassignment_maintained_until_success`、`old_holder_residue_absent`、`stale_action_fenced`）と `providerState` は最初 `na` で、ラボ運用者がプロバイダーインベントリ、BGP mobility パス、プロバイダー trap アクションプラン、アクションジャーナルから取り込みます（`collect-evidence.sh` 参照）。ランが **PASS** となるのは `result == pass` かつすべての必須アサーションがパスした場合のみです。
 
 ## 接続マトリクス
 
@@ -114,14 +114,14 @@ routerd.cloudedge.purpose
 
 ## 自律性チャーター（概要）
 
-エージェントは**ラボ起動 -> デプロイ -> 障害注入 -> データプレーン検証 -> エビデンス -> teardown -> issue/PR 更新**のフルループを所有し、人間が Runbook を読むことなく実行します。クラウドアクションはデフォルトで dry であり、明示的なクレデンシャル/予算の承認でゲートされています。エージェントは常にラボを teardown 済みか TTL コストガード内の状態にしなければならず、PASS には必ずスキーマ有効なエビデンスバンドルを添付する必要があります。
+エージェントは**ラボ起動 -> デプロイ -> 障害注入 -> データプレーン検証 -> エビデンス -> teardown -> issue/PR 更新**のフルループを所有し、人間が Runbook を読むことなく実行します。クラウドアクションはデフォルトで dry であり、明示的な認証情報/予算の承認でゲートされています。エージェントは常にラボを teardown 済みか TTL コストガード内の状態にしなければならず、PASS には必ずスキーマ有効なエビデンスバンドルを添付する必要があります。
 
 ## 人間のゲート
 
 以下のみ人間が必要です。それ以外はすべて自動化されています:
 
 1. **予算** — 支出の承認 / TTL または予算上限の引き上げ。
-2. **クレデンシャル/権限** — クラウドクレデンシャルと executor が使用する最小権限の ID/ロールの付与（シークレットはコミットされず、プラグインにも渡されません）。
+2. **認証情報/権限** — クラウド認証情報と executor が使用する最小権限の識別情報/ロールの付与（秘密はコミットされず、プラグインにも渡されません）。
 3. **マージ** — PR の最終承認。
 4. **本番** — 本番ロールアウト（ラボハーネスでは一切実行されません）。
 
@@ -129,4 +129,4 @@ routerd.cloudedge.purpose
 
 - これは**ラボハーネス**であり、本番用のターンキーソリューションではありません。
 - 初期実装: 実際のプロバイダーごとの割り当て/teardown/ノードプッシュは `TODO(lab-operator)` のスタブか、デモパッケージの薄いラッパーです — run-id タグでフィルタリングした Terraform/OpenTofu またはプロバイダー CLI を接続してください。
-- 実際のアカウント ID / サブスクリプション ID / OCID / ENI/VNIC ID / シークレット / 秘密鍵は決してコミットしないでください。`env.example` のようにプレースホルダーの論理アドレスを使用してください。
+- 実際のアカウント ID / サブスクリプション ID / OCID / ENI/VNIC ID / 秘密情報 / 秘密鍵は決してコミットしないでください。`env.example` のようにプレースホルダーの論理アドレスを使用してください。

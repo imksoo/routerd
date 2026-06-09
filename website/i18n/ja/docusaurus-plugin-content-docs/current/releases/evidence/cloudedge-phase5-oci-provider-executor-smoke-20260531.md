@@ -1,4 +1,4 @@
-# CloudEdge Phase 5.1 OCI Provider Executor スモーク
+# CloudEdge Phase 5.1 OCI プロバイダーエグゼキュータースモーク
 
 Result: PASS
 
@@ -8,17 +8,17 @@ Result: PASS
 
 ## スコープ
 
-- プロバイダーミューテーション対象: OCI のみ。
+- プロバイダー変更操作の対象: OCI のみ。
 - テナンシー/リージョン: `ocid1.tenancy.oc1..aaaaaaaaby2raoa2kzgywrsz6ofjk4eks6uwtpczgtqxulach3xgksfx52qq` / `ap-tokyo-1`。
 - 再利用した routerd 専用 SAM ラボ: `Project=routerd-cloudedge-sam-oci-pve`。
 - 対象ルーターインスタンス: `routerd-cloud-oci` / `ocid1.instance.oc1.ap-tokyo-1.anxhiljr6yebb3qc2sucs3kor7u77ki2cg7zf3xlgmubj5utwfqeejmm7crq`。
 - 対象クライアントインスタンス: `oci-cloud-client` / `ocid1.instance.oc1.ap-tokyo-1.anxhiljr6yebb3qc2biuwl7yyjglwn6aompawzlfmkohpbrqceuijiuf7dva`。
 - 対象 VNIC: `ocid1.vnic.oc1.ap-tokyo-1.abxhiljrzn6c2b4hs2jljbs4cmbshywzr7ldugepftjdrvm77nlvcvbdzzkq`。
-- キャプチャアドレス: `10.77.60.9`。
+- 捕捉アドレス: `10.77.60.9`。
 
-## リベースライン
+## 基準値リセット
 
-ミューテーション前に、既存の SAM ラボをフレッシュなプロバイダーベースラインにリセット:
+変更操作の前に、既存の SAM ラボを初期状態のプロバイダー基準値にリセット:
 
 - ルーター VNIC から `10.77.60.9` セカンダリプライベート IP を削除。
 - VNIC で `skipSourceDestCheck=false` を復元。
@@ -26,18 +26,18 @@ Result: PASS
 
 ## インスタンスプリンシパルゲート
 
-`routerd-cloud-oci` が executor 用の OCI ダイナミックグループとポリシーを受領。
+`routerd-cloud-oci` がエグゼキューター用の OCI ダイナミックグループとポリシーを受領。
 
 - ダイナミックグループ: `routerd_phase5_oci_executor`。
 - 初期の最小権限ポリシーは `private-ip create` に不十分で、`NotAuthorizedOrNotFound` を返却。
 - 進行優先の修正: このラボのダイナミックグループに対してポリシーを `manage virtual-network-family in tenancy` に拡大。
 
-ルーターからのインスタンスプリンシパル preflight がパス:
+ルーターからのインスタンスプリンシパル preflight が通過:
 
 - `oci network vnic get` で対象 VNIC を読み取り可能。
 - `oci network private-ip list` で対象 VNIC のプライベート IP を読み取り可能。
 
-## Executor 実行
+## エグゼキューター実行
 
 `oci-provider-executor` を `routerd-cloud-oci` にビルドしインストール。
 
@@ -51,7 +51,7 @@ Result: PASS
   - Message: `set skipSourceDestCheck=true on <target VNIC> (prior=false)`
   - 観測されたジャーナルファクト: `priorSkipSourceDestCheck=false`
 
-ミューテーション後の OCI 検証:
+変更操作後の OCI 検証:
 
 - VNIC プライマリ: `10.77.60.4`
 - VNIC セカンダリ: `10.77.60.9`
@@ -91,9 +91,9 @@ Result: PASS
 - action 4 `ensure-forwarding-enabled`: `rolledBack`、`skipSourceDestCheck=false` を復元。
 - action 3 `assign-secondary-ip`: `rolledBack`、`10.77.60.9` を割当解除。
 
-ロールバック中に修正可能なラボの問題が 1 件発見: OCI の `private-ip delete` が Plugin の元の `30s` タイムアウトを超過する可能性がありました。ラボの Plugin タイムアウトを `120s` に拡大した後、action 3 のロールバックが完了し、ジャーナルに `rolledBack` が記録されました。
+ロールバック中に修正可能なラボの問題が 1 件発見: OCI の `private-ip delete` がプラグインの元の `30s` タイムアウトを超過する可能性がありました。ラボのプラグインタイムアウトを `120s` に拡大した後、action 3 のロールバックが完了し、ジャーナルに `rolledBack` が記録されました。
 
-最終 teardown はオプション B を使用: 既存の SAM ラボ状態を復元。
+最終後片付けはオプション B を使用: 既存の SAM ラボ状態を復元。
 
 - `10.77.60.9` セカンダリプライベート IP が再び存在。
 - `skipSourceDestCheck=true`。
@@ -107,6 +107,6 @@ Result: PASS
 
 ## ノート
 
-- OCI Ubuntu イメージにターミナルの iptables reject ルールがありました。OCI SAM スモークで使用したものと同じラボファイアウォールブートストラップをデータプレーン検証前に適用。
-- 最初の executor 試行では、インスタンスプリンシパルポリシーがプライベート IP 作成に対して狭すぎることが判明。ラボのダイナミックグループポリシーを拡大した後、retry2 のアクションペアがパス。
+- OCI Ubuntu イメージにターミナルの iptables reject ルールがありました。OCI SAM スモークで使用したものと同じラボファイアウォールのブートストラップをデータプレーン検証前に適用。
+- 最初のエグゼキューター試行では、インスタンスプリンシパルポリシーがプライベート IP 作成に対して狭すぎることが判明。ラボのダイナミックグループポリシーを拡大した後、retry2 のアクションペアが通過。
 - 最初の通常ユーザーでのロールバック試行は、アクション DB のファイルパーミッションにより拒否されました。ロールバックは `sudo routerctl` で実行し、アクション DB の所有権と一致させました。

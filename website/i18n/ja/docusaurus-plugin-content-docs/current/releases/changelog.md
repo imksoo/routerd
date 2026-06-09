@@ -18,16 +18,16 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 ### 追加
 
 - `SAMTransportProfile.spec.peersFrom` と `SAMPeerGroup` Kind を追加。
-  再利用可能な transport peer 参照。union semantics: `peersFrom` を先に読み込み、
-  静的 `peers` が `nodeRef` 単位で上書き (#332, #333)。
+  再利用可能なトランスポートピア参照。union セマンティクス: `peersFrom` のメンバーを
+  先に読み込み、静的 `peers` が `nodeRef` 単位で上書き (#332, #333)。
 - `SAMTransportProfile.spec.publishPeerGroup` で route-reflector が
-  `SAMPeerGroup` を `DynamicConfigPart` として生成し、leaf に自動配布 (#332)。
-- SAM peer group sync: WireGuard 内部ネットワーク上の port 19652 で動作する
-  軽量 HTTP サービス。publisher が `GET /v1/peer-groups` を提供し、consumer が
-  WireGuard peer を列挙して自動取得。手動配布が不要に (#334, #336)。
+  `SAMPeerGroup` を `DynamicConfigPart` として生成し、leaf ルーターに自動配布 (#332)。
+- SAM ピアグループ同期: WireGuard 内部ネットワーク上のポート 19652 で動作する
+  軽量 HTTP サービス。パブリッシャーが `GET /v1/peer-groups` を提供し、leaf が
+  WireGuard ピアを検出して一致するグループを自動取得。手動配布が不要に (#334, #336)。
 - `MobilityMemberSet` Kind と `MobilityPool.spec.membersFrom` を追加。
-  共有 identity-only pool member の配布。leaf は共有 topology を import し、
-  自身の capture/discovery だけを inline に残す。O(N²) config 重複を削減 (#339, #340)。
+  共有の識別情報のみのプールメンバーの配布。leaf は共有トポロジを取り込み、
+  自身の捕捉/検出の詳細だけをインラインに残す。O(N^2) の設定重複を削減 (#339, #340)。
 - `MobilityPool.spec.publishMemberSet` で RR が `MobilityMemberSet` を
   `DynamicConfigPart` として生成。leaf は同じ sync サービスの
   `GET /v1/member-sets` で取得 (#340)。

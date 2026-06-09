@@ -5,10 +5,10 @@ sidebar_position: 30
 
 # DS-Lite ホームルーター
 
-![IPv6 WAN prefix delegation、DS-Lite tunnel egress、derived NAT44、LAN IPv4 と delegated IPv6 service の構成](/img/diagrams/config-example-dslite-home.png)
+![IPv6 WAN プレフィックス委任、DS-Lite トンネル出口、自動導出 NAT44、LAN IPv4 と委任 IPv6 サービスの構成](/img/diagrams/config-example-dslite-home.png)
 
 IPv6 を主回線として使う回線の例です。ルーターは Router Advertisement と DHCPv6-PD で
-IPv6 を受け取り、LAN prefix を派生させ、IPv4 のトラフィックは DS-Lite tunnel に通します。
+IPv6 を受け取り、LAN プレフィックスを導出し、IPv4 のトラフィックは DS-Lite トンネルに通します。
 
 完全な検証済み YAML は `examples/example-dslite-home.yaml` にあります。
 
@@ -32,10 +32,10 @@ flowchart LR
 
 | 番号 | 意味 | 主なリソース |
 | --- | --- | --- |
-| [1] | DS-Lite tunnel の接続先になる ISP 側 AFTR。 | `DSLiteTunnel/transix` |
+| [1] | DS-Lite トンネルの接続先になる ISP 側 AFTR。 | `DSLiteTunnel/transix` |
 | [2] | IPv6 RA と DHCPv6-PD を受ける WAN インターフェース。 | `DHCPv6PrefixDelegation/wan-pd` |
-| [3] | tunnel と LAN サービスを作り、必要な sysctl を導出する routerd ホスト。 | Derived host runtime |
-| [4] | IPv4 egress に使う DS-Lite `ip6tnl` デバイス。 | `DSLiteTunnel/transix`, trust/untrust ゾーンからの NAT44 自動導出 |
+| [3] | トンネルと LAN サービスを作り、必要な sysctl を導出する routerd ホスト。 | Derived host runtime |
+| [4] | IPv4 の出口に使う DS-Lite `ip6tnl` デバイス。 | `DSLiteTunnel/transix`, trust/untrust ゾーンからの NAT44 自動導出 |
 | [5] | IPv4 アドレスと委任された IPv6 アドレスを持つ LAN インターフェース。 | `IPv4StaticAddress/lan-ipv4`, `IPv6DelegatedAddress/lan-ipv6` |
 | [6] | DHCPv4、RA、RDNSS、DNSSL を受ける LAN クライアント。 | `DHCPv4Server/lan-dhcpv4`, `IPv6RouterAdvertisement/lan-ra` |
 
@@ -49,7 +49,7 @@ flowchart LR
 | LAN IPv4 と DHCPv4 | `IPv4StaticAddress/lan-ipv4`, `DHCPv4Server/lan-dhcpv4` |
 | LAN IPv6 の広告 | `IPv6RouterAdvertisement/lan-ra` |
 | DNS | `DNSZone/home`, `DNSResolver/lan-resolver` |
-| IPv4 egress | trust/untrust ゾーンから自動導出される NAT44 |
+| IPv4 の出口 | trust/untrust ゾーンから自動導出される NAT44 |
 | MTU/MSS | `DSLiteTunnel/transix` とファイアウォールゾーンから自動導出 |
 
 この例では Transix に近い AFTR 値をプレースホルダーとして使っています。実回線に合わせて、
@@ -58,7 +58,7 @@ AFTR FQDN、DNS サーバー、DHCPv6 クライアントの profile を置き換
 ## 設定の要点
 
 ```yaml
-# [2] WAN から IPv6 prefix delegation を取得する。
+# [2] WAN から IPv6 プレフィックス委任を取得する。
 - apiVersion: net.routerd.net/v1alpha1
   kind: DHCPv6PrefixDelegation
   metadata:
@@ -68,7 +68,7 @@ AFTR FQDN、DNS サーバー、DHCPv6 クライアントの profile を置き換
     client: dhcp6c
     profile: ntt-hgw-lan-pd
 
-# [5] delegated prefix から LAN IPv6 address を派生させる。
+# [5] 委任されたプレフィックスから LAN IPv6 アドレスを導出する。
 - apiVersion: net.routerd.net/v1alpha1
   kind: IPv6DelegatedAddress
   metadata:
@@ -79,7 +79,7 @@ AFTR FQDN、DNS サーバー、DHCPv6 クライアントの profile を置き換
     subnetID: "0"
     addressSuffix: "::1"
 
-# [1] + [4] ISP AFTR に向けた DS-Lite tunnel を作る。
+# [1] + [4] ISP AFTR に向けた DS-Lite トンネルを作る。
 - apiVersion: net.routerd.net/v1alpha1
   kind: DSLiteTunnel
   metadata:
@@ -98,7 +98,7 @@ AFTR FQDN、DNS サーバー、DHCPv6 クライアントの profile を置き換
     mtu: 1454
 ```
 
-この DS-Lite tunnel は、委任された IPv6 アドレスを local エンドポイントとして使います。
+この DS-Lite トンネルは、委任された IPv6 アドレスをローカルエンドポイントとして使います。
 回線側が WAN RA アドレスをエンドポイントとして期待する場合は、`localAddressSource` を
 `interface` に変えてください。
 
@@ -107,7 +107,7 @@ AFTR FQDN、DNS サーバー、DHCPv6 クライアントの profile を置き換
 この例では、委任された prefix を RA で広告し、クライアントにはルーターを DNS として配ります。
 
 ```yaml
-# [6] delegated LAN prefix と local DNS 情報を RA で広告する。
+# [6] 委任された LAN プレフィックスとローカル DNS 情報を RA で広告する。
 - apiVersion: net.routerd.net/v1alpha1
   kind: IPv6RouterAdvertisement
   metadata:
@@ -177,5 +177,5 @@ dig router.home.example
 
 - プラットフォームに合わせて `client` と `profile` を変更する。
 - Transix 以外では `gw.transix.jp` と AFTR リゾルバのアドレスを置き換える。
-- DS-Lite tunnel を WAN RA アドレスから張る必要がある場合は `localAddressSource: interface` を使う。
-- DS-Lite では MSS clamp が必要になりやすい。routerd は tunnel の MTU と LAN/WAN のファイアウォールゾーンから自動導出する。
+- DS-Lite トンネルを WAN RA アドレスから張る必要がある場合は `localAddressSource: interface` を使う。
+- DS-Lite では MSS クランプが必要になりやすい。routerd はトンネルの MTU と LAN/WAN のファイアウォールゾーンから自動導出する。

@@ -4,7 +4,7 @@ title: BGP 付き Kubernetes API VIP
 
 # BGP 付き Kubernetes API VIP
 
-![routerd edge pair が VRRP VIP、Kubernetes API ingress health check、cluster speaker への BGP peering を管理する構成](/img/diagrams/config-example-kubernetes-api-vip.png)
+![routerd エッジペアが VRRP VIP、Kubernetes API 受信ヘルスチェック、クラスタースピーカーへの BGP ピアリングを管理する構成](/img/diagrams/config-example-kubernetes-api-vip.png)
 
 この例は、Kubernetes API のエンドポイントを cluster 内に置かず、routerd の edge pair で
 ブートストラップするための構成です。ルーターは VRRP VIP を保持し、

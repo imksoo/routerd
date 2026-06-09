@@ -11,8 +11,8 @@ title: ファイアウォール例外を追加する
 `FirewallZone` のロールベースの既定で大半はまかなえますが、例外が必要になる場面もあります。
 
 - 特定の管理サブネットからの SSH を許可したい。
-- ルーター本体上のサービスポート（メトリクスのエンドポイント、独自の listener）を開けたい。
-- 特定の LAN ホストへの、WAN からの inbound 接続を通したい（port forward や DMZ のような用途）。
+- ルーター本体上のサービスポート（メトリクスのエンドポイント、独自のリスナー）を開けたい。
+- 特定の LAN ホストへの、WAN からの着信接続を通したい（ポート転送や DMZ のような用途）。
 
 ## routerd での解決方法
 
@@ -36,7 +36,7 @@ title: ファイアウォール例外を追加する
 ```
 
 `fromZone` / `toZone` は `FirewallZone` 名を参照します。
-`toZone: self` は、ルーター自身が終端する通信（forward ではない）を意味します。
+`toZone: self` は、ルーター自身が終端する通信（転送ではない）を意味します。
 
 ## 例: ルーター本体のサービスポートを開ける
 
@@ -107,10 +107,10 @@ ICMP ルールは type 名で絞り込めます。
     action: accept
 ```
 
-## 例: rate / connection limit を超えた SSH を reject する
+## 例: レート制限や接続数制限を超えた SSH を拒否する
 
 `rateLimit` は、設定した閾値を超えた通信に一致します。`connLimit` は、同じ送信元が
-許可数を超える concurrent tracked state をすでに持っている場合に一致します。
+許可数を超える同時追跡状態をすでに持っている場合に一致します。
 
 ```yaml
 - apiVersion: firewall.routerd.net/v1alpha1

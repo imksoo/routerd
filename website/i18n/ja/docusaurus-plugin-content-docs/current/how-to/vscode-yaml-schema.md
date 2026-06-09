@@ -1,13 +1,13 @@
 ---
-title: VS Code YAML schema
+title: VS Code YAML スキーマ
 slug: /how-to/vscode-yaml-schema
 ---
 
-# VS Code YAML schema
+# VS Code YAML スキーマ
 
-![Go API type から公開 routerd JSON Schema、YAML modeline、VS Code workspace mapping、editor diagnostic へつながる流れ](/img/diagrams/how-to-vscode-yaml-schema.png)
+![Go の API 型から公開された routerd JSON Schema、YAML modeline、VS Code ワークスペースマッピング、エディタ診断へつながる流れ](/img/diagrams/how-to-vscode-yaml-schema.png)
 
-routerd は生成済み config schema を次の URL で公開しています。
+routerd は生成済みの設定スキーマを次の URL で公開しています。
 
 ```text
 https://routerd.net/schemas/routerd-config-v1alpha1.schema.json
@@ -15,7 +15,7 @@ https://routerd.net/schemas/routerd-config-v1alpha1.schema.json
 
 ## ファイルごとの modeline
 
-任意の routerd config file の先頭にこの comment を置きます。
+routerd の設定ファイルの先頭に、次のコメントを置きます。
 
 ```yaml
 # yaml-language-server: $schema=https://routerd.net/schemas/routerd-config-v1alpha1.schema.json
@@ -23,13 +23,11 @@ apiVersion: routerd.net/v1alpha1
 kind: Router
 ```
 
-VS Code と YAML extension はこの modeline を読み、該当 file で補完、hover、
-enum 検証、型診断を有効にします。
+VS Code と YAML 拡張機能はこの modeline を読み、該当ファイルで補完、ホバー情報、列挙値の検証、型診断を有効にします。
 
-## workspace mapping
+## ワークスペースマッピング
 
-この repository には、router config file 向けの `yaml.schemas` mapping を持つ
-`.vscode/settings.json` が入っています。
+このリポジトリには、ルーター設定ファイル向けの `yaml.schemas` マッピングを持つ `.vscode/settings.json` が入っています。
 
 - `examples/*.yaml`
 - `examples/cloudedge-mobility-demo/*.yaml`
@@ -40,7 +38,7 @@ enum 検証、型診断を有効にします。
 - `**/routerd.yaml`
 - `**/router.yaml`
 
-別 workspace では、同じ mapping をその workspace の settings に入れてください。
+別のワークスペースでは、同じマッピングをそのワークスペースの設定ファイルに入れてください。
 
 ```json
 {
@@ -59,10 +57,8 @@ enum 検証、型診断を有効にします。
 }
 ```
 
-これらの pattern に合わない YAML filename では modeline を使ってください。
+これらのパターンに合わない YAML ファイルでは modeline を使ってください。
 
-## checks
+## 整合性の確認
 
-schema は Go API type から生成されます。CI は repository 内の schema と website
-で公開する copy が同期していることを確認します。そのため editor feedback は
-`routerctl validate` が使う契約と同じものに追従します。
+スキーマは Go の API 型から生成されます。CI がリポジトリ内のスキーマと Web サイトで公開しているコピーの同期を確認するため、エディタの診断結果は `routerctl validate` が使う規約と常に一致します。

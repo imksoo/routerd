@@ -5,7 +5,7 @@ sidebar_position: 60
 
 # ゲスト / IoT 端末の分離
 
-![ClientPolicy が shared LAN 上の guest と IoT MAC address を分類し LAN や management access を拒否する構成](/img/diagrams/config-example-guest-isolation.png)
+![ClientPolicy が共有 LAN 上のゲストと IoT の MAC アドレスを分類し、LAN や管理網へのアクセスを拒否する構成](/img/diagrams/config-example-guest-isolation.png)
 
 同じ LAN につながった特定の MAC アドレスをゲスト / IoT 端末として扱い、
 インターネットは許可しつつ、信頼済み LAN や管理網への到達を止める例です。
@@ -39,10 +39,18 @@ flowchart LR
 | [4] | ゲスト / IoT として扱う MAC アドレス。 | `ClientPolicy/guest-devices` |
 | [5] | ゲスト端末から到達させない管理宛先。 | `ClientPolicy.spec.isolation.lanMgmt` |
 
-## 要点
+## この例で管理するもの
+
+| 領域 | routerd リソース |
+| --- | --- |
+| LAN アドレス | `IPv4StaticAddress/lan-gateway`, `DHCPv4Server/lan-v4` |
+| 端末の分類 | `ClientPolicy/guest-devices` |
+| フィルタリング | `FirewallZone/*`, `FirewallPolicy/default` |
+
+## 設定の要点
 
 ```yaml
-# [4] listed MAC address を isolated guest / IoT client として扱う。
+# [4] 列挙した MAC アドレスを隔離されたゲスト / IoT 端末として扱う。
 - apiVersion: firewall.routerd.net/v1alpha1
   kind: ClientPolicy
   metadata:
@@ -51,7 +59,7 @@ flowchart LR
     mode: include
     macs:
       - 18:ec:e7:33:12:6c
-    # [4] -> [1] internet は許可し、LAN と管理網は拒否する。
+    # [4] -> [1] インターネットは許可し、LAN と管理網は拒否する。
     isolation:
       lanInternet: allow
       lanLAN: deny

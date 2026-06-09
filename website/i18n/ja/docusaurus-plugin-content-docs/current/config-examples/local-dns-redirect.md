@@ -5,7 +5,7 @@ sidebar_position: 80
 
 # パブリック DNS をローカルリゾルバへリダイレクト
 
-![LAN の plaintext DNS が IPAddressSet で一致し local DNSResolver へ redirect される構成](/img/diagrams/config-example-local-dns-redirect.png)
+![LAN の平文 DNS が IPAddressSet で一致しローカル DNSResolver へリダイレクトされる構成](/img/diagrams/config-example-local-dns-redirect.png)
 
 LAN クライアントが有名なパブリックリゾルバへ平文 DNS を直接送ろうとしたときに、
 TCP/UDP の port 53 だけをルーターのローカルリゾルバへリダイレクトする例です。
@@ -30,7 +30,7 @@ flowchart LR
 
 ## 図の対応表
 
-| 番号 | 意味 | 主な resource |
+| 番号 | 意味 | 主なリソース |
 | --- | --- | --- |
 | [1] | パブリック DNS へ直接問い合わせようとするクライアント。 | external client |
 | [2] | prerouting のリダイレクトルールが一致する LAN インターフェース。 | `LocalServiceRedirect/lan-local-services.spec.interface` |
@@ -38,10 +38,19 @@ flowchart LR
 | [4] | nftables の set に展開される完全一致の FQDN。 | `IPAddressSet/public-dns` |
 | [5] | ローカルリゾルバが実際に使う上流リゾルバ。 | `DNSForwarder`, `DNSUpstream` |
 
-## 要点
+## この例で管理するもの
+
+| 領域 | routerd リソース |
+| --- | --- |
+| ローカル DNS | `DNSResolver/lan-resolver`, `DNSZone/home` |
+| DHCP の広告 | `DHCPv4Server/lan-dhcpv4` |
+| FQDN ベースの宛先セット | `IPAddressSet/public-dns` |
+| ローカルリダイレクト | `LocalServiceRedirect/lan-local-services` |
+
+## 設定の要点
 
 ```yaml
-# [4] public DNS の exact name を IPAddressSet に解決する。
+# [4] パブリック DNS の完全一致名を IPAddressSet に解決する。
 - apiVersion: net.routerd.net/v1alpha1
   kind: IPAddressSet
   metadata:
@@ -52,7 +61,7 @@ flowchart LR
       - one.one.one.one
     refreshInterval: 10m
 
-# [2] -> [3] 平文 DNS port 53 だけ local resolver に redirect する。
+# [2] -> [3] 平文 DNS の port 53 だけローカルリゾルバにリダイレクトする。
 - apiVersion: firewall.routerd.net/v1alpha1
   kind: LocalServiceRedirect
   metadata:

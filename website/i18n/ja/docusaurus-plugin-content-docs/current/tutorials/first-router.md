@@ -5,7 +5,7 @@ sidebar_position: 2
 
 # 最初のルーターを立ち上げる
 
-![DHCPv4 WAN、static LAN address、最小 Interface resource、validate-plan-dry-run apply loop を示す first router tutorial](/img/diagrams/tutorial-first-router.png)
+![DHCPv4 WAN、静的 LAN アドレス、最小限の Interface リソース、validate-plan-dry-run の適用ループを示す最初のルーターチュートリアル](/img/diagrams/tutorial-first-router.png)
 
 このチュートリアルでは、最小の routerd 構成を立ち上げます。構成は「DHCPv4 で IPv4 を取得する WAN 1 本」と「固定 IPv4 アドレスの LAN 1 本」です。
 

@@ -5,10 +5,10 @@ sidebar_position: 4
 
 # WAN 側サービス
 
-![DHCPv4、DHCPv6-PD、PPPoE、DS-Lite、health check、egress selection、NAT44、downstream status input を扱う WAN-side routerd services](/img/diagrams/tutorial-wan-side-services.png)
+![DHCPv4、DHCPv6-PD、PPPoE、DS-Lite、ヘルスチェック、出口経路選択、NAT44、下流ステータス入力を扱う WAN 側 routerd サービス](/img/diagrams/tutorial-wan-side-services.png)
 
 このページでは、ルーターの WAN 側を扱う routerd リソースを紹介します。
-WAN 側のリソースは、上流リンクの確立、ISP からの IP アドレスとプレフィックスの取得、トンネルの終端、複数の上流経路の controller chain への提供といった役割を担います。
+WAN 側のリソースは、上流リンクの確立、ISP からの IP アドレスとプレフィックスの取得、トンネルの終端、複数の上流経路のコントローラーチェーンへの提供といった役割を担います。
 
 LAN 側 (ルーターから内側に提供するサービス) は [LAN 側サービス](./lan-side-services.md) を参照してください。
 
@@ -78,7 +78,7 @@ ISP が同一 WAN インターフェースで IPv4 (DHCPv4) と IPv6 prefix (DHC
 ## 上流 NTP / SNTP
 
 `NTPClient` は、DHCPv4 option 42 または DHCPv6 option 31 から時刻サーバーを取り出せます。
-上流が時刻サーバーを配布しない場合は、指定した public NTP サーバーを OS の NTP クライアントに設定します。
+上流が時刻サーバーを配布しない場合は、指定した公開 NTP サーバーを OS の NTP クライアントに設定します。
 Linux / NixOS では `systemd-timesyncd`、FreeBSD では `ntpd` を使います。
 
 ```yaml

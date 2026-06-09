@@ -4,7 +4,7 @@ title: FreeBSD から始める
 
 # FreeBSD から始める
 
-![release archive install から rc.d、rc.conf.d、pf、dnsmasq、mpd5 の render と apply validation へ進む FreeBSD getting started flow](/img/diagrams/tutorial-freebsd-getting-started.png)
+![リリースアーカイブの導入から rc.d、rc.conf.d、pf、dnsmasq、mpd5 の生成と適用検証へ進む FreeBSD 入門の流れ](/img/diagrams/tutorial-freebsd-getting-started.png)
 
 FreeBSD は、Ubuntu や NixOS と同じ routerd リソースモデルを使います。
 ただし、生成されるホスト成果物は FreeBSD の機構に合わせます。
@@ -95,7 +95,7 @@ routerd は、リソースを次の FreeBSD の機構へ対応付けます。
 | `dnsmasq.conf` | DHCPv4、DHCPv6、DHCP 中継、RA |
 | `dhclient.conf` | 引き継いだ上流インターフェースの DHCPv4 クライアント動作 |
 | `mpd5.conf` | PPPoE の bundle、link、認証、MTU/MRU、既定経路 |
-| `ifconfig gif` | 静的な `rc.conf` だけでは足りない DS-Lite tunnel の動的な適用 |
+| `ifconfig gif` | 静的な `rc.conf` だけでは足りない DS-Lite トンネルの動的な適用 |
 
 ## 5. 適用する
 

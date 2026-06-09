@@ -29,7 +29,7 @@ spec:
 - `status`: routerd や専用デーモンが観測した状態です。
 
 設定ファイルに書くのは主に `spec` です。
-`status` は制御 API、状態データベース、デーモンの `/v1/status` で確認します。
+`status` は制御 API、状態データベース、デーモンの `/v1/status`、`routerctl`、Web 管理画面で確認します。
 
 ## API グループ
 
@@ -76,6 +76,8 @@ deviceFrom:
   field: interface
 ```
 
+この形にすることで、検証、計画、イベント購読、コントローラーの調整（リコンサイル）から依存関係が見えるようになります。
+
 ## 所有参照
 
 `ownerRefs` は、あるリソースが別のリソースに従属することを表します。
@@ -83,3 +85,9 @@ deviceFrom:
 これは、DHCPv6-PD が失われたときに古い LAN IPv6 設定を残さないための重要な仕組みです。
 委任されたプレフィックスに依存する LAN IPv6 アドレス、RA、DNS レコード、DS-Lite は、
 親が準備できない間は古い状態を出さないようにします。
+
+## 次に読むもの
+
+- [適用と生成](./apply-and-render.md) — validate、plan、dry-run、serve がリソースグラフをどう使うか
+- [状態と所有](./state-and-ownership.md) — routerd がホスト上の所有物をどう追跡するか
+- [リソース API リファレンス](../api-v1alpha1.md) — 全リソース Kind のフィールドリファレンス
