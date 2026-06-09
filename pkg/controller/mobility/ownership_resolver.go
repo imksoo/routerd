@@ -78,9 +78,10 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 	staticOwners := staticOwnedOwnerNodesByAddress(in.Spec)
 	remoteHomeFacts := providerInventoryHomeOwnerFacts(in.PoolName, in.Spec, in.Events, now)
 	localInventory := localInventoryRecordsFromStatus(in.Status, prefix)
-	selfIPs, selfIPsObserved := selfInventoryAddressSetFromStatus(in.Status, prefix)
+	selfIPs, capturedIPs, selfIPsObserved := selfInventoryAddressSetsFromStatus(in.Status, prefix)
+	captureObservedIPs := mergeBoolMaps(selfIPs, capturedIPs)
 	eventOwned := resolverEventOwnedAddresses(in.PoolName, in.SelfNode, in.Spec, in.Events, in.Status, prefix, now)
-	confirmedCaptures, staleCaptures := captureStatesForSelf(self, in.PreviousPlans, in.ActionJournal, selfIPs, selfIPsObserved)
+	confirmedCaptures, staleCaptures := captureStatesForSelf(self, in.PreviousPlans, in.ActionJournal, captureObservedIPs, selfIPsObserved)
 	handoverTargets := staticHandoverTargets(in.Spec, prefix)
 	universe := map[string]bool{}
 	for address := range staticOwners {
@@ -96,6 +97,9 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 		universe[address] = true
 	}
 	for address := range selfIPs {
+		universe[address] = true
+	}
+	for address := range capturedIPs {
 		universe[address] = true
 	}
 	for address := range confirmedCaptures {
@@ -230,7 +234,7 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 				out = append(out, decision)
 				continue
 			}
-			if decision.CaptureState != captureStateNone || selfIPs[address] {
+			if decision.CaptureState != captureStateNone || selfIPs[address] || capturedIPs[address] {
 				decision.Class = ownershipClassStaleCapture
 				decision.SuppressionReason = "fresh-home-owner"
 			} else {
@@ -322,8 +326,9 @@ func localInventoryRecordsFromStatus(status map[string]any, poolPrefix netip.Pre
 	return out
 }
 
-func selfInventoryAddressSetFromStatus(status map[string]any, poolPrefix netip.Prefix) (map[string]bool, bool) {
-	out := map[string]bool{}
+func selfInventoryAddressSetsFromStatus(status map[string]any, poolPrefix netip.Prefix) (map[string]bool, map[string]bool, bool) {
+	privateIPs := map[string]bool{}
+	capturedIPs := map[string]bool{}
 	observed := false
 	for _, key := range []string{"discoverySelfPrivateIPs", "discoverySelfCapturedAddresses"} {
 		if _, ok := status[key]; ok {
@@ -331,12 +336,29 @@ func selfInventoryAddressSetFromStatus(status map[string]any, poolPrefix netip.P
 		}
 		for _, raw := range statusStringSlice(status[key]) {
 			address, ok := normalizeDiscoveredAddress(raw, poolPrefix)
-			if ok {
-				out[address] = true
+			if !ok {
+				continue
+			}
+			if key == "discoverySelfCapturedAddresses" {
+				capturedIPs[address] = true
+			} else {
+				privateIPs[address] = true
 			}
 		}
 	}
-	return out, observed
+	return privateIPs, capturedIPs, observed
+}
+
+func mergeBoolMaps(values ...map[string]bool) map[string]bool {
+	out := map[string]bool{}
+	for _, value := range values {
+		for key, ok := range value {
+			if ok {
+				out[key] = true
+			}
+		}
+	}
+	return out
 }
 
 type resolverEventOwnedAddress struct {
@@ -347,7 +369,7 @@ type resolverEventOwnedAddress struct {
 func resolverEventOwnedAddresses(poolName, selfNode string, spec api.MobilityPoolSpec, events []routerstate.EventRecord, status map[string]any, poolPrefix netip.Prefix, now time.Time) map[string]resolverEventOwnedAddress {
 	discoveryOwnedAddresses := statusStringSet(status["discoveryOwnedAddresses"], poolPrefix)
 	discoveryOwnedObserved := statusHasAny(status, "discoveryOwnedAddresses")
-	discoverySelfIPs, discoverySelfIPsObserved := selfInventoryAddressSetFromStatus(status, poolPrefix)
+	discoverySelfIPs, _, discoverySelfIPsObserved := selfInventoryAddressSetsFromStatus(status, poolPrefix)
 	owned := bgpLocalOwnedAddressesFromConfigAndEvents(poolName, selfNode, spec, events, discoveryOwnedAddresses, discoveryOwnedObserved, discoverySelfIPs, discoverySelfIPsObserved, poolPrefix, now)
 	out := map[string]resolverEventOwnedAddress{}
 	for _, item := range owned {

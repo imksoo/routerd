@@ -153,6 +153,32 @@ func TestOwnershipResolverScenario398RemoteHomeSuppressesCrossCapture(t *testing
 	}
 }
 
+func TestOwnershipResolverDoesNotClassifyCapturedSecondaryAsRouterSelf(t *testing.T) {
+	now := time.Date(2026, 6, 9, 23, 55, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	decisions, err := resolveAddressOwnership(ownershipResolverInput{
+		PoolName: "cloudedge",
+		SelfNode: "aws-router-a",
+		Spec:     spec,
+		Status: map[string]any{
+			"discoverySelfPrivateIPs":        []string{"10.88.60.4/32"},
+			"discoverySelfCapturedAddresses": []string{"10.88.60.12/32"},
+		},
+		Now: now,
+	})
+	if err != nil {
+		t.Fatalf("resolveAddressOwnership: %v", err)
+	}
+	primary := ownershipDecisionByAddress(t, decisions, "10.88.60.4/32")
+	if primary.Class != ownershipClassLocalRouterSelf {
+		t.Fatalf("primary decision = %#v, want router self", primary)
+	}
+	captured := ownershipDecisionByAddress(t, decisions, "10.88.60.12/32")
+	if captured.Class == ownershipClassLocalRouterSelf {
+		t.Fatalf("captured decision = %#v, want captured secondary not classified as router self", captured)
+	}
+}
+
 func ownershipDecisionByAddress(t *testing.T, decisions []ownershipDecision, address string) ownershipDecision {
 	t.Helper()
 	for _, decision := range decisions {
