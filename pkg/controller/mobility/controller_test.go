@@ -206,7 +206,7 @@ func TestControllerBGPModeProviderDiscoveryAdvertisesUnexpiredOwnerEvents(t *tes
 	}
 }
 
-func TestControllerBGPModeSuppressesFailedProviderActionAddress(t *testing.T) {
+func TestControllerBGPModeFailedProviderActionDoesNotSuppressHomeOwnerPath(t *testing.T) {
 	now := time.Date(2026, 6, 2, 10, 0, 0, 0, time.UTC)
 	store := testStore(t, now)
 	spec := plannedPoolSpec()
@@ -247,8 +247,8 @@ func TestControllerBGPModeSuppressesFailedProviderActionAddress(t *testing.T) {
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
-	if _, ok := maybePathBySourcePrefix(bgp, source, "10.88.60.11/32"); ok {
-		t.Fatalf("paths = %#v, want failed provider action address suppressed", bgp.paths)
+	if _, ok := maybePathBySourcePrefix(bgp, source, "10.88.60.11/32"); !ok {
+		t.Fatalf("paths = %#v, want provider-discovery home path retained despite failed capture action", bgp.paths)
 	}
 	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
 	if fmt.Sprint(status["providerActionFailedAddresses"]) != "[10.88.60.11/32]" {
@@ -1424,6 +1424,117 @@ func TestControllerBGPModeProviderTrapRecapturesWhenObservedProviderStateLost(t 
 	}
 }
 
+func TestControllerBGPModeRouteTableDoesNotCaptureRouterSelfOrLocalHome(t *testing.T) {
+	now := time.Date(2026, 6, 9, 23, 0, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := plannedPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	spec.Members[1].Capture.ProviderMode = captureStrategyRouteTable
+	spec.Members[1].Capture.Strategy = captureStrategyRouteTable
+	spec.Members[1].Capture.Target = map[string]string{
+		"region":           "japaneast",
+		"routeTableRef":    "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/routeTables/rt-cloudedge",
+		"nextHopIPAddress": "10.88.60.4",
+	}
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"discoveryLocalInventory": []map[string]any{
+			{"address": "10.88.60.4/32", "nicRef": "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic", "subnetRef": "/subnets/azure", "providerRef": "azure-provider", "resourceType": "router-nic", "primary": true},
+			{"address": "10.88.60.11/32", "nicRef": "/subscriptions/sub-1/resourceGroups/rg-app/providers/Microsoft.Network/networkInterfaces/client-nic", "subnetRef": "/subnets/azure", "providerRef": "azure-provider", "resourceType": "instance-nic"},
+		},
+		"discoverySelfPrivateIPs": []string{"10.88.60.4"},
+		"discoveryLastScanAt":     now.Format(time.RFC3339Nano),
+	}); err != nil {
+		t.Fatalf("SaveObjectStatus: %v", err)
+	}
+	saveBGPInstalledNextHops(t, store, map[string][]string{
+		"10.88.60.4/32":  {"10.99.0.1"},
+		"10.88.60.11/32": {"10.99.0.1"},
+	})
+
+	bgp := &fakeBGPPaths{}
+	controller := Controller{Router: routerWithBGPRouter(planningRouterForNode("azure-router", spec)), Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	plans := decodeActionPlans(t, latestPart(t, store, DynamicSource("cloudedge", "azure-router")).ActionPlansJSON)
+	if findActionPlanByAddress(plans, actionAssignRouteTableRoute, "10.88.60.4/32") != nil ||
+		findActionPlanByAddress(plans, actionAssignRouteTableRoute, "10.88.60.11/32") != nil {
+		t.Fatalf("plans = %#v, want no route-table assign for router self or local same-subnet home", plans)
+	}
+	if _, ok := maybePathBySourcePrefix(bgp, DynamicSource("cloudedge", "azure-router"), "10.88.60.4/32"); ok {
+		t.Fatalf("paths = %#v, want no BGP advertisement for router self management IP", bgp.paths)
+	}
+	pathBySourcePrefix(t, bgp, DynamicSource("cloudedge", "azure-router"), "10.88.60.11/32")
+}
+
+func TestControllerBGPModeRouteTableWrongLocalUDRIsDeprovisioned(t *testing.T) {
+	now := time.Date(2026, 6, 9, 23, 5, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := plannedPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	spec.Members[1].Capture.ProviderMode = captureStrategyRouteTable
+	spec.Members[1].Capture.Strategy = captureStrategyRouteTable
+	spec.Members[1].Capture.Target = map[string]string{
+		"region":           "japaneast",
+		"routeTableRef":    "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/routeTables/rt-cloudedge",
+		"nextHopIPAddress": "10.88.60.4",
+	}
+	source := DynamicSource("cloudedge", "azure-router")
+	previous := []dynamicconfig.ActionPlan{
+		routeTableAssignPlan("cloudedge", "azure", "azure-provider", "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic", "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/routeTables/rt-cloudedge", "10.88.60.4/32", now.Add(-time.Minute)),
+		routeTableAssignPlan("cloudedge", "azure", "azure-provider", "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic", "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/routeTables/rt-cloudedge", "10.88.60.11/32", now.Add(-time.Minute)),
+	}
+	rawPrevious, err := json.Marshal(previous)
+	if err != nil {
+		t.Fatalf("marshal previous plans: %v", err)
+	}
+	if err := store.UpsertDynamicConfigPart(routerstate.DynamicConfigPartRecord{
+		Source:          source,
+		Generation:      dynamicGeneration,
+		ObservedAt:      now.Add(-time.Minute),
+		ExpiresAt:       now.Add(time.Hour),
+		ActionPlansJSON: string(rawPrevious),
+		Status:          "active",
+	}); err != nil {
+		t.Fatalf("UpsertDynamicConfigPart: %v", err)
+	}
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"discoveryLocalInventory": []map[string]any{
+			{"address": "10.88.60.4/32", "nicRef": "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic", "subnetRef": "/subnets/azure", "providerRef": "azure-provider", "resourceType": "router-nic", "primary": true},
+			{"address": "10.88.60.11/32", "nicRef": "/subscriptions/sub-1/resourceGroups/rg-app/providers/Microsoft.Network/networkInterfaces/client-nic", "subnetRef": "/subnets/azure", "providerRef": "azure-provider", "resourceType": "instance-nic"},
+		},
+		"discoverySelfPrivateIPs": []string{"10.88.60.4"},
+		"discoveryLastScanAt":     now.Format(time.RFC3339Nano),
+	}); err != nil {
+		t.Fatalf("SaveObjectStatus: %v", err)
+	}
+	saveBGPInstalledNextHops(t, store, map[string][]string{
+		"10.88.60.4/32":  {"10.99.0.1"},
+		"10.88.60.11/32": {"10.99.0.1"},
+	})
+
+	bgp := &fakeBGPPaths{}
+	controller := Controller{Router: routerWithBGPRouter(planningRouterForNode("azure-router", spec)), Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	plans := decodeActionPlans(t, latestPart(t, store, source).ActionPlansJSON)
+	if findActionPlanByAddress(plans, actionAssignRouteTableRoute, "10.88.60.4/32") != nil ||
+		findActionPlanByAddress(plans, actionAssignRouteTableRoute, "10.88.60.11/32") != nil {
+		t.Fatalf("plans = %#v, want wrong local UDR assign removed from desired set", plans)
+	}
+	if findActionPlanByAddress(plans, actionUnassignRouteTableRoute, "10.88.60.4/32") == nil ||
+		findActionPlanByAddress(plans, actionUnassignRouteTableRoute, "10.88.60.11/32") == nil {
+		t.Fatalf("plans = %#v, want wrong local UDR deprovisioned", plans)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	decisions := ownershipStatusDecisions(t, status["ownershipResolverDecisions"])
+	selfDecision := ownershipStatusDecisionByAddress(t, decisions, "10.88.60.4/32")
+	if selfDecision["class"] != ownershipClassStaleCapture || selfDecision["suppressionReason"] != "local-router-self" {
+		t.Fatalf("self decision = %#v, want local router self stale capture", selfDecision)
+	}
+}
+
 func TestControllerBGPModeProviderTrapUsesStaticOwnedOwnerWhenOwnershipMissing(t *testing.T) {
 	now := time.Date(2026, 6, 2, 10, 0, 0, 0, time.UTC)
 	store := testStore(t, now)
@@ -1804,5 +1915,60 @@ func staticRouter(nodeName string, spec api.MobilityPoolSpec) *api.Router {
 				Spec:     spec,
 			},
 		}},
+	}
+}
+
+func routeTableAssignPlan(poolName, provider, providerRef, nicRef, routeTableRef, address string, at time.Time) dynamicconfig.ActionPlan {
+	pathSig := "prefix=" + normalizeAddressString(address) + ";test=wrong-local-udr"
+	return dynamicconfig.ActionPlan{
+		Name:        safeName("mobility-" + poolName + "-assign-" + address),
+		Provider:    provider,
+		ProviderRef: providerRef,
+		Action:      actionAssignRouteTableRoute,
+		Target: map[string]string{
+			"address":         address,
+			"provider":        provider,
+			"providerRef":     providerRef,
+			"nicRef":          nicRef,
+			"routeTableRef":   routeTableRef,
+			"captureStrategy": captureStrategyRouteTable,
+		},
+		Parameters: map[string]string{
+			bgpPathSigParam:        pathSig,
+			bgpTrapLastSeenAtParam: at.Format(time.RFC3339Nano),
+			captureParamHolder:     "azure-router",
+		},
+	}
+}
+
+func ownershipStatusDecisionByAddress(t *testing.T, decisions []map[string]any, address string) map[string]any {
+	t.Helper()
+	for _, decision := range decisions {
+		if fmt.Sprint(decision["address"]) == address {
+			return decision
+		}
+	}
+	t.Fatalf("ownership decision %s not found in %#v", address, decisions)
+	return nil
+}
+
+func ownershipStatusDecisions(t *testing.T, raw any) []map[string]any {
+	t.Helper()
+	switch typed := raw.(type) {
+	case []map[string]any:
+		return typed
+	case []any:
+		out := make([]map[string]any, 0, len(typed))
+		for _, item := range typed {
+			m, ok := item.(map[string]any)
+			if !ok {
+				t.Fatalf("ownershipResolverDecisions item = %#v, want map[string]any", item)
+			}
+			out = append(out, m)
+		}
+		return out
+	default:
+		t.Fatalf("ownershipResolverDecisions = %#v, want slice", raw)
+		return nil
 	}
 }

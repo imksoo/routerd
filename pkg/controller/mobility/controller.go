@@ -186,49 +186,20 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		return err
 	}
 	events = append(events, releaseEvents...)
-	discoveryOwnedAddresses, discoveryOwnedObserved := c.discoveryProviderOwnedAddressSet(res.Metadata.Name, spec)
 	discoverySelfIPs, discoverySelfIPsObserved := c.discoverySelfPrivateIPSet(res.Metadata.Name, spec)
-	homeOwnerFacts := providerInventoryHomeOwnerFacts(res.Metadata.Name, spec, events, now)
 	livenessMarkers, livenessMarkersObserved := c.bgpLivenessMarkers()
 	ownerPlacement := evaluateBGPCapturePlacement(self, members, livenessMarkers, livenessMarkersObserved)
 	actionJournal, err := c.Store.ListActions(routerstate.ActionExecutionFilter{})
 	if err != nil {
 		return fmt.Errorf("list action journal: %w", err)
 	}
-	homeOwnerPathPrefixes := bgpSelfHomeOwnerAddressSet(selfNode, homeOwnerFacts)
-	ownedPaths := bgpOwnedPaths(res.Metadata.Name, source, selfNode, spec, events, discoveryOwnedAddresses, discoveryOwnedObserved, discoverySelfIPs, discoverySelfIPsObserved, homeOwnerFacts, ownerPlacement.Active, now)
 	failedActions := latestFailedProviderActions(actionJournal)
-	ownedPaths = filterBGPPathsByProviderActionSuccess(ownedPaths, failedActions, homeOwnerPathPrefixes)
-	localOwned := bgpLocalOwnedAddresses(ownedPaths)
-	desired := append([]bgpdaemon.AppliedPath(nil), ownedPaths...)
-	if !self.MaintenanceDrain {
-		marker, ok := c.bgpLivenessMarkerPath(res.Metadata.Name, source, selfNode, spec.GroupRef)
-		if ok {
-			desired = append(desired, marker)
-		}
-	}
 	previousActionPlans, err := c.previousGeneratedActionPlans(res.Metadata.Name, selfNode)
 	if err != nil {
 		return err
 	}
 	installedNextHops, bgpRIBObserved := c.bgpInstalledNextHops()
-	desiredTrapAddresses, capturePlacement, err := c.bgpTrapAddresses(res.Metadata.Name, selfNode, spec, installedNextHops, bgpRIBObserved, livenessMarkers, livenessMarkersObserved, previousActionPlans, localOwned, discoveryOwnedAddresses, discoverySelfIPs, homeOwnerFacts, now)
-	if err != nil {
-		return err
-	}
-	var actionPlans []dynamicconfig.ActionPlan
 	forwardingObserved, forwardingEnabled, forwardingObservedAt := c.discoverySelfForwardingState(res.Metadata.Name)
-	if len(desiredTrapAddresses) > 0 && !selfCaptureResolved {
-		actionPlans = nil
-	} else {
-		actionPlans, err = bgpProviderActionPlans(res.Metadata.Name, selfNode, spec, desiredTrapAddresses, previousActionPlans, cloudProviderProfiles(c.Router), actionJournal, discoverySelfIPs, discoverySelfIPsObserved, forwardingObserved, forwardingEnabled, forwardingObservedAt, c.SuppressProviderDeprovision, now)
-		if err != nil {
-			return err
-		}
-	}
-	providerTransitions := latestProviderCaptureTransitions(previousActionPlans, actionJournal)
-	providerCapturedPaths, seizedPathCount := bgpProviderCapturedOwnedPaths(source, self, desiredTrapAddresses, providerTransitions, discoverySelfIPs, discoverySelfIPsObserved, homeOwnerFacts)
-	desired = appendUniqueBGPPaths(desired, providerCapturedPaths...)
 	ownershipDecisions, ownershipErr := resolveAddressOwnership(ownershipResolverInput{
 		PoolName:          res.Metadata.Name,
 		SelfNode:          selfNode,
@@ -240,6 +211,44 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		InstalledNextHops: installedNextHops,
 		Now:               now,
 	})
+	if ownershipErr != nil {
+		return ownershipErr
+	}
+	delivery, err := planBGPMobilityDelivery(bgpDeliveryPlannerInput{
+		PoolName:             res.Metadata.Name,
+		Source:               source,
+		Self:                 self,
+		Members:              members,
+		Spec:                 spec,
+		Decisions:            ownershipDecisions,
+		Placement:            ownerPlacement,
+		InstalledNextHops:    installedNextHops,
+		RIBObserved:          bgpRIBObserved,
+		PreviousPlans:        previousActionPlans,
+		Profiles:             cloudProviderProfiles(c.Router),
+		ActionJournal:        actionJournal,
+		ObservedSelfIPs:      discoverySelfIPs,
+		ObservedSelfIPsOK:    discoverySelfIPsObserved,
+		ForwardingObserved:   forwardingObserved,
+		ForwardingEnabled:    forwardingEnabled,
+		ForwardingObservedAt: forwardingObservedAt,
+		SuppressDeprovision:  c.SuppressProviderDeprovision,
+		Now:                  now,
+	})
+	if err != nil {
+		return err
+	}
+	desired := append([]bgpdaemon.AppliedPath(nil), delivery.Paths...)
+	if !self.MaintenanceDrain {
+		marker, ok := c.bgpLivenessMarkerPath(res.Metadata.Name, source, selfNode, spec.GroupRef)
+		if ok {
+			desired = append(desired, marker)
+		}
+	}
+	actionPlans := delivery.ActionPlans
+	if len(delivery.CaptureCandidates) > 0 && !selfCaptureResolved {
+		actionPlans = nil
+	}
 	current, err := c.BGPPaths.ListPaths(ctx, source)
 	if err != nil {
 		return fmt.Errorf("list BGP mobility paths: %w", err)
@@ -270,11 +279,11 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		"deliveryMode":                      "bgp",
 		"bgpPathSource":                     source,
 		"generatedBGPPaths":                 len(desired),
-		"generatedSeizedBGPPaths":           seizedPathCount,
-		"generatedProviderCapturedBGPPaths": len(providerCapturedPaths),
+		"generatedSeizedBGPPaths":           delivery.SeizedPaths,
+		"generatedProviderCapturedBGPPaths": delivery.ProviderCapturedPaths,
 		"bgpRIBObserved":                    bgpRIBObserved,
-		"bgpCaptureElection":                bgpCaptureElectionStatus(capturePlacement),
-		"generatedBGPTraps":                 len(desiredTrapAddresses),
+		"bgpCaptureElection":                bgpCaptureElectionStatus(delivery.Placement),
+		"generatedBGPTraps":                 len(delivery.CaptureCandidates),
 		"generatedClaims":                   0,
 		"generatedActions":                  len(actionPlans),
 		"membersFrom":                       mobilityMembersFromStatusMaps(resolved.MembersFrom),
@@ -289,7 +298,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 	if selfCaptureReason != "" {
 		status["selfCaptureReason"] = selfCaptureReason
 	}
-	if len(desiredTrapAddresses) > 0 && !selfCaptureResolved {
+	if len(delivery.CaptureCandidates) > 0 && !selfCaptureResolved {
 		status["plannerPhase"] = "Degraded"
 		status["plannerReason"] = selfCaptureReason
 		status["providerActionPhase"] = "Blocked"
@@ -314,13 +323,8 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 			status["providerActionFailedAt"] = lastFailedAt.Format(time.RFC3339)
 		}
 	}
-	if ownershipErr != nil {
-		status["ownershipResolverPhase"] = "ShadowDegraded"
-		status["ownershipResolverError"] = ownershipErr.Error()
-	} else {
-		for key, value := range ownershipResolverStatus(ownershipDecisions) {
-			status[key] = value
-		}
+	for key, value := range ownershipResolverStatus(ownershipDecisions) {
+		status[key] = value
 	}
 	return c.savePlannerStatus(res.Metadata.Name, status)
 }
