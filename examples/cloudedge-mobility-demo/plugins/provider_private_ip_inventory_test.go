@@ -42,6 +42,9 @@ case "$*" in
   *"--network-interface-ids eni-router"*)
     printf '%s\n' '{"NetworkInterfaces":[{"NetworkInterfaceId":"eni-router","SubnetId":"subnet-a","SourceDestCheck":false}]}'
     ;;
+  *"describe-instances"*"instance-state-name"*)
+    printf '%s\n' '{"Reservations":[{"Instances":[{"InstanceId":"i-router","NetworkInterfaces":[{"NetworkInterfaceId":"eni-router"}]},{"InstanceId":"i-client","NetworkInterfaces":[{"NetworkInterfaceId":"eni-client"}]}]}]}'
+    ;;
   *"Name=subnet-id,Values=subnet-a"*)
     printf '%s\n' '{"NetworkInterfaces":[{"NetworkInterfaceId":"eni-router","SubnetId":"subnet-a","PrivateIpAddresses":[{"PrivateIpAddress":"10.77.60.21","Primary":true}],"TagSet":[{"Key":"role","Value":"router"}]},{"NetworkInterfaceId":"eni-client","SubnetId":"subnet-a","PrivateIpAddresses":[{"PrivateIpAddress":"10.77.60.11","Primary":false}],"TagSet":[{"Key":"role","Value":"client"}]}]}'
     ;;
@@ -71,6 +74,9 @@ func TestProviderPrivateIPInventoryPluginAWSResolvesSelfFromLocalIP(t *testing.T
 case "$*" in
   *"Name=addresses.private-ip-address,Values=10.77.60.21"*)
     printf '%s\n' '{"NetworkInterfaces":[{"NetworkInterfaceId":"eni-router","SubnetId":"subnet-a","SourceDestCheck":true,"PrivateIpAddresses":[{"PrivateIpAddress":"10.77.60.21","Primary":true}]}]}'
+    ;;
+  *"describe-instances"*"instance-state-name"*)
+    printf '%s\n' '{"Reservations":[{"Instances":[{"InstanceId":"i-router","NetworkInterfaces":[{"NetworkInterfaceId":"eni-router"}]},{"InstanceId":"i-client","NetworkInterfaces":[{"NetworkInterfaceId":"eni-client"}]}]}]}'
     ;;
   *"Name=subnet-id,Values=subnet-a"*)
     printf '%s\n' '{"NetworkInterfaces":[{"NetworkInterfaceId":"eni-router","SubnetId":"subnet-a","PrivateIpAddresses":[{"PrivateIpAddress":"10.77.60.21","Primary":true}]},{"NetworkInterfaceId":"eni-client","SubnetId":"subnet-a","PrivateIpAddresses":[{"PrivateIpAddress":"10.77.60.11","Primary":false}]}]}'
@@ -119,6 +125,9 @@ func TestProviderPrivateIPInventoryPluginAWSResolvesSelfFromIMDS(t *testing.T) {
 case "$*" in
   *"--network-interface-ids eni-router-b"*)
     printf '%s\n' '{"NetworkInterfaces":[{"NetworkInterfaceId":"eni-router-b","SubnetId":"subnet-a","SourceDestCheck":false,"PrivateIpAddresses":[{"PrivateIpAddress":"10.77.60.5","Primary":true}]}]}'
+    ;;
+  *"describe-instances"*"instance-state-name"*)
+    printf '%s\n' '{"Reservations":[{"Instances":[{"InstanceId":"i-router-b","NetworkInterfaces":[{"NetworkInterfaceId":"eni-router-b"}]},{"InstanceId":"i-client","NetworkInterfaces":[{"NetworkInterfaceId":"eni-client"}]}]}]}'
     ;;
   *"Name=subnet-id,Values=subnet-a"*)
     printf '%s\n' '{"NetworkInterfaces":[{"NetworkInterfaceId":"eni-router-b","SubnetId":"subnet-a","PrivateIpAddresses":[{"PrivateIpAddress":"10.77.60.5","Primary":true}]},{"NetworkInterfaceId":"eni-client","SubnetId":"subnet-a","PrivateIpAddresses":[{"PrivateIpAddress":"10.77.60.11","Primary":false}]}]}'
@@ -232,6 +241,105 @@ esac
 		t.Fatalf("self.forwardingEnabled = %#v, want false", res.Status.Self.ForwardingEnabled)
 	}
 	assertIP(t, res, "10.77.60.13", "vnic-client", "subnet-oci")
+}
+
+func TestProviderPrivateIPInventoryPluginAWSFiltersStopped(t *testing.T) {
+	requirePython(t)
+	bin := fakeBinDir(t)
+	writeExecutable(t, filepath.Join(bin, "aws"), `#!/bin/sh
+case "$*" in
+  *"--network-interface-ids eni-router"*)
+    printf '%s\n' '{"NetworkInterfaces":[{"NetworkInterfaceId":"eni-router","SubnetId":"subnet-a","SourceDestCheck":false}]}'
+    ;;
+  *"describe-instances"*"instance-state-name"*)
+    printf '%s\n' '{"Reservations":[{"Instances":[{"InstanceId":"i-router","NetworkInterfaces":[{"NetworkInterfaceId":"eni-router"}]}]}]}'
+    ;;
+  *"Name=subnet-id,Values=subnet-a"*)
+    printf '%s\n' '{"NetworkInterfaces":[{"NetworkInterfaceId":"eni-router","SubnetId":"subnet-a","PrivateIpAddresses":[{"PrivateIpAddress":"10.77.60.21","Primary":true}],"TagSet":[{"Key":"role","Value":"router"}]},{"NetworkInterfaceId":"eni-stopped","SubnetId":"subnet-a","PrivateIpAddresses":[{"PrivateIpAddress":"10.77.60.19","Primary":true}],"TagSet":[{"Key":"role","Value":"client"}]}]}'
+    ;;
+  *)
+    echo "unexpected aws args: $*" >&2
+    exit 2
+    ;;
+esac
+`)
+	res := runInventoryPlugin(t, bin, `{"spec":{"provider":"aws","selfNicRef":"eni-router","target":{"region":"us-east-1"}}}`)
+	if res.Status.Status != "succeeded" {
+		t.Fatalf("status = %q error=%q", res.Status.Status, res.Status.Error)
+	}
+	assertIP(t, res, "10.77.60.21", "eni-router", "subnet-a")
+	for _, ip := range res.Status.IPs {
+		if ip.Address == "10.77.60.19" {
+			t.Fatalf("stopped instance IP 10.77.60.19 should be filtered out, but found in results")
+		}
+	}
+}
+
+func TestProviderPrivateIPInventoryPluginOCIFiltersStopped(t *testing.T) {
+	requirePython(t)
+	bin := fakeBinDir(t)
+	writeExecutable(t, filepath.Join(bin, "oci"), `#!/bin/sh
+case "$*" in
+  *"network vnic get --vnic-id vnic-router"*)
+    printf '%s\n' '{"data":{"id":"vnic-router","subnet-id":"subnet-oci","compartment-id":"compartment-demo","skip-source-dest-check":true}}'
+    ;;
+  *"compute vnic-attachment list --compartment-id compartment-demo"*)
+    printf '%s\n' '{"data":[{"vnic-id":"vnic-router","instance-id":"i-router"},{"vnic-id":"vnic-client","instance-id":"i-client"},{"vnic-id":"vnic-stopped","instance-id":"i-stopped"}]}'
+    ;;
+  *"compute instance list --compartment-id compartment-demo"*)
+    printf '%s\n' '{"data":[{"id":"i-router","lifecycle-state":"RUNNING"},{"id":"i-client","lifecycle-state":"RUNNING"},{"id":"i-stopped","lifecycle-state":"STOPPED"}]}'
+    ;;
+  *"network private-ip list --subnet-id subnet-oci"*)
+    printf '%s\n' '{"data":[{"ip-address":"10.77.60.23","vnic-id":"vnic-router","subnet-id":"subnet-oci","is-primary":true},{"ip-address":"10.77.60.13","vnic-id":"vnic-client","subnet-id":"subnet-oci","is-primary":false,"freeform-tags":{"role":"client"}},{"ip-address":"10.77.60.19","vnic-id":"vnic-stopped","subnet-id":"subnet-oci","is-primary":true}]}'
+    ;;
+  *)
+    echo "unexpected oci args: $*" >&2
+    exit 2
+    ;;
+esac
+`)
+	res := runInventoryPlugin(t, bin, `{"spec":{"provider":"oci","selfNicRef":"vnic-router","target":{"region":"ap-tokyo-1"}}}`)
+	if res.Status.Status != "succeeded" {
+		t.Fatalf("status = %q error=%q", res.Status.Status, res.Status.Error)
+	}
+	assertIP(t, res, "10.77.60.13", "vnic-client", "subnet-oci")
+	for _, ip := range res.Status.IPs {
+		if ip.Address == "10.77.60.19" {
+			t.Fatalf("stopped instance IP 10.77.60.19 should be filtered out, but found in results")
+		}
+	}
+}
+
+func TestProviderPrivateIPInventoryPluginAzureFiltersStopped(t *testing.T) {
+	requirePython(t)
+	bin := fakeBinDir(t)
+	writeExecutable(t, filepath.Join(bin, "az"), `#!/bin/sh
+case "$*" in
+  *"network nic show --ids /nic/router"*)
+    printf '%s\n' '{"id":"/nic/router","resourceGroup":"rg-demo","enableIPForwarding":true,"ipConfigurations":[{"subnet":{"id":"/subnets/demo"}}]}'
+    ;;
+  *"network nic list --resource-group rg-demo"*)
+    printf '%s\n' '[{"id":"/nic/router","tags":{"role":"router"},"ipConfigurations":[{"privateIPAddress":"10.77.60.22","primary":true,"subnet":{"id":"/subnets/demo"}}]},{"id":"/nic/client","tags":{"role":"client"},"ipConfigurations":[{"privateIPAddress":"10.77.60.12","primary":false,"subnet":{"id":"/subnets/demo"}}]},{"id":"/nic/stopped","tags":{"role":"stopped"},"ipConfigurations":[{"privateIPAddress":"10.77.60.19","primary":true,"subnet":{"id":"/subnets/demo"}}]}]'
+    ;;
+  *"vm list --resource-group rg-demo"*)
+    printf '%s\n' '[{"powerState":"VM running","networkProfile":{"networkInterfaces":[{"id":"/nic/router"}]}},{"powerState":"VM running","networkProfile":{"networkInterfaces":[{"id":"/nic/client"}]}},{"powerState":"VM stopped","networkProfile":{"networkInterfaces":[{"id":"/nic/stopped"}]}}]'
+    ;;
+  *)
+    echo "unexpected az args: $*" >&2
+    exit 2
+    ;;
+esac
+`)
+	res := runInventoryPlugin(t, bin, `{"spec":{"provider":"azure","selfNicRef":"/nic/router","target":{"resourceGroup":"rg-demo"}}}`)
+	if res.Status.Status != "succeeded" {
+		t.Fatalf("status = %q error=%q", res.Status.Status, res.Status.Error)
+	}
+	assertIP(t, res, "10.77.60.12", "/nic/client", "/subnets/demo")
+	for _, ip := range res.Status.IPs {
+		if ip.Address == "10.77.60.19" {
+			t.Fatalf("stopped VM IP 10.77.60.19 should be filtered out, but found in results")
+		}
+	}
 }
 
 func runInventoryPlugin(t *testing.T, fakeBin, stdin string) inventoryResult {

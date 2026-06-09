@@ -201,6 +201,25 @@ def oci_cli(region, args):
     return run_json(argv)
 
 
+def aws_running_enis(region, subnet):
+    """Return set of ENI IDs attached to running instances."""
+    try:
+        doc = aws_cli(region, ["ec2", "describe-instances",
+                               "--filters",
+                               "Name=subnet-id,Values=" + subnet,
+                               "Name=instance-state-name,Values=running"])
+        running = set()
+        for res in doc.get("Reservations") or []:
+            for inst in res.get("Instances") or []:
+                for nic in inst.get("NetworkInterfaces") or []:
+                    eni = nic.get("NetworkInterfaceId", "")
+                    if eni:
+                        running.add(eni)
+        return running
+    except Exception:
+        return None
+
+
 def aws_inventory(spec):
     target = spec.get("target") or {}
     region = target.get("region") or os.environ.get("AWS_DEFAULT_REGION", "")
@@ -244,11 +263,16 @@ def aws_inventory(spec):
             self_forwarding_enabled = not bool(interfaces[0].get("SourceDestCheck"))
     if not subnet:
         raise ValueError("AWS subnetRef could not be inferred from self NIC")
+    running = aws_running_enis(region, subnet)
+    if running is not None:
+        running.add(self_nic)
     doc = aws_cli(region, ["ec2", "describe-network-interfaces", "--filters", "Name=subnet-id,Values=" + subnet])
     ips = []
     for nic in doc.get("NetworkInterfaces") or []:
         nic_ref = nic.get("NetworkInterfaceId", "")
         subnet_ref = nic.get("SubnetId", subnet)
+        if running is not None and nic_ref not in running:
+            continue
         tags = {item.get("Key", ""): item.get("Value", "") for item in nic.get("TagSet") or [] if item.get("Key")}
         for rec in nic.get("PrivateIpAddresses") or []:
             address = rec.get("PrivateIpAddress", "")
@@ -265,6 +289,23 @@ def aws_inventory(spec):
     if self_forwarding_enabled is not None:
         self_info["forwardingEnabled"] = bool(self_forwarding_enabled)
     return self_info, ips
+
+
+def azure_stopped_nics(resource_group):
+    """Return set of NIC resource IDs attached to non-running VMs."""
+    try:
+        vms = az_cli(["vm", "list", "--resource-group", resource_group, "--show-details"])
+        stopped = set()
+        for vm in vms or []:
+            if vm.get("powerState", "") == "VM running":
+                continue
+            for nic_ref in (vm.get("networkProfile") or {}).get("networkInterfaces") or []:
+                nic_id = nic_ref.get("id", "")
+                if nic_id:
+                    stopped.add(nic_id)
+        return stopped
+    except Exception:
+        return None
 
 
 def azure_inventory(spec):
@@ -309,9 +350,12 @@ def azure_inventory(spec):
         address = cfg.get("privateIPAddress") or cfg.get("privateIpAddress") or ""
         if address:
             self_private_ips.append(address)
+    stopped = azure_stopped_nics(resource_group)
     ips = []
     for nic in nics or []:
         nic_ref = nic.get("id", "")
+        if stopped is not None and nic_ref != self_nic and nic_ref in stopped:
+            continue
         tags = nic.get("tags") or {}
         for cfg in nic.get("ipConfigurations") or []:
             subnet_ref = ((cfg.get("subnet") or {}).get("id") or "")
@@ -344,6 +388,32 @@ def flatten_oci_tags(rec):
     return tags
 
 
+def oci_running_vnics(region, compartment):
+    """Return set of VNIC IDs belonging to RUNNING instances."""
+    running_vnics = set()
+    try:
+        attachments = oci_cli(region, ["compute", "vnic-attachment", "list",
+                                       "--compartment-id", compartment, "--all"])
+        vnic_to_instance = {}
+        for att in attachments.get("data") or []:
+            vid = att.get("vnic-id", "")
+            iid = att.get("instance-id", "")
+            if vid and iid:
+                vnic_to_instance[vid] = iid
+        instances = oci_cli(region, ["compute", "instance", "list",
+                                     "--compartment-id", compartment, "--all"])
+        running_ids = set()
+        for inst in instances.get("data") or []:
+            if inst.get("lifecycle-state", "") == "RUNNING":
+                running_ids.add(inst.get("id", ""))
+        for vid, iid in vnic_to_instance.items():
+            if iid in running_ids:
+                running_vnics.add(vid)
+    except Exception:
+        return None
+    return running_vnics
+
+
 def oci_inventory(spec):
     target = spec.get("target") or {}
     region = target.get("region") or os.environ.get("OCI_REGION", "")
@@ -363,17 +433,24 @@ def oci_inventory(spec):
         subnet = (self_data.get("subnet-id") or "")
     if not subnet:
         raise ValueError("OCI subnetRef could not be inferred from self VNIC")
+    compartment = self_data.get("compartment-id", "")
+    running = oci_running_vnics(region, compartment) if compartment else None
+    if running is not None:
+        running.add(self_nic)
     doc = oci_cli(region, ["network", "private-ip", "list", "--subnet-id", subnet, "--all"])
     ips = []
     for rec in doc.get("data") or []:
         address = rec.get("ip-address", "")
         if not address:
             continue
-        if rec.get("vnic-id", "") == self_nic:
+        vnic_id = rec.get("vnic-id", "")
+        if vnic_id == self_nic:
             self_private_ips.append(address)
+        if running is not None and vnic_id not in running:
+            continue
         ips.append({
             "address": address,
-            "nicRef": rec.get("vnic-id", ""),
+            "nicRef": vnic_id,
             "subnetRef": rec.get("subnet-id", subnet),
             "primary": bool(rec.get("is-primary")),
             "tags": flatten_oci_tags(rec),
