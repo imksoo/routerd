@@ -980,6 +980,10 @@ func TestSystemdUnitControllerRemovesStaleEventFederationUnits(t *testing.T) {
 	if err := os.WriteFile(stale, []byte("[Service]\nExecStart=/usr/local/sbin/routerd-eventd\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
+	legacy := filepath.Join(dir, "routerd-eventd.service")
+	if err := os.WriteFile(legacy, []byte("[Service]\nExecStart=/usr/local/sbin/routerd-eventd daemon --config-file /var/lib/routerd/eventd/cloudedge/config.json\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	kept := filepath.Join(dir, "routerd-eventd@current.service")
 	router := &api.Router{Metadata: api.ObjectMeta{Name: "home"}, Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.FederationAPIVersion, Kind: "EventGroup"}, Metadata: api.ObjectMeta{Name: "current"}, Spec: api.EventGroupSpec{NodeName: "home"}},
@@ -1004,10 +1008,15 @@ func TestSystemdUnitControllerRemovesStaleEventFederationUnits(t *testing.T) {
 	if _, err := os.Stat(stale); !os.IsNotExist(err) {
 		t.Fatalf("stale unit still exists: %v", err)
 	}
+	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
+		t.Fatalf("legacy unit still exists: %v", err)
+	}
 	gotCommands := strings.Join(commands, "\n")
 	for _, want := range []string{
 		"systemctl disable --now routerd-eventd@old.service",
 		"systemctl reset-failed routerd-eventd@old.service",
+		"systemctl disable --now routerd-eventd.service",
+		"systemctl reset-failed routerd-eventd.service",
 		"systemctl daemon-reload",
 	} {
 		if !strings.Contains(gotCommands, want) {
