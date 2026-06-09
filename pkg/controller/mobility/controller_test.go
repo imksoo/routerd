@@ -291,7 +291,7 @@ func TestControllerBGPModeKeepsOnPremOwnerWhenOneDiscoverySourceExpires(t *testi
 	}
 }
 
-func TestControllerBGPModeDrainWithdrawsLocalPathWithoutOwnershipEpoch(t *testing.T) {
+func TestControllerBGPModeDrainKeepsLocalPathAtStandbyPreference(t *testing.T) {
 	now := time.Date(2026, 6, 2, 10, 0, 0, 0, time.UTC)
 	store := testStore(t, now)
 	spec := centralizedOwnershipPoolSpec()
@@ -314,14 +314,24 @@ func TestControllerBGPModeDrainWithdrawsLocalPathWithoutOwnershipEpoch(t *testin
 			Family: bgpdaemon.AppliedPathFamilyIPv4Unicast,
 			Attrs:  bgpdaemon.AppliedPathAttrs{LocalPref: bgpMobilityLocalPrefBase + 1},
 		}),
+		bgpdaemon.AppliedPathKey(bgpdaemon.AppliedPath{Source: aSource, Prefix: "10.99.0.2/32"}): bgpdaemon.NormalizeAppliedPath(bgpdaemon.AppliedPath{
+			Source: aSource,
+			Prefix: "10.99.0.2/32",
+			Family: bgpdaemon.AppliedPathFamilyIPv4Unicast,
+			Attrs:  bgpdaemon.AppliedPathAttrs{LocalPref: 50, Communities: []string{bgpstate.MobilityCommunityNodeLiveness, bgpstate.MobilityNodeIdentityCommunity("azure-router-a")}},
+		}),
 	}}
 
-	controllerA := Controller{Router: planningRouterForNode("azure-router-a", spec), Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	controllerA := Controller{Router: routerWithEventGroupListen(planningRouterForNode("azure-router-a", spec), "10.99.0.2"), Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
 	if err := controllerA.Reconcile(context.Background()); err != nil {
 		t.Fatalf("old owner Reconcile: %v", err)
 	}
-	if len(bgp.deletes) != 1 || bgp.deletes[0].Source != aSource || bgp.deletes[0].Prefix != "10.88.60.12/32" {
-		t.Fatalf("old owner deletes = %#v, want withdraw", bgp.deletes)
+	path := pathBySourcePrefix(t, bgp, aSource, "10.88.60.12/32")
+	if path.Attrs.LocalPref != bgpMobilityLocalPrefBase {
+		t.Fatalf("drained path localPref = %d, want standby preference", path.Attrs.LocalPref)
+	}
+	if len(bgp.deletes) != 1 || bgp.deletes[0].Source != aSource || bgp.deletes[0].Prefix != "10.99.0.2/32" {
+		t.Fatalf("old owner deletes = %#v, want liveness marker withdrawn only", bgp.deletes)
 	}
 }
 
@@ -543,6 +553,111 @@ func TestControllerBGPModeProviderStateFollowsBestPathOwnerChange(t *testing.T) 
 	}
 	if assignB.Parameters[bgpPathSigParam] == "" || assignB.Parameters[captureParamHolder] != "azure-router-b" {
 		t.Fatalf("router-b assign parameters = %#v, want path-fenced trap to active placement holder", assignB.Parameters)
+	}
+}
+
+func TestControllerBGPModeDrainMarkerWithdrawLetsPeerSeizeWithStaleConfig(t *testing.T) {
+	now := time.Date(2026, 6, 2, 10, 0, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	recordEvent(t, store, routerstate.EventRecord{
+		ID:         "evt-aws-a",
+		Group:      "cloudedge",
+		SourceNode: "aws-router-a",
+		Type:       ObservedEventType,
+		Subject:    "10.88.60.11/32",
+		ObservedAt: now.Add(-time.Second),
+		ExpiresAt:  now.Add(time.Hour),
+		Payload: map[string]string{
+			"address": "10.88.60.11/32",
+			"pool":    "cloudedge",
+			"source":  providerDiscoverySource,
+			"nicRef":  "client-nic-a",
+		},
+	})
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"discoveryOwnedAddresses": []string{"10.88.60.11/32"},
+		"discoverySelfPrivateIPs": []string{"10.88.60.4/32"},
+		"discoveryLastScanAt":     now.Format(time.RFC3339Nano),
+	}); err != nil {
+		t.Fatalf("SaveObjectStatus: %v", err)
+	}
+
+	drained := awsFailoverPoolSpec()
+	drained.DeliveryPolicy.Mode = "bgp"
+	drained.Members[1].Maintenance.Drain = true
+	bgp := &fakeBGPPaths{}
+	controllerA := Controller{Router: routerWithBGPRouter(routerWithEventGroupListen(planningRouterForNode("aws-router-a", drained), "10.99.0.2")), Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controllerA.Reconcile(context.Background()); err != nil {
+		t.Fatalf("drained router-a Reconcile: %v", err)
+	}
+	aPath := pathBySourcePrefix(t, bgp, DynamicSource("cloudedge", "aws-router-a"), "10.88.60.11/32")
+	if aPath.Attrs.LocalPref != bgpMobilityLocalPrefBase {
+		t.Fatalf("drained router-a localPref = %d, want low-preference handoff path", aPath.Attrs.LocalPref)
+	}
+	if _, ok := maybePathBySourcePrefix(bgp, DynamicSource("cloudedge", "aws-router-a"), "10.99.0.2/32"); ok {
+		t.Fatalf("drained router-a still advertises liveness marker: %#v", bgp.paths)
+	}
+
+	saveBGPStatus(t, store, map[string][]string{
+		"10.88.60.11/32": {"10.99.0.2"},
+	}, []map[string]any{}, map[string]string{bgpstate.MobilityNodeIdentityCommunity("aws-router-b"): "10.99.0.5/32"})
+	controllerB := Controller{Router: routerWithBGPRouter(planningRouterForNode("aws-router-b", spec)), Store: store, BGPPaths: bgp, Now: func() time.Time { return now.Add(time.Second) }}
+	if err := controllerB.Reconcile(context.Background()); err != nil {
+		t.Fatalf("stale-config router-b Reconcile: %v", err)
+	}
+	plans := decodeActionPlans(t, latestPart(t, store, DynamicSource("cloudedge", "aws-router-b")).ActionPlansJSON)
+	assign := findActionPlanByAddress(plans, "assign-secondary-ip", "10.88.60.11/32")
+	if assign == nil {
+		t.Fatalf("stale-config router-b plans = %#v, want seize assign after drained active marker withdrew", plans)
+	}
+	if assign.Parameters["allowReassignment"] != "true" {
+		t.Fatalf("assign parameters = %#v, want allowReassignment for marker-withdraw seize", assign.Parameters)
+	}
+}
+
+func TestControllerBGPModeProviderCaptureSuccessAdvertisesPlannedDrainTakeover(t *testing.T) {
+	now := time.Date(2026, 6, 2, 10, 0, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	spec.Members[1].Maintenance.Drain = true
+	recordEvent(t, store, routerstate.EventRecord{
+		ID:         "evt-aws-a",
+		Group:      "cloudedge",
+		SourceNode: "aws-router-a",
+		Type:       ObservedEventType,
+		Subject:    "10.88.60.11/32",
+		ObservedAt: now.Add(-time.Second),
+		ExpiresAt:  now.Add(time.Hour),
+		Payload: map[string]string{
+			"address": "10.88.60.11/32",
+			"pool":    "cloudedge",
+			"source":  providerDiscoverySource,
+			"nicRef":  "client-nic-a",
+		},
+	})
+	saveBGPStatus(t, store, map[string][]string{
+		"10.88.60.11/32": {"10.99.0.2"},
+	}, []map[string]any{}, map[string]string{
+		bgpstate.MobilityNodeIdentityCommunity("aws-router-a"): "10.99.0.2/32",
+		bgpstate.MobilityNodeIdentityCommunity("aws-router-b"): "10.99.0.5/32",
+	})
+	seedSucceededBGPCaptureAction(t, store, "aws-provider", "eni-b", "aws-router-b", "10.88.60.11/32", "assign-secondary-ip", 1, now.Add(-time.Second))
+
+	bgp := &fakeBGPPaths{}
+	controllerB := Controller{Router: routerWithBGPRouter(planningRouterForNode("aws-router-b", spec)), Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controllerB.Reconcile(context.Background()); err != nil {
+		t.Fatalf("router-b Reconcile: %v", err)
+	}
+	path := pathBySourcePrefix(t, bgp, DynamicSource("cloudedge", "aws-router-b"), "10.88.60.11/32")
+	if path.Attrs.LocalPref != bgpMobilityLocalPrefBase+1 {
+		t.Fatalf("captured path localPref = %d, want active provider-captured path", path.Attrs.LocalPref)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	if fmt.Sprint(status["generatedProviderCapturedBGPPaths"]) != "1" || fmt.Sprint(status["generatedSeizedBGPPaths"]) != "0" {
+		t.Fatalf("status = %#v, want provider-captured=1 seized=0", status)
 	}
 }
 
@@ -984,8 +1099,9 @@ func TestControllerBGPModeRestoreKeepsOwnerPreferredOverStandby(t *testing.T) {
 	if err := controllerB.Reconcile(context.Background()); err != nil {
 		t.Fatalf("takeover router-b Reconcile: %v", err)
 	}
-	if _, ok := maybePathBySourcePrefix(bgp, DynamicSource("cloudedge", "aws-router-a"), "10.88.60.11/32"); ok {
-		t.Fatalf("drained router-a path still present")
+	aDrained := pathBySourcePrefix(t, bgp, DynamicSource("cloudedge", "aws-router-a"), "10.88.60.11/32")
+	if aDrained.Attrs.LocalPref != bgpMobilityLocalPrefBase {
+		t.Fatalf("drained router-a localPref = %d, want low-preference handoff path", aDrained.Attrs.LocalPref)
 	}
 	bTakeover := pathBySourcePrefix(t, bgp, DynamicSource("cloudedge", "aws-router-b"), "10.88.60.11/32")
 	if bTakeover.Attrs.LocalPref != bgpMobilityLocalPrefBase+1 {
