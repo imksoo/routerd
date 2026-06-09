@@ -31,6 +31,13 @@ type inventoryResult struct {
 			Tags          map[string]string `json:"tags"`
 			InstanceState string            `json:"instanceState"`
 		} `json:"ips"`
+		LocalIPs []struct {
+			Address       string            `json:"address"`
+			NICRef        string            `json:"nicRef"`
+			SubnetRef     string            `json:"subnetRef"`
+			Tags          map[string]string `json:"tags"`
+			InstanceState string            `json:"instanceState"`
+		} `json:"localIPs"`
 		Error string `json:"error"`
 	} `json:"status"`
 }
@@ -66,6 +73,7 @@ esac
 		t.Fatalf("self.forwardingEnabled = %#v, want true", res.Status.Self.ForwardingEnabled)
 	}
 	assertIP(t, res, "10.77.60.11", "eni-client", "subnet-a")
+	assertLocalIP(t, res, "10.77.60.11")
 }
 
 func TestProviderPrivateIPInventoryPluginAWSResolvesSelfFromLocalIP(t *testing.T) {
@@ -182,6 +190,7 @@ esac
 		t.Fatalf("self.forwardingEnabled = %#v, want true", res.Status.Self.ForwardingEnabled)
 	}
 	assertIP(t, res, "10.77.60.12", "/nic/client", "/subnets/demo")
+	assertLocalIP(t, res, "10.77.60.12")
 }
 
 func TestProviderPrivateIPInventoryPluginOCI(t *testing.T) {
@@ -212,6 +221,7 @@ esac
 		t.Fatalf("self.forwardingEnabled = %#v, want true", res.Status.Self.ForwardingEnabled)
 	}
 	assertIP(t, res, "10.77.60.13", "vnic-client", "subnet-oci")
+	assertLocalIP(t, res, "10.77.60.13")
 }
 
 func TestProviderPrivateIPInventoryPluginOCIResolvesSelfFromEnv(t *testing.T) {
@@ -372,6 +382,16 @@ func assertIP(t *testing.T, res inventoryResult, address, nicRef, subnetRef stri
 		}
 	}
 	t.Fatalf("missing address %s in %+v", address, res.Status.IPs)
+}
+
+func assertLocalIP(t *testing.T, res inventoryResult, address string) {
+	t.Helper()
+	for _, ip := range res.Status.LocalIPs {
+		if ip.Address == address {
+			return
+		}
+	}
+	t.Fatalf("missing local address %s in %+v", address, res.Status.LocalIPs)
 }
 
 func assertInstanceState(t *testing.T, res inventoryResult, address, wantState string) {

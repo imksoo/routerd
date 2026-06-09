@@ -15,7 +15,7 @@ API_VERSION = "providerinventory.routerd.net/v1alpha1"
 KIND_RESULT = "ObservePrivateIPsResult"
 
 
-def result(status, ips=None, self_info=None, message="", error=""):
+def result(status, ips=None, self_info=None, message="", error="", local_ips=None, observed_candidates=None):
     out = {
         "apiVersion": API_VERSION,
         "kind": KIND_RESULT,
@@ -25,6 +25,10 @@ def result(status, ips=None, self_info=None, message="", error=""):
         out["status"]["self"] = self_info
     if ips:
         out["status"]["ips"] = ips
+    if local_ips:
+        out["status"]["localIPs"] = local_ips
+    if observed_candidates:
+        out["status"]["observedCandidates"] = observed_candidates
     if message:
         out["status"]["message"] = message
     if error:
@@ -482,7 +486,7 @@ def main():
     else:
         result("skipped", message="unsupported provider: " + provider)
         return
-    result("succeeded", ips=ips, self_info=self_info)
+    result("succeeded", ips=ips, local_ips=ips, self_info=self_info)
 
 
 if __name__ == "__main__":

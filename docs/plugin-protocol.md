@@ -230,6 +230,23 @@ the provider-action journal. The plugin result itself must stay a dry-run plan;
 `routerctl action execute --approved` or the daemon auto-execution gate, and the
 executor plugin receives no routerd-held secrets.
 
+### ObservePrivateIPsResult
+
+Plugins with `observe.providerPrivateIPs` return
+`providerinventory.routerd.net/v1alpha1` `ObservePrivateIPsResult` objects. The
+legacy `status.ips` field remains wire-compatible and is treated as observed
+candidate addresses for ownership-discovery events. New plugins should also set
+`status.localIPs` to the authoritative local provider inventory for the scanned
+VPC/VNet/VCN or subnet, including VM NIC and private-endpoint addresses before
+routerd applies trap exclusions or ownership selectors. If `localIPs` is absent,
+routerd falls back to `observedCandidates` and then `ips`.
+
+`status.observedCandidates` can be used when a plugin wants to return a narrower
+event-emission candidate set while still exposing the full local inventory in
+`localIPs`. SAM's ownership resolver uses `localIPs` for shadow locality
+classification; the existing discovery event path continues to use
+`observedCandidates` or legacy `ips`.
+
 ## CLI
 
 The MVP operator commands are:

@@ -33,7 +33,7 @@ func TestRunInventoryRejectsMissingCapability(t *testing.T) {
 }
 
 func TestRunInventoryRoundTrip(t *testing.T) {
-	bin := writeInventoryPlugin(t, `{"apiVersion":"providerinventory.routerd.net/v1alpha1","kind":"ObservePrivateIPsResult","status":{"status":"succeeded","self":{"nicRef":"eni-router","subnetRef":"subnet-a","privateIPs":["10.88.60.21"],"forwardingEnabled":false},"ips":[{"address":"10.88.60.11","nicRef":"eni-client","subnetRef":"subnet-a","tags":{"cloudedge-mobility":"true"}}]}}`)
+	bin := writeInventoryPlugin(t, `{"apiVersion":"providerinventory.routerd.net/v1alpha1","kind":"ObservePrivateIPsResult","status":{"status":"succeeded","self":{"nicRef":"eni-router","subnetRef":"subnet-a","privateIPs":["10.88.60.21"],"forwardingEnabled":false},"ips":[{"address":"10.88.60.11","nicRef":"eni-client","subnetRef":"subnet-a","tags":{"cloudedge-mobility":"true"}}],"localIPs":[{"address":"10.88.60.11","nicRef":"eni-client","subnetRef":"subnet-a","resourceType":"instance-nic"}],"observedCandidates":[{"address":"10.88.60.12","nicRef":"eni-candidate","subnetRef":"subnet-a"}]}}`)
 	req := NewObservePrivateIPsRequest(ObservePrivateIPsRequestSpec{Provider: "aws", ProviderRef: "aws-provider", SelfNode: "aws-router", Pool: "cloudedge", Prefix: "10.88.60.0/24", SelfNICRef: "eni-router"})
 	res, outcome, err := RunInventory(context.Background(), inventorySpec(bin), req)
 	if err != nil {
@@ -41,6 +41,12 @@ func TestRunInventoryRoundTrip(t *testing.T) {
 	}
 	if res.Status.Status != ResultSucceeded || len(res.Status.IPs) != 1 || res.Status.IPs[0].Address != "10.88.60.11" {
 		t.Fatalf("result = %#v", res)
+	}
+	if got := res.Status.LocalInventoryRecords(); len(got) != 1 || got[0].Address != "10.88.60.11" || got[0].ResourceType != "instance-nic" {
+		t.Fatalf("local inventory = %#v, want localIPs preferred", got)
+	}
+	if got := res.Status.ObservedCandidateRecords(); len(got) != 1 || got[0].Address != "10.88.60.12" {
+		t.Fatalf("observed candidates = %#v, want observedCandidates preferred", got)
 	}
 	if res.Status.Self == nil || res.Status.Self.NICRef != "eni-router" || res.Status.Self.SubnetRef != "subnet-a" || len(res.Status.Self.PrivateIPs) != 1 {
 		t.Fatalf("self = %#v", res.Status.Self)

@@ -54,12 +54,14 @@ type ObservePrivateIPsResult struct {
 }
 
 type ObservePrivateIPsResultStatus struct {
-	Status  string            `json:"status" yaml:"status"`
-	Message string            `json:"message,omitempty" yaml:"message,omitempty"`
-	Error   string            `json:"error,omitempty" yaml:"error,omitempty"`
-	Self    *PrivateIPSelf    `json:"self,omitempty" yaml:"self,omitempty"`
-	IPs     []PrivateIPRecord `json:"ips,omitempty" yaml:"ips,omitempty"`
-	Routes  []RouteRecord     `json:"routes,omitempty" yaml:"routes,omitempty"`
+	Status             string            `json:"status" yaml:"status"`
+	Message            string            `json:"message,omitempty" yaml:"message,omitempty"`
+	Error              string            `json:"error,omitempty" yaml:"error,omitempty"`
+	Self               *PrivateIPSelf    `json:"self,omitempty" yaml:"self,omitempty"`
+	IPs                []PrivateIPRecord `json:"ips,omitempty" yaml:"ips,omitempty"`
+	ObservedCandidates []PrivateIPRecord `json:"observedCandidates,omitempty" yaml:"observedCandidates,omitempty"`
+	LocalIPs           []PrivateIPRecord `json:"localIPs,omitempty" yaml:"localIPs,omitempty"`
+	Routes             []RouteRecord     `json:"routes,omitempty" yaml:"routes,omitempty"`
 }
 
 type PrivateIPSelf struct {
@@ -74,6 +76,10 @@ type PrivateIPRecord struct {
 	Address       string            `json:"address" yaml:"address"`
 	NICRef        string            `json:"nicRef,omitempty" yaml:"nicRef,omitempty"`
 	SubnetRef     string            `json:"subnetRef,omitempty" yaml:"subnetRef,omitempty"`
+	VPCRef        string            `json:"vpcRef,omitempty" yaml:"vpcRef,omitempty"`
+	ProviderRef   string            `json:"providerRef,omitempty" yaml:"providerRef,omitempty"`
+	ResourceRef   string            `json:"resourceRef,omitempty" yaml:"resourceRef,omitempty"`
+	ResourceType  string            `json:"resourceType,omitempty" yaml:"resourceType,omitempty"`
 	Primary       bool              `json:"primary,omitempty" yaml:"primary,omitempty"`
 	Tags          map[string]string `json:"tags,omitempty" yaml:"tags,omitempty"`
 	InstanceState string            `json:"instanceState,omitempty" yaml:"instanceState,omitempty"`
@@ -93,6 +99,23 @@ func NewObservePrivateIPsRequest(spec ObservePrivateIPsRequestSpec) ObservePriva
 		TypeMeta: TypeMeta{APIVersion: ProtocolAPIVersion, Kind: KindObservePrivateIPsRequest},
 		Spec:     spec,
 	}
+}
+
+func (s ObservePrivateIPsResultStatus) ObservedCandidateRecords() []PrivateIPRecord {
+	if len(s.ObservedCandidates) > 0 {
+		return append([]PrivateIPRecord(nil), s.ObservedCandidates...)
+	}
+	return append([]PrivateIPRecord(nil), s.IPs...)
+}
+
+func (s ObservePrivateIPsResultStatus) LocalInventoryRecords() []PrivateIPRecord {
+	if len(s.LocalIPs) > 0 {
+		return append([]PrivateIPRecord(nil), s.LocalIPs...)
+	}
+	if len(s.ObservedCandidates) > 0 {
+		return append([]PrivateIPRecord(nil), s.ObservedCandidates...)
+	}
+	return append([]PrivateIPRecord(nil), s.IPs...)
 }
 
 func hasCapability(caps []string, want string) bool {
