@@ -617,6 +617,61 @@ func TestControllerBGPModeDrainMarkerWithdrawLetsPeerSeizeWithStaleConfig(t *tes
 	}
 }
 
+func TestControllerGracefulStopSuppressesProviderDeprovision(t *testing.T) {
+	now := time.Date(2026, 6, 2, 10, 0, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	recordEvent(t, store, routerstate.EventRecord{
+		ID:         "evt-aws-a",
+		Group:      "cloudedge",
+		SourceNode: "aws-router-a",
+		Type:       ObservedEventType,
+		Subject:    "10.88.60.11/32",
+		ObservedAt: now.Add(-time.Second),
+		ExpiresAt:  now.Add(time.Hour),
+		Payload: map[string]string{
+			"address": "10.88.60.11/32",
+			"pool":    "cloudedge",
+			"source":  providerDiscoverySource,
+			"nicRef":  "client-nic-a",
+		},
+	})
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"discoveryOwnedAddresses": []string{"10.88.60.11/32"},
+		"discoverySelfPrivateIPs": []string{"10.88.60.4/32"},
+		"discoveryLastScanAt":     now.Format(time.RFC3339Nano),
+	}); err != nil {
+		t.Fatalf("SaveObjectStatus: %v", err)
+	}
+	bgp := &fakeBGPPaths{}
+	controller := Controller{Router: routerWithBGPRouter(routerWithEventGroupListen(planningRouterForNode("aws-router-a", spec), "10.99.0.2")), Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("initial Reconcile: %v", err)
+	}
+
+	drained := awsFailoverPoolSpec()
+	drained.DeliveryPolicy.Mode = "bgp"
+	drained.Members[1].Maintenance.Drain = true
+	controller.Router = routerWithBGPRouter(routerWithEventGroupListen(planningRouterForNode("aws-router-a", drained), "10.99.0.2"))
+	controller.SuppressProviderDeprovision = true
+	controller.Now = func() time.Time { return now.Add(time.Second) }
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("graceful-stop Reconcile: %v", err)
+	}
+	plans := decodeActionPlans(t, latestPart(t, store, DynamicSource("cloudedge", "aws-router-a")).ActionPlansJSON)
+	if findActionPlanByAddress(plans, "unassign-secondary-ip", "10.88.60.11/32") != nil {
+		t.Fatalf("plans = %#v, want graceful stop prepare to suppress local unassign", plans)
+	}
+	path := pathBySourcePrefix(t, bgp, DynamicSource("cloudedge", "aws-router-a"), "10.88.60.11/32")
+	if path.Attrs.LocalPref != bgpMobilityLocalPrefBase {
+		t.Fatalf("localPref = %d, want low-preference handoff path", path.Attrs.LocalPref)
+	}
+	if _, ok := maybePathBySourcePrefix(bgp, DynamicSource("cloudedge", "aws-router-a"), "10.99.0.2/32"); ok {
+		t.Fatalf("graceful stop still advertises liveness marker: %#v", bgp.paths)
+	}
+}
+
 func TestControllerBGPModeProviderCaptureSuccessAdvertisesPlannedDrainTakeover(t *testing.T) {
 	now := time.Date(2026, 6, 2, 10, 0, 0, 0, time.UTC)
 	store := testStore(t, now)

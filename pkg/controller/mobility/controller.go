@@ -75,6 +75,10 @@ type Controller struct {
 	BGPPaths      BGPPathClient
 	MemberSetSync *PeerGroupSyncClient
 	Now           func() time.Time
+	// SuppressProviderDeprovision keeps graceful-stop handoff make-before-break:
+	// withdraw liveness and lower local BGP preference first, but do not ask the
+	// local provider to unassign until the caller has observed peer takeover.
+	SuppressProviderDeprovision bool
 }
 
 func (c Controller) HandleEvent(ctx context.Context, _ daemonapi.DaemonEvent) error {
@@ -215,7 +219,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 	if len(desiredTrapAddresses) > 0 && !selfCaptureResolved {
 		actionPlans = nil
 	} else {
-		actionPlans, err = bgpProviderActionPlans(res.Metadata.Name, selfNode, spec, desiredTrapAddresses, previousActionPlans, cloudProviderProfiles(c.Router), actionJournal, discoverySelfIPs, discoverySelfIPsObserved, forwardingObserved, forwardingEnabled, forwardingObservedAt, now)
+		actionPlans, err = bgpProviderActionPlans(res.Metadata.Name, selfNode, spec, desiredTrapAddresses, previousActionPlans, cloudProviderProfiles(c.Router), actionJournal, discoverySelfIPs, discoverySelfIPsObserved, forwardingObserved, forwardingEnabled, forwardingObservedAt, c.SuppressProviderDeprovision, now)
 		if err != nil {
 			return err
 		}
@@ -850,7 +854,7 @@ func decodeActionRecordMap(raw string) map[string]string {
 	return out
 }
 
-func bgpProviderActionPlans(poolName, selfNode string, spec api.MobilityPoolSpec, desiredTrapAddresses map[string]bgpTrapCandidate, previousPlans []dynamicconfig.ActionPlan, profiles map[string]api.CloudProviderProfileSpec, actionJournal []routerstate.ActionExecutionRecord, observedSelfIPs map[string]bool, observedSelfIPsOK bool, forwardingObserved, forwardingEnabled bool, forwardingObservedAt time.Time, now time.Time) ([]dynamicconfig.ActionPlan, error) {
+func bgpProviderActionPlans(poolName, selfNode string, spec api.MobilityPoolSpec, desiredTrapAddresses map[string]bgpTrapCandidate, previousPlans []dynamicconfig.ActionPlan, profiles map[string]api.CloudProviderProfileSpec, actionJournal []routerstate.ActionExecutionRecord, observedSelfIPs map[string]bool, observedSelfIPsOK bool, forwardingObserved, forwardingEnabled bool, forwardingObservedAt time.Time, suppressDeprovision bool, now time.Time) ([]dynamicconfig.ActionPlan, error) {
 	members := plannerMembers(spec.Members)
 	self, ok := members[strings.TrimSpace(selfNode)]
 	if !ok {
@@ -886,11 +890,13 @@ func bgpProviderActionPlans(poolName, selfNode string, spec api.MobilityPoolSpec
 			plans = append(plans, generated...)
 		}
 	}
-	deprovisionPlans, err := bgpProviderDeprovisionPlans(poolName, self, previousPlans, desiredAddresses, desiredProviderNICs, profiles, actionJournal, now)
-	if err != nil {
-		return nil, err
+	if !suppressDeprovision {
+		deprovisionPlans, err := bgpProviderDeprovisionPlans(poolName, self, previousPlans, desiredAddresses, desiredProviderNICs, profiles, actionJournal, now)
+		if err != nil {
+			return nil, err
+		}
+		plans = append(plans, deprovisionPlans...)
 	}
-	plans = append(plans, deprovisionPlans...)
 	return dedupeActionPlans(plans), nil
 }
 
