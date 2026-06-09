@@ -892,6 +892,10 @@ type Runner struct {
 	Bus    *bus.Bus
 	Store  Store
 	Opts   Options
+
+	supervisedMu       sync.Mutex
+	supervisedDaemons  map[string]bool
+	daemonSourcesStarted map[string]bool
 }
 
 func (r *Runner) effectiveRouter(store eventedStore) *api.Router {
@@ -1041,18 +1045,7 @@ func (r *Runner) Start(ctx context.Context) error {
 			}
 		}()
 	}
-	for _, spec := range r.mobilityARPObserverDaemonSpecs() {
-		source := daemonsource.DaemonSource{
-			Daemon:    daemonapi.DaemonRef{Name: "routerd-arp-observer-" + spec.ResourceName, Kind: "routerd-arp-observer", Instance: spec.ResourceName},
-			Socket:    spec.Socket,
-			Publisher: r.Bus,
-		}
-		go func(spec mobilityARPObserverDaemonSpec, source daemonsource.DaemonSource) {
-			if err := source.Run(ctx); err != nil && ctx.Err() == nil {
-				logger.Warn("arp observer daemon source stopped", "resource", spec.ResourceName, "error", err)
-			}
-		}(spec, source)
-	}
+	r.startARPObserverDaemonSources(ctx, logger)
 
 	store := eventedStore{Store: r.Store, Bus: r.Bus, Router: r.Router}
 	haDecision, err := acquireClusterLease(ctx, r.Router, store)
@@ -1607,6 +1600,12 @@ func (r *Runner) Start(ctx context.Context) error {
 			return current.Reconcile(ctx)
 		}})
 	}
+	if r.Opts.SuperviseClientDaemons && r.controllerEnabled("daemon-supervisor") {
+		controllers = append(controllers, framework.FuncController{ControllerName: "daemon-supervisor-reconcile", Every: 30 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed"}}}, PeriodicFunc: func(ctx context.Context) error {
+			r.reconcileARPObserverDaemons(ctx, logger)
+			return nil
+		}})
+	}
 	controllers = r.filterControllers(controllers)
 	if r.controllerEnabled("daemon-status") {
 		r.warmDaemonStatuses(ctx, daemonStatusSync, logger)
@@ -1878,44 +1877,7 @@ func (r *Runner) superviseClientDaemons(ctx context.Context, logger *slog.Logger
 			r.startSupervisedDaemon(ctx, logger, resource.Metadata.Name, "routerd-pppoe-client", args)
 		}
 	}
-	for _, spec := range r.mobilityARPObserverDaemonSpecs() {
-		args := []string{
-			"daemon",
-			"--resource", spec.ResourceName,
-			"--interface", spec.IfName,
-			"--event-interface", spec.EventInterface,
-			"--socket", spec.Socket,
-			"--event-file", spec.EventFile,
-			"--pool", spec.PoolName,
-			"--prefix", spec.Prefix,
-			"--source-type", spec.SourceType,
-		}
-		if spec.Network != "" {
-			args = append(args, "--network", spec.Network)
-		}
-		if spec.Bridge != "" {
-			args = append(args, "--bridge", spec.Bridge)
-		}
-		if spec.SourceAddress != "" {
-			args = append(args, "--source-address", spec.SourceAddress)
-		}
-		if spec.OnDemand {
-			args = append(args, "--on-demand")
-		}
-		if spec.Observe {
-			args = append(args, "--observe")
-		}
-		if spec.ProbeTimeout != "" {
-			args = append(args, "--probe-timeout", spec.ProbeTimeout)
-		}
-		if spec.ProbeRetries != 0 {
-			args = append(args, "--probe-retries", fmt.Sprintf("%d", spec.ProbeRetries))
-		}
-		if spec.ScanInterval != "" {
-			args = append(args, "--scan-interval", spec.ScanInterval)
-		}
-		r.startSupervisedDaemon(ctx, logger, spec.ResourceName, "routerd-arp-observer", args)
-	}
+	r.reconcileARPObserverDaemons(ctx, logger)
 }
 
 type mobilityARPObserverDaemonSpec struct {
@@ -2066,6 +2028,97 @@ func safeDaemonResourceName(value string) string {
 		return "arp-observer"
 	}
 	return out
+}
+
+func (r *Runner) startARPObserverDaemonSources(ctx context.Context, logger *slog.Logger) {
+	r.supervisedMu.Lock()
+	if r.daemonSourcesStarted == nil {
+		r.daemonSourcesStarted = make(map[string]bool)
+	}
+	r.supervisedMu.Unlock()
+
+	for _, spec := range r.mobilityARPObserverDaemonSpecs() {
+		r.supervisedMu.Lock()
+		already := r.daemonSourcesStarted[spec.ResourceName]
+		if !already {
+			r.daemonSourcesStarted[spec.ResourceName] = true
+		}
+		r.supervisedMu.Unlock()
+		if already {
+			continue
+		}
+		source := daemonsource.DaemonSource{
+			Daemon:    daemonapi.DaemonRef{Name: "routerd-arp-observer-" + spec.ResourceName, Kind: "routerd-arp-observer", Instance: spec.ResourceName},
+			Socket:    spec.Socket,
+			Publisher: r.Bus,
+		}
+		go func(spec mobilityARPObserverDaemonSpec, source daemonsource.DaemonSource) {
+			if err := source.Run(ctx); err != nil && ctx.Err() == nil {
+				logger.Warn("arp observer daemon source stopped", "resource", spec.ResourceName, "error", err)
+			}
+		}(spec, source)
+	}
+}
+
+func (r *Runner) reconcileARPObserverDaemons(ctx context.Context, logger *slog.Logger) {
+	r.supervisedMu.Lock()
+	if r.supervisedDaemons == nil {
+		r.supervisedDaemons = make(map[string]bool)
+	}
+	r.supervisedMu.Unlock()
+
+	r.startARPObserverDaemonSources(ctx, logger)
+
+	for _, spec := range r.mobilityARPObserverDaemonSpecs() {
+		r.supervisedMu.Lock()
+		already := r.supervisedDaemons[spec.ResourceName]
+		if !already {
+			r.supervisedDaemons[spec.ResourceName] = true
+		}
+		r.supervisedMu.Unlock()
+		if already {
+			continue
+		}
+		args := []string{
+			"daemon",
+			"--resource", spec.ResourceName,
+			"--interface", spec.IfName,
+			"--event-interface", spec.EventInterface,
+			"--socket", spec.Socket,
+			"--event-file", spec.EventFile,
+			"--pool", spec.PoolName,
+			"--prefix", spec.Prefix,
+			"--source-type", spec.SourceType,
+		}
+		if spec.Network != "" {
+			args = append(args, "--network", spec.Network)
+		}
+		if spec.Bridge != "" {
+			args = append(args, "--bridge", spec.Bridge)
+		}
+		if spec.SourceAddress != "" {
+			args = append(args, "--source-address", spec.SourceAddress)
+		}
+		if spec.OnDemand {
+			args = append(args, "--on-demand")
+		}
+		if spec.Observe {
+			args = append(args, "--observe")
+		}
+		if spec.ProbeTimeout != "" {
+			args = append(args, "--probe-timeout", spec.ProbeTimeout)
+		}
+		if spec.ProbeRetries != 0 {
+			args = append(args, "--probe-retries", fmt.Sprintf("%d", spec.ProbeRetries))
+		}
+		if spec.ScanInterval != "" {
+			args = append(args, "--scan-interval", spec.ScanInterval)
+		}
+		if logger != nil {
+			logger.Info("daemon-supervisor-reconcile: starting new arp-observer", "resource", spec.ResourceName, "interface", spec.IfName)
+		}
+		r.startSupervisedDaemon(ctx, logger, spec.ResourceName, "routerd-arp-observer", args)
+	}
 }
 
 func (r *Runner) startSupervisedDaemon(ctx context.Context, logger *slog.Logger, resourceName, binary string, args []string) {
