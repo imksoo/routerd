@@ -252,6 +252,11 @@ spec:
             role: onprem
             staticOwnedAddresses:
               - 10.77.60.10/32
+            ownershipDiscovery:
+              mode: onprem-l2
+              sources:
+                - type: arp-observer
+                  interface: ens21
             capture:
               type: proxy-arp
               interface: ens21
