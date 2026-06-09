@@ -27,11 +27,13 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/apply"
+	"github.com/imksoo/routerd/pkg/bgpdaemon"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/config"
 	"github.com/imksoo/routerd/pkg/controlapi"
 	controllerchain "github.com/imksoo/routerd/pkg/controller/chain"
 	mobilitycontroller "github.com/imksoo/routerd/pkg/controller/mobility"
+	provideractioncontroller "github.com/imksoo/routerd/pkg/controller/provideraction"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/eventlog"
 	"github.com/imksoo/routerd/pkg/logstore"
@@ -332,6 +334,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	bgpSocketPath := fs.String("bgp-socket", "/run/routerd/bgp/gobgp.sock", "routerd-bgp GoBGP gRPC Unix socket path")
 	bgpControlSocketPath := fs.String("bgp-control-socket", "", "routerd-bgp control Unix socket path")
 	bgpStatePath := fs.String("bgp-state-file", "", "routerd-bgp applied state JSON path")
+	gracefulStopTimeout := fs.Duration("graceful-stop-timeout", 20*time.Second, "wait up to this duration for mobility make-before-break handoff on SIGTERM/SIGINT; 0 disables")
 	once := fs.Bool("once", false, "converge once and exit without serving control sockets")
 	sandbox := fs.Bool("sandbox", false, "serve control API in a dry-run sandbox with no host mutation")
 	sandboxRoot := fs.String("root", "", "sandbox root directory used with --sandbox")
@@ -433,18 +436,17 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	}
 	cache := &resultCache{}
 
-	signalCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stopSignals()
+	signalCtx, cancelSignalCtx := context.WithCancel(context.Background())
+	defer cancelSignalCtx()
+	signalCh := make(chan os.Signal, 2)
+	signal.Notify(signalCh, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(signalCh)
 	stop := make(chan struct{})
 	var stopOnce sync.Once
 	closeStop := func() {
 		stopOnce.Do(func() { close(stop) })
 	}
 	defer closeStop()
-	go func() {
-		<-signalCtx.Done()
-		closeStop()
-	}()
 	ctx, cancelControllers := context.WithCancel(signalCtx)
 	defer cancelControllers()
 	go func() {
@@ -506,6 +508,38 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	if err := chainRunner.Start(ctx); err != nil {
 		return err
 	}
+	go func() {
+		sig, ok := <-signalCh
+		if !ok {
+			return
+		}
+		logger.Emit(eventlog.LevelInfo, "serve", "routerd daemon stopping", map[string]string{"signal": sig.String()})
+		if !*sandbox && *gracefulStopTimeout > 0 {
+			handoffCtx, handoffCancel := context.WithTimeout(context.Background(), *gracefulStopTimeout+5*time.Second)
+			err := runGracefulStopHandoff(handoffCtx, currentRouter(), stateStore, gracefulStopOptions{
+				Timeout:          *gracefulStopTimeout,
+				PollInterval:     time.Second,
+				BGPPaths:         bgpdaemon.NewControlClient(controllerOpts.BGPControlSocketPath),
+				MemberSetSync:    controllerOpts.MemberSetSyncClient,
+				ProviderAction:   provideractioncontroller.Controller{Bus: controllerBus, Runner: controllerOpts.ProviderActionRunner, DryRun: controllerOpts.DryRunProviderAction},
+				Logger:           logger,
+				ControllerLogger: controllerOpts.Logger,
+			})
+			handoffCancel()
+			if err != nil {
+				logger.Emit(eventlog.LevelWarning, "serve", "graceful mobility stop did not complete", map[string]string{"error": err.Error()})
+			}
+		}
+		closeStop()
+		cancelSignalCtx()
+		select {
+		case sig := <-signalCh:
+			logger.Emit(eventlog.LevelWarning, "serve", "second stop signal received; forcing shutdown", map[string]string{"signal": sig.String()})
+			closeStop()
+			cancelSignalCtx()
+		default:
+		}
+	}()
 	mutator := serveConfigMutator{
 		configPath: *configPath,
 		statePath:  *statePath,
