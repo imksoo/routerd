@@ -617,6 +617,42 @@ func TestDynamicRouteSAMViewGatesRouteAndSAMCleanupOnVRRPBackup(t *testing.T) {
 	if status["phase"] != "Gated" {
 		t.Fatalf("backup claim status = %#v", status)
 	}
+
+	rejoinedStore := &dynamicRouteSAMStore{
+		records: activeStore.records,
+		objects: map[string]map[string]any{
+			api.NetAPIVersion + "/VirtualAddress/onprem-vip": {"role": "master"},
+		},
+		statuses: []routerstate.ObjectStatus{
+			{
+				APIVersion: api.HybridAPIVersion,
+				Kind:       "RemoteAddressClaim",
+				Name:       "app",
+				Status: map[string]any{
+					"phase":         "Gated",
+					"captureStatus": "gated",
+				},
+			},
+		},
+	}
+	rejoinedView, err := buildDynamicRouteSAMView(startup, rejoinedStore, now, platform.OSLinux)
+	if err != nil {
+		t.Fatalf("rejoined view: %v", err)
+	}
+	if countResources(rejoinedView.RouteRouter, api.NetAPIVersion, "IPv4Route") != 1 || len(rejoinedView.SAMLowerings) != 1 {
+		t.Fatalf("rejoined view route/lowerings = %d/%d, want one each", countResources(rejoinedView.RouteRouter, api.NetAPIVersion, "IPv4Route"), len(rejoinedView.SAMLowerings))
+	}
+
+	rejoinedApplier := &fakeSAMApplier{}
+	rejoinedGARP := &fakeSAMGARP{}
+	rejoinedSAM := SAMController{Router: rejoinedView.EffectiveRouter, Store: rejoinedStore, Lowerings: rejoinedView.SAMLowerings, OS: platform.OSLinux, Applier: rejoinedApplier, GARP: rejoinedGARP}
+	if err := rejoinedSAM.Reconcile(context.Background()); err != nil {
+		t.Fatalf("rejoined SAM reconcile: %v", err)
+	}
+	assertSAMCalls(t, rejoinedApplier.calls, []string{"proxyarp:lan0=1", "ensure:10.0.1.123/32@lan0"})
+	if !reflect.DeepEqual(rejoinedGARP.calls, []string{"10.0.1.123/32@lan0"}) {
+		t.Fatalf("rejoined GARP calls = %#v, want one gratuitous ARP", rejoinedGARP.calls)
+	}
 }
 
 type dynamicRouteSAMStore struct {
