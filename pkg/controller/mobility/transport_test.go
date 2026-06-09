@@ -361,6 +361,129 @@ func TestSAMTransportProfilePeersFromUnionStaticOverridesGroupPeer(t *testing.T)
 	}
 }
 
+func TestSAMTransportProfileDerivesPeersAndTopologyFromSAMNodeSet(t *testing.T) {
+	now := time.Date(2026, 6, 6, 9, 5, 35, 0, time.UTC)
+	store := testStore(t, now)
+	router := transportRouterWithTopology("svnet1", "leaf-rt01", nil, nil)
+	spec, err := router.Spec.Resources[0].SAMTransportProfileSpec()
+	if err != nil {
+		t.Fatalf("SAMTransportProfile spec: %v", err)
+	}
+	spec.PeersFrom = []api.SAMTransportPeersSourceSpec{{Resource: "SAMNodeSet/svnet1-nodes"}}
+	router.Spec.Resources[0].Spec = spec
+	router.Spec.Resources = append(router.Spec.Resources, samNodeSetResource("svnet1-nodes", []api.SAMNodeSpec{
+		{NodeRef: "leaf-rt01", SAMEndpoint: "203.0.113.10/32"},
+		{NodeRef: "rr-rt01", SAMEndpoint: "203.0.113.11/32"},
+		{NodeRef: "rr-rt02", SAMEndpoint: "203.0.113.12"},
+	}))
+
+	controller := TransportController{Router: router, Store: store, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	resources := decodeResources(t, latestPart(t, store, TransportDynamicSource("svnet1", "leaf-rt01")).ResourcesJSON)
+	if got, want := len(resources), 6; got != want {
+		t.Fatalf("resources = %d, want %d", got, want)
+	}
+	tunnel := findTransportTunnelForPeer(t, resources, "leaf-rt01", "rr-rt01")
+	if tunnel.Remote != "203.0.113.11" {
+		t.Fatalf("tunnel remote = %q, want normalized SAM endpoint", tunnel.Remote)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "SAMTransportProfile", "svnet1")
+	topology, ok := status["topologyNodeRefs"].([]any)
+	if !ok || len(topology) != 3 {
+		t.Fatalf("topologyNodeRefs = %#v, want three nodes", status["topologyNodeRefs"])
+	}
+}
+
+func TestSAMTransportProfileStaticPeerOverridesSAMNodeSetPeer(t *testing.T) {
+	now := time.Date(2026, 6, 6, 9, 5, 36, 0, time.UTC)
+	store := testStore(t, now)
+	router := transportRouterWithTopology("svnet1", "leaf-rt01", nil, []api.SAMTransportPeerSpec{{
+		NodeRef:        "rr-rt01",
+		RemoteEndpoint: "203.0.113.99",
+	}})
+	spec, err := router.Spec.Resources[0].SAMTransportProfileSpec()
+	if err != nil {
+		t.Fatalf("SAMTransportProfile spec: %v", err)
+	}
+	spec.PeersFrom = []api.SAMTransportPeersSourceSpec{{Resource: "SAMNodeSet/svnet1-nodes"}}
+	router.Spec.Resources[0].Spec = spec
+	router.Spec.Resources = append(router.Spec.Resources, samNodeSetResource("svnet1-nodes", []api.SAMNodeSpec{
+		{NodeRef: "leaf-rt01", SAMEndpoint: "203.0.113.10"},
+		{NodeRef: "rr-rt01", SAMEndpoint: "203.0.113.11"},
+	}))
+
+	controller := TransportController{Router: router, Store: store, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	resources := decodeResources(t, latestPart(t, store, TransportDynamicSource("svnet1", "leaf-rt01")).ResourcesJSON)
+	tunnel := findTransportTunnelForPeer(t, resources, "leaf-rt01", "rr-rt01")
+	if tunnel.Remote != "203.0.113.99" {
+		t.Fatalf("static peer did not override node set peer: remote=%q", tunnel.Remote)
+	}
+}
+
+func TestSAMTransportProfileSAMNodeSetPeersFromMissingRequiredIsPending(t *testing.T) {
+	now := time.Date(2026, 6, 6, 9, 5, 37, 0, time.UTC)
+	store := testStore(t, now)
+	router := transportRouterWithMode("svnet1", "leaf-rt01", "pair-stable", nil)
+	spec, err := router.Spec.Resources[0].SAMTransportProfileSpec()
+	if err != nil {
+		t.Fatalf("SAMTransportProfile spec: %v", err)
+	}
+	spec.PeersFrom = []api.SAMTransportPeersSourceSpec{{Resource: "SAMNodeSet/missing"}}
+	router.Spec.Resources[0].Spec = spec
+
+	controller := TransportController{Router: router, Store: store, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if resources := decodeResources(t, latestPart(t, store, TransportDynamicSource("svnet1", "leaf-rt01")).ResourcesJSON); len(resources) != 0 {
+		t.Fatalf("resources = %#v, want none while SAMNodeSet peersFrom is pending", resources)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "SAMTransportProfile", "svnet1")
+	if status["phase"] != "Pending" {
+		t.Fatalf("status phase = %#v, want Pending status=%#v", status["phase"], status)
+	}
+}
+
+func TestSAMTransportProfileSAMNodeSetPairStableDoesNotRenumberExistingPeer(t *testing.T) {
+	now := time.Date(2026, 6, 6, 9, 5, 38, 0, time.UTC)
+	localAddress := func(nodes []api.SAMNodeSpec) string {
+		t.Helper()
+		store := testStore(t, now)
+		router := transportRouterWithMode("svnet1", "leaf-rt01", "pair-stable", nil)
+		spec, err := router.Spec.Resources[0].SAMTransportProfileSpec()
+		if err != nil {
+			t.Fatalf("SAMTransportProfile spec: %v", err)
+		}
+		spec.PeersFrom = []api.SAMTransportPeersSourceSpec{{Resource: "SAMNodeSet/svnet1-nodes"}}
+		router.Spec.Resources[0].Spec = spec
+		router.Spec.Resources = append(router.Spec.Resources, samNodeSetResource("svnet1-nodes", nodes))
+		controller := TransportController{Router: router, Store: store, Now: func() time.Time { return now }}
+		if err := controller.Reconcile(context.Background()); err != nil {
+			t.Fatalf("Reconcile: %v", err)
+		}
+		resources := decodeResources(t, latestPart(t, store, TransportDynamicSource("svnet1", "leaf-rt01")).ResourcesJSON)
+		return findTransportTunnelForPeer(t, resources, "leaf-rt01", "rr-rt01").Address
+	}
+
+	before := localAddress([]api.SAMNodeSpec{
+		{NodeRef: "leaf-rt01", SAMEndpoint: "203.0.113.10"},
+		{NodeRef: "rr-rt01", SAMEndpoint: "203.0.113.11"},
+	})
+	after := localAddress([]api.SAMNodeSpec{
+		{NodeRef: "leaf-rt01", SAMEndpoint: "203.0.113.10"},
+		{NodeRef: "rr-rt01", SAMEndpoint: "203.0.113.11"},
+		{NodeRef: "rr-rt02", SAMEndpoint: "203.0.113.12"},
+	})
+	if before != after {
+		t.Fatalf("pair-stable local address changed after adding node: before=%s after=%s", before, after)
+	}
+}
+
 func TestSAMTransportProfilePublishesSAMPeerGroupDynamicPart(t *testing.T) {
 	now := time.Date(2026, 6, 6, 9, 5, 40, 0, time.UTC)
 	store := testStore(t, now)
@@ -588,6 +711,14 @@ func samPeerGroupResource(name string, peers []api.SAMTransportPeerSpec) api.Res
 		TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMPeerGroup"},
 		Metadata: api.ObjectMeta{Name: name},
 		Spec:     api.SAMPeerGroupSpec{Peers: peers},
+	}
+}
+
+func samNodeSetResource(name string, nodes []api.SAMNodeSpec) api.Resource {
+	return api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMNodeSet"},
+		Metadata: api.ObjectMeta{Name: name},
+		Spec:     api.SAMNodeSetSpec{Nodes: nodes},
 	}
 }
 

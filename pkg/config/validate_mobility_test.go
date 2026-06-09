@@ -155,12 +155,22 @@ func TestValidateSAMTransportProfileAllowsPeersFromWithoutPeers(t *testing.T) {
 	}
 }
 
+func TestValidateSAMTransportProfileAllowsSAMNodeSetPeersFromWithoutPeers(t *testing.T) {
+	spec := validSAMTransportProfileSpec()
+	spec.AddressingMode = "pair-stable"
+	spec.Peers = nil
+	spec.PeersFrom = []api.SAMTransportPeersSourceSpec{{Resource: "SAMNodeSet/svnet1-nodes"}}
+	if err := Validate(samTransportProfileRouter(spec)); err != nil {
+		t.Fatalf("Validate SAMNodeSet peersFrom SAMTransportProfile: %v", err)
+	}
+}
+
 func TestValidateSAMTransportProfileRejectsInvalidPeersFrom(t *testing.T) {
 	spec := validSAMTransportProfileSpec()
 	spec.PeersFrom = []api.SAMTransportPeersSourceSpec{{Resource: "BGPPeer/rr"}}
 	err := Validate(samTransportProfileRouter(spec))
-	if err == nil || !strings.Contains(err.Error(), "spec.peersFrom[0].resource must reference SAMPeerGroup/<name>") {
-		t.Fatalf("Validate peersFrom error = %v, want SAMPeerGroup ref error", err)
+	if err == nil || !strings.Contains(err.Error(), "spec.peersFrom[0].resource must reference SAMPeerGroup/<name> or SAMNodeSet/<name>") {
+		t.Fatalf("Validate peersFrom error = %v, want SAMPeerGroup/SAMNodeSet ref error", err)
 	}
 }
 

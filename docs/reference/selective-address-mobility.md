@@ -287,10 +287,12 @@ node identity from hostname or BGP router ID.
 
 `spec.addressingMode` controls `/31` slot derivation:
 
-- `edge-index` (default): profiles with more than one peer must declare the same
-  `spec.topologyNodeRefs` list on every router in the transport domain. The
-  controller sorts that shared node list and ranks each unordered node pair
-  before allocating a `/31` from `spec.innerPrefix`.
+- `edge-index` (default): profiles with more than one peer need the same
+  topology node list on every router in the transport domain. Operators can
+  still declare `spec.topologyNodeRefs` directly, or import it from
+  `SAMNodeSet` with `spec.peersFrom`. The controller sorts that shared node list
+  and ranks each unordered node pair before allocating a `/31` from
+  `spec.innerPrefix`.
 - `pair-stable`: each peer edge derives a slot from a stable hash, so
   leaf/router profiles can omit global `topologyNodeRefs`. Collision detection
   is currently profile-local (within one profile's `spec.peers` list). When a
@@ -301,13 +303,39 @@ For production fabrics, prefer `/20` or larger `innerPrefix` where practical;
 smaller pools such as `/24` (128 `/31` slots) collide more easily under
 hash+mod allocation.
 
-`SAMPeerGroup` groups reusable transport peers. A profile can set
-`spec.peersFrom` to one or more `SAMPeerGroup/<name>` references; the controller
-resolves those groups at reconcile time, adds their peers first, then overlays
-the profile's local `spec.peers`. When the same `nodeRef` appears in both, the
-local `spec.peers` entry wins so operators can keep static bootstrap or override
-entries on a leaf. If a required `peersFrom` group is not yet present, the
-profile reports `Pending`; optional sources are ignored until they arrive.
+`spec.peersFrom` can reference either `SAMNodeSet/<name>` or
+`SAMPeerGroup/<name>`. A `SAMNodeSet` source contributes every
+`spec.nodes[].nodeRef` to the resolved topology, and contributes peers for every
+non-self node that has `samEndpoint` set. The generated peer uses that
+`samEndpoint` as `remoteEndpoint`. A `SAMPeerGroup` source contributes reusable
+transport peers only.
+
+The controller resolves all sources at reconcile time, adds imported peers
+first, then overlays the profile's local `spec.peers`. When the same `nodeRef`
+appears in both, the local `spec.peers` entry wins so operators can keep static
+bootstrap or override entries on a leaf. If a required `peersFrom` source is not
+yet present, the profile reports `Pending`; optional sources are ignored until
+they arrive.
+
+```yaml
+apiVersion: mobility.routerd.net/v1alpha1
+kind: SAMTransportProfile
+metadata: { name: cloudedge-transport }
+spec:
+  selfNodeRef: pve-rt01
+  mode: ipip
+  addressingMode: pair-stable
+  innerPrefix: 10.255.0.0/20
+  underlayInterface: wg-svnet1
+  localEndpointFrom:
+    resource: Interface/wg-svnet1
+    field: primaryIPv4
+  bgp:
+    routerRef: BGPRouter/mobility
+    peerASN: 64512
+  peersFrom:
+    - resource: SAMNodeSet/svnet1-nodes
+```
 
 Spine or route-reflector profiles can set `spec.publishPeerGroup: true`. In that
 mode routerd publishes a `SAMPeerGroup` DynamicConfigPart with this profile's

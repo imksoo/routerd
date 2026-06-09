@@ -41,13 +41,14 @@ type transportPeerStatus struct {
 }
 
 type transportDerivation struct {
-	Resources      []api.Resource
-	Peers          []transportPeerStatus
-	PeersFrom      []transportPeersFromStatus
-	PendingSources []string
-	Tunnels        int
-	BGPPeers       int
-	EndpointRoutes int
+	Resources        []api.Resource
+	Peers            []transportPeerStatus
+	PeersFrom        []transportPeersFromStatus
+	TopologyNodeRefs []string
+	PendingSources   []string
+	Tunnels          int
+	BGPPeers         int
+	EndpointRoutes   int
 }
 
 type transportPeersFromStatus struct {
@@ -139,6 +140,7 @@ func (c TransportController) Reconcile(ctx context.Context) error {
 			"pendingSources":          derived.PendingSources,
 			"peers":                   transportPeerStatusMaps(derived.Peers),
 			"peersFrom":               transportPeersFromStatusMaps(derived.PeersFrom),
+			"topologyNodeRefs":        append([]string(nil), derived.TopologyNodeRefs...),
 			"peerGroup":               peerGroupStatus,
 			"updatedAt":               now.Format(time.RFC3339Nano),
 		})
@@ -153,21 +155,25 @@ func (c TransportController) deriveTransportResources(ctx context.Context, owner
 		return transportDerivation{}, err
 	}
 	inner = inner.Masked()
-	peers, peerSources, pendingSources, err := c.resolveTransportPeers(ctx, owner, spec)
+	peers, topologyNodeRefs, peerSources, pendingSources, err := c.resolveTransportPeers(ctx, owner, spec)
 	if err != nil {
 		return transportDerivation{}, err
 	}
 	spec.Peers = peers
+	if len(topologyNodeRefs) > 0 {
+		spec.TopologyNodeRefs = topologyNodeRefs
+	}
 	if len(spec.Peers) == 0 {
-		return transportDerivation{PeersFrom: peerSources, PendingSources: pendingSources}, nil
+		return transportDerivation{PeersFrom: peerSources, TopologyNodeRefs: topologyNodeRefs, PendingSources: pendingSources}, nil
 	}
 	edgeIndex, err := transportAddressSlots(spec, inner)
 	if err != nil {
 		return transportDerivation{}, err
 	}
 	out := transportDerivation{
-		PeersFrom:      peerSources,
-		PendingSources: append([]string(nil), pendingSources...),
+		PeersFrom:        peerSources,
+		TopologyNodeRefs: append([]string(nil), spec.TopologyNodeRefs...),
+		PendingSources:   append([]string(nil), pendingSources...),
 	}
 	for _, peer := range spec.Peers {
 		peerNode := strings.TrimSpace(peer.NodeRef)
@@ -260,9 +266,11 @@ func (c TransportController) deriveTransportResources(ctx context.Context, owner
 	return out, nil
 }
 
-func (c TransportController) resolveTransportPeers(ctx context.Context, _ api.Resource, spec api.SAMTransportProfileSpec) ([]api.SAMTransportPeerSpec, []transportPeersFromStatus, []string, error) {
+func (c TransportController) resolveTransportPeers(ctx context.Context, _ api.Resource, spec api.SAMTransportProfileSpec) ([]api.SAMTransportPeerSpec, []string, []transportPeersFromStatus, []string, error) {
 	peers := []api.SAMTransportPeerSpec{}
 	indexByNode := map[string]int{}
+	topology := []string{}
+	topologyIndex := map[string]bool{}
 	statuses := make([]transportPeersFromStatus, 0, len(spec.PeersFrom))
 	pending := []string{}
 	addPeer := func(peer api.SAMTransportPeerSpec) {
@@ -274,6 +282,14 @@ func (c TransportController) resolveTransportPeers(ctx context.Context, _ api.Re
 		indexByNode[nodeRef] = len(peers)
 		peers = append(peers, peer)
 	}
+	addTopology := func(nodeRef string) {
+		nodeRef = strings.TrimSpace(nodeRef)
+		if nodeRef == "" || topologyIndex[nodeRef] {
+			return
+		}
+		topologyIndex[nodeRef] = true
+		topology = append(topology, nodeRef)
+	}
 	for _, source := range spec.PeersFrom {
 		ref := strings.TrimSpace(source.Resource)
 		status := transportPeersFromStatus{
@@ -281,12 +297,72 @@ func (c TransportController) resolveTransportPeers(ctx context.Context, _ api.Re
 			Optional: source.Optional,
 			Phase:    "Resolved",
 		}
+		sourceKind, _, ok := strings.Cut(ref, "/")
+		if !ok {
+			status.Phase = "Invalid"
+			status.Reason = "peersFrom resource must reference SAMPeerGroup/<name> or SAMNodeSet/<name>"
+			statuses = append(statuses, status)
+			return nil, nil, statuses, pending, fmt.Errorf("%s", status.Reason)
+		}
+		if sourceKind == "SAMNodeSet" {
+			nodeSet, found, err := c.samNodeSet(ref)
+			if err != nil {
+				status.Phase = "Invalid"
+				status.Reason = err.Error()
+				statuses = append(statuses, status)
+				return nil, nil, statuses, pending, err
+			}
+			if !found {
+				status.Phase = "Missing"
+				status.Reason = "SAMNodeSet not found"
+				statuses = append(statuses, status)
+				if !source.Optional {
+					pending = append(pending, ref)
+				}
+				continue
+			}
+			self := strings.TrimSpace(spec.SelfNodeRef)
+			for _, node := range nodeSet.Nodes {
+				nodeRef := strings.TrimSpace(node.NodeRef)
+				if nodeRef == "" {
+					continue
+				}
+				addTopology(nodeRef)
+				if nodeRef == self {
+					continue
+				}
+				endpoint := strings.TrimSpace(node.SAMEndpoint)
+				if endpoint == "" {
+					continue
+				}
+				addr, err := endpointAddress(endpoint)
+				if err != nil {
+					status.Phase = "Invalid"
+					status.Reason = fmt.Sprintf("%s node %s samEndpoint %q: %v", ref, nodeRef, endpoint, err)
+					statuses = append(statuses, status)
+					return nil, nil, statuses, pending, fmt.Errorf("%s", status.Reason)
+				}
+				addPeer(api.SAMTransportPeerSpec{
+					NodeRef:        nodeRef,
+					RemoteEndpoint: addr.String(),
+				})
+				status.PeerCount++
+			}
+			statuses = append(statuses, status)
+			continue
+		}
+		if sourceKind != "SAMPeerGroup" {
+			status.Phase = "Invalid"
+			status.Reason = "peersFrom resource must reference SAMPeerGroup/<name> or SAMNodeSet/<name>"
+			statuses = append(statuses, status)
+			return nil, nil, statuses, pending, fmt.Errorf("%s", status.Reason)
+		}
 		group, found, err := c.samPeerGroup(ref)
 		if err != nil {
 			status.Phase = "Invalid"
 			status.Reason = err.Error()
 			statuses = append(statuses, status)
-			return nil, statuses, pending, err
+			return nil, nil, statuses, pending, err
 		}
 		if !found {
 			status.Phase = "Missing"
@@ -322,9 +398,17 @@ func (c TransportController) resolveTransportPeers(ctx context.Context, _ api.Re
 	}
 	for _, peer := range spec.Peers {
 		addPeer(peer)
+		addTopology(peer.NodeRef)
+	}
+	for _, nodeRef := range spec.TopologyNodeRefs {
+		addTopology(nodeRef)
+	}
+	if len(topology) > 0 && !topologyIndex[strings.TrimSpace(spec.SelfNodeRef)] && len(spec.TopologyNodeRefs) == 0 {
+		topology = append([]string{strings.TrimSpace(spec.SelfNodeRef)}, topology...)
+		topologyIndex[strings.TrimSpace(spec.SelfNodeRef)] = true
 	}
 	sort.Strings(pending)
-	return peers, statuses, pending, nil
+	return peers, topology, statuses, pending, nil
 }
 
 func nameFromPeerGroupRef(ref string) string {
@@ -354,6 +438,27 @@ func (c TransportController) samPeerGroup(ref string) (api.SAMPeerGroupSpec, boo
 		return spec, true, nil
 	}
 	return api.SAMPeerGroupSpec{}, false, nil
+}
+
+func (c TransportController) samNodeSet(ref string) (api.SAMNodeSetSpec, bool, error) {
+	kind, name, ok := strings.Cut(strings.TrimSpace(ref), "/")
+	if !ok || kind != "SAMNodeSet" || strings.TrimSpace(name) == "" {
+		return api.SAMNodeSetSpec{}, false, fmt.Errorf("peersFrom resource must reference SAMNodeSet/<name>")
+	}
+	if c.Router == nil {
+		return api.SAMNodeSetSpec{}, false, nil
+	}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "SAMNodeSet" || resource.Metadata.Name != strings.TrimSpace(name) {
+			continue
+		}
+		spec, err := resource.SAMNodeSetSpec()
+		if err != nil {
+			return api.SAMNodeSetSpec{}, true, fmt.Errorf("%s spec: %w", ref, err)
+		}
+		return spec, true, nil
+	}
+	return api.SAMNodeSetSpec{}, false, nil
 }
 
 func transportAddressSlots(spec api.SAMTransportProfileSpec, inner netip.Prefix) (map[string]int, error) {
