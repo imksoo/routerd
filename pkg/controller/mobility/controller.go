@@ -702,10 +702,7 @@ func bgpOwnershipEventSourceKey(ev routerstate.EventRecord) string {
 }
 
 func selfProviderDiscoveryEventBackedByFreshInventory(address string, ev routerstate.EventRecord, self memberPlanInfo, discoveryOwnedAddresses map[string]bool, discoveryOwnedObserved bool, discoverySelfIPs map[string]bool, discoverySelfIPsObserved bool) bool {
-	if !discoveryOwnedObserved {
-		return false
-	}
-	if !discoveryOwnedAddresses[address] {
+	if discoveryOwnedObserved && len(discoveryOwnedAddresses) == 0 {
 		return false
 	}
 	if discoverySelfIPsObserved && discoverySelfIPs[address] {
@@ -1879,7 +1876,7 @@ func filterBGPPathsByProviderActionSuccess(paths []bgpdaemon.AppliedPath, failed
 			out = append(out, p)
 			continue
 		}
-		addr := prefix.Addr().String()
+		addr := prefix.Masked().String()
 		if _, failed := failedAddrs[addr]; failed {
 			continue
 		}

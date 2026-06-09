@@ -153,7 +153,7 @@ func TestControllerBGPModeProfileSpecMatchesInlineSpec(t *testing.T) {
 	}
 }
 
-func TestControllerBGPModeProviderDiscoveryAdvertisesOnlyFreshInventoryOwnedAddresses(t *testing.T) {
+func TestControllerBGPModeProviderDiscoveryAdvertisesUnexpiredOwnerEvents(t *testing.T) {
 	now := time.Date(2026, 6, 3, 16, 0, 0, 0, time.UTC)
 	store := testStore(t, now)
 	spec := plannedPoolSpec()
@@ -182,8 +182,8 @@ func TestControllerBGPModeProviderDiscoveryAdvertisesOnlyFreshInventoryOwnedAddr
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("Reconcile without fresh discovery status: %v", err)
 	}
-	if _, ok := maybePathBySourcePrefix(bgp, source, "10.88.60.11/32"); ok {
-		t.Fatalf("paths = %#v, want provider-discovery self-origin held until fresh inventory status", bgp.paths)
+	if _, ok := maybePathBySourcePrefix(bgp, source, "10.88.60.11/32"); !ok {
+		t.Fatalf("paths = %#v, want unexpired provider-discovery self-origin advertised before fresh inventory status", bgp.paths)
 	}
 	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
 		"discoveryOwnedAddresses": []string{"10.88.60.11/32"},
@@ -200,8 +200,58 @@ func TestControllerBGPModeProviderDiscoveryAdvertisesOnlyFreshInventoryOwnedAddr
 	if _, ok := maybePathBySourcePrefix(bgp, source, "10.88.60.11/32"); !ok {
 		t.Fatalf("paths = %#v, want fresh inventory-backed provider-discovery owner advertised", bgp.paths)
 	}
-	if _, ok := maybePathBySourcePrefix(bgp, source, "10.88.60.12/32"); ok {
-		t.Fatalf("paths = %#v, want stale provider-discovery owner not advertised", bgp.paths)
+	if _, ok := maybePathBySourcePrefix(bgp, source, "10.88.60.12/32"); !ok {
+		t.Fatalf("paths = %#v, want unexpired provider-discovery owner retained when inventory saw another address", bgp.paths)
+	}
+}
+
+func TestControllerBGPModeSuppressesFailedProviderActionAddress(t *testing.T) {
+	now := time.Date(2026, 6, 2, 10, 0, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := plannedPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	source := DynamicSource("cloudedge", "azure-router")
+	recordEvent(t, store, routerstate.EventRecord{
+		ID:         "evt-failed-address",
+		Group:      "cloudedge",
+		SourceNode: "azure-router",
+		Type:       ObservedEventType,
+		Subject:    "10.88.60.11/32",
+		ObservedAt: now.Add(-time.Minute),
+		ExpiresAt:  now.Add(time.Hour),
+		Payload: map[string]string{
+			"address": "10.88.60.11/32",
+			"pool":    "cloudedge",
+			"source":  providerDiscoverySource,
+			"nicRef":  "client-nic",
+		},
+	})
+	if _, err := store.ImportAction(routerstate.ActionExecutionRecord{
+		Source:         source,
+		IdempotencyKey: "failed-assign",
+		Provider:       "azure",
+		ProviderRef:    "azure-provider",
+		Action:         "assign-secondary-ip",
+		TargetJSON:     `{"address":"10.88.60.11/32","nicRef":"client-nic","providerRef":"azure-provider"}`,
+		Status:         routerstate.ActionFailed,
+		Error:          "provider API unavailable",
+		CreatedAt:      now.Add(-2 * time.Minute),
+		UpdatedAt:      now.Add(-time.Minute),
+	}); err != nil {
+		t.Fatalf("ImportAction: %v", err)
+	}
+
+	bgp := &fakeBGPPaths{}
+	controller := Controller{Router: planningRouterForNode("azure-router", spec), Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if _, ok := maybePathBySourcePrefix(bgp, source, "10.88.60.11/32"); ok {
+		t.Fatalf("paths = %#v, want failed provider action address suppressed", bgp.paths)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	if fmt.Sprint(status["providerActionFailedAddresses"]) != "[10.88.60.11/32]" {
+		t.Fatalf("status = %#v, want failed /32 address reported", status)
 	}
 }
 
