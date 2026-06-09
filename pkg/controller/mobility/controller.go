@@ -195,8 +195,11 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 	ownedPaths = filterBGPPathsByProviderActionSuccess(ownedPaths, failedActions)
 	localOwned := bgpLocalOwnedAddresses(ownedPaths)
 	desired := append([]bgpdaemon.AppliedPath(nil), ownedPaths...)
-	if marker, ok := c.bgpLivenessMarkerPath(res.Metadata.Name, source, selfNode, spec.GroupRef); ok {
-		desired = append(desired, marker)
+	if !self.MaintenanceDrain {
+		marker, ok := c.bgpLivenessMarkerPath(res.Metadata.Name, source, selfNode, spec.GroupRef)
+		if ok {
+			desired = append(desired, marker)
+		}
 	}
 	previousActionPlans, err := c.previousGeneratedActionPlans(res.Metadata.Name, selfNode)
 	if err != nil {
@@ -218,8 +221,8 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		}
 	}
 	providerTransitions := latestProviderCaptureTransitions(previousActionPlans, actionJournal)
-	seizedPaths := bgpSeizedCaptureOwnedPaths(source, self, desiredTrapAddresses, providerTransitions)
-	desired = appendUniqueBGPPaths(desired, seizedPaths...)
+	providerCapturedPaths, seizedPathCount := bgpProviderCapturedOwnedPaths(source, self, desiredTrapAddresses, providerTransitions)
+	desired = appendUniqueBGPPaths(desired, providerCapturedPaths...)
 	current, err := c.BGPPaths.ListPaths(ctx, source)
 	if err != nil {
 		return fmt.Errorf("list BGP mobility paths: %w", err)
@@ -243,27 +246,28 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		return err
 	}
 	status := map[string]any{
-		"plannerPhase":            "BGPPlanned",
-		"plannerReason":           "deliveryPolicy.mode=bgp",
-		"selfNode":                selfNode,
-		"dynamicSource":           source,
-		"deliveryMode":            "bgp",
-		"bgpPathSource":           source,
-		"generatedBGPPaths":       len(desired),
-		"generatedSeizedBGPPaths": len(seizedPaths),
-		"bgpRIBObserved":          bgpRIBObserved,
-		"bgpCaptureElection":      bgpCaptureElectionStatus(capturePlacement),
-		"generatedBGPTraps":       len(desiredTrapAddresses),
-		"generatedClaims":         0,
-		"generatedActions":        len(actionPlans),
-		"membersFrom":             mobilityMembersFromStatusMaps(resolved.MembersFrom),
-		"resolvedMemberCount":     len(spec.Members),
-		"pendingSources":          resolved.PendingSources,
-		"memberSet":               memberSetStatus,
-		"selfCaptureResolved":     selfCaptureResolved,
-		"plannedAt":               now.Format(time.RFC3339Nano),
-		"operatorIntent":          "MobilityPool",
-		"derivedConfigKinds":      []string{"BGPPath"},
+		"plannerPhase":                      "BGPPlanned",
+		"plannerReason":                     "deliveryPolicy.mode=bgp",
+		"selfNode":                          selfNode,
+		"dynamicSource":                     source,
+		"deliveryMode":                      "bgp",
+		"bgpPathSource":                     source,
+		"generatedBGPPaths":                 len(desired),
+		"generatedSeizedBGPPaths":           seizedPathCount,
+		"generatedProviderCapturedBGPPaths": len(providerCapturedPaths),
+		"bgpRIBObserved":                    bgpRIBObserved,
+		"bgpCaptureElection":                bgpCaptureElectionStatus(capturePlacement),
+		"generatedBGPTraps":                 len(desiredTrapAddresses),
+		"generatedClaims":                   0,
+		"generatedActions":                  len(actionPlans),
+		"membersFrom":                       mobilityMembersFromStatusMaps(resolved.MembersFrom),
+		"resolvedMemberCount":               len(spec.Members),
+		"pendingSources":                    resolved.PendingSources,
+		"memberSet":                         memberSetStatus,
+		"selfCaptureResolved":               selfCaptureResolved,
+		"plannedAt":                         now.Format(time.RFC3339Nano),
+		"operatorIntent":                    "MobilityPool",
+		"derivedConfigKinds":                []string{"BGPPath"},
 	}
 	if selfCaptureReason != "" {
 		status["selfCaptureReason"] = selfCaptureReason
@@ -436,9 +440,6 @@ func bgpOwnedPaths(poolName, source, selfNode string, spec api.MobilityPoolSpec,
 	poolPrefix = poolPrefix.Masked()
 	members := plannerMembers(spec.Members)
 	self := members[strings.TrimSpace(selfNode)]
-	if self.MaintenanceDrain {
-		return nil
-	}
 	owned := bgpLocalOwnedAddressesFromConfigAndEvents(poolName, selfNode, spec, events, discoveryOwnedAddresses, discoveryOwnedObserved, discoverySelfIPs, discoverySelfIPsObserved, poolPrefix, now)
 	var out []bgpdaemon.AppliedPath
 	for _, owner := range owned {
@@ -460,16 +461,13 @@ func bgpOwnedPaths(poolName, source, selfNode string, spec api.MobilityPoolSpec,
 	return out
 }
 
-func bgpSeizedCaptureOwnedPaths(source string, self memberPlanInfo, desiredTrapAddresses map[string]bgpTrapCandidate, providerTransitions map[string]providerCaptureTransition) []bgpdaemon.AppliedPath {
+func bgpProviderCapturedOwnedPaths(source string, self memberPlanInfo, desiredTrapAddresses map[string]bgpTrapCandidate, providerTransitions map[string]providerCaptureTransition) ([]bgpdaemon.AppliedPath, int) {
 	if self.MaintenanceDrain || self.Capture.Type != "provider-secondary-ip" {
-		return nil
+		return nil, 0
 	}
 	var out []bgpdaemon.AppliedPath
+	seized := 0
 	for _, address := range mapStringKeysSorted(desiredTrapAddresses) {
-		candidate := desiredTrapAddresses[address]
-		if !candidate.Seize {
-			continue
-		}
 		prefix, err := netip.ParsePrefix(strings.TrimSpace(address))
 		if err != nil {
 			continue
@@ -483,6 +481,9 @@ func bgpSeizedCaptureOwnedPaths(source string, self memberPlanInfo, desiredTrapA
 		if holder := strings.TrimSpace(transition.plan.Parameters[captureParamHolder]); holder != "" && holder != strings.TrimSpace(self.NodeRef) {
 			continue
 		}
+		if desiredTrapAddresses[address].Seize {
+			seized++
+		}
 		out = append(out, bgpdaemon.NormalizeAppliedPath(bgpdaemon.AppliedPath{
 			Source: source,
 			Prefix: prefix.String(),
@@ -493,7 +494,7 @@ func bgpSeizedCaptureOwnedPaths(source string, self memberPlanInfo, desiredTrapA
 	sort.SliceStable(out, func(i, j int) bool {
 		return out[i].Prefix < out[j].Prefix
 	})
-	return out
+	return out, seized
 }
 
 func appendUniqueBGPPaths(base []bgpdaemon.AppliedPath, extra ...bgpdaemon.AppliedPath) []bgpdaemon.AppliedPath {
@@ -641,6 +642,9 @@ func bgpLocalOwnedAddressesFromConfigAndEvents(poolName, selfNode string, spec a
 				if !selfProviderDiscoveryEventBackedByFreshInventory(address, ev, self, discoveryOwnedAddresses, discoveryOwnedObserved, discoverySelfIPs, discoverySelfIPsObserved) {
 					continue
 				}
+			}
+			if sourceType == providerDiscoverySource && strings.TrimSpace(ev.SourceNode) != strings.TrimSpace(selfNode) {
+				continue
 			}
 			if bgpMemberAdvertisesOwnedAddress(self, members[strings.TrimSpace(ev.SourceNode)]) {
 				if strings.TrimSpace(ev.Payload["instanceState"]) == "stopped" && stoppedInstancePolicyFromSpec(spec) == "hold" {
