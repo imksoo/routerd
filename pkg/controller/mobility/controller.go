@@ -195,9 +195,10 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 	if err != nil {
 		return fmt.Errorf("list action journal: %w", err)
 	}
-	ownedPaths := bgpOwnedPaths(res.Metadata.Name, source, selfNode, spec, events, discoveryOwnedAddresses, discoveryOwnedObserved, discoverySelfIPs, discoverySelfIPsObserved, ownerPlacement.Active, now)
+	homeOwnerPathPrefixes := bgpSelfHomeOwnerAddressSet(selfNode, homeOwnerFacts)
+	ownedPaths := bgpOwnedPaths(res.Metadata.Name, source, selfNode, spec, events, discoveryOwnedAddresses, discoveryOwnedObserved, discoverySelfIPs, discoverySelfIPsObserved, homeOwnerFacts, ownerPlacement.Active, now)
 	failedActions := latestFailedProviderActions(actionJournal)
-	ownedPaths = filterBGPPathsByProviderActionSuccess(ownedPaths, failedActions)
+	ownedPaths = filterBGPPathsByProviderActionSuccess(ownedPaths, failedActions, homeOwnerPathPrefixes)
 	localOwned := bgpLocalOwnedAddresses(ownedPaths)
 	desired := append([]bgpdaemon.AppliedPath(nil), ownedPaths...)
 	if !self.MaintenanceDrain {
@@ -447,7 +448,7 @@ type providerInventoryOwnerFact struct {
 	ObservedAt  time.Time
 }
 
-func bgpOwnedPaths(poolName, source, selfNode string, spec api.MobilityPoolSpec, events []routerstate.EventRecord, discoveryOwnedAddresses map[string]bool, discoveryOwnedObserved bool, discoverySelfIPs map[string]bool, discoverySelfIPsObserved bool, ownerActive bool, now time.Time) []bgpdaemon.AppliedPath {
+func bgpOwnedPaths(poolName, source, selfNode string, spec api.MobilityPoolSpec, events []routerstate.EventRecord, discoveryOwnedAddresses map[string]bool, discoveryOwnedObserved bool, discoverySelfIPs map[string]bool, discoverySelfIPsObserved bool, homeOwnerFacts map[string]providerInventoryOwnerFact, ownerActive bool, now time.Time) []bgpdaemon.AppliedPath {
 	poolPrefix, err := netip.ParsePrefix(strings.TrimSpace(spec.Prefix))
 	if err != nil {
 		return nil
@@ -456,6 +457,8 @@ func bgpOwnedPaths(poolName, source, selfNode string, spec api.MobilityPoolSpec,
 	members := plannerMembers(spec.Members)
 	self := members[strings.TrimSpace(selfNode)]
 	owned := bgpLocalOwnedAddressesFromConfigAndEvents(poolName, selfNode, spec, events, discoveryOwnedAddresses, discoveryOwnedObserved, discoverySelfIPs, discoverySelfIPsObserved, poolPrefix, now)
+	owned = append(owned, bgpSelfHomeOwnerAddresses(selfNode, homeOwnerFacts)...)
+	owned = dedupeBGPOwnedAddresses(owned)
 	var out []bgpdaemon.AppliedPath
 	for _, owner := range owned {
 		prefix, err := netip.ParsePrefix(owner.Address)
@@ -473,6 +476,62 @@ func bgpOwnedPaths(poolName, source, selfNode string, spec api.MobilityPoolSpec,
 	sort.SliceStable(out, func(i, j int) bool {
 		return out[i].Prefix < out[j].Prefix
 	})
+	return out
+}
+
+func dedupeBGPOwnedAddresses(values []bgpOwnedAddress) []bgpOwnedAddress {
+	byAddress := map[string]bgpOwnedAddress{}
+	for _, value := range values {
+		address := normalizeAddressString(value.Address)
+		if address == "" {
+			continue
+		}
+		byAddress[address] = bgpOwnedAddress{Address: address, SourceType: value.SourceType}
+	}
+	out := make([]bgpOwnedAddress, 0, len(byAddress))
+	for _, value := range byAddress {
+		out = append(out, value)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		return out[i].Address < out[j].Address
+	})
+	return out
+}
+
+func bgpSelfHomeOwnerAddresses(selfNode string, facts map[string]providerInventoryOwnerFact) []bgpOwnedAddress {
+	ownedByAddress := map[string]bgpOwnedAddress{}
+	for address := range bgpSelfHomeOwnerAddressSet(selfNode, facts) {
+		ownedByAddress[address] = bgpOwnedAddress{Address: address, SourceType: providerDiscoverySource}
+	}
+	out := make([]bgpOwnedAddress, 0, len(ownedByAddress))
+	for _, owned := range ownedByAddress {
+		out = append(out, owned)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		return out[i].Address < out[j].Address
+	})
+	return out
+}
+
+func bgpSelfHomeOwnerAddressSet(selfNode string, facts map[string]providerInventoryOwnerFact) map[string]bool {
+	selfNode = strings.TrimSpace(selfNode)
+	out := map[string]bool{}
+	for address, fact := range facts {
+		if strings.TrimSpace(fact.NodeRef) != selfNode {
+			continue
+		}
+		if strings.TrimSpace(fact.ProviderRef) == "" {
+			continue
+		}
+		address = normalizeAddressString(address)
+		if address == "" {
+			address = normalizeAddressString(fact.Address)
+		}
+		if address == "" {
+			continue
+		}
+		out[address] = true
+	}
 	return out
 }
 
@@ -729,15 +788,34 @@ func providerInventoryHomeOwnerFacts(poolName string, spec api.MobilityPoolSpec,
 	poolPrefix = poolPrefix.Masked()
 	routerNICs := mobilityRouterNICRefs(spec.Members)
 	members := plannerMembers(spec.Members)
-	out := map[string]providerInventoryOwnerFact{}
+	latest := map[string]routerstate.EventRecord{}
 	for _, ev := range events {
-		if ev.Group != spec.GroupRef || ev.Type != ObservedEventType {
+		if ev.Group != spec.GroupRef || ev.Type != ObservedEventType && ev.Type != ExpiredEventType {
 			continue
 		}
 		if bgpOwnershipEventSourceType(ev) != providerDiscoverySource {
 			continue
 		}
 		if !strings.EqualFold(strings.TrimSpace(ev.Payload["pool"]), strings.TrimSpace(poolName)) {
+			continue
+		}
+		address, ok := normalizeLeaseAddress(firstNonEmpty(ev.Payload["address"], ev.Subject), poolPrefix)
+		if !ok {
+			continue
+		}
+		key := address + "\x00" + strings.TrimSpace(ev.SourceNode)
+		candidate := ev
+		if candidate.ObservedAt.IsZero() {
+			candidate.ObservedAt = now
+		}
+		current, found := latest[key]
+		if !found || eventRecordGreater(candidate, current) {
+			latest[key] = candidate
+		}
+	}
+	out := map[string]providerInventoryOwnerFact{}
+	for _, ev := range latest {
+		if ev.Type != ObservedEventType {
 			continue
 		}
 		if !ev.ExpiresAt.IsZero() && !now.Before(ev.ExpiresAt) {
@@ -757,9 +835,6 @@ func providerInventoryHomeOwnerFacts(poolName string, spec api.MobilityPoolSpec,
 			continue
 		}
 		providerRef := strings.TrimSpace(ev.Payload["providerRef"])
-		if providerRef == "" && memberOK {
-			providerRef = strings.TrimSpace(member.OwnershipDiscovery.ProviderRef)
-		}
 		fact := providerInventoryOwnerFact{
 			Address:     address,
 			NodeRef:     nodeRef,
@@ -1963,7 +2038,7 @@ func latestFailedProviderActions(actions []routerstate.ActionExecutionRecord) ma
 	return failed
 }
 
-func filterBGPPathsByProviderActionSuccess(paths []bgpdaemon.AppliedPath, failedAddrs map[string]routerstate.ActionExecutionRecord) []bgpdaemon.AppliedPath {
+func filterBGPPathsByProviderActionSuccess(paths []bgpdaemon.AppliedPath, failedAddrs map[string]routerstate.ActionExecutionRecord, exemptAddrs map[string]bool) []bgpdaemon.AppliedPath {
 	if len(failedAddrs) == 0 {
 		return paths
 	}
@@ -1975,6 +2050,10 @@ func filterBGPPathsByProviderActionSuccess(paths []bgpdaemon.AppliedPath, failed
 			continue
 		}
 		addr := prefix.Masked().String()
+		if exemptAddrs[addr] {
+			out = append(out, p)
+			continue
+		}
 		if _, failed := failedAddrs[addr]; failed {
 			continue
 		}
