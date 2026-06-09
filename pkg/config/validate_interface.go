@@ -154,6 +154,11 @@ func validateInterfaceResource(res api.Resource, targetOS platform.OS) (bool, er
 		if spec.MTU != 0 && (spec.MTU < 576 || spec.MTU > 9216) {
 			return true, fmt.Errorf("%s spec.mtu must be within 576-9216", res.ID())
 		}
+		for i, source := range spec.PeersFrom {
+			if err := validateWireGuardPeersFrom(res.ID(), i, source); err != nil {
+				return true, err
+			}
+		}
 		if spec.FwMark != 0 || spec.Table != 0 {
 			return true, fmt.Errorf("%s spec.fwmark and spec.table are not supported; routerd derives WireGuard fwmark and routing table ownership automatically", res.ID())
 		}
@@ -345,4 +350,12 @@ func validateInterfaceResource(res api.Resource, targetOS platform.OS) (bool, er
 		return false, nil
 	}
 	return true, nil
+}
+
+func validateWireGuardPeersFrom(resourceID string, index int, source api.WireGuardPeersSourceSpec) error {
+	kind, name, ok := strings.Cut(strings.TrimSpace(source.Resource), "/")
+	if !ok || kind != "SAMNodeSet" || strings.TrimSpace(name) == "" {
+		return fmt.Errorf("%s spec.peersFrom[%d].resource must reference SAMNodeSet/<name>", resourceID, index)
+	}
+	return nil
 }

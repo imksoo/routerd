@@ -428,13 +428,25 @@ type VXLANSegmentSpec struct {
 }
 
 type WireGuardInterfaceSpec struct {
-	IfName         string `yaml:"ifname,omitempty" json:"ifname,omitempty"`
+	IfName string `yaml:"ifname,omitempty" json:"ifname,omitempty"`
+	// SelfNodeRef is the local SAM node identity used to skip this node when
+	// importing peersFrom. It defaults to Router.metadata.name.
+	SelfNodeRef    string `yaml:"selfNodeRef,omitempty" json:"selfNodeRef,omitempty"`
 	PrivateKey     string `yaml:"privateKey,omitempty" json:"privateKey,omitempty"`
 	PrivateKeyFile string `yaml:"privateKeyFile,omitempty" json:"privateKeyFile,omitempty"`
 	ListenPort     int    `yaml:"listenPort,omitempty" json:"listenPort,omitempty" jsonschema:"minimum=1,maximum=65535"`
 	MTU            int    `yaml:"mtu,omitempty" json:"mtu,omitempty" jsonschema:"minimum=576,maximum=9216"`
-	FwMark         int    `yaml:"-" json:"-"`
-	Table          int    `yaml:"-" json:"-"`
+	// PeersFrom imports WireGuardPeer targets from shared SAMNodeSet resources.
+	// Imported peers are added first; static WireGuardPeer resources with the
+	// same metadata.name are overlaid after generated peers.
+	PeersFrom []WireGuardPeersSourceSpec `yaml:"peersFrom,omitempty" json:"peersFrom,omitempty"`
+	FwMark    int                        `yaml:"-" json:"-"`
+	Table     int                        `yaml:"-" json:"-"`
+}
+
+type WireGuardPeersSourceSpec struct {
+	Resource string `yaml:"resource" json:"resource"`
+	Optional bool   `yaml:"optional,omitempty" json:"optional,omitempty"`
 }
 
 type TunnelInterfaceSpec struct {

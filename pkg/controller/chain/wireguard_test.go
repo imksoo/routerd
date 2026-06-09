@@ -470,6 +470,192 @@ spec:
 	}
 }
 
+func TestWireGuardControllerDerivesPeersFromSAMNodeSet(t *testing.T) {
+	router := mustWireGuardRouter(t, `
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata: {name: router-a}
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardInterface
+      metadata: {name: wg0}
+      spec:
+        selfNodeRef: router-a
+        privateKey: priv
+        peersFrom:
+          - resource: SAMNodeSet/fabric
+    - apiVersion: mobility.routerd.net/v1alpha1
+      kind: SAMNodeSet
+      metadata: {name: fabric}
+      spec:
+        nodes:
+          - nodeRef: router-a
+            wireGuard:
+              publicKey: selfpub
+              allowedIPs: [10.99.0.1/32]
+          - nodeRef: router-b
+            wireGuard:
+              publicKey: peerpub-b
+              endpoint: 198.51.100.2:51820
+              allowedIPs: [10.99.0.2/32]
+              persistentKeepalive: 25
+          - nodeRef: router-c
+`)
+	store := mapStore{}
+	var setconf string
+	controller := WireGuardController{
+		Router: router,
+		Store:  store,
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			call := name + " " + strings.Join(args, " ")
+			switch call {
+			case "ip link show wg0":
+				return nil, errors.New("missing")
+			case "wg show wg0 dump":
+				return []byte("priv\tifacepub\t51820\toff\npeerpub-b\tpsk\t198.51.100.2:51820\t10.99.0.2/32\t0\t0\t0\t25\n"), nil
+			default:
+				return nil, nil
+			}
+		},
+		CommandStdin: func(_ context.Context, stdin []byte, name string, args ...string) ([]byte, error) {
+			if name == "wg" && strings.Join(args, " ") == "setconf wg0 /dev/stdin" {
+				setconf = string(stdin)
+			}
+			return nil, nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"PublicKey = peerpub-b",
+		"AllowedIPs = 10.99.0.2/32",
+		"Endpoint = 198.51.100.2:51820",
+		"PersistentKeepalive = 25",
+	} {
+		if !strings.Contains(setconf, want) {
+			t.Fatalf("setconf missing %q:\n%s", want, setconf)
+		}
+	}
+	if strings.Contains(setconf, "selfpub") {
+		t.Fatalf("self node must not be rendered as peer:\n%s", setconf)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "WireGuardInterface", "wg0")
+	if status["phase"] != "Up" || status["selfNodeRef"] != "router-a" {
+		t.Fatalf("interface status = %+v", status)
+	}
+	peer := store.ObjectStatus(api.NetAPIVersion, "WireGuardPeer", "router-b")
+	if peer["publicKey"] != "peerpub-b" || peer["persistentKeepalive"] != 25 {
+		t.Fatalf("generated peer status = %+v", peer)
+	}
+}
+
+func TestWireGuardControllerStaticPeerOverridesPeersFrom(t *testing.T) {
+	router := mustWireGuardRouter(t, `
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata: {name: router-a}
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardInterface
+      metadata: {name: wg0}
+      spec:
+        selfNodeRef: router-a
+        privateKey: priv
+        peersFrom:
+          - resource: SAMNodeSet/fabric
+    - apiVersion: mobility.routerd.net/v1alpha1
+      kind: SAMNodeSet
+      metadata: {name: fabric}
+      spec:
+        nodes:
+          - nodeRef: router-b
+            wireGuard:
+              publicKey: generated
+              allowedIPs: [10.99.0.2/32]
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardPeer
+      metadata: {name: router-b}
+      spec:
+        interface: wg0
+        publicKey: override
+        allowedIPs: [10.99.0.200/32]
+        endpoint: 203.0.113.2:51820
+`)
+	store := mapStore{}
+	var setconf string
+	controller := WireGuardController{
+		Router: router,
+		Store:  store,
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			call := name + " " + strings.Join(args, " ")
+			switch call {
+			case "ip link show wg0":
+				return nil, errors.New("missing")
+			case "wg show wg0 dump":
+				return []byte("priv\tifacepub\t51820\toff\noverride\tpsk\t203.0.113.2:51820\t10.99.0.200/32\t0\t0\t0\t0\n"), nil
+			default:
+				return nil, nil
+			}
+		},
+		CommandStdin: func(_ context.Context, stdin []byte, name string, args ...string) ([]byte, error) {
+			if name == "wg" && strings.Join(args, " ") == "setconf wg0 /dev/stdin" {
+				setconf = string(stdin)
+			}
+			return nil, nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(setconf, "PublicKey = override") || !strings.Contains(setconf, "AllowedIPs = 10.99.0.200/32") {
+		t.Fatalf("static override was not rendered:\n%s", setconf)
+	}
+	if strings.Contains(setconf, "PublicKey = generated") || strings.Contains(setconf, "10.99.0.2/32") {
+		t.Fatalf("generated peer leaked despite static override:\n%s", setconf)
+	}
+}
+
+func TestWireGuardControllerPeersFromMissingRequiredIsPending(t *testing.T) {
+	router := mustWireGuardRouter(t, `
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata: {name: router-a}
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardInterface
+      metadata: {name: wg0}
+      spec:
+        selfNodeRef: router-a
+        privateKey: priv
+        peersFrom:
+          - resource: SAMNodeSet/missing
+`)
+	store := mapStore{}
+	controller := WireGuardController{
+		Router: router,
+		Store:  store,
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			t.Fatalf("wireguard apply must not run while peersFrom is pending: %s %v", name, args)
+			return nil, nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "WireGuardInterface", "wg0")
+	if status["phase"] != "Pending" || status["reason"] != "PeersFromPending" {
+		t.Fatalf("interface status = %+v, want peersFrom Pending", status)
+	}
+	pending, ok := status["pendingSources"].([]string)
+	if !ok || len(pending) != 1 || pending[0] != "SAMNodeSet/missing" {
+		t.Fatalf("pendingSources = %#v", status["pendingSources"])
+	}
+}
+
 func TestWireGuardControllerMarksMissingKeyPending(t *testing.T) {
 	router := mustWireGuardRouter(t, `
 apiVersion: routerd.net/v1alpha1

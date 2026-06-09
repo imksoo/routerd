@@ -1317,8 +1317,8 @@ func (r *Runner) Start(ctx context.Context) error {
 			current.Store = store.withRouter(effective)
 			return current.Reconcile(ctx)
 		}},
-		framework.FuncController{ControllerName: "wireguard", Every: 30 * time.Second, Subs: statusSubscriptions("WireGuardInterface", "BGPRouter"), PeriodicFunc: func(ctx context.Context) error {
-			effective, err := effectiveForReconcile()
+		framework.FuncController{ControllerName: "wireguard", Every: 30 * time.Second, Subs: statusSubscriptions("WireGuardInterface", "WireGuardPeer", "SAMNodeSet", "BGPRouter"), PeriodicFunc: func(ctx context.Context) error {
+			effective, err := effectiveDynamicForReconcile()
 			if err != nil {
 				return err
 			}

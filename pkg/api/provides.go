@@ -172,7 +172,7 @@ func resourceProvidesTable() map[string][]ProvidedFieldSpec {
 		"VXLANSegment":                    withCommon(s("ifname", "VXLAN device"), i("vni", "VXLAN VNI")),
 		"VirtualAddress":                  withCommon(s("address", "Resolved virtual address"), s("ifname", "Kernel interface name"), s("role", "VRRP role"), s("hostname", "Announced hostname"), i("virtualRouterID", "VRRP router ID"), i("priority", "Effective VRRP priority"), b("dryRun", "Dry-run status")),
 		"WebConsole":                      withCommon(s("listenAddress", "Resolved listen address"), i("port", "Listen port")),
-		"WireGuardInterface":              withCommon(s("publicKey", "Interface public key"), i("listenPort", "Listen port"), i("fwmark", "Firewall mark"), i("peerCount", "Peer count")),
+		"WireGuardInterface":              withCommon(s("publicKey", "Interface public key"), s("selfNodeRef", "Local SAM node reference used for peersFrom self-skip"), i("listenPort", "Listen port"), i("fwmark", "Firewall mark"), i("peerCount", "Peer count"), os("peersFrom", "Resolved peersFrom source status"), ss("pendingSources", "Status sources that have not resolved yet")),
 		"WireGuardPeer":                   withCommon(s("latestEndpoint", "Latest endpoint"), t("latestHandshake", "Latest handshake"), i("handshakeAgeSeconds", "Handshake age seconds"), i("transferRxBytes", "Received bytes"), i("transferTxBytes", "Transmitted bytes")),
 	}
 }
