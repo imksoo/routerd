@@ -459,6 +459,20 @@ func routerWithBGPRouter(router *api.Router) *api.Router {
 	return &cp
 }
 
+func routerWithOCIProvider(router *api.Router) *api.Router {
+	cp := *router
+	cp.Spec.Resources = append(append([]api.Resource(nil), router.Spec.Resources...), api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "CloudProviderProfile"},
+		Metadata: api.ObjectMeta{Name: "oci-provider"},
+		Spec: api.CloudProviderProfileSpec{
+			Provider:     "oci",
+			Capabilities: []string{"vnic-secondary-ip", "ip-forwarding"},
+			Auth:         api.ProviderAuth{Mode: "external-command", Command: "oci"},
+		},
+	})
+	return &cp
+}
+
 func routerWithEventGroupListen(router *api.Router, address string) *api.Router {
 	cp := *router
 	cp.Spec.Resources = append([]api.Resource(nil), router.Spec.Resources...)

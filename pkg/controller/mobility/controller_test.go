@@ -303,20 +303,38 @@ func TestControllerBGPModeFreshHomeOwnerSuppressesRemoteProviderCapture(t *testi
 			}
 
 			bgp := &fakeBGPPaths{}
-			ociController := Controller{Router: routerWithBGPRouter(planningRouterForNode("oci-router", spec)), Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+			ociController := Controller{Router: routerWithOCIProvider(routerWithBGPRouter(planningRouterForNode("oci-router", spec))), Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
 			if err := ociController.Reconcile(context.Background()); err != nil {
 				t.Fatalf("oci Reconcile: %v", err)
 			}
 			if _, ok := maybePathBySourcePrefix(bgp, DynamicSource("cloudedge", "oci-router"), tc.address); ok {
 				t.Fatalf("paths = %#v, want OCI captured path suppressed while fresh %s home owner exists", bgp.paths, tc.homeRef)
 			}
+			ociPlans := decodeActionPlans(t, latestPart(t, store, DynamicSource("cloudedge", "oci-router")).ActionPlansJSON)
+			if findActionPlanByAddress(ociPlans, "unassign-secondary-ip", tc.address) == nil {
+				t.Fatalf("oci plans = %#v, want stale remote capture deprovision for %s", ociPlans, tc.address)
+			}
 
 			if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
-				"discoveryOwnedAddresses": []string{tc.address},
+				"discoveryOwnedAddresses": []string{},
 				"discoverySelfPrivateIPs": []string{"10.88.60.250"},
 				"discoveryLastScanAt":     now.Format(time.RFC3339Nano),
 			}); err != nil {
 				t.Fatalf("SaveObjectStatus(home): %v", err)
+			}
+			if _, err := store.ImportAction(routerstate.ActionExecutionRecord{
+				Source:         DynamicSource("cloudedge", tc.homeNode),
+				IdempotencyKey: "failed-home-capture-" + safeName(tc.address),
+				Provider:       tc.homeProvider,
+				ProviderRef:    tc.homeRef,
+				Action:         "assign-secondary-ip",
+				TargetJSON:     fmt.Sprintf(`{"address":%q,"nicRef":%q,"providerRef":%q}`, tc.address, tc.homeNIC, tc.homeRef),
+				Status:         routerstate.ActionFailed,
+				Error:          "stale capture failure",
+				CreatedAt:      now.Add(-10 * time.Minute),
+				UpdatedAt:      now.Add(-9 * time.Minute),
+			}); err != nil {
+				t.Fatalf("ImportAction(failed home capture): %v", err)
 			}
 			homeController := Controller{Router: routerWithBGPRouter(planningRouterForNode(tc.homeNode, spec)), Store: store, BGPPaths: bgp, Now: func() time.Time { return now.Add(time.Second) }}
 			if err := homeController.Reconcile(context.Background()); err != nil {
