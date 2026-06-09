@@ -96,7 +96,7 @@ spec:
           scanInterval: 60s
           subnetRefFrom: self.subnetRef
           scope:
-            includePrimary: false
+            includePrimary: true
   members:
     - nodeRef: onprem-router
       site: onprem
