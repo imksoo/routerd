@@ -375,6 +375,8 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.vpn(w)
 	case "api/v1/routes":
 		h.routes(w)
+	case "api/v1/sam":
+		h.sam(w)
 	case "api/v1/bgp":
 		h.operationalStatus(w, "bgp")
 	case "api/v1/vrrp":
@@ -1032,6 +1034,63 @@ type OperationalStatus struct {
 	Resources   []routerstate.ObjectStatus `json:"resources"`
 }
 
+type SAMStatus struct {
+	GeneratedAt time.Time       `json:"generatedAt"`
+	Nodes       []SAMNode       `json:"nodes"`
+	Pools       []SAMPool       `json:"pools"`
+	Tunnels     []SAMTunnel     `json:"tunnels,omitempty"`
+	Federation  []SAMFederation `json:"federation,omitempty"`
+	Errors      []string        `json:"errors,omitempty"`
+}
+
+type SAMNode struct {
+	NodeRef        string `json:"nodeRef"`
+	Site           string `json:"site,omitempty"`
+	Role           string `json:"role,omitempty"`
+	RouteReflector bool   `json:"routeReflector,omitempty"`
+	Phase          string `json:"phase,omitempty"`
+	Reason         string `json:"reason,omitempty"`
+}
+
+type SAMPool struct {
+	Name                   string           `json:"name"`
+	Prefix                 string           `json:"prefix,omitempty"`
+	Phase                  string           `json:"phase,omitempty"`
+	Reason                 string           `json:"reason,omitempty"`
+	DiscoveryMode          string           `json:"discoveryMode,omitempty"`
+	DiscoveryPhase         string           `json:"discoveryPhase,omitempty"`
+	GeneratedBGPPaths      int              `json:"generatedBGPPaths,omitempty"`
+	ResolvedMemberCount    int              `json:"resolvedMemberCount,omitempty"`
+	PlacementActive        bool             `json:"placementActive,omitempty"`
+	PlacementActiveNode    string           `json:"placementActiveNode,omitempty"`
+	Addresses              []SAMPoolAddress `json:"addresses,omitempty"`
+	HeldAddresses          []string         `json:"heldAddresses,omitempty"`
+	StoppedInstancePolicy  string           `json:"stoppedInstancePolicy,omitempty"`
+}
+
+type SAMPoolAddress struct {
+	Address   string `json:"address"`
+	OwnerNode string `json:"ownerNode,omitempty"`
+	Source    string `json:"source,omitempty"`
+	State     string `json:"state,omitempty"`
+}
+
+type SAMTunnel struct {
+	Name      string `json:"name"`
+	PeerRef   string `json:"peerRef,omitempty"`
+	Phase     string `json:"phase,omitempty"`
+	Endpoint  string `json:"endpoint,omitempty"`
+	Interface string `json:"interface,omitempty"`
+}
+
+type SAMFederation struct {
+	GroupName   string `json:"groupName"`
+	Phase       string `json:"phase,omitempty"`
+	Reason      string `json:"reason,omitempty"`
+	PeerCount   int    `json:"peerCount,omitempty"`
+	ListenAddr  string `json:"listenAddr,omitempty"`
+}
+
 type RoutesStatus struct {
 	GeneratedAt time.Time      `json:"generatedAt"`
 	Routes      []RouteEntry   `json:"routes"`
@@ -1066,6 +1125,173 @@ type RouteBGPPeer struct {
 	Messages         string `json:"messages,omitempty"`
 	LastEstablished  string `json:"lastEstablishedAt,omitempty"`
 	LastError        string `json:"lastErrorReason,omitempty"`
+}
+
+func (h Handler) sam(w http.ResponseWriter) {
+	resources, err := h.resourceStatuses()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	status := SAMStatus{GeneratedAt: time.Now().UTC()}
+
+	for _, res := range resources {
+		switch res.Kind {
+		case "SAMNodeSet":
+			status.Nodes = append(status.Nodes, samNodesFromResource(res)...)
+		case "MobilityPool":
+			if pool, ok := samPoolFromResource(res); ok {
+				status.Pools = append(status.Pools, pool)
+			}
+		case "WireGuardInterface":
+			if t, ok := samTunnelFromResource(res); ok {
+				status.Tunnels = append(status.Tunnels, t)
+			}
+		case "EventGroup":
+			if fed, ok := samFederationFromResource(res, resources); ok {
+				status.Federation = append(status.Federation, fed)
+			}
+		}
+	}
+	writeJSON(w, status)
+}
+
+func samNodesFromResource(res routerstate.ObjectStatus) []SAMNode {
+	status := res.Status
+	if status == nil {
+		return nil
+	}
+	nodesRaw := statusList(status["nodes"])
+	if len(nodesRaw) == 0 {
+		nodesRaw = statusList(status["resolvedNodes"])
+	}
+	var out []SAMNode
+	for _, node := range nodesRaw {
+		out = append(out, SAMNode{
+			NodeRef:        statusAnyText(node["nodeRef"]),
+			Site:           statusAnyText(node["site"]),
+			Role:           statusAnyText(node["role"]),
+			RouteReflector: statusAnyText(node["routeReflector"]) == "true",
+			Phase:          statusAnyText(node["phase"]),
+			Reason:         statusAnyText(node["reason"]),
+		})
+	}
+	if len(out) == 0 {
+		configured := statusList(status["configuredNodes"])
+		for _, node := range configured {
+			out = append(out, SAMNode{
+				NodeRef:        statusAnyText(node["nodeRef"]),
+				Site:           statusAnyText(node["site"]),
+				Role:           statusAnyText(node["role"]),
+				RouteReflector: statusAnyText(node["routeReflector"]) == "true",
+			})
+		}
+	}
+	return out
+}
+
+func samPoolFromResource(res routerstate.ObjectStatus) (SAMPool, bool) {
+	status := res.Status
+	if status == nil {
+		return SAMPool{}, false
+	}
+	pool := SAMPool{
+		Name:                  res.Name,
+		Prefix:                statusAnyText(status["prefix"]),
+		Phase:                 statusAnyText(status["phase"]),
+		Reason:                statusAnyText(status["reason"]),
+		DiscoveryMode:         statusAnyText(status["discoveryMode"]),
+		DiscoveryPhase:        statusAnyText(status["discoveryPhase"]),
+		GeneratedBGPPaths:     statusIntValue(status["generatedBGPPaths"]),
+		ResolvedMemberCount:   statusIntValue(status["resolvedMemberCount"]),
+		PlacementActive:       statusAnyText(status["placementActive"]) == "true",
+		PlacementActiveNode:   statusAnyText(status["placementActiveNode"]),
+		StoppedInstancePolicy: statusAnyText(status["stoppedInstancePolicy"]),
+	}
+	if prefix := statusAnyText(status["configuredPrefix"]); prefix != "" && pool.Prefix == "" {
+		pool.Prefix = prefix
+	}
+
+	for _, entry := range statusList(status["ownedAddresses"]) {
+		pool.Addresses = append(pool.Addresses, SAMPoolAddress{
+			Address:   statusAnyText(entry["address"]),
+			OwnerNode: statusAnyText(entry["ownerNode"]),
+			Source:    statusAnyText(entry["source"]),
+			State:     statusAnyText(entry["state"]),
+		})
+	}
+	for _, entry := range statusList(status["discoveredAddresses"]) {
+		addr := statusAnyText(entry["address"])
+		if addr == "" {
+			continue
+		}
+		found := false
+		for _, existing := range pool.Addresses {
+			if existing.Address == addr {
+				found = true
+				break
+			}
+		}
+		if !found {
+			pool.Addresses = append(pool.Addresses, SAMPoolAddress{
+				Address:   addr,
+				OwnerNode: statusAnyText(entry["ownerNode"]),
+				Source:    statusAnyText(entry["source"]),
+				State:     "discovered",
+			})
+		}
+	}
+
+	if held := statusList(status["discoveryHeldAddresses"]); len(held) > 0 {
+		for _, entry := range held {
+			pool.HeldAddresses = append(pool.HeldAddresses, statusAnyText(entry["address"]))
+		}
+	} else if heldStr := statusAnyText(status["discoveryHeldAddresses"]); heldStr != "" {
+		pool.HeldAddresses = append(pool.HeldAddresses, heldStr)
+	}
+
+	return pool, true
+}
+
+func samTunnelFromResource(res routerstate.ObjectStatus) (SAMTunnel, bool) {
+	status := res.Status
+	if status == nil {
+		return SAMTunnel{}, false
+	}
+	if statusAnyText(status["samTransportProfile"]) == "" && statusAnyText(status["mobilityOverlay"]) == "" {
+		return SAMTunnel{}, false
+	}
+	return SAMTunnel{
+		Name:      res.Name,
+		PeerRef:   statusAnyText(status["peerNodeRef"]),
+		Phase:     statusAnyText(status["phase"]),
+		Endpoint:  statusAnyText(status["endpoint"]),
+		Interface: statusAnyText(status["interfaceName"]),
+	}, true
+}
+
+func samFederationFromResource(res routerstate.ObjectStatus, allResources []routerstate.ObjectStatus) (SAMFederation, bool) {
+	status := res.Status
+	if status == nil {
+		return SAMFederation{}, false
+	}
+	peerCount := 0
+	groupName := res.Name
+	for _, peer := range allResources {
+		if peer.Kind != "EventPeer" {
+			continue
+		}
+		if statusAnyText(peer.Status["groupRef"]) == groupName || statusAnyText(peer.Status["group"]) == groupName {
+			peerCount++
+		}
+	}
+	return SAMFederation{
+		GroupName:  groupName,
+		Phase:      statusAnyText(status["phase"]),
+		Reason:     statusAnyText(status["reason"]),
+		PeerCount:  peerCount,
+		ListenAddr: statusAnyText(status["listenAddress"]),
+	}, true
 }
 
 func (h Handler) operationalStatus(w http.ResponseWriter, kind string) {

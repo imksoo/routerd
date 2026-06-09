@@ -44,6 +44,7 @@ import {
   NavigationRegular,
   PeopleRegular,
   PhoneRegular,
+  GlobeRegular,
   PlugConnectedRegular,
   PrintRegular,
   ServerRegular,
@@ -538,6 +539,63 @@ type TailscalePeerStatus = {
   txBytes?: number;
 };
 
+type SAMStatusResponse = {
+  generatedAt?: string;
+  nodes?: SAMNodeEntry[];
+  pools?: SAMPoolEntry[];
+  tunnels?: SAMTunnelEntry[];
+  federation?: SAMFederationEntry[];
+  errors?: string[];
+};
+
+type SAMNodeEntry = {
+  nodeRef: string;
+  site?: string;
+  role?: string;
+  routeReflector?: boolean;
+  phase?: string;
+  reason?: string;
+};
+
+type SAMPoolEntry = {
+  name: string;
+  prefix?: string;
+  phase?: string;
+  reason?: string;
+  discoveryMode?: string;
+  discoveryPhase?: string;
+  generatedBGPPaths?: number;
+  resolvedMemberCount?: number;
+  placementActive?: boolean;
+  placementActiveNode?: string;
+  addresses?: SAMPoolAddressEntry[];
+  heldAddresses?: string[];
+  stoppedInstancePolicy?: string;
+};
+
+type SAMPoolAddressEntry = {
+  address: string;
+  ownerNode?: string;
+  source?: string;
+  state?: string;
+};
+
+type SAMTunnelEntry = {
+  name: string;
+  peerRef?: string;
+  phase?: string;
+  endpoint?: string;
+  interface?: string;
+};
+
+type SAMFederationEntry = {
+  groupName: string;
+  phase?: string;
+  reason?: string;
+  peerCount?: number;
+  listenAddr?: string;
+};
+
 type ConfigSnapshot = {
   path?: string;
   text?: string;
@@ -618,7 +676,7 @@ type ClientRow = {
   isolationPolicy: Set<string>;
 };
 
-type ViewKey = "overview" | "resources" | "routes" | "controllers" | "clients" | "connections" | "gateway-health" | "vpn" | "events" | "firewall" | "config" | "generations";
+type ViewKey = "overview" | "resources" | "routes" | "controllers" | "clients" | "connections" | "gateway-health" | "vpn" | "sam" | "events" | "firewall" | "config" | "generations";
 type NavSubItem = { key: string; label: string; count?: number; view: ViewKey; targetID: string };
 
 const cfg = window.__ROUTERD_WEB_CONSOLE__ ?? { basePath: "/", title: "routerd" };
@@ -637,6 +695,7 @@ const navItems: { key: ViewKey; label: string; description: string; icon: React.
   { key: "connections", label: "Connections", description: "conntrack and live flows", icon: <PlugConnectedRegular /> },
   { key: "gateway-health", label: "Gateway Health", description: "Egress path status and evidence", icon: <HeartPulseRegular /> },
   { key: "vpn", label: "VPN", description: "WireGuard and Tailscale peers", icon: <PlugConnectedRegular /> },
+  { key: "sam", label: "SAM", description: "Selective Address Mobility topology", icon: <GlobeRegular /> },
   { key: "events", label: "Events", description: "Bus events and resource changes", icon: <ServerRegular /> },
   { key: "firewall", label: "Firewall", description: "Deny ranking and timeline", icon: <ShieldRegular /> },
   { key: "controllers", label: "Controllers", description: "Live and dry-run controller modes", icon: <ServerRegular /> },
@@ -2426,6 +2485,7 @@ function App() {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [config, setConfig] = useState<ConfigSnapshot | null>(null);
   const [routesStatus, setRoutesStatus] = useState<RoutesStatus | null>(null);
+  const [samStatus, setSAMStatus] = useState<SAMStatusResponse | null>(null);
   const [generations, setGenerations] = useState<GenerationRecord[]>([]);
   const [firewallDenyTimeline, setFirewallDenyTimeline] = useState<FirewallDenyTimelineBucket[]>([]);
   const [generationDiff, setGenerationDiff] = useState<string>("");
@@ -2521,6 +2581,7 @@ function App() {
     const shouldFetchConfig = selected === "config";
     const shouldFetchGenerations = selected === "config" || selected === "generations";
     const shouldFetchRoutes = selected === "routes";
+    const shouldFetchSAM = selected === "sam";
     const includeClients = selected === "clients" || selected === "connections";
     const includeTuning = selected === "firewall";
     const includeVPN = selected === "vpn";
@@ -2545,14 +2606,16 @@ function App() {
       dhcpLeases: includeDHCPLeases ? "1" : "0",
     });
     try {
-      const [summaryResponse, configResponse, generationResponse, denyTimelineResponse, routesResponse] = await Promise.all([
+      const [summaryResponse, configResponse, generationResponse, denyTimelineResponse, routesResponse, samResponse] = await Promise.all([
         fetchJSON<Summary>(`api/v1/summary?${summaryQuery.toString()}`),
         shouldFetchConfig ? (configRef.current ? Promise.resolve(configRef.current) : fetchJSON<ConfigSnapshot>("api/v1/config")) : Promise.resolve(null),
         shouldFetchGenerations ? fetchJSON<GenerationRecord[]>(`api/v1/generations?limit=${generationLimit}`) : Promise.resolve(null),
         selected === "firewall" ? fetchJSON<FirewallDenyTimelineBucket[]>("api/v1/firewall/deny-timeline?range=24h&bucket=5min") : Promise.resolve(null),
         shouldFetchRoutes ? fetchJSON<RoutesStatus>("api/v1/routes") : Promise.resolve(null),
+        shouldFetchSAM ? fetchJSON<SAMStatusResponse>("api/v1/sam") : Promise.resolve(null),
       ]);
       pendingScrollSnapshot.current = scrollSnapshot;
+      if (samResponse) setSAMStatus(samResponse);
       setSummary(current => reconcileSummary(current, summaryResponse));
       if (selected === "overview" && !overviewDetailsLoaded.current) {
         overviewDetailsLoaded.current = true;
@@ -3280,6 +3343,9 @@ function App() {
                   <WireGuardPanel interfaces={summary?.vpn?.wireGuard ?? []} errors={summary?.vpn?.errors ?? []} />
                 </Card>
               </div>
+            ) : null}
+            {selected === "sam" ? (
+              <SAMView status={samStatus} />
             ) : null}
             {selected === "events" ? (
               <div className={styles.eventsGrid}>
@@ -4323,6 +4389,208 @@ function ResourceTable({ resources, controllers, navigateTo }: { resources: Reso
       </div>
     </>
   );
+}
+
+function SAMView({ status }: { status: SAMStatusResponse | null }) {
+  const styles = useStyles();
+  if (!status) {
+    return <div style={{ padding: "2rem", textAlign: "center" }}><Spinner label="Loading SAM status..." /></div>;
+  }
+  const nodes = status.nodes ?? [];
+  const pools = status.pools ?? [];
+  const tunnels = status.tunnels ?? [];
+  const federation = status.federation ?? [];
+  const spineNodes = nodes.filter(n => n.routeReflector);
+  const leafNodes = nodes.filter(n => !n.routeReflector);
+
+  return (
+    <div className={styles.vpnGrid}>
+      <Card id="sam-topology" className={styles.connectionAnchor}>
+        <CardHeader
+          header={<Text weight="semibold">Topology</Text>}
+          description={<Text className={styles.muted}>SAM node mesh: Spine (RR) and Leaf nodes</Text>}
+        />
+        {nodes.length === 0 ? (
+          <Text className={styles.muted} style={{ padding: "1rem" }}>No SAMNodeSet configured</Text>
+        ) : (
+          <>
+            {spineNodes.length > 0 && (
+              <>
+                <Text weight="semibold" size={200} style={{ padding: "0.5rem 1rem 0.25rem" }}>Spine / Route Reflector</Text>
+                <Table size="small">
+                  <TableHeader><TableRow>
+                    <TableHeaderCell>Node</TableHeaderCell>
+                    <TableHeaderCell>Site</TableHeaderCell>
+                    <TableHeaderCell>Role</TableHeaderCell>
+                    <TableHeaderCell>Phase</TableHeaderCell>
+                  </TableRow></TableHeader>
+                  <TableBody>
+                    {spineNodes.map(node => (
+                      <TableRow key={node.nodeRef}>
+                        <TableCell>{node.nodeRef}</TableCell>
+                        <TableCell>{node.site || "-"}</TableCell>
+                        <TableCell>{node.role || "-"}</TableCell>
+                        <TableCell><PhaseBadge phase={node.phase} /></TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </>
+            )}
+            {leafNodes.length > 0 && (
+              <>
+                <Text weight="semibold" size={200} style={{ padding: "0.5rem 1rem 0.25rem" }}>Leaf Nodes</Text>
+                <Table size="small">
+                  <TableHeader><TableRow>
+                    <TableHeaderCell>Node</TableHeaderCell>
+                    <TableHeaderCell>Site</TableHeaderCell>
+                    <TableHeaderCell>Role</TableHeaderCell>
+                    <TableHeaderCell>Phase</TableHeaderCell>
+                  </TableRow></TableHeader>
+                  <TableBody>
+                    {leafNodes.map(node => (
+                      <TableRow key={node.nodeRef}>
+                        <TableCell>{node.nodeRef}</TableCell>
+                        <TableCell>{node.site || "-"}</TableCell>
+                        <TableCell>{node.role || "-"}</TableCell>
+                        <TableCell><PhaseBadge phase={node.phase} /></TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </>
+            )}
+          </>
+        )}
+      </Card>
+
+      {pools.map(pool => (
+        <Card key={pool.name} id={`sam-pool-${pool.name}`} className={styles.connectionAnchor}>
+          <CardHeader
+            header={<Text weight="semibold">MobilityPool: {pool.name}</Text>}
+            description={<Text className={styles.muted}>{pool.prefix || "no prefix"} — {pool.discoveryMode || "provider"} discovery</Text>}
+          />
+          <div className={styles.grid}>
+            <Metric label="phase" value={pool.phase || "-"} />
+            <Metric label="BGP paths" value={String(pool.generatedBGPPaths ?? 0)} />
+            <Metric label="members" value={String(pool.resolvedMemberCount ?? 0)} />
+            <Metric label="discovery" value={pool.discoveryPhase || "-"} />
+            {pool.placementActiveNode ? <Metric label="active node" value={pool.placementActiveNode} /> : null}
+            {pool.stoppedInstancePolicy ? <Metric label="stopped policy" value={pool.stoppedInstancePolicy} /> : null}
+          </div>
+          {(pool.addresses ?? []).length > 0 && (
+            <>
+              <Text weight="semibold" size={200} style={{ padding: "0.5rem 1rem 0.25rem" }}>IP Ownership</Text>
+              <Table size="small">
+                <TableHeader><TableRow>
+                  <TableHeaderCell>Address</TableHeaderCell>
+                  <TableHeaderCell>Owner</TableHeaderCell>
+                  <TableHeaderCell>Source</TableHeaderCell>
+                  <TableHeaderCell>State</TableHeaderCell>
+                </TableRow></TableHeader>
+                <TableBody>
+                  {pool.addresses!.map(addr => (
+                    <TableRow key={addr.address}>
+                      <TableCell style={{ fontFamily: "monospace" }}>{addr.address}</TableCell>
+                      <TableCell>{addr.ownerNode || "-"}</TableCell>
+                      <TableCell>{addr.source || "-"}</TableCell>
+                      <TableCell><PhaseBadge phase={addr.state} /></TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </>
+          )}
+          {(pool.heldAddresses ?? []).length > 0 && (
+            <div style={{ padding: "0.5rem 1rem" }}>
+              <Text size={200} className={styles.muted}>Held (stopped VM): {pool.heldAddresses!.join(", ")}</Text>
+            </div>
+          )}
+        </Card>
+      ))}
+
+      {tunnels.length > 0 && (
+        <Card id="sam-tunnels" className={styles.connectionAnchor}>
+          <CardHeader
+            header={<Text weight="semibold">Transport Tunnels</Text>}
+            description={<Text className={styles.muted}>WireGuard overlay tunnels for SAM transport</Text>}
+          />
+          <Table size="small">
+            <TableHeader><TableRow>
+              <TableHeaderCell>Name</TableHeaderCell>
+              <TableHeaderCell>Peer</TableHeaderCell>
+              <TableHeaderCell>Endpoint</TableHeaderCell>
+              <TableHeaderCell>Interface</TableHeaderCell>
+              <TableHeaderCell>Phase</TableHeaderCell>
+            </TableRow></TableHeader>
+            <TableBody>
+              {tunnels.map(t => (
+                <TableRow key={t.name}>
+                  <TableCell>{t.name}</TableCell>
+                  <TableCell>{t.peerRef || "-"}</TableCell>
+                  <TableCell style={{ fontFamily: "monospace" }}>{t.endpoint || "-"}</TableCell>
+                  <TableCell>{t.interface || "-"}</TableCell>
+                  <TableCell><PhaseBadge phase={t.phase} /></TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </Card>
+      )}
+
+      {federation.length > 0 && (
+        <Card id="sam-federation" className={styles.connectionAnchor}>
+          <CardHeader
+            header={<Text weight="semibold">Event Federation</Text>}
+            description={<Text className={styles.muted}>Cross-node event bus groups for SAM coordination</Text>}
+          />
+          <Table size="small">
+            <TableHeader><TableRow>
+              <TableHeaderCell>Group</TableHeaderCell>
+              <TableHeaderCell>Phase</TableHeaderCell>
+              <TableHeaderCell>Peers</TableHeaderCell>
+              <TableHeaderCell>Listen</TableHeaderCell>
+              <TableHeaderCell>Reason</TableHeaderCell>
+            </TableRow></TableHeader>
+            <TableBody>
+              {federation.map(f => (
+                <TableRow key={f.groupName}>
+                  <TableCell>{f.groupName}</TableCell>
+                  <TableCell><PhaseBadge phase={f.phase} /></TableCell>
+                  <TableCell>{f.peerCount ?? 0}</TableCell>
+                  <TableCell style={{ fontFamily: "monospace" }}>{f.listenAddr || "-"}</TableCell>
+                  <TableCell>{f.reason || "-"}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </Card>
+      )}
+
+      {(status.errors ?? []).length > 0 && (
+        <Card id="sam-errors" className={styles.connectionAnchor}>
+          <CardHeader header={<Text weight="semibold">Errors</Text>} />
+          {status.errors!.map((err, i) => (
+            <Text key={i} className={styles.muted} style={{ padding: "0.5rem 1rem" }}>{err}</Text>
+          ))}
+        </Card>
+      )}
+    </div>
+  );
+}
+
+function PhaseBadge({ phase }: { phase?: string }) {
+  if (!phase) return <Badge appearance="outline" color="subtle">-</Badge>;
+  const lower = phase.toLowerCase();
+  if (lower === "healthy" || lower === "ready" || lower === "running" || lower === "bound" || lower === "active" || lower === "owned")
+    return <Badge appearance="filled" color="success">{phase}</Badge>;
+  if (lower === "degraded" || lower === "warning" || lower === "stopped" || lower === "held")
+    return <Badge appearance="filled" color="warning">{phase}</Badge>;
+  if (lower === "error" || lower === "failed" || lower === "down")
+    return <Badge appearance="filled" color="danger">{phase}</Badge>;
+  if (lower === "discovered" || lower === "pending")
+    return <Badge appearance="filled" color="informative">{phase}</Badge>;
+  return <Badge appearance="outline" color="subtle">{phase}</Badge>;
 }
 
 function RoutesView({ status }: { status: RoutesStatus | null }) {
