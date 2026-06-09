@@ -638,6 +638,44 @@ func TestSAMTransportProfileEndpointRouteUsesUnderlayDevice(t *testing.T) {
 	}
 }
 
+func TestSAMTransportProfileRouteReflectorOverWireGuardUnderlay(t *testing.T) {
+	now := time.Date(2026, 6, 6, 9, 9, 30, 0, time.UTC)
+	store := testStore(t, now)
+	router := transportRouter("rr", "k8s-rt01", []api.SAMTransportPeerSpec{{
+		NodeRef:        "pve-rt06",
+		RemoteEndpoint: "10.99.0.26",
+	}})
+	spec, err := router.Spec.Resources[0].SAMTransportProfileSpec()
+	if err != nil {
+		t.Fatalf("SAMTransportProfile spec: %v", err)
+	}
+	spec.UnderlayInterface = "wg-svnet1"
+	spec.BGP.RouteReflectorClient = true
+	spec.BGP.RouteReflectorClusterID = "10.99.0.1"
+	router.Spec.Resources[0].Spec = spec
+
+	controller := TransportController{
+		Router: router,
+		Store:  store,
+		Now:    func() time.Time { return now },
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	resources := decodeResources(t, latestPart(t, store, TransportDynamicSource("rr", "k8s-rt01")).ResourcesJSON)
+	peer := findTransportBGPPeer(t, resources)
+	if !peer.RouteReflectorClient || peer.RouteReflectorClusterID != "10.99.0.1" {
+		t.Fatalf("BGPPeer RR settings = client:%v cluster:%q, want true/10.99.0.1", peer.RouteReflectorClient, peer.RouteReflectorClusterID)
+	}
+	route := findTransportEndpointRoute(t, resources)
+	if route.Device != "wg-svnet1" {
+		t.Fatalf("endpoint route device = %q, want wg-svnet1", route.Device)
+	}
+	if route.DeviceFrom.Resource != "" || route.DeviceFrom.Field != "" {
+		t.Fatalf("endpoint route deviceFrom = %#v, want empty for WireGuard underlay", route.DeviceFrom)
+	}
+}
+
 func TestSAMTransportProfileDeletionUpsertsEmptyPart(t *testing.T) {
 	now := time.Date(2026, 6, 6, 9, 10, 0, 0, time.UTC)
 	store := testStore(t, now)
