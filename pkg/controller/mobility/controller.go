@@ -186,15 +186,17 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 	discoverySelfIPs, discoverySelfIPsObserved := c.discoverySelfPrivateIPSet(res.Metadata.Name, spec)
 	livenessMarkers, livenessMarkersObserved := c.bgpLivenessMarkers()
 	ownerPlacement := evaluateBGPCapturePlacement(self, members, livenessMarkers, livenessMarkersObserved)
+	actionJournal, err := c.Store.ListActions(routerstate.ActionExecutionFilter{})
+	if err != nil {
+		return fmt.Errorf("list action journal: %w", err)
+	}
 	ownedPaths := bgpOwnedPaths(res.Metadata.Name, source, selfNode, spec, events, discoveryOwnedAddresses, discoveryOwnedObserved, discoverySelfIPs, discoverySelfIPsObserved, ownerPlacement.Active, now)
+	failedActions := latestFailedProviderActions(actionJournal)
+	ownedPaths = filterBGPPathsByProviderActionSuccess(ownedPaths, failedActions)
 	localOwned := bgpLocalOwnedAddresses(ownedPaths)
 	desired := append([]bgpdaemon.AppliedPath(nil), ownedPaths...)
 	if marker, ok := c.bgpLivenessMarkerPath(res.Metadata.Name, source, selfNode, spec.GroupRef); ok {
 		desired = append(desired, marker)
-	}
-	actionJournal, err := c.Store.ListActions(routerstate.ActionExecutionFilter{})
-	if err != nil {
-		return fmt.Errorf("list action journal: %w", err)
 	}
 	previousActionPlans, err := c.previousGeneratedActionPlans(res.Metadata.Name, selfNode)
 	if err != nil {
@@ -215,7 +217,8 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 			return err
 		}
 	}
-	seizedPaths := bgpSeizedCaptureOwnedPaths(source, self, desiredTrapAddresses, actionJournal)
+	providerTransitions := latestProviderCaptureTransitions(previousActionPlans, actionJournal)
+	seizedPaths := bgpSeizedCaptureOwnedPaths(source, self, desiredTrapAddresses, providerTransitions)
 	desired = appendUniqueBGPPaths(desired, seizedPaths...)
 	current, err := c.BGPPaths.ListPaths(ctx, source)
 	if err != nil {
@@ -269,6 +272,26 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		status["plannerPhase"] = "Degraded"
 		status["plannerReason"] = selfCaptureReason
 		status["providerActionPhase"] = "Blocked"
+	}
+	if len(failedActions) > 0 {
+		status["providerActionPhase"] = "Failed"
+		var failedAddrs []string
+		var lastError string
+		var lastFailedAt time.Time
+		for addr, rec := range failedActions {
+			failedAddrs = append(failedAddrs, addr)
+			if rec.ExecutedAt.After(lastFailedAt) {
+				lastFailedAt = rec.ExecutedAt
+				lastError = rec.Error
+			}
+		}
+		sort.Strings(failedAddrs)
+		status["providerActionError"] = lastError
+		status["providerActionFailedAddresses"] = failedAddrs
+		status["providerActionFailedCount"] = len(failedActions)
+		if !lastFailedAt.IsZero() {
+			status["providerActionFailedAt"] = lastFailedAt.Format(time.RFC3339)
+		}
 	}
 	return c.savePlannerStatus(res.Metadata.Name, status)
 }
@@ -437,11 +460,10 @@ func bgpOwnedPaths(poolName, source, selfNode string, spec api.MobilityPoolSpec,
 	return out
 }
 
-func bgpSeizedCaptureOwnedPaths(source string, self memberPlanInfo, desiredTrapAddresses map[string]bgpTrapCandidate, actionJournal []routerstate.ActionExecutionRecord) []bgpdaemon.AppliedPath {
+func bgpSeizedCaptureOwnedPaths(source string, self memberPlanInfo, desiredTrapAddresses map[string]bgpTrapCandidate, providerTransitions map[string]providerCaptureTransition) []bgpdaemon.AppliedPath {
 	if self.MaintenanceDrain || self.Capture.Type != "provider-secondary-ip" {
 		return nil
 	}
-	latest := latestProviderCaptureTransitions(nil, actionJournal)
 	var out []bgpdaemon.AppliedPath
 	for _, address := range mapStringKeysSorted(desiredTrapAddresses) {
 		candidate := desiredTrapAddresses[address]
@@ -454,8 +476,8 @@ func bgpSeizedCaptureOwnedPaths(source string, self memberPlanInfo, desiredTrapA
 		}
 		prefix = prefix.Masked()
 		key := providerCaptureTransitionKey(self.Capture.ProviderRef, self.Capture.NICRef, prefix.String())
-		transition, ok := latest[key]
-		if !ok || !transition.assign {
+		transition, ok := providerTransitions[key]
+		if !ok || !transition.succeeded || !transition.assign {
 			continue
 		}
 		if holder := strings.TrimSpace(transition.plan.Parameters[captureParamHolder]); holder != "" && holder != strings.TrimSpace(self.NodeRef) {
@@ -1537,10 +1559,11 @@ func stampForwardingDriftFence(plans []dynamicconfig.ActionPlan, observed, enabl
 }
 
 type providerCaptureTransition struct {
-	at     time.Time
-	id     int64
-	assign bool
-	plan   dynamicconfig.ActionPlan
+	at        time.Time
+	id        int64
+	assign    bool
+	succeeded bool
+	plan      dynamicconfig.ActionPlan
 }
 
 func latestProviderCaptureTransitions(previousPlans []dynamicconfig.ActionPlan, journal []routerstate.ActionExecutionRecord) map[string]providerCaptureTransition {
@@ -1584,9 +1607,10 @@ func latestProviderCaptureTransitions(previousPlans []dynamicconfig.ActionPlan, 
 		}
 		params := decodeActionRecordMap(row.ParametersJSON)
 		latest[key] = providerCaptureTransition{
-			at:     at,
-			id:     row.ID,
-			assign: assign,
+			at:        at,
+			id:        row.ID,
+			assign:    assign,
+			succeeded: true,
 			plan: dynamicconfig.ActionPlan{
 				IdempotencyKey: row.IdempotencyKey,
 				Provider:       row.Provider,
@@ -1807,4 +1831,49 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func latestFailedProviderActions(actions []routerstate.ActionExecutionRecord) map[string]routerstate.ActionExecutionRecord {
+	latest := map[string]routerstate.ActionExecutionRecord{}
+	for _, a := range actions {
+		if a.Action != "assign-secondary-ip" {
+			continue
+		}
+		target := decodeActionRecordMap(a.TargetJSON)
+		address := normalizeAddressString(target["address"])
+		if address == "" {
+			continue
+		}
+		prev, found := latest[address]
+		if !found || a.UpdatedAt.After(prev.UpdatedAt) {
+			latest[address] = a
+		}
+	}
+	failed := map[string]routerstate.ActionExecutionRecord{}
+	for addr, rec := range latest {
+		if rec.Status == routerstate.ActionFailed {
+			failed[addr] = rec
+		}
+	}
+	return failed
+}
+
+func filterBGPPathsByProviderActionSuccess(paths []bgpdaemon.AppliedPath, failedAddrs map[string]routerstate.ActionExecutionRecord) []bgpdaemon.AppliedPath {
+	if len(failedAddrs) == 0 {
+		return paths
+	}
+	var out []bgpdaemon.AppliedPath
+	for _, p := range paths {
+		prefix, err := netip.ParsePrefix(p.Prefix)
+		if err != nil {
+			out = append(out, p)
+			continue
+		}
+		addr := prefix.Addr().String()
+		if _, failed := failedAddrs[addr]; failed {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
 }

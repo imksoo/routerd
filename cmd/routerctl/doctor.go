@@ -65,7 +65,7 @@ type doctorRunner struct {
 	store  routerstate.Store
 }
 
-var doctorAreas = []string{"wan", "dns", "dslite", "dhcpv6-pd", "nat", "firewall", "rollback", "disk", "mgmt", "reconcile", "runtime", "dynamic", "plugin", "hybrid"}
+var doctorAreas = []string{"wan", "dns", "dslite", "dhcpv6-pd", "nat", "firewall", "rollback", "disk", "mgmt", "reconcile", "runtime", "dynamic", "plugin", "hybrid", "sam"}
 
 // doctorReconcileWarnThreshold is the total historical error count (across all
 // controllers) that promotes the reconcile area to warn. Current controller
@@ -202,9 +202,42 @@ func (r doctorRunner) runArea(area string) []doctorCheck {
 		return r.doctorPlugin()
 	case "hybrid":
 		return r.doctorHybrid()
+	case "sam":
+		return r.doctorSAM()
 	default:
 		return []doctorCheck{{Area: area, Name: "area", Status: doctorSkip, Detail: "unknown area"}}
 	}
+}
+
+func (r doctorRunner) doctorSAM() []doctorCheck {
+	if r.router == nil {
+		return []doctorCheck{{Area: "sam", Name: "startup config", Status: doctorSkip, Detail: "startup config unavailable"}}
+	}
+	pools := selectResources(r.router.Spec.Resources, "MobilityPool", "")
+	if len(pools) == 0 {
+		return []doctorCheck{{Area: "sam", Name: "MobilityPool", Status: doctorSkip, Detail: "no MobilityPool configured"}}
+	}
+	var checks []doctorCheck
+	for _, res := range pools {
+		status := objectStatus(r.store, res.APIVersion, res.Kind, res.Metadata.Name)
+		checks = append(checks, doctorResourceCheck("sam", res, status, healthyPhases("BGPPlanned")))
+		phase := stringStatus(status, "providerActionPhase")
+		if phase == "Failed" {
+			errMsg := stringStatus(status, "providerActionError")
+			detail := "provider action failed"
+			if errMsg != "" {
+				detail += ": " + errMsg
+			}
+			checks = append(checks, doctorCheck{
+				Area:   "sam",
+				Name:   "MobilityPool/" + res.Metadata.Name + " provider-action",
+				Status: doctorWarn,
+				Detail: detail,
+				Remedy: "check provider API limits (e.g. secondary IP quota) and retry",
+			})
+		}
+	}
+	return checks
 }
 
 func (r doctorRunner) doctorHybrid() []doctorCheck {
