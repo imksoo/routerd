@@ -12,8 +12,10 @@ package eventfederation
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -42,6 +44,14 @@ type Controller struct {
 	StateDir   string
 }
 
+type peersFromStatus struct {
+	Resource  string `json:"resource"`
+	Optional  bool   `json:"optional,omitempty"`
+	Phase     string `json:"phase"`
+	PeerCount int    `json:"peerCount,omitempty"`
+	Reason    string `json:"reason,omitempty"`
+}
+
 // HandleEvent reconciles in response to a bus event (bridge for FuncController).
 func (c Controller) HandleEvent(ctx context.Context, _ daemonapi.DaemonEvent) error {
 	return c.Reconcile(ctx)
@@ -63,9 +73,21 @@ func (c Controller) Reconcile(ctx context.Context) error {
 			return err
 		}
 		group := resource.Metadata.Name
-		config := c.buildConfig(group, spec, stateDir)
+		config, peersFrom, pendingSources, err := c.buildConfig(group, spec, stateDir)
+		if err != nil {
+			if statusErr := c.saveStatus(group, config, "Pending", err.Error(), peersFrom, pendingSources); statusErr != nil {
+				return statusErr
+			}
+			return err
+		}
+		if len(pendingSources) > 0 {
+			if err := c.saveStatus(group, config, "Pending", "peersFrom source is not resolved", peersFrom, pendingSources); err != nil {
+				return err
+			}
+			continue
+		}
 		if c.DryRun {
-			if err := c.saveStatus(group, config, "Pending", "DryRun"); err != nil {
+			if err := c.saveStatus(group, config, "Pending", "DryRun", peersFrom, pendingSources); err != nil {
 				return err
 			}
 			continue
@@ -73,12 +95,12 @@ func (c Controller) Reconcile(ctx context.Context) error {
 		configPath := filepath.Join(stateDir, "eventd", group, "config.json")
 		changed, err := c.writeConfig(configPath, config)
 		if err != nil {
-			if statusErr := c.saveStatus(group, config, "Pending", err.Error()); statusErr != nil {
+			if statusErr := c.saveStatus(group, config, "Pending", err.Error(), peersFrom, pendingSources); statusErr != nil {
 				return statusErr
 			}
 			return err
 		}
-		if err := c.saveStatus(group, config, "Applied", ""); err != nil {
+		if err := c.saveStatus(group, config, "Applied", "", peersFrom, pendingSources); err != nil {
 			return err
 		}
 		if changed && c.Bus != nil {
@@ -92,7 +114,7 @@ func (c Controller) Reconcile(ctx context.Context) error {
 
 // buildConfig assembles the eventd runtime config for a single group, gathering
 // the EventPeers whose GroupRef matches.
-func (c Controller) buildConfig(group string, spec api.EventGroupSpec, stateDir string) eventd.Config {
+func (c Controller) buildConfig(group string, spec api.EventGroupSpec, stateDir string) (eventd.Config, []peersFromStatus, []string, error) {
 	config := eventd.Config{
 		NodeName:      strings.TrimSpace(spec.NodeName),
 		Group:         group,
@@ -120,6 +142,27 @@ func (c Controller) buildConfig(group string, spec api.EventGroupSpec, stateDir 
 		BaseBackoff: eventd.DefaultBaseBackoff,
 		MaxBackoff:  eventd.DefaultMaxBackoff,
 	}
+	peers := []eventd.PeerConfig{}
+	indexByNode := map[string]int{}
+	addPeer := func(peer eventd.PeerConfig) {
+		nodeName := strings.TrimSpace(peer.NodeName)
+		if nodeName == "" {
+			return
+		}
+		peer.NodeName = nodeName
+		peer.Endpoint = strings.TrimSpace(peer.Endpoint)
+		if existing, ok := indexByNode[nodeName]; ok {
+			peers[existing] = peer
+			return
+		}
+		indexByNode[nodeName] = len(peers)
+		peers = append(peers, peer)
+	}
+	peersFrom, pendingSources, err := c.resolvePeersFrom(spec, addPeer)
+	if err != nil {
+		config.Peers = peers
+		return config, peersFrom, pendingSources, err
+	}
 	for _, peer := range c.Router.Spec.Resources {
 		if peer.Kind != "EventPeer" {
 			continue
@@ -131,14 +174,81 @@ func (c Controller) buildConfig(group string, spec api.EventGroupSpec, stateDir 
 		if strings.TrimSpace(peerSpec.GroupRef) != group {
 			continue
 		}
-		config.Peers = append(config.Peers, eventd.PeerConfig{
+		addPeer(eventd.PeerConfig{
 			NodeName:        strings.TrimSpace(peerSpec.NodeName),
 			Endpoint:        strings.TrimSpace(peerSpec.Endpoint),
 			Types:           peerSpec.Types,
 			SubjectPrefixes: peerSpec.SubjectPrefixes,
 		})
 	}
-	return config
+	config.Peers = peers
+	return config, peersFrom, pendingSources, nil
+}
+
+func (c Controller) resolvePeersFrom(spec api.EventGroupSpec, addPeer func(eventd.PeerConfig)) ([]peersFromStatus, []string, error) {
+	statuses := make([]peersFromStatus, 0, len(spec.PeersFrom))
+	pending := []string{}
+	self := strings.TrimSpace(spec.NodeName)
+	for _, source := range spec.PeersFrom {
+		ref := strings.TrimSpace(source.Resource)
+		status := peersFromStatus{
+			Resource: ref,
+			Optional: source.Optional,
+			Phase:    "Resolved",
+		}
+		nodeSet, found, err := c.samNodeSet(ref)
+		if err != nil {
+			status.Phase = "Invalid"
+			status.Reason = err.Error()
+			statuses = append(statuses, status)
+			return statuses, pending, err
+		}
+		if !found {
+			status.Phase = "Missing"
+			status.Reason = "SAMNodeSet not found"
+			statuses = append(statuses, status)
+			if !source.Optional {
+				pending = append(pending, ref)
+			}
+			continue
+		}
+		for _, node := range nodeSet.Nodes {
+			nodeRef := strings.TrimSpace(node.NodeRef)
+			endpoint := strings.TrimSpace(node.EventEndpoint)
+			if nodeRef == "" || nodeRef == self || endpoint == "" {
+				continue
+			}
+			addPeer(eventd.PeerConfig{
+				NodeName: nodeRef,
+				Endpoint: endpoint,
+			})
+			status.PeerCount++
+		}
+		statuses = append(statuses, status)
+	}
+	sort.Strings(pending)
+	return statuses, pending, nil
+}
+
+func (c Controller) samNodeSet(ref string) (api.SAMNodeSetSpec, bool, error) {
+	kind, name, ok := strings.Cut(strings.TrimSpace(ref), "/")
+	if !ok || kind != "SAMNodeSet" || strings.TrimSpace(name) == "" {
+		return api.SAMNodeSetSpec{}, false, fmt.Errorf("peersFrom resource must reference SAMNodeSet/<name>")
+	}
+	if c.Router == nil {
+		return api.SAMNodeSetSpec{}, false, nil
+	}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "SAMNodeSet" || resource.Metadata.Name != strings.TrimSpace(name) {
+			continue
+		}
+		spec, err := resource.SAMNodeSetSpec()
+		if err != nil {
+			return api.SAMNodeSetSpec{}, true, fmt.Errorf("%s spec: %w", ref, err)
+		}
+		return spec, true, nil
+	}
+	return api.SAMNodeSetSpec{}, false, nil
 }
 
 // writeConfig writes config.json idempotently, reporting whether it changed.
@@ -160,7 +270,7 @@ func (c Controller) writeConfig(configPath string, config eventd.Config) (bool, 
 	return true, nil
 }
 
-func (c Controller) saveStatus(group string, config eventd.Config, phase, message string) error {
+func (c Controller) saveStatus(group string, config eventd.Config, phase, message string, peersFrom []peersFromStatus, pendingSources []string) error {
 	status := map[string]any{
 		"phase":     phase,
 		"group":     group,
@@ -176,7 +286,34 @@ func (c Controller) saveStatus(group string, config eventd.Config, phase, messag
 		status["message"] = message
 		status["reason"] = message
 	}
+	if len(peersFrom) > 0 {
+		status["peersFrom"] = peersFromStatusMaps(peersFrom)
+	}
+	if len(pendingSources) > 0 {
+		status["pendingSources"] = append([]string(nil), pendingSources...)
+	}
 	return c.Store.SaveObjectStatus(api.FederationAPIVersion, "EventGroup", group, status)
+}
+
+func peersFromStatusMaps(statuses []peersFromStatus) []map[string]any {
+	out := make([]map[string]any, 0, len(statuses))
+	for _, status := range statuses {
+		item := map[string]any{
+			"resource": status.Resource,
+			"phase":    status.Phase,
+		}
+		if status.Optional {
+			item["optional"] = true
+		}
+		if status.PeerCount > 0 {
+			item["peerCount"] = status.PeerCount
+		}
+		if status.Reason != "" {
+			item["reason"] = status.Reason
+		}
+		out = append(out, item)
+	}
+	return out
 }
 
 func (c Controller) dirs() (runtimeDir, stateDir string) {

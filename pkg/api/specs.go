@@ -1415,6 +1415,10 @@ type EventGroupSpec struct {
 	// NodeName is this node's identity within the group; it is stamped as the
 	// sourceNode on events emitted into this group.
 	NodeName string `yaml:"nodeName" json:"nodeName"`
+	// PeersFrom imports EventPeer delivery targets from a shared SAMNodeSet.
+	// Nodes whose nodeRef equals nodeName are skipped; static EventPeer resources
+	// are overlaid after generated peers so they can act as bootstrap overrides.
+	PeersFrom []EventPeersSourceSpec `yaml:"peersFrom,omitempty" json:"peersFrom,omitempty"`
 	// Retention bounds how many federation events and for how long the local
 	// store keeps them. Empty/zero values mean unlimited.
 	Retention EventGroupRetention `yaml:"retention,omitempty" json:"retention,omitempty"`
@@ -1428,6 +1432,11 @@ type EventGroupSpec struct {
 	// for replay protection; empty is treated as "5m" downstream.
 	ReplayWindow string           `yaml:"replayWindow,omitempty" json:"replayWindow,omitempty"`
 	When         ResourceWhenSpec `yaml:"when,omitempty" json:"when,omitempty"`
+}
+
+type EventPeersSourceSpec struct {
+	Resource string `yaml:"resource" json:"resource"`
+	Optional bool   `yaml:"optional,omitempty" json:"optional,omitempty"`
 }
 
 // EventGroupListen is the receiver bind for inbound peer pushes. Empty Address

@@ -27,6 +27,11 @@ func validateEventResource(res api.Resource, _ platform.OS) (bool, error) {
 		if strings.TrimSpace(spec.NodeName) == "" {
 			return true, fmt.Errorf("%s spec.nodeName is required", res.ID())
 		}
+		for i, source := range spec.PeersFrom {
+			if err := validateEventPeersFrom(res.ID(), i, source); err != nil {
+				return true, err
+			}
+		}
 		if spec.Retention.MaxEvents < 0 {
 			return true, fmt.Errorf("%s spec.retention.maxEvents must be >= 0", res.ID())
 		}
@@ -139,4 +144,12 @@ func validateEventResource(res api.Resource, _ platform.OS) (bool, error) {
 		return false, nil
 	}
 	return true, nil
+}
+
+func validateEventPeersFrom(resourceID string, index int, source api.EventPeersSourceSpec) error {
+	kind, name, ok := strings.Cut(strings.TrimSpace(source.Resource), "/")
+	if !ok || kind != "SAMNodeSet" || strings.TrimSpace(name) == "" {
+		return fmt.Errorf("%s spec.peersFrom[%d].resource must reference SAMNodeSet/<name>", resourceID, index)
+	}
+	return nil
 }

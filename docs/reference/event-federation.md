@@ -27,10 +27,18 @@ The bus a node participates in. One node has one identity per group.
 | Field | Meaning |
 |---|---|
 | `nodeName` | This node's identity in the group; stamped as `sourceNode` on emitted events. |
+| `peersFrom` | Optional `SAMNodeSet/<name>` sources used to derive push peers from each node's `eventEndpoint`. |
 | `retention` | Bounds how many events / how long the local store keeps them. Empty/zero = unlimited. |
 | `auth` | HMAC secret material for peer delivery (push). |
 | `listen` | Receiver bind (`address`) for inbound peer pushes. Empty = push-only (no receiver). |
 | `replayWindow` | Go duration bounding accepted message timestamp skew for replay protection (default `5m`). |
+
+`peersFrom` lets an `EventGroup` import peer targets from a shared
+`SAMNodeSet`. The controller reads `SAMNodeSet.spec.nodes[].eventEndpoint`,
+skips the node whose `nodeRef` matches `nodeName`, and writes the resolved peers
+directly into the generated `routerd-eventd` config. Hand-authored `EventPeer`
+resources are still accepted and are overlaid after generated peers, so a static
+peer with the same `nodeName` acts as a bootstrap override.
 
 ### `EventPeer`
 
@@ -88,6 +96,11 @@ generated systemd unit on Linux, rc.d on FreeBSD) that:
 
 The outbox carries a `sourceNode` guard so a received event is not re-forwarded back
 to its origin (no delivery loop).
+
+When `EventGroup.spec.peersFrom` is present, `routerd-eventd` still sees ordinary
+peer entries in its config. The dynamic part is resolved by the routerd
+controller before writing `config.json`; no separate `DynamicConfigPart` is
+created for EventPeer derivation.
 
 ## Subscription → plugin → DynamicConfigPart flow
 

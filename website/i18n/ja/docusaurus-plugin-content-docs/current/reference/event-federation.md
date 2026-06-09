@@ -25,10 +25,18 @@ IPv4 が観測された」「このアドレスが期限切れになった」）
 | フィールド | 意味 |
 |---|---|
 | `nodeName` | グループ内でのこのノードの識別子。発行イベントに `sourceNode` として刻印される。 |
+| `peersFrom` | 各ノードの `eventEndpoint` から push peer を導出するための、任意の `SAMNodeSet/<name>` source。 |
 | `retention` | ローカルストアがイベントを保持する件数/期間の上限。空/ゼロ = 無制限。 |
 | `auth` | ピア配信（push）用の HMAC 秘密鍵素材。 |
 | `listen` | ピアからの push を受け付ける待ち受けアドレス（`address`）。空 = push 送信のみ（受信なし）。 |
 | `replayWindow` | リプレイ保護のために受け入れるメッセージタイムスタンプのスキュー上限を示す Go duration（デフォルト `5m`）。 |
+
+`peersFrom` を使うと、`EventGroup` は共有 `SAMNodeSet` から peer 送信先を
+import できます。controller は `SAMNodeSet.spec.nodes[].eventEndpoint` を読み、
+`nodeRef` が `nodeName` と一致する自ノードを除外して、解決済み peer を
+`routerd-eventd` の生成 config に直接書き込みます。手書きの `EventPeer` resource も
+引き続き有効で、生成 peer の後に overlay されるため、同じ `nodeName` の静的 peer は
+bootstrap override として使えます。
 
 ### `EventPeer`
 
@@ -85,6 +93,10 @@ systemd unit、FreeBSD では rc.d によって管理）、以下を行います
 
 outbox は `sourceNode` ガードを持ち、受信したイベントが発信元に再転送されることは
 ありません（配送ループなし）。
+
+`EventGroup.spec.peersFrom` がある場合でも、`routerd-eventd` からは通常の peer entry
+として見えます。動的部分は routerd controller が `config.json` を書く前に解決し、
+EventPeer 導出用に別個の `DynamicConfigPart` は作成しません。
 
 ## Subscription → plugin → DynamicConfigPart フロー
 
