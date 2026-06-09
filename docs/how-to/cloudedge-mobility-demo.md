@@ -41,6 +41,10 @@ separate RFC1918 endpoint/inner addressing plan (kept clear of link-local
 [Selective Address Mobility](../reference/selective-address-mobility) for the
 addressing constraints.
 
+On the on-prem side, only `10.77.60.10/32` is declared with static ownership.
+To discover additional on-prem clients, define `ownershipDiscovery` on the on-prem
+member as `mode: onprem-l2` and provide an `arp-observer` source on `ens21`.
+
 ## Data plane
 
 - **provider-secondary-ip capture** — on each cloud router, the owner addresses of

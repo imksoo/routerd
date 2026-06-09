@@ -31,6 +31,10 @@ title: CloudEdge Mobility デモ
 
 論理サブネット: **`10.77.60.0/24`**。ルーター間トランスポートは別の RFC1918 エンドポイント/内部アドレス体系を使用します（リンクローカル `169.254/16` や CGNAT `100.64/10` とは分離）。アドレスの制約については [Selective Address Mobility](../reference/selective-address-mobility) を参照してください。
 
+on-prem 側は `10.77.60.10/32` のみを `staticOwnedAddresses` で宣言します。
+追加の on-prem クライアントを検知するには、on-prem メンバーで `ownershipDiscovery`
+`mode: onprem-l2` と `ens21` の `arp-observer` ソースを設定してください。
+
 ## データプレーン
 
 - **provider-secondary-ip 捕捉** — 各クラウドルーターで、*他の*サイトのオーナーアドレスがその ENI / NIC / VNIC にセカンダリ IP としてアタッチされ、クラウドファブリックがそのルーターにトラフィックを配送します。
