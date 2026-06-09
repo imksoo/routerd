@@ -13,6 +13,8 @@ import (
 const (
 	ActionAssignSecondaryIP        = "assign-secondary-ip"
 	ActionUnassignSecondaryIP      = "unassign-secondary-ip"
+	ActionAssignRouteTableRoute    = "assign-route-table-route"
+	ActionUnassignRouteTableRoute  = "unassign-route-table-route"
 	ActionEnsureForwardingEnabled  = "ensure-forwarding-enabled"
 	ActionEnsureForwardingDisabled = "ensure-forwarding-disabled"
 )
@@ -35,6 +37,8 @@ var canonicalProviders = map[string]bool{
 var canonicalActions = map[string]bool{
 	ActionAssignSecondaryIP:        true,
 	ActionUnassignSecondaryIP:      true,
+	ActionAssignRouteTableRoute:    true,
+	ActionUnassignRouteTableRoute:  true,
 	ActionEnsureForwardingEnabled:  true,
 	ActionEnsureForwardingDisabled: true,
 }
@@ -62,12 +66,22 @@ func ValidateActionPlan(p ActionPlan) error {
 		return fmt.Errorf("actionPlan %q action is required", p.Name)
 	}
 	if !canonicalActions[p.Action] {
-		return fmt.Errorf("actionPlan %q action %q must be one of assign-secondary-ip, unassign-secondary-ip, ensure-forwarding-enabled, ensure-forwarding-disabled", p.Name, p.Action)
+		return fmt.Errorf("actionPlan %q action %q must be one of assign-secondary-ip, unassign-secondary-ip, assign-route-table-route, unassign-route-table-route, ensure-forwarding-enabled, ensure-forwarding-disabled", p.Name, p.Action)
 	}
 	switch p.Action {
 	case ActionAssignSecondaryIP, ActionUnassignSecondaryIP:
 		if strings.TrimSpace(p.Target["address"]) == "" {
 			return fmt.Errorf("actionPlan %q action %q requires target.address", p.Name, p.Action)
+		}
+		if strings.TrimSpace(p.Target["nicRef"]) == "" {
+			return fmt.Errorf("actionPlan %q action %q requires target.nicRef", p.Name, p.Action)
+		}
+	case ActionAssignRouteTableRoute, ActionUnassignRouteTableRoute:
+		if strings.TrimSpace(p.Target["address"]) == "" {
+			return fmt.Errorf("actionPlan %q action %q requires target.address", p.Name, p.Action)
+		}
+		if strings.TrimSpace(p.Target["routeTableRef"]) == "" {
+			return fmt.Errorf("actionPlan %q action %q requires target.routeTableRef", p.Name, p.Action)
 		}
 		if strings.TrimSpace(p.Target["nicRef"]) == "" {
 			return fmt.Errorf("actionPlan %q action %q requires target.nicRef", p.Name, p.Action)
@@ -89,7 +103,7 @@ func ValidateActionPlan(p ActionPlan) error {
 			return fmt.Errorf("actionPlan %q undo.action is required", p.Name)
 		}
 		if !canonicalActions[p.Undo.Action] {
-			return fmt.Errorf("actionPlan %q undo.action %q must be one of assign-secondary-ip, unassign-secondary-ip, ensure-forwarding-enabled, ensure-forwarding-disabled", p.Name, p.Undo.Action)
+			return fmt.Errorf("actionPlan %q undo.action %q must be one of assign-secondary-ip, unassign-secondary-ip, assign-route-table-route, unassign-route-table-route, ensure-forwarding-enabled, ensure-forwarding-disabled", p.Name, p.Undo.Action)
 		}
 	}
 	return nil

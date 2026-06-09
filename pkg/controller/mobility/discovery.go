@@ -166,16 +166,18 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 	}
 	prefix = prefix.Masked()
 	req := providerinventory.NewObservePrivateIPsRequest(providerinventory.ObservePrivateIPsRequestSpec{
-		Provider:    strings.TrimSpace(profile.Provider),
-		ProviderRef: profileRef,
-		SelfNode:    self.NodeRef,
-		Pool:        poolName,
-		Prefix:      prefix.String(),
-		SelfNICRef:  strings.TrimSpace(self.Capture.NICRef),
-		SubnetRef:   strings.TrimSpace(discovery.SubnetRef),
-		Target:      copyStringMap(self.CaptureTarget),
-		Selector:    providerinventory.InventorySelector{Tags: copyStringMap(discovery.Selector.Tags)},
-		Context:     pluginContext,
+		Provider:      strings.TrimSpace(profile.Provider),
+		ProviderRef:   profileRef,
+		Strategy:      effectiveCaptureStrategy(profile.Provider, self.Capture.Strategy),
+		SelfNode:      self.NodeRef,
+		Pool:          poolName,
+		Prefix:        prefix.String(),
+		SelfNICRef:    strings.TrimSpace(self.Capture.NICRef),
+		SubnetRef:     strings.TrimSpace(discovery.SubnetRef),
+		RouteTableRef: strings.TrimSpace(self.CaptureTarget["routeTableRef"]),
+		Target:        copyStringMap(self.CaptureTarget),
+		Selector:      providerinventory.InventorySelector{Tags: copyStringMap(discovery.Selector.Tags)},
+		Context:       pluginContext,
 	})
 	result, _, err := c.runner()(ctx, pluginSpec, req)
 	if err != nil {
@@ -783,6 +785,7 @@ type discoverySelfInventory struct {
 	NICRef            string
 	SubnetRef         string
 	PrivateIPs        []string
+	CapturedAddresses []string
 	ForwardingEnabled *bool
 }
 
@@ -792,6 +795,7 @@ func resolvedDiscoverySelfInventory(self memberPlanInfo, discovery api.MobilityO
 		out.NICRef = strings.TrimSpace(pluginSelf.NICRef)
 		out.SubnetRef = strings.TrimSpace(pluginSelf.SubnetRef)
 		out.PrivateIPs = cleanStrings(pluginSelf.PrivateIPs)
+		out.CapturedAddresses = cleanStrings(pluginSelf.CapturedAddresses)
 		out.ForwardingEnabled = pluginSelf.ForwardingEnabled
 	}
 	if explicit := strings.TrimSpace(self.Capture.NICRef); explicit != "" {
@@ -808,6 +812,7 @@ func discoverySelfInventoryStatus(self discoverySelfInventory) map[string]any {
 		"discoverySelfNICRef":             self.NICRef,
 		"discoverySelfSubnetRef":          self.SubnetRef,
 		"discoverySelfPrivateIPs":         append([]string(nil), self.PrivateIPs...),
+		"discoverySelfCapturedAddresses":  append([]string(nil), self.CapturedAddresses...),
 		"discoverySelfForwardingObserved": self.ForwardingEnabled != nil,
 	}
 	if self.ForwardingEnabled != nil {
@@ -1069,7 +1074,7 @@ func discoveryCurrentTrapAddresses(store DiscoveryStore, poolName, selfNode stri
 			continue
 		}
 		for _, plan := range decodeDiscoveryActionPlans(part.ActionPlansJSON) {
-			if plan.Action != "assign-secondary-ip" {
+			if !isProviderCaptureAssignAction(plan.Action) {
 				continue
 			}
 			address, ok := normalizeDiscoveredAddress(plan.Target["address"], poolPrefix)
@@ -1083,7 +1088,7 @@ func discoveryCurrentTrapAddresses(store DiscoveryStore, poolName, selfNode stri
 		return nil, fmt.Errorf("list discovery action journal: %w", err)
 	}
 	for _, action := range actions {
-		if action.Action != "assign-secondary-ip" || !discoveryActionStatusCurrent(action.Status) {
+		if !isProviderCaptureAssignAction(action.Action) || !discoveryActionStatusCurrent(action.Status) {
 			continue
 		}
 		var target map[string]string

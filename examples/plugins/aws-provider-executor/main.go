@@ -88,11 +88,13 @@ const (
 	statusFailed    = "failed"
 	statusSkipped   = "skipped"
 
-	actionAssignSecondaryIP    = "assign-secondary-ip"
-	actionUnassignSecondaryIP  = "unassign-secondary-ip"
-	actionEnsureFwdEnabled     = "ensure-forwarding-enabled"
-	actionEnsureFwdDisabled    = "ensure-forwarding-disabled"
-	defaultAWSCommandTimeoutMs = 25000
+	actionAssignSecondaryIP       = "assign-secondary-ip"
+	actionUnassignSecondaryIP     = "unassign-secondary-ip"
+	actionAssignRouteTableRoute   = "assign-route-table-route"
+	actionUnassignRouteTableRoute = "unassign-route-table-route"
+	actionEnsureFwdEnabled        = "ensure-forwarding-enabled"
+	actionEnsureFwdDisabled       = "ensure-forwarding-disabled"
+	defaultAWSCommandTimeoutMs    = 25000
 )
 
 func main() {
@@ -196,15 +198,107 @@ func dispatch(ctx context.Context, req executeActionRequest, runner awsRunner) e
 	switch spec.Action {
 	case actionAssignSecondaryIP:
 		return assignSecondaryIP(ctx, spec, mode, runner)
+	case actionAssignRouteTableRoute:
+		return assignRouteTableRoute(ctx, spec, mode, runner)
 	case actionEnsureFwdEnabled:
 		return ensureForwardingEnabled(ctx, spec, mode, runner)
 	case actionUnassignSecondaryIP:
 		return unassignSecondaryIP(ctx, spec, mode, runner)
+	case actionUnassignRouteTableRoute:
+		return unassignRouteTableRoute(ctx, spec, mode, runner)
 	case actionEnsureFwdDisabled:
 		return ensureForwardingDisabled(ctx, spec, mode, runner)
 	default:
 		return failed(fmt.Sprintf("unsupported action %q", spec.Action), nil)
 	}
+}
+
+func requireRouteTarget(spec executeActionRequestSpec) (routeTable, eni, address, region string, err error) {
+	routeTable = spec.Target["routeTableRef"]
+	eni = spec.Target["nicRef"]
+	address = spec.Target["address"]
+	region = spec.Target["region"]
+	if routeTable == "" {
+		return "", "", "", "", fmt.Errorf("target.routeTableRef is required")
+	}
+	if eni == "" {
+		return "", "", "", "", fmt.Errorf("target.nicRef (ENI id) is required")
+	}
+	if region == "" {
+		return "", "", "", "", fmt.Errorf("target.region is required")
+	}
+	if address == "" {
+		return "", "", "", "", fmt.Errorf("target.address is required")
+	}
+	return routeTable, eni, address, region, nil
+}
+
+func assignRouteTableRoute(ctx context.Context, spec executeActionRequestSpec, mode string, runner awsRunner) executeActionResult {
+	routeTable, eni, address, region, err := requireRouteTarget(spec)
+	if err != nil {
+		return failed("assign-route-table-route: missing target field", err)
+	}
+	res := newResult()
+	res.Status.UndoAvailable = true
+
+	if mode == modeDryRun {
+		if _, derr := runner(ctx, "ec2", "describe-route-tables", "--route-table-ids", routeTable, "--region", region); derr != nil {
+			return failed("assign-route-table-route dry-run: describe route table failed", derr)
+		}
+		res.Status.Status = statusSucceeded
+		res.Status.Message = fmt.Sprintf("would route %s to %s in %s", address, eni, routeTable)
+		return res
+	}
+
+	if _, err := runner(ctx, "ec2", "replace-route",
+		"--route-table-id", routeTable,
+		"--destination-cidr-block", address,
+		"--network-interface-id", eni,
+		"--region", region); err != nil {
+		if _, cerr := runner(ctx, "ec2", "create-route",
+			"--route-table-id", routeTable,
+			"--destination-cidr-block", address,
+			"--network-interface-id", eni,
+			"--region", region); cerr != nil {
+			return failed("assign-route-table-route execute: replace/create route failed", fmt.Errorf("replace: %v; create: %w", err, cerr))
+		}
+	}
+	res.Status.Status = statusSucceeded
+	res.Status.Message = fmt.Sprintf("routed %s to %s in %s", address, eni, routeTable)
+	res.Status.Observed = map[string]string{"assignedRoute": address, "routeTableRef": routeTable, "nextHopNICRef": eni}
+	return res
+}
+
+func unassignRouteTableRoute(ctx context.Context, spec executeActionRequestSpec, mode string, runner awsRunner) executeActionResult {
+	routeTable, _, address, region, err := requireRouteTarget(spec)
+	if err != nil {
+		return failed("unassign-route-table-route: missing target field", err)
+	}
+	res := newResult()
+
+	if mode == modeDryRun {
+		if _, derr := runner(ctx, "ec2", "describe-route-tables", "--route-table-ids", routeTable, "--region", region); derr != nil {
+			return failed("unassign-route-table-route dry-run: describe route table failed", derr)
+		}
+		res.Status.Status = statusSucceeded
+		res.Status.Message = fmt.Sprintf("would delete route %s from %s", address, routeTable)
+		return res
+	}
+
+	if _, err := runner(ctx, "ec2", "delete-route",
+		"--route-table-id", routeTable,
+		"--destination-cidr-block", address,
+		"--region", region); err != nil {
+		if isNotFoundError(err) {
+			res.Status.Status = statusSkipped
+			res.Status.Message = fmt.Sprintf("route %s already absent from %s", address, routeTable)
+			return res
+		}
+		return failed("unassign-route-table-route execute: delete route failed", err)
+	}
+	res.Status.Status = statusSucceeded
+	res.Status.Message = fmt.Sprintf("deleted route %s from %s", address, routeTable)
+	return res
 }
 
 // assignSecondaryIP attaches the captured /32 to the ENI.
@@ -382,6 +476,17 @@ func stringBool(v string) bool {
 	default:
 		return false
 	}
+}
+
+func isNotFoundError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "not found") ||
+		strings.Contains(msg, "notfound") ||
+		strings.Contains(msg, "could not be found") ||
+		strings.Contains(msg, "invalidroutenotfound")
 }
 
 // commandTimeout is the per-aws-invocation timeout.

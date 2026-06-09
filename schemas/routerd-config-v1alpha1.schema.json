@@ -7070,6 +7070,14 @@
                           "providerRef": {
                             "type": "string"
                           },
+                          "strategy": {
+                            "enum": [
+                              "",
+                              "secondary-ip",
+                              "route-table"
+                            ],
+                            "type": "string"
+                          },
                           "type": {
                             "enum": [
                               "provider-secondary-ip",
@@ -7787,6 +7795,14 @@
                                   ],
                                   "type": "object"
                                 },
+                                "strategy": {
+                                  "enum": [
+                                    "",
+                                    "secondary-ip",
+                                    "route-table"
+                                  ],
+                                  "type": "string"
+                                },
                                 "target": {
                                   "additionalProperties": {
                                     "type": "string"
@@ -8196,6 +8212,14 @@
                                         "resource"
                                       ],
                                       "type": "object"
+                                    },
+                                    "strategy": {
+                                      "enum": [
+                                        "",
+                                        "secondary-ip",
+                                        "route-table"
+                                      ],
+                                      "type": "string"
                                     },
                                     "target": {
                                       "additionalProperties": {

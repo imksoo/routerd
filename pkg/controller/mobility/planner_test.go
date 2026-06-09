@@ -78,6 +78,114 @@ func TestPlannerMembersInheritOwnershipDiscoveryProviderRef(t *testing.T) {
 	}
 }
 
+func TestProviderActionPlansRouteTableStrategy(t *testing.T) {
+	profile := api.CloudProviderProfileSpec{Provider: "aws"}
+	capture := api.AddressCapture{
+		Type:         "provider-secondary-ip",
+		ProviderRef:  "aws-provider",
+		ProviderMode: "route-table",
+		Strategy:     captureStrategyRouteTable,
+		NICRef:       "eni-router",
+	}
+	plans, err := providerActionPlans("cloudedge", profile, capture, map[string]string{
+		"region":        "ap-northeast-1",
+		"routeTableRef": "rtb-123",
+	}, "10.88.60.10/32", map[string]bool{}, true)
+	if err != nil {
+		t.Fatalf("providerActionPlans: %v", err)
+	}
+	assign := findActionPlanByAddress(plans, actionAssignRouteTableRoute, "10.88.60.10/32")
+	if assign == nil {
+		t.Fatalf("plans = %#v, want route-table assign action", plans)
+	}
+	if assign.Target["routeTableRef"] != "rtb-123" || assign.Target["nicRef"] != "eni-router" || assign.Target["captureStrategy"] != captureStrategyRouteTable {
+		t.Fatalf("assign target = %#v, want route table target", assign.Target)
+	}
+	if assign.Undo == nil || assign.Undo.Action != actionUnassignRouteTableRoute {
+		t.Fatalf("assign undo = %#v, want unassign route-table route", assign.Undo)
+	}
+	if assign.Parameters["allowReassignment"] != "true" {
+		t.Fatalf("assign parameters = %#v, want allowReassignment", assign.Parameters)
+	}
+}
+
+func TestBGPCapturedInventoryAllowsSeizedPathWithoutJournal(t *testing.T) {
+	self := memberPlanInfo{
+		NodeRef: "aws-router-b",
+		Role:    "cloud",
+		Capture: api.AddressCapture{
+			Type:         "provider-secondary-ip",
+			ProviderRef:  "aws-provider",
+			ProviderMode: "route-table",
+			Strategy:     captureStrategyRouteTable,
+			NICRef:       "eni-b",
+		},
+		CaptureTarget: map[string]string{"routeTableRef": "rtb-123"},
+	}
+	paths, seized := bgpProviderCapturedOwnedPaths(
+		DynamicSource("cloudedge", "aws-router-b"),
+		self,
+		map[string]bgpTrapCandidate{"10.88.60.10/32": {Seize: true}},
+		nil,
+		map[string]bool{"10.88.60.10/32": true},
+		true,
+	)
+	if len(paths) != 1 || paths[0].Prefix != "10.88.60.10/32" {
+		t.Fatalf("paths = %#v, want inventory-confirmed seized path", paths)
+	}
+	if seized != 1 {
+		t.Fatalf("seized = %d, want 1", seized)
+	}
+}
+
+func TestBGPRouteTableTransitionKeyMatchesSelfCaptureTarget(t *testing.T) {
+	self := memberPlanInfo{
+		NodeRef: "aws-router-b",
+		Role:    "cloud",
+		Capture: api.AddressCapture{
+			Type:         "provider-secondary-ip",
+			ProviderRef:  "aws-provider",
+			ProviderMode: "route-table",
+			Strategy:     captureStrategyRouteTable,
+			NICRef:       "eni-b",
+		},
+		CaptureTarget: map[string]string{"routeTableRef": "rtb-123"},
+	}
+	transitionKey := providerCaptureTransitionKey("aws-provider", "rtb-123", "10.88.60.10/32")
+	paths, seized := bgpProviderCapturedOwnedPaths(
+		DynamicSource("cloudedge", "aws-router-b"),
+		self,
+		map[string]bgpTrapCandidate{"10.88.60.10/32": {Seize: true}},
+		map[string]providerCaptureTransition{
+			transitionKey: {
+				assign:    true,
+				succeeded: true,
+				plan: dynamicconfig.ActionPlan{
+					Provider:    "aws",
+					ProviderRef: "aws-provider",
+					Action:      actionAssignRouteTableRoute,
+					Target: map[string]string{
+						"providerRef":     "aws-provider",
+						"captureStrategy": captureStrategyRouteTable,
+						"routeTableRef":   "rtb-123",
+						"nicRef":          "eni-b",
+						"address":         "10.88.60.10/32",
+					},
+					Parameters: map[string]string{captureParamHolder: "aws-router-b"},
+				},
+			},
+		},
+		nil,
+		false,
+	)
+	if len(paths) != 1 || paths[0].Prefix != "10.88.60.10/32" {
+		t.Fatalf("paths = %#v, want route-table journal-confirmed captured path", paths)
+	}
+	if seized != 1 {
+		t.Fatalf("seized = %d, want 1", seized)
+	}
+}
+
 func TestBGPCapturePlacementSeizesWhenActiveMarkerAbsentWithCanonicalNodeIdentity(t *testing.T) {
 	members := map[string]memberPlanInfo{
 		"aws-router-a": {

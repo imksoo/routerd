@@ -493,6 +493,15 @@ generated provider `ActionPlan.target` values. Put identifiers such as region,
 compartment ID, resource group, NIC name, or IP config name there; credentials,
 tokens, and private keys must stay in provider auth mechanisms.
 
+Cloud `provider-secondary-ip` capture supports `members[].capture.strategy`.
+The default is `secondary-ip`, which keeps the historical AWS ENI, Azure NIC
+ipConfig, and OCI VNIC secondary-address behavior. AWS and Azure may instead set
+`strategy: route-table`: AWS writes a `/32` route in `capture.target.routeTableRef`
+to `capture.nicRef`; Azure writes a UDR in `capture.target.routeTableRef` and
+requires `capture.target.nextHopIPAddress`. Provider inventory must confirm that
+the route table points at the local router before routerd advertises the captured
+`/32` to BGP.
+
 For BGP-mode on-prem `proxy-arp` capture, `members[].capture.sourceAddress`
 optionally declares the router's local sender address on the capture
 interface. routerd lowers this to an `IPv4StaticAddress` `/32` and uses it as
