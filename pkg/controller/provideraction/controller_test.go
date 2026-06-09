@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	enginepkg "github.com/imksoo/routerd/pkg/provideraction"
 	routerstate "github.com/imksoo/routerd/pkg/state"
@@ -54,6 +55,38 @@ func TestControllerAutoApprovesAndExecutesWhenPolicyAllows(t *testing.T) {
 	}
 	if rec.ApprovedBy != "policy:auto-approve" {
 		t.Fatalf("approvedBy = %q, want policy:auto-approve", rec.ApprovedBy)
+	}
+}
+
+func TestControllerPublishesProviderCaptureChangedAfterSucceededAssign(t *testing.T) {
+	store := controllerStore(t)
+	seedPart(t, store, []dynamicconfig.ActionPlan{controllerPlan("k1", "10.0.0.5/32")})
+	runner := &fakeRunner{}
+	eventBus := bus.New()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	events, unsubscribe := eventBus.Subscribe(ctx, bus.Subscription{Topics: []string{enginepkg.ProviderCaptureChangedEvent}}, 1)
+	defer unsubscribe()
+	controller := Controller{
+		Router: controllerRouter(controllerPolicy(false, 5)),
+		Bus:    eventBus,
+		Store:  store,
+		Runner: runner.run,
+		Now:    fixedNow,
+	}
+	if err := controller.Reconcile(ctx); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	select {
+	case event := <-events:
+		if event.Type != enginepkg.ProviderCaptureChangedEvent {
+			t.Fatalf("event type = %q, want provider capture changed", event.Type)
+		}
+		if event.Attributes["action"] != "assign-secondary-ip" || event.Attributes["providerRef"] != "aws-prod" {
+			t.Fatalf("event attributes = %#v", event.Attributes)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("provider capture changed event was not published")
 	}
 }
 

@@ -858,6 +858,34 @@ func TestControllerBGPModeStandbySeizesTrapWhenActiveLivenessMarkerWithdrawn(t *
 	}
 }
 
+func TestControllerBGPModeSeizeSuccessAdvertisesTrapImmediately(t *testing.T) {
+	now := time.Date(2026, 6, 3, 11, 0, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	saveBGPStatus(t, store, map[string][]string{
+		"10.88.60.12/32": {"10.99.0.3"},
+	}, []map[string]any{}, map[string]string{bgpstate.MobilityNodeIdentityCommunity("aws-router-b"): "10.99.0.5/32"})
+	seedSucceededBGPCaptureAction(t, store, "aws-provider", "eni-b", "aws-router-b", "10.88.60.12/32", "assign-secondary-ip", 1, now.Add(-time.Second))
+
+	bgp := &fakeBGPPaths{}
+	controller := Controller{Router: routerWithBGPRouter(planningRouterForNode("aws-router-b", spec)), Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	path := pathBySourcePrefix(t, bgp, DynamicSource("cloudedge", "aws-router-b"), "10.88.60.12/32")
+	if path.Attrs.LocalPref != bgpMobilityLocalPrefBase+1 || !stringSliceContains(path.Attrs.Communities, bgpMobilityCommunityRoleCloud) {
+		t.Fatalf("path attrs = %#v, want active cloud seized owner", path.Attrs)
+	}
+	if _, ok := maybePathBySourcePrefix(bgp, DynamicSource("cloudedge", "aws-router-b"), "10.88.60.10/32"); ok {
+		t.Fatalf("paths = %#v, want no BGP path for trap without successful provider capture", bgp.paths)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	if fmt.Sprint(status["generatedSeizedBGPPaths"]) != "1" {
+		t.Fatalf("status = %#v, want generatedSeizedBGPPaths=1", status)
+	}
+}
+
 func TestControllerBGPModeBG24RuntimeSeizesWhenAWSActiveMarkerAbsent(t *testing.T) {
 	now := time.Date(2026, 6, 3, 10, 43, 4, 0, time.UTC)
 	store := testStore(t, now)

@@ -18,6 +18,7 @@ import (
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	"github.com/imksoo/routerd/pkg/mobilityconfig"
 	"github.com/imksoo/routerd/pkg/plugin"
+	provideraction "github.com/imksoo/routerd/pkg/provideraction"
 	"github.com/imksoo/routerd/pkg/providerinventory"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
@@ -60,10 +61,14 @@ func (c DiscoveryController) HandleEvent(ctx context.Context, event daemonapi.Da
 	if err := c.handleOnPremDiscoveryEvent(ctx, event); err != nil {
 		return err
 	}
-	return c.Reconcile(ctx)
+	return c.reconcile(ctx, event.Type == provideraction.ProviderCaptureChangedEvent)
 }
 
 func (c DiscoveryController) Reconcile(ctx context.Context) error {
+	return c.reconcile(ctx, false)
+}
+
+func (c DiscoveryController) reconcile(ctx context.Context, forceProviderScan bool) error {
 	if c.Router == nil || c.Store == nil {
 		return nil
 	}
@@ -80,7 +85,7 @@ func (c DiscoveryController) Reconcile(ctx context.Context) error {
 		if !mobilityBGPMode(spec) {
 			continue
 		}
-		if err := c.reconcilePoolDiscovery(ctx, res.Metadata.Name, spec, now); err != nil {
+		if err := c.reconcilePoolDiscovery(ctx, res.Metadata.Name, spec, now, forceProviderScan); err != nil {
 			c.saveDiscoveryStatus(res.Metadata.Name, map[string]any{
 				"discoveryPhase":  "Degraded",
 				"discoveryReason": err.Error(),
@@ -90,7 +95,7 @@ func (c DiscoveryController) Reconcile(ctx context.Context) error {
 	return nil
 }
 
-func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolName string, spec api.MobilityPoolSpec, now time.Time) error {
+func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolName string, spec api.MobilityPoolSpec, now time.Time, forceProviderScan bool) error {
 	selfNode, err := routerSelfNode(c.Router, spec.GroupRef)
 	if err != nil {
 		return err
@@ -134,7 +139,7 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 		return fmt.Errorf("ownershipDiscovery requires cloud provider-secondary-ip member %q", self.NodeRef)
 	}
 	interval := discoveryScanInterval(discovery)
-	if !c.scanDue(poolName, interval, now, true, self.Capture.Type == "provider-secondary-ip" && strings.TrimSpace(self.Capture.NICRef) == "") {
+	if !forceProviderScan && !c.scanDue(poolName, interval, now, true, self.Capture.Type == "provider-secondary-ip" && strings.TrimSpace(self.Capture.NICRef) == "") {
 		return nil
 	}
 	livenessMarkers, livenessMarkersObserved := bgpLivenessMarkersFromStatus(c.Router, c.Store)

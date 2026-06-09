@@ -1186,6 +1186,7 @@ func (r *Runner) Start(ctx context.Context) error {
 	if rawStore, ok := r.Store.(provideractioncontroller.Store); ok {
 		providerAction = provideractioncontroller.Controller{
 			Router: r.Router,
+			Bus:    r.Bus,
 			Store:  rawStore,
 			Runner: r.Opts.ProviderActionRunner,
 			DryRun: r.Opts.DryRunProviderAction,
@@ -1498,7 +1499,7 @@ func (r *Runner) Start(ctx context.Context) error {
 			return current.Reconcile(ctx)
 		}},
 		framework.FuncController{ControllerName: "event-subscription", Every: 5 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed"}}}, PeriodicFunc: eventSubscription.Reconcile},
-		framework.FuncController{ControllerName: "mobility-discovery", Every: 30 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed", "routerd.dhcp.lease.add", "routerd.dhcp.lease.old", "routerd.dhcp.lease.del", mobilitycontroller.OnPremARPObservedEvent, mobilitycontroller.OnPremARPProbeHitEvent, mobilitycontroller.OnPremPVESVNetObservedEvent}}}, ReconcileFunc: func(ctx context.Context, event daemonapi.DaemonEvent) error {
+		framework.FuncController{ControllerName: "mobility-discovery", Every: 30 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed", "routerd.dhcp.lease.add", "routerd.dhcp.lease.old", "routerd.dhcp.lease.del", mobilitycontroller.OnPremARPObservedEvent, mobilitycontroller.OnPremARPProbeHitEvent, mobilitycontroller.OnPremPVESVNetObservedEvent, provideraction.ProviderCaptureChangedEvent}}}, ReconcileFunc: func(ctx context.Context, event daemonapi.DaemonEvent) error {
 			effective, err := effectiveDynamicForReconcile()
 			if err != nil {
 				return err

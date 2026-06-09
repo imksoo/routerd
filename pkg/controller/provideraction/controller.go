@@ -7,9 +7,12 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/bus"
+	"github.com/imksoo/routerd/pkg/daemonapi"
 	enginepkg "github.com/imksoo/routerd/pkg/provideraction"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
@@ -25,6 +28,7 @@ type Store interface {
 // Engine path used by routerctl action execute.
 type Controller struct {
 	Router *api.Router
+	Bus    *bus.Bus
 	Store  Store
 	Runner enginepkg.ExecutorRunner
 	Now    func() time.Time
@@ -80,8 +84,40 @@ func (c Controller) Reconcile(ctx context.Context) error {
 			c.log("provideraction: auto execute action failed", "id", row.ID, "key", row.IdempotencyKey, "error", err)
 			continue
 		}
+		updated, found, err := c.Store.GetActionByID(row.ID)
+		if err != nil {
+			return fmt.Errorf("load executed action %d: %w", row.ID, err)
+		}
+		if found {
+			_ = c.publishProviderCaptureChanged(ctx, updated, now)
+		}
 	}
 	return nil
+}
+
+func (c Controller) publishProviderCaptureChanged(ctx context.Context, row routerstate.ActionExecutionRecord, now time.Time) error {
+	if c.Bus == nil || row.Status != routerstate.ActionSucceeded || !providerCaptureAction(row.Action) {
+		return nil
+	}
+	event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "provider-action-execution", Kind: "provider-action-execution"}, enginepkg.ProviderCaptureChangedEvent, daemonapi.SeverityInfo)
+	event.Time = now
+	event.Attributes = map[string]string{
+		"actionID":       fmt.Sprint(row.ID),
+		"action":         row.Action,
+		"provider":       row.Provider,
+		"providerRef":    row.ProviderRef,
+		"idempotencyKey": row.IdempotencyKey,
+	}
+	return c.Bus.Publish(ctx, event)
+}
+
+func providerCaptureAction(action string) bool {
+	switch strings.TrimSpace(action) {
+	case "assign-secondary-ip", "unassign-secondary-ip":
+		return true
+	default:
+		return false
+	}
 }
 
 func (c Controller) now() time.Time {
