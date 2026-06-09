@@ -14,6 +14,7 @@ import (
 	bgpstate "github.com/imksoo/routerd/pkg/bgp"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
+	provideraction "github.com/imksoo/routerd/pkg/provideraction"
 	"github.com/imksoo/routerd/pkg/providerinventory"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
@@ -973,6 +974,28 @@ func TestDiscoveryControllerHonorsScanInterval(t *testing.T) {
 	}
 	if runner.calls != 1 {
 		t.Fatalf("runner calls = %d, want second scan suppressed by interval", runner.calls)
+	}
+}
+
+func TestDiscoveryControllerProviderCaptureEventBypassesScanInterval(t *testing.T) {
+	now := time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := discoveryPoolSpec()
+	runner := &fakeInventoryRunner{result: providerinventory.ObservePrivateIPsResult{
+		TypeMeta: providerinventory.TypeMeta{APIVersion: providerinventory.ProtocolAPIVersion, Kind: providerinventory.KindObservePrivateIPsResult},
+		Status:   providerinventory.ObservePrivateIPsResultStatus{Status: providerinventory.ResultSucceeded},
+	}}
+	controller := DiscoveryController{Router: discoveryRouter("azure-router-a", spec), Store: store, Runner: runner.run, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("initial Reconcile: %v", err)
+	}
+	controller.Now = func() time.Time { return now.Add(30 * time.Second) }
+	event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "provider-action-execution", Kind: "provider-action-execution"}, provideraction.ProviderCaptureChangedEvent, daemonapi.SeverityInfo)
+	if err := controller.HandleEvent(context.Background(), event); err != nil {
+		t.Fatalf("HandleEvent: %v", err)
+	}
+	if runner.calls != 2 {
+		t.Fatalf("runner calls = %d, want provider capture event to force second scan", runner.calls)
 	}
 }
 

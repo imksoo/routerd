@@ -70,6 +70,8 @@ type Config struct {
 const (
 	pathSigParam = "mobilityPathSig"
 
+	ProviderCaptureChangedEvent = "routerd.provider.capture.changed"
+
 	DefaultStaleRunningTimeout = 2 * time.Minute
 )
 
