@@ -16,6 +16,7 @@ import (
 	bgpstate "github.com/imksoo/routerd/pkg/bgp"
 	"github.com/imksoo/routerd/pkg/bgpdaemon"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
+	"github.com/imksoo/routerd/pkg/providerinventory"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -252,6 +253,79 @@ func TestControllerBGPModeSuppressesFailedProviderActionAddress(t *testing.T) {
 	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
 	if fmt.Sprint(status["providerActionFailedAddresses"]) != "[10.88.60.11/32]" {
 		t.Fatalf("status = %#v, want failed /32 address reported", status)
+	}
+}
+
+func TestControllerBGPModeFreshHomeOwnerSuppressesRemoteProviderCapture(t *testing.T) {
+	now := time.Date(2026, 6, 9, 17, 30, 0, 0, time.UTC)
+	cases := []struct {
+		name         string
+		address      string
+		homeNode     string
+		homeProvider string
+		homeRef      string
+		homeNIC      string
+	}{
+		{
+			name:         "aws home owner suppresses oci capture",
+			address:      "10.88.60.11/32",
+			homeNode:     "aws-router-a",
+			homeProvider: "aws",
+			homeRef:      "aws-provider",
+			homeNIC:      "aws-client-nic",
+		},
+		{
+			name:         "azure home owner suppresses oci capture",
+			address:      "10.88.60.12/32",
+			homeNode:     "azure-router",
+			homeProvider: "azure",
+			homeRef:      "azure-provider",
+			homeNIC:      "azure-client-nic",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := testStore(t, now)
+			spec := awsFailoverPoolSpec()
+			spec.DeliveryPolicy.Mode = "bgp"
+			recordEvent(t, store, providerDiscoveryObservedEvent("cloudedge", "cloudedge", tc.homeNode, tc.address, tc.homeProvider, tc.homeRef, providerinventory.PrivateIPRecord{
+				Address:   tc.address,
+				NICRef:    tc.homeNIC,
+				SubnetRef: tc.homeRef + "-subnet",
+			}, now.Add(-time.Second), time.Hour))
+			seedSucceededBGPCaptureAction(t, store, "oci-provider", "oci-vnic", "oci-router", tc.address, "assign-secondary-ip", 1, now.Add(-time.Second))
+			saveBGPInstalledNextHops(t, store, map[string][]string{tc.address: {"10.99.0.200"}})
+			if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+				"discoverySelfPrivateIPs": []string{tc.address},
+				"discoveryLastScanAt":     now.Format(time.RFC3339Nano),
+			}); err != nil {
+				t.Fatalf("SaveObjectStatus(oci): %v", err)
+			}
+
+			bgp := &fakeBGPPaths{}
+			ociController := Controller{Router: routerWithBGPRouter(planningRouterForNode("oci-router", spec)), Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+			if err := ociController.Reconcile(context.Background()); err != nil {
+				t.Fatalf("oci Reconcile: %v", err)
+			}
+			if _, ok := maybePathBySourcePrefix(bgp, DynamicSource("cloudedge", "oci-router"), tc.address); ok {
+				t.Fatalf("paths = %#v, want OCI captured path suppressed while fresh %s home owner exists", bgp.paths, tc.homeRef)
+			}
+
+			if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+				"discoveryOwnedAddresses": []string{tc.address},
+				"discoverySelfPrivateIPs": []string{"10.88.60.250"},
+				"discoveryLastScanAt":     now.Format(time.RFC3339Nano),
+			}); err != nil {
+				t.Fatalf("SaveObjectStatus(home): %v", err)
+			}
+			homeController := Controller{Router: routerWithBGPRouter(planningRouterForNode(tc.homeNode, spec)), Store: store, BGPPaths: bgp, Now: func() time.Time { return now.Add(time.Second) }}
+			if err := homeController.Reconcile(context.Background()); err != nil {
+				t.Fatalf("home Reconcile: %v", err)
+			}
+			if _, ok := maybePathBySourcePrefix(bgp, DynamicSource("cloudedge", tc.homeNode), tc.address); !ok {
+				t.Fatalf("paths = %#v, want fresh home owner %s to advertise %s", bgp.paths, tc.homeNode, tc.address)
+			}
+		})
 	}
 }
 

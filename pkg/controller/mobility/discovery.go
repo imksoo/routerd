@@ -222,7 +222,7 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 	}
 	selfPrivateIPs := discoverySelfPrivateIPSet(selfInventory.PrivateIPs, prefix)
 	staticOwners := staticOwnedOwnerNodesByAddress(spec)
-	trapAddresses, err := discoveryCurrentTrapAddresses(c.Store, poolName, selfNode, prefix, now)
+	trapAddresses, err := discoveryCurrentTrapAddresses(c.Store, poolName, selfNode, profileRef, providerCaptureRefFromCapture(self.Capture, self.CaptureTarget), prefix, now)
 	if err != nil {
 		return err
 	}
@@ -1062,7 +1062,7 @@ func discoverySelfPrivateIPSet(values []string, poolPrefix netip.Prefix) map[str
 	return out
 }
 
-func discoveryCurrentTrapAddresses(store DiscoveryStore, poolName, selfNode string, poolPrefix netip.Prefix, now time.Time) (map[string]bool, error) {
+func discoveryCurrentTrapAddresses(store DiscoveryStore, poolName, selfNode, providerRef, captureRef string, poolPrefix netip.Prefix, now time.Time) (map[string]bool, error) {
 	out := map[string]bool{}
 	source := DynamicSource(poolName, selfNode)
 	parts, err := store.GetDynamicConfigPartsBySource(source)
@@ -1075,6 +1075,9 @@ func discoveryCurrentTrapAddresses(store DiscoveryStore, poolName, selfNode stri
 		}
 		for _, plan := range decodeDiscoveryActionPlans(part.ActionPlansJSON) {
 			if !isProviderCaptureAssignAction(plan.Action) {
+				continue
+			}
+			if !discoveryTrapPlanMatchesSelf(plan.ProviderRef, plan.Target, plan.Parameters, selfNode, providerRef, "") {
 				continue
 			}
 			address, ok := normalizeDiscoveredAddress(plan.Target["address"], poolPrefix)
@@ -1095,12 +1098,30 @@ func discoveryCurrentTrapAddresses(store DiscoveryStore, poolName, selfNode stri
 		if err := json.Unmarshal([]byte(action.TargetJSON), &target); err != nil {
 			continue
 		}
+		params := decodeActionRecordMap(action.ParametersJSON)
+		if !discoveryTrapPlanMatchesSelf(action.ProviderRef, target, params, selfNode, providerRef, captureRef) {
+			continue
+		}
 		address, ok := normalizeDiscoveredAddress(target["address"], poolPrefix)
 		if ok {
 			out[address] = true
 		}
 	}
 	return out, nil
+}
+
+func discoveryTrapPlanMatchesSelf(actionProviderRef string, target, params map[string]string, selfNode, providerRef, captureRef string) bool {
+	providerRef = strings.TrimSpace(providerRef)
+	captureRef = strings.TrimSpace(captureRef)
+	actionProviderRef = firstNonEmpty(actionProviderRef, target["providerRef"])
+	if providerRef != "" && strings.TrimSpace(actionProviderRef) != "" && strings.TrimSpace(actionProviderRef) != providerRef {
+		return false
+	}
+	if captureRef != "" && providerCaptureRefFromTarget(target) != captureRef {
+		return false
+	}
+	holder := strings.TrimSpace(params[captureParamHolder])
+	return holder == "" || holder == strings.TrimSpace(selfNode)
 }
 
 func decodeDiscoveryActionPlans(raw string) []dynamicconfig.ActionPlan {
