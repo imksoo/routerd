@@ -95,8 +95,6 @@ spec:
           mode: provider-private-ip
           scanInterval: 60s
           subnetRefFrom: self.subnetRef
-          scope:
-            includePrimary: true
   members:
     - nodeRef: onprem-router
       site: onprem

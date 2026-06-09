@@ -207,9 +207,6 @@ func mergeOwnershipDiscovery(base, override api.MobilityOwnershipDiscovery) api.
 	if len(override.Sources) > 0 {
 		out.Sources = append([]api.MobilityOwnershipDiscoverySource(nil), override.Sources...)
 	}
-	if override.Scope.IncludePrimary != nil {
-		out.Scope.IncludePrimary = override.Scope.IncludePrimary
-	}
 	if len(override.Scope.IncludeAddresses) > 0 {
 		out.Scope.IncludeAddresses = append([]string(nil), override.Scope.IncludeAddresses...)
 	}
@@ -326,7 +323,6 @@ func discoverySet(d api.MobilityOwnershipDiscovery) bool {
 		strings.TrimSpace(d.SubnetRefFrom) != "" ||
 		strings.TrimSpace(d.ScanInterval) != "" ||
 		strings.TrimSpace(d.LeaseTTL) != "" ||
-		d.Scope.IncludePrimary != nil ||
 		len(d.Scope.IncludeAddresses) > 0 ||
 		len(d.Scope.ExcludeAddresses) > 0 ||
 		len(d.Selector.Tags) > 0

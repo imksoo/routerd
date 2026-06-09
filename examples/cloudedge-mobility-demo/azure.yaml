@@ -205,7 +205,6 @@ spec:
                   resourceGroup: self.resourceGroup
               ownershipDiscovery:
                 mode: provider-private-ip
-                scope: { includePrimary: true }
                 subnetRefFrom: self.subnetRef
                 scanInterval: 60s
                 leaseTTL: 10m

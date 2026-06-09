@@ -1006,7 +1006,6 @@ function mobilityMember(node: SAMNode): Record<string, unknown> {
       ownershipDiscovery: {
         mode: "provider-private-ip",
         providerRef: node.providerRef,
-        scope: {includePrimary: false},
         scanInterval: "60s",
         leaseTTL: "10m",
       },

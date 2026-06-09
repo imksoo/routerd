@@ -7882,10 +7882,6 @@
                                         "type": "string"
                                       },
                                       "type": "array"
-                                    },
-                                    "includePrimary": {
-                                      "description": "IncludePrimary controls whether provider-primary private IPs may become\nmobility-owned addresses. Nil defaults to true for backward compatibility.",
-                                      "type": "boolean"
                                     }
                                   },
                                   "type": "object"
@@ -8222,10 +8218,6 @@
                                             "type": "string"
                                           },
                                           "type": "array"
-                                        },
-                                        "includePrimary": {
-                                          "description": "IncludePrimary controls whether provider-primary private IPs may become\nmobility-owned addresses. Nil defaults to true for backward compatibility.",
-                                          "type": "boolean"
                                         }
                                       },
                                       "type": "object"
