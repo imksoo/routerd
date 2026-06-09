@@ -138,12 +138,12 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 	if self.Role != "cloud" || self.Capture.Type != "provider-secondary-ip" {
 		return fmt.Errorf("ownershipDiscovery requires cloud provider-secondary-ip member %q", self.NodeRef)
 	}
-	interval := discoveryScanInterval(discovery)
-	if !forceProviderScan && !c.scanDue(poolName, interval, now, true, self.Capture.Type == "provider-secondary-ip" && strings.TrimSpace(self.Capture.NICRef) == "") {
-		return nil
-	}
 	livenessMarkers, livenessMarkersObserved := bgpLivenessMarkersFromStatus(c.Router, c.Store)
 	placement := evaluateBGPCapturePlacement(self, members, livenessMarkers, livenessMarkersObserved)
+	interval := discoveryScanInterval(discovery)
+	if !forceProviderScan && !c.scanDue(poolName, interval, now, true, self.Capture.Type == "provider-secondary-ip" && strings.TrimSpace(self.Capture.NICRef) == "", placement) {
+		return nil
+	}
 	profileRef := strings.TrimSpace(discovery.ProviderRef)
 	if profileRef == "" {
 		profileRef = strings.TrimSpace(self.Capture.ProviderRef)
@@ -201,7 +201,7 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 		if err := c.expireStaleProviderDiscoveryEvents(poolName, spec, self.NodeRef, prefix, nil, now, discoveryLeaseTTL(discovery, spec), 0); err != nil {
 			return err
 		}
-		status := mergeAnyMaps(discoverySelfInventoryStatus(selfInventory), map[string]any{
+		status := mergeAnyMaps(discoveryPlacementStatus(placement), mergeAnyMaps(discoverySelfInventoryStatus(selfInventory), map[string]any{
 			"discoveryPhase":          "Standby",
 			"discoveryReason":         placement.Reason,
 			"discoveryProvider":       profile.Provider,
@@ -211,7 +211,7 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 			"discoveryOwnedAddresses": []string{},
 			"discoveryLastScanAt":     now.Format(time.RFC3339Nano),
 			"discoveryNextScanAt":     now.Add(interval).Format(time.RFC3339Nano),
-		})
+		}))
 		c.saveDiscoveryStatus(poolName, status)
 		return nil
 	}
@@ -281,7 +281,7 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 	if err := c.expireStaleProviderDiscoveryEvents(poolName, spec, self.NodeRef, prefix, retainedThisScan, now, ttl, ttl); err != nil {
 		return err
 	}
-	status := mergeAnyMaps(discoverySelfInventoryStatus(selfInventory), map[string]any{
+	status := mergeAnyMaps(discoveryPlacementStatus(placement), mergeAnyMaps(discoverySelfInventoryStatus(selfInventory), map[string]any{
 		"discoveryPhase":             "Observed",
 		"discoveryReason":            "",
 		"discoveryProvider":          profile.Provider,
@@ -300,7 +300,7 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 		"discoveryExcludedSelector":  counters.Selector,
 		"discoveryLastScanAt":        now.Format(time.RFC3339Nano),
 		"discoveryNextScanAt":        now.Add(interval).Format(time.RFC3339Nano),
-	})
+	}))
 	c.saveDiscoveryStatus(poolName, status)
 	return nil
 }
@@ -816,6 +816,23 @@ func discoverySelfInventoryStatus(self discoverySelfInventory) map[string]any {
 	return status
 }
 
+func discoveryPlacementStatus(placement PlacementDecision) map[string]any {
+	return map[string]any{
+		"discoveryPlacementGroup":               placement.Group,
+		"discoveryPlacementActive":              placement.Active,
+		"discoveryPlacementActiveNode":          placement.ActiveNode,
+		"discoveryPlacementSeize":               placement.Seize,
+		"discoveryPlacementLivenessObserved":    placement.LivenessObserved,
+		"discoveryPlacementSelfCommunity":       placement.SelfCommunity,
+		"discoveryPlacementSelfMarker":          placement.SelfMarker,
+		"discoveryPlacementSelfMarkerPresent":   placement.SelfMarkerPresent,
+		"discoveryPlacementActiveIdentityNode":  placement.ActiveIdentityNodeRef,
+		"discoveryPlacementActiveCommunity":     placement.ActiveCommunity,
+		"discoveryPlacementActiveMarker":        placement.ActiveMarker,
+		"discoveryPlacementActiveMarkerPresent": placement.ActiveMarkerPresent,
+	}
+}
+
 func mergeAnyMaps(a, b map[string]any) map[string]any {
 	out := map[string]any{}
 	for k, v := range a {
@@ -827,8 +844,11 @@ func mergeAnyMaps(a, b map[string]any) map[string]any {
 	return out
 }
 
-func (c DiscoveryController) scanDue(poolName string, interval time.Duration, now time.Time, requireForwardingState, requireSelfNICRef bool) bool {
+func (c DiscoveryController) scanDue(poolName string, interval time.Duration, now time.Time, requireForwardingState, requireSelfNICRef bool, placement PlacementDecision) bool {
 	status := c.Store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", poolName)
+	if discoveryPlacementChanged(status, placement) {
+		return true
+	}
 	if requireSelfNICRef {
 		nicRef := strings.TrimSpace(fmt.Sprint(status["discoverySelfNICRef"]))
 		if nicRef == "" || nicRef == "<nil>" {
@@ -845,6 +865,31 @@ func (c DiscoveryController) scanDue(poolName string, interval time.Duration, no
 		return true
 	}
 	return !last.Add(interval).After(now)
+}
+
+func discoveryPlacementChanged(status map[string]any, placement PlacementDecision) bool {
+	if !placement.LivenessObserved && !discoveryStatusBool(status, "discoveryPlacementLivenessObserved") {
+		return false
+	}
+	return discoveryStatusBool(status, "discoveryPlacementLivenessObserved") != placement.LivenessObserved ||
+		strings.TrimSpace(fmt.Sprint(status["discoveryPlacementActiveNode"])) != placement.ActiveNode ||
+		discoveryStatusBool(status, "discoveryPlacementActive") != placement.Active ||
+		discoveryStatusBool(status, "discoveryPlacementSeize") != placement.Seize ||
+		discoveryStatusBool(status, "discoveryPlacementSelfMarkerPresent") != placement.SelfMarkerPresent ||
+		discoveryStatusBool(status, "discoveryPlacementActiveMarkerPresent") != placement.ActiveMarkerPresent ||
+		strings.TrimSpace(fmt.Sprint(status["discoveryPlacementSelfMarker"])) != placement.SelfMarker ||
+		strings.TrimSpace(fmt.Sprint(status["discoveryPlacementActiveMarker"])) != placement.ActiveMarker
+}
+
+func discoveryStatusBool(status map[string]any, key string) bool {
+	value, ok := status[key]
+	if !ok {
+		return false
+	}
+	if parsed, ok := statusBool(value); ok {
+		return parsed
+	}
+	return false
 }
 
 func (c DiscoveryController) resolveInventoryPlugin(provider string, discovery api.MobilityOwnershipDiscovery) (api.PluginSpec, string, error) {
