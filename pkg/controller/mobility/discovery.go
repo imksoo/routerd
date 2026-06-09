@@ -226,12 +226,14 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 	if err != nil {
 		return err
 	}
+	localInventory := result.Status.LocalInventoryRecords()
+	observedCandidates := result.Status.ObservedCandidateRecords()
 	ttl := discoveryLeaseTTL(discovery, spec)
 	observedThisScan := map[string]bool{}
 	heldThisScan := map[string]bool{}
 	retainedThisScan := map[string]bool{}
 	counters := discoveryExclusionCounters{}
-	for _, rec := range sortedPrivateIPs(result.Status.IPs) {
+	for _, rec := range sortedPrivateIPs(observedCandidates) {
 		address, ok := normalizeDiscoveredAddress(rec.Address, prefix)
 		if !ok {
 			counters.Scope++
@@ -284,24 +286,27 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 		return err
 	}
 	status := mergeAnyMaps(discoveryPlacementStatus(placement), mergeAnyMaps(discoverySelfInventoryStatus(selfInventory), map[string]any{
-		"discoveryPhase":             "Observed",
-		"discoveryReason":            "",
-		"discoveryProvider":          profile.Provider,
-		"discoveryProviderRef":       profileRef,
-		"discoveryPlugin":            pluginName,
-		"discoveryObserved":          counters.Observed,
-		"discoveryOwnedAddresses":    mapStringKeysSorted(observedThisScan),
-		"discoveryHeldAddresses":     mapStringKeysSorted(heldThisScan),
-		"discoveryExcluded":          counters.Excluded(),
-		"discoveryExcludedRouterNIC": counters.RouterNIC,
-		"discoveryExcludedSelfIP":    counters.SelfPrivateIP,
-		"discoveryExcludedStatic":    counters.StaticOwned,
-		"discoveryExcludedRemote":    counters.RemoteOwner,
-		"discoveryExcludedTrap":      counters.TrapAction,
-		"discoveryExcludedScope":     counters.Scope,
-		"discoveryExcludedSelector":  counters.Selector,
-		"discoveryLastScanAt":        now.Format(time.RFC3339Nano),
-		"discoveryNextScanAt":        now.Add(interval).Format(time.RFC3339Nano),
+		"discoveryPhase":                "Observed",
+		"discoveryReason":               "",
+		"discoveryProvider":             profile.Provider,
+		"discoveryProviderRef":          profileRef,
+		"discoveryPlugin":               pluginName,
+		"discoveryObserved":             counters.Observed,
+		"discoveryLocalInventory":       privateIPRecordsStatus(localInventory, prefix),
+		"discoveryLocalInventoryIPs":    privateIPRecordAddresses(localInventory, prefix),
+		"discoveryObservedCandidateIPs": privateIPRecordAddresses(observedCandidates, prefix),
+		"discoveryOwnedAddresses":       mapStringKeysSorted(observedThisScan),
+		"discoveryHeldAddresses":        mapStringKeysSorted(heldThisScan),
+		"discoveryExcluded":             counters.Excluded(),
+		"discoveryExcludedRouterNIC":    counters.RouterNIC,
+		"discoveryExcludedSelfIP":       counters.SelfPrivateIP,
+		"discoveryExcludedStatic":       counters.StaticOwned,
+		"discoveryExcludedRemote":       counters.RemoteOwner,
+		"discoveryExcludedTrap":         counters.TrapAction,
+		"discoveryExcludedScope":        counters.Scope,
+		"discoveryExcludedSelector":     counters.Selector,
+		"discoveryLastScanAt":           now.Format(time.RFC3339Nano),
+		"discoveryNextScanAt":           now.Add(interval).Format(time.RFC3339Nano),
 	}))
 	c.saveDiscoveryStatus(poolName, status)
 	return nil
@@ -1329,5 +1334,54 @@ func sortedPrivateIPs(records []providerinventory.PrivateIPRecord) []providerinv
 		}
 		return out[i].Address < out[j].Address
 	})
+	return out
+}
+
+func privateIPRecordAddresses(records []providerinventory.PrivateIPRecord, poolPrefix netip.Prefix) []string {
+	seen := map[string]bool{}
+	for _, rec := range records {
+		address, ok := normalizeDiscoveredAddress(rec.Address, poolPrefix)
+		if !ok {
+			continue
+		}
+		seen[address] = true
+	}
+	return mapKeysSorted(seen)
+}
+
+func privateIPRecordsStatus(records []providerinventory.PrivateIPRecord, poolPrefix netip.Prefix) []map[string]any {
+	var out []map[string]any
+	for _, rec := range sortedPrivateIPs(records) {
+		address, ok := normalizeDiscoveredAddress(rec.Address, poolPrefix)
+		if !ok {
+			continue
+		}
+		item := map[string]any{"address": address}
+		if value := strings.TrimSpace(rec.NICRef); value != "" {
+			item["nicRef"] = value
+		}
+		if value := strings.TrimSpace(rec.SubnetRef); value != "" {
+			item["subnetRef"] = value
+		}
+		if value := strings.TrimSpace(rec.VPCRef); value != "" {
+			item["vpcRef"] = value
+		}
+		if value := strings.TrimSpace(rec.ProviderRef); value != "" {
+			item["providerRef"] = value
+		}
+		if value := strings.TrimSpace(rec.ResourceRef); value != "" {
+			item["resourceRef"] = value
+		}
+		if value := strings.TrimSpace(rec.ResourceType); value != "" {
+			item["resourceType"] = value
+		}
+		if rec.Primary {
+			item["primary"] = true
+		}
+		if value := strings.TrimSpace(rec.InstanceState); value != "" {
+			item["instanceState"] = value
+		}
+		out = append(out, item)
+	}
 	return out
 }

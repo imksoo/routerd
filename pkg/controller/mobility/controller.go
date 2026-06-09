@@ -229,6 +229,17 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 	providerTransitions := latestProviderCaptureTransitions(previousActionPlans, actionJournal)
 	providerCapturedPaths, seizedPathCount := bgpProviderCapturedOwnedPaths(source, self, desiredTrapAddresses, providerTransitions, discoverySelfIPs, discoverySelfIPsObserved, homeOwnerFacts)
 	desired = appendUniqueBGPPaths(desired, providerCapturedPaths...)
+	ownershipDecisions, ownershipErr := resolveAddressOwnership(ownershipResolverInput{
+		PoolName:          res.Metadata.Name,
+		SelfNode:          selfNode,
+		Spec:              spec,
+		Events:            events,
+		Status:            c.Store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", res.Metadata.Name),
+		ActionJournal:     actionJournal,
+		PreviousPlans:     previousActionPlans,
+		InstalledNextHops: installedNextHops,
+		Now:               now,
+	})
 	current, err := c.BGPPaths.ListPaths(ctx, source)
 	if err != nil {
 		return fmt.Errorf("list BGP mobility paths: %w", err)
@@ -301,6 +312,14 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		status["providerActionFailedCount"] = len(failedActions)
 		if !lastFailedAt.IsZero() {
 			status["providerActionFailedAt"] = lastFailedAt.Format(time.RFC3339)
+		}
+	}
+	if ownershipErr != nil {
+		status["ownershipResolverPhase"] = "ShadowDegraded"
+		status["ownershipResolverError"] = ownershipErr.Error()
+	} else {
+		for key, value := range ownershipResolverStatus(ownershipDecisions) {
+			status[key] = value
 		}
 	}
 	return c.savePlannerStatus(res.Metadata.Name, status)

@@ -231,6 +231,21 @@ routerd はプラグインの標準出力を YAML デコーダーで読み取り
 `routerctl action execute --approved` またはデーモンの自動実行ゲート経由でのみ行われ、
 エグゼキュータープラグインは routerd が保持する秘密を一切受け取りません。
 
+### ObservePrivateIPsResult
+
+`observe.providerPrivateIPs` capability を持つプラグインは
+`providerinventory.routerd.net/v1alpha1` の `ObservePrivateIPsResult` を返します。
+従来の `status.ips` は wire 互換のため残り、ownership-discovery event を発行する
+候補アドレスとして扱われます。新しいプラグインは、routerd が trap 除外や ownership
+selector を適用する前の、スキャン対象 VPC/VNet/VCN または subnet にある VM NIC と
+Private Endpoint のアドレス一覧を `status.localIPs` にも入れてください。`localIPs` が
+ない場合、routerd は `observedCandidates`、次に `ips` へフォールバックします。
+
+プラグインが完全な local inventory を `localIPs` で返しつつ、event 発行候補だけを狭めたい
+場合は `status.observedCandidates` を使えます。SAM の ownership resolver は shadow
+locality 分類に `localIPs` を使い、既存の discovery event 経路は `observedCandidates`
+または legacy `ips` を使い続けます。
+
 ## CLI
 
 MVP の運用者向けコマンドは次の通りです。
