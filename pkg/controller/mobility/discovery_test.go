@@ -571,6 +571,38 @@ func TestDiscoveryControllerExcludesCurrentTrapActionTargets(t *testing.T) {
 	}
 }
 
+func TestDiscoveryControllerDoesNotExcludeRemoteProviderTrapActionTargets(t *testing.T) {
+	now := time.Date(2026, 6, 9, 17, 45, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := discoveryPoolSpec()
+	seedSucceededBGPCaptureAction(t, store, "oci-provider", "oci-vnic", "oci-router", "10.88.60.12/32", "assign-secondary-ip", 1, now.Add(-time.Second))
+	runner := &fakeInventoryRunner{result: providerinventory.ObservePrivateIPsResult{
+		TypeMeta: providerinventory.TypeMeta{APIVersion: providerinventory.ProtocolAPIVersion, Kind: providerinventory.KindObservePrivateIPsResult},
+		Status: providerinventory.ObservePrivateIPsResultStatus{
+			Status: providerinventory.ResultSucceeded,
+			Self:   &providerinventory.PrivateIPSelf{NICRef: "router-nic", SubnetRef: "subnet-a"},
+			IPs: []providerinventory.PrivateIPRecord{
+				{Address: "10.88.60.12", NICRef: "client-nic", SubnetRef: "subnet-a", Tags: map[string]string{"cloudedge-mobility": "true"}},
+			},
+		},
+	}}
+	controller := DiscoveryController{Router: discoveryRouter("azure-router-a", spec), Store: store, Runner: runner.run, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	events, err := store.ListFederationEvents("cloudedge", false, now.Unix())
+	if err != nil {
+		t.Fatalf("ListFederationEvents: %v", err)
+	}
+	if len(events) != 1 || events[0].Subject != "10.88.60.12/32" {
+		t.Fatalf("events = %#v, want remote provider trap not to hide local home inventory", events)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	if fmt.Sprint(status["discoveryExcludedTrap"]) != "0" {
+		t.Fatalf("status = %#v, want no trap action exclusion for remote holder/provider", status)
+	}
+}
+
 func TestDiscoveryControllerDefaultScopeAllowsProviderPrimaryAddresses(t *testing.T) {
 	now := time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)
 	store := testStore(t, now)

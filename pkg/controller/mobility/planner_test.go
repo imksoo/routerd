@@ -129,6 +129,7 @@ func TestBGPCapturedInventoryAllowsSeizedPathWithoutJournal(t *testing.T) {
 		nil,
 		map[string]bool{"10.88.60.10/32": true},
 		true,
+		nil,
 	)
 	if len(paths) != 1 || paths[0].Prefix != "10.88.60.10/32" {
 		t.Fatalf("paths = %#v, want inventory-confirmed seized path", paths)
@@ -177,6 +178,7 @@ func TestBGPRouteTableTransitionKeyMatchesSelfCaptureTarget(t *testing.T) {
 		},
 		nil,
 		false,
+		nil,
 	)
 	if len(paths) != 1 || paths[0].Prefix != "10.88.60.10/32" {
 		t.Fatalf("paths = %#v, want route-table journal-confirmed captured path", paths)

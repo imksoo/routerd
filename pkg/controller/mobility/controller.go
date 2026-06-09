@@ -188,6 +188,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 	events = append(events, releaseEvents...)
 	discoveryOwnedAddresses, discoveryOwnedObserved := c.discoveryProviderOwnedAddressSet(res.Metadata.Name, spec)
 	discoverySelfIPs, discoverySelfIPsObserved := c.discoverySelfPrivateIPSet(res.Metadata.Name, spec)
+	homeOwnerFacts := providerInventoryHomeOwnerFacts(res.Metadata.Name, spec, events, now)
 	livenessMarkers, livenessMarkersObserved := c.bgpLivenessMarkers()
 	ownerPlacement := evaluateBGPCapturePlacement(self, members, livenessMarkers, livenessMarkersObserved)
 	actionJournal, err := c.Store.ListActions(routerstate.ActionExecutionFilter{})
@@ -210,7 +211,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		return err
 	}
 	installedNextHops, bgpRIBObserved := c.bgpInstalledNextHops()
-	desiredTrapAddresses, capturePlacement, err := c.bgpTrapAddresses(res.Metadata.Name, selfNode, spec, installedNextHops, bgpRIBObserved, livenessMarkers, livenessMarkersObserved, previousActionPlans, localOwned, discoveryOwnedAddresses, discoverySelfIPs, now)
+	desiredTrapAddresses, capturePlacement, err := c.bgpTrapAddresses(res.Metadata.Name, selfNode, spec, installedNextHops, bgpRIBObserved, livenessMarkers, livenessMarkersObserved, previousActionPlans, localOwned, discoveryOwnedAddresses, discoverySelfIPs, homeOwnerFacts, now)
 	if err != nil {
 		return err
 	}
@@ -225,7 +226,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		}
 	}
 	providerTransitions := latestProviderCaptureTransitions(previousActionPlans, actionJournal)
-	providerCapturedPaths, seizedPathCount := bgpProviderCapturedOwnedPaths(source, self, desiredTrapAddresses, providerTransitions, discoverySelfIPs, discoverySelfIPsObserved)
+	providerCapturedPaths, seizedPathCount := bgpProviderCapturedOwnedPaths(source, self, desiredTrapAddresses, providerTransitions, discoverySelfIPs, discoverySelfIPsObserved, homeOwnerFacts)
 	desired = appendUniqueBGPPaths(desired, providerCapturedPaths...)
 	current, err := c.BGPPaths.ListPaths(ctx, source)
 	if err != nil {
@@ -436,6 +437,16 @@ type bgpOwnedAddress struct {
 	SourceType string
 }
 
+type providerInventoryOwnerFact struct {
+	Address     string
+	NodeRef     string
+	Provider    string
+	ProviderRef string
+	SubnetRef   string
+	NICRef      string
+	ObservedAt  time.Time
+}
+
 func bgpOwnedPaths(poolName, source, selfNode string, spec api.MobilityPoolSpec, events []routerstate.EventRecord, discoveryOwnedAddresses map[string]bool, discoveryOwnedObserved bool, discoverySelfIPs map[string]bool, discoverySelfIPsObserved bool, ownerActive bool, now time.Time) []bgpdaemon.AppliedPath {
 	poolPrefix, err := netip.ParsePrefix(strings.TrimSpace(spec.Prefix))
 	if err != nil {
@@ -465,7 +476,7 @@ func bgpOwnedPaths(poolName, source, selfNode string, spec api.MobilityPoolSpec,
 	return out
 }
 
-func bgpProviderCapturedOwnedPaths(source string, self memberPlanInfo, desiredTrapAddresses map[string]bgpTrapCandidate, providerTransitions map[string]providerCaptureTransition, observedSelfCaptures map[string]bool, observedSelfCapturesOK bool) ([]bgpdaemon.AppliedPath, int) {
+func bgpProviderCapturedOwnedPaths(source string, self memberPlanInfo, desiredTrapAddresses map[string]bgpTrapCandidate, providerTransitions map[string]providerCaptureTransition, observedSelfCaptures map[string]bool, observedSelfCapturesOK bool, homeOwnerFacts map[string]providerInventoryOwnerFact) ([]bgpdaemon.AppliedPath, int) {
 	if self.MaintenanceDrain || self.Capture.Type != "provider-secondary-ip" {
 		return nil, 0
 	}
@@ -477,6 +488,9 @@ func bgpProviderCapturedOwnedPaths(source string, self memberPlanInfo, desiredTr
 			continue
 		}
 		prefix = prefix.Masked()
+		if fact, hasFreshHomeOwner := homeOwnerFacts[prefix.String()]; hasFreshHomeOwner && providerHomeOwnerBlocksCapture(self, fact) {
+			continue
+		}
 		key := providerCaptureTransitionKey(self.Capture.ProviderRef, providerCaptureRefFromCapture(self.Capture, self.CaptureTarget), prefix.String())
 		captured := false
 		if transition, ok := providerTransitions[key]; ok && transition.succeeded && transition.assign {
@@ -705,6 +719,68 @@ func bgpOwnershipEventSourceKey(ev routerstate.EventRecord) string {
 		source = "event"
 	}
 	return strings.Join([]string{source, sourceType, strings.TrimSpace(ev.SourceNode)}, "\x00")
+}
+
+func providerInventoryHomeOwnerFacts(poolName string, spec api.MobilityPoolSpec, events []routerstate.EventRecord, now time.Time) map[string]providerInventoryOwnerFact {
+	poolPrefix, err := netip.ParsePrefix(strings.TrimSpace(spec.Prefix))
+	if err != nil {
+		return nil
+	}
+	poolPrefix = poolPrefix.Masked()
+	routerNICs := mobilityRouterNICRefs(spec.Members)
+	members := plannerMembers(spec.Members)
+	out := map[string]providerInventoryOwnerFact{}
+	for _, ev := range events {
+		if ev.Group != spec.GroupRef || ev.Type != ObservedEventType {
+			continue
+		}
+		if bgpOwnershipEventSourceType(ev) != providerDiscoverySource {
+			continue
+		}
+		if !strings.EqualFold(strings.TrimSpace(ev.Payload["pool"]), strings.TrimSpace(poolName)) {
+			continue
+		}
+		if !ev.ExpiresAt.IsZero() && !now.Before(ev.ExpiresAt) {
+			continue
+		}
+		address, ok := normalizeLeaseAddress(firstNonEmpty(ev.Payload["address"], ev.Subject), poolPrefix)
+		if !ok {
+			continue
+		}
+		nicRef := strings.TrimSpace(ev.Payload["nicRef"])
+		if nicRef != "" && routerNICs[nicRef] {
+			continue
+		}
+		nodeRef := strings.TrimSpace(ev.SourceNode)
+		member, memberOK := lookupMemberByNodeRef(members, nodeRef)
+		if memberOK && nicRef != "" && nicRef == strings.TrimSpace(member.Capture.NICRef) {
+			continue
+		}
+		providerRef := strings.TrimSpace(ev.Payload["providerRef"])
+		if providerRef == "" && memberOK {
+			providerRef = strings.TrimSpace(member.OwnershipDiscovery.ProviderRef)
+		}
+		fact := providerInventoryOwnerFact{
+			Address:     address,
+			NodeRef:     nodeRef,
+			Provider:    strings.TrimSpace(ev.Payload["provider"]),
+			ProviderRef: providerRef,
+			SubnetRef:   strings.TrimSpace(ev.Payload["subnetRef"]),
+			NICRef:      nicRef,
+			ObservedAt:  ev.ObservedAt.UTC(),
+		}
+		current, found := out[address]
+		if !found || fact.ObservedAt.After(current.ObservedAt) || fact.ObservedAt.Equal(current.ObservedAt) && fact.NodeRef < current.NodeRef {
+			out[address] = fact
+		}
+	}
+	return out
+}
+
+func providerHomeOwnerBlocksCapture(self memberPlanInfo, fact providerInventoryOwnerFact) bool {
+	homeProviderRef := strings.TrimSpace(fact.ProviderRef)
+	selfProviderRef := strings.TrimSpace(self.Capture.ProviderRef)
+	return homeProviderRef != "" && selfProviderRef != "" && homeProviderRef != selfProviderRef
 }
 
 func selfProviderDiscoveryEventBackedByFreshInventory(address string, ev routerstate.EventRecord, self memberPlanInfo, discoveryOwnedAddresses map[string]bool, discoveryOwnedObserved bool, discoverySelfIPs map[string]bool, discoverySelfIPsObserved bool) bool {
@@ -1062,7 +1138,7 @@ func normalizeObservedBGPPrefix(value string) string {
 	return prefix.Masked().String()
 }
 
-func (c Controller) bgpTrapAddresses(poolName, selfNode string, spec api.MobilityPoolSpec, installedNextHops map[string][]string, ribObserved bool, livenessMarkers map[string]string, livenessMarkersObserved bool, previousPlans []dynamicconfig.ActionPlan, localOwned map[string]bool, freshOwned map[string]bool, freshSelfOwned map[string]bool, now time.Time) (map[string]bgpTrapCandidate, PlacementDecision, error) {
+func (c Controller) bgpTrapAddresses(poolName, selfNode string, spec api.MobilityPoolSpec, installedNextHops map[string][]string, ribObserved bool, livenessMarkers map[string]string, livenessMarkersObserved bool, previousPlans []dynamicconfig.ActionPlan, localOwned map[string]bool, freshOwned map[string]bool, freshSelfOwned map[string]bool, homeOwnerFacts map[string]providerInventoryOwnerFact, now time.Time) (map[string]bgpTrapCandidate, PlacementDecision, error) {
 	prefix, err := netip.ParsePrefix(strings.TrimSpace(spec.Prefix))
 	if err != nil {
 		return nil, PlacementDecision{}, fmt.Errorf("parse pool prefix: %w", err)
@@ -1091,6 +1167,9 @@ func (c Controller) bgpTrapAddresses(poolName, selfNode string, spec api.Mobilit
 		if !ok {
 			continue
 		}
+		if fact, hasFreshHomeOwner := homeOwnerFacts[address]; hasFreshHomeOwner && providerHomeOwnerBlocksCapture(self, fact) {
+			continue
+		}
 		if freshOwned[address] && freshSelfOwned[address] {
 			continue
 		}
@@ -1100,6 +1179,9 @@ func (c Controller) bgpTrapAddresses(poolName, selfNode string, spec api.Mobilit
 		out[address] = bgpTrapCandidate{PathSig: bgpTrapPathSig(address, cleanNextHops), LastSeenAt: now.UTC(), Seize: placement.Seize}
 	}
 	for address, candidate := range previousBGPTrapCandidateAddresses(previousPlans, prefix) {
+		if fact, hasFreshHomeOwner := homeOwnerFacts[address]; hasFreshHomeOwner && providerHomeOwnerBlocksCapture(self, fact) {
+			continue
+		}
 		if localOwned[address] || freshOwned[address] && freshSelfOwned[address] {
 			continue
 		}
