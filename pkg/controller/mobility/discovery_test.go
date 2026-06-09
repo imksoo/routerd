@@ -999,6 +999,49 @@ func TestDiscoveryControllerProviderCaptureEventBypassesScanInterval(t *testing.
 	}
 }
 
+func TestDiscoveryControllerLivenessChangeBypassesScanInterval(t *testing.T) {
+	now := time.Date(2026, 6, 3, 16, 0, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := discoveryPoolSpec()
+	runner := &fakeInventoryRunner{result: providerinventory.ObservePrivateIPsResult{
+		TypeMeta: providerinventory.TypeMeta{APIVersion: providerinventory.ProtocolAPIVersion, Kind: providerinventory.KindObservePrivateIPsResult},
+		Status: providerinventory.ObservePrivateIPsResultStatus{
+			Status: providerinventory.ResultSucceeded,
+			Self:   &providerinventory.PrivateIPSelf{NICRef: "standby-router-nic", SubnetRef: "subnet-b", PrivateIPs: []string{"10.88.60.22"}},
+			IPs: []providerinventory.PrivateIPRecord{
+				{Address: "10.88.60.12", NICRef: "standby-client-nic", SubnetRef: "subnet-b", Tags: map[string]string{"cloudedge-mobility": "true"}},
+			},
+		},
+	}}
+	saveBGPStatus(t, store, map[string][]string{}, []map[string]any{}, map[string]string{
+		bgpstate.MobilityNodeIdentityCommunity("azure-router-a"): "10.99.0.2/32",
+		bgpstate.MobilityNodeIdentityCommunity("azure-router-b"): "10.99.0.6/32",
+	})
+	router := routerWithBGPRouter(discoveryRouter("azure-router-b", spec))
+	controller := DiscoveryController{Router: router, Store: store, Runner: runner.run, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("initial Reconcile: %v", err)
+	}
+	if runner.calls != 1 {
+		t.Fatalf("runner calls = %d, want initial scan", runner.calls)
+	}
+	saveBGPStatus(t, store, map[string][]string{}, []map[string]any{}, map[string]string{
+		bgpstate.MobilityNodeIdentityCommunity("azure-router-b"): "10.99.0.6/32",
+	})
+	controller.Now = func() time.Time { return now.Add(10 * time.Second) }
+	event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "mobility-bgp", Kind: "BGPRouter"}, "routerd.resource.status.changed", daemonapi.SeverityInfo)
+	if err := controller.HandleEvent(context.Background(), event); err != nil {
+		t.Fatalf("HandleEvent: %v", err)
+	}
+	if runner.calls != 2 {
+		t.Fatalf("runner calls = %d, want BGP liveness loss to bypass scan interval", runner.calls)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	if status["discoveryPlacementSeize"] != true || status["discoveryPhase"] != "Observed" {
+		t.Fatalf("status = %#v, want seized discovery after active marker loss", status)
+	}
+}
+
 func TestDiscoveryControllerRescansWhenForwardingStatusMissing(t *testing.T) {
 	now := time.Date(2026, 6, 3, 15, 0, 0, 0, time.UTC)
 	store := testStore(t, now)
