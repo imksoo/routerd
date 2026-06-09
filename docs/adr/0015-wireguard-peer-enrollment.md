@@ -4,7 +4,7 @@
 
 Proposed -- 2026-06-09.
 
-Related issue: #377.
+Related issues: #377, #387.
 
 ## Context
 
@@ -23,6 +23,43 @@ The first contact path cannot be the target WireGuard tunnel. WireGuard drops
 unknown peers before any application protocol can run, so enrollment must use a
 separate bootstrap transport such as a management address, an underlay listener,
 or another pre-established control channel.
+
+### Lab Evaluation -- 2026-06-09
+
+The svnet1 hub/spoke lab was rewritten toward the current `SAMNodeSet` and
+`peersFrom` config style for `k8s-rt-01` and `k8s-rt-02` as RR/spine routers.
+The candidate rendered and passed `config.Load` / `config.Validate` against
+current `main`.
+
+The compact form removed the per-RR static `WireGuardPeer` resources and the
+duplicated `SAMTransportProfile.spec.peers` / `topologyNodeRefs` lists:
+
+- generated RR resources changed from 22 to 16;
+- explicit `WireGuardPeer` resources changed from 8 to 0;
+- `SAMTransportProfile` changed from 8 static peers plus 10 topology node refs
+  to one `peersFrom: SAMNodeSet/svnet1-nodes` source.
+
+Line count did not drop in that lab snapshot because the same change also
+introduced `MobilityPool` membership data in the RR config. The meaningful
+complexity reduction was removal of duplicated peer declarations, not raw YAML
+lines.
+
+The deployed live image in the lab (`routerd live v20260608.0642`) rejected the
+candidate during `routerctl validate --replace` with:
+
+```text
+parse config candidate: unsupported resource kind SAMNodeSet in mobility.routerd.net/v1alpha1/SAMNodeSet/svnet1-nodes
+```
+
+Therefore the compact config style is valid on current `main`, but cannot be
+rolled out to that deployed image until the runtime artifact includes
+`SAMNodeSet` and `WireGuardInterface.spec.peersFrom` support.
+
+This also confirms the remaining operational gap: with only `SAMNodeSet`, adding
+or deleting a leaf still requires changing the RR/spine registry entry that
+contains the leaf public key, transport endpoint, and allowed IPs. Enrollment is
+still required before RR/spine configs can remain untouched during leaf
+addition, removal, or key rotation.
 
 ## Decision
 
