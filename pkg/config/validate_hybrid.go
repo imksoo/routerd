@@ -201,6 +201,15 @@ func validateHybridResource(res api.Resource, _ platform.OS) (bool, error) {
 		}
 		switch strings.TrimSpace(spec.Capture.Type) {
 		case "provider-secondary-ip":
+			switch addressCaptureStrategy(spec.Capture) {
+			case "", "secondary-ip":
+			case "route-table":
+				if strings.TrimSpace(spec.Capture.NICRef) == "" {
+					return true, fmt.Errorf("%s spec.capture.nicRef is required when spec.capture.captureStrategy is route-table", res.ID())
+				}
+			default:
+				return true, fmt.Errorf("%s spec.capture.captureStrategy must be secondary-ip or route-table", res.ID())
+			}
 			if strings.TrimSpace(spec.Capture.ProviderRef) == "" {
 				return true, fmt.Errorf("%s spec.capture.providerRef is required when spec.capture.type is provider-secondary-ip", res.ID())
 			}
@@ -214,6 +223,11 @@ func validateHybridResource(res api.Resource, _ platform.OS) (bool, error) {
 				return true, fmt.Errorf("%s spec.capture.configureOSAddress=true is not implemented in the MVP", res.ID())
 			}
 		case "proxy-arp":
+			switch addressCaptureStrategy(spec.Capture) {
+			case "", "proxy-arp":
+			default:
+				return true, fmt.Errorf("%s spec.capture.captureStrategy must be proxy-arp when spec.capture.type is proxy-arp", res.ID())
+			}
 			if strings.TrimSpace(spec.Capture.Interface) == "" {
 				return true, fmt.Errorf("%s spec.capture.interface is required when spec.capture.type is proxy-arp", res.ID())
 			}
@@ -388,6 +402,13 @@ func validateRemoteClaimAddress(value string) error {
 		return fmt.Errorf("must be an IPv4 /32 CIDR")
 	}
 	return nil
+}
+
+func addressCaptureStrategy(capture api.AddressCapture) string {
+	if value := strings.TrimSpace(capture.CaptureStrategy); value != "" {
+		return value
+	}
+	return strings.TrimSpace(capture.Strategy)
 }
 
 func validateHybridDestinationCIDR(value string) error {

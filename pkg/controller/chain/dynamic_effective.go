@@ -333,6 +333,8 @@ func addressCaptureFromMobilityCapture(capture api.MobilityMemberCapture) api.Ad
 		Type:               capture.Type,
 		ProviderRef:        capture.ProviderRef,
 		ProviderMode:       capture.ProviderMode,
+		CaptureStrategy:    capture.CaptureStrategy,
+		Strategy:           capture.Strategy,
 		NICRef:             capture.NICRef,
 		ConfigureOSAddress: capture.ConfigureOSAddress,
 		Interface:          capture.Interface,
@@ -530,6 +532,8 @@ func bgpMobilityProxyARPClaim(poolName string, member api.MobilityPoolMember, ad
 			OwnerSide: "remote",
 			Capture: api.AddressCapture{
 				Type:             member.Capture.Type,
+				CaptureStrategy:  member.Capture.CaptureStrategy,
+				Strategy:         member.Capture.Strategy,
 				Interface:        member.Capture.Interface,
 				ExcludeAddresses: append([]string(nil), member.Capture.ExcludeAddresses...),
 				GratuitousARP:    member.Capture.GratuitousARP,

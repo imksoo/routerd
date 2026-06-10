@@ -21,11 +21,12 @@ func TestNormalizeMobilityPoolExpandsCloudCaptureProfile(t *testing.T) {
 		Profiles: api.MobilityPoolProfiles{CloudCaptures: map[string]api.MobilityCloudCaptureProfile{
 			"aws-edge": {
 				Capture: api.MobilityMemberCapture{
-					Type:         "provider-secondary-ip",
-					ProviderRef:  "aws-provider",
-					ProviderMode: "secondary-private-ip",
-					Target:       map[string]string{"resourceGroup": "explicit"},
-					TargetFrom:   map[string]string{"nicRef": "nic", "region": "region"},
+					Type:            "provider-secondary-ip",
+					ProviderRef:     "aws-provider",
+					ProviderMode:    "secondary-private-ip",
+					CaptureStrategy: "secondary-ip",
+					Target:          map[string]string{"resourceGroup": "explicit"},
+					TargetFrom:      map[string]string{"nicRef": "nic", "region": "region"},
 				},
 				OwnershipDiscovery: api.MobilityOwnershipDiscovery{
 					Mode:          "provider-private-ip",
@@ -54,6 +55,9 @@ func TestNormalizeMobilityPoolExpandsCloudCaptureProfile(t *testing.T) {
 	member := got.Members[0]
 	if member.Capture.ProviderRef != "aws-provider" || member.Capture.ProviderMode != "secondary-private-ip" {
 		t.Fatalf("capture provider = %q/%q, want aws-provider/secondary-private-ip", member.Capture.ProviderRef, member.Capture.ProviderMode)
+	}
+	if member.Capture.CaptureStrategy != "secondary-ip" {
+		t.Fatalf("captureStrategy = %q, want secondary-ip", member.Capture.CaptureStrategy)
 	}
 	if member.Capture.Target["nicRef"] != "nic-a" {
 		t.Fatalf("target nicRef = %q, want nic-a", member.Capture.Target["nicRef"])

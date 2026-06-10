@@ -69,7 +69,7 @@ case "$*" in
     ;;
 esac
 `)
-	res := runInventoryPlugin(t, bin, `{"spec":{"provider":"aws","selfNicRef":"eni-router","target":{"region":"us-east-1"}}}`)
+	res := runInventoryPlugin(t, bin, `{"spec":{"provider":"aws","strategy":"secondary-ip","prefix":"10.77.60.0/24","selfNicRef":"eni-router","routeTableRef":"rtb-cloudedge","target":{"region":"us-east-1","routeTableRef":"rtb-cloudedge"}}}`)
 	if res.Status.Status != "succeeded" {
 		t.Fatalf("status = %q error=%q", res.Status.Status, res.Status.Error)
 	}
@@ -85,6 +85,9 @@ esac
 	assertIP(t, res, "10.77.60.11", "eni-client", "subnet-a")
 	assertResource(t, res, "10.77.60.11", "i-client", "instance-nic")
 	assertLocalIP(t, res, "10.77.60.11")
+	if len(res.Status.Self.CapturedAddresses) != 0 {
+		t.Fatalf("self.capturedAddresses = %#v, want empty for secondary-ip strategy", res.Status.Self.CapturedAddresses)
+	}
 }
 
 func TestProviderPrivateIPInventoryPluginAWSRouteTableCaptures(t *testing.T) {

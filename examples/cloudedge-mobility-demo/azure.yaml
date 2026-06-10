@@ -201,7 +201,7 @@ spec:
                 interface: eth0
                 providerRef: azure-lab
                 providerMode: route-table
-                strategy: route-table
+                captureStrategy: route-table
                 configureOSAddress: false
                 targetFrom:
                   region: self.region
@@ -255,7 +255,7 @@ spec:
         requireApproval: false
         allowedProviders: [azure]
         allowedProviderRefs: [azure-lab]
-        allowedActions: [assign-route-table-route, unassign-route-table-route, ensure-forwarding-enabled, ensure-forwarding-disabled]
+        allowedActions: [assign-secondary-ip, unassign-secondary-ip, ensure-forwarding-enabled, ensure-forwarding-disabled]
         allowedCIDRs: [10.77.60.0/24]
         maxActionsPerRun: 8
         allowUndo: true

@@ -250,7 +250,7 @@ func samePlacementSite(a, b memberPlanInfo) bool {
 }
 
 func routeTableCaptureAllowed(decision ownershipDecision, self memberPlanInfo) bool {
-	if effectiveCaptureStrategy("", self.Capture.Strategy) != captureStrategyRouteTable {
+	if effectiveCaptureStrategy("", captureStrategyValue(self.Capture)) != captureStrategyRouteTable {
 		return true
 	}
 	if decision.Class == ownershipClassLocalRouterSelf || decision.Class == ownershipClassLocalHomeOwned {

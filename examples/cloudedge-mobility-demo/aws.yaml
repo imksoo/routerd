@@ -240,7 +240,7 @@ spec:
         accountID: "${AWS_ACCOUNT_ID}"
         region: "${AWS_REGION}"
         capabilities:
-          - route-table
+          - secondary-ip
           - source-dest-check-disable
         auth:
           mode: external-command
@@ -256,7 +256,6 @@ spec:
         values:
           self.region: "${AWS_REGION}"
           self.subnetRef: "${AWS_SUBNET_REF}"
-          self.routeTableRef: "${DEMO_SELF_ROUTE_TABLE_REF}"
         profiles:
           cloudCaptures:
             aws-self:
@@ -264,12 +263,11 @@ spec:
                 type: provider-secondary-ip
                 interface: ens5
                 providerRef: aws-lab
-                providerMode: route-table
-                strategy: route-table
+                providerMode: secondary-ip
+                captureStrategy: secondary-ip
                 configureOSAddress: false
                 targetFrom:
                   region: self.region
-                  routeTableRef: self.routeTableRef
               ownershipDiscovery:
                 mode: provider-private-ip
                 subnetRefFrom: self.subnetRef
@@ -319,8 +317,8 @@ spec:
         allowedProviders: [aws]
         allowedProviderRefs: [aws-lab]
         allowedActions:
-          - assign-route-table-route
-          - unassign-route-table-route
+          - assign-secondary-ip
+          - unassign-secondary-ip
           - ensure-forwarding-enabled
           - ensure-forwarding-disabled
         allowedCIDRs: [10.77.60.0/24]

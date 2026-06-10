@@ -7045,6 +7045,17 @@
                             },
                             "type": "object"
                           },
+                          "captureStrategy": {
+                            "description": "CaptureStrategy selects the provider/on-link capture mechanism. The\nlegacy strategy field remains accepted as an alias.",
+                            "enum": [
+                              "",
+                              "proxy-arp",
+                              "secondary-ip",
+                              "route-table",
+                              "addr-add"
+                            ],
+                            "type": "string"
+                          },
                           "configureOSAddress": {
                             "type": "boolean"
                           },
@@ -7745,6 +7756,17 @@
                                   },
                                   "type": "object"
                                 },
+                                "captureStrategy": {
+                                  "description": "CaptureStrategy selects the provider/on-link capture mechanism. The\nlegacy strategy field remains accepted as an alias.",
+                                  "enum": [
+                                    "",
+                                    "proxy-arp",
+                                    "secondary-ip",
+                                    "route-table",
+                                    "addr-add"
+                                  ],
+                                  "type": "string"
+                                },
                                 "configureOSAddress": {
                                   "type": "boolean"
                                 },
@@ -8163,6 +8185,17 @@
                                       },
                                       "type": "object"
                                     },
+                                    "captureStrategy": {
+                                      "description": "CaptureStrategy selects the provider/on-link capture mechanism. The\nlegacy strategy field remains accepted as an alias.",
+                                      "enum": [
+                                        "",
+                                        "proxy-arp",
+                                        "secondary-ip",
+                                        "route-table",
+                                        "addr-add"
+                                      ],
+                                      "type": "string"
+                                    },
                                     "configureOSAddress": {
                                       "type": "boolean"
                                     },
@@ -8512,6 +8545,17 @@
                                     }
                                   },
                                   "type": "object"
+                                },
+                                "captureStrategy": {
+                                  "description": "CaptureStrategy selects the provider/on-link capture mechanism. The\nlegacy strategy field remains accepted as an alias.",
+                                  "enum": [
+                                    "",
+                                    "proxy-arp",
+                                    "secondary-ip",
+                                    "route-table",
+                                    "addr-add"
+                                  ],
+                                  "type": "string"
                                 },
                                 "configureOSAddress": {
                                   "type": "boolean"

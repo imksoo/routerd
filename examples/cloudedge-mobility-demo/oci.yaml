@@ -197,6 +197,7 @@ spec:
                 interface: ens3
                 providerRef: oci-lab
                 providerMode: vnic-secondary-ip
+                captureStrategy: secondary-ip
                 nicRef: "${DEMO_SELF_NIC_REF}"
                 configureOSAddress: false
                 targetFrom:
