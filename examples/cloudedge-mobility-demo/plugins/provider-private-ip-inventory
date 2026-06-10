@@ -205,21 +205,22 @@ def oci_cli(region, args):
     return run_json(argv)
 
 
-def aws_eni_instance_states(region, subnet):
-    """Return dict of ENI ID -> instance state name for all instances in the subnet."""
+def aws_eni_instance_metadata(region, subnet):
+    """Return dict of ENI ID -> instance metadata for all instances in the subnet."""
     try:
         doc = aws_cli(region, ["ec2", "describe-instances",
                                "--filters",
                                "Name=subnet-id,Values=" + subnet])
-        states = {}
+        metadata = {}
         for res in doc.get("Reservations") or []:
             for inst in res.get("Instances") or []:
+                instance_id = inst.get("InstanceId", "")
                 state = inst.get("State", {}).get("Name", "")
                 for nic in inst.get("NetworkInterfaces") or []:
                     eni = nic.get("NetworkInterfaceId", "")
                     if eni:
-                        states[eni] = state
-        return states
+                        metadata[eni] = {"resourceRef": instance_id, "instanceState": state}
+        return metadata
     except Exception:
         return None
 
@@ -267,14 +268,22 @@ def aws_inventory(spec):
             self_forwarding_enabled = not bool(interfaces[0].get("SourceDestCheck"))
     if not subnet:
         raise ValueError("AWS subnetRef could not be inferred from self NIC")
-    eni_states = aws_eni_instance_states(region, subnet)
+    eni_metadata = aws_eni_instance_metadata(region, subnet)
     doc = aws_cli(region, ["ec2", "describe-network-interfaces", "--filters", "Name=subnet-id,Values=" + subnet])
     ips = []
+    self_resource_ref = ""
     for nic in doc.get("NetworkInterfaces") or []:
         nic_ref = nic.get("NetworkInterfaceId", "")
         subnet_ref = nic.get("SubnetId", subnet)
         tags = {item.get("Key", ""): item.get("Value", "") for item in nic.get("TagSet") or [] if item.get("Key")}
-        instance_state = (eni_states or {}).get(nic_ref, "")
+        metadata = (eni_metadata or {}).get(nic_ref, {})
+        resource_ref = metadata.get("resourceRef", "")
+        if nic_ref == self_nic and resource_ref:
+            self_resource_ref = resource_ref
+        instance_state = metadata.get("instanceState", "")
+        resource_type = "instance-nic"
+        if nic_ref == self_nic or str(tags.get("role", "")).lower() == "router":
+            resource_type = "router-nic"
         for rec in nic.get("PrivateIpAddresses") or []:
             address = rec.get("PrivateIpAddress", "")
             if not address:
@@ -283,30 +292,37 @@ def aws_inventory(spec):
                 "address": address,
                 "nicRef": nic_ref,
                 "subnetRef": subnet_ref,
+                "resourceType": resource_type,
                 "primary": bool(rec.get("Primary")),
                 "tags": tags,
             }
+            if resource_ref:
+                entry["resourceRef"] = resource_ref
             if instance_state:
                 entry["instanceState"] = instance_state
             ips.append(entry)
     self_info = {"nicRef": self_nic, "subnetRef": subnet, "privateIPs": sorted(set(self_private_ips))}
+    if self_resource_ref:
+        self_info["resourceRef"] = self_resource_ref
+        self_info["resourceType"] = "router-nic"
     if self_forwarding_enabled is not None:
         self_info["forwardingEnabled"] = bool(self_forwarding_enabled)
     return self_info, ips
 
 
-def azure_nic_vm_states(resource_group):
-    """Return dict of NIC resource ID -> VM power state."""
+def azure_nic_vm_metadata(resource_group):
+    """Return dict of NIC resource ID -> VM metadata."""
     try:
         vms = az_cli(["vm", "list", "--resource-group", resource_group, "--show-details"])
-        states = {}
+        metadata = {}
         for vm in vms or []:
+            vm_id = vm.get("id", "")
             power_state = vm.get("powerState", "")
             for nic_ref in (vm.get("networkProfile") or {}).get("networkInterfaces") or []:
                 nic_id = nic_ref.get("id", "")
                 if nic_id:
-                    states[nic_id] = power_state
-        return states
+                    metadata[nic_id] = {"resourceRef": vm_id, "powerState": power_state}
+        return metadata
     except Exception:
         return None
 
@@ -353,17 +369,25 @@ def azure_inventory(spec):
         address = cfg.get("privateIPAddress") or cfg.get("privateIpAddress") or ""
         if address:
             self_private_ips.append(address)
-    nic_states = azure_nic_vm_states(resource_group)
+    nic_metadata = azure_nic_vm_metadata(resource_group)
     ips = []
+    self_resource_ref = ""
     for nic in nics or []:
         nic_ref = nic.get("id", "")
         tags = nic.get("tags") or {}
-        vm_state = (nic_states or {}).get(nic_ref, "")
+        metadata = (nic_metadata or {}).get(nic_ref, {})
+        resource_ref = metadata.get("resourceRef", "")
+        if nic_ref == self_nic and resource_ref:
+            self_resource_ref = resource_ref
+        vm_state = metadata.get("powerState", "")
         instance_state = ""
         if vm_state == "VM running":
             instance_state = "running"
         elif vm_state:
             instance_state = "stopped"
+        resource_type = "instance-nic"
+        if nic_ref == self_nic or str(tags.get("role", "")).lower() == "router":
+            resource_type = "router-nic"
         for cfg in nic.get("ipConfigurations") or []:
             subnet_ref = ((cfg.get("subnet") or {}).get("id") or "")
             if subnet_ref != subnet:
@@ -375,13 +399,19 @@ def azure_inventory(spec):
                 "address": address,
                 "nicRef": nic_ref,
                 "subnetRef": subnet_ref,
+                "resourceType": resource_type,
                 "primary": bool(cfg.get("primary")),
                 "tags": tags,
             }
+            if resource_ref:
+                entry["resourceRef"] = resource_ref
             if instance_state:
                 entry["instanceState"] = instance_state
             ips.append(entry)
     self_info = {"nicRef": self_nic, "subnetRef": subnet, "privateIPs": sorted(set(self_private_ips))}
+    if self_resource_ref:
+        self_info["resourceRef"] = self_resource_ref
+        self_info["resourceType"] = "router-nic"
     if self_forwarding_enabled is not None:
         self_info["forwardingEnabled"] = bool(self_forwarding_enabled)
     return self_info, ips
@@ -398,8 +428,8 @@ def flatten_oci_tags(rec):
     return tags
 
 
-def oci_vnic_instance_states(region, compartment):
-    """Return dict of VNIC ID -> instance lifecycle state."""
+def oci_vnic_instance_metadata(region, compartment):
+    """Return dict of VNIC ID -> instance metadata."""
     try:
         attachments = oci_cli(region, ["compute", "vnic-attachment", "list",
                                        "--compartment-id", compartment, "--all"])
@@ -414,14 +444,16 @@ def oci_vnic_instance_states(region, compartment):
         instance_states = {}
         for inst in instances.get("data") or []:
             instance_states[inst.get("id", "")] = inst.get("lifecycle-state", "")
-        vnic_states = {}
+        vnic_metadata = {}
         for vid, iid in vnic_to_instance.items():
             state = instance_states.get(iid, "")
+            item = {"resourceRef": iid}
             if state == "RUNNING":
-                vnic_states[vid] = "running"
+                item["instanceState"] = "running"
             elif state:
-                vnic_states[vid] = "stopped"
-        return vnic_states
+                item["instanceState"] = "stopped"
+            vnic_metadata[vid] = item
+        return vnic_metadata
     except Exception:
         return None
 
@@ -446,9 +478,10 @@ def oci_inventory(spec):
     if not subnet:
         raise ValueError("OCI subnetRef could not be inferred from self VNIC")
     compartment = self_data.get("compartment-id", "")
-    vnic_states = oci_vnic_instance_states(region, compartment) if compartment else None
+    vnic_metadata = oci_vnic_instance_metadata(region, compartment) if compartment else None
     doc = oci_cli(region, ["network", "private-ip", "list", "--subnet-id", subnet, "--all"])
     ips = []
+    self_resource_ref = ""
     for rec in doc.get("data") or []:
         address = rec.get("ip-address", "")
         if not address:
@@ -456,18 +489,32 @@ def oci_inventory(spec):
         vnic_id = rec.get("vnic-id", "")
         if vnic_id == self_nic:
             self_private_ips.append(address)
-        instance_state = (vnic_states or {}).get(vnic_id, "")
+        metadata = (vnic_metadata or {}).get(vnic_id, {})
+        resource_ref = metadata.get("resourceRef", "")
+        if vnic_id == self_nic and resource_ref:
+            self_resource_ref = resource_ref
+        instance_state = metadata.get("instanceState", "")
+        tags = flatten_oci_tags(rec)
+        resource_type = "instance-nic"
+        if vnic_id == self_nic or str(tags.get("role", "")).lower() == "router":
+            resource_type = "router-nic"
         entry = {
             "address": address,
             "nicRef": vnic_id,
             "subnetRef": rec.get("subnet-id", subnet),
+            "resourceType": resource_type,
             "primary": bool(rec.get("is-primary")),
-            "tags": flatten_oci_tags(rec),
+            "tags": tags,
         }
+        if resource_ref:
+            entry["resourceRef"] = resource_ref
         if instance_state:
             entry["instanceState"] = instance_state
         ips.append(entry)
     self_info = {"nicRef": self_nic, "subnetRef": subnet, "privateIPs": sorted(set(self_private_ips))}
+    if self_resource_ref:
+        self_info["resourceRef"] = self_resource_ref
+        self_info["resourceType"] = "router-nic"
     if "skip-source-dest-check" in self_data:
         self_info["forwardingEnabled"] = bool(self_data.get("skip-source-dest-check"))
     return self_info, ips

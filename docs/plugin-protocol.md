@@ -247,6 +247,13 @@ event-emission candidate set while still exposing the full local inventory in
 classification; the existing discovery event path continues to use
 `observedCandidates` or legacy `ips`.
 
+Each private-IP record should set `resourceRef` to the owning compute instance
+ID when the provider can report it, and `resourceType` to distinguish router
+NICs from ordinary instance NICs or private endpoints. `status.self` may also
+set `resourceRef`/`resourceType` for the local router instance. SAM uses this
+identity to distinguish a secondary IP captured onto the router instance from a
+real home client address on the same provider subnet.
+
 ## CLI
 
 The MVP operator commands are:

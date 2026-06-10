@@ -464,13 +464,15 @@ type bgpOwnedAddress struct {
 }
 
 type providerInventoryOwnerFact struct {
-	Address     string
-	NodeRef     string
-	Provider    string
-	ProviderRef string
-	SubnetRef   string
-	NICRef      string
-	ObservedAt  time.Time
+	Address      string
+	NodeRef      string
+	Provider     string
+	ProviderRef  string
+	SubnetRef    string
+	NICRef       string
+	ResourceRef  string
+	ResourceType string
+	ObservedAt   time.Time
 }
 
 func (c Controller) bgpLivenessMarkerPath(poolName, source, selfNode, groupRef string) (bgpdaemon.AppliedPath, bool) {
@@ -688,6 +690,9 @@ func providerInventoryHomeOwnerFacts(poolName string, spec api.MobilityPoolSpec,
 		if nicRef != "" && routerNICs[nicRef] {
 			continue
 		}
+		if strings.TrimSpace(ev.Payload["resourceType"]) == "router-nic" {
+			continue
+		}
 		nodeRef := strings.TrimSpace(ev.SourceNode)
 		member, memberOK := lookupMemberByNodeRef(members, nodeRef)
 		if memberOK && nicRef != "" && nicRef == strings.TrimSpace(member.Capture.NICRef) {
@@ -695,13 +700,15 @@ func providerInventoryHomeOwnerFacts(poolName string, spec api.MobilityPoolSpec,
 		}
 		providerRef := strings.TrimSpace(ev.Payload["providerRef"])
 		fact := providerInventoryOwnerFact{
-			Address:     address,
-			NodeRef:     nodeRef,
-			Provider:    strings.TrimSpace(ev.Payload["provider"]),
-			ProviderRef: providerRef,
-			SubnetRef:   strings.TrimSpace(ev.Payload["subnetRef"]),
-			NICRef:      nicRef,
-			ObservedAt:  ev.ObservedAt.UTC(),
+			Address:      address,
+			NodeRef:      nodeRef,
+			Provider:     strings.TrimSpace(ev.Payload["provider"]),
+			ProviderRef:  providerRef,
+			SubnetRef:    strings.TrimSpace(ev.Payload["subnetRef"]),
+			NICRef:       nicRef,
+			ResourceRef:  strings.TrimSpace(ev.Payload["resourceRef"]),
+			ResourceType: strings.TrimSpace(ev.Payload["resourceType"]),
+			ObservedAt:   ev.ObservedAt.UTC(),
 		}
 		current, found := out[address]
 		if !found || fact.ObservedAt.After(current.ObservedAt) || fact.ObservedAt.Equal(current.ObservedAt) && fact.NodeRef < current.NodeRef {

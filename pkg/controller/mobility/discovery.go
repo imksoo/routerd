@@ -225,6 +225,7 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 	if selfInventory.NICRef != "" {
 		excludedNICs[selfInventory.NICRef] = true
 	}
+	selfResourceRef := strings.TrimSpace(selfInventory.ResourceRef)
 	selfPrivateIPs := discoverySelfPrivateIPSet(selfInventory.PrivateIPs, prefix)
 	staticOwners := staticOwnedOwnerNodesByAddress(spec)
 	trapAddresses, err := discoveryCurrentTrapAddresses(c.Store, poolName, selfNode, profileRef, providerCaptureRefFromCapture(self.Capture, self.CaptureTarget), prefix, now)
@@ -244,6 +245,11 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 			continue
 		}
 		if selfPrivateIPs[address] {
+			invalidThisScan[address] = true
+			counters.SelfPrivateIP++
+			continue
+		}
+		if selfResourceRef != "" && strings.TrimSpace(rec.ResourceRef) == selfResourceRef {
 			invalidThisScan[address] = true
 			counters.SelfPrivateIP++
 			continue
@@ -299,7 +305,7 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 	if err := c.expireStaleProviderDiscoveryEvents(poolName, spec, self.NodeRef, prefix, retainedThisScan, now, ttl, ttl); err != nil {
 		return err
 	}
-	statusLocalInventory := filterDiscoveryLocalInventoryStatusRecords(localInventory, excludedNICs)
+	statusLocalInventory := filterDiscoveryLocalInventoryStatusRecords(localInventory, excludedNICs, selfResourceRef)
 	status := mergeAnyMaps(discoveryPlacementStatus(placement), mergeAnyMaps(discoverySelfInventoryStatus(selfInventory), map[string]any{
 		"discoveryPhase":                "Observed",
 		"discoveryReason":               "",
@@ -825,6 +831,8 @@ func (c discoveryExclusionCounters) Excluded() int {
 type discoverySelfInventory struct {
 	NICRef            string
 	SubnetRef         string
+	ResourceRef       string
+	ResourceType      string
 	PrivateIPs        []string
 	CapturedAddresses []string
 	ForwardingEnabled *bool
@@ -835,6 +843,8 @@ func resolvedDiscoverySelfInventory(self memberPlanInfo, discovery api.MobilityO
 	if pluginSelf != nil {
 		out.NICRef = strings.TrimSpace(pluginSelf.NICRef)
 		out.SubnetRef = strings.TrimSpace(pluginSelf.SubnetRef)
+		out.ResourceRef = strings.TrimSpace(pluginSelf.ResourceRef)
+		out.ResourceType = strings.TrimSpace(pluginSelf.ResourceType)
 		out.PrivateIPs = cleanStrings(pluginSelf.PrivateIPs)
 		out.CapturedAddresses = cleanStrings(pluginSelf.CapturedAddresses)
 		out.ForwardingEnabled = pluginSelf.ForwardingEnabled
@@ -903,11 +913,15 @@ func scopedOutProviderCandidateAddresses(raw, scoped []providerinventory.Private
 	return out
 }
 
-func filterDiscoveryLocalInventoryStatusRecords(records []providerinventory.PrivateIPRecord, excludedNICs map[string]bool) []providerinventory.PrivateIPRecord {
+func filterDiscoveryLocalInventoryStatusRecords(records []providerinventory.PrivateIPRecord, excludedNICs map[string]bool, selfResourceRef string) []providerinventory.PrivateIPRecord {
+	selfResourceRef = strings.TrimSpace(selfResourceRef)
 	var out []providerinventory.PrivateIPRecord
 	for _, rec := range records {
 		nicRef := strings.TrimSpace(rec.NICRef)
 		if nicRef != "" && excludedNICs[nicRef] {
+			continue
+		}
+		if selfResourceRef != "" && strings.TrimSpace(rec.ResourceRef) == selfResourceRef {
 			continue
 		}
 		out = append(out, rec)
@@ -917,7 +931,8 @@ func filterDiscoveryLocalInventoryStatusRecords(records []providerinventory.Priv
 
 func scopedDiscoverySelfInventory(self discoverySelfInventory, localInventory []providerinventory.PrivateIPRecord, poolPrefix netip.Prefix) discoverySelfInventory {
 	selfNIC := strings.TrimSpace(self.NICRef)
-	if selfNIC == "" {
+	selfResource := strings.TrimSpace(self.ResourceRef)
+	if selfNIC == "" && selfResource == "" {
 		self.PrivateIPs = normalizedDiscoveryAddresses(self.PrivateIPs, poolPrefix)
 		self.CapturedAddresses = normalizedDiscoveryAddresses(self.CapturedAddresses, poolPrefix)
 		return self
@@ -927,7 +942,9 @@ func scopedDiscoverySelfInventory(self discoverySelfInventory, localInventory []
 	matched := false
 	primaryObserved := false
 	for _, rec := range localInventory {
-		if strings.TrimSpace(rec.NICRef) != selfNIC {
+		recNIC := strings.TrimSpace(rec.NICRef)
+		recResource := strings.TrimSpace(rec.ResourceRef)
+		if (selfNIC == "" || recNIC != selfNIC) && (selfResource == "" || recResource != selfResource) {
 			continue
 		}
 		address, ok := normalizeDiscoveredAddress(rec.Address, poolPrefix)
@@ -935,6 +952,13 @@ func scopedDiscoverySelfInventory(self discoverySelfInventory, localInventory []
 			continue
 		}
 		matched = true
+		if self.ResourceRef == "" && recResource != "" {
+			self.ResourceRef = recResource
+			selfResource = recResource
+		}
+		if self.ResourceType == "" && strings.TrimSpace(rec.ResourceType) != "" {
+			self.ResourceType = strings.TrimSpace(rec.ResourceType)
+		}
 		if rec.Primary {
 			primaryObserved = true
 			privateIPs = append(privateIPs, address)
@@ -988,6 +1012,12 @@ func discoverySelfInventoryStatus(self discoverySelfInventory) map[string]any {
 		"discoverySelfPrivateIPs":         append([]string(nil), self.PrivateIPs...),
 		"discoverySelfCapturedAddresses":  append([]string(nil), self.CapturedAddresses...),
 		"discoverySelfForwardingObserved": self.ForwardingEnabled != nil,
+	}
+	if self.ResourceRef != "" {
+		status["discoverySelfResourceRef"] = self.ResourceRef
+	}
+	if self.ResourceType != "" {
+		status["discoverySelfResourceType"] = self.ResourceType
 	}
 	if self.ForwardingEnabled != nil {
 		status["discoverySelfForwardingEnabled"] = *self.ForwardingEnabled
@@ -1353,6 +1383,12 @@ func providerDiscoveryObservedEvent(poolName, group, nodeRef, address, provider,
 	if value := strings.TrimSpace(rec.SubnetRef); value != "" {
 		payload["subnetRef"] = value
 	}
+	if value := strings.TrimSpace(rec.ResourceRef); value != "" {
+		payload["resourceRef"] = value
+	}
+	if value := strings.TrimSpace(rec.ResourceType); value != "" {
+		payload["resourceType"] = value
+	}
 	if rec.Primary {
 		payload["primary"] = "true"
 	}
@@ -1387,6 +1423,12 @@ func providerDiscoveryExpiredEvent(poolName, group, nodeRef, address string, pre
 	}
 	if providerRef != "" {
 		payload["providerRef"] = providerRef
+	}
+	if value := strings.TrimSpace(previous.Payload["resourceRef"]); value != "" {
+		payload["resourceRef"] = value
+	}
+	if value := strings.TrimSpace(previous.Payload["resourceType"]); value != "" {
+		payload["resourceType"] = value
 	}
 	if value := strings.TrimSpace(previous.Payload["nicRef"]); value != "" {
 		payload["nicRef"] = value

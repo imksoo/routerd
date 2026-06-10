@@ -11,9 +11,11 @@
 # - ListPrivateIps
 # - GetVnic
 # - UpdateVnic, for skipSourceDestCheck
+# - ListInstances
+# - ListVnicAttachments
 # - Read/use subnets referenced by VNIC private-IP placement
 #
-# The two statements below are the intended minimum shape for the demo. Add
+# The statements below are the intended minimum shape for the demo. Add
 # tenancy-specific conditions only after confirming they still permit
 # CreatePrivateIp/DeletePrivateIp on the router VNIC and UpdateVnic for
 # skipSourceDestCheck.
@@ -21,3 +23,5 @@
 Allow dynamic-group <dynamic-group-name> to manage private-ips in compartment <compartment-name>
 Allow dynamic-group <dynamic-group-name> to use vnics in compartment <compartment-name>
 Allow dynamic-group <dynamic-group-name> to use subnets in compartment <compartment-name>
+Allow dynamic-group <dynamic-group-name> to read instances in compartment <compartment-name>
+Allow dynamic-group <dynamic-group-name> to inspect vnic-attachments in compartment <compartment-name>

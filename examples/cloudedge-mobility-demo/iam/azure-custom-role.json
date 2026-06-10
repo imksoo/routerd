@@ -14,7 +14,9 @@
     "Microsoft.Network/networkSecurityGroups/read",
     "Microsoft.Network/networkSecurityGroups/join/action",
     "Microsoft.Network/publicIPAddresses/read",
-    "Microsoft.Network/publicIPAddresses/join/action"
+    "Microsoft.Network/publicIPAddresses/join/action",
+    "Microsoft.Compute/virtualMachines/read",
+    "Microsoft.Compute/virtualMachines/instanceView/read"
   ],
   "NotActions": [],
   "DataActions": [],

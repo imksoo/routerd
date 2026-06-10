@@ -67,6 +67,8 @@ type ObservePrivateIPsResultStatus struct {
 type PrivateIPSelf struct {
 	NICRef            string   `json:"nicRef,omitempty" yaml:"nicRef,omitempty"`
 	SubnetRef         string   `json:"subnetRef,omitempty" yaml:"subnetRef,omitempty"`
+	ResourceRef       string   `json:"resourceRef,omitempty" yaml:"resourceRef,omitempty"`
+	ResourceType      string   `json:"resourceType,omitempty" yaml:"resourceType,omitempty"`
 	PrivateIPs        []string `json:"privateIPs,omitempty" yaml:"privateIPs,omitempty"`
 	CapturedAddresses []string `json:"capturedAddresses,omitempty" yaml:"capturedAddresses,omitempty"`
 	ForwardingEnabled *bool    `json:"forwardingEnabled,omitempty" yaml:"forwardingEnabled,omitempty"`
