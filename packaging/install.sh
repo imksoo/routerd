@@ -456,6 +456,20 @@ install_binary()
     atomic_install 0755 "${binary}" "${target}"
 }
 
+install_libexec_payload()
+{
+    [ -d libexec ] || return 0
+    find libexec -type f | while IFS= read -r file; do
+        mode=0644
+        case "${file}" in
+            */bin/*|*/provider-private-ip-inventory)
+                mode=0755
+                ;;
+        esac
+        atomic_install "${mode}" "${file}" "${prefix}/${file}"
+    done
+}
+
 verify_ndpi_agent_install()
 {
     [ "${with_ndpi}" -eq 1 ] || return 0
@@ -2108,6 +2122,7 @@ for binary in bin/*; do
     [ -f "${binary}" ] || continue
     install_binary "${binary}"
 done
+install_libexec_payload
 install_ndpi_agent_archive
 verify_ndpi_agent_install
 

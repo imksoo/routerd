@@ -45,7 +45,7 @@ func TestOwnershipResolverScenario392SameProviderConfirmedCapture(t *testing.T) 
 		PoolName:      "cloudedge",
 		SelfNode:      "aws-router-b",
 		Spec:          spec,
-		Status:        map[string]any{"discoverySelfPrivateIPs": []string{"10.88.60.11"}},
+		Status:        map[string]any{"discoverySelfCapturedAddresses": []string{"10.88.60.11"}},
 		ActionJournal: []routerstate.ActionExecutionRecord{action},
 		Now:           now,
 	})
@@ -58,6 +58,31 @@ func TestOwnershipResolverScenario392SameProviderConfirmedCapture(t *testing.T) 
 	}
 	if decision.CaptureState != captureStateConfirmed || decision.CaptureHolderNode != "aws-router-b" {
 		t.Fatalf("decision = %#v, want confirmed same-provider capture state", decision)
+	}
+}
+
+func TestOwnershipResolverDoesNotConfirmRouterPrimaryFromActionJournal(t *testing.T) {
+	now := time.Date(2026, 6, 10, 15, 0, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	action := resolverSucceededAction(t, "aws-provider", "eni-a", "aws-router-a", "10.88.60.4/32", actionAssignSecondaryIP, now.Add(-time.Second))
+	decisions, err := resolveAddressOwnership(ownershipResolverInput{
+		PoolName: "cloudedge",
+		SelfNode: "aws-router-a",
+		Spec:     spec,
+		Status: map[string]any{
+			"discoverySelfPrivateIPs":        []string{"10.88.60.4/32"},
+			"discoverySelfCapturedAddresses": []string{},
+			"discoveryLastScanAt":            now.Format(time.RFC3339Nano),
+		},
+		ActionJournal: []routerstate.ActionExecutionRecord{action},
+		Now:           now,
+	})
+	if err != nil {
+		t.Fatalf("resolveAddressOwnership: %v", err)
+	}
+	decision := ownershipDecisionByAddress(t, decisions, "10.88.60.4/32")
+	if decision.Class != ownershipClassLocalRouterSelf || decision.AdvertiseOwnerNode != "" {
+		t.Fatalf("decision = %#v, want router primary to remain non-advertised LocalRouterSelf", decision)
 	}
 }
 

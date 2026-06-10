@@ -276,6 +276,7 @@ dist:
 	install -d $(DISTROOT)/libexec/routerd/plugins/oci-provider-executor/bin
 	install -m 0755 $(OCI_PROVIDER_EXECUTOR_BIN) $(DISTROOT)/libexec/routerd/plugins/oci-provider-executor/bin/oci-provider-executor
 	install -m 0644 examples/plugins/oci-provider-executor/plugin.yaml $(DISTROOT)/libexec/routerd/plugins/oci-provider-executor/plugin.yaml
+	install -m 0755 examples/cloudedge-mobility-demo/plugins/provider-private-ip-inventory $(DISTROOT)/libexec/routerd/plugins/provider-private-ip-inventory
 	install -m 0755 packaging/install.sh $(DISTROOT)/install.sh
 	install -m 0755 packaging/uninstall.sh $(DISTROOT)/uninstall.sh
 	install -d $(DISTROOT)/etc/routerd

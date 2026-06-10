@@ -53,6 +53,7 @@ type ownershipDecision struct {
 	CaptureTargetRef   string
 	CaptureStrategy    string
 	CaptureState       string
+	CaptureSucceeded   bool
 	AdvertiseOwnerNode string
 	AdvertiseReason    string
 	SuppressionReason  string
@@ -80,9 +81,12 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 	localInventory := localInventoryRecordsFromStatus(in.Status, prefix)
 	removeSelfResourceLocalInventory(localInventory, statusString(in.Status["discoverySelfResourceRef"]))
 	selfIPs, capturedIPs, selfIPsObserved := selfInventoryAddressSetsFromStatus(in.Status, prefix)
-	captureObservedIPs := mergeBoolMaps(selfIPs, capturedIPs)
+	captureConfirmIPs := capturedIPs
+	if !statusHasAny(in.Status, "discoverySelfCapturedAddresses") {
+		captureConfirmIPs = mergeBoolMaps(selfIPs, capturedIPs)
+	}
 	eventOwned := resolverEventOwnedAddresses(in.PoolName, in.SelfNode, in.Spec, in.Events, in.Status, prefix, now)
-	confirmedCaptures, staleCaptures := captureStatesForSelf(self, in.PreviousPlans, in.ActionJournal, captureObservedIPs, selfIPsObserved)
+	confirmedCaptures, staleCaptures := captureStatesForSelf(self, in.PreviousPlans, in.ActionJournal, captureConfirmIPs, selfIPsObserved)
 	handoverTargets := staticHandoverTargets(in.Spec, prefix)
 	universe := map[string]bool{}
 	for address := range staticOwners {
@@ -130,6 +134,7 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 			decision.CaptureProviderRef = capture.ProviderRef
 			decision.CaptureTargetRef = capture.TargetRef
 			decision.CaptureStrategy = capture.Strategy
+			decision.CaptureSucceeded = capture.Succeeded
 		}
 		if capture, ok := staleCaptures[address]; ok && decision.CaptureState == captureStateNone {
 			decision.CaptureState = captureStateStale
@@ -137,6 +142,7 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 			decision.CaptureProviderRef = capture.ProviderRef
 			decision.CaptureTargetRef = capture.TargetRef
 			decision.CaptureStrategy = capture.Strategy
+			decision.CaptureSucceeded = capture.Succeeded
 		}
 		if owner := strings.TrimSpace(staticOwners[address]); owner != "" {
 			decision.HomeOwnerNode = owner
@@ -491,6 +497,7 @@ type resolverCaptureState struct {
 	ProviderRef string
 	TargetRef   string
 	Strategy    string
+	Succeeded   bool
 }
 
 func captureStatesForSelf(self memberPlanInfo, previousPlans []dynamicconfig.ActionPlan, journal []routerstate.ActionExecutionRecord, selfIPs map[string]bool, selfIPsObserved bool) (map[string]resolverCaptureState, map[string]resolverCaptureState) {
@@ -514,6 +521,7 @@ func captureStatesForSelf(self memberPlanInfo, previousPlans []dynamicconfig.Act
 			ProviderRef: providerRef,
 			TargetRef:   targetRef,
 			Strategy:    effectiveCaptureStrategy(tr.plan.Provider, firstNonEmpty(tr.plan.Target["captureStrategy"], captureStrategyValue(self.Capture))),
+			Succeeded:   tr.succeeded,
 		}
 		if tr.assign && tr.succeeded && (selfIPs[address] || !selfIPsObserved) {
 			confirmed[address] = state
@@ -534,6 +542,9 @@ func captureStatesForSelf(self memberPlanInfo, previousPlans []dynamicconfig.Act
 			continue
 		}
 		if _, ok := confirmed[address]; ok {
+			continue
+		}
+		if _, ok := stale[address]; ok {
 			continue
 		}
 		stale[address] = resolverCaptureState{

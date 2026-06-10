@@ -60,7 +60,7 @@ func planBGPMobilityDelivery(in bgpDeliveryPlannerInput) (bgpDeliveryPlannerResu
 	decisions := decisionsByAddress(in.Decisions)
 	failedActions := latestFailedProviderActions(in.ActionJournal)
 	paths, providerCaptured, seized := planBGPAdvertisements(in.Source, in.Self, in.Decisions, in.Placement, failedActions)
-	candidates := planCaptureCandidates(in.Self, in.Members, decisions, in.Placement, in.InstalledNextHops, in.RIBObserved, in.PreviousPlans, in.ObservedSelfCaptures, poolPrefix, now)
+	candidates := planCaptureCandidates(in.Self, in.Members, decisions, in.Placement, in.InstalledNextHops, in.RIBObserved, in.PreviousPlans, in.ObservedSelfCaptures, failedActions, poolPrefix, now)
 	actionPlans, err := planCaptureActionPlans(in, candidates)
 	if err != nil {
 		return bgpDeliveryPlannerResult{}, err
@@ -134,7 +134,7 @@ func bgpDecisionSourceType(decision ownershipDecision) string {
 	}
 }
 
-func planCaptureCandidates(self memberPlanInfo, members map[string]memberPlanInfo, decisions map[string]ownershipDecision, placement PlacementDecision, installedNextHops map[string][]string, ribObserved bool, previousPlans []dynamicconfig.ActionPlan, observedSelfIPs map[string]bool, poolPrefix netip.Prefix, now time.Time) map[string]bgpTrapCandidate {
+func planCaptureCandidates(self memberPlanInfo, members map[string]memberPlanInfo, decisions map[string]ownershipDecision, placement PlacementDecision, installedNextHops map[string][]string, ribObserved bool, previousPlans []dynamicconfig.ActionPlan, observedSelfIPs map[string]bool, failedActions map[string]routerstate.ActionExecutionRecord, poolPrefix netip.Prefix, now time.Time) map[string]bgpTrapCandidate {
 	out := map[string]bgpTrapCandidate{}
 	if self.Capture.Type != "provider-secondary-ip" || !placement.Active {
 		return out
@@ -145,6 +145,15 @@ func planCaptureCandidates(self memberPlanInfo, members map[string]memberPlanInf
 		}
 	}
 	selfNextHop := bgpTrapSelfNextHop(placement.SelfMarker)
+	installedAddresses := map[string]bool{}
+	for rawPrefix, nextHops := range installedNextHops {
+		if len(cleanStrings(nextHops)) == 0 {
+			continue
+		}
+		if address, ok := normalizeBGPTrapPrefix(rawPrefix, poolPrefix); ok {
+			installedAddresses[address] = true
+		}
+	}
 	for rawPrefix, nextHops := range installedNextHops {
 		cleanNextHops := cleanStrings(nextHops)
 		if len(cleanNextHops) == 0 {
@@ -155,7 +164,7 @@ func planCaptureCandidates(self memberPlanInfo, members map[string]memberPlanInf
 			continue
 		}
 		decision, ok := decisions[address]
-		if !ok || !decisionEligibleForCapture(decision, self, members, placement) {
+		if !ok {
 			continue
 		}
 		if selfNextHop != "" && !bgpTrapHasRemoteNextHop(cleanNextHops, selfNextHop) {
@@ -167,6 +176,11 @@ func planCaptureCandidates(self memberPlanInfo, members map[string]memberPlanInf
 			}
 			continue
 		}
+		if !decisionEligibleForCapture(decision, self, members, placement) {
+			if _, failed := failedActions[address]; !failed {
+				continue
+			}
+		}
 		if !routeTableCaptureAllowed(decision, self) {
 			continue
 		}
@@ -174,8 +188,17 @@ func planCaptureCandidates(self memberPlanInfo, members map[string]memberPlanInf
 	}
 	for address, candidate := range previousBGPTrapCandidateAddresses(previousPlans, poolPrefix) {
 		decision, ok := decisions[address]
-		if !ok || !decisionEligibleForCapture(decision, self, members, placement) {
+		if !ok {
 			continue
+		}
+		if !decisionEligibleForCapture(decision, self, members, placement) {
+			_, failed := failedActions[address]
+			if !failed && (ribObserved || !decisionIsCaptureNotDesiredStale(decision)) {
+				if ribObserved && decisionIsCaptureNotDesiredStale(decision) && !decision.CaptureSucceeded && !installedAddresses[address] && bgpTrapCandidateWithinMissingHold(candidate, now) {
+					out[address] = candidate
+				}
+				continue
+			}
 		}
 		if decision.Class == ownershipClassConfirmedCapture {
 			if confirmedCaptureObservedOnSelf(decision, self, observedSelfIPs) {
@@ -223,7 +246,7 @@ func decisionEligibleForCapture(decision ownershipDecision, self memberPlanInfo,
 		return decision.Source == providerDiscoverySource && decision.AdvertiseReason == "ownership-event"
 	case ownershipClassStaleCapture:
 		switch strings.TrimSpace(decision.SuppressionReason) {
-		case "fresh-home-owner", "local-router-self", "local-home-owner", "self-captured-secondary":
+		case "capture-not-desired", "fresh-home-owner", "local-router-self", "local-home-owner", "self-captured-secondary":
 			return false
 		default:
 			return true
@@ -241,6 +264,10 @@ func decisionEligibleForCapture(decision ownershipDecision, self memberPlanInfo,
 		}
 	}
 	return true
+}
+
+func decisionIsCaptureNotDesiredStale(decision ownershipDecision) bool {
+	return decision.Class == ownershipClassStaleCapture && strings.TrimSpace(decision.SuppressionReason) == "capture-not-desired"
 }
 
 func samePlacementSite(a, b memberPlanInfo) bool {

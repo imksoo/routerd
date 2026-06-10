@@ -147,6 +147,46 @@ echo native-agent
 	}
 }
 
+func TestInstallInstallsLibexecPluginPayload(t *testing.T) {
+	dir := t.TempDir()
+	pkg := filepath.Join(dir, "package")
+	prefix := filepath.Join(dir, "prefix")
+	writeExecutable(t, filepath.Join(pkg, "bin", "routerd"), `#!/bin/sh
+if [ "$1" = "--version" ]; then echo routerd-test; exit 0; fi
+exit 0
+`)
+	writeExecutable(t, filepath.Join(pkg, "libexec", "routerd", "plugins", "provider-private-ip-inventory"), `#!/bin/sh
+echo inventory-plugin
+`)
+	if err := os.MkdirAll(filepath.Join(pkg, "libexec", "routerd", "plugins", "azure-provider-executor"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pkg, "libexec", "routerd", "plugins", "azure-provider-executor", "plugin.yaml"), []byte("name: azure-provider-executor\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runInstall(t, pkg, prefix, "--no-install-deps", "--no-config-update", "--no-restart")
+	if err != nil {
+		t.Fatalf("install failed: %v\n%s", err, out)
+	}
+	pluginPath := filepath.Join(prefix, "libexec", "routerd", "plugins", "provider-private-ip-inventory")
+	info, err := os.Stat(pluginPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o755 {
+		t.Fatalf("plugin mode = %o, want 0755", got)
+	}
+	manifestPath := filepath.Join(prefix, "libexec", "routerd", "plugins", "azure-provider-executor", "plugin.yaml")
+	info, err = os.Stat(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o644 {
+		t.Fatalf("manifest mode = %o, want 0644", got)
+	}
+}
+
 func TestInstallWithNDPIArchiveRejectsStaticArchive(t *testing.T) {
 	dir := t.TempDir()
 	pkg := filepath.Join(dir, "package")

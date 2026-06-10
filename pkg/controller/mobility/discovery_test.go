@@ -816,6 +816,9 @@ func TestDiscoveryControllerResolvesSelfNICForStandbyPlacementMember(t *testing.
 	if got := statusStringSlice(status["discoveryOwnedAddresses"]); len(got) != 0 {
 		t.Fatalf("status = %#v, want standby to publish empty owned-address backing", status)
 	}
+	if got := statusStringSlice(status["discoveryLocalInventoryIPs"]); len(got) != 0 {
+		t.Fatalf("status = %#v, want standby to clear local inventory backing", status)
+	}
 	if status["discoverySelfNICRef"] != "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic-b" || status["discoverySelfSubnetRef"] != "subnet-b" {
 		t.Fatalf("self status = %#v, want standby self NIC resolved", status)
 	}

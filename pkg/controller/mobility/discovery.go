@@ -209,15 +209,19 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 			return err
 		}
 		status := mergeAnyMaps(discoveryPlacementStatus(placement), mergeAnyMaps(discoverySelfInventoryStatus(selfInventory), map[string]any{
-			"discoveryPhase":          "Standby",
-			"discoveryReason":         placement.Reason,
-			"discoveryProvider":       profile.Provider,
-			"discoveryProviderRef":    profileRef,
-			"discoveryPlugin":         pluginName,
-			"discoveryObserved":       0,
-			"discoveryOwnedAddresses": []string{},
-			"discoveryLastScanAt":     now.Format(time.RFC3339Nano),
-			"discoveryNextScanAt":     now.Add(interval).Format(time.RFC3339Nano),
+			"discoveryPhase":                "Standby",
+			"discoveryReason":               placement.Reason,
+			"discoveryProvider":             profile.Provider,
+			"discoveryProviderRef":          profileRef,
+			"discoveryPlugin":               pluginName,
+			"discoveryObserved":             0,
+			"discoveryLocalInventory":       []map[string]any{},
+			"discoveryLocalInventoryIPs":    []string{},
+			"discoveryObservedCandidateIPs": []string{},
+			"discoveryOwnedAddresses":       []string{},
+			"discoveryHeldAddresses":        []string{},
+			"discoveryLastScanAt":           now.Format(time.RFC3339Nano),
+			"discoveryNextScanAt":           now.Add(interval).Format(time.RFC3339Nano),
 		}))
 		c.saveDiscoveryStatus(poolName, status)
 		return nil
