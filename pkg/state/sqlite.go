@@ -1047,6 +1047,24 @@ func (s *SQLiteStore) SaveObjectStatus(apiVersion, kind, name string, status map
 	return s.saveStatus(objectRef{APIVersion: apiVersion, Kind: kind, Name: name}, objectStatus(status))
 }
 
+func (s *SQLiteStore) MergeObjectStatus(apiVersion, kind, name string, updates map[string]any) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return nil
+	}
+	status, _, err := s.loadStatus(apiVersion, kind, name)
+	if errors.Is(err, sql.ErrNoRows) {
+		status = objectStatus{}
+	} else if err != nil {
+		return err
+	}
+	for key, value := range updates {
+		status[key] = value
+	}
+	return s.saveStatus(objectRef{APIVersion: apiVersion, Kind: kind, Name: name}, status)
+}
+
 func (s *SQLiteStore) ObjectStatus(apiVersion, kind, name string) map[string]any {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

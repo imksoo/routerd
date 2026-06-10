@@ -62,6 +62,10 @@ type Store interface {
 	ObjectStatus(apiVersion, kind, name string) map[string]any
 }
 
+type objectStatusMerger interface {
+	MergeObjectStatus(apiVersion, kind, name string, updates map[string]any) error
+}
+
 type BGPPathClient interface {
 	ListPaths(ctx context.Context, source string) ([]bgpdaemon.AppliedPath, error)
 	UpsertPath(ctx context.Context, path bgpdaemon.AppliedPath) (bgpdaemon.AppliedPath, error)
