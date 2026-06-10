@@ -301,6 +301,11 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		"plannedAt":                         now.Format(time.RFC3339Nano),
 		"operatorIntent":                    "MobilityPool",
 		"derivedConfigKinds":                []string{"BGPPath"},
+		"providerActionPhase":               "OK",
+		"providerActionError":               "",
+		"providerActionFailedAddresses":     nil,
+		"providerActionFailedCount":         0,
+		"providerActionFailedAt":            "",
 	}
 	for key, value := range bgpSeizeHoldDownStatus(delivery.Placement) {
 		status[key] = value

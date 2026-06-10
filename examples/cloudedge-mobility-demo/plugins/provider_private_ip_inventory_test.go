@@ -441,6 +441,57 @@ esac
 	assertInstanceState(t, res, "10.77.60.12", "running")
 }
 
+func TestProviderPrivateIPInventoryPluginAWSFailsWhenInstanceMetadataQueryFails(t *testing.T) {
+	requirePython(t)
+	bin := fakeBinDir(t)
+	writeExecutable(t, filepath.Join(bin, "aws"), `#!/bin/sh
+case "$*" in
+  *"--network-interface-ids eni-router"*)
+    printf '%s\n' '{"NetworkInterfaces":[{"NetworkInterfaceId":"eni-router","SubnetId":"subnet-a","SourceDestCheck":false,"PrivateIpAddresses":[{"PrivateIpAddress":"10.77.60.21","Primary":true}]}]}'
+    ;;
+  *"describe-instances"*)
+    echo "throttled" >&2
+    exit 2
+    ;;
+  *)
+    echo "unexpected aws args: $*" >&2
+    exit 2
+    ;;
+esac
+`)
+	res := runInventoryPlugin(t, bin, `{"spec":{"provider":"aws","selfNicRef":"eni-router","target":{"region":"us-east-1"}}}`)
+	if res.Status.Status != "failed" || !strings.Contains(res.Status.Error, "AWS instance metadata inventory failed") {
+		t.Fatalf("status=%q error=%q, want failed AWS metadata error", res.Status.Status, res.Status.Error)
+	}
+}
+
+func TestProviderPrivateIPInventoryPluginAzureFailsWhenVMMetadataQueryFails(t *testing.T) {
+	requirePython(t)
+	bin := fakeBinDir(t)
+	writeExecutable(t, filepath.Join(bin, "az"), `#!/bin/sh
+case "$*" in
+  *"network nic show --ids /nic/router"*)
+    printf '%s\n' '{"id":"/nic/router","resourceGroup":"rg-demo","enableIPForwarding":true,"ipConfigurations":[{"privateIPAddress":"10.77.60.22","subnet":{"id":"/subnets/demo"}}]}'
+    ;;
+  *"network nic list --resource-group rg-demo"*)
+    printf '%s\n' '[{"id":"/nic/router","tags":{"role":"router"},"ipConfigurations":[{"privateIPAddress":"10.77.60.22","primary":true,"subnet":{"id":"/subnets/demo"}}]}]'
+    ;;
+  *"vm list --resource-group rg-demo"*)
+    echo "temporary azure error" >&2
+    exit 2
+    ;;
+  *)
+    echo "unexpected az args: $*" >&2
+    exit 2
+    ;;
+esac
+`)
+	res := runInventoryPlugin(t, bin, `{"spec":{"provider":"azure","selfNicRef":"/nic/router","target":{"resourceGroup":"rg-demo"}}}`)
+	if res.Status.Status != "failed" || !strings.Contains(res.Status.Error, "Azure VM metadata inventory failed") {
+		t.Fatalf("status=%q error=%q, want failed Azure metadata error", res.Status.Status, res.Status.Error)
+	}
+}
+
 func runInventoryPlugin(t *testing.T, fakeBin, stdin string) inventoryResult {
 	t.Helper()
 	return runInventoryPluginWithEnv(t, fakeBin, stdin, nil)

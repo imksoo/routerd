@@ -582,6 +582,38 @@ func TestControllerBGPModeProviderActionFailureDoesNotRemoveBGPPath(t *testing.T
 	}
 }
 
+func TestControllerBGPModeClearsStaleProviderActionFailureStatus(t *testing.T) {
+	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+	store := testStore(t, now)
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"providerActionPhase":           "Failed",
+		"providerActionError":           "provider API unavailable",
+		"providerActionFailedAddresses": []string{"10.88.60.11/32"},
+		"providerActionFailedCount":     1,
+		"providerActionFailedAt":        now.Add(-time.Minute).Format(time.RFC3339),
+	}); err != nil {
+		t.Fatalf("SaveObjectStatus: %v", err)
+	}
+	spec := plannedPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	controller := Controller{
+		Router:   routerWithBGPRouter(planningRouterForNode("azure-router", spec)),
+		Store:    store,
+		BGPPaths: &fakeBGPPaths{},
+		Now:      func() time.Time { return now },
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	if status["providerActionPhase"] != "OK" || status["providerActionError"] != "" || fmt.Sprint(status["providerActionFailedCount"]) != "0" {
+		t.Fatalf("provider action failure status was not cleared: %#v", status)
+	}
+	if status["providerActionFailedAddresses"] != nil || status["providerActionFailedAt"] != "" {
+		t.Fatalf("provider action failure details were not cleared: %#v", status)
+	}
+}
+
 func TestControllerBGPModeUsesDiscoveredSelfNICForProviderActions(t *testing.T) {
 	now := time.Date(2026, 6, 2, 10, 0, 0, 0, time.UTC)
 	store := testStore(t, now)
