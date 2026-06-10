@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/netip"
 	"strings"
 	"testing"
 	"time"
@@ -1257,6 +1258,27 @@ func TestDiscoveryControllerDoesNotExpireProviderDiscoveryOnTransientActiveMiss(
 	}
 	if countEvents(events, ExpiredEventType, "azure-router-a", "10.88.60.12/32") != 0 {
 		t.Fatalf("events = %#v, want no immediate active expire for transient missing scan", events)
+	}
+}
+
+func TestDiscoveryProviderDiscoveredAddressesHonorsLatestExpiredEvent(t *testing.T) {
+	now := time.Date(2026, 6, 10, 12, 10, 0, 0, time.UTC)
+	store := testStore(t, now)
+	prefix := netip.MustParsePrefix("10.88.60.0/24")
+	observed := providerDiscoveryObservedEvent("cloudedge", "cloudedge", "azure-router-a", "10.88.60.12/32", "azure", "azure-provider", providerinventory.PrivateIPRecord{
+		Address:     "10.88.60.12",
+		NICRef:      "client-nic",
+		ProviderRef: "azure-provider",
+		SubnetRef:   "subnet-a",
+	}, now.Add(-2*time.Minute), 10*time.Minute)
+	expired := providerDiscoveryExpiredEvent("cloudedge", "cloudedge", "azure-router-a", "10.88.60.12/32", observed, now.Add(-time.Minute), 10*time.Minute)
+	recordEvent(t, store, observed)
+	recordEvent(t, store, expired)
+
+	controller := DiscoveryController{Store: store, Now: func() time.Time { return now }}
+	addresses := controller.providerDiscoveredAddresses("cloudedge", "cloudedge", prefix, now)
+	if addresses["10.88.60.12/32"] {
+		t.Fatalf("providerDiscoveredAddresses = %#v, want latest Expired event to remove address", addresses)
 	}
 }
 
