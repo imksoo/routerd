@@ -132,6 +132,7 @@ type ObjectGenerationReader interface {
 
 type ObjectStatusStore interface {
 	SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error
+	MergeObjectStatus(apiVersion, kind, name string, updates map[string]any) error
 	ObjectStatus(apiVersion, kind, name string) map[string]any
 }
 

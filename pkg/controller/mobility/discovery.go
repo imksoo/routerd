@@ -1154,6 +1154,10 @@ func (c DiscoveryController) saveDiscoveryStatus(poolName string, updates map[st
 	if c.Store == nil {
 		return
 	}
+	if store, ok := c.Store.(objectStatusMerger); ok {
+		_ = store.MergeObjectStatus(api.MobilityAPIVersion, "MobilityPool", poolName, updates)
+		return
+	}
 	status := map[string]any{}
 	for k, v := range c.Store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", poolName) {
 		status[k] = v

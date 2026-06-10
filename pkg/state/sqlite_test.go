@@ -649,3 +649,32 @@ func TestSQLiteStoreClosedAccessIsBenign(t *testing.T) {
 		t.Fatalf("generation config after close ok=%t yaml=%q, want empty", ok, configYAML)
 	}
 }
+
+func TestSQLiteStoreMergeObjectStatusPreservesExistingFields(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "routerd.db")
+	store, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatalf("open sqlite store: %v", err)
+	}
+	defer store.Close()
+
+	if err := store.SaveObjectStatus("mobility.routerd.net/v1alpha1", "MobilityPool", "cloudedge", map[string]any{
+		"plannerPhase": "Planned",
+	}); err != nil {
+		t.Fatalf("save planner status: %v", err)
+	}
+	if err := store.MergeObjectStatus("mobility.routerd.net/v1alpha1", "MobilityPool", "cloudedge", map[string]any{
+		"discoveryPhase":          "Observed",
+		"discoverySelfPrivateIPs": []string{"10.88.60.21"},
+	}); err != nil {
+		t.Fatalf("merge discovery status: %v", err)
+	}
+
+	status := store.ObjectStatus("mobility.routerd.net/v1alpha1", "MobilityPool", "cloudedge")
+	if status["plannerPhase"] != "Planned" || status["discoveryPhase"] != "Observed" {
+		t.Fatalf("merged status = %#v", status)
+	}
+	if got, ok := status["discoverySelfPrivateIPs"].([]any); !ok || len(got) != 1 || got[0] != "10.88.60.21" {
+		t.Fatalf("discoverySelfPrivateIPs = %#v", status["discoverySelfPrivateIPs"])
+	}
+}

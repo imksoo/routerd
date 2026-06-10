@@ -189,6 +189,9 @@ func routerSelfNode(router *api.Router, groupRef string) (string, error) {
 }
 
 func (c Controller) savePlannerStatus(poolName string, updates map[string]any) error {
+	if store, ok := c.Store.(objectStatusMerger); ok {
+		return store.MergeObjectStatus(api.MobilityAPIVersion, "MobilityPool", poolName, updates)
+	}
 	status := map[string]any{}
 	if c.Store != nil {
 		for k, v := range c.Store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", poolName) {

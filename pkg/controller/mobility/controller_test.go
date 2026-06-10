@@ -2012,3 +2012,44 @@ func ownershipStatusDecisions(t *testing.T, raw any) []map[string]any {
 		return nil
 	}
 }
+
+type mergeTrackingStore struct {
+	*routerstate.SQLiteStore
+	objectStatusCalls int
+	mergeCalls        int
+}
+
+func (s *mergeTrackingStore) ObjectStatus(apiVersion, kind, name string) map[string]any {
+	s.objectStatusCalls++
+	return s.SQLiteStore.ObjectStatus(apiVersion, kind, name)
+}
+
+func (s *mergeTrackingStore) MergeObjectStatus(apiVersion, kind, name string, updates map[string]any) error {
+	s.mergeCalls++
+	return s.SQLiteStore.MergeObjectStatus(apiVersion, kind, name, updates)
+}
+
+func TestMobilityPoolStatusWritersUsePartialMerge(t *testing.T) {
+	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+	store := &mergeTrackingStore{SQLiteStore: testStore(t, now)}
+	planner := Controller{Store: store}
+	discovery := DiscoveryController{Store: store}
+
+	if err := planner.savePlannerStatus("cloudedge", map[string]any{
+		"plannerPhase": "Planned",
+	}); err != nil {
+		t.Fatalf("savePlannerStatus: %v", err)
+	}
+	discovery.saveDiscoveryStatus("cloudedge", map[string]any{
+		"discoveryPhase":          "Observed",
+		"discoverySelfPrivateIPs": []string{"10.88.60.21"},
+	})
+
+	status := store.SQLiteStore.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	if status["plannerPhase"] != "Planned" || status["discoveryPhase"] != "Observed" {
+		t.Fatalf("status = %#v", status)
+	}
+	if store.mergeCalls != 2 || store.objectStatusCalls != 0 {
+		t.Fatalf("mergeCalls=%d objectStatusCalls=%d, want partial merge without read-modify-write", store.mergeCalls, store.objectStatusCalls)
+	}
+}
