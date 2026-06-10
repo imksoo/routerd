@@ -21,8 +21,10 @@ const (
 	dynamicSourceKind  = "MobilityPool"
 	captureParamHolder = "mobilityCaptureHolder"
 
+	captureStrategyProxyARP    = "proxy-arp"
 	captureStrategySecondaryIP = "secondary-ip"
 	captureStrategyRouteTable  = "route-table"
+	captureStrategyAddrAdd     = "addr-add"
 
 	actionAssignSecondaryIP       = "assign-secondary-ip"
 	actionUnassignSecondaryIP     = "unassign-secondary-ip"
@@ -331,7 +333,7 @@ func providerActionPlans(poolName string, profile api.CloudProviderProfileSpec, 
 	provider := strings.TrimSpace(profile.Provider)
 	providerRef := strings.TrimSpace(capture.ProviderRef)
 	nicRef := strings.TrimSpace(capture.NICRef)
-	strategy := effectiveCaptureStrategy(provider, capture.Strategy)
+	strategy := effectiveCaptureStrategy(provider, captureStrategyValue(capture))
 	if err := validateProviderCaptureStrategy(provider, strategy); err != nil {
 		return nil, err
 	}
@@ -360,10 +362,10 @@ func providerActionPlans(poolName string, profile api.CloudProviderProfileSpec, 
 	if strategy == captureStrategyRouteTable {
 		routeTableRef := strings.TrimSpace(target["routeTableRef"])
 		if routeTableRef == "" {
-			return nil, fmt.Errorf("capture.strategy route-table requires capture.target.routeTableRef")
+			return nil, fmt.Errorf("capture.captureStrategy route-table requires capture.target.routeTableRef")
 		}
 		if provider == "azure" && strings.TrimSpace(target["nextHopIPAddress"]) == "" {
-			return nil, fmt.Errorf("provider azure capture.strategy route-table requires capture.target.nextHopIPAddress")
+			return nil, fmt.Errorf("provider azure capture.captureStrategy route-table requires capture.target.nextHopIPAddress")
 		}
 		assignDescription = fmt.Sprintf("Route %s in %s route table %s to NIC %s for MobilityPool/%s", address, provider, routeTableRef, nicRef, poolName)
 		assignEffects = []string{
@@ -434,7 +436,7 @@ func providerUnassignActionPlan(poolName string, profile api.CloudProviderProfil
 	provider := strings.TrimSpace(profile.Provider)
 	providerRef := strings.TrimSpace(capture.ProviderRef)
 	nicRef := strings.TrimSpace(capture.NICRef)
-	strategy := effectiveCaptureStrategy(provider, capture.Strategy)
+	strategy := effectiveCaptureStrategy(provider, captureStrategyValue(capture))
 	if err := validateProviderCaptureStrategy(provider, strategy); err != nil {
 		return dynamicconfig.ActionPlan{}, err
 	}
@@ -511,7 +513,7 @@ func providerActionTarget(poolName string, profile api.CloudProviderProfileSpec,
 		"providerRef":     providerRef,
 		"nicRef":          nicRef,
 		"address":         strings.TrimSpace(address),
-		"captureStrategy": effectiveCaptureStrategy(provider, capture.Strategy),
+		"captureStrategy": effectiveCaptureStrategy(provider, captureStrategyValue(capture)),
 	}
 	for key, value := range captureTarget {
 		key = strings.TrimSpace(key)
@@ -525,7 +527,7 @@ func providerActionTarget(poolName string, profile api.CloudProviderProfileSpec,
 	target["providerRef"] = providerRef
 	target["nicRef"] = nicRef
 	target["address"] = strings.TrimSpace(address)
-	target["captureStrategy"] = effectiveCaptureStrategy(provider, capture.Strategy)
+	target["captureStrategy"] = effectiveCaptureStrategy(provider, captureStrategyValue(capture))
 	return target
 }
 
@@ -537,6 +539,14 @@ func effectiveCaptureStrategy(provider, strategy string) string {
 	return captureStrategySecondaryIP
 }
 
+func captureStrategyValue(capture api.AddressCapture) string {
+	return firstNonEmpty(capture.CaptureStrategy, capture.Strategy)
+}
+
+func memberCaptureStrategyValue(capture api.MobilityMemberCapture) string {
+	return firstNonEmpty(capture.CaptureStrategy, capture.Strategy)
+}
+
 func validateProviderCaptureStrategy(provider, strategy string) error {
 	switch strings.TrimSpace(strategy) {
 	case captureStrategySecondaryIP:
@@ -546,20 +556,15 @@ func validateProviderCaptureStrategy(provider, strategy string) error {
 		case "aws", "azure":
 			return nil
 		default:
-			return fmt.Errorf("provider %q does not support capture.strategy route-table", provider)
+			return fmt.Errorf("provider %q does not support capture.captureStrategy route-table", provider)
 		}
 	default:
-		return fmt.Errorf("capture.strategy %q is not supported", strategy)
+		return fmt.Errorf("capture.captureStrategy %q is not supported", strategy)
 	}
 }
 
 func providerCaptureActions(strategy string) (assign, unassign string) {
-	switch strings.TrimSpace(strategy) {
-	case captureStrategyRouteTable:
-		return actionAssignRouteTableRoute, actionUnassignRouteTableRoute
-	default:
-		return actionAssignSecondaryIP, actionUnassignSecondaryIP
-	}
+	return actionAssignSecondaryIP, actionUnassignSecondaryIP
 }
 
 func isProviderCaptureAssignAction(action string) bool {
@@ -590,7 +595,7 @@ func providerCaptureRefFromTarget(target map[string]string) string {
 }
 
 func providerCaptureRefFromCapture(capture api.AddressCapture, target map[string]string) string {
-	if strings.TrimSpace(capture.Strategy) == captureStrategyRouteTable {
+	if strings.TrimSpace(captureStrategyValue(capture)) == captureStrategyRouteTable {
 		if target != nil {
 			if value := strings.TrimSpace(target["routeTableRef"]); value != "" {
 				return value
@@ -764,6 +769,7 @@ func trimCapture(c api.MobilityMemberCapture) api.AddressCapture {
 		Type:               strings.TrimSpace(c.Type),
 		ProviderRef:        strings.TrimSpace(c.ProviderRef),
 		ProviderMode:       strings.TrimSpace(c.ProviderMode),
+		CaptureStrategy:    strings.TrimSpace(memberCaptureStrategyValue(c)),
 		Strategy:           strings.TrimSpace(c.Strategy),
 		NICRef:             strings.TrimSpace(c.NICRef),
 		ConfigureOSAddress: c.ConfigureOSAddress,

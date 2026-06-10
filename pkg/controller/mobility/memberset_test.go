@@ -86,12 +86,12 @@ func TestMobilityPoolMembersFromPreservesCaptureFields(t *testing.T) {
 		Role:       "cloud",
 		ProfileRef: "aws-self",
 		Capture: api.MobilityMemberCapture{
-			Type:         "provider-secondary-ip",
-			ProviderRef:  "aws-provider",
-			ProviderMode: "route-table",
-			Strategy:     captureStrategyRouteTable,
-			NICRef:       "eni-a",
-			Target:       map[string]string{"routeTableRef": "rtb-cloudedge", "region": "us-east-1"},
+			Type:            "provider-secondary-ip",
+			ProviderRef:     "aws-provider",
+			ProviderMode:    "route-table",
+			CaptureStrategy: captureStrategyRouteTable,
+			NICRef:          "eni-a",
+			Target:          map[string]string{"routeTableRef": "rtb-cloudedge", "region": "us-east-1"},
 		},
 		OwnershipDiscovery: api.MobilityOwnershipDiscovery{
 			Mode:         "provider-private-ip",
@@ -109,7 +109,7 @@ func TestMobilityPoolMembersFromPreservesCaptureFields(t *testing.T) {
 		t.Fatalf("members = %#v, want one", resolved.Spec.Members)
 	}
 	member := resolved.Spec.Members[0]
-	if member.ProfileRef != "aws-self" || member.Capture.NICRef != "eni-a" || member.Capture.Strategy != captureStrategyRouteTable || member.Capture.Target["routeTableRef"] != "rtb-cloudedge" {
+	if member.ProfileRef != "aws-self" || member.Capture.NICRef != "eni-a" || member.Capture.CaptureStrategy != captureStrategyRouteTable || member.Capture.Target["routeTableRef"] != "rtb-cloudedge" {
 		t.Fatalf("member = %#v, want capture/profile fields preserved", member)
 	}
 	if member.OwnershipDiscovery.Mode != "provider-private-ip" || member.OwnershipDiscovery.SubnetRef != "subnet-a" {

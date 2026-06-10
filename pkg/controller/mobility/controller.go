@@ -1733,14 +1733,14 @@ func bgpSyntheticAssignedPlansFromJournal(self memberPlanInfo, journal []routers
 			continue
 		}
 		plan := tr.plan
-		plan.Action, _ = providerCaptureActions(effectiveCaptureStrategy(plan.Provider, self.Capture.Strategy))
+		plan.Action, _ = providerCaptureActions(effectiveCaptureStrategy(plan.Provider, captureStrategyValue(self.Capture)))
 		if plan.Target == nil {
 			plan.Target = map[string]string{}
 		}
 		plan.Target["address"] = normalizeAddressString(parts[2])
 		plan.Target["providerRef"] = strings.TrimSpace(self.Capture.ProviderRef)
 		plan.Target["nicRef"] = strings.TrimSpace(self.Capture.NICRef)
-		if strategy := strings.TrimSpace(self.Capture.Strategy); strategy != "" {
+		if strategy := strings.TrimSpace(captureStrategyValue(self.Capture)); strategy != "" {
 			plan.Target["captureStrategy"] = strategy
 		}
 		if plan.ProviderRef == "" {
@@ -1771,7 +1771,7 @@ func captureFromActionPlan(fallback api.AddressCapture, plan dynamicconfig.Actio
 		capture.NICRef = value
 	}
 	if value := strings.TrimSpace(plan.Target["captureStrategy"]); value != "" {
-		capture.Strategy = value
+		capture.CaptureStrategy = value
 	}
 	return capture
 }

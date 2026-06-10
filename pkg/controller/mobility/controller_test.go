@@ -1493,7 +1493,7 @@ func TestControllerBGPModeRouteTableDoesNotCaptureRouterSelfOrLocalHome(t *testi
 	spec := plannedPoolSpec()
 	spec.DeliveryPolicy.Mode = "bgp"
 	spec.Members[1].Capture.ProviderMode = captureStrategyRouteTable
-	spec.Members[1].Capture.Strategy = captureStrategyRouteTable
+	spec.Members[1].Capture.CaptureStrategy = captureStrategyRouteTable
 	spec.Members[1].Capture.Target = map[string]string{
 		"region":           "japaneast",
 		"routeTableRef":    "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/routeTables/rt-cloudedge",
@@ -1520,9 +1520,9 @@ func TestControllerBGPModeRouteTableDoesNotCaptureRouterSelfOrLocalHome(t *testi
 		t.Fatalf("Reconcile: %v", err)
 	}
 	plans := decodeActionPlans(t, latestPart(t, store, DynamicSource("cloudedge", "azure-router")).ActionPlansJSON)
-	if findActionPlanByAddress(plans, actionAssignRouteTableRoute, "10.88.60.4/32") != nil ||
-		findActionPlanByAddress(plans, actionAssignRouteTableRoute, "10.88.60.11/32") != nil {
-		t.Fatalf("plans = %#v, want no route-table assign for router self or local same-subnet home", plans)
+	if findActionPlanByAddress(plans, actionAssignSecondaryIP, "10.88.60.4/32") != nil ||
+		findActionPlanByAddress(plans, actionAssignSecondaryIP, "10.88.60.11/32") != nil {
+		t.Fatalf("plans = %#v, want no provider capture assign for router self or local same-subnet home", plans)
 	}
 	if _, ok := maybePathBySourcePrefix(bgp, DynamicSource("cloudedge", "azure-router"), "10.88.60.4/32"); ok {
 		t.Fatalf("paths = %#v, want no BGP advertisement for router self management IP", bgp.paths)
@@ -1536,7 +1536,7 @@ func TestControllerBGPModeRouteTableWrongLocalUDRIsDeprovisioned(t *testing.T) {
 	spec := plannedPoolSpec()
 	spec.DeliveryPolicy.Mode = "bgp"
 	spec.Members[1].Capture.ProviderMode = captureStrategyRouteTable
-	spec.Members[1].Capture.Strategy = captureStrategyRouteTable
+	spec.Members[1].Capture.CaptureStrategy = captureStrategyRouteTable
 	spec.Members[1].Capture.Target = map[string]string{
 		"region":           "japaneast",
 		"routeTableRef":    "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/routeTables/rt-cloudedge",
@@ -1582,12 +1582,12 @@ func TestControllerBGPModeRouteTableWrongLocalUDRIsDeprovisioned(t *testing.T) {
 		t.Fatalf("Reconcile: %v", err)
 	}
 	plans := decodeActionPlans(t, latestPart(t, store, source).ActionPlansJSON)
-	if findActionPlanByAddress(plans, actionAssignRouteTableRoute, "10.88.60.4/32") != nil ||
-		findActionPlanByAddress(plans, actionAssignRouteTableRoute, "10.88.60.11/32") != nil {
+	if findActionPlanByAddress(plans, actionAssignSecondaryIP, "10.88.60.4/32") != nil ||
+		findActionPlanByAddress(plans, actionAssignSecondaryIP, "10.88.60.11/32") != nil {
 		t.Fatalf("plans = %#v, want wrong local UDR assign removed from desired set", plans)
 	}
-	if findActionPlanByAddress(plans, actionUnassignRouteTableRoute, "10.88.60.4/32") == nil ||
-		findActionPlanByAddress(plans, actionUnassignRouteTableRoute, "10.88.60.11/32") == nil {
+	if findActionPlanByAddress(plans, actionUnassignSecondaryIP, "10.88.60.4/32") == nil ||
+		findActionPlanByAddress(plans, actionUnassignSecondaryIP, "10.88.60.11/32") == nil {
 		t.Fatalf("plans = %#v, want wrong local UDR deprovisioned", plans)
 	}
 	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
