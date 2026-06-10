@@ -23,9 +23,9 @@ mobility demo:
 
 | Cloud | API surface |
 | --- | --- |
-| AWS | `ec2:AssignPrivateIpAddresses`, `ec2:UnassignPrivateIpAddresses`, `ec2:DescribeNetworkInterfaces`, `ec2:ModifyNetworkInterfaceAttribute` |
-| Azure | NIC read/write, child `ipConfigurations` read/write/delete/join, and linked `subnets` / `networkSecurityGroups` / `publicIPAddresses` read + join |
-| OCI | `CreatePrivateIp`, `DeletePrivateIp`, `ListPrivateIps`, `GetVnic`, `UpdateVnic`, and subnet read/use |
+| AWS | `ec2:AssignPrivateIpAddresses`, `ec2:UnassignPrivateIpAddresses`, `ec2:DescribeNetworkInterfaces`, `ec2:DescribeInstances`, `ec2:ModifyNetworkInterfaceAttribute` |
+| Azure | NIC read/write, child `ipConfigurations` read/write/delete/join, VM read/instanceView read, and linked `subnets` / `networkSecurityGroups` / `publicIPAddresses` read + join |
+| OCI | `CreatePrivateIp`, `DeletePrivateIp`, `ListPrivateIps`, `GetVnic`, `UpdateVnic`, `ListInstances`, `ListVnicAttachments`, and subnet read/use |
 
 Harness permissions are intentionally not included. Starting/stopping VMs,
 creating NICs/VNICs, changing NSGs/security lists, uploading files, and other lab
@@ -57,8 +57,8 @@ Attach the policy to the instance profile used by each AWS router. Replace:
 
 The mutating EC2 actions are scoped to the target ENI ARN. EC2 describe APIs are
 not scoped to an individual ENI resource in the same way, so the template keeps
-`Resource: "*"` for `DescribeNetworkInterfaces` and restricts it by
-`aws:RequestedRegion`.
+`Resource: "*"` for `DescribeNetworkInterfaces` and `DescribeInstances`, and
+restricts them by `aws:RequestedRegion`.
 
 If a router has both active and standby ENIs, prefer one policy document per
 instance profile with only that instance's own ENI ARN. Do not grant a router
@@ -78,6 +78,13 @@ This replaces broad `Network Contributor` for routerd. The role permits NIC read
 and write plus child `ipConfigurations` read/write/delete. Those are the
 operations the executor uses to enable forwarding and create/delete captured
 secondary IP configurations.
+
+The provider-private-IP inventory plugin also lists VMs in the resource group so
+it can attach compute instance IDs and power state to NIC private-IP records.
+The template therefore includes:
+
+- `Microsoft.Compute/virtualMachines/read`
+- `Microsoft.Compute/virtualMachines/instanceView/read`
 
 Azure ARM also authorizes linked resources when an `ipConfiguration` is written.
 If the ipConfig references a subnet, network security group, or public IP,
@@ -125,7 +132,10 @@ Replace:
 The `private-ips` permission covers create/delete/list of captured private IP
 objects. The `vnics` permission covers reading the VNIC and updating
 `skipSourceDestCheck`. The `subnets` permission covers reading/using the subnet
-referenced by VNIC private-IP placement.
+referenced by VNIC private-IP placement. The inventory plugin also lists
+instances and VNIC attachments so it can attach compute instance IDs and
+lifecycle state to private-IP records; the template therefore includes `read
+instances` and `inspect vnic-attachments`.
 
 Keep the dynamic group narrow. It should match the router instances only, not the
 demo clients and not the operator harness.
@@ -155,7 +165,7 @@ policies and rerunning the live demo is a separate cost-bearing lab step.
 The least-privilege surface above was corrected after a scoped provider-action
 retest captured in `evidence/20260604T051859Z-leastpriv-a2434c96`:
 
-- AWS succeeded with the ENI-scoped four-action policy in `aws-policy.json`.
+- AWS succeeded with the ENI-scoped policy in `aws-policy.json`.
 - OCI succeeded with compartment-scoped `private-ips`, `vnics`, and `subnets`
   permissions in `oci-policy.txt`.
 - Azure required the linked-resource join/read surface above. Where a strict

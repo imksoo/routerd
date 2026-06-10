@@ -179,6 +179,89 @@ func TestOwnershipResolverDoesNotClassifyCapturedSecondaryAsRouterSelf(t *testin
 	}
 }
 
+func TestOwnershipResolverSelfCapturedSecondaryIsNotLocalHomeOwned(t *testing.T) {
+	now := time.Date(2026, 6, 10, 13, 0, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	plan := dynamicconfig.ActionPlan{
+		Provider:    "aws",
+		ProviderRef: "aws-provider",
+		Action:      actionAssignSecondaryIP,
+		Target: map[string]string{
+			"address":     "10.88.60.12/32",
+			"providerRef": "aws-provider",
+			"nicRef":      "eni-a",
+		},
+		Parameters: map[string]string{captureParamHolder: "aws-router-a"},
+	}
+	selfEvent := providerDiscoveryObservedEvent("cloudedge", "cloudedge", "aws-router-a", "10.88.60.12/32", "aws", "aws-provider", providerinventory.PrivateIPRecord{
+		Address:      "10.88.60.12",
+		NICRef:       "eni-a",
+		SubnetRef:    "subnet-aws",
+		ResourceRef:  "i-aws-a",
+		ResourceType: "instance-nic",
+	}, now.Add(-time.Second), time.Hour)
+	decisions, err := resolveAddressOwnership(ownershipResolverInput{
+		PoolName:      "cloudedge",
+		SelfNode:      "aws-router-a",
+		Spec:          spec,
+		Events:        []routerstate.EventRecord{selfEvent},
+		PreviousPlans: []dynamicconfig.ActionPlan{plan},
+		Status: map[string]any{
+			"discoverySelfResourceRef":       "i-aws-a",
+			"discoverySelfPrivateIPs":        []string{"10.88.60.4/32"},
+			"discoverySelfCapturedAddresses": []string{"10.88.60.12/32"},
+			"discoveryLocalInventory":        []map[string]any{{"address": "10.88.60.12/32", "nicRef": "eni-a", "subnetRef": "subnet-aws", "providerRef": "aws-provider", "resourceRef": "i-aws-a", "resourceType": "instance-nic"}},
+			"discoveryOwnedAddresses":        []string{"10.88.60.12/32"},
+		},
+		Now: now,
+	})
+	if err != nil {
+		t.Fatalf("resolveAddressOwnership: %v", err)
+	}
+	decision := ownershipDecisionByAddress(t, decisions, "10.88.60.12/32")
+	if decision.Class != ownershipClassStaleCapture || decision.SuppressionReason != "self-captured-secondary" {
+		t.Fatalf("decision = %#v, want self captured secondary marked stale instead of LocalHomeOwned", decision)
+	}
+}
+
+func TestOwnershipResolverConfirmedSelfCapturedSecondaryAdvertisesAsCapture(t *testing.T) {
+	now := time.Date(2026, 6, 10, 13, 5, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	action := resolverSucceededAction(t, "aws-provider", "eni-a", "aws-router-a", "10.88.60.12/32", actionAssignSecondaryIP, now.Add(-time.Second))
+	decisions, err := resolveAddressOwnership(ownershipResolverInput{
+		PoolName:      "cloudedge",
+		SelfNode:      "aws-router-a",
+		Spec:          spec,
+		Status:        map[string]any{"discoverySelfCapturedAddresses": []string{"10.88.60.12/32"}},
+		ActionJournal: []routerstate.ActionExecutionRecord{action},
+		Now:           now,
+	})
+	if err != nil {
+		t.Fatalf("resolveAddressOwnership: %v", err)
+	}
+	decision := ownershipDecisionByAddress(t, decisions, "10.88.60.12/32")
+	if decision.Class != ownershipClassConfirmedCapture || decision.AdvertiseOwnerNode != "aws-router-a" {
+		t.Fatalf("decision = %#v, want confirmed self captured secondary advertised as capture", decision)
+	}
+}
+
+func TestProviderInventoryHomeOwnerFactsExcludeRouterNICPrimary(t *testing.T) {
+	now := time.Date(2026, 6, 10, 13, 10, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	event := providerDiscoveryObservedEvent("cloudedge", "cloudedge", "aws-router-b", "10.88.60.5/32", "aws", "aws-provider", providerinventory.PrivateIPRecord{
+		Address:      "10.88.60.5",
+		NICRef:       "eni-b",
+		SubnetRef:    "subnet-aws",
+		ResourceRef:  "i-aws-b",
+		ResourceType: "router-nic",
+		Primary:      true,
+	}, now.Add(-time.Second), time.Hour)
+	facts := providerInventoryHomeOwnerFacts("cloudedge", spec, []routerstate.EventRecord{event}, now)
+	if _, ok := facts["10.88.60.5/32"]; ok {
+		t.Fatalf("facts = %#v, want router/member primary excluded from home-owner facts", facts)
+	}
+}
+
 func ownershipDecisionByAddress(t *testing.T, decisions []ownershipDecision, address string) ownershipDecision {
 	t.Helper()
 	for _, decision := range decisions {

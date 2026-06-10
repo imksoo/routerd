@@ -78,6 +78,7 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 	staticOwners := staticOwnedOwnerNodesByAddress(in.Spec)
 	remoteHomeFacts := providerInventoryHomeOwnerFacts(in.PoolName, in.Spec, in.Events, now)
 	localInventory := localInventoryRecordsFromStatus(in.Status, prefix)
+	removeSelfResourceLocalInventory(localInventory, strings.TrimSpace(fmt.Sprint(in.Status["discoverySelfResourceRef"])))
 	selfIPs, capturedIPs, selfIPsObserved := selfInventoryAddressSetsFromStatus(in.Status, prefix)
 	captureObservedIPs := mergeBoolMaps(selfIPs, capturedIPs)
 	eventOwned := resolverEventOwnedAddresses(in.PoolName, in.SelfNode, in.Spec, in.Events, in.Status, prefix, now)
@@ -164,6 +165,35 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 			}
 			out = append(out, decision)
 			continue
+		}
+		if capturedIPs[address] {
+			remoteFact, hasRemoteFact := remoteHomeFacts[address]
+			if !hasRemoteFact || strings.TrimSpace(remoteFact.NodeRef) == "" || strings.TrimSpace(remoteFact.NodeRef) == self.NodeRef {
+				if decision.CaptureState == captureStateConfirmed {
+					decision.Class = ownershipClassConfirmedCapture
+					decision.AdvertiseOwnerNode = self.NodeRef
+					decision.AdvertiseReason = "confirmed-capture"
+					decision.Source = "provider-action"
+					decision.Fresh = true
+					out = append(out, decision)
+					continue
+				}
+				if decision.CaptureState == captureStateNone {
+					decision.CaptureState = captureStateStale
+					decision.CaptureHolderNode = self.NodeRef
+					decision.CaptureProviderRef = strings.TrimSpace(self.Capture.ProviderRef)
+					decision.CaptureTargetRef = providerCaptureRefFromCapture(self.Capture, self.CaptureTarget)
+					decision.CaptureStrategy = effectiveCaptureStrategy("", self.Capture.Strategy)
+				}
+				decision.Class = ownershipClassStaleCapture
+				decision.SuppressionReason = "self-captured-secondary"
+				decision.Source = "self-inventory"
+				decision.Fresh = true
+				out = append(out, decision)
+				continue
+			}
+			// Remote fresh-home facts below decide whether this is a valid
+			// same-provider capture or a stale cross-home attachment.
 		}
 		if rec, ok := localInventory[address]; ok && localInventoryRecordIsRouterSelf(rec, self) {
 			if decision.CaptureState != captureStateNone && decision.CaptureStrategy == captureStrategyRouteTable {
@@ -326,6 +356,18 @@ func localInventoryRecordsFromStatus(status map[string]any, poolPrefix netip.Pre
 	return out
 }
 
+func removeSelfResourceLocalInventory(records map[string]resolverPrivateIPRecord, selfResourceRef string) {
+	selfResourceRef = strings.TrimSpace(selfResourceRef)
+	if selfResourceRef == "" {
+		return
+	}
+	for address, rec := range records {
+		if strings.TrimSpace(rec.ResourceRef) == selfResourceRef {
+			delete(records, address)
+		}
+	}
+}
+
 func selfInventoryAddressSetsFromStatus(status map[string]any, poolPrefix netip.Prefix) (map[string]bool, map[string]bool, bool) {
 	privateIPs := map[string]bool{}
 	capturedIPs := map[string]bool{}
@@ -468,7 +510,7 @@ func captureStatesForSelf(self memberPlanInfo, previousPlans []dynamicconfig.Act
 			TargetRef:   targetRef,
 			Strategy:    effectiveCaptureStrategy(tr.plan.Provider, firstNonEmpty(tr.plan.Target["captureStrategy"], self.Capture.Strategy)),
 		}
-		if tr.assign && (selfIPs[address] || tr.succeeded && !selfIPsObserved) {
+		if tr.assign && tr.succeeded && (selfIPs[address] || !selfIPsObserved) {
 			confirmed[address] = state
 			continue
 		}

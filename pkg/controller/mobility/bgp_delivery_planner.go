@@ -223,7 +223,7 @@ func decisionEligibleForCapture(decision ownershipDecision, self memberPlanInfo,
 		return decision.Source == providerDiscoverySource && decision.AdvertiseReason == "ownership-event"
 	case ownershipClassStaleCapture:
 		switch strings.TrimSpace(decision.SuppressionReason) {
-		case "fresh-home-owner", "local-router-self", "local-home-owner":
+		case "fresh-home-owner", "local-router-self", "local-home-owner", "self-captured-secondary":
 			return false
 		default:
 			return true

@@ -21,6 +21,8 @@ type inventoryResult struct {
 		Self   struct {
 			NICRef            string   `json:"nicRef"`
 			SubnetRef         string   `json:"subnetRef"`
+			ResourceRef       string   `json:"resourceRef"`
+			ResourceType      string   `json:"resourceType"`
 			PrivateIPs        []string `json:"privateIPs"`
 			ForwardingEnabled *bool    `json:"forwardingEnabled"`
 		} `json:"self"`
@@ -28,6 +30,8 @@ type inventoryResult struct {
 			Address       string            `json:"address"`
 			NICRef        string            `json:"nicRef"`
 			SubnetRef     string            `json:"subnetRef"`
+			ResourceRef   string            `json:"resourceRef"`
+			ResourceType  string            `json:"resourceType"`
 			Tags          map[string]string `json:"tags"`
 			InstanceState string            `json:"instanceState"`
 		} `json:"ips"`
@@ -35,6 +39,8 @@ type inventoryResult struct {
 			Address       string            `json:"address"`
 			NICRef        string            `json:"nicRef"`
 			SubnetRef     string            `json:"subnetRef"`
+			ResourceRef   string            `json:"resourceRef"`
+			ResourceType  string            `json:"resourceType"`
 			Tags          map[string]string `json:"tags"`
 			InstanceState string            `json:"instanceState"`
 		} `json:"localIPs"`
@@ -69,10 +75,14 @@ esac
 	if res.Status.Self.NICRef != "eni-router" || res.Status.Self.SubnetRef != "subnet-a" {
 		t.Fatalf("self = %+v, want eni-router/subnet-a", res.Status.Self)
 	}
+	if res.Status.Self.ResourceRef != "i-router" || res.Status.Self.ResourceType != "router-nic" {
+		t.Fatalf("self resource = %+v, want i-router/router-nic", res.Status.Self)
+	}
 	if res.Status.Self.ForwardingEnabled == nil || !*res.Status.Self.ForwardingEnabled {
 		t.Fatalf("self.forwardingEnabled = %#v, want true", res.Status.Self.ForwardingEnabled)
 	}
 	assertIP(t, res, "10.77.60.11", "eni-client", "subnet-a")
+	assertResource(t, res, "10.77.60.11", "i-client", "instance-nic")
 	assertLocalIP(t, res, "10.77.60.11")
 }
 
@@ -103,10 +113,14 @@ esac
 	if res.Status.Self.NICRef != "eni-router" || res.Status.Self.SubnetRef != "subnet-a" {
 		t.Fatalf("self = %+v, want resolved eni-router/subnet-a", res.Status.Self)
 	}
+	if res.Status.Self.ResourceRef != "i-router" || res.Status.Self.ResourceType != "router-nic" {
+		t.Fatalf("self resource = %+v, want i-router/router-nic", res.Status.Self)
+	}
 	if res.Status.Self.ForwardingEnabled == nil || *res.Status.Self.ForwardingEnabled {
 		t.Fatalf("self.forwardingEnabled = %#v, want false", res.Status.Self.ForwardingEnabled)
 	}
 	assertIP(t, res, "10.77.60.11", "eni-client", "subnet-a")
+	assertResource(t, res, "10.77.60.11", "i-client", "instance-nic")
 }
 
 func TestProviderPrivateIPInventoryPluginAWSResolvesSelfFromIMDS(t *testing.T) {
@@ -156,10 +170,14 @@ esac
 	if res.Status.Self.NICRef != "eni-router-b" || res.Status.Self.SubnetRef != "subnet-a" {
 		t.Fatalf("self = %+v, want IMDS-resolved eni-router-b/subnet-a", res.Status.Self)
 	}
+	if res.Status.Self.ResourceRef != "i-router-b" || res.Status.Self.ResourceType != "router-nic" {
+		t.Fatalf("self resource = %+v, want i-router-b/router-nic", res.Status.Self)
+	}
 	if res.Status.Self.ForwardingEnabled == nil || !*res.Status.Self.ForwardingEnabled {
 		t.Fatalf("self.forwardingEnabled = %#v, want true", res.Status.Self.ForwardingEnabled)
 	}
 	assertIP(t, res, "10.77.60.11", "eni-client", "subnet-a")
+	assertResource(t, res, "10.77.60.11", "i-client", "instance-nic")
 }
 
 func TestProviderPrivateIPInventoryPluginAzure(t *testing.T) {
@@ -172,6 +190,9 @@ case "$*" in
     ;;
   *"network nic list --resource-group rg-demo"*)
     printf '%s\n' '[{"id":"/nic/router","tags":{"role":"router"},"ipConfigurations":[{"privateIPAddress":"10.77.60.22","primary":true,"subnet":{"id":"/subnets/demo"}}]},{"id":"/nic/client","tags":{"role":"client"},"ipConfigurations":[{"privateIPAddress":"10.77.60.12","primary":false,"subnet":{"id":"/subnets/demo"}}]}]'
+    ;;
+  *"vm list --resource-group rg-demo"*)
+    printf '%s\n' '[{"id":"/vm/router","powerState":"VM running","networkProfile":{"networkInterfaces":[{"id":"/nic/router"}]}},{"id":"/vm/client","powerState":"VM running","networkProfile":{"networkInterfaces":[{"id":"/nic/client"}]}}]'
     ;;
   *)
     echo "unexpected az args: $*" >&2
@@ -186,10 +207,14 @@ esac
 	if res.Status.Self.NICRef != "/nic/router" || res.Status.Self.SubnetRef != "/subnets/demo" {
 		t.Fatalf("self = %+v, want /nic/router//subnets/demo", res.Status.Self)
 	}
+	if res.Status.Self.ResourceRef != "/vm/router" || res.Status.Self.ResourceType != "router-nic" {
+		t.Fatalf("self resource = %+v, want /vm/router/router-nic", res.Status.Self)
+	}
 	if res.Status.Self.ForwardingEnabled == nil || !*res.Status.Self.ForwardingEnabled {
 		t.Fatalf("self.forwardingEnabled = %#v, want true", res.Status.Self.ForwardingEnabled)
 	}
 	assertIP(t, res, "10.77.60.12", "/nic/client", "/subnets/demo")
+	assertResource(t, res, "10.77.60.12", "/vm/client", "instance-nic")
 	assertLocalIP(t, res, "10.77.60.12")
 }
 
@@ -313,6 +338,8 @@ esac
 	}
 	assertIP(t, res, "10.77.60.13", "vnic-client", "subnet-oci")
 	assertIP(t, res, "10.77.60.19", "vnic-stopped", "subnet-oci")
+	assertResource(t, res, "10.77.60.13", "i-client", "instance-nic")
+	assertResource(t, res, "10.77.60.19", "i-stopped", "instance-nic")
 	assertInstanceState(t, res, "10.77.60.19", "stopped")
 	assertInstanceState(t, res, "10.77.60.13", "running")
 }
@@ -329,7 +356,7 @@ case "$*" in
     printf '%s\n' '[{"id":"/nic/router","tags":{"role":"router"},"ipConfigurations":[{"privateIPAddress":"10.77.60.22","primary":true,"subnet":{"id":"/subnets/demo"}}]},{"id":"/nic/client","tags":{"role":"client"},"ipConfigurations":[{"privateIPAddress":"10.77.60.12","primary":false,"subnet":{"id":"/subnets/demo"}}]},{"id":"/nic/stopped","tags":{"role":"stopped"},"ipConfigurations":[{"privateIPAddress":"10.77.60.19","primary":true,"subnet":{"id":"/subnets/demo"}}]}]'
     ;;
   *"vm list --resource-group rg-demo"*)
-    printf '%s\n' '[{"powerState":"VM running","networkProfile":{"networkInterfaces":[{"id":"/nic/router"}]}},{"powerState":"VM running","networkProfile":{"networkInterfaces":[{"id":"/nic/client"}]}},{"powerState":"VM stopped","networkProfile":{"networkInterfaces":[{"id":"/nic/stopped"}]}}]'
+    printf '%s\n' '[{"id":"/vm/router","powerState":"VM running","networkProfile":{"networkInterfaces":[{"id":"/nic/router"}]}},{"id":"/vm/client","powerState":"VM running","networkProfile":{"networkInterfaces":[{"id":"/nic/client"}]}},{"id":"/vm/stopped","powerState":"VM stopped","networkProfile":{"networkInterfaces":[{"id":"/nic/stopped"}]}}]'
     ;;
   *)
     echo "unexpected az args: $*" >&2
@@ -343,6 +370,8 @@ esac
 	}
 	assertIP(t, res, "10.77.60.12", "/nic/client", "/subnets/demo")
 	assertIP(t, res, "10.77.60.19", "/nic/stopped", "/subnets/demo")
+	assertResource(t, res, "10.77.60.12", "/vm/client", "instance-nic")
+	assertResource(t, res, "10.77.60.19", "/vm/stopped", "instance-nic")
 	assertInstanceState(t, res, "10.77.60.19", "stopped")
 	assertInstanceState(t, res, "10.77.60.12", "running")
 }
@@ -392,6 +421,19 @@ func assertLocalIP(t *testing.T, res inventoryResult, address string) {
 		}
 	}
 	t.Fatalf("missing local address %s in %+v", address, res.Status.LocalIPs)
+}
+
+func assertResource(t *testing.T, res inventoryResult, address, wantRef, wantType string) {
+	t.Helper()
+	for _, ip := range res.Status.IPs {
+		if ip.Address == address {
+			if ip.ResourceRef != wantRef || ip.ResourceType != wantType {
+				t.Fatalf("resource for %s = %q/%q, want %q/%q", address, ip.ResourceRef, ip.ResourceType, wantRef, wantType)
+			}
+			return
+		}
+	}
+	t.Fatalf("missing address %s in %+v", address, res.Status.IPs)
 }
 
 func assertInstanceState(t *testing.T, res inventoryResult, address, wantState string) {
