@@ -29,6 +29,7 @@ type bgpDeliveryPlannerInput struct {
 	Profiles             map[string]api.CloudProviderProfileSpec
 	ActionJournal        []routerstate.ActionExecutionRecord
 	ObservedSelfIPs      map[string]bool
+	ObservedSelfCaptures map[string]bool
 	ObservedSelfIPsOK    bool
 	ForwardingObserved   bool
 	ForwardingEnabled    bool
@@ -59,7 +60,7 @@ func planBGPMobilityDelivery(in bgpDeliveryPlannerInput) (bgpDeliveryPlannerResu
 	decisions := decisionsByAddress(in.Decisions)
 	failedActions := latestFailedProviderActions(in.ActionJournal)
 	paths, providerCaptured, seized := planBGPAdvertisements(in.Source, in.Self, in.Decisions, in.Placement, failedActions)
-	candidates := planCaptureCandidates(in.Self, in.Members, decisions, in.Placement, in.InstalledNextHops, in.RIBObserved, in.PreviousPlans, poolPrefix, now)
+	candidates := planCaptureCandidates(in.Self, in.Members, decisions, in.Placement, in.InstalledNextHops, in.RIBObserved, in.PreviousPlans, in.ObservedSelfCaptures, poolPrefix, now)
 	actionPlans, err := planCaptureActionPlans(in, candidates)
 	if err != nil {
 		return bgpDeliveryPlannerResult{}, err
@@ -133,10 +134,15 @@ func bgpDecisionSourceType(decision ownershipDecision) string {
 	}
 }
 
-func planCaptureCandidates(self memberPlanInfo, members map[string]memberPlanInfo, decisions map[string]ownershipDecision, placement PlacementDecision, installedNextHops map[string][]string, ribObserved bool, previousPlans []dynamicconfig.ActionPlan, poolPrefix netip.Prefix, now time.Time) map[string]bgpTrapCandidate {
+func planCaptureCandidates(self memberPlanInfo, members map[string]memberPlanInfo, decisions map[string]ownershipDecision, placement PlacementDecision, installedNextHops map[string][]string, ribObserved bool, previousPlans []dynamicconfig.ActionPlan, observedSelfIPs map[string]bool, poolPrefix netip.Prefix, now time.Time) map[string]bgpTrapCandidate {
 	out := map[string]bgpTrapCandidate{}
 	if self.Capture.Type != "provider-secondary-ip" || !placement.Active {
 		return out
+	}
+	for address, decision := range decisions {
+		if confirmedCaptureObservedOnSelf(decision, self, observedSelfIPs) {
+			out[address] = bgpTrapCandidate{ProtectOnly: true}
+		}
 	}
 	selfNextHop := bgpTrapSelfNextHop(placement.SelfMarker)
 	for rawPrefix, nextHops := range installedNextHops {
@@ -155,6 +161,12 @@ func planCaptureCandidates(self memberPlanInfo, members map[string]memberPlanInf
 		if selfNextHop != "" && !bgpTrapHasRemoteNextHop(cleanNextHops, selfNextHop) {
 			continue
 		}
+		if decision.Class == ownershipClassConfirmedCapture {
+			if confirmedCaptureObservedOnSelf(decision, self, observedSelfIPs) {
+				out[address] = bgpTrapCandidate{ProtectOnly: true}
+			}
+			continue
+		}
 		if !routeTableCaptureAllowed(decision, self) {
 			continue
 		}
@@ -163,6 +175,12 @@ func planCaptureCandidates(self memberPlanInfo, members map[string]memberPlanInf
 	for address, candidate := range previousBGPTrapCandidateAddresses(previousPlans, poolPrefix) {
 		decision, ok := decisions[address]
 		if !ok || !decisionEligibleForCapture(decision, self, members, placement) {
+			continue
+		}
+		if decision.Class == ownershipClassConfirmedCapture {
+			if confirmedCaptureObservedOnSelf(decision, self, observedSelfIPs) {
+				out[address] = bgpTrapCandidate{ProtectOnly: true}
+			}
 			continue
 		}
 		if !routeTableCaptureAllowed(decision, self) {
@@ -182,13 +200,25 @@ func planCaptureCandidates(self memberPlanInfo, members map[string]memberPlanInf
 	return out
 }
 
+func confirmedCaptureObservedOnSelf(decision ownershipDecision, self memberPlanInfo, observedSelfIPs map[string]bool) bool {
+	if decision.Class != ownershipClassConfirmedCapture {
+		return false
+	}
+	if strings.TrimSpace(decision.AdvertiseOwnerNode) != strings.TrimSpace(self.NodeRef) {
+		return false
+	}
+	return observedSelfIPs[normalizeAddressString(decision.Address)]
+}
+
 func decisionEligibleForCapture(decision ownershipDecision, self memberPlanInfo, members map[string]memberPlanInfo, placement PlacementDecision) bool {
 	if normalizeAddressString(decision.Address) == "" {
 		return false
 	}
 	switch decision.Class {
-	case ownershipClassLocalRouterSelf, ownershipClassStaticOwned, ownershipClassStaticHandover, ownershipClassConfirmedCapture:
+	case ownershipClassLocalRouterSelf, ownershipClassStaticOwned, ownershipClassStaticHandover:
 		return false
+	case ownershipClassConfirmedCapture:
+		return true
 	case ownershipClassLocalHomeOwned:
 		return decision.Source == providerDiscoverySource && decision.AdvertiseReason == "ownership-event"
 	case ownershipClassStaleCapture:

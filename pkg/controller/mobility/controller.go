@@ -187,6 +187,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 	}
 	events = append(events, releaseEvents...)
 	discoverySelfIPs, discoverySelfIPsObserved := c.discoverySelfPrivateIPSet(res.Metadata.Name, spec)
+	discoverySelfCaptures, _ := c.discoverySelfCapturedAddressSet(res.Metadata.Name, spec)
 	livenessMarkers, livenessMarkersObserved := c.bgpLivenessMarkers()
 	ownerPlacement := evaluateBGPCapturePlacement(self, members, livenessMarkers, livenessMarkersObserved)
 	actionJournal, err := c.Store.ListActions(routerstate.ActionExecutionFilter{})
@@ -228,6 +229,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		Profiles:             cloudProviderProfiles(c.Router),
 		ActionJournal:        actionJournal,
 		ObservedSelfIPs:      discoverySelfIPs,
+		ObservedSelfCaptures: discoverySelfCaptures,
 		ObservedSelfIPsOK:    discoverySelfIPsObserved,
 		ForwardingObserved:   forwardingObserved,
 		ForwardingEnabled:    forwardingEnabled,
@@ -778,6 +780,28 @@ func (c Controller) discoverySelfPrivateIPSet(poolName string, spec api.Mobility
 	return out, true
 }
 
+func (c Controller) discoverySelfCapturedAddressSet(poolName string, spec api.MobilityPoolSpec) (map[string]bool, bool) {
+	status := c.Store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", poolName)
+	raw, ok := status["discoverySelfCapturedAddresses"]
+	if !ok {
+		return nil, false
+	}
+	prefix, err := netip.ParsePrefix(strings.TrimSpace(spec.Prefix))
+	if err != nil {
+		return nil, false
+	}
+	prefix = prefix.Masked()
+	out := map[string]bool{}
+	for _, value := range statusStringSlice(raw) {
+		address, ok := normalizeDiscoveredAddress(value, prefix)
+		if !ok {
+			continue
+		}
+		out[address] = true
+	}
+	return out, true
+}
+
 func (c Controller) discoveryProviderOwnedAddressSet(poolName string, spec api.MobilityPoolSpec) (map[string]bool, bool) {
 	status := c.Store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", poolName)
 	raw, ok := status["discoveryOwnedAddresses"]
@@ -867,6 +891,9 @@ func bgpProviderActionPlans(poolName, selfNode string, spec api.MobilityPoolSpec
 			}
 			desiredAddresses[address] = true
 			candidate := desiredTrapAddresses[address]
+			if candidate.ProtectOnly {
+				continue
+			}
 			seize := candidate.Seize || shouldAllowBGPTrapReassignment(self, address, previousPlans, actionJournal, observedSelfIPs, observedSelfIPsOK)
 			generated, err := providerActionPlans(poolName, profile, self.Capture, self.CaptureTarget, address, forwardingSeen, seize)
 			if err != nil {
@@ -938,9 +965,10 @@ func bgpProviderActionPlans(poolName, selfNode string, spec api.MobilityPoolSpec
 }
 
 type bgpTrapCandidate struct {
-	PathSig    string
-	LastSeenAt time.Time
-	Seize      bool
+	PathSig     string
+	LastSeenAt  time.Time
+	Seize       bool
+	ProtectOnly bool
 }
 
 func previousBGPTrapCandidateAddresses(previousPlans []dynamicconfig.ActionPlan, poolPrefix netip.Prefix) map[string]bgpTrapCandidate {
