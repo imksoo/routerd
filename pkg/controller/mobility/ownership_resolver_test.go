@@ -262,6 +262,64 @@ func TestProviderInventoryHomeOwnerFactsExcludeRouterNICPrimary(t *testing.T) {
 	}
 }
 
+func TestOwnershipResolverNilStatusValuesDoNotLeakNilStrings(t *testing.T) {
+	now := time.Date(2026, 6, 10, 13, 15, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	decisions, err := resolveAddressOwnership(ownershipResolverInput{
+		PoolName: "cloudedge",
+		SelfNode: "aws-router-a",
+		Spec:     spec,
+		Status: map[string]any{
+			"discoverySelfResourceRef": nil,
+			"discoverySelfPrivateIPs":  []string{"10.88.60.4/32"},
+			"discoverySelfSubnetRef":   nil,
+			"discoveryLocalInventory": []map[string]any{
+				{"address": "10.88.60.11/32", "nicRef": nil, "subnetRef": nil, "providerRef": nil, "resourceRef": nil, "resourceType": nil},
+			},
+		},
+		Now: now,
+	})
+	if err != nil {
+		t.Fatalf("resolveAddressOwnership: %v", err)
+	}
+	localHome := ownershipDecisionByAddress(t, decisions, "10.88.60.11/32")
+	if localHome.Class != ownershipClassLocalHomeOwned {
+		t.Fatalf("localHome = %#v, want nil resource refs not to remove local inventory", localHome)
+	}
+	routerSelf := ownershipDecisionByAddress(t, decisions, "10.88.60.4/32")
+	for _, decision := range []ownershipDecision{localHome, routerSelf} {
+		if ownershipDecisionContainsNilString(decision) {
+			t.Fatalf("decision = %#v, want no <nil> status string leaks", decision)
+		}
+	}
+}
+
+func ownershipDecisionContainsNilString(decision ownershipDecision) bool {
+	values := []string{
+		decision.Address,
+		decision.Class,
+		decision.HomeOwnerNode,
+		decision.HomeProviderRef,
+		decision.HomeSubnetRef,
+		decision.HomeNICRef,
+		decision.CaptureHolderNode,
+		decision.CaptureProviderRef,
+		decision.CaptureTargetRef,
+		decision.CaptureStrategy,
+		decision.CaptureState,
+		decision.AdvertiseOwnerNode,
+		decision.AdvertiseReason,
+		decision.SuppressionReason,
+		decision.Source,
+	}
+	for _, value := range values {
+		if value == "<nil>" {
+			return true
+		}
+	}
+	return false
+}
+
 func ownershipDecisionByAddress(t *testing.T, decisions []ownershipDecision, address string) ownershipDecision {
 	t.Helper()
 	for _, decision := range decisions {
