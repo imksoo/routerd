@@ -595,12 +595,12 @@ func (c DiscoveryController) providerDiscoveredAddresses(group, poolName string,
 	if err != nil {
 		return nil
 	}
-	out := map[string]bool{}
+	latest := map[string]routerstate.EventRecord{}
 	for _, ev := range events {
 		if ev.Group != group {
 			continue
 		}
-		if ev.Type != ObservedEventType {
+		if ev.Type != ObservedEventType && ev.Type != ExpiredEventType {
 			continue
 		}
 		if strings.TrimSpace(ev.Payload["source"]) != providerDiscoverySource {
@@ -610,7 +610,21 @@ func (c DiscoveryController) providerDiscoveredAddresses(group, poolName string,
 			continue
 		}
 		address, ok := normalizeDiscoveredAddress(firstNonEmpty(ev.Payload["address"], ev.Subject), poolPrefix)
-		if ok {
+		if !ok {
+			continue
+		}
+		candidate := ev
+		if candidate.ObservedAt.IsZero() {
+			candidate.ObservedAt = now
+		}
+		current, found := latest[address]
+		if !found || eventRecordGreater(candidate, current) {
+			latest[address] = candidate
+		}
+	}
+	out := map[string]bool{}
+	for address, ev := range latest {
+		if ev.Type == ObservedEventType {
 			out[address] = true
 		}
 	}
