@@ -1641,6 +1641,46 @@ func TestControllerBGPModeDeprovisionRegeneratesFromActionJournal(t *testing.T) 
 	}
 }
 
+func TestControllerBGPModeConfirmedCaptureDoesNotDeprovision(t *testing.T) {
+	now := time.Date(2026, 6, 10, 14, 0, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	address := "10.88.60.12/32"
+	seedSucceededBGPCaptureAction(t, store, "aws-provider", "eni-a", "aws-router-a", address, "assign-secondary-ip", 1, now.Add(-time.Minute))
+	saveBGPInstalledNextHops(t, store, map[string][]string{address: {"10.99.0.200"}})
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"discoverySelfPrivateIPs":        []string{"10.88.60.4/32"},
+		"discoverySelfCapturedAddresses": []string{address},
+		"discoveryLastScanAt":            now.Format(time.RFC3339Nano),
+	}); err != nil {
+		t.Fatalf("SaveObjectStatus: %v", err)
+	}
+
+	bgp := &fakeBGPPaths{}
+	controller := Controller{Router: routerWithBGPRouter(planningRouterForNode("aws-router-a", spec)), Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	path := pathBySourcePrefix(t, bgp, DynamicSource("cloudedge", "aws-router-a"), address)
+	if path.Attrs.LocalPref != bgpMobilityLocalPref(1) {
+		t.Fatalf("path localPref = %d, want provider-captured advertisement", path.Attrs.LocalPref)
+	}
+	plans := decodeActionPlans(t, latestPart(t, store, DynamicSource("cloudedge", "aws-router-a")).ActionPlansJSON)
+	if findActionPlanByAddress(plans, "unassign-secondary-ip", address) != nil {
+		t.Fatalf("plans = %#v, want confirmed capture protected from deprovision", plans)
+	}
+	if findActionPlanByAddress(plans, "assign-secondary-ip", address) != nil {
+		t.Fatalf("plans = %#v, want no new assign plan for already confirmed capture", plans)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	decisions := ownershipStatusDecisions(t, status["ownershipResolverDecisions"])
+	decision := ownershipStatusDecisionByAddress(t, decisions, address)
+	if decision["class"] != ownershipClassConfirmedCapture {
+		t.Fatalf("decision = %#v, want ConfirmedCapture", decision)
+	}
+}
+
 func TestControllerBGPModeStaticOwnedAdvertisesOnPremOwner(t *testing.T) {
 	now := time.Date(2026, 6, 2, 9, 0, 0, 0, time.UTC)
 	store := testStore(t, now)
