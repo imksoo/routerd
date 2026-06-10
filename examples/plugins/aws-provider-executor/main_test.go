@@ -56,6 +56,12 @@ func reqSpec(action, mode string) executeActionRequestSpec {
 	}
 }
 
+func routeReqSpec(action, mode string) executeActionRequestSpec {
+	spec := reqSpec(action, mode)
+	spec.Target["routeTableRef"] = "rtb-cloudedge"
+	return spec
+}
+
 func dispatchWith(spec executeActionRequestSpec, runner awsRunner) executeActionResult {
 	return dispatch(context.Background(), executeActionRequest{Spec: spec}, runner)
 }
@@ -226,6 +232,50 @@ func TestUnassignExecuteIssuesUnassign(t *testing.T) {
 	want := "ec2 unassign-private-ip-addresses --network-interface-id eni-1 --private-ip-addresses 10.88.60.9 --region ap-northeast-1"
 	if got != want {
 		t.Fatalf("unassign argv mismatch:\n got: %s\nwant: %s", got, want)
+	}
+}
+
+func TestAssignRouteTableExecuteCreatesRoute(t *testing.T) {
+	f := &fakeAWS{}
+	res := dispatchWith(routeReqSpec(actionAssignRouteTableRoute, modeExecute), f.run)
+	if res.Status.Status != statusSucceeded {
+		t.Fatalf("want succeeded, got %q err=%q", res.Status.Status, res.Status.Error)
+	}
+	got := strings.Join(f.calls[0], " ")
+	want := "ec2 create-route --route-table-id rtb-cloudedge --destination-cidr-block 10.88.60.9/32 --network-interface-id eni-1 --region ap-northeast-1"
+	if got != want {
+		t.Fatalf("create route argv mismatch:\n got: %s\nwant: %s", got, want)
+	}
+	if res.Status.Observed["assignedRoute"] != "10.88.60.9/32" || res.Status.Observed["routeTableRef"] != "rtb-cloudedge" || res.Status.Observed["nextHopNICRef"] != "eni-1" {
+		t.Fatalf("observed = %#v, want assigned route metadata", res.Status.Observed)
+	}
+}
+
+func TestAssignRouteTableSeizeReplacesRoute(t *testing.T) {
+	f := &fakeAWS{}
+	spec := routeReqSpec(actionAssignRouteTableRoute, modeExecute)
+	spec.Parameters = map[string]string{"allowReassignment": "true"}
+	res := dispatchWith(spec, f.run)
+	if res.Status.Status != statusSucceeded {
+		t.Fatalf("want succeeded, got %q err=%q", res.Status.Status, res.Status.Error)
+	}
+	got := strings.Join(f.calls[0], " ")
+	want := "ec2 replace-route --route-table-id rtb-cloudedge --destination-cidr-block 10.88.60.9/32 --network-interface-id eni-1 --region ap-northeast-1"
+	if got != want {
+		t.Fatalf("replace route argv mismatch:\n got: %s\nwant: %s", got, want)
+	}
+}
+
+func TestUnassignRouteTableExecuteDeletesRoute(t *testing.T) {
+	f := &fakeAWS{}
+	res := dispatchWith(routeReqSpec(actionUnassignRouteTableRoute, modeExecute), f.run)
+	if res.Status.Status != statusSucceeded {
+		t.Fatalf("want succeeded, got %q err=%q", res.Status.Status, res.Status.Error)
+	}
+	got := strings.Join(f.calls[0], " ")
+	want := "ec2 delete-route --route-table-id rtb-cloudedge --destination-cidr-block 10.88.60.9/32 --region ap-northeast-1"
+	if got != want {
+		t.Fatalf("delete route argv mismatch:\n got: %s\nwant: %s", got, want)
 	}
 }
 
