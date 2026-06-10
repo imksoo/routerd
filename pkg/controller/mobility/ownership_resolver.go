@@ -183,7 +183,7 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 					decision.CaptureHolderNode = self.NodeRef
 					decision.CaptureProviderRef = strings.TrimSpace(self.Capture.ProviderRef)
 					decision.CaptureTargetRef = providerCaptureRefFromCapture(self.Capture, self.CaptureTarget)
-					decision.CaptureStrategy = effectiveCaptureStrategy("", self.Capture.Strategy)
+					decision.CaptureStrategy = effectiveCaptureStrategy("", captureStrategyValue(self.Capture))
 				}
 				decision.Class = ownershipClassStaleCapture
 				decision.SuppressionReason = "self-captured-secondary"
@@ -513,7 +513,7 @@ func captureStatesForSelf(self memberPlanInfo, previousPlans []dynamicconfig.Act
 			HolderNode:  holder,
 			ProviderRef: providerRef,
 			TargetRef:   targetRef,
-			Strategy:    effectiveCaptureStrategy(tr.plan.Provider, firstNonEmpty(tr.plan.Target["captureStrategy"], self.Capture.Strategy)),
+			Strategy:    effectiveCaptureStrategy(tr.plan.Provider, firstNonEmpty(tr.plan.Target["captureStrategy"], captureStrategyValue(self.Capture))),
 		}
 		if tr.assign && tr.succeeded && (selfIPs[address] || !selfIPsObserved) {
 			confirmed[address] = state
@@ -540,7 +540,7 @@ func captureStatesForSelf(self memberPlanInfo, previousPlans []dynamicconfig.Act
 			HolderNode:  firstNonEmpty(plan.Parameters[captureParamHolder], self.NodeRef),
 			ProviderRef: providerRef,
 			TargetRef:   targetRef,
-			Strategy:    effectiveCaptureStrategy(plan.Provider, firstNonEmpty(plan.Target["captureStrategy"], self.Capture.Strategy)),
+			Strategy:    effectiveCaptureStrategy(plan.Provider, firstNonEmpty(plan.Target["captureStrategy"], captureStrategyValue(self.Capture))),
 		}
 	}
 	return confirmed, stale

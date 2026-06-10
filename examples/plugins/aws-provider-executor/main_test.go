@@ -70,6 +70,7 @@ func reqSpec(action, mode string) executeActionRequestSpec {
 func routeReqSpec(action, mode string) executeActionRequestSpec {
 	spec := reqSpec(action, mode)
 	spec.Target["routeTableRef"] = "rtb-cloudedge"
+	spec.Target["captureStrategy"] = captureStrategyRouteTable
 	return spec
 }
 
@@ -259,6 +260,19 @@ func TestAssignRouteTableExecuteCreatesRoute(t *testing.T) {
 	}
 	if res.Status.Observed["assignedRoute"] != "10.88.60.9/32" || res.Status.Observed["routeTableRef"] != "rtb-cloudedge" || res.Status.Observed["nextHopNICRef"] != "eni-1" {
 		t.Fatalf("observed = %#v, want assigned route metadata", res.Status.Observed)
+	}
+}
+
+func TestAssignSecondaryIPRouteTableStrategyCreatesRoute(t *testing.T) {
+	f := &fakeAWS{}
+	res := dispatchWith(routeReqSpec(actionAssignSecondaryIP, modeExecute), f.run)
+	if res.Status.Status != statusSucceeded {
+		t.Fatalf("want succeeded, got %q err=%q", res.Status.Status, res.Status.Error)
+	}
+	got := strings.Join(f.calls[0], " ")
+	want := "ec2 create-route --route-table-id rtb-cloudedge --destination-cidr-block 10.88.60.9/32 --network-interface-id eni-1 --region ap-northeast-1"
+	if got != want {
+		t.Fatalf("create route argv mismatch:\n got: %s\nwant: %s", got, want)
 	}
 }
 

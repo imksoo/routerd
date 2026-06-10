@@ -241,6 +241,7 @@ func routeReqSpec(action, mode string) executeActionRequestSpec {
 	spec.Target["routeTableName"] = "rt-cloudedge"
 	spec.Target["routeName"] = "cloudedge-10-88-60-9-32"
 	spec.Target["nextHopIPAddress"] = "10.88.60.254"
+	spec.Target["captureStrategy"] = captureStrategyRouteTable
 	return spec
 }
 
@@ -344,6 +345,18 @@ func TestAssignRouteTableExecuteCreatesRoute(t *testing.T) {
 	want := "network route-table route create --resource-group rg1 --route-table-name rt-cloudedge --name cloudedge-10-88-60-9-32 --address-prefix 10.88.60.9/32 --next-hop-type VirtualAppliance --next-hop-ip-address 10.88.60.254"
 	if len(got) != 1 || got[0] != want {
 		t.Fatalf("calls = %v, want create route", got)
+	}
+}
+
+func TestAssignSecondaryIPRouteTableStrategyCreatesRoute(t *testing.T) {
+	f := &routeFakeAz{}
+	res := dispatchWith(routeReqSpec(actionAssignSecondaryIP, modeExecute), f.run)
+	if res.Status.Status != statusSucceeded {
+		t.Fatalf("want succeeded, got %q err=%q", res.Status.Status, res.Status.Error)
+	}
+	want := "network route-table route create --resource-group rg1 --route-table-name rt-cloudedge --name cloudedge-10-88-60-9-32 --address-prefix 10.88.60.9/32 --next-hop-type VirtualAppliance --next-hop-ip-address 10.88.60.254"
+	if got := strings.Join(f.calls[0], " "); got != want {
+		t.Fatalf("create route argv mismatch:\n got: %s\nwant: %s", got, want)
 	}
 }
 

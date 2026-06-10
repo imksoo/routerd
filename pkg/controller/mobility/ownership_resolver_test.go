@@ -64,7 +64,7 @@ func TestOwnershipResolverScenario392SameProviderConfirmedCapture(t *testing.T) 
 func TestOwnershipResolverScenario394RouteTablePreviousPlanIsStaleUntilConfirmed(t *testing.T) {
 	now := time.Date(2026, 6, 9, 22, 10, 0, 0, time.UTC)
 	spec := awsFailoverPoolSpec()
-	spec.Members[2].Capture.Strategy = captureStrategyRouteTable
+	spec.Members[2].Capture.CaptureStrategy = captureStrategyRouteTable
 	spec.Members[2].Capture.Target = map[string]string{"routeTableRef": "rtb-123"}
 	plan := dynamicconfig.ActionPlan{
 		Provider:    "aws",

@@ -168,7 +168,7 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 	req := providerinventory.NewObservePrivateIPsRequest(providerinventory.ObservePrivateIPsRequestSpec{
 		Provider:      strings.TrimSpace(profile.Provider),
 		ProviderRef:   profileRef,
-		Strategy:      effectiveCaptureStrategy(profile.Provider, self.Capture.Strategy),
+		Strategy:      effectiveCaptureStrategy(profile.Provider, captureStrategyValue(self.Capture)),
 		SelfNode:      self.NodeRef,
 		Pool:          poolName,
 		Prefix:        prefix.String(),

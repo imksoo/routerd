@@ -76,6 +76,9 @@ func ValidateActionPlan(p ActionPlan) error {
 		if strings.TrimSpace(p.Target["nicRef"]) == "" {
 			return fmt.Errorf("actionPlan %q action %q requires target.nicRef", p.Name, p.Action)
 		}
+		if strings.TrimSpace(p.Target["captureStrategy"]) == "route-table" && strings.TrimSpace(p.Target["routeTableRef"]) == "" {
+			return fmt.Errorf("actionPlan %q action %q with target.captureStrategy route-table requires target.routeTableRef", p.Name, p.Action)
+		}
 	case ActionAssignRouteTableRoute, ActionUnassignRouteTableRoute:
 		if strings.TrimSpace(p.Target["address"]) == "" {
 			return fmt.Errorf("actionPlan %q action %q requires target.address", p.Name, p.Action)

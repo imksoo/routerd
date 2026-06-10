@@ -94,6 +94,7 @@ const (
 	actionUnassignRouteTableRoute = "unassign-route-table-route"
 	actionEnsureFwdEnabled        = "ensure-forwarding-enabled"
 	actionEnsureFwdDisabled       = "ensure-forwarding-disabled"
+	captureStrategyRouteTable     = "route-table"
 	defaultAWSCommandTimeoutMs    = 25000
 )
 
@@ -197,12 +198,18 @@ func dispatch(ctx context.Context, req executeActionRequest, runner awsRunner) e
 
 	switch spec.Action {
 	case actionAssignSecondaryIP:
+		if captureStrategy(spec) == captureStrategyRouteTable {
+			return assignRouteTableRoute(ctx, spec, mode, runner)
+		}
 		return assignSecondaryIP(ctx, spec, mode, runner)
 	case actionAssignRouteTableRoute:
 		return assignRouteTableRoute(ctx, spec, mode, runner)
 	case actionEnsureFwdEnabled:
 		return ensureForwardingEnabled(ctx, spec, mode, runner)
 	case actionUnassignSecondaryIP:
+		if captureStrategy(spec) == captureStrategyRouteTable {
+			return unassignRouteTableRoute(ctx, spec, mode, runner)
+		}
 		return unassignSecondaryIP(ctx, spec, mode, runner)
 	case actionUnassignRouteTableRoute:
 		return unassignRouteTableRoute(ctx, spec, mode, runner)
@@ -211,6 +218,10 @@ func dispatch(ctx context.Context, req executeActionRequest, runner awsRunner) e
 	default:
 		return failed(fmt.Sprintf("unsupported action %q", spec.Action), nil)
 	}
+}
+
+func captureStrategy(spec executeActionRequestSpec) string {
+	return strings.TrimSpace(spec.Target["captureStrategy"])
 }
 
 func requireRouteTarget(spec executeActionRequestSpec) (routeTable, eni, address, region string, err error) {

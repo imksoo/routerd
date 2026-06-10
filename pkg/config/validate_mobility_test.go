@@ -468,6 +468,73 @@ func TestValidateMobilityPoolAllowsExplicitSingleOnpremProxyARPWithoutVRRP(t *te
 	}
 }
 
+func TestValidateMobilityPoolAllowsExplicitProxyARPCaptureStrategy(t *testing.T) {
+	router := mobilityPoolRouter(api.MobilityPoolSpec{
+		Prefix:   "10.88.60.0/24",
+		GroupRef: "cloudedge",
+		Members: []api.MobilityPoolMember{{
+			NodeRef: "onprem-router",
+			Site:    "onprem",
+			Role:    "onprem",
+			Capture: api.MobilityMemberCapture{
+				Type:            "proxy-arp",
+				CaptureStrategy: "proxy-arp",
+				Interface:       "lan",
+				ActiveWhen:      api.CaptureActiveWhen{Type: "single-router"},
+			},
+		}},
+	}, testInterfaceResource("lan"))
+	if err := Validate(router); err != nil {
+		t.Fatalf("Validate proxy-arp captureStrategy: %v", err)
+	}
+}
+
+func TestValidateMobilityPoolAllowsRouteTableCaptureStrategyAndLegacyStrategy(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		capture api.MobilityMemberCapture
+	}{
+		{
+			name: "captureStrategy",
+			capture: api.MobilityMemberCapture{
+				Type:            "provider-secondary-ip",
+				ProviderRef:     "azure-provider",
+				ProviderMode:    "route-table",
+				CaptureStrategy: "route-table",
+				NICRef:          "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Network/networkInterfaces/router-nic",
+				Target:          map[string]string{"routeTableRef": "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Network/routeTables/rt-cloudedge"},
+			},
+		},
+		{
+			name: "legacy strategy",
+			capture: api.MobilityMemberCapture{
+				Type:         "provider-secondary-ip",
+				ProviderRef:  "azure-provider",
+				ProviderMode: "route-table",
+				Strategy:     "route-table",
+				NICRef:       "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Network/networkInterfaces/router-nic",
+				Target:       map[string]string{"routeTableRef": "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Network/routeTables/rt-cloudedge"},
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			router := mobilityPoolRouter(api.MobilityPoolSpec{
+				Prefix:   "10.88.60.0/24",
+				GroupRef: "cloudedge",
+				Members: []api.MobilityPoolMember{{
+					NodeRef: "azure-router",
+					Site:    "azure",
+					Role:    "cloud",
+					Capture: tc.capture,
+				}},
+			})
+			if err := Validate(router); err != nil {
+				t.Fatalf("Validate route-table capture strategy: %v", err)
+			}
+		})
+	}
+}
+
 func TestValidateMobilityPoolAllowsOnPremL2OwnershipDiscoverySources(t *testing.T) {
 	router := mobilityPoolRouter(api.MobilityPoolSpec{
 		Prefix:         "192.168.123.0/24",
