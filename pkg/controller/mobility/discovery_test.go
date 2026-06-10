@@ -426,6 +426,53 @@ func TestDiscoveryControllerExcludesPluginSelfPrivateIPs(t *testing.T) {
 	}
 }
 
+func TestDiscoveryControllerScopesProviderInventoryToSelfNICAndSubnet(t *testing.T) {
+	now := time.Date(2026, 6, 9, 23, 50, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := discoveryPoolSpec()
+	runner := &fakeInventoryRunner{result: providerinventory.ObservePrivateIPsResult{
+		TypeMeta: providerinventory.TypeMeta{APIVersion: providerinventory.ProtocolAPIVersion, Kind: providerinventory.KindObservePrivateIPsResult},
+		Status: providerinventory.ObservePrivateIPsResultStatus{
+			Status: providerinventory.ResultSucceeded,
+			Self: &providerinventory.PrivateIPSelf{
+				NICRef:     "plugin-router-nic",
+				SubnetRef:  "subnet-a",
+				PrivateIPs: []string{"10.88.60.12", "10.88.60.13", "10.88.60.4"},
+			},
+			IPs: []providerinventory.PrivateIPRecord{
+				{Address: "10.88.60.4", NICRef: "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic-a", SubnetRef: "subnet-a", Primary: true, Tags: map[string]string{"cloudedge-mobility": "true"}},
+				{Address: "10.88.60.13", NICRef: "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic-a", SubnetRef: "subnet-a", Tags: map[string]string{"cloudedge-mobility": "true"}},
+				{Address: "10.88.60.11", NICRef: "client-nic-a", SubnetRef: "subnet-a", Tags: map[string]string{"cloudedge-mobility": "true"}},
+				{Address: "10.88.60.12", NICRef: "foreign-nic", SubnetRef: "foreign-subnet", ProviderRef: "aws-provider", Tags: map[string]string{"cloudedge-mobility": "true"}},
+			},
+		},
+	}}
+	controller := DiscoveryController{Router: discoveryRouter("azure-router-a", spec), Store: store, Runner: runner.run, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	events, err := store.ListFederationEvents("cloudedge", false, now.Unix())
+	if err != nil {
+		t.Fatalf("ListFederationEvents: %v", err)
+	}
+	if len(events) != 1 || events[0].Subject != "10.88.60.11/32" {
+		t.Fatalf("events = %#v, want only local subnet client ownership", events)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	if got := statusStringSlice(status["discoverySelfPrivateIPs"]); len(got) != 1 || got[0] != "10.88.60.4/32" {
+		t.Fatalf("discoverySelfPrivateIPs = %#v, want only self NIC primary", status["discoverySelfPrivateIPs"])
+	}
+	if got := statusStringSlice(status["discoverySelfCapturedAddresses"]); len(got) != 1 || got[0] != "10.88.60.13/32" {
+		t.Fatalf("discoverySelfCapturedAddresses = %#v, want self NIC secondary split out", status["discoverySelfCapturedAddresses"])
+	}
+	if got := statusStringSlice(status["discoveryOwnedAddresses"]); len(got) != 1 || got[0] != "10.88.60.11/32" {
+		t.Fatalf("discoveryOwnedAddresses = %#v, want only provider-local client", status["discoveryOwnedAddresses"])
+	}
+	if got := statusStringSlice(status["discoveryLocalInventoryIPs"]); stringSliceContains(got, "10.88.60.12/32") {
+		t.Fatalf("discoveryLocalInventoryIPs = %#v, want foreign provider/subnet excluded", got)
+	}
+}
+
 func TestDiscoveryControllerDoesNotStealStaticOwnedAddress(t *testing.T) {
 	now := time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)
 	store := testStore(t, now)

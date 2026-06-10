@@ -199,6 +199,11 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 	}
 	excludedNICs := mobilityRouterNICRefs(spec.Members)
 	selfInventory := resolvedDiscoverySelfInventory(self, discovery, result.Status.Self)
+	rawLocalInventory := filterProviderLocalInventoryRecords(result.Status.LocalInventoryRecords(), profileRef, "", prefix)
+	selfInventory = scopedDiscoverySelfInventory(selfInventory, rawLocalInventory, prefix)
+	trustedSubnetRef := trustedDiscoverySelfSubnetRef(selfInventory, rawLocalInventory)
+	localInventory := filterProviderLocalInventoryRecords(rawLocalInventory, profileRef, trustedSubnetRef, prefix)
+	observedCandidates := filterProviderObservedCandidateRecords(result.Status.ObservedCandidateRecords(), profileRef, trustedSubnetRef)
 	if !placement.Active {
 		if err := c.expireStaleProviderDiscoveryEvents(poolName, spec, self.NodeRef, prefix, nil, now, discoveryLeaseTTL(discovery, spec), 0); err != nil {
 			return err
@@ -226,8 +231,6 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 	if err != nil {
 		return err
 	}
-	localInventory := result.Status.LocalInventoryRecords()
-	observedCandidates := result.Status.ObservedCandidateRecords()
 	ttl := discoveryLeaseTTL(discovery, spec)
 	observedThisScan := map[string]bool{}
 	heldThisScan := map[string]bool{}
@@ -810,6 +813,107 @@ func resolvedDiscoverySelfInventory(self memberPlanInfo, discovery api.MobilityO
 		out.SubnetRef = explicit
 	}
 	return out
+}
+
+func filterProviderLocalInventoryRecords(records []providerinventory.PrivateIPRecord, providerRef, subnetRef string, poolPrefix netip.Prefix) []providerinventory.PrivateIPRecord {
+	providerRef = strings.TrimSpace(providerRef)
+	subnetRef = strings.TrimSpace(subnetRef)
+	var out []providerinventory.PrivateIPRecord
+	for _, rec := range records {
+		if _, ok := normalizeDiscoveredAddress(rec.Address, poolPrefix); !ok {
+			continue
+		}
+		if recProvider := strings.TrimSpace(rec.ProviderRef); recProvider != "" && providerRef != "" && recProvider != providerRef {
+			continue
+		}
+		if recSubnet := strings.TrimSpace(rec.SubnetRef); recSubnet != "" && subnetRef != "" && recSubnet != subnetRef {
+			continue
+		}
+		out = append(out, rec)
+	}
+	return out
+}
+
+func filterProviderObservedCandidateRecords(records []providerinventory.PrivateIPRecord, providerRef, subnetRef string) []providerinventory.PrivateIPRecord {
+	providerRef = strings.TrimSpace(providerRef)
+	subnetRef = strings.TrimSpace(subnetRef)
+	var out []providerinventory.PrivateIPRecord
+	for _, rec := range records {
+		if recProvider := strings.TrimSpace(rec.ProviderRef); recProvider != "" && providerRef != "" && recProvider != providerRef {
+			continue
+		}
+		if recSubnet := strings.TrimSpace(rec.SubnetRef); recSubnet != "" && subnetRef != "" && recSubnet != subnetRef {
+			continue
+		}
+		out = append(out, rec)
+	}
+	return out
+}
+
+func scopedDiscoverySelfInventory(self discoverySelfInventory, localInventory []providerinventory.PrivateIPRecord, poolPrefix netip.Prefix) discoverySelfInventory {
+	selfNIC := strings.TrimSpace(self.NICRef)
+	if selfNIC == "" {
+		self.PrivateIPs = normalizedDiscoveryAddresses(self.PrivateIPs, poolPrefix)
+		self.CapturedAddresses = normalizedDiscoveryAddresses(self.CapturedAddresses, poolPrefix)
+		return self
+	}
+	var privateIPs []string
+	var captured []string
+	matched := false
+	primaryObserved := false
+	for _, rec := range localInventory {
+		if strings.TrimSpace(rec.NICRef) != selfNIC {
+			continue
+		}
+		address, ok := normalizeDiscoveredAddress(rec.Address, poolPrefix)
+		if !ok {
+			continue
+		}
+		matched = true
+		if rec.Primary {
+			primaryObserved = true
+			privateIPs = append(privateIPs, address)
+		} else {
+			captured = append(captured, address)
+		}
+	}
+	if matched {
+		if primaryObserved {
+			self.PrivateIPs = cleanStrings(privateIPs)
+		} else {
+			self.PrivateIPs = normalizedDiscoveryAddresses(self.PrivateIPs, poolPrefix)
+		}
+		self.CapturedAddresses = cleanStrings(captured)
+		return self
+	}
+	self.PrivateIPs = normalizedDiscoveryAddresses(self.PrivateIPs, poolPrefix)
+	self.CapturedAddresses = normalizedDiscoveryAddresses(self.CapturedAddresses, poolPrefix)
+	return self
+}
+
+func trustedDiscoverySelfSubnetRef(self discoverySelfInventory, localInventory []providerinventory.PrivateIPRecord) string {
+	selfNIC := strings.TrimSpace(self.NICRef)
+	selfSubnet := strings.TrimSpace(self.SubnetRef)
+	if selfNIC == "" || selfSubnet == "" {
+		return ""
+	}
+	for _, rec := range localInventory {
+		if strings.TrimSpace(rec.NICRef) == selfNIC && strings.TrimSpace(rec.SubnetRef) == selfSubnet {
+			return selfSubnet
+		}
+	}
+	return ""
+}
+
+func normalizedDiscoveryAddresses(values []string, poolPrefix netip.Prefix) []string {
+	var out []string
+	for _, raw := range values {
+		address, ok := normalizeDiscoveredAddress(raw, poolPrefix)
+		if ok {
+			out = append(out, address)
+		}
+	}
+	return cleanStrings(out)
 }
 
 func discoverySelfInventoryStatus(self discoverySelfInventory) map[string]any {
