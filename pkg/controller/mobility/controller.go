@@ -45,10 +45,11 @@ const (
 	bgpMobilityCommunitySourceHandover = "64512:112"
 	bgpMobilityCommunityFailover       = "64512:120"
 
-	bgpPathSigParam        = "mobilityPathSig"
-	bgpTrapLastSeenAtParam = "mobilityTrapLastSeenAt"
-	bgpTrapTransitionParam = "mobilityProviderTransition"
-	bgpTrapRIBMissingHold  = 2 * time.Minute
+	bgpPathSigParam             = "mobilityPathSig"
+	bgpTrapLastSeenAtParam      = "mobilityTrapLastSeenAt"
+	bgpTrapTransitionParam      = "mobilityProviderTransition"
+	bgpTrapRIBMissingHold       = 2 * time.Minute
+	bgpSeizeLivenessMissingHold = 30 * time.Second
 )
 
 type Store interface {
@@ -189,7 +190,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 	discoverySelfIPs, discoverySelfIPsObserved := c.discoverySelfPrivateIPSet(res.Metadata.Name, spec)
 	discoverySelfCaptures, _ := c.discoverySelfCapturedAddressSet(res.Metadata.Name, spec)
 	livenessMarkers, livenessMarkersObserved := c.bgpLivenessMarkers()
-	ownerPlacement := evaluateBGPCapturePlacement(self, members, livenessMarkers, livenessMarkersObserved)
+	ownerPlacement := c.applyBGPCaptureSeizeHoldDown(res.Metadata.Name, evaluateBGPCapturePlacement(self, members, livenessMarkers, livenessMarkersObserved), now)
 	actionJournal, err := c.Store.ListActions(routerstate.ActionExecutionFilter{})
 	if err != nil {
 		return fmt.Errorf("list action journal: %w", err)
@@ -296,6 +297,9 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		"plannedAt":                         now.Format(time.RFC3339Nano),
 		"operatorIntent":                    "MobilityPool",
 		"derivedConfigKinds":                []string{"BGPPath"},
+	}
+	for key, value := range bgpSeizeHoldDownStatus(delivery.Placement) {
+		status[key] = value
 	}
 	if selfCaptureReason != "" {
 		status["selfCaptureReason"] = selfCaptureReason
@@ -1203,6 +1207,71 @@ func evaluateBGPCapturePlacement(self memberPlanInfo, members map[string]memberP
 	}
 }
 
+func (c Controller) applyBGPCaptureSeizeHoldDown(poolName string, placement PlacementDecision, now time.Time) PlacementDecision {
+	var status map[string]any
+	if c.Store != nil {
+		status = c.Store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", poolName)
+	}
+	return applyBGPCaptureSeizeHoldDown(status, placement, now)
+}
+
+func (c DiscoveryController) applyBGPCaptureSeizeHoldDown(poolName string, placement PlacementDecision, now time.Time) PlacementDecision {
+	var status map[string]any
+	if c.Store != nil {
+		status = c.Store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", poolName)
+	}
+	return applyBGPCaptureSeizeHoldDown(status, placement, now)
+}
+
+func applyBGPCaptureSeizeHoldDown(status map[string]any, placement PlacementDecision, now time.Time) PlacementDecision {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	now = now.UTC()
+	key := bgpSeizeHoldDownKey(placement)
+	if !placement.Seize || key == "" {
+		return placement
+	}
+	since := now
+	if strings.TrimSpace(fmt.Sprint(status["bgpSeizeHoldDownKey"])) == key {
+		if parsed, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(fmt.Sprint(status["bgpSeizeHoldDownSince"]))); err == nil && !parsed.IsZero() {
+			since = parsed.UTC()
+		}
+	}
+	until := since.Add(bgpSeizeLivenessMissingHold)
+	placement.SeizeHoldDownKey = key
+	placement.SeizeHoldDownSince = since
+	placement.SeizeHoldDownUntil = until
+	if !now.Before(until) {
+		return placement
+	}
+	placement.SeizeHoldDown = true
+	placement.Seize = false
+	placement.Active = false
+	if active := strings.TrimSpace(placement.ActiveIdentityNodeRef); active != "" {
+		placement.ActiveNode = active
+	}
+	placement.Reason = strings.TrimSpace(firstNonEmpty(placement.Reason, "active BGP liveness marker is absent")) +
+		"; waiting for seize hold-down until " + until.Format(time.RFC3339Nano)
+	return placement
+}
+
+func bgpSeizeHoldDownKey(placement PlacementDecision) string {
+	if !placement.Seize {
+		return ""
+	}
+	parts := []string{
+		strings.TrimSpace(placement.Group),
+		strings.TrimSpace(placement.ActiveIdentityNodeRef),
+		strings.TrimSpace(placement.ActiveCommunity),
+		strings.TrimSpace(placement.SelfCommunity),
+	}
+	if parts[1] == "" || parts[2] == "" || parts[3] == "" {
+		return ""
+	}
+	return strings.Join(parts, "\x00")
+}
+
 func lookupMemberByNodeRef(members map[string]memberPlanInfo, nodeRef string) (memberPlanInfo, bool) {
 	nodeRef = strings.TrimSpace(nodeRef)
 	if nodeRef == "" {
@@ -1319,6 +1388,31 @@ func bgpCaptureElectionStatus(decision PlacementDecision) map[string]any {
 	if decision.ActiveIdentityNodeRef != "" {
 		status["activeIdentityNodeRef"] = decision.ActiveIdentityNodeRef
 	}
+	if decision.SeizeHoldDownKey != "" {
+		status["seizeHoldDown"] = decision.SeizeHoldDown
+		status["seizeHoldDownKey"] = decision.SeizeHoldDownKey
+		status["seizeHoldDownSince"] = decision.SeizeHoldDownSince.Format(time.RFC3339Nano)
+		status["seizeHoldDownUntil"] = decision.SeizeHoldDownUntil.Format(time.RFC3339Nano)
+	} else {
+		status["seizeHoldDown"] = false
+	}
+	return status
+}
+
+func bgpSeizeHoldDownStatus(decision PlacementDecision) map[string]any {
+	status := map[string]any{
+		"bgpSeizeHoldDownActive": false,
+		"bgpSeizeHoldDownKey":    "",
+		"bgpSeizeHoldDownSince":  "",
+		"bgpSeizeHoldDownUntil":  "",
+	}
+	if decision.SeizeHoldDownKey == "" {
+		return status
+	}
+	status["bgpSeizeHoldDownActive"] = decision.SeizeHoldDown
+	status["bgpSeizeHoldDownKey"] = decision.SeizeHoldDownKey
+	status["bgpSeizeHoldDownSince"] = decision.SeizeHoldDownSince.Format(time.RFC3339Nano)
+	status["bgpSeizeHoldDownUntil"] = decision.SeizeHoldDownUntil.Format(time.RFC3339Nano)
 	return status
 }
 

@@ -745,6 +745,9 @@ func TestControllerBGPModeDrainMarkerWithdrawLetsPeerSeizeWithStaleConfig(t *tes
 	saveBGPStatus(t, store, map[string][]string{
 		"10.88.60.11/32": {"10.99.0.2"},
 	}, []map[string]any{}, map[string]string{bgpstate.MobilityNodeIdentityCommunity("aws-router-b"): "10.99.0.5/32"})
+	seedElapsedBGPSeizeHoldDown(t, store, "cloudedge", "aws-router-b", spec, map[string]string{
+		bgpstate.MobilityNodeIdentityCommunity("aws-router-b"): "10.99.0.5/32",
+	}, now.Add(time.Second))
 	controllerB := Controller{Router: routerWithBGPRouter(planningRouterForNode("aws-router-b", spec)), Store: store, BGPPaths: bgp, Now: func() time.Time { return now.Add(time.Second) }}
 	if err := controllerB.Reconcile(context.Background()); err != nil {
 		t.Fatalf("stale-config router-b Reconcile: %v", err)
@@ -1114,7 +1117,7 @@ func TestControllerBGPModeStandbyDefersTrapWhenActiveLivenessMarkerPresent(t *te
 	}
 }
 
-func TestControllerBGPModeStandbySeizesTrapWhenActiveLivenessMarkerWithdrawn(t *testing.T) {
+func TestControllerBGPModeStandbySeizesTrapAfterActiveLivenessHoldDown(t *testing.T) {
 	now := time.Date(2026, 6, 2, 10, 0, 0, 0, time.UTC)
 	store := testStore(t, now)
 	spec := awsFailoverPoolSpec()
@@ -1136,9 +1139,27 @@ func TestControllerBGPModeStandbySeizesTrapWhenActiveLivenessMarkerWithdrawn(t *
 	}, []map[string]any{}, map[string]string{bgpstate.MobilityNodeIdentityCommunity("aws-router-b"): "10.99.0.5/32"})
 	bgp := &fakeBGPPaths{}
 	router := routerWithBGPRouter(planningRouterForNode("aws-router-b", spec))
-	controller := Controller{Router: router, Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	current := now
+	controller := Controller{Router: router, Store: store, BGPPaths: bgp, Now: func() time.Time { return current }}
 	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("Reconcile: %v", err)
+		t.Fatalf("initial Reconcile: %v", err)
+	}
+	initialPlans := decodeActionPlans(t, latestPart(t, store, DynamicSource("cloudedge", "aws-router-b")).ActionPlansJSON)
+	if findActionPlanByAddress(initialPlans, "assign-secondary-ip", "10.88.60.10/32") != nil {
+		t.Fatalf("initial plans = %#v, want hold-down before standby seize", initialPlans)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	election, ok := status["bgpCaptureElection"].(map[string]any)
+	if !ok {
+		t.Fatalf("initial bgpCaptureElection = %#v, want map status", status["bgpCaptureElection"])
+	}
+	if election["seize"] != false || election["seizeHoldDown"] != true || election["selfMarkerPresent"] != true || election["activeMarkerPresent"] != false {
+		t.Fatalf("initial bgpCaptureElection = %#v, want self marker present, active marker absent, hold-down", election)
+	}
+
+	current = now.Add(bgpSeizeLivenessMissingHold + time.Second)
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("hold-down elapsed Reconcile: %v", err)
 	}
 	plans := decodeActionPlans(t, latestPart(t, store, DynamicSource("cloudedge", "aws-router-b")).ActionPlansJSON)
 	for _, address := range []string{"10.88.60.10/32", "10.88.60.12/32", "10.88.60.13/32"} {
@@ -1156,12 +1177,12 @@ func TestControllerBGPModeStandbySeizesTrapWhenActiveLivenessMarkerWithdrawn(t *
 	if findActionPlanByAddress(plans, "assign-secondary-ip", "10.88.60.11/32") != nil {
 		t.Fatalf("plans = %#v, want no same-site self-owned trap despite standby .11 path", plans)
 	}
-	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
-	election, ok := status["bgpCaptureElection"].(map[string]any)
+	status = store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	election, ok = status["bgpCaptureElection"].(map[string]any)
 	if !ok {
 		t.Fatalf("bgpCaptureElection = %#v, want map status", status["bgpCaptureElection"])
 	}
-	if election["seize"] != true || election["selfMarkerPresent"] != true || election["activeMarkerPresent"] != false {
+	if election["seize"] != true || election["seizeHoldDown"] != false || election["selfMarkerPresent"] != true || election["activeMarkerPresent"] != false {
 		t.Fatalf("bgpCaptureElection = %#v, want self marker present, active marker absent, seize", election)
 	}
 	if election["selfCommunity"] != bgpstate.MobilityNodeIdentityCommunity("aws-router-b") ||
@@ -1178,6 +1199,9 @@ func TestControllerBGPModeSeizeSuccessAdvertisesTrapImmediately(t *testing.T) {
 	saveBGPStatus(t, store, map[string][]string{
 		"10.88.60.12/32": {"10.99.0.3"},
 	}, []map[string]any{}, map[string]string{bgpstate.MobilityNodeIdentityCommunity("aws-router-b"): "10.99.0.5/32"})
+	seedElapsedBGPSeizeHoldDown(t, store, "cloudedge", "aws-router-b", spec, map[string]string{
+		bgpstate.MobilityNodeIdentityCommunity("aws-router-b"): "10.99.0.5/32",
+	}, now)
 	seedSucceededBGPCaptureAction(t, store, "aws-provider", "eni-b", "aws-router-b", "10.88.60.12/32", "assign-secondary-ip", 1, now.Add(-time.Second))
 
 	bgp := &fakeBGPPaths{}
@@ -1224,6 +1248,13 @@ func TestControllerBGPModeBG24RuntimeSeizesWhenAWSActiveMarkerAbsent(t *testing.
 		bgpstate.MobilityNodeIdentityCommunity("azure-router"):   "10.99.0.3/32",
 		bgpstate.MobilityNodeIdentityCommunity("oci-router"):     "10.99.0.4/32",
 	})
+	seedElapsedBGPSeizeHoldDown(t, store, "cloudedge", "aws-router-b", spec, map[string]string{
+		bgpstate.MobilityNodeIdentityCommunity("onprem-router"):  "10.99.0.1/32",
+		bgpstate.MobilityNodeIdentityCommunity("aws-router-b"):   "10.99.0.5/32",
+		bgpstate.MobilityNodeIdentityCommunity("azure-router-b"): "10.99.0.6/32",
+		bgpstate.MobilityNodeIdentityCommunity("azure-router"):   "10.99.0.3/32",
+		bgpstate.MobilityNodeIdentityCommunity("oci-router"):     "10.99.0.4/32",
+	}, now)
 	bgp := &fakeBGPPaths{}
 	controller := Controller{Router: routerWithBGPRouter(planningRouterForNode("aws-router-b", spec)), Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
 	if err := controller.Reconcile(context.Background()); err != nil {
@@ -1846,6 +1877,9 @@ func reconcileBGPProfileEquivalence(t *testing.T, selfNode string, spec api.Mobi
 	}, nil, map[string]string{
 		bgpstate.MobilityNodeIdentityCommunity(selfNode): "10.99.0.6/32",
 	})
+	seedElapsedBGPSeizeHoldDown(t, store, "cloudedge", selfNode, spec, map[string]string{
+		bgpstate.MobilityNodeIdentityCommunity(selfNode): "10.99.0.6/32",
+	}, now)
 	bgp := &fakeBGPPaths{}
 	router := routerWithBGPRouter(routerWithEventGroupListen(planningRouterForNode(selfNode, spec), "10.99.0.6"))
 	controller := Controller{Router: router, Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}

@@ -75,6 +75,48 @@ func TestMobilityPoolMembersFromMissingRequiredIsPending(t *testing.T) {
 	}
 }
 
+func TestMobilityPoolMembersFromPreservesCaptureFields(t *testing.T) {
+	spec := plannedPoolSpec()
+	spec.Members = nil
+	spec.MembersFrom = []api.MobilityMembersSourceSpec{{Resource: "MobilityMemberSet/cloudedge"}}
+	router := planningRouterForNode("aws-router-a", spec)
+	router.Spec.Resources = append(router.Spec.Resources, mobilityMemberSetResource("cloudedge", []api.MobilityMemberSetMember{{
+		NodeRef:    "aws-router-a",
+		Site:       "aws",
+		Role:       "cloud",
+		ProfileRef: "aws-self",
+		Capture: api.MobilityMemberCapture{
+			Type:         "provider-secondary-ip",
+			ProviderRef:  "aws-provider",
+			ProviderMode: "route-table",
+			Strategy:     captureStrategyRouteTable,
+			NICRef:       "eni-a",
+			Target:       map[string]string{"routeTableRef": "rtb-cloudedge", "region": "us-east-1"},
+		},
+		OwnershipDiscovery: api.MobilityOwnershipDiscovery{
+			Mode:         "provider-private-ip",
+			SubnetRef:    "subnet-a",
+			ScanInterval: "60s",
+		},
+		Placement: api.MobilityMemberPlacement{Group: "aws-edge", Priority: 10},
+	}}))
+
+	resolved, err := (mobilityMemberResolver{Router: router}).resolve(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if len(resolved.Spec.Members) != 1 {
+		t.Fatalf("members = %#v, want one", resolved.Spec.Members)
+	}
+	member := resolved.Spec.Members[0]
+	if member.ProfileRef != "aws-self" || member.Capture.NICRef != "eni-a" || member.Capture.Strategy != captureStrategyRouteTable || member.Capture.Target["routeTableRef"] != "rtb-cloudedge" {
+		t.Fatalf("member = %#v, want capture/profile fields preserved", member)
+	}
+	if member.OwnershipDiscovery.Mode != "provider-private-ip" || member.OwnershipDiscovery.SubnetRef != "subnet-a" {
+		t.Fatalf("ownershipDiscovery = %#v, want preserved", member.OwnershipDiscovery)
+	}
+}
+
 func TestMobilityPoolPublishesMemberSetDynamicPart(t *testing.T) {
 	now := time.Date(2026, 6, 8, 11, 2, 0, 0, time.UTC)
 	store := testStore(t, now)
@@ -99,9 +141,14 @@ func TestMobilityPoolPublishesMemberSetDynamicPart(t *testing.T) {
 		t.Fatalf("published members = %#v, want 2", set.Members)
 	}
 	for _, member := range set.Members {
+		if member.NodeRef == "azure-router" && (member.Capture.NICRef == "" || member.Capture.ProviderRef != "azure-provider") {
+			t.Fatalf("published azure member = %#v, want capture fields preserved", member)
+		}
+	}
+	for _, member := range set.Members {
 		if member.NodeRef == "onprem-router" && member.Placement.Group == "" {
 			return
 		}
 	}
-	t.Fatalf("published members = %#v, want stripped identity-only onprem-router", set.Members)
+	t.Fatalf("published members = %#v, want onprem-router member", set.Members)
 }

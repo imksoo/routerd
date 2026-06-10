@@ -178,7 +178,7 @@ spec:
         subscriptionID: "${AZURE_SUBSCRIPTION_ID}"
         resourceGroup: "${AZURE_RESOURCE_GROUP}"
         region: "${AZURE_REGION}"
-        capabilities: [nic-secondary-ip, ip-forwarding]
+        capabilities: [route-table, ip-forwarding]
         auth: { mode: external-command, command: /usr/local/libexec/routerd/plugins/azure-auth }
 
     - apiVersion: mobility.routerd.net/v1alpha1
@@ -191,6 +191,8 @@ spec:
           self.region: "${AZURE_REGION}"
           self.resourceGroup: "${AZURE_RESOURCE_GROUP}"
           self.subnetRef: "${AZURE_SUBNET_REF}"
+          self.routeTableRef: "${DEMO_SELF_ROUTE_TABLE_REF}"
+          self.nextHopIPAddress: "${DEMO_SELF_CLOUD_IP}"
         profiles:
           cloudCaptures:
             azure-self:
@@ -198,11 +200,14 @@ spec:
                 type: provider-secondary-ip
                 interface: eth0
                 providerRef: azure-lab
-                providerMode: nic-secondary-ip
+                providerMode: route-table
+                strategy: route-table
                 configureOSAddress: false
                 targetFrom:
                   region: self.region
                   resourceGroup: self.resourceGroup
+                  routeTableRef: self.routeTableRef
+                  nextHopIPAddress: self.nextHopIPAddress
               ownershipDiscovery:
                 mode: provider-private-ip
                 subnetRefFrom: self.subnetRef
@@ -250,7 +255,7 @@ spec:
         requireApproval: false
         allowedProviders: [azure]
         allowedProviderRefs: [azure-lab]
-        allowedActions: [assign-secondary-ip, unassign-secondary-ip, ensure-forwarding-enabled, ensure-forwarding-disabled]
+        allowedActions: [assign-route-table-route, unassign-route-table-route, ensure-forwarding-enabled, ensure-forwarding-disabled]
         allowedCIDRs: [10.77.60.0/24]
         maxActionsPerRun: 8
         allowUndo: true

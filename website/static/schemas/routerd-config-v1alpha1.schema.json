@@ -8493,6 +8493,166 @@
                         "items": {
                           "additionalProperties": false,
                           "properties": {
+                            "capture": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "activeWhen": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "type": {
+                                      "enum": [
+                                        "",
+                                        "single-router",
+                                        "vrrp-master"
+                                      ],
+                                      "type": "string"
+                                    },
+                                    "virtualAddressRef": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "type": "object"
+                                },
+                                "configureOSAddress": {
+                                  "type": "boolean"
+                                },
+                                "excludeAddresses": {
+                                  "description": "ExcludeAddresses prevents proxy-ARP capture for selected IPv4 addresses or\nCIDRs inside the mobility prefix. Use this for local-only infrastructure\naddresses such as a PVE Simple SDN gateway address that must not be\nanswered across the extended segment.",
+                                  "items": {
+                                    "type": "string"
+                                  },
+                                  "type": "array"
+                                },
+                                "gratuitousARP": {
+                                  "type": "boolean"
+                                },
+                                "interface": {
+                                  "type": "string"
+                                },
+                                "nicRef": {
+                                  "type": "string"
+                                },
+                                "providerMode": {
+                                  "type": "string"
+                                },
+                                "providerRef": {
+                                  "type": "string"
+                                },
+                                "sourceAddress": {
+                                  "description": "SourceAddress is an optional local IPv4 address used by proxy-ARP capture\nmembers as the capture-interface sender address. In BGP delivery mode,\nrouterd lowers it to a /32 IPv4StaticAddress and uses it as the capture\nprefix route preferred source so Linux ARP for local same-subnet clients\nstays inside the mobility prefix.",
+                                  "type": "string"
+                                },
+                                "sourceAddressFrom": {
+                                  "additionalProperties": false,
+                                  "description": "SourceAddressFrom resolves the capture-interface sender address from a\nresource status field, for example DHCPv4Client/currentAddress. Unlike\nsourceAddress, routerd does not lower this to an IPv4StaticAddress because\nthe referenced resource owns the address lifecycle.",
+                                  "properties": {
+                                    "field": {
+                                      "description": "Field defaults to phase when omitted.",
+                                      "type": "string"
+                                    },
+                                    "optional": {
+                                      "type": "boolean"
+                                    },
+                                    "resource": {
+                                      "description": "Resource names the source resource as Kind/name and reads its status, or a router config field for supported resources.",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "resource"
+                                  ],
+                                  "type": "object"
+                                },
+                                "strategy": {
+                                  "enum": [
+                                    "",
+                                    "secondary-ip",
+                                    "route-table"
+                                  ],
+                                  "type": "string"
+                                },
+                                "target": {
+                                  "additionalProperties": {
+                                    "type": "string"
+                                  },
+                                  "description": "Target carries non-secret provider target hints such as region,\ncompartmentId, resourceGroup, nicName, or ipConfigName. It is copied to\nprovider ActionPlan.target; credentials and tokens do not belong here.",
+                                  "type": "object"
+                                },
+                                "targetFrom": {
+                                  "additionalProperties": {
+                                    "type": "string"
+                                  },
+                                  "description": "TargetFrom resolves provider target hints from spec.values. Keys are\nprovider target keys and values are spec.values keys. Explicit target\nentries take precedence over targetFrom.",
+                                  "type": "object"
+                                },
+                                "type": {
+                                  "enum": [
+                                    "provider-secondary-ip",
+                                    "proxy-arp"
+                                  ],
+                                  "type": "string"
+                                }
+                              },
+                              "type": "object"
+                            },
+                            "delivery": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "mode": {
+                                  "enum": [
+                                    "",
+                                    "route"
+                                  ],
+                                  "type": "string"
+                                },
+                                "peerRef": {
+                                  "type": "string"
+                                },
+                                "tunnelInterface": {
+                                  "type": "string"
+                                }
+                              },
+                              "type": "object"
+                            },
+                            "deliveryTo": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "mode": {
+                                    "enum": [
+                                      "",
+                                      "route"
+                                    ],
+                                    "type": "string"
+                                  },
+                                  "nodeRef": {
+                                    "type": "string"
+                                  },
+                                  "peerRef": {
+                                    "type": "string"
+                                  },
+                                  "role": {
+                                    "enum": [
+                                      "",
+                                      "onprem",
+                                      "cloud"
+                                    ],
+                                    "type": "string"
+                                  },
+                                  "site": {
+                                    "type": "string"
+                                  },
+                                  "tunnelInterface": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "peerRef"
+                                ],
+                                "type": "object"
+                              },
+                              "type": "array"
+                            },
                             "maintenance": {
                               "additionalProperties": false,
                               "properties": {
@@ -8504,6 +8664,158 @@
                             },
                             "nodeRef": {
                               "type": "string"
+                            },
+                            "ownershipDiscovery": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "leaseTTL": {
+                                  "description": "LeaseTTL controls the emitted observed event expiry. Empty defaults to the\ncontroller default.",
+                                  "type": "string"
+                                },
+                                "mode": {
+                                  "description": "Mode selects the discovery backend. Empty/disabled does nothing.",
+                                  "enum": [
+                                    "",
+                                    "disabled",
+                                    "provider-private-ip",
+                                    "onprem-l2"
+                                  ],
+                                  "type": "string"
+                                },
+                                "pluginRef": {
+                                  "description": "PluginRef optionally pins the inventory plugin. Empty resolves by\nprovider name or sole observe.providerPrivateIPs plugin.",
+                                  "type": "string"
+                                },
+                                "providerRef": {
+                                  "description": "ProviderRef defaults to the member capture.providerRef.",
+                                  "type": "string"
+                                },
+                                "scanInterval": {
+                                  "description": "ScanInterval bounds provider inventory calls. Empty defaults to 60s.",
+                                  "type": "string"
+                                },
+                                "scope": {
+                                  "additionalProperties": false,
+                                  "description": "Scope narrows which provider private IPs become mobility ownership facts.\nEmpty keeps the historical broad scan behavior.",
+                                  "properties": {
+                                    "excludeAddresses": {
+                                      "description": "ExcludeAddresses optionally denylists discovered addresses by IPv4 CIDR or\nbare IPv4 address.",
+                                      "items": {
+                                        "type": "string"
+                                      },
+                                      "type": "array"
+                                    },
+                                    "includeAddresses": {
+                                      "description": "IncludeAddresses optionally allowlists discovered addresses by IPv4 CIDR or\nbare IPv4 address. Empty means all pool addresses are candidates.",
+                                      "items": {
+                                        "type": "string"
+                                      },
+                                      "type": "array"
+                                    }
+                                  },
+                                  "type": "object"
+                                },
+                                "selector": {
+                                  "additionalProperties": false,
+                                  "description": "Selector optionally filters discovered IP records by provider tags/labels.",
+                                  "properties": {
+                                    "tags": {
+                                      "additionalProperties": {
+                                        "type": "string"
+                                      },
+                                      "type": "object"
+                                    }
+                                  },
+                                  "type": "object"
+                                },
+                                "sources": {
+                                  "description": "Sources enables one or more on-prem L2 ownership signals. The controller\nnormalizes DHCP lease hooks, ARP observers, on-demand ARP probes, and\nPVE svnet observations into the same observed-client federation fact.",
+                                  "items": {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "bridge": {
+                                        "description": "Bridge optionally carries the local bridge name for PVE/svnet observers.",
+                                        "type": "string"
+                                      },
+                                      "interface": {
+                                        "description": "Interface narrows L2 observations to one capture interface. Empty defaults\nto the member capture.interface when applicable.",
+                                        "type": "string"
+                                      },
+                                      "leaseTTL": {
+                                        "description": "LeaseTTL overrides ownership event expiry for this source.",
+                                        "type": "string"
+                                      },
+                                      "network": {
+                                        "description": "Network optionally carries the logical svnet/network name, for example svnet1.",
+                                        "type": "string"
+                                      },
+                                      "probeRetries": {
+                                        "description": "ProbeRetries controls retry count for active ARP probes.",
+                                        "maximum": 20,
+                                        "minimum": 0,
+                                        "type": "integer"
+                                      },
+                                      "probeTimeout": {
+                                        "description": "ProbeTimeout bounds one active ARP probe attempt for on-demand-arp.",
+                                        "type": "string"
+                                      },
+                                      "resource": {
+                                        "description": "Resource optionally identifies the daemon/resource that emits the signal.",
+                                        "type": "string"
+                                      },
+                                      "scanInterval": {
+                                        "description": "ScanInterval bounds polling sources. Event-driven sources may ignore it.",
+                                        "type": "string"
+                                      },
+                                      "sourceAddressFrom": {
+                                        "additionalProperties": false,
+                                        "description": "SourceAddressFrom resolves the sender address used by active probing\nsources when the capture source address is DHCP-managed.",
+                                        "properties": {
+                                          "field": {
+                                            "description": "Field defaults to phase when omitted.",
+                                            "type": "string"
+                                          },
+                                          "optional": {
+                                            "type": "boolean"
+                                          },
+                                          "resource": {
+                                            "description": "Resource names the source resource as Kind/name and reads its status, or a router config field for supported resources.",
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "resource"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      "type": {
+                                        "description": "Type selects the on-prem observation source.",
+                                        "enum": [
+                                          "dhcpv4-lease",
+                                          "arp-observer",
+                                          "on-demand-arp",
+                                          "pve-svnet"
+                                        ],
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "type"
+                                    ],
+                                    "type": "object"
+                                  },
+                                  "type": "array"
+                                },
+                                "subnetRef": {
+                                  "description": "SubnetRef optionally constrains the provider scan. Empty asks the plugin\nto infer it from the self NIC.",
+                                  "type": "string"
+                                },
+                                "subnetRefFrom": {
+                                  "description": "SubnetRefFrom resolves SubnetRef from spec.values when SubnetRef is not\nset explicitly.",
+                                  "type": "string"
+                                }
+                              },
+                              "type": "object"
                             },
                             "placement": {
                               "additionalProperties": false,
@@ -8520,6 +8832,9 @@
                               },
                               "type": "object"
                             },
+                            "profileRef": {
+                              "type": "string"
+                            },
                             "role": {
                               "enum": [
                                 "onprem",
@@ -8529,6 +8844,12 @@
                             },
                             "site": {
                               "type": "string"
+                            },
+                            "staticOwnedAddresses": {
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
                             }
                           },
                           "required": [

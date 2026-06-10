@@ -5,6 +5,7 @@
 # The protocol is defined by pkg/providerinventory.
 
 import json
+import ipaddress
 import os
 import subprocess
 import sys
@@ -205,6 +206,30 @@ def oci_cli(region, args):
     return run_json(argv)
 
 
+def address_in_prefix(address, prefix):
+    try:
+        net = ipaddress.ip_network(prefix, strict=False)
+        cidr = ipaddress.ip_network(address, strict=False)
+    except Exception:
+        return False
+    return cidr.version == 4 and cidr.prefixlen == 32 and cidr.network_address in net
+
+
+def azure_resource_name(ref):
+    ref = (ref or "").strip().rstrip("/")
+    if not ref:
+        return ""
+    return ref.split("/")[-1]
+
+
+def first_non_empty(*values):
+    for value in values:
+        value = (value or "").strip()
+        if value:
+            return value
+    return ""
+
+
 def aws_eni_instance_metadata(region, subnet):
     """Return dict of ENI ID -> instance metadata for all instances in the subnet."""
     try:
@@ -225,9 +250,32 @@ def aws_eni_instance_metadata(region, subnet):
         return None
 
 
+def aws_route_table_captured_addresses(region, route_table_ref, self_nic, prefix):
+    if not route_table_ref or not self_nic:
+        return []
+    try:
+        doc = aws_cli(region, ["ec2", "describe-route-tables",
+                               "--route-table-ids", route_table_ref])
+    except Exception:
+        return []
+    out = []
+    for table in doc.get("RouteTables") or []:
+        for route in table.get("Routes") or []:
+            address = route.get("DestinationCidrBlock", "")
+            if route.get("NetworkInterfaceId", "") != self_nic:
+                continue
+            if not address_in_prefix(address, prefix):
+                continue
+            out.append(address)
+    return sorted(set(out))
+
+
 def aws_inventory(spec):
     target = spec.get("target") or {}
     region = target.get("region") or os.environ.get("AWS_DEFAULT_REGION", "")
+    strategy = (spec.get("strategy") or "").strip()
+    prefix = (spec.get("prefix") or "").strip()
+    route_table_ref = (spec.get("routeTableRef") or target.get("routeTableRef") or "").strip()
     self_nic = (spec.get("selfNicRef", "").strip()
                 or os.environ.get("ROUTERD_PROVIDER_INVENTORY_SELF_NIC_REF", "").strip()
                 or os.environ.get("AWS_SELF_ENI_REF", "").strip())
@@ -302,6 +350,10 @@ def aws_inventory(spec):
                 entry["instanceState"] = instance_state
             ips.append(entry)
     self_info = {"nicRef": self_nic, "subnetRef": subnet, "privateIPs": sorted(set(self_private_ips))}
+    if strategy == "route-table":
+        captured = aws_route_table_captured_addresses(region, route_table_ref, self_nic, prefix)
+        if captured:
+            self_info["capturedAddresses"] = captured
     if self_resource_ref:
         self_info["resourceRef"] = self_resource_ref
         self_info["resourceType"] = "router-nic"
@@ -332,6 +384,10 @@ def azure_inventory(spec):
     self_nic = spec.get("selfNicRef", "").strip()
     resource_group = target.get("resourceGroup", "").strip()
     subnet = (spec.get("subnetRef") or "").strip()
+    strategy = (spec.get("strategy") or "").strip()
+    prefix = (spec.get("prefix") or "").strip()
+    route_table_name = first_non_empty(target.get("routeTableName", ""), azure_resource_name(spec.get("routeTableRef") or target.get("routeTableRef") or ""))
+    next_hop_ip = (target.get("nextHopIPAddress") or "").strip()
     if not resource_group:
         if self_nic:
             self_doc = az_cli(["network", "nic", "show", "--ids", self_nic])
@@ -409,6 +465,27 @@ def azure_inventory(spec):
                 entry["instanceState"] = instance_state
             ips.append(entry)
     self_info = {"nicRef": self_nic, "subnetRef": subnet, "privateIPs": sorted(set(self_private_ips))}
+    if strategy == "route-table" and route_table_name and next_hop_ip:
+        try:
+            routes = az_cli(["network", "route-table", "route", "list",
+                             "--resource-group", resource_group,
+                             "--route-table-name", route_table_name])
+            captured = []
+            for route in routes or []:
+                address = route.get("addressPrefix") or route.get("address_prefix") or ""
+                hop_type = route.get("nextHopType") or route.get("next_hop_type") or ""
+                hop_ip = route.get("nextHopIpAddress") or route.get("next_hop_ip_address") or ""
+                if hop_type and hop_type != "VirtualAppliance":
+                    continue
+                if hop_ip != next_hop_ip:
+                    continue
+                if not address_in_prefix(address, prefix):
+                    continue
+                captured.append(address)
+            if captured:
+                self_info["capturedAddresses"] = sorted(set(captured))
+        except Exception:
+            pass
     if self_resource_ref:
         self_info["resourceRef"] = self_resource_ref
         self_info["resourceType"] = "router-nic"

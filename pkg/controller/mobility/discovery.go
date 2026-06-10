@@ -139,7 +139,7 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 		return fmt.Errorf("ownershipDiscovery requires cloud provider-secondary-ip member %q", self.NodeRef)
 	}
 	livenessMarkers, livenessMarkersObserved := bgpLivenessMarkersFromStatus(c.Router, c.Store)
-	placement := evaluateBGPCapturePlacement(self, members, livenessMarkers, livenessMarkersObserved)
+	placement := c.applyBGPCaptureSeizeHoldDown(poolName, evaluateBGPCapturePlacement(self, members, livenessMarkers, livenessMarkersObserved), now)
 	interval := discoveryScanInterval(discovery)
 	if !forceProviderScan && !c.scanDue(poolName, interval, now, true, self.Capture.Type == "provider-secondary-ip" && strings.TrimSpace(self.Capture.NICRef) == "", placement) {
 		return nil
@@ -972,7 +972,7 @@ func scopedDiscoverySelfInventory(self discoverySelfInventory, localInventory []
 		} else {
 			self.PrivateIPs = normalizedDiscoveryAddresses(self.PrivateIPs, poolPrefix)
 		}
-		self.CapturedAddresses = cleanStrings(captured)
+		self.CapturedAddresses = cleanStrings(append(captured, normalizedDiscoveryAddresses(self.CapturedAddresses, poolPrefix)...))
 		return self
 	}
 	self.PrivateIPs = normalizedDiscoveryAddresses(self.PrivateIPs, poolPrefix)
@@ -1026,7 +1026,7 @@ func discoverySelfInventoryStatus(self discoverySelfInventory) map[string]any {
 }
 
 func discoveryPlacementStatus(placement PlacementDecision) map[string]any {
-	return map[string]any{
+	status := map[string]any{
 		"discoveryPlacementGroup":               placement.Group,
 		"discoveryPlacementActive":              placement.Active,
 		"discoveryPlacementActiveNode":          placement.ActiveNode,
@@ -1040,6 +1040,21 @@ func discoveryPlacementStatus(placement PlacementDecision) map[string]any {
 		"discoveryPlacementActiveMarker":        placement.ActiveMarker,
 		"discoveryPlacementActiveMarkerPresent": placement.ActiveMarkerPresent,
 	}
+	if placement.SeizeHoldDownKey != "" {
+		status["discoveryPlacementSeizeHoldDown"] = placement.SeizeHoldDown
+		status["discoveryPlacementSeizeHoldDownKey"] = placement.SeizeHoldDownKey
+		status["discoveryPlacementSeizeHoldDownSince"] = placement.SeizeHoldDownSince.Format(time.RFC3339Nano)
+		status["discoveryPlacementSeizeHoldDownUntil"] = placement.SeizeHoldDownUntil.Format(time.RFC3339Nano)
+	} else {
+		status["discoveryPlacementSeizeHoldDown"] = false
+		status["discoveryPlacementSeizeHoldDownKey"] = ""
+		status["discoveryPlacementSeizeHoldDownSince"] = ""
+		status["discoveryPlacementSeizeHoldDownUntil"] = ""
+	}
+	for key, value := range bgpSeizeHoldDownStatus(placement) {
+		status[key] = value
+	}
+	return status
 }
 
 func mergeAnyMaps(a, b map[string]any) map[string]any {
@@ -1066,6 +1081,12 @@ func (c DiscoveryController) scanDue(poolName string, interval time.Duration, no
 	}
 	if requireForwardingState {
 		if _, ok := status["discoverySelfForwardingObserved"]; !ok {
+			return true
+		}
+	}
+	if discoveryStatusBool(status, "bgpSeizeHoldDownActive") {
+		until, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(fmt.Sprint(status["bgpSeizeHoldDownUntil"])))
+		if err == nil && !until.IsZero() && !until.After(now) {
 			return true
 		}
 	}

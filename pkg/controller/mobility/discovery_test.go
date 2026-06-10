@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/netip"
 	"strings"
 	"testing"
 	"time"
@@ -473,6 +474,26 @@ func TestDiscoveryControllerScopesProviderInventoryToSelfNICAndSubnet(t *testing
 	}
 }
 
+func TestScopedDiscoverySelfInventoryPreservesRouteTableCapturedAddresses(t *testing.T) {
+	prefix := netip.MustParsePrefix("10.88.60.0/24")
+	self := discoverySelfInventory{
+		NICRef:            "eni-router",
+		SubnetRef:         "subnet-a",
+		PrivateIPs:        []string{"10.88.60.4"},
+		CapturedAddresses: []string{"10.88.60.12/32"},
+	}
+	local := []providerinventory.PrivateIPRecord{{
+		Address:   "10.88.60.4",
+		NICRef:    "eni-router",
+		SubnetRef: "subnet-a",
+		Primary:   true,
+	}}
+	got := scopedDiscoverySelfInventory(self, local, prefix)
+	if len(got.CapturedAddresses) != 1 || got.CapturedAddresses[0] != "10.88.60.12/32" {
+		t.Fatalf("capturedAddresses = %#v, want route-table capture preserved", got.CapturedAddresses)
+	}
+}
+
 func TestDiscoveryControllerExcludesSelfResourceSecondaryFromOwnership(t *testing.T) {
 	now := time.Date(2026, 6, 10, 13, 15, 0, 0, time.UTC)
 	store := testStore(t, now)
@@ -893,6 +914,9 @@ func TestDiscoveryControllerLivenessSeizedStandbyAdvertisesOwnedAddress(t *testi
 	saveBGPStatus(t, store, map[string][]string{}, []map[string]any{}, map[string]string{
 		bgpstate.MobilityNodeIdentityCommunity("azure-router-b"): "10.99.0.6/32",
 	})
+	seedElapsedBGPSeizeHoldDown(t, store, "cloudedge", "azure-router-b", spec, map[string]string{
+		bgpstate.MobilityNodeIdentityCommunity("azure-router-b"): "10.99.0.6/32",
+	}, now)
 	router := routerWithBGPRouter(discoveryRouter("azure-router-b", spec))
 	discovery := DiscoveryController{Router: router, Store: store, Runner: runner.run, Now: func() time.Time { return now }}
 	if err := discovery.Reconcile(context.Background()); err != nil {
@@ -1037,6 +1061,9 @@ func TestDiscoveryControllerStandbySelfNICEnablesLivenessSeizeActions(t *testing
 	}, []map[string]any{}, map[string]string{
 		bgpstate.MobilityNodeIdentityCommunity("azure-router-b"): "10.99.0.6/32",
 	})
+	seedElapsedBGPSeizeHoldDown(t, store, "cloudedge", "azure-router-b", spec, map[string]string{
+		bgpstate.MobilityNodeIdentityCommunity("azure-router-b"): "10.99.0.6/32",
+	}, now.Add(time.Second))
 	mobility := Controller{Router: routerWithBGPRouter(router), Store: store, BGPPaths: &fakeBGPPaths{}, Now: func() time.Time { return now.Add(time.Second) }}
 	if err := mobility.Reconcile(context.Background()); err != nil {
 		t.Fatalf("mobility Reconcile: %v", err)
@@ -1164,8 +1191,19 @@ func TestDiscoveryControllerLivenessChangeBypassesScanInterval(t *testing.T) {
 		t.Fatalf("runner calls = %d, want BGP liveness loss to bypass scan interval", runner.calls)
 	}
 	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
-	if status["discoveryPlacementSeize"] != true || status["discoveryPhase"] != "Observed" {
-		t.Fatalf("status = %#v, want seized discovery after active marker loss", status)
+	if status["discoveryPlacementSeize"] != false || status["discoveryPlacementSeizeHoldDown"] != true || status["discoveryPhase"] != "Standby" {
+		t.Fatalf("status = %#v, want hold-down standby after active marker loss", status)
+	}
+	controller.Now = func() time.Time { return now.Add(10*time.Second + bgpSeizeLivenessMissingHold + time.Second) }
+	if err := controller.HandleEvent(context.Background(), event); err != nil {
+		t.Fatalf("HandleEvent after hold-down: %v", err)
+	}
+	if runner.calls != 3 {
+		t.Fatalf("runner calls = %d, want hold-down expiry to bypass scan interval", runner.calls)
+	}
+	status = store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	if status["discoveryPlacementSeize"] != true || status["discoveryPlacementSeizeHoldDown"] != false || status["discoveryPhase"] != "Observed" {
+		t.Fatalf("status = %#v, want seized discovery after hold-down", status)
 	}
 }
 

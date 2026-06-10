@@ -6,7 +6,8 @@
       "Effect": "Allow",
       "Action": [
         "ec2:DescribeInstances",
-        "ec2:DescribeNetworkInterfaces"
+        "ec2:DescribeNetworkInterfaces",
+        "ec2:DescribeRouteTables"
       ],
       "Resource": "*",
       "Condition": {
@@ -21,7 +22,10 @@
       "Action": [
         "ec2:AssignPrivateIpAddresses",
         "ec2:UnassignPrivateIpAddresses",
-        "ec2:ModifyNetworkInterfaceAttribute"
+        "ec2:ModifyNetworkInterfaceAttribute",
+        "ec2:CreateRoute",
+        "ec2:DeleteRoute",
+        "ec2:ReplaceRoute"
       ],
       "Resource": [
         "arn:aws:ec2:<aws-region>:<aws-account-id>:network-interface/<eni-id>"

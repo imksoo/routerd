@@ -714,11 +714,17 @@ type MobilityMemberSetSpec struct {
 }
 
 type MobilityMemberSetMember struct {
-	NodeRef     string                    `yaml:"nodeRef" json:"nodeRef"`
-	Site        string                    `yaml:"site" json:"site"`
-	Role        string                    `yaml:"role" json:"role" jsonschema:"enum=onprem,enum=cloud"`
-	Placement   MobilityMemberPlacement   `yaml:"placement,omitempty" json:"placement,omitempty"`
-	Maintenance MobilityMemberMaintenance `yaml:"maintenance,omitempty" json:"maintenance,omitempty"`
+	NodeRef              string                         `yaml:"nodeRef" json:"nodeRef"`
+	Site                 string                         `yaml:"site" json:"site"`
+	Role                 string                         `yaml:"role" json:"role" jsonschema:"enum=onprem,enum=cloud"`
+	ProfileRef           string                         `yaml:"profileRef,omitempty" json:"profileRef,omitempty"`
+	Capture              MobilityMemberCapture          `yaml:"capture,omitempty" json:"capture,omitempty"`
+	Delivery             MobilityMemberDelivery         `yaml:"delivery,omitempty" json:"delivery,omitempty"`
+	DeliveryTo           []MobilityMemberDeliveryTarget `yaml:"deliveryTo,omitempty" json:"deliveryTo,omitempty"`
+	StaticOwnedAddresses []string                       `yaml:"staticOwnedAddresses,omitempty" json:"staticOwnedAddresses,omitempty"`
+	OwnershipDiscovery   MobilityOwnershipDiscovery     `yaml:"ownershipDiscovery,omitempty" json:"ownershipDiscovery,omitempty"`
+	Placement            MobilityMemberPlacement        `yaml:"placement,omitempty" json:"placement,omitempty"`
+	Maintenance          MobilityMemberMaintenance      `yaml:"maintenance,omitempty" json:"maintenance,omitempty"`
 }
 
 // SAMNodeSetSpec is the shared node identity registry for write-once SAM
