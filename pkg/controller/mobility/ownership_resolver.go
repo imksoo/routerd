@@ -78,7 +78,7 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 	staticOwners := staticOwnedOwnerNodesByAddress(in.Spec)
 	remoteHomeFacts := providerInventoryHomeOwnerFacts(in.PoolName, in.Spec, in.Events, now)
 	localInventory := localInventoryRecordsFromStatus(in.Status, prefix)
-	removeSelfResourceLocalInventory(localInventory, strings.TrimSpace(fmt.Sprint(in.Status["discoverySelfResourceRef"])))
+	removeSelfResourceLocalInventory(localInventory, statusString(in.Status["discoverySelfResourceRef"]))
 	selfIPs, capturedIPs, selfIPsObserved := selfInventoryAddressSetsFromStatus(in.Status, prefix)
 	captureObservedIPs := mergeBoolMaps(selfIPs, capturedIPs)
 	eventOwned := resolverEventOwnedAddresses(in.PoolName, in.SelfNode, in.Spec, in.Events, in.Status, prefix, now)
@@ -226,12 +226,6 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 			decision.AdvertiseOwnerNode = self.NodeRef
 			decision.Source = providerDiscoverySource
 			decision.Fresh = true
-			if decision.CaptureState != captureStateNone && decision.CaptureStrategy == captureStrategyRouteTable {
-				decision.Class = ownershipClassLocalHomeOwned
-				decision.AdvertiseReason = "provider-home-owner"
-				out = append(out, decision)
-				continue
-			}
 			decision.Class = ownershipClassLocalHomeOwned
 			decision.AdvertiseReason = "provider-home-owner"
 			out = append(out, decision)
@@ -287,7 +281,7 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 			decision.Class = ownershipClassLocalRouterSelf
 			decision.HomeOwnerNode = self.NodeRef
 			decision.HomeProviderRef = self.Capture.ProviderRef
-			decision.HomeSubnetRef = strings.TrimSpace(fmt.Sprint(in.Status["discoverySelfSubnetRef"]))
+			decision.HomeSubnetRef = statusString(in.Status["discoverySelfSubnetRef"])
 			decision.HomeNICRef = self.Capture.NICRef
 			decision.Source = "self-inventory"
 			decision.Fresh = true
@@ -465,9 +459,20 @@ func statusMapSlice(value any) []map[string]string {
 func anyMapToStringMap(values map[string]any) map[string]string {
 	out := map[string]string{}
 	for k, v := range values {
-		out[strings.TrimSpace(k)] = strings.TrimSpace(fmt.Sprint(v))
+		key := strings.TrimSpace(k)
+		if key == "" {
+			continue
+		}
+		out[key] = statusString(v)
 	}
 	return out
+}
+
+func statusString(value any) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(fmt.Sprint(value))
 }
 
 func localInventoryRecordIsRouterSelf(rec resolverPrivateIPRecord, self memberPlanInfo) bool {
