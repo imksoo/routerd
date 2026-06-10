@@ -21,6 +21,7 @@ import (
 type fakeAWS struct {
 	calls       [][]string
 	describeOut []byte
+	routeOut    []byte
 	err         error
 }
 
@@ -35,6 +36,12 @@ func (f *fakeAWS) run(ctx context.Context, argv ...string) ([]byte, error) {
 		}
 		return cannedDescribe(true, "10.88.60.5"), nil
 	}
+	if len(argv) >= 2 && argv[1] == "describe-route-tables" {
+		if f.routeOut != nil {
+			return f.routeOut, nil
+		}
+		return cannedDescribeRouteTable("rtb-cloudedge", "10.88.60.9/32", "eni-1"), nil
+	}
 	// Mutating verbs return a benign (ignored) JSON body.
 	return []byte(`{}`), nil
 }
@@ -44,6 +51,10 @@ func (f *fakeAWS) run(ctx context.Context, argv ...string) ([]byte, error) {
 func cannedDescribe(sourceDestCheck bool, secondary string) []byte {
 	body := fmt.Sprintf(`{"NetworkInterfaces":[{"NetworkInterfaceId":"eni-1","SourceDestCheck":%t,"PrivateIpAddresses":[{"PrivateIpAddress":"10.88.60.1","Primary":true},{"PrivateIpAddress":%q,"Primary":false}]}]}`, sourceDestCheck, secondary)
 	return []byte(body)
+}
+
+func cannedDescribeRouteTable(routeTable, address, eni string) []byte {
+	return []byte(fmt.Sprintf(`{"RouteTables":[{"RouteTableId":%q,"Routes":[{"DestinationCidrBlock":%q,"NetworkInterfaceId":%q}]}]}`, routeTable, address, eni))
 }
 
 func reqSpec(action, mode string) executeActionRequestSpec {
@@ -272,10 +283,38 @@ func TestUnassignRouteTableExecuteDeletesRoute(t *testing.T) {
 	if res.Status.Status != statusSucceeded {
 		t.Fatalf("want succeeded, got %q err=%q", res.Status.Status, res.Status.Error)
 	}
-	got := strings.Join(f.calls[0], " ")
+	if len(f.calls) != 2 {
+		t.Fatalf("calls = %v, want describe then delete", f.calls)
+	}
+	if got := strings.Join(f.calls[0], " "); got != "ec2 describe-route-tables --route-table-ids rtb-cloudedge --region ap-northeast-1" {
+		t.Fatalf("describe route argv mismatch:\n got: %s", got)
+	}
+	got := strings.Join(f.calls[1], " ")
 	want := "ec2 delete-route --route-table-id rtb-cloudedge --destination-cidr-block 10.88.60.9/32 --region ap-northeast-1"
 	if got != want {
 		t.Fatalf("delete route argv mismatch:\n got: %s\nwant: %s", got, want)
+	}
+}
+
+func TestUnassignRouteTableSkipsForeignHolder(t *testing.T) {
+	f := &fakeAWS{routeOut: cannedDescribeRouteTable("rtb-cloudedge", "10.88.60.9/32", "eni-other")}
+	res := dispatchWith(routeReqSpec(actionUnassignRouteTableRoute, modeExecute), f.run)
+	if res.Status.Status != statusSkipped {
+		t.Fatalf("want skipped, got %q err=%q", res.Status.Status, res.Status.Error)
+	}
+	if len(f.calls) != 1 || f.calls[0][1] != "describe-route-tables" {
+		t.Fatalf("calls = %v, want describe only", f.calls)
+	}
+}
+
+func TestUnassignRouteTableSkipsMissingRoute(t *testing.T) {
+	f := &fakeAWS{routeOut: cannedDescribeRouteTable("rtb-cloudedge", "10.88.60.10/32", "eni-1")}
+	res := dispatchWith(routeReqSpec(actionUnassignRouteTableRoute, modeExecute), f.run)
+	if res.Status.Status != statusSkipped {
+		t.Fatalf("want skipped, got %q err=%q", res.Status.Status, res.Status.Error)
+	}
+	if len(f.calls) != 1 || f.calls[0][1] != "describe-route-tables" {
+		t.Fatalf("calls = %v, want describe only", f.calls)
 	}
 }
 

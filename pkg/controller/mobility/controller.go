@@ -907,6 +907,9 @@ func bgpProviderActionPlans(poolName, selfNode string, spec api.MobilityPoolSpec
 			desiredAddresses[address] = true
 			candidate := desiredTrapAddresses[address]
 			if candidate.ProtectOnly {
+				if key := providerNICKey("", self.Capture.ProviderRef, providerCaptureRefFromCapture(self.Capture, self.CaptureTarget)); key != "" {
+					desiredProviderNICs[key] = true
+				}
 				continue
 			}
 			seize := candidate.Seize || shouldAllowBGPTrapReassignment(self, address, previousPlans, actionJournal, observedSelfIPs, observedSelfIPsOK)

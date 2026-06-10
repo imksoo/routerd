@@ -54,6 +54,8 @@ func (f *fakeAz) run(ctx context.Context, argv ...string) ([]byte, error) {
 
 type routeFakeAz struct {
 	calls     [][]string
+	showOut   []byte
+	showErr   error
 	createErr error
 	updateErr error
 	deleteErr error
@@ -63,6 +65,14 @@ func (f *routeFakeAz) run(ctx context.Context, argv ...string) ([]byte, error) {
 	f.calls = append(f.calls, append([]string(nil), argv...))
 	toks := strings.Join(leadingTokens(argv), " ")
 	switch toks {
+	case "network route-table route show":
+		if f.showErr != nil {
+			return nil, f.showErr
+		}
+		if f.showOut != nil {
+			return f.showOut, nil
+		}
+		return cannedRouteShow("10.88.60.9/32", "10.88.60.254"), nil
 	case "network route-table route create":
 		if f.createErr != nil {
 			return nil, f.createErr
@@ -77,6 +87,10 @@ func (f *routeFakeAz) run(ctx context.Context, argv ...string) ([]byte, error) {
 		}
 	}
 	return []byte(`{}`), nil
+}
+
+func cannedRouteShow(address, nextHop string) []byte {
+	return []byte(fmt.Sprintf(`{"addressPrefix":%q,"nextHopIpAddress":%q}`, address, nextHop))
 }
 
 type seizeFakeAz struct {
@@ -348,27 +362,66 @@ func TestAssignRouteTableSeizeUpdatesExistingRoute(t *testing.T) {
 	}
 }
 
-func TestAssignRouteTableCreateExistingFallsBackToUpdate(t *testing.T) {
+func TestAssignRouteTableCreateExistingSameNextHopIsIdempotent(t *testing.T) {
 	f := &routeFakeAz{createErr: fmt.Errorf("route already exists")}
 	res := dispatchWith(routeReqSpec(actionAssignRouteTableRoute, modeExecute), f.run)
 	if res.Status.Status != statusSucceeded {
 		t.Fatalf("want succeeded, got %q err=%q", res.Status.Status, res.Status.Error)
 	}
 	got := joinedCalls(f.calls)
-	if len(got) != 2 || !strings.Contains(got[0], " route create ") || !strings.Contains(got[1], " route update ") {
-		t.Fatalf("calls = %v, want create then update", got)
+	if len(got) != 2 || !strings.Contains(got[0], " route create ") || !strings.Contains(got[1], " route show ") {
+		t.Fatalf("calls = %v, want create then show", got)
+	}
+}
+
+func TestAssignRouteTableCreateExistingForeignNextHopFails(t *testing.T) {
+	f := &routeFakeAz{
+		createErr: fmt.Errorf("route already exists"),
+		showOut:   cannedRouteShow("10.88.60.9/32", "10.88.60.253"),
+	}
+	res := dispatchWith(routeReqSpec(actionAssignRouteTableRoute, modeExecute), f.run)
+	if res.Status.Status != statusFailed {
+		t.Fatalf("want failed, got %q err=%q", res.Status.Status, res.Status.Error)
+	}
+	got := joinedCalls(f.calls)
+	if len(got) != 2 || !strings.Contains(got[0], " route create ") || !strings.Contains(got[1], " route show ") {
+		t.Fatalf("calls = %v, want create then show only", got)
 	}
 }
 
 func TestUnassignRouteTableMissingRouteSkips(t *testing.T) {
-	f := &routeFakeAz{deleteErr: fmt.Errorf("route not found")}
+	f := &routeFakeAz{showErr: fmt.Errorf("route not found")}
 	res := dispatchWith(routeReqSpec(actionUnassignRouteTableRoute, modeExecute), f.run)
 	if res.Status.Status != statusSkipped {
 		t.Fatalf("want skipped, got %q err=%q", res.Status.Status, res.Status.Error)
 	}
 	got := joinedCalls(f.calls)
-	if len(got) != 1 || !strings.Contains(got[0], " route delete ") {
-		t.Fatalf("calls = %v, want delete attempt", got)
+	if len(got) != 1 || !strings.Contains(got[0], " route show ") {
+		t.Fatalf("calls = %v, want show only", got)
+	}
+}
+
+func TestUnassignRouteTableSkipsForeignNextHop(t *testing.T) {
+	f := &routeFakeAz{showOut: cannedRouteShow("10.88.60.9/32", "10.88.60.253")}
+	res := dispatchWith(routeReqSpec(actionUnassignRouteTableRoute, modeExecute), f.run)
+	if res.Status.Status != statusSkipped {
+		t.Fatalf("want skipped, got %q err=%q", res.Status.Status, res.Status.Error)
+	}
+	got := joinedCalls(f.calls)
+	if len(got) != 1 || !strings.Contains(got[0], " route show ") {
+		t.Fatalf("calls = %v, want show only", got)
+	}
+}
+
+func TestUnassignRouteTableDeletesOnlyMatchingNextHop(t *testing.T) {
+	f := &routeFakeAz{}
+	res := dispatchWith(routeReqSpec(actionUnassignRouteTableRoute, modeExecute), f.run)
+	if res.Status.Status != statusSucceeded {
+		t.Fatalf("want succeeded, got %q err=%q", res.Status.Status, res.Status.Error)
+	}
+	got := joinedCalls(f.calls)
+	if len(got) != 2 || !strings.Contains(got[0], " route show ") || !strings.Contains(got[1], " route delete ") {
+		t.Fatalf("calls = %v, want show then delete", got)
 	}
 }
 

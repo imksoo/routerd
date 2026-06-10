@@ -1712,6 +1712,38 @@ func TestControllerBGPModeConfirmedCaptureDoesNotDeprovision(t *testing.T) {
 	}
 }
 
+func TestControllerBGPModeProtectOnlyCaptureKeepsForwardingEnabled(t *testing.T) {
+	now := time.Date(2026, 6, 10, 14, 30, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	confirmed := "10.88.60.12/32"
+	stale := "10.88.60.10/32"
+	seedSucceededBGPCaptureAction(t, store, "aws-provider", "eni-a", "aws-router-a", confirmed, "assign-secondary-ip", 1, now.Add(-2*time.Minute))
+	seedSucceededBGPCaptureAction(t, store, "aws-provider", "eni-a", "aws-router-a", stale, "assign-secondary-ip", 1, now.Add(-time.Minute))
+	saveBGPInstalledNextHops(t, store, map[string][]string{confirmed: {"10.99.0.200"}})
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"discoverySelfPrivateIPs":        []string{"10.88.60.4/32"},
+		"discoverySelfCapturedAddresses": []string{confirmed},
+		"discoveryLastScanAt":            now.Format(time.RFC3339Nano),
+	}); err != nil {
+		t.Fatalf("SaveObjectStatus: %v", err)
+	}
+
+	bgp := &fakeBGPPaths{}
+	controller := Controller{Router: routerWithBGPRouter(planningRouterForNode("aws-router-a", spec)), Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	plans := decodeActionPlans(t, latestPart(t, store, DynamicSource("cloudedge", "aws-router-a")).ActionPlansJSON)
+	if findActionPlanByAddress(plans, "unassign-secondary-ip", stale) == nil {
+		t.Fatalf("plans = %#v, want stale capture unassign", plans)
+	}
+	if findActionPlan(plans, "ensure-forwarding-disabled") != nil {
+		t.Fatalf("plans = %#v, must not disable forwarding while confirmed capture remains on same provider target", plans)
+	}
+}
+
 func TestControllerBGPModeStaticOwnedAdvertisesOnPremOwner(t *testing.T) {
 	now := time.Date(2026, 6, 2, 9, 0, 0, 0, time.UTC)
 	store := testStore(t, now)

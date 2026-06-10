@@ -279,7 +279,7 @@ func assignRouteTableRoute(ctx context.Context, spec executeActionRequestSpec, m
 }
 
 func unassignRouteTableRoute(ctx context.Context, spec executeActionRequestSpec, mode string, runner awsRunner) executeActionResult {
-	routeTable, _, address, region, err := requireRouteTarget(spec)
+	routeTable, eni, address, region, err := requireRouteTarget(spec)
 	if err != nil {
 		return failed("unassign-route-table-route: missing target field", err)
 	}
@@ -291,6 +291,21 @@ func unassignRouteTableRoute(ctx context.Context, spec executeActionRequestSpec,
 		}
 		res.Status.Status = statusSucceeded
 		res.Status.Message = fmt.Sprintf("would delete route %s from %s", address, routeTable)
+		return res
+	}
+
+	route, found, err := describeRouteTableRoute(ctx, runner, routeTable, address, region)
+	if err != nil {
+		return failed("unassign-route-table-route execute: describe route failed", err)
+	}
+	if !found {
+		res.Status.Status = statusSkipped
+		res.Status.Message = fmt.Sprintf("route %s already absent from %s", address, routeTable)
+		return res
+	}
+	if !strings.EqualFold(strings.TrimSpace(route.NetworkInterfaceID), strings.TrimSpace(eni)) {
+		res.Status.Status = statusSkipped
+		res.Status.Message = fmt.Sprintf("route %s in %s is held by %s, not %s; leaving it intact", address, routeTable, route.NetworkInterfaceID, eni)
 		return res
 	}
 
@@ -308,6 +323,41 @@ func unassignRouteTableRoute(ctx context.Context, spec executeActionRequestSpec,
 	res.Status.Status = statusSucceeded
 	res.Status.Message = fmt.Sprintf("deleted route %s from %s", address, routeTable)
 	return res
+}
+
+type routeTableRoute struct {
+	NetworkInterfaceID string
+}
+
+func describeRouteTableRoute(ctx context.Context, runner awsRunner, routeTable, address, region string) (routeTableRoute, bool, error) {
+	out, err := runner(ctx, "ec2", "describe-route-tables",
+		"--route-table-ids", routeTable,
+		"--region", region)
+	if err != nil {
+		if isNotFoundError(err) {
+			return routeTableRoute{}, false, nil
+		}
+		return routeTableRoute{}, false, err
+	}
+	var parsed struct {
+		RouteTables []struct {
+			Routes []struct {
+				DestinationCIDRBlock string `json:"DestinationCidrBlock"`
+				NetworkInterfaceID   string `json:"NetworkInterfaceId"`
+			} `json:"Routes"`
+		} `json:"RouteTables"`
+	}
+	if err := json.Unmarshal(out, &parsed); err != nil {
+		return routeTableRoute{}, false, fmt.Errorf("parse describe-route-tables output: %w", err)
+	}
+	for _, table := range parsed.RouteTables {
+		for _, route := range table.Routes {
+			if strings.TrimSpace(route.DestinationCIDRBlock) == strings.TrimSpace(address) {
+				return routeTableRoute{NetworkInterfaceID: route.NetworkInterfaceID}, true, nil
+			}
+		}
+	}
+	return routeTableRoute{}, false, nil
 }
 
 // assignSecondaryIP attaches the captured /32 to the ENI.
