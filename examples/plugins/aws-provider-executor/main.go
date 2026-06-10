@@ -250,18 +250,27 @@ func assignRouteTableRoute(ctx context.Context, spec executeActionRequestSpec, m
 		return res
 	}
 
-	if _, err := runner(ctx, "ec2", "replace-route",
+	allowReassignment := stringBool(spec.Parameters["allowReassignment"])
+	if allowReassignment {
+		if _, err := runner(ctx, "ec2", "replace-route",
+			"--route-table-id", routeTable,
+			"--destination-cidr-block", address,
+			"--network-interface-id", eni,
+			"--region", region); err != nil {
+			if _, cerr := runner(ctx, "ec2", "create-route",
+				"--route-table-id", routeTable,
+				"--destination-cidr-block", address,
+				"--network-interface-id", eni,
+				"--region", region); cerr != nil {
+				return failed("assign-route-table-route execute: replace/create route failed", fmt.Errorf("replace: %v; create: %w", err, cerr))
+			}
+		}
+	} else if _, err := runner(ctx, "ec2", "create-route",
 		"--route-table-id", routeTable,
 		"--destination-cidr-block", address,
 		"--network-interface-id", eni,
 		"--region", region); err != nil {
-		if _, cerr := runner(ctx, "ec2", "create-route",
-			"--route-table-id", routeTable,
-			"--destination-cidr-block", address,
-			"--network-interface-id", eni,
-			"--region", region); cerr != nil {
-			return failed("assign-route-table-route execute: replace/create route failed", fmt.Errorf("replace: %v; create: %w", err, cerr))
-		}
+		return failed("assign-route-table-route execute: create route failed", err)
 	}
 	res.Status.Status = statusSucceeded
 	res.Status.Message = fmt.Sprintf("routed %s to %s in %s", address, eni, routeTable)

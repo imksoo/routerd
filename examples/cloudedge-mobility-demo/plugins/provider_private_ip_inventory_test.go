@@ -24,6 +24,7 @@ type inventoryResult struct {
 			ResourceRef       string   `json:"resourceRef"`
 			ResourceType      string   `json:"resourceType"`
 			PrivateIPs        []string `json:"privateIPs"`
+			CapturedAddresses []string `json:"capturedAddresses"`
 			ForwardingEnabled *bool    `json:"forwardingEnabled"`
 		} `json:"self"`
 		IPs []struct {
@@ -84,6 +85,38 @@ esac
 	assertIP(t, res, "10.77.60.11", "eni-client", "subnet-a")
 	assertResource(t, res, "10.77.60.11", "i-client", "instance-nic")
 	assertLocalIP(t, res, "10.77.60.11")
+}
+
+func TestProviderPrivateIPInventoryPluginAWSRouteTableCaptures(t *testing.T) {
+	requirePython(t)
+	bin := fakeBinDir(t)
+	writeExecutable(t, filepath.Join(bin, "aws"), `#!/bin/sh
+case "$*" in
+  *"--network-interface-ids eni-router"*)
+    printf '%s\n' '{"NetworkInterfaces":[{"NetworkInterfaceId":"eni-router","SubnetId":"subnet-a","SourceDestCheck":false,"PrivateIpAddresses":[{"PrivateIpAddress":"10.77.60.21","Primary":true}]}]}'
+    ;;
+  *"describe-route-tables --route-table-ids rtb-cloudedge"*)
+    printf '%s\n' '{"RouteTables":[{"RouteTableId":"rtb-cloudedge","Routes":[{"DestinationCidrBlock":"10.77.60.12/32","NetworkInterfaceId":"eni-router"},{"DestinationCidrBlock":"10.77.60.13/32","NetworkInterfaceId":"eni-other"},{"DestinationCidrBlock":"10.77.61.9/32","NetworkInterfaceId":"eni-router"}]}]}'
+    ;;
+  *"describe-instances"*)
+    printf '%s\n' '{"Reservations":[{"Instances":[{"InstanceId":"i-router","State":{"Name":"running"},"NetworkInterfaces":[{"NetworkInterfaceId":"eni-router"}]},{"InstanceId":"i-client","State":{"Name":"running"},"NetworkInterfaces":[{"NetworkInterfaceId":"eni-client"}]}]}]}'
+    ;;
+  *"Name=subnet-id,Values=subnet-a"*)
+    printf '%s\n' '{"NetworkInterfaces":[{"NetworkInterfaceId":"eni-router","SubnetId":"subnet-a","PrivateIpAddresses":[{"PrivateIpAddress":"10.77.60.21","Primary":true}],"TagSet":[{"Key":"role","Value":"router"}]},{"NetworkInterfaceId":"eni-client","SubnetId":"subnet-a","PrivateIpAddresses":[{"PrivateIpAddress":"10.77.60.11","Primary":false}],"TagSet":[{"Key":"role","Value":"client"}]}]}'
+    ;;
+  *)
+    echo "unexpected aws args: $*" >&2
+    exit 2
+    ;;
+esac
+`)
+	res := runInventoryPlugin(t, bin, `{"spec":{"provider":"aws","strategy":"route-table","prefix":"10.77.60.0/24","selfNicRef":"eni-router","subnetRef":"subnet-a","routeTableRef":"rtb-cloudedge","target":{"region":"us-east-1","routeTableRef":"rtb-cloudedge"}}}`)
+	if res.Status.Status != "succeeded" {
+		t.Fatalf("status = %q error=%q", res.Status.Status, res.Status.Error)
+	}
+	assertSelfCaptured(t, res, "10.77.60.12/32")
+	assertNotSelfCaptured(t, res, "10.77.60.13/32")
+	assertNotSelfCaptured(t, res, "10.77.61.9/32")
 }
 
 func TestProviderPrivateIPInventoryPluginAWSResolvesSelfFromLocalIP(t *testing.T) {
@@ -216,6 +249,38 @@ esac
 	assertIP(t, res, "10.77.60.12", "/nic/client", "/subnets/demo")
 	assertResource(t, res, "10.77.60.12", "/vm/client", "instance-nic")
 	assertLocalIP(t, res, "10.77.60.12")
+}
+
+func TestProviderPrivateIPInventoryPluginAzureRouteTableCaptures(t *testing.T) {
+	requirePython(t)
+	bin := fakeBinDir(t)
+	writeExecutable(t, filepath.Join(bin, "az"), `#!/bin/sh
+case "$*" in
+  *"network nic show --ids /nic/router"*)
+    printf '%s\n' '{"id":"/nic/router","resourceGroup":"rg-demo","enableIPForwarding":true,"ipConfigurations":[{"privateIPAddress":"10.77.60.22","primary":true,"subnet":{"id":"/subnets/demo"}}]}'
+    ;;
+  *"network route-table route list --resource-group rg-demo --route-table-name rt-cloudedge"*)
+    printf '%s\n' '[{"addressPrefix":"10.77.60.13/32","nextHopType":"VirtualAppliance","nextHopIpAddress":"10.77.60.22"},{"addressPrefix":"10.77.60.14/32","nextHopType":"VirtualAppliance","nextHopIpAddress":"10.77.60.99"},{"addressPrefix":"10.77.61.9/32","nextHopType":"VirtualAppliance","nextHopIpAddress":"10.77.60.22"}]'
+    ;;
+  *"network nic list --resource-group rg-demo"*)
+    printf '%s\n' '[{"id":"/nic/router","tags":{"role":"router"},"ipConfigurations":[{"privateIPAddress":"10.77.60.22","primary":true,"subnet":{"id":"/subnets/demo"}}]},{"id":"/nic/client","tags":{"role":"client"},"ipConfigurations":[{"privateIPAddress":"10.77.60.12","primary":false,"subnet":{"id":"/subnets/demo"}}]}]'
+    ;;
+  *"vm list --resource-group rg-demo"*)
+    printf '%s\n' '[{"id":"/vm/router","powerState":"VM running","networkProfile":{"networkInterfaces":[{"id":"/nic/router"}]}},{"id":"/vm/client","powerState":"VM running","networkProfile":{"networkInterfaces":[{"id":"/nic/client"}]}}]'
+    ;;
+  *)
+    echo "unexpected az args: $*" >&2
+    exit 2
+    ;;
+esac
+`)
+	res := runInventoryPlugin(t, bin, `{"spec":{"provider":"azure","strategy":"route-table","prefix":"10.77.60.0/24","selfNicRef":"/nic/router","routeTableRef":"/subscriptions/sub/resourceGroups/rg-demo/providers/Microsoft.Network/routeTables/rt-cloudedge","target":{"resourceGroup":"rg-demo","routeTableRef":"/subscriptions/sub/resourceGroups/rg-demo/providers/Microsoft.Network/routeTables/rt-cloudedge","nextHopIPAddress":"10.77.60.22"}}}`)
+	if res.Status.Status != "succeeded" {
+		t.Fatalf("status = %q error=%q", res.Status.Status, res.Status.Error)
+	}
+	assertSelfCaptured(t, res, "10.77.60.13/32")
+	assertNotSelfCaptured(t, res, "10.77.60.14/32")
+	assertNotSelfCaptured(t, res, "10.77.61.9/32")
 }
 
 func TestProviderPrivateIPInventoryPluginOCI(t *testing.T) {
@@ -421,6 +486,25 @@ func assertLocalIP(t *testing.T, res inventoryResult, address string) {
 		}
 	}
 	t.Fatalf("missing local address %s in %+v", address, res.Status.LocalIPs)
+}
+
+func assertSelfCaptured(t *testing.T, res inventoryResult, address string) {
+	t.Helper()
+	for _, got := range res.Status.Self.CapturedAddresses {
+		if got == address {
+			return
+		}
+	}
+	t.Fatalf("missing self captured address %s in %+v", address, res.Status.Self.CapturedAddresses)
+}
+
+func assertNotSelfCaptured(t *testing.T, res inventoryResult, address string) {
+	t.Helper()
+	for _, got := range res.Status.Self.CapturedAddresses {
+		if got == address {
+			t.Fatalf("unexpected self captured address %s in %+v", address, res.Status.Self.CapturedAddresses)
+		}
+	}
 }
 
 func assertResource(t *testing.T, res inventoryResult, address, wantRef, wantType string) {

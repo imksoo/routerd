@@ -9,6 +9,8 @@
     "Microsoft.Network/networkInterfaces/ipConfigurations/write",
     "Microsoft.Network/networkInterfaces/ipConfigurations/delete",
     "Microsoft.Network/networkInterfaces/ipConfigurations/join/action",
+    "Microsoft.Network/routeTables/read",
+    "Microsoft.Network/routeTables/routes/*",
     "Microsoft.Network/virtualNetworks/subnets/read",
     "Microsoft.Network/virtualNetworks/subnets/join/action",
     "Microsoft.Network/networkSecurityGroups/read",

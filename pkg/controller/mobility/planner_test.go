@@ -440,6 +440,35 @@ func saveBGPStatus(t *testing.T, store interface {
 	}
 }
 
+func seedElapsedBGPSeizeHoldDown(t *testing.T, store interface {
+	SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error
+	ObjectStatus(apiVersion, kind, name string) map[string]any
+}, poolName, selfNode string, spec api.MobilityPoolSpec, livenessMarkers map[string]string, now time.Time) {
+	t.Helper()
+	members := plannerMembers(spec.Members)
+	self, ok := lookupMemberByNodeRef(members, selfNode)
+	if !ok {
+		t.Fatalf("self member %q not found", selfNode)
+	}
+	placement := evaluateBGPCapturePlacement(self, members, livenessMarkers, true)
+	key := bgpSeizeHoldDownKey(placement)
+	if key == "" {
+		t.Fatalf("placement = %#v, want seize hold-down key", placement)
+	}
+	status := map[string]any{}
+	for k, v := range store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", poolName) {
+		status[k] = v
+	}
+	since := now.Add(-bgpSeizeLivenessMissingHold - time.Second)
+	status["bgpSeizeHoldDownActive"] = true
+	status["bgpSeizeHoldDownKey"] = key
+	status["bgpSeizeHoldDownSince"] = since.Format(time.RFC3339Nano)
+	status["bgpSeizeHoldDownUntil"] = since.Add(bgpSeizeLivenessMissingHold).Format(time.RFC3339Nano)
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", poolName, status); err != nil {
+		t.Fatalf("SaveObjectStatus(MobilityPool/%s): %v", poolName, err)
+	}
+}
+
 func latestPart(t *testing.T, store interface {
 	GetDynamicConfigPartsBySource(string) ([]routerstate.DynamicConfigPartRecord, error)
 }, source string) routerstate.DynamicConfigPartRecord {

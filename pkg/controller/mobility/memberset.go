@@ -131,21 +131,33 @@ func (r mobilityMemberResolver) memberSet(ref string) (api.MobilityMemberSetSpec
 
 func mobilityPoolMemberFromSetMember(member api.MobilityMemberSetMember) api.MobilityPoolMember {
 	return api.MobilityPoolMember{
-		NodeRef:     strings.TrimSpace(member.NodeRef),
-		Site:        strings.TrimSpace(member.Site),
-		Role:        strings.TrimSpace(member.Role),
-		Placement:   member.Placement,
-		Maintenance: member.Maintenance,
+		NodeRef:              strings.TrimSpace(member.NodeRef),
+		Site:                 strings.TrimSpace(member.Site),
+		Role:                 strings.TrimSpace(member.Role),
+		ProfileRef:           strings.TrimSpace(member.ProfileRef),
+		Capture:              member.Capture,
+		Delivery:             member.Delivery,
+		DeliveryTo:           append([]api.MobilityMemberDeliveryTarget(nil), member.DeliveryTo...),
+		StaticOwnedAddresses: append([]string(nil), member.StaticOwnedAddresses...),
+		OwnershipDiscovery:   member.OwnershipDiscovery,
+		Placement:            member.Placement,
+		Maintenance:          member.Maintenance,
 	}
 }
 
 func mobilityMemberSetMemberFromPoolMember(member api.MobilityPoolMember) api.MobilityMemberSetMember {
 	return api.MobilityMemberSetMember{
-		NodeRef:     strings.TrimSpace(member.NodeRef),
-		Site:        strings.TrimSpace(member.Site),
-		Role:        strings.TrimSpace(member.Role),
-		Placement:   member.Placement,
-		Maintenance: member.Maintenance,
+		NodeRef:              strings.TrimSpace(member.NodeRef),
+		Site:                 strings.TrimSpace(member.Site),
+		Role:                 strings.TrimSpace(member.Role),
+		ProfileRef:           strings.TrimSpace(member.ProfileRef),
+		Capture:              member.Capture,
+		Delivery:             member.Delivery,
+		DeliveryTo:           append([]api.MobilityMemberDeliveryTarget(nil), member.DeliveryTo...),
+		StaticOwnedAddresses: append([]string(nil), member.StaticOwnedAddresses...),
+		OwnershipDiscovery:   member.OwnershipDiscovery,
+		Placement:            member.Placement,
+		Maintenance:          member.Maintenance,
 	}
 }
 

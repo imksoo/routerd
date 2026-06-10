@@ -44,6 +44,10 @@ type PlacementDecision struct {
 	ActiveMarker          string
 	ActiveMarkerPresent   bool
 	ActiveIdentityNodeRef string
+	SeizeHoldDown         bool
+	SeizeHoldDownKey      string
+	SeizeHoldDownSince    time.Time
+	SeizeHoldDownUntil    time.Time
 }
 
 func (d PlacementDecision) NoCandidate() bool {
