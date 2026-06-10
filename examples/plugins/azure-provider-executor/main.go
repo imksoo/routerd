@@ -335,8 +335,15 @@ func assignRouteTableRoute(ctx context.Context, spec executeActionRequestSpec, m
 		if !isAlreadyExistsError(err) {
 			return failed("assign-route-table-route execute: route create failed", err)
 		}
-		if err := updateRouteTableRoute(ctx, runner, t); err != nil {
-			return failed("assign-route-table-route execute: route update after existing create failed", err)
+		existing, found, err := showRouteTableRoute(ctx, runner, t)
+		if err != nil {
+			return failed("assign-route-table-route execute: route show after existing create failed", err)
+		}
+		if !found {
+			return failed("assign-route-table-route execute: route already exists but show returned missing", nil)
+		}
+		if !sameIP(existing.nextHopIPAddress, t.nextHopIPAddress) {
+			return failed(fmt.Sprintf("assign-route-table-route execute: route already exists with next hop %s, not %s", existing.nextHopIPAddress, t.nextHopIPAddress), nil)
 		}
 	}
 	res.Status.Status = statusSucceeded
@@ -384,6 +391,21 @@ func unassignRouteTableRoute(ctx context.Context, spec executeActionRequestSpec,
 		return res
 	}
 
+	existing, found, err := showRouteTableRoute(ctx, runner, t)
+	if err != nil {
+		return failed("unassign-route-table-route execute: route show failed", err)
+	}
+	if !found {
+		res.Status.Status = statusSkipped
+		res.Status.Message = fmt.Sprintf("route %s already absent from %s", t.routeName, t.routeTableName)
+		return res
+	}
+	if !sameIP(existing.nextHopIPAddress, t.nextHopIPAddress) {
+		res.Status.Status = statusSkipped
+		res.Status.Message = fmt.Sprintf("route %s in %s is held by %s, not %s; leaving it intact", t.routeName, t.routeTableName, existing.nextHopIPAddress, t.nextHopIPAddress)
+		return res
+	}
+
 	if _, err := runner(ctx, "network", "route-table", "route", "delete",
 		"--resource-group", t.resourceGroup,
 		"--route-table-name", t.routeTableName,
@@ -399,6 +421,43 @@ func unassignRouteTableRoute(ctx context.Context, spec executeActionRequestSpec,
 	res.Status.Status = statusSucceeded
 	res.Status.Message = fmt.Sprintf("deleted route %s from %s", t.address, t.routeTableName)
 	return res
+}
+
+type routeTableRoute struct {
+	addressPrefix    string
+	nextHopIPAddress string
+}
+
+func showRouteTableRoute(ctx context.Context, runner azRunner, t routeTarget) (routeTableRoute, bool, error) {
+	out, err := runner(ctx, "network", "route-table", "route", "show",
+		"--resource-group", t.resourceGroup,
+		"--route-table-name", t.routeTableName,
+		"--name", t.routeName)
+	if err != nil {
+		if isNotFoundError(err) {
+			return routeTableRoute{}, false, nil
+		}
+		return routeTableRoute{}, false, err
+	}
+	var parsed struct {
+		AddressPrefix    string `json:"addressPrefix"`
+		NextHopIPAddress string `json:"nextHopIpAddress"`
+		Properties       struct {
+			AddressPrefix    string `json:"addressPrefix"`
+			NextHopIPAddress string `json:"nextHopIpAddress"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(out, &parsed); err != nil {
+		return routeTableRoute{}, false, fmt.Errorf("parse network route-table route show output: %w", err)
+	}
+	route := routeTableRoute{
+		addressPrefix:    firstNonEmpty(parsed.AddressPrefix, parsed.Properties.AddressPrefix),
+		nextHopIPAddress: firstNonEmpty(parsed.NextHopIPAddress, parsed.Properties.NextHopIPAddress),
+	}
+	if strings.TrimSpace(route.addressPrefix) == "" && strings.TrimSpace(route.nextHopIPAddress) == "" {
+		return routeTableRoute{}, false, nil
+	}
+	return route, true, nil
 }
 
 // assignSecondaryIP attaches the captured /32 to the NIC via a new ip-config.
