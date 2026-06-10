@@ -468,8 +468,8 @@ func TestDiscoveryControllerScopesProviderInventoryToSelfNICAndSubnet(t *testing
 	if got := statusStringSlice(status["discoveryOwnedAddresses"]); len(got) != 1 || got[0] != "10.88.60.11/32" {
 		t.Fatalf("discoveryOwnedAddresses = %#v, want only provider-local client", status["discoveryOwnedAddresses"])
 	}
-	if got := statusStringSlice(status["discoveryLocalInventoryIPs"]); stringSliceContains(got, "10.88.60.12/32") {
-		t.Fatalf("discoveryLocalInventoryIPs = %#v, want foreign provider/subnet excluded", got)
+	if got := statusStringSlice(status["discoveryLocalInventoryIPs"]); !stringSliceContains(got, "10.88.60.11/32") || stringSliceContains(got, "10.88.60.4/32") || stringSliceContains(got, "10.88.60.12/32") || stringSliceContains(got, "10.88.60.13/32") {
+		t.Fatalf("discoveryLocalInventoryIPs = %#v, want only non-router local subnet inventory", got)
 	}
 }
 
@@ -1212,7 +1212,7 @@ func TestDiscoveryControllerDoesNotExpireProviderDiscoveryOnTransientActiveMiss(
 	}
 }
 
-func TestDiscoveryControllerRetainsExcludedProviderDiscoveryAddress(t *testing.T) {
+func TestDiscoveryControllerExpiresProviderDiscoveryAddressExcludedBySelector(t *testing.T) {
 	now := time.Date(2026, 6, 3, 15, 0, 0, 0, time.UTC)
 	store := testStore(t, now)
 	spec := discoveryPoolSpec()
@@ -1240,12 +1240,50 @@ func TestDiscoveryControllerRetainsExcludedProviderDiscoveryAddress(t *testing.T
 	if err != nil {
 		t.Fatalf("ListFederationEvents: %v", err)
 	}
-	if countEvents(events, ExpiredEventType, "azure-router-a", "10.88.60.12/32") != 0 {
-		t.Fatalf("events = %#v, want retained provider-present address not expired by selector exclusion", events)
+	if countEvents(events, ExpiredEventType, "azure-router-a", "10.88.60.12/32") != 1 {
+		t.Fatalf("events = %#v, want visible selector-excluded address expired", events)
 	}
 	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
 	if fmt.Sprint(status["discoveryExcludedSelector"]) != "1" {
 		t.Fatalf("status = %#v, want selector exclusion counted", status)
+	}
+}
+
+func TestDiscoveryControllerExpiresProviderDiscoveryAddressScopedOutByProvider(t *testing.T) {
+	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := discoveryPoolSpec()
+	recordEvent(t, store, providerDiscoveryObservedEvent("cloudedge", "cloudedge", "azure-router-a", "10.88.60.12/32", "azure", "azure-provider", providerinventory.PrivateIPRecord{
+		Address:     "10.88.60.12",
+		NICRef:      "stale-foreign-nic",
+		ProviderRef: "azure-provider",
+		SubnetRef:   "subnet-a",
+		Tags:        map[string]string{"cloudedge-mobility": "true"},
+	}, now.Add(-time.Minute), 5*time.Minute))
+	runner := &fakeInventoryRunner{result: providerinventory.ObservePrivateIPsResult{
+		TypeMeta: providerinventory.TypeMeta{APIVersion: providerinventory.ProtocolAPIVersion, Kind: providerinventory.KindObservePrivateIPsResult},
+		Status: providerinventory.ObservePrivateIPsResultStatus{
+			Status: providerinventory.ResultSucceeded,
+			Self:   &providerinventory.PrivateIPSelf{NICRef: "router-nic", SubnetRef: "subnet-a", ForwardingEnabled: boolPtr(true)},
+			IPs: []providerinventory.PrivateIPRecord{
+				{Address: "10.88.60.12", NICRef: "foreign-nic", ProviderRef: "aws-provider", SubnetRef: "subnet-a", Tags: map[string]string{"cloudedge-mobility": "true"}},
+			},
+		},
+	}}
+	controller := DiscoveryController{Router: discoveryRouter("azure-router-a", spec), Store: store, Runner: runner.run, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	events, err := store.ListFederationEvents("cloudedge", false, now.Unix())
+	if err != nil {
+		t.Fatalf("ListFederationEvents: %v", err)
+	}
+	if countEvents(events, ExpiredEventType, "azure-router-a", "10.88.60.12/32") != 1 {
+		t.Fatalf("events = %#v, want provider-scoped-out stale address expired", events)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	if got := statusStringSlice(status["discoveryOwnedAddresses"]); len(got) != 0 {
+		t.Fatalf("discoveryOwnedAddresses = %#v, want provider-scoped-out address excluded", got)
 	}
 }
 

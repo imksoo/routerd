@@ -235,6 +235,7 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 	observedThisScan := map[string]bool{}
 	heldThisScan := map[string]bool{}
 	retainedThisScan := map[string]bool{}
+	invalidThisScan := scopedOutProviderCandidateAddresses(result.Status.ObservedCandidateRecords(), observedCandidates, prefix)
 	counters := discoveryExclusionCounters{}
 	for _, rec := range sortedPrivateIPs(observedCandidates) {
 		address, ok := normalizeDiscoveredAddress(rec.Address, prefix)
@@ -242,33 +243,39 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 			counters.Scope++
 			continue
 		}
-		retainedThisScan[address] = true
 		if selfPrivateIPs[address] {
+			invalidThisScan[address] = true
 			counters.SelfPrivateIP++
 			continue
 		}
 		if strings.TrimSpace(rec.NICRef) != "" && excludedNICs[strings.TrimSpace(rec.NICRef)] {
+			invalidThisScan[address] = true
 			counters.RouterNIC++
 			continue
 		}
 		if ownerNode := strings.TrimSpace(staticOwners[address]); ownerNode != "" && ownerNode != self.NodeRef {
+			invalidThisScan[address] = true
 			counters.StaticOwned++
 			continue
 		}
 		if trapAddresses[address] {
+			invalidThisScan[address] = true
 			counters.TrapAction++
 			continue
 		}
 		if !discoveryScopeAllowsAddress(discovery.Scope, address) {
+			invalidThisScan[address] = true
 			counters.Scope++
 			continue
 		}
 		if !discoverySelectorMatches(discovery.Selector, rec.Tags) {
+			invalidThisScan[address] = true
 			counters.Selector++
 			continue
 		}
 		instanceStopped := strings.TrimSpace(rec.InstanceState) == "stopped"
 		if instanceStopped && stoppedInstancePolicy(spec) == "release" {
+			invalidThisScan[address] = true
 			counters.Scope++
 			continue
 		}
@@ -284,10 +291,15 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 	}
 	for address := range observedThisScan {
 		retainedThisScan[address] = true
+		delete(invalidThisScan, address)
+	}
+	if err := c.expireProviderDiscoveryAddresses(poolName, spec, self.NodeRef, prefix, invalidThisScan, now, ttl); err != nil {
+		return err
 	}
 	if err := c.expireStaleProviderDiscoveryEvents(poolName, spec, self.NodeRef, prefix, retainedThisScan, now, ttl, ttl); err != nil {
 		return err
 	}
+	statusLocalInventory := filterDiscoveryLocalInventoryStatusRecords(localInventory, excludedNICs)
 	status := mergeAnyMaps(discoveryPlacementStatus(placement), mergeAnyMaps(discoverySelfInventoryStatus(selfInventory), map[string]any{
 		"discoveryPhase":                "Observed",
 		"discoveryReason":               "",
@@ -295,8 +307,8 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 		"discoveryProviderRef":          profileRef,
 		"discoveryPlugin":               pluginName,
 		"discoveryObserved":             counters.Observed,
-		"discoveryLocalInventory":       privateIPRecordsStatus(localInventory, prefix),
-		"discoveryLocalInventoryIPs":    privateIPRecordAddresses(localInventory, prefix),
+		"discoveryLocalInventory":       privateIPRecordsStatus(statusLocalInventory, prefix),
+		"discoveryLocalInventoryIPs":    privateIPRecordAddresses(statusLocalInventory, prefix),
 		"discoveryObservedCandidateIPs": privateIPRecordAddresses(observedCandidates, prefix),
 		"discoveryOwnedAddresses":       mapStringKeysSorted(observedThisScan),
 		"discoveryHeldAddresses":        mapStringKeysSorted(heldThisScan),
@@ -739,6 +751,27 @@ func (c DiscoveryController) expireStaleProviderDiscoveryEvents(poolName string,
 	return nil
 }
 
+func (c DiscoveryController) expireProviderDiscoveryAddresses(poolName string, spec api.MobilityPoolSpec, selfNode string, poolPrefix netip.Prefix, addresses map[string]bool, now time.Time, ttl time.Duration) error {
+	if len(addresses) == 0 {
+		return nil
+	}
+	latest, err := c.latestProviderDiscoveryEvents(poolName, spec.GroupRef, selfNode, poolPrefix, now)
+	if err != nil {
+		return err
+	}
+	for _, address := range mapStringKeysSorted(addresses) {
+		ev, ok := latest[address]
+		if !ok || ev.Type != ObservedEventType {
+			continue
+		}
+		expired := providerDiscoveryExpiredEvent(poolName, spec.GroupRef, selfNode, address, ev, now, ttl)
+		if err := c.Store.RecordFederationEvent(expired); err != nil {
+			return fmt.Errorf("record provider discovery invalidated event %q: %w", expired.ID, err)
+		}
+	}
+	return nil
+}
+
 func (c DiscoveryController) latestProviderDiscoveryEvents(poolName, group, selfNode string, poolPrefix netip.Prefix, now time.Time) (map[string]routerstate.EventRecord, error) {
 	events, err := c.Store.ListFederationEvents(group, false, now.Unix())
 	if err != nil {
@@ -843,6 +876,38 @@ func filterProviderObservedCandidateRecords(records []providerinventory.PrivateI
 			continue
 		}
 		if recSubnet := strings.TrimSpace(rec.SubnetRef); recSubnet != "" && subnetRef != "" && recSubnet != subnetRef {
+			continue
+		}
+		out = append(out, rec)
+	}
+	return out
+}
+
+func scopedOutProviderCandidateAddresses(raw, scoped []providerinventory.PrivateIPRecord, poolPrefix netip.Prefix) map[string]bool {
+	scopedAddresses := map[string]bool{}
+	for _, rec := range scoped {
+		address, ok := normalizeDiscoveredAddress(rec.Address, poolPrefix)
+		if !ok {
+			continue
+		}
+		scopedAddresses[address] = true
+	}
+	out := map[string]bool{}
+	for _, rec := range raw {
+		address, ok := normalizeDiscoveredAddress(rec.Address, poolPrefix)
+		if !ok || scopedAddresses[address] {
+			continue
+		}
+		out[address] = true
+	}
+	return out
+}
+
+func filterDiscoveryLocalInventoryStatusRecords(records []providerinventory.PrivateIPRecord, excludedNICs map[string]bool) []providerinventory.PrivateIPRecord {
+	var out []providerinventory.PrivateIPRecord
+	for _, rec := range records {
+		nicRef := strings.TrimSpace(rec.NICRef)
+		if nicRef != "" && excludedNICs[nicRef] {
 			continue
 		}
 		out = append(out, rec)
