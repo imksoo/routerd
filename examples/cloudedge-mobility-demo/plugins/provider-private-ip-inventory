@@ -246,8 +246,8 @@ def aws_eni_instance_metadata(region, subnet):
                     if eni:
                         metadata[eni] = {"resourceRef": instance_id, "instanceState": state}
         return metadata
-    except Exception:
-        return None
+    except Exception as exc:
+        raise RuntimeError("AWS instance metadata inventory failed: " + str(exc)) from exc
 
 
 def aws_route_table_captured_addresses(region, route_table_ref, self_nic, prefix):
@@ -375,8 +375,8 @@ def azure_nic_vm_metadata(resource_group):
                 if nic_id:
                     metadata[nic_id] = {"resourceRef": vm_id, "powerState": power_state}
         return metadata
-    except Exception:
-        return None
+    except Exception as exc:
+        raise RuntimeError("Azure VM metadata inventory failed: " + str(exc)) from exc
 
 
 def azure_inventory(spec):

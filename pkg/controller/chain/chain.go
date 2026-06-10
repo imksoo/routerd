@@ -68,6 +68,10 @@ type Store interface {
 	ObjectStatus(apiVersion, kind, name string) map[string]any
 }
 
+type objectStatusMerger interface {
+	MergeObjectStatus(apiVersion, kind, name string, updates map[string]any) error
+}
+
 type eventedStore struct {
 	Store  Store
 	Bus    *bus.Bus
@@ -99,6 +103,10 @@ type mobilityStore struct {
 
 func (s mobilityStore) SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error {
 	return s.evented.SaveObjectStatus(apiVersion, kind, name, status)
+}
+
+func (s mobilityStore) MergeObjectStatus(apiVersion, kind, name string, updates map[string]any) error {
+	return s.evented.MergeObjectStatus(apiVersion, kind, name, updates)
 }
 
 func (s mobilityStore) ObjectStatus(apiVersion, kind, name string) map[string]any {
@@ -191,6 +199,40 @@ func (s eventedStore) SaveObjectStatus(apiVersion, kind, name string, status map
 	return nil
 }
 
+func (s eventedStore) MergeObjectStatus(apiVersion, kind, name string, updates map[string]any) error {
+	if s.Store == nil {
+		return nil
+	}
+	status := s.statusWithLifecycle(apiVersion, kind, name, copyStatusMap(updates))
+	current := s.Store.ObjectStatus(apiVersion, kind, name)
+	next := copyStatusMap(current)
+	for key, value := range status {
+		next[key] = value
+	}
+	if newerStatus(current, next) {
+		return nil
+	}
+	publishChanged := statusChangedForEvent(apiVersion, kind, current, next)
+	if store, ok := s.Store.(objectStatusMerger); ok {
+		if err := store.MergeObjectStatus(apiVersion, kind, name, status); err != nil {
+			return err
+		}
+	} else if err := s.Store.SaveObjectStatus(apiVersion, kind, name, next); err != nil {
+		return err
+	}
+	if publishChanged && s.Bus != nil {
+		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "store"}, "routerd.resource.status.changed", daemonapi.SeverityInfo)
+		event.Resource = &daemonapi.ResourceRef{APIVersion: apiVersion, Kind: kind, Name: name}
+		event.Attributes = map[string]string{
+			"phase":         fmt.Sprint(next["phase"]),
+			"previousPhase": fmt.Sprint(current["phase"]),
+			"changedFields": strings.Join(statusChangedFieldsForEvent(apiVersion, kind, current, next), ","),
+		}
+		return s.Bus.Publish(context.Background(), event)
+	}
+	return nil
+}
+
 func (s eventedStore) withRouter(router *api.Router) eventedStore {
 	s.Router = router
 	return s
@@ -203,6 +245,14 @@ func (s eventedStore) statusWithLifecycle(apiVersion, kind, name string, status 
 
 func statusWithOwnership(apiVersion, kind string, status map[string]any) map[string]any {
 	return statusWithLifecycle(apiVersion, kind, "", api.Resource{}, false, status)
+}
+
+func copyStatusMap(status map[string]any) map[string]any {
+	out := map[string]any{}
+	for key, value := range status {
+		out[key] = value
+	}
+	return out
 }
 
 func statusWithLifecycle(apiVersion, kind, name string, resource api.Resource, found bool, status map[string]any) map[string]any {
@@ -893,8 +943,8 @@ type Runner struct {
 	Store  Store
 	Opts   Options
 
-	supervisedMu       sync.Mutex
-	supervisedDaemons  map[string]bool
+	supervisedMu         sync.Mutex
+	supervisedDaemons    map[string]bool
 	daemonSourcesStarted map[string]bool
 }
 
@@ -2441,19 +2491,25 @@ func (c DaemonStatusController) Reconcile(ctx context.Context) error {
 				"updatedAt":  time.Now().UTC().Format(time.RFC3339Nano),
 			}
 			if observed.Resource.APIVersion == api.MobilityAPIVersion && observed.Resource.Kind == "MobilityPool" {
-				for key, value := range c.Store.ObjectStatus(observed.Resource.APIVersion, observed.Resource.Kind, observed.Resource.Name) {
+				for key, value := range observed.Observed {
 					next[key] = value
 				}
-				next["phase"] = observed.Phase
-				next["health"] = observed.Health
-				next["conditions"] = observed.Conditions
-				next["updatedAt"] = time.Now().UTC().Format(time.RFC3339Nano)
-			}
-			for key, value := range observed.Observed {
-				next[key] = value
-			}
-			if observed.Resource.APIVersion == api.MobilityAPIVersion && observed.Resource.Kind == "MobilityPool" {
 				mergeMobilityObservedSourceStatus(next, observed.Observed)
+				if store, ok := c.Store.(objectStatusMerger); ok {
+					if err := store.MergeObjectStatus(observed.Resource.APIVersion, observed.Resource.Kind, observed.Resource.Name, next); err != nil {
+						return err
+					}
+					continue
+				}
+				full := copyStatusMap(c.Store.ObjectStatus(observed.Resource.APIVersion, observed.Resource.Kind, observed.Resource.Name))
+				for key, value := range next {
+					full[key] = value
+				}
+				next = full
+			} else {
+				for key, value := range observed.Observed {
+					next[key] = value
+				}
 			}
 			if err := c.Store.SaveObjectStatus(observed.Resource.APIVersion, observed.Resource.Kind, observed.Resource.Name, next); err != nil {
 				return err

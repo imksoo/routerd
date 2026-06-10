@@ -4,6 +4,10 @@ package chain
 
 import (
 	"context"
+	"encoding/json"
+	"net"
+	"net/http"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +16,27 @@ import (
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 )
+
+type mergeTrackingMapStore struct {
+	mapStore
+	mergeCalls int
+	saveCalls  int
+}
+
+func (s *mergeTrackingMapStore) SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error {
+	s.saveCalls++
+	return s.mapStore.SaveObjectStatus(apiVersion, kind, name, status)
+}
+
+func (s *mergeTrackingMapStore) MergeObjectStatus(apiVersion, kind, name string, updates map[string]any) error {
+	s.mergeCalls++
+	current := s.ObjectStatus(apiVersion, kind, name)
+	next := copyStatusMap(current)
+	for key, value := range updates {
+		next[key] = value
+	}
+	return s.mapStore.SaveObjectStatus(apiVersion, kind, name, next)
+}
 
 func TestStatusWithOwnershipAddsControllerMetadata(t *testing.T) {
 	status := statusWithOwnership("net.routerd.net/v1alpha1", "EgressRoutePolicy", map[string]any{"phase": "Applied"})
@@ -58,6 +83,62 @@ func TestEventedStoreAddsLifecycleOwnerMetadata(t *testing.T) {
 	}
 	if status["lifecycleClass"] != "controller" {
 		t.Fatalf("lifecycleClass = %v, want controller", status["lifecycleClass"])
+	}
+}
+
+func TestDaemonStatusControllerMergesMobilityPoolStatus(t *testing.T) {
+	socket := filepath.Join(t.TempDir(), "daemon.sock")
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatalf("listen unix socket: %v", err)
+	}
+	defer listener.Close()
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/status" {
+			http.NotFound(w, r)
+			return
+		}
+		status := daemonapi.DaemonStatus{Resources: []daemonapi.ResourceStatus{{
+			Resource: daemonapi.ResourceRef{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool", Name: "cloudedge"},
+			Phase:    "Observed",
+			Health:   "OK",
+			Observed: map[string]string{
+				"sourceType": "arp-observer",
+				"address":    "10.88.60.10/32",
+			},
+		}}}
+		_ = json.NewEncoder(w).Encode(status)
+	})}
+	defer server.Close()
+	go func() { _ = server.Serve(listener) }()
+
+	base := &mergeTrackingMapStore{mapStore: mapStore{
+		api.MobilityAPIVersion + "/MobilityPool/cloudedge": {
+			"plannerPhase":            "BGPPlanned",
+			"discoverySelfPrivateIPs": []string{"10.88.60.21"},
+		},
+	}}
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Client"},
+		Metadata: api.ObjectMeta{Name: "wan"},
+	}}}}
+	controller := DaemonStatusController{
+		Router:        router,
+		Store:         base,
+		DaemonSockets: map[string]string{"wan": socket},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if base.mergeCalls != 1 || base.saveCalls != 0 {
+		t.Fatalf("mergeCalls=%d saveCalls=%d, want MobilityPool partial merge", base.mergeCalls, base.saveCalls)
+	}
+	status := base.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	if status["plannerPhase"] != "BGPPlanned" || status["discoverySelfPrivateIPs"] == nil {
+		t.Fatalf("status fields were not preserved: %#v", status)
+	}
+	if status["phase"] != "Observed" || status["address"] != "10.88.60.10/32" {
+		t.Fatalf("daemon observed fields missing: %#v", status)
 	}
 }
 
