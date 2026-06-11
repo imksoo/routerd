@@ -127,6 +127,41 @@ func TestDHCPv4ServerLeaseSyncMissingLeaseFileIsPending(t *testing.T) {
 	}
 }
 
+func TestDHCPv4ServerLeaseSyncAddsStickyLogSourcesWhenEnabled(t *testing.T) {
+	controller := FileSyncController{
+		Router: &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"}, Metadata: api.ObjectMeta{Name: "lan-dhcpv4"}, Spec: api.DHCPv4ServerSpec{StickyHoldDays: 3}},
+		}}},
+	}
+	job, err := controller.fileSyncJobFromDHCPv4ServerLeaseSync(api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4ServerLeaseSync"},
+		Metadata: api.ObjectMeta{Name: "lan-v4-leases"},
+		Spec: api.DHCPv4ServerLeaseSyncSpec{
+			Source:  api.DHCPv4ServerLeaseSyncSourceSpec{Resource: "DHCPv4Server/lan-dhcpv4"},
+			Targets: []api.LeaseSyncTargetSpec{{Host: "homert03.lain.local"}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(job.Sources) != 4 {
+		t.Fatalf("sources = %#v, want lease file plus sticky sqlite files", job.Sources)
+	}
+	if job.Sources[0].Name != "leaseFile" || !job.Sources[0].Required {
+		t.Fatalf("lease source = %#v, want required leaseFile first", job.Sources[0])
+	}
+	wantSuffixes := []string{"dhcp-sticky.db", "dhcp-sticky.db-wal", "dhcp-sticky.db-shm"}
+	for i, suffix := range wantSuffixes {
+		source := job.Sources[i+1]
+		if source.Required {
+			t.Fatalf("sticky source %s is required; source=%#v", suffix, source)
+		}
+		if !strings.HasSuffix(source.Path, suffix) {
+			t.Fatalf("sticky source path = %q, want suffix %q", source.Path, suffix)
+		}
+	}
+}
+
 func TestDHCPv4ServerLeaseSyncDefaultLeaseFileMatchesRuntimeDnsmasq(t *testing.T) {
 	got := defaultDHCPv4LeaseFile()
 	defaults, features := platform.Current()

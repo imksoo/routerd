@@ -212,6 +212,7 @@ func (c FileSyncController) fileSyncJobFromDHCPv4ServerLeaseSync(resource api.Re
 	sourceName := dhcpv4ServerLeaseSyncResourceName(spec.Source.Resource)
 	if sourceName != "" {
 		job.Sources = append(job.Sources, fileSyncSource{Name: "leaseFile", Path: c.dhcpv4LeaseFile(sourceName), Required: true})
+		job.Sources = append(job.Sources, c.dhcpv4StickyLogFiles(sourceName)...)
 	}
 	for _, target := range spec.Targets {
 		job.Targets = append(job.Targets, fileSyncTarget{
@@ -223,6 +224,28 @@ func (c FileSyncController) fileSyncJobFromDHCPv4ServerLeaseSync(resource api.Re
 		})
 	}
 	return job, nil
+}
+
+func (c FileSyncController) dhcpv4StickyLogFiles(resourceName string) []fileSyncSource {
+	if c.Router == nil {
+		return nil
+	}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.Kind != "DHCPv4Server" || resource.Metadata.Name != resourceName {
+			continue
+		}
+		spec, err := resource.DHCPv4ServerSpec()
+		if err != nil || spec.StickyHoldDays <= 0 {
+			return nil
+		}
+		path := defaultDHCPStickyLogFile()
+		return []fileSyncSource{
+			{Name: "stickyLog", Path: path},
+			{Name: "stickyLogWAL", Path: path + "-wal"},
+			{Name: "stickyLogSHM", Path: path + "-shm"},
+		}
+	}
+	return nil
 }
 
 func (c FileSyncController) dhcpv4LeaseFile(resourceName string) string {
@@ -380,6 +403,11 @@ func dhcpv6ServerLeaseSyncResourceName(ref string) string {
 
 func defaultDHCPv4LeaseFile() string {
 	return defaultDNSMasqLeaseFile()
+}
+
+func defaultDHCPStickyLogFile() string {
+	defaults, _ := platform.Current()
+	return filepath.Join(defaults.StateDir, "dhcp-sticky.db")
 }
 
 func defaultDNSMasqLeaseFile() string {
