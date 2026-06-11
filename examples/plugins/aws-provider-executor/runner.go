@@ -41,21 +41,17 @@ func resolveAWSHelperPath() (string, error) {
 }
 
 func validateExecutablePath(candidate, source string) (string, error) {
-	if strings.ContainsAny(candidate, `/\`) {
-		info, err := os.Stat(candidate)
-		if err != nil {
-			return "", fmt.Errorf("AWS helper executable unavailable: %s=%q: %w", source, candidate, err)
-		}
-		if info.IsDir() || info.Mode()&0111 == 0 {
-			return "", fmt.Errorf("AWS helper executable unavailable: %s=%q is not executable", source, candidate)
-		}
-		return candidate, nil
+	if !strings.ContainsAny(candidate, `/\`) {
+		return "", fmt.Errorf("AWS helper executable unavailable: %s=%q must be a concrete executable path; PATH lookup is not used", source, candidate)
 	}
-	path, err := exec.LookPath(candidate)
+	info, err := os.Stat(candidate)
 	if err != nil {
-		return "", fmt.Errorf("AWS helper executable unavailable: install aws-routerd-helper or set %s: %w", awsHelperEnv, err)
+		return "", fmt.Errorf("AWS helper executable unavailable: %s=%q: %w", source, candidate, err)
 	}
-	return path, nil
+	if info.IsDir() || info.Mode()&0111 == 0 {
+		return "", fmt.Errorf("AWS helper executable unavailable: %s=%q is not executable", source, candidate)
+	}
+	return candidate, nil
 }
 
 // execRunner execs aws-routerd-helper with the CLI-compatible argv the executor

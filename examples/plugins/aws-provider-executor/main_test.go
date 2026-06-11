@@ -129,6 +129,27 @@ func TestPreflightLegacyAWSCLIPathFallbackPasses(t *testing.T) {
 	}
 }
 
+func TestPreflightLegacyAWSCLIPathDoesNotUsePATHLookup(t *testing.T) {
+	binDir := t.TempDir()
+	path := filepath.Join(binDir, "aws")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+		t.Fatalf("write fake legacy aws: %v", err)
+	}
+	t.Setenv("PATH", binDir)
+	t.Setenv(awsHelperEnv, "")
+	t.Setenv(awsCLIPathEnv, "aws")
+	res := dispatchWith(reqSpec(actionPreflight, modeDryRun), func(ctx context.Context, argv ...string) ([]byte, error) {
+		t.Fatalf("preflight must not invoke aws helper runner")
+		return nil, nil
+	})
+	if res.Status.Status != statusFailed {
+		t.Fatalf("want failed, got %#v", res.Status)
+	}
+	if !strings.Contains(res.Status.Error, "PATH lookup is not used") {
+		t.Fatalf("preflight error = %#v", res.Status)
+	}
+}
+
 func verbsOf(calls [][]string) []string {
 	var out []string
 	for _, c := range calls {
