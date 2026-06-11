@@ -209,12 +209,13 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 	installedNextHops, bgpRIBObserved := c.bgpInstalledNextHops()
 	acceptedBGPPathPrefixes := c.bgpAcceptedPathPrefixes()
 	forwardingObserved, forwardingEnabled, forwardingObservedAt := c.discoverySelfForwardingState(res.Metadata.Name)
+	currentStatus := c.Store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", res.Metadata.Name)
 	ownershipDecisions, ownershipErr := resolveAddressOwnership(ownershipResolverInput{
 		PoolName:          res.Metadata.Name,
 		SelfNode:          selfNode,
 		Spec:              spec,
 		Events:            events,
-		Status:            c.Store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", res.Metadata.Name),
+		Status:            currentStatus,
 		ActionJournal:     actionJournal,
 		PreviousPlans:     previousActionPlans,
 		InstalledNextHops: installedNextHops,
@@ -346,21 +347,24 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		status[key] = value
 	}
 	for key, value := range samConvergenceStatusFields(samConvergenceInput{
-		Status:                  status,
-		DesiredBGPPaths:         delivery.Paths,
-		InstalledNextHops:       installedNextHops,
-		AcceptedBGPPathPrefixes: acceptedBGPPathPrefixes,
-		BGPRIBObserved:          bgpRIBObserved,
-		SelfCaptureResolved:     selfCaptureResolved,
-		SelfCaptureReason:       selfCaptureReason,
-		CaptureCandidates:       len(delivery.CaptureCandidates),
-		GeneratedActions:        len(actionPlans),
-		ProviderCapturedPaths:   delivery.ProviderCapturedPaths,
-		OSCaptureExpected:       self.Capture.Type == "provider-secondary-ip" && self.Capture.ConfigureOSAddress && (len(delivery.CaptureCandidates) > 0 || len(actionPlans) > 0 || delivery.ProviderCapturedPaths > 0),
-		OSCaptureObserved:       c.providerSecondaryOSCaptureReflected(res.Metadata.Name, captureConvergenceAddresses(delivery)),
-		ForwardingObserved:      forwardingObserved,
-		ForwardingEnabled:       forwardingEnabled,
-		ObservedAt:              now,
+		Status:                    status,
+		DesiredBGPPaths:           delivery.Paths,
+		InstalledNextHops:         installedNextHops,
+		AcceptedBGPPathPrefixes:   acceptedBGPPathPrefixes,
+		BGPRIBObserved:            bgpRIBObserved,
+		SelfCaptureResolved:       selfCaptureResolved,
+		SelfCaptureReason:         selfCaptureReason,
+		CaptureCandidates:         len(delivery.CaptureCandidates),
+		GeneratedActions:          len(actionPlans),
+		ProviderCapturedPaths:     delivery.ProviderCapturedPaths,
+		ProviderDiscoveryRequired: strings.EqualFold(strings.TrimSpace(self.OwnershipDiscovery.Mode), "provider-private-ip"),
+		ProviderDiscoveryPhase:    statusMapString(currentStatus, "discoveryPhase"),
+		ProviderDiscoveryReason:   statusMapString(currentStatus, "discoveryReason"),
+		OSCaptureExpected:         self.Capture.Type == "provider-secondary-ip" && self.Capture.ConfigureOSAddress && (len(delivery.CaptureCandidates) > 0 || len(actionPlans) > 0 || delivery.ProviderCapturedPaths > 0),
+		OSCaptureObserved:         c.providerSecondaryOSCaptureReflected(res.Metadata.Name, captureConvergenceAddresses(delivery)),
+		ForwardingObserved:        forwardingObserved,
+		ForwardingEnabled:         forwardingEnabled,
+		ObservedAt:                now,
 	}) {
 		status[key] = value
 	}
@@ -368,21 +372,24 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 }
 
 type samConvergenceInput struct {
-	Status                  map[string]any
-	DesiredBGPPaths         []bgpdaemon.AppliedPath
-	InstalledNextHops       map[string][]string
-	AcceptedBGPPathPrefixes map[string]bool
-	BGPRIBObserved          bool
-	SelfCaptureResolved     bool
-	SelfCaptureReason       string
-	CaptureCandidates       int
-	GeneratedActions        int
-	ProviderCapturedPaths   int
-	OSCaptureExpected       bool
-	OSCaptureObserved       bool
-	ForwardingObserved      bool
-	ForwardingEnabled       bool
-	ObservedAt              time.Time
+	Status                    map[string]any
+	DesiredBGPPaths           []bgpdaemon.AppliedPath
+	InstalledNextHops         map[string][]string
+	AcceptedBGPPathPrefixes   map[string]bool
+	BGPRIBObserved            bool
+	SelfCaptureResolved       bool
+	SelfCaptureReason         string
+	CaptureCandidates         int
+	GeneratedActions          int
+	ProviderCapturedPaths     int
+	ProviderDiscoveryRequired bool
+	ProviderDiscoveryPhase    string
+	ProviderDiscoveryReason   string
+	OSCaptureExpected         bool
+	OSCaptureObserved         bool
+	ForwardingObserved        bool
+	ForwardingEnabled         bool
+	ObservedAt                time.Time
 }
 
 func withSAMConvergenceBlocked(status map[string]any, reason string, observedAt time.Time) map[string]any {
@@ -409,6 +416,23 @@ func samConvergenceStatusFields(in samConvergenceInput) map[string]any {
 	selfCaptureBlocked := !in.SelfCaptureResolved && strings.TrimSpace(in.SelfCaptureReason) != ""
 	if selfCaptureBlocked {
 		blocking = append(blocking, in.SelfCaptureReason)
+	}
+	providerDiscoveryBlocked := false
+	if in.ProviderDiscoveryRequired {
+		switch strings.TrimSpace(in.ProviderDiscoveryPhase) {
+		case "Observed", "Standby":
+		default:
+			providerDiscoveryBlocked = true
+			reason := strings.TrimSpace(in.ProviderDiscoveryReason)
+			if reason == "" {
+				phase := strings.TrimSpace(in.ProviderDiscoveryPhase)
+				if phase == "" {
+					phase = "missing"
+				}
+				reason = "provider private-IP discovery phase is " + phase
+			}
+			blocking = append(blocking, reason)
+		}
 	}
 
 	cloudClaimPhase := sam.CloudClaimNotApplicable
@@ -473,6 +497,7 @@ func samConvergenceStatusFields(in samConvergenceInput) map[string]any {
 	case strings.EqualFold(ownershipPhase, "Conflict") || cloudClaimPhase == sam.CloudClaimFailed:
 		samPhase = sam.SAMConvergenceFailed
 	case !selfCaptureBlocked &&
+		!providerDiscoveryBlocked &&
 		strings.EqualFold(ownershipPhase, "Resolved") &&
 		(cloudClaimPhase == sam.CloudClaimNotApplicable || cloudClaimPhase == sam.CloudClaimClaimed) &&
 		(osCapturePhase == sam.OSCaptureNotApplicable || osCapturePhase == sam.OSCaptureReflected || osCapturePhase == sam.OSCaptureForwardingReady) &&

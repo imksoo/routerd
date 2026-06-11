@@ -129,6 +129,36 @@ func TestSAMConvergenceStatusBlocksUnresolvedSelfCapture(t *testing.T) {
 	}
 }
 
+func TestSAMConvergenceStatusBlocksDegradedProviderDiscovery(t *testing.T) {
+	fields := samConvergenceStatusFields(samConvergenceInput{
+		Status: map[string]any{
+			"ownershipResolverPhase": "Resolved",
+			"providerActionPhase":    "OK",
+		},
+		DesiredBGPPaths: []bgpdaemon.AppliedPath{{
+			Prefix: "10.77.60.10/32",
+		}},
+		AcceptedBGPPathPrefixes: map[string]bool{
+			"10.77.60.10/32": true,
+		},
+		BGPRIBObserved:            true,
+		ProviderDiscoveryRequired: true,
+		ProviderDiscoveryPhase:    "Degraded",
+		ProviderDiscoveryReason:   `provider inventory plugin "oci-inventory" failed: [Errno 2] No such file or directory: 'oci'`,
+		ObservedAt:                time.Unix(1700000000, 0).UTC(),
+	})
+	if fields["samConvergencePhase"] != sam.SAMConvergenceDegraded {
+		t.Fatalf("samConvergencePhase = %v, want %s", fields["samConvergencePhase"], sam.SAMConvergenceDegraded)
+	}
+	if fields["advertisementGatePhase"] != sam.AdvertisementGateBlocked {
+		t.Fatalf("advertisementGatePhase = %v, want %s", fields["advertisementGatePhase"], sam.AdvertisementGateBlocked)
+	}
+	reasons := fields["blockingReasons"].([]string)
+	if len(reasons) != 1 || !strings.Contains(reasons[0], "oci-inventory") {
+		t.Fatalf("blockingReasons = %#v, want OCI discovery failure", reasons)
+	}
+}
+
 func TestSAMConvergenceStatusProviderCaptureBlocksUntilOSAndForwardingEvidence(t *testing.T) {
 	fields := samConvergenceStatusFields(samConvergenceInput{
 		Status: map[string]any{
