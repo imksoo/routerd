@@ -5,7 +5,9 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"os"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -57,6 +59,16 @@ func TestVersionCommandOutputShape(t *testing.T) {
 	}
 	if body.Data["version"] != helperVersion {
 		t.Fatalf("version = %q, want %q", body.Data["version"], helperVersion)
+	}
+}
+
+func TestPreflightDoesNotCallUnsupportedAuthType(t *testing.T) {
+	body, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(body), ".AuthType()") {
+		t.Fatal("runPreflight must not call provider.AuthType(); OCI SDK instance principal returns unsupported on fresh VMs")
 	}
 }
 

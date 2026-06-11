@@ -79,10 +79,6 @@ func runPreflight(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("instance principal auth: %w", err)
 	}
-	authConfig, err := provider.AuthType()
-	if err != nil {
-		return fmt.Errorf("instance principal auth type: %w", err)
-	}
 	region, err := provider.Region()
 	if err != nil {
 		return fmt.Errorf("instance principal region: %w", err)
@@ -103,8 +99,8 @@ func runPreflight(ctx context.Context) error {
 	}
 	return writeData(map[string]any{
 		"version":            helperVersion,
-		"auth":               string(authConfig.AuthType),
-		"configFile":         fmt.Sprintf("%t", authConfig.IsFromConfigFile),
+		"auth":               "instance_principal",
+		"configFile":         "false",
 		"region":             region,
 		"instancePrincipal":  "ok",
 		"keyIDProbe":         "ok",
