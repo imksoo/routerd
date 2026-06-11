@@ -1713,11 +1713,128 @@ func (r doctorRunner) doctorFirewall() []doctorCheck {
 			}
 			checks = append(checks, check)
 		}
+		checks = append(checks, r.doctorHostFirewallListenerChecks(ctx)...)
 		checks = append(checks, r.doctorStaleNftTablesCheck(ctx))
 	} else {
 		checks = append(checks, doctorHostSkipped("firewall", "nft routerd_filter"))
 	}
 	return checks
+}
+
+func (r doctorRunner) doctorHostFirewallListenerChecks(ctx context.Context) []doctorCheck {
+	if doctorCurrentOS() != platform.OSLinux {
+		return nil
+	}
+	listeners := declaredFirewallSensitiveListeners(r.router)
+	if len(listeners) == 0 {
+		return nil
+	}
+	command := doctorRunDiagnosticCommand(ctx, "iptables-save -t filter", "iptables-save", "-t", "filter")
+	if !command.OK {
+		return []doctorCheck{{
+			Area:   "firewall",
+			Name:   "host iptables listener conflicts",
+			Status: doctorSkip,
+			Detail: firstNonEmpty(command.Error, oneLine(command.Output), "iptables-save unavailable"),
+			Remedy: "check host firewall manually for unmanaged INPUT rejects that can shadow routerd-owned listeners",
+		}}
+	}
+	var checks []doctorCheck
+	for _, listener := range listeners {
+		if iptablesInputRejectsListener(command.Output, listener.Proto, listener.Port) {
+			checks = append(checks, doctorCheck{
+				Area:   "firewall",
+				Name:   listener.Resource + " host firewall input",
+				Status: doctorFail,
+				Detail: fmt.Sprintf("iptables INPUT has a reject/drop before any %s dport %d accept", listener.Proto, listener.Port),
+				Remedy: fmt.Sprintf("allow %s/%d in the host firewall or remove the unmanaged INPUT reject before relying on %s", listener.Proto, listener.Port, listener.Resource),
+			})
+			continue
+		}
+		checks = append(checks, doctorCheck{
+			Area:   "firewall",
+			Name:   listener.Resource + " host firewall input",
+			Status: doctorPass,
+			Detail: fmt.Sprintf("no unmanaged iptables INPUT reject found before %s dport %d", listener.Proto, listener.Port),
+		})
+	}
+	return checks
+}
+
+type doctorDeclaredListener struct {
+	Resource string
+	Proto    string
+	Port     int
+}
+
+func declaredFirewallSensitiveListeners(router *api.Router) []doctorDeclaredListener {
+	if router == nil {
+		return nil
+	}
+	var listeners []doctorDeclaredListener
+	seen := map[string]bool{}
+	add := func(resource, proto string, port int) {
+		if resource == "" || proto == "" || port == 0 {
+			return
+		}
+		key := resource + "|" + proto + "|" + strconv.Itoa(port)
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		listeners = append(listeners, doctorDeclaredListener{Resource: resource, Proto: proto, Port: port})
+	}
+	for _, resource := range router.Spec.Resources {
+		switch resource.Kind {
+		case "BGPRouter":
+			spec, err := resource.BGPRouterSpec()
+			if err != nil {
+				continue
+			}
+			add("BGPRouter/"+resource.Metadata.Name, "tcp", doctorDefaultInt(spec.Listen.Port, 179))
+		case "WireGuardInterface":
+			spec, err := resource.WireGuardInterfaceSpec()
+			if err != nil {
+				continue
+			}
+			add("WireGuardInterface/"+resource.Metadata.Name, "udp", spec.ListenPort)
+		}
+	}
+	sort.Slice(listeners, func(i, j int) bool {
+		if listeners[i].Resource != listeners[j].Resource {
+			return listeners[i].Resource < listeners[j].Resource
+		}
+		if listeners[i].Proto != listeners[j].Proto {
+			return listeners[i].Proto < listeners[j].Proto
+		}
+		return listeners[i].Port < listeners[j].Port
+	})
+	return listeners
+}
+
+func iptablesInputRejectsListener(output, proto string, port int) bool {
+	proto = strings.TrimSpace(proto)
+	portText := strconv.Itoa(port)
+	for _, raw := range strings.Split(output, "\n") {
+		line := strings.TrimSpace(raw)
+		if !strings.HasPrefix(line, "-A INPUT ") {
+			continue
+		}
+		if strings.Contains(line, "-j ACCEPT") && strings.Contains(line, "-p "+proto) && strings.Contains(line, "--dport "+portText) {
+			return false
+		}
+		if strings.Contains(line, "-j REJECT") || strings.Contains(line, "-j DROP") {
+			return true
+		}
+	}
+	return false
+}
+
+func doctorDefaultInt(value, fallback int) int {
+	if value != 0 {
+		return value
+	}
+	return fallback
 }
 
 func (r doctorRunner) doctorStaleNftTablesCheck(ctx context.Context) doctorCheck {

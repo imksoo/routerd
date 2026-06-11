@@ -100,6 +100,33 @@ func TestDoctorJSONOutputIncludesSummaryAndChecks(t *testing.T) {
 	}
 }
 
+func TestIptablesInputRejectsDeclaredListener(t *testing.T) {
+	const ociDefault = `*filter
+:INPUT ACCEPT [0:0]
+-A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
+-A INPUT -p icmp -j ACCEPT
+-A INPUT -i lo -j ACCEPT
+-A INPUT -p tcp -m state --state NEW -m tcp --dport 22 -j ACCEPT
+-A INPUT -j REJECT --reject-with icmp-host-prohibited
+COMMIT`
+	if !iptablesInputRejectsListener(ociDefault, "tcp", 179) {
+		t.Fatalf("expected OCI-style default INPUT reject to block tcp/179")
+	}
+}
+
+func TestIptablesInputAcceptBeforeRejectAllowsDeclaredListener(t *testing.T) {
+	const opened = `*filter
+:INPUT ACCEPT [0:0]
+-A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
+-A INPUT -p tcp -m tcp --dport 179 -j ACCEPT
+-A INPUT -p tcp -m state --state NEW -m tcp --dport 22 -j ACCEPT
+-A INPUT -j REJECT --reject-with icmp-host-prohibited
+COMMIT`
+	if iptablesInputRejectsListener(opened, "tcp", 179) {
+		t.Fatalf("tcp/179 accept before reject should not be reported as blocked")
+	}
+}
+
 func TestDoctorSAMConvergenceDegradedWarnsWhenOwnershipResolved(t *testing.T) {
 	configPath, statePath := writeDoctorSAMFixture(t)
 	store := openDoctorState(t, statePath)

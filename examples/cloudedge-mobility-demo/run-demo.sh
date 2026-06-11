@@ -251,6 +251,8 @@ preflight_oci_forwarding() {
       exit 1
     fi
     if command -v iptables >/dev/null 2>&1; then
+      sudo iptables -C INPUT -p tcp --dport 179 -j ACCEPT 2>/dev/null ||
+        sudo iptables -I INPUT 1 -p tcp --dport 179 -j ACCEPT
       sudo iptables -C FORWARD -i ens3 -o wg-hybrid -j ACCEPT 2>/dev/null ||
         sudo iptables -I FORWARD 1 -i ens3 -o wg-hybrid -j ACCEPT
       sudo iptables -C FORWARD -i wg-hybrid -o ens3 -j ACCEPT 2>/dev/null ||
@@ -260,7 +262,7 @@ preflight_oci_forwarding() {
       sudo iptables -C FORWARD -i sam+ -o ens3 -j ACCEPT 2>/dev/null ||
         sudo iptables -I FORWARD 1 -i sam+ -o ens3 -j ACCEPT
     else
-      echo 'OCI preflight failed: iptables command unavailable; cannot assert ens3<->wg-hybrid FORWARD allow' >&2
+      echo 'OCI preflight failed: iptables command unavailable; cannot assert BGP INPUT and ens3<->wg-hybrid FORWARD allow' >&2
       exit 1
     fi"
 }
