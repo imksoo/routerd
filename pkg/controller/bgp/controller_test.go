@@ -439,6 +439,7 @@ type fakeFIB struct {
 	routes                []FIBRoute
 	history               [][]FIBRoute
 	unsupported           map[string]string
+	missingInstalled      map[string]bool
 	err                   error
 	guardPreferredSource  bool
 	localPreferredSources map[string]bool
@@ -478,6 +479,9 @@ func (f *fakeFIB) SyncBGP(_ context.Context, routes []FIBRoute) (FIBSyncResult, 
 	for prefix, reason := range f.unsupported {
 		delete(result.Installed, prefix)
 		result.Unsupported[prefix] = reason
+	}
+	for prefix := range f.missingInstalled {
+		delete(result.Installed, prefix)
 	}
 	return result, f.err
 }
@@ -1432,6 +1436,48 @@ func TestReconcileDegradesWhenSomePrefixesCannotInstall(t *testing.T) {
 	}
 	if got := byPrefix["2001:db8:250::/64"]; got.Installed || got.SelectionReason != "GoBGPIPv6FIBUnsupported" {
 		t.Fatalf("v6 prefix = %#v, want unsupported", got)
+	}
+}
+
+func TestReconcileReportsAcceptedPrefixMissingInstalledNextHopEvidence(t *testing.T) {
+	server := &fakeServer{routes: []*gobgpapi.Destination{testDestination("10.77.60.10/32", "10.99.0.1")}}
+	controller := Controller{
+		Router: bgpRouterWithImportPrefixes("10.77.60.0/24"),
+		Store:  mapStore{},
+		Server: server,
+		FIB:    &fakeFIB{missingInstalled: map[string]bool{"10.77.60.10/32": true}},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	status := controller.Store.ObjectStatus(api.NetAPIVersion, "BGPRouter", "lan")
+	if status["phase"] != "Degraded" || status["pendingReason"] != "GoBGPFIBMissingRoute" {
+		t.Fatalf("router status = %#v, want degraded missing FIB route", status)
+	}
+	if status["fibMissingRoutes"] != 1 {
+		t.Fatalf("fibMissingRoutes = %#v, want 1", status["fibMissingRoutes"])
+	}
+	installed, ok := status["installedNextHops"].(map[string][]string)
+	if !ok {
+		t.Fatalf("installedNextHops = %#v, want map[string][]string", status["installedNextHops"])
+	}
+	if _, ok := installed["10.77.60.10/32"]; ok {
+		t.Fatalf("installedNextHops = %#v, want accepted prefix omitted until FIB evidence exists", installed)
+	}
+	missing, ok := status["missingInstalledNextHops"].(map[string][]string)
+	if !ok || !reflect.DeepEqual(missing["10.77.60.10/32"], []string{"10.99.0.1"}) {
+		t.Fatalf("missingInstalledNextHops = %#v, want accepted prefix next-hop evidence", status["missingInstalledNextHops"])
+	}
+	prefixes, ok := status["prefixes"].([]bgpstate.Prefix)
+	if !ok {
+		t.Fatalf("prefixes = %#v", status["prefixes"])
+	}
+	byPrefix := map[string]bgpstate.Prefix{}
+	for _, prefix := range prefixes {
+		byPrefix[prefix.Prefix] = prefix
+	}
+	if got := byPrefix["10.77.60.10/32"]; got.Installed || got.SelectionReason != "GoBGPFIBNotInstalled" {
+		t.Fatalf("prefix = %#v, want accepted but not installed", got)
 	}
 }
 

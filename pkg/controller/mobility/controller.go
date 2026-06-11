@@ -344,15 +344,18 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		status[key] = value
 	}
 	for key, value := range samConvergenceStatusFields(samConvergenceInput{
-		Status:             status,
-		DesiredBGPPaths:    delivery.Paths,
-		InstalledNextHops:  installedNextHops,
-		BGPRIBObserved:     bgpRIBObserved,
-		CaptureCandidates:  len(delivery.CaptureCandidates),
-		GeneratedActions:   len(actionPlans),
-		ForwardingObserved: forwardingObserved,
-		ForwardingEnabled:  forwardingEnabled,
-		ObservedAt:         now,
+		Status:                status,
+		DesiredBGPPaths:       delivery.Paths,
+		InstalledNextHops:     installedNextHops,
+		BGPRIBObserved:        bgpRIBObserved,
+		CaptureCandidates:     len(delivery.CaptureCandidates),
+		GeneratedActions:      len(actionPlans),
+		ProviderCapturedPaths: delivery.ProviderCapturedPaths,
+		OSCaptureExpected:     self.Capture.Type == "provider-secondary-ip" && self.Capture.ConfigureOSAddress && (len(delivery.CaptureCandidates) > 0 || len(actionPlans) > 0 || delivery.ProviderCapturedPaths > 0),
+		OSCaptureObserved:     c.providerSecondaryOSCaptureReflected(res.Metadata.Name, captureConvergenceAddresses(delivery)),
+		ForwardingObserved:    forwardingObserved,
+		ForwardingEnabled:     forwardingEnabled,
+		ObservedAt:            now,
 	}) {
 		status[key] = value
 	}
@@ -360,15 +363,18 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 }
 
 type samConvergenceInput struct {
-	Status             map[string]any
-	DesiredBGPPaths    []bgpdaemon.AppliedPath
-	InstalledNextHops  map[string][]string
-	BGPRIBObserved     bool
-	CaptureCandidates  int
-	GeneratedActions   int
-	ForwardingObserved bool
-	ForwardingEnabled  bool
-	ObservedAt         time.Time
+	Status                map[string]any
+	DesiredBGPPaths       []bgpdaemon.AppliedPath
+	InstalledNextHops     map[string][]string
+	BGPRIBObserved        bool
+	CaptureCandidates     int
+	GeneratedActions      int
+	ProviderCapturedPaths int
+	OSCaptureExpected     bool
+	OSCaptureObserved     bool
+	ForwardingObserved    bool
+	ForwardingEnabled     bool
+	ObservedAt            time.Time
 }
 
 func withSAMConvergenceBlocked(status map[string]any, reason string, observedAt time.Time) map[string]any {
@@ -394,11 +400,13 @@ func samConvergenceStatusFields(in samConvergenceInput) map[string]any {
 	providerActionPhase := statusMapString(in.Status, "providerActionPhase")
 
 	cloudClaimPhase := sam.CloudClaimNotApplicable
-	captureExpected := in.CaptureCandidates > 0 || in.GeneratedActions > 0
+	captureExpected := in.CaptureCandidates > 0 || in.GeneratedActions > 0 || in.ProviderCapturedPaths > 0
 	switch {
 	case strings.EqualFold(providerActionPhase, "Failed"):
 		cloudClaimPhase = sam.CloudClaimFailed
 		blocking = append(blocking, "provider action failed")
+	case in.ProviderCapturedPaths > 0:
+		cloudClaimPhase = sam.CloudClaimClaimed
 	case captureExpected:
 		cloudClaimPhase = sam.CloudClaimPending
 		blocking = append(blocking, "provider cloud claim is not confirmed")
@@ -407,8 +415,14 @@ func samConvergenceStatusFields(in samConvergenceInput) map[string]any {
 	osCapturePhase := sam.OSCaptureNotApplicable
 	forwardingPhase := sam.ForwardingNotApplicable
 	if captureExpected {
-		osCapturePhase = sam.OSCaptureUnknown
-		blocking = append(blocking, "OS capture evidence is not available")
+		if in.OSCaptureExpected {
+			if in.OSCaptureObserved {
+				osCapturePhase = sam.OSCaptureReflected
+			} else {
+				osCapturePhase = sam.OSCaptureMissing
+				blocking = append(blocking, "OS capture is not reflected on the active router")
+			}
+		}
 		if in.ForwardingObserved {
 			if in.ForwardingEnabled {
 				forwardingPhase = sam.ForwardingReady
@@ -431,7 +445,7 @@ func samConvergenceStatusFields(in samConvergenceInput) map[string]any {
 			fibPhase = sam.FIBConvergenceReady
 		} else {
 			fibPhase = sam.FIBConvergenceMissingRoute
-			blocking = append(blocking, "missing installed BGP routes: "+strings.Join(missing, ","))
+			blocking = append(blocking, "missing installed BGP routes in BGPRouter.installedNextHops: "+strings.Join(missing, ","))
 		}
 	}
 
@@ -447,7 +461,7 @@ func samConvergenceStatusFields(in samConvergenceInput) map[string]any {
 	case strings.EqualFold(ownershipPhase, "Conflict") || cloudClaimPhase == sam.CloudClaimFailed:
 		samPhase = sam.SAMConvergenceFailed
 	case strings.EqualFold(ownershipPhase, "Resolved") &&
-		cloudClaimPhase == sam.CloudClaimNotApplicable &&
+		(cloudClaimPhase == sam.CloudClaimNotApplicable || cloudClaimPhase == sam.CloudClaimClaimed) &&
 		(osCapturePhase == sam.OSCaptureNotApplicable || osCapturePhase == sam.OSCaptureReflected || osCapturePhase == sam.OSCaptureForwardingReady) &&
 		(forwardingPhase == sam.ForwardingNotApplicable || forwardingPhase == sam.ForwardingReady) &&
 		fibPhase == sam.FIBConvergenceReady:
@@ -1019,6 +1033,63 @@ func (c Controller) discoverySelfForwardingState(poolName string) (observed bool
 	return true, enabled, observedAt
 }
 
+func (c Controller) providerSecondaryOSCaptureReflected(poolName string, addresses []string) bool {
+	if c.Store == nil || len(addresses) == 0 {
+		return false
+	}
+	for _, address := range cleanStrings(addresses) {
+		status := c.Store.ObjectStatus(api.HybridAPIVersion, "RemoteAddressClaim", bgpMobilityRemoteClaimName(poolName, address))
+		raw, ok := status["captureOSAddressPresence"].(map[string]any)
+		if !ok || !statusMapBool(raw, "enforced") {
+			return false
+		}
+		observed := normalizeAddressString(strings.TrimSpace(fmt.Sprint(raw["address"])))
+		if observed != "" && observed != normalizeAddressString(address) {
+			return false
+		}
+	}
+	return true
+}
+
+func captureConvergenceAddresses(delivery bgpDeliveryPlannerResult) []string {
+	seen := map[string]bool{}
+	for address := range delivery.CaptureCandidates {
+		if normalized := normalizeAddressString(address); normalized != "" {
+			seen[normalized] = true
+		}
+	}
+	for _, path := range delivery.Paths {
+		if normalized := normalizeAddressString(path.Prefix); normalized != "" {
+			seen[normalized] = true
+		}
+	}
+	return mapKeysSorted(seen)
+}
+
+func bgpMobilityRemoteClaimName(poolName, address string) string {
+	return "bgp-" + mobilitySafeResourceName(poolName) + "-" + mobilitySafeResourceName(strings.TrimSuffix(address, "/32"))
+}
+
+func mobilitySafeResourceName(value string) string {
+	value = strings.TrimSpace(strings.ToLower(value))
+	var b strings.Builder
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('-')
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	if out == "" {
+		return "resource"
+	}
+	return out
+}
+
 func statusBool(value any) (bool, bool) {
 	switch typed := value.(type) {
 	case bool:
@@ -1032,6 +1103,18 @@ func statusBool(value any) (bool, bool) {
 		}
 	}
 	return false, false
+}
+
+func statusMapBool(status map[string]any, key string) bool {
+	if status == nil {
+		return false
+	}
+	value, ok := status[key]
+	if !ok {
+		return false
+	}
+	result, ok := statusBool(value)
+	return ok && result
 }
 
 func decodeActionRecordMap(raw string) map[string]string {

@@ -1655,6 +1655,7 @@ func (c *Controller) saveObservedStatuses(routerName string, spec routerapi.BGPR
 	peersByResource := c.peersByResource(state)
 	fibRoutes := fibInstalledCount(fibResult)
 	fibUnsupported := fibUnsupportedCount(fibResult)
+	fibMissingInstalled := fibMissingInstalledCount(routes, fibResult)
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.APIVersion != routerapi.NetAPIVersion {
 			continue
@@ -1676,28 +1677,33 @@ func (c *Controller) saveObservedStatuses(routerName string, spec routerapi.BGPR
 			if fibUnsupported > 0 && phase == "Established" {
 				phase = "Degraded"
 			}
+			if fibMissingInstalled > 0 && phase == "Established" {
+				phase = "Degraded"
+			}
 			status := map[string]any{
-				"phase":                phase,
-				"backend":              "gobgp",
-				"applyWith":            "routerd-bgp gRPC API",
-				"daemon":               c.daemonSpec().Name,
-				"daemonSocket":         c.daemonSpec().SocketPath,
-				"appliedConfigHash":    bgpdaemon.Hash(c.appliedConfig),
-				"changed":              changed,
-				"dryRun":               c.DryRun,
-				"peers":                state.Peers,
-				"prefixes":             state.Prefixes,
-				"observedCommunities":  observedCommunities(state.Prefixes),
-				"livenessMarkers":      livenessMarkers,
-				"establishedPeers":     established,
-				"acceptedPrefixes":     len(state.Prefixes),
-				"fibRoutes":            fibRoutes,
-				"fibUnsupportedRoutes": fibUnsupported,
-				"nextHopRewrite":       importNextHopRewrite(spec.ImportPolicy),
-				"installedNextHops":    installedNextHops(routes, fibResult),
-				"preferredSources":     fibResult.PreferredSource,
-				"observedAt":           now,
-				"conditions":           []map[string]any{{"type": "Observed", "status": "True", "reason": "GoBGPStatus"}},
+				"phase":                    phase,
+				"backend":                  "gobgp",
+				"applyWith":                "routerd-bgp gRPC API",
+				"daemon":                   c.daemonSpec().Name,
+				"daemonSocket":             c.daemonSpec().SocketPath,
+				"appliedConfigHash":        bgpdaemon.Hash(c.appliedConfig),
+				"changed":                  changed,
+				"dryRun":                   c.DryRun,
+				"peers":                    state.Peers,
+				"prefixes":                 state.Prefixes,
+				"observedCommunities":      observedCommunities(state.Prefixes),
+				"livenessMarkers":          livenessMarkers,
+				"establishedPeers":         established,
+				"acceptedPrefixes":         len(state.Prefixes),
+				"fibRoutes":                fibRoutes,
+				"fibUnsupportedRoutes":     fibUnsupported,
+				"fibMissingRoutes":         fibMissingInstalled,
+				"nextHopRewrite":           importNextHopRewrite(spec.ImportPolicy),
+				"installedNextHops":        installedNextHops(routes, fibResult),
+				"missingInstalledNextHops": missingInstalledNextHops(routes, fibResult),
+				"preferredSources":         fibResult.PreferredSource,
+				"observedAt":               now,
+				"conditions":               []map[string]any{{"type": "Observed", "status": "True", "reason": "GoBGPStatus"}},
 			}
 			if len(fibResult.PreferredSourceSkipped) > 0 {
 				status["preferredSourceSkipped"] = fibResult.PreferredSourceSkipped
@@ -1711,6 +1717,16 @@ func (c *Controller) saveObservedStatuses(routerName string, spec routerapi.BGPR
 					"status":  "False",
 					"reason":  "GoBGPFIBPartial",
 					"message": fmt.Sprintf("%d imported BGP prefix(es) could not be installed into the kernel FIB", fibUnsupported),
+				})
+			}
+			if fibMissingInstalled > 0 {
+				status["reason"] = "GoBGPFIBMissingRoute"
+				status["pendingReason"] = "GoBGPFIBMissingRoute"
+				status["conditions"] = append(status["conditions"].([]map[string]any), map[string]any{
+					"type":    "KernelFIB",
+					"status":  "False",
+					"reason":  "GoBGPFIBMissingRoute",
+					"message": fmt.Sprintf("%d imported BGP prefix(es) were accepted but have no installed kernel FIB evidence", fibMissingInstalled),
 				})
 			}
 			if err := c.Store.SaveObjectStatus(routerapi.NetAPIVersion, "BGPRouter", resource.Metadata.Name, status); err != nil {
@@ -2464,6 +2480,26 @@ func fibInstalledCount(result FIBSyncResult) int {
 
 func fibUnsupportedCount(result FIBSyncResult) int {
 	return len(result.Unsupported)
+}
+
+func fibMissingInstalledCount(routes []FIBRoute, result FIBSyncResult) int {
+	return len(missingInstalledNextHops(routes, result))
+}
+
+func missingInstalledNextHops(routes []FIBRoute, result FIBSyncResult) map[string][]string {
+	out := map[string][]string{}
+	for _, route := range routes {
+		prefix := normalizeRoutePrefix(route.Prefix)
+		if prefix == "" || result.Installed[prefix] || result.Unsupported[prefix] != "" {
+			continue
+		}
+		nextHops := normalizeRouteNextHops(route.NextHops)
+		if len(nextHops) == 0 {
+			continue
+		}
+		out[prefix] = nextHops
+	}
+	return out
 }
 
 func importAllowedPrefixes(spec routerapi.BGPRouterSpec, peers map[string]desiredPeer) []netip.Prefix {

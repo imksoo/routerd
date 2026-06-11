@@ -164,7 +164,7 @@ func appendBGPMobilityProxyARPClaims(router api.Router, store any) api.Router {
 		}
 		prefix = prefix.Masked()
 		self, ok := mobilityPoolMemberByNode(spec.Members, selfNode)
-		if !ok || strings.TrimSpace(self.Capture.Type) != "proxy-arp" || strings.TrimSpace(self.Capture.Interface) == "" {
+		if !ok || !bgpMobilityClaimCaptureSupported(self.Capture) {
 			continue
 		}
 		owned := mobilityStaticOwnedAddresses(self, prefix)
@@ -184,6 +184,20 @@ func appendBGPMobilityProxyARPClaims(router api.Router, store any) api.Router {
 	out := router
 	out.Spec.Resources = append(append([]api.Resource(nil), router.Spec.Resources...), claims...)
 	return out
+}
+
+func bgpMobilityClaimCaptureSupported(capture api.MobilityMemberCapture) bool {
+	if strings.TrimSpace(capture.Interface) == "" {
+		return false
+	}
+	switch strings.TrimSpace(capture.Type) {
+	case "proxy-arp":
+		return true
+	case "provider-secondary-ip":
+		return capture.ConfigureOSAddress
+	default:
+		return false
+	}
 }
 
 func appendBGPMobilityCapturePrefixRoutes(effective, routeRouter api.Router, store any) api.Router {
@@ -531,13 +545,17 @@ func bgpMobilityProxyARPClaim(poolName string, member api.MobilityPoolMember, ad
 			Address:   address,
 			OwnerSide: "remote",
 			Capture: api.AddressCapture{
-				Type:             member.Capture.Type,
-				CaptureStrategy:  member.Capture.CaptureStrategy,
-				Strategy:         member.Capture.Strategy,
-				Interface:        member.Capture.Interface,
-				ExcludeAddresses: append([]string(nil), member.Capture.ExcludeAddresses...),
-				GratuitousARP:    member.Capture.GratuitousARP,
-				ActiveWhen:       member.Capture.ActiveWhen,
+				Type:               member.Capture.Type,
+				ProviderRef:        member.Capture.ProviderRef,
+				ProviderMode:       member.Capture.ProviderMode,
+				CaptureStrategy:    member.Capture.CaptureStrategy,
+				Strategy:           member.Capture.Strategy,
+				NICRef:             member.Capture.NICRef,
+				ConfigureOSAddress: member.Capture.ConfigureOSAddress,
+				Interface:          member.Capture.Interface,
+				ExcludeAddresses:   append([]string(nil), member.Capture.ExcludeAddresses...),
+				GratuitousARP:      member.Capture.GratuitousARP,
+				ActiveWhen:         member.Capture.ActiveWhen,
 			},
 			Delivery: api.AddressDelivery{Mode: "bgp"},
 		},

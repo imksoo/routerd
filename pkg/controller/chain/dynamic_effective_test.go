@@ -245,6 +245,65 @@ func TestDynamicRouteSAMViewDerivesBGPProxyARPClaimsWithoutRouteLowering(t *test
 	})
 }
 
+func TestBGPMobilityClaimPreservesProviderSecondaryOSCaptureIntent(t *testing.T) {
+	claim := bgpMobilityProxyARPClaim("cloudedge", api.MobilityPoolMember{
+		NodeRef: "aws-router",
+		Site:    "aws",
+		Role:    "cloud",
+		Capture: api.MobilityMemberCapture{
+			Type:               "provider-secondary-ip",
+			ProviderRef:        "aws-lab",
+			ProviderMode:       "eni-secondary-ip",
+			CaptureStrategy:    "provider-secondary-ip",
+			NICRef:             "eni-a",
+			ConfigureOSAddress: true,
+			Interface:          "ens5",
+		},
+	}, "10.0.1.11/32")
+	spec, err := claim.RemoteAddressClaimSpec()
+	if err != nil {
+		t.Fatalf("RemoteAddressClaimSpec: %v", err)
+	}
+	if spec.Capture.Type != "provider-secondary-ip" || !spec.Capture.ConfigureOSAddress || spec.Capture.Interface != "ens5" {
+		t.Fatalf("capture = %#v, want provider-secondary-ip with configureOSAddress on ens5", spec.Capture)
+	}
+	if spec.Capture.ProviderRef != "aws-lab" || spec.Capture.ProviderMode != "eni-secondary-ip" || spec.Capture.NICRef != "eni-a" {
+		t.Fatalf("provider capture fields = %#v", spec.Capture)
+	}
+}
+
+func TestDynamicRouteSAMViewDerivesProviderSecondaryBGPClaimForOSCapture(t *testing.T) {
+	startup := bgpProxyARPStartup(false)
+	for i, resource := range startup.Spec.Resources {
+		switch {
+		case resource.APIVersion == api.FederationAPIVersion && resource.Kind == "EventGroup":
+			spec := resource.Spec.(api.EventGroupSpec)
+			spec.NodeName = "aws-router"
+			startup.Spec.Resources[i].Spec = spec
+		case resource.APIVersion == api.MobilityAPIVersion && resource.Kind == "MobilityPool":
+			spec := resource.Spec.(api.MobilityPoolSpec)
+			spec.Members[1].Capture.ConfigureOSAddress = true
+			startup.Spec.Resources[i].Spec = spec
+		}
+	}
+	store := mapStore{
+		api.NetAPIVersion + "/BGPRouter/mobility-bgp": {
+			"installedNextHops": map[string]any{"10.0.1.11/32": []any{"10.99.0.2"}},
+		},
+	}
+	view, err := buildDynamicRouteSAMView(startup, store, time.Now().UTC(), platform.OSLinux)
+	if err != nil {
+		t.Fatalf("buildDynamicRouteSAMView: %v", err)
+	}
+	claims := remoteAddressClaimSpecs(view.EffectiveRouter)
+	if len(claims) != 1 {
+		t.Fatalf("effective claims = %#v, want one provider-secondary-ip claim", claims)
+	}
+	if claims[0].Address != "10.0.1.11/32" || claims[0].Capture.Type != "provider-secondary-ip" || !claims[0].Capture.ConfigureOSAddress || claims[0].Capture.Interface != "ens5" {
+		t.Fatalf("claim = %#v, want provider-secondary-ip OS capture on ens5", claims[0])
+	}
+}
+
 func TestDynamicRouteSAMViewBGPProxyARPExcludesLocalAddresses(t *testing.T) {
 	startup := bgpProxyARPStartup(false)
 	for i, resource := range startup.Spec.Resources {

@@ -36,6 +36,7 @@ AWS_PROVIDER_EXECUTOR_BIN := $(BUILDDIR)/aws-provider-executor
 AZURE_PROVIDER_EXECUTOR_BIN := $(BUILDDIR)/azure-provider-executor
 OCI_PROVIDER_EXECUTOR_BIN := $(BUILDDIR)/oci-provider-executor
 ROUTERD_PROVIDER_EXECUTOR_BINS := $(AWS_PROVIDER_EXECUTOR_BIN) $(AZURE_PROVIDER_EXECUTOR_BIN) $(OCI_PROVIDER_EXECUTOR_BIN)
+PROVIDER_PRIVATE_IP_INVENTORY := examples/cloudedge-mobility-demo/plugins/provider-private-ip-inventory
 ROUTERD_RELEASE_BINS := $(ROUTERD_BIN) $(ROUTERCTL_BIN) $(ROUTERD_DHCPv4_CLIENT_BIN) $(ROUTERD_DHCPv6_CLIENT_BIN) $(ROUTERD_DHCP_EVENT_RELAY_BIN) $(ROUTERD_DHCP_FINGERPRINT_WATCHER_BIN) $(ROUTERD_HEALTHCHECK_BIN) $(ROUTERD_BGP_BIN) $(ROUTERD_DNS_RESOLVER_BIN) $(ROUTERD_FIREWALL_LOGGER_BIN) $(ROUTERD_DPI_CLASSIFIER_BIN) $(ROUTERD_NDPI_AGENT_BIN) $(ROUTERD_RA_OBSERVER_BIN) $(ROUTERD_ARP_OBSERVER_BIN) $(ROUTERD_PPPOE_CLIENT_BIN) $(ROUTERD_EVENTD_BIN) $(ROUTERD_PROVIDER_EXECUTOR_BINS)
 ROUTERD_NDPI_AGENT_LIBNDPI_DISTROOT := $(DISTDIR)/ndpi-agent-libndpi-package
 ROUTERD_NDPI_AGENT_LIBNDPI_TAR := $(DISTDIR)/routerd-ndpi-agent-libndpi-$(VERSION)-$(DISTPLATFORM).tar.gz
@@ -276,6 +277,8 @@ dist:
 	install -d $(DISTROOT)/libexec/routerd/plugins/oci-provider-executor/bin
 	install -m 0755 $(OCI_PROVIDER_EXECUTOR_BIN) $(DISTROOT)/libexec/routerd/plugins/oci-provider-executor/bin/oci-provider-executor
 	install -m 0644 examples/plugins/oci-provider-executor/plugin.yaml $(DISTROOT)/libexec/routerd/plugins/oci-provider-executor/plugin.yaml
+	install -d $(DISTROOT)/libexec/routerd/plugins
+	install -m 0755 $(PROVIDER_PRIVATE_IP_INVENTORY) $(DISTROOT)/libexec/routerd/plugins/provider-private-ip-inventory
 	install -m 0755 packaging/install.sh $(DISTROOT)/install.sh
 	install -m 0755 packaging/uninstall.sh $(DISTROOT)/uninstall.sh
 	install -d $(DISTROOT)/etc/routerd

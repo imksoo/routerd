@@ -81,6 +81,32 @@ func TestSAMControllerDeassignAbsentAddressIsNoopButTracked(t *testing.T) {
 	}
 }
 
+func TestSAMControllerAssignsProviderSecondaryOSAddressAndStatus(t *testing.T) {
+	router := samControllerRouterWithClaim("10.0.1.122/32", "provider-secondary-ip", "eth0")
+	spec := router.Spec.Resources[1].Spec.(api.RemoteAddressClaimSpec)
+	spec.Capture.ConfigureOSAddress = true
+	router.Spec.Resources[1].Spec = spec
+	store := &samStore{objects: map[string]map[string]any{}}
+	applier := &fakeSAMApplier{assignResult: samOSAddressAssignResult{
+		address:            "10.0.1.122/32",
+		ifname:             "eth0",
+		addedThisReconcile: true,
+	}}
+	controller := SAMController{Router: router, Store: store, OS: platform.OSLinux, Applier: applier}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	assertSAMCalls(t, applier.calls, []string{"assign:10.0.1.122/32@eth0"})
+	status := store.ObjectStatus(api.HybridAPIVersion, "RemoteAddressClaim", "app")
+	note, ok := status["captureOSAddressPresence"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing captureOSAddressPresence in status %#v", status)
+	}
+	if note["address"] != "10.0.1.122/32" || note["interface"] != "eth0" || note["enforced"] != true || note["lastReconcileAdded"] != true {
+		t.Fatalf("assign note = %#v", note)
+	}
+}
+
 func TestSAMControllerNonLinuxNoHostActions(t *testing.T) {
 	router := samControllerRouter()
 	store := &samStore{objects: map[string]map[string]any{}}
@@ -403,9 +429,11 @@ func TestSAMControllerNoClaimsNoProxyNeighborActions(t *testing.T) {
 type fakeSAMApplier struct {
 	ensure         []string
 	delete         []string
+	assign         []string
 	deassign       []string
 	proxyARP       []string
 	calls          []string
+	assignResult   samOSAddressAssignResult
 	deassignResult samOSAddressDeassignResult
 }
 
@@ -439,6 +467,19 @@ func (a *fakeSAMApplier) DeleteProxyNeighbor(_ context.Context, address, ifname 
 	a.delete = append(a.delete, address+"@"+ifname)
 	a.calls = append(a.calls, "delete:"+address+"@"+ifname)
 	return nil
+}
+
+func (a *fakeSAMApplier) EnsureOSAddressPresent(_ context.Context, address, ifname string) (samOSAddressAssignResult, error) {
+	a.assign = append(a.assign, address+"@"+ifname)
+	a.calls = append(a.calls, "assign:"+address+"@"+ifname)
+	result := a.assignResult
+	if result.address == "" {
+		result.address = address
+	}
+	if result.ifname == "" {
+		result.ifname = ifname
+	}
+	return result, nil
 }
 
 func (a *fakeSAMApplier) EnsureOSAddressAbsent(_ context.Context, address string) (samOSAddressDeassignResult, error) {

@@ -282,8 +282,16 @@ func PlanCaptureWithOptions(router *api.Router, targetOS platform.OS, opts PlanO
 		}
 		addForwarding()
 		if captureType != "proxy-arp" {
-			if captureType == "provider-secondary-ip" && !spec.Capture.ConfigureOSAddress {
-				actions = append(actions, CaptureAction{Kind: "deassign-os-address", ClaimName: resource.Metadata.Name, Address: address})
+			if captureType == "provider-secondary-ip" {
+				if spec.Capture.ConfigureOSAddress {
+					iface := ResolveCaptureInterface(strings.TrimSpace(spec.Capture.Interface), interfaceAliases)
+					if iface == "" {
+						return nil, fmt.Errorf("%s spec.capture.interface is required when provider-secondary-ip configureOSAddress is true", resource.ID())
+					}
+					actions = append(actions, CaptureAction{Kind: "assign-os-address", ClaimName: resource.Metadata.Name, Address: address, Interface: iface})
+				} else {
+					actions = append(actions, CaptureAction{Kind: "deassign-os-address", ClaimName: resource.Metadata.Name, Address: address})
+				}
 			}
 			continue
 		}

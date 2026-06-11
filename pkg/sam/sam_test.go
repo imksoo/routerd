@@ -334,11 +334,12 @@ func TestPlanCaptureProviderSecondaryIPDeassignsOSAddress(t *testing.T) {
 	}
 }
 
-func TestPlanCaptureProviderSecondaryIPConfigureOSAddressTrueSkipsDeassign(t *testing.T) {
+func TestPlanCaptureProviderSecondaryIPConfigureOSAddressTrueAssignsOSAddress(t *testing.T) {
 	router := testRouter()
 	router.Spec.Resources = router.Spec.Resources[:4]
 	spec := router.Spec.Resources[3].Spec.(api.RemoteAddressClaimSpec)
 	spec.Capture.ConfigureOSAddress = true
+	spec.Capture.Interface = "lan0"
 	router.Spec.Resources[3].Spec = spec
 	actions, err := PlanCapture(router, platform.OSLinux)
 	if err != nil {
@@ -346,6 +347,12 @@ func TestPlanCaptureProviderSecondaryIPConfigureOSAddressTrueSkipsDeassign(t *te
 	}
 	if hasAction(actions, "deassign-os-address", "", "10.0.1.122/32", "") {
 		t.Fatalf("unexpected OS address deassign: %#v", actions)
+	}
+	if !hasAction(actions, "assign-os-address", "", "10.0.1.122/32", "lan0") {
+		t.Fatalf("actions missing OS address assign: %#v", actions)
+	}
+	if !hasAction(actions, "sysctl", "net.ipv4.ip_forward", "", "") {
+		t.Fatalf("actions missing ip_forward: %#v", actions)
 	}
 }
 

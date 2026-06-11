@@ -200,7 +200,7 @@ spec:
                 providerRef: azure-lab
                 providerMode: secondary-ip
                 captureStrategy: secondary-ip
-                configureOSAddress: false
+                configureOSAddress: true
                 targetFrom:
                   region: self.region
                   resourceGroup: self.resourceGroup

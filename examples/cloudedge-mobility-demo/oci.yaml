@@ -199,7 +199,7 @@ spec:
                 providerMode: vnic-secondary-ip
                 captureStrategy: secondary-ip
                 nicRef: "${DEMO_SELF_NIC_REF}"
-                configureOSAddress: false
+                configureOSAddress: true
                 targetFrom:
                   region: self.region
                   compartmentId: self.compartmentId

@@ -113,6 +113,39 @@ func (netlinkSAMProxyNeighborApplier) EnsureOSAddressAbsent(_ context.Context, a
 	return result, nil
 }
 
+func (netlinkSAMProxyNeighborApplier) EnsureOSAddressPresent(_ context.Context, address, ifname string) (samOSAddressAssignResult, error) {
+	ip, ipNet, err := net.ParseCIDR(address)
+	if err != nil {
+		ip = net.ParseIP(address)
+		if ip != nil && ip.To4() != nil {
+			ipNet = &net.IPNet{IP: ip.To4(), Mask: net.CIDRMask(32, 32)}
+		}
+	}
+	if ip == nil || ip.To4() == nil || ipNet == nil {
+		return samOSAddressAssignResult{}, fmt.Errorf("invalid IPv4 address %q", address)
+	}
+	link, err := netlink.LinkByName(ifname)
+	if err != nil {
+		return samOSAddressAssignResult{}, err
+	}
+	result := samOSAddressAssignResult{address: address, ifname: ifname}
+	addrs, err := netlink.AddrList(link, netlink.FAMILY_V4)
+	if err != nil {
+		return result, err
+	}
+	for _, addr := range addrs {
+		if addr.IP != nil && addr.IP.Equal(ip.To4()) {
+			return result, nil
+		}
+	}
+	addr := netlink.Addr{IPNet: &net.IPNet{IP: ip.To4(), Mask: ipNet.Mask}}
+	if err := netlink.AddrAdd(link, &addr); err != nil && !isNetlinkExists(err) {
+		return result, err
+	}
+	result.addedThisReconcile = true
+	return result, nil
+}
+
 func samProxyNeighbor(address, ifname string) (netlink.Link, *netlink.Neigh, error) {
 	ip, _, err := net.ParseCIDR(address)
 	if err != nil {
@@ -140,4 +173,12 @@ func isNetlinkNotFound(err error) bool {
 	}
 	message := strings.ToLower(err.Error())
 	return strings.Contains(message, "no such file") || strings.Contains(message, "not found")
+}
+
+func isNetlinkExists(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "file exists") || strings.Contains(message, "object already exists")
 }

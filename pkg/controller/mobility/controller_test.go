@@ -74,6 +74,74 @@ func TestSAMConvergenceStatusReadyRequiresFIB(t *testing.T) {
 	}
 }
 
+func TestSAMConvergenceStatusProviderCaptureBlocksUntilOSAndForwardingEvidence(t *testing.T) {
+	fields := samConvergenceStatusFields(samConvergenceInput{
+		Status: map[string]any{
+			"ownershipResolverPhase": "Resolved",
+			"providerActionPhase":    "OK",
+		},
+		DesiredBGPPaths: []bgpdaemon.AppliedPath{{
+			Prefix: "10.77.60.10/32",
+		}},
+		InstalledNextHops: map[string][]string{
+			"10.77.60.10/32": {"192.0.2.10"},
+		},
+		BGPRIBObserved:        true,
+		CaptureCandidates:     1,
+		ProviderCapturedPaths: 1,
+		OSCaptureExpected:     true,
+		ForwardingObserved:    false,
+		ObservedAt:            time.Unix(1700000000, 0).UTC(),
+	})
+	if fields["cloudClaimPhase"] != sam.CloudClaimClaimed {
+		t.Fatalf("cloudClaimPhase = %v, want %s", fields["cloudClaimPhase"], sam.CloudClaimClaimed)
+	}
+	if fields["osCapturePhase"] != sam.OSCaptureMissing {
+		t.Fatalf("osCapturePhase = %v, want %s", fields["osCapturePhase"], sam.OSCaptureMissing)
+	}
+	if fields["forwardingPhase"] != sam.ForwardingUnknown {
+		t.Fatalf("forwardingPhase = %v, want %s", fields["forwardingPhase"], sam.ForwardingUnknown)
+	}
+	if fields["advertisementGatePhase"] != sam.AdvertisementGateBlocked {
+		t.Fatalf("advertisementGatePhase = %v, want %s", fields["advertisementGatePhase"], sam.AdvertisementGateBlocked)
+	}
+}
+
+func TestSAMConvergenceStatusProviderCaptureReadyWithCloudOSForwardingAndFIB(t *testing.T) {
+	fields := samConvergenceStatusFields(samConvergenceInput{
+		Status: map[string]any{
+			"ownershipResolverPhase": "Resolved",
+			"providerActionPhase":    "OK",
+		},
+		DesiredBGPPaths: []bgpdaemon.AppliedPath{{
+			Prefix: "10.77.60.10/32",
+		}},
+		InstalledNextHops: map[string][]string{
+			"10.77.60.10/32": {"192.0.2.10"},
+		},
+		BGPRIBObserved:        true,
+		CaptureCandidates:     1,
+		ProviderCapturedPaths: 1,
+		OSCaptureExpected:     true,
+		OSCaptureObserved:     true,
+		ForwardingObserved:    true,
+		ForwardingEnabled:     true,
+		ObservedAt:            time.Unix(1700000000, 0).UTC(),
+	})
+	if fields["cloudClaimPhase"] != sam.CloudClaimClaimed {
+		t.Fatalf("cloudClaimPhase = %v, want %s", fields["cloudClaimPhase"], sam.CloudClaimClaimed)
+	}
+	if fields["osCapturePhase"] != sam.OSCaptureReflected {
+		t.Fatalf("osCapturePhase = %v, want %s", fields["osCapturePhase"], sam.OSCaptureReflected)
+	}
+	if fields["forwardingPhase"] != sam.ForwardingReady {
+		t.Fatalf("forwardingPhase = %v, want %s", fields["forwardingPhase"], sam.ForwardingReady)
+	}
+	if fields["samConvergencePhase"] != sam.SAMConvergenceReady {
+		t.Fatalf("samConvergencePhase = %v, want %s", fields["samConvergencePhase"], sam.SAMConvergenceReady)
+	}
+}
+
 func (f *fakeBGPPaths) ListPaths(_ context.Context, source string) ([]bgpdaemon.AppliedPath, error) {
 	var out []bgpdaemon.AppliedPath
 	for _, path := range f.paths {

@@ -21,6 +21,7 @@ type samProxyNeighborApplier interface {
 	SetProxyARP(ctx context.Context, ifname string, enabled bool) error
 	EnsureProxyNeighbor(ctx context.Context, address, ifname string) error
 	DeleteProxyNeighbor(ctx context.Context, address, ifname string) error
+	EnsureOSAddressPresent(ctx context.Context, address, ifname string) (samOSAddressAssignResult, error)
 	EnsureOSAddressAbsent(ctx context.Context, address string) (samOSAddressDeassignResult, error)
 }
 
@@ -39,6 +40,12 @@ type samOSAddressDeassignResult struct {
 	// removedThisReconcile is true only when this reconcile deleted the
 	// captured address from a local OS interface.
 	removedThisReconcile bool
+}
+
+type samOSAddressAssignResult struct {
+	address            string
+	ifname             string
+	addedThisReconcile bool
 }
 
 func samSelectResources(resources []api.Resource, kind string) []api.Resource {
@@ -71,7 +78,7 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 		targetOS = platform.CurrentOS()
 	}
 	if targetOS != platform.OSLinux {
-		return c.reconcileStatuses(targetOS, nil, nil, nil)
+		return c.reconcileStatuses(targetOS, nil, nil, nil, nil)
 	}
 	statuses, err := c.listObjectStatuses()
 	if err != nil {
@@ -91,6 +98,7 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 		return err
 	}
 	var failures []string
+	assignResults := map[string]samOSAddressAssignResult{}
 	deassignResults := map[string]samOSAddressDeassignResult{}
 	garpSent := map[string]bool{}
 	garpErrors := map[string]string{}
@@ -139,11 +147,32 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 			if err != nil {
 				failures = append(failures, fmt.Sprintf("%s deassign %s: %v", action.ClaimName, action.Address, err))
 			}
+		case "assign-os-address":
+			result := samOSAddressAssignResult{address: strings.TrimSpace(action.Address), ifname: strings.TrimSpace(action.Interface)}
+			assignResults[action.ClaimName] = result
+			if c.DryRun {
+				continue
+			}
+			applier := c.Applier
+			if applier == nil {
+				applier = defaultSAMProxyNeighborApplier()
+			}
+			result, err := applier.EnsureOSAddressPresent(ctx, action.Address, action.Interface)
+			if result.address == "" {
+				result.address = strings.TrimSpace(action.Address)
+			}
+			if result.ifname == "" {
+				result.ifname = strings.TrimSpace(action.Interface)
+			}
+			assignResults[action.ClaimName] = result
+			if err != nil {
+				failures = append(failures, fmt.Sprintf("%s assign %s dev %s: %v", action.ClaimName, action.Address, action.Interface, err))
+			}
 		default:
 			continue
 		}
 	}
-	if err := c.reconcileStatuses(targetOS, deassignResults, garpSent, garpErrors); err != nil {
+	if err := c.reconcileStatuses(targetOS, assignResults, deassignResults, garpSent, garpErrors); err != nil {
 		return err
 	}
 	if len(failures) > 0 {
@@ -191,7 +220,7 @@ func (c SAMController) reconcileProxyARPInterfaces(ctx context.Context, actions 
 	return nil
 }
 
-func (c SAMController) reconcileStatuses(targetOS platform.OS, deassignResults map[string]samOSAddressDeassignResult, garpSent map[string]bool, garpErrors map[string]string) error {
+func (c SAMController) reconcileStatuses(targetOS platform.OS, assignResults map[string]samOSAddressAssignResult, deassignResults map[string]samOSAddressDeassignResult, garpSent map[string]bool, garpErrors map[string]string) error {
 	claims := samSelectResources(c.Router.Spec.Resources, "RemoteAddressClaim")
 	for _, claim := range claims {
 		status := sam.StatusForRemoteAddressClaim(claim, c.Lowerings, c.Store, targetOS)
@@ -211,21 +240,35 @@ func (c SAMController) reconcileStatuses(targetOS platform.OS, deassignResults m
 						status["lastGARPError"] = garpErrors[claim.Metadata.Name]
 					}
 				}
-			} else if err == nil && strings.TrimSpace(spec.Capture.Type) == "provider-secondary-ip" && !spec.Capture.ConfigureOSAddress {
-				result := deassignResults[claim.Metadata.Name]
-				note := map[string]any{
-					"address": firstNonEmpty(result.address, strings.TrimSpace(spec.Address)),
-					// enforced is an audit flag: routerd is actively enforcing
-					// OS-absence for this provider-captured address.
-					"enforced": true,
-					// lastReconcileRemoved is a per-reconcile action signal. It
-					// is false in steady state when the address was already absent.
-					"lastReconcileRemoved": result.removedThisReconcile,
+			} else if err == nil && strings.TrimSpace(spec.Capture.Type) == "provider-secondary-ip" {
+				if spec.Capture.ConfigureOSAddress {
+					result := assignResults[claim.Metadata.Name]
+					if result.ifname == "" {
+						aliases := sam.CaptureInterfaceAliases(c.Router)
+						result.ifname = sam.ResolveCaptureInterface(strings.TrimSpace(spec.Capture.Interface), aliases)
+					}
+					status["captureOSAddressPresence"] = map[string]any{
+						"address":            firstNonEmpty(result.address, strings.TrimSpace(spec.Address)),
+						"interface":          result.ifname,
+						"enforced":           true,
+						"lastReconcileAdded": result.addedThisReconcile,
+					}
+				} else {
+					result := deassignResults[claim.Metadata.Name]
+					note := map[string]any{
+						"address": firstNonEmpty(result.address, strings.TrimSpace(spec.Address)),
+						// enforced is an audit flag: routerd is actively enforcing
+						// OS-absence for this provider-captured address.
+						"enforced": true,
+						// lastReconcileRemoved is a per-reconcile action signal. It
+						// is false in steady state when the address was already absent.
+						"lastReconcileRemoved": result.removedThisReconcile,
+					}
+					if result.ifname != "" {
+						note["interface"] = result.ifname
+					}
+					status["captureOSAddressAbsence"] = note
 				}
-				if result.ifname != "" {
-					note["interface"] = result.ifname
-				}
-				status["captureOSAddressAbsence"] = note
 			}
 		}
 		if err := c.Store.SaveObjectStatus(api.HybridAPIVersion, "RemoteAddressClaim", claim.Metadata.Name, status); err != nil {
