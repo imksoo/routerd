@@ -48,3 +48,20 @@ printf 'ok\n' > "$work/safe-hardlink/original"
 ln "$work/safe-hardlink/original" "$work/safe-hardlink/copy"
 tar -C "$work/safe-hardlink" -czf "$work/safe-hardlink.tar.gz" .
 "$check" "$work/safe-hardlink.tar.gz"
+
+if command -v python3 >/dev/null 2>&1; then
+	python3 - "$work/unsafe-hardlink-target.tar.gz" <<'PY'
+import sys
+import tarfile
+
+with tarfile.open(sys.argv[1], "w:gz") as archive:
+    info = tarfile.TarInfo("safe-hardlink-name")
+    info.type = tarfile.LNKTYPE
+    info.linkname = "/tmp/routerd-install"
+    archive.addfile(info)
+PY
+	if "$check" "$work/unsafe-hardlink-target.tar.gz" >/dev/null 2>&1; then
+		echo "expected unsafe hardlink target archive to fail" >&2
+		exit 1
+	fi
+fi

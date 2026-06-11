@@ -141,10 +141,7 @@ func doctorCommand(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	runner := doctorRunner{opts: opts, router: router, store: store}
-	collectChecks := opts.Target != "" && opts.Target != "incident"
-	if opts.Incident && opts.Target == "" {
-		collectChecks = false
-	}
+	collectChecks := opts.Target != "incident"
 	areas := doctorAreas
 	if opts.Target != "" && opts.Target != "incident" {
 		areas = []string{opts.Target}

@@ -81,8 +81,8 @@ func TestDoctorIncidentDumpIncludesRuntimeStatusAndCommands(t *testing.T) {
 	})
 
 	var out bytes.Buffer
-	if err := run([]string{"doctor", "--incident", "--config", configPath, "--state-file", statePath, "--no-host", "-o", "json"}, &out, &bytes.Buffer{}); err != nil {
-		t.Fatalf("doctor incident: %v", err)
+	if err := run([]string{"doctor", "--incident", "--config", configPath, "--state-file", statePath, "--no-host", "-o", "json"}, &out, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "doctor found failing checks") {
+		t.Fatalf("doctor --incident should preserve normal check exit status, got %v", err)
 	}
 	var got doctorReport
 	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
@@ -108,6 +108,9 @@ func TestDoctorIncidentDumpIncludesRuntimeStatusAndCommands(t *testing.T) {
 	}
 	if got.Incident.Error != "" {
 		t.Fatalf("incident error = %q", got.Incident.Error)
+	}
+	if len(got.Checks) == 0 {
+		t.Fatalf("doctor --incident should attach incident data to normal checks")
 	}
 }
 
@@ -138,7 +141,7 @@ func TestDoctorIncidentSkipsHostCommandsWhenNoHost(t *testing.T) {
 	withDoctorIncidentCommandsStub(t, []diagnoseCommandCheck{})
 
 	var out bytes.Buffer
-	if err := run([]string{"doctor", "--incident", "--no-host", "--config", configPath, "--state-file", statePath, "-o", "json"}, &out, &bytes.Buffer{}); err != nil {
+	if err := run([]string{"doctor", "incident", "--incident", "--no-host", "--config", configPath, "--state-file", statePath, "-o", "json"}, &out, &bytes.Buffer{}); err != nil {
 		t.Fatalf("doctor incident: %v", err)
 	}
 	var got doctorReport
@@ -159,7 +162,7 @@ func TestDoctorIncidentCommandErrorsAreCaptured(t *testing.T) {
 	withRuntimeStub(t, nil, errors.New("runtime socket unavailable"))
 
 	var out bytes.Buffer
-	if err := run([]string{"doctor", "--incident", "--config", configPath, "--state-file", statePath, "--no-host", "-o", "json"}, &out, &bytes.Buffer{}); err != nil {
+	if err := run([]string{"doctor", "incident", "--incident", "--config", configPath, "--state-file", statePath, "--no-host", "-o", "json"}, &out, &bytes.Buffer{}); err != nil {
 		t.Fatalf("doctor incident should still emit snapshot: %v", err)
 	}
 	var got doctorReport

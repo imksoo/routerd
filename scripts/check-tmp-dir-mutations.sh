@@ -57,7 +57,9 @@ matches=$(
 				if (line ~ command_prefix() "(install|mkdir)[[:space:]][^;&|()]*(-d|-m|--mode=)[^;&|()]*" tmp_target()) {
 					return 1
 				}
-				if (line ~ command_prefix() "rm[[:space:]][^;&|()]*(^|[[:space:]])-[^;&|()]*[rR][^;&|()]*[fF][^;&|()]*" tmp_target()) {
+				if (line ~ command_prefix() "rm[[:space:]][^;&|()]*" tmp_target() &&
+				    line ~ /(^|[[:space:]])-[^;&|()]*[rR]/ &&
+				    line ~ /(^|[[:space:]])-[^;&|()]*[fF]/) {
 					return 1
 				}
 				if (line ~ command_prefix() "(mv|ln)[[:space:]][^;&|()]*" tmp_target()) {
