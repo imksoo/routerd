@@ -41,6 +41,34 @@ func TestValidateMobilityPool(t *testing.T) {
 	}
 }
 
+func TestValidateMobilityPoolAllowsProviderCaptureConfigureOSAddress(t *testing.T) {
+	router := mobilityPoolRouter(api.MobilityPoolSpec{
+		Prefix:   "10.88.60.0/24",
+		GroupRef: "cloudedge",
+		Members: []api.MobilityPoolMember{
+			{NodeRef: "onprem-router", Site: "onprem", Role: "onprem"},
+			{
+				NodeRef: "aws-router",
+				Site:    "aws",
+				Role:    "cloud",
+				Capture: api.MobilityMemberCapture{
+					Type:               "provider-secondary-ip",
+					Interface:          "ens5",
+					ProviderRef:        "aws-provider",
+					ProviderMode:       "secondary-ip",
+					NICRef:             "eni-router",
+					ConfigureOSAddress: true,
+				},
+				Placement: api.MobilityMemberPlacement{Group: "aws-edge", Priority: 10},
+			},
+		},
+		DeliveryPolicy: api.MobilityDeliveryPolicy{Mode: "bgp"},
+	})
+	if err := Validate(router); err != nil {
+		t.Fatalf("Validate MobilityPool: %v", err)
+	}
+}
+
 func TestValidateSAMTransportProfile(t *testing.T) {
 	router := samTransportProfileRouter(validSAMTransportProfileSpec())
 	if err := Validate(router); err != nil {
@@ -1011,6 +1039,19 @@ func TestValidateMobilityPoolRejectsInvalidFields(t *testing.T) {
 				spec.Members[1].Placement = api.MobilityMemberPlacement{Group: "azure-edge", Priority: -1}
 			},
 			want: "placement.priority must be between 0 and 1000000",
+		},
+		{
+			name: "provider capture configure OS address missing interface",
+			mut: func(spec *api.MobilityPoolSpec) {
+				spec.Members[1].Capture = api.MobilityMemberCapture{
+					Type:               "provider-secondary-ip",
+					ProviderRef:        "azure-provider",
+					ProviderMode:       "nic-secondary-ip",
+					NICRef:             "nic-1",
+					ConfigureOSAddress: true,
+				}
+			},
+			want: "capture.interface is required when capture.configureOSAddress is true",
 		},
 		{
 			name: "placement role",

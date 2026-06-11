@@ -65,6 +65,38 @@ func TestInstallDoesNotExcludeBGPOrDNSResolverHelpersFromStaleRestart(t *testing
 	}
 }
 
+func TestInstallCopiesLibexecPayload(t *testing.T) {
+	dir := t.TempDir()
+	pkg := filepath.Join(dir, "package")
+	prefix := filepath.Join(dir, "prefix")
+	writeExecutable(t, filepath.Join(pkg, "bin", "routerd"), `#!/bin/sh
+if [ "$1" = "--version" ]; then echo routerd-test; exit 0; fi
+exit 0
+`)
+	writeExecutable(t, filepath.Join(pkg, "libexec", "routerd", "plugins", "provider-private-ip-inventory"), `#!/bin/sh
+echo inventory
+`)
+	if err := os.MkdirAll(filepath.Join(pkg, "libexec", "routerd", "plugins", "aws-provider-executor"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pkg, "libexec", "routerd", "plugins", "aws-provider-executor", "plugin.yaml"), []byte("name: aws-provider-executor\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runInstall(t, pkg, prefix, "--no-install-deps", "--no-config-update", "--no-restart")
+	if err != nil {
+		t.Fatalf("install failed: %v\n%s", err, out)
+	}
+	for _, path := range []string{
+		filepath.Join(prefix, "libexec", "routerd", "plugins", "provider-private-ip-inventory"),
+		filepath.Join(prefix, "libexec", "routerd", "plugins", "aws-provider-executor", "plugin.yaml"),
+	} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("libexec payload was not installed at %s: %v\n%s", path, err, out)
+		}
+	}
+}
+
 func TestInstallWaitsForJSONApplyStateAfterServiceRestart(t *testing.T) {
 	script, err := os.ReadFile(filepath.Join(repoRoot(t), "packaging", "install.sh"))
 	if err != nil {

@@ -2015,6 +2015,7 @@ if [ -f share/doc/TARGET ]; then
     target_archive=$(sed -n '1p' share/doc/TARGET)
 fi
 bindir="${prefix}/sbin"
+libexecdir="${prefix}/libexec"
 sysconfdir="${prefix}/etc/routerd"
 systemd_system_dir=${ROUTERD_INSTALL_SYSTEMD_SYSTEM_DIR:-/etc/systemd/system}
 openrc_init_dir=${ROUTERD_INSTALL_OPENRC_INIT_DIR:-/etc/init.d}
@@ -2108,6 +2109,24 @@ for binary in bin/*; do
     [ -f "${binary}" ] || continue
     install_binary "${binary}"
 done
+if [ -d libexec ]; then
+    if [ "${dry_run}" -eq 1 ]; then
+        echo "dry-run: install libexec payload to ${libexecdir}"
+    else
+        ( cd libexec && find . -type d -exec install -d -m 0755 "${libexecdir}/{}" \; )
+        ( cd libexec && find . -type f -exec sh -c '
+            target_root=$1
+            shift
+            for source do
+                target="${target_root}/${source#./}"
+                install -d -m 0755 "$(dirname "$target")"
+                mode=0644
+                [ -x "$source" ] && mode=0755
+                install -m "$mode" "$source" "$target"
+            done
+        ' sh "${libexecdir}" {} + )
+    fi
+fi
 install_ndpi_agent_archive
 verify_ndpi_agent_install
 
