@@ -459,16 +459,16 @@ install_binary()
 
 install_libexec_payload()
 {
-    [ -d libexec ] || return 0
-    find libexec -type f | while IFS= read -r file; do
-        mode=0644
-        case "${file}" in
-            */bin/*|*/provider-private-ip-inventory)
-                mode=0755
-                ;;
-        esac
-        atomic_install "${mode}" "${file}" "${prefix}/${file}"
-    done
+	[ -d libexec ] || return 0
+	find libexec -type f | while IFS= read -r file; do
+		file_mode=0644
+		case "${file}" in
+		*/bin/*|*/provider-private-ip-inventory)
+			file_mode=0755
+			;;
+		esac
+		atomic_install "${file_mode}" "${file}" "${prefix}/${file}"
+	done
 }
 
 verify_ndpi_agent_install()
