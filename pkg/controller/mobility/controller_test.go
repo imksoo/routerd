@@ -74,6 +74,34 @@ func TestSAMConvergenceStatusReadyRequiresFIB(t *testing.T) {
 	}
 }
 
+func TestSAMConvergenceStatusBlocksUnresolvedSelfCapture(t *testing.T) {
+	fields := samConvergenceStatusFields(samConvergenceInput{
+		Status: map[string]any{
+			"ownershipResolverPhase": "Resolved",
+			"providerActionPhase":    "OK",
+		},
+		DesiredBGPPaths: []bgpdaemon.AppliedPath{{
+			Prefix: "10.77.60.10/32",
+		}},
+		InstalledNextHops: map[string][]string{
+			"10.77.60.10/32": {"192.0.2.10"},
+		},
+		BGPRIBObserved:      true,
+		SelfCaptureResolved: false,
+		SelfCaptureReason:   "provider inventory self NIC is unresolved",
+		ObservedAt:          time.Unix(1700000000, 0).UTC(),
+	})
+	if fields["samConvergencePhase"] != sam.SAMConvergenceDegraded {
+		t.Fatalf("samConvergencePhase = %v, want %s", fields["samConvergencePhase"], sam.SAMConvergenceDegraded)
+	}
+	if fields["advertisementGatePhase"] != sam.AdvertisementGateBlocked {
+		t.Fatalf("advertisementGatePhase = %v, want %s", fields["advertisementGatePhase"], sam.AdvertisementGateBlocked)
+	}
+	if reasons := fields["blockingReasons"].([]string); len(reasons) != 1 || !strings.Contains(reasons[0], "self NIC is unresolved") {
+		t.Fatalf("blockingReasons = %#v, want self NIC unresolved", reasons)
+	}
+}
+
 func TestSAMConvergenceStatusProviderCaptureBlocksUntilOSAndForwardingEvidence(t *testing.T) {
 	fields := samConvergenceStatusFields(samConvergenceInput{
 		Status: map[string]any{

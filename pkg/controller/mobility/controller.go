@@ -348,6 +348,8 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		DesiredBGPPaths:       delivery.Paths,
 		InstalledNextHops:     installedNextHops,
 		BGPRIBObserved:        bgpRIBObserved,
+		SelfCaptureResolved:   selfCaptureResolved,
+		SelfCaptureReason:     selfCaptureReason,
 		CaptureCandidates:     len(delivery.CaptureCandidates),
 		GeneratedActions:      len(actionPlans),
 		ProviderCapturedPaths: delivery.ProviderCapturedPaths,
@@ -367,6 +369,8 @@ type samConvergenceInput struct {
 	DesiredBGPPaths       []bgpdaemon.AppliedPath
 	InstalledNextHops     map[string][]string
 	BGPRIBObserved        bool
+	SelfCaptureResolved   bool
+	SelfCaptureReason     string
 	CaptureCandidates     int
 	GeneratedActions      int
 	ProviderCapturedPaths int
@@ -398,6 +402,10 @@ func samConvergenceStatusFields(in samConvergenceInput) map[string]any {
 	blocking := []string{}
 	ownershipPhase := statusMapString(in.Status, "ownershipResolverPhase")
 	providerActionPhase := statusMapString(in.Status, "providerActionPhase")
+	selfCaptureBlocked := !in.SelfCaptureResolved && strings.TrimSpace(in.SelfCaptureReason) != ""
+	if selfCaptureBlocked {
+		blocking = append(blocking, in.SelfCaptureReason)
+	}
 
 	cloudClaimPhase := sam.CloudClaimNotApplicable
 	captureExpected := in.CaptureCandidates > 0 || in.GeneratedActions > 0 || in.ProviderCapturedPaths > 0
@@ -460,7 +468,8 @@ func samConvergenceStatusFields(in samConvergenceInput) map[string]any {
 	switch {
 	case strings.EqualFold(ownershipPhase, "Conflict") || cloudClaimPhase == sam.CloudClaimFailed:
 		samPhase = sam.SAMConvergenceFailed
-	case strings.EqualFold(ownershipPhase, "Resolved") &&
+	case !selfCaptureBlocked &&
+		strings.EqualFold(ownershipPhase, "Resolved") &&
 		(cloudClaimPhase == sam.CloudClaimNotApplicable || cloudClaimPhase == sam.CloudClaimClaimed) &&
 		(osCapturePhase == sam.OSCaptureNotApplicable || osCapturePhase == sam.OSCaptureReflected || osCapturePhase == sam.OSCaptureForwardingReady) &&
 		(forwardingPhase == sam.ForwardingNotApplicable || forwardingPhase == sam.ForwardingReady) &&

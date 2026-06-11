@@ -163,6 +163,29 @@ func TestPackageFeaturesIncludeArpingForVRRPGatedSAMCapture(t *testing.T) {
 	}
 }
 
+func TestPackageFeaturesIncludeAWSCLIForAWSProviderProfile(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
+		TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "CloudProviderProfile"},
+		Metadata: api.ObjectMeta{Name: "aws-lab"},
+		Spec: api.CloudProviderProfileSpec{
+			Provider:     "aws",
+			Capabilities: []string{"secondary-ip"},
+		},
+	}}}}
+	sets := PackageSets(router)
+	if len(sets) == 0 {
+		t.Fatal("PackageSets returned no derived packages")
+	}
+	ubuntu := packageSetByOS(t, sets, "ubuntu")
+	if !stringInSlice("awscli", ubuntu.Names) {
+		t.Fatalf("ubuntu packages = %#v, want awscli", ubuntu.Names)
+	}
+	nixos := packageSetByOS(t, sets, "nixos")
+	if !stringInSlice("awscli2", nixos.Names) {
+		t.Fatalf("nixos packages = %#v, want awscli2", nixos.Names)
+	}
+}
+
 func TestPackageFeaturesCoverStandaloneDataplaneResources(t *testing.T) {
 	for _, tc := range []struct {
 		kind string
@@ -219,6 +242,26 @@ func TestPackageFeaturesInternalEventResourcesNeedNoHostPackages(t *testing.T) {
 			}
 		})
 	}
+}
+
+func packageSetByOS(t *testing.T, sets []api.OSPackageSetSpec, osName string) api.OSPackageSetSpec {
+	t.Helper()
+	for _, set := range sets {
+		if set.OS == osName {
+			return set
+		}
+	}
+	t.Fatalf("missing package set for %s in %#v", osName, sets)
+	return api.OSPackageSetSpec{}
+}
+
+func stringInSlice(want string, values []string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func routerWithSingleKind(kind string) *api.Router {
