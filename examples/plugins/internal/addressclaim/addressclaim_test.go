@@ -291,11 +291,11 @@ func TestBuildMissingNICRef(t *testing.T) {
 //
 // SCOPING (Phase 5.1): the REAL provider executors (aws-provider-executor,
 // oci-provider-executor, azure-provider-executor) LEGITIMATELY use os/exec to run
-// their provider CLI binary (`aws`/`oci`/`az`) and link no cloud SDK. They are
-// therefore EXCLUDED from this os/exec-forbidding invariant; each one's own test
-// (TestExecutorImportsNoCloudSDK) asserts it imports no cloud SDK and uses
-// os/exec only to exec its CLI. Planners + the fake executor remain bound by the
-// invariant here.
+// their provider command and link no cloud SDK. The OCI SDK is intentionally
+// isolated in oci-routerd-helper, the shipped OCI control-plane command used by
+// the OCI inventory/executor. These directories are therefore EXCLUDED from this
+// planner/fake-executor invariant. Planners + the fake executor remain bound by
+// the invariant here.
 func TestNoExecImports(t *testing.T) {
 	_, thisFile, _, ok := runtime.Caller(0)
 	if !ok {
@@ -304,13 +304,13 @@ func TestNoExecImports(t *testing.T) {
 	// .../examples/plugins/internal/addressclaim/addressclaim_test.go -> examples/plugins
 	pluginsDir := filepath.Clean(filepath.Join(filepath.Dir(thisFile), "..", ".."))
 
-	// The real provider executors legitimately exec their CLI (`aws`/`oci`/`az`);
-	// they are exempt from the os/exec ban (but not from the no-cloud-SDK rule,
-	// asserted in each one's own package test).
+	// The real provider executors legitimately exec their provider command; the
+	// OCI helper is the sole allowed SDK boundary for OCI cloud API calls.
 	exemptDirs := map[string]bool{
 		filepath.Join(pluginsDir, "aws-provider-executor"):   true,
 		filepath.Join(pluginsDir, "oci-provider-executor"):   true,
 		filepath.Join(pluginsDir, "azure-provider-executor"): true,
+		filepath.Join(pluginsDir, "oci-routerd-helper"):      true,
 	}
 
 	forbidden := []string{
