@@ -205,6 +205,12 @@ func requireNICID(spec executeActionRequestSpec) (nicTarget, error) {
 	if t.nicID == "" {
 		return nicTarget{}, fmt.Errorf("target.nicRef (NIC resource id) is required")
 	}
+	if t.subscriptionID == "" {
+		t.subscriptionID = subscriptionFromARMID(t.nicID)
+	}
+	if t.displaced.subscriptionID == "" {
+		t.displaced.subscriptionID = subscriptionFromARMID(t.displaced.nicID)
+	}
 	return t, nil
 }
 
@@ -231,6 +237,31 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
+func subscriptionFromARMID(id string) string {
+	parts := strings.Split(strings.Trim(id, "/"), "/")
+	for i := 0; i+1 < len(parts); i++ {
+		if strings.EqualFold(parts[i], "subscriptions") {
+			return strings.TrimSpace(parts[i+1])
+		}
+	}
+	return ""
+}
+
+func routeTableRefParts(ref string) (subscriptionID, resourceGroup, routeTableName string) {
+	parts := strings.Split(strings.Trim(ref, "/"), "/")
+	for i := 0; i+1 < len(parts); i++ {
+		switch {
+		case strings.EqualFold(parts[i], "subscriptions"):
+			subscriptionID = strings.TrimSpace(parts[i+1])
+		case strings.EqualFold(parts[i], "resourceGroups"):
+			resourceGroup = strings.TrimSpace(parts[i+1])
+		case strings.EqualFold(parts[i], "routeTables"):
+			routeTableName = strings.TrimSpace(parts[i+1])
+		}
+	}
+	return subscriptionID, resourceGroup, routeTableName
+}
+
 // requireIPConfigTarget requires the fields az ip-config create/delete need:
 // resourceGroup + nicName + ipConfigName (and, for create, address).
 func requireIPConfigTarget(spec executeActionRequestSpec, needAddress bool) (nicTarget, error) {
@@ -250,17 +281,25 @@ func requireIPConfigTarget(spec executeActionRequestSpec, needAddress bool) (nic
 	if needAddress && t.address == "" {
 		return nicTarget{}, fmt.Errorf("target.address is required")
 	}
+	if t.subscriptionID == "" {
+		return nicTarget{}, fmt.Errorf("target.subscriptionId is required for Azure ip-config operations")
+	}
 	return t, nil
 }
 
 func requireRouteTarget(spec executeActionRequestSpec) (routeTarget, error) {
+	routeTableRef := firstNonEmpty(spec.Target["routeTableName"], spec.Target["routeTableRef"])
+	refSubscriptionID, refResourceGroup, refRouteTableName := routeTableRefParts(routeTableRef)
 	t := routeTarget{
-		subscriptionID:   firstNonEmpty(spec.Target["subscriptionID"], spec.Target["subscriptionId"]),
-		resourceGroup:    spec.Target["resourceGroup"],
-		routeTableName:   firstNonEmpty(spec.Target["routeTableName"], spec.Target["routeTableRef"]),
+		subscriptionID:   firstNonEmpty(spec.Target["subscriptionID"], spec.Target["subscriptionId"], refSubscriptionID),
+		resourceGroup:    firstNonEmpty(spec.Target["resourceGroup"], refResourceGroup),
+		routeTableName:   firstNonEmpty(spec.Target["routeTableName"], spec.Target["routeTableRef"], refRouteTableName),
 		routeName:        spec.Target["routeName"],
 		address:          spec.Target["address"],
 		nextHopIPAddress: spec.Target["nextHopIPAddress"],
+	}
+	if refRouteTableName != "" {
+		t.routeTableName = refRouteTableName
 	}
 	if t.resourceGroup == "" {
 		return routeTarget{}, fmt.Errorf("target.resourceGroup is required for route-table operations")
@@ -276,6 +315,9 @@ func requireRouteTarget(spec executeActionRequestSpec) (routeTarget, error) {
 	}
 	if t.nextHopIPAddress == "" {
 		return routeTarget{}, fmt.Errorf("target.nextHopIPAddress is required")
+	}
+	if t.subscriptionID == "" {
+		return routeTarget{}, fmt.Errorf("target.subscriptionId is required for Azure route-table operations")
 	}
 	return t, nil
 }
@@ -558,6 +600,16 @@ func assignSecondaryIP(ctx context.Context, spec executeActionRequestSpec, mode 
 		"--nic-name", t.nicName,
 		"--name", t.ipConfigName,
 		"--private-ip-address", t.address)...); err != nil {
+		if isAlreadyExistsError(err) {
+			cfg, serr := waitForSelfAddress(ctx, runner, t)
+			if serr != nil {
+				return failed("assign-secondary-ip execute: verify existing self ip-config failed", serr)
+			}
+			res.Status.Status = statusSucceeded
+			res.Status.Message = fmt.Sprintf("assigned %s to %s (already present as ip-config %s)", t.address, t.nicName, cfg.Name)
+			res.Status.Observed = map[string]string{"assignedAddress": t.address, "ipConfigName": cfg.Name, "alreadyPresent": "true"}
+			return res
+		}
 		return failed("assign-secondary-ip execute: ip-config create failed", err)
 	}
 	res.Status.Status = statusSucceeded

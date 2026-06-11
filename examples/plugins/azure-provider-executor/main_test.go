@@ -411,6 +411,37 @@ func TestAssignExecuteIssuesIPConfigCreate(t *testing.T) {
 	}
 }
 
+func TestAssignExecuteDerivesSubscriptionFromNICRef(t *testing.T) {
+	f := &fakeAz{}
+	spec := reqSpec(actionAssignSecondaryIP, modeExecute)
+	delete(spec.Target, "subscriptionId")
+	res := dispatchWith(spec, f.run)
+	if res.Status.Status != statusSucceeded {
+		t.Fatalf("want succeeded, got %q err=%q", res.Status.Status, res.Status.Error)
+	}
+	got := strings.Join(f.calls[0], " ")
+	if !strings.HasSuffix(got, "--subscription s1") {
+		t.Fatalf("assign argv = %q, want subscription derived from nicRef", got)
+	}
+}
+
+func TestAssignExecuteMissingSubscriptionFailsBeforeMutation(t *testing.T) {
+	f := &fakeAz{}
+	spec := reqSpec(actionAssignSecondaryIP, modeExecute)
+	spec.Target["nicRef"] = "nic1"
+	delete(spec.Target, "subscriptionId")
+	res := dispatchWith(spec, f.run)
+	if res.Status.Status != statusFailed {
+		t.Fatalf("want failed, got %q", res.Status.Status)
+	}
+	if !strings.Contains(res.Status.Error, "target.subscriptionId") {
+		t.Fatalf("error = %q, want subscription diagnostic", res.Status.Error)
+	}
+	if len(f.calls) != 0 {
+		t.Fatalf("missing subscription must not invoke helper, got %v", f.calls)
+	}
+}
+
 func TestAssignRouteTableExecuteCreatesRoute(t *testing.T) {
 	f := &routeFakeAz{}
 	res := dispatchWith(routeReqSpec(actionAssignRouteTableRoute, modeExecute), f.run)
@@ -421,6 +452,39 @@ func TestAssignRouteTableExecuteCreatesRoute(t *testing.T) {
 	want := "network route-table route create --resource-group rg1 --route-table-name rt-cloudedge --name cloudedge-10-88-60-9-32 --address-prefix 10.88.60.9/32 --next-hop-type VirtualAppliance --next-hop-ip-address 10.88.60.254 --subscription s1"
 	if len(got) != 1 || got[0] != want {
 		t.Fatalf("calls = %v, want create route", got)
+	}
+}
+
+func TestAssignRouteTableMissingSubscriptionFailsBeforeMutation(t *testing.T) {
+	f := &routeFakeAz{}
+	spec := routeReqSpec(actionAssignRouteTableRoute, modeExecute)
+	delete(spec.Target, "subscriptionId")
+	res := dispatchWith(spec, f.run)
+	if res.Status.Status != statusFailed {
+		t.Fatalf("want failed, got %q", res.Status.Status)
+	}
+	if !strings.Contains(res.Status.Error, "target.subscriptionId") {
+		t.Fatalf("error = %q, want subscription diagnostic", res.Status.Error)
+	}
+	if len(f.calls) != 0 {
+		t.Fatalf("missing subscription must not invoke helper, got %v", f.calls)
+	}
+}
+
+func TestAssignRouteTableDerivesSubscriptionFromARMRouteTableRef(t *testing.T) {
+	f := &routeFakeAz{}
+	spec := routeReqSpec(actionAssignRouteTableRoute, modeExecute)
+	delete(spec.Target, "subscriptionId")
+	delete(spec.Target, "routeTableName")
+	spec.Target["routeTableRef"] = "/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.Network/routeTables/rt-cloudedge"
+	res := dispatchWith(spec, f.run)
+	if res.Status.Status != statusSucceeded {
+		t.Fatalf("want succeeded, got %q err=%q", res.Status.Status, res.Status.Error)
+	}
+	got := strings.Join(f.calls[0], " ")
+	want := "network route-table route create --resource-group rg1 --route-table-name rt-cloudedge --name cloudedge-10-88-60-9-32 --address-prefix 10.88.60.9/32 --next-hop-type VirtualAppliance --next-hop-ip-address 10.88.60.254 --subscription s1"
+	if got != want {
+		t.Fatalf("create route argv mismatch:\n got: %s\nwant: %s", got, want)
 	}
 }
 
@@ -738,6 +802,25 @@ func TestAssignExecuteAllowReassignmentCreateAlreadyExistsVerifiesSelf(t *testin
 	}
 }
 
+func TestAssignExecuteCreateAlreadyExistsVerifiesSelf(t *testing.T) {
+	f := newSeizeFakeAz()
+	f.oldHolds = false
+	f.createErr = fmt.Errorf("AlreadyExists: IP configuration already exists")
+	f.alreadyExistsRevealsSelf = true
+	spec := reqSpec(actionAssignSecondaryIP, modeExecute)
+	res := dispatchWith(spec, f.run)
+	if res.Status.Status != statusSucceeded {
+		t.Fatalf("already-exists self verify should converge, got %q err=%q message=%q", res.Status.Status, res.Status.Error, res.Status.Message)
+	}
+	if res.Status.Observed["alreadyPresent"] != "true" {
+		t.Fatalf("observed = %+v, want already-present convergence", res.Status.Observed)
+	}
+	got := joinedCalls(f.calls)
+	if len(got) != 2 || !strings.Contains(got[0], " ip-config create ") || !strings.Contains(got[1], " nic show ") {
+		t.Fatalf("calls = %v, want create then self show", got)
+	}
+}
+
 func TestAssignExecuteAllowReassignmentConflictRediscovery(t *testing.T) {
 	f := newSeizeFakeAz()
 	f.oldHolds = false
@@ -973,6 +1056,31 @@ func TestRunEndToEndStdInOut(t *testing.T) {
 	}
 	if res.Status.Status != statusSucceeded {
 		t.Fatalf("want succeeded, got %q", res.Status.Status)
+	}
+}
+
+func TestPluginTimeoutCoversHelperPoller(t *testing.T) {
+	body, err := os.ReadFile("plugin.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var timeoutValue string
+	for _, line := range strings.Split(string(body), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "timeout:") {
+			timeoutValue = strings.TrimSpace(strings.TrimPrefix(line, "timeout:"))
+			break
+		}
+	}
+	if timeoutValue == "" {
+		t.Fatal("plugin.yaml missing timeout")
+	}
+	d, err := time.ParseDuration(timeoutValue)
+	if err != nil {
+		t.Fatalf("parse timeout %q: %v", timeoutValue, err)
+	}
+	if d < 150*time.Second {
+		t.Fatalf("timeout = %s, want at least 150s for Azure helper pollers", d)
 	}
 }
 
