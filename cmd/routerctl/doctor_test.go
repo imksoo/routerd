@@ -127,6 +127,18 @@ COMMIT`
 	}
 }
 
+func TestIptablesInputConditionalRejectBeforeAcceptDoesNotBlockListener(t *testing.T) {
+	const opened = `*filter
+:INPUT ACCEPT [0:0]
+-A INPUT -s 192.0.2.10/32 -j DROP
+-A INPUT -p tcp -m tcp --dport 179 -j ACCEPT
+-A INPUT -j REJECT --reject-with icmp-host-prohibited
+COMMIT`
+	if iptablesInputRejectsListener(opened, "tcp", 179) {
+		t.Fatalf("source-specific drop should not be reported as blocking tcp/179")
+	}
+}
+
 func TestDoctorSAMConvergenceDegradedWarnsWhenOwnershipResolved(t *testing.T) {
 	configPath, statePath := writeDoctorSAMFixture(t)
 	store := openDoctorState(t, statePath)

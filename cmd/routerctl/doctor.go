@@ -1823,7 +1823,26 @@ func iptablesInputRejectsListener(output, proto string, port int) bool {
 		if strings.Contains(line, "-j ACCEPT") && strings.Contains(line, "-p "+proto) && strings.Contains(line, "--dport "+portText) {
 			return false
 		}
-		if strings.Contains(line, "-j REJECT") || strings.Contains(line, "-j DROP") {
+		if iptablesRuleRejectsListener(line, proto, portText) {
+			return true
+		}
+	}
+	return false
+}
+
+func iptablesRuleRejectsListener(line, proto, portText string) bool {
+	if !strings.Contains(line, "-j REJECT") && !strings.Contains(line, "-j DROP") {
+		return false
+	}
+	if strings.Contains(line, "-p "+proto) && strings.Contains(line, "--dport "+portText) {
+		return true
+	}
+	return !iptablesRuleHasMatchCondition(line)
+}
+
+func iptablesRuleHasMatchCondition(line string) bool {
+	for _, token := range []string{" -s ", " -d ", " -i ", " -o ", " -p ", " --sport ", " --dport ", " --state ", " --ctstate "} {
+		if strings.Contains(line, token) {
 			return true
 		}
 	}
