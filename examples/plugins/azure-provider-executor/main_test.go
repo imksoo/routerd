@@ -385,6 +385,30 @@ func TestAssignRouteTableExecuteCreatesRoute(t *testing.T) {
 	}
 }
 
+func TestAssignRouteTableCreateRetriesTransientFailure(t *testing.T) {
+	withNoRetrySleep(t)
+	callCount := 0
+	runner := func(ctx context.Context, argv ...string) ([]byte, error) {
+		switch strings.Join(leadingTokens(argv), " ") {
+		case "network route-table route create":
+			callCount++
+			if callCount < 3 {
+				return nil, fmt.Errorf("azure CLI failed: signal: killed")
+			}
+			return []byte(`{}`), nil
+		default:
+			return nil, fmt.Errorf("unexpected call: %v", argv)
+		}
+	}
+	res := dispatchWith(routeReqSpec(actionAssignRouteTableRoute, modeExecute), runner)
+	if res.Status.Status != statusSucceeded {
+		t.Fatalf("want succeeded after retry, got %q err=%q", res.Status.Status, res.Status.Error)
+	}
+	if callCount != 3 {
+		t.Fatalf("route create should retry twice before success, got %d calls", callCount)
+	}
+}
+
 func TestAssignSecondaryIPRouteTableStrategyCreatesRoute(t *testing.T) {
 	f := &routeFakeAz{}
 	res := dispatchWith(routeReqSpec(actionAssignSecondaryIP, modeExecute), f.run)
@@ -409,6 +433,32 @@ func TestAssignRouteTableSeizeUpdatesExistingRoute(t *testing.T) {
 	want := "network route-table route update --resource-group rg1 --route-table-name rt-cloudedge --name cloudedge-10-88-60-9-32 --set addressPrefix=10.88.60.9/32 nextHopType=VirtualAppliance nextHopIpAddress=10.88.60.254"
 	if len(got) != 1 || got[0] != want {
 		t.Fatalf("calls = %v, want update route for seize", got)
+	}
+}
+
+func TestAssignRouteTableUpdateRetriesTransientFailure(t *testing.T) {
+	withNoRetrySleep(t)
+	spec := routeReqSpec(actionAssignRouteTableRoute, modeExecute)
+	spec.Parameters = map[string]string{"allowReassignment": "true"}
+	callCount := 0
+	runner := func(ctx context.Context, argv ...string) ([]byte, error) {
+		switch strings.Join(leadingTokens(argv), " ") {
+		case "network route-table route update":
+			callCount++
+			if callCount < 3 {
+				return nil, fmt.Errorf("azure CLI failed: temporary failure")
+			}
+			return []byte(`{}`), nil
+		default:
+			return nil, fmt.Errorf("unexpected call: %v", argv)
+		}
+	}
+	res := dispatchWith(spec, runner)
+	if res.Status.Status != statusSucceeded {
+		t.Fatalf("want succeeded after retry, got %q err=%q", res.Status.Status, res.Status.Error)
+	}
+	if callCount != 3 {
+		t.Fatalf("route update should retry twice before success, got %d calls", callCount)
 	}
 }
 
@@ -472,6 +522,32 @@ func TestUnassignRouteTableDeletesOnlyMatchingNextHop(t *testing.T) {
 	got := joinedCalls(f.calls)
 	if len(got) != 2 || !strings.Contains(got[0], " route show ") || !strings.Contains(got[1], " route delete ") {
 		t.Fatalf("calls = %v, want show then delete", got)
+	}
+}
+
+func TestUnassignRouteTableDeleteRetriesTransientFailure(t *testing.T) {
+	withNoRetrySleep(t)
+	deleteCount := 0
+	runner := func(ctx context.Context, argv ...string) ([]byte, error) {
+		switch strings.Join(leadingTokens(argv), " ") {
+		case "network route-table route show":
+			return cannedRouteShow("10.88.60.9/32", "10.88.60.254"), nil
+		case "network route-table route delete":
+			deleteCount++
+			if deleteCount < 3 {
+				return nil, fmt.Errorf("azure CLI failed: 429 too many requests")
+			}
+			return []byte(`{}`), nil
+		default:
+			return nil, fmt.Errorf("unexpected call: %v", argv)
+		}
+	}
+	res := dispatchWith(routeReqSpec(actionUnassignRouteTableRoute, modeExecute), runner)
+	if res.Status.Status != statusSucceeded {
+		t.Fatalf("want succeeded after retry, got %q err=%q", res.Status.Status, res.Status.Error)
+	}
+	if deleteCount != 3 {
+		t.Fatalf("route delete should retry twice before success, got %d calls", deleteCount)
 	}
 }
 

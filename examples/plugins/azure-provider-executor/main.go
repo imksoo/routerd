@@ -369,7 +369,7 @@ func assignRouteTableRoute(ctx context.Context, spec executeActionRequestSpec, m
 }
 
 func createRouteTableRoute(ctx context.Context, runner azRunner, t routeTarget) error {
-	_, err := runner(ctx, "network", "route-table", "route", "create",
+	_, err := callAzWithRetry(ctx, runner, "network", "route-table", "route", "create",
 		"--resource-group", t.resourceGroup,
 		"--route-table-name", t.routeTableName,
 		"--name", t.routeName,
@@ -380,7 +380,7 @@ func createRouteTableRoute(ctx context.Context, runner azRunner, t routeTarget) 
 }
 
 func updateRouteTableRoute(ctx context.Context, runner azRunner, t routeTarget) error {
-	_, err := runner(ctx, "network", "route-table", "route", "update",
+	_, err := callAzWithRetry(ctx, runner, "network", "route-table", "route", "update",
 		"--resource-group", t.resourceGroup,
 		"--route-table-name", t.routeTableName,
 		"--name", t.routeName,
@@ -422,7 +422,7 @@ func unassignRouteTableRoute(ctx context.Context, spec executeActionRequestSpec,
 		return res
 	}
 
-	if _, err := runner(ctx, "network", "route-table", "route", "delete",
+	if _, err := callAzWithRetry(ctx, runner, "network", "route-table", "route", "delete",
 		"--resource-group", t.resourceGroup,
 		"--route-table-name", t.routeTableName,
 		"--name", t.routeName,
