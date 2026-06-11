@@ -182,7 +182,7 @@ func TestOwnershipResolverScenario398RemoteHomeKeepsConfirmedCrossCapture(t *tes
 		t.Fatalf("resolveAddressOwnership: %v", err)
 	}
 	decision := ownershipDecisionByAddress(t, decisions, "10.88.60.11/32")
-	if decision.Class != ownershipClassConfirmedCapture || decision.HomeOwnerNode != "aws-router-a" || decision.AdvertiseOwnerNode != "oci-router" || decision.AdvertiseReason != "confirmed-cross-provider-capture" {
+	if decision.Class != ownershipClassConfirmedCapture || decision.HomeOwnerNode != "aws-router-a" || decision.AdvertiseOwnerNode != "" || decision.AdvertiseReason != "confirmed-cross-provider-capture" {
 		t.Fatalf("decision = %#v, want confirmed OCI capture retained for remote AWS home", decision)
 	}
 }

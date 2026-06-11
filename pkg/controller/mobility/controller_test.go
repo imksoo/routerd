@@ -509,8 +509,8 @@ func TestControllerBGPModeFreshHomeOwnerKeepsConfirmedCrossProviderCapture(t *te
 			if err := ociController.Reconcile(context.Background()); err != nil {
 				t.Fatalf("oci Reconcile: %v", err)
 			}
-			if _, ok := maybePathBySourcePrefix(bgp, DynamicSource("cloudedge", "oci-router"), tc.address); !ok {
-				t.Fatalf("paths = %#v, want OCI confirmed capture retained while fresh %s home owner exists", bgp.paths, tc.homeRef)
+			if _, ok := maybePathBySourcePrefix(bgp, DynamicSource("cloudedge", "oci-router"), tc.address); ok {
+				t.Fatalf("paths = %#v, want OCI cross-provider capture kept local without owner advertisement while fresh %s home owner exists", bgp.paths, tc.homeRef)
 			}
 			ociPlans := decodeActionPlans(t, latestPart(t, store, DynamicSource("cloudedge", "oci-router")).ActionPlansJSON)
 			if findActionPlanByAddress(ociPlans, "unassign-secondary-ip", tc.address) != nil {
@@ -518,6 +518,13 @@ func TestControllerBGPModeFreshHomeOwnerKeepsConfirmedCrossProviderCapture(t *te
 			}
 			if findActionPlanByAddress(ociPlans, "assign-secondary-ip", tc.address) != nil {
 				t.Fatalf("oci plans = %#v, want no duplicate assign for already confirmed cross-provider capture %s", ociPlans, tc.address)
+			}
+			ociStatus := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+			if got := fmt.Sprint(ociStatus["cloudClaimPhase"]); got != sam.CloudClaimClaimed {
+				t.Fatalf("oci status = %#v, want cloud claim confirmed without owner advertisement", ociStatus)
+			}
+			if got := fmt.Sprint(ociStatus["generatedProviderCapturedBGPPaths"]); got != "1" {
+				t.Fatalf("oci status = %#v, want provider capture counted independently of BGP owner advertisement", ociStatus)
 			}
 
 			if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{

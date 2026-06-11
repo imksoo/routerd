@@ -258,8 +258,8 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 			selfProviderRef := strings.TrimSpace(self.Capture.ProviderRef)
 			if decision.CaptureState == captureStateConfirmed {
 				decision.Class = ownershipClassConfirmedCapture
-				decision.AdvertiseOwnerNode = self.NodeRef
 				if homeProviderRef == "" || selfProviderRef == "" || homeProviderRef == selfProviderRef {
+					decision.AdvertiseOwnerNode = self.NodeRef
 					decision.AdvertiseReason = "confirmed-capture"
 				} else {
 					decision.AdvertiseReason = "confirmed-cross-provider-capture"

@@ -80,20 +80,18 @@ func planBGPAdvertisements(source string, self memberPlanInfo, decisions []owner
 	providerCaptured := 0
 	seized := 0
 	for _, decision := range decisions {
+		if decision.Class == ownershipClassConfirmedCapture {
+			if !self.MaintenanceDrain {
+				if _, failed := failedActions[normalizeAddressString(decision.Address)]; !failed {
+					providerCaptured++
+					if placement.Seize {
+						seized++
+					}
+				}
+			}
+		}
 		if !decisionAdvertisesFromSelf(decision, self) {
 			continue
-		}
-		if decision.Class == ownershipClassConfirmedCapture {
-			if self.MaintenanceDrain {
-				continue
-			}
-			if _, failed := failedActions[normalizeAddressString(decision.Address)]; failed {
-				continue
-			}
-			providerCaptured++
-			if placement.Seize {
-				seized++
-			}
 		}
 		prefix, err := netip.ParsePrefix(strings.TrimSpace(decision.Address))
 		if err != nil || !prefix.Addr().Is4() || prefix.Bits() != 32 {
@@ -204,7 +202,7 @@ func confirmedCaptureObservedOnSelf(decision ownershipDecision, self memberPlanI
 	if decision.Class != ownershipClassConfirmedCapture {
 		return false
 	}
-	if strings.TrimSpace(decision.AdvertiseOwnerNode) != strings.TrimSpace(self.NodeRef) {
+	if strings.TrimSpace(decision.CaptureHolderNode) != "" && strings.TrimSpace(decision.CaptureHolderNode) != strings.TrimSpace(self.NodeRef) {
 		return false
 	}
 	return observedSelfIPs[normalizeAddressString(decision.Address)]
