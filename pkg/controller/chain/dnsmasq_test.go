@@ -114,7 +114,6 @@ func TestDnsmasqLANServiceLines(t *testing.T) {
 		"dhcp-option=tag:lan-v4,option:ntp-server,192.168.10.1",
 		"dhcp-option=tag:lan-v4,option:domain-name,lan",
 		"dhcp-option=tag:lan-v4,option:domain-search,lan",
-		"dhcp-host=02:00:00:00:01:50,set:printer,printer,192.168.10.150",
 		"dhcp-option=tag:printer,42,192.168.10.1",
 		"dhcp-range=set:lan-v6,::100,::1ff,constructor:ens19,slaac,64,6h",
 		"dhcp-option=tag:lan-v6,option6:dns-server,[2001:db8::53]",
@@ -192,7 +191,7 @@ func TestDHCPv4ServerPendingSourceOmitsScopeUntilResolved(t *testing.T) {
 	store := mapStore{}
 	configPath := filepath.Join(dir, "dnsmasq.conf")
 	pidFile := filepath.Join(dir, "dnsmasq.pid")
-	if _, err := writeDnsmasqConfig(router, store, configPath, pidFile, 1053, nil); err != nil {
+	if _, _, err := writeDnsmasqConfig(router, store, configPath, pidFile, 1053, nil); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(configPath)
@@ -215,7 +214,7 @@ func TestDHCPv4ServerPendingSourceOmitsScopeUntilResolved(t *testing.T) {
 	}
 
 	store.SaveObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", "lan-base", map[string]any{"address": "192.168.10.1/24"})
-	if _, err := writeDnsmasqConfig(router, store, configPath, pidFile, 1053, nil); err != nil {
+	if _, _, err := writeDnsmasqConfig(router, store, configPath, pidFile, 1053, nil); err != nil {
 		t.Fatal(err)
 	}
 	data, err = os.ReadFile(configPath)
@@ -247,7 +246,7 @@ func TestWriteDnsmasqConfigDisablesDNSPort(t *testing.T) {
 			LeaseFile:   leaseFile,
 		}},
 	}}}
-	changed, err := writeDnsmasqConfig(router, mapStore{}, path, filepath.Join(dir, "run", "test.pid"), 53, []string{"127.0.0.1", "192.168.160.5"})
+	changed, _, err := writeDnsmasqConfig(router, mapStore{}, path, filepath.Join(dir, "run", "test.pid"), 53, []string{"127.0.0.1", "192.168.160.5"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -279,7 +278,7 @@ func TestWriteDnsmasqConfigUsesDeclaredLeaseFile(t *testing.T) {
 			LeaseFile:   leaseFile,
 		}},
 	}}}
-	if _, err := writeDnsmasqConfig(router, mapStore{}, configPath, pidFile, 53, nil); err != nil {
+	if _, _, err := writeDnsmasqConfig(router, mapStore{}, configPath, pidFile, 53, nil); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(configPath)
@@ -291,6 +290,87 @@ func TestWriteDnsmasqConfigUsesDeclaredLeaseFile(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Dir(leaseFile)); err != nil {
 		t.Fatalf("lease directory was not created: %v", err)
+	}
+}
+
+func TestWriteDnsmasqConfigKeepsReservationsInHostsFile(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "dnsmasq.conf")
+	pidFile := filepath.Join(dir, "dnsmasq.pid")
+	leaseFile := filepath.Join(dir, "state", "dnsmasq", "dnsmasq.leases")
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"}, Metadata: api.ObjectMeta{Name: "lan-v4"}, Spec: api.DHCPv4ServerSpec{
+			Interface:   "lan",
+			AddressPool: api.DHCPAddressPoolSpec{Start: "192.168.10.100", End: "192.168.10.199", LeaseTime: "8h"},
+			LeaseFile:   leaseFile,
+		}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Reservation"}, Metadata: api.ObjectMeta{Name: "printer"}, Spec: api.DHCPv4ReservationSpec{
+			Server:     "lan-v4",
+			MACAddress: "02:00:00:00:01:50",
+			Hostname:   "printer",
+			IPAddress:  "192.168.10.150",
+		}},
+	}}}
+	changed, reloadOnly, err := writeDnsmasqConfig(router, mapStore{}, configPath, pidFile, 53, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed || !reloadOnly {
+		t.Fatalf("first write changed=%t reloadOnly=%t, want both true", changed, reloadOnly)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hostsPath := dnsmasqHostsFile(configPath)
+	if !strings.Contains(string(data), "dhcp-hostsfile="+hostsPath+"\n") {
+		t.Fatalf("config missing hostsfile include:\n%s", data)
+	}
+	if strings.Contains(string(data), "dhcp-host=02:00:00:00:01:50") {
+		t.Fatalf("config contains inline reservation:\n%s", data)
+	}
+	hostsData, err := os.ReadFile(hostsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(hostsData), "02:00:00:00:01:50,set:printer,printer,192.168.10.150") {
+		t.Fatalf("hosts file missing reservation:\n%s", hostsData)
+	}
+
+	router.Spec.Resources[2].Spec = api.DHCPv4ReservationSpec{
+		Server:     "lan-v4",
+		MACAddress: "02:00:00:00:01:50",
+		Hostname:   "printer",
+		IPAddress:  "192.168.10.151",
+	}
+	changed, reloadOnly, err = writeDnsmasqConfig(router, mapStore{}, configPath, pidFile, 53, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed || !reloadOnly {
+		t.Fatalf("reservation-only write changed=%t reloadOnly=%t, want config unchanged and reloadOnly", changed, reloadOnly)
+	}
+	hostsData, err = os.ReadFile(hostsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(hostsData), "02:00:00:00:01:50,set:printer,printer,192.168.10.151") {
+		t.Fatalf("hosts file missing updated reservation:\n%s", hostsData)
+	}
+}
+
+func TestDnsmasqHostFileLinesStripOptionPrefix(t *testing.T) {
+	got := dnsmasqHostFileLines([]string{
+		"dhcp-host=02:00:00:00:01:50,192.168.10.150,12h",
+		"02:00:00:00:01:51,192.168.10.151,12h",
+	})
+	want := []string{
+		"02:00:00:00:01:50,192.168.10.150,12h",
+		"02:00:00:00:01:51,192.168.10.151,12h",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("dnsmasqHostFileLines = %#v, want %#v", got, want)
 	}
 }
 
@@ -321,7 +401,7 @@ func TestDHCPv4ServerWhenFalseRemovesDnsmasqScope(t *testing.T) {
 	controller := DHCPv6ServerController{Router: router, Store: store, DryRun: true}
 
 	effective := controller.effectiveRouter()
-	if changed, err := writeDnsmasqConfig(effective, store, configPath, pidFile, 53, nil); err != nil || !changed {
+	if changed, _, err := writeDnsmasqConfig(effective, store, configPath, pidFile, 53, nil); err != nil || !changed {
 		t.Fatalf("write backup config changed=%t err=%v", changed, err)
 	}
 	data, err := os.ReadFile(configPath)
@@ -341,7 +421,7 @@ func TestDHCPv4ServerWhenFalseRemovesDnsmasqScope(t *testing.T) {
 
 	store.mapStore[api.NetAPIVersion+"/VirtualAddress/lan-vip"]["role"] = "master"
 	effective = controller.effectiveRouter()
-	if _, err := writeDnsmasqConfig(effective, store, configPath, pidFile, 53, nil); err != nil {
+	if _, _, err := writeDnsmasqConfig(effective, store, configPath, pidFile, 53, nil); err != nil {
 		t.Fatal(err)
 	}
 	data, err = os.ReadFile(configPath)
@@ -388,7 +468,7 @@ func TestDHCPv4ReservationWhenTrueClearsWhenFalseStatus(t *testing.T) {
 	controller := DHCPv6ServerController{Router: router, Store: store, DryRun: true}
 
 	effective := controller.effectiveRouter()
-	if _, err := writeDnsmasqConfig(effective, store, configPath, pidFile, 53, nil); err != nil {
+	if _, _, err := writeDnsmasqConfig(effective, store, configPath, pidFile, 53, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := controller.saveDHCPv4ReservationStatuses(effective, configPath, pidFile); err != nil {
@@ -408,7 +488,7 @@ func TestDHCPv4ReservationWhenTrueClearsWhenFalseStatus(t *testing.T) {
 
 	store.mapStore[api.NetAPIVersion+"/VirtualAddress/lan-vip"]["role"] = "master"
 	effective = controller.effectiveRouter()
-	if _, err := writeDnsmasqConfig(effective, store, configPath, pidFile, 53, nil); err != nil {
+	if _, _, err := writeDnsmasqConfig(effective, store, configPath, pidFile, 53, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := controller.saveDHCPv4ServerStatuses(effective, configPath, pidFile); err != nil {
@@ -421,8 +501,15 @@ func TestDHCPv4ReservationWhenTrueClearsWhenFalseStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), "dhcp-host=02:00:00:00:01:50,set:printer,printer,192.168.10.150") {
-		t.Fatalf("master config missing reservation:\n%s", data)
+	if strings.Contains(string(data), "dhcp-host=02:00:00:00:01:50") {
+		t.Fatalf("master config contains inline reservation:\n%s", data)
+	}
+	hostsData, err := os.ReadFile(dnsmasqHostsFile(configPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(hostsData), "02:00:00:00:01:50,set:printer,printer,192.168.10.150") {
+		t.Fatalf("master hosts file missing reservation:\n%s", hostsData)
 	}
 	status = store.ObjectStatus(api.NetAPIVersion, "DHCPv4Reservation", "printer")
 	if status["phase"] != "Rendered" {
@@ -466,7 +553,7 @@ func TestIPv6RouterAdvertisementWhenFalseRemovesDnsmasqRA(t *testing.T) {
 	controller := DHCPv6ServerController{Router: router, Store: store, DryRun: true}
 
 	effective := controller.effectiveRouter()
-	if changed, err := writeDnsmasqConfig(effective, store, configPath, pidFile, 53, nil); err != nil || !changed {
+	if changed, _, err := writeDnsmasqConfig(effective, store, configPath, pidFile, 53, nil); err != nil || !changed {
 		t.Fatalf("write backup config changed=%t err=%v", changed, err)
 	}
 	data, err := os.ReadFile(configPath)
@@ -486,7 +573,7 @@ func TestIPv6RouterAdvertisementWhenFalseRemovesDnsmasqRA(t *testing.T) {
 
 	store.mapStore[api.NetAPIVersion+"/VirtualAddress/lan-vip"]["role"] = "master"
 	effective = controller.effectiveRouter()
-	if _, err := writeDnsmasqConfig(effective, store, configPath, pidFile, 53, nil); err != nil {
+	if _, _, err := writeDnsmasqConfig(effective, store, configPath, pidFile, 53, nil); err != nil {
 		t.Fatal(err)
 	}
 	data, err = os.ReadFile(configPath)
