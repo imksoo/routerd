@@ -249,35 +249,79 @@ func dispatchWith(spec executeActionRequestSpec, runner azRunner) executeActionR
 	return dispatch(context.Background(), executeActionRequest{Spec: spec}, runner)
 }
 
-func TestPreflightMissingAzCLIPathFails(t *testing.T) {
-	t.Setenv(azCLIPathEnv, filepath.Join(t.TempDir(), "missing-az"))
+func TestPreflightMissingAzureHelperFails(t *testing.T) {
+	t.Setenv(azureHelperEnv, filepath.Join(t.TempDir(), "missing-helper"))
 	res := dispatchWith(reqSpec(actionPreflight, modeDryRun), func(ctx context.Context, argv ...string) ([]byte, error) {
-		t.Fatalf("preflight must not invoke az runner")
+		t.Fatalf("preflight must not invoke azure helper runner")
 		return nil, nil
 	})
 	if res.Status.Status != statusFailed {
 		t.Fatalf("want failed, got %#v", res.Status)
 	}
-	if !strings.Contains(res.Status.Error, azCLIPathEnv) || !strings.Contains(res.Status.Message, "preflight") {
+	if !strings.Contains(res.Status.Error, azureHelperEnv) || !strings.Contains(res.Status.Message, "preflight") {
 		t.Fatalf("preflight error not actionable: %#v", res.Status)
 	}
 }
 
-func TestPreflightAzCLIPathOverridePasses(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "az")
-	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
-		t.Fatalf("write fake az: %v", err)
+func TestPreflightAzureHelperOverridePasses(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "azure-routerd-helper")
+	if err := os.WriteFile(path, []byte(`#!/bin/sh
+if [ "$1" = "version" ]; then echo '{"version":"azure-routerd-helper/test"}'; exit 0; fi
+if [ "$1" = "preflight" ]; then echo '{"managedIdentity":"ok","subscriptionProbe":"not-requested"}'; exit 0; fi
+exit 2
+`), 0755); err != nil {
+		t.Fatalf("write fake helper: %v", err)
 	}
-	t.Setenv(azCLIPathEnv, path)
+	t.Setenv(azureHelperEnv, path)
 	res := dispatchWith(reqSpec(actionPreflight, modeDryRun), func(ctx context.Context, argv ...string) ([]byte, error) {
-		t.Fatalf("preflight must not invoke az runner")
+		t.Fatalf("preflight must not invoke azure helper runner")
 		return nil, nil
 	})
 	if res.Status.Status != statusSucceeded {
 		t.Fatalf("want succeeded, got %#v", res.Status)
 	}
-	if res.Status.Observed["dependency"] != "az" || res.Status.Observed["path"] != path {
+	if res.Status.Observed["dependency"] != "azure-routerd-helper" || res.Status.Observed["path"] != path || res.Status.Observed["version"] != "azure-routerd-helper/test" {
 		t.Fatalf("observed = %#v", res.Status.Observed)
+	}
+}
+
+func TestPreflightLegacyAzCLIPathFallbackPasses(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "az")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+		t.Fatalf("write fake az: %v", err)
+	}
+	t.Setenv(azureHelperEnv, "")
+	t.Setenv(azCLIPathEnv, path)
+	res := dispatchWith(reqSpec(actionPreflight, modeDryRun), func(ctx context.Context, argv ...string) ([]byte, error) {
+		t.Fatalf("preflight must not invoke azure helper runner")
+		return nil, nil
+	})
+	if res.Status.Status != statusSucceeded {
+		t.Fatalf("want succeeded, got %#v", res.Status)
+	}
+	if res.Status.Observed["legacyAzCLI"] != "true" || res.Status.Observed["path"] != path {
+		t.Fatalf("observed = %#v", res.Status.Observed)
+	}
+}
+
+func TestPreflightLegacyAzCLIPathDoesNotUsePATHLookup(t *testing.T) {
+	binDir := t.TempDir()
+	path := filepath.Join(binDir, "az")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+		t.Fatalf("write fake az: %v", err)
+	}
+	t.Setenv("PATH", binDir)
+	t.Setenv(azureHelperEnv, "")
+	t.Setenv(azCLIPathEnv, "az")
+	res := dispatchWith(reqSpec(actionPreflight, modeDryRun), func(ctx context.Context, argv ...string) ([]byte, error) {
+		t.Fatalf("preflight must not invoke azure helper runner")
+		return nil, nil
+	})
+	if res.Status.Status != statusFailed {
+		t.Fatalf("want failed, got %#v", res.Status)
+	}
+	if !strings.Contains(res.Status.Error, "PATH lookup is not used") {
+		t.Fatalf("preflight error = %#v", res.Status)
 	}
 }
 
@@ -361,7 +405,7 @@ func TestAssignExecuteIssuesIPConfigCreate(t *testing.T) {
 		t.Fatalf("execute assign should issue exactly one call, got %v", f.calls)
 	}
 	got := strings.Join(f.calls[0], " ")
-	want := "network nic ip-config create --resource-group rg1 --nic-name nic1 --name ipcfg-mobility --private-ip-address 10.88.60.9"
+	want := "network nic ip-config create --resource-group rg1 --nic-name nic1 --name ipcfg-mobility --private-ip-address 10.88.60.9 --subscription s1"
 	if got != want {
 		t.Fatalf("assign argv mismatch:\n got: %s\nwant: %s", got, want)
 	}
@@ -374,7 +418,7 @@ func TestAssignRouteTableExecuteCreatesRoute(t *testing.T) {
 		t.Fatalf("want succeeded, got %q err=%q", res.Status.Status, res.Status.Error)
 	}
 	got := joinedCalls(f.calls)
-	want := "network route-table route create --resource-group rg1 --route-table-name rt-cloudedge --name cloudedge-10-88-60-9-32 --address-prefix 10.88.60.9/32 --next-hop-type VirtualAppliance --next-hop-ip-address 10.88.60.254"
+	want := "network route-table route create --resource-group rg1 --route-table-name rt-cloudedge --name cloudedge-10-88-60-9-32 --address-prefix 10.88.60.9/32 --next-hop-type VirtualAppliance --next-hop-ip-address 10.88.60.254 --subscription s1"
 	if len(got) != 1 || got[0] != want {
 		t.Fatalf("calls = %v, want create route", got)
 	}
@@ -386,7 +430,7 @@ func TestAssignSecondaryIPRouteTableStrategyCreatesRoute(t *testing.T) {
 	if res.Status.Status != statusSucceeded {
 		t.Fatalf("want succeeded, got %q err=%q", res.Status.Status, res.Status.Error)
 	}
-	want := "network route-table route create --resource-group rg1 --route-table-name rt-cloudedge --name cloudedge-10-88-60-9-32 --address-prefix 10.88.60.9/32 --next-hop-type VirtualAppliance --next-hop-ip-address 10.88.60.254"
+	want := "network route-table route create --resource-group rg1 --route-table-name rt-cloudedge --name cloudedge-10-88-60-9-32 --address-prefix 10.88.60.9/32 --next-hop-type VirtualAppliance --next-hop-ip-address 10.88.60.254 --subscription s1"
 	if got := strings.Join(f.calls[0], " "); got != want {
 		t.Fatalf("create route argv mismatch:\n got: %s\nwant: %s", got, want)
 	}
@@ -401,7 +445,7 @@ func TestAssignRouteTableSeizeUpdatesExistingRoute(t *testing.T) {
 		t.Fatalf("want succeeded, got %q err=%q", res.Status.Status, res.Status.Error)
 	}
 	got := joinedCalls(f.calls)
-	want := "network route-table route update --resource-group rg1 --route-table-name rt-cloudedge --name cloudedge-10-88-60-9-32 --set addressPrefix=10.88.60.9/32 nextHopType=VirtualAppliance nextHopIpAddress=10.88.60.254"
+	want := "network route-table route update --resource-group rg1 --route-table-name rt-cloudedge --name cloudedge-10-88-60-9-32 --set addressPrefix=10.88.60.9/32 nextHopType=VirtualAppliance nextHopIpAddress=10.88.60.254 --subscription s1"
 	if len(got) != 1 || got[0] != want {
 		t.Fatalf("calls = %v, want update route for seize", got)
 	}
@@ -502,11 +546,11 @@ func TestAssignExecuteAllowReassignmentDeletesOldThenCreatesSelf(t *testing.T) {
 	got := joinedCalls(f.calls)
 	want := []string{
 		"network nic show --ids /subscriptions/s1/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/nic1",
-		"network nic ip-config list --resource-group rg1 --nic-name nic-old",
-		"network nic ip-config delete --resource-group rg1 --nic-name nic-old --name ipcfg-mobility",
-		"network nic ip-config create --resource-group rg1 --nic-name nic1 --name ipcfg-mobility --private-ip-address 10.88.60.9",
+		"network nic ip-config list --resource-group rg1 --nic-name nic-old --subscription s1",
+		"network nic ip-config delete --resource-group rg1 --nic-name nic-old --name ipcfg-mobility --subscription s1",
+		"network nic ip-config create --resource-group rg1 --nic-name nic1 --name ipcfg-mobility --private-ip-address 10.88.60.9 --subscription s1",
 		"network nic show --ids /subscriptions/s1/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/nic1",
-		"network nic ip-config list --resource-group rg1 --nic-name nic-old",
+		"network nic ip-config list --resource-group rg1 --nic-name nic-old --subscription s1",
 	}
 	if fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Fatalf("seize calls mismatch:\n got: %v\nwant: %v", got, want)
@@ -528,10 +572,10 @@ func TestAssignExecuteAllowReassignmentFallsBackToInventoryDiscovery(t *testing.
 		t.Fatalf("want succeeded, got %q err=%q message=%q", res.Status.Status, res.Status.Error, res.Status.Message)
 	}
 	got := joinedCalls(f.calls)
-	if len(got) < 3 || got[1] != "network nic list --resource-group rg1" {
+	if len(got) < 3 || got[1] != "network nic list --resource-group rg1 --subscription s1" {
 		t.Fatalf("calls = %v, want inventory discovery via nic list", got)
 	}
-	if !containsCall(got, "network nic ip-config delete --resource-group rg1 --nic-name nic-old --name ipcfg-mobility") {
+	if !containsCall(got, "network nic ip-config delete --resource-group rg1 --nic-name nic-old --name ipcfg-mobility --subscription s1") {
 		t.Fatalf("calls = %v, want delete of discovered old holder", got)
 	}
 }
@@ -549,7 +593,7 @@ func TestAssignExecuteAllowReassignmentParsesNestedPrivateIPAddress(t *testing.T
 	if res.Status.Status != statusSucceeded {
 		t.Fatalf("want succeeded, got %q err=%q message=%q", res.Status.Status, res.Status.Error, res.Status.Message)
 	}
-	if !containsCall(joinedCalls(f.calls), "network nic ip-config delete --resource-group rg1 --nic-name nic-old --name ipcfg-mobility") {
+	if !containsCall(joinedCalls(f.calls), "network nic ip-config delete --resource-group rg1 --nic-name nic-old --name ipcfg-mobility --subscription s1") {
 		t.Fatalf("calls = %v, want old holder discovered from nested privateIpAddress", joinedCalls(f.calls))
 	}
 }
@@ -591,7 +635,7 @@ func TestAssignExecuteAllowReassignmentRetriesAfterRemoveSucceededAddFailed(t *t
 	if res.Status.Status != statusSucceeded {
 		t.Fatalf("retry should add self after old removal, got %q err=%q", res.Status.Status, res.Status.Error)
 	}
-	if !containsCall(joinedCalls(retry.calls), "network nic ip-config create --resource-group rg1 --nic-name nic1 --name ipcfg-mobility --private-ip-address 10.88.60.9") {
+	if !containsCall(joinedCalls(retry.calls), "network nic ip-config create --resource-group rg1 --nic-name nic1 --name ipcfg-mobility --private-ip-address 10.88.60.9 --subscription s1") {
 		t.Fatalf("retry calls = %v, want create self", joinedCalls(retry.calls))
 	}
 }
@@ -638,7 +682,7 @@ func TestAssignExecuteAllowReassignmentWaitsForEventualSelfAndOldVisibility(t *t
 	if countCall(got, showSelf) < 4 {
 		t.Fatalf("calls = %v, want initial show plus repeated self verify", got)
 	}
-	oldList := "network nic ip-config list --resource-group rg1 --nic-name nic-old"
+	oldList := "network nic ip-config list --resource-group rg1 --nic-name nic-old --subscription s1"
 	if countCall(got, oldList) < 3 {
 		t.Fatalf("calls = %v, want holder discovery plus repeated old release verify", got)
 	}
@@ -673,7 +717,7 @@ func TestAssignExecuteAllowReassignmentDeleteFailureIsRetriedLater(t *testing.T)
 	if !f.oldHolds {
 		t.Fatal("old holder should remain when delete fails before removal")
 	}
-	if containsCall(joinedCalls(f.calls), "network nic ip-config create --resource-group rg1 --nic-name nic1 --name ipcfg-mobility --private-ip-address 10.88.60.9") {
+	if containsCall(joinedCalls(f.calls), "network nic ip-config create --resource-group rg1 --nic-name nic1 --name ipcfg-mobility --private-ip-address 10.88.60.9 --subscription s1") {
 		t.Fatalf("calls = %v, must not create self after old delete failed", joinedCalls(f.calls))
 	}
 }
@@ -707,19 +751,19 @@ func TestAssignExecuteAllowReassignmentConflictRediscovery(t *testing.T) {
 		t.Fatalf("conflict rediscovery should delete holder and retry create, got status=%q message=%q err=%q", res.Status.Status, res.Status.Message, res.Status.Error)
 	}
 	got := joinedCalls(f.calls)
-	if !containsCall(got, "network nic ip-config delete --resource-group rg1 --nic-name nic-old --name ipcfg-mobility") {
+	if !containsCall(got, "network nic ip-config delete --resource-group rg1 --nic-name nic-old --name ipcfg-mobility --subscription s1") {
 		t.Fatalf("calls = %v, want delete after rediscovery", got)
 	}
 	createCount := 0
 	for _, call := range got {
-		if call == "network nic ip-config create --resource-group rg1 --nic-name nic1 --name ipcfg-mobility --private-ip-address 10.88.60.9" {
+		if call == "network nic ip-config create --resource-group rg1 --nic-name nic1 --name ipcfg-mobility --private-ip-address 10.88.60.9 --subscription s1" {
 			createCount++
 		}
 	}
 	if createCount != 2 {
 		t.Fatalf("calls = %v, want create attempted twice around conflict", got)
 	}
-	if !containsCall(got, "network nic ip-config list --resource-group rg1 --nic-name nic-old") {
+	if !containsCall(got, "network nic ip-config list --resource-group rg1 --nic-name nic-old --subscription s1") {
 		t.Fatalf("calls = %v, want displaced verify after conflict retry", got)
 	}
 }
@@ -825,7 +869,7 @@ func TestUnassignExecuteDeletesIPConfig(t *testing.T) {
 		t.Fatalf("execute unassign should issue exactly one call, got %v", f.calls)
 	}
 	got := strings.Join(f.calls[0], " ")
-	want := "network nic ip-config delete --resource-group rg1 --nic-name nic1 --name ipcfg-mobility"
+	want := "network nic ip-config delete --resource-group rg1 --nic-name nic1 --name ipcfg-mobility --subscription s1"
 	if got != want {
 		t.Fatalf("unassign argv mismatch:\n got: %s\nwant: %s", got, want)
 	}
@@ -933,9 +977,9 @@ func TestRunEndToEndStdInOut(t *testing.T) {
 }
 
 // TestExecutorImportsNoCloudSDK asserts the azure-provider-executor shipped code
-// imports NO cloud SDK. It LEGITIMATELY uses os/exec (it runs the `az` CLI), so
+// imports NO cloud SDK. It LEGITIMATELY uses os/exec (it runs azure-routerd-helper), so
 // os/exec is allowed here — but pulling in an Azure/AWS/OCI/GCP SDK is forbidden:
-// the executor's only external dependency is exec of the `az` binary. (The
+// the executor's only external dependency is exec of the helper binary. (The
 // fleet-wide examples/plugins no-exec invariant in internal/addressclaim
 // excludes THIS directory for exactly this reason.)
 func TestExecutorImportsNoCloudSDK(t *testing.T) {
@@ -972,12 +1016,12 @@ func TestExecutorImportsNoCloudSDK(t *testing.T) {
 			}
 			for _, bad := range forbidden {
 				if p == bad || strings.HasPrefix(p, bad) {
-					t.Errorf("%s imports forbidden cloud SDK %q (executor may exec `az`, not link an SDK)", name, p)
+					t.Errorf("%s imports forbidden cloud SDK %q (executor may exec azure-routerd-helper, not link an SDK)", name, p)
 				}
 			}
 		}
 	}
 	if !usesExec {
-		t.Error("expected the azure executor to use os/exec to run the `az` CLI")
+		t.Error("expected the azure executor to use os/exec to run azure-routerd-helper")
 	}
 }

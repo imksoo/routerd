@@ -85,6 +85,9 @@ echo inventory
 	writeExecutable(t, filepath.Join(pkg, "libexec", "routerd", "plugins", "aws-routerd-helper", "bin", "aws-routerd-helper"), `#!/bin/sh
 echo helper
 `)
+	writeExecutable(t, filepath.Join(pkg, "libexec", "routerd", "plugins", "azure-routerd-helper", "bin", "azure-routerd-helper"), `#!/bin/sh
+echo helper
+`)
 
 	out, err := runInstall(t, pkg, prefix, "--no-install-deps", "--no-config-update", "--no-restart")
 	if err != nil {
@@ -94,6 +97,7 @@ echo helper
 		filepath.Join(prefix, "libexec", "routerd", "plugins", "provider-private-ip-inventory"),
 		filepath.Join(prefix, "libexec", "routerd", "plugins", "aws-provider-executor", "plugin.yaml"),
 		filepath.Join(prefix, "libexec", "routerd", "plugins", "aws-routerd-helper", "bin", "aws-routerd-helper"),
+		filepath.Join(prefix, "libexec", "routerd", "plugins", "azure-routerd-helper", "bin", "azure-routerd-helper"),
 	} {
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("libexec payload was not installed at %s: %v\n%s", path, err, out)

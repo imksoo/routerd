@@ -8,15 +8,15 @@
 //
 // REAL EXECUTOR — it mutates Azure, but ONLY in execute mode. In dry-run mode it
 // issues read-only show/list calls and mutates nothing (enforced: see
-// guardedRunner). It drives the Azure CLI (`az`) via an injectable command runner
-// (the azRunner func var, default execRunner running the real `az` binary; tests
-// inject a fake), so unit tests NEVER call real Azure.
+// guardedRunner). It drives routerd's azure-routerd-helper via an injectable
+// command runner (the azRunner func var, default execRunner running the shipped
+// helper; tests inject a fake), so unit tests NEVER call real Azure.
 //
-// CREDENTIALS: it authenticates with the Azure managed identity that the `az` CLI
-// resolves on its own. routerd core passes it NO credentials and inherits NO
-// parent environment to it (see RunExecutor); the executor reads no Azure
-// credentials from the request. It imports no Azure SDK — the ONLY external
-// dependency is exec of the `az` CLI binary.
+// CREDENTIALS: azure-routerd-helper authenticates with Azure managed identity.
+// routerd core passes it NO credentials and inherits NO parent environment to it
+// (see RunExecutor); the executor reads no Azure credentials from the request.
+// It imports no Azure SDK — provider SDK calls are isolated in
+// azure-routerd-helper.
 //
 // Reads from the request Target: nicRef (NIC resource id), resourceGroup, NIC
 // name, ipConfigName, address (the captured /32), region/subscriptionId when
@@ -99,7 +99,7 @@ const (
 	actionEnsureFwdDisabled       = "ensure-forwarding-disabled"
 	actionPreflight               = "preflight"
 	captureStrategyRouteTable     = "route-table"
-	defaultAzCommandTimeoutMs     = 25000
+	defaultAzCommandTimeoutMs     = 120000
 	seizeVerifyAttempts           = 5
 	seizeVerifyDelay              = 500 * time.Millisecond
 )
@@ -155,22 +155,25 @@ func failed(msg string, err error) executeActionResult {
 
 // nicTarget bundles the Azure NIC identification read from the request Target.
 type nicTarget struct {
-	nicID         string // NIC resource id (for --ids on show/update)
-	resourceGroup string
-	nicName       string // for ip-config create/delete (--nic-name)
-	ipConfigName  string
-	address       string
-	displaced     displacedTarget
+	subscriptionID string
+	nicID          string // NIC resource id (for --ids on show/update)
+	resourceGroup  string
+	nicName        string // for ip-config create/delete (--nic-name)
+	ipConfigName   string
+	address        string
+	displaced      displacedTarget
 }
 
 type displacedTarget struct {
-	nicID         string
-	resourceGroup string
-	nicName       string
-	ipConfigName  string
+	subscriptionID string
+	nicID          string
+	resourceGroup  string
+	nicName        string
+	ipConfigName   string
 }
 
 type routeTarget struct {
+	subscriptionID   string
 	resourceGroup    string
 	routeTableName   string
 	routeName        string
@@ -185,16 +188,18 @@ func (t displacedTarget) complete() bool {
 // requireNICID requires the NIC resource id (used for show/update via --ids).
 func requireNICID(spec executeActionRequestSpec) (nicTarget, error) {
 	t := nicTarget{
-		nicID:         spec.Target["nicRef"],
-		resourceGroup: spec.Target["resourceGroup"],
-		nicName:       spec.Target["nicName"],
-		ipConfigName:  spec.Target["ipConfigName"],
-		address:       bareIP(spec.Target["address"]),
+		subscriptionID: firstNonEmpty(spec.Target["subscriptionID"], spec.Target["subscriptionId"]),
+		nicID:          spec.Target["nicRef"],
+		resourceGroup:  spec.Target["resourceGroup"],
+		nicName:        spec.Target["nicName"],
+		ipConfigName:   spec.Target["ipConfigName"],
+		address:        bareIP(spec.Target["address"]),
 		displaced: displacedTarget{
-			nicID:         spec.Target["displacedNicRef"],
-			resourceGroup: spec.Target["displacedResourceGroup"],
-			nicName:       spec.Target["displacedNicName"],
-			ipConfigName:  spec.Target["displacedIpConfigName"],
+			subscriptionID: firstNonEmpty(spec.Target["displacedSubscriptionID"], spec.Target["displacedSubscriptionId"], spec.Target["subscriptionID"], spec.Target["subscriptionId"]),
+			nicID:          spec.Target["displacedNicRef"],
+			resourceGroup:  spec.Target["displacedResourceGroup"],
+			nicName:        spec.Target["displacedNicName"],
+			ipConfigName:   spec.Target["displacedIpConfigName"],
 		},
 	}
 	if t.nicID == "" {
@@ -250,6 +255,7 @@ func requireIPConfigTarget(spec executeActionRequestSpec, needAddress bool) (nic
 
 func requireRouteTarget(spec executeActionRequestSpec) (routeTarget, error) {
 	t := routeTarget{
+		subscriptionID:   firstNonEmpty(spec.Target["subscriptionID"], spec.Target["subscriptionId"]),
 		resourceGroup:    spec.Target["resourceGroup"],
 		routeTableName:   firstNonEmpty(spec.Target["routeTableName"], spec.Target["routeTableRef"]),
 		routeName:        spec.Target["routeName"],
@@ -284,7 +290,7 @@ func dispatch(ctx context.Context, req executeActionRequest, runner azRunner) ex
 		return failed(fmt.Sprintf("invalid mode %q (want dry-run or execute)", mode), nil)
 	}
 	if spec.Action == actionPreflight {
-		return preflight()
+		return preflight(ctx)
 	}
 	if mode == modeDryRun {
 		// Dry-run hard guard: only show/list verbs may be issued.
@@ -315,15 +321,45 @@ func dispatch(ctx context.Context, req executeActionRequest, runner azRunner) ex
 	}
 }
 
-func preflight() executeActionResult {
-	path, err := resolveAzCLIPath()
+func preflight(ctx context.Context) executeActionResult {
+	path, err := resolveAzureHelperPath()
 	if err != nil {
-		return failed("provider executor preflight failed: az CLI unavailable", err)
+		return failed("provider executor preflight failed: Azure helper unavailable", err)
 	}
 	res := newResult()
+	observed := map[string]string{"dependency": "azure-routerd-helper", "path": path}
+	if strings.TrimSpace(os.Getenv(azureHelperEnv)) == "" && strings.TrimSpace(os.Getenv(azCLIPathEnv)) != "" {
+		observed["legacyAzCLI"] = "true"
+		res.Status.Status = statusSucceeded
+		res.Status.Message = "legacy az CLI path available"
+		res.Status.Observed = observed
+		return res
+	}
+	versionOut, err := runHelperPreflightCommand(ctx, path, "version")
+	if err != nil {
+		return failed("provider executor preflight failed: Azure helper version failed", err)
+	}
+	var versionBody map[string]string
+	if err := json.Unmarshal(versionOut, &versionBody); err == nil {
+		if versionBody["version"] != "" {
+			observed["version"] = versionBody["version"]
+		}
+	}
+	preflightOut, err := runHelperPreflightCommand(ctx, path, "preflight")
+	if err != nil {
+		return failed("provider executor preflight failed: Azure helper identity probe failed", err)
+	}
+	var preflightBody map[string]string
+	if err := json.Unmarshal(preflightOut, &preflightBody); err == nil {
+		for k, v := range preflightBody {
+			if strings.TrimSpace(v) != "" {
+				observed[k] = v
+			}
+		}
+	}
 	res.Status.Status = statusSucceeded
-	res.Status.Message = "az CLI available"
-	res.Status.Observed = map[string]string{"dependency": "az", "path": path}
+	res.Status.Message = "Azure helper available"
+	res.Status.Observed = observed
 	return res
 }
 
@@ -340,7 +376,7 @@ func assignRouteTableRoute(ctx context.Context, spec executeActionRequestSpec, m
 	res.Status.UndoAvailable = true
 
 	if mode == modeDryRun {
-		if _, derr := runner(ctx, "network", "route-table", "show", "--resource-group", t.resourceGroup, "--name", t.routeTableName); derr != nil {
+		if _, derr := runner(ctx, appendSubscription(t.subscriptionID, "network", "route-table", "show", "--resource-group", t.resourceGroup, "--name", t.routeTableName)...); derr != nil {
 			return failed("assign-route-table-route dry-run: route table show failed", derr)
 		}
 		res.Status.Status = statusSucceeded
@@ -380,25 +416,25 @@ func assignRouteTableRoute(ctx context.Context, spec executeActionRequestSpec, m
 }
 
 func createRouteTableRoute(ctx context.Context, runner azRunner, t routeTarget) error {
-	_, err := runner(ctx, "network", "route-table", "route", "create",
+	_, err := runner(ctx, appendSubscription(t.subscriptionID, "network", "route-table", "route", "create",
 		"--resource-group", t.resourceGroup,
 		"--route-table-name", t.routeTableName,
 		"--name", t.routeName,
 		"--address-prefix", t.address,
 		"--next-hop-type", "VirtualAppliance",
-		"--next-hop-ip-address", t.nextHopIPAddress)
+		"--next-hop-ip-address", t.nextHopIPAddress)...)
 	return err
 }
 
 func updateRouteTableRoute(ctx context.Context, runner azRunner, t routeTarget) error {
-	_, err := runner(ctx, "network", "route-table", "route", "update",
+	_, err := runner(ctx, appendSubscription(t.subscriptionID, "network", "route-table", "route", "update",
 		"--resource-group", t.resourceGroup,
 		"--route-table-name", t.routeTableName,
 		"--name", t.routeName,
 		"--set",
 		"addressPrefix="+t.address,
 		"nextHopType=VirtualAppliance",
-		"nextHopIpAddress="+t.nextHopIPAddress)
+		"nextHopIpAddress="+t.nextHopIPAddress)...)
 	return err
 }
 
@@ -410,7 +446,7 @@ func unassignRouteTableRoute(ctx context.Context, spec executeActionRequestSpec,
 	res := newResult()
 
 	if mode == modeDryRun {
-		if _, derr := runner(ctx, "network", "route-table", "show", "--resource-group", t.resourceGroup, "--name", t.routeTableName); derr != nil {
+		if _, derr := runner(ctx, appendSubscription(t.subscriptionID, "network", "route-table", "show", "--resource-group", t.resourceGroup, "--name", t.routeTableName)...); derr != nil {
 			return failed("unassign-route-table-route dry-run: route table show failed", derr)
 		}
 		res.Status.Status = statusSucceeded
@@ -433,11 +469,11 @@ func unassignRouteTableRoute(ctx context.Context, spec executeActionRequestSpec,
 		return res
 	}
 
-	if _, err := runner(ctx, "network", "route-table", "route", "delete",
+	if _, err := runner(ctx, appendSubscription(t.subscriptionID, "network", "route-table", "route", "delete",
 		"--resource-group", t.resourceGroup,
 		"--route-table-name", t.routeTableName,
 		"--name", t.routeName,
-		"--yes"); err != nil {
+		"--yes")...); err != nil {
 		if isNotFoundError(err) {
 			res.Status.Status = statusSkipped
 			res.Status.Message = fmt.Sprintf("route %s already absent from %s", t.routeName, t.routeTableName)
@@ -456,10 +492,10 @@ type routeTableRoute struct {
 }
 
 func showRouteTableRoute(ctx context.Context, runner azRunner, t routeTarget) (routeTableRoute, bool, error) {
-	out, err := runner(ctx, "network", "route-table", "route", "show",
+	out, err := runner(ctx, appendSubscription(t.subscriptionID, "network", "route-table", "route", "show",
 		"--resource-group", t.resourceGroup,
 		"--route-table-name", t.routeTableName,
-		"--name", t.routeName)
+		"--name", t.routeName)...)
 	if err != nil {
 		if isNotFoundError(err) {
 			return routeTableRoute{}, false, nil
@@ -517,11 +553,11 @@ func assignSecondaryIP(ctx context.Context, spec executeActionRequestSpec, mode 
 		return seizeSecondaryIP(ctx, t, runner)
 	}
 
-	if _, err := runner(ctx, "network", "nic", "ip-config", "create",
+	if _, err := runner(ctx, appendSubscription(t.subscriptionID, "network", "nic", "ip-config", "create",
 		"--resource-group", t.resourceGroup,
 		"--nic-name", t.nicName,
 		"--name", t.ipConfigName,
-		"--private-ip-address", t.address); err != nil {
+		"--private-ip-address", t.address)...); err != nil {
 		return failed("assign-secondary-ip execute: ip-config create failed", err)
 	}
 	res.Status.Status = statusSucceeded
@@ -626,7 +662,7 @@ func waitForSelfAddress(ctx context.Context, runner azRunner, t nicTarget) (ipCo
 func waitForDisplacedRelease(ctx context.Context, runner azRunner, h ipConfigHolder, address string) error {
 	var lastErr error
 	for attempt := 0; attempt < seizeVerifyAttempts; attempt++ {
-		configs, err := listIPConfigs(ctx, runner, h.resourceGroup, h.nicName)
+		configs, err := listIPConfigs(ctx, runner, h.subscriptionID, h.resourceGroup, h.nicName)
 		if err == nil {
 			if _, stillPresent := ipConfigForAddress(configs, address); !stillPresent {
 				return nil
@@ -654,19 +690,19 @@ func sleepBeforeRetry(ctx context.Context, attempt int) error {
 }
 
 func createIPConfig(ctx context.Context, runner azRunner, t nicTarget) error {
-	_, err := runner(ctx, "network", "nic", "ip-config", "create",
+	_, err := runner(ctx, appendSubscription(t.subscriptionID, "network", "nic", "ip-config", "create",
 		"--resource-group", t.resourceGroup,
 		"--nic-name", t.nicName,
 		"--name", t.ipConfigName,
-		"--private-ip-address", t.address)
+		"--private-ip-address", t.address)...)
 	return err
 }
 
 func deleteIPConfig(ctx context.Context, runner azRunner, h ipConfigHolder) error {
-	_, err := runner(ctx, "network", "nic", "ip-config", "delete",
+	_, err := runner(ctx, appendSubscription(h.subscriptionID, "network", "nic", "ip-config", "delete",
 		"--resource-group", h.resourceGroup,
 		"--nic-name", h.nicName,
-		"--name", h.ipConfigName)
+		"--name", h.ipConfigName)...)
 	if err != nil && isNotFoundError(err) {
 		return nil
 	}
@@ -674,9 +710,10 @@ func deleteIPConfig(ctx context.Context, runner azRunner, h ipConfigHolder) erro
 }
 
 type ipConfigHolder struct {
-	resourceGroup string
-	nicName       string
-	ipConfigName  string
+	subscriptionID string
+	resourceGroup  string
+	nicName        string
+	ipConfigName   string
 }
 
 func (h ipConfigHolder) sameNIC(resourceGroup, nicName string) bool {
@@ -686,7 +723,7 @@ func (h ipConfigHolder) sameNIC(resourceGroup, nicName string) bool {
 
 func discoverCurrentHolder(ctx context.Context, runner azRunner, t nicTarget) (ipConfigHolder, bool, error) {
 	if t.displaced.complete() {
-		configs, err := listIPConfigs(ctx, runner, t.displaced.resourceGroup, t.displaced.nicName)
+		configs, err := listIPConfigs(ctx, runner, t.displaced.subscriptionID, t.displaced.resourceGroup, t.displaced.nicName)
 		if err != nil {
 			if isNotFoundError(err) {
 				return ipConfigHolder{}, false, nil
@@ -695,13 +732,14 @@ func discoverCurrentHolder(ctx context.Context, runner azRunner, t nicTarget) (i
 		}
 		if cfg, ok := namedOrAddressConfig(configs, t.displaced.ipConfigName, t.address); ok {
 			return ipConfigHolder{
-				resourceGroup: t.displaced.resourceGroup,
-				nicName:       t.displaced.nicName,
-				ipConfigName:  cfg.Name,
+				subscriptionID: t.displaced.subscriptionID,
+				resourceGroup:  t.displaced.resourceGroup,
+				nicName:        t.displaced.nicName,
+				ipConfigName:   cfg.Name,
 			}, true, nil
 		}
 	}
-	nics, err := listNICs(ctx, runner, t.resourceGroup)
+	nics, err := listNICs(ctx, runner, t.subscriptionID, t.resourceGroup)
 	if err != nil {
 		return ipConfigHolder{}, false, err
 	}
@@ -714,7 +752,7 @@ func discoverCurrentHolder(ctx context.Context, runner azRunner, t nicTarget) (i
 		if rg == "" {
 			rg = t.resourceGroup
 		}
-		return ipConfigHolder{resourceGroup: rg, nicName: nic.Name, ipConfigName: cfg.Name}, true, nil
+		return ipConfigHolder{subscriptionID: t.subscriptionID, resourceGroup: rg, nicName: nic.Name, ipConfigName: cfg.Name}, true, nil
 	}
 	return ipConfigHolder{}, false, nil
 }
@@ -826,10 +864,10 @@ func unassignSecondaryIP(ctx context.Context, spec executeActionRequestSpec, mod
 		return res
 	}
 
-	if _, err := runner(ctx, "network", "nic", "ip-config", "delete",
+	if _, err := runner(ctx, appendSubscription(t.subscriptionID, "network", "nic", "ip-config", "delete",
 		"--resource-group", t.resourceGroup,
 		"--nic-name", t.nicName,
-		"--name", t.ipConfigName); err != nil {
+		"--name", t.ipConfigName)...); err != nil {
 		return failed("unassign-secondary-ip execute: ip-config delete failed", err)
 	}
 	res.Status.Status = statusSucceeded
@@ -898,6 +936,14 @@ func stringBool(v string) bool {
 	default:
 		return false
 	}
+}
+
+func appendSubscription(subscriptionID string, argv ...string) []string {
+	out := append([]string(nil), argv...)
+	if strings.TrimSpace(subscriptionID) != "" {
+		out = append(out, "--subscription", strings.TrimSpace(subscriptionID))
+	}
+	return out
 }
 
 // commandTimeout is the per-az-invocation timeout.

@@ -14,7 +14,9 @@ spec:
     # this capability. REAL — mutates Azure in execute mode only (dry-run issues
     # show/list calls and mutates nothing).
     - execute.providerAction
-  # No context.resources and NO credentials: the executor authenticates with the
-  # Azure managed identity resolved by the `az` CLI itself. routerd passes it NO
+  # No context.resources and NO credentials: the executor authenticates through
+  # azure-routerd-helper using Azure managed identity. routerd passes it NO
   # secrets and inherits NO parent environment to it (per ADR 0007).
-  # If az is not in PATH, set env.AZ_CLI_PATH to the executable path.
+  # If the helper is not installed at the default path, set
+  # env.ROUTERD_AZURE_HELPER. env.AZ_CLI_PATH remains a legacy fallback but is
+  # not the default path and must be a concrete executable path.

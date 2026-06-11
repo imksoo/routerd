@@ -292,7 +292,7 @@ func TestBuildMissingNICRef(t *testing.T) {
 // SCOPING (Phase 5.1): the REAL provider executors (aws-provider-executor,
 // oci-provider-executor, azure-provider-executor) LEGITIMATELY use os/exec to run
 // their provider command and link no cloud SDK. The OCI SDK is intentionally
-// isolated in aws-routerd-helper / oci-routerd-helper, the shipped cloud
+// isolated in aws-routerd-helper / azure-routerd-helper / oci-routerd-helper, the shipped cloud
 // control-plane commands used by the provider executors. These directories are
 // therefore EXCLUDED from this planner/fake-executor invariant. Planners + the
 // fake executor remain bound by the invariant here.
@@ -311,6 +311,7 @@ func TestNoExecImports(t *testing.T) {
 		filepath.Join(pluginsDir, "oci-provider-executor"):   true,
 		filepath.Join(pluginsDir, "azure-provider-executor"): true,
 		filepath.Join(pluginsDir, "aws-routerd-helper"):      true,
+		filepath.Join(pluginsDir, "azure-routerd-helper"):    true,
 		filepath.Join(pluginsDir, "oci-routerd-helper"):      true,
 	}
 

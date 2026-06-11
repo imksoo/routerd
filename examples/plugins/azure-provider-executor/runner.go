@@ -12,62 +12,79 @@ import (
 	"strings"
 )
 
-// azRunner runs one `az` CLI invocation with the given argv (without the leading
-// "az") and returns its stdout. It is the single injectable seam so unit tests
-// substitute a fake that records argv and returns canned JSON, NEVER calling real
-// Azure. The production implementation (execRunner) execs the real `az` binary,
-// which resolves the managed identity on its own; routerd passes NO credentials.
+// azRunner runs one Azure helper invocation with the given CLI-compatible argv
+// and returns its stdout. Unit tests substitute a fake that records argv and
+// returns canned JSON, NEVER calling real Azure. The production implementation
+// (execRunner) execs routerd's
+// azure-routerd-helper, which resolves managed identity on its own; routerd
+// passes NO credentials.
 type azRunner func(ctx context.Context, argv ...string) ([]byte, error)
 
-const azCLIPathEnv = "AZ_CLI_PATH"
+const (
+	defaultAzureHelper = "/usr/local/libexec/routerd/plugins/azure-routerd-helper/bin/azure-routerd-helper"
+	azureHelperEnv     = "ROUTERD_AZURE_HELPER"
+	azCLIPathEnv       = "AZ_CLI_PATH"
+)
 
-// defaultRunner returns the production runner that execs the real `az` binary.
-// This is the ONLY use of os/exec in the executor, and it runs only `az`.
+// defaultRunner returns the production runner that execs routerd's Azure helper.
 func defaultRunner() azRunner { return execRunner }
 
-func resolveAzCLIPath() (string, error) {
-	candidate := strings.TrimSpace(os.Getenv(azCLIPathEnv))
-	if candidate == "" {
-		candidate = "az"
+func resolveAzureHelperPath() (string, error) {
+	candidate := strings.TrimSpace(os.Getenv(azureHelperEnv))
+	if candidate != "" {
+		return validateExecutablePath(candidate, azureHelperEnv)
 	}
-	if strings.ContainsAny(candidate, `/\`) {
-		info, err := os.Stat(candidate)
-		if err != nil {
-			return "", fmt.Errorf("az CLI executable unavailable: %s=%q: %w", azCLIPathEnv, candidate, err)
-		}
-		if info.IsDir() || info.Mode()&0111 == 0 {
-			return "", fmt.Errorf("az CLI executable unavailable: %s=%q is not executable", azCLIPathEnv, candidate)
-		}
-		return candidate, nil
+	if legacy := strings.TrimSpace(os.Getenv(azCLIPathEnv)); legacy != "" {
+		return validateExecutablePath(legacy, azCLIPathEnv)
 	}
-	path, err := exec.LookPath(candidate)
-	if err != nil {
-		return "", fmt.Errorf("az CLI executable unavailable: install az in PATH or set %s: %w", azCLIPathEnv, err)
-	}
-	return path, nil
+	return validateExecutablePath(defaultAzureHelper, azureHelperEnv)
 }
 
-// execRunner execs `az <argv...> --only-show-errors --output json`. The plugin
-// runs in routerd's isolated executor environment (no inherited parent env
-// beyond PATH + the plugin's own spec.Env), so `az` authenticates with the
-// managed identity, not from routerd. --output json forces machine-readable
-// stdout, while --only-show-errors keeps command noise out of stderr. The
-// current NIC ip-config commands do not expose a confirmation flag; if a future
-// mutating command does, add its explicit non-interactive flag at that call site.
+func validateExecutablePath(candidate, source string) (string, error) {
+	if !strings.ContainsAny(candidate, `/\`) {
+		return "", fmt.Errorf("Azure helper executable unavailable: %s=%q must be a concrete executable path; PATH lookup is not used", source, candidate)
+	}
+	info, err := os.Stat(candidate)
+	if err != nil {
+		return "", fmt.Errorf("Azure helper executable unavailable: %s=%q: %w", source, candidate, err)
+	}
+	if info.IsDir() || info.Mode()&0111 == 0 {
+		return "", fmt.Errorf("Azure helper executable unavailable: %s=%q is not executable", source, candidate)
+	}
+	return candidate, nil
+}
+
+// execRunner execs azure-routerd-helper with the CLI-compatible argv the
+// executor already emits. The plugin runs in routerd's isolated executor
+// environment (no inherited parent env beyond PATH + the plugin's own spec.Env),
+// so the helper authenticates with managed identity, not from routerd.
 func execRunner(ctx context.Context, argv ...string) ([]byte, error) {
 	runCtx, cancel := context.WithTimeout(ctx, commandTimeout())
 	defer cancel()
 	full := azCommandArgs(argv...)
-	azPath, err := resolveAzCLIPath()
+	helper, err := resolveAzureHelperPath()
 	if err != nil {
 		return nil, err
 	}
-	cmd := exec.CommandContext(runCtx, azPath, full...)
+	cmd := exec.CommandContext(runCtx, helper, full...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("az %s: %w: %s", strings.Join(full, " "), err, strings.TrimSpace(stderr.String()))
+		return nil, fmt.Errorf("%s %s: %w: %s", helper, strings.Join(full, " "), err, strings.TrimSpace(stderr.String()))
+	}
+	return stdout.Bytes(), nil
+}
+
+func runHelperPreflightCommand(ctx context.Context, helper string, argv ...string) ([]byte, error) {
+	runCtx, cancel := context.WithTimeout(ctx, commandTimeout())
+	defer cancel()
+	cmd := exec.CommandContext(runCtx, helper, argv...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("%s %s: %w: %s", helper, strings.Join(argv, " "), err, strings.TrimSpace(stderr.String()))
 	}
 	return stdout.Bytes(), nil
 }
@@ -171,10 +188,10 @@ func showNIC(ctx context.Context, runner azRunner, nicID string) (nicShow, error
 	}, nil
 }
 
-func listIPConfigs(ctx context.Context, runner azRunner, resourceGroup, nicName string) ([]ipConfig, error) {
-	out, err := runner(ctx, "network", "nic", "ip-config", "list",
+func listIPConfigs(ctx context.Context, runner azRunner, subscriptionID, resourceGroup, nicName string) ([]ipConfig, error) {
+	out, err := runner(ctx, appendSubscription(subscriptionID, "network", "nic", "ip-config", "list",
 		"--resource-group", resourceGroup,
-		"--nic-name", nicName)
+		"--nic-name", nicName)...)
 	if err != nil {
 		return nil, err
 	}
@@ -185,8 +202,8 @@ func listIPConfigs(ctx context.Context, runner azRunner, resourceGroup, nicName 
 	return normalizeIPConfigs(parsed), nil
 }
 
-func listNICs(ctx context.Context, runner azRunner, resourceGroup string) ([]nicShow, error) {
-	out, err := runner(ctx, "network", "nic", "list", "--resource-group", resourceGroup)
+func listNICs(ctx context.Context, runner azRunner, subscriptionID, resourceGroup string) ([]nicShow, error) {
+	out, err := runner(ctx, appendSubscription(subscriptionID, "network", "nic", "list", "--resource-group", resourceGroup)...)
 	if err != nil {
 		return nil, err
 	}
