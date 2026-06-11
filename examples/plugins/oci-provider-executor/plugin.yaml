@@ -14,7 +14,7 @@ spec:
     # this capability. REAL — mutates OCI in execute mode only (dry-run issues
     # get/list calls and mutates nothing).
     - execute.providerAction
-  # No context.resources and NO credentials: the executor authenticates with the
-  # OCI instance principal resolved by the `oci` CLI itself (--auth
-  # instance_principal). routerd passes it NO secrets and inherits NO parent
-  # environment to it (per ADR 0007).
+  # No context.resources and NO credentials: the executor calls routerd's
+  # oci-routerd-helper, which authenticates with the OCI instance principal.
+  # routerd passes it NO secrets and inherits NO parent environment to it (per
+  # ADR 0007).

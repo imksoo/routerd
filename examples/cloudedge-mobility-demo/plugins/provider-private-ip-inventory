@@ -639,7 +639,7 @@ def azure_cli_route_from_arm(item):
 
 
 def oci_base(region):
-    argv = ["oci"]
+    argv = [os.environ.get("ROUTERD_OCI_HELPER", "/usr/local/libexec/routerd/plugins/oci-routerd-helper/bin/oci-routerd-helper")]
     config_file = os.environ.get("OCI_CONFIG_FILE", "").strip()
     profile = os.environ.get("OCI_PROFILE", "").strip()
     auth = os.environ.get("OCI_AUTH_MODE", "").strip()

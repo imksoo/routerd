@@ -7,37 +7,42 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 )
 
-// ociRunner runs one `oci` CLI invocation with the given argv (without the
-// leading "oci") and returns its stdout. It is the single injectable seam so
-// unit tests substitute a fake that records argv and returns canned JSON, NEVER
-// calling real OCI. The production implementation (execRunner) execs the real
-// `oci` binary, which resolves the instance principal on its own; routerd passes
-// NO credentials.
+// ociRunner runs one OCI command invocation with the given argv (without the
+// leading helper path) and returns its stdout. It is the single injectable seam
+// so unit tests substitute a fake that records argv and returns canned JSON,
+// NEVER calling real OCI. The production implementation execs routerd's
+// oci-routerd-helper, which uses the OCI Go SDK with instance principal auth.
 type ociRunner func(ctx context.Context, argv ...string) ([]byte, error)
 
-// defaultRunner returns the production runner that execs the real `oci` binary.
-// This is the ONLY use of os/exec in the executor, and it runs only `oci`.
+const defaultOCIHelper = "/usr/local/libexec/routerd/plugins/oci-routerd-helper/bin/oci-routerd-helper"
+
+// defaultRunner returns the production runner that execs routerd's OCI helper.
 func defaultRunner() ociRunner { return execRunner }
 
-// execRunner execs `oci <argv...> --auth instance_principal`. The plugin runs in
-// routerd's isolated executor environment (no inherited parent env beyond PATH +
-// the plugin's own spec.Env), so `oci` authenticates with the instance
-// principal, not from routerd. --output json forces machine-readable output.
+// execRunner execs routerd's OCI helper. The helper authenticates with the OCI
+// instance principal through the OCI Go SDK; routerd passes it no user
+// credentials. --output json is accepted by the helper for compatibility with
+// the OCI CLI shape this executor already used.
 func execRunner(ctx context.Context, argv ...string) ([]byte, error) {
 	runCtx, cancel := context.WithTimeout(ctx, commandTimeout())
 	defer cancel()
 	full := append([]string(nil), argv...)
 	full = append(full, "--auth", "instance_principal", "--output", "json")
-	cmd := exec.CommandContext(runCtx, "oci", full...)
+	helper := os.Getenv("ROUTERD_OCI_HELPER")
+	if helper == "" {
+		helper = defaultOCIHelper
+	}
+	cmd := exec.CommandContext(runCtx, helper, full...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("oci %s: %w: %s", strings.Join(full, " "), err, strings.TrimSpace(stderr.String()))
+		return nil, fmt.Errorf("%s %s: %w: %s", helper, strings.Join(full, " "), err, strings.TrimSpace(stderr.String()))
 	}
 	return stdout.Bytes(), nil
 }

@@ -364,13 +364,10 @@ func TestRunEndToEndStdInOut(t *testing.T) {
 	}
 }
 
-// TestExecutorImportsNoCloudSDK asserts the oci-provider-executor shipped code
-// imports NO cloud SDK. It LEGITIMATELY uses os/exec (it runs the `oci` CLI), so
-// os/exec is allowed here — but pulling in an OCI/AWS/Azure/GCP SDK is forbidden:
-// the executor's only external dependency is exec of the `oci` binary. (The
-// fleet-wide examples/plugins no-exec invariant in internal/addressclaim
-// excludes THIS directory for exactly this reason.)
-func TestExecutorImportsNoCloudSDK(t *testing.T) {
+// TestExecutorDoesNotLinkCloudSDK asserts the executor remains a protocol
+// adapter. OCI SDK calls live in oci-routerd-helper so inventory and executor
+// share one cloud API implementation.
+func TestExecutorDoesNotLinkCloudSDK(t *testing.T) {
 	_, thisFile, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("cannot locate test file")
@@ -404,12 +401,12 @@ func TestExecutorImportsNoCloudSDK(t *testing.T) {
 			}
 			for _, bad := range forbidden {
 				if p == bad || strings.HasPrefix(p, bad) {
-					t.Errorf("%s imports forbidden cloud SDK %q (executor may exec `oci`, not link an SDK)", name, p)
+					t.Errorf("%s imports forbidden cloud SDK %q (executor should exec oci-routerd-helper, not link a cloud SDK)", name, p)
 				}
 			}
 		}
 	}
 	if !usesExec {
-		t.Error("expected the oci executor to use os/exec to run the `oci` CLI")
+		t.Error("expected the oci executor to use os/exec to run oci-routerd-helper")
 	}
 }

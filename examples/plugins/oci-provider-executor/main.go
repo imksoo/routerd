@@ -8,15 +8,14 @@
 //
 // REAL EXECUTOR — it mutates OCI, but ONLY in execute mode. In dry-run mode it
 // issues read-only get/list calls and mutates nothing (enforced: see
-// guardedRunner). It drives the OCI CLI (`oci`) via an injectable command runner
-// (the ociRunner func var, default execRunner running the real `oci` binary;
-// tests inject a fake), so unit tests NEVER call real OCI.
+// guardedRunner). It drives routerd's OCI helper via an injectable command
+// runner (the ociRunner func var, default execRunner running
+// oci-routerd-helper; tests inject a fake), so unit tests NEVER call real OCI.
 //
-// CREDENTIALS: it authenticates with the OCI instance principal that the OCI CLI
-// resolves on its own. routerd core passes it NO credentials and inherits NO
+// CREDENTIALS: oci-routerd-helper authenticates with the OCI instance principal
+// through the OCI Go SDK. routerd core passes it NO credentials and inherits NO
 // parent environment to it (see RunExecutor); the executor reads no OCI
-// credentials from the request. It imports no OCI SDK — the ONLY external
-// dependency is exec of the `oci` CLI binary.
+// credentials from the request.
 //
 // Reads from the request Target: nicRef (VNIC OCID), address (the captured /32),
 // region (and compartmentId/region when available). A missing required field is

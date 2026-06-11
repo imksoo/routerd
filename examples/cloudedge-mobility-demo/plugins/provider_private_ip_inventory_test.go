@@ -660,6 +660,7 @@ func runInventoryPluginWithEnv(t *testing.T, fakeBin, stdin string, extraEnv []s
 	cmd := exec.Command("./provider-private-ip-inventory")
 	cmd.Stdin = strings.NewReader(stdin)
 	cmd.Env = append(os.Environ(), "PATH="+fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	cmd.Env = append(cmd.Env, "ROUTERD_OCI_HELPER="+filepath.Join(fakeBin, "oci"))
 	cmd.Env = append(cmd.Env, extraEnv...)
 	var out, errOut bytes.Buffer
 	cmd.Stdout = &out

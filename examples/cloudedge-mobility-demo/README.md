@@ -101,6 +101,11 @@ $EDITOR env
 
 Run `reset-lab.sh` after every demo run, even on failure.
 
+OCI clean Ubuntu images do not provide the `oci` CLI. The demo therefore ships
+`oci-routerd-helper`, a small Go SDK helper installed under
+`/usr/local/libexec/routerd/plugins/oci-routerd-helper/bin/`, and the OCI
+inventory/executor plugins use that helper with instance principal auth.
+
 ## Validation
 
 These templates are intended to validate offline:
