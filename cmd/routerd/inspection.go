@@ -9,6 +9,7 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/controlapi"
+	"github.com/imksoo/routerd/pkg/hostdeps"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -110,7 +111,7 @@ func serveInspectionResources(router *api.Router, store *routerstate.SQLiteStore
 	if err != nil {
 		return nil, err
 	}
-	selected := selectInspectionResources(router.Spec.Resources, kind, name)
+	selected := selectInspectionResources(inspectionResources(router), kind, name)
 	if len(selected) == 0 {
 		return nil, fmt.Errorf("%w: %s not found", controlapi.ErrBadRequest, target)
 	}
@@ -152,6 +153,31 @@ func selectInspectionResources(resources []api.Resource, kind, name string) []ap
 		out = append(out, res)
 	}
 	return out
+}
+
+func inspectionResources(router *api.Router) []api.Resource {
+	if router == nil {
+		return nil
+	}
+	resources := append([]api.Resource(nil), router.Spec.Resources...)
+	resources = appendMissingInspectionResources(resources, hostdeps.DerivedPackageResources(router)...)
+	return resources
+}
+
+func appendMissingInspectionResources(resources []api.Resource, additions ...api.Resource) []api.Resource {
+	seen := map[string]bool{}
+	for _, res := range resources {
+		seen[res.APIVersion+"/"+res.Kind+"/"+res.Metadata.Name] = true
+	}
+	for _, res := range additions {
+		key := res.APIVersion + "/" + res.Kind + "/" + res.Metadata.Name
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		resources = append(resources, res)
+	}
+	return resources
 }
 
 func inspectionEventsForResource(store *routerstate.SQLiteStore, res api.Resource, limit int) []routerstate.Event {
@@ -220,7 +246,7 @@ func resourcePhaseProbe(router *api.Router, store *routerstate.SQLiteStore, kind
 	if router == nil {
 		return []controlapi.ProbeCheck{{Name: kind, Status: "fail", Detail: "router config unavailable"}}
 	}
-	resources := selectInspectionResources(router.Spec.Resources, kind, name)
+	resources := selectInspectionResources(inspectionResources(router), kind, name)
 	if len(resources) == 0 {
 		return []controlapi.ProbeCheck{{Name: kind, Status: "fail", Detail: "resource not found"}}
 	}

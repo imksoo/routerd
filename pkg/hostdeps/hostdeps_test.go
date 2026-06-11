@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/config"
 	"github.com/imksoo/routerd/pkg/sysctlprofile"
 )
 
@@ -183,6 +184,45 @@ func TestPackageFeaturesIncludeAWSCLIForAWSProviderProfile(t *testing.T) {
 	nixos := packageSetByOS(t, sets, "nixos")
 	if !stringInSlice("awscli2", nixos.Names) {
 		t.Fatalf("nixos packages = %#v, want awscli2", nixos.Names)
+	}
+}
+
+func TestPackageFeaturesIncludeAWSCLIForLoadedAWSProviderProfile(t *testing.T) {
+	router, err := config.LoadBytes([]byte(`
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: aws-a
+spec:
+  resources:
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: CloudProviderProfile
+      metadata:
+        name: aws-lab
+      spec:
+        provider: aws
+        accountID: "350538780953"
+        region: ap-northeast-1
+        capabilities:
+          - secondary-ip
+          - source-dest-check-disable
+        auth:
+          mode: external-command
+          command: /usr/local/libexec/routerd/plugins/aws-auth
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardInterface
+      metadata:
+        name: wg-sam
+      spec: {}
+`), "test.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ubuntu := packageSetByOS(t, PackageSets(router), "ubuntu")
+	for _, want := range []string{"awscli", "wireguard-tools"} {
+		if !stringInSlice(want, ubuntu.Names) {
+			t.Fatalf("ubuntu packages = %#v, want %s", ubuntu.Names, want)
+		}
 	}
 }
 

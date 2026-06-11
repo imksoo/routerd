@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/hostdeps"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/render"
 	"github.com/imksoo/routerd/pkg/sysctlprofile"
@@ -277,10 +278,7 @@ func applyLinuxPackages(router *api.Router) ([]string, error) {
 	}
 	var missing []string
 	seen := map[string]bool{}
-	for _, resource := range router.Spec.Resources {
-		if resource.Kind != "Package" {
-			continue
-		}
+	for _, resource := range hostdeps.PackageResources(router) {
 		spec, err := resource.PackageSpec()
 		if err != nil {
 			return nil, err

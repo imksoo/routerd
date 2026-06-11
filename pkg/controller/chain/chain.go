@@ -1309,7 +1309,16 @@ func (r *Runner) Start(ctx context.Context) error {
 			current.Router = effective
 			return current.Reconcile(ctx)
 		}},
-		framework.FuncController{ControllerName: "package", Every: 5 * time.Minute, PeriodicFunc: packages.Reconcile},
+		framework.FuncController{ControllerName: "package", Every: 5 * time.Minute, PeriodicFunc: func(ctx context.Context) error {
+			effective, err := effectiveForReconcile()
+			if err != nil {
+				return err
+			}
+			current := packages
+			current.Router = effective
+			current.Store = store.withRouter(effective)
+			return current.Reconcile(ctx)
+		}},
 		framework.FuncController{ControllerName: "kernel-module", Every: 5 * time.Minute, PeriodicFunc: kernelModules.Reconcile},
 		framework.FuncController{ControllerName: "sysctl", Every: 30 * time.Second, PeriodicFunc: sysctl.Reconcile},
 		framework.FuncController{ControllerName: "network-adoption", Every: 5 * time.Minute, PeriodicFunc: adoption.Reconcile},
