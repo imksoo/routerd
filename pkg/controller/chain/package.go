@@ -82,7 +82,8 @@ func (c PackageController) Reconcile(ctx context.Context) error {
 				continue
 			}
 			checkName, checkArgs := packageCheckCommand(manager, name)
-			if _, err := command(ctx, checkName, checkArgs...); err != nil {
+			out, err := command(ctx, checkName, checkArgs...)
+			if !packageCheckInstalled(manager, out, err) {
 				missing = append(missing, name)
 			}
 		}
@@ -214,6 +215,18 @@ func packageCheckCommand(manager, name string) (string, []string) {
 		return "pkg", []string{"info", "-e", name}
 	default:
 		return manager, []string{name}
+	}
+}
+
+func packageCheckInstalled(manager string, out []byte, err error) bool {
+	if err != nil {
+		return false
+	}
+	switch manager {
+	case "apt":
+		return strings.TrimSpace(string(out)) == "install ok installed"
+	default:
+		return true
 	}
 }
 

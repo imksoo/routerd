@@ -128,6 +128,49 @@ func TestPackageControllerDoesNotInstallWhenPackagesPresent(t *testing.T) {
 	}
 }
 
+func TestPackageControllerTreatsAptNotInstalledStatusAsMissing(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "Package"}, Metadata: api.ObjectMeta{Name: "service-deps"}, Spec: api.PackageSpec{
+			Packages: []api.OSPackageSetSpec{{
+				OS:      packageOSName("linux"),
+				Manager: "apt",
+				Names:   []string{"awscli", "wireguard-tools"},
+			}},
+		}},
+	}}}
+	store := mapStore{}
+	var commands []string
+	controller := PackageController{
+		Router: router,
+		Store:  store,
+		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			_ = ctx
+			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
+			if name == "dpkg-query" && args[len(args)-1] == "awscli" {
+				return []byte("unknown ok not-installed"), nil
+			}
+			if name == "dpkg-query" {
+				return []byte("install ok installed"), nil
+			}
+			return []byte("installed"), nil
+		},
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(commands, "\n")
+	if !strings.Contains(got, "apt-get install -y awscli") {
+		t.Fatalf("commands = %q, want awscli install", got)
+	}
+	if strings.Contains(got, "apt-get install -y awscli wireguard-tools") {
+		t.Fatalf("commands = %q, did not expect already-installed wireguard-tools", got)
+	}
+	status := store.ObjectStatus(api.SystemAPIVersion, "Package", "service-deps")
+	if status["phase"] != "Applied" || status["changed"] != true {
+		t.Fatalf("status = %#v", status)
+	}
+}
+
 func TestPackageControllerReportsNixOSPackagesAsDeclarative(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "Package"}, Metadata: api.ObjectMeta{Name: "service-deps"}, Spec: api.PackageSpec{
