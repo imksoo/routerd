@@ -41,7 +41,7 @@ routerctl doctor -o yaml
 | `dslite` | `DSLiteTunnel` のリソース status、AFTR FQDN の AAAA プローブ、tunnel device の存在（`ip link show`）。 |
 | `dhcpv6-pd` | `DHCPv6PrefixDelegation` の status（Bound、委任 prefix）。PD 未取得時は設計上 **WARN**（壊れている IPv6 を LAN に出さない）。 |
 | `nat` | `NAT44Rule` のリソース status、`nft list table ip routerd_nat` の存在。 |
-| `firewall` | `FirewallZone` / `FirewallPolicy` の status、`nft list table inet routerd_filter` の存在と input チェインの `policy drop`（無いと permissive）、BGP tcp/179 など宣言済み routerd listener を隠してしまう unmanaged `iptables` INPUT reject、current config から render される ruleset に含まれない routerd-prefixed nft table が Linux host 上に残っていないか。 |
+| `firewall` | `FirewallZone` / `FirewallPolicy` の status、`nft list table inet routerd_filter` の存在と input チェインの `policy drop`（無いと permissive）、BGP tcp/179 など宣言済み routerd listener を隠してしまう unmanaged `iptables` INPUT drop policy / reject、current config から render される ruleset に含まれない routerd-prefixed nft table が Linux host 上に残っていないか。 |
 | `rollback` | 1 つ以上の世代が保存されていて `routerctl rollback --to` が使えること。 |
 | `disk` | `/var/lib/routerd` と `/run/routerd` の容量。90% 以上 or 256 MiB 未満で WARN、98% 以上 or 64 MiB 未満で FAIL。 |
 | `mgmt` | 管理用 interface の存在（`ManagementAccess` または `FirewallZone role=mgmt` から推定）。WebConsole の bind 先（`0.0.0.0` / `::` は WARN/FAIL）。 |

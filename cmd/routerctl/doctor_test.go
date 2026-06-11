@@ -139,6 +139,28 @@ COMMIT`
 	}
 }
 
+func TestIptablesInputDropPolicyBlocksListenerWithoutAccept(t *testing.T) {
+	const hardened = `*filter
+:INPUT DROP [0:0]
+-A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
+-A INPUT -p tcp -m tcp --dport 22 -j ACCEPT
+COMMIT`
+	if !iptablesInputRejectsListener(hardened, "tcp", 179) {
+		t.Fatalf("INPUT DROP policy without tcp/179 accept should be reported as blocked")
+	}
+}
+
+func TestIptablesInputScopedPortRejectDoesNotBlockListener(t *testing.T) {
+	const opened = `*filter
+:INPUT ACCEPT [0:0]
+-A INPUT -s 192.0.2.10/32 -p tcp -m tcp --dport 179 -j DROP
+-A INPUT -p tcp -m tcp --dport 179 -j ACCEPT
+COMMIT`
+	if iptablesInputRejectsListener(opened, "tcp", 179) {
+		t.Fatalf("source-specific tcp/179 drop should not be reported as blocking all tcp/179")
+	}
+}
+
 func TestDoctorSAMConvergenceDegradedWarnsWhenOwnershipResolved(t *testing.T) {
 	configPath, statePath := writeDoctorSAMFixture(t)
 	store := openDoctorState(t, statePath)

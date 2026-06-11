@@ -1815,8 +1815,13 @@ func declaredFirewallSensitiveListeners(router *api.Router) []doctorDeclaredList
 func iptablesInputRejectsListener(output, proto string, port int) bool {
 	proto = strings.TrimSpace(proto)
 	portText := strconv.Itoa(port)
+	inputDropPolicy := false
 	for _, raw := range strings.Split(output, "\n") {
 		line := strings.TrimSpace(raw)
+		if strings.HasPrefix(line, ":INPUT DROP ") {
+			inputDropPolicy = true
+			continue
+		}
 		if !strings.HasPrefix(line, "-A INPUT ") {
 			continue
 		}
@@ -1827,14 +1832,14 @@ func iptablesInputRejectsListener(output, proto string, port int) bool {
 			return true
 		}
 	}
-	return false
+	return inputDropPolicy
 }
 
 func iptablesRuleRejectsListener(line, proto, portText string) bool {
 	if !strings.Contains(line, "-j REJECT") && !strings.Contains(line, "-j DROP") {
 		return false
 	}
-	if strings.Contains(line, "-p "+proto) && strings.Contains(line, "--dport "+portText) {
+	if strings.Contains(line, "-p "+proto) && strings.Contains(line, "--dport "+portText) && !iptablesRuleHasScopeCondition(line) {
 		return true
 	}
 	return !iptablesRuleHasMatchCondition(line)
@@ -1842,6 +1847,15 @@ func iptablesRuleRejectsListener(line, proto, portText string) bool {
 
 func iptablesRuleHasMatchCondition(line string) bool {
 	for _, token := range []string{" -s ", " -d ", " -i ", " -o ", " -p ", " --sport ", " --dport ", " --state ", " --ctstate "} {
+		if strings.Contains(line, token) {
+			return true
+		}
+	}
+	return false
+}
+
+func iptablesRuleHasScopeCondition(line string) bool {
+	for _, token := range []string{" -s ", " -d ", " -i ", " -o "} {
 		if strings.Contains(line, token) {
 			return true
 		}
