@@ -180,6 +180,59 @@ func TestDnsmasqConfigRendersLogDHCPForDirectServer(t *testing.T) {
 	}
 }
 
+func TestDnsmasqConfigRendersVirtualAddressSourcesForDirectDHCPv4(t *testing.T) {
+	router := &api.Router{
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "lan"},
+				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: true, Owner: "routerd"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"},
+				Metadata: api.ObjectMeta{Name: "lan-gw-v4"},
+				Spec: api.VirtualAddressSpec{
+					Interface: "lan",
+					Family:    "ipv4",
+					Address:   "192.0.2.1/32",
+					Mode:      "vrrp",
+					VRRP:      api.VirtualAddressVRRPSpec{VirtualRouterID: 18, Peers: []string{"192.0.2.2"}},
+				},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"},
+				Metadata: api.ObjectMeta{Name: "lan-dhcpv4"},
+				Spec: api.DHCPv4ServerSpec{
+					Server:      "dnsmasq",
+					Interface:   "lan",
+					AddressPool: api.DHCPAddressPoolSpec{Start: "192.0.2.64", End: "192.0.2.191", LeaseTime: "12h"},
+					GatewayFrom: api.StatusValueSourceSpec{Resource: "VirtualAddress/lan-gw-v4", Field: "address"},
+					DNSServerFrom: []api.StatusValueSourceSpec{
+						{Resource: "VirtualAddress/lan-gw-v4", Field: "address"},
+					},
+					NTPServerFrom: []api.StatusValueSourceSpec{
+						{Resource: "VirtualAddress/lan-gw-v4", Field: "address"},
+					},
+				},
+			},
+		}},
+	}
+	data, _, err := DnsmasqConfig(router, DnsmasqRuntime{})
+	if err != nil {
+		t.Fatalf("render dnsmasq: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		"dhcp-option=tag:lan-dhcpv4,option:router,192.0.2.1",
+		"dhcp-option=tag:lan-dhcpv4,option:dns-server,192.0.2.1",
+		"dhcp-option=tag:lan-dhcpv4,option:ntp-server,192.0.2.1",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("dnsmasq output missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestDnsmasqConfigRendersDHCPv4Reservation(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{Resources: []api.Resource{
