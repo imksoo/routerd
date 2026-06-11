@@ -905,6 +905,14 @@ exit 0
 echo "keepalived $@" >> %q
 exit 0
 `, commandLog))
+	writeExecutable(t, filepath.Join(binDir, "dpkg-query"), fmt.Sprintf(`#!/bin/sh
+echo "dpkg-query $@" >> %q
+exit 1
+`, commandLog))
+	writeExecutable(t, filepath.Join(binDir, "apt-get"), fmt.Sprintf(`#!/bin/sh
+echo "apt-get $@" >> %q
+exit 0
+`, commandLog))
 	writeExecutable(t, filepath.Join(binDir, "ip"), fmt.Sprintf(`#!/bin/sh
 echo "ip $@" >> %q
 if [ "$1" = "-4" ] && [ "$2" = "addr" ] && [ "$3" = "show" ]; then
