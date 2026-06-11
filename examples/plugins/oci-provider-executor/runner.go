@@ -32,6 +32,9 @@ func resolveOCIHelperPath() (string, error) {
 	if helper == "" {
 		helper = defaultOCIHelper
 	}
+	if !strings.ContainsAny(helper, `/\`) {
+		return "", fmt.Errorf("OCI helper executable unavailable: %s=%q must be a concrete executable path; PATH lookup is not used", ociHelperEnv, helper)
+	}
 	info, err := os.Stat(helper)
 	if err != nil {
 		return "", fmt.Errorf("OCI helper executable unavailable: %s=%q: %w", ociHelperEnv, helper, err)
@@ -61,6 +64,19 @@ func execRunner(ctx context.Context, argv ...string) ([]byte, error) {
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		return nil, fmt.Errorf("%s %s: %w: %s", helper, strings.Join(full, " "), err, strings.TrimSpace(stderr.String()))
+	}
+	return stdout.Bytes(), nil
+}
+
+func runHelperPreflightCommand(ctx context.Context, helper string, argv ...string) ([]byte, error) {
+	runCtx, cancel := context.WithTimeout(ctx, commandTimeout())
+	defer cancel()
+	cmd := exec.CommandContext(runCtx, helper, argv...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("%s %s: %w: %s", helper, strings.Join(argv, " "), err, strings.TrimSpace(stderr.String()))
 	}
 	return stdout.Bytes(), nil
 }

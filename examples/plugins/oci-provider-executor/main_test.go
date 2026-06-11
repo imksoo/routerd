@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fakeOCI is a FAKE oci command runner: it records every argv and returns canned
@@ -23,6 +24,7 @@ type fakeOCI struct {
 	vnicGetOut []byte
 	listOut    []byte
 	err        error
+	mutateErr  error
 }
 
 func (f *fakeOCI) run(ctx context.Context, argv ...string) ([]byte, error) {
@@ -47,6 +49,9 @@ func (f *fakeOCI) run(ctx context.Context, argv ...string) ([]byte, error) {
 		}
 		return cannedPrivateIPList("10.88.60.9", "ocid1.privateip.oc1..pip9"), nil
 	default:
+		if f.mutateErr != nil {
+			return nil, f.mutateErr
+		}
 		// Mutating verbs return a benign (ignored) JSON body.
 		return []byte(`{}`), nil
 	}
@@ -90,7 +95,11 @@ func TestPreflightMissingOCIHelperFails(t *testing.T) {
 
 func TestPreflightOCIHelperOverridePasses(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "oci-routerd-helper")
-	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+	if err := os.WriteFile(path, []byte(`#!/bin/sh
+if [ "$1" = "version" ]; then echo '{"data":{"version":"oci-routerd-helper/test"}}'; exit 0; fi
+if [ "$1" = "preflight" ]; then echo '{"data":{"instancePrincipal":"ok","resourceProbe":"not-requested","credentialSource":"instance-principal"}}'; exit 0; fi
+exit 1
+`), 0755); err != nil {
 		t.Fatalf("write fake helper: %v", err)
 	}
 	t.Setenv(ociHelperEnv, path)
@@ -103,6 +112,23 @@ func TestPreflightOCIHelperOverridePasses(t *testing.T) {
 	}
 	if res.Status.Observed["dependency"] != "oci-routerd-helper" || res.Status.Observed["path"] != path {
 		t.Fatalf("observed = %#v", res.Status.Observed)
+	}
+	if res.Status.Observed["version"] != "oci-routerd-helper/test" || res.Status.Observed["instancePrincipal"] != "ok" {
+		t.Fatalf("observed = %#v, want helper preflight fields", res.Status.Observed)
+	}
+}
+
+func TestPreflightOCIHelperOverrideRequiresConcretePath(t *testing.T) {
+	t.Setenv(ociHelperEnv, "oci-routerd-helper")
+	res := dispatchWith(reqSpec(actionPreflight, modeDryRun), func(ctx context.Context, argv ...string) ([]byte, error) {
+		t.Fatalf("preflight must not invoke oci runner")
+		return nil, nil
+	})
+	if res.Status.Status != statusFailed {
+		t.Fatalf("want failed, got %#v", res.Status)
+	}
+	if !strings.Contains(res.Status.Error, "PATH lookup is not used") {
+		t.Fatalf("error = %q, want no PATH lookup diagnostic", res.Status.Error)
 	}
 }
 
@@ -173,6 +199,24 @@ func TestAssignExecuteIssuesCreate(t *testing.T) {
 	}
 }
 
+func TestAssignExecuteCreateAlreadyExistsVerifiesSelf(t *testing.T) {
+	f := &fakeOCI{
+		mutateErr: fmt.Errorf("Conflict: private IP is already assigned"),
+		listOut:   cannedPrivateIPList("10.88.60.9", "ocid1.privateip.oc1..pip9"),
+	}
+	res := dispatchWith(reqSpec(actionAssignSecondaryIP, modeExecute), f.run)
+	if res.Status.Status != statusSucceeded {
+		t.Fatalf("already-present address should converge, got %q err=%q message=%q", res.Status.Status, res.Status.Error, res.Status.Message)
+	}
+	if res.Status.Observed["alreadyPresent"] != "true" {
+		t.Fatalf("observed = %+v, want already-present convergence", res.Status.Observed)
+	}
+	got := joinedCalls(f.calls)
+	if len(got) != 2 || got[0] != "network private-ip create --vnic-id ocid1.vnic.oc1..vnic1 --ip-address 10.88.60.9" || got[1] != "network private-ip list --vnic-id ocid1.vnic.oc1..vnic1" {
+		t.Fatalf("calls = %v, want create then self private-ip list", got)
+	}
+}
+
 func TestAssignExecuteAllowReassignment(t *testing.T) {
 	f := &fakeOCI{}
 	spec := reqSpec(actionAssignSecondaryIP, modeExecute)
@@ -195,6 +239,14 @@ func TestAssignExecuteAllowReassignment(t *testing.T) {
 	if !strings.Contains(res.Status.Message, "seized/reassigned") {
 		t.Fatalf("message = %q, want seize/reassign", res.Status.Message)
 	}
+}
+
+func joinedCalls(calls [][]string) []string {
+	out := make([]string, 0, len(calls))
+	for _, call := range calls {
+		out = append(out, strings.Join(call, " "))
+	}
+	return out
 }
 
 func TestEnsureForwardingEnabledDryRunCapturesPriorNoMutation(t *testing.T) {
@@ -393,6 +445,31 @@ func TestRunEndToEndStdInOut(t *testing.T) {
 	}
 	if res.Status.Status != statusSucceeded {
 		t.Fatalf("want succeeded, got %q", res.Status.Status)
+	}
+}
+
+func TestPluginTimeoutCoversHelperPoller(t *testing.T) {
+	body, err := os.ReadFile("plugin.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var timeoutValue string
+	for _, line := range strings.Split(string(body), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "timeout:") {
+			timeoutValue = strings.TrimSpace(strings.TrimPrefix(line, "timeout:"))
+			break
+		}
+	}
+	if timeoutValue == "" {
+		t.Fatal("plugin.yaml missing timeout")
+	}
+	d, err := time.ParseDuration(timeoutValue)
+	if err != nil {
+		t.Fatalf("parse timeout %q: %v", timeoutValue, err)
+	}
+	if d < 150*time.Second {
+		t.Fatalf("timeout = %s, want at least 150s for OCI helper/API latency", d)
 	}
 }
 

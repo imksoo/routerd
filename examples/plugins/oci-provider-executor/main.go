@@ -93,7 +93,7 @@ const (
 	actionEnsureFwdEnabled     = "ensure-forwarding-enabled"
 	actionEnsureFwdDisabled    = "ensure-forwarding-disabled"
 	actionPreflight            = "preflight"
-	defaultOCICommandTimeoutMs = 25000
+	defaultOCICommandTimeoutMs = 120000
 )
 
 func main() {
@@ -186,7 +186,7 @@ func dispatch(ctx context.Context, req executeActionRequest, runner ociRunner) e
 		return failed(fmt.Sprintf("invalid mode %q (want dry-run or execute)", mode), nil)
 	}
 	if spec.Action == actionPreflight {
-		return preflight()
+		return preflight(ctx)
 	}
 	if mode == modeDryRun {
 		// Dry-run hard guard: only get/list verbs may be issued.
@@ -207,15 +207,42 @@ func dispatch(ctx context.Context, req executeActionRequest, runner ociRunner) e
 	}
 }
 
-func preflight() executeActionResult {
+func preflight(ctx context.Context) executeActionResult {
 	path, err := resolveOCIHelperPath()
 	if err != nil {
 		return failed("provider executor preflight failed: OCI helper unavailable", err)
 	}
+	observed := map[string]string{"dependency": "oci-routerd-helper", "path": path}
+	versionOut, err := runHelperPreflightCommand(ctx, path, "version")
+	if err != nil {
+		return failed("provider executor preflight failed: OCI helper version failed", err)
+	}
+	var versionBody struct {
+		Data map[string]string `json:"data"`
+	}
+	if err := json.Unmarshal(versionOut, &versionBody); err == nil {
+		if versionBody.Data["version"] != "" {
+			observed["version"] = versionBody.Data["version"]
+		}
+	}
+	preflightOut, err := runHelperPreflightCommand(ctx, path, "preflight")
+	if err != nil {
+		return failed("provider executor preflight failed: OCI helper instance principal probe failed", err)
+	}
+	var preflightBody struct {
+		Data map[string]string `json:"data"`
+	}
+	if err := json.Unmarshal(preflightOut, &preflightBody); err == nil {
+		for k, v := range preflightBody.Data {
+			if strings.TrimSpace(v) != "" {
+				observed[k] = v
+			}
+		}
+	}
 	res := newResult()
 	res.Status.Status = statusSucceeded
 	res.Status.Message = "OCI helper available"
-	res.Status.Observed = map[string]string{"dependency": "oci-routerd-helper", "path": path}
+	res.Status.Observed = observed
 	return res
 }
 
@@ -255,6 +282,14 @@ func assignSecondaryIP(ctx context.Context, spec executeActionRequestSpec, mode 
 			"--unassign-if-already-assigned"}
 	}
 	if _, err := runner(ctx, args...); err != nil {
+		if !allowReassignment && isAlreadyExistsError(err) {
+			if _, lerr := findPrivateIPOCID(ctx, runner, vnic, address); lerr == nil {
+				res.Status.Status = statusSucceeded
+				res.Status.Message = fmt.Sprintf("assigned %s to %s (already present)", address, vnic)
+				res.Status.Observed = map[string]string{"assignedAddress": address, "alreadyPresent": "true"}
+				return res
+			}
+		}
 		return failed("assign-secondary-ip execute: assign failed", err)
 	}
 	res.Status.Status = statusSucceeded
@@ -403,6 +438,17 @@ func stringBool(v string) bool {
 	default:
 		return false
 	}
+}
+
+func isAlreadyExistsError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "already") ||
+		strings.Contains(msg, "conflict") ||
+		strings.Contains(msg, "privateipalreadyexists") ||
+		strings.Contains(msg, "is in use")
 }
 
 // commandTimeout is the per-oci-invocation timeout.

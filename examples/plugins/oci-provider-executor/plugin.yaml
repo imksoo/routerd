@@ -8,7 +8,7 @@ metadata:
   name: oci-executor
 spec:
   executable: /usr/local/libexec/routerd/plugins/oci-provider-executor/bin/oci-provider-executor
-  timeout: 30s
+  timeout: 150s
   capabilities:
     # Marks this Plugin as an EXECUTOR. RunExecutor refuses any plugin lacking
     # this capability. REAL — mutates OCI in execute mode only (dry-run issues

@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"strings"
@@ -21,13 +22,18 @@ import (
 	"github.com/oracle/oci-go-sdk/v65/core"
 )
 
-const defaultTimeout = 25 * time.Second
+const (
+	defaultTimeout = 120 * time.Second
+	helperVersion  = "oci-routerd-helper/v1"
+)
 
 type cliRequest struct {
 	Region string
 	Words  []string
 	Flags  map[string]string
 }
+
+var stdout io.Writer = os.Stdout
 
 func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
@@ -42,6 +48,12 @@ func run(ctx context.Context, argv []string) error {
 	req, err := parseArgs(argv)
 	if err != nil {
 		return err
+	}
+	switch strings.Join(req.Words, " ") {
+	case "version":
+		return writeData(map[string]any{"version": helperVersion})
+	case "preflight":
+		return runPreflight(ctx)
 	}
 	provider, err := auth.InstancePrincipalConfigurationProvider()
 	if err != nil {
@@ -60,6 +72,42 @@ func run(ctx context.Context, argv []string) error {
 		compute.SetRegion(req.Region)
 	}
 	return dispatch(ctx, req, vcn, compute)
+}
+
+func runPreflight(ctx context.Context) error {
+	provider, err := auth.InstancePrincipalConfigurationProvider()
+	if err != nil {
+		return fmt.Errorf("instance principal auth: %w", err)
+	}
+	authConfig, err := provider.AuthType()
+	if err != nil {
+		return fmt.Errorf("instance principal auth type: %w", err)
+	}
+	region, err := provider.Region()
+	if err != nil {
+		return fmt.Errorf("instance principal region: %w", err)
+	}
+	if _, err := core.NewVirtualNetworkClientWithConfigurationProvider(provider); err != nil {
+		return fmt.Errorf("virtual network client: %w", err)
+	}
+	if _, err := core.NewComputeClientWithConfigurationProvider(provider); err != nil {
+		return fmt.Errorf("compute client: %w", err)
+	}
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return writeData(map[string]any{
+		"version":            helperVersion,
+		"auth":               string(authConfig.AuthType),
+		"configFile":         fmt.Sprintf("%t", authConfig.IsFromConfigFile),
+		"region":             region,
+		"instancePrincipal":  "ok",
+		"resourceProbe":      "not-requested",
+		"credentialSource":   "instance-principal",
+		"profileDependency":  "false",
+		"configDependency":   "false",
+		"mutationPermission": "not-probed",
+	})
 }
 
 func parseArgs(argv []string) (cliRequest, error) {
@@ -98,6 +146,9 @@ func parseArgs(argv []string) (cliRequest, error) {
 			i++
 			req.Flags[name] = argv[i]
 		}
+	}
+	if strings.Join(req.Words, " ") == "version" || strings.Join(req.Words, " ") == "preflight" {
+		return req, nil
 	}
 	if len(req.Words) < 3 {
 		return req, fmt.Errorf("unsupported OCI command %q", strings.Join(argv, " "))
@@ -352,7 +403,7 @@ func privateIPJSON(ip core.PrivateIp) map[string]any {
 }
 
 func writeData(data any) error {
-	enc := json.NewEncoder(os.Stdout)
+	enc := json.NewEncoder(stdout)
 	return enc.Encode(map[string]any{"data": data})
 }
 

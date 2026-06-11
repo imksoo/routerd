@@ -3,6 +3,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"reflect"
 	"testing"
 )
@@ -35,6 +37,26 @@ func TestParseArgsKeepsOCICommandAndConsumesGlobals(t *testing.T) {
 func TestParseArgsRejectsNonInstancePrincipalAuth(t *testing.T) {
 	if _, err := parseArgs([]string{"--auth", "security_token", "network", "vnic", "get", "--vnic-id", "v"}); err == nil {
 		t.Fatal("expected non-instance-principal auth to be rejected")
+	}
+}
+
+func TestVersionCommandOutputShape(t *testing.T) {
+	var out bytes.Buffer
+	old := stdout
+	stdout = &out
+	t.Cleanup(func() { stdout = old })
+
+	if err := run(t.Context(), []string{"version"}); err != nil {
+		t.Fatalf("run version: %v", err)
+	}
+	var body struct {
+		Data map[string]string `json:"data"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &body); err != nil {
+		t.Fatalf("decode version output: %v\n%s", err, out.String())
+	}
+	if body.Data["version"] != helperVersion {
+		t.Fatalf("version = %q, want %q", body.Data["version"], helperVersion)
 	}
 }
 
