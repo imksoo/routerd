@@ -388,15 +388,7 @@ func defaultDNSMasqLeaseFile() string {
 }
 
 func defaultDNSMasqLeaseFileFor(defaults platform.Defaults, features platform.Features) string {
-	if features.HasRCD {
-		return defaults.DnsmasqLeaseFile()
-	}
-	if features.HasOpenRC {
-		return defaults.DnsmasqLeaseFile()
-	}
-	if strings.TrimSpace(defaults.RuntimeDir) != "" {
-		return defaults.RuntimeDnsmasqLeaseFile()
-	}
+	_ = features
 	return defaults.DnsmasqLeaseFile()
 }
 

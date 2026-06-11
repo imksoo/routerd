@@ -25,6 +25,6 @@ spec:
         hostnameSuffix: lab.example
         ddns: true
         ttl: 60
-        leaseFile: /run/routerd/dnsmasq.leases
+        leaseFile: /var/lib/routerd/dnsmasq/dnsmasq.leases
       reverseZones:
       - name: 160.168.192.in-addr.arpa

@@ -46,7 +46,7 @@ DHCP-derived records are kept in sync via the event bus: dnsmasq invokes `router
       hostnameSuffix: lan.example.org
       ddns: true
       ttl: 60
-      leaseFile: /run/routerd/dnsmasq.leases
+      leaseFile: /var/lib/routerd/dnsmasq/dnsmasq.leases
     reverseZones:
       - name: 2.0.192.in-addr.arpa
 ```

@@ -146,7 +146,7 @@ func TestDefaultDNSMasqLeaseFileUsesPlatformHelpers(t *testing.T) {
 			name:     "linux",
 			defaults: platform.Defaults{RuntimeDir: "/run/routerd", StateDir: "/var/lib/routerd"},
 			features: platform.Features{},
-			want:     "/run/routerd/dnsmasq.leases",
+			want:     "/var/lib/routerd/dnsmasq/dnsmasq.leases",
 		},
 		{
 			name:     "freebsd-rcd",
