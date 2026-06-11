@@ -74,6 +74,38 @@ func dispatchWith(spec executeActionRequestSpec, runner ociRunner) executeAction
 	return dispatch(context.Background(), executeActionRequest{Spec: spec}, runner)
 }
 
+func TestPreflightMissingOCIHelperFails(t *testing.T) {
+	t.Setenv(ociHelperEnv, filepath.Join(t.TempDir(), "missing-helper"))
+	res := dispatchWith(reqSpec(actionPreflight, modeDryRun), func(ctx context.Context, argv ...string) ([]byte, error) {
+		t.Fatalf("preflight must not invoke oci runner")
+		return nil, nil
+	})
+	if res.Status.Status != statusFailed {
+		t.Fatalf("want failed, got %#v", res.Status)
+	}
+	if !strings.Contains(res.Status.Error, ociHelperEnv) || !strings.Contains(res.Status.Message, "preflight") {
+		t.Fatalf("preflight error not actionable: %#v", res.Status)
+	}
+}
+
+func TestPreflightOCIHelperOverridePasses(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "oci-routerd-helper")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+		t.Fatalf("write fake helper: %v", err)
+	}
+	t.Setenv(ociHelperEnv, path)
+	res := dispatchWith(reqSpec(actionPreflight, modeDryRun), func(ctx context.Context, argv ...string) ([]byte, error) {
+		t.Fatalf("preflight must not invoke oci runner")
+		return nil, nil
+	})
+	if res.Status.Status != statusSucceeded {
+		t.Fatalf("want succeeded, got %#v", res.Status)
+	}
+	if res.Status.Observed["dependency"] != "oci-routerd-helper" || res.Status.Observed["path"] != path {
+		t.Fatalf("observed = %#v", res.Status.Observed)
+	}
+}
+
 func verbsOf(calls [][]string) []string {
 	var out []string
 	for _, c := range calls {

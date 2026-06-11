@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 )
@@ -18,9 +19,33 @@ import (
 // which resolves the managed identity on its own; routerd passes NO credentials.
 type azRunner func(ctx context.Context, argv ...string) ([]byte, error)
 
+const azCLIPathEnv = "AZ_CLI_PATH"
+
 // defaultRunner returns the production runner that execs the real `az` binary.
 // This is the ONLY use of os/exec in the executor, and it runs only `az`.
 func defaultRunner() azRunner { return execRunner }
+
+func resolveAzCLIPath() (string, error) {
+	candidate := strings.TrimSpace(os.Getenv(azCLIPathEnv))
+	if candidate == "" {
+		candidate = "az"
+	}
+	if strings.ContainsAny(candidate, `/\`) {
+		info, err := os.Stat(candidate)
+		if err != nil {
+			return "", fmt.Errorf("az CLI executable unavailable: %s=%q: %w", azCLIPathEnv, candidate, err)
+		}
+		if info.IsDir() || info.Mode()&0111 == 0 {
+			return "", fmt.Errorf("az CLI executable unavailable: %s=%q is not executable", azCLIPathEnv, candidate)
+		}
+		return candidate, nil
+	}
+	path, err := exec.LookPath(candidate)
+	if err != nil {
+		return "", fmt.Errorf("az CLI executable unavailable: install az in PATH or set %s: %w", azCLIPathEnv, err)
+	}
+	return path, nil
+}
 
 // execRunner execs `az <argv...> --only-show-errors --output json`. The plugin
 // runs in routerd's isolated executor environment (no inherited parent env
@@ -33,7 +58,11 @@ func execRunner(ctx context.Context, argv ...string) ([]byte, error) {
 	runCtx, cancel := context.WithTimeout(ctx, commandTimeout())
 	defer cancel()
 	full := azCommandArgs(argv...)
-	cmd := exec.CommandContext(runCtx, "az", full...)
+	azPath, err := resolveAzCLIPath()
+	if err != nil {
+		return nil, err
+	}
+	cmd := exec.CommandContext(runCtx, azPath, full...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

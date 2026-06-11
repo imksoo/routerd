@@ -17,3 +17,4 @@ spec:
   # No context.resources and NO credentials: the executor authenticates with the
   # Azure managed identity resolved by the `az` CLI itself. routerd passes it NO
   # secrets and inherits NO parent environment to it (per ADR 0007).
+  # If az is not in PATH, set env.AZ_CLI_PATH to the executable path.

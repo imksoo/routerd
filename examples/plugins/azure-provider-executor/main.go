@@ -97,6 +97,7 @@ const (
 	actionUnassignRouteTableRoute = "unassign-route-table-route"
 	actionEnsureFwdEnabled        = "ensure-forwarding-enabled"
 	actionEnsureFwdDisabled       = "ensure-forwarding-disabled"
+	actionPreflight               = "preflight"
 	captureStrategyRouteTable     = "route-table"
 	defaultAzCommandTimeoutMs     = 25000
 	seizeVerifyAttempts           = 5
@@ -282,6 +283,9 @@ func dispatch(ctx context.Context, req executeActionRequest, runner azRunner) ex
 	if mode != modeDryRun && mode != modeExecute {
 		return failed(fmt.Sprintf("invalid mode %q (want dry-run or execute)", mode), nil)
 	}
+	if spec.Action == actionPreflight {
+		return preflight()
+	}
 	if mode == modeDryRun {
 		// Dry-run hard guard: only show/list verbs may be issued.
 		runner = guardedRunner(runner)
@@ -309,6 +313,18 @@ func dispatch(ctx context.Context, req executeActionRequest, runner azRunner) ex
 	default:
 		return failed(fmt.Sprintf("unsupported action %q", spec.Action), nil)
 	}
+}
+
+func preflight() executeActionResult {
+	path, err := resolveAzCLIPath()
+	if err != nil {
+		return failed("provider executor preflight failed: az CLI unavailable", err)
+	}
+	res := newResult()
+	res.Status.Status = statusSucceeded
+	res.Status.Message = "az CLI available"
+	res.Status.Observed = map[string]string{"dependency": "az", "path": path}
+	return res
 }
 
 func captureStrategy(spec executeActionRequestSpec) string {

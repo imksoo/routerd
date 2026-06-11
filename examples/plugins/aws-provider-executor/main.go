@@ -94,6 +94,7 @@ const (
 	actionUnassignRouteTableRoute = "unassign-route-table-route"
 	actionEnsureFwdEnabled        = "ensure-forwarding-enabled"
 	actionEnsureFwdDisabled       = "ensure-forwarding-disabled"
+	actionPreflight               = "preflight"
 	captureStrategyRouteTable     = "route-table"
 	defaultAWSCommandTimeoutMs    = 25000
 )
@@ -191,6 +192,9 @@ func dispatch(ctx context.Context, req executeActionRequest, runner awsRunner) e
 	if mode != modeDryRun && mode != modeExecute {
 		return failed(fmt.Sprintf("invalid mode %q (want dry-run or execute)", mode), nil)
 	}
+	if spec.Action == actionPreflight {
+		return preflight()
+	}
 	if mode == modeDryRun {
 		// Dry-run hard guard: only describe-* verbs may be issued.
 		runner = guardedRunner(runner)
@@ -218,6 +222,18 @@ func dispatch(ctx context.Context, req executeActionRequest, runner awsRunner) e
 	default:
 		return failed(fmt.Sprintf("unsupported action %q", spec.Action), nil)
 	}
+}
+
+func preflight() executeActionResult {
+	path, err := resolveAWSCLIPath()
+	if err != nil {
+		return failed("provider executor preflight failed: aws CLI unavailable", err)
+	}
+	res := newResult()
+	res.Status.Status = statusSucceeded
+	res.Status.Message = "aws CLI available"
+	res.Status.Observed = map[string]string{"dependency": "aws", "path": path}
+	return res
 }
 
 func captureStrategy(spec executeActionRequestSpec) string {

@@ -78,6 +78,38 @@ func dispatchWith(spec executeActionRequestSpec, runner awsRunner) executeAction
 	return dispatch(context.Background(), executeActionRequest{Spec: spec}, runner)
 }
 
+func TestPreflightMissingAWSCLIPathFails(t *testing.T) {
+	t.Setenv(awsCLIPathEnv, filepath.Join(t.TempDir(), "missing-aws"))
+	res := dispatchWith(reqSpec(actionPreflight, modeDryRun), func(ctx context.Context, argv ...string) ([]byte, error) {
+		t.Fatalf("preflight must not invoke aws runner")
+		return nil, nil
+	})
+	if res.Status.Status != statusFailed {
+		t.Fatalf("want failed, got %#v", res.Status)
+	}
+	if !strings.Contains(res.Status.Error, awsCLIPathEnv) || !strings.Contains(res.Status.Message, "preflight") {
+		t.Fatalf("preflight error not actionable: %#v", res.Status)
+	}
+}
+
+func TestPreflightAWSCLIPathOverridePasses(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "aws")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+		t.Fatalf("write fake aws: %v", err)
+	}
+	t.Setenv(awsCLIPathEnv, path)
+	res := dispatchWith(reqSpec(actionPreflight, modeDryRun), func(ctx context.Context, argv ...string) ([]byte, error) {
+		t.Fatalf("preflight must not invoke aws runner")
+		return nil, nil
+	})
+	if res.Status.Status != statusSucceeded {
+		t.Fatalf("want succeeded, got %#v", res.Status)
+	}
+	if res.Status.Observed["dependency"] != "aws" || res.Status.Observed["path"] != path {
+		t.Fatalf("observed = %#v", res.Status.Observed)
+	}
+}
+
 func verbsOf(calls [][]string) []string {
 	var out []string
 	for _, c := range calls {

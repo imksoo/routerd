@@ -92,6 +92,7 @@ const (
 	actionUnassignSecondaryIP  = "unassign-secondary-ip"
 	actionEnsureFwdEnabled     = "ensure-forwarding-enabled"
 	actionEnsureFwdDisabled    = "ensure-forwarding-disabled"
+	actionPreflight            = "preflight"
 	defaultOCICommandTimeoutMs = 25000
 )
 
@@ -184,6 +185,9 @@ func dispatch(ctx context.Context, req executeActionRequest, runner ociRunner) e
 	if mode != modeDryRun && mode != modeExecute {
 		return failed(fmt.Sprintf("invalid mode %q (want dry-run or execute)", mode), nil)
 	}
+	if spec.Action == actionPreflight {
+		return preflight()
+	}
 	if mode == modeDryRun {
 		// Dry-run hard guard: only get/list verbs may be issued.
 		runner = guardedRunner(runner)
@@ -201,6 +205,18 @@ func dispatch(ctx context.Context, req executeActionRequest, runner ociRunner) e
 	default:
 		return failed(fmt.Sprintf("unsupported action %q", spec.Action), nil)
 	}
+}
+
+func preflight() executeActionResult {
+	path, err := resolveOCIHelperPath()
+	if err != nil {
+		return failed("provider executor preflight failed: OCI helper unavailable", err)
+	}
+	res := newResult()
+	res.Status.Status = statusSucceeded
+	res.Status.Message = "OCI helper available"
+	res.Status.Observed = map[string]string{"dependency": "oci-routerd-helper", "path": path}
+	return res
 }
 
 // assignSecondaryIP attaches the captured /32 to the VNIC.

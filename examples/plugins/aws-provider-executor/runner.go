@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 )
@@ -19,9 +20,33 @@ import (
 // routerd passes NO credentials.
 type awsRunner func(ctx context.Context, argv ...string) ([]byte, error)
 
+const awsCLIPathEnv = "AWS_CLI_PATH"
+
 // defaultRunner returns the production runner that execs the real `aws` binary.
 // This is the ONLY use of os/exec in the executor, and it runs only `aws`.
 func defaultRunner() awsRunner { return execRunner }
+
+func resolveAWSCLIPath() (string, error) {
+	candidate := strings.TrimSpace(os.Getenv(awsCLIPathEnv))
+	if candidate == "" {
+		candidate = "aws"
+	}
+	if strings.ContainsAny(candidate, `/\`) {
+		info, err := os.Stat(candidate)
+		if err != nil {
+			return "", fmt.Errorf("aws CLI executable unavailable: %s=%q: %w", awsCLIPathEnv, candidate, err)
+		}
+		if info.IsDir() || info.Mode()&0111 == 0 {
+			return "", fmt.Errorf("aws CLI executable unavailable: %s=%q is not executable", awsCLIPathEnv, candidate)
+		}
+		return candidate, nil
+	}
+	path, err := exec.LookPath(candidate)
+	if err != nil {
+		return "", fmt.Errorf("aws CLI executable unavailable: install aws in PATH or set %s: %w", awsCLIPathEnv, err)
+	}
+	return path, nil
+}
 
 // execRunner execs `aws <argv...>`. The plugin runs in routerd's isolated
 // executor environment (no inherited parent env beyond PATH + the plugin's own
@@ -30,7 +55,11 @@ func defaultRunner() awsRunner { return execRunner }
 func execRunner(ctx context.Context, argv ...string) ([]byte, error) {
 	runCtx, cancel := context.WithTimeout(ctx, commandTimeout())
 	defer cancel()
-	cmd := exec.CommandContext(runCtx, "aws", argv...)
+	awsPath, err := resolveAWSCLIPath()
+	if err != nil {
+		return nil, err
+	}
+	cmd := exec.CommandContext(runCtx, awsPath, argv...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

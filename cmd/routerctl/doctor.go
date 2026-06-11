@@ -24,6 +24,7 @@ import (
 	"github.com/imksoo/routerd/pkg/hybrid"
 	"github.com/imksoo/routerd/pkg/platform"
 	routerplugin "github.com/imksoo/routerd/pkg/plugin"
+	"github.com/imksoo/routerd/pkg/provideraction"
 	"github.com/imksoo/routerd/pkg/render"
 	"github.com/imksoo/routerd/pkg/sam"
 	routerstate "github.com/imksoo/routerd/pkg/state"
@@ -238,7 +239,155 @@ func (r doctorRunner) doctorSAM() []doctorCheck {
 		}
 		checks = append(checks, doctorSAMConvergenceChecks(res.Metadata.Name, status)...)
 	}
+	checks = append(checks, r.doctorSAMProviderExecutorPreflightChecks(pools)...)
 	return checks
+}
+
+func (r doctorRunner) doctorSAMProviderExecutorPreflightChecks(pools []api.Resource) []doctorCheck {
+	providerRefs := map[string]bool{}
+	profiles := map[string]api.CloudProviderProfileSpec{}
+	for _, res := range r.router.Spec.Resources {
+		if res.APIVersion != api.HybridAPIVersion || res.Kind != "CloudProviderProfile" {
+			continue
+		}
+		spec, err := res.CloudProviderProfileSpec()
+		if err == nil {
+			profiles[res.Metadata.Name] = spec
+		}
+	}
+	for _, pool := range pools {
+		spec, err := pool.MobilityPoolSpec()
+		if err != nil {
+			continue
+		}
+		for _, member := range spec.Members {
+			capture := member.Capture
+			if strings.TrimSpace(member.ProfileRef) != "" {
+				if profile, ok := spec.Profiles.CloudCaptures[member.ProfileRef]; ok {
+					capture = doctorMergeMobilityCapture(profile.Capture, capture)
+				}
+			}
+			if strings.TrimSpace(capture.Type) == "provider-secondary-ip" && strings.TrimSpace(capture.ProviderRef) != "" {
+				providerRefs[strings.TrimSpace(capture.ProviderRef)] = true
+			}
+		}
+	}
+	if len(providerRefs) == 0 {
+		return nil
+	}
+	providers := map[string]string{}
+	for ref := range providerRefs {
+		profile, ok := profiles[ref]
+		if !ok {
+			continue
+		}
+		provider := strings.ToLower(strings.TrimSpace(profile.Provider))
+		switch provider {
+		case "aws", "azure", "oci":
+			providers[provider] = ref
+		}
+	}
+	if len(providers) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(providers))
+	for provider := range providers {
+		keys = append(keys, provider)
+	}
+	sort.Strings(keys)
+	checks := make([]doctorCheck, 0, len(keys))
+	for _, provider := range keys {
+		checks = append(checks, r.doctorSAMProviderExecutorPreflightCheck(provider, providers[provider]))
+	}
+	return checks
+}
+
+func doctorMergeMobilityCapture(base, override api.MobilityMemberCapture) api.MobilityMemberCapture {
+	if strings.TrimSpace(override.Type) != "" {
+		base.Type = override.Type
+	}
+	if strings.TrimSpace(override.ProviderRef) != "" {
+		base.ProviderRef = override.ProviderRef
+	}
+	if strings.TrimSpace(override.ProviderMode) != "" {
+		base.ProviderMode = override.ProviderMode
+	}
+	return base
+}
+
+func (r doctorRunner) doctorSAMProviderExecutorPreflightCheck(provider, providerRef string) doctorCheck {
+	name := "ProviderAction/" + provider + " executor preflight"
+	spec, pluginName, err := doctorResolveProviderExecutor(r.router, provider)
+	if err != nil {
+		return doctorCheck{Area: "sam", Name: name, Status: doctorFail, Detail: err.Error(), Remedy: "configure Plugin/" + provider + "-executor with execute.providerAction"}
+	}
+	if !r.opts.Host {
+		return doctorHostSkipped("sam", name)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), r.opts.Timeout)
+	defer cancel()
+	req := provideraction.NewExecuteActionRequest(provideraction.ExecuteActionRequestSpec{
+		Action:         "preflight",
+		Provider:       provider,
+		ProviderRef:    providerRef,
+		Mode:           provideraction.ModeDryRun,
+		IdempotencyKey: "doctor-preflight-" + provider,
+	})
+	result, _, err := provideraction.RunExecutor(ctx, spec, req)
+	if err != nil {
+		return doctorCheck{Area: "sam", Name: name, Status: doctorFail, Detail: "Plugin/" + pluginName + ": " + err.Error(), Remedy: "install the executor and its local CLI/helper dependency"}
+	}
+	switch result.Status.Status {
+	case provideraction.ResultSucceeded:
+		return doctorCheck{Area: "sam", Name: name, Status: doctorPass, Detail: firstNonEmpty(result.Status.Message, "Plugin/"+pluginName+" preflight succeeded")}
+	case provideraction.ResultSkipped:
+		return doctorCheck{Area: "sam", Name: name, Status: doctorWarn, Detail: firstNonEmpty(result.Status.Message, "Plugin/"+pluginName+" preflight skipped"), Remedy: "verify executor dependency before enabling provider actions"}
+	default:
+		detail := firstNonEmpty(result.Status.Error, result.Status.Message, "Plugin/"+pluginName+" preflight failed")
+		return doctorCheck{Area: "sam", Name: name, Status: doctorFail, Detail: detail, Remedy: "install/configure provider CLI/helper dependency in the executor Plugin env"}
+	}
+}
+
+func doctorResolveProviderExecutor(router *api.Router, provider string) (api.PluginSpec, string, error) {
+	wantName := strings.ToLower(strings.TrimSpace(provider)) + "-executor"
+	var candidates []api.Resource
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "Plugin" {
+			continue
+		}
+		spec, err := res.PluginSpec()
+		if err != nil {
+			continue
+		}
+		if !doctorHasCapability(spec.Capabilities, provideraction.CapabilityExecuteProviderAction) {
+			continue
+		}
+		if strings.EqualFold(res.Metadata.Name, wantName) {
+			return spec, res.Metadata.Name, nil
+		}
+		candidates = append(candidates, res)
+	}
+	switch len(candidates) {
+	case 0:
+		return api.PluginSpec{}, "", fmt.Errorf("no Plugin with capability %q named %q (or sole executor)", provideraction.CapabilityExecuteProviderAction, wantName)
+	case 1:
+		spec, err := candidates[0].PluginSpec()
+		if err != nil {
+			return api.PluginSpec{}, "", err
+		}
+		return spec, candidates[0].Metadata.Name, nil
+	default:
+		return api.PluginSpec{}, "", fmt.Errorf("ambiguous executor for provider %q: %d executors found, none named %q", provider, len(candidates), wantName)
+	}
+}
+
+func doctorHasCapability(caps []string, want string) bool {
+	for _, cap := range caps {
+		if cap == want {
+			return true
+		}
+	}
+	return false
 }
 
 func doctorSAMConvergenceChecks(poolName string, status map[string]any) []doctorCheck {

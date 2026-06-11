@@ -257,6 +257,43 @@ func TestDoctorSAMConvergenceFailedFails(t *testing.T) {
 	}
 }
 
+func TestDoctorSAMProviderExecutorPreflightFailsForMissingDependency(t *testing.T) {
+	for _, provider := range []string{"aws", "azure", "oci"} {
+		t.Run(provider, func(t *testing.T) {
+			configPath, statePath := writeDoctorSAMProviderExecutorFixture(t, provider, doctorProviderPreflightScript("missing dependency for "+provider))
+			var out bytes.Buffer
+			err := run([]string{"doctor", "sam", "--config", configPath, "--state-file", statePath, "-o", "json"}, &out, &bytes.Buffer{})
+			if err == nil {
+				t.Fatalf("doctor sam should fail for missing %s dependency:\n%s", provider, out.String())
+			}
+			var report doctorReport
+			if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+				t.Fatalf("unmarshal doctor report: %v\n%s", err, out.String())
+			}
+			check := findDoctorCheck(t, report, "ProviderAction/"+provider+" executor preflight")
+			if check.Status != doctorFail || !strings.Contains(check.Detail, "missing dependency for "+provider) {
+				t.Fatalf("provider preflight check = %#v", check)
+			}
+		})
+	}
+}
+
+func TestDoctorSAMProviderExecutorPreflightSkippedWithoutHost(t *testing.T) {
+	configPath, statePath := writeDoctorSAMProviderExecutorFixture(t, "aws", doctorProviderPreflightScript("should not run"))
+	var out bytes.Buffer
+	if err := run([]string{"doctor", "sam", "--config", configPath, "--state-file", statePath, "--no-host", "-o", "json"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("doctor sam --no-host should skip preflight failure: %v\n%s", err, out.String())
+	}
+	var report doctorReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("unmarshal doctor report: %v\n%s", err, out.String())
+	}
+	check := findDoctorCheck(t, report, "ProviderAction/aws executor preflight")
+	if check.Status != doctorSkip || !strings.Contains(check.Detail, "--no-host") {
+		t.Fatalf("provider preflight check = %#v", check)
+	}
+}
+
 func TestDoctorReconcileHistoricalErrorsWarnButDoNotFail(t *testing.T) {
 	oldFetcher := reconcileStatusFetcher
 	defer func() { reconcileStatusFetcher = oldFetcher }()
@@ -1557,6 +1594,84 @@ spec:
 		t.Fatalf("write config: %v", err)
 	}
 	return configPath, filepath.Join(dir, "routerd.db")
+}
+
+func writeDoctorSAMProviderExecutorFixture(t *testing.T, provider, script string) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	execPath := filepath.Join(dir, provider+"-executor")
+	writeTestCommand(t, execPath, script)
+	configPath := filepath.Join(dir, "router.yaml")
+	data := []byte(`apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: test
+spec:
+  resources:
+    - apiVersion: federation.routerd.net/v1alpha1
+      kind: EventGroup
+      metadata:
+        name: cloudedge
+      spec:
+        nodeName: node-a
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: CloudProviderProfile
+      metadata:
+        name: provider-lab
+      spec:
+        provider: ` + provider + `
+        capabilities: [secondary-ip, ip-forwarding]
+        auth:
+          mode: external-command
+          command: ` + execPath + `
+    - apiVersion: mobility.routerd.net/v1alpha1
+      kind: MobilityPool
+      metadata:
+        name: cloudedge
+      spec:
+        prefix: 10.77.60.0/24
+        groupRef: cloudedge
+        deliveryPolicy:
+          mode: bgp
+        members:
+          - nodeRef: node-a
+            site: ` + provider + `
+            role: cloud
+            capture:
+              type: provider-secondary-ip
+              providerRef: provider-lab
+              providerMode: secondary-ip
+              nicRef: nic-1
+              interface: eth0
+    - apiVersion: plugin.routerd.net/v1alpha1
+      kind: Plugin
+      metadata:
+        name: ` + provider + `-executor
+      spec:
+        executable: ` + execPath + `
+        timeout: 5s
+        capabilities: [execute.providerAction]
+`)
+	if err := os.WriteFile(configPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	return configPath, filepath.Join(dir, "routerd.db")
+}
+
+func doctorProviderPreflightScript(failure string) string {
+	return `#!/bin/sh
+cat <<'EOF'
+{
+  "apiVersion": "provideraction.routerd.net/v1alpha1",
+  "kind": "ExecuteActionResult",
+  "status": {
+    "status": "failed",
+    "message": "provider executor preflight failed",
+    "error": "` + failure + `"
+  }
+}
+EOF
+`
 }
 
 func writeDoctorHybridFixture(t *testing.T, missingPeer bool) (string, string) {

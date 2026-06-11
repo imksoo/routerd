@@ -19,10 +19,28 @@ import (
 // oci-routerd-helper, which uses the OCI Go SDK with instance principal auth.
 type ociRunner func(ctx context.Context, argv ...string) ([]byte, error)
 
-const defaultOCIHelper = "/usr/local/libexec/routerd/plugins/oci-routerd-helper/bin/oci-routerd-helper"
+const (
+	defaultOCIHelper = "/usr/local/libexec/routerd/plugins/oci-routerd-helper/bin/oci-routerd-helper"
+	ociHelperEnv     = "ROUTERD_OCI_HELPER"
+)
 
 // defaultRunner returns the production runner that execs routerd's OCI helper.
 func defaultRunner() ociRunner { return execRunner }
+
+func resolveOCIHelperPath() (string, error) {
+	helper := strings.TrimSpace(os.Getenv(ociHelperEnv))
+	if helper == "" {
+		helper = defaultOCIHelper
+	}
+	info, err := os.Stat(helper)
+	if err != nil {
+		return "", fmt.Errorf("OCI helper executable unavailable: %s=%q: %w", ociHelperEnv, helper, err)
+	}
+	if info.IsDir() || info.Mode()&0111 == 0 {
+		return "", fmt.Errorf("OCI helper executable unavailable: %s=%q is not executable", ociHelperEnv, helper)
+	}
+	return helper, nil
+}
 
 // execRunner execs routerd's OCI helper. The helper authenticates with the OCI
 // instance principal through the OCI Go SDK; routerd passes it no user
@@ -33,9 +51,9 @@ func execRunner(ctx context.Context, argv ...string) ([]byte, error) {
 	defer cancel()
 	full := append([]string(nil), argv...)
 	full = append(full, "--auth", "instance_principal", "--output", "json")
-	helper := os.Getenv("ROUTERD_OCI_HELPER")
-	if helper == "" {
-		helper = defaultOCIHelper
+	helper, err := resolveOCIHelperPath()
+	if err != nil {
+		return nil, err
 	}
 	cmd := exec.CommandContext(runCtx, helper, full...)
 	var stdout, stderr bytes.Buffer

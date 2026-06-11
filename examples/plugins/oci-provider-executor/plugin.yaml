@@ -18,3 +18,4 @@ spec:
   # oci-routerd-helper, which authenticates with the OCI instance principal.
   # routerd passes it NO secrets and inherits NO parent environment to it (per
   # ADR 0007).
+  # If the helper is not installed at the default path, set env.ROUTERD_OCI_HELPER.

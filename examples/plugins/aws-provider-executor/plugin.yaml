@@ -19,3 +19,4 @@ spec:
   # routerd passes it NO secrets and inherits NO parent environment to it (per
   # ADR 0007). The instance profile is least-privilege (4 EC2 actions) per
   # docs/how-to/aws-provider-action-execution.md.
+  # If aws is not in PATH, set env.AWS_CLI_PATH to the executable path.
