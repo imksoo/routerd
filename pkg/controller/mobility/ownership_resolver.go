@@ -256,10 +256,14 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 			decision.Fresh = true
 			homeProviderRef := strings.TrimSpace(fact.ProviderRef)
 			selfProviderRef := strings.TrimSpace(self.Capture.ProviderRef)
-			if decision.CaptureState == captureStateConfirmed && (homeProviderRef == "" || selfProviderRef == "" || homeProviderRef == selfProviderRef) {
+			if decision.CaptureState == captureStateConfirmed {
 				decision.Class = ownershipClassConfirmedCapture
 				decision.AdvertiseOwnerNode = self.NodeRef
-				decision.AdvertiseReason = "confirmed-capture"
+				if homeProviderRef == "" || selfProviderRef == "" || homeProviderRef == selfProviderRef {
+					decision.AdvertiseReason = "confirmed-capture"
+				} else {
+					decision.AdvertiseReason = "confirmed-cross-provider-capture"
+				}
 				decision.Source = "provider-action"
 				out = append(out, decision)
 				continue

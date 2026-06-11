@@ -157,7 +157,7 @@ func TestOwnershipResolverScenario397MigrationExpiredOldHomeNewLocalHome(t *test
 	}
 }
 
-func TestOwnershipResolverScenario398RemoteHomeSuppressesCrossCapture(t *testing.T) {
+func TestOwnershipResolverScenario398RemoteHomeKeepsConfirmedCrossCapture(t *testing.T) {
 	now := time.Date(2026, 6, 9, 22, 20, 0, 0, time.UTC)
 	spec := awsFailoverPoolSpec()
 	homeEvent := providerDiscoveryObservedEvent("cloudedge", "cloudedge", "aws-router-a", "10.88.60.11/32", "aws", "aws-provider", providerinventory.PrivateIPRecord{
@@ -172,7 +172,8 @@ func TestOwnershipResolverScenario398RemoteHomeSuppressesCrossCapture(t *testing
 		Spec:     spec,
 		Events:   []routerstate.EventRecord{homeEvent},
 		Status: map[string]any{
-			"discoverySelfPrivateIPs": []string{"10.88.60.11"},
+			"discoverySelfPrivateIPs":        []string{"10.88.60.250/32"},
+			"discoverySelfCapturedAddresses": []string{"10.88.60.11/32"},
 		},
 		ActionJournal: []routerstate.ActionExecutionRecord{action},
 		Now:           now,
@@ -181,8 +182,8 @@ func TestOwnershipResolverScenario398RemoteHomeSuppressesCrossCapture(t *testing
 		t.Fatalf("resolveAddressOwnership: %v", err)
 	}
 	decision := ownershipDecisionByAddress(t, decisions, "10.88.60.11/32")
-	if decision.Class != ownershipClassStaleCapture || decision.HomeOwnerNode != "aws-router-a" || decision.SuppressionReason != "fresh-home-owner" {
-		t.Fatalf("decision = %#v, want remote AWS home to mark OCI capture stale", decision)
+	if decision.Class != ownershipClassConfirmedCapture || decision.HomeOwnerNode != "aws-router-a" || decision.AdvertiseOwnerNode != "oci-router" || decision.AdvertiseReason != "confirmed-cross-provider-capture" {
+		t.Fatalf("decision = %#v, want confirmed OCI capture retained for remote AWS home", decision)
 	}
 }
 

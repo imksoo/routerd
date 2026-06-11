@@ -457,7 +457,7 @@ func TestControllerBGPModeFailedProviderActionDoesNotSuppressHomeOwnerPath(t *te
 	}
 }
 
-func TestControllerBGPModeFreshHomeOwnerSuppressesRemoteProviderCapture(t *testing.T) {
+func TestControllerBGPModeFreshHomeOwnerKeepsConfirmedCrossProviderCapture(t *testing.T) {
 	now := time.Date(2026, 6, 9, 17, 30, 0, 0, time.UTC)
 	cases := []struct {
 		name         string
@@ -497,8 +497,9 @@ func TestControllerBGPModeFreshHomeOwnerSuppressesRemoteProviderCapture(t *testi
 			seedSucceededBGPCaptureAction(t, store, "oci-provider", "oci-vnic", "oci-router", tc.address, "assign-secondary-ip", 1, now.Add(-time.Second))
 			saveBGPInstalledNextHops(t, store, map[string][]string{tc.address: {"10.99.0.200"}})
 			if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
-				"discoverySelfPrivateIPs": []string{tc.address},
-				"discoveryLastScanAt":     now.Format(time.RFC3339Nano),
+				"discoverySelfPrivateIPs":        []string{"10.88.60.250/32"},
+				"discoverySelfCapturedAddresses": []string{tc.address},
+				"discoveryLastScanAt":            now.Format(time.RFC3339Nano),
 			}); err != nil {
 				t.Fatalf("SaveObjectStatus(oci): %v", err)
 			}
@@ -508,12 +509,15 @@ func TestControllerBGPModeFreshHomeOwnerSuppressesRemoteProviderCapture(t *testi
 			if err := ociController.Reconcile(context.Background()); err != nil {
 				t.Fatalf("oci Reconcile: %v", err)
 			}
-			if _, ok := maybePathBySourcePrefix(bgp, DynamicSource("cloudedge", "oci-router"), tc.address); ok {
-				t.Fatalf("paths = %#v, want OCI captured path suppressed while fresh %s home owner exists", bgp.paths, tc.homeRef)
+			if _, ok := maybePathBySourcePrefix(bgp, DynamicSource("cloudedge", "oci-router"), tc.address); !ok {
+				t.Fatalf("paths = %#v, want OCI confirmed capture retained while fresh %s home owner exists", bgp.paths, tc.homeRef)
 			}
 			ociPlans := decodeActionPlans(t, latestPart(t, store, DynamicSource("cloudedge", "oci-router")).ActionPlansJSON)
-			if findActionPlanByAddress(ociPlans, "unassign-secondary-ip", tc.address) == nil {
-				t.Fatalf("oci plans = %#v, want stale remote capture deprovision for %s", ociPlans, tc.address)
+			if findActionPlanByAddress(ociPlans, "unassign-secondary-ip", tc.address) != nil {
+				t.Fatalf("oci plans = %#v, want confirmed cross-provider capture protected from deprovision for %s", ociPlans, tc.address)
+			}
+			if findActionPlanByAddress(ociPlans, "assign-secondary-ip", tc.address) != nil {
+				t.Fatalf("oci plans = %#v, want no duplicate assign for already confirmed cross-provider capture %s", ociPlans, tc.address)
 			}
 
 			if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
