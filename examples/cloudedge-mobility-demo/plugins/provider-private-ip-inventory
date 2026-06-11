@@ -5,12 +5,17 @@
 # The protocol is defined by pkg/providerinventory.
 
 import json
+import datetime
+import hashlib
+import hmac
 import ipaddress
 import os
 import subprocess
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
+import xml.etree.ElementTree as ET
 
 API_VERSION = "providerinventory.routerd.net/v1alpha1"
 KIND_RESULT = "ObservePrivateIPsResult"
@@ -51,11 +56,251 @@ def opt_region(argv, region):
 
 
 def aws_cli(region, args):
+    if os.environ.get("ROUTERD_PROVIDER_INVENTORY_AWS_FORCE_QUERY_API", "").strip() == "1":
+        return aws_ec2_cli_compat(region, args)
     argv = ["aws"]
     argv.extend(opt_region([], region))
     argv.extend(args)
     argv.extend(["--output", "json", "--no-cli-pager"])
-    return run_json(argv)
+    try:
+        return run_json(argv)
+    except FileNotFoundError:
+        return aws_ec2_cli_compat(region, args)
+
+
+def aws_credentials():
+    access_key = os.environ.get("ROUTERD_PROVIDER_INVENTORY_AWS_ACCESS_KEY_ID", "").strip()
+    secret_key = os.environ.get("ROUTERD_PROVIDER_INVENTORY_AWS_SECRET_ACCESS_KEY", "").strip()
+    token = os.environ.get("ROUTERD_PROVIDER_INVENTORY_AWS_SESSION_TOKEN", "").strip()
+    if access_key and secret_key:
+        return access_key, secret_key, token
+    try:
+        role_name = aws_imds_get("/latest/meta-data/iam/security-credentials/")
+        doc = json.loads(aws_imds_get("/latest/meta-data/iam/security-credentials/" + role_name))
+        access_key = doc.get("AccessKeyId", "").strip()
+        secret_key = doc.get("SecretAccessKey", "").strip()
+        token = doc.get("Token", "").strip()
+    except Exception as exc:
+        raise RuntimeError("AWS credentials unavailable from IMDS: " + str(exc)) from exc
+    if not access_key or not secret_key:
+        raise RuntimeError("AWS credentials unavailable from IMDS")
+    return access_key, secret_key, token
+
+
+def aws_ec2_endpoint(region):
+    endpoint = os.environ.get("ROUTERD_PROVIDER_INVENTORY_AWS_EC2_ENDPOINT", "").strip()
+    if endpoint:
+        return endpoint.rstrip("/")
+    if not region:
+        raise ValueError("AWS region is required when aws CLI is unavailable")
+    return "https://ec2." + region + ".amazonaws.com"
+
+
+def aws_sigv4_key(secret_key, date_stamp, region, service):
+    key = ("AWS4" + secret_key).encode("utf-8")
+    for value in (date_stamp, region, service, "aws4_request"):
+        key = hmac.new(key, value.encode("utf-8"), hashlib.sha256).digest()
+    return key
+
+
+def aws_ec2_query(region, params):
+    access_key, secret_key, token = aws_credentials()
+    endpoint = aws_ec2_endpoint(region)
+    parsed = urllib.parse.urlparse(endpoint)
+    host = parsed.netloc
+    body = urllib.parse.urlencode(sorted(params.items()))
+    now = datetime.datetime.utcnow()
+    amz_date = now.strftime("%Y%m%dT%H%M%SZ")
+    date_stamp = now.strftime("%Y%m%d")
+    payload_hash = hashlib.sha256(body.encode("utf-8")).hexdigest()
+    headers = {
+        "content-type": "application/x-www-form-urlencoded; charset=utf-8",
+        "host": host,
+        "x-amz-date": amz_date,
+    }
+    if token:
+        headers["x-amz-security-token"] = token
+    signed_headers = ";".join(sorted(headers.keys()))
+    canonical_headers = "".join(key + ":" + headers[key] + "\n" for key in sorted(headers.keys()))
+    canonical_request = "\n".join(["POST", parsed.path or "/", "", canonical_headers, signed_headers, payload_hash])
+    credential_scope = "/".join([date_stamp, region, "ec2", "aws4_request"])
+    string_to_sign = "\n".join([
+        "AWS4-HMAC-SHA256",
+        amz_date,
+        credential_scope,
+        hashlib.sha256(canonical_request.encode("utf-8")).hexdigest(),
+    ])
+    signing_key = aws_sigv4_key(secret_key, date_stamp, region, "ec2")
+    signature = hmac.new(signing_key, string_to_sign.encode("utf-8"), hashlib.sha256).hexdigest()
+    headers["authorization"] = (
+        "AWS4-HMAC-SHA256 Credential=" + access_key + "/" + credential_scope +
+        ", SignedHeaders=" + signed_headers + ", Signature=" + signature
+    )
+    req = urllib.request.Request(endpoint, data=body.encode("utf-8"), method="POST", headers=headers)
+    with urllib.request.urlopen(req, timeout=5.0) as resp:
+        return ET.fromstring(resp.read())
+
+
+def xml_name(tag):
+    return tag.rsplit("}", 1)[-1]
+
+
+def xml_children(node, name):
+    return [child for child in list(node) if xml_name(child.tag) == name]
+
+
+def xml_child(node, name):
+    for child in list(node):
+        if xml_name(child.tag) == name:
+            return child
+    return None
+
+
+def xml_text(node, name, default=""):
+    child = xml_child(node, name)
+    if child is None or child.text is None:
+        return default
+    return child.text
+
+
+def xml_bool(value):
+    return str(value).strip().lower() == "true"
+
+
+def parse_aws_cli_filters(args):
+    filters = []
+    i = 0
+    while i < len(args):
+        if args[i] != "--filters":
+            i += 1
+            continue
+        i += 1
+        while i < len(args) and not args[i].startswith("--"):
+            item = args[i]
+            name = ""
+            values = ""
+            for part in item.split(","):
+                key, _, value = part.partition("=")
+                if key == "Name":
+                    name = value
+                elif key == "Values":
+                    values = value
+            if name:
+                filters.append((name, [value for value in values.split(",") if value]))
+            i += 1
+    return filters
+
+
+def aws_cli_option_values(args, option):
+    out = []
+    i = 0
+    while i < len(args):
+        if args[i] == option:
+            i += 1
+            while i < len(args) and not args[i].startswith("--"):
+                out.extend([value for value in args[i].split(",") if value])
+                i += 1
+            continue
+        i += 1
+    return out
+
+
+def aws_ec2_params(action, args):
+    params = {"Action": action, "Version": "2016-11-15"}
+    for idx, value in enumerate(aws_cli_option_values(args, "--network-interface-ids"), start=1):
+        params["NetworkInterfaceId." + str(idx)] = value
+    for idx, value in enumerate(aws_cli_option_values(args, "--route-table-ids"), start=1):
+        params["RouteTableId." + str(idx)] = value
+    for idx, item in enumerate(parse_aws_cli_filters(args), start=1):
+        name, values = item
+        params["Filter." + str(idx) + ".Name"] = name
+        for value_idx, value in enumerate(values, start=1):
+            params["Filter." + str(idx) + ".Value." + str(value_idx)] = value
+    return params
+
+
+def aws_ec2_cli_compat(region, args):
+    if len(args) < 2 or args[0] != "ec2":
+        raise FileNotFoundError("aws")
+    verb = args[1]
+    rest = args[2:]
+    if verb == "describe-network-interfaces":
+        root = aws_ec2_query(region, aws_ec2_params("DescribeNetworkInterfaces", rest))
+        return aws_parse_describe_network_interfaces(root)
+    if verb == "describe-instances":
+        root = aws_ec2_query(region, aws_ec2_params("DescribeInstances", rest))
+        return aws_parse_describe_instances(root)
+    if verb == "describe-route-tables":
+        root = aws_ec2_query(region, aws_ec2_params("DescribeRouteTables", rest))
+        return aws_parse_describe_route_tables(root)
+    raise FileNotFoundError("aws")
+
+
+def aws_parse_describe_network_interfaces(root):
+    out = []
+    network_interface_set = xml_child(root, "networkInterfaceSet")
+    for item in xml_children(network_interface_set or root, "item"):
+        private_ips = []
+        private_ip_set = xml_child(item, "privateIpAddressesSet")
+        for ip_item in xml_children(private_ip_set or item, "item"):
+            private_ips.append({
+                "PrivateIpAddress": xml_text(ip_item, "privateIpAddress"),
+                "Primary": xml_bool(xml_text(ip_item, "primary")),
+            })
+        tags = []
+        tag_set = xml_child(item, "tagSet")
+        for tag_item in xml_children(tag_set or item, "item"):
+            key = xml_text(tag_item, "key")
+            if key:
+                tags.append({"Key": key, "Value": xml_text(tag_item, "value")})
+        rec = {
+            "NetworkInterfaceId": xml_text(item, "networkInterfaceId"),
+            "SubnetId": xml_text(item, "subnetId"),
+            "PrivateIpAddresses": private_ips,
+            "TagSet": tags,
+        }
+        source_dest = xml_text(item, "sourceDestCheck")
+        if source_dest != "":
+            rec["SourceDestCheck"] = xml_bool(source_dest)
+        out.append(rec)
+    return {"NetworkInterfaces": out}
+
+
+def aws_parse_describe_instances(root):
+    reservations = []
+    reservation_set = xml_child(root, "reservationSet")
+    for res_item in xml_children(reservation_set or root, "item"):
+        instances = []
+        instances_set = xml_child(res_item, "instancesSet")
+        for inst_item in xml_children(instances_set or res_item, "item"):
+            nics = []
+            nic_set = xml_child(inst_item, "networkInterfaceSet")
+            for nic_item in xml_children(nic_set or inst_item, "item"):
+                nics.append({"NetworkInterfaceId": xml_text(nic_item, "networkInterfaceId")})
+            instances.append({
+                "InstanceId": xml_text(inst_item, "instanceId"),
+                "State": {"Name": xml_text(xml_child(inst_item, "instanceState") or inst_item, "name")},
+                "NetworkInterfaces": nics,
+            })
+        reservations.append({"Instances": instances})
+    return {"Reservations": reservations}
+
+
+def aws_parse_describe_route_tables(root):
+    tables = []
+    route_table_set = xml_child(root, "routeTableSet")
+    for table_item in xml_children(route_table_set or root, "item"):
+        routes = []
+        route_set = xml_child(table_item, "routeSet")
+        for route_item in xml_children(route_set or table_item, "item"):
+            routes.append({
+                "DestinationCidrBlock": xml_text(route_item, "destinationCidrBlock"),
+                "NetworkInterfaceId": xml_text(route_item, "networkInterfaceId"),
+                "GatewayId": xml_text(route_item, "gatewayId"),
+                "State": xml_text(route_item, "state"),
+            })
+        tables.append({"RouteTableId": xml_text(table_item, "routeTableId"), "Routes": routes})
+    return {"RouteTables": tables}
 
 
 def http_text(url, headers=None, method="GET", data=None, timeout=1.0):

@@ -216,6 +216,101 @@ esac
 	assertResource(t, res, "10.77.60.11", "i-client", "instance-nic")
 }
 
+func TestProviderPrivateIPInventoryPluginAWSUsesQueryAPIWithoutAWSCLI(t *testing.T) {
+	requirePython(t)
+	ec2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("ParseForm: %v", err)
+		}
+		switch r.Form.Get("Action") {
+		case "DescribeNetworkInterfaces":
+			if r.Form.Get("NetworkInterfaceId.1") == "eni-router" {
+				_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
+<DescribeNetworkInterfacesResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">
+  <networkInterfaceSet>
+    <item>
+      <networkInterfaceId>eni-router</networkInterfaceId>
+      <subnetId>subnet-a</subnetId>
+      <sourceDestCheck>false</sourceDestCheck>
+      <privateIpAddressesSet>
+        <item><privateIpAddress>10.77.60.21</privateIpAddress><primary>true</primary></item>
+      </privateIpAddressesSet>
+      <tagSet><item><key>role</key><value>router</value></item></tagSet>
+    </item>
+  </networkInterfaceSet>
+</DescribeNetworkInterfacesResponse>`))
+				return
+			}
+			if r.Form.Get("Filter.1.Name") != "subnet-id" || r.Form.Get("Filter.1.Value.1") != "subnet-a" {
+				t.Fatalf("unexpected DescribeNetworkInterfaces form: %v", r.Form)
+			}
+			_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
+<DescribeNetworkInterfacesResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">
+  <networkInterfaceSet>
+    <item>
+      <networkInterfaceId>eni-router</networkInterfaceId>
+      <subnetId>subnet-a</subnetId>
+      <privateIpAddressesSet>
+        <item><privateIpAddress>10.77.60.21</privateIpAddress><primary>true</primary></item>
+      </privateIpAddressesSet>
+      <tagSet><item><key>role</key><value>router</value></item></tagSet>
+    </item>
+    <item>
+      <networkInterfaceId>eni-client</networkInterfaceId>
+      <subnetId>subnet-a</subnetId>
+      <privateIpAddressesSet>
+        <item><privateIpAddress>10.77.60.11</privateIpAddress><primary>false</primary></item>
+      </privateIpAddressesSet>
+      <tagSet><item><key>role</key><value>client</value></item></tagSet>
+    </item>
+  </networkInterfaceSet>
+</DescribeNetworkInterfacesResponse>`))
+		case "DescribeInstances":
+			_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
+<DescribeInstancesResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">
+  <reservationSet>
+    <item>
+      <instancesSet>
+        <item>
+          <instanceId>i-router</instanceId>
+          <instanceState><name>running</name></instanceState>
+          <networkInterfaceSet><item><networkInterfaceId>eni-router</networkInterfaceId></item></networkInterfaceSet>
+        </item>
+        <item>
+          <instanceId>i-client</instanceId>
+          <instanceState><name>running</name></instanceState>
+          <networkInterfaceSet><item><networkInterfaceId>eni-client</networkInterfaceId></item></networkInterfaceSet>
+        </item>
+      </instancesSet>
+    </item>
+  </reservationSet>
+</DescribeInstancesResponse>`))
+		default:
+			t.Fatalf("unexpected action %q form=%v", r.Form.Get("Action"), r.Form)
+		}
+	}))
+	defer ec2.Close()
+	bin := fakeBinDir(t)
+	res := runInventoryPluginWithEnv(t, bin, `{"spec":{"provider":"aws","strategy":"secondary-ip","prefix":"10.77.60.0/24","selfNicRef":"eni-router","target":{"region":"us-east-1"}}}`, []string{
+		"ROUTERD_PROVIDER_INVENTORY_AWS_FORCE_QUERY_API=1",
+		"ROUTERD_PROVIDER_INVENTORY_AWS_EC2_ENDPOINT=" + ec2.URL,
+		"ROUTERD_PROVIDER_INVENTORY_AWS_ACCESS_KEY_ID=AKIDEXAMPLE",
+		"ROUTERD_PROVIDER_INVENTORY_AWS_SECRET_ACCESS_KEY=secret",
+		"ROUTERD_PROVIDER_INVENTORY_AWS_SESSION_TOKEN=token",
+	})
+	if res.Status.Status != "succeeded" {
+		t.Fatalf("status = %q error=%q", res.Status.Status, res.Status.Error)
+	}
+	if res.Status.Self.NICRef != "eni-router" || res.Status.Self.SubnetRef != "subnet-a" {
+		t.Fatalf("self = %+v, want eni-router/subnet-a", res.Status.Self)
+	}
+	if res.Status.Self.ForwardingEnabled == nil || !*res.Status.Self.ForwardingEnabled {
+		t.Fatalf("self.forwardingEnabled = %#v, want true", res.Status.Self.ForwardingEnabled)
+	}
+	assertIP(t, res, "10.77.60.11", "eni-client", "subnet-a")
+	assertResource(t, res, "10.77.60.11", "i-client", "instance-nic")
+}
+
 func TestProviderPrivateIPInventoryPluginAzure(t *testing.T) {
 	requirePython(t)
 	bin := fakeBinDir(t)
