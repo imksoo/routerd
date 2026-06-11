@@ -198,7 +198,6 @@ spec:
                 providerRef: oci-lab
                 providerMode: vnic-secondary-ip
                 captureStrategy: secondary-ip
-                nicRef: "${DEMO_SELF_NIC_REF}"
                 configureOSAddress: false
                 targetFrom:
                   region: self.region
@@ -261,6 +260,8 @@ spec:
       spec:
         executable: /usr/local/libexec/routerd/plugins/oci-provider-executor/bin/oci-provider-executor
         timeout: 120s
+        env:
+          OCI_CLI_PATH: "${OCI_CLI_PATH}"
         capabilities: [execute.providerAction]
 
     - apiVersion: plugin.routerd.net/v1alpha1
@@ -274,5 +275,5 @@ spec:
           OCI_PROFILE: "${OCI_INVENTORY_PROFILE}"
           OCI_REGION: "${OCI_REGION}"
           OCI_AUTH_MODE: "${OCI_INVENTORY_AUTH_MODE}"
-          ROUTERD_PROVIDER_INVENTORY_SELF_NIC_REF: "${DEMO_SELF_NIC_REF}"
+          OCI_CLI_PATH: "${OCI_CLI_PATH}"
         capabilities: [observe.providerPrivateIPs]

@@ -3,6 +3,7 @@
 /dist/
 /LOCAL.md
 /local/
+examples/cloudedge-mobility-demo/.rendered/
 *.test
 coverage.out
 website/.docusaurus/

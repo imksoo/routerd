@@ -447,6 +447,225 @@ func TestDynamicRouteSAMViewBGPProxyARPCapturePrefixRouteHonorsGate(t *testing.T
 	}
 }
 
+func TestDynamicRouteSAMViewBGPLocalHomeOwnerRouteBeatsRemoteHostRoute(t *testing.T) {
+	startup := startupHybridContextRouter()
+	startup.Spec.Resources = append(startup.Spec.Resources,
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.FederationAPIVersion, Kind: "EventGroup"},
+			Metadata: api.ObjectMeta{Name: "cloudedge"},
+			Spec:     api.EventGroupSpec{NodeName: "azure-router"},
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"},
+			Metadata: api.ObjectMeta{Name: "mobility-bgp"},
+			Spec:     api.BGPRouterSpec{ASN: 64577, RouterID: "10.99.0.3"},
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"},
+			Metadata: api.ObjectMeta{Name: "cloudedge"},
+			Spec: api.MobilityPoolSpec{
+				Prefix:         "10.0.1.0/24",
+				GroupRef:       "cloudedge",
+				DeliveryPolicy: api.MobilityDeliveryPolicy{Mode: "bgp"},
+				Members: []api.MobilityPoolMember{
+					{
+						NodeRef: "azure-router",
+						Site:    "azure",
+						Role:    "cloud",
+						Capture: api.MobilityMemberCapture{
+							Type:      "provider-secondary-ip",
+							Interface: "eth0",
+						},
+					},
+					{NodeRef: "onprem-router", Site: "onprem", Role: "onprem"},
+				},
+			},
+		},
+	)
+	store := mapStore{
+		api.NetAPIVersion + "/BGPRouter/mobility-bgp": {
+			"installedNextHops": map[string]any{"10.0.1.7/32": []any{"10.255.0.1"}},
+		},
+		api.MobilityAPIVersion + "/MobilityPool/cloudedge": {
+			"ownershipResolverFIBVerdicts": []any{
+				map[string]any{
+					"address":   "10.0.1.7/32",
+					"action":    "local-route",
+					"ownerNode": "azure-router",
+					"localNode": "azure-router",
+				},
+			},
+		},
+	}
+	view, err := buildDynamicRouteSAMView(startup, store, time.Now().UTC(), platform.OSLinux)
+	if err != nil {
+		t.Fatalf("buildDynamicRouteSAMView: %v", err)
+	}
+	route := ipv4RouteSpecByName(t, view.RouteRouter, "sam-cloudedge-local-10-0-1-7")
+	if route.Destination != "10.0.1.7/32" || route.Device != "eth0" || route.Metric != 1 {
+		t.Fatalf("local inventory route = %#v, want 10.0.1.7/32 dev eth0 metric 1", route)
+	}
+}
+
+func TestDynamicRouteSAMViewBGPConflictLocalEvidenceCreatesLocalRoute(t *testing.T) {
+	startup := startupHybridContextRouter()
+	startup.Spec.Resources = append(startup.Spec.Resources,
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.FederationAPIVersion, Kind: "EventGroup"},
+			Metadata: api.ObjectMeta{Name: "cloudedge"},
+			Spec:     api.EventGroupSpec{NodeName: "aws-router-a"},
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"},
+			Metadata: api.ObjectMeta{Name: "mobility-bgp"},
+			Spec:     api.BGPRouterSpec{ASN: 64577, RouterID: "10.99.0.2"},
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"},
+			Metadata: api.ObjectMeta{Name: "cloudedge"},
+			Spec: api.MobilityPoolSpec{
+				Prefix:         "10.77.60.0/24",
+				GroupRef:       "cloudedge",
+				DeliveryPolicy: api.MobilityDeliveryPolicy{Mode: "bgp"},
+				Members: []api.MobilityPoolMember{
+					{
+						NodeRef: "aws-router-a",
+						Site:    "aws",
+						Role:    "cloud",
+						Capture: api.MobilityMemberCapture{
+							Type:      "provider-secondary-ip",
+							Interface: "eth0",
+						},
+					},
+					{NodeRef: "aws-router-b", Site: "aws", Role: "cloud"},
+				},
+			},
+		},
+	)
+	store := mapStore{
+		api.NetAPIVersion + "/BGPRouter/mobility-bgp": {
+			"installedNextHops": map[string]any{"10.77.60.11/32": []any{"10.255.0.11"}},
+		},
+		api.MobilityAPIVersion + "/MobilityPool/cloudedge": {
+			"ownershipResolverFIBVerdicts": []any{
+				map[string]any{
+					"address":        "10.77.60.11/32",
+					"action":         "local-route",
+					"conflictReason": "remote-home-owner-overlaps-local-ownership-event",
+					"ownerNode":      "aws-router-b",
+					"localNode":      "aws-router-a",
+				},
+			},
+		},
+	}
+	view, err := buildDynamicRouteSAMView(startup, store, time.Now().UTC(), platform.OSLinux)
+	if err != nil {
+		t.Fatalf("buildDynamicRouteSAMView: %v", err)
+	}
+	route := ipv4RouteSpecByName(t, view.RouteRouter, "sam-cloudedge-local-10-77-60-11")
+	if route.Destination != "10.77.60.11/32" || route.Device != "eth0" || route.Metric != 1 {
+		t.Fatalf("conflict local evidence route = %#v, want 10.77.60.11/32 dev eth0 metric 1", route)
+	}
+}
+
+func TestDynamicRouteSAMViewBGPUnresolvedInventoryDoesNotCreateLocalRoute(t *testing.T) {
+	startup := startupHybridContextRouter()
+	startup.Spec.Resources = append(startup.Spec.Resources,
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.FederationAPIVersion, Kind: "EventGroup"},
+			Metadata: api.ObjectMeta{Name: "cloudedge"},
+			Spec:     api.EventGroupSpec{NodeName: "azure-router"},
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"},
+			Metadata: api.ObjectMeta{Name: "cloudedge"},
+			Spec: api.MobilityPoolSpec{
+				Prefix:         "10.0.1.0/24",
+				GroupRef:       "cloudedge",
+				DeliveryPolicy: api.MobilityDeliveryPolicy{Mode: "bgp"},
+				Members: []api.MobilityPoolMember{
+					{
+						NodeRef: "azure-router",
+						Site:    "azure",
+						Role:    "cloud",
+						Capture: api.MobilityMemberCapture{
+							Type:      "provider-secondary-ip",
+							Interface: "eth0",
+						},
+					},
+					{NodeRef: "onprem-router", Site: "onprem", Role: "onprem"},
+				},
+			},
+		},
+	)
+	store := mapStore{
+		api.MobilityAPIVersion + "/MobilityPool/cloudedge": {
+			"discoveryLocalInventory": []any{
+				map[string]any{"address": "10.0.1.7", "nicRef": "client-nic", "resourceType": "instance-nic"},
+			},
+		},
+	}
+	view, err := buildDynamicRouteSAMView(startup, store, time.Now().UTC(), platform.OSLinux)
+	if err != nil {
+		t.Fatalf("buildDynamicRouteSAMView: %v", err)
+	}
+	if got := countResources(view.RouteRouter, api.NetAPIVersion, "IPv4Route"); got != 0 {
+		t.Fatalf("route IPv4Routes = %d, want none until ownership resolver confirms local home", got)
+	}
+}
+
+func TestDynamicRouteSAMViewBGPStaleCaptureDoesNotCreateLocalRoute(t *testing.T) {
+	startup := startupHybridContextRouter()
+	startup.Spec.Resources = append(startup.Spec.Resources,
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.FederationAPIVersion, Kind: "EventGroup"},
+			Metadata: api.ObjectMeta{Name: "cloudedge"},
+			Spec:     api.EventGroupSpec{NodeName: "azure-router"},
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"},
+			Metadata: api.ObjectMeta{Name: "cloudedge"},
+			Spec: api.MobilityPoolSpec{
+				Prefix:         "10.0.1.0/24",
+				GroupRef:       "cloudedge",
+				DeliveryPolicy: api.MobilityDeliveryPolicy{Mode: "bgp"},
+				Members: []api.MobilityPoolMember{
+					{
+						NodeRef: "azure-router",
+						Site:    "azure",
+						Role:    "cloud",
+						Capture: api.MobilityMemberCapture{
+							Type:      "provider-secondary-ip",
+							Interface: "eth0",
+						},
+					},
+					{NodeRef: "onprem-router", Site: "onprem", Role: "onprem"},
+				},
+			},
+		},
+	)
+	store := mapStore{
+		api.MobilityAPIVersion + "/MobilityPool/cloudedge": {
+			"discoverySelfCapturedAddresses": []any{"10.0.1.7"},
+			"ownershipResolverFIBVerdicts": []any{
+				map[string]any{
+					"address":   "10.0.1.7/32",
+					"action":    "deliver-remote",
+					"ownerNode": "remote-router",
+					"localNode": "azure-router",
+				},
+			},
+		},
+	}
+	view, err := buildDynamicRouteSAMView(startup, store, time.Now().UTC(), platform.OSLinux)
+	if err != nil {
+		t.Fatalf("buildDynamicRouteSAMView: %v", err)
+	}
+	if got := countResources(view.RouteRouter, api.NetAPIVersion, "IPv4Route"); got != 0 {
+		t.Fatalf("route IPv4Routes = %d, want none for stale self capture", got)
+	}
+}
+
 func TestDynamicRouteSAMClaimRemovalTriggersRouteAndSAMCleanup(t *testing.T) {
 	startup := startupHybridContextRouter()
 	now := time.Now().UTC()

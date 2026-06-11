@@ -57,13 +57,19 @@ WIZARD_FIXTURE_DIR := website/fixtures/wizard
 
 WEBSITE_NODE_MODULES_STAMP := website/node_modules/.package-lock.json
 
-.PHONY: test check-version-ldflags build build-daemons build-provider-executors build-ndpi-agent build-ndpi-agent-libndpi build-daemons-freebsd check-linux-static check-ndpi-agent-libndpi check-install-deps alpine-vm-smoke cloudedge-acceptance-lint cloudedge-acceptance-offline-test cloudedge-runners-offline-test cloudedge-poc-evidence-offline-test webconsole-build webconsole-browser-install webconsole-screenshot generate-schema sync-website-schemas check-schema check-website-schemas generate-wizard-fixtures check-wizard-fixtures validate-wizard-fixtures check-examples-line-limits check-render-golden update-render-golden check-bespoke-lifecycle website-deps website-build third-party-licenses check-build-deps dist dist-ndpi-agent-libndpi live-iso validate-example dry-run-example plan-config release clean
+.PHONY: test check-version-ldflags check-tmp-dir-mutations check-tar-safe-paths-test build build-daemons build-provider-executors build-ndpi-agent build-ndpi-agent-libndpi build-daemons-freebsd check-linux-static check-ndpi-agent-libndpi check-install-deps alpine-vm-smoke cloudedge-acceptance-lint cloudedge-acceptance-offline-test cloudedge-runners-offline-test cloudedge-poc-evidence-offline-test webconsole-build webconsole-browser-install webconsole-screenshot generate-schema sync-website-schemas check-schema check-website-schemas generate-wizard-fixtures check-wizard-fixtures validate-wizard-fixtures check-examples-line-limits check-render-golden update-render-golden check-bespoke-lifecycle website-deps website-build third-party-licenses check-build-deps dist dist-ndpi-agent-libndpi live-iso validate-example dry-run-example plan-config release clean
 
-test: check-version-ldflags
+test: check-version-ldflags check-tmp-dir-mutations check-tar-safe-paths-test
 	go test ./...
 
 check-version-ldflags:
 	scripts/check-version-ldflags.sh
+
+check-tmp-dir-mutations:
+	scripts/check-tmp-dir-mutations.sh
+
+check-tar-safe-paths-test:
+	scripts/check-tar-safe-paths-test.sh
 
 build: webconsole-build
 	$(MAKE) build-daemons
@@ -299,6 +305,7 @@ dist:
 	fi
 	install -d $(DISTDIR)
 	tar -C $(DISTROOT) -czf $(DISTTAR) .
+	scripts/check-tar-safe-paths.sh $(DISTTAR)
 	cp $(DISTTAR) $(DISTTAR_ALIAS)
 	if command -v sha256sum >/dev/null 2>&1; then (cd $(DISTDIR) && sha256sum $(notdir $(DISTTAR)) > $(notdir $(DISTTAR)).sha256); elif command -v shasum >/dev/null 2>&1; then (cd $(DISTDIR) && shasum -a 256 $(notdir $(DISTTAR)) > $(notdir $(DISTTAR)).sha256); elif command -v sha256 >/dev/null 2>&1; then (cd $(DISTDIR) && sha256 -r $(notdir $(DISTTAR)) > $(notdir $(DISTTAR)).sha256); else echo "missing sha256 tool" >&2; exit 1; fi
 	if command -v sha256sum >/dev/null 2>&1; then (cd $(DISTDIR) && sha256sum $(notdir $(DISTTAR_ALIAS)) > $(notdir $(DISTTAR_ALIAS)).sha256); elif command -v shasum >/dev/null 2>&1; then (cd $(DISTDIR) && shasum -a 256 $(notdir $(DISTTAR_ALIAS)) > $(notdir $(DISTTAR_ALIAS)).sha256); elif command -v sha256 >/dev/null 2>&1; then (cd $(DISTDIR) && sha256 -r $(notdir $(DISTTAR_ALIAS)) > $(notdir $(DISTTAR_ALIAS)).sha256); else echo "missing sha256 tool" >&2; exit 1; fi
@@ -316,6 +323,7 @@ dist-ndpi-agent-libndpi:
 	printf '%s\n' '$(DISTPLATFORM)' > $(ROUTERD_NDPI_AGENT_LIBNDPI_DISTROOT)/share/doc/TARGET
 	install -d $(DISTDIR)
 	tar -C $(ROUTERD_NDPI_AGENT_LIBNDPI_DISTROOT) -czf $(ROUTERD_NDPI_AGENT_LIBNDPI_TAR) .
+	scripts/check-tar-safe-paths.sh $(ROUTERD_NDPI_AGENT_LIBNDPI_TAR)
 	cp $(ROUTERD_NDPI_AGENT_LIBNDPI_TAR) $(ROUTERD_NDPI_AGENT_LIBNDPI_ALIAS)
 	if command -v sha256sum >/dev/null 2>&1; then (cd $(DISTDIR) && sha256sum $(notdir $(ROUTERD_NDPI_AGENT_LIBNDPI_TAR)) > $(notdir $(ROUTERD_NDPI_AGENT_LIBNDPI_TAR)).sha256); elif command -v shasum >/dev/null 2>&1; then (cd $(DISTDIR) && shasum -a 256 $(notdir $(ROUTERD_NDPI_AGENT_LIBNDPI_TAR)) > $(notdir $(ROUTERD_NDPI_AGENT_LIBNDPI_TAR)).sha256); elif command -v sha256 >/dev/null 2>&1; then (cd $(DISTDIR) && sha256 -r $(notdir $(ROUTERD_NDPI_AGENT_LIBNDPI_TAR)) > $(notdir $(ROUTERD_NDPI_AGENT_LIBNDPI_TAR)).sha256); else echo "missing sha256 tool" >&2; exit 1; fi
 	if command -v sha256sum >/dev/null 2>&1; then (cd $(DISTDIR) && sha256sum $(notdir $(ROUTERD_NDPI_AGENT_LIBNDPI_ALIAS)) > $(notdir $(ROUTERD_NDPI_AGENT_LIBNDPI_ALIAS)).sha256); elif command -v shasum >/dev/null 2>&1; then (cd $(DISTDIR) && shasum -a 256 $(notdir $(ROUTERD_NDPI_AGENT_LIBNDPI_ALIAS)) > $(notdir $(ROUTERD_NDPI_AGENT_LIBNDPI_ALIAS)).sha256); elif command -v sha256 >/dev/null 2>&1; then (cd $(DISTDIR) && sha256 -r $(notdir $(ROUTERD_NDPI_AGENT_LIBNDPI_ALIAS)) > $(notdir $(ROUTERD_NDPI_AGENT_LIBNDPI_ALIAS)).sha256); else echo "missing sha256 tool" >&2; exit 1; fi

@@ -109,6 +109,54 @@ func TestProviderActionPlansRouteTableStrategy(t *testing.T) {
 	}
 }
 
+func TestProviderActionTargetUsesCaptureTargetNICFallback(t *testing.T) {
+	profile := api.CloudProviderProfileSpec{Provider: "azure", SubscriptionID: "sub-1", ResourceGroup: "rg-router"}
+	target := providerActionTarget("cloudedge", profile, api.AddressCapture{
+		Type:        "provider-secondary-ip",
+		ProviderRef: "azure-provider",
+	}, map[string]string{
+		"nicRef": "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic",
+	}, "10.88.60.10/32")
+	if target["nicRef"] == "" {
+		t.Fatalf("target = %#v, want nicRef fallback from capture target", target)
+	}
+	if target["ipConfigName"] == "" {
+		t.Fatalf("target = %#v, want provider fields derived with fallback nicRef", target)
+	}
+}
+
+func TestProviderActionPlansFallsBackToCaptureTargetNICRef(t *testing.T) {
+	profile := api.CloudProviderProfileSpec{Provider: "azure", SubscriptionID: "sub-1", ResourceGroup: "rg-router"}
+	capture := api.AddressCapture{
+		Type:        "provider-secondary-ip",
+		ProviderRef: "azure-provider",
+	}
+	captureTarget := map[string]string{
+		"nicRef":       "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic",
+		"region":       "japaneast",
+		"ipConfigName": "capture-a",
+	}
+	plans, err := providerActionPlans("cloudedge", profile, capture, captureTarget, "10.88.60.10/32", map[string]bool{}, false)
+	if err != nil {
+		t.Fatalf("providerActionPlans: %v", err)
+	}
+	assign := findActionPlanByAddress(plans, actionAssignSecondaryIP, "10.88.60.10/32")
+	if assign == nil {
+		t.Fatalf("plans = %#v, want assign plan", plans)
+	}
+	if assign.Target["nicRef"] != captureTarget["nicRef"] {
+		t.Fatalf("assign target = %#v, want nicRef from captureTarget", assign.Target)
+	}
+
+	unassign, err := providerUnassignActionPlan("cloudedge", profile, capture, captureTarget, "10.88.60.10/32", time.Time{})
+	if err != nil {
+		t.Fatalf("providerUnassignActionPlan: %v", err)
+	}
+	if unassign.Target["nicRef"] != captureTarget["nicRef"] {
+		t.Fatalf("unassign target = %#v, want nicRef from captureTarget", unassign.Target)
+	}
+}
+
 func TestBGPCapturePlacementSeizesWhenActiveMarkerAbsentWithCanonicalNodeIdentity(t *testing.T) {
 	members := map[string]memberPlanInfo{
 		"aws-router-a": {

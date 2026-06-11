@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/controller/mobilityfib"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	"github.com/imksoo/routerd/pkg/hybrid"
 	"github.com/imksoo/routerd/pkg/mobilityconfig"
@@ -84,6 +85,7 @@ func buildDynamicRouteSAMView(startup *api.Router, store any, now time.Time, tar
 
 	routeRouter := effective
 	routeRouter = appendBGPMobilityCapturePrefixRoutes(effective, routeRouter, store)
+	routeRouter = appendBGPMobilityLocalInventoryRoutes(effective, routeRouter, store)
 	hybridLowerings := []hybrid.HybridLowering(nil)
 	if hybrid.HasHybridRoutes(&effective) {
 		expanded, lowerings, err := hybrid.ExpandHybridRoutes(routeRouter)
@@ -324,6 +326,72 @@ func bgpMobilityCapturePrefixRoute(poolName, prefix, device, preferredSource str
 			Device:          device,
 			PreferredSource: preferredSource,
 			Metric:          90,
+		},
+	}
+}
+
+func appendBGPMobilityLocalInventoryRoutes(effective, routeRouter api.Router, store any) api.Router {
+	selfByGroup := eventGroupSelfNodes(effective)
+	if len(selfByGroup) == 0 {
+		return routeRouter
+	}
+	aliases := interfaceIfNames(effective)
+	reader := statusReaderFromStore(store)
+	if reader == nil {
+		return routeRouter
+	}
+	snapshot := mobilityfib.NewSnapshot(&effective, reader)
+	var resources []api.Resource
+	for _, resource := range effective.Spec.Resources {
+		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "MobilityPool" {
+			continue
+		}
+		spec, err := resource.MobilityPoolSpec()
+		if err != nil || mobilityDeliveryMode(spec) != "bgp" {
+			continue
+		}
+		selfNode := strings.TrimSpace(selfByGroup[strings.TrimSpace(spec.GroupRef)])
+		if selfNode == "" {
+			continue
+		}
+		spec, _, err = mobilityconfig.NormalizeMobilityPool(spec, selfNode)
+		if err != nil {
+			continue
+		}
+		self, ok := mobilityPoolMemberByNode(spec.Members, selfNode)
+		if !ok || strings.TrimSpace(self.Capture.Type) != "provider-secondary-ip" {
+			continue
+		}
+		device := resolveInterfaceIfName(strings.TrimSpace(self.Capture.Interface), aliases)
+		if device == "" {
+			continue
+		}
+		for _, address := range snapshot.LocalRouteAddressesForPool(resource.Metadata.Name) {
+			resources = append(resources, bgpMobilityLocalInventoryRoute(resource.Metadata.Name, address, device))
+		}
+	}
+	if len(resources) == 0 {
+		return routeRouter
+	}
+	out := routeRouter
+	out.Spec.Resources = append(append([]api.Resource(nil), routeRouter.Spec.Resources...), resources...)
+	return out
+}
+
+func bgpMobilityLocalInventoryRoute(poolName, address, device string) api.Resource {
+	return api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4Route"},
+		Metadata: api.ObjectMeta{
+			Name: "sam-" + safeResourceName(poolName) + "-local-" + safeResourceName(strings.TrimSuffix(address, "/32")),
+			Annotations: map[string]string{
+				"mobility.routerd.net/pool":   poolName,
+				"mobility.routerd.net/source": "bgp-local-inventory",
+			},
+		},
+		Spec: api.IPv4RouteSpec{
+			Destination: address,
+			Device:      device,
+			Metric:      1,
 		},
 	}
 }

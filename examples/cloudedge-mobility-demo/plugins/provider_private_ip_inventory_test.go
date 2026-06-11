@@ -122,6 +122,34 @@ esac
 	assertNotSelfCaptured(t, res, "10.77.61.9/32")
 }
 
+func TestProviderPrivateIPInventoryPluginAWSClassifiesRemoteRouterFromInstanceTags(t *testing.T) {
+	requirePython(t)
+	bin := fakeBinDir(t)
+	writeExecutable(t, filepath.Join(bin, "aws"), `#!/bin/sh
+case "$*" in
+  *"--network-interface-ids eni-router-a"*)
+    printf '%s\n' '{"NetworkInterfaces":[{"NetworkInterfaceId":"eni-router-a","SubnetId":"subnet-a","SourceDestCheck":false,"PrivateIpAddresses":[{"PrivateIpAddress":"10.77.60.4","Primary":true}]}]}'
+    ;;
+  *"describe-instances"*)
+    printf '%s\n' '{"Reservations":[{"Instances":[{"InstanceId":"i-router-a","State":{"Name":"running"},"Tags":[{"Key":"role","Value":"router"}],"NetworkInterfaces":[{"NetworkInterfaceId":"eni-router-a"}]},{"InstanceId":"i-router-b","State":{"Name":"running"},"Tags":[{"Key":"Role","Value":"routerd-cloud"}],"NetworkInterfaces":[{"NetworkInterfaceId":"eni-router-b"}]},{"InstanceId":"i-client","State":{"Name":"running"},"Tags":[{"Key":"role","Value":"cloudedge-client"},{"Key":"Name","Value":"ce-router-client"}],"NetworkInterfaces":[{"NetworkInterfaceId":"eni-client"}]}]}]}'
+    ;;
+  *"Name=subnet-id,Values=subnet-a"*)
+    printf '%s\n' '{"NetworkInterfaces":[{"NetworkInterfaceId":"eni-router-a","SubnetId":"subnet-a","PrivateIpAddresses":[{"PrivateIpAddress":"10.77.60.4","Primary":true}]},{"NetworkInterfaceId":"eni-router-b","SubnetId":"subnet-a","SourceDestCheck":true,"PrivateIpAddresses":[{"PrivateIpAddress":"10.77.60.5","Primary":true}]},{"NetworkInterfaceId":"eni-client","SubnetId":"subnet-a","SourceDestCheck":true,"PrivateIpAddresses":[{"PrivateIpAddress":"10.77.60.11","Primary":false}]}]}'
+    ;;
+  *)
+    echo "unexpected aws args: $*" >&2
+    exit 2
+    ;;
+esac
+`)
+	res := runInventoryPlugin(t, bin, `{"spec":{"provider":"aws","strategy":"secondary-ip","prefix":"10.77.60.0/24","selfNicRef":"eni-router-a","target":{"region":"us-east-1"}}}`)
+	if res.Status.Status != "succeeded" {
+		t.Fatalf("status = %q error=%q", res.Status.Status, res.Status.Error)
+	}
+	assertResource(t, res, "10.77.60.5", "i-router-b", "router-nic")
+	assertResource(t, res, "10.77.60.11", "i-client", "instance-nic")
+}
+
 func TestProviderPrivateIPInventoryPluginAWSResolvesSelfFromLocalIP(t *testing.T) {
 	requirePython(t)
 	bin := fakeBinDir(t)
@@ -257,12 +285,40 @@ esac
 	}
 }
 
+func TestProviderPrivateIPInventoryPluginAzureClassifiesRemoteRouterFromVMTags(t *testing.T) {
+	requirePython(t)
+	bin := fakeBinDir(t)
+	writeExecutable(t, filepath.Join(bin, "az"), `#!/bin/sh
+case "$*" in
+  *"network nic show --ids /NIC/ROUTER-A"*)
+    printf '%s\n' '{"id":"/NIC/ROUTER-A","resourceGroup":"rg-demo","enableIPForwarding":true,"ipConfigurations":[{"subnet":{"id":"/subnets/demo"}}]}'
+    ;;
+  *"network nic list --resource-group rg-demo"*)
+    printf '%s\n' '[{"id":"/nic/router-a","ipConfigurations":[{"privateIPAddress":"10.77.60.4","primary":true,"subnet":{"id":"/subnets/demo"}}]},{"id":"/nic/node-b","enableIPForwarding":true,"ipConfigurations":[{"privateIPAddress":"10.77.60.5","primary":true,"subnet":{"id":"/subnets/demo"}}]},{"id":"/nic/ce-router-client","enableIPForwarding":true,"tags":{"role":"client"},"ipConfigurations":[{"privateIPAddress":"10.77.60.12","primary":false,"subnet":{"id":"/subnets/demo"}}]}]'
+    ;;
+  *"vm list --resource-group rg-demo"*)
+    printf '%s\n' '[{"id":"/vm/router-a","powerState":"VM running","tags":{"role":"router"},"networkProfile":{"networkInterfaces":[{"id":"/NIC/ROUTER-A"}]}},{"id":"/vm/router-b","powerState":"VM running","tags":{"Role":"routerd-cloud"},"networkProfile":{"networkInterfaces":[{"id":"/NIC/NODE-B"}]}},{"id":"/vm/client","powerState":"VM running","tags":{"Name":"routerd-cloud-client"},"networkProfile":{"networkInterfaces":[{"id":"/NIC/CE-ROUTER-CLIENT"}]}}]'
+    ;;
+  *)
+    echo "unexpected az args: $*" >&2
+    exit 2
+    ;;
+esac
+`)
+	res := runInventoryPlugin(t, bin, `{"spec":{"provider":"azure","strategy":"secondary-ip","prefix":"10.77.60.0/24","selfNicRef":"/NIC/ROUTER-A","target":{"resourceGroup":"rg-demo"}}}`)
+	if res.Status.Status != "succeeded" {
+		t.Fatalf("status = %q error=%q", res.Status.Status, res.Status.Error)
+	}
+	assertResource(t, res, "10.77.60.5", "/vm/router-b", "router-nic")
+	assertResource(t, res, "10.77.60.12", "/vm/client", "instance-nic")
+}
+
 func TestProviderPrivateIPInventoryPluginAzureUsesManagedIdentityARM(t *testing.T) {
 	requirePython(t)
 	const (
-		subnet = "/subscriptions/sub-demo/resourceGroups/rg-demo/providers/Microsoft.Network/virtualNetworks/vnet-demo/subnets/subnet-demo"
-		router = "/subscriptions/sub-demo/resourceGroups/rg-demo/providers/Microsoft.Network/networkInterfaces/nic-router"
-		client = "/subscriptions/sub-demo/resourceGroups/rg-demo/providers/Microsoft.Network/networkInterfaces/nic-client"
+		subnet     = "/subscriptions/sub-demo/resourceGroups/rg-demo/providers/Microsoft.Network/virtualNetworks/vnet-demo/subnets/subnet-demo"
+		router     = "/subscriptions/sub-demo/resourceGroups/rg-demo/providers/Microsoft.Network/networkInterfaces/nic-router"
+		client     = "/subscriptions/sub-demo/resourceGroups/rg-demo/providers/Microsoft.Network/networkInterfaces/nic-client"
 		routeTable = "/subscriptions/sub-demo/resourceGroups/rg-demo/providers/Microsoft.Network/routeTables/rt-cloudedge"
 	)
 	var arm *httptest.Server
@@ -414,7 +470,7 @@ case "$*" in
     ;;
 esac
 `)
-	res := runInventoryPlugin(t, bin, `{"spec":{"provider":"oci","selfNicRef":"vnic-router","target":{"region":"ap-tokyo-1"}}}`)
+	res := runInventoryPluginWithEnv(t, bin, `{"spec":{"provider":"oci","selfNicRef":"vnic-router","target":{"region":"ap-tokyo-1"}}}`, []string{"ROUTERD_PROVIDER_INVENTORY_OCI_IMDS_DISABLE=1"})
 	if res.Status.Status != "succeeded" {
 		t.Fatalf("status = %q error=%q", res.Status.Status, res.Status.Error)
 	}
@@ -426,6 +482,126 @@ esac
 	}
 	assertIP(t, res, "10.77.60.13", "vnic-client", "subnet-oci")
 	assertLocalIP(t, res, "10.77.60.13")
+}
+
+func TestProviderPrivateIPInventoryPluginOCISucceedsWhenRemoteVNICDetailTimesOut(t *testing.T) {
+	requirePython(t)
+	bin := fakeBinDir(t)
+	writeExecutable(t, filepath.Join(bin, "oci"), `#!/bin/sh
+case "$*" in
+  *"network vnic get --vnic-id vnic-router"*)
+    printf '%s\n' '{"data":{"id":"vnic-router","subnet-id":"subnet-oci","compartment-id":"compartment-demo","skip-source-dest-check":true}}'
+    ;;
+  *"network vnic get --vnic-id vnic-client"*)
+    sleep 2
+    printf '%s\n' '{"data":{"id":"vnic-client","subnet-id":"subnet-oci"}}'
+    ;;
+  *"compute vnic-attachment list --compartment-id compartment-demo"*)
+    printf '%s\n' '{"data":[{"vnic-id":"vnic-router","instance-id":"i-router"},{"vnic-id":"vnic-client","instance-id":"i-client"}]}'
+    ;;
+  *"compute instance list --compartment-id compartment-demo"*)
+    printf '%s\n' '{"data":[{"id":"i-router","lifecycle-state":"RUNNING","freeform-tags":{"role":"router"}},{"id":"i-client","lifecycle-state":"RUNNING","freeform-tags":{"role":"client"}}]}'
+    ;;
+  *"network private-ip list --subnet-id subnet-oci"*)
+    printf '%s\n' '{"data":[{"ip-address":"10.77.60.23","vnic-id":"vnic-router","subnet-id":"subnet-oci","is-primary":true},{"ip-address":"10.77.60.13","vnic-id":"vnic-client","subnet-id":"subnet-oci","is-primary":false}]}'
+    ;;
+  *)
+    echo "unexpected oci args: $*" >&2
+    exit 2
+    ;;
+esac
+`)
+	res := runInventoryPluginWithEnv(t, bin, `{"spec":{"provider":"oci","selfNicRef":"vnic-router","target":{"region":"ap-tokyo-1"}}}`, []string{
+		"ROUTERD_PROVIDER_INVENTORY_OCI_IMDS_DISABLE=1",
+		"ROUTERD_PROVIDER_INVENTORY_OCI_VNIC_DETAIL_TIMEOUT=0.1",
+	})
+	if res.Status.Status != "succeeded" {
+		t.Fatalf("status = %q error=%q", res.Status.Status, res.Status.Error)
+	}
+	assertIP(t, res, "10.77.60.13", "vnic-client", "subnet-oci")
+	assertResource(t, res, "10.77.60.13", "i-client", "instance-nic")
+}
+
+func TestProviderPrivateIPInventoryPluginOCIClassifiesRemoteRouterFromInstanceTags(t *testing.T) {
+	requirePython(t)
+	bin := fakeBinDir(t)
+	writeExecutable(t, filepath.Join(bin, "oci"), `#!/bin/sh
+case "$*" in
+  *"network vnic get --vnic-id vnic-router-a"*)
+    printf '%s\n' '{"data":{"id":"vnic-router-a","subnet-id":"subnet-oci","compartment-id":"compartment-demo","skip-source-dest-check":true}}'
+    ;;
+  *"network vnic get --vnic-id vnic-router-b"*)
+    echo "remote vnic details unavailable" >&2
+    exit 1
+    ;;
+  *"compute vnic-attachment list --compartment-id compartment-demo"*)
+    printf '%s\n' '{"data":[{"vnic-id":"vnic-router-a","instance-id":"i-router-a"},{"vnic-id":"vnic-router-b","instance-id":"i-router-b"},{"vnic-id":"vnic-client","instance-id":"i-client"}]}'
+    ;;
+  *"compute instance list --compartment-id compartment-demo"*)
+    printf '%s\n' '{"data":[{"id":"i-router-a","lifecycle-state":"RUNNING","freeform-tags":{"role":"router"}},{"id":"i-router-b","lifecycle-state":"RUNNING","freeform-tags":{"Role":"routerd-cloud","Name":"routerd-cloud-b-clean"}},{"id":"i-client","lifecycle-state":"RUNNING","freeform-tags":{"Role":"cloudedge-client","Name":"routerd-cloud-client"}}]}'
+    ;;
+  *"network private-ip list --subnet-id subnet-oci"*)
+    printf '%s\n' '{"data":[{"ip-address":"10.77.60.4","vnic-id":"vnic-router-a","subnet-id":"subnet-oci","is-primary":true},{"ip-address":"10.77.60.5","vnic-id":"vnic-router-b","subnet-id":"subnet-oci","is-primary":true},{"ip-address":"10.77.60.13","vnic-id":"vnic-client","subnet-id":"subnet-oci","is-primary":false}]}'
+    ;;
+  *)
+    echo "unexpected oci args: $*" >&2
+    exit 2
+    ;;
+esac
+`)
+	res := runInventoryPluginWithEnv(t, bin, `{"spec":{"provider":"oci","selfNicRef":"vnic-router-a","target":{"region":"ap-tokyo-1"}}}`, []string{"ROUTERD_PROVIDER_INVENTORY_OCI_IMDS_DISABLE=1"})
+	if res.Status.Status != "succeeded" {
+		t.Fatalf("status = %q error=%q", res.Status.Status, res.Status.Error)
+	}
+	assertResource(t, res, "10.77.60.5", "i-router-b", "router-nic")
+	assertResource(t, res, "10.77.60.13", "i-client", "instance-nic")
+}
+
+func TestProviderPrivateIPInventoryPluginOCIUsesExplicitCLIPath(t *testing.T) {
+	requirePython(t)
+	bin := fakeBinDir(t)
+	cli := filepath.Join(bin, "oci-real")
+	writeExecutable(t, cli, `#!/bin/sh
+case "$*" in
+  *"network vnic get --vnic-id vnic-router"*)
+    printf '%s\n' '{"data":{"id":"vnic-router","subnet-id":"subnet-oci","skip-source-dest-check":true}}'
+    ;;
+  *"network private-ip list --subnet-id subnet-oci"*)
+    printf '%s\n' '{"data":[{"ip-address":"10.77.60.13","vnic-id":"vnic-client","subnet-id":"subnet-oci","is-primary":false}]}'
+    ;;
+  *)
+    echo "unexpected oci args: $*" >&2
+    exit 2
+    ;;
+esac
+`)
+	if err := os.WriteFile(filepath.Join(bin, "oci"), []byte("#!/bin/sh\nexit 99\n"), 0o644); err != nil {
+		t.Fatalf("write non-executable oci: %v", err)
+	}
+	res := runInventoryPluginWithEnv(t, bin, `{"spec":{"provider":"oci","selfNicRef":"vnic-router","target":{"region":"ap-tokyo-1"}}}`, []string{
+		"ROUTERD_PROVIDER_INVENTORY_OCI_IMDS_DISABLE=1",
+		"OCI_CLI_PATH=" + cli,
+	})
+	if res.Status.Status != "succeeded" {
+		t.Fatalf("status = %q error=%q", res.Status.Status, res.Status.Error)
+	}
+	assertIP(t, res, "10.77.60.13", "vnic-client", "subnet-oci")
+}
+
+func TestProviderPrivateIPInventoryPluginOCIReportsNonExecutableCLIPath(t *testing.T) {
+	requirePython(t)
+	bin := fakeBinDir(t)
+	cli := filepath.Join(bin, "oci")
+	if err := os.WriteFile(cli, []byte("#!/bin/sh\nexit 0\n"), 0o644); err != nil {
+		t.Fatalf("write non-executable oci: %v", err)
+	}
+	res := runInventoryPluginWithEnv(t, bin, `{"spec":{"provider":"oci","selfNicRef":"vnic-router","target":{"region":"ap-tokyo-1"}}}`, []string{
+		"ROUTERD_PROVIDER_INVENTORY_OCI_IMDS_DISABLE=1",
+		"OCI_CLI_PATH=" + cli,
+	})
+	if res.Status.Status != "failed" || !strings.Contains(res.Status.Error, "OCI_CLI_PATH") || !strings.Contains(res.Status.Error, "not executable") {
+		t.Fatalf("status=%q error=%q, want explicit non-executable OCI_CLI_PATH error", res.Status.Status, res.Status.Error)
+	}
 }
 
 func TestProviderPrivateIPInventoryPluginOCIResolvesSelfFromEnv(t *testing.T) {
@@ -445,7 +621,10 @@ case "$*" in
     ;;
 esac
 `)
-	res := runInventoryPluginWithEnv(t, bin, `{"spec":{"provider":"oci","target":{"region":"ap-tokyo-1"}}}`, []string{"ROUTERD_PROVIDER_INVENTORY_SELF_NIC_REF=vnic-router-b"})
+	res := runInventoryPluginWithEnv(t, bin, `{"spec":{"provider":"oci","target":{"region":"ap-tokyo-1"}}}`, []string{
+		"ROUTERD_PROVIDER_INVENTORY_OCI_IMDS_DISABLE=1",
+		"ROUTERD_PROVIDER_INVENTORY_SELF_NIC_REF=vnic-router-b",
+	})
 	if res.Status.Status != "succeeded" {
 		t.Fatalf("status = %q error=%q", res.Status.Status, res.Status.Error)
 	}
@@ -456,6 +635,29 @@ esac
 		t.Fatalf("self.forwardingEnabled = %#v, want false", res.Status.Self.ForwardingEnabled)
 	}
 	assertIP(t, res, "10.77.60.13", "vnic-client", "subnet-oci")
+}
+
+func TestProviderPrivateIPInventoryPluginOCIRejectsSelfVNICMismatch(t *testing.T) {
+	requirePython(t)
+	imds := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/opc/v2/vnics/":
+			_, _ = w.Write([]byte(`[{"vnicId":"vnic-router-b"}]`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer imds.Close()
+	bin := fakeBinDir(t)
+	res := runInventoryPluginWithEnv(t, bin, `{"spec":{"provider":"oci","selfNicRef":"vnic-client","target":{"region":"ap-tokyo-1"}}}`, []string{
+		"ROUTERD_PROVIDER_INVENTORY_OCI_IMDS_BASE=" + imds.URL,
+	})
+	if res.Status.Status != "failed" {
+		t.Fatalf("status = %q error=%q, want failed", res.Status.Status, res.Status.Error)
+	}
+	if !strings.Contains(res.Status.Error, "does not match IMDS self VNIC") {
+		t.Fatalf("error = %q, want IMDS mismatch", res.Status.Error)
+	}
 }
 
 func TestProviderPrivateIPInventoryPluginAWSReportsInstanceState(t *testing.T) {
@@ -511,7 +713,7 @@ case "$*" in
     ;;
 esac
 `)
-	res := runInventoryPlugin(t, bin, `{"spec":{"provider":"oci","selfNicRef":"vnic-router","target":{"region":"ap-tokyo-1"}}}`)
+	res := runInventoryPluginWithEnv(t, bin, `{"spec":{"provider":"oci","selfNicRef":"vnic-router","target":{"region":"ap-tokyo-1"}}}`, []string{"ROUTERD_PROVIDER_INVENTORY_OCI_IMDS_DISABLE=1"})
 	if res.Status.Status != "succeeded" {
 		t.Fatalf("status = %q error=%q", res.Status.Status, res.Status.Error)
 	}
@@ -521,6 +723,38 @@ esac
 	assertResource(t, res, "10.77.60.19", "i-stopped", "instance-nic")
 	assertInstanceState(t, res, "10.77.60.19", "stopped")
 	assertInstanceState(t, res, "10.77.60.13", "running")
+}
+
+func TestProviderPrivateIPInventoryPluginOCISucceedsWhenSelfVNICMetadataDeniedWithSubnet(t *testing.T) {
+	requirePython(t)
+	bin := fakeBinDir(t)
+	writeExecutable(t, filepath.Join(bin, "oci"), `#!/bin/sh
+case "$*" in
+  *"network vnic get --vnic-id vnic-router"*)
+    echo "NotAuthorizedOrNotFound" >&2
+    exit 1
+    ;;
+  *"network private-ip list --subnet-id subnet-oci"*)
+    printf '%s\n' '{"data":[{"ip-address":"10.77.60.23","vnic-id":"vnic-router","subnet-id":"subnet-oci","is-primary":true},{"ip-address":"10.77.60.13","vnic-id":"vnic-client","subnet-id":"subnet-oci","is-primary":false,"freeform-tags":{"role":"client"}}]}'
+    ;;
+  *)
+    echo "unexpected oci args: $*" >&2
+    exit 2
+    ;;
+esac
+`)
+	res := runInventoryPluginWithEnv(t, bin, `{"spec":{"provider":"oci","selfNicRef":"vnic-router","subnetRef":"subnet-oci","target":{"region":"ap-tokyo-1"}}}`, []string{"ROUTERD_PROVIDER_INVENTORY_OCI_IMDS_DISABLE=1"})
+	if res.Status.Status != "succeeded" {
+		t.Fatalf("status = %q error=%q", res.Status.Status, res.Status.Error)
+	}
+	if res.Status.Self.NICRef != "vnic-router" || res.Status.Self.SubnetRef != "subnet-oci" {
+		t.Fatalf("self = %+v, want vnic-router/subnet-oci", res.Status.Self)
+	}
+	if res.Status.Self.ForwardingEnabled != nil {
+		t.Fatalf("self.forwardingEnabled = %#v, want unknown when self VNIC metadata is denied", res.Status.Self.ForwardingEnabled)
+	}
+	assertIP(t, res, "10.77.60.13", "vnic-client", "subnet-oci")
+	assertLocalIP(t, res, "10.77.60.23")
 }
 
 func TestProviderPrivateIPInventoryPluginAzureReportsInstanceState(t *testing.T) {

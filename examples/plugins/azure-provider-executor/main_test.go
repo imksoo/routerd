@@ -46,6 +46,9 @@ func (f *fakeAz) run(ctx context.Context, argv ...string) ([]byte, error) {
 		if f.listOut != nil {
 			return f.listOut, nil
 		}
+		if strings.Join(toks, " ") == "network nic ip-config list" {
+			return cannedIPConfigList("ipcfg-mobility", "10.88.60.9"), nil
+		}
 		return cannedNICList("rg1", "nic1", "ipcfg-mobility", "10.88.60.9"), nil
 	}
 	// Mutating verbs return a benign (ignored) JSON body.
@@ -268,6 +271,40 @@ func joinedCalls(calls [][]string) []string {
 	return out
 }
 
+func stripQueryFromCall(call string) string {
+	if i := strings.Index(call, " --query "); i != -1 {
+		return call[:i]
+	}
+	return call
+}
+
+func joinedCallsWithoutQuery(calls [][]string) []string {
+	out := make([]string, 0, len(calls))
+	for _, call := range calls {
+		out = append(out, stripQueryFromCall(strings.Join(call, " ")))
+	}
+	return out
+}
+
+func containsCallWithoutQuery(calls []string, want string) bool {
+	for _, call := range calls {
+		if stripQueryFromCall(call) == want {
+			return true
+		}
+	}
+	return false
+}
+
+func countCallWithoutQuery(calls []string, want string) int {
+	count := 0
+	for _, call := range calls {
+		if stripQueryFromCall(call) == want {
+			count++
+		}
+	}
+	return count
+}
+
 func containsCall(calls []string, want string) bool {
 	for _, call := range calls {
 		if call == want {
@@ -468,6 +505,7 @@ func TestAssignExecuteAllowReassignmentDeletesOldThenCreatesSelf(t *testing.T) {
 		t.Fatalf("want succeeded, got %q err=%q message=%q", res.Status.Status, res.Status.Error, res.Status.Message)
 	}
 	got := joinedCalls(f.calls)
+	gotNoQuery := joinedCallsWithoutQuery(f.calls)
 	want := []string{
 		"network nic show --ids /subscriptions/s1/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/nic1",
 		"network nic ip-config list --resource-group rg1 --nic-name nic-old",
@@ -476,7 +514,7 @@ func TestAssignExecuteAllowReassignmentDeletesOldThenCreatesSelf(t *testing.T) {
 		"network nic show --ids /subscriptions/s1/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/nic1",
 		"network nic ip-config list --resource-group rg1 --nic-name nic-old",
 	}
-	if fmt.Sprint(got) != fmt.Sprint(want) {
+	if fmt.Sprint(gotNoQuery) != fmt.Sprint(want) {
 		t.Fatalf("seize calls mismatch:\n got: %v\nwant: %v", got, want)
 	}
 	if res.Status.Observed["assignedAddress"] != "10.88.60.9" || res.Status.Observed["ipConfigName"] != "ipcfg-mobility" {
@@ -499,7 +537,7 @@ func TestAssignExecuteAllowReassignmentFallsBackToInventoryDiscovery(t *testing.
 	if len(got) < 3 || got[1] != "network nic list --resource-group rg1" {
 		t.Fatalf("calls = %v, want inventory discovery via nic list", got)
 	}
-	if !containsCall(got, "network nic ip-config delete --resource-group rg1 --nic-name nic-old --name ipcfg-mobility") {
+	if !containsCallWithoutQuery(got, "network nic ip-config delete --resource-group rg1 --nic-name nic-old --name ipcfg-mobility") {
 		t.Fatalf("calls = %v, want delete of discovered old holder", got)
 	}
 }
@@ -517,7 +555,7 @@ func TestAssignExecuteAllowReassignmentParsesNestedPrivateIPAddress(t *testing.T
 	if res.Status.Status != statusSucceeded {
 		t.Fatalf("want succeeded, got %q err=%q message=%q", res.Status.Status, res.Status.Error, res.Status.Message)
 	}
-	if !containsCall(joinedCalls(f.calls), "network nic ip-config delete --resource-group rg1 --nic-name nic-old --name ipcfg-mobility") {
+	if !containsCallWithoutQuery(joinedCalls(f.calls), "network nic ip-config delete --resource-group rg1 --nic-name nic-old --name ipcfg-mobility") {
 		t.Fatalf("calls = %v, want old holder discovered from nested privateIpAddress", joinedCalls(f.calls))
 	}
 }
@@ -559,7 +597,7 @@ func TestAssignExecuteAllowReassignmentRetriesAfterRemoveSucceededAddFailed(t *t
 	if res.Status.Status != statusSucceeded {
 		t.Fatalf("retry should add self after old removal, got %q err=%q", res.Status.Status, res.Status.Error)
 	}
-	if !containsCall(joinedCalls(retry.calls), "network nic ip-config create --resource-group rg1 --nic-name nic1 --name ipcfg-mobility --private-ip-address 10.88.60.9") {
+	if !containsCallWithoutQuery(joinedCalls(retry.calls), "network nic ip-config create --resource-group rg1 --nic-name nic1 --name ipcfg-mobility --private-ip-address 10.88.60.9") {
 		t.Fatalf("retry calls = %v, want create self", joinedCalls(retry.calls))
 	}
 }
@@ -607,7 +645,7 @@ func TestAssignExecuteAllowReassignmentWaitsForEventualSelfAndOldVisibility(t *t
 		t.Fatalf("calls = %v, want initial show plus repeated self verify", got)
 	}
 	oldList := "network nic ip-config list --resource-group rg1 --nic-name nic-old"
-	if countCall(got, oldList) < 3 {
+	if countCallWithoutQuery(got, oldList) < 3 {
 		t.Fatalf("calls = %v, want holder discovery plus repeated old release verify", got)
 	}
 }
@@ -641,7 +679,7 @@ func TestAssignExecuteAllowReassignmentDeleteFailureIsRetriedLater(t *testing.T)
 	if !f.oldHolds {
 		t.Fatal("old holder should remain when delete fails before removal")
 	}
-	if containsCall(joinedCalls(f.calls), "network nic ip-config create --resource-group rg1 --nic-name nic1 --name ipcfg-mobility --private-ip-address 10.88.60.9") {
+	if containsCallWithoutQuery(joinedCalls(f.calls), "network nic ip-config create --resource-group rg1 --nic-name nic1 --name ipcfg-mobility --private-ip-address 10.88.60.9") {
 		t.Fatalf("calls = %v, must not create self after old delete failed", joinedCalls(f.calls))
 	}
 }
@@ -675,7 +713,7 @@ func TestAssignExecuteAllowReassignmentConflictRediscovery(t *testing.T) {
 		t.Fatalf("conflict rediscovery should delete holder and retry create, got status=%q message=%q err=%q", res.Status.Status, res.Status.Message, res.Status.Error)
 	}
 	got := joinedCalls(f.calls)
-	if !containsCall(got, "network nic ip-config delete --resource-group rg1 --nic-name nic-old --name ipcfg-mobility") {
+	if !containsCallWithoutQuery(got, "network nic ip-config delete --resource-group rg1 --nic-name nic-old --name ipcfg-mobility") {
 		t.Fatalf("calls = %v, want delete after rediscovery", got)
 	}
 	createCount := 0
@@ -687,7 +725,7 @@ func TestAssignExecuteAllowReassignmentConflictRediscovery(t *testing.T) {
 	if createCount != 2 {
 		t.Fatalf("calls = %v, want create attempted twice around conflict", got)
 	}
-	if !containsCall(got, "network nic ip-config list --resource-group rg1 --nic-name nic-old") {
+	if !containsCallWithoutQuery(got, "network nic ip-config list --resource-group rg1 --nic-name nic-old") {
 		t.Fatalf("calls = %v, want displaced verify after conflict retry", got)
 	}
 }
@@ -790,15 +828,284 @@ func TestUnassignExecuteDeletesIPConfig(t *testing.T) {
 		t.Fatalf("want succeeded, got %q err=%q", res.Status.Status, res.Status.Error)
 	}
 	if len(f.calls) != 1 {
-		t.Fatalf("execute unassign should issue exactly one call, got %v", f.calls)
+		t.Fatalf("execute unassign should only delete, got %v", f.calls)
 	}
-	got := strings.Join(f.calls[0], " ")
-	want := "network nic ip-config delete --resource-group rg1 --nic-name nic1 --name ipcfg-mobility"
-	if got != want {
-		t.Fatalf("unassign argv mismatch:\n got: %s\nwant: %s", got, want)
+	gotNoQuery := joinedCallsWithoutQuery(f.calls)
+	want := []string{"network nic ip-config delete --resource-group rg1 --nic-name nic1 --name ipcfg-mobility"}
+	if gotNoQuery[0] != want[0] {
+		t.Fatalf("unassign argv mismatch:\n got: %s\nwant: %s", gotNoQuery[0], want[0])
 	}
 	if strings.Contains(res.Status.Message, "/32") {
 		t.Fatalf("unassign message should not leak CIDR-form address, got %q", res.Status.Message)
+	}
+}
+
+func TestUnassignExecuteSucceedsWhenIPConfigAlreadyAbsent(t *testing.T) {
+	callCount := 0
+	runner := func(ctx context.Context, argv ...string) ([]byte, error) {
+		callCount++
+		joined := strings.Join(leadingTokens(argv), " ")
+		switch joined {
+		case "network nic ip-config delete":
+			return nil, fmt.Errorf("azure CLI failed: ResourceNotFound")
+		case "network nic show":
+			return cannedNICShow(false), nil
+		default:
+			return nil, fmt.Errorf("unexpected call: %v", argv)
+		}
+	}
+	res := dispatchWith(reqSpec(actionUnassignSecondaryIP, modeExecute), runner)
+	if res.Status.Status != statusSucceeded {
+		t.Fatalf("want succeeded, got %q err=%q", res.Status.Status, res.Status.Error)
+	}
+	if !strings.Contains(res.Status.Message, "already absent") {
+		t.Fatalf("message = %q, want already absent", res.Status.Message)
+	}
+	if callCount != 2 {
+		t.Fatalf("expected delete+show fallback calls, got %d", callCount)
+	}
+}
+
+func TestUnassignExecuteDeletesWhenDeleteReturnsNotFound(t *testing.T) {
+	callCount := 0
+	runner := func(ctx context.Context, argv ...string) ([]byte, error) {
+		callCount++
+		joined := strings.Join(leadingTokens(argv), " ")
+		switch joined {
+		case "network nic ip-config delete":
+			return nil, fmt.Errorf("azure CLI failed: ResourceNotFound")
+		case "network nic show":
+			return cannedNICShowWithConfig(false, "ipcfg-renamed", "10.88.60.9"), nil
+		default:
+			return nil, fmt.Errorf("unexpected call: %v", argv)
+		}
+	}
+	res := dispatchWith(reqSpec(actionUnassignSecondaryIP, modeExecute), runner)
+	if res.Status.Status != statusSucceeded {
+		t.Fatalf("want succeeded, got %q err=%q", res.Status.Status, res.Status.Error)
+	}
+	if callCount != 3 {
+		t.Fatalf("expected delete+show+delete calls, got %d", callCount)
+	}
+	if !strings.Contains(res.Status.Message, "unassigned") {
+		t.Fatalf("message = %q, want unassigned", res.Status.Message)
+	}
+}
+
+func TestUnassignExecuteFallsBackToDeleteWhenShowContainsAddress(t *testing.T) {
+	withNoRetrySleep(t)
+	callCount := 0
+	var calls []string
+	runner := func(ctx context.Context, argv ...string) ([]byte, error) {
+		callCount++
+		calls = append(calls, strings.Join(argv, " "))
+		joined := strings.Join(leadingTokens(argv), " ")
+		switch joined {
+		case "network nic ip-config delete":
+			if callCount == 1 {
+				return nil, fmt.Errorf("azure CLI failed: ResourceNotFound")
+			}
+			return []byte(`{}`), nil
+		case "network nic show":
+			return cannedNICShowWithConfig(false, "ipcfg-renamed", "10.88.60.9"), nil
+		default:
+			return nil, fmt.Errorf("unexpected call: %v", argv)
+		}
+	}
+	res := dispatchWith(reqSpec(actionUnassignSecondaryIP, modeExecute), runner)
+	if res.Status.Status != statusSucceeded {
+		t.Fatalf("want succeeded, got %q err=%q", res.Status.Status, res.Status.Error)
+	}
+	if callCount != 3 {
+		t.Fatalf("expected delete + show + delete by discovered ip-config name, got=%d", callCount)
+	}
+	want := []string{
+		"network nic ip-config delete --resource-group rg1 --nic-name nic1 --name ipcfg-mobility",
+		"network nic show --ids /subscriptions/s1/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/nic1",
+		"network nic ip-config delete --resource-group rg1 --nic-name nic1 --name ipcfg-renamed",
+	}
+	if len(calls) != len(want) {
+		t.Fatalf("calls = %v, want length %d", calls, len(want))
+	}
+	for i := range want {
+		if stripQueryFromCall(calls[i]) != want[i] {
+			t.Fatalf("unassign calls mismatch at %d:\n got=%q\nwant=%q", i, calls[i], want[i])
+		}
+	}
+}
+
+func TestUnassignExecuteRequiresTargetAddress(t *testing.T) {
+	f := &fakeAz{}
+	spec := reqSpec(actionUnassignSecondaryIP, modeExecute)
+	delete(spec.Target, "address")
+	res := dispatchWith(spec, f.run)
+	if res.Status.Status != statusFailed {
+		t.Fatalf("missing target.address should fail, got %q", res.Status.Status)
+	}
+	if len(f.calls) != 0 {
+		t.Fatalf("missing target.address should not invoke az, got %v", f.calls)
+	}
+}
+
+func TestUnassignExecuteRetriesDeleteWithRetryableError(t *testing.T) {
+	withNoRetrySleep(t)
+	callCount := 0
+	var calls []string
+	runner := func(ctx context.Context, argv ...string) ([]byte, error) {
+		callCount++
+		calls = append(calls, strings.Join(argv, " "))
+		joined := strings.Join(leadingTokens(argv), " ")
+		switch joined {
+		case "network nic ip-config delete":
+			if callCount < 3 {
+				return nil, fmt.Errorf("azure CLI failed: signal: killed")
+			}
+			return []byte(`{}`), nil
+		default:
+			return nil, fmt.Errorf("unexpected call: %v", argv)
+		}
+	}
+	res := dispatchWith(reqSpec(actionUnassignSecondaryIP, modeExecute), runner)
+	if res.Status.Status != statusSucceeded {
+		t.Fatalf("want succeeded, got %q err=%q", res.Status.Status, res.Status.Error)
+	}
+	if callCount != 3 {
+		t.Fatalf("delete retryable should attempt 3 calls, got=%d", callCount)
+	}
+	want := []string{
+		"network nic ip-config delete --resource-group rg1 --nic-name nic1 --name ipcfg-mobility",
+		"network nic ip-config delete --resource-group rg1 --nic-name nic1 --name ipcfg-mobility",
+		"network nic ip-config delete --resource-group rg1 --nic-name nic1 --name ipcfg-mobility",
+	}
+	if len(calls) != len(want) {
+		t.Fatalf("calls = %v, want length %d", calls, len(want))
+	}
+	for i := range want {
+		if stripQueryFromCall(calls[i]) != want[i] {
+			t.Fatalf("unassign calls mismatch at %d:\n got=%q\nwant=%q", i, calls[i], want[i])
+		}
+	}
+}
+
+func TestListIPConfigsUsesQueryAndRetriesTransientFailure(t *testing.T) {
+	withNoRetrySleep(t)
+	callCount := 0
+	var lastCall []string
+	runner := func(ctx context.Context, argv ...string) ([]byte, error) {
+		callCount++
+		lastCall = append([]string(nil), argv...)
+		if callCount == 1 {
+			return nil, fmt.Errorf("azure CLI failed: signal: killed")
+		}
+		if strings.Join(leadingTokens(argv), " ") == "network nic ip-config list" {
+			out := cannedIPConfigList("ipcfg-mobility", "10.88.60.9")
+			return out, nil
+		}
+		return []byte(`[]`), nil
+	}
+	configs, err := listIPConfigs(context.Background(), runner, "rg1", "nic1")
+	if err != nil {
+		t.Fatalf("listIPConfigs should retry and succeed, got err=%v", err)
+	}
+	if callCount != 2 {
+		t.Fatalf("listIPConfigs should retry once on transient failure, got calls=%d", callCount)
+	}
+	if len(configs) != 1 || configs[0].Name != "ipcfg-mobility" || configs[0].PrivateIPAddress != "10.88.60.9" {
+		t.Fatalf("unexpected ip-configs: %+v", configs)
+	}
+	if lastCall == nil || !strings.Contains(strings.Join(lastCall, " "), "--query") {
+		t.Fatalf("list call should include --query, got %v", lastCall)
+	}
+}
+
+func TestCreateIPConfigRetriesTransientFailure(t *testing.T) {
+	withNoRetrySleep(t)
+	callCount := 0
+	var calls []string
+	runner := func(ctx context.Context, argv ...string) ([]byte, error) {
+		callCount++
+		calls = append(calls, strings.Join(argv, " "))
+		joined := strings.Join(leadingTokens(argv), " ")
+		switch joined {
+		case "network nic ip-config create":
+			if callCount < 3 {
+				return nil, fmt.Errorf("azure CLI failed: 429 too many requests")
+			}
+			return []byte(`{}`), nil
+		default:
+			return nil, fmt.Errorf("unexpected call: %v", argv)
+		}
+	}
+
+	config := nicTarget{
+		resourceGroup: "rg1",
+		nicName:       "nic1",
+		ipConfigName:  "ipcfg-mobility",
+		address:       "10.88.60.9",
+	}
+	err := createIPConfig(context.Background(), runner, config)
+	if err != nil {
+		t.Fatalf("createIPConfig should succeed after retries, got err=%v calls=%v", err, calls)
+	}
+
+	if callCount != 3 {
+		t.Fatalf("ip-config create should retry twice before success, got %d calls (%v)", callCount, calls)
+	}
+}
+
+func TestDeleteIPConfigRetriesTransientFailure(t *testing.T) {
+	withNoRetrySleep(t)
+	callCount := 0
+	var calls []string
+	runner := func(ctx context.Context, argv ...string) ([]byte, error) {
+		callCount++
+		calls = append(calls, strings.Join(argv, " "))
+		joined := strings.Join(leadingTokens(argv), " ")
+		switch joined {
+		case "network nic ip-config delete":
+			if callCount < 3 {
+				return nil, fmt.Errorf("azure CLI failed: temporary failure")
+			}
+			return []byte(`{}`), nil
+		default:
+			return nil, fmt.Errorf("unexpected call: %v", argv)
+		}
+	}
+
+	err := deleteIPConfig(context.Background(), runner, ipConfigHolder{resourceGroup: "rg1", nicName: "nic1", ipConfigName: "ipcfg-mobility"})
+	if err != nil {
+		t.Fatalf("deleteIPConfig should succeed after retries, got err=%v calls=%v", err, calls)
+	}
+
+	if callCount != 3 {
+		t.Fatalf("delete should retry twice before success, got calls=%d (%v)", callCount, calls)
+	}
+}
+
+func TestCommandTimeoutUsesDurationEnv(t *testing.T) {
+	t.Setenv(azCommandTimeoutEnv, "75s")
+	t.Setenv(legacyAzCommandTimeoutMsEnv, "")
+
+	if got := commandTimeout(); got != 75*time.Second {
+		t.Fatalf("commandTimeout() = %s, want 75s", got)
+	}
+}
+
+func TestCommandTimeoutUsesLegacyMillisecondsEnv(t *testing.T) {
+	t.Setenv(azCommandTimeoutEnv, "")
+	t.Setenv(legacyAzCommandTimeoutMsEnv, "45000")
+
+	if got := commandTimeout(); got != 45*time.Second {
+		t.Fatalf("commandTimeout() = %s, want 45s", got)
+	}
+}
+
+func TestCommandTimeoutIgnoresInvalidEnv(t *testing.T) {
+	t.Setenv(azCommandTimeoutEnv, "0")
+	t.Setenv(legacyAzCommandTimeoutMsEnv, "-1")
+
+	if got := commandTimeout(); got != defaultAzCommandTimeout {
+		t.Fatalf("commandTimeout() = %s, want default %s", got, defaultAzCommandTimeout)
 	}
 }
 

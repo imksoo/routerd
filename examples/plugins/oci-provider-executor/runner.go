@@ -7,7 +7,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -32,7 +34,11 @@ func execRunner(ctx context.Context, argv ...string) ([]byte, error) {
 	defer cancel()
 	full := append([]string(nil), argv...)
 	full = append(full, "--auth", "instance_principal", "--output", "json")
-	cmd := exec.CommandContext(runCtx, "oci", full...)
+	oci, err := resolveOCICommand()
+	if err != nil {
+		return nil, err
+	}
+	cmd := exec.CommandContext(runCtx, oci, full...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -40,6 +46,39 @@ func execRunner(ctx context.Context, argv ...string) ([]byte, error) {
 		return nil, fmt.Errorf("oci %s: %w: %s", strings.Join(full, " "), err, strings.TrimSpace(stderr.String()))
 	}
 	return stdout.Bytes(), nil
+}
+
+func resolveOCICommand() (string, error) {
+	if override := strings.TrimSpace(os.Getenv("OCI_CLI_PATH")); override != "" {
+		if err := executableFile(override); err != nil {
+			return "", fmt.Errorf("OCI_CLI_PATH=%s is not executable: %w", override, err)
+		}
+		return override, nil
+	}
+	if path, err := exec.LookPath("oci"); err == nil && executableFile(path) == nil {
+		return path, nil
+	}
+	for _, dir := range []string{"/usr/local/bin", "/usr/bin", "/bin", "/opt/oci-cli/bin"} {
+		path := filepath.Join(dir, "oci")
+		if executableFile(path) == nil {
+			return path, nil
+		}
+	}
+	return "", fmt.Errorf("OCI CLI \"oci\" was not found as an executable on PATH=%q; set OCI_CLI_PATH to an absolute executable path", os.Getenv("PATH"))
+}
+
+func executableFile(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if info.IsDir() {
+		return fmt.Errorf("is a directory")
+	}
+	if info.Mode().Perm()&0111 == 0 {
+		return fmt.Errorf("mode %s has no execute bit", info.Mode().Perm())
+	}
+	return nil
 }
 
 // guardedRunner wraps a runner so that ONLY read-only get/list verbs may be

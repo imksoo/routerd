@@ -8,7 +8,9 @@ metadata:
   name: azure-executor
 spec:
   executable: /usr/local/libexec/routerd/plugins/azure-provider-executor/bin/azure-provider-executor
-  timeout: 30s
+  timeout: 120s
+  env:
+    ROUTERD_AZURE_EXECUTOR_COMMAND_TIMEOUT: 60s
   capabilities:
     # Marks this Plugin as an EXECUTOR. RunExecutor refuses any plugin lacking
     # this capability. REAL — mutates Azure in execute mode only (dry-run issues

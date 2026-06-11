@@ -124,6 +124,9 @@ Template: `oci-policy.txt`.
 
 Create a dynamic group that matches only the router instances, then add the
 policy statements in the compartment containing the router VNIC and private IPs.
+Prefer a stable router tag or compartment/tag rule over matching concrete
+`instance.id` OCIDs. Instance OCIDs change when the lab VMs are rebuilt, so
+OCID-based dynamic groups are only appropriate for short-lived manual probes.
 Replace:
 
 - `<dynamic-group-name>` with the dynamic group name.
@@ -138,7 +141,8 @@ lifecycle state to private-IP records; the template therefore includes `read
 instances` and `inspect vnic-attachments`.
 
 Keep the dynamic group narrow. It should match the router instances only, not the
-demo clients and not the operator harness.
+demo clients and not the operator harness. If the lab uses tags, tag both OCI
+router instances at create time and match that tag in the dynamic group.
 
 ## Migration From Admin / Broad Roles
 

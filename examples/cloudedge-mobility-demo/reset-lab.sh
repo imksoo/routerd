@@ -54,10 +54,10 @@ if command -v oci >/dev/null; then
     oci network vnic update --vnic-id "$OCI_ROUTER_VNIC_REF" --skip-source-dest-check false \
       --config-file "$OCI_CONFIG_FILE" --profile "$OCI_PROFILE" --auth security_token || true
   fi
-  oci compute instance action --instance-id "$OCI_ROUTER_INSTANCE_REF" --action STOP \
-    --config-file "$OCI_CONFIG_FILE" --profile "$OCI_PROFILE" --auth security_token || true
-  oci compute instance action --instance-id "$OCI_CLIENT_INSTANCE_REF" --action STOP \
-    --config-file "$OCI_CONFIG_FILE" --profile "$OCI_PROFILE" --auth security_token || true
+  for instance_ref in ${OCI_ROUTER_INSTANCE_REF:-} ${OCI_ROUTER_B_INSTANCE_REF:-} ${OCI_CLIENT_INSTANCE_REF:-}; do
+    oci compute instance action --instance-id "$instance_ref" --action STOP \
+      --config-file "$OCI_CONFIG_FILE" --profile "$OCI_PROFILE" --auth security_token || true
+  done
 fi
 
 echo "reset issued; verify provider consoles/CLI state before leaving the lab"

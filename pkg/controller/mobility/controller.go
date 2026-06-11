@@ -181,6 +181,11 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 	}
 	selfNode = self.NodeRef
 	spec, selfCaptureResolved, selfCaptureReason := c.specWithDiscoveredSelfCapture(res.Metadata.Name, selfNode, spec)
+	members = plannerMembers(spec.Members)
+	self, ok = lookupMemberByNodeRef(members, selfNode)
+	if !ok {
+		return fmt.Errorf("self node %q is not a member of MobilityPool/%s after self capture resolution", selfNode, res.Metadata.Name)
+	}
 	source := DynamicSource(res.Metadata.Name, selfNode)
 	events, err := c.Store.ListFederationEvents(spec.GroupRef, false, now.Unix())
 	if err != nil {
@@ -340,6 +345,17 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 	}
 	for key, value := range ownershipResolverStatus(ownershipDecisions) {
 		status[key] = value
+	}
+	if status["ownershipResolverPhase"] == "Conflict" {
+		reason := strings.TrimSpace(fmt.Sprint(status["ownershipResolverReason"]))
+		if reason == "" {
+			reason = "ownership resolver conflict"
+		}
+		status["plannerPhase"] = "Degraded"
+		status["plannerReason"] = reason
+		if status["providerActionPhase"] == "OK" {
+			status["providerActionPhase"] = "Blocked"
+		}
 	}
 	return c.savePlannerStatus(res.Metadata.Name, status)
 }
@@ -655,6 +671,20 @@ func bgpOwnershipEventSourceKey(ev routerstate.EventRecord) string {
 }
 
 func providerInventoryHomeOwnerFacts(poolName string, spec api.MobilityPoolSpec, events []routerstate.EventRecord, now time.Time) map[string]providerInventoryOwnerFact {
+	sets := providerInventoryHomeOwnerFactSets(poolName, spec, events, now)
+	out := map[string]providerInventoryOwnerFact{}
+	for address, facts := range sets {
+		for _, fact := range facts {
+			current, found := out[address]
+			if !found || providerInventoryOwnerFactGreater(fact, current) {
+				out[address] = fact
+			}
+		}
+	}
+	return out
+}
+
+func providerInventoryHomeOwnerFactSets(poolName string, spec api.MobilityPoolSpec, events []routerstate.EventRecord, now time.Time) map[string][]providerInventoryOwnerFact {
 	poolPrefix, err := netip.ParsePrefix(strings.TrimSpace(spec.Prefix))
 	if err != nil {
 		return nil
@@ -687,7 +717,7 @@ func providerInventoryHomeOwnerFacts(poolName string, spec api.MobilityPoolSpec,
 			latest[key] = candidate
 		}
 	}
-	out := map[string]providerInventoryOwnerFact{}
+	out := map[string][]providerInventoryOwnerFact{}
 	for _, ev := range latest {
 		if ev.Type != ObservedEventType {
 			continue
@@ -723,12 +753,22 @@ func providerInventoryHomeOwnerFacts(poolName string, spec api.MobilityPoolSpec,
 			ResourceType: strings.TrimSpace(ev.Payload["resourceType"]),
 			ObservedAt:   ev.ObservedAt.UTC(),
 		}
-		current, found := out[address]
-		if !found || fact.ObservedAt.After(current.ObservedAt) || fact.ObservedAt.Equal(current.ObservedAt) && fact.NodeRef < current.NodeRef {
-			out[address] = fact
-		}
+		out[address] = append(out[address], fact)
+	}
+	for address := range out {
+		sort.SliceStable(out[address], func(i, j int) bool {
+			if !out[address][i].ObservedAt.Equal(out[address][j].ObservedAt) {
+				return out[address][i].ObservedAt.After(out[address][j].ObservedAt)
+			}
+			return out[address][i].NodeRef < out[address][j].NodeRef
+		})
 	}
 	return out
+}
+
+func providerInventoryOwnerFactGreater(candidate, current providerInventoryOwnerFact) bool {
+	return candidate.ObservedAt.After(current.ObservedAt) ||
+		candidate.ObservedAt.Equal(current.ObservedAt) && candidate.NodeRef < current.NodeRef
 }
 
 func stoppedInstancePolicyFromSpec(spec api.MobilityPoolSpec) string {
@@ -946,7 +986,8 @@ func bgpProviderActionPlans(poolName, selfNode string, spec api.MobilityPoolSpec
 			if address == "" || desiredAddresses[address] {
 				continue
 			}
-			capture := captureFromActionPlan(self.Capture, previous)
+			capture := captureFromActionPlan(self.Capture, self.CaptureTarget, previous)
+			capture = captureWithTargetFallback(capture, previous.Target)
 			if capture.Type != "provider-secondary-ip" {
 				continue
 			}
@@ -1737,9 +1778,10 @@ func bgpSyntheticAssignedPlansFromJournal(self memberPlanInfo, journal []routers
 		if plan.Target == nil {
 			plan.Target = map[string]string{}
 		}
+		capture := captureWithTargetFallback(self.Capture, self.CaptureTarget)
 		plan.Target["address"] = normalizeAddressString(parts[2])
 		plan.Target["providerRef"] = strings.TrimSpace(self.Capture.ProviderRef)
-		plan.Target["nicRef"] = strings.TrimSpace(self.Capture.NICRef)
+		plan.Target["nicRef"] = strings.TrimSpace(capture.NICRef)
 		if strategy := strings.TrimSpace(captureStrategyValue(self.Capture)); strategy != "" {
 			plan.Target["captureStrategy"] = strategy
 		}
@@ -1758,7 +1800,7 @@ func bgpPathSigFromActionPlan(plan dynamicconfig.ActionPlan, address string) str
 	return "deprovision:" + normalizeAddressString(address)
 }
 
-func captureFromActionPlan(fallback api.AddressCapture, plan dynamicconfig.ActionPlan) api.AddressCapture {
+func captureFromActionPlan(fallback api.AddressCapture, fallbackTarget map[string]string, plan dynamicconfig.ActionPlan) api.AddressCapture {
 	capture := fallback
 	capture.Type = "provider-secondary-ip"
 	if value := strings.TrimSpace(plan.ProviderRef); value != "" {
@@ -1768,6 +1810,8 @@ func captureFromActionPlan(fallback api.AddressCapture, plan dynamicconfig.Actio
 		capture.ProviderRef = value
 	}
 	if value := strings.TrimSpace(plan.Target["nicRef"]); value != "" {
+		capture.NICRef = value
+	} else if value := strings.TrimSpace(fallbackTarget["nicRef"]); value != "" {
 		capture.NICRef = value
 	}
 	if value := strings.TrimSpace(plan.Target["captureStrategy"]); value != "" {

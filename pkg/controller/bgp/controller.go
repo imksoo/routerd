@@ -28,6 +28,7 @@ import (
 	bgpstate "github.com/imksoo/routerd/pkg/bgp"
 	"github.com/imksoo/routerd/pkg/bgpdaemon"
 	"github.com/imksoo/routerd/pkg/bus"
+	"github.com/imksoo/routerd/pkg/controller/mobilityfib"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/manageddaemon"
 	"github.com/imksoo/routerd/pkg/mobilityconfig"
@@ -1626,6 +1627,7 @@ func (c *Controller) observeState(ctx context.Context, allowedImportPrefixes []n
 	var routes []FIBRoute
 	livenessMarkers := map[string]string{}
 	fibNextHopRewritePeers := peerAddressFIBRewritePeers(desired)
+	fibPolicy := mobilityfib.NewSnapshot(c.Router, c.Store)
 	if err := c.Server.ListPeer(ctx, &gobgpapi.ListPeerRequest{EnableAdvertised: true}, func(peer *gobgpapi.Peer) {
 		state.Peers = append(state.Peers, statePeer(peer))
 	}); err != nil {
@@ -1635,7 +1637,7 @@ func (c *Controller) observeState(ctx context.Context, allowedImportPrefixes []n
 		err := c.Server.ListPath(ctx, &gobgpapi.ListPathRequest{TableType: gobgpapi.TableType_GLOBAL, Family: family}, func(dst *gobgpapi.Destination) {
 			state.Prefixes = append(state.Prefixes, statePrefixes(dst)...)
 			mergeStringMap(livenessMarkers, mobilityLivenessMarkersFromDestination(dst))
-			routes = append(routes, fibRoutesFromDestination(dst, allowedImportPrefixes, fibNextHopRewritePeers)...)
+			routes = append(routes, fibRoutesFromDestination(dst, allowedImportPrefixes, fibNextHopRewritePeers, fibPolicy.AdmitBGPRoute)...)
 		})
 		if err != nil {
 			return bgpstate.State{}, nil, nil, err
@@ -2097,7 +2099,7 @@ type bgpPathRank struct {
 	MED       uint32
 }
 
-func fibRoutesFromDestination(dst *gobgpapi.Destination, allowed []netip.Prefix, peerAddressRewrite map[string]bool) []FIBRoute {
+func fibRoutesFromDestination(dst *gobgpapi.Destination, allowed []netip.Prefix, peerAddressRewrite map[string]bool, admit func(netip.Prefix) bool) []FIBRoute {
 	prefix := normalizeRoutePrefix(dst.GetPrefix())
 	var candidates []struct {
 		nextHop string
@@ -2121,6 +2123,9 @@ func fibRoutesFromDestination(dst *gobgpapi.Destination, allowed []netip.Prefix,
 		}
 		parsed = parsed.Masked()
 		if len(allowed) > 0 && !prefixAllowed(parsed, allowed) {
+			continue
+		}
+		if admit != nil && !admit(parsed) {
 			continue
 		}
 		nextHop := strings.TrimSpace(pathFIBNextHop(path, peerAddressRewrite))

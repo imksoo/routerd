@@ -413,3 +413,16 @@ func TestExecutorImportsNoCloudSDK(t *testing.T) {
 		t.Error("expected the oci executor to use os/exec to run the `oci` CLI")
 	}
 }
+
+func TestResolveOCICommandReportsNonExecutableOverride(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "oci")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o644); err != nil {
+		t.Fatalf("write fake oci: %v", err)
+	}
+	t.Setenv("OCI_CLI_PATH", path)
+	_, err := resolveOCICommand()
+	if err == nil || !strings.Contains(err.Error(), "OCI_CLI_PATH") || !strings.Contains(err.Error(), "no execute bit") {
+		t.Fatalf("resolveOCICommand error = %v, want non-executable OCI_CLI_PATH error", err)
+	}
+}

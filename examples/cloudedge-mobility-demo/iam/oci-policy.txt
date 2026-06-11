@@ -1,8 +1,10 @@
 # CloudEdge Mobility routerd least-privilege OCI policy template.
 #
 # Replace:
-# - <dynamic-group-name>: dynamic group containing only the router instance(s)
-#   that run routerd provider executor / inventory plugin.
+# - <dynamic-group-name>: dynamic group containing only the router instances
+#   that run routerd provider executor / inventory plugin. Prefer a stable
+#   router tag or compartment/tag match. Avoid instance.id OCID matches for
+#   rebuildable labs because instance OCIDs change on VM recreation.
 # - <compartment-name>: compartment containing the target VNIC and private IPs.
 #
 # Required OCI API surface:

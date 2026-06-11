@@ -36,6 +36,18 @@ func (s mapStore) ObjectStatus(apiVersion, kind, name string) map[string]any {
 	return map[string]any{}
 }
 
+func mobilityOwnerStore(rows ...map[string]any) mapStore {
+	values := make([]any, 0, len(rows))
+	for _, row := range rows {
+		values = append(values, row)
+	}
+	return mapStore{
+		api.MobilityAPIVersion + "/MobilityPool/cloudedge": {
+			"ownershipResolverFIBVerdicts": values,
+		},
+	}
+}
+
 type testGoBGPServer struct {
 	*gobgpserver.BgpServer
 	applied bgpdaemon.AppliedConfig
@@ -1046,7 +1058,9 @@ func TestReconcileAddsMobilityPreferredSourceForLocalStaticOwnedAddress(t *testi
 		testDestination("10.77.60.11/32", "10.99.0.2"),
 	}}
 	fib := &fakeFIB{guardPreferredSource: true, localPreferredSources: map[string]bool{"10.77.60.10": true}}
-	controller := Controller{Router: router, Store: mapStore{}, Server: server, FIB: fib}
+	controller := Controller{Router: router, Store: mobilityOwnerStore(
+		map[string]any{"address": "10.77.60.11/32", "action": "deliver-remote", "ownerNode": "aws-router"},
+	), Server: server, FIB: fib}
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
@@ -1067,7 +1081,9 @@ func TestReconcileSkipsMobilityPreferredSourceWhenLocalAddressMissing(t *testing
 		testDestination("10.77.60.11/32", "10.99.0.2"),
 	}}
 	fib := &fakeFIB{guardPreferredSource: true, localPreferredSources: map[string]bool{}}
-	controller := Controller{Router: router, Store: mapStore{}, Server: server, FIB: fib}
+	controller := Controller{Router: router, Store: mobilityOwnerStore(
+		map[string]any{"address": "10.77.60.11/32", "action": "deliver-remote", "ownerNode": "aws-router"},
+	), Server: server, FIB: fib}
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
@@ -1093,7 +1109,9 @@ func TestReconcileDoesNotAddMobilityPreferredSourceForCloudNonOwner(t *testing.T
 		testDestination("10.77.60.10/32", "10.99.0.1"),
 	}}
 	fib := &fakeFIB{guardPreferredSource: true, localPreferredSources: map[string]bool{"10.77.60.11": true}}
-	controller := Controller{Router: router, Store: mapStore{}, Server: server, FIB: fib}
+	controller := Controller{Router: router, Store: mobilityOwnerStore(
+		map[string]any{"address": "10.77.60.10/32", "action": "deliver-remote", "ownerNode": "onprem-router"},
+	), Server: server, FIB: fib}
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
@@ -1448,6 +1466,85 @@ func TestReconcileReportsFIBSyncFailure(t *testing.T) {
 	status := controller.Store.ObjectStatus(api.NetAPIVersion, "BGPRouter", "lan")
 	if status["phase"] != "Pending" || status["pendingReason"] != "GoBGPFIBSyncFailed" {
 		t.Fatalf("pending status = %#v", status)
+	}
+}
+
+func TestReconcileSuppressesLocalMobilityPrivateIPFromFIB(t *testing.T) {
+	router := bgpRouterWithImportPrefixes("10.77.60.0/24")
+	router.Spec.Resources = append(router.Spec.Resources, bgpMobilityPreferredSourceResources("aws-router")...)
+	store := mapStore{
+		api.MobilityAPIVersion + "/MobilityPool/cloudedge": {
+			"discoverySelfPrivateIPs": []any{"10.77.60.4/32"},
+			"ownershipResolverFIBVerdicts": []any{
+				map[string]any{
+					"address":   "10.77.60.4/32",
+					"action":    "local-route",
+					"ownerNode": "aws-router",
+				},
+				map[string]any{
+					"address":   "10.77.60.11/32",
+					"action":    "deliver-remote",
+					"ownerNode": "aws-router-b",
+				},
+			},
+		},
+	}
+	fib := &fakeFIB{}
+	controller := Controller{
+		Router: router,
+		Store:  store,
+		Server: &fakeServer{routes: []*gobgpapi.Destination{
+			testDestination("10.77.60.4/32", "10.255.0.41"),
+			testDestination("10.77.60.11/32", "10.255.0.41"),
+		}},
+		FIB: fib,
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	routes := fib.lastRoutes()
+	if len(routes) != 1 || routes[0].Prefix != "10.77.60.11/32" {
+		t.Fatalf("FIB routes = %#v, want only remote 10.77.60.11/32", routes)
+	}
+}
+
+func TestReconcileSuppressesConflictLocalProviderEvidenceFromFIB(t *testing.T) {
+	router := bgpRouterWithImportPrefixes("10.77.60.0/24")
+	router.Spec.Resources = append(router.Spec.Resources, bgpMobilityPreferredSourceResources("aws-router-a")...)
+	store := mapStore{
+		api.MobilityAPIVersion + "/MobilityPool/cloudedge": {
+			"ownershipResolverFIBVerdicts": []any{
+				map[string]any{
+					"address":        "10.77.60.11/32",
+					"action":         "local-route",
+					"conflictReason": "remote-home-owner-overlaps-local-ownership-event",
+					"ownerNode":      "aws-router-b",
+					"localNode":      "aws-router-a",
+				},
+				map[string]any{
+					"address":   "10.77.60.12/32",
+					"action":    "deliver-remote",
+					"ownerNode": "azure-router",
+				},
+			},
+		},
+	}
+	fib := &fakeFIB{}
+	controller := Controller{
+		Router: router,
+		Store:  store,
+		Server: &fakeServer{routes: []*gobgpapi.Destination{
+			testDestination("10.77.60.11/32", "10.255.0.11"),
+			testDestination("10.77.60.12/32", "10.255.0.11"),
+		}},
+		FIB: fib,
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	routes := fib.lastRoutes()
+	if len(routes) != 1 || routes[0].Prefix != "10.77.60.12/32" {
+		t.Fatalf("FIB routes = %#v, want only remote 10.77.60.12/32", routes)
 	}
 }
 
@@ -1945,7 +2042,7 @@ func TestFIBRoutesFromDestinationChoosesHigherLocalPref(t *testing.T) {
 	routes := fibRoutesFromDestination(testRankedDestination("10.77.60.12/32",
 		rankedPath{nextHop: "10.99.0.11", localPref: 201, med: 20},
 		rankedPath{nextHop: "10.99.0.12", localPref: 202, med: 10},
-	), []netip.Prefix{netip.MustParsePrefix("10.77.60.0/24")}, nil)
+	), []netip.Prefix{netip.MustParsePrefix("10.77.60.0/24")}, nil, nil)
 	want := []FIBRoute{{Prefix: "10.77.60.12/32", NextHops: []string{"10.99.0.12"}}}
 	if !reflect.DeepEqual(routes, want) {
 		t.Fatalf("routes = %#v, want %#v", routes, want)
@@ -1958,6 +2055,7 @@ func TestFIBRoutesFromDestinationUsesPeerAddressRewriteFromNeighbor(t *testing.T
 		dst,
 		[]netip.Prefix{netip.MustParsePrefix("192.168.123.0/24")},
 		map[string]bool{"10.252.0.1": true},
+		nil,
 	)
 	want := []FIBRoute{{Prefix: "192.168.123.112/32", NextHops: []string{"10.252.0.1"}}}
 	if !reflect.DeepEqual(routes, want) {
@@ -1976,6 +2074,7 @@ func TestFIBRoutesFromDestinationKeepsPeerAddressRewriteMultipath(t *testing.T) 
 		dst,
 		[]netip.Prefix{netip.MustParsePrefix("192.168.123.0/24")},
 		map[string]bool{"10.252.0.1": true, "10.252.0.2": true},
+		nil,
 	)
 	want := []FIBRoute{{Prefix: "192.168.123.112/32", NextHops: []string{"10.252.0.1", "10.252.0.2"}}}
 	if !reflect.DeepEqual(routes, want) {
@@ -1988,6 +2087,7 @@ func TestFIBRoutesFromDestinationCanLeaveReflectedNextHopUnchanged(t *testing.T)
 	routes := fibRoutesFromDestination(
 		dst,
 		[]netip.Prefix{netip.MustParsePrefix("192.168.123.0/24")},
+		nil,
 		nil,
 	)
 	want := []FIBRoute{{Prefix: "192.168.123.112/32", NextHops: []string{"10.252.0.17"}}}

@@ -575,6 +575,50 @@ func TestDiscoveryControllerDoesNotStealStaticOwnedAddress(t *testing.T) {
 	}
 }
 
+func TestDiscoveryControllerExcludesRemoteRouterNICFromOwnership(t *testing.T) {
+	now := time.Date(2026, 6, 10, 17, 45, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := discoveryPoolSpec()
+	runner := &fakeInventoryRunner{result: providerinventory.ObservePrivateIPsResult{
+		TypeMeta: providerinventory.TypeMeta{APIVersion: providerinventory.ProtocolAPIVersion, Kind: providerinventory.KindObservePrivateIPsResult},
+		Status: providerinventory.ObservePrivateIPsResultStatus{
+			Status: providerinventory.ResultSucceeded,
+			Self: &providerinventory.PrivateIPSelf{
+				NICRef:      "eni-router-a",
+				SubnetRef:   "subnet-a",
+				PrivateIPs:  []string{"10.88.60.4"},
+				ResourceRef: "i-router-a",
+			},
+			IPs: []providerinventory.PrivateIPRecord{
+				{Address: "10.88.60.4", NICRef: "eni-router-a", SubnetRef: "subnet-a", ResourceRef: "i-router-a", ResourceType: "router-nic", Primary: true, Tags: map[string]string{"cloudedge-mobility": "true"}},
+				{Address: "10.88.60.5", NICRef: "eni-router-b", SubnetRef: "subnet-a", ResourceRef: "i-router-b", ResourceType: "router-nic", Primary: true, Tags: map[string]string{"cloudedge-mobility": "true"}},
+				{Address: "10.88.60.11", NICRef: "eni-client", SubnetRef: "subnet-a", ResourceRef: "i-client", ResourceType: "instance-nic", Tags: map[string]string{"cloudedge-mobility": "true"}},
+			},
+		},
+	}}
+	controller := DiscoveryController{Router: discoveryRouter("azure-router-a", spec), Store: store, Runner: runner.run, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	events, err := store.ListFederationEvents("cloudedge", false, now.Unix())
+	if err != nil {
+		t.Fatalf("ListFederationEvents: %v", err)
+	}
+	if len(events) != 1 || events[0].Subject != "10.88.60.11/32" {
+		t.Fatalf("events = %#v, want only client ownership", events)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	if got := statusStringSlice(status["discoveryOwnedAddresses"]); len(got) != 1 || got[0] != "10.88.60.11/32" {
+		t.Fatalf("discoveryOwnedAddresses = %#v, want only client", got)
+	}
+	if got := statusStringSlice(status["discoveryLocalInventoryIPs"]); stringSliceContains(got, "10.88.60.5/32") {
+		t.Fatalf("discoveryLocalInventoryIPs = %#v, want remote router primary excluded", got)
+	}
+	if fmt.Sprint(status["discoveryExcludedRouterNIC"]) != "2" {
+		t.Fatalf("discoveryExcludedRouterNIC = %#v, want 2", status["discoveryExcludedRouterNIC"])
+	}
+}
+
 func TestDiscoveryControllerDoesNotUseLeaseTableForRemoteExclusion(t *testing.T) {
 	now := time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)
 	store := testStore(t, now)

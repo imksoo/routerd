@@ -19,17 +19,28 @@ import (
 const bgpRouteProtocol = 186
 
 type netlinkFIBSyncer struct {
-	installed map[string]FIBRoute
+	installed map[string]kernelBGPRoute
+}
+
+type kernelBGPRoute struct {
+	FIB     FIBRoute
+	Netlink netlink.Route
 }
 
 func defaultFIBSyncer() FIBSyncer {
-	return &netlinkFIBSyncer{installed: map[string]FIBRoute{}}
+	return &netlinkFIBSyncer{installed: map[string]kernelBGPRoute{}}
 }
 
 func (s *netlinkFIBSyncer) SyncBGP(_ context.Context, routes []FIBRoute) (FIBSyncResult, error) {
 	if s.installed == nil {
-		s.installed = map[string]FIBRoute{}
+		s.installed = map[string]kernelBGPRoute{}
 	}
+	kernel, err := kernelBGPRoutes()
+	if err != nil {
+		return FIBSyncResult{}, fmt.Errorf("list current BGP routes: %w", err)
+	}
+	s.installed = kernel
+	localHostPrefixes := localIPv4HostPrefixes()
 	result := FIBSyncResult{
 		Installed:                    map[string]bool{},
 		Unsupported:                  map[string]string{},
@@ -50,6 +61,7 @@ func (s *netlinkFIBSyncer) SyncBGP(_ context.Context, routes []FIBRoute) (FIBSyn
 		}
 		desired[route.Prefix] = route
 	}
+	desired = filterLocalHostFIBRoutes(desired, localHostPrefixes)
 	var keys []string
 	for key := range desired {
 		keys = append(keys, key)
@@ -57,7 +69,7 @@ func (s *netlinkFIBSyncer) SyncBGP(_ context.Context, routes []FIBRoute) (FIBSyn
 	sort.Strings(keys)
 	for _, key := range keys {
 		route := normalizeFIBRoute(desired[key])
-		if equalFIBRoute(s.installed[key], route) {
+		if installed, ok := s.installed[key]; ok && equalFIBRoute(installed.FIB, route) {
 			result.Installed[key] = true
 			if route.PreferredSource != "" {
 				result.PreferredSource[key] = route.PreferredSource
@@ -72,7 +84,7 @@ func (s *netlinkFIBSyncer) SyncBGP(_ context.Context, routes []FIBRoute) (FIBSyn
 		if err := netlink.RouteReplace(nl); err != nil {
 			return result, fmt.Errorf("replace BGP route %s via %v: %w", route.Prefix, route.NextHops, err)
 		}
-		s.installed[key] = route
+		s.installed[key] = kernelBGPRoute{FIB: route, Netlink: *nl}
 		result.Installed[key] = true
 		if route.PreferredSource != "" {
 			result.PreferredSource[key] = route.PreferredSource
@@ -82,12 +94,99 @@ func (s *netlinkFIBSyncer) SyncBGP(_ context.Context, routes []FIBRoute) (FIBSyn
 		if _, ok := desired[key]; ok {
 			continue
 		}
-		if nl, ok := netlinkRoute(route); ok {
-			_ = netlink.RouteDel(nl)
+		if err := netlink.RouteDel(&route.Netlink); err != nil {
+			if nl, ok := netlinkRoute(route.FIB); ok {
+				err = netlink.RouteDel(nl)
+			}
+			if err != nil {
+				return result, fmt.Errorf("delete stale BGP route %s: %w", key, err)
+			}
 		}
 		delete(s.installed, key)
 	}
 	return result, nil
+}
+
+func filterLocalHostFIBRoutes(routes map[string]FIBRoute, localHostPrefixes map[string]bool) map[string]FIBRoute {
+	if len(routes) == 0 || len(localHostPrefixes) == 0 {
+		return routes
+	}
+	out := map[string]FIBRoute{}
+	for prefix, route := range routes {
+		if localHostPrefixes[normalizeRoutePrefix(prefix)] {
+			continue
+		}
+		out[prefix] = route
+	}
+	return out
+}
+
+func localIPv4HostPrefixes() map[string]bool {
+	out := map[string]bool{}
+	links, err := netlink.LinkList()
+	if err != nil {
+		return out
+	}
+	for _, link := range links {
+		addrs, err := netlink.AddrList(link, netlink.FAMILY_V4)
+		if err != nil {
+			continue
+		}
+		for _, local := range addrs {
+			if local.IP == nil {
+				continue
+			}
+			addr, ok := netip.AddrFromSlice(local.IP.To4())
+			if ok && addr.Is4() {
+				out[netip.PrefixFrom(addr, 32).String()] = true
+			}
+		}
+	}
+	return out
+}
+
+func kernelBGPRoutes() (map[string]kernelBGPRoute, error) {
+	filter := &netlink.Route{Protocol: bgpRouteProtocol}
+	routes, err := netlink.RouteListFiltered(netlink.FAMILY_V4, filter, netlink.RT_FILTER_PROTOCOL)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]kernelBGPRoute{}
+	for _, route := range routes {
+		fibRoute, ok := fibRouteFromNetlinkRoute(route)
+		if !ok {
+			continue
+		}
+		out[fibRoute.Prefix] = kernelBGPRoute{FIB: fibRoute, Netlink: route}
+	}
+	return out, nil
+}
+
+func fibRouteFromNetlinkRoute(route netlink.Route) (FIBRoute, bool) {
+	if route.Dst == nil {
+		return FIBRoute{}, false
+	}
+	prefix, err := netip.ParsePrefix(route.Dst.String())
+	if err != nil || !prefix.Addr().Is4() {
+		return FIBRoute{}, false
+	}
+	var nextHops []string
+	if route.Gw != nil {
+		nextHops = append(nextHops, route.Gw.String())
+	}
+	for _, hop := range route.MultiPath {
+		if hop != nil && hop.Gw != nil {
+			nextHops = append(nextHops, hop.Gw.String())
+		}
+	}
+	out := FIBRoute{
+		Prefix:   prefix.Masked().String(),
+		NextHops: normalizeNextHops(nextHops),
+	}
+	if route.Src != nil {
+		out.PreferredSource = normalizePreferredSource(route.Src.String())
+	}
+	return out, true
 }
 
 func netlinkRoute(route FIBRoute) (*netlink.Route, bool) {

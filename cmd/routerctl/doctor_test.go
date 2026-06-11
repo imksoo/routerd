@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -97,6 +98,271 @@ func TestDoctorJSONOutputIncludesSummaryAndChecks(t *testing.T) {
 	}
 	if len(report.Checks) == 0 || report.Checks[0].Area != "dns" {
 		t.Fatalf("checks = %#v", report.Checks)
+	}
+}
+
+func TestDoctorTempDirPermissionsFailsWhenTmpIs0755(t *testing.T) {
+	oldRun := doctorRunDiagnosticCommand
+	oldOS := doctorCurrentOS
+	defer func() {
+		doctorRunDiagnosticCommand = oldRun
+		doctorCurrentOS = oldOS
+	}()
+	doctorCurrentOS = func() platform.OS { return platform.OSLinux }
+	doctorRunDiagnosticCommand = func(_ context.Context, label, name string, args ...string) diagnoseCommandCheck {
+		return diagnoseCommandCheck{
+			Name:   label,
+			OK:     true,
+			Stdout: "755|0|0|drwxr-xr-x|directory|/tmp\n1777|0|0|drwxrwxrwt|directory|/var/tmp\n755|0|0|drwxr-xr-x|directory|/var/spool\n",
+		}
+	}
+	check := doctorTempDirPermissionsCheck(context.Background())
+	if check.Status != doctorFail || !strings.Contains(check.Detail, "/tmp mode=755") {
+		t.Fatalf("check = %#v", check)
+	}
+	if !strings.Contains(check.Remedy, "identify the process") {
+		t.Fatalf("remedy should preserve root-cause investigation context: %#v", check)
+	}
+}
+
+func TestDoctorTempDirPermissionsIgnoresVarSpool(t *testing.T) {
+	oldRun := doctorRunDiagnosticCommand
+	oldOS := doctorCurrentOS
+	defer func() {
+		doctorRunDiagnosticCommand = oldRun
+		doctorCurrentOS = oldOS
+	}()
+	doctorCurrentOS = func() platform.OS { return platform.OSLinux }
+	doctorRunDiagnosticCommand = func(_ context.Context, label, name string, args ...string) diagnoseCommandCheck {
+		return diagnoseCommandCheck{
+			Name:   label,
+			OK:     true,
+			Stdout: "1777|0|0|drwxrwxrwt|directory|/tmp\n1777|0|0|drwxrwxrwt|directory|/var/tmp\n777|0|0|lrwxrwxrwx|symbolic link|/var/spool\n",
+		}
+	}
+	check := doctorTempDirPermissionsCheck(context.Background())
+	if check.Status != doctorPass || strings.Contains(check.Detail, "/var/spool") {
+		t.Fatalf("check = %#v, want /var/spool ignored", check)
+	}
+}
+
+func TestDoctorSAMOwnershipConflictFailsNoHost(t *testing.T) {
+	configPath, statePath := writeDoctorSAMFixture(t)
+	store := openDoctorState(t, statePath)
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"plannerPhase":                   "Degraded",
+		"plannerReason":                  "remote home owner overlaps local provider inventory",
+		"ownershipResolverPhase":         "Conflict",
+		"ownershipResolverConflictCount": 1,
+		"ownershipResolverConflicts": []map[string]any{{
+			"address":        "10.77.60.7/32",
+			"homeOwnerNode":  "oci-router",
+			"localNodeRef":   "azure-router",
+			"conflictReason": "remote-home-owner-overlaps-local-inventory",
+		}},
+	}); err != nil {
+		t.Fatalf("save mobility status: %v", err)
+	}
+	closeDoctorState(t, store)
+
+	var out bytes.Buffer
+	err := run([]string{"doctor", "sam", "--config", configPath, "--state-file", statePath, "--no-host", "-o", "json"}, &out, &bytes.Buffer{})
+	if err == nil {
+		t.Fatalf("doctor sam succeeded with ownership conflict:\n%s", out.String())
+	}
+	var report doctorReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("unmarshal doctor report: %v\n%s", err, out.String())
+	}
+	check := findDoctorCheck(t, report, "MobilityPool/cloudedge ownership conflicts")
+	if check.Status != doctorFail || !strings.Contains(check.Detail, "10.77.60.7/32") {
+		t.Fatalf("check = %#v, want failing ownership conflict detail", check)
+	}
+}
+
+func TestDoctorSAMOwnerTableRouteDriftFails(t *testing.T) {
+	oldRun := doctorRunDiagnosticCommand
+	defer func() { doctorRunDiagnosticCommand = oldRun }()
+	doctorRunDiagnosticCommand = func(_ context.Context, label, name string, args ...string) diagnoseCommandCheck {
+		if label == "ip -4 route show table main" {
+			return diagnoseCommandCheck{
+				Name:   label,
+				OK:     true,
+				Stdout: "10.77.60.7 via 10.255.0.28 dev samtc72ffb1610c proto bgp src 10.77.60.4 metric 200\n",
+				Output: "10.77.60.7 via 10.255.0.28 dev samtc72ffb1610c proto bgp src 10.77.60.4 metric 200\n",
+			}
+		}
+		return diagnoseCommandCheck{
+			Name:   label,
+			OK:     true,
+			Stdout: "10.77.60.7 dev samtc72ffb1610c src 10.77.60.4 uid 1000",
+			Output: "10.77.60.7 dev samtc72ffb1610c src 10.77.60.4 uid 1000",
+		}
+	}
+
+	configPath, statePath := writeDoctorSAMFixture(t)
+	store := openDoctorState(t, statePath)
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"plannerPhase":                   "BGPPlanned",
+		"ownershipResolverPhase":         "Resolved",
+		"ownershipResolverConflictCount": 0,
+		"ownershipResolverOwnerTable": []map[string]any{{
+			"address":          "10.77.60.7/32",
+			"state":            "OK",
+			"class":            "LocalHomeOwned",
+			"ownerNode":        "azure-router",
+			"localNode":        "azure-router",
+			"localProviderRef": "azure-provider",
+		}},
+	}); err != nil {
+		t.Fatalf("save mobility status: %v", err)
+	}
+	closeDoctorState(t, store)
+
+	var out bytes.Buffer
+	err := run([]string{"doctor", "sam", "--config", configPath, "--state-file", statePath, "-o", "json"}, &out, &bytes.Buffer{})
+	if err == nil {
+		t.Fatalf("doctor sam succeeded with route drift:\n%s", out.String())
+	}
+	var report doctorReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("unmarshal doctor report: %v\n%s", err, out.String())
+	}
+	check := findDoctorCheck(t, report, "MobilityPool/cloudedge owner-table route drift 10.77.60.7/32")
+	if check.Status != doctorFail || !strings.Contains(check.Detail, "samtc72ffb1610c") {
+		t.Fatalf("check = %#v, want failing route drift detail", check)
+	}
+}
+
+func TestDoctorSAMFederationDiscoveryWarnsWhenNoPeerDiscoveryEvents(t *testing.T) {
+	configPath, statePath := writeDoctorSAMFederationFixture(t)
+	store := openDoctorState(t, statePath)
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"plannerPhase":  "BGPPlanned",
+		"plannerReason": "",
+	}); err != nil {
+		t.Fatalf("save mobility status: %v", err)
+	}
+	closeDoctorState(t, store)
+
+	oldNow := doctorNow
+	doctorNow = func() time.Time { return time.Date(2026, 6, 10, 15, 30, 0, 0, time.UTC) }
+	defer func() { doctorNow = oldNow }()
+
+	var out bytes.Buffer
+	err := run([]string{"doctor", "sam", "--config", configPath, "--state-file", statePath, "--no-host", "-o", "json"}, &out, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("doctor sam: %v\n%s", err, out.String())
+	}
+	var report doctorReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("unmarshal doctor report: %v\n%s", err, out.String())
+	}
+	check := findDoctorCheck(t, report, "MobilityPool/cloudedge federation discovery")
+	if check.Status != doctorWarn {
+		t.Fatalf("check = %#v, want warn", check)
+	}
+	if !strings.Contains(check.Detail, "aws-router-a") || !strings.Contains(check.Detail, "oci-router") {
+		t.Fatalf("check detail should include peers, got: %#v", check.Detail)
+	}
+}
+
+func TestDoctorSAMFederationDiscoveryPassesWhenPeerDiscoveryEventsPresent(t *testing.T) {
+	configPath, statePath := writeDoctorSAMFederationFixture(t)
+	store := openDoctorState(t, statePath)
+	now := time.Date(2026, 6, 10, 15, 30, 0, 0, time.UTC)
+	recordFederationEvent(t, store, routerstate.EventRecord{
+		ID:         "e-aws-a",
+		Group:      "cloudedge",
+		SourceNode: "aws-router-a",
+		Type:       "routerd.client.ipv4.observed",
+		Subject:    "10.77.60.11/32",
+		Payload: map[string]string{
+			"source":  "provider-discovery",
+			"pool":    "cloudedge",
+			"address": "10.77.60.11",
+		},
+		ObservedAt: now,
+	})
+	recordFederationEvent(t, store, routerstate.EventRecord{
+		ID:         "e-oci-1",
+		Group:      "cloudedge",
+		SourceNode: "oci-router",
+		Type:       "routerd.client.ipv4.observed",
+		Subject:    "10.77.60.12/32",
+		Payload: map[string]string{
+			"source":  "provider-discovery",
+			"pool":    "cloudedge",
+			"address": "10.77.60.12",
+		},
+		ObservedAt: now,
+	})
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"plannerPhase":  "BGPPlanned",
+		"plannerReason": "",
+	}); err != nil {
+		t.Fatalf("save mobility status: %v", err)
+	}
+	closeDoctorState(t, store)
+
+	oldNow := doctorNow
+	doctorNow = func() time.Time { return now.Add(2 * time.Minute) }
+	defer func() { doctorNow = oldNow }()
+
+	var out bytes.Buffer
+	if err := run([]string{"doctor", "sam", "--config", configPath, "--state-file", statePath, "--no-host", "-o", "json"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("doctor sam: %v\n%s", err, out.String())
+	}
+	var report doctorReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("unmarshal doctor report: %v\n%s", err, out.String())
+	}
+	check := findDoctorCheck(t, report, "MobilityPool/cloudedge federation discovery")
+	if check.Status != doctorPass {
+		t.Fatalf("check = %#v, want pass", check)
+	}
+}
+
+func TestDoctorSAMFederationDiscoveryWarnsWhenEventsAreStale(t *testing.T) {
+	configPath, statePath := writeDoctorSAMFederationFixture(t)
+	store := openDoctorState(t, statePath)
+	now := time.Date(2026, 6, 10, 15, 30, 0, 0, time.UTC)
+	recordFederationEvent(t, store, routerstate.EventRecord{
+		ID:         "e-aws-stale",
+		Group:      "cloudedge",
+		SourceNode: "aws-router-a",
+		Type:       "routerd.client.ipv4.observed",
+		Subject:    "10.77.60.11/32",
+		Payload: map[string]string{
+			"source":  "provider-discovery",
+			"pool":    "cloudedge",
+			"address": "10.77.60.11",
+		},
+		ObservedAt: now.Add(-20 * time.Minute),
+	})
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"plannerPhase":  "BGPPlanned",
+		"plannerReason": "",
+	}); err != nil {
+		t.Fatalf("save mobility status: %v", err)
+	}
+	closeDoctorState(t, store)
+
+	oldNow := doctorNow
+	doctorNow = func() time.Time { return now }
+	defer func() { doctorNow = oldNow }()
+
+	var out bytes.Buffer
+	if err := run([]string{"doctor", "sam", "--config", configPath, "--state-file", statePath, "--no-host", "-o", "json"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("doctor sam: %v\n%s", err, out.String())
+	}
+	var report doctorReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("unmarshal doctor report: %v\n%s", err, out.String())
+	}
+	check := findDoctorCheck(t, report, "MobilityPool/cloudedge federation discovery")
+	if check.Status != doctorWarn {
+		t.Fatalf("check = %#v, want warn", check)
 	}
 }
 
@@ -1361,6 +1627,99 @@ spec:
 		t.Fatalf("write config: %v", err)
 	}
 	return configPath, filepath.Join(dir, "routerd.db")
+}
+
+func writeDoctorSAMFixture(t *testing.T) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "router.yaml")
+	data := []byte(`apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: test
+spec:
+  resources:
+    - apiVersion: mobility.routerd.net/v1alpha1
+      kind: MobilityPool
+      metadata:
+        name: cloudedge
+      spec:
+        prefix: 10.77.60.0/24
+        groupRef: cloudedge
+        deliveryPolicy:
+          mode: bgp
+        members:
+          - nodeRef: azure-router
+            site: azure
+            role: cloud
+            capture:
+              type: provider-secondary-ip
+              interface: eth0
+          - nodeRef: oci-router
+            site: oci
+            role: cloud
+            capture:
+              type: provider-secondary-ip
+              interface: ens3
+          - nodeRef: onprem-router
+            site: onprem
+            role: onprem
+            capture:
+              type: proxy-arp
+              interface: lan0
+`)
+	if err := os.WriteFile(configPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	return configPath, filepath.Join(dir, "routerd.db")
+}
+
+func writeDoctorSAMFederationFixture(t *testing.T) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "router.yaml")
+	data := fmt.Sprintf(`apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: test
+spec:
+  resources:
+    - apiVersion: federation.routerd.net/v1alpha1
+      kind: EventGroup
+      metadata: { name: cloudedge }
+      spec:
+        nodeName: azure-router
+        retention:
+          maxEvents: 1000
+          maxAge: 24h
+        listen:
+          address: 10.99.0.3
+          port: 9443
+        replayWindow: 5m
+    - apiVersion: mobility.routerd.net/v1alpha1
+      kind: MobilityPool
+      metadata:
+        name: cloudedge
+      spec:
+        prefix: 10.77.60.0/24
+        groupRef: cloudedge
+        deliveryPolicy: { mode: bgp }
+        members:
+          - nodeRef: azure-router
+          - nodeRef: aws-router-a
+          - nodeRef: oci-router
+`)
+	if err := os.WriteFile(configPath, []byte(data), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	return configPath, filepath.Join(dir, "routerd.db")
+}
+
+func recordFederationEvent(t *testing.T, store *routerstate.SQLiteStore, rec routerstate.EventRecord) {
+	t.Helper()
+	if err := store.RecordFederationEvent(rec); err != nil {
+		t.Fatalf("record federation event: %v", err)
+	}
 }
 
 func writeDoctorHybridFixture(t *testing.T, missingPeer bool) (string, string) {

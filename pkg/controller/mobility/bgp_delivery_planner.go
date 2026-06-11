@@ -237,6 +237,9 @@ func decisionEligibleForCapture(decision ownershipDecision, self memberPlanInfo,
 	if normalizeAddressString(decision.Address) == "" {
 		return false
 	}
+	if strings.TrimSpace(decision.ConflictReason) != "" {
+		return false
+	}
 	switch decision.Class {
 	case ownershipClassLocalRouterSelf, ownershipClassStaticOwned, ownershipClassStaticHandover:
 		return false
@@ -305,7 +308,63 @@ func planCaptureActionPlans(in bgpDeliveryPlannerInput, candidates map[string]bg
 	if in.Self.Capture.Type != "provider-secondary-ip" {
 		return nil, nil
 	}
-	return bgpProviderActionPlans(in.PoolName, in.Self.NodeRef, in.Spec, candidates, in.PreviousPlans, in.Profiles, in.ActionJournal, in.ObservedSelfIPs, in.ObservedSelfIPsOK, in.ForwardingObserved, in.ForwardingEnabled, in.ForwardingObservedAt, in.SuppressDeprovision, in.Now)
+	plans, err := bgpProviderActionPlans(in.PoolName, in.Self.NodeRef, in.Spec, candidates, in.PreviousPlans, in.Profiles, in.ActionJournal, in.ObservedSelfIPs, in.ObservedSelfIPsOK, in.ForwardingObserved, in.ForwardingEnabled, in.ForwardingObservedAt, in.SuppressDeprovision, in.Now)
+	if err != nil {
+		return nil, err
+	}
+	if !in.SuppressDeprovision {
+		observed, err := observedSelfStaleCaptureActionPlans(in, candidates)
+		if err != nil {
+			return nil, err
+		}
+		plans = append(plans, observed...)
+	}
+	return dedupeActionPlans(plans), nil
+}
+
+func observedSelfStaleCaptureActionPlans(in bgpDeliveryPlannerInput, candidates map[string]bgpTrapCandidate) ([]dynamicconfig.ActionPlan, error) {
+	desired := map[string]bool{}
+	for raw := range candidates {
+		address := normalizeAddressString(raw)
+		if address != "" {
+			desired[address] = true
+		}
+	}
+	var staleAddresses []string
+	for _, decision := range in.Decisions {
+		address := normalizeAddressString(decision.Address)
+		if address == "" || desired[address] {
+			continue
+		}
+		if decision.Class != ownershipClassStaleCapture || strings.TrimSpace(decision.SuppressionReason) != "self-captured-secondary" {
+			continue
+		}
+		if strings.TrimSpace(decision.CaptureHolderNode) != "" && strings.TrimSpace(decision.CaptureHolderNode) != strings.TrimSpace(in.Self.NodeRef) {
+			continue
+		}
+		staleAddresses = append(staleAddresses, address)
+	}
+	if len(staleAddresses) == 0 {
+		return nil, nil
+	}
+	profile, ok := in.Profiles[strings.TrimSpace(in.Self.Capture.ProviderRef)]
+	if !ok {
+		return nil, fmt.Errorf("CloudProviderProfile/%s not found for MobilityPool/%s member %q", in.Self.Capture.ProviderRef, in.PoolName, in.Self.NodeRef)
+	}
+	var plans []dynamicconfig.ActionPlan
+	for _, address := range staleAddresses {
+		unassign, err := providerUnassignActionPlan(in.PoolName, profile, in.Self.Capture, in.Self.CaptureTarget, address, in.Now)
+		if err != nil {
+			return nil, err
+		}
+		unassign = stampSingleBGPPathFence(unassign, address, bgpPathSigFromObservedSelfStale(address), in.Self.NodeRef)
+		plans = append(plans, unassign)
+	}
+	return plans, nil
+}
+
+func bgpPathSigFromObservedSelfStale(address string) string {
+	return "deprovision:" + normalizeAddressString(address)
 }
 
 func decisionsByAddress(decisions []ownershipDecision) map[string]ownershipDecision {

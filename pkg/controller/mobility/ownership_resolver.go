@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/controller/mobilityfib"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
@@ -48,6 +49,14 @@ type ownershipDecision struct {
 	HomeProviderRef    string
 	HomeSubnetRef      string
 	HomeNICRef         string
+	LocalNodeRef       string
+	LocalProviderRef   string
+	LocalSubnetRef     string
+	LocalNICRef        string
+	LocalResourceRef   string
+	LocalResourceType  string
+	LocalSource        string
+	LocalSourceType    string
 	CaptureHolderNode  string
 	CaptureProviderRef string
 	CaptureTargetRef   string
@@ -57,6 +66,8 @@ type ownershipDecision struct {
 	AdvertiseOwnerNode string
 	AdvertiseReason    string
 	SuppressionReason  string
+	ConflictReason     string
+	ConflictOwners     []providerInventoryOwnerFact
 	Fresh              bool
 	Source             string
 }
@@ -77,7 +88,9 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 		return nil, fmt.Errorf("self node %q is not a member of MobilityPool/%s", in.SelfNode, in.PoolName)
 	}
 	staticOwners := staticOwnedOwnerNodesByAddress(in.Spec)
-	remoteHomeFacts := providerInventoryHomeOwnerFacts(in.PoolName, in.Spec, in.Events, now)
+	remoteHomeFactSets := providerInventoryHomeOwnerFactSets(in.PoolName, in.Spec, in.Events, now)
+	remoteHomeFacts := selectedProviderInventoryHomeOwnerFacts(remoteHomeFactSets)
+	remoteHomeConflicts := duplicateProviderHomeOwnerFacts(remoteHomeFactSets)
 	localInventory := localInventoryRecordsFromStatus(in.Status, prefix)
 	removeSelfResourceLocalInventory(localInventory, statusString(in.Status["discoverySelfResourceRef"]))
 	selfIPs, capturedIPs, selfIPsObserved := selfInventoryAddressSetsFromStatus(in.Status, prefix)
@@ -93,6 +106,9 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 		universe[address] = true
 	}
 	for address := range remoteHomeFacts {
+		universe[address] = true
+	}
+	for address := range remoteHomeConflicts {
 		universe[address] = true
 	}
 	for address := range localInventory {
@@ -127,6 +143,17 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 			Address:      address,
 			Class:        ownershipClassUnknown,
 			CaptureState: captureStateNone,
+		}
+		if facts := remoteHomeConflicts[address]; len(facts) > 1 {
+			applyProviderHomeOwnerFact(&decision, facts[0])
+			decision.Class = ownershipClassRemoteHomeOwned
+			decision.Source = providerDiscoverySource
+			decision.SuppressionReason = "provider-home-owner-conflict"
+			decision.ConflictReason = "duplicate-provider-home-owners"
+			decision.ConflictOwners = facts
+			decision.Fresh = true
+			out = append(out, decision)
+			continue
 		}
 		if capture, ok := confirmedCaptures[address]; ok {
 			decision.CaptureState = captureStateConfirmed
@@ -208,6 +235,12 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 				decision.HomeProviderRef = firstNonEmpty(rec.ProviderRef, self.Capture.ProviderRef)
 				decision.HomeSubnetRef = rec.SubnetRef
 				decision.HomeNICRef = rec.NICRef
+				decision.LocalNodeRef = self.NodeRef
+				decision.LocalProviderRef = decision.HomeProviderRef
+				decision.LocalSubnetRef = rec.SubnetRef
+				decision.LocalNICRef = rec.NICRef
+				decision.LocalResourceRef = rec.ResourceRef
+				decision.LocalResourceType = rec.ResourceType
 				decision.Source = "local-inventory"
 				decision.SuppressionReason = "local-router-self"
 				decision.Fresh = true
@@ -219,16 +252,19 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 			decision.HomeProviderRef = firstNonEmpty(rec.ProviderRef, self.Capture.ProviderRef)
 			decision.HomeSubnetRef = rec.SubnetRef
 			decision.HomeNICRef = rec.NICRef
+			decision.LocalNodeRef = self.NodeRef
+			decision.LocalProviderRef = decision.HomeProviderRef
+			decision.LocalSubnetRef = rec.SubnetRef
+			decision.LocalNICRef = rec.NICRef
+			decision.LocalResourceRef = rec.ResourceRef
+			decision.LocalResourceType = rec.ResourceType
 			decision.Source = "local-inventory"
 			decision.Fresh = true
 			out = append(out, decision)
 			continue
 		}
 		if fact, ok := remoteHomeFacts[address]; ok && strings.TrimSpace(fact.NodeRef) == self.NodeRef && strings.TrimSpace(fact.ProviderRef) != "" {
-			decision.HomeOwnerNode = self.NodeRef
-			decision.HomeProviderRef = fact.ProviderRef
-			decision.HomeSubnetRef = fact.SubnetRef
-			decision.HomeNICRef = fact.NICRef
+			applyProviderHomeOwnerFact(&decision, fact)
 			decision.AdvertiseOwnerNode = self.NodeRef
 			decision.Source = providerDiscoverySource
 			decision.Fresh = true
@@ -238,8 +274,24 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 			continue
 		}
 		if eventOwner, ok := eventOwned[address]; ok && strings.TrimSpace(eventOwner.AdvertiseOwnerNode) == self.NodeRef {
+			if fact, remote := remoteHomeFacts[address]; remote && strings.TrimSpace(fact.NodeRef) != "" && strings.TrimSpace(fact.NodeRef) != self.NodeRef {
+				decision.Class = ownershipClassRemoteHomeOwned
+				applyProviderHomeOwnerFact(&decision, fact)
+				decision.LocalNodeRef = self.NodeRef
+				decision.LocalSource = ownershipEventLocalSource(eventOwner.SourceType)
+				decision.LocalSourceType = eventOwner.SourceType
+				decision.Source = providerDiscoverySource
+				decision.SuppressionReason = "remote-home-owner"
+				decision.ConflictReason = "remote-home-owner-overlaps-local-ownership-event"
+				decision.Fresh = true
+				out = append(out, decision)
+				continue
+			}
 			decision.Class = ownershipClassLocalHomeOwned
 			decision.HomeOwnerNode = self.NodeRef
+			decision.LocalNodeRef = self.NodeRef
+			decision.LocalSource = ownershipEventLocalSource(eventOwner.SourceType)
+			decision.LocalSourceType = eventOwner.SourceType
 			decision.AdvertiseOwnerNode = self.NodeRef
 			decision.AdvertiseReason = "ownership-event"
 			decision.Source = eventOwner.SourceType
@@ -248,12 +300,19 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 			continue
 		}
 		if fact, ok := remoteHomeFacts[address]; ok && strings.TrimSpace(fact.NodeRef) != "" && strings.TrimSpace(fact.NodeRef) != self.NodeRef {
-			decision.HomeOwnerNode = fact.NodeRef
-			decision.HomeProviderRef = fact.ProviderRef
-			decision.HomeSubnetRef = fact.SubnetRef
-			decision.HomeNICRef = fact.NICRef
+			applyProviderHomeOwnerFact(&decision, fact)
 			decision.Source = providerDiscoverySource
 			decision.Fresh = true
+			if rec, local := localInventory[address]; local {
+				decision.ConflictReason = "remote-home-owner-overlaps-local-inventory"
+				decision.LocalNodeRef = self.NodeRef
+				decision.LocalProviderRef = firstNonEmpty(rec.ProviderRef, self.OwnershipDiscovery.ProviderRef, self.Capture.ProviderRef)
+				decision.LocalSubnetRef = rec.SubnetRef
+				decision.LocalNICRef = rec.NICRef
+				decision.LocalResourceRef = rec.ResourceRef
+				decision.LocalResourceType = rec.ResourceType
+				decision.LocalSource = "local-inventory"
+			}
 			homeProviderRef := strings.TrimSpace(fact.ProviderRef)
 			selfProviderRef := strings.TrimSpace(self.Capture.ProviderRef)
 			if decision.CaptureState == captureStateConfirmed && (homeProviderRef == "" || selfProviderRef == "" || homeProviderRef == selfProviderRef) {
@@ -289,6 +348,11 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 			decision.HomeProviderRef = self.Capture.ProviderRef
 			decision.HomeSubnetRef = statusString(in.Status["discoverySelfSubnetRef"])
 			decision.HomeNICRef = self.Capture.NICRef
+			decision.LocalNodeRef = self.NodeRef
+			decision.LocalProviderRef = self.Capture.ProviderRef
+			decision.LocalSubnetRef = decision.HomeSubnetRef
+			decision.LocalNICRef = self.Capture.NICRef
+			decision.LocalSource = "self-inventory"
 			decision.Source = "self-inventory"
 			decision.Fresh = true
 			out = append(out, decision)
@@ -300,6 +364,13 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 			decision.HomeProviderRef = firstNonEmpty(rec.ProviderRef, self.OwnershipDiscovery.ProviderRef, self.Capture.ProviderRef)
 			decision.HomeSubnetRef = rec.SubnetRef
 			decision.HomeNICRef = rec.NICRef
+			decision.LocalNodeRef = self.NodeRef
+			decision.LocalProviderRef = decision.HomeProviderRef
+			decision.LocalSubnetRef = rec.SubnetRef
+			decision.LocalNICRef = rec.NICRef
+			decision.LocalResourceRef = rec.ResourceRef
+			decision.LocalResourceType = rec.ResourceType
+			decision.LocalSource = "local-inventory"
 			decision.AdvertiseOwnerNode = self.NodeRef
 			decision.AdvertiseReason = "local-home-inventory"
 			decision.Source = "local-inventory"
@@ -320,6 +391,56 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 		out = append(out, decision)
 	}
 	return out, nil
+}
+
+func selectedProviderInventoryHomeOwnerFacts(sets map[string][]providerInventoryOwnerFact) map[string]providerInventoryOwnerFact {
+	out := map[string]providerInventoryOwnerFact{}
+	for address, facts := range sets {
+		if len(facts) == 0 {
+			continue
+		}
+		out[address] = facts[0]
+	}
+	return out
+}
+
+func duplicateProviderHomeOwnerFacts(sets map[string][]providerInventoryOwnerFact) map[string][]providerInventoryOwnerFact {
+	out := map[string][]providerInventoryOwnerFact{}
+	for address, facts := range sets {
+		byNode := map[string]providerInventoryOwnerFact{}
+		for _, fact := range facts {
+			node := strings.TrimSpace(fact.NodeRef)
+			if node == "" {
+				continue
+			}
+			current, found := byNode[node]
+			if !found || providerInventoryOwnerFactGreater(fact, current) {
+				byNode[node] = fact
+			}
+		}
+		if len(byNode) < 2 {
+			continue
+		}
+		rows := make([]providerInventoryOwnerFact, 0, len(byNode))
+		for _, fact := range byNode {
+			rows = append(rows, fact)
+		}
+		sort.SliceStable(rows, func(i, j int) bool {
+			if !rows[i].ObservedAt.Equal(rows[j].ObservedAt) {
+				return rows[i].ObservedAt.After(rows[j].ObservedAt)
+			}
+			return rows[i].NodeRef < rows[j].NodeRef
+		})
+		out[address] = rows
+	}
+	return out
+}
+
+func applyProviderHomeOwnerFact(decision *ownershipDecision, fact providerInventoryOwnerFact) {
+	decision.HomeOwnerNode = strings.TrimSpace(fact.NodeRef)
+	decision.HomeProviderRef = strings.TrimSpace(fact.ProviderRef)
+	decision.HomeSubnetRef = strings.TrimSpace(fact.SubnetRef)
+	decision.HomeNICRef = strings.TrimSpace(fact.NICRef)
 }
 
 type resolverPrivateIPRecord struct {
@@ -406,6 +527,15 @@ func mergeBoolMaps(values ...map[string]bool) map[string]bool {
 type resolverEventOwnedAddress struct {
 	AdvertiseOwnerNode string
 	SourceType         string
+}
+
+func ownershipEventLocalSource(sourceType string) string {
+	switch strings.TrimSpace(sourceType) {
+	case OnPremSourceDHCPv4Lease, OnPremSourceARPObserver, OnPremSourceOnDemandARP, OnPremSourcePVESVNet:
+		return onPremDiscoverySource
+	default:
+		return strings.TrimSpace(sourceType)
+	}
 }
 
 func resolverEventOwnedAddresses(poolName, selfNode string, spec api.MobilityPoolSpec, events []routerstate.EventRecord, status map[string]any, poolPrefix netip.Prefix, now time.Time) map[string]resolverEventOwnedAddress {
@@ -574,6 +704,7 @@ func staticHandoverTargets(spec api.MobilityPoolSpec, poolPrefix netip.Prefix) m
 func ownershipResolverStatus(decisions []ownershipDecision) map[string]any {
 	counts := map[string]int{}
 	items := make([]map[string]any, 0, len(decisions))
+	conflicts := []map[string]any{}
 	for _, d := range decisions {
 		counts[d.Class]++
 		item := map[string]any{
@@ -592,6 +723,30 @@ func ownershipResolverStatus(decisions []ownershipDecision) map[string]any {
 		}
 		if d.HomeNICRef != "" {
 			item["homeNICRef"] = d.HomeNICRef
+		}
+		if d.LocalNodeRef != "" {
+			item["localNodeRef"] = d.LocalNodeRef
+		}
+		if d.LocalProviderRef != "" {
+			item["localProviderRef"] = d.LocalProviderRef
+		}
+		if d.LocalSubnetRef != "" {
+			item["localSubnetRef"] = d.LocalSubnetRef
+		}
+		if d.LocalNICRef != "" {
+			item["localNICRef"] = d.LocalNICRef
+		}
+		if d.LocalResourceRef != "" {
+			item["localResourceRef"] = d.LocalResourceRef
+		}
+		if d.LocalResourceType != "" {
+			item["localResourceType"] = d.LocalResourceType
+		}
+		if d.LocalSource != "" {
+			item["localSource"] = d.LocalSource
+		}
+		if d.LocalSourceType != "" {
+			item["localSourceType"] = d.LocalSourceType
 		}
 		if d.CaptureState != "" && d.CaptureState != captureStateNone {
 			item["captureState"] = d.CaptureState
@@ -617,6 +772,56 @@ func ownershipResolverStatus(decisions []ownershipDecision) map[string]any {
 		if d.SuppressionReason != "" {
 			item["suppressionReason"] = d.SuppressionReason
 		}
+		if d.ConflictReason != "" {
+			item["conflictReason"] = d.ConflictReason
+			if len(d.ConflictOwners) > 0 {
+				item["conflictOwners"] = providerInventoryOwnerFactStatusRows(d.ConflictOwners)
+			}
+			conflict := map[string]any{
+				"address":        d.Address,
+				"class":          d.Class,
+				"conflictReason": d.ConflictReason,
+				"homeOwnerNode":  d.HomeOwnerNode,
+				"source":         d.Source,
+			}
+			if d.HomeProviderRef != "" {
+				conflict["homeProviderRef"] = d.HomeProviderRef
+			}
+			if d.HomeSubnetRef != "" {
+				conflict["homeSubnetRef"] = d.HomeSubnetRef
+			}
+			if d.HomeNICRef != "" {
+				conflict["homeNICRef"] = d.HomeNICRef
+			}
+			if d.LocalNodeRef != "" {
+				conflict["localNodeRef"] = d.LocalNodeRef
+			}
+			if d.LocalProviderRef != "" {
+				conflict["localProviderRef"] = d.LocalProviderRef
+			}
+			if d.LocalSubnetRef != "" {
+				conflict["localSubnetRef"] = d.LocalSubnetRef
+			}
+			if d.LocalNICRef != "" {
+				conflict["localNICRef"] = d.LocalNICRef
+			}
+			if d.LocalResourceRef != "" {
+				conflict["localResourceRef"] = d.LocalResourceRef
+			}
+			if d.LocalResourceType != "" {
+				conflict["localResourceType"] = d.LocalResourceType
+			}
+			if d.LocalSource != "" {
+				conflict["localSource"] = d.LocalSource
+			}
+			if d.LocalSourceType != "" {
+				conflict["localSourceType"] = d.LocalSourceType
+			}
+			if len(d.ConflictOwners) > 0 {
+				conflict["owners"] = providerInventoryOwnerFactStatusRows(d.ConflictOwners)
+			}
+			conflicts = append(conflicts, conflict)
+		}
 		if d.Fresh {
 			item["fresh"] = true
 		}
@@ -629,10 +834,174 @@ func ownershipResolverStatus(decisions []ownershipDecision) map[string]any {
 	for _, key := range mapStringKeysSorted(counts) {
 		countMap[key] = counts[key]
 	}
-	return map[string]any{
+	sort.SliceStable(conflicts, func(i, j int) bool {
+		return fmt.Sprint(conflicts[i]["address"]) < fmt.Sprint(conflicts[j]["address"])
+	})
+	phase := "Resolved"
+	reason := ""
+	if len(conflicts) > 0 {
+		phase = "Conflict"
+		reason = "remote home owner overlaps local ownership evidence"
+	}
+	status := map[string]any{
 		"ownershipResolverPhase":        "Resolved",
 		"ownershipResolverAddressCount": len(decisions),
 		"ownershipResolverClassCounts":  countMap,
 		"ownershipResolverDecisions":    items,
+		"ownershipResolverOwnerTable":   ownershipResolverOwnerTable(decisions),
+		"ownershipResolverFIBVerdicts":  ownershipResolverFIBVerdicts(decisions),
 	}
+	status["ownershipResolverPhase"] = phase
+	status["ownershipResolverConflictCount"] = len(conflicts)
+	status["ownershipResolverConflicts"] = conflicts
+	status["ownershipResolverReason"] = reason
+	return status
+}
+
+func providerInventoryOwnerFactStatusRows(facts []providerInventoryOwnerFact) []map[string]any {
+	rows := make([]map[string]any, 0, len(facts))
+	for _, fact := range facts {
+		row := map[string]any{
+			"nodeRef": fact.NodeRef,
+		}
+		if fact.Provider != "" {
+			row["provider"] = fact.Provider
+		}
+		if fact.ProviderRef != "" {
+			row["providerRef"] = fact.ProviderRef
+		}
+		if fact.SubnetRef != "" {
+			row["subnetRef"] = fact.SubnetRef
+		}
+		if fact.NICRef != "" {
+			row["nicRef"] = fact.NICRef
+		}
+		if fact.ResourceRef != "" {
+			row["resourceRef"] = fact.ResourceRef
+		}
+		if fact.ResourceType != "" {
+			row["resourceType"] = fact.ResourceType
+		}
+		if !fact.ObservedAt.IsZero() {
+			row["observedAt"] = fact.ObservedAt.UTC().Format(time.RFC3339Nano)
+		}
+		rows = append(rows, row)
+	}
+	return rows
+}
+
+func ownershipResolverFIBVerdicts(decisions []ownershipDecision) []map[string]any {
+	rows := make([]map[string]any, 0, len(decisions))
+	for _, d := range decisions {
+		action, reason := ownershipResolverFIBVerdict(d)
+		row := map[string]any{
+			"address": d.Address,
+			"action":  action,
+			"reason":  reason,
+			"class":   d.Class,
+		}
+		if d.HomeOwnerNode != "" {
+			row["ownerNode"] = d.HomeOwnerNode
+		}
+		if d.LocalNodeRef != "" {
+			row["localNode"] = d.LocalNodeRef
+		}
+		if d.ConflictReason != "" {
+			row["conflictReason"] = d.ConflictReason
+		}
+		if len(d.ConflictOwners) > 0 {
+			row["conflictOwners"] = providerInventoryOwnerFactStatusRows(d.ConflictOwners)
+		}
+		rows = append(rows, row)
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		return fmt.Sprint(rows[i]["address"]) < fmt.Sprint(rows[j]["address"])
+	})
+	return rows
+}
+
+func ownershipResolverFIBVerdict(d ownershipDecision) (string, string) {
+	if strings.TrimSpace(d.ConflictReason) != "" {
+		if strings.TrimSpace(d.LocalNodeRef) != "" && strings.TrimSpace(d.LocalSource) != "" {
+			return mobilityfib.ActionLocalRoute, d.ConflictReason
+		}
+		return mobilityfib.ActionWithhold, d.ConflictReason
+	}
+	switch strings.TrimSpace(d.Class) {
+	case ownershipClassRemoteHomeOwned, ownershipClassStaleCapture:
+		if strings.TrimSpace(d.HomeOwnerNode) != "" {
+			return mobilityfib.ActionDeliverRemote, firstNonEmpty(d.SuppressionReason, "remote-owner")
+		}
+	case ownershipClassLocalHomeOwned, ownershipClassLocalRouterSelf, ownershipClassStaticOwned, ownershipClassStaticHandover, ownershipClassConfirmedCapture:
+		if strings.TrimSpace(d.HomeOwnerNode) != "" || strings.TrimSpace(d.LocalNodeRef) != "" || strings.TrimSpace(d.AdvertiseOwnerNode) != "" {
+			return mobilityfib.ActionLocalRoute, firstNonEmpty(d.AdvertiseReason, d.Source, "local-owner")
+		}
+	}
+	return mobilityfib.ActionWithhold, firstNonEmpty(d.SuppressionReason, d.Source, "no-fib-owner")
+}
+
+func ownershipResolverOwnerTable(decisions []ownershipDecision) []map[string]any {
+	rows := make([]map[string]any, 0, len(decisions))
+	for _, d := range decisions {
+		state := "OK"
+		if d.ConflictReason != "" {
+			state = "Conflict"
+		}
+		row := map[string]any{
+			"address": d.Address,
+			"class":   d.Class,
+			"state":   state,
+			"source":  d.Source,
+		}
+		if d.HomeOwnerNode != "" {
+			row["ownerNode"] = d.HomeOwnerNode
+		}
+		if d.HomeProviderRef != "" {
+			row["ownerProviderRef"] = d.HomeProviderRef
+		}
+		if d.HomeSubnetRef != "" {
+			row["ownerSubnetRef"] = d.HomeSubnetRef
+		}
+		if d.HomeNICRef != "" {
+			row["ownerNICRef"] = d.HomeNICRef
+		}
+		if d.LocalNodeRef != "" {
+			row["localNode"] = d.LocalNodeRef
+		}
+		if d.LocalProviderRef != "" {
+			row["localProviderRef"] = d.LocalProviderRef
+		}
+		if d.LocalSubnetRef != "" {
+			row["localSubnetRef"] = d.LocalSubnetRef
+		}
+		if d.LocalNICRef != "" {
+			row["localNICRef"] = d.LocalNICRef
+		}
+		if d.LocalResourceRef != "" {
+			row["localResourceRef"] = d.LocalResourceRef
+		}
+		if d.LocalResourceType != "" {
+			row["localResourceType"] = d.LocalResourceType
+		}
+		if d.LocalSource != "" {
+			row["localSource"] = d.LocalSource
+		}
+		if d.LocalSourceType != "" {
+			row["localSourceType"] = d.LocalSourceType
+		}
+		if d.AdvertiseOwnerNode != "" {
+			row["advertiseOwnerNode"] = d.AdvertiseOwnerNode
+		}
+		if d.SuppressionReason != "" {
+			row["suppressionReason"] = d.SuppressionReason
+		}
+		if d.ConflictReason != "" {
+			row["conflictReason"] = d.ConflictReason
+		}
+		rows = append(rows, row)
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		return fmt.Sprint(rows[i]["address"]) < fmt.Sprint(rows[j]["address"])
+	})
+	return rows
 }

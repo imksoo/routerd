@@ -178,6 +178,125 @@ func TestOwnershipResolverScenario398RemoteHomeSuppressesCrossCapture(t *testing
 	}
 }
 
+func TestOwnershipResolverReportsRemoteHomeLocalInventoryConflict(t *testing.T) {
+	now := time.Date(2026, 6, 10, 15, 20, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	homeEvent := providerDiscoveryObservedEvent("cloudedge", "cloudedge", "oci-router", "10.88.60.11/32", "oci", "oci-provider", providerinventory.PrivateIPRecord{
+		Address:      "10.88.60.11",
+		NICRef:       "oci-client",
+		SubnetRef:    "oci-subnet",
+		ResourceRef:  "ocid1.instance.oc1.test.client",
+		ResourceType: "instance-nic",
+	}, now.Add(-time.Second), time.Hour)
+	decisions, err := resolveAddressOwnership(ownershipResolverInput{
+		PoolName: "cloudedge",
+		SelfNode: "aws-router-a",
+		Spec:     spec,
+		Events:   []routerstate.EventRecord{homeEvent},
+		Status: map[string]any{
+			"discoveryLocalInventory": []map[string]any{
+				{
+					"address":      "10.88.60.11/32",
+					"nicRef":       "eni-client",
+					"subnetRef":    "subnet-a",
+					"providerRef":  "aws-provider",
+					"resourceRef":  "i-aws-client",
+					"resourceType": "instance-nic",
+				},
+			},
+		},
+		Now: now,
+	})
+	if err != nil {
+		t.Fatalf("resolveAddressOwnership: %v", err)
+	}
+	decision := ownershipDecisionByAddress(t, decisions, "10.88.60.11/32")
+	if decision.Class != ownershipClassRemoteHomeOwned || decision.HomeOwnerNode != "oci-router" {
+		t.Fatalf("decision = %#v, want remote home owner preserved", decision)
+	}
+	if decision.ConflictReason != "remote-home-owner-overlaps-local-inventory" {
+		t.Fatalf("decision = %#v, want local/remote inventory conflict", decision)
+	}
+	if decision.LocalProviderRef != "aws-provider" || decision.LocalSubnetRef != "subnet-a" || decision.LocalNICRef != "eni-client" || decision.LocalResourceRef != "i-aws-client" {
+		t.Fatalf("decision = %#v, want local inventory refs recorded", decision)
+	}
+	status := ownershipResolverStatus(decisions)
+	if status["ownershipResolverPhase"] != "Conflict" || status["ownershipResolverConflictCount"] != 1 {
+		t.Fatalf("status = %#v, want conflict phase and count", status)
+	}
+	items := status["ownershipResolverDecisions"].([]map[string]any)
+	item := items[0]
+	if item["conflictReason"] != "remote-home-owner-overlaps-local-inventory" || item["localProviderRef"] != "aws-provider" || item["homeProviderRef"] != "oci-provider" {
+		t.Fatalf("decision status item = %#v, want remote/local conflict refs", item)
+	}
+	conflicts := status["ownershipResolverConflicts"].([]map[string]any)
+	if len(conflicts) != 1 || conflicts[0]["address"] != "10.88.60.11/32" || conflicts[0]["localNICRef"] != "eni-client" {
+		t.Fatalf("conflicts = %#v, want address and local refs", conflicts)
+	}
+	ownerTable := status["ownershipResolverOwnerTable"].([]map[string]any)
+	if len(ownerTable) != 1 {
+		t.Fatalf("owner table = %#v, want one row", ownerTable)
+	}
+	row := ownerTable[0]
+	if row["state"] != "Conflict" || row["ownerNode"] != "oci-router" || row["ownerProviderRef"] != "oci-provider" || row["localNode"] != "aws-router-a" || row["localProviderRef"] != "aws-provider" {
+		t.Fatalf("owner table row = %#v, want remote owner and local inventory conflict", row)
+	}
+	verdicts := status["ownershipResolverFIBVerdicts"].([]map[string]any)
+	if len(verdicts) != 1 || verdicts[0]["address"] != "10.88.60.11/32" || verdicts[0]["action"] != "local-route" {
+		t.Fatalf("fib verdicts = %#v, want local-route for conflict with local evidence", verdicts)
+	}
+}
+
+func TestOwnershipResolverReportsRemoteHomeLocalOwnershipEventConflict(t *testing.T) {
+	now := time.Date(2026, 6, 10, 15, 25, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	address := "10.88.60.11/32"
+	cloudHome := providerDiscoveryObservedEvent("cloudedge", "cloudedge", "aws-router-a", address, "aws", "aws-provider", providerinventory.PrivateIPRecord{
+		Address:      "10.88.60.11",
+		NICRef:       "eni-client",
+		SubnetRef:    "subnet-a",
+		ResourceRef:  "i-aws-client",
+		ResourceType: "instance-nic",
+	}, now.Add(-time.Second), time.Hour)
+	onPremObserved := onPremDiscoveryObservedEvent("cloudedge", "cloudedge", "onprem-router", address, onPremObservation{
+		Address:    address,
+		MAC:        "02:00:00:00:00:11",
+		Interface:  "lan0",
+		SourceType: OnPremSourceARPObserver,
+		ObservedAt: now,
+	}, now, time.Hour)
+	decisions, err := resolveAddressOwnership(ownershipResolverInput{
+		PoolName: "cloudedge",
+		SelfNode: "onprem-router",
+		Spec:     spec,
+		Events:   []routerstate.EventRecord{cloudHome, onPremObserved},
+		Now:      now,
+	})
+	if err != nil {
+		t.Fatalf("resolveAddressOwnership: %v", err)
+	}
+	decision := ownershipDecisionByAddress(t, decisions, address)
+	if decision.Class != ownershipClassRemoteHomeOwned || decision.HomeOwnerNode != "aws-router-a" || decision.LocalNodeRef != "onprem-router" {
+		t.Fatalf("decision = %#v, want remote cloud owner with local onprem observation recorded", decision)
+	}
+	if decision.ConflictReason != "remote-home-owner-overlaps-local-ownership-event" || decision.LocalSource != onPremDiscoverySource || decision.LocalSourceType != OnPremSourceARPObserver {
+		t.Fatalf("decision = %#v, want onprem ownership event conflict", decision)
+	}
+	status := ownershipResolverStatus(decisions)
+	if status["ownershipResolverPhase"] != "Conflict" || status["ownershipResolverConflictCount"] != 1 {
+		t.Fatalf("status = %#v, want conflict phase and count", status)
+	}
+	ownerTable := status["ownershipResolverOwnerTable"].([]map[string]any)
+	row := ownerTable[0]
+	if row["state"] != "Conflict" || row["ownerNode"] != "aws-router-a" || row["localNode"] != "onprem-router" || row["localSource"] != onPremDiscoverySource || row["localSourceType"] != OnPremSourceARPObserver {
+		t.Fatalf("owner table row = %#v, want cloud/onprem conflict", row)
+	}
+	verdicts := status["ownershipResolverFIBVerdicts"].([]map[string]any)
+	if len(verdicts) != 1 || verdicts[0]["address"] != address || verdicts[0]["action"] != "local-route" {
+		t.Fatalf("fib verdicts = %#v, want local-route for onprem conflict evidence", verdicts)
+	}
+}
+
 func TestOwnershipResolverDoesNotClassifyCapturedSecondaryAsRouterSelf(t *testing.T) {
 	now := time.Date(2026, 6, 9, 23, 55, 0, 0, time.UTC)
 	spec := awsFailoverPoolSpec()
@@ -287,6 +406,94 @@ func TestProviderInventoryHomeOwnerFactsExcludeRouterNICPrimary(t *testing.T) {
 	}
 }
 
+func TestOwnershipResolverReportsDuplicateProviderHomeOwnerConflict(t *testing.T) {
+	now := time.Date(2026, 6, 10, 16, 0, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	address := "10.88.60.11/32"
+	awsHome := providerDiscoveryObservedEvent("cloudedge", "cloudedge", "aws-router-a", address, "aws", "aws-provider", providerinventory.PrivateIPRecord{
+		Address:      "10.88.60.11",
+		NICRef:       "eni-client",
+		SubnetRef:    "subnet-aws",
+		ResourceRef:  "i-aws-client",
+		ResourceType: "instance-nic",
+	}, now.Add(-time.Second), time.Hour)
+	ociHome := providerDiscoveryObservedEvent("cloudedge", "cloudedge", "oci-router", address, "oci", "oci-provider", providerinventory.PrivateIPRecord{
+		Address:      "10.88.60.11",
+		NICRef:       "oci-client",
+		SubnetRef:    "subnet-oci",
+		ResourceRef:  "ocid1.instance.oc1.test.client",
+		ResourceType: "instance-nic",
+	}, now.Add(-time.Second), time.Hour)
+	decisions, err := resolveAddressOwnership(ownershipResolverInput{
+		PoolName: "cloudedge",
+		SelfNode: "aws-router-b",
+		Spec:     spec,
+		Events:   []routerstate.EventRecord{awsHome, ociHome},
+		Now:      now,
+	})
+	if err != nil {
+		t.Fatalf("resolveAddressOwnership: %v", err)
+	}
+	decision := ownershipDecisionByAddress(t, decisions, address)
+	if decision.ConflictReason != "duplicate-provider-home-owners" {
+		t.Fatalf("decision = %#v, want duplicate provider home-owner conflict", decision)
+	}
+	if len(decision.ConflictOwners) != 2 {
+		t.Fatalf("decision = %#v, want both provider owner facts retained", decision)
+	}
+	status := ownershipResolverStatus(decisions)
+	if status["ownershipResolverPhase"] != "Conflict" || status["ownershipResolverConflictCount"] != 1 {
+		t.Fatalf("status = %#v, want conflict phase and count", status)
+	}
+	conflicts := status["ownershipResolverConflicts"].([]map[string]any)
+	owners, ok := conflicts[0]["owners"].([]map[string]any)
+	if !ok || len(owners) != 2 {
+		t.Fatalf("conflicts = %#v, want both conflicting owners in status", conflicts)
+	}
+	verdicts := status["ownershipResolverFIBVerdicts"].([]map[string]any)
+	if len(verdicts) != 1 || verdicts[0]["address"] != address || verdicts[0]["action"] != "withhold" {
+		t.Fatalf("fib verdicts = %#v, want withhold for duplicate remote owners", verdicts)
+	}
+}
+
+func TestOwnershipResolverIgnoresExpiredDuplicateProviderHomeOwner(t *testing.T) {
+	now := time.Date(2026, 6, 10, 16, 5, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	address := "10.88.60.11/32"
+	awsHome := providerDiscoveryObservedEvent("cloudedge", "cloudedge", "aws-router-a", address, "aws", "aws-provider", providerinventory.PrivateIPRecord{
+		Address:      "10.88.60.11",
+		NICRef:       "eni-client",
+		SubnetRef:    "subnet-aws",
+		ResourceRef:  "i-aws-client",
+		ResourceType: "instance-nic",
+	}, now.Add(-time.Minute), time.Hour)
+	ociHome := providerDiscoveryObservedEvent("cloudedge", "cloudedge", "oci-router", address, "oci", "oci-provider", providerinventory.PrivateIPRecord{
+		Address:      "10.88.60.11",
+		NICRef:       "oci-client",
+		SubnetRef:    "subnet-oci",
+		ResourceRef:  "ocid1.instance.oc1.test.client",
+		ResourceType: "instance-nic",
+	}, now.Add(-2*time.Minute), time.Minute)
+	ociExpired := providerDiscoveryExpiredEvent("cloudedge", "cloudedge", "oci-router", address, ociHome, now.Add(-30*time.Second), time.Minute)
+	decisions, err := resolveAddressOwnership(ownershipResolverInput{
+		PoolName: "cloudedge",
+		SelfNode: "aws-router-b",
+		Spec:     spec,
+		Events:   []routerstate.EventRecord{awsHome, ociHome, ociExpired},
+		Now:      now,
+	})
+	if err != nil {
+		t.Fatalf("resolveAddressOwnership: %v", err)
+	}
+	decision := ownershipDecisionByAddress(t, decisions, address)
+	if decision.ConflictReason != "" {
+		t.Fatalf("decision = %#v, want expired duplicate owner ignored", decision)
+	}
+	if decision.Class != ownershipClassRemoteHomeOwned || decision.HomeOwnerNode != "aws-router-a" {
+		t.Fatalf("decision = %#v, want fresh AWS owner selected", decision)
+	}
+}
+
 func TestOwnershipResolverNilStatusValuesDoNotLeakNilStrings(t *testing.T) {
 	now := time.Date(2026, 6, 10, 13, 15, 0, 0, time.UTC)
 	spec := awsFailoverPoolSpec()
@@ -327,6 +534,14 @@ func ownershipDecisionContainsNilString(decision ownershipDecision) bool {
 		decision.HomeProviderRef,
 		decision.HomeSubnetRef,
 		decision.HomeNICRef,
+		decision.LocalNodeRef,
+		decision.LocalProviderRef,
+		decision.LocalSubnetRef,
+		decision.LocalNICRef,
+		decision.LocalResourceRef,
+		decision.LocalResourceType,
+		decision.LocalSource,
+		decision.LocalSourceType,
 		decision.CaptureHolderNode,
 		decision.CaptureProviderRef,
 		decision.CaptureTargetRef,
@@ -335,6 +550,7 @@ func ownershipDecisionContainsNilString(decision ownershipDecision) bool {
 		decision.AdvertiseOwnerNode,
 		decision.AdvertiseReason,
 		decision.SuppressionReason,
+		decision.ConflictReason,
 		decision.Source,
 	}
 	for _, value := range values {

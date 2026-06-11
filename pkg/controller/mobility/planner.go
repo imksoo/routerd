@@ -330,6 +330,7 @@ func normalizeAddressString(address string) string {
 }
 
 func providerActionPlans(poolName string, profile api.CloudProviderProfileSpec, capture api.AddressCapture, captureTarget map[string]string, address string, forwardingSeen map[string]bool, seize bool) ([]dynamicconfig.ActionPlan, error) {
+	capture = captureWithTargetFallback(capture, captureTarget)
 	provider := strings.TrimSpace(profile.Provider)
 	providerRef := strings.TrimSpace(capture.ProviderRef)
 	nicRef := strings.TrimSpace(capture.NICRef)
@@ -433,6 +434,7 @@ func providerActionPlans(poolName string, profile api.CloudProviderProfileSpec, 
 }
 
 func providerUnassignActionPlan(poolName string, profile api.CloudProviderProfileSpec, capture api.AddressCapture, captureTarget map[string]string, address string, since time.Time) (dynamicconfig.ActionPlan, error) {
+	capture = captureWithTargetFallback(capture, captureTarget)
 	provider := strings.TrimSpace(profile.Provider)
 	providerRef := strings.TrimSpace(capture.ProviderRef)
 	nicRef := strings.TrimSpace(capture.NICRef)
@@ -475,6 +477,7 @@ func providerUnassignActionPlan(poolName string, profile api.CloudProviderProfil
 }
 
 func providerForwardingDisableActionPlan(poolName string, profile api.CloudProviderProfileSpec, capture api.AddressCapture, captureTarget map[string]string, address string) (dynamicconfig.ActionPlan, error) {
+	capture = captureWithTargetFallback(capture, captureTarget)
 	provider := strings.TrimSpace(profile.Provider)
 	providerRef := strings.TrimSpace(capture.ProviderRef)
 	nicRef := strings.TrimSpace(capture.NICRef)
@@ -505,6 +508,7 @@ func providerForwardingDisableActionPlan(poolName string, profile api.CloudProvi
 }
 
 func providerActionTarget(poolName string, profile api.CloudProviderProfileSpec, capture api.AddressCapture, captureTarget map[string]string, address string) map[string]string {
+	capture = captureWithTargetFallback(capture, captureTarget)
 	provider := strings.TrimSpace(profile.Provider)
 	providerRef := strings.TrimSpace(capture.ProviderRef)
 	nicRef := strings.TrimSpace(capture.NICRef)
@@ -521,6 +525,9 @@ func providerActionTarget(poolName string, profile api.CloudProviderProfileSpec,
 		if key != "" && value != "" {
 			target[key] = value
 		}
+	}
+	if nicRef == "" {
+		nicRef = strings.TrimSpace(target["nicRef"])
 	}
 	addProfileTargetFields(target, provider, profile, poolName, address, nicRef)
 	target["provider"] = provider
@@ -609,6 +616,16 @@ func providerCaptureRefFromCapture(capture api.AddressCapture, target map[string
 		}
 	}
 	return strings.TrimSpace(capture.NICRef)
+}
+
+func captureWithTargetFallback(capture api.AddressCapture, captureTarget map[string]string) api.AddressCapture {
+	if strings.TrimSpace(capture.NICRef) != "" {
+		return capture
+	}
+	if value := strings.TrimSpace(captureTarget["nicRef"]); value != "" {
+		capture.NICRef = value
+	}
+	return capture
 }
 
 func addProfileTargetFields(target map[string]string, provider string, profile api.CloudProviderProfileSpec, poolName, address, nicRef string) {
