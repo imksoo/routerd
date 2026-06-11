@@ -172,21 +172,24 @@ func TestDnsmasqLANServiceLinesStripIPv6PrefixLengthFromOptions(t *testing.T) {
 }
 
 func TestDHCPv4ServerPendingSourceOmitsScopeUntilResolved(t *testing.T) {
+	dir := t.TempDir()
+	leaseFile := filepath.Join(dir, "state", "dnsmasq", "dnsmasq.leases")
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"}, Metadata: api.ObjectMeta{Name: "lan-pending"}, Spec: api.DHCPv4ServerSpec{
 			Interface:     "lan",
 			AddressPool:   api.DHCPAddressPoolSpec{Start: "192.168.10.100", End: "192.168.10.199", LeaseTime: "8h"},
 			DNSServerFrom: []api.StatusValueSourceSpec{{Resource: "IPv4StaticAddress/lan-base", Field: "address"}},
+			LeaseFile:     leaseFile,
 		}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"}, Metadata: api.ObjectMeta{Name: "guest-v4"}, Spec: api.DHCPv4ServerSpec{
 			Interface:   "lan",
 			AddressPool: api.DHCPAddressPoolSpec{Start: "192.168.20.100", End: "192.168.20.199", LeaseTime: "8h"},
 			DNSServers:  []string{"192.168.20.1"},
+			LeaseFile:   leaseFile,
 		}},
 	}}}
 	store := mapStore{}
-	dir := t.TempDir()
 	configPath := filepath.Join(dir, "dnsmasq.conf")
 	pidFile := filepath.Join(dir, "dnsmasq.pid")
 	if _, err := writeDnsmasqConfig(router, store, configPath, pidFile, 1053, nil); err != nil {
@@ -235,7 +238,16 @@ func TestDHCPv4ServerPendingSourceOmitsScopeUntilResolved(t *testing.T) {
 func TestWriteDnsmasqConfigDisablesDNSPort(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "dnsmasq.conf")
-	changed, err := writeDnsmasqConfig(&api.Router{}, mapStore{}, path, filepath.Join(dir, "run", "test.pid"), 53, []string{"127.0.0.1", "192.168.160.5"})
+	leaseFile := filepath.Join(dir, "state", "dnsmasq", "dnsmasq.leases")
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"}, Metadata: api.ObjectMeta{Name: "lan-v4"}, Spec: api.DHCPv4ServerSpec{
+			Interface:   "lan",
+			AddressPool: api.DHCPAddressPoolSpec{Start: "192.168.10.100", End: "192.168.10.199", LeaseTime: "8h"},
+			LeaseFile:   leaseFile,
+		}},
+	}}}
+	changed, err := writeDnsmasqConfig(router, mapStore{}, path, filepath.Join(dir, "run", "test.pid"), 53, []string{"127.0.0.1", "192.168.160.5"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -286,14 +298,21 @@ func TestDHCPv4ServerWhenFalseRemovesDnsmasqScope(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "dnsmasq.conf")
 	pidFile := filepath.Join(dir, "dnsmasq.pid")
+	leaseFile := filepath.Join(dir, "state", "dnsmasq", "dnsmasq.leases")
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"}, Metadata: api.ObjectMeta{Name: "lan-v4"}, Spec: api.DHCPv4ServerSpec{
 			Interface:   "lan",
 			AddressPool: api.DHCPAddressPoolSpec{Start: "192.168.10.100", End: "192.168.10.199", LeaseTime: "8h"},
+			LeaseFile:   leaseFile,
 			When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{
 				"VirtualAddress/lan-vip.role": {Equals: "master"},
 			}},
+		}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"}, Metadata: api.ObjectMeta{Name: "guest-v4"}, Spec: api.DHCPv4ServerSpec{
+			Interface:   "lan",
+			AddressPool: api.DHCPAddressPoolSpec{Start: "192.168.20.100", End: "192.168.20.199", LeaseTime: "8h"},
+			LeaseFile:   leaseFile,
 		}},
 	}}}
 	store := statefulDHCPMapStore{mapStore: mapStore{
@@ -338,6 +357,7 @@ func TestDHCPv4ReservationWhenTrueClearsWhenFalseStatus(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "dnsmasq.conf")
 	pidFile := filepath.Join(dir, "dnsmasq.pid")
+	leaseFile := filepath.Join(dir, "state", "dnsmasq", "dnsmasq.leases")
 	whenMaster := api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{
 		"VirtualAddress/lan-vip.role": {Equals: "master"},
 	}}
@@ -346,7 +366,13 @@ func TestDHCPv4ReservationWhenTrueClearsWhenFalseStatus(t *testing.T) {
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"}, Metadata: api.ObjectMeta{Name: "lan-v4"}, Spec: api.DHCPv4ServerSpec{
 			Interface:   "lan",
 			AddressPool: api.DHCPAddressPoolSpec{Start: "192.168.10.100", End: "192.168.10.199", LeaseTime: "8h"},
+			LeaseFile:   leaseFile,
 			When:        whenMaster,
+		}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"}, Metadata: api.ObjectMeta{Name: "guest-v4"}, Spec: api.DHCPv4ServerSpec{
+			Interface:   "lan",
+			AddressPool: api.DHCPAddressPoolSpec{Start: "192.168.20.100", End: "192.168.20.199", LeaseTime: "8h"},
+			LeaseFile:   leaseFile,
 		}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Reservation"}, Metadata: api.ObjectMeta{Name: "printer"}, Spec: api.DHCPv4ReservationSpec{
 			Server:     "lan-v4",
@@ -418,8 +444,14 @@ func TestIPv6RouterAdvertisementWhenFalseRemovesDnsmasqRA(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "dnsmasq.conf")
 	pidFile := filepath.Join(dir, "dnsmasq.pid")
+	leaseFile := filepath.Join(dir, "state", "dnsmasq", "dnsmasq.leases")
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"}, Metadata: api.ObjectMeta{Name: "lan-v4"}, Spec: api.DHCPv4ServerSpec{
+			Interface:   "lan",
+			AddressPool: api.DHCPAddressPoolSpec{Start: "192.168.10.100", End: "192.168.10.199", LeaseTime: "8h"},
+			LeaseFile:   leaseFile,
+		}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6RouterAdvertisement"}, Metadata: api.ObjectMeta{Name: "lan-ra"}, Spec: api.IPv6RouterAdvertisementSpec{
 			Interface: "lan",
 			Prefix:    "2001:db8:1::/64",

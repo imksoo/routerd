@@ -8,6 +8,7 @@ interface=ens19
 
 interface=ens19
 dhcp-range=set:lan-dhcpv4,192.168.30.100,192.168.30.199,12h
+dhcp-option=tag:lan-dhcpv4,option:router,192.168.30.1
 dhcp-option=tag:lan-dhcpv4,option:dns-server,192.168.30.1
 dhcp-option=tag:lan-dhcpv4,option:domain-name,home.example
 dhcp-option=tag:lan-dhcpv4,option:domain-search,home.example

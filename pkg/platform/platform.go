@@ -199,12 +199,10 @@ func (d Defaults) RuntimeDnsmasqLeaseFile() string {
 	return strings.TrimRight(d.RuntimeDir, "/") + "/dnsmasq.leases"
 }
 
-// DnsmasqLeaseCandidates returns the dnsmasq lease paths readers should try.
+// DnsmasqLeaseCandidates returns the managed dnsmasq lease path.
 func DnsmasqLeaseCandidates(d Defaults, f Features) []string {
-	if f.HasRCD || f.HasOpenRC {
-		return []string{d.DnsmasqLeaseFile(), d.RuntimeDnsmasqLeaseFile(), "/var/lib/misc/dnsmasq.leases"}
-	}
-	return []string{d.RuntimeDnsmasqLeaseFile(), d.DnsmasqLeaseFile(), "/var/lib/misc/dnsmasq.leases"}
+	_ = f
+	return []string{d.DnsmasqLeaseFile()}
 }
 
 // ConfigFile returns the default router.yaml path.

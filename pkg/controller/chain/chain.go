@@ -3281,16 +3281,8 @@ func dnsmasqLeaseFile(router *api.Router, configPath, pidFile string) (string, e
 	if declared != "" {
 		return declared, nil
 	}
-	leaseDir := filepath.Dir(configPath)
-	if strings.TrimSpace(leaseDir) == "" {
-		leaseDir = filepath.Dir(pidFile)
-	}
-	leaseFile := filepath.Join(leaseDir, "dnsmasq.leases")
-	defaults, features := platform.Current()
-	if features.HasRCD {
-		leaseFile = defaults.DnsmasqLeaseFile()
-	}
-	return leaseFile, nil
+	defaults, _ := platform.Current()
+	return defaults.DnsmasqLeaseFile(), nil
 }
 
 func dnsmasqListenAddresses(addresses []string) []string {

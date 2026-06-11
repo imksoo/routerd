@@ -117,21 +117,18 @@ func TestCanonicalResourcePaths(t *testing.T) {
 	}
 }
 
-func TestDnsmasqLeaseCandidatesPreferActualManagedPath(t *testing.T) {
+func TestDnsmasqLeaseCandidatesUsePersistentManagedPath(t *testing.T) {
 	defaults := Defaults{RuntimeDir: "/run/routerd", StateDir: "/var/lib/routerd"}
-	if got := DnsmasqLeaseCandidates(defaults, Features{}); got[0] != "/run/routerd/dnsmasq.leases" {
-		t.Fatalf("systemd candidates = %#v, want runtime path first", got)
+	if got := DnsmasqLeaseCandidates(defaults, Features{}); len(got) != 1 || got[0] != "/var/lib/routerd/dnsmasq/dnsmasq.leases" {
+		t.Fatalf("systemd candidates = %#v, want persistent path only", got)
 	}
-	if got := DnsmasqLeaseCandidates(defaults, Features{HasOpenRC: true}); got[0] != "/var/lib/routerd/dnsmasq/dnsmasq.leases" {
-		t.Fatalf("openrc candidates = %#v, want state path first", got)
+	if got := DnsmasqLeaseCandidates(defaults, Features{HasOpenRC: true}); len(got) != 1 || got[0] != "/var/lib/routerd/dnsmasq/dnsmasq.leases" {
+		t.Fatalf("openrc candidates = %#v, want persistent path only", got)
 	}
 	freebsd := Defaults{RuntimeDir: "/var/run/routerd", StateDir: "/var/db/routerd"}
 	got := DnsmasqLeaseCandidates(freebsd, Features{HasRCD: true})
-	if got[0] != "/var/db/routerd/dnsmasq/dnsmasq.leases" {
-		t.Fatalf("freebsd candidates = %#v, want state path first", got)
-	}
-	if got[1] != "/var/run/routerd/dnsmasq.leases" {
-		t.Fatalf("freebsd candidates = %#v, want runtime fallback second", got)
+	if len(got) != 1 || got[0] != "/var/db/routerd/dnsmasq/dnsmasq.leases" {
+		t.Fatalf("freebsd candidates = %#v, want persistent path only", got)
 	}
 }
 

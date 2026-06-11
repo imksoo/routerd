@@ -1289,14 +1289,13 @@ func configuredTrafficFlowLogPath(router *api.Router) string {
 
 func configuredDHCPLeasePaths(controllerDnsmasqConfig string) []string {
 	var paths []string
-	if leaseFile := dnsmasqLeaseFileForPlatform(); strings.TrimSpace(leaseFile) != "" {
-		paths = append(paths, leaseFile)
-	}
 	if leaseFile := dnsmasqLeaseFileForConfig(controllerDnsmasqConfig); strings.TrimSpace(leaseFile) != "" {
 		paths = append(paths, leaseFile)
 	}
+	if leaseFile := dnsmasqLeaseFileForPlatform(); strings.TrimSpace(leaseFile) != "" {
+		paths = append(paths, leaseFile)
+	}
 	paths = append(paths, platform.DnsmasqLeaseCandidates(platformDefaults, platformFeatures)...)
-	paths = append(paths, "/run/routerd/dnsmasq.leases", "/var/lib/misc/dnsmasq.leases")
 	return dedupeStrings(paths)
 }
 

@@ -48,6 +48,10 @@ func applyDnsmasqConfig(configPath, servicePath string, configData []byte) ([]st
 	if err := os.MkdirAll(filepathDir(configPath), 0755); err != nil {
 		return nil, fmt.Errorf("create directory for %s: %w", configPath, err)
 	}
+	leaseFile := dnsmasqLeaseFileForPlatform()
+	if err := os.MkdirAll(filepathDir(leaseFile), 0755); err != nil {
+		return nil, fmt.Errorf("create dnsmasq lease directory %s: %w", filepathDir(leaseFile), err)
+	}
 	changed, err := writeFileIfChanged(configPath, configData, 0644)
 	if err != nil {
 		return nil, fmt.Errorf("write dnsmasq config %s: %w", configPath, err)
@@ -228,9 +232,6 @@ func applyDirectDnsmasqConfig(configPath string, configData []byte, dnsmasqPath 
 		return nil, fmt.Errorf("create runtime directory %s: %w", platformDefaults.RuntimeDir, err)
 	}
 	leaseFile := dnsmasqLeaseFileForPlatform()
-	if leaseFile == "" {
-		leaseFile = strings.TrimRight(platformDefaults.RuntimeDir, "/") + "/dnsmasq.leases"
-	}
 	if err := os.MkdirAll(filepathDir(leaseFile), 0755); err != nil {
 		return nil, fmt.Errorf("create dnsmasq lease directory %s: %w", filepathDir(leaseFile), err)
 	}
@@ -278,9 +279,6 @@ func applyOpenRCDnsmasqConfig(configPath, servicePath string, configData []byte,
 		return nil, fmt.Errorf("create runtime directory %s: %w", platformDefaults.RuntimeDir, err)
 	}
 	leaseFile := dnsmasqLeaseFileForPlatform()
-	if leaseFile == "" {
-		leaseFile = platformDefaults.DnsmasqLeaseFile()
-	}
 	if err := os.MkdirAll(filepathDir(leaseFile), 0755); err != nil {
 		return nil, fmt.Errorf("create dnsmasq lease directory %s: %w", filepathDir(leaseFile), err)
 	}
@@ -397,6 +395,10 @@ func applyNixOSDnsmasqConfig(configPath string, configData []byte, dnsmasqPath s
 	if err := os.MkdirAll(filepathDir(configPath), 0755); err != nil {
 		return nil, fmt.Errorf("create directory for %s: %w", configPath, err)
 	}
+	leaseFile := dnsmasqLeaseFileForPlatform()
+	if err := os.MkdirAll(filepathDir(leaseFile), 0755); err != nil {
+		return nil, fmt.Errorf("create dnsmasq lease directory %s: %w", filepathDir(leaseFile), err)
+	}
 	changed, err := writeFileIfChanged(configPath, configData, 0644)
 	if err != nil {
 		return nil, fmt.Errorf("write dnsmasq config %s: %w", configPath, err)
@@ -507,13 +509,7 @@ func applyFreeBSDDnsmasqConfig(configPath, servicePath string, configData []byte
 }
 
 func dnsmasqLeaseFileForPlatform() string {
-	if platformDefaults.OS == platform.OSFreeBSD {
-		return platformDefaults.DnsmasqLeaseFile()
-	}
-	if platformFeatures.HasOpenRC {
-		return platformDefaults.DnsmasqLeaseFile()
-	}
-	return ""
+	return platformDefaults.DnsmasqLeaseFile()
 }
 
 func dhcpStickyLogPath() string {
