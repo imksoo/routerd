@@ -207,6 +207,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		return err
 	}
 	installedNextHops, bgpRIBObserved := c.bgpInstalledNextHops()
+	acceptedBGPPathPrefixes := c.bgpAcceptedPathPrefixes()
 	forwardingObserved, forwardingEnabled, forwardingObservedAt := c.discoverySelfForwardingState(res.Metadata.Name)
 	ownershipDecisions, ownershipErr := resolveAddressOwnership(ownershipResolverInput{
 		PoolName:          res.Metadata.Name,
@@ -295,6 +296,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		"generatedBGPTraps":                 len(delivery.CaptureCandidates),
 		"generatedClaims":                   0,
 		"generatedActions":                  len(actionPlans),
+		"acceptedBGPPathPrefixes":           sortedMapKeys(acceptedBGPPathPrefixes),
 		"membersFrom":                       mobilityMembersFromStatusMaps(resolved.MembersFrom),
 		"resolvedMemberCount":               len(spec.Members),
 		"pendingSources":                    resolved.PendingSources,
@@ -344,20 +346,21 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		status[key] = value
 	}
 	for key, value := range samConvergenceStatusFields(samConvergenceInput{
-		Status:                status,
-		DesiredBGPPaths:       delivery.Paths,
-		InstalledNextHops:     installedNextHops,
-		BGPRIBObserved:        bgpRIBObserved,
-		SelfCaptureResolved:   selfCaptureResolved,
-		SelfCaptureReason:     selfCaptureReason,
-		CaptureCandidates:     len(delivery.CaptureCandidates),
-		GeneratedActions:      len(actionPlans),
-		ProviderCapturedPaths: delivery.ProviderCapturedPaths,
-		OSCaptureExpected:     self.Capture.Type == "provider-secondary-ip" && self.Capture.ConfigureOSAddress && (len(delivery.CaptureCandidates) > 0 || len(actionPlans) > 0 || delivery.ProviderCapturedPaths > 0),
-		OSCaptureObserved:     c.providerSecondaryOSCaptureReflected(res.Metadata.Name, captureConvergenceAddresses(delivery)),
-		ForwardingObserved:    forwardingObserved,
-		ForwardingEnabled:     forwardingEnabled,
-		ObservedAt:            now,
+		Status:                  status,
+		DesiredBGPPaths:         delivery.Paths,
+		InstalledNextHops:       installedNextHops,
+		AcceptedBGPPathPrefixes: acceptedBGPPathPrefixes,
+		BGPRIBObserved:          bgpRIBObserved,
+		SelfCaptureResolved:     selfCaptureResolved,
+		SelfCaptureReason:       selfCaptureReason,
+		CaptureCandidates:       len(delivery.CaptureCandidates),
+		GeneratedActions:        len(actionPlans),
+		ProviderCapturedPaths:   delivery.ProviderCapturedPaths,
+		OSCaptureExpected:       self.Capture.Type == "provider-secondary-ip" && self.Capture.ConfigureOSAddress && (len(delivery.CaptureCandidates) > 0 || len(actionPlans) > 0 || delivery.ProviderCapturedPaths > 0),
+		OSCaptureObserved:       c.providerSecondaryOSCaptureReflected(res.Metadata.Name, captureConvergenceAddresses(delivery)),
+		ForwardingObserved:      forwardingObserved,
+		ForwardingEnabled:       forwardingEnabled,
+		ObservedAt:              now,
 	}) {
 		status[key] = value
 	}
@@ -365,20 +368,21 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 }
 
 type samConvergenceInput struct {
-	Status                map[string]any
-	DesiredBGPPaths       []bgpdaemon.AppliedPath
-	InstalledNextHops     map[string][]string
-	BGPRIBObserved        bool
-	SelfCaptureResolved   bool
-	SelfCaptureReason     string
-	CaptureCandidates     int
-	GeneratedActions      int
-	ProviderCapturedPaths int
-	OSCaptureExpected     bool
-	OSCaptureObserved     bool
-	ForwardingObserved    bool
-	ForwardingEnabled     bool
-	ObservedAt            time.Time
+	Status                  map[string]any
+	DesiredBGPPaths         []bgpdaemon.AppliedPath
+	InstalledNextHops       map[string][]string
+	AcceptedBGPPathPrefixes map[string]bool
+	BGPRIBObserved          bool
+	SelfCaptureResolved     bool
+	SelfCaptureReason       string
+	CaptureCandidates       int
+	GeneratedActions        int
+	ProviderCapturedPaths   int
+	OSCaptureExpected       bool
+	OSCaptureObserved       bool
+	ForwardingObserved      bool
+	ForwardingEnabled       bool
+	ObservedAt              time.Time
 }
 
 func withSAMConvergenceBlocked(status map[string]any, reason string, observedAt time.Time) map[string]any {
@@ -448,7 +452,7 @@ func samConvergenceStatusFields(in samConvergenceInput) map[string]any {
 	if !in.BGPRIBObserved {
 		blocking = append(blocking, "BGP installed next-hop evidence is not observable")
 	} else {
-		missing := missingDesiredBGPPathPrefixes(in.DesiredBGPPaths, in.InstalledNextHops)
+		missing := missingDesiredBGPPathPrefixes(in.DesiredBGPPaths, in.InstalledNextHops, in.AcceptedBGPPathPrefixes)
 		if len(missing) == 0 {
 			fibPhase = sam.FIBConvergenceReady
 		} else {
@@ -493,16 +497,17 @@ func samConvergenceStatusFields(in samConvergenceInput) map[string]any {
 	}.StatusFields()
 }
 
-func missingDesiredBGPPathPrefixes(paths []bgpdaemon.AppliedPath, installed map[string][]string) []string {
+func missingDesiredBGPPathPrefixes(paths []bgpdaemon.AppliedPath, installed map[string][]string, accepted map[string]bool) []string {
 	var missing []string
 	for _, path := range paths {
 		prefix := strings.TrimSpace(path.Prefix)
 		if prefix == "" {
 			continue
 		}
-		if len(installed[prefix]) == 0 {
-			missing = append(missing, prefix)
+		if len(installed[prefix]) > 0 || accepted[prefix] {
+			continue
 		}
+		missing = append(missing, prefix)
 	}
 	sort.Strings(missing)
 	return missing
@@ -1313,6 +1318,23 @@ func (c Controller) bgpInstalledNextHops() (map[string][]string, bool) {
 	return out, observed
 }
 
+func (c Controller) bgpAcceptedPathPrefixes() map[string]bool {
+	out := map[string]bool{}
+	if c.Router == nil || c.Store == nil {
+		return out
+	}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "BGPRouter" {
+			continue
+		}
+		status := c.Store.ObjectStatus(api.NetAPIVersion, "BGPRouter", resource.Metadata.Name)
+		for prefix := range bgpAcceptedPrefixesStatusValue(status["prefixes"]) {
+			out[prefix] = true
+		}
+	}
+	return out
+}
+
 func bgpInstalledNextHopsValue(value any) map[string][]string {
 	out := map[string][]string{}
 	switch typed := value.(type) {
@@ -1325,6 +1347,48 @@ func bgpInstalledNextHopsValue(value any) map[string][]string {
 			out[strings.TrimSpace(prefix)] = statusStringSlice(raw)
 		}
 	}
+	return out
+}
+
+func bgpAcceptedPrefixesStatusValue(value any) map[string]bool {
+	out := map[string]bool{}
+	switch typed := value.(type) {
+	case []bgpstate.Prefix:
+		for _, prefix := range typed {
+			addAcceptedPrefix(out, prefix.Prefix)
+		}
+	case []any:
+		for _, item := range typed {
+			if prefix, ok := item.(bgpstate.Prefix); ok {
+				addAcceptedPrefix(out, prefix.Prefix)
+				continue
+			}
+			rec, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			addAcceptedPrefix(out, statusMapString(rec, "prefix"))
+		}
+	}
+	return out
+}
+
+func addAcceptedPrefix(out map[string]bool, raw string) {
+	prefix, err := netip.ParsePrefix(strings.TrimSpace(raw))
+	if err != nil {
+		return
+	}
+	out[prefix.Masked().String()] = true
+}
+
+func sortedMapKeys(values map[string]bool) []string {
+	out := make([]string, 0, len(values))
+	for key, ok := range values {
+		if ok && strings.TrimSpace(key) != "" {
+			out = append(out, strings.TrimSpace(key))
+		}
+	}
+	sort.Strings(out)
 	return out
 }
 

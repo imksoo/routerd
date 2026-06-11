@@ -74,6 +74,33 @@ func TestSAMConvergenceStatusReadyRequiresFIB(t *testing.T) {
 	}
 }
 
+func TestSAMConvergenceStatusReadyWithAcceptedSelfOriginatedBGPPath(t *testing.T) {
+	fields := samConvergenceStatusFields(samConvergenceInput{
+		Status: map[string]any{
+			"ownershipResolverPhase": "Resolved",
+			"providerActionPhase":    "OK",
+		},
+		DesiredBGPPaths: []bgpdaemon.AppliedPath{{
+			Prefix: "10.77.60.12/32",
+		}},
+		InstalledNextHops: map[string][]string{},
+		AcceptedBGPPathPrefixes: map[string]bool{
+			"10.77.60.12/32": true,
+		},
+		BGPRIBObserved: true,
+		ObservedAt:     time.Unix(1700000000, 0).UTC(),
+	})
+	if fields["samConvergencePhase"] != sam.SAMConvergenceReady {
+		t.Fatalf("samConvergencePhase = %v, want %s", fields["samConvergencePhase"], sam.SAMConvergenceReady)
+	}
+	if fields["fibConvergencePhase"] != sam.FIBConvergenceReady {
+		t.Fatalf("fibConvergencePhase = %v, want %s", fields["fibConvergencePhase"], sam.FIBConvergenceReady)
+	}
+	if fields["advertisementGatePhase"] != sam.AdvertisementGateAllowed {
+		t.Fatalf("advertisementGatePhase = %v, want %s", fields["advertisementGatePhase"], sam.AdvertisementGateAllowed)
+	}
+}
+
 func TestSAMConvergenceStatusBlocksUnresolvedSelfCapture(t *testing.T) {
 	fields := samConvergenceStatusFields(samConvergenceInput{
 		Status: map[string]any{
