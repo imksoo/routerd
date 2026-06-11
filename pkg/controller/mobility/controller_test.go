@@ -51,6 +51,19 @@ func TestSAMConvergenceStatusResolvedButMissingFIBIsDegraded(t *testing.T) {
 	}
 }
 
+func TestCaptureConvergenceAddressesIgnoreOrdinaryBGPPaths(t *testing.T) {
+	got := captureConvergenceAddresses(bgpDeliveryPlannerResult{
+		Paths: []bgpdaemon.AppliedPath{
+			{Prefix: "10.77.60.13/32"},
+			{Prefix: "10.77.60.5/32"},
+		},
+		ProviderCapturedAddrs: []string{"10.77.60.44/32"},
+	})
+	if len(got) != 1 || got[0] != "10.77.60.44/32" {
+		t.Fatalf("captureConvergenceAddresses = %#v, want only provider-captured address", got)
+	}
+}
+
 func TestSAMConvergenceStatusReadyRequiresFIB(t *testing.T) {
 	fields := samConvergenceStatusFields(samConvergenceInput{
 		Status: map[string]any{
