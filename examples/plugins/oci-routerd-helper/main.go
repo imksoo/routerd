@@ -87,6 +87,11 @@ func runPreflight(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("instance principal region: %w", err)
 	}
+	// KeyID forces the instance-principal federation/security-token exchange.
+	// Do not emit the key ID; preflight only needs an ok/fail marker.
+	if _, err := provider.KeyID(); err != nil {
+		return fmt.Errorf("instance principal federation token: %w", err)
+	}
 	if _, err := core.NewVirtualNetworkClientWithConfigurationProvider(provider); err != nil {
 		return fmt.Errorf("virtual network client: %w", err)
 	}
@@ -102,6 +107,8 @@ func runPreflight(ctx context.Context) error {
 		"configFile":         fmt.Sprintf("%t", authConfig.IsFromConfigFile),
 		"region":             region,
 		"instancePrincipal":  "ok",
+		"keyIDProbe":         "ok",
+		"federationToken":    "ok",
 		"resourceProbe":      "not-requested",
 		"credentialSource":   "instance-principal",
 		"profileDependency":  "false",

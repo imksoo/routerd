@@ -97,7 +97,7 @@ func TestPreflightOCIHelperOverridePasses(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "oci-routerd-helper")
 	if err := os.WriteFile(path, []byte(`#!/bin/sh
 if [ "$1" = "version" ]; then echo '{"data":{"version":"oci-routerd-helper/test"}}'; exit 0; fi
-if [ "$1" = "preflight" ]; then echo '{"data":{"instancePrincipal":"ok","resourceProbe":"not-requested","credentialSource":"instance-principal"}}'; exit 0; fi
+if [ "$1" = "preflight" ]; then echo '{"data":{"instancePrincipal":"ok","keyIDProbe":"ok","federationToken":"ok","resourceProbe":"not-requested","credentialSource":"instance-principal"}}'; exit 0; fi
 exit 1
 `), 0755); err != nil {
 		t.Fatalf("write fake helper: %v", err)
@@ -113,7 +113,7 @@ exit 1
 	if res.Status.Observed["dependency"] != "oci-routerd-helper" || res.Status.Observed["path"] != path {
 		t.Fatalf("observed = %#v", res.Status.Observed)
 	}
-	if res.Status.Observed["version"] != "oci-routerd-helper/test" || res.Status.Observed["instancePrincipal"] != "ok" {
+	if res.Status.Observed["version"] != "oci-routerd-helper/test" || res.Status.Observed["instancePrincipal"] != "ok" || res.Status.Observed["keyIDProbe"] != "ok" {
 		t.Fatalf("observed = %#v, want helper preflight fields", res.Status.Observed)
 	}
 }
