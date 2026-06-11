@@ -523,6 +523,11 @@ func TestControllerBGPModeFreshHomeOwnerKeepsConfirmedCrossProviderCapture(t *te
 			}); err != nil {
 				t.Fatalf("SaveObjectStatus(oci): %v", err)
 			}
+			if err := store.SaveObjectStatus(api.HybridAPIVersion, "RemoteAddressClaim", bgpMobilityRemoteClaimName("cloudedge", tc.address), map[string]any{
+				"captureOSAddressPresence": map[string]any{"address": tc.address, "interface": "ens3", "enforced": true},
+			}); err != nil {
+				t.Fatalf("SaveObjectStatus(RemoteAddressClaim): %v", err)
+			}
 
 			bgp := &fakeBGPPaths{}
 			ociController := Controller{Router: routerWithOCIProvider(routerWithBGPRouter(planningRouterForNode("oci-router", spec))), Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
@@ -547,7 +552,7 @@ func TestControllerBGPModeFreshHomeOwnerKeepsConfirmedCrossProviderCapture(t *te
 				t.Fatalf("oci status = %#v, want provider capture counted independently of BGP owner advertisement", ociStatus)
 			}
 			if got := fmt.Sprint(ociStatus["osCapturePhase"]); got != sam.OSCaptureReflected {
-				t.Fatalf("oci status = %#v, want OS capture reflected from discoverySelfCapturedAddresses", ociStatus)
+				t.Fatalf("oci status = %#v, want OS capture reflected from RemoteAddressClaim presence", ociStatus)
 			}
 
 			if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
@@ -579,6 +584,50 @@ func TestControllerBGPModeFreshHomeOwnerKeepsConfirmedCrossProviderCapture(t *te
 				t.Fatalf("paths = %#v, want fresh home owner %s to advertise %s", bgp.paths, tc.homeNode, tc.address)
 			}
 		})
+	}
+}
+
+func TestControllerBGPModeProviderInventoryCaptureDoesNotSatisfyOSGate(t *testing.T) {
+	now := time.Date(2026, 6, 11, 18, 15, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	for i := range spec.Members {
+		if spec.Members[i].NodeRef != "oci-router" {
+			continue
+		}
+		spec.Members[i].Capture.ConfigureOSAddress = true
+		spec.Members[i].Capture.Interface = "ens3"
+	}
+	address := "10.88.60.11/32"
+	recordEvent(t, store, providerDiscoveryObservedEvent("cloudedge", "cloudedge", "aws-router-a", address, "aws", "aws-provider", providerinventory.PrivateIPRecord{
+		Address:   address,
+		NICRef:    "aws-client-nic",
+		SubnetRef: "aws-subnet",
+	}, now.Add(-time.Second), time.Hour))
+	seedSucceededBGPCaptureAction(t, store, "oci-provider", "oci-vnic", "oci-router", address, "assign-secondary-ip", 1, now.Add(-time.Second))
+	saveBGPInstalledNextHops(t, store, map[string][]string{address: {"10.99.0.200"}})
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"discoverySelfPrivateIPs":        []string{"10.88.60.250/32"},
+		"discoverySelfCapturedAddresses": []string{address},
+		"discoveryLastScanAt":            now.Format(time.RFC3339Nano),
+	}); err != nil {
+		t.Fatalf("SaveObjectStatus: %v", err)
+	}
+
+	controller := Controller{Router: routerWithOCIProvider(routerWithBGPRouter(planningRouterForNode("oci-router", spec))), Store: store, BGPPaths: &fakeBGPPaths{}, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	if got := fmt.Sprint(status["cloudClaimPhase"]); got != sam.CloudClaimClaimed {
+		t.Fatalf("cloudClaimPhase = %v, want %s; status=%#v", got, sam.CloudClaimClaimed, status)
+	}
+	if got := fmt.Sprint(status["osCapturePhase"]); got != sam.OSCaptureMissing {
+		t.Fatalf("osCapturePhase = %v, want %s when only provider inventory has the capture; status=%#v", got, sam.OSCaptureMissing, status)
+	}
+	if got := fmt.Sprint(status["samConvergencePhase"]); got != sam.SAMConvergenceDegraded {
+		t.Fatalf("samConvergencePhase = %v, want %s; status=%#v", got, sam.SAMConvergenceDegraded, status)
 	}
 }
 
