@@ -67,6 +67,7 @@ type AppliedPeer struct {
 	ASN                     uint32                  `json:"asn"`
 	Password                string                  `json:"password,omitempty"`
 	BFD                     string                  `json:"bfd,omitempty"`
+	PassiveMode             bool                    `json:"passiveMode,omitempty"`
 	EbgpMultihop            int                     `json:"ebgpMultihop,omitempty"`
 	RouteReflectorClient    bool                    `json:"routeReflectorClient,omitempty"`
 	RouteReflectorClusterID string                  `json:"routeReflectorClusterID,omitempty"`

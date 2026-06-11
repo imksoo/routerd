@@ -570,6 +570,17 @@ func TestGoBGPPeerEbgpMultihop(t *testing.T) {
 	}
 }
 
+func TestGoBGPPeerPassiveMode(t *testing.T) {
+	active := goBGPPeer(desiredPeer{Address: "127.0.0.1", ASN: 64578})
+	if active.GetTransport() != nil {
+		t.Fatalf("active peer transport = %#v, want nil", active.GetTransport())
+	}
+	passive := goBGPPeer(desiredPeer{Address: "127.0.0.1", ASN: 64578, PassiveMode: true})
+	if !passive.GetTransport().GetPassiveMode() {
+		t.Fatalf("passive peer transport = %#v, want passiveMode", passive.GetTransport())
+	}
+}
+
 func TestGoBGPPeerInternalRouteReflectorClient(t *testing.T) {
 	peer := goBGPPeer(desiredPeer{
 		Address:                 "10.99.0.2",
@@ -1791,6 +1802,35 @@ func TestReconcileRefreshesMissingDynamicAdvertisementFromAppliedState(t *testin
 	key := bgpdaemon.AppliedPathKey(bgpdaemon.AppliedPath{Source: "MobilityPool/demo/node/aws-router-a", Prefix: "10.77.60.11/32"})
 	if pathsByKey[key].UUID == "" || pathsByKey[key].UUID == bgpdaemon.EncodeUUID([]byte{7}) {
 		t.Fatalf("dynamic path UUID was not refreshed: %#v", server.applied.Paths)
+	}
+}
+
+func TestReconcilePersistsBGPPeerPassiveMode(t *testing.T) {
+	router := bgpRouterWithImportPrefixes("10.250.0.0/24")
+	for i := range router.Spec.Resources {
+		if router.Spec.Resources[i].APIVersion != api.NetAPIVersion || router.Spec.Resources[i].Kind != "BGPPeer" {
+			continue
+		}
+		spec := router.Spec.Resources[i].Spec.(api.BGPPeerSpec)
+		spec.PassiveMode = true
+		router.Spec.Resources[i].Spec = spec
+	}
+	server := &fakeServer{}
+	controller := Controller{
+		Router: router,
+		Store:  mapStore{},
+		Server: server,
+		FIB:    &fakeFIB{},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	peer, ok := server.applied.Peers["10.0.0.21"]
+	if !ok {
+		t.Fatalf("applied peers = %#v, missing 10.0.0.21", server.applied.Peers)
+	}
+	if !peer.PassiveMode {
+		t.Fatalf("applied peer = %#v, want passiveMode persisted", peer)
 	}
 }
 

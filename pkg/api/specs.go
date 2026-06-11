@@ -670,6 +670,7 @@ type BGPPeerSpec struct {
 	Peers                   []string              `yaml:"peers" json:"peers"`
 	Password                string                `yaml:"password,omitempty" json:"password,omitempty"`
 	PasswordFrom            SecretValueSourceSpec `yaml:"passwordFrom,omitempty" json:"passwordFrom,omitempty"`
+	PassiveMode             bool                  `yaml:"passiveMode,omitempty" json:"passiveMode,omitempty"`
 	EbgpMultihop            int                   `yaml:"ebgpMultihop,omitempty" json:"ebgpMultihop,omitempty" jsonschema:"minimum=0,maximum=255"`
 	RouteReflectorClient    bool                  `yaml:"routeReflectorClient,omitempty" json:"routeReflectorClient,omitempty"`
 	RouteReflectorClusterID string                `yaml:"routeReflectorClusterID,omitempty" json:"routeReflectorClusterID,omitempty"`

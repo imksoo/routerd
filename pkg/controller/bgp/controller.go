@@ -121,6 +121,7 @@ type desiredPeer struct {
 	LocalASN                uint32
 	Password                string
 	BFD                     string
+	PassiveMode             bool
 	EbgpMultihop            int
 	RouteReflectorClient    bool
 	RouteReflectorClusterID string
@@ -595,6 +596,7 @@ func (c *Controller) desiredPeers(routerName string, localASN uint32) (map[strin
 				LocalASN:                localASN,
 				Password:                password,
 				BFD:                     strings.TrimSpace(spec.BFD),
+				PassiveMode:             spec.PassiveMode,
 				EbgpMultihop:            spec.EbgpMultihop,
 				RouteReflectorClient:    spec.RouteReflectorClient,
 				RouteReflectorClusterID: strings.TrimSpace(spec.RouteReflectorClusterID),
@@ -1107,6 +1109,7 @@ func desiredPeersFromApplied(localASN uint32, peers map[string]bgpdaemon.Applied
 			LocalASN:                localASN,
 			Password:                peer.Password,
 			BFD:                     peer.BFD,
+			PassiveMode:             peer.PassiveMode,
 			EbgpMultihop:            peer.EbgpMultihop,
 			RouteReflectorClient:    peer.RouteReflectorClient,
 			RouteReflectorClusterID: peer.RouteReflectorClusterID,
@@ -1174,6 +1177,7 @@ func appliedPeer(peer desiredPeer) bgpdaemon.AppliedPeer {
 		ASN:                     peer.ASN,
 		Password:                peer.Password,
 		BFD:                     peer.BFD,
+		PassiveMode:             peer.PassiveMode,
 		EbgpMultihop:            peer.EbgpMultihop,
 		RouteReflectorClient:    peer.RouteReflectorClient,
 		RouteReflectorClusterID: peer.RouteReflectorClusterID,
@@ -1874,6 +1878,9 @@ func goBGPPeer(peer desiredPeer) *gobgpapi.Peer {
 	}
 	if peer.EbgpMultihop > 1 {
 		out.EbgpMultihop = &gobgpapi.EbgpMultihop{Enabled: true, MultihopTtl: uint32(peer.EbgpMultihop)}
+	}
+	if peer.PassiveMode {
+		out.Transport = &gobgpapi.Transport{PassiveMode: true}
 	}
 	if peer.RouteReflectorClient {
 		out.RouteReflector = &gobgpapi.RouteReflector{

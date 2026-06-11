@@ -3152,6 +3152,9 @@
                         },
                         "type": "object"
                       },
+                      "passiveMode": {
+                        "type": "boolean"
+                      },
                       "password": {
                         "type": "string"
                       },

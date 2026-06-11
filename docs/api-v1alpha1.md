@@ -338,6 +338,10 @@ deny; add `spec.importPolicy.allowedPrefixes` for Kubernetes LoadBalancer pools.
 peering or lab-to-production validation across routed hops. Omit it or set `0`
 or `1` for the direct eBGP default; set a value from `2` to `255` to configure
 the GoBGP multihop TTL for that peer group.
+`BGPPeer.spec.passiveMode: true` disables GoBGP's active TCP open for that peer.
+Use it for harnesses or peers that actively connect to routerd-bgp, especially
+loopback speakers where active self-connections would otherwise collide with the
+inbound session.
 `BGPRouter` can use a router ID that differs from the TCP source address, but
 peer routers must still configure the address that the host actually uses as
 its BGP source. Check `ip route get <peer-address>` on Linux when the LAN has
