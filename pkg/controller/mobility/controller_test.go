@@ -17,6 +17,7 @@ import (
 	"github.com/imksoo/routerd/pkg/bgpdaemon"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	"github.com/imksoo/routerd/pkg/providerinventory"
+	"github.com/imksoo/routerd/pkg/sam"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -24,6 +25,53 @@ type fakeBGPPaths struct {
 	paths   map[string]bgpdaemon.AppliedPath
 	upserts []bgpdaemon.AppliedPath
 	deletes []bgpdaemon.AppliedPath
+}
+
+func TestSAMConvergenceStatusResolvedButMissingFIBIsDegraded(t *testing.T) {
+	fields := samConvergenceStatusFields(samConvergenceInput{
+		Status: map[string]any{
+			"ownershipResolverPhase": "Resolved",
+			"providerActionPhase":    "OK",
+		},
+		DesiredBGPPaths: []bgpdaemon.AppliedPath{{
+			Prefix: "10.77.60.10/32",
+		}},
+		InstalledNextHops: map[string][]string{},
+		BGPRIBObserved:    true,
+		ObservedAt:        time.Unix(1700000000, 0).UTC(),
+	})
+	if fields["samConvergencePhase"] != sam.SAMConvergenceDegraded {
+		t.Fatalf("samConvergencePhase = %v, want %s", fields["samConvergencePhase"], sam.SAMConvergenceDegraded)
+	}
+	if fields["fibConvergencePhase"] != sam.FIBConvergenceMissingRoute {
+		t.Fatalf("fibConvergencePhase = %v, want %s", fields["fibConvergencePhase"], sam.FIBConvergenceMissingRoute)
+	}
+	if fields["advertisementGatePhase"] != sam.AdvertisementGateBlocked {
+		t.Fatalf("advertisementGatePhase = %v, want %s", fields["advertisementGatePhase"], sam.AdvertisementGateBlocked)
+	}
+}
+
+func TestSAMConvergenceStatusReadyRequiresFIB(t *testing.T) {
+	fields := samConvergenceStatusFields(samConvergenceInput{
+		Status: map[string]any{
+			"ownershipResolverPhase": "Resolved",
+			"providerActionPhase":    "OK",
+		},
+		DesiredBGPPaths: []bgpdaemon.AppliedPath{{
+			Prefix: "10.77.60.10/32",
+		}},
+		InstalledNextHops: map[string][]string{
+			"10.77.60.10/32": {"192.0.2.10"},
+		},
+		BGPRIBObserved: true,
+		ObservedAt:     time.Unix(1700000000, 0).UTC(),
+	})
+	if fields["samConvergencePhase"] != sam.SAMConvergenceReady {
+		t.Fatalf("samConvergencePhase = %v, want %s", fields["samConvergencePhase"], sam.SAMConvergenceReady)
+	}
+	if fields["advertisementGatePhase"] != sam.AdvertisementGateAllowed {
+		t.Fatalf("advertisementGatePhase = %v, want %s", fields["advertisementGatePhase"], sam.AdvertisementGateAllowed)
+	}
 }
 
 func (f *fakeBGPPaths) ListPaths(_ context.Context, source string) ([]bgpdaemon.AppliedPath, error) {

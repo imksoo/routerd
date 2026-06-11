@@ -25,6 +25,65 @@ const (
 	CaptureStatusBlocked  = "Blocked"
 )
 
+const (
+	CloudClaimNotApplicable = "NotApplicable"
+	CloudClaimPending       = "Pending"
+	CloudClaimClaimed       = "Claimed"
+	CloudClaimFailed        = "Failed"
+	CloudClaimUnknown       = "Unknown"
+
+	OSCaptureNotApplicable   = "NotApplicable"
+	OSCaptureMissing         = "Missing"
+	OSCaptureReflected       = "Reflected"
+	OSCaptureForwardingReady = "ForwardingReady"
+	OSCaptureUnexpected      = "Unexpected"
+	OSCaptureUnknown         = "Unknown"
+
+	ForwardingNotApplicable = "NotApplicable"
+	ForwardingReady         = "Ready"
+	ForwardingDisabled      = "Disabled"
+	ForwardingUnknown       = "Unknown"
+
+	FIBConvergenceReady        = "Ready"
+	FIBConvergenceMissingRoute = "MissingRoute"
+	FIBConvergenceUnknown      = "Unknown"
+
+	AdvertisementGateAllowed = "Allowed"
+	AdvertisementGateBlocked = "Blocked"
+
+	SAMConvergenceReady    = "Ready"
+	SAMConvergenceDegraded = "Degraded"
+	SAMConvergenceFailed   = "Failed"
+)
+
+type SAMConvergenceStatus struct {
+	CloudClaimPhase        string
+	OSCapturePhase         string
+	ForwardingPhase        string
+	FIBConvergencePhase    string
+	AdvertisementGatePhase string
+	SAMConvergencePhase    string
+	SplitBrainDetected     bool
+	StaleEpochDetected     bool
+	BlockingReasons        []string
+	LastObservedAt         string
+}
+
+func (s SAMConvergenceStatus) StatusFields() map[string]any {
+	return map[string]any{
+		"cloudClaimPhase":        s.CloudClaimPhase,
+		"osCapturePhase":         s.OSCapturePhase,
+		"forwardingPhase":        s.ForwardingPhase,
+		"fibConvergencePhase":    s.FIBConvergencePhase,
+		"advertisementGatePhase": s.AdvertisementGatePhase,
+		"samConvergencePhase":    s.SAMConvergencePhase,
+		"splitBrainDetected":     s.SplitBrainDetected,
+		"staleEpochDetected":     s.StaleEpochDetected,
+		"blockingReasons":        append([]string(nil), s.BlockingReasons...),
+		"lastObservedAt":         s.LastObservedAt,
+	}
+}
+
 type DeliveryLowering struct {
 	ClaimName       string
 	AddressCIDR     string

@@ -100,6 +100,102 @@ func TestDoctorJSONOutputIncludesSummaryAndChecks(t *testing.T) {
 	}
 }
 
+func TestDoctorSAMConvergenceDegradedWarnsWhenOwnershipResolved(t *testing.T) {
+	configPath, statePath := writeDoctorSAMFixture(t)
+	store := openDoctorState(t, statePath)
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"phase":                  "BGPPlanned",
+		"plannerPhase":           "BGPPlanned",
+		"ownershipResolverPhase": "Resolved",
+		"samConvergencePhase":    "Degraded",
+		"fibConvergencePhase":    "MissingRoute",
+		"blockingReasons":        []string{"missing installed BGP routes: 10.77.60.10/32"},
+	}); err != nil {
+		t.Fatalf("save mobility status: %v", err)
+	}
+	closeDoctorState(t, store)
+
+	var out bytes.Buffer
+	if err := run([]string{"doctor", "sam", "--config", configPath, "--state-file", statePath, "--no-host", "-o", "json"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("doctor sam degraded should warn, not fail: %v\n%s", err, out.String())
+	}
+	var report doctorReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("unmarshal doctor report: %v\n%s", err, out.String())
+	}
+	if report.Summary.Overall != doctorWarn || report.Summary.Fail != 0 {
+		t.Fatalf("summary = %#v", report.Summary)
+	}
+	if check := findDoctorCheck(t, report, "MobilityPool/cloudedge SAM convergence"); check.Status != doctorWarn {
+		t.Fatalf("SAM convergence check = %#v", check)
+	}
+	if check := findDoctorCheck(t, report, "MobilityPool/cloudedge Resolved is converged"); check.Status != doctorWarn {
+		t.Fatalf("Resolved convergence check = %#v", check)
+	}
+	if check := findDoctorCheck(t, report, "MobilityPool/cloudedge FIB convergence"); check.Status != doctorWarn {
+		t.Fatalf("FIB convergence check = %#v", check)
+	}
+}
+
+func TestDoctorSAMConvergenceReadyPasses(t *testing.T) {
+	configPath, statePath := writeDoctorSAMFixture(t)
+	store := openDoctorState(t, statePath)
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"phase":                  "BGPPlanned",
+		"plannerPhase":           "BGPPlanned",
+		"ownershipResolverPhase": "Resolved",
+		"samConvergencePhase":    "Ready",
+		"fibConvergencePhase":    "Ready",
+	}); err != nil {
+		t.Fatalf("save mobility status: %v", err)
+	}
+	closeDoctorState(t, store)
+
+	var out bytes.Buffer
+	if err := run([]string{"doctor", "sam", "--config", configPath, "--state-file", statePath, "--no-host", "-o", "json"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("doctor sam ready: %v\n%s", err, out.String())
+	}
+	var report doctorReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("unmarshal doctor report: %v\n%s", err, out.String())
+	}
+	if check := findDoctorCheck(t, report, "MobilityPool/cloudedge SAM convergence"); check.Status != doctorPass {
+		t.Fatalf("SAM convergence check = %#v", check)
+	}
+	if check := findDoctorCheck(t, report, "MobilityPool/cloudedge FIB convergence"); check.Status != doctorPass {
+		t.Fatalf("FIB convergence check = %#v", check)
+	}
+}
+
+func TestDoctorSAMConvergenceFailedFails(t *testing.T) {
+	configPath, statePath := writeDoctorSAMFixture(t)
+	store := openDoctorState(t, statePath)
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"phase":                  "BGPPlanned",
+		"plannerPhase":           "BGPPlanned",
+		"ownershipResolverPhase": "Resolved",
+		"samConvergencePhase":    "Failed",
+		"fibConvergencePhase":    "Ready",
+		"splitBrainDetected":     true,
+	}); err != nil {
+		t.Fatalf("save mobility status: %v", err)
+	}
+	closeDoctorState(t, store)
+
+	var out bytes.Buffer
+	err := run([]string{"doctor", "sam", "--config", configPath, "--state-file", statePath, "--no-host", "-o", "json"}, &out, &bytes.Buffer{})
+	if err == nil {
+		t.Fatalf("doctor sam failed should fail:\n%s", out.String())
+	}
+	var report doctorReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("unmarshal doctor report: %v\n%s", err, out.String())
+	}
+	if check := findDoctorCheck(t, report, "MobilityPool/cloudedge SAM convergence"); check.Status != doctorFail {
+		t.Fatalf("SAM convergence check = %#v", check)
+	}
+}
+
 func TestDoctorReconcileHistoricalErrorsWarnButDoNotFail(t *testing.T) {
 	oldFetcher := reconcileStatusFetcher
 	defer func() { reconcileStatusFetcher = oldFetcher }()
@@ -1356,6 +1452,45 @@ spec:
       spec:
         interface: wan
         prefixLength: 60
+`)
+	if err := os.WriteFile(configPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	return configPath, filepath.Join(dir, "routerd.db")
+}
+
+func writeDoctorSAMFixture(t *testing.T) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "router.yaml")
+	data := []byte(`apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: test
+spec:
+  resources:
+    - apiVersion: federation.routerd.net/v1alpha1
+      kind: EventGroup
+      metadata:
+        name: cloudedge
+      spec:
+        nodeName: node-a
+    - apiVersion: mobility.routerd.net/v1alpha1
+      kind: MobilityPool
+      metadata:
+        name: cloudedge
+      spec:
+        prefix: 10.77.60.0/24
+        groupRef: cloudedge
+        deliveryPolicy:
+          mode: bgp
+        members:
+          - nodeRef: node-a
+            site: aws
+            role: cloud
+          - nodeRef: node-b
+            site: azure
+            role: cloud
 `)
 	if err := os.WriteFile(configPath, data, 0644); err != nil {
 		t.Fatalf("write config: %v", err)

@@ -236,7 +236,78 @@ func (r doctorRunner) doctorSAM() []doctorCheck {
 				Remedy: "check provider API limits (e.g. secondary IP quota) and retry",
 			})
 		}
+		checks = append(checks, doctorSAMConvergenceChecks(res.Metadata.Name, status)...)
 	}
+	return checks
+}
+
+func doctorSAMConvergenceChecks(poolName string, status map[string]any) []doctorCheck {
+	name := "MobilityPool/" + poolName
+	phase := stringStatus(status, "samConvergencePhase")
+	fibPhase := stringStatus(status, "fibConvergencePhase")
+	ownershipPhase := stringStatus(status, "ownershipResolverPhase")
+	detail := doctorStatusDetail(status)
+	if reasons := stringStatusSlice(status, "blockingReasons"); len(reasons) > 0 {
+		detail = appendDoctorDetail(detail, "blocking="+strings.Join(reasons, ", "))
+	}
+	var checks []doctorCheck
+	convergence := doctorCheck{
+		Area:   "sam",
+		Name:   name + " SAM convergence",
+		Status: doctorWarn,
+		Detail: firstNonEmpty(detail, "samConvergencePhase is missing"),
+		Remedy: "wait for routerd to publish SAM convergence status; ownership resolution alone is not dataplane convergence",
+	}
+	switch phase {
+	case sam.SAMConvergenceReady:
+		convergence.Status = doctorPass
+		convergence.Remedy = ""
+	case sam.SAMConvergenceFailed:
+		convergence.Status = doctorFail
+		convergence.Remedy = "inspect CloudEdge SAM owner, provider, OS capture, FIB, and advertisement gate evidence"
+	case sam.SAMConvergenceDegraded:
+		convergence.Status = doctorWarn
+		convergence.Remedy = "inspect CloudEdge SAM convergence blocking reasons before treating the /32 dataplane as ready"
+	}
+	if boolStatus(status, "splitBrainDetected") {
+		convergence.Status = doctorFail
+		convergence.Detail = appendDoctorDetail(convergence.Detail, "splitBrainDetected=true")
+		convergence.Remedy = "fence duplicate CloudEdge SAM holders before advertising /32 ownership"
+	}
+	checks = append(checks, convergence)
+
+	if strings.EqualFold(ownershipPhase, "Resolved") && phase != "" && phase != sam.SAMConvergenceReady {
+		checks = append(checks, doctorCheck{
+			Area:   "sam",
+			Name:   name + " Resolved is converged",
+			Status: doctorWarn,
+			Detail: "ownershipResolverPhase=Resolved but samConvergencePhase=" + phase,
+			Remedy: "require samConvergencePhase=Ready before accepting T1/A1/A2 dataplane readiness",
+		})
+	}
+
+	fibDetail := "fibConvergencePhase is missing"
+	if fibPhase != "" {
+		fibDetail = "fibConvergencePhase=" + fibPhase
+	}
+	fib := doctorCheck{
+		Area:   "sam",
+		Name:   name + " FIB convergence",
+		Status: doctorWarn,
+		Detail: fibDetail,
+		Remedy: "wait for BGP installed next-hop evidence or inspect routerd-bgp FIB import status",
+	}
+	switch fibPhase {
+	case sam.FIBConvergenceReady:
+		fib.Status = doctorPass
+		fib.Remedy = ""
+	case "WrongNextHop", "ConflictingRoute":
+		fib.Status = doctorFail
+		fib.Remedy = "repair conflicting local/link/BGP route state before accepting SAM convergence"
+	case sam.FIBConvergenceMissingRoute, sam.FIBConvergenceUnknown, "":
+		fib.Status = doctorWarn
+	}
+	checks = append(checks, fib)
 	return checks
 }
 
@@ -2055,6 +2126,63 @@ func stringStatus(status map[string]any, key string) string {
 		return ""
 	}
 	return strings.TrimSpace(fmt.Sprint(value))
+}
+
+func stringStatusSlice(status map[string]any, key string) []string {
+	if status == nil {
+		return nil
+	}
+	value, ok := status[key]
+	if !ok || value == nil {
+		return nil
+	}
+	switch typed := value.(type) {
+	case []string:
+		return cleanStatusStrings(typed)
+	case []any:
+		var out []string
+		for _, item := range typed {
+			if value := strings.TrimSpace(fmt.Sprint(item)); value != "" && value != "<nil>" {
+				out = append(out, value)
+			}
+		}
+		return cleanStatusStrings(out)
+	default:
+		if value := strings.TrimSpace(fmt.Sprint(value)); value != "" && value != "<nil>" {
+			return []string{value}
+		}
+	}
+	return nil
+}
+
+func cleanStatusStrings(values []string) []string {
+	var out []string
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
+}
+
+func boolStatus(status map[string]any, key string) bool {
+	if status == nil {
+		return false
+	}
+	value, ok := status[key]
+	if !ok || value == nil {
+		return false
+	}
+	switch typed := value.(type) {
+	case bool:
+		return typed
+	case string:
+		parsed, _ := strconv.ParseBool(strings.TrimSpace(typed))
+		return parsed
+	default:
+		parsed, _ := strconv.ParseBool(strings.TrimSpace(fmt.Sprint(value)))
+		return parsed
+	}
 }
 
 func firstCSV(value string) string {

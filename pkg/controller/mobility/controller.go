@@ -22,6 +22,7 @@ import (
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	"github.com/imksoo/routerd/pkg/mobilityconfig"
+	"github.com/imksoo/routerd/pkg/sam"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -101,20 +102,21 @@ func (c Controller) Reconcile(ctx context.Context) error {
 		}
 		spec, err := res.MobilityPoolSpec()
 		if err != nil {
-			_ = c.savePlannerStatus(res.Metadata.Name, map[string]any{
+			_ = c.savePlannerStatus(res.Metadata.Name, withSAMConvergenceBlocked(map[string]any{
 				"plannerPhase":  "Degraded",
 				"plannerReason": err.Error(),
 				"plannedAt":     now.Format(time.RFC3339Nano),
-			})
+			}, err.Error(), now))
 			continue
 		}
 		if mobilityDeliveryMode(spec) != "bgp" {
-			_ = c.savePlannerStatus(res.Metadata.Name, map[string]any{
+			reason := fmt.Sprintf("deliveryPolicy.mode=%s is no longer supported; use bgp", mobilityDeliveryMode(spec))
+			_ = c.savePlannerStatus(res.Metadata.Name, withSAMConvergenceBlocked(map[string]any{
 				"plannerPhase":  "Degraded",
-				"plannerReason": fmt.Sprintf("deliveryPolicy.mode=%s is no longer supported; use bgp", mobilityDeliveryMode(spec)),
+				"plannerReason": reason,
 				"plannedAt":     now.Format(time.RFC3339Nano),
 				"deliveryMode":  mobilityDeliveryMode(spec),
-			})
+			}, reason, now))
 			continue
 		}
 		memberSetStatus := map[string]any{"phase": "Disabled"}
@@ -122,23 +124,23 @@ func (c Controller) Reconcile(ctx context.Context) error {
 			source := MobilityMemberSetDynamicSource(res.Metadata.Name)
 			status, err := c.upsertMobilityMemberSetPart(res, spec, source, now)
 			if err != nil {
-				_ = c.savePlannerStatus(res.Metadata.Name, map[string]any{
+				_ = c.savePlannerStatus(res.Metadata.Name, withSAMConvergenceBlocked(map[string]any{
 					"plannerPhase":  "Degraded",
 					"plannerReason": err.Error(),
 					"memberSet":     status,
 					"plannedAt":     now.Format(time.RFC3339Nano),
-				})
+				}, err.Error(), now))
 				continue
 			}
 			memberSetStatus = status
 		}
 		if err := c.reconcileBGPDelivery(ctx, res, spec, memberSetStatus, now); err != nil {
-			_ = c.savePlannerStatus(res.Metadata.Name, map[string]any{
+			_ = c.savePlannerStatus(res.Metadata.Name, withSAMConvergenceBlocked(map[string]any{
 				"plannerPhase":  "Degraded",
 				"plannerReason": err.Error(),
 				"memberSet":     memberSetStatus,
 				"plannedAt":     now.Format(time.RFC3339Nano),
-			})
+			}, err.Error(), now))
 		}
 	}
 	return nil
@@ -158,7 +160,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 	}
 	spec = resolved.Spec
 	if len(resolved.PendingSources) > 0 {
-		return c.savePlannerStatus(res.Metadata.Name, map[string]any{
+		return c.savePlannerStatus(res.Metadata.Name, withSAMConvergenceBlocked(map[string]any{
 			"plannerPhase":        "Pending",
 			"plannerReason":       "membersFrom source is not resolved",
 			"selfNode":            selfNode,
@@ -168,7 +170,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 			"resolvedMemberCount": resolved.ResolvedMemberCount,
 			"memberSet":           memberSetStatus,
 			"plannedAt":           now.Format(time.RFC3339Nano),
-		})
+		}, "membersFrom source is not resolved", now))
 	}
 	spec, _, err = mobilityconfig.NormalizeMobilityPool(spec, selfNode)
 	if err != nil {
@@ -341,7 +343,161 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 	for key, value := range ownershipResolverStatus(ownershipDecisions) {
 		status[key] = value
 	}
+	for key, value := range samConvergenceStatusFields(samConvergenceInput{
+		Status:             status,
+		DesiredBGPPaths:    delivery.Paths,
+		InstalledNextHops:  installedNextHops,
+		BGPRIBObserved:     bgpRIBObserved,
+		CaptureCandidates:  len(delivery.CaptureCandidates),
+		GeneratedActions:   len(actionPlans),
+		ForwardingObserved: forwardingObserved,
+		ForwardingEnabled:  forwardingEnabled,
+		ObservedAt:         now,
+	}) {
+		status[key] = value
+	}
 	return c.savePlannerStatus(res.Metadata.Name, status)
+}
+
+type samConvergenceInput struct {
+	Status             map[string]any
+	DesiredBGPPaths    []bgpdaemon.AppliedPath
+	InstalledNextHops  map[string][]string
+	BGPRIBObserved     bool
+	CaptureCandidates  int
+	GeneratedActions   int
+	ForwardingObserved bool
+	ForwardingEnabled  bool
+	ObservedAt         time.Time
+}
+
+func withSAMConvergenceBlocked(status map[string]any, reason string, observedAt time.Time) map[string]any {
+	fields := sam.SAMConvergenceStatus{
+		CloudClaimPhase:        sam.CloudClaimUnknown,
+		OSCapturePhase:         sam.OSCaptureUnknown,
+		ForwardingPhase:        sam.ForwardingUnknown,
+		FIBConvergencePhase:    sam.FIBConvergenceUnknown,
+		AdvertisementGatePhase: sam.AdvertisementGateBlocked,
+		SAMConvergencePhase:    sam.SAMConvergenceDegraded,
+		BlockingReasons:        cleanStrings([]string{reason}),
+		LastObservedAt:         observedAt.Format(time.RFC3339Nano),
+	}.StatusFields()
+	for key, value := range fields {
+		status[key] = value
+	}
+	return status
+}
+
+func samConvergenceStatusFields(in samConvergenceInput) map[string]any {
+	blocking := []string{}
+	ownershipPhase := statusMapString(in.Status, "ownershipResolverPhase")
+	providerActionPhase := statusMapString(in.Status, "providerActionPhase")
+
+	cloudClaimPhase := sam.CloudClaimNotApplicable
+	captureExpected := in.CaptureCandidates > 0 || in.GeneratedActions > 0
+	switch {
+	case strings.EqualFold(providerActionPhase, "Failed"):
+		cloudClaimPhase = sam.CloudClaimFailed
+		blocking = append(blocking, "provider action failed")
+	case captureExpected:
+		cloudClaimPhase = sam.CloudClaimPending
+		blocking = append(blocking, "provider cloud claim is not confirmed")
+	}
+
+	osCapturePhase := sam.OSCaptureNotApplicable
+	forwardingPhase := sam.ForwardingNotApplicable
+	if captureExpected {
+		osCapturePhase = sam.OSCaptureUnknown
+		blocking = append(blocking, "OS capture evidence is not available")
+		if in.ForwardingObserved {
+			if in.ForwardingEnabled {
+				forwardingPhase = sam.ForwardingReady
+			} else {
+				forwardingPhase = sam.ForwardingDisabled
+				blocking = append(blocking, "forwarding is disabled")
+			}
+		} else {
+			forwardingPhase = sam.ForwardingUnknown
+			blocking = append(blocking, "forwarding state is not observable")
+		}
+	}
+
+	fibPhase := sam.FIBConvergenceUnknown
+	if !in.BGPRIBObserved {
+		blocking = append(blocking, "BGP installed next-hop evidence is not observable")
+	} else {
+		missing := missingDesiredBGPPathPrefixes(in.DesiredBGPPaths, in.InstalledNextHops)
+		if len(missing) == 0 {
+			fibPhase = sam.FIBConvergenceReady
+		} else {
+			fibPhase = sam.FIBConvergenceMissingRoute
+			blocking = append(blocking, "missing installed BGP routes: "+strings.Join(missing, ","))
+		}
+	}
+
+	if ownershipPhase == "" {
+		blocking = append(blocking, "ownership resolver status is missing")
+	} else if !strings.EqualFold(ownershipPhase, "Resolved") {
+		blocking = append(blocking, "ownership resolver phase is "+ownershipPhase)
+	}
+
+	gatePhase := sam.AdvertisementGateBlocked
+	samPhase := sam.SAMConvergenceDegraded
+	switch {
+	case strings.EqualFold(ownershipPhase, "Conflict") || cloudClaimPhase == sam.CloudClaimFailed:
+		samPhase = sam.SAMConvergenceFailed
+	case strings.EqualFold(ownershipPhase, "Resolved") &&
+		cloudClaimPhase == sam.CloudClaimNotApplicable &&
+		(osCapturePhase == sam.OSCaptureNotApplicable || osCapturePhase == sam.OSCaptureReflected || osCapturePhase == sam.OSCaptureForwardingReady) &&
+		(forwardingPhase == sam.ForwardingNotApplicable || forwardingPhase == sam.ForwardingReady) &&
+		fibPhase == sam.FIBConvergenceReady:
+		gatePhase = sam.AdvertisementGateAllowed
+		samPhase = sam.SAMConvergenceReady
+		blocking = nil
+	}
+
+	return sam.SAMConvergenceStatus{
+		CloudClaimPhase:        cloudClaimPhase,
+		OSCapturePhase:         osCapturePhase,
+		ForwardingPhase:        forwardingPhase,
+		FIBConvergencePhase:    fibPhase,
+		AdvertisementGatePhase: gatePhase,
+		SAMConvergencePhase:    samPhase,
+		SplitBrainDetected:     false,
+		StaleEpochDetected:     false,
+		BlockingReasons:        cleanStrings(blocking),
+		LastObservedAt:         in.ObservedAt.Format(time.RFC3339Nano),
+	}.StatusFields()
+}
+
+func missingDesiredBGPPathPrefixes(paths []bgpdaemon.AppliedPath, installed map[string][]string) []string {
+	var missing []string
+	for _, path := range paths {
+		prefix := strings.TrimSpace(path.Prefix)
+		if prefix == "" {
+			continue
+		}
+		if len(installed[prefix]) == 0 {
+			missing = append(missing, prefix)
+		}
+	}
+	sort.Strings(missing)
+	return missing
+}
+
+func statusMapString(status map[string]any, key string) string {
+	if status == nil {
+		return ""
+	}
+	value, ok := status[key]
+	if !ok || value == nil {
+		return ""
+	}
+	valueString := strings.TrimSpace(fmt.Sprint(value))
+	if valueString == "<nil>" {
+		return ""
+	}
+	return valueString
 }
 
 func (c Controller) recordBGPStaticHandoverReleaseEvents(poolName, selfNode string, spec api.MobilityPoolSpec, events []routerstate.EventRecord, now time.Time) ([]routerstate.EventRecord, error) {
