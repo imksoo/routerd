@@ -137,9 +137,6 @@ func appendBGPMobilityProxyARPClaims(router api.Router, store any) api.Router {
 		return router
 	}
 	installed := bgpInstalledNextHopsFromRouterStatus(router, reader)
-	if len(installed) == 0 {
-		return router
-	}
 	selfByGroup := eventGroupSelfNodes(router)
 	var claims []api.Resource
 	for _, resource := range router.Spec.Resources {
@@ -168,7 +165,7 @@ func appendBGPMobilityProxyARPClaims(router api.Router, store any) api.Router {
 			continue
 		}
 		owned := mobilityStaticOwnedAddresses(self, prefix)
-		for _, address := range bgpMobilityInstalledAddresses(installed, prefix) {
+		for _, address := range bgpMobilityClaimAddresses(reader, resource.Metadata.Name, selfNode, installed, prefix) {
 			if owned[address] {
 				continue
 			}
@@ -198,6 +195,50 @@ func bgpMobilityClaimCaptureSupported(capture api.MobilityMemberCapture) bool {
 	default:
 		return false
 	}
+}
+
+func bgpMobilityClaimAddresses(reader sam.StatusReader, poolName, selfNode string, installed map[string][]string, pool netip.Prefix) []string {
+	seen := map[string]bool{}
+	for _, address := range bgpMobilityInstalledAddresses(installed, pool) {
+		seen[address] = true
+	}
+	if reader != nil {
+		for _, address := range bgpMobilityConfirmedCaptureAddresses(reader, poolName, selfNode, pool) {
+			seen[address] = true
+		}
+	}
+	return bgpSortedStringKeys(seen)
+}
+
+func bgpMobilityConfirmedCaptureAddresses(reader sam.StatusReader, poolName, selfNode string, pool netip.Prefix) []string {
+	status := reader.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", poolName)
+	raw, ok := status["ownershipResolverDecisions"].([]any)
+	if !ok {
+		return nil
+	}
+	seen := map[string]bool{}
+	for _, item := range raw {
+		decision, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		if strings.TrimSpace(fmt.Sprint(decision["class"])) != "ConfirmedCapture" {
+			continue
+		}
+		holder := strings.TrimSpace(fmt.Sprint(decision["captureHolderNode"]))
+		if holder != "" && holder != strings.TrimSpace(selfNode) {
+			continue
+		}
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(fmt.Sprint(decision["address"])))
+		if err != nil {
+			continue
+		}
+		prefix = prefix.Masked()
+		if prefix.Addr().Is4() && prefix.Bits() == 32 && pool.Contains(prefix.Addr()) {
+			seen[prefix.String()] = true
+		}
+	}
+	return bgpSortedStringKeys(seen)
 }
 
 func appendBGPMobilityCapturePrefixRoutes(effective, routeRouter api.Router, store any) api.Router {

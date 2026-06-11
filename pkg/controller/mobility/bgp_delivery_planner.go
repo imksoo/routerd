@@ -44,6 +44,7 @@ type bgpDeliveryPlannerResult struct {
 	CaptureCandidates     map[string]bgpTrapCandidate
 	Placement             PlacementDecision
 	ProviderCapturedPaths int
+	ProviderCapturedAddrs []string
 	SeizedPaths           int
 }
 
@@ -59,7 +60,7 @@ func planBGPMobilityDelivery(in bgpDeliveryPlannerInput) (bgpDeliveryPlannerResu
 	}
 	decisions := decisionsByAddress(in.Decisions)
 	failedActions := latestFailedProviderActions(in.ActionJournal)
-	paths, providerCaptured, seized := planBGPAdvertisements(in.Source, in.Self, in.Decisions, in.Placement, failedActions)
+	paths, providerCapturedAddrs, seized := planBGPAdvertisements(in.Source, in.Self, in.Decisions, in.Placement, failedActions)
 	candidates := planCaptureCandidates(in.Self, in.Members, decisions, in.Placement, in.InstalledNextHops, in.RIBObserved, in.PreviousPlans, in.ObservedSelfCaptures, poolPrefix, now)
 	actionPlans, err := planCaptureActionPlans(in, candidates)
 	if err != nil {
@@ -70,20 +71,23 @@ func planBGPMobilityDelivery(in bgpDeliveryPlannerInput) (bgpDeliveryPlannerResu
 		ActionPlans:           actionPlans,
 		CaptureCandidates:     candidates,
 		Placement:             in.Placement,
-		ProviderCapturedPaths: providerCaptured,
+		ProviderCapturedPaths: len(providerCapturedAddrs),
+		ProviderCapturedAddrs: providerCapturedAddrs,
 		SeizedPaths:           seized,
 	}, nil
 }
 
-func planBGPAdvertisements(source string, self memberPlanInfo, decisions []ownershipDecision, placement PlacementDecision, failedActions map[string]routerstate.ActionExecutionRecord) ([]bgpdaemon.AppliedPath, int, int) {
+func planBGPAdvertisements(source string, self memberPlanInfo, decisions []ownershipDecision, placement PlacementDecision, failedActions map[string]routerstate.ActionExecutionRecord) ([]bgpdaemon.AppliedPath, []string, int) {
 	var out []bgpdaemon.AppliedPath
-	providerCaptured := 0
+	providerCaptured := map[string]bool{}
 	seized := 0
 	for _, decision := range decisions {
 		if decision.Class == ownershipClassConfirmedCapture {
 			if !self.MaintenanceDrain {
 				if _, failed := failedActions[normalizeAddressString(decision.Address)]; !failed {
-					providerCaptured++
+					if address := normalizeAddressString(decision.Address); address != "" {
+						providerCaptured[address] = true
+					}
 					if placement.Seize {
 						seized++
 					}
@@ -111,7 +115,7 @@ func planBGPAdvertisements(source string, self memberPlanInfo, decisions []owner
 	sort.SliceStable(out, func(i, j int) bool {
 		return out[i].Prefix < out[j].Prefix
 	})
-	return out, providerCaptured, seized
+	return out, mapKeysSorted(providerCaptured), seized
 }
 
 func decisionAdvertisesFromSelf(decision ownershipDecision, self memberPlanInfo) bool {

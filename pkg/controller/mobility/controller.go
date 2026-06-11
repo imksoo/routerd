@@ -1102,6 +1102,11 @@ func captureConvergenceAddresses(delivery bgpDeliveryPlannerResult) []string {
 			seen[normalized] = true
 		}
 	}
+	for _, address := range delivery.ProviderCapturedAddrs {
+		if normalized := normalizeAddressString(address); normalized != "" {
+			seen[normalized] = true
+		}
+	}
 	return mapKeysSorted(seen)
 }
 

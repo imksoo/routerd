@@ -302,6 +302,57 @@ func TestDynamicRouteSAMViewDerivesProviderSecondaryBGPClaimForOSCapture(t *test
 	if claims[0].Address != "10.0.1.11/32" || claims[0].Capture.Type != "provider-secondary-ip" || !claims[0].Capture.ConfigureOSAddress || claims[0].Capture.Interface != "ens5" {
 		t.Fatalf("claim = %#v, want provider-secondary-ip OS capture on ens5", claims[0])
 	}
+	applier := &fakeSAMApplier{}
+	controller := SAMController{Router: view.EffectiveRouter, Store: store, Lowerings: view.SAMLowerings, OS: platform.OSLinux, Applier: applier}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("SAM reconcile: %v", err)
+	}
+	assertSAMCalls(t, applier.calls, []string{"assign:10.0.1.11/32@ens5"})
+}
+
+func TestDynamicRouteSAMViewKeepsProviderSecondaryClaimFromConfirmedCaptureStatus(t *testing.T) {
+	startup := bgpProxyARPStartup(false)
+	for i, resource := range startup.Spec.Resources {
+		switch {
+		case resource.APIVersion == api.FederationAPIVersion && resource.Kind == "EventGroup":
+			spec := resource.Spec.(api.EventGroupSpec)
+			spec.NodeName = "aws-router"
+			startup.Spec.Resources[i].Spec = spec
+		case resource.APIVersion == api.MobilityAPIVersion && resource.Kind == "MobilityPool":
+			spec := resource.Spec.(api.MobilityPoolSpec)
+			spec.Members[1].Capture.ConfigureOSAddress = true
+			startup.Spec.Resources[i].Spec = spec
+		}
+	}
+	store := mapStore{
+		api.MobilityAPIVersion + "/MobilityPool/cloudedge": {
+			"ownershipResolverDecisions": []any{
+				map[string]any{
+					"address":           "10.0.1.44/32",
+					"class":             "ConfirmedCapture",
+					"captureHolderNode": "aws-router",
+					"captureState":      "Confirmed",
+				},
+			},
+		},
+	}
+	view, err := buildDynamicRouteSAMView(startup, store, time.Now().UTC(), platform.OSLinux)
+	if err != nil {
+		t.Fatalf("buildDynamicRouteSAMView: %v", err)
+	}
+	claims := remoteAddressClaimSpecs(view.EffectiveRouter)
+	if len(claims) != 1 {
+		t.Fatalf("effective claims = %#v, want confirmed provider capture claim", claims)
+	}
+	if claims[0].Address != "10.0.1.44/32" || claims[0].Capture.Type != "provider-secondary-ip" || !claims[0].Capture.ConfigureOSAddress {
+		t.Fatalf("claim = %#v, want confirmed provider-secondary-ip OS capture", claims[0])
+	}
+	applier := &fakeSAMApplier{}
+	controller := SAMController{Router: view.EffectiveRouter, Store: store, Lowerings: view.SAMLowerings, OS: platform.OSLinux, Applier: applier}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("SAM reconcile: %v", err)
+	}
+	assertSAMCalls(t, applier.calls, []string{"assign:10.0.1.44/32@ens5"})
 }
 
 func TestDynamicRouteSAMViewBGPProxyARPExcludesLocalAddresses(t *testing.T) {
