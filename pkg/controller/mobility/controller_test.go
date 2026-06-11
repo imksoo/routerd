@@ -489,6 +489,13 @@ func TestControllerBGPModeFreshHomeOwnerKeepsConfirmedCrossProviderCapture(t *te
 			store := testStore(t, now)
 			spec := awsFailoverPoolSpec()
 			spec.DeliveryPolicy.Mode = "bgp"
+			for i := range spec.Members {
+				if spec.Members[i].NodeRef != "oci-router" {
+					continue
+				}
+				spec.Members[i].Capture.ConfigureOSAddress = true
+				spec.Members[i].Capture.Interface = "ens3"
+			}
 			recordEvent(t, store, providerDiscoveryObservedEvent("cloudedge", "cloudedge", tc.homeNode, tc.address, tc.homeProvider, tc.homeRef, providerinventory.PrivateIPRecord{
 				Address:   tc.address,
 				NICRef:    tc.homeNIC,
@@ -525,6 +532,9 @@ func TestControllerBGPModeFreshHomeOwnerKeepsConfirmedCrossProviderCapture(t *te
 			}
 			if got := fmt.Sprint(ociStatus["generatedProviderCapturedBGPPaths"]); got != "1" {
 				t.Fatalf("oci status = %#v, want provider capture counted independently of BGP owner advertisement", ociStatus)
+			}
+			if got := fmt.Sprint(ociStatus["osCapturePhase"]); got != sam.OSCaptureReflected {
+				t.Fatalf("oci status = %#v, want OS capture reflected from discoverySelfCapturedAddresses", ociStatus)
 			}
 
 			if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{

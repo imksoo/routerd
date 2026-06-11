@@ -361,7 +361,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		ProviderDiscoveryPhase:    statusMapString(currentStatus, "discoveryPhase"),
 		ProviderDiscoveryReason:   statusMapString(currentStatus, "discoveryReason"),
 		OSCaptureExpected:         self.Capture.Type == "provider-secondary-ip" && self.Capture.ConfigureOSAddress && (len(delivery.CaptureCandidates) > 0 || len(actionPlans) > 0 || delivery.ProviderCapturedPaths > 0),
-		OSCaptureObserved:         c.providerSecondaryOSCaptureReflected(res.Metadata.Name, captureConvergenceAddresses(delivery)),
+		OSCaptureObserved:         c.providerSecondaryOSCaptureReflected(res.Metadata.Name, captureConvergenceAddresses(delivery), discoverySelfCaptures),
 		ForwardingObserved:        forwardingObserved,
 		ForwardingEnabled:         forwardingEnabled,
 		ObservedAt:                now,
@@ -1072,18 +1072,22 @@ func (c Controller) discoverySelfForwardingState(poolName string) (observed bool
 	return true, enabled, observedAt
 }
 
-func (c Controller) providerSecondaryOSCaptureReflected(poolName string, addresses []string) bool {
+func (c Controller) providerSecondaryOSCaptureReflected(poolName string, addresses []string, observedSelfCaptures map[string]bool) bool {
 	if c.Store == nil || len(addresses) == 0 {
 		return false
 	}
 	for _, address := range cleanStrings(addresses) {
+		normalizedAddress := normalizeAddressString(address)
+		if normalizedAddress != "" && observedSelfCaptures[normalizedAddress] {
+			continue
+		}
 		status := c.Store.ObjectStatus(api.HybridAPIVersion, "RemoteAddressClaim", bgpMobilityRemoteClaimName(poolName, address))
 		raw, ok := status["captureOSAddressPresence"].(map[string]any)
 		if !ok || !statusMapBool(raw, "enforced") {
 			return false
 		}
 		observed := normalizeAddressString(strings.TrimSpace(fmt.Sprint(raw["address"])))
-		if observed != "" && observed != normalizeAddressString(address) {
+		if observed != "" && observed != normalizedAddress {
 			return false
 		}
 	}
