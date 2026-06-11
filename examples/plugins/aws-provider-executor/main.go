@@ -8,15 +8,15 @@
 //
 // REAL EXECUTOR — it mutates AWS, but ONLY in execute mode. In dry-run mode it
 // issues read-only describe-* calls and mutates nothing (enforced: see
-// guardedRunner). It drives the AWS CLI (`aws`) via an injectable command runner
-// (the awsRunner func var, default execRunner running the real `aws` binary;
-// tests inject a fake), so unit tests NEVER call real AWS.
+// guardedRunner). It drives routerd's aws-routerd-helper via an injectable
+// command runner (the awsRunner func var, default execRunner running the shipped
+// helper; tests inject a fake), so unit tests NEVER call real AWS.
 //
 // CREDENTIALS: it authenticates with the EC2 instance IAM role (instance
-// profile) that the AWS CLI resolves on its own. routerd core passes it NO
-// credentials and inherits NO parent environment to it (see RunExecutor); the
-// executor reads no AWS credentials from the request. It imports no AWS SDK — the
-// ONLY external dependency is exec of the `aws` CLI binary.
+// profile) that aws-routerd-helper resolves on its own. routerd core passes it
+// NO credentials and inherits NO parent environment to it (see RunExecutor); the
+// executor reads no AWS credentials from the request. It imports no AWS SDK —
+// provider SDK calls are isolated in aws-routerd-helper.
 //
 // Reads from the request Target: nicRef (ENI id), address (the captured /32),
 // region. A missing required field is a clear failed result.
@@ -225,14 +225,14 @@ func dispatch(ctx context.Context, req executeActionRequest, runner awsRunner) e
 }
 
 func preflight() executeActionResult {
-	path, err := resolveAWSCLIPath()
+	path, err := resolveAWSHelperPath()
 	if err != nil {
-		return failed("provider executor preflight failed: aws CLI unavailable", err)
+		return failed("provider executor preflight failed: AWS helper unavailable", err)
 	}
 	res := newResult()
 	res.Status.Status = statusSucceeded
-	res.Status.Message = "aws CLI available"
-	res.Status.Observed = map[string]string{"dependency": "aws", "path": path}
+	res.Status.Message = "AWS helper available"
+	res.Status.Observed = map[string]string{"dependency": "aws-routerd-helper", "path": path}
 	return res
 }
 
@@ -462,7 +462,7 @@ func ensureForwardingEnabled(ctx context.Context, spec executeActionRequestSpec,
 
 	if _, err := runner(ctx, "ec2", "modify-network-interface-attribute",
 		"--network-interface-id", eni,
-		"--no-source-dest-check",
+		"--source-dest-check", `{"Value":false}`,
 		"--region", region); err != nil {
 		return failed("ensure-forwarding-enabled execute: modify failed", err)
 	}
@@ -538,7 +538,7 @@ func ensureForwardingDisabled(ctx context.Context, spec executeActionRequestSpec
 
 	if _, err := runner(ctx, "ec2", "modify-network-interface-attribute",
 		"--network-interface-id", eni,
-		"--source-dest-check",
+		"--source-dest-check", `{"Value":true}`,
 		"--region", region); err != nil {
 		return failed("ensure-forwarding-disabled execute: modify failed", err)
 	}

@@ -12,59 +12,69 @@ import (
 	"strings"
 )
 
-// awsRunner runs one `aws` CLI invocation with the given argv (without the
-// leading "aws") and returns its stdout. It is the single injectable seam so
-// unit tests substitute a fake that records argv and returns canned JSON,
-// NEVER calling real AWS. The production implementation (execRunner) execs the
-// real `aws` binary, which resolves the EC2 instance IAM role on its own;
+// awsRunner runs one AWS helper invocation with the given CLI-compatible argv
+// and returns its stdout. It is the single injectable seam so unit tests
+// substitute a fake that records argv and returns canned JSON, NEVER calling
+// real AWS. The production implementation (execRunner) execs routerd's
+// aws-routerd-helper, which resolves the EC2 instance IAM role on its own;
 // routerd passes NO credentials.
 type awsRunner func(ctx context.Context, argv ...string) ([]byte, error)
 
-const awsCLIPathEnv = "AWS_CLI_PATH"
+const (
+	defaultAWSHelper = "/usr/local/libexec/routerd/plugins/aws-routerd-helper/bin/aws-routerd-helper"
+	awsHelperEnv     = "ROUTERD_AWS_HELPER"
+	awsCLIPathEnv    = "AWS_CLI_PATH"
+)
 
-// defaultRunner returns the production runner that execs the real `aws` binary.
-// This is the ONLY use of os/exec in the executor, and it runs only `aws`.
+// defaultRunner returns the production runner that execs routerd's AWS helper.
 func defaultRunner() awsRunner { return execRunner }
 
-func resolveAWSCLIPath() (string, error) {
-	candidate := strings.TrimSpace(os.Getenv(awsCLIPathEnv))
-	if candidate == "" {
-		candidate = "aws"
+func resolveAWSHelperPath() (string, error) {
+	candidate := strings.TrimSpace(os.Getenv(awsHelperEnv))
+	if candidate != "" {
+		return validateExecutablePath(candidate, awsHelperEnv)
 	}
+	if legacy := strings.TrimSpace(os.Getenv(awsCLIPathEnv)); legacy != "" {
+		return validateExecutablePath(legacy, awsCLIPathEnv)
+	}
+	return validateExecutablePath(defaultAWSHelper, awsHelperEnv)
+}
+
+func validateExecutablePath(candidate, source string) (string, error) {
 	if strings.ContainsAny(candidate, `/\`) {
 		info, err := os.Stat(candidate)
 		if err != nil {
-			return "", fmt.Errorf("aws CLI executable unavailable: %s=%q: %w", awsCLIPathEnv, candidate, err)
+			return "", fmt.Errorf("AWS helper executable unavailable: %s=%q: %w", source, candidate, err)
 		}
 		if info.IsDir() || info.Mode()&0111 == 0 {
-			return "", fmt.Errorf("aws CLI executable unavailable: %s=%q is not executable", awsCLIPathEnv, candidate)
+			return "", fmt.Errorf("AWS helper executable unavailable: %s=%q is not executable", source, candidate)
 		}
 		return candidate, nil
 	}
 	path, err := exec.LookPath(candidate)
 	if err != nil {
-		return "", fmt.Errorf("aws CLI executable unavailable: install aws in PATH or set %s: %w", awsCLIPathEnv, err)
+		return "", fmt.Errorf("AWS helper executable unavailable: install aws-routerd-helper or set %s: %w", awsHelperEnv, err)
 	}
 	return path, nil
 }
 
-// execRunner execs `aws <argv...>`. The plugin runs in routerd's isolated
-// executor environment (no inherited parent env beyond PATH + the plugin's own
-// spec.Env), so `aws` resolves credentials from the instance profile, not from
-// routerd.
+// execRunner execs aws-routerd-helper with the CLI-compatible argv the executor
+// already emits. The plugin runs in routerd's isolated executor environment (no
+// inherited parent env beyond PATH + the plugin's own spec.Env), so the helper
+// resolves credentials from the instance profile, not from routerd.
 func execRunner(ctx context.Context, argv ...string) ([]byte, error) {
 	runCtx, cancel := context.WithTimeout(ctx, commandTimeout())
 	defer cancel()
-	awsPath, err := resolveAWSCLIPath()
+	helper, err := resolveAWSHelperPath()
 	if err != nil {
 		return nil, err
 	}
-	cmd := exec.CommandContext(runCtx, awsPath, argv...)
+	cmd := exec.CommandContext(runCtx, helper, argv...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("aws %s: %w: %s", strings.Join(argv, " "), err, strings.TrimSpace(stderr.String()))
+		return nil, fmt.Errorf("%s %s: %w: %s", helper, strings.Join(argv, " "), err, strings.TrimSpace(stderr.String()))
 	}
 	return stdout.Bytes(), nil
 }

@@ -15,8 +15,9 @@ spec:
     # describe-* calls and mutates nothing).
     - execute.providerAction
   # No context.resources and NO credentials: the executor authenticates with the
-  # EC2 instance IAM role (instance profile) resolved by the `aws` CLI itself.
+  # EC2 instance IAM role (instance profile) resolved by aws-routerd-helper.
   # routerd passes it NO secrets and inherits NO parent environment to it (per
-  # ADR 0007). The instance profile is least-privilege (4 EC2 actions) per
+  # ADR 0007). The instance profile is least-privilege per
   # docs/how-to/aws-provider-action-execution.md.
-  # If aws is not in PATH, set env.AWS_CLI_PATH to the executable path.
+  # If the helper is not installed at the default path, set env.ROUTERD_AWS_HELPER.
+  # env.AWS_CLI_PATH remains a legacy fallback but is not the default path.

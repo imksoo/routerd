@@ -82,6 +82,9 @@ echo inventory
 	if err := os.WriteFile(filepath.Join(pkg, "libexec", "routerd", "plugins", "aws-provider-executor", "plugin.yaml"), []byte("name: aws-provider-executor\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	writeExecutable(t, filepath.Join(pkg, "libexec", "routerd", "plugins", "aws-routerd-helper", "bin", "aws-routerd-helper"), `#!/bin/sh
+echo helper
+`)
 
 	out, err := runInstall(t, pkg, prefix, "--no-install-deps", "--no-config-update", "--no-restart")
 	if err != nil {
@@ -90,6 +93,7 @@ echo inventory
 	for _, path := range []string{
 		filepath.Join(prefix, "libexec", "routerd", "plugins", "provider-private-ip-inventory"),
 		filepath.Join(prefix, "libexec", "routerd", "plugins", "aws-provider-executor", "plugin.yaml"),
+		filepath.Join(prefix, "libexec", "routerd", "plugins", "aws-routerd-helper", "bin", "aws-routerd-helper"),
 	} {
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("libexec payload was not installed at %s: %v\n%s", path, err, out)

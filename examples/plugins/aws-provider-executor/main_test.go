@@ -78,34 +78,53 @@ func dispatchWith(spec executeActionRequestSpec, runner awsRunner) executeAction
 	return dispatch(context.Background(), executeActionRequest{Spec: spec}, runner)
 }
 
-func TestPreflightMissingAWSCLIPathFails(t *testing.T) {
-	t.Setenv(awsCLIPathEnv, filepath.Join(t.TempDir(), "missing-aws"))
+func TestPreflightMissingAWSHelperFails(t *testing.T) {
+	t.Setenv(awsHelperEnv, filepath.Join(t.TempDir(), "missing-helper"))
 	res := dispatchWith(reqSpec(actionPreflight, modeDryRun), func(ctx context.Context, argv ...string) ([]byte, error) {
-		t.Fatalf("preflight must not invoke aws runner")
+		t.Fatalf("preflight must not invoke aws helper runner")
 		return nil, nil
 	})
 	if res.Status.Status != statusFailed {
 		t.Fatalf("want failed, got %#v", res.Status)
 	}
-	if !strings.Contains(res.Status.Error, awsCLIPathEnv) || !strings.Contains(res.Status.Message, "preflight") {
+	if !strings.Contains(res.Status.Error, awsHelperEnv) || !strings.Contains(res.Status.Message, "preflight") {
 		t.Fatalf("preflight error not actionable: %#v", res.Status)
 	}
 }
 
-func TestPreflightAWSCLIPathOverridePasses(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "aws")
+func TestPreflightAWSHelperOverridePasses(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "aws-routerd-helper")
 	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
-		t.Fatalf("write fake aws: %v", err)
+		t.Fatalf("write fake helper: %v", err)
 	}
-	t.Setenv(awsCLIPathEnv, path)
+	t.Setenv(awsHelperEnv, path)
 	res := dispatchWith(reqSpec(actionPreflight, modeDryRun), func(ctx context.Context, argv ...string) ([]byte, error) {
-		t.Fatalf("preflight must not invoke aws runner")
+		t.Fatalf("preflight must not invoke aws helper runner")
 		return nil, nil
 	})
 	if res.Status.Status != statusSucceeded {
 		t.Fatalf("want succeeded, got %#v", res.Status)
 	}
-	if res.Status.Observed["dependency"] != "aws" || res.Status.Observed["path"] != path {
+	if res.Status.Observed["dependency"] != "aws-routerd-helper" || res.Status.Observed["path"] != path {
+		t.Fatalf("observed = %#v", res.Status.Observed)
+	}
+}
+
+func TestPreflightLegacyAWSCLIPathFallbackPasses(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "aws")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+		t.Fatalf("write fake legacy aws: %v", err)
+	}
+	t.Setenv(awsHelperEnv, "")
+	t.Setenv(awsCLIPathEnv, path)
+	res := dispatchWith(reqSpec(actionPreflight, modeDryRun), func(ctx context.Context, argv ...string) ([]byte, error) {
+		t.Fatalf("preflight must not invoke aws helper runner")
+		return nil, nil
+	})
+	if res.Status.Status != statusSucceeded {
+		t.Fatalf("want succeeded, got %#v", res.Status)
+	}
+	if res.Status.Observed["path"] != path {
 		t.Fatalf("observed = %#v", res.Status.Observed)
 	}
 }
@@ -217,8 +236,8 @@ func TestEnsureForwardingEnabledExecuteDescribesThenModifies(t *testing.T) {
 	if verbs[1] != "modify-network-interface-attribute" {
 		t.Fatalf("second call must be modify, got %q", verbs[1])
 	}
-	if !contains(f.calls[1], "--no-source-dest-check") {
-		t.Fatalf("modify must use --no-source-dest-check, got %v", f.calls[1])
+	if !contains(f.calls[1], "--source-dest-check") || !contains(f.calls[1], `{"Value":false}`) {
+		t.Fatalf("modify must disable SourceDestCheck via JSON value, got %v", f.calls[1])
 	}
 }
 
@@ -233,8 +252,8 @@ func TestEnsureForwardingDisabledRestoresWhenPriorTrue(t *testing.T) {
 	if len(f.calls) != 1 || f.calls[0][1] != "modify-network-interface-attribute" {
 		t.Fatalf("expected one modify call, got %v", f.calls)
 	}
-	if !contains(f.calls[0], "--source-dest-check") || contains(f.calls[0], "--no-source-dest-check") {
-		t.Fatalf("restore must re-enable with --source-dest-check, got %v", f.calls[0])
+	if !contains(f.calls[0], "--source-dest-check") || !contains(f.calls[0], `{"Value":true}`) || contains(f.calls[0], "--no-source-dest-check") {
+		t.Fatalf("restore must re-enable with --source-dest-check JSON value, got %v", f.calls[0])
 	}
 }
 
@@ -441,9 +460,9 @@ func contains(ss []string, want string) bool {
 }
 
 // TestExecutorImportsNoCloudSDK asserts the aws-provider-executor shipped code
-// imports NO cloud SDK. It LEGITIMATELY uses os/exec (it runs the `aws` CLI),
+// imports NO cloud SDK. It LEGITIMATELY uses os/exec (it runs aws-routerd-helper),
 // so os/exec is allowed here — but pulling in an AWS/Azure/OCI/GCP SDK is
-// forbidden: the executor's only external dependency is exec of the `aws`
+// forbidden: the executor's only external dependency is exec of the helper
 // binary. (The fleet-wide examples/plugins no-exec invariant in
 // internal/addressclaim excludes THIS directory for exactly this reason.)
 func TestExecutorImportsNoCloudSDK(t *testing.T) {

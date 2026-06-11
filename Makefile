@@ -35,8 +35,9 @@ ROUTERD_EVENTD_BIN := $(BUILDDIR)/routerd-eventd
 AWS_PROVIDER_EXECUTOR_BIN := $(BUILDDIR)/aws-provider-executor
 AZURE_PROVIDER_EXECUTOR_BIN := $(BUILDDIR)/azure-provider-executor
 OCI_PROVIDER_EXECUTOR_BIN := $(BUILDDIR)/oci-provider-executor
+AWS_ROUTERD_HELPER_BIN := $(BUILDDIR)/aws-routerd-helper
 OCI_ROUTERD_HELPER_BIN := $(BUILDDIR)/oci-routerd-helper
-ROUTERD_PROVIDER_EXECUTOR_BINS := $(AWS_PROVIDER_EXECUTOR_BIN) $(AZURE_PROVIDER_EXECUTOR_BIN) $(OCI_PROVIDER_EXECUTOR_BIN) $(OCI_ROUTERD_HELPER_BIN)
+ROUTERD_PROVIDER_EXECUTOR_BINS := $(AWS_PROVIDER_EXECUTOR_BIN) $(AZURE_PROVIDER_EXECUTOR_BIN) $(OCI_PROVIDER_EXECUTOR_BIN) $(AWS_ROUTERD_HELPER_BIN) $(OCI_ROUTERD_HELPER_BIN)
 PROVIDER_PRIVATE_IP_INVENTORY := examples/cloudedge-mobility-demo/plugins/provider-private-ip-inventory
 ROUTERD_RELEASE_BINS := $(ROUTERD_BIN) $(ROUTERCTL_BIN) $(ROUTERD_DHCPv4_CLIENT_BIN) $(ROUTERD_DHCPv6_CLIENT_BIN) $(ROUTERD_DHCP_EVENT_RELAY_BIN) $(ROUTERD_DHCP_FINGERPRINT_WATCHER_BIN) $(ROUTERD_HEALTHCHECK_BIN) $(ROUTERD_BGP_BIN) $(ROUTERD_DNS_RESOLVER_BIN) $(ROUTERD_FIREWALL_LOGGER_BIN) $(ROUTERD_DPI_CLASSIFIER_BIN) $(ROUTERD_NDPI_AGENT_BIN) $(ROUTERD_RA_OBSERVER_BIN) $(ROUTERD_ARP_OBSERVER_BIN) $(ROUTERD_PPPOE_CLIENT_BIN) $(ROUTERD_EVENTD_BIN) $(ROUTERD_PROVIDER_EXECUTOR_BINS)
 ROUTERD_NDPI_AGENT_LIBNDPI_DISTROOT := $(DISTDIR)/ndpi-agent-libndpi-package
@@ -94,6 +95,7 @@ build-provider-executors:
 	$(GO_BUILD_ENV) go build $(GO_BUILD_FLAGS) -o $(AWS_PROVIDER_EXECUTOR_BIN) ./examples/plugins/aws-provider-executor
 	$(GO_BUILD_ENV) go build $(GO_BUILD_FLAGS) -o $(AZURE_PROVIDER_EXECUTOR_BIN) ./examples/plugins/azure-provider-executor
 	$(GO_BUILD_ENV) go build $(GO_BUILD_FLAGS) -o $(OCI_PROVIDER_EXECUTOR_BIN) ./examples/plugins/oci-provider-executor
+	$(GO_BUILD_ENV) go build $(GO_BUILD_FLAGS) -o $(AWS_ROUTERD_HELPER_BIN) ./examples/plugins/aws-routerd-helper
 	$(GO_BUILD_ENV) go build $(GO_BUILD_FLAGS) -o $(OCI_ROUTERD_HELPER_BIN) ./examples/plugins/oci-routerd-helper
 
 build-ndpi-agent:
@@ -273,6 +275,8 @@ dist:
 	install -d $(DISTROOT)/libexec/routerd/plugins/aws-provider-executor/bin
 	install -m 0755 $(AWS_PROVIDER_EXECUTOR_BIN) $(DISTROOT)/libexec/routerd/plugins/aws-provider-executor/bin/aws-provider-executor
 	install -m 0644 examples/plugins/aws-provider-executor/plugin.yaml $(DISTROOT)/libexec/routerd/plugins/aws-provider-executor/plugin.yaml
+	install -d $(DISTROOT)/libexec/routerd/plugins/aws-routerd-helper/bin
+	install -m 0755 $(AWS_ROUTERD_HELPER_BIN) $(DISTROOT)/libexec/routerd/plugins/aws-routerd-helper/bin/aws-routerd-helper
 	install -d $(DISTROOT)/libexec/routerd/plugins/azure-provider-executor/bin
 	install -m 0755 $(AZURE_PROVIDER_EXECUTOR_BIN) $(DISTROOT)/libexec/routerd/plugins/azure-provider-executor/bin/azure-provider-executor
 	install -m 0644 examples/plugins/azure-provider-executor/plugin.yaml $(DISTROOT)/libexec/routerd/plugins/azure-provider-executor/plugin.yaml
