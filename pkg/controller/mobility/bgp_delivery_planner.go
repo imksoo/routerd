@@ -236,9 +236,6 @@ func decisionEligibleForCapture(decision ownershipDecision, self memberPlanInfo,
 		if owner, ok := lookupMemberByNodeRef(members, decision.HomeOwnerNode); ok && samePlacementSite(self, owner) && !placement.Seize {
 			return false
 		}
-		if decision.HomeProviderRef != "" && self.Capture.ProviderRef != "" && strings.TrimSpace(decision.HomeProviderRef) != strings.TrimSpace(self.Capture.ProviderRef) {
-			return false
-		}
 	}
 	return true
 }
