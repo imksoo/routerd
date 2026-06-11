@@ -541,11 +541,9 @@ def azure_arm_cli_compat(args):
         sub = azure_subscription_id()
         if not rg or not sub:
             raise ValueError("Azure subscriptionID/resourceGroup is required when az CLI is unavailable")
-        doc = azure_arm_get("/subscriptions/" + sub + "/resourceGroups/" + rg + "/providers/Microsoft.Compute/virtualMachines", {
-            "api-version": "2023-07-01",
-            "$expand": "instanceView",
-        })
-        return [azure_cli_vm_from_arm(item, azure_cli_has(args, "--show-details")) for item in doc.get("value") or []]
+        doc = azure_arm_get("/subscriptions/" + sub + "/resourceGroups/" + rg + "/providers/Microsoft.Compute/virtualMachines", {"api-version": "2023-07-01"})
+        show_details = azure_cli_has(args, "--show-details")
+        return [azure_cli_vm_from_arm(item, show_details, sub, rg) for item in doc.get("value") or []]
     if len(args) >= 5 and args[:4] == ["network", "route-table", "route", "list"]:
         rg = azure_resource_group_value(args)
         name = azure_cli_option(args, "--route-table-name")
@@ -581,7 +579,7 @@ def azure_cli_nic_from_arm(item):
     return out
 
 
-def azure_cli_vm_from_arm(item, show_details):
+def azure_cli_vm_from_arm(item, show_details, subscription_id="", resource_group=""):
     props = item.get("properties") or {}
     out = {
         "id": item.get("id", ""),
@@ -591,13 +589,42 @@ def azure_cli_vm_from_arm(item, show_details):
         "networkProfile": props.get("networkProfile") or {},
     }
     if show_details:
-        for status in (((props.get("instanceView") or {}).get("statuses")) or []):
+        statuses = ((props.get("instanceView") or {}).get("statuses")) or []
+        if not statuses:
+            statuses = azure_vm_instance_view_statuses(item, subscription_id, resource_group)
+        for status in statuses:
             code = (status.get("code") or "").lower()
             if code.startswith("powerstate/"):
                 state = code.split("/", 1)[1].replace("-", " ")
                 out["powerState"] = "VM " + state
                 break
     return out
+
+
+def azure_vm_instance_view_statuses(item, subscription_id="", resource_group=""):
+    name = (item.get("name") or "").strip()
+    if not name:
+        return []
+    ref = item.get("id", "")
+    sub = azure_subscription_id(ref) or subscription_id
+    rg = azure_resource_group_from_ref(ref) or resource_group
+    if not sub or not rg:
+        return []
+    try:
+        doc = azure_arm_get(
+            "/subscriptions/" + sub + "/resourceGroups/" + rg + "/providers/Microsoft.Compute/virtualMachines/" + urllib.parse.quote(name, safe=""),
+            {"api-version": "2023-07-01", "$expand": "instanceView"},
+        )
+        return ((doc.get("properties") or {}).get("instanceView") or {}).get("statuses") or []
+    except Exception:
+        try:
+            doc = azure_arm_get(
+                "/subscriptions/" + sub + "/resourceGroups/" + rg + "/providers/Microsoft.Compute/virtualMachines/" + urllib.parse.quote(name, safe="") + "/instanceView",
+                {"api-version": "2023-07-01"},
+            )
+            return doc.get("statuses") or []
+        except Exception:
+            return []
 
 
 def azure_cli_route_from_arm(item):

@@ -367,7 +367,21 @@ func TestProviderPrivateIPInventoryPluginAzureUsesARMWithoutAzCLI(t *testing.T) 
 		case "/subscriptions/sub/resourceGroups/rg-demo/providers/Microsoft.Network/networkInterfaces":
 			_, _ = w.Write([]byte(`{"value":[{"id":"` + nicRouterID + `","name":"routerNic","location":"japaneast","tags":{"role":"router"},"properties":{"enableIPForwarding":true,"ipConfigurations":[{"name":"ipconfig1","properties":{"privateIPAddress":"10.77.60.22","primary":true,"subnet":{"id":"` + subnetID + `"}}}]}},{"id":"` + nicClientID + `","name":"clientNic","location":"japaneast","tags":{"role":"client"},"properties":{"enableIPForwarding":false,"ipConfigurations":[{"name":"ipconfig1","properties":{"privateIPAddress":"10.77.60.12","primary":true,"subnet":{"id":"` + subnetID + `"}}}]}}]}`))
 		case "/subscriptions/sub/resourceGroups/rg-demo/providers/Microsoft.Compute/virtualMachines":
-			_, _ = w.Write([]byte(`{"value":[{"id":"/subscriptions/sub/resourceGroups/rg-demo/providers/Microsoft.Compute/virtualMachines/router","name":"router","properties":{"networkProfile":{"networkInterfaces":[{"id":"` + nicRouterID + `"}]},"instanceView":{"statuses":[{"code":"PowerState/running"}]}}},{"id":"/subscriptions/sub/resourceGroups/rg-demo/providers/Microsoft.Compute/virtualMachines/client","name":"client","properties":{"networkProfile":{"networkInterfaces":[{"id":"` + nicClientID + `"}]},"instanceView":{"statuses":[{"code":"PowerState/running"}]}}}]}`))
+			if strings.Contains(r.URL.RawQuery, "%24expand=") || strings.Contains(r.URL.RawQuery, "$expand=") {
+				http.Error(w, `{"error":{"code":"BadRequest"}}`, http.StatusBadRequest)
+				return
+			}
+			_, _ = w.Write([]byte(`{"value":[{"id":"/subscriptions/sub/resourceGroups/rg-demo/providers/Microsoft.Compute/virtualMachines/router","name":"router","properties":{"networkProfile":{"networkInterfaces":[{"id":"` + nicRouterID + `"}]}}},{"id":"/subscriptions/sub/resourceGroups/rg-demo/providers/Microsoft.Compute/virtualMachines/client","name":"client","properties":{"networkProfile":{"networkInterfaces":[{"id":"` + nicClientID + `"}]}}}]}`))
+		case "/subscriptions/sub/resourceGroups/rg-demo/providers/Microsoft.Compute/virtualMachines/router":
+			if !strings.Contains(r.URL.RawQuery, "instanceView") {
+				t.Fatalf("router VM GET query=%s, want instanceView", r.URL.RawQuery)
+			}
+			_, _ = w.Write([]byte(`{"properties":{"instanceView":{"statuses":[{"code":"PowerState/running"}]}}}`))
+		case "/subscriptions/sub/resourceGroups/rg-demo/providers/Microsoft.Compute/virtualMachines/client":
+			if !strings.Contains(r.URL.RawQuery, "instanceView") {
+				t.Fatalf("client VM GET query=%s, want instanceView", r.URL.RawQuery)
+			}
+			_, _ = w.Write([]byte(`{"properties":{"instanceView":{"statuses":[{"code":"PowerState/running"}]}}}`))
 		default:
 			t.Fatalf("unexpected ARM path %s query=%s", r.URL.Path, r.URL.RawQuery)
 		}
