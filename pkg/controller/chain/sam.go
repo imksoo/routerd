@@ -35,8 +35,10 @@ type samStoredProxyNeighbor struct {
 }
 
 type samOSAddressDeassignResult struct {
-	address string
-	ifname  string
+	address   string
+	ifname    string
+	enforced  bool
+	lastError string
 	// removedThisReconcile is true only when this reconcile deleted the
 	// captured address from a local OS interface.
 	removedThisReconcile bool
@@ -45,6 +47,8 @@ type samOSAddressDeassignResult struct {
 type samOSAddressAssignResult struct {
 	address            string
 	ifname             string
+	enforced           bool
+	lastError          string
 	addedThisReconcile bool
 }
 
@@ -143,10 +147,13 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 			if result.address == "" {
 				result.address = strings.TrimSpace(action.Address)
 			}
-			deassignResults[action.ClaimName] = result
 			if err != nil {
+				result.lastError = err.Error()
 				failures = append(failures, fmt.Sprintf("%s deassign %s: %v", action.ClaimName, action.Address, err))
+			} else {
+				result.enforced = true
 			}
+			deassignResults[action.ClaimName] = result
 		case "assign-os-address":
 			result := samOSAddressAssignResult{address: strings.TrimSpace(action.Address), ifname: strings.TrimSpace(action.Interface)}
 			assignResults[action.ClaimName] = result
@@ -164,10 +171,13 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 			if result.ifname == "" {
 				result.ifname = strings.TrimSpace(action.Interface)
 			}
-			assignResults[action.ClaimName] = result
 			if err != nil {
+				result.lastError = err.Error()
 				failures = append(failures, fmt.Sprintf("%s assign %s dev %s: %v", action.ClaimName, action.Address, action.Interface, err))
+			} else {
+				result.enforced = true
 			}
+			assignResults[action.ClaimName] = result
 		default:
 			continue
 		}
@@ -250,8 +260,11 @@ func (c SAMController) reconcileStatuses(targetOS platform.OS, assignResults map
 					status["captureOSAddressPresence"] = map[string]any{
 						"address":            firstNonEmpty(result.address, strings.TrimSpace(spec.Address)),
 						"interface":          result.ifname,
-						"enforced":           true,
+						"enforced":           result.enforced,
 						"lastReconcileAdded": result.addedThisReconcile,
+					}
+					if result.lastError != "" {
+						status["captureOSAddressPresence"].(map[string]any)["lastError"] = result.lastError
 					}
 				} else {
 					result := deassignResults[claim.Metadata.Name]
@@ -259,13 +272,16 @@ func (c SAMController) reconcileStatuses(targetOS platform.OS, assignResults map
 						"address": firstNonEmpty(result.address, strings.TrimSpace(spec.Address)),
 						// enforced is an audit flag: routerd is actively enforcing
 						// OS-absence for this provider-captured address.
-						"enforced": true,
+						"enforced": result.enforced,
 						// lastReconcileRemoved is a per-reconcile action signal. It
 						// is false in steady state when the address was already absent.
 						"lastReconcileRemoved": result.removedThisReconcile,
 					}
 					if result.ifname != "" {
 						note["interface"] = result.ifname
+					}
+					if result.lastError != "" {
+						note["lastError"] = result.lastError
 					}
 					status["captureOSAddressAbsence"] = note
 				}
@@ -328,6 +344,11 @@ func (c SAMController) teardownRemovedCapture(ctx context.Context, status router
 				return fmt.Errorf("delete removed SAM proxy neighbor %s dev %s: %w", capture.address, capture.ifname, err)
 			}
 		}
+		if address, ok := samStoredOSAddressPresenceFromStatus(status); ok {
+			if _, err := applier.EnsureOSAddressAbsent(ctx, address); err != nil {
+				return fmt.Errorf("delete removed SAM OS address %s: %w", address, err)
+			}
+		}
 	}
 	if err := deleter.DeleteObject(api.HybridAPIVersion, "RemoteAddressClaim", status.Name); err != nil {
 		return err
@@ -348,7 +369,8 @@ func (c SAMController) cleanupChangedCaptures(ctx context.Context, statuses []ro
 		return nil
 	}
 	prior := samStoredProxyNeighbors(statuses)
-	if len(prior) == 0 {
+	priorOS := samStoredOSAddressPresences(statuses)
+	if len(prior) == 0 && len(priorOS) == 0 {
 		return nil
 	}
 	desiredClaims := map[string]bool{}
@@ -358,9 +380,13 @@ func (c SAMController) cleanupChangedCaptures(ctx context.Context, statuses []ro
 		}
 	}
 	desiredNeighbors := map[string]samStoredProxyNeighbor{}
+	desiredOS := map[string]string{}
 	for _, action := range actions {
-		if action.Kind == "proxy-neighbor" {
+		switch action.Kind {
+		case "proxy-neighbor":
 			desiredNeighbors[action.ClaimName] = samStoredProxyNeighbor{address: strings.TrimSpace(action.Address), ifname: strings.TrimSpace(action.Interface)}
+		case "assign-os-address":
+			desiredOS[action.ClaimName] = strings.TrimSpace(action.Address)
 		}
 	}
 	applier := c.Applier
@@ -379,6 +405,18 @@ func (c SAMController) cleanupChangedCaptures(ctx context.Context, statuses []ro
 		}
 		if err := applier.DeleteProxyNeighbor(ctx, old.address, old.ifname); err != nil {
 			return fmt.Errorf("delete changed SAM proxy neighbor %s dev %s: %w", old.address, old.ifname, err)
+		}
+	}
+	for name, oldAddress := range priorOS {
+		if !desiredClaims[name] {
+			continue
+		}
+		nextAddress, ok := desiredOS[name]
+		if ok && nextAddress == oldAddress {
+			continue
+		}
+		if _, err := applier.EnsureOSAddressAbsent(ctx, oldAddress); err != nil {
+			return fmt.Errorf("delete changed SAM OS address %s: %w", oldAddress, err)
 		}
 	}
 	return nil
@@ -410,6 +448,19 @@ func samStoredProxyNeighbors(statuses []routerstate.ObjectStatus) map[string]sam
 	return out
 }
 
+func samStoredOSAddressPresences(statuses []routerstate.ObjectStatus) map[string]string {
+	out := map[string]string{}
+	for _, status := range statuses {
+		if status.APIVersion != api.HybridAPIVersion || status.Kind != "RemoteAddressClaim" {
+			continue
+		}
+		if address, ok := samStoredOSAddressPresenceFromStatus(status); ok {
+			out[status.Name] = address
+		}
+	}
+	return out
+}
+
 func samStoredProxyNeighborFromStatus(status routerstate.ObjectStatus) (samStoredProxyNeighbor, bool) {
 	capture, ok := status.Status["captureProxyNeighbor"].(map[string]any)
 	if !ok {
@@ -421,4 +472,16 @@ func samStoredProxyNeighborFromStatus(status routerstate.ObjectStatus) (samStore
 		return samStoredProxyNeighbor{}, false
 	}
 	return samStoredProxyNeighbor{address: address, ifname: ifname}, true
+}
+
+func samStoredOSAddressPresenceFromStatus(status routerstate.ObjectStatus) (string, bool) {
+	capture, ok := status.Status["captureOSAddressPresence"].(map[string]any)
+	if !ok {
+		return "", false
+	}
+	address := strings.TrimSpace(fmt.Sprint(capture["address"]))
+	if address == "" || address == "<nil>" {
+		return "", false
+	}
+	return address, true
 }

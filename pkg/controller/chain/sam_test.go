@@ -107,6 +107,28 @@ func TestSAMControllerAssignsProviderSecondaryOSAddressAndStatus(t *testing.T) {
 	}
 }
 
+func TestSAMControllerFailedProviderSecondaryOSAddressAssignIsNotEnforced(t *testing.T) {
+	router := samControllerRouterWithClaim("10.0.1.122/32", "provider-secondary-ip", "eth0")
+	spec := router.Spec.Resources[1].Spec.(api.RemoteAddressClaimSpec)
+	spec.Capture.ConfigureOSAddress = true
+	router.Spec.Resources[1].Spec = spec
+	store := &samStore{objects: map[string]map[string]any{}}
+	applier := &fakeSAMApplier{assignErr: errors.New("link not found")}
+	controller := SAMController{Router: router, Store: store, OS: platform.OSLinux, Applier: applier}
+	if err := controller.Reconcile(context.Background()); err == nil {
+		t.Fatal("Reconcile error = nil, want assign failure")
+	}
+	assertSAMCalls(t, applier.calls, []string{"assign:10.0.1.122/32@eth0"})
+	status := store.ObjectStatus(api.HybridAPIVersion, "RemoteAddressClaim", "app")
+	note, ok := status["captureOSAddressPresence"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing captureOSAddressPresence in status %#v", status)
+	}
+	if note["address"] != "10.0.1.122/32" || note["interface"] != "eth0" || note["enforced"] != false || note["lastError"] != "link not found" {
+		t.Fatalf("assign failure note = %#v", note)
+	}
+}
+
 func TestSAMControllerNonLinuxNoHostActions(t *testing.T) {
 	router := samControllerRouter()
 	store := &samStore{objects: map[string]map[string]any{}}
@@ -150,6 +172,30 @@ func TestSAMControllerCleansRemovedProxyNeighbor(t *testing.T) {
 	}
 }
 
+func TestSAMControllerCleansRemovedProviderSecondaryOSAddress(t *testing.T) {
+	router := &api.Router{}
+	store := &samStore{
+		objects: map[string]map[string]any{},
+		statuses: []routerstate.ObjectStatus{{
+			APIVersion: api.HybridAPIVersion,
+			Kind:       "RemoteAddressClaim",
+			Name:       "old",
+			Status: map[string]any{
+				"captureOSAddressPresence": map[string]any{"address": "10.0.1.122/32", "interface": "eth0", "enforced": true},
+			},
+		}},
+	}
+	applier := &fakeSAMApplier{}
+	controller := SAMController{Router: router, Store: store, OS: platform.OSLinux, Applier: applier}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	assertSAMCalls(t, applier.calls, []string{"deassign:10.0.1.122/32"})
+	if !store.deleted[api.HybridAPIVersion+"/RemoteAddressClaim/old"] {
+		t.Fatalf("deleted = %#v", store.deleted)
+	}
+}
+
 func TestSAMControllerCleansChangedProxyNeighborInterface(t *testing.T) {
 	router := samControllerRouterWithClaim("10.0.1.123/32", "proxy-arp", "br-new")
 	store := &samStore{objects: map[string]map[string]any{}, statuses: []routerstate.ObjectStatus{
@@ -165,6 +211,30 @@ func TestSAMControllerCleansChangedProxyNeighborInterface(t *testing.T) {
 		"proxyarp:br-new=1",
 		"ensure:10.0.1.123/32@br-new",
 	})
+}
+
+func TestSAMControllerCleansChangedProviderSecondaryOSAddress(t *testing.T) {
+	router := samControllerRouterWithClaim("10.0.1.124/32", "provider-secondary-ip", "eth0")
+	spec := router.Spec.Resources[1].Spec.(api.RemoteAddressClaimSpec)
+	spec.Capture.ConfigureOSAddress = true
+	router.Spec.Resources[1].Spec = spec
+	store := &samStore{objects: map[string]map[string]any{}, statuses: []routerstate.ObjectStatus{
+		samRemoteAddressClaimOSPresenceStatus("app", "10.0.1.122/32", "eth0"),
+	}}
+	applier := &fakeSAMApplier{assignResult: samOSAddressAssignResult{address: "10.0.1.124/32", ifname: "eth0"}}
+	controller := SAMController{Router: router, Store: store, OS: platform.OSLinux, Applier: applier}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	assertSAMCalls(t, applier.calls, []string{
+		"deassign:10.0.1.122/32",
+		"assign:10.0.1.124/32@eth0",
+	})
+	status := store.ObjectStatus(api.HybridAPIVersion, "RemoteAddressClaim", "app")
+	note, ok := status["captureOSAddressPresence"].(map[string]any)
+	if !ok || note["address"] != "10.0.1.124/32" || note["enforced"] != true {
+		t.Fatalf("captureOSAddressPresence = %#v", status["captureOSAddressPresence"])
+	}
 }
 
 func TestSAMControllerCleansChangedProxyNeighborAddress(t *testing.T) {
@@ -435,6 +505,8 @@ type fakeSAMApplier struct {
 	calls          []string
 	assignResult   samOSAddressAssignResult
 	deassignResult samOSAddressDeassignResult
+	assignErr      error
+	deassignErr    error
 }
 
 type fakeSAMGARP struct {
@@ -479,7 +551,7 @@ func (a *fakeSAMApplier) EnsureOSAddressPresent(_ context.Context, address, ifna
 	if result.ifname == "" {
 		result.ifname = ifname
 	}
-	return result, nil
+	return result, a.assignErr
 }
 
 func (a *fakeSAMApplier) EnsureOSAddressAbsent(_ context.Context, address string) (samOSAddressDeassignResult, error) {
@@ -489,7 +561,7 @@ func (a *fakeSAMApplier) EnsureOSAddressAbsent(_ context.Context, address string
 	if result.address == "" {
 		result.address = address
 	}
-	return result, nil
+	return result, a.deassignErr
 }
 
 type samStore struct {
@@ -554,6 +626,17 @@ func samRemoteAddressClaimStatus(name, address, ifname string) routerstate.Objec
 		Name:       name,
 		Status: map[string]any{
 			"captureProxyNeighbor": map[string]any{"address": address, "interface": ifname},
+		},
+	}
+}
+
+func samRemoteAddressClaimOSPresenceStatus(name, address, ifname string) routerstate.ObjectStatus {
+	return routerstate.ObjectStatus{
+		APIVersion: api.HybridAPIVersion,
+		Kind:       "RemoteAddressClaim",
+		Name:       name,
+		Status: map[string]any{
+			"captureOSAddressPresence": map[string]any{"address": address, "interface": ifname, "enforced": true},
 		},
 	}
 }
