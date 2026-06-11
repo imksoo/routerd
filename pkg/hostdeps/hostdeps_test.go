@@ -164,7 +164,7 @@ func TestPackageFeaturesIncludeArpingForVRRPGatedSAMCapture(t *testing.T) {
 	}
 }
 
-func TestPackageFeaturesIncludeAWSCLIForAWSProviderProfile(t *testing.T) {
+func TestPackageFeaturesDoNotRequireAWSCLIForAWSProviderProfile(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
 		TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "CloudProviderProfile"},
 		Metadata: api.ObjectMeta{Name: "aws-lab"},
@@ -174,20 +174,12 @@ func TestPackageFeaturesIncludeAWSCLIForAWSProviderProfile(t *testing.T) {
 		},
 	}}}}
 	sets := PackageSets(router)
-	if len(sets) == 0 {
-		t.Fatal("PackageSets returned no derived packages")
-	}
-	ubuntu := packageSetByOS(t, sets, "ubuntu")
-	if !stringInSlice("awscli", ubuntu.Names) {
-		t.Fatalf("ubuntu packages = %#v, want awscli", ubuntu.Names)
-	}
-	nixos := packageSetByOS(t, sets, "nixos")
-	if !stringInSlice("awscli2", nixos.Names) {
-		t.Fatalf("nixos packages = %#v, want awscli2", nixos.Names)
+	if len(sets) != 0 {
+		t.Fatalf("PackageSets = %#v, want no CLI package from CloudProviderProfile alone", sets)
 	}
 }
 
-func TestPackageFeaturesIncludeAWSCLIForLoadedAWSProviderProfile(t *testing.T) {
+func TestPackageFeaturesForLoadedAWSProviderProfileUseDataplaneResourcesOnly(t *testing.T) {
 	router, err := config.LoadBytes([]byte(`
 apiVersion: routerd.net/v1alpha1
 kind: Router
@@ -219,10 +211,11 @@ spec:
 		t.Fatal(err)
 	}
 	ubuntu := packageSetByOS(t, PackageSets(router), "ubuntu")
-	for _, want := range []string{"awscli", "wireguard-tools"} {
-		if !stringInSlice(want, ubuntu.Names) {
-			t.Fatalf("ubuntu packages = %#v, want %s", ubuntu.Names, want)
-		}
+	if stringInSlice("awscli", ubuntu.Names) {
+		t.Fatalf("ubuntu packages = %#v, did not expect awscli from CloudProviderProfile", ubuntu.Names)
+	}
+	if !stringInSlice("wireguard-tools", ubuntu.Names) {
+		t.Fatalf("ubuntu packages = %#v, want wireguard-tools from WireGuardInterface", ubuntu.Names)
 	}
 }
 

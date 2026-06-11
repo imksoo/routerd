@@ -10,12 +10,9 @@ import (
 
 func TestServeInspectionResourcesIncludesDerivedRuntimePackage(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
-		TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "CloudProviderProfile"},
-		Metadata: api.ObjectMeta{Name: "aws-lab"},
-		Spec: api.CloudProviderProfileSpec{
-			Provider:     "aws",
-			Capabilities: []string{"secondary-ip"},
-		},
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardInterface"},
+		Metadata: api.ObjectMeta{Name: "wg-sam"},
+		Spec:     api.WireGuardInterfaceSpec{},
 	}}}}
 
 	resources, err := serveInspectionResources(router, nil, "Package/router-runtime", 0)
@@ -38,8 +35,8 @@ func TestServeInspectionResourcesIncludesDerivedRuntimePackage(t *testing.T) {
 			ubuntu = set
 		}
 	}
-	if !stringInSlice(ubuntu.Names, "awscli") {
-		t.Fatalf("ubuntu package names = %#v, want awscli", ubuntu.Names)
+	if !stringInSlice(ubuntu.Names, "wireguard-tools") {
+		t.Fatalf("ubuntu package names = %#v, want wireguard-tools", ubuntu.Names)
 	}
 }
 

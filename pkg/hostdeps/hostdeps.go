@@ -66,7 +66,6 @@ var ubuntuPackages = map[string][]string{
 	"arping":        {"iputils-arping"},
 	"base":          {"iproute2", "systemd"},
 	"bgp":           {},
-	"cloud-aws-cli": {"awscli"},
 	"conntrack":     {"conntrack"},
 	"dhcp-dns":      {"dnsmasq-base"},
 	"dpi":           {"libnetfilter-log1", "libndpi-bin"},
@@ -88,7 +87,6 @@ var nixosPackages = map[string][]string{
 	"arping":        {"iputils"},
 	"base":          {"iproute2", "systemd"},
 	"bgp":           {},
-	"cloud-aws-cli": {"awscli2"},
 	"conntrack":     {"conntrack-tools"},
 	"dhcp-dns":      {"dnsmasq"},
 	"dpi":           {"libnetfilter_log", "ndpi"},
@@ -188,14 +186,6 @@ func packageFeatures(router *api.Router) map[string]bool {
 		case "RemoteAddressClaim":
 			if spec, err := res.RemoteAddressClaimSpec(); err == nil && spec.Capture.Type == "proxy-arp" && (spec.Capture.GratuitousARP || spec.Capture.ActiveWhen.Type == "vrrp-master") {
 				features["arping"] = true
-			}
-		case "CloudProviderProfile":
-			spec, err := res.CloudProviderProfileSpec()
-			if err != nil {
-				continue
-			}
-			if strings.TrimSpace(spec.Provider) == "aws" {
-				features["cloud-aws-cli"] = true
 			}
 		}
 	}
