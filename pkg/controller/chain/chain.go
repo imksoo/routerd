@@ -3007,11 +3007,17 @@ func renderAndEnsureDnsmasq(ctx context.Context, router *api.Router, store Store
 	if port == 0 {
 		port = 1053
 	}
-	changed, err := writeDnsmasqConfig(router, store, configPath, pidFile, port, listenAddresses)
+	changed, reloadOnly, err := writeDnsmasqConfig(router, store, configPath, pidFile, port, listenAddresses)
 	if err != nil {
 		return err
 	}
-	return ensureDnsmasq(ctx, command, configPath, pidFile, changed)
+	if err := ensureDnsmasq(ctx, command, configPath, pidFile, changed); err != nil {
+		return err
+	}
+	if reloadOnly && !changed {
+		return reloadDnsmasq(ctx, pidFile)
+	}
+	return nil
 }
 
 func routerNeedsDnsmasq(router *api.Router) bool {
@@ -3047,25 +3053,33 @@ func daemonStatus(ctx context.Context, socketPath string) (daemonapi.DaemonStatu
 	return status, json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&status)
 }
 
-func writeDnsmasqConfig(router *api.Router, store Store, path, pidFile string, port int, listenAddresses []string) (bool, error) {
+func writeDnsmasqConfig(router *api.Router, store Store, path, pidFile string, port int, listenAddresses []string) (bool, bool, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return false, err
+		return false, false, err
 	}
 	if err := os.MkdirAll(filepath.Dir(pidFile), 0755); err != nil {
-		return false, err
+		return false, false, err
 	}
 	leaseFile, err := dnsmasqLeaseFile(router, path, pidFile)
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
 	if err := os.MkdirAll(filepath.Dir(leaseFile), 0755); err != nil {
-		return false, err
+		return false, false, err
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "port=0\nno-resolv\nno-hosts\nbind-interfaces\npid-file=%s\ndhcp-leasefile=%s\n", pidFile, leaseFile)
+	hostsFile := dnsmasqHostsFile(path)
+	hostsChanged, err := writeDnsmasqHostsFile(router, hostsFile)
+	if err != nil {
+		return false, false, err
+	}
+	if routerHasDnsmasqHostsFile(router) {
+		b.WriteString("dhcp-hostsfile=" + hostsFile + "\n")
+	}
 	lines, err := dnsmasqLANServiceLines(router, store)
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
 	for _, line := range lines {
 		b.WriteString(line)
@@ -3074,12 +3088,12 @@ func writeDnsmasqConfig(router *api.Router, store Store, path, pidFile string, p
 	data := []byte(b.String())
 	current, err := os.ReadFile(path)
 	if err == nil && bytes.Equal(current, data) {
-		return false, nil
+		return false, hostsChanged, nil
 	}
 	if err != nil && !os.IsNotExist(err) {
-		return false, err
+		return false, false, err
 	}
-	return true, os.WriteFile(path, data, 0644)
+	return true, hostsChanged, os.WriteFile(path, data, 0644)
 }
 
 func dnsmasqLeaseFile(router *api.Router, configPath, pidFile string) (string, error) {
@@ -3196,13 +3210,10 @@ func dnsmasqLANServiceLines(router *api.Router, store Store) ([]string, error) {
 			if reservationSpec.Scope != "" || (reservationSpec.Server != "" && reservationSpec.Server != resource.Metadata.Name) {
 				continue
 			}
-			reservationTag := sanitizeChainTag(reservation.Metadata.Name)
-			lines = append(lines, "dhcp-host="+dnsmasqIPv4Reservation(reservationSpec, reservationTag))
 			for _, option := range reservationSpec.Options {
-				lines = append(lines, "dhcp-option=tag:"+reservationTag+","+dnsmasqDHCPv4Option(option))
+				lines = append(lines, "dhcp-option=tag:"+sanitizeChainTag(reservation.Metadata.Name)+","+dnsmasqDHCPv4Option(option))
 			}
 		}
-		lines = append(lines, dnsmasqStickyHostLines("ipv4", leaseTime)...)
 	}
 	for _, resource := range router.Spec.Resources {
 		if resource.Kind != "DHCPv6Server" {
@@ -3245,7 +3256,6 @@ func dnsmasqLANServiceLines(router *api.Router, store Store) ([]string, error) {
 		if spec.RapidCommit {
 			lines = append(lines, fmt.Sprintf("dhcp-option=tag:%s,option6:rapid-commit", tag))
 		}
-		lines = append(lines, dnsmasqStickyHostLines("ipv6", leaseTime)...)
 	}
 	for _, resource := range router.Spec.Resources {
 		if resource.Kind != "IPv6RouterAdvertisement" {
@@ -3390,6 +3400,128 @@ func dnsmasqStickyHostLines(family, leaseTime string) []string {
 		lines = append(lines, "dhcp-host="+strings.Join(parts, ","))
 	}
 	sort.Strings(lines)
+	return lines
+}
+
+func routerHasDnsmasqHostsFile(router *api.Router) bool {
+	if router == nil {
+		return false
+	}
+	for _, resource := range router.Spec.Resources {
+		switch resource.Kind {
+		case "DHCPv4Reservation":
+			return true
+		case "DHCPv4Server":
+			spec, err := resource.DHCPv4ServerSpec()
+			if err == nil && spec.StickyHoldDays > 0 {
+				return true
+			}
+		case "DHCPv6Server":
+			spec, err := resource.DHCPv6ServerSpec()
+			if err == nil && spec.StickyHoldDays > 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func dnsmasqHostsFile(configPath string) string {
+	if dir := strings.TrimSpace(filepath.Dir(configPath)); dir != "" && dir != "." {
+		return filepath.Join(dir, "dnsmasq-hosts.hosts")
+	}
+	defaults, _ := platform.Current()
+	return filepath.Join(defaults.RuntimeDir, "dnsmasq-hosts.hosts")
+}
+
+func writeDnsmasqHostsFile(router *api.Router, path string) (bool, error) {
+	if strings.TrimSpace(path) == "" || !routerHasDnsmasqHostsFile(router) {
+		return false, nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return false, err
+	}
+	var lines []string
+	lines = append(lines, dnsmasqReservationHostLines(router)...)
+	if routerHasDHCPStickyHold(router) {
+		lines = append(lines, dnsmasqHostFileLines(dnsmasqStickyHostLines("ipv4", "12h"))...)
+		lines = append(lines, dnsmasqHostFileLines(dnsmasqStickyHostLines("ipv6", "12h"))...)
+	}
+	sort.Strings(lines)
+	data := []byte(strings.Join(lines, "\n"))
+	if len(data) > 0 {
+		data = append(data, '\n')
+	}
+	current, err := os.ReadFile(path)
+	if err == nil && bytes.Equal(current, data) {
+		return false, nil
+	}
+	if err != nil && !os.IsNotExist(err) {
+		return false, err
+	}
+	return true, os.WriteFile(path, data, 0644)
+}
+
+func dnsmasqHostFileLines(lines []string) []string {
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		line = strings.TrimPrefix(line, "dhcp-host=")
+		if line != "" {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+func routerHasDHCPStickyHold(router *api.Router) bool {
+	if router == nil {
+		return false
+	}
+	for _, resource := range router.Spec.Resources {
+		switch resource.Kind {
+		case "DHCPv4Server":
+			spec, err := resource.DHCPv4ServerSpec()
+			if err == nil && spec.StickyHoldDays > 0 {
+				return true
+			}
+		case "DHCPv6Server":
+			spec, err := resource.DHCPv6ServerSpec()
+			if err == nil && spec.StickyHoldDays > 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func dnsmasqReservationHostLines(router *api.Router) []string {
+	if router == nil {
+		return nil
+	}
+	servers := map[string]bool{}
+	for _, resource := range router.Spec.Resources {
+		if resource.Kind == "DHCPv4Server" {
+			servers[resource.Metadata.Name] = true
+		}
+	}
+	var lines []string
+	for _, resource := range router.Spec.Resources {
+		if resource.Kind != "DHCPv4Reservation" {
+			continue
+		}
+		spec, err := resource.DHCPv4ReservationSpec()
+		if err != nil {
+			continue
+		}
+		if strings.TrimSpace(spec.Scope) != "" {
+			continue
+		}
+		if server := strings.TrimSpace(spec.Server); server != "" && !servers[server] {
+			continue
+		}
+		lines = append(lines, dnsmasqIPv4Reservation(spec, sanitizeChainTag(resource.Metadata.Name)))
+	}
 	return lines
 }
 
@@ -3577,6 +3709,14 @@ func ensureDnsmasq(ctx context.Context, command, configPath, pidFile string, cha
 		return nil
 	}
 	return startDnsmasq(ctx, command, configPath, pidFile)
+}
+
+func reloadDnsmasq(_ context.Context, pidFile string) error {
+	proc, alive := dnsmasqProcess(pidFile)
+	if !alive {
+		return nil
+	}
+	return proc.Signal(syscall.SIGHUP)
 }
 
 func ensureSystemdDnsmasqService(ctx context.Context, systemdDir, command, configPath, pidFile string, changed bool) error {
