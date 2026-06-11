@@ -422,10 +422,193 @@ def oci_imds_vnic_id():
 
 
 def az_cli(args):
+    if os.environ.get("ROUTERD_PROVIDER_INVENTORY_AZURE_FORCE_REST", "").strip() == "1":
+        return azure_arm_cli_compat(args)
     argv = ["az"]
     argv.extend(args)
     argv.extend(["--output", "json"])
-    return run_json(argv)
+    try:
+        return run_json(argv)
+    except FileNotFoundError:
+        return azure_arm_cli_compat(args)
+
+
+def azure_arm_endpoint():
+    return os.environ.get("ROUTERD_PROVIDER_INVENTORY_AZURE_ARM_ENDPOINT", "https://management.azure.com").strip().rstrip("/")
+
+
+def azure_access_token():
+    token = os.environ.get("ROUTERD_PROVIDER_INVENTORY_AZURE_ACCESS_TOKEN", "").strip()
+    if token:
+        return token
+    query = urllib.parse.urlencode({
+        "api-version": "2018-02-01",
+        "resource": "https://management.azure.com/",
+    })
+    try:
+        doc = json.loads(http_text(
+            "http://169.254.169.254/metadata/identity/oauth2/token?" + query,
+            headers={"Metadata": "true"},
+            timeout=2.0,
+        ))
+    except Exception as exc:
+        raise RuntimeError("Azure managed identity token unavailable from IMDS: " + str(exc)) from exc
+    token = doc.get("access_token", "").strip()
+    if not token:
+        raise RuntimeError("Azure managed identity token unavailable from IMDS")
+    return token
+
+
+def azure_imds_instance():
+    try:
+        return json.loads(http_text(
+            "http://169.254.169.254/metadata/instance/compute?api-version=2021-02-01",
+            headers={"Metadata": "true"},
+            timeout=1.0,
+        ))
+    except Exception:
+        return {}
+
+
+def azure_resource_id_part(ref, key):
+    parts = [p for p in (ref or "").strip("/").split("/") if p]
+    for i in range(0, len(parts) - 1, 2):
+        if parts[i].lower() == key.lower():
+            return parts[i + 1]
+    return ""
+
+
+def azure_subscription_id(*refs):
+    for ref in refs:
+        value = azure_resource_id_part(ref, "subscriptions")
+        if value:
+            return value
+    value = os.environ.get("AZURE_SUBSCRIPTION_ID", "").strip()
+    if value:
+        return value
+    doc = azure_imds_instance()
+    return (doc.get("subscriptionId") or "").strip()
+
+
+def azure_resource_group_from_ref(*refs):
+    for ref in refs:
+        value = azure_resource_id_part(ref, "resourceGroups")
+        if value:
+            return value
+    doc = azure_imds_instance()
+    return (doc.get("resourceGroupName") or doc.get("resourceGroup") or "").strip()
+
+
+def azure_arm_get(path_or_id, params=None):
+    params = dict(params or {})
+    params.setdefault("api-version", "2023-09-01")
+    path = path_or_id if path_or_id.startswith("/") else "/" + path_or_id
+    url = azure_arm_endpoint() + path + "?" + urllib.parse.urlencode(params)
+    req = urllib.request.Request(url, headers={"Authorization": "Bearer " + azure_access_token()})
+    with urllib.request.urlopen(req, timeout=5.0) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def azure_cli_option(args, option):
+    for i, value in enumerate(args):
+        if value == option and i + 1 < len(args):
+            return args[i + 1]
+    return ""
+
+
+def azure_cli_has(args, option):
+    return option in args
+
+
+def azure_resource_group_value(args, *refs):
+    value = azure_cli_option(args, "--resource-group")
+    return value or azure_resource_group_from_ref(*refs)
+
+
+def azure_arm_cli_compat(args):
+    if len(args) >= 4 and args[:3] == ["network", "nic", "show"] and "--ids" in args:
+        nic_id = azure_cli_option(args, "--ids")
+        return azure_cli_nic_from_arm(azure_arm_get(nic_id, {"api-version": "2023-09-01"}))
+    if len(args) >= 4 and args[:3] == ["network", "nic", "list"]:
+        rg = azure_resource_group_value(args)
+        sub = azure_subscription_id()
+        if not rg or not sub:
+            raise ValueError("Azure subscriptionID/resourceGroup is required when az CLI is unavailable")
+        doc = azure_arm_get("/subscriptions/" + sub + "/resourceGroups/" + rg + "/providers/Microsoft.Network/networkInterfaces", {"api-version": "2023-09-01"})
+        return [azure_cli_nic_from_arm(item) for item in doc.get("value") or []]
+    if len(args) >= 3 and args[:2] == ["vm", "list"]:
+        rg = azure_resource_group_value(args)
+        sub = azure_subscription_id()
+        if not rg or not sub:
+            raise ValueError("Azure subscriptionID/resourceGroup is required when az CLI is unavailable")
+        doc = azure_arm_get("/subscriptions/" + sub + "/resourceGroups/" + rg + "/providers/Microsoft.Compute/virtualMachines", {
+            "api-version": "2023-07-01",
+            "$expand": "instanceView",
+        })
+        return [azure_cli_vm_from_arm(item, azure_cli_has(args, "--show-details")) for item in doc.get("value") or []]
+    if len(args) >= 5 and args[:4] == ["network", "route-table", "route", "list"]:
+        rg = azure_resource_group_value(args)
+        name = azure_cli_option(args, "--route-table-name")
+        sub = azure_subscription_id()
+        if not rg or not name or not sub:
+            raise ValueError("Azure subscriptionID/resourceGroup/routeTableName is required when az CLI is unavailable")
+        doc = azure_arm_get("/subscriptions/" + sub + "/resourceGroups/" + rg + "/providers/Microsoft.Network/routeTables/" + urllib.parse.quote(name, safe="") + "/routes", {"api-version": "2023-09-01"})
+        return [azure_cli_route_from_arm(item) for item in doc.get("value") or []]
+    raise FileNotFoundError("az")
+
+
+def azure_cli_nic_from_arm(item):
+    props = item.get("properties") or {}
+    out = {
+        "id": item.get("id", ""),
+        "name": item.get("name", ""),
+        "resourceGroup": azure_resource_group_from_ref(item.get("id", "")),
+        "location": item.get("location", ""),
+        "tags": item.get("tags") or {},
+        "enableIPForwarding": bool(props.get("enableIPForwarding")),
+        "ipConfigurations": [],
+    }
+    for cfg in props.get("ipConfigurations") or []:
+        cprops = cfg.get("properties") or {}
+        out["ipConfigurations"].append({
+            "id": cfg.get("id", ""),
+            "name": cfg.get("name", ""),
+            "privateIPAddress": cprops.get("privateIPAddress", ""),
+            "privateIpAddress": cprops.get("privateIPAddress", ""),
+            "primary": bool(cprops.get("primary")),
+            "subnet": {"id": ((cprops.get("subnet") or {}).get("id") or "")},
+        })
+    return out
+
+
+def azure_cli_vm_from_arm(item, show_details):
+    props = item.get("properties") or {}
+    out = {
+        "id": item.get("id", ""),
+        "name": item.get("name", ""),
+        "resourceGroup": azure_resource_group_from_ref(item.get("id", "")),
+        "location": item.get("location", ""),
+        "networkProfile": props.get("networkProfile") or {},
+    }
+    if show_details:
+        for status in (((props.get("instanceView") or {}).get("statuses")) or []):
+            code = (status.get("code") or "").lower()
+            if code.startswith("powerstate/"):
+                state = code.split("/", 1)[1].replace("-", " ")
+                out["powerState"] = "VM " + state
+                break
+    return out
+
+
+def azure_cli_route_from_arm(item):
+    props = item.get("properties") or {}
+    return {
+        "id": item.get("id", ""),
+        "name": item.get("name", ""),
+        "addressPrefix": props.get("addressPrefix", ""),
+        "nextHopType": props.get("nextHopType", ""),
+        "nextHopIpAddress": props.get("nextHopIpAddress", ""),
+    }
 
 
 def oci_base(region):
@@ -626,6 +809,8 @@ def azure_nic_vm_metadata(resource_group):
 
 def azure_inventory(spec):
     target = spec.get("target") or {}
+    if target.get("subscriptionID") and not os.environ.get("AZURE_SUBSCRIPTION_ID", "").strip():
+        os.environ["AZURE_SUBSCRIPTION_ID"] = str(target.get("subscriptionID", "")).strip()
     self_nic = spec.get("selfNicRef", "").strip()
     resource_group = target.get("resourceGroup", "").strip()
     subnet = (spec.get("subnetRef") or "").strip()

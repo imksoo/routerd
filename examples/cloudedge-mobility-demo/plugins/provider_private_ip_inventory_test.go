@@ -352,6 +352,49 @@ esac
 	}
 }
 
+func TestProviderPrivateIPInventoryPluginAzureUsesARMWithoutAzCLI(t *testing.T) {
+	requirePython(t)
+	nicRouterID := "/subscriptions/sub/resourceGroups/rg-demo/providers/Microsoft.Network/networkInterfaces/routerNic"
+	nicClientID := "/subscriptions/sub/resourceGroups/rg-demo/providers/Microsoft.Network/networkInterfaces/clientNic"
+	subnetID := "/subscriptions/sub/resourceGroups/rg-demo/providers/Microsoft.Network/virtualNetworks/vnet/subnets/subnet-a"
+	arm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer token" {
+			t.Fatalf("Authorization = %q, want bearer token", got)
+		}
+		switch r.URL.Path {
+		case "/subscriptions/sub/resourceGroups/rg-demo/providers/Microsoft.Network/networkInterfaces/routerNic":
+			_, _ = w.Write([]byte(`{"id":"` + nicRouterID + `","name":"routerNic","location":"japaneast","tags":{"role":"router"},"properties":{"enableIPForwarding":true,"ipConfigurations":[{"name":"ipconfig1","properties":{"privateIPAddress":"10.77.60.22","primary":true,"subnet":{"id":"` + subnetID + `"}}}]}}`))
+		case "/subscriptions/sub/resourceGroups/rg-demo/providers/Microsoft.Network/networkInterfaces":
+			_, _ = w.Write([]byte(`{"value":[{"id":"` + nicRouterID + `","name":"routerNic","location":"japaneast","tags":{"role":"router"},"properties":{"enableIPForwarding":true,"ipConfigurations":[{"name":"ipconfig1","properties":{"privateIPAddress":"10.77.60.22","primary":true,"subnet":{"id":"` + subnetID + `"}}}]}},{"id":"` + nicClientID + `","name":"clientNic","location":"japaneast","tags":{"role":"client"},"properties":{"enableIPForwarding":false,"ipConfigurations":[{"name":"ipconfig1","properties":{"privateIPAddress":"10.77.60.12","primary":true,"subnet":{"id":"` + subnetID + `"}}}]}}]}`))
+		case "/subscriptions/sub/resourceGroups/rg-demo/providers/Microsoft.Compute/virtualMachines":
+			_, _ = w.Write([]byte(`{"value":[{"id":"/subscriptions/sub/resourceGroups/rg-demo/providers/Microsoft.Compute/virtualMachines/router","name":"router","properties":{"networkProfile":{"networkInterfaces":[{"id":"` + nicRouterID + `"}]},"instanceView":{"statuses":[{"code":"PowerState/running"}]}}},{"id":"/subscriptions/sub/resourceGroups/rg-demo/providers/Microsoft.Compute/virtualMachines/client","name":"client","properties":{"networkProfile":{"networkInterfaces":[{"id":"` + nicClientID + `"}]},"instanceView":{"statuses":[{"code":"PowerState/running"}]}}}]}`))
+		default:
+			t.Fatalf("unexpected ARM path %s query=%s", r.URL.Path, r.URL.RawQuery)
+		}
+	}))
+	defer arm.Close()
+
+	res := runInventoryPluginWithEnv(t, fakeBinDir(t), `{"spec":{"provider":"azure","strategy":"secondary-ip","prefix":"10.77.60.0/24","selfNicRef":"`+nicRouterID+`","target":{"subscriptionID":"sub","resourceGroup":"rg-demo"}}}`, []string{
+		"ROUTERD_PROVIDER_INVENTORY_AZURE_FORCE_REST=1",
+		"ROUTERD_PROVIDER_INVENTORY_AZURE_ARM_ENDPOINT=" + arm.URL,
+		"ROUTERD_PROVIDER_INVENTORY_AZURE_ACCESS_TOKEN=token",
+	})
+	if res.Status.Status != "succeeded" {
+		t.Fatalf("status = %q error=%q", res.Status.Status, res.Status.Error)
+	}
+	if res.Status.Self.NICRef != nicRouterID || res.Status.Self.SubnetRef != subnetID {
+		t.Fatalf("self = %+v, want router NIC/subnet", res.Status.Self)
+	}
+	if res.Status.Self.ResourceRef == "" || res.Status.Self.ResourceType != "router-nic" {
+		t.Fatalf("self resource = %+v, want VM/router-nic", res.Status.Self)
+	}
+	if res.Status.Self.ForwardingEnabled == nil || !*res.Status.Self.ForwardingEnabled {
+		t.Fatalf("self.forwardingEnabled = %#v, want true", res.Status.Self.ForwardingEnabled)
+	}
+	assertIP(t, res, "10.77.60.12", nicClientID, subnetID)
+	assertResource(t, res, "10.77.60.12", "/subscriptions/sub/resourceGroups/rg-demo/providers/Microsoft.Compute/virtualMachines/client", "instance-nic")
+}
+
 func TestProviderPrivateIPInventoryPluginAzureRouteTableCaptures(t *testing.T) {
 	requirePython(t)
 	bin := fakeBinDir(t)
