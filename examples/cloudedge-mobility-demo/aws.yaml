@@ -304,7 +304,7 @@ spec:
             role: cloud
             placement: { group: oci-edge, priority: 20 }
         capturePolicy: { mode: all-non-owner-sites }
-        ipOwnershipPolicy: { type: centralized, autoFailover: true }
+        ipOwnershipPolicy: { type: centralized, autoFailover: true, stoppedInstancePolicy: release }
 
     - apiVersion: hybrid.routerd.net/v1alpha1
       kind: ProviderActionPolicy

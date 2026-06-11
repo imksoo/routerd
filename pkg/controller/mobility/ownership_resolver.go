@@ -195,6 +195,12 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 			// Remote fresh-home facts below decide whether this is a valid
 			// same-provider capture or a stale cross-home attachment.
 		}
+		if rec, ok := localInventory[address]; ok && localInventoryRecordReleasedStopped(rec, in.Spec) {
+			decision.Source = "local-inventory"
+			decision.SuppressionReason = "stopped-instance-release"
+			out = append(out, decision)
+			continue
+		}
 		if rec, ok := localInventory[address]; ok && localInventoryRecordIsRouterSelf(rec, self) {
 			if decision.CaptureState != captureStateNone && decision.CaptureStrategy == captureStrategyRouteTable {
 				decision.Class = ownershipClassStaleCapture
@@ -484,6 +490,10 @@ func localInventoryRecordIsRouterSelf(rec resolverPrivateIPRecord, self memberPl
 		return true
 	}
 	return strings.TrimSpace(rec.ResourceType) == "router-nic"
+}
+
+func localInventoryRecordReleasedStopped(rec resolverPrivateIPRecord, spec api.MobilityPoolSpec) bool {
+	return strings.EqualFold(strings.TrimSpace(rec.InstanceState), "stopped") && stoppedInstancePolicyFromSpec(spec) == "release"
 }
 
 type resolverCaptureState struct {

@@ -37,6 +37,39 @@ func TestOwnershipResolverScenario391BaselineSameSubnetHome(t *testing.T) {
 	}
 }
 
+func TestOwnershipResolverReleasePolicyIgnoresStoppedLocalInventory(t *testing.T) {
+	now := time.Date(2026, 6, 11, 12, 20, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	spec.IPOwnershipPolicy.StoppedInstancePolicy = "release"
+	decisions, err := resolveAddressOwnership(ownershipResolverInput{
+		PoolName: "cloudedge",
+		SelfNode: "aws-router-a",
+		Spec:     spec,
+		Status: map[string]any{
+			"discoveryLocalInventory": []map[string]any{
+				{
+					"address":       "10.88.60.11/32",
+					"nicRef":        "eni-stopped",
+					"subnetRef":     "subnet-a",
+					"providerRef":   "aws-provider",
+					"resourceType":  "instance-nic",
+					"resourceRef":   "i-stopped",
+					"instanceState": "stopped",
+				},
+			},
+			"discoverySelfPrivateIPs": []string{"10.88.60.4"},
+		},
+		Now: now,
+	})
+	if err != nil {
+		t.Fatalf("resolveAddressOwnership: %v", err)
+	}
+	decision := ownershipDecisionByAddress(t, decisions, "10.88.60.11/32")
+	if decision.Class != ownershipClassUnknown || decision.AdvertiseOwnerNode != "" || decision.SuppressionReason != "stopped-instance-release" {
+		t.Fatalf("decision = %#v, want stopped local inventory released instead of advertised as local home", decision)
+	}
+}
+
 func TestOwnershipResolverScenario392SameProviderConfirmedCapture(t *testing.T) {
 	now := time.Date(2026, 6, 9, 22, 5, 0, 0, time.UTC)
 	spec := awsFailoverPoolSpec()
