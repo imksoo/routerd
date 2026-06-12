@@ -193,6 +193,47 @@ func TestSAMTransportProfilePeersFromSyncResolvesMissingGroup(t *testing.T) {
 	}
 }
 
+func TestDiscoverWireGuardPeerGroupSyncEndpointsPrefersSAMRouteReflectors(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "azure-a"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardInterface"},
+				Metadata: api.ObjectMeta{Name: "wg-hybrid"},
+				Spec: api.WireGuardInterfaceSpec{
+					SelfNodeRef: "azure-a",
+					PeersFrom:   []api.WireGuardPeersSourceSpec{{Resource: "SAMNodeSet/fabric"}},
+				},
+			},
+			samNodeSetResource("fabric", []api.SAMNodeSpec{
+				{
+					NodeRef:        "onprem",
+					RouteReflector: true,
+					SAMEndpoint:    "10.99.0.1",
+				},
+				{
+					NodeRef:     "azure-b",
+					SAMEndpoint: "10.99.0.3",
+				},
+				{
+					NodeRef:        "azure-a",
+					RouteReflector: true,
+					SAMEndpoint:    "10.99.0.2",
+				},
+			}),
+		}},
+	}
+
+	addrs, err := DiscoverWireGuardPeerGroupSyncEndpoints(context.Background(), router, "wg-hybrid")
+	if err != nil {
+		t.Fatalf("DiscoverWireGuardPeerGroupSyncEndpoints: %v", err)
+	}
+	if got := addrStrings(addrs); len(got) != 1 || got[0] != "10.99.0.1" {
+		t.Fatalf("sync endpoints = %v, want only route-reflector onprem 10.99.0.1", got)
+	}
+}
+
 func TestFirstAllowedIPAddrsPrefersIPv4ThenIPv6(t *testing.T) {
 	addrs := firstAllowedIPAddrs([]wireguard.PeerStatus{
 		{AllowedIPs: []string{"fd00::2/128"}},

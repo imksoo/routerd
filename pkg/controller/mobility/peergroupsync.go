@@ -450,6 +450,11 @@ func DiscoverWireGuardPeerGroupSyncEndpoints(ctx context.Context, router *api.Ro
 		sort.Slice(out, func(i, j int) bool { return out[i].String() < out[j].String() })
 		return out, nil
 	}
+	if addrs, err := samRouteReflectorSyncEndpoints(router, underlayInterface); err != nil {
+		return nil, err
+	} else if len(addrs) > 0 {
+		return addrs, nil
+	}
 	iface := wireGuardInterfaceName(router, underlayInterface)
 	if strings.TrimSpace(iface) == "" {
 		iface = strings.TrimSpace(underlayInterface)
@@ -466,6 +471,80 @@ func DiscoverWireGuardPeerGroupSyncEndpoints(ctx context.Context, router *api.Ro
 		return nil, err
 	}
 	return firstAllowedIPAddrs(status.Peers), nil
+}
+
+func samRouteReflectorSyncEndpoints(router *api.Router, underlayInterface string) ([]netip.Addr, error) {
+	if router == nil {
+		return nil, nil
+	}
+	underlayInterface = strings.TrimSpace(underlayInterface)
+	seen := map[netip.Addr]bool{}
+	var out []netip.Addr
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "WireGuardInterface" {
+			continue
+		}
+		spec, err := resource.WireGuardInterfaceSpec()
+		if err != nil {
+			continue
+		}
+		ifname := firstNonEmpty(strings.TrimSpace(spec.IfName), strings.TrimSpace(resource.Metadata.Name))
+		if underlayInterface != "" && resource.Metadata.Name != underlayInterface && ifname != underlayInterface {
+			continue
+		}
+		self := strings.TrimSpace(spec.SelfNodeRef)
+		if self == "" {
+			self = strings.TrimSpace(router.Metadata.Name)
+		}
+		for _, source := range spec.PeersFrom {
+			kind, name, ok := strings.Cut(strings.TrimSpace(source.Resource), "/")
+			if !ok || kind != "SAMNodeSet" || strings.TrimSpace(name) == "" {
+				continue
+			}
+			nodeSet, found, err := peerSyncSAMNodeSet(router, strings.TrimSpace(name))
+			if err != nil {
+				return nil, err
+			}
+			if !found {
+				continue
+			}
+			for _, node := range nodeSet.Nodes {
+				nodeRef := strings.TrimSpace(node.NodeRef)
+				endpoint := strings.TrimSpace(node.SAMEndpoint)
+				if !node.RouteReflector || nodeRef == "" || nodeRef == self || endpoint == "" {
+					continue
+				}
+				addr, err := endpointAddress(endpoint)
+				if err != nil {
+					return nil, fmt.Errorf("SAMNodeSet/%s node %s samEndpoint %q: %w", strings.TrimSpace(name), nodeRef, endpoint, err)
+				}
+				if seen[addr] {
+					continue
+				}
+				seen[addr] = true
+				out = append(out, addr)
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].String() < out[j].String() })
+	return out, nil
+}
+
+func peerSyncSAMNodeSet(router *api.Router, name string) (api.SAMNodeSetSpec, bool, error) {
+	if router == nil || strings.TrimSpace(name) == "" {
+		return api.SAMNodeSetSpec{}, false, nil
+	}
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "SAMNodeSet" || resource.Metadata.Name != strings.TrimSpace(name) {
+			continue
+		}
+		spec, err := resource.SAMNodeSetSpec()
+		if err != nil {
+			return api.SAMNodeSetSpec{}, true, fmt.Errorf("SAMNodeSet/%s spec: %w", strings.TrimSpace(name), err)
+		}
+		return spec, true, nil
+	}
+	return api.SAMNodeSetSpec{}, false, nil
 }
 
 func wireGuardInterfaceName(router *api.Router, underlayInterface string) string {
