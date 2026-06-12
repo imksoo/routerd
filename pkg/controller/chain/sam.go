@@ -744,6 +744,10 @@ func samStoredOSAddressPresenceFromStatus(status routerstate.ObjectStatus) (stri
 	if !ok {
 		return "", false
 	}
+	enforced, ok := capture["enforced"].(bool)
+	if !ok || !enforced {
+		return "", false
+	}
 	address := strings.TrimSpace(fmt.Sprint(capture["address"]))
 	if address == "" || address == "<nil>" {
 		return "", false

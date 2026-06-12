@@ -287,6 +287,9 @@ func staticRemoteAddressClaimProviderPlans(name string, spec api.RemoteAddressCl
 }
 
 func addStaticProfileTargetFields(target map[string]string, provider string, profile api.CloudProviderProfileSpec, name, address, nicRef string) {
+	if profile.Region != "" {
+		target["region"] = strings.TrimSpace(profile.Region)
+	}
 	if profile.SubscriptionID != "" {
 		target["subscriptionId"] = strings.TrimSpace(profile.SubscriptionID)
 	}

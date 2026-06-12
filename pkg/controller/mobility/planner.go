@@ -612,6 +612,9 @@ func providerCaptureRefFromCapture(capture api.AddressCapture, target map[string
 }
 
 func addProfileTargetFields(target map[string]string, provider string, profile api.CloudProviderProfileSpec, poolName, address, nicRef string) {
+	if profile.Region != "" && strings.TrimSpace(target["region"]) == "" {
+		target["region"] = strings.TrimSpace(profile.Region)
+	}
 	if profile.SubscriptionID != "" && strings.TrimSpace(target["subscriptionId"]) == "" {
 		target["subscriptionId"] = strings.TrimSpace(profile.SubscriptionID)
 	}

@@ -134,6 +134,19 @@ func publishControllerModeEvents(ctx context.Context, b *bus.Bus, controllers []
 var cleanupLedgerOwnedOrphansForServe = cleanupLedgerOwnedOrphans
 var ensureLoopbackUpForServe = ensureLoopbackUp
 
+func slogLevelFromEventLevel(level eventlog.Level) slog.Level {
+	switch level {
+	case eventlog.LevelDebug:
+		return slog.LevelDebug
+	case eventlog.LevelWarning:
+		return slog.LevelWarn
+	case eventlog.LevelError:
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
+}
+
 func ensureLoopbackUp() error {
 	if runtime.GOOS != "linux" {
 		return nil
@@ -404,6 +417,9 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		return err
 	}
 	defer closeLogger(logger, "serve", &err)
+	var controllerLogLevel slog.LevelVar
+	controllerLogLevel.Set(slog.LevelInfo)
+	controllerLogger := slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: &controllerLogLevel}))
 	emitServeBootFallbackWarning(stderr, logger, *configPath, bootFallback)
 	logger.Emit(eventlog.LevelInfo, "serve", "routerd daemon starting", map[string]string{
 		"config":        *configPath,
@@ -466,7 +482,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		logger.Emit(eventlog.LevelWarning, "serve", "initial observe failed", map[string]string{"error": observeErr.Error()})
 	}
 	controllerBus = bus.NewWithStore(stateStore)
-	controllerBus.SetLogger(slog.Default())
+	controllerBus.SetLogger(controllerLogger)
 	publishControllerModeEvents(ctx, controllerBus, controllerStatuses)
 	_, hostFeatures := platform.Current()
 	peerGroupSyncClient := mobilitycontroller.NewPeerGroupSyncClient(stateStore)
@@ -491,6 +507,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		BGPControlSocketPath:   *bgpControlSocketPath,
 		BGPStatePath:           *bgpStatePath,
 		ConntrackInterval:      30 * time.Second,
+		Logger:                 controllerLogger,
 		ControllerObserver:     controllerRuntime,
 		EnabledControllers:     enabledControllers,
 		PeerGroupSyncClient:    peerGroupSyncClient,
@@ -710,9 +727,11 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 			switch level {
 			case "", "default":
 				eventlog.SetLevelOverride(nil)
+				controllerLogLevel.Set(slog.LevelInfo)
 			case "debug", "info", "warning", "error":
 				override := eventlog.Level(level)
 				eventlog.SetLevelOverride(&override)
+				controllerLogLevel.Set(slogLevelFromEventLevel(override))
 				effective = string(override)
 			default:
 				return nil, fmt.Errorf("%w: unsupported log level %q", controlapi.ErrBadRequest, req.Level)

@@ -220,6 +220,38 @@ func TestSAMControllerBlocksProviderSecondaryOSAddressUntilOwnershipConfirmed(t 
 	}
 }
 
+func TestSAMControllerDoesNotCleanupBlockedProviderSecondaryOSAddressPresence(t *testing.T) {
+	router := samControllerRouterWithClaim("10.0.1.122/32", "provider-secondary-ip", "eth0")
+	spec := router.Spec.Resources[1].Spec.(api.RemoteAddressClaimSpec)
+	spec.Capture.ConfigureOSAddress = true
+	spec.Capture.ProviderRef = "oci-prod"
+	spec.Capture.NICRef = "vnic-1"
+	router.Spec.Resources[1].Spec = spec
+	store := &samStore{
+		objects: map[string]map[string]any{},
+		statuses: []routerstate.ObjectStatus{{
+			APIVersion: api.HybridAPIVersion,
+			Kind:       "RemoteAddressClaim",
+			Name:       "app",
+			Status: map[string]any{
+				"captureOSAddressPresence": map[string]any{
+					"address":   "10.0.1.122/32",
+					"interface": "eth0",
+					"enforced":  false,
+					"blocked":   true,
+					"reason":    "ProviderOwnershipPending",
+				},
+			},
+		}},
+	}
+	applier := &fakeSAMApplier{}
+	controller := SAMController{Router: router, Store: store, OS: platform.OSLinux, Applier: applier}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	assertSAMCalls(t, applier.calls, nil)
+}
+
 func TestSAMControllerFailedProviderSecondaryOSAddressAssignIsNotEnforced(t *testing.T) {
 	router := samControllerRouterWithClaim("10.0.1.122/32", "provider-secondary-ip", "eth0")
 	spec := router.Spec.Resources[1].Spec.(api.RemoteAddressClaimSpec)

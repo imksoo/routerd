@@ -6971,6 +6971,9 @@
                         ],
                         "type": "string"
                       },
+                      "region": {
+                        "type": "string"
+                      },
                       "resourceGroup": {
                         "type": "string"
                       },
