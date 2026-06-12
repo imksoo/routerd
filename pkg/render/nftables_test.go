@@ -1864,6 +1864,74 @@ func TestNftablesFirewallHolesForBGPVRRPAndIngress(t *testing.T) {
 	}
 }
 
+func TestNftablesFirewallHolesForSAMCaptureTunnelForwarding(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+			Metadata: api.ObjectMeta{Name: "capture-nic"},
+			Spec:     api.InterfaceSpec{IfName: "ens3"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
+			Metadata: api.ObjectMeta{Name: "samt-oci-onprem"},
+			Spec: api.TunnelInterfaceSpec{
+				Mode:              "ipip",
+				Local:             "10.99.44.44",
+				Remote:            "10.99.44.1",
+				UnderlayInterface: "wg-clean",
+			},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallPolicy"},
+			Metadata: api.ObjectMeta{Name: "default"},
+			Spec:     api.FirewallPolicySpec{},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
+			Metadata: api.ObjectMeta{Name: "cloud-capture"},
+			Spec:     api.FirewallZoneSpec{Role: "untrust", Interfaces: []string{"Interface/capture-nic"}},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
+			Metadata: api.ObjectMeta{Name: "sam-tunnel"},
+			Spec:     api.FirewallZoneSpec{Role: "untrust", Interfaces: []string{"TunnelInterface/samt-oci-onprem"}},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "RemoteAddressClaim"},
+			Metadata: api.ObjectMeta{Name: "oci-capture"},
+			Spec: api.RemoteAddressClaimSpec{
+				DomainRef: "same-subnet",
+				Address:   "10.77.60.46/32",
+				OwnerSide: "onprem",
+				Capture: api.AddressCapture{
+					Type:               "provider-secondary-ip",
+					ProviderRef:        "oci-lab",
+					ProviderMode:       "vnic-secondary-ip",
+					NICRef:             "ocid1.vnic.example",
+					ConfigureOSAddress: true,
+					Interface:          "capture-nic",
+				},
+				Delivery: api.AddressDelivery{PeerRef: "onprem-main", Mode: "route", TunnelInterface: "samt-oci-onprem"},
+			},
+		},
+	}}}
+	data, err := NftablesFirewall(router, InternalFirewallHoles(router))
+	if err != nil {
+		t.Fatalf("render nftables firewall: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		`chain cloud_capture_to_sam_tunnel`,
+		`iifname "ens3" counter accept comment "hybrid.routerd.net/v1alpha1/RemoteAddressClaim/oci-capture"`,
+		`chain sam_tunnel_to_cloud_capture`,
+		`iifname "samt-oci-onprem" counter accept comment "hybrid.routerd.net/v1alpha1/RemoteAddressClaim/oci-capture"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("nftables output missing SAM forwarding allow %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestNftablesClientPolicyIncludeGuestMACs(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{

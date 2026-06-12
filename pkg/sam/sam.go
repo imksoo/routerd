@@ -206,7 +206,7 @@ func ExpandRemoteAddressClaimRoutesWithOptions(router api.Router, opts PlanOptio
 			device = resolvedDevice
 		}
 		syntheticNames[name] = true
-		preferredSource := strings.TrimSpace(resource.Metadata.Annotations[DeliveryPreferredSourceAnnotation])
+		preferredSource := defaultDeliveryPreferredSource(resource, spec, cidr)
 		route := api.Resource{
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4Route"},
 			Metadata: api.ObjectMeta{
@@ -241,6 +241,20 @@ func ExpandRemoteAddressClaimRoutesWithOptions(router api.Router, opts PlanOptio
 		})
 	}
 	return out, lowerings, nil
+}
+
+func defaultDeliveryPreferredSource(resource api.Resource, spec api.RemoteAddressClaimSpec, cidr string) string {
+	if source := strings.TrimSpace(resource.Metadata.Annotations[DeliveryPreferredSourceAnnotation]); source != "" {
+		return source
+	}
+	if strings.TrimSpace(spec.Capture.Type) != "provider-secondary-ip" || !spec.Capture.ConfigureOSAddress {
+		return ""
+	}
+	prefix, err := netip.ParsePrefix(cidr)
+	if err != nil || !prefix.Addr().Is4() || prefix.Bits() != 32 {
+		return ""
+	}
+	return prefix.Addr().String()
 }
 
 func PlanCapture(router *api.Router, targetOS platform.OS) ([]CaptureAction, error) {

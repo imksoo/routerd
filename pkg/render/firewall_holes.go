@@ -116,6 +116,20 @@ func InternalFirewallHoles(router *api.Router) []FirewallHole {
 				}
 				add(resource.Metadata.Name+"-healthcheck", "self", zones.byResource(spec.Interface), proto, spec.Port, resource.ID(), zones.ifNameByResource(spec.Interface))
 			}
+		case "RemoteAddressClaim":
+			spec, _ := resource.RemoteAddressClaimSpec()
+			captureIface := strings.TrimSpace(spec.Capture.Interface)
+			tunnelIface := strings.TrimSpace(spec.Delivery.TunnelInterface)
+			if captureIface == "" || tunnelIface == "" {
+				continue
+			}
+			fromZone := zones.byResource(captureIface)
+			toZone := zones.byResource(tunnelIface)
+			if fromZone == "" || toZone == "" {
+				continue
+			}
+			add(resource.Metadata.Name+"-sam-capture-to-tunnel", fromZone, toZone, "", 0, resource.ID(), zones.ifNameByResource(captureIface))
+			add(resource.Metadata.Name+"-sam-tunnel-to-capture", toZone, fromZone, "", 0, resource.ID(), zones.ifNameByResource(tunnelIface))
 		}
 	}
 	sort.Slice(holes, func(i, j int) bool { return holes[i].Name < holes[j].Name })
@@ -200,6 +214,8 @@ func internalFirewallResourceIfName(resource api.Resource) string {
 			}
 			return strings.TrimSpace(resource.Metadata.Name)
 		}
+	case "TunnelInterface":
+		return strings.TrimSpace(resource.Metadata.Name)
 	case "VXLANSegment":
 		spec, err := resource.VXLANSegmentSpec()
 		if err == nil {
@@ -263,13 +279,17 @@ func (z internalFirewallZonesByRef) firstIfName(zone string) string {
 }
 
 func (z internalFirewallZonesByRef) ifNameByResource(name string) string {
+	name = strings.TrimSpace(name)
 	if ifname := z.ifname[name]; ifname != "" {
 		return ifname
 	}
 	if _, short, ok := strings.Cut(name, "/"); ok {
-		return z.ifname[short]
+		if ifname := z.ifname[short]; ifname != "" {
+			return ifname
+		}
+		return strings.TrimSpace(short)
 	}
-	return ""
+	return name
 }
 
 func (z internalFirewallZonesByRef) byListenAddress(addresses []string) []string {

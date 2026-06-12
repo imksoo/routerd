@@ -113,6 +113,37 @@ func TestExpandRemoteAddressClaimRoutesCopiesPreferredSourceAnnotation(t *testin
 	}
 }
 
+func TestExpandRemoteAddressClaimRoutesUsesProviderOSCaptureAsPreferredSource(t *testing.T) {
+	router := testRouter()
+	spec := router.Spec.Resources[3].Spec.(api.RemoteAddressClaimSpec)
+	spec.Capture.ConfigureOSAddress = true
+	spec.Capture.Interface = "eth0"
+	router.Spec.Resources[3].Spec = spec
+
+	expanded, lowerings, err := ExpandRemoteAddressClaimRoutes(*router)
+	if err != nil {
+		t.Fatalf("ExpandRemoteAddressClaimRoutes: %v", err)
+	}
+	route := findRoute(t, ipv4Routes(expanded), "sam-provider-10-0-1-122-delivery")
+	routeSpec, err := route.IPv4RouteSpec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if routeSpec.PreferredSource != "10.0.1.122" {
+		t.Fatalf("preferredSource = %q, want captured address", routeSpec.PreferredSource)
+	}
+	var got DeliveryLowering
+	for _, lowering := range lowerings {
+		if lowering.ClaimName == "provider-10-0-1-122" {
+			got = lowering
+			break
+		}
+	}
+	if got.PreferredSource != "10.0.1.122" {
+		t.Fatalf("lowering preferredSource = %q", got.PreferredSource)
+	}
+}
+
 func TestExpandRemoteAddressClaimRoutesHonorsVRRPMasterGate(t *testing.T) {
 	router := testRouter()
 	spec := router.Spec.Resources[4].Spec.(api.RemoteAddressClaimSpec)
