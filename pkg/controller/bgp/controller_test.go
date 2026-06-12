@@ -82,6 +82,7 @@ type fakeServer struct {
 	routes           []*gobgpapi.Destination
 	applied          bgpdaemon.AppliedConfig
 	deletedPathUUIDs [][]byte
+	pathOps          []string
 	resetRequests    []*gobgpapi.ResetPeerRequest
 
 	policyRequest     *gobgpapi.SetPoliciesRequest
@@ -356,12 +357,14 @@ func (s *fakeServer) AddPath(_ context.Context, req *gobgpapi.AddPathRequest) (*
 	s.paths++
 	uuid := []byte{byte(s.paths)}
 	req.GetPath().Uuid = uuid
+	s.pathOps = append(s.pathOps, "add:"+pathPrefix(req.GetPath()))
 	s.routes = append(s.routes, &gobgpapi.Destination{Prefix: pathPrefix(req.GetPath()), Paths: []*gobgpapi.Path{req.GetPath()}})
 	return &gobgpapi.AddPathResponse{Uuid: uuid}, nil
 }
 
 func (s *fakeServer) DeletePath(_ context.Context, req *gobgpapi.DeletePathRequest) error {
 	s.deletedPathUUIDs = append(s.deletedPathUUIDs, append([]byte(nil), req.GetUuid()...))
+	s.pathOps = append(s.pathOps, fmt.Sprintf("delete:%x", req.GetUuid()))
 	return nil
 }
 
@@ -1816,6 +1819,9 @@ func TestReconcileKeepsUnchangedStaticAdvertisementWithoutReadd(t *testing.T) {
 	}
 	if server.paths != 1 {
 		t.Fatalf("AddPath calls = %d, want dynamic refresh only", server.paths)
+	}
+	if want := []string{"add:10.77.60.11/32", "delete:07"}; !reflect.DeepEqual(server.pathOps, want) {
+		t.Fatalf("path ops = %#v, want add-before-delete refresh %#v", server.pathOps, want)
 	}
 }
 

@@ -565,11 +565,35 @@ func (c SAMController) cleanupRemovedCaptures(ctx context.Context, statuses []ro
 		if status.APIVersion != api.HybridAPIVersion || status.Kind != "RemoteAddressClaim" {
 			continue
 		}
+		if samSkipRemovedCaptureTeardown(status) {
+			continue
+		}
 		if err := c.teardownRemovedCapture(ctx, status, applier, deleter); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func samSkipRemovedCaptureTeardown(status routerstate.ObjectStatus) bool {
+	if samStatusString(status.Status, "deliveryMode") != "bgp" {
+		return false
+	}
+	if samStatusString(status.Status, "lifecycleClass") != "dynamic-source" {
+		return false
+	}
+	return samStatusString(status.Status, "captureType") == "provider-secondary-ip"
+}
+
+func samStatusString(status map[string]any, key string) string {
+	if status == nil {
+		return ""
+	}
+	value := strings.TrimSpace(fmt.Sprint(status[key]))
+	if value == "<nil>" {
+		return ""
+	}
+	return value
 }
 
 func (c SAMController) teardownRemovedCapture(ctx context.Context, status routerstate.ObjectStatus, applier samProxyNeighborApplier, deleter routerstate.ObjectDeleteStore) error {

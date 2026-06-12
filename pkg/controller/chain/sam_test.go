@@ -434,6 +434,44 @@ func TestSAMControllerCleansRemovedProviderSecondaryReturnPolicyRoute(t *testing
 	}
 }
 
+func TestSAMControllerKeepsTransientMissingBGPDynamicProviderCapture(t *testing.T) {
+	router := &api.Router{}
+	store := &samStore{
+		objects: map[string]map[string]any{},
+		statuses: []routerstate.ObjectStatus{{
+			APIVersion: api.HybridAPIVersion,
+			Kind:       "RemoteAddressClaim",
+			Name:       "bgp-cloudedge-172-31-28-50",
+			Status: map[string]any{
+				"captureType":    "provider-secondary-ip",
+				"deliveryMode":   "bgp",
+				"lifecycleClass": "dynamic-source",
+				"captureOSAddressAbsence": map[string]any{
+					"address":                "172.31.28.50/32",
+					"enforced":               true,
+					"localOSAddressExpected": false,
+				},
+				"captureForwardingPath": map[string]any{
+					"captureInterface": "ens5",
+					"tunnelInterface":  "samt2a3f26f8f6f",
+					"managedBy":        "routerd",
+				},
+			},
+		}},
+	}
+	applier := &fakeSAMApplier{}
+	controller := SAMController{Router: router, Store: store, OS: platform.OSLinux, Applier: applier}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(applier.calls) != 0 {
+		t.Fatalf("calls = %#v, want no teardown for transient missing BGP dynamic claim", applier.calls)
+	}
+	if store.deleted[api.HybridAPIVersion+"/RemoteAddressClaim/bgp-cloudedge-172-31-28-50"] {
+		t.Fatalf("BGP dynamic claim status was deleted")
+	}
+}
+
 func TestSAMControllerCleansChangedProxyNeighborInterface(t *testing.T) {
 	router := samControllerRouterWithClaim("10.0.1.123/32", "proxy-arp", "br-new")
 	store := &samStore{objects: map[string]map[string]any{}, statuses: []routerstate.ObjectStatus{

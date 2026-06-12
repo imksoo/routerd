@@ -1456,10 +1456,9 @@ func (c *Controller) refreshDynamicAdvertisements(ctx context.Context, applied b
 		if path.Source == bgpdaemon.AppliedPathSourceStatic {
 			continue
 		}
+		var oldUUID []byte
 		if uuid, err := bgpdaemon.DecodeUUID(path.UUID); err == nil && len(uuid) > 0 {
-			if err := c.Server.DeletePath(ctx, &gobgpapi.DeletePathRequest{TableType: gobgpapi.TableType_GLOBAL, Uuid: uuid}); err != nil && !isMissingGoBGPPath(err) {
-				return bgpdaemon.AppliedConfig{}, err
-			}
+			oldUUID = append([]byte(nil), uuid...)
 		}
 		reqPath, err := appliedPathToGoBGPPath(path)
 		if err != nil {
@@ -1470,6 +1469,11 @@ func (c *Controller) refreshDynamicAdvertisements(ctx context.Context, applied b
 			return bgpdaemon.AppliedConfig{}, err
 		}
 		applied.Paths[i].UUID = bgpdaemon.EncodeUUID(resp.GetUuid())
+		if len(oldUUID) > 0 {
+			if err := c.Server.DeletePath(ctx, &gobgpapi.DeletePathRequest{TableType: gobgpapi.TableType_GLOBAL, Uuid: oldUUID}); err != nil && !isMissingGoBGPPath(err) {
+				return bgpdaemon.AppliedConfig{}, err
+			}
+		}
 	}
 	return bgpdaemon.Normalize(applied), nil
 }
