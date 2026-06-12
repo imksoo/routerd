@@ -226,6 +226,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 	if ownershipErr != nil {
 		return ownershipErr
 	}
+	failedActions = filterFailedProviderActionsByConfirmedCaptures(failedActions, ownershipDecisions)
 	delivery, err := planBGPMobilityDelivery(bgpDeliveryPlannerInput{
 		PoolName:             res.Metadata.Name,
 		Source:               source,
@@ -2409,4 +2410,31 @@ func latestFailedProviderActions(actions []routerstate.ActionExecutionRecord) ma
 		}
 	}
 	return failed
+}
+
+func filterFailedProviderActionsByConfirmedCaptures(failed map[string]routerstate.ActionExecutionRecord, decisions []ownershipDecision) map[string]routerstate.ActionExecutionRecord {
+	if len(failed) == 0 {
+		return failed
+	}
+	confirmed := map[string]bool{}
+	for _, decision := range decisions {
+		if decision.CaptureState != captureStateConfirmed {
+			continue
+		}
+		address := normalizeAddressString(decision.Address)
+		if address != "" {
+			confirmed[address] = true
+		}
+	}
+	if len(confirmed) == 0 {
+		return failed
+	}
+	filtered := make(map[string]routerstate.ActionExecutionRecord, len(failed))
+	for address, record := range failed {
+		if confirmed[normalizeAddressString(address)] {
+			continue
+		}
+		filtered[address] = record
+	}
+	return filtered
 }

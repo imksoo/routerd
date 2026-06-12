@@ -2195,6 +2195,20 @@ func TestControllerBGPModeConfirmedCaptureDoesNotDeprovision(t *testing.T) {
 	spec.DeliveryPolicy.Mode = "bgp"
 	address := "10.88.60.12/32"
 	seedSucceededBGPCaptureAction(t, store, "aws-provider", "eni-a", "aws-router-a", address, "assign-secondary-ip", 1, now.Add(-time.Minute))
+	if _, err := store.ImportAction(routerstate.ActionExecutionRecord{
+		Source:         DynamicSource("cloudedge", "aws-router-a"),
+		IdempotencyKey: "stale-failed-assign",
+		Provider:       "aws",
+		ProviderRef:    "aws-provider",
+		Action:         "assign-secondary-ip",
+		TargetJSON:     `{"address":"10.88.60.12/32","nicRef":"eni-a","providerRef":"aws-provider"}`,
+		Status:         routerstate.ActionFailed,
+		Error:          "provider API unavailable before inventory caught up",
+		CreatedAt:      now.Add(-2 * time.Minute),
+		UpdatedAt:      now.Add(-90 * time.Second),
+	}); err != nil {
+		t.Fatalf("ImportAction(stale failed assign): %v", err)
+	}
 	saveBGPInstalledNextHops(t, store, map[string][]string{address: {"10.99.0.200"}})
 	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
 		"discoverySelfPrivateIPs":        []string{"10.88.60.4/32"},
@@ -2225,6 +2239,9 @@ func TestControllerBGPModeConfirmedCaptureDoesNotDeprovision(t *testing.T) {
 	decision := ownershipStatusDecisionByAddress(t, decisions, address)
 	if decision["class"] != ownershipClassConfirmedCapture {
 		t.Fatalf("decision = %#v, want ConfirmedCapture", decision)
+	}
+	if status["providerActionPhase"] != "OK" || fmt.Sprint(status["providerActionFailedCount"]) != "0" {
+		t.Fatalf("status = %#v, want confirmed provider capture to suppress stale failed action", status)
 	}
 }
 
