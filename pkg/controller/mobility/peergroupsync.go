@@ -153,12 +153,19 @@ func (s *PeerGroupSyncServer) MemberSets() ([]api.Resource, error) {
 	return out, nil
 }
 
-type PeerGroupEndpointDiscovery func(ctx context.Context, router *api.Router, underlayInterface string) ([]netip.Addr, error)
+type SAMSyncEndpoint struct {
+	Addr     netip.Addr
+	Source   string
+	Resource string
+	NodeRef  string
+}
+
+type SAMEndpointDiscovery func(ctx context.Context, router *api.Router, underlayInterface string) ([]SAMSyncEndpoint, error)
 
 type PeerGroupSyncClient struct {
 	Store      peerGroupSyncStore
 	HTTPClient *http.Client
-	Discover   PeerGroupEndpointDiscovery
+	Discover   SAMEndpointDiscovery
 	Port       int
 	Now        func() time.Time
 }
@@ -167,7 +174,7 @@ func NewPeerGroupSyncClient(store peerGroupSyncStore) *PeerGroupSyncClient {
 	return &PeerGroupSyncClient{
 		Store:      store,
 		HTTPClient: &http.Client{Timeout: 2 * time.Second},
-		Discover:   DiscoverWireGuardPeerGroupSyncEndpoints,
+		Discover:   DiscoverWireGuardSAMSyncEndpointDetails,
 		Port:       PeerGroupSyncPort,
 	}
 }
@@ -187,7 +194,7 @@ func (c *PeerGroupSyncClient) SyncPeerGroup(ctx context.Context, router *api.Rou
 	}
 	discover := c.Discover
 	if discover == nil {
-		discover = DiscoverWireGuardPeerGroupSyncEndpoints
+		discover = DiscoverWireGuardSAMSyncEndpointDetails
 	}
 	endpoints, err := discover(ctx, router, underlayInterface)
 	if err != nil {
@@ -216,7 +223,7 @@ func (c *PeerGroupSyncClient) SyncPeerGroup(ctx context.Context, router *api.Rou
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			resource, found, err := fetchPeerGroupFromEndpoint(ctx, client, endpoint, port, groupName)
+			resource, found, err := fetchPeerGroupFromEndpoint(ctx, client, endpoint.Addr, port, groupName)
 			results <- result{resource: resource, found: found, err: err}
 		}()
 	}
@@ -240,6 +247,9 @@ func (c *PeerGroupSyncClient) SyncPeerGroup(ctx context.Context, router *api.Rou
 		}
 		return spec, true, nil
 	}
+	if firstErr == nil {
+		return api.SAMPeerGroupSpec{}, false, fmt.Errorf("SAMPeerGroup/%s was not published by peer-group sync endpoint(s) %s; ensure at least one publisher serves the peer group, and for route-reflector bootstrap set SAMTransportProfile/%s publishPeerGroup: true on the selected route reflector", groupName, describeSAMSyncEndpoints(endpoints), groupName)
+	}
 	return api.SAMPeerGroupSpec{}, false, firstErr
 }
 
@@ -250,7 +260,7 @@ func (c *PeerGroupSyncClient) SyncMemberSet(ctx context.Context, router *api.Rou
 	}
 	discover := c.Discover
 	if discover == nil {
-		discover = DiscoverWireGuardPeerGroupSyncEndpoints
+		discover = DiscoverWireGuardSAMSyncEndpointDetails
 	}
 	endpoints, err := discover(ctx, router, "")
 	if err != nil {
@@ -279,7 +289,7 @@ func (c *PeerGroupSyncClient) SyncMemberSet(ctx context.Context, router *api.Rou
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			resource, found, err := fetchMemberSetFromEndpoint(ctx, client, endpoint, port, setName)
+			resource, found, err := fetchMemberSetFromEndpoint(ctx, client, endpoint.Addr, port, setName)
 			results <- result{resource: resource, found: found, err: err}
 		}()
 	}
@@ -302,6 +312,9 @@ func (c *PeerGroupSyncClient) SyncMemberSet(ctx context.Context, router *api.Rou
 			return api.MobilityMemberSetSpec{}, false, err
 		}
 		return spec, true, nil
+	}
+	if firstErr == nil {
+		return api.MobilityMemberSetSpec{}, false, fmt.Errorf("MobilityMemberSet/%s was not published by SAM sync endpoint(s) %s; ensure at least one publisher serves the member set", setName, describeSAMSyncEndpoints(endpoints))
 	}
 	return api.MobilityMemberSetSpec{}, false, firstErr
 }
@@ -425,9 +438,25 @@ func (c *PeerGroupSyncClient) saveMemberSet(_ context.Context, setName string, r
 }
 
 func DiscoverWireGuardPeerGroupSyncEndpoints(ctx context.Context, router *api.Router, underlayInterface string) ([]netip.Addr, error) {
+	return DiscoverWireGuardSAMSyncEndpoints(ctx, router, underlayInterface)
+}
+
+func DiscoverWireGuardSAMSyncEndpoints(ctx context.Context, router *api.Router, underlayInterface string) ([]netip.Addr, error) {
+	endpoints, err := DiscoverWireGuardSAMSyncEndpointDetails(ctx, router, underlayInterface)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]netip.Addr, 0, len(endpoints))
+	for _, endpoint := range endpoints {
+		out = append(out, endpoint.Addr)
+	}
+	return out, nil
+}
+
+func DiscoverWireGuardSAMSyncEndpointDetails(ctx context.Context, router *api.Router, underlayInterface string) ([]SAMSyncEndpoint, error) {
 	if strings.TrimSpace(underlayInterface) == "" && router != nil {
 		seen := map[netip.Addr]bool{}
-		var out []netip.Addr
+		var out []SAMSyncEndpoint
 		for _, resource := range router.Spec.Resources {
 			if resource.APIVersion != api.NetAPIVersion || resource.Kind != "WireGuardInterface" {
 				continue
@@ -436,18 +465,18 @@ func DiscoverWireGuardPeerGroupSyncEndpoints(ctx context.Context, router *api.Ro
 			if spec, err := resource.WireGuardInterfaceSpec(); err == nil {
 				name = firstNonEmpty(strings.TrimSpace(spec.IfName), name)
 			}
-			addrs, err := DiscoverWireGuardPeerGroupSyncEndpoints(ctx, router, name)
+			endpoints, err := DiscoverWireGuardSAMSyncEndpointDetails(ctx, router, name)
 			if err != nil {
 				return nil, err
 			}
-			for _, addr := range addrs {
-				if !seen[addr] {
-					seen[addr] = true
-					out = append(out, addr)
+			for _, endpoint := range endpoints {
+				if !seen[endpoint.Addr] {
+					seen[endpoint.Addr] = true
+					out = append(out, endpoint)
 				}
 			}
 		}
-		sort.Slice(out, func(i, j int) bool { return out[i].String() < out[j].String() })
+		sort.Slice(out, func(i, j int) bool { return out[i].Addr.String() < out[j].Addr.String() })
 		return out, nil
 	}
 	if addrs, err := samRouteReflectorSyncEndpoints(router, underlayInterface); err != nil {
@@ -470,16 +499,16 @@ func DiscoverWireGuardPeerGroupSyncEndpoints(ctx context.Context, router *api.Ro
 	if err != nil {
 		return nil, err
 	}
-	return firstAllowedIPAddrs(status.Peers), nil
+	return wireGuardSAMSyncEndpoints(status.Peers), nil
 }
 
-func samRouteReflectorSyncEndpoints(router *api.Router, underlayInterface string) ([]netip.Addr, error) {
+func samRouteReflectorSyncEndpoints(router *api.Router, underlayInterface string) ([]SAMSyncEndpoint, error) {
 	if router == nil {
 		return nil, nil
 	}
 	underlayInterface = strings.TrimSpace(underlayInterface)
 	seen := map[netip.Addr]bool{}
-	var out []netip.Addr
+	var out []SAMSyncEndpoint
 	for _, resource := range router.Spec.Resources {
 		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "WireGuardInterface" {
 			continue
@@ -522,11 +551,16 @@ func samRouteReflectorSyncEndpoints(router *api.Router, underlayInterface string
 					continue
 				}
 				seen[addr] = true
-				out = append(out, addr)
+				out = append(out, SAMSyncEndpoint{
+					Addr:     addr,
+					Source:   "sam-route-reflector",
+					Resource: "SAMNodeSet/" + strings.TrimSpace(name),
+					NodeRef:  nodeRef,
+				})
 			}
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].String() < out[j].String() })
+	sort.Slice(out, func(i, j int) bool { return out[i].Addr.String() < out[j].Addr.String() })
 	return out, nil
 }
 
@@ -568,16 +602,47 @@ func wireGuardInterfaceName(router *api.Router, underlayInterface string) string
 }
 
 func firstAllowedIPAddrs(peers []wireguard.PeerStatus) []netip.Addr {
+	endpoints := wireGuardSAMSyncEndpoints(peers)
+	out := make([]netip.Addr, 0, len(endpoints))
+	for _, endpoint := range endpoints {
+		out = append(out, endpoint.Addr)
+	}
+	return out
+}
+
+func wireGuardSAMSyncEndpoints(peers []wireguard.PeerStatus) []SAMSyncEndpoint {
 	seen := map[netip.Addr]bool{}
-	var out []netip.Addr
+	var out []SAMSyncEndpoint
 	for _, peer := range peers {
 		if addr, ok := firstAllowedIPAddr(peer.AllowedIPs); ok && !seen[addr] {
 			seen[addr] = true
-			out = append(out, addr)
+			out = append(out, SAMSyncEndpoint{Addr: addr, Source: "wireguard-dump"})
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].String() < out[j].String() })
+	sort.Slice(out, func(i, j int) bool { return out[i].Addr.String() < out[j].Addr.String() })
 	return out
+}
+
+func describeSAMSyncEndpoints(endpoints []SAMSyncEndpoint) string {
+	if len(endpoints) == 0 {
+		return "[]"
+	}
+	parts := make([]string, 0, len(endpoints))
+	for _, endpoint := range endpoints {
+		part := endpoint.Addr.String()
+		if endpoint.Source != "" {
+			part += " source=" + endpoint.Source
+		}
+		if endpoint.Resource != "" {
+			part += " resource=" + endpoint.Resource
+		}
+		if endpoint.NodeRef != "" {
+			part += " nodeRef=" + endpoint.NodeRef
+		}
+		parts = append(parts, part)
+	}
+	sort.Strings(parts)
+	return "[" + strings.Join(parts, ", ") + "]"
 }
 
 func firstAllowedIPAddr(allowedIPs []string) (netip.Addr, bool) {

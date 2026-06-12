@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -89,8 +90,8 @@ func TestPeerGroupSyncClientFetchesAndStoresGroup(t *testing.T) {
 		HTTPClient: srv.Client(),
 		Port:       port,
 		Now:        func() time.Time { return now },
-		Discover: func(context.Context, *api.Router, string) ([]netip.Addr, error) {
-			return []netip.Addr{addr}, nil
+		Discover: func(context.Context, *api.Router, string) ([]SAMSyncEndpoint, error) {
+			return []SAMSyncEndpoint{{Addr: addr, Source: "sam-route-reflector", Resource: "SAMNodeSet/fabric", NodeRef: "rr-rt01"}}, nil
 		},
 	}
 	group, ok, err := client.SyncPeerGroup(context.Background(), nil, "wg-svnet1", "svnet1-rrs")
@@ -104,6 +105,36 @@ func TestPeerGroupSyncClientFetchesAndStoresGroup(t *testing.T) {
 	resources := decodeResources(t, part.ResourcesJSON)
 	if len(resources) != 1 || resources[0].Kind != "SAMPeerGroup" || resources[0].Metadata.Name != "svnet1-rrs" {
 		t.Fatalf("stored resources = %#v, want SAMPeerGroup/svnet1-rrs", resources)
+	}
+}
+
+func TestPeerGroupSyncClientReportsReachableEndpointWithoutGroup(t *testing.T) {
+	now := time.Date(2026, 6, 8, 10, 1, 15, 0, time.UTC)
+	store := testStore(t, now)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != peerGroupSyncPath {
+			t.Fatalf("request path = %s, want %s", r.URL.Path, peerGroupSyncPath)
+		}
+		_ = json.NewEncoder(w).Encode(PeerGroupSyncResponse{})
+	}))
+	defer srv.Close()
+	addr, port := serverAddr(t, srv)
+
+	client := &PeerGroupSyncClient{
+		Store:      store,
+		HTTPClient: srv.Client(),
+		Port:       port,
+		Now:        func() time.Time { return now },
+		Discover: func(context.Context, *api.Router, string) ([]SAMSyncEndpoint, error) {
+			return []SAMSyncEndpoint{{Addr: addr, Source: "sam-route-reflector", Resource: "SAMNodeSet/fabric", NodeRef: "rr-rt01"}}, nil
+		},
+	}
+	_, ok, err := client.SyncPeerGroup(context.Background(), nil, "wg-svnet1", "svnet1-rrs")
+	if err == nil || !strings.Contains(err.Error(), "SAMPeerGroup/svnet1-rrs was not published") || !strings.Contains(err.Error(), "source=sam-route-reflector") || !strings.Contains(err.Error(), "publishPeerGroup: true") {
+		t.Fatalf("SyncPeerGroup error = %v, want not-published publisher hint", err)
+	}
+	if ok {
+		t.Fatalf("SyncPeerGroup ok = true, want false")
 	}
 }
 
@@ -128,8 +159,8 @@ func TestPeerGroupSyncClientFetchesAndStoresMemberSet(t *testing.T) {
 		HTTPClient: srv.Client(),
 		Port:       port,
 		Now:        func() time.Time { return now },
-		Discover: func(context.Context, *api.Router, string) ([]netip.Addr, error) {
-			return []netip.Addr{addr}, nil
+		Discover: func(context.Context, *api.Router, string) ([]SAMSyncEndpoint, error) {
+			return []SAMSyncEndpoint{{Addr: addr, Source: "sam-route-reflector", Resource: "SAMNodeSet/fabric", NodeRef: "pve-rt01"}}, nil
 		},
 	}
 	set, ok, err := client.SyncMemberSet(context.Background(), nil, "svnet1")
@@ -143,6 +174,72 @@ func TestPeerGroupSyncClientFetchesAndStoresMemberSet(t *testing.T) {
 	resources := decodeResources(t, part.ResourcesJSON)
 	if len(resources) != 1 || resources[0].Kind != "MobilityMemberSet" || resources[0].Metadata.Name != "svnet1" {
 		t.Fatalf("stored resources = %#v, want MobilityMemberSet/svnet1", resources)
+	}
+}
+
+func TestPeerGroupSyncClientReportsReachableEndpointWithoutMemberSet(t *testing.T) {
+	now := time.Date(2026, 6, 8, 10, 1, 45, 0, time.UTC)
+	store := testStore(t, now)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != memberSetSyncPath {
+			t.Fatalf("request path = %s, want %s", r.URL.Path, memberSetSyncPath)
+		}
+		_ = json.NewEncoder(w).Encode(MemberSetSyncResponse{})
+	}))
+	defer srv.Close()
+	addr, port := serverAddr(t, srv)
+
+	client := &PeerGroupSyncClient{
+		Store:      store,
+		HTTPClient: srv.Client(),
+		Port:       port,
+		Now:        func() time.Time { return now },
+		Discover: func(context.Context, *api.Router, string) ([]SAMSyncEndpoint, error) {
+			return []SAMSyncEndpoint{{Addr: addr, Source: "sam-route-reflector", Resource: "SAMNodeSet/fabric", NodeRef: "rr-rt01"}}, nil
+		},
+	}
+	_, ok, err := client.SyncMemberSet(context.Background(), nil, "cloudedge")
+	if err == nil || !strings.Contains(err.Error(), "MobilityMemberSet/cloudedge was not published") || !strings.Contains(err.Error(), "source=sam-route-reflector") {
+		t.Fatalf("SyncMemberSet error = %v, want not-published publisher hint", err)
+	}
+	if ok {
+		t.Fatalf("SyncMemberSet ok = true, want false")
+	}
+}
+
+func TestMobilityMembersFromSyncReportsNotPublishedMemberSet(t *testing.T) {
+	now := time.Date(2026, 6, 8, 10, 1, 50, 0, time.UTC)
+	store := testStore(t, now)
+	spec := plannedPoolSpec()
+	spec.MembersFrom = []api.MobilityMembersSourceSpec{{Resource: "MobilityMemberSet/cloudedge"}}
+	router := planningRouterForNode("onprem-router", spec)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(MemberSetSyncResponse{})
+	}))
+	defer srv.Close()
+	addr, port := serverAddr(t, srv)
+
+	resolved, err := (mobilityMemberResolver{
+		Router: router,
+		Sync: &PeerGroupSyncClient{
+			Store:      store,
+			HTTPClient: srv.Client(),
+			Port:       port,
+			Now:        func() time.Time { return now },
+			Discover: func(context.Context, *api.Router, string) ([]SAMSyncEndpoint, error) {
+				return []SAMSyncEndpoint{{Addr: addr, Source: "sam-route-reflector", Resource: "SAMNodeSet/fabric", NodeRef: "rr-rt01"}}, nil
+			},
+		},
+	}).resolve(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if len(resolved.MembersFrom) != 1 {
+		t.Fatalf("membersFrom = %#v, want one source", resolved.MembersFrom)
+	}
+	reason := resolved.MembersFrom[0].Reason
+	if !strings.Contains(reason, "MobilityMemberSet/cloudedge was not published") || !strings.Contains(reason, "source=sam-route-reflector") {
+		t.Fatalf("membersFrom reason = %q, want not-published publisher hint", reason)
 	}
 }
 
@@ -173,8 +270,8 @@ func TestSAMTransportProfilePeersFromSyncResolvesMissingGroup(t *testing.T) {
 			HTTPClient: srv.Client(),
 			Port:       port,
 			Now:        func() time.Time { return now },
-			Discover: func(context.Context, *api.Router, string) ([]netip.Addr, error) {
-				return []netip.Addr{addr}, nil
+			Discover: func(context.Context, *api.Router, string) ([]SAMSyncEndpoint, error) {
+				return []SAMSyncEndpoint{{Addr: addr, Source: "sam-route-reflector", Resource: "SAMNodeSet/fabric", NodeRef: "rr-rt01"}}, nil
 			},
 		},
 		Now: func() time.Time { return now },
@@ -193,7 +290,58 @@ func TestSAMTransportProfilePeersFromSyncResolvesMissingGroup(t *testing.T) {
 	}
 }
 
-func TestDiscoverWireGuardPeerGroupSyncEndpointsPrefersSAMRouteReflectors(t *testing.T) {
+func TestSAMTransportProfilePeersFromSyncReportsNotPublishedGroup(t *testing.T) {
+	now := time.Date(2026, 6, 8, 10, 2, 15, 0, time.UTC)
+	store := testStore(t, now)
+	router := transportRouterWithMode("svnet1", "leaf-rt01", "pair-stable", nil)
+	spec, err := router.Spec.Resources[0].SAMTransportProfileSpec()
+	if err != nil {
+		t.Fatalf("SAMTransportProfile spec: %v", err)
+	}
+	spec.PeersFrom = []api.SAMTransportPeersSourceSpec{{Resource: "SAMPeerGroup/svnet1-rrs"}}
+	router.Spec.Resources[0].Spec = spec
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(PeerGroupSyncResponse{})
+	}))
+	defer srv.Close()
+	addr, port := serverAddr(t, srv)
+
+	controller := TransportController{
+		Router: router,
+		Store:  store,
+		PeerGroupSync: &PeerGroupSyncClient{
+			Store:      store,
+			HTTPClient: srv.Client(),
+			Port:       port,
+			Now:        func() time.Time { return now },
+			Discover: func(context.Context, *api.Router, string) ([]SAMSyncEndpoint, error) {
+				return []SAMSyncEndpoint{{Addr: addr, Source: "sam-route-reflector", Resource: "SAMNodeSet/fabric", NodeRef: "rr-rt01"}}, nil
+			},
+		},
+		Now: func() time.Time { return now },
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "SAMTransportProfile", "svnet1")
+	if status["phase"] != "Pending" {
+		t.Fatalf("status phase = %#v, want Pending status=%#v", status["phase"], status)
+	}
+	peersFrom, ok := status["peersFrom"].([]any)
+	if !ok || len(peersFrom) != 1 {
+		t.Fatalf("status peersFrom = %#v, want one source", status["peersFrom"])
+	}
+	source, ok := peersFrom[0].(map[string]any)
+	if !ok {
+		t.Fatalf("status peersFrom[0] = %#v, want object", peersFrom[0])
+	}
+	reason, _ := source["reason"].(string)
+	if !strings.Contains(reason, "SAMPeerGroup/svnet1-rrs was not published") || !strings.Contains(reason, "source=sam-route-reflector") || !strings.Contains(reason, "publishPeerGroup: true") {
+		t.Fatalf("peersFrom reason = %q, want not-published publisher hint", reason)
+	}
+}
+
+func TestDiscoverWireGuardSAMSyncEndpointsPrefersSAMRouteReflectors(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 		Metadata: api.ObjectMeta{Name: "azure-a"},
@@ -225,12 +373,22 @@ func TestDiscoverWireGuardPeerGroupSyncEndpointsPrefersSAMRouteReflectors(t *tes
 		}},
 	}
 
-	addrs, err := DiscoverWireGuardPeerGroupSyncEndpoints(context.Background(), router, "wg-hybrid")
+	addrs, err := DiscoverWireGuardSAMSyncEndpoints(context.Background(), router, "wg-hybrid")
 	if err != nil {
-		t.Fatalf("DiscoverWireGuardPeerGroupSyncEndpoints: %v", err)
+		t.Fatalf("DiscoverWireGuardSAMSyncEndpoints: %v", err)
 	}
 	if got := addrStrings(addrs); len(got) != 1 || got[0] != "10.99.0.1" {
 		t.Fatalf("sync endpoints = %v, want only route-reflector onprem 10.99.0.1", got)
+	}
+	endpoints, err := DiscoverWireGuardSAMSyncEndpointDetails(context.Background(), router, "wg-hybrid")
+	if err != nil {
+		t.Fatalf("DiscoverWireGuardSAMSyncEndpointDetails: %v", err)
+	}
+	if len(endpoints) != 1 {
+		t.Fatalf("sync endpoint details = %#v, want one route-reflector endpoint", endpoints)
+	}
+	if endpoints[0].Source != "sam-route-reflector" || endpoints[0].Resource != "SAMNodeSet/fabric" || endpoints[0].NodeRef != "onprem" {
+		t.Fatalf("sync endpoint detail = %#v, want route-reflector source/resource/nodeRef", endpoints[0])
 	}
 }
 
