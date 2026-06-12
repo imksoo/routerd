@@ -439,6 +439,9 @@ func doctorSAMConvergenceChecks(poolName string, status map[string]any) []doctor
 	if fibPhase != "" {
 		fibDetail = "fibConvergencePhase=" + fibPhase
 	}
+	if reasons := stringStatusSlice(status, "blockingReasons"); len(reasons) > 0 {
+		fibDetail = appendDoctorDetail(fibDetail, "blocking="+strings.Join(reasons, ", "))
+	}
 	fib := doctorCheck{
 		Area:   "sam",
 		Name:   name + " FIB convergence",

@@ -5,6 +5,7 @@ package bgp
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/netip"
 	"reflect"
 	"strconv"
@@ -1157,6 +1158,84 @@ func TestReconcileExposesMobilityLivenessMarkerWithoutInstallingFIBRoute(t *test
 	}
 	if _, ok := installed["10.99.0.2/32"]; ok {
 		t.Fatalf("installedNextHops include liveness marker: %#v", installed)
+	}
+}
+
+func TestReconcileAdmitsNormalMobilityPoolHostRoute(t *testing.T) {
+	router := bgpRouterWithImportPrefixes("10.77.60.0/24", "10.99.0.0/24")
+	router.Spec.Resources = append(router.Spec.Resources, bgpMobilityPreferredSourceResources("aws-router")...)
+	server := &fakeServer{routes: []*gobgpapi.Destination{
+		testDestinationWithCommunities("10.77.60.44/32", "10.99.0.2", "64512:100", "64512:102", "64512:110"),
+		testDestinationWithCommunities("10.99.0.2/32", "10.99.0.1", bgpstate.MobilityCommunityNodeLiveness, bgpstate.MobilityNodeIdentityCommunity("peer-speaker")),
+	}}
+	fib := &fakeFIB{}
+	controller := Controller{Router: router, Store: mapStore{}, Server: server, FIB: fib}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	want := []FIBRoute{{Prefix: "10.77.60.44/32", NextHops: []string{"10.99.0.2"}}}
+	if !reflect.DeepEqual(fib.routes, want) {
+		t.Fatalf("fib routes = %#v, want normal mobility pool host admitted only %#v", fib.routes, want)
+	}
+	status := controller.Store.ObjectStatus(api.NetAPIVersion, "BGPRouter", "lan")
+	installed, ok := status["installedNextHops"].(map[string][]string)
+	if !ok || !reflect.DeepEqual(installed["10.77.60.44/32"], []string{"10.99.0.2"}) {
+		t.Fatalf("installedNextHops = %#v, want target installed", status["installedNextHops"])
+	}
+	if _, ok := installed["10.99.0.2/32"]; ok {
+		t.Fatalf("installedNextHops include standalone liveness marker: %#v", installed)
+	}
+	prefixes, ok := status["prefixes"].([]bgpstate.Prefix)
+	if !ok {
+		t.Fatalf("prefixes = %#v, want []bgpstate.Prefix", status["prefixes"])
+	}
+	seenTarget := false
+	for _, prefix := range prefixes {
+		if prefix.Prefix == "10.77.60.44/32" {
+			seenTarget = true
+		}
+		if prefix.Prefix == "10.99.0.2/32" {
+			t.Fatalf("prefixes include standalone liveness marker: %#v", prefixes)
+		}
+	}
+	if !seenTarget {
+		t.Fatalf("prefixes = %#v, want target accepted", prefixes)
+	}
+	if got := fmt.Sprint(status["invalidLivenessMarkerPrefixes"]); got != "[]" {
+		t.Fatalf("invalidLivenessMarkerPrefixes = %v, want none", got)
+	}
+}
+
+func TestReconcileRecordsMisTaggedLivenessMobilityPoolHostRoute(t *testing.T) {
+	router := bgpRouterWithImportPrefixes("10.77.60.0/24", "10.99.0.0/24")
+	router.Spec.Resources = append(router.Spec.Resources, bgpMobilityPreferredSourceResources("aws-router")...)
+	server := &fakeServer{routes: []*gobgpapi.Destination{
+		testDestinationWithCommunities("10.77.60.44/32", "10.99.0.2", bgpstate.MobilityCommunityNodeLiveness, bgpstate.MobilityNodeIdentityCommunity("peer-speaker")),
+	}}
+	fib := &fakeFIB{}
+	controller := Controller{Router: router, Store: mapStore{}, Server: server, FIB: fib}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if len(fib.routes) != 0 {
+		t.Fatalf("fib routes = %#v, want mis-tagged liveness pool host excluded", fib.routes)
+	}
+	status := controller.Store.ObjectStatus(api.NetAPIVersion, "BGPRouter", "lan")
+	installed, ok := status["installedNextHops"].(map[string][]string)
+	if !ok {
+		t.Fatalf("installedNextHops = %#v, want map", status["installedNextHops"])
+	}
+	if _, ok := installed["10.77.60.44/32"]; ok {
+		t.Fatalf("installedNextHops include mis-tagged liveness target: %#v", installed)
+	}
+	if got := fmt.Sprint(status["invalidLivenessMarkerPrefixes"]); got != "[10.77.60.44/32]" {
+		t.Fatalf("invalidLivenessMarkerPrefixes = %v, want target; status=%#v", got, status)
+	}
+	if got := fmt.Sprint(status["phase"]); got != "Degraded" {
+		t.Fatalf("phase = %v, want Degraded; status=%#v", got, status)
+	}
+	if got := fmt.Sprint(status["reason"]); got != "GoBGPMisTaggedMobilityLivenessMarker" {
+		t.Fatalf("reason = %v, want GoBGPMisTaggedMobilityLivenessMarker; status=%#v", got, status)
 	}
 }
 

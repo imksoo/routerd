@@ -208,6 +208,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 	}
 	installedNextHops, bgpRIBObserved := c.bgpInstalledNextHops()
 	acceptedBGPPathPrefixes := c.bgpAcceptedPathPrefixes()
+	invalidLivenessMarkerPrefixes := invalidLivenessMarkerPoolPrefixes(livenessMarkers, spec.Prefix)
 	forwardingObserved, forwardingEnabled, forwardingObservedAt := c.discoverySelfForwardingState(res.Metadata.Name)
 	currentStatus := c.Store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", res.Metadata.Name)
 	ownershipDecisions, ownershipErr := resolveAddressOwnership(ownershipResolverInput{
@@ -298,6 +299,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		"generatedClaims":                   0,
 		"generatedActions":                  len(actionPlans),
 		"acceptedBGPPathPrefixes":           sortedMapKeys(acceptedBGPPathPrefixes),
+		"invalidLivenessMarkerPrefixes":     invalidLivenessMarkerPrefixes,
 		"membersFrom":                       mobilityMembersFromStatusMaps(resolved.MembersFrom),
 		"resolvedMemberCount":               len(spec.Members),
 		"pendingSources":                    resolved.PendingSources,
@@ -347,24 +349,25 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		status[key] = value
 	}
 	for key, value := range samConvergenceStatusFields(samConvergenceInput{
-		Status:                    status,
-		DesiredBGPPaths:           delivery.Paths,
-		InstalledNextHops:         installedNextHops,
-		AcceptedBGPPathPrefixes:   acceptedBGPPathPrefixes,
-		BGPRIBObserved:            bgpRIBObserved,
-		SelfCaptureResolved:       selfCaptureResolved,
-		SelfCaptureReason:         selfCaptureReason,
-		CaptureCandidates:         len(delivery.CaptureCandidates),
-		GeneratedActions:          len(actionPlans),
-		ProviderCapturedPaths:     delivery.ProviderCapturedPaths,
-		ProviderDiscoveryRequired: strings.EqualFold(strings.TrimSpace(self.OwnershipDiscovery.Mode), "provider-private-ip"),
-		ProviderDiscoveryPhase:    statusMapString(currentStatus, "discoveryPhase"),
-		ProviderDiscoveryReason:   statusMapString(currentStatus, "discoveryReason"),
-		OSCaptureExpected:         self.Capture.Type == "provider-secondary-ip" && self.Capture.ConfigureOSAddress && (len(delivery.CaptureCandidates) > 0 || len(actionPlans) > 0 || delivery.ProviderCapturedPaths > 0),
-		OSCaptureObserved:         c.providerSecondaryOSCaptureReflected(res.Metadata.Name, captureConvergenceAddresses(delivery)),
-		ForwardingObserved:        forwardingObserved,
-		ForwardingEnabled:         forwardingEnabled,
-		ObservedAt:                now,
+		Status:                        status,
+		DesiredBGPPaths:               delivery.Paths,
+		InvalidLivenessMarkerPrefixes: invalidLivenessMarkerPrefixes,
+		InstalledNextHops:             installedNextHops,
+		AcceptedBGPPathPrefixes:       acceptedBGPPathPrefixes,
+		BGPRIBObserved:                bgpRIBObserved,
+		SelfCaptureResolved:           selfCaptureResolved,
+		SelfCaptureReason:             selfCaptureReason,
+		CaptureCandidates:             len(delivery.CaptureCandidates),
+		GeneratedActions:              len(actionPlans),
+		ProviderCapturedPaths:         delivery.ProviderCapturedPaths,
+		ProviderDiscoveryRequired:     strings.EqualFold(strings.TrimSpace(self.OwnershipDiscovery.Mode), "provider-private-ip"),
+		ProviderDiscoveryPhase:        statusMapString(currentStatus, "discoveryPhase"),
+		ProviderDiscoveryReason:       statusMapString(currentStatus, "discoveryReason"),
+		OSCaptureExpected:             self.Capture.Type == "provider-secondary-ip" && self.Capture.ConfigureOSAddress && (len(delivery.CaptureCandidates) > 0 || len(actionPlans) > 0 || delivery.ProviderCapturedPaths > 0),
+		OSCaptureObserved:             c.providerSecondaryOSCaptureReflected(res.Metadata.Name, captureConvergenceAddresses(delivery)),
+		ForwardingObserved:            forwardingObserved,
+		ForwardingEnabled:             forwardingEnabled,
+		ObservedAt:                    now,
 	}) {
 		status[key] = value
 	}
@@ -372,24 +375,25 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 }
 
 type samConvergenceInput struct {
-	Status                    map[string]any
-	DesiredBGPPaths           []bgpdaemon.AppliedPath
-	InstalledNextHops         map[string][]string
-	AcceptedBGPPathPrefixes   map[string]bool
-	BGPRIBObserved            bool
-	SelfCaptureResolved       bool
-	SelfCaptureReason         string
-	CaptureCandidates         int
-	GeneratedActions          int
-	ProviderCapturedPaths     int
-	ProviderDiscoveryRequired bool
-	ProviderDiscoveryPhase    string
-	ProviderDiscoveryReason   string
-	OSCaptureExpected         bool
-	OSCaptureObserved         bool
-	ForwardingObserved        bool
-	ForwardingEnabled         bool
-	ObservedAt                time.Time
+	Status                        map[string]any
+	DesiredBGPPaths               []bgpdaemon.AppliedPath
+	InvalidLivenessMarkerPrefixes []string
+	InstalledNextHops             map[string][]string
+	AcceptedBGPPathPrefixes       map[string]bool
+	BGPRIBObserved                bool
+	SelfCaptureResolved           bool
+	SelfCaptureReason             string
+	CaptureCandidates             int
+	GeneratedActions              int
+	ProviderCapturedPaths         int
+	ProviderDiscoveryRequired     bool
+	ProviderDiscoveryPhase        string
+	ProviderDiscoveryReason       string
+	OSCaptureExpected             bool
+	OSCaptureObserved             bool
+	ForwardingObserved            bool
+	ForwardingEnabled             bool
+	ObservedAt                    time.Time
 }
 
 func withSAMConvergenceBlocked(status map[string]any, reason string, observedAt time.Time) map[string]any {
@@ -477,7 +481,12 @@ func samConvergenceStatusFields(in samConvergenceInput) map[string]any {
 		blocking = append(blocking, "BGP installed next-hop evidence is not observable")
 	} else {
 		missing := missingDesiredBGPPathPrefixes(in.DesiredBGPPaths, in.InstalledNextHops, in.AcceptedBGPPathPrefixes)
-		if len(missing) == 0 {
+		missing = cleanStrings(missing)
+		invalidLivenessMarkers := cleanStrings(in.InvalidLivenessMarkerPrefixes)
+		if len(invalidLivenessMarkers) > 0 {
+			fibPhase = sam.FIBConvergenceMissingRoute
+			blocking = append(blocking, "mis-tagged BGP liveness marker prefixes inside MobilityPool: "+strings.Join(invalidLivenessMarkers, ","))
+		} else if len(missing) == 0 {
 			fibPhase = sam.FIBConvergenceReady
 		} else {
 			fibPhase = sam.FIBConvergenceMissingRoute
@@ -536,6 +545,34 @@ func missingDesiredBGPPathPrefixes(paths []bgpdaemon.AppliedPath, installed map[
 	}
 	sort.Strings(missing)
 	return missing
+}
+
+func invalidLivenessMarkerPoolPrefixes(markers map[string]string, pool string) []string {
+	poolPrefix, err := netip.ParsePrefix(strings.TrimSpace(pool))
+	if err != nil || !poolPrefix.Addr().Is4() {
+		return nil
+	}
+	poolPrefix = poolPrefix.Masked()
+	seen := map[string]bool{}
+	var out []string
+	for _, raw := range markers {
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(raw))
+		if err != nil || !prefix.Addr().Is4() || prefix.Bits() != 32 {
+			continue
+		}
+		prefix = prefix.Masked()
+		if !poolPrefix.Contains(prefix.Addr()) {
+			continue
+		}
+		value := prefix.String()
+		if seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func statusMapString(status map[string]any, key string) string {
