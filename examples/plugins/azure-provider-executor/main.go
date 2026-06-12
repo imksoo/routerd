@@ -149,8 +149,62 @@ func failed(msg string, err error) executeActionResult {
 	res.Status.Message = msg
 	if err != nil {
 		res.Status.Error = err.Error()
+		if isAuthorizationError(err) {
+			res.Status.Observed = map[string]string{
+				"failureClass":   "authorization",
+				"permissionHint": azurePermissionHint(msg),
+			}
+		}
 	}
 	return res
+}
+
+func isAuthorizationError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	if isToolchainExecutionError(msg) {
+		return false
+	}
+	return strings.Contains(msg, "authorizationfailed") ||
+		strings.Contains(msg, "access denied") ||
+		strings.Contains(msg, "not authorized") ||
+		strings.Contains(msg, "does not have authorization") ||
+		strings.Contains(msg, "forbidden")
+}
+
+func isToolchainExecutionError(msg string) bool {
+	return strings.Contains(msg, "fork/exec") ||
+		strings.Contains(msg, "executable file not found") ||
+		strings.Contains(msg, "no such file or directory") ||
+		strings.Contains(msg, "permission denied")
+}
+
+func azurePermissionHint(msg string) string {
+	msg = strings.ToLower(msg)
+	switch {
+	case strings.Contains(msg, "route-table") && strings.Contains(msg, "show"):
+		return "Microsoft.Network/routeTables/routes/read"
+	case strings.Contains(msg, "assign-route-table-route"):
+		return "Microsoft.Network/routeTables/routes/write"
+	case strings.Contains(msg, "unassign-route-table-route"):
+		return "Microsoft.Network/routeTables/routes/delete"
+	case strings.Contains(msg, "assign-secondary-ip") && strings.Contains(msg, "show"):
+		return "Microsoft.Network/networkInterfaces/read"
+	case strings.Contains(msg, "assign-secondary-ip"):
+		return "Microsoft.Network/networkInterfaces/write"
+	case strings.Contains(msg, "unassign-secondary-ip") && strings.Contains(msg, "show"):
+		return "Microsoft.Network/networkInterfaces/read"
+	case strings.Contains(msg, "unassign-secondary-ip"):
+		return "Microsoft.Network/networkInterfaces/write"
+	case strings.Contains(msg, "ensure-forwarding") && strings.Contains(msg, "show"):
+		return "Microsoft.Network/networkInterfaces/read"
+	case strings.Contains(msg, "ensure-forwarding"):
+		return "Microsoft.Network/networkInterfaces/write"
+	default:
+		return "azure-rbac"
+	}
 }
 
 // nicTarget bundles the Azure NIC identification read from the request Target.

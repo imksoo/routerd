@@ -442,6 +442,31 @@ func TestAssignExecuteMissingSubscriptionFailsBeforeMutation(t *testing.T) {
 	}
 }
 
+func TestAuthorizationFailureIsClassified(t *testing.T) {
+	f := &fakeAz{err: fmt.Errorf("AuthorizationFailed: The client does not have authorization to perform action")}
+	res := dispatchWith(reqSpec(actionAssignSecondaryIP, modeExecute), f.run)
+	if res.Status.Status != statusFailed {
+		t.Fatalf("want failed, got %q", res.Status.Status)
+	}
+	if res.Status.Observed["failureClass"] != "authorization" {
+		t.Fatalf("want authorization failure class, got %+v", res.Status.Observed)
+	}
+	if res.Status.Observed["permissionHint"] != "Microsoft.Network/networkInterfaces/write" {
+		t.Fatalf("permissionHint = %q", res.Status.Observed["permissionHint"])
+	}
+}
+
+func TestToolchainPermissionFailureIsNotAuthorization(t *testing.T) {
+	f := &fakeAz{err: fmt.Errorf("fork/exec /usr/local/bin/az: permission denied")}
+	res := dispatchWith(reqSpec(actionAssignSecondaryIP, modeExecute), f.run)
+	if res.Status.Status != statusFailed {
+		t.Fatalf("want failed, got %q", res.Status.Status)
+	}
+	if res.Status.Observed["failureClass"] == "authorization" {
+		t.Fatalf("toolchain permission failure must not look like cloud authorization, got %+v", res.Status.Observed)
+	}
+}
+
 func TestAssignRouteTableExecuteCreatesRoute(t *testing.T) {
 	f := &routeFakeAz{}
 	res := dispatchWith(routeReqSpec(actionAssignRouteTableRoute, modeExecute), f.run)
