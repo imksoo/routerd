@@ -116,6 +116,11 @@ func (c TunnelInterfaceController) cleanupStaleResources(ctx context.Context) er
 		if _, ok := desired[item.Name]; ok || !routerdManagedObjectStatus(item) {
 			continue
 		}
+		if route, ok := tunnelStoredUnderlayEndpointRoute(item.Status); ok && !c.DryRun {
+			if err := c.deleteUnderlayEndpointRoute(ctx, route); err != nil {
+				return err
+			}
+		}
 		ifname := firstNonEmpty(statusString(item.Status, "ifname"), statusString(item.Status, "interface"), item.Name)
 		if ifname != "" && !c.DryRun {
 			if err := c.deleteTunnelInterface(ctx, ifname); err != nil {
@@ -212,7 +217,19 @@ func (c TunnelInterfaceController) reconcileInterface(ctx context.Context, resou
 		}
 		applied = applied || addressChanged
 	}
+	if endpointRoute, ok, err := tunnelUnderlayEndpointRoute(desired); err != nil {
+		return c.saveApplyError(resource, desired, err)
+	} else if ok {
+		routeChanged, err := c.reconcileUnderlayEndpointRoute(ctx, resource, endpointRoute)
+		if err != nil {
+			return c.saveApplyError(resource, desired, err)
+		}
+		applied = applied || routeChanged
+	}
 	status = tunnelStatus(desired, c.DryRun, map[string]any{"phase": "Up"})
+	if endpointRoute, ok, err := tunnelUnderlayEndpointRoute(desired); err == nil && ok {
+		status["underlayEndpointRoute"] = endpointRoute.status()
+	}
 	if !applied {
 		status["reason"] = "AlreadyConfigured"
 	}
@@ -580,6 +597,91 @@ func (c TunnelInterfaceController) setTunnelAddress(ctx context.Context, desired
 	return commandError("set tunnel interface "+desired.Name+" address", err)
 }
 
+type tunnelEndpointRoute struct {
+	Destination string
+	Device      string
+}
+
+func (r tunnelEndpointRoute) status() map[string]any {
+	return map[string]any{
+		"destination": r.Destination,
+		"device":      r.Device,
+		"managedBy":   "routerd",
+	}
+}
+
+func tunnelUnderlayEndpointRoute(desired tunnelDesired) (tunnelEndpointRoute, bool, error) {
+	if desired.UnderlayInterface == "" || desired.Remote == "" {
+		return tunnelEndpointRoute{}, false, nil
+	}
+	addr, err := netip.ParseAddr(strings.TrimSpace(desired.Remote))
+	if err != nil {
+		return tunnelEndpointRoute{}, false, fmt.Errorf("parse tunnel remote endpoint %q: %w", desired.Remote, err)
+	}
+	if !addr.Is4() {
+		return tunnelEndpointRoute{}, false, nil
+	}
+	return tunnelEndpointRoute{
+		Destination: addr.String() + "/32",
+		Device:      desired.UnderlayInterface,
+	}, true, nil
+}
+
+func (c TunnelInterfaceController) reconcileUnderlayEndpointRoute(ctx context.Context, resource api.Resource, desired tunnelEndpointRoute) (bool, error) {
+	currentStatus := c.Store.ObjectStatus(api.HybridAPIVersion, "TunnelInterface", resource.Metadata.Name)
+	if current, ok := tunnelStoredUnderlayEndpointRoute(currentStatus); ok && current != desired {
+		if err := c.deleteUnderlayEndpointRoute(ctx, current); err != nil {
+			return false, err
+		}
+	}
+	if err := c.ensureUnderlayEndpointRoute(ctx, desired); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func tunnelStoredUnderlayEndpointRoute(status map[string]any) (tunnelEndpointRoute, bool) {
+	raw, ok := status["underlayEndpointRoute"]
+	if !ok {
+		return tunnelEndpointRoute{}, false
+	}
+	values, ok := raw.(map[string]any)
+	if !ok {
+		if typed, ok := raw.(map[string]string); ok {
+			values = map[string]any{}
+			for key, value := range typed {
+				values[key] = value
+			}
+		} else {
+			return tunnelEndpointRoute{}, false
+		}
+	}
+	if statusString(values, "managedBy") != "routerd" {
+		return tunnelEndpointRoute{}, false
+	}
+	route := tunnelEndpointRoute{
+		Destination: statusString(values, "destination"),
+		Device:      firstNonEmpty(statusString(values, "device"), statusString(values, "interface")),
+	}
+	if route.Destination == "" || route.Device == "" {
+		return tunnelEndpointRoute{}, false
+	}
+	return route, true
+}
+
+func (c TunnelInterfaceController) ensureUnderlayEndpointRoute(ctx context.Context, route tunnelEndpointRoute) error {
+	_, err := c.run(ctx, "ip", "route", "replace", route.Destination, "dev", route.Device)
+	return commandError("ensure tunnel underlay endpoint route "+route.Destination+" via "+route.Device, err)
+}
+
+func (c TunnelInterfaceController) deleteUnderlayEndpointRoute(ctx context.Context, route tunnelEndpointRoute) error {
+	out, err := c.run(ctx, "ip", "route", "del", route.Destination, "dev", route.Device)
+	if err == nil || tunnelMissingRoute(out, err) {
+		return nil
+	}
+	return fmt.Errorf("delete tunnel underlay endpoint route %s via %s: %w: %s", route.Destination, route.Device, err, strings.TrimSpace(string(out)))
+}
+
 func (c TunnelInterfaceController) ensureFOUListener(ctx context.Context, desired tunnelDesired) error {
 	if desired.Mode != "fou" && desired.Mode != "gue" {
 		return nil
@@ -666,4 +768,17 @@ func tunnelFOUAlreadyExists(out []byte, err error) bool {
 	}
 	msg := strings.ToLower(strings.TrimSpace(string(out)) + " " + err.Error())
 	return strings.Contains(msg, "file exists") || strings.Contains(msg, "object already exists") || strings.Contains(msg, "already exists")
+}
+
+func tunnelMissingRoute(out []byte, err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(strings.TrimSpace(string(out)) + " " + err.Error())
+	for _, needle := range []string{"no such process", "not found", "no such file or directory"} {
+		if strings.Contains(msg, needle) {
+			return true
+		}
+	}
+	return false
 }

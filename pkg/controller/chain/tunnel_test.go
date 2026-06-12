@@ -184,6 +184,7 @@ func TestTunnelInterfaceControllerDerivesIPIPMTUFromUnderlay(t *testing.T) {
 		{"ip", "-d", "-o", "link", "show", "dev", "tun-ipip"},
 		{"ip", "link", "add", "dev", "tun-ipip", "type", "ipip", "local", "10.99.0.1", "remote", "10.99.0.2", "ttl", "64"},
 		{"ip", "link", "set", "dev", "tun-ipip", "mtu", "1400", "up"},
+		{"ip", "route", "replace", "10.99.0.2/32", "dev", "wg-underlay"},
 	}
 	if !reflect.DeepEqual(calls, want) {
 		t.Fatalf("calls = %#v, want %#v", calls, want)
@@ -191,6 +192,10 @@ func TestTunnelInterfaceControllerDerivesIPIPMTUFromUnderlay(t *testing.T) {
 	status := controller.Store.ObjectStatus(api.HybridAPIVersion, "TunnelInterface", "tun-ipip")
 	if status["phase"] != "Up" || status["mtu"] != 1400 || status["underlayInterface"] != "wg-underlay" || status["underlayMTU"] != 1420 || status["tunnelOverhead"] != 20 {
 		t.Fatalf("status = %#v", status)
+	}
+	route, ok := status["underlayEndpointRoute"].(map[string]any)
+	if !ok || route["destination"] != "10.99.0.2/32" || route["device"] != "wg-underlay" || route["managedBy"] != "routerd" {
+		t.Fatalf("underlay endpoint route status = %#v", status["underlayEndpointRoute"])
 	}
 }
 
@@ -521,6 +526,99 @@ func TestTunnelInterfaceControllerDeletesStaleManagedInterface(t *testing.T) {
 	}
 	if _, ok := store[api.HybridAPIVersion+"/TunnelInterface/old"]; ok {
 		t.Fatalf("stale status was not deleted: %#v", store)
+	}
+}
+
+func TestTunnelInterfaceControllerDeletesStaleUnderlayEndpointRoute(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: nil}}
+	store := mapStore{}
+	store.SaveObjectStatus(api.HybridAPIVersion, "TunnelInterface", "old", map[string]any{
+		"phase":     "Up",
+		"ifname":    "tun-old",
+		"managedBy": "routerd",
+		"underlayEndpointRoute": map[string]any{
+			"destination": "10.99.0.2/32",
+			"device":      "wg-underlay",
+			"managedBy":   "routerd",
+		},
+	})
+	var calls [][]string
+	controller := TunnelInterfaceController{
+		Router: router,
+		Store:  store,
+		OS:     platform.OSLinux,
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			calls = append(calls, append([]string{name}, args...))
+			return nil, nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	want := [][]string{
+		{"ip", "route", "del", "10.99.0.2/32", "dev", "wg-underlay"},
+		{"ip", "link", "del", "dev", "tun-old"},
+	}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("calls = %#v, want %#v", calls, want)
+	}
+	if _, ok := store[api.HybridAPIVersion+"/TunnelInterface/old"]; ok {
+		t.Fatalf("stale status was not deleted: %#v", store)
+	}
+}
+
+func TestTunnelInterfaceControllerReplacesChangedUnderlayEndpointRoute(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
+		TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
+		Metadata: api.ObjectMeta{Name: "tun-ipip"},
+		Spec: api.TunnelInterfaceSpec{
+			Mode:              "ipip",
+			Local:             "10.99.0.1",
+			Remote:            "10.99.0.3",
+			UnderlayInterface: "wg-underlay",
+			TrustedUnderlay:   true,
+		},
+	}}}}
+	store := mapStore{}
+	store.SaveObjectStatus(api.HybridAPIVersion, "TunnelInterface", "tun-ipip", map[string]any{
+		"phase":     "Up",
+		"ifname":    "tun-ipip",
+		"managedBy": "routerd",
+		"underlayEndpointRoute": map[string]any{
+			"destination": "10.99.0.2/32",
+			"device":      "wg-underlay",
+			"managedBy":   "routerd",
+		},
+	})
+	var calls [][]string
+	controller := TunnelInterfaceController{
+		Router: router,
+		Store:  store,
+		OS:     platform.OSLinux,
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			call := append([]string{name}, args...)
+			calls = append(calls, call)
+			if strings.Join(call, " ") == "ip -d -o link show dev tun-ipip" {
+				return []byte(`7: tun-ipip@NONE: <POINTOPOINT,NOARP,UP,LOWER_UP> mtu 1480 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000 link/ipip 10.99.0.1 peer 10.99.0.3 ttl 64`), nil
+			}
+			return nil, nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	want := [][]string{
+		{"ip", "-d", "-o", "link", "show", "dev", "tun-ipip"},
+		{"ip", "route", "del", "10.99.0.2/32", "dev", "wg-underlay"},
+		{"ip", "route", "replace", "10.99.0.3/32", "dev", "wg-underlay"},
+	}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("calls = %#v, want %#v", calls, want)
+	}
+	status := controller.Store.ObjectStatus(api.HybridAPIVersion, "TunnelInterface", "tun-ipip")
+	route, ok := status["underlayEndpointRoute"].(map[string]any)
+	if !ok || route["destination"] != "10.99.0.3/32" || route["device"] != "wg-underlay" {
+		t.Fatalf("underlay endpoint route status = %#v", status["underlayEndpointRoute"])
 	}
 }
 
