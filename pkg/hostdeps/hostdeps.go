@@ -364,7 +364,40 @@ func derivedSAMSysctls(router *api.Router) []sysctlResource {
 			},
 		})
 	}
+	for _, iface := range samRPFilterInterfaces(router) {
+		out = append(out, sysctlResource{
+			Name: "sam-rp-filter-" + safeResourceName(iface),
+			Spec: api.SysctlSpec{
+				Key:        "net.ipv4.conf." + iface + ".rp_filter",
+				Value:      "2",
+				Runtime:    boolPtr(true),
+				Persistent: true,
+				Optional:   true,
+			},
+		})
+	}
 	return out
+}
+
+func samRPFilterInterfaces(router *api.Router) []string {
+	aliases := sam.CaptureInterfaceAliases(router)
+	names := map[string]bool{}
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.HybridAPIVersion || resource.Kind != "RemoteAddressClaim" {
+			continue
+		}
+		spec, err := resource.RemoteAddressClaimSpec()
+		if err != nil {
+			continue
+		}
+		if iface := sam.ResolveCaptureInterface(strings.TrimSpace(spec.Capture.Interface), aliases); iface != "" {
+			names[iface] = true
+		}
+		if iface := strings.TrimSpace(spec.Delivery.TunnelInterface); iface != "" {
+			names[iface] = true
+		}
+	}
+	return sortedKeys(names)
 }
 
 func derivedRouterProfile(router *api.Router) (api.SysctlProfileSpec, bool) {

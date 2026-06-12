@@ -630,6 +630,9 @@ func TestSAMTransportProfileEndpointRouteUsesUnderlayDevice(t *testing.T) {
 	}
 	resources := decodeResources(t, latestPart(t, store, TransportDynamicSource("wireguard", "pve-rt06")).ResourcesJSON)
 	route := findTransportEndpointRoute(t, resources)
+	if route.Destination != "10.252.0.1/32" {
+		t.Fatalf("endpoint route destination = %q, want remote endpoint /32", route.Destination)
+	}
 	if route.Device != "wg-svnet1" {
 		t.Fatalf("endpoint route device = %q, want wg-svnet1", route.Device)
 	}

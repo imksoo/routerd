@@ -601,7 +601,7 @@ func (r doctorRunner) doctorSAMLiveChecks(name string, spec api.RemoteAddressCla
 	checks = append(checks,
 		doctorSAMIPForwardCheck(ctx, name),
 		doctorSAMDeliveryRouteCheck(ctx, name, routeName, address, tunnel),
-		doctorSAMRouteGetCheck(ctx, name, address),
+		doctorSAMRouteGetCheck(ctx, name, address, tunnel, doctorSAMRouteGetExpectedSource(spec)),
 		doctorSAMMSSClampCheck(ctx, name, captureInterface, tunnel),
 		doctorSAMForceFragmentCheck(ctx, name, captureInterface, tunnel),
 		doctorSAMHostFirewallCheck(ctx, name, captureInterface, tunnel, r.doctorWireGuardListenPort(tunnel)),
@@ -626,6 +626,13 @@ func (r doctorRunner) doctorSAMLiveChecks(name string, spec api.RemoteAddressCla
 		checks = append(checks, doctorSAMForwardPolicyCheck(ctx, name, strings.TrimSpace(spec.Capture.Interface), tunnel, address))
 	}
 	return checks
+}
+
+func doctorSAMRouteGetExpectedSource(spec api.RemoteAddressClaimSpec) string {
+	if strings.TrimSpace(spec.Capture.Type) != "provider-secondary-ip" || !spec.Capture.ConfigureOSAddress {
+		return ""
+	}
+	return strings.TrimSuffix(strings.TrimSpace(spec.Address), "/32")
 }
 
 func doctorSAMActiveWhenVRRPCheck(name string, gate sam.CaptureGateStatus) doctorCheck {
@@ -700,14 +707,27 @@ func doctorSAMIPForwardCheck(ctx context.Context, name string) doctorCheck {
 	return doctorCheck{Area: "hybrid", Name: label, Status: doctorWarn, Detail: firstNonEmpty(command.Error, oneLine(command.Output), "net.ipv4.ip_forward is not 1"), Remedy: "wait for routerd sysctl reconciliation or set net.ipv4.ip_forward=1"}
 }
 
-func doctorSAMRouteGetCheck(ctx context.Context, name, address string) doctorCheck {
+func doctorSAMRouteGetCheck(ctx context.Context, name, address, tunnel, expectedSource string) doctorCheck {
 	label := "RemoteAddressClaim/" + name + " route get"
 	ip := strings.TrimSuffix(strings.TrimSpace(address), "/32")
 	if ip == "" {
 		return doctorCheck{Area: "hybrid", Name: label, Status: doctorSkip, Detail: "address unavailable"}
 	}
-	command := doctorRunDiagnosticCommand(ctx, "ip route get "+ip, "ip", "-4", "route", "get", ip)
+	args := []string{"-4", "route", "get", ip}
+	commandLabel := "ip route get " + ip
+	if expectedSource != "" {
+		args = append(args, "from", expectedSource)
+		commandLabel += " from " + expectedSource
+	}
+	command := doctorRunDiagnosticCommand(ctx, commandLabel, "ip", args...)
 	if command.OK {
+		detail := oneLine(command.Stdout)
+		if expectedSource != "" && !strings.Contains(command.Stdout, "src "+expectedSource) {
+			return doctorCheck{Area: "hybrid", Name: label, Status: doctorWarn, Detail: appendDoctorDetail(detail, "expected src "+expectedSource), Remedy: "ensure the captured /32 is installed locally or set a source route/preferred source for SAM reverse dataplane"}
+		}
+		if strings.TrimSpace(tunnel) != "" && !strings.HasPrefix(tunnel, "delivery tunnel interface unresolved") && !strings.Contains(command.Stdout, "dev "+tunnel) {
+			return doctorCheck{Area: "hybrid", Name: label, Status: doctorWarn, Detail: appendDoctorDetail(detail, "expected dev "+tunnel), Remedy: "ensure the SAM delivery /32 route selects the tunnel device instead of a connected provider subnet route"}
+		}
 		return doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: oneLine(command.Stdout)}
 	}
 	return doctorCheck{Area: "hybrid", Name: label, Status: doctorWarn, Detail: firstNonEmpty(command.Error, oneLine(command.Output), "route lookup failed"), Remedy: "inspect Linux route selection for the SAM claim address"}

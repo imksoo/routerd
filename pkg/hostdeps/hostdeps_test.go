@@ -143,6 +143,32 @@ func TestDerivedSysctlResourcesForSAMAreStrictlyGated(t *testing.T) {
 	}
 }
 
+func TestDerivedSysctlResourcesForSAMProviderSecondaryDataplane(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "RemoteAddressClaim"}, Metadata: api.ObjectMeta{Name: "cloud-cap"}, Spec: api.RemoteAddressClaimSpec{
+			DomainRef: "cloudedge",
+			Address:   "10.77.60.45/32",
+			OwnerSide: "cloud",
+			Capture: api.AddressCapture{
+				Type:               "provider-secondary-ip",
+				Interface:          "ens3",
+				ConfigureOSAddress: true,
+			},
+			Delivery: api.AddressDelivery{PeerRef: "onprem-main", Mode: "route", TunnelInterface: "wg-hybrid"},
+		}},
+	}}}
+	keys := derivedSysctlKeys(t, router)
+	for _, want := range []string{
+		"net.ipv4.ip_forward",
+		"net.ipv4.conf.ens3.rp_filter",
+		"net.ipv4.conf.wg-hybrid.rp_filter",
+	} {
+		if !keys[want] {
+			t.Fatalf("missing SAM provider-secondary sysctl %s in %#v", want, sortedKeys(keys))
+		}
+	}
+}
+
 func TestPackageFeaturesIncludeArpingForVRRPGatedSAMCapture(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
 		TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "RemoteAddressClaim"},

@@ -759,6 +759,42 @@ func TestDoctorHybridSAMLiveChecksStubbed(t *testing.T) {
 	}
 }
 
+func TestDoctorSAMRouteGetWarnsWhenRouteLosesToConnectedSubnet(t *testing.T) {
+	oldRun := doctorRunDiagnosticCommand
+	defer func() { doctorRunDiagnosticCommand = oldRun }()
+	doctorRunDiagnosticCommand = func(_ context.Context, label, name string, args ...string) diagnoseCommandCheck {
+		if label != "ip route get 10.77.60.45" {
+			t.Fatalf("label = %q", label)
+		}
+		return diagnoseCommandCheck{Name: label, OK: true, Stdout: "10.77.60.45 dev ens3 src 10.77.60.45", Output: "10.77.60.45 dev ens3 src 10.77.60.45"}
+	}
+	check := doctorSAMRouteGetCheck(context.Background(), "oci-clean", "10.77.60.45/32", "samt-oci-onprem", "")
+	if check.Status != doctorWarn || !strings.Contains(check.Detail, "expected dev samt-oci-onprem") {
+		t.Fatalf("check = %#v", check)
+	}
+	if !strings.Contains(check.Remedy, "connected provider subnet") {
+		t.Fatalf("remedy = %q", check.Remedy)
+	}
+}
+
+func TestDoctorSAMRouteGetWarnsWhenCapturedSourceMismatches(t *testing.T) {
+	oldRun := doctorRunDiagnosticCommand
+	defer func() { doctorRunDiagnosticCommand = oldRun }()
+	doctorRunDiagnosticCommand = func(_ context.Context, label, name string, args ...string) diagnoseCommandCheck {
+		if label != "ip route get 10.99.44.1 from 10.77.60.45" {
+			t.Fatalf("label = %q", label)
+		}
+		return diagnoseCommandCheck{Name: label, OK: true, Stdout: "10.99.44.1 dev samt-oci-onprem src 10.99.44.44", Output: "10.99.44.1 dev samt-oci-onprem src 10.99.44.44"}
+	}
+	check := doctorSAMRouteGetCheck(context.Background(), "oci-clean", "10.99.44.1/32", "samt-oci-onprem", "10.77.60.45")
+	if check.Status != doctorWarn || !strings.Contains(check.Detail, "expected src 10.77.60.45") {
+		t.Fatalf("check = %#v", check)
+	}
+	if !strings.Contains(check.Remedy, "source route") {
+		t.Fatalf("remedy = %q", check.Remedy)
+	}
+}
+
 func TestDoctorHybridSAMProxyARPInterfaceLiveChecksStubbed(t *testing.T) {
 	oldRun := doctorRunDiagnosticCommand
 	oldOS := doctorCurrentOS
