@@ -236,7 +236,7 @@ func TestDoctorSAMConvergenceReadyPasses(t *testing.T) {
 	configPath, statePath := writeDoctorSAMFixture(t)
 	store := openDoctorState(t, statePath)
 	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
-		"phase":                  "BGPPlanned",
+		"phase":                  "Ready",
 		"plannerPhase":           "BGPPlanned",
 		"ownershipResolverPhase": "Resolved",
 		"samConvergencePhase":    "Ready",
@@ -253,6 +253,12 @@ func TestDoctorSAMConvergenceReadyPasses(t *testing.T) {
 	var report doctorReport
 	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
 		t.Fatalf("unmarshal doctor report: %v\n%s", err, out.String())
+	}
+	if report.Summary.Overall != doctorPass || report.Summary.Warn != 0 || report.Summary.Fail != 0 {
+		t.Fatalf("summary = %#v", report.Summary)
+	}
+	if check := findDoctorCheck(t, report, "MobilityPool/cloudedge"); check.Status != doctorPass {
+		t.Fatalf("MobilityPool check = %#v", check)
 	}
 	if check := findDoctorCheck(t, report, "MobilityPool/cloudedge SAM convergence"); check.Status != doctorPass {
 		t.Fatalf("SAM convergence check = %#v", check)

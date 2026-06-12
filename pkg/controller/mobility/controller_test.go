@@ -1402,6 +1402,39 @@ func TestControllerBGPModeReappliesForwardingWhenProviderObservedDisabled(t *tes
 	}
 }
 
+func TestControllerBGPModeSkipsForwardingWhenProviderObservedEnabled(t *testing.T) {
+	now := time.Date(2026, 6, 12, 22, 32, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	saveBGPInstalledNextHops(t, store, map[string][]string{
+		"10.88.60.10/32": {"10.99.0.1"},
+		"10.88.60.12/32": {"10.99.0.3"},
+	})
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"discoverySelfNICRef":             "eni-a",
+		"discoverySelfSubnetRef":          "subnet-a",
+		"discoverySelfPrivateIPs":         []string{"10.88.60.10/32", "10.88.60.11/32"},
+		"discoverySelfForwardingObserved": true,
+		"discoverySelfForwardingEnabled":  true,
+		"discoveryLastScanAt":             now.Format(time.RFC3339Nano),
+	}); err != nil {
+		t.Fatalf("SaveObjectStatus: %v", err)
+	}
+	bgp := &fakeBGPPaths{}
+	controller := Controller{Router: routerWithBGPRouter(planningRouterForNode("aws-router-a", spec)), Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	plans := decodeActionPlans(t, latestPart(t, store, DynamicSource("cloudedge", "aws-router-a")).ActionPlansJSON)
+	if findActionPlan(plans, "ensure-forwarding-enabled") != nil {
+		t.Fatalf("plans = %#v, forwarding already observed enabled should not generate ensure-forwarding-enabled", plans)
+	}
+	if findActionPlanByAddress(plans, "assign-secondary-ip", "10.88.60.12/32") == nil {
+		t.Fatalf("plans = %#v, want capture assign retained", plans)
+	}
+}
+
 func TestControllerBGPModeAdvertisesSelfLivenessMarker(t *testing.T) {
 	now := time.Date(2026, 6, 2, 10, 0, 0, 0, time.UTC)
 	store := testStore(t, now)

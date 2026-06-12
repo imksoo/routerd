@@ -222,7 +222,7 @@ func (r doctorRunner) doctorSAM() []doctorCheck {
 	var checks []doctorCheck
 	for _, res := range pools {
 		status := objectStatus(r.store, res.APIVersion, res.Kind, res.Metadata.Name)
-		checks = append(checks, doctorResourceCheck("sam", res, status, healthyPhases("BGPPlanned")))
+		checks = append(checks, doctorResourceCheck("sam", res, status, healthyPhases("BGPPlanned", "Ready")))
 		phase := stringStatus(status, "providerActionPhase")
 		if phase == "Failed" {
 			errMsg := stringStatus(status, "providerActionError")

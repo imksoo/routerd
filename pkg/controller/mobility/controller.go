@@ -1317,6 +1317,7 @@ func bgpProviderActionPlans(poolName, selfNode string, spec api.MobilityPoolSpec
 					desiredProviderNICs[key] = true
 				}
 			}
+			generated = dropObservedReadyForwardingPlans(generated, forwardingObserved, forwardingEnabled)
 			stampBGPPathFenceActionPlans(generated, address, candidate.PathSig, self.NodeRef, candidate.LastSeenAt)
 			stampBGPProviderTransitionFence(generated, self, address, actionJournal, observedSelfIPs, observedSelfIPsOK, observedSelfIPsAt)
 			stampForwardingDriftFence(generated, forwardingObserved, forwardingEnabled, forwardingObservedAt)
@@ -2088,6 +2089,20 @@ func stampForwardingDriftFence(plans []dynamicconfig.ActionPlan, observed, enabl
 		plan.Parameters["mobilityForwardingDrift"] = token
 		plan.IdempotencyKey += ":forwarding-drift:" + safeName(token)
 	}
+}
+
+func dropObservedReadyForwardingPlans(plans []dynamicconfig.ActionPlan, observed, enabled bool) []dynamicconfig.ActionPlan {
+	if !observed || !enabled {
+		return plans
+	}
+	out := plans[:0]
+	for _, plan := range plans {
+		if plan.Action == "ensure-forwarding-enabled" {
+			continue
+		}
+		out = append(out, plan)
+	}
+	return out
 }
 
 type providerCaptureTransition struct {
