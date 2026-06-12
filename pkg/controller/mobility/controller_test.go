@@ -1841,6 +1841,59 @@ func TestControllerBGPModeProviderTrapRecapturesWhenObservedProviderStateLost(t 
 	}
 }
 
+func TestControllerBGPModeProviderTrapDoesNotChurnWhileInventoryIsOlderThanRetry(t *testing.T) {
+	now := time.Date(2026, 6, 12, 21, 47, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	spec.Members[0].StaticOwnedAddresses = []string{"10.88.60.10/32"}
+	seedSucceededBGPCaptureAction(t, store, "aws-provider", "eni-a", "aws-router-a", "10.88.60.10/32", "assign-secondary-ip", 1, now.Add(-3*time.Minute))
+	saveBGPInstalledNextHops(t, store, map[string][]string{
+		"10.88.60.10/32": {"10.99.0.1"},
+	})
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"discoverySelfPrivateIPs": []string{"10.88.60.11"},
+		"discoveryLastScanAt":     now.Add(-time.Second).Format(time.RFC3339Nano),
+	}); err != nil {
+		t.Fatalf("SaveObjectStatus(MobilityPool/cloudedge): %v", err)
+	}
+
+	bgp := &fakeBGPPaths{}
+	router := routerWithBGPRouter(planningRouterForNode("aws-router-a", spec))
+	controller := Controller{Router: router, Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	source := DynamicSource("cloudedge", "aws-router-a")
+	plans := decodeActionPlans(t, latestPart(t, store, source).ActionPlansJSON)
+	assign := findActionPlanByAddress(plans, "assign-secondary-ip", "10.88.60.10/32")
+	if assign == nil {
+		t.Fatalf("plans = %#v, want provider-missing retry assign", plans)
+	}
+	if !strings.Contains(assign.IdempotencyKey, ":transition:provider-missing-") {
+		t.Fatalf("assign key = %q, want provider-missing transition after fresh missing scan", assign.IdempotencyKey)
+	}
+	retryID := seedSucceededActionPlan(t, store, assign, source, now.Add(500*time.Millisecond))
+
+	controller.Now = func() time.Time { return now.Add(time.Second) }
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("second Reconcile: %v", err)
+	}
+	secondPlans := decodeActionPlans(t, latestPart(t, store, source).ActionPlansJSON)
+	secondAssign := findActionPlanByAddress(secondPlans, "assign-secondary-ip", "10.88.60.10/32")
+	if secondAssign == nil {
+		t.Fatalf("second plans = %#v, want assign plan retained", secondPlans)
+	}
+	churnToken := fmt.Sprintf(":transition:provider-missing-%d", retryID)
+	if strings.Contains(secondAssign.IdempotencyKey, churnToken) || secondAssign.Parameters[bgpTrapTransitionParam] == fmt.Sprintf("provider-missing-%d", retryID) {
+		t.Fatalf("second assign = %q %#v, stale inventory must not create a new retry transition from action %d", secondAssign.IdempotencyKey, secondAssign.Parameters, retryID)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	if status["phase"] != status["samConvergencePhase"] {
+		t.Fatalf("phase = %v, samConvergencePhase = %v; top-level phase should mirror SAM convergence", status["phase"], status["samConvergencePhase"])
+	}
+}
+
 func TestControllerBGPModeRouteTableDoesNotCaptureRouterSelfOrLocalHome(t *testing.T) {
 	now := time.Date(2026, 6, 9, 23, 0, 0, 0, time.UTC)
 	store := testStore(t, now)

@@ -563,6 +563,22 @@ func importApprovedAction(t *testing.T, plan *dynamicconfig.ActionPlan, source s
 	return 0, fmt.Errorf("imported action %q not found", plan.IdempotencyKey)
 }
 
+func seedSucceededActionPlan(t *testing.T, store *routerstate.SQLiteStore, plan *dynamicconfig.ActionPlan, source string, at time.Time) int64 {
+	t.Helper()
+	id, err := importApprovedAction(t, plan, source, store, at.Add(-time.Second))
+	if err != nil {
+		t.Fatalf("importApprovedAction: %v", err)
+	}
+	claimed, err := store.BeginActionExecution(id, at.Add(-500*time.Millisecond))
+	if err != nil || !claimed {
+		t.Fatalf("BeginActionExecution: claimed=%v err=%v", claimed, err)
+	}
+	if err := store.MarkActionResult(id, routerstate.ActionSucceeded, "ok", "", nil, at); err != nil {
+		t.Fatalf("MarkActionResult: %v", err)
+	}
+	return id
+}
+
 func seedSucceededBGPCaptureAction(t *testing.T, store *routerstate.SQLiteStore, providerRef, nicRef, holder, address, action string, epoch int64, at time.Time) {
 	t.Helper()
 	_ = epoch

@@ -31,6 +31,7 @@ type bgpDeliveryPlannerInput struct {
 	ObservedSelfIPs      map[string]bool
 	ObservedSelfCaptures map[string]bool
 	ObservedSelfIPsOK    bool
+	ObservedSelfIPsAt    time.Time
 	ForwardingObserved   bool
 	ForwardingEnabled    bool
 	ForwardingObservedAt time.Time
@@ -277,7 +278,7 @@ func planCaptureActionPlans(in bgpDeliveryPlannerInput, candidates map[string]bg
 	if in.Self.Capture.Type != "provider-secondary-ip" {
 		return nil, nil
 	}
-	return bgpProviderActionPlans(in.PoolName, in.Self.NodeRef, in.Spec, candidates, in.PreviousPlans, in.Profiles, in.ActionJournal, in.ObservedSelfIPs, in.ObservedSelfIPsOK, in.ForwardingObserved, in.ForwardingEnabled, in.ForwardingObservedAt, in.SuppressDeprovision, in.Now)
+	return bgpProviderActionPlans(in.PoolName, in.Self.NodeRef, in.Spec, candidates, in.PreviousPlans, in.Profiles, in.ActionJournal, in.ObservedSelfIPs, in.ObservedSelfIPsOK, in.ObservedSelfIPsAt, in.ForwardingObserved, in.ForwardingEnabled, in.ForwardingObservedAt, in.SuppressDeprovision, in.Now)
 }
 
 func decisionsByAddress(decisions []ownershipDecision) map[string]ownershipDecision {
