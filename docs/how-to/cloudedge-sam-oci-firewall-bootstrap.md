@@ -2,9 +2,9 @@
 
 ![Diagram showing OCI Ubuntu guest firewall defaults blocking WireGuard and SAM forwarding, required bootstrap allowances, and routerctl doctor checks](/img/diagrams/how-to-cloudedge-sam-oci-firewall-bootstrap.png)
 
-> Experimental (CloudEdge SAM). This is **host bootstrap / provider-image
-> behavior**, not a routerd dataplane concern. It applies to OCI Canonical Ubuntu
-> images used as SAM routers.
+> Experimental (CloudEdge SAM). This documents **provider-image host firewall
+> behavior** seen on OCI Canonical Ubuntu images used as SAM routers, and the
+> routerd-owned allowances that must converge on a clean host.
 
 ## Symptom
 
@@ -24,25 +24,33 @@ also permit the SAM paths.
 
 ## Required allowances (guest OS)
 
-On each OCI SAM router, ensure the host firewall permits:
+On each OCI SAM router, the host firewall must permit:
 
 - **inbound `UDP/51820`** to the `wg-hybrid` WireGuard listener;
 - **`FORWARD`** between the OCI VNIC interface (e.g. `ens3`) and `wg-hybrid` in both
   directions.
 
-Express these declaratively in the router config as part of host bootstrap (the
-same way other "router prerequisites" are declared so a clean host proves them),
-rather than relying on ad-hoc `iptables` rules that do not survive a rebuild.
+`WireGuardInterface.spec.listenPort` is routerd-owned on Linux: the
+`WireGuardInterface` controller ensures an `INPUT` accept rule for that UDP
+port and reports the result in `WireGuardInterface.status.hostFirewall`.
+
+Forwarding allowances remain path-specific. For managed capture paths,
+`RemoteAddressClaim` owns the capture-interface-to-tunnel `FORWARD` opening
+that it needs. Until the full CloudEdge SAM path is green on clean OCI hosts,
+keep `routerctl doctor hybrid` in the acceptance gate so image-level
+reject-all `FORWARD` rules are detected instead of becoming a silent dataplane
+failure.
 
 ## Diagnosing it
 
 `routerctl doctor hybrid` surfaces guest-firewall reject-all `FORWARD`/`INPUT`
-patterns that would block the WireGuard / SAM paths, so a missing allowance is
-reported rather than appearing as a silent "no handshake". Run it on the OCI router
-after deploy:
+patterns that would block the WireGuard / SAM paths. `routerctl describe
+WireGuardInterface/<name>` also shows whether the listen-port opening was
+applied through `status.hostFirewall`. Run both on the OCI router after deploy:
 
 ```
 routerctl doctor hybrid
+routerctl describe WireGuardInterface/wg-hybrid
 ```
 
 If the WireGuard endpoint shows no handshake while the peer is sending keepalives,

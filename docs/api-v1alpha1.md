@@ -652,7 +652,7 @@ and fields outside the target kind's `provides` set.
 | `VXLANTunnel` | `ifname` (string), `phase` (string), `vni` (int) |
 | `VirtualAddress` | `address` (string), `dryRun` (bool), `hostname` (string), `ifname` (string), `phase` (string), `priority` (int), `role` (string), `virtualRouterID` (int) |
 | `WebConsole` | `listenAddress` (string), `phase` (string), `port` (int) |
-| `WireGuardInterface` | `fwmark` (int), `listenPort` (int), `peerCount` (int), `peersFrom` (objectList), `pendingSources` (stringList), `phase` (string), `publicKey` (string), `selfNodeRef` (string) |
+| `WireGuardInterface` | `fwmark` (int), `hostFirewall` (object), `listenPort` (int), `peerCount` (int), `peersFrom` (objectList), `pendingSources` (stringList), `phase` (string), `publicKey` (string), `selfNodeRef` (string) |
 | `WireGuardPeer` | `handshakeAgeSeconds` (int), `latestEndpoint` (string), `latestHandshake` (timestamp), `phase` (string), `transferRxBytes` (int), `transferTxBytes` (int) |
 
 ## Firewall
