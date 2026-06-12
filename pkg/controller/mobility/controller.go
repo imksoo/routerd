@@ -348,6 +348,8 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 	for key, value := range ownershipResolverStatus(ownershipDecisions) {
 		status[key] = value
 	}
+	osCaptureExpected := mobilityMemberExpectsLocalOSCapture(self, spec) &&
+		(len(delivery.CaptureCandidates) > 0 || len(actionPlans) > 0 || delivery.ProviderCapturedPaths > 0)
 	for key, value := range samConvergenceStatusFields(samConvergenceInput{
 		Status:                        status,
 		DesiredBGPPaths:               delivery.Paths,
@@ -363,7 +365,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		ProviderDiscoveryRequired:     strings.EqualFold(strings.TrimSpace(self.OwnershipDiscovery.Mode), "provider-private-ip"),
 		ProviderDiscoveryPhase:        statusMapString(currentStatus, "discoveryPhase"),
 		ProviderDiscoveryReason:       statusMapString(currentStatus, "discoveryReason"),
-		OSCaptureExpected:             self.Capture.Type == "provider-secondary-ip" && self.Capture.ConfigureOSAddress && (len(delivery.CaptureCandidates) > 0 || len(actionPlans) > 0 || delivery.ProviderCapturedPaths > 0),
+		OSCaptureExpected:             osCaptureExpected,
 		OSCaptureObserved:             c.providerSecondaryOSCaptureReflected(res.Metadata.Name, captureConvergenceAddresses(delivery)),
 		ForwardingObserved:            forwardingObserved,
 		ForwardingEnabled:             forwardingEnabled,
@@ -394,6 +396,17 @@ type samConvergenceInput struct {
 	ForwardingObserved            bool
 	ForwardingEnabled             bool
 	ObservedAt                    time.Time
+}
+
+func mobilityMemberExpectsLocalOSCapture(member memberPlanInfo, spec api.MobilityPoolSpec) bool {
+	deliveryMode := strings.TrimSpace(member.Delivery.Mode)
+	if deliveryMode == "" {
+		deliveryMode = strings.TrimSpace(spec.DeliveryPolicy.Mode)
+	}
+	return sam.ProviderSecondaryInstallsLocalOSAddress(api.RemoteAddressClaimSpec{
+		Capture:  member.Capture,
+		Delivery: api.AddressDelivery{Mode: deliveryMode},
+	})
 }
 
 func withSAMConvergenceBlocked(status map[string]any, reason string, observedAt time.Time) map[string]any {
