@@ -6,10 +6,14 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/controlapi"
+	controllerchain "github.com/imksoo/routerd/pkg/controller/chain"
 	"github.com/imksoo/routerd/pkg/hostdeps"
+	"github.com/imksoo/routerd/pkg/platform"
+	"github.com/imksoo/routerd/pkg/resourcequery"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -111,7 +115,11 @@ func serveInspectionResources(router *api.Router, store *routerstate.SQLiteStore
 	if err != nil {
 		return nil, err
 	}
-	selected := selectInspectionResources(inspectionResources(router), kind, name)
+	resources, err := effectiveInspectionResources(router, store, time.Now().UTC())
+	if err != nil {
+		return nil, err
+	}
+	selected := selectInspectionResources(resources, kind, name)
 	if len(selected) == 0 {
 		return nil, fmt.Errorf("%w: %s not found", controlapi.ErrBadRequest, target)
 	}
@@ -162,6 +170,25 @@ func inspectionResources(router *api.Router) []api.Resource {
 	resources := append([]api.Resource(nil), router.Spec.Resources...)
 	resources = appendMissingInspectionResources(resources, hostdeps.DerivedPackageResources(router)...)
 	return resources
+}
+
+func effectiveInspectionResources(router *api.Router, store *routerstate.SQLiteStore, now time.Time) ([]api.Resource, error) {
+	if router == nil {
+		return nil, nil
+	}
+	if store == nil {
+		return inspectionResources(router), nil
+	}
+	effective := resourcequery.FilterRouterByWhen(router, store)
+	routers, err := controllerchain.BuildDynamicRouteSAMObjectStatusRouters(effective, store, now.UTC(), platform.CurrentOS())
+	if err != nil {
+		return nil, err
+	}
+	var resources []api.Resource
+	for _, candidate := range routers {
+		resources = appendMissingInspectionResources(resources, inspectionResources(candidate)...)
+	}
+	return resources, nil
 }
 
 func appendMissingInspectionResources(resources []api.Resource, additions ...api.Resource) []api.Resource {
@@ -246,7 +273,11 @@ func resourcePhaseProbe(router *api.Router, store *routerstate.SQLiteStore, kind
 	if router == nil {
 		return []controlapi.ProbeCheck{{Name: kind, Status: "fail", Detail: "router config unavailable"}}
 	}
-	resources := selectInspectionResources(inspectionResources(router), kind, name)
+	resources, err := effectiveInspectionResources(router, store, time.Now().UTC())
+	if err != nil {
+		return []controlapi.ProbeCheck{{Name: kind, Status: "fail", Detail: err.Error()}}
+	}
+	resources = selectInspectionResources(resources, kind, name)
 	if len(resources) == 0 {
 		return []controlapi.ProbeCheck{{Name: kind, Status: "fail", Detail: "resource not found"}}
 	}
