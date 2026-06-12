@@ -380,16 +380,21 @@ func (c SAMController) reconcileStatuses(targetOS platform.OS, assignResults map
 					}
 				}
 			} else if err == nil && strings.TrimSpace(spec.Capture.Type) == "provider-secondary-ip" {
-				if spec.Capture.ConfigureOSAddress {
+				localOSAddress := sam.ProviderSecondaryInstallsLocalOSAddress(spec)
+				if spec.Capture.ConfigureOSAddress || strings.TrimSpace(spec.Delivery.Mode) == "bgp" {
 					if block, blocked := providerBlocks[claim.Metadata.Name]; blocked {
 						status["phase"] = "Degraded"
 						status["reason"] = block.reason
 						status["captureStatus"] = sam.CaptureStatusBlocked
 						status["cloudClaimPhase"] = sam.CloudClaimPending
-						status["osCapturePhase"] = sam.OSCaptureMissing
+						if localOSAddress {
+							status["osCapturePhase"] = sam.OSCaptureMissing
+						} else {
+							status["osCapturePhase"] = sam.OSCaptureNotApplicable
+						}
 						status["advertisementGatePhase"] = sam.AdvertisementGateBlocked
 						status["samConvergencePhase"] = sam.SAMConvergenceDegraded
-						status["blockingReasons"] = []string{"provider ownership not confirmed for provider-secondary-ip capture; OS address not installed"}
+						status["blockingReasons"] = []string{"provider ownership not confirmed for provider-secondary-ip capture"}
 						status["captureProviderOwnership"] = map[string]any{
 							"address":     firstNonEmpty(block.address, strings.TrimSpace(spec.Address)),
 							"expectedRef": strings.TrimSpace(spec.Capture.NICRef),
@@ -397,51 +402,66 @@ func (c SAMController) reconcileStatuses(targetOS platform.OS, assignResults map
 							"confirmed":   false,
 							"reason":      block.reason,
 						}
-						status["captureOSAddressPresence"] = map[string]any{
-							"address":   firstNonEmpty(block.address, strings.TrimSpace(spec.Address)),
-							"interface": block.ifname,
-							"enforced":  false,
-							"blocked":   true,
-							"reason":    block.reason,
+						if localOSAddress {
+							status["captureOSAddressPresence"] = map[string]any{
+								"address":   firstNonEmpty(block.address, strings.TrimSpace(spec.Address)),
+								"interface": block.ifname,
+								"enforced":  false,
+								"blocked":   true,
+								"reason":    block.reason,
+							}
 						}
 						if err := c.Store.SaveObjectStatus(api.HybridAPIVersion, "RemoteAddressClaim", claim.Metadata.Name, status); err != nil {
 							return err
 						}
 						continue
 					}
-					result := assignResults[claim.Metadata.Name]
-					if result.ifname == "" {
-						aliases := sam.CaptureInterfaceAliases(c.Router)
-						result.ifname = sam.ResolveCaptureInterface(strings.TrimSpace(spec.Capture.Interface), aliases)
-					}
-					status["captureOSAddressPresence"] = map[string]any{
-						"address":            firstNonEmpty(result.address, strings.TrimSpace(spec.Address)),
-						"interface":          result.ifname,
-						"enforced":           result.enforced,
-						"lastReconcileAdded": result.addedThisReconcile,
-					}
-					if result.lastError != "" {
-						status["captureOSAddressPresence"].(map[string]any)["lastError"] = result.lastError
-					}
-					if route, ok := returnRouteResults[claim.Metadata.Name]; ok {
+					if localOSAddress {
+						result := assignResults[claim.Metadata.Name]
+						if result.ifname == "" {
+							aliases := sam.CaptureInterfaceAliases(c.Router)
+							result.ifname = sam.ResolveCaptureInterface(strings.TrimSpace(spec.Capture.Interface), aliases)
+						}
+						status["captureOSAddressPresence"] = map[string]any{
+							"address":            firstNonEmpty(result.address, strings.TrimSpace(spec.Address)),
+							"interface":          result.ifname,
+							"enforced":           result.enforced,
+							"lastReconcileAdded": result.addedThisReconcile,
+						}
+						if result.lastError != "" {
+							status["captureOSAddressPresence"].(map[string]any)["lastError"] = result.lastError
+						}
+						if route, ok := returnRouteResults[claim.Metadata.Name]; ok {
+							note := map[string]any{
+								"source":      route.source,
+								"destination": route.destination,
+								"interface":   route.ifname,
+								"table":       route.table,
+								"priority":    route.priority,
+								"metric":      route.metric,
+								"enforced":    route.enforced,
+							}
+							if route.lastError != "" {
+								note["lastError"] = route.lastError
+							}
+							status["captureReturnPolicyRoute"] = note
+						}
+					} else {
+						result := deassignResults[claim.Metadata.Name]
 						note := map[string]any{
-							"source":      route.source,
-							"destination": route.destination,
-							"interface":   route.ifname,
-							"table":       route.table,
-							"priority":    route.priority,
-							"metric":      route.metric,
-							"enforced":    route.enforced,
+							"address":                firstNonEmpty(result.address, strings.TrimSpace(spec.Address)),
+							"enforced":               result.enforced,
+							"lastReconcileRemoved":   result.removedThisReconcile,
+							"reason":                 "forwarding-capture-not-local-owner",
+							"localOSAddressExpected": false,
 						}
-						if route.lastError != "" {
-							note["lastError"] = route.lastError
+						if result.ifname != "" {
+							note["interface"] = result.ifname
 						}
-						status["captureReturnPolicyRoute"] = note
-					}
-					if paths := forwardPathResults[claim.Metadata.Name]; len(paths) > 0 {
-						notes := samForwardPathStatusNotes(paths)
-						status["captureForwardingPaths"] = notes
-						status["captureForwardingPath"] = notes[0]
+						if result.lastError != "" {
+							note["lastError"] = result.lastError
+						}
+						status["captureOSAddressAbsence"] = note
 					}
 				} else {
 					result := deassignResults[claim.Metadata.Name]
@@ -461,6 +481,11 @@ func (c SAMController) reconcileStatuses(targetOS platform.OS, assignResults map
 						note["lastError"] = result.lastError
 					}
 					status["captureOSAddressAbsence"] = note
+				}
+				if paths := forwardPathResults[claim.Metadata.Name]; len(paths) > 0 {
+					notes := samForwardPathStatusNotes(paths)
+					status["captureForwardingPaths"] = notes
+					status["captureForwardingPath"] = notes[0]
 				}
 			}
 		}

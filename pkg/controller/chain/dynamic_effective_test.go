@@ -272,7 +272,7 @@ func TestBGPMobilityClaimPreservesProviderSecondaryOSCaptureIntent(t *testing.T)
 	}
 }
 
-func TestDynamicRouteSAMViewDerivesProviderSecondaryBGPClaimForOSCapture(t *testing.T) {
+func TestDynamicRouteSAMViewDerivesProviderSecondaryBGPClaimForForwardingCapture(t *testing.T) {
 	startup := bgpProxyARPStartup(false)
 	for i, resource := range startup.Spec.Resources {
 		switch {
@@ -307,14 +307,14 @@ func TestDynamicRouteSAMViewDerivesProviderSecondaryBGPClaimForOSCapture(t *test
 		t.Fatalf("effective claims = %#v, want one provider-secondary-ip claim", claims)
 	}
 	if claims[0].Address != "10.0.1.11/32" || claims[0].Capture.Type != "provider-secondary-ip" || !claims[0].Capture.ConfigureOSAddress || claims[0].Capture.Interface != "ens5" {
-		t.Fatalf("claim = %#v, want provider-secondary-ip OS capture on ens5", claims[0])
+		t.Fatalf("claim = %#v, want provider-secondary-ip forwarding capture on ens5", claims[0])
 	}
 	applier := &fakeSAMApplier{}
 	controller := SAMController{Router: view.EffectiveRouter, Store: store, Lowerings: view.SAMLowerings, OS: platform.OSLinux, Applier: applier}
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("SAM reconcile: %v", err)
 	}
-	assertSAMCalls(t, applier.calls, []string{"assign:10.0.1.11/32@ens5"})
+	assertSAMCalls(t, applier.calls, []string{"deassign:10.0.1.11/32"})
 }
 
 func TestDynamicRouteSAMViewProviderSecondaryBGPClaimInstallsSAMForwardPath(t *testing.T) {
@@ -382,10 +382,17 @@ func TestDynamicRouteSAMViewProviderSecondaryBGPClaimInstallsSAMForwardPath(t *t
 		t.Fatalf("SAM reconcile: %v", err)
 	}
 	assertSAMCalls(t, applier.calls, []string{
-		"assign:10.0.1.44/32@ens5",
+		"deassign:10.0.1.44/32",
 		"forward-path:ens5<->samt-onprem-aws",
 	})
 	status := store.ObjectStatus(api.HybridAPIVersion, "RemoteAddressClaim", "bgp-cloudedge-10-0-1-44")
+	if presence := status["captureOSAddressPresence"]; presence != nil {
+		t.Fatalf("captureOSAddressPresence = %#v, want absent for BGP forwarding capture", presence)
+	}
+	absence, ok := status["captureOSAddressAbsence"].(map[string]any)
+	if !ok || absence["localOSAddressExpected"] != false {
+		t.Fatalf("captureOSAddressAbsence = %#v", status["captureOSAddressAbsence"])
+	}
 	paths, ok := status["captureForwardingPaths"].([]map[string]any)
 	if !ok || len(paths) != 1 {
 		t.Fatalf("captureForwardingPaths = %#v, want one SAM tunnel path", status["captureForwardingPaths"])
@@ -437,14 +444,14 @@ func TestDynamicRouteSAMViewKeepsProviderSecondaryClaimFromConfirmedCaptureStatu
 		t.Fatalf("effective claims = %#v, want confirmed provider capture claim", claims)
 	}
 	if claims[0].Address != "10.0.1.44/32" || claims[0].Capture.Type != "provider-secondary-ip" || !claims[0].Capture.ConfigureOSAddress {
-		t.Fatalf("claim = %#v, want confirmed provider-secondary-ip OS capture", claims[0])
+		t.Fatalf("claim = %#v, want confirmed provider-secondary-ip forwarding capture", claims[0])
 	}
 	applier := &fakeSAMApplier{}
 	controller := SAMController{Router: view.EffectiveRouter, Store: store, Lowerings: view.SAMLowerings, OS: platform.OSLinux, Applier: applier}
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("SAM reconcile: %v", err)
 	}
-	assertSAMCalls(t, applier.calls, []string{"assign:10.0.1.44/32@ens5"})
+	assertSAMCalls(t, applier.calls, []string{"deassign:10.0.1.44/32"})
 }
 
 func TestDynamicRouteSAMViewBGPProxyARPExcludesLocalAddresses(t *testing.T) {

@@ -387,7 +387,7 @@ func TestPlanCaptureProviderSecondaryIPConfigureOSAddressTrueAssignsOSAddress(t 
 	}
 }
 
-func TestPlanCaptureProviderSecondaryIPBGPDeliveryAllowsForwardToTunnels(t *testing.T) {
+func TestPlanCaptureProviderSecondaryIPBGPDeliveryForwardsWithoutLocalOSAddress(t *testing.T) {
 	router := testRouter()
 	router.Spec.Resources = router.Spec.Resources[:4]
 	router.Spec.Resources = append(router.Spec.Resources,
@@ -413,8 +413,11 @@ func TestPlanCaptureProviderSecondaryIPBGPDeliveryAllowsForwardToTunnels(t *test
 	if err != nil {
 		t.Fatalf("PlanCapture: %v", err)
 	}
-	if !hasAction(actions, "assign-os-address", "", "10.0.1.122/32", "ens3") {
-		t.Fatalf("actions missing OS address assign: %#v", actions)
+	if hasAction(actions, "assign-os-address", "", "10.0.1.122/32", "ens3") {
+		t.Fatalf("BGP forwarding capture must not install a local OS address: %#v", actions)
+	}
+	if !hasAction(actions, "deassign-os-address", "", "10.0.1.122/32", "") {
+		t.Fatalf("actions missing OS address deassign: %#v", actions)
 	}
 	if !hasAction(actions, "forward-path", "", "", "ens3") {
 		t.Fatalf("actions missing forward-path: %#v", actions)

@@ -254,7 +254,7 @@ func defaultDeliveryPreferredSource(resource api.Resource, spec api.RemoteAddres
 	if source := strings.TrimSpace(resource.Metadata.Annotations[DeliveryPreferredSourceAnnotation]); source != "" {
 		return source
 	}
-	if strings.TrimSpace(spec.Capture.Type) != "provider-secondary-ip" || !spec.Capture.ConfigureOSAddress {
+	if !ProviderSecondaryInstallsLocalOSAddress(spec) {
 		return ""
 	}
 	prefix, err := netip.ParsePrefix(cidr)
@@ -262,6 +262,12 @@ func defaultDeliveryPreferredSource(resource api.Resource, spec api.RemoteAddres
 		return ""
 	}
 	return prefix.Addr().String()
+}
+
+func ProviderSecondaryInstallsLocalOSAddress(spec api.RemoteAddressClaimSpec) bool {
+	return strings.TrimSpace(spec.Capture.Type) == "provider-secondary-ip" &&
+		spec.Capture.ConfigureOSAddress &&
+		strings.TrimSpace(spec.Delivery.Mode) != "bgp"
 }
 
 func PlanCapture(router *api.Router, targetOS platform.OS) ([]CaptureAction, error) {
@@ -307,22 +313,29 @@ func PlanCaptureWithOptions(router *api.Router, targetOS platform.OS, opts PlanO
 		addForwarding()
 		if captureType != "proxy-arp" {
 			if captureType == "provider-secondary-ip" {
-				if spec.Capture.ConfigureOSAddress {
+				localOSAddress := ProviderSecondaryInstallsLocalOSAddress(spec)
+				bgpDelivery := strings.TrimSpace(spec.Delivery.Mode) == "bgp"
+				if spec.Capture.ConfigureOSAddress || bgpDelivery {
 					iface := ResolveCaptureInterface(strings.TrimSpace(spec.Capture.Interface), interfaceAliases)
 					if iface == "" {
-						return nil, fmt.Errorf("%s spec.capture.interface is required when provider-secondary-ip configureOSAddress is true", resource.ID())
+						return nil, fmt.Errorf("%s spec.capture.interface is required for provider-secondary-ip capture", resource.ID())
 					}
 					if opts.ProviderOwnershipConfirmed != nil && !opts.ProviderOwnershipConfirmed(resource.Metadata.Name, spec.Capture, address) {
 						actions = append(actions, CaptureAction{Kind: "provider-ownership-blocked", ClaimName: resource.Metadata.Name, Address: address, Interface: iface})
 						continue
 					}
-					actions = append(actions, CaptureAction{Kind: "assign-os-address", ClaimName: resource.Metadata.Name, Address: address, Interface: iface})
-					if action, ok, err := returnPolicyRouteAction(resource, spec, address, peers, domains); err != nil {
-						return nil, err
-					} else if ok {
-						actions = append(actions, action)
-						actions = append(actions, CaptureAction{Kind: "forward-path", ClaimName: resource.Metadata.Name, Interface: iface, PeerInterface: action.Interface})
-					} else if strings.TrimSpace(spec.Delivery.Mode) == "bgp" {
+					if localOSAddress {
+						actions = append(actions, CaptureAction{Kind: "assign-os-address", ClaimName: resource.Metadata.Name, Address: address, Interface: iface})
+						if action, ok, err := returnPolicyRouteAction(resource, spec, address, peers, domains); err != nil {
+							return nil, err
+						} else if ok {
+							actions = append(actions, action)
+							actions = append(actions, CaptureAction{Kind: "forward-path", ClaimName: resource.Metadata.Name, Interface: iface, PeerInterface: action.Interface})
+						}
+					} else {
+						actions = append(actions, CaptureAction{Kind: "deassign-os-address", ClaimName: resource.Metadata.Name, Address: address})
+					}
+					if bgpDelivery {
 						for _, tunnelIface := range bgpDeliveryForwardInterfaces(router) {
 							actions = append(actions, CaptureAction{Kind: "forward-path", ClaimName: resource.Metadata.Name, Interface: iface, PeerInterface: tunnelIface})
 						}
@@ -370,10 +383,7 @@ func bgpDeliveryForwardInterfaces(router *api.Router) []string {
 }
 
 func returnPolicyRouteAction(resource api.Resource, spec api.RemoteAddressClaimSpec, address string, peers map[string]api.OverlayPeerSpec, domains map[string]string) (CaptureAction, bool, error) {
-	if strings.TrimSpace(spec.Capture.Type) != "provider-secondary-ip" || !spec.Capture.ConfigureOSAddress {
-		return CaptureAction{}, false, nil
-	}
-	if strings.TrimSpace(spec.Delivery.Mode) == "bgp" {
+	if !ProviderSecondaryInstallsLocalOSAddress(spec) {
 		return CaptureAction{}, false, nil
 	}
 	domainName := normalizeRefName(spec.DomainRef, "AddressMobilityDomain")

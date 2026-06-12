@@ -198,11 +198,18 @@ func TestSAMControllerInstallsProviderSecondaryBGPForwardPaths(t *testing.T) {
 		t.Fatalf("Reconcile: %v", err)
 	}
 	assertSAMCalls(t, applier.calls, []string{
-		"assign:10.77.60.46/32@ens3",
+		"deassign:10.77.60.46/32",
 		"forward-path:ens3<->samt-a",
 		"forward-path:ens3<->samt-b",
 	})
 	status := store.ObjectStatus(api.HybridAPIVersion, "RemoteAddressClaim", "app")
+	if presence := status["captureOSAddressPresence"]; presence != nil {
+		t.Fatalf("captureOSAddressPresence = %#v, want absent for BGP forwarding capture", presence)
+	}
+	absence, ok := status["captureOSAddressAbsence"].(map[string]any)
+	if !ok || absence["localOSAddressExpected"] != false {
+		t.Fatalf("captureOSAddressAbsence = %#v", status["captureOSAddressAbsence"])
+	}
 	if _, ok := status["captureReturnPolicyRoute"]; ok {
 		t.Fatalf("BGP delivery must not install route-mode return policy route: %#v", status["captureReturnPolicyRoute"])
 	}
