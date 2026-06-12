@@ -1074,16 +1074,17 @@ type DNSResolverListenAddressSourceSpec struct {
 }
 
 type DNSResolverSourceSpec struct {
-	Name              string                     `yaml:"name,omitempty" json:"name,omitempty"`
-	Kind              string                     `yaml:"kind" json:"kind" jsonschema:"enum=zone,enum=forward,enum=upstream"`
-	Match             []string                   `yaml:"match" json:"match"`
-	ZoneRef           []string                   `yaml:"zoneRef,omitempty" json:"zoneRef,omitempty"`
-	Upstreams         []string                   `yaml:"upstreams,omitempty" json:"upstreams,omitempty"`
-	UpstreamFrom      []StatusValueSourceSpec    `yaml:"upstreamFrom,omitempty" json:"upstreamFrom,omitempty"`
-	ViaInterface      string                     `yaml:"viaInterface,omitempty" json:"viaInterface,omitempty"`
-	BootstrapResolver []string                   `yaml:"bootstrapResolver,omitempty" json:"bootstrapResolver,omitempty"`
-	DNSSECValidate    bool                       `yaml:"dnssecValidate,omitempty" json:"dnssecValidate,omitempty"`
-	Healthcheck       DNSResolverHealthcheckSpec `yaml:"healthcheck,omitempty" json:"healthcheck,omitempty"`
+	Name                  string                     `yaml:"name,omitempty" json:"name,omitempty"`
+	Kind                  string                     `yaml:"kind" json:"kind" jsonschema:"enum=zone,enum=forward,enum=upstream"`
+	Match                 []string                   `yaml:"match" json:"match"`
+	ZoneRef               []string                   `yaml:"zoneRef,omitempty" json:"zoneRef,omitempty"`
+	Upstreams             []string                   `yaml:"upstreams,omitempty" json:"upstreams,omitempty"`
+	UpstreamFrom          []StatusValueSourceSpec    `yaml:"upstreamFrom,omitempty" json:"upstreamFrom,omitempty"`
+	ViaInterface          string                     `yaml:"viaInterface,omitempty" json:"viaInterface,omitempty"`
+	BootstrapResolver     []string                   `yaml:"bootstrapResolver,omitempty" json:"bootstrapResolver,omitempty"`
+	BootstrapResolverFrom []StatusValueSourceSpec    `yaml:"bootstrapResolverFrom,omitempty" json:"bootstrapResolverFrom,omitempty"`
+	DNSSECValidate        bool                       `yaml:"dnssecValidate,omitempty" json:"dnssecValidate,omitempty"`
+	Healthcheck           DNSResolverHealthcheckSpec `yaml:"healthcheck,omitempty" json:"healthcheck,omitempty"`
 }
 
 type DNSForwarderSpec struct {
@@ -1104,6 +1105,7 @@ type DNSUpstreamSpec struct {
 	Path            string                  `yaml:"path,omitempty" json:"path,omitempty"`
 	TLSName         string                  `yaml:"tlsName,omitempty" json:"tlsName,omitempty"`
 	Bootstrap       []string                `yaml:"bootstrap,omitempty" json:"bootstrap,omitempty"`
+	BootstrapFrom   []StatusValueSourceSpec `yaml:"bootstrapFrom,omitempty" json:"bootstrapFrom,omitempty"`
 	SourceInterface string                  `yaml:"sourceInterface,omitempty" json:"sourceInterface,omitempty"`
 	When            ResourceWhenSpec        `yaml:"when,omitempty" json:"when,omitempty"`
 }

@@ -6207,6 +6207,29 @@
                         },
                         "type": "array"
                       },
+                      "bootstrapFrom": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "field": {
+                              "description": "Field defaults to phase when omitted.",
+                              "type": "string"
+                            },
+                            "optional": {
+                              "type": "boolean"
+                            },
+                            "resource": {
+                              "description": "Resource names the source resource as Kind/name and reads its status, or a router config field for supported resources.",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "resource"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
                       "path": {
                         "type": "string"
                       },
