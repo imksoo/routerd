@@ -1,0 +1,97 @@
+# yaml-language-server: $schema=https://routerd.net/schemas/routerd-config-v1alpha1.schema.json
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: azure-router
+spec:
+  resources:
+    - apiVersion: mobility.routerd.net/v1alpha1
+      kind: SAMNodeSet
+      metadata: { name: fabric }
+      spec:
+        nodes:
+          - nodeRef: onprem-router
+            site: onprem
+            role: onprem
+            routeReflector: true
+            samEndpoint: 10.99.0.1
+            wireGuard:
+              publicKey: "xN2c1gRLT/6mxVhLtg2Tq9/AekH/6GvJLGu4CgsGOgE="
+              endpoint: "203.0.113.1:51820"
+              allowedIPs: [10.99.0.1/32]
+              persistentKeepalive: 25
+          - nodeRef: azure-router
+            site: azure
+            role: cloud
+            samEndpoint: 10.99.0.3
+            wireGuard:
+              publicKey: "xQxbSWkBeoEN64n+2O3s0YTPMejjIVk3pRwh/E2W6BA="
+              endpoint: "203.0.113.3:51820"
+              allowedIPs: [10.99.0.3/32]
+              persistentKeepalive: 25
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardInterface
+      metadata: { name: wg-hybrid }
+      spec:
+        selfNodeRef: azure-router
+        privateKeyFile: /usr/local/etc/routerd/secrets/wg-hybrid.key
+        listenPort: 51820
+        mtu: 1420
+        peersFrom:
+          - resource: SAMNodeSet/fabric
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata: { name: wg-hybrid }
+      spec: { ifname: wg-hybrid, managed: false, mtu: 1420 }
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4StaticAddress
+      metadata: { name: wg-hybrid-ipv4 }
+      spec: { interface: wg-hybrid, address: 10.99.0.3/32 }
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4Route
+      metadata: { name: wg-bootstrap-onprem }
+      spec: { destination: 10.99.0.1/32, device: wg-hybrid }
+
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: Sysctl
+      metadata: { name: ipv4-forwarding }
+      spec: { key: net.ipv4.ip_forward, value: "1", runtime: true }
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: BGPRouter
+      metadata: { name: mobility-bgp }
+      spec:
+        asn: 64577
+        routerID: 10.99.0.3
+        listen: { port: 179 }
+        importPolicy:
+          allowedPrefixes: [10.77.60.0/24, 10.99.0.0/24]
+          nextHopRewrite: unchanged
+        timers: { profile: fast }
+        convergenceProfile: fast
+
+    - apiVersion: mobility.routerd.net/v1alpha1
+      kind: SAMTransportProfile
+      metadata: { name: cloudedge-transport }
+      spec:
+        selfNodeRef: azure-router
+        mode: ipip
+        encryption: wireguard
+        innerPrefix: 10.255.0.0/20
+        addressingMode: pair-stable
+        underlayInterface: wg-hybrid
+        localEndpointFrom:
+          resource: IPv4StaticAddress/wg-hybrid-ipv4
+          field: address
+        bgp:
+          routerRef: BGPRouter/mobility-bgp
+          peerASN: 64577
+          timersPreset: fast
+          importPolicy:
+            allowedPrefixes: [10.77.60.0/24]
+            nextHopRewrite: peer-address
+        peersFrom:
+          - resource: SAMPeerGroup/cloudedge-transport
