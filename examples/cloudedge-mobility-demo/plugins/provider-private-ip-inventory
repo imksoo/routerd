@@ -58,14 +58,31 @@ def opt_region(argv, region):
 def aws_cli(region, args):
     if os.environ.get("ROUTERD_PROVIDER_INVENTORY_AWS_FORCE_QUERY_API", "").strip() == "1":
         return aws_ec2_cli_compat(region, args)
-    argv = ["aws"]
+    helper = aws_helper_path()
+    argv = [helper]
     argv.extend(opt_region([], region))
     argv.extend(args)
     argv.extend(["--output", "json", "--no-cli-pager"])
-    try:
-        return run_json(argv)
-    except FileNotFoundError:
-        return aws_ec2_cli_compat(region, args)
+    return run_json(argv)
+
+
+def aws_helper_path():
+    explicit = os.environ.get("ROUTERD_PROVIDER_INVENTORY_AWS_HELPER", "").strip()
+    if explicit:
+        if os.path.isfile(explicit) and os.access(explicit, os.X_OK):
+            return explicit
+        raise FileNotFoundError("AWS inventory helper not executable: " + explicit)
+    explicit_cli = os.environ.get("ROUTERD_PROVIDER_INVENTORY_AWS_CLI_PATH", "").strip()
+    if explicit_cli:
+        if os.path.isfile(explicit_cli) and os.access(explicit_cli, os.X_OK):
+            return explicit_cli
+        raise FileNotFoundError("AWS inventory explicit CLI not executable: " + explicit_cli)
+    packaged = "/usr/local/libexec/routerd/plugins/aws-routerd-helper/bin/aws-routerd-helper"
+    if os.path.isfile(packaged) and os.access(packaged, os.X_OK):
+        return packaged
+    raise FileNotFoundError(
+        "AWS inventory helper unavailable: install aws-routerd-helper or set ROUTERD_PROVIDER_INVENTORY_AWS_HELPER"
+    )
 
 
 def aws_credentials():
