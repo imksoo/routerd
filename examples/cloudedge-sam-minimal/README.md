@@ -10,8 +10,8 @@ The first target is the transport substrate:
 - `WireGuardInterface.spec.peersFrom: SAMNodeSet/fabric` for bootstrap peers;
 - RR/onprem `SAMTransportProfile.publishPeerGroup: true`;
 - leaf/cloud `SAMTransportProfile.spec.peersFrom: SAMPeerGroup/cloudedge-transport`;
-- leaf/cloud bootstrap `IPv4Route` entries so first-contact peer-group sync
-  reaches SAM endpoints over `wg-hybrid` on a fresh host;
+- leaf/cloud bootstrap `IPv4Route` entry so first-contact peer-group sync
+  reaches the RR/onprem SAM endpoint over `wg-hybrid` on a fresh host;
 - BGP over SAMTransportProfile-generated IPIP tunnels.
 
 This does not implement first-contact WireGuard enrollment. Until ADR0015
@@ -41,10 +41,9 @@ installer: without it, a fresh cloud leaf can handshake WireGuard but still send
 peer-group HTTP sync traffic for the RR/onprem SAM endpoint through its default
 underlay route.
 
-For a multi-leaf lab, add the same kind of bootstrap route for every other
-node's `samEndpoint` in the shared `SAMNodeSet`. A 5-node Azure/AWS/OCI run
-showed that peer-group sync may probe non-RR peers before it reaches the
-publisher; if those endpoint /32 routes are missing, the probes fall back to
-the cloud VM's default route and time out even while WireGuard handshakes are
-healthy. This should become automatic pre-sync route generation, but until then
-the declarative route entries are part of the minimal working config.
+For a multi-leaf lab, the leaf still only needs the RR/onprem bootstrap route
+when the shared `SAMNodeSet` marks that node with `routeReflector: true` and a
+reachable `samEndpoint`. Peer-group sync prefers those RR endpoints before
+falling back to legacy WireGuard peer probing, so non-RR leaf `samEndpoint`
+routes can be derived later by `SAMTransportProfile` instead of being present
+before sync.
