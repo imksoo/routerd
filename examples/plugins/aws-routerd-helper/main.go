@@ -107,9 +107,16 @@ func dispatch(ctx context.Context, req cliRequest, client ec2API, out io.Writer)
 	switch strings.Join(req.Words, " ") {
 	case "ec2 describe-network-interfaces":
 		eni := req.Flags["network-interface-ids"]
+		filters, err := ec2Filters(req.Flags["filters"])
+		if err != nil {
+			return err
+		}
+		if len(splitComma(eni)) == 0 && len(filters) == 0 {
+			return errors.New("ec2 describe-network-interfaces requires --network-interface-ids or --filters")
+		}
 		resp, err := client.DescribeNetworkInterfaces(ctx, &ec2.DescribeNetworkInterfacesInput{
 			NetworkInterfaceIds: splitComma(eni),
-			Filters:             ec2Filters(req.Flags["filters"]),
+			Filters:             filters,
 		})
 		if err != nil {
 			return err
@@ -120,8 +127,12 @@ func dispatch(ctx context.Context, req cliRequest, client ec2API, out io.Writer)
 		}
 		return writeJSON(out, map[string]any{"NetworkInterfaces": items})
 	case "ec2 describe-instances":
+		filters, err := ec2Filters(req.Flags["filters"])
+		if err != nil {
+			return err
+		}
 		resp, err := client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
-			Filters: ec2Filters(req.Flags["filters"]),
+			Filters: filters,
 		})
 		if err != nil {
 			return err
@@ -255,25 +266,25 @@ func splitComma(raw string) []string {
 	return out
 }
 
-func ec2Filters(raw string) []types.Filter {
+func ec2Filters(raw string) ([]types.Filter, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return nil
+		return nil, nil
 	}
 	nameRaw, valuesRaw, ok := strings.Cut(raw, ",Values=")
 	if !ok {
-		return nil
+		return nil, fmt.Errorf("invalid --filters value %q: want Name=<name>,Values=<value>[,<value>...]", raw)
 	}
 	name, ok := strings.CutPrefix(strings.TrimSpace(nameRaw), "Name=")
 	if !ok {
-		return nil
+		return nil, fmt.Errorf("invalid --filters value %q: missing Name=", raw)
 	}
 	values := splitComma(valuesRaw)
 	name = strings.TrimSpace(name)
 	if name == "" || len(values) == 0 {
-		return nil
+		return nil, fmt.Errorf("invalid --filters value %q: filter name and values are required", raw)
 	}
-	return []types.Filter{{Name: aws.String(name), Values: values}}
+	return []types.Filter{{Name: aws.String(name), Values: values}}, nil
 }
 
 func sourceDestCheckValue(flags map[string]string) (bool, error) {
@@ -326,6 +337,10 @@ func networkInterfaceJSON(ni types.NetworkInterface) map[string]any {
 func reservationJSON(res types.Reservation) map[string]any {
 	instances := make([]map[string]any, 0, len(res.Instances))
 	for _, instance := range res.Instances {
+		stateName := ""
+		if instance.State != nil {
+			stateName = string(instance.State.Name)
+		}
 		interfaces := make([]map[string]any, 0, len(instance.NetworkInterfaces))
 		for _, ni := range instance.NetworkInterfaces {
 			interfaces = append(interfaces, map[string]any{
@@ -334,7 +349,7 @@ func reservationJSON(res types.Reservation) map[string]any {
 		}
 		instances = append(instances, map[string]any{
 			"InstanceId":        aws.ToString(instance.InstanceId),
-			"State":             map[string]any{"Name": string(instance.State.Name)},
+			"State":             map[string]any{"Name": stateName},
 			"NetworkInterfaces": interfaces,
 		})
 	}

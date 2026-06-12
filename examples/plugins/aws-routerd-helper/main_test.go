@@ -141,7 +141,10 @@ func TestDispatchDescribeInstancesOutputShape(t *testing.T) {
 }
 
 func TestEC2FiltersPreservesMultipleValues(t *testing.T) {
-	filters := ec2Filters("Name=addresses.private-ip-address,Values=10.77.60.21,10.77.60.22")
+	filters, err := ec2Filters("Name=addresses.private-ip-address,Values=10.77.60.21,10.77.60.22")
+	if err != nil {
+		t.Fatalf("ec2Filters: %v", err)
+	}
 	if len(filters) != 1 {
 		t.Fatalf("filters = %#v, want one filter", filters)
 	}
@@ -150,6 +153,51 @@ func TestEC2FiltersPreservesMultipleValues(t *testing.T) {
 	}
 	if !reflect.DeepEqual(filters[0].Values, []string{"10.77.60.21", "10.77.60.22"}) {
 		t.Fatalf("values = %#v", filters[0].Values)
+	}
+}
+
+func TestEC2FiltersRejectsMalformedValues(t *testing.T) {
+	for _, raw := range []string{
+		"Name=subnet-id",
+		"Values=subnet-a",
+		"Name=,Values=subnet-a",
+		"Name=subnet-id,Values=",
+	} {
+		if filters, err := ec2Filters(raw); err == nil {
+			t.Fatalf("ec2Filters(%q) = %#v, nil error", raw, filters)
+		}
+	}
+}
+
+func TestDescribeNetworkInterfacesRequiresBoundedTarget(t *testing.T) {
+	req, err := parseArgs([]string{"ec2", "describe-network-interfaces", "--region", "ap-northeast-1"})
+	if err != nil {
+		t.Fatalf("parseArgs: %v", err)
+	}
+	if err := dispatch(context.Background(), req, &fakeEC2{}, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "requires --network-interface-ids or --filters") {
+		t.Fatalf("dispatch error = %v, want bounded-target error", err)
+	}
+}
+
+func TestDescribeNetworkInterfacesRejectsMalformedFilter(t *testing.T) {
+	req, err := parseArgs([]string{"ec2", "describe-network-interfaces", "--filters", "Name=subnet-id", "--region", "ap-northeast-1"})
+	if err != nil {
+		t.Fatalf("parseArgs: %v", err)
+	}
+	if err := dispatch(context.Background(), req, &fakeEC2{}, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "invalid --filters value") {
+		t.Fatalf("dispatch error = %v, want invalid filter error", err)
+	}
+}
+
+func TestReservationJSONHandlesNilState(t *testing.T) {
+	body := reservationJSON(types.Reservation{Instances: []types.Instance{{InstanceId: aws.String("i-router")}}})
+	instances, ok := body["Instances"].([]map[string]any)
+	if !ok || len(instances) != 1 {
+		t.Fatalf("body = %#v", body)
+	}
+	state, ok := instances[0]["State"].(map[string]any)
+	if !ok || state["Name"] != "" {
+		t.Fatalf("state = %#v, want empty state name", instances[0]["State"])
 	}
 }
 
