@@ -795,6 +795,26 @@ func TestDoctorSAMRouteGetWarnsWhenCapturedSourceMismatches(t *testing.T) {
 	}
 }
 
+func TestDoctorSAMRouteGetAcceptsLocalClaimRoute(t *testing.T) {
+	oldRun := doctorRunDiagnosticCommand
+	defer func() { doctorRunDiagnosticCommand = oldRun }()
+	doctorRunDiagnosticCommand = func(_ context.Context, label, name string, args ...string) diagnoseCommandCheck {
+		if label != "ip route get 10.77.60.47 from 10.77.60.47" {
+			t.Fatalf("label = %q", label)
+		}
+		return diagnoseCommandCheck{
+			Name:   label,
+			OK:     true,
+			Stdout: "local 10.77.60.47 from 10.77.60.47 dev lo uid 0\n    cache <local>",
+			Output: "local 10.77.60.47 from 10.77.60.47 dev lo uid 0\n    cache <local>",
+		}
+	}
+	check := doctorSAMRouteGetCheck(context.Background(), "oci-clean", "10.77.60.47/32", "ipip-onprem", "10.77.60.47")
+	if check.Status != doctorPass {
+		t.Fatalf("check = %#v", check)
+	}
+}
+
 func TestDoctorHybridSAMProxyARPInterfaceLiveChecksStubbed(t *testing.T) {
 	oldRun := doctorRunDiagnosticCommand
 	oldOS := doctorCurrentOS

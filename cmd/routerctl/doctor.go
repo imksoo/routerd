@@ -765,6 +765,9 @@ func doctorSAMRouteGetCheck(ctx context.Context, name, address, tunnel, expected
 	command := doctorRunDiagnosticCommand(ctx, commandLabel, "ip", args...)
 	if command.OK {
 		detail := oneLine(command.Stdout)
+		if expectedSource != "" && expectedSource == ip && doctorRouteGetIsLocalClaimRoute(command.Stdout, ip) {
+			return doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: detail}
+		}
 		if expectedSource != "" && !strings.Contains(command.Stdout, "src "+expectedSource) {
 			return doctorCheck{Area: "hybrid", Name: label, Status: doctorWarn, Detail: appendDoctorDetail(detail, "expected src "+expectedSource), Remedy: "ensure the captured /32 is installed locally or set a source route/preferred source for SAM reverse dataplane"}
 		}
@@ -774,6 +777,15 @@ func doctorSAMRouteGetCheck(ctx context.Context, name, address, tunnel, expected
 		return doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: oneLine(command.Stdout)}
 	}
 	return doctorCheck{Area: "hybrid", Name: label, Status: doctorWarn, Detail: firstNonEmpty(command.Error, oneLine(command.Output), "route lookup failed"), Remedy: "inspect Linux route selection for the SAM claim address"}
+}
+
+func doctorRouteGetIsLocalClaimRoute(output, ip string) bool {
+	output = strings.TrimSpace(output)
+	ip = strings.TrimSpace(ip)
+	if output == "" || ip == "" {
+		return false
+	}
+	return strings.Contains(output, "local "+ip) && strings.Contains(output, " dev lo")
 }
 
 func doctorSAMDeliveryRouteCheck(ctx context.Context, name, routeName, address, tunnel string) doctorCheck {
