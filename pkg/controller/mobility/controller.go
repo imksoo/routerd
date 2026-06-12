@@ -453,12 +453,13 @@ func samConvergenceStatusFields(in samConvergenceInput) map[string]any {
 	}
 
 	cloudClaimPhase := sam.CloudClaimNotApplicable
-	captureExpected := in.CaptureCandidates > 0 || in.GeneratedActions > 0 || in.ProviderCapturedPaths > 0
+	confirmedProviderCaptures := confirmedProviderCaptureCount(in.Status)
+	captureExpected := in.CaptureCandidates > 0 || in.GeneratedActions > 0 || in.ProviderCapturedPaths > 0 || confirmedProviderCaptures > 0
 	switch {
 	case strings.EqualFold(providerActionPhase, "Failed"):
 		cloudClaimPhase = sam.CloudClaimFailed
 		blocking = append(blocking, "provider action failed")
-	case in.ProviderCapturedPaths > 0:
+	case in.ProviderCapturedPaths > 0 || confirmedProviderCaptures > 0:
 		cloudClaimPhase = sam.CloudClaimClaimed
 	case captureExpected:
 		cloudClaimPhase = sam.CloudClaimPending
@@ -542,6 +543,24 @@ func samConvergenceStatusFields(in samConvergenceInput) map[string]any {
 		BlockingReasons:        cleanStrings(blocking),
 		LastObservedAt:         in.ObservedAt.Format(time.RFC3339Nano),
 	}.StatusFields()
+}
+
+func confirmedProviderCaptureCount(status map[string]any) int {
+	raw, ok := status["ownershipResolverDecisions"].([]any)
+	if !ok {
+		return 0
+	}
+	count := 0
+	for _, item := range raw {
+		decision, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		if strings.TrimSpace(fmt.Sprint(decision["captureState"])) == captureStateConfirmed {
+			count++
+		}
+	}
+	return count
 }
 
 func missingDesiredBGPPathPrefixes(paths []bgpdaemon.AppliedPath, installed map[string][]string, accepted map[string]bool) []string {
