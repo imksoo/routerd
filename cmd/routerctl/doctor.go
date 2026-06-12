@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -620,12 +621,54 @@ func (r doctorRunner) doctorSAMLiveChecks(name string, spec api.RemoteAddressCla
 		checks = append(checks, doctorSAMRPFilterCheck(ctx, name, iface))
 	}
 	if strings.TrimSpace(spec.Capture.Type) == "provider-secondary-ip" {
+		checks = append(checks, r.doctorSAMProviderOwnershipCheck(name, spec))
 		if !spec.Capture.ConfigureOSAddress {
 			checks = append(checks, doctorSAMLocalAddressAbsentCheck(ctx, name, address))
 		}
 		checks = append(checks, doctorSAMForwardPolicyCheck(ctx, name, strings.TrimSpace(spec.Capture.Interface), tunnel, address))
 	}
 	return checks
+}
+
+func (r doctorRunner) doctorSAMProviderOwnershipCheck(name string, spec api.RemoteAddressClaimSpec) doctorCheck {
+	label := "RemoteAddressClaim/" + name + " provider ownership"
+	providerRef := strings.TrimSpace(spec.Capture.ProviderRef)
+	nicRef := strings.TrimSpace(spec.Capture.NICRef)
+	address := strings.TrimSpace(spec.Address)
+	if providerRef == "" || nicRef == "" {
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorFail, Detail: "providerRef/nicRef missing for provider-secondary-ip capture", Remedy: "set spec.capture.providerRef and spec.capture.nicRef"}
+	}
+	lister, ok := r.store.(interface {
+		ListActions(routerstate.ActionExecutionFilter) ([]routerstate.ActionExecutionRecord, error)
+	})
+	if !ok {
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorWarn, Detail: "provider action journal unavailable; provider ownership unknown", Remedy: "run doctor against routerd SQLite state or provider inventory evidence"}
+	}
+	rows, err := lister.ListActions(routerstate.ActionExecutionFilter{})
+	if err != nil {
+		return doctorCheck{Area: "hybrid", Name: label, Status: doctorFail, Detail: "provider action journal read failed: " + err.Error(), Remedy: "repair routerd state DB before trusting SAM provider capture"}
+	}
+	for _, row := range rows {
+		if row.Status != routerstate.ActionSucceeded || strings.TrimSpace(row.Action) != "assign-secondary-ip" || strings.TrimSpace(row.ProviderRef) != providerRef {
+			continue
+		}
+		target := map[string]string{}
+		if strings.TrimSpace(row.TargetJSON) != "" {
+			if err := json.Unmarshal([]byte(row.TargetJSON), &target); err != nil {
+				continue
+			}
+		}
+		if strings.TrimSpace(target["nicRef"]) == nicRef && strings.TrimSpace(target["address"]) == address {
+			return doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: "assign-secondary-ip succeeded for providerRef=" + providerRef + " nicRef=" + nicRef + " address=" + address}
+		}
+	}
+	return doctorCheck{
+		Area:   "hybrid",
+		Name:   label,
+		Status: doctorFail,
+		Detail: "ProviderOwnershipPending: no succeeded assign-secondary-ip action for providerRef=" + providerRef + " nicRef=" + nicRef + " address=" + address,
+		Remedy: "wait for ProviderActionPolicy/plugin execution or inspect provider inventory before installing the OS /32",
+	}
 }
 
 func doctorSAMRouteGetExpectedSource(spec api.RemoteAddressClaimSpec) string {

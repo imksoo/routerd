@@ -145,34 +145,50 @@ func (e *Engine) ImportFromDynamicParts() (ImportResult, error) {
 		if err := json.Unmarshal([]byte(part.ActionPlansJSON), &plans); err != nil {
 			return res, fmt.Errorf("decode actionPlans for source %q: %w", part.Source, err)
 		}
-		for _, plan := range plans {
-			if strings.TrimSpace(plan.IdempotencyKey) == "" {
-				res.Skipped++
-				e.logf("provideraction: skipping plan %q from source %q: missing idempotencyKey", plan.Name, part.Source)
-				continue
-			}
-			stale, err := e.planStaleByCurrentDesired(plan)
-			if err != nil {
-				return res, err
-			}
-			if stale {
-				res.Skipped++
-				e.logf("provideraction: skipping stale capture action %q from source %q", plan.IdempotencyKey, part.Source)
-				continue
-			}
-			rec, err := recordFromPlan(part.Source, plan)
-			if err != nil {
-				return res, err
-			}
-			inserted, err := e.store.ImportAction(rec)
-			if err != nil {
-				return res, fmt.Errorf("import action %q: %w", plan.IdempotencyKey, err)
-			}
-			if inserted {
-				res.Inserted++
-			} else {
-				res.Duplicates++
-			}
+		imported, err := e.ImportPlans(part.Source, plans)
+		if err != nil {
+			return res, err
+		}
+		res.Inserted += imported.Inserted
+		res.Duplicates += imported.Duplicates
+		res.Skipped += imported.Skipped
+	}
+	return res, nil
+}
+
+// ImportPlans imports already-rendered provider action plans into the journal.
+// It is used for static desired state that is not represented as a
+// DynamicConfigPart, while preserving the same idempotency and stale fencing as
+// dynamic imports.
+func (e *Engine) ImportPlans(source string, plans []dynamicconfig.ActionPlan) (ImportResult, error) {
+	var res ImportResult
+	for _, plan := range plans {
+		if strings.TrimSpace(plan.IdempotencyKey) == "" {
+			res.Skipped++
+			e.logf("provideraction: skipping plan %q from source %q: missing idempotencyKey", plan.Name, source)
+			continue
+		}
+		stale, err := e.planStaleByCurrentDesired(plan)
+		if err != nil {
+			return res, err
+		}
+		if stale {
+			res.Skipped++
+			e.logf("provideraction: skipping stale capture action %q from source %q", plan.IdempotencyKey, source)
+			continue
+		}
+		rec, err := recordFromPlan(source, plan)
+		if err != nil {
+			return res, err
+		}
+		inserted, err := e.store.ImportAction(rec)
+		if err != nil {
+			return res, fmt.Errorf("import action %q: %w", plan.IdempotencyKey, err)
+		}
+		if inserted {
+			res.Inserted++
+		} else {
+			res.Duplicates++
 		}
 	}
 	return res, nil

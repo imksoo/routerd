@@ -90,6 +90,38 @@ func TestControllerPublishesProviderCaptureChangedAfterSucceededAssign(t *testin
 	}
 }
 
+func TestControllerImportsStaticRemoteAddressClaimProviderAction(t *testing.T) {
+	store := controllerStore(t)
+	runner := &fakeRunner{}
+	controller := Controller{
+		Router: controllerRouterWithStaticClaim(controllerPolicy(false, 5)),
+		Store:  store,
+		Runner: runner.run,
+		Now:    fixedNow,
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	key := "remote-address-claim:app:aws:eni-1:assign-secondary-ip:10.0.0.5/32"
+	rec := actionByKey(t, store, key)
+	if rec.Status != routerstate.ActionSucceeded {
+		t.Fatalf("status = %q, want succeeded", rec.Status)
+	}
+	if rec.Source != "RemoteAddressClaim" {
+		t.Fatalf("source = %q, want RemoteAddressClaim", rec.Source)
+	}
+	target := map[string]string{}
+	if err := json.Unmarshal([]byte(rec.TargetJSON), &target); err != nil {
+		t.Fatalf("target json: %v", err)
+	}
+	if target["providerRef"] != "aws-prod" || target["nicRef"] != "eni-1" || target["address"] != "10.0.0.5/32" {
+		t.Fatalf("target = %#v", target)
+	}
+	if runner.calls != 1 {
+		t.Fatalf("runner calls = %d, want 1", runner.calls)
+	}
+}
+
 func TestControllerDoesNotAutoExecuteWhenPolicyRequiresManualApproval(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -287,6 +319,37 @@ func controllerRouter(policy api.ProviderActionPolicySpec) *api.Router {
 			},
 		}},
 	}
+}
+
+func controllerRouterWithStaticClaim(policy api.ProviderActionPolicySpec) *api.Router {
+	router := controllerRouter(policy)
+	router.Spec.Resources = append(router.Spec.Resources,
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "CloudProviderProfile"},
+			Metadata: api.ObjectMeta{Name: "aws-prod"},
+			Spec: api.CloudProviderProfileSpec{
+				Provider: "aws",
+				Auth:     api.ProviderAuth{Mode: "external-command", Command: "aws"},
+			},
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "RemoteAddressClaim"},
+			Metadata: api.ObjectMeta{Name: "app"},
+			Spec: api.RemoteAddressClaimSpec{
+				Address:   "10.0.0.5/32",
+				OwnerSide: "onprem",
+				Capture: api.AddressCapture{
+					Type:               "provider-secondary-ip",
+					ProviderRef:        "aws-prod",
+					NICRef:             "eni-1",
+					ConfigureOSAddress: true,
+					Interface:          "eth0",
+				},
+				Delivery: api.AddressDelivery{Mode: "route", PeerRef: "onprem", TunnelInterface: "ipip0"},
+			},
+		},
+	)
+	return router
 }
 
 func controllerPolicy(requireApproval bool, maxActions int) api.ProviderActionPolicySpec {

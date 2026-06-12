@@ -283,12 +283,19 @@ func TestDynamicRouteSAMViewDerivesProviderSecondaryBGPClaimForOSCapture(t *test
 		case resource.APIVersion == api.MobilityAPIVersion && resource.Kind == "MobilityPool":
 			spec := resource.Spec.(api.MobilityPoolSpec)
 			spec.Members[1].Capture.ConfigureOSAddress = true
+			spec.Members[1].Capture.ProviderRef = "aws-lab"
+			spec.Members[1].Capture.NICRef = "eni-a"
 			startup.Spec.Resources[i].Spec = spec
 		}
 	}
-	store := mapStore{
-		api.NetAPIVersion + "/BGPRouter/mobility-bgp": {
-			"installedNextHops": map[string]any{"10.0.1.11/32": []any{"10.99.0.2"}},
+	store := actionMapStore{
+		mapStore: mapStore{
+			api.NetAPIVersion + "/BGPRouter/mobility-bgp": {
+				"installedNextHops": map[string]any{"10.0.1.11/32": []any{"10.99.0.2"}},
+			},
+		},
+		actions: []routerstate.ActionExecutionRecord{
+			samSucceededAssignAction("aws-lab", "eni-a", "10.0.1.11/32"),
 		},
 	}
 	view, err := buildDynamicRouteSAMView(startup, store, time.Now().UTC(), platform.OSLinux)
@@ -321,19 +328,26 @@ func TestDynamicRouteSAMViewKeepsProviderSecondaryClaimFromConfirmedCaptureStatu
 		case resource.APIVersion == api.MobilityAPIVersion && resource.Kind == "MobilityPool":
 			spec := resource.Spec.(api.MobilityPoolSpec)
 			spec.Members[1].Capture.ConfigureOSAddress = true
+			spec.Members[1].Capture.ProviderRef = "aws-lab"
+			spec.Members[1].Capture.NICRef = "eni-a"
 			startup.Spec.Resources[i].Spec = spec
 		}
 	}
-	store := mapStore{
-		api.MobilityAPIVersion + "/MobilityPool/cloudedge": {
-			"ownershipResolverDecisions": []any{
-				map[string]any{
-					"address":           "10.0.1.44/32",
-					"class":             "ConfirmedCapture",
-					"captureHolderNode": "aws-router",
-					"captureState":      "Confirmed",
+	store := actionMapStore{
+		mapStore: mapStore{
+			api.MobilityAPIVersion + "/MobilityPool/cloudedge": {
+				"ownershipResolverDecisions": []any{
+					map[string]any{
+						"address":           "10.0.1.44/32",
+						"class":             "ConfirmedCapture",
+						"captureHolderNode": "aws-router",
+						"captureState":      "Confirmed",
+					},
 				},
 			},
+		},
+		actions: []routerstate.ActionExecutionRecord{
+			samSucceededAssignAction("aws-lab", "eni-a", "10.0.1.44/32"),
 		},
 	}
 	view, err := buildDynamicRouteSAMView(startup, store, time.Now().UTC(), platform.OSLinux)

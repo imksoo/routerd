@@ -4,6 +4,7 @@ package chain
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -52,6 +53,12 @@ type samOSAddressAssignResult struct {
 	addedThisReconcile bool
 }
 
+type samProviderOwnershipBlock struct {
+	address string
+	ifname  string
+	reason  string
+}
+
 func samSelectResources(resources []api.Resource, kind string) []api.Resource {
 	var out []api.Resource
 	for _, resource := range resources {
@@ -82,7 +89,7 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 		targetOS = platform.CurrentOS()
 	}
 	if targetOS != platform.OSLinux {
-		return c.reconcileStatuses(targetOS, nil, nil, nil, nil)
+		return c.reconcileStatuses(targetOS, nil, nil, nil, nil, nil)
 	}
 	statuses, err := c.listObjectStatuses()
 	if err != nil {
@@ -91,7 +98,12 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 	if err := c.cleanupRemovedCaptures(ctx, statuses); err != nil {
 		return err
 	}
-	actions, err := sam.PlanCaptureWithOptions(c.Router, targetOS, sam.PlanOptions{StatusReader: c.Store})
+	actions, err := sam.PlanCaptureWithOptions(c.Router, targetOS, sam.PlanOptions{
+		StatusReader: c.Store,
+		ProviderOwnershipConfirmed: func(_ string, capture api.AddressCapture, address string) bool {
+			return c.providerSecondaryOwnershipConfirmed(capture, address)
+		},
+	})
 	if err != nil {
 		return err
 	}
@@ -104,11 +116,18 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 	var failures []string
 	assignResults := map[string]samOSAddressAssignResult{}
 	deassignResults := map[string]samOSAddressDeassignResult{}
+	providerBlocks := map[string]samProviderOwnershipBlock{}
 	garpSent := map[string]bool{}
 	garpErrors := map[string]string{}
 	priorNeighbors := samStoredProxyNeighbors(statuses)
 	for _, action := range actions {
 		switch action.Kind {
+		case "provider-ownership-blocked":
+			providerBlocks[action.ClaimName] = samProviderOwnershipBlock{
+				address: strings.TrimSpace(action.Address),
+				ifname:  strings.TrimSpace(action.Interface),
+				reason:  "ProviderOwnershipPending",
+			}
 		case "proxy-neighbor":
 			if c.DryRun {
 				continue
@@ -182,7 +201,7 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 			continue
 		}
 	}
-	if err := c.reconcileStatuses(targetOS, assignResults, deassignResults, garpSent, garpErrors); err != nil {
+	if err := c.reconcileStatuses(targetOS, assignResults, deassignResults, providerBlocks, garpSent, garpErrors); err != nil {
 		return err
 	}
 	if len(failures) > 0 {
@@ -230,7 +249,7 @@ func (c SAMController) reconcileProxyARPInterfaces(ctx context.Context, actions 
 	return nil
 }
 
-func (c SAMController) reconcileStatuses(targetOS platform.OS, assignResults map[string]samOSAddressAssignResult, deassignResults map[string]samOSAddressDeassignResult, garpSent map[string]bool, garpErrors map[string]string) error {
+func (c SAMController) reconcileStatuses(targetOS platform.OS, assignResults map[string]samOSAddressAssignResult, deassignResults map[string]samOSAddressDeassignResult, providerBlocks map[string]samProviderOwnershipBlock, garpSent map[string]bool, garpErrors map[string]string) error {
 	claims := samSelectResources(c.Router.Spec.Resources, "RemoteAddressClaim")
 	for _, claim := range claims {
 		status := sam.StatusForRemoteAddressClaim(claim, c.Lowerings, c.Store, targetOS)
@@ -252,6 +271,34 @@ func (c SAMController) reconcileStatuses(targetOS platform.OS, assignResults map
 				}
 			} else if err == nil && strings.TrimSpace(spec.Capture.Type) == "provider-secondary-ip" {
 				if spec.Capture.ConfigureOSAddress {
+					if block, blocked := providerBlocks[claim.Metadata.Name]; blocked {
+						status["phase"] = "Degraded"
+						status["reason"] = block.reason
+						status["captureStatus"] = sam.CaptureStatusBlocked
+						status["cloudClaimPhase"] = sam.CloudClaimPending
+						status["osCapturePhase"] = sam.OSCaptureMissing
+						status["advertisementGatePhase"] = sam.AdvertisementGateBlocked
+						status["samConvergencePhase"] = sam.SAMConvergenceDegraded
+						status["blockingReasons"] = []string{"provider ownership not confirmed for provider-secondary-ip capture; OS address not installed"}
+						status["captureProviderOwnership"] = map[string]any{
+							"address":     firstNonEmpty(block.address, strings.TrimSpace(spec.Address)),
+							"expectedRef": strings.TrimSpace(spec.Capture.NICRef),
+							"providerRef": strings.TrimSpace(spec.Capture.ProviderRef),
+							"confirmed":   false,
+							"reason":      block.reason,
+						}
+						status["captureOSAddressPresence"] = map[string]any{
+							"address":   firstNonEmpty(block.address, strings.TrimSpace(spec.Address)),
+							"interface": block.ifname,
+							"enforced":  false,
+							"blocked":   true,
+							"reason":    block.reason,
+						}
+						if err := c.Store.SaveObjectStatus(api.HybridAPIVersion, "RemoteAddressClaim", claim.Metadata.Name, status); err != nil {
+							return err
+						}
+						continue
+					}
 					result := assignResults[claim.Metadata.Name]
 					if result.ifname == "" {
 						aliases := sam.CaptureInterfaceAliases(c.Router)
@@ -298,6 +345,40 @@ func (c SAMController) reconcileStatuses(targetOS platform.OS, assignResults map
 		}
 	}
 	return nil
+}
+
+func (c SAMController) providerSecondaryOwnershipConfirmed(capture api.AddressCapture, address string) bool {
+	providerRef := strings.TrimSpace(capture.ProviderRef)
+	nicRef := strings.TrimSpace(capture.NICRef)
+	address = strings.TrimSpace(address)
+	if providerRef == "" || nicRef == "" || address == "" || c.Store == nil {
+		return false
+	}
+	lister, ok := c.Store.(interface {
+		ListActions(routerstate.ActionExecutionFilter) ([]routerstate.ActionExecutionRecord, error)
+	})
+	if !ok {
+		return false
+	}
+	rows, err := lister.ListActions(routerstate.ActionExecutionFilter{})
+	if err != nil {
+		return false
+	}
+	for _, row := range rows {
+		if row.Status != routerstate.ActionSucceeded || strings.TrimSpace(row.Action) != "assign-secondary-ip" || strings.TrimSpace(row.ProviderRef) != providerRef {
+			continue
+		}
+		target := map[string]string{}
+		if strings.TrimSpace(row.TargetJSON) != "" {
+			if err := json.Unmarshal([]byte(row.TargetJSON), &target); err != nil {
+				continue
+			}
+		}
+		if strings.TrimSpace(target["nicRef"]) == nicRef && strings.TrimSpace(target["address"]) == address {
+			return true
+		}
+	}
+	return false
 }
 
 func (c SAMController) cleanupRemovedCaptures(ctx context.Context, statuses []routerstate.ObjectStatus) error {

@@ -110,7 +110,8 @@ type CaptureAction struct {
 }
 
 type PlanOptions struct {
-	StatusReader StatusReader
+	StatusReader               StatusReader
+	ProviderOwnershipConfirmed func(claimName string, capture api.AddressCapture, address string) bool
 }
 
 type CaptureGateStatus struct {
@@ -287,6 +288,10 @@ func PlanCaptureWithOptions(router *api.Router, targetOS platform.OS, opts PlanO
 					iface := ResolveCaptureInterface(strings.TrimSpace(spec.Capture.Interface), interfaceAliases)
 					if iface == "" {
 						return nil, fmt.Errorf("%s spec.capture.interface is required when provider-secondary-ip configureOSAddress is true", resource.ID())
+					}
+					if opts.ProviderOwnershipConfirmed != nil && !opts.ProviderOwnershipConfirmed(resource.Metadata.Name, spec.Capture, address) {
+						actions = append(actions, CaptureAction{Kind: "provider-ownership-blocked", ClaimName: resource.Metadata.Name, Address: address, Interface: iface})
+						continue
 					}
 					actions = append(actions, CaptureAction{Kind: "assign-os-address", ClaimName: resource.Metadata.Name, Address: address, Interface: iface})
 				} else {

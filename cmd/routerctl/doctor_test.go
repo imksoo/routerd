@@ -929,6 +929,23 @@ func TestDoctorHybridSAMProviderLocalAddressWarnsWhenPresent(t *testing.T) {
 	}
 }
 
+func TestDoctorSAMProviderOwnershipFailsWithoutSucceededAssign(t *testing.T) {
+	store := openDoctorState(t, filepath.Join(t.TempDir(), "routerd.db"))
+	defer closeDoctorState(t, store)
+	runner := doctorRunner{store: store}
+	check := runner.doctorSAMProviderOwnershipCheck("oci-capture", api.RemoteAddressClaimSpec{
+		Address: "10.77.60.45/32",
+		Capture: api.AddressCapture{
+			Type:        "provider-secondary-ip",
+			ProviderRef: "oci-lab",
+			NICRef:      "ocid1.vnic.example",
+		},
+	})
+	if check.Status != doctorFail || !strings.Contains(check.Detail, "ProviderOwnershipPending") {
+		t.Fatalf("check = %#v", check)
+	}
+}
+
 func TestDoctorHybridSAMProxyARPInterfaceHostSkips(t *testing.T) {
 	t.Run("no-host", func(t *testing.T) {
 		configPath, statePath := writeDoctorProxyARPAddressMobilityFixture(t)
@@ -1365,7 +1382,26 @@ spec:
 	if err := os.WriteFile(configPath, data, 0644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
-	return configPath, filepath.Join(dir, "routerd.db")
+	statePath := filepath.Join(dir, "routerd.db")
+	saveDoctorSucceededProviderAssign(t, statePath, "azure-lab", "azure-nic", "10.0.0.9/32")
+	return configPath, statePath
+}
+
+func saveDoctorSucceededProviderAssign(t *testing.T, statePath, providerRef, nicRef, address string) {
+	t.Helper()
+	store := openDoctorState(t, statePath)
+	defer closeDoctorState(t, store)
+	target := `{"address":"` + address + `","nicRef":"` + nicRef + `"}`
+	if _, err := store.ImportAction(routerstate.ActionExecutionRecord{
+		IdempotencyKey: "doctor:" + providerRef + ":" + nicRef + ":" + address,
+		Provider:       strings.TrimSuffix(providerRef, "-lab"),
+		ProviderRef:    providerRef,
+		Action:         "assign-secondary-ip",
+		TargetJSON:     target,
+		Status:         routerstate.ActionSucceeded,
+	}); err != nil {
+		t.Fatalf("import provider action: %v", err)
+	}
 }
 
 func writeDoctorFirewallFixture(t *testing.T) (string, string) {
