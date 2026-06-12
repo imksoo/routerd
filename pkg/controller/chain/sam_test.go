@@ -256,6 +256,39 @@ func TestSAMControllerReadsProviderOwnershipThroughEventedStore(t *testing.T) {
 	}
 }
 
+func TestSAMControllerReadsProviderOwnershipFromInventory(t *testing.T) {
+	router := samControllerRouterWithClaim("10.0.1.122/32", "provider-secondary-ip", "eth0")
+	spec := router.Spec.Resources[1].Spec.(api.RemoteAddressClaimSpec)
+	spec.Capture.ConfigureOSAddress = true
+	spec.Capture.ProviderRef = "azure-lab"
+	spec.Capture.NICRef = "nic-router"
+	router.Spec.Resources[1].Spec = spec
+	store := &samStore{
+		objects: map[string]map[string]any{},
+		statuses: []routerstate.ObjectStatus{{
+			APIVersion: api.MobilityAPIVersion,
+			Kind:       "MobilityPool",
+			Name:       "cloudedge",
+			Status: map[string]any{
+				"discoveryProviderRef":           "azure-lab",
+				"discoverySelfNICRef":            "nic-router",
+				"discoverySelfCapturedAddresses": []string{"10.0.1.122/32"},
+			},
+		}},
+	}
+	applier := &fakeSAMApplier{}
+	controller := SAMController{Router: router, Store: store, OS: platform.OSLinux, Applier: applier}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	assertSAMCalls(t, applier.calls, []string{"assign:10.0.1.122/32@eth0"})
+	status := store.ObjectStatus(api.HybridAPIVersion, "RemoteAddressClaim", "app")
+	note, ok := status["captureOSAddressPresence"].(map[string]any)
+	if !ok || note["enforced"] != true || note["blocked"] == true {
+		t.Fatalf("captureOSAddressPresence = %#v in status %#v", status["captureOSAddressPresence"], status)
+	}
+}
+
 func TestSAMControllerBlocksProviderSecondaryOSAddressUntilOwnershipConfirmed(t *testing.T) {
 	router := samControllerRouterWithClaim("10.0.1.122/32", "provider-secondary-ip", "eth0")
 	spec := router.Spec.Resources[1].Spec.(api.RemoteAddressClaimSpec)

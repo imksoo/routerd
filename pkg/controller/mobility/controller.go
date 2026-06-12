@@ -458,11 +458,11 @@ func samConvergenceStatusFields(in samConvergenceInput) map[string]any {
 	confirmedProviderCaptures := confirmedProviderCaptureCount(in.Status)
 	captureExpected := in.CaptureCandidates > 0 || in.GeneratedActions > 0 || in.ProviderCapturedPaths > 0 || confirmedProviderCaptures > 0
 	switch {
+	case in.ProviderCapturedPaths > 0 || confirmedProviderCaptures > 0:
+		cloudClaimPhase = sam.CloudClaimClaimed
 	case strings.EqualFold(providerActionPhase, "Failed"):
 		cloudClaimPhase = sam.CloudClaimFailed
 		blocking = append(blocking, "provider action failed")
-	case in.ProviderCapturedPaths > 0 || confirmedProviderCaptures > 0:
-		cloudClaimPhase = sam.CloudClaimClaimed
 	case captureExpected:
 		cloudClaimPhase = sam.CloudClaimPending
 		blocking = append(blocking, "provider cloud claim is not confirmed")

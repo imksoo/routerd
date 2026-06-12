@@ -281,6 +281,35 @@ func TestSAMConvergenceStatusProviderCaptureReadyWithCloudOSForwardingAndFIB(t *
 	}
 }
 
+func TestSAMConvergenceStatusConfirmedProviderCaptureOverridesStaleActionFailure(t *testing.T) {
+	fields := samConvergenceStatusFields(samConvergenceInput{
+		Status: map[string]any{
+			"ownershipResolverPhase": "Resolved",
+			"providerActionPhase":    "Failed",
+			"ownershipResolverDecisions": []map[string]any{{
+				"address":      "10.77.60.50/32",
+				"captureState": captureStateConfirmed,
+			}},
+		},
+		DesiredBGPPaths: []bgpdaemon.AppliedPath{{
+			Prefix: "10.77.60.50/32",
+		}},
+		InstalledNextHops: map[string][]string{
+			"10.77.60.50/32": {"10.255.0.59"},
+		},
+		BGPRIBObserved:     true,
+		ForwardingObserved: true,
+		ForwardingEnabled:  true,
+		ObservedAt:         time.Unix(1700000000, 0).UTC(),
+	})
+	if fields["cloudClaimPhase"] != sam.CloudClaimClaimed {
+		t.Fatalf("cloudClaimPhase = %v, want %s", fields["cloudClaimPhase"], sam.CloudClaimClaimed)
+	}
+	if fields["samConvergencePhase"] != sam.SAMConvergenceReady {
+		t.Fatalf("samConvergencePhase = %v, want %s; blocking=%#v", fields["samConvergencePhase"], sam.SAMConvergenceReady, fields["blockingReasons"])
+	}
+}
+
 func (f *fakeBGPPaths) ListPaths(_ context.Context, source string) ([]bgpdaemon.AppliedPath, error) {
 	var out []bgpdaemon.AppliedPath
 	for _, path := range f.paths {

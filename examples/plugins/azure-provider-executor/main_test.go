@@ -821,6 +821,26 @@ func TestAssignExecuteCreateAlreadyExistsVerifiesSelf(t *testing.T) {
 	}
 }
 
+func TestAssignExecuteAddressConflictAdoptsExistingSelfIP(t *testing.T) {
+	f := newSeizeFakeAz()
+	f.oldHolds = false
+	f.selfHolds = true
+	f.selfIPConfig = "mobility-capture-10-88-60-9"
+	f.createErr = fmt.Errorf("PrivateIPAddressInUse: private IP address is in use")
+	spec := reqSpec(actionAssignSecondaryIP, modeExecute)
+	res := dispatchWith(spec, f.run)
+	if res.Status.Status != statusSucceeded {
+		t.Fatalf("same-NIC conflict should converge, got %q err=%q message=%q", res.Status.Status, res.Status.Error, res.Status.Message)
+	}
+	if res.Status.Observed["conflictAdopted"] != "true" || res.Status.Observed["ipConfigName"] != "mobility-capture-10-88-60-9" {
+		t.Fatalf("observed = %+v, want conflict adoption of existing self ip-config", res.Status.Observed)
+	}
+	got := joinedCalls(f.calls)
+	if !containsCall(got, "network nic show --ids /subscriptions/s1/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/nic1") {
+		t.Fatalf("calls = %v, want self NIC verification after conflict", got)
+	}
+}
+
 func TestAssignExecuteAllowReassignmentConflictRediscovery(t *testing.T) {
 	f := newSeizeFakeAz()
 	f.oldHolds = false

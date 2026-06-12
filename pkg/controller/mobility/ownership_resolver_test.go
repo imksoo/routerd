@@ -253,8 +253,8 @@ func TestOwnershipResolverSelfCapturedSecondaryIsNotLocalHomeOwned(t *testing.T)
 		t.Fatalf("resolveAddressOwnership: %v", err)
 	}
 	decision := ownershipDecisionByAddress(t, decisions, "10.88.60.12/32")
-	if decision.Class != ownershipClassStaleCapture || decision.SuppressionReason != "self-captured-secondary" {
-		t.Fatalf("decision = %#v, want self captured secondary marked stale instead of LocalHomeOwned", decision)
+	if decision.Class != ownershipClassConfirmedCapture || decision.CaptureState != captureStateConfirmed || decision.AdvertiseOwnerNode != "aws-router-a" {
+		t.Fatalf("decision = %#v, want self captured secondary confirmed from provider observation instead of LocalHomeOwned", decision)
 	}
 }
 

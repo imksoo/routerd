@@ -509,6 +509,9 @@ func (c SAMController) providerSecondaryOwnershipConfirmed(capture api.AddressCa
 	if providerRef == "" || nicRef == "" || address == "" || c.Store == nil {
 		return false
 	}
+	if c.providerSecondaryOwnershipConfirmedByInventory(providerRef, nicRef, address) {
+		return true
+	}
 	lister, ok := c.Store.(interface {
 		ListActions(routerstate.ActionExecutionFilter) ([]routerstate.ActionExecutionRecord, error)
 	})
@@ -531,6 +534,36 @@ func (c SAMController) providerSecondaryOwnershipConfirmed(capture api.AddressCa
 		}
 		if strings.TrimSpace(target["nicRef"]) == nicRef && strings.TrimSpace(target["address"]) == address {
 			return true
+		}
+	}
+	return false
+}
+
+func (c SAMController) providerSecondaryOwnershipConfirmedByInventory(providerRef, nicRef, address string) bool {
+	lister, ok := c.Store.(interface {
+		ListObjectStatuses() ([]routerstate.ObjectStatus, error)
+	})
+	if !ok {
+		return false
+	}
+	statuses, err := lister.ListObjectStatuses()
+	if err != nil {
+		return false
+	}
+	for _, status := range statuses {
+		if status.APIVersion != api.MobilityAPIVersion || status.Kind != "MobilityPool" {
+			continue
+		}
+		if observedProvider := strings.TrimSpace(fmt.Sprint(status.Status["discoveryProviderRef"])); observedProvider != "" && observedProvider != providerRef {
+			continue
+		}
+		if strings.TrimSpace(fmt.Sprint(status.Status["discoverySelfNICRef"])) != nicRef {
+			continue
+		}
+		for _, captured := range statusStringSlice(status.Status["discoverySelfCapturedAddresses"]) {
+			if strings.TrimSpace(captured) == address {
+				return true
+			}
 		}
 	}
 	return false

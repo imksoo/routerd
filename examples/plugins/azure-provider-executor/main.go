@@ -610,6 +610,15 @@ func assignSecondaryIP(ctx context.Context, spec executeActionRequestSpec, mode 
 			res.Status.Observed = map[string]string{"assignedAddress": t.address, "ipConfigName": cfg.Name, "alreadyPresent": "true"}
 			return res
 		}
+		if isAddressConflictError(err) {
+			cfg, serr := waitForSelfAddress(ctx, runner, t)
+			if serr == nil {
+				res.Status.Status = statusSucceeded
+				res.Status.Message = fmt.Sprintf("assigned %s to %s (already present as ip-config %s)", t.address, t.nicName, cfg.Name)
+				res.Status.Observed = map[string]string{"assignedAddress": t.address, "ipConfigName": cfg.Name, "alreadyPresent": "true", "conflictAdopted": "true"}
+				return res
+			}
+		}
 		return failed("assign-secondary-ip execute: ip-config create failed", err)
 	}
 	res.Status.Status = statusSucceeded

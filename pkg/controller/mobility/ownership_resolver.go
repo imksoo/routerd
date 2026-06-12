@@ -80,9 +80,8 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 	localInventory := localInventoryRecordsFromStatus(in.Status, prefix)
 	removeSelfResourceLocalInventory(localInventory, statusString(in.Status["discoverySelfResourceRef"]))
 	selfIPs, capturedIPs, selfIPsObserved := selfInventoryAddressSetsFromStatus(in.Status, prefix)
-	captureObservedIPs := mergeBoolMaps(selfIPs, capturedIPs)
 	eventOwned := resolverEventOwnedAddresses(in.PoolName, in.SelfNode, in.Spec, in.Events, in.Status, prefix, now)
-	confirmedCaptures, staleCaptures := captureStatesForSelf(self, in.PreviousPlans, in.ActionJournal, captureObservedIPs, selfIPsObserved)
+	confirmedCaptures, staleCaptures := captureStatesForSelf(self, in.PreviousPlans, in.ActionJournal, selfIPs, capturedIPs, selfIPsObserved)
 	handoverTargets := staticHandoverTargets(in.Spec, prefix)
 	universe := map[string]bool{}
 	for address := range staticOwners {
@@ -507,12 +506,23 @@ type resolverCaptureState struct {
 	Strategy    string
 }
 
-func captureStatesForSelf(self memberPlanInfo, previousPlans []dynamicconfig.ActionPlan, journal []routerstate.ActionExecutionRecord, selfIPs map[string]bool, selfIPsObserved bool) (map[string]resolverCaptureState, map[string]resolverCaptureState) {
+func captureStatesForSelf(self memberPlanInfo, previousPlans []dynamicconfig.ActionPlan, journal []routerstate.ActionExecutionRecord, selfIPs, capturedIPs map[string]bool, selfIPsObserved bool) (map[string]resolverCaptureState, map[string]resolverCaptureState) {
 	confirmed := map[string]resolverCaptureState{}
 	stale := map[string]resolverCaptureState{}
 	latest := latestProviderCaptureTransitions(previousPlans, journal)
 	selfProviderRef := strings.TrimSpace(self.Capture.ProviderRef)
 	selfTargetRef := providerCaptureRefFromCapture(self.Capture, self.CaptureTarget)
+	for address, ok := range capturedIPs {
+		if !ok {
+			continue
+		}
+		confirmed[address] = resolverCaptureState{
+			HolderNode:  self.NodeRef,
+			ProviderRef: selfProviderRef,
+			TargetRef:   selfTargetRef,
+			Strategy:    effectiveCaptureStrategy("", captureStrategyValue(self.Capture)),
+		}
+	}
 	for key, tr := range latest {
 		parts := strings.Split(key, "\x00")
 		if len(parts) != 3 {
@@ -529,7 +539,7 @@ func captureStatesForSelf(self memberPlanInfo, previousPlans []dynamicconfig.Act
 			TargetRef:   targetRef,
 			Strategy:    effectiveCaptureStrategy(tr.plan.Provider, firstNonEmpty(tr.plan.Target["captureStrategy"], captureStrategyValue(self.Capture))),
 		}
-		if tr.assign && tr.succeeded && (selfIPs[address] || !selfIPsObserved) {
+		if tr.assign && tr.succeeded && (selfIPs[address] || capturedIPs[address] || !selfIPsObserved) {
 			confirmed[address] = state
 			continue
 		}
