@@ -114,7 +114,7 @@ func TestControllerImportsStaticRemoteAddressClaimProviderAction(t *testing.T) {
 	if err := json.Unmarshal([]byte(rec.TargetJSON), &target); err != nil {
 		t.Fatalf("target json: %v", err)
 	}
-	if target["providerRef"] != "aws-prod" || target["nicRef"] != "eni-1" || target["address"] != "10.0.0.5/32" {
+	if target["providerRef"] != "aws-prod" || target["nicRef"] != "eni-1" || target["address"] != "10.0.0.5/32" || target["region"] != "ap-northeast-1" {
 		t.Fatalf("target = %#v", target)
 	}
 	if runner.calls != 1 {
@@ -344,6 +344,7 @@ func controllerRouterWithStaticClaim(policy api.ProviderActionPolicySpec) *api.R
 					NICRef:             "eni-1",
 					ConfigureOSAddress: true,
 					Interface:          "eth0",
+					Target:             map[string]string{"region": "ap-northeast-1"},
 				},
 				Delivery: api.AddressDelivery{Mode: "route", PeerRef: "onprem", TunnelInterface: "ipip0"},
 			},

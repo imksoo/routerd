@@ -81,6 +81,35 @@ func TestExpandRemoteAddressClaimRoutesAllowsSingleRouterGate(t *testing.T) {
 	}
 }
 
+func TestExpandRemoteAddressClaimRoutesBlocksProviderSecondaryUntilOwnershipConfirmed(t *testing.T) {
+	router := testRouter()
+	expanded, lowerings, err := ExpandRemoteAddressClaimRoutesWithOptions(*router, PlanOptions{
+		ProviderOwnershipConfirmed: func(_ string, _ api.AddressCapture, _ string) bool { return false },
+	})
+	if err != nil {
+		t.Fatalf("ExpandRemoteAddressClaimRoutesWithOptions blocked: %v", err)
+	}
+	if len(lowerings) != 1 {
+		t.Fatalf("blocked lowerings = %#v, want only proxy-arp claim", lowerings)
+	}
+	if findRouteName(ipv4Routes(expanded), "sam-provider-10-0-1-122-delivery") {
+		t.Fatalf("provider-secondary route was lowered before provider ownership: %#v", ipv4Routes(expanded))
+	}
+
+	expanded, lowerings, err = ExpandRemoteAddressClaimRoutesWithOptions(*router, PlanOptions{
+		ProviderOwnershipConfirmed: func(_ string, _ api.AddressCapture, _ string) bool { return true },
+	})
+	if err != nil {
+		t.Fatalf("ExpandRemoteAddressClaimRoutesWithOptions confirmed: %v", err)
+	}
+	if len(lowerings) != 2 {
+		t.Fatalf("confirmed lowerings = %#v, want both claims", lowerings)
+	}
+	if !findRouteName(ipv4Routes(expanded), "sam-provider-10-0-1-122-delivery") {
+		t.Fatalf("provider-secondary route missing after provider ownership: %#v", ipv4Routes(expanded))
+	}
+}
+
 func TestExpandRemoteAddressClaimRoutesCopiesPreferredSourceAnnotation(t *testing.T) {
 	router := testRouter()
 	claim := router.Spec.Resources[4]

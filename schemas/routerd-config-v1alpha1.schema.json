@@ -7092,6 +7092,13 @@
                             ],
                             "type": "string"
                           },
+                          "target": {
+                            "additionalProperties": {
+                              "type": "string"
+                            },
+                            "description": "Target carries non-secret provider target hints such as region,\ncompartmentId, resourceGroup, nicName, or ipConfigName. It is copied to\nprovider ActionPlan.target; credentials and tokens do not belong here.",
+                            "type": "object"
+                          },
                           "type": {
                             "enum": [
                               "provider-secondary-ip",

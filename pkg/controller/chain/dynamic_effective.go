@@ -97,7 +97,12 @@ func buildDynamicRouteSAMView(startup *api.Router, store any, now time.Time, tar
 	routeRouter = suppressBGPModeMobilityClaims(effective, routeRouter)
 	samLowerings := []sam.DeliveryLowering(nil)
 	if targetOS == platform.OSLinux && sam.HasRemoteAddressClaims(&effective) {
-		expanded, lowerings, err := sam.ExpandRemoteAddressClaimRoutesWithOptions(routeRouter, sam.PlanOptions{StatusReader: statusReaderFromStore(store)})
+		expanded, lowerings, err := sam.ExpandRemoteAddressClaimRoutesWithOptions(routeRouter, sam.PlanOptions{
+			StatusReader: statusReaderFromStore(store),
+			ProviderOwnershipConfirmed: func(_ string, capture api.AddressCapture, address string) bool {
+				return providerSecondaryOwnershipConfirmed(store, capture, address)
+			},
+		})
 		if err != nil {
 			return dynamicRouteSAMView{}, err
 		}
@@ -111,6 +116,51 @@ func buildDynamicRouteSAMView(startup *api.Router, store any, now time.Time, tar
 		HybridLowerings: hybridLowerings,
 		SAMLowerings:    samLowerings,
 	}, nil
+}
+
+func providerSecondaryOwnershipConfirmed(store any, capture api.AddressCapture, address string) bool {
+	providerRef := strings.TrimSpace(capture.ProviderRef)
+	nicRef := strings.TrimSpace(capture.NICRef)
+	address = strings.TrimSpace(address)
+	if providerRef == "" || nicRef == "" || address == "" || store == nil {
+		return false
+	}
+	lister, ok := store.(interface {
+		ListActions(routerstate.ActionExecutionFilter) ([]routerstate.ActionExecutionRecord, error)
+	})
+	if !ok {
+		return false
+	}
+	rows, err := lister.ListActions(routerstate.ActionExecutionFilter{})
+	if err != nil {
+		return false
+	}
+	for _, row := range rows {
+		if row.Status != routerstate.ActionSucceeded || strings.TrimSpace(row.Action) != "assign-secondary-ip" || strings.TrimSpace(row.ProviderRef) != providerRef {
+			continue
+		}
+		target := map[string]string{}
+		if strings.TrimSpace(row.TargetJSON) != "" {
+			if err := json.Unmarshal([]byte(row.TargetJSON), &target); err != nil {
+				continue
+			}
+		}
+		if strings.TrimSpace(target["nicRef"]) == nicRef && strings.TrimSpace(target["address"]) == address {
+			return true
+		}
+	}
+	return false
+}
+
+func copyStringMap(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }
 
 func suppressBGPModeMobilityClaims(effective, routeRouter api.Router) api.Router {
@@ -396,6 +446,7 @@ func addressCaptureFromMobilityCapture(capture api.MobilityMemberCapture) api.Ad
 		ExcludeAddresses:   append([]string(nil), capture.ExcludeAddresses...),
 		GratuitousARP:      capture.GratuitousARP,
 		ActiveWhen:         capture.ActiveWhen,
+		Target:             copyStringMap(capture.Target),
 	}
 }
 
@@ -597,6 +648,7 @@ func bgpMobilityProxyARPClaim(poolName string, member api.MobilityPoolMember, ad
 				ExcludeAddresses:   append([]string(nil), member.Capture.ExcludeAddresses...),
 				GratuitousARP:      member.Capture.GratuitousARP,
 				ActiveWhen:         member.Capture.ActiveWhen,
+				Target:             copyStringMap(member.Capture.Target),
 			},
 			Delivery: api.AddressDelivery{Mode: "bgp"},
 		},

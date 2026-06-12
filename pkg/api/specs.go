@@ -1869,6 +1869,10 @@ type AddressCapture struct {
 	ExcludeAddresses []string          `yaml:"excludeAddresses,omitempty" json:"excludeAddresses,omitempty"`
 	GratuitousARP    bool              `yaml:"gratuitousARP,omitempty" json:"gratuitousARP,omitempty"`
 	ActiveWhen       CaptureActiveWhen `yaml:"activeWhen,omitempty" json:"activeWhen,omitempty"`
+	// Target carries non-secret provider target hints such as region,
+	// compartmentId, resourceGroup, nicName, or ipConfigName. It is copied to
+	// provider ActionPlan.target; credentials and tokens do not belong here.
+	Target map[string]string `yaml:"target,omitempty" json:"target,omitempty"`
 }
 
 type AddressDelivery struct {

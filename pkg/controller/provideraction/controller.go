@@ -235,13 +235,12 @@ func staticRemoteAddressClaimProviderPlans(name string, spec api.RemoteAddressCl
 	if strategy != "secondary-ip" {
 		return nil, fmt.Errorf("provider-secondary-ip static action generation supports captureStrategy secondary-ip, got %q", strategy)
 	}
-	target := map[string]string{
-		"provider":        provider,
-		"providerRef":     providerRef,
-		"nicRef":          nicRef,
-		"address":         address,
-		"captureStrategy": strategy,
-	}
+	target := copyStringMap(spec.Capture.Target)
+	target["provider"] = provider
+	target["providerRef"] = providerRef
+	target["nicRef"] = nicRef
+	target["address"] = address
+	target["captureStrategy"] = strategy
 	addStaticProfileTargetFields(target, provider, profile, name, address, nicRef)
 	assign := dynamicconfig.ActionPlan{
 		Name:           safeName("remote-claim-" + name + "-assign-" + address),

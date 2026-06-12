@@ -58,6 +58,49 @@ func TestDynamicRouteSAMViewIncludesDynamicRemoteAddressClaim(t *testing.T) {
 	}
 }
 
+func TestDynamicRouteSAMViewBlocksProviderSecondaryRouteUntilProviderOwnership(t *testing.T) {
+	startup := staticSAMRouter("10.0.1.123/32", "provider-secondary-ip", "ens5")
+	for i, resource := range startup.Spec.Resources {
+		if resource.APIVersion != api.HybridAPIVersion || resource.Kind != "RemoteAddressClaim" {
+			continue
+		}
+		spec, err := resource.RemoteAddressClaimSpec()
+		if err != nil {
+			t.Fatalf("RemoteAddressClaim spec: %v", err)
+		}
+		spec.Capture.ProviderRef = "aws-lab"
+		spec.Capture.NICRef = "eni-a"
+		spec.Capture.ConfigureOSAddress = true
+		startup.Spec.Resources[i].Spec = spec
+	}
+
+	store := actionMapStore{mapStore: mapStore{}}
+	view, err := buildDynamicRouteSAMView(startup, store, time.Now().UTC(), platform.OSLinux)
+	if err != nil {
+		t.Fatalf("buildDynamicRouteSAMView without ownership: %v", err)
+	}
+	if got := countResources(view.RouteRouter, api.NetAPIVersion, "IPv4Route"); got != 0 {
+		t.Fatalf("route IPv4Routes = %d, want provider-secondary delivery route blocked until ownership", got)
+	}
+	if len(view.SAMLowerings) != 0 {
+		t.Fatalf("SAM lowerings = %+v, want none until provider ownership", view.SAMLowerings)
+	}
+
+	store.actions = []routerstate.ActionExecutionRecord{
+		samSucceededAssignAction("aws-lab", "eni-a", "10.0.1.123/32"),
+	}
+	view, err = buildDynamicRouteSAMView(startup, store, time.Now().UTC(), platform.OSLinux)
+	if err != nil {
+		t.Fatalf("buildDynamicRouteSAMView with ownership: %v", err)
+	}
+	if got := countResources(view.RouteRouter, api.NetAPIVersion, "IPv4Route"); got != 1 {
+		t.Fatalf("route IPv4Routes = %d, want provider-secondary delivery route after ownership", got)
+	}
+	if len(view.SAMLowerings) != 1 || view.SAMLowerings[0].AddressCIDR != "10.0.1.123/32" {
+		t.Fatalf("SAM lowerings = %+v, want confirmed provider-secondary lowering", view.SAMLowerings)
+	}
+}
+
 func TestDynamicControllerRouterIncludesDynamicTunnelAndBGPPeer(t *testing.T) {
 	now := time.Now().UTC()
 	startup := startupHybridContextRouter()

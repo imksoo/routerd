@@ -182,6 +182,9 @@ func ExpandRemoteAddressClaimRoutesWithOptions(router api.Router, opts PlanOptio
 		if strings.TrimSpace(spec.Delivery.Mode) == "bgp" {
 			continue
 		}
+		if strings.TrimSpace(spec.Capture.Type) == "provider-secondary-ip" && opts.ProviderOwnershipConfirmed != nil && !opts.ProviderOwnershipConfirmed(resource.Metadata.Name, spec.Capture, cidr) {
+			continue
+		}
 		if existing := userRouteDestinations[cidr]; existing != "" {
 			return router, nil, fmt.Errorf("%s destination %s collides with user IPv4Route/%s", resource.ID(), cidr, existing)
 		}
