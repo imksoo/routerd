@@ -109,7 +109,7 @@ func (e *Engine) logf(format string, args ...any) {
 
 // ImportResult summarizes an ImportFromDynamicParts run.
 type ImportResult struct {
-	// Inserted is the count of newly journaled pending actions.
+	// Inserted is the count of newly journaled or requeued pending actions.
 	Inserted int
 	// Duplicates is the count of plans whose idempotencyKey already existed.
 	Duplicates int
@@ -121,8 +121,8 @@ type ImportResult struct {
 // ImportFromDynamicParts scans every stored DynamicConfigPart's actionPlans and
 // imports each into the journal as pending, keyed by ActionPlan.IdempotencyKey.
 // Plans without a non-empty idempotencyKey are skipped + logged (never
-// journaled). Dedup is provided by the store's ON CONFLICT(idempotency_key)
-// import, so a repeated key never creates a second row.
+// journaled). Dedup/requeue is provided by the store's idempotency-key import,
+// so a repeated key never creates a second row.
 func (e *Engine) ImportFromDynamicParts() (ImportResult, error) {
 	var res ImportResult
 	fenced, err := e.fenceStalePendingActions()

@@ -55,6 +55,87 @@ func TestImportActionDedup(t *testing.T) {
 	}
 }
 
+func TestImportActionRequeuesFailedDesiredAction(t *testing.T) {
+	store := mustOpenStore(t)
+	defer store.Close()
+
+	if _, err := store.ImportAction(sampleActionRecord("retry-key")); err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	rec, ok, err := store.GetActionByIdempotencyKey("retry-key")
+	if err != nil || !ok {
+		t.Fatalf("get imported action: ok=%v err=%v", ok, err)
+	}
+	if err := store.ApproveAction(rec.ID, "policy:auto-approve", time.Time{}); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	claimed, err := store.BeginActionExecution(rec.ID, time.Time{})
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if !claimed {
+		t.Fatal("action was not claimed")
+	}
+	if err := store.MarkActionResult(rec.ID, ActionFailed, "assign failed", "UnauthorizedOperation", map[string]string{"attempt": "1"}, time.Time{}); err != nil {
+		t.Fatalf("mark failed: %v", err)
+	}
+
+	requeued := sampleActionRecord("retry-key")
+	requeued.TargetJSON = `{"address":"10.88.60.9/32","nicRef":"eni-2"}`
+	inserted, err := store.ImportAction(requeued)
+	if err != nil {
+		t.Fatalf("reimport failed action: %v", err)
+	}
+	if !inserted {
+		t.Fatalf("reimporting failed desired action should report inserted/updated=true")
+	}
+
+	got, ok, err := store.GetActionByIdempotencyKey("retry-key")
+	if err != nil || !ok {
+		t.Fatalf("get requeued action: ok=%v err=%v", ok, err)
+	}
+	if got.ID != rec.ID {
+		t.Fatalf("requeue should preserve journal row id: got %d want %d", got.ID, rec.ID)
+	}
+	if got.Status != ActionPending {
+		t.Fatalf("status = %q, want pending", got.Status)
+	}
+	if got.TargetJSON != requeued.TargetJSON {
+		t.Fatalf("target was not refreshed: %s", got.TargetJSON)
+	}
+	if got.ApprovedBy != "" || !got.ApprovedAt.IsZero() || !got.ExecutedAt.IsZero() || got.ResultMessage != "" || got.Error != "" || len(got.Observed) != 0 {
+		t.Fatalf("terminal execution fields were not cleared: %+v", got)
+	}
+}
+
+func TestImportActionDoesNotRequeueSucceededAction(t *testing.T) {
+	store := mustOpenStore(t)
+	defer store.Close()
+
+	if _, err := store.ImportAction(sampleActionRecord("done-key")); err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	rec, _, _ := store.GetActionByIdempotencyKey("done-key")
+	if err := store.ApproveAction(rec.ID, "policy:auto-approve", time.Time{}); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	if err := store.MarkActionResult(rec.ID, ActionSucceeded, "applied", "", nil, time.Time{}); err != nil {
+		t.Fatalf("mark succeeded: %v", err)
+	}
+
+	inserted, err := store.ImportAction(sampleActionRecord("done-key"))
+	if err != nil {
+		t.Fatalf("reimport succeeded action: %v", err)
+	}
+	if inserted {
+		t.Fatalf("reimporting succeeded action should remain a duplicate")
+	}
+	got, _, _ := store.GetActionByIdempotencyKey("done-key")
+	if got.Status != ActionSucceeded {
+		t.Fatalf("status = %q, want succeeded", got.Status)
+	}
+}
+
 func TestImportActionRequiresFields(t *testing.T) {
 	store := mustOpenStore(t)
 	defer store.Close()

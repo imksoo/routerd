@@ -117,9 +117,10 @@ CREATE INDEX IF NOT EXISTS action_executions_status ON action_executions(status,
 }
 
 // ImportAction inserts an action into the journal as pending, keyed by its
-// idempotency key. It uses ON CONFLICT(idempotency_key) DO NOTHING so a repeated
-// key never creates a duplicate execution row; inserted=false reports the key
-// already existed.
+// idempotency key. A repeated key never creates a duplicate execution row.
+// Already-succeeded rows remain idempotent. Failed or skipped rows are requeued
+// when the same desired action is still being imported, so transient provider
+// API or permission failures do not permanently wedge declarative convergence.
 func (s *SQLiteStore) ImportAction(rec ActionExecutionRecord) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -147,10 +148,27 @@ func (s *SQLiteStore) ImportAction(rec ActionExecutionRecord) (bool, error) {
 	}
 	result, err := s.db.Exec(`INSERT INTO action_executions(idempotency_key,source,provider,provider_ref,action,target_json,parameters_json,undo_json,risk_level,status,created_at,updated_at)
 VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
-ON CONFLICT(idempotency_key) DO NOTHING`,
+ON CONFLICT(idempotency_key) DO UPDATE SET
+  source = excluded.source,
+  provider = excluded.provider,
+  provider_ref = excluded.provider_ref,
+  action = excluded.action,
+  target_json = excluded.target_json,
+  parameters_json = excluded.parameters_json,
+  undo_json = excluded.undo_json,
+  risk_level = excluded.risk_level,
+  status = excluded.status,
+  approved_by = NULL,
+  approved_at = NULL,
+  executed_at = NULL,
+  result_message = NULL,
+  error = NULL,
+  observed_json = NULL,
+  updated_at = excluded.updated_at
+WHERE action_executions.status IN (?, ?)`,
 		rec.IdempotencyKey, nullableString(rec.Source), rec.Provider, nullableString(rec.ProviderRef), rec.Action,
 		nullableString(rec.TargetJSON), nullableString(rec.ParametersJSON), nullableString(rec.UndoJSON), nullableString(rec.RiskLevel),
-		rec.Status, formatStateTime(rec.CreatedAt), formatStateTime(rec.UpdatedAt))
+		rec.Status, formatStateTime(rec.CreatedAt), formatStateTime(rec.UpdatedAt), ActionFailed, ActionSkipped)
 	if err != nil {
 		return false, err
 	}

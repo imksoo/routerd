@@ -220,6 +220,57 @@ func TestControllerRequeuesAndExecutesStaleRunningAction(t *testing.T) {
 	}
 }
 
+func TestControllerRequeuesAndExecutesFailedDesiredAction(t *testing.T) {
+	store := controllerStore(t)
+	plan := controllerPlan("failed-still-desired", "10.0.0.5/32")
+	target, err := json.Marshal(plan.Target)
+	if err != nil {
+		t.Fatalf("marshal target: %v", err)
+	}
+	if _, err := store.ImportAction(routerstate.ActionExecutionRecord{
+		IdempotencyKey: plan.IdempotencyKey,
+		Source:         "test",
+		Provider:       plan.Provider,
+		ProviderRef:    plan.ProviderRef,
+		Action:         plan.Action,
+		TargetJSON:     string(target),
+		Status:         routerstate.ActionPending,
+	}); err != nil {
+		t.Fatalf("ImportAction: %v", err)
+	}
+	rec := actionByKey(t, store, "failed-still-desired")
+	if err := store.ApproveAction(rec.ID, "policy:auto-approve", fixedNow().Add(-2*time.Minute)); err != nil {
+		t.Fatalf("ApproveAction: %v", err)
+	}
+	claimed, err := store.BeginActionExecution(rec.ID, fixedNow().Add(-time.Minute))
+	if err != nil {
+		t.Fatalf("BeginActionExecution: %v", err)
+	}
+	if !claimed {
+		t.Fatal("failed action was not claimed")
+	}
+	if err := store.MarkActionResult(rec.ID, routerstate.ActionFailed, "assign failed", "UnauthorizedOperation", nil, fixedNow().Add(-time.Minute)); err != nil {
+		t.Fatalf("MarkActionResult: %v", err)
+	}
+	seedPart(t, store, []dynamicconfig.ActionPlan{plan})
+
+	runner := &fakeRunner{}
+	controller := Controller{Router: controllerRouter(controllerPolicy(false, 5)), Store: store, Runner: runner.run, Now: fixedNow}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if runner.calls != 1 {
+		t.Fatalf("runner calls = %d, want 1", runner.calls)
+	}
+	rec = actionByKey(t, store, "failed-still-desired")
+	if rec.Status != routerstate.ActionSucceeded {
+		t.Fatalf("status = %q, want succeeded", rec.Status)
+	}
+	if rec.Error != "" {
+		t.Fatalf("error was not cleared: %q", rec.Error)
+	}
+}
+
 func TestControllerSkipsStaleMobilityPathBeforeExecute(t *testing.T) {
 	store := controllerStore(t)
 	plan := controllerPlan("k-stale", "10.0.0.5/32")
