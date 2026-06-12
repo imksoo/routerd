@@ -137,6 +137,16 @@ func (s mobilityStore) ListActions(filter routerstate.ActionExecutionFilter) ([]
 	return s.data.ListActions(filter)
 }
 
+func (s eventedStore) ListActions(filter routerstate.ActionExecutionFilter) ([]routerstate.ActionExecutionRecord, error) {
+	lister, ok := s.Store.(interface {
+		ListActions(routerstate.ActionExecutionFilter) ([]routerstate.ActionExecutionRecord, error)
+	})
+	if !ok || lister == nil {
+		return nil, nil
+	}
+	return lister.ListActions(filter)
+}
+
 func (s eventSubscriptionStore) SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error {
 	return s.evented.SaveObjectStatus(apiVersion, kind, name, status)
 }
@@ -853,6 +863,12 @@ func hybridRouteStatusSubscriptions() []bus.Subscription {
 func samStatusSubscriptions() []bus.Subscription {
 	subs := statusSubscriptions("IPv4Route", "Sysctl", "WireGuardInterface", "TunnelInterface", "Interface", "VirtualAddress", "DHCPv4Client")
 	subs = append(subs, bus.Subscription{
+		Topics: []string{provideraction.ProviderCaptureChangedEvent},
+		Filter: func(event daemonapi.DaemonEvent) bool {
+			return event.Type == provideraction.ProviderCaptureChangedEvent
+		},
+	})
+	subs = append(subs, bus.Subscription{
 		Topics: []string{"routerd.resource.status.changed"},
 		Filter: func(event daemonapi.DaemonEvent) bool {
 			if event.Resource == nil || event.Resource.Kind != "BGPRouter" {
@@ -1478,7 +1494,7 @@ func (r *Runner) Start(ctx context.Context) error {
 			current.Lowerings = view.HybridLowerings
 			return current.Reconcile(ctx)
 		}},
-		framework.FuncController{ControllerName: "sam", Subs: samStatusSubscriptions(), PeriodicFunc: func(ctx context.Context) error {
+		framework.FuncController{ControllerName: "sam", Every: 5 * time.Second, Subs: samStatusSubscriptions(), PeriodicFunc: func(ctx context.Context) error {
 			effective, err := effectiveForReconcile()
 			if err != nil {
 				return err

@@ -8,6 +8,7 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/provideraction"
 )
 
 func TestSAMRouteControllersSubscribeToVirtualAddressStatus(t *testing.T) {
@@ -49,6 +50,19 @@ func TestSAMControllerSubscribesToBGPRouterStatus(t *testing.T) {
 	}
 	if !subscriptionSetAccepts(samStatusSubscriptions(), event) {
 		t.Fatal("sam subscriptions did not accept BGPRouter status change")
+	}
+}
+
+func TestSAMControllerSubscribesToProviderCaptureChanged(t *testing.T) {
+	event := daemonapi.DaemonEvent{
+		Type: provideraction.ProviderCaptureChangedEvent,
+		Attributes: map[string]string{
+			"action":      "assign-secondary-ip",
+			"providerRef": "oci-lab",
+		},
+	}
+	if !subscriptionSetAccepts(samStatusSubscriptions(), event) {
+		t.Fatal("sam subscriptions did not accept provider capture change")
 	}
 }
 

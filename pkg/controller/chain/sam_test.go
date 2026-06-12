@@ -114,6 +114,33 @@ func TestSAMControllerAssignsProviderSecondaryOSAddressAndStatus(t *testing.T) {
 	}
 }
 
+func TestSAMControllerReadsProviderOwnershipThroughEventedStore(t *testing.T) {
+	router := samControllerRouterWithClaim("10.0.1.122/32", "provider-secondary-ip", "eth0")
+	spec := router.Spec.Resources[1].Spec.(api.RemoteAddressClaimSpec)
+	spec.Capture.ConfigureOSAddress = true
+	spec.Capture.ProviderRef = "oci-prod"
+	spec.Capture.NICRef = "vnic-1"
+	router.Spec.Resources[1].Spec = spec
+	base := &samStore{
+		objects: map[string]map[string]any{},
+		actions: []routerstate.ActionExecutionRecord{
+			samSucceededAssignAction("oci-prod", "vnic-1", "10.0.1.122/32"),
+		},
+	}
+	store := eventedStore{Store: base, Router: router}.withRouter(router)
+	applier := &fakeSAMApplier{}
+	controller := SAMController{Router: router, Store: store, OS: platform.OSLinux, Applier: applier}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	assertSAMCalls(t, applier.calls, []string{"assign:10.0.1.122/32@eth0"})
+	status := base.ObjectStatus(api.HybridAPIVersion, "RemoteAddressClaim", "app")
+	note, ok := status["captureOSAddressPresence"].(map[string]any)
+	if !ok || note["enforced"] != true || note["blocked"] == true {
+		t.Fatalf("captureOSAddressPresence = %#v in status %#v", status["captureOSAddressPresence"], status)
+	}
+}
+
 func TestSAMControllerBlocksProviderSecondaryOSAddressUntilOwnershipConfirmed(t *testing.T) {
 	router := samControllerRouterWithClaim("10.0.1.122/32", "provider-secondary-ip", "eth0")
 	spec := router.Spec.Resources[1].Spec.(api.RemoteAddressClaimSpec)
