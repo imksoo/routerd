@@ -127,6 +127,110 @@ spec:
 	}
 }
 
+func TestWireGuardControllerOpensHostFirewallForListenPort(t *testing.T) {
+	router := mustWireGuardRouter(t, `
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata: {name: test}
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardInterface
+      metadata: {name: wg0}
+      spec:
+        privateKey: priv
+        listenPort: 51820
+        mtu: 1420
+`)
+	store := mapStore{}
+	var calls []string
+	controller := WireGuardController{
+		Router: router,
+		Store:  store,
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			call := name + " " + strings.Join(args, " ")
+			calls = append(calls, call)
+			switch call {
+			case "ip link show wg0":
+				return nil, errors.New("missing")
+			case "wg show wg0 dump":
+				return []byte("priv\tifacepub\t51820\toff\n"), nil
+			case "iptables -C INPUT -p udp --dport 51820 -j ACCEPT":
+				return []byte("iptables: Bad rule (does a matching rule exist in that chain?).\n"), errors.New("exit status 1")
+			default:
+				return nil, nil
+			}
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	gotCommands := strings.Join(calls, "\n")
+	for _, want := range []string{
+		"iptables -C INPUT -p udp --dport 51820 -j ACCEPT",
+		"iptables -I INPUT 1 -p udp --dport 51820 -j ACCEPT",
+	} {
+		if !strings.Contains(gotCommands, want) {
+			t.Fatalf("commands missing %q:\n%s", want, gotCommands)
+		}
+	}
+	iface := store.ObjectStatus(api.NetAPIVersion, "WireGuardInterface", "wg0")
+	hostFirewall, ok := iface["hostFirewall"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing hostFirewall status: %#v", iface)
+	}
+	if hostFirewall["phase"] != "Applied" || hostFirewall["chain"] != "INPUT" || hostFirewall["port"] != 51820 {
+		t.Fatalf("hostFirewall = %#v", hostFirewall)
+	}
+}
+
+func TestWireGuardControllerRemovesStaleHostFirewallListenPort(t *testing.T) {
+	router := mustWireGuardRouter(t, `
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata: {name: test}
+spec:
+  resources: []
+`)
+	store := mapStore{
+		api.NetAPIVersion + "/WireGuardInterface/wg0": {
+			"managedBy": "routerd",
+			"interface": "wg0",
+			"hostFirewall": map[string]any{
+				"managedBy": "routerd",
+				"protocol":  "udp",
+				"port":      51820,
+				"chain":     "INPUT",
+				"phase":     "Applied",
+			},
+		},
+	}
+	var calls []string
+	controller := WireGuardController{
+		Router: router,
+		Store:  store,
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			calls = append(calls, name+" "+strings.Join(args, " "))
+			return nil, nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	gotCommands := strings.Join(calls, "\n")
+	for _, want := range []string{
+		"ip link delete dev wg0",
+		"iptables -D INPUT -p udp --dport 51820 -j ACCEPT",
+	} {
+		if !strings.Contains(gotCommands, want) {
+			t.Fatalf("commands missing %q:\n%s", want, gotCommands)
+		}
+	}
+	if _, ok := store[api.NetAPIVersion+"/WireGuardInterface/wg0"]; ok {
+		t.Fatalf("stale status was not deleted: %#v", store)
+	}
+}
+
 func TestWireGuardControllerUsesInterfaceIfName(t *testing.T) {
 	router := mustWireGuardRouter(t, `
 apiVersion: routerd.net/v1alpha1

@@ -639,12 +639,14 @@ literal address. A named reference can be added later if it proves useful.
 
 SAM-forwarded traffic still traverses the existing firewall and conntrack path
 like any other forwarded traffic. Independence means the mobility resources do
-not configure firewall or NAT policy; it does not mean bypass.
+not configure arbitrary firewall or NAT policy; it does not mean bypass.
 
 In particular, the delivered `/32` traffic crosses the Linux firewall
 `FORWARD` chain between the capture interface and the tunnel interface. Permit
 that forwarding path for the captured address explicitly when the router has a
-default-drop forwarding policy. SAM does not add firewall rules by itself.
+default-drop forwarding policy. The managed exceptions are narrow:
+`WireGuardInterface` opens its Linux UDP listen port in `INPUT`, and
+`RemoteAddressClaim` opens the capture-to-tunnel `FORWARD` path it owns.
 
 ## Overlay And Federation Addressing On Cloud Nodes
 
