@@ -198,6 +198,40 @@ func TestDoctorSAMConvergenceDegradedWarnsWhenOwnershipResolved(t *testing.T) {
 	}
 }
 
+func TestDoctorSAMConvergenceWarnsOnMisTaggedLivenessMarker(t *testing.T) {
+	configPath, statePath := writeDoctorSAMFixture(t)
+	store := openDoctorState(t, statePath)
+	reason := "mis-tagged BGP liveness marker prefixes inside MobilityPool: 10.77.60.44/32"
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"phase":                         "BGPPlanned",
+		"plannerPhase":                  "BGPPlanned",
+		"ownershipResolverPhase":        "Resolved",
+		"samConvergencePhase":           "Degraded",
+		"fibConvergencePhase":           "MissingRoute",
+		"invalidLivenessMarkerPrefixes": []string{"10.77.60.44/32"},
+		"blockingReasons":               []string{reason},
+	}); err != nil {
+		t.Fatalf("save mobility status: %v", err)
+	}
+	closeDoctorState(t, store)
+
+	var out bytes.Buffer
+	if err := run([]string{"doctor", "sam", "--config", configPath, "--state-file", statePath, "--no-host", "-o", "json"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("doctor sam degraded should warn, not fail: %v\n%s", err, out.String())
+	}
+	var report doctorReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("unmarshal doctor report: %v\n%s", err, out.String())
+	}
+	if report.Summary.Overall != doctorWarn || report.Summary.Fail != 0 {
+		t.Fatalf("summary = %#v", report.Summary)
+	}
+	check := findDoctorCheck(t, report, "MobilityPool/cloudedge FIB convergence")
+	if check.Status != doctorWarn || !strings.Contains(check.Detail, reason) {
+		t.Fatalf("FIB convergence check = %#v, want mis-tagged liveness detail", check)
+	}
+}
+
 func TestDoctorSAMConvergenceReadyPasses(t *testing.T) {
 	configPath, statePath := writeDoctorSAMFixture(t)
 	store := openDoctorState(t, statePath)

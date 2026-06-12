@@ -1654,12 +1654,35 @@ func (c *Controller) observeState(ctx context.Context, allowedImportPrefixes []n
 	return bgpstate.Normalize(limited), routes, livenessMarkers, nil
 }
 
+func (c *Controller) mobilityPoolImportPrefixes() []netip.Prefix {
+	if c == nil || c.Router == nil {
+		return nil
+	}
+	var out []netip.Prefix
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion != routerapi.MobilityAPIVersion || resource.Kind != "MobilityPool" {
+			continue
+		}
+		spec, err := resource.MobilityPoolSpec()
+		if err != nil {
+			continue
+		}
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(spec.Prefix))
+		if err != nil || !prefix.Addr().Is4() {
+			continue
+		}
+		out = append(out, prefix.Masked())
+	}
+	return out
+}
+
 func (c *Controller) saveObservedStatuses(routerName string, spec routerapi.BGPRouterSpec, state bgpstate.State, routes []FIBRoute, changed bool, fibResult FIBSyncResult, livenessMarkers map[string]string) error {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	peersByResource := c.peersByResource(state)
 	fibRoutes := fibInstalledCount(fibResult)
 	fibUnsupported := fibUnsupportedCount(fibResult)
 	fibMissingInstalled := fibMissingInstalledCount(routes, fibResult)
+	invalidLivenessMarkers := invalidMobilityLivenessMarkerPrefixes(livenessMarkers, c.mobilityPoolImportPrefixes())
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.APIVersion != routerapi.NetAPIVersion {
 			continue
@@ -1684,30 +1707,34 @@ func (c *Controller) saveObservedStatuses(routerName string, spec routerapi.BGPR
 			if fibMissingInstalled > 0 && phase == "Established" {
 				phase = "Degraded"
 			}
+			if len(invalidLivenessMarkers) > 0 && phase == "Established" {
+				phase = "Degraded"
+			}
 			status := map[string]any{
-				"phase":                    phase,
-				"backend":                  "gobgp",
-				"applyWith":                "routerd-bgp gRPC API",
-				"daemon":                   c.daemonSpec().Name,
-				"daemonSocket":             c.daemonSpec().SocketPath,
-				"appliedConfigHash":        bgpdaemon.Hash(c.appliedConfig),
-				"changed":                  changed,
-				"dryRun":                   c.DryRun,
-				"peers":                    state.Peers,
-				"prefixes":                 state.Prefixes,
-				"observedCommunities":      observedCommunities(state.Prefixes),
-				"livenessMarkers":          livenessMarkers,
-				"establishedPeers":         established,
-				"acceptedPrefixes":         len(state.Prefixes),
-				"fibRoutes":                fibRoutes,
-				"fibUnsupportedRoutes":     fibUnsupported,
-				"fibMissingRoutes":         fibMissingInstalled,
-				"nextHopRewrite":           importNextHopRewrite(spec.ImportPolicy),
-				"installedNextHops":        installedNextHops(routes, fibResult),
-				"missingInstalledNextHops": missingInstalledNextHops(routes, fibResult),
-				"preferredSources":         fibResult.PreferredSource,
-				"observedAt":               now,
-				"conditions":               []map[string]any{{"type": "Observed", "status": "True", "reason": "GoBGPStatus"}},
+				"phase":                         phase,
+				"backend":                       "gobgp",
+				"applyWith":                     "routerd-bgp gRPC API",
+				"daemon":                        c.daemonSpec().Name,
+				"daemonSocket":                  c.daemonSpec().SocketPath,
+				"appliedConfigHash":             bgpdaemon.Hash(c.appliedConfig),
+				"changed":                       changed,
+				"dryRun":                        c.DryRun,
+				"peers":                         state.Peers,
+				"prefixes":                      state.Prefixes,
+				"observedCommunities":           observedCommunities(state.Prefixes),
+				"livenessMarkers":               livenessMarkers,
+				"invalidLivenessMarkerPrefixes": invalidLivenessMarkers,
+				"establishedPeers":              established,
+				"acceptedPrefixes":              len(state.Prefixes),
+				"fibRoutes":                     fibRoutes,
+				"fibUnsupportedRoutes":          fibUnsupported,
+				"fibMissingRoutes":              fibMissingInstalled,
+				"nextHopRewrite":                importNextHopRewrite(spec.ImportPolicy),
+				"installedNextHops":             installedNextHops(routes, fibResult),
+				"missingInstalledNextHops":      missingInstalledNextHops(routes, fibResult),
+				"preferredSources":              fibResult.PreferredSource,
+				"observedAt":                    now,
+				"conditions":                    []map[string]any{{"type": "Observed", "status": "True", "reason": "GoBGPStatus"}},
 			}
 			if len(fibResult.PreferredSourceSkipped) > 0 {
 				status["preferredSourceSkipped"] = fibResult.PreferredSourceSkipped
@@ -1731,6 +1758,16 @@ func (c *Controller) saveObservedStatuses(routerName string, spec routerapi.BGPR
 					"status":  "False",
 					"reason":  "GoBGPFIBMissingRoute",
 					"message": fmt.Sprintf("%d imported BGP prefix(es) were accepted but have no installed kernel FIB evidence", fibMissingInstalled),
+				})
+			}
+			if len(invalidLivenessMarkers) > 0 {
+				status["reason"] = "GoBGPMisTaggedMobilityLivenessMarker"
+				status["pendingReason"] = "GoBGPMisTaggedMobilityLivenessMarker"
+				status["conditions"] = append(status["conditions"].([]map[string]any), map[string]any{
+					"type":    "MobilityLivenessMarker",
+					"status":  "False",
+					"reason":  "GoBGPMisTaggedMobilityLivenessMarker",
+					"message": "liveness marker prefixes are inside a MobilityPool and are excluded from FIB: " + strings.Join(invalidLivenessMarkers, ","),
 				})
 			}
 			if err := c.Store.SaveObjectStatus(routerapi.NetAPIVersion, "BGPRouter", resource.Metadata.Name, status); err != nil {
@@ -2055,7 +2092,8 @@ func statePrefixes(dst *gobgpapi.Destination) []bgpstate.Prefix {
 		if path.GetIsWithdraw() {
 			continue
 		}
-		if bgpstate.HasCommunity(pathCommunities(path), bgpstate.MobilityCommunityNodeLiveness) {
+		communities := pathCommunities(path)
+		if bgpstate.HasCommunity(communities, bgpstate.MobilityCommunityNodeLiveness) {
 			continue
 		}
 		prefix := firstNonEmpty(dst.GetPrefix(), pathPrefix(path))
@@ -2070,7 +2108,7 @@ func statePrefixes(dst *gobgpapi.Destination) []bgpstate.Prefix {
 			Installed:   path.GetBest() && !path.GetIsNexthopInvalid(),
 			Selected:    path.GetBest(),
 			Stale:       path.GetStale(),
-			Communities: pathCommunities(path),
+			Communities: communities,
 		})
 	}
 	return out
@@ -2190,6 +2228,36 @@ func fibRoutesFromDestination(dst *gobgpapi.Destination, allowed []netip.Prefix,
 		return nil
 	}
 	return []FIBRoute{{Prefix: prefix, NextHops: nextHops}}
+}
+
+func invalidMobilityLivenessMarkerPrefixes(markers map[string]string, mobilityPools []netip.Prefix) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, raw := range markers {
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(raw))
+		if err != nil || !prefix.Addr().Is4() || prefix.Bits() != 32 {
+			continue
+		}
+		prefix = prefix.Masked()
+		insidePool := false
+		for _, pool := range mobilityPools {
+			if pool.Addr().Is4() && pool.Contains(prefix.Addr()) {
+				insidePool = true
+				break
+			}
+		}
+		if !insidePool {
+			continue
+		}
+		value := prefix.String()
+		if seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func peerAddressFIBRewritePeers(desired map[string]desiredPeer) map[string]bool {

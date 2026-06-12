@@ -114,6 +114,47 @@ func TestSAMConvergenceStatusReadyWithAcceptedSelfOriginatedBGPPath(t *testing.T
 	}
 }
 
+func TestSAMConvergenceStatusMisTaggedLivenessMarkerTargetBlocks(t *testing.T) {
+	fields := samConvergenceStatusFields(samConvergenceInput{
+		Status: map[string]any{
+			"ownershipResolverPhase": "Resolved",
+			"providerActionPhase":    "OK",
+		},
+		InvalidLivenessMarkerPrefixes: []string{"10.77.60.44/32"},
+		InstalledNextHops:             map[string][]string{},
+		AcceptedBGPPathPrefixes: map[string]bool{
+			"10.77.60.44/32": true,
+		},
+		BGPRIBObserved: true,
+		ObservedAt:     time.Unix(1700000000, 0).UTC(),
+	})
+	if fields["samConvergencePhase"] != sam.SAMConvergenceDegraded {
+		t.Fatalf("samConvergencePhase = %v, want %s", fields["samConvergencePhase"], sam.SAMConvergenceDegraded)
+	}
+	if fields["fibConvergencePhase"] != sam.FIBConvergenceMissingRoute {
+		t.Fatalf("fibConvergencePhase = %v, want %s", fields["fibConvergencePhase"], sam.FIBConvergenceMissingRoute)
+	}
+	if fields["cloudClaimPhase"] != sam.CloudClaimNotApplicable {
+		t.Fatalf("cloudClaimPhase = %v, want %s", fields["cloudClaimPhase"], sam.CloudClaimNotApplicable)
+	}
+	reasons := fields["blockingReasons"].([]string)
+	joined := strings.Join(reasons, "\n")
+	if !strings.Contains(joined, "mis-tagged BGP liveness marker prefixes inside MobilityPool") || !strings.Contains(joined, "10.77.60.44/32") {
+		t.Fatalf("blockingReasons = %#v, want mis-tagged liveness target", reasons)
+	}
+}
+
+func TestInvalidLivenessMarkerPoolPrefixesFiltersPoolHosts(t *testing.T) {
+	got := invalidLivenessMarkerPoolPrefixes(map[string]string{
+		"64512:34882": "10.77.60.44/32",
+		"64512:34852": "10.99.0.4/32",
+		"64512:34853": "10.77.61.44/32",
+	}, "10.77.60.0/24")
+	if fmt.Sprint(got) != "[10.77.60.44/32]" {
+		t.Fatalf("invalidLivenessMarkerPoolPrefixes = %#v, want only target pool /32", got)
+	}
+}
+
 func TestSAMConvergenceStatusBlocksUnresolvedSelfCapture(t *testing.T) {
 	fields := samConvergenceStatusFields(samConvergenceInput{
 		Status: map[string]any{
@@ -1905,6 +1946,50 @@ func TestControllerBGPModeProviderTrapUsesStaticOwnedOwnerWhenOwnershipMissing(t
 	}
 	if assign.Parameters[bgpPathSigParam] == "" || assign.Parameters[captureParamHolder] != "azure-router" {
 		t.Fatalf("assign parameters = %#v, want BGP path fence for static-owned trap", assign.Parameters)
+	}
+}
+
+func TestControllerBGPModeMisTaggedLivenessPoolPrefixBlocksSAM(t *testing.T) {
+	now := time.Date(2026, 6, 12, 0, 5, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := awsFailoverPoolSpec()
+	spec.Prefix = "10.77.60.0/24"
+	spec.DeliveryPolicy.Mode = "bgp"
+	target := "10.77.60.44/32"
+	saveBGPStatus(t, store,
+		map[string][]string{},
+		[]map[string]any{{"prefix": target}},
+		map[string]string{bgpstate.MobilityNodeIdentityCommunity("peer-speaker"): target},
+	)
+
+	bgp := &fakeBGPPaths{}
+	router := routerWithOCIProvider(routerWithBGPRouter(planningRouterForNode("oci-router", spec)))
+	controller := Controller{Router: router, Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	if got := fmt.Sprint(status["invalidLivenessMarkerPrefixes"]); got != "[10.77.60.44/32]" {
+		t.Fatalf("invalidLivenessMarkerPrefixes = %v, want target; status=%#v", got, status)
+	}
+	if got := fmt.Sprint(status["generatedProviderCapturedBGPPaths"]); got != "0" {
+		t.Fatalf("generatedProviderCapturedBGPPaths = %v, want 0; status=%#v", got, status)
+	}
+	if got := fmt.Sprint(status["samConvergencePhase"]); got != sam.SAMConvergenceDegraded {
+		t.Fatalf("samConvergencePhase = %v, want %s", got, sam.SAMConvergenceDegraded)
+	}
+	if got := fmt.Sprint(status["fibConvergencePhase"]); got != sam.FIBConvergenceMissingRoute {
+		t.Fatalf("fibConvergencePhase = %v, want %s", got, sam.FIBConvergenceMissingRoute)
+	}
+	reasons := statusStringSlice(status["blockingReasons"])
+	if joined := strings.Join(reasons, "\n"); !strings.Contains(joined, "mis-tagged BGP liveness marker prefixes inside MobilityPool") || !strings.Contains(joined, target) {
+		t.Fatalf("blockingReasons = %#v, want mis-tagged target; status=%#v", reasons, status)
+	}
+	plans := decodeActionPlans(t, latestPart(t, store, DynamicSource("cloudedge", "oci-router")).ActionPlansJSON)
+	assign := findActionPlanByAddress(plans, "assign-secondary-ip", target)
+	if assign != nil {
+		t.Fatalf("plans = %#v, want no provider action for mis-tagged liveness target", plans)
 	}
 }
 
