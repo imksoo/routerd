@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -42,14 +43,16 @@ func TestDispatchDescribeNetworkInterfacesOutputShape(t *testing.T) {
 	fake := &fakeEC2{
 		networkInterfaces: []types.NetworkInterface{{
 			NetworkInterfaceId: aws.String("eni-1"),
+			SubnetId:           aws.String("subnet-a"),
 			SourceDestCheck:    aws.Bool(true),
 			PrivateIpAddresses: []types.NetworkInterfacePrivateIpAddress{
 				{PrivateIpAddress: aws.String("10.99.0.4"), Primary: aws.Bool(true)},
 				{PrivateIpAddress: aws.String("10.77.60.10"), Primary: aws.Bool(false)},
 			},
+			TagSet: []types.Tag{{Key: aws.String("role"), Value: aws.String("router")}},
 		}},
 	}
-	req, err := parseArgs([]string{"ec2", "describe-network-interfaces", "--network-interface-ids", "eni-1", "--region", "ap-northeast-1"})
+	req, err := parseArgs([]string{"ec2", "describe-network-interfaces", "--filters", "Name=subnet-id,Values=subnet-a", "--region", "ap-northeast-1"})
 	if err != nil {
 		t.Fatalf("parseArgs: %v", err)
 	}
@@ -60,11 +63,16 @@ func TestDispatchDescribeNetworkInterfacesOutputShape(t *testing.T) {
 	var body struct {
 		NetworkInterfaces []struct {
 			NetworkInterfaceID string `json:"NetworkInterfaceId"`
+			SubnetID           string `json:"SubnetId"`
 			SourceDestCheck    bool   `json:"SourceDestCheck"`
 			PrivateIPAddresses []struct {
 				PrivateIPAddress string `json:"PrivateIpAddress"`
 				Primary          bool   `json:"Primary"`
 			} `json:"PrivateIpAddresses"`
+			TagSet []struct {
+				Key   string `json:"Key"`
+				Value string `json:"Value"`
+			} `json:"TagSet"`
 		} `json:"NetworkInterfaces"`
 	}
 	if err := json.Unmarshal(out.Bytes(), &body); err != nil {
@@ -73,8 +81,75 @@ func TestDispatchDescribeNetworkInterfacesOutputShape(t *testing.T) {
 	if len(body.NetworkInterfaces) != 1 || body.NetworkInterfaces[0].NetworkInterfaceID != "eni-1" || !body.NetworkInterfaces[0].SourceDestCheck {
 		t.Fatalf("body = %#v", body)
 	}
+	if fake.describeNI == nil || len(fake.describeNI.Filters) != 1 || aws.ToString(fake.describeNI.Filters[0].Name) != "subnet-id" || fake.describeNI.Filters[0].Values[0] != "subnet-a" {
+		t.Fatalf("describe input = %#v, want subnet-id filter", fake.describeNI)
+	}
+	if body.NetworkInterfaces[0].SubnetID != "subnet-a" || len(body.NetworkInterfaces[0].TagSet) != 1 || body.NetworkInterfaces[0].TagSet[0].Key != "role" {
+		t.Fatalf("body missing subnet/tag shape: %#v", body.NetworkInterfaces[0])
+	}
 	if len(body.NetworkInterfaces[0].PrivateIPAddresses) != 2 || body.NetworkInterfaces[0].PrivateIPAddresses[1].PrivateIPAddress != "10.77.60.10" {
 		t.Fatalf("private IPs = %#v", body.NetworkInterfaces[0].PrivateIPAddresses)
+	}
+}
+
+func TestDispatchDescribeInstancesOutputShape(t *testing.T) {
+	fake := &fakeEC2{
+		reservations: []types.Reservation{{
+			Instances: []types.Instance{{
+				InstanceId: aws.String("i-router"),
+				State:      &types.InstanceState{Name: types.InstanceStateNameRunning},
+				NetworkInterfaces: []types.InstanceNetworkInterface{{
+					NetworkInterfaceId: aws.String("eni-router"),
+				}},
+			}},
+		}},
+	}
+	req, err := parseArgs([]string{"ec2", "describe-instances", "--filters", "Name=network-interface.subnet-id,Values=subnet-a", "--region", "ap-northeast-1"})
+	if err != nil {
+		t.Fatalf("parseArgs: %v", err)
+	}
+	var out bytes.Buffer
+	if err := dispatch(context.Background(), req, fake, &out); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	if fake.describeInstances == nil || len(fake.describeInstances.Filters) != 1 || aws.ToString(fake.describeInstances.Filters[0].Name) != "network-interface.subnet-id" {
+		t.Fatalf("describe instances input = %#v, want subnet filter", fake.describeInstances)
+	}
+	var body struct {
+		Reservations []struct {
+			Instances []struct {
+				InstanceID string `json:"InstanceId"`
+				State      struct {
+					Name string `json:"Name"`
+				} `json:"State"`
+				NetworkInterfaces []struct {
+					NetworkInterfaceID string `json:"NetworkInterfaceId"`
+				} `json:"NetworkInterfaces"`
+			} `json:"Instances"`
+		} `json:"Reservations"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &body); err != nil {
+		t.Fatalf("json: %v\n%s", err, out.String())
+	}
+	if len(body.Reservations) != 1 || len(body.Reservations[0].Instances) != 1 {
+		t.Fatalf("body = %#v", body)
+	}
+	got := body.Reservations[0].Instances[0]
+	if got.InstanceID != "i-router" || got.State.Name != "running" || got.NetworkInterfaces[0].NetworkInterfaceID != "eni-router" {
+		t.Fatalf("instance = %#v", got)
+	}
+}
+
+func TestEC2FiltersPreservesMultipleValues(t *testing.T) {
+	filters := ec2Filters("Name=addresses.private-ip-address,Values=10.77.60.21,10.77.60.22")
+	if len(filters) != 1 {
+		t.Fatalf("filters = %#v, want one filter", filters)
+	}
+	if aws.ToString(filters[0].Name) != "addresses.private-ip-address" {
+		t.Fatalf("name = %q", aws.ToString(filters[0].Name))
+	}
+	if !reflect.DeepEqual(filters[0].Values, []string{"10.77.60.21", "10.77.60.22"}) {
+		t.Fatalf("values = %#v", filters[0].Values)
 	}
 }
 
@@ -160,7 +235,10 @@ func TestDispatchRouteTableCommands(t *testing.T) {
 
 type fakeEC2 struct {
 	networkInterfaces []types.NetworkInterface
+	reservations      []types.Reservation
 	routeTables       []types.RouteTable
+	describeNI        *ec2.DescribeNetworkInterfacesInput
+	describeInstances *ec2.DescribeInstancesInput
 	assign            *ec2.AssignPrivateIpAddressesInput
 	unassign          *ec2.UnassignPrivateIpAddressesInput
 	modify            *ec2.ModifyNetworkInterfaceAttributeInput
@@ -169,8 +247,14 @@ type fakeEC2 struct {
 	delete            *ec2.DeleteRouteInput
 }
 
-func (f *fakeEC2) DescribeNetworkInterfaces(context.Context, *ec2.DescribeNetworkInterfacesInput, ...func(*ec2.Options)) (*ec2.DescribeNetworkInterfacesOutput, error) {
+func (f *fakeEC2) DescribeNetworkInterfaces(_ context.Context, in *ec2.DescribeNetworkInterfacesInput, _ ...func(*ec2.Options)) (*ec2.DescribeNetworkInterfacesOutput, error) {
+	f.describeNI = in
 	return &ec2.DescribeNetworkInterfacesOutput{NetworkInterfaces: f.networkInterfaces}, nil
+}
+
+func (f *fakeEC2) DescribeInstances(_ context.Context, in *ec2.DescribeInstancesInput, _ ...func(*ec2.Options)) (*ec2.DescribeInstancesOutput, error) {
+	f.describeInstances = in
+	return &ec2.DescribeInstancesOutput{Reservations: f.reservations}, nil
 }
 
 func (f *fakeEC2) AssignPrivateIpAddresses(_ context.Context, in *ec2.AssignPrivateIpAddressesInput, _ ...func(*ec2.Options)) (*ec2.AssignPrivateIpAddressesOutput, error) {

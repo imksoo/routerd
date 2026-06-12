@@ -661,6 +661,9 @@ func runInventoryPluginWithEnv(t *testing.T, fakeBin, stdin string, extraEnv []s
 	cmd.Stdin = strings.NewReader(stdin)
 	cmd.Env = append(os.Environ(), "PATH="+fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	cmd.Env = append(cmd.Env, "ROUTERD_OCI_HELPER="+filepath.Join(fakeBin, "oci"))
+	if _, err := os.Stat(filepath.Join(fakeBin, "aws")); err == nil {
+		cmd.Env = append(cmd.Env, "ROUTERD_PROVIDER_INVENTORY_AWS_CLI_PATH="+filepath.Join(fakeBin, "aws"))
+	}
 	cmd.Env = append(cmd.Env, extraEnv...)
 	var out, errOut bytes.Buffer
 	cmd.Stdout = &out

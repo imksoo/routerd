@@ -33,6 +33,7 @@ type cliRequest struct {
 
 type ec2API interface {
 	DescribeNetworkInterfaces(context.Context, *ec2.DescribeNetworkInterfacesInput, ...func(*ec2.Options)) (*ec2.DescribeNetworkInterfacesOutput, error)
+	DescribeInstances(context.Context, *ec2.DescribeInstancesInput, ...func(*ec2.Options)) (*ec2.DescribeInstancesOutput, error)
 	AssignPrivateIpAddresses(context.Context, *ec2.AssignPrivateIpAddressesInput, ...func(*ec2.Options)) (*ec2.AssignPrivateIpAddressesOutput, error)
 	UnassignPrivateIpAddresses(context.Context, *ec2.UnassignPrivateIpAddressesInput, ...func(*ec2.Options)) (*ec2.UnassignPrivateIpAddressesOutput, error)
 	ModifyNetworkInterfaceAttribute(context.Context, *ec2.ModifyNetworkInterfaceAttributeInput, ...func(*ec2.Options)) (*ec2.ModifyNetworkInterfaceAttributeOutput, error)
@@ -106,11 +107,9 @@ func dispatch(ctx context.Context, req cliRequest, client ec2API, out io.Writer)
 	switch strings.Join(req.Words, " ") {
 	case "ec2 describe-network-interfaces":
 		eni := req.Flags["network-interface-ids"]
-		if eni == "" {
-			return errors.New("ec2 describe-network-interfaces requires --network-interface-ids")
-		}
 		resp, err := client.DescribeNetworkInterfaces(ctx, &ec2.DescribeNetworkInterfacesInput{
-			NetworkInterfaceIds: []string{eni},
+			NetworkInterfaceIds: splitComma(eni),
+			Filters:             ec2Filters(req.Flags["filters"]),
 		})
 		if err != nil {
 			return err
@@ -120,6 +119,18 @@ func dispatch(ctx context.Context, req cliRequest, client ec2API, out io.Writer)
 			items = append(items, networkInterfaceJSON(item))
 		}
 		return writeJSON(out, map[string]any{"NetworkInterfaces": items})
+	case "ec2 describe-instances":
+		resp, err := client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
+			Filters: ec2Filters(req.Flags["filters"]),
+		})
+		if err != nil {
+			return err
+		}
+		items := make([]map[string]any, 0, len(resp.Reservations))
+		for _, item := range resp.Reservations {
+			items = append(items, reservationJSON(item))
+		}
+		return writeJSON(out, map[string]any{"Reservations": items})
 	case "ec2 assign-private-ip-addresses":
 		eni := req.Flags["network-interface-id"]
 		ip := bareIP(req.Flags["private-ip-addresses"])
@@ -233,6 +244,38 @@ func requireRouteFlags(flags map[string]string) (routeTableID, destination, eni 
 	return routeTableID, destination, eni, nil
 }
 
+func splitComma(raw string) []string {
+	var out []string
+	for _, value := range strings.Split(raw, ",") {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
+}
+
+func ec2Filters(raw string) []types.Filter {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	nameRaw, valuesRaw, ok := strings.Cut(raw, ",Values=")
+	if !ok {
+		return nil
+	}
+	name, ok := strings.CutPrefix(strings.TrimSpace(nameRaw), "Name=")
+	if !ok {
+		return nil
+	}
+	values := splitComma(valuesRaw)
+	name = strings.TrimSpace(name)
+	if name == "" || len(values) == 0 {
+		return nil
+	}
+	return []types.Filter{{Name: aws.String(name), Values: values}}
+}
+
 func sourceDestCheckValue(flags map[string]string) (bool, error) {
 	if flags["no-source-dest-check"] == "true" {
 		return false, nil
@@ -264,11 +307,38 @@ func networkInterfaceJSON(ni types.NetworkInterface) map[string]any {
 			"Primary":          aws.ToBool(ip.Primary),
 		})
 	}
+	tags := make([]map[string]any, 0, len(ni.TagSet))
+	for _, tag := range ni.TagSet {
+		tags = append(tags, map[string]any{
+			"Key":   aws.ToString(tag.Key),
+			"Value": aws.ToString(tag.Value),
+		})
+	}
 	return map[string]any{
 		"NetworkInterfaceId": aws.ToString(ni.NetworkInterfaceId),
+		"SubnetId":           aws.ToString(ni.SubnetId),
 		"SourceDestCheck":    aws.ToBool(ni.SourceDestCheck),
 		"PrivateIpAddresses": privateIPs,
+		"TagSet":             tags,
 	}
+}
+
+func reservationJSON(res types.Reservation) map[string]any {
+	instances := make([]map[string]any, 0, len(res.Instances))
+	for _, instance := range res.Instances {
+		interfaces := make([]map[string]any, 0, len(instance.NetworkInterfaces))
+		for _, ni := range instance.NetworkInterfaces {
+			interfaces = append(interfaces, map[string]any{
+				"NetworkInterfaceId": aws.ToString(ni.NetworkInterfaceId),
+			})
+		}
+		instances = append(instances, map[string]any{
+			"InstanceId":        aws.ToString(instance.InstanceId),
+			"State":             map[string]any{"Name": string(instance.State.Name)},
+			"NetworkInterfaces": interfaces,
+		})
+	}
+	return map[string]any{"Instances": instances}
 }
 
 func routeTableJSON(rt types.RouteTable) map[string]any {
