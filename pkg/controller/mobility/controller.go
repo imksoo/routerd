@@ -546,18 +546,23 @@ func samConvergenceStatusFields(in samConvergenceInput) map[string]any {
 }
 
 func confirmedProviderCaptureCount(status map[string]any) int {
-	raw, ok := status["ownershipResolverDecisions"].([]any)
-	if !ok {
-		return 0
-	}
 	count := 0
-	for _, item := range raw {
-		decision, ok := item.(map[string]any)
-		if !ok {
-			continue
+	switch raw := status["ownershipResolverDecisions"].(type) {
+	case []map[string]any:
+		for _, decision := range raw {
+			if strings.TrimSpace(fmt.Sprint(decision["captureState"])) == captureStateConfirmed {
+				count++
+			}
 		}
-		if strings.TrimSpace(fmt.Sprint(decision["captureState"])) == captureStateConfirmed {
-			count++
+	case []any:
+		for _, item := range raw {
+			decision, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			if strings.TrimSpace(fmt.Sprint(decision["captureState"])) == captureStateConfirmed {
+				count++
+			}
 		}
 	}
 	return count
