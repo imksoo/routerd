@@ -41,9 +41,13 @@ installer: without it, a fresh cloud leaf can handshake WireGuard but still send
 peer-group HTTP sync traffic for the RR/onprem SAM endpoint through its default
 underlay route.
 
-For a multi-leaf lab, the leaf still only needs the RR/onprem bootstrap route
-when the shared `SAMNodeSet` marks that node with `routeReflector: true` and a
-reachable `samEndpoint`. Peer-group sync prefers those RR endpoints before
-falling back to legacy WireGuard peer probing, so non-RR leaf `samEndpoint`
-routes can be derived later by `SAMTransportProfile` instead of being present
-before sync.
+In the current RR-first implementation, a multi-leaf lab is expected to need
+only the RR/onprem bootstrap route when the shared `SAMNodeSet` marks that node
+with `routeReflector: true` and a reachable `samEndpoint`. Peer-group sync
+prefers those RR endpoints before falling back to legacy WireGuard peer probing,
+so non-RR leaf `samEndpoint` routes are intended to be derived later by
+`SAMTransportProfile` instead of being present before sync.
+
+This still needs to be validated whenever the lab is rebuilt from scratch. A
+node marked `routeReflector: true` must also publish the peer group, otherwise a
+fresh leaf can select that RR endpoint and fail sync before falling back.
