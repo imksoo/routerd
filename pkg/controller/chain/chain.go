@@ -996,6 +996,16 @@ func (r *Runner) effectiveDynamicRouterForReconcile(store eventedStore, now time
 	return view.EffectiveRouter, nil
 }
 
+func (r *Runner) reconcileProviderAction(ctx context.Context, store eventedStore, controller provideractioncontroller.Controller) error {
+	effective, err := r.effectiveRouterForReconcile(store)
+	if err != nil {
+		return err
+	}
+	current := controller
+	current.Router = effective
+	return current.Reconcile(ctx)
+}
+
 func (r *Runner) Start(ctx context.Context) error {
 	if r.Router == nil || r.Bus == nil || r.Store == nil {
 		return fmt.Errorf("router, bus, and store are required")
@@ -1585,7 +1595,9 @@ func (r *Runner) Start(ctx context.Context) error {
 			current.Router = effective
 			return current.Reconcile(ctx)
 		}},
-		framework.FuncController{ControllerName: "provider-action-execution", Every: 5 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed"}}}, PeriodicFunc: providerAction.Reconcile},
+		framework.FuncController{ControllerName: "provider-action-execution", Every: 5 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed"}}}, PeriodicFunc: func(ctx context.Context) error {
+			return r.reconcileProviderAction(ctx, store, providerAction)
+		}},
 		framework.FuncController{ControllerName: "egress-route-policy", Every: 15 * time.Second, Subs: statusSubscriptionsWithWhen(r.Router, []string{"EgressRoutePolicy"}, "HealthCheck", "DSLiteTunnel", "Interface", "DHCPv4Client", "PPPoESession"), PeriodicFunc: func(ctx context.Context) error {
 			effective, err := effectiveForReconcile()
 			if err != nil {
