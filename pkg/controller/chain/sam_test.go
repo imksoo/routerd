@@ -5,6 +5,7 @@ package chain
 import (
 	"context"
 	"errors"
+	"strconv"
 	"testing"
 
 	"github.com/imksoo/routerd/pkg/api"
@@ -111,6 +112,48 @@ func TestSAMControllerAssignsProviderSecondaryOSAddressAndStatus(t *testing.T) {
 	}
 	if note["address"] != "10.0.1.122/32" || note["interface"] != "eth0" || note["enforced"] != true || note["lastReconcileAdded"] != true {
 		t.Fatalf("assign note = %#v", note)
+	}
+}
+
+func TestSAMControllerInstallsProviderSecondaryReturnPolicyRoute(t *testing.T) {
+	router := samControllerRouterWithClaim("10.77.60.46/32", "provider-secondary-ip", "ens3")
+	router.Spec.Resources = append(router.Spec.Resources, api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "AddressMobilityDomain"},
+		Metadata: api.ObjectMeta{Name: "same-subnet"},
+		Spec:     api.AddressMobilityDomainSpec{Prefix: "10.99.44.0/24", Mode: "selective-address", PeerRef: "cloud"},
+	})
+	spec := router.Spec.Resources[1].Spec.(api.RemoteAddressClaimSpec)
+	spec.Capture.ConfigureOSAddress = true
+	spec.Capture.ProviderRef = "oci-prod"
+	spec.Capture.NICRef = "vnic-1"
+	spec.Delivery.TunnelInterface = "samt-oci-onprem"
+	router.Spec.Resources[1].Spec = spec
+	store := &samStore{
+		objects: map[string]map[string]any{},
+		actions: []routerstate.ActionExecutionRecord{
+			samSucceededAssignAction("oci-prod", "vnic-1", "10.77.60.46/32"),
+		},
+	}
+	applier := &fakeSAMApplier{}
+	controller := SAMController{Router: router, Store: store, OS: platform.OSLinux, Applier: applier}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	table, priority := sam.ReturnPolicyRouteIDs("app", "10.77.60.46/32")
+	assertSAMCalls(t, applier.calls, []string{
+		"assign:10.77.60.46/32@ens3",
+		"return-route:10.77.60.46/32->10.99.44.0/24@samt-oci-onprem table=" + strconv.Itoa(table) + " priority=" + strconv.Itoa(priority) + " metric=120",
+	})
+	status := store.ObjectStatus(api.HybridAPIVersion, "RemoteAddressClaim", "app")
+	note, ok := status["captureReturnPolicyRoute"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing captureReturnPolicyRoute in status %#v", status)
+	}
+	if note["source"] != "10.77.60.46/32" || note["destination"] != "10.99.44.0/24" || note["interface"] != "samt-oci-onprem" || note["enforced"] != true {
+		t.Fatalf("return route note = %#v", note)
+	}
+	if note["table"] != table || note["priority"] != priority || note["metric"] != 120 {
+		t.Fatalf("return route identifiers = %#v, want table %d priority %d metric 120", note, table, priority)
 	}
 }
 
@@ -265,6 +308,28 @@ func TestSAMControllerCleansRemovedProviderSecondaryOSAddress(t *testing.T) {
 	}
 }
 
+func TestSAMControllerCleansRemovedProviderSecondaryReturnPolicyRoute(t *testing.T) {
+	table, priority := sam.ReturnPolicyRouteIDs("old", "10.77.60.46/32")
+	router := &api.Router{}
+	store := &samStore{
+		objects: map[string]map[string]any{},
+		statuses: []routerstate.ObjectStatus{
+			samRemoteAddressClaimReturnPolicyRouteStatus("old", "10.77.60.46/32", "10.99.44.0/24", "samt-old", table, priority, 120),
+		},
+	}
+	applier := &fakeSAMApplier{}
+	controller := SAMController{Router: router, Store: store, OS: platform.OSLinux, Applier: applier}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	assertSAMCalls(t, applier.calls, []string{
+		"delete-return-route:10.77.60.46/32->10.99.44.0/24 table=" + strconv.Itoa(table) + " priority=" + strconv.Itoa(priority),
+	})
+	if !store.deleted[api.HybridAPIVersion+"/RemoteAddressClaim/old"] {
+		t.Fatalf("deleted = %#v", store.deleted)
+	}
+}
+
 func TestSAMControllerCleansChangedProxyNeighborInterface(t *testing.T) {
 	router := samControllerRouterWithClaim("10.0.1.123/32", "proxy-arp", "br-new")
 	store := &samStore{objects: map[string]map[string]any{}, statuses: []routerstate.ObjectStatus{
@@ -279,6 +344,128 @@ func TestSAMControllerCleansChangedProxyNeighborInterface(t *testing.T) {
 		"delete:10.0.1.123/32@br-old",
 		"proxyarp:br-new=1",
 		"ensure:10.0.1.123/32@br-new",
+	})
+}
+
+func TestSAMControllerCleansReturnPolicyRouteWhenOwnershipLost(t *testing.T) {
+	router := samControllerRouterWithClaim("10.77.60.46/32", "provider-secondary-ip", "ens3")
+	router.Spec.Resources = append(router.Spec.Resources, api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "AddressMobilityDomain"},
+		Metadata: api.ObjectMeta{Name: "same-subnet"},
+		Spec:     api.AddressMobilityDomainSpec{Prefix: "10.99.44.0/24", Mode: "selective-address", PeerRef: "cloud"},
+	})
+	spec := router.Spec.Resources[1].Spec.(api.RemoteAddressClaimSpec)
+	spec.Capture.ConfigureOSAddress = true
+	spec.Capture.ProviderRef = "oci-prod"
+	spec.Capture.NICRef = "vnic-1"
+	spec.Delivery.TunnelInterface = "samt-oci-onprem"
+	router.Spec.Resources[1].Spec = spec
+	table, priority := sam.ReturnPolicyRouteIDs("app", "10.77.60.46/32")
+	store := &samStore{
+		objects: map[string]map[string]any{},
+		statuses: []routerstate.ObjectStatus{
+			samRemoteAddressClaimReturnPolicyRouteStatus("app", "10.77.60.46/32", "10.99.44.0/24", "samt-oci-onprem", table, priority, 120),
+		},
+	}
+	applier := &fakeSAMApplier{}
+	controller := SAMController{Router: router, Store: store, OS: platform.OSLinux, Applier: applier}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	assertSAMCalls(t, applier.calls, []string{
+		"delete-return-route:10.77.60.46/32->10.99.44.0/24 table=" + strconv.Itoa(table) + " priority=" + strconv.Itoa(priority),
+	})
+	status := store.ObjectStatus(api.HybridAPIVersion, "RemoteAddressClaim", "app")
+	if status["reason"] != "ProviderOwnershipPending" {
+		t.Fatalf("status = %#v", status)
+	}
+}
+
+func TestSAMControllerCleansReturnPolicyRouteWhenConfigureOSAddressDisabled(t *testing.T) {
+	router := samControllerRouterWithClaim("10.77.60.46/32", "provider-secondary-ip", "")
+	table, priority := sam.ReturnPolicyRouteIDs("app", "10.77.60.46/32")
+	store := &samStore{
+		objects: map[string]map[string]any{},
+		statuses: []routerstate.ObjectStatus{
+			samRemoteAddressClaimReturnPolicyRouteStatus("app", "10.77.60.46/32", "10.99.44.0/24", "samt-oci-onprem", table, priority, 120),
+		},
+	}
+	applier := &fakeSAMApplier{}
+	controller := SAMController{Router: router, Store: store, OS: platform.OSLinux, Applier: applier}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	assertSAMCalls(t, applier.calls, []string{
+		"delete-return-route:10.77.60.46/32->10.99.44.0/24 table=" + strconv.Itoa(table) + " priority=" + strconv.Itoa(priority),
+		"deassign:10.77.60.46/32",
+	})
+}
+
+func TestSAMControllerCleansReturnPolicyRouteWhenCaptureGated(t *testing.T) {
+	router := samControllerRouterWithClaim("10.77.60.46/32", "provider-secondary-ip", "ens3")
+	spec := router.Spec.Resources[1].Spec.(api.RemoteAddressClaimSpec)
+	spec.Capture.ConfigureOSAddress = true
+	spec.Capture.ProviderRef = "oci-prod"
+	spec.Capture.NICRef = "vnic-1"
+	spec.Capture.ActiveWhen = api.CaptureActiveWhen{Type: "vrrp-master", VirtualAddressRef: "VirtualAddress/onprem-vip"}
+	router.Spec.Resources[1].Spec = spec
+	table, priority := sam.ReturnPolicyRouteIDs("app", "10.77.60.46/32")
+	store := &samStore{
+		objects: map[string]map[string]any{},
+		statuses: []routerstate.ObjectStatus{
+			samRemoteAddressClaimReturnPolicyRouteStatus("app", "10.77.60.46/32", "10.99.44.0/24", "samt-oci-onprem", table, priority, 120),
+		},
+		actions: []routerstate.ActionExecutionRecord{
+			samSucceededAssignAction("oci-prod", "vnic-1", "10.77.60.46/32"),
+		},
+	}
+	store.objects[api.NetAPIVersion+"/VirtualAddress/onprem-vip"] = map[string]any{"role": "backup"}
+	applier := &fakeSAMApplier{}
+	controller := SAMController{Router: router, Store: store, OS: platform.OSLinux, Applier: applier}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	assertSAMCalls(t, applier.calls, []string{
+		"delete-return-route:10.77.60.46/32->10.99.44.0/24 table=" + strconv.Itoa(table) + " priority=" + strconv.Itoa(priority),
+	})
+	status := store.ObjectStatus(api.HybridAPIVersion, "RemoteAddressClaim", "app")
+	if status["phase"] != "Gated" {
+		t.Fatalf("status = %#v", status)
+	}
+}
+
+func TestSAMControllerCleansChangedReturnPolicyRoute(t *testing.T) {
+	router := samControllerRouterWithClaim("10.77.60.46/32", "provider-secondary-ip", "ens3")
+	router.Spec.Resources = append(router.Spec.Resources, api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "AddressMobilityDomain"},
+		Metadata: api.ObjectMeta{Name: "same-subnet"},
+		Spec:     api.AddressMobilityDomainSpec{Prefix: "10.99.45.0/24", Mode: "selective-address", PeerRef: "cloud"},
+	})
+	spec := router.Spec.Resources[1].Spec.(api.RemoteAddressClaimSpec)
+	spec.Capture.ConfigureOSAddress = true
+	spec.Capture.ProviderRef = "oci-prod"
+	spec.Capture.NICRef = "vnic-1"
+	spec.Delivery.TunnelInterface = "samt-new"
+	router.Spec.Resources[1].Spec = spec
+	table, priority := sam.ReturnPolicyRouteIDs("app", "10.77.60.46/32")
+	store := &samStore{
+		objects: map[string]map[string]any{},
+		statuses: []routerstate.ObjectStatus{
+			samRemoteAddressClaimReturnPolicyRouteStatus("app", "10.77.60.46/32", "10.99.44.0/24", "samt-old", table, priority, 120),
+		},
+		actions: []routerstate.ActionExecutionRecord{
+			samSucceededAssignAction("oci-prod", "vnic-1", "10.77.60.46/32"),
+		},
+	}
+	applier := &fakeSAMApplier{}
+	controller := SAMController{Router: router, Store: store, OS: platform.OSLinux, Applier: applier}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	assertSAMCalls(t, applier.calls, []string{
+		"delete-return-route:10.77.60.46/32->10.99.44.0/24 table=" + strconv.Itoa(table) + " priority=" + strconv.Itoa(priority),
+		"assign:10.77.60.46/32@ens3",
+		"return-route:10.77.60.46/32->10.99.45.0/24@samt-new table=" + strconv.Itoa(table) + " priority=" + strconv.Itoa(priority) + " metric=120",
 	})
 }
 
@@ -578,6 +765,7 @@ type fakeSAMApplier struct {
 	delete         []string
 	assign         []string
 	deassign       []string
+	returnRoutes   []string
 	proxyARP       []string
 	calls          []string
 	assignResult   samOSAddressAssignResult
@@ -639,6 +827,20 @@ func (a *fakeSAMApplier) EnsureOSAddressAbsent(_ context.Context, address string
 		result.address = address
 	}
 	return result, a.deassignErr
+}
+
+func (a *fakeSAMApplier) EnsureReturnPolicyRoute(_ context.Context, sourceCIDR, destinationCIDR, ifname string, table, priority, metric int) error {
+	call := "return-route:" + sourceCIDR + "->" + destinationCIDR + "@" + ifname + " table=" + strconv.Itoa(table) + " priority=" + strconv.Itoa(priority) + " metric=" + strconv.Itoa(metric)
+	a.returnRoutes = append(a.returnRoutes, call)
+	a.calls = append(a.calls, call)
+	return nil
+}
+
+func (a *fakeSAMApplier) DeleteReturnPolicyRoute(_ context.Context, sourceCIDR, destinationCIDR string, table, priority int) error {
+	call := "delete-return-route:" + sourceCIDR + "->" + destinationCIDR + " table=" + strconv.Itoa(table) + " priority=" + strconv.Itoa(priority)
+	a.returnRoutes = append(a.returnRoutes, call)
+	a.calls = append(a.calls, call)
+	return nil
 }
 
 type samStore struct {
@@ -728,6 +930,25 @@ func samRemoteAddressClaimOSPresenceStatus(name, address, ifname string) routers
 		Name:       name,
 		Status: map[string]any{
 			"captureOSAddressPresence": map[string]any{"address": address, "interface": ifname, "enforced": true},
+		},
+	}
+}
+
+func samRemoteAddressClaimReturnPolicyRouteStatus(name, source, destination, ifname string, table, priority, metric int) routerstate.ObjectStatus {
+	return routerstate.ObjectStatus{
+		APIVersion: api.HybridAPIVersion,
+		Kind:       "RemoteAddressClaim",
+		Name:       name,
+		Status: map[string]any{
+			"captureReturnPolicyRoute": map[string]any{
+				"source":      source,
+				"destination": destination,
+				"interface":   ifname,
+				"table":       table,
+				"priority":    priority,
+				"metric":      metric,
+				"enforced":    true,
+			},
 		},
 	}
 }

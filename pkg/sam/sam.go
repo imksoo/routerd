@@ -4,6 +4,7 @@ package sam
 
 import (
 	"fmt"
+	"hash/fnv"
 	"math/bits"
 	"net/netip"
 	"regexp"
@@ -100,12 +101,17 @@ type DeliveryLowering struct {
 }
 
 type CaptureAction struct {
-	Kind          string
-	ClaimName     string
-	Address       string
-	Interface     string
-	Key           string
-	Value         string
+	Kind        string
+	ClaimName   string
+	Address     string
+	Destination string
+	Interface   string
+	Key         string
+	Value       string
+	Table       int
+	Priority    int
+	Metric      int
+
 	GratuitousARP bool
 }
 
@@ -267,6 +273,8 @@ func PlanCaptureWithOptions(router *api.Router, targetOS platform.OS, opts PlanO
 	}
 	interfaces := map[string]bool{}
 	interfaceAliases := CaptureInterfaceAliases(router)
+	peers := overlayPeers(*router)
+	domains := addressMobilityDomainPrefixes(router)
 	forwardingAdded := false
 	var actions []CaptureAction
 	addForwarding := func() {
@@ -308,6 +316,11 @@ func PlanCaptureWithOptions(router *api.Router, targetOS platform.OS, opts PlanO
 						continue
 					}
 					actions = append(actions, CaptureAction{Kind: "assign-os-address", ClaimName: resource.Metadata.Name, Address: address, Interface: iface})
+					if action, ok, err := returnPolicyRouteAction(resource, spec, address, peers, domains); err != nil {
+						return nil, err
+					} else if ok {
+						actions = append(actions, action)
+					}
 				} else {
 					actions = append(actions, CaptureAction{Kind: "deassign-os-address", ClaimName: resource.Metadata.Name, Address: address})
 				}
@@ -325,6 +338,57 @@ func PlanCaptureWithOptions(router *api.Router, targetOS platform.OS, opts PlanO
 		actions = append(actions, CaptureAction{Kind: "proxy-neighbor", ClaimName: resource.Metadata.Name, Address: address, Interface: iface, GratuitousARP: wantsGratuitousARP(spec.Capture)})
 	}
 	return actions, nil
+}
+
+func returnPolicyRouteAction(resource api.Resource, spec api.RemoteAddressClaimSpec, address string, peers map[string]api.OverlayPeerSpec, domains map[string]string) (CaptureAction, bool, error) {
+	if strings.TrimSpace(spec.Capture.Type) != "provider-secondary-ip" || !spec.Capture.ConfigureOSAddress {
+		return CaptureAction{}, false, nil
+	}
+	if strings.TrimSpace(spec.Delivery.Mode) == "bgp" {
+		return CaptureAction{}, false, nil
+	}
+	domainName := normalizeRefName(spec.DomainRef, "AddressMobilityDomain")
+	destination := strings.TrimSpace(domains[domainName])
+	if destination == "" {
+		return CaptureAction{}, false, nil
+	}
+	destinationPrefix, err := netip.ParsePrefix(destination)
+	if err != nil || !destinationPrefix.Addr().Is4() {
+		return CaptureAction{}, false, fmt.Errorf("%s AddressMobilityDomain/%s prefix must be an IPv4 CIDR", resource.ID(), domainName)
+	}
+	device := strings.TrimSpace(spec.Delivery.TunnelInterface)
+	if device == "" {
+		peerName := normalizeRefName(spec.Delivery.PeerRef, "OverlayPeer")
+		peer, ok := peers[peerName]
+		if !ok {
+			return CaptureAction{}, false, fmt.Errorf("%s spec.delivery.peerRef references missing OverlayPeer %q", resource.ID(), spec.Delivery.PeerRef)
+		}
+		resolvedDevice, _, err := hybrid.RouteTarget(peer)
+		if err != nil {
+			return CaptureAction{}, false, fmt.Errorf("%s: %w", resource.ID(), err)
+		}
+		device = resolvedDevice
+	}
+	table, priority := ReturnPolicyRouteIDs(resource.Metadata.Name, address)
+	return CaptureAction{
+		Kind:        "return-policy-route",
+		ClaimName:   resource.Metadata.Name,
+		Address:     address,
+		Destination: destinationPrefix.Masked().String(),
+		Interface:   device,
+		Table:       table,
+		Priority:    priority,
+		Metric:      DeliveryRouteMetricDefault,
+	}, true, nil
+}
+
+func ReturnPolicyRouteIDs(claimName, address string) (int, int) {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(strings.TrimSpace(claimName)))
+	_, _ = h.Write([]byte{0})
+	_, _ = h.Write([]byte(strings.TrimSpace(address)))
+	slot := int(h.Sum32() % 1000)
+	return 42000 + slot, 14200 + slot
 }
 
 func CaptureExcludesAddress(capture api.AddressCapture, address string) bool {
@@ -742,6 +806,23 @@ func overlayPeers(router api.Router) map[string]api.OverlayPeerSpec {
 		spec, err := resource.OverlayPeerSpec()
 		if err == nil {
 			out[resource.Metadata.Name] = spec
+		}
+	}
+	return out
+}
+
+func addressMobilityDomainPrefixes(router *api.Router) map[string]string {
+	out := map[string]string{}
+	if router == nil {
+		return out
+	}
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.HybridAPIVersion || resource.Kind != "AddressMobilityDomain" {
+			continue
+		}
+		spec, err := resource.AddressMobilityDomainSpec()
+		if err == nil {
+			out[resource.Metadata.Name] = strings.TrimSpace(spec.Prefix)
 		}
 	}
 	return out

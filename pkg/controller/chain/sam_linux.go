@@ -146,6 +146,83 @@ func (netlinkSAMProxyNeighborApplier) EnsureOSAddressPresent(_ context.Context, 
 	return result, nil
 }
 
+func (netlinkSAMProxyNeighborApplier) EnsureReturnPolicyRoute(_ context.Context, sourceCIDR, destinationCIDR, ifname string, table, priority, metric int) error {
+	sourceIP, sourceNet, err := net.ParseCIDR(sourceCIDR)
+	if err != nil || sourceIP == nil || sourceIP.To4() == nil || sourceNet == nil {
+		return fmt.Errorf("invalid IPv4 source CIDR %q", sourceCIDR)
+	}
+	_, destinationNet, err := net.ParseCIDR(destinationCIDR)
+	if err != nil || destinationNet == nil || destinationNet.IP.To4() == nil {
+		return fmt.Errorf("invalid IPv4 destination CIDR %q", destinationCIDR)
+	}
+	link, err := netlink.LinkByName(ifname)
+	if err != nil {
+		return err
+	}
+	route := netlink.Route{
+		LinkIndex: link.Attrs().Index,
+		Dst:       destinationNet,
+		Src:       sourceIP.To4(),
+		Table:     unixRouteTableMain,
+		Priority:  metric,
+	}
+	if err := netlink.RouteReplace(&route); err != nil {
+		return err
+	}
+	route.Table = table
+	if err := netlink.RouteReplace(&route); err != nil {
+		return err
+	}
+	rule := netlink.NewRule()
+	rule.Family = netlink.FAMILY_V4
+	rule.Src = sourceNet
+	rule.Table = table
+	rule.Priority = priority
+	rules, err := netlink.RuleList(netlink.FAMILY_V4)
+	if err != nil {
+		return err
+	}
+	for _, existing := range rules {
+		if existing.Table == table && existing.Priority == priority && existing.Src != nil && existing.Src.String() == sourceNet.String() {
+			return nil
+		}
+	}
+	if err := netlink.RuleAdd(rule); err != nil && !isNetlinkExists(err) {
+		return err
+	}
+	return nil
+}
+
+func (netlinkSAMProxyNeighborApplier) DeleteReturnPolicyRoute(_ context.Context, sourceCIDR, destinationCIDR string, table, priority int) error {
+	_, sourceNet, err := net.ParseCIDR(sourceCIDR)
+	if err != nil || sourceNet == nil || sourceNet.IP.To4() == nil {
+		return fmt.Errorf("invalid IPv4 source CIDR %q", sourceCIDR)
+	}
+	_, destinationNet, err := net.ParseCIDR(destinationCIDR)
+	if err != nil || destinationNet == nil || destinationNet.IP.To4() == nil {
+		return fmt.Errorf("invalid IPv4 destination CIDR %q", destinationCIDR)
+	}
+	rule := netlink.NewRule()
+	rule.Family = netlink.FAMILY_V4
+	rule.Src = sourceNet
+	rule.Table = table
+	rule.Priority = priority
+	if err := netlink.RuleDel(rule); err != nil && !isNetlinkNotFound(err) {
+		return err
+	}
+	mainRoute := netlink.Route{Dst: destinationNet, Table: unixRouteTableMain}
+	if err := netlink.RouteDel(&mainRoute); err != nil && !isNetlinkNotFound(err) {
+		return err
+	}
+	route := netlink.Route{Dst: destinationNet, Table: table}
+	if err := netlink.RouteDel(&route); err != nil && !isNetlinkNotFound(err) {
+		return err
+	}
+	return nil
+}
+
+const unixRouteTableMain = 254
+
 func samProxyNeighbor(address, ifname string) (netlink.Link, *netlink.Neigh, error) {
 	ip, _, err := net.ParseCIDR(address)
 	if err != nil {
@@ -172,7 +249,7 @@ func isNetlinkNotFound(err error) bool {
 		return false
 	}
 	message := strings.ToLower(err.Error())
-	return strings.Contains(message, "no such file") || strings.Contains(message, "not found")
+	return strings.Contains(message, "no such file") || strings.Contains(message, "not found") || strings.Contains(message, "no such process")
 }
 
 func isNetlinkExists(err error) bool {

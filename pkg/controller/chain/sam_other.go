@@ -39,6 +39,14 @@ func (unsupportedSAMProxyNeighborApplier) EnsureOSAddressAbsent(context.Context,
 	return samOSAddressDeassignResult{}, nil
 }
 
+func (unsupportedSAMProxyNeighborApplier) EnsureReturnPolicyRoute(context.Context, string, string, string, int, int, int) error {
+	return nil
+}
+
+func (unsupportedSAMProxyNeighborApplier) DeleteReturnPolicyRoute(context.Context, string, string, int, int) error {
+	return nil
+}
+
 type unsupportedSAMGratuitousARPAnnouncer struct{}
 
 func (unsupportedSAMGratuitousARPAnnouncer) SendGratuitousARP(context.Context, string, string) error {

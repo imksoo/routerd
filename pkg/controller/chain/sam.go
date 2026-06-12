@@ -24,6 +24,8 @@ type samProxyNeighborApplier interface {
 	DeleteProxyNeighbor(ctx context.Context, address, ifname string) error
 	EnsureOSAddressPresent(ctx context.Context, address, ifname string) (samOSAddressAssignResult, error)
 	EnsureOSAddressAbsent(ctx context.Context, address string) (samOSAddressDeassignResult, error)
+	EnsureReturnPolicyRoute(ctx context.Context, sourceCIDR, destinationCIDR, ifname string, table, priority, metric int) error
+	DeleteReturnPolicyRoute(ctx context.Context, sourceCIDR, destinationCIDR string, table, priority int) error
 }
 
 type samGratuitousARPAnnouncer interface {
@@ -59,6 +61,26 @@ type samProviderOwnershipBlock struct {
 	reason  string
 }
 
+type samReturnPolicyRouteResult struct {
+	source      string
+	destination string
+	ifname      string
+	table       int
+	priority    int
+	metric      int
+	enforced    bool
+	lastError   string
+}
+
+func (r samReturnPolicyRouteResult) sameDesired(next samReturnPolicyRouteResult) bool {
+	return r.source == next.source &&
+		r.destination == next.destination &&
+		r.ifname == next.ifname &&
+		r.table == next.table &&
+		r.priority == next.priority &&
+		r.metric == next.metric
+}
+
 func samSelectResources(resources []api.Resource, kind string) []api.Resource {
 	var out []api.Resource
 	for _, resource := range resources {
@@ -89,7 +111,7 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 		targetOS = platform.CurrentOS()
 	}
 	if targetOS != platform.OSLinux {
-		return c.reconcileStatuses(targetOS, nil, nil, nil, nil, nil)
+		return c.reconcileStatuses(targetOS, nil, nil, nil, nil, nil, nil)
 	}
 	statuses, err := c.listObjectStatuses()
 	if err != nil {
@@ -117,6 +139,7 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 	assignResults := map[string]samOSAddressAssignResult{}
 	deassignResults := map[string]samOSAddressDeassignResult{}
 	providerBlocks := map[string]samProviderOwnershipBlock{}
+	returnRouteResults := map[string]samReturnPolicyRouteResult{}
 	garpSent := map[string]bool{}
 	garpErrors := map[string]string{}
 	priorNeighbors := samStoredProxyNeighbors(statuses)
@@ -197,11 +220,36 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 				result.enforced = true
 			}
 			assignResults[action.ClaimName] = result
+		case "return-policy-route":
+			result := samReturnPolicyRouteResult{
+				source:      strings.TrimSpace(action.Address),
+				destination: strings.TrimSpace(action.Destination),
+				ifname:      strings.TrimSpace(action.Interface),
+				table:       action.Table,
+				priority:    action.Priority,
+				metric:      action.Metric,
+			}
+			returnRouteResults[action.ClaimName] = result
+			if c.DryRun {
+				continue
+			}
+			applier := c.Applier
+			if applier == nil {
+				applier = defaultSAMProxyNeighborApplier()
+			}
+			err := applier.EnsureReturnPolicyRoute(ctx, action.Address, action.Destination, action.Interface, action.Table, action.Priority, action.Metric)
+			if err != nil {
+				result.lastError = err.Error()
+				failures = append(failures, fmt.Sprintf("%s return route from %s to %s dev %s: %v", action.ClaimName, action.Address, action.Destination, action.Interface, err))
+			} else {
+				result.enforced = true
+			}
+			returnRouteResults[action.ClaimName] = result
 		default:
 			continue
 		}
 	}
-	if err := c.reconcileStatuses(targetOS, assignResults, deassignResults, providerBlocks, garpSent, garpErrors); err != nil {
+	if err := c.reconcileStatuses(targetOS, assignResults, deassignResults, providerBlocks, returnRouteResults, garpSent, garpErrors); err != nil {
 		return err
 	}
 	if len(failures) > 0 {
@@ -249,7 +297,7 @@ func (c SAMController) reconcileProxyARPInterfaces(ctx context.Context, actions 
 	return nil
 }
 
-func (c SAMController) reconcileStatuses(targetOS platform.OS, assignResults map[string]samOSAddressAssignResult, deassignResults map[string]samOSAddressDeassignResult, providerBlocks map[string]samProviderOwnershipBlock, garpSent map[string]bool, garpErrors map[string]string) error {
+func (c SAMController) reconcileStatuses(targetOS platform.OS, assignResults map[string]samOSAddressAssignResult, deassignResults map[string]samOSAddressDeassignResult, providerBlocks map[string]samProviderOwnershipBlock, returnRouteResults map[string]samReturnPolicyRouteResult, garpSent map[string]bool, garpErrors map[string]string) error {
 	claims := samSelectResources(c.Router.Spec.Resources, "RemoteAddressClaim")
 	for _, claim := range claims {
 		status := sam.StatusForRemoteAddressClaim(claim, c.Lowerings, c.Store, targetOS)
@@ -312,6 +360,21 @@ func (c SAMController) reconcileStatuses(targetOS platform.OS, assignResults map
 					}
 					if result.lastError != "" {
 						status["captureOSAddressPresence"].(map[string]any)["lastError"] = result.lastError
+					}
+					if route, ok := returnRouteResults[claim.Metadata.Name]; ok {
+						note := map[string]any{
+							"source":      route.source,
+							"destination": route.destination,
+							"interface":   route.ifname,
+							"table":       route.table,
+							"priority":    route.priority,
+							"metric":      route.metric,
+							"enforced":    route.enforced,
+						}
+						if route.lastError != "" {
+							note["lastError"] = route.lastError
+						}
+						status["captureReturnPolicyRoute"] = note
 					}
 				} else {
 					result := deassignResults[claim.Metadata.Name]
@@ -430,6 +493,11 @@ func (c SAMController) teardownRemovedCapture(ctx context.Context, status router
 				return fmt.Errorf("delete removed SAM OS address %s: %w", address, err)
 			}
 		}
+		if route, ok := samStoredReturnPolicyRouteFromStatus(status); ok {
+			if err := applier.DeleteReturnPolicyRoute(ctx, route.source, route.destination, route.table, route.priority); err != nil {
+				return fmt.Errorf("delete removed SAM return policy route from %s to %s table %d priority %d: %w", route.source, route.destination, route.table, route.priority, err)
+			}
+		}
 	}
 	if err := deleter.DeleteObject(api.HybridAPIVersion, "RemoteAddressClaim", status.Name); err != nil {
 		return err
@@ -451,7 +519,8 @@ func (c SAMController) cleanupChangedCaptures(ctx context.Context, statuses []ro
 	}
 	prior := samStoredProxyNeighbors(statuses)
 	priorOS := samStoredOSAddressPresences(statuses)
-	if len(prior) == 0 && len(priorOS) == 0 {
+	priorReturnRoutes := samStoredReturnPolicyRoutes(statuses)
+	if len(prior) == 0 && len(priorOS) == 0 && len(priorReturnRoutes) == 0 {
 		return nil
 	}
 	desiredClaims := map[string]bool{}
@@ -462,12 +531,22 @@ func (c SAMController) cleanupChangedCaptures(ctx context.Context, statuses []ro
 	}
 	desiredNeighbors := map[string]samStoredProxyNeighbor{}
 	desiredOS := map[string]string{}
+	desiredReturnRoutes := map[string]samReturnPolicyRouteResult{}
 	for _, action := range actions {
 		switch action.Kind {
 		case "proxy-neighbor":
 			desiredNeighbors[action.ClaimName] = samStoredProxyNeighbor{address: strings.TrimSpace(action.Address), ifname: strings.TrimSpace(action.Interface)}
 		case "assign-os-address":
 			desiredOS[action.ClaimName] = strings.TrimSpace(action.Address)
+		case "return-policy-route":
+			desiredReturnRoutes[action.ClaimName] = samReturnPolicyRouteResult{
+				source:      strings.TrimSpace(action.Address),
+				destination: strings.TrimSpace(action.Destination),
+				ifname:      strings.TrimSpace(action.Interface),
+				table:       action.Table,
+				priority:    action.Priority,
+				metric:      action.Metric,
+			}
 		}
 	}
 	applier := c.Applier
@@ -498,6 +577,18 @@ func (c SAMController) cleanupChangedCaptures(ctx context.Context, statuses []ro
 		}
 		if _, err := applier.EnsureOSAddressAbsent(ctx, oldAddress); err != nil {
 			return fmt.Errorf("delete changed SAM OS address %s: %w", oldAddress, err)
+		}
+	}
+	for name, old := range priorReturnRoutes {
+		if !desiredClaims[name] {
+			continue
+		}
+		next, ok := desiredReturnRoutes[name]
+		if ok && old.sameDesired(next) {
+			continue
+		}
+		if err := applier.DeleteReturnPolicyRoute(ctx, old.source, old.destination, old.table, old.priority); err != nil {
+			return fmt.Errorf("delete changed SAM return policy route from %s to %s table %d priority %d: %w", old.source, old.destination, old.table, old.priority, err)
 		}
 	}
 	return nil
@@ -542,6 +633,19 @@ func samStoredOSAddressPresences(statuses []routerstate.ObjectStatus) map[string
 	return out
 }
 
+func samStoredReturnPolicyRoutes(statuses []routerstate.ObjectStatus) map[string]samReturnPolicyRouteResult {
+	out := map[string]samReturnPolicyRouteResult{}
+	for _, status := range statuses {
+		if status.APIVersion != api.HybridAPIVersion || status.Kind != "RemoteAddressClaim" {
+			continue
+		}
+		if route, ok := samStoredReturnPolicyRouteFromStatus(status); ok {
+			out[status.Name] = route
+		}
+	}
+	return out
+}
+
 func samStoredProxyNeighborFromStatus(status routerstate.ObjectStatus) (samStoredProxyNeighbor, bool) {
 	capture, ok := status.Status["captureProxyNeighbor"].(map[string]any)
 	if !ok {
@@ -565,4 +669,41 @@ func samStoredOSAddressPresenceFromStatus(status routerstate.ObjectStatus) (stri
 		return "", false
 	}
 	return address, true
+}
+
+func samStoredReturnPolicyRouteFromStatus(status routerstate.ObjectStatus) (samReturnPolicyRouteResult, bool) {
+	capture, ok := status.Status["captureReturnPolicyRoute"].(map[string]any)
+	if !ok {
+		return samReturnPolicyRouteResult{}, false
+	}
+	route := samReturnPolicyRouteResult{
+		source:      strings.TrimSpace(fmt.Sprint(capture["source"])),
+		destination: strings.TrimSpace(fmt.Sprint(capture["destination"])),
+		ifname:      strings.TrimSpace(fmt.Sprint(capture["interface"])),
+		table:       intFromStatus(capture["table"]),
+		priority:    intFromStatus(capture["priority"]),
+		metric:      intFromStatus(capture["metric"]),
+	}
+	if route.source == "" || route.source == "<nil>" || route.destination == "" || route.destination == "<nil>" || route.table == 0 || route.priority == 0 {
+		return samReturnPolicyRouteResult{}, false
+	}
+	return route, true
+}
+
+func intFromStatus(value any) int {
+	switch v := value.(type) {
+	case int:
+		return v
+	case int64:
+		return int(v)
+	case float64:
+		return int(v)
+	case json.Number:
+		out, _ := v.Int64()
+		return int(out)
+	default:
+		var out int
+		_, _ = fmt.Sscanf(strings.TrimSpace(fmt.Sprint(value)), "%d", &out)
+		return out
+	}
 }
