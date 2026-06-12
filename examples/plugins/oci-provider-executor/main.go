@@ -139,8 +139,57 @@ func failed(msg string, err error) executeActionResult {
 	res.Status.Message = msg
 	if err != nil {
 		res.Status.Error = err.Error()
+		if isAuthorizationError(err) {
+			res.Status.Observed = map[string]string{
+				"failureClass":   "authorization",
+				"permissionHint": ociPermissionHint(msg),
+			}
+		}
 	}
 	return res
+}
+
+func isAuthorizationError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	if isToolchainExecutionError(msg) {
+		return false
+	}
+	return strings.Contains(msg, "notauthorizedornotfound") ||
+		strings.Contains(msg, "not authorized") ||
+		strings.Contains(msg, "authorization") ||
+		strings.Contains(msg, "forbidden") ||
+		strings.Contains(msg, "status code: 401") ||
+		strings.Contains(msg, "status code: 403") ||
+		strings.Contains(msg, "http 401") ||
+		strings.Contains(msg, "http 403")
+}
+
+func isToolchainExecutionError(msg string) bool {
+	return strings.Contains(msg, "fork/exec") ||
+		strings.Contains(msg, "executable file not found") ||
+		strings.Contains(msg, "no such file or directory") ||
+		strings.Contains(msg, "permission denied")
+}
+
+func ociPermissionHint(msg string) string {
+	msg = strings.ToLower(msg)
+	switch {
+	case strings.Contains(msg, "assign-secondary-ip") && strings.Contains(msg, "vnic get"):
+		return "use vnics"
+	case strings.Contains(msg, "assign-secondary-ip"):
+		return "manage private-ips"
+	case strings.Contains(msg, "unassign-secondary-ip"):
+		return "manage private-ips"
+	case strings.Contains(msg, "ensure-forwarding") && strings.Contains(msg, "vnic get"):
+		return "use vnics"
+	case strings.Contains(msg, "ensure-forwarding"):
+		return "use vnics"
+	default:
+		return "oci-policy"
+	}
 }
 
 // requireTarget extracts the required VNIC/address from the request, erroring if

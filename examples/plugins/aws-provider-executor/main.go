@@ -141,8 +141,63 @@ func failed(msg string, err error) executeActionResult {
 	res.Status.Message = msg
 	if err != nil {
 		res.Status.Error = err.Error()
+		if isAuthorizationError(err) {
+			res.Status.Observed = map[string]string{
+				"failureClass":   "authorization",
+				"permissionHint": awsPermissionHint(msg),
+			}
+		}
 	}
 	return res
+}
+
+func isAuthorizationError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	if isToolchainExecutionError(msg) {
+		return false
+	}
+	return strings.Contains(msg, "unauthorizedoperation") ||
+		strings.Contains(msg, "accessdenied") ||
+		strings.Contains(msg, "access denied") ||
+		strings.Contains(msg, "not authorized") ||
+		strings.Contains(msg, "is not authorized") ||
+		strings.Contains(msg, "authfailure")
+}
+
+func isToolchainExecutionError(msg string) bool {
+	return strings.Contains(msg, "fork/exec") ||
+		strings.Contains(msg, "executable file not found") ||
+		strings.Contains(msg, "no such file or directory") ||
+		strings.Contains(msg, "permission denied")
+}
+
+func awsPermissionHint(msg string) string {
+	msg = strings.ToLower(msg)
+	switch {
+	case strings.Contains(msg, "assign-secondary-ip") && strings.Contains(msg, "describe"):
+		return "ec2:DescribeNetworkInterfaces"
+	case strings.Contains(msg, "assign-secondary-ip"):
+		return "ec2:AssignPrivateIpAddresses"
+	case strings.Contains(msg, "unassign-secondary-ip") && strings.Contains(msg, "describe"):
+		return "ec2:DescribeNetworkInterfaces"
+	case strings.Contains(msg, "unassign-secondary-ip"):
+		return "ec2:UnassignPrivateIpAddresses"
+	case strings.Contains(msg, "ensure-forwarding") && strings.Contains(msg, "describe"):
+		return "ec2:DescribeNetworkInterfaces"
+	case strings.Contains(msg, "ensure-forwarding"):
+		return "ec2:ModifyNetworkInterfaceAttribute"
+	case strings.Contains(msg, "route-table") && strings.Contains(msg, "describe"):
+		return "ec2:DescribeRouteTables"
+	case strings.Contains(msg, "assign-route-table-route"):
+		return "ec2:CreateRoute/ec2:ReplaceRoute"
+	case strings.Contains(msg, "unassign-route-table-route"):
+		return "ec2:DeleteRoute/ec2:DescribeRouteTables"
+	default:
+		return "aws-iam"
+	}
 }
 
 // target extracts the required ENI/address/region from the request, erroring if
