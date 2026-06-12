@@ -265,6 +265,9 @@ func defaultDeliveryPreferredSource(resource api.Resource, spec api.RemoteAddres
 }
 
 func ProviderSecondaryInstallsLocalOSAddress(spec api.RemoteAddressClaimSpec) bool {
+	// In SAM BGP delivery, the cloud-side provider secondary IP is a forwarding
+	// capture for a remote owner. Installing it as a local /32 would make Linux
+	// answer locally and bypass the tunnel dataplane.
 	return strings.TrimSpace(spec.Capture.Type) == "provider-secondary-ip" &&
 		spec.Capture.ConfigureOSAddress &&
 		strings.TrimSpace(spec.Delivery.Mode) != "bgp"
