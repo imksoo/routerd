@@ -322,6 +322,10 @@ func PlanCaptureWithOptions(router *api.Router, targetOS platform.OS, opts PlanO
 					} else if ok {
 						actions = append(actions, action)
 						actions = append(actions, CaptureAction{Kind: "forward-path", ClaimName: resource.Metadata.Name, Interface: iface, PeerInterface: action.Interface})
+					} else if strings.TrimSpace(spec.Delivery.Mode) == "bgp" {
+						for _, tunnelIface := range bgpDeliveryForwardInterfaces(router) {
+							actions = append(actions, CaptureAction{Kind: "forward-path", ClaimName: resource.Metadata.Name, Interface: iface, PeerInterface: tunnelIface})
+						}
 					}
 				} else {
 					actions = append(actions, CaptureAction{Kind: "deassign-os-address", ClaimName: resource.Metadata.Name, Address: address})
@@ -340,6 +344,29 @@ func PlanCaptureWithOptions(router *api.Router, targetOS platform.OS, opts PlanO
 		actions = append(actions, CaptureAction{Kind: "proxy-neighbor", ClaimName: resource.Metadata.Name, Address: address, Interface: iface, GratuitousARP: wantsGratuitousARP(spec.Capture)})
 	}
 	return actions, nil
+}
+
+func bgpDeliveryForwardInterfaces(router *api.Router) []string {
+	all := map[string]bool{}
+	samOwned := map[string]bool{}
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.HybridAPIVersion || resource.Kind != "TunnelInterface" {
+			continue
+		}
+		name := strings.TrimSpace(resource.Metadata.Name)
+		if name != "" {
+			all[name] = true
+			for _, owner := range resource.Metadata.OwnerRefs {
+				if owner.APIVersion == api.MobilityAPIVersion && owner.Kind == "SAMTransportProfile" {
+					samOwned[name] = true
+				}
+			}
+		}
+	}
+	if len(samOwned) > 0 {
+		return sortedKeys(samOwned)
+	}
+	return sortedKeys(all)
 }
 
 func returnPolicyRouteAction(resource api.Resource, spec api.RemoteAddressClaimSpec, address string, peers map[string]api.OverlayPeerSpec, domains map[string]string) (CaptureAction, bool, error) {

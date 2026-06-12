@@ -165,6 +165,63 @@ func TestSAMControllerInstallsProviderSecondaryReturnPolicyRoute(t *testing.T) {
 	}
 }
 
+func TestSAMControllerInstallsProviderSecondaryBGPForwardPaths(t *testing.T) {
+	router := samControllerRouterWithClaim("10.77.60.46/32", "provider-secondary-ip", "ens3")
+	router.Spec.Resources = append(router.Spec.Resources,
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
+			Metadata: api.ObjectMeta{Name: "samt-a"},
+			Spec:     api.TunnelInterfaceSpec{Mode: "ipip", Local: "10.99.0.1", Remote: "10.99.0.2"},
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
+			Metadata: api.ObjectMeta{Name: "samt-b"},
+			Spec:     api.TunnelInterfaceSpec{Mode: "ipip", Local: "10.99.0.1", Remote: "10.99.0.3"},
+		},
+	)
+	spec := router.Spec.Resources[1].Spec.(api.RemoteAddressClaimSpec)
+	spec.Capture.ConfigureOSAddress = true
+	spec.Capture.ProviderRef = "oci-prod"
+	spec.Capture.NICRef = "vnic-1"
+	spec.Delivery.Mode = "bgp"
+	spec.Delivery.TunnelInterface = ""
+	router.Spec.Resources[1].Spec = spec
+	store := &samStore{
+		objects: map[string]map[string]any{},
+		actions: []routerstate.ActionExecutionRecord{
+			samSucceededAssignAction("oci-prod", "vnic-1", "10.77.60.46/32"),
+		},
+	}
+	applier := &fakeSAMApplier{}
+	controller := SAMController{Router: router, Store: store, OS: platform.OSLinux, Applier: applier}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	assertSAMCalls(t, applier.calls, []string{
+		"assign:10.77.60.46/32@ens3",
+		"forward-path:ens3<->samt-a",
+		"forward-path:ens3<->samt-b",
+	})
+	status := store.ObjectStatus(api.HybridAPIVersion, "RemoteAddressClaim", "app")
+	if _, ok := status["captureReturnPolicyRoute"]; ok {
+		t.Fatalf("BGP delivery must not install route-mode return policy route: %#v", status["captureReturnPolicyRoute"])
+	}
+	paths, ok := status["captureForwardingPaths"].([]map[string]any)
+	if !ok || len(paths) != 2 {
+		t.Fatalf("captureForwardingPaths = %#v, want two paths", status["captureForwardingPaths"])
+	}
+	if paths[0]["captureInterface"] != "ens3" || paths[0]["tunnelInterface"] != "samt-a" || paths[0]["enforced"] != true {
+		t.Fatalf("first forwarding path = %#v", paths[0])
+	}
+	if paths[1]["captureInterface"] != "ens3" || paths[1]["tunnelInterface"] != "samt-b" || paths[1]["enforced"] != true {
+		t.Fatalf("second forwarding path = %#v", paths[1])
+	}
+	legacy, ok := status["captureForwardingPath"].(map[string]any)
+	if !ok || legacy["tunnelInterface"] != "samt-a" {
+		t.Fatalf("legacy captureForwardingPath = %#v, want first path", status["captureForwardingPath"])
+	}
+}
+
 func TestSAMControllerReadsProviderOwnershipThroughEventedStore(t *testing.T) {
 	router := samControllerRouterWithClaim("10.0.1.122/32", "provider-secondary-ip", "eth0")
 	spec := router.Spec.Resources[1].Spec.(api.RemoteAddressClaimSpec)

@@ -387,6 +387,64 @@ func TestPlanCaptureProviderSecondaryIPConfigureOSAddressTrueAssignsOSAddress(t 
 	}
 }
 
+func TestPlanCaptureProviderSecondaryIPBGPDeliveryAllowsForwardToTunnels(t *testing.T) {
+	router := testRouter()
+	router.Spec.Resources = router.Spec.Resources[:4]
+	router.Spec.Resources = append(router.Spec.Resources,
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
+			Metadata: api.ObjectMeta{Name: "samt-a"},
+			Spec:     api.TunnelInterfaceSpec{Mode: "ipip", Local: "10.99.0.1", Remote: "10.99.0.2"},
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
+			Metadata: api.ObjectMeta{Name: "samt-b"},
+			Spec:     api.TunnelInterfaceSpec{Mode: "ipip", Local: "10.99.0.1", Remote: "10.99.0.3"},
+		},
+	)
+	spec := router.Spec.Resources[3].Spec.(api.RemoteAddressClaimSpec)
+	spec.Capture.ConfigureOSAddress = true
+	spec.Capture.Interface = "ens3"
+	spec.Delivery.Mode = "bgp"
+	spec.Delivery.PeerRef = ""
+	router.Spec.Resources[3].Spec = spec
+
+	actions, err := PlanCapture(router, platform.OSLinux)
+	if err != nil {
+		t.Fatalf("PlanCapture: %v", err)
+	}
+	if !hasAction(actions, "assign-os-address", "", "10.0.1.122/32", "ens3") {
+		t.Fatalf("actions missing OS address assign: %#v", actions)
+	}
+	if !hasAction(actions, "forward-path", "", "", "ens3") {
+		t.Fatalf("actions missing forward-path: %#v", actions)
+	}
+	if !hasForwardPath(actions, "ens3", "samt-a") || !hasForwardPath(actions, "ens3", "samt-b") {
+		t.Fatalf("actions missing BGP tunnel forward paths: %#v", actions)
+	}
+}
+
+func TestBGPCaptureForwardInterfacesPreferSAMTransportTunnels(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
+			Metadata: api.ObjectMeta{Name: "manual-gre"},
+			Spec:     api.TunnelInterfaceSpec{Mode: "gre", Local: "10.99.0.1", Remote: "10.99.0.9"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
+			Metadata: api.ObjectMeta{
+				Name:      "samt-a",
+				OwnerRefs: []api.OwnerRef{{APIVersion: api.MobilityAPIVersion, Kind: "SAMTransportProfile", Name: "fabric"}},
+			},
+			Spec: api.TunnelInterfaceSpec{Mode: "ipip", Local: "10.99.0.1", Remote: "10.99.0.2"},
+		},
+	}}}
+	if got := bgpDeliveryForwardInterfaces(router); !reflect.DeepEqual(got, []string{"samt-a"}) {
+		t.Fatalf("forward interfaces = %#v, want only SAM transport tunnel", got)
+	}
+}
+
 func TestPlanCaptureProviderSecondaryIPDeassignPlanningStable(t *testing.T) {
 	router := testRouter()
 	router.Spec.Resources = router.Spec.Resources[:4]
@@ -495,6 +553,15 @@ func hasAction(actions []CaptureAction, kind, key, address, iface string) bool {
 			continue
 		}
 		return true
+	}
+	return false
+}
+
+func hasForwardPath(actions []CaptureAction, captureIface, tunnelIface string) bool {
+	for _, action := range actions {
+		if action.Kind == "forward-path" && action.Interface == captureIface && action.PeerInterface == tunnelIface {
+			return true
+		}
 	}
 	return false
 }

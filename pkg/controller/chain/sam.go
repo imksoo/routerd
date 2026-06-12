@@ -81,6 +81,10 @@ type samForwardPathResult struct {
 	lastError    string
 }
 
+func (r samForwardPathResult) key() string {
+	return r.captureIface + "\x00" + r.tunnelIface
+}
+
 func (r samReturnPolicyRouteResult) sameDesired(next samReturnPolicyRouteResult) bool {
 	return r.source == next.source &&
 		r.destination == next.destination &&
@@ -88,6 +92,33 @@ func (r samReturnPolicyRouteResult) sameDesired(next samReturnPolicyRouteResult)
 		r.table == next.table &&
 		r.priority == next.priority &&
 		r.metric == next.metric
+}
+
+func replaceSAMForwardPathResult(results []samForwardPathResult, next samForwardPathResult) []samForwardPathResult {
+	for i, existing := range results {
+		if existing.key() == next.key() {
+			results[i] = next
+			return results
+		}
+	}
+	return append(results, next)
+}
+
+func samForwardPathStatusNotes(paths []samForwardPathResult) []map[string]any {
+	notes := make([]map[string]any, 0, len(paths))
+	for _, path := range paths {
+		note := map[string]any{
+			"captureInterface": path.captureIface,
+			"tunnelInterface":  path.tunnelIface,
+			"enforced":         path.enforced,
+			"managedBy":        "routerd",
+		}
+		if path.lastError != "" {
+			note["lastError"] = path.lastError
+		}
+		notes = append(notes, note)
+	}
+	return notes
 }
 
 func samSelectResources(resources []api.Resource, kind string) []api.Resource {
@@ -149,7 +180,7 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 	deassignResults := map[string]samOSAddressDeassignResult{}
 	providerBlocks := map[string]samProviderOwnershipBlock{}
 	returnRouteResults := map[string]samReturnPolicyRouteResult{}
-	forwardPathResults := map[string]samForwardPathResult{}
+	forwardPathResults := map[string][]samForwardPathResult{}
 	garpSent := map[string]bool{}
 	garpErrors := map[string]string{}
 	priorNeighbors := samStoredProxyNeighbors(statuses)
@@ -260,7 +291,7 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 				captureIface: strings.TrimSpace(action.Interface),
 				tunnelIface:  strings.TrimSpace(action.PeerInterface),
 			}
-			forwardPathResults[action.ClaimName] = result
+			forwardPathResults[action.ClaimName] = append(forwardPathResults[action.ClaimName], result)
 			if c.DryRun {
 				continue
 			}
@@ -275,7 +306,7 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 			} else {
 				result.enforced = true
 			}
-			forwardPathResults[action.ClaimName] = result
+			forwardPathResults[action.ClaimName] = replaceSAMForwardPathResult(forwardPathResults[action.ClaimName], result)
 		default:
 			continue
 		}
@@ -328,7 +359,7 @@ func (c SAMController) reconcileProxyARPInterfaces(ctx context.Context, actions 
 	return nil
 }
 
-func (c SAMController) reconcileStatuses(targetOS platform.OS, assignResults map[string]samOSAddressAssignResult, deassignResults map[string]samOSAddressDeassignResult, providerBlocks map[string]samProviderOwnershipBlock, returnRouteResults map[string]samReturnPolicyRouteResult, forwardPathResults map[string]samForwardPathResult, garpSent map[string]bool, garpErrors map[string]string) error {
+func (c SAMController) reconcileStatuses(targetOS platform.OS, assignResults map[string]samOSAddressAssignResult, deassignResults map[string]samOSAddressDeassignResult, providerBlocks map[string]samProviderOwnershipBlock, returnRouteResults map[string]samReturnPolicyRouteResult, forwardPathResults map[string][]samForwardPathResult, garpSent map[string]bool, garpErrors map[string]string) error {
 	claims := samSelectResources(c.Router.Spec.Resources, "RemoteAddressClaim")
 	for _, claim := range claims {
 		status := sam.StatusForRemoteAddressClaim(claim, c.Lowerings, c.Store, targetOS)
@@ -407,17 +438,10 @@ func (c SAMController) reconcileStatuses(targetOS platform.OS, assignResults map
 						}
 						status["captureReturnPolicyRoute"] = note
 					}
-					if path, ok := forwardPathResults[claim.Metadata.Name]; ok {
-						note := map[string]any{
-							"captureInterface": path.captureIface,
-							"tunnelInterface":  path.tunnelIface,
-							"enforced":         path.enforced,
-							"managedBy":        "routerd",
-						}
-						if path.lastError != "" {
-							note["lastError"] = path.lastError
-						}
-						status["captureForwardingPath"] = note
+					if paths := forwardPathResults[claim.Metadata.Name]; len(paths) > 0 {
+						notes := samForwardPathStatusNotes(paths)
+						status["captureForwardingPaths"] = notes
+						status["captureForwardingPath"] = notes[0]
 					}
 				} else {
 					result := deassignResults[claim.Metadata.Name]
@@ -541,7 +565,7 @@ func (c SAMController) teardownRemovedCapture(ctx context.Context, status router
 				return fmt.Errorf("delete removed SAM return policy route from %s to %s table %d priority %d: %w", route.source, route.destination, route.table, route.priority, err)
 			}
 		}
-		if path, ok := samStoredForwardPathFromStatus(status); ok {
+		for _, path := range samStoredForwardPathsFromStatus(status) {
 			if err := applier.DeleteForwardPath(ctx, path.captureIface, path.tunnelIface); err != nil {
 				return fmt.Errorf("delete removed SAM forward path %s <-> %s: %w", path.captureIface, path.tunnelIface, err)
 			}
@@ -581,7 +605,7 @@ func (c SAMController) cleanupChangedCaptures(ctx context.Context, statuses []ro
 	desiredNeighbors := map[string]samStoredProxyNeighbor{}
 	desiredOS := map[string]string{}
 	desiredReturnRoutes := map[string]samReturnPolicyRouteResult{}
-	desiredForwardPaths := map[string]samForwardPathResult{}
+	desiredForwardPaths := map[string]map[string]samForwardPathResult{}
 	for _, action := range actions {
 		switch action.Kind {
 		case "proxy-neighbor":
@@ -598,10 +622,14 @@ func (c SAMController) cleanupChangedCaptures(ctx context.Context, statuses []ro
 				metric:      action.Metric,
 			}
 		case "forward-path":
-			desiredForwardPaths[action.ClaimName] = samForwardPathResult{
+			path := samForwardPathResult{
 				captureIface: strings.TrimSpace(action.Interface),
 				tunnelIface:  strings.TrimSpace(action.PeerInterface),
 			}
+			if desiredForwardPaths[action.ClaimName] == nil {
+				desiredForwardPaths[action.ClaimName] = map[string]samForwardPathResult{}
+			}
+			desiredForwardPaths[action.ClaimName][path.key()] = path
 		}
 	}
 	applier := c.Applier
@@ -646,16 +674,17 @@ func (c SAMController) cleanupChangedCaptures(ctx context.Context, statuses []ro
 			return fmt.Errorf("delete changed SAM return policy route from %s to %s table %d priority %d: %w", old.source, old.destination, old.table, old.priority, err)
 		}
 	}
-	for name, old := range priorForwardPaths {
+	for name, paths := range priorForwardPaths {
 		if !desiredClaims[name] {
 			continue
 		}
-		next, ok := desiredForwardPaths[name]
-		if ok && old == next {
-			continue
-		}
-		if err := applier.DeleteForwardPath(ctx, old.captureIface, old.tunnelIface); err != nil {
-			return fmt.Errorf("delete changed SAM forward path %s <-> %s: %w", old.captureIface, old.tunnelIface, err)
+		for _, old := range paths {
+			if desiredForwardPaths[name][old.key()] == old {
+				continue
+			}
+			if err := applier.DeleteForwardPath(ctx, old.captureIface, old.tunnelIface); err != nil {
+				return fmt.Errorf("delete changed SAM forward path %s <-> %s: %w", old.captureIface, old.tunnelIface, err)
+			}
 		}
 	}
 	return nil
@@ -713,14 +742,14 @@ func samStoredReturnPolicyRoutes(statuses []routerstate.ObjectStatus) map[string
 	return out
 }
 
-func samStoredForwardPaths(statuses []routerstate.ObjectStatus) map[string]samForwardPathResult {
-	out := map[string]samForwardPathResult{}
+func samStoredForwardPaths(statuses []routerstate.ObjectStatus) map[string][]samForwardPathResult {
+	out := map[string][]samForwardPathResult{}
 	for _, status := range statuses {
 		if status.APIVersion != api.HybridAPIVersion || status.Kind != "RemoteAddressClaim" {
 			continue
 		}
-		if path, ok := samStoredForwardPathFromStatus(status); ok {
-			out[status.Name] = path
+		if paths := samStoredForwardPathsFromStatus(status); len(paths) > 0 {
+			out[status.Name] = paths
 		}
 	}
 	return out
@@ -774,11 +803,40 @@ func samStoredReturnPolicyRouteFromStatus(status routerstate.ObjectStatus) (samR
 	return route, true
 }
 
-func samStoredForwardPathFromStatus(status routerstate.ObjectStatus) (samForwardPathResult, bool) {
+func samStoredForwardPathsFromStatus(status routerstate.ObjectStatus) []samForwardPathResult {
+	if captures, ok := status.Status["captureForwardingPaths"].([]map[string]any); ok {
+		out := make([]samForwardPathResult, 0, len(captures))
+		for _, capture := range captures {
+			if path, ok := samStoredForwardPathFromMap(capture); ok {
+				out = append(out, path)
+			}
+		}
+		return out
+	}
+	if captures, ok := status.Status["captureForwardingPaths"].([]any); ok {
+		var out []samForwardPathResult
+		for _, item := range captures {
+			capture, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			if path, ok := samStoredForwardPathFromMap(capture); ok {
+				out = append(out, path)
+			}
+		}
+		return out
+	}
 	capture, ok := status.Status["captureForwardingPath"].(map[string]any)
 	if !ok {
-		return samForwardPathResult{}, false
+		return nil
 	}
+	if path, ok := samStoredForwardPathFromMap(capture); ok {
+		return []samForwardPathResult{path}
+	}
+	return nil
+}
+
+func samStoredForwardPathFromMap(capture map[string]any) (samForwardPathResult, bool) {
 	if strings.TrimSpace(fmt.Sprint(capture["managedBy"])) != "routerd" {
 		return samForwardPathResult{}, false
 	}
