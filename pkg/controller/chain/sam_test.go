@@ -143,6 +143,7 @@ func TestSAMControllerInstallsProviderSecondaryReturnPolicyRoute(t *testing.T) {
 	assertSAMCalls(t, applier.calls, []string{
 		"assign:10.77.60.46/32@ens3",
 		"return-route:10.77.60.46/32->10.99.44.0/24@samt-oci-onprem table=" + strconv.Itoa(table) + " priority=" + strconv.Itoa(priority) + " metric=120",
+		"forward-path:ens3<->samt-oci-onprem",
 	})
 	status := store.ObjectStatus(api.HybridAPIVersion, "RemoteAddressClaim", "app")
 	note, ok := status["captureReturnPolicyRoute"].(map[string]any)
@@ -154,6 +155,13 @@ func TestSAMControllerInstallsProviderSecondaryReturnPolicyRoute(t *testing.T) {
 	}
 	if note["table"] != table || note["priority"] != priority || note["metric"] != 120 {
 		t.Fatalf("return route identifiers = %#v, want table %d priority %d metric 120", note, table, priority)
+	}
+	forward, ok := status["captureForwardingPath"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing captureForwardingPath in status %#v", status)
+	}
+	if forward["captureInterface"] != "ens3" || forward["tunnelInterface"] != "samt-oci-onprem" || forward["enforced"] != true || forward["managedBy"] != "routerd" {
+		t.Fatalf("forward path = %#v", forward)
 	}
 }
 
@@ -466,7 +474,36 @@ func TestSAMControllerCleansChangedReturnPolicyRoute(t *testing.T) {
 		"delete-return-route:10.77.60.46/32->10.99.44.0/24 table=" + strconv.Itoa(table) + " priority=" + strconv.Itoa(priority),
 		"assign:10.77.60.46/32@ens3",
 		"return-route:10.77.60.46/32->10.99.45.0/24@samt-new table=" + strconv.Itoa(table) + " priority=" + strconv.Itoa(priority) + " metric=120",
+		"forward-path:ens3<->samt-new",
 	})
+}
+
+func TestSAMControllerCleansRemovedForwardPath(t *testing.T) {
+	router := samControllerRouterWithClaim("10.77.60.46/32", "provider-secondary-ip", "ens3")
+	store := &samStore{
+		objects: map[string]map[string]any{},
+		statuses: []routerstate.ObjectStatus{{
+			APIVersion: api.HybridAPIVersion,
+			Kind:       "RemoteAddressClaim",
+			Name:       "old",
+			Status: map[string]any{
+				"captureForwardingPath": map[string]any{
+					"captureInterface": "ens3",
+					"tunnelInterface":  "samt-old",
+					"managedBy":        "routerd",
+				},
+			},
+		}},
+	}
+	applier := &fakeSAMApplier{}
+	controller := SAMController{Router: router, Store: store, OS: platform.OSLinux, Applier: applier}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	assertSAMCalls(t, applier.calls, []string{"delete-forward-path:ens3<->samt-old", "deassign:10.77.60.46/32"})
+	if !store.deleted[api.HybridAPIVersion+"/RemoteAddressClaim/old"] {
+		t.Fatalf("old claim status was not deleted")
+	}
 }
 
 func TestSAMControllerCleansChangedProviderSecondaryOSAddress(t *testing.T) {
@@ -766,6 +803,7 @@ type fakeSAMApplier struct {
 	assign         []string
 	deassign       []string
 	returnRoutes   []string
+	forwardPaths   []string
 	proxyARP       []string
 	calls          []string
 	assignResult   samOSAddressAssignResult
@@ -839,6 +877,20 @@ func (a *fakeSAMApplier) EnsureReturnPolicyRoute(_ context.Context, sourceCIDR, 
 func (a *fakeSAMApplier) DeleteReturnPolicyRoute(_ context.Context, sourceCIDR, destinationCIDR string, table, priority int) error {
 	call := "delete-return-route:" + sourceCIDR + "->" + destinationCIDR + " table=" + strconv.Itoa(table) + " priority=" + strconv.Itoa(priority)
 	a.returnRoutes = append(a.returnRoutes, call)
+	a.calls = append(a.calls, call)
+	return nil
+}
+
+func (a *fakeSAMApplier) EnsureForwardPath(_ context.Context, captureIface, tunnelIface string) error {
+	call := "forward-path:" + captureIface + "<->" + tunnelIface
+	a.forwardPaths = append(a.forwardPaths, call)
+	a.calls = append(a.calls, call)
+	return nil
+}
+
+func (a *fakeSAMApplier) DeleteForwardPath(_ context.Context, captureIface, tunnelIface string) error {
+	call := "delete-forward-path:" + captureIface + "<->" + tunnelIface
+	a.forwardPaths = append(a.forwardPaths, call)
 	a.calls = append(a.calls, call)
 	return nil
 }

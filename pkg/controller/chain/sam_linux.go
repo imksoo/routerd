@@ -221,6 +221,64 @@ func (netlinkSAMProxyNeighborApplier) DeleteReturnPolicyRoute(_ context.Context,
 	return nil
 }
 
+func (netlinkSAMProxyNeighborApplier) EnsureForwardPath(ctx context.Context, captureIface, tunnelIface string) error {
+	captureIface = strings.TrimSpace(captureIface)
+	tunnelIface = strings.TrimSpace(tunnelIface)
+	if captureIface == "" || tunnelIface == "" {
+		return fmt.Errorf("capture and tunnel interfaces are required")
+	}
+	if err := ensureIPTablesForwardAccept(ctx, captureIface, tunnelIface); err != nil {
+		return err
+	}
+	return ensureIPTablesForwardAccept(ctx, tunnelIface, captureIface)
+}
+
+func (netlinkSAMProxyNeighborApplier) DeleteForwardPath(ctx context.Context, captureIface, tunnelIface string) error {
+	captureIface = strings.TrimSpace(captureIface)
+	tunnelIface = strings.TrimSpace(tunnelIface)
+	if captureIface == "" || tunnelIface == "" {
+		return nil
+	}
+	if err := deleteIPTablesForwardAccept(ctx, captureIface, tunnelIface); err != nil {
+		return err
+	}
+	return deleteIPTablesForwardAccept(ctx, tunnelIface, captureIface)
+}
+
+func ensureIPTablesForwardAccept(ctx context.Context, inIface, outIface string) error {
+	check := []string{"-C", "FORWARD", "-i", inIface, "-o", outIface, "-j", "ACCEPT"}
+	if out, err := exec.CommandContext(ctx, "iptables", check...).CombinedOutput(); err == nil {
+		return nil
+	} else if !iptablesRuleMissing(out, err) {
+		return fmt.Errorf("iptables %s: %w: %s", strings.Join(check, " "), err, strings.TrimSpace(string(out)))
+	}
+	insert := []string{"-I", "FORWARD", "1", "-i", inIface, "-o", outIface, "-j", "ACCEPT"}
+	if out, err := exec.CommandContext(ctx, "iptables", insert...).CombinedOutput(); err != nil {
+		return fmt.Errorf("iptables %s: %w: %s", strings.Join(insert, " "), err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func deleteIPTablesForwardAccept(ctx context.Context, inIface, outIface string) error {
+	args := []string{"-D", "FORWARD", "-i", inIface, "-o", outIface, "-j", "ACCEPT"}
+	out, err := exec.CommandContext(ctx, "iptables", args...).CombinedOutput()
+	if err == nil || iptablesRuleMissing(out, err) {
+		return nil
+	}
+	return fmt.Errorf("iptables %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+}
+
+func iptablesRuleMissing(out []byte, err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(strings.TrimSpace(string(out)) + " " + err.Error())
+	return strings.Contains(msg, "bad rule") ||
+		strings.Contains(msg, "does a matching rule exist") ||
+		strings.Contains(msg, "no chain/target/match") ||
+		strings.Contains(msg, "does not exist")
+}
+
 const unixRouteTableMain = 254
 
 func samProxyNeighbor(address, ifname string) (netlink.Link, *netlink.Neigh, error) {

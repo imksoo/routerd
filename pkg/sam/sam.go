@@ -101,16 +101,17 @@ type DeliveryLowering struct {
 }
 
 type CaptureAction struct {
-	Kind        string
-	ClaimName   string
-	Address     string
-	Destination string
-	Interface   string
-	Key         string
-	Value       string
-	Table       int
-	Priority    int
-	Metric      int
+	Kind          string
+	ClaimName     string
+	Address       string
+	Destination   string
+	Interface     string
+	PeerInterface string
+	Key           string
+	Value         string
+	Table         int
+	Priority      int
+	Metric        int
 
 	GratuitousARP bool
 }
@@ -320,6 +321,7 @@ func PlanCaptureWithOptions(router *api.Router, targetOS platform.OS, opts PlanO
 						return nil, err
 					} else if ok {
 						actions = append(actions, action)
+						actions = append(actions, CaptureAction{Kind: "forward-path", ClaimName: resource.Metadata.Name, Interface: iface, PeerInterface: action.Interface})
 					}
 				} else {
 					actions = append(actions, CaptureAction{Kind: "deassign-os-address", ClaimName: resource.Metadata.Name, Address: address})

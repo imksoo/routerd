@@ -47,6 +47,14 @@ func (unsupportedSAMProxyNeighborApplier) DeleteReturnPolicyRoute(context.Contex
 	return nil
 }
 
+func (unsupportedSAMProxyNeighborApplier) EnsureForwardPath(context.Context, string, string) error {
+	return nil
+}
+
+func (unsupportedSAMProxyNeighborApplier) DeleteForwardPath(context.Context, string, string) error {
+	return nil
+}
+
 type unsupportedSAMGratuitousARPAnnouncer struct{}
 
 func (unsupportedSAMGratuitousARPAnnouncer) SendGratuitousARP(context.Context, string, string) error {
