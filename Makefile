@@ -312,7 +312,7 @@ dist:
 		install -m 0755 contrib/openrc/routerd $(DISTROOT)/openrc/routerd; \
 	fi
 	install -d $(DISTDIR)
-	tar -C $(DISTROOT) -czf $(DISTTAR) .
+	cd $(DISTROOT) && find . -mindepth 1 -print | LC_ALL=C sort | tar -czf $(abspath $(DISTTAR)) -T -
 	cp $(DISTTAR) $(DISTTAR_ALIAS)
 	if command -v sha256sum >/dev/null 2>&1; then (cd $(DISTDIR) && sha256sum $(notdir $(DISTTAR)) > $(notdir $(DISTTAR)).sha256); elif command -v shasum >/dev/null 2>&1; then (cd $(DISTDIR) && shasum -a 256 $(notdir $(DISTTAR)) > $(notdir $(DISTTAR)).sha256); elif command -v sha256 >/dev/null 2>&1; then (cd $(DISTDIR) && sha256 -r $(notdir $(DISTTAR)) > $(notdir $(DISTTAR)).sha256); else echo "missing sha256 tool" >&2; exit 1; fi
 	if command -v sha256sum >/dev/null 2>&1; then (cd $(DISTDIR) && sha256sum $(notdir $(DISTTAR_ALIAS)) > $(notdir $(DISTTAR_ALIAS)).sha256); elif command -v shasum >/dev/null 2>&1; then (cd $(DISTDIR) && shasum -a 256 $(notdir $(DISTTAR_ALIAS)) > $(notdir $(DISTTAR_ALIAS)).sha256); elif command -v sha256 >/dev/null 2>&1; then (cd $(DISTDIR) && sha256 -r $(notdir $(DISTTAR_ALIAS)) > $(notdir $(DISTTAR_ALIAS)).sha256); else echo "missing sha256 tool" >&2; exit 1; fi
@@ -329,7 +329,7 @@ dist-ndpi-agent-libndpi:
 	printf '%s\n' '$(VERSION)' > $(ROUTERD_NDPI_AGENT_LIBNDPI_DISTROOT)/share/doc/VERSION
 	printf '%s\n' '$(DISTPLATFORM)' > $(ROUTERD_NDPI_AGENT_LIBNDPI_DISTROOT)/share/doc/TARGET
 	install -d $(DISTDIR)
-	tar -C $(ROUTERD_NDPI_AGENT_LIBNDPI_DISTROOT) -czf $(ROUTERD_NDPI_AGENT_LIBNDPI_TAR) .
+	cd $(ROUTERD_NDPI_AGENT_LIBNDPI_DISTROOT) && find . -mindepth 1 -print | LC_ALL=C sort | tar -czf $(abspath $(ROUTERD_NDPI_AGENT_LIBNDPI_TAR)) -T -
 	cp $(ROUTERD_NDPI_AGENT_LIBNDPI_TAR) $(ROUTERD_NDPI_AGENT_LIBNDPI_ALIAS)
 	if command -v sha256sum >/dev/null 2>&1; then (cd $(DISTDIR) && sha256sum $(notdir $(ROUTERD_NDPI_AGENT_LIBNDPI_TAR)) > $(notdir $(ROUTERD_NDPI_AGENT_LIBNDPI_TAR)).sha256); elif command -v shasum >/dev/null 2>&1; then (cd $(DISTDIR) && shasum -a 256 $(notdir $(ROUTERD_NDPI_AGENT_LIBNDPI_TAR)) > $(notdir $(ROUTERD_NDPI_AGENT_LIBNDPI_TAR)).sha256); elif command -v sha256 >/dev/null 2>&1; then (cd $(DISTDIR) && sha256 -r $(notdir $(ROUTERD_NDPI_AGENT_LIBNDPI_TAR)) > $(notdir $(ROUTERD_NDPI_AGENT_LIBNDPI_TAR)).sha256); else echo "missing sha256 tool" >&2; exit 1; fi
 	if command -v sha256sum >/dev/null 2>&1; then (cd $(DISTDIR) && sha256sum $(notdir $(ROUTERD_NDPI_AGENT_LIBNDPI_ALIAS)) > $(notdir $(ROUTERD_NDPI_AGENT_LIBNDPI_ALIAS)).sha256); elif command -v shasum >/dev/null 2>&1; then (cd $(DISTDIR) && shasum -a 256 $(notdir $(ROUTERD_NDPI_AGENT_LIBNDPI_ALIAS)) > $(notdir $(ROUTERD_NDPI_AGENT_LIBNDPI_ALIAS)).sha256); elif command -v sha256 >/dev/null 2>&1; then (cd $(DISTDIR) && sha256 -r $(notdir $(ROUTERD_NDPI_AGENT_LIBNDPI_ALIAS)) > $(notdir $(ROUTERD_NDPI_AGENT_LIBNDPI_ALIAS)).sha256); else echo "missing sha256 tool" >&2; exit 1; fi
