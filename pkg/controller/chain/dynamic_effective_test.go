@@ -317,6 +317,84 @@ func TestDynamicRouteSAMViewDerivesProviderSecondaryBGPClaimForOSCapture(t *test
 	assertSAMCalls(t, applier.calls, []string{"assign:10.0.1.11/32@ens5"})
 }
 
+func TestDynamicRouteSAMViewProviderSecondaryBGPClaimInstallsSAMForwardPath(t *testing.T) {
+	startup := bgpProxyARPStartup(false)
+	startup.Spec.Resources = append(startup.Spec.Resources,
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
+			Metadata: api.ObjectMeta{
+				Name: "samt-onprem-aws",
+				OwnerRefs: []api.OwnerRef{{
+					APIVersion: api.MobilityAPIVersion,
+					Kind:       "SAMTransportProfile",
+					Name:       "cloudedge-transport",
+				}},
+			},
+			Spec: api.TunnelInterfaceSpec{Mode: "ipip", Local: "10.255.0.1", Remote: "10.255.0.2", Address: "10.255.1.0/31"},
+		},
+	)
+	for i, resource := range startup.Spec.Resources {
+		switch {
+		case resource.APIVersion == api.FederationAPIVersion && resource.Kind == "EventGroup":
+			spec := resource.Spec.(api.EventGroupSpec)
+			spec.NodeName = "aws-router"
+			startup.Spec.Resources[i].Spec = spec
+		case resource.APIVersion == api.MobilityAPIVersion && resource.Kind == "MobilityPool":
+			spec := resource.Spec.(api.MobilityPoolSpec)
+			spec.Members[1].Capture.ConfigureOSAddress = true
+			spec.Members[1].Capture.ProviderRef = "aws-lab"
+			spec.Members[1].Capture.ProviderMode = "eni-secondary-ip"
+			spec.Members[1].Capture.NICRef = "eni-a"
+			startup.Spec.Resources[i].Spec = spec
+		}
+	}
+	store := actionMapStore{
+		mapStore: mapStore{
+			api.MobilityAPIVersion + "/MobilityPool/cloudedge": {
+				"ownershipResolverDecisions": []any{
+					map[string]any{
+						"address":           "10.0.1.44/32",
+						"class":             "ConfirmedCapture",
+						"captureHolderNode": "aws-router",
+						"captureState":      "Confirmed",
+					},
+				},
+			},
+		},
+		actions: []routerstate.ActionExecutionRecord{
+			samSucceededAssignAction("aws-lab", "eni-a", "10.0.1.44/32"),
+		},
+	}
+	view, err := buildDynamicRouteSAMView(startup, store, time.Now().UTC(), platform.OSLinux)
+	if err != nil {
+		t.Fatalf("buildDynamicRouteSAMView: %v", err)
+	}
+	claims := remoteAddressClaimSpecs(view.EffectiveRouter)
+	if len(claims) != 1 || claims[0].Address != "10.0.1.44/32" || claims[0].Delivery.Mode != "bgp" {
+		t.Fatalf("effective BGP provider claim = %#v, want one BGP claim for confirmed capture", claims)
+	}
+	if len(view.SAMLowerings) != 0 {
+		t.Fatalf("BGP delivery must not produce route lowerings: %#v", view.SAMLowerings)
+	}
+	applier := &fakeSAMApplier{}
+	controller := SAMController{Router: view.EffectiveRouter, Store: store, Lowerings: view.SAMLowerings, OS: platform.OSLinux, Applier: applier}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("SAM reconcile: %v", err)
+	}
+	assertSAMCalls(t, applier.calls, []string{
+		"assign:10.0.1.44/32@ens5",
+		"forward-path:ens5<->samt-onprem-aws",
+	})
+	status := store.ObjectStatus(api.HybridAPIVersion, "RemoteAddressClaim", "bgp-cloudedge-10-0-1-44")
+	paths, ok := status["captureForwardingPaths"].([]map[string]any)
+	if !ok || len(paths) != 1 {
+		t.Fatalf("captureForwardingPaths = %#v, want one SAM tunnel path", status["captureForwardingPaths"])
+	}
+	if paths[0]["captureInterface"] != "ens5" || paths[0]["tunnelInterface"] != "samt-onprem-aws" || paths[0]["enforced"] != true {
+		t.Fatalf("forward path status = %#v", paths[0])
+	}
+}
+
 func TestDynamicRouteSAMViewKeepsProviderSecondaryClaimFromConfirmedCaptureStatus(t *testing.T) {
 	startup := bgpProxyARPStartup(false)
 	for i, resource := range startup.Spec.Resources {
