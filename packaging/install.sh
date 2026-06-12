@@ -1977,6 +1977,9 @@ while [ "$#" -gt 0 ]; do
             ndpi_archive=${1#*=}
             [ -n "${ndpi_archive}" ] || { echo "--with-ndpi-archive requires a value" >&2; exit 2; }
             ;;
+        .)
+            [ "${command_mode}" = "install" ] || { echo "unknown argument: $1" >&2; usage >&2; exit 2; }
+            ;;
         --configure)
             command_mode=configure
             ;;

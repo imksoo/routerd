@@ -105,6 +105,24 @@ echo helper
 	}
 }
 
+func TestInstallAcceptsCurrentDirectoryPayloadArgument(t *testing.T) {
+	dir := t.TempDir()
+	pkg := filepath.Join(dir, "package")
+	prefix := filepath.Join(dir, "prefix")
+	writeExecutable(t, filepath.Join(pkg, "bin", "routerd"), `#!/bin/sh
+if [ "$1" = "--version" ]; then echo routerd-test; exit 0; fi
+exit 0
+`)
+
+	out, err := runInstall(t, pkg, prefix, ".", "--no-install-deps", "--no-config-update", "--no-restart")
+	if err != nil {
+		t.Fatalf("install failed: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(filepath.Join(prefix, "sbin", "routerd")); err != nil {
+		t.Fatalf("routerd was not installed with '.' payload argument: %v\n%s", err, out)
+	}
+}
+
 func TestInstallWaitsForJSONApplyStateAfterServiceRestart(t *testing.T) {
 	script, err := os.ReadFile(filepath.Join(repoRoot(t), "packaging", "install.sh"))
 	if err != nil {
