@@ -701,7 +701,7 @@ func TestControllerBGPModeProviderInventoryCaptureDoesNotSatisfyOSGate(t *testin
 	}
 }
 
-func TestControllerBGPModeProviderDiscoveryDoesNotAdvertiseRouterNICTrapAsOwner(t *testing.T) {
+func TestControllerBGPModeProviderDiscoveryAdvertisesRouterSelfWithoutCaptureTrap(t *testing.T) {
 	now := time.Date(2026, 6, 3, 16, 5, 0, 0, time.UTC)
 	store := testStore(t, now)
 	spec := plannedPoolSpec()
@@ -734,8 +734,11 @@ func TestControllerBGPModeProviderDiscoveryDoesNotAdvertiseRouterNICTrapAsOwner(
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
-	if _, ok := maybePathBySourcePrefix(bgp, DynamicSource("cloudedge", "azure-router"), "10.88.60.12/32"); ok {
-		t.Fatalf("paths = %#v, want router-NIC trap excluded from self-origin ownership", bgp.paths)
+	pathBySourcePrefix(t, bgp, DynamicSource("cloudedge", "azure-router"), "10.88.60.12/32")
+	plans := decodeActionPlans(t, latestPart(t, store, DynamicSource("cloudedge", "azure-router")).ActionPlansJSON)
+	if findActionPlanByAddress(plans, actionAssignSecondaryIP, "10.88.60.12/32") != nil ||
+		findActionPlanByAddress(plans, actionAssignRouteTableRoute, "10.88.60.12/32") != nil {
+		t.Fatalf("plans = %#v, want router self advertised but not captured", plans)
 	}
 }
 
@@ -2008,9 +2011,7 @@ func TestControllerBGPModeRouteTableDoesNotCaptureRouterSelfOrLocalHome(t *testi
 		findActionPlanByAddress(plans, actionAssignRouteTableRoute, "10.88.60.11/32") != nil {
 		t.Fatalf("plans = %#v, want no provider capture assign for router self or local same-subnet home", plans)
 	}
-	if _, ok := maybePathBySourcePrefix(bgp, DynamicSource("cloudedge", "azure-router"), "10.88.60.4/32"); ok {
-		t.Fatalf("paths = %#v, want no BGP advertisement for router self management IP", bgp.paths)
-	}
+	pathBySourcePrefix(t, bgp, DynamicSource("cloudedge", "azure-router"), "10.88.60.4/32")
 	pathBySourcePrefix(t, bgp, DynamicSource("cloudedge", "azure-router"), "10.88.60.11/32")
 }
 

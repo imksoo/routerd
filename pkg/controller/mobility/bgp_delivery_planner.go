@@ -91,7 +91,7 @@ func planBGPAdvertisements(source string, self memberPlanInfo, decisions []owner
 				}
 			}
 		}
-		if !decisionAdvertisesFromSelf(decision, self) {
+		if !decisionAdvertisesFromSelf(decision, self, placement) {
 			continue
 		}
 		prefix, err := netip.ParsePrefix(strings.TrimSpace(decision.Address))
@@ -115,11 +115,14 @@ func planBGPAdvertisements(source string, self memberPlanInfo, decisions []owner
 	return out, mapKeysSorted(providerCaptured), seized
 }
 
-func decisionAdvertisesFromSelf(decision ownershipDecision, self memberPlanInfo) bool {
+func decisionAdvertisesFromSelf(decision ownershipDecision, self memberPlanInfo, placement PlacementDecision) bool {
 	if strings.TrimSpace(decision.AdvertiseOwnerNode) != strings.TrimSpace(self.NodeRef) {
 		return false
 	}
-	return decision.Class != ownershipClassLocalRouterSelf
+	if decision.Class == ownershipClassLocalRouterSelf && !placement.Active {
+		return false
+	}
+	return true
 }
 
 func bgpDecisionSourceType(decision ownershipDecision) string {

@@ -71,11 +71,14 @@ type FIBRoute struct {
 	NextHops        []string
 	PreferredSource string
 	DeleteGrace     time.Duration
+	MobilitySource  string
 }
 
 type FIBSyncResult struct {
 	Installed                    map[string]bool
 	Unsupported                  map[string]string
+	Suppressed                   map[string]bool
+	SuppressedReason             map[string]string
 	PreferredSource              map[string]string
 	PreferredSourceSkipped       map[string]bool
 	PreferredSourceSkippedReason map[string]string
@@ -84,6 +87,13 @@ type FIBSyncResult struct {
 const MinPollInterval = 3 * time.Second
 
 const mobilityOwnerFIBDeleteGrace = 10 * time.Second
+
+const (
+	mobilitySourceObserved = "observed"
+	mobilitySourceStatic   = "static"
+	mobilitySourceHandover = "handover"
+	mobilitySourceMixed    = "mixed"
+)
 
 type Controller struct {
 	Router *routerapi.Router
@@ -1710,6 +1720,8 @@ func (c *Controller) saveObservedStatuses(routerName string, spec routerapi.BGPR
 				"nextHopRewrite":                importNextHopRewrite(spec.ImportPolicy),
 				"installedNextHops":             installedNextHops(routes, fibResult),
 				"missingInstalledNextHops":      missingInstalledNextHops(routes, fibResult),
+				"suppressedFIBRoutes":           fibResult.Suppressed,
+				"suppressedFIBRouteReasons":     fibResult.SuppressedReason,
 				"preferredSources":              fibResult.PreferredSource,
 				"observedAt":                    now,
 				"conditions":                    []map[string]any{{"type": "Observed", "status": "True", "reason": "GoBGPStatus"}},
@@ -2152,10 +2164,11 @@ type bgpPathRank struct {
 func fibRoutesFromDestination(dst *gobgpapi.Destination, allowed []netip.Prefix, peerAddressRewrite map[string]bool) []FIBRoute {
 	prefix := normalizeRoutePrefix(dst.GetPrefix())
 	var candidates []struct {
-		nextHop     string
-		rank        bgpPathRank
-		best        bool
-		deleteGrace time.Duration
+		nextHop        string
+		rank           bgpPathRank
+		best           bool
+		deleteGrace    time.Duration
+		mobilitySource string
 	}
 	for _, path := range dst.GetPaths() {
 		if path.GetIsWithdraw() || path.GetIsNexthopInvalid() {
@@ -2185,12 +2198,21 @@ func fibRoutesFromDestination(dst *gobgpapi.Destination, allowed []netip.Prefix,
 		if bgpstate.HasCommunity(communities, bgpstate.MobilityCommunityOwner) {
 			deleteGrace = mobilityOwnerFIBDeleteGrace
 		}
+		mobilitySource := ""
+		if bgpstate.HasCommunity(communities, "64512:110") {
+			mobilitySource = mobilitySourceObserved
+		} else if bgpstate.HasCommunity(communities, "64512:111") {
+			mobilitySource = mobilitySourceStatic
+		} else if bgpstate.HasCommunity(communities, "64512:112") {
+			mobilitySource = mobilitySourceHandover
+		}
 		candidates = append(candidates, struct {
-			nextHop     string
-			rank        bgpPathRank
-			best        bool
-			deleteGrace time.Duration
-		}{nextHop: nextHop, rank: pathRank(path), best: path.GetBest(), deleteGrace: deleteGrace})
+			nextHop        string
+			rank           bgpPathRank
+			best           bool
+			deleteGrace    time.Duration
+			mobilitySource string
+		}{nextHop: nextHop, rank: pathRank(path), best: path.GetBest(), deleteGrace: deleteGrace, mobilitySource: mobilitySource})
 		prefix = parsed.String()
 	}
 	if len(candidates) == 0 || prefix == "" {
@@ -2215,6 +2237,7 @@ func fibRoutesFromDestination(dst *gobgpapi.Destination, allowed []netip.Prefix,
 	seen := map[string]bool{}
 	var nextHops []string
 	deleteGrace := time.Duration(0)
+	mobilitySource := ""
 	for _, candidate := range candidates {
 		if bestSet && !candidate.best {
 			continue
@@ -2227,12 +2250,17 @@ func fibRoutesFromDestination(dst *gobgpapi.Destination, allowed []netip.Prefix,
 		if candidate.deleteGrace > deleteGrace {
 			deleteGrace = candidate.deleteGrace
 		}
+		if mobilitySource == "" {
+			mobilitySource = candidate.mobilitySource
+		} else if candidate.mobilitySource != "" && candidate.mobilitySource != mobilitySource {
+			mobilitySource = mobilitySourceMixed
+		}
 	}
 	sort.Strings(nextHops)
 	if len(nextHops) == 0 {
 		return nil
 	}
-	return []FIBRoute{{Prefix: prefix, NextHops: nextHops, DeleteGrace: deleteGrace}}
+	return []FIBRoute{{Prefix: prefix, NextHops: nextHops, DeleteGrace: deleteGrace, MobilitySource: mobilitySource}}
 }
 
 func invalidMobilityLivenessMarkerPrefixes(markers map[string]string, mobilityPools []netip.Prefix) []string {
@@ -2304,6 +2332,7 @@ func mergeFIBRoutes(routes []FIBRoute) []FIBRoute {
 		nextHops        map[string]bool
 		preferredSource string
 		deleteGrace     time.Duration
+		mobilitySource  string
 	}
 	byPrefix := map[string]mergedRoute{}
 	for _, route := range routes {
@@ -2329,6 +2358,14 @@ func mergeFIBRoutes(routes []FIBRoute) []FIBRoute {
 		if route.DeleteGrace > merged.deleteGrace {
 			merged.deleteGrace = route.DeleteGrace
 		}
+		sourceType := strings.TrimSpace(route.MobilitySource)
+		if sourceType != "" {
+			if merged.mobilitySource == "" {
+				merged.mobilitySource = sourceType
+			} else if merged.mobilitySource != sourceType {
+				merged.mobilitySource = mobilitySourceMixed
+			}
+		}
 		byPrefix[prefix] = merged
 	}
 	out := make([]FIBRoute, 0, len(byPrefix))
@@ -2338,7 +2375,7 @@ func mergeFIBRoutes(routes []FIBRoute) []FIBRoute {
 			hops = append(hops, hop)
 		}
 		sort.Strings(hops)
-		out = append(out, FIBRoute{Prefix: prefix, NextHops: hops, PreferredSource: merged.preferredSource, DeleteGrace: merged.deleteGrace})
+		out = append(out, FIBRoute{Prefix: prefix, NextHops: hops, PreferredSource: merged.preferredSource, DeleteGrace: merged.deleteGrace, MobilitySource: merged.mobilitySource})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Prefix < out[j].Prefix })
 	return out
@@ -2533,6 +2570,12 @@ func applyFIBResult(state bgpstate.State, routes []FIBRoute, result FIBSyncResul
 			state.Prefixes[i].SelectionReason = ""
 			continue
 		}
+		if result.Suppressed[prefix] {
+			state.Prefixes[i].Installed = false
+			state.Prefixes[i].SelectionState = "suppressed"
+			state.Prefixes[i].SelectionReason = firstNonEmpty(result.SuppressedReason[prefix], "GoBGPFIBSuppressed")
+			continue
+		}
 		state.Prefixes[i].Installed = false
 		state.Prefixes[i].SelectionState = "notInstalled"
 		if reason := result.Unsupported[prefix]; reason != "" {
@@ -2574,7 +2617,7 @@ func missingInstalledNextHops(routes []FIBRoute, result FIBSyncResult) map[strin
 	out := map[string][]string{}
 	for _, route := range routes {
 		prefix := normalizeRoutePrefix(route.Prefix)
-		if prefix == "" || result.Installed[prefix] || result.Unsupported[prefix] != "" {
+		if prefix == "" || result.Installed[prefix] || result.Unsupported[prefix] != "" || result.Suppressed[prefix] {
 			continue
 		}
 		nextHops := normalizeRouteNextHops(route.NextHops)
@@ -3051,6 +3094,8 @@ func normalizeFIBSyncResult(result FIBSyncResult) FIBSyncResult {
 	out := FIBSyncResult{
 		Installed:                    map[string]bool{},
 		Unsupported:                  map[string]string{},
+		Suppressed:                   map[string]bool{},
+		SuppressedReason:             map[string]string{},
 		PreferredSource:              map[string]string{},
 		PreferredSourceSkipped:       map[string]bool{},
 		PreferredSourceSkippedReason: map[string]string{},
@@ -3063,6 +3108,16 @@ func normalizeFIBSyncResult(result FIBSyncResult) FIBSyncResult {
 	for prefix, reason := range result.Unsupported {
 		if normalized := normalizeRoutePrefix(prefix); normalized != "" {
 			out.Unsupported[normalized] = reason
+		}
+	}
+	for prefix, suppressed := range result.Suppressed {
+		if normalized := normalizeRoutePrefix(prefix); normalized != "" {
+			out.Suppressed[normalized] = suppressed
+		}
+	}
+	for prefix, reason := range result.SuppressedReason {
+		if normalized := normalizeRoutePrefix(prefix); normalized != "" && strings.TrimSpace(reason) != "" {
+			out.SuppressedReason[normalized] = strings.TrimSpace(reason)
 		}
 	}
 	for prefix, source := range result.PreferredSource {

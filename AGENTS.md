@@ -95,11 +95,11 @@ Useful direct commands:
 go test ./...
 go build ./cmd/routerd
 go build ./cmd/routerctl
-routerctl validate --config examples/router-lab.yaml
-routerctl plan --config examples/router-lab.yaml
-routerctl apply --config examples/router-lab.yaml --once --dry-run --status-file /tmp/routerd-status.json
-routerctl status
-routerctl show napt --limit 20
+scripts/routerd-sandbox-run.sh sh -c 'go run ./cmd/routerctl validate --socket "$ROUTERD_SANDBOX_STATUS_SOCKET" -f examples/router-lab.yaml --replace'
+scripts/routerd-sandbox-run.sh sh -c 'go run ./cmd/routerctl plan --socket "$ROUTERD_SANDBOX_STATUS_SOCKET" -f examples/router-lab.yaml --replace'
+scripts/routerd-sandbox-run.sh sh -c 'go run ./cmd/routerctl apply --socket "$ROUTERD_SANDBOX_SOCKET" -f examples/router-lab.yaml --replace --no-reconcile'
+routerctl get status
+routerctl get connections --limit 20
 ```
 
 Default source-install paths:

@@ -238,15 +238,19 @@ sudo install -d -m 0755 /usr/local/etc/routerd
 sudo install -m 0600 /usr/local/etc/routerd/router.yaml.sample /usr/local/etc/routerd/router.yaml
 sudo vi /usr/local/etc/routerd/router.yaml
 
-routerctl validate --config /usr/local/etc/routerd/router.yaml
-routerctl plan --config /usr/local/etc/routerd/router.yaml
-routerctl apply --config /usr/local/etc/routerd/router.yaml --dry-run
+sudo systemctl start routerd
+routerctl validate -f /usr/local/etc/routerd/router.yaml --replace
+routerctl plan -f /usr/local/etc/routerd/router.yaml --replace
 ```
+
+`routerctl validate`、`plan`、`apply` は稼働中の `routerd` Unix socket に
+接続します。ホストのネットワークを変更しない開発時確認には、下の sandbox
+wrapper を使います。CI の `make validate-example` も同じ経路です。
 
 管理経路が残ることを確認してから反映します。
 
 ```sh
-sudo routerctl apply --config /usr/local/etc/routerd/router.yaml
+sudo routerctl apply -f /usr/local/etc/routerd/router.yaml --replace
 ```
 
 ## 開発者向けビルド
@@ -279,12 +283,12 @@ Makefile は開発用です。
 よく使う確認:
 
 ```sh
-routerctl validate --config examples/home-router.yaml
-routerctl plan --config examples/home-router.yaml
-routerctl apply --config examples/home-router.yaml --dry-run
-routerctl status
-routerctl events --limit 20
-routerctl connections --limit 50
+scripts/routerd-sandbox-run.sh sh -c 'go run ./cmd/routerctl validate --socket "$ROUTERD_SANDBOX_STATUS_SOCKET" -f examples/home-router.yaml --replace'
+scripts/routerd-sandbox-run.sh sh -c 'go run ./cmd/routerctl plan --socket "$ROUTERD_SANDBOX_STATUS_SOCKET" -f examples/home-router.yaml --replace'
+scripts/routerd-sandbox-run.sh sh -c 'go run ./cmd/routerctl apply --socket "$ROUTERD_SANDBOX_SOCKET" -f examples/home-router.yaml --replace --no-reconcile'
+routerctl get status
+routerctl get events --limit 20
+routerctl get connections --limit 50
 routerctl plugin list
 routerctl plugin run <name> --dry-run
 ```

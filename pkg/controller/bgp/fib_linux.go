@@ -53,6 +53,8 @@ func (s *netlinkFIBSyncer) SyncBGP(_ context.Context, routes []FIBRoute) (FIBSyn
 	result := FIBSyncResult{
 		Installed:                    map[string]bool{},
 		Unsupported:                  map[string]string{},
+		Suppressed:                   map[string]bool{},
+		SuppressedReason:             map[string]string{},
 		PreferredSource:              map[string]string{},
 		PreferredSourceSkipped:       map[string]bool{},
 		PreferredSourceSkippedReason: map[string]string{},
@@ -61,6 +63,13 @@ func (s *netlinkFIBSyncer) SyncBGP(_ context.Context, routes []FIBRoute) (FIBSyn
 	for _, route := range routes {
 		route = normalizeFIBRoute(route)
 		if route.Prefix == "" {
+			continue
+		}
+		if mobilityObservedRouteCoveredByConnectedKernelRoute(route) {
+			delete(s.retainedDesired, route.Prefix)
+			delete(s.missingSince, route.Prefix)
+			result.Suppressed[route.Prefix] = true
+			result.SuppressedReason[route.Prefix] = "LocalConnectedRoutePreferred"
 			continue
 		}
 		delete(s.missingSince, route.Prefix)
@@ -275,6 +284,41 @@ func preferredSourceIsLocal(value string) bool {
 			if ok && parsed == addr {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+func mobilityObservedRouteCoveredByConnectedKernelRoute(route FIBRoute) bool {
+	if strings.TrimSpace(route.MobilitySource) != mobilitySourceObserved {
+		return false
+	}
+	prefix, err := netip.ParsePrefix(strings.TrimSpace(route.Prefix))
+	if err != nil || !prefix.Addr().Is4() {
+		return false
+	}
+	routes, err := netlink.RouteList(nil, netlink.FAMILY_V4)
+	if err != nil {
+		return false
+	}
+	return localConnectedRouteCovers(prefix.Masked(), routes)
+}
+
+func localConnectedRouteCovers(prefix netip.Prefix, routes []netlink.Route) bool {
+	if !prefix.Addr().Is4() {
+		return false
+	}
+	for _, route := range routes {
+		if route.Dst == nil || route.Gw != nil || len(route.MultiPath) > 0 || route.Protocol == bgpRouteProtocol {
+			continue
+		}
+		covered, err := netip.ParsePrefix(route.Dst.String())
+		if err != nil || !covered.Addr().Is4() {
+			continue
+		}
+		covered = covered.Masked()
+		if covered.Bits() <= prefix.Bits() && covered.Contains(prefix.Addr()) {
+			return true
 		}
 	}
 	return false

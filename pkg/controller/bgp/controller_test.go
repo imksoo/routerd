@@ -455,6 +455,8 @@ func (f *fakeFIB) SyncBGP(_ context.Context, routes []FIBRoute) (FIBSyncResult, 
 	result := FIBSyncResult{
 		Installed:                    map[string]bool{},
 		Unsupported:                  map[string]string{},
+		Suppressed:                   map[string]bool{},
+		SuppressedReason:             map[string]string{},
 		PreferredSource:              map[string]string{},
 		PreferredSourceSkipped:       map[string]bool{},
 		PreferredSourceSkippedReason: map[string]string{},
@@ -1176,7 +1178,7 @@ func TestReconcileAdmitsNormalMobilityPoolHostRoute(t *testing.T) {
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
-	want := []FIBRoute{{Prefix: "10.77.60.44/32", NextHops: []string{"10.99.0.2"}, DeleteGrace: mobilityOwnerFIBDeleteGrace}}
+	want := []FIBRoute{{Prefix: "10.77.60.44/32", NextHops: []string{"10.99.0.2"}, DeleteGrace: mobilityOwnerFIBDeleteGrace, MobilitySource: mobilitySourceObserved}}
 	if !reflect.DeepEqual(fib.routes, want) {
 		t.Fatalf("fib routes = %#v, want normal mobility pool host admitted only %#v", fib.routes, want)
 	}
@@ -2133,6 +2135,18 @@ func TestFIBRoutesFromDestinationHonorsGoBGPBestPath(t *testing.T) {
 	want := []FIBRoute{{Prefix: "10.77.60.12/32", NextHops: []string{"10.99.0.11"}}}
 	if !reflect.DeepEqual(routes, want) {
 		t.Fatalf("routes = %#v, want only GoBGP best path %#v", routes, want)
+	}
+}
+
+func TestFIBRoutesFromDestinationCarriesMobilitySource(t *testing.T) {
+	routes := fibRoutesFromDestination(testDestinationWithCommunities("10.77.60.12/32", "10.99.0.11",
+		bgpstate.MobilityCommunityOwner,
+		"64512:102",
+		"64512:110",
+	), []netip.Prefix{netip.MustParsePrefix("10.77.60.0/24")}, nil)
+	want := []FIBRoute{{Prefix: "10.77.60.12/32", NextHops: []string{"10.99.0.11"}, DeleteGrace: mobilityOwnerFIBDeleteGrace, MobilitySource: mobilitySourceObserved}}
+	if !reflect.DeepEqual(routes, want) {
+		t.Fatalf("routes = %#v, want mobility source preserved %#v", routes, want)
 	}
 }
 

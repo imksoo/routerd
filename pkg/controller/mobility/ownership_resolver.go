@@ -218,6 +218,8 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 			decision.HomeProviderRef = firstNonEmpty(rec.ProviderRef, self.Capture.ProviderRef)
 			decision.HomeSubnetRef = rec.SubnetRef
 			decision.HomeNICRef = rec.NICRef
+			decision.AdvertiseOwnerNode = self.NodeRef
+			decision.AdvertiseReason = "local-router-self"
 			decision.Source = "local-inventory"
 			decision.Fresh = true
 			out = append(out, decision)
@@ -292,6 +294,8 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 			decision.HomeProviderRef = self.Capture.ProviderRef
 			decision.HomeSubnetRef = statusString(in.Status["discoverySelfSubnetRef"])
 			decision.HomeNICRef = self.Capture.NICRef
+			decision.AdvertiseOwnerNode = self.NodeRef
+			decision.AdvertiseReason = "local-router-self"
 			decision.Source = "self-inventory"
 			decision.Fresh = true
 			out = append(out, decision)
