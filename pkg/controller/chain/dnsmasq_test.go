@@ -683,6 +683,122 @@ func TestIPv4StaticAddressControllerDeletesPreviousAddressWhenChanged(t *testing
 	}
 }
 
+func TestIPv4StaticAddressControllerRemovesStaleMobilityProviderOSAddresses(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.FederationAPIVersion, Kind: "EventGroup"}, Metadata: api.ObjectMeta{Name: "cloudedge"}, Spec: api.EventGroupSpec{NodeName: "azpair-a"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "azure-nic"}, Spec: api.InterfaceSpec{IfName: "eth0"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"}, Metadata: api.ObjectMeta{Name: "cloudedge"}, Spec: api.MobilityPoolSpec{
+			Prefix:         "10.77.60.0/24",
+			GroupRef:       "cloudedge",
+			DeliveryPolicy: api.MobilityDeliveryPolicy{Mode: "bgp"},
+			Members: []api.MobilityPoolMember{
+				{
+					NodeRef: "azpair-a",
+					Site:    "azure",
+					Role:    "cloud",
+					Capture: api.MobilityMemberCapture{
+						Type:               "provider-secondary-ip",
+						Interface:          "azure-nic",
+						ConfigureOSAddress: true,
+					},
+				},
+			},
+		}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "sam-cloudedge-provider-capture-10-77-60-10"}, Spec: api.IPv4StaticAddressSpec{Interface: "azure-nic", Address: "10.77.60.10/32"}},
+	}}}
+	store := mapStore{
+		api.MobilityAPIVersion + "/MobilityPool/cloudedge": {
+			"discoverySelfPrivateIPs":        []any{"10.77.60.14/32"},
+			"discoverySelfCapturedAddresses": []any{"10.77.60.10/32"},
+		},
+	}
+	var commands []string
+	controller := IPv4StaticAddressController{
+		Router: router,
+		Store:  store,
+		AddressPresent: func(context.Context, string, string) bool {
+			return true
+		},
+		DevicePresent: func(context.Context, string) bool {
+			return true
+		},
+		AddressList: func(_ context.Context, ifname string) ([]string, error) {
+			if ifname != "eth0" {
+				t.Fatalf("ifname = %q, want eth0", ifname)
+			}
+			return []string{"10.77.60.10/24", "10.77.60.11/24", "10.77.60.13/24", "10.77.60.14/24"}, nil
+		},
+		Command: func(ctx context.Context, name string, args ...string) error {
+			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
+			return nil
+		},
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"ip -4 addr replace 10.77.60.10/32 dev eth0",
+		"ip -4 addr del 10.77.60.10/24 dev eth0",
+		"ip -4 addr del 10.77.60.11/24 dev eth0",
+		"ip -4 addr del 10.77.60.13/24 dev eth0",
+	}
+	if !reflect.DeepEqual(commands, want) {
+		t.Fatalf("commands = %#v, want %#v", commands, want)
+	}
+}
+
+func TestIPv4StaticAddressControllerRemovesStaleMobilityProviderOSAddressesWhenStandby(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.FederationAPIVersion, Kind: "EventGroup"}, Metadata: api.ObjectMeta{Name: "cloudedge"}, Spec: api.EventGroupSpec{NodeName: "azpair-b"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "azure-nic"}, Spec: api.InterfaceSpec{IfName: "eth0"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"}, Metadata: api.ObjectMeta{Name: "cloudedge"}, Spec: api.MobilityPoolSpec{
+			Prefix:         "10.77.60.0/24",
+			GroupRef:       "cloudedge",
+			DeliveryPolicy: api.MobilityDeliveryPolicy{Mode: "bgp"},
+			Members: []api.MobilityPoolMember{
+				{
+					NodeRef: "azpair-b",
+					Site:    "azure",
+					Role:    "cloud",
+					Capture: api.MobilityMemberCapture{
+						Type:               "provider-secondary-ip",
+						Interface:          "azure-nic",
+						ConfigureOSAddress: true,
+					},
+				},
+			},
+		}},
+	}}}
+	store := mapStore{
+		api.MobilityAPIVersion + "/MobilityPool/cloudedge": {
+			"discoverySelfPrivateIPs":        []any{"10.77.60.16/32"},
+			"discoverySelfCapturedAddresses": []any{},
+		},
+	}
+	var commands []string
+	controller := IPv4StaticAddressController{
+		Router: router,
+		Store:  store,
+		AddressList: func(_ context.Context, ifname string) ([]string, error) {
+			if ifname != "eth0" {
+				t.Fatalf("ifname = %q, want eth0", ifname)
+			}
+			return []string{"10.77.60.13/32", "10.77.60.16/24"}, nil
+		},
+		Command: func(ctx context.Context, name string, args ...string) error {
+			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
+			return nil
+		},
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"ip -4 addr del 10.77.60.13/32 dev eth0"}
+	if !reflect.DeepEqual(commands, want) {
+		t.Fatalf("commands = %#v, want %#v", commands, want)
+	}
+}
+
 func TestLANAddressControllerPopulatesInterfaceBeforeDependencyCheck(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "lo", Managed: false}},

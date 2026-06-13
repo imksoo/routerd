@@ -263,7 +263,7 @@ func resourceLifecycleObjectStatus(status routerstate.ObjectStatus) bool {
 		return false
 	}
 	switch {
-	case status.APIVersion == api.NetAPIVersion && (status.Kind == "IPv4Route" || status.Kind == "WireGuardInterface" || status.Kind == "WireGuardPeer"):
+	case status.APIVersion == api.NetAPIVersion && (status.Kind == "IPv4Route" || status.Kind == "IPv4StaticAddress" || status.Kind == "WireGuardInterface" || status.Kind == "WireGuardPeer"):
 		return true
 	case status.APIVersion == api.HybridAPIVersion && status.Kind == "RemoteAddressClaim":
 		return true

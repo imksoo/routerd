@@ -2442,6 +2442,7 @@ type IPv4StaticAddressController struct {
 	Command        commandFunc
 	AddressPresent func(context.Context, string, string) bool
 	DevicePresent  func(context.Context, string) bool
+	AddressList    func(context.Context, string) ([]string, error)
 }
 
 type DaemonStatusController struct {
@@ -2719,12 +2720,255 @@ func (c IPv4StaticAddressController) Reconcile(ctx context.Context) error {
 			}
 		}
 	}
+	if err := c.cleanupRemovedIPv4StaticAddresses(ctx); err != nil {
+		return err
+	}
+	if err := c.cleanupStaleMobilityProviderOSAddresses(ctx); err != nil {
+		return err
+	}
 	return nil
 }
 
+func (c IPv4StaticAddressController) cleanupRemovedIPv4StaticAddresses(ctx context.Context) error {
+	if c.Store == nil {
+		return nil
+	}
+	lister, ok := c.Store.(interface {
+		ListObjectStatuses() ([]routerstate.ObjectStatus, error)
+	})
+	if !ok {
+		return nil
+	}
+	deleter, ok := c.Store.(interface {
+		DeleteObject(apiVersion, kind, name string) error
+	})
+	if !ok {
+		return nil
+	}
+	statuses, err := lister.ListObjectStatuses()
+	if err != nil {
+		return err
+	}
+	desired := map[string]bool{}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion == api.NetAPIVersion && resource.Kind == "IPv4StaticAddress" {
+			desired[lifecycle.OwnerKey(resource.APIVersion, resource.Kind, resource.Metadata.Name)] = true
+		}
+	}
+	plan := lifecycle.PlanResourceTeardownGC(desired, statuses)
+	for _, action := range plan.Actions {
+		if action.Type != lifecycle.GCActionTeardownResource {
+			continue
+		}
+		status := action.Status
+		if status.APIVersion != api.NetAPIVersion || status.Kind != "IPv4StaticAddress" {
+			continue
+		}
+		if err := c.teardownRemovedIPv4StaticAddress(ctx, status, deleter); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c IPv4StaticAddressController) teardownRemovedIPv4StaticAddress(ctx context.Context, status routerstate.ObjectStatus, deleter routerstate.ObjectDeleteStore) error {
+	if !c.DryRun {
+		ifname := cleanStatusString(status.Status["ifname"])
+		address := cleanStatusString(status.Status["address"])
+		if ifname != "" && address != "" {
+			addressPresentFn := c.AddressPresent
+			if addressPresentFn == nil {
+				addressPresentFn = ipv4AddressPresent
+			}
+			if addressPresentFn(ctx, ifname, address) {
+				command := c.Command
+				if command == nil {
+					command = runCommandContext
+				}
+				name, args := ipv4StaticAddressDeleteCommand(platform.CurrentOS(), ifname, address)
+				if err := command(ctx, name, args...); err != nil {
+					return fmt.Errorf("delete removed IPv4StaticAddress %s %s dev %s: %w", status.Name, address, ifname, err)
+				}
+			}
+		}
+	}
+	if err := deleter.DeleteObject(api.NetAPIVersion, "IPv4StaticAddress", status.Name); err != nil {
+		return err
+	}
+	if c.Bus != nil {
+		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.lan.ipv4_address.removed", daemonapi.SeverityInfo)
+		event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress", Name: status.Name}
+		event.Attributes = map[string]string{"address": fmt.Sprint(status.Status["address"]), "ifname": fmt.Sprint(status.Status["ifname"])}
+		if err := c.Bus.Publish(ctx, event); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c IPv4StaticAddressController) cleanupStaleMobilityProviderOSAddresses(ctx context.Context) error {
+	if c.Router == nil || c.Store == nil || c.DryRun || platform.CurrentOS() != platform.OSLinux {
+		return nil
+	}
+	selfByGroup := eventGroupSelfNodes(*c.Router)
+	aliases := interfaceIfNames(*c.Router)
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "MobilityPool" {
+			continue
+		}
+		spec, err := resource.MobilityPoolSpec()
+		if err != nil || mobilityDeliveryMode(spec) != "bgp" {
+			continue
+		}
+		selfNode := strings.TrimSpace(selfByGroup[strings.TrimSpace(spec.GroupRef)])
+		if selfNode == "" {
+			continue
+		}
+		spec, _, err = mobilityconfig.NormalizeMobilityPool(spec, selfNode)
+		if err != nil {
+			continue
+		}
+		self, ok := mobilityPoolMemberByNode(spec.Members, selfNode)
+		if !ok || strings.TrimSpace(self.Capture.Type) != "provider-secondary-ip" || !self.Capture.ConfigureOSAddress {
+			continue
+		}
+		ifname := resolveInterfaceIfName(strings.TrimSpace(self.Capture.Interface), aliases)
+		if ifname == "" {
+			continue
+		}
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(spec.Prefix))
+		if err != nil || !prefix.Addr().Is4() {
+			continue
+		}
+		status := c.Store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", resource.Metadata.Name)
+		if !statusKeyObserved(status, "discoverySelfPrivateIPs") || !statusKeyObserved(status, "discoverySelfCapturedAddresses") {
+			continue
+		}
+		privateHosts := map[string]bool{}
+		keepCIDRs := map[string]bool{}
+		for _, value := range statusStringSlice(status["discoverySelfPrivateIPs"]) {
+			if normalized, ok := normalizeIPv4HostPrefixInPool(value, prefix.Masked()); ok {
+				privateHosts[strings.TrimSuffix(normalized, "/32")] = true
+			}
+		}
+		for _, value := range statusStringSlice(status["discoverySelfCapturedAddresses"]) {
+			if normalized, ok := normalizeIPv4HostPrefixInPool(value, prefix.Masked()); ok {
+				keepCIDRs[normalized] = true
+			}
+		}
+		for _, res := range c.Router.Spec.Resources {
+			if res.APIVersion != api.NetAPIVersion || res.Kind != "IPv4StaticAddress" {
+				continue
+			}
+			spec, err := res.IPv4StaticAddressSpec()
+			if err != nil || resolveInterfaceIfName(strings.TrimSpace(spec.Interface), aliases) != ifname {
+				continue
+			}
+			if normalized, ok := normalizeIPv4HostPrefixInPool(spec.Address, prefix.Masked()); ok {
+				keepCIDRs[normalized] = true
+			}
+		}
+		current, err := c.listIPv4InterfaceAddresses(ctx, ifname)
+		if err != nil {
+			return err
+		}
+		command := c.Command
+		if command == nil {
+			command = runCommandContext
+		}
+		for _, address := range current {
+			normalized, ok := normalizeIPv4HostPrefixInPool(address, prefix.Masked())
+			if !ok {
+				continue
+			}
+			host := strings.TrimSuffix(normalized, "/32")
+			if privateHosts[host] || keepCIDRs[strings.TrimSpace(address)] || keepCIDRs[normalized] && strings.TrimSpace(address) == normalized {
+				continue
+			}
+			name, args := ipv4StaticAddressDeleteCommand(platform.CurrentOS(), ifname, address)
+			if err := command(ctx, name, args...); err != nil {
+				return fmt.Errorf("delete stale MobilityPool/%s OS address %s dev %s: %w", resource.Metadata.Name, address, ifname, err)
+			}
+			if c.Bus != nil {
+				event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.mobility.os_address.removed", daemonapi.SeverityInfo)
+				event.Resource = &daemonapi.ResourceRef{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool", Name: resource.Metadata.Name}
+				event.Attributes = map[string]string{"address": address, "ifname": ifname, "reason": "stale-provider-secondary-os-address"}
+				if err := c.Bus.Publish(ctx, event); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func (c IPv4StaticAddressController) listIPv4InterfaceAddresses(ctx context.Context, ifname string) ([]string, error) {
+	if c.AddressList != nil {
+		return c.AddressList(ctx, ifname)
+	}
+	return linuxIPv4InterfaceAddresses(ctx, ifname)
+}
+
+func linuxIPv4InterfaceAddresses(ctx context.Context, ifname string) ([]string, error) {
+	out, err := exec.CommandContext(ctx, "ip", "-4", "-o", "addr", "show", "dev", ifname).Output()
+	if err != nil {
+		return nil, fmt.Errorf("ip -4 -o addr show dev %s: %w", ifname, err)
+	}
+	var addresses []string
+	fields := strings.Fields(string(out))
+	for i := 0; i+1 < len(fields); i++ {
+		if fields[i] != "inet" {
+			continue
+		}
+		address := strings.TrimPrefix(fields[i+1], "addr:")
+		if strings.TrimSpace(address) != "" {
+			addresses = append(addresses, address)
+		}
+	}
+	return addresses, nil
+}
+
+func normalizeIPv4HostPrefixInPool(value string, pool netip.Prefix) (string, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" || !pool.Addr().Is4() {
+		return "", false
+	}
+	var addr netip.Addr
+	if prefix, err := netip.ParsePrefix(value); err == nil && prefix.Addr().Is4() {
+		addr = prefix.Addr()
+	} else if parsed, err := netip.ParseAddr(value); err == nil && parsed.Is4() {
+		addr = parsed
+	} else {
+		return "", false
+	}
+	if !pool.Contains(addr) {
+		return "", false
+	}
+	return netip.PrefixFrom(addr, 32).String(), true
+}
+
+func statusKeyObserved(status map[string]any, key string) bool {
+	if status == nil {
+		return false
+	}
+	_, ok := status[key]
+	return ok
+}
+
+func cleanStatusString(value any) string {
+	if value == nil {
+		return ""
+	}
+	out := strings.TrimSpace(fmt.Sprint(value))
+	if out == "<nil>" {
+		return ""
+	}
+	return out
+}
+
 func (c IPv4StaticAddressController) cleanupPreviousIPv4StaticAddress(ctx context.Context, command commandFunc, resourceName string, previous map[string]any, desiredIfName, desiredAddress string) error {
-	previousAddress := strings.TrimSpace(fmt.Sprint(previous["address"]))
-	previousIfName := strings.TrimSpace(fmt.Sprint(previous["ifname"]))
+	previousAddress := cleanStatusString(previous["address"])
+	previousIfName := cleanStatusString(previous["ifname"])
 	if previousAddress == "" || previousIfName == "" {
 		return nil
 	}
