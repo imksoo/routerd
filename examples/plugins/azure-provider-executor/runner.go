@@ -10,6 +10,7 @@ import (
 	"math"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -22,7 +23,54 @@ type azRunner func(ctx context.Context, argv ...string) ([]byte, error)
 
 // defaultRunner returns the production runner that execs the real `az` binary.
 // This is the ONLY use of os/exec in the executor, and it runs only `az`.
-func defaultRunner() azRunner { return execRunner }
+func defaultRunner() azRunner { return azureLoginEnsuringRunner(execRunner) }
+
+func azureLoginEnsuringRunner(inner azRunner) azRunner {
+	var mu sync.Mutex
+	var loggedIn bool
+	return func(ctx context.Context, argv ...string) ([]byte, error) {
+		mu.Lock()
+		if !loggedIn {
+			if err := ensureManagedIdentityLogin(ctx, inner); err != nil {
+				mu.Unlock()
+				return nil, err
+			}
+			loggedIn = true
+		}
+		mu.Unlock()
+
+		out, err := inner(ctx, argv...)
+		if err == nil || !isAzureLoginRequiredError(err) {
+			return out, err
+		}
+		// The token cache can expire between the bootstrap check and the real
+		// mutating call. Refresh once and retry the original command.
+		mu.Lock()
+		refreshErr := loginWithManagedIdentity(ctx, inner)
+		loggedIn = refreshErr == nil
+		mu.Unlock()
+		if refreshErr != nil {
+			return nil, refreshErr
+		}
+		return inner(ctx, argv...)
+	}
+}
+
+func ensureManagedIdentityLogin(ctx context.Context, runner azRunner) error {
+	if _, err := runner(ctx, "account", "show"); err == nil {
+		return nil
+	} else if !isAzureLoginRequiredError(err) {
+		return fmt.Errorf("azure managed identity bootstrap: account show failed: %w", err)
+	}
+	return loginWithManagedIdentity(ctx, runner)
+}
+
+func loginWithManagedIdentity(ctx context.Context, runner azRunner) error {
+	if _, err := runner(ctx, "login", "--identity", "--allow-no-subscriptions"); err != nil {
+		return fmt.Errorf("azure managed identity bootstrap: login --identity failed: %w", err)
+	}
+	return nil
+}
 
 // execRunner execs `az <argv...> --only-show-errors --output json`. The plugin
 // runs in routerd's isolated executor environment (no inherited parent env
@@ -227,6 +275,17 @@ func isRetryableCommandError(err error) bool {
 		strings.Contains(msg, "connection refused") ||
 		strings.Contains(msg, "econnreset") ||
 		strings.Contains(msg, "econnrefused")
+}
+
+func isAzureLoginRequiredError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "please run 'az login'") ||
+		strings.Contains(msg, "please run \"az login\"") ||
+		strings.Contains(msg, "az login to setup account") ||
+		strings.Contains(msg, "run az login")
 }
 
 func callTimeoutForAttempt(ctx context.Context, attemptsLeft int) time.Duration {

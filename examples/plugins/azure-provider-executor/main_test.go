@@ -64,6 +64,49 @@ type routeFakeAz struct {
 	deleteErr error
 }
 
+type authFakeAz struct {
+	calls             [][]string
+	accountShowErr    error
+	commandLoginErr   error
+	loginErr          error
+	loginErrs         []error
+	commandLoginTries int
+}
+
+func (f *authFakeAz) run(ctx context.Context, argv ...string) ([]byte, error) {
+	f.calls = append(f.calls, append([]string(nil), argv...))
+	toks := strings.Join(leadingTokens(argv), " ")
+	switch toks {
+	case "account show":
+		if f.accountShowErr != nil {
+			return nil, f.accountShowErr
+		}
+		return []byte(`{"id":"s1"}`), nil
+	case "login":
+		if len(f.loginErrs) > 0 {
+			err := f.loginErrs[0]
+			f.loginErrs = f.loginErrs[1:]
+			if err != nil {
+				return nil, err
+			}
+		}
+		if f.loginErr != nil {
+			return nil, f.loginErr
+		}
+		return []byte(`[{"id":"s1"}]`), nil
+	case "network nic show":
+		return cannedNICShow(false), nil
+	case "network nic ip-config create":
+		if f.commandLoginErr != nil && f.commandLoginTries == 0 {
+			f.commandLoginTries++
+			return nil, f.commandLoginErr
+		}
+		return []byte(`{}`), nil
+	default:
+		return []byte(`{}`), nil
+	}
+}
+
 func (f *routeFakeAz) run(ctx context.Context, argv ...string) ([]byte, error) {
 	f.calls = append(f.calls, append([]string(nil), argv...))
 	toks := strings.Join(leadingTokens(argv), " ")
@@ -250,6 +293,72 @@ func routeReqSpec(action, mode string) executeActionRequestSpec {
 
 func dispatchWith(spec executeActionRequestSpec, runner azRunner) executeActionResult {
 	return dispatch(context.Background(), executeActionRequest{Spec: spec}, runner)
+}
+
+func TestAzureLoginEnsuringRunnerLogsInWithManagedIdentityWhenAccountMissing(t *testing.T) {
+	f := &authFakeAz{accountShowErr: fmt.Errorf("ERROR: Please run 'az login' to setup account.")}
+	runner := azureLoginEnsuringRunner(f.run)
+
+	if _, err := runner(context.Background(), "network", "nic", "show", "--ids", "nic1"); err != nil {
+		t.Fatalf("runner returned error: %v", err)
+	}
+
+	got := joinedCalls(f.calls)
+	want := []string{
+		"account show",
+		"login --identity --allow-no-subscriptions",
+		"network nic show --ids nic1",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("calls:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+func TestAzureLoginEnsuringRunnerRefreshesWhenCommandNeedsLogin(t *testing.T) {
+	f := &authFakeAz{commandLoginErr: fmt.Errorf("ERROR: Please run 'az login' to setup account.")}
+	runner := azureLoginEnsuringRunner(f.run)
+
+	if _, err := runner(context.Background(), "network", "nic", "ip-config", "create", "--resource-group", "rg1", "--nic-name", "nic1"); err != nil {
+		t.Fatalf("runner returned error: %v", err)
+	}
+
+	got := joinedCalls(f.calls)
+	want := []string{
+		"account show",
+		"network nic ip-config create --resource-group rg1 --nic-name nic1",
+		"login --identity --allow-no-subscriptions",
+		"network nic ip-config create --resource-group rg1 --nic-name nic1",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("calls:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+func TestAzureLoginEnsuringRunnerDoesNotPinInitialLoginFailure(t *testing.T) {
+	f := &authFakeAz{
+		accountShowErr: fmt.Errorf("ERROR: Please run 'az login' to setup account."),
+		loginErrs:      []error{fmt.Errorf("managed identity endpoint is not ready"), nil},
+	}
+	runner := azureLoginEnsuringRunner(f.run)
+
+	if _, err := runner(context.Background(), "network", "nic", "show", "--ids", "nic1"); err == nil {
+		t.Fatal("first runner call unexpectedly succeeded")
+	}
+	if _, err := runner(context.Background(), "network", "nic", "show", "--ids", "nic1"); err != nil {
+		t.Fatalf("second runner call returned error: %v", err)
+	}
+
+	got := joinedCalls(f.calls)
+	want := []string{
+		"account show",
+		"login --identity --allow-no-subscriptions",
+		"account show",
+		"login --identity --allow-no-subscriptions",
+		"network nic show --ids nic1",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("calls:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
 }
 
 func verbsOf(calls [][]string) []string {
