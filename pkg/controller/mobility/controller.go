@@ -1986,12 +1986,6 @@ func stampBGPPathFenceActionPlans(plans []dynamicconfig.ActionPlan, address, pat
 	}
 }
 
-func stampSingleBGPPathFence(plan dynamicconfig.ActionPlan, address, pathSig, holder string) dynamicconfig.ActionPlan {
-	plans := []dynamicconfig.ActionPlan{plan}
-	stampBGPPathFenceActionPlans(plans, address, pathSig, holder, time.Time{})
-	return plans[0]
-}
-
 func stampBGPProviderTransitionFence(plans []dynamicconfig.ActionPlan, self memberPlanInfo, address string, journal []routerstate.ActionExecutionRecord, observedSelfIPs map[string]bool, observedSelfIPsOK bool, observedSelfIPsAt time.Time) {
 	address = normalizeAddressString(address)
 	if address == "" {

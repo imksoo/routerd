@@ -432,48 +432,6 @@ func providerActionPlans(poolName string, profile api.CloudProviderProfileSpec, 
 	return plans, nil
 }
 
-func providerUnassignActionPlan(poolName string, profile api.CloudProviderProfileSpec, capture api.AddressCapture, captureTarget map[string]string, address string, since time.Time) (dynamicconfig.ActionPlan, error) {
-	provider := strings.TrimSpace(profile.Provider)
-	providerRef := strings.TrimSpace(capture.ProviderRef)
-	nicRef := strings.TrimSpace(capture.NICRef)
-	strategy := effectiveCaptureStrategy(provider, captureStrategyValue(capture))
-	if err := validateProviderCaptureStrategy(provider, strategy); err != nil {
-		return dynamicconfig.ActionPlan{}, err
-	}
-	assignAction, unassignAction := providerCaptureActions(strategy)
-	target := providerActionTarget(poolName, profile, capture, captureTarget, address)
-	target["captureStrategy"] = strategy
-	description := fmt.Sprintf("Unassign stale secondary IP %s from %s NIC %s for MobilityPool/%s", address, provider, nicRef, poolName)
-	effects := []string{
-		fmt.Sprintf("%s NIC %s would stop advertising stale secondary IP %s", provider, nicRef, address),
-	}
-	if strategy == captureStrategyRouteTable {
-		description = fmt.Sprintf("Remove stale route for %s from %s route table %s for MobilityPool/%s", address, provider, target["routeTableRef"], poolName)
-		effects = []string{
-			fmt.Sprintf("%s route table %s would stop sending stale %s to NIC %s", provider, target["routeTableRef"], address, nicRef),
-		}
-	}
-	return dynamicconfig.ActionPlan{
-		Name:           safeName("mobility-" + poolName + "-unassign-" + address),
-		Provider:       provider,
-		Action:         unassignAction,
-		Target:         target,
-		ProviderRef:    providerRef,
-		Mode:           "dry-run",
-		Description:    description,
-		RiskLevel:      "medium",
-		IdempotencyKey: "mobility:" + poolName + ":" + provider + ":" + providerCaptureTargetRef(strategy, target) + ":" + unassignAction + ":" + address,
-		Parameters: map[string]string{
-			"deprovisionSince": since.UTC().Format(time.RFC3339Nano),
-		},
-		ExpectedEffects: effects,
-		Undo: &dynamicconfig.ActionUndo{
-			Action:     assignAction,
-			Parameters: copyStringMap(target),
-		},
-	}, nil
-}
-
 func providerForwardingDisableActionPlan(poolName string, profile api.CloudProviderProfileSpec, capture api.AddressCapture, captureTarget map[string]string, address string) (dynamicconfig.ActionPlan, error) {
 	provider := strings.TrimSpace(profile.Provider)
 	providerRef := strings.TrimSpace(capture.ProviderRef)
