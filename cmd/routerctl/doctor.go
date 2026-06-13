@@ -338,13 +338,13 @@ func (r doctorRunner) doctorSAM() []doctorCheck {
 	var checks []doctorCheck
 	for _, res := range pools {
 		status := objectStatus(r.store, res.APIVersion, res.Kind, res.Metadata.Name)
-		checks = append(checks, doctorResourceCheck("sam", res, status, healthyPhases("BGPPlanned")))
+		checks = append(checks, doctorResourceCheck("sam", res, status, healthyPhases("Ready", "BGPPlanned")))
 		poolSpec, err := res.MobilityPoolSpec()
 		if err != nil {
 			checks = append(checks, doctorCheck{Area: "sam", Name: "MobilityPool/" + res.Metadata.Name + " federation discovery", Status: doctorFail, Detail: err.Error(), Remedy: "fix MobilityPool spec and retry"})
 			continue
 		}
-		checks = append(checks, r.doctorSAMFederationDiscoveryChecks(res.Metadata.Name, poolSpec)...)
+		checks = append(checks, r.doctorSAMFederationDiscoveryChecks(res.Metadata.Name, poolSpec, status)...)
 		checks = append(checks, doctorSAMOwnershipConflictCheck(res.Metadata.Name, status))
 		checks = append(checks, r.doctorSAMOwnerTableRouteChecks(res.Metadata.Name, status)...)
 		phase := stringStatus(status, "providerActionPhase")
@@ -366,7 +366,7 @@ func (r doctorRunner) doctorSAM() []doctorCheck {
 	return checks
 }
 
-func (r doctorRunner) doctorSAMFederationDiscoveryChecks(pool string, poolSpec api.MobilityPoolSpec) []doctorCheck {
+func (r doctorRunner) doctorSAMFederationDiscoveryChecks(pool string, poolSpec api.MobilityPoolSpec, status map[string]any) []doctorCheck {
 	label := "MobilityPool/" + pool + " federation discovery"
 	if r.router == nil {
 		return []doctorCheck{{Area: "sam", Name: label, Status: doctorSkip, Detail: "startup config unavailable"}}
@@ -434,6 +434,9 @@ func (r doctorRunner) doctorSAMFederationDiscoveryChecks(pool string, poolSpec a
 		seenTotal++
 	}
 	if seenTotal == 0 {
+		if ok, detail := doctorSAMOwnershipTableCoversFederation(status); ok {
+			return []doctorCheck{{Area: "sam", Name: label, Status: doctorPass, Detail: detail}}
+		}
 		missing := make([]string, 0, len(peers))
 		for node := range peers {
 			missing = append(missing, node)
@@ -450,8 +453,59 @@ func (r doctorRunner) doctorSAMFederationDiscoveryChecks(pool string, poolSpec a
 	if len(missing) == 0 {
 		return []doctorCheck{{Area: "sam", Name: label, Status: doctorPass, Detail: fmt.Sprintf("received provider-discovery updates from %d peer(s)", len(peers))}}
 	}
+	if ok, detail := doctorSAMOwnershipTableCoversFederation(status); ok {
+		sort.Strings(missing)
+		return []doctorCheck{{Area: "sam", Name: label, Status: doctorPass, Detail: detail + "; stale/missing event peers=" + strings.Join(missing, ",")}}
+	}
 	sort.Strings(missing)
 	return []doctorCheck{{Area: "sam", Name: label, Status: doctorWarn, Detail: "stale/missing provider-discovery updates from: " + strings.Join(missing, ",")}}
+}
+
+func doctorSAMOwnershipTableCoversFederation(status map[string]any) (bool, string) {
+	if !strings.EqualFold(stringStatus(status, "ownershipResolverPhase"), "Resolved") {
+		return false, ""
+	}
+	if !boolStatus(status, "bgpRIBObserved") {
+		return false, ""
+	}
+	rows, ok := status["ownershipResolverOwnerTable"].([]any)
+	if !ok {
+		if typed, typedOK := status["ownershipResolverOwnerTable"].([]map[string]any); typedOK {
+			rows = make([]any, 0, len(typed))
+			for _, row := range typed {
+				rows = append(rows, row)
+			}
+		}
+	}
+	if len(rows) == 0 {
+		return false, ""
+	}
+	ready := 0
+	for _, raw := range rows {
+		row, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		state := stringStatus(row, "state")
+		if state == "" || strings.EqualFold(state, "OK") || strings.EqualFold(state, "Resolved") {
+			ready++
+		}
+	}
+	if ready == 0 {
+		return false, ""
+	}
+	return true, fmt.Sprintf("ownership resolver is using BGP/provider owner table (%d ready row(s)); provider-discovery event freshness is advisory", ready)
+}
+
+func boolStatus(status map[string]any, key string) bool {
+	switch value := status[key].(type) {
+	case bool:
+		return value
+	case string:
+		return strings.EqualFold(strings.TrimSpace(value), "true")
+	default:
+		return strings.EqualFold(strings.TrimSpace(fmt.Sprint(value)), "true")
+	}
 }
 
 func doctorSAMEventGroupSpec(router *api.Router, group string) (api.EventGroupSpec, bool, error) {

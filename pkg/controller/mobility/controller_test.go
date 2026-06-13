@@ -117,7 +117,7 @@ func TestControllerBGPModeAdvertisesSelfOwnedHostRouteAndSuppressesSAMPart(t *te
 		t.Fatalf("BGP mode dynamic resources = %#v, want empty SAM part", resources)
 	}
 	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
-	if status["plannerPhase"] != "BGPPlanned" || status["deliveryMode"] != "bgp" || fmt.Sprint(status["generatedBGPPaths"]) != "1" {
+	if status["phase"] != "Ready" || status["plannerPhase"] != "BGPPlanned" || status["deliveryMode"] != "bgp" || fmt.Sprint(status["generatedBGPPaths"]) != "1" {
 		t.Fatalf("BGP status = %#v", status)
 	}
 }
@@ -642,7 +642,7 @@ func TestControllerBGPModeUsesDiscoveredSelfNICForProviderActions(t *testing.T) 
 		t.Fatalf("unresolved plans = %#v, want no provider actions", plans)
 	}
 	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
-	if status["plannerPhase"] != "Degraded" || !strings.Contains(fmt.Sprint(status["plannerReason"]), "self NIC is unresolved") {
+	if status["phase"] != "Degraded" || status["plannerPhase"] != "Degraded" || !strings.Contains(fmt.Sprint(status["plannerReason"]), "self NIC is unresolved") {
 		t.Fatalf("status = %#v, want unresolved self NIC degraded", status)
 	}
 	if status["selfCaptureResolved"] != false || !strings.Contains(fmt.Sprint(status["selfCaptureReason"]), "self NIC is unresolved") {

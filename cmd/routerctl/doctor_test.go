@@ -267,6 +267,52 @@ func TestDoctorSAMFederationDiscoveryWarnsWhenNoPeerDiscoveryEvents(t *testing.T
 	}
 }
 
+func TestDoctorSAMFederationDiscoveryPassesWithResolvedOwnerTable(t *testing.T) {
+	configPath, statePath := writeDoctorSAMFederationFixture(t)
+	store := openDoctorState(t, statePath)
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"phase":                          "Ready",
+		"plannerPhase":                   "BGPPlanned",
+		"plannerReason":                  "deliveryPolicy.mode=bgp",
+		"bgpRIBObserved":                 true,
+		"ownershipResolverPhase":         "Resolved",
+		"ownershipResolverConflictCount": 0,
+		"ownershipResolverOwnerTable": []map[string]any{{
+			"address":   "10.77.60.11/32",
+			"state":     "OK",
+			"ownerNode": "aws-router-a",
+		}, {
+			"address":   "10.77.60.12/32",
+			"state":     "OK",
+			"ownerNode": "oci-router",
+		}},
+	}); err != nil {
+		t.Fatalf("save mobility status: %v", err)
+	}
+	closeDoctorState(t, store)
+
+	oldNow := doctorNow
+	doctorNow = func() time.Time { return time.Date(2026, 6, 10, 15, 30, 0, 0, time.UTC) }
+	defer func() { doctorNow = oldNow }()
+
+	var out bytes.Buffer
+	if err := run([]string{"doctor", "sam", "--config", configPath, "--state-file", statePath, "--no-host", "-o", "json"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("doctor sam: %v\n%s", err, out.String())
+	}
+	var report doctorReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("unmarshal doctor report: %v\n%s", err, out.String())
+	}
+	resourceCheck := findDoctorCheck(t, report, "MobilityPool/cloudedge")
+	if resourceCheck.Status != doctorPass {
+		t.Fatalf("resource check = %#v, want pass", resourceCheck)
+	}
+	discoveryCheck := findDoctorCheck(t, report, "MobilityPool/cloudedge federation discovery")
+	if discoveryCheck.Status != doctorPass || !strings.Contains(discoveryCheck.Detail, "owner table") {
+		t.Fatalf("federation check = %#v, want owner-table pass", discoveryCheck)
+	}
+}
+
 func TestDoctorSAMFederationDiscoveryPassesWhenPeerDiscoveryEventsPresent(t *testing.T) {
 	configPath, statePath := writeDoctorSAMFederationFixture(t)
 	store := openDoctorState(t, statePath)

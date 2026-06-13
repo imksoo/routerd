@@ -103,6 +103,7 @@ func (c Controller) Reconcile(ctx context.Context) error {
 		spec, err := res.MobilityPoolSpec()
 		if err != nil {
 			_ = c.savePlannerStatus(res.Metadata.Name, map[string]any{
+				"phase":         "Degraded",
 				"plannerPhase":  "Degraded",
 				"plannerReason": err.Error(),
 				"plannedAt":     now.Format(time.RFC3339Nano),
@@ -111,6 +112,7 @@ func (c Controller) Reconcile(ctx context.Context) error {
 		}
 		if mobilityDeliveryMode(spec) != "bgp" {
 			_ = c.savePlannerStatus(res.Metadata.Name, map[string]any{
+				"phase":         "Degraded",
 				"plannerPhase":  "Degraded",
 				"plannerReason": fmt.Sprintf("deliveryPolicy.mode=%s is no longer supported; use bgp", mobilityDeliveryMode(spec)),
 				"plannedAt":     now.Format(time.RFC3339Nano),
@@ -124,6 +126,7 @@ func (c Controller) Reconcile(ctx context.Context) error {
 			status, err := c.upsertMobilityMemberSetPart(res, spec, source, now)
 			if err != nil {
 				_ = c.savePlannerStatus(res.Metadata.Name, map[string]any{
+					"phase":         "Degraded",
 					"plannerPhase":  "Degraded",
 					"plannerReason": err.Error(),
 					"memberSet":     status,
@@ -135,6 +138,7 @@ func (c Controller) Reconcile(ctx context.Context) error {
 		}
 		if err := c.reconcileBGPDelivery(ctx, res, spec, memberSetStatus, now); err != nil {
 			_ = c.savePlannerStatus(res.Metadata.Name, map[string]any{
+				"phase":         "Degraded",
 				"plannerPhase":  "Degraded",
 				"plannerReason": err.Error(),
 				"memberSet":     memberSetStatus,
@@ -160,6 +164,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 	spec = resolved.Spec
 	if len(resolved.PendingSources) > 0 {
 		return c.savePlannerStatus(res.Metadata.Name, map[string]any{
+			"phase":               "Pending",
 			"plannerPhase":        "Pending",
 			"plannerReason":       "membersFrom source is not resolved",
 			"selfNode":            selfNode,
@@ -360,7 +365,32 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 			status["providerActionPhase"] = "Blocked"
 		}
 	}
+	status["phase"] = mobilityPoolResourcePhase(status)
 	return c.savePlannerStatus(res.Metadata.Name, status)
+}
+
+func mobilityPoolResourcePhase(status map[string]any) string {
+	switch strings.TrimSpace(fmt.Sprint(status["providerActionPhase"])) {
+	case "Failed":
+		return "Failed"
+	case "Blocked":
+		return "Degraded"
+	}
+	switch strings.TrimSpace(fmt.Sprint(status["ownershipResolverPhase"])) {
+	case "Conflict":
+		return "Degraded"
+	}
+	switch strings.TrimSpace(fmt.Sprint(status["plannerPhase"])) {
+	case "BGPPlanned":
+		return "Ready"
+	case "Pending":
+		return "Pending"
+	case "Degraded":
+		return "Degraded"
+	case "Failed":
+		return "Failed"
+	}
+	return "Degraded"
 }
 
 func (c Controller) recordBGPStaticHandoverReleaseEvents(poolName, selfNode string, spec api.MobilityPoolSpec, events []routerstate.EventRecord, now time.Time) ([]routerstate.EventRecord, error) {
