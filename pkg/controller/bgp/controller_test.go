@@ -1176,7 +1176,7 @@ func TestReconcileAdmitsNormalMobilityPoolHostRoute(t *testing.T) {
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
-	want := []FIBRoute{{Prefix: "10.77.60.44/32", NextHops: []string{"10.99.0.2"}}}
+	want := []FIBRoute{{Prefix: "10.77.60.44/32", NextHops: []string{"10.99.0.2"}, DeleteGrace: mobilityOwnerFIBDeleteGrace}}
 	if !reflect.DeepEqual(fib.routes, want) {
 		t.Fatalf("fib routes = %#v, want normal mobility pool host admitted only %#v", fib.routes, want)
 	}

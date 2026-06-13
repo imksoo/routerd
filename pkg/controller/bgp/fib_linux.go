@@ -12,6 +12,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/vishvananda/netlink"
 )
@@ -19,7 +20,9 @@ import (
 const bgpRouteProtocol = 186
 
 type netlinkFIBSyncer struct {
-	installed map[string]kernelBGPRoute
+	installed       map[string]kernelBGPRoute
+	retainedDesired map[string]FIBRoute
+	missingSince    map[string]time.Time
 }
 
 type kernelBGPRoute struct {
@@ -35,6 +38,13 @@ func (s *netlinkFIBSyncer) SyncBGP(_ context.Context, routes []FIBRoute) (FIBSyn
 	if s.installed == nil {
 		s.installed = map[string]kernelBGPRoute{}
 	}
+	if s.retainedDesired == nil {
+		s.retainedDesired = map[string]FIBRoute{}
+	}
+	if s.missingSince == nil {
+		s.missingSince = map[string]time.Time{}
+	}
+	now := time.Now()
 	kernel, err := kernelBGPRoutes()
 	if err != nil {
 		return FIBSyncResult{}, fmt.Errorf("list current BGP routes: %w", err)
@@ -53,12 +63,14 @@ func (s *netlinkFIBSyncer) SyncBGP(_ context.Context, routes []FIBRoute) (FIBSyn
 		if route.Prefix == "" {
 			continue
 		}
+		delete(s.missingSince, route.Prefix)
 		if route.PreferredSource != "" && !preferredSourceIsLocal(route.PreferredSource) {
 			result.PreferredSourceSkipped[route.Prefix] = true
 			result.PreferredSourceSkippedReason[route.Prefix] = "LocalAddressMissing"
 			route.PreferredSource = ""
 		}
 		desired[route.Prefix] = route
+		s.retainedDesired[route.Prefix] = route
 	}
 	var keys []string
 	for key := range desired {
@@ -94,10 +106,27 @@ func (s *netlinkFIBSyncer) SyncBGP(_ context.Context, routes []FIBRoute) (FIBSyn
 		if _, ok := desired[key]; ok {
 			continue
 		}
+		retained := normalizeFIBRoute(s.retainedDesired[key])
+		if retained.DeleteGrace > 0 {
+			since, ok := s.missingSince[key]
+			if !ok {
+				since = now
+				s.missingSince[key] = since
+			}
+			if now.Sub(since) < retained.DeleteGrace {
+				result.Installed[key] = true
+				if route.FIB.PreferredSource != "" {
+					result.PreferredSource[key] = route.FIB.PreferredSource
+				}
+				continue
+			}
+		}
 		if err := netlink.RouteDel(&route.Netlink); err != nil {
 			return result, fmt.Errorf("delete stale BGP route %s: %w", route.FIB.Prefix, err)
 		}
 		delete(s.installed, key)
+		delete(s.retainedDesired, key)
+		delete(s.missingSince, key)
 	}
 	return result, nil
 }
@@ -169,11 +198,10 @@ func netlinkRoute(route FIBRoute) (*netlink.Route, bool) {
 	case 1:
 		if gw := net.ParseIP(nextHops[0]); gw != nil {
 			linkIndex := linkIndexForGateway(gw)
-			if linkIndex == 0 {
-				return nil, false
+			if linkIndex != 0 {
+				nl.LinkIndex = linkIndex
 			}
 			nl.Gw = gw
-			nl.LinkIndex = linkIndex
 		}
 	default:
 		for _, hop := range nextHops {

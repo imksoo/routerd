@@ -70,6 +70,7 @@ type FIBRoute struct {
 	Prefix          string
 	NextHops        []string
 	PreferredSource string
+	DeleteGrace     time.Duration
 }
 
 type FIBSyncResult struct {
@@ -81,6 +82,8 @@ type FIBSyncResult struct {
 }
 
 const MinPollInterval = 3 * time.Second
+
+const mobilityOwnerFIBDeleteGrace = 10 * time.Second
 
 type Controller struct {
 	Router *routerapi.Router
@@ -2096,7 +2099,8 @@ func bestFIBRoutes(prefixes []bgpstate.Prefix, allowed []netip.Prefix) []FIBRout
 
 func fibRoutesFromStatePrefixes(prefixes []bgpstate.Prefix, allowed []netip.Prefix) []FIBRoute {
 	type stateRoute struct {
-		nextHops map[string]bool
+		nextHops    map[string]bool
+		deleteGrace time.Duration
 	}
 	byPrefix := map[string]stateRoute{}
 	for _, prefix := range prefixes {
@@ -2121,6 +2125,9 @@ func fibRoutesFromStatePrefixes(prefixes []bgpstate.Prefix, allowed []netip.Pref
 			route.nextHops = map[string]bool{}
 		}
 		route.nextHops[nextHop] = true
+		if bgpstate.HasCommunity(prefix.Communities, bgpstate.MobilityCommunityOwner) {
+			route.deleteGrace = mobilityOwnerFIBDeleteGrace
+		}
 		byPrefix[key] = route
 	}
 	var out []FIBRoute
@@ -2130,7 +2137,7 @@ func fibRoutesFromStatePrefixes(prefixes []bgpstate.Prefix, allowed []netip.Pref
 			hops = append(hops, hop)
 		}
 		sort.Strings(hops)
-		out = append(out, FIBRoute{Prefix: prefix, NextHops: hops})
+		out = append(out, FIBRoute{Prefix: prefix, NextHops: hops, DeleteGrace: route.deleteGrace})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Prefix < out[j].Prefix })
 	return out
@@ -2146,9 +2153,10 @@ type bgpPathRank struct {
 func fibRoutesFromDestination(dst *gobgpapi.Destination, allowed []netip.Prefix, peerAddressRewrite map[string]bool) []FIBRoute {
 	prefix := normalizeRoutePrefix(dst.GetPrefix())
 	var candidates []struct {
-		nextHop string
-		rank    bgpPathRank
-		best    bool
+		nextHop     string
+		rank        bgpPathRank
+		best        bool
+		deleteGrace time.Duration
 	}
 	for _, path := range dst.GetPaths() {
 		if path.GetIsWithdraw() || path.GetIsNexthopInvalid() {
@@ -2174,11 +2182,16 @@ func fibRoutesFromDestination(dst *gobgpapi.Destination, allowed []netip.Prefix,
 		if nextHop == "" || nextHop == "0.0.0.0" || nextHop == "::" {
 			continue
 		}
+		deleteGrace := time.Duration(0)
+		if bgpstate.HasCommunity(communities, bgpstate.MobilityCommunityOwner) {
+			deleteGrace = mobilityOwnerFIBDeleteGrace
+		}
 		candidates = append(candidates, struct {
-			nextHop string
-			rank    bgpPathRank
-			best    bool
-		}{nextHop: nextHop, rank: pathRank(path), best: path.GetBest()})
+			nextHop     string
+			rank        bgpPathRank
+			best        bool
+			deleteGrace time.Duration
+		}{nextHop: nextHop, rank: pathRank(path), best: path.GetBest(), deleteGrace: deleteGrace})
 		prefix = parsed.String()
 	}
 	if len(candidates) == 0 || prefix == "" {
@@ -2202,18 +2215,22 @@ func fibRoutesFromDestination(dst *gobgpapi.Destination, allowed []netip.Prefix,
 	}
 	seen := map[string]bool{}
 	var nextHops []string
+	deleteGrace := time.Duration(0)
 	for _, candidate := range candidates {
 		if comparePathRank(candidate.rank, bestRank) != 0 || seen[candidate.nextHop] {
 			continue
 		}
 		seen[candidate.nextHop] = true
 		nextHops = append(nextHops, candidate.nextHop)
+		if candidate.deleteGrace > deleteGrace {
+			deleteGrace = candidate.deleteGrace
+		}
 	}
 	sort.Strings(nextHops)
 	if len(nextHops) == 0 {
 		return nil
 	}
-	return []FIBRoute{{Prefix: prefix, NextHops: nextHops}}
+	return []FIBRoute{{Prefix: prefix, NextHops: nextHops, DeleteGrace: deleteGrace}}
 }
 
 func invalidMobilityLivenessMarkerPrefixes(markers map[string]string, mobilityPools []netip.Prefix) []string {
@@ -2284,6 +2301,7 @@ func mergeFIBRoutes(routes []FIBRoute) []FIBRoute {
 	type mergedRoute struct {
 		nextHops        map[string]bool
 		preferredSource string
+		deleteGrace     time.Duration
 	}
 	byPrefix := map[string]mergedRoute{}
 	for _, route := range routes {
@@ -2306,6 +2324,9 @@ func mergeFIBRoutes(routes []FIBRoute) []FIBRoute {
 				merged.preferredSource = ""
 			}
 		}
+		if route.DeleteGrace > merged.deleteGrace {
+			merged.deleteGrace = route.DeleteGrace
+		}
 		byPrefix[prefix] = merged
 	}
 	out := make([]FIBRoute, 0, len(byPrefix))
@@ -2315,7 +2336,7 @@ func mergeFIBRoutes(routes []FIBRoute) []FIBRoute {
 			hops = append(hops, hop)
 		}
 		sort.Strings(hops)
-		out = append(out, FIBRoute{Prefix: prefix, NextHops: hops, PreferredSource: merged.preferredSource})
+		out = append(out, FIBRoute{Prefix: prefix, NextHops: hops, PreferredSource: merged.preferredSource, DeleteGrace: merged.deleteGrace})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Prefix < out[j].Prefix })
 	return out
