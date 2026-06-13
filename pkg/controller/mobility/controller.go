@@ -569,11 +569,28 @@ func (c Controller) selfLivenessMarkerPrefix(groupRef string) (string, bool) {
 		if err != nil {
 			return "", false
 		}
-		addr, err := netip.ParseAddr(strings.TrimSpace(spec.Listen.Address))
+		listenAddress := strings.TrimSpace(spec.Listen.Address)
+		if listenAddress == "" {
+			break
+		}
+		addr, err := netip.ParseAddr(listenAddress)
 		if err != nil || !addr.Is4() {
 			return "", false
 		}
 		return netip.PrefixFrom(addr, 32).String(), true
+	}
+	for _, res := range c.Router.Spec.Resources {
+		if res.APIVersion != api.NetAPIVersion || res.Kind != "BGPRouter" {
+			continue
+		}
+		spec, err := res.BGPRouterSpec()
+		if err != nil {
+			continue
+		}
+		addr, err := netip.ParseAddr(strings.TrimSpace(spec.RouterID))
+		if err == nil && addr.Is4() {
+			return netip.PrefixFrom(addr, 32).String(), true
+		}
 	}
 	return "", false
 }

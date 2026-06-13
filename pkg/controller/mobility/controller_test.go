@@ -77,6 +77,17 @@ func maybePathBySourcePrefix(bgp *fakeBGPPaths, source, prefix string) (bgpdaemo
 	return path, ok
 }
 
+func nonLivenessUpserts(paths []bgpdaemon.AppliedPath) []bgpdaemon.AppliedPath {
+	var out []bgpdaemon.AppliedPath
+	for _, path := range paths {
+		if stringSliceContains(path.Attrs.Communities, bgpstate.MobilityCommunityNodeLiveness) {
+			continue
+		}
+		out = append(out, path)
+	}
+	return out
+}
+
 func TestControllerBGPModeAdvertisesSelfOwnedHostRouteAndSuppressesSAMPart(t *testing.T) {
 	now := time.Date(2026, 6, 2, 10, 0, 0, 0, time.UTC)
 	store := testStore(t, now)
@@ -573,7 +584,8 @@ func TestControllerBGPModeProviderActionFailureDoesNotRemoveBGPPath(t *testing.T
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("second Reconcile: %v", err)
 	}
-	if len(bgp.upserts) != 1 || bgp.upserts[0].Prefix != "10.88.60.11/32" {
+	ownerUpserts := nonLivenessUpserts(bgp.upserts)
+	if len(ownerUpserts) != 1 || ownerUpserts[0].Prefix != "10.88.60.11/32" {
 		t.Fatalf("BGP upserts after failed provider action = %#v, want route retained", bgp.upserts)
 	}
 	part = latestPart(t, store, source)
@@ -648,7 +660,7 @@ func TestControllerBGPModeUsesDiscoveredSelfNICForProviderActions(t *testing.T) 
 	if status["selfCaptureResolved"] != false || !strings.Contains(fmt.Sprint(status["selfCaptureReason"]), "self NIC is unresolved") {
 		t.Fatalf("status = %#v, want explicit self capture blocker", status)
 	}
-	if len(bgp.upserts) != 0 {
+	if ownerUpserts := nonLivenessUpserts(bgp.upserts); len(ownerUpserts) != 0 {
 		t.Fatalf("bgp upserts = %#v, want no self-owned path for remote owner", bgp.upserts)
 	}
 
@@ -1059,6 +1071,24 @@ func TestControllerBGPModeAdvertisesSelfLivenessMarker(t *testing.T) {
 		t.Fatalf("Reconcile: %v", err)
 	}
 	marker := pathBySourcePrefix(t, bgp, DynamicSource("cloudedge", "aws-router-a"), "10.99.0.2/32")
+	if !stringSliceContains(marker.Attrs.Communities, bgpstate.MobilityCommunityNodeLiveness) ||
+		!stringSliceContains(marker.Attrs.Communities, bgpstate.MobilityNodeIdentityCommunity("aws-router-a")) {
+		t.Fatalf("marker attrs = %#v, want liveness + node identity communities", marker.Attrs)
+	}
+}
+
+func TestControllerBGPModeAdvertisesSelfLivenessMarkerFromBGPRouterID(t *testing.T) {
+	now := time.Date(2026, 6, 2, 10, 0, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	bgp := &fakeBGPPaths{}
+	router := routerWithBGPRouter(planningRouterForNode("aws-router-a", spec))
+	controller := Controller{Router: router, Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	marker := pathBySourcePrefix(t, bgp, DynamicSource("cloudedge", "aws-router-a"), "10.99.0.1/32")
 	if !stringSliceContains(marker.Attrs.Communities, bgpstate.MobilityCommunityNodeLiveness) ||
 		!stringSliceContains(marker.Attrs.Communities, bgpstate.MobilityNodeIdentityCommunity("aws-router-a")) {
 		t.Fatalf("marker attrs = %#v, want liveness + node identity communities", marker.Attrs)

@@ -1154,7 +1154,8 @@ func TestDiscoveryControllerObservedEventFeedsBGPAdvertisement(t *testing.T) {
 	if err := mobility.Reconcile(context.Background()); err != nil {
 		t.Fatalf("mobility Reconcile: %v", err)
 	}
-	if len(bgp.upserts) != 1 || bgp.upserts[0].Prefix != "10.88.60.11/32" || bgp.upserts[0].Source != DynamicSource("cloudedge", "azure-router-a") {
+	ownerUpserts := nonLivenessUpserts(bgp.upserts)
+	if len(ownerUpserts) != 1 || ownerUpserts[0].Prefix != "10.88.60.11/32" || ownerUpserts[0].Source != DynamicSource("cloudedge", "azure-router-a") {
 		t.Fatalf("bgp upserts = %#v, want discovered local /32 advertisement", bgp.upserts)
 	}
 }
