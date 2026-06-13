@@ -111,9 +111,6 @@ type Controller struct {
 	observed         bool
 	lastState        bgpstate.State
 	peerEvents       map[string]time.Time
-	lastFIBRoutesSig string
-	lastFIBResult    FIBSyncResult
-	lastFIBValid     bool
 	bfdPeerSeenUp    map[string]bool
 	bfdPeerDownSince map[string]time.Time
 }
@@ -295,8 +292,6 @@ func (c *Controller) stopServerLocked() {
 	c.pathUUIDs = nil
 	c.observed = false
 	c.lastState = bgpstate.State{}
-	c.lastFIBRoutesSig = ""
-	c.lastFIBValid = false
 }
 
 func (c *Controller) Start(ctx context.Context) {
@@ -398,15 +393,11 @@ func (c *Controller) syncBGPFIBLocked(ctx context.Context, routes []FIBRoute) (F
 	if c.FIB == nil {
 		c.FIB = defaultFIBSyncer()
 	}
-	sig := fibRoutesSignature(routes)
 	result, err := c.FIB.SyncBGP(ctx, routes)
 	if err != nil {
 		return result, err
 	}
-	c.lastFIBRoutesSig = sig
-	c.lastFIBResult = normalizeFIBSyncResult(result)
-	c.lastFIBValid = true
-	return c.lastFIBResult, nil
+	return normalizeFIBSyncResult(result), nil
 }
 
 func watchEventHasBestPathChange(resp *gobgpapi.WatchEventResponse) bool {
@@ -1423,29 +1414,6 @@ func staticPathUUIDs(paths []bgpdaemon.AppliedPath) map[string][]byte {
 		out[path.Prefix] = uuid
 	}
 	return out
-}
-
-func dynamicImportPolicyExpanded(previous, current bgpdaemon.AppliedConfig) bool {
-	previousPrefixes := appliedImportPolicyAllowedPrefixes(previous)
-	currentPrefixes := appliedImportPolicyAllowedPrefixes(current)
-	if sameStringSet(previousPrefixes, currentPrefixes) {
-		return false
-	}
-	for _, prefix := range dynamicPathExportPrefixes(current.Paths) {
-		if !stringSliceContains(previousPrefixes, prefix) && stringSliceContains(currentPrefixes, prefix) {
-			return true
-		}
-	}
-	return false
-}
-
-func appliedImportPolicyAllowedPrefixes(applied bgpdaemon.AppliedConfig) []string {
-	var prefixes []string
-	prefixes = append(prefixes, applied.Global.ImportPolicy.AllowedPrefixes...)
-	for _, peer := range applied.Peers {
-		prefixes = append(prefixes, peer.ImportPolicy.AllowedPrefixes...)
-	}
-	return cleanStrings(prefixes)
 }
 
 func (c *Controller) refreshDynamicAdvertisements(ctx context.Context, applied bgpdaemon.AppliedConfig) (bgpdaemon.AppliedConfig, error) {
@@ -3076,39 +3044,6 @@ func PollInterval(router *routerapi.Router) time.Duration {
 		}
 	}
 	return out
-}
-
-func fibRoutesSignature(routes []FIBRoute) string {
-	normalized := make([]FIBRoute, 0, len(routes))
-	for _, route := range routes {
-		route = normalizeFIBRouteForSignature(route)
-		if route.Prefix != "" {
-			normalized = append(normalized, route)
-		}
-	}
-	sort.SliceStable(normalized, func(i, j int) bool { return normalized[i].Prefix < normalized[j].Prefix })
-	var b strings.Builder
-	for _, route := range normalized {
-		b.WriteString(route.Prefix)
-		b.WriteByte('=')
-		b.WriteString(strings.Join(route.NextHops, ","))
-		if route.PreferredSource != "" {
-			b.WriteString("|src=")
-			b.WriteString(route.PreferredSource)
-		}
-		if route.RetainOnMissing {
-			b.WriteString("|retain")
-		}
-		b.WriteByte(';')
-	}
-	sum := sha256.Sum256([]byte(b.String()))
-	return hex.EncodeToString(sum[:])
-}
-
-func normalizeFIBRouteForSignature(route FIBRoute) FIBRoute {
-	prefix := normalizeRoutePrefix(route.Prefix)
-	nextHops := normalizeRouteNextHops(route.NextHops)
-	return FIBRoute{Prefix: prefix, NextHops: nextHops, PreferredSource: strings.TrimSpace(route.PreferredSource), RetainOnMissing: route.RetainOnMissing}
 }
 
 func normalizeFIBSyncResult(result FIBSyncResult) FIBSyncResult {
