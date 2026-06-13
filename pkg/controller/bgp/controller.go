@@ -1454,11 +1454,30 @@ func appliedImportPolicyAllowedPrefixes(applied bgpdaemon.AppliedConfig) []strin
 
 func (c *Controller) refreshDynamicAdvertisements(ctx context.Context, applied bgpdaemon.AppliedConfig) (bgpdaemon.AppliedConfig, error) {
 	applied = bgpdaemon.Normalize(applied)
+	hasDynamic := false
+	for _, path := range applied.Paths {
+		if path.Source != bgpdaemon.AppliedPathSourceStatic {
+			hasDynamic = true
+			break
+		}
+	}
+	live := map[string][][]byte{}
+	if hasDynamic {
+		var err error
+		live, err = c.advertisedPathUUIDs(ctx)
+		if err != nil {
+			return bgpdaemon.AppliedConfig{}, err
+		}
+	}
 	for i, path := range applied.Paths {
 		if path.Source == bgpdaemon.AppliedPathSourceStatic {
 			continue
 		}
-		if uuid, err := bgpdaemon.DecodeUUID(path.UUID); err == nil && len(uuid) > 0 {
+		uuid, err := bgpdaemon.DecodeUUID(path.UUID)
+		if err == nil && len(uuid) > 0 && pathUUIDSetContains(live[path.Prefix], uuid) {
+			continue
+		}
+		if err == nil && len(uuid) > 0 {
 			if err := c.Server.DeletePath(ctx, &gobgpapi.DeletePathRequest{TableType: gobgpapi.TableType_GLOBAL, Uuid: uuid}); err != nil && !isMissingGoBGPPath(err) {
 				return bgpdaemon.AppliedConfig{}, err
 			}

@@ -1713,7 +1713,13 @@ func TestReconcileReattachesToLiveDaemonWithoutPeerOrPathChurn(t *testing.T) {
 
 func TestReconcilePreservesMobilityPathsWhenStaticAdvertisementsChange(t *testing.T) {
 	router := bgpRouter()
+	mobilityPath, err := localPath("10.77.60.11/32")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mobilityPath.Uuid = []byte{7}
 	server := &fakeServer{
+		routes: []*gobgpapi.Destination{{Prefix: "10.77.60.11/32", Paths: []*gobgpapi.Path{mobilityPath}}},
 		applied: bgpdaemon.AppliedConfig{
 			Version: bgpdaemon.AppliedVersion,
 			Global:  bgpdaemon.AppliedGlobal{ASN: 64512, RouterID: "10.0.0.1"},
@@ -1738,18 +1744,16 @@ func TestReconcilePreservesMobilityPathsWhenStaticAdvertisementsChange(t *testin
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
-	if len(server.deletedPathUUIDs) != 2 ||
-		!reflect.DeepEqual(server.deletedPathUUIDs[0], []byte{9}) ||
-		!reflect.DeepEqual(server.deletedPathUUIDs[1], []byte{7}) {
-		t.Fatalf("deleted path UUIDs = %#v, want old static and refreshed dynamic", server.deletedPathUUIDs)
+	if len(server.deletedPathUUIDs) != 1 || !reflect.DeepEqual(server.deletedPathUUIDs[0], []byte{9}) {
+		t.Fatalf("deleted path UUIDs = %#v, want old static only", server.deletedPathUUIDs)
 	}
 	pathsByKey := map[string]bgpdaemon.AppliedPath{}
 	for _, path := range server.applied.Paths {
 		pathsByKey[bgpdaemon.AppliedPathKey(path)] = path
 	}
 	mobilityKey := bgpdaemon.AppliedPathKey(bgpdaemon.AppliedPath{Source: "MobilityPool/demo/node/aws-router-a", Prefix: "10.77.60.11/32"})
-	if pathsByKey[mobilityKey].UUID == "" || pathsByKey[mobilityKey].UUID == bgpdaemon.EncodeUUID([]byte{7}) {
-		t.Fatalf("mobility path was not refreshed: %#v", server.applied.Paths)
+	if pathsByKey[mobilityKey].UUID != bgpdaemon.EncodeUUID([]byte{7}) {
+		t.Fatalf("mobility path UUID changed despite live advertisement: %#v", server.applied.Paths)
 	}
 	staticKey := bgpdaemon.AppliedPathKey(bgpdaemon.StaticAppliedPath("10.0.0.0/16", nil))
 	if pathsByKey[staticKey].Source != bgpdaemon.AppliedPathSourceStatic || pathsByKey[staticKey].UUID == "" {
@@ -1771,7 +1775,13 @@ func TestReconcilePreservesMobilityPathsWhenStaticAdvertisementsChange(t *testin
 
 func TestReconcileKeepsUnchangedStaticAdvertisementWithoutReadd(t *testing.T) {
 	router := bgpRouter()
+	mobilityPath, err := localPath("10.77.60.11/32")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mobilityPath.Uuid = []byte{7}
 	server := &fakeServer{
+		routes: []*gobgpapi.Destination{{Prefix: "10.77.60.11/32", Paths: []*gobgpapi.Path{mobilityPath}}},
 		applied: bgpdaemon.AppliedConfig{
 			Version: bgpdaemon.AppliedVersion,
 			Global:  bgpdaemon.AppliedGlobal{ASN: 64512, RouterID: "10.0.0.1"},
@@ -1796,11 +1806,11 @@ func TestReconcileKeepsUnchangedStaticAdvertisementWithoutReadd(t *testing.T) {
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
-	if len(server.deletedPathUUIDs) != 1 || !reflect.DeepEqual(server.deletedPathUUIDs[0], []byte{7}) {
-		t.Fatalf("deleted paths = %#v, want dynamic refresh only", server.deletedPathUUIDs)
+	if len(server.deletedPathUUIDs) != 0 {
+		t.Fatalf("deleted paths = %#v, want no churn for live dynamic advertisement", server.deletedPathUUIDs)
 	}
-	if server.paths != 1 {
-		t.Fatalf("AddPath calls = %d, want dynamic refresh only", server.paths)
+	if server.paths != 0 {
+		t.Fatalf("AddPath calls = %d, want no churn for live dynamic advertisement", server.paths)
 	}
 }
 
