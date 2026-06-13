@@ -16,6 +16,7 @@ const (
 	EventPrefixWithdrawn = "prefix withdrawn"
 	DefaultMaxPrefixes   = 4096
 
+	MobilityCommunityOwner        = "64512:100"
 	MobilityCommunityNodeLiveness = "64512:130"
 )
 

@@ -1176,7 +1176,7 @@ func TestReconcileAdmitsNormalMobilityPoolHostRoute(t *testing.T) {
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
-	want := []FIBRoute{{Prefix: "10.77.60.44/32", NextHops: []string{"10.99.0.2"}}}
+	want := []FIBRoute{{Prefix: "10.77.60.44/32", NextHops: []string{"10.99.0.2"}, RetainOnMissing: true}}
 	if !reflect.DeepEqual(fib.routes, want) {
 		t.Fatalf("fib routes = %#v, want normal mobility pool host admitted only %#v", fib.routes, want)
 	}
@@ -1309,7 +1309,7 @@ func TestWatchEventReconnectsAfterStreamError(t *testing.T) {
 	}
 }
 
-func TestWatchEventSkipsDuplicateFIBApplyAndPollFallbackStillWorks(t *testing.T) {
+func TestWatchEventReappliesFIBSoKernelDriftCanRecover(t *testing.T) {
 	server := &fakeServer{
 		routes:        []*gobgpapi.Destination{testDestination("10.77.60.11/32", "10.99.0.11")},
 		watchSessions: make(chan watchSession, 1),
@@ -1328,14 +1328,14 @@ func TestWatchEventSkipsDuplicateFIBApplyAndPollFallbackStillWorks(t *testing.T)
 	if err := controller.watchBestPathEvents(context.Background()); err != nil {
 		t.Fatalf("watch event: %v", err)
 	}
-	if fib.calls() != 1 {
-		t.Fatalf("FIB calls after duplicate watch event = %d, want unchanged", fib.calls())
+	if fib.calls() != 2 {
+		t.Fatalf("FIB calls after duplicate watch event = %d, want reapply", fib.calls())
 	}
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("poll reconcile duplicate: %v", err)
 	}
-	if fib.calls() != 1 {
-		t.Fatalf("FIB calls after duplicate poll = %d, want unchanged", fib.calls())
+	if fib.calls() != 3 {
+		t.Fatalf("FIB calls after duplicate poll = %d, want reapply", fib.calls())
 	}
 	server.routes = []*gobgpapi.Destination{testDestination("10.77.60.11/32", "10.99.0.14")}
 	if err := controller.Reconcile(context.Background()); err != nil {
@@ -1345,8 +1345,8 @@ func TestWatchEventSkipsDuplicateFIBApplyAndPollFallbackStillWorks(t *testing.T)
 	if !reflect.DeepEqual(fib.lastRoutes(), want) {
 		t.Fatalf("FIB routes after poll fallback = %#v, want %#v", fib.lastRoutes(), want)
 	}
-	if fib.calls() != 2 {
-		t.Fatalf("FIB calls after poll fallback = %d, want 2", fib.calls())
+	if fib.calls() != 4 {
+		t.Fatalf("FIB calls after poll fallback = %d, want 4", fib.calls())
 	}
 }
 
