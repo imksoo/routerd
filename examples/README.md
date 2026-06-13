@@ -6,9 +6,13 @@ intended as starting points, not as drop-in production files.
 Run validation before adapting an example:
 
 ```sh
-routerctl validate --config examples/<name>.yaml
-routerctl plan --config examples/<name>.yaml
+scripts/routerd-sandbox-run.sh sh -c 'go run ./cmd/routerctl validate --socket "$ROUTERD_SANDBOX_STATUS_SOCKET" -f examples/<name>.yaml --replace'
+scripts/routerd-sandbox-run.sh sh -c 'go run ./cmd/routerctl plan --socket "$ROUTERD_SANDBOX_STATUS_SOCKET" -f examples/<name>.yaml --replace'
 ```
+
+`routerctl validate` and `routerctl plan` call the running routerd control API.
+Use the sandbox wrapper for repository-local checks; CI's `make
+validate-example` runs the same control-API validation path.
 
 ## Small starting points
 

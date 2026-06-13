@@ -69,7 +69,7 @@ Any test that changes network state must be isolated under:
 Be careful when applying config to a remote router. Prefer this sequence:
 - validate
 - plan
-- dry-run apply
+- confirm the plan output
 - confirm the management path is not being removed
 - apply
 - verify service state and connectivity

@@ -11,15 +11,27 @@ routerd compares the intent declared in YAML with the host's current state. When
 ## Standard sequence
 
 ```bash
-routerctl validate --config router.yaml
-routerctl plan     --config router.yaml
-routerctl apply    --config router.yaml --dry-run
-routerctl apply    --config router.yaml
+routerctl validate -f router.yaml --replace
+routerctl plan     -f router.yaml --replace
+routerctl apply    -f router.yaml --replace
 ```
 
-For a remote router, confirm that the management connection (SSH, console, hypervisor console) will survive the change before running the non-dry-run `apply`.
+`routerctl validate`, `plan`, and `apply` call the running routerd control API
+over Unix sockets. For repository-local checks without touching the host, use
+the same sandbox wrapper as CI:
 
-On a live router, `plan`, `observe`, and dry-run apply read the state database as a transient snapshot; when the daemon is writing SQLite WAL pages concurrently, that snapshot can be slightly stale, so treat it as advisory preflight input rather than a rollback record.
+```bash
+scripts/routerd-sandbox-run.sh sh -c 'go run ./cmd/routerctl validate --socket "$ROUTERD_SANDBOX_STATUS_SOCKET" -f router.yaml --replace'
+scripts/routerd-sandbox-run.sh sh -c 'go run ./cmd/routerctl plan --socket "$ROUTERD_SANDBOX_STATUS_SOCKET" -f router.yaml --replace'
+scripts/routerd-sandbox-run.sh sh -c 'go run ./cmd/routerctl apply --socket "$ROUTERD_SANDBOX_SOCKET" -f router.yaml --replace --no-reconcile'
+```
+
+For a remote router, confirm that the management connection (SSH, console, hypervisor console) will survive the change before running `apply`.
+
+On a live router, `plan` reads the state database as a transient snapshot; when
+the daemon is writing SQLite WAL pages concurrently, that snapshot can be
+slightly stale, so treat it as advisory preflight input rather than a rollback
+record.
 
 ## Long-running mode
 
@@ -37,10 +49,10 @@ remains a pre-apply check rather than a persistent operating mode.
 When the config contains resources that forward traffic, such as
 `IngressService`, `PortForward`, NAT, BGP, or static/policy routes, routerd
 derives the required runtime sysctls. `routerctl apply` observes, plans,
-and renders those derived settings without mutating them; `routerd serve`
-converges them during controller reconcile. This keeps one-shot apply bounded to
-config validation and artifact rendering while the long-running controller owns
-daemon and runtime kernel lifecycle.
+and writes the desired config to the running daemon; `routerd serve` converges
+host state during controller reconcile. This keeps the CLI bounded to control
+API mutation while the long-running controller owns daemon and runtime kernel
+lifecycle.
 
 ## Drift checks
 
@@ -98,7 +110,7 @@ filter table during normal apply.
 
 routerd only deletes objects whose ownership it can attribute (i.e. that routerd previously created or adopted). It does not remove third-party configuration or manual changes.
 
-Generation-based rollback is supported. `routerctl rollback --list` shows the stored generations recorded by past applies, and `routerctl rollback --to <generation>` re-applies a stored Router YAML through the normal apply path. Rollback re-applies the declared config and the artifacts routerd manages; it does **not** restore live conntrack, kernel transient state, daemon runtime state, or any host change made outside routerd's ledger. For changes that include deletions, always run `routerctl plan` and `routerctl apply --dry-run` first and confirm the deletion list before applying.
+Generation-based rollback is supported. `routerctl rollback --list` shows the stored generations recorded by past applies, and `routerctl rollback --to <generation>` re-applies a stored Router YAML through the normal apply path. Rollback re-applies the declared config and the artifacts routerd manages; it does **not** restore live conntrack, kernel transient state, daemon runtime state, or any host change made outside routerd's ledger. For changes that include deletions, always run `routerctl plan` first and confirm the deletion list before applying.
 
 ## See also
 
