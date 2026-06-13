@@ -704,7 +704,6 @@ func TestIPv4StaticAddressControllerRemovesStaleMobilityProviderOSAddresses(t *t
 				},
 			},
 		}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "sam-cloudedge-provider-capture-10-77-60-10"}, Spec: api.IPv4StaticAddressSpec{Interface: "azure-nic", Address: "10.77.60.10/32"}},
 	}}}
 	store := mapStore{
 		api.MobilityAPIVersion + "/MobilityPool/cloudedge": {
@@ -737,7 +736,6 @@ func TestIPv4StaticAddressControllerRemovesStaleMobilityProviderOSAddresses(t *t
 		t.Fatal(err)
 	}
 	want := []string{
-		"ip -4 addr replace 10.77.60.10/32 dev eth0",
 		"ip -4 addr del 10.77.60.10/24 dev eth0",
 		"ip -4 addr del 10.77.60.11/24 dev eth0",
 		"ip -4 addr del 10.77.60.13/24 dev eth0",

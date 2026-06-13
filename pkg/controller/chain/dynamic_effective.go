@@ -82,7 +82,6 @@ func buildDynamicRouteSAMView(startup *api.Router, store any, now time.Time, tar
 	}
 
 	effective = appendBGPMobilityProviderSecondaryClaims(effective, store)
-	effective = appendBGPMobilityProviderSecondaryOSAddresses(effective, store)
 	effective = appendBGPMobilityProxyARPClaims(effective, store)
 
 	routeRouter := effective
@@ -236,58 +235,6 @@ func appendBGPMobilityProviderSecondaryClaims(router api.Router, store any) api.
 	}
 	out := router
 	out.Spec.Resources = append(append([]api.Resource(nil), router.Spec.Resources...), claims...)
-	return out
-}
-
-func appendBGPMobilityProviderSecondaryOSAddresses(router api.Router, store any) api.Router {
-	reader := statusReaderFromStore(store)
-	if reader == nil {
-		return router
-	}
-	selfByGroup := eventGroupSelfNodes(router)
-	var addresses []api.Resource
-	for _, resource := range router.Spec.Resources {
-		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "MobilityPool" {
-			continue
-		}
-		spec, err := resource.MobilityPoolSpec()
-		if err != nil || mobilityDeliveryMode(spec) != "bgp" {
-			continue
-		}
-		selfNode := strings.TrimSpace(selfByGroup[strings.TrimSpace(spec.GroupRef)])
-		if selfNode == "" {
-			continue
-		}
-		spec, _, err = mobilityconfig.NormalizeMobilityPool(spec, selfNode)
-		if err != nil {
-			continue
-		}
-		prefix, err := netip.ParsePrefix(strings.TrimSpace(spec.Prefix))
-		if err != nil {
-			continue
-		}
-		prefix = prefix.Masked()
-		self, ok := mobilityPoolMemberByNode(spec.Members, selfNode)
-		if !ok || strings.TrimSpace(self.Capture.Type) != "provider-secondary-ip" || !self.Capture.ConfigureOSAddress {
-			continue
-		}
-		if strings.TrimSpace(self.Capture.Interface) == "" {
-			continue
-		}
-		status := reader.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", resource.Metadata.Name)
-		for _, address := range bgpStatusStringSlice(status["discoverySelfCapturedAddresses"]) {
-			normalized, ok := normalizeBGPMobilityHostPrefix(address, prefix)
-			if !ok || sam.CaptureExcludesAddress(addressCaptureFromMobilityCapture(self.Capture), normalized) {
-				continue
-			}
-			addresses = append(addresses, bgpMobilityProviderSecondaryOSAddress(resource.Metadata.Name, self, normalized))
-		}
-	}
-	if len(addresses) == 0 {
-		return router
-	}
-	out := router
-	out.Spec.Resources = append(append([]api.Resource(nil), router.Spec.Resources...), addresses...)
 	return out
 }
 
@@ -748,24 +695,6 @@ func bgpMobilityProviderSecondaryClaim(poolName string, member api.MobilityPoolM
 			OwnerSide: "remote",
 			Capture:   addressCaptureFromMobilityCapture(member.Capture),
 			Delivery:  api.AddressDelivery{Mode: "bgp"},
-		},
-	}
-}
-
-func bgpMobilityProviderSecondaryOSAddress(poolName string, member api.MobilityPoolMember, address string) api.Resource {
-	name := "sam-" + safeResourceName(poolName) + "-provider-capture-" + safeResourceName(strings.TrimSuffix(address, "/32"))
-	return api.Resource{
-		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},
-		Metadata: api.ObjectMeta{
-			Name: name,
-			Annotations: map[string]string{
-				"mobility.routerd.net/pool":   poolName,
-				"mobility.routerd.net/source": "bgp-provider-capture-os-address",
-			},
-		},
-		Spec: api.IPv4StaticAddressSpec{
-			Interface: strings.TrimSpace(member.Capture.Interface),
-			Address:   address,
 		},
 	}
 }

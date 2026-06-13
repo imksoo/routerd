@@ -358,58 +358,6 @@ func TestDynamicRouteSAMViewDerivesBGPProviderSecondaryForwardPath(t *testing.T)
 	})
 }
 
-func TestDynamicRouteSAMViewDerivesBGPProviderSecondaryOSAddress(t *testing.T) {
-	startup := startupHybridContextRouter()
-	startup.Spec.Resources = append(startup.Spec.Resources,
-		api.Resource{
-			TypeMeta: api.TypeMeta{APIVersion: api.FederationAPIVersion, Kind: "EventGroup"},
-			Metadata: api.ObjectMeta{Name: "cloudedge"},
-			Spec:     api.EventGroupSpec{NodeName: "azure-router"},
-		},
-		api.Resource{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
-			Metadata: api.ObjectMeta{Name: "azure-nic"},
-			Spec:     api.InterfaceSpec{IfName: "eth0"},
-		},
-		api.Resource{
-			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"},
-			Metadata: api.ObjectMeta{Name: "cloudedge"},
-			Spec: api.MobilityPoolSpec{
-				Prefix:         "10.77.60.0/24",
-				GroupRef:       "cloudedge",
-				DeliveryPolicy: api.MobilityDeliveryPolicy{Mode: "bgp"},
-				Members: []api.MobilityPoolMember{
-					{NodeRef: "onprem-router", Site: "onprem", Role: "onprem", StaticOwnedAddresses: []string{"10.77.60.10/32"}},
-					{
-						NodeRef: "azure-router",
-						Site:    "azure",
-						Role:    "cloud",
-						Capture: api.MobilityMemberCapture{
-							Type:               "provider-secondary-ip",
-							Interface:          "azure-nic",
-							CaptureStrategy:    "secondary-ip",
-							ConfigureOSAddress: true,
-						},
-					},
-				},
-			},
-		},
-	)
-	store := mapStore{
-		api.MobilityAPIVersion + "/MobilityPool/cloudedge": {
-			"discoverySelfCapturedAddresses": []any{"10.77.60.10/32"},
-		},
-	}
-	view, err := buildDynamicRouteSAMView(startup, store, time.Now().UTC(), platform.OSLinux)
-	if err != nil {
-		t.Fatalf("buildDynamicRouteSAMView: %v", err)
-	}
-	address := ipv4StaticAddressSpecByName(t, view.RouteRouter, "sam-cloudedge-provider-capture-10-77-60-10")
-	if address.Interface != "azure-nic" || address.Address != "10.77.60.10/32" {
-		t.Fatalf("provider secondary OS address = %#v", address)
-	}
-}
-
 func TestDynamicRouteSAMViewBGPProxyARPIdentityOnlyRemoteMatchesInline(t *testing.T) {
 	now := time.Now().UTC()
 	store := mapStore{

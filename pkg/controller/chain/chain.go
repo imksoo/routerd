@@ -2851,11 +2851,6 @@ func (c IPv4StaticAddressController) cleanupStaleMobilityProviderOSAddresses(ctx
 				privateHosts[strings.TrimSuffix(normalized, "/32")] = true
 			}
 		}
-		for _, value := range statusStringSlice(status["discoverySelfCapturedAddresses"]) {
-			if normalized, ok := normalizeIPv4HostPrefixInPool(value, prefix.Masked()); ok {
-				keepCIDRs[normalized] = true
-			}
-		}
 		for _, res := range c.Router.Spec.Resources {
 			if res.APIVersion != api.NetAPIVersion || res.Kind != "IPv4StaticAddress" {
 				continue
