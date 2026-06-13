@@ -50,6 +50,9 @@ const (
 	bgpTrapLastSeenAtParam      = "mobilityTrapLastSeenAt"
 	bgpTrapTransitionParam      = "mobilityProviderTransition"
 	bgpSeizeLivenessMissingHold = 30 * time.Second
+	bgpSeizeHoldDownBypassFresh = 2 * bgpSeizeLivenessMissingHold
+	bgpSeizeHoldDownBypassKey   = "bgpSeizeHoldDownBypassKey"
+	bgpSeizeHoldDownBypassAt    = "bgpSeizeHoldDownBypassObservedAt"
 )
 
 type Store interface {
@@ -1670,6 +1673,10 @@ func applyBGPCaptureSeizeHoldDown(status map[string]any, placement PlacementDeci
 	if !placement.Seize || key == "" {
 		return placement
 	}
+	if bgpSeizeHoldDownBypassed(status, key, now) {
+		placement.SeizeHoldDownKey = key
+		return placement
+	}
 	since := now
 	if strings.TrimSpace(fmt.Sprint(status["bgpSeizeHoldDownKey"])) == key {
 		if parsed, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(fmt.Sprint(status["bgpSeizeHoldDownSince"]))); err == nil && !parsed.IsZero() {
@@ -1692,6 +1699,21 @@ func applyBGPCaptureSeizeHoldDown(status map[string]any, placement PlacementDeci
 	placement.Reason = strings.TrimSpace(firstNonEmpty(placement.Reason, "active BGP liveness marker is absent")) +
 		"; waiting for seize hold-down until " + until.Format(time.RFC3339Nano)
 	return placement
+}
+
+func bgpSeizeHoldDownBypassed(status map[string]any, key string, now time.Time) bool {
+	if strings.TrimSpace(fmt.Sprint(status[bgpSeizeHoldDownBypassKey])) != key {
+		return false
+	}
+	observedAt, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(fmt.Sprint(status[bgpSeizeHoldDownBypassAt])))
+	if err != nil || observedAt.IsZero() {
+		return false
+	}
+	observedAt = observedAt.UTC()
+	if now.Before(observedAt) {
+		return false
+	}
+	return !observedAt.Add(bgpSeizeHoldDownBypassFresh).Before(now)
 }
 
 func bgpSeizeHoldDownKey(placement PlacementDecision) string {

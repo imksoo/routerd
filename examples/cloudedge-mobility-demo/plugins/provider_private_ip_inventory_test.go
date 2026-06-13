@@ -541,13 +541,13 @@ case "$*" in
     printf '%s\n' '{"data":{"id":"vnic-router","subnet-id":"subnet-oci","compartment-id":"compartment-demo","skip-source-dest-check":true}}'
     ;;
   *"compute vnic-attachment list --compartment-id compartment-demo"*)
-    printf '%s\n' '{"data":[{"vnic-id":"vnic-router","instance-id":"i-router"},{"vnic-id":"vnic-client","instance-id":"i-client"},{"vnic-id":"vnic-stopped","instance-id":"i-stopped"}]}'
+    printf '%s\n' '{"data":[{"vnic-id":"vnic-router","instance-id":"i-router"},{"vnic-id":"vnic-client","instance-id":"i-client"},{"vnic-id":"vnic-stopped","instance-id":"i-stopped"},{"vnic-id":"vnic-starting","instance-id":"i-starting"}]}'
     ;;
   *"compute instance list --compartment-id compartment-demo"*)
-    printf '%s\n' '{"data":[{"id":"i-router","lifecycle-state":"RUNNING"},{"id":"i-client","lifecycle-state":"RUNNING"},{"id":"i-stopped","lifecycle-state":"STOPPED"}]}'
+    printf '%s\n' '{"data":[{"id":"i-router","lifecycle-state":"RUNNING"},{"id":"i-client","lifecycle-state":"RUNNING"},{"id":"i-stopped","lifecycle-state":"STOPPED"},{"id":"i-starting","lifecycle-state":"STARTING"}]}'
     ;;
   *"network private-ip list --subnet-id subnet-oci"*)
-    printf '%s\n' '{"data":[{"ip-address":"10.77.60.23","vnic-id":"vnic-router","subnet-id":"subnet-oci","is-primary":true},{"ip-address":"10.77.60.13","vnic-id":"vnic-client","subnet-id":"subnet-oci","is-primary":false,"freeform-tags":{"role":"client"}},{"ip-address":"10.77.60.19","vnic-id":"vnic-stopped","subnet-id":"subnet-oci","is-primary":true}]}'
+    printf '%s\n' '{"data":[{"ip-address":"10.77.60.23","vnic-id":"vnic-router","subnet-id":"subnet-oci","is-primary":true},{"ip-address":"10.77.60.13","vnic-id":"vnic-client","subnet-id":"subnet-oci","is-primary":false,"freeform-tags":{"role":"client"}},{"ip-address":"10.77.60.19","vnic-id":"vnic-stopped","subnet-id":"subnet-oci","is-primary":true},{"ip-address":"10.77.60.18","vnic-id":"vnic-starting","subnet-id":"subnet-oci","is-primary":true}]}'
     ;;
   *)
     echo "unexpected oci args: $*" >&2
@@ -565,6 +565,7 @@ esac
 	assertResource(t, res, "10.77.60.19", "i-stopped", "instance-nic")
 	assertInstanceState(t, res, "10.77.60.19", "stopped")
 	assertInstanceState(t, res, "10.77.60.13", "running")
+	assertInstanceState(t, res, "10.77.60.18", "")
 }
 
 func TestProviderPrivateIPInventoryPluginAzureReportsInstanceState(t *testing.T) {
@@ -576,10 +577,10 @@ case "$*" in
     printf '%s\n' '{"id":"/nic/router","resourceGroup":"rg-demo","enableIPForwarding":true,"ipConfigurations":[{"subnet":{"id":"/subnets/demo"}}]}'
     ;;
   *"network nic list --resource-group rg-demo"*)
-    printf '%s\n' '[{"id":"/nic/router","tags":{"role":"router"},"ipConfigurations":[{"privateIPAddress":"10.77.60.22","primary":true,"subnet":{"id":"/subnets/demo"}}]},{"id":"/nic/client","tags":{"role":"client"},"ipConfigurations":[{"privateIPAddress":"10.77.60.12","primary":false,"subnet":{"id":"/subnets/demo"}}]},{"id":"/nic/stopped","tags":{"role":"stopped"},"ipConfigurations":[{"privateIPAddress":"10.77.60.19","primary":true,"subnet":{"id":"/subnets/demo"}}]}]'
+    printf '%s\n' '[{"id":"/nic/router","tags":{"role":"router"},"ipConfigurations":[{"privateIPAddress":"10.77.60.22","primary":true,"subnet":{"id":"/subnets/demo"}}]},{"id":"/nic/client","tags":{"role":"client"},"ipConfigurations":[{"privateIPAddress":"10.77.60.12","primary":false,"subnet":{"id":"/subnets/demo"}}]},{"id":"/nic/stopped","tags":{"role":"stopped"},"ipConfigurations":[{"privateIPAddress":"10.77.60.19","primary":true,"subnet":{"id":"/subnets/demo"}}]},{"id":"/nic/starting","tags":{"role":"starting"},"ipConfigurations":[{"privateIPAddress":"10.77.60.18","primary":true,"subnet":{"id":"/subnets/demo"}}]}]'
     ;;
   *"vm list --resource-group rg-demo"*)
-    printf '%s\n' '[{"id":"/vm/router","powerState":"VM running","networkProfile":{"networkInterfaces":[{"id":"/nic/router"}]}},{"id":"/vm/client","powerState":"VM running","networkProfile":{"networkInterfaces":[{"id":"/nic/client"}]}},{"id":"/vm/stopped","powerState":"VM stopped","networkProfile":{"networkInterfaces":[{"id":"/nic/stopped"}]}}]'
+    printf '%s\n' '[{"id":"/vm/router","powerState":"VM running","networkProfile":{"networkInterfaces":[{"id":"/nic/router"}]}},{"id":"/vm/client","powerState":"VM running","networkProfile":{"networkInterfaces":[{"id":"/nic/client"}]}},{"id":"/vm/stopped","powerState":"VM stopped","networkProfile":{"networkInterfaces":[{"id":"/nic/stopped"}]}},{"id":"/vm/starting","powerState":"VM starting","networkProfile":{"networkInterfaces":[{"id":"/nic/starting"}]}}]'
     ;;
   *)
     echo "unexpected az args: $*" >&2
@@ -597,6 +598,7 @@ esac
 	assertResource(t, res, "10.77.60.19", "/vm/stopped", "instance-nic")
 	assertInstanceState(t, res, "10.77.60.19", "stopped")
 	assertInstanceState(t, res, "10.77.60.12", "running")
+	assertInstanceState(t, res, "10.77.60.18", "")
 }
 
 func TestProviderPrivateIPInventoryPluginAWSFailsWhenInstanceMetadataQueryFails(t *testing.T) {

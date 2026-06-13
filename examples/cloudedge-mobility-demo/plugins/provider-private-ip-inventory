@@ -601,6 +601,15 @@ def azure_cli_vm_from_arm(item, show_details, subscription_id="", resource_group
     return out
 
 
+def azure_instance_state(power_state):
+    value = str(power_state or "").strip().lower()
+    if value == "vm running":
+        return "running"
+    if value in ("vm stopped", "vm deallocated"):
+        return "stopped"
+    return ""
+
+
 def azure_vm_instance_view_statuses(item, subscription_id="", resource_group=""):
     name = (item.get("name") or "").strip()
     if not name:
@@ -892,12 +901,7 @@ def azure_inventory(spec):
         resource_ref = metadata.get("resourceRef", "")
         if nic_ref == self_nic and resource_ref:
             self_resource_ref = resource_ref
-        vm_state = metadata.get("powerState", "")
-        instance_state = ""
-        if vm_state == "VM running":
-            instance_state = "running"
-        elif vm_state:
-            instance_state = "stopped"
+        instance_state = azure_instance_state(metadata.get("powerState", ""))
         resource_type = "instance-nic"
         if nic_ref == self_nic or str(tags.get("role", "")).lower() == "router":
             resource_type = "router-nic"
@@ -984,7 +988,7 @@ def oci_vnic_instance_metadata(region, compartment):
             item = {"resourceRef": iid}
             if state == "RUNNING":
                 item["instanceState"] = "running"
-            elif state:
+            elif state == "STOPPED":
                 item["instanceState"] = "stopped"
             vnic_metadata[vid] = item
         return vnic_metadata

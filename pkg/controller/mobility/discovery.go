@@ -200,6 +200,8 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 	excludedNICs := mobilityRouterNICRefs(spec.Members)
 	selfInventory := resolvedDiscoverySelfInventory(self, discovery, result.Status.Self)
 	rawLocalInventory := filterProviderLocalInventoryRecords(result.Status.LocalInventoryRecords(), profileRef, "", prefix)
+	placement, providerStoppedBypass := bypassSeizeHoldDownWhenActiveProviderStopped(placement, self, members, spec, rawLocalInventory, now)
+	providerStoppedBypassStatus := providerStoppedSeizeBypassStatus(providerStoppedBypass)
 	selfInventory = scopedDiscoverySelfInventory(selfInventory, rawLocalInventory, prefix)
 	trustedSubnetRef := trustedDiscoverySelfSubnetRef(selfInventory, rawLocalInventory)
 	localInventory := filterProviderLocalInventoryRecords(rawLocalInventory, profileRef, trustedSubnetRef, prefix)
@@ -208,7 +210,7 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 		if err := c.expireStaleProviderDiscoveryEvents(poolName, spec, self.NodeRef, prefix, nil, now, discoveryLeaseTTL(discovery, spec), 0); err != nil {
 			return err
 		}
-		status := mergeAnyMaps(discoveryPlacementStatus(placement), mergeAnyMaps(discoverySelfInventoryStatus(selfInventory), map[string]any{
+		status := mergeAnyMaps(mergeAnyMaps(discoveryPlacementStatus(placement), mergeAnyMaps(discoverySelfInventoryStatus(selfInventory), map[string]any{
 			"discoveryPhase":          "Standby",
 			"discoveryReason":         placement.Reason,
 			"discoveryProvider":       profile.Provider,
@@ -218,7 +220,7 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 			"discoveryOwnedAddresses": []string{},
 			"discoveryLastScanAt":     now.Format(time.RFC3339Nano),
 			"discoveryNextScanAt":     now.Add(interval).Format(time.RFC3339Nano),
-		}))
+		})), providerStoppedBypassStatus)
 		c.saveDiscoveryStatus(poolName, status)
 		return nil
 	}
@@ -306,7 +308,7 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 		return err
 	}
 	statusLocalInventory := filterDiscoveryLocalInventoryStatusRecords(localInventory, excludedNICs, selfResourceRef)
-	status := mergeAnyMaps(discoveryPlacementStatus(placement), mergeAnyMaps(discoverySelfInventoryStatus(selfInventory), map[string]any{
+	status := mergeAnyMaps(mergeAnyMaps(discoveryPlacementStatus(placement), mergeAnyMaps(discoverySelfInventoryStatus(selfInventory), map[string]any{
 		"discoveryPhase":                "Observed",
 		"discoveryReason":               "",
 		"discoveryProvider":             profile.Provider,
@@ -328,9 +330,69 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 		"discoveryExcludedSelector":     counters.Selector,
 		"discoveryLastScanAt":           now.Format(time.RFC3339Nano),
 		"discoveryNextScanAt":           now.Add(interval).Format(time.RFC3339Nano),
-	}))
+	})), providerStoppedBypassStatus)
 	c.saveDiscoveryStatus(poolName, status)
 	return nil
+}
+
+type providerStoppedSeizeBypass struct {
+	ActiveNode  string
+	NICRef      string
+	ResourceRef string
+	Key         string
+	ObservedAt  time.Time
+}
+
+func bypassSeizeHoldDownWhenActiveProviderStopped(placement PlacementDecision, self memberPlanInfo, members map[string]memberPlanInfo, spec api.MobilityPoolSpec, records []providerinventory.PrivateIPRecord, now time.Time) (PlacementDecision, providerStoppedSeizeBypass) {
+	if !placement.SeizeHoldDown || stoppedInstancePolicy(spec) != "release" {
+		return placement, providerStoppedSeizeBypass{}
+	}
+	active, ok := lookupMemberByNodeRef(members, placement.ActiveIdentityNodeRef)
+	if !ok || strings.TrimSpace(active.Capture.NICRef) == "" {
+		return placement, providerStoppedSeizeBypass{}
+	}
+	activeNIC := strings.TrimSpace(active.Capture.NICRef)
+	for _, rec := range records {
+		if strings.TrimSpace(rec.NICRef) != activeNIC || !strings.EqualFold(strings.TrimSpace(rec.InstanceState), "stopped") {
+			continue
+		}
+		placement.Active = true
+		placement.ActiveNode = self.NodeRef
+		placement.Seize = true
+		placement.SeizeHoldDown = false
+		placement.Reason = strings.TrimSpace(firstNonEmpty(placement.Reason, "active BGP liveness marker is absent")) + "; provider inventory reports active node stopped"
+		return placement, providerStoppedSeizeBypass{
+			ActiveNode:  active.NodeRef,
+			NICRef:      activeNIC,
+			ResourceRef: strings.TrimSpace(rec.ResourceRef),
+			Key:         placement.SeizeHoldDownKey,
+			ObservedAt:  now.UTC(),
+		}
+	}
+	return placement, providerStoppedSeizeBypass{}
+}
+
+func providerStoppedSeizeBypassStatus(bypass providerStoppedSeizeBypass) map[string]any {
+	status := map[string]any{
+		bgpSeizeHoldDownBypassKey:           "",
+		bgpSeizeHoldDownBypassAt:            "",
+		"bgpSeizeHoldDownBypassReason":      "",
+		"bgpSeizeHoldDownBypassNode":        "",
+		"bgpSeizeHoldDownBypassNICRef":      "",
+		"bgpSeizeHoldDownBypassResourceRef": "",
+	}
+	if bypass.Key == "" {
+		return status
+	}
+	status[bgpSeizeHoldDownBypassKey] = bypass.Key
+	status[bgpSeizeHoldDownBypassAt] = bypass.ObservedAt.UTC().Format(time.RFC3339Nano)
+	status["bgpSeizeHoldDownBypassReason"] = "provider-active-instance-stopped"
+	status["bgpSeizeHoldDownBypassNode"] = bypass.ActiveNode
+	status["bgpSeizeHoldDownBypassNICRef"] = bypass.NICRef
+	if bypass.ResourceRef != "" {
+		status["bgpSeizeHoldDownBypassResourceRef"] = bypass.ResourceRef
+	}
+	return status
 }
 
 func (c DiscoveryController) reconcileOnPremL2Discovery(ctx context.Context, poolName string, spec api.MobilityPoolSpec, self memberPlanInfo, discovery api.MobilityOwnershipDiscovery, now time.Time) error {

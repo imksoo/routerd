@@ -1655,6 +1655,89 @@ func TestControllerBGPModeStandbySeizesTrapAfterActiveLivenessHoldDown(t *testin
 	}
 }
 
+func TestControllerBGPModeStandbySeizesTrapImmediatelyWhenProviderStoppedBypassFresh(t *testing.T) {
+	now := time.Date(2026, 6, 13, 9, 30, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	saveBGPStatus(t, store, map[string][]string{
+		"10.88.60.10/32": {"10.99.0.1"},
+		"10.88.60.12/32": {"10.99.0.3"},
+	}, []map[string]any{}, map[string]string{bgpstate.MobilityNodeIdentityCommunity("aws-router-b"): "10.99.0.5/32"})
+	members := plannerMembers(spec.Members)
+	placement := evaluateBGPCapturePlacement(members["aws-router-b"], members, map[string]string{
+		bgpstate.MobilityNodeIdentityCommunity("aws-router-b"): "10.99.0.5/32",
+	}, true)
+	key := bgpSeizeHoldDownKey(placement)
+	if key == "" {
+		t.Fatalf("hold-down key is empty for placement %#v", placement)
+	}
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		bgpSeizeHoldDownBypassKey: key,
+		bgpSeizeHoldDownBypassAt:  now.Add(-time.Second).Format(time.RFC3339Nano),
+	}); err != nil {
+		t.Fatalf("SaveObjectStatus: %v", err)
+	}
+
+	bgp := &fakeBGPPaths{}
+	router := routerWithBGPRouter(planningRouterForNode("aws-router-b", spec))
+	controller := Controller{Router: router, Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	plans := decodeActionPlans(t, latestPart(t, store, DynamicSource("cloudedge", "aws-router-b")).ActionPlansJSON)
+	assign := findActionPlanByAddress(plans, "assign-secondary-ip", "10.88.60.10/32")
+	if assign == nil {
+		t.Fatalf("plans = %#v, want immediate standby seize assign with fresh provider-stopped bypass", plans)
+	}
+	if assign.Parameters["allowReassignment"] != "true" {
+		t.Fatalf("assign parameters = %#v, want allowReassignment", assign.Parameters)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	election, _ := status["bgpCaptureElection"].(map[string]any)
+	if election["seize"] != true || election["seizeHoldDown"] != false {
+		t.Fatalf("bgpCaptureElection = %#v, want seize without hold-down", election)
+	}
+}
+
+func TestControllerBGPModeStandbyIgnoresStaleProviderStoppedBypass(t *testing.T) {
+	now := time.Date(2026, 6, 13, 9, 35, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	saveBGPStatus(t, store, map[string][]string{
+		"10.88.60.10/32": {"10.99.0.1"},
+		"10.88.60.12/32": {"10.99.0.3"},
+	}, []map[string]any{}, map[string]string{bgpstate.MobilityNodeIdentityCommunity("aws-router-b"): "10.99.0.5/32"})
+	members := plannerMembers(spec.Members)
+	placement := evaluateBGPCapturePlacement(members["aws-router-b"], members, map[string]string{
+		bgpstate.MobilityNodeIdentityCommunity("aws-router-b"): "10.99.0.5/32",
+	}, true)
+	key := bgpSeizeHoldDownKey(placement)
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		bgpSeizeHoldDownBypassKey: key,
+		bgpSeizeHoldDownBypassAt:  now.Add(-bgpSeizeHoldDownBypassFresh - time.Second).Format(time.RFC3339Nano),
+	}); err != nil {
+		t.Fatalf("SaveObjectStatus: %v", err)
+	}
+
+	bgp := &fakeBGPPaths{}
+	router := routerWithBGPRouter(planningRouterForNode("aws-router-b", spec))
+	controller := Controller{Router: router, Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	plans := decodeActionPlans(t, latestPart(t, store, DynamicSource("cloudedge", "aws-router-b")).ActionPlansJSON)
+	if assign := findActionPlanByAddress(plans, "assign-secondary-ip", "10.88.60.10/32"); assign != nil {
+		t.Fatalf("plans = %#v, want stale provider-stopped bypass ignored during hold-down", plans)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	election, _ := status["bgpCaptureElection"].(map[string]any)
+	if election["seize"] != false || election["seizeHoldDown"] != true {
+		t.Fatalf("bgpCaptureElection = %#v, want stale bypass ignored and hold-down active", election)
+	}
+}
+
 func TestControllerBGPModeSeizeSuccessAdvertisesTrapImmediately(t *testing.T) {
 	now := time.Date(2026, 6, 3, 11, 0, 0, 0, time.UTC)
 	store := testStore(t, now)
