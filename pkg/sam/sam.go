@@ -224,9 +224,12 @@ func PlanCaptureWithOptions(router *api.Router, targetOS platform.OS, opts PlanO
 		}
 		addForwarding()
 		if captureType != "proxy-arp" {
-			if captureType == "provider-secondary-ip" && !spec.Capture.ConfigureOSAddress {
-				actions = append(actions, CaptureAction{Kind: "deassign-os-address", ClaimName: resource.Metadata.Name, Address: address})
-				if strings.TrimSpace(spec.Delivery.Mode) == "bgp" {
+			if captureType == "provider-secondary-ip" {
+				bgpDelivery := strings.TrimSpace(spec.Delivery.Mode) == "bgp"
+				if !spec.Capture.ConfigureOSAddress || bgpDelivery {
+					actions = append(actions, CaptureAction{Kind: "deassign-os-address", ClaimName: resource.Metadata.Name, Address: address})
+				}
+				if bgpDelivery {
 					iface := ResolveCaptureInterface(strings.TrimSpace(spec.Capture.Interface), interfaceAliases)
 					if iface == "" {
 						return nil, fmt.Errorf("%s spec.capture.interface is required for provider-secondary-ip BGP forwarding", resource.ID())

@@ -328,7 +328,7 @@ func TestDynamicRouteSAMViewDerivesBGPProviderSecondaryForwardPath(t *testing.T)
 							Type:               "provider-secondary-ip",
 							Interface:          "ens3",
 							CaptureStrategy:    "secondary-ip",
-							ConfigureOSAddress: false,
+							ConfigureOSAddress: true,
 						},
 					},
 				},
