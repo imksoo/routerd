@@ -257,7 +257,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		ForwardingObserved:   forwardingObserved,
 		ForwardingEnabled:    forwardingEnabled,
 		ForwardingObservedAt: forwardingObservedAt,
-		SuppressDeprovision:  c.SuppressProviderDeprovision,
+		SuppressDeprovision:  c.SuppressProviderDeprovision || (effectiveCaptureStrategy("", captureStrategyValue(self.Capture)) == captureStrategySecondaryIP && !self.MaintenanceDrain),
 		Now:                  now,
 	})
 	if err != nil {

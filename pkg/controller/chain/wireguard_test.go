@@ -409,22 +409,20 @@ spec:
 
 func TestWireGuardControllerSkipsApplyWhenInterfaceMatches(t *testing.T) {
 	t.Run("literal endpoint", func(t *testing.T) {
-		testWireGuardControllerSkipsApplyWhenInterfaceMatches(t, "198.51.100.2:51820", "198.51.100.2:51820", nil)
+		testWireGuardControllerSkipsApplyWhenInterfaceMatches(t, "198.51.100.2:51820", "198.51.100.2:51820")
 	})
 	t.Run("dns endpoint resolved to latest endpoint", func(t *testing.T) {
-		testWireGuardControllerSkipsApplyWhenInterfaceMatches(t, "peer-a.example.test:51820", "198.51.100.2:51820", func(_ context.Context, host string) ([]string, error) {
-			if host != "peer-a.example.test" {
-				t.Fatalf("lookup host = %q, want peer-a.example.test", host)
-			}
-			return []string{"198.51.100.2"}, nil
-		})
+		testWireGuardControllerSkipsApplyWhenInterfaceMatches(t, "peer-a.example.test:51820", "198.51.100.2:51820")
 	})
 	t.Run("configured endpoint without latest handshake endpoint", func(t *testing.T) {
-		testWireGuardControllerSkipsApplyWhenInterfaceMatches(t, "198.51.100.2:51820", "", nil)
+		testWireGuardControllerSkipsApplyWhenInterfaceMatches(t, "198.51.100.2:51820", "")
+	})
+	t.Run("roamed endpoint differs from configured endpoint", func(t *testing.T) {
+		testWireGuardControllerSkipsApplyWhenInterfaceMatches(t, "198.51.100.2:51820", "203.0.113.9:51820")
 	})
 }
 
-func testWireGuardControllerSkipsApplyWhenInterfaceMatches(t *testing.T, desiredEndpoint, observedEndpoint string, lookup func(context.Context, string) ([]string, error)) {
+func testWireGuardControllerSkipsApplyWhenInterfaceMatches(t *testing.T, desiredEndpoint, observedEndpoint string) {
 	t.Helper()
 	router := mustWireGuardRouter(t, `
 apiVersion: routerd.net/v1alpha1
@@ -480,7 +478,6 @@ spec:
 				return nil, nil
 			}
 		},
-		LookupHost: lookup,
 	}
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatal(err)
