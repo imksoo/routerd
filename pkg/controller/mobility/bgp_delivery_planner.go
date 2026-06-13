@@ -24,6 +24,7 @@ type bgpDeliveryPlannerInput struct {
 	Decisions            []ownershipDecision
 	Placement            PlacementDecision
 	InstalledNextHops    map[string][]string
+	CaptureNextHops      map[string][]string
 	RIBObserved          bool
 	PreviousPlans        []dynamicconfig.ActionPlan
 	Profiles             map[string]api.CloudProviderProfileSpec
@@ -60,7 +61,11 @@ func planBGPMobilityDelivery(in bgpDeliveryPlannerInput) (bgpDeliveryPlannerResu
 	decisions := decisionsByAddress(in.Decisions)
 	failedActions := latestFailedProviderActions(in.ActionJournal)
 	paths, providerCaptured, seized := planBGPAdvertisements(in.Source, in.Self, in.Decisions, in.Placement, failedActions)
-	candidates := planCaptureCandidates(in.Self, in.Members, decisions, in.Placement, in.InstalledNextHops, in.RIBObserved, in.PreviousPlans, in.ObservedSelfCaptures, failedActions, poolPrefix, now)
+	captureNextHops := in.CaptureNextHops
+	if len(captureNextHops) == 0 {
+		captureNextHops = in.InstalledNextHops
+	}
+	candidates := planCaptureCandidates(in.Self, in.Members, decisions, in.Placement, captureNextHops, in.RIBObserved, in.PreviousPlans, in.ObservedSelfCaptures, failedActions, poolPrefix, now)
 	actionPlans, err := planCaptureActionPlans(in, candidates)
 	if err != nil {
 		return bgpDeliveryPlannerResult{}, err
@@ -144,13 +149,16 @@ func bgpDecisionSourceType(decision ownershipDecision) string {
 
 func planCaptureCandidates(self memberPlanInfo, members map[string]memberPlanInfo, decisions map[string]ownershipDecision, placement PlacementDecision, installedNextHops map[string][]string, ribObserved bool, previousPlans []dynamicconfig.ActionPlan, observedSelfIPs map[string]bool, failedActions map[string]routerstate.ActionExecutionRecord, poolPrefix netip.Prefix, now time.Time) map[string]bgpTrapCandidate {
 	out := map[string]bgpTrapCandidate{}
-	if self.Capture.Type != "provider-secondary-ip" || !placement.Active {
+	if self.Capture.Type != "provider-secondary-ip" {
 		return out
 	}
 	for address, decision := range decisions {
 		if confirmedCaptureObservedOnSelf(decision, self, observedSelfIPs) {
 			out[address] = bgpTrapCandidate{ProtectOnly: true}
 		}
+	}
+	if !placement.Active {
+		return out
 	}
 	installedAddresses := map[string]bool{}
 	for rawPrefix, nextHops := range installedNextHops {

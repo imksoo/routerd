@@ -216,6 +216,10 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		return err
 	}
 	installedNextHops, bgpRIBObserved := c.bgpInstalledNextHops()
+	captureNextHops, captureRIBObserved := c.bgpCaptureCandidateNextHops(spec)
+	if captureRIBObserved {
+		bgpRIBObserved = true
+	}
 	bgpHomeOwnerNodes := c.bgpHomeOwnerNodes(spec)
 	forwardingObserved, forwardingEnabled, forwardingObservedAt := c.discoverySelfForwardingState(res.Metadata.Name)
 	ownershipDecisions, ownershipErr := resolveAddressOwnership(ownershipResolverInput{
@@ -242,6 +246,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		Decisions:            ownershipDecisions,
 		Placement:            ownerPlacement,
 		InstalledNextHops:    installedNextHops,
+		CaptureNextHops:      captureNextHops,
 		RIBObserved:          bgpRIBObserved,
 		PreviousPlans:        previousActionPlans,
 		Profiles:             cloudProviderProfiles(c.Router),
@@ -1131,6 +1136,50 @@ func (c Controller) bgpInstalledNextHops() (map[string][]string, bool) {
 		}
 	}
 	return out, observed
+}
+
+func (c Controller) bgpCaptureCandidateNextHops(spec api.MobilityPoolSpec) (map[string][]string, bool) {
+	out := map[string][]string{}
+	observed := false
+	if c.Router == nil || c.Store == nil {
+		return out, observed
+	}
+	poolPrefix, err := netip.ParsePrefix(strings.TrimSpace(spec.Prefix))
+	if err != nil {
+		return out, observed
+	}
+	poolPrefix = poolPrefix.Masked()
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "BGPRouter" {
+			continue
+		}
+		status := c.Store.ObjectStatus(api.NetAPIVersion, "BGPRouter", resource.Metadata.Name)
+		if _, ok := status["prefixes"]; !ok {
+			continue
+		}
+		observed = true
+		for _, prefix := range bgpStatusPrefixesValue(status["prefixes"]) {
+			if !prefix.Best || !prefix.Valid || prefix.Stale || bgpstate.HasCommunity(prefix.Communities, bgpstate.MobilityCommunityNodeLiveness) {
+				continue
+			}
+			if bgpstate.HasCommunity(prefix.Communities, bgpMobilityCommunitySourceCapture) {
+				continue
+			}
+			address, ok := normalizeBGPTrapPrefix(prefix.Prefix, poolPrefix)
+			if !ok {
+				continue
+			}
+			nextHop := strings.TrimSpace(prefix.NextHop)
+			if nextHop == "" || nextHop == "0.0.0.0" || nextHop == "::" {
+				continue
+			}
+			out[address] = mergeStringSet(out[address], []string{nextHop})
+		}
+	}
+	if !observed {
+		return out, false
+	}
+	return out, true
 }
 
 func (c Controller) bgpHomeOwnerNodes(spec api.MobilityPoolSpec) map[string]string {
