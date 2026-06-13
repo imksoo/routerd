@@ -153,7 +153,7 @@ func planCaptureCandidates(self memberPlanInfo, members map[string]memberPlanInf
 		return out
 	}
 	for address, decision := range decisions {
-		if confirmedCaptureObservedOnSelf(decision, self, observedSelfIPs) {
+		if desiredCaptureObservedOnSelf(decision, self, members, placement, observedSelfIPs) {
 			out[address] = bgpTrapCandidate{ProtectOnly: true}
 		}
 	}
@@ -183,7 +183,7 @@ func planCaptureCandidates(self memberPlanInfo, members map[string]memberPlanInf
 			continue
 		}
 		if decision.Class == ownershipClassConfirmedCapture {
-			if confirmedCaptureObservedOnSelf(decision, self, observedSelfIPs) {
+			if providerCaptureObservedOnSelf(decision, self, observedSelfIPs) {
 				out[address] = bgpTrapCandidate{ProtectOnly: true}
 			}
 			continue
@@ -213,7 +213,7 @@ func planCaptureCandidates(self memberPlanInfo, members map[string]memberPlanInf
 			}
 		}
 		if decision.Class == ownershipClassConfirmedCapture {
-			if confirmedCaptureObservedOnSelf(decision, self, observedSelfIPs) {
+			if providerCaptureObservedOnSelf(decision, self, observedSelfIPs) {
 				out[address] = bgpTrapCandidate{ProtectOnly: true}
 			}
 			continue
@@ -235,10 +235,17 @@ func planCaptureCandidates(self memberPlanInfo, members map[string]memberPlanInf
 	return out
 }
 
-func confirmedCaptureObservedOnSelf(decision ownershipDecision, self memberPlanInfo, observedSelfIPs map[string]bool) bool {
-	if decision.Class != ownershipClassConfirmedCapture {
+func desiredCaptureObservedOnSelf(decision ownershipDecision, self memberPlanInfo, members map[string]memberPlanInfo, placement PlacementDecision, observedSelfIPs map[string]bool) bool {
+	if !providerCaptureObservedOnSelf(decision, self, observedSelfIPs) {
 		return false
 	}
+	if decision.Class == ownershipClassConfirmedCapture {
+		return true
+	}
+	return decisionEligibleForCapture(decision, self, members, placement)
+}
+
+func providerCaptureObservedOnSelf(decision ownershipDecision, self memberPlanInfo, observedSelfIPs map[string]bool) bool {
 	holder := firstNonEmpty(decision.CaptureHolderNode, decision.AdvertiseOwnerNode)
 	if strings.TrimSpace(holder) != strings.TrimSpace(self.NodeRef) {
 		return false

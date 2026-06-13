@@ -1508,6 +1508,58 @@ func TestControllerBGPModeStandbyProtectsConfirmedCaptureFromUnassign(t *testing
 	}
 }
 
+func TestControllerBGPModeProtectsObservedRemoteHomeCaptureFromUnassign(t *testing.T) {
+	now := time.Date(2026, 6, 13, 22, 10, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	members := plannerMembers(spec.Members)
+	self := members["aws-router-a"]
+	address := "10.88.60.10/32"
+	previous, err := providerActionPlans("cloudedge", api.CloudProviderProfileSpec{Provider: "aws"}, self.Capture, self.CaptureTarget, address, map[string]bool{}, false)
+	if err != nil {
+		t.Fatalf("providerActionPlans: %v", err)
+	}
+	stampBGPPathFenceActionPlans(previous, address, "prefix="+address+";nextHops=10.99.0.1", self.NodeRef, now.Add(-time.Minute))
+	delivery, err := planBGPMobilityDelivery(bgpDeliveryPlannerInput{
+		PoolName: "cloudedge",
+		Source:   DynamicSource("cloudedge", self.NodeRef),
+		Self:     self,
+		Members:  members,
+		Spec:     spec,
+		Decisions: []ownershipDecision{{
+			Address:            address,
+			Class:              ownershipClassRemoteHomeOwned,
+			HomeOwnerNode:      "onprem-router",
+			Source:             staticOwnedType,
+			SuppressionReason:  "static-owned-by-remote",
+			CaptureState:       captureStateStale,
+			CaptureHolderNode:  self.NodeRef,
+			CaptureProviderRef: "aws-provider",
+			CaptureTargetRef:   "eni-a",
+			CaptureStrategy:    captureStrategySecondaryIP,
+		}},
+		Placement:            PlacementDecision{Group: "aws-edge", Active: true, ActiveNode: self.NodeRef},
+		PreviousPlans:        previous,
+		Profiles:             map[string]api.CloudProviderProfileSpec{"aws-provider": {Provider: "aws"}},
+		ObservedSelfCaptures: map[string]bool{address: true},
+		ObservedSelfIPsOK:    true,
+		RIBObserved:          true,
+		Now:                  now,
+	})
+	if err != nil {
+		t.Fatalf("planBGPMobilityDelivery: %v", err)
+	}
+	if len(delivery.CaptureCandidates) != 1 || !delivery.CaptureCandidates[address].ProtectOnly {
+		t.Fatalf("capture candidates = %#v, want observed remote-home capture protected", delivery.CaptureCandidates)
+	}
+	if unassign := findActionPlanByAddress(delivery.ActionPlans, "unassign-secondary-ip", address); unassign != nil {
+		t.Fatalf("action plans = %#v, observed desired remote-home capture must not unassign", delivery.ActionPlans)
+	}
+	if assign := findActionPlanByAddress(delivery.ActionPlans, "assign-secondary-ip", address); assign != nil {
+		t.Fatalf("action plans = %#v, protect-only capture must not reassign", delivery.ActionPlans)
+	}
+}
+
 func TestControllerBGPModeProviderTrapRecapturesAfterSuccessfulRelease(t *testing.T) {
 	now := time.Date(2026, 6, 2, 10, 0, 0, 0, time.UTC)
 	store := testStore(t, now)
