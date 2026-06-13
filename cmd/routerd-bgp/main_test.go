@@ -8,9 +8,11 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/netip"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -357,6 +359,41 @@ func TestRestoreAppliedRefreshesDynamicExportPolicy(t *testing.T) {
 	reset := server.resetRequests[0]
 	if reset.GetAddress() != "10.252.0.2" || !reset.GetSoft() || reset.GetDirection() != gobgpapi.ResetPeerRequest_OUT {
 		t.Fatalf("ResetPeer request = %#v, want soft outbound reset for 10.252.0.2", reset)
+	}
+}
+
+func TestLoadAppliedStateDoesNotRewriteControllerOwnedState(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "applied.json")
+	initial := bgpdaemon.AppliedConfig{
+		Global: bgpdaemon.AppliedGlobal{ASN: 64512, RouterID: "10.0.0.1", ListenPort: 179},
+		Peers: map[string]bgpdaemon.AppliedPeer{
+			"10.0.0.2": {Address: "10.0.0.2", ASN: 64512},
+		},
+		Paths: []bgpdaemon.AppliedPath{{
+			Source: "MobilityPool/demo/node/aws-router-a",
+			Prefix: "10.77.60.11/32",
+			Family: bgpdaemon.AppliedPathFamilyIPv4Unicast,
+			UUID:   bgpdaemon.EncodeUUID([]byte{9}),
+		}},
+	}
+	if err := bgpdaemon.WriteApplied(statePath, initial); err != nil {
+		t.Fatalf("write initial applied: %v", err)
+	}
+	before, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatalf("read initial applied: %v", err)
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	if err := loadAppliedState(statePath, logger); err != nil {
+		t.Fatalf("load applied state: %v", err)
+	}
+	after, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatalf("read applied after load: %v", err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatalf("loadAppliedState rewrote applied state; before=%s after=%s", before, after)
 	}
 }
 

@@ -80,7 +80,7 @@ func run(args []string) error {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	server := gobgpserver.NewBgpServer(gobgpserver.GrpcListenAddress("unix://" + *socketPath))
 	go server.Serve()
-	if err := restoreApplied(context.Background(), server, *statePath, logger); err != nil {
+	if err := loadAppliedState(*statePath, logger); err != nil {
 		return err
 	}
 	control, err := serveControlSocket(*controlSocketPath, *statePath, server)
@@ -211,7 +211,7 @@ func writeJSON(w http.ResponseWriter, value any) {
 	_ = json.NewEncoder(w).Encode(value)
 }
 
-func restoreApplied(ctx context.Context, server *gobgpserver.BgpServer, statePath string, logger *slog.Logger) error {
+func loadAppliedState(statePath string, logger *slog.Logger) error {
 	applied, ok, err := bgpdaemon.ReadApplied(statePath)
 	if err != nil {
 		return fmt.Errorf("read applied BGP state: %w", err)
@@ -219,30 +219,13 @@ func restoreApplied(ctx context.Context, server *gobgpserver.BgpServer, statePat
 	if !ok {
 		return nil
 	}
-	if err := bgpdaemon.Validate(applied); err != nil {
-		return fmt.Errorf("validate applied BGP state: %w", err)
-	}
-	if err := server.StartBgp(ctx, &gobgpapi.StartBgpRequest{Global: appliedGlobal(applied.Global)}); err != nil {
-		return fmt.Errorf("restore BGP global: %w", err)
-	}
-	if err := applyAppliedPolicies(ctx, server, applied); err != nil {
-		return fmt.Errorf("restore BGP policy: %w", err)
-	}
-	for _, peer := range sortedPeers(applied.Peers) {
-		if err := server.AddPeer(ctx, &gobgpapi.AddPeerRequest{Peer: appliedPeer(peer, applied.Global)}); err != nil {
-			return fmt.Errorf("restore BGP peer %s: %w", peer.Address, err)
-		}
-	}
-	if err := restoreAppliedPaths(ctx, server, &applied); err != nil {
-		return err
-	}
-	if err := refreshDynamicPathPolicies(ctx, server, applied); err != nil {
-		return fmt.Errorf("restore BGP dynamic policy refresh: %w", err)
-	}
-	if err := bgpdaemon.WriteApplied(statePath, applied); err != nil {
-		return fmt.Errorf("persist restored BGP path UUIDs: %w", err)
-	}
-	logger.Info("restored applied BGP state", "peers", len(applied.Peers), "paths", len(applied.Paths), "advertisements", len(applied.Advertisements), "hash", bgpdaemon.Hash(applied))
+	// The applied file is a controller-owned checkpoint, not the daemon's
+	// startup source of truth. Starting GoBGP from it can resurrect a previous
+	// topology and make the current BGPRouter config look like a conflicting
+	// live global/peer state. Keep the file available through the control API;
+	// the routerd controller will start GoBGP from the current config and then
+	// refresh any persisted dynamic paths against that live instance.
+	logger.Info("loaded applied BGP state for controller reconcile", "peers", len(applied.Peers), "paths", len(applied.Paths), "advertisements", len(applied.Advertisements), "hash", bgpdaemon.Hash(applied))
 	return nil
 }
 
