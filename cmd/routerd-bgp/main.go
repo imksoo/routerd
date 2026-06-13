@@ -225,7 +225,24 @@ func restoreApplied(ctx context.Context, server *gobgpserver.BgpServer, statePat
 	if err := server.StartBgp(ctx, &gobgpapi.StartBgpRequest{Global: appliedGlobal(applied.Global)}); err != nil {
 		return fmt.Errorf("restore BGP global: %w", err)
 	}
-	logger.Info("loaded applied BGP state; controller will restore peers and paths", "peers", len(applied.Peers), "paths", len(applied.Paths), "advertisements", len(applied.Advertisements), "hash", bgpdaemon.Hash(applied))
+	if err := applyAppliedPolicies(ctx, server, applied); err != nil {
+		return fmt.Errorf("restore BGP policy: %w", err)
+	}
+	for _, peer := range sortedPeers(applied.Peers) {
+		if err := server.AddPeer(ctx, &gobgpapi.AddPeerRequest{Peer: appliedPeer(peer, applied.Global)}); err != nil {
+			return fmt.Errorf("restore BGP peer %s: %w", peer.Address, err)
+		}
+	}
+	if err := restoreAppliedPaths(ctx, server, &applied); err != nil {
+		return err
+	}
+	if err := refreshDynamicPathPolicies(ctx, server, applied); err != nil {
+		return fmt.Errorf("restore BGP dynamic policy refresh: %w", err)
+	}
+	if err := bgpdaemon.WriteApplied(statePath, applied); err != nil {
+		return fmt.Errorf("persist restored BGP path UUIDs: %w", err)
+	}
+	logger.Info("restored applied BGP state", "peers", len(applied.Peers), "paths", len(applied.Paths), "advertisements", len(applied.Advertisements), "hash", bgpdaemon.Hash(applied))
 	return nil
 }
 
