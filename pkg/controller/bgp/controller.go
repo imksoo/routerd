@@ -2216,10 +2216,6 @@ func fibRoutesFromDestination(dst *gobgpapi.Destination, allowed []netip.Prefix,
 	return []FIBRoute{{Prefix: prefix, NextHops: nextHops}}
 }
 
-func mobilityOwnerBGPRoute(communities []string) bool {
-	return bgpstate.HasCommunity(communities, bgpstate.MobilityCommunityOwner)
-}
-
 func invalidMobilityLivenessMarkerPrefixes(markers map[string]string, mobilityPools []netip.Prefix) []string {
 	seen := map[string]bool{}
 	var out []string
