@@ -577,12 +577,12 @@ func (r doctorRunner) doctorSAMOwnerTableRouteChecks(pool string, status map[str
 		}
 		name := label + " " + address
 		actual := actualRoutes[normalizeDoctorIPv4RoutePrefix(address)]
-		if badLine := doctorSAMForbiddenLocalOwnerRoute(actual); badLine != "" {
-			checks = append(checks, doctorCheck{Area: "sam", Name: name, Status: doctorFail, Detail: appendDoctorDetail("expected local/provider-owned route, actual "+badLine, "actual FIB snapshot has stale BGP/SAM route"), Remedy: "reconcile routerd and remove stale remote /32 FIB state; expected local/cloud route to win"})
-			continue
-		}
 		command := doctorRunDiagnosticCommand(ctx, "ip route get "+ip, "ip", "-4", "route", "get", ip)
 		if !command.OK {
+			if badLine := doctorSAMForbiddenLocalOwnerRoute(actual); badLine != "" {
+				checks = append(checks, doctorCheck{Area: "sam", Name: name, Status: doctorFail, Detail: appendDoctorDetail("expected local/provider-owned route, actual "+badLine, "actual FIB snapshot has stale BGP/SAM route and route get failed"), Remedy: "reconcile routerd and remove stale remote /32 FIB state; expected local/cloud route to win"})
+				continue
+			}
 			checks = append(checks, doctorCheck{Area: "sam", Name: name, Status: doctorWarn, Detail: firstNonEmpty(command.Error, oneLine(command.Output), "route lookup failed"), Remedy: "inspect Linux route selection for local owned address"})
 			continue
 		}

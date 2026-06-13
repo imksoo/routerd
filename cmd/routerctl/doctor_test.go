@@ -234,6 +234,65 @@ func TestDoctorSAMOwnerTableRouteDriftFails(t *testing.T) {
 	}
 }
 
+func TestDoctorSAMOwnerTableRouteDriftAllowsUnselectedOverlayRoute(t *testing.T) {
+	oldRun := doctorRunDiagnosticCommand
+	defer func() { doctorRunDiagnosticCommand = oldRun }()
+	doctorRunDiagnosticCommand = func(_ context.Context, label, name string, args ...string) diagnoseCommandCheck {
+		if label == "ip -4 route show table main" {
+			return diagnoseCommandCheck{
+				Name: label,
+				OK:   true,
+				Stdout: strings.Join([]string{
+					"10.77.60.7 dev ens5 scope link metric 1",
+					"10.77.60.7 via 10.255.0.28 dev samtc72ffb1610c proto bgp src 10.77.60.4 metric 200",
+				}, "\n") + "\n",
+				Output: strings.Join([]string{
+					"10.77.60.7 dev ens5 scope link metric 1",
+					"10.77.60.7 via 10.255.0.28 dev samtc72ffb1610c proto bgp src 10.77.60.4 metric 200",
+				}, "\n") + "\n",
+			}
+		}
+		return diagnoseCommandCheck{
+			Name:   label,
+			OK:     true,
+			Stdout: "10.77.60.7 dev ens5 src 10.77.60.4 uid 1000",
+			Output: "10.77.60.7 dev ens5 src 10.77.60.4 uid 1000",
+		}
+	}
+
+	configPath, statePath := writeDoctorSAMFixture(t)
+	store := openDoctorState(t, statePath)
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"plannerPhase":                   "BGPPlanned",
+		"ownershipResolverPhase":         "Resolved",
+		"ownershipResolverConflictCount": 0,
+		"ownershipResolverOwnerTable": []map[string]any{{
+			"address":          "10.77.60.7/32",
+			"state":            "OK",
+			"class":            "LocalHomeOwned",
+			"ownerNode":        "azure-router",
+			"localNode":        "azure-router",
+			"localProviderRef": "azure-provider",
+		}},
+	}); err != nil {
+		t.Fatalf("save mobility status: %v", err)
+	}
+	closeDoctorState(t, store)
+
+	var out bytes.Buffer
+	if err := run([]string{"doctor", "sam", "--config", configPath, "--state-file", statePath, "-o", "json"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("doctor sam: %v\n%s", err, out.String())
+	}
+	var report doctorReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("unmarshal doctor report: %v\n%s", err, out.String())
+	}
+	check := findDoctorCheck(t, report, "MobilityPool/cloudedge owner-table route drift 10.77.60.7/32")
+	if check.Status != doctorPass || !strings.Contains(check.Detail, "dev ens5") || !strings.Contains(check.Detail, "samtc72ffb1610c") {
+		t.Fatalf("check = %#v, want pass with selected local route and snapshot context", check)
+	}
+}
+
 func TestDoctorSAMFederationDiscoveryWarnsWhenNoPeerDiscoveryEvents(t *testing.T) {
 	configPath, statePath := writeDoctorSAMFederationFixture(t)
 	store := openDoctorState(t, statePath)
