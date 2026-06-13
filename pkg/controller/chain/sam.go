@@ -599,6 +599,9 @@ func (c SAMController) cleanupRemovedCaptures(ctx context.Context, statuses []ro
 			continue
 		}
 		if samSkipRemovedCaptureTeardown(status) {
+			if err := deleter.DeleteObject(api.HybridAPIVersion, "RemoteAddressClaim", status.Name); err != nil {
+				return err
+			}
 			continue
 		}
 		if err := c.teardownRemovedCapture(ctx, status, applier, deleter); err != nil {

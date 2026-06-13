@@ -467,7 +467,7 @@ func TestSAMControllerCleansRemovedProviderSecondaryReturnPolicyRoute(t *testing
 	}
 }
 
-func TestSAMControllerKeepsTransientMissingBGPDynamicProviderCapture(t *testing.T) {
+func TestSAMControllerDropsMissingBGPDynamicProviderCaptureStatusWithoutHostTeardown(t *testing.T) {
 	router := &api.Router{}
 	store := &samStore{
 		objects: map[string]map[string]any{},
@@ -500,8 +500,8 @@ func TestSAMControllerKeepsTransientMissingBGPDynamicProviderCapture(t *testing.
 	if len(applier.calls) != 0 {
 		t.Fatalf("calls = %#v, want no teardown for transient missing BGP dynamic claim", applier.calls)
 	}
-	if store.deleted[api.HybridAPIVersion+"/RemoteAddressClaim/bgp-cloudedge-172-31-28-50"] {
-		t.Fatalf("BGP dynamic claim status was deleted")
+	if !store.deleted[api.HybridAPIVersion+"/RemoteAddressClaim/bgp-cloudedge-172-31-28-50"] {
+		t.Fatalf("BGP dynamic claim status was not deleted: %#v", store.deleted)
 	}
 }
 
