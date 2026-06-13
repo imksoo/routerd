@@ -53,11 +53,10 @@ func runGracefulStopHandoff(ctx context.Context, router *api.Router, store *rout
 		return nil
 	}
 	prepare := mobilitycontroller.Controller{
-		Router:                      drained,
-		Store:                       store,
-		BGPPaths:                    opts.BGPPaths,
-		MemberSetSync:               opts.MemberSetSync,
-		SuppressProviderDeprovision: true,
+		Router:        drained,
+		Store:         store,
+		BGPPaths:      opts.BGPPaths,
+		MemberSetSync: opts.MemberSetSync,
 	}
 	if err := prepare.Reconcile(ctx); err != nil {
 		return fmt.Errorf("prepare graceful mobility stop: %w", err)

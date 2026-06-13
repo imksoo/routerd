@@ -35,7 +35,6 @@ type bgpDeliveryPlannerInput struct {
 	ForwardingObserved   bool
 	ForwardingEnabled    bool
 	ForwardingObservedAt time.Time
-	SuppressDeprovision  bool
 	Now                  time.Time
 }
 
@@ -60,9 +59,8 @@ func planBGPMobilityDelivery(in bgpDeliveryPlannerInput) (bgpDeliveryPlannerResu
 		now = time.Now().UTC()
 	}
 	decisions := decisionsByAddress(in.Decisions)
-	failedActions := latestFailedProviderActions(in.ActionJournal)
-	paths, providerCapturedAddrs, seized := planBGPAdvertisements(in.Source, in.Self, in.Decisions, in.Placement, failedActions)
-	candidates := planCaptureCandidates(in.Self, in.Members, decisions, in.Placement, in.InstalledNextHops, in.RIBObserved, in.PreviousPlans, in.ObservedSelfCaptures, poolPrefix, now)
+	paths, providerCapturedAddrs, seized := planBGPAdvertisements(in.Source, in.Self, in.Decisions, in.Placement)
+	candidates := planCaptureCandidates(in.Self, in.Members, decisions, in.Placement, in.InstalledNextHops, in.ObservedSelfCaptures, poolPrefix, now)
 	actionPlans, err := planCaptureActionPlans(in, candidates)
 	if err != nil {
 		return bgpDeliveryPlannerResult{}, err
@@ -78,20 +76,18 @@ func planBGPMobilityDelivery(in bgpDeliveryPlannerInput) (bgpDeliveryPlannerResu
 	}, nil
 }
 
-func planBGPAdvertisements(source string, self memberPlanInfo, decisions []ownershipDecision, placement PlacementDecision, failedActions map[string]routerstate.ActionExecutionRecord) ([]bgpdaemon.AppliedPath, []string, int) {
+func planBGPAdvertisements(source string, self memberPlanInfo, decisions []ownershipDecision, placement PlacementDecision) ([]bgpdaemon.AppliedPath, []string, int) {
 	var out []bgpdaemon.AppliedPath
 	providerCaptured := map[string]bool{}
 	seized := 0
 	for _, decision := range decisions {
 		if decision.Class == ownershipClassConfirmedCapture {
 			if !self.MaintenanceDrain {
-				if _, failed := failedActions[normalizeAddressString(decision.Address)]; !failed {
-					if address := normalizeAddressString(decision.Address); address != "" {
-						providerCaptured[address] = true
-					}
-					if placement.Seize {
-						seized++
-					}
+				if address := normalizeAddressString(decision.Address); address != "" {
+					providerCaptured[address] = true
+				}
+				if placement.Seize {
+					seized++
 				}
 			}
 		}
@@ -137,7 +133,7 @@ func bgpDecisionSourceType(decision ownershipDecision) string {
 	}
 }
 
-func planCaptureCandidates(self memberPlanInfo, members map[string]memberPlanInfo, decisions map[string]ownershipDecision, placement PlacementDecision, installedNextHops map[string][]string, ribObserved bool, previousPlans []dynamicconfig.ActionPlan, observedSelfIPs map[string]bool, poolPrefix netip.Prefix, now time.Time) map[string]bgpTrapCandidate {
+func planCaptureCandidates(self memberPlanInfo, members map[string]memberPlanInfo, decisions map[string]ownershipDecision, placement PlacementDecision, installedNextHops map[string][]string, observedSelfIPs map[string]bool, poolPrefix netip.Prefix, now time.Time) map[string]bgpTrapCandidate {
 	out := map[string]bgpTrapCandidate{}
 	if self.Capture.Type != "provider-secondary-ip" || !placement.Active {
 		return out
@@ -174,31 +170,6 @@ func planCaptureCandidates(self memberPlanInfo, members map[string]memberPlanInf
 			continue
 		}
 		out[address] = bgpTrapCandidate{PathSig: bgpTrapPathSig(address, cleanNextHops), LastSeenAt: now.UTC(), Seize: placement.Seize}
-	}
-	for address, candidate := range previousBGPTrapCandidateAddresses(previousPlans, poolPrefix) {
-		decision, ok := decisions[address]
-		if !ok || !decisionEligibleForCapture(decision, self, members, placement) {
-			continue
-		}
-		if decision.Class == ownershipClassConfirmedCapture {
-			if confirmedCaptureObservedOnSelf(decision, self, observedSelfIPs) {
-				out[address] = bgpTrapCandidate{ProtectOnly: true}
-			}
-			continue
-		}
-		if !routeTableCaptureAllowed(decision, self) {
-			continue
-		}
-		if _, desired := out[address]; desired {
-			continue
-		}
-		if !ribObserved || bgpTrapCandidateWithinMissingHold(candidate, now) {
-			if candidate.LastSeenAt.IsZero() {
-				candidate.LastSeenAt = now.UTC()
-			}
-			candidate.Seize = placement.Seize
-			out[address] = candidate
-		}
 	}
 	return out
 }
@@ -278,7 +249,7 @@ func planCaptureActionPlans(in bgpDeliveryPlannerInput, candidates map[string]bg
 	if in.Self.Capture.Type != "provider-secondary-ip" {
 		return nil, nil
 	}
-	return bgpProviderActionPlans(in.PoolName, in.Self.NodeRef, in.Spec, candidates, in.PreviousPlans, in.Profiles, in.ActionJournal, in.ObservedSelfIPs, in.ObservedSelfIPsOK, in.ObservedSelfIPsAt, in.ForwardingObserved, in.ForwardingEnabled, in.ForwardingObservedAt, in.SuppressDeprovision, in.Now)
+	return bgpProviderActionPlans(in.PoolName, in.Self.NodeRef, in.Spec, candidates, in.PreviousPlans, in.Profiles, in.ActionJournal, in.ObservedSelfIPs, in.ObservedSelfIPsOK, in.ObservedSelfIPsAt, in.ForwardingObserved, in.ForwardingEnabled, in.ForwardingObservedAt)
 }
 
 func decisionsByAddress(decisions []ownershipDecision) map[string]ownershipDecision {
