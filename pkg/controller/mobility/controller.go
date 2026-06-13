@@ -772,7 +772,7 @@ type providerInventoryOwnerFact struct {
 }
 
 func (c Controller) bgpLivenessMarkerPath(poolName, source, selfNode, groupRef string) (bgpdaemon.AppliedPath, bool) {
-	prefix, ok := c.selfLivenessMarkerPrefix(groupRef)
+	prefix, ok := c.selfLivenessMarkerPrefix(groupRef, selfNode)
 	if !ok {
 		return bgpdaemon.AppliedPath{}, false
 	}
@@ -791,7 +791,7 @@ func (c Controller) bgpLivenessMarkerPath(poolName, source, selfNode, groupRef s
 	}), true
 }
 
-func (c Controller) selfLivenessMarkerPrefix(groupRef string) (string, bool) {
+func (c Controller) selfLivenessMarkerPrefix(groupRef, selfNode string) (string, bool) {
 	if c.Router == nil {
 		return "", false
 	}
@@ -805,11 +805,76 @@ func (c Controller) selfLivenessMarkerPrefix(groupRef string) (string, bool) {
 		}
 		addr, err := netip.ParseAddr(strings.TrimSpace(spec.Listen.Address))
 		if err != nil || !addr.Is4() {
-			return "", false
+			break
 		}
 		return netip.PrefixFrom(addr, 32).String(), true
 	}
+	if prefix, ok := c.selfLivenessMarkerPrefixFromSAMNodeSet(selfNode); ok {
+		return prefix, true
+	}
+	if prefix, ok := c.selfLivenessMarkerPrefixFromBGPRouter(); ok {
+		return prefix, true
+	}
 	return "", false
+}
+
+func (c Controller) selfLivenessMarkerPrefixFromSAMNodeSet(selfNode string) (string, bool) {
+	selfNode = canonicalNodeIdentity(selfNode)
+	if selfNode == "" || c.Router == nil {
+		return "", false
+	}
+	for _, res := range c.Router.Spec.Resources {
+		if res.APIVersion != api.MobilityAPIVersion || res.Kind != "SAMNodeSet" {
+			continue
+		}
+		spec, err := res.SAMNodeSetSpec()
+		if err != nil {
+			continue
+		}
+		for _, node := range spec.Nodes {
+			if canonicalNodeIdentity(node.NodeRef) != selfNode {
+				continue
+			}
+			if prefix, ok := ipv4HostPrefixFromString(node.SAMEndpoint); ok {
+				return prefix, true
+			}
+		}
+	}
+	return "", false
+}
+
+func (c Controller) selfLivenessMarkerPrefixFromBGPRouter() (string, bool) {
+	if c.Router == nil {
+		return "", false
+	}
+	for _, res := range c.Router.Spec.Resources {
+		if res.APIVersion != api.NetAPIVersion || res.Kind != "BGPRouter" {
+			continue
+		}
+		spec, err := res.BGPRouterSpec()
+		if err != nil {
+			continue
+		}
+		if prefix, ok := ipv4HostPrefixFromString(spec.RouterID); ok {
+			return prefix, true
+		}
+	}
+	return "", false
+}
+
+func ipv4HostPrefixFromString(value string) (string, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", false
+	}
+	if prefix, err := netip.ParsePrefix(value); err == nil && prefix.Addr().Is4() {
+		return netip.PrefixFrom(prefix.Addr(), 32).String(), true
+	}
+	addr, err := netip.ParseAddr(value)
+	if err != nil || !addr.Is4() {
+		return "", false
+	}
+	return netip.PrefixFrom(addr, 32).String(), true
 }
 
 func bgpLocalOwnedAddressesFromConfigAndEvents(poolName, selfNode string, spec api.MobilityPoolSpec, events []routerstate.EventRecord, discoveryOwnedAddresses map[string]bool, discoveryOwnedObserved bool, discoverySelfIPs map[string]bool, discoverySelfIPsObserved bool, poolPrefix netip.Prefix, now time.Time) []bgpOwnedAddress {

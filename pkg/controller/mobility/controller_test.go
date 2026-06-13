@@ -927,9 +927,8 @@ func TestControllerBGPModeProviderActionFailureDoesNotRemoveBGPPath(t *testing.T
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("second Reconcile: %v", err)
 	}
-	if len(bgp.upserts) != 1 || bgp.upserts[0].Prefix != "10.88.60.11/32" {
-		t.Fatalf("BGP upserts after failed provider action = %#v, want route retained", bgp.upserts)
-	}
+	pathBySourcePrefix(t, bgp, source, "10.88.60.11/32")
+	pathBySourcePrefix(t, bgp, source, "10.99.0.1/32")
 	part = latestPart(t, store, source)
 	if findActionPlanByAddress(decodeActionPlans(t, part.ActionPlansJSON), "assign-secondary-ip", "10.88.60.10/32") == nil {
 		t.Fatalf("actionPlans after failure = %s, want desired provider assign retained", part.ActionPlansJSON)
@@ -1002,9 +1001,10 @@ func TestControllerBGPModeUsesDiscoveredSelfNICForProviderActions(t *testing.T) 
 	if status["selfCaptureResolved"] != false || !strings.Contains(fmt.Sprint(status["selfCaptureReason"]), "self NIC is unresolved") {
 		t.Fatalf("status = %#v, want explicit self capture blocker", status)
 	}
-	if len(bgp.upserts) != 0 {
-		t.Fatalf("bgp upserts = %#v, want no self-owned path for remote owner", bgp.upserts)
+	if _, ok := maybePathBySourcePrefix(bgp, source, "10.88.60.11/32"); ok {
+		t.Fatalf("bgp paths = %#v, want no self-owned path for remote owner", bgp.paths)
 	}
+	pathBySourcePrefix(t, bgp, source, "10.99.0.1/32")
 
 	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
 		"discoverySelfNICRef":    "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/resolved-router-nic",
@@ -1027,6 +1027,49 @@ func TestControllerBGPModeUsesDiscoveredSelfNICForProviderActions(t *testing.T) 
 	}
 	if assign.Target["nicRef"] != "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/resolved-router-nic" {
 		t.Fatalf("assign target = %#v, want discovered nicRef", assign.Target)
+	}
+}
+
+func TestBGPLivenessMarkerPrefixFallsBackToSAMNodeSetEndpoint(t *testing.T) {
+	spec := plannedPoolSpec()
+	router := routerWithBGPRouter(planningRouterForNode("azure-router", spec))
+	router.Spec.Resources = append(router.Spec.Resources, api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMNodeSet"},
+		Metadata: api.ObjectMeta{Name: "fabric"},
+		Spec: api.SAMNodeSetSpec{Nodes: []api.SAMNodeSpec{
+			{NodeRef: "onprem-router", SAMEndpoint: "10.99.0.1"},
+			{NodeRef: "azure-router", SAMEndpoint: "10.99.0.6/32"},
+		}},
+	})
+
+	path, ok := (Controller{Router: router}).bgpLivenessMarkerPath("cloudedge", DynamicSource("cloudedge", "azure-router"), "azure-router", "cloudedge")
+	if !ok {
+		t.Fatal("bgpLivenessMarkerPath returned false, want SAMNodeSet fallback")
+	}
+	if path.Prefix != "10.99.0.6/32" {
+		t.Fatalf("liveness marker prefix = %q, want SAMNodeSet self endpoint", path.Prefix)
+	}
+	if !stringSliceContains(path.Attrs.Communities, bgpstate.MobilityNodeIdentityCommunity("azure-router")) {
+		t.Fatalf("liveness marker communities = %#v, want azure-router identity", path.Attrs.Communities)
+	}
+}
+
+func TestBGPLivenessMarkerPrefixPrefersEventGroupListen(t *testing.T) {
+	router := routerWithBGPRouter(routerWithEventGroupListen(planningRouterForNode("azure-router", plannedPoolSpec()), "10.99.0.8"))
+	router.Spec.Resources = append(router.Spec.Resources, api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMNodeSet"},
+		Metadata: api.ObjectMeta{Name: "fabric"},
+		Spec: api.SAMNodeSetSpec{Nodes: []api.SAMNodeSpec{
+			{NodeRef: "azure-router", SAMEndpoint: "10.99.0.6"},
+		}},
+	})
+
+	path, ok := (Controller{Router: router}).bgpLivenessMarkerPath("cloudedge", DynamicSource("cloudedge", "azure-router"), "azure-router", "cloudedge")
+	if !ok {
+		t.Fatal("bgpLivenessMarkerPath returned false, want EventGroup listen marker")
+	}
+	if path.Prefix != "10.99.0.8/32" {
+		t.Fatalf("liveness marker prefix = %q, want EventGroup listen address", path.Prefix)
 	}
 }
 

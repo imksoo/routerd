@@ -1105,9 +1105,9 @@ func TestDiscoveryControllerObservedEventFeedsBGPAdvertisement(t *testing.T) {
 	if err := mobility.Reconcile(context.Background()); err != nil {
 		t.Fatalf("mobility Reconcile: %v", err)
 	}
-	if len(bgp.upserts) != 1 || bgp.upserts[0].Prefix != "10.88.60.11/32" || bgp.upserts[0].Source != DynamicSource("cloudedge", "azure-router-a") {
-		t.Fatalf("bgp upserts = %#v, want discovered local /32 advertisement", bgp.upserts)
-	}
+	source := DynamicSource("cloudedge", "azure-router-a")
+	pathBySourcePrefix(t, bgp, source, "10.88.60.11/32")
+	pathBySourcePrefix(t, bgp, source, "10.99.0.1/32")
 }
 
 func TestDiscoveryControllerHonorsScanInterval(t *testing.T) {
