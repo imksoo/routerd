@@ -282,7 +282,6 @@ func TestDynamicRouteSAMViewDerivesProviderSecondaryBGPClaimForForwardingCapture
 			startup.Spec.Resources[i].Spec = spec
 		case resource.APIVersion == api.MobilityAPIVersion && resource.Kind == "MobilityPool":
 			spec := resource.Spec.(api.MobilityPoolSpec)
-			spec.Members[1].Capture.ConfigureOSAddress = true
 			spec.Members[1].Capture.ProviderRef = "aws-lab"
 			spec.Members[1].Capture.NICRef = "eni-a"
 			startup.Spec.Resources[i].Spec = spec
@@ -306,7 +305,7 @@ func TestDynamicRouteSAMViewDerivesProviderSecondaryBGPClaimForForwardingCapture
 	if len(claims) != 1 {
 		t.Fatalf("effective claims = %#v, want one provider-secondary-ip claim", claims)
 	}
-	if claims[0].Address != "10.0.1.11/32" || claims[0].Capture.Type != "provider-secondary-ip" || !claims[0].Capture.ConfigureOSAddress || claims[0].Capture.Interface != "ens5" {
+	if claims[0].Address != "10.0.1.11/32" || claims[0].Capture.Type != "provider-secondary-ip" || claims[0].Capture.ConfigureOSAddress || claims[0].Capture.Interface != "ens5" {
 		t.Fatalf("claim = %#v, want provider-secondary-ip forwarding capture on ens5", claims[0])
 	}
 	applier := &fakeSAMApplier{}
@@ -341,7 +340,6 @@ func TestDynamicRouteSAMViewProviderSecondaryBGPClaimInstallsSAMForwardPath(t *t
 			startup.Spec.Resources[i].Spec = spec
 		case resource.APIVersion == api.MobilityAPIVersion && resource.Kind == "MobilityPool":
 			spec := resource.Spec.(api.MobilityPoolSpec)
-			spec.Members[1].Capture.ConfigureOSAddress = true
 			spec.Members[1].Capture.ProviderRef = "aws-lab"
 			spec.Members[1].Capture.ProviderMode = "eni-secondary-ip"
 			spec.Members[1].Capture.NICRef = "eni-a"
@@ -412,7 +410,6 @@ func TestDynamicRouteSAMViewKeepsProviderSecondaryClaimFromConfirmedCaptureStatu
 			startup.Spec.Resources[i].Spec = spec
 		case resource.APIVersion == api.MobilityAPIVersion && resource.Kind == "MobilityPool":
 			spec := resource.Spec.(api.MobilityPoolSpec)
-			spec.Members[1].Capture.ConfigureOSAddress = true
 			spec.Members[1].Capture.ProviderRef = "aws-lab"
 			spec.Members[1].Capture.NICRef = "eni-a"
 			startup.Spec.Resources[i].Spec = spec
@@ -443,7 +440,7 @@ func TestDynamicRouteSAMViewKeepsProviderSecondaryClaimFromConfirmedCaptureStatu
 	if len(claims) != 1 {
 		t.Fatalf("effective claims = %#v, want confirmed provider capture claim", claims)
 	}
-	if claims[0].Address != "10.0.1.44/32" || claims[0].Capture.Type != "provider-secondary-ip" || !claims[0].Capture.ConfigureOSAddress {
+	if claims[0].Address != "10.0.1.44/32" || claims[0].Capture.Type != "provider-secondary-ip" || claims[0].Capture.ConfigureOSAddress {
 		t.Fatalf("claim = %#v, want confirmed provider-secondary-ip forwarding capture", claims[0])
 	}
 	applier := &fakeSAMApplier{}

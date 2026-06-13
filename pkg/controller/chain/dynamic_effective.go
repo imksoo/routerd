@@ -191,7 +191,7 @@ func bgpMobilityClaimCaptureSupported(capture api.MobilityMemberCapture) bool {
 	case "proxy-arp":
 		return true
 	case "provider-secondary-ip":
-		return capture.ConfigureOSAddress
+		return true
 	default:
 		return false
 	}
