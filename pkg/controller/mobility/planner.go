@@ -564,6 +564,9 @@ func validateProviderCaptureStrategy(provider, strategy string) error {
 }
 
 func providerCaptureActions(strategy string) (assign, unassign string) {
+	if strings.TrimSpace(strategy) == captureStrategyRouteTable {
+		return actionAssignRouteTableRoute, actionUnassignRouteTableRoute
+	}
 	return actionAssignSecondaryIP, actionUnassignSecondaryIP
 }
 

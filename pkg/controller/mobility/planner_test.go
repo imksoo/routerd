@@ -94,15 +94,15 @@ func TestProviderActionPlansRouteTableStrategy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("providerActionPlans: %v", err)
 	}
-	assign := findActionPlanByAddress(plans, actionAssignSecondaryIP, "10.88.60.10/32")
+	assign := findActionPlanByAddress(plans, actionAssignRouteTableRoute, "10.88.60.10/32")
 	if assign == nil {
-		t.Fatalf("plans = %#v, want abstract assign action", plans)
+		t.Fatalf("plans = %#v, want route-table assign action", plans)
 	}
 	if assign.Target["routeTableRef"] != "rtb-123" || assign.Target["nicRef"] != "eni-router" || assign.Target["captureStrategy"] != captureStrategyRouteTable {
 		t.Fatalf("assign target = %#v, want route table target", assign.Target)
 	}
-	if assign.Undo == nil || assign.Undo.Action != actionUnassignSecondaryIP {
-		t.Fatalf("assign undo = %#v, want abstract unassign", assign.Undo)
+	if assign.Undo == nil || assign.Undo.Action != actionUnassignRouteTableRoute {
+		t.Fatalf("assign undo = %#v, want route-table unassign", assign.Undo)
 	}
 	if assign.Parameters["allowReassignment"] != "true" {
 		t.Fatalf("assign parameters = %#v, want allowReassignment", assign.Parameters)

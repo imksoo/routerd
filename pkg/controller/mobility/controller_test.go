@@ -1960,7 +1960,9 @@ func TestControllerBGPModeRouteTableDoesNotCaptureRouterSelfOrLocalHome(t *testi
 	}
 	plans := decodeActionPlans(t, latestPart(t, store, DynamicSource("cloudedge", "azure-router")).ActionPlansJSON)
 	if findActionPlanByAddress(plans, actionAssignSecondaryIP, "10.88.60.4/32") != nil ||
-		findActionPlanByAddress(plans, actionAssignSecondaryIP, "10.88.60.11/32") != nil {
+		findActionPlanByAddress(plans, actionAssignSecondaryIP, "10.88.60.11/32") != nil ||
+		findActionPlanByAddress(plans, actionAssignRouteTableRoute, "10.88.60.4/32") != nil ||
+		findActionPlanByAddress(plans, actionAssignRouteTableRoute, "10.88.60.11/32") != nil {
 		t.Fatalf("plans = %#v, want no provider capture assign for router self or local same-subnet home", plans)
 	}
 	if _, ok := maybePathBySourcePrefix(bgp, DynamicSource("cloudedge", "azure-router"), "10.88.60.4/32"); ok {
@@ -2022,7 +2024,9 @@ func TestControllerBGPModeRouteTableWrongLocalUDRIsDeprovisioned(t *testing.T) {
 	}
 	plans := decodeActionPlans(t, latestPart(t, store, source).ActionPlansJSON)
 	if findActionPlanByAddress(plans, actionAssignSecondaryIP, "10.88.60.4/32") != nil ||
-		findActionPlanByAddress(plans, actionAssignSecondaryIP, "10.88.60.11/32") != nil {
+		findActionPlanByAddress(plans, actionAssignSecondaryIP, "10.88.60.11/32") != nil ||
+		findActionPlanByAddress(plans, actionAssignRouteTableRoute, "10.88.60.4/32") != nil ||
+		findActionPlanByAddress(plans, actionAssignRouteTableRoute, "10.88.60.11/32") != nil {
 		t.Fatalf("plans = %#v, want wrong local UDR assign removed from desired set", plans)
 	}
 	if findActionPlanByAddress(plans, actionUnassignSecondaryIP, "10.88.60.4/32") != nil ||
