@@ -1623,7 +1623,6 @@ func (c *Controller) observeState(ctx context.Context, allowedImportPrefixes []n
 			return bgpstate.State{}, nil, nil, err
 		}
 	}
-	routes = append(routes, fibRoutesFromStatePrefixes(state.Prefixes, allowedImportPrefixes)...)
 	routes = mergeFIBRoutes(routes)
 	routes = c.applyMobilityPreferredSources(routes)
 	limited, truncated := bgpstate.LimitPrefixes(bgpstate.Normalize(state), c.maxPrefixes())
@@ -2217,6 +2216,9 @@ func fibRoutesFromDestination(dst *gobgpapi.Destination, allowed []netip.Prefix,
 	var nextHops []string
 	deleteGrace := time.Duration(0)
 	for _, candidate := range candidates {
+		if bestSet && !candidate.best {
+			continue
+		}
 		if comparePathRank(candidate.rank, bestRank) != 0 || seen[candidate.nextHop] {
 			continue
 		}

@@ -2123,6 +2123,32 @@ func TestFIBRoutesFromDestinationChoosesHigherLocalPref(t *testing.T) {
 	}
 }
 
+func TestFIBRoutesFromDestinationHonorsGoBGPBestPath(t *testing.T) {
+	dst := testRankedDestination("10.77.60.12/32",
+		rankedPath{nextHop: "10.99.0.11", localPref: 200, med: 0, best: true},
+		rankedPath{nextHop: "10.99.0.12", localPref: 200, med: 0},
+		rankedPath{nextHop: "10.99.0.13", localPref: 200, med: 0},
+	)
+	routes := fibRoutesFromDestination(dst, []netip.Prefix{netip.MustParsePrefix("10.77.60.0/24")}, nil)
+	want := []FIBRoute{{Prefix: "10.77.60.12/32", NextHops: []string{"10.99.0.11"}}}
+	if !reflect.DeepEqual(routes, want) {
+		t.Fatalf("routes = %#v, want only GoBGP best path %#v", routes, want)
+	}
+}
+
+func TestFIBRoutesFromDestinationKeepsGoBGPMultipathBest(t *testing.T) {
+	dst := testRankedDestination("10.77.60.12/32",
+		rankedPath{nextHop: "10.99.0.11", localPref: 200, med: 0, best: true},
+		rankedPath{nextHop: "10.99.0.12", localPref: 200, med: 0, best: true},
+		rankedPath{nextHop: "10.99.0.13", localPref: 200, med: 0},
+	)
+	routes := fibRoutesFromDestination(dst, []netip.Prefix{netip.MustParsePrefix("10.77.60.0/24")}, nil)
+	want := []FIBRoute{{Prefix: "10.77.60.12/32", NextHops: []string{"10.99.0.11", "10.99.0.12"}}}
+	if !reflect.DeepEqual(routes, want) {
+		t.Fatalf("routes = %#v, want GoBGP best multipath %#v", routes, want)
+	}
+}
+
 func TestFIBRoutesFromDestinationUsesPeerAddressRewriteFromNeighbor(t *testing.T) {
 	dst := testDestinationWithNeighbor("192.168.123.112/32", "10.252.0.17", "10.252.0.1")
 	routes := fibRoutesFromDestination(
@@ -2190,6 +2216,7 @@ type rankedPath struct {
 	nextHop   string
 	localPref uint32
 	med       uint32
+	best      bool
 }
 
 func testRankedDestination(prefix string, ranked ...rankedPath) *gobgpapi.Destination {
@@ -2203,6 +2230,7 @@ func testRankedDestination(prefix string, ranked ...rankedPath) *gobgpapi.Destin
 		paths = append(paths, &gobgpapi.Path{
 			Family: ipv4Family(),
 			Nlri:   nlri,
+			Best:   path.best,
 			Pattrs: []*anypb.Any{nh, localPref, med},
 		})
 	}
