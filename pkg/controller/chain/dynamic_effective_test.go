@@ -292,6 +292,72 @@ func TestDynamicRouteSAMViewBGPProxyARPExcludesLocalAddresses(t *testing.T) {
 	}
 }
 
+func TestDynamicRouteSAMViewDerivesBGPProviderSecondaryForwardPath(t *testing.T) {
+	startup := startupHybridContextRouter()
+	startup.Spec.Resources = append(startup.Spec.Resources,
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.FederationAPIVersion, Kind: "EventGroup"},
+			Metadata: api.ObjectMeta{Name: "cloudedge"},
+			Spec:     api.EventGroupSpec{NodeName: "oci-router"},
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
+			Metadata: api.ObjectMeta{Name: "samtd2b3cb08326"},
+			Spec: api.TunnelInterfaceSpec{
+				Mode:            "ipip",
+				Local:           "10.99.70.4",
+				Remote:          "10.99.70.1",
+				Address:         "10.255.70.112/31",
+				TrustedUnderlay: true,
+			},
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"},
+			Metadata: api.ObjectMeta{Name: "cloudedge"},
+			Spec: api.MobilityPoolSpec{
+				Prefix:         "10.77.70.0/24",
+				GroupRef:       "cloudedge",
+				DeliveryPolicy: api.MobilityDeliveryPolicy{Mode: "bgp"},
+				Members: []api.MobilityPoolMember{
+					{NodeRef: "onprem-router", Site: "onprem", Role: "onprem", StaticOwnedAddresses: []string{"10.77.70.50/32"}},
+					{
+						NodeRef: "oci-router",
+						Site:    "oci",
+						Role:    "cloud",
+						Capture: api.MobilityMemberCapture{
+							Type:               "provider-secondary-ip",
+							Interface:          "ens3",
+							CaptureStrategy:    "secondary-ip",
+							ConfigureOSAddress: false,
+						},
+					},
+				},
+			},
+		},
+	)
+	store := &dynamicRouteSAMStore{objects: map[string]map[string]any{
+		api.MobilityAPIVersion + "/MobilityPool/cloudedge": {
+			"discoverySelfCapturedAddresses": []any{"10.77.70.50/32"},
+		},
+	}}
+	view, err := buildDynamicRouteSAMView(startup, store, time.Now().UTC(), platform.OSLinux)
+	if err != nil {
+		t.Fatalf("buildDynamicRouteSAMView: %v", err)
+	}
+	if got := countResources(view.EffectiveRouter, api.HybridAPIVersion, "RemoteAddressClaim"); got != 1 {
+		t.Fatalf("effective provider claims = %d, want 1", got)
+	}
+	applier := &fakeSAMApplier{}
+	controller := SAMController{Router: view.EffectiveRouter, Store: store, Lowerings: view.SAMLowerings, OS: platform.OSLinux, Applier: applier}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("SAM reconcile: %v", err)
+	}
+	assertSAMCalls(t, applier.calls, []string{
+		"forward:10.77.70.50/32@ens3<->samtd2b3cb08326",
+		"deassign:10.77.70.50/32",
+	})
+}
+
 func TestDynamicRouteSAMViewBGPProxyARPIdentityOnlyRemoteMatchesInline(t *testing.T) {
 	now := time.Now().UTC()
 	store := mapStore{
@@ -723,8 +789,11 @@ func TestDynamicRouteSAMClaimRemovalTriggersRouteAndSAMCleanup(t *testing.T) {
 	if err := routeController.reconcile(context.Background()); err != nil {
 		t.Fatalf("route reconcile: %v", err)
 	}
-	wantRouteDelete := []string{"ip", "route", "del", "10.0.1.123/32", "dev", "wg-sam", "metric", "200"}
-	if len(commands) != 1 || !reflect.DeepEqual(commands[0], wantRouteDelete) {
+	wantRouteDelete := [][]string{
+		{"ip", "route", "show", "10.0.1.123/32"},
+		{"ip", "route", "del", "10.0.1.123/32", "dev", "wg-sam", "metric", "200"},
+	}
+	if !reflect.DeepEqual(commands, wantRouteDelete) {
 		t.Fatalf("route cleanup commands = %#v, want %#v", commands, wantRouteDelete)
 	}
 
@@ -821,8 +890,11 @@ func TestDynamicRouteSAMViewGatesRouteAndSAMCleanupOnVRRPBackup(t *testing.T) {
 	if err := routeController.reconcile(context.Background()); err != nil {
 		t.Fatalf("route reconcile: %v", err)
 	}
-	wantRouteDelete := []string{"ip", "route", "del", "10.0.1.123/32", "dev", "wg-sam", "metric", "120"}
-	if len(commands) != 1 || !reflect.DeepEqual(commands[0], wantRouteDelete) {
+	wantRouteDelete := [][]string{
+		{"ip", "route", "show", "10.0.1.123/32"},
+		{"ip", "route", "del", "10.0.1.123/32", "dev", "wg-sam", "metric", "120"},
+	}
+	if !reflect.DeepEqual(commands, wantRouteDelete) {
 		t.Fatalf("route cleanup commands = %#v, want %#v", commands, wantRouteDelete)
 	}
 

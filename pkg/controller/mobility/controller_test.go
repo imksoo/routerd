@@ -531,7 +531,7 @@ func TestControllerBGPModeProviderActionFailureDoesNotRemoveBGPPath(t *testing.T
 		ObservedAt: now.Add(-time.Second),
 		ExpiresAt:  now.Add(time.Hour),
 	})
-	saveBGPInstalledNextHops(t, store, map[string][]string{"10.88.60.10/32": {"10.99.0.1"}})
+	saveBGPStatus(t, store, map[string][]string{"10.88.60.10/32": {"10.99.0.1"}}, nil, nil)
 	bgp := &fakeBGPPaths{}
 	source := DynamicSource("cloudedge", "azure-router")
 	controller := Controller{Router: routerWithBGPRouter(planningRouterForNode("azure-router", spec)), Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
@@ -630,7 +630,7 @@ func TestControllerBGPModeUsesDiscoveredSelfNICForProviderActions(t *testing.T) 
 		ObservedAt: now.Add(-time.Second),
 		ExpiresAt:  now.Add(time.Hour),
 	})
-	saveBGPInstalledNextHops(t, store, map[string][]string{"10.88.60.10/32": {"10.99.0.1"}})
+	saveBGPStatus(t, store, map[string][]string{"10.88.60.10/32": {"10.99.0.1"}}, nil, nil)
 	bgp := &fakeBGPPaths{}
 	source := DynamicSource("cloudedge", "azure-router")
 	controller := Controller{Router: routerWithBGPRouter(planningRouterForNode("azure-router", spec)), Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
@@ -681,7 +681,7 @@ func TestControllerBGPModeProviderStateFollowsBestPathOwnerChange(t *testing.T) 
 	store := testStore(t, now)
 	spec := centralizedOwnershipPoolSpec()
 	spec.DeliveryPolicy.Mode = "bgp"
-	saveBGPInstalledNextHops(t, store, map[string][]string{"10.88.60.10/32": {"10.99.0.1"}})
+	saveBGPStatus(t, store, map[string][]string{"10.88.60.10/32": {"10.99.0.1"}}, nil, nil)
 	bgp := &fakeBGPPaths{}
 	sourceA := DynamicSource("cloudedge", "azure-router-a")
 	sourceB := DynamicSource("cloudedge", "azure-router-b")
@@ -849,7 +849,7 @@ func TestControllerGracefulStopSuppressesProviderDeprovision(t *testing.T) {
 	}
 }
 
-func TestControllerBGPModeProviderCaptureSuccessAdvertisesPlannedDrainTakeover(t *testing.T) {
+func TestControllerBGPModeProviderCaptureSuccessDoesNotAdvertisePlannedDrainTakeover(t *testing.T) {
 	now := time.Date(2026, 6, 2, 10, 0, 0, 0, time.UTC)
 	store := testStore(t, now)
 	spec := awsFailoverPoolSpec()
@@ -883,13 +883,12 @@ func TestControllerBGPModeProviderCaptureSuccessAdvertisesPlannedDrainTakeover(t
 	if err := controllerB.Reconcile(context.Background()); err != nil {
 		t.Fatalf("router-b Reconcile: %v", err)
 	}
-	path := pathBySourcePrefix(t, bgp, DynamicSource("cloudedge", "aws-router-b"), "10.88.60.11/32")
-	if path.Attrs.LocalPref != bgpMobilityLocalPrefBase+1 {
-		t.Fatalf("captured path localPref = %d, want active provider-captured path", path.Attrs.LocalPref)
+	if _, ok := maybePathBySourcePrefix(bgp, DynamicSource("cloudedge", "aws-router-b"), "10.88.60.11/32"); ok {
+		t.Fatalf("paths = %#v, provider capture must not advertise home ownership", bgp.paths)
 	}
 	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
-	if fmt.Sprint(status["generatedProviderCapturedBGPPaths"]) != "1" || fmt.Sprint(status["generatedSeizedBGPPaths"]) != "0" {
-		t.Fatalf("status = %#v, want provider-captured=1 seized=0", status)
+	if fmt.Sprint(status["generatedProviderCapturedBGPPaths"]) != "0" || fmt.Sprint(status["generatedSeizedBGPPaths"]) != "0" {
+		t.Fatalf("status = %#v, want provider-captured=0 seized=0", status)
 	}
 }
 
@@ -1014,10 +1013,10 @@ func TestControllerBGPModeReappliesForwardingWhenProviderObservedDisabled(t *tes
 	store := testStore(t, now)
 	spec := awsFailoverPoolSpec()
 	spec.DeliveryPolicy.Mode = "bgp"
-	saveBGPInstalledNextHops(t, store, map[string][]string{
+	saveBGPStatus(t, store, map[string][]string{
 		"10.88.60.10/32": {"10.99.0.1"},
 		"10.88.60.12/32": {"10.99.0.3"},
-	})
+	}, nil, nil)
 	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
 		"discoverySelfNICRef":            "eni-a",
 		"discoverySelfSubnetRef":         "subnet-a",
@@ -1223,7 +1222,7 @@ func TestControllerBGPModeStandbySeizesTrapAfterActiveLivenessHoldDown(t *testin
 	}
 }
 
-func TestControllerBGPModeSeizeSuccessAdvertisesTrapImmediately(t *testing.T) {
+func TestControllerBGPModeSeizeSuccessDoesNotAdvertiseTrapAsOwner(t *testing.T) {
 	now := time.Date(2026, 6, 3, 11, 0, 0, 0, time.UTC)
 	store := testStore(t, now)
 	spec := awsFailoverPoolSpec()
@@ -1241,16 +1240,15 @@ func TestControllerBGPModeSeizeSuccessAdvertisesTrapImmediately(t *testing.T) {
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
-	path := pathBySourcePrefix(t, bgp, DynamicSource("cloudedge", "aws-router-b"), "10.88.60.12/32")
-	if path.Attrs.LocalPref != bgpMobilityLocalPrefBase+1 || !stringSliceContains(path.Attrs.Communities, bgpMobilityCommunityRoleCloud) {
-		t.Fatalf("path attrs = %#v, want active cloud seized owner", path.Attrs)
+	if _, ok := maybePathBySourcePrefix(bgp, DynamicSource("cloudedge", "aws-router-b"), "10.88.60.12/32"); ok {
+		t.Fatalf("paths = %#v, provider capture must not advertise home ownership", bgp.paths)
 	}
 	if _, ok := maybePathBySourcePrefix(bgp, DynamicSource("cloudedge", "aws-router-b"), "10.88.60.10/32"); ok {
 		t.Fatalf("paths = %#v, want no BGP path for trap without successful provider capture", bgp.paths)
 	}
 	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
-	if fmt.Sprint(status["generatedSeizedBGPPaths"]) != "1" {
-		t.Fatalf("status = %#v, want generatedSeizedBGPPaths=1", status)
+	if fmt.Sprint(status["generatedSeizedBGPPaths"]) != "0" {
+		t.Fatalf("status = %#v, want generatedSeizedBGPPaths=0", status)
 	}
 }
 
@@ -1405,11 +1403,11 @@ func TestControllerBGPModeProviderTrapRecapturesAfterSuccessfulRelease(t *testin
 		seedSucceededBGPCaptureAction(t, store, "aws-provider", "eni-a", "aws-router-a", address, "assign-secondary-ip", 1, now.Add(-3*time.Minute))
 		seedSucceededBGPCaptureAction(t, store, "aws-provider", "eni-a", "aws-router-a", address, "unassign-secondary-ip", 1, now.Add(-2*time.Minute))
 	}
-	saveBGPInstalledNextHops(t, store, map[string][]string{
+	saveBGPStatus(t, store, map[string][]string{
 		"10.88.60.10/32": {"10.99.0.1"},
 		"10.88.60.12/32": {"10.99.0.3"},
 		"10.88.60.13/32": {"10.99.0.4"},
-	})
+	}, nil, nil)
 
 	bgp := &fakeBGPPaths{}
 	router := routerWithBGPRouter(planningRouterForNode("aws-router-a", spec))
@@ -1500,6 +1498,7 @@ func TestControllerBGPModeRouteTableDoesNotCaptureRouterSelfOrLocalHome(t *testi
 		"nextHopIPAddress": "10.88.60.4",
 	}
 	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"discoveryOwnedAddresses": []string{"10.88.60.11/32"},
 		"discoveryLocalInventory": []map[string]any{
 			{"address": "10.88.60.4/32", "nicRef": "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic", "subnetRef": "/subnets/azure", "providerRef": "azure-provider", "resourceType": "router-nic", "primary": true},
 			{"address": "10.88.60.11/32", "nicRef": "/subscriptions/sub-1/resourceGroups/rg-app/providers/Microsoft.Network/networkInterfaces/client-nic", "subnetRef": "/subnets/azure", "providerRef": "azure-provider", "resourceType": "instance-nic"},
@@ -1528,6 +1527,32 @@ func TestControllerBGPModeRouteTableDoesNotCaptureRouterSelfOrLocalHome(t *testi
 		t.Fatalf("paths = %#v, want no BGP advertisement for router self management IP", bgp.paths)
 	}
 	pathBySourcePrefix(t, bgp, DynamicSource("cloudedge", "azure-router"), "10.88.60.11/32")
+}
+
+func TestControllerBGPModeProviderTrapRejectsUnknownBGPOnlyAddress(t *testing.T) {
+	now := time.Date(2026, 6, 9, 23, 2, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := plannedPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	saveBGPInstalledNextHops(t, store, map[string][]string{
+		"10.88.60.44/32": {"10.99.0.200"},
+	})
+
+	bgp := &fakeBGPPaths{}
+	controller := Controller{Router: routerWithBGPRouter(planningRouterForNode("azure-router", spec)), Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	plans := decodeActionPlans(t, latestPart(t, store, DynamicSource("cloudedge", "azure-router")).ActionPlansJSON)
+	if findActionPlanByAddress(plans, actionAssignSecondaryIP, "10.88.60.44/32") != nil {
+		t.Fatalf("plans = %#v, want BGP-only unknown address to stay out of provider capture", plans)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	decisions := ownershipStatusDecisions(t, status["ownershipResolverDecisions"])
+	decision := ownershipStatusDecisionByAddress(t, decisions, "10.88.60.44/32")
+	if decision["class"] != ownershipClassUnknown || decision["source"] != "bgp-rib" {
+		t.Fatalf("decision = %#v, want unknown bgp-rib address", decision)
+	}
 }
 
 func TestControllerBGPModeRouteTableWrongLocalUDRIsDeprovisioned(t *testing.T) {
@@ -1629,6 +1654,7 @@ func TestControllerBGPModeProviderTrapRIBStartupIsConservative(t *testing.T) {
 	store := testStore(t, now)
 	spec := plannedPoolSpec()
 	spec.DeliveryPolicy.Mode = "bgp"
+	spec.Members[0].StaticOwnedAddresses = []string{"10.88.60.10/32"}
 	router := routerWithBGPRouter(planningRouterForNode("azure-router", spec))
 	saveBGPInstalledNextHops(t, store, map[string][]string{"10.88.60.10/32": {"10.99.0.1"}})
 	bgp := &fakeBGPPaths{}
@@ -1745,6 +1771,7 @@ func TestControllerBGPModeObservedSelfStaleCaptureIsDeprovisionedWithoutPriorAct
 	spec := awsFailoverPoolSpec()
 	spec.DeliveryPolicy.Mode = "bgp"
 	address := "10.88.60.10/32"
+	saveBGPStatus(t, store, map[string][]string{}, nil, nil)
 	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
 		"discoverySelfPrivateIPs":        []string{"10.88.60.4/32"},
 		"discoverySelfCapturedAddresses": []string{address},
@@ -1769,7 +1796,8 @@ func TestControllerBGPModeObservedSelfStaleCaptureIsDeprovisionedWithoutPriorAct
 	if unassign.Target["nicRef"] != "eni-a" {
 		t.Fatalf("unassign target = %#v, want self capture NIC eni-a", unassign.Target)
 	}
-	if unassign.Parameters[bgpPathSigParam] != "deprovision:"+address || unassign.Parameters[captureParamHolder] != "aws-router-a" {
+	wantPathSig := "deprovision:" + address + ":observed:" + now.Format(time.RFC3339Nano)
+	if unassign.Parameters[bgpPathSigParam] != wantPathSig || unassign.Parameters[captureParamHolder] != "aws-router-a" {
 		t.Fatalf("unassign parameters = %#v, want stale cleanup path fence", unassign.Parameters)
 	}
 	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
@@ -1777,6 +1805,32 @@ func TestControllerBGPModeObservedSelfStaleCaptureIsDeprovisionedWithoutPriorAct
 	decision := ownershipStatusDecisionByAddress(t, decisions, address)
 	if decision["class"] != ownershipClassStaleCapture || decision["suppressionReason"] != "self-captured-secondary" {
 		t.Fatalf("decision = %#v, want self-captured-secondary stale capture", decision)
+	}
+}
+
+func TestControllerBGPModeObservedSelfStaleCaptureWithInstalledBGPRouteIsProtected(t *testing.T) {
+	now := time.Date(2026, 6, 10, 18, 40, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	address := "10.88.60.12/32"
+	saveBGPStatus(t, store, map[string][]string{address: {"10.99.0.3"}}, nil, nil)
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"discoverySelfPrivateIPs":        []string{"10.88.60.4/32"},
+		"discoverySelfCapturedAddresses": []string{address},
+		"discoveryLastScanAt":            now.Format(time.RFC3339Nano),
+	}); err != nil {
+		t.Fatalf("SaveObjectStatus: %v", err)
+	}
+
+	bgp := &fakeBGPPaths{}
+	controller := Controller{Router: routerWithBGPRouter(planningRouterForNode("aws-router-a", spec)), Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	plans := decodeActionPlans(t, latestPart(t, store, DynamicSource("cloudedge", "aws-router-a")).ActionPlansJSON)
+	if findActionPlanByAddress(plans, "unassign-secondary-ip", address) != nil {
+		t.Fatalf("plans = %#v, BGP-installed captured address must not be stale-cleaned during owner convergence", plans)
 	}
 }
 
@@ -1789,6 +1843,7 @@ func TestControllerBGPModeObservedSelfStaleCaptureUsesDiscoveredSelfNIC(t *testi
 	spec.Members[3].OwnershipDiscovery.Mode = "provider-private-ip"
 	discoveredNIC := "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic"
 	address := "10.88.60.10/32"
+	saveBGPStatus(t, store, map[string][]string{}, nil, nil)
 	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
 		"discoverySelfNICRef":            discoveredNIC,
 		"discoverySelfPrivateIPs":        []string{"10.88.60.22/32"},
@@ -1827,6 +1882,7 @@ func TestControllerBGPModeObservedSelfStaleCaptureUsesCaptureTargetNIC(t *testin
 	}
 	spec.Members[3].Capture.Target["nicRef"] = "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/target-router-nic"
 	address := "10.88.60.10/32"
+	saveBGPStatus(t, store, map[string][]string{}, nil, nil)
 	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
 		"discoverySelfPrivateIPs":        []string{"10.88.60.4/32"},
 		"discoverySelfCapturedAddresses": []string{address},
@@ -1970,7 +2026,7 @@ func TestControllerBGPModeConfirmedCaptureDoesNotDeprovision(t *testing.T) {
 	spec.DeliveryPolicy.Mode = "bgp"
 	address := "10.88.60.12/32"
 	seedSucceededBGPCaptureAction(t, store, "aws-provider", "eni-a", "aws-router-a", address, "assign-secondary-ip", 1, now.Add(-time.Minute))
-	saveBGPInstalledNextHops(t, store, map[string][]string{address: {"10.99.0.200"}})
+	saveBGPStatus(t, store, map[string][]string{address: {"10.99.0.3"}}, nil, nil)
 	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
 		"discoverySelfPrivateIPs":        []string{"10.88.60.4/32"},
 		"discoverySelfCapturedAddresses": []string{address},
@@ -1984,9 +2040,8 @@ func TestControllerBGPModeConfirmedCaptureDoesNotDeprovision(t *testing.T) {
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
-	path := pathBySourcePrefix(t, bgp, DynamicSource("cloudedge", "aws-router-a"), address)
-	if path.Attrs.LocalPref != bgpMobilityLocalPref(1) {
-		t.Fatalf("path localPref = %d, want provider-captured advertisement", path.Attrs.LocalPref)
+	if _, ok := maybePathBySourcePrefix(bgp, DynamicSource("cloudedge", "aws-router-a"), address); ok {
+		t.Fatalf("paths = %#v, provider capture must not advertise home ownership", bgp.paths)
 	}
 	plans := decodeActionPlans(t, latestPart(t, store, DynamicSource("cloudedge", "aws-router-a")).ActionPlansJSON)
 	if findActionPlanByAddress(plans, "unassign-secondary-ip", address) != nil {
@@ -2012,7 +2067,7 @@ func TestControllerBGPModeProtectOnlyCaptureKeepsForwardingEnabled(t *testing.T)
 	stale := "10.88.60.10/32"
 	seedSucceededBGPCaptureAction(t, store, "aws-provider", "eni-a", "aws-router-a", confirmed, "assign-secondary-ip", 1, now.Add(-2*time.Minute))
 	seedSucceededBGPCaptureAction(t, store, "aws-provider", "eni-a", "aws-router-a", stale, "assign-secondary-ip", 1, now.Add(-time.Minute))
-	saveBGPInstalledNextHops(t, store, map[string][]string{confirmed: {"10.99.0.200"}})
+	saveBGPStatus(t, store, map[string][]string{confirmed: {"10.99.0.3"}}, nil, nil)
 	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
 		"discoverySelfPrivateIPs":        []string{"10.88.60.4/32"},
 		"discoverySelfCapturedAddresses": []string{confirmed},

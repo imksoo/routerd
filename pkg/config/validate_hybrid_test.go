@@ -18,6 +18,17 @@ func TestValidateHybridResources(t *testing.T) {
 	}
 }
 
+func TestValidateHybridRemoteClaimConfigureOSAddress(t *testing.T) {
+	router := validHybridRouter()
+	spec := router.Spec.Resources[6].Spec.(api.RemoteAddressClaimSpec)
+	spec.Capture.ConfigureOSAddress = true
+	spec.Capture.Interface = "ens5"
+	router.Spec.Resources[6].Spec = spec
+	if err := Validate(router); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+}
+
 func TestValidateTunnelInterfaceResources(t *testing.T) {
 	router := validTunnelHybridRouter()
 	if err := Validate(router); err != nil {
@@ -225,13 +236,13 @@ func TestValidateHybridFailures(t *testing.T) {
 			want: "spec.capture.nicRef is required",
 		},
 		{
-			name: "remote claim provider configure OS address rejected",
+			name: "remote claim provider configure OS address missing interface",
 			mutate: func(router *api.Router) {
 				spec := router.Spec.Resources[6].Spec.(api.RemoteAddressClaimSpec)
 				spec.Capture.ConfigureOSAddress = true
 				router.Spec.Resources[6].Spec = spec
 			},
-			want: "spec.capture.configureOSAddress=true is not implemented in the MVP",
+			want: "spec.capture.interface is required when spec.capture.configureOSAddress is true",
 		},
 		{
 			name: "remote claim proxy arp missing interface",

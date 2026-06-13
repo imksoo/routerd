@@ -41,6 +41,34 @@ func TestValidateMobilityPool(t *testing.T) {
 	}
 }
 
+func TestValidateMobilityPoolAllowsProviderCaptureConfigureOSAddress(t *testing.T) {
+	router := mobilityPoolRouter(api.MobilityPoolSpec{
+		Prefix:   "10.88.60.0/24",
+		GroupRef: "cloudedge",
+		Members: []api.MobilityPoolMember{
+			{NodeRef: "onprem-router", Site: "onprem", Role: "onprem"},
+			{
+				NodeRef: "aws-router",
+				Site:    "aws",
+				Role:    "cloud",
+				Capture: api.MobilityMemberCapture{
+					Type:               "provider-secondary-ip",
+					Interface:          "ens5",
+					ProviderRef:        "aws-provider",
+					ProviderMode:       "secondary-ip",
+					NICRef:             "eni-router",
+					ConfigureOSAddress: true,
+				},
+				Placement: api.MobilityMemberPlacement{Group: "aws-edge", Priority: 10},
+			},
+		},
+		DeliveryPolicy: api.MobilityDeliveryPolicy{Mode: "bgp"},
+	})
+	if err := Validate(router); err != nil {
+		t.Fatalf("Validate MobilityPool: %v", err)
+	}
+}
+
 func TestValidateSAMTransportProfile(t *testing.T) {
 	router := samTransportProfileRouter(validSAMTransportProfileSpec())
 	if err := Validate(router); err != nil {

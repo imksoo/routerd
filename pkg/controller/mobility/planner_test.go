@@ -479,11 +479,60 @@ func saveBGPInstalledNextHops(t *testing.T, store interface {
 	}
 }
 
+func bgpOwnerPrefixesForInstalledNextHops(nextHops map[string][]string) []bgpstate.Prefix {
+	ownerByNextHop := map[string]string{
+		"10.99.0.1": "onprem-router",
+		"10.99.0.2": "aws-router-a",
+		"10.99.0.3": "azure-router",
+		"10.99.0.4": "oci-router",
+		"10.99.0.5": "aws-router-b",
+		"10.99.0.6": "azure-router-b",
+	}
+	var out []bgpstate.Prefix
+	for prefix, hops := range nextHops {
+		for _, hop := range hops {
+			owner := strings.TrimSpace(ownerByNextHop[strings.TrimSpace(hop)])
+			if owner == "" {
+				continue
+			}
+			out = append(out, bgpstate.Prefix{
+				Prefix:  prefix,
+				NextHop: hop,
+				Best:    true,
+				Valid:   true,
+				Communities: []string{
+					bgpstate.MobilityCommunityOwner,
+					bgpstate.MobilityNodeIdentityCommunity(owner),
+				},
+			})
+			break
+		}
+	}
+	return out
+}
+
+func bgpOwnerPrefix(prefix, nextHop, owner string) map[string]any {
+	return map[string]any{
+		"prefix":  prefix,
+		"nextHop": nextHop,
+		"best":    true,
+		"valid":   true,
+		"communities": []string{
+			bgpstate.MobilityCommunityOwner,
+			bgpstate.MobilityNodeIdentityCommunity(owner),
+		},
+	}
+}
+
 func saveBGPStatus(t *testing.T, store interface {
 	SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error
 }, nextHops map[string][]string, prefixes []map[string]any, livenessMarkers map[string]string) {
 	t.Helper()
-	if err := store.SaveObjectStatus(api.NetAPIVersion, "BGPRouter", "mobility-bgp", map[string]any{"installedNextHops": nextHops, "prefixes": prefixes, "livenessMarkers": livenessMarkers}); err != nil {
+	rawPrefixes := any(prefixes)
+	if len(prefixes) == 0 {
+		rawPrefixes = bgpOwnerPrefixesForInstalledNextHops(nextHops)
+	}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "BGPRouter", "mobility-bgp", map[string]any{"installedNextHops": nextHops, "prefixes": rawPrefixes, "livenessMarkers": livenessMarkers}); err != nil {
 		t.Fatalf("SaveObjectStatus(BGPRouter/mobility-bgp): %v", err)
 	}
 }

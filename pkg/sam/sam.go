@@ -45,6 +45,7 @@ type CaptureAction struct {
 	ClaimName     string
 	Address       string
 	Interface     string
+	PeerInterface string
 	Key           string
 	Value         string
 	GratuitousARP bool
@@ -225,6 +226,15 @@ func PlanCaptureWithOptions(router *api.Router, targetOS platform.OS, opts PlanO
 		if captureType != "proxy-arp" {
 			if captureType == "provider-secondary-ip" && !spec.Capture.ConfigureOSAddress {
 				actions = append(actions, CaptureAction{Kind: "deassign-os-address", ClaimName: resource.Metadata.Name, Address: address})
+				if strings.TrimSpace(spec.Delivery.Mode) == "bgp" {
+					iface := ResolveCaptureInterface(strings.TrimSpace(spec.Capture.Interface), interfaceAliases)
+					if iface == "" {
+						return nil, fmt.Errorf("%s spec.capture.interface is required for provider-secondary-ip BGP forwarding", resource.ID())
+					}
+					for _, tunnelIface := range bgpDeliveryForwardInterfaces(router) {
+						actions = append(actions, CaptureAction{Kind: "forward-path", ClaimName: resource.Metadata.Name, Address: address, Interface: iface, PeerInterface: tunnelIface})
+					}
+				}
 			}
 			continue
 		}
@@ -239,6 +249,27 @@ func PlanCaptureWithOptions(router *api.Router, targetOS platform.OS, opts PlanO
 		actions = append(actions, CaptureAction{Kind: "proxy-neighbor", ClaimName: resource.Metadata.Name, Address: address, Interface: iface, GratuitousARP: wantsGratuitousARP(spec.Capture)})
 	}
 	return actions, nil
+}
+
+func bgpDeliveryForwardInterfaces(router *api.Router) []string {
+	if router == nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.HybridAPIVersion || resource.Kind != "TunnelInterface" {
+			continue
+		}
+		iface := strings.TrimSpace(resource.Metadata.Name)
+		if iface == "" || seen[iface] {
+			continue
+		}
+		seen[iface] = true
+		out = append(out, iface)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func CaptureExcludesAddress(capture api.AddressCapture, address string) bool {

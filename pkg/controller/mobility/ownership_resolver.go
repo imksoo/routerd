@@ -39,6 +39,7 @@ type ownershipResolverInput struct {
 	ActionJournal     []routerstate.ActionExecutionRecord
 	PreviousPlans     []dynamicconfig.ActionPlan
 	InstalledNextHops map[string][]string
+	BGPHomeOwnerNodes map[string]string
 	Now               time.Time
 }
 
@@ -93,6 +94,7 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 	remoteHomeConflicts := duplicateProviderHomeOwnerFacts(remoteHomeFactSets)
 	localInventory := localInventoryRecordsFromStatus(in.Status, prefix)
 	removeSelfResourceLocalInventory(localInventory, statusString(in.Status["discoverySelfResourceRef"]))
+	discoveryOwned := statusStringSet(in.Status["discoveryOwnedAddresses"], prefix)
 	selfIPs, capturedIPs, selfIPsObserved := selfInventoryAddressSetsFromStatus(in.Status, prefix)
 	captureConfirmIPs := capturedIPs
 	if !statusHasAny(in.Status, "discoverySelfCapturedAddresses") {
@@ -133,6 +135,11 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 		universe[address] = true
 	}
 	for raw := range in.InstalledNextHops {
+		if address, ok := normalizeBGPTrapPrefix(raw, prefix); ok {
+			universe[address] = true
+		}
+	}
+	for raw := range in.BGPHomeOwnerNodes {
 		if address, ok := normalizeBGPTrapPrefix(raw, prefix); ok {
 			universe[address] = true
 		}
@@ -201,16 +208,8 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 		}
 		if capturedIPs[address] {
 			remoteFact, hasRemoteFact := remoteHomeFacts[address]
-			if !hasRemoteFact || strings.TrimSpace(remoteFact.NodeRef) == "" || strings.TrimSpace(remoteFact.NodeRef) == self.NodeRef {
-				if decision.CaptureState == captureStateConfirmed {
-					decision.Class = ownershipClassConfirmedCapture
-					decision.AdvertiseOwnerNode = self.NodeRef
-					decision.AdvertiseReason = "confirmed-capture"
-					decision.Source = "provider-action"
-					decision.Fresh = true
-					out = append(out, decision)
-					continue
-				}
+			bgpOwner := strings.TrimSpace(in.BGPHomeOwnerNodes[address])
+			if (!hasRemoteFact || strings.TrimSpace(remoteFact.NodeRef) == "" || strings.TrimSpace(remoteFact.NodeRef) == self.NodeRef) && (bgpOwner == "" || bgpOwner == self.NodeRef) {
 				if decision.CaptureState == captureStateNone {
 					decision.CaptureState = captureStateStale
 					decision.CaptureHolderNode = self.NodeRef
@@ -317,7 +316,6 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 			selfProviderRef := strings.TrimSpace(self.Capture.ProviderRef)
 			if decision.CaptureState == captureStateConfirmed && (homeProviderRef == "" || selfProviderRef == "" || homeProviderRef == selfProviderRef) {
 				decision.Class = ownershipClassConfirmedCapture
-				decision.AdvertiseOwnerNode = self.NodeRef
 				decision.AdvertiseReason = "confirmed-capture"
 				decision.Source = "provider-action"
 				out = append(out, decision)
@@ -334,8 +332,10 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 			continue
 		}
 		if decision.CaptureState == captureStateConfirmed {
+			if owner := strings.TrimSpace(in.BGPHomeOwnerNodes[address]); owner != "" && owner != self.NodeRef {
+				decision.HomeOwnerNode = owner
+			}
 			decision.Class = ownershipClassConfirmedCapture
-			decision.AdvertiseOwnerNode = self.NodeRef
 			decision.AdvertiseReason = "confirmed-capture"
 			decision.Source = "provider-action"
 			decision.Fresh = true
@@ -358,7 +358,7 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 			out = append(out, decision)
 			continue
 		}
-		if rec, ok := localInventory[address]; ok {
+		if rec, ok := localInventory[address]; ok && discoveryOwned[address] {
 			decision.Class = ownershipClassLocalHomeOwned
 			decision.HomeOwnerNode = self.NodeRef
 			decision.HomeProviderRef = firstNonEmpty(rec.ProviderRef, self.OwnershipDiscovery.ProviderRef, self.Capture.ProviderRef)
@@ -377,6 +377,31 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 			decision.Fresh = true
 			out = append(out, decision)
 			continue
+		}
+		if owner := strings.TrimSpace(in.BGPHomeOwnerNodes[address]); owner != "" {
+			if owner == self.NodeRef {
+				if decision.CaptureState == captureStateStale {
+					decision.Class = ownershipClassStaleCapture
+					decision.SuppressionReason = "capture-not-desired"
+					out = append(out, decision)
+					continue
+				}
+			} else if decision.CaptureState == captureStateConfirmed {
+				decision.HomeOwnerNode = owner
+				decision.Source = "bgp-owner"
+				decision.Class = ownershipClassConfirmedCapture
+				decision.AdvertiseReason = "confirmed-capture"
+				decision.Source = "provider-action"
+			} else {
+				decision.HomeOwnerNode = owner
+				decision.Source = "bgp-owner"
+				decision.Class = ownershipClassRemoteHomeOwned
+				decision.SuppressionReason = "bgp-owner"
+			}
+			if decision.Class != ownershipClassUnknown {
+				out = append(out, decision)
+				continue
+			}
 		}
 		if decision.CaptureState == captureStateStale {
 			decision.Class = ownershipClassStaleCapture
@@ -932,7 +957,11 @@ func ownershipResolverFIBVerdict(d ownershipDecision) (string, string) {
 		if strings.TrimSpace(d.HomeOwnerNode) != "" {
 			return mobilityfib.ActionDeliverRemote, firstNonEmpty(d.SuppressionReason, "remote-owner")
 		}
-	case ownershipClassLocalHomeOwned, ownershipClassLocalRouterSelf, ownershipClassStaticOwned, ownershipClassStaticHandover, ownershipClassConfirmedCapture:
+	case ownershipClassConfirmedCapture:
+		if owner := strings.TrimSpace(d.HomeOwnerNode); owner != "" && owner != strings.TrimSpace(d.LocalNodeRef) {
+			return mobilityfib.ActionDeliverRemote, firstNonEmpty(d.AdvertiseReason, "confirmed-capture")
+		}
+	case ownershipClassLocalHomeOwned, ownershipClassLocalRouterSelf, ownershipClassStaticOwned, ownershipClassStaticHandover:
 		if strings.TrimSpace(d.HomeOwnerNode) != "" || strings.TrimSpace(d.LocalNodeRef) != "" || strings.TrimSpace(d.AdvertiseOwnerNode) != "" {
 			return mobilityfib.ActionLocalRoute, firstNonEmpty(d.AdvertiseReason, d.Source, "local-owner")
 		}

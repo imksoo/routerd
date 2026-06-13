@@ -34,6 +34,13 @@ const (
 	ActionWithhold      = "withhold"
 )
 
+const (
+	communityMobilityOwner          = "64512:100"
+	communityMobilitySourceObserved = "64512:110"
+	communityMobilitySourceStatic   = "64512:111"
+	communityMobilitySourceHandover = "64512:112"
+)
+
 type Verdict struct {
 	Address   string
 	Action    string
@@ -122,6 +129,30 @@ func (s Snapshot) AdmitBGPRoute(prefix netip.Prefix) bool {
 		return false
 	}
 	return strings.TrimSpace(verdict.Action) == ActionDeliverRemote
+}
+
+func (s Snapshot) AdmitBGPPath(prefix netip.Prefix, communities []string) bool {
+	prefix = prefix.Masked()
+	pool, ok := s.poolFor(prefix)
+	if !ok {
+		return true
+	}
+	if prefix.Bits() != 32 {
+		return false
+	}
+	address := prefix.String()
+	if pool.staticLocal[address] {
+		return false
+	}
+	if verdict, ok := pool.verdicts[address]; ok {
+		return strings.TrimSpace(verdict.Action) == ActionDeliverRemote
+	}
+	if !hasCommunity(communities, communityMobilityOwner) {
+		return false
+	}
+	return hasCommunity(communities, communityMobilitySourceObserved) ||
+		hasCommunity(communities, communityMobilitySourceStatic) ||
+		hasCommunity(communities, communityMobilitySourceHandover)
 }
 
 func (s Snapshot) LocalRouteAddresses() []string {
@@ -287,4 +318,14 @@ func sortedKeys(values map[string]bool) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+func hasCommunity(values []string, want string) bool {
+	want = strings.TrimSpace(want)
+	for _, value := range values {
+		if strings.TrimSpace(value) == want {
+			return true
+		}
+	}
+	return false
 }

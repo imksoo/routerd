@@ -7,6 +7,8 @@ package chain
 import (
 	"context"
 	"fmt"
+
+	"github.com/imksoo/routerd/pkg/sam"
 )
 
 type unsupportedSAMProxyNeighborApplier struct{}
@@ -33,6 +35,10 @@ func (unsupportedSAMProxyNeighborApplier) DeleteProxyNeighbor(context.Context, s
 
 func (unsupportedSAMProxyNeighborApplier) EnsureOSAddressAbsent(context.Context, string) (samOSAddressDeassignResult, error) {
 	return samOSAddressDeassignResult{}, nil
+}
+
+func (unsupportedSAMProxyNeighborApplier) ReconcileForwardPaths(context.Context, []sam.CaptureAction) error {
+	return nil
 }
 
 type unsupportedSAMGratuitousARPAnnouncer struct{}

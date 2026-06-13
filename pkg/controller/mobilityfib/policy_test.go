@@ -72,8 +72,22 @@ func TestSnapshotFailsClosedForUnknownMobilityAddress(t *testing.T) {
 	if snapshot.AdmitBGPRoute(netip.MustParsePrefix("10.77.60.12/32")) {
 		t.Fatal("unknown mobility address was admitted; want fail-closed until owner table is populated")
 	}
+	if !snapshot.AdmitBGPPath(netip.MustParsePrefix("10.77.60.12/32"), []string{communityMobilityOwner, communityMobilitySourceObserved}) {
+		t.Fatal("trusted mobility BGP owner path was rejected; want BGP evidence to bridge missing local owner verdict")
+	}
 	if !snapshot.AdmitBGPRoute(netip.MustParsePrefix("192.0.2.12/32")) {
 		t.Fatal("non-mobility address was rejected")
+	}
+}
+
+func TestSnapshotRejectsTrustedBGPPathForLocalStaticOwnedAddress(t *testing.T) {
+	router := testRouter("aws-router-a")
+	spec := router.Spec.Resources[1].Spec.(api.MobilityPoolSpec)
+	spec.Members[0].StaticOwnedAddresses = []string{"10.77.60.10/32"}
+	router.Spec.Resources[1].Spec = spec
+	snapshot := NewSnapshot(router, mapStatusReader{})
+	if snapshot.AdmitBGPPath(netip.MustParsePrefix("10.77.60.10/32"), []string{communityMobilityOwner, communityMobilitySourceObserved}) {
+		t.Fatal("local static-owned mobility address was admitted from BGP")
 	}
 }
 

@@ -19,7 +19,8 @@ import (
 const bgpRouteProtocol = 186
 
 type netlinkFIBSyncer struct {
-	installed map[string]kernelBGPRoute
+	installed       map[string]kernelBGPRoute
+	retainOnMissing map[string]bool
 }
 
 type kernelBGPRoute struct {
@@ -28,12 +29,15 @@ type kernelBGPRoute struct {
 }
 
 func defaultFIBSyncer() FIBSyncer {
-	return &netlinkFIBSyncer{installed: map[string]kernelBGPRoute{}}
+	return &netlinkFIBSyncer{installed: map[string]kernelBGPRoute{}, retainOnMissing: map[string]bool{}}
 }
 
 func (s *netlinkFIBSyncer) SyncBGP(_ context.Context, routes []FIBRoute) (FIBSyncResult, error) {
 	if s.installed == nil {
 		s.installed = map[string]kernelBGPRoute{}
+	}
+	if s.retainOnMissing == nil {
+		s.retainOnMissing = map[string]bool{}
 	}
 	kernel, err := kernelBGPRoutes()
 	if err != nil {
@@ -44,6 +48,8 @@ func (s *netlinkFIBSyncer) SyncBGP(_ context.Context, routes []FIBRoute) (FIBSyn
 	result := FIBSyncResult{
 		Installed:                    map[string]bool{},
 		Unsupported:                  map[string]string{},
+		Retained:                     map[string]bool{},
+		RetainedNextHops:             map[string][]string{},
 		PreferredSource:              map[string]string{},
 		PreferredSourceSkipped:       map[string]bool{},
 		PreferredSourceSkippedReason: map[string]string{},
@@ -59,6 +65,11 @@ func (s *netlinkFIBSyncer) SyncBGP(_ context.Context, routes []FIBRoute) (FIBSyn
 			result.PreferredSourceSkippedReason[route.Prefix] = "LocalAddressMissing"
 			route.PreferredSource = ""
 		}
+		if route.RetainOnMissing {
+			s.retainOnMissing[route.Prefix] = true
+		} else {
+			delete(s.retainOnMissing, route.Prefix)
+		}
 		desired[route.Prefix] = route
 	}
 	desired = filterLocalHostFIBRoutes(desired, localHostPrefixes)
@@ -70,6 +81,8 @@ func (s *netlinkFIBSyncer) SyncBGP(_ context.Context, routes []FIBRoute) (FIBSyn
 	for _, key := range keys {
 		route := normalizeFIBRoute(desired[key])
 		if installed, ok := s.installed[key]; ok && equalFIBRoute(installed.FIB, route) {
+			installed.FIB = route
+			s.installed[key] = installed
 			result.Installed[key] = true
 			if route.PreferredSource != "" {
 				result.PreferredSource[key] = route.PreferredSource
@@ -94,13 +107,17 @@ func (s *netlinkFIBSyncer) SyncBGP(_ context.Context, routes []FIBRoute) (FIBSyn
 		if _, ok := desired[key]; ok {
 			continue
 		}
+		if route.FIB.RetainOnMissing || s.retainOnMissing[key] {
+			result.Installed[key] = true
+			result.Retained[key] = true
+			result.RetainedNextHops[key] = route.FIB.NextHops
+			if route.FIB.PreferredSource != "" {
+				result.PreferredSource[key] = route.FIB.PreferredSource
+			}
+			continue
+		}
 		if err := netlink.RouteDel(&route.Netlink); err != nil {
-			if nl, ok := netlinkRoute(route.FIB); ok {
-				err = netlink.RouteDel(nl)
-			}
-			if err != nil {
-				return result, fmt.Errorf("delete stale BGP route %s: %w", key, err)
-			}
+			return result, fmt.Errorf("delete stale BGP route %s: %w", route.FIB.Prefix, err)
 		}
 		delete(s.installed, key)
 	}

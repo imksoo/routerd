@@ -451,6 +451,13 @@ func (a *fakeSAMApplier) EnsureOSAddressAbsent(_ context.Context, address string
 	return result, nil
 }
 
+func (a *fakeSAMApplier) ReconcileForwardPaths(_ context.Context, paths []sam.CaptureAction) error {
+	for _, path := range paths {
+		a.calls = append(a.calls, "forward:"+path.Address+"@"+path.Interface+"<->"+path.PeerInterface)
+	}
+	return nil
+}
+
 type samStore struct {
 	objects  map[string]map[string]any
 	statuses []routerstate.ObjectStatus

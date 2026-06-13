@@ -22,6 +22,7 @@ type samProxyNeighborApplier interface {
 	EnsureProxyNeighbor(ctx context.Context, address, ifname string) error
 	DeleteProxyNeighbor(ctx context.Context, address, ifname string) error
 	EnsureOSAddressAbsent(ctx context.Context, address string) (samOSAddressDeassignResult, error)
+	ReconcileForwardPaths(ctx context.Context, paths []sam.CaptureAction) error
 }
 
 type samGratuitousARPAnnouncer interface {
@@ -90,6 +91,9 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 	if err := c.reconcileProxyARPInterfaces(ctx, actions); err != nil {
 		return err
 	}
+	if err := c.reconcileForwardPaths(ctx, actions); err != nil {
+		return err
+	}
 	var failures []string
 	deassignResults := map[string]samOSAddressDeassignResult{}
 	garpSent := map[string]bool{}
@@ -150,6 +154,23 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 		return fmt.Errorf("SAM capture failed: %s", strings.Join(failures, "; "))
 	}
 	return nil
+}
+
+func (c SAMController) reconcileForwardPaths(ctx context.Context, actions []sam.CaptureAction) error {
+	var paths []sam.CaptureAction
+	for _, action := range actions {
+		if action.Kind == "forward-path" {
+			paths = append(paths, action)
+		}
+	}
+	if c.DryRun {
+		return nil
+	}
+	applier := c.Applier
+	if applier == nil {
+		applier = defaultSAMProxyNeighborApplier()
+	}
+	return applier.ReconcileForwardPaths(ctx, paths)
 }
 
 func (c SAMController) reconcileProxyARPInterfaces(ctx context.Context, actions []sam.CaptureAction) error {

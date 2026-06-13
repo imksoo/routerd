@@ -5,6 +5,7 @@ package chain
 import (
 	"context"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/imksoo/routerd/pkg/api"
@@ -381,11 +382,104 @@ func TestIPv4RouteControllerDeletesRemovedRoute(t *testing.T) {
 		t.Fatalf("reconcile: %v", err)
 	}
 
-	want := []string{"ip", "route", "del", "1.1.1.1/32", "dev", "ds-lite-a", "metric", "10"}
-	if len(commands) != 1 || !reflect.DeepEqual(commands[0], want) {
+	want := [][]string{
+		{"ip", "route", "show", "1.1.1.1/32"},
+		{"ip", "route", "del", "1.1.1.1/32", "dev", "ds-lite-a", "metric", "10"},
+	}
+	if !reflect.DeepEqual(commands, want) {
 		t.Fatalf("commands = %#v, want %#v", commands, want)
 	}
 	if !store.deleted["net.routerd.net/v1alpha1/IPv4Route/dslite-a-healthcheck"] {
+		t.Fatalf("removed route status was not deleted")
+	}
+}
+
+func TestIPv4RouteControllerDoesNotDeleteRemovedRouteWhenKernelRouteIsBGP(t *testing.T) {
+	store := &routeCleanupStore{statuses: []routerstate.ObjectStatus{
+		{
+			APIVersion: api.NetAPIVersion,
+			Kind:       "IPv4Route",
+			Name:       "stale-sam-delivery",
+			Status: map[string]any{
+				"phase":       "Installed",
+				"type":        "unicast",
+				"destination": "10.77.70.5/32",
+				"device":      "samt2d56b60b72f",
+				"metric":      200,
+			},
+		},
+	}}
+	var commands [][]string
+	controller := IPv4RouteController{
+		Router: &api.Router{Spec: api.RouterSpec{Resources: nil}},
+		Store:  store,
+		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			command := append([]string{name}, args...)
+			commands = append(commands, command)
+			if reflect.DeepEqual(command, []string{"ip", "route", "show", "10.77.70.5/32"}) {
+				return []byte("10.77.70.5 via 10.255.70.112 dev samt2d56b60b72f proto bgp src 10.77.70.50 metric 200\n"), nil
+			}
+			return nil, nil
+		},
+	}
+
+	if err := controller.reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	if len(commands) != 1 || !reflect.DeepEqual(commands[0], []string{"ip", "route", "show", "10.77.70.5/32"}) {
+		t.Fatalf("commands = %#v, want only route show", commands)
+	}
+	if !store.deleted["net.routerd.net/v1alpha1/IPv4Route/stale-sam-delivery"] {
+		t.Fatalf("removed route status was not deleted")
+	}
+}
+
+func TestIPv4RouteControllerDeletesRemovedLinkRouteWhenBGPRouteSharesDestination(t *testing.T) {
+	store := &routeCleanupStore{statuses: []routerstate.ObjectStatus{
+		{
+			APIVersion: api.NetAPIVersion,
+			Kind:       "IPv4Route",
+			Name:       "sam-cloudedge-local-10-77-60-12",
+			Status: map[string]any{
+				"phase":       "Installed",
+				"type":        "unicast",
+				"destination": "10.77.60.12/32",
+				"device":      "ens5",
+				"metric":      1,
+			},
+		},
+	}}
+	var commands [][]string
+	controller := IPv4RouteController{
+		Router: &api.Router{Spec: api.RouterSpec{Resources: nil}},
+		Store:  store,
+		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			command := append([]string{name}, args...)
+			commands = append(commands, command)
+			if reflect.DeepEqual(command, []string{"ip", "route", "show", "10.77.60.12/32"}) {
+				return []byte(strings.Join([]string{
+					"10.77.60.12 dev ens5 scope link metric 1",
+					"10.77.60.12 via 10.255.70.5 dev samt54927d44912 proto bgp metric 200",
+					"",
+				}, "\n")), nil
+			}
+			return nil, nil
+		},
+	}
+
+	if err := controller.reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	want := [][]string{
+		{"ip", "route", "show", "10.77.60.12/32"},
+		{"ip", "route", "del", "10.77.60.12/32", "dev", "ens5", "metric", "1"},
+	}
+	if !reflect.DeepEqual(commands, want) {
+		t.Fatalf("commands = %#v, want %#v", commands, want)
+	}
+	if !store.deleted["net.routerd.net/v1alpha1/IPv4Route/sam-cloudedge-local-10-77-60-12"] {
 		t.Fatalf("removed route status was not deleted")
 	}
 }

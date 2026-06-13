@@ -9,8 +9,10 @@ import (
 	"fmt"
 	"net"
 	"os/exec"
+	"sort"
 	"strings"
 
+	"github.com/imksoo/routerd/pkg/sam"
 	"github.com/vishvananda/netlink"
 )
 
@@ -111,6 +113,65 @@ func (netlinkSAMProxyNeighborApplier) EnsureOSAddressAbsent(_ context.Context, a
 		}
 	}
 	return result, nil
+}
+
+func (netlinkSAMProxyNeighborApplier) ReconcileForwardPaths(ctx context.Context, paths []sam.CaptureAction) error {
+	const chain = "routerd_sam_forward"
+	run := func(args ...string) error {
+		out, err := exec.CommandContext(ctx, "iptables", args...).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("iptables %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+		}
+		return nil
+	}
+	_ = run("-N", chain)
+	if err := run("-C", "FORWARD", "-j", chain); err != nil {
+		if insertErr := run("-I", "FORWARD", "1", "-j", chain); insertErr != nil {
+			return insertErr
+		}
+	}
+	if len(paths) == 0 {
+		return run("-F", chain)
+	}
+	sort.SliceStable(paths, func(i, j int) bool {
+		if paths[i].Address != paths[j].Address {
+			return paths[i].Address < paths[j].Address
+		}
+		if paths[i].Interface != paths[j].Interface {
+			return paths[i].Interface < paths[j].Interface
+		}
+		return paths[i].PeerInterface < paths[j].PeerInterface
+	})
+	for _, path := range paths {
+		address := strings.TrimSpace(path.Address)
+		captureIface := strings.TrimSpace(path.Interface)
+		tunnelIface := strings.TrimSpace(path.PeerInterface)
+		if address == "" || captureIface == "" || tunnelIface == "" {
+			continue
+		}
+		if err := ensureIPTablesRule(ctx, chain, "-i", captureIface, "-o", tunnelIface, "-d", address, "-j", "ACCEPT"); err != nil {
+			return err
+		}
+		if err := ensureIPTablesRule(ctx, chain, "-i", tunnelIface, "-o", captureIface, "-s", address, "-j", "ACCEPT"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func ensureIPTablesRule(ctx context.Context, chain string, rule ...string) error {
+	checkArgs := append([]string{"-C", chain}, rule...)
+	if out, err := exec.CommandContext(ctx, "iptables", checkArgs...).CombinedOutput(); err == nil {
+		return nil
+	} else if strings.TrimSpace(string(out)) != "" {
+		_ = out
+	}
+	addArgs := append([]string{"-A", chain}, rule...)
+	out, err := exec.CommandContext(ctx, "iptables", addArgs...).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("iptables %s: %w: %s", strings.Join(addArgs, " "), err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 func samProxyNeighbor(address, ifname string) (netlink.Link, *netlink.Neigh, error) {

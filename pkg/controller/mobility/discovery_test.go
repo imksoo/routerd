@@ -1055,11 +1055,13 @@ func TestDiscoveryControllerExpiredStandbyOwnershipAllowsActiveRestoreTrap(t *te
 	if err := discoveryB.Reconcile(context.Background()); err != nil {
 		t.Fatalf("discovery B Reconcile: %v", err)
 	}
-	saveBGPInstalledNextHops(t, store, map[string][]string{
+	saveBGPStatus(t, store, map[string][]string{
 		"10.88.60.10/32": {"10.99.0.1"},
 		"10.88.60.12/32": {"10.99.0.6"},
 		"10.88.60.13/32": {"10.99.0.4"},
-	})
+	}, []map[string]any{
+		bgpOwnerPrefix("10.88.60.13/32", "10.99.0.4", "azure-router-b"),
+	}, nil)
 	seedSucceededBGPCaptureAction(t, store, "azure-provider", "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic-b", "azure-router-b", "10.88.60.13/32", "assign-secondary-ip", 1, now.Add(-30*time.Second))
 	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
 		"discoverySelfNICRef":     "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic-a",
@@ -1069,7 +1071,7 @@ func TestDiscoveryControllerExpiredStandbyOwnershipAllowsActiveRestoreTrap(t *te
 		t.Fatalf("SaveObjectStatus: %v", err)
 	}
 
-	mobilityA := Controller{Router: routerWithBGPRouter(discoveryRouter("azure-router-a", spec)), Store: store, BGPPaths: &fakeBGPPaths{}, Now: func() time.Time { return now.Add(time.Second) }}
+	mobilityA := Controller{Router: routerWithBGPRouter(discoveryRouter("azure-router-a", spec)), Store: store, BGPPaths: &fakeBGPPaths{}, Now: func() time.Time { return now.Add(3 * time.Minute) }}
 	if err := mobilityA.Reconcile(context.Background()); err != nil {
 		t.Fatalf("mobility A Reconcile: %v", err)
 	}

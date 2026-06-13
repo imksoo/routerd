@@ -722,6 +722,30 @@ func TestReconcileAppliesPeerExportPoliciesWithUniqueStatements(t *testing.T) {
 	}
 }
 
+func TestApplyRouterBGPDefaultsExportsImportAllowedPrefixesToRouteReflectorClients(t *testing.T) {
+	peers := map[string]desiredPeer{
+		"10.255.70.4": {
+			Address:              "10.255.70.4",
+			RouteReflectorClient: true,
+		},
+		"10.255.70.5": {
+			Address: "10.255.70.5",
+		},
+	}
+	routerSpec := api.BGPRouterSpec{
+		ImportPolicy: api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.77.60.0/24"}},
+	}
+
+	got := applyRouterBGPDefaults("mobility-bgp", routerSpec, peers, []string{"10.99.70.1/32"}, []string{"10.77.60.10/32"})
+
+	if prefixes := got["10.255.70.4"].ExportPolicy.AllowedPrefixes; !sameStringSet(prefixes, []string{"10.77.60.0/24", "10.77.60.10/32", "10.99.70.1/32"}) {
+		t.Fatalf("route reflector client export prefixes = %#v, want reflected import allowance plus local exports", prefixes)
+	}
+	if prefixes := got["10.255.70.5"].ExportPolicy.AllowedPrefixes; !sameStringSet(prefixes, []string{"10.77.60.10/32", "10.99.70.1/32"}) {
+		t.Fatalf("regular peer export prefixes = %#v, want only local exports", prefixes)
+	}
+}
+
 func TestReconcileSoftResetsChangedPeerExportPolicy(t *testing.T) {
 	router := bgpRouterWithImportPrefixes()
 	peerResource := router.Spec.Resources[1]
@@ -1230,7 +1254,7 @@ func TestWatchEventReconnectsAfterStreamError(t *testing.T) {
 	}
 }
 
-func TestWatchEventSkipsDuplicateFIBApplyAndPollFallbackStillWorks(t *testing.T) {
+func TestWatchEventReappliesFIBSoKernelDriftCanRecover(t *testing.T) {
 	server := &fakeServer{
 		routes:        []*gobgpapi.Destination{testDestination("10.77.60.11/32", "10.99.0.11")},
 		watchSessions: make(chan watchSession, 1),
@@ -1249,14 +1273,14 @@ func TestWatchEventSkipsDuplicateFIBApplyAndPollFallbackStillWorks(t *testing.T)
 	if err := controller.watchBestPathEvents(context.Background()); err != nil {
 		t.Fatalf("watch event: %v", err)
 	}
-	if fib.calls() != 1 {
-		t.Fatalf("FIB calls after duplicate watch event = %d, want unchanged", fib.calls())
+	if fib.calls() != 2 {
+		t.Fatalf("FIB calls after duplicate watch event = %d, want reapply", fib.calls())
 	}
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("poll reconcile duplicate: %v", err)
 	}
-	if fib.calls() != 1 {
-		t.Fatalf("FIB calls after duplicate poll = %d, want unchanged", fib.calls())
+	if fib.calls() != 3 {
+		t.Fatalf("FIB calls after duplicate poll = %d, want reapply", fib.calls())
 	}
 	server.routes = []*gobgpapi.Destination{testDestination("10.77.60.11/32", "10.99.0.14")}
 	if err := controller.Reconcile(context.Background()); err != nil {
@@ -1266,8 +1290,8 @@ func TestWatchEventSkipsDuplicateFIBApplyAndPollFallbackStillWorks(t *testing.T)
 	if !reflect.DeepEqual(fib.lastRoutes(), want) {
 		t.Fatalf("FIB routes after poll fallback = %#v, want %#v", fib.lastRoutes(), want)
 	}
-	if fib.calls() != 2 {
-		t.Fatalf("FIB calls after poll fallback = %d, want 2", fib.calls())
+	if fib.calls() != 4 {
+		t.Fatalf("FIB calls after poll fallback = %d, want 4", fib.calls())
 	}
 }
 
@@ -1842,6 +1866,46 @@ func TestReconcileRefreshesMissingDynamicAdvertisementFromAppliedState(t *testin
 	key := bgpdaemon.AppliedPathKey(bgpdaemon.AppliedPath{Source: "MobilityPool/demo/node/aws-router-a", Prefix: "10.77.60.11/32"})
 	if pathsByKey[key].UUID == "" || pathsByKey[key].UUID == bgpdaemon.EncodeUUID([]byte{7}) {
 		t.Fatalf("dynamic path UUID was not refreshed: %#v", server.applied.Paths)
+	}
+}
+
+func TestDynamicAdvertisementsSyncedAcceptsLocalUUIDAmongMultiplePathsForPrefix(t *testing.T) {
+	dynamicPath, err := localPath("10.77.60.11/32")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dynamicPath.Uuid = []byte{7}
+	remotePath, err := localPath("10.77.60.11/32")
+	if err != nil {
+		t.Fatal(err)
+	}
+	remotePath.Uuid = []byte{99}
+	server := &fakeServer{
+		routes: []*gobgpapi.Destination{
+			{Prefix: "10.77.60.11/32", Paths: []*gobgpapi.Path{remotePath, dynamicPath}},
+		},
+	}
+	controller := Controller{
+		Router: bgpRouter(),
+		Server: server,
+	}
+	applied := bgpdaemon.AppliedConfig{
+		Version: bgpdaemon.AppliedVersion,
+		Paths: []bgpdaemon.AppliedPath{
+			{
+				Source: "MobilityPool/demo/node/aws-router-a",
+				Prefix: "10.77.60.11/32",
+				Family: bgpdaemon.AppliedPathFamilyIPv4Unicast,
+				UUID:   bgpdaemon.EncodeUUID([]byte{7}),
+			},
+		},
+	}
+	synced, err := controller.dynamicAdvertisementsSynced(context.Background(), applied)
+	if err != nil {
+		t.Fatalf("dynamic advertisements synced: %v", err)
+	}
+	if !synced {
+		t.Fatalf("dynamic advertisement was treated as unsynced when its UUID was present alongside a remote path")
 	}
 }
 

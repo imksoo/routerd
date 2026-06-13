@@ -120,10 +120,18 @@ func decisionAdvertisesFromSelf(decision ownershipDecision, self memberPlanInfo)
 	if strings.TrimSpace(decision.AdvertiseOwnerNode) != strings.TrimSpace(self.NodeRef) {
 		return false
 	}
-	return decision.Class != ownershipClassLocalRouterSelf
+	switch decision.Class {
+	case ownershipClassStaticOwned, ownershipClassStaticHandover, ownershipClassLocalHomeOwned:
+		return true
+	default:
+		return false
+	}
 }
 
 func bgpDecisionSourceType(decision ownershipDecision) string {
+	if decision.Class == ownershipClassConfirmedCapture {
+		return "provider-capture"
+	}
 	switch strings.TrimSpace(decision.Source) {
 	case staticOwnedType:
 		return staticOwnedType
@@ -227,7 +235,8 @@ func confirmedCaptureObservedOnSelf(decision ownershipDecision, self memberPlanI
 	if decision.Class != ownershipClassConfirmedCapture {
 		return false
 	}
-	if strings.TrimSpace(decision.AdvertiseOwnerNode) != strings.TrimSpace(self.NodeRef) {
+	holder := firstNonEmpty(decision.CaptureHolderNode, decision.AdvertiseOwnerNode)
+	if strings.TrimSpace(holder) != strings.TrimSpace(self.NodeRef) {
 		return false
 	}
 	return observedSelfIPs[normalizeAddressString(decision.Address)]
@@ -254,19 +263,16 @@ func decisionEligibleForCapture(decision ownershipDecision, self memberPlanInfo,
 		default:
 			return true
 		}
-	}
-	if strings.TrimSpace(decision.AdvertiseOwnerNode) == strings.TrimSpace(self.NodeRef) {
-		return false
-	}
-	if decision.Class == ownershipClassRemoteHomeOwned {
-		if owner, ok := lookupMemberByNodeRef(members, decision.HomeOwnerNode); ok && samePlacementSite(self, owner) && !placement.Seize {
+	case ownershipClassRemoteHomeOwned:
+		if strings.TrimSpace(decision.AdvertiseOwnerNode) == strings.TrimSpace(self.NodeRef) {
 			return false
 		}
-		if decision.HomeProviderRef != "" && self.Capture.ProviderRef != "" && strings.TrimSpace(decision.HomeProviderRef) != strings.TrimSpace(self.Capture.ProviderRef) {
+		if owner, ok := lookupMemberByNodeRef(members, decision.HomeOwnerNode); ok && samePlacementSite(self, owner) && !placement.Active && !placement.Seize {
 			return false
 		}
+		return true
 	}
-	return true
+	return false
 }
 
 func decisionIsCaptureNotDesiredStale(decision ownershipDecision) bool {
@@ -308,7 +314,7 @@ func planCaptureActionPlans(in bgpDeliveryPlannerInput, candidates map[string]bg
 	if in.Self.Capture.Type != "provider-secondary-ip" {
 		return nil, nil
 	}
-	plans, err := bgpProviderActionPlans(in.PoolName, in.Self.NodeRef, in.Spec, candidates, in.PreviousPlans, in.Profiles, in.ActionJournal, in.ObservedSelfIPs, in.ObservedSelfIPsOK, in.ForwardingObserved, in.ForwardingEnabled, in.ForwardingObservedAt, in.SuppressDeprovision, in.Now)
+	plans, err := bgpProviderActionPlans(in.PoolName, in.Self.NodeRef, in.Spec, candidates, in.PreviousPlans, in.Profiles, in.ActionJournal, in.ObservedSelfCaptures, in.ObservedSelfIPsOK, in.ForwardingObserved, in.ForwardingEnabled, in.ForwardingObservedAt, in.SuppressDeprovision, in.Now)
 	if err != nil {
 		return nil, err
 	}
@@ -323,6 +329,9 @@ func planCaptureActionPlans(in bgpDeliveryPlannerInput, candidates map[string]bg
 }
 
 func observedSelfStaleCaptureActionPlans(in bgpDeliveryPlannerInput, candidates map[string]bgpTrapCandidate) ([]dynamicconfig.ActionPlan, error) {
+	if !in.RIBObserved {
+		return nil, nil
+	}
 	desired := map[string]bool{}
 	for raw := range candidates {
 		address := normalizeAddressString(raw)
@@ -330,10 +339,23 @@ func observedSelfStaleCaptureActionPlans(in bgpDeliveryPlannerInput, candidates 
 			desired[address] = true
 		}
 	}
+	installed := map[string]bool{}
+	for raw, nextHops := range in.InstalledNextHops {
+		if len(cleanStrings(nextHops)) == 0 {
+			continue
+		}
+		address := normalizeAddressString(raw)
+		if address != "" {
+			installed[address] = true
+		}
+	}
 	var staleAddresses []string
 	for _, decision := range in.Decisions {
 		address := normalizeAddressString(decision.Address)
 		if address == "" || desired[address] {
+			continue
+		}
+		if installed[address] {
 			continue
 		}
 		if decision.Class != ownershipClassStaleCapture || strings.TrimSpace(decision.SuppressionReason) != "self-captured-secondary" {
@@ -357,14 +379,18 @@ func observedSelfStaleCaptureActionPlans(in bgpDeliveryPlannerInput, candidates 
 		if err != nil {
 			return nil, err
 		}
-		unassign = stampSingleBGPPathFence(unassign, address, bgpPathSigFromObservedSelfStale(address), in.Self.NodeRef)
+		unassign = stampSingleBGPPathFence(unassign, address, bgpPathSigFromObservedSelfStale(address, in.Now), in.Self.NodeRef)
 		plans = append(plans, unassign)
 	}
 	return plans, nil
 }
 
-func bgpPathSigFromObservedSelfStale(address string) string {
-	return "deprovision:" + normalizeAddressString(address)
+func bgpPathSigFromObservedSelfStale(address string, observedAt time.Time) string {
+	stamp := observedAt.UTC()
+	if stamp.IsZero() {
+		stamp = time.Now().UTC()
+	}
+	return "deprovision:" + normalizeAddressString(address) + ":observed:" + stamp.Format(time.RFC3339Nano)
 }
 
 func decisionsByAddress(decisions []ownershipDecision) map[string]ownershipDecision {

@@ -21,6 +21,7 @@ func TestOwnershipResolverScenario391BaselineSameSubnetHome(t *testing.T) {
 		SelfNode: "aws-router-a",
 		Spec:     spec,
 		Status: map[string]any{
+			"discoveryOwnedAddresses": []string{"10.88.60.11/32"},
 			"discoveryLocalInventory": []map[string]any{
 				{"address": "10.88.60.11/32", "nicRef": "eni-client", "subnetRef": "subnet-a", "providerRef": "aws-provider", "resourceType": "instance-nic"},
 			},
@@ -47,7 +48,10 @@ func TestOwnershipResolverScenario392SameProviderConfirmedCapture(t *testing.T) 
 		Spec:          spec,
 		Status:        map[string]any{"discoverySelfCapturedAddresses": []string{"10.88.60.11"}},
 		ActionJournal: []routerstate.ActionExecutionRecord{action},
-		Now:           now,
+		BGPHomeOwnerNodes: map[string]string{
+			"10.88.60.11/32": "aws-router-a",
+		},
+		Now: now,
 	})
 	if err != nil {
 		t.Fatalf("resolveAddressOwnership: %v", err)
@@ -55,6 +59,12 @@ func TestOwnershipResolverScenario392SameProviderConfirmedCapture(t *testing.T) 
 	decision := ownershipDecisionByAddress(t, decisions, "10.88.60.11/32")
 	if decision.Class != ownershipClassConfirmedCapture {
 		t.Fatalf("decision = %#v, want confirmed capture separated from router self", decision)
+	}
+	if decision.HomeOwnerNode != "aws-router-a" {
+		t.Fatalf("decision = %#v, want confirmed capture to retain remote home owner", decision)
+	}
+	if decision.AdvertiseOwnerNode != "" {
+		t.Fatalf("decision = %#v, confirmed capture must not advertise as owner", decision)
 	}
 	if decision.CaptureState != captureStateConfirmed || decision.CaptureHolderNode != "aws-router-b" {
 		t.Fatalf("decision = %#v, want confirmed same-provider capture state", decision)
@@ -134,6 +144,7 @@ func TestOwnershipResolverScenario397MigrationExpiredOldHomeNewLocalHome(t *test
 		Spec:     spec,
 		Events:   []routerstate.EventRecord{old, expired},
 		Status: map[string]any{
+			"discoveryOwnedAddresses": []string{"10.88.60.11/32"},
 			"discoveryLocalInventory": []map[string]any{
 				{"address": "10.88.60.11/32", "nicRef": "eni-client", "subnetRef": "subnet-a", "providerRef": "aws-provider"},
 			},
@@ -368,7 +379,7 @@ func TestOwnershipResolverSelfCapturedSecondaryIsNotLocalHomeOwned(t *testing.T)
 	}
 }
 
-func TestOwnershipResolverConfirmedSelfCapturedSecondaryAdvertisesAsCapture(t *testing.T) {
+func TestOwnershipResolverConfirmedSelfCapturedSecondaryDeliversToRemoteOwner(t *testing.T) {
 	now := time.Date(2026, 6, 10, 13, 5, 0, 0, time.UTC)
 	spec := awsFailoverPoolSpec()
 	action := resolverSucceededAction(t, "aws-provider", "eni-a", "aws-router-a", "10.88.60.12/32", actionAssignSecondaryIP, now.Add(-time.Second))
@@ -378,14 +389,32 @@ func TestOwnershipResolverConfirmedSelfCapturedSecondaryAdvertisesAsCapture(t *t
 		Spec:          spec,
 		Status:        map[string]any{"discoverySelfCapturedAddresses": []string{"10.88.60.12/32"}},
 		ActionJournal: []routerstate.ActionExecutionRecord{action},
-		Now:           now,
+		BGPHomeOwnerNodes: map[string]string{
+			"10.88.60.12/32": "azure-router",
+		},
+		Now: now,
 	})
 	if err != nil {
 		t.Fatalf("resolveAddressOwnership: %v", err)
 	}
 	decision := ownershipDecisionByAddress(t, decisions, "10.88.60.12/32")
-	if decision.Class != ownershipClassConfirmedCapture || decision.AdvertiseOwnerNode != "aws-router-a" {
-		t.Fatalf("decision = %#v, want confirmed self captured secondary advertised as capture", decision)
+	if decision.Class != ownershipClassConfirmedCapture || decision.HomeOwnerNode != "azure-router" {
+		t.Fatalf("decision = %#v, want confirmed self captured secondary tied to remote home owner", decision)
+	}
+	if decision.AdvertiseOwnerNode != "" {
+		t.Fatalf("decision = %#v, confirmed capture must not advertise as owner", decision)
+	}
+	status := ownershipResolverStatus(decisions)
+	verdicts := status["ownershipResolverFIBVerdicts"].([]map[string]any)
+	verdict := map[string]any{}
+	for _, row := range verdicts {
+		if row["address"] == "10.88.60.12/32" {
+			verdict = row
+			break
+		}
+	}
+	if verdict["action"] != "deliver-remote" || verdict["ownerNode"] != "azure-router" {
+		t.Fatalf("fib verdicts = %#v, want confirmed capture delivered to remote home owner", verdicts)
 	}
 }
 
@@ -505,6 +534,7 @@ func TestOwnershipResolverNilStatusValuesDoNotLeakNilStrings(t *testing.T) {
 			"discoverySelfResourceRef": nil,
 			"discoverySelfPrivateIPs":  []string{"10.88.60.4/32"},
 			"discoverySelfSubnetRef":   nil,
+			"discoveryOwnedAddresses":  []string{"10.88.60.11/32"},
 			"discoveryLocalInventory": []map[string]any{
 				{"address": "10.88.60.11/32", "nicRef": nil, "subnetRef": nil, "providerRef": nil, "resourceRef": nil, "resourceType": nil},
 			},

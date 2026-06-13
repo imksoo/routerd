@@ -1142,8 +1142,8 @@ func validateMobilityMemberCapture(res api.Resource, index int, spec api.Mobilit
 		if strings.TrimSpace(member.Capture.NICRef) == "" && !mobilityProviderCaptureAllowsDiscoveredNIC(spec, member) {
 			return fmt.Errorf("%s spec.members[%d].capture.nicRef is required when capture.type is provider-secondary-ip", res.ID(), index)
 		}
-		if member.Capture.ConfigureOSAddress {
-			return fmt.Errorf("%s spec.members[%d].capture.configureOSAddress=true is not implemented in the MVP", res.ID(), index)
+		if member.Capture.ConfigureOSAddress && strings.TrimSpace(member.Capture.Interface) == "" {
+			return fmt.Errorf("%s spec.members[%d].capture.interface is required when capture.configureOSAddress is true", res.ID(), index)
 		}
 	case "proxy-arp":
 		switch captureStrategy {
