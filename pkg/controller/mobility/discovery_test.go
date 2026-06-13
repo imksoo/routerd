@@ -1259,6 +1259,52 @@ func TestDiscoveryControllerProviderStoppedBypassesSeizeHoldDown(t *testing.T) {
 	}
 }
 
+func TestDiscoveryControllerProviderStoppedBypassesSeizeHoldDownByResourceRefWhenActiveNICDynamic(t *testing.T) {
+	now := time.Date(2026, 6, 13, 10, 5, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := discoveryPoolSpec()
+	spec.IPOwnershipPolicy.StoppedInstancePolicy = "release"
+	spec.Members[1].Capture.NICRef = ""
+	runner := &fakeInventoryRunner{result: providerinventory.ObservePrivateIPsResult{
+		TypeMeta: providerinventory.TypeMeta{APIVersion: providerinventory.ProtocolAPIVersion, Kind: providerinventory.KindObservePrivateIPsResult},
+		Status: providerinventory.ObservePrivateIPsResultStatus{
+			Status: providerinventory.ResultSucceeded,
+			Self:   &providerinventory.PrivateIPSelf{NICRef: "standby-router-nic", SubnetRef: "subnet-b", PrivateIPs: []string{"10.88.60.22"}},
+			IPs: []providerinventory.PrivateIPRecord{
+				{Address: "10.88.60.11", NICRef: "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic-a", SubnetRef: "subnet-b", ResourceRef: "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Compute/virtualMachines/azure-router-a", Primary: true, InstanceState: "stopped", Tags: map[string]string{"cloudedge-mobility": "true"}},
+				{Address: "10.88.60.12", NICRef: "standby-client-nic", SubnetRef: "subnet-b", ResourceRef: "vm-client", Tags: map[string]string{"cloudedge-mobility": "true"}},
+			},
+		},
+	}}
+	saveBGPStatus(t, store, map[string][]string{}, []map[string]any{}, map[string]string{
+		bgpstate.MobilityNodeIdentityCommunity("azure-router-a"): "10.99.0.2/32",
+		bgpstate.MobilityNodeIdentityCommunity("azure-router-b"): "10.99.0.6/32",
+	})
+	router := routerWithBGPRouter(discoveryRouter("azure-router-b", spec))
+	controller := DiscoveryController{Router: router, Store: store, Runner: runner.run, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("initial Reconcile: %v", err)
+	}
+	saveBGPStatus(t, store, map[string][]string{}, []map[string]any{}, map[string]string{
+		bgpstate.MobilityNodeIdentityCommunity("azure-router-b"): "10.99.0.6/32",
+	})
+	controller.Now = func() time.Time { return now.Add(10 * time.Second) }
+	event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "mobility-bgp", Kind: "BGPRouter"}, "routerd.resource.status.changed", daemonapi.SeverityInfo)
+	if err := controller.HandleEvent(context.Background(), event); err != nil {
+		t.Fatalf("HandleEvent: %v", err)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	if status["discoveryPlacementSeize"] != true || status["discoveryPlacementSeizeHoldDown"] != false || status["discoveryPhase"] != "Observed" {
+		t.Fatalf("status = %#v, want provider-stopped resourceRef evidence to bypass hold-down and observe", status)
+	}
+	if status[bgpSeizeHoldDownBypassKey] == "" || status["bgpSeizeHoldDownBypassReason"] != "provider-active-instance-stopped" {
+		t.Fatalf("status = %#v, want provider-stopped hold-down bypass status", status)
+	}
+	if status["bgpSeizeHoldDownBypassResourceRef"] != "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Compute/virtualMachines/azure-router-a" {
+		t.Fatalf("status = %#v, want active resourceRef recorded", status)
+	}
+}
+
 func TestDiscoveryControllerRescansWhenForwardingStatusMissing(t *testing.T) {
 	now := time.Date(2026, 6, 3, 15, 0, 0, 0, time.UTC)
 	store := testStore(t, now)

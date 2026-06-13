@@ -348,12 +348,12 @@ func bypassSeizeHoldDownWhenActiveProviderStopped(placement PlacementDecision, s
 		return placement, providerStoppedSeizeBypass{}
 	}
 	active, ok := lookupMemberByNodeRef(members, placement.ActiveIdentityNodeRef)
-	if !ok || strings.TrimSpace(active.Capture.NICRef) == "" {
+	if !ok {
 		return placement, providerStoppedSeizeBypass{}
 	}
 	activeNIC := strings.TrimSpace(active.Capture.NICRef)
 	for _, rec := range records {
-		if strings.TrimSpace(rec.NICRef) != activeNIC || !strings.EqualFold(strings.TrimSpace(rec.InstanceState), "stopped") {
+		if !providerInventoryRecordMatchesMember(rec, activeNIC, active.NodeRef) || !strings.EqualFold(strings.TrimSpace(rec.InstanceState), "stopped") {
 			continue
 		}
 		placement.Active = true
@@ -370,6 +370,45 @@ func bypassSeizeHoldDownWhenActiveProviderStopped(placement PlacementDecision, s
 		}
 	}
 	return placement, providerStoppedSeizeBypass{}
+}
+
+func providerInventoryRecordMatchesMember(rec providerinventory.PrivateIPRecord, activeNIC, nodeRef string) bool {
+	activeNIC = strings.TrimSpace(activeNIC)
+	if activeNIC != "" && strings.TrimSpace(rec.NICRef) == activeNIC {
+		return true
+	}
+	for _, alias := range nodeIdentityAliases(nodeRef) {
+		if alias == "" {
+			continue
+		}
+		if providerRecordTagMatchesNode(rec.Tags, alias) {
+			return true
+		}
+		if providerResourceRefMatchesNode(rec.ResourceRef, alias) {
+			return true
+		}
+	}
+	return false
+}
+
+func providerRecordTagMatchesNode(tags map[string]string, node string) bool {
+	if len(tags) == 0 {
+		return false
+	}
+	for _, key := range []string{"routerd-node", "routerd-node-ref", "routerd-nodeRef", "nodeRef"} {
+		if canonicalNodeIdentity(tags[key]) == node {
+			return true
+		}
+	}
+	return false
+}
+
+func providerResourceRefMatchesNode(resourceRef, node string) bool {
+	resourceRef = strings.TrimSpace(resourceRef)
+	if resourceRef == "" || node == "" {
+		return false
+	}
+	return canonicalNodeIdentity(resourceRef) == node
 }
 
 func providerStoppedSeizeBypassStatus(bypass providerStoppedSeizeBypass) map[string]any {
