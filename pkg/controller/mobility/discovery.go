@@ -1199,6 +1199,9 @@ func (c DiscoveryController) scanDue(poolName string, interval time.Duration, no
 			return true
 		}
 	}
+	if placement.SeizeHoldDown {
+		return true
+	}
 	if discoveryStatusBool(status, "bgpSeizeHoldDownActive") {
 		until, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(fmt.Sprint(status["bgpSeizeHoldDownUntil"])))
 		if err == nil && !until.IsZero() && !until.After(now) {
