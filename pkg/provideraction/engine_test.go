@@ -72,6 +72,11 @@ func newEngine(t *testing.T, store Store, runner ExecutorRunner, plugins []api.R
 // seedPart writes a DynamicConfigPart with the given plans into the store.
 func seedPart(t *testing.T, store *state.SQLiteStore, source string, plans []dynamicconfig.ActionPlan) {
 	t.Helper()
+	seedPartAt(t, store, source, time.Now().UTC(), time.Time{}, plans)
+}
+
+func seedPartAt(t *testing.T, store *state.SQLiteStore, source string, observedAt, expiresAt time.Time, plans []dynamicconfig.ActionPlan) {
+	t.Helper()
 	b, err := json.Marshal(plans)
 	if err != nil {
 		t.Fatal(err)
@@ -79,7 +84,8 @@ func seedPart(t *testing.T, store *state.SQLiteStore, source string, plans []dyn
 	rec := state.DynamicConfigPartRecord{
 		Source:          source,
 		Generation:      1,
-		ObservedAt:      time.Now().UTC(),
+		ObservedAt:      observedAt,
+		ExpiresAt:       expiresAt,
 		Digest:          source + "-digest",
 		ActionPlansJSON: string(b),
 		Status:          "active",
@@ -227,6 +233,65 @@ func TestImportAllowsCurrentMobilityPathDeprovision(t *testing.T) {
 	}
 	if res.Inserted != 1 || res.Skipped != 0 {
 		t.Fatalf("want current path deprovision imported, got %+v", res)
+	}
+}
+
+func TestImportSkipsOldButUnexpiredMobilityPathPart(t *testing.T) {
+	store := mustStore(t)
+	now := time.Unix(1700000000, 0).UTC()
+	e, err := NewEngine(Config{
+		Store:  store,
+		Runner: (&fakeRunner{result: succeededResult()}).run,
+		Now:    func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	plan := samplePlan("old-but-unexpired")
+	plan.Parameters = map[string]string{
+		pathSigParam: "prefix=10.0.0.5/32;nextHops=10.99.0.1",
+	}
+	seedPartAt(t, store, "sub-old", now.Add(-time.Minute), now.Add(5*time.Minute), []dynamicconfig.ActionPlan{plan})
+
+	res, err := e.ImportFromDynamicParts()
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if res.Inserted != 0 || res.Skipped != 1 {
+		t.Fatalf("want old path-fenced plan skipped, got %+v", res)
+	}
+	rows, err := store.ListActions(state.ActionExecutionFilter{})
+	if err != nil {
+		t.Fatalf("ListActions: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("want no journal rows from stale dynamic part, got %d", len(rows))
+	}
+}
+
+func TestImportAllowsFreshMobilityPathPart(t *testing.T) {
+	store := mustStore(t)
+	now := time.Unix(1700000000, 0).UTC()
+	e, err := NewEngine(Config{
+		Store:  store,
+		Runner: (&fakeRunner{result: succeededResult()}).run,
+		Now:    func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	plan := samplePlan("fresh-path")
+	plan.Parameters = map[string]string{
+		pathSigParam: "prefix=10.0.0.5/32;nextHops=10.99.0.1",
+	}
+	seedPartAt(t, store, "sub-fresh", now.Add(-5*time.Second), now.Add(5*time.Minute), []dynamicconfig.ActionPlan{plan})
+
+	res, err := e.ImportFromDynamicParts()
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if res.Inserted != 1 || res.Skipped != 0 {
+		t.Fatalf("want fresh path-fenced plan imported, got %+v", res)
 	}
 }
 
