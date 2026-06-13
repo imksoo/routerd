@@ -268,6 +268,42 @@ func TestDoctorSAMConvergenceReadyPasses(t *testing.T) {
 	}
 }
 
+func TestDoctorSAMBGPDeliveryFailsWhenBGPRouterDown(t *testing.T) {
+	configPath, statePath := writeDoctorSAMBGPDeliveryFixture(t)
+	store := openDoctorState(t, statePath)
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"phase":                  "Ready",
+		"plannerPhase":           "BGPPlanned",
+		"ownershipResolverPhase": "Resolved",
+		"samConvergencePhase":    "Ready",
+		"fibConvergencePhase":    "Ready",
+	}); err != nil {
+		t.Fatalf("save mobility status: %v", err)
+	}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "BGPRouter", "mobility-bgp", map[string]any{
+		"phase":            "Down",
+		"establishedPeers": 0,
+		"fibMissingRoutes": 0,
+	}); err != nil {
+		t.Fatalf("save bgp status: %v", err)
+	}
+	closeDoctorState(t, store)
+
+	var out bytes.Buffer
+	err := run([]string{"doctor", "sam", "--config", configPath, "--state-file", statePath, "--no-host", "-o", "json"}, &out, &bytes.Buffer{})
+	if err == nil {
+		t.Fatalf("doctor sam should fail when BGP-delivery BGPRouter is down:\n%s", out.String())
+	}
+	var report doctorReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("unmarshal doctor report: %v\n%s", err, out.String())
+	}
+	check := findDoctorCheck(t, report, "MobilityPool/cloudedge BGP delivery BGPRouter/mobility-bgp")
+	if check.Status != doctorFail || !strings.Contains(check.Detail, "phase=Down") {
+		t.Fatalf("BGP delivery check = %#v", check)
+	}
+}
+
 func TestDoctorSAMConvergenceFailedFails(t *testing.T) {
 	configPath, statePath := writeDoctorSAMFixture(t)
 	store := openDoctorState(t, statePath)
@@ -1705,6 +1741,65 @@ spec:
         name: cloudedge
       spec:
         nodeName: node-a
+    - apiVersion: mobility.routerd.net/v1alpha1
+      kind: MobilityPool
+      metadata:
+        name: cloudedge
+      spec:
+        prefix: 10.77.60.0/24
+        groupRef: cloudedge
+        deliveryPolicy:
+          mode: bgp
+        members:
+          - nodeRef: node-a
+            site: aws
+            role: cloud
+          - nodeRef: node-b
+            site: azure
+            role: cloud
+`)
+	if err := os.WriteFile(configPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	return configPath, filepath.Join(dir, "routerd.db")
+}
+
+func writeDoctorSAMBGPDeliveryFixture(t *testing.T) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "router.yaml")
+	data := []byte(`apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: test
+spec:
+  resources:
+    - apiVersion: federation.routerd.net/v1alpha1
+      kind: EventGroup
+      metadata:
+        name: cloudedge
+      spec:
+        nodeName: node-a
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: BGPRouter
+      metadata:
+        name: mobility-bgp
+      spec:
+        asn: 64577
+        routerID: 10.99.0.1
+    - apiVersion: mobility.routerd.net/v1alpha1
+      kind: SAMTransportProfile
+      metadata:
+        name: cloudedge-transport
+      spec:
+        selfNodeRef: node-a
+        mode: ipip
+        innerPrefix: 10.255.0.0/20
+        underlayInterface: wg-hybrid
+        localEndpoint: 10.99.0.1
+        bgp:
+          routerRef: BGPRouter/mobility-bgp
+          peerASN: 64577
     - apiVersion: mobility.routerd.net/v1alpha1
       kind: MobilityPool
       metadata:

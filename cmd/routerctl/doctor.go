@@ -239,9 +239,107 @@ func (r doctorRunner) doctorSAM() []doctorCheck {
 			})
 		}
 		checks = append(checks, doctorSAMConvergenceChecks(res.Metadata.Name, status)...)
+		checks = append(checks, r.doctorSAMBGPDeliveryChecks(res)...)
 	}
 	checks = append(checks, r.doctorSAMProviderExecutorPreflightChecks(pools)...)
 	return checks
+}
+
+func (r doctorRunner) doctorSAMBGPDeliveryChecks(pool api.Resource) []doctorCheck {
+	spec, err := pool.MobilityPoolSpec()
+	if err != nil {
+		return []doctorCheck{{
+			Area:   "sam",
+			Name:   "MobilityPool/" + pool.Metadata.Name + " BGP delivery",
+			Status: doctorFail,
+			Detail: "invalid MobilityPool spec: " + err.Error(),
+			Remedy: "fix MobilityPool spec before accepting SAM dataplane readiness",
+		}}
+	}
+	mode := strings.TrimSpace(spec.DeliveryPolicy.Mode)
+	if mode != "" && mode != "bgp" {
+		return nil
+	}
+	routerRefs := r.samTransportBGPRouterRefs()
+	if len(routerRefs) == 0 {
+		return nil
+	}
+	checks := make([]doctorCheck, 0, len(routerRefs))
+	for _, routerName := range routerRefs {
+		status := objectStatus(r.store, api.NetAPIVersion, "BGPRouter", routerName)
+		name := "MobilityPool/" + pool.Metadata.Name + " BGP delivery BGPRouter/" + routerName
+		if len(status) == 0 {
+			checks = append(checks, doctorCheck{
+				Area:   "sam",
+				Name:   name,
+				Status: doctorWarn,
+				Detail: "BGPRouter status is missing",
+				Remedy: "wait for routerd-bgp observation before accepting BGP-delivery SAM dataplane readiness",
+			})
+			continue
+		}
+		phase := stringStatus(status, "phase")
+		established := doctorStatusInt(status, "establishedPeers")
+		fibMissing := doctorStatusInt(status, "fibMissingRoutes")
+		fibUnsupported := doctorStatusInt(status, "fibUnsupportedRoutes")
+		detail := appendDoctorDetail("phase="+firstNonEmpty(phase, "missing"), fmt.Sprintf("establishedPeers=%d fibMissingRoutes=%d fibUnsupportedRoutes=%d", established, fibMissing, fibUnsupported))
+		check := doctorCheck{
+			Area:   "sam",
+			Name:   name,
+			Status: doctorPass,
+			Detail: detail,
+		}
+		switch {
+		case phase == "":
+			check.Status = doctorWarn
+			check.Remedy = "wait for routerd-bgp to publish BGPRouter phase before accepting SAM dataplane readiness"
+		case !strings.EqualFold(phase, "Established"):
+			check.Status = doctorFail
+			check.Remedy = "repair BGP peer establishment before accepting BGP-delivery SAM dataplane readiness"
+		case established == 0:
+			check.Status = doctorFail
+			check.Remedy = "repair BGP peer establishment before accepting BGP-delivery SAM dataplane readiness"
+		case fibMissing > 0 || fibUnsupported > 0:
+			check.Status = doctorFail
+			check.Remedy = "repair BGP FIB installation before accepting BGP-delivery SAM dataplane readiness"
+		}
+		checks = append(checks, check)
+	}
+	return checks
+}
+
+func (r doctorRunner) samTransportBGPRouterRefs() []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, res := range r.router.Spec.Resources {
+		if res.APIVersion != api.MobilityAPIVersion || res.Kind != "SAMTransportProfile" {
+			continue
+		}
+		spec, err := res.SAMTransportProfileSpec()
+		if err != nil {
+			continue
+		}
+		ref := strings.TrimSpace(spec.BGP.RouterRef)
+		if ref == "" {
+			continue
+		}
+		kind, name, ok := strings.Cut(ref, "/")
+		if !ok {
+			name = ref
+			kind = "BGPRouter"
+		}
+		if kind != "BGPRouter" || strings.TrimSpace(name) == "" {
+			continue
+		}
+		name = strings.TrimSpace(name)
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func (r doctorRunner) doctorSAMProviderExecutorPreflightChecks(pools []api.Resource) []doctorCheck {
@@ -2503,6 +2601,30 @@ func stringStatus(status map[string]any, key string) string {
 		return ""
 	}
 	return strings.TrimSpace(fmt.Sprint(value))
+}
+
+func doctorStatusInt(status map[string]any, key string) int {
+	if status == nil {
+		return 0
+	}
+	value, ok := status[key]
+	if !ok || value == nil {
+		return 0
+	}
+	switch typed := value.(type) {
+	case int:
+		return typed
+	case int64:
+		return int(typed)
+	case float64:
+		return int(typed)
+	case json.Number:
+		n, _ := typed.Int64()
+		return int(n)
+	default:
+		n, _ := strconv.Atoi(strings.TrimSpace(fmt.Sprint(value)))
+		return n
+	}
 }
 
 func stringStatusSlice(status map[string]any, key string) []string {
