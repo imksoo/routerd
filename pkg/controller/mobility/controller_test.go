@@ -267,7 +267,7 @@ func TestControllerBGPModeFailedProviderActionDoesNotSuppressHomeOwnerPath(t *te
 	}
 }
 
-func TestControllerBGPModeFreshHomeOwnerSuppressesRemoteProviderCapture(t *testing.T) {
+func TestControllerBGPModeFreshHomeOwnerKeepsRemoteProviderDeliveryCapture(t *testing.T) {
 	now := time.Date(2026, 6, 9, 17, 30, 0, 0, time.UTC)
 	cases := []struct {
 		name         string
@@ -278,7 +278,7 @@ func TestControllerBGPModeFreshHomeOwnerSuppressesRemoteProviderCapture(t *testi
 		homeNIC      string
 	}{
 		{
-			name:         "aws home owner suppresses oci capture",
+			name:         "aws home owner keeps oci delivery capture",
 			address:      "10.88.60.11/32",
 			homeNode:     "aws-router-a",
 			homeProvider: "aws",
@@ -286,7 +286,7 @@ func TestControllerBGPModeFreshHomeOwnerSuppressesRemoteProviderCapture(t *testi
 			homeNIC:      "aws-client-nic",
 		},
 		{
-			name:         "azure home owner suppresses oci capture",
+			name:         "azure home owner keeps oci delivery capture",
 			address:      "10.88.60.12/32",
 			homeNode:     "azure-router",
 			homeProvider: "azure",
@@ -322,8 +322,8 @@ func TestControllerBGPModeFreshHomeOwnerSuppressesRemoteProviderCapture(t *testi
 				t.Fatalf("paths = %#v, want OCI captured path suppressed while fresh %s home owner exists", bgp.paths, tc.homeRef)
 			}
 			ociPlans := decodeActionPlans(t, latestPart(t, store, DynamicSource("cloudedge", "oci-router")).ActionPlansJSON)
-			if findActionPlanByAddress(ociPlans, "unassign-secondary-ip", tc.address) == nil {
-				t.Fatalf("oci plans = %#v, want stale remote capture deprovision for %s", ociPlans, tc.address)
+			if findActionPlanByAddress(ociPlans, "assign-secondary-ip", tc.address) == nil {
+				t.Fatalf("oci plans = %#v, want remote delivery capture retained for %s", ociPlans, tc.address)
 			}
 
 			if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
@@ -1515,6 +1515,58 @@ func TestControllerBGPModeProviderTrapRecapturesWhenObservedProviderStateLost(t 
 	}
 }
 
+func TestControllerBGPModeRemoteProviderTrapRecapturesWithoutSelfMarkerMatch(t *testing.T) {
+	now := time.Date(2026, 6, 13, 20, 40, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	address := "10.88.60.13/32"
+	recordEvent(t, store, routerstate.EventRecord{
+		ID:         "evt-oci-client",
+		Group:      "cloudedge",
+		SourceNode: "oci-router",
+		Type:       ObservedEventType,
+		Subject:    address,
+		ObservedAt: now.Add(-time.Second),
+		ExpiresAt:  now.Add(time.Hour),
+		Payload: map[string]string{
+			"source": providerDiscoverySource,
+			"pool":   "cloudedge",
+		},
+	})
+	seedSucceededBGPCaptureAction(t, store, "aws-provider", "eni-a", "aws-router-a", address, "assign-secondary-ip", 1, now.Add(-3*time.Minute))
+	saveBGPStatus(t, store, map[string][]string{
+		address: {"10.99.0.2"},
+	}, []map[string]any{
+		bgpOwnerPrefix(address, "10.99.0.2", "oci-router"),
+	}, map[string]string{
+		bgpstate.MobilityNodeIdentityCommunity("aws-router-a"): "10.99.0.2/32",
+	})
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"discoverySelfPrivateIPs": []string{"10.88.60.4/32"},
+		"discoveryLastScanAt":     now.Format(time.RFC3339Nano),
+	}); err != nil {
+		t.Fatalf("SaveObjectStatus(MobilityPool/cloudedge): %v", err)
+	}
+
+	bgp := &fakeBGPPaths{}
+	controller := Controller{Router: routerWithBGPRouter(planningRouterForNode("aws-router-a", spec)), Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	plans := decodeActionPlans(t, latestPart(t, store, DynamicSource("cloudedge", "aws-router-a")).ActionPlansJSON)
+	assign := findActionPlanByAddress(plans, "assign-secondary-ip", address)
+	if assign == nil {
+		t.Fatalf("plans = %#v, want recapture assign for remote provider trap with installed BGP path", plans)
+	}
+	if assign.Parameters[bgpPathSigParam] != "prefix=10.88.60.13/32;nextHops=10.99.0.2" {
+		t.Fatalf("assign parameters = %#v, want installed path signature", assign.Parameters)
+	}
+	if assign.Parameters["allowReassignment"] != "true" {
+		t.Fatalf("assign parameters = %#v, want reassignment after provider-observed loss", assign.Parameters)
+	}
+}
+
 func TestControllerBGPModeRouteTableDoesNotCaptureRouterSelfOrLocalHome(t *testing.T) {
 	now := time.Date(2026, 6, 9, 23, 0, 0, 0, time.UTC)
 	store := testStore(t, now)
@@ -2117,6 +2169,36 @@ func TestControllerBGPModeProtectOnlyCaptureKeepsForwardingEnabled(t *testing.T)
 	}
 	if findActionPlan(plans, "ensure-forwarding-disabled") != nil {
 		t.Fatalf("plans = %#v, must not disable forwarding while confirmed capture remains on same provider target", plans)
+	}
+}
+
+func TestControllerBGPModeStaleCaptureCleanupKeepsForwardingReady(t *testing.T) {
+	now := time.Date(2026, 6, 10, 15, 0, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	stale := "10.88.60.12/32"
+	seedSucceededBGPCaptureAction(t, store, "aws-provider", "eni-a", "aws-router-a", stale, "assign-secondary-ip", 1, now.Add(-time.Minute))
+	saveBGPStatus(t, store, map[string][]string{}, nil, nil)
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"discoverySelfPrivateIPs":        []string{"10.88.60.4/32"},
+		"discoverySelfCapturedAddresses": []string{stale},
+		"discoveryLastScanAt":            now.Format(time.RFC3339Nano),
+	}); err != nil {
+		t.Fatalf("SaveObjectStatus: %v", err)
+	}
+
+	bgp := &fakeBGPPaths{}
+	controller := Controller{Router: routerWithBGPRouter(planningRouterForNode("aws-router-a", spec)), Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	plans := decodeActionPlans(t, latestPart(t, store, DynamicSource("cloudedge", "aws-router-a")).ActionPlansJSON)
+	if findActionPlanByAddress(plans, "unassign-secondary-ip", stale) == nil {
+		t.Fatalf("plans = %#v, want stale capture unassign", plans)
+	}
+	if findActionPlan(plans, "ensure-forwarding-disabled") != nil {
+		t.Fatalf("plans = %#v, BGP SAM router candidates must keep provider forwarding ready after capture cleanup", plans)
 	}
 }
 

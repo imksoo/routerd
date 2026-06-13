@@ -152,7 +152,6 @@ func planCaptureCandidates(self memberPlanInfo, members map[string]memberPlanInf
 			out[address] = bgpTrapCandidate{ProtectOnly: true}
 		}
 	}
-	selfNextHop := bgpTrapSelfNextHop(placement.SelfMarker)
 	installedAddresses := map[string]bool{}
 	for rawPrefix, nextHops := range installedNextHops {
 		if len(cleanStrings(nextHops)) == 0 {
@@ -173,9 +172,6 @@ func planCaptureCandidates(self memberPlanInfo, members map[string]memberPlanInf
 		}
 		decision, ok := decisions[address]
 		if !ok {
-			continue
-		}
-		if selfNextHop != "" && !bgpTrapHasRemoteNextHop(cleanNextHops, selfNextHop) {
 			continue
 		}
 		if decision.Class == ownershipClassConfirmedCapture {
@@ -258,8 +254,11 @@ func decisionEligibleForCapture(decision ownershipDecision, self memberPlanInfo,
 		return decision.Source == providerDiscoverySource && decision.AdvertiseReason == "ownership-event"
 	case ownershipClassStaleCapture:
 		switch strings.TrimSpace(decision.SuppressionReason) {
-		case "capture-not-desired", "fresh-home-owner", "local-router-self", "local-home-owner", "self-captured-secondary":
+		case "capture-not-desired", "local-router-self", "local-home-owner", "self-captured-secondary":
 			return false
+		case "fresh-home-owner":
+			return strings.TrimSpace(decision.HomeOwnerNode) != "" &&
+				strings.TrimSpace(decision.HomeOwnerNode) != strings.TrimSpace(self.NodeRef)
 		default:
 			return true
 		}
