@@ -1814,7 +1814,7 @@ func TestReconcileKeepsUnchangedStaticAdvertisementWithoutReadd(t *testing.T) {
 	}
 }
 
-func TestReconcileRefreshesMissingDynamicAdvertisementFromAppliedState(t *testing.T) {
+func TestReconcileLeavesDynamicAdvertisementOwnershipToControlAPI(t *testing.T) {
 	router := bgpRouterWithImportPrefixes("10.250.0.0/24", "10.77.60.11/32")
 	staticPath, err := localPath("10.0.0.0/16")
 	if err != nil {
@@ -1863,59 +1863,19 @@ func TestReconcileRefreshesMissingDynamicAdvertisementFromAppliedState(t *testin
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
-	if len(server.deletedPathUUIDs) != 1 || !reflect.DeepEqual(server.deletedPathUUIDs[0], []byte{7}) {
-		t.Fatalf("deleted paths = %#v, want missing dynamic UUID refresh", server.deletedPathUUIDs)
+	if len(server.deletedPathUUIDs) != 0 {
+		t.Fatalf("deleted paths = %#v, want BGP controller not to churn control-API dynamic paths", server.deletedPathUUIDs)
 	}
-	if server.paths != 1 {
-		t.Fatalf("AddPath calls = %d, want missing dynamic path re-added", server.paths)
+	if server.paths != 0 {
+		t.Fatalf("AddPath calls = %d, want BGP controller not to re-add control-API dynamic paths", server.paths)
 	}
 	pathsByKey := map[string]bgpdaemon.AppliedPath{}
 	for _, path := range server.applied.Paths {
 		pathsByKey[bgpdaemon.AppliedPathKey(path)] = path
 	}
 	key := bgpdaemon.AppliedPathKey(bgpdaemon.AppliedPath{Source: "MobilityPool/demo/node/aws-router-a", Prefix: "10.77.60.11/32"})
-	if pathsByKey[key].UUID == "" || pathsByKey[key].UUID == bgpdaemon.EncodeUUID([]byte{7}) {
-		t.Fatalf("dynamic path UUID was not refreshed: %#v", server.applied.Paths)
-	}
-}
-
-func TestDynamicAdvertisementsSyncedAcceptsLocalUUIDAmongMultiplePathsForPrefix(t *testing.T) {
-	dynamicPath, err := localPath("10.77.60.11/32")
-	if err != nil {
-		t.Fatal(err)
-	}
-	dynamicPath.Uuid = []byte{7}
-	remotePath, err := localPath("10.77.60.11/32")
-	if err != nil {
-		t.Fatal(err)
-	}
-	remotePath.Uuid = []byte{99}
-	server := &fakeServer{
-		routes: []*gobgpapi.Destination{
-			{Prefix: "10.77.60.11/32", Paths: []*gobgpapi.Path{remotePath, dynamicPath}},
-		},
-	}
-	controller := Controller{
-		Router: bgpRouter(),
-		Server: server,
-	}
-	applied := bgpdaemon.AppliedConfig{
-		Version: bgpdaemon.AppliedVersion,
-		Paths: []bgpdaemon.AppliedPath{
-			{
-				Source: "MobilityPool/demo/node/aws-router-a",
-				Prefix: "10.77.60.11/32",
-				Family: bgpdaemon.AppliedPathFamilyIPv4Unicast,
-				UUID:   bgpdaemon.EncodeUUID([]byte{7}),
-			},
-		},
-	}
-	synced, err := controller.dynamicAdvertisementsSynced(context.Background(), applied)
-	if err != nil {
-		t.Fatalf("dynamic advertisements synced: %v", err)
-	}
-	if !synced {
-		t.Fatalf("dynamic advertisement was treated as unsynced when its UUID was present alongside a remote path")
+	if pathsByKey[key].UUID != bgpdaemon.EncodeUUID([]byte{7}) {
+		t.Fatalf("dynamic path UUID changed outside control API ownership: %#v", server.applied.Paths)
 	}
 }
 

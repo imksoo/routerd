@@ -3,7 +3,6 @@
 package bgp
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -215,21 +214,6 @@ func (c *Controller) reconcileLocked(ctx context.Context) error {
 		return c.savePendingAll("GoBGPAppliedStatePersistFailed", err)
 	}
 	_ = previousApplied
-	advertisementsSynced, err := c.dynamicAdvertisementsSynced(ctx, applied)
-	if err != nil {
-		return c.savePendingAll("GoBGPDynamicPathObserveFailed", err)
-	}
-	dynamicRefreshNeeded := !advertisementsSynced
-	if dynamicRefreshNeeded {
-		refreshed, err := c.refreshDynamicAdvertisements(ctx, applied)
-		if err != nil {
-			return c.savePendingAll("GoBGPDynamicPathRefreshFailed", err)
-		}
-		applied = refreshed
-		if err := c.Server.SaveAppliedConfig(ctx, applied); err != nil {
-			return c.savePendingAll("GoBGPAppliedStatePersistFailed", err)
-		}
-	}
 	c.appliedConfig = applied
 	allowedImportPrefixes := importAllowedPrefixesFromApplied(applied)
 	state, routes, livenessMarkers, err := c.observeState(ctx, allowedImportPrefixes, desired)
@@ -1452,77 +1436,6 @@ func appliedImportPolicyAllowedPrefixes(applied bgpdaemon.AppliedConfig) []strin
 	return cleanStrings(prefixes)
 }
 
-func (c *Controller) refreshDynamicAdvertisements(ctx context.Context, applied bgpdaemon.AppliedConfig) (bgpdaemon.AppliedConfig, error) {
-	applied = bgpdaemon.Normalize(applied)
-	hasDynamic := false
-	for _, path := range applied.Paths {
-		if path.Source != bgpdaemon.AppliedPathSourceStatic {
-			hasDynamic = true
-			break
-		}
-	}
-	live := map[string][][]byte{}
-	if hasDynamic {
-		var err error
-		live, err = c.advertisedPathUUIDs(ctx)
-		if err != nil {
-			return bgpdaemon.AppliedConfig{}, err
-		}
-	}
-	for i, path := range applied.Paths {
-		if path.Source == bgpdaemon.AppliedPathSourceStatic {
-			continue
-		}
-		uuid, err := bgpdaemon.DecodeUUID(path.UUID)
-		if err == nil && len(uuid) > 0 && pathUUIDSetContains(live[path.Prefix], uuid) {
-			continue
-		}
-		if err == nil && len(uuid) > 0 {
-			if err := c.Server.DeletePath(ctx, &gobgpapi.DeletePathRequest{TableType: gobgpapi.TableType_GLOBAL, Uuid: uuid}); err != nil && !isMissingGoBGPPath(err) {
-				return bgpdaemon.AppliedConfig{}, err
-			}
-		}
-		reqPath, err := appliedPathToGoBGPPath(path)
-		if err != nil {
-			return bgpdaemon.AppliedConfig{}, err
-		}
-		resp, err := c.Server.AddPath(ctx, &gobgpapi.AddPathRequest{TableType: gobgpapi.TableType_GLOBAL, Path: reqPath})
-		if err != nil {
-			return bgpdaemon.AppliedConfig{}, err
-		}
-		applied.Paths[i].UUID = bgpdaemon.EncodeUUID(resp.GetUuid())
-	}
-	return bgpdaemon.Normalize(applied), nil
-}
-
-func (c *Controller) dynamicAdvertisementsSynced(ctx context.Context, applied bgpdaemon.AppliedConfig) (bool, error) {
-	applied = bgpdaemon.Normalize(applied)
-	var dynamic []bgpdaemon.AppliedPath
-	for _, path := range applied.Paths {
-		if path.Source == bgpdaemon.AppliedPathSourceStatic {
-			continue
-		}
-		dynamic = append(dynamic, path)
-	}
-	if len(dynamic) == 0 {
-		return true, nil
-	}
-	live, err := c.advertisedPathUUIDs(ctx)
-	if err != nil {
-		return false, err
-	}
-	for _, path := range dynamic {
-		uuid, err := bgpdaemon.DecodeUUID(path.UUID)
-		if err != nil || len(uuid) == 0 {
-			return false, nil
-		}
-		if !pathUUIDSetContains(live[path.Prefix], uuid) {
-			return false, nil
-		}
-	}
-	return true, nil
-}
-
 func isMissingGoBGPPath(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "can't find a specified path")
 }
@@ -1618,36 +1531,6 @@ func stringSliceContains(values []string, want string) bool {
 	want = strings.TrimSpace(want)
 	for _, value := range values {
 		if strings.TrimSpace(value) == want {
-			return true
-		}
-	}
-	return false
-}
-
-func (c *Controller) advertisedPathUUIDs(ctx context.Context) (map[string][][]byte, error) {
-	out := map[string][][]byte{}
-	for _, family := range bgpFamiliesForRouter(c.Router) {
-		err := c.Server.ListPath(ctx, &gobgpapi.ListPathRequest{TableType: gobgpapi.TableType_GLOBAL, Family: family}, func(dst *gobgpapi.Destination) {
-			for _, path := range dst.GetPaths() {
-				if path.GetIsWithdraw() || len(path.GetUuid()) == 0 {
-					continue
-				}
-				prefix := firstNonEmpty(dst.GetPrefix(), pathPrefix(path))
-				if prefix != "" {
-					out[prefix] = append(out[prefix], append([]byte(nil), path.GetUuid()...))
-				}
-			}
-		})
-		if err != nil {
-			return nil, err
-		}
-	}
-	return out, nil
-}
-
-func pathUUIDSetContains(values [][]byte, want []byte) bool {
-	for _, value := range values {
-		if bytes.Equal(value, want) {
 			return true
 		}
 	}
