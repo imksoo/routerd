@@ -30,7 +30,9 @@ go run ./cmd/routerd serve --sandbox --root "${root}" >"${stdout_log}" 2>"${stde
 pid=$!
 
 status_socket="${root}/run/routerd/routerd-status.sock"
-for _ in $(seq 1 100); do
+ready_timeout="${ROUTERD_SANDBOX_READY_TIMEOUT_SECONDS:-30}"
+ready_checks=$((ready_timeout * 10))
+for _ in $(seq 1 "${ready_checks}"); do
     if ! kill -0 "${pid}" >/dev/null 2>&1; then
         echo "routerd sandbox serve exited before socket became ready" >&2
         cat "${stdout_log}" >&2 || true
