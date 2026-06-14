@@ -346,7 +346,7 @@ func (r doctorRunner) doctorSAM() []doctorCheck {
 		}
 		checks = append(checks, r.doctorSAMFederationDiscoveryChecks(res.Metadata.Name, poolSpec, status)...)
 		checks = append(checks, doctorSAMOwnershipConflictCheck(res.Metadata.Name, status))
-		checks = append(checks, r.doctorSAMOwnerTableRouteChecks(res.Metadata.Name, status)...)
+		checks = append(checks, r.doctorSAMOwnerTableRouteChecks(res.Metadata.Name, poolSpec, status)...)
 		checks = append(checks, r.doctorSAMBGPDeliveryChecks(res)...)
 		phase := stringStatus(status, "providerActionPhase")
 		if phase == "Failed" {
@@ -651,7 +651,7 @@ func doctorSAMOwnershipConflictCheck(pool string, status map[string]any) doctorC
 	return doctorCheck{Area: "sam", Name: label, Status: doctorPass, Detail: "no ownership conflicts"}
 }
 
-func (r doctorRunner) doctorSAMOwnerTableRouteChecks(pool string, status map[string]any) []doctorCheck {
+func (r doctorRunner) doctorSAMOwnerTableRouteChecks(pool string, poolSpec api.MobilityPoolSpec, status map[string]any) []doctorCheck {
 	label := "MobilityPool/" + pool + " owner-table route drift"
 	rows := statusMaps(status["ownershipResolverOwnerTable"])
 	if len(rows) == 0 {
@@ -667,8 +667,12 @@ func (r doctorRunner) doctorSAMOwnerTableRouteChecks(pool string, status map[str
 	if !snapshotCommand.OK {
 		checks = append(checks, doctorCheck{Area: "sam", Name: label + " actual FIB snapshot", Status: doctorWarn, Detail: firstNonEmpty(snapshotCommand.Error, oneLine(snapshotCommand.Output), "main table route snapshot unavailable"), Remedy: "inspect ip -4 route show table main"})
 	}
+	expectedPrefixes := map[string]bool{}
 	for _, row := range rows {
 		address := strings.TrimSpace(fmt.Sprint(row["address"]))
+		if normalized := normalizeDoctorIPv4RoutePrefix(address); normalized != "" {
+			expectedPrefixes[normalized] = true
+		}
 		if address == "" || !doctorSAMOwnerRowNeedsLocalFIB(row) {
 			continue
 		}
@@ -697,6 +701,9 @@ func (r doctorRunner) doctorSAMOwnerTableRouteChecks(pool string, status map[str
 			detail = appendDoctorDetail(detail, "actual="+strings.Join(actual, " | "))
 		}
 		checks = append(checks, doctorCheck{Area: "sam", Name: name, Status: doctorPass, Detail: detail})
+	}
+	if snapshotCommand.OK {
+		checks = append(checks, doctorSAMUnexpectedRouteResidueChecks(pool, poolSpec, expectedPrefixes, actualRoutes)...)
 	}
 	if len(checks) == 0 {
 		return []doctorCheck{{Area: "sam", Name: label, Status: doctorSkip, Detail: "no local owner rows"}}
@@ -763,6 +770,40 @@ func doctorSAMForbiddenLocalOwnerRoute(lines []string) string {
 		}
 	}
 	return ""
+}
+
+func doctorSAMUnexpectedRouteResidueChecks(pool string, poolSpec api.MobilityPoolSpec, expected map[string]bool, actual map[string][]string) []doctorCheck {
+	prefix, err := netip.ParsePrefix(strings.TrimSpace(poolSpec.Prefix))
+	if err != nil || !prefix.Addr().Is4() {
+		return nil
+	}
+	prefix = prefix.Masked()
+	var unexpected []string
+	for routePrefix, lines := range actual {
+		parsed, err := netip.ParsePrefix(routePrefix)
+		if err != nil || !parsed.Addr().Is4() || parsed.Bits() != 32 {
+			continue
+		}
+		parsed = parsed.Masked()
+		normalized := parsed.String()
+		if !prefix.Contains(parsed.Addr()) || expected[normalized] {
+			continue
+		}
+		unexpected = append(unexpected, normalized+" actual="+strings.Join(lines, " | "))
+	}
+	sort.Strings(unexpected)
+	checks := make([]doctorCheck, 0, len(unexpected))
+	for _, detail := range unexpected {
+		address, _, _ := strings.Cut(detail, " ")
+		checks = append(checks, doctorCheck{
+			Area:   "sam",
+			Name:   "MobilityPool/" + pool + " owner-table unexpected route residue " + address,
+			Status: doctorFail,
+			Detail: "route inside MobilityPool prefix is present in the host FIB but absent from ownershipResolverOwnerTable; " + detail,
+			Remedy: "inspect routerd/provider ownership state and remove stale /32 host route only after confirming it is not currently owned",
+		})
+	}
+	return checks
 }
 
 func doctorSAMOwnerRowsSummary(rows []map[string]any, limit int) string {

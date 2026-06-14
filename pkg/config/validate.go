@@ -53,6 +53,9 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 	if err := validateBGPRouterInstances(router, idx.VRFs); err != nil {
 		return err
 	}
+	if err := validateMobilityPoolPrefixes(router); err != nil {
+		return err
+	}
 	for _, res := range router.Spec.Resources {
 		if res.APIVersion != api.NetAPIVersion || res.Kind != "VirtualAddress" {
 			continue
@@ -781,6 +784,35 @@ func bfdSpecMatchesBGPPeer(spec api.BFDSpec, peerName string, peerAddresses []st
 		}
 	}
 	return false
+}
+
+func validateMobilityPoolPrefixes(router *api.Router) error {
+	type poolPrefix struct {
+		id     string
+		prefix netip.Prefix
+	}
+	var pools []poolPrefix
+	for _, res := range router.Spec.Resources {
+		if res.APIVersion != api.MobilityAPIVersion || res.Kind != "MobilityPool" {
+			continue
+		}
+		spec, err := res.MobilityPoolSpec()
+		if err != nil {
+			return err
+		}
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(spec.Prefix))
+		if err != nil || !prefix.Addr().Is4() {
+			continue
+		}
+		prefix = prefix.Masked()
+		for _, existing := range pools {
+			if prefix.Overlaps(existing.prefix) {
+				return fmt.Errorf("%s spec.prefix %s overlaps %s spec.prefix %s; MobilityPool prefixes must be disjoint", res.ID(), prefix, existing.id, existing.prefix)
+			}
+		}
+		pools = append(pools, poolPrefix{id: res.ID(), prefix: prefix})
+	}
+	return nil
 }
 
 func validateApplyPolicy(spec api.ApplyPolicySpec) error {
