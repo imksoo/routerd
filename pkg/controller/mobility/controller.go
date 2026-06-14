@@ -718,7 +718,7 @@ func bgpLocalOwnedAddressesFromConfigAndEvents(poolName, selfNode string, spec a
 			if sourceType == providerDiscoverySource && strings.TrimSpace(ev.SourceNode) == strings.TrimSpace(selfNode) {
 				eventNIC := strings.TrimSpace(ev.Payload["nicRef"])
 				selfNIC := strings.TrimSpace(self.Capture.NICRef)
-				if discoveryOwnedObserved && len(discoveryOwnedAddresses) == 0 ||
+				if discoveryOwnedObserved && !discoveryOwnedAddresses[address] ||
 					discoverySelfIPsObserved && discoverySelfIPs[address] ||
 					eventNIC != "" && selfNIC != "" && eventNIC == selfNIC {
 					continue
@@ -1048,7 +1048,7 @@ func decodeActionRecordMap(raw string) map[string]string {
 	return out
 }
 
-func bgpProviderActionPlans(poolName, selfNode string, spec api.MobilityPoolSpec, desiredTrapAddresses map[string]bgpTrapCandidate, previousPlans []dynamicconfig.ActionPlan, profiles map[string]api.CloudProviderProfileSpec, actionJournal []routerstate.ActionExecutionRecord, observedSelfCaptures map[string]bool, observedSelfCapturesOK bool, observedSelfAt time.Time, forwardingObserved, forwardingEnabled bool, forwardingObservedAt time.Time, suppressDeprovision bool, now time.Time) ([]dynamicconfig.ActionPlan, error) {
+func bgpProviderActionPlans(poolName, selfNode string, spec api.MobilityPoolSpec, desiredTrapAddresses map[string]bgpTrapCandidate, previousPlans []dynamicconfig.ActionPlan, profiles map[string]api.CloudProviderProfileSpec, actionJournal []routerstate.ActionExecutionRecord, observedSelfCaptures map[string]bool, observedSelfCapturesOK bool, observedSelfAt time.Time, forwardingObserved, forwardingEnabled bool, forwardingObservedAt time.Time, suppressDeprovision, releaseStandbyCaptures bool, now time.Time) ([]dynamicconfig.ActionPlan, error) {
 	members := plannerMembers(spec.Members)
 	self, ok := members[strings.TrimSpace(selfNode)]
 	if !ok {
@@ -1100,7 +1100,10 @@ func bgpProviderActionPlans(poolName, selfNode string, spec api.MobilityPoolSpec
 			if capture.Type != "provider-secondary-ip" {
 				continue
 			}
-			if strategy == captureStrategySecondaryIP && !self.MaintenanceDrain {
+			if strategy == captureStrategySecondaryIP && !self.MaintenanceDrain && !releaseStandbyCaptures {
+				continue
+			}
+			if strategy == captureStrategySecondaryIP && observedSelfCapturesOK && !observedSelfCaptures[address] {
 				continue
 			}
 			transitionKey := providerCaptureTransitionKey(capture.ProviderRef, providerCaptureRefFromCapture(capture, previous.Target), address)
