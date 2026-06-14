@@ -355,16 +355,6 @@ func observedSelfStaleCaptureActionPlans(in bgpDeliveryPlannerInput, candidates 
 			desired[address] = true
 		}
 	}
-	installed := map[string]bool{}
-	for raw, nextHops := range in.InstalledNextHops {
-		if len(cleanStrings(nextHops)) == 0 {
-			continue
-		}
-		address := normalizeAddressString(raw)
-		if address != "" {
-			installed[address] = true
-		}
-	}
 	poolPrefix, err := netip.ParsePrefix(strings.TrimSpace(in.Spec.Prefix))
 	if err != nil {
 		return nil, fmt.Errorf("parse pool prefix: %w", err)
@@ -375,9 +365,6 @@ func observedSelfStaleCaptureActionPlans(in bgpDeliveryPlannerInput, candidates 
 	for _, decision := range in.Decisions {
 		address := normalizeAddressString(decision.Address)
 		if address == "" || desired[address] {
-			continue
-		}
-		if installed[address] {
 			continue
 		}
 		if decision.Class != ownershipClassStaleCapture || strings.TrimSpace(decision.SuppressionReason) != "self-captured-secondary" {
