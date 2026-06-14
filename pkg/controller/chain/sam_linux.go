@@ -177,7 +177,7 @@ func (netlinkSAMProxyNeighborApplier) ReconcileForwardPaths(ctx context.Context,
 
 func addDesiredIPTablesRule(desired map[string][]string, rule ...string) {
 	normalized := append([]string(nil), rule...)
-	desired[strings.Join(normalized, "\x00")] = normalized
+	desired[iptablesRuleKey(normalized)] = normalized
 }
 
 func sortedIPTablesRules(rules map[string][]string) [][]string {
@@ -224,7 +224,7 @@ func deleteStaleIPTablesRules(ctx context.Context, chain string, desired map[str
 		if len(rule) == 0 {
 			continue
 		}
-		key := strings.Join(rule, "\x00")
+		key := iptablesRuleKey(rule)
 		if _, ok := desired[key]; ok && !seenDesired[key] {
 			seenDesired[key] = true
 			continue
@@ -235,6 +235,69 @@ func deleteStaleIPTablesRules(ctx context.Context, chain string, desired map[str
 		}
 	}
 	return nil
+}
+
+func iptablesRuleKey(rule []string) string {
+	var src, dst, in, out, jump string
+	rest := make([]string, 0, len(rule))
+	for i := 0; i < len(rule); i++ {
+		token := rule[i]
+		value := ""
+		if i+1 < len(rule) {
+			value = rule[i+1]
+		}
+		switch token {
+		case "-s", "--source":
+			if value != "" {
+				src = value
+				i++
+				continue
+			}
+		case "-d", "--destination":
+			if value != "" {
+				dst = value
+				i++
+				continue
+			}
+		case "-i", "--in-interface":
+			if value != "" {
+				in = value
+				i++
+				continue
+			}
+		case "-o", "--out-interface":
+			if value != "" {
+				out = value
+				i++
+				continue
+			}
+		case "-j", "--jump":
+			if value != "" {
+				jump = value
+				i++
+				continue
+			}
+		}
+		rest = append(rest, token)
+	}
+	key := make([]string, 0, len(rule))
+	if src != "" {
+		key = append(key, "-s", src)
+	}
+	if dst != "" {
+		key = append(key, "-d", dst)
+	}
+	if in != "" {
+		key = append(key, "-i", in)
+	}
+	if out != "" {
+		key = append(key, "-o", out)
+	}
+	key = append(key, rest...)
+	if jump != "" {
+		key = append(key, "-j", jump)
+	}
+	return strings.Join(key, "\x00")
 }
 
 func samProxyNeighbor(address, ifname string) (netlink.Link, *netlink.Neigh, error) {
