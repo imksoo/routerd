@@ -2306,16 +2306,21 @@ func TestControllerBGPModeObservedSelfStaleCaptureUsesCaptureTargetNIC(t *testin
 }
 
 func TestBGPPathSigFromObservedSelfStaleIsStable(t *testing.T) {
-	first := bgpPathSigFromObservedSelfStale("10.88.60.10/32")
-	second := bgpPathSigFromObservedSelfStale("10.88.60.10")
+	staleSince := time.Date(2026, 6, 10, 18, 45, 0, 0, time.UTC)
+	first := bgpPathSigFromObservedSelfStale("10.88.60.10/32", staleSince)
+	second := bgpPathSigFromObservedSelfStale("10.88.60.10", staleSince)
 	if first != second {
 		t.Fatalf("path sig mismatch for same address: %q != %q", first, second)
 	}
-	if strings.Contains(first, "2026-") || strings.Contains(first, "T") {
-		t.Fatalf("path sig %q must not include observation time", first)
+	nextGeneration := bgpPathSigFromObservedSelfStale("10.88.60.10/32", staleSince.Add(time.Minute))
+	if first == nextGeneration {
+		t.Fatalf("path sig must distinguish repeated stale cleanup generations for the same address: %q", first)
 	}
 	if !strings.Contains(first, "observed-self-stale") {
 		t.Fatalf("path sig %q does not identify observed self-stale cleanup", first)
+	}
+	if !strings.Contains(first, staleSince.Format(time.RFC3339Nano)) {
+		t.Fatalf("path sig %q does not include stale first-seen generation %q", first, staleSince.Format(time.RFC3339Nano))
 	}
 }
 
