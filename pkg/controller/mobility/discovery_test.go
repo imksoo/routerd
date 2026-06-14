@@ -1333,7 +1333,7 @@ func TestDiscoveryControllerDoesNotExpireProviderDiscoveryOnTransientActiveMiss(
 		NICRef:    "client-nic",
 		SubnetRef: "subnet-a",
 		Tags:      map[string]string{"cloudedge-mobility": "true"},
-	}, now.Add(-30*time.Second), 2*time.Minute))
+	}, now.Add(-90*time.Second), 2*time.Minute))
 	runner := &fakeInventoryRunner{result: providerinventory.ObservePrivateIPsResult{
 		TypeMeta: providerinventory.TypeMeta{APIVersion: providerinventory.ProtocolAPIVersion, Kind: providerinventory.KindObservePrivateIPsResult},
 		Status: providerinventory.ObservePrivateIPsResultStatus{
