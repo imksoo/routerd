@@ -149,6 +149,75 @@ for flow in data.get("flows", []):
             raise SystemExit(f"flow {flow.get('src')}->{flow.get('dst')} {field}={flow.get(field)!r}")
 PY
 
+identity_runner="$tmp/identity-matrix-runner"
+cat > "$identity_runner" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+op=$1
+src=$2
+dst_site=${4:-}
+case "$src" in
+  onprem) src_ip=10.77.60.10; src_host=onprem-client ;;
+  aws) src_ip=10.77.60.11; src_host=aws-client ;;
+  *) exit 2 ;;
+esac
+case "$dst_site" in
+  onprem) dst_host=onprem-client ;;
+  aws) dst_host=aws-client ;;
+  *) dst_host=unknown ;;
+esac
+case "$op" in
+  ping) exit 0 ;;
+  ssh)
+    printf 'src_hostname=%s\n' "$src_host"
+    printf 'src_hostkey_sha256=SHA256:source\n'
+    printf 'dst_hostname=%s\n' "$dst_host"
+    printf 'dst_hostkey_sha256=SHA256:dest\n'
+    printf 'peer_ip=%s\n' "$src_ip"
+    printf 'default_gw=10.77.60.1\n'
+    ;;
+  *) exit 2 ;;
+esac
+SH
+chmod +x "$identity_runner"
+
+identity_json="$tmp/connectivity-matrix-identity.json"
+CE_ONPREM_CLIENT_EXPECT_HOSTNAME=onprem-client \
+CE_AWS_CLIENT_EXPECT_HOSTNAME=aws-client \
+MATRIX_RUNNER="$identity_runner" \
+  "$SCRIPT_DIR/cloudedge-connectivity-matrix.sh" \
+    --sites "onprem=10.77.60.10,aws=10.77.60.11" \
+    --out "$identity_json" >/dev/null
+python3 - "$identity_json" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1]))
+if data["summary"]["result"] != "pass":
+    raise SystemExit(f"identity matrix did not pass: {data['summary']!r}")
+for flow in data["flows"]:
+    if flow.get("identityCheck") != "pass":
+        raise SystemExit(f"identityCheck = {flow.get('identityCheck')!r}")
+    if not flow.get("srcHostname") or not flow.get("dstHostname"):
+        raise SystemExit(f"missing identity evidence: {flow!r}")
+PY
+
+identity_fail_json="$tmp/connectivity-matrix-identity-fail.json"
+if CE_ONPREM_CLIENT_EXPECT_HOSTNAME=onprem-client \
+   CE_AWS_CLIENT_EXPECT_HOSTNAME=wrong-aws-client \
+   MATRIX_RUNNER="$identity_runner" \
+     "$SCRIPT_DIR/cloudedge-connectivity-matrix.sh" \
+       --sites "onprem=10.77.60.10,aws=10.77.60.11" \
+       --out "$identity_fail_json" >/dev/null 2>&1; then
+  die "identity mismatch matrix unexpectedly passed"
+fi
+python3 - "$identity_fail_json" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1]))
+if data["summary"]["result"] != "fail":
+    raise SystemExit(f"identity mismatch did not fail: {data['summary']!r}")
+if not any(flow.get("identityCheck") == "fail" and "wrong-aws-client" in flow.get("dstIdentityError", "") for flow in data["flows"]):
+    raise SystemExit(f"identity mismatch was not recorded: {data['flows']!r}")
+PY
+
 out="$tmp/evidence"
 run_id="20260601T000000Z-cloudedge-d3-4site-directed-matrix"
 MATRIX_RUNNER="$runner" CE_STATE_DIR="$tmp/state" \

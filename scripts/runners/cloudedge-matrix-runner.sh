@@ -24,10 +24,14 @@ ENV:
   CLIENT_SSH_USER             User for nested site-to-site SSH (default ubuntu)
   CE_NESTED_SSH_KNOWN_HOSTS   Known-hosts file visible on the source VM
   CE_NESTED_SSH_EXTRA_OPTS    Extra nested SSH options
+  CE_<SITE>_CLIENT_EXPECT_HOSTNAME
+                              Optional expected hostname for source/destination
+                              identity checks. A mismatch fails the SSH probe.
 
 The runner executes commands on the source client VM over SSH, then uses the
 source client to ping/SSH the destination logical IP. It prints peer_ip and
-default_gw for the matrix source-IP/default-gateway checks.
+default_gw for the matrix source-IP/default-gateway checks, plus source and
+destination hostname/host-key evidence for target identity checks.
 EOF
 }
 
@@ -37,10 +41,19 @@ cmd_ping() {
 }
 
 cmd_ssh() {
-  local src=$1 dst_ip=$2 user opts
+  local src=$1 dst_ip=$2 dst_site=${3:-} user opts
   user=${CLIENT_SSH_USER:-ubuntu}
   opts=$(nested_ssh_opts)
-  ce_client_ssh "$src" "ssh $opts $(printf '%q' "$user@$dst_ip") 'echo peer_ip=\$(echo \$SSH_CONNECTION | awk \"{print \\\$1}\")'; echo default_gw=\$(ip route show default | awk '{print \$3; exit}')"
+  local src_expected dst_expected src_identity dst_identity
+  src_expected=$(ce_expected_hostname client "$src")
+  if [[ -n "$dst_site" ]]; then
+    dst_expected=$(ce_expected_hostname client "$dst_site")
+  else
+    dst_expected=""
+  fi
+  src_identity=$(ce_remote_identity_command "$src_expected")
+  dst_identity=$(ce_remote_identity_command "$dst_expected")
+  ce_client_ssh "$src" "src_out=\$(bash -lc $src_identity); src_rc=\$?; printf '%s\n' \"\$src_out\" | sed 's/^/src_/'; ssh_rc=0; ssh $opts $(printf '%q' "$user@$dst_ip") \"dst_out=\\\$(bash -lc $dst_identity); dst_rc=\\\$?; printf '%s\n' \\\"\\\$dst_out\\\" | sed 's/^/dst_/'; echo peer_ip=\\\$(echo \\\$SSH_CONNECTION | awk '{print \\\$1}'); exit \\\$dst_rc\" || ssh_rc=\$?; echo default_gw=\$(ip route show default | awk '{print \$3; exit}'); exit \$((src_rc != 0 ? src_rc : ssh_rc))"
 }
 
 main() {
@@ -51,8 +64,8 @@ main() {
       cmd_ping "$2" "$3"
       ;;
     ssh)
-      [[ $# -eq 3 ]] || ce_die "ssh requires <src-site> <dst-ip>"
-      cmd_ssh "$2" "$3"
+      [[ $# -eq 3 || $# -eq 4 ]] || ce_die "ssh requires <src-site> <dst-ip> [dst-site]"
+      cmd_ssh "$2" "$3" "${4:-}"
       ;;
     -h|--help|help|"")
       usage

@@ -68,6 +68,44 @@ nested_ssh_opts() {
   printf '%s' "$user_opts"
 }
 
+ce_expected_hostname() {
+  local role=$1 name=$2 upper role_upper
+  upper=$(ce_upper "$name")
+  role_upper=$(ce_upper "$role")
+  ce_env_first "CE_${upper}_${role_upper}_EXPECT_HOSTNAME" "${upper}_${role_upper}_EXPECT_HOSTNAME" "CE_${upper}_EXPECT_HOSTNAME" "${upper}_EXPECT_HOSTNAME" || true
+}
+
+ce_remote_identity_command() {
+  local expected=$1
+  python3 - "$expected" <<'PY'
+import shlex, sys
+expected = sys.argv[1]
+script = r'''
+set -eu
+hostname_value="$(hostname 2>/dev/null || hostname -f 2>/dev/null || true)"
+hostkey_file=""
+for candidate in /etc/ssh/ssh_host_ed25519_key.pub /etc/ssh/ssh_host_ecdsa_key.pub /etc/ssh/ssh_host_rsa_key.pub; do
+  if [ -r "$candidate" ]; then
+    hostkey_file="$candidate"
+    break
+  fi
+done
+hostkey_fp=""
+if [ -n "$hostkey_file" ] && command -v ssh-keygen >/dev/null 2>&1; then
+  hostkey_fp="$(ssh-keygen -lf "$hostkey_file" 2>/dev/null | awk '{print $2}' || true)"
+fi
+printf 'hostname=%s\n' "$hostname_value"
+printf 'hostkey_sha256=%s\n' "$hostkey_fp"
+if [ -n "__EXPECTED_HOSTNAME__" ] && [ "$hostname_value" != "__EXPECTED_HOSTNAME__" ]; then
+  printf 'identity_error=hostname mismatch: got %s want %s\n' "$hostname_value" "__EXPECTED_HOSTNAME__"
+  exit 42
+fi
+'''
+script = script.replace("__EXPECTED_HOSTNAME__", expected.replace("\\", "\\\\").replace('"', '\\"'))
+print(shlex.quote(script))
+PY
+}
+
 ce_ssh() {
   local host=$1; shift
   local user=${CE_SSH_USER:-${SSH_USER:-ubuntu}}
