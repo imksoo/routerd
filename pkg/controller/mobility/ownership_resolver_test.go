@@ -135,6 +135,55 @@ func TestOwnershipResolverClearsDisprovedStaleCaptureForStaticRemoteOwner(t *tes
 	}
 }
 
+func TestOwnershipResolverKeepsObservedSelfCapture(t *testing.T) {
+	now := time.Date(2026, 6, 14, 8, 40, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	address := "10.88.60.11/32"
+	action := resolverSucceededAction(t, "aws-provider", "eni-b", "aws-router-b", address, "assign-secondary-ip", now.Add(-time.Minute))
+	decisions, err := resolveAddressOwnership(ownershipResolverInput{
+		PoolName: "cloudedge",
+		SelfNode: "aws-router-b",
+		Spec:     spec,
+		Status: map[string]any{
+			"discoverySelfPrivateIPs":        []string{"10.88.60.6/32"},
+			"discoverySelfCapturedAddresses": []string{address},
+			"discoveryLastScanAt":            now.Format(time.RFC3339Nano),
+		},
+		ActionJournal: []routerstate.ActionExecutionRecord{action},
+		BGPHomeOwnerNodes: map[string]string{
+			address: "aws-router-a",
+		},
+		Now: now,
+	})
+	if err != nil {
+		t.Fatalf("resolveAddressOwnership: %v", err)
+	}
+	decision := ownershipDecisionByAddress(t, decisions, address)
+	if decision.Class != ownershipClassConfirmedCapture || decision.CaptureState != captureStateConfirmed || decision.CaptureHolderNode != "aws-router-b" {
+		t.Fatalf("decision = %#v, want observed self capture to stay confirmed", decision)
+	}
+}
+
+func TestOwnershipResolverDoesNotClearOtherHolderStaleCapture(t *testing.T) {
+	address := "10.88.60.11/32"
+	decision := ownershipDecision{
+		Address:            address,
+		Class:              ownershipClassRemoteHomeOwned,
+		HomeOwnerNode:      "aws-router-a",
+		CaptureHolderNode:  "aws-router-c",
+		CaptureProviderRef: "aws-provider",
+		CaptureTargetRef:   "eni-c",
+		CaptureStrategy:    captureStrategySecondaryIP,
+		CaptureState:       captureStateStale,
+	}
+
+	clearDisprovedStaleCapture(&decision, "aws-router-b", map[string]bool{}, true, address)
+
+	if decision.Class != ownershipClassRemoteHomeOwned || decision.CaptureState != captureStateStale || decision.CaptureHolderNode != "aws-router-c" {
+		t.Fatalf("decision = %#v, want self observation not to clear another holder stale capture", decision)
+	}
+}
+
 func TestOwnershipResolverDoesNotConfirmRouterPrimaryFromActionJournal(t *testing.T) {
 	now := time.Date(2026, 6, 10, 15, 0, 0, 0, time.UTC)
 	spec := awsFailoverPoolSpec()
