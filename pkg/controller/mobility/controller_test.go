@@ -1467,7 +1467,60 @@ func TestControllerBGPCaptureCandidateNextHopsExcludeProviderCapturePaths(t *tes
 	}
 }
 
-func TestControllerBGPModeStandbyProtectsConfirmedCaptureFromUnassign(t *testing.T) {
+func TestControllerBGPModeStandbyKeepsConfirmedCaptureWhileActiveMarkerAbsent(t *testing.T) {
+	now := time.Date(2026, 6, 13, 22, 4, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	members := plannerMembers(spec.Members)
+	self := members["aws-router-b"]
+	address := "10.88.60.12/32"
+	previous, err := providerActionPlans("cloudedge", api.CloudProviderProfileSpec{Provider: "aws"}, self.Capture, self.CaptureTarget, address, map[string]bool{}, true)
+	if err != nil {
+		t.Fatalf("providerActionPlans: %v", err)
+	}
+	stampBGPPathFenceActionPlans(previous, address, "prefix="+address+";nextHops=10.99.0.3", self.NodeRef, now.Add(-time.Minute))
+	delivery, err := planBGPMobilityDelivery(bgpDeliveryPlannerInput{
+		PoolName: "cloudedge",
+		Source:   DynamicSource("cloudedge", self.NodeRef),
+		Self:     self,
+		Members:  members,
+		Spec:     spec,
+		Decisions: []ownershipDecision{{
+			Address:            address,
+			Class:              ownershipClassConfirmedCapture,
+			CaptureHolderNode:  self.NodeRef,
+			AdvertiseOwnerNode: self.NodeRef,
+			CaptureState:       captureStateConfirmed,
+		}},
+		Placement: PlacementDecision{
+			Group:               "aws-edge",
+			Active:              false,
+			ActiveNode:          "aws-router-a",
+			ActiveMarkerPresent: false,
+			Reason:              "configured active marker absent",
+		},
+		PreviousPlans:        previous,
+		Profiles:             map[string]api.CloudProviderProfileSpec{"aws-provider": {Provider: "aws"}},
+		ObservedSelfCaptures: map[string]bool{address: true},
+		ObservedSelfIPsOK:    true,
+		RIBObserved:          true,
+		Now:                  now,
+	})
+	if err != nil {
+		t.Fatalf("planBGPMobilityDelivery: %v", err)
+	}
+	if len(delivery.CaptureCandidates) != 1 || !delivery.CaptureCandidates[address].ProtectOnly {
+		t.Fatalf("capture candidates = %#v, standby holder must stay protected while active liveness is absent", delivery.CaptureCandidates)
+	}
+	if unassign := findActionPlanByAddress(delivery.ActionPlans, "unassign-secondary-ip", address); unassign != nil {
+		t.Fatalf("action plans = %#v, standby holder must not release before active liveness returns", delivery.ActionPlans)
+	}
+	if assign := findActionPlanByAddress(delivery.ActionPlans, "assign-secondary-ip", address); assign != nil {
+		t.Fatalf("action plans = %#v, protect-only capture must not reassign", delivery.ActionPlans)
+	}
+}
+
+func TestControllerBGPModeStandbyReleasesConfirmedCaptureWhenActiveMarkerReturns(t *testing.T) {
 	now := time.Date(2026, 6, 13, 22, 5, 0, 0, time.UTC)
 	spec := awsFailoverPoolSpec()
 	spec.DeliveryPolicy.Mode = "bgp"
