@@ -40,6 +40,7 @@ type ownershipResolverInput struct {
 	PreviousPlans     []dynamicconfig.ActionPlan
 	InstalledNextHops map[string][]string
 	BGPHomeOwnerNodes map[string]string
+	BGPReturnRoutes   map[string]bool
 	Now               time.Time
 }
 
@@ -134,6 +135,9 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 	}
 	for raw := range in.InstalledNextHops {
 		if address, ok := normalizeBGPTrapPrefix(raw, prefix); ok {
+			if in.BGPReturnRoutes[address] {
+				continue
+			}
 			universe[address] = true
 		}
 	}
@@ -409,6 +413,9 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 			decision.SuppressionReason = "capture-not-desired"
 			decision.Source = "provider-action"
 			out = append(out, decision)
+			continue
+		}
+		if in.BGPReturnRoutes[address] {
 			continue
 		}
 		if decision.Source == "" {
