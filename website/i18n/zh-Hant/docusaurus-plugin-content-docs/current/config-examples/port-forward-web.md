@@ -68,8 +68,8 @@ flowchart LR
 ## 確認
 
 ```bash
-routerctl validate --config examples/example-port-forward-web.yaml
-routerctl apply --config examples/example-port-forward-web.yaml --dry-run
+routerctl validate -f examples/example-port-forward-web.yaml --replace
+routerctl plan -f examples/example-port-forward-web.yaml --replace
 routerctl describe PortForward/web-https
 nft list table ip routerd_nat
 ```

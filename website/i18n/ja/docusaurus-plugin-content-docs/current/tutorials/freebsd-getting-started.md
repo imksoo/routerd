@@ -52,7 +52,7 @@ sudo install -m 0600 examples/freebsd-edge.yaml /usr/local/etc/routerd/router.ya
 まず設定を検証します。
 
 ```sh
-routerctl validate --config /usr/local/etc/routerd/router.yaml
+routerctl validate -f /usr/local/etc/routerd/router.yaml --replace
 ```
 
 次に、FreeBSD 用の成果物を一時ディレクトリへ生成します。
@@ -102,13 +102,13 @@ routerd は、リソースを次の FreeBSD の機構へ対応付けます。
 先に計画を確認します。
 
 ```sh
-routerctl plan --config /usr/local/etc/routerd/router.yaml
+routerctl plan -f /usr/local/etc/routerd/router.yaml --replace
 ```
 
 生成ファイルと計画が想定どおりなら、適用します。
 
 ```sh
-sudo routerctl apply --config /usr/local/etc/routerd/router.yaml
+sudo routerctl apply -f /usr/local/etc/routerd/router.yaml --replace
 ```
 
 routerd は、`pf.conf` を読み込む前に `pfctl -nf` で検証します。

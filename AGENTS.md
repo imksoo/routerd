@@ -95,9 +95,9 @@ Useful direct commands:
 go test ./...
 go build ./cmd/routerd
 go build ./cmd/routerctl
-routerctl validate --config examples/router-lab.yaml
-routerctl plan --config examples/router-lab.yaml
-routerctl apply --config examples/router-lab.yaml --once --dry-run --status-file /tmp/routerd-status.json
+routerctl validate -f examples/router-lab.yaml --replace
+routerctl plan -f examples/router-lab.yaml --replace
+routerctl apply -f examples/router-lab.yaml --replace --no-reconcile
 routerctl status
 routerctl show napt --limit 20
 ```

@@ -4,18 +4,17 @@ title: 调和（reconcile）与删除
 
 # 调和（reconcile）与删除
 
-![Diagram showing reconcile and removal from validate, plan, and dry-run preflight through effective desired view construction to owner-reference GC planner cleanup with backup and event recording](/img/diagrams/operations-reconcile.png)
+![Diagram showing reconcile and removal from validate and plan preflight through effective desired view construction to owner-reference GC planner cleanup with backup and event recording](/img/diagrams/operations-reconcile.png)
 
 routerd 会比较 YAML 所声明的意图与主机的当前状态。
-若有差异，则生成计划（plan），必要时可先通过 dry-run 确认后再应用。
+若有差异，则生成计划（plan），确认后再应用。
 
 ## 标准流程
 
 ```bash
-routerctl validate --config router.yaml
-routerctl plan     --config router.yaml
-routerctl apply    --config router.yaml --dry-run
-routerctl apply    --config router.yaml
+routerctl validate -f router.yaml --replace
+routerctl plan -f router.yaml --replace
+routerctl apply -f router.yaml --replace
 ```
 
 对远程路由器执行正式 `apply` 前，请先确认管理路径（SSH、控制台、hypervisor 控制台）在变更后仍能保持连接。
@@ -98,7 +97,7 @@ routerd 只删除可确认拥有权的产物（即 routerd 先前创建或明确
 `routerctl rollback --to <generation>` 通过正常的 apply 流程重新应用已保存的 Router YAML。
 回滚会重新应用声明的配置与 routerd 管理的产物；但**不会**还原 conntrack、内核瞬时状态、
 守护进程运行时状态，或在 routerd 账本之外对主机所做的任何变更。包含删除的变更，
-请务必先执行 `routerctl plan` 与 `routerctl apply --dry-run` 确认删除清单后再应用。
+请务必先执行 `routerctl plan` 确认删除清单后再应用。
 
 ## 相关项目
 

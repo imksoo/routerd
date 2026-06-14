@@ -6,9 +6,9 @@ Alpine Linux では、routerd は OpenRC をサービスマネージャーとし
 one-shot apply は、routerd が管理するローカルサービスまで含めて自己完結します。
 
 ```sh
-routerctl validate --config /usr/local/etc/routerd/router.yaml
-routerctl plan --config /usr/local/etc/routerd/router.yaml
-routerctl apply --config /usr/local/etc/routerd/router.yaml
+routerctl validate -f /usr/local/etc/routerd/router.yaml --replace
+routerctl plan -f /usr/local/etc/routerd/router.yaml --replace
+routerctl apply -f /usr/local/etc/routerd/router.yaml --replace
 ```
 
 `mode: vrrp` の `VirtualAddress` がある場合、routerd は `/etc/keepalived/keepalived.conf` を生成（レンダリング）し、OpenRC の `keepalived` init script を導入し、`rc-update` で有効化します。設定の変更は、デーモンモードと同じ VRRP コントローラー経路で適用します。デーモンが稼働中なら `rc-service keepalived reload` を、必要な場合は `restart` にフォールバックします。

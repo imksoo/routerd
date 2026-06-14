@@ -74,7 +74,7 @@ spec:
 ## 3. 検証
 
 ```bash
-routerctl validate --config first-router.yaml
+routerctl validate -f first-router.yaml --replace
 ```
 
 検証では、routerd がホストに触れる前にリソースの形を確かめます。
@@ -82,7 +82,7 @@ routerctl validate --config first-router.yaml
 ## 4. 計画の確認
 
 ```bash
-routerctl plan --config first-router.yaml
+routerctl plan -f first-router.yaml --replace
 ```
 
 計画では、インターフェース名の間違い、依存関係の不足、作成されるホスト成果物を確認します。
@@ -90,7 +90,7 @@ routerctl plan --config first-router.yaml
 ## 5. 予行実行
 
 ```bash
-routerctl apply --config first-router.yaml --dry-run
+routerctl plan -f first-router.yaml --replace
 ```
 
 予行実行では、リソースの読み込み、依存の順序、生成内容を確かめます。

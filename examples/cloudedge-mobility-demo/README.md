@@ -106,10 +106,10 @@ Run `reset-lab.sh` after every demo run, even on failure.
 These templates are intended to validate offline:
 
 ```sh
-routerctl validate --config examples/cloudedge-mobility-demo/onprem.yaml
-routerctl validate --config examples/cloudedge-mobility-demo/aws.yaml
-routerctl validate --config examples/cloudedge-mobility-demo/azure.yaml
-routerctl validate --config examples/cloudedge-mobility-demo/oci.yaml
+routerctl validate -f examples/cloudedge-mobility-demo/onprem.yaml --replace
+routerctl validate -f examples/cloudedge-mobility-demo/aws.yaml --replace
+routerctl validate -f examples/cloudedge-mobility-demo/azure.yaml --replace
+routerctl validate -f examples/cloudedge-mobility-demo/oci.yaml --replace
 ```
 
 Before committing local changes, grep the diff for real cloud identifiers,

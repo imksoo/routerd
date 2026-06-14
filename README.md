@@ -233,15 +233,14 @@ sudo install -d -m 0755 /usr/local/etc/routerd
 sudo install -m 0600 /usr/local/etc/routerd/router.yaml.sample /usr/local/etc/routerd/router.yaml
 sudo vi /usr/local/etc/routerd/router.yaml
 
-routerctl validate --config /usr/local/etc/routerd/router.yaml
-routerctl plan --config /usr/local/etc/routerd/router.yaml
-routerctl apply --config /usr/local/etc/routerd/router.yaml --dry-run
+routerctl validate -f /usr/local/etc/routerd/router.yaml --replace
+routerctl plan -f /usr/local/etc/routerd/router.yaml --replace
 ```
 
 Apply only after confirming that the management path is safe:
 
 ```sh
-sudo routerctl apply --config /usr/local/etc/routerd/router.yaml
+sudo routerctl apply -f /usr/local/etc/routerd/router.yaml --replace
 ```
 
 ## Developer Build
@@ -274,9 +273,8 @@ Important binaries built by `make build` include:
 Useful direct commands:
 
 ```sh
-routerctl validate --config examples/home-router.yaml
-routerctl plan --config examples/home-router.yaml
-routerctl apply --config examples/home-router.yaml --dry-run
+routerctl validate -f examples/home-router.yaml --replace
+routerctl plan -f examples/home-router.yaml --replace
 routerctl status
 routerctl events --limit 20
 routerctl connections --limit 50

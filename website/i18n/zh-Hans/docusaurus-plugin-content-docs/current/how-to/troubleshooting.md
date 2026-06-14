@@ -14,7 +14,7 @@ slug: /how-to/troubleshooting
 
 1. `routerctl status` — 总览全局
 2. `routerctl describe <kind>/<name>` — 深入查看目标资源
-3. `routerctl apply --dry-run` — 确认下次应用将会发生什么变更
+3. `routerctl plan` — 确认下次应用将会发生什么变更
 4. OS 命令（`ip`、`nft`、`ss`、`journalctl`）— 确认实际状态
 5. 对应守护进程的 `/v1/status` 与事件日志
 

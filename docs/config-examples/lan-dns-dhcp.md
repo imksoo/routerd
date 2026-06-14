@@ -83,8 +83,8 @@ flowchart LR
 ## Checks
 
 ```bash
-routerctl validate --config examples/example-lan-dns-dhcp.yaml
-routerctl apply --config examples/example-lan-dns-dhcp.yaml --dry-run
+routerctl validate -f examples/example-lan-dns-dhcp.yaml --replace
+routerctl plan -f examples/example-lan-dns-dhcp.yaml --replace
 routerctl describe DNSZone/home
 routerctl describe DHCPv4Server/lan-dhcpv4
 dig @192.168.30.1 router.home.example

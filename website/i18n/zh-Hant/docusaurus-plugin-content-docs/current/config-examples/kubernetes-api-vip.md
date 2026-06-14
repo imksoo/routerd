@@ -14,9 +14,8 @@ title: 帶有 BGP 的 Kubernetes API VIP
 作為出發點，依下列順序確認：
 
 ```bash
-routerctl validate --config examples/kubernetes-api-vip.yaml
-routerctl plan --config examples/kubernetes-api-vip.yaml
-routerctl apply --config examples/kubernetes-api-vip.yaml --dry-run
+routerctl validate -f examples/kubernetes-api-vip.yaml --replace
+routerctl plan -f examples/kubernetes-api-vip.yaml --replace
 ```
 
 構成：

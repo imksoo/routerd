@@ -75,15 +75,14 @@ Before applying an example on a router you are actively using:
 
 - Keep console or hypervisor access available.
 - Know which interface carries management traffic.
-- Run `routerctl validate`, `routerctl plan`, and a dry-run apply first.
+- Run `routerctl validate` and `routerctl plan` first.
 - Check that the plan does not remove the management interface address, route, or firewall opening.
 - Apply from the release binary installed on the router, not from an unrelated development tree.
 
 ```bash
-routerctl validate --config router.yaml
-routerctl plan --config router.yaml
-routerctl apply --config router.yaml --dry-run
-routerctl apply --config router.yaml
+routerctl validate -f router.yaml --replace
+routerctl plan -f router.yaml --replace
+routerctl apply -f router.yaml --replace
 routerctl status
 ```
 

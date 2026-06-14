@@ -57,7 +57,7 @@ flowchart LR
 ## 确认步骤
 
 ```bash
-routerctl validate --config examples/telemetry-export.yaml
+routerctl validate -f examples/telemetry-export.yaml --replace
 routerctl describe Telemetry/otlp
 ```
 

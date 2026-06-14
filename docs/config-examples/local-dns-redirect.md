@@ -86,8 +86,8 @@ you want to match.
 ## Checks
 
 ```bash
-routerctl validate --config examples/example-local-dns-redirect.yaml
-routerctl apply --config examples/example-local-dns-redirect.yaml --dry-run
+routerctl validate -f examples/example-local-dns-redirect.yaml --replace
+routerctl plan -f examples/example-local-dns-redirect.yaml --replace
 routerctl describe IPAddressSet/public-dns
 nft list table ip routerd_nat
 ```

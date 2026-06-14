@@ -133,9 +133,8 @@ AFTR FQDN、DNS 伺服器，以及 DHCPv6 用戶端的 profile。
 
 ```bash
 cp examples/example-dslite-home.yaml router.yaml
-routerctl validate --config router.yaml
-routerctl plan --config router.yaml
-routerctl apply --config router.yaml --dry-run
+routerctl validate -f router.yaml --replace
+routerctl plan -f router.yaml --replace
 ```
 
 執行 plan 時請確認以下項目。
@@ -148,7 +147,7 @@ routerctl apply --config router.yaml --dry-run
 確認無誤後執行套用。
 
 ```bash
-routerctl apply --config router.yaml
+routerctl apply -f router.yaml --replace
 ```
 
 ## 確認

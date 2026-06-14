@@ -172,7 +172,7 @@ network.
 Apply the config:
 
 ```sh
-routerctl validate --config /usr/local/etc/routerd/router.yaml
+routerctl validate -f /usr/local/etc/routerd/router.yaml --replace
 systemctl restart routerd.service
 ```
 

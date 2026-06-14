@@ -17,9 +17,8 @@ The complete YAML is in `examples/firewall-rate-limit.yaml`.
 ## Apply sequence
 
 ```bash
-routerctl validate --config examples/firewall-rate-limit.yaml
-routerctl plan --config examples/firewall-rate-limit.yaml
-routerctl apply --config examples/firewall-rate-limit.yaml --dry-run
+routerctl validate -f examples/firewall-rate-limit.yaml --replace
+routerctl plan -f examples/firewall-rate-limit.yaml --replace
 ```
 
 ## Rule excerpt

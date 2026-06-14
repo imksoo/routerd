@@ -49,7 +49,7 @@ const copy = {
       {number: 1, label: 'Declare', command: 'router.yaml'},
       {number: 2, label: 'Validate', command: 'routerctl validate'},
       {number: 3, label: 'Plan', command: 'routerctl plan'},
-      {number: 4, label: 'Dry-run', command: 'routerctl apply --dry-run'},
+      {number: 4, label: 'Apply', command: 'routerctl apply'},
       {number: 5, label: 'Serve', command: 'routerd serve'},
       {number: 6, label: 'Observe', command: 'routerctl doctor / get / describe'},
     ] as OperatorStep[],
@@ -155,7 +155,7 @@ const copy = {
       {number: 1, label: '宣言', command: 'router.yaml'},
       {number: 2, label: '検証', command: 'routerctl validate'},
       {number: 3, label: '計画', command: 'routerctl plan'},
-      {number: 4, label: 'ドライラン', command: 'routerctl apply --dry-run'},
+      {number: 4, label: '適用', command: 'routerctl apply'},
       {number: 5, label: '稼働', command: 'routerd serve'},
       {number: 6, label: '観測', command: 'routerctl doctor / get / describe'},
     ] as OperatorStep[],
@@ -357,9 +357,8 @@ sha256sum -c routerd-linux-amd64.tar.gz.sha256
 tar -xzf routerd-linux-amd64.tar.gz
 sudo ./install.sh
 sudo install -m 0600 /usr/local/etc/routerd/router.yaml.sample /usr/local/etc/routerd/router.yaml
-routerctl validate --config /usr/local/etc/routerd/router.yaml
-routerctl plan --config /usr/local/etc/routerd/router.yaml
-routerctl apply --config /usr/local/etc/routerd/router.yaml --dry-run
+routerctl validate -f /usr/local/etc/routerd/router.yaml --replace
+routerctl plan -f /usr/local/etc/routerd/router.yaml --replace
 routerd serve --config /usr/local/etc/routerd/router.yaml`}</code></pre>
         <p className={styles.note}>{siteCopy.note}</p>
       </div>

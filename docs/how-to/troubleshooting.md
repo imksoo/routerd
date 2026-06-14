@@ -5,7 +5,7 @@ slug: /how-to/troubleshooting
 
 # Troubleshooting
 
-![Diagram showing routerd troubleshooting order from routerctl status and dry-run intent to OS state, daemon sockets, events, and common DHCP, DNS, and conntrack checks](/img/diagrams/how-to-troubleshooting.png)
+![Diagram showing routerd troubleshooting order from routerctl status and plan intent to OS state, daemon sockets, events, and common DHCP, DNS, and conntrack checks](/img/diagrams/how-to-troubleshooting.png)
 
 When investigating routerd, first separate **what routerd intends** from **what the host actually has**. Verify routerd's view, then compare against the OS state.
 
@@ -13,7 +13,7 @@ When investigating routerd, first separate **what routerd intends** from **what 
 
 1. `routerctl status` — overall view.
 2. `routerctl describe <kind>/<name>` — focus on a specific resource.
-3. `routerctl apply --dry-run` — what would change next.
+3. `routerctl plan` — what would change next.
 4. OS commands (`ip`, `nft`, `ss`, `journalctl`) — actual host state.
 5. The relevant daemon's `/v1/status` and event log.
 

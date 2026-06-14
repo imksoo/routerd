@@ -6,9 +6,9 @@
 單次套用（one-shot apply）涵蓋 routerd 管理的本地服務，自給自足。
 
 ```sh
-routerctl validate --config /usr/local/etc/routerd/router.yaml
-routerctl plan --config /usr/local/etc/routerd/router.yaml
-routerctl apply --config /usr/local/etc/routerd/router.yaml
+routerctl validate -f /usr/local/etc/routerd/router.yaml --replace
+routerctl plan -f /usr/local/etc/routerd/router.yaml --replace
+routerctl apply -f /usr/local/etc/routerd/router.yaml --replace
 ```
 
 若設定中含有 `mode: vrrp` 的 `VirtualAddress`，routerd 會產生（render）`/etc/keepalived/keepalived.conf`，

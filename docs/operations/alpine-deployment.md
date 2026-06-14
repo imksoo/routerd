@@ -6,9 +6,9 @@ On Alpine Linux, routerd treats OpenRC as the service manager. A one-shot apply
 is self-contained for routerd-managed local services:
 
 ```sh
-routerctl validate --config /usr/local/etc/routerd/router.yaml
-routerctl plan --config /usr/local/etc/routerd/router.yaml
-routerctl apply --config /usr/local/etc/routerd/router.yaml
+routerctl validate -f /usr/local/etc/routerd/router.yaml --replace
+routerctl plan -f /usr/local/etc/routerd/router.yaml --replace
+routerctl apply -f /usr/local/etc/routerd/router.yaml --replace
 ```
 
 For `VirtualAddress` resources with `mode: vrrp`,
