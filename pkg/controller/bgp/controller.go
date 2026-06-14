@@ -190,7 +190,8 @@ func (c *Controller) reconcileLocked(ctx context.Context) error {
 	dynamicExportPrefixes := dynamicPathExportPrefixes(applied.Paths)
 	effectiveImportPolicy := effectiveGlobalImportPolicy(routerSpec.ImportPolicy, dynamicExportPrefixes)
 	desired = applyRouterBGPDefaults(routerResource.Metadata.Name, routerSpec, desired, staticExportPrefixes, dynamicExportPrefixes)
-	if err := c.reconcilePolicies(ctx, routerResource.Metadata.Name, effectiveImportPolicy, desired); err != nil {
+	adoptedRestoredPolicies, err := c.reconcilePolicies(ctx, routerResource.Metadata.Name, effectiveImportPolicy, desired)
+	if err != nil {
 		return c.savePendingAll("GoBGPPolicyApplyFailed", err)
 	}
 	exportPolicyRefreshPeers := exportPolicyChangedPeers(c.appliedPeerKeys, desired)
@@ -218,24 +219,26 @@ func (c *Controller) reconcileLocked(ctx context.Context) error {
 	if err != nil {
 		return c.savePendingAll("GoBGPObserveFailed", err)
 	}
-	importDrift, err := c.importPolicyDrift(ctx, routerResource.Metadata.Name, effectiveImportPolicy, desired)
-	if err != nil {
-		return c.savePendingAll("GoBGPPolicyObserveFailed", err)
-	}
-	if importDrift.RefreshNeeded() {
-		if err := c.applyBGPPolicies(ctx, routerResource.Metadata.Name, effectiveImportPolicy, desired); err != nil {
-			return c.savePendingAll("GoBGPPolicyApplyFailed", err)
-		}
-		c.importPolicyKey = bgpPoliciesKey(effectiveImportPolicy, desired)
-		if err := c.refreshPeerImportPolicyAssignments(ctx, desired, importDrift.PeerAddresses); err != nil {
-			return c.savePendingAll("GoBGPPeerApplyFailed", err)
-		}
-		if err := c.softResetImportPolicy(ctx, desired); err != nil {
-			return c.savePendingAll("GoBGPImportPolicyRefreshFailed", err)
-		}
-		state, routes, livenessMarkers, err = c.observeState(ctx, allowedImportPrefixes, desired)
+	if !adoptedRestoredPolicies {
+		importDrift, err := c.importPolicyDrift(ctx, routerResource.Metadata.Name, effectiveImportPolicy, desired)
 		if err != nil {
-			return c.savePendingAll("GoBGPObserveFailed", err)
+			return c.savePendingAll("GoBGPPolicyObserveFailed", err)
+		}
+		if importDrift.RefreshNeeded() {
+			if err := c.applyBGPPolicies(ctx, routerResource.Metadata.Name, effectiveImportPolicy, desired); err != nil {
+				return c.savePendingAll("GoBGPPolicyApplyFailed", err)
+			}
+			c.importPolicyKey = bgpPoliciesKey(effectiveImportPolicy, desired)
+			if err := c.refreshPeerImportPolicyAssignments(ctx, desired, importDrift.PeerAddresses); err != nil {
+				return c.savePendingAll("GoBGPPeerApplyFailed", err)
+			}
+			if err := c.softResetImportPolicy(ctx, desired); err != nil {
+				return c.savePendingAll("GoBGPImportPolicyRefreshFailed", err)
+			}
+			state, routes, livenessMarkers, err = c.observeState(ctx, allowedImportPrefixes, desired)
+			if err != nil {
+				return c.savePendingAll("GoBGPObserveFailed", err)
+			}
 		}
 	}
 	if c.FIB == nil {
@@ -429,17 +432,6 @@ func (c *Controller) hydrateAppliedState(applied bgpdaemon.AppliedConfig) {
 	applied = bgpdaemon.Normalize(applied)
 	c.appliedConfig = applied
 	c.appliedPeerKeys = desiredPeersFromApplied(applied.Global.ASN, applied.Peers)
-	if c.importPolicyKey != "" || !appliedGlobalConfigured(applied.Global) {
-		return
-	}
-	c.importPolicyKey = bgpPoliciesKey(routerapi.BGPImportPolicySpec{
-		AllowedPrefixes: applied.Global.ImportPolicy.AllowedPrefixes,
-		NextHopRewrite:  applied.Global.ImportPolicy.NextHopRewrite,
-	}, c.appliedPeerKeys)
-}
-
-func appliedGlobalConfigured(global bgpdaemon.AppliedGlobal) bool {
-	return global.ASN != 0 && strings.TrimSpace(global.RouterID) != ""
 }
 
 func (c *Controller) ensureServer(ctx context.Context, spec routerapi.BGPRouterSpec) error {
@@ -626,16 +618,26 @@ func peerHasImportPolicy(spec routerapi.BGPImportPolicySpec) bool {
 	return len(cleanStrings(spec.AllowedPrefixes)) > 0 || strings.TrimSpace(spec.NextHopRewrite) != ""
 }
 
-func (c *Controller) reconcilePolicies(ctx context.Context, routerName string, spec routerapi.BGPImportPolicySpec, peers map[string]desiredPeer) error {
+func (c *Controller) reconcilePolicies(ctx context.Context, routerName string, spec routerapi.BGPImportPolicySpec, peers map[string]desiredPeer) (bool, error) {
 	key := bgpPoliciesKey(spec, peers)
 	if c.importPolicyKey == key {
-		return nil
+		return false, nil
+	}
+	if c.importPolicyKey == "" && len(c.appliedConfig.Peers) > 0 {
+		drift, err := c.importPolicyDrift(ctx, routerName, spec, peers)
+		if err != nil {
+			return false, err
+		}
+		if !drift.RefreshNeeded() {
+			c.importPolicyKey = key
+			return true, nil
+		}
 	}
 	if err := c.applyBGPPolicies(ctx, routerName, spec, peers); err != nil {
-		return err
+		return false, err
 	}
 	c.importPolicyKey = key
-	return nil
+	return false, nil
 }
 
 func (c *Controller) applyBGPPolicies(ctx context.Context, routerName string, spec routerapi.BGPImportPolicySpec, peers map[string]desiredPeer) error {
