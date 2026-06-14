@@ -46,6 +46,7 @@ ENV:
                      The default runner shells out to ssh/ping using the demo
                      env (SSH_KEY_FILE, *_CLIENT_SSH_HOST, jump hosts).
   CE_MATRIX_SITES    Same format as --sites.
+  CE_SSH_KNOWN_HOSTS Known-hosts file for SSH host-key verification.
 
 OUTPUT (JSON):
   { "flows": [ {src,dst,dstIp,ping,sourceIpPreserved,defaultGwUnchanged,noNat,result} ],
@@ -115,8 +116,13 @@ fi
 default_runner() {
   local op=$1 src=$2 dst_ip=$3
   local key="${SSH_KEY_FILE:-}" jump user="${CLIENT_SSH_USER:-ubuntu}"
-  local ssh_opts=(-o BatchMode=yes -o StrictHostKeyChecking=no
-                  -o UserKnownHostsFile=/dev/null -o ConnectTimeout=8)
+  local known_hosts=${CE_SSH_KNOWN_HOSTS:-${CE_SSH_USER_KNOWN_HOSTS_FILE:-$HOME/.ssh/known_hosts}}
+  local strict=${CE_SSH_STRICT_HOST_KEY_CHECKING:-yes}
+  local nested_known_hosts=${CE_NESTED_SSH_KNOWN_HOSTS:-}
+  [[ -n "$nested_known_hosts" ]] || nested_known_hosts='$HOME/.ssh/known_hosts'
+  local nested_strict=${CE_NESTED_SSH_STRICT_HOST_KEY_CHECKING:-yes}
+  local ssh_opts=(-o BatchMode=yes -o StrictHostKeyChecking="$strict"
+                  -o UserKnownHostsFile="$known_hosts" -o ConnectTimeout=8)
   [[ -n "$key" ]] && ssh_opts=(-i "$key" "${ssh_opts[@]}")
 
   # Resolve jump host (router/client front door) for the src site from env.
@@ -142,7 +148,7 @@ default_runner() {
       # the src client's default gateway. Inner command runs on the remote side.
       # shellcheck disable=SC2029
       ssh "${ssh_opts[@]}" "${target[@]}" \
-        "ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=8 $user@$dst_ip 'echo peer_ip=\$(echo \$SSH_CONNECTION | awk \"{print \\\$1}\")'; echo default_gw=\$(ip route show default | awk '{print \$3; exit}')"
+        "ssh -o BatchMode=yes -o StrictHostKeyChecking=$nested_strict -o UserKnownHostsFile=$nested_known_hosts -o ConnectTimeout=8 $user@$dst_ip 'echo peer_ip=\$(echo \$SSH_CONNECTION | awk \"{print \\\$1}\")'; echo default_gw=\$(ip route show default | awk '{print \$3; exit}')"
       ;;
     *) echo "$SELF: default runner: unknown op $op" >&2; return 3 ;;
   esac

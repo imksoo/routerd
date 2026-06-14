@@ -41,8 +41,10 @@ ce_ssh_target() {
 }
 
 ce_ssh_opts() {
-  local opts=(-o BatchMode=yes -o StrictHostKeyChecking=no
-              -o UserKnownHostsFile=/dev/null
+  local known_hosts=${CE_SSH_KNOWN_HOSTS:-${CE_SSH_USER_KNOWN_HOSTS_FILE:-$HOME/.ssh/known_hosts}}
+  local strict=${CE_SSH_STRICT_HOST_KEY_CHECKING:-yes}
+  local opts=(-o BatchMode=yes -o StrictHostKeyChecking="$strict"
+              -o UserKnownHostsFile="$known_hosts"
               -o ConnectTimeout="${CE_SSH_CONNECT_TIMEOUT:-8}")
   if [[ -n "${SSH_KEY_FILE:-}" ]]; then
     opts=(-i "$SSH_KEY_FILE" "${opts[@]}")
@@ -53,6 +55,17 @@ ce_ssh_opts() {
     opts+=("${extra[@]}")
   fi
   printf '%q ' "${opts[@]}"
+}
+
+nested_ssh_opts() {
+  local known_hosts=${CE_NESTED_SSH_KNOWN_HOSTS:-}
+  local strict=${CE_NESTED_SSH_STRICT_HOST_KEY_CHECKING:-yes}
+  [[ -n "$known_hosts" ]] || known_hosts='$HOME/.ssh/known_hosts'
+  local user_opts="-o BatchMode=yes -o StrictHostKeyChecking=$strict -o UserKnownHostsFile=$known_hosts -o ConnectTimeout=${CE_NESTED_SSH_CONNECT_TIMEOUT:-8}"
+  if [[ -n "${CE_NESTED_SSH_EXTRA_OPTS:-}" ]]; then
+    user_opts="$user_opts ${CE_NESTED_SSH_EXTRA_OPTS}"
+  fi
+  printf '%s' "$user_opts"
 }
 
 ce_ssh() {
