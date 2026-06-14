@@ -4,7 +4,7 @@ title: 安裝與升級
 
 # 安裝與升級
 
-![Diagram showing routerd install and upgrade from release archive download and install.sh through first router.yaml validation, dry-run apply, serve mode, preserved config and state, and uninstall](/img/diagrams/install-and-upgrade.png)
+![Diagram showing routerd install and upgrade from release archive download and install.sh through first router.yaml validation, plan, serve mode, preserved config and state, and uninstall](/img/diagrams/install-and-upgrade.png)
 
 透過發布封存檔將 routerd 安裝至路由器主機。
 封存檔包含執行檔、服務範本、設定範例及安裝程式。
@@ -333,15 +333,14 @@ sudo vi /usr/local/etc/routerd/router.yaml
 驗證並確認計畫：
 
 ```sh
-routerctl validate --config /usr/local/etc/routerd/router.yaml
-routerctl plan --config /usr/local/etc/routerd/router.yaml
-routerctl apply --config /usr/local/etc/routerd/router.yaml --dry-run
+routerctl validate -f /usr/local/etc/routerd/router.yaml --replace
+routerctl plan -f /usr/local/etc/routerd/router.yaml --replace
 ```
 
 確認管理路徑安全後再套用：
 
 ```sh
-sudo routerctl apply --config /usr/local/etc/routerd/router.yaml
+sudo routerctl apply -f /usr/local/etc/routerd/router.yaml --replace
 ```
 
 單次套用正常完成後，啟動服務：

@@ -4,22 +4,21 @@ title: Reconcile and removal
 
 # Reconcile and removal
 
-![Diagram showing reconcile and removal from validate, plan, and dry-run preflight through effective desired view construction to owner-reference GC planner cleanup with backup and event recording](/img/diagrams/operations-reconcile.png)
+![Diagram showing reconcile and removal from validate and plan preflight through effective desired view construction to owner-reference GC planner cleanup with backup and event recording](/img/diagrams/operations-reconcile.png)
 
-routerd compares the intent declared in YAML with the host's current state. When they differ, routerd computes a plan, optionally previews it as a dry-run, and then applies it.
+routerd compares the intent declared in YAML with the host's current state. When they differ, routerd computes a plan and then applies it.
 
 ## Standard sequence
 
 ```bash
-routerctl validate --config router.yaml
-routerctl plan     --config router.yaml
-routerctl apply    --config router.yaml --dry-run
-routerctl apply    --config router.yaml
+routerctl validate -f router.yaml --replace
+routerctl plan -f router.yaml --replace
+routerctl apply -f router.yaml --replace
 ```
 
-For a remote router, confirm that the management connection (SSH, console, hypervisor console) will survive the change before running the non-dry-run `apply`.
+For a remote router, confirm that the management connection (SSH, console, hypervisor console) will survive the change before running `apply`.
 
-On a live router, `plan`, `observe`, and dry-run apply read the state database as a transient snapshot; when the daemon is writing SQLite WAL pages concurrently, that snapshot can be slightly stale, so treat it as advisory preflight input rather than a rollback record.
+On a live router, `plan` and `observe` read the state database as a transient snapshot; when the daemon is writing SQLite WAL pages concurrently, that snapshot can be slightly stale, so treat it as advisory preflight input rather than a rollback record.
 
 ## Long-running mode
 
@@ -31,8 +30,9 @@ In serve mode, routerd reacts to events on the bus and re-evaluates only the res
 
 `routerd serve` runs the controller runtime directly from the declared config.
 There is no public flag to choose a partial controller set; if a resource is
-declared, the matching controller decides how to converge it, and `--dry-run`
-remains a pre-apply check rather than a persistent operating mode.
+declared, the matching controller decides how to converge it. Use `routerctl plan`
+as the pre-apply check rather than treating preview mode as a persistent
+operating mode.
 
 When the config contains resources that forward traffic, such as
 `IngressService`, `PortForward`, NAT, BGP, or static/policy routes, routerd
@@ -98,7 +98,7 @@ filter table during normal apply.
 
 routerd only deletes objects whose ownership it can attribute (i.e. that routerd previously created or adopted). It does not remove third-party configuration or manual changes.
 
-Generation-based rollback is supported. `routerctl rollback --list` shows the stored generations recorded by past applies, and `routerctl rollback --to <generation>` re-applies a stored Router YAML through the normal apply path. Rollback re-applies the declared config and the artifacts routerd manages; it does **not** restore live conntrack, kernel transient state, daemon runtime state, or any host change made outside routerd's ledger. For changes that include deletions, always run `routerctl plan` and `routerctl apply --dry-run` first and confirm the deletion list before applying.
+Generation-based rollback is supported. `routerctl rollback --list` shows the stored generations recorded by past applies, and `routerctl rollback --to <generation>` re-applies a stored Router YAML through the normal apply path. Rollback re-applies the declared config and the artifacts routerd manages; it does **not** restore live conntrack, kernel transient state, daemon runtime state, or any host change made outside routerd's ledger. For changes that include deletions, always run `routerctl plan` first and confirm the deletion list before applying.
 
 ## See also
 

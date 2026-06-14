@@ -21,7 +21,7 @@
 ## 2. 主机/云引导 — 手动 (部署缺口, 大部分不在 routerd 核心范围内)
 
 - routerd tarball 的构建/复制/安装、systemd 单元的创建/启用、实时配置的放置、
-  validate/dry-run/apply 的执行 — 手动。未来: 实验室引导脚本 / 黄金镜像;
+  validate/plan/apply 的执行 — 手动。未来: 实验室引导脚本 / 黄金镜像;
   与发现已有的 OS 引导自动化相关。(后续跟进。)
 - 运行时前提条件 (`wireguard-tools`、`tcpdump`、`jq`、`curl`) 的安装 — 手动;
   应作为 routerd 运行时前提条件写入文档 / 在打包中处理。(后续跟进。)

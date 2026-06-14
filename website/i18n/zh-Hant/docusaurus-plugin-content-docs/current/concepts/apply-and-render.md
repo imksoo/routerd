@@ -6,7 +6,7 @@ sidebar_position: 4
 
 # 套用與產生
 
-![routerctl validate、plan、dry-run、apply 與 render 使用同一個有效資源圖的流程](/img/diagrams/concept-apply-and-render.png)
+![routerctl validate、plan、apply 與 render 使用同一個有效資源圖的流程](/img/diagrams/concept-apply-and-render.png)
 
 routerd 有幾個日常運作中常用的操作。
 本頁統一說明文件中使用的術語。
@@ -17,7 +17,7 @@ routerd 有幾個日常運作中常用的操作。
 可偵測 Kind 名稱、必要欄位、值範圍，以及明顯的相依性錯誤。
 
 ```bash
-routerctl validate --config /usr/local/etc/routerd/router.yaml
+routerctl validate -f /usr/local/etc/routerd/router.yaml --replace
 ```
 
 ## 檢視計畫
@@ -26,7 +26,7 @@ routerctl validate --config /usr/local/etc/routerd/router.yaml
 在套用至正式路由器之前，可確認管理連線是否會中斷、是否有意外的路由變更。
 
 ```bash
-routerctl plan --config /usr/local/etc/routerd/router.yaml
+routerctl plan -f /usr/local/etc/routerd/router.yaml --replace
 ```
 
 ## 模擬執行
@@ -35,7 +35,7 @@ routerctl plan --config /usr/local/etc/routerd/router.yaml
 routerd 在新控制器開發與實機驗證初期，以模擬執行作為預設模式。
 
 ```bash
-routerctl apply --config /usr/local/etc/routerd/router.yaml --dry-run
+routerctl plan -f /usr/local/etc/routerd/router.yaml --replace
 ```
 
 ## 套用
@@ -45,7 +45,7 @@ routerctl apply --config /usr/local/etc/routerd/router.yaml --dry-run
 若要持續運行，請使用 `routerd serve`。
 
 ```bash
-sudo routerctl apply --config /usr/local/etc/routerd/router.yaml
+sudo routerctl apply -f /usr/local/etc/routerd/router.yaml --replace
 sudo routerd serve --config /usr/local/etc/routerd/router.yaml
 ```
 

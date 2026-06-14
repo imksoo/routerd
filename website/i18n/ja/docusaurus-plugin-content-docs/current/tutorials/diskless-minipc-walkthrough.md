@@ -178,9 +178,9 @@ USB 永続化は、USB への書き込みを減らすために、既定で `asyn
 その後、次を実行します。
 
 ```sh
-routerctl validate --config /usr/local/etc/routerd/router.yaml
-routerctl plan --config /usr/local/etc/routerd/router.yaml
-routerctl apply --config /usr/local/etc/routerd/router.yaml
+routerctl validate -f /usr/local/etc/routerd/router.yaml --replace
+routerctl plan -f /usr/local/etc/routerd/router.yaml --replace
+routerctl apply -f /usr/local/etc/routerd/router.yaml --replace
 ```
 
 ![ウィザードの要約と初回適用](/img/iso-boot/iso-boot-06-wizard-summary.png)

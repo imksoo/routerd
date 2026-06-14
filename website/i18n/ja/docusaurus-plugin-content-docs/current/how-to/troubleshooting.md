@@ -14,7 +14,7 @@ routerd が何を意図しているかを確認してから、OS の状態と突
 
 1. `routerctl status` — 全体を見る
 2. `routerctl describe <kind>/<name>` — 対象リソースを掘り下げる
-3. `routerctl apply --dry-run` — 次の適用で何が変わるか
+3. `routerctl plan` — 次の適用で何が変わるか
 4. OS コマンド (`ip`、`nft`、`ss`、`journalctl`) — 実状態
 5. 該当デーモンの `/v1/status` とイベントログ
 

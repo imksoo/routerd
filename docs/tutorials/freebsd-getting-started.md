@@ -53,7 +53,7 @@ SSH on a separate interface or use a hypervisor console during the first run.
 Validate the configuration:
 
 ```sh
-routerctl validate --config /usr/local/etc/routerd/router.yaml
+routerctl validate -f /usr/local/etc/routerd/router.yaml --replace
 ```
 
 Render FreeBSD artifacts into a temporary directory:
@@ -103,13 +103,13 @@ routerd maps resources to these FreeBSD components:
 Run a plan first:
 
 ```sh
-routerctl plan --config /usr/local/etc/routerd/router.yaml
+routerctl plan -f /usr/local/etc/routerd/router.yaml --replace
 ```
 
 Apply when the generated files and plan are expected:
 
 ```sh
-sudo routerctl apply --config /usr/local/etc/routerd/router.yaml
+sudo routerctl apply -f /usr/local/etc/routerd/router.yaml --replace
 ```
 
 routerctl validates `pf.conf` with `pfctl -nf` before loading it. It validates

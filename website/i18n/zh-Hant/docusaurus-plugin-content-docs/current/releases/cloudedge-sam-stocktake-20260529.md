@@ -21,7 +21,7 @@
 ## 2. 主機/雲端引導 — 手動 (部署缺口, 大部分不在 routerd 核心範圍內)
 
 - routerd tarball 的建置/複製/安裝、systemd 單元的建立/啟用、即時設定的放置、
-  validate/dry-run/apply 的執行 — 手動。未來: 實驗室引導指令碼 / 黃金映像;
+  validate/plan/apply 的執行 — 手動。未來: 實驗室引導指令碼 / 黃金映像;
   與發現已有的 OS 引導自動化相關。(後續跟進。)
 - 執行時期前提條件 (`wireguard-tools`、`tcpdump`、`jq`、`curl`) 的安裝 — 手動;
   應作為 routerd 執行時期前提條件寫入文件 / 在打包中處理。(後續跟進。)

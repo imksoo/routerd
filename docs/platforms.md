@@ -94,7 +94,7 @@ Implemented:
 - platform detection through `pkg/platform` with `HasOpenRC`
 - `Package` resources with `os: alpine` and `manager: apk`
 - CI smoke coverage for Alpine `install.sh --list-deps` and a minimal
-  `Package` validate/dry-run apply path
+  `Package` validate/plan path
 - `routerd render alpine --out-dir` for OpenRC scripts and dnsmasq config
 - OpenRC script rendering for generated routerd service artifacts, managed
   dnsmasq, `routerd-healthcheck`, DNS resolver, firewall logger, PPPoE, and
@@ -137,7 +137,8 @@ Implemented:
 - systemd unit generation for `routerd-dhcpv4-client`
 - systemd unit generation for `routerd-pppoe-client`
 - NixOS module generation for `Package` overrides, `SysctlProfile`, derived host runtime artifacts, and generated service artifacts
-- automatic `nixos-rebuild test` from `routerctl apply --dry-run`
+- NixOS module rendering with activation handled through `nixos-rebuild test`
+  and `nixos-rebuild switch`
 - automatic `nixos-rebuild switch` from `routerctl apply`
 - rollback attempt with `nixos-rebuild switch --rollback` when a NixOS switch fails
 - generation tracking before and after `nixos-rebuild`
@@ -245,7 +246,7 @@ NixOS, FreeBSD, and Alpine:
 
 | Area | Current gap | Backlog |
 | --- | --- | --- |
-| CI/runtime coverage | CI runs unit tests and Linux static checks on Ubuntu. Alpine now has a host-independent installer dependency smoke plus minimal `Package` validate/dry-run coverage and an installed-host smoke harness, but Alpine activation is not yet a regular VM job. FreeBSD is cross-built in release, and NixOS activation is not yet a regular VM job. | Add FreeBSD VM, NixOS VM, and Alpine VM smoke jobs that run validate, plan, dry-run apply, real package-manager checks, service activation, and renderer syntax checks. |
+| CI/runtime coverage | CI runs unit tests and Linux static checks on Ubuntu. Alpine now has a host-independent installer dependency smoke plus minimal `Package` validate/plan coverage and an installed-host smoke harness, but Alpine activation is not yet a regular VM job. FreeBSD is cross-built in release, and NixOS activation is not yet a regular VM job. | Add FreeBSD VM, NixOS VM, and Alpine VM smoke jobs that run validate, plan, real package-manager checks, service activation, and renderer syntax checks. |
 | Alpine service manager | Alpine now has OpenRC rendering for generated routerd service artifacts, managed dnsmasq, `routerd-healthcheck`, DNS resolver, firewall logger, PPPoE, and Tailscale. Apply-time activation uses `rc-update` / `rc-service` and avoids duplicate enable/start/restart work when state is unchanged. DNS resolver scripts are enabled and started after routerd materializes the runtime config. | Broaden installed-host networking ownership and promote the Alpine smoke harness to CI. |
 | NixOS imperative leftovers | NixOS renders the module and lets `nixos-rebuild` activate it. Runtime-only network mutations and legacy dnsmasq unit cleanup still run from `routerd.service` after activation. The cleanup is intentionally kept for the first release that contains generated NixOS dnsmasq service ownership. | Remove legacy dnsmasq cleanup after that release cycle, reduce post-activation reconciliation where NixOS has native declarations, and keep tests around remaining runtime-only resources. |
 | FreeBSD feature exceptions | `ClientPolicy` remains Linux-only because it depends on nftables Ethernet source address sets. | Keep rejecting it explicitly, and only add pf support after a design that preserves the same isolation semantics. |

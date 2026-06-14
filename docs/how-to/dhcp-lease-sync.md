@@ -135,8 +135,8 @@ targets:
 ## Check it
 
 ```bash
-routerctl validate --config examples/dhcp-lease-sync-ha.yaml
-routerctl apply --config examples/dhcp-lease-sync-ha.yaml --dry-run
+routerctl validate -f examples/dhcp-lease-sync-ha.yaml --replace
+routerctl plan -f examples/dhcp-lease-sync-ha.yaml --replace
 routerctl describe VirtualAddress/lan-vip
 routerctl describe DHCPv4ServerLeaseSync/lan-v4-leases
 ```

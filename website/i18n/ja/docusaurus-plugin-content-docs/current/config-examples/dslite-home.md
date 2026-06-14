@@ -134,9 +134,8 @@ AFTR FQDN、DNS サーバー、DHCPv6 クライアントの profile を置き換
 
 ```bash
 cp examples/example-dslite-home.yaml router.yaml
-routerctl validate --config router.yaml
-routerctl plan --config router.yaml
-routerctl apply --config router.yaml --dry-run
+routerctl validate -f router.yaml --replace
+routerctl plan -f router.yaml --replace
 ```
 
 plan では次を確認します。
@@ -149,7 +148,7 @@ plan では次を確認します。
 問題なければ適用します。
 
 ```bash
-routerctl apply --config router.yaml
+routerctl apply -f router.yaml --replace
 ```
 
 ## 確認

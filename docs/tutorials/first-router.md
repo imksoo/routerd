@@ -5,7 +5,7 @@ sidebar_position: 2
 
 # Bring up the first router
 
-![Diagram showing the first router tutorial with DHCPv4 WAN, static LAN address, minimal Interface resources, and validate-plan-dry-run apply loop](/img/diagrams/tutorial-first-router.png)
+![Diagram showing the first router tutorial with DHCPv4 WAN, static LAN address, minimal Interface resources, and validate-plan-apply loop](/img/diagrams/tutorial-first-router.png)
 
 This tutorial brings up the smallest possible routerd configuration: one WAN interface that gets its IPv4 address from DHCPv4, and one LAN interface with a static IPv4 address.
 
@@ -55,9 +55,8 @@ spec:
 Before applying for real, validate the configuration and preview the plan:
 
 ```bash
-routerctl validate --config first-router.yaml
-routerctl plan     --config first-router.yaml
-routerctl apply    --config first-router.yaml --dry-run
+routerctl validate -f first-router.yaml --replace
+routerctl plan -f first-router.yaml --replace
 ```
 
 Confirm that your management connection (SSH on the LAN, console, or hypervisor console) will survive the change, then apply without `--dry-run`.

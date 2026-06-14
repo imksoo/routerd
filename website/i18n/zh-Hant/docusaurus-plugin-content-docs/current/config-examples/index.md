@@ -71,15 +71,14 @@ DS-Lite 優先 + PPPoE 備援、用於 apply 時鎖出保護的 `ManagementAcces
 
 - 保留可從主控台或 hypervisor 進入的路徑。
 - 確認管理通訊經由哪個介面傳輸。
-- 先執行 `routerctl validate`、`routerctl plan`、dry-run apply。
+- 先執行 `routerctl validate` 和 `routerctl plan`。
 - 確認 plan 不會刪除管理介面的位址、路由及防火牆開放規則。
 - 使用路由器上已安裝的 release 二進位檔執行 apply，勿從其他開發目錄執行。
 
 ```bash
-routerctl validate --config router.yaml
-routerctl plan --config router.yaml
-routerctl apply --config router.yaml --dry-run
-routerctl apply --config router.yaml
+routerctl validate -f router.yaml --replace
+routerctl plan -f router.yaml --replace
+routerctl apply -f router.yaml --replace
 routerctl status
 ```
 

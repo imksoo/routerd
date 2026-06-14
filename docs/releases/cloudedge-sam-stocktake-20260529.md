@@ -24,7 +24,7 @@ core) and the #52 host-firewall prerequisite (by-design host-side, surfaced by d
 ## 2. Host/cloud bootstrap — manual (deployment gap, mostly outside routerd core)
 
 - build/copy/install the routerd tarball, create/enable the systemd unit, place live config,
-  run validate/dry-run/apply — manual. Future: lab bootstrap script / golden image; relates
+  run validate/plan/apply — manual. Future: lab bootstrap script / golden image; relates
   to the existing OS-bootstrap-automation finding. (Follow-up.)
 - install runtime prerequisites (`wireguard-tools`, `tcpdump`, `jq`, `curl`) — manual; should
   be documented as routerd runtime prerequisites / handled in packaging. (Follow-up.)

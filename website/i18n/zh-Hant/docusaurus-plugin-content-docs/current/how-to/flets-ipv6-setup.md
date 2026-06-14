@@ -147,7 +147,7 @@ spec:
 ## 驗證
 
 ```bash
-routerctl apply --config router.yaml --dry-run
+routerctl plan -f router.yaml --replace
 routerctl status
 
 ip -6 tunnel show

@@ -52,7 +52,7 @@ sudo install -m 0600 examples/freebsd-edge.yaml /usr/local/etc/routerd/router.ya
 首先驗證設定。
 
 ```sh
-routerctl validate --config /usr/local/etc/routerd/router.yaml
+routerctl validate -f /usr/local/etc/routerd/router.yaml --replace
 ```
 
 接著將 FreeBSD 用的成果物產生至暫存目錄。
@@ -102,13 +102,13 @@ routerd 將資源對應至以下 FreeBSD 機制。
 先確認計畫。
 
 ```sh
-routerctl plan --config /usr/local/etc/routerd/router.yaml
+routerctl plan -f /usr/local/etc/routerd/router.yaml --replace
 ```
 
 產生的檔案與計畫符合預期後，套用設定。
 
 ```sh
-sudo routerctl apply --config /usr/local/etc/routerd/router.yaml
+sudo routerctl apply -f /usr/local/etc/routerd/router.yaml --replace
 ```
 
 routerd 在載入 `pf.conf` 前以 `pfctl -nf` 驗證。

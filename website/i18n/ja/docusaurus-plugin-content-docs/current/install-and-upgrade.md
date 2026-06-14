@@ -4,7 +4,7 @@ title: インストールとアップグレード
 
 # インストールとアップグレード
 
-![Diagram showing routerd install and upgrade from release archive download and install.sh through first router.yaml validation, dry-run apply, serve mode, preserved config and state, and uninstall](/img/diagrams/install-and-upgrade.png)
+![Diagram showing routerd install and upgrade from release archive download and install.sh through first router.yaml validation, plan, serve mode, preserved config and state, and uninstall](/img/diagrams/install-and-upgrade.png)
 
 ルーターホストへはリリースアーカイブから導入します。
 アーカイブには、実行ファイル、サービステンプレート、設定例、インストーラーが
@@ -410,15 +410,14 @@ sudo vi /usr/local/etc/routerd/router.yaml
 検証し、計画を確認します。
 
 ```sh
-routerctl validate --config /usr/local/etc/routerd/router.yaml
-routerctl plan --config /usr/local/etc/routerd/router.yaml
-routerctl apply --config /usr/local/etc/routerd/router.yaml --dry-run
+routerctl validate -f /usr/local/etc/routerd/router.yaml --replace
+routerctl plan -f /usr/local/etc/routerd/router.yaml --replace
 ```
 
 管理経路が安全だと確認してから反映します。
 
 ```sh
-sudo routerctl apply --config /usr/local/etc/routerd/router.yaml
+sudo routerctl apply -f /usr/local/etc/routerd/router.yaml --replace
 ```
 
 一度だけの反映が正常に終われば、サービスを起動します。

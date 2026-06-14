@@ -225,7 +225,7 @@ dig @<lan-ip> example.com
 
 ## 操作提示
 
-- 請先從 `routerctl plan` 與 `--dry-run` 開始。在確保管理路徑與已知的回滾路徑後，再啟用生產環境的 LAN 監聽。
+- 請先從 `routerctl plan` 開始。在確保管理路徑與已知的回滾路徑後，再啟用生產環境的 LAN 監聽。
 - 若手動修改了 dnsmasq 的租約檔案，請重新啟動 `routerd-dhcp-event-relay` 以使記憶體內狀態同步。租約的變更請盡量透過 routerd 進行。
 - 請保留公共 DNS 作為備援。`routerd-dns-resolver` 會降低健康檢查失敗的轉送器優先度，但僅在沒有其他健全替代方案時才會如此。
 

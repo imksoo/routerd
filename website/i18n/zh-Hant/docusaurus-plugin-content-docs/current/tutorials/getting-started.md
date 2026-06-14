@@ -73,7 +73,7 @@ spec:
 ## 3. 驗證
 
 ```bash
-routerctl validate --config first-router.yaml
+routerctl validate -f first-router.yaml --replace
 ```
 
 驗證步驟在 routerd 接觸主機之前，先確認資源的格式是否正確。
@@ -81,7 +81,7 @@ routerctl validate --config first-router.yaml
 ## 4. 確認計畫
 
 ```bash
-routerctl plan --config first-router.yaml
+routerctl plan -f first-router.yaml --replace
 ```
 
 計畫步驟可確認介面名稱錯誤、缺少相依關係，以及將產生的主機成品。
@@ -89,7 +89,7 @@ routerctl plan --config first-router.yaml
 ## 5. 預演執行
 
 ```bash
-routerctl apply --config first-router.yaml --dry-run
+routerctl plan -f first-router.yaml --replace
 ```
 
 預演執行可確認資源載入、相依順序及產生內容。

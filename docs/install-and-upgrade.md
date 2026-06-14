@@ -4,7 +4,7 @@ title: Install and upgrade
 
 # Install and upgrade
 
-![Diagram showing routerd install and upgrade from release archive download and install.sh through first router.yaml validation, dry-run apply, serve mode, preserved config and state, and uninstall](/img/diagrams/install-and-upgrade.png)
+![Diagram showing routerd install and upgrade from release archive download and install.sh through first router.yaml validation, plan, serve mode, preserved config and state, and uninstall](/img/diagrams/install-and-upgrade.png)
 
 Use the release archive when you install routerd on a router host.
 The archive contains the binaries, service template, sample configuration, and
@@ -405,15 +405,14 @@ sudo vi /usr/local/etc/routerd/router.yaml
 Then validate and review the plan:
 
 ```sh
-routerctl validate --config /usr/local/etc/routerd/router.yaml
-routerctl plan --config /usr/local/etc/routerd/router.yaml
-routerctl apply --config /usr/local/etc/routerd/router.yaml --dry-run
+routerctl validate -f /usr/local/etc/routerd/router.yaml --replace
+routerctl plan -f /usr/local/etc/routerd/router.yaml --replace
 ```
 
 Apply only after the management path is safe:
 
 ```sh
-sudo routerctl apply --config /usr/local/etc/routerd/router.yaml
+sudo routerctl apply -f /usr/local/etc/routerd/router.yaml --replace
 ```
 
 Start the service when the one-shot apply is healthy:

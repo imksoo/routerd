@@ -138,9 +138,8 @@ resolver.
 
 ```bash
 cp examples/example-dslite-home.yaml router.yaml
-routerctl validate --config router.yaml
-routerctl plan --config router.yaml
-routerctl apply --config router.yaml --dry-run
+routerctl validate -f router.yaml --replace
+routerctl plan -f router.yaml --replace
 ```
 
 Check the plan for:
@@ -153,7 +152,7 @@ Check the plan for:
 Then apply:
 
 ```bash
-routerctl apply --config router.yaml
+routerctl apply -f router.yaml --replace
 ```
 
 ## Checks

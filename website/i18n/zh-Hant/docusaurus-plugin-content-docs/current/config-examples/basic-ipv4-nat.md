@@ -104,15 +104,14 @@ flowchart LR
 
 ```bash
 cp examples/example-basic-ipv4-nat.yaml router.yaml
-routerctl validate --config router.yaml
-routerctl plan --config router.yaml
-routerctl apply --config router.yaml --dry-run
+routerctl validate -f router.yaml --replace
+routerctl plan -f router.yaml --replace
 ```
 
 確認管理存取並非依賴即將變更位址的 LAN 介面，或已具備主控台存取權限後再執行套用。
 
 ```bash
-routerctl apply --config router.yaml
+routerctl apply -f router.yaml --replace
 ```
 
 ## 確認

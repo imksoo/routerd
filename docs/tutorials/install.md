@@ -55,15 +55,14 @@ sudo install -d -m 0755 /usr/local/etc/routerd
 sudo install -m 0600 /usr/local/etc/routerd/router.yaml.sample /usr/local/etc/routerd/router.yaml
 sudo vi /usr/local/etc/routerd/router.yaml
 
-routerctl validate --config /usr/local/etc/routerd/router.yaml
-routerctl plan --config /usr/local/etc/routerd/router.yaml
-routerctl apply --config /usr/local/etc/routerd/router.yaml --dry-run
+routerctl validate -f /usr/local/etc/routerd/router.yaml --replace
+routerctl plan -f /usr/local/etc/routerd/router.yaml --replace
 ```
 
 Apply only after confirming that management access stays reachable:
 
 ```sh
-sudo routerctl apply --config /usr/local/etc/routerd/router.yaml
+sudo routerctl apply -f /usr/local/etc/routerd/router.yaml --replace
 ```
 
 See [Install and upgrade](../install-and-upgrade.md) for OS-specific package

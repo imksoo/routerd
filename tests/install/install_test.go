@@ -82,6 +82,31 @@ func TestInstallWaitsForJSONApplyStateAfterServiceRestart(t *testing.T) {
 	}
 }
 
+func TestInstallConfigureUsesCurrentRouterdServeCLI(t *testing.T) {
+	script, err := os.ReadFile(filepath.Join(repoRoot(t), "packaging", "install.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(script)
+	for _, forbidden := range []string{
+		`"${routerd_bin}" validate --config`,
+		`"${routerd_bin}" plan --config`,
+		`"${routerd_bin}" apply --config`,
+	} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("install.sh still calls removed routerd CLI %q", forbidden)
+		}
+	}
+	for _, want := range []string{
+		`"${routerd_bin}" serve --sandbox --root "${sandbox_root}" --config "${final_config}" --once`,
+		`"${routerd_bin}" serve --config "${final_config}" --once`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("install.sh missing current serve CLI %q", want)
+		}
+	}
+}
+
 func TestInstallWithNDPIRejectsStaticAgent(t *testing.T) {
 	dir := t.TempDir()
 	pkg := filepath.Join(dir, "package")

@@ -66,8 +66,8 @@ flowchart LR
 ## 確認
 
 ```bash
-routerctl validate --config examples/wireguard-hub-spoke.yaml
-routerctl apply --config examples/wireguard-hub-spoke.yaml --dry-run
+routerctl validate -f examples/wireguard-hub-spoke.yaml --replace
+routerctl plan -f examples/wireguard-hub-spoke.yaml --replace
 routerctl describe WireGuardInterface/wg-hub
 wg show
 ```

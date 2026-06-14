@@ -17,7 +17,7 @@ routerd には、日常の運用でよく使う操作がいくつかあります
 Kind 名、必須フィールド、値の範囲、明らかな依存関係の誤りを検出します。
 
 ```bash
-routerctl validate --config /usr/local/etc/routerd/router.yaml
+routerctl validate -f /usr/local/etc/routerd/router.yaml --replace
 ```
 
 ## 計画を見る
@@ -26,7 +26,7 @@ routerctl validate --config /usr/local/etc/routerd/router.yaml
 本番ルーターへ適用する前に、管理用の接続が切れないか、予期しない経路変更がないかを確認できます。
 
 ```bash
-routerctl plan --config /usr/local/etc/routerd/router.yaml
+routerctl plan -f /usr/local/etc/routerd/router.yaml --replace
 ```
 
 ## 予行実行する
@@ -34,7 +34,7 @@ routerctl plan --config /usr/local/etc/routerd/router.yaml
 `--dry-run` は、ホストを変更せずに適用の流れだけを確認します。実際に変わる箇所を事前に把握できます。
 
 ```bash
-routerctl apply --config /usr/local/etc/routerd/router.yaml --dry-run
+routerctl plan -f /usr/local/etc/routerd/router.yaml --replace
 ```
 
 ## 適用する
@@ -42,7 +42,7 @@ routerctl apply --config /usr/local/etc/routerd/router.yaml --dry-run
 `routerctl apply` は、一度きりのホスト操作です。意図を検証し、必要に応じてホストの現在状態を観測し、生成した成果物を書き出し、状態を記録して終了します。長時間動くデーモンのライフサイクルは管理しません。管理対象デーモンの起動・有効化・再起動・再読み込みは `routerd serve` が担当します。
 
 ```bash
-sudo routerctl apply --config /usr/local/etc/routerd/router.yaml
+sudo routerctl apply -f /usr/local/etc/routerd/router.yaml --replace
 sudo routerd serve --config /usr/local/etc/routerd/router.yaml
 ```
 
