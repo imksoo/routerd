@@ -252,6 +252,23 @@ func TestOwnershipResolverReportsRemoteHomeLocalInventoryConflict(t *testing.T) 
 	if row["state"] != "Conflict" || row["ownerNode"] != "oci-router" || row["ownerProviderRef"] != "oci-provider" || row["localNode"] != "aws-router-a" || row["localProviderRef"] != "aws-provider" {
 		t.Fatalf("owner table row = %#v, want remote owner and local inventory conflict", row)
 	}
+	controlTable := status["ownershipResolverControlPlaneOwnerTable"].([]map[string]any)
+	if len(controlTable) != 1 {
+		t.Fatalf("control-plane owner table = %#v, want one row", controlTable)
+	}
+	controlRow := controlTable[0]
+	if controlRow["state"] != "Conflict" ||
+		controlRow["ownerNode"] != "oci-router" ||
+		controlRow["ownerProviderRef"] != "oci-provider" ||
+		controlRow["ownerNICRef"] != "oci-client" ||
+		controlRow["ownerResourceRef"] != "ocid1.instance.oc1.test.client" ||
+		controlRow["localEvidenceNode"] != "aws-router-a" ||
+		controlRow["localEvidenceProviderRef"] != "aws-provider" ||
+		controlRow["localEvidenceNICRef"] != "eni-client" ||
+		controlRow["localEvidenceResourceRef"] != "i-aws-client" ||
+		controlRow["conflictReason"] != "remote-home-owner-overlaps-local-inventory" {
+		t.Fatalf("control-plane owner table row = %#v, want centralized conflict evidence", controlRow)
+	}
 	verdicts := status["ownershipResolverFIBVerdicts"].([]map[string]any)
 	if len(verdicts) != 1 || verdicts[0]["address"] != "10.88.60.11/32" || verdicts[0]["action"] != "local-route" {
 		t.Fatalf("fib verdicts = %#v, want local-route for conflict with local evidence", verdicts)
@@ -307,6 +324,17 @@ func TestOwnershipResolverStatusDistinguishesStaleConflictAndUnknown(t *testing.
 	}
 	if rows["10.88.60.11/32"]["state"] != "Stale" || rows["10.88.60.12/32"]["state"] != "Unknown" || rows["10.88.60.13/32"]["state"] != "Conflict" {
 		t.Fatalf("owner table = %#v, want distinct stale/unknown/conflict states", ownerTable)
+	}
+	controlTable := status["ownershipResolverControlPlaneOwnerTable"].([]map[string]any)
+	controlRows := map[string]map[string]any{}
+	for _, row := range controlTable {
+		controlRows[row["address"].(string)] = row
+	}
+	if controlRows["10.88.60.11/32"]["state"] != "Stale" ||
+		controlRows["10.88.60.11/32"]["captureHolderNode"] != "aws-router-a" ||
+		controlRows["10.88.60.12/32"]["state"] != "Unknown" ||
+		controlRows["10.88.60.13/32"]["state"] != "Conflict" {
+		t.Fatalf("control-plane owner table = %#v, want stale/unknown/conflict rows preserved", controlTable)
 	}
 }
 
@@ -531,6 +559,14 @@ func TestOwnershipResolverReportsDuplicateProviderHomeOwnerConflict(t *testing.T
 	if !ok || len(owners) != 2 {
 		t.Fatalf("conflicts = %#v, want both conflicting owners in status", conflicts)
 	}
+	controlTable := status["ownershipResolverControlPlaneOwnerTable"].([]map[string]any)
+	if len(controlTable) != 1 || controlTable[0]["state"] != "Conflict" || controlTable[0]["conflictReason"] != "duplicate-provider-home-owners" {
+		t.Fatalf("control-plane owner table = %#v, want duplicate conflict row", controlTable)
+	}
+	conflictOwners, ok := controlTable[0]["conflictOwners"].([]map[string]any)
+	if !ok || len(conflictOwners) != 2 {
+		t.Fatalf("control-plane owner table = %#v, want both duplicate owners retained", controlTable)
+	}
 	verdicts := status["ownershipResolverFIBVerdicts"].([]map[string]any)
 	if len(verdicts) != 1 || verdicts[0]["address"] != address || verdicts[0]["action"] != "withhold" {
 		t.Fatalf("fib verdicts = %#v, want withhold for duplicate remote owners", verdicts)
@@ -572,6 +608,11 @@ func TestOwnershipResolverIgnoresExpiredDuplicateProviderHomeOwner(t *testing.T)
 	}
 	if decision.Class != ownershipClassRemoteHomeOwned || decision.HomeOwnerNode != "aws-router-a" {
 		t.Fatalf("decision = %#v, want fresh AWS owner selected", decision)
+	}
+	status := ownershipResolverStatus(decisions)
+	controlTable := status["ownershipResolverControlPlaneOwnerTable"].([]map[string]any)
+	if len(controlTable) != 1 || controlTable[0]["state"] != "OK" || controlTable[0]["ownerNode"] != "aws-router-a" {
+		t.Fatalf("control-plane owner table = %#v, want expired duplicate cleaned up", controlTable)
 	}
 }
 

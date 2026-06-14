@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
@@ -87,12 +88,63 @@ func TestMobilityTrapsCommand(t *testing.T) {
 	}
 }
 
+func TestMobilityOwnersCommand(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "routerd.db")
+	store, err := routerstate.OpenSQLite(path)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"ownershipResolverControlPlaneOwnerTable": []map[string]any{{
+			"address":                  "10.88.60.11/32",
+			"state":                    "Conflict",
+			"class":                    "RemoteHomeOwned",
+			"ownerNode":                "oci-router",
+			"ownerProviderRef":         "oci-provider",
+			"ownerNICRef":              "oci-client",
+			"localEvidenceNode":        "aws-router-a",
+			"localEvidenceSource":      "local-inventory",
+			"localEvidenceNICRef":      "eni-client",
+			"localEvidenceResourceRef": "i-aws-client",
+			"conflictReason":           "remote-home-owner-overlaps-local-inventory",
+		}},
+	}); err != nil {
+		t.Fatalf("SaveObjectStatus: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	if err := mobilityCommand([]string{"owners", "--state-file", path}, &stdout, &stderr); err != nil {
+		t.Fatalf("mobility owners: %v stderr=%s", err, stderr.String())
+	}
+	out := stdout.String()
+	for _, want := range []string{"cloudedge", "10.88.60.11/32", "Conflict", "oci-router", "aws-router-a", "remote-home-owner-overlaps-local-inventory"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("mobility owners output missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "<nil>") {
+		t.Fatalf("mobility owners output leaked nil values:\n%s", out)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if err := mobilityCommand([]string{"owners", "--state-file", path, "-o", "json"}, &stdout, &stderr); err != nil {
+		t.Fatalf("mobility owners json: %v stderr=%s", err, stderr.String())
+	}
+	if strings.Contains(stdout.String(), "<nil>") {
+		t.Fatalf("mobility owners json leaked nil values:\n%s", stdout.String())
+	}
+}
+
 func TestTopLevelUsageListsCurrentMobilityCommands(t *testing.T) {
 	var stdout bytes.Buffer
 	usage(&stdout)
 
 	out := stdout.String()
 	for _, want := range []string{
+		"mobility owners",
 		"mobility paths",
 		"mobility traps",
 	} {
