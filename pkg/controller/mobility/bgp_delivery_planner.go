@@ -355,16 +355,6 @@ func observedSelfStaleCaptureActionPlans(in bgpDeliveryPlannerInput, candidates 
 			desired[address] = true
 		}
 	}
-	installed := map[string]bool{}
-	for raw, nextHops := range in.InstalledNextHops {
-		if len(cleanStrings(nextHops)) == 0 {
-			continue
-		}
-		address := normalizeAddressString(raw)
-		if address != "" {
-			installed[address] = true
-		}
-	}
 	poolPrefix, err := netip.ParsePrefix(strings.TrimSpace(in.Spec.Prefix))
 	if err != nil {
 		return nil, fmt.Errorf("parse pool prefix: %w", err)
@@ -372,12 +362,10 @@ func observedSelfStaleCaptureActionPlans(in bgpDeliveryPlannerInput, candidates 
 	poolPrefix = poolPrefix.Masked()
 	recentTrapCandidates := previousBGPTrapCandidateAddresses(in.PreviousPlans, poolPrefix)
 	var staleAddresses []string
+	staleSinceByAddress := map[string]time.Time{}
 	for _, decision := range in.Decisions {
 		address := normalizeAddressString(decision.Address)
 		if address == "" || desired[address] {
-			continue
-		}
-		if installed[address] {
 			continue
 		}
 		if decision.Class != ownershipClassStaleCapture || strings.TrimSpace(decision.SuppressionReason) != "self-captured-secondary" {
@@ -386,13 +374,15 @@ func observedSelfStaleCaptureActionPlans(in bgpDeliveryPlannerInput, candidates 
 		if strings.TrimSpace(decision.CaptureHolderNode) != "" && strings.TrimSpace(decision.CaptureHolderNode) != strings.TrimSpace(in.Self.NodeRef) {
 			continue
 		}
-		if staleSince, ok := in.ObservedStaleSince[address]; !ok || staleSince.IsZero() || in.Now.UTC().Sub(staleSince.UTC()) < bgpTrapRIBMissingHold {
+		staleSince, ok := in.ObservedStaleSince[address]
+		if !ok || staleSince.IsZero() || in.Now.UTC().Sub(staleSince.UTC()) < bgpTrapRIBMissingHold {
 			continue
 		}
 		if candidate, ok := recentTrapCandidates[address]; ok && bgpTrapCandidateWithinMissingHold(candidate, in.Now) {
 			continue
 		}
 		staleAddresses = append(staleAddresses, address)
+		staleSinceByAddress[address] = staleSince
 	}
 	if len(staleAddresses) == 0 {
 		return nil, nil
@@ -407,20 +397,21 @@ func observedSelfStaleCaptureActionPlans(in bgpDeliveryPlannerInput, candidates 
 		if err != nil {
 			return nil, err
 		}
-		unassign = stampSingleBGPPathFence(unassign, address, bgpPathSigFromObservedSelfStale(address), in.Self.NodeRef)
+		unassign = stampSingleBGPPathFence(unassign, address, bgpPathSigFromObservedSelfStale(address, staleSinceByAddress[address]), in.Self.NodeRef)
 		plans = append(plans, unassign)
 	}
 	return plans, nil
 }
 
-func bgpPathSigFromObservedSelfStale(address string) string {
+func bgpPathSigFromObservedSelfStale(address string, staleSince time.Time) string {
 	normalized := normalizeAddressString(address)
 	if prefix, err := netip.ParsePrefix(normalized); err == nil && prefix.Addr().Is4() {
 		normalized = prefix.Masked().String()
 	} else if addr, err := netip.ParseAddr(normalized); err == nil && addr.Is4() {
 		normalized = netip.PrefixFrom(addr, 32).String()
 	}
-	return "deprovision:" + normalized + ":observed-self-stale"
+	generation := staleSince.UTC().Format(time.RFC3339Nano)
+	return "deprovision:" + normalized + ":observed-self-stale:since=" + generation
 }
 
 func decisionsByAddress(decisions []ownershipDecision) map[string]ownershipDecision {

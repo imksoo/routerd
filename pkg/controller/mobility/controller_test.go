@@ -2172,17 +2172,54 @@ func TestControllerBGPModeObservedSelfStaleCaptureWaitsForRecentTrapMissingHold(
 	}
 }
 
-func TestControllerBGPModeObservedSelfStaleCaptureWithInstalledBGPRouteIsProtected(t *testing.T) {
+func TestControllerBGPModeObservedSelfStaleCaptureWithInstalledReturnRouteIsCleaned(t *testing.T) {
 	now := time.Date(2026, 6, 10, 18, 40, 0, 0, time.UTC)
 	store := testStore(t, now)
 	spec := awsFailoverPoolSpec()
 	spec.DeliveryPolicy.Mode = "bgp"
 	address := "10.88.60.12/32"
-	saveBGPStatus(t, store, map[string][]string{address: {"10.99.0.3"}}, nil, nil)
+	saveBGPStatus(t, store, map[string][]string{address: {"10.99.0.3"}}, []map[string]any{{
+		"prefix":      address,
+		"nextHop":     "10.99.0.3",
+		"best":        true,
+		"valid":       true,
+		"communities": []string{bgpstate.MobilityCommunityReturnRoute},
+	}}, nil)
 	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
 		"discoverySelfPrivateIPs":        []string{"10.88.60.4/32"},
 		"discoverySelfCapturedAddresses": []string{address},
 		"discoveryLastScanAt":            now.Format(time.RFC3339Nano),
+		"observedSelfStaleCaptures":      map[string]string{address: now.Add(-3 * time.Minute).Format(time.RFC3339Nano)},
+	}); err != nil {
+		t.Fatalf("SaveObjectStatus: %v", err)
+	}
+
+	bgp := &fakeBGPPaths{}
+	controller := Controller{Router: routerWithBGPRouter(planningRouterForNode("aws-router-a", spec)), Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	plans := decodeActionPlans(t, latestPart(t, store, DynamicSource("cloudedge", "aws-router-a")).ActionPlansJSON)
+	if findActionPlanByAddress(plans, "unassign-secondary-ip", address) == nil {
+		t.Fatalf("plans = %#v, stale self-capture must be cleaned when it is not a capture candidate even if a return route exists", plans)
+	}
+}
+
+func TestControllerBGPModeObservedSelfStaleCaptureWithInstalledOwnerPathIsProtected(t *testing.T) {
+	now := time.Date(2026, 6, 10, 18, 42, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	address := "10.88.60.12/32"
+	seedSucceededBGPCaptureAction(t, store, "aws-provider", "eni-a", "aws-router-a", address, "assign-secondary-ip", 1, now.Add(-3*time.Minute))
+	saveBGPStatus(t, store, map[string][]string{address: {"10.99.0.3"}}, []map[string]any{
+		bgpOwnerPrefix(address, "10.99.0.3", "azure-router"),
+	}, nil)
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"discoverySelfPrivateIPs":        []string{"10.88.60.4/32"},
+		"discoverySelfCapturedAddresses": []string{address},
+		"discoveryLastScanAt":            now.Format(time.RFC3339Nano),
+		"observedSelfStaleCaptures":      map[string]string{address: now.Add(-3 * time.Minute).Format(time.RFC3339Nano)},
 	}); err != nil {
 		t.Fatalf("SaveObjectStatus: %v", err)
 	}
@@ -2194,7 +2231,10 @@ func TestControllerBGPModeObservedSelfStaleCaptureWithInstalledBGPRouteIsProtect
 	}
 	plans := decodeActionPlans(t, latestPart(t, store, DynamicSource("cloudedge", "aws-router-a")).ActionPlansJSON)
 	if findActionPlanByAddress(plans, "unassign-secondary-ip", address) != nil {
-		t.Fatalf("plans = %#v, BGP-installed captured address must not be stale-cleaned during owner convergence", plans)
+		t.Fatalf("plans = %#v, installed valid provider-secondary capture must be protected by capture candidate computation", plans)
+	}
+	if findActionPlanByAddress(plans, "assign-secondary-ip", address) != nil {
+		t.Fatalf("plans = %#v, observed valid provider-secondary capture must not be reassigned", plans)
 	}
 }
 
@@ -2266,16 +2306,62 @@ func TestControllerBGPModeObservedSelfStaleCaptureUsesCaptureTargetNIC(t *testin
 }
 
 func TestBGPPathSigFromObservedSelfStaleIsStable(t *testing.T) {
-	first := bgpPathSigFromObservedSelfStale("10.88.60.10/32")
-	second := bgpPathSigFromObservedSelfStale("10.88.60.10")
+	staleSince := time.Date(2026, 6, 10, 18, 45, 0, 0, time.UTC)
+	first := bgpPathSigFromObservedSelfStale("10.88.60.10/32", staleSince)
+	second := bgpPathSigFromObservedSelfStale("10.88.60.10", staleSince)
 	if first != second {
 		t.Fatalf("path sig mismatch for same address: %q != %q", first, second)
 	}
-	if strings.Contains(first, "2026-") || strings.Contains(first, "T") {
-		t.Fatalf("path sig %q must not include observation time", first)
+	nextGeneration := bgpPathSigFromObservedSelfStale("10.88.60.10/32", staleSince.Add(time.Minute))
+	if first == nextGeneration {
+		t.Fatalf("path sig must distinguish repeated stale cleanup generations for the same address: %q", first)
 	}
 	if !strings.Contains(first, "observed-self-stale") {
 		t.Fatalf("path sig %q does not identify observed self-stale cleanup", first)
+	}
+	if !strings.Contains(first, staleSince.Format(time.RFC3339Nano)) {
+		t.Fatalf("path sig %q does not include stale first-seen generation %q", first, staleSince.Format(time.RFC3339Nano))
+	}
+}
+
+func TestBGPObservedSelfStaleCleanupIdempotencyKeyIncludesGeneration(t *testing.T) {
+	profile := api.CloudProviderProfileSpec{Provider: "aws"}
+	capture := api.AddressCapture{
+		Type:        "provider-secondary-ip",
+		ProviderRef: "aws-provider",
+		NICRef:      "eni-a",
+	}
+	captureTarget := map[string]string{"nicRef": "eni-a", "region": "ap-northeast-1"}
+	address := "10.88.60.10/32"
+	holder := "aws-router-a"
+	firstSeen := time.Date(2026, 6, 10, 18, 45, 0, 0, time.UTC)
+
+	planFor := func(staleSince time.Time) dynamicconfig.ActionPlan {
+		t.Helper()
+		plan, err := providerUnassignActionPlan("cloudedge", profile, capture, captureTarget, address, time.Date(2026, 6, 10, 18, 50, 0, 0, time.UTC))
+		if err != nil {
+			t.Fatalf("providerUnassignActionPlan: %v", err)
+		}
+		return stampSingleBGPPathFence(plan, address, bgpPathSigFromObservedSelfStale(address, staleSince), holder)
+	}
+
+	first := planFor(firstSeen)
+	sameGeneration := planFor(firstSeen)
+	nextGeneration := planFor(firstSeen.Add(time.Minute))
+	if first.IdempotencyKey != sameGeneration.IdempotencyKey {
+		t.Fatalf("same stale generation produced different idempotency keys:\n%s\n%s", first.IdempotencyKey, sameGeneration.IdempotencyKey)
+	}
+	if first.Parameters[bgpPathSigParam] != sameGeneration.Parameters[bgpPathSigParam] {
+		t.Fatalf("same stale generation produced different path sigs:\n%s\n%s", first.Parameters[bgpPathSigParam], sameGeneration.Parameters[bgpPathSigParam])
+	}
+	if first.IdempotencyKey == nextGeneration.IdempotencyKey {
+		t.Fatalf("different stale generations must not collide on idempotency key: %s", first.IdempotencyKey)
+	}
+	if first.Parameters[bgpPathSigParam] == nextGeneration.Parameters[bgpPathSigParam] {
+		t.Fatalf("different stale generations must not collide on path sig: %s", first.Parameters[bgpPathSigParam])
+	}
+	if !strings.Contains(first.Parameters[bgpPathSigParam], firstSeen.Format(time.RFC3339Nano)) {
+		t.Fatalf("path sig %q does not include first stale generation", first.Parameters[bgpPathSigParam])
 	}
 }
 
