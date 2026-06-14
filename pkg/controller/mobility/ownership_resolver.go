@@ -714,6 +714,8 @@ func ownershipResolverStatus(decisions []ownershipDecision) map[string]any {
 	counts := map[string]int{}
 	items := make([]map[string]any, 0, len(decisions))
 	conflicts := []map[string]any{}
+	staleClaims := []map[string]any{}
+	unknownClaims := []map[string]any{}
 	for _, d := range decisions {
 		counts[d.Class]++
 		item := map[string]any{
@@ -831,6 +833,12 @@ func ownershipResolverStatus(decisions []ownershipDecision) map[string]any {
 			}
 			conflicts = append(conflicts, conflict)
 		}
+		switch ownershipResolverClaimState(d) {
+		case "Stale":
+			staleClaims = append(staleClaims, ownershipResolverDiagnosticRow(d, "stale"))
+		case "Unknown":
+			unknownClaims = append(unknownClaims, ownershipResolverDiagnosticRow(d, "unknown"))
+		}
 		if d.Fresh {
 			item["fresh"] = true
 		}
@@ -845,6 +853,12 @@ func ownershipResolverStatus(decisions []ownershipDecision) map[string]any {
 	}
 	sort.SliceStable(conflicts, func(i, j int) bool {
 		return fmt.Sprint(conflicts[i]["address"]) < fmt.Sprint(conflicts[j]["address"])
+	})
+	sort.SliceStable(staleClaims, func(i, j int) bool {
+		return fmt.Sprint(staleClaims[i]["address"]) < fmt.Sprint(staleClaims[j]["address"])
+	})
+	sort.SliceStable(unknownClaims, func(i, j int) bool {
+		return fmt.Sprint(unknownClaims[i]["address"]) < fmt.Sprint(unknownClaims[j]["address"])
 	})
 	phase := "Resolved"
 	reason := ""
@@ -863,8 +877,51 @@ func ownershipResolverStatus(decisions []ownershipDecision) map[string]any {
 	status["ownershipResolverPhase"] = phase
 	status["ownershipResolverConflictCount"] = len(conflicts)
 	status["ownershipResolverConflicts"] = conflicts
+	status["ownershipResolverStaleCount"] = len(staleClaims)
+	status["ownershipResolverStaleClaims"] = staleClaims
+	status["ownershipResolverUnknownCount"] = len(unknownClaims)
+	status["ownershipResolverUnknownClaims"] = unknownClaims
 	status["ownershipResolverReason"] = reason
 	return status
+}
+
+func ownershipResolverClaimState(d ownershipDecision) string {
+	if d.ConflictReason != "" {
+		return "Conflict"
+	}
+	if d.Class == ownershipClassUnknown {
+		return "Unknown"
+	}
+	if d.Class == ownershipClassStaleCapture || d.CaptureState == captureStateStale {
+		return "Stale"
+	}
+	return "OK"
+}
+
+func ownershipResolverDiagnosticRow(d ownershipDecision, reason string) map[string]any {
+	row := map[string]any{
+		"address": d.Address,
+		"class":   d.Class,
+		"state":   ownershipResolverClaimState(d),
+		"source":  d.Source,
+		"reason":  reason,
+	}
+	if d.HomeOwnerNode != "" {
+		row["ownerNode"] = d.HomeOwnerNode
+	}
+	if d.CaptureState != "" && d.CaptureState != captureStateNone {
+		row["captureState"] = d.CaptureState
+	}
+	if d.CaptureHolderNode != "" {
+		row["captureHolderNode"] = d.CaptureHolderNode
+	}
+	if d.SuppressionReason != "" {
+		row["suppressionReason"] = d.SuppressionReason
+	}
+	if d.ConflictReason != "" {
+		row["conflictReason"] = d.ConflictReason
+	}
+	return row
 }
 
 func providerInventoryOwnerFactStatusRows(facts []providerInventoryOwnerFact) []map[string]any {
@@ -956,14 +1013,10 @@ func ownershipResolverFIBVerdict(d ownershipDecision) (string, string) {
 func ownershipResolverOwnerTable(decisions []ownershipDecision) []map[string]any {
 	rows := make([]map[string]any, 0, len(decisions))
 	for _, d := range decisions {
-		state := "OK"
-		if d.ConflictReason != "" {
-			state = "Conflict"
-		}
 		row := map[string]any{
 			"address": d.Address,
 			"class":   d.Class,
-			"state":   state,
+			"state":   ownershipResolverClaimState(d),
 			"source":  d.Source,
 		}
 		if d.HomeOwnerNode != "" {
