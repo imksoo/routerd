@@ -311,7 +311,7 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 	if err := c.expireProviderDiscoveryAddresses(poolName, spec, self.NodeRef, prefix, invalidThisScan, now, ttl); err != nil {
 		return err
 	}
-	if err := c.expireStaleProviderDiscoveryEvents(poolName, spec, self.NodeRef, prefix, retainedThisScan, now, ttl, ttl); err != nil {
+	if err := c.expireStaleProviderDiscoveryEvents(poolName, spec, self.NodeRef, prefix, retainedThisScan, now, ttl, interval); err != nil {
 		return err
 	}
 	statusLocalInventory := filterDiscoveryLocalInventoryStatusRecords(localInventory, excludedNICs, selfResourceRef)

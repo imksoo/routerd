@@ -2001,7 +2001,6 @@ func fibRoutesFromStatePrefixes(prefixes []bgpstate.Prefix, allowed []netip.Pref
 			route.nextHops = map[string]bool{}
 		}
 		route.nextHops[nextHop] = true
-		route.retainOnMissing = route.retainOnMissing || mobilityOwnerBGPRoute(prefix.Communities)
 		byPrefix[key] = route
 	}
 	var out []FIBRoute
@@ -2030,7 +2029,6 @@ func fibRoutesFromDestination(dst *gobgpapi.Destination, allowed []netip.Prefix,
 		nextHop string
 		rank    bgpPathRank
 		best    bool
-		retain  bool
 	}
 	for _, path := range dst.GetPaths() {
 		if path.GetIsWithdraw() || path.GetIsNexthopInvalid() {
@@ -2063,8 +2061,7 @@ func fibRoutesFromDestination(dst *gobgpapi.Destination, allowed []netip.Prefix,
 			nextHop string
 			rank    bgpPathRank
 			best    bool
-			retain  bool
-		}{nextHop: nextHop, rank: pathRank(path), best: path.GetBest(), retain: mobilityOwnerBGPRoute(communities)})
+		}{nextHop: nextHop, rank: pathRank(path), best: path.GetBest()})
 		prefix = parsed.String()
 	}
 	if len(candidates) == 0 || prefix == "" {
@@ -2088,24 +2085,18 @@ func fibRoutesFromDestination(dst *gobgpapi.Destination, allowed []netip.Prefix,
 	}
 	seen := map[string]bool{}
 	var nextHops []string
-	retainOnMissing := false
 	for _, candidate := range candidates {
 		if comparePathRank(candidate.rank, bestRank) != 0 || seen[candidate.nextHop] {
 			continue
 		}
 		seen[candidate.nextHop] = true
 		nextHops = append(nextHops, candidate.nextHop)
-		retainOnMissing = retainOnMissing || candidate.retain
 	}
 	sort.Strings(nextHops)
 	if len(nextHops) == 0 {
 		return nil
 	}
-	return []FIBRoute{{Prefix: prefix, NextHops: nextHops, RetainOnMissing: retainOnMissing}}
-}
-
-func mobilityOwnerBGPRoute(communities []string) bool {
-	return bgpstate.HasCommunity(communities, bgpstate.MobilityCommunityOwner)
+	return []FIBRoute{{Prefix: prefix, NextHops: nextHops}}
 }
 
 func peerAddressFIBRewritePeers(desired map[string]desiredPeer) map[string]bool {
