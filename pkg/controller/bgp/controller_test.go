@@ -2059,13 +2059,13 @@ func TestStatePeerMapsListPeerFields(t *testing.T) {
 	}
 }
 
-func TestBestFIBRoutesBuildsECMPAndSkipsLocalAdvertisements(t *testing.T) {
-	routes := bestFIBRoutes([]bgpstate.Prefix{
+func TestFIBRoutesFromStatePrefixesBuildsECMPAndSkipsLocalAdvertisements(t *testing.T) {
+	routes := fibRoutesFromStatePrefixes([]bgpstate.Prefix{
 		{Prefix: "10.250.0.0/24", NextHop: "192.168.1.53", Best: true, Valid: true},
 		{Prefix: "10.250.0.0/24", NextHop: "192.168.1.38", Best: true, Valid: true},
 		{Prefix: "10.0.0.0/16", NextHop: "0.0.0.0", Best: true, Valid: true},
 		{Prefix: "10.96.0.0/12", NextHop: "192.168.1.57", Best: true, Valid: true},
-	}, []netip.Prefix{netip.MustParsePrefix("10.250.0.0/16")})
+	}, []netip.Prefix{netip.MustParsePrefix("10.250.0.0/16")}, nil)
 	want := []FIBRoute{{Prefix: "10.250.0.0/24", NextHops: []string{"192.168.1.38", "192.168.1.53"}}}
 	if !reflect.DeepEqual(routes, want) {
 		t.Fatalf("routes = %#v, want %#v", routes, want)

@@ -180,7 +180,6 @@ func (c *Controller) reconcileLocked(ctx context.Context) error {
 	if err != nil {
 		return c.savePendingAll("GoBGPAppliedStateUnavailable", err)
 	}
-	previousApplied := applied
 	c.hydrateAppliedState(applied)
 	desired, err := c.desiredPeers(routerResource.Metadata.Name, routerSpec.ASN)
 	if err != nil {
@@ -213,7 +212,6 @@ func (c *Controller) reconcileLocked(ctx context.Context) error {
 	if err := c.Server.SaveAppliedConfig(ctx, applied); err != nil {
 		return c.savePendingAll("GoBGPAppliedStatePersistFailed", err)
 	}
-	_ = previousApplied
 	c.appliedConfig = applied
 	allowedImportPrefixes := importAllowedPrefixesFromApplied(applied)
 	state, routes, livenessMarkers, err := c.observeState(ctx, allowedImportPrefixes, desired)
@@ -1968,10 +1966,6 @@ func statePrefixes(dst *gobgpapi.Destination) []bgpstate.Prefix {
 		})
 	}
 	return out
-}
-
-func bestFIBRoutes(prefixes []bgpstate.Prefix, allowed []netip.Prefix) []FIBRoute {
-	return fibRoutesFromStatePrefixes(prefixes, allowed, nil)
 }
 
 func fibRoutesFromStatePrefixes(prefixes []bgpstate.Prefix, allowed []netip.Prefix, admit func(netip.Prefix, []string) bool) []FIBRoute {

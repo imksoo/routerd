@@ -2138,6 +2138,20 @@ func TestControllerBGPModeObservedSelfStaleCaptureUsesCaptureTargetNIC(t *testin
 	}
 }
 
+func TestBGPPathSigFromObservedSelfStaleIsStable(t *testing.T) {
+	first := bgpPathSigFromObservedSelfStale("10.88.60.10/32")
+	second := bgpPathSigFromObservedSelfStale("10.88.60.10")
+	if first != second {
+		t.Fatalf("path sig mismatch for same address: %q != %q", first, second)
+	}
+	if strings.Contains(first, "2026-") || strings.Contains(first, "T") {
+		t.Fatalf("path sig %q must not include observation time", first)
+	}
+	if !strings.Contains(first, "observed-self-stale") {
+		t.Fatalf("path sig %q does not identify observed self-stale cleanup", first)
+	}
+}
+
 func TestControllerBGPModeRemoteHomeLocalInventoryConflictBlocksProviderAction(t *testing.T) {
 	now := time.Date(2026, 6, 10, 15, 15, 0, 0, time.UTC)
 	store := testStore(t, now)

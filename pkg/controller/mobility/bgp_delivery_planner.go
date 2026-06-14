@@ -394,18 +394,20 @@ func observedSelfStaleCaptureActionPlans(in bgpDeliveryPlannerInput, candidates 
 		if err != nil {
 			return nil, err
 		}
-		unassign = stampSingleBGPPathFence(unassign, address, bgpPathSigFromObservedSelfStale(address, in.Now), in.Self.NodeRef)
+		unassign = stampSingleBGPPathFence(unassign, address, bgpPathSigFromObservedSelfStale(address), in.Self.NodeRef)
 		plans = append(plans, unassign)
 	}
 	return plans, nil
 }
 
-func bgpPathSigFromObservedSelfStale(address string, observedAt time.Time) string {
-	stamp := observedAt.UTC()
-	if stamp.IsZero() {
-		stamp = time.Now().UTC()
+func bgpPathSigFromObservedSelfStale(address string) string {
+	normalized := normalizeAddressString(address)
+	if prefix, err := netip.ParsePrefix(normalized); err == nil && prefix.Addr().Is4() {
+		normalized = prefix.Masked().String()
+	} else if addr, err := netip.ParseAddr(normalized); err == nil && addr.Is4() {
+		normalized = netip.PrefixFrom(addr, 32).String()
 	}
-	return "deprovision:" + normalizeAddressString(address) + ":observed:" + stamp.Format(time.RFC3339Nano)
+	return "deprovision:" + normalized + ":observed-self-stale"
 }
 
 func decisionsByAddress(decisions []ownershipDecision) map[string]ownershipDecision {
