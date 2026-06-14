@@ -691,7 +691,7 @@ func captureStatesForSelf(self memberPlanInfo, previousPlans []dynamicconfig.Act
 			Strategy:    effectiveCaptureStrategy(tr.plan.Provider, firstNonEmpty(tr.plan.Target["captureStrategy"], captureStrategyValue(self.Capture))),
 			Succeeded:   tr.succeeded,
 		}
-		if tr.assign && tr.succeeded && (selfIPs[address] || !selfIPsObserved) {
+		if tr.assign && tr.succeeded && selfIPs[address] {
 			confirmed[address] = state
 			continue
 		}

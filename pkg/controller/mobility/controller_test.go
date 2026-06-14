@@ -1882,6 +1882,36 @@ func TestControllerBGPModeProviderTrapHoldsRecentProviderMissingObservation(t *t
 	}
 }
 
+func TestControllerBGPModeUnobservedHistoricalCaptureDoesNotUnassign(t *testing.T) {
+	now := time.Date(2026, 6, 14, 21, 10, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	address := "10.88.60.12/32"
+	seedSucceededBGPCaptureAction(t, store, "aws-provider", "eni-a", "aws-router-a", address, "assign-secondary-ip", 1, now.Add(-time.Minute))
+	saveBGPStatus(t, store, map[string][]string{
+		address: {"10.99.0.3"},
+	}, []map[string]any{
+		bgpOwnerPrefix(address, "10.99.0.3", "azure-router"),
+	}, nil)
+
+	bgp := &fakeBGPPaths{}
+	controller := Controller{Router: routerWithBGPRouter(planningRouterForNode("aws-router-a", spec)), Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	plans := decodeActionPlans(t, latestPart(t, store, DynamicSource("cloudedge", "aws-router-a")).ActionPlansJSON)
+	if unassign := findActionPlanByAddress(plans, "unassign-secondary-ip", address); unassign != nil {
+		t.Fatalf("plans = %#v, historical capture without provider observation must not be destructively unassigned", plans)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	decisions := ownershipStatusDecisions(t, status["ownershipResolverDecisions"])
+	decision := ownershipStatusDecisionByAddress(t, decisions, address)
+	if decision["class"] == ownershipClassConfirmedCapture || decision["captureState"] == captureStateConfirmed {
+		t.Fatalf("decision = %#v, action journal without provider observation must not confirm capture", decision)
+	}
+}
+
 func TestControllerBGPModeRemoteProviderTrapRecapturesWithoutSelfMarkerMatch(t *testing.T) {
 	now := time.Date(2026, 6, 13, 20, 40, 0, 0, time.UTC)
 	store := testStore(t, now)
