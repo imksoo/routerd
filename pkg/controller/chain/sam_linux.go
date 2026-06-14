@@ -136,12 +136,6 @@ func (netlinkSAMProxyNeighborApplier) ReconcileForwardPaths(ctx context.Context,
 			return insertErr
 		}
 	}
-	if err := run("-F", chain); err != nil {
-		return err
-	}
-	if len(paths) == 0 {
-		return nil
-	}
 	sort.SliceStable(paths, func(i, j int) bool {
 		if paths[i].Address != paths[j].Address {
 			return paths[i].Address < paths[j].Address
@@ -151,6 +145,7 @@ func (netlinkSAMProxyNeighborApplier) ReconcileForwardPaths(ctx context.Context,
 		}
 		return paths[i].PeerInterface < paths[j].PeerInterface
 	})
+	desired := map[string][]string{}
 	for _, path := range paths {
 		address := strings.TrimSpace(path.Address)
 		captureIface := strings.TrimSpace(path.Interface)
@@ -159,22 +154,40 @@ func (netlinkSAMProxyNeighborApplier) ReconcileForwardPaths(ctx context.Context,
 			continue
 		}
 		if path.Kind == "forward-local-path" {
-			if err := ensureIPTablesRule(ctx, chain, "-i", tunnelIface, "-o", captureIface, "-d", address, "-j", "ACCEPT"); err != nil {
-				return err
-			}
-			if err := ensureIPTablesRule(ctx, chain, "-i", captureIface, "-o", tunnelIface, "-s", address, "-j", "ACCEPT"); err != nil {
-				return err
-			}
+			addDesiredIPTablesRule(desired, "-i", tunnelIface, "-o", captureIface, "-d", address, "-j", "ACCEPT")
+			addDesiredIPTablesRule(desired, "-i", captureIface, "-o", tunnelIface, "-s", address, "-j", "ACCEPT")
 		} else {
-			if err := ensureIPTablesRule(ctx, chain, "-i", captureIface, "-o", tunnelIface, "-d", address, "-j", "ACCEPT"); err != nil {
-				return err
-			}
-			if err := ensureIPTablesRule(ctx, chain, "-i", tunnelIface, "-o", captureIface, "-s", address, "-j", "ACCEPT"); err != nil {
-				return err
-			}
+			addDesiredIPTablesRule(desired, "-i", captureIface, "-o", tunnelIface, "-d", address, "-j", "ACCEPT")
+			addDesiredIPTablesRule(desired, "-i", tunnelIface, "-o", captureIface, "-s", address, "-j", "ACCEPT")
 		}
 	}
+	for _, rule := range sortedIPTablesRules(desired) {
+		if err := ensureIPTablesRule(ctx, chain, rule...); err != nil {
+			return err
+		}
+	}
+	if err := deleteStaleIPTablesRules(ctx, chain, desired); err != nil {
+		return err
+	}
 	return nil
+}
+
+func addDesiredIPTablesRule(desired map[string][]string, rule ...string) {
+	normalized := append([]string(nil), rule...)
+	desired[strings.Join(normalized, "\x00")] = normalized
+}
+
+func sortedIPTablesRules(rules map[string][]string) [][]string {
+	keys := make([]string, 0, len(rules))
+	for key := range rules {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	out := make([][]string, 0, len(keys))
+	for _, key := range keys {
+		out = append(out, rules[key])
+	}
+	return out
 }
 
 func ensureIPTablesRule(ctx context.Context, chain string, rule ...string) error {
@@ -188,6 +201,35 @@ func ensureIPTablesRule(ctx context.Context, chain string, rule ...string) error
 	out, err := exec.CommandContext(ctx, "iptables", addArgs...).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("iptables %s: %w: %s", strings.Join(addArgs, " "), err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func deleteStaleIPTablesRules(ctx context.Context, chain string, desired map[string][]string) error {
+	out, err := exec.CommandContext(ctx, "iptables", "-S", chain).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("iptables -S %s: %w: %s", chain, err, strings.TrimSpace(string(out)))
+	}
+	seenDesired := map[string]bool{}
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		prefix := "-A " + chain + " "
+		if !strings.HasPrefix(line, prefix) {
+			continue
+		}
+		rule := strings.Fields(strings.TrimPrefix(line, prefix))
+		if len(rule) == 0 {
+			continue
+		}
+		key := strings.Join(rule, "\x00")
+		if _, ok := desired[key]; ok && !seenDesired[key] {
+			seenDesired[key] = true
+			continue
+		}
+		deleteArgs := append([]string{"-D", chain}, rule...)
+		if out, err := exec.CommandContext(ctx, "iptables", deleteArgs...).CombinedOutput(); err != nil {
+			return fmt.Errorf("iptables %s: %w: %s", strings.Join(deleteArgs, " "), err, strings.TrimSpace(string(out)))
+		}
 	}
 	return nil
 }
