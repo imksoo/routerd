@@ -5,6 +5,7 @@ package chain
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/imksoo/routerd/pkg/api"
@@ -433,6 +434,131 @@ func TestSAMForwardPathInterfacesFromRule(t *testing.T) {
 	for i := range want {
 		if got[i] != want[i] {
 			t.Fatalf("interfaces = %#v, want %#v", got, want)
+		}
+	}
+}
+
+func TestSAMReconcileForwardPathsResetsStaleAcceptLocal(t *testing.T) {
+	fake := newFakeForwardPathOps([]string{
+		"-A routerd_sam_forward -d 10.77.60.10/32 -i oldcap -o oldtun -j ACCEPT",
+		"-A routerd_sam_forward -s 10.77.60.10/32 -i oldtun -o oldcap -j ACCEPT",
+	})
+	err := reconcileSAMForwardPaths([]sam.CaptureAction{{
+		Kind:          "forward-remote-path",
+		Address:       "10.77.60.11/32",
+		Interface:     "newcap",
+		PeerInterface: "newtun",
+	}}, fake.ops())
+	if err != nil {
+		t.Fatalf("reconcileSAMForwardPaths: %v", err)
+	}
+	assertContainsAll(t, fake.sysctls, []string{
+		"net.ipv4.conf.newcap.accept_local=1",
+		"net.ipv4.conf.newtun.accept_local=1",
+		"net.ipv4.conf.oldcap.accept_local=0",
+		"net.ipv4.conf.oldtun.accept_local=0",
+	})
+	assertNotContainsPrefix(t, fake.sysctls, "net.ipv4.conf.all.accept_local=")
+	assertContainsAll(t, fake.iptables, []string{
+		"-A routerd_sam_forward -i newcap -o newtun -d 10.77.60.11/32 -j ACCEPT",
+		"-A routerd_sam_forward -i newtun -o newcap -s 10.77.60.11/32 -j ACCEPT",
+		"-D routerd_sam_forward -d 10.77.60.10/32 -i oldcap -o oldtun -j ACCEPT",
+		"-D routerd_sam_forward -s 10.77.60.10/32 -i oldtun -o oldcap -j ACCEPT",
+	})
+}
+
+func TestSAMReconcileForwardPathsEmptyDesiredDeletesStaleState(t *testing.T) {
+	fake := newFakeForwardPathOps([]string{
+		"-A routerd_sam_forward -d 10.77.60.10/32 -i oldcap -o oldtun -j ACCEPT",
+		"-A routerd_sam_forward -s 10.77.60.10/32 -i oldtun -o oldcap -j ACCEPT",
+	})
+	err := reconcileSAMForwardPaths(nil, fake.ops())
+	if err != nil {
+		t.Fatalf("reconcileSAMForwardPaths: %v", err)
+	}
+	assertContainsAll(t, fake.sysctls, []string{
+		"net.ipv4.conf.oldcap.accept_local=0",
+		"net.ipv4.conf.oldtun.accept_local=0",
+	})
+	assertNotContainsPrefix(t, fake.sysctls, "net.ipv4.conf.all.accept_local=")
+	assertContainsAll(t, fake.iptables, []string{
+		"-D routerd_sam_forward -d 10.77.60.10/32 -i oldcap -o oldtun -j ACCEPT",
+		"-D routerd_sam_forward -s 10.77.60.10/32 -i oldtun -o oldcap -j ACCEPT",
+	})
+	assertNotContainsPrefix(t, fake.iptables, "-A routerd_sam_forward ")
+}
+
+type fakeForwardPathOps struct {
+	rules    []string
+	sysctls  []string
+	iptables []string
+}
+
+func newFakeForwardPathOps(rules []string) *fakeForwardPathOps {
+	return &fakeForwardPathOps{rules: append([]string(nil), rules...)}
+}
+
+func (f *fakeForwardPathOps) ops() samForwardPathOps {
+	return samForwardPathOps{
+		runIPTables: func(args ...string) ([]byte, error) {
+			command := strings.Join(args, " ")
+			switch {
+			case command == "-N routerd_sam_forward":
+				f.iptables = append(f.iptables, command)
+				return nil, nil
+			case command == "-C FORWARD -j routerd_sam_forward":
+				f.iptables = append(f.iptables, command)
+				return nil, nil
+			case command == "-S routerd_sam_forward":
+				f.iptables = append(f.iptables, command)
+				return []byte(strings.Join(f.rules, "\n")), nil
+			case strings.HasPrefix(command, "-C routerd_sam_forward "):
+				f.iptables = append(f.iptables, command)
+				rule := "-A routerd_sam_forward " + strings.TrimPrefix(command, "-C routerd_sam_forward ")
+				for _, existing := range f.rules {
+					if existing == rule {
+						return nil, nil
+					}
+				}
+				return nil, errors.New("rule not found")
+			case strings.HasPrefix(command, "-A routerd_sam_forward "):
+				f.iptables = append(f.iptables, command)
+				return nil, nil
+			case strings.HasPrefix(command, "-D routerd_sam_forward "):
+				f.iptables = append(f.iptables, command)
+				return nil, nil
+			default:
+				return nil, errors.New("unexpected iptables command: " + command)
+			}
+		},
+		setSysctl: func(key, value string) error {
+			f.sysctls = append(f.sysctls, key+"="+value)
+			return nil
+		},
+		sysctlPresent: func(key string) (bool, error) {
+			return strings.HasPrefix(key, "net.ipv4.conf."), nil
+		},
+	}
+}
+
+func assertContainsAll(t *testing.T, got []string, want []string) {
+	t.Helper()
+	seen := map[string]bool{}
+	for _, item := range got {
+		seen[item] = true
+	}
+	for _, item := range want {
+		if !seen[item] {
+			t.Fatalf("missing %q in %#v", item, got)
+		}
+	}
+}
+
+func assertNotContainsPrefix(t *testing.T, got []string, prefix string) {
+	t.Helper()
+	for _, item := range got {
+		if strings.HasPrefix(item, prefix) {
+			t.Fatalf("unexpected %q with prefix %q in %#v", item, prefix, got)
 		}
 	}
 }
