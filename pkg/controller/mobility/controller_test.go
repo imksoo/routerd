@@ -979,8 +979,11 @@ func TestControllerBGPModeProviderCaptureSuccessDoesNotAdvertisePlannedDrainTake
 		t.Fatalf("paths = %#v, provider capture must not advertise home ownership", bgp.paths)
 	}
 	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
-	if fmt.Sprint(status["generatedProviderCapturedBGPPaths"]) != "0" || fmt.Sprint(status["generatedSeizedBGPPaths"]) != "0" {
-		t.Fatalf("status = %#v, want provider-captured=0 seized=0", status)
+	if _, ok := status["generatedProviderCapturedBGPPaths"]; ok {
+		t.Fatalf("status = %#v, provider-captured BGP status is obsolete because provider capture must not advertise ownership", status)
+	}
+	if _, ok := status["generatedSeizedBGPPaths"]; ok {
+		t.Fatalf("status = %#v, seized BGP path status is obsolete because seize is a provider-capture action, not owner advertisement", status)
 	}
 }
 
@@ -1357,8 +1360,8 @@ func TestControllerBGPModeSeizeSuccessDoesNotAdvertiseTrapAsOwner(t *testing.T) 
 		t.Fatalf("paths = %#v, want no BGP path for trap without successful provider capture", bgp.paths)
 	}
 	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
-	if fmt.Sprint(status["generatedSeizedBGPPaths"]) != "0" {
-		t.Fatalf("status = %#v, want generatedSeizedBGPPaths=0", status)
+	if _, ok := status["generatedSeizedBGPPaths"]; ok {
+		t.Fatalf("status = %#v, seized BGP path status is obsolete because seize is a provider-capture action, not owner advertisement", status)
 	}
 }
 
