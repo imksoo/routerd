@@ -8,8 +8,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
-	"net"
-	"net/netip"
 	"sort"
 	"strconv"
 	"strings"
@@ -31,7 +29,6 @@ type WireGuardController struct {
 	DryRun       bool
 	Command      wireguard.CommandRunner
 	CommandStdin wireguard.CommandStdinRunner
-	LookupHost   func(context.Context, string) ([]string, error)
 	Logger       *slog.Logger
 }
 
@@ -700,56 +697,11 @@ func (c WireGuardController) interfaceMatchesDesired(ctx context.Context, cfg wi
 		if !stringSetEqual(desired.AllowedIPs, current.AllowedIPs) {
 			return false
 		}
-		if strings.TrimSpace(desired.Endpoint) != "" && !c.endpointMatches(ctx, desired.Endpoint, current.LatestEndpoint) {
-			return false
-		}
 		if desired.PersistentKeepalive != current.PersistentKeepalive {
 			return false
 		}
 	}
 	return true
-}
-
-func (c WireGuardController) endpointMatches(ctx context.Context, desired, current string) bool {
-	desired = strings.TrimSpace(desired)
-	current = strings.TrimSpace(current)
-	if desired == current {
-		return true
-	}
-	if current == "" {
-		return true
-	}
-	desiredHost, desiredPort, err := net.SplitHostPort(desired)
-	if err != nil {
-		return false
-	}
-	currentHost, currentPort, err := net.SplitHostPort(current)
-	if err != nil || desiredPort != currentPort {
-		return false
-	}
-	if desiredAddr, err := netip.ParseAddr(desiredHost); err == nil {
-		currentAddr, err := netip.ParseAddr(currentHost)
-		return err == nil && desiredAddr == currentAddr
-	}
-	lookup := c.LookupHost
-	if lookup == nil {
-		lookup = net.DefaultResolver.LookupHost
-	}
-	addrs, err := lookup(ctx, desiredHost)
-	if err != nil {
-		return false
-	}
-	currentAddr, err := netip.ParseAddr(currentHost)
-	if err != nil {
-		return false
-	}
-	for _, raw := range addrs {
-		addr, err := netip.ParseAddr(strings.TrimSpace(raw))
-		if err == nil && addr == currentAddr {
-			return true
-		}
-	}
-	return false
 }
 
 func (c WireGuardController) linkMTUMatches(ctx context.Context, ifname string, mtu int) bool {
