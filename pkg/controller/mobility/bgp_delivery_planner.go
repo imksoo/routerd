@@ -46,8 +46,6 @@ type bgpDeliveryPlannerResult struct {
 	ActionPlans           []dynamicconfig.ActionPlan
 	CaptureCandidates     map[string]bgpTrapCandidate
 	Placement             PlacementDecision
-	ProviderCapturedPaths int
-	SeizedPaths           int
 }
 
 func planBGPMobilityDelivery(in bgpDeliveryPlannerInput) (bgpDeliveryPlannerResult, error) {
@@ -62,7 +60,7 @@ func planBGPMobilityDelivery(in bgpDeliveryPlannerInput) (bgpDeliveryPlannerResu
 	}
 	decisions := decisionsByAddress(in.Decisions)
 	failedActions := interpretProviderCaptureAssignFailures(in.ActionJournal, in.ObservedSelfCaptures).Active
-	paths, providerCaptured, seized := planBGPAdvertisements(in.Source, in.Self, in.Decisions, in.Placement, failedActions)
+	paths := planBGPAdvertisements(in.Source, in.Self, in.Decisions, in.Placement)
 	captureNextHops := in.CaptureNextHops
 	if len(captureNextHops) == 0 {
 		captureNextHops = in.InstalledNextHops
@@ -77,50 +75,30 @@ func planBGPMobilityDelivery(in bgpDeliveryPlannerInput) (bgpDeliveryPlannerResu
 		ActionPlans:           actionPlans,
 		CaptureCandidates:     candidates,
 		Placement:             in.Placement,
-		ProviderCapturedPaths: providerCaptured,
-		SeizedPaths:           seized,
 	}, nil
 }
 
-func planBGPAdvertisements(source string, self memberPlanInfo, decisions []ownershipDecision, placement PlacementDecision, failedActions map[string]routerstate.ActionExecutionRecord) ([]bgpdaemon.AppliedPath, int, int) {
+func planBGPAdvertisements(source string, self memberPlanInfo, decisions []ownershipDecision, placement PlacementDecision) []bgpdaemon.AppliedPath {
 	var out []bgpdaemon.AppliedPath
-	providerCaptured := 0
-	seized := 0
 	for _, decision := range decisions {
 		if !decisionAdvertisesFromSelf(decision, self) {
 			continue
-		}
-		if decision.Class == ownershipClassConfirmedCapture {
-			if self.MaintenanceDrain {
-				continue
-			}
-			if _, failed := failedActions[normalizeAddressString(decision.Address)]; failed {
-				continue
-			}
-			providerCaptured++
-			if placement.Seize {
-				seized++
-			}
 		}
 		prefix, err := netip.ParsePrefix(strings.TrimSpace(decision.Address))
 		if err != nil || !prefix.Addr().Is4() || prefix.Bits() != 32 {
 			continue
 		}
-		active := placement.Active
-		if decision.Class == ownershipClassConfirmedCapture {
-			active = true
-		}
 		out = append(out, bgpdaemon.NormalizeAppliedPath(bgpdaemon.AppliedPath{
 			Source: source,
 			Prefix: prefix.Masked().String(),
 			Family: bgpdaemon.AppliedPathFamilyIPv4Unicast,
-			Attrs:  bgpMobilityPathAttrs(self, bgpDecisionSourceType(decision), active),
+			Attrs:  bgpMobilityPathAttrs(self, bgpDecisionSourceType(decision), placement.Active),
 		}))
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		return out[i].Prefix < out[j].Prefix
 	})
-	return out, providerCaptured, seized
+	return out
 }
 
 func decisionAdvertisesFromSelf(decision ownershipDecision, self memberPlanInfo) bool {
@@ -136,9 +114,6 @@ func decisionAdvertisesFromSelf(decision ownershipDecision, self memberPlanInfo)
 }
 
 func bgpDecisionSourceType(decision ownershipDecision) string {
-	if decision.Class == ownershipClassConfirmedCapture {
-		return "provider-capture"
-	}
 	switch strings.TrimSpace(decision.Source) {
 	case staticOwnedType:
 		return staticOwnedType
