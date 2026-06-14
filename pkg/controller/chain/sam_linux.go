@@ -11,12 +11,15 @@ import (
 	"os/exec"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/imksoo/routerd/pkg/sam"
 	"github.com/vishvananda/netlink"
 )
 
 type netlinkSAMProxyNeighborApplier struct{}
+
+var samForwardPathMu sync.Mutex
 
 func defaultSAMProxyNeighborApplier() samProxyNeighborApplier {
 	return netlinkSAMProxyNeighborApplier{}
@@ -116,6 +119,9 @@ func (netlinkSAMProxyNeighborApplier) EnsureOSAddressAbsent(_ context.Context, a
 }
 
 func (netlinkSAMProxyNeighborApplier) ReconcileForwardPaths(ctx context.Context, paths []sam.CaptureAction) error {
+	samForwardPathMu.Lock()
+	defer samForwardPathMu.Unlock()
+
 	const chain = "routerd_sam_forward"
 	run := func(args ...string) error {
 		out, err := exec.CommandContext(ctx, "iptables", args...).CombinedOutput()
