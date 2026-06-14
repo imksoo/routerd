@@ -242,9 +242,16 @@ func desiredCaptureObservedOnSelf(decision ownershipDecision, self memberPlanInf
 		return false
 	}
 	if decision.Class == ownershipClassConfirmedCapture {
-		return true
+		return !standbyShouldReleaseCapture(self, placement)
 	}
 	return decisionEligibleForCapture(decision, self, members, placement)
+}
+
+func standbyShouldReleaseCapture(self memberPlanInfo, placement PlacementDecision) bool {
+	return !placement.Active &&
+		strings.TrimSpace(placement.ActiveNode) != "" &&
+		strings.TrimSpace(placement.ActiveNode) != strings.TrimSpace(self.NodeRef) &&
+		placement.ActiveMarkerPresent
 }
 
 func providerCaptureObservedOnSelf(decision ownershipDecision, self memberPlanInfo, observedSelfIPs map[string]bool) bool {
@@ -330,7 +337,7 @@ func planCaptureActionPlans(in bgpDeliveryPlannerInput, candidates map[string]bg
 	if in.Self.Capture.Type != "provider-secondary-ip" {
 		return nil, nil
 	}
-	plans, err := bgpProviderActionPlans(in.PoolName, in.Self.NodeRef, in.Spec, candidates, in.PreviousPlans, in.Profiles, in.ActionJournal, in.ObservedSelfCaptures, in.ObservedSelfIPsOK, in.ObservedSelfAt, in.ForwardingObserved, in.ForwardingEnabled, in.ForwardingObservedAt, in.SuppressDeprovision, in.Now)
+	plans, err := bgpProviderActionPlans(in.PoolName, in.Self.NodeRef, in.Spec, candidates, in.PreviousPlans, in.Profiles, in.ActionJournal, in.ObservedSelfCaptures, in.ObservedSelfIPsOK, in.ObservedSelfAt, in.ForwardingObserved, in.ForwardingEnabled, in.ForwardingObservedAt, in.SuppressDeprovision, standbyShouldReleaseCapture(in.Self, in.Placement), in.Now)
 	if err != nil {
 		return nil, err
 	}
