@@ -626,17 +626,67 @@ func TestControllerBGPModeClearsStaleProviderActionFailureStatus(t *testing.T) {
 	}
 }
 
-func TestSuppressObservedSelfCaptureFailures(t *testing.T) {
+func TestControllerBGPModeObservedSelfCaptureSupersedesProviderActionFailureStatus(t *testing.T) {
+	now := time.Date(2026, 6, 14, 20, 5, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	address := "10.88.60.10/32"
+	recordEvent(t, store, providerDiscoveryObservedEvent("cloudedge", "cloudedge", "oci-router", address, "oci", "oci-provider", providerinventory.PrivateIPRecord{
+		Address:   address,
+		NICRef:    "oci-client-vnic",
+		SubnetRef: "oci-subnet",
+	}, now.Add(-time.Second), time.Hour))
+	if _, err := store.ImportAction(routerstate.ActionExecutionRecord{
+		Source:         DynamicSource("cloudedge", "aws-router-a"),
+		IdempotencyKey: "stale-failed-assign-" + safeName(address),
+		Provider:       "aws",
+		ProviderRef:    "aws-provider",
+		Action:         "assign-secondary-ip",
+		TargetJSON:     `{"address":"10.88.60.10/32","nicRef":"eni-a","providerRef":"aws-provider"}`,
+		Status:         routerstate.ActionFailed,
+		Error:          "stale provider conflict",
+		CreatedAt:      now.Add(-time.Minute),
+		UpdatedAt:      now.Add(-30 * time.Second),
+		ExecutedAt:     now.Add(-30 * time.Second),
+	}); err != nil {
+		t.Fatalf("ImportAction(failed): %v", err)
+	}
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"discoverySelfPrivateIPs":        []string{address},
+		"discoverySelfCapturedAddresses": []string{address},
+		"discoveryLastScanAt":            now.Format(time.RFC3339Nano),
+	}); err != nil {
+		t.Fatalf("SaveObjectStatus: %v", err)
+	}
+
+	bgp := &fakeBGPPaths{}
+	controller := Controller{Router: routerWithOCIProvider(routerWithBGPRouter(planningRouterForNode("oci-router", spec))), Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	if status["providerActionPhase"] != "OK" || fmt.Sprint(status["providerActionFailedCount"]) != "0" {
+		t.Fatalf("provider failure was not superseded in status: %#v", status)
+	}
+	if fmt.Sprint(status["providerActionSupersededFailureCount"]) != "1" ||
+		fmt.Sprint(status["providerActionSupersededFailureAddresses"]) != "[10.88.60.10/32]" ||
+		status["providerActionSupersededFailureReason"] != "observed-self-capture" {
+		t.Fatalf("superseded failure breadcrumb missing: %#v", status)
+	}
+}
+
+func TestInterpretProviderCaptureAssignFailures(t *testing.T) {
 	now := time.Date(2026, 6, 14, 19, 8, 31, 0, time.UTC)
-	failed := map[string]routerstate.ActionExecutionRecord{
-		"10.88.60.11/32": {
+	actions := []routerstate.ActionExecutionRecord{
+		{
 			Action:     "assign-secondary-ip",
 			Status:     routerstate.ActionFailed,
 			TargetJSON: `{"address":"10.88.60.11/32"}`,
 			Error:      "provider conflict: address already allocated",
 			UpdatedAt:  now,
 		},
-		"10.88.60.12/32": {
+		{
 			Action:     "assign-secondary-ip",
 			Status:     routerstate.ActionFailed,
 			TargetJSON: `{"address":"10.88.60.12/32"}`,
@@ -644,12 +694,15 @@ func TestSuppressObservedSelfCaptureFailures(t *testing.T) {
 			UpdatedAt:  now,
 		},
 	}
-	filtered := suppressObservedSelfCaptureFailures(failed, map[string]bool{"10.88.60.11/32": true})
-	if _, ok := filtered["10.88.60.11/32"]; ok {
-		t.Fatalf("observed self capture failure was not suppressed: %#v", filtered)
+	interpreted := interpretProviderCaptureAssignFailures(actions, map[string]bool{"10.88.60.11/32": true})
+	if _, ok := interpreted.Active["10.88.60.11/32"]; ok {
+		t.Fatalf("observed self capture failure is still active: %#v", interpreted.Active)
 	}
-	if _, ok := filtered["10.88.60.12/32"]; !ok {
-		t.Fatalf("unobserved failure was suppressed: %#v", filtered)
+	if _, ok := interpreted.Superseded["10.88.60.11/32"]; !ok {
+		t.Fatalf("observed self capture failure was not marked superseded: %#v", interpreted.Superseded)
+	}
+	if _, ok := interpreted.Active["10.88.60.12/32"]; !ok {
+		t.Fatalf("unobserved failure was not active: %#v", interpreted.Active)
 	}
 }
 

@@ -213,7 +213,8 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 	if err != nil {
 		return fmt.Errorf("list action journal: %w", err)
 	}
-	failedActions := suppressObservedSelfCaptureFailures(latestFailedProviderActions(actionJournal), discoverySelfCaptures)
+	providerFailures := interpretProviderCaptureAssignFailures(actionJournal, discoverySelfCaptures)
+	failedActions := providerFailures.Active
 	previousActionPlans, err := c.previousGeneratedActionPlans(res.Metadata.Name, selfNode)
 	if err != nil {
 		return err
@@ -309,36 +310,40 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		return err
 	}
 	status := map[string]any{
-		"plannerPhase":                      "BGPPlanned",
-		"plannerReason":                     "deliveryPolicy.mode=bgp",
-		"selfNode":                          selfNode,
-		"dynamicSource":                     source,
-		"deliveryMode":                      "bgp",
-		"bgpPathSource":                     source,
-		"generatedBGPPaths":                 len(desired),
-		"generatedBGPReturnRoutes":          len(returnRoutes),
-		"observedBGPReturnRoutes":           mapStringKeysSorted(bgpReturnRoutes),
-		"generatedSeizedBGPPaths":           delivery.SeizedPaths,
-		"generatedProviderCapturedBGPPaths": delivery.ProviderCapturedPaths,
-		"bgpRIBObserved":                    bgpRIBObserved,
-		"bgpCaptureElection":                bgpCaptureElectionStatus(delivery.Placement),
-		"generatedBGPTraps":                 len(delivery.CaptureCandidates),
-		"generatedClaims":                   0,
-		"generatedActions":                  len(actionPlans),
-		"membersFrom":                       mobilityMembersFromStatusMaps(resolved.MembersFrom),
-		"resolvedMemberCount":               len(spec.Members),
-		"pendingSources":                    resolved.PendingSources,
-		"memberSet":                         memberSetStatus,
-		"selfCaptureResolved":               selfCaptureResolved,
-		"plannedAt":                         now.Format(time.RFC3339Nano),
-		"operatorIntent":                    "MobilityPool",
-		"derivedConfigKinds":                []string{"BGPPath"},
-		"providerActionPhase":               "OK",
-		"providerActionError":               "",
-		"providerActionFailedAddresses":     nil,
-		"providerActionFailedCount":         0,
-		"providerActionFailedAt":            "",
-		"observedSelfStaleCaptures":         observedSelfStaleCaptureStatus(ownershipDecisions, selfNode, observedStaleSince, now),
+		"plannerPhase":                             "BGPPlanned",
+		"plannerReason":                            "deliveryPolicy.mode=bgp",
+		"selfNode":                                 selfNode,
+		"dynamicSource":                            source,
+		"deliveryMode":                             "bgp",
+		"bgpPathSource":                            source,
+		"generatedBGPPaths":                        len(desired),
+		"generatedBGPReturnRoutes":                 len(returnRoutes),
+		"observedBGPReturnRoutes":                  mapStringKeysSorted(bgpReturnRoutes),
+		"generatedSeizedBGPPaths":                  delivery.SeizedPaths,
+		"generatedProviderCapturedBGPPaths":        delivery.ProviderCapturedPaths,
+		"bgpRIBObserved":                           bgpRIBObserved,
+		"bgpCaptureElection":                       bgpCaptureElectionStatus(delivery.Placement),
+		"generatedBGPTraps":                        len(delivery.CaptureCandidates),
+		"generatedClaims":                          0,
+		"generatedActions":                         len(actionPlans),
+		"membersFrom":                              mobilityMembersFromStatusMaps(resolved.MembersFrom),
+		"resolvedMemberCount":                      len(spec.Members),
+		"pendingSources":                           resolved.PendingSources,
+		"memberSet":                                memberSetStatus,
+		"selfCaptureResolved":                      selfCaptureResolved,
+		"plannedAt":                                now.Format(time.RFC3339Nano),
+		"operatorIntent":                           "MobilityPool",
+		"derivedConfigKinds":                       []string{"BGPPath"},
+		"providerActionPhase":                      "OK",
+		"providerActionError":                      "",
+		"providerActionFailedAddresses":            nil,
+		"providerActionFailedCount":                0,
+		"providerActionFailedAt":                   "",
+		"providerActionSupersededFailureAddresses": nil,
+		"providerActionSupersededFailureCount":     0,
+		"providerActionSupersededFailureAt":        "",
+		"providerActionSupersededFailureReason":    "",
+		"observedSelfStaleCaptures":                observedSelfStaleCaptureStatus(ownershipDecisions, selfNode, observedStaleSince, now),
 	}
 	for key, value := range bgpSeizeHoldDownStatus(delivery.Placement) {
 		status[key] = value
@@ -369,6 +374,23 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		status["providerActionFailedCount"] = len(failedActions)
 		if !lastFailedAt.IsZero() {
 			status["providerActionFailedAt"] = lastFailedAt.Format(time.RFC3339)
+		}
+	}
+	if len(providerFailures.Superseded) > 0 {
+		var addrs []string
+		var lastSupersededAt time.Time
+		for addr, rec := range providerFailures.Superseded {
+			addrs = append(addrs, addr)
+			if rec.UpdatedAt.After(lastSupersededAt) {
+				lastSupersededAt = rec.UpdatedAt
+			}
+		}
+		sort.Strings(addrs)
+		status["providerActionSupersededFailureAddresses"] = addrs
+		status["providerActionSupersededFailureCount"] = len(providerFailures.Superseded)
+		status["providerActionSupersededFailureReason"] = "observed-self-capture"
+		if !lastSupersededAt.IsZero() {
+			status["providerActionSupersededFailureAt"] = lastSupersededAt.Format(time.RFC3339)
 		}
 	}
 	for key, value := range ownershipResolverStatus(ownershipDecisions) {
@@ -2388,16 +2410,23 @@ func latestFailedProviderActions(actions []routerstate.ActionExecutionRecord) ma
 	return failed
 }
 
-func suppressObservedSelfCaptureFailures(failed map[string]routerstate.ActionExecutionRecord, observedSelfCaptures map[string]bool) map[string]routerstate.ActionExecutionRecord {
-	if len(failed) == 0 || len(observedSelfCaptures) == 0 {
-		return failed
+type providerCaptureAssignFailureInterpretation struct {
+	Active     map[string]routerstate.ActionExecutionRecord
+	Superseded map[string]routerstate.ActionExecutionRecord
+}
+
+func interpretProviderCaptureAssignFailures(actions []routerstate.ActionExecutionRecord, observedSelfCaptures map[string]bool) providerCaptureAssignFailureInterpretation {
+	latestFailed := latestFailedProviderActions(actions)
+	out := providerCaptureAssignFailureInterpretation{
+		Active:     map[string]routerstate.ActionExecutionRecord{},
+		Superseded: map[string]routerstate.ActionExecutionRecord{},
 	}
-	filtered := map[string]routerstate.ActionExecutionRecord{}
-	for addr, rec := range failed {
+	for addr, rec := range latestFailed {
 		if observedSelfCaptures[normalizeAddressString(addr)] {
+			out.Superseded[addr] = rec
 			continue
 		}
-		filtered[addr] = rec
+		out.Active[addr] = rec
 	}
-	return filtered
+	return out
 }
