@@ -96,12 +96,8 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 	removeSelfResourceLocalInventory(localInventory, statusString(in.Status["discoverySelfResourceRef"]))
 	discoveryOwned := statusStringSet(in.Status["discoveryOwnedAddresses"], prefix)
 	selfIPs, capturedIPs, selfIPsObserved := selfInventoryAddressSetsFromStatus(in.Status, prefix)
-	captureConfirmIPs := capturedIPs
-	if !statusHasAny(in.Status, "discoverySelfCapturedAddresses") {
-		captureConfirmIPs = mergeBoolMaps(selfIPs, capturedIPs)
-	}
 	eventOwned := resolverEventOwnedAddresses(in.PoolName, in.SelfNode, in.Spec, in.Events, in.Status, prefix, now)
-	confirmedCaptures, staleCaptures := captureStatesForSelf(self, in.PreviousPlans, in.ActionJournal, captureConfirmIPs, selfIPsObserved)
+	confirmedCaptures, staleCaptures := captureStatesForSelf(self, in.PreviousPlans, in.ActionJournal, capturedIPs, selfIPsObserved)
 	handoverTargets := staticHandoverTargets(in.Spec, prefix)
 	universe := map[string]bool{}
 	for address := range staticOwners {
@@ -535,18 +531,6 @@ func selfInventoryAddressSetsFromStatus(status map[string]any, poolPrefix netip.
 		}
 	}
 	return privateIPs, capturedIPs, observed
-}
-
-func mergeBoolMaps(values ...map[string]bool) map[string]bool {
-	out := map[string]bool{}
-	for _, value := range values {
-		for key, ok := range value {
-			if ok {
-				out[key] = true
-			}
-		}
-	}
-	return out
 }
 
 type resolverEventOwnedAddress struct {
