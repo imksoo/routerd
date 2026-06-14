@@ -17,6 +17,7 @@ const (
 	DefaultMaxPrefixes   = 4096
 
 	MobilityCommunityOwner        = "64512:100"
+	MobilityCommunityReturnRoute  = "64512:114"
 	MobilityCommunityNodeLiveness = "64512:130"
 )
 

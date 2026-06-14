@@ -1436,9 +1436,17 @@ func TestControllerBGPCaptureCandidateNextHopsExcludeProviderCapturePaths(t *tes
 			"valid":       true,
 			"communities": []string{bgpMobilityCommunitySourceCapture},
 		},
+		{
+			"prefix":      "10.88.60.4/32",
+			"nextHop":     "10.99.0.2",
+			"best":        true,
+			"valid":       true,
+			"communities": []string{bgpstate.MobilityCommunityReturnRoute, bgpstate.MobilityNodeIdentityCommunity("aws-router-a")},
+		},
 		bgpOwnerPrefix("10.88.60.13/32", "10.99.0.4", "oci-router"),
 	}
 	saveBGPStatus(t, store, map[string][]string{
+		"10.88.60.4/32":  {"10.99.0.2"},
 		"10.88.60.12/32": {"10.99.0.5"},
 		"10.88.60.13/32": {"10.99.0.4"},
 	}, prefixes, nil)
@@ -1450,6 +1458,9 @@ func TestControllerBGPCaptureCandidateNextHopsExcludeProviderCapturePaths(t *tes
 	}
 	if _, ok := got["10.88.60.12/32"]; ok {
 		t.Fatalf("capture candidate next hops = %#v, provider-capture path must not be recaptured", got)
+	}
+	if _, ok := got["10.88.60.4/32"]; ok {
+		t.Fatalf("capture candidate next hops = %#v, router return-route must not be captured", got)
 	}
 	if hops := got["10.88.60.13/32"]; len(hops) != 1 || hops[0] != "10.99.0.4" {
 		t.Fatalf("capture candidate next hops = %#v, want owner path for .13", got)
@@ -1740,7 +1751,7 @@ func TestControllerBGPModeRemoteProviderTrapRecapturesWithoutSelfMarkerMatch(t *
 	}
 }
 
-func TestControllerBGPModeRouteTableDoesNotCaptureRouterSelfOrLocalHome(t *testing.T) {
+func TestControllerBGPModeRouteTableAdvertisesRouterSelfReturnRouteWithoutCapture(t *testing.T) {
 	now := time.Date(2026, 6, 9, 23, 0, 0, 0, time.UTC)
 	store := testStore(t, now)
 	spec := plannedPoolSpec()
@@ -1758,8 +1769,9 @@ func TestControllerBGPModeRouteTableDoesNotCaptureRouterSelfOrLocalHome(t *testi
 			{"address": "10.88.60.4/32", "nicRef": "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic", "subnetRef": "/subnets/azure", "providerRef": "azure-provider", "resourceType": "router-nic", "primary": true},
 			{"address": "10.88.60.11/32", "nicRef": "/subscriptions/sub-1/resourceGroups/rg-app/providers/Microsoft.Network/networkInterfaces/client-nic", "subnetRef": "/subnets/azure", "providerRef": "azure-provider", "resourceType": "instance-nic"},
 		},
-		"discoverySelfPrivateIPs": []string{"10.88.60.4"},
-		"discoveryLastScanAt":     now.Format(time.RFC3339Nano),
+		"discoverySelfPrivateIPs":      []string{"10.88.60.4"},
+		"discoverySelfPrimaryObserved": true,
+		"discoveryLastScanAt":          now.Format(time.RFC3339Nano),
 	}); err != nil {
 		t.Fatalf("SaveObjectStatus: %v", err)
 	}
@@ -1778,8 +1790,12 @@ func TestControllerBGPModeRouteTableDoesNotCaptureRouterSelfOrLocalHome(t *testi
 		findActionPlanByAddress(plans, actionAssignSecondaryIP, "10.88.60.11/32") != nil {
 		t.Fatalf("plans = %#v, want no provider capture assign for router self or local same-subnet home", plans)
 	}
-	if _, ok := maybePathBySourcePrefix(bgp, DynamicSource("cloudedge", "azure-router"), "10.88.60.4/32"); ok {
-		t.Fatalf("paths = %#v, want no BGP advertisement for router self management IP", bgp.paths)
+	selfPath := pathBySourcePrefix(t, bgp, DynamicSource("cloudedge", "azure-router"), "10.88.60.4/32")
+	if !stringSliceContains(selfPath.Attrs.Communities, bgpstate.MobilityCommunityReturnRoute) {
+		t.Fatalf("self path attrs = %#v, want return-route community", selfPath.Attrs)
+	}
+	if stringSliceContains(selfPath.Attrs.Communities, bgpstate.MobilityCommunityOwner) {
+		t.Fatalf("self path attrs = %#v, router return-route must not be a mobility owner path", selfPath.Attrs)
 	}
 	pathBySourcePrefix(t, bgp, DynamicSource("cloudedge", "azure-router"), "10.88.60.11/32")
 }

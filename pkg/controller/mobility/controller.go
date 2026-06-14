@@ -44,6 +44,7 @@ const (
 	bgpMobilityCommunitySourceStatic   = "64512:111"
 	bgpMobilityCommunitySourceHandover = "64512:112"
 	bgpMobilityCommunitySourceCapture  = "64512:113"
+	bgpMobilityCommunitySourceReturn   = bgpstate.MobilityCommunityReturnRoute
 	bgpMobilityCommunityFailover       = "64512:120"
 
 	bgpPathSigParam             = "mobilityPathSig"
@@ -267,7 +268,10 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		return err
 	}
 	desired := append([]bgpdaemon.AppliedPath(nil), delivery.Paths...)
+	var returnRoutes []bgpdaemon.AppliedPath
 	if !self.MaintenanceDrain {
+		returnRoutes = c.bgpSelfReturnRoutePaths(res.Metadata.Name, source, self, spec)
+		desired = append(desired, returnRoutes...)
 		marker, ok := c.bgpLivenessMarkerPath(res.Metadata.Name, source, selfNode, spec.GroupRef)
 		if ok {
 			desired = append(desired, marker)
@@ -307,6 +311,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		"deliveryMode":                      "bgp",
 		"bgpPathSource":                     source,
 		"generatedBGPPaths":                 len(desired),
+		"generatedBGPReturnRoutes":          len(returnRoutes),
 		"generatedSeizedBGPPaths":           delivery.SeizedPaths,
 		"generatedProviderCapturedBGPPaths": delivery.ProviderCapturedPaths,
 		"bgpRIBObserved":                    bgpRIBObserved,
@@ -563,6 +568,44 @@ func (c Controller) bgpLivenessMarkerPath(poolName, source, selfNode, groupRef s
 			Communities: []string{bgpstate.MobilityCommunityNodeLiveness, nodeCommunity},
 		},
 	}), true
+}
+
+func (c Controller) bgpSelfReturnRoutePaths(poolName, source string, self memberPlanInfo, spec api.MobilityPoolSpec) []bgpdaemon.AppliedPath {
+	if c.Store == nil {
+		return nil
+	}
+	poolPrefix, err := netip.ParsePrefix(strings.TrimSpace(spec.Prefix))
+	if err != nil {
+		return nil
+	}
+	poolPrefix = poolPrefix.Masked()
+	status := c.Store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", poolName)
+	primaryObserved, ok := statusBool(status["discoverySelfPrimaryObserved"])
+	if !ok || !primaryObserved {
+		return nil
+	}
+	selfIPs := statusStringSet(status["discoverySelfPrivateIPs"], poolPrefix)
+	if len(selfIPs) == 0 {
+		return nil
+	}
+	captured := statusStringSet(status["discoverySelfCapturedAddresses"], poolPrefix)
+	var out []bgpdaemon.AppliedPath
+	for _, address := range mapStringKeysSorted(selfIPs) {
+		if captured[address] {
+			continue
+		}
+		prefix, err := netip.ParsePrefix(address)
+		if err != nil || !prefix.Addr().Is4() || prefix.Bits() != 32 {
+			continue
+		}
+		out = append(out, bgpdaemon.NormalizeAppliedPath(bgpdaemon.AppliedPath{
+			Source: source,
+			Prefix: prefix.Masked().String(),
+			Family: bgpdaemon.AppliedPathFamilyIPv4Unicast,
+			Attrs:  bgpMobilityReturnRoutePathAttrs(self),
+		}))
+	}
+	return out
 }
 
 func (c Controller) selfLivenessMarkerPrefix(groupRef string) (string, bool) {
@@ -1174,6 +1217,9 @@ func (c Controller) bgpCaptureCandidateNextHops(spec api.MobilityPoolSpec) (map[
 		observed = true
 		for _, prefix := range bgpStatusPrefixesValue(status["prefixes"]) {
 			if !prefix.Best || !prefix.Valid || prefix.Stale || bgpstate.HasCommunity(prefix.Communities, bgpstate.MobilityCommunityNodeLiveness) {
+				continue
+			}
+			if bgpstate.HasCommunity(prefix.Communities, bgpstate.MobilityCommunityReturnRoute) {
 				continue
 			}
 			if bgpstate.HasCommunity(prefix.Communities, bgpMobilityCommunitySourceCapture) {
@@ -2086,6 +2132,23 @@ func bgpMobilityPathAttrs(member memberPlanInfo, sourceType string, active bool)
 		attrs.MED = uint32(member.PlacementPriority)
 	}
 	return attrs
+}
+
+func bgpMobilityReturnRoutePathAttrs(member memberPlanInfo) bgpdaemon.AppliedPathAttrs {
+	communities := []string{bgpMobilityCommunitySourceReturn}
+	if nodeCommunity := bgpstate.MobilityNodeIdentityCommunity(canonicalNodeIdentity(member.NodeRef)); nodeCommunity != "" {
+		communities = append(communities, nodeCommunity)
+	}
+	switch member.Role {
+	case "onprem":
+		communities = append(communities, bgpMobilityCommunityRoleOnPrem)
+	case "cloud":
+		communities = append(communities, bgpMobilityCommunityRoleCloud)
+	}
+	return bgpdaemon.AppliedPathAttrs{
+		LocalPref:   bgpMobilityLocalPrefBase,
+		Communities: communities,
+	}
 }
 
 func bgpMobilityLocalPref(epoch int64) uint32 {

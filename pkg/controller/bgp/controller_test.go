@@ -1306,6 +1306,22 @@ func TestReconcileExposesMobilityLivenessMarkerWithoutInstallingFIBRoute(t *test
 	}
 }
 
+func TestReconcileInstallsMobilityReturnRouteWithoutOwnerRetain(t *testing.T) {
+	router := bgpRouterWithImportPrefixes("10.77.60.0/24")
+	server := &fakeServer{routes: []*gobgpapi.Destination{
+		testDestinationWithCommunities("10.77.60.4/32", "10.99.0.2", bgpstate.MobilityCommunityReturnRoute, bgpstate.MobilityNodeIdentityCommunity("aws-router-a")),
+	}}
+	fib := &fakeFIB{}
+	controller := Controller{Router: router, Store: mapStore{}, Server: server, FIB: fib}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	want := []FIBRoute{{Prefix: "10.77.60.4/32", NextHops: []string{"10.99.0.2"}}}
+	if !reflect.DeepEqual(fib.routes, want) {
+		t.Fatalf("fib routes = %#v, want return-route installed without owner retain %#v", fib.routes, want)
+	}
+}
+
 func TestWatchEventTriggersImmediateFIBSync(t *testing.T) {
 	server := &fakeServer{
 		routes:        []*gobgpapi.Destination{testDestination("10.77.60.11/32", "10.99.0.11")},
