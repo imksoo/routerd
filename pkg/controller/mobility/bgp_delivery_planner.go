@@ -32,6 +32,7 @@ type bgpDeliveryPlannerInput struct {
 	ObservedSelfIPs      map[string]bool
 	ObservedSelfCaptures map[string]bool
 	ObservedSelfIPsOK    bool
+	ObservedSelfAt       time.Time
 	ForwardingObserved   bool
 	ForwardingEnabled    bool
 	ForwardingObservedAt time.Time
@@ -328,7 +329,7 @@ func planCaptureActionPlans(in bgpDeliveryPlannerInput, candidates map[string]bg
 	if in.Self.Capture.Type != "provider-secondary-ip" {
 		return nil, nil
 	}
-	plans, err := bgpProviderActionPlans(in.PoolName, in.Self.NodeRef, in.Spec, candidates, in.PreviousPlans, in.Profiles, in.ActionJournal, in.ObservedSelfCaptures, in.ObservedSelfIPsOK, in.ForwardingObserved, in.ForwardingEnabled, in.ForwardingObservedAt, in.SuppressDeprovision, in.Now)
+	plans, err := bgpProviderActionPlans(in.PoolName, in.Self.NodeRef, in.Spec, candidates, in.PreviousPlans, in.Profiles, in.ActionJournal, in.ObservedSelfCaptures, in.ObservedSelfIPsOK, in.ObservedSelfAt, in.ForwardingObserved, in.ForwardingEnabled, in.ForwardingObservedAt, in.SuppressDeprovision, in.Now)
 	if err != nil {
 		return nil, err
 	}

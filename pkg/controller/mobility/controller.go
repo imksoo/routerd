@@ -51,6 +51,7 @@ const (
 	bgpTrapTransitionParam      = "mobilityProviderTransition"
 	bgpTrapRIBMissingHold       = 2 * time.Minute
 	bgpSeizeLivenessMissingHold = 30 * time.Second
+	bgpProviderMissingRetryHold = 30 * time.Second
 )
 
 type Store interface {
@@ -204,6 +205,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 	events = append(events, releaseEvents...)
 	discoverySelfIPs, discoverySelfIPsObserved := c.discoverySelfPrivateIPSet(res.Metadata.Name, spec)
 	discoverySelfCaptures, _ := c.discoverySelfCapturedAddressSet(res.Metadata.Name, spec)
+	discoverySelfObservedAt := c.discoveryLastScanAt(res.Metadata.Name)
 	livenessMarkers, livenessMarkersObserved := c.bgpLivenessMarkers()
 	ownerPlacement := c.applyBGPCaptureSeizeHoldDown(res.Metadata.Name, evaluateBGPCapturePlacement(self, members, livenessMarkers, livenessMarkersObserved), now)
 	actionJournal, err := c.Store.ListActions(routerstate.ActionExecutionFilter{})
@@ -254,6 +256,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		ObservedSelfIPs:      discoverySelfIPs,
 		ObservedSelfCaptures: discoverySelfCaptures,
 		ObservedSelfIPsOK:    discoverySelfIPsObserved,
+		ObservedSelfAt:       discoverySelfObservedAt,
 		ForwardingObserved:   forwardingObserved,
 		ForwardingEnabled:    forwardingEnabled,
 		ForwardingObservedAt: forwardingObservedAt,
@@ -917,6 +920,17 @@ func (c Controller) discoverySelfCapturedAddressSet(poolName string, spec api.Mo
 	return out, true
 }
 
+func (c Controller) discoveryLastScanAt(poolName string) time.Time {
+	if c.Store == nil {
+		return time.Time{}
+	}
+	status := c.Store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", poolName)
+	if parsed, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(fmt.Sprint(status["discoveryLastScanAt"]))); err == nil {
+		return parsed.UTC()
+	}
+	return time.Time{}
+}
+
 func (c Controller) discoveryProviderOwnedAddressSet(poolName string, spec api.MobilityPoolSpec) (map[string]bool, bool) {
 	status := c.Store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", poolName)
 	raw, ok := status["discoveryOwnedAddresses"]
@@ -984,7 +998,7 @@ func decodeActionRecordMap(raw string) map[string]string {
 	return out
 }
 
-func bgpProviderActionPlans(poolName, selfNode string, spec api.MobilityPoolSpec, desiredTrapAddresses map[string]bgpTrapCandidate, previousPlans []dynamicconfig.ActionPlan, profiles map[string]api.CloudProviderProfileSpec, actionJournal []routerstate.ActionExecutionRecord, observedSelfCaptures map[string]bool, observedSelfCapturesOK bool, forwardingObserved, forwardingEnabled bool, forwardingObservedAt time.Time, suppressDeprovision bool, now time.Time) ([]dynamicconfig.ActionPlan, error) {
+func bgpProviderActionPlans(poolName, selfNode string, spec api.MobilityPoolSpec, desiredTrapAddresses map[string]bgpTrapCandidate, previousPlans []dynamicconfig.ActionPlan, profiles map[string]api.CloudProviderProfileSpec, actionJournal []routerstate.ActionExecutionRecord, observedSelfCaptures map[string]bool, observedSelfCapturesOK bool, observedSelfAt time.Time, forwardingObserved, forwardingEnabled bool, forwardingObservedAt time.Time, suppressDeprovision bool, now time.Time) ([]dynamicconfig.ActionPlan, error) {
 	members := plannerMembers(spec.Members)
 	self, ok := members[strings.TrimSpace(selfNode)]
 	if !ok {
@@ -1008,13 +1022,13 @@ func bgpProviderActionPlans(poolName, selfNode string, spec api.MobilityPoolSpec
 			if candidate.ProtectOnly {
 				continue
 			}
-			seize := candidate.Seize || shouldAllowBGPTrapReassignment(self, address, previousPlans, actionJournal, observedSelfCaptures, observedSelfCapturesOK)
+			seize := candidate.Seize || shouldAllowBGPTrapReassignment(self, address, previousPlans, actionJournal, observedSelfCaptures, observedSelfCapturesOK, observedSelfAt)
 			generated, err := providerActionPlans(poolName, profile, self.Capture, self.CaptureTarget, address, forwardingSeen, seize)
 			if err != nil {
 				return nil, err
 			}
 			stampBGPPathFenceActionPlans(generated, address, candidate.PathSig, self.NodeRef, candidate.LastSeenAt)
-			stampBGPProviderTransitionFence(generated, self, address, actionJournal, observedSelfCaptures, observedSelfCapturesOK)
+			stampBGPProviderTransitionFence(generated, self, address, actionJournal, observedSelfCaptures, observedSelfCapturesOK, observedSelfAt)
 			stampForwardingDriftFence(generated, forwardingObserved, forwardingEnabled, forwardingObservedAt)
 			plans = append(plans, generated...)
 		}
@@ -1759,7 +1773,7 @@ func mapStringKeysSorted[T any](values map[string]T) []string {
 	return out
 }
 
-func shouldAllowBGPTrapReassignment(self memberPlanInfo, address string, previousPlans []dynamicconfig.ActionPlan, journal []routerstate.ActionExecutionRecord, observedSelfCaptures map[string]bool, observedSelfCapturesOK bool) bool {
+func shouldAllowBGPTrapReassignment(self memberPlanInfo, address string, previousPlans []dynamicconfig.ActionPlan, journal []routerstate.ActionExecutionRecord, observedSelfCaptures map[string]bool, observedSelfCapturesOK bool, observedSelfAt time.Time) bool {
 	address = normalizeAddressString(address)
 	if address == "" {
 		return false
@@ -1773,11 +1787,8 @@ func shouldAllowBGPTrapReassignment(self memberPlanInfo, address string, previou
 	if !ok {
 		return false
 	}
-	if tr.assign && observedSelfCapturesOK && !observedSelfCaptures[address] {
-		return true
-	}
 	if observedSelfCapturesOK && !observedSelfCaptures[address] {
-		return true
+		return providerMissingRetryDue(tr, observedSelfAt)
 	}
 	return !tr.assign
 }
@@ -1813,7 +1824,7 @@ func stampSingleBGPPathFence(plan dynamicconfig.ActionPlan, address, pathSig, ho
 	return plans[0]
 }
 
-func stampBGPProviderTransitionFence(plans []dynamicconfig.ActionPlan, self memberPlanInfo, address string, journal []routerstate.ActionExecutionRecord, observedSelfCaptures map[string]bool, observedSelfCapturesOK bool) {
+func stampBGPProviderTransitionFence(plans []dynamicconfig.ActionPlan, self memberPlanInfo, address string, journal []routerstate.ActionExecutionRecord, observedSelfCaptures map[string]bool, observedSelfCapturesOK bool, observedSelfAt time.Time) {
 	address = normalizeAddressString(address)
 	if address == "" {
 		return
@@ -1828,7 +1839,7 @@ func stampBGPProviderTransitionFence(plans []dynamicconfig.ActionPlan, self memb
 	switch {
 	case !tr.assign:
 		token = fmt.Sprintf("after-unassign-%d", tr.id)
-	case observedSelfCapturesOK && !observedSelfCaptures[address]:
+	case observedSelfCapturesOK && !observedSelfCaptures[address] && providerMissingRetryDue(tr, observedSelfAt):
 		token = fmt.Sprintf("provider-missing-%d", tr.id)
 	}
 	if token == "" {
@@ -1845,6 +1856,16 @@ func stampBGPProviderTransitionFence(plans []dynamicconfig.ActionPlan, self memb
 		plan.Parameters[bgpTrapTransitionParam] = token
 		plan.IdempotencyKey += ":transition:" + safeName(token)
 	}
+}
+
+func providerMissingRetryDue(tr providerCaptureTransition, observedSelfAt time.Time) bool {
+	if !tr.assign {
+		return true
+	}
+	if tr.at.IsZero() || observedSelfAt.IsZero() {
+		return false
+	}
+	return !observedSelfAt.Before(tr.at.Add(bgpProviderMissingRetryHold))
 }
 
 func stampForwardingDriftFence(plans []dynamicconfig.ActionPlan, observed, enabled bool, observedAt time.Time) {
