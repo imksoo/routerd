@@ -226,12 +226,14 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 	bgpHomeOwnerNodes := c.bgpHomeOwnerNodes(spec)
 	bgpReturnRoutes := c.bgpReturnRoutes(spec)
 	forwardingObserved, forwardingEnabled, forwardingObservedAt := c.discoverySelfForwardingState(res.Metadata.Name)
+	poolStatus := c.Store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", res.Metadata.Name)
+	observedStaleSince := observedSelfStaleCaptureSinceFromStatus(poolStatus)
 	ownershipDecisions, ownershipErr := resolveAddressOwnership(ownershipResolverInput{
 		PoolName:          res.Metadata.Name,
 		SelfNode:          selfNode,
 		Spec:              spec,
 		Events:            events,
-		Status:            c.Store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", res.Metadata.Name),
+		Status:            poolStatus,
 		ActionJournal:     actionJournal,
 		PreviousPlans:     previousActionPlans,
 		InstalledNextHops: installedNextHops,
@@ -263,6 +265,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		ForwardingObserved:   forwardingObserved,
 		ForwardingEnabled:    forwardingEnabled,
 		ForwardingObservedAt: forwardingObservedAt,
+		ObservedStaleSince:   observedStaleSince,
 		SuppressDeprovision:  c.SuppressProviderDeprovision,
 		Now:                  now,
 	})
@@ -335,6 +338,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		"providerActionFailedAddresses":     nil,
 		"providerActionFailedCount":         0,
 		"providerActionFailedAt":            "",
+		"observedSelfStaleCaptures":         observedSelfStaleCaptureStatus(ownershipDecisions, selfNode, observedStaleSince, now),
 	}
 	for key, value := range bgpSeizeHoldDownStatus(delivery.Placement) {
 		status[key] = value
@@ -1762,6 +1766,81 @@ func parseBGPTrapLastSeenAt(value string) time.Time {
 		return time.Time{}
 	}
 	return t.UTC()
+}
+
+func observedSelfStaleCaptureSinceFromStatus(status map[string]any) map[string]time.Time {
+	out := map[string]time.Time{}
+	raw, ok := status["observedSelfStaleCaptures"]
+	if !ok || raw == nil {
+		return out
+	}
+	add := func(address, value string) {
+		address = normalizeAddressString(address)
+		if address == "" {
+			return
+		}
+		parsed, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(value))
+		if err != nil || parsed.IsZero() {
+			return
+		}
+		out[address] = parsed.UTC()
+	}
+	switch typed := raw.(type) {
+	case map[string]string:
+		for address, value := range typed {
+			add(address, value)
+		}
+	case map[string]any:
+		for address, value := range typed {
+			add(address, fmt.Sprint(value))
+		}
+	case []map[string]any:
+		for _, row := range typed {
+			add(fmt.Sprint(row["address"]), statusStringFirst(row["firstSeenAt"], row["since"]))
+		}
+	case []any:
+		for _, item := range typed {
+			row, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			add(fmt.Sprint(row["address"]), statusStringFirst(row["firstSeenAt"], row["since"]))
+		}
+	}
+	return out
+}
+
+func statusStringFirst(values ...any) string {
+	for _, value := range values {
+		str := strings.TrimSpace(fmt.Sprint(value))
+		if str == "" || str == "<nil>" {
+			continue
+		}
+		return str
+	}
+	return ""
+}
+
+func observedSelfStaleCaptureStatus(decisions []ownershipDecision, selfNode string, previous map[string]time.Time, now time.Time) map[string]string {
+	out := map[string]string{}
+	for _, decision := range decisions {
+		if decision.Class != ownershipClassStaleCapture || strings.TrimSpace(decision.SuppressionReason) != "self-captured-secondary" {
+			continue
+		}
+		if strings.TrimSpace(decision.CaptureHolderNode) != "" && strings.TrimSpace(decision.CaptureHolderNode) != strings.TrimSpace(selfNode) {
+			continue
+		}
+		address := normalizeAddressString(decision.Address)
+		if address == "" {
+			continue
+		}
+		since := now.UTC()
+		if previousSince, ok := previous[address]; ok && !previousSince.IsZero() {
+			since = previousSince.UTC()
+		}
+		out[address] = since.Format(time.RFC3339Nano)
+	}
+	return out
 }
 
 func bgpTrapCandidateWithinMissingHold(candidate bgpTrapCandidate, now time.Time) bool {

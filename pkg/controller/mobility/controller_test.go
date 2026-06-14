@@ -2100,14 +2100,75 @@ func TestControllerBGPModeObservedSelfStaleCaptureIsProtectedWithoutPriorAction(
 	if findActionPlanByAddress(plans, "assign-secondary-ip", address) != nil {
 		t.Fatalf("plans = %#v, observed stale capture must not recreate assign", plans)
 	}
-	if unassign := findActionPlanByAddress(plans, "unassign-secondary-ip", address); unassign == nil {
-		t.Fatalf("plans = %#v, observed stale provider-secondary capture must be deprovisioned", plans)
+	if unassign := findActionPlanByAddress(plans, "unassign-secondary-ip", address); unassign != nil {
+		t.Fatalf("plans = %#v, first observed stale provider-secondary capture must wait for cleanup hold", plans)
 	}
 	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	staleSince := observedSelfStaleCaptureSinceFromStatus(status)
+	if staleSince[address].IsZero() {
+		t.Fatalf("observedSelfStaleCaptures = %#v, want first-seen marker for %s", status["observedSelfStaleCaptures"], address)
+	}
 	decisions := ownershipStatusDecisions(t, status["ownershipResolverDecisions"])
 	decision := ownershipStatusDecisionByAddress(t, decisions, address)
 	if decision["class"] != ownershipClassStaleCapture || decision["suppressionReason"] != "self-captured-secondary" {
 		t.Fatalf("decision = %#v, want self-captured-secondary stale capture", decision)
+	}
+}
+
+func TestControllerBGPModeObservedSelfStaleCaptureWaitsForRecentTrapMissingHold(t *testing.T) {
+	now := time.Date(2026, 6, 10, 18, 37, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	source := DynamicSource("cloudedge", "aws-router-a")
+	address := "10.88.60.12/32"
+	previousPlans, err := json.Marshal([]dynamicconfig.ActionPlan{{
+		Name:        "mobility-cloudedge-assign-10-88-60-12-32",
+		Provider:    "aws",
+		ProviderRef: "aws-provider",
+		Action:      "assign-secondary-ip",
+		Target: map[string]string{
+			"address":     address,
+			"nicRef":      "eni-a",
+			"provider":    "aws",
+			"providerRef": "aws-provider",
+		},
+		Parameters: map[string]string{
+			bgpPathSigParam:        "prefix=10.88.60.12/32;nextHops=10.99.0.3",
+			bgpTrapLastSeenAtParam: now.Add(-time.Minute).Format(time.RFC3339Nano),
+			captureParamHolder:     "aws-router-a",
+		},
+	}})
+	if err != nil {
+		t.Fatalf("marshal previous plans: %v", err)
+	}
+	if err := store.UpsertDynamicConfigPart(routerstate.DynamicConfigPartRecord{
+		Source:          source,
+		Generation:      dynamicGeneration,
+		ObservedAt:      now.Add(-time.Minute),
+		ExpiresAt:       now.Add(time.Hour),
+		ActionPlansJSON: string(previousPlans),
+		Status:          "active",
+	}); err != nil {
+		t.Fatalf("UpsertDynamicConfigPart: %v", err)
+	}
+	saveBGPStatus(t, store, map[string][]string{}, nil, nil)
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"discoverySelfPrivateIPs":        []string{"10.88.60.4/32"},
+		"discoverySelfCapturedAddresses": []string{address},
+		"discoveryLastScanAt":            now.Format(time.RFC3339Nano),
+	}); err != nil {
+		t.Fatalf("SaveObjectStatus: %v", err)
+	}
+
+	bgp := &fakeBGPPaths{}
+	controller := Controller{Router: routerWithBGPRouter(planningRouterForNode("aws-router-a", spec)), Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	plans := decodeActionPlans(t, latestPart(t, store, source).ActionPlansJSON)
+	if findActionPlanByAddress(plans, "unassign-secondary-ip", address) != nil {
+		t.Fatalf("plans = %#v, recent BGP trap must hold observed self stale cleanup during convergence", plans)
 	}
 }
 
@@ -2152,6 +2213,7 @@ func TestControllerBGPModeObservedSelfStaleCaptureUsesDiscoveredSelfNIC(t *testi
 		"discoverySelfPrivateIPs":        []string{"10.88.60.22/32"},
 		"discoverySelfCapturedAddresses": []string{address},
 		"discoveryLastScanAt":            now.Format(time.RFC3339Nano),
+		"observedSelfStaleCaptures":      map[string]string{address: now.Add(-3 * time.Minute).Format(time.RFC3339Nano)},
 	}); err != nil {
 		t.Fatalf("SaveObjectStatus: %v", err)
 	}
@@ -2185,6 +2247,7 @@ func TestControllerBGPModeObservedSelfStaleCaptureUsesCaptureTargetNIC(t *testin
 		"discoverySelfPrivateIPs":        []string{"10.88.60.4/32"},
 		"discoverySelfCapturedAddresses": []string{address},
 		"discoveryLastScanAt":            now.Format(time.RFC3339Nano),
+		"observedSelfStaleCaptures":      map[string]string{address: now.Add(-3 * time.Minute).Format(time.RFC3339Nano)},
 	}); err != nil {
 		t.Fatalf("SaveObjectStatus: %v", err)
 	}
@@ -2412,6 +2475,7 @@ func TestControllerBGPModeStaleCaptureCleanupKeepsForwardingReady(t *testing.T) 
 		"discoverySelfPrivateIPs":        []string{"10.88.60.4/32"},
 		"discoverySelfCapturedAddresses": []string{stale},
 		"discoveryLastScanAt":            now.Format(time.RFC3339Nano),
+		"observedSelfStaleCaptures":      map[string]string{stale: now.Add(-3 * time.Minute).Format(time.RFC3339Nano)},
 	}); err != nil {
 		t.Fatalf("SaveObjectStatus: %v", err)
 	}
