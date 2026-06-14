@@ -166,6 +166,9 @@ func (netlinkSAMProxyNeighborApplier) ReconcileForwardPaths(ctx context.Context,
 			return err
 		}
 	}
+	if len(desired) == 0 {
+		return nil
+	}
 	if err := deleteStaleIPTablesRules(ctx, chain, desired); err != nil {
 		return err
 	}
