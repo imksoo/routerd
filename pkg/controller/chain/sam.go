@@ -184,7 +184,12 @@ func (c SAMController) reconcileProxyARPInterfaces(ctx context.Context, actions 
 			continue
 		}
 		spec, err := resource.RemoteAddressClaimSpec()
-		if err != nil || strings.TrimSpace(spec.Capture.Type) != "proxy-arp" {
+		if err != nil {
+			continue
+		}
+		captureType := strings.TrimSpace(spec.Capture.Type)
+		bgpDelivery := strings.TrimSpace(spec.Delivery.Mode) == "bgp"
+		if captureType != "proxy-arp" && !(captureType == "provider-secondary-ip" && bgpDelivery) {
 			continue
 		}
 		if iface := sam.ResolveCaptureInterface(strings.TrimSpace(spec.Capture.Interface), aliases); iface != "" {

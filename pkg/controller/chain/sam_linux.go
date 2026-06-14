@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"os"
 	"os/exec"
 	"sort"
 	"strings"
@@ -39,6 +40,10 @@ func (netlinkSAMProxyNeighborApplier) SetProxyARP(ctx context.Context, ifname st
 		value = "1"
 	}
 	key := "net.ipv4.conf." + ifname + ".proxy_arp"
+	return samSetSysctl(ctx, key, value)
+}
+
+func samSetSysctl(ctx context.Context, key, value string) error {
 	out, err := exec.CommandContext(ctx, "sysctl", "-w", key+"="+value).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("sysctl -w %s=%s: %w: %s", key, value, err, strings.TrimSpace(string(out)))
@@ -136,6 +141,10 @@ func (netlinkSAMProxyNeighborApplier) ReconcileForwardPaths(ctx context.Context,
 			return insertErr
 		}
 	}
+	currentIfaces, err := currentForwardPathInterfaces(ctx, chain)
+	if err != nil {
+		return err
+	}
 	sort.SliceStable(paths, func(i, j int) bool {
 		if paths[i].Address != paths[j].Address {
 			return paths[i].Address < paths[j].Address
@@ -146,6 +155,7 @@ func (netlinkSAMProxyNeighborApplier) ReconcileForwardPaths(ctx context.Context,
 		return paths[i].PeerInterface < paths[j].PeerInterface
 	})
 	desired := map[string][]string{}
+	acceptLocal := map[string]bool{}
 	for _, path := range paths {
 		address := strings.TrimSpace(path.Address)
 		captureIface := strings.TrimSpace(path.Interface)
@@ -153,6 +163,8 @@ func (netlinkSAMProxyNeighborApplier) ReconcileForwardPaths(ctx context.Context,
 		if address == "" || captureIface == "" || tunnelIface == "" {
 			continue
 		}
+		acceptLocal[captureIface] = true
+		acceptLocal[tunnelIface] = true
 		if path.Kind == "forward-local-path" {
 			addDesiredIPTablesRule(desired, "-i", tunnelIface, "-o", captureIface, "-d", address, "-j", "ACCEPT")
 			addDesiredIPTablesRule(desired, "-i", captureIface, "-o", tunnelIface, "-s", address, "-j", "ACCEPT")
@@ -161,18 +173,42 @@ func (netlinkSAMProxyNeighborApplier) ReconcileForwardPaths(ctx context.Context,
 			addDesiredIPTablesRule(desired, "-i", tunnelIface, "-o", captureIface, "-s", address, "-j", "ACCEPT")
 		}
 	}
+	for ifname := range acceptLocal {
+		if err := samSetSysctl(ctx, "net.ipv4.conf."+ifname+".accept_local", "1"); err != nil {
+			return err
+		}
+	}
+	for ifname := range currentIfaces {
+		if acceptLocal[ifname] {
+			continue
+		}
+		if err := samSetSysctlIfPresent(ctx, "net.ipv4.conf."+ifname+".accept_local", "0"); err != nil {
+			return err
+		}
+	}
 	for _, rule := range sortedIPTablesRules(desired) {
 		if err := ensureIPTablesRule(ctx, chain, rule...); err != nil {
 			return err
 		}
 	}
-	if len(desired) == 0 {
-		return nil
-	}
 	if err := deleteStaleIPTablesRules(ctx, chain, desired); err != nil {
 		return err
 	}
 	return nil
+}
+
+func samSetSysctlIfPresent(ctx context.Context, key, value string) error {
+	if !strings.HasPrefix(key, "net.ipv4.conf.") {
+		return samSetSysctl(ctx, key, value)
+	}
+	path := "/proc/sys/" + strings.ReplaceAll(key, ".", "/")
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	return samSetSysctl(ctx, key, value)
 }
 
 func addDesiredIPTablesRule(desired map[string][]string, rule ...string) {
@@ -206,6 +242,50 @@ func ensureIPTablesRule(ctx context.Context, chain string, rule ...string) error
 		return fmt.Errorf("iptables %s: %w: %s", strings.Join(addArgs, " "), err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+func currentForwardPathInterfaces(ctx context.Context, chain string) (map[string]bool, error) {
+	out, err := exec.CommandContext(ctx, "iptables", "-S", chain).CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("iptables -S %s: %w: %s", chain, err, strings.TrimSpace(string(out)))
+	}
+	ifaces := map[string]bool{}
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		prefix := "-A " + chain + " "
+		if !strings.HasPrefix(line, prefix) {
+			continue
+		}
+		for _, ifname := range forwardPathInterfacesFromRule(strings.Fields(strings.TrimPrefix(line, prefix))) {
+			ifaces[ifname] = true
+		}
+	}
+	return ifaces, nil
+}
+
+func forwardPathInterfacesFromRule(rule []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(ifname string) {
+		ifname = strings.TrimSpace(ifname)
+		if ifname == "" || seen[ifname] {
+			return
+		}
+		seen[ifname] = true
+		out = append(out, ifname)
+	}
+	for i := 0; i < len(rule); i++ {
+		token := rule[i]
+		if token != "-i" && token != "--in-interface" && token != "-o" && token != "--out-interface" {
+			continue
+		}
+		if i+1 >= len(rule) {
+			continue
+		}
+		add(rule[i+1])
+		i++
+	}
+	return out
 }
 
 func deleteStaleIPTablesRules(ctx context.Context, chain string, desired map[string][]string) error {
