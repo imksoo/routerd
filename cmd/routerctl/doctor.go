@@ -791,6 +791,9 @@ func doctorSAMUnexpectedRouteResidueChecks(pool string, poolSpec api.MobilityPoo
 		if !prefix.Contains(parsed.Addr()) || expected[normalized] {
 			continue
 		}
+		if doctorSAMRouteResidueIsProviderDHCPLink(lines) {
+			continue
+		}
 		unexpected = append(unexpected, normalized+" actual="+strings.Join(lines, " | "))
 	}
 	sort.Strings(unexpected)
@@ -806,6 +809,28 @@ func doctorSAMUnexpectedRouteResidueChecks(pool string, poolSpec api.MobilityPoo
 		})
 	}
 	return checks
+}
+
+func doctorSAMRouteResidueIsProviderDHCPLink(lines []string) bool {
+	if len(lines) == 0 {
+		return false
+	}
+	for _, line := range lines {
+		if !doctorRouteLineHasTokenPair(line, "proto", "dhcp") || !doctorRouteLineHasTokenPair(line, "scope", "link") {
+			return false
+		}
+	}
+	return true
+}
+
+func doctorRouteLineHasTokenPair(line, key, value string) bool {
+	fields := strings.Fields(line)
+	for i := 0; i+1 < len(fields); i++ {
+		if fields[i] == key && fields[i+1] == value {
+			return true
+		}
+	}
+	return false
 }
 
 func doctorSAMOwnerRowsSummary(rows []map[string]any, limit int) string {

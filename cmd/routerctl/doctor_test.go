@@ -409,11 +409,21 @@ func TestDoctorSAMOwnerTableReportsUnexpectedRouteResidue(t *testing.T) {
 				OK:   true,
 				Stdout: strings.Join([]string{
 					"10.77.60.7 dev ens5 scope link metric 1",
+					"10.77.60.1 dev ens5 proto dhcp scope link src 10.77.60.4 metric 100",
+					"10.77.60.2 dev ens5 proto dhcp scope link src 10.77.60.4 metric 100",
+					"10.77.60.3 dev ens5 proto dhcp scope link src 10.77.60.4 metric 100",
+					"10.77.60.3 dev ens5 scope link metric 1",
+					"10.77.60.4 dev ens5 proto dhcp scope global src 10.77.60.4 metric 100",
 					"10.77.60.8 dev ens5 scope link metric 1",
 					"10.88.60.9 dev ens5 scope link metric 1",
 				}, "\n") + "\n",
 				Output: strings.Join([]string{
 					"10.77.60.7 dev ens5 scope link metric 1",
+					"10.77.60.1 dev ens5 proto dhcp scope link src 10.77.60.4 metric 100",
+					"10.77.60.2 dev ens5 proto dhcp scope link src 10.77.60.4 metric 100",
+					"10.77.60.3 dev ens5 proto dhcp scope link src 10.77.60.4 metric 100",
+					"10.77.60.3 dev ens5 scope link metric 1",
+					"10.77.60.4 dev ens5 proto dhcp scope global src 10.77.60.4 metric 100",
 					"10.77.60.8 dev ens5 scope link metric 1",
 					"10.88.60.9 dev ens5 scope link metric 1",
 				}, "\n") + "\n",
@@ -459,6 +469,16 @@ func TestDoctorSAMOwnerTableReportsUnexpectedRouteResidue(t *testing.T) {
 	if check.Status != doctorFail || !strings.Contains(check.Detail, "absent from ownershipResolverOwnerTable") || !strings.Contains(check.Detail, "10.77.60.8 dev ens5") {
 		t.Fatalf("check = %#v, want failing unexpected residue detail", check)
 	}
+	mixed := findDoctorCheck(t, report, "MobilityPool/cloudedge owner-table unexpected route residue 10.77.60.3/32")
+	if mixed.Status != doctorFail || !strings.Contains(mixed.Detail, "proto dhcp scope link") || !strings.Contains(mixed.Detail, "scope link metric 1") {
+		t.Fatalf("mixed check = %#v, want mixed DHCP/stale route to fail", mixed)
+	}
+	global := findDoctorCheck(t, report, "MobilityPool/cloudedge owner-table unexpected route residue 10.77.60.4/32")
+	if global.Status != doctorFail || !strings.Contains(global.Detail, "scope global") {
+		t.Fatalf("global check = %#v, want non-link DHCP route to fail", global)
+	}
+	assertDoctorCheckAbsent(t, report, "MobilityPool/cloudedge owner-table unexpected route residue 10.77.60.1/32")
+	assertDoctorCheckAbsent(t, report, "MobilityPool/cloudedge owner-table unexpected route residue 10.77.60.2/32")
 	assertDoctorCheckAbsent(t, report, "MobilityPool/cloudedge owner-table unexpected route residue 10.88.60.9/32")
 }
 
