@@ -374,6 +374,76 @@ func TestPlanCaptureProviderSecondaryIPBGPDeassignsAndForwardsWithConfigureOSAdd
 	}
 }
 
+func TestPlanCaptureBGPLocalInventoryAddsLocalForwardPath(t *testing.T) {
+	router := testRouter()
+	router.Spec.Resources = router.Spec.Resources[:3]
+	router.Spec.Resources = append(router.Spec.Resources,
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
+			Metadata: api.ObjectMeta{Name: "samt0"},
+			Spec:     api.TunnelInterfaceSpec{Mode: "ipip", Local: "10.99.0.2", Remote: "10.99.0.1", Address: "10.255.0.2/31"},
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4Route"},
+			Metadata: api.ObjectMeta{
+				Name: "sam-cloudedge-local-10-77-60-13",
+				Annotations: map[string]string{
+					"mobility.routerd.net/source": "bgp-local-inventory",
+				},
+			},
+			Spec: api.IPv4RouteSpec{
+				Destination: "10.77.60.13/32",
+				Device:      "ens3",
+				Metric:      1,
+			},
+		},
+	)
+	actions, err := PlanCapture(router, platform.OSLinux)
+	if err != nil {
+		t.Fatalf("PlanCapture: %v", err)
+	}
+	if !hasAction(actions, "forward-local-path", "", "10.77.60.13/32", "ens3") {
+		t.Fatalf("actions missing local inventory forward path: %#v", actions)
+	}
+	if !hasAction(actions, "sysctl", "net.ipv4.ip_forward", "", "") {
+		t.Fatalf("actions missing ip_forward: %#v", actions)
+	}
+}
+
+func TestPlanCaptureBGPLocalInventorySkipsRouterSelfForwardPath(t *testing.T) {
+	router := testRouter()
+	router.Spec.Resources = router.Spec.Resources[:3]
+	router.Spec.Resources = append(router.Spec.Resources,
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
+			Metadata: api.ObjectMeta{Name: "samt0"},
+			Spec:     api.TunnelInterfaceSpec{Mode: "ipip", Local: "10.99.0.2", Remote: "10.99.0.1", Address: "10.255.0.2/31"},
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4Route"},
+			Metadata: api.ObjectMeta{
+				Name: "sam-cloudedge-local-10-77-60-26",
+				Annotations: map[string]string{
+					"mobility.routerd.net/source":   "bgp-local-inventory",
+					"mobility.routerd.net/fibClass": "LocalRouterSelf",
+				},
+			},
+			Spec: api.IPv4RouteSpec{
+				Destination: "10.77.60.26/32",
+				Device:      "ens3",
+				Metric:      1,
+			},
+		},
+	)
+	actions, err := PlanCapture(router, platform.OSLinux)
+	if err != nil {
+		t.Fatalf("PlanCapture: %v", err)
+	}
+	if hasAction(actions, "forward-local-path", "", "10.77.60.26/32", "ens3") {
+		t.Fatalf("actions include router-self local inventory forward path: %#v", actions)
+	}
+}
+
 func TestPlanCaptureProviderSecondaryIPDeassignPlanningStable(t *testing.T) {
 	router := testRouter()
 	router.Spec.Resources = router.Spec.Resources[:4]

@@ -189,7 +189,7 @@ func PlanCapture(router *api.Router, targetOS platform.OS) ([]CaptureAction, err
 }
 
 func PlanCaptureWithOptions(router *api.Router, targetOS platform.OS, opts PlanOptions) ([]CaptureAction, error) {
-	if router == nil || !HasRemoteAddressClaims(router) || targetOS != platform.OSLinux {
+	if router == nil || targetOS != platform.OSLinux {
 		return nil, nil
 	}
 	interfaces := map[string]bool{}
@@ -251,7 +251,49 @@ func PlanCaptureWithOptions(router *api.Router, targetOS platform.OS, opts PlanO
 		}
 		actions = append(actions, CaptureAction{Kind: "proxy-neighbor", ClaimName: resource.Metadata.Name, Address: address, Interface: iface, GratuitousARP: wantsGratuitousARP(spec.Capture)})
 	}
+	for _, action := range localInventoryForwardPathActions(router) {
+		addForwarding()
+		actions = append(actions, action)
+	}
 	return actions, nil
+}
+
+func localInventoryForwardPathActions(router *api.Router) []CaptureAction {
+	if router == nil {
+		return nil
+	}
+	tunnels := bgpDeliveryForwardInterfaces(router)
+	if len(tunnels) == 0 {
+		return nil
+	}
+	var actions []CaptureAction
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "IPv4Route" {
+			continue
+		}
+		if strings.TrimSpace(resource.Metadata.Annotations["mobility.routerd.net/source"]) != "bgp-local-inventory" {
+			continue
+		}
+		if strings.TrimSpace(resource.Metadata.Annotations["mobility.routerd.net/fibClass"]) == "LocalRouterSelf" {
+			continue
+		}
+		spec, err := resource.IPv4RouteSpec()
+		if err != nil {
+			continue
+		}
+		address, err := normalizeClaimAddress(spec.Destination)
+		if err != nil {
+			continue
+		}
+		iface := strings.TrimSpace(spec.Device)
+		if iface == "" {
+			continue
+		}
+		for _, tunnelIface := range tunnels {
+			actions = append(actions, CaptureAction{Kind: "forward-local-path", ClaimName: resource.Metadata.Name, Address: address, Interface: iface, PeerInterface: tunnelIface})
+		}
+	}
+	return actions
 }
 
 func bgpDeliveryForwardInterfaces(router *api.Router) []string {

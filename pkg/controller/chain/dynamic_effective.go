@@ -83,10 +83,10 @@ func buildDynamicRouteSAMView(startup *api.Router, store any, now time.Time, tar
 
 	effective = appendBGPMobilityProviderSecondaryClaims(effective, store)
 	effective = appendBGPMobilityProxyARPClaims(effective, store)
+	effective = appendBGPMobilityLocalInventoryRoutes(effective, effective, store)
 
 	routeRouter := effective
 	routeRouter = appendBGPMobilityCapturePrefixRoutes(effective, routeRouter, store)
-	routeRouter = appendBGPMobilityLocalInventoryRoutes(effective, routeRouter, store)
 	hybridLowerings := []hybrid.HybridLowering(nil)
 	if hybrid.HasHybridRoutes(&effective) {
 		expanded, lowerings, err := hybrid.ExpandHybridRoutes(routeRouter)
@@ -416,8 +416,8 @@ func appendBGPMobilityLocalInventoryRoutes(effective, routeRouter api.Router, st
 		if device == "" {
 			continue
 		}
-		for _, address := range snapshot.LocalRouteAddressesForPool(resource.Metadata.Name) {
-			resources = append(resources, bgpMobilityLocalInventoryRoute(resource.Metadata.Name, address, device))
+		for _, verdict := range snapshot.LocalRouteVerdictsForPool(resource.Metadata.Name) {
+			resources = append(resources, bgpMobilityLocalInventoryRoute(resource.Metadata.Name, verdict.Address, device, verdict))
 		}
 	}
 	if len(resources) == 0 {
@@ -428,14 +428,18 @@ func appendBGPMobilityLocalInventoryRoutes(effective, routeRouter api.Router, st
 	return out
 }
 
-func bgpMobilityLocalInventoryRoute(poolName, address, device string) api.Resource {
+func bgpMobilityLocalInventoryRoute(poolName, address, device string, verdict mobilityfib.Verdict) api.Resource {
 	return api.Resource{
 		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4Route"},
 		Metadata: api.ObjectMeta{
 			Name: "sam-" + safeResourceName(poolName) + "-local-" + safeResourceName(strings.TrimSuffix(address, "/32")),
 			Annotations: map[string]string{
-				"mobility.routerd.net/pool":   poolName,
-				"mobility.routerd.net/source": "bgp-local-inventory",
+				"mobility.routerd.net/pool":       poolName,
+				"mobility.routerd.net/source":     "bgp-local-inventory",
+				"mobility.routerd.net/fibClass":   strings.TrimSpace(verdict.Class),
+				"mobility.routerd.net/fibOwner":   strings.TrimSpace(verdict.OwnerNode),
+				"mobility.routerd.net/fibReason":  strings.TrimSpace(verdict.Reason),
+				"mobility.routerd.net/fibVerdict": strings.TrimSpace(verdict.Action),
 			},
 		},
 		Spec: api.IPv4RouteSpec{

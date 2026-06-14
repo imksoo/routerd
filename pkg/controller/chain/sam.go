@@ -159,7 +159,7 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 func (c SAMController) reconcileForwardPaths(ctx context.Context, actions []sam.CaptureAction) error {
 	var paths []sam.CaptureAction
 	for _, action := range actions {
-		if action.Kind == "forward-path" {
+		if action.Kind == "forward-path" || action.Kind == "forward-local-path" {
 			paths = append(paths, action)
 		}
 	}

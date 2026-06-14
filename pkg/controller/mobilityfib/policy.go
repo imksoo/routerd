@@ -44,6 +44,7 @@ const (
 type Verdict struct {
 	Address   string
 	Action    string
+	Class     string
 	OwnerNode string
 	Reason    string
 }
@@ -149,6 +150,25 @@ func (s Snapshot) LocalRouteAddressesForPool(poolName string) []string {
 	return sortedKeys(seen)
 }
 
+func (s Snapshot) LocalRouteVerdictsForPool(poolName string) []Verdict {
+	poolName = strings.TrimSpace(poolName)
+	seen := map[string]Verdict{}
+	for _, pool := range s.pools {
+		if pool.name != poolName {
+			continue
+		}
+		for _, verdict := range pool.localRouteVerdicts() {
+			seen[verdict.Address] = verdict
+		}
+	}
+	keys := sortedVerdictKeys(seen)
+	out := make([]Verdict, 0, len(keys))
+	for _, key := range keys {
+		out = append(out, seen[key])
+	}
+	return out
+}
+
 func (p poolSnapshot) localRouteAddresses() []string {
 	seen := map[string]bool{}
 	for address := range p.staticLocal {
@@ -160,6 +180,30 @@ func (p poolSnapshot) localRouteAddresses() []string {
 		}
 	}
 	return sortedKeys(seen)
+}
+
+func (p poolSnapshot) localRouteVerdicts() []Verdict {
+	seen := map[string]Verdict{}
+	for address := range p.staticLocal {
+		seen[address] = Verdict{
+			Address:   address,
+			Action:    ActionLocalRoute,
+			Class:     "StaticOwned",
+			OwnerNode: p.selfNode,
+			Reason:    "static-local",
+		}
+	}
+	for address, verdict := range p.verdicts {
+		if strings.TrimSpace(verdict.Action) == ActionLocalRoute {
+			seen[address] = verdict
+		}
+	}
+	keys := sortedVerdictKeys(seen)
+	out := make([]Verdict, 0, len(keys))
+	for _, key := range keys {
+		out = append(out, seen[key])
+	}
+	return out
 }
 
 func (s Snapshot) poolFor(prefix netip.Prefix) (poolSnapshot, bool) {
@@ -178,6 +222,7 @@ func verdictFromMap(row map[string]string) Verdict {
 	return Verdict{
 		Address:   row["address"],
 		Action:    row["action"],
+		Class:     row["class"],
 		OwnerNode: row["ownerNode"],
 		Reason:    row["reason"],
 	}
@@ -282,6 +327,15 @@ func firstNonEmpty(values ...string) string {
 }
 
 func sortedKeys(values map[string]bool) []string {
+	out := make([]string, 0, len(values))
+	for value := range values {
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func sortedVerdictKeys(values map[string]Verdict) []string {
 	out := make([]string, 0, len(values))
 	for value := range values {
 		out = append(out, value)

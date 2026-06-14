@@ -130,8 +130,11 @@ func (netlinkSAMProxyNeighborApplier) ReconcileForwardPaths(ctx context.Context,
 			return insertErr
 		}
 	}
+	if err := run("-F", chain); err != nil {
+		return err
+	}
 	if len(paths) == 0 {
-		return run("-F", chain)
+		return nil
 	}
 	sort.SliceStable(paths, func(i, j int) bool {
 		if paths[i].Address != paths[j].Address {
@@ -149,11 +152,20 @@ func (netlinkSAMProxyNeighborApplier) ReconcileForwardPaths(ctx context.Context,
 		if address == "" || captureIface == "" || tunnelIface == "" {
 			continue
 		}
-		if err := ensureIPTablesRule(ctx, chain, "-i", captureIface, "-o", tunnelIface, "-d", address, "-j", "ACCEPT"); err != nil {
-			return err
-		}
-		if err := ensureIPTablesRule(ctx, chain, "-i", tunnelIface, "-o", captureIface, "-s", address, "-j", "ACCEPT"); err != nil {
-			return err
+		if path.Kind == "forward-local-path" {
+			if err := ensureIPTablesRule(ctx, chain, "-i", tunnelIface, "-o", captureIface, "-d", address, "-j", "ACCEPT"); err != nil {
+				return err
+			}
+			if err := ensureIPTablesRule(ctx, chain, "-i", captureIface, "-o", tunnelIface, "-s", address, "-j", "ACCEPT"); err != nil {
+				return err
+			}
+		} else {
+			if err := ensureIPTablesRule(ctx, chain, "-i", captureIface, "-o", tunnelIface, "-d", address, "-j", "ACCEPT"); err != nil {
+				return err
+			}
+			if err := ensureIPTablesRule(ctx, chain, "-i", tunnelIface, "-o", captureIface, "-s", address, "-j", "ACCEPT"); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
