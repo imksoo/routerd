@@ -1348,6 +1348,46 @@ func TestDiscoveryControllerDoesNotExpireProviderDiscoveryOnTransientActiveMiss(
 	}
 }
 
+func TestDiscoveryControllerExpiresProviderDiscoveryAfterMissingInventoryHold(t *testing.T) {
+	now := time.Date(2026, 6, 3, 15, 5, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := discoveryPoolSpec()
+	recordEvent(t, store, providerDiscoveryObservedEvent("cloudedge", "cloudedge", "azure-router-a", "10.88.60.12/32", "azure", "azure-provider", providerinventory.PrivateIPRecord{
+		Address:   "10.88.60.12",
+		NICRef:    "client-nic",
+		SubnetRef: "subnet-a",
+		Tags:      map[string]string{"cloudedge-mobility": "true"},
+	}, now.Add(-3*time.Minute), 10*time.Minute))
+	runner := &fakeInventoryRunner{result: providerinventory.ObservePrivateIPsResult{
+		TypeMeta: providerinventory.TypeMeta{APIVersion: providerinventory.ProtocolAPIVersion, Kind: providerinventory.KindObservePrivateIPsResult},
+		Status: providerinventory.ObservePrivateIPsResultStatus{
+			Status: providerinventory.ResultSucceeded,
+			Self:   &providerinventory.PrivateIPSelf{NICRef: "router-nic", SubnetRef: "subnet-a", ForwardingEnabled: boolPtr(true)},
+		},
+	}}
+	router := discoveryRouter("azure-router-a", spec)
+	discovery := DiscoveryController{Router: router, Store: store, Runner: runner.run, Now: func() time.Time { return now }}
+	if err := discovery.Reconcile(context.Background()); err != nil {
+		t.Fatalf("discovery Reconcile: %v", err)
+	}
+	events, err := store.ListFederationEvents("cloudedge", false, now.Unix())
+	if err != nil {
+		t.Fatalf("ListFederationEvents: %v", err)
+	}
+	if countEvents(events, ExpiredEventType, "azure-router-a", "10.88.60.12/32") != 1 {
+		t.Fatalf("events = %#v, want missing inventory after hold to expire provider discovery", events)
+	}
+
+	bgp := &fakeBGPPaths{}
+	mobility := Controller{Router: routerWithBGPRouter(router), Store: store, BGPPaths: bgp, Now: func() time.Time { return now.Add(time.Second) }}
+	if err := mobility.Reconcile(context.Background()); err != nil {
+		t.Fatalf("mobility Reconcile: %v", err)
+	}
+	if _, ok := maybePathBySourcePrefix(bgp, DynamicSource("cloudedge", "azure-router-a"), "10.88.60.12/32"); ok {
+		t.Fatalf("paths = %#v, expired missing-inventory claim must not keep advertising", bgp.paths)
+	}
+}
+
 func TestDiscoveryProviderDiscoveredAddressesHonorsLatestExpiredEvent(t *testing.T) {
 	now := time.Date(2026, 6, 10, 12, 10, 0, 0, time.UTC)
 	store := testStore(t, now)
