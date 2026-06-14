@@ -111,26 +111,6 @@ func NewSnapshot(router *api.Router, reader StatusReader) Snapshot {
 	return Snapshot{pools: pools}
 }
 
-func (s Snapshot) AdmitBGPRoute(prefix netip.Prefix) bool {
-	prefix = prefix.Masked()
-	pool, ok := s.poolFor(prefix)
-	if !ok {
-		return true
-	}
-	if prefix.Bits() != 32 {
-		return false
-	}
-	address := prefix.String()
-	if pool.staticLocal[address] {
-		return false
-	}
-	verdict, ok := pool.verdicts[address]
-	if !ok {
-		return false
-	}
-	return strings.TrimSpace(verdict.Action) == ActionDeliverRemote
-}
-
 func (s Snapshot) AdmitBGPPath(prefix netip.Prefix, communities []string) bool {
 	prefix = prefix.Masked()
 	pool, ok := s.poolFor(prefix)
@@ -153,16 +133,6 @@ func (s Snapshot) AdmitBGPPath(prefix netip.Prefix, communities []string) bool {
 	return hasCommunity(communities, communityMobilitySourceObserved) ||
 		hasCommunity(communities, communityMobilitySourceStatic) ||
 		hasCommunity(communities, communityMobilitySourceHandover)
-}
-
-func (s Snapshot) LocalRouteAddresses() []string {
-	seen := map[string]bool{}
-	for _, pool := range s.pools {
-		for _, address := range pool.localRouteAddresses() {
-			seen[address] = true
-		}
-	}
-	return sortedKeys(seen)
 }
 
 func (s Snapshot) LocalRouteAddressesForPool(poolName string) []string {

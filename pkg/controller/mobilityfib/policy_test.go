@@ -33,8 +33,8 @@ func TestSnapshotRejectsConflictLocalEvidenceAndCreatesLocalRoute(t *testing.T) 
 		},
 	})
 	prefix := netip.MustParsePrefix("10.77.60.11/32")
-	if snapshot.AdmitBGPRoute(prefix) {
-		t.Fatalf("AdmitBGPRoute(%s) = true, want false for conflict with local provider evidence", prefix)
+	if snapshot.AdmitBGPPath(prefix, nil) {
+		t.Fatalf("AdmitBGPPath(%s) = true, want false for conflict with local provider evidence", prefix)
 	}
 	got := snapshot.LocalRouteAddressesForPool("cloudedge")
 	if len(got) != 1 || got[0] != "10.77.60.11/32" {
@@ -61,21 +61,21 @@ func TestSnapshotAllowsOKRemoteMobilityRoutes(t *testing.T) {
 	})
 	for _, raw := range []string{"10.77.60.10/32", "10.77.60.12/32"} {
 		prefix := netip.MustParsePrefix(raw)
-		if !snapshot.AdmitBGPRoute(prefix) {
-			t.Fatalf("AdmitBGPRoute(%s) = false, want true for OK remote owner", prefix)
+		if !snapshot.AdmitBGPPath(prefix, nil) {
+			t.Fatalf("AdmitBGPPath(%s) = false, want true for OK remote owner", prefix)
 		}
 	}
 }
 
 func TestSnapshotFailsClosedForUnknownMobilityAddress(t *testing.T) {
 	snapshot := NewSnapshot(testRouter("aws-router-a"), mapStatusReader{})
-	if snapshot.AdmitBGPRoute(netip.MustParsePrefix("10.77.60.12/32")) {
+	if snapshot.AdmitBGPPath(netip.MustParsePrefix("10.77.60.12/32"), nil) {
 		t.Fatal("unknown mobility address was admitted; want fail-closed until owner table is populated")
 	}
 	if !snapshot.AdmitBGPPath(netip.MustParsePrefix("10.77.60.12/32"), []string{communityMobilityOwner, communityMobilitySourceObserved}) {
 		t.Fatal("trusted mobility BGP owner path was rejected; want BGP evidence to bridge missing local owner verdict")
 	}
-	if !snapshot.AdmitBGPRoute(netip.MustParsePrefix("192.0.2.12/32")) {
+	if !snapshot.AdmitBGPPath(netip.MustParsePrefix("192.0.2.12/32"), nil) {
 		t.Fatal("non-mobility address was rejected")
 	}
 }
@@ -105,8 +105,8 @@ func TestSnapshotRejectsNonHostRoutesInsideMobilityPool(t *testing.T) {
 	})
 	for _, raw := range []string{"10.77.60.0/24", "10.77.60.0/25"} {
 		prefix := netip.MustParsePrefix(raw)
-		if snapshot.AdmitBGPRoute(prefix) {
-			t.Fatalf("AdmitBGPRoute(%s) = true, want false for non-/32 route inside MobilityPool", prefix)
+		if snapshot.AdmitBGPPath(prefix, nil) {
+			t.Fatalf("AdmitBGPPath(%s) = true, want false for non-/32 route inside MobilityPool", prefix)
 		}
 	}
 }
@@ -124,7 +124,7 @@ func TestSnapshotIgnoresLegacyOwnerTableForFIBDecisions(t *testing.T) {
 			},
 		},
 	})
-	if snapshot.AdmitBGPRoute(netip.MustParsePrefix("10.77.60.12/32")) {
+	if snapshot.AdmitBGPPath(netip.MustParsePrefix("10.77.60.12/32"), nil) {
 		t.Fatal("legacy owner table admitted a mobility route; want verdict-only FIB policy")
 	}
 }
