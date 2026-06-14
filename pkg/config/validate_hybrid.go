@@ -219,8 +219,8 @@ func validateHybridResource(res api.Resource, _ platform.OS) (bool, error) {
 			if strings.TrimSpace(spec.Capture.NICRef) == "" {
 				return true, fmt.Errorf("%s spec.capture.nicRef is required when spec.capture.type is provider-secondary-ip", res.ID())
 			}
-			if spec.Capture.ConfigureOSAddress {
-				return true, fmt.Errorf("%s spec.capture.configureOSAddress=true is not implemented in the MVP", res.ID())
+			if spec.Capture.ConfigureOSAddress && strings.TrimSpace(spec.Capture.Interface) == "" {
+				return true, fmt.Errorf("%s spec.capture.interface is required when spec.capture.configureOSAddress is true", res.ID())
 			}
 		case "proxy-arp":
 			switch addressCaptureStrategy(spec.Capture) {

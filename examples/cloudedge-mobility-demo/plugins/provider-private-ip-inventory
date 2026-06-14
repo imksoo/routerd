@@ -7,9 +7,11 @@
 import json
 import ipaddress
 import os
+import shutil
 import subprocess
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 
 API_VERSION = "providerinventory.routerd.net/v1alpha1"
@@ -37,11 +39,45 @@ def result(status, ips=None, self_info=None, message="", error="", local_ips=Non
     print(json.dumps(out, sort_keys=True, separators=(",", ":")))
 
 
-def run_json(argv):
-    proc = subprocess.run(argv, check=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+def parse_seconds(value, default):
+    value = (value or "").strip()
+    if not value:
+        return default
+    try:
+        out = float(value)
+    except ValueError:
+        return default
+    if out <= 0:
+        return default
+    return out
+
+
+def run_json(argv, timeout=None):
+    proc = subprocess.run(argv, check=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
     if proc.stdout.strip() == "":
         return {}
     return json.loads(proc.stdout)
+
+
+def resolve_cli(name, env_var):
+    override = os.environ.get(env_var, "").strip()
+    if override:
+        if not os.path.exists(override):
+            raise RuntimeError("%s=%s does not exist" % (env_var, override))
+        if not os.path.isfile(override):
+            raise RuntimeError("%s=%s is not a regular file" % (env_var, override))
+        if not os.access(override, os.X_OK):
+            raise RuntimeError("%s=%s is not executable" % (env_var, override))
+        return override
+    found = shutil.which(name)
+    if found:
+        return found
+    for directory in ("/usr/local/bin", "/usr/bin", "/bin", "/opt/oci-cli/bin"):
+        candidate = os.path.join(directory, name)
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    raise RuntimeError("%s CLI %r was not found as an executable on PATH=%r; set %s to an absolute executable path" % (
+        name.upper(), name, os.environ.get("PATH", ""), env_var))
 
 
 def opt_region(argv, region):
@@ -51,7 +87,7 @@ def opt_region(argv, region):
 
 
 def aws_cli(region, args):
-    argv = ["aws"]
+    argv = [resolve_cli("aws", "AWS_CLI_PATH")]
     argv.extend(opt_region([], region))
     argv.extend(args)
     argv.extend(["--output", "json", "--no-cli-pager"])
@@ -62,6 +98,13 @@ def http_text(url, headers=None, method="GET", data=None, timeout=1.0):
     req = urllib.request.Request(url, data=data, method=method, headers=headers or {})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return resp.read().decode("utf-8")
+
+
+def http_json(url, headers=None, method="GET", data=None, timeout=1.0):
+    text = http_text(url, headers=headers, method=method, data=data, timeout=timeout)
+    if not text.strip():
+        return {}
+    return json.loads(text)
 
 
 def local_ipv4s():
@@ -159,14 +202,48 @@ def azure_imds_ipv4s():
     return sorted(set(out))
 
 
+def azure_imds_base():
+    return os.environ.get("ROUTERD_PROVIDER_INVENTORY_AZURE_IMDS_BASE", "http://169.254.169.254").rstrip("/")
+
+
+def azure_arm_base():
+    return os.environ.get("ROUTERD_PROVIDER_INVENTORY_AZURE_ARM_BASE", "https://management.azure.com").rstrip("/")
+
+
+def azure_rest_timeout():
+    return parse_seconds(os.environ.get("ROUTERD_PROVIDER_INVENTORY_AZURE_REST_TIMEOUT", ""), 10.0)
+
+
+def oci_imds_base():
+    return os.environ.get("ROUTERD_PROVIDER_INVENTORY_OCI_IMDS_BASE", "http://169.254.169.254").rstrip("/")
+
+
+def oci_imds_disabled():
+    return os.environ.get("ROUTERD_PROVIDER_INVENTORY_OCI_IMDS_DISABLE", "").strip().lower() in ("1", "true", "yes")
+
+
+def azure_managed_identity_token():
+    timeout = parse_seconds(os.environ.get("ROUTERD_PROVIDER_INVENTORY_AZURE_IMDS_TIMEOUT", ""), 2.0)
+    doc = http_json(
+        azure_imds_base() + "/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https%3A%2F%2Fmanagement.azure.com%2F",
+        headers={"Metadata": "true"},
+        timeout=timeout,
+    )
+    token = (doc.get("access_token") or "").strip()
+    if not token:
+        raise RuntimeError("Azure managed identity token is empty")
+    return token
+
+
 def oci_imds_vnic_id():
+    if oci_imds_disabled():
+        return ""
     headers = {"Authorization": "Bearer Oracle"}
-    for url in (
-        "http://169.254.169.254/opc/v2/vnics/",
-        "http://169.254.169.254/opc/v1/vnics/",
-    ):
+    timeout = parse_seconds(os.environ.get("ROUTERD_PROVIDER_INVENTORY_OCI_IMDS_TIMEOUT", ""), 1.0)
+    base = oci_imds_base()
+    for path in ("/opc/v2/vnics/", "/opc/v1/vnics/"):
         try:
-            doc = json.loads(http_text(url, headers=headers, timeout=1.0))
+            doc = json.loads(http_text(base + path, headers=headers, timeout=timeout))
         except Exception:
             continue
         if isinstance(doc, list) and doc:
@@ -176,15 +253,15 @@ def oci_imds_vnic_id():
     return ""
 
 
-def az_cli(args):
-    argv = ["az"]
+def az_cli(args, timeout=None):
+    argv = [resolve_cli("az", "AZ_CLI_PATH")]
     argv.extend(args)
     argv.extend(["--output", "json"])
-    return run_json(argv)
+    return run_json(argv, timeout=timeout)
 
 
 def oci_base(region):
-    argv = ["oci"]
+    argv = [resolve_cli("oci", "OCI_CLI_PATH")]
     config_file = os.environ.get("OCI_CONFIG_FILE", "").strip()
     profile = os.environ.get("OCI_PROFILE", "").strip()
     auth = os.environ.get("OCI_AUTH_MODE", "").strip()
@@ -199,11 +276,15 @@ def oci_base(region):
     return argv
 
 
-def oci_cli(region, args):
+def oci_cli_timeout():
+    return parse_seconds(os.environ.get("ROUTERD_PROVIDER_INVENTORY_OCI_CLI_TIMEOUT", ""), 10.0)
+
+
+def oci_cli(region, args, timeout=None):
     argv = oci_base(region)
     argv.extend(args)
     argv.extend(["--output", "json"])
-    return run_json(argv)
+    return run_json(argv, timeout=timeout if timeout is not None else oci_cli_timeout())
 
 
 def address_in_prefix(address, prefix):
@@ -222,12 +303,131 @@ def azure_resource_name(ref):
     return ref.split("/")[-1]
 
 
+def azure_resource_group_from_ref(ref):
+    parts = [part for part in (ref or "").strip("/").split("/") if part]
+    for idx, part in enumerate(parts):
+        if part.lower() == "resourcegroups" and idx + 1 < len(parts):
+            return parts[idx + 1]
+    return ""
+
+
+def azure_subscription_from_ref(ref):
+    parts = [part for part in (ref or "").strip("/").split("/") if part]
+    for idx, part in enumerate(parts):
+        if part.lower() == "subscriptions" and idx + 1 < len(parts):
+            return parts[idx + 1]
+    return ""
+
+
 def first_non_empty(*values):
     for value in values:
         value = (value or "").strip()
         if value:
             return value
     return ""
+
+
+def merged_tags(*items):
+    out = {}
+    for tags in items:
+        for key, value in (tags or {}).items():
+            key = str(key)
+            if key:
+                out[key] = str(value)
+    return out
+
+
+def tags_indicate_router(tags):
+    normalized = {str(key).strip().lower(): str(value).strip().lower() for key, value in (tags or {}).items()}
+    for key in ("role", "routerd.cloudedge.role", "routerd.role", "node_role", "node-role"):
+        if normalized.get(key) in ("client", "cloudedge-client", "instance", "workload"):
+            return False
+    for key in ("purpose", "routerd.cloudedge.purpose"):
+        if normalized.get(key) in ("client", "workload"):
+            return False
+    for key in ("role", "routerd.cloudedge.role", "routerd.role", "node_role", "node-role"):
+        if normalized.get(key) in ("router", "routerd-cloud"):
+            return True
+    for key in ("purpose", "routerd.cloudedge.purpose"):
+        if normalized.get(key) == "router":
+            return True
+    name = normalized.get("name", "")
+    for sep in ("-", "_", ".", "/", ":"):
+        name = name.replace(sep, " ")
+    if "router" in name.split():
+        return True
+    return False
+
+
+def azure_api_url(resource_path, api_version, params=None):
+    base = azure_arm_base()
+    if resource_path.startswith("http://") or resource_path.startswith("https://"):
+        url = resource_path
+    else:
+        url = base + "/" + resource_path.lstrip("/")
+    query = {}
+    if api_version:
+        query["api-version"] = api_version
+    query.update(params or {})
+    if not query:
+        return url
+    sep = "&" if "?" in url else "?"
+    return url + sep + urllib.parse.urlencode(query)
+
+
+def azure_arm_get(token, resource_path, api_version, params=None):
+    return http_json(
+        azure_api_url(resource_path, api_version, params=params),
+        headers={"Authorization": "Bearer " + token},
+        timeout=azure_rest_timeout(),
+    )
+
+
+def azure_arm_get_paged_values(token, resource_path, api_version, params=None):
+    values = []
+    doc = azure_arm_get(token, resource_path, api_version, params=params)
+    values.extend(doc.get("value") or [])
+    next_link = doc.get("nextLink", "")
+    while next_link:
+        doc = azure_arm_get(token, next_link, "")
+        values.extend(doc.get("value") or [])
+        next_link = doc.get("nextLink", "")
+    return values
+
+
+def azure_resource_id_key(ref):
+    return (ref or "").strip().rstrip("/").lower()
+
+
+def azure_nic_ip_configs(nic):
+    props = nic.get("properties") or {}
+    return nic.get("ipConfigurations") or props.get("ipConfigurations") or []
+
+
+def azure_ip_config_address(cfg):
+    props = cfg.get("properties") or {}
+    return (cfg.get("privateIPAddress") or cfg.get("privateIpAddress")
+            or props.get("privateIPAddress") or props.get("privateIpAddress") or "")
+
+
+def azure_ip_config_subnet(cfg):
+    props = cfg.get("properties") or {}
+    subnet = cfg.get("subnet") or props.get("subnet") or {}
+    return subnet.get("id", "")
+
+
+def azure_ip_config_primary(cfg):
+    props = cfg.get("properties") or {}
+    return bool(cfg.get("primary") if "primary" in cfg else props.get("primary"))
+
+
+def azure_nic_forwarding_enabled(nic):
+    if "enableIPForwarding" in nic:
+        return bool(nic.get("enableIPForwarding"))
+    props = nic.get("properties") or {}
+    if "enableIPForwarding" in props:
+        return bool(props.get("enableIPForwarding"))
+    return None
 
 
 def aws_eni_instance_metadata(region, subnet):
@@ -241,10 +441,11 @@ def aws_eni_instance_metadata(region, subnet):
             for inst in res.get("Instances") or []:
                 instance_id = inst.get("InstanceId", "")
                 state = inst.get("State", {}).get("Name", "")
+                tags = {item.get("Key", ""): item.get("Value", "") for item in inst.get("Tags") or [] if item.get("Key")}
                 for nic in inst.get("NetworkInterfaces") or []:
                     eni = nic.get("NetworkInterfaceId", "")
                     if eni:
-                        metadata[eni] = {"resourceRef": instance_id, "instanceState": state}
+                        metadata[eni] = {"resourceRef": instance_id, "instanceState": state, "tags": tags}
         return metadata
     except Exception as exc:
         raise RuntimeError("AWS instance metadata inventory failed: " + str(exc)) from exc
@@ -326,11 +527,16 @@ def aws_inventory(spec):
         tags = {item.get("Key", ""): item.get("Value", "") for item in nic.get("TagSet") or [] if item.get("Key")}
         metadata = (eni_metadata or {}).get(nic_ref, {})
         resource_ref = metadata.get("resourceRef", "")
+        name_tags = {}
+        if azure_resource_name(nic_ref):
+            name_tags["Name"] = azure_resource_name(nic_ref)
+        tags = merged_tags(name_tags, tags, metadata.get("tags") or {})
         if nic_ref == self_nic and resource_ref:
             self_resource_ref = resource_ref
         instance_state = metadata.get("instanceState", "")
+        nic_forwarding_enabled = "SourceDestCheck" in nic and not bool(nic.get("SourceDestCheck"))
         resource_type = "instance-nic"
-        if nic_ref == self_nic or str(tags.get("role", "")).lower() == "router":
+        if nic_ref == self_nic or tags_indicate_router(tags) or nic_forwarding_enabled:
             resource_type = "router-nic"
         for rec in nic.get("PrivateIpAddresses") or []:
             address = rec.get("PrivateIpAddress", "")
@@ -365,21 +571,55 @@ def aws_inventory(spec):
 def azure_nic_vm_metadata(resource_group):
     """Return dict of NIC resource ID -> VM metadata."""
     try:
-        vms = az_cli(["vm", "list", "--resource-group", resource_group, "--show-details"])
+        timeout = parse_seconds(os.environ.get("ROUTERD_PROVIDER_INVENTORY_AZURE_VM_METADATA_TIMEOUT", ""), 10.0)
+        vms = az_cli(["vm", "list", "--resource-group", resource_group, "--show-details"], timeout=timeout)
         metadata = {}
         for vm in vms or []:
             vm_id = vm.get("id", "")
             power_state = vm.get("powerState", "")
+            tags = vm.get("tags") or {}
             for nic_ref in (vm.get("networkProfile") or {}).get("networkInterfaces") or []:
                 nic_id = nic_ref.get("id", "")
                 if nic_id:
-                    metadata[nic_id] = {"resourceRef": vm_id, "powerState": power_state}
+                    metadata[azure_resource_id_key(nic_id)] = {"resourceRef": vm_id, "powerState": power_state, "tags": tags}
         return metadata
-    except Exception as exc:
-        raise RuntimeError("Azure VM metadata inventory failed: " + str(exc)) from exc
+    except Exception:
+        # VM metadata enriches ownership with resourceRef/instanceState, but the
+        # NIC/IP list is the source of truth for baseline inventory. Keep Azure
+        # T1 usable when `az vm list --show-details` is slow or transiently stuck.
+        return {}
 
 
-def azure_inventory(spec):
+def azure_nic_vm_metadata_rest(token, subscription, resource_group):
+    """Return dict of NIC resource ID -> VM metadata using ARM REST."""
+    if not subscription or not resource_group:
+        return {}
+    try:
+        path = "/subscriptions/{}/resourceGroups/{}/providers/Microsoft.Compute/virtualMachines".format(
+            urllib.parse.quote(subscription, safe=""),
+            urllib.parse.quote(resource_group, safe=""),
+        )
+        metadata = {}
+        for vm in azure_arm_get_paged_values(token, path, "2023-07-01", params={"$expand": "instanceView"}):
+            vm_id = vm.get("id", "")
+            props = vm.get("properties") or {}
+            statuses = ((props.get("instanceView") or {}).get("statuses") or [])
+            power_state = ""
+            for status in statuses:
+                code = status.get("code", "")
+                if code.startswith("PowerState/"):
+                    power_state = status.get("displayStatus", "") or code.split("/", 1)[1]
+                    break
+            for nic_ref in ((props.get("networkProfile") or {}).get("networkInterfaces") or []):
+                nic_id = nic_ref.get("id", "")
+                if nic_id:
+                    metadata[azure_resource_id_key(nic_id)] = {"resourceRef": vm_id, "powerState": power_state, "tags": vm.get("tags") or {}}
+        return metadata
+    except Exception:
+        return {}
+
+
+def azure_inventory_cli(spec):
     target = spec.get("target") or {}
     self_nic = spec.get("selfNicRef", "").strip()
     resource_group = target.get("resourceGroup", "").strip()
@@ -431,8 +671,12 @@ def azure_inventory(spec):
     for nic in nics or []:
         nic_ref = nic.get("id", "")
         tags = nic.get("tags") or {}
-        metadata = (nic_metadata or {}).get(nic_ref, {})
+        metadata = (nic_metadata or {}).get(azure_resource_id_key(nic_ref), {})
         resource_ref = metadata.get("resourceRef", "")
+        name_tags = {}
+        if azure_resource_name(nic_ref):
+            name_tags["Name"] = azure_resource_name(nic_ref)
+        tags = merged_tags(tags, metadata.get("tags") or {}, name_tags)
         if nic_ref == self_nic and resource_ref:
             self_resource_ref = resource_ref
         vm_state = metadata.get("powerState", "")
@@ -442,7 +686,7 @@ def azure_inventory(spec):
         elif vm_state:
             instance_state = "stopped"
         resource_type = "instance-nic"
-        if nic_ref == self_nic or str(tags.get("role", "")).lower() == "router":
+        if nic_ref == self_nic or tags_indicate_router(tags):
             resource_type = "router-nic"
         for cfg in nic.get("ipConfigurations") or []:
             subnet_ref = ((cfg.get("subnet") or {}).get("id") or "")
@@ -494,6 +738,154 @@ def azure_inventory(spec):
     return self_info, ips
 
 
+def azure_inventory_rest(spec):
+    target = spec.get("target") or {}
+    self_nic = spec.get("selfNicRef", "").strip()
+    resource_group = first_non_empty(
+        target.get("resourceGroup", ""),
+        azure_resource_group_from_ref(self_nic),
+        azure_resource_group_from_ref(spec.get("subnetRef") or ""),
+        azure_resource_group_from_ref(spec.get("routeTableRef") or target.get("routeTableRef") or ""),
+    )
+    subnet = (spec.get("subnetRef") or "").strip()
+    strategy = (spec.get("strategy") or "").strip()
+    prefix = (spec.get("prefix") or "").strip()
+    route_table_ref = (spec.get("routeTableRef") or target.get("routeTableRef") or "").strip()
+    route_table_name = first_non_empty(target.get("routeTableName", ""), azure_resource_name(route_table_ref))
+    next_hop_ip = (target.get("nextHopIPAddress") or "").strip()
+    subscription = first_non_empty(
+        azure_subscription_from_ref(self_nic),
+        azure_subscription_from_ref(subnet),
+        azure_subscription_from_ref(route_table_ref),
+    )
+    if not resource_group:
+        raise ValueError("Azure resourceGroup is required for segment inventory")
+    if not subscription:
+        raise ValueError("Azure subscription could not be inferred from resource IDs")
+    token = azure_managed_identity_token()
+    rg_path = "/subscriptions/{}/resourceGroups/{}".format(
+        urllib.parse.quote(subscription, safe=""),
+        urllib.parse.quote(resource_group, safe=""),
+    )
+    nics = azure_arm_get_paged_values(token, rg_path + "/providers/Microsoft.Network/networkInterfaces", "2023-09-01")
+    self_doc = {}
+    self_forwarding_enabled = None
+    local_ips = local_ipv4s() or azure_imds_ipv4s()
+    self_key = azure_resource_id_key(self_nic)
+    if self_nic:
+        for nic in nics:
+            if azure_resource_id_key(nic.get("id", "")) == self_key:
+                self_doc = nic
+                break
+        if not self_doc:
+            self_doc = azure_arm_get(token, self_nic, "2023-09-01")
+    else:
+        for nic in nics:
+            for cfg in azure_nic_ip_configs(nic):
+                address = azure_ip_config_address(cfg)
+                if address in local_ips:
+                    self_doc = nic
+                    self_nic = nic.get("id", "")
+                    break
+            if self_nic:
+                break
+    if not self_nic:
+        raise ValueError("Azure self NIC could not be resolved from local IPs")
+    self_forwarding_enabled = azure_nic_forwarding_enabled(self_doc)
+    if not subnet:
+        configs = azure_nic_ip_configs(self_doc)
+        if configs:
+            subnet = azure_ip_config_subnet(configs[0])
+    if not subnet:
+        raise ValueError("Azure subnetRef could not be inferred from self NIC")
+    self_private_ips = []
+    for cfg in azure_nic_ip_configs(self_doc):
+        address = azure_ip_config_address(cfg)
+        if address:
+            self_private_ips.append(address)
+    nic_metadata = azure_nic_vm_metadata_rest(token, subscription, resource_group)
+    ips = []
+    self_resource_ref = ""
+    for nic in nics:
+        nic_ref = nic.get("id", "")
+        tags = nic.get("tags") or {}
+        metadata = (nic_metadata or {}).get(azure_resource_id_key(nic_ref), {})
+        resource_ref = metadata.get("resourceRef", "")
+        name_tags = {}
+        if azure_resource_name(nic_ref):
+            name_tags["Name"] = azure_resource_name(nic_ref)
+        tags = merged_tags(tags, metadata.get("tags") or {}, name_tags)
+        if azure_resource_id_key(nic_ref) == self_key and resource_ref:
+            self_resource_ref = resource_ref
+        vm_state = metadata.get("powerState", "")
+        instance_state = ""
+        if vm_state in ("VM running", "running"):
+            instance_state = "running"
+        elif vm_state:
+            instance_state = "stopped"
+        resource_type = "instance-nic"
+        if azure_resource_id_key(nic_ref) == self_key or tags_indicate_router(tags):
+            resource_type = "router-nic"
+        for cfg in azure_nic_ip_configs(nic):
+            subnet_ref = azure_ip_config_subnet(cfg)
+            if subnet_ref != subnet:
+                continue
+            address = azure_ip_config_address(cfg)
+            if not address:
+                continue
+            entry = {
+                "address": address,
+                "nicRef": nic_ref,
+                "subnetRef": subnet_ref,
+                "resourceType": resource_type,
+                "primary": azure_ip_config_primary(cfg),
+                "tags": tags,
+            }
+            if resource_ref:
+                entry["resourceRef"] = resource_ref
+            if instance_state:
+                entry["instanceState"] = instance_state
+            ips.append(entry)
+    self_info = {"nicRef": self_nic, "subnetRef": subnet, "privateIPs": sorted(set(self_private_ips))}
+    if strategy == "route-table" and route_table_name and next_hop_ip:
+        try:
+            route_path = rg_path + "/providers/Microsoft.Network/routeTables/{}/routes".format(
+                urllib.parse.quote(route_table_name, safe=""),
+            )
+            captured = []
+            for route in azure_arm_get_paged_values(token, route_path, "2023-09-01"):
+                props = route.get("properties") or {}
+                address = route.get("addressPrefix") or props.get("addressPrefix") or ""
+                hop_type = route.get("nextHopType") or props.get("nextHopType") or ""
+                hop_ip = route.get("nextHopIpAddress") or props.get("nextHopIpAddress") or ""
+                if hop_type and hop_type != "VirtualAppliance":
+                    continue
+                if hop_ip != next_hop_ip:
+                    continue
+                if not address_in_prefix(address, prefix):
+                    continue
+                captured.append(address)
+            if captured:
+                self_info["capturedAddresses"] = sorted(set(captured))
+        except Exception:
+            pass
+    if self_resource_ref:
+        self_info["resourceRef"] = self_resource_ref
+        self_info["resourceType"] = "router-nic"
+    if self_forwarding_enabled is not None:
+        self_info["forwardingEnabled"] = bool(self_forwarding_enabled)
+    return self_info, ips
+
+
+def azure_inventory(spec):
+    if os.environ.get("ROUTERD_PROVIDER_INVENTORY_AZURE_ARM_DISABLE", "").strip().lower() not in ("1", "true", "yes"):
+        try:
+            return azure_inventory_rest(spec)
+        except Exception:
+            pass
+    return azure_inventory_cli(spec)
+
+
 def flatten_oci_tags(rec):
     tags = {}
     for key, value in (rec.get("freeform-tags") or {}).items():
@@ -520,36 +912,67 @@ def oci_vnic_instance_metadata(region, compartment):
                                      "--compartment-id", compartment, "--all"])
         instance_states = {}
         for inst in instances.get("data") or []:
-            instance_states[inst.get("id", "")] = inst.get("lifecycle-state", "")
+            instance_states[inst.get("id", "")] = {
+                "state": inst.get("lifecycle-state", ""),
+                "tags": flatten_oci_tags(inst),
+            }
         vnic_metadata = {}
         for vid, iid in vnic_to_instance.items():
-            state = instance_states.get(iid, "")
+            item_meta = instance_states.get(iid, {})
+            state = item_meta.get("state", "")
             item = {"resourceRef": iid}
             if state == "RUNNING":
                 item["instanceState"] = "running"
             elif state:
                 item["instanceState"] = "stopped"
+            item["tags"] = item_meta.get("tags") or {}
             vnic_metadata[vid] = item
         return vnic_metadata
     except Exception:
         return None
 
 
+def oci_vnic_details(region, vnic_ids, initial=None):
+    out = {}
+    for key, value in (initial or {}).items():
+        if key and value:
+            out[key] = value
+    detail_timeout = parse_seconds(os.environ.get("ROUTERD_PROVIDER_INVENTORY_OCI_VNIC_DETAIL_TIMEOUT", ""), 3.0)
+    for vnic_id in sorted(set([item for item in vnic_ids if item])):
+        if vnic_id in out:
+            continue
+        try:
+            doc = oci_cli(region, ["network", "vnic", "get", "--vnic-id", vnic_id], timeout=detail_timeout)
+            data = doc.get("data") or {}
+            if data:
+                out[vnic_id] = data
+        except Exception:
+            continue
+    return out
+
+
 def oci_inventory(spec):
     target = spec.get("target") or {}
     region = target.get("region") or os.environ.get("OCI_REGION", "")
-    self_nic = spec.get("selfNicRef", "").strip()
+    explicit_self_nic = spec.get("selfNicRef", "").strip()
     subnet = (spec.get("subnetRef") or "").strip()
-    if not self_nic:
-        self_nic = (os.environ.get("ROUTERD_PROVIDER_INVENTORY_SELF_NIC_REF", "").strip()
-                    or os.environ.get("OCI_SELF_VNIC_REF", "").strip())
-    if not self_nic:
-        self_nic = oci_imds_vnic_id()
+    if not explicit_self_nic:
+        explicit_self_nic = (os.environ.get("ROUTERD_PROVIDER_INVENTORY_SELF_NIC_REF", "").strip()
+                             or os.environ.get("OCI_SELF_VNIC_REF", "").strip())
+    imds_self_nic = oci_imds_vnic_id()
+    if explicit_self_nic and imds_self_nic and explicit_self_nic != imds_self_nic:
+        raise ValueError("OCI explicit self VNIC %s does not match IMDS self VNIC %s" % (explicit_self_nic, imds_self_nic))
+    self_nic = explicit_self_nic or imds_self_nic
     if not self_nic:
         raise ValueError("OCI self VNIC could not be resolved from IMDS")
     self_private_ips = []
-    self_doc = oci_cli(region, ["network", "vnic", "get", "--vnic-id", self_nic])
-    self_data = self_doc.get("data") or {}
+    try:
+        self_doc = oci_cli(region, ["network", "vnic", "get", "--vnic-id", self_nic])
+        self_data = self_doc.get("data") or {}
+    except Exception as exc:
+        if not subnet:
+            raise RuntimeError("OCI self VNIC metadata lookup failed and subnetRef is not configured: " + str(exc)) from exc
+        self_data = {}
     if not subnet:
         subnet = (self_data.get("subnet-id") or "")
     if not subnet:
@@ -557,6 +980,8 @@ def oci_inventory(spec):
     compartment = self_data.get("compartment-id", "")
     vnic_metadata = oci_vnic_instance_metadata(region, compartment) if compartment else None
     doc = oci_cli(region, ["network", "private-ip", "list", "--subnet-id", subnet, "--all"])
+    vnic_ids = [rec.get("vnic-id", "") for rec in doc.get("data") or []]
+    vnic_details = oci_vnic_details(region, vnic_ids, initial={self_nic: self_data} if self_data else None)
     ips = []
     self_resource_ref = ""
     for rec in doc.get("data") or []:
@@ -571,9 +996,14 @@ def oci_inventory(spec):
         if vnic_id == self_nic and resource_ref:
             self_resource_ref = resource_ref
         instance_state = metadata.get("instanceState", "")
-        tags = flatten_oci_tags(rec)
+        detail = vnic_details.get(vnic_id, {})
+        detail_tags = flatten_oci_tags(detail)
+        if detail.get("display-name"):
+            detail_tags["Name"] = detail.get("display-name", "")
+        tags = merged_tags(flatten_oci_tags(rec), detail_tags, metadata.get("tags") or {})
+        vnic_forwarding_enabled = detail.get("skip-source-dest-check") is True
         resource_type = "instance-nic"
-        if vnic_id == self_nic or str(tags.get("role", "")).lower() == "router":
+        if vnic_id == self_nic or tags_indicate_router(tags) or vnic_forwarding_enabled:
             resource_type = "router-nic"
         entry = {
             "address": address,

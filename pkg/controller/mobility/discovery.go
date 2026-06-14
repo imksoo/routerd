@@ -209,15 +209,19 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 			return err
 		}
 		status := mergeAnyMaps(discoveryPlacementStatus(placement), mergeAnyMaps(discoverySelfInventoryStatus(selfInventory), map[string]any{
-			"discoveryPhase":          "Standby",
-			"discoveryReason":         placement.Reason,
-			"discoveryProvider":       profile.Provider,
-			"discoveryProviderRef":    profileRef,
-			"discoveryPlugin":         pluginName,
-			"discoveryObserved":       0,
-			"discoveryOwnedAddresses": []string{},
-			"discoveryLastScanAt":     now.Format(time.RFC3339Nano),
-			"discoveryNextScanAt":     now.Add(interval).Format(time.RFC3339Nano),
+			"discoveryPhase":                "Standby",
+			"discoveryReason":               placement.Reason,
+			"discoveryProvider":             profile.Provider,
+			"discoveryProviderRef":          profileRef,
+			"discoveryPlugin":               pluginName,
+			"discoveryObserved":             0,
+			"discoveryLocalInventory":       []map[string]any{},
+			"discoveryLocalInventoryIPs":    []string{},
+			"discoveryObservedCandidateIPs": []string{},
+			"discoveryOwnedAddresses":       []string{},
+			"discoveryHeldAddresses":        []string{},
+			"discoveryLastScanAt":           now.Format(time.RFC3339Nano),
+			"discoveryNextScanAt":           now.Add(interval).Format(time.RFC3339Nano),
 		}))
 		c.saveDiscoveryStatus(poolName, status)
 		return nil
@@ -242,6 +246,11 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 		address, ok := normalizeDiscoveredAddress(rec.Address, prefix)
 		if !ok {
 			counters.Scope++
+			continue
+		}
+		if providerInventoryRecordIsRouterNIC(rec) {
+			invalidThisScan[address] = true
+			counters.RouterNIC++
 			continue
 		}
 		if selfPrivateIPs[address] {
@@ -575,8 +584,7 @@ func (c DiscoveryController) handleOnPremDiscoveryEvent(ctx context.Context, eve
 			continue
 		}
 		poolPrefix = poolPrefix.Masked()
-		providerAddrs := c.providerDiscoveredAddresses(strings.TrimSpace(spec.GroupRef), res.Metadata.Name, poolPrefix, now)
-		ok, recordErr := c.recordOnPremObservationFiltered(res.Metadata.Name, spec, self, poolPrefix, observation, now, providerAddrs)
+		ok, recordErr := c.recordOnPremObservation(res.Metadata.Name, spec, self, poolPrefix, observation, now)
 		if recordErr != nil {
 			return recordErr
 		}
@@ -632,21 +640,11 @@ func (c DiscoveryController) providerDiscoveredAddresses(group, poolName string,
 }
 
 func (c DiscoveryController) recordOnPremObservation(poolName string, spec api.MobilityPoolSpec, self memberPlanInfo, poolPrefix netip.Prefix, observation onPremObservation, now time.Time) (bool, error) {
-	return c.recordOnPremObservationFiltered(poolName, spec, self, poolPrefix, observation, now, nil)
-}
-
-func (c DiscoveryController) recordOnPremObservationFiltered(poolName string, spec api.MobilityPoolSpec, self memberPlanInfo, poolPrefix netip.Prefix, observation onPremObservation, now time.Time, providerAddrs map[string]bool) (bool, error) {
 	address, ok := normalizeDiscoveredAddress(observation.Address, poolPrefix)
 	if !ok || !discoveryScopeAllowsAddress(self.OwnershipDiscovery.Scope, address) {
 		return false, nil
 	}
 	if ownerNode := strings.TrimSpace(staticOwnedOwnerNodesByAddress(spec)[address]); ownerNode != "" && ownerNode != self.NodeRef {
-		return false, nil
-	}
-	if providerAddrs == nil {
-		providerAddrs = c.providerDiscoveredAddresses(strings.TrimSpace(spec.GroupRef), poolName, poolPrefix, now)
-	}
-	if providerAddrs[address] {
 		return false, nil
 	}
 	source, ok := matchingOnPremDiscoverySource(self, observation)
@@ -931,6 +929,9 @@ func filterDiscoveryLocalInventoryStatusRecords(records []providerinventory.Priv
 	selfResourceRef = strings.TrimSpace(selfResourceRef)
 	var out []providerinventory.PrivateIPRecord
 	for _, rec := range records {
+		if providerInventoryRecordIsRouterNIC(rec) {
+			continue
+		}
 		nicRef := strings.TrimSpace(rec.NICRef)
 		if nicRef != "" && excludedNICs[nicRef] {
 			continue
@@ -941,6 +942,10 @@ func filterDiscoveryLocalInventoryStatusRecords(records []providerinventory.Priv
 		out = append(out, rec)
 	}
 	return out
+}
+
+func providerInventoryRecordIsRouterNIC(rec providerinventory.PrivateIPRecord) bool {
+	return strings.TrimSpace(rec.ResourceType) == "router-nic"
 }
 
 func scopedDiscoverySelfInventory(self discoverySelfInventory, localInventory []providerinventory.PrivateIPRecord, poolPrefix netip.Prefix) discoverySelfInventory {

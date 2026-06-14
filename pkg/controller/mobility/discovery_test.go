@@ -575,6 +575,50 @@ func TestDiscoveryControllerDoesNotStealStaticOwnedAddress(t *testing.T) {
 	}
 }
 
+func TestDiscoveryControllerExcludesRemoteRouterNICFromOwnership(t *testing.T) {
+	now := time.Date(2026, 6, 10, 17, 45, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := discoveryPoolSpec()
+	runner := &fakeInventoryRunner{result: providerinventory.ObservePrivateIPsResult{
+		TypeMeta: providerinventory.TypeMeta{APIVersion: providerinventory.ProtocolAPIVersion, Kind: providerinventory.KindObservePrivateIPsResult},
+		Status: providerinventory.ObservePrivateIPsResultStatus{
+			Status: providerinventory.ResultSucceeded,
+			Self: &providerinventory.PrivateIPSelf{
+				NICRef:      "eni-router-a",
+				SubnetRef:   "subnet-a",
+				PrivateIPs:  []string{"10.88.60.4"},
+				ResourceRef: "i-router-a",
+			},
+			IPs: []providerinventory.PrivateIPRecord{
+				{Address: "10.88.60.4", NICRef: "eni-router-a", SubnetRef: "subnet-a", ResourceRef: "i-router-a", ResourceType: "router-nic", Primary: true, Tags: map[string]string{"cloudedge-mobility": "true"}},
+				{Address: "10.88.60.5", NICRef: "eni-router-b", SubnetRef: "subnet-a", ResourceRef: "i-router-b", ResourceType: "router-nic", Primary: true, Tags: map[string]string{"cloudedge-mobility": "true"}},
+				{Address: "10.88.60.11", NICRef: "eni-client", SubnetRef: "subnet-a", ResourceRef: "i-client", ResourceType: "instance-nic", Tags: map[string]string{"cloudedge-mobility": "true"}},
+			},
+		},
+	}}
+	controller := DiscoveryController{Router: discoveryRouter("azure-router-a", spec), Store: store, Runner: runner.run, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	events, err := store.ListFederationEvents("cloudedge", false, now.Unix())
+	if err != nil {
+		t.Fatalf("ListFederationEvents: %v", err)
+	}
+	if len(events) != 1 || events[0].Subject != "10.88.60.11/32" {
+		t.Fatalf("events = %#v, want only client ownership", events)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	if got := statusStringSlice(status["discoveryOwnedAddresses"]); len(got) != 1 || got[0] != "10.88.60.11/32" {
+		t.Fatalf("discoveryOwnedAddresses = %#v, want only client", got)
+	}
+	if got := statusStringSlice(status["discoveryLocalInventoryIPs"]); stringSliceContains(got, "10.88.60.5/32") {
+		t.Fatalf("discoveryLocalInventoryIPs = %#v, want remote router primary excluded", got)
+	}
+	if fmt.Sprint(status["discoveryExcludedRouterNIC"]) != "2" {
+		t.Fatalf("discoveryExcludedRouterNIC = %#v, want 2", status["discoveryExcludedRouterNIC"])
+	}
+}
+
 func TestDiscoveryControllerDoesNotUseLeaseTableForRemoteExclusion(t *testing.T) {
 	now := time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)
 	store := testStore(t, now)
@@ -816,6 +860,9 @@ func TestDiscoveryControllerResolvesSelfNICForStandbyPlacementMember(t *testing.
 	if got := statusStringSlice(status["discoveryOwnedAddresses"]); len(got) != 0 {
 		t.Fatalf("status = %#v, want standby to publish empty owned-address backing", status)
 	}
+	if got := statusStringSlice(status["discoveryLocalInventoryIPs"]); len(got) != 0 {
+		t.Fatalf("status = %#v, want standby to clear local inventory backing", status)
+	}
 	if status["discoverySelfNICRef"] != "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic-b" || status["discoverySelfSubnetRef"] != "subnet-b" {
 		t.Fatalf("self status = %#v, want standby self NIC resolved", status)
 	}
@@ -1008,11 +1055,13 @@ func TestDiscoveryControllerExpiredStandbyOwnershipAllowsActiveRestoreTrap(t *te
 	if err := discoveryB.Reconcile(context.Background()); err != nil {
 		t.Fatalf("discovery B Reconcile: %v", err)
 	}
-	saveBGPInstalledNextHops(t, store, map[string][]string{
+	saveBGPStatus(t, store, map[string][]string{
 		"10.88.60.10/32": {"10.99.0.1"},
 		"10.88.60.12/32": {"10.99.0.6"},
 		"10.88.60.13/32": {"10.99.0.4"},
-	})
+	}, []map[string]any{
+		bgpOwnerPrefix("10.88.60.13/32", "10.99.0.4", "azure-router-b"),
+	}, nil)
 	seedSucceededBGPCaptureAction(t, store, "azure-provider", "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic-b", "azure-router-b", "10.88.60.13/32", "assign-secondary-ip", 1, now.Add(-30*time.Second))
 	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
 		"discoverySelfNICRef":     "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic-a",
@@ -1022,7 +1071,7 @@ func TestDiscoveryControllerExpiredStandbyOwnershipAllowsActiveRestoreTrap(t *te
 		t.Fatalf("SaveObjectStatus: %v", err)
 	}
 
-	mobilityA := Controller{Router: routerWithBGPRouter(discoveryRouter("azure-router-a", spec)), Store: store, BGPPaths: &fakeBGPPaths{}, Now: func() time.Time { return now.Add(time.Second) }}
+	mobilityA := Controller{Router: routerWithBGPRouter(discoveryRouter("azure-router-a", spec)), Store: store, BGPPaths: &fakeBGPPaths{}, Now: func() time.Time { return now.Add(3 * time.Minute) }}
 	if err := mobilityA.Reconcile(context.Background()); err != nil {
 		t.Fatalf("mobility A Reconcile: %v", err)
 	}
@@ -1105,7 +1154,8 @@ func TestDiscoveryControllerObservedEventFeedsBGPAdvertisement(t *testing.T) {
 	if err := mobility.Reconcile(context.Background()); err != nil {
 		t.Fatalf("mobility Reconcile: %v", err)
 	}
-	if len(bgp.upserts) != 1 || bgp.upserts[0].Prefix != "10.88.60.11/32" || bgp.upserts[0].Source != DynamicSource("cloudedge", "azure-router-a") {
+	ownerUpserts := nonLivenessUpserts(bgp.upserts)
+	if len(ownerUpserts) != 1 || ownerUpserts[0].Prefix != "10.88.60.11/32" || ownerUpserts[0].Source != DynamicSource("cloudedge", "azure-router-a") {
 		t.Fatalf("bgp upserts = %#v, want discovered local /32 advertisement", bgp.upserts)
 	}
 }

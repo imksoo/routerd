@@ -52,6 +52,99 @@ func TestMobilityPoolMembersFromResolvesAndStaticOverridesSetMember(t *testing.T
 	}
 }
 
+func TestMobilityPoolMembersFromPreservesStaticOwnedAcrossDuplicateMembers(t *testing.T) {
+	spec := plannedPoolSpec()
+	spec.MembersFrom = []api.MobilityMembersSourceSpec{{Resource: "MobilityMemberSet/cloudedge"}}
+	spec.Members = []api.MobilityPoolMember{{
+		NodeRef:              "onprem-router",
+		Site:                 "local-pve01",
+		Role:                 "onprem",
+		StaticOwnedAddresses: []string{"10.88.60.99/32"},
+	}}
+	router := planningRouterForNode("onprem-router", spec)
+	router.Spec.Resources = append(router.Spec.Resources, mobilityMemberSetResource("cloudedge", []api.MobilityMemberSetMember{
+		{NodeRef: "onprem-router", Site: "published-pve01", Role: "onprem", StaticOwnedAddresses: []string{"10.88.60.10/32", "10.88.60.98/32"}},
+		{NodeRef: "azure-router", Site: "azure", Role: "cloud"},
+	}))
+
+	resolved, err := (mobilityMemberResolver{Router: router}).resolve(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	self := resolved.Spec.Members[0]
+	if self.NodeRef != "onprem-router" || self.Site != "local-pve01" {
+		t.Fatalf("resolved self member = %#v, want local override", self)
+	}
+	want := map[string]bool{
+		"10.88.60.10/32": true,
+		"10.88.60.98/32": true,
+		"10.88.60.99/32": true,
+	}
+	if len(self.StaticOwnedAddresses) != len(want) {
+		t.Fatalf("staticOwnedAddresses = %#v, want %v", self.StaticOwnedAddresses, want)
+	}
+	for _, address := range self.StaticOwnedAddresses {
+		if !want[address] {
+			t.Fatalf("staticOwnedAddresses = %#v, want %v", self.StaticOwnedAddresses, want)
+		}
+	}
+}
+
+func TestMobilityPoolMembersFromPreservesCaptureAcrossDuplicateMembers(t *testing.T) {
+	spec := api.MobilityPoolSpec{
+		MembersFrom: []api.MobilityMembersSourceSpec{{Resource: "MobilityMemberSet/cloudedge"}},
+		Members: []api.MobilityPoolMember{{
+			NodeRef: "aws-router-a",
+			Site:    "override-site",
+			Role:    "cloud",
+		}},
+	}
+	router := planningRouterForNode("aws-router-a", spec)
+	router.Spec.Resources = append(router.Spec.Resources, mobilityMemberSetResource("cloudedge", []api.MobilityMemberSetMember{{
+		NodeRef:    "aws-router-a",
+		Site:       "source-site",
+		Role:       "cloud",
+		ProfileRef: "aws-profile",
+		Capture: api.MobilityMemberCapture{
+			Type:            "provider-secondary-ip",
+			ProviderRef:     "aws-provider",
+			ProviderMode:    "nic-secondary-ip",
+			NICRef:          "eni-a",
+			CaptureStrategy: captureStrategyRouteTable,
+			Target:          map[string]string{"routeTableRef": "rtb-cloudedge", "region": "us-east-1"},
+		},
+		StaticOwnedAddresses: []string{"10.88.60.10/32", "10.88.60.98/32"},
+	}}))
+
+	resolved, err := (mobilityMemberResolver{Router: router}).resolve(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	member := resolved.Spec.Members[0]
+	if member.NodeRef != "aws-router-a" {
+		t.Fatalf("member = %#v, want aws-router-a", member)
+	}
+	if member.Site != "override-site" {
+		t.Fatalf("member site = %#v, want override-site", member)
+	}
+	if member.Capture.NICRef != "eni-a" || member.Capture.ProviderRef != "aws-provider" || member.Capture.CaptureStrategy != captureStrategyRouteTable {
+		t.Fatalf("member capture = %#v, want preserved source capture", member.Capture)
+	}
+	if member.Capture.Target["routeTableRef"] != "rtb-cloudedge" {
+		t.Fatalf("member capture target = %#v, want routeTableRef", member.Capture.Target)
+	}
+	if len(member.StaticOwnedAddresses) != 2 {
+		t.Fatalf("staticOwnedAddresses = %#v, want source+override merged", member.StaticOwnedAddresses)
+	}
+	member.StaticOwnedAddresses = cleanStrings(member.StaticOwnedAddresses)
+	wantStatic := map[string]bool{"10.88.60.10/32": true, "10.88.60.98/32": true}
+	for _, address := range member.StaticOwnedAddresses {
+		if !wantStatic[address] {
+			t.Fatalf("staticOwnedAddresses = %#v, want %v", member.StaticOwnedAddresses, wantStatic)
+		}
+	}
+}
+
 func TestMobilityPoolMembersFromMissingRequiredIsPending(t *testing.T) {
 	now := time.Date(2026, 6, 8, 11, 1, 0, 0, time.UTC)
 	store := testStore(t, now)

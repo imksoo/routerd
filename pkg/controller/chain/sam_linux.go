@@ -9,12 +9,17 @@ import (
 	"fmt"
 	"net"
 	"os/exec"
+	"sort"
 	"strings"
+	"sync"
 
+	"github.com/imksoo/routerd/pkg/sam"
 	"github.com/vishvananda/netlink"
 )
 
 type netlinkSAMProxyNeighborApplier struct{}
+
+var samForwardPathMu sync.Mutex
 
 func defaultSAMProxyNeighborApplier() samProxyNeighborApplier {
 	return netlinkSAMProxyNeighborApplier{}
@@ -111,6 +116,188 @@ func (netlinkSAMProxyNeighborApplier) EnsureOSAddressAbsent(_ context.Context, a
 		}
 	}
 	return result, nil
+}
+
+func (netlinkSAMProxyNeighborApplier) ReconcileForwardPaths(ctx context.Context, paths []sam.CaptureAction) error {
+	samForwardPathMu.Lock()
+	defer samForwardPathMu.Unlock()
+
+	const chain = "routerd_sam_forward"
+	run := func(args ...string) error {
+		out, err := exec.CommandContext(ctx, "iptables", args...).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("iptables %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+		}
+		return nil
+	}
+	_ = run("-N", chain)
+	if err := run("-C", "FORWARD", "-j", chain); err != nil {
+		if insertErr := run("-I", "FORWARD", "1", "-j", chain); insertErr != nil {
+			return insertErr
+		}
+	}
+	sort.SliceStable(paths, func(i, j int) bool {
+		if paths[i].Address != paths[j].Address {
+			return paths[i].Address < paths[j].Address
+		}
+		if paths[i].Interface != paths[j].Interface {
+			return paths[i].Interface < paths[j].Interface
+		}
+		return paths[i].PeerInterface < paths[j].PeerInterface
+	})
+	desired := map[string][]string{}
+	for _, path := range paths {
+		address := strings.TrimSpace(path.Address)
+		captureIface := strings.TrimSpace(path.Interface)
+		tunnelIface := strings.TrimSpace(path.PeerInterface)
+		if address == "" || captureIface == "" || tunnelIface == "" {
+			continue
+		}
+		if path.Kind == "forward-local-path" {
+			addDesiredIPTablesRule(desired, "-i", tunnelIface, "-o", captureIface, "-d", address, "-j", "ACCEPT")
+			addDesiredIPTablesRule(desired, "-i", captureIface, "-o", tunnelIface, "-s", address, "-j", "ACCEPT")
+		} else {
+			addDesiredIPTablesRule(desired, "-i", captureIface, "-o", tunnelIface, "-d", address, "-j", "ACCEPT")
+			addDesiredIPTablesRule(desired, "-i", tunnelIface, "-o", captureIface, "-s", address, "-j", "ACCEPT")
+		}
+	}
+	for _, rule := range sortedIPTablesRules(desired) {
+		if err := ensureIPTablesRule(ctx, chain, rule...); err != nil {
+			return err
+		}
+	}
+	if len(desired) == 0 {
+		return nil
+	}
+	if err := deleteStaleIPTablesRules(ctx, chain, desired); err != nil {
+		return err
+	}
+	return nil
+}
+
+func addDesiredIPTablesRule(desired map[string][]string, rule ...string) {
+	normalized := append([]string(nil), rule...)
+	desired[iptablesRuleKey(normalized)] = normalized
+}
+
+func sortedIPTablesRules(rules map[string][]string) [][]string {
+	keys := make([]string, 0, len(rules))
+	for key := range rules {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	out := make([][]string, 0, len(keys))
+	for _, key := range keys {
+		out = append(out, rules[key])
+	}
+	return out
+}
+
+func ensureIPTablesRule(ctx context.Context, chain string, rule ...string) error {
+	checkArgs := append([]string{"-C", chain}, rule...)
+	if out, err := exec.CommandContext(ctx, "iptables", checkArgs...).CombinedOutput(); err == nil {
+		return nil
+	} else if strings.TrimSpace(string(out)) != "" {
+		_ = out
+	}
+	addArgs := append([]string{"-A", chain}, rule...)
+	out, err := exec.CommandContext(ctx, "iptables", addArgs...).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("iptables %s: %w: %s", strings.Join(addArgs, " "), err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func deleteStaleIPTablesRules(ctx context.Context, chain string, desired map[string][]string) error {
+	out, err := exec.CommandContext(ctx, "iptables", "-S", chain).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("iptables -S %s: %w: %s", chain, err, strings.TrimSpace(string(out)))
+	}
+	seenDesired := map[string]bool{}
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		prefix := "-A " + chain + " "
+		if !strings.HasPrefix(line, prefix) {
+			continue
+		}
+		rule := strings.Fields(strings.TrimPrefix(line, prefix))
+		if len(rule) == 0 {
+			continue
+		}
+		key := iptablesRuleKey(rule)
+		if _, ok := desired[key]; ok && !seenDesired[key] {
+			seenDesired[key] = true
+			continue
+		}
+		deleteArgs := append([]string{"-D", chain}, rule...)
+		if out, err := exec.CommandContext(ctx, "iptables", deleteArgs...).CombinedOutput(); err != nil {
+			return fmt.Errorf("iptables %s: %w: %s", strings.Join(deleteArgs, " "), err, strings.TrimSpace(string(out)))
+		}
+	}
+	return nil
+}
+
+func iptablesRuleKey(rule []string) string {
+	var src, dst, in, out, jump string
+	rest := make([]string, 0, len(rule))
+	for i := 0; i < len(rule); i++ {
+		token := rule[i]
+		value := ""
+		if i+1 < len(rule) {
+			value = rule[i+1]
+		}
+		switch token {
+		case "-s", "--source":
+			if value != "" {
+				src = value
+				i++
+				continue
+			}
+		case "-d", "--destination":
+			if value != "" {
+				dst = value
+				i++
+				continue
+			}
+		case "-i", "--in-interface":
+			if value != "" {
+				in = value
+				i++
+				continue
+			}
+		case "-o", "--out-interface":
+			if value != "" {
+				out = value
+				i++
+				continue
+			}
+		case "-j", "--jump":
+			if value != "" {
+				jump = value
+				i++
+				continue
+			}
+		}
+		rest = append(rest, token)
+	}
+	key := make([]string, 0, len(rule))
+	if src != "" {
+		key = append(key, "-s", src)
+	}
+	if dst != "" {
+		key = append(key, "-d", dst)
+	}
+	if in != "" {
+		key = append(key, "-i", in)
+	}
+	if out != "" {
+		key = append(key, "-o", out)
+	}
+	key = append(key, rest...)
+	if jump != "" {
+		key = append(key, "-j", jump)
+	}
+	return strings.Join(key, "\x00")
 }
 
 func samProxyNeighbor(address, ifname string) (netlink.Link, *netlink.Neigh, error) {

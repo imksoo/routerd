@@ -47,11 +47,13 @@ core) and the #52 host-firewall prerequisite (by-design host-side, surfaced by d
   enforces OS-local absence").
 - `doctor` FORWARD-policy skip was hard to read on Azure (`exit status 1`); improved on AWS.
 
-## 4. WireGuard key provisioning — manual
+## 4. WireGuard key provisioning
 
-- private/public keys generated, placed, and public keys exchanged by hand; routerd only reads
-  `privateKeyFile`. Candidate: generate-if-absent + expose the public key for exchange.
-  (Follow-up.)
+- `privateKeyFile` now supports generate-if-absent during non-dry-run apply:
+  routerd creates the parent directory with restrictive permissions, writes a
+  new private key as `0600`, never overwrites an existing non-empty key, and
+  publishes the interface public key in status when it can observe or derive it.
+- Public-key exchange/enrollment is still a follow-up; see ADR 0015.
 - (lab SSH key temporarily placed on clients for client-originated SSH evidence, then removed —
   test-harness only, out of routerd scope.)
 

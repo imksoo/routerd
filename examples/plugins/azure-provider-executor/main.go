@@ -34,6 +34,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -98,7 +99,11 @@ const (
 	actionEnsureFwdEnabled        = "ensure-forwarding-enabled"
 	actionEnsureFwdDisabled       = "ensure-forwarding-disabled"
 	captureStrategyRouteTable     = "route-table"
-	defaultAzCommandTimeoutMs     = 25000
+	defaultAzCommandTimeout       = 60 * time.Second
+	azCommandTimeoutEnv           = "ROUTERD_AZURE_EXECUTOR_COMMAND_TIMEOUT"
+	legacyAzCommandTimeoutMsEnv   = "ROUTERD_AZURE_EXECUTOR_COMMAND_TIMEOUT_MS"
+	azCommandRetryAttempts        = 3
+	azCommandRetryDelay           = 250 * time.Millisecond
 	seizeVerifyAttempts           = 5
 	seizeVerifyDelay              = 500 * time.Millisecond
 )
@@ -148,8 +153,62 @@ func failed(msg string, err error) executeActionResult {
 	res.Status.Message = msg
 	if err != nil {
 		res.Status.Error = err.Error()
+		if isAuthorizationError(err) {
+			res.Status.Observed = map[string]string{
+				"failureClass":   "authorization",
+				"permissionHint": azurePermissionHint(msg),
+			}
+		}
 	}
 	return res
+}
+
+func isAuthorizationError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	if isToolchainExecutionError(msg) {
+		return false
+	}
+	return strings.Contains(msg, "authorizationfailed") ||
+		strings.Contains(msg, "access denied") ||
+		strings.Contains(msg, "not authorized") ||
+		strings.Contains(msg, "does not have authorization") ||
+		strings.Contains(msg, "forbidden")
+}
+
+func isToolchainExecutionError(msg string) bool {
+	return strings.Contains(msg, "fork/exec") ||
+		strings.Contains(msg, "executable file not found") ||
+		strings.Contains(msg, "no such file or directory") ||
+		strings.Contains(msg, "permission denied")
+}
+
+func azurePermissionHint(msg string) string {
+	msg = strings.ToLower(msg)
+	switch {
+	case strings.Contains(msg, "route-table") && strings.Contains(msg, "show"):
+		return "Microsoft.Network/routeTables/routes/read"
+	case strings.Contains(msg, "assign-route-table-route"):
+		return "Microsoft.Network/routeTables/routes/write"
+	case strings.Contains(msg, "unassign-route-table-route"):
+		return "Microsoft.Network/routeTables/routes/delete"
+	case strings.Contains(msg, "assign-secondary-ip") && strings.Contains(msg, "show"):
+		return "Microsoft.Network/networkInterfaces/read"
+	case strings.Contains(msg, "assign-secondary-ip"):
+		return "Microsoft.Network/networkInterfaces/write"
+	case strings.Contains(msg, "unassign-secondary-ip") && strings.Contains(msg, "show"):
+		return "Microsoft.Network/networkInterfaces/read"
+	case strings.Contains(msg, "unassign-secondary-ip"):
+		return "Microsoft.Network/networkInterfaces/write"
+	case strings.Contains(msg, "ensure-forwarding") && strings.Contains(msg, "show"):
+		return "Microsoft.Network/networkInterfaces/read"
+	case strings.Contains(msg, "ensure-forwarding"):
+		return "Microsoft.Network/networkInterfaces/write"
+	default:
+		return "azure-rbac"
+	}
 }
 
 // nicTarget bundles the Azure NIC identification read from the request Target.
@@ -364,7 +423,7 @@ func assignRouteTableRoute(ctx context.Context, spec executeActionRequestSpec, m
 }
 
 func createRouteTableRoute(ctx context.Context, runner azRunner, t routeTarget) error {
-	_, err := runner(ctx, "network", "route-table", "route", "create",
+	_, err := callAzWithRetry(ctx, runner, "network", "route-table", "route", "create",
 		"--resource-group", t.resourceGroup,
 		"--route-table-name", t.routeTableName,
 		"--name", t.routeName,
@@ -375,7 +434,7 @@ func createRouteTableRoute(ctx context.Context, runner azRunner, t routeTarget) 
 }
 
 func updateRouteTableRoute(ctx context.Context, runner azRunner, t routeTarget) error {
-	_, err := runner(ctx, "network", "route-table", "route", "update",
+	_, err := callAzWithRetry(ctx, runner, "network", "route-table", "route", "update",
 		"--resource-group", t.resourceGroup,
 		"--route-table-name", t.routeTableName,
 		"--name", t.routeName,
@@ -417,7 +476,7 @@ func unassignRouteTableRoute(ctx context.Context, spec executeActionRequestSpec,
 		return res
 	}
 
-	if _, err := runner(ctx, "network", "route-table", "route", "delete",
+	if _, err := callAzWithRetry(ctx, runner, "network", "route-table", "route", "delete",
 		"--resource-group", t.resourceGroup,
 		"--route-table-name", t.routeTableName,
 		"--name", t.routeName,
@@ -440,7 +499,7 @@ type routeTableRoute struct {
 }
 
 func showRouteTableRoute(ctx context.Context, runner azRunner, t routeTarget) (routeTableRoute, bool, error) {
-	out, err := runner(ctx, "network", "route-table", "route", "show",
+	out, err := callAzReadWithRetry(ctx, runner, "network", "route-table", "route", "show",
 		"--resource-group", t.resourceGroup,
 		"--route-table-name", t.routeTableName,
 		"--name", t.routeName)
@@ -638,7 +697,7 @@ func sleepBeforeRetry(ctx context.Context, attempt int) error {
 }
 
 func createIPConfig(ctx context.Context, runner azRunner, t nicTarget) error {
-	_, err := runner(ctx, "network", "nic", "ip-config", "create",
+	_, err := callAzWithRetry(ctx, runner, "network", "nic", "ip-config", "create",
 		"--resource-group", t.resourceGroup,
 		"--nic-name", t.nicName,
 		"--name", t.ipConfigName,
@@ -647,13 +706,18 @@ func createIPConfig(ctx context.Context, runner azRunner, t nicTarget) error {
 }
 
 func deleteIPConfig(ctx context.Context, runner azRunner, h ipConfigHolder) error {
-	_, err := runner(ctx, "network", "nic", "ip-config", "delete",
-		"--resource-group", h.resourceGroup,
-		"--nic-name", h.nicName,
-		"--name", h.ipConfigName)
+	err := deleteIPConfigRaw(ctx, runner, h)
 	if err != nil && isNotFoundError(err) {
 		return nil
 	}
+	return err
+}
+
+func deleteIPConfigRaw(ctx context.Context, runner azRunner, h ipConfigHolder) error {
+	_, err := callAzWithRetry(ctx, runner, "network", "nic", "ip-config", "delete",
+		"--resource-group", h.resourceGroup,
+		"--nic-name", h.nicName,
+		"--name", h.ipConfigName)
 	return err
 }
 
@@ -794,7 +858,7 @@ func ensureForwardingEnabled(ctx context.Context, spec executeActionRequestSpec,
 
 // unassignSecondaryIP is the undo of assign-secondary-ip: delete the ip-config.
 func unassignSecondaryIP(ctx context.Context, spec executeActionRequestSpec, mode string, runner azRunner) executeActionResult {
-	t, err := requireIPConfigTarget(spec, false)
+	t, err := requireIPConfigTarget(spec, true)
 	if err != nil {
 		return failed("unassign-secondary-ip: missing target field", err)
 	}
@@ -810,15 +874,61 @@ func unassignSecondaryIP(ctx context.Context, spec executeActionRequestSpec, mod
 		return res
 	}
 
-	if _, err := runner(ctx, "network", "nic", "ip-config", "delete",
-		"--resource-group", t.resourceGroup,
-		"--nic-name", t.nicName,
-		"--name", t.ipConfigName); err != nil {
+	if err := deleteIPConfigRaw(ctx, runner, ipConfigHolder{
+		resourceGroup: t.resourceGroup,
+		nicName:       t.nicName,
+		ipConfigName:  t.ipConfigName,
+	}); err != nil {
+		if isNotFoundError(err) {
+			deleted, derr := unassignIPConfigByAddress(ctx, runner, t)
+			if derr != nil {
+				return failed("unassign-secondary-ip execute: nic show for fallback failed", derr)
+			}
+			if deleted {
+				res.Status.Status = statusSucceeded
+				res.Status.Message = fmt.Sprintf("unassigned ip-config %s from %s", t.ipConfigName, t.nicName)
+				return res
+			}
+			res.Status.Status = statusSucceeded
+			res.Status.Message = fmt.Sprintf("ip-config %s already absent from %s", t.ipConfigName, t.nicName)
+			return res
+		}
 		return failed("unassign-secondary-ip execute: ip-config delete failed", err)
 	}
 	res.Status.Status = statusSucceeded
 	res.Status.Message = fmt.Sprintf("unassigned ip-config %s from %s", t.ipConfigName, t.nicName)
 	return res
+}
+
+func unassignIPConfigByAddress(ctx context.Context, runner azRunner, t nicTarget) (bool, error) {
+	self, err := showNIC(ctx, runner, t.nicID)
+	if err != nil {
+		return false, err
+	}
+	if !strings.EqualFold(strings.TrimSpace(self.Name), strings.TrimSpace(t.nicName)) {
+		// If the NIC identity shifted in-place (unexpected), use the show response
+		// as truth for the follow-up delete target.
+		t.nicName = self.Name
+	}
+	cfg, ok := ipConfigForAddress(self.IPConfigurations, t.address)
+	if !ok {
+		return false, nil
+	}
+	rg := strings.TrimSpace(t.resourceGroup)
+	if rg == "" && strings.TrimSpace(self.ResourceGroup) != "" {
+		rg = strings.TrimSpace(self.ResourceGroup)
+	}
+	if err := deleteIPConfig(ctx, runner, ipConfigHolder{
+		resourceGroup: rg,
+		nicName:       t.nicName,
+		ipConfigName:  cfg.Name,
+	}); err != nil {
+		if isNotFoundError(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
 }
 
 // ensureForwardingDisabled is the undo of ensure-forwarding-enabled. It applies
@@ -884,7 +994,21 @@ func stringBool(v string) bool {
 	}
 }
 
-// commandTimeout is the per-az-invocation timeout.
+// commandTimeout is the per-az-invocation timeout. Azure CLI calls can be slow
+// when managed identity token acquisition or ARM control-plane reads are cold, so
+// keep this independent from routerd's outer executor timeout.
 func commandTimeout() time.Duration {
-	return defaultAzCommandTimeoutMs * time.Millisecond
+	if value := strings.TrimSpace(os.Getenv(azCommandTimeoutEnv)); value != "" {
+		timeout, err := time.ParseDuration(value)
+		if err == nil && timeout > 0 {
+			return timeout
+		}
+	}
+	if value := strings.TrimSpace(os.Getenv(legacyAzCommandTimeoutMsEnv)); value != "" {
+		ms, err := strconv.Atoi(value)
+		if err == nil && ms > 0 {
+			return time.Duration(ms) * time.Millisecond
+		}
+	}
+	return defaultAzCommandTimeout
 }

@@ -73,6 +73,13 @@ const (
 	ProviderCaptureChangedEvent = "routerd.provider.capture.changed"
 
 	DefaultStaleRunningTimeout = 2 * time.Minute
+
+	// DynamicConfigPart TTL is intentionally longer than the reconcile cadence,
+	// but mobility path-fenced provider actions are destructive. Treat only a
+	// recently refreshed plan as desired so a daemon restart cannot execute old
+	// unassign/claim actions before the mobility controller publishes the
+	// current generation again.
+	pathFenceFreshness = 30 * time.Second
 )
 
 // NewEngine builds an Engine.
@@ -109,7 +116,7 @@ func (e *Engine) logf(format string, args ...any) {
 
 // ImportResult summarizes an ImportFromDynamicParts run.
 type ImportResult struct {
-	// Inserted is the count of newly journaled pending actions.
+	// Inserted is the count of newly journaled or requeued pending actions.
 	Inserted int
 	// Duplicates is the count of plans whose idempotencyKey already existed.
 	Duplicates int
@@ -121,8 +128,8 @@ type ImportResult struct {
 // ImportFromDynamicParts scans every stored DynamicConfigPart's actionPlans and
 // imports each into the journal as pending, keyed by ActionPlan.IdempotencyKey.
 // Plans without a non-empty idempotencyKey are skipped + logged (never
-// journaled). Dedup is provided by the store's ON CONFLICT(idempotency_key)
-// import, so a repeated key never creates a second row.
+// journaled). Dedup/requeue is provided by the store's idempotency-key import,
+// so a repeated key never creates a second row.
 func (e *Engine) ImportFromDynamicParts() (ImportResult, error) {
 	var res ImportResult
 	fenced, err := e.fenceStalePendingActions()
@@ -242,8 +249,13 @@ func (e *Engine) currentDesiredPathFenceKeys() (map[string]bool, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list dynamic config parts for provider action fencing: %w", err)
 	}
+	now := e.now().UTC()
+	freshAfter := now.Add(-pathFenceFreshness)
 	for _, part := range parts {
-		if part.EffectiveStatus(e.now()) == "expired" || strings.TrimSpace(part.ActionPlansJSON) == "" {
+		if part.EffectiveStatus(now) == "expired" || strings.TrimSpace(part.ActionPlansJSON) == "" {
+			continue
+		}
+		if pathFencedPartStale(part, freshAfter) {
 			continue
 		}
 		var plans []dynamicconfig.ActionPlan
@@ -260,6 +272,13 @@ func (e *Engine) currentDesiredPathFenceKeys() (map[string]bool, error) {
 		}
 	}
 	return out, nil
+}
+
+func pathFencedPartStale(part state.DynamicConfigPartRecord, freshAfter time.Time) bool {
+	if part.ObservedAt.IsZero() {
+		return true
+	}
+	return part.ObservedAt.UTC().Before(freshAfter)
 }
 
 // recordFromPlan converts a planned action into a journal record (pending). It

@@ -44,10 +44,13 @@
   OS ローカルでの不在を強制" として明確化)。
 - `doctor` の FORWARD ポリシースキップは Azure では読みにくかった (`exit status 1`); AWS では改善。
 
-## 4. WireGuard 鍵プロビジョニング — 手動
+## 4. WireGuard 鍵プロビジョニング
 
-- private/public 鍵の生成、配置、公開鍵の交換はすべて手動; routerd は `privateKeyFile` のみ読み取り。
-  候補: 不在時の自動生成 + 交換用の公開鍵公開。(フォローアップ。)
+- `privateKeyFile` は非 dry-run apply 時に generate-if-absent をサポートします。
+  routerd は親ディレクトリを制限付きパーミッションで作成し、新しい秘密鍵を
+  mode `0600` で書き込み、既存の非空鍵は上書きしません。interface public key は、
+  観測または導出できる場合に status へ公開します。
+- 公開鍵交換/enrollment はまだフォローアップです。ADR 0015 を参照してください。
 - (ラボ SSH 鍵はクライアント発信の SSH エビデンス用にクライアントに一時配置後、削除 — テストハーネスのみ、
   routerd スコープ外。)
 

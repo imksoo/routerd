@@ -116,7 +116,7 @@ const config: Config = {
             {to: '/docs/config-examples/', label: 'Configuration examples'},
             {to: '/docs/how-to/multi-wan', label: 'How-to guides'},
             {to: '/docs/operations/routerctl-doctor', label: 'Operate'},
-            {to: '/docs/api-v1alpha1', label: 'API reference'},
+            {to: '/docs/reference/api-v1alpha1', label: 'API reference'},
             {to: '/docs/design-notes', label: 'Design notes'},
             {to: '/docs/releases/stable', label: 'Releases'},
           ],

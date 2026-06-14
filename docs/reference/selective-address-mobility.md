@@ -154,6 +154,13 @@ a bootstrap or emergency override. If a required source is missing, the
 interface reports `Pending` and routerd leaves the current WireGuard runtime
 config untouched.
 
+When `privateKeyFile` is set and the file is absent, a non-dry-run apply creates
+the parent directory with restrictive permissions and writes a new WireGuard
+private key with mode `0600`. Existing non-empty key files are never
+overwritten. Dry-run and plan paths remain non-mutating. The interface status
+publishes the derived `publicKey` when it can observe WireGuard runtime state or
+derive it from configured key material.
+
 For hub/spoke deployments, `peersFrom` removes repeated peer authoring after a
 trusted node registry exists, but it does not by itself solve first-contact
 registration. [ADR 0015](../adr/0015-wireguard-peer-enrollment.md) describes a
@@ -639,12 +646,14 @@ literal address. A named reference can be added later if it proves useful.
 
 SAM-forwarded traffic still traverses the existing firewall and conntrack path
 like any other forwarded traffic. Independence means the mobility resources do
-not configure firewall or NAT policy; it does not mean bypass.
+not configure arbitrary firewall or NAT policy; it does not mean bypass.
 
 In particular, the delivered `/32` traffic crosses the Linux firewall
 `FORWARD` chain between the capture interface and the tunnel interface. Permit
 that forwarding path for the captured address explicitly when the router has a
-default-drop forwarding policy. SAM does not add firewall rules by itself.
+default-drop forwarding policy. The managed exceptions are narrow:
+`WireGuardInterface` opens its Linux UDP listen port in `INPUT`, and
+`RemoteAddressClaim` opens the capture-to-tunnel `FORWARD` path it owns.
 
 ## Overlay And Federation Addressing On Cloud Nodes
 

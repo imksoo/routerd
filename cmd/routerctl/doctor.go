@@ -34,7 +34,13 @@ const (
 	doctorWarn = "warn"
 	doctorFail = "fail"
 	doctorSkip = "skip"
+
+	doctorObservedEventType             = "routerd.client.ipv4.observed"
+	doctorExpiredEventType              = "routerd.client.ipv4.expired"
+	doctorFederationSourceProviderOwner = "provider-discovery"
 )
+
+var doctorNow = time.Now
 
 var doctorMACAddressPattern = regexp.MustCompile(`(?i)\b(?:[0-9a-f]{2}:){5}[0-9a-f]{2}\b`)
 
@@ -55,8 +61,20 @@ type doctorSummary struct {
 }
 
 type doctorReport struct {
-	Summary doctorSummary `json:"summary" yaml:"summary"`
-	Checks  []doctorCheck `json:"checks" yaml:"checks"`
+	Summary  doctorSummary         `json:"summary" yaml:"summary"`
+	Checks   []doctorCheck         `json:"checks" yaml:"checks"`
+	Incident *doctorIncidentReport `json:"incident,omitempty" yaml:"incident,omitempty"`
+}
+
+type doctorIncidentReport struct {
+	GeneratedAt    string                        `json:"generatedAt" yaml:"generatedAt"`
+	Status         *controlapi.Status            `json:"status,omitempty" yaml:"status,omitempty"`
+	Runtime        *controlapi.RuntimeStats      `json:"runtime,omitempty" yaml:"runtime,omitempty"`
+	ObjectStatuses []routerstate.ObjectStatus    `json:"objectStatuses,omitempty" yaml:"objectStatuses,omitempty"`
+	PluginRuns     []routerstate.PluginRunRecord `json:"pluginRuns,omitempty" yaml:"pluginRuns,omitempty"`
+	Events         []routerstate.StoredEvent     `json:"events,omitempty" yaml:"events,omitempty"`
+	Commands       []diagnoseCommandCheck        `json:"commands,omitempty" yaml:"commands,omitempty"`
+	Error          string                        `json:"error,omitempty" yaml:"error,omitempty"`
 }
 
 type doctorRunner struct {
@@ -76,6 +94,9 @@ const (
 
 // reconcileStatusFetcher allows tests to stub the controllers fetch.
 var reconcileStatusFetcher = fetchReconcileControllers
+
+// doctorStatusFetcher allows tests to stub the main status fetch.
+var doctorStatusFetcher = fetchStatus
 
 // runtimeStatsFetcher allows tests to stub the runtime-stats fetch.
 var runtimeStatsFetcher = fetchRuntimeStats
@@ -107,7 +128,7 @@ func doctorCommand(args []string, stdout, stderr io.Writer) error {
 	if opts.Probe != "" {
 		return doctorProbeCommand(opts, stdout)
 	}
-	if opts.Target != "" && !validDoctorArea(opts.Target) {
+	if opts.Target != "" && opts.Target != "incident" && !validDoctorArea(opts.Target) {
 		return fmt.Errorf("unknown doctor area %q", opts.Target)
 	}
 	router, store, err := loadDiagnoseInputs(opts)
@@ -120,13 +141,20 @@ func doctorCommand(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	runner := doctorRunner{opts: opts, router: router, store: store}
+	collectChecks := opts.Target != "incident"
 	areas := doctorAreas
-	if opts.Target != "" {
+	if opts.Target != "" && opts.Target != "incident" {
 		areas = []string{opts.Target}
 	}
 	report := doctorReport{}
-	for _, area := range areas {
-		report.Checks = append(report.Checks, runner.runArea(area)...)
+	if collectChecks {
+		for _, area := range areas {
+			report.Checks = append(report.Checks, runner.runArea(area)...)
+		}
+	}
+	if opts.Incident || opts.Target == "incident" {
+		incident := runner.doctorIncidentDump()
+		report.Incident = &incident
 	}
 	report.Summary = summarizeDoctorChecks(report.Checks)
 	if err := writeDoctorReport(stdout, report, opts.Output); err != nil {
@@ -161,6 +189,15 @@ func doctorProbeCommand(opts diagnoseOptions, stdout io.Writer) error {
 	default:
 		return fmt.Errorf("unsupported output %q", opts.Output)
 	}
+}
+
+func fetchStatus(socketPath string, timeout time.Duration) (*controlapi.Status, error) {
+	if timeout <= 0 {
+		timeout = 5 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	return controlapi.NewUnixClient(socketPath).Status(ctx)
 }
 
 func validDoctorArea(area string) bool {
@@ -209,6 +246,87 @@ func (r doctorRunner) runArea(area string) []doctorCheck {
 	}
 }
 
+func (r doctorRunner) doctorIncidentDump() doctorIncidentReport {
+	dump := doctorIncidentReport{GeneratedAt: doctorNow().UTC().Format(time.RFC3339)}
+	if status, err := doctorStatusFetcher(r.opts.Socket, r.opts.Timeout); err == nil {
+		dump.Status = status
+	} else {
+		dump.Error = appendDoctorDetail(dump.Error, "status: "+err.Error())
+	}
+	if runtime, err := runtimeStatsFetcher(r.opts.Socket, r.opts.Timeout); err == nil {
+		dump.Runtime = runtime
+	} else {
+		dump.Error = appendDoctorDetail(dump.Error, "runtime: "+err.Error())
+	}
+	if lister, ok := r.store.(routerstate.ObjectStatusLister); ok {
+		objectStatuses, err := lister.ListObjectStatuses()
+		if err != nil {
+			dump.Error = appendDoctorDetail(dump.Error, "object status list: "+err.Error())
+		} else {
+			dump.ObjectStatuses = objectStatuses
+		}
+	}
+	if lister, ok := r.store.(routerstate.PluginRunLister); ok {
+		pluginRuns, err := lister.ListPluginRuns("")
+		if err != nil {
+			dump.Error = appendDoctorDetail(dump.Error, "plugin run list: "+err.Error())
+		} else {
+			dump.PluginRuns = pluginRuns
+			if len(dump.PluginRuns) > 25 {
+				dump.PluginRuns = dump.PluginRuns[:25]
+			}
+		}
+	}
+	if lister, ok := r.store.(routerstate.EventLister); ok {
+		events, err := lister.ListEvents(routerstate.EventQuery{Limit: 50})
+		if err != nil {
+			dump.Error = appendDoctorDetail(dump.Error, "events list: "+err.Error())
+		} else {
+			dump.Events = events
+			if len(dump.Events) > 50 {
+				dump.Events = dump.Events[:50]
+			}
+		}
+	}
+	if r.opts.Host {
+		dump.Commands = collectDoctorIncidentCommands(r)
+	}
+	return dump
+}
+
+func collectDoctorIncidentCommands(r doctorRunner) []diagnoseCommandCheck {
+	if doctorCurrentOS() != platform.OSLinux {
+		return []diagnoseCommandCheck{{
+			Name:  "host command snapshots",
+			OK:    false,
+			Error: "host command snapshots are linux-only",
+		}}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), r.opts.Timeout)
+	defer cancel()
+	commands := []struct {
+		label string
+		cmd   string
+		args  []string
+	}{
+		{label: "ip -4 route show table all", cmd: "ip", args: []string{"-4", "route", "show", "table", "all"}},
+		{label: "ip -6 route show table all", cmd: "ip", args: []string{"-6", "route", "show", "table", "all"}},
+		{label: "ip -4 rule show", cmd: "ip", args: []string{"-4", "rule", "show"}},
+		{label: "ip -4 neigh show", cmd: "ip", args: []string{"-4", "neigh", "show"}},
+		{label: "ip -s -s -d link show", cmd: "ip", args: []string{"-s", "-s", "-d", "link", "show"}},
+		{label: "sysctl net.ipv4.ip_forward", cmd: "sysctl", args: []string{"net.ipv4.ip_forward"}},
+		{label: "sysctl net.ipv4.conf.all.rp_filter", cmd: "sysctl", args: []string{"net.ipv4.conf.all.rp_filter"}},
+		{label: "sysctl net.ipv4.conf.all.src_valid_mark", cmd: "sysctl", args: []string{"net.ipv4.conf.all.src_valid_mark"}},
+		{label: "journalctl -u routerd", cmd: "journalctl", args: []string{"-u", "routerd", "--no-pager", "-n", "120"}},
+		{label: "stat /tmp /var/tmp", cmd: "stat", args: []string{"-c", "%n %a %u %g %F", "/tmp", "/var/tmp"}},
+	}
+	out := make([]diagnoseCommandCheck, 0, len(commands))
+	for _, command := range commands {
+		out = append(out, doctorRunDiagnosticCommand(ctx, command.label, command.cmd, command.args...))
+	}
+	return out
+}
+
 func (r doctorRunner) doctorSAM() []doctorCheck {
 	if r.router == nil {
 		return []doctorCheck{{Area: "sam", Name: "startup config", Status: doctorSkip, Detail: "startup config unavailable"}}
@@ -220,7 +338,16 @@ func (r doctorRunner) doctorSAM() []doctorCheck {
 	var checks []doctorCheck
 	for _, res := range pools {
 		status := objectStatus(r.store, res.APIVersion, res.Kind, res.Metadata.Name)
-		checks = append(checks, doctorResourceCheck("sam", res, status, healthyPhases("BGPPlanned")))
+		checks = append(checks, doctorResourceCheck("sam", res, status, healthyPhases("Ready", "BGPPlanned")))
+		poolSpec, err := res.MobilityPoolSpec()
+		if err != nil {
+			checks = append(checks, doctorCheck{Area: "sam", Name: "MobilityPool/" + res.Metadata.Name + " federation discovery", Status: doctorFail, Detail: err.Error(), Remedy: "fix MobilityPool spec and retry"})
+			continue
+		}
+		checks = append(checks, r.doctorSAMFederationDiscoveryChecks(res.Metadata.Name, poolSpec, status)...)
+		checks = append(checks, doctorSAMOwnershipConflictCheck(res.Metadata.Name, status))
+		checks = append(checks, r.doctorSAMOwnerTableRouteChecks(res.Metadata.Name, status)...)
+		checks = append(checks, r.doctorSAMBGPDeliveryChecks(res)...)
 		phase := stringStatus(status, "providerActionPhase")
 		if phase == "Failed" {
 			errMsg := stringStatus(status, "providerActionError")
@@ -238,6 +365,429 @@ func (r doctorRunner) doctorSAM() []doctorCheck {
 		}
 	}
 	return checks
+}
+
+func (r doctorRunner) doctorSAMBGPDeliveryChecks(pool api.Resource) []doctorCheck {
+	spec, err := pool.MobilityPoolSpec()
+	if err != nil {
+		return []doctorCheck{{
+			Area:   "sam",
+			Name:   "MobilityPool/" + pool.Metadata.Name + " BGP delivery",
+			Status: doctorFail,
+			Detail: "invalid MobilityPool spec: " + err.Error(),
+			Remedy: "fix MobilityPool spec before accepting SAM dataplane readiness",
+		}}
+	}
+	mode := strings.TrimSpace(spec.DeliveryPolicy.Mode)
+	if mode != "" && mode != "bgp" {
+		return nil
+	}
+	routerRefs := r.samTransportBGPRouterRefs()
+	if len(routerRefs) == 0 {
+		return nil
+	}
+	checks := make([]doctorCheck, 0, len(routerRefs))
+	for _, routerName := range routerRefs {
+		status := objectStatus(r.store, api.NetAPIVersion, "BGPRouter", routerName)
+		name := "MobilityPool/" + pool.Metadata.Name + " BGP delivery BGPRouter/" + routerName
+		if len(status) == 0 {
+			checks = append(checks, doctorCheck{
+				Area:   "sam",
+				Name:   name,
+				Status: doctorWarn,
+				Detail: "BGPRouter status is missing",
+				Remedy: "wait for routerd-bgp observation before accepting BGP-delivery SAM dataplane readiness",
+			})
+			continue
+		}
+		phase := stringStatus(status, "phase")
+		established := statusInt(status["establishedPeers"])
+		fibMissing := statusInt(status["fibMissingRoutes"])
+		fibUnsupported := statusInt(status["fibUnsupportedRoutes"])
+		detail := appendDoctorDetail("phase="+firstNonEmpty(phase, "missing"), fmt.Sprintf("establishedPeers=%d fibMissingRoutes=%d fibUnsupportedRoutes=%d", established, fibMissing, fibUnsupported))
+		check := doctorCheck{
+			Area:   "sam",
+			Name:   name,
+			Status: doctorPass,
+			Detail: detail,
+		}
+		switch {
+		case phase == "":
+			check.Status = doctorWarn
+			check.Remedy = "wait for routerd-bgp to publish BGPRouter phase before accepting SAM dataplane readiness"
+		case !strings.EqualFold(phase, "Established"):
+			check.Status = doctorFail
+			check.Remedy = "repair BGP peer establishment before accepting BGP-delivery SAM dataplane readiness"
+		case established == 0:
+			check.Status = doctorFail
+			check.Remedy = "repair BGP peer establishment before accepting BGP-delivery SAM dataplane readiness"
+		case fibMissing > 0 || fibUnsupported > 0:
+			check.Status = doctorFail
+			check.Remedy = "repair BGP FIB installation before accepting BGP-delivery SAM dataplane readiness"
+		}
+		checks = append(checks, check)
+	}
+	return checks
+}
+
+func (r doctorRunner) samTransportBGPRouterRefs() []string {
+	seen := map[string]bool{}
+	var out []string
+	if r.router == nil {
+		return out
+	}
+	for _, res := range r.router.Spec.Resources {
+		if res.APIVersion != api.MobilityAPIVersion || res.Kind != "SAMTransportProfile" {
+			continue
+		}
+		spec, err := res.SAMTransportProfileSpec()
+		if err != nil {
+			continue
+		}
+		ref := strings.TrimSpace(spec.BGP.RouterRef)
+		if ref == "" {
+			continue
+		}
+		kind, name, ok := strings.Cut(ref, "/")
+		if !ok {
+			name = ref
+			kind = "BGPRouter"
+		}
+		if kind != "BGPRouter" || strings.TrimSpace(name) == "" {
+			continue
+		}
+		name = strings.TrimSpace(name)
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func (r doctorRunner) doctorSAMFederationDiscoveryChecks(pool string, poolSpec api.MobilityPoolSpec, status map[string]any) []doctorCheck {
+	label := "MobilityPool/" + pool + " federation discovery"
+	if r.router == nil {
+		return []doctorCheck{{Area: "sam", Name: label, Status: doctorSkip, Detail: "startup config unavailable"}}
+	}
+	groupRef := strings.TrimSpace(poolSpec.GroupRef)
+	if groupRef == "" {
+		return []doctorCheck{{Area: "sam", Name: label, Status: doctorWarn, Detail: "groupRef is empty; federation checks skipped"}}
+	}
+	groupSpec, ok, err := doctorSAMEventGroupSpec(r.router, groupRef)
+	if err != nil {
+		return []doctorCheck{{Area: "sam", Name: label, Status: doctorFail, Detail: err.Error(), Remedy: "fix EventGroup spec and retry"}}
+	}
+	if !ok {
+		return []doctorCheck{{Area: "sam", Name: label, Status: doctorSkip, Detail: "EventGroup " + groupRef + " not found"}}
+	}
+	selfNode := strings.TrimSpace(groupSpec.NodeName)
+	if selfNode == "" {
+		return []doctorCheck{{Area: "sam", Name: label, Status: doctorFail, Detail: "EventGroup spec.nodeName is required", Remedy: "set EventGroup.nodeName to this node id"}}
+	}
+	peers := map[string]bool{}
+	for _, member := range poolSpec.Members {
+		nodeRef := strings.TrimSpace(member.NodeRef)
+		if nodeRef == "" || nodeRef == selfNode {
+			continue
+		}
+		peers[nodeRef] = true
+	}
+	if len(peers) == 0 {
+		return []doctorCheck{{Area: "sam", Name: label, Status: doctorSkip, Detail: "no other MobilityPool members to monitor"}}
+	}
+	federationStore, ok := r.store.(routerstate.FederationEventStore)
+	if !ok {
+		return []doctorCheck{{Area: "sam", Name: label, Status: doctorWarn, Detail: "state backend does not expose federation events"}}
+	}
+	now := doctorNow().UTC()
+	events, err := federationStore.ListFederationEvents(groupRef, false, now.Unix())
+	if err != nil {
+		return []doctorCheck{{Area: "sam", Name: label, Status: doctorFail, Detail: err.Error(), Remedy: "check state backend and retry"}}
+	}
+	seenByPeer := map[string]bool{}
+	seenTotal := 0
+	for _, ev := range events {
+		source := strings.TrimSpace(ev.SourceNode)
+		if source == "" || source == selfNode || !peers[source] {
+			continue
+		}
+		t := strings.TrimSpace(ev.Type)
+		if t != doctorObservedEventType && t != doctorExpiredEventType {
+			continue
+		}
+		if strings.TrimSpace(ev.Payload["source"]) != doctorFederationSourceProviderOwner {
+			continue
+		}
+		if strings.TrimSpace(ev.Payload["pool"]) != pool {
+			continue
+		}
+		timeKey := ev.ObservedAt
+		if timeKey.IsZero() {
+			timeKey = now
+		}
+		if now.Sub(timeKey) > 15*time.Minute {
+			continue
+		}
+		seenByPeer[source] = true
+		seenTotal++
+	}
+	if seenTotal == 0 {
+		if ok, detail := doctorSAMOwnershipTableCoversFederation(status); ok {
+			return []doctorCheck{{Area: "sam", Name: label, Status: doctorPass, Detail: detail}}
+		}
+		missing := make([]string, 0, len(peers))
+		for node := range peers {
+			missing = append(missing, node)
+		}
+		sort.Strings(missing)
+		return []doctorCheck{{Area: "sam", Name: label, Status: doctorWarn, Detail: "no recent provider-discovery events for: " + strings.Join(missing, ",") + ", from peers"}}
+	}
+	missing := make([]string, 0, len(peers)-len(seenByPeer))
+	for node := range peers {
+		if !seenByPeer[node] {
+			missing = append(missing, node)
+		}
+	}
+	if len(missing) == 0 {
+		return []doctorCheck{{Area: "sam", Name: label, Status: doctorPass, Detail: fmt.Sprintf("received provider-discovery updates from %d peer(s)", len(peers))}}
+	}
+	if ok, detail := doctorSAMOwnershipTableCoversFederation(status); ok {
+		sort.Strings(missing)
+		return []doctorCheck{{Area: "sam", Name: label, Status: doctorPass, Detail: detail + "; stale/missing event peers=" + strings.Join(missing, ",")}}
+	}
+	sort.Strings(missing)
+	return []doctorCheck{{Area: "sam", Name: label, Status: doctorWarn, Detail: "stale/missing provider-discovery updates from: " + strings.Join(missing, ",")}}
+}
+
+func doctorSAMOwnershipTableCoversFederation(status map[string]any) (bool, string) {
+	if !strings.EqualFold(stringStatus(status, "ownershipResolverPhase"), "Resolved") {
+		return false, ""
+	}
+	if !boolStatus(status, "bgpRIBObserved") {
+		return false, ""
+	}
+	rows, ok := status["ownershipResolverOwnerTable"].([]any)
+	if !ok {
+		if typed, typedOK := status["ownershipResolverOwnerTable"].([]map[string]any); typedOK {
+			rows = make([]any, 0, len(typed))
+			for _, row := range typed {
+				rows = append(rows, row)
+			}
+		}
+	}
+	if len(rows) == 0 {
+		return false, ""
+	}
+	ready := 0
+	for _, raw := range rows {
+		row, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		state := stringStatus(row, "state")
+		if state == "" || strings.EqualFold(state, "OK") || strings.EqualFold(state, "Resolved") {
+			ready++
+		}
+	}
+	if ready == 0 {
+		return false, ""
+	}
+	return true, fmt.Sprintf("ownership resolver is using BGP/provider owner table (%d ready row(s)); provider-discovery event freshness is advisory", ready)
+}
+
+func boolStatus(status map[string]any, key string) bool {
+	switch value := status[key].(type) {
+	case bool:
+		return value
+	case string:
+		return strings.EqualFold(strings.TrimSpace(value), "true")
+	default:
+		return strings.EqualFold(strings.TrimSpace(fmt.Sprint(value)), "true")
+	}
+}
+
+func doctorSAMEventGroupSpec(router *api.Router, group string) (api.EventGroupSpec, bool, error) {
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "EventGroup" || strings.TrimSpace(res.Metadata.Name) != strings.TrimSpace(group) {
+			continue
+		}
+		spec, err := res.EventGroupSpec()
+		if err != nil {
+			return api.EventGroupSpec{}, false, err
+		}
+		return spec, true, nil
+	}
+	return api.EventGroupSpec{}, false, nil
+}
+
+func doctorSAMOwnershipConflictCheck(pool string, status map[string]any) doctorCheck {
+	label := "MobilityPool/" + pool + " ownership conflicts"
+	if strings.EqualFold(stringStatus(status, "ownershipResolverPhase"), "Conflict") || statusInt(status["ownershipResolverConflictCount"]) > 0 {
+		conflicts := statusMaps(status["ownershipResolverConflicts"])
+		count := statusInt(status["ownershipResolverConflictCount"])
+		if len(conflicts) > count {
+			count = len(conflicts)
+		}
+		detail := fmt.Sprintf("%d ownership conflict(s)", count)
+		if len(conflicts) > 0 {
+			detail = appendDoctorDetail(detail, doctorSAMOwnerRowsSummary(conflicts, 3))
+		} else if reason := stringStatus(status, "ownershipResolverReason"); reason != "" {
+			detail = appendDoctorDetail(detail, reason)
+		}
+		return doctorCheck{
+			Area:   "sam",
+			Name:   label,
+			Status: doctorFail,
+			Detail: detail,
+			Remedy: "fix duplicate /32 ownership before applying provider capture actions; inspect ownershipResolverOwnerTable",
+		}
+	}
+	if len(status) == 0 {
+		return doctorCheck{Area: "sam", Name: label, Status: doctorSkip, Detail: "MobilityPool status unavailable"}
+	}
+	return doctorCheck{Area: "sam", Name: label, Status: doctorPass, Detail: "no ownership conflicts"}
+}
+
+func (r doctorRunner) doctorSAMOwnerTableRouteChecks(pool string, status map[string]any) []doctorCheck {
+	label := "MobilityPool/" + pool + " owner-table route drift"
+	rows := statusMaps(status["ownershipResolverOwnerTable"])
+	if len(rows) == 0 {
+		return []doctorCheck{{Area: "sam", Name: label, Status: doctorSkip, Detail: "ownershipResolverOwnerTable unavailable"}}
+	}
+	if !r.opts.Host {
+		return []doctorCheck{doctorHostSkipped("sam", label)}
+	}
+	var checks []doctorCheck
+	ctx := context.Background()
+	snapshotCommand := doctorRunDiagnosticCommand(ctx, "ip -4 route show table main", "ip", "-4", "route", "show", "table", "main")
+	actualRoutes := parseDoctorIPv4MainRoutes(snapshotCommand.Stdout)
+	if !snapshotCommand.OK {
+		checks = append(checks, doctorCheck{Area: "sam", Name: label + " actual FIB snapshot", Status: doctorWarn, Detail: firstNonEmpty(snapshotCommand.Error, oneLine(snapshotCommand.Output), "main table route snapshot unavailable"), Remedy: "inspect ip -4 route show table main"})
+	}
+	for _, row := range rows {
+		address := strings.TrimSpace(fmt.Sprint(row["address"]))
+		if address == "" || !doctorSAMOwnerRowNeedsLocalFIB(row) {
+			continue
+		}
+		ip := strings.TrimSuffix(address, "/32")
+		if ip == "" || strings.Contains(ip, "/") {
+			continue
+		}
+		name := label + " " + address
+		actual := actualRoutes[normalizeDoctorIPv4RoutePrefix(address)]
+		command := doctorRunDiagnosticCommand(ctx, "ip route get "+ip, "ip", "-4", "route", "get", ip)
+		if !command.OK {
+			if badLine := doctorSAMForbiddenLocalOwnerRoute(actual); badLine != "" {
+				checks = append(checks, doctorCheck{Area: "sam", Name: name, Status: doctorFail, Detail: appendDoctorDetail("expected local/provider-owned route, actual "+badLine, "actual FIB snapshot has stale BGP/SAM route and route get failed"), Remedy: "reconcile routerd and remove stale remote /32 FIB state; expected local/cloud route to win"})
+				continue
+			}
+			checks = append(checks, doctorCheck{Area: "sam", Name: name, Status: doctorWarn, Detail: firstNonEmpty(command.Error, oneLine(command.Output), "route lookup failed"), Remedy: "inspect Linux route selection for local owned address"})
+			continue
+		}
+		out := oneLine(command.Stdout)
+		if strings.Contains(out, " dev sam") || strings.Contains(out, " dev wg-") || strings.Contains(out, " dev ipip") {
+			checks = append(checks, doctorCheck{Area: "sam", Name: name, Status: doctorFail, Detail: appendDoctorDetail(out, "expected local/provider-owned route, route get selects SAM/overlay device"), Remedy: "reconcile routerd and remove stale remote /32 FIB state; expected local/cloud route to win"})
+			continue
+		}
+		detail := out
+		if len(actual) > 0 {
+			detail = appendDoctorDetail(detail, "actual="+strings.Join(actual, " | "))
+		}
+		checks = append(checks, doctorCheck{Area: "sam", Name: name, Status: doctorPass, Detail: detail})
+	}
+	if len(checks) == 0 {
+		return []doctorCheck{{Area: "sam", Name: label, Status: doctorSkip, Detail: "no local owner rows"}}
+	}
+	return checks
+}
+
+func doctorSAMOwnerRowNeedsLocalFIB(row map[string]any) bool {
+	if strings.TrimSpace(fmt.Sprint(row["localNode"])) == "" {
+		return false
+	}
+	if state := strings.TrimSpace(fmt.Sprint(row["state"])); state != "" && state != "OK" {
+		return false
+	}
+	switch strings.TrimSpace(fmt.Sprint(row["class"])) {
+	case "LocalHomeOwned", "LocalRouterSelf", "StaticOwned", "StaticHandover":
+		return true
+	default:
+		return false
+	}
+}
+
+func parseDoctorIPv4MainRoutes(output string) map[string][]string {
+	out := map[string][]string{}
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) == 0 || fields[0] == "default" {
+			continue
+		}
+		prefix := normalizeDoctorIPv4RoutePrefix(fields[0])
+		if prefix == "" {
+			continue
+		}
+		out[prefix] = append(out[prefix], line)
+	}
+	return out
+}
+
+func normalizeDoctorIPv4RoutePrefix(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if prefix, err := netip.ParsePrefix(value); err == nil && prefix.Addr().Is4() {
+		return prefix.Masked().String()
+	}
+	if addr, err := netip.ParseAddr(value); err == nil && addr.Is4() {
+		return netip.PrefixFrom(addr, 32).String()
+	}
+	return ""
+}
+
+func doctorSAMForbiddenLocalOwnerRoute(lines []string) string {
+	for _, line := range lines {
+		if strings.Contains(line, " proto bgp") ||
+			strings.Contains(line, " dev sam") ||
+			strings.Contains(line, " dev wg-") ||
+			strings.Contains(line, " dev ipip") {
+			return line
+		}
+	}
+	return ""
+}
+
+func doctorSAMOwnerRowsSummary(rows []map[string]any, limit int) string {
+	if limit <= 0 || limit > len(rows) {
+		limit = len(rows)
+	}
+	var parts []string
+	for _, row := range rows[:limit] {
+		address := strings.TrimSpace(fmt.Sprint(row["address"]))
+		owner := firstNonEmpty(strings.TrimSpace(fmt.Sprint(row["homeOwnerNode"])), strings.TrimSpace(fmt.Sprint(row["ownerNode"])))
+		local := firstNonEmpty(strings.TrimSpace(fmt.Sprint(row["localNodeRef"])), strings.TrimSpace(fmt.Sprint(row["localNode"])))
+		reason := strings.TrimSpace(fmt.Sprint(row["conflictReason"]))
+		item := address
+		if owner != "" || local != "" {
+			item += " owner=" + owner + " local=" + local
+		}
+		if reason != "" {
+			item += " reason=" + reason
+		}
+		parts = append(parts, strings.TrimSpace(item))
+	}
+	if len(rows) > limit {
+		parts = append(parts, fmt.Sprintf("+%d more", len(rows)-limit))
+	}
+	return strings.Join(parts, "; ")
 }
 
 func (r doctorRunner) doctorHybrid() []doctorCheck {
@@ -1780,11 +2330,69 @@ func (r doctorRunner) doctorDisk() []doctorCheck {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), r.opts.Timeout)
 	defer cancel()
+	checks := []doctorCheck{doctorTempDirPermissionsCheck(ctx)}
 	command := runDiagnosticCommand(ctx, "df routerd runtime", "df", "-Pk", "/var/lib/routerd", "/run/routerd")
 	if !command.OK {
-		return []doctorCheck{{Area: "disk", Name: command.Name, Status: doctorWarn, Detail: firstNonEmpty(command.Error, command.Output), Remedy: "check routerd runtime and state paths"}}
+		return append(checks, doctorCheck{Area: "disk", Name: command.Name, Status: doctorWarn, Detail: firstNonEmpty(command.Error, command.Output), Remedy: "check routerd runtime and state paths"})
 	}
-	return doctorDFChecks(command.Output)
+	return append(checks, doctorDFChecks(command.Output)...)
+}
+
+func doctorTempDirPermissionsCheck(ctx context.Context) doctorCheck {
+	if doctorCurrentOS() != platform.OSLinux {
+		return doctorCheck{Area: "disk", Name: "temporary directory permissions", Status: doctorSkip, Detail: "Linux host check not available on this OS"}
+	}
+	command := doctorRunDiagnosticCommand(ctx, "stat temporary directories", "env", "LC_ALL=C", "stat", "-c", "%a|%u|%g|%A|%F|%n", "/tmp", "/var/tmp")
+	if !command.OK {
+		return doctorCheck{Area: "disk", Name: command.Name, Status: doctorWarn, Detail: firstNonEmpty(command.Error, command.Output), Remedy: "inspect /tmp and /var/tmp permissions manually"}
+	}
+	type expectedTempDir struct {
+		mode string
+		uid  string
+		gid  string
+		typ  string
+	}
+	expected := map[string]expectedTempDir{
+		"/tmp":     {mode: "1777", uid: "0", gid: "0", typ: "directory"},
+		"/var/tmp": {mode: "1777", uid: "0", gid: "0", typ: "directory"},
+	}
+	seen := map[string]bool{}
+	var problems []string
+	for _, line := range strings.Split(strings.TrimSpace(command.Stdout), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, "|", 6)
+		if len(parts) != 6 {
+			problems = append(problems, "unparseable stat output: "+line)
+			continue
+		}
+		path := parts[5]
+		want, ok := expected[path]
+		if !ok {
+			continue
+		}
+		seen[path] = true
+		if parts[0] != want.mode || parts[1] != want.uid || parts[2] != want.gid || parts[4] != want.typ {
+			problems = append(problems, fmt.Sprintf("%s mode=%s uid=%s gid=%s type=%s perms=%s want mode=%s uid=%s gid=%s type=%s", path, parts[0], parts[1], parts[2], parts[4], parts[3], want.mode, want.uid, want.gid, want.typ))
+		}
+	}
+	for path := range expected {
+		if !seen[path] {
+			problems = append(problems, path+" missing from stat output")
+		}
+	}
+	if len(problems) > 0 {
+		return doctorCheck{
+			Area:   "disk",
+			Name:   "temporary directory permissions",
+			Status: doctorFail,
+			Detail: strings.Join(problems, "; "),
+			Remedy: "identify the process that changed temporary directory ownership or mode before repairing it; /tmp and /var/tmp should be root:root 1777 sticky directories",
+		}
+	}
+	return doctorCheck{Area: "disk", Name: "temporary directory permissions", Status: doctorPass, Detail: "/tmp and /var/tmp are root:root 1777 sticky directories"}
 }
 
 func (r doctorRunner) doctorMgmt() []doctorCheck {

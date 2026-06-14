@@ -103,9 +103,11 @@ present, so WireGuard listen ports must use a different value. The Tailscale
 how-to covers the full setup flow.
 
 `WireGuardInterface` accepts `privateKeyFile` so the private key can stay out of
-the router YAML. `WireGuardPeer` also accepts `presharedKeyFile` for optional
-peer PSKs; inline key fields are intended for examples and tests. On FreeBSD,
-routerd renders an rc.d service that creates the
+the router YAML. If the file is absent, non-dry-run apply generates it with mode
+`0600` and never overwrites an existing non-empty key. `WireGuardPeer` also
+accepts `presharedKeyFile` for optional peer PSKs; inline key fields are
+intended for examples and tests. On FreeBSD, routerd renders an rc.d service
+that creates the
 `wg` interface, loads the key from that file, applies peers, and then assigns
 declared static addresses for the WireGuard interface.
 `WireGuardInterface.spec.peersFrom` references `SAMNodeSet/<name>` and derives
@@ -626,7 +628,7 @@ and fields outside the target kind's `provides` set.
 | `LogSink` | `phase` (string), `type` (string) |
 | `ManagementAccess` | `interfaces` (stringList), `phase` (string) |
 | `MobilityMemberSet` | `memberCount` (int) |
-| `MobilityPool` | `dynamicSource` (string), `generatedActions` (int), `generatedBGPPaths` (int), `generatedBGPTraps` (int), `groupRef` (string), `memberSet` (object), `membersFrom` (objectList), `pendingSources` (stringList), `placementActive` (bool), `placementActiveNode` (string), `placementGroup` (string), `plannerPhase` (string), `plannerReason` (string), `prefix` (string), `resolvedMemberCount` (int), `deliveryMode` (string), `discoverySelfPrivateIPs` (stringList) |
+| `MobilityPool` | `dynamicSource` (string), `generatedActions` (int), `generatedBGPPaths` (int), `generatedBGPTraps` (int), `groupRef` (string), `memberSet` (object), `membersFrom` (objectList), `pendingSources` (stringList), `placementActive` (bool), `placementActiveNode` (string), `placementGroup` (string), `plannerPhase` (string), `plannerReason` (string), `prefix` (string), `resolvedMemberCount` (int), `deliveryMode` (string), `discoverySelfPrivateIPs` (stringList), `ownershipResolverPhase` (string), `ownershipResolverReason` (string), `ownershipResolverConflictCount` (int), `ownershipResolverConflicts` (objectList), `ownershipResolverOwnerTable` (objectList) |
 | `SAMNodeSet` | `nodeCount` (int) |
 | `NAT44Rule` | `dryRun` (bool), `egressInterface` (string), `phase` (string), `snatAddress` (string) |
 | `NAT44SessionSync` | `deleteFailed` (int), `deleteOK` (int), `dryRun` (bool), `insertFailed` (int), `insertOK` (int), `mode` (string), `phase` (string), `sessionCount` (int), `snatAddresses` (stringList), `syncedAt` (timestamp), `targetCount` (int), `targets` (objectList) |
@@ -652,7 +654,7 @@ and fields outside the target kind's `provides` set.
 | `VXLANTunnel` | `ifname` (string), `phase` (string), `vni` (int) |
 | `VirtualAddress` | `address` (string), `dryRun` (bool), `hostname` (string), `ifname` (string), `phase` (string), `priority` (int), `role` (string), `virtualRouterID` (int) |
 | `WebConsole` | `listenAddress` (string), `phase` (string), `port` (int) |
-| `WireGuardInterface` | `fwmark` (int), `listenPort` (int), `peerCount` (int), `peersFrom` (objectList), `pendingSources` (stringList), `phase` (string), `publicKey` (string), `selfNodeRef` (string) |
+| `WireGuardInterface` | `fwmark` (int), `hostFirewall` (object), `listenPort` (int), `peerCount` (int), `peersFrom` (objectList), `pendingSources` (stringList), `phase` (string), `publicKey` (string), `selfNodeRef` (string) |
 | `WireGuardPeer` | `handshakeAgeSeconds` (int), `latestEndpoint` (string), `latestHandshake` (timestamp), `phase` (string), `transferRxBytes` (int), `transferTxBytes` (int) |
 
 ## Firewall

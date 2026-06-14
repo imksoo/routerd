@@ -43,7 +43,9 @@ func (r mobilityMemberResolver) resolve(ctx context.Context, spec api.MobilityPo
 	addMember := func(member api.MobilityPoolMember) {
 		nodeRef := strings.TrimSpace(member.NodeRef)
 		if existing, ok := indexByNode[nodeRef]; ok {
-			members[existing] = member
+			merged := mergeMobilityPoolMembers(members[existing], member)
+			merged.StaticOwnedAddresses = mergeStringSet(members[existing].StaticOwnedAddresses, member.StaticOwnedAddresses)
+			members[existing] = merged
 			return
 		}
 		indexByNode[nodeRef] = len(members)
@@ -143,6 +145,121 @@ func mobilityPoolMemberFromSetMember(member api.MobilityMemberSetMember) api.Mob
 		Placement:            member.Placement,
 		Maintenance:          member.Maintenance,
 	}
+}
+
+func mergeMobilityPoolMembers(base, patch api.MobilityPoolMember) api.MobilityPoolMember {
+	out := base
+	if value := strings.TrimSpace(patch.NodeRef); value != "" {
+		out.NodeRef = value
+	}
+	if value := strings.TrimSpace(patch.Site); value != "" {
+		out.Site = value
+	}
+	if value := strings.TrimSpace(patch.Role); value != "" {
+		out.Role = value
+	}
+	if value := strings.TrimSpace(patch.ProfileRef); value != "" {
+		out.ProfileRef = value
+	}
+	out.Capture = mergeMobilityMemberCapture(base.Capture, patch.Capture)
+	if strings.TrimSpace(patch.Delivery.PeerRef) != "" || strings.TrimSpace(patch.Delivery.Mode) != "" || strings.TrimSpace(patch.Delivery.TunnelInterface) != "" {
+		out.Delivery = api.MobilityMemberDelivery{
+			PeerRef:         strings.TrimSpace(firstNonEmpty(patch.Delivery.PeerRef, out.Delivery.PeerRef)),
+			Mode:            strings.TrimSpace(firstNonEmpty(patch.Delivery.Mode, out.Delivery.Mode)),
+			TunnelInterface: strings.TrimSpace(firstNonEmpty(patch.Delivery.TunnelInterface, out.Delivery.TunnelInterface)),
+		}
+	}
+	if len(patch.DeliveryTo) > 0 {
+		out.DeliveryTo = append([]api.MobilityMemberDeliveryTarget(nil), patch.DeliveryTo...)
+	}
+	if value := strings.TrimSpace(patch.OwnershipDiscovery.Mode); value != "" {
+		out.OwnershipDiscovery.Mode = value
+	}
+	if value := strings.TrimSpace(patch.OwnershipDiscovery.ProviderRef); value != "" {
+		out.OwnershipDiscovery.ProviderRef = value
+	}
+	if value := strings.TrimSpace(patch.OwnershipDiscovery.PluginRef); value != "" {
+		out.OwnershipDiscovery.PluginRef = value
+	}
+	if value := strings.TrimSpace(patch.OwnershipDiscovery.SubnetRef); value != "" {
+		out.OwnershipDiscovery.SubnetRef = value
+	}
+	if value := strings.TrimSpace(patch.OwnershipDiscovery.SubnetRefFrom); value != "" {
+		out.OwnershipDiscovery.SubnetRefFrom = value
+	}
+	if value := strings.TrimSpace(patch.OwnershipDiscovery.ScanInterval); value != "" {
+		out.OwnershipDiscovery.ScanInterval = value
+	}
+	if value := strings.TrimSpace(patch.OwnershipDiscovery.LeaseTTL); value != "" {
+		out.OwnershipDiscovery.LeaseTTL = value
+	}
+	if value := strings.TrimSpace(patch.Placement.Group); value != "" {
+		out.Placement.Group = value
+	}
+	if patch.Placement.Priority != 0 {
+		out.Placement.Priority = patch.Placement.Priority
+	}
+	if patch.Maintenance.Drain {
+		out.Maintenance.Drain = true
+	}
+	return out
+}
+
+func mergeMobilityMemberCapture(base, patch api.MobilityMemberCapture) api.MobilityMemberCapture {
+	out := base
+	if value := strings.TrimSpace(patch.Type); value != "" {
+		out.Type = value
+	}
+	if value := strings.TrimSpace(patch.ProviderRef); value != "" {
+		out.ProviderRef = value
+	}
+	if value := strings.TrimSpace(patch.ProviderMode); value != "" {
+		out.ProviderMode = value
+	}
+	if value := firstNonEmpty(strings.TrimSpace(patch.CaptureStrategy), strings.TrimSpace(patch.Strategy)); value != "" {
+		out.CaptureStrategy = value
+		out.Strategy = value
+	}
+	if value := strings.TrimSpace(patch.NICRef); value != "" {
+		out.NICRef = value
+	}
+	if value := strings.TrimSpace(patch.Interface); value != "" {
+		out.Interface = value
+	}
+	if value := strings.TrimSpace(patch.SourceAddress); value != "" {
+		out.SourceAddress = value
+	}
+	if strings.TrimSpace(patch.SourceAddressFrom.Resource) != "" {
+		out.SourceAddressFrom = patch.SourceAddressFrom
+		out.SourceAddressFrom.Resource = strings.TrimSpace(patch.SourceAddressFrom.Resource)
+		out.SourceAddressFrom.Field = strings.TrimSpace(patch.SourceAddressFrom.Field)
+	}
+	if strings.TrimSpace(patch.SourceAddressFrom.Field) != "" {
+		out.SourceAddressFrom.Field = strings.TrimSpace(patch.SourceAddressFrom.Field)
+	}
+	if patch.SourceAddressFrom.Optional {
+		out.SourceAddressFrom.Optional = true
+	}
+	if patch.ConfigureOSAddress {
+		out.ConfigureOSAddress = true
+	}
+	if patch.GratuitousARP {
+		out.GratuitousARP = true
+	}
+	if value := strings.TrimSpace(patch.ActiveWhen.Type); value != "" {
+		out.ActiveWhen.Type = value
+	}
+	if value := strings.TrimSpace(patch.ActiveWhen.VirtualAddressRef); value != "" {
+		out.ActiveWhen.VirtualAddressRef = value
+	}
+	out.ExcludeAddresses = mergeStringSet(out.ExcludeAddresses, patch.ExcludeAddresses)
+	if patch.Target != nil {
+		out.Target = mergeStringMaps(out.Target, patch.Target)
+	}
+	if patch.TargetFrom != nil {
+		out.TargetFrom = mergeStringMaps(out.TargetFrom, patch.TargetFrom)
+	}
+	return out
 }
 
 func mobilityMemberSetMemberFromPoolMember(member api.MobilityPoolMember) api.MobilityMemberSetMember {

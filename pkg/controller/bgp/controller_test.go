@@ -36,6 +36,18 @@ func (s mapStore) ObjectStatus(apiVersion, kind, name string) map[string]any {
 	return map[string]any{}
 }
 
+func mobilityOwnerStore(rows ...map[string]any) mapStore {
+	values := make([]any, 0, len(rows))
+	for _, row := range rows {
+		values = append(values, row)
+	}
+	return mapStore{
+		api.MobilityAPIVersion + "/MobilityPool/cloudedge": {
+			"ownershipResolverFIBVerdicts": values,
+		},
+	}
+}
+
 type testGoBGPServer struct {
 	*gobgpserver.BgpServer
 	applied bgpdaemon.AppliedConfig
@@ -710,6 +722,30 @@ func TestReconcileAppliesPeerExportPoliciesWithUniqueStatements(t *testing.T) {
 	}
 }
 
+func TestApplyRouterBGPDefaultsExportsImportAllowedPrefixesToRouteReflectorClients(t *testing.T) {
+	peers := map[string]desiredPeer{
+		"10.255.70.4": {
+			Address:              "10.255.70.4",
+			RouteReflectorClient: true,
+		},
+		"10.255.70.5": {
+			Address: "10.255.70.5",
+		},
+	}
+	routerSpec := api.BGPRouterSpec{
+		ImportPolicy: api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.77.60.0/24"}},
+	}
+
+	got := applyRouterBGPDefaults("mobility-bgp", routerSpec, peers, []string{"10.99.70.1/32"}, []string{"10.77.60.10/32"})
+
+	if prefixes := got["10.255.70.4"].ExportPolicy.AllowedPrefixes; !sameStringSet(prefixes, []string{"10.77.60.0/24", "10.77.60.10/32", "10.99.70.1/32"}) {
+		t.Fatalf("route reflector client export prefixes = %#v, want reflected import allowance plus local exports", prefixes)
+	}
+	if prefixes := got["10.255.70.5"].ExportPolicy.AllowedPrefixes; !sameStringSet(prefixes, []string{"10.77.60.10/32", "10.99.70.1/32"}) {
+		t.Fatalf("regular peer export prefixes = %#v, want only local exports", prefixes)
+	}
+}
+
 func TestReconcileSoftResetsChangedPeerExportPolicy(t *testing.T) {
 	router := bgpRouterWithImportPrefixes()
 	peerResource := router.Spec.Resources[1]
@@ -1046,7 +1082,9 @@ func TestReconcileAddsMobilityPreferredSourceForLocalStaticOwnedAddress(t *testi
 		testDestination("10.77.60.11/32", "10.99.0.2"),
 	}}
 	fib := &fakeFIB{guardPreferredSource: true, localPreferredSources: map[string]bool{"10.77.60.10": true}}
-	controller := Controller{Router: router, Store: mapStore{}, Server: server, FIB: fib}
+	controller := Controller{Router: router, Store: mobilityOwnerStore(
+		map[string]any{"address": "10.77.60.11/32", "action": "deliver-remote", "ownerNode": "aws-router"},
+	), Server: server, FIB: fib}
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
@@ -1067,7 +1105,9 @@ func TestReconcileSkipsMobilityPreferredSourceWhenLocalAddressMissing(t *testing
 		testDestination("10.77.60.11/32", "10.99.0.2"),
 	}}
 	fib := &fakeFIB{guardPreferredSource: true, localPreferredSources: map[string]bool{}}
-	controller := Controller{Router: router, Store: mapStore{}, Server: server, FIB: fib}
+	controller := Controller{Router: router, Store: mobilityOwnerStore(
+		map[string]any{"address": "10.77.60.11/32", "action": "deliver-remote", "ownerNode": "aws-router"},
+	), Server: server, FIB: fib}
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
@@ -1093,7 +1133,9 @@ func TestReconcileDoesNotAddMobilityPreferredSourceForCloudNonOwner(t *testing.T
 		testDestination("10.77.60.10/32", "10.99.0.1"),
 	}}
 	fib := &fakeFIB{guardPreferredSource: true, localPreferredSources: map[string]bool{"10.77.60.11": true}}
-	controller := Controller{Router: router, Store: mapStore{}, Server: server, FIB: fib}
+	controller := Controller{Router: router, Store: mobilityOwnerStore(
+		map[string]any{"address": "10.77.60.10/32", "action": "deliver-remote", "ownerNode": "onprem-router"},
+	), Server: server, FIB: fib}
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
@@ -1212,7 +1254,7 @@ func TestWatchEventReconnectsAfterStreamError(t *testing.T) {
 	}
 }
 
-func TestWatchEventSkipsDuplicateFIBApplyAndPollFallbackStillWorks(t *testing.T) {
+func TestWatchEventReappliesFIBSoKernelDriftCanRecover(t *testing.T) {
 	server := &fakeServer{
 		routes:        []*gobgpapi.Destination{testDestination("10.77.60.11/32", "10.99.0.11")},
 		watchSessions: make(chan watchSession, 1),
@@ -1231,14 +1273,14 @@ func TestWatchEventSkipsDuplicateFIBApplyAndPollFallbackStillWorks(t *testing.T)
 	if err := controller.watchBestPathEvents(context.Background()); err != nil {
 		t.Fatalf("watch event: %v", err)
 	}
-	if fib.calls() != 1 {
-		t.Fatalf("FIB calls after duplicate watch event = %d, want unchanged", fib.calls())
+	if fib.calls() != 2 {
+		t.Fatalf("FIB calls after duplicate watch event = %d, want reapply", fib.calls())
 	}
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("poll reconcile duplicate: %v", err)
 	}
-	if fib.calls() != 1 {
-		t.Fatalf("FIB calls after duplicate poll = %d, want unchanged", fib.calls())
+	if fib.calls() != 3 {
+		t.Fatalf("FIB calls after duplicate poll = %d, want reapply", fib.calls())
 	}
 	server.routes = []*gobgpapi.Destination{testDestination("10.77.60.11/32", "10.99.0.14")}
 	if err := controller.Reconcile(context.Background()); err != nil {
@@ -1248,8 +1290,8 @@ func TestWatchEventSkipsDuplicateFIBApplyAndPollFallbackStillWorks(t *testing.T)
 	if !reflect.DeepEqual(fib.lastRoutes(), want) {
 		t.Fatalf("FIB routes after poll fallback = %#v, want %#v", fib.lastRoutes(), want)
 	}
-	if fib.calls() != 2 {
-		t.Fatalf("FIB calls after poll fallback = %d, want 2", fib.calls())
+	if fib.calls() != 4 {
+		t.Fatalf("FIB calls after poll fallback = %d, want 4", fib.calls())
 	}
 }
 
@@ -1451,6 +1493,85 @@ func TestReconcileReportsFIBSyncFailure(t *testing.T) {
 	}
 }
 
+func TestReconcileSuppressesLocalMobilityPrivateIPFromFIB(t *testing.T) {
+	router := bgpRouterWithImportPrefixes("10.77.60.0/24")
+	router.Spec.Resources = append(router.Spec.Resources, bgpMobilityPreferredSourceResources("aws-router")...)
+	store := mapStore{
+		api.MobilityAPIVersion + "/MobilityPool/cloudedge": {
+			"discoverySelfPrivateIPs": []any{"10.77.60.4/32"},
+			"ownershipResolverFIBVerdicts": []any{
+				map[string]any{
+					"address":   "10.77.60.4/32",
+					"action":    "local-route",
+					"ownerNode": "aws-router",
+				},
+				map[string]any{
+					"address":   "10.77.60.11/32",
+					"action":    "deliver-remote",
+					"ownerNode": "aws-router-b",
+				},
+			},
+		},
+	}
+	fib := &fakeFIB{}
+	controller := Controller{
+		Router: router,
+		Store:  store,
+		Server: &fakeServer{routes: []*gobgpapi.Destination{
+			testDestination("10.77.60.4/32", "10.255.0.41"),
+			testDestination("10.77.60.11/32", "10.255.0.41"),
+		}},
+		FIB: fib,
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	routes := fib.lastRoutes()
+	if len(routes) != 1 || routes[0].Prefix != "10.77.60.11/32" {
+		t.Fatalf("FIB routes = %#v, want only remote 10.77.60.11/32", routes)
+	}
+}
+
+func TestReconcileSuppressesConflictLocalProviderEvidenceFromFIB(t *testing.T) {
+	router := bgpRouterWithImportPrefixes("10.77.60.0/24")
+	router.Spec.Resources = append(router.Spec.Resources, bgpMobilityPreferredSourceResources("aws-router-a")...)
+	store := mapStore{
+		api.MobilityAPIVersion + "/MobilityPool/cloudedge": {
+			"ownershipResolverFIBVerdicts": []any{
+				map[string]any{
+					"address":        "10.77.60.11/32",
+					"action":         "local-route",
+					"conflictReason": "remote-home-owner-overlaps-local-ownership-event",
+					"ownerNode":      "aws-router-b",
+					"localNode":      "aws-router-a",
+				},
+				map[string]any{
+					"address":   "10.77.60.12/32",
+					"action":    "deliver-remote",
+					"ownerNode": "azure-router",
+				},
+			},
+		},
+	}
+	fib := &fakeFIB{}
+	controller := Controller{
+		Router: router,
+		Store:  store,
+		Server: &fakeServer{routes: []*gobgpapi.Destination{
+			testDestination("10.77.60.11/32", "10.255.0.11"),
+			testDestination("10.77.60.12/32", "10.255.0.11"),
+		}},
+		FIB: fib,
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	routes := fib.lastRoutes()
+	if len(routes) != 1 || routes[0].Prefix != "10.77.60.12/32" {
+		t.Fatalf("FIB routes = %#v, want only remote 10.77.60.12/32", routes)
+	}
+}
+
 func TestReconcileBFDObservationNeverDeconfiguresPeer(t *testing.T) {
 	router := bgpRouter()
 	peer := router.Spec.Resources[1].Spec.(api.BGPPeerSpec)
@@ -1592,7 +1713,13 @@ func TestReconcileReattachesToLiveDaemonWithoutPeerOrPathChurn(t *testing.T) {
 
 func TestReconcilePreservesMobilityPathsWhenStaticAdvertisementsChange(t *testing.T) {
 	router := bgpRouter()
+	mobilityPath, err := localPath("10.77.60.11/32")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mobilityPath.Uuid = []byte{7}
 	server := &fakeServer{
+		routes: []*gobgpapi.Destination{{Prefix: "10.77.60.11/32", Paths: []*gobgpapi.Path{mobilityPath}}},
 		applied: bgpdaemon.AppliedConfig{
 			Version: bgpdaemon.AppliedVersion,
 			Global:  bgpdaemon.AppliedGlobal{ASN: 64512, RouterID: "10.0.0.1"},
@@ -1617,18 +1744,16 @@ func TestReconcilePreservesMobilityPathsWhenStaticAdvertisementsChange(t *testin
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
-	if len(server.deletedPathUUIDs) != 2 ||
-		!reflect.DeepEqual(server.deletedPathUUIDs[0], []byte{9}) ||
-		!reflect.DeepEqual(server.deletedPathUUIDs[1], []byte{7}) {
-		t.Fatalf("deleted path UUIDs = %#v, want old static and refreshed dynamic", server.deletedPathUUIDs)
+	if len(server.deletedPathUUIDs) != 1 || !reflect.DeepEqual(server.deletedPathUUIDs[0], []byte{9}) {
+		t.Fatalf("deleted path UUIDs = %#v, want old static only", server.deletedPathUUIDs)
 	}
 	pathsByKey := map[string]bgpdaemon.AppliedPath{}
 	for _, path := range server.applied.Paths {
 		pathsByKey[bgpdaemon.AppliedPathKey(path)] = path
 	}
 	mobilityKey := bgpdaemon.AppliedPathKey(bgpdaemon.AppliedPath{Source: "MobilityPool/demo/node/aws-router-a", Prefix: "10.77.60.11/32"})
-	if pathsByKey[mobilityKey].UUID == "" || pathsByKey[mobilityKey].UUID == bgpdaemon.EncodeUUID([]byte{7}) {
-		t.Fatalf("mobility path was not refreshed: %#v", server.applied.Paths)
+	if pathsByKey[mobilityKey].UUID != bgpdaemon.EncodeUUID([]byte{7}) {
+		t.Fatalf("mobility path UUID changed despite live advertisement: %#v", server.applied.Paths)
 	}
 	staticKey := bgpdaemon.AppliedPathKey(bgpdaemon.StaticAppliedPath("10.0.0.0/16", nil))
 	if pathsByKey[staticKey].Source != bgpdaemon.AppliedPathSourceStatic || pathsByKey[staticKey].UUID == "" {
@@ -1650,7 +1775,13 @@ func TestReconcilePreservesMobilityPathsWhenStaticAdvertisementsChange(t *testin
 
 func TestReconcileKeepsUnchangedStaticAdvertisementWithoutReadd(t *testing.T) {
 	router := bgpRouter()
+	mobilityPath, err := localPath("10.77.60.11/32")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mobilityPath.Uuid = []byte{7}
 	server := &fakeServer{
+		routes: []*gobgpapi.Destination{{Prefix: "10.77.60.11/32", Paths: []*gobgpapi.Path{mobilityPath}}},
 		applied: bgpdaemon.AppliedConfig{
 			Version: bgpdaemon.AppliedVersion,
 			Global:  bgpdaemon.AppliedGlobal{ASN: 64512, RouterID: "10.0.0.1"},
@@ -1675,15 +1806,15 @@ func TestReconcileKeepsUnchangedStaticAdvertisementWithoutReadd(t *testing.T) {
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
-	if len(server.deletedPathUUIDs) != 1 || !reflect.DeepEqual(server.deletedPathUUIDs[0], []byte{7}) {
-		t.Fatalf("deleted paths = %#v, want dynamic refresh only", server.deletedPathUUIDs)
+	if len(server.deletedPathUUIDs) != 0 {
+		t.Fatalf("deleted paths = %#v, want no churn for live dynamic advertisement", server.deletedPathUUIDs)
 	}
-	if server.paths != 1 {
-		t.Fatalf("AddPath calls = %d, want dynamic refresh only", server.paths)
+	if server.paths != 0 {
+		t.Fatalf("AddPath calls = %d, want no churn for live dynamic advertisement", server.paths)
 	}
 }
 
-func TestReconcileRefreshesMissingDynamicAdvertisementFromAppliedState(t *testing.T) {
+func TestReconcileLeavesDynamicAdvertisementOwnershipToControlAPI(t *testing.T) {
 	router := bgpRouterWithImportPrefixes("10.250.0.0/24", "10.77.60.11/32")
 	staticPath, err := localPath("10.0.0.0/16")
 	if err != nil {
@@ -1732,19 +1863,19 @@ func TestReconcileRefreshesMissingDynamicAdvertisementFromAppliedState(t *testin
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
-	if len(server.deletedPathUUIDs) != 1 || !reflect.DeepEqual(server.deletedPathUUIDs[0], []byte{7}) {
-		t.Fatalf("deleted paths = %#v, want missing dynamic UUID refresh", server.deletedPathUUIDs)
+	if len(server.deletedPathUUIDs) != 0 {
+		t.Fatalf("deleted paths = %#v, want BGP controller not to churn control-API dynamic paths", server.deletedPathUUIDs)
 	}
-	if server.paths != 1 {
-		t.Fatalf("AddPath calls = %d, want missing dynamic path re-added", server.paths)
+	if server.paths != 0 {
+		t.Fatalf("AddPath calls = %d, want BGP controller not to re-add control-API dynamic paths", server.paths)
 	}
 	pathsByKey := map[string]bgpdaemon.AppliedPath{}
 	for _, path := range server.applied.Paths {
 		pathsByKey[bgpdaemon.AppliedPathKey(path)] = path
 	}
 	key := bgpdaemon.AppliedPathKey(bgpdaemon.AppliedPath{Source: "MobilityPool/demo/node/aws-router-a", Prefix: "10.77.60.11/32"})
-	if pathsByKey[key].UUID == "" || pathsByKey[key].UUID == bgpdaemon.EncodeUUID([]byte{7}) {
-		t.Fatalf("dynamic path UUID was not refreshed: %#v", server.applied.Paths)
+	if pathsByKey[key].UUID != bgpdaemon.EncodeUUID([]byte{7}) {
+		t.Fatalf("dynamic path UUID changed outside control API ownership: %#v", server.applied.Paths)
 	}
 }
 
@@ -1928,13 +2059,13 @@ func TestStatePeerMapsListPeerFields(t *testing.T) {
 	}
 }
 
-func TestBestFIBRoutesBuildsECMPAndSkipsLocalAdvertisements(t *testing.T) {
-	routes := bestFIBRoutes([]bgpstate.Prefix{
+func TestFIBRoutesFromStatePrefixesBuildsECMPAndSkipsLocalAdvertisements(t *testing.T) {
+	routes := fibRoutesFromStatePrefixes([]bgpstate.Prefix{
 		{Prefix: "10.250.0.0/24", NextHop: "192.168.1.53", Best: true, Valid: true},
 		{Prefix: "10.250.0.0/24", NextHop: "192.168.1.38", Best: true, Valid: true},
 		{Prefix: "10.0.0.0/16", NextHop: "0.0.0.0", Best: true, Valid: true},
 		{Prefix: "10.96.0.0/12", NextHop: "192.168.1.57", Best: true, Valid: true},
-	}, []netip.Prefix{netip.MustParsePrefix("10.250.0.0/16")})
+	}, []netip.Prefix{netip.MustParsePrefix("10.250.0.0/16")}, nil)
 	want := []FIBRoute{{Prefix: "10.250.0.0/24", NextHops: []string{"192.168.1.38", "192.168.1.53"}}}
 	if !reflect.DeepEqual(routes, want) {
 		t.Fatalf("routes = %#v, want %#v", routes, want)
@@ -1945,7 +2076,7 @@ func TestFIBRoutesFromDestinationChoosesHigherLocalPref(t *testing.T) {
 	routes := fibRoutesFromDestination(testRankedDestination("10.77.60.12/32",
 		rankedPath{nextHop: "10.99.0.11", localPref: 201, med: 20},
 		rankedPath{nextHop: "10.99.0.12", localPref: 202, med: 10},
-	), []netip.Prefix{netip.MustParsePrefix("10.77.60.0/24")}, nil)
+	), []netip.Prefix{netip.MustParsePrefix("10.77.60.0/24")}, nil, nil)
 	want := []FIBRoute{{Prefix: "10.77.60.12/32", NextHops: []string{"10.99.0.12"}}}
 	if !reflect.DeepEqual(routes, want) {
 		t.Fatalf("routes = %#v, want %#v", routes, want)
@@ -1958,6 +2089,7 @@ func TestFIBRoutesFromDestinationUsesPeerAddressRewriteFromNeighbor(t *testing.T
 		dst,
 		[]netip.Prefix{netip.MustParsePrefix("192.168.123.0/24")},
 		map[string]bool{"10.252.0.1": true},
+		nil,
 	)
 	want := []FIBRoute{{Prefix: "192.168.123.112/32", NextHops: []string{"10.252.0.1"}}}
 	if !reflect.DeepEqual(routes, want) {
@@ -1976,6 +2108,7 @@ func TestFIBRoutesFromDestinationKeepsPeerAddressRewriteMultipath(t *testing.T) 
 		dst,
 		[]netip.Prefix{netip.MustParsePrefix("192.168.123.0/24")},
 		map[string]bool{"10.252.0.1": true, "10.252.0.2": true},
+		nil,
 	)
 	want := []FIBRoute{{Prefix: "192.168.123.112/32", NextHops: []string{"10.252.0.1", "10.252.0.2"}}}
 	if !reflect.DeepEqual(routes, want) {
@@ -1988,6 +2121,7 @@ func TestFIBRoutesFromDestinationCanLeaveReflectedNextHopUnchanged(t *testing.T)
 	routes := fibRoutesFromDestination(
 		dst,
 		[]netip.Prefix{netip.MustParsePrefix("192.168.123.0/24")},
+		nil,
 		nil,
 	)
 	want := []FIBRoute{{Prefix: "192.168.123.112/32", NextHops: []string{"10.252.0.17"}}}

@@ -45,6 +45,7 @@ type CaptureAction struct {
 	ClaimName     string
 	Address       string
 	Interface     string
+	PeerInterface string
 	Key           string
 	Value         string
 	GratuitousARP bool
@@ -188,7 +189,7 @@ func PlanCapture(router *api.Router, targetOS platform.OS) ([]CaptureAction, err
 }
 
 func PlanCaptureWithOptions(router *api.Router, targetOS platform.OS, opts PlanOptions) ([]CaptureAction, error) {
-	if router == nil || !HasRemoteAddressClaims(router) || targetOS != platform.OSLinux {
+	if router == nil || targetOS != platform.OSLinux {
 		return nil, nil
 	}
 	interfaces := map[string]bool{}
@@ -223,8 +224,20 @@ func PlanCaptureWithOptions(router *api.Router, targetOS platform.OS, opts PlanO
 		}
 		addForwarding()
 		if captureType != "proxy-arp" {
-			if captureType == "provider-secondary-ip" && !spec.Capture.ConfigureOSAddress {
-				actions = append(actions, CaptureAction{Kind: "deassign-os-address", ClaimName: resource.Metadata.Name, Address: address})
+			if captureType == "provider-secondary-ip" {
+				bgpDelivery := strings.TrimSpace(spec.Delivery.Mode) == "bgp"
+				if !spec.Capture.ConfigureOSAddress || bgpDelivery {
+					actions = append(actions, CaptureAction{Kind: "deassign-os-address", ClaimName: resource.Metadata.Name, Address: address})
+				}
+				if bgpDelivery {
+					iface := ResolveCaptureInterface(strings.TrimSpace(spec.Capture.Interface), interfaceAliases)
+					if iface == "" {
+						return nil, fmt.Errorf("%s spec.capture.interface is required for provider-secondary-ip BGP forwarding", resource.ID())
+					}
+					for _, tunnelIface := range bgpDeliveryForwardInterfaces(router) {
+						actions = append(actions, CaptureAction{Kind: "forward-path", ClaimName: resource.Metadata.Name, Address: address, Interface: iface, PeerInterface: tunnelIface})
+					}
+				}
 			}
 			continue
 		}
@@ -238,7 +251,70 @@ func PlanCaptureWithOptions(router *api.Router, targetOS platform.OS, opts PlanO
 		}
 		actions = append(actions, CaptureAction{Kind: "proxy-neighbor", ClaimName: resource.Metadata.Name, Address: address, Interface: iface, GratuitousARP: wantsGratuitousARP(spec.Capture)})
 	}
+	for _, action := range localInventoryForwardPathActions(router) {
+		addForwarding()
+		actions = append(actions, action)
+	}
 	return actions, nil
+}
+
+func localInventoryForwardPathActions(router *api.Router) []CaptureAction {
+	if router == nil {
+		return nil
+	}
+	tunnels := bgpDeliveryForwardInterfaces(router)
+	if len(tunnels) == 0 {
+		return nil
+	}
+	var actions []CaptureAction
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "IPv4Route" {
+			continue
+		}
+		if strings.TrimSpace(resource.Metadata.Annotations["mobility.routerd.net/source"]) != "bgp-local-inventory" {
+			continue
+		}
+		if strings.TrimSpace(resource.Metadata.Annotations["mobility.routerd.net/fibClass"]) == "LocalRouterSelf" {
+			continue
+		}
+		spec, err := resource.IPv4RouteSpec()
+		if err != nil {
+			continue
+		}
+		address, err := normalizeClaimAddress(spec.Destination)
+		if err != nil {
+			continue
+		}
+		iface := strings.TrimSpace(spec.Device)
+		if iface == "" {
+			continue
+		}
+		for _, tunnelIface := range tunnels {
+			actions = append(actions, CaptureAction{Kind: "forward-local-path", ClaimName: resource.Metadata.Name, Address: address, Interface: iface, PeerInterface: tunnelIface})
+		}
+	}
+	return actions
+}
+
+func bgpDeliveryForwardInterfaces(router *api.Router) []string {
+	if router == nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.HybridAPIVersion || resource.Kind != "TunnelInterface" {
+			continue
+		}
+		iface := strings.TrimSpace(resource.Metadata.Name)
+		if iface == "" || seen[iface] {
+			continue
+		}
+		seen[iface] = true
+		out = append(out, iface)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func CaptureExcludesAddress(capture api.AddressCapture, address string) bool {

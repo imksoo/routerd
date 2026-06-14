@@ -5,6 +5,8 @@ package chain
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -124,6 +126,110 @@ spec:
 		if !found {
 			t.Fatalf("missing command prefix %q in %#v", want, calls)
 		}
+	}
+}
+
+func TestWireGuardControllerOpensHostFirewallForListenPort(t *testing.T) {
+	router := mustWireGuardRouter(t, `
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata: {name: test}
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardInterface
+      metadata: {name: wg0}
+      spec:
+        privateKey: priv
+        listenPort: 51820
+        mtu: 1420
+`)
+	store := mapStore{}
+	var calls []string
+	controller := WireGuardController{
+		Router: router,
+		Store:  store,
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			call := name + " " + strings.Join(args, " ")
+			calls = append(calls, call)
+			switch call {
+			case "ip link show wg0":
+				return nil, errors.New("missing")
+			case "wg show wg0 dump":
+				return []byte("priv\tifacepub\t51820\toff\n"), nil
+			case "iptables -C INPUT -p udp --dport 51820 -j ACCEPT":
+				return []byte("iptables: Bad rule (does a matching rule exist in that chain?).\n"), errors.New("exit status 1")
+			default:
+				return nil, nil
+			}
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	gotCommands := strings.Join(calls, "\n")
+	for _, want := range []string{
+		"iptables -C INPUT -p udp --dport 51820 -j ACCEPT",
+		"iptables -I INPUT 1 -p udp --dport 51820 -j ACCEPT",
+	} {
+		if !strings.Contains(gotCommands, want) {
+			t.Fatalf("commands missing %q:\n%s", want, gotCommands)
+		}
+	}
+	iface := store.ObjectStatus(api.NetAPIVersion, "WireGuardInterface", "wg0")
+	hostFirewall, ok := iface["hostFirewall"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing hostFirewall status: %#v", iface)
+	}
+	if hostFirewall["phase"] != "Applied" || hostFirewall["chain"] != "INPUT" || hostFirewall["port"] != 51820 {
+		t.Fatalf("hostFirewall = %#v", hostFirewall)
+	}
+}
+
+func TestWireGuardControllerRemovesStaleHostFirewallListenPort(t *testing.T) {
+	router := mustWireGuardRouter(t, `
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata: {name: test}
+spec:
+  resources: []
+`)
+	store := mapStore{
+		api.NetAPIVersion + "/WireGuardInterface/wg0": {
+			"managedBy": "routerd",
+			"interface": "wg0",
+			"hostFirewall": map[string]any{
+				"managedBy": "routerd",
+				"protocol":  "udp",
+				"port":      51820,
+				"chain":     "INPUT",
+				"phase":     "Applied",
+			},
+		},
+	}
+	var calls []string
+	controller := WireGuardController{
+		Router: router,
+		Store:  store,
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			calls = append(calls, name+" "+strings.Join(args, " "))
+			return nil, nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	gotCommands := strings.Join(calls, "\n")
+	for _, want := range []string{
+		"ip link delete dev wg0",
+		"iptables -D INPUT -p udp --dport 51820 -j ACCEPT",
+	} {
+		if !strings.Contains(gotCommands, want) {
+			t.Fatalf("commands missing %q:\n%s", want, gotCommands)
+		}
+	}
+	if _, ok := store[api.NetAPIVersion+"/WireGuardInterface/wg0"]; ok {
+		t.Fatalf("stale status was not deleted: %#v", store)
 	}
 }
 
@@ -305,22 +411,20 @@ spec:
 
 func TestWireGuardControllerSkipsApplyWhenInterfaceMatches(t *testing.T) {
 	t.Run("literal endpoint", func(t *testing.T) {
-		testWireGuardControllerSkipsApplyWhenInterfaceMatches(t, "198.51.100.2:51820", "198.51.100.2:51820", nil)
+		testWireGuardControllerSkipsApplyWhenInterfaceMatches(t, "198.51.100.2:51820", "198.51.100.2:51820")
 	})
 	t.Run("dns endpoint resolved to latest endpoint", func(t *testing.T) {
-		testWireGuardControllerSkipsApplyWhenInterfaceMatches(t, "peer-a.example.test:51820", "198.51.100.2:51820", func(_ context.Context, host string) ([]string, error) {
-			if host != "peer-a.example.test" {
-				t.Fatalf("lookup host = %q, want peer-a.example.test", host)
-			}
-			return []string{"198.51.100.2"}, nil
-		})
+		testWireGuardControllerSkipsApplyWhenInterfaceMatches(t, "peer-a.example.test:51820", "198.51.100.2:51820")
 	})
 	t.Run("configured endpoint without latest handshake endpoint", func(t *testing.T) {
-		testWireGuardControllerSkipsApplyWhenInterfaceMatches(t, "198.51.100.2:51820", "", nil)
+		testWireGuardControllerSkipsApplyWhenInterfaceMatches(t, "198.51.100.2:51820", "")
+	})
+	t.Run("roamed endpoint differs from configured endpoint", func(t *testing.T) {
+		testWireGuardControllerSkipsApplyWhenInterfaceMatches(t, "198.51.100.2:51820", "203.0.113.9:51820")
 	})
 }
 
-func testWireGuardControllerSkipsApplyWhenInterfaceMatches(t *testing.T, desiredEndpoint, observedEndpoint string, lookup func(context.Context, string) ([]string, error)) {
+func testWireGuardControllerSkipsApplyWhenInterfaceMatches(t *testing.T, desiredEndpoint, observedEndpoint string) {
 	t.Helper()
 	router := mustWireGuardRouter(t, `
 apiVersion: routerd.net/v1alpha1
@@ -376,7 +480,6 @@ spec:
 				return nil, nil
 			}
 		},
-		LookupHost: lookup,
 	}
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatal(err)
@@ -677,5 +780,56 @@ spec:
 	status := store.ObjectStatus(api.NetAPIVersion, "WireGuardInterface", "wg0")
 	if status["phase"] != "Pending" || status["reason"] != "PrivateKeyMissing" {
 		t.Fatalf("status = %+v", status)
+	}
+}
+
+func TestWireGuardControllerGeneratesMissingPrivateKeyFileAndPublishesPublicKey(t *testing.T) {
+	keyPath := filepath.Join(t.TempDir(), "secrets", "wg0.key")
+	router := mustWireGuardRouter(t, `
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata: {name: test}
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardInterface
+      metadata: {name: wg0}
+      spec:
+        privateKeyFile: `+keyPath+`
+        listenPort: 51820
+`)
+	store := mapStore{}
+	controller := WireGuardController{
+		Router: router,
+		Store:  store,
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			call := name + " " + strings.Join(args, " ")
+			switch call {
+			case "ip link show wg0":
+				return nil, errors.New("missing")
+			case "wg show wg0 dump":
+				return nil, errors.New("status unavailable")
+			default:
+				return nil, nil
+			}
+		},
+		CommandStdin: func(_ context.Context, _ []byte, _ string, _ ...string) ([]byte, error) {
+			return nil, nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	key, err := os.ReadFile(keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicKey, err := wireguard.PublicKeyFromPrivateKey(strings.TrimSpace(string(key)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "WireGuardInterface", "wg0")
+	if status["phase"] != "Up" || status["publicKey"] != publicKey {
+		t.Fatalf("status = %+v, want derived public key %q", status, publicKey)
 	}
 }

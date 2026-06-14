@@ -8,8 +8,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
-	"net"
-	"net/netip"
 	"sort"
 	"strconv"
 	"strings"
@@ -19,6 +17,7 @@ import (
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/lifecycle"
+	"github.com/imksoo/routerd/pkg/platform"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 	"github.com/imksoo/routerd/pkg/wireguard"
 )
@@ -30,7 +29,6 @@ type WireGuardController struct {
 	DryRun       bool
 	Command      wireguard.CommandRunner
 	CommandStdin wireguard.CommandStdinRunner
-	LookupHost   func(context.Context, string) ([]string, error)
 	Logger       *slog.Logger
 }
 
@@ -238,12 +236,16 @@ func (c WireGuardController) cleanupStaleResources(ctx context.Context) error {
 	}
 	desiredInterfaces := map[string]struct{}{}
 	desiredPeers := map[string]struct{}{}
+	desiredListenPorts := map[int]struct{}{}
 	desired := map[string]bool{}
 	for _, resource := range c.Router.Spec.Resources {
 		switch resource.Kind {
 		case "WireGuardInterface":
 			desiredInterfaces[resource.Metadata.Name] = struct{}{}
 			desired[lifecycle.OwnerKey(api.NetAPIVersion, "WireGuardInterface", resource.Metadata.Name)] = true
+			if spec, err := resource.WireGuardInterfaceSpec(); err == nil && spec.ListenPort > 0 {
+				desiredListenPorts[spec.ListenPort] = struct{}{}
+			}
 			if ifname := interfaceIfName(c.Router, resource.Metadata.Name); ifname != "" {
 				desiredInterfaces[ifname] = struct{}{}
 				desired[lifecycle.OwnerKey(api.NetAPIVersion, "WireGuardInterface", ifname)] = true
@@ -264,7 +266,7 @@ func (c WireGuardController) cleanupStaleResources(ctx context.Context) error {
 			continue
 		}
 		ifname := firstNonEmpty(statusString(item.Status, "ifname"), statusString(item.Status, "interface"), item.Name)
-		if err := c.teardownWireGuardInterface(ctx, item, ifname, deleter); err != nil {
+		if err := c.teardownWireGuardInterface(ctx, item, ifname, desiredListenPorts, deleter); err != nil {
 			return err
 		}
 		staleInterfaces[item.Name] = struct{}{}
@@ -299,10 +301,17 @@ func (c WireGuardController) cleanupStaleResources(ctx context.Context) error {
 	return nil
 }
 
-func (c WireGuardController) teardownWireGuardInterface(ctx context.Context, item routerstate.ObjectStatus, ifname string, deleter routerstate.ObjectDeleteStore) error {
+func (c WireGuardController) teardownWireGuardInterface(ctx context.Context, item routerstate.ObjectStatus, ifname string, desiredListenPorts map[int]struct{}, deleter routerstate.ObjectDeleteStore) error {
 	if ifname != "" && !c.DryRun {
 		if err := c.deleteWireGuardInterface(ctx, ifname); err != nil {
 			return err
+		}
+	}
+	if port := wireGuardHostFirewallPort(item.Status); port > 0 {
+		if _, stillDesired := desiredListenPorts[port]; !stillDesired && !c.DryRun {
+			if err := c.deleteWireGuardInputAccept(ctx, port); err != nil {
+				return err
+			}
 		}
 	}
 	if err := deleter.DeleteObject(item.APIVersion, item.Kind, item.Name); err != nil {
@@ -451,6 +460,35 @@ func (c WireGuardController) reconcileInterface(ctx context.Context, resource ap
 		applied = true
 		observed, statusErr = c.interfaceStatus(ctx, cfg.Name)
 	}
+	firewallStatus := map[string]any{
+		"managedBy": "routerd",
+		"protocol":  "udp",
+		"port":      cfg.ListenPort,
+		"chain":     "INPUT",
+	}
+	if cfg.ListenPort > 0 {
+		if platform.CurrentOS() != platform.OSLinux {
+			firewallStatus["phase"] = "NotApplicable"
+			firewallStatus["reason"] = "HostFirewallManagedOnLinuxOnly"
+		} else if c.DryRun {
+			firewallStatus["phase"] = "Planned"
+		} else if err := c.ensureWireGuardInputAccept(ctx, cfg.ListenPort); err != nil {
+			firewallStatus["phase"] = "Error"
+			firewallStatus["lastError"] = err.Error()
+			status["hostFirewall"] = firewallStatus
+			status["phase"] = "Error"
+			status["reason"] = "HostFirewallApplyFailed"
+			status["error"] = err.Error()
+			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "WireGuardInterface", resource.Metadata.Name, status); err != nil {
+				return err
+			}
+			c.savePeerPendingStatuses(resource.Metadata.Name, cfg.Peers, "InterfaceError")
+			return nil
+		} else {
+			firewallStatus["phase"] = "Applied"
+		}
+		status["hostFirewall"] = firewallStatus
+	}
 	status["phase"] = "Up"
 	if c.DryRun {
 		status["phase"] = "Planned"
@@ -473,6 +511,11 @@ func (c WireGuardController) reconcileInterface(ctx context.Context, resource ap
 	} else {
 		c.savePeerPendingStatuses(resource.Metadata.Name, cfg.Peers, "DryRun")
 	}
+	if _, ok := status["publicKey"]; !ok {
+		if publicKey := wireGuardPublicKeyFromConfig(cfg); publicKey != "" {
+			status["publicKey"] = publicKey
+		}
+	}
 	if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "WireGuardInterface", resource.Metadata.Name, status); err != nil {
 		return err
 	}
@@ -489,6 +532,24 @@ func (c WireGuardController) reconcileInterface(ctx context.Context, resource ap
 	return nil
 }
 
+func wireGuardHostFirewallPort(status map[string]any) int {
+	hostFirewall := statusMap(status["hostFirewall"])
+	if !strings.EqualFold(statusString(hostFirewall, "managedBy"), "routerd") {
+		return 0
+	}
+	if !strings.EqualFold(statusString(hostFirewall, "protocol"), "udp") {
+		return 0
+	}
+	if !strings.EqualFold(statusString(hostFirewall, "chain"), "INPUT") {
+		return 0
+	}
+	port, ok := statusInt(hostFirewall["port"])
+	if !ok || port <= 0 {
+		return 0
+	}
+	return port
+}
+
 func (c WireGuardController) selfNodeRef(spec api.WireGuardInterfaceSpec) string {
 	if self := strings.TrimSpace(spec.SelfNodeRef); self != "" {
 		return self
@@ -497,6 +558,53 @@ func (c WireGuardController) selfNodeRef(spec api.WireGuardInterfaceSpec) string
 		return ""
 	}
 	return strings.TrimSpace(c.Router.Metadata.Name)
+}
+
+func (c WireGuardController) ensureWireGuardInputAccept(ctx context.Context, port int) error {
+	if port <= 0 {
+		return nil
+	}
+	check := []string{"-C", "INPUT", "-p", "udp", "--dport", strconv.Itoa(port), "-j", "ACCEPT"}
+	if out, err := c.runWireGuardHostCommand(ctx, "iptables", check...); err == nil {
+		return nil
+	} else if !wireGuardIPTablesRuleMissing(out, err) {
+		return fmt.Errorf("iptables %s: %w: %s", strings.Join(check, " "), err, strings.TrimSpace(string(out)))
+	}
+	insert := []string{"-I", "INPUT", "1", "-p", "udp", "--dport", strconv.Itoa(port), "-j", "ACCEPT"}
+	if out, err := c.runWireGuardHostCommand(ctx, "iptables", insert...); err != nil {
+		return fmt.Errorf("iptables %s: %w: %s", strings.Join(insert, " "), err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func (c WireGuardController) deleteWireGuardInputAccept(ctx context.Context, port int) error {
+	if port <= 0 || platform.CurrentOS() != platform.OSLinux {
+		return nil
+	}
+	deleteRule := []string{"-D", "INPUT", "-p", "udp", "--dport", strconv.Itoa(port), "-j", "ACCEPT"}
+	if out, err := c.runWireGuardHostCommand(ctx, "iptables", deleteRule...); err != nil && !wireGuardIPTablesRuleMissing(out, err) {
+		return fmt.Errorf("iptables %s: %w: %s", strings.Join(deleteRule, " "), err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func (c WireGuardController) runWireGuardHostCommand(ctx context.Context, name string, args ...string) ([]byte, error) {
+	run := c.Command
+	if run == nil {
+		run = wireguard.DefaultCommandRunner
+	}
+	return run(ctx, name, args...)
+}
+
+func wireGuardIPTablesRuleMissing(out []byte, err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(strings.TrimSpace(string(out)) + " " + err.Error())
+	return strings.Contains(msg, "bad rule") ||
+		strings.Contains(msg, "does a matching rule exist") ||
+		strings.Contains(msg, "no chain/target/match") ||
+		strings.Contains(msg, "does not exist")
 }
 
 func wireGuardPeersFromStatusMaps(statuses []wireGuardPeersFromStatus) []map[string]any {
@@ -569,6 +677,18 @@ func wireGuardConfigHash(cfg wireguard.InterfaceConfig, dryRun bool) string {
 	return hex.EncodeToString(sum[:])
 }
 
+func wireGuardPublicKeyFromConfig(cfg wireguard.InterfaceConfig) string {
+	resolved, err := wireguard.ResolveKeyFiles(cfg)
+	if err != nil {
+		return ""
+	}
+	publicKey, err := wireguard.PublicKeyFromPrivateKey(resolved.PrivateKey)
+	if err != nil {
+		return ""
+	}
+	return publicKey
+}
+
 func (c WireGuardController) interfaceMatchesDesired(ctx context.Context, cfg wireguard.InterfaceConfig, observed wireguard.InterfaceStatus) bool {
 	if cfg.ListenPort != 0 && observed.ListenPort != cfg.ListenPort {
 		return false
@@ -594,56 +714,11 @@ func (c WireGuardController) interfaceMatchesDesired(ctx context.Context, cfg wi
 		if !stringSetEqual(desired.AllowedIPs, current.AllowedIPs) {
 			return false
 		}
-		if strings.TrimSpace(desired.Endpoint) != "" && !c.endpointMatches(ctx, desired.Endpoint, current.LatestEndpoint) {
-			return false
-		}
 		if desired.PersistentKeepalive != current.PersistentKeepalive {
 			return false
 		}
 	}
 	return true
-}
-
-func (c WireGuardController) endpointMatches(ctx context.Context, desired, current string) bool {
-	desired = strings.TrimSpace(desired)
-	current = strings.TrimSpace(current)
-	if desired == current {
-		return true
-	}
-	if current == "" {
-		return true
-	}
-	desiredHost, desiredPort, err := net.SplitHostPort(desired)
-	if err != nil {
-		return false
-	}
-	currentHost, currentPort, err := net.SplitHostPort(current)
-	if err != nil || desiredPort != currentPort {
-		return false
-	}
-	if desiredAddr, err := netip.ParseAddr(desiredHost); err == nil {
-		currentAddr, err := netip.ParseAddr(currentHost)
-		return err == nil && desiredAddr == currentAddr
-	}
-	lookup := c.LookupHost
-	if lookup == nil {
-		lookup = net.DefaultResolver.LookupHost
-	}
-	addrs, err := lookup(ctx, desiredHost)
-	if err != nil {
-		return false
-	}
-	currentAddr, err := netip.ParseAddr(currentHost)
-	if err != nil {
-		return false
-	}
-	for _, raw := range addrs {
-		addr, err := netip.ParseAddr(strings.TrimSpace(raw))
-		if err == nil && addr == currentAddr {
-			return true
-		}
-	}
-	return false
 }
 
 func (c WireGuardController) linkMTUMatches(ctx context.Context, ifname string, mtu int) bool {

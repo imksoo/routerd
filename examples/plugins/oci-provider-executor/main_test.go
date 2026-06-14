@@ -141,6 +141,31 @@ func TestAssignExecuteIssuesCreate(t *testing.T) {
 	}
 }
 
+func TestAuthorizationFailureIsClassified(t *testing.T) {
+	f := &fakeOCI{err: fmt.Errorf("ServiceError: NotAuthorizedOrNotFound. Authorization failed or requested resource not found")}
+	res := dispatchWith(reqSpec(actionAssignSecondaryIP, modeExecute), f.run)
+	if res.Status.Status != statusFailed {
+		t.Fatalf("want failed, got %q", res.Status.Status)
+	}
+	if res.Status.Observed["failureClass"] != "authorization" {
+		t.Fatalf("want authorization failure class, got %+v", res.Status.Observed)
+	}
+	if res.Status.Observed["permissionHint"] != "manage private-ips" {
+		t.Fatalf("permissionHint = %q", res.Status.Observed["permissionHint"])
+	}
+}
+
+func TestToolchainPermissionFailureIsNotAuthorization(t *testing.T) {
+	f := &fakeOCI{err: fmt.Errorf("fork/exec /usr/local/bin/oci: permission denied")}
+	res := dispatchWith(reqSpec(actionAssignSecondaryIP, modeExecute), f.run)
+	if res.Status.Status != statusFailed {
+		t.Fatalf("want failed, got %q", res.Status.Status)
+	}
+	if res.Status.Observed["failureClass"] == "authorization" {
+		t.Fatalf("toolchain permission failure must not look like cloud authorization, got %+v", res.Status.Observed)
+	}
+}
+
 func TestAssignExecuteAllowReassignment(t *testing.T) {
 	f := &fakeOCI{}
 	spec := reqSpec(actionAssignSecondaryIP, modeExecute)
@@ -411,5 +436,18 @@ func TestExecutorImportsNoCloudSDK(t *testing.T) {
 	}
 	if !usesExec {
 		t.Error("expected the oci executor to use os/exec to run the `oci` CLI")
+	}
+}
+
+func TestResolveOCICommandReportsNonExecutableOverride(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "oci")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o644); err != nil {
+		t.Fatalf("write fake oci: %v", err)
+	}
+	t.Setenv("OCI_CLI_PATH", path)
+	_, err := resolveOCICommand()
+	if err == nil || !strings.Contains(err.Error(), "OCI_CLI_PATH") || !strings.Contains(err.Error(), "no execute bit") {
+		t.Fatalf("resolveOCICommand error = %v, want non-executable OCI_CLI_PATH error", err)
 	}
 }

@@ -579,7 +579,11 @@ func TestTunnelUnderlayRemovalOrderFixture(t *testing.T) {
 	if err := routeController.reconcile(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(routeCommands) != 1 || !reflect.DeepEqual(routeCommands[0], []string{"ip", "route", "del", "10.20.0.0/16", "dev", "tun-ipip"}) {
+	wantRouteCommands := [][]string{
+		{"ip", "route", "show", "10.20.0.0/16"},
+		{"ip", "route", "del", "10.20.0.0/16", "dev", "tun-ipip"},
+	}
+	if !reflect.DeepEqual(routeCommands, wantRouteCommands) {
 		t.Fatalf("route commands = %#v", routeCommands)
 	}
 	if !routeStore.deleted[api.NetAPIVersion+"/IPv4Route/"+lowerings[0].IPv4RouteName] {

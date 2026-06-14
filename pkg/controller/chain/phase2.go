@@ -485,7 +485,7 @@ func ipv4RouteLineMatches(line, routeType, destination, device, gateway, preferr
 		if len(fields) < 2 || fields[0] != "blackhole" || fields[1] != destination {
 			return false
 		}
-	} else if fields[0] != destination {
+	} else if !routeLineMatchesDestination(fields[0], destination) {
 		return false
 	}
 	if device != "" && !routeFieldsContainPair(fields, "dev", device) {
@@ -594,10 +594,14 @@ func (c IPv4RouteController) teardownRemovedRoute(ctx context.Context, status ro
 			name := "ip"
 			if platform.CurrentOS() == platform.OSFreeBSD {
 				name, args = freeBSDIPv4RouteDeleteCommand(status.Status)
+			} else if removedIPv4RouteIsCurrentlyBGP(ctx, c.run, status.Status) {
+				args = nil
 			}
-			out, err := c.run(ctx, name, args...)
-			if err != nil && !missingIPv4RouteDelete(err, out) {
-				return fmt.Errorf("delete removed IPv4Route %s: %s %s: %w: %s", status.Name, name, strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+			if len(args) > 0 {
+				out, err := c.run(ctx, name, args...)
+				if err != nil && !missingIPv4RouteDelete(err, out) {
+					return fmt.Errorf("delete removed IPv4Route %s: %s %s: %w: %s", status.Name, name, strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+				}
 			}
 		}
 	}
@@ -613,6 +617,67 @@ func (c IPv4RouteController) teardownRemovedRoute(ctx context.Context, status ro
 		}
 	}
 	return nil
+}
+
+func removedIPv4RouteIsCurrentlyBGP(ctx context.Context, run outputCommandFunc, status map[string]any) bool {
+	destination := fmt.Sprint(status["destination"])
+	if destination == "" || destination == "<nil>" {
+		return false
+	}
+	routeType := fmt.Sprint(status["type"])
+	if routeType == "" || routeType == "<nil>" {
+		routeType = "unicast"
+	}
+	device := fmt.Sprint(status["device"])
+	if device == "<nil>" {
+		device = ""
+	}
+	gateway := fmt.Sprint(status["gateway"])
+	if gateway == "<nil>" {
+		gateway = ""
+	}
+	preferredSource := fmt.Sprint(status["effectivePreferredSource"])
+	if preferredSource == "" || preferredSource == "<nil>" {
+		preferredSource = fmt.Sprint(status["preferredSource"])
+	}
+	if preferredSource == "<nil>" {
+		preferredSource = ""
+	}
+	metric := 0
+	if raw := fmt.Sprint(status["metric"]); raw != "" && raw != "<nil>" {
+		_, _ = fmt.Sscanf(raw, "%d", &metric)
+	}
+	out, err := run(ctx, "ip", "route", "show", destination)
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 || !routeLineMatchesDestination(fields[0], destination) {
+			continue
+		}
+		if !ipv4RouteLineMatches(line, routeType, destination, device, gateway, preferredSource, metric) {
+			continue
+		}
+		for i := 0; i+1 < len(fields); i++ {
+			if fields[i] == "proto" && fields[i+1] == "bgp" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func routeLineMatchesDestination(got, want string) bool {
+	got = strings.TrimSpace(got)
+	want = strings.TrimSpace(want)
+	if got == want {
+		return true
+	}
+	if strings.HasSuffix(want, "/32") && strings.TrimSuffix(want, "/32") == got {
+		return true
+	}
+	return false
 }
 
 func (c IPv4RouteController) run(ctx context.Context, name string, args ...string) ([]byte, error) {

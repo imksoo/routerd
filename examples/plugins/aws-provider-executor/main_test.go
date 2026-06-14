@@ -129,6 +129,31 @@ func TestAssignExecuteIssuesAssign(t *testing.T) {
 	}
 }
 
+func TestAuthorizationFailureIsClassified(t *testing.T) {
+	f := &fakeAWS{err: fmt.Errorf("UnauthorizedOperation: You are not authorized to perform this operation")}
+	res := dispatchWith(reqSpec(actionAssignSecondaryIP, modeExecute), f.run)
+	if res.Status.Status != statusFailed {
+		t.Fatalf("want failed, got %q", res.Status.Status)
+	}
+	if res.Status.Observed["failureClass"] != "authorization" {
+		t.Fatalf("want authorization failure class, got %+v", res.Status.Observed)
+	}
+	if res.Status.Observed["permissionHint"] != "ec2:AssignPrivateIpAddresses" {
+		t.Fatalf("permissionHint = %q", res.Status.Observed["permissionHint"])
+	}
+}
+
+func TestToolchainPermissionFailureIsNotAuthorization(t *testing.T) {
+	f := &fakeAWS{err: fmt.Errorf("fork/exec /usr/local/bin/aws: permission denied")}
+	res := dispatchWith(reqSpec(actionAssignSecondaryIP, modeExecute), f.run)
+	if res.Status.Status != statusFailed {
+		t.Fatalf("want failed, got %q", res.Status.Status)
+	}
+	if res.Status.Observed["failureClass"] == "authorization" {
+		t.Fatalf("toolchain permission failure must not look like cloud authorization, got %+v", res.Status.Observed)
+	}
+}
+
 func TestAssignExecuteAllowReassignment(t *testing.T) {
 	f := &fakeAWS{}
 	spec := reqSpec(actionAssignSecondaryIP, modeExecute)

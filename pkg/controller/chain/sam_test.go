@@ -400,6 +400,20 @@ func TestSAMControllerNoClaimsNoProxyNeighborActions(t *testing.T) {
 	}
 }
 
+func TestSAMIPTablesRuleKeyMatchesIPTablesSaveOrder(t *testing.T) {
+	desired := iptablesRuleKey([]string{"-i", "ens5", "-o", "samt83136b64870", "-d", "10.77.60.10/32", "-j", "ACCEPT"})
+	fromSave := iptablesRuleKey([]string{"-d", "10.77.60.10/32", "-i", "ens5", "-o", "samt83136b64870", "-j", "ACCEPT"})
+	if desired != fromSave {
+		t.Fatalf("desired key %q != iptables -S key %q", desired, fromSave)
+	}
+
+	localDesired := iptablesRuleKey([]string{"-i", "samt83136b64870", "-o", "ens5", "-s", "10.77.60.13/32", "-j", "ACCEPT"})
+	localFromSave := iptablesRuleKey([]string{"-s", "10.77.60.13/32", "-i", "samt83136b64870", "-o", "ens5", "-j", "ACCEPT"})
+	if localDesired != localFromSave {
+		t.Fatalf("local desired key %q != iptables -S key %q", localDesired, localFromSave)
+	}
+}
+
 type fakeSAMApplier struct {
 	ensure         []string
 	delete         []string
@@ -449,6 +463,13 @@ func (a *fakeSAMApplier) EnsureOSAddressAbsent(_ context.Context, address string
 		result.address = address
 	}
 	return result, nil
+}
+
+func (a *fakeSAMApplier) ReconcileForwardPaths(_ context.Context, paths []sam.CaptureAction) error {
+	for _, path := range paths {
+		a.calls = append(a.calls, "forward:"+path.Address+"@"+path.Interface+"<->"+path.PeerInterface)
+	}
+	return nil
 }
 
 type samStore struct {

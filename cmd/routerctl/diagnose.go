@@ -26,6 +26,7 @@ type diagnoseOptions struct {
 	ConfigPath string
 	StatePath  string
 	Host       bool
+	Incident   bool
 	Server     string
 	Names      string
 	Timeout    time.Duration
@@ -247,9 +248,11 @@ func parseDiagnoseOptions(name string, args []string, helpOutput io.Writer) (dia
 		case "doctor":
 			summary = "routerd の各 area (wan/dns/dslite/dhcpv6-pd/nat/firewall/rollback/disk/mgmt/reconcile/runtime/dynamic/plugin/hybrid) の\n" +
 				"健全性チェックをまとめて実行する。\n" +
+				"--incident を付けると host ダンプ(診断コマンド出力/イベント/オブジェクトステータス/プラグイン実行履歴)を付加する。\n" +
 				"位置引数: [area] (省略時は全 area)。--probe は control API 経由の対象別 probe を実行する。"
 			examples = "routerctl doctor\n" +
 				"routerctl doctor wan\n" +
+				"routerctl doctor --incident\n" +
 				"routerctl doctor --probe egress ipv4-default\n" +
 				"routerctl doctor --probe dns -o json"
 		default:
@@ -271,6 +274,7 @@ func parseDiagnoseOptions(name string, args []string, helpOutput io.Writer) (dia
 	fs.StringVar(&opts.Socket, "status-socket", defaultStatusSocketPath(), "doctor reconcile area: routerd read-only status Unix domain socket path")
 	fs.StringVar(&opts.Socket, "socket", defaultStatusSocketPath(), "routerd read-only status Unix domain socket path")
 	fs.StringVar(&opts.Probe, "probe", "", "doctor probe subject (egress, dns, lan-client)")
+	fs.BoolVar(&opts.Incident, "incident", false, "collect incident debug dump (status/events/object status/plugin runs and host command outputs)")
 	normalized, err := normalizeDiagnoseArgs(args)
 	if err != nil {
 		return opts, err

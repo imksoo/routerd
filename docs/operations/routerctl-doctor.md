@@ -44,7 +44,7 @@ Per-call options reuse the `diagnose` flag set: `--config`, `--state-file`,
 | `nat` | `NAT44Rule` resource status; `nft list table ip routerd_nat` exists. |
 | `firewall` | `FirewallZone` / `FirewallPolicy` resource status; `nft list table inet routerd_filter` exists with `policy drop` on the input chain (otherwise the router is permissive); Linux host check for marked routerd-owned nft tables that are present but not expected by the current config-rendered ruleset. |
 | `rollback` | At least one stored generation exists, so `routerctl rollback --to` is usable. |
-| `disk` | `/var/lib/routerd` and `/run/routerd` capacity; WARN at 90% or `<256 MiB`, FAIL at 98% or `<64 MiB`. |
+| `disk` | `/var/lib/routerd` and `/run/routerd` capacity; WARN at 90% or `<256 MiB`, FAIL at 98% or `<64 MiB`. On Linux, also fails when temporary directory invariants are broken: `/tmp` and `/var/tmp` must be `root:root` sticky `1777` directories. |
 | `mgmt` | Management interface presence (best-effort from `ManagementAccess` or `FirewallZone role=mgmt`); WebConsole binding (FAIL/WARN on `0.0.0.0` / `::`). |
 | `reconcile` | Per-controller reconcile error history from the read-only status socket. `--since <duration>` bounds the window. WARN at ≥1 error in the window, FAIL at ≥10; up to 5 sample entries are shown in the detail. |
 | `runtime` | routerd's own heap / goroutine / fd footprint from the read-only status socket: `heapAlloc`, `heapObjects`, `numGoroutine`, `numGC`, `openFds`/`maxFds`. WARN when `numGoroutine` exceeds 10000 or open fds reach ≥80% of `RLIMIT_NOFILE`. Observational — never FAILs. |

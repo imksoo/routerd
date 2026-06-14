@@ -330,6 +330,7 @@ func normalizeAddressString(address string) string {
 }
 
 func providerActionPlans(poolName string, profile api.CloudProviderProfileSpec, capture api.AddressCapture, captureTarget map[string]string, address string, forwardingSeen map[string]bool, seize bool) ([]dynamicconfig.ActionPlan, error) {
+	capture = captureWithTargetFallback(capture, captureTarget)
 	provider := strings.TrimSpace(profile.Provider)
 	providerRef := strings.TrimSpace(capture.ProviderRef)
 	nicRef := strings.TrimSpace(capture.NICRef)
@@ -433,6 +434,7 @@ func providerActionPlans(poolName string, profile api.CloudProviderProfileSpec, 
 }
 
 func providerUnassignActionPlan(poolName string, profile api.CloudProviderProfileSpec, capture api.AddressCapture, captureTarget map[string]string, address string, since time.Time) (dynamicconfig.ActionPlan, error) {
+	capture = captureWithTargetFallback(capture, captureTarget)
 	provider := strings.TrimSpace(profile.Provider)
 	providerRef := strings.TrimSpace(capture.ProviderRef)
 	nicRef := strings.TrimSpace(capture.NICRef)
@@ -474,37 +476,8 @@ func providerUnassignActionPlan(poolName string, profile api.CloudProviderProfil
 	}, nil
 }
 
-func providerForwardingDisableActionPlan(poolName string, profile api.CloudProviderProfileSpec, capture api.AddressCapture, captureTarget map[string]string, address string) (dynamicconfig.ActionPlan, error) {
-	provider := strings.TrimSpace(profile.Provider)
-	providerRef := strings.TrimSpace(capture.ProviderRef)
-	nicRef := strings.TrimSpace(capture.NICRef)
-	params, err := forwardingDisableParams(provider)
-	if err != nil {
-		return dynamicconfig.ActionPlan{}, err
-	}
-	target := providerActionTarget(poolName, profile, capture, captureTarget, address)
-	return dynamicconfig.ActionPlan{
-		Name:           safeName("mobility-" + poolName + "-forwarding-disable-" + nicRef),
-		Provider:       provider,
-		Action:         "ensure-forwarding-disabled",
-		Target:         target,
-		ProviderRef:    providerRef,
-		Mode:           "dry-run",
-		Description:    fmt.Sprintf("Disable forwarding on %s NIC %s after MobilityPool/%s no longer captures addresses there", provider, nicRef, poolName),
-		RiskLevel:      "medium",
-		IdempotencyKey: "mobility:" + poolName + ":" + provider + ":" + nicRef + ":ensure-forwarding-disabled",
-		Parameters:     params,
-		ExpectedEffects: []string{
-			fmt.Sprintf("%s NIC %s would stop forwarding mobility capture traffic", provider, nicRef),
-		},
-		Undo: &dynamicconfig.ActionUndo{
-			Action:     "ensure-forwarding-enabled",
-			Parameters: mergeStringMaps(target, mustForwardingParams(provider)),
-		},
-	}, nil
-}
-
 func providerActionTarget(poolName string, profile api.CloudProviderProfileSpec, capture api.AddressCapture, captureTarget map[string]string, address string) map[string]string {
+	capture = captureWithTargetFallback(capture, captureTarget)
 	provider := strings.TrimSpace(profile.Provider)
 	providerRef := strings.TrimSpace(capture.ProviderRef)
 	nicRef := strings.TrimSpace(capture.NICRef)
@@ -521,6 +494,9 @@ func providerActionTarget(poolName string, profile api.CloudProviderProfileSpec,
 		if key != "" && value != "" {
 			target[key] = value
 		}
+	}
+	if nicRef == "" {
+		nicRef = strings.TrimSpace(target["nicRef"])
 	}
 	addProfileTargetFields(target, provider, profile, poolName, address, nicRef)
 	target["provider"] = provider
@@ -611,6 +587,16 @@ func providerCaptureRefFromCapture(capture api.AddressCapture, target map[string
 	return strings.TrimSpace(capture.NICRef)
 }
 
+func captureWithTargetFallback(capture api.AddressCapture, captureTarget map[string]string) api.AddressCapture {
+	if strings.TrimSpace(capture.NICRef) != "" {
+		return capture
+	}
+	if value := strings.TrimSpace(captureTarget["nicRef"]); value != "" {
+		capture.NICRef = value
+	}
+	return capture
+}
+
 func addProfileTargetFields(target map[string]string, provider string, profile api.CloudProviderProfileSpec, poolName, address, nicRef string) {
 	if profile.SubscriptionID != "" && strings.TrimSpace(target["subscriptionId"]) == "" {
 		target["subscriptionId"] = strings.TrimSpace(profile.SubscriptionID)
@@ -651,47 +637,6 @@ func forwardingParams(provider string) (map[string]string, error) {
 	default:
 		return nil, fmt.Errorf("provider %q is not supported for mobility action plans", provider)
 	}
-}
-
-func forwardingDisableParams(provider string) (map[string]string, error) {
-	switch provider {
-	case "aws":
-		return map[string]string{"priorSourceDestCheck": "true"}, nil
-	case "azure":
-		return map[string]string{"priorIpForwarding": "false"}, nil
-	case "oci":
-		return map[string]string{"priorSkipSourceDestCheck": "false"}, nil
-	case "gcp":
-		return map[string]string{"priorCanIpForward": "false"}, nil
-	default:
-		return nil, fmt.Errorf("provider %q is not supported for mobility action plans", provider)
-	}
-}
-
-func mustForwardingParams(provider string) map[string]string {
-	params, err := forwardingParams(provider)
-	if err != nil {
-		return map[string]string{}
-	}
-	return params
-}
-
-func firstNonZeroTime(values ...time.Time) time.Time {
-	for _, value := range values {
-		if !value.IsZero() {
-			return value.UTC()
-		}
-	}
-	return time.Time{}
-}
-
-func providerNICKey(provider, providerRef, nicRef string) string {
-	providerRef = strings.TrimSpace(providerRef)
-	nicRef = strings.TrimSpace(nicRef)
-	if providerRef == "" || nicRef == "" {
-		return ""
-	}
-	return strings.TrimSpace(provider) + "\x00" + providerRef + "\x00" + nicRef
 }
 
 func dedupeActionPlans(plans []dynamicconfig.ActionPlan) []dynamicconfig.ActionPlan {

@@ -5,9 +5,12 @@ package wireguard
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -16,6 +19,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
+	"golang.org/x/crypto/curve25519"
 
 	"github.com/imksoo/routerd/internal/hostcmd"
 	"github.com/imksoo/routerd/pkg/api"
@@ -175,6 +179,11 @@ func RenderSetConf(cfg InterfaceConfig) ([]byte, error) {
 }
 
 func (c Controller) Apply(ctx context.Context, cfg InterfaceConfig) ([]byte, error) {
+	if !c.DryRun {
+		if err := EnsurePrivateKeyFile(cfg.PrivateKeyFile); err != nil {
+			return nil, err
+		}
+	}
 	resolved, err := ResolveKeyFiles(cfg)
 	if err != nil {
 		if !c.DryRun {
@@ -234,6 +243,69 @@ func ResolveKeyFiles(cfg InterfaceConfig) (InterfaceConfig, error) {
 		cfg.Peers[i].PresharedKey = value
 	}
 	return cfg, nil
+}
+
+func EnsurePrivateKeyFile(path string) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return nil
+	}
+	if value, err := readSecretFile(path); err == nil {
+		if _, err := PublicKeyFromPrivateKey(value); err != nil {
+			return fmt.Errorf("validate WireGuard private key file %s: %w", path, err)
+		}
+		return nil
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("read WireGuard private key file %s: %w", path, err)
+	}
+	key, err := GeneratePrivateKey()
+	if err != nil {
+		return fmt.Errorf("generate WireGuard private key for %s: %w", path, err)
+	}
+	dir := filepath.Dir(path)
+	if dir != "." && dir != "" {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return fmt.Errorf("create WireGuard private key directory %s: %w", dir, err)
+		}
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		if os.IsExist(err) {
+			return nil
+		}
+		return fmt.Errorf("create WireGuard private key file %s: %w", path, err)
+	}
+	defer f.Close()
+	if _, err := f.WriteString(key + "\n"); err != nil {
+		return fmt.Errorf("write WireGuard private key file %s: %w", path, err)
+	}
+	return nil
+}
+
+func GeneratePrivateKey() (string, error) {
+	var key [32]byte
+	if _, err := rand.Read(key[:]); err != nil {
+		return "", err
+	}
+	key[0] &= 248
+	key[31] &= 127
+	key[31] |= 64
+	return base64.StdEncoding.EncodeToString(key[:]), nil
+}
+
+func PublicKeyFromPrivateKey(privateKey string) (string, error) {
+	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(privateKey))
+	if err != nil {
+		return "", err
+	}
+	if len(raw) != 32 {
+		return "", fmt.Errorf("private key length = %d, want 32 bytes", len(raw))
+	}
+	pub, err := curve25519.X25519(raw, curve25519.Basepoint)
+	if err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(pub), nil
 }
 
 func readSecretFile(path string) (string, error) {

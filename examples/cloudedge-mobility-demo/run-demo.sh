@@ -75,7 +75,7 @@ router_scp() {
 }
 
 render_cloud_config() {
-  local template=$1 out=$2 router_name=$3 self_node=$4 self_ip=$5 same_site_peer_node=$6 same_site_peer_ip=$7 self_priority=$8 same_site_peer_priority=$9 self_nic_ref=${10:-} self_route_table_ref=${11:-} self_cloud_ip=${12:-}
+  local template=$1 out=$2 router_name=$3 self_node=$4 self_ip=$5 same_site_peer_node=$6 same_site_peer_ip=$7 self_priority=$8 same_site_peer_priority=$9
   DEMO_ROUTER_NAME=$router_name \
     DEMO_SELF_NODE=$self_node \
     DEMO_SELF_IP=$self_ip \
@@ -83,9 +83,6 @@ render_cloud_config() {
     DEMO_SAMESITE_PEER_IP=$same_site_peer_ip \
     DEMO_SELF_PRIORITY=$self_priority \
     DEMO_SAMESITE_PEER_PRIORITY=$same_site_peer_priority \
-    DEMO_SELF_NIC_REF=$self_nic_ref \
-    DEMO_SELF_ROUTE_TABLE_REF=$self_route_table_ref \
-    DEMO_SELF_CLOUD_IP=$self_cloud_ip \
     envsubst < "$template" > "$out"
 }
 
@@ -93,17 +90,17 @@ render_configs() {
   mkdir -p "$WORKDIR"
   envsubst < "$ROOT/onprem.yaml" > "$WORKDIR/onprem.yaml"
   render_cloud_config "$ROOT/aws.yaml" "$WORKDIR/aws-a.yaml" \
-    cloudedge-mobility-aws-router-a-demo aws-router-a 10.99.0.2 aws-router-b 10.99.0.5 10 20 "" "${AWS_ROUTE_TABLE_REF:-}"
+    cloudedge-mobility-aws-router-a-demo aws-router-a 10.99.0.2 aws-router-b 10.99.0.5 10 20
   render_cloud_config "$ROOT/aws.yaml" "$WORKDIR/aws-b.yaml" \
-    cloudedge-mobility-aws-router-b-demo aws-router-b 10.99.0.5 aws-router-a 10.99.0.2 20 10 "" "${AWS_ROUTE_TABLE_REF:-}"
+    cloudedge-mobility-aws-router-b-demo aws-router-b 10.99.0.5 aws-router-a 10.99.0.2 20 10
   render_cloud_config "$ROOT/azure.yaml" "$WORKDIR/azure.yaml" \
-    cloudedge-mobility-azure-demo azure-router 10.99.0.3 azure-router-b 10.99.0.6 10 20 "" "${AZURE_ROUTE_TABLE_REF:-}" "${AZURE_ROUTER_PRIVATE_IP:-}"
+    cloudedge-mobility-azure-demo azure-router 10.99.0.3 azure-router-b 10.99.0.6 10 20
   render_cloud_config "$ROOT/azure.yaml" "$WORKDIR/azure-b.yaml" \
-    cloudedge-mobility-azure-b-demo azure-router-b 10.99.0.6 azure-router 10.99.0.3 20 10 "" "${AZURE_ROUTE_TABLE_REF:-}" "${AZURE_ROUTER_B_PRIVATE_IP:-}"
+    cloudedge-mobility-azure-b-demo azure-router-b 10.99.0.6 azure-router 10.99.0.3 20 10
   render_cloud_config "$ROOT/oci.yaml" "$WORKDIR/oci.yaml" \
-    cloudedge-mobility-oci-demo oci-router 10.99.0.4 oci-router-b 10.99.0.7 10 20 "${OCI_ROUTER_VNIC_REF:-}"
+    cloudedge-mobility-oci-demo oci-router 10.99.0.4 oci-router-b 10.99.0.7 10 20
   render_cloud_config "$ROOT/oci.yaml" "$WORKDIR/oci-b.yaml" \
-    cloudedge-mobility-oci-b-demo oci-router-b 10.99.0.7 oci-router 10.99.0.4 20 10 "${OCI_ROUTER_B_VNIC_REF:-}"
+    cloudedge-mobility-oci-b-demo oci-router-b 10.99.0.7 oci-router 10.99.0.4 20 10
 
   cp "$WORKDIR/aws-a.yaml" "$WORKDIR/aws-a-drain.yaml"
   cp "$WORKDIR/onprem.yaml" "$WORKDIR/onprem-drain.yaml"

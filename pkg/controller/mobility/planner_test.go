@@ -109,6 +109,54 @@ func TestProviderActionPlansRouteTableStrategy(t *testing.T) {
 	}
 }
 
+func TestProviderActionTargetUsesCaptureTargetNICFallback(t *testing.T) {
+	profile := api.CloudProviderProfileSpec{Provider: "azure", SubscriptionID: "sub-1", ResourceGroup: "rg-router"}
+	target := providerActionTarget("cloudedge", profile, api.AddressCapture{
+		Type:        "provider-secondary-ip",
+		ProviderRef: "azure-provider",
+	}, map[string]string{
+		"nicRef": "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic",
+	}, "10.88.60.10/32")
+	if target["nicRef"] == "" {
+		t.Fatalf("target = %#v, want nicRef fallback from capture target", target)
+	}
+	if target["ipConfigName"] == "" {
+		t.Fatalf("target = %#v, want provider fields derived with fallback nicRef", target)
+	}
+}
+
+func TestProviderActionPlansFallsBackToCaptureTargetNICRef(t *testing.T) {
+	profile := api.CloudProviderProfileSpec{Provider: "azure", SubscriptionID: "sub-1", ResourceGroup: "rg-router"}
+	capture := api.AddressCapture{
+		Type:        "provider-secondary-ip",
+		ProviderRef: "azure-provider",
+	}
+	captureTarget := map[string]string{
+		"nicRef":       "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic",
+		"region":       "japaneast",
+		"ipConfigName": "capture-a",
+	}
+	plans, err := providerActionPlans("cloudedge", profile, capture, captureTarget, "10.88.60.10/32", map[string]bool{}, false)
+	if err != nil {
+		t.Fatalf("providerActionPlans: %v", err)
+	}
+	assign := findActionPlanByAddress(plans, actionAssignSecondaryIP, "10.88.60.10/32")
+	if assign == nil {
+		t.Fatalf("plans = %#v, want assign plan", plans)
+	}
+	if assign.Target["nicRef"] != captureTarget["nicRef"] {
+		t.Fatalf("assign target = %#v, want nicRef from captureTarget", assign.Target)
+	}
+
+	unassign, err := providerUnassignActionPlan("cloudedge", profile, capture, captureTarget, "10.88.60.10/32", time.Time{})
+	if err != nil {
+		t.Fatalf("providerUnassignActionPlan: %v", err)
+	}
+	if unassign.Target["nicRef"] != captureTarget["nicRef"] {
+		t.Fatalf("unassign target = %#v, want nicRef from captureTarget", unassign.Target)
+	}
+}
+
 func TestBGPCapturePlacementSeizesWhenActiveMarkerAbsentWithCanonicalNodeIdentity(t *testing.T) {
 	members := map[string]memberPlanInfo{
 		"aws-router-a": {
@@ -431,11 +479,60 @@ func saveBGPInstalledNextHops(t *testing.T, store interface {
 	}
 }
 
+func bgpOwnerPrefixesForInstalledNextHops(nextHops map[string][]string) []bgpstate.Prefix {
+	ownerByNextHop := map[string]string{
+		"10.99.0.1": "onprem-router",
+		"10.99.0.2": "aws-router-a",
+		"10.99.0.3": "azure-router",
+		"10.99.0.4": "oci-router",
+		"10.99.0.5": "aws-router-b",
+		"10.99.0.6": "azure-router-b",
+	}
+	var out []bgpstate.Prefix
+	for prefix, hops := range nextHops {
+		for _, hop := range hops {
+			owner := strings.TrimSpace(ownerByNextHop[strings.TrimSpace(hop)])
+			if owner == "" {
+				continue
+			}
+			out = append(out, bgpstate.Prefix{
+				Prefix:  prefix,
+				NextHop: hop,
+				Best:    true,
+				Valid:   true,
+				Communities: []string{
+					bgpstate.MobilityCommunityOwner,
+					bgpstate.MobilityNodeIdentityCommunity(owner),
+				},
+			})
+			break
+		}
+	}
+	return out
+}
+
+func bgpOwnerPrefix(prefix, nextHop, owner string) map[string]any {
+	return map[string]any{
+		"prefix":  prefix,
+		"nextHop": nextHop,
+		"best":    true,
+		"valid":   true,
+		"communities": []string{
+			bgpstate.MobilityCommunityOwner,
+			bgpstate.MobilityNodeIdentityCommunity(owner),
+		},
+	}
+}
+
 func saveBGPStatus(t *testing.T, store interface {
 	SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error
 }, nextHops map[string][]string, prefixes []map[string]any, livenessMarkers map[string]string) {
 	t.Helper()
-	if err := store.SaveObjectStatus(api.NetAPIVersion, "BGPRouter", "mobility-bgp", map[string]any{"installedNextHops": nextHops, "prefixes": prefixes, "livenessMarkers": livenessMarkers}); err != nil {
+	rawPrefixes := any(prefixes)
+	if len(prefixes) == 0 {
+		rawPrefixes = bgpOwnerPrefixesForInstalledNextHops(nextHops)
+	}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "BGPRouter", "mobility-bgp", map[string]any{"installedNextHops": nextHops, "prefixes": rawPrefixes, "livenessMarkers": livenessMarkers}); err != nil {
 		t.Fatalf("SaveObjectStatus(BGPRouter/mobility-bgp): %v", err)
 	}
 }

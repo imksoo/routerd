@@ -11,6 +11,7 @@ dry_run=0
 verbose=0
 config_update=1
 install_deps=1
+status_timeout_seconds=${ROUTERD_INSTALL_STATUS_TIMEOUT_SECONDS:-10}
 list_deps=0
 deps_only=0
 with_tailscale=0
@@ -456,6 +457,20 @@ install_binary()
     atomic_install 0755 "${binary}" "${target}"
 }
 
+install_libexec_payload()
+{
+	[ -d libexec ] || return 0
+	find libexec -type f | while IFS= read -r file; do
+		file_mode=0644
+		case "${file}" in
+		*/bin/*|*/provider-private-ip-inventory)
+			file_mode=0755
+			;;
+		esac
+		atomic_install "${file_mode}" "${file}" "${prefix}/${file}"
+	done
+}
+
 verify_ndpi_agent_install()
 {
     [ "${with_ndpi}" -eq 1 ] || return 0
@@ -622,6 +637,25 @@ wait_for_routerd_status_apply()
         sleep 1
     done
     return 1
+}
+
+run_routerctl_status()
+{
+    status_socket_path=$1
+    if [ "${status_timeout_seconds}" = "0" ]; then
+        "${bindir}/routerctl" get status --socket "${status_socket_path}"
+        return $?
+    fi
+    case "${status_timeout_seconds}" in
+        *[!0-9]*|"")
+            status_timeout_seconds=10
+            ;;
+    esac
+    if command -v timeout >/dev/null 2>&1; then
+        timeout "${status_timeout_seconds}" "${bindir}/routerctl" get status --socket "${status_socket_path}"
+        return $?
+    fi
+    "${bindir}/routerctl" get status --socket "${status_socket_path}"
 }
 
 routerd_helper_unit_file_state()
@@ -2108,6 +2142,7 @@ for binary in bin/*; do
     [ -f "${binary}" ] || continue
     install_binary "${binary}"
 done
+install_libexec_payload
 install_ndpi_agent_archive
 verify_ndpi_agent_install
 
@@ -2290,9 +2325,11 @@ if [ "${dry_run}" -eq 0 ] && [ -x "${bindir}/routerctl" ]; then
     fi
     if [ -n "${status_socket}" ] && [ -S "${status_socket}" ]; then
         echo "routerctl get status:"
-        "${bindir}/routerctl" get status --socket "${status_socket}" || {
+        run_routerctl_status "${status_socket}" || {
             if [ "${service_touched}" -eq 1 ]; then
                 echo "warning: routerctl get status failed after service restart" >&2
+            else
+                echo "warning: routerctl get status failed or timed out" >&2
             fi
         }
     else
