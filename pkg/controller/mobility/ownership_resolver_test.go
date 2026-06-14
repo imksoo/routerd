@@ -258,6 +258,58 @@ func TestOwnershipResolverReportsRemoteHomeLocalInventoryConflict(t *testing.T) 
 	}
 }
 
+func TestOwnershipResolverStatusDistinguishesStaleConflictAndUnknown(t *testing.T) {
+	decisions := []ownershipDecision{
+		{
+			Address:            "10.88.60.11/32",
+			Class:              ownershipClassStaleCapture,
+			Source:             "provider-action",
+			CaptureState:       captureStateStale,
+			CaptureHolderNode:  "aws-router-a",
+			SuppressionReason:  "capture-not-desired",
+			CaptureTargetRef:   "eni-a",
+			CaptureProviderRef: "aws-provider",
+		},
+		{
+			Address: "10.88.60.12/32",
+			Class:   ownershipClassUnknown,
+			Source:  "bgp-rib",
+		},
+		{
+			Address:        "10.88.60.13/32",
+			Class:          ownershipClassRemoteHomeOwned,
+			Source:         providerDiscoverySource,
+			HomeOwnerNode:  "oci-router",
+			ConflictReason: "remote-home-owner-overlaps-local-inventory",
+			LocalNodeRef:   "aws-router-a",
+			LocalSource:    "local-inventory",
+		},
+	}
+	status := ownershipResolverStatus(decisions)
+	if status["ownershipResolverPhase"] != "Conflict" || status["ownershipResolverConflictCount"] != 1 {
+		t.Fatalf("status = %#v, want conflict phase with one conflict", status)
+	}
+	if status["ownershipResolverStaleCount"] != 1 || status["ownershipResolverUnknownCount"] != 1 {
+		t.Fatalf("status = %#v, want explicit stale and unknown counts", status)
+	}
+	stale := status["ownershipResolverStaleClaims"].([]map[string]any)
+	if len(stale) != 1 || stale[0]["address"] != "10.88.60.11/32" || stale[0]["state"] != "Stale" || stale[0]["suppressionReason"] != "capture-not-desired" {
+		t.Fatalf("stale claims = %#v, want stale capture row", stale)
+	}
+	unknown := status["ownershipResolverUnknownClaims"].([]map[string]any)
+	if len(unknown) != 1 || unknown[0]["address"] != "10.88.60.12/32" || unknown[0]["state"] != "Unknown" || unknown[0]["source"] != "bgp-rib" {
+		t.Fatalf("unknown claims = %#v, want unknown BGP row", unknown)
+	}
+	ownerTable := status["ownershipResolverOwnerTable"].([]map[string]any)
+	rows := map[string]map[string]any{}
+	for _, row := range ownerTable {
+		rows[row["address"].(string)] = row
+	}
+	if rows["10.88.60.11/32"]["state"] != "Stale" || rows["10.88.60.12/32"]["state"] != "Unknown" || rows["10.88.60.13/32"]["state"] != "Conflict" {
+		t.Fatalf("owner table = %#v, want distinct stale/unknown/conflict states", ownerTable)
+	}
+}
+
 func TestOwnershipResolverReportsRemoteHomeLocalOwnershipEventConflict(t *testing.T) {
 	now := time.Date(2026, 6, 10, 15, 25, 0, 0, time.UTC)
 	spec := awsFailoverPoolSpec()
