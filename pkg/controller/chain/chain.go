@@ -1459,7 +1459,7 @@ func (r *Runner) Start(ctx context.Context) error {
 			current.Lowerings = view.HybridLowerings
 			return current.Reconcile(ctx)
 		}},
-		framework.FuncController{ControllerName: "sam", Subs: samStatusSubscriptions(), PeriodicFunc: func(ctx context.Context) error {
+		framework.FuncController{ControllerName: "sam", Every: 30 * time.Second, Subs: samStatusSubscriptions(), PeriodicFunc: func(ctx context.Context) error {
 			effective, err := effectiveForReconcile()
 			if err != nil {
 				return err
