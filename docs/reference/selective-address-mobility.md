@@ -154,6 +154,13 @@ a bootstrap or emergency override. If a required source is missing, the
 interface reports `Pending` and routerd leaves the current WireGuard runtime
 config untouched.
 
+When `privateKeyFile` is set and the file is absent, a non-dry-run apply creates
+the parent directory with restrictive permissions and writes a new WireGuard
+private key with mode `0600`. Existing non-empty key files are never
+overwritten. Dry-run and plan paths remain non-mutating. The interface status
+publishes the derived `publicKey` when it can observe WireGuard runtime state or
+derive it from configured key material.
+
 For hub/spoke deployments, `peersFrom` removes repeated peer authoring after a
 trusted node registry exists, but it does not by itself solve first-contact
 registration. [ADR 0015](../adr/0015-wireguard-peer-enrollment.md) describes a

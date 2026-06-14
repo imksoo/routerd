@@ -5,6 +5,8 @@ package chain
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -778,5 +780,56 @@ spec:
 	status := store.ObjectStatus(api.NetAPIVersion, "WireGuardInterface", "wg0")
 	if status["phase"] != "Pending" || status["reason"] != "PrivateKeyMissing" {
 		t.Fatalf("status = %+v", status)
+	}
+}
+
+func TestWireGuardControllerGeneratesMissingPrivateKeyFileAndPublishesPublicKey(t *testing.T) {
+	keyPath := filepath.Join(t.TempDir(), "secrets", "wg0.key")
+	router := mustWireGuardRouter(t, `
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata: {name: test}
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardInterface
+      metadata: {name: wg0}
+      spec:
+        privateKeyFile: `+keyPath+`
+        listenPort: 51820
+`)
+	store := mapStore{}
+	controller := WireGuardController{
+		Router: router,
+		Store:  store,
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			call := name + " " + strings.Join(args, " ")
+			switch call {
+			case "ip link show wg0":
+				return nil, errors.New("missing")
+			case "wg show wg0 dump":
+				return nil, errors.New("status unavailable")
+			default:
+				return nil, nil
+			}
+		},
+		CommandStdin: func(_ context.Context, _ []byte, _ string, _ ...string) ([]byte, error) {
+			return nil, nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	key, err := os.ReadFile(keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicKey, err := wireguard.PublicKeyFromPrivateKey(strings.TrimSpace(string(key)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "WireGuardInterface", "wg0")
+	if status["phase"] != "Up" || status["publicKey"] != publicKey {
+		t.Fatalf("status = %+v, want derived public key %q", status, publicKey)
 	}
 }

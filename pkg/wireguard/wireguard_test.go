@@ -142,6 +142,101 @@ func TestResolveKeyFiles(t *testing.T) {
 	}
 }
 
+func TestEnsurePrivateKeyFileCreatesMissingKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "secrets", "wg0.key")
+	if err := EnsurePrivateKeyFile(path); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("key mode = %v, want 0600", info.Mode().Perm())
+	}
+	key, err := readSecretFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PublicKeyFromPrivateKey(key); err != nil {
+		t.Fatalf("generated key is invalid: %v", err)
+	}
+}
+
+func TestEnsurePrivateKeyFileDoesNotOverwriteExistingKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "wg0.key")
+	key, err := GeneratePrivateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(key+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsurePrivateKeyFile(path); err != nil {
+		t.Fatal(err)
+	}
+	got, err := readSecretFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != key {
+		t.Fatalf("existing key was overwritten")
+	}
+}
+
+func TestEnsurePrivateKeyFileRejectsEmptyExistingKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "wg0.key")
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsurePrivateKeyFile(path); err == nil || !strings.Contains(err.Error(), "empty key file") {
+		t.Fatalf("EnsurePrivateKeyFile error = %v, want empty key file", err)
+	}
+}
+
+func TestApplyDryRunDoesNotGeneratePrivateKeyFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "secrets", "wg0.key")
+	controller := Controller{DryRun: true}
+	if _, err := controller.Apply(context.Background(), InterfaceConfig{Name: "wg0", PrivateKeyFile: path}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("dry-run created private key file: %v", err)
+	}
+}
+
+func TestApplyGeneratesPrivateKeyFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "secrets", "wg0.key")
+	var setconf string
+	controller := Controller{
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			if name == "ip" && strings.Join(args, " ") == "link show wg0" {
+				return nil, os.ErrNotExist
+			}
+			return nil, nil
+		},
+		CommandStdin: func(_ context.Context, stdin []byte, name string, args ...string) ([]byte, error) {
+			if name == "wg" && strings.Join(args, " ") == "setconf wg0 /dev/stdin" {
+				setconf = string(stdin)
+			}
+			return nil, nil
+		},
+	}
+	if _, err := controller.Apply(context.Background(), InterfaceConfig{Name: "wg0", PrivateKeyFile: path}); err != nil {
+		t.Fatal(err)
+	}
+	key, err := readSecretFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PublicKeyFromPrivateKey(key); err != nil {
+		t.Fatalf("generated key is invalid: %v", err)
+	}
+	if !strings.Contains(setconf, "PrivateKey = "+key) {
+		t.Fatalf("setconf did not use generated key:\n%s", setconf)
+	}
+}
+
 func TestParseDump(t *testing.T) {
 	data := "priv\tpub\t51820\toff\npeerpub\tpsk\t203.0.113.2:51820\t10.0.0.2/32\t1710000000\t100\t200\t25\n"
 	status, err := ParseInterfaceDump("wg0", []byte(data))

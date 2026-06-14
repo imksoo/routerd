@@ -74,6 +74,8 @@ wg show
 
 ## Common edits
 
-- Keep the private key in a file with restricted permissions.
+- Keep the private key in a file with restricted permissions. If
+  `privateKeyFile` is configured and absent, non-dry-run apply generates the key
+  file with mode `0600`; existing non-empty keys are not overwritten.
 - Use one `/32` tunnel address per peer and add routed LAN prefixes explicitly.
 - Add firewall rules for the UDP listen port where the WAN firewall is managed by routerd.

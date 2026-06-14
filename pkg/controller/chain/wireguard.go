@@ -511,6 +511,11 @@ func (c WireGuardController) reconcileInterface(ctx context.Context, resource ap
 	} else {
 		c.savePeerPendingStatuses(resource.Metadata.Name, cfg.Peers, "DryRun")
 	}
+	if _, ok := status["publicKey"]; !ok {
+		if publicKey := wireGuardPublicKeyFromConfig(cfg); publicKey != "" {
+			status["publicKey"] = publicKey
+		}
+	}
 	if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "WireGuardInterface", resource.Metadata.Name, status); err != nil {
 		return err
 	}
@@ -670,6 +675,18 @@ func wireGuardConfigHash(cfg wireguard.InterfaceConfig, dryRun bool) string {
 	}
 	sum := sha256.Sum256(conf)
 	return hex.EncodeToString(sum[:])
+}
+
+func wireGuardPublicKeyFromConfig(cfg wireguard.InterfaceConfig) string {
+	resolved, err := wireguard.ResolveKeyFiles(cfg)
+	if err != nil {
+		return ""
+	}
+	publicKey, err := wireguard.PublicKeyFromPrivateKey(resolved.PrivateKey)
+	if err != nil {
+		return ""
+	}
+	return publicKey
 }
 
 func (c WireGuardController) interfaceMatchesDesired(ctx context.Context, cfg wireguard.InterfaceConfig, observed wireguard.InterfaceStatus) bool {
