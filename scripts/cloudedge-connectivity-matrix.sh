@@ -18,6 +18,9 @@
 set -euo pipefail
 
 SELF=$(basename "${BASH_SOURCE[0]}")
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=scripts/runners/cloudedge-runner-lib.sh
+. "$SCRIPT_DIR/runners/cloudedge-runner-lib.sh"
 
 usage() {
   cat <<EOF
@@ -47,9 +50,13 @@ ENV:
                      env (SSH_KEY_FILE, *_CLIENT_SSH_HOST, jump hosts).
   CE_MATRIX_SITES    Same format as --sites.
   CE_SSH_KNOWN_HOSTS Known-hosts file for SSH host-key verification.
+  CE_<SITE>_CLIENT_EXPECT_HOSTNAME
+                     Optional expected hostname for source/destination client
+                     identity checks. A mismatch fails the flow and is recorded
+                     in identityCheck/srcIdentityError/dstIdentityError.
 
 OUTPUT (JSON):
-  { "flows": [ {src,dst,dstIp,ping,sourceIpPreserved,defaultGwUnchanged,noNat,result} ],
+  { "flows": [ {src,dst,dstIp,ping,sourceIpPreserved,defaultGwUnchanged,noNat,identityCheck,result} ],
     "summary": { "total", "passed", "failed", "result" } }
 
 EXIT: 0 if every flow passes, 1 if any flow fails, 2 on usage error.
@@ -114,7 +121,7 @@ fi
 # ---- default runner (real ssh/ping) ------------------------------------------
 # Overridable via MATRIX_RUNNER for unit tests / dry runs.
 default_runner() {
-  local op=$1 src=$2 dst_ip=$3
+  local op=$1 src=$2 dst_ip=$3 dst_site=${4:-}
   local key="${SSH_KEY_FILE:-}" jump user="${CLIENT_SSH_USER:-ubuntu}"
   local known_hosts=${CE_SSH_KNOWN_HOSTS:-${CE_SSH_USER_KNOWN_HOSTS_FILE:-$HOME/.ssh/known_hosts}}
   local strict=${CE_SSH_STRICT_HOST_KEY_CHECKING:-yes}
@@ -146,9 +153,18 @@ default_runner() {
     ssh)
       # From the src client, SSH to dst_ip and report what the peer (dst) sees and
       # the src client's default gateway. Inner command runs on the remote side.
+      local src_expected dst_expected src_identity dst_identity
+      src_expected=$(ce_expected_hostname client "$src")
+      if [[ -n "$dst_site" ]]; then
+        dst_expected=$(ce_expected_hostname client "$dst_site")
+      else
+        dst_expected=""
+      fi
+      src_identity=$(ce_remote_identity_command "$src_expected")
+      dst_identity=$(ce_remote_identity_command "$dst_expected")
       # shellcheck disable=SC2029
       ssh "${ssh_opts[@]}" "${target[@]}" \
-        "ssh -o BatchMode=yes -o StrictHostKeyChecking=$nested_strict -o UserKnownHostsFile=$nested_known_hosts -o ConnectTimeout=8 $user@$dst_ip 'echo peer_ip=\$(echo \$SSH_CONNECTION | awk \"{print \\\$1}\")'; echo default_gw=\$(ip route show default | awk '{print \$3; exit}')"
+        "src_out=\$(bash -lc $src_identity); src_rc=\$?; printf '%s\n' \"\$src_out\" | sed 's/^/src_/'; ssh_rc=0; ssh -o BatchMode=yes -o StrictHostKeyChecking=$nested_strict -o UserKnownHostsFile=$nested_known_hosts -o ConnectTimeout=8 $user@$dst_ip \"dst_out=\\\$(bash -lc $dst_identity); dst_rc=\\\$?; printf '%s\n' \\\"\\\$dst_out\\\" | sed 's/^/dst_/'; echo peer_ip=\\\$(echo \\\$SSH_CONNECTION | awk '{print \\\$1}'); exit \\\$dst_rc\" || ssh_rc=\$?; echo default_gw=\$(ip route show default | awk '{print \$3; exit}'); exit \$((src_rc != 0 ? src_rc : ssh_rc))"
       ;;
     *) echo "$SELF: default runner: unknown op $op" >&2; return 3 ;;
   esac
@@ -185,10 +201,16 @@ for i in "${!SITE_NAMES[@]}"; do
     peer_ip=""
     default_gw=""
     ssh_out=""
-    if ssh_out=$(run_op ssh "$src" "$dst_ip" 2>/dev/null); then
-      peer_ip=$(echo "$ssh_out" | sed -n 's/^peer_ip=//p' | head -n1)
-      default_gw=$(echo "$ssh_out" | sed -n 's/^default_gw=//p' | head -n1)
-    fi
+    ssh_rc=0
+    ssh_out=$(run_op ssh "$src" "$dst_ip" "$dst" 2>/dev/null) || ssh_rc=$?
+    peer_ip=$(echo "$ssh_out" | sed -n 's/^peer_ip=//p' | head -n1)
+    default_gw=$(echo "$ssh_out" | sed -n 's/^default_gw=//p' | head -n1)
+    src_hostname=$(echo "$ssh_out" | sed -n 's/^src_hostname=//p' | head -n1)
+    dst_hostname=$(echo "$ssh_out" | sed -n 's/^dst_hostname=//p' | head -n1)
+    src_hostkey=$(echo "$ssh_out" | sed -n 's/^src_hostkey_sha256=//p' | head -n1)
+    dst_hostkey=$(echo "$ssh_out" | sed -n 's/^dst_hostkey_sha256=//p' | head -n1)
+    src_identity_error=$(echo "$ssh_out" | sed -n 's/^src_identity_error=//p' | head -n1)
+    dst_identity_error=$(echo "$ssh_out" | sed -n 's/^dst_identity_error=//p' | head -n1)
 
     # Assertions.
     src_pres="fail"
@@ -204,8 +226,23 @@ for i in "${!SITE_NAMES[@]}"; do
       [[ "$default_gw" == "$EXPECT_GW" ]] && gw_ok="pass"
     fi
 
+    identity_ok="pass"
+    src_expected=$(ce_expected_hostname client "$src")
+    dst_expected=$(ce_expected_hostname client "$dst")
+    if [[ -n "$src_identity_error" || -n "$dst_identity_error" ]]; then
+      identity_ok="fail"
+    fi
+    if [[ -n "$src_expected" && "$src_hostname" != "$src_expected" ]]; then
+      identity_ok="fail"
+      [[ -n "$src_identity_error" ]] || src_identity_error="hostname mismatch: got ${src_hostname:-<empty>} want $src_expected"
+    fi
+    if [[ -n "$dst_expected" && "$dst_hostname" != "$dst_expected" ]]; then
+      identity_ok="fail"
+      [[ -n "$dst_identity_error" ]] || dst_identity_error="hostname mismatch: got ${dst_hostname:-<empty>} want $dst_expected"
+    fi
+
     flow_res="fail"
-    if [[ "$ping_res" == "pass" && "$src_pres" == "pass" && "$gw_ok" == "pass" && "$no_nat" == "pass" ]]; then
+    if [[ "$ping_res" == "pass" && "$src_pres" == "pass" && "$gw_ok" == "pass" && "$no_nat" == "pass" && "$identity_ok" == "pass" && "$ssh_rc" -eq 0 ]]; then
       flow_res="pass"; passed=$((passed + 1))
     else
       failed=$((failed + 1))
@@ -213,7 +250,7 @@ for i in "${!SITE_NAMES[@]}"; do
 
     [[ -n "$FLOWS_JSON" ]] && FLOWS_JSON+=","
     FLOWS_JSON+=$(cat <<EOF
-{"src":"$(json_escape "$src")","dst":"$(json_escape "$dst")","dstIp":"$(json_escape "$dst_ip")","srcIp":"$(json_escape "$src_ip")","peerIp":"$(json_escape "$peer_ip")","defaultGw":"$(json_escape "$default_gw")","ping":"$ping_res","sourceIpPreserved":"$src_pres","defaultGwUnchanged":"$gw_ok","noNat":"$no_nat","result":"$flow_res"}
+{"src":"$(json_escape "$src")","dst":"$(json_escape "$dst")","dstIp":"$(json_escape "$dst_ip")","srcIp":"$(json_escape "$src_ip")","peerIp":"$(json_escape "$peer_ip")","defaultGw":"$(json_escape "$default_gw")","srcHostname":"$(json_escape "$src_hostname")","dstHostname":"$(json_escape "$dst_hostname")","srcHostKeySHA256":"$(json_escape "$src_hostkey")","dstHostKeySHA256":"$(json_escape "$dst_hostkey")","srcIdentityError":"$(json_escape "$src_identity_error")","dstIdentityError":"$(json_escape "$dst_identity_error")","ping":"$ping_res","sourceIpPreserved":"$src_pres","defaultGwUnchanged":"$gw_ok","noNat":"$no_nat","identityCheck":"$identity_ok","result":"$flow_res"}
 EOF
 )
   done
