@@ -2324,6 +2324,47 @@ func TestBGPPathSigFromObservedSelfStaleIsStable(t *testing.T) {
 	}
 }
 
+func TestBGPObservedSelfStaleCleanupIdempotencyKeyIncludesGeneration(t *testing.T) {
+	profile := api.CloudProviderProfileSpec{Provider: "aws"}
+	capture := api.AddressCapture{
+		Type:        "provider-secondary-ip",
+		ProviderRef: "aws-provider",
+		NICRef:      "eni-a",
+	}
+	captureTarget := map[string]string{"nicRef": "eni-a", "region": "ap-northeast-1"}
+	address := "10.88.60.10/32"
+	holder := "aws-router-a"
+	firstSeen := time.Date(2026, 6, 10, 18, 45, 0, 0, time.UTC)
+
+	planFor := func(staleSince time.Time) dynamicconfig.ActionPlan {
+		t.Helper()
+		plan, err := providerUnassignActionPlan("cloudedge", profile, capture, captureTarget, address, time.Date(2026, 6, 10, 18, 50, 0, 0, time.UTC))
+		if err != nil {
+			t.Fatalf("providerUnassignActionPlan: %v", err)
+		}
+		return stampSingleBGPPathFence(plan, address, bgpPathSigFromObservedSelfStale(address, staleSince), holder)
+	}
+
+	first := planFor(firstSeen)
+	sameGeneration := planFor(firstSeen)
+	nextGeneration := planFor(firstSeen.Add(time.Minute))
+	if first.IdempotencyKey != sameGeneration.IdempotencyKey {
+		t.Fatalf("same stale generation produced different idempotency keys:\n%s\n%s", first.IdempotencyKey, sameGeneration.IdempotencyKey)
+	}
+	if first.Parameters[bgpPathSigParam] != sameGeneration.Parameters[bgpPathSigParam] {
+		t.Fatalf("same stale generation produced different path sigs:\n%s\n%s", first.Parameters[bgpPathSigParam], sameGeneration.Parameters[bgpPathSigParam])
+	}
+	if first.IdempotencyKey == nextGeneration.IdempotencyKey {
+		t.Fatalf("different stale generations must not collide on idempotency key: %s", first.IdempotencyKey)
+	}
+	if first.Parameters[bgpPathSigParam] == nextGeneration.Parameters[bgpPathSigParam] {
+		t.Fatalf("different stale generations must not collide on path sig: %s", first.Parameters[bgpPathSigParam])
+	}
+	if !strings.Contains(first.Parameters[bgpPathSigParam], firstSeen.Format(time.RFC3339Nano)) {
+		t.Fatalf("path sig %q does not include first stale generation", first.Parameters[bgpPathSigParam])
+	}
+}
+
 func TestControllerBGPModeRemoteHomeLocalInventoryConflictBlocksProviderAction(t *testing.T) {
 	now := time.Date(2026, 6, 10, 15, 15, 0, 0, time.UTC)
 	store := testStore(t, now)
